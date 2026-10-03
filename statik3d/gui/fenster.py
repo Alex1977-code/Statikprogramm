@@ -359,6 +359,11 @@ class Fensteranordnung(QtCore.QObject):
         self._klickuhr = QtCore.QElapsedTimer()
         leiste.tabBarClicked.connect(self._unten_geklickt)
         leiste.tabBarDoubleClicked.connect(self._unten_doppelt)
+        # eine freie Stelle des Kopfes wirkt wie ein Reiter - auch in der
+        # Gruppe Protokoll, die keinen hat (mit ihr startet das Programm, bei
+        # 1366 x 768 eingeklappt). Kennung -2: kein Reiter, nicht die Leiste
+        unten.kopf_geklickt.connect(lambda: self._unten_geklickt(-2))
+        unten.kopf_doppelt.connect(lambda: self._unten_doppelt(-2))
         unten.gruppenwahl.activated.connect(lambda _i: self._unten_aufklappen())
         unten.bedient.connect(self._unten_aufklappen)
         if self.fest:
@@ -553,9 +558,9 @@ class Fensteranordnung(QtCore.QObject):
     def unten_einklappen(self, an: bool) -> None:
         """Unten nur die Kopfzeile zeigen (an) oder den ganzen Bereich.
 
-        Ein Klick auf einen Reiter oder die Wahl einer Gruppe klappt ihn
-        wieder auf, ein Doppelklick auf die Reiter schaltet um. Bis zum
-        03.10.2026 war die Registerzeile die Gruppenleiste (10b)."""
+        Ein Klick auf einen Reiter oder eine freie Stelle des Kopfes oder die
+        Wahl einer Gruppe klappt ihn wieder auf, ein Doppelklick dort schaltet
+        um. Bis zum 03.10.2026 war die Registerzeile die Gruppenleiste (10b)."""
         w = self.w
         dock, tb = w.unten_dock, w.tab_unten
         if bool(an) == self.unten_eingeklappt():

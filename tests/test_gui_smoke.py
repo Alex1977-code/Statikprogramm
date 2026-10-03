@@ -1088,7 +1088,9 @@ def main():
             app.processEvents()
             check("Nachweiszeile waehlt den ganzen Stab",
                   len(w.selection) >= 2, f"{stab}: {len(w.selection)} Knoten")
-            # Max/Min gibt es an Ergebnistabellen erst ab 5 Zeilen (03.10.2026, 10b)
+            # Max/Min gibt es an Ergebnistabellen erst ab 5 Zeilen (03.10.2026, 10b);
+            # der Hallenrahmen hat 3 Nachweiszeilen. Die Fusszeile selbst prueft
+            # tests/test_unten_kopfzeile.py an 6 Nachweiszeilen
             n_ = w.tbl_design.zeilenzahl()
             check(f"Nachweistabelle führt Max/Min, zu sehen ab {tb.Datentabelle.KENNWERTE_AB} Zeilen (hier {n_})",
                   w.tbl_design.kennwerte_zeigen

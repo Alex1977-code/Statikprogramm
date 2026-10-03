@@ -335,7 +335,11 @@ rollt dann auch waagerecht — bis zum 24.09.2026 zog die Windmaske ihn auf
 1170 px, die Ansicht blieb bei 128 px. Reicht die Breite unten nicht für die
 Knopfzeile unter einer Tabelle, rollt nur diese Zeile waagerecht. Bis zum
 03.10.2026 rollte der ganze untere Bereich samt Kopfzeile, und die breiteste
-Knopfzeile aller Tabellen (Bericht) bestimmte die Breite jeder Tabelle.
+Knopfzeile aller Tabellen (Bericht) bestimmte die Breite jeder Tabelle: bei
+1024 × 700 rollte er so bei jeder Tabelle um 250 px. Jetzt rollt dort bei
+manchen Gruppen noch der Kopf um bis zu 26 px, weil Gruppe, ganzer Reiter und
+der Knopf „»“ nicht schmaler werden (mit Segoe UI gemessen; bei 1366 × 768
+rollt nichts, weder vorher noch jetzt).
 
 **Ansicht → Fenster** (Knopf „Fenster ▾“ im Register Ansicht): Schalter
 *Modellbaum zeigen*, *Rechten Bereich zeigen*, *Unteren Bereich zeigen*;
@@ -346,9 +350,11 @@ daneben klickt, etwa in die Ansicht); *Nur
 Ansicht* blendet Baum, rechten und unteren Bereich aus und klappt das Ribbon
 ein, noch einmal gewählt ist alles wie vorher (auch wenn das Fenster
 inzwischen größer oder kleiner geworden ist); *Anordnung zurücksetzen* zeigt
-alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Reiter
-unten klappt den unteren Bereich auf seine Kopfzeile zusammen und wieder auf
-(bis zum 03.10.2026 auf die Gruppenleiste). Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
+alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Kopfzeile
+unten — auf einen Reiter oder eine freie Stelle — klappt den unteren Bereich
+auf seine Kopfzeile zusammen und wieder auf, ein einfacher Klick dort klappt
+ihn auf. Das gilt auch beim Protokoll, das keinen Reiter hat und mit dem das
+Programm startet (bis zum 03.10.2026 ging das nur über die Gruppenleiste). Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
 Querschnitte, Werkstoffe, ein Klick auf einen Baumzweig), klappen den Bereich
 auf; nach einer gescheiterten Rechnung steht dort das Protokoll mit der
 FEHLER-Zeile. Bis zum 25.09.2026 wechselte eingeklappt nur die Gruppe in der
@@ -2556,20 +2562,27 @@ Tabelle nach vorn — samt ihrer Gruppe. Bis zum 03.10.2026 standen
 untereinander eine Gruppenleiste, die Register der Gruppe, über jeder Tabelle
 eine eigene Zeile mit Zeilenzahl und Knöpfen und eine immer offene
 Filterzeile. Von 270 px unten blieben bei 1920 × 1080 der Knotentabelle
-94 px (zwei Zeilen) und den Stabkräften 120 px (drei Zeilen), jetzt sind es
-215 px (acht Zeilen) und 192 px (sechs Zeilen). In der Kompaktstufe bei
-1366 × 768 (aufgeklappt) sind es 137 statt 68 px und 114 statt 91 px; dort war
-der Inhalt vorher höher als der Bereich, und von den Zeilen Max und Min der
-Stabkräfte war nichts zu sehen (offscreen gemessen am Hallenrahmen, Prüfung
+78 px (zwei Zeilen) und den Stabkräften 108 px (drei Zeilen), jetzt sind es
+207 px und 188 px (je sieben Zeilen). In der Kompaktstufe bei 1366 × 768
+(aufgeklappt) sind es 129 statt 68 px und 110 statt 98 px; dort war der Inhalt
+vorher 260 px hoch im 217 px hohen Bereich, und von den Zeilen Max und Min der
+Stabkräfte waren 3 von 46 px zu sehen, jetzt stehen sie ganz da. Gemessen am
+Hallenrahmen mit Segoe UI (offscreen mit nachgeladener Schrift, Prüfung
 `tests/test_unten_kopfzeile.py`).
 
 **Zähler am Reiter.** Am Reiter jeder Tabelle steht klein ihre Zeilenzahl,
 und die Reiter leerer Tabellen sind grau; nach dem Rechnen sieht man so,
-welche Tabellen etwas enthalten. Die Zahl steht neben dem Namen, nicht in
-ihm. Eine große Tabelle, die nicht vorn liegt, füllt sich erst beim Anzeigen;
-ihr Zähler nennt die Zahl trotzdem schon, ohne sie zu füllen. Eine leere
-Tabelle sagt in ihrer Mitte, wie sie sich füllt, etwa „Noch keine Lasten –
-Lasten → Knotenlast …“ oder „Noch keine Stabkräfte – Start → Berechnen“.
+welche Tabellen etwas enthalten. Die graue Schrift hat mindestens 3 : 1
+Kontrast zum Grund und ist doch deutlich heller als die gefüllter Reiter; ein
+gewählter leerer Reiter steht hellblau mit dem Strich des gewählten da. Die
+Zahl steht neben dem Namen, nicht in ihm. Eine große Tabelle, die nicht vorn
+liegt, füllt sich erst beim Anzeigen; ihr Zähler nennt die Zahl trotzdem
+schon, ohne sie zu füllen. Wirkt dabei ein Filter, steht dort „?/19“: wie
+viele Zeilen der Filter übrig lässt, zeigt die Tabelle erst beim Anzeigen,
+und eine falsche Zahl steht nirgends. Eine leere Tabelle sagt in ihrer Mitte,
+wie sie sich füllt, etwa „Noch keine Lasten – Lasten → Knotenlast“ oder
+„Noch keine Verformungsnachweise – Nachweise → Verformung ▾ → Neu …“; die
+Verweise nennen Register und Knopf genau so, wie sie im Ribbon stehen.
 Gehört zum gezeigten Ergebnis ein eigener Hinweis (Stabkräfte zu einer
 Umhüllenden), steht er an dieser Stelle. Bis zum 03.10.2026 stand über einer
 leeren Tabelle nur „0 Zeilen“, und am Reiter war nicht zu sehen, ob sie
@@ -2651,7 +2664,10 @@ was der Filter gerade übrig lässt, und bleibt beim Sortieren und Filtern an
 ihrem Platz; ob sie steht, entscheidet die Zeilenzahl ohne Filter. Bis zum
 03.10.2026 stand sie auch unter den Eingabetabellen Knoten, Stäbe, Flächen,
 Volumenkörper und Schweißnähte und schon ab einer Zeile; unter der
-Knotentabelle nahm sie bei 1920 × 1080 46 von 140 px.
+Knotentabelle nahm sie bei 1920 × 1080 46 px neben 78 px Tabelle. Dasselbe
+gilt für *Kopieren*, *CSV…* und *Excel…*: Eingabetabellen und Tabellen mit
+weniger als 5 Zeilen geben seit dem 03.10.2026 keine Zeilen Max und Min mehr
+aus, Ergebnistabellen ab 5 Zeilen wie bisher beide am Ende.
 
 **Nicht erfüllte Nachweise fallen auf** (seit 24.09.2026). In den
 Nachweistabellen – Nachweise EC3, Ermüdung, Anschlüsse, Verformungen,

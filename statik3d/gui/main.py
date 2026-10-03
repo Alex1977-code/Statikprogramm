@@ -5001,7 +5001,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("In die Zwischenablage", lambda: self.tabelle_ausgeben("clip"),
                 "Ctrl+Shift+C", "Die sichtbaren Zeilen kopieren")
         g.klein("Filter leeren", self.tabelle_filter_leeren,
-                hinweis="Alle Kopfzeilenfilter der vorderen Tabelle löschen")
+                hinweis="Die Felder der Filterzeile der vorderen Tabelle leeren - alle Zeilen "
+                        "sind wieder zu sehen, die Filterzeile bleibt offen")
 
         # -- Nachweise ---------------------------------------------------
         r = rb.register("Nachweise")
@@ -12252,7 +12253,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---- Knoten -------------------------------------------------------
         # Die Modelltabellen sind Eingabe: Max und Min stehen seit 03.10.2026
         # (10b) nur unter Ergebnis- und Nachweistabellen - unter Knoten und
-        # Staeben nahmen sie 46 px von 94 px Tabelle und sagten nichts Neues.
+        # Staeben nahmen sie 46 px neben 78 px Tabelle (1920 x 1080, Segoe UI)
+        # und sagten nichts Neues.
         self.tbl_knoten = tab.Datentabelle([
             Spalte("Knoten", "", "ganz", hinweis="Knotennummer"),
             Spalte("x", "m", "zahl", 4, True), Spalte("y", "m", "zahl", 4, True),
@@ -13702,40 +13704,41 @@ class MainWindow(QtWidgets.QMainWindow):
 
     #: Was eine leere Tabelle unten sagt: wie sie sich fuellt (03.10.2026,
     #: Teilpaket 10b; vorher stand nur „0 Zeilen“ da). Schluessel ist die
-    #: Tabelle, nicht der Name ihres Reiters - der kann sich aendern. Jeder
-    #: Verweis „Register → Befehl“ und jeder Knopf „…“ wird in
-    #: tests/test_unten_kopfzeile.py gegen das Ribbon und die Knoepfe der
-    #: Tabelle geprueft.
+    #: Tabelle, nicht der Name ihres Reiters - der kann sich aendern. Ein
+    #: Verweis nennt Register und Knopf, wie sie im Ribbon stehen („Register →
+    #: Knopf“, bei einem Menueknopf „Register → Knopf ▾ → Eintrag“), ein Knopf
+    #: an der Tabelle steht in „…“. tests/test_unten_kopfzeile.py vergleicht
+    #: jeden Verweis ganz mit den Beschriftungen im Ribbon und an der Tabelle.
     LEERTEXTE = {
-        "tbl_knoten": "Noch keine Knoten – Geometrie → Knoten …",
-        "tbl_linie": "Noch keine Linien – Geometrie → Linie …",
-        "tbl_geoflaeche": "Noch keine Flächen – Struktur → Fläche aus Linien …",
-        "tbl_geokoerper": "Noch keine Volumenkörper – Struktur → Volumen aus Flächen …",
-        "tbl_elem": "Noch keine Elemente – Struktur → Stab … oder Netz → Vernetzen",
+        "tbl_knoten": "Noch keine Knoten – Geometrie → Knoten",
+        "tbl_linie": "Noch keine Linien – Geometrie → Linie",
+        "tbl_geoflaeche": "Noch keine Flächen – Struktur → Fläche aus Linien",
+        "tbl_geokoerper": "Noch keine Volumenkörper – Struktur → Volumen aus Flächen",
+        "tbl_elem": "Noch keine Elemente – Struktur → Stab oder Netz → Vernetzen",
         "tbl_naht": "Noch keine Schweißnähte – Nachweise → Schweißnähte…",
         "tbl_mat": "Noch keine Werkstoffe – unten „Werkstoff hinzufügen…“",
         "tbl_sec": "Noch keine Querschnitte – unten „Querschnitt hinzufügen (Profildatenbank)…“",
         "tbl_shell": "Noch keine Dicken – unten t eintragen und „Dicke hinzufügen“",
-        "tbl_lager": "Noch keine Lager – Lager / Kontakt → Knotenlager …",
-        "tbl_gelenk": "Noch keine Gelenke – Struktur → Gelenk …",
+        "tbl_lager": "Noch keine Lager – Lager / Kontakt → Knotenlager",
+        "tbl_gelenk": "Noch keine Gelenke – Struktur → Gelenk",
         "tbl_freigabe": "Noch keine Kontaktbedingungen – Lager / Kontakt → Kontaktbedingung…",
-        "tbl_lastfall": "Noch keine Lastfälle – Lasten → Lastfälle …",
-        "tbl_last": "Noch keine Lasten – Lasten → Knotenlast …",
-        "tbl_kombi": "Noch keine Kombinationen – Lasten → Kombinationen automatisch…",
+        "tbl_lastfall": "Noch keine Lastfälle – Lasten → Lastfälle",
+        "tbl_last": "Noch keine Lasten – Lasten → Knotenlast",
+        "tbl_kombi": "Noch keine Kombinationen – Lasten → EN 1990… oder Lasten → DIN 19704",
         "tbl_beam": "Noch keine Stabkräfte – Start → Berechnen",
         "tbl_react": "Noch keine Auflagerkräfte – Start → Berechnen",
-        "tbl_env": "Noch keine Umhüllende – Lasten → Kombinationen automatisch…, dann Start → Berechnen",
-        "tbl_contact": "Noch keine Kontaktkräfte – Lager / Kontakt → Kontakt …, dann Start → Berechnen",
-        "tbl_kontaktpaare": "Noch keine Kontaktpaare – Lager / Kontakt → Kontakt …, dann Start → Berechnen",
+        "tbl_env": "Noch keine Umhüllende – Lasten → EN 1990…, dann Start → Berechnen",
+        "tbl_contact": "Noch keine Kontaktkräfte – Lager / Kontakt → Kontakt, dann Start → Berechnen",
+        "tbl_kontaktpaare": "Noch keine Kontaktpaare – Lager / Kontakt → Kontakt, dann Start → Berechnen",
         "tbl_design": "Noch keine Nachweise – Nachweise → Nachweise EC3",
         "tbl_knick": "Noch keine Knicklängen – Nachweise → Aus Knickfigur",
-        "tbl_schwing": "Noch kein Schwingungsnachweis – Nachweise → Verschluss …",
+        "tbl_schwing": "Noch kein Schwingungsnachweis – Nachweise → Verschluss",
         "tbl_fat": "Noch keine Ermüdungsnachweise – Lasten → Ermüdungslasten…, dann Nachweise → Ermüdung",
-        "tbl_joint": "Noch keine Anschlüsse – Lager / Kontakt → Anschluss …",
-        "tbl_gzg": "Noch keine Verformungsnachweise – Nachweise → Verformung …",
-        "tbl_beul": "Noch keine Beulfelder – Nachweise → Beulfeld …",
-        "tbl_vol": "Noch keine Volumenbereiche – Nachweise → Volumenbereich …",
-        "tbl_le": "Noch keine Lasteinleitungen – Nachweise → Lasteinleitung …",
+        "tbl_joint": "Noch keine Anschlüsse – Lager / Kontakt → Anschluss",
+        "tbl_gzg": "Noch keine Verformungsnachweise – Nachweise → Verformung ▾ → Neu …",
+        "tbl_beul": "Noch keine Beulfelder – Nachweise → Beulfeld ▾ → Neu …",
+        "tbl_vol": "Noch keine Volumenbereiche – Nachweise → Volumenbereich ▾ → Neu …",
+        "tbl_le": "Noch keine Lasteinleitungen – Nachweise → Lasteinleitung ▾ → Neu …",
         "tbl_bericht": ("Noch keine eigenen Einträge im Bericht – Bericht → Ansicht übernehmen "
                         "oder Bericht → Text einfügen"),
         "tbl_unterlagen": "Noch keine Unterlagen – Unterlagen → Datei hinzufügen…",

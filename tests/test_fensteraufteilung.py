@@ -281,8 +281,12 @@ def _reiter_klick(leiste, i: int, doppelt: bool = False):
     """Ein echter (Doppel-)Klick auf den Reiter i einer QTabBar. Gegenpruefung
     25.09.2026: tabBarDoubleClicked.emit() allein verbarg, dass QTabBar nach
     dem Doppelklick selbst noch einen Klick sendet."""
+    _klick_bei(leiste, leiste.tabRect(i).center(), doppelt)
+
+
+def _klick_bei(leiste, p, doppelt: bool = False):
+    """Ein echter (Doppel-)Klick auf die Stelle *p* eines Widgets."""
     from PySide6 import QtCore, QtTest
-    p = leiste.tabRect(i).center()
     if doppelt:
         # wie vom Betriebssystem: Druecken, Loslassen, Doppelklick, Loslassen -
         # QTest.mouseDClick allein sendet nur das Doppelklick-Ereignis
@@ -417,10 +421,32 @@ def test_kompaktstufe():
     check("… die Ansicht hat mindestens 30 % der Fensterfläche",
           bb * hh >= 0.30 * w.width() * w.height(), f"{bb} x {hh} = {100 * bb * hh / (w.width() * w.height()):.1f} %")
     # Seit 03.10.2026 (10b) stehen Gruppe (Aufklappfeld) und Reiter in einer
-    # Kopfzeile; geklickt wird auf einen Reiter der Gruppe Modell
-    w.tab_unten.zeigen("Knoten")
+    # Kopfzeile. Das Programm startet mit der Gruppe Protokoll, die keinen
+    # Reiter hat: geklickt wird dort auf eine freie Stelle des Kopfes
+    # (Gegenpruefung L1 - vorher liess sich der Bereich so nicht umschalten)
+    from PySide6 import QtCore
+    tu = w.tab_unten
+    p = QtCore.QPoint(tu.gruppenwahl.geometry().right() + 40, tu.kopf.height() // 2)
+    check("… unten steht die Gruppe Protokoll ohne Reiter, rechts vom Aufklappfeld ist der Kopf frei",
+          tu.currentGroup() == "Protokoll" and tu.reiter.isHidden() and tu.kopf.childAt(p) is None
+          and p.x() < tu.kopf.width(),
+          f"{tu.currentGroup()}, Reiter verborgen {tu.reiter.isHidden()}")
+    _klick_bei(tu.kopf, p)
+    check("Protokoll: ein Klick auf den Kopf unten klappt den Bereich auf",
+          not an.unten_eingeklappt() and w.unten_dock.height() >= 150 and w.log.isVisible(),
+          f"{w.unten_dock.height()} px")
+    _klick_bei(tu.kopf, p, doppelt=True)
+    check("… ein echter Doppelklick auf den Kopf wieder zu",
+          an.unten_eingeklappt() and w.unten_dock.height() <= 40, f"{w.unten_dock.height()} px")
+    _klick_bei(tu.kopf, p, doppelt=True)
+    check("… und ein echter Doppelklick auf den eingeklappten Kopf wieder auf",
+          not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
+    an.unten_einklappen(True)
+    _ruhe(6)
+    # dasselbe mit den Reitern einer Gruppe, die welche hat
+    tu.zeigen("Knoten")
     _ruhe()
-    leiste = w.tab_unten.reiter
+    leiste = tu.reiter
     _reiter_klick(leiste, 1)
     check("ein Klick auf einen Reiter unten klappt den Bereich auf",
           not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")

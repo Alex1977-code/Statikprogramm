@@ -1011,7 +1011,8 @@ class Datentabelle(QtWidgets.QWidget):
             self.kennwerte_zeigen = bool(mit_kennwerten)
         if len(zeilen) > self.VERZOEGERT_AB and not self.isVisible():
             self._ausstehend = zeilen
-            self.lbl_zeilen.setText(f"{len(zeilen)} Zeilen – wird beim Anzeigen gefüllt")
+            gefiltert = ", gefiltert" if self.filter_wirkt() else ""
+            self.lbl_zeilen.setText(f"{len(zeilen)} Zeilen{gefiltert} – wird beim Anzeigen gefüllt")
             self.lbl_leer.hide()
             # der Zaehler am Reiter nimmt die Zahl, ohne die Tabelle zu fuellen
             self.stand_geaendert.emit()
@@ -1096,12 +1097,16 @@ class Datentabelle(QtWidgets.QWidget):
 
     def zaehler(self) -> tuple:
         """(Zeilen, davon sichtbar) fuer den Zaehler am Reiter - ohne die
-        Tabelle zu fuellen: eine, die noch auf das Anzeigen wartet, nennt die
-        Zahl ihrer ausstehenden Zeilen (am Drehlager 133 066 Knoten, deren
-        Fuellen Sekunden kostet)."""
+        Tabelle zu fuellen: eine, die noch auf das Anzeigen wartet (ab
+        VERZOEGERT_AB Zeilen, am Drehlager etwa die Knoten), nennt die Zahl
+        ihrer ausstehenden Zeilen. Wirkt dabei ein Filter, steht die Zahl der
+        sichtbaren Zeilen erst nach dem Fuellen fest: dann None statt der
+        Gesamtzahl. Bis zur Nachbesserung vom 03.10.2026 stand dort die
+        Gesamtzahl - Reiter „19“ und „19 von 19 sichtbar“, waehrend Export und
+        Tabelle gefiltert waren."""
         z = getattr(self, "_ausstehend", None)
         if z is not None:
-            return len(z), len(z)
+            return len(z), (None if self.filter_wirkt() else len(z))
         return self.modell.rowCount(), self.filter.rowCount()
 
     def kennwerte_aktiv(self) -> bool:
@@ -1398,10 +1403,11 @@ class Knopfzeile(QtWidgets.QScrollArea):
     rollt sie allein waagerecht (03.10.2026, Teilpaket 10b).
 
     Bis dahin machte die breiteste Knopfzeile (Bericht, sieben Knoepfe) den
-    ganzen unteren Bereich so breit: er rollte samt Kopfzeile waagerecht, und
-    in der Kompaktstufe lagen Knoepfe ausserhalb (1366 x 768 offscreen am
-    Stand 5ee513d: 389 px Rollweg). Jetzt rollt nur die Zeile, die zu breit
-    ist; sie wird dann um den Rollbalken hoeher."""
+    ganzen unteren Bereich so breit: bei 1024 x 700 rollte er am Stand 5734a94
+    samt Kopfzeile um 250 px, bei jeder Tabelle (Segoe UI, offscreen mit
+    nachgeladener Schrift gemessen; bei 1366 x 768 rollte er nicht). Jetzt
+    rollt nur die Zeile, die zu breit ist; sie wird dann um den Rollbalken
+    hoeher."""
 
     def __init__(self, inhalt: QtWidgets.QWidget, parent=None):
         super().__init__(parent)
@@ -1432,13 +1438,17 @@ class Knopfzeile(QtWidgets.QScrollArea):
 class Gruppenwahl(QtWidgets.QComboBox):
     """Die Gruppe als Aufklappfeld im Kopf unten - so breit wie der Name der
     gewaehlten Gruppe, nicht wie der laengste (03.10.2026, Teilpaket 10b).
-    Mit dem laengsten („Eigenschaften“) nahm das Feld in der Kompaktstufe bei
-    1280 x 720 offscreen 207 von 536 px, und „Kontaktbedingungen“ passte nicht
-    mehr ganz daneben. Die Liste zeigt weiter alle Namen ganz."""
+    Mit Segoe UI ist es 69 px (Lager) bis 120 px (Eigenschaften) breit, das
+    Protokoll 91 px; mit dem laengsten Namen waeren es immer 120 px - Platz,
+    der den Reitern daneben fehlt. Die Liste zeigt weiter alle Namen ganz."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        # nie breiter als der Name: steht daneben kein Reiter (Protokoll),
+        # zog das Layout das Feld sonst ueber den ganzen Kopf (Gegenpruefung
+        # 03.10.2026, Segoe UI: 626 px statt 91 px bei 1366 x 768)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         self.currentIndexChanged.connect(lambda _i: self.updateGeometry())
 
     def sizeHint(self) -> QtCore.QSize:
@@ -1467,20 +1477,30 @@ def reiter_frei(leiste: QtWidgets.QTabBar) -> QtCore.QRect:
     return QtCore.QRect(links, 0, max(0, rechts - links), leiste.height())
 
 
+#: Schrift leerer Reiter (Teilpaket 10b, Nachbesserung 03.10.2026): 3,2 : 1
+#: gegen den Grund des Kopfes (#f4f6f8) - die Schrift gefuellter Reiter (matt,
+#: #66717c) hat 4,6 : 1. Der erste Schleier ueber der Schrift kam laut
+#: Gegenpruefung auf etwa 1,6 : 1, und ein gewaehlter leerer Reiter war kaum
+#: von den anderen zu unterscheiden.
+REITER_LEER = "#808a94"
+#: ... und gewaehlt: ein helleres Akzentblau, 3,2 : 1 (Akzent #1467c6: 5,1 : 1)
+REITER_LEER_GEWAEHLT = "#5a8bd0"
+
+
 class Reiterleiste(QtWidgets.QTabBar):
     """Die Reiter der gewaehlten Gruppe im Kopf des unteren Bereichs, jeder mit
     seiner Zeilenzahl (03.10.2026, Teilpaket 10b).
 
     Die Zahl steht als kleine Marke rechts am Reiter und nicht im Text: der
     Text bleibt der Name der Tabelle, den Befehle und Pruefungen woertlich
-    vergleichen. Leere Reiter sind grau. Die Schriftfarbe der Reiter setzt das
-    Stilblatt (QTabBar::tab) und uebergeht dabei setTabTextColor - offscreen
-    geprueft, kein einziger Bildpunkt in der gesetzten Farbe. Darum legt
-    paintEvent ueber die Schrift eines leeren Reiters einen Schleier in der
-    Grundfarbe des Kopfes; die Marke wird ueber das Stilblatt grau."""
+    vergleichen. Leere Reiter sind grau (REITER_LEER), ein gewaehlter leerer
+    Reiter hellblau mit dem Strich des gewaehlten. Die Schriftfarbe der Reiter
+    setzt das Stilblatt (QTabBar::tab) und uebergeht dabei setTabTextColor -
+    offscreen geprueft, kein einziger Bildpunkt in der gesetzten Farbe. Darum
+    zeichnet der Stil bei leeren Reitern Form und Strich ohne Text
+    (initStyleOption), und paintEvent schreibt den Namen in der eigenen Farbe
+    an dieselbe Stelle (SE_TabBarTabText)."""
 
-    #: Deckkraft des Schleiers ueber einem leeren Reiter (0..255)
-    SCHLEIER = 165
     RECHTS = QtWidgets.QTabBar.ButtonPosition.RightSide
 
     def __init__(self, parent=None):
@@ -1492,13 +1512,22 @@ class Reiterleiste(QtWidgets.QTabBar):
         # wird kein Name
         self.setUsesScrollButtons(True)
         self.setElideMode(QtCore.Qt.ElideNone)
+        #: waehrend paintEvent: leere Reiter ohne Text an den Stil geben
+        self._ohne_leertext = False
 
-    def zahl_setzen(self, j: int, gesamt: int, sichtbar: int, hinweis: str = "") -> None:
-        """Die Marke am Reiter *j*: „19“, gefiltert „5/19“; leer grau."""
+    def zahl_setzen(self, j: int, gesamt: int, sichtbar, hinweis: str = "") -> None:
+        """Die Marke am Reiter *j*: „19“, gefiltert „5/19“, leer grau.
+        ``sichtbar`` None: ein Filter wirkt, aber wie viele Zeilen er uebrig
+        laesst, steht erst nach dem Fuellen fest - dann „?/19“, nie eine
+        falsche Zahl (Nachbesserung 03.10.2026)."""
         if not 0 <= j < self.count():
             return
-        text = (zl.zahl_text(gesamt) if sichtbar == gesamt
-                else f"{zl.zahl_text(sichtbar)}/{zl.zahl_text(gesamt)}")
+        if sichtbar is None:
+            text = f"?/{zl.zahl_text(gesamt)}"
+        elif sichtbar == gesamt:
+            text = zl.zahl_text(gesamt)
+        else:
+            text = f"{zl.zahl_text(sichtbar)}/{zl.zahl_text(gesamt)}"
         leer = gesamt == 0
         marke = self.tabButton(j, self.RECHTS)
         neu = not isinstance(marke, QtWidgets.QLabel)
@@ -1526,10 +1555,11 @@ class Reiterleiste(QtWidgets.QTabBar):
 
     def minimumSizeHint(self) -> QtCore.QSize:
         """Mindestens so breit, dass der breiteste Reiter samt Rollpfeilen ganz
-        zu sehen ist. QTabBar verlangt sonst nur 123 px (offscreen gemessen): in
-        der Kompaktstufe (1280 x 720) blieben ihr 144 px, und kein
-        Reiter der Gruppe Nachweise passte ganz hinein - die Knoepfe rechts
-        behielten ihren Platz. So weichen zuerst die Knoepfe ins Menue „»“."""
+        zu sehen ist. QTabBar verlangt sonst nur Platz fuer die Pfeile und ein
+        Stueck: mit Segoe UI blieben ihr bei 1024 x 700 so 123 px, und bei 13
+        Tabellen war der gewaehlte Reiter nicht ganz zu sehen („Kontaktbedingungen“
+        braucht 146 px), waehrend die Knoepfe rechts ihren Platz behielten. So
+        weichen zuerst die Knoepfe ins Menue „»“."""
         s = super().minimumSizeHint()
         if self.count() == 0:
             return s
@@ -1546,22 +1576,34 @@ class Reiterleiste(QtWidgets.QTabBar):
     def ist_leer(self, j: int) -> bool:
         return bool(self.tabData(j)) if 0 <= j < self.count() else False
 
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        if self._ohne_leertext and self.ist_leer(index):
+            option.text = ""
+
     def paintEvent(self, ev):
-        super().paintEvent(ev)
         leere = [j for j in range(self.count()) if self.ist_leer(j)]
+        self._ohne_leertext = bool(leere)
+        try:
+            super().paintEvent(ev)
+        finally:
+            self._ohne_leertext = False
         if not leere:
             return
-        farbe = QtGui.QColor(dsg.FARBEN["grund"])
-        farbe.setAlpha(self.SCHLEIER)
         p = QtGui.QPainter(self)
         try:
+            # die Schrift der Reiter: Gewicht 500 wie im Stilblatt (::tab)
+            f = QtGui.QFont(self.font())
+            f.setWeight(QtGui.QFont.Weight.Medium)
+            p.setFont(f)
+            frei = reiter_frei(self)
+            p.setClipRect(frei)
             for j in leere:
-                r = self.tabRect(j)
-                marke = self.tabButton(j, self.RECHTS)
-                rechts = marke.geometry().left() if marke is not None else r.right()
-                # die Unterkante (Strich des gewaehlten Reiters) bleibt frei
-                p.fillRect(QtCore.QRect(r.left(), r.top(), max(0, rechts - r.left()),
-                                        max(0, r.height() - 3)), farbe)
+                opt = QtWidgets.QStyleOptionTab()
+                self.initStyleOption(opt, j)
+                r = self.style().subElementRect(QtWidgets.QStyle.SE_TabBarTabText, opt, self)
+                p.setPen(QtGui.QColor(REITER_LEER_GEWAEHLT if j == self.currentIndex() else REITER_LEER))
+                p.drawText(r, int(QtCore.Qt.AlignCenter), opt.text)
         finally:
             p.end()
 
@@ -1576,8 +1618,9 @@ class Tabellenbereich(QtWidgets.QWidget):
     fuer die Tabelle vorn. Bis dahin standen untereinander eine Gruppenleiste,
     die Register der Gruppe, je Tabelle eine Werkzeugzeile und eine immer
     offene Filterzeile: von 270 px unten blieben bei 1920 x 1080 der
-    Knotentabelle 94 px (zwei Zeilen) und den Stabkraeften 120 px (offscreen
-    gemessen, tests/test_unten_kopfzeile.py).
+    Knotentabelle 78 px (zwei Zeilen) und den Stabkraeften 108 px (drei
+    Zeilen), jetzt sind es 207 px und 188 px (je sieben Zeilen; Segoe UI,
+    offscreen mit nachgeladener Schrift gemessen, tests/test_unten_kopfzeile.py).
 
     Reicht die Breite nicht fuer Knoepfe mit Text, stehen nur ihre Symbole da
     (der Tooltip nennt sie); reicht sie auch dafuer nicht, nimmt die
@@ -1597,6 +1640,11 @@ class Tabellenbereich(QtWidgets.QWidget):
     #: Ein Knopf, der die Tabelle sichtbar braucht (Filter, Spalten), wurde
     #: bedient - die Fensteranordnung klappt dann einen eingeklappten Bereich auf
     bedient = QtCore.Signal()
+    #: Klick bzw. Doppelklick auf eine freie Stelle des Kopfes - wie auf einen
+    #: Reiter: die Fensteranordnung klappt auf bzw. um. So geht das auch in
+    #: der Gruppe Protokoll, die keinen Reiter hat (Nachbesserung 03.10.2026)
+    kopf_geklickt = QtCore.Signal()
+    kopf_doppelt = QtCore.Signal()
 
     def __init__(self, gruppen, parent=None):
         super().__init__(parent)
@@ -1646,6 +1694,9 @@ class Tabellenbereich(QtWidgets.QWidget):
                                lambda: self._an_tabelle("export_xlsx"))
         kl.addWidget(self.gruppenwahl, 0, QtCore.Qt.AlignVCenter)
         kl.addWidget(self.reiter, 1, QtCore.Qt.AlignVCenter)
+        # ohne Reiter (Protokoll) haelt der Leerraum das Feld links; sonst
+        # stand es mitten im Kopf (mit Segoe UI gesehen, Nachbesserung 10b)
+        kl.addStretch(0)
         kl.addWidget(self.werkzeug, 0, QtCore.Qt.AlignVCenter)
 
         self.stapel = QtWidgets.QStackedWidget(self)
@@ -1718,13 +1769,14 @@ class Tabellenbereich(QtWidgets.QWidget):
         """Nur die Seite vorn bestimmt die Mindestgroesse des Bereichs.
 
         QStackedWidget und QTabWidget nehmen sonst das Groesste aller Seiten:
-        die breiteste Knopfzeile (Bericht) machte jede Tabelle unten 1023 px
-        breit und 244 px hoch (offscreen am Stand 5ee513d gemessen) - in der
-        Kompaktstufe rollte der Bereich samt Kopfzeile waagerecht, und unten
-        fehlten 42 px: die Zeilen Max und Min der Stabkraefte waren gar nicht
-        zu sehen. Seiten, die nicht vorn liegen, bekommen darum die
-        Groessenregel Ignored (so empfiehlt es die Qt-Dokumentation zu
-        QStackedWidget); die vordere behaelt ihre eigene."""
+        mit Segoe UI am Stand 5734a94 gemessen war der Inhalt unten in der
+        Kompaktstufe 260 px hoch im 217 px hohen Bereich - von Max und Min der
+        Stabkraefte waren 3 von 46 px zu sehen -, und bei 1024 x 700 rollte
+        der Bereich samt Kopfzeile um 250 px, weil die breiteste Knopfzeile
+        (Bericht) jede Tabelle so breit machte. Seiten, die nicht vorn liegen,
+        bekommen darum die Groessenregel Ignored - so zaehlen sie in
+        QStackedLayout nicht zur Mindestgroesse -, die vordere behaelt ihre
+        eigene."""
         aus = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
         vorn_g = self.stapel.currentWidget()
 
@@ -1785,7 +1837,8 @@ class Tabellenbereich(QtWidgets.QWidget):
         """Den gewaehlten Reiter in den sichtbaren Teil rollen. QTabBar tut das
         bei setCurrentIndex nur mit der Breite, die sie gerade hat - nach dem
         Umbau der Reiter einer Gruppe stand der gewaehlte sonst hinter den
-        Pfeilen (offscreen gesehen: „Lasteinleitung“ bei 1366 x 768)."""
+        Pfeilen (offscreen mit Kaestchen statt Schrift gesehen: „Lasteinleitung“
+        bei 1366 x 768)."""
         rb = self.reiter
         try:
             j = rb.currentIndex()
@@ -1854,7 +1907,11 @@ class Tabellenbereich(QtWidgets.QWidget):
         text = "Filter aktiv" if wirkt else "Filter"
         if wirkt:
             gesamt, sichtbar = t.zaehler()
-            tip = (f"Filter aktiv: {zl.zahl_text(sichtbar)} von {zl.zahl_text(gesamt)} Zeilen sichtbar. "
+            wie_viele = (f"{zl.zahl_text(sichtbar)} von {zl.zahl_text(gesamt)} Zeilen sichtbar"
+                         if sichtbar is not None else
+                         f"wie viele der {zl.zahl_text(gesamt)} Zeilen er übrig lässt, zeigt die "
+                         "Tabelle beim Anzeigen")
+            tip = (f"Filter aktiv: {wie_viele}. "
                    "Ein Klick blendet die Filterzeile aus und hebt den Filter auf.")
         else:
             tip = ("Filterzeile ein- und ausblenden - ausblenden hebt den Filter auf. "
@@ -1922,8 +1979,14 @@ class Tabellenbereich(QtWidgets.QWidget):
             self.werkzeug.setToolButtonStyle(art)
 
     def eventFilter(self, obj, ev):
-        if obj is self.kopf and ev.type() in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
-            self._knopfart_waehlen()
+        if obj is self.kopf:
+            typ = ev.type()
+            if typ in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
+                self._knopfart_waehlen()
+            elif typ == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton:
+                self.kopf_geklickt.emit()
+            elif typ == QtCore.QEvent.MouseButtonDblClick and ev.button() == QtCore.Qt.LeftButton:
+                self.kopf_doppelt.emit()
         return super().eventFilter(obj, ev)
 
     # ---- flache Sicht (wie ein QTabWidget) ---------------------------------
@@ -2009,7 +2072,7 @@ QComboBox#gruppenwahl {{ padding: 2px 8px; border-radius: 6px; font-weight: 600;
 QTabBar#tabellenreiter {{ background: transparent; }}
 QTabBar#tabellenreiter::tab {{ padding: 5px 8px; font-weight: 500; }}
 QLabel#reiterzahl {{ color: {matt}; font-size: 10px; background: transparent; }}
-QLabel#reiterzahl[leer="true"] {{ color: #b3bcc5; }}
+QLabel#reiterzahl[leer="true"] {{ color: {reiter_leer}; }}
 QLabel#reiterzahl[gefiltert="true"] {{ color: {akzent2}; font-weight: 600; }}
 QToolBar#tabellenwerkzeug {{ background: transparent; border: 0; padding: 0px; spacing: 3px; }}
 QToolBar#tabellenwerkzeug QToolButton {{ padding: 2px 6px; border-radius: 6px;
@@ -2020,4 +2083,4 @@ QToolBar#tabellenwerkzeug QToolButton[aktiv="true"] {{ background: {akzent2};
 
 
 def stil() -> str:
-    return STIL.format(**dsg.FARBEN)
+    return STIL.format(**dsg.FARBEN, reiter_leer=REITER_LEER)

@@ -1,31 +1,41 @@
 """
 Unterer Bereich in einer Kopfzeile (Teilpaket 10b des Oberflaechenplans, 03.10.2026).
 
-Befund am Stand 5ee513d (offscreen gemessen, Beispiel hall gerechnet, eine
-Kombination gezeigt): unten standen untereinander die Gruppenleiste, die
-Register der Gruppe, eine Werkzeugzeile je Tabelle (Zeilenzahl, Spalten…,
-Filter leeren, Kopieren, CSV…, Excel…), die Filterzeile und unter jeder
-Tabelle mit Kennwerten die Zeilen Max und Min - auch unter den Eingabetabellen
-Knoten, Stäbe, Flächen, Volumenkörper und Schweißnähte. Von 270 px unten bei
-1920 x 1080 blieben der Knotentabelle 94 px (2 Zeilen), den Stabkräften 120 px
-(3 Zeilen); in der Kompaktstufe (aufgeklappt) 68 und 94 px.
+Befund am Stand 5734a94 (offscreen mit nachgeladener Segoe UI gemessen,
+scratchpad/mit_schrift.py; Beispiel hall gerechnet, eine Kombination gezeigt):
+unten standen untereinander die Gruppenleiste, die Register der Gruppe, eine
+Werkzeugzeile je Tabelle (Zeilenzahl, Spalten…, Filter leeren, Kopieren, CSV…,
+Excel…), die Filterzeile und unter jeder Tabelle mit Kennwerten die Zeilen Max
+und Min - auch unter den Eingabetabellen Knoten, Stäbe, Flächen, Volumenkörper
+und Schweißnähte. Von 270 px unten bei 1920 x 1080 blieben der Knotentabelle
+78 px (2 Zeilen), den Stabkräften 108 px (3 Zeilen); in der Kompaktstufe
+(aufgeklappt) 68 und 98 px, und der Inhalt war dort 260 px hoch in 217 px -
+von Max/Min der Stabkräfte waren 3 von 46 px zu sehen.
+
+Offscreen ohne nachgeladene Schrift malt Qt Kaestchen, etwa doppelt so breit
+wie Segoe UI (Regel Block C): die Suite waehlt ihre Werte vorher danach, ob Qt
+eine Schrift kennt, und nennt Werte ohne Schrift „Kästchenwert“.
 
 Geprueft wird:
 
 * Gruppe (Aufklappfeld), Reiter und die Knoepfe Spalten, Filter, Kopieren,
   CSV und Excel stehen in **einer** Zeile; keine zweite Registerzeile;
-* die Tabelle gewinnt Hoehe (gemessen gegen den Stand 5ee513d);
+* die Tabelle gewinnt Hoehe (gemessen gegen den Stand vor 10b);
 * die Filterzeile kommt und geht auf Knopfdruck, ein wirkender Filter bleibt
   sichtbar und der Knopf sagt es, die Filtersprache bleibt;
-* der Zaehler steht klein am Reiter (nicht im Text), leere Reiter sind grau,
-  der Zaehler fuellt keine wartende Tabelle;
+* der Zaehler steht klein am Reiter (nicht im Text), leere Reiter sind grau
+  mit mindestens 3 : 1 Kontrast, ein gewaehlter leerer Reiter ist erkennbar,
+  der Zaehler fuellt keine wartende Tabelle und nennt bei ihr mit Filter keine
+  falsche Zahl;
 * eine leere Tabelle sagt, wie sie sich fuellt, und ihre Verweise
-  („Register → Befehl“, „Knopf“) gibt es wirklich;
-* Max/Min nur an Ergebnis- und Nachweistabellen und erst ab 5 Zeilen;
+  („Register → Knopf“, „Knopf“) stehen genau so im Ribbon bzw. an der Tabelle;
+* Max/Min nur an Ergebnis- und Nachweistabellen und erst ab 5 Zeilen, an einer
+  echten Nachweistabelle mit 6 Zeilen;
 * in der Kompaktstufe (1366 x 768, 1280 x 720) ist alles erreichbar und
-  nichts gekuerzt.
+  nichts gekuerzt, auch in der Gruppe Protokoll ohne Reiter.
 
 Aufruf:  python -m tests.test_unten_kopfzeile
+         (mit Schrift: python scratchpad/mit_schrift.py <Baum> tests.test_unten_kopfzeile)
 """
 import os
 import re
@@ -43,15 +53,23 @@ os.environ["STATIK3D_EINSTELLUNGEN"] = os.path.join(
 RESULTS = []
 _F = {}
 
-#: Was am Stand 5ee513d von der Tabelle zu sehen war, offscreen, Beispiel
-#: hall mit solve_all(design=True), erste Kombination gezeigt; Kompaktstufe
-#: aufgeklappt (anordnung.unten_einklappen(False)). Gemessen mit demselben
-#: Ablauf wie _hoehen() unten (scratchpad/messung_unten.py, 03.10.2026):
-#: (sichtbare Hoehe der Tabelle [px], sichtbare Datenzeilen, sichtbare Zeilen
-#: Max/Min). In der Kompaktstufe war der Inhalt unten 244 px hoch, der Bereich
-#: 202 px: unten fehlten 42 px - von Max/Min der Knoten waren 20 von 46 px zu
-#: sehen (keine ganze Zeile), von denen der Stabkraefte nichts.
-VORHER = {
+#: Was vor 10b (Stand 5734a94) von der Tabelle zu sehen war: (sichtbare Hoehe
+#: der Tabelle [px], sichtbare Datenzeilen, sichtbare ganze Zeilen Max/Min).
+#: Offscreen, Beispiel hall mit solve_all(design=True), erste Kombination,
+#: Kompaktstufe aufgeklappt (anordnung.unten_einklappen(False)); derselbe
+#: Ablauf wie _hoehen() unten (scratchpad/pruef_hoehen2.py, 03.10.2026).
+#: Mit Segoe UI (scratchpad/mit_schrift.py): in der Kompaktstufe war der
+#: Inhalt 260 px hoch im 217 px hohen Bereich - von Max/Min der Knoten waren
+#: 33 von 46 px zu sehen, von denen der Stabkraefte 3.
+VORHER_SCHRIFT = {
+    (1920, 1080): {"Knoten": (78, 2, 2), "Stabkräfte": (108, 3, 2)},
+    (1366, 768): {"Knoten": (68, 1, 1), "Stabkräfte": (98, 2, 0)},
+    (1280, 720): {"Knoten": (68, 1, 1), "Stabkräfte": (98, 2, 0)},
+}
+#: Dasselbe ohne Schrift - Kaestchenwerte (am Stand 5ee513d und 5734a94 gleich
+#: gemessen); der Bereich rollte dabei bei 1366 x 768 um 401 px, mit Segoe UI
+#: rollte er nicht.
+VORHER_KAESTCHEN = {
     (1920, 1080): {"Knoten": (94, 2, 2), "Stabkräfte": (120, 3, 2)},
     (1366, 768): {"Knoten": (68, 1, 0), "Stabkräfte": (91, 2, 0)},
     (1280, 720): {"Knoten": (68, 1, 0), "Stabkräfte": (91, 2, 0)},
@@ -60,6 +78,25 @@ VORHER = {
 ZEILE = 22
 #: Gruppen, deren Tabellen Ergebnisse tragen - nur dort gibt es Max/Min
 ERGEBNISGRUPPEN = ("Ergebnisse", "Nachweise")
+
+
+def _mit_schrift() -> bool:
+    """Kennt Qt eine Schrift? Offscreen ohne nachgeladene Schrift ist die Liste
+    leer, und Qt malt Kaestchen statt Buchstaben."""
+    from PySide6 import QtGui
+    _app()
+    return bool(QtGui.QFontDatabase.families())
+
+
+def _kontrast(a, b) -> float:
+    """Kontrastverhaeltnis zweier QColor nach WCAG (1 … 21)."""
+    def lum(c):
+        teile = []
+        for x in (c.redF(), c.greenF(), c.blueF()):
+            teile.append(x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * teile[0] + 0.7152 * teile[1] + 0.0722 * teile[2]
+    la, lb = sorted((lum(a), lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
 
 
 def check(name, ok, detail=""):
@@ -219,7 +256,9 @@ def test_hoehe():
     w = _fenster()
     _hall(w)
     _F["hall"] = True
-    for (b, h), vorher in VORHER.items():
+    schrift = _mit_schrift()
+    print(f"     {'mit Schrift' if schrift else 'ohne Schrift - Kästchenwerte'}", flush=True)
+    for (b, h), vorher in (VORHER_SCHRIFT if schrift else VORHER_KAESTCHEN).items():
         e = _hoehen(w, b, h)
         teile = []
         for name in ("Knoten", "Stabkräfte"):
@@ -228,10 +267,13 @@ def test_hoehe():
         detail = f"unten {e['unten']} px: " + "; ".join(teile)
         print(f"     Messung {b} x {h}{' (Kompaktstufe, aufgeklappt)' if e['kompakt'] else ''}: {detail}",
               flush=True)
-        check(f"{b} x {h}: man sieht von jeder Tabelle mindestens zwei Zeilen mehr (Daten und Max/Min), "
-              "und keine wird niedriger",
-              all(sum(e[n][1:]) >= sum(vorher[n][1:]) + 2 and e[n][0] >= vorher[n][0]
-                  for n in ("Knoten", "Stabkräfte")), detail)
+        # Knoten ist Eingabe und verliert Max/Min mit Absicht: dort zaehlen die
+        # Datenzeilen, bei den Stabkraeften Daten und Max/Min zusammen
+        check(f"{b} x {h}: mindestens zwei Zeilen mehr zu sehen (Knoten: Daten; Stabkräfte: Daten und "
+              "Max/Min), keine Tabelle wird niedriger",
+              e["Knoten"][1] >= vorher["Knoten"][1] + 2
+              and sum(e["Stabkräfte"][1:]) >= sum(vorher["Stabkräfte"][1:]) + 2
+              and all(e[n][0] >= vorher[n][0] for n in ("Knoten", "Stabkräfte")), detail)
         check(f"{b} x {h}: Max/Min ganz zu sehen, der Bereich rollt nicht waagerecht",
               e["Knoten_fuss_ganz"] and e["Stabkräfte_fuss_ganz"] and e["rollt"] == 0,
               f"rollt {e['rollt']} px")
@@ -331,28 +373,21 @@ def test_zaehler():
     leer_alle = [nm for nm, t in tabellen.items() if t.zeilenzahl() == 0]
     check("leere Reiter sind als leer geführt, gefüllte nicht",
           leer_alle and all(rb.ist_leer(j) == (nm in leer_alle) for j, nm in enumerate(namen)), str(leer_alle))
-    # im Bild nur Reiter, die ganz zu sehen sind (nicht unter den Rollpfeilen)
-    frei = tab.reiter_frei(rb)
-    ganz = [nm for j, nm in enumerate(namen) if frei.contains(rb.tabRect(j)) and j != rb.currentIndex()]
-    leer = [nm for nm in ganz if nm in leer_alle]
-    voll = [nm for nm in ganz if nm not in leer_alle]
-    check("Vorbedingung: in der Gruppe Modell sind leere und gefüllte Reiter ganz zu sehen",
-          leer and voll, f"{leer} / {voll}")
-    if not (leer and voll):
+    farben = _reiterfarben(w, namen)
+    if farben is None:
         return
-    bild = rb.grab().toImage()
-
-    def dunkelster(j):
-        r = rb.tabRect(j)
-        knopf = rb.tabButton(j, rb.ButtonPosition.RightSide)
-        rechts = knopf.geometry().left() if knopf is not None else r.right()
-        werte = [bild.pixelColor(x, y).lightness() for x in range(r.left() + 2, rechts)
-                 for y in range(r.top() + 2, r.bottom() - 3)]
-        return min(werte) if werte else 255
-    hell_leer = min(dunkelster(namen.index(nm)) for nm in leer)
-    hell_voll = max(dunkelster(namen.index(nm)) for nm in voll)
-    check("leere Reiter sind grau: ihre Schrift ist deutlich heller als die gefüllter Reiter (Bild)",
-          hell_leer >= hell_voll + 40, f"dunkelster Punkt leer {hell_leer}, gefüllt {hell_voll}")
+    grund, leer, voll, gewaehlt_leer, strich = farben
+    k_leer = min(_kontrast(c, grund) for c in leer.values())
+    k_voll = min(_kontrast(c, grund) for c in voll.values())
+    check("leere Reiter sind grau: Schrift mindestens 3 : 1 gegen den Grund und klar heller als gefüllte "
+          "(Bild auf deckendem Grund)", k_leer >= 3.0 and k_voll >= k_leer + 1.0,
+          f"leer {k_leer:.2f} : 1, gefüllt {k_voll:.2f} : 1, Grund {grund.name()}")
+    c, cl = gewaehlt_leer, next(iter(leer.values()))
+    abstand = abs(c.red() - cl.red()) + abs(c.green() - cl.green()) + abs(c.blue() - cl.blue())
+    check("ein gewählter leerer Reiter ist erkennbar: Strich in Akzentfarbe, blaue Schrift mit 3 : 1, "
+          "anders als die übrigen leeren",
+          strich >= 10 and c.blue() >= c.red() + 40 and _kontrast(c, grund) >= 3.0 and abstand >= 60,
+          f"Strich {strich} Punkte, Schrift {c.name()} ({_kontrast(c, grund):.2f} : 1), übrige {cl.name()}")
     # Eine grosse Tabelle, die nicht zu sehen ist, wartet mit dem Fuellen bis
     # zum Anzeigen - der Zaehler nimmt ihre Zahl, ohne sie zu fuellen
     t = w.tbl_kombi
@@ -379,6 +414,107 @@ def test_zaehler():
         t._ausstehend = None
     w.refresh_all()
     _ruhe()
+    _wartend_gefiltert(w)
+
+
+def _reiterfarben(w, namen):
+    """Farben der Reiterschrift im Bild des Kopfes (deckender Grund): (Grund,
+    {leer: Farbe}, {gefuellt: Farbe}, gewaehlter leerer Reiter, Punkte des
+    Strichs unter ihm). Je Reiter die dunkelste Stelle im Textfeld - bei
+    Kaestchen die Linienfarbe, mit Schrift der Kern der Striche."""
+    from PySide6 import QtCore, QtGui, QtWidgets
+    from statik3d.gui import tabellen as tab
+    tu, rb = w.tab_unten, w.tab_unten.reiter
+    frei = tab.reiter_frei(rb)
+    ganz = [j for j in range(rb.count()) if frei.contains(rb.tabRect(j)) and j != rb.currentIndex()]
+    leer_j = [j for j in ganz if rb.ist_leer(j)]
+    voll_j = [j for j in ganz if not rb.ist_leer(j)]
+    check("Vorbedingung: in der Gruppe Modell sind leere und gefüllte Reiter ganz zu sehen",
+          leer_j and voll_j, f"{[namen[j] for j in leer_j]} / {[namen[j] for j in voll_j]}")
+    if not (leer_j and voll_j):
+        return None
+
+    def farben(bild, j):
+        opt = QtWidgets.QStyleOptionTab()
+        rb.initStyleOption(opt, j)
+        r = rb.style().subElementRect(QtWidgets.QStyle.SE_TabBarTabText, opt, rb)
+        r = QtCore.QRect(rb.mapTo(tu.kopf, r.topLeft()), r.size())
+        punkte = [bild.pixelColor(x, y) for x in range(r.left(), r.right() + 1)
+                  for y in range(r.top(), r.bottom() + 1)]
+        return min(punkte, key=lambda c: c.lightness())
+
+    bild = tu.kopf.grab().toImage()
+    r0 = rb.tabRect(voll_j[0])
+    grund = bild.pixelColor(rb.mapTo(tu.kopf, QtCore.QPoint(r0.left() + 2, r0.top() + 2)))
+    leer = {namen[j]: farben(bild, j) for j in leer_j}
+    voll = {namen[j]: farben(bild, j) for j in voll_j}
+    # ein leerer Reiter gewaehlt
+    j = leer_j[0]
+    seite = tu.seiten[tu.currentGroup()]
+    vorher = seite.currentIndex()
+    seite.setCurrentIndex(j)
+    _ruhe()
+    bild = tu.kopf.grab().toImage()
+    gewaehlt = farben(bild, j)
+    r = rb.tabRect(j)
+    akzent = QtGui.QColor("#1467c6")
+    strich = 0
+    for x in range(r.left(), r.right() + 1):
+        for y in range(r.bottom() - 3, r.bottom() + 1):
+            c = bild.pixelColor(rb.mapTo(tu.kopf, QtCore.QPoint(x, y)))
+            if abs(c.red() - akzent.red()) + abs(c.green() - akzent.green()) + abs(c.blue() - akzent.blue()) < 40:
+                strich += 1
+    seite.setCurrentIndex(vorher)
+    _ruhe()
+    return grund, leer, voll, gewaehlt, strich
+
+
+def _wartend_gefiltert(w):
+    """Nachbesserung 03.10.2026 (Gegenpruefung F1): eine wartende Tabelle mit
+    wirkendem Filter nannte am Reiter die Gesamtzahl („19“) und im Tooltip des
+    Knopfs „19 von 19 sichtbar“, obwohl Tabelle und Export gefiltert sind."""
+    from statik3d.gui import tabellen as tab
+    tu, rb, an = w.tab_unten, w.tab_unten.reiter, w.anordnung
+    t = w.tbl_knoten
+    t.VERZOEGERT_AB = 10
+    try:
+        w.tabelle_zeigen("Knoten")
+        _ruhe()
+        if not t.filterzeile_offen():
+            tu.act_filter.trigger()
+        t.felder[0].setText("1..5")
+        _ruhe()
+        n, soll = t.zeilenzahl(), t.sichtbar()
+        j = tu.tabellen("Modell").index("Knoten")
+        gefiltert = rb.zahl(j)
+        rb.setCurrentIndex(tu.tabellen("Modell").index("Stäbe"))
+        _ruhe()
+        w.refresh_all()
+        _ruhe()
+        marke = rb.tabButton(j, tab.Reiterleiste.RECHTS)
+        check("wartende Tabelle mit Filter, eine andere vorn: am Reiter „?/n“ statt der Gesamtzahl",
+              t.ausstehend() and t.filter_wirkt() and rb.zahl(j) == f"?/{zl_text(n)}"
+              and marke.property("gefiltert") is True and "gefiltert" in t.lbl_zeilen.text(),
+              f"vorher {gefiltert!r}, jetzt {rb.zahl(j)!r}, {t.lbl_zeilen.text()!r}")
+        rb.setCurrentIndex(j)
+        _ruhe()
+        an.unten_einklappen(True)
+        _ruhe()
+        w.refresh_all()
+        _ruhe()
+        tip = tu.act_filter.toolTip()
+        check("… eingeklappt mit der Tabelle vorn: „Filter aktiv“, der Tooltip nennt keine falsche Zahl",
+              t.ausstehend() and tu.act_filter.text() == "Filter aktiv" and f"{n} von {n}" not in tip
+              and "beim Anzeigen" in tip and rb.zahl(j) == f"?/{zl_text(n)}", f"{rb.zahl(j)!r} / {tip[:80]!r}")
+        an.unten_einklappen(False)
+        _ruhe(10)
+        check("… beim Anzeigen gefüllt: wieder die echte Zahl am Reiter und im Tooltip",
+              not t.ausstehend() and rb.zahl(j) == f"{zl_text(soll)}/{zl_text(n)}"
+              and f"{zl_text(soll)} von {zl_text(n)}" in tu.act_filter.toolTip(), f"{rb.zahl(j)!r}")
+    finally:
+        t.VERZOEGERT_AB = tab.Datentabelle.VERZOEGERT_AB
+        t.filterzeile_zeigen(False)
+        _ruhe()
 
 
 def zl_text(n):
@@ -386,22 +522,47 @@ def zl_text(n):
     return zl.zahl_text(n)
 
 
-_VERWEIS = re.compile(r" → ")
+def _ribbon_beschriftungen(w):
+    """Was im Ribbon auf den Knoepfen steht: {Register: {Knopf}} und
+    {(Register, Menueknopf): {Eintrag}} - so, wie der Anwender es liest."""
+    from PySide6 import QtWidgets
+    knoepfe, menues = {}, {}
+    for reg, seite in w.ribbon._register.items():
+        for b in seite.findChildren(QtWidgets.QToolButton):
+            if b.objectName() not in ("ribbongross", "ribbonklein"):
+                continue
+            knoepfe.setdefault(reg, set()).add(b.text())
+            if b.menu() is not None:
+                menues[(reg, b.text())] = {a.text() for a in b.menu().actions() if not a.isSeparator()}
+    return knoepfe, menues
 
 
 def _verweise_pruefen(w, text, seite):
-    """Jeder Verweis „Register → Befehl“ nennt einen Befehl, den es im Ribbon gibt,
-    jeder Knopf in „…“ steht auf der Seite der Tabelle."""
+    """Jeder Verweis nach „ – “ steht ganz so im Ribbon: „Register → Knopf“ oder
+    „Register → Menüknopf ▾ → Eintrag“; mehrere mit „, dann“ oder „oder“. Jeder
+    Knopf in „…“ steht sichtbar an der Tabelle. Verglichen werden ganze Namen
+    (Gegenpruefung S4: bis dahin nur der Wortanfang)."""
     from PySide6 import QtWidgets
+    knoepfe, menues = _ribbon_beschriftungen(w)
     fehlt = []
-    befehle = [(b.register, b.text.rstrip("…").strip()) for b in w.ribbon.befehle]
-    for m in _VERWEIS.finditer(text):
-        vorn, hinten = text[:m.start()], text[m.end():]
-        if not any(vorn.endswith(reg) and hinten.startswith(cmd) for reg, cmd in befehle if cmd):
-            fehlt.append(f"{vorn[-20:]} → {hinten[:20]}")
-    knoepfe = {b.text() for b in seite.findChildren(QtWidgets.QAbstractButton)}
+    teil = text.split(" – ", 1)[1] if " – " in text else ""
+    if not teil:
+        fehlt.append("kein „ – “ vor dem Verweis")
+    for ref in re.split(r", dann | oder ", teil):
+        if "→" not in ref:
+            continue
+        stuecke = [s.strip() for s in ref.split("→")]
+        if len(stuecke) == 2:
+            ok = stuecke[1] in knoepfe.get(stuecke[0], set())
+        elif len(stuecke) == 3:
+            ok = stuecke[2] in menues.get((stuecke[0], stuecke[1]), set())
+        else:
+            ok = False
+        if not ok:
+            fehlt.append(ref.strip())
+    an_tabelle = {b.text() for b in seite.findChildren(QtWidgets.QAbstractButton) if b.isVisibleTo(seite)}
     for k in re.findall(r"„([^“]+)“", text):
-        if k not in knoepfe:
+        if k not in an_tabelle:
             fehlt.append(f"Knopf „{k}“")
     return fehlt
 
@@ -417,7 +578,7 @@ def test_leere_tabelle():
     t = w.tbl_last
     check("leere Tabelle Lasten sagt, wie sie sich füllt",
           t.zeilenzahl() == 0 and t.lbl_leer.isVisible()
-          and t.lbl_leer.text() == "Noch keine Lasten – Lasten → Knotenlast …", t.lbl_leer.text())
+          and t.lbl_leer.text() == "Noch keine Lasten – Lasten → Knotenlast", t.lbl_leer.text())
     tu = w.tab_unten
     ohne, falsch = [], []
     for k in range(tu.count()):
@@ -432,6 +593,12 @@ def test_leere_tabelle():
         if f:
             falsch.append(f"{name}: {f}")
     check("jede Tabelle unten hat einen Satz für den leeren Zustand", not ohne, str(ohne))
+    seite = tu.widget(tu.indexOf(tu.currentWidget()))
+    check("die Verweisprüfung weist Ungenaues ab (Wortanfang, angehängtes „ …“, falsches Register, "
+          "falscher Menüeintrag)",
+          all(_verweise_pruefen(w, f"X – {v}", seite) for v in (
+              "Lasten → Knotenlas", "Lasten → Knotenlast …", "Geometrie → Knotenlast",
+              "Nachweise → Verformung ▾ → Neu", "Nachweise → Verformung → Neu …")))
     check("jeder Verweis darin führt zu einem Befehl im Ribbon oder einem Knopf an der Tabelle",
           not falsch, "; ".join(falsch[:3]))
     w.tabelle_zeigen("Stabkräfte")
@@ -497,6 +664,56 @@ def test_kennwerte():
     check("… die Kennwerte folgen dem Filter, die Zeile bleibt (die Tabelle hat 5 Zeilen)",
           not t.fuss.isHidden() and float(t.fussmodell.zeilen[0][1]) == 2.0, str(t.fussmodell.zeilen))
     halter.hide()
+    _nachweistabelle_mit_kennwerten(w)
+
+
+def _nachweistabelle_mit_kennwerten(w):
+    """Eine echte Nachweistabelle mit mindestens 5 Zeilen zeigt Max und Min
+    (Gegenpruefung S5: am Hallenrahmen hat Nachweise EC3 nur 3 Zeilen, der
+    Zweig mit Fusszeile lief nie). Der Hallenrahmen mit je zwei Staeben fuer
+    Stiele und Riegel ergibt 6 Nachweiszeilen."""
+    from dataclasses import replace
+    from statik3d import solver
+    from statik3d.examples_lib import build_example
+    m = build_example("hall")
+    alt = dict(m.members)
+    m.members.clear()
+    for name, mem in alt.items():
+        h = len(mem.elements) // 2
+        for teil, els in (("a", mem.elements[:h]), ("b", mem.elements[h:])):
+            m.members[f"{name} {teil}"] = replace(mem, name=f"{name} {teil}", elements=list(els))
+    w._modell_setzen(m)
+    _F["hall"] = False
+    _ruhe()
+    an = solver.solve_all(w.model, design=True)
+    w._solve_done("all", an)
+    _ruhe()
+    for idx in range(w.cb_result.count()):
+        if w.cb_result.itemData(idx)[0] in ("combo", "case"):
+            w.cb_result.setCurrentIndex(idx)
+            break
+    w.show_results()
+    _ruhe()
+    w.tabelle_zeigen("Nachweise EC3")
+    _ruhe()
+    t = w.tbl_design
+    namen = [sp.name for sp in t.modell.spalten]
+    k = namen.index("Ausnutzung")
+    werte = [float(z[k]) for z in t.modell.zeilen if isinstance(z[k], (int, float))]
+    fuss = t.fussmodell.zeilen
+    check("Nachweise EC3 mit 6 Stäben: Max/Min sichtbar, Max und Min der Ausnutzung stimmen",
+          t.zeilenzahl() >= 5 and not t.fuss.isHidden() and t.fuss.isVisible() and len(fuss) == 2
+          and werte and abs(float(fuss[0][k]) - max(werte)) < 1e-9 and abs(float(fuss[1][k]) - min(werte)) < 1e-9,
+          f"{t.zeilenzahl()} Zeilen, Max {fuss[0][k] if fuss else '-'} / {max(werte) if werte else '-'}")
+    export = t.zeilen_fuer_export()
+    check("… und Kopieren/CSV/Excel geben Max und Min mit aus", len(export) == t.zeilenzahl() + 2
+          and export[-2][0] == "Max" and export[-1][0] == "Min", f"{len(export)} Zeilen")
+    w.tabelle_zeigen("Knoten")
+    _ruhe()
+    k_ex = w.tbl_knoten.zeilen_fuer_export()
+    check("Eingabetabelle Knoten: Kopieren/CSV/Excel ohne Max und Min",
+          len(k_ex) == w.tbl_knoten.zeilenzahl() and all(z[0] not in ("Max", "Min") for z in k_ex),
+          f"{len(k_ex)} von {w.tbl_knoten.zeilenzahl()}")
 
 
 def _erreichbar(w):
@@ -545,8 +762,12 @@ def _erreichbar(w):
 
 
 def _klick(leiste, j, doppelt=False):
+    _klick_bei(leiste, leiste.tabRect(j).center(), doppelt)
+
+
+def _klick_bei(wi, p, doppelt=False):
     from PySide6 import QtCore, QtTest
-    p = leiste.tabRect(j).center()
+    leiste = wi
     if doppelt:
         QtTest.QTest.mousePress(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
         QtTest.QTest.mouseRelease(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
@@ -555,6 +776,35 @@ def _klick(leiste, j, doppelt=False):
     else:
         QtTest.QTest.mouseClick(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
     _ruhe(6)
+
+
+def _protokoll_kopf(w, b, h):
+    """Gruppe Protokoll, eingeklappt (so startet das Programm bei 1366 x 768):
+    das Aufklappfeld ist so breit wie der Name (Gegenpruefung S1: 626 statt
+    91 px mit Segoe UI), und ein Klick bzw. Doppelklick auf den freien Kopf
+    klappt auf und zu (L1: ohne Reiter ging das vorher nicht)."""
+    from PySide6 import QtCore
+    tu, an = w.tab_unten, w.anordnung
+    tu.zeigen("Protokoll")
+    an.unten_einklappen(True)
+    _ruhe()
+    cb, kopf = tu.gruppenwahl, tu.kopf
+    check(f"{b} x {h}, Protokoll: Aufklappfeld so breit wie der Name und links im Kopf, kein Reiter",
+          cb.width() <= cb.sizeHint().width() + 2 and cb.x() <= 8 and tu.reiter.isHidden(),
+          f"Feld {cb.width()} px bei x = {cb.x()}, Name braucht {cb.sizeHint().width()} px, "
+          f"Kopf {kopf.width()} px")
+    p = QtCore.QPoint(cb.geometry().right() + 40, kopf.height() // 2)
+    frei = kopf.childAt(p) is None and p.x() < kopf.width()
+    _klick_bei(kopf, p)
+    auf = not an.unten_eingeklappt()
+    _klick_bei(kopf, p, doppelt=True)
+    zu = an.unten_eingeklappt()
+    _klick_bei(kopf, p, doppelt=True)
+    wieder = not an.unten_eingeklappt() and w.log.isVisible()
+    check(f"{b} x {h}, Protokoll: Klick auf den freien Kopf klappt auf, Doppelklick zu und wieder auf",
+          frei and auf and zu and wieder, f"frei {frei}, auf {auf}, zu {zu}, wieder {wieder}")
+    an.unten_einklappen(True)
+    _ruhe()
 
 
 def test_kompaktstufe():
@@ -570,6 +820,7 @@ def test_kompaktstufe():
               an.kompakt and an.unten_eingeklappt() and w.unten_dock.height() <= 40
               and tu.kopf.isVisible() and w.unten_dock.height() >= tu.kopf.height(),
               f"unten {w.unten_dock.height()} px, Kopf {tu.kopf.height()} px")
+        _protokoll_kopf(w, b, h)
         for gruppe, tabelle in (("Modell", "Knoten"), ("Nachweise", "Lasteinleitung"),
                                 ("Ergebnisse", "Kontaktpaare")):
             tu.zeigen(tabelle)
@@ -634,8 +885,13 @@ def test_handbuch():
     check("Handbuch: Zeilenzahl am Reiter, leere Reiter grau, Satz in der leeren Tabelle",
           "grau" in c and "Noch keine Lasten" in c, c[:90])
     d = absatz("Unter jeder Ergebnistabelle")
-    check("Handbuch: Max/Min nur an Ergebnis- und Nachweistabellen ab 5 Zeilen",
-          "ab 5 Zeilen" in d and "Bis zum 03.10.2026" in d, d[:90])
+    check("Handbuch: Max/Min nur an Ergebnis- und Nachweistabellen ab 5 Zeilen, auch Kopieren und Export",
+          "ab 5 Zeilen" in d and "Bis zum 03.10.2026" in d and "Kopieren" in d and "Excel" in d, d[:90])
+    e = absatz("**Ansicht → Fenster**")
+    check("Handbuch: Doppelklick auf eine freie Stelle der Kopfzeile unten, auch beim Protokoll",
+          "freie Stelle" in e and "Protokoll" in e, e[:90])
+    check("Handbuch: Messwerte mit Schrift, keine Kästchenwerte mehr (78 und 108 px vorher)",
+          "78 px" in a and "108 px" in a and "215 px" not in a, a[:90])
 
 
 def main():
