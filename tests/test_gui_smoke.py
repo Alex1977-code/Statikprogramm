@@ -3664,9 +3664,23 @@ def main():
         check("Abbrechen während der Strömungsberechnung lässt das Modell unverändert",
               "Wabbruch" not in m_.wasserdruecke and not w.progress_bar.isVisible()
               and "abgebrochen" in w.log.toPlainText())
+        # Seit 13m (03.10.2026) gilt der Abbruch als gescheitertes Uebernehmen: die
+        # Maske bleibt mit ihren Eingaben stehen, der Baumklick haelt an der Leiste,
+        # „Verwerfen“ fuehrt ihn danach aus. Bis dahin ersetzte er sie still.
+        check("Abbruch: die Maske „Neu: Wasserdruck“ bleibt mit ihren Eingaben stehen",
+              w.maskenrand.maske is mk2 and bool(mk2.geaenderte_felder()),
+              str(getattr(w.maskenrand.maske, "titel", None)))
         w._baum_geklickt("wasserdruck", "W1")
         app.processEvents()
+        check("… der Baumklick auf W1 hält an der Leiste „Übernehmen | Verwerfen“",
+              w.aenderungsleiste.isVisible() and w.maskenrand.maske is mk2,
+              str(getattr(w.maskenrand.maske, "titel", None)))
+        w.aenderungsleiste.btn_verwerfen.click()
+        app.processEvents()
         mk = w.maskenrand.maske
+        check("… „Verwerfen“: die Maske von W1 steht rechts, nichts angelegt",
+              mk is not mk2 and "W1" in str(getattr(mk, "titel", "")) and "Wabbruch" not in m_.wasserdruecke,
+              str(getattr(mk, "titel", None)))
         mk.setzen("h_ow", 6.0)
         mk.setzen("ueber", True)
         mk.setzen("unter", True)
