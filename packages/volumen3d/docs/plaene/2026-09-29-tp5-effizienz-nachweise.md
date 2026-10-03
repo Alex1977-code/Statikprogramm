@@ -776,7 +776,10 @@ linearer Volumenlast. Schalter: `ordnung_tet` Vorgabe / 2p / 3p, `ordnung_flaech
 
 **Zwei unabhängige Auswertungen.** (A1) Größter relativer Fehler der rohen Spannung σ = D B u an 1 500 festen Werkstoffpunkten (mehr als 0,5 mm vom Rand), bezogen auf den größten Sollbetrag –
 über die Lösung des Gleichungssystems. (A2) Konsistenzrest des exakten Felds ohne Lösung: der Koeffizientenvektor a des exakten Felds entsteht je Zelle aus einer L²-Projektion über die volle Zelle
-(Gauß p + 2), der Rest ist r = Cᵀ(K a − F), bezogen auf den größten Betrag von CᵀF; Gegenprobe der Konstruktion: C angewandt auf die freien Einträge von a ergibt a (unter 10⁻¹⁰). Beide müssen im
+(Gauß p + 2), der Rest ist r = Cᵀ(K_vol a − f_Volumenlast − ∫(σ_exakt n)·v) mit der Flächenregel des Problems, bezogen auf den größten Betrag von Cᵀ K_vol a; Gegenprobe der Konstruktion: C angewandt
+auf die freien Einträge von a ergibt a (unter 10⁻⁹). *Berichtigt vor der Messreihe (03.10.2026):* die erste Fassung r = Cᵀ(K a − F), bezogen auf CᵀF, war blind – die Nitsche-Strafterme verschwinden für das
+exakte Feld punktweise, tragen aber β mal die Rundung der Zwangsmatrix ein (C gibt das Feld auf 2 bis 5·10⁻¹⁰ wieder): im Probelauf mit den Vorgaben lag der Rest des linearen und des quadratischen Felds gleich
+bei 5·10⁻¹¹ (Streifen 30°, p 2), in der berichtigten Fassung bei 8·10⁻¹⁰ und 9·10⁻⁶. Die Schranke der Gegenprobe ist auf 10⁻⁹ gesetzt (gemessen 2 bis 5·10⁻¹⁰). Beide müssen im
 Urteil übereinstimmen (derselbe Schalter beseitigt Fehler und Rest); berichtet wird nur, was beide tragen. Das Verhältnis Fehler zu Rest ist die Verstärkung (H4).
 
 **Kur und ihre Prüfung.** Erwartete Kur, wenn H1 bis H3 zutreffen: (K1) die Momente schräg geschnittener Stücke exakt über den Divergenzsatz (`geometry/huelle.huellenmomente` auf den Polygonen
