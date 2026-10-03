@@ -1590,10 +1590,61 @@ kommt Σ_j p ∫N_j w_ji = p ∫N_i^m an, genau seine Einflussfläche (gemessen:
 625 / 1250 / 2500 cm² auf 2,5·10⁻¹⁶ m²). Bei deckungsgleichen Netzen ist
 w_ji = δ_ji (gemessen auf 3,9·10⁻¹⁵): Knoten auf Knoten wie bisher, die
 Prüfmatrix K1–K5, K7, KP1, KP2 bleibt unverändert grün. K6 ist mit tet4 und
-hex8 grün (σ_v 0,00 N/mm²). Knoten, deren Einflussbereich nicht ganz auf der
-Gegenfläche liegt (Rand der Überdeckung), behalten die Projektion; Paare mit
-quadratischen Elementen (Kontakt dort gesperrt) ebenso. Folge im Test: der
-Stempel auf Sockel (4 × 4 gegen 6 × 6) u_max +0,33 %.
+hex8 grün (σ_v 0,00 N/mm²). Paare mit quadratischen Elementen (Kontakt dort
+gesperrt) behalten die Projektion. Folge im Test: der Stempel auf Sockel
+(4 × 4 gegen 6 × 6) u_max +0,33 %.
+
+**Rand der Überdeckung (30.09.2026, `mortar.VOLL_TOL`).** Knoten, deren
+Facetten nur zum Teil auf der Gegenfläche liegen, behielten bis dahin die
+Projektion. Der naheliegende Weg, die dualen Integrale auf den überdeckten
+Teil zu normieren (w = M_ji / Σ_i M_ji), ist gemessen untauglich: Φ_j ist
+abseits seines Knotens negativ, und über ein Teilstück integriert kippt die
+Summe. Am Gitter 3 × 3 auf [0, 1,2]² über 2 × 2 auf [0,1, 1,1]² bekämen
+alle 16 Knoten negative Gewichte (Ecken −0,96 / +2,56), und Σ_i M_ji / D_j
+läge für die inneren Knoten bei 1,34, obwohl ihr Einflussbereich nicht ganz
+überdeckt ist – Σ M/D unterscheidet den Rand also nicht von einer doppelten
+Master-Lage. Darum wird je Slave-Facette entschieden, nach der exakten
+Fläche ihrer Schnittstücke mit den Master-Facetten: eine ganz überdeckte
+Facette (auf 10⁻⁶ ihrer Fläche) trägt die dualen Integrale wie bisher, eine
+teilweise überdeckte die Standard-Formfunktionen auf ihren Schnittstücken
+(∫_{e∩γ} N_j N_i^m, ∫_{e∩γ} N_j – nichtnegativ), eine unüberdeckte nichts,
+und eine mehr als einmal überdeckte gilt als fehlerhaft (ihre Knoten
+behalten die Projektion, das Protokoll zählt sie). Beide Anteile bilden auf
+jedem Stück die Eins nach (Σ_j Φ_j = Σ_j N_j = 1); darum kommt ein
+gleichmäßiger Druck p mit der konsistenten Knotenlast p D_j auch gemischt
+genau als p ∫_γ N_i^m am Master-Knoten an. Gemessen (Test
+`test_mortar_am_rand_der_ueberdeckung`): Slave 3 × 3 über Master 2 × 2 (16
+Randknoten), 6 × 6 über 2 × 2 (40 Randknoten, 9 innere dual) und 6 × 6 über
+3 × 3: Einflussflächen der Master-Knoten auf 2,5·10⁻¹⁶ m², Summe der
+Gewichte 1 auf 2·10⁻¹⁵; deckungsgleich unverändert δ (3,9·10⁻¹⁵). Am Modell
+– Stempel 1,2 × 1,2 (hex8, 0,3) auf Sockel 1,0 × 1,0 (hex8, 0,5), beide in
+ihren Mittelebenen gehalten, gleichmäßiger Druck – sind die Master-Kräfte
+spiegelsymmetrisch auf 2,8·10⁻¹⁶; mit der Projektion (Rücknahmeprobe) weichen
+spiegelbildliche Eckknoten um 10,3 % voneinander ab (8 972 gegen 4 128 kN).
+Prüfmatrix K1–K7, KP1, KP2 und der Stempel der Plastizität (als kleinerer
+Slave ganz überdeckt) bleiben unverändert.
+
+Am Drehlager (Lauf `mortar_rand_cca9e85`, 30.09.2026, PARDISO, auf dem
+Netz des Laufs `einzeilig_18a770d`, zwei Auswerter) bekommen jetzt 7 504
+Slave-Knoten in sieben Fugen Mortar-Gewichte statt 803, davon 6 701 am Rand
+der Überdeckung: die Fugen dort sind schmale Streifen und Ringe mit vielen
+Rändern (Lagerbock-Grundplatte 1 255 Randkanten auf 4 249 Master-Facetten,
+Deckel 1 3 422 auf 8 378), und jede teilweise überdeckte Facette liegt
+innerhalb einer halben Facettengröße neben einer Randkante des Masters –
+kein Kandidat fällt durch einen Filter. Der Aufbau der Gewichte für alle
+zwölf Paare dauert 23,9 s. Ergebnis gegen den Lauf `einzeilig_18a770d`
+(gleiches Netz): alle 18 Kontaktläufe konvergiert, 137 Runden und 119
+Faktorisierungen statt 130 und 105, ε_p 8,291 %, u_max 1,1502 statt
+1,1507 mm, größter Knotenunterschied 0,015 mm; Kontaktzustand wie dort
+(kein festgehaltener Knoten, keiner unter Zug, drei offene mit einer
+Durchdringung unter einem Nanometer bei beiden). Bohrungskörper V15, V16,
+V29, V34, V113, V114 auf 0,13 % gleich; das Montageauge V35 380,4 statt
+373,3 N/mm² und V115 206,2 statt 212,4 N/mm² – in derselben Richtung wie
+schon der erste Mortar-Stand (379,8 / 210,7), dort liegen 974 und 228
+Randknoten. Ein Sollwert ist an diesen Stellen nicht bekannt; die
+Erwartung vor dem Lauf, die Werte rückten näher an den Stand ohne Mortar,
+hat sich nicht bestätigt. Was für die Mortar-Werte spricht, ist der
+Prüffall: die Projektion verteilt die Kraft an einem Rand um 10 % schief.
 Am Drehlager (Lauf `mortar_81e7b64`, 28.09.2026, zwei Auswerter): 803
 Slave-Knoten in sechs Fugen bekommen Mortar-Gewichte, die übrigen gepaarten
 behalten die Projektion. Die Überdeckung Σ_i M_ji / D_j ist dort

@@ -384,14 +384,14 @@ def test_mortar_ungleiche_netze():
     Ks, Fs = gitter(3, 1.0)
     Km, Fm = gitter(3, 1.0, versatz=len(Ks))
     w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
-    fehl = max(abs(v - (D if i == j + len(Ks) else 0.0)) / D for j, (D, Mj) in w.items() for i, v in Mj.items())
+    fehl = max(abs(v - (g.D if i == j + len(Ks) else 0.0)) / g.D for j, g in w.items() for i, v in g.M.items())
     check("deckungsgleiche Netze: Gewicht 1 auf dem gegenueberliegenden Knoten (auf 1e-12)",
           fehl < 1e-12, f"{fehl:.1e}")
     Km, Fm = gitter(2, 1.0, versatz=len(Ks))
     w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
     last = {}
-    for j, (D, Mj) in w.items():
-        for i, v in Mj.items():
+    for j, g in w.items():
+        for i, v in g.M.items():
             last[i] = last.get(i, 0.0) + v
     soll = {0: 0.0625, 1: 0.125, 2: 0.0625, 3: 0.125, 4: 0.25, 5: 0.125, 6: 0.0625, 7: 0.125, 8: 0.0625}
     abw = max(abs(last[i + len(Ks)] - a) for i, a in soll.items())
@@ -416,6 +416,134 @@ def test_mortar_ungleiche_netze():
         contact.MORTAR = alt
     check("Ruecknahme (Knoten gegen Flaeche): K6 hex8 wieder weit daneben (> 10 N/mm2)", sv > 10.0,
           f"{sv:.2f} N/mm2")
+
+
+def test_mortar_am_rand_der_ueberdeckung():
+    """Slave-Knoten, deren Facetten nur teilweise auf dem Master liegen
+    (mortar.py, 30.09.2026): ganz ueberdeckte Facetten tragen die dualen
+    Integrale, teilweise ueberdeckte die Standard-Formfunktionen auf ihren
+    Schnittstuecken. Bis dahin behielten solche Knoten die Projektion, und am
+    Drehlager rechneten zwei Kopplungen nebeneinander in einer Fuge. Der
+    Vorschlag, die dualen Integrale auf den ueberdeckten Teil zu normieren,
+    ist gemessen untauglich: am Gitter 3 x 3 ueber 2 x 2 bekaemen alle 16
+    Knoten negative Gewichte (Ecken -0,96 / +2,56).
+
+    Geprueft wird die Identitaet, die jede Kopplung erfuellen muss: ein
+    gleichmaessiger Druck p mit der konsistenten Knotenlast p D_j kommt am
+    Master-Knoten als p mal seine Einflussflaeche an - auch gemischt (innere
+    Knoten dual, Randknoten Standard). Am Modell: Stempel 1,2 x 1,2 auf
+    Sockel 1,0 x 1,0, beide in ihren Mittelebenen gehalten, gleichmaessiger
+    Druck: die Master-Kraefte muessen spiegelsymmetrisch sein. Mit der
+    Projektion sind sie es nicht (Ecken 8 972 gegen 4 128 kN, 10,3 %)."""
+    print("\n--- Mortar am Rand der Ueberdeckung: Standard-Formfunktionen auf dem ueberdeckten Teil ---")
+    from statik3d import mortar as mo
+    from tests import pruefmatrix as pm
+    from tests.pruefmatrix import pk
+
+    def gitter(n, x0, x1, z, versatz=0):
+        xs = np.linspace(x0, x1, n + 1)
+        K = [[xs[i], xs[j], z] for j in range(n + 1) for i in range(n + 1)]
+        F = [(versatz + j * (n + 1) + i, versatz + j * (n + 1) + i + 1,
+              versatz + (j + 1) * (n + 1) + i + 1, versatz + (j + 1) * (n + 1) + i)
+             for j in range(n) for i in range(n)]
+        return np.array(K, float), F
+
+    for ns, nm, rand_soll, innen_soll in ((3, 2, 16, 0), (6, 2, 40, 9), (6, 3, 40, 9)):
+        Ks, Fs = gitter(ns, 0.0, 1.2, 1.0)                  # Slave ragt 0,1 m ueber
+        Km, Fm = gitter(nm, 0.1, 1.1, 1.0, versatz=len(Ks))
+        w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
+        last, summen, nrand, negativ = {}, [], 0, 0
+        for j, g in w.items():
+            ww = {i: v / g.D for i, v in g.M.items()}
+            summen.append(sum(ww.values()))
+            nrand += int(g.rand)
+            for i, v in ww.items():
+                last[i] = last.get(i, 0.0) + g.D * v
+        h = 1.0 / nm
+        abw = 0.0
+        for jj in range(nm + 1):
+            for ii in range(nm + 1):
+                a_i = (h / 2 if ii in (0, nm) else h) * (h / 2 if jj in (0, nm) else h)
+                abw = max(abw, abs(last.get(len(Ks) + jj * (nm + 1) + ii, 0.0) - a_i))
+        check(f"Slave {ns} x {ns} ueber Master {nm} x {nm}: {rand_soll} Randknoten, {innen_soll} innere, "
+              f"Summe der Gewichte 1, Einflussflaechen der Master-Knoten genau (1e-12 m2)",
+              nrand == rand_soll and len(w) - nrand == innen_soll and not any(g.doppelt for g in w.values())
+              and max(abs(x - 1.0) for x in summen) < 1e-12 and abw < 1e-12,
+              f"Rand {nrand}, innere {len(w) - nrand}, Summe max |w - 1| {max(abs(x - 1.0) for x in summen):.1e}, "
+              f"Abweichung {abw:.1e} m2")
+    Ks, Fs = gitter(3, 0.0, 1.0, 1.0)
+    Km, Fm = gitter(3, 0.0, 1.0, 1.0, versatz=len(Ks))
+    w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
+    check("deckungsgleich: kein Randknoten, Gewicht 1 auf dem gegenueberliegenden Knoten (1e-12)",
+          not any(g.rand for g in w.values())
+          and max(abs(v / g.D - (1.0 if i == j + len(Ks) else 0.0)) for j, g in w.items() for i, v in g.M.items()) < 1e-12)
+
+    def modell():
+        m = pm.leeres_modell()
+        tol = 1e-9
+        pm.block(m, "hex8", (0, 0, 0), (1.0, 1.0, 1.0), 0.5, "Unten")
+        pm.block(m, "hex8", (-0.1, -0.1, 1.0), (1.2, 1.2, 1.0), 0.3, "Oben")
+        pm.lagern(m, lambda x: abs(x[2]) < tol, [2])
+        pm.lagern(m, lambda x: abs(x[0] - 0.5) < tol, [0])
+        pm.lagern(m, lambda x: abs(x[1] - 0.5) < tol, [1])
+        seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 2] - 2.0) < tol)))
+        pk.spannung_auf_seiten(m, seiten, lambda x: np.array([0.0, 0.0, -100e6]))
+        pm.kontaktpaar(m, "Oben", "Unten", 1.0, 0.5, mu=0.0)
+        return m
+
+    def rechne():
+        m = modell()
+        res = solver.solve_static(m, workers=1)
+        X = np.asarray(m.nodes, float)
+        F = np.asarray(res.contact_forces, float)
+        master = pm.knoten_von(m, "Unten", lambda x: abs(x[2] - 1.0) < 1e-9)
+        fz = {n: float(F[n, 2]) for n in master}
+        idx = {(round(X[n, 0], 6), round(X[n, 1], 6)): n for n in master}
+        asym = max(abs(fz[n] - fz[idx[(round(x2, 6), round(y2, 6))]])
+                   for (x, y), n in idx.items() for (x2, y2) in ((1 - x, y), (x, 1 - y), (1 - x, 1 - y)))
+        asym /= max(abs(v) for v in fz.values())
+        R = float(res.reactions[[n for n in range(len(X)) if abs(X[n, 2]) < 1e-9], 2].sum())
+        zeile = next((z for z in (res.info.get("contact_log") or []) if "Mortar" in z), "")
+        return res, asym, R, sum(fz.values()), zeile
+    res, asym, R, Fc, zeile = rechne()
+    check("Stempel 1,2 x 1,2 auf Sockel 1,0 x 1,0: konvergiert, Last geht ganz durch die Fuge",
+          res.info.get("contact_converged") and abs(R - 100e6 * 1.44) < 1e-6 * 100e6 * 1.44
+          and abs(Fc + 100e6 * 1.44) < 1e-6 * 100e6 * 1.44, f"Auflager {R / 1e3:.1f} kN, Fuge {Fc / 1e3:.1f} kN")
+    check("8 gepaarte Knoten am Rand der Ueberdeckung bekommen Mortar-Gewichte (der neunte liegt auf einem Master-Knoten)",
+          "8 Slave-Knoten mit Mortar-Gewichten" in zeile and "davon 8 am Rand" in zeile, zeile[:120])
+    check("Master-Kraefte spiegelsymmetrisch (x <-> 1-x, y <-> 1-y) auf 1e-9", asym < 1e-9, f"{asym:.1e}")
+    alt = contact.MORTAR
+    contact.MORTAR = False
+    try:
+        _res, asym2, _R, _Fc, _z = rechne()
+    finally:
+        contact.MORTAR = alt
+    check("Ruecknahme (Knoten gegen Flaeche): unsymmetrisch um mehr als 1 % (gemessen 10,3 %)",
+          asym2 > 1e-2, f"{asym2:.3f}")
+    # Zaehlung im Protokoll: "davon N am Rand" zaehlt nur Knoten, deren Gewichte
+    # sich geaendert haben. Am Drehlager (Lauf mortar_rand_cca9e85, 30.09.2026)
+    # stand "932 Slave-Knoten mit Mortar-Gewichten, davon 1058 am Rand": Rand-
+    # knoten deckungsgleicher Netze behalten delta und zaehlten trotzdem mit.
+    # Hier: Master aus zwei Koerpern derselben Gruppe - links feiner (Gewichte
+    # aendern sich), rechts deckungsgleich und kuerzer als der Slave (die
+    # Knoten auf seiner Kante sind Randknoten mit unveraenderten Gewichten).
+    m = pm.leeres_modell()
+    tol = 1e-9
+    pm.block(m, "hex8", (0, 0, 0), (0.4, 1.2, 1.0), 0.2, "Unten")
+    pm.block(m, "hex8", (0.4, 0, 0), (0.4, 1.2, 1.0), 0.4, "Unten")
+    pm.block(m, "hex8", (0, 0, 1.0), (1.2, 1.2, 1.0), 0.4, "Oben")
+    pm.lagern(m, lambda x: abs(x[2]) < tol, [2])
+    pm.lagern(m, lambda x: abs(x[0]) < tol, [0])
+    pm.lagern(m, lambda x: abs(x[1]) < tol, [1])
+    seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 2] - 2.0) < tol)))
+    pk.spannung_auf_seiten(m, seiten, lambda x: np.array([0.0, 0.0, -100e6]))
+    pm.kontaktpaar(m, "Oben", "Unten", 1.0, 0.4, mu=0.0)
+    res = solver.solve_static(m, workers=1)
+    zeile = next((z for z in (res.info.get("contact_log") or []) if "Mortar" in z), "")
+    check("gemischter Master: 8 Knoten ueber dem feineren Teil aendern die Gewichte, die 4 Randknoten auf der "
+          "Kante des deckungsgleichen Teils behalten delta und zaehlen nicht als 'davon am Rand'",
+          res.info.get("contact_converged") and "8 Slave-Knoten mit Mortar-Gewichten" in zeile
+          and "am Rand" not in zeile, zeile[:140] or "keine Mortar-Zeile")
 
 
 def test_reibung_in_einer_richtung():
@@ -487,7 +615,8 @@ def main() -> int:
     for t in (test_spalt_null_und_gleichgewicht, test_kippender_block, test_presspassung_exakt,
               test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt,
               test_reibung_primal_dual, test_reibung_mit_symmetrischem_loeser,
-              test_mortar_ungleiche_netze, test_reibung_in_einer_richtung):
+              test_mortar_ungleiche_netze, test_mortar_am_rand_der_ueberdeckung,
+              test_reibung_in_einer_richtung):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

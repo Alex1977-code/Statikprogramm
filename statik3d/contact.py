@@ -1139,9 +1139,11 @@ class ContactSystem:
         """Die Knoten-gegen-Flaeche-Gewichte der Bedingungen dieses Paars (ab
         ``erste``) durch duale Mortar-Gewichte ersetzen (MORTAR, mortar.py).
         Normale, Anfangsspalt und Zustand bleiben; nur wer die Kraft auf der
-        Master-Seite traegt, aendert sich. Knoten, deren Einflussbereich nicht
-        ganz auf der Gegenflaeche liegt (Rand der Ueberdeckung), behalten die
-        Projektion - dort gibt es kein Integral ueber die ganze Einflussflaeche."""
+        Master-Seite traegt, aendert sich. Knoten am Rand der Ueberdeckung
+        bekommen die Gewichte aus dem ueberdeckten Teil ihrer Facetten
+        (mortar.py, 30.09.2026); bis dahin behielten sie die Projektion, und am
+        Drehlager rechneten so zwei Kopplungen nebeneinander in einer Fuge.
+        Knoten mit einer mehrfach ueberdeckten Facette behalten sie weiter."""
         from . import mortar as mo
         if any(len(f) not in (3, 4) for f in facets):
             return
@@ -1151,18 +1153,21 @@ class ContactSystem:
         gew = mo.gewichte(self.model.nodes, sf, facets, radius,
                           slave_innen=getattr(self, "_slave_innen", None),
                           master_innen=_solid_outward(self.model, cp))
-        geaendert = rand = 0
+        geaendert = rand = doppelt = unvollstaendig = 0
         for c in self.cons[erste:]:
             if c.kind != "surface":
                 continue
             s = int(c.node)
             eintrag = gew.get(s)
-            if eintrag is None or eintrag[0] <= 0:
+            if eintrag is None or eintrag.D <= 0:
                 continue
-            D, Mj = eintrag
+            if eintrag.doppelt:
+                doppelt += 1
+                continue
+            D, Mj = eintrag.D, eintrag.M
             w = {int(i): v / D for i, v in Mj.items() if abs(v) > 1e-14 * D}
             if not w or abs(sum(w.values()) - 1.0) > 1e-6:
-                rand += 1
+                unvollstaendig += 1              # Sicherheitsnetz, sollte nicht vorkommen
                 continue
             groesste = max(w, key=lambda i: abs(w[i]))
             if abs(w[groesste] - 1.0) <= 1e-9 and all(abs(v) <= 1e-9 for i, v in w.items() if i != groesste):
@@ -1174,6 +1179,11 @@ class ContactSystem:
                     and np.allclose([dict(zip(map(int, alt_m[0]), alt_m[1]))[i] for i in tri], wj,
                                     rtol=0.0, atol=1e-9)):
                 continue                             # dieselben Gewichte (deckungsgleich)
+            # erst hier zaehlen: ein Randknoten deckungsgleicher Netze behaelt
+            # delta - am Drehlager standen sonst 1058 "davon am Rand" bei 932
+            # geaenderten (Lauf mortar_rand_cca9e85, 30.09.2026)
+            if eintrag.rand:
+                rand += 1
             n = np.asarray(c.cn[:3], float)
             c.dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
             c.cn = np.concatenate([n] + [-wi * n for wi in wj])
@@ -1183,11 +1193,14 @@ class ContactSystem:
                                   np.concatenate([t2] + [-wi * t2 for wi in wj])])
             c.master = (tri, wj)
             geaendert += 1
-        if geaendert:
+        if geaendert or doppelt or unvollstaendig:
             self.log.append(f"Kontaktpaar '{cp.name}': {geaendert} Slave-Knoten mit Mortar-Gewichten "
                             f"(ungleiche Netze)"
-                            + (f", {rand} am Rand der Überdeckung wie bisher Knoten gegen Fläche"
-                               if rand else ""))
+                            + (f", davon {rand} am Rand der Überdeckung" if rand else "")
+                            + (f"; {doppelt} mit mehrfach überdeckter Facette wie bisher Knoten gegen Fläche"
+                               if doppelt else "")
+                            + (f"; {unvollstaendig} ohne vollständige Gewichte wie bisher Knoten gegen Fläche"
+                               if unvollstaendig else ""))
 
     def _rand_von(self, cp) -> set:
         """Die Randknoten eines Kontaktpaars als Menge (einmal gebaut)."""
