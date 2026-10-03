@@ -497,6 +497,7 @@ def test_tabellenknopf_knoten_loeschen_nimmt_denselben_weg():
             _zeilenzahl=lambda _tbl: zeile,
             error=lambda t: meld.append("error: " + t),
             merken=lambda t: meld.append("merken: " + t),
+            _protokollzeilen=lambda zeilen: meld.extend("protokoll: " + z for z in zeilen),
             refresh_all=lambda: None)
         MainWindow.knoten_loeschen(attrappe)
         return meld

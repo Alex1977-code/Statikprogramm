@@ -3903,7 +3903,7 @@ class Model:
         self.nodes[[a, b]] = self.nodes[[b, a]]
         self._knotenverweise_abbilden({a: b, b: a})
 
-    def _knotennutzer(self, gefragt: set) -> dict:
+    def _knotennutzer(self, gefragt: set, linien: bool = True) -> dict:
         """{Knoten: [was ihn benutzt]} fuer die Knoten aus ``gefragt``, an denen
         etwas haengt, das den Knoten **braucht** - ein Durchgang je Verweisart
         fuer alle Knoten zusammen.
@@ -3941,8 +3941,8 @@ class Model:
                 if n in gefragt:
                     n_el[n] = n_el.get(n, 0) + 1
         for n, z in n_el.items():
-            dazu([n], f"{z} Elemente")
-        for nm, ln in self.lines.items():
+            dazu([n], f"{z} {'Element' if z == 1 else 'Elemente'}")
+        for nm, ln in (self.lines.items() if linien else ()):
             dazu({int(x) for x in ln.nodes} & gefragt, f"Linie {nm}")
         for nm, fl in self.flaechen.items():
             dazu({int(x) for x in (fl.ecken or [])} & gefragt, f"Fläche {nm} (Eckknoten)")
@@ -3966,11 +3966,12 @@ class Model:
                 dazu({int(an[0])} & gefragt, f"Stellung {st.name} (Antrieb)")
         return nutzer
 
-    def knoten_benutzt_von(self, i: int) -> list:
+    def knoten_benutzt_von(self, i: int, linien: bool = True) -> list:
         """Was an einem Knoten haengt und ihn braucht: ["3 Elemente", "Linie L2", ...]
-        (:meth:`_knotennutzer`)."""
+        (:meth:`_knotennutzer`). ``linien=False`` laesst die Linien aus - fuer den
+        Knopf unter der Tabelle „Knoten“, der den Knoten selbst aus ihnen nimmt."""
         i = int(i)
-        return self._knotennutzer({i}).get(i, [])
+        return self._knotennutzer({i}, linien).get(i, [])
 
     def knoten_loeschen(self, i: int, protokoll: list = None) -> str:
         """Einen freien Knoten entfernen; die Nummern dahinter ruecken auf.
@@ -4028,7 +4029,7 @@ class Model:
         """Die freien Knoten ``frei`` entfernen, samt allem, was nur an ihnen
         haengt: Knotenlager, Knotenlasten, Zwangsverformungen, Kontaktlager,
         Punktmassen, Daempfer, starre Koerper (Master; ein Slave geht nur aus
-        der Liste), die Eintraege in Linien- und Flaechenlagern (samt ihrer
+        der Liste, samt seinem Gewicht), die Eintraege in Linien- und Flaechenlagern (samt ihrer
         Einflussflaeche), Layern und Subsystemen und alles, was
         :meth:`_knoten_aus_verweisen` nimmt. Danach ruecken die Nummern auf;
         Stellungen, die ein geloeschtes Lager nannten, ziehen nach
@@ -4057,7 +4058,15 @@ class Model:
                          if int(x.node_a) not in frei and int(x.node_b) not in frei]
         for sk in (getattr(self, "starrkoerper", None) or []):
             if frei & {int(n) for n in sk.slaves}:
-                sk.slaves = [n for n in sk.slaves if int(n) not in frei]
+                # Die Gewichte eines RBE3 stehen parallel zu den Slaves; blieben sie
+                # ganz stehen, rechnete assemble.starrkoerper bei ungleicher Laenge
+                # still mit gleichen Gewichten (Gegenpruefung 03.10.2026)
+                alt_sl = list(sk.slaves)
+                halten = [int(n) not in frei for n in alt_sl]
+                sk.slaves = [n for n, ok in zip(alt_sl, halten) if ok]
+                gew = list(getattr(sk, "gewichte", None) or [])
+                if len(gew) == len(alt_sl):
+                    sk.gewichte = [g for g, ok in zip(gew, halten) if ok]
         self.starrkoerper = [sk for sk in (getattr(self, "starrkoerper", None) or [])
                              if int(sk.master) not in frei and sk.slaves]
         for L in (getattr(self, "layer", None) or {}).values():
@@ -4174,24 +4183,38 @@ class Model:
                 neu, hier = [], []
                 for x in liste:
                     s = str(x).strip()
-                    if s in n_jetzt:
-                        neu.append(x)
-                    elif s in n_vor:
-                        hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
-                                    f"aus „{text}“ genommen")
-                    elif nummernart and s.isdigit() and int(s) < len(vorher[nummernart]):
-                        j = platz[nummernart].get(id(vorher[nummernart][int(s)]))
-                        wort = self.STELLUNG_LAGERARTEN[nummernart][1]
-                        if j is None:
-                            hier.append(f"Stellung „{st.name}“: {wort} Nummer {s} ist gelöscht – "
+                    lebt, war = s in n_jetzt, s in n_vor
+                    # Stellung._gemeint trifft Name **und** Nummer; isdecimal, nicht
+                    # isdigit: „²“ ist eine Ziffer, aber int("²") scheitert
+                    if not (nummernart and s.isdecimal() and int(s) < len(vorher[nummernart])):
+                        if war and not lebt:
+                            hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
                                         f"aus „{text}“ genommen")
                         else:
-                            neu.append(str(j))
-                            if j != int(s):
-                                hier.append(f"Stellung „{st.name}“: {wort} Nummer {s} heißt jetzt {j} "
-                                            f"(ein {wort} davor ist gelöscht)")
-                    else:
+                            neu.append(x)
+                        continue
+                    j = platz[nummernart].get(id(vorher[nummernart][int(s)]))
+                    wort = self.STELLUNG_LAGERARTEN[nummernart][1]
+                    if j == int(s):
                         neu.append(x)
+                        continue
+                    if j is not None:
+                        neu.append(str(j))
+                    if lebt or (j is not None and str(j) in n_jetzt):
+                        # Ein Lager heisst wie eine Nummer: derselbe Eintrag meint dann
+                        # zwei Lager, und nach dem Loeschen laesst sich das mit einer
+                        # Liste von Namen nicht mehr eindeutig sagen - also laut
+                        if lebt:
+                            neu.append(x)
+                        hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ ist der Name "
+                                    f"eines Lagers und die Nummer eines {wort}s – nach dem Löschen "
+                                    "nicht eindeutig; bitte die Stellung prüfen")
+                    elif j is None:
+                        hier.append(f"Stellung „{st.name}“: das {wort} mit der Nummer „{s}“ ist "
+                                    f"gelöscht – aus „{text}“ genommen")
+                    else:
+                        hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ heißt jetzt "
+                                    f"„{j}“ – ein {wort} davor ist gelöscht")
                 if not hier:
                     continue
                 setattr(st, feld, neu)

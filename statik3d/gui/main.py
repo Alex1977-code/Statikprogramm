@@ -12081,9 +12081,15 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         if not (0 <= i < m.nn):
             return self.error("Zuerst eine Zeile wählen")
-        if any(i in [int(n) for n in e.nodes] for e in m.elements):
-            return self.error(f"An Knoten {i} hängt mindestens ein Element - "
-                              "erst das Element löschen.")
+        # Eine Linie verliert den Knoten (unten); alles andere, was ihn braucht
+        # (Element, Flaeche, Kopplung ... - Model._knotennutzer), weist ab, **bevor**
+        # etwas geaendert ist. Bis zum 03.10.2026 fragte der Knopf hier nur nach
+        # Elementen: wies Model.knoten_loeschen danach ab, standen die Linien schon
+        # ohne den Knoten da, und ein leerer Rueckgaengig-Schritt blieb.
+        andere = m.knoten_benutzt_von(i, linien=False)
+        if andere:
+            return self.error(f"Knoten {i} wird benutzt von " + ", ".join(andere)
+                              + " - erst diese löschen oder ändern")
         self.merken(f"Knoten {i} gelöscht")
         # Eine Linie verliert den Knoten wie bisher (Model.knoten_loeschen
         # wiese ihn sonst ab); alles Uebrige samt Umnummerieren dort.
@@ -18375,8 +18381,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Die Elemente nimmt ``Model.elemente_loeschen`` heraus und zieht dabei
         alle Verweise nach (Stäbe, Flächen, Volumen, Lasten, Anschlüsse,
         Beulfelder). Danach verschwinden die Knoten selbst - die Nummern
-        dahinter rücken auf -, soweit keine Linie sie noch braucht; solche
-        Knoten bleiben und werden genannt. Rückgängig nimmt alles zurück.
+        dahinter rücken auf -, soweit nichts anderes sie noch braucht (Linie,
+        Kopplung ... - Model._knotennutzer); solche Knoten bleiben samt Lager
+        und Lasten und werden genannt. Rückgängig nimmt alles zurück.
         """
         if not len(self.selection):
             return self.error("Zuerst Knoten wählen")
@@ -18385,19 +18392,17 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         els = [i for i, e in enumerate(m.elements) if {int(n) for n in e.nodes} & wegmenge]
         self.merken(f"{len(weg)} Knoten gelöscht")
-        vorher = m.stellungsbezug()
         zeilen = []
         n_el = m.elemente_loeschen(els)
-        m.supports = [x for x in m.supports if int(x.node) not in wegmenge]
-        for lc in m.load_cases.values():
-            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) not in wegmenge]
+        # Lager und Knotenlasten gehen mit ihrem Knoten (Model.knoten_loeschen).
+        # Bis zum 03.10.2026 nahm der Befehl sie hier vorher weg - auch an
+        # Knoten, die danach stehen blieben
         self._set_selection([])
         self._objektauswahl_leeren()
         bleiben = []
         for i in weg:                 # von hinten: die Nummern davor bleiben gültig
             if m.knoten_loeschen(i, protokoll=zeilen):
                 bleiben.append(i)
-        zeilen = m.stellungen_nachziehen(vorher) + zeilen
         text = f"{len(weg) - len(bleiben)} Knoten und {n_el} Elemente entfernt"
         if bleiben:
             text += (f"; {len(bleiben)} Knoten bleiben, weil noch etwas an ihnen hängt "
@@ -18841,7 +18846,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Rückgängig (Strg+Z) holt sie zurück.", "Alle löschen", "Abbrechen", vorgabe="nein"):
             return
         self.merken("Alle Knotenlager gelöscht")
+        vorher = self.model.stellungsbezug()
         self.model.supports.clear()
+        self._protokollzeilen(self.model.stellungen_nachziehen(vorher))
         self.refresh_all()
 
     # ---- Ergebnisauswahl in der Glasleiste ------------------------------

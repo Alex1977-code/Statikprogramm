@@ -1124,6 +1124,77 @@ def test_loeschwege_raeumen_stellungen_auf():
         w._undo.clear()
 
 
+def test_knoten_loeschen_aendert_nichts_bei_abweisung():
+    """Der Knopf unter der Tabelle „Knoten“ nimmt den Knoten aus seinen Linien und
+    loescht ihn dann. Braucht ihn noch etwas anderes (hier: eine Flaeche als
+    Eckknoten), weist er ab, **bevor** etwas geaendert ist (Gegenpruefung
+    03.10.2026: die Linien standen schon ohne ihn da, und ein Rueckgaengig-Schritt
+    blieb). Der Befehl *Knoten löschen* laesst einem Knoten, der bleibt, sein Lager
+    und seine Last; bis dahin nahm er beides vorher weg."""
+    import numpy as np
+    from statik3d.model import Flaeche, Kopplung
+    w, app = _fenster()
+    try:
+        n0 = _halle(w, app)
+        m = w.model
+        a, b = n0 - 2, n0 - 1                       # frei
+        m.add_line("LX", [a, b])
+        m.flaechen["FX"] = Flaeche("FX", ["LX"], ecken=[a, b])
+        w.refresh_all()
+        app.processEvents()
+        w.fehler_liste.clear()
+        schritte = len(w._undo)
+        w.tbl_knoten.view.selectRow(b)
+        w.knoten_loeschen()
+        app.processEvents()
+        check("Knopf „Knoten löschen“, Knoten ist Eckknoten einer Fläche: abgewiesen mit Grund",
+              m.nn == n0 and any("Fläche FX" in f for f in w.fehler_liste), str(w.fehler_liste))
+        check("… die Linie hat ihn noch, und kein Rückgängig-Schritt bleibt",
+              [int(x) for x in m.lines["LX"].nodes] == [a, b] and len(w._undo) == schritte,
+              f"{m.lines['LX'].nodes}, {len(w._undo) - schritte} Schritte")
+        n0 = _halle(w, app)
+        m = w.model
+        k = n0 - 1
+        m.fix(k, [0, 1, 2])
+        m.load_node(k, Fz=-1e3)
+        m.kopplungen.append(Kopplung(k, n0 - 2, [[1.0, 0.0, 0.0]], [1e9]))
+        w.refresh_all()
+        app.processEvents()
+        w.selection = np.array([k], dtype=int)
+        w.delete_nodes()
+        app.processEvents()
+        lasten = [l for lc in m.load_cases.values() for l in lc.nodal_loads if int(l.node) == k]
+        check("Befehl „Knoten löschen“, Knoten mit Kopplung bleibt: Lager und Last bleiben mit ihm",
+              m.nn == n0 and any(int(x.node) == k for x in m.supports) and len(lasten) == 1,
+              f"{m.nn}, {[x.node for x in m.supports]}, {len(lasten)} Lasten")
+    finally:
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
+def test_alle_lager_loeschen_raeumt_stellungen_auf():
+    """„Alle Lager löschen“ (Register Lager/Lasten) ist auch ein Loeschweg."""
+    w, app = _fenster()
+    alt = w.__dict__.get("_fragen_knoepfe")
+    w._fragen_knoepfe = lambda *a, **k: True
+    try:
+        m, st = _halle_mit_stellung(w, app)
+        ab = len(w.log.toPlainText())
+        w.clear_supports()
+        app.processEvents()
+        neu = _stellungszeilen(w, ab)
+        check("Alle Lager löschen: das Lager geht aus der Stellung, mit Zeile im Protokoll",
+              not m.supports and st.lager_aus == [] and any("Fuß links" in z for z in neu),
+              f"{st.lager_aus}, {' | '.join(neu)[:160]}")
+    finally:
+        if alt is None:
+            w.__dict__.pop("_fragen_knoepfe", None)
+        else:
+            w._fragen_knoepfe = alt
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
 def test_entf_knoten_mit_kopplung():
     """Ein freier Knoten, an dem eine Kopplung hängt, ist benutzt: Entf lässt ihn stehen
     und nennt den Grund; die Rückfrage behauptet nicht, es seien Elemente oder Linien."""
@@ -1175,7 +1246,8 @@ def main():
               test_rueckfrage_nennt_die_folgen, test_nichts_geloescht_laesst_die_stapel_in_ruhe,
               test_entf_grosse_auswahl_ist_schnell, test_entf_teils_benutzte_knoten,
               test_stab_loeschen_ueberall_gleich, test_loeschwege_raeumen_stellungen_auf,
-              test_entf_knoten_mit_kopplung):
+              test_entf_knoten_mit_kopplung, test_knoten_loeschen_aendert_nichts_bei_abweisung,
+              test_alle_lager_loeschen_raeumt_stellungen_auf):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

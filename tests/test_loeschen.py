@@ -377,6 +377,14 @@ def test_verweise_gehen_mit_dem_knoten():
     fs = m.add_surface_support(nodes=[k, p], areas=[1.0, 2.0])
     m.knoten_loeschen_viele([k])
     check("… ebenso beim Löschen vieler Knoten", list(fs.areas) == [2.0], str(fs.areas))
+    # Starrer Koerper RBE3: die Gewichte stehen parallel zu den Slaves (Gegenpruefung:
+    # sie blieben ganz stehen, und assemble rechnete dann mit gleichen Gewichten)
+    m, j, k, n, p = _vier_freie()
+    sk = m.add_starrkoerper(0, [k, n, p], art="RBE3", gewichte=[1.0, 5.0, 10.0])
+    m.knoten_loeschen(k)
+    check("Starrer Körper RBE3: der Slave geht samt seinem Gewicht",
+          _orte(m, sk.slaves) == [(22.0, 2.0, 0.0), (23.0, 2.0, 0.0)] and list(sk.gewichte) == [5.0, 10.0],
+          f"{sk.slaves}, {sk.gewichte}")
     # Kantenmitten eines Tetraeders mit Ordnung p: Schluessel sind Knotenpaare
     m, j, k, n, p = _vier_freie()
     t = [m.add_node(*q) for q in ((30, 0, 0), (31, 0, 0), (30, 1, 0), (30, 0, 1))]
@@ -456,6 +464,47 @@ def test_stellung_lagernamen_im_protokoll():
           " | ".join(zeilen)[:300])
 
 
+def test_stellung_name_und_nummer_zugleich():
+    """Stellung._gemeint trifft ein Lager beim Namen **und** bei der Nummer. Heisst
+    ein Lager wie eine Nummer, laesst sich der Eintrag nach dem Loeschen nicht
+    eindeutig nachziehen - das darf nicht still geschehen (Gegenpruefung 03.10.2026:
+    der Eintrag blieb stehen und schaltete still ein anderes Lager ab)."""
+    from statik3d.bridges.positions import Stellung
+    m = _balken()                                   # Lager 0, 1 am Balken
+    k, p, q = (m.add_node(20.0 + i, 2.0, 0.0) for i in range(3))
+    for n in (k, p, q):
+        m.fix(n, [0, 1, 2])                         # Lager 2, 3, 4
+    m.supports[3].name = "3"
+    st = Stellung("S1", lager_aus=["3"], faelle=["LF1"])
+    m.stellungen.append(st)
+    zeilen = []
+    m.knoten_loeschen(k, protokoll=zeilen)
+    check("Lager heißt „3“ und steht an Platz 3: nach dem Löschen davor sagt das Protokoll, "
+          "dass der Eintrag nicht eindeutig ist",
+          any("„S1“" in z and "nicht eindeutig" in z for z in zeilen), " | ".join(zeilen))
+    m = _balken()
+    k, p = m.add_node(20.0, 2.0, 0.0), m.add_node(21.0, 2.0, 0.0)
+    m.fix(k, [0, 1, 2])
+    m.fix(p, [0, 1, 2])                             # Lager 2 an k, 3 an p
+    m.add_line_support([1, 2], name="3")
+    st = Stellung("S2", lager_aus=["3"], faelle=["LF1"])
+    m.stellungen.append(st)
+    zeilen = []
+    m.knoten_loeschen(k, protokoll=zeilen)
+    check("Ein Linienlager heißt „3“, die Nummer meint Knotenlager 3: ebenso",
+          any("„S2“" in z and "nicht eindeutig" in z for z in zeilen), " | ".join(zeilen))
+    m = _balken()
+    k = m.add_node(20.0, 2.0, 0.0)
+    m.fix(k, [0, 1, 2])
+    m.stellungen.append(Stellung("S3", lager_aus=["²", "2"], faelle=["LF1"]))
+    try:
+        m.knoten_loeschen(k)
+        ok, text = m.stellungen[0].lager_aus == ["²"], str(m.stellungen[0].lager_aus)
+    except ValueError as ex:
+        ok, text = False, f"ValueError: {ex}"
+    check("Ein Eintrag „²“ ist keine Nummer und bricht nichts ab", ok, text)
+
+
 def test_stellung_staebe_nach_stab_loeschen():
     from statik3d.bridges.positions import Stellung
     m = _balken(zwei_staebe=True)
@@ -503,7 +552,8 @@ def main():
               test_viele_knoten_wie_einzeln, test_viele_knoten_schnell,
               test_benutzte_knoten_werden_abgewiesen, test_knoten_tauschen_nimmt_antrieb_und_kantenmitte_mit,
               test_verweise_gehen_mit_dem_knoten, test_stellung_lagernamen_nach_knoten_loeschen,
-              test_stellung_lagernamen_im_protokoll, test_stellung_staebe_nach_stab_loeschen,
+              test_stellung_lagernamen_im_protokoll, test_stellung_name_und_nummer_zugleich,
+              test_stellung_staebe_nach_stab_loeschen,
               test_stellung_linien_und_flaechenlager):
         print(f"\n--- {t.__name__} ---")
         try:
