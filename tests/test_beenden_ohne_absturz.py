@@ -94,9 +94,11 @@ def _key(it):
 
 
 def _eintrag(w, art=None, text=None):
-    """Die erste Zeile des Modellbaums mit dieser Art oder diesem Zweignamen."""
+    """Mit ``art`` der erste Eintrag (eine Zeile mit Schluessel) dieser Art,
+    mit ``text`` der Zweig dieses Namens. Seit 8b traegt auch der Zweig
+    „Knoten“ die Art „knoten“, und ein Klick auf einen Zweig waehlt nichts."""
     for it in _alle(w.baum):
-        if art is not None and _art(it) != art:
+        if art is not None and (_art(it) != art or _key(it) is None):
             continue
         if text is not None and (it.text(0) != text or _key(it) is not None):
             continue
@@ -240,8 +242,8 @@ def _kind() -> None:
     merken("kontextregister", reg)
     merken("stabmaske_2", _maske(w))
     _klick(w, app, _eintrag(w, art="knoten"))
-    _melden("kontextregister_ersetzt", reg is not None and w.ribbon._kontext is not reg,
-            w.ribbon._kontext_name)
+    _melden("kontextregister_ersetzt", reg is not None and w.ribbon._kontext is not reg
+            and "Knoten" in w.ribbon._kontext_name, w.ribbon._kontext_name)
 
     # 4. Leiste „Übernehmen | Verwerfen“ (13m): Knoten aendern, im Baum
     #    weiter - die Leiste haelt an, „Verwerfen“ fuehrt den Klick aus
