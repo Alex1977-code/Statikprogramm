@@ -3522,19 +3522,32 @@ Das Programm meldet sich auf zwei Arten. Ein **Hinweis** sagt, was man anders
 machen soll: Es fehlt eine Auswahl („Zuerst Knoten in der Ansicht wählen“),
 eine Eingabe ist ungültig („Spiel größer als null eintragen“), ein Name ist
 schon vergeben („Lastfall „S“ gibt es schon“), oder in einer Tabelle ist keine
-Zeile gewählt („Zuerst eine Zeile wählen“). Ein Hinweis öffnet kein Fenster.
-Er steht an drei Stellen zugleich: gelb hinterlegt in der Statuszeile als
-„Hinweis: …“, bis eine andere Meldung kommt oder nach 15 Sekunden; gelb in der
-Meldungszeile über den Knöpfen der offenen Maske; und im Protokoll als Zeile,
-die mit „HINWEIS:“ beginnt. Diese Zeile bleibt im Protokoll schwarz, rot sind
-dort nur FEHLER-Zeilen. Die Maske bleibt mit allen Eingaben offen: Man
-verbessert die Eingabe und drückt noch einmal „Übernehmen“. Das nächste
-Übernehmen oder eine Änderung an einem Zahlenfeld nimmt den Hinweis aus der
-Meldungszeile wieder weg.
+Zeile gewählt („Zuerst eine Zeile wählen“). Ungültig ist auch eine Liste in
+einem Textfeld der Maske, etwa der Versatz „1.000, 0“, eine Teilung, eine
+Ersatzachse oder RBE3-Gewichte mit falscher Anzahl oder die Stabknoten „0, 1,
+x“. Ein Hinweis öffnet kein Fenster. Er steht gelb hinterlegt in der
+Statuszeile als „Hinweis: …“, bis eine andere Meldung kommt oder nach 15
+Sekunden, und im Protokoll als Zeile, die mit „HINWEIS:“ beginnt. Diese Zeile
+bleibt im Protokoll schwarz, rot sind dort nur FEHLER-Zeilen. Kommt der
+Hinweis aus dem Übernehmen einer Maske oder von einem ihrer Knöpfe (etwa
+„Bettung übernehmen“), steht er außerdem gelb in ihrer Meldungszeile über den
+Knöpfen. Ein Hinweis aus einer Tabelle oder der Layerliste steht dagegen nicht
+in der Zeile einer Maske, die gerade offen ist. Die Maske bleibt mit allen
+Eingaben offen: Man verbessert die Eingabe und drückt noch einmal
+„Übernehmen“. Das nächste Übernehmen oder eine Änderung in irgendeinem Feld
+der Maske nimmt den Hinweis aus der Meldungszeile wieder weg.
+
+**Während einer Rechnung** schreiben Fortschrittsbalken und Uhr die
+Statuszeile mehrmals in der Sekunde neu. Ein Hinweis steht dann bis zum Ablauf
+der 15 Sekunden vorn, vor dem Fortschrittstext, und die Statuszeile bleibt
+gelb. Das Protokoll kommt bei einem Hinweis nicht nach vorn, denn unten springt
+der Reiter nur bei Fehlern und Warnungen, und ein Hinweis aus einer Tabelle
+nähme sonst genau die Tabelle weg, an der man arbeitet.
 
 Ein **Fehler** deutet auf ein Problem im Programm oder in den Daten: eine
 Ausnahme, eine Datei, die sich nicht lesen oder schreiben lässt, eine
-gescheiterte Rechnung. Er erscheint weiter im roten Fenster „Fehler“, das man
+gescheiterte Rechnung, ein Wert, den das Programm nicht kennt (etwa eine
+unbekannte Nahtart). Er erscheint weiter im roten Fenster „Fehler“, das man
 wegklicken muss, und im Protokoll als FEHLER-Zeile. Während einer Rechnung
 öffnet auch ein Fehler kein Fenster; er steht dann im Protokoll und in der
 Statuszeile.
@@ -3543,16 +3556,23 @@ Ein Hinweis beim Übernehmen zählt wie ein Fehler: Das Übernehmen ist
 gescheitert. Steht gerade die Leiste „… hat nicht übernommene Änderungen“,
 bleiben Maske, Punkt im Titel und Leiste stehen, und was man wollte, wartet
 weiter. Hatte das Übernehmen schon etwas geschrieben, ist das Modell danach
-wieder so wie zu Beginn.
+wieder so wie zu Beginn; der Satz „… nicht übernommen – das Modell ist wieder
+wie vorher“ hängt sich dann in der Statuszeile an den Hinweis an, statt ihn zu
+ersetzen.
 
 Hinweise ohne Fenster geben seit dem 03.10.2026 die Masken am rechten Rand
 (etwa Knoten, Linie, Lager, Knoten-, Linien- und Flächenlast, Lastfall,
 Kombination, Werkstoff, Querschnitt, Gelenk, Kontaktbedingung, Stellung,
 Situation, Subsystem, Wind, Wasserdruck, Spalt, Spiel, Passung, Übermaß,
 Schweißnaht, Netzeinstellungen) und die Knöpfe an den Tabellen (Löschen,
-Ändern, Entfernen ohne gewählte Zeile, die Layerliste). Bis zum 03.10.2026 kam
-jede dieser Meldungen im roten Fenster „Fehler“, und man musste es
-wegklicken, bevor man die Eingabe verbessern konnte. Befehle, die ohne
+Ändern, Entfernen ohne gewählte Zeile, die Layerliste). Auch der Rechtsklick
+meldet sich mit Hinweisen: bei einem ausgeblendeten oder gesperrten Objekt,
+bei einem Eintrag während einer Rechnung oder nach einer Änderung des Modells
+und bei „Nichts gelöscht“. Bis zum 03.10.2026 kam jede Meldung der Masken und
+Tabellen im roten Fenster „Fehler“, und man musste es wegklicken, bevor man die
+Eingabe verbessern konnte; in der ersten Fassung vom 03.10.2026 galt das noch
+für die Listenfelder (Versatz, Teilung, Ersatzachse, Gewichte, Stabknoten),
+und die Hinweise des Rechtsklicks standen nur kurz in der Statuszeile. Befehle, die ohne
 passende Auswahl gar keine Maske öffnen (etwa *Lot* ohne gewählte Knoten),
 und Meldungen nach einem schon geschlossenen Dialog kommen vorerst weiter im
 Fenster; sie folgen in einem späteren Schritt.

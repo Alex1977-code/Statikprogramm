@@ -50,6 +50,14 @@ ZEICHEN = frozenset("0123456789+-.,eE") | frozenset(LEERZEICHEN)
 #: 0,3 und nicht 0,30000000000000004)
 STELLEN = 15
 
+class Eingabefehler(ValueError):
+    """Eine Eingabe des Anwenders ist ungueltig - kein Programm- oder
+    Datenfehler (Paket 9b, Nachbesserung 03.10.2026). Die Leser dieses Moduls
+    werfen ihn; die Oberflaeche meldet ihn als Hinweis ohne Fenster, jeden
+    anderen ValueError weiter als Fehler. Als Unterklasse von ValueError
+    fangen ihn alle bisherigen ``except ValueError`` weiter."""
+
+
 _GRUPPE_VORN = re.compile(r"\d{1,3}")
 _GRUPPE = re.compile(r"\d{3}")
 TAUSENDERPUNKT = re.compile(r"^[+-]?\d{1,3}(\.\d{3})+$")
@@ -153,15 +161,15 @@ def ergaenzbar(text, ganz: bool = False) -> bool:
 
 
 def zahl_wert(text, ganz: bool = False) -> float:
-    """Die Zahl einer Eingabe; ValueError, wenn sie leer oder ungueltig ist.
+    """Die Zahl einer Eingabe; Eingabefehler, wenn sie leer oder ungueltig ist.
 
     Eine mehrdeutige Eingabe („1.000“) gilt hier als Dezimalzahl - wer sie
     anders behandeln muss (Lastspiele), fragt :func:`lesen`."""
     lesung = lesen(text, ganz)
     if lesung.status == LEER:
-        raise ValueError("leer")
+        raise Eingabefehler("leer")
     if lesung.status == UNGUELTIG:
-        raise ValueError(lesung.meldung)
+        raise Eingabefehler(lesung.meldung)
     return float(lesung.wert)
 
 
@@ -183,10 +191,10 @@ def feldwert(wert, vorgabe=None, ganz: bool = False):
     if les.status == LEER:
         return vorgabe
     if les.status == UNGUELTIG:
-        raise ValueError(les.meldung)
+        raise Eingabefehler(les.meldung)
     if les.status == FRAGE:
         roh = str(wert).strip()
-        raise ValueError(f"„{roh}“ ist mehrdeutig ({les.meldung}) – "
+        raise Eingabefehler(f"„{roh}“ ist mehrdeutig ({les.meldung}) – "
                          f"{zahl_text(les.wert, tausender=False)} oder {zahl_text(les.vorschlag)} schreiben.")
     return float(les.wert)
 
@@ -222,7 +230,7 @@ def anzahl_pruefen(teile: list, anzahl, feld: str = "", text=None) -> list:
         return teile
     roh = str(text).strip() if text is not None else ""
     werte = "Wert" if erlaubt == {1} else "Werte"
-    raise ValueError(f"{feld + ': ' if feld else ''}{anzahl_text(anzahl)} {werte} erwartet, "
+    raise Eingabefehler(f"{feld + ': ' if feld else ''}{anzahl_text(anzahl)} {werte} erwartet, "
                      f"{len(teile)} gefunden" + (f" („{roh}“)" if roh else "") + ".")
 
 
@@ -253,7 +261,7 @@ def listenteile(text, feld: str = "") -> list:
         zusammen = f"{vorn} {hinten}"
         les = lesen(zusammen)
         if les.status in (GUELTIG, FRAGE):
-            raise ValueError(
+            raise Eingabefehler(
                 f"{feld + ': ' if feld else ''}„{zusammen}“ ist in einer Liste nicht eindeutig – "
                 f"eine Zahl ({zahl_text(les.wert)}) oder zwei Einträge? Einträge mit „;“ trennen "
                 f"(dann gilt das Leerzeichen als Tausendertrennung) oder ohne Leerzeichen schreiben.")
@@ -265,7 +273,7 @@ def zahlenliste(text, anzahl=None, feld: str = "") -> list:
     Gewichte), jede nach :func:`feldwert` (25.09.2026).
 
     Getrennt wird nach :func:`listenteile`. Ein mehrdeutiger oder ungueltiger
-    Eintrag wirft ValueError, statt still wegzufallen oder 1 zu werden; mit
+    Eintrag wirft Eingabefehler, statt still wegzufallen oder 1 zu werden; mit
     ``anzahl`` ebenso eine Liste mit zu vielen oder zu wenigen Eintraegen
     (:func:`anzahl_pruefen`). ``feld`` steht vorn in der Meldung."""
     werte = []
@@ -273,7 +281,7 @@ def zahlenliste(text, anzahl=None, feld: str = "") -> list:
         try:
             werte.append(feldwert(t))
         except ValueError as ex:
-            raise ValueError(f"{feld}: {ex}" if feld else str(ex)) from None
+            raise Eingabefehler(f"{feld}: {ex}" if feld else str(ex)) from None
     return anzahl_pruefen(werte, anzahl, feld, text)
 
 

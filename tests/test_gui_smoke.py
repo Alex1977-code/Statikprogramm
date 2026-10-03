@@ -162,7 +162,16 @@ def main():
     from statik3d.gui import dialogs as dg
     # Fehler und Hinweise gemeinsam abfangen (Paket 9b): abfangen(w, liste) gibt
     # beide Arten in die Liste, getrennt auswertbar am zurueckgegebenen Objekt
-    from tests.meldungen import abfangen
+    from tests.meldungen import abfangen as _abfangen
+
+    def abfangen(w_, liste=None, **k):
+        # zaehlen=False ausdruecklich (Nachbesserung 9b, S4): die Rauchpruefung
+        # laeuft nur auf dem Desktop; ob ihre Ablaeufe ein gezaehltes error()
+        # vertragen (ein abgewiesenes „Übernehmen“ behaelt dann seine Maske),
+        # ist offscreen nicht pruefbar. Bis ein Desktop-Lauf mit zaehlen=True
+        # gruen ist, bleibt es beim gemessenen Stand bfffa26 (1454/1454).
+        k.setdefault("zaehlen", False)
+        return _abfangen(w_, liste, **k)
     from statik3d.model import Model
     # Gespeicherte Einstellungen (Loeser, Threads, Nachladen) in eine
     # Wegwerfdatei - die Pruefung darf die des Anwenders nicht ueberschreiben

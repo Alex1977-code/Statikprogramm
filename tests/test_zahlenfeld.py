@@ -1105,9 +1105,10 @@ def test_textfelder_zahlenregel():
         mk.setzen("ex_a", "1.000, 0")
         mk.anwenden()
         app.processEvents()
+        # seit der Nachbesserung 9b ein Hinweis (ohne Fenster), kein Fehler
         check("Stab-Versatz „1.000, 0“: abgewiesen mit Meldung, Versatz unverändert",
               list(getattr(m.elements[e0], "exzentrizitaet", []) or []) == ex_vorher
-              and any("1.000" in t for t in fehler), f"{m.elements[e0].exzentrizitaet} {fehler[-1:]}")
+              and abf.zuletzt_hinweis("1.000"), f"{m.elements[e0].exzentrizitaet} {abf.eintraege[-1:]}")
         mk = w._objektmaske("stabelement", str(e0)) or w.maskenrand.maske
         mk.setzen("ex_a", "12,5, 0")
         mk.anwenden()
@@ -1233,10 +1234,15 @@ def test_listen_anzahl():
     w.refresh_all()
     app.processEvents()
 
-    def fall(titel, art, name, key, eingabe, lesen, soll, meldung="fehler"):
-        # meldung: „fehler“ oder „hinweis“ - seit 9b weisen manche Masken mit
-        # einem Hinweis ab (ohne Fenster), die Pruefung nennt die Art
+    def fall(titel, art, name, key, eingabe, lesen, soll, meldung="hinweis"):
+        # meldung: „fehler“ oder „hinweis“ - seit 9b weisen die Masken eine
+        # ungueltige Eingabe mit einem Hinweis ab (ohne Fenster; Versatz,
+        # Stabknoten, Ersatzachse und Gewichte seit der Nachbesserung, L2)
         fehler.clear()
+        # Eine abgewiesene Maske behaelt ihre Eingabe (Paket 13m), die naechste
+        # hielte an der Leiste - seit 9b ist das hier ein Hinweis, und der zaehlt
+        w._leiste_weg()
+        w._maske_verwerfen(w.maskenrand.maske)
         n0 = len(abf.eintraege)
         mk = w._objektmaske(art, name) or w.maskenrand.maske
         vorher, u0 = lesen(), _undo_n(w)
@@ -1258,6 +1264,10 @@ def test_listen_anzahl():
     kn = ", ".join(str(n) for n in m.elements[0].nodes)
     fall("Stab-Knoten", "stabelement", "0", "kn", kn + ", x", versatz, ("Knoten", "x"))
     fehler.clear()
+    # Eine abgewiesene Maske behaelt ihre Eingabe (Paket 13m), die naechste
+    # hielte an der Leiste - seit 9b ist das hier ein Hinweis, und der zaehlt
+    w._leiste_weg()
+    w._maske_verwerfen(w.maskenrand.maske)
     mk = w._objektmaske("stabelement", "0") or w.maskenrand.maske
     mk.setzen("ex_a", "12,5; 1 000")
     mk.anwenden()
@@ -1278,6 +1288,10 @@ def test_listen_anzahl():
     fall("RBE3 Gewichte", "starrkoerper", i_sk, "gewichte", "1 000, 2", gewichte, ("1 000", ";"))
     fall("RBE3 Gewichte", "starrkoerper", i_sk, "gewichte", "1; 2; 3", gewichte, ("Gewichte", "2", "3"))
     fehler.clear()
+    # Eine abgewiesene Maske behaelt ihre Eingabe (Paket 13m), die naechste
+    # hielte an der Leiste - seit 9b ist das hier ein Hinweis, und der zaehlt
+    w._leiste_weg()
+    w._maske_verwerfen(w.maskenrand.maske)
     mk = w._objektmaske("starrkoerper", i_sk) or w.maskenrand.maske
     mk.setzen("gewichte", "1 000; 2")
     mk.anwenden()
@@ -1290,8 +1304,8 @@ def test_listen_anzahl():
     def lastfall():
         lc = m.load_cases[lf]
         return (lc.psi, lc.category, lc.description)
-    fall("Lastfall ψ", "lastfall", lf, "psi", "0,7/0,5", lastfall, ("ψ", "3", "2"), "hinweis")
-    fall("Lastfall ψ", "lastfall", lf, "psi", "1.000/0,5/0,3", lastfall, ("1.000",), "hinweis")
+    fall("Lastfall ψ", "lastfall", lf, "psi", "0,7/0,5", lastfall, ("ψ", "3", "2"))
+    fall("Lastfall ψ", "lastfall", lf, "psi", "1.000/0,5/0,3", lastfall, ("1.000",))
 
     t = meldung(lambda: w._zahlenliste("4, 4, 4", anzahl=(1, 2), feld="Teilung"))
     check("Teilung einer Fläche „4, 4, 4“: Meldung (1 oder 2 Werte), nicht still gekürzt",

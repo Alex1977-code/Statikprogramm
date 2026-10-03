@@ -563,7 +563,7 @@ class Maske(QtWidgets.QFrame):
             zeile = QtWidgets.QHBoxLayout()
             for text, ruf in zusatz:
                 b = QtWidgets.QPushButton(text, self)
-                b.clicked.connect(lambda _c=False, r=ruf: r())
+                b.clicked.connect(lambda _c=False, r=ruf: self._knopf_rufen(r))
                 zeile.addWidget(b)
                 self.zusatzknoepfe[text] = b
             fuss.addLayout(zeile)
@@ -823,6 +823,14 @@ class Maske(QtWidgets.QFrame):
                 w.itemChanged.connect(self._merker_anstossen)
 
     def _merker_anstossen(self, *_a) -> None:
+        # Jede Aenderung in einem Feld nimmt einen Hinweis des Fensters aus der
+        # Meldungszeile (Nachbesserung 9b, H1): bis dahin nur eine, die den
+        # Zustand eines Zahlenfelds wechselte (gueltig/ungueltig/mehrdeutig)
+        if getattr(self, "_hinweis", ""):
+            try:
+                self._zahlmeldung_nachfuehren()
+            except (RuntimeError, AttributeError):
+                pass
         try:
             self._merker_uhr.start()
         except (RuntimeError, AttributeError):
@@ -847,6 +855,7 @@ class Maske(QtWidgets.QFrame):
             self.geaendert_gemeldet.emit(an)
 
     def _zahlmeldung_nachfuehren(self) -> None:
+        self._hinweis = ""          # die Zeile zeigt danach die Zahlenfelder (oder nichts)
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
         # ein Zwischenstand beim Tippen („-“) meldet nichts (meldung leer)
         schlecht = next((w for w in felder if w.ungueltig() and w.meldung()), None)
@@ -865,8 +874,22 @@ class Maske(QtWidgets.QFrame):
         """Ein Bedienhinweis des Fensters (hinweis(), Paket 9b, 03.10.2026) in
         der Meldungszeile ueber den Knoepfen - gelb wie eine mehrdeutige Zahl,
         dort, wo man nach „Übernehmen“ hinsieht. Das naechste „Übernehmen“ oder
-        eine Aenderung an einem Zahlenfeld nimmt ihn wieder weg."""
+        eine Aenderung in einem Feld der Maske nimmt ihn wieder weg."""
         self._zahlmeldung_setzen(str(text), zf.GELB)
+        self._hinweis = str(text)
+
+    def _knopf_rufen(self, ruf):
+        """Ein Zusatzknopf der Maske („Bettung übernehmen“, „Spalt-Vorschau“ …):
+        solange er laeuft, gehoert ein Hinweis des Fensters in die Meldungszeile
+        dieser Maske (Nachbesserung 9b, S2)."""
+        self._knopf_laeuft = True
+        try:
+            return ruf()
+        finally:
+            try:
+                self._knopf_laeuft = False
+            except RuntimeError:            # Maske schon freigegeben
+                pass
 
     def setzen(self, name: str, wert):
         w = self._felder.get(name)

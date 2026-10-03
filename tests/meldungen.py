@@ -29,10 +29,11 @@ Text“ (:meth:`Meldungen.hinweis_mit`, :meth:`Meldungen.zuletzt_hinweis`).
 Zaehlen (Paket 13m): ein „Übernehmen“, waehrend dessen ``error()`` oder
 ``hinweis()`` kam, ist gescheitert. Der abgefangene Hinweis ist der echte des
 Fensters - er oeffnet ohnehin nichts - und zaehlt darum wie im Programm. Der
-abgefangene Fehler zaehlt nur mit ``zaehlen=True``: die Pruefungen ersetzten
-``w.error`` bisher durch Listen, die nicht zaehlten, und ihre Ablaeufe bauen
-darauf (gemessen 03.10.2026: mit Zaehlen hielt in tests.test_zahlenfeld die
-naechste Maske an der Leiste).
+abgefangene Fehler zaehlt ebenso (Vorgabe ``zaehlen=True``, Nachbesserung
+03.10.2026, S4). Bis dahin ersetzten die Pruefungen ``w.error`` durch Listen,
+die nicht zaehlten: ein abgewiesenes „Übernehmen“ galt in der Pruefung als
+gelungen, im Programm nicht. Wo eine Suite das nicht vertraegt, steht
+``zaehlen=False`` mit Begruendung beim Aufruf.
 
 Fuer Attrappen (``mock.MagicMock`` als Fenster) liest :func:`aus_attrappe` die
 Aufrufe von ``s.error`` und ``s.hinweis``.
@@ -93,7 +94,7 @@ class Meldungen:
 class Abfang(Meldungen):
     """Haelt ``error`` und ``hinweis`` eines Fensters fest, bis :meth:`zurueck`."""
 
-    def __init__(self, w, liste=None, protokoll=False, rufen=None, zaehlen=False):
+    def __init__(self, w, liste=None, protokoll=False, rufen=None, zaehlen=True):
         super().__init__()
         self.w = w
         self.liste = liste
@@ -150,11 +151,12 @@ class Abfang(Meldungen):
         return False
 
 
-def abfangen(w, liste=None, protokoll=False, rufen=None, zaehlen=False) -> Abfang:
+def abfangen(w, liste=None, protokoll=False, rufen=None, zaehlen=True) -> Abfang:
     """``w.error`` und ``w.hinweis`` abfangen; ``liste`` bekommt die Texte
     beider Arten, ``protokoll`` schreibt die FEHLER-Zeile wie das Fenster,
     ``rufen(art, text)`` wird je Meldung gerufen (etwa ein check(..., False)),
-    ``zaehlen`` zaehlt auch den Fehler im Fehlerzaehler (der Hinweis zaehlt immer)."""
+    ``zaehlen`` zaehlt den Fehler im Fehlerzaehler wie MainWindow.error (der
+    Hinweis zaehlt immer); ``zaehlen=False`` nur mit Begruendung beim Aufruf."""
     a = Abfang(w, liste, protokoll, rufen, zaehlen)
     w.error = a.error
     w.hinweis = a.hinweis

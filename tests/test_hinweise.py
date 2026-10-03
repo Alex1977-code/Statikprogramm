@@ -15,6 +15,12 @@ Hinweis statt Fehlerfenster (Plan-Paket 9b, 03.10.2026).
   Punkt im Titel und Leiste bleiben stehen, der Wunsch wartet.
 * Das gemeinsame Abfangmuster der Pruefungen (tests/meldungen.py) sieht beide
   Arten und wertet sie getrennt aus.
+* Nachbesserung nach der Gegenpruefung (03.10.2026): der Hinweis bleibt
+  waehrend einer Rechnung vorn in der Statuszeile (L1); ungueltige Eingaben
+  der Objektmaske sind Hinweise, Programm- und Datenfehler bleiben Fehler
+  (L2, S3); der Rueckbau ueberschreibt den Hinweis nicht (S1); in die
+  Meldungszeile einer Maske kommt nur ihr eigener Hinweis (S2); jede
+  Feldaenderung nimmt ihn weg (H1); der Rechtsklick meldet mit Hinweis (H2).
 
 Aufruf:  python -m tests.test_hinweise
 """
@@ -422,12 +428,281 @@ def test_abfangmuster():
           a.fehler == ["F2"] and a.hinweise == ["H2"], repr(a))
 
 
+# ---------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung (03.10.2026), je ein Fall
+def test_l1_hinweis_waehrend_der_rechnung():
+    """L1: Balken und Uhr schreiben die Statuszeile in Zehntelsekunden neu - ein
+    frischer Hinweis bleibt bis zum Ablauf vorn stehen, gelb; das Protokoll
+    springt nicht nach vorn."""
+    import time
+    w, app = _fenster()
+    _halle(w, app)
+    reiter = w.bottom_tabs.currentIndex()
+    w._rechnet_gerade = True
+    w._rechnung_t0 = time.time()
+    w._rechnung_name = "Berechnung"
+    try:
+        w.hinweis("Probehinweis während der Rechnung")
+        w._rechnung_fortschritt("Lastfall 3 von 7", 0.4)
+        nach_fortschritt = w.statusBar().currentMessage()
+        w._rechnung_tick()
+        nach_tick = w.statusBar().currentMessage()
+        w._fortschritt(None, "Vernetzen")
+        nach_vernetzen = w.statusBar().currentMessage()
+        gelb = "#fff6d0" in w.statusBar().styleSheet()
+        check("Rechnung läuft: der Hinweis bleibt vorn, vor Fortschritt, Uhr und Vernetzen, gelb",
+              all(t.startswith("Hinweis: Probehinweis während der Rechnung")
+                  for t in (nach_fortschritt, nach_tick, nach_vernetzen))
+              and "Lastfall 3 von 7" in nach_fortschritt and gelb and not MODAL,
+              f"{nach_fortschritt!r} | {nach_tick!r} | {nach_vernetzen!r} | gelb {gelb}")
+        check("… das Protokoll springt nicht nach vorn (der Reiter unten bleibt)",
+              w.bottom_tabs.currentIndex() == reiter, f"{reiter} -> {w.bottom_tabs.currentIndex()}")
+        w._hinweis_bis = time.time() - 1.0          # abgelaufen
+        w._rechnung_fortschritt("Lastfall 4 von 7", 0.5)
+        t = w.statusBar().currentMessage()
+        check("… nach dem Ablauf steht wieder nur der Fortschritt, ohne Gelb",
+              t.startswith("Berechnung: Lastfall 4 von 7") and "#fff6d0" not in w.statusBar().styleSheet(),
+              repr(t))
+    finally:
+        w._rechnet_gerade = False
+        w.progress_bar.setRange(0, 0)
+        w.statusBar().clearMessage()
+    # eine echte Rechnung im Hintergrund (Hallenrahmen): ihre Zeilen kommen auch
+    # ueber info() - der Hinweis bleibt trotzdem vorn (gemessen: ohne den Schutz
+    # war er nach 0,3 s weg)
+    _halle(w, app)
+    w._fragen_knoepfe = lambda *a, **k: True
+    w.do_solve()
+    _ruhe(app)
+    lief = w._rechnet()
+    w.tbl_stellung.setCurrentCell(-1, -1)
+    w.stellung_aendern()            # Tabelle Stellungen ohne Zeile: Hinweis
+    t0 = time.time()
+    texte = []
+    while time.time() - t0 < 3.0 or (w._rechnet() and time.time() - t0 < 60.0):
+        app.processEvents()
+        time.sleep(0.02)
+        if not texte or texte[-1] != w.statusBar().currentMessage():
+            texte.append(w.statusBar().currentMessage())
+    ohne = [t for t in texte if not t.startswith("Hinweis: Zuerst eine Stellung in der Liste wählen")]
+    check("Rechnung am Hallenrahmen: der Hinweis steht bis zum Ende vorn in jeder Zeile",
+          lief and not w._rechnet() and len(texte) >= 2 and not ohne,
+          f"lief {lief}, {len(texte)} Texte, ohne Hinweis {ohne[:2]}")
+
+
+def test_l2_eingabefehler_als_hinweis():
+    """L2: eine ungueltige Eingabe in der Objektmaske (Versatz, Stabknoten) ist
+    ein Hinweis wie beim ψ des Lastfalls - kein rotes Fenster."""
+    from tests.meldungen import abfangen
+    w, app = _fenster()
+    _halle(w, app)
+    for feld, eingabe, text in (("ex_a", "1.000, 0", "1.000"), ("ex_a", "1; 2; 3", "2 Werte erwartet"),
+                                ("kn", "0, 1, x", "„x“ ist keine ganze Zahl")):
+        _aufraeumen(w, app)
+        w._objektmaske("stabelement", "0")
+        _ruhe(app)
+        mk = _maske(w)
+        vorher = list(w.model.elements[0].nodes), list(w.model.elements[0].exzentrizitaet or [])
+        mk.setzen(feld, eingabe)
+        MODAL.clear()
+        m = abfangen(w)
+        try:
+            erg = mk.anwenden()
+            _ruhe(app)
+        finally:
+            m.zurueck()
+        nachher = list(w.model.elements[0].nodes), list(w.model.elements[0].exzentrizitaet or [])
+        check(f"Stabelement „{feld}“ = „{eingabe}“: Hinweis ohne Fenster, Element unverändert",
+              m.hinweis_mit(text) and not m.fehler and not MODAL and erg is False and nachher == vorher,
+              f"Hinweise {m.hinweise[:1]}, Fehler {m.fehler[:1]}, {MODAL}, {erg!r}")
+    _aufraeumen(w, app)
+    from statik3d import zahlen as zl
+    check("zahlen: der Eingabefehler ist ein ValueError (bisherige except ValueError fangen ihn)",
+          issubclass(zl.Eingabefehler, ValueError) and isinstance(_wirft(zl.feldwert, "1.000"), zl.Eingabefehler)
+          and isinstance(_wirft(zl.zahlenliste, "1, 2, 3", 2, "Versatz"), zl.Eingabefehler))
+
+
+def _wirft(f, *a):
+    try:
+        f(*a)
+    except Exception as ex:        # noqa: BLE001
+        return ex
+    return None
+
+
+def test_s3_programmfehler_bleiben_fehler():
+    """S3: Schweißnaht - eine mehrdeutige Zahl ist ein Hinweis, eine unbekannte
+    Nahtart aus swn.kerbfall ein Fehler (Fenster)."""
+    from statik3d.schweissnaehte import Schweissnaht
+    from tests.meldungen import abfangen
+    w, app = _fenster()
+    _halle(w, app)
+    MODAL.clear()
+    m = abfangen(w)
+    try:
+        w._schweissnaht_anlegen({"name": "N9", "kf_vorgabe": "1.000"}, Schweissnaht("N9"))
+    finally:
+        m.zurueck()
+    check("Schweißnaht, Kerbfall-Vorgabe „1.000“: Hinweis (Eingabe)",
+          m.hinweis_mit("Eingabe", "1.000") and not m.fehler, f"{m!r}")
+    MODAL.clear()
+    w._schweissnaht_anlegen({"name": "N9", "art": "Quatschnaht"}, Schweissnaht("N9"))
+    _ruhe(app)
+    check("Schweißnaht, unbekannte Nahtart (aus swn.kerbfall): weiter das rote Fenster",
+          any(a == "critical" and "Quatschnaht" in t for a, t in MODAL), str(MODAL))
+    MODAL.clear()
+    m = abfangen(w)
+    try:
+        w._netzeinstellungen_setzen({"nachbessern": "MMG3D (nicht installiert)"})
+    finally:
+        m.zurueck()
+    check("Netzeinstellungen, nicht installierte Nachbesserung: Hinweis (Eingabe)",
+          m.hinweis_mit("nicht installiert") and not m.fehler, f"{m!r}")
+
+
+def test_s1_rueckbau_ueberschreibt_den_hinweis_nicht():
+    """S1: geprueft wird vor merken - die Statuszeile behaelt den Hinweis; wo
+    der Rueckbau doch laeuft, haengt sich sein Satz an."""
+    w, app = _fenster()
+    _halle(w, app)
+    w.maske_temperaturlast()
+    _ruhe(app)
+    mk = _maske(w)
+    schritte = len(w._undo)
+    mk.anwenden()                   # ohne Auswahl, „alle Elemente“ nicht angekreuzt
+    _ruhe(app)
+    t = w.statusBar().currentMessage()
+    check("Temperaturlast ohne Auswahl: die Statuszeile zeigt den Hinweis, kein Rückgängig-Schritt",
+          "Zuerst Stäbe, Flächen oder Volumen wählen" in t and len(w._undo) == schritte, repr(t))
+    _aufraeumen(w, app)
+    w.model.add_punktmasse(0, 1.0)
+    w.refresh_all()
+    _ruhe(app)
+    w._objektmaske("punktmasse", "0")
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("node", 999)
+    schritte, n_pm = len(w._undo), len(w.model.punktmassen)
+    mk.anwenden()
+    _ruhe(app)
+    t = w.statusBar().currentMessage()
+    check("Punktmasse auf Knoten 999: Hinweis in der Statuszeile, nichts angelegt, kein Schritt",
+          "Knoten 999 gibt es nicht" in t and len(w.model.punktmassen) == n_pm
+          and w.model.punktmassen[0].node == 0 and len(w._undo) == schritte, repr(t))
+    _aufraeumen(w, app)
+
+    # ein Handler, der erst merkt und dann mit einem Hinweis abweist
+    def halb(werte):
+        w.merken("halber Schritt")
+        w.model.add_node(77.0, 0.0, 0.0)
+        w.hinweis("simuliert: nach dem Merken abgewiesen")
+    w._maske_knoten_anlegen = halb
+    try:
+        w.maske_knoten()
+        _ruhe(app)
+        mk = _maske(w)
+        mk.setzen("x", 1.0)
+        mk.anwenden()
+        _ruhe(app)
+        t = w.statusBar().currentMessage()
+        check("Rückbau nach einem Hinweis: der Satz hängt sich an, der Hinweis bleibt vorn und gelb",
+              t.startswith("Hinweis: simuliert: nach dem Merken abgewiesen") and "nicht übernommen" in t
+              and "#fff6d0" in w.statusBar().styleSheet(), repr(t))
+    finally:
+        del w._maske_knoten_anlegen
+    _aufraeumen(w, app)
+
+
+def test_s2_hinweis_nur_in_der_eigenen_maske():
+    """S2: ein Hinweis aus einer Tabelle steht nicht in der Zeile einer fremden
+    offenen Maske; der Hinweis eines Maskenknopfs steht in ihrer."""
+    w, app = _fenster()
+    _halle(w, app)
+    w.maske_lager()
+    _ruhe(app)
+    mk = _maske(w)
+    w.stellung_aendern()            # Tabelle Stellungen, keine Zeile gewählt
+    _ruhe(app)
+    t, sichtbar, _s = _meldungszeile(mk)
+    check("Hinweis der Tabelle Stellungen bei offener Maske „Lager“: nicht in deren Meldungszeile",
+          not sichtbar and "Stellung" not in t
+          and "Zuerst eine Stellung in der Liste wählen" in w.statusBar().currentMessage(),
+          f"{t!r}, sichtbar {sichtbar}")
+    _aufraeumen(w, app)
+    w._objektmaske("lager_einzeln", "0")
+    _ruhe(app)
+    mk = _maske(w)
+    MODAL.clear()
+    mk.zusatzknoepfe["Bettung übernehmen"].click()     # „Bettung“ steht auf „–“
+    _ruhe(app)
+    t, sichtbar, _s = _meldungszeile(mk)
+    check("Knopf „Bettung übernehmen“ ohne Wahl: Hinweis in der Meldungszeile der eigenen Maske",
+          sichtbar and "Erst „auf Beton“ oder „an Beton“ wählen" in t and not MODAL, f"{t!r}, {MODAL}")
+    _aufraeumen(w, app)
+
+
+def test_h1_feldaenderung_nimmt_den_hinweis():
+    """H1: jede Aenderung in einem Feld nimmt den Hinweis aus der Meldungszeile -
+    auch ein Haken, nicht nur ein Zahlenfeld, das seinen Zustand wechselt."""
+    w, app = _fenster()
+    _halle(w, app)
+    w.maske_lager()
+    _ruhe(app)
+    mk = _maske(w)
+    mk.anwenden()                   # ohne Auswahl: Hinweis
+    _ruhe(app)
+    vorher = _meldungszeile(mk)[1]
+    mk.setzen("d3", True)           # ein Haken
+    _ruhe(app)
+    t, sichtbar, _s = _meldungszeile(mk)
+    check("Hinweis in der Maske, dann einen Haken setzen: der Hinweis geht",
+          vorher and not sichtbar, f"vorher {vorher}, nachher {t!r} sichtbar {sichtbar}")
+    _aufraeumen(w, app)
+    w.maske_knotenlast()
+    _ruhe(app)
+    mk = _maske(w)
+    import numpy as np
+    w.selection = np.array([1], dtype=int)
+    mk.anwenden()                   # alles null: Hinweis
+    _ruhe(app)
+    vorher = _meldungszeile(mk)[1]
+    mk._felder["Fz"].setText("-5")  # gültig nach gültig: der Zustand des Felds bleibt
+    _ruhe(app)
+    t, sichtbar, _s = _meldungszeile(mk)
+    check("… ebenso eine gültige Zahl statt einer gültigen Zahl",
+          vorher and not sichtbar, f"vorher {vorher}, nachher {t!r} sichtbar {sichtbar}")
+    _aufraeumen(w, app)
+
+
+def test_h2_rechtsklick_meldet_mit_hinweis():
+    """H2: die Bedienhinweise des Rechtsklicks kommen als Hinweis."""
+    from tests.meldungen import abfangen
+    w, app = _fenster()
+    _halle(w, app)
+    m = abfangen(w)
+    try:
+        w._rechnet_gerade = True
+        ok1 = w._eintrag_gilt(None)
+        w._rechnet_gerade = False
+        ok2 = w._eintrag_gilt(("anderer Stand",))
+    finally:
+        w._rechnet_gerade = False
+        m.zurueck()
+    check("Rechtsklick-Eintrag während der Rechnung und nach einer Modelländerung: je ein Hinweis",
+          ok1 is False and ok2 is False and m.hinweis_mit("Rechnung läuft")
+          and m.hinweis_mit("seit das Menü aufging") and not m.fehler, f"{m!r}")
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
     for t in (test_hinweis_in_der_maske, test_hinweis_ohne_maske, test_fehler_bleibt_ein_fenster,
               test_stichprobe_umgestellter_stellen, test_13m_hinweis_laesst_alles_stehen,
-              test_abfangmuster):
+              test_abfangmuster, test_l1_hinweis_waehrend_der_rechnung,
+              test_l2_eingabefehler_als_hinweis, test_s3_programmfehler_bleiben_fehler,
+              test_s1_rueckbau_ueberschreibt_den_hinweis_nicht,
+              test_s2_hinweis_nur_in_der_eigenen_maske, test_h1_feldaenderung_nimmt_den_hinweis,
+              test_h2_rechtsklick_meldet_mit_hinweis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

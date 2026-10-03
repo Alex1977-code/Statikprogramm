@@ -1360,12 +1360,12 @@ class MainWindow(QtWidgets.QMainWindow):
         Knoten (Nachbesserung F2 und L1 vom 03.10.2026). Die Statuszeile sagt,
         warum nichts geschieht."""
         if self._rechnet():
-            self.statusBar().showMessage("Rechnung läuft: der Eintrag wirkt nicht – während einer Rechnung gibt "
-                                         "es im Rechtsklick nur Sicht und Zoom", 8000)
+            self.hinweis("Rechnung läuft: der Eintrag wirkt nicht – während einer Rechnung gibt "
+                         "es im Rechtsklick nur Sicht und Zoom")
             return False
         if stand is not None and stand != self._menuestand():
-            self.statusBar().showMessage("Das Modell hat sich geändert, seit das Menü aufging – der Eintrag wirkt "
-                                         "nicht; bitte noch einmal rechts klicken", 8000)
+            self.hinweis("Das Modell hat sich geändert, seit das Menü aufging – der Eintrag wirkt "
+                         "nicht; bitte noch einmal rechts klicken")
             return False
         return True
 
@@ -1410,7 +1410,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if art != "Knoten" and not self._dargestellt(art):
             # wie beim Linksklick: was nicht dargestellt ist, laesst sich nicht waehlen
-            self.info(f"{art}: ausgeblendet - erst wieder einblenden (Glasleiste), dann wählen")
+            self.hinweis(f"{art}: ausgeblendet - erst wieder einblenden (Glasleiste), dann wählen")
             return None
         if art == "Lager":
             return lager()
@@ -1440,11 +1440,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if i is not None and int(i) >= 0:
             i = int(i)
             if not self._objekt_sichtbar("Knoten", i):
-                self.info(f"Knoten {i}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
+                self.hinweis(f"Knoten {i}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
                 return None
             sperre = self._layer_sperre("Knoten", i)
             if sperre:
-                self.info(f"Knoten {i}: gesperrt (Layer „{sperre}“) - nicht wählbar")
+                self.hinweis(f"Knoten {i}: gesperrt (Layer „{sperre}“) - nicht wählbar")
                 return None
             return ("knoten", i)
         if len(m.elements) or getattr(m, "lines", None) or m.flaechen:
@@ -1458,8 +1458,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if name:
                     sperre = self._layer_sperre(a, name)
                     if sperre:
-                        self.info(f"{name}: gesperrt (Layer „{sperre}“) - nicht wählbar; "
-                                  "Layerliste: Haken „gesperrt“ weg")
+                        self.hinweis(f"{name}: gesperrt (Layer „{sperre}“) - nicht wählbar; "
+                                     "Layerliste: Haken „gesperrt“ weg")
                         return None
                     return (schl, name)
         return lager()
@@ -1708,7 +1708,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "knoten":
             gesperrt = self.model.knoten_gesperrt([int(name)])
             if gesperrt:
-                return self.info(f"Nichts gelöscht: K{int(name)}: {gesperrt.get(int(name), '')}")
+                return self.hinweis(f"Nichts gelöscht: K{int(name)}: {gesperrt.get(int(name), '')}")
         if not self._bestaetigen(f"{titel} wirklich löschen?" + self._loesch_folgen([(art, [name])])):
             return None
         rest = self._auswahl_merken(ohne=ziel)
@@ -1720,7 +1720,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sicherung_ablegen(f"{titel} gelöscht", kopie, stand)
             raise
         if gruende is None or gruende:
-            return self.info("Nichts gelöscht: " + ("; ".join(gruende) if gruende else f"{art}: kein Löschweg"))
+            return self.hinweis("Nichts gelöscht: " + ("; ".join(gruende) if gruende else f"{art}: kein Löschweg"))
         self._sicherung_ablegen(f"{titel} gelöscht", kopie, stand)
         self.analysis = None
         self.results = None
@@ -2083,6 +2083,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     normale = np.array({"yz": (1, 0, 0), "xz": (0, 1, 0), "xy": (0, 0, 1)}[wahl[:2]], float)
                     punkt = normale * zahl("lage")
                 R, t = tr.spiegelung(punkt, normale)
+        except zl.Eingabefehler as ex:          # ungueltige Eingabe (Nachbesserung 9b, L2)
+            return self.hinweis(str(ex))
         except (ValueError, KeyError) as ex:
             return self.error(str(ex))
         kopie = art == "kopieren" or bool(w.get("kopie"))
@@ -2463,7 +2465,7 @@ class MainWindow(QtWidgets.QMainWindow):
         gruende = self._art_loeschen(art, namen)
         if gruende is None:
             self._merken_zuruecknehmen()
-            return self.error(f"{art}: kein Löschweg")
+            return self.hinweis(f"{art}: kein Löschweg")
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
@@ -6602,7 +6604,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._undo_init()
         beginn = {"modell": self.model, "undo": list(self._undo), "redo": list(self._redo),
                   "stand": self._stand, "tausch": len(getattr(self, "_knotentausch", None) or []),
-                  "erster": None}
+                  "erster": None, "hinweis_nr": getattr(self, "_hinweis_nr", 0)}
         staende = getattr(self, "_uebernahme_staende", None)
         if staende is None:
             staende = self._uebernahme_staende = []
@@ -6753,7 +6755,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         text = f"„{titel}“ nicht übernommen - das Modell ist wieder wie vorher"
         self.log.appendPlainText(text)
-        self.statusBar().showMessage(text, 10000)
+        # Kam der Grund als Hinweis in diesem „Übernehmen“, haengt sich der Satz
+        # an, statt ihn zu ueberschreiben (Nachbesserung 9b, S1)
+        hinweis = self._hinweis_frisch()
+        if hinweis and getattr(self, "_hinweis_nr", 0) != beginn.get("hinweis_nr", 0):
+            self._hinweis_statuszeile(f"{hinweis} · {text}")
+        else:
+            self.statusBar().showMessage(text, 10000)
 
     # ---- Wuensche zeigen auf Objekte, nicht auf Namen oder Plaetze (Paket 13m, F4) ----
     #: Art im Modellbaum und in den Masken -> Sammlung am Modell. Ein Wunsch
@@ -7841,8 +7849,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Ganz: Nummernlisten (Knoten, Elemente, Teilung) - ohne ``anzahl``
         faellt weg, was keine Nummer ist. Mit Komma (Stab-Versatz y, z;
         Ersatzachse; Gewichte): jede Zahl nach der Regel der Zahlenfelder, ein
-        mehrdeutiger („1.000“) oder ungueltiger Eintrag wirft ValueError
-        (25.09.2026; bis dahin wurde „1.000“ still 1 und „1,0,0“ fiel still weg).
+        mehrdeutiger („1.000“) oder ungueltiger Eintrag wirft zl.Eingabefehler, einen
+        ValueError (25.09.2026; bis dahin wurde „1.000“ still 1 und „1,0,0“ fiel
+        still weg; als Eingabefehler seit 03.10.2026 ein Hinweis, Paket 9b).
 
         ``anzahl`` (eine Zahl oder mehrere erlaubte): Listen fester Laenge
         (Versatz, Achse, Gewichte, Stabknoten, Teilung) weisen zu viele oder
@@ -7857,7 +7866,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return [int(t) for t in teile if t.lstrip("-").isdigit()]
             falsch = next((t for t in teile if not t.lstrip("+-").isdigit()), None)
             if falsch is not None:
-                raise ValueError(f"{feld + ': ' if feld else ''}„{falsch}“ ist keine ganze Zahl.")
+                raise zl.Eingabefehler(f"{feld + ': ' if feld else ''}„{falsch}“ ist keine ganze Zahl.")
             return zl.anzahl_pruefen([int(t) for t in teile], anzahl, feld, text)
         return zl.zahlenliste(text, anzahl, feld)
 
@@ -8636,6 +8645,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 feld="Gewichte (RBE3, eines je angeschlossenem Knoten)")}
         return {}
 
+    @staticmethod
+    def _verbindung_knoten(w: dict, schluessel: str, vorgabe=0) -> int:
+        """Eine Knotennummer aus der Maske eines Verbindungsobjekts."""
+        try:
+            return int(float(w.get(schluessel, vorgabe)))
+        except (TypeError, ValueError):
+            return int(vorgabe)
+
+    def _verbindung_pruefen(self, art: str, w: dict):
+        """Die Knoten einer Punktmasse, eines Daempfers oder eines starren
+        Koerpers pruefen, bevor etwas geschrieben wird - der Grund als Text oder
+        None (Nachbesserung 9b, S1: geprueft wurde bis dahin nach dem Merken, und
+        der Rueckbau ueberschrieb den Hinweis in der Statuszeile)."""
+        m = self.model
+        knoten = lambda s, v=0: self._verbindung_knoten(w, s, v)   # noqa: E731
+        if art == "punktmasse":
+            n = knoten("node")
+            return None if 0 <= n < m.nn else f"Knoten {n} gibt es nicht"
+        if art == "daempfer":
+            a, b = knoten("node_a"), knoten("node_b", -1)
+            if not 0 <= a < m.nn or (b >= 0 and b >= m.nn):
+                return "Knoten A (und B, wenn nicht −1) müssen vorhanden sein"
+            return None
+        if art == "starrkoerper":
+            master = knoten("master")
+            slaves = [n for n in self._zahlenliste(w.get("slaves")) if 0 <= n < m.nn and n != master]
+            if not 0 <= master < m.nn or not slaves:
+                return "Masterknoten und mindestens ein angeschlossener Knoten nötig"
+        return None
+
     def _verbindung_uebernehmen(self, art: str, name: str, w: dict, neu: bool, listen: dict = None):
         """Die Maske eines Verbindungsobjekts in das Modell schreiben.
         Rueckgabe: der (neue) Name bzw. Index als Text - None bei einem Fehler.
@@ -8643,12 +8682,15 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         if listen is None:
             listen = self._verbindung_listen(art, w)
+        # erst pruefen, dann anlegen: bis 03.10.2026 entstand eine neue
+        # Punktmasse oder ein Daempfer schon vor der Pruefung der Knoten
+        grund = self._verbindung_pruefen(art, w)
+        if grund:
+            self.hinweis(grund)
+            return None
 
         def knoten(schluessel, vorgabe=0):
-            try:
-                return int(float(w.get(schluessel, vorgabe)))
-            except (TypeError, ValueError):
-                return int(vorgabe)
+            return self._verbindung_knoten(w, schluessel, vorgabe)
 
         if art == "punktmasse":
             i = int(name) if str(name).isdigit() else -1
@@ -8657,9 +8699,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 i = len(m.punktmassen) - 1
             pm = m.punktmassen[i]
             n = knoten("node")
-            if not 0 <= n < m.nn:
-                self.hinweis(f"Knoten {n} gibt es nicht")
-                return None
             pm.node = n
             pm.masse = max(0.0, float(w.get("masse", 0.0) or 0.0))
             pm.traegheit = [max(0.0, float(w.get(k, 0.0) or 0.0)) for k in ("Jx", "Jy", "Jz")]
@@ -8673,9 +8712,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 i = len(m.daempfer) - 1
             dp = m.daempfer[i]
             a, b = knoten("node_a"), knoten("node_b", -1)
-            if not 0 <= a < m.nn or (b >= 0 and b >= m.nn):
-                self.hinweis("Knoten A (und B, wenn nicht −1) müssen vorhanden sein")
-                return None
             dp.node_a, dp.node_b = a, b
             dp.c = [float(w.get(k, 0.0) or 0.0) for k in ("cx", "cy", "cz")] + [0.0, 0.0, 0.0]
             dp.name = str(w.get("name", "") or "").strip() or dp.name
@@ -8723,10 +8759,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sk = m.starrkoerper[i]
         master = knoten("master")
         slaves = [n for n in self._zahlenliste(w.get("slaves")) if 0 <= n < m.nn and n != master]
-        if not 0 <= master < m.nn or not slaves:
-            self.hinweis("Masterknoten und mindestens ein angeschlossener Knoten nötig")
-            return None
-        sk.master, sk.slaves = master, slaves
+        sk.master, sk.slaves = master, slaves       # geprueft in _verbindung_pruefen
         sk.art = "RBE3" if str(w.get("art", "RBE2")).upper() == "RBE3" else "RBE2"
         sk.gewichte =gew if len(gew) == len(slaves) else []
         sk.name = str(w.get("name", "") or "").strip() or sk.name
@@ -8773,7 +8806,7 @@ class MainWindow(QtWidgets.QMainWindow):
         w = maske.werte()
         wahl = str(w.get("beton", "–"))
         if wahl.startswith("–"):
-            return self.statusBar().showMessage("Erst „auf Beton“ oder „an Beton“ wählen", 4000)
+            return self.hinweis("Erst „auf Beton“ oder „an Beton“ wählen")
         # Dieselbe Freigabe wie „Übernehmen“ (24.09.2026): „33.000“ in E_cm
         # fragt erst nach, sonst stuende eine 1000-fach zu weiche Feder im
         # Feld, bevor die Maske ueberhaupt fragt; der zweite Klick bestaetigt
@@ -10269,6 +10302,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Listenfelder vor dem Merken lesen (25.09.2026): eine
                 # abgewiesene Eingabe hinterlaesst keinen leeren Schritt
                 listen = self._verbindung_listen(art, w)
+                # Knoten vor dem Merken pruefen (Nachbesserung 9b, S1)
+                grund = self._verbindung_pruefen(art, w)
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(self.VERBINDUNGEN[art][2])
                 name = self._verbindung_uebernehmen(art, name, w, neu, listen)
                 if name is None:
@@ -10408,6 +10445,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     kp_.kerbfall_vorschlag = False
             else:
                 return None
+        except zl.Eingabefehler as ex:
+            # Versatz, Teilung, Ersatzachse, Gewichte, Stabknoten: eine
+            # ungueltige Eingabe ist ein Hinweis (Nachbesserung 9b, L2) - wie
+            # schon beim ψ des Lastfalls; alles andere bleibt ein Fehler
+            return self.hinweis(str(ex))
         except (KeyError, ValueError, IndexError) as ex:
             return self.error(str(ex))
         if w.get("vernetzen"):
@@ -12437,7 +12479,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if time.time() - getattr(self, "_sperre_gemeldet", 0.0) < 4.0:
             # eben abgewiesen (waehrend „Übernehmen“ rechnet): der Grund bleibt stehen
             zeile = f"{_SPERRTEXT} · {zeile}"
-        self.statusBar().showMessage(zeile)
+        # ein frischer Hinweis bleibt vorn stehen (_hinweis_statuszeile)
+        self.statusBar().showMessage(self._mit_hinweis(zeile))
         jetzt = time.time()
         if sofort or jetzt - getattr(self, "_fortschritt_tick", 0.0) >= 0.15:
             self._fortschritt_tick = jetzt
@@ -16701,7 +16744,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def info(self, msg):
         self.log.appendPlainText(str(msg))
-        self.statusBar().showMessage(str(msg), 5000)
+        # waehrend eines Fortschritts (Rechnung, Vernetzen) bleibt ein frischer
+        # Hinweis vorn - die Zeilen der Rechnung kommen in Zehntelsekunden
+        text = self._mit_hinweis(str(msg)) if self._fortschritt_sichtbar() else str(msg)
+        self.statusBar().showMessage(text, 5000)
 
     def _modal_gesperrt(self, art: str, msg) -> bool:
         """Waehrend einer Rechnung wird kein modales Fenster geoeffnet.
@@ -16746,8 +16792,14 @@ class MainWindow(QtWidgets.QMainWindow):
         Gezaehlt wie error(), hier und nicht beim Aufrufer, damit es keiner
         vergessen kann: ein „Übernehmen“, das ein Hinweis abweist, ist
         gescheitert - Maske, Punkt und Leiste bleiben stehen, die Eingaben gehen
-        nicht verloren (_uebernahme_lauf, Paket 13m, Fehler F1)."""
+        nicht verloren (_uebernahme_lauf, Paket 13m, Fehler F1).
+
+        In die Meldungszeile einer Maske schreibt er nur, solange deren eigenes
+        „Übernehmen“ laeuft oder einer ihrer Knoepfe ihn ausgeloest hat
+        (Nachbesserung 03.10.2026, S2): ein Hinweis aus einer Tabelle oder der
+        Layerliste stand bis dahin in der Zeile einer fremden offenen Maske."""
         self._fehlerzahl = getattr(self, "_fehlerzahl", 0) + 1
+        self._hinweis_nr = getattr(self, "_hinweis_nr", 0) + 1
         text = str(msg)
         self.log.appendPlainText("HINWEIS: " + text)
         erste = text.splitlines()[0] if text.strip() else text
@@ -16755,29 +16807,74 @@ class MainWindow(QtWidgets.QMainWindow):
         rand = getattr(self, "maskenrand", None)
         mk = getattr(rand, "maske", None)
         zeigen = getattr(mk, "hinweis_zeigen", None)
-        if mk is not None and _lebt(mk) and not mk.isHidden() and callable(zeigen):
+        if mk is not None and _lebt(mk) and not mk.isHidden() and callable(zeigen) \
+                and (getattr(mk, "_uebernimmt", False) or getattr(mk, "_knopf_laeuft", False)):
             zeigen(text)
 
     #: Statuszeile bei einem Hinweis: dieselben Farben wie die gelbe
     #: Meldungszeile der Masken (zahlenfeld.meldungszeile_setzen)
     HINWEIS_STATUSSTIL = "QStatusBar { background: #fff6d0; color: #6b5000; border-top: 1px solid #e0a800; }"
 
+    #: so lange steht ein Hinweis in der Statuszeile [s]
+    HINWEIS_DAUER = 15.0
+
     def _hinweis_statuszeile(self, text: str) -> None:
         """Den Hinweis in die Statuszeile, gelb hinterlegt - bis eine andere
-        Meldung kommt oder er nach 15 s ablaeuft (_hinweis_statuszeile_aus)."""
+        Meldung kommt oder er nach 15 s ablaeuft (_hinweis_statuszeile_aus).
+
+        Waehrend einer Rechnung (oder eines Vernetzens) schreiben Balken und Uhr
+        die Statuszeile in Zehntelsekunden neu (_rechnung_fortschritt,
+        _rechnung_tick, _fortschritt); bis zum Ablauf steht der Hinweis dort
+        vorn, vor ihrem Text (:meth:`_mit_hinweis`). Das Protokoll holt ein
+        Hinweis nicht nach vorn - anders als error() waehrend einer Rechnung:
+        der Reiter unten springt nur bei Fehlern und Warnungen (Paket 9 des
+        Plans), und ein Hinweis aus einer Tabelle naehme dem Anwender sonst
+        genau die Tabelle weg, an der er arbeitet (Nachbesserung 03.10.2026,
+        L1; Vorbild ist der Sperrtext waehrend „Übernehmen“ in _fortschritt)."""
         sb = self.statusBar()
         if not getattr(self, "_hinweis_status_verbunden", False):
             sb.messageChanged.connect(self._hinweis_statuszeile_aus)
             self._hinweis_status_verbunden = True
         self._hinweis_statustext = text
+        self._hinweis_bis = time.time() + self.HINWEIS_DAUER
         sb.setStyleSheet(self.HINWEIS_STATUSSTIL)
-        sb.showMessage(text, 15000)
+        sb.showMessage(text, int(self.HINWEIS_DAUER * 1000))
+
+    def _hinweis_frisch(self):
+        """Der Text des Hinweises in der Statuszeile, solange er nicht abgelaufen ist."""
+        text = getattr(self, "_hinweis_statustext", None)
+        return text if text and time.time() < getattr(self, "_hinweis_bis", 0.0) else None
+
+    def _mit_hinweis(self, zeile: str) -> str:
+        """Ein Fortschrittstext fuer die Statuszeile - ein frischer Hinweis steht
+        davor, und die Zeile ist (wieder) gelb."""
+        hinweis = self._hinweis_frisch()
+        if not hinweis:
+            return zeile
+        sb = self.statusBar()
+        if sb.styleSheet() != self.HINWEIS_STATUSSTIL:
+            sb.setStyleSheet(self.HINWEIS_STATUSSTIL)
+        return f"{hinweis} · {zeile}"
+
+    def _fortschritt_sichtbar(self) -> bool:
+        """Laeuft ein Fortschritt mit Balken (Rechnung, Vernetzen, Datei)?"""
+        balken = getattr(self, "progress_bar", None)
+        return balken is not None and not balken.isHidden()
 
     def _hinweis_statuszeile_aus(self, text: str) -> None:
-        """Eine andere Meldung der Statuszeile (oder keine mehr) nimmt das Gelb weg."""
-        if text != getattr(self, "_hinweis_statustext", None) and self.statusBar().styleSheet():
-            self._hinweis_statustext = None
+        """Eine andere Meldung der Statuszeile (oder keine mehr) nimmt das Gelb
+        weg - nicht ein Fortschrittstext, vor dem der frische Hinweis steht.
+        Laeuft ein Fortschritt, bleibt der Hinweis bis zum Ablauf gemerkt: der
+        naechste Fortschrittstext setzt ihn wieder davor (gemessen 03.10.2026,
+        Rechnung am Hallenrahmen: ohne das war er nach 0,3 s weg)."""
+        hinweis = self._hinweis_frisch()
+        if hinweis and str(text).startswith(hinweis):
+            return
+        if self.statusBar().styleSheet():
             self.statusBar().setStyleSheet("")
+        if not (hinweis and self._fortschritt_sichtbar()):
+            self._hinweis_statustext = None
+            self._hinweis_bis = 0.0
 
     def warnung(self, msg):
         """Etwas stimmt nicht, aber es geht weiter - anders als bei error()."""
@@ -17036,8 +17133,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         try:
             sn = self._schwingung_aus_maske(w, vorlage)
-        except ValueError as ex:
+        except zl.Eingabefehler as ex:          # nur die Eingabe ist ein Hinweis (9b, S3)
             return self.hinweis(f"Eingabe: {ex}")
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
         if sn.wasserdruck not in m.wasserdruecke:
             return self.error(f"Wasserdruck „{sn.wasserdruck}“ gibt es nicht")
         if alt and alt != sn.name and alt in m.schwingungen:
@@ -17228,8 +17327,12 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             n = self._naht_aus_maske(w, vorlage)
             kf = swn.kerbfall(n)
-        except ValueError as ex:
+        except zl.Eingabefehler as ex:
+            # nur die Eingabe ist ein Hinweis (9b, S3) - „Nahtart … unbekannt“
+            # aus swn.kerbfall ist ein Daten- oder Programmfehler
             return self.hinweis(f"Eingabe: {ex}")
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
         if n.name != alt and n.name in m.schweissnaehte:
             return self.hinweis(f"Schweißnaht „{n.name}“ gibt es schon")
         if not (n.staebe or n.linien or n.flaechen or n.aequivalent):
@@ -18359,7 +18462,7 @@ class MainWindow(QtWidgets.QMainWindow):
         vernetzer = wahl(w.get("vernetzer"), ("eigener", "gmsh", "netgen"), n.vernetzer)
         nachbessern = wahl(w.get("nachbessern"), ("keine", "mmg3d"), n.nachbessern)
         if "nicht installiert" in str(w.get("vernetzer", "")) or "nicht installiert" in str(w.get("nachbessern", "")):
-            raise ValueError("Der gewählte Vernetzer bzw. die Nachbesserung ist nicht installiert")
+            raise zl.Eingabefehler("Der gewählte Vernetzer bzw. die Nachbesserung ist nicht installiert")
         neu = replace(n, dichte=str(w.get("dichte", n.dichte)),
                       ziellaenge=max(1e-4, ziel),
                       intelligent=bool(w.get("intelligent", True)),
@@ -18409,8 +18512,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _netzeinstellungen_setzen(self, w: dict):
         try:
             netz = self._netz_aus_maske(w)
-        except (ValueError, TypeError) as ex:
+        except zl.Eingabefehler as ex:          # nur die Eingabe ist ein Hinweis (9b, S3)
             return self.hinweis(f"Eingabe: {ex}")
+        except (ValueError, TypeError) as ex:
+            return self.error(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
         self.model.netz = netz
         # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
@@ -20365,8 +20470,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         try:
             wd = self._wind_aus_maske(w, vorlage)
-        except ValueError as ex:
+        except zl.Eingabefehler as ex:          # nur die Eingabe ist ein Hinweis (9b, S3)
             return self.hinweis(f"Eingabe: {ex}")
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
         if not (wd.flaechen or wd.freie_waende or wd.schilder or wd.staebe):
             return self.hinweis("Zuerst Wände/Dach oder Stäbe in der Ansicht wählen und „Auswahl übernehmen“")
         if wd.name != alt and wd.name in m.winde:
@@ -20482,8 +20589,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         try:
             wd = self._wasserdruck_aus_maske(w, vorlage)
-        except ValueError as ex:
+        except zl.Eingabefehler as ex:          # nur die Eingabe ist ein Hinweis (9b, S3)
             return self.hinweis(f"Eingabe: {ex}")
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
         if not (wd.flaechen or wd.koerper):
             return self.hinweis("Zuerst die benetzten Flächen (oder Volumen) in der Ansicht wählen "
                               "und „Auswahl übernehmen“")
@@ -20561,6 +20670,11 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         n_el = 0
         objekte = 0
+        # vor merken pruefen (Nachbesserung 9b, S1): ein Rueckbau ueberschriebe
+        # den Hinweis in der Statuszeile
+        if not w.get("alle") and not (self.sel_staebe or self.sel_flaechen or self.sel_koerper):
+            return self.hinweis("Zuerst Stäbe, Flächen oder Volumen wählen - oder "
+                                "„alle Elemente“ ankreuzen")
         self.merken("Temperaturlast")
         if w.get("alle"):
             for i in range(len(m.elements)):
@@ -20582,9 +20696,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 m.add_geometrielast(name, art="koerper", lastart="temperatur", dT=dT,
                                     dT_z=dTz, case=fall)
                 objekte += 1
-            if not objekte:
-                return self.hinweis("Zuerst Stäbe, Flächen oder Volumen wählen - oder "
-                                  "„alle Elemente“ ankreuzen")
             n_el += m.lasten_verteilen()
         self.analysis = None
         self.results = None
@@ -22552,9 +22663,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setFormat(f"%p % · {zeit} {z}")
             self.progress_bar.setTextVisible(True)
         else:
-            self.statusBar().showMessage(
+            self.statusBar().showMessage(self._mit_hinweis(
                 f"{getattr(self, '_rechnung_name', 'Berechnung')}: "
-                f"{getattr(self, '_rechnung_letzter_text', '') or 'läuft'} ({zeit}) {z}")
+                f"{getattr(self, '_rechnung_letzter_text', '') or 'läuft'} ({zeit}) {z}"))
 
     def _rechnung_fortschritt(self, text: str, anteil: float) -> None:
         """Balken und Statuszeile waehrend der Rechnung: Schritt, Anteil, Zeit."""
@@ -22572,9 +22683,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # 12.09.2026: „Schritt 4 (2 %, 0 s)“ statt der Zusage).
             return
         dt = time.time() - getattr(self, "_rechnung_t0", time.time())
-        self.statusBar().showMessage(
+        self.statusBar().showMessage(self._mit_hinweis(
             f"{getattr(self, '_rechnung_name', 'Berechnung')}: {text}  "
-            f"({a * 100:.0f} %, {dt:.0f} s)")
+            f"({a * 100:.0f} %, {dt:.0f} s)"))
 
     def _rechnung_ende(self, meldung: str = None, dauer: float = 8000) -> None:
         takt = getattr(self, "_rechnung_takt", None)
@@ -22588,8 +22699,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_abbrechen.setVisible(False)
         self._abbruch = False
         dt = time.time() - getattr(self, "_rechnung_t0", time.time())
-        self.statusBar().showMessage(
-            meldung or f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)",
+        self.statusBar().showMessage(self._mit_hinweis(
+            meldung or f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)"),
             int(dauer))
 
     #: zaehlt Neu/Oeffnen/Beispiel/Import (_protokoll_neu); eine Rechnung

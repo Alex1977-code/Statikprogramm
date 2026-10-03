@@ -149,7 +149,15 @@ def _fenster():
     w._fragen_knoepfe = lambda *a, **k: True
     w._frage_speichern_verwerfen = lambda *a, **k: "verwerfen"
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: w.fehler_liste.append(str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    # zaehlen=False ausdruecklich (Nachbesserung 9b, S4): die Kontaktbedingung
+    # „Fuge“ des Pruefmodells liegt an shell8-Elementen, ihr „Übernehmen“ meldet
+    # dazu einen Fehler (fugen.QuadratischeSeiten). Gezaehlt scheitert es wie im
+    # Programm, und S5 (Umbenennen, Wunsch der Leiste) kaeme nie an - gemessen
+    # 03.10.2026: „Maske 'Kontaktbedingung Fuge'“ statt „Fuge2“.
+    w.meldungen = abfangen(w, w.fehler_liste, zaehlen=False)
     _FENSTER.update(w=w, app=app)
     _antwort(w, True)
     return w, app
@@ -1097,7 +1105,8 @@ def test_f2_l1_offenes_menue():
     meldung = w.statusBar().currentMessage()
     check("F2: Rechtsklick auf B, Strg+Z bei offenem Menü, „Knoten löschen“: nichts gelöscht, keine Rückfrage, "
           "die Statuszeile sagt warum",
-          st.get("da") and st.get("rueckgaengig") and da_a and da_b and not FRAGEN and "geändert" in meldung,
+          st.get("da") and st.get("rueckgaengig") and da_a and da_b and not FRAGEN and "geändert" in meldung
+          and w.meldungen.zuletzt_hinweis("geändert"),      # seit 9b ein Hinweis
           f"{st} A {da_a} B {da_b} {FRAGEN} {meldung!r}")
     _leeren(w, app)
     # F5 bei offenem Menue: die Rechnung (Ersatz) beginnt, dann „Knoten löschen“
@@ -1124,7 +1133,8 @@ def test_f2_l1_offenes_menue():
         w._rechnet_gerade = False
         w.do_solve = alt
     check("L1: F5 bei offenem Menü, dann „Knoten löschen“: während der Rechnung wird nichts gelöscht",
-          aufrufe and st.get("da_f5") and w.model.nn == nn and not FRAGEN and "Rechnung" in meldung,
+          aufrufe and st.get("da_f5") and w.model.nn == nn and not FRAGEN and "Rechnung" in meldung
+          and w.meldungen.zuletzt_hinweis("Rechnung läuft"),      # seit 9b ein Hinweis
           f"F5 {bool(aufrufe)} {w.model.nn}/{nn} {FRAGEN} {meldung!r}")
     _leeren(w, app)
     # eine Rechnung beginnt, waehrend das Menue offen ist: „Bearbeiten…“ und „Knotenlast…“ wirken nicht
@@ -1385,7 +1395,8 @@ def test_gesperrt_wie_linksklick():
         menu = rechtsklick(w, app, m.nodes[n["K1"]])
         check("gesperrter Knoten K1: kein Objektmenü, nichts gewählt, die Auswahlart bleibt, die Statuszeile sagt es",
               _titel(menu) == "" and not _knoten(w) and not w.sel_staebe and w.auswahlart == "Knoten"
-              and "gesperrt" in w.statusBar().currentMessage(),
+              and "gesperrt" in w.statusBar().currentMessage()
+              and w.meldungen.zuletzt_hinweis("gesperrt"),          # seit 9b ein Hinweis
               f"{_titel(menu)!r} {_knoten(w)} {w.sel_staebe} {w.auswahlart} {w.statusBar().currentMessage()!r}")
     finally:
         del m.layer["Sperre"]
