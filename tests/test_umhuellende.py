@@ -861,7 +861,7 @@ def test_stellungsreihe_ohne_kombinationen():
     from statik3d.bridges.positions import Stellungsreihe, Stellung
     m, _ = _kragarm_nachweis("K")
     r = Stellungsreihe(m, "Kragarm")
-    r.add(Stellung("S1", 0.0, "geschlossen"))
+    r.add(Stellung("S1", 0.0, "geschlossen", faelle=list(m.load_cases)))
     u = r.rechnen(kombinationen=False, nachweise=True)
     e = r.ergebnis("S1")
     # getattr: so zeigt die Ruecknahmeprobe den alten Zustand als FAIL mit
@@ -907,12 +907,13 @@ def test_stellung_behaelt_ergebniskombination():
     Lastfaellen eta 0,1702 statt 0,3702, weil der Nachweis auf die
     Lastfaelle zurueckfiel (gemessen 23.09.2026)."""
     from statik3d.bridges.positions import Stellung
-    stellungen = (Stellung("alle", 0.0), Stellung("faelle", 0.0, faelle=["LF1", "LF2"]),
+    # seit 02.10.2026 rechnet eine Stellung nur Zugewiesenes - „alle“ steht ausdruecklich da
+    stellungen = (Stellung("alle", 0.0, faelle=["LF1", "LF2"]), Stellung("faelle", 0.0, faelle=["LF2", "LF1"]),
                   Stellung("nur_LF1", 0.0, faelle=["LF1"]))
     ek, _ = _stellungen_eta("EK", *stellungen)
     k, _ = _stellungen_eta("K", *stellungen)
     e = ek["faelle"]
-    check("faelle mit allen Lastfaellen: EK1 bleibt, eta wie ohne faelle",
+    check("faelle mit allen Lastfaellen (andere Reihenfolge): EK1 bleibt, eta gleich",
           "EK1" in e.modell.combinations and abs(e.eta - ek["alle"].eta) < 1e-9
           and ek["alle"].eta > 0.3 and not e.warnungen,
           f"eta {e.eta:.4f} / ohne faelle {ek['alle'].eta:.4f}, {sorted(e.modell.combinations)}")
@@ -957,9 +958,10 @@ def test_antrieb_in_den_alternativen():
     die EK ohne Antrieb: eta 0,3702 wie ohne Antrieb, mit der gleichwertigen
     K2 0,4255 (Mz 50 kNm an der Spitze, gemessen 23.09.2026)."""
     from statik3d.bridges.positions import Stellung
-    antrieb = (lambda ids: Stellung("antrieb", 0.0, antrieb=(ids[-1], (0.0, 0.0, 5.0e4))))
-    ek, _ = _stellungen_eta("EK", Stellung("ohne", 0.0), antrieb)
-    k, _ = _stellungen_eta("K", Stellung("ohne", 0.0), antrieb)
+    antrieb = (lambda ids: Stellung("antrieb", 0.0, faelle=["LF1", "LF2"],
+                                    antrieb=(ids[-1], (0.0, 0.0, 5.0e4))))
+    ek, _ = _stellungen_eta("EK", Stellung("ohne", 0.0, faelle=["LF1", "LF2"]), antrieb)
+    k, _ = _stellungen_eta("K", Stellung("ohne", 0.0, faelle=["LF1", "LF2"]), antrieb)
     e = ek["antrieb"]
     alt = e.modell.combinations["EK1"].alternativen
     check("jede Alternative traegt den Antrieb mit 1,0",

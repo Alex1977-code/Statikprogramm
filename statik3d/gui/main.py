@@ -5871,7 +5871,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("situationen", "Situationen", "info", str(len(m.situationen)))]
                 titel, knopf = "Stellungen", "Neue Stellung"
                 hinweis = ("Eine Stellung ist eine Lage des Systems: Ausgangsstellung, Verschiebung, "
-                           "Verdrehung und was darin nicht wirkt. Situationen ordnen ihr Lastfälle zu.")
+                           "Verdrehung und was darin nicht wirkt. Welche Lastfälle sie bei „Alle Stellungen“ "
+                           "rechnet, steht in ihrer Maske; Situationen ordnen Lastfälle für „Berechnen“ zu.")
             else:
                 st = m.stellung(name)
                 andere = [s.name for s in m.stellungen if s.name != name]
@@ -5888,6 +5889,14 @@ class MainWindow(QtWidgets.QMainWindow):
                             for i, x in enumerate(self._lagerliste_von(lart))]
 
                 felder = [F("name", "Bezeichnung", "text", name, breite=150),
+                          F("faelle", "Lastfälle dieser Stellung", "mehrfach", liste("faelle"),
+                            list(m.load_cases),
+                            hinweis="Nur angehakte Lastfälle rechnet „Alle Stellungen“; ohne Haken "
+                                    "rechnet die Stellung nichts, und das Protokoll sagt es"),
+                          F("faelle_alle", "Alle Lastfälle anhaken", "haken",
+                            bool(st is not None and m.load_cases
+                                 and set(m.load_cases) <= set(st.faelle or [])),
+                            hinweis="Setzt oder löscht jeden Haken der Liste darüber"),
                           F("klick", "Klick in der Ansicht schaltet Stab, Fläche oder Volumen aus / ein",
                             "haken", True,
                             hinweis="Solange der Haken steht, gehen Klicks in der Ansicht an diese "
@@ -5985,6 +5994,7 @@ class MainWindow(QtWidgets.QMainWindow):
             maske.geschlossen.connect(lambda: self._situation_vorschau(None))
             maske.abgebrochen.connect(lambda: self._situation_vorschau(None))
             self._stellung_klickmodus(maske, name)
+            self._stellung_alle_lastfaelle(maske)
         zweigart = self.baum.ELTERNART.get(art, art)
         if not eintrag:
             maske.angewendet.connect(lambda _w, z=zweigart: self._baum_neu(z))
@@ -6330,7 +6340,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _stellung_aus_maske(self, w: dict, alt):
         """Eine Stellung aus den Feldern der Maske - alles, was die Maske nicht
-        kennt (Lastfälle, Antrieb, Winkelbeschriftung), bleibt vom Original."""
+        kennt (Antrieb, Winkelbeschriftung), bleibt vom Original; die Lastfaelle
+        nur, wenn die Maske kein Feld dafuer hat."""
         from ..bridges.positions import Stellung
         import dataclasses
         m = self.model
@@ -6357,6 +6368,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       linienlager_aus=self._namensliste(w.get("linienlager_aus")),
                       flaechenlager_aus=self._namensliste(w.get("flaechenlager_aus")))
         felder["winkel"] = felder["dreh_winkel"]
+        if "faelle" in w:
+            felder["faelle"] = [f for f in self._namensliste(w.get("faelle")) if f in m.load_cases]
         vorlage = alt if alt is not None else None
         if vorlage is not None:
             return dataclasses.replace(vorlage, **felder)
@@ -6432,6 +6445,33 @@ class MainWindow(QtWidgets.QMainWindow):
         if haken is not None:
             haken.toggled.connect(modus)
             modus(bool(haken.isChecked()))
+
+    def _stellung_alle_lastfaelle(self, maske):
+        """Der Haken „Alle Lastfälle anhaken“ unter der Lastfallliste der
+        Stellungsmaske - am Drehlager sonst 422 einzelne Haken. Er setzt oder
+        loescht jeden Haken der Liste, direkt an der Liste und nicht ueber einen
+        Namenstext, und folgt ihr, wenn von Hand alle angehakt werden. Ein Haken
+        statt eines vierten Zusatzknopfs: mit vier Knoepfen wurden bei 1920 und
+        1366 alle Beschriftungen im Fuss abgeschnitten (Sichtpruefung 02.10.2026)."""
+        felder = getattr(maske, "_felder", None) or {}
+        lw, cb = felder.get("faelle"), felder.get("faelle_alle")
+        if lw is None or cb is None:
+            return
+
+        def alle(an):
+            for i in range(lw.count()):
+                lw.item(i).setCheckState(QtCore.Qt.Checked if an else QtCore.Qt.Unchecked)
+
+        def folgen(_it=None):
+            voll = lw.count() > 0 and all(lw.item(i).checkState() == QtCore.Qt.Checked
+                                          for i in range(lw.count()))
+            if cb.isChecked() != voll:
+                cb.blockSignals(True)
+                cb.setChecked(voll)
+                cb.blockSignals(False)
+
+        cb.toggled.connect(alle)
+        lw.itemChanged.connect(folgen)
 
     def _stellung_alle_aktiv(self, maske, name: str):
         if maske is None:
@@ -7855,6 +7895,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         c.lastfall_umbenennen(name, neuname)
                     for fl in m.fatigue_loads.values():
                         fl.lastfall_umbenennen(name, neuname)
+                    for s in getattr(m, "stellungen", None) or []:
+                        s.lastfall_umbenennen(name, neuname)
                     if m.active_case == name:
                         m.active_case = neuname
                 lc.category = kat
@@ -10200,6 +10242,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 c.lastfall_umbenennen(name, nm)
             for fl in self.model.fatigue_loads.values():
                 fl.lastfall_umbenennen(name, nm)
+            for s in getattr(self.model, "stellungen", None) or []:
+                s.lastfall_umbenennen(name, nm)
             if self.model.active_case == name:
                 self.model.active_case = nm
         self.refresh_all()
@@ -12362,7 +12406,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for s in self._stellungen_obj():
             e = erg.get(s.name)
             rows.append([s.name, zl.zahl_text(s.winkel, tausender=False, punkt=True), ", ".join(s.lager_aus) or "–",
-                         ", ".join(s.faelle) or "alle",
+                         ", ".join(s.faelle) or "keine",
                          # ohne gefuehrten Nachweis ist eta = 0 keine Zahl
                          "–" if e is None or e.fehler
                          or (e.warnungen and not e.nachgewiesen) else f"{e.eta:.3f}",
@@ -12376,7 +12420,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # (Gegenpruefung zu B064).
             self.lbl_umh.setText(
                 "Umhüllende über alle Stellungen: η nicht bestimmt – keine Stellung gerechnet"
-                + (f" ({len(u.fehlerhaft)} mit FEHLER, siehe Protokoll)" if u.fehlerhaft else ""))
+                + u.nicht_gerechnet_text())
         elif u is not None:
             self.lbl_umh.setText(
                 (f"Umhüllende über alle Stellungen: η = {u.eta:.3f}"
@@ -12384,7 +12428,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     if u.massgebende_stellung else "")
                  + f"; größte Verformung {u.u_max * 1e3:.3f} mm").replace(".", ",")
                 # nicht nachgewiesene Kombinationen gehoeren neben das eta
-                + u.warnhinweis())
+                + u.warnhinweis()
+                # nicht gerechnete Stellungen (FEHLER, ohne Lastfaelle) ebenso
+                + u.nicht_gerechnet_text())
         elif self._stellungen_obj():
             self.lbl_umh.setText(f"{len(self._stellungen_obj())} Stellungen angelegt – "
                                  "noch nicht gerechnet")
@@ -12454,13 +12500,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # 23.09.2026 stand hier immer „{n} Stellungen gerechnet: …“ - auch
         # wenn jede Stellung am FEHLER gescheitert war: „2 Stellungen
         # gerechnet: eta = 0.000“ bei 0 Ergebnissen (Befund B064).
-        n_ok, n_fehler = len(umh.ergebnisse), len(umh.fehlerhaft)
-        if not n_ok:
-            self.error(f"Keine Stellung gerechnet – {n_fehler} von {len(liste)} mit FEHLER "
-                       "(siehe Protokoll)")
-        elif n_fehler:
-            self.info(f"{n_ok} von {len(liste)} Stellungen gerechnet ({n_fehler} mit FEHLER, "
-                      "siehe Protokoll): " + umh.kurztext())
+        # Stellungen ohne zugewiesene Lastfaelle zaehlen ebenso nicht mit.
+        n_ok, n_fehler, n_ohne = len(umh.ergebnisse), len(umh.fehlerhaft), len(umh.ohne_lastfaelle)
+        if not n_ok and not n_fehler and n_ohne:
+            self.error("Keine Stellung gerechnet – keiner ist ein Lastfall zugewiesen (Stellungsmaske: "
+                       "„Lastfälle dieser Stellung“ anhaken)")
+        elif not n_ok:
+            self.error(f"Keine Stellung gerechnet – {n_fehler} von {len(liste)} mit FEHLER"
+                       + (f", {n_ohne} ohne Lastfälle" if n_ohne else "") + " (siehe Protokoll)")
+        elif n_fehler or n_ohne:
+            self.info(f"{n_ok} von {len(liste)} Stellungen gerechnet" + umh.nicht_gerechnet_text()
+                      + ": " + umh.kurztext())
         else:
             # kurztext: wie vorher "eta = ..., maßgebend ...", dazu der Hinweis,
             # wenn Kombinationen nicht nachgewiesen wurden
@@ -18248,6 +18298,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     c.lastfall_umbenennen(old, name)
                 for fl in self.model.fatigue_loads.values():
                     fl.lastfall_umbenennen(old, name)
+                for s in getattr(self.model, "stellungen", None) or []:
+                    s.lastfall_umbenennen(old, name)
                 self.model.active_case = name
             self.refresh_all()
 
@@ -22709,6 +22761,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
             self.selection = np.array([], dtype=int)
             self.path = p
+            # was das Laden umgestellt hat (Stellungen ohne Lastfaelle in
+            # aelteren Dateien, E6) - in das Protokoll
+            for z in getattr(self.model, "_ladehinweise", None) or []:
+                self.log.appendPlainText("Hinweis: " + z)
             self.refresh_all()
             self._refresh_title()
             self.zoom_alles()

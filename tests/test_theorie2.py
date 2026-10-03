@@ -984,7 +984,7 @@ def test_handbuch_stauwand():
     m = examples_lib.build_example("gate")
     reihe = Stellungsreihe(m, "Stauwand")
     for name, w in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
-        reihe.add(Stellung(name, w, f"{w:g} Grad"))
+        reihe.add(Stellung(name, w, f"{w:g} Grad", faelle=list(m.load_cases)))
     umh = reihe.rechnen(kombinationen=False, nachweise=True)
     erg = reihe.ergebnisse
     check("BH: `reihe.rechnen(kombinationen=False, nachweise=True)` – keine Stellung `ok`",

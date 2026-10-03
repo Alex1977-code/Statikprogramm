@@ -1528,7 +1528,14 @@ def _op_stellungen_rechnen(st, m, d):
     # meldete diese Operation fuer die Stauwand ohne Kombinationen und die
     # Halle ohne GZT "eta nicht bestimmt - kein Nachweis gefuehrt" (seit
     # B036 heisst es "kein Stabnachweis gefuehrt").
-    return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
+    # Gezaehlt wird, was gerechnet ist - seit 02.10.2026 rechnet eine
+    # Stellung ohne zugewiesene Lastfaelle nichts.
+    n_ok = len(umh.ergebnisse)
+    if n_ok == len(liste):
+        return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
+    if not n_ok:
+        return "Keine Stellung gerechnet" + umh.nicht_gerechnet_text() + ": eta nicht bestimmt"
+    return f"{n_ok} von {len(liste)} Stellungen gerechnet{umh.nicht_gerechnet_text()}: " + umh.kurztext()
 
 
 @op("staebe_anschliessen")

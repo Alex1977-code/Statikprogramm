@@ -1362,6 +1362,10 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
               sorted(mit) == ["LF2", "LF3"], str(sorted(mit)))
         check("der Grundfall bleibt am vollen System",
               not m.load_cases["LF1"].situation, m.load_cases["LF1"].situation or "(leer)")
+        # Stellungen rechnen seit 02.10.2026 nur zugewiesene Lastfaelle - die der
+        # Strukturmodifikation sind ihr zugewiesen, der Grundfall nicht
+        check("die Stellung der Strukturmodifikation rechnet genau ihre Lastfälle",
+              st.faelle == ["LF2", "LF3"], str(st.faelle))
         check("das Protokoll nennt Stab, Lager und Anzahl",
               "Ankerausfall" in txt and "1 Stäbe (S2)" in txt
               and "2 davon in der Situation" in txt,

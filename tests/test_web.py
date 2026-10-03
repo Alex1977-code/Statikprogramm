@@ -508,10 +508,12 @@ def test_stellungen_din19704_export():
     try:
         st, j, _ = c.post("/api/example", {"name": "gate"})
         check("Beispiel Stauwand geladen", st == 200 and j["state"]["nn"] > 0)
+        # seit 02.10.2026 rechnet eine Stellung nur ihre zugewiesenen Lastfaelle
+        alle = ", ".join(x["name"] for x in j["state"]["load_cases"])
 
         for name, winkel in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
             st, j, _ = c.op(op="stellung", name=name, winkel=winkel,
-                            beschreibung=f"{winkel:g} Grad")
+                            beschreibung=f"{winkel:g} Grad", faelle=alle)
             if st != 200:
                 break
         check("Drei Stellungen angelegt",
@@ -538,6 +540,14 @@ def test_stellungen_din19704_export():
               st == 200 and falsch["ergebnis"] and "GibtsNicht" in falsch["ergebnis"]["fehler"],
               str(falsch.get("ergebnis")))
         st, j, _ = c.op(op="remove_stellung", name="Falsch")
+        # Plan 7S (02.10.2026): eine Stellung ohne Lastfaelle rechnet nichts
+        # und zaehlt nicht als gerechnet
+        st, j, _ = c.op(op="stellung", name="Leer", winkel=60.0)
+        st, j, _ = c.op(op="stellungen_rechnen")
+        check("Stellung ohne Lastfälle: „3 von 4 Stellungen gerechnet (1 ohne Lastfälle …)“",
+              st == 200 and "3 von 4 Stellungen gerechnet (1 ohne Lastfälle" in (j.get("message") or ""),
+              (j.get("message") or j.get("error") or "")[:90])
+        st, j, _ = c.op(op="remove_stellung", name="Leer")
 
         st, j, _ = c.op(op="din19704")
         rw = j["state"]["stellungen"]["regelwerk"]
@@ -673,9 +683,10 @@ def test_oberflaeche_rendert():
 
     server, c = _server()
     try:
-        c.post("/api/example", {"name": "gate"})
+        _st, jb, _ = c.post("/api/example", {"name": "gate"})
+        alle = ", ".join(x["name"] for x in jb["state"]["load_cases"])
         for name, winkel in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
-            c.op(op="stellung", name=name, winkel=winkel, beschreibung=f"{winkel:g} Grad")
+            c.op(op="stellung", name=name, winkel=winkel, beschreibung=f"{winkel:g} Grad", faelle=alle)
         c.op(op="din19704")
         c.op(op="stellungen_rechnen")
         import subprocess

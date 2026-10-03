@@ -1994,7 +1994,7 @@ class StellungDialog(QtWidgets.QDialog):
         gl.addWidget(row("Lager aus (Namen, Komma)", self.ed_aus))
         gl.addWidget(row("nur diese Lager aktiv (leer = alle)", self.ed_aktiv))
         self.ed_faelle = QtWidgets.QLineEdit(", ".join(s.faelle) if s else "")
-        gl.addWidget(row("Lastfälle (leer = alle)", self.ed_faelle))
+        gl.addWidget(row("Lastfälle (leer = keine)", self.ed_faelle))
         if model is not None and model.load_cases:
             hint = QtWidgets.QLabel("vorhanden: " + ", ".join(_namen(model.load_cases)[:12]))
             hint.setStyleSheet("color:#66717c; font-size:11px;")
