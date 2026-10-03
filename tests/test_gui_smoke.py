@@ -7596,18 +7596,19 @@ def main():
               and not any(z.startswith(("Rz", "ux", "sig_v")) for z in w._kennwerte_zeilen),
               str(w._kennwerte_zeilen[:3]))
         rk_ = w.tbl_react.modell
-        # Die Einheiten werden an den Auflagerkraeften des Lastfalls geprueft
-        # (Spalten Rx … Mz): zur Umhuellenden, die nach der Rechnung vorn steht,
-        # heissen sie seit 03.10.2026 (10c) „Rx min“, „Rx max“ … - bis dahin
-        # stand dort „min / max“ als Text in einer Zelle
+        # Die Einheiten werden an den Auflagerkraeften des Lastfalls (Spalten
+        # Rx … Mz) und weiter unten an denen der Umhuellenden geprueft - dort
+        # stehen min und max seit 03.10.2026 (10c) in eigenen Zahlenspalten
+        # „Rx min“, „Rx max“ …, bis dahin als Text „min / max“ in einer Zelle
+        i_huelle_ = next(i_ for i_ in range(w.cb_result.count())
+                         if (w.cb_result.itemData(i_) or ("",))[0] == "env")
+        huelle_ = w.analysis.envelopes[w.cb_result.itemData(i_huelle_)[1]]
         for i_ in range(w.cb_result.count()):
             if (w.cb_result.itemData(i_) or ("",))[0] == "case":
                 w.cb_result.setCurrentIndex(i_)
                 break
         app.processEvents()
-        roh_ = str(rk_.zeilen[0][3])
-        rz_kN = float(roh_.split("/")[0].replace(",", "."))
-        paar_ = "/" in roh_
+        rz_kN = float(rk_.zeilen[0][3])
         maske_ = w.maske_einheiten()
         check("Maske „Einheiten und Genauigkeiten“ rechts mit Kraft, Länge, Verformung, Spannung",
               w.eingaben_dock.windowTitle() == "Einheiten und Genauigkeiten"
@@ -7624,18 +7625,31 @@ def main():
               and w.tbl_react.kopfzeile()[4] == "Mx [Nmm]",
               str((w.tbl_knoten.kopfzeile()[1], w.tbl_react.kopfzeile()[1:5])))
         rz_zelle = str(rk_.data(rk_.index(0, 3)))
-        check("Zellen folgen: x = 4000,0 mm; Rz in N ohne Nachkomma (auch als min/max-Paar)",
+        check("Zellen folgen: x = 4000,0 mm; Rz in N ohne Nachkomma",
               mk_.data(mk_.index(1, 1)) == "4000,0"
-              and rz_zelle.split("/")[0].strip() == f"{rz_kN * 1000:.0f}".replace(".", ","),
+              and rz_zelle == f"{rz_kN * 1000:.0f}".replace(".", ","),
               str((mk_.data(mk_.index(1, 1)), rz_zelle, rz_kN)))
-        if not paar_:
-            check("Filter und Sortierung in der Anzeigeeinheit (UserRole = N)",
-                  abs(float(rk_.data(rk_.index(0, 3), QtCore.Qt.UserRole)) - rz_kN * 1000) < 1e-6)
+        check("Filter und Sortierung in der Anzeigeeinheit (UserRole = N)",
+              abs(float(rk_.data(rk_.index(0, 3), QtCore.Qt.UserRole)) - rz_kN * 1000) < 1e-6)
         csv_ = w.tbl_react.text().splitlines()
         check("CSV-Export in der Anzeigeeinheit: Kopf [N], Wert in N",
               csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
-              and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
+              and abs(float(csv_[1].split(";")[3].replace(",", ".")) - rz_kN * 1000) < 1e-6,
               str(csv_[:2]))
+        # Auflager der Umhuellenden in N: Kopf und beide Zahlenspalten
+        from statik3d.gui import tabellen as tb_
+        w.cb_result.setCurrentIndex(i_huelle_)
+        app.processEvents()
+        k_rz_ = [sp.name for sp in rk_.spalten].index("Rz min")
+        s0_ = int(rk_.zeilen[0][0])
+        soll_ = (float(huelle_.r_min[s0_, 2]), float(huelle_.r_max[s0_, 2]))
+        zellen_ = (str(rk_.data(rk_.index(0, k_rz_))), str(rk_.data(rk_.index(0, k_rz_ + 1))))
+        check("Auflager der Umhüllenden folgen: Rz min [N], Rz max [N] als Zahlen in N ohne Nachkomma",
+              w.tbl_react.kopfzeile()[k_rz_:k_rz_ + 2] == ["Rz min [N]", "Rz max [N]"]
+              and zellen_ == tuple(tb_.festkomma(v, 0) for v in soll_)
+              and abs(float(rk_.data(rk_.index(0, k_rz_ + 1), QtCore.Qt.UserRole)) - soll_[1]) < 1e-6
+              and abs(soll_[1]) > 1.0,
+              str((w.tbl_react.kopfzeile()[k_rz_:k_rz_ + 2], zellen_, soll_)))
         # Seit 24.09.2026 stehen im Bild der Umhuellenden (hier „Umhüllende
         # Lastfälle“) keine Lasten mehr (Schalter „Lasten im Ergebnisbild“,
         # Vorgabe aus) - geprueft wird darum am Ergebnis des Lastfalls, das

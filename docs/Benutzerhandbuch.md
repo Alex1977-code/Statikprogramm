@@ -2613,7 +2613,14 @@ dieselbe Wahl wie die Glasleiste: Wer an einer der drei Stellen ein Ergebnis
 wählt, sieht es an allen dreien, im Bild und in den Tabellen. Geschlossen zeigt
 das Feld nur den Namen („Kombination GZT7“, „Umhüllende GZT“), die aufgeklappte
 Liste und der Tooltip nennen die ganze Kombination. Sind die Ergebnisse mit dem
-Knopf *Ergebnisse* ausgeblendet, blendet eine Wahl unten sie wieder ein. Die
+Knopf *Ergebnisse* ausgeblendet, blendet eine Wahl unten oder oben rechts sie
+wieder ein, ebenso wie eine Kombination oder Umhüllende in der Glasleiste; ein
+Lastfall in der Glasleiste bleibt dort die Wahl des aktiven Lastfalls und zeigt
+dessen Lasten. Bis zur Nachbesserung am 03.10.2026 blendete die Wahl oben
+rechts nicht ein, und die Glasleiste zeigte weiter den aktiven Lastfall.
+Verwirft eine Änderung die Ergebnisse, etwa ein neuer E-Modul in der Tabelle
+*Werkstoffe*, sind Ergebnisliste, Wahl unten und Ergebnistabellen sofort leer;
+bis dahin zeigten sie nach einer Zelländerung weiter die alte Umhüllende. Die
 Wahl steht in der Kopfzeile und nicht in einer eigenen Zeile darunter, weil
 diese der Tabelle 29 px genommen hätte: Bei 1920 × 1080 wären von den
 Stabkräften 5 statt 7 Zeilen zu sehen gewesen, in der Kompaktstufe bei
@@ -2632,27 +2639,45 @@ Kombination führt die Tabelle *Stabkräfte* die Stabendkräfte je Element. Ist
 eine Umhüllende gezeigt, stehen dort je Element min und max von N, Vz, My und
 Mz über die Länge des Elements und alle Kombinationen der Umhüllenden, und
 neben jedem Wert nennt die Spalte *Komb.* die Kombination, aus der er stammt.
-Alle sechs Schnittgrößen stehen weiter im Register *Umhüllende*. Die Werte
+Die Spalte *Ausn.* steht nur bei Umhüllenden des GZT, zu denen die
+Ausnutzung nach EC3 gehört; bei den Umhüllenden der Gebrauchstauglichkeit und
+der Lastfälle fehlt sie (bis zur Nachbesserung am 03.10.2026 stand sie auch
+dort, mit der Ausnutzung aus dem GZT). Alle sechs Schnittgrößen stehen weiter
+im Register *Umhüllende*. Die Werte
 kommen aus der Umhüllenden selbst; es wird nichts neu gerechnet. Fehlen sie,
 etwa bei einer Umhüllenden aus einer älteren Ergebnisdatei, sagt die leere
 Tabelle das und nennt den Weg (*Start → Berechnen*). Die *Auflagerkräfte*
 einer Umhüllenden stehen in Zahlenspalten *Rx min*, *Rx max* bis *Mz max*,
-die sich wie alle Zahlen sortieren und filtern lassen. Unter den
+die sich wie alle Zahlen sortieren und filtern lassen; jede dieser Zellen
+nennt am Zeiger die Kombination, aus der der Wert stammt. Unter den
 Auflagerkräften eines Lastfalls oder einer Kombination steht eine
 Summenzeile **Σ** mit der Summe der Reaktionen Rx, Ry und Rz (mit Filter die
 der sichtbaren Zeilen), zum Abgleich mit der Summe der Lasten. Die Momente
 einzelner Lager haben dort keine Summe, weil sie ohne ihre Hebelarme keine
-Gesamtgröße ergeben. Bei einer Umhüllenden steht in der Zeile Σ **keine
-Summe**, sondern der Grund: Das Minimum am einen Lager stammt meist aus einer
-anderen Kombination als das am nächsten, beide wirken nie zugleich, und ihre
-Summe gleicht keiner Last. Kopieren, CSV und Excel geben die Summe mit aus,
-den Satz nicht. Ein **Klick** auf eine Zelle mit der maßgebenden Kombination
-in *Stabkräfte*, im Register *Umhüllende* und in *Nachweise EC3* zeigt dieses
-Ergebnis in der Ergebniszeile, oben rechts, in der Glasleiste, im Bild und in
-den Tabellen; diese Zellen sind dafür blau unterstrichen. Das angeklickte
-Element bleibt gewählt, und seine Zeile steht in der neu gefüllten Tabelle
-markiert. Ein Name ohne eigenes Ergebnis, etwa eine Alternative einer
-Ergebniskombination, schaltet nicht, und die Statuszeile sagt es. Bis zum
+Gesamtgröße ergeben. Bei einer Umhüllenden steht unter der Tabelle **keine
+Summe**, sondern der kurze Satz „keine Summe – min und max stammen aus
+verschiedenen Kombinationen“; am Zeiger steht der ganze Grund: Das Minimum am
+einen Lager stammt meist aus einer anderen Kombination als das am nächsten,
+beide wirken nie zugleich, und ihre Summe gleicht keiner Last. Der Satz rollt
+nicht mit der Tabelle und ist bei 1366 × 768 in der Kompaktstufe ganz zu lesen
+(467 von 634 px, mit Segoe UI gemessen); bis zur Nachbesserung am 03.10.2026
+war er 1001 px breit, und den Rest sah man nur durch waagerechtes Rollen.
+Kopieren, CSV und Excel geben die Summe mit aus, den Satz nicht. Ein
+**Klick** auf eine Zelle mit der maßgebenden Kombination in *Stabkräfte*, im
+Register *Umhüllende*, in *Nachweise EC3* und auf eine min- oder max-Zelle der
+Auflager einer Umhüllenden zeigt dieses Ergebnis in der Ergebniszeile, oben
+rechts, in der Glasleiste, im Bild und in den Tabellen, und das Bild wird
+dafür einmal gezeichnet. Blau unterstrichen sind nur Zellen, deren
+Kombination ein eigenes Ergebnis hat; eine Alternative einer
+Ergebniskombination („EK1 [4]“) steht als gewöhnlicher Text da und schaltet
+nicht. Werden gerade Eigenformen gezeigt, sagt die Statuszeile das, statt zu
+schalten. Das angeklickte Element bleibt gewählt, und seine Zeile steht in der
+neu gefüllten Tabelle markiert und im Bild. Filter und Sortierung bleiben beim
+Wechsel zwischen Umhüllender und einzelnem Ergebnis für jede Spalte erhalten,
+die es in beiden gibt (etwa *Element*); fällt die gefilterte oder sortierte
+Spalte weg, sagt die Statuszeile das. Bis zur Nachbesserung am 03.10.2026
+gingen dabei alle Filter verloren, die angeklickte Zeile konnte außerhalb des
+Sichtfensters liegen, und ein Klick zeichnete das Bild zweimal. Bis zum
 03.10.2026 blieb *Stabkräfte* bei einer Umhüllenden leer mit einem Hinweis,
 und der Bereich unten sprang auf das Register *Umhüllende*; die
 Auflagerkräfte standen als Text „min / max“ in einer Zelle, eine Summenzeile
@@ -2777,7 +2802,12 @@ Volumenkörper und Schweißnähte und schon ab einer Zeile; unter der
 Knotentabelle nahm sie bei 1920 × 1080 46 px neben 78 px Tabelle. Dasselbe
 gilt für *Kopieren*, *CSV…* und *Excel…*: Eingabetabellen und Tabellen mit
 weniger als 5 Zeilen geben seit dem 03.10.2026 keine Zeilen Max und Min mehr
-aus, Ergebnistabellen ab 5 Zeilen wie bisher beide am Ende.
+aus, Ergebnistabellen ab 5 Zeilen wie bisher beide am Ende. Max und Min stehen
+nur unter Zahlenspalten; unter Textspalten wie *Komb.* bleibt der Fuß leer,
+auch wenn der Text wie eine Zahl aussieht. Verschiebt man eine Spalte mit der
+Maus, wandern ihre Werte im Fuß mit. Bis zur Nachbesserung am 03.10.2026 stand
+unter *Komb.* bei den Lastfällen „1“ und „2“ als Max „2,0“, und der Fuß blieb
+beim Verschieben stehen, sodass unter *Rz* die Werte von *Rx* standen.
 
 **Nicht erfüllte Nachweise fallen auf** (seit 24.09.2026). In den
 Nachweistabellen – Nachweise EC3, Ermüdung, Anschlüsse, Verformungen,

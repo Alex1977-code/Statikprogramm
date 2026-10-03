@@ -5718,7 +5718,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # die Glasleiste zieht mit: ausgeblendet steht sie auf dem aktiven
         # Lastfall, dessen Lasten das Bild dann zeigt (24.09.2026)
         self.act_ergebnisse = g.schalter(
-            "Ergebnisse zeigen", lambda _z: (self.redraw(), self._lastwahl_nachziehen()), True,
+            "Ergebnisse zeigen", lambda _z: (self._neu_zeichnen(), self._lastwahl_nachziehen()), True,
             "Ergebnisse zeigen / ausblenden – die Ergebnisdarstellung aus dem Bild "
             "nehmen: Färbung, verformtes System, "
             "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
@@ -14624,6 +14624,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not behalten:
             self.analysis = None
             self.results = None
+            # Liste, Wahl unten und Ergebnistabellen gleich mit: bis zur
+            # Nachbesserung vom 03.10.2026 (10c) zeigten sie nach einer
+            # Zellaenderung weiter die alte Umhuellende, und ein Klick auf eine
+            # Kombinationszelle meldete „kein einzeln gespeichertes Ergebnis“
+            self._ergebnisse_verworfen_nachziehen()
         else:
             self._schritt_beschriftung()
         self._undo_knoepfe()
@@ -14699,7 +14704,7 @@ class MainWindow(QtWidgets.QMainWindow):
     STAB_HUELLE = (("N", "kN"), ("Vz", "kN"), ("My", "kNm"), ("Mz", "kNm"))
     AUFLAGER = (("Rx", "kN"), ("Ry", "kN"), ("Rz", "kN"), ("Mx", "kNm"), ("My", "kNm"), ("Mz", "kNm"))
 
-    def _stab_spalten(self, huelle: bool) -> list:
+    def _stab_spalten(self, huelle: bool, ausnutzung: bool = True) -> list:
         """Spalten der Stabkraefte - zu Lastfall oder Kombination die Werte an
         den Stabenden, zu einer Umhuellenden je Groesse min und max mit der
         massgebenden Kombination (03.10.2026, Teilpaket 10c; vorher blieb die
@@ -14721,9 +14726,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                       "die Länge des Elements und alle Kombinationen der Umhüllenden"),
                        Spalte("Komb.", hinweis=f"maßgebende Kombination für {g} {s} – ein Klick "
                                                "zeigt dieses Ergebnis", ergebnis=True)]
-        sp.append(Spalte("Ausn.", "", "zahl", 3,
-                         hinweis="größte Ausnutzung über die Kombinationen; Filter z. B. > 0,9"))
+        if ausnutzung:
+            # nur zu Umhuellenden des GZT (_ausnutzung_zur_huelle): eine
+            # Ausnutzung zu Gebrauchstauglichkeit oder Lastfaellen gibt es nicht
+            sp.append(Spalte("Ausn.", "", "zahl", 3,
+                             hinweis="Ausnutzung nach EC3 (ohne EC3-Nachweis die elastische, die größte über "
+                                     "die Kombinationen der Umhüllenden); Filter z. B. > 0,9"))
         return sp
+
+    def _ausnutzung_zur_huelle(self, schluessel) -> bool:
+        """Gehoert eine EC3-Ausnutzung zu dieser Umhuellenden? Nur zum GZT
+        (ULS, EQU, ACC, USER - wie solve_all sie gruppiert) und zu den
+        Ergebniskombinationen dieser Arten. Bis zur Nachbesserung vom
+        03.10.2026 (10c) stand die Spalte auch bei „Umhüllende GZG …“, mit der
+        Ausnutzung aus dem GZT."""
+        if schluessel == "ULS":
+            return True
+        kombi = (self.model.combinations or {}).get(schluessel)
+        return kombi is not None and kombi.typ in ("ULS", "EQU", "ACC", "USER")
 
     def _auflager_spalten(self, huelle: bool) -> list:
         """Spalten der Auflagerkraefte: zu Lastfall oder Kombination je
@@ -14765,8 +14785,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "Umhuellende", self, mit_kennwerten=True)
         self.tbl_env.zeile_gewaehlt.connect(self._tabelle_element)
         tabs.addTab(self.tbl_env, "Umhüllende")
-        for t in (self.tbl_beam, self.tbl_env):
+        for t in (self.tbl_beam, self.tbl_env, self.tbl_react):
             t.ergebnis_gewaehlt.connect(self._ergebnis_aus_zelle)
+        # entfaellt beim Wechsel der Spalten eine Sortierung oder ein Filter
+        for t in (self.tbl_beam, self.tbl_react):
+            t.hinweis.connect(self._tabellenhinweis)
 
         self.tbl_design = tab.Datentabelle([
             Spalte("Stab"), Spalte("Querschnitt"), Spalte("Material"),
@@ -16076,6 +16099,9 @@ class MainWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(w)
         self.cb_result = QtWidgets.QComboBox()
         self.cb_result.currentIndexChanged.connect(self.show_results)
+        # vom Anwender gewaehlt (nicht von einem anderen Weg nachgezogen):
+        # ausgeblendete Ergebnisse einblenden wie unten und in der Glasleiste
+        self.cb_result.activated.connect(self._ergebnis_oben_gewaehlt)
         self.cb_field = QtWidgets.QComboBox()
         self.cb_field.addItems(FIELDS)
         self.cb_field.currentIndexChanged.connect(self.redraw)
@@ -18083,12 +18109,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Maske Ergebnisse leeren. Bis zur Nachbesserung vom 24.09.2026
             # stand dort nach Rueckgaengig weiter „Kombination GZT4“, die
             # Glasleiste zeigte „Lastfall LF1“.
-            self._fill_result_selector()
-            for w_ in (getattr(self, "cb_mode", None), getattr(self, "txt_res", None)):
-                if w_ is not None and _lebt(w_):
-                    w_.blockSignals(True)
-                    w_.clear()
-                    w_.blockSignals(False)
+            self._ergebnisse_verworfen_nachziehen()
         else:
             # neuer aktiver Lastfall (Lastfall angelegt): ein gezeigtes
             # Lastfall-Ergebnis folgt ihm (_ergebnis_zum_lastfall)
@@ -21441,7 +21462,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt")
         self._auswahl_register()
         self._tabellen_markieren()
-        self.redraw()
+        self._neu_zeichnen()
 
     def do_select(self):
         if not zf.freigeben(self.sel, self._zahlmeldung):
@@ -23642,6 +23663,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Ergebnisse --------------------------------------------------
     def _fill_result_selector(self):
+        self._ergebnisnamen_setzen()
         self.cb_result.blockSignals(True)
         self.cb_result.clear()
         if self.results is not None:
@@ -23671,10 +23693,101 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ergebniszeile_nachziehen()
 
     # ---- Ergebniszeile unten (03.10.2026, Teilpaket 10c) ---------------------
-    #: Was in der Summenzeile der Auflager einer Umhuellenden steht (show_results)
-    SUMME_UMHUELLENDE = ("keine Summe: min und max stammen aus verschiedenen Kombinationen und "
-                         "wirken nie zugleich – die Summe der Reaktionen steht bei Lastfall oder "
-                         "Kombination")
+    #: Was in der Summenzeile der Auflager einer Umhuellenden steht
+    #: (show_results), kurz genug fuer 1366 x 768 in der Kompaktstufe, und die
+    #: ganze Begruendung am Zeiger (Nachbesserung 10c: der erste Satz war mit
+    #: Segoe UI 1001 px breit, im Bild lagen 622 px)
+    SUMME_UMHUELLENDE = "keine Summe – min und max stammen aus verschiedenen Kombinationen"
+    SUMME_UMHUELLENDE_LANG = ("Keine Summe der Minima oder Maxima: min und max eines Lagers stammen "
+                              "meist aus einer anderen Kombination als die des nächsten und wirken nie "
+                              "zugleich – ihre Summe gleicht keiner Last. Die Summe der Reaktionen steht "
+                              "bei Lastfall oder Kombination.")
+
+    def _ergebnisnamen_setzen(self) -> None:
+        """Welche Namen ein eigenes Ergebnis haben (Kombinationen, Lastfaelle,
+        Umhuellende der Analyse): nur sie erscheinen in den Tabellen als
+        Verweis und schalten beim Klick (Nachbesserung 10c). Eine Alternative
+        einer Ergebniskombination („EK1 [4]“) ist gewoehnlicher Text. Gelesen
+        aus der Analyse, nicht aus der Liste oben rechts: werden Eigenformen
+        gezeigt, fuehrt die Liste nur sie, die Nachweise darunter nennen aber
+        weiter Kombinationen."""
+        an = getattr(self, "analysis", None)
+        namen = set() if an is None else {str(k) for k in (list(an.combinations) + list(an.cases)
+                                                            + list(an.envelopes))}
+        for name in ("tbl_beam", "tbl_env", "tbl_design", "tbl_react"):
+            t = getattr(self, name, None)
+            if t is not None:
+                t.modell.ergebnisnamen = namen
+
+    def _ergebnistabellen_leeren(self) -> None:
+        """Die Tabellen zum gezeigten Ergebnis leeren - Stab- und
+        Auflagerkraefte wieder mit den Spalten des einzelnen Ergebnisses."""
+        if not hasattr(self, "tbl_beam"):
+            return
+        self.tbl_beam.spalten_setzen(self._stab_spalten(False), melden=False)
+        self.tbl_react.spalten_setzen(self._auflager_spalten(False), melden=False)
+        self.tbl_react.modell.herkunft = {}
+        self.tbl_react.summe_setzen(None)
+        for t in (self.tbl_beam, self.tbl_react, self.tbl_env, self.tbl_contact,
+                  self.tbl_kontaktpaare, self.tbl_design, self.tbl_fat):
+            t.hinweis_setzen("")
+            t.setzen([])
+
+    def _ergebnisse_verworfen_nachziehen(self) -> None:
+        """Nach verworfenen Ergebnissen (Rueckgaengig, Modell oder Zelle
+        geaendert): Ergebnisliste und Wahl unten, Maske Ergebnisse und die
+        Ergebnistabellen leeren."""
+        self._fill_result_selector()
+        for w_ in (getattr(self, "cb_mode", None), getattr(self, "txt_res", None)):
+            if w_ is not None and _lebt(w_):
+                w_.blockSignals(True)
+                w_.clear()
+                w_.blockSignals(False)
+        self._ergebnistabellen_leeren()
+
+    def _auflager_herkunft(self, env, knoten) -> dict:
+        """{(Knoten, Spalte): Name} der massgebenden Kombination je min- und
+        max-Zelle der Auflager einer Umhuellenden - leer, wenn die Umhuellende
+        die Herkunft nicht kennt (aeltere Ergebnisdatei)."""
+        namen = list(getattr(env, "names", None) or [])
+        q_min, q_max = getattr(env, "r_min_src", None), getattr(env, "r_max_src", None)
+        if not namen or q_min is None or q_max is None:
+            return {}
+        aus = {}
+        for s in knoten:
+            for i in range(6):
+                for k, q in ((1 + 2 * i, q_min), (2 + 2 * i, q_max)):
+                    j = int(q[s, i])
+                    if 0 <= j < len(namen):
+                        aus[(float(s), k)] = str(namen[j])
+        return aus
+
+    def _tabellenhinweis(self, text: str) -> None:
+        """Ein Hinweis einer Ergebnistabelle (eine Sortierung oder ein Filter
+        entfaellt mit seiner Spalte) in die Statuszeile, mit ihrem Namen."""
+        t = self.sender()
+        name = {getattr(self, "tbl_beam", None): "Stabkräfte",
+                getattr(self, "tbl_react", None): "Auflagerkräfte"}.get(t, "Tabelle")
+        self.info(f"{name}: {text}")
+
+    # ---- Neuzeichnen buendeln (Nachbesserung 10c) ---------------------------
+    def _neu_zeichnen(self) -> None:
+        """Neu zeichnen - oder, waehrend ein Weg mehrere Schritte buendelt
+        (Klick auf eine Kombinationszelle: Auswahl, Einblenden, anderes
+        Ergebnis), erst an dessen Ende einmal."""
+        if getattr(self, "_zeichnen_sperre", 0):
+            self._zeichnen_offen = True
+            return
+        self.redraw()
+
+    def _zeichnen_aufschieben(self) -> None:
+        self._zeichnen_sperre = getattr(self, "_zeichnen_sperre", 0) + 1
+
+    def _zeichnen_freigeben(self) -> None:
+        self._zeichnen_sperre = max(0, getattr(self, "_zeichnen_sperre", 0) - 1)
+        if not self._zeichnen_sperre and getattr(self, "_zeichnen_offen", False):
+            self._zeichnen_offen = False
+            self.redraw()
 
     def _ergebniszeile_bauen(self, tabs) -> None:
         """Die Ergebniswahl im Kopf des unteren Bereichs, zu sehen in den Gruppen
@@ -23743,42 +23856,79 @@ class MainWindow(QtWidgets.QMainWindow):
         """Den Eintrag *i* der Ergebnissteuerung zeigen - auch im Bild: sind
         die Ergebnisse ausgeblendet (Knopf „Ergebnisse“), werden sie
         eingeblendet, sonst zeigten Glasleiste und Bild etwas anderes als die
-        Tabellen."""
+        Tabellen. Einblenden und Wechsel zeichnen zusammen einmal."""
+        self._zeichnen_aufschieben()
+        try:
+            act = getattr(self, "act_ergebnisse", None)
+            if act is not None and not self.ergebnisse_sichtbar():
+                act.setChecked(True)            # zieht die Glasleiste nach
+            if i != self.cb_result.currentIndex():
+                self.cb_result.setCurrentIndex(i)   # show_results: Tabellen, Glasleiste, unten
+        finally:
+            self._zeichnen_freigeben()
+
+    def _ergebnis_oben_gewaehlt(self, i: int) -> None:
+        """Oben rechts vom Anwender gewaehlt (activated): ausgeblendete
+        Ergebnisse einblenden - wie die Wahl unten und in der Glasleiste
+        (Nachbesserung 10c; bis dahin blieb die Ansicht dort aus, und die
+        Glasleiste zeigte weiter den aktiven Lastfall)."""
         act = getattr(self, "act_ergebnisse", None)
-        if act is not None and not self.ergebnisse_sichtbar():
-            act.setChecked(True)            # zeichnet neu, zieht die Glasleiste nach
-        if i != self.cb_result.currentIndex():
-            self.cb_result.setCurrentIndex(i)   # show_results: Tabellen, Bild, Glasleiste, unten
+        if act is not None and 0 <= i < self.cb_result.count() and not self.ergebnisse_sichtbar():
+            act.setChecked(True)
 
     def _ergebnis_aus_zelle(self, name: str) -> None:
-        """Klick auf die Zelle mit der massgebenden Kombination (Stabkraefte
-        einer Umhuellenden, Register Umhüllende, Nachweise EC3): dieses Ergebnis
-        zeigen. Erst nach dem Klick, nicht in ihm - die Tabelle, in die
-        geklickt wurde, wird dabei neu gefuellt."""
+        """Klick auf eine Zelle mit der massgebenden Kombination (Stabkraefte
+        und Auflager einer Umhuellenden, Register Umhüllende, Nachweise EC3):
+        dieses Ergebnis zeigen. Erst nach dem Klick, nicht in ihm - die
+        Tabelle, in die geklickt wurde, wird dabei neu gefuellt. Die Tabelle
+        meldet den Namen vor der Zeile; Auswahl und Wechsel zeichnen darum
+        zusammen einmal (bis zur Nachbesserung vom 03.10.2026 zweimal).
+
+        Die Meldung „kein einzeln gespeichertes Ergebnis“ kommt nur, wenn es
+        den Namen in der Analyse nicht gibt; werden Eigen- oder Knickformen
+        gezeigt, sagt sie das (wie die Glasleiste)."""
         name = str(name or "").strip()
-        cbr = getattr(self, "cb_result", None)
-        ziel = -1
-        if cbr is not None and _lebt(cbr) and self.results is None and self.analysis is not None:
-            for art in ("combo", "case", "env"):
-                ziel = next((i for i in range(cbr.count())
-                             if tuple(cbr.itemData(i) or ()) == (art, name)), -1)
-                if ziel >= 0:
+        an = self.analysis
+        art = None
+        if an is not None:
+            for a, verz in (("combo", an.combinations), ("case", an.cases), ("env", an.envelopes)):
+                if name in (verz or {}):
+                    art = a
                     break
-        if ziel < 0:
+        if an is None:
+            self.info(f"„{name}“: die Ergebnisse sind verworfen – Berechnung → Berechnen rechnet neu")
+            return
+        if art is None:
             self.info(f"„{name}“ ist kein einzeln gespeichertes Ergebnis (etwa eine Alternative "
                       "einer Ergebniskombination) und lässt sich nicht für sich zeigen")
             return
-        QtCore.QTimer.singleShot(0, lambda i=ziel: self._ergebnis_aus_zelle_zeigen(i))
-
-    def _ergebnis_aus_zelle_zeigen(self, i: int) -> None:
-        cbr = getattr(self, "cb_result", None)
-        if cbr is None or not _lebt(cbr) or not 0 <= i < cbr.count():
+        wer = {"combo": f"Kombination {name}", "case": f"Lastfall {name}"}.get(art) or bg.umhuellende_kurz(name)
+        if self.results is not None:
+            self.info(f"{wer}: gezeigt werden die Eigen- bzw. Knickformen – die statischen "
+                      "Ergebnisse zeigen sich wieder nach Berechnung → Berechnen")
             return
-        self._ergebnis_zeigen(i)
-        # die angeklickte Zeile steht in der neu gefuellten Tabelle wieder markiert
-        self._tabellen_markieren()
+        cbr = self.cb_result
+        ziel = next((i for i in range(cbr.count()) if tuple(cbr.itemData(i) or ()) == (art, name)), -1)
+        if ziel < 0:
+            self.info(f"{wer} steht nicht in der Ergebnisliste")
+            return
+        self._ziel_aus_zelle = ziel
+        self._zeichnen_aufschieben()        # die Auswahl der Zeile folgt gleich
+        QtCore.QTimer.singleShot(0, self._ergebnis_aus_zelle_zeigen)
 
-    def _stabkraefte_umhuellende(self, env) -> tuple:
+    def _ergebnis_aus_zelle_zeigen(self) -> None:
+        try:
+            i = getattr(self, "_ziel_aus_zelle", -1)
+            cbr = getattr(self, "cb_result", None)
+            if cbr is not None and _lebt(cbr) and 0 <= i < cbr.count():
+                self._ergebnis_zeigen(i)
+                # die angeklickte Zeile steht in der neu gefuellten Tabelle
+                # wieder markiert und im Bild
+                self._tabellen_markieren()
+        finally:
+            self._zeichnen_freigeben()
+
+    def _stabkraefte_umhuellende(self, env, ausnutzung: bool = True) -> tuple:
         """Zeilen der Stabkraefte zu einer Umhuellenden: je Element min und max
         von N, Vz, My, Mz ueber alle Stationen und Ergebnisse, je Wert der Name
         des massgebenden Ergebnisses - gelesen aus ``Envelope.beam``, ohne neue
@@ -23811,6 +23961,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     k = herkunft[reihe, j]
                     k = np.where((k >= 0) & (k < len(namen) - 1), k, len(namen) - 1)
                     spalten.append(namen[k].tolist())
+        if not ausnutzung:
+            return [list(z) for z in zip(ids, *spalten)], ""
         util_map = self._util_map("Ausnutzung EC3") or {}
         util_env = getattr(env, "util", None) or {}
         ausn = []
@@ -23923,7 +24075,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lastwahl_nachziehen()     # die Form steht jetzt fest
         if r is None:
             self.txt_res.setPlainText("")
-            self.redraw()
+            self._neu_zeichnen()
             return
         lines = [r.summary()]
         if an is not None and an.design is not None:
@@ -23966,6 +24118,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # zu einer Umhuellenden standen andere Spalten da (10c)
             self.tbl_beam.spalten_setzen(self._stab_spalten(False))
             self.tbl_react.spalten_setzen(self._auflager_spalten(False))
+            self.tbl_react.modell.herkunft = {}
             rows = []
             for e, d in sorted(r.beam_forces.items()):
                 u = util_map.get(e, d["util"])
@@ -24008,8 +24161,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # Teilpaket 10c). Bis dahin blieb die Tabelle leer mit dem Satz
             # „die Umhüllende zeigt ihre Extremwerte im Register „Umhüllende“
             # …“, und das Register sprang dorthin.
-            self.tbl_beam.spalten_setzen(self._stab_spalten(True))
-            zeilen, warum = self._stabkraefte_umhuellende(r)
+            d_ = self.cb_result.currentData() if self.cb_result.count() else None
+            ausn = self._ausnutzung_zur_huelle(d_[1] if d_ and d_[0] == "env" else None)
+            self.tbl_beam.spalten_setzen(self._stab_spalten(True, ausn))
+            zeilen, warum = self._stabkraefte_umhuellende(r, ausn)
             self._fill(self.tbl_beam, zeilen)
             # Kontaktkraefte gibt es je Lastfall oder Kombination, nicht zur
             # Umhuellenden - die Tabellen bleiben leer statt veraltet
@@ -24027,10 +24182,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tbl_beam.hinweis_setzen(warum)
             self.tbl_env.hinweis_setzen("")
             # Auflager: min und max als zwei Zahlenspalten je Komponente - bis
-            # zum 03.10.2026 „min / max“ als Text in einer Zelle (10c)
+            # zum 03.10.2026 „min / max“ als Text in einer Zelle (10c). Jede
+            # Zelle nennt am Zeiger die massgebende Kombination und schaltet
+            # beim Klick auf sie (herkunft, Nachbesserung 10c). Die Kontaktlager
+            # stehen wie beim einzelnen Ergebnis dabei: r_min und r_max fuehren
+            # jeden Knoten.
             self.tbl_react.spalten_setzen(self._auflager_spalten(True))
+            knoten = sorted({s.node for s in self.model.supports}
+                            | {c.node for c in self.model.contact_supports})
             react = [[s] + [float(v) / 1e3 for i in range(6) for v in (r.r_min[s, i], r.r_max[s, i])]
-                     for s in sorted({s.node for s in self.model.supports})]
+                     for s in knoten]
+            self.tbl_react.modell.herkunft = self._auflager_herkunft(r, knoten)
             self._fill(self.tbl_react, react)
             # Keine Summe der Minima oder Maxima: das Minimum am einen Lager
             # stammt meist aus einer anderen Kombination als das am naechsten,
@@ -24040,14 +24202,14 @@ class MainWindow(QtWidgets.QMainWindow):
             # Umhuellende nicht (dafuer muesste jede Kombination neu
             # ausgewertet werden). Darum steht dort, warum, und wo die Summe
             # zu finden ist.
-            self.tbl_react.summe_setzen(self.SUMME_UMHUELLENDE)
+            self.tbl_react.summe_setzen(self.SUMME_UMHUELLENDE, self.SUMME_UMHUELLENDE_LANG)
         # Zusaetze im Modellbaum (Verformungen, Schnittgroessen) zum gezeigten
         # Ergebnis - sie blieben beim alten stehen (Befund 24.09.2026). Aendern
         # sich die Gruppen, wird neu aufgebaut, aber erst nach dem laufenden
         # Ereignis: der Aufruf kann aus einem Klick in den Baum selbst kommen.
         if hasattr(self, "baum") and not self.baum.ergebnisse_nachziehen(self._ergebnisliste()):
             QtCore.QTimer.singleShot(0, self._refresh_baum)
-        self.redraw()
+        self._neu_zeichnen()
 
     def _raender(self) -> dict:
         """{Flaechenname: Randpunkte} - einmal je Modellstand berechnet.

@@ -350,14 +350,18 @@ def test_auflager():
     check("… angezeigt mit Komma, ohne „/“ und ohne „-0,00“",
           zellen and all("," in z and "/" not in z and z != "-0,00" for z in zellen), str(zellen[:3]))
     fuss = t.fussmodell.zeilen
-    zeile = fuss[-1] if fuss else []
-    text = str(zeile[0]) if zeile else ""
-    check("… statt einer Summe eine Zeile Σ, die sagt warum: keine Zahl, Text über die ganze Breite",
-          text.startswith("Σ") and "keine Summe" in text and "Kombination" in text
-          and all(x == "" for x in zeile[1:]) and t.fuss.columnSpan(len(fuss) - 1, 0) == m.columnCount(),
-          text[:90])
-    check("… sie geht nicht in Kopieren/CSV/Excel (dort stehen nur Zahlen)",
-          not any(str(z[0]).startswith("Σ") for z in t.zeilen_fuer_export()), "")
+    lbl = getattr(t, "lbl_summe", None)
+    text = lbl.text() if lbl is not None else ""
+    tip = lbl.toolTip() if lbl is not None else ""
+    # Seit der Nachbesserung (03.10.2026) ein Satz unter dem Fuss, ueber die
+    # Breite der Tabelle und ohne mit ihr waagerecht zu rollen; vorher eine
+    # Zeile des Fusses, die ueber alle Spalten reichte
+    check("… statt einer Summe ein Satz Σ unter der Tabelle, der sagt warum; keine Σ-Zeile mit Zahlen",
+          lbl is not None and lbl.isVisible() and text.startswith("Σ") and "keine Summe" in text
+          and "Kombination" in tip and "nie zugleich" in tip
+          and not any(str(z[0]).startswith("Σ") for z in fuss), f"{text[:70]!r} / {tip[:60]!r}")
+    check("… er geht nicht in Kopieren/CSV/Excel (dort stehen nur Zahlen)",
+          not any(str(z[0]).startswith("Σ") or "keine Summe" in str(z[0]) for z in t.zeilen_fuer_export()), "")
 
 
 def test_kombinationszelle():
@@ -550,6 +554,408 @@ def test_hoehe_und_platz():
     _ruhe(8)
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung von a5846e9 (03.10.2026), Abnahme B1-B14
+# --------------------------------------------------------------------------
+def _klicke(t, zeile, spalte):
+    """Ein echter Mausklick auf die Zelle (zeile, spalte) der Ansicht."""
+    from PySide6 import QtCore, QtTest
+    q = t.filter.index(zeile, spalte)
+    t.view.scrollTo(q)
+    _ruhe(2)
+    QtTest.QTest.mouseClick(t.view.viewport(), QtCore.Qt.LeftButton, QtCore.Qt.NoModifier,
+                            t.view.visualRect(q).center())
+    _ruhe(12)
+
+
+def _markiert(t):
+    from PySide6 import QtCore
+    return [int(i.data(QtCore.Qt.UserRole)) for i in t.view.selectionModel().selectedRows()]
+
+
+def _im_bild(t, schluessel) -> bool:
+    """Steht die Zeile mit diesem Schluessel ganz im Sichtfenster der Tabelle?"""
+    from PySide6 import QtCore
+    for r in range(t.filter.rowCount()):
+        if int(float(t.filter.index(r, 0).data(QtCore.Qt.UserRole))) == int(schluessel):
+            rect = t.view.visualRect(t.filter.index(r, 0))
+            return rect.isValid() and rect.top() >= 0 and rect.bottom() <= t.view.viewport().height()
+    return False
+
+
+def _huelle_zeigen(w, schluessel="ULS", tabelle="Stabkräfte"):
+    w.tabelle_zeigen(tabelle)
+    _ruhe()
+    w.cb_result.setCurrentIndex(_index(w, "env", schluessel))
+    _ruhe()
+
+
+def _aufraeumen(t):
+    """Filter weg, nach Element aufsteigend (fuer die folgenden Pruefungen)."""
+    from PySide6 import QtCore
+    t.filterzeile_zeigen(False)
+    t.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+    _ruhe()
+
+
+def test_b01_b02_zeile_im_bild():
+    from PySide6 import QtCore
+    w = _fenster()
+    _hall(w)
+    w.resize(1920, 1080)
+    _ruhe()
+    t = w.tbl_beam
+    _huelle_zeigen(w)
+    k_my = _namen(t).index("My max")
+    t.view.sortByColumn(k_my, QtCore.Qt.DescendingOrder)
+    _ruhe()
+    e = int(t.filter.index(2, 0).data(QtCore.Qt.UserRole))
+    _klicke(t, 2, k_my + 1)
+    check("B1: nach „My max“ absteigend, Klick auf „Komb.“ in Zeile 3: Element 17 markiert und im Sichtfenster",
+          e == 17 and _markiert(t) == [17] and _im_bild(t, 17),
+          f"Element {e}, markiert {_markiert(t)}, im Bild {_im_bild(t, 17)}, "
+          f"Rollwert {t.view.verticalScrollBar().value()}/{t.view.verticalScrollBar().maximum()}")
+    _huelle_zeigen(w)
+    _aufraeumen(t)
+    t.filterzeile_zeigen(True)
+    t.felder[0].setText("> 9")
+    t.view.sortByColumn(_namen(t).index("My max"), QtCore.Qt.DescendingOrder)
+    _ruhe()
+    soll = sum(1 for z in t.modell.zeilen if int(z[0]) > 9)
+    e = int(t.filter.index(2, 0).data(QtCore.Qt.UserRole))
+    _klicke(t, 2, _namen(t).index("My max") + 1)
+    check("B2: dasselbe mit Filter „Element > 9“: der Filter wirkt weiter, die Zeile ist markiert und sichtbar",
+          w.cb_result.currentData()[0] == "combo" and t.felder[0].text() == "> 9" and t.filter_wirkt()
+          and t.sichtbar() == soll and _markiert(t) == [e] and _im_bild(t, e),
+          f"Filter {t.felder[0].text()!r}, {t.sichtbar()} von {soll}, markiert {_markiert(t)} / {e}, "
+          f"im Bild {_im_bild(t, e)}")
+    _aufraeumen(t)
+
+
+def test_b03_filter_und_sortierung_bleiben():
+    from PySide6 import QtCore
+    w = _fenster()
+    _hall(w)
+    t = w.tbl_beam
+    _huelle_zeigen(w)
+    _aufraeumen(t)
+    t.filterzeile_zeigen(True)
+    t.felder[0].setText("> 4")
+    t.view.sortByColumn(0, QtCore.Qt.DescendingOrder)
+    _ruhe()
+    soll = sum(1 for z in t.modell.zeilen if int(z[0]) > 4)
+
+    def stand():
+        kopf = t.view.horizontalHeader()
+        return (t.felder[0].text(), t.filter_wirkt(), t.sichtbar(), kopf.sortIndicatorSection(),
+                kopf.sortIndicatorOrder() == QtCore.Qt.DescendingOrder,
+                int(t.filter.index(0, 0).data(QtCore.Qt.UserRole)) if t.sichtbar() else None)
+    erwartet = ("> 4", True, soll, 0, True, 17)
+    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    _ruhe()
+    zur_kombination = stand()
+    w.cb_result.setCurrentIndex(_index(w, "env", "ULS"))
+    _ruhe()
+    zurueck = stand()
+    check("B3: Umhüllende → GZT7 → Umhüllende mit Filter und absteigender Sortierung auf „Element“: beides bleibt",
+          zur_kombination == erwartet and zurueck == erwartet, f"GZT7 {zur_kombination}, zurück {zurueck}")
+    # die sortierte Spalte gibt es zur Kombination nicht: die Statuszeile sagt es
+    t.view.sortByColumn(_namen(t).index("My max"), QtCore.Qt.DescendingOrder)
+    _ruhe()
+    n0 = len(w.meldungen)
+    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    _ruhe()
+    neu = w.meldungen[n0:]
+    check("… fällt die sortierte Spalte weg („My max“), sagt die Statuszeile das",
+          any("My max" in x and "Sortierung" in x for x in neu), str(neu[-1:])[:120])
+    _huelle_zeigen(w)
+    _aufraeumen(t)
+
+
+def test_b04_meldung_bei_eigenformen():
+    from PySide6 import QtCore
+    from statik3d import solver
+    w = _fenster()
+    _hall(w)
+    rm = solver.solve_modal(w.model, 3)
+    w._solve_done("modal", rm)
+    _ruhe()
+    w.tabelle_zeigen("Nachweise EC3")
+    _ruhe()
+    td = w.tbl_design
+    k = _namen(td).index("Kombination")
+    name = str(td.filter.index(0, k).data(QtCore.Qt.UserRole)) if td.filter.rowCount() else ""
+    n0 = len(w.meldungen)
+    if td.filter.rowCount():
+        _klicke(td, 0, k)
+    neu = w.meldungen[n0:]
+    check(f"B4: Eigenformen gezeigt, Klick in Nachweise EC3 auf „{name}“: keine Meldung „kein einzeln "
+          "gespeichertes Ergebnis“, sondern dass Eigenformen gezeigt werden",
+          name == "GZT4" and not any("kein einzeln gespeichertes Ergebnis" in x for x in neu)
+          and any("Eigen" in x and name in x for x in neu), str(neu)[:140])
+    _F["hall"] = None
+
+
+def _zahlnamen_modell():
+    """Rahmen aus sechs Staeben, Lastfaelle „1“ und „2“, keine Kombination:
+    die Umhuellende ueber die Lastfaelle nennt Namen, die wie Zahlen aussehen."""
+    from statik3d.model import Model, Material, Section
+    m = Model("zahlnamen")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 300"))
+    n = [m.add_node(2.0 * i, 0.0, 0.0) for i in range(7)]
+    for i in range(6):
+        m.add_element("beam", [n[i], n[i + 1]], "S355", "HEB 300")
+    m.fix(n[0], "all")
+    m.fix(n[6], [0, 1, 2])
+    for name in list(m.load_cases):
+        del m.load_cases[name]
+    m.add_load_case("1", "G")
+    m.add_load_case("2", "Q", activate=False)
+    m.load_node(n[3], Fz=-10e3, case="1")
+    m.load_node(n[2], Fz=+4e3, case="2")
+    m.load_node(n[4], Fy=3e3, case="2")
+    m.active_case = "1"
+    return m
+
+
+def _rechnen(w, m, design=False):
+    from statik3d import solver
+    w._modell_setzen(m)
+    w.refresh_all()
+    _ruhe()
+    an = solver.solve_all(w.model, design=design)
+    w._solve_done("all", an)
+    _ruhe()
+    _F["hall"] = None
+    return an
+
+
+def test_b05_fuss_ohne_verweise():
+    from PySide6 import QtCore
+    w = _fenster()
+    an = _rechnen(w, _zahlnamen_modell())
+    _huelle_zeigen(w, "CASES")
+    t = w.tbl_beam
+    fm = t.fussmodell
+    kk = [k for k, s in enumerate(t.modell.spalten) if s.name == "Komb."]
+    texte = [[fm.data(fm.index(r, k), QtCore.Qt.DisplayRole) for k in kk] for r in range(fm.rowCount())]
+    stil = [(fm.data(fm.index(r, k), QtCore.Qt.ForegroundRole), fm.data(fm.index(r, k), QtCore.Qt.FontRole),
+             fm.data(fm.index(r, k), QtCore.Qt.ToolTipRole)) for r in range(fm.rowCount()) for k in kk]
+    check("B5: Lastfälle „1“ und „2“, Umhüllende Lastfälle: unter „Komb.“ bleibt der Fuß leer, ohne Verweisstil",
+          set(an.envelopes["CASES"].names) == {"1", "2"} and fm.rowCount() == 2 and kk
+          and all(x in ("", None) for z in texte for x in z) and all(s == (None, None, None) for s in stil),
+          f"Fuß {texte}, Stil {[s for s in stil if s != (None, None, None)][:2]}")
+
+
+def _hall_ek():
+    from statik3d.examples_lib import hall_frame_example
+    from statik3d.model import Combination
+    m = hall_frame_example()
+    m.combinations["EK1"] = Combination("EK1", {}, "ULS", alternativen=[
+        {"LF1": 1.35, "S": 1.5, "W_links": 0.9}, {"LF1": 1.0},
+        {"LF1": 1.0, "W_links": 1.5}, {"LF1": 1.35, "S": 1.5, "W_rechts": 0.9}])
+    return m
+
+
+def test_b06_alternative_ohne_verweis():
+    from PySide6 import QtCore
+    w = _fenster()
+    _rechnen(w, _hall_ek(), design=True)
+    _huelle_zeigen(w, "EK1")
+    t = w.tbl_beam
+    treffer = [(r, k) for r in range(t.filter.rowCount()) for k, s in enumerate(t.modell.spalten)
+               if s.name == "Komb." and str(t.filter.index(r, k).data(QtCore.Qt.UserRole)) == "EK1 [4]"]
+    r, k = treffer[0] if treffer else (0, 0)
+    q = t.filter.mapToSource(t.filter.index(r, k))
+    m = t.modell
+    vorder, schrift, tip = (m.data(q, QtCore.Qt.ForegroundRole), m.data(q, QtCore.Qt.FontRole),
+                            m.data(q, QtCore.Qt.ToolTipRole))
+    lf = [(rr, kk) for rr in range(t.filter.rowCount()) for kk, s in enumerate(t.modell.spalten)
+          if s.name == "Komb." and str(t.filter.index(rr, kk).data(QtCore.Qt.UserRole)) == "LF1"]
+    q2 = t.filter.mapToSource(t.filter.index(*lf[0])) if lf else None
+    check("B6: Alternative „EK1 [4]“: gewöhnlicher Text, ohne Unterstreichung und ohne Tooltip „Klick zeigt …“",
+          treffer and vorder is None and (schrift is None or not schrift.underline())
+          and not (tip and "Klick" in str(tip)), f"{len(treffer)} Zellen, Tooltip {tip!r}")
+    check("… ein Name mit eigenem Ergebnis daneben („LF1“) bleibt ein Verweis",
+          q2 is not None and m.data(q2, QtCore.Qt.FontRole) is not None
+          and m.data(q2, QtCore.Qt.FontRole).underline() and "Klick" in str(m.data(q2, QtCore.Qt.ToolTipRole)),
+          str(m.data(q2, QtCore.Qt.ToolTipRole)) if q2 is not None else "kein LF1")
+
+
+def test_b07_fuss_folgt_der_spalte():
+    from PySide6 import QtCore
+    w = _fenster()
+    _hall(w)
+    w.tabelle_zeigen("Auflagerkräfte")
+    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    _ruhe()
+    t = w.tbl_react
+    kopf, fk = t.view.horizontalHeader(), t.fuss.horizontalHeader()
+    kopf.moveSection(kopf.visualIndex(3), 1)
+    _ruhe()
+    fm = t.fussmodell
+    x = kopf.sectionViewportPosition(3) + 5
+    k_f = fk.logicalIndexAt(x)
+    unter = [fm.data(fm.index(r, k_f), QtCore.Qt.DisplayRole) for r in range(fm.rowCount())]
+    soll = [fm.data(fm.index(r, 3), QtCore.Qt.DisplayRole) for r in range(fm.rowCount())]
+    gleich = all(fk.visualIndex(k) == kopf.visualIndex(k) for k in range(kopf.count()))
+    check("B7: Auflager GZT7, Rz an die zweite Stelle gezogen: darunter stehen Max, Min und Σ von Rz",
+          kopf.visualIndex(3) == 1 and k_f == 3 and unter == soll and gleich and len(soll) == 3,
+          f"unter Rz steht Spalte {t.modell.spalten[k_f].name}: {unter} (Rz: {soll})")
+    kopf.moveSection(1, 3)
+    _ruhe()
+
+
+def test_b08_grenzen_der_umhuellenden():
+    from statik3d.gui import viewport as vp
+    w = _fenster()
+    an = _hall(w)
+    g = vp.schnittgroessen_grenzen(w.model, an.envelopes["ULS"])
+    lo, _e1, hi, _e2 = g.get("N", (None,) * 4)
+    check("B8: schnittgroessen_grenzen, Hallenrahmen, Umhüllende GZT: N max = −10 429,5 N, N min = −172 431,4 N",
+          lo is not None and abs(hi - (-10429.5)) < 1.0 and abs(lo - (-172431.4)) < 1.0, f"{lo} … {hi}")
+    alle = {q: g.get(q) for q in vp.SCHNITTGROESSEN}
+    falsch = []
+    env = an.envelopes["ULS"]
+    for q, v in alle.items():
+        mn = min(float(d[q][0].min()) for d in env.beam.values())
+        mx = max(float(d[q][1].max()) for d in env.beam.values())
+        if v is None or abs(v[0] - mn) > 1e-6 or abs(v[2] - mx) > 1e-6:
+            falsch.append(q)
+    check("… und alle Schnittgrößen gleich min und max der Umhüllenden (keine Herkunftsindizes als Werte)",
+          not falsch, str(falsch))
+
+
+def test_b09_auflager_nennen_kombination():
+    from PySide6 import QtCore
+    w = _fenster()
+    an = _hall(w)
+    env = an.envelopes["ULS"]
+    _huelle_zeigen(w, "ULS", "Auflagerkräfte")
+    t = w.tbl_react
+    k = _namen(t).index("Rz min")
+    r = next(rr for rr in range(t.filter.rowCount()) if int(t.filter.index(rr, 0).data(QtCore.Qt.UserRole)) == 0)
+    q = t.filter.mapToSource(t.filter.index(r, k))
+    tip = str(t.modell.data(q, QtCore.Qt.ToolTipRole))
+    soll = env.names[int(env.r_min_src[0, 2])]
+    _klicke(t, r, k)
+    check("B9: Auflager der Umhüllenden, Rz min an Knoten 0: Tooltip nennt GZT27, ein Klick schaltet auf GZT27",
+          soll == "GZT27" and "GZT27" in tip and w.cb_result.currentData() == ("combo", "GZT27"),
+          f"Tooltip {tip!r}, danach {w.cb_result.currentData()}")
+
+
+def test_b10_summensatz_ganz():
+    from PySide6 import QtGui, QtWidgets
+    w = _fenster()
+    _hall(w)
+    schrift = bool(QtGui.QFontDatabase.families())
+    w.resize(1366, 768)
+    _ruhe(8)
+    w.anordnung.zuruecksetzen()
+    _ruhe(8)
+    if w.anordnung.kompakt:
+        w.anordnung.unten_einklappen(False)
+        _ruhe(8)
+    _huelle_zeigen(w, "ULS", "Auflagerkräfte")
+    _ruhe(6)
+    t = w.tbl_react
+    lbl = getattr(t, "lbl_summe", None)
+    rolle = w.unten_dock.widget()
+    rollt = rolle.horizontalScrollBar().maximum() if isinstance(rolle, QtWidgets.QScrollArea) else 0
+    if lbl is None:
+        check("B10: 1366 × 768 kompakt: Σ-Satz ganz sichtbar, Tooltip mit vollem Text", False, "kein Satzfeld")
+    else:
+        fm = lbl.fontMetrics()
+        breite = fm.horizontalAdvance(lbl.text())
+        ganz = lbl.isVisible() and not lbl.text().endswith("…") and breite <= lbl.contentsRect().width() \
+            and lbl.visibleRegion().boundingRect().width() >= lbl.width() - 1
+        detail = (f"{'mit Schrift' if schrift else 'Kästchenwert'}: Text {breite} px, Feld {lbl.width()} px, "
+                  f"rollt {rollt} px, Tooltip {lbl.toolTip()[:50]!r}")
+        print(f"     B10 {detail}", flush=True)
+        voll = "nie zugleich" in lbl.toolTip() and "Lastfall oder Kombination" in lbl.toolTip()
+        if schrift:
+            check("B10: 1366 × 768 kompakt, mit Schrift: Σ-Satz ganz sichtbar ohne Rollen, Tooltip mit vollem Text",
+                  w.anordnung.kompakt and ganz and rollt == 0 and voll, detail)
+        else:
+            check("B10 (ohne Schrift, Kästchen): Σ-Satz ganz oder mit „…“ gekürzt, nie gerollt, Tooltip voll",
+                  w.anordnung.kompakt and lbl.isVisible() and rollt == 0 and voll, detail)
+    w.resize(1920, 1080)
+    _ruhe(8)
+    w.anordnung.zuruecksetzen()
+    _ruhe(8)
+
+
+def test_b11_ein_neuzeichnen():
+    w = _fenster()
+    _hall(w)
+    t = w.tbl_beam
+    _huelle_zeigen(w)
+    _aufraeumen(t)
+    zaehler = {"n": 0}
+    alt = w.redraw
+
+    def redraw(*a, **k):
+        zaehler["n"] += 1
+        return alt(*a, **k)
+    w.redraw = redraw
+    try:
+        _klicke(t, 0, _namen(t).index("N min") + 1)
+    finally:
+        del w.redraw
+    check("B11: Klick auf eine Kombinationszelle zeichnet genau einmal",
+          w.cb_result.currentData()[0] == "combo" and zaehler["n"] == 1, f"{zaehler['n']}× gezeichnet")
+
+
+def test_b12_einblenden_oben_rechts():
+    w = _fenster()
+    _hall(w)
+    _huelle_zeigen(w)
+    w.act_ergebnisse.setChecked(False)
+    _ruhe()
+    i = _index(w, "combo", "GZT10")
+    # wie die Wahl in der Liste: erst der neue Eintrag, dann „activated“
+    w.cb_result.setCurrentIndex(i)
+    w.cb_result.activated.emit(i)
+    _ruhe()
+    check("B12: Ergebnisse ausgeblendet, Wahl oben rechts (GZT10): eingeblendet, Glasleiste und unten gleich",
+          w.ergebnisse_sichtbar() and tuple(w.cb_lastwahl.currentData() or ()) == ("combo", "GZT10")
+          and w.cb_ergebnis_unten.currentData() == ("combo", "GZT10"),
+          f"sichtbar {w.ergebnisse_sichtbar()}, Glasleiste {w.cb_lastwahl.currentData()}")
+    w.act_ergebnisse.setChecked(True)
+    _ruhe()
+
+
+def test_b13_veraltete_liste():
+    from PySide6 import QtCore
+    w = _fenster()
+    _hall(w)
+    _huelle_zeigen(w)
+    tm = w.tbl_mat
+    ok = tm.modell.setData(tm.modell.index(0, 1), "205000", QtCore.Qt.EditRole)
+    _ruhe()
+    reste = {n: _namen(getattr(w, n)) for n in ("tbl_beam", "tbl_react")
+             if any(" min" in x or x == "Komb." for x in _namen(getattr(w, n)))}
+    zeilen = {n: getattr(w, n).zeilenzahl() for n in ("tbl_beam", "tbl_react", "tbl_env")}
+    check("B13: E-Modul in der Zelle geändert: keine Tabelle zeigt Spalten der alten Umhüllenden, Listen leer",
+          ok and w.analysis is None and not reste and not any(zeilen.values())
+          and w.cb_result.count() == 0 and not w.cb_ergebnis_unten.isVisible(),
+          f"Reste {reste}, Zeilen {zeilen}, Liste {w.cb_result.count()}")
+    _F["hall"] = None
+
+
+def test_b14_ausnutzung_nur_gzt():
+    w = _fenster()
+    _hall(w)
+    _huelle_zeigen(w, "SLS_CH")
+    gzg = _namen(w.tbl_beam)
+    _huelle_zeigen(w, "ULS")
+    gzt = _namen(w.tbl_beam)
+    tip = next((sp.hinweis for sp in w.tbl_beam.modell.spalten if sp.name == "Ausn."), "")
+    check("B14: Umhüllende GZG ohne Spalte „Ausn.“, Umhüllende GZT mit, und ihr Hinweis nennt EC3",
+          "Ausn." not in gzg and "Ausn." in gzt and "EC3" in tip, f"GZG {gzg[-2:]}, GZT {gzt[-2:]}, {tip!r}")
+
+
 def test_handbuch():
     from tests.handbuch import absatz
     a = absatz("**Ergebniszeile unten.**")
@@ -558,6 +964,13 @@ def test_handbuch():
     b = absatz("**Stabkräfte und Auflager einer Umhüllenden.**")
     check("Handbuch: min und max mit Kombination, Σ-Zeile, keine Summe bei der Umhüllenden, Klick schaltet",
           "min" in b and "Σ" in b and "keine Summe" in b and "Klick" in b and "Bis zum 03.10.2026" in b, b[:90])
+    check("Handbuch: Nachbesserung - Verweis nur mit eigenem Ergebnis, Filter und Sortierung bleiben, "
+          "Auflager nennen die Kombination, Ausn. nur im GZT, einmal gezeichnet",
+          "EK1 [4]" in b and "Filter und Sortierung bleiben" in b and "nennt am Zeiger die Kombination" in b
+          and "Ausn." in b and "einmal gezeichnet" in b and "Nachbesserung am 03.10.2026" in b, b[-90:])
+    c = absatz("Unter jeder Ergebnistabelle")
+    check("Handbuch: Max und Min nur unter Zahlenspalten, der Fuß wandert mit verschobenen Spalten",
+          "nur unter Zahlenspalten" in c and "wandern ihre Werte im Fuß mit" in c, c[-90:])
 
 
 def main():
@@ -565,7 +978,12 @@ def main():
     faulthandler.dump_traceback_later(900, exit=True)
     nur = sys.argv[sys.argv.index("-k") + 1] if "-k" in sys.argv[:-1] else ""
     for t in (test_ergebniszeile_gleich, test_stabkraefte_umhuellende, test_auflager, test_kombinationszelle,
-              test_alte_ergebnisdatei, test_hoehe_und_platz, test_handbuch):
+              test_alte_ergebnisdatei, test_hoehe_und_platz,
+              test_b01_b02_zeile_im_bild, test_b03_filter_und_sortierung_bleiben, test_b04_meldung_bei_eigenformen,
+              test_b07_fuss_folgt_der_spalte, test_b08_grenzen_der_umhuellenden, test_b09_auflager_nennen_kombination,
+              test_b10_summensatz_ganz, test_b11_ein_neuzeichnen, test_b12_einblenden_oben_rechts,
+              test_b14_ausnutzung_nur_gzt, test_b13_veraltete_liste, test_b05_fuss_ohne_verweise,
+              test_b06_alternative_ohne_verweis, test_handbuch):
         if nur and nur not in t.__name__:
             continue
         print(f"\n--- {t.__name__} ---", flush=True)

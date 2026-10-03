@@ -270,6 +270,10 @@ def kennwerte(zeilen: list, spalten: list) -> tuple:
     Spaltenweise mit numpy: die Zellenschleife (_zahl je Zelle) kostete am
     Drehlager 44 s je Modellstand fuer 1,8 Mio. Elementzeilen (12.09.2026);
     Spalten, die sich nicht in einem Zug wandeln lassen, gehen den alten Weg.
+
+    Textspalten bleiben leer, auch wenn ihr Text wie eine Zahl aussieht: bis
+    zur Nachbesserung vom 03.10.2026 (10c) stand unter „Komb.“ bei Lastfaellen
+    „1“ und „2“ als Max „2.0“ - eine Zahl, die nichts bedeutet.
     """
     if not zeilen:
         return [], []
@@ -277,6 +281,10 @@ def kennwerte(zeilen: list, spalten: list) -> tuple:
     n_sp = len(spalten)
     breit = all(len(r) >= n_sp for r in zeilen) if len(zeilen) <= 1000 else (len(zeilen[0]) >= n_sp)
     for k in range(1, n_sp):
+        if spalten[k].art not in ("zahl", "ganz"):
+            hoch.append("")
+            tief.append("")
+            continue
         werte = None
         if breit:
             try:
@@ -408,7 +416,6 @@ _ROLLEN_VERWEIS = (R_VORDER, R_SCHRIFT, R_TIP)
 #: alle Rollen, auf die data() etwas sagt - die uebrigen gleich mit None
 _ROLLEN_DATEN = frozenset(_ROLLEN_TEXT + _ROLLEN_FARBE + (R_TIP, R_AUSRICHTUNG, R_USER))
 _AUSRICHTUNG = QtCore.Qt.AlignmentFlag
-_LINKS = int(_AUSRICHTUNG.AlignLeft | _AUSRICHTUNG.AlignVCenter)
 _RECHTS = int(_AUSRICHTUNG.AlignRight | _AUSRICHTUNG.AlignVCenter)
 _FLAGS = QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
 _FLAGS_EDIT = _FLAGS | QtCore.Qt.ItemFlag.ItemIsEditable
@@ -439,9 +446,15 @@ class TabellenModell(QtCore.QAbstractTableModel):
         #: Zeilen in der Reihenfolge, in der sie gesetzt wurden - damit die
         #: Modellreihenfolge nach einer Spaltensortierung wiederkommt
         self._ur = None
-        #: Zeilen, die ein Satz sind und linksbuendig ueber die ganze Breite
-        #: stehen (Fusszeile Σ einer Umhuellenden, 10c)
-        self.textzeilen: set = set()
+        #: Verweise auf Ergebnisse (Spalte.ergebnis, herkunft): Namen, die ein
+        #: eigenes Ergebnis haben - nur sie sehen aus wie ein Verweis und
+        #: schalten beim Klick; None: jeder Name. Die Fusszeile zeigt nie
+        #: Verweise (verweise False). Nachbesserung 10c, 03.10.2026.
+        self.ergebnisnamen = None
+        self.verweise = True
+        #: {(Schluessel der Zeile, Spalte): Name des massgebenden Ergebnisses}
+        #: fuer Zahlenzellen, die eines haben (Auflager einer Umhuellenden)
+        self.herkunft: dict = {}
 
     # -- Einheiten -------------------------------------------------------
     def anzeige(self, k: int) -> tuple:
@@ -541,18 +554,26 @@ class TabellenModell(QtCore.QAbstractTableModel):
             if sp.art == "ganz" and isinstance(wert, (int, float)):
                 return str(int(wert))
             return str(wert)
-        if self.spalten[k].ergebnis and str(wert).strip() not in ("", "–", "-") \
-                and rolle in _ROLLEN_VERWEIS:
-            # Die massgebende Kombination sieht aus wie ein Verweis: ein Klick
-            # darauf zeigt sie (10c) - sonst ahnt niemand, dass die Zelle mehr
-            # kann als die uebrigen
-            if rolle == R_VORDER:
-                return QtGui.QBrush(QtGui.QColor(dsg.FARBEN["akzent"]))
-            if rolle == R_SCHRIFT:
-                f = QtGui.QFont()
-                f.setUnderline(True)
-                return f
-            return f"Klick zeigt das Ergebnis {wert} – im Bild und in den Tabellen"
+        if rolle in _ROLLEN_VERWEIS and self.verweise and (self.spalten[k].ergebnis or self.herkunft):
+            # Die massgebende Kombination sieht aus wie ein Verweis, wo ein
+            # Klick sie zeigt (10c) - sonst ahnt niemand, dass die Zelle mehr
+            # kann als die uebrigen. Ein Name ohne eigenes Ergebnis (die
+            # Alternative „EK1 [4]“) bleibt gewoehnlicher Text.
+            name = self.ergebnisname(z, k)
+            if name:
+                verweis = self.ist_verweis(name)
+                if rolle == R_TIP:
+                    if self.spalten[k].ergebnis:
+                        return (f"Klick zeigt das Ergebnis {name} – im Bild und in den Tabellen"
+                                if verweis else None)
+                    return (f"maßgebend: {name}"
+                            + (" – ein Klick zeigt dieses Ergebnis" if verweis else ""))
+                if verweis and rolle == R_VORDER:
+                    return QtGui.QBrush(QtGui.QColor(dsg.FARBEN["akzent"]))
+                if verweis and rolle == R_SCHRIFT:
+                    f = QtGui.QFont()
+                    f.setUnderline(True)
+                    return f
         if rolle in _ROLLEN_FARBE:
             # Nur die Anzeige: Zwischenablage, CSV und Excel lesen die Zeilen
             # und bleiben ohne Farbe (24.09.2026)
@@ -573,8 +594,6 @@ class TabellenModell(QtCore.QAbstractTableModel):
             elif stufe == "gelb" and rolle == R_HINTER:
                 return QtGui.QBrush(QtGui.QColor(AMPEL_GELB))
             return None
-        if rolle == R_AUSRICHTUNG and z in self.textzeilen:
-            return _LINKS
         if rolle == R_AUSRICHTUNG and self.spalten[k].art != "text":
             return _RECHTS
         if rolle == R_USER:
@@ -584,6 +603,24 @@ class TabellenModell(QtCore.QAbstractTableModel):
                 return wert if z is None else self.angezeigt(k, z)
             return self.spalten[k].text_von(wert)
         return None
+
+    def ergebnisname(self, z: int, k: int) -> str:
+        """Der Name des Ergebnisses, auf das die Zelle (z, k) verweist - der
+        Text einer Spalte „Komb.“ oder die Herkunft einer Zahlenzelle; „“
+        ohne Verweis."""
+        zeile = self.zeilen[z] if 0 <= z < len(self.zeilen) else ()
+        if self.spalten[k].ergebnis:
+            name = str(zeile[k]).strip() if k < len(zeile) else ""
+        elif self.herkunft and zeile:
+            name = str(self.herkunft.get((_schluessel_wert(zeile[0]), k), ""))
+        else:
+            return ""
+        return "" if name in ("–", "-") else name
+
+    def ist_verweis(self, name: str) -> bool:
+        """Hat *name* ein eigenes Ergebnis, das ein Klick zeigen kann?"""
+        return bool(name) and self.verweise and (self.ergebnisnamen is None
+                                                 or name in self.ergebnisnamen)
 
     def flags(self, index):
         if index.isValid() and self.spalten[index.column()].editierbar:
@@ -874,9 +911,13 @@ class Datentabelle(QtWidgets.QWidget):
     #: Zeilenzahl, Filter oder Filterzeile geaendert - der untere Bereich zieht
     #: daran den Zaehler am Reiter und den Knopf Filter nach (03.10.2026, 10b)
     stand_geaendert = QtCore.Signal()
-    #: Klick auf eine Zelle einer Ergebnisspalte (Spalte.ergebnis): ihr Text,
-    #: der Name der massgebenden Kombination (03.10.2026, Teilpaket 10c)
+    #: Klick auf eine Zelle, die auf ein Ergebnis verweist (Spalte.ergebnis
+    #: oder herkunft): sein Name (03.10.2026, Teilpaket 10c). Gesendet vor
+    #: zeile_gewaehlt, damit beides zusammen nur einmal zeichnet
     ergebnis_gewaehlt = QtCore.Signal(str)
+    #: Ein Satz fuer die Statuszeile (etwa: eine Sortierung entfaellt mit
+    #: ihrer Spalte, spalten_setzen)
+    hinweis = QtCore.Signal(str)
     #: Hoehe der Filterzeile
     FILTER_HOEHE = 22
     #: Breiter wird keine Spalte aus ihrem Inhalt (eine Elementliste mit
@@ -1019,6 +1060,7 @@ class Datentabelle(QtWidgets.QWidget):
         #: Summenzeile: None, "summe" (Spalten mit Spalte.summe) oder ein Satz
         self._summe = None
         self.fussmodell = TabellenModell(spalten, [], self)
+        self.fussmodell.verweise = False         # Max/Min/Σ verweisen auf nichts
         self.fuss = QtWidgets.QTableView(self)
         self.fuss.setObjectName("tabellenfuss")
         self.fuss.setModel(self.fussmodell)
@@ -1033,6 +1075,16 @@ class Datentabelle(QtWidgets.QWidget):
         self.fuss.setFixedHeight(2 * 22 + 2)
         self.fuss.hide()
         lay.addWidget(self.fuss)
+        # Statt einer Summe ein Satz (Auflager einer Umhuellenden): eine eigene
+        # Zeile ueber die Breite der Tabelle, die nicht mit ihr waagerecht rollt
+        # und einen zu langen Satz mit „…“ kuerzt; der ganze steht am Zeiger.
+        # Bis zur Nachbesserung vom 03.10.2026 (10c) war er eine Zeile des
+        # Fusses ueber alle Spalten: bei 1366 x 768 lagen von 1001 px Text
+        # 622 px im Bild, der Rest nur durch Rollen (Segoe UI gemessen).
+        self.lbl_summe = Satzzeile(self)
+        self.lbl_summe.setObjectName("tabellensumme")
+        self.lbl_summe.hide()
+        lay.addWidget(self.lbl_summe)
 
         self.view.horizontalHeader().sectionResized.connect(
             lambda *_a: self._filterbreiten())
@@ -1073,37 +1125,65 @@ class Datentabelle(QtWidgets.QWidget):
         self._nachfuehren()
 
     def _filterfelder_anlegen(self, spalten: list) -> None:
+        # Die Spalte steht als Eigenschaft am Feld, verbunden wird eine
+        # gebundene Methode und kein Lambda: spalten_setzen ersetzt die Felder
+        # mit deleteLater, und ein Lambda an einem geloeschten Feld ist die
+        # Art Verbindung, die beim Beenden Zugriffsverletzungen macht
         for k, sp in enumerate(spalten):
             e = QtWidgets.QLineEdit(self.filterzeile)
             e.setObjectName("tabellenfilter")
             e.setPlaceholderText(sp.name[:14])
             e.setToolTip(self.FILTER_HINWEIS)
-            e.textChanged.connect(lambda t, i=k: self._filter(i, t))
+            e.setProperty("spalte", k)
+            e.textChanged.connect(self._filterfeld_geaendert)
             self.felder.append(e)
+
+    def _filterfeld_geaendert(self, text: str) -> None:
+        e = self.sender()
+        k = e.property("spalte") if e is not None else None
+        if k is not None:
+            self._filter(int(k), text)
+
+    @staticmethod
+    def _spaltenschluessel(spalten: list) -> list:
+        """(Name, wievielte Spalte dieses Namens) - „Komb.“ steht mehrfach da."""
+        gezaehlt: dict = {}
+        aus = []
+        for sp in spalten:
+            gezaehlt[sp.name] = gezaehlt.get(sp.name, 0) + 1
+            aus.append((sp.name, gezaehlt[sp.name]))
+        return aus
 
     @staticmethod
     def _spaltenkennung(spalten: list) -> list:
         return [(sp.name, sp.einheit, sp.art, sp.nachkomma, sp.ergebnis, sp.summe) for sp in spalten]
 
-    def spalten_setzen(self, spalten: list) -> bool:
+    def spalten_setzen(self, spalten: list, melden: bool = True) -> bool:
         """Andere Spalten fuer dieselbe Tabelle (03.10.2026, Teilpaket 10c).
 
         Die Stab- und Auflagerkraefte zeigen zu einem Lastfall oder einer
         Kombination andere Spalten als zu einer Umhuellenden (min und max je
         Groesse). Die Tabelle bleibt dieselbe - ihr Reiter, ihre Verbindungen
         zur Ansicht und ihr Platz im unteren Bereich -, neu angelegt werden
-        Spalten, Filterfelder und Fusszeile; die Zeilen sind danach leer. Ein
-        Filter wird aufgehoben (seine Spalte gibt es so nicht mehr), die
-        Sortierung bleibt, wenn ihre Spalte gleich heisst. False, wenn es schon
-        diese Spalten sind - dann geschieht nichts."""
+        Spalten, Filterfelder und Fusszeile; die Zeilen sind danach leer.
+        Filter und Sortierung bleiben fuer jede Spalte, die es in beiden
+        Fassungen gibt (gleicher Name, bei „Komb.“ an gleicher Stelle unter
+        den gleichnamigen); faellt die gefilterte oder sortierte Spalte weg,
+        sagt das Signal ``hinweis`` es (nicht mit *melden* False, etwa beim
+        Leeren nach verworfenen Ergebnissen). Bis zur Nachbesserung vom 03.10.2026
+        (10c) ging jeder Filter verloren - auch der auf „Element“. False, wenn
+        es schon diese Spalten sind - dann geschieht nichts."""
         neu = list(spalten)
         if self._spaltenkennung(neu) == self._spaltenkennung(self.modell.spalten):
             return False
+        alt_schl = self._spaltenschluessel(self.modell.spalten)
+        neu_schl = self._spaltenschluessel(neu)
         kopf = self.view.horizontalHeader()
         k_alt = kopf.sortIndicatorSection()
-        name_alt = (self.modell.spalten[k_alt].name
-                    if 0 <= k_alt < len(self.modell.spalten) else None)
+        sort_alt = alt_schl[k_alt] if 0 <= k_alt < len(alt_schl) else None
         richtung = kopf.sortIndicatorOrder()
+        filter_alt = {alt_schl[k]: e.text() for k, e in enumerate(self.felder)
+                      if k < len(alt_schl) and e.text().strip()}
         offen = self.filterzeile_offen()
         if self.filter_wirkt():
             self.filter.leeren()
@@ -1114,44 +1194,56 @@ class Datentabelle(QtWidgets.QWidget):
             mdl.zeilen = []
             mdl._ur = []
             mdl._index = None
-            mdl.textzeilen = set()
+            mdl.herkunft = {}
             mdl.endResetModel()
-        self.fuss.clearSpans()
         for e in self.felder:
+            e.textChanged.disconnect(self._filterfeld_geaendert)
+            e.hide()
             e.deleteLater()
         self.felder = []
         self._filterfelder_anlegen(neu)
         for k in range(len(neu)):
             self.view.setColumnHidden(k, False)
             self.fuss.setColumnHidden(k, False)
-        namen = [sp.name for sp in neu]
-        if name_alt in namen and k_alt >= 0:
-            self.view.sortByColumn(namen.index(name_alt), richtung)
-        elif not self.modellreihenfolge:
-            self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
-        self.filterzeile.setVisible(offen)
+        weg = []
+        for schl, text in filter_alt.items():
+            if schl in neu_schl:
+                self.felder[neu_schl.index(schl)].setText(text)
+            else:
+                weg.append(f"Filter auf „{schl[0]}“")
+        if sort_alt in neu_schl:
+            self.view.sortByColumn(neu_schl.index(sort_alt), richtung)
+        else:
+            if sort_alt is not None and not (k_alt == 0 and richtung == QtCore.Qt.AscendingOrder):
+                weg.append(f"Sortierung nach „{sort_alt[0]}“")
+            if not self.modellreihenfolge:
+                self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+        self.filterzeile.setVisible(offen or self.filter_wirkt())
         self._spaltenbreiten()
         self._nachfuehren()
+        if weg and melden:
+            self.hinweis.emit(" und ".join(weg) + (" entfällt" if len(weg) == 1 else " entfallen")
+                              + " – die Spalte gibt es beim gezeigten Ergebnis nicht")
         return True
 
-    def summe_setzen(self, art=None) -> None:
+    def summe_setzen(self, art=None, erklaerung: str = "") -> None:
         """Die Summenzeile Σ unter der Tabelle (03.10.2026, Teilpaket 10c).
 
         ``"summe"``: die Spalten mit ``Spalte.summe`` ueber die sichtbaren
         Zeilen addiert - mit Filter die gefilterten, wie Max und Min. Ein Text
-        steht als Satz ueber die ganze Breite (etwa bei einer Umhuellenden,
-        warum es dort keine Summe gibt) und geht nicht in den Export. None:
-        keine Summenzeile."""
+        steht als Satz in einer eigenen Zeile unter dem Fuss (etwa bei einer
+        Umhuellenden, warum es dort keine Summe gibt), *erklaerung* am Zeiger;
+        er geht nicht in den Export. None: keine Summenzeile."""
         self._summe = art or None
+        self._summe_erklaerung = str(erklaerung or "")
         self._kennwerte()
 
     def _summenzeile(self, sicht: list) -> list:
-        """Die Zeile Σ zu den sichtbaren Zeilen (leer, wenn es keine gibt)."""
-        if self._summe is None or not sicht:
+        """Die Zeile Σ zu den sichtbaren Zeilen (leer, wenn es keine gibt
+        oder sie ein Satz ist)."""
+        if self._summe != "summe" or not sicht:
             return []
         n = len(self.modell.spalten)
-        if self._summe != "summe":
-            return [f"Σ  {self._summe}"] + [""] * (n - 1)
         zeile = ["Σ"]
         for k in range(1, n):
             if not self.modell.spalten[k].summe:
@@ -1395,6 +1487,11 @@ class Datentabelle(QtWidgets.QWidget):
             auswahl.select(self.filter.index(a, 0), self.filter.index(b, letzte_spalte))
         sm.select(auswahl, QtCore.QItemSelectionModel.Select
                   | QtCore.QItemSelectionModel.Rows)
+        # Erst den aufgeschobenen Aufbau der Ansicht nachholen: gleich nach dem
+        # Neufuellen (Klick auf eine Kombinationszelle) war der Rollbereich
+        # noch 0, scrollTo blieb bei 0 stehen, und die markierte Zeile 17 von
+        # 18 lag ausserhalb des Sichtfensters (Gegenpruefung 03.10.2026, 10c)
+        self.view.doItemsLayout()
         self.view.scrollTo(self.filter.index(min(zeilen), 0),
                            QtWidgets.QAbstractItemView.EnsureVisible)
         return len(zeilen)
@@ -1457,6 +1554,7 @@ class Datentabelle(QtWidgets.QWidget):
         aktiv = self.kennwerte_aktiv()
         if not aktiv and self._summe is None:
             self.fuss.hide()
+            self.lbl_summe.hide()
             return
         # Ohne wirksamen Filter direkt aus dem Modell - der Weg ueber den
         # Filter fragt jede Zeile einzeln ab und kostet bei grossen Tabellen Sekunden
@@ -1472,14 +1570,14 @@ class Datentabelle(QtWidgets.QWidget):
         summe = self._summenzeile(sicht)
         if summe:
             zeilen.append(summe)
-        self.fussmodell.textzeilen = ({len(zeilen) - 1} if summe and self._summe != "summe" else set())
         self.fussmodell.setzen(zeilen)
-        self.fuss.clearSpans()
-        if self.fussmodell.textzeilen:
-            # der Satz steht ueber alle Spalten, nicht in der schmalen ersten
-            self.fuss.setSpan(len(zeilen) - 1, 0, 1, max(1, len(self.modell.spalten)))
         self.fuss.setFixedHeight(len(zeilen) * 22 + 2)
         self.fuss.setVisible(bool(zeilen))
+        satz = self._summe not in (None, "summe") and bool(sicht)
+        if satz:
+            self.lbl_summe.satz_setzen(f"Σ  {self._summe}",
+                                       getattr(self, "_summe_erklaerung", "") or str(self._summe))
+        self.lbl_summe.setVisible(satz)
 
     def _filterbreiten(self):
         """Filterfelder und Fusszeile auf die Spalten legen - Lage und Breite
@@ -1497,6 +1595,14 @@ class Datentabelle(QtWidgets.QWidget):
                 e.setGeometry(x + 1, 1, max(30, kopf.sectionSize(k) - 2), max(16, h - 2))
             self.fuss.setColumnHidden(k, versteckt)
             self.fuss.setColumnWidth(k, kopf.sectionSize(k))
+        # dieselbe Reihenfolge wie die Kopfzeile: bis zur Nachbesserung vom
+        # 03.10.2026 (10c) blieb der Fuss beim Verschieben einer Spalte stehen,
+        # und unter „Rz“ standen Max, Min und Σ von Rx
+        fk = self.fuss.horizontalHeader()
+        for v in range(min(kopf.count(), fk.count())):
+            k = kopf.logicalIndex(v)
+            if fk.visualIndex(k) != v:
+                fk.moveSection(fk.visualIndex(k), v)
 
     def _spaltenwahl(self):
         m = QtWidgets.QMenu(self)
@@ -1511,18 +1617,19 @@ class Datentabelle(QtWidgets.QWidget):
     def _geklickt(self, index):
         wert = self.filter.data(self.filter.index(index.row(), 0), QtCore.Qt.UserRole)
         werte = self.gewaehlte_schluessel()
+        # Eine Zelle, die auf ein eigenes Ergebnis verweist (10c): zuerst das
+        # melden, dann die Zeile - so kann das Fenster beides in einem Bild
+        # zeichnen (Nachbesserung 03.10.2026: vorher zweimal je Klick)
+        k = index.column()
+        if 0 <= k < len(self.modell.spalten) and len(werte) <= 1:
+            q = self.filter.mapToSource(index)
+            name = self.modell.ergebnisname(q.row(), k)
+            if self.modell.ist_verweis(name):
+                self.ergebnis_gewaehlt.emit(name)
         if len(werte) > 1:
             self.zeilen_gewaehlt.emit(werte)
         else:
             self.zeile_gewaehlt.emit(werte[0] if werte else wert)
-        # die Zelle mit der massgebenden Kombination: das Ergebnis zeigen (10c)
-        k = index.column()
-        if 0 <= k < len(self.modell.spalten) and self.modell.spalten[k].ergebnis:
-            q = self.filter.mapToSource(index)
-            zeile = self.modell.zeilen[q.row()] if 0 <= q.row() < len(self.modell.zeilen) else []
-            name = str(zeile[k]).strip() if k < len(zeile) else ""
-            if name and name not in ("–", "-"):
-                self.ergebnis_gewaehlt.emit(name)
 
     def gewaehlte_schluessel(self) -> list:
         """Die erste Spalte aller markierten Zeilen, in Tabellenreihenfolge."""
@@ -1666,7 +1773,10 @@ class Kurzwahl(QtWidgets.QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        self.currentIndexChanged.connect(lambda _i: self.updateGeometry())
+        self.currentIndexChanged.connect(self._index_geaendert)
+
+    def _index_geaendert(self, _i: int) -> None:
+        self.updateGeometry()
 
     @staticmethod
     def kurz(text) -> str:
@@ -1701,6 +1811,34 @@ class Kurzwahl(QtWidgets.QComboBox):
         opt.currentText = self.fontMetrics().elidedText(self.kurz(opt.currentText),
                                                        QtCore.Qt.ElideRight, max(10, r.width()))
         p.drawControl(QtWidgets.QStyle.CE_ComboBoxLabel, opt)
+
+
+class Satzzeile(QtWidgets.QLabel):
+    """Ein Satz in einer Zeile: zu lang, wird er mit „…“ gekuerzt; der ganze
+    steht am Zeiger (die Zeile Σ der Auflager einer Umhuellenden, 10c)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._voll = ""
+        self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        self.setMinimumWidth(0)
+        self.setFixedHeight(22)
+
+    def satz_setzen(self, text: str, erklaerung: str = "") -> None:
+        self._voll = str(text or "")
+        self.setToolTip(str(erklaerung or text or ""))
+        self._kuerzen()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._kuerzen()
+
+    def _kuerzen(self) -> None:
+        breit = self.contentsRect().width()
+        text = (self.fontMetrics().elidedText(self._voll, QtCore.Qt.ElideRight, breit)
+                if breit > 0 else self._voll)
+        if text != self.text():
+            self.setText(text)
 
 
 class Gruppenseite(QtWidgets.QTabWidget):
@@ -2410,6 +2548,8 @@ QLabel#tabellenzahl {{ color: {matt}; font-size: 12px; }}
 QTableView#tabellenfuss {{ background: {akzent_hell}; border: 0;
     border-top: 1px solid {linie}; font-weight: 600; color: {text}; }}
 QLabel#tabelleleer {{ color: {matt}; font-size: 12px; background: transparent; }}
+QLabel#tabellensumme {{ background: {akzent_hell}; border-top: 1px solid {linie};
+    font-weight: 600; color: {text}; padding: 0px 6px; }}
 QWidget#unterkopf {{ background: {grund}; border-bottom: 1px solid {linie}; }}
 QComboBox#gruppenwahl {{ padding: 2px 8px; border-radius: 6px; font-weight: 600; }}
 QComboBox#ergebniswahl {{ padding: 2px 8px; border-radius: 6px; }}

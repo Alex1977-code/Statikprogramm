@@ -3758,23 +3758,38 @@ def schnittgroessen_grenzen(model: Model, res, groessen=SCHNITTGROESSEN, element
 
     Gesucht wird ueber **alle Nachweisstellen**, nicht nur die Stabenden: das
     groesste Feldmoment liegt in der Regel dazwischen. Bei einer Umhuellenden
-    stehen die Grenzwerte schon in ``res.beam``; dann werden sie genommen.
+    stehen die Grenzwerte schon in ``res.beam``; dann werden sie genommen -
+    je Groesse (min, max, Herkunft min, Herkunft max), gelesen werden nur min
+    und max. Bis zum 03.10.2026 (Nachbesserung 10c) ging das Quadrupel ganz in
+    np.nanmax ein, und die Herkunftsindizes zaehlten als Werte: am
+    Hallenrahmen, Umhuellende GZT, stand N max = 34 N (ein Index) statt
+    -10 429,5 N im Modellbaum und in den Kennwerten im Bild.
     """
     out: dict = {}
     st = res.stations() if hasattr(res, "stations") else None
     quelle = st if st else getattr(res, "beam", None)
     if not quelle:
         return out
+    huelle = not st
     if elemente is not None:
         drin = set(int(i) for i in elemente)
         quelle = {i: d for i, d in quelle.items() if int(i) in drin}
     for q in groessen:
         klein = gross = None
         for i, d in quelle.items():
-            v = np.asarray(d.get(q), float)
-            if not v.size:
-                continue
-            a, b = float(np.nanmin(v)), float(np.nanmax(v))
+            if huelle:
+                t = d.get(q)
+                if t is None or len(t) < 2:
+                    continue
+                lo, hi = np.asarray(t[0], float), np.asarray(t[1], float)
+                if not lo.size or not hi.size:
+                    continue
+                a, b = float(np.nanmin(lo)), float(np.nanmax(hi))
+            else:
+                v = np.asarray(d.get(q), float)
+                if not v.size:
+                    continue
+                a, b = float(np.nanmin(v)), float(np.nanmax(v))
             if klein is None or a < klein[0]:
                 klein = (a, i)
             if gross is None or b > gross[0]:
