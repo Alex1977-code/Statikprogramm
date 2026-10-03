@@ -1039,6 +1039,200 @@ def test_stab_loeschen_ueberall_gleich():
         w._auswahl_leeren()
 
 
+def _halle_mit_stellung(w, app, lager: int = 0, name: str = "Fuß links"):
+    """Die Halle, ihr Knotenlager ``lager`` heisst ``name``; die Stellung „S1“ schaltet
+    es und den Stab „Riegel“ ab."""
+    from statik3d.bridges.positions import Stellung
+    _halle(w, app)
+    m = w.model
+    m.supports[lager].name = name
+    st = Stellung("S1", lager_aus=[name], staebe_aus=["Riegel"], faelle=list(m.load_cases))
+    m.stellungen.append(st)
+    w.refresh_all()
+    app.processEvents()
+    return m, st
+
+
+def _stellungszeilen(w, ab: int) -> list:
+    return [z for z in w.log.toPlainText()[ab:].splitlines() if "Stellung „S1“" in z]
+
+
+def test_loeschwege_raeumen_stellungen_auf():
+    """Ein Lager und ein Stab, die eine Stellung beim Namen nennt: jeder Löschweg der
+    Oberfläche nimmt den Namen aus der Stellung und sagt es im Protokoll (Gegenprüfung
+    zu 14a, 03.10.2026). Bis dahin blieben die Namen stehen - ein Lager, das später so
+    hieß, war in der Stellung still abgeschaltet."""
+    import numpy as np
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    fragen = _fragen(w, True)
+    try:
+        for weg in ("Entf", "Rechtsklick", "Baum", "Kontextmenü und Tabellen"):
+            m, st = _halle_mit_stellung(w, app)
+            ab = len(w.log.toPlainText())
+            if weg == "Entf":
+                ia = _ansicht(w, app)
+                w._auswahl_vergessen()
+                w.sel_lager = [("lager", 0)]
+                w.sel_staebe = ["Riegel"]
+                QtTest.QTest.keyClick(ia, K.Key_Delete)
+            elif weg == "Rechtsklick":
+                w.auswahl_loeschen("lager", [0])
+                w.auswahl_loeschen("stab", ["Riegel"])
+            elif weg == "Baum":
+                w._baum_loeschen("lager_einzeln", "0")
+                w._baum_loeschen("stab", "Riegel")
+            else:
+                w.lager_loeschen(0)
+                w.tbl_mem.setCurrentCell(list(m.members).index("Riegel"), 0)
+                w.remove_member()
+            app.processEvents()
+            neu = _stellungszeilen(w, ab)
+            check(f"{weg}: Lager und Stab gehen aus der Stellung",
+                  st.lager_aus == [] and st.staebe_aus == [] and "Riegel" not in m.members,
+                  f"{st.lager_aus}, {st.staebe_aus}")
+            check("… und das Protokoll nennt beide",
+                  any("Fuß links" in z for z in neu) and any("Riegel" in z for z in neu),
+                  " | ".join(neu)[:200])
+        for weg in ("Befehl „Knoten löschen“", "Knopf unter der Tabelle „Knoten“", "Lager entfernen"):
+            m, st = _halle_mit_stellung(w, app)
+            k = m.nn - 1                                    # frei
+            m.fix(k, [0, 1, 2])
+            m.supports[-1].name = "Hilfslager"
+            st.lager_aus = ["Hilfslager"]
+            w.refresh_all()
+            app.processEvents()
+            ab = len(w.log.toPlainText())
+            w.selection = np.array([k], dtype=int)
+            if weg.startswith("Befehl"):
+                w.delete_nodes()
+            elif weg.startswith("Knopf"):
+                w.tbl_knoten.view.selectRow(k)
+                w.knoten_loeschen()
+            else:
+                w.remove_support()
+            app.processEvents()
+            neu = _stellungszeilen(w, ab)
+            check(f"{weg}: das Lager am Knoten geht aus der Stellung, mit Zeile im Protokoll",
+                  st.lager_aus == [] and any("Hilfslager" in z for z in neu),
+                  f"{st.lager_aus}, {' | '.join(neu)[:160]}")
+        check("… ohne Fehlermeldung", not w.fehler_liste, str(w.fehler_liste))
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
+def test_knoten_loeschen_aendert_nichts_bei_abweisung():
+    """Der Knopf unter der Tabelle „Knoten“ nimmt den Knoten aus seinen Linien und
+    loescht ihn dann. Braucht ihn noch etwas anderes (hier: eine Flaeche als
+    Eckknoten), weist er ab, **bevor** etwas geaendert ist (Gegenpruefung
+    03.10.2026: die Linien standen schon ohne ihn da, und ein Rueckgaengig-Schritt
+    blieb). Der Befehl *Knoten löschen* laesst einem Knoten, der bleibt, sein Lager
+    und seine Last; bis dahin nahm er beides vorher weg."""
+    import numpy as np
+    from statik3d.model import Flaeche, Kopplung
+    w, app = _fenster()
+    try:
+        n0 = _halle(w, app)
+        m = w.model
+        a, b = n0 - 2, n0 - 1                       # frei
+        m.add_line("LX", [a, b])
+        m.flaechen["FX"] = Flaeche("FX", ["LX"], ecken=[a, b])
+        w.refresh_all()
+        app.processEvents()
+        w.fehler_liste.clear()
+        schritte = len(w._undo)
+        w.tbl_knoten.view.selectRow(b)
+        w.knoten_loeschen()
+        app.processEvents()
+        check("Knopf „Knoten löschen“, Knoten ist Eckknoten einer Fläche: abgewiesen mit Grund",
+              m.nn == n0 and any("Fläche FX" in f for f in w.fehler_liste), str(w.fehler_liste))
+        check("… die Linie hat ihn noch, und kein Rückgängig-Schritt bleibt",
+              [int(x) for x in m.lines["LX"].nodes] == [a, b] and len(w._undo) == schritte,
+              f"{m.lines['LX'].nodes}, {len(w._undo) - schritte} Schritte")
+        n0 = _halle(w, app)
+        m = w.model
+        k = n0 - 1
+        m.fix(k, [0, 1, 2])
+        m.load_node(k, Fz=-1e3)
+        m.kopplungen.append(Kopplung(k, n0 - 2, [[1.0, 0.0, 0.0]], [1e9]))
+        w.refresh_all()
+        app.processEvents()
+        w.selection = np.array([k], dtype=int)
+        w.delete_nodes()
+        app.processEvents()
+        lasten = [l for lc in m.load_cases.values() for l in lc.nodal_loads if int(l.node) == k]
+        check("Befehl „Knoten löschen“, Knoten mit Kopplung bleibt: Lager und Last bleiben mit ihm",
+              m.nn == n0 and any(int(x.node) == k for x in m.supports) and len(lasten) == 1,
+              f"{m.nn}, {[x.node for x in m.supports]}, {len(lasten)} Lasten")
+    finally:
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
+def test_alle_lager_loeschen_raeumt_stellungen_auf():
+    """„Alle Lager löschen“ (Register Lager/Lasten) ist auch ein Loeschweg."""
+    w, app = _fenster()
+    alt = w.__dict__.get("_fragen_knoepfe")
+    w._fragen_knoepfe = lambda *a, **k: True
+    try:
+        m, st = _halle_mit_stellung(w, app)
+        ab = len(w.log.toPlainText())
+        w.clear_supports()
+        app.processEvents()
+        neu = _stellungszeilen(w, ab)
+        check("Alle Lager löschen: das Lager geht aus der Stellung, mit Zeile im Protokoll",
+              not m.supports and st.lager_aus == [] and any("Fuß links" in z for z in neu),
+              f"{st.lager_aus}, {' | '.join(neu)[:160]}")
+    finally:
+        if alt is None:
+            w.__dict__.pop("_fragen_knoepfe", None)
+        else:
+            w._fragen_knoepfe = alt
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
+def test_entf_knoten_mit_kopplung():
+    """Ein freier Knoten, an dem eine Kopplung hängt, ist benutzt: Entf lässt ihn stehen
+    und nennt den Grund; die Rückfrage behauptet nicht, es seien Elemente oder Linien."""
+    from PySide6 import QtCore, QtTest
+    from statik3d.model import Kopplung
+    K = QtCore.Qt
+    w, app = _fenster()
+    n0 = _halle(w, app)                             # die letzten drei Knoten sind frei
+    ia = _ansicht(w, app)
+    fragen = _fragen(w, True)
+    try:
+        m = w.model
+        a, b = n0 - 2, n0 - 1
+        m.kopplungen.append(Kopplung(a, b, [[1.0, 0.0, 0.0]], [1e9]))
+        ort = [tuple(m.nodes[a]), tuple(m.nodes[b])]
+        _waehlen(w, knoten=[a])
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Entf, nur ein gekoppelter Knoten gewählt: nichts gelöscht, ohne Rückfrage",
+              not fragen and m.nn == n0 and "Kopplung" in w.log.toPlainText()[-300:],
+              w.log.toPlainText()[-200:])
+        _waehlen(w, knoten=[n0 - 3, a])
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        f = fragen[-1] if fragen else ""
+        check("… mit einem freien dazu: die Rückfrage nennt den freien und sagt, dass einer bleibt",
+              f.startswith("1 Knoten wirklich löschen?") and "1 der 2 gewählten Knoten bleibt stehen" in f
+              and "Elemente oder Linien" not in f, f[:200])
+        kp = m.kopplungen[0]
+        check("… die Kopplung zeigt danach auf dieselben Orte",
+              m.nn == n0 - 1 and [tuple(m.nodes[kp.node_a]), tuple(m.nodes[kp.node_b])] == ort,
+              f"{kp.node_a}, {kp.node_b}")
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
@@ -1051,7 +1245,9 @@ def main():
               test_einzeltaste_ersetzt_keine_geaenderte_maske, test_entf_und_tasten_waehrend_der_rechnung,
               test_rueckfrage_nennt_die_folgen, test_nichts_geloescht_laesst_die_stapel_in_ruhe,
               test_entf_grosse_auswahl_ist_schnell, test_entf_teils_benutzte_knoten,
-              test_stab_loeschen_ueberall_gleich):
+              test_stab_loeschen_ueberall_gleich, test_loeschwege_raeumen_stellungen_auf,
+              test_entf_knoten_mit_kopplung, test_knoten_loeschen_aendert_nichts_bei_abweisung,
+              test_alle_lager_loeschen_raeumt_stellungen_auf):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

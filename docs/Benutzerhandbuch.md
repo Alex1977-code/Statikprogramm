@@ -957,8 +957,11 @@ hinzu (Schalter *Kontaktmarken* oder die Färbung *Kontakt Zustand*).
 In der Tabelle „Knoten“ wird ein Knoten nur gelöscht, wenn **kein** Element
 mehr an ihm hängt — sonst sagt das Programm, welches Element im Weg ist. Der
 Befehl *Geometrie → Knoten löschen* (und im Kontextregister „Auswahl“) nimmt
-dagegen die gewählten Knoten **mitsamt** ihren Elementen; nur Knoten, die eine
-Linie noch braucht, bleiben und werden genannt. Beim Löschen eines Elements
+dagegen die gewählten Knoten **mitsamt** ihren Elementen; nur Knoten, an denen
+sonst noch etwas hängt, das sie braucht (etwa eine Linie oder eine Kopplung),
+bleiben samt ihren Lagern und Lasten und werden genannt. Bis zum 03.10.2026 nahm
+der Befehl Lager und Knotenlasten aller gewählten Knoten vorher weg, auch an
+Knoten, die danach stehen blieben. Beim Löschen eines Elements
 oder Knotens werden Stabzüge, Flächen, Volumen, Lager, Lasten, Anschlüsse und
 Beulfelder mitgeführt, die Nummern dahinter rücken auf — und alles ist mit
 Rückgängig zurückzunehmen.
@@ -978,6 +981,38 @@ der Befehl.
 Nach einem neuen Vernetzen baut das Programm diese Angaben
 ohnehin neu auf; betroffen war das Löschen und Umnummerieren von Knoten im
 fertig vernetzten Modell.
+
+**Wann ein Knoten benutzt ist (seit 03.10.2026).** Ein Knoten wird nicht
+gelöscht, solange etwas an ihm hängt, das ihn braucht. Das sind ein
+Element oder eine Linie, eine Fläche, die ihn als Eckknoten oder als
+integrierten Knoten nennt, eine Kopplung oder ein Spaltelement, ein Kontaktpaar
+(als Slave-Knoten oder in einer Master-Facette), eine Lasteinleitung, eine
+Verformungsgrenze und eine Stellung, deren Antriebsmoment an ihm angreift. Das
+Programm nennt dann, was am Knoten hängt, etwa „Knoten 20 wird benutzt von
+1 Kopplung – erst diese löschen oder ändern“. Zwei Wege nehmen vorher etwas
+selbst weg: der Knopf *Knoten löschen* unter der Tabelle „Knoten“ nimmt den
+Knoten aus seinen Linien, und der Befehl *Geometrie → Knoten löschen* nimmt seine
+Elemente mit. Alles Übrige weist auch dort ab, und zwar bevor etwas geändert ist.
+Was dagegen nur am Knoten hängt,
+geht mit ihm: sein Knotenlager, seine Knotenlasten und Zwangsverformungen, ein
+Kontaktlager, Punktmassen und Dämpfer und ein starrer Körper, dessen Master er
+ist; als Slave fällt er nur aus der Liste des starren Körpers, bei einer
+Verteilkopplung (RBE3) samt seinem Gewicht. Ebenso fällt er
+aus Linien- und Flächenlagern (samt seiner Einflussfläche), aus Layern und
+Subsystemen heraus, ein Paar getrennter Fugenknoten mit ihm entfällt, und die
+Kantenmitte eines Tetraeders mit Ordnung p an einer Kante mit ihm auch. Bis zum
+03.10.2026 zählten nur Elemente und Linien, und die übrigen Verweise blieben
+beim Löschen stehen. Sie zeigten danach auf den Knoten, der auf die frei
+gewordene Nummer nachrückte. Gemessen am Stand vor der Änderung: Nach dem
+Löschen eines freien Knotens, an dem eine Kopplung hing, zeigte sie auf den
+nachgerückten Knoten; lag ihr zweiter Knoten auf der nächsten Nummer, koppelte sie
+danach einen Knoten mit sich selbst. Der Antrieb einer Stellung wurde beim Umnummerieren gar
+nicht mitgeführt; nach dem Löschen irgendeines freien Knotens mit kleinerer
+Nummer griff das Antriebsmoment am Nachbarknoten an. Auch die Einflussflächen eines Flächenlagers über Knoten blieben stehen,
+und die Fläche des gelöschten Knotens ging an den nächsten. Beim Neuvernetzen
+(„Knoten des alten Netzes löschen“) halten seit demselben Tag auch die
+Master-Facetten eines Kontaktpaars und der Antrieb einer Stellung ihre Knoten
+fest. Geprüft je Verweisart in `tests/test_loeschen.py`.
 
 ### Die Geometriekette: Knoten → Linien → Flächen → Volumen
 
@@ -3518,6 +3553,31 @@ aktivieren“ leert die Listen. Solange die Maske offen ist, zeigt die Ansicht
 die Stellung ohne ihre abgeschalteten Elemente. Stellungen werden mit dem
 Modell gespeichert. Geprüft in `tests/test_gui_smoke.py` (Abschnitt
 Werkbank: Klick schaltet aus und wieder ein, Listen zum Anhaken).
+
+**Gelöschte Lager und Stäbe (seit 03.10.2026).** Wird ein Lager oder ein Stab
+gelöscht, den eine Stellung nennt, nimmt das Programm ihn aus der Stellung und
+schreibt je Angabe eine Zeile ins Protokoll, etwa „Stellung „S1“: Lager
+„Endlager“ gibt es nicht mehr – aus „Deaktivierte Knotenlager“ genommen“. Das
+gilt für jeden Löschweg: Entf in der Ansicht, Rechtsklick, Modellbaum,
+Kontextmenü des Lagers, die Knöpfe unter den Tabellen, „Alle Lager löschen“, den
+Befehl *Knoten löschen* und das Knotenlager, das mit seinem Knoten geht. Ein Lager
+ohne Namen steht in der Liste mit seiner Nummer. Diese Nummern sind die der
+Stellungsmaske und zählen ab 0; der Modellbaum nennt dasselbe Lager „Lager 1“.
+Wird ein Lager mit kleinerer Nummer gelöscht, rücken die Nummern dahinter auf, und
+die Stellung zieht mit („Eintrag „3“ in „Deaktivierte Knotenlager“ heißt jetzt
+„2““). Heißt ein Lager selbst wie eine Nummer, etwa „3“, meint ein solcher Eintrag
+zwei Lager, eines beim Namen und eines bei der Nummer. Nach dem Löschen eines
+Lagers davor lässt er sich nicht mehr eindeutig nachziehen; das Protokoll sagt
+dann „nicht eindeutig; bitte die Stellung prüfen“. Bis zum 03.10.2026 blieben Namen und
+Nummern stehen; gemessen am Stand vor der Änderung schaltete die Stellung danach
+mit der Nummer des gelöschten Lagers das nächste ab, und die Nummer des
+nachgerückten Lagers traf ein anderes oder keines. Leert das Löschen die Liste
+„nur diese Lager aktiv“ (Python: `lager_aktiv`), greifen in der Stellung alle
+Lager, denn leer heißt dort „alle“. Die Protokollzeile sagt das ausdrücklich,
+weil sich damit die Rechnung der Stellung ändert. Der Knoten, an dem das
+Antriebsmoment einer Stellung angreift, lässt sich nicht löschen, solange die
+Stellung ihn nennt. Geprüft in `tests/test_loeschen.py` und
+`tests/test_tasten_fokus.py` (alle Löschwege der Oberfläche).
 
 ### Situationen: Stellung und ihre Lastfälle
 
@@ -8140,17 +8200,21 @@ deselektieren*, mit jeder anderen Änderung der Auswahl und mit jeder Änderung 
 Modell.
 
 Was sich nicht löschen lässt, bleibt stehen und wird mit Grund genannt, etwa ein
-Knoten, an dem noch ein Element hängt („erst diese löschen“); der Rest wird
-trotzdem gelöscht. Das ist ein anderer Weg als der Befehl *Geometrie → Knoten
-löschen*: der nimmt die gewählten Knoten **mitsamt** ihren Elementen mit (nur
-Knoten, die eine Linie braucht, bleiben), Entf in der Ansicht weist benutzte Knoten
-ab, wie die Tabelle „Knoten“. Sind nur Knoten gewählt und lässt sich keiner löschen
-(Strg+A, Entf an einem vernetzten Modell), fragt das Programm gar nicht erst,
+Knoten, an dem noch ein Element hängt („erst diese löschen oder ändern“); der Rest
+wird trotzdem gelöscht. Was einen Knoten benutzt macht, steht in Kapitel 2 unter
+„Wann ein Knoten benutzt ist“. Das ist ein anderer Weg als der Befehl *Geometrie →
+Knoten löschen*: der nimmt die gewählten Knoten **mitsamt** ihren Elementen mit (nur
+Knoten, an denen sonst noch etwas hängt, bleiben), Entf in der Ansicht weist benutzte
+Knoten ab, wie die Tabelle „Knoten“. Sind nur Knoten gewählt und lässt sich keiner
+löschen (Strg+A, Entf an einem vernetzten Modell), fragt das Programm gar nicht erst,
 sondern nennt in der Statuszeile und im Protokoll den Grund. Lässt sich nur ein
 Teil löschen, nennt die Rückfrage nur die freien Knoten und sagt, wie viele
 stehen bleiben („62 Knoten wirklich löschen? 133004 der 133066 gewählten Knoten
-bleiben stehen, weil an ihnen Elemente oder Linien hängen.“), und gelöscht werden
-nur die freien. Bis zum 03.10.2026 fragte sie am Drehlager nach Strg+A „133066
+bleiben stehen, weil noch etwas an ihnen hängt (etwa ein Element, eine Linie oder
+eine Kopplung).“), und gelöscht werden nur die freien. Bis zum 03.10.2026 hieß es
+dort „weil an ihnen Elemente oder Linien hängen“; seitdem machen auch Kopplungen,
+Kontaktpaare und andere Verweise einen Knoten benutzt, und der Satz zählt darum
+nicht mehr abschließend auf. Bis zum 03.10.2026 fragte sie am Drehlager nach Strg+A „133066
 Knoten wirklich löschen?“ und löschte die 62 freien. Lässt sich sonst
 nichts löschen, bleibt nichts zurück: kein Rückgängig-Schritt, keine
 Änderungsmarke, und auch der Wiederholen-Stapel bleibt (bis zum 03.10.2026 leerte
