@@ -5246,8 +5246,21 @@ Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines
 Knotens nach den überdeckten Flächen (Mortar-Verfahren) statt nach dem Punkt,
 auf den er fällt. Vorher lag die Spannung im Prüffall bis 74 N/mm² daneben.
 Im Protokoll steht dann „Kontaktpaar '…': 250 Slave-Knoten mit
-Mortar-Gewichten (ungleiche Netze)“; Knoten am Rand der Überdeckung rechnen
-wie bisher. Bei gleichen Netzen ändert sich nichts.
+Mortar-Gewichten (ungleiche Netze), davon 40 am Rand der Überdeckung“. Bei
+gleichen Netzen ändert sich nichts.
+
+Der Rand der Überdeckung – Knoten, deren Nachbarflächen über die Kante der
+Gegenfläche hinausragen, etwa an einem Stempel, der breiter ist als sein
+Sockel – rechnete bis zum 30.09.2026 noch nach dem Punkt, auf den der Knoten
+fällt. In einer Fuge liefen so zwei Kopplungen nebeneinander, und die Kräfte
+kamen dort schief an: am Prüffall (Stempel 1,2 × 1,2 m auf Sockel 1,0 × 1,0 m,
+gleichmäßiger Druck) unterschieden sich spiegelbildliche Eckknoten des Sockels
+um 10 %, 8 972 gegen 4 128 kN. Jetzt bekommen auch diese Knoten ihre Gewichte
+aus dem überdeckten Teil ihrer Flächen; die Kräfte sind spiegelsymmetrisch
+(Unterschied 3·10⁻¹⁶). Nur Knoten, deren Fläche mehr als einmal überdeckt ist
+(zwei Master-Lagen übereinander, ein Fehler in der Kontaktdefinition), rechnen
+weiter nach dem Punkt; das Protokoll zählt sie: „…; 12 mit mehrfach
+überdeckter Facette wie bisher Knoten gegen Fläche“.
 
 **Plastizität: eine Laststufe wird halbiert (seit 28.09.2026).** Wächst die
 Änderung der plastischen Kräfte in einer Laststufe zweimal hintereinander,

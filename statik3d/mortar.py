@@ -22,12 +22,53 @@ p D_j, und am Master-Knoten kommt sum_j p D_j w_ji = p int N_i^m an - genau
 seine Einflussflaeche. Bei deckungsgleichen Netzen ist w_ji = delta_ji: die
 Kopplung Knoten auf Knoten bleibt, wie sie war.
 
+Am Rand der Ueberdeckung (30.09.2026): liegt eine Slave-Facette nur zum Teil
+auf der Master-Flaeche, sind die dualen Integrale ueber den ueberdeckten Teil
+wertlos - Phi_j ist abseits seines Knotens negativ, und ueber ein Teilstueck
+integriert kippt die Summe. Gemessen am Gitter 3 x 3 auf [0, 1,2]^2 ueber
+2 x 2 auf [0,1, 1,1]^2: auf den ueberdeckten Teil normiert (w = M_ji / sum_i
+M_ji) bekaemen alle 16 Knoten negative Gewichte, an den Ecken -0,96 und
++2,56, und sum_i M_ji / D_j laege fuer die inneren Knoten bei 1,34, obwohl
+ihr Einflussbereich nicht ganz ueberdeckt ist. Darum wird **je Facette**
+entschieden (VOLL_TOL): eine ganz ueberdeckte Facette traegt die dualen
+Integrale wie bisher, eine teilweise ueberdeckte die Standard-Formfunktionen
+auf ihren Schnittstuecken (int_{e cap gamma} N_j N_i^m, int_{e cap gamma}
+N_j - nichtnegativ), eine gar nicht ueberdeckte nichts. Beide Anteile bilden
+auf jedem Stueck die Eins nach (sum_j Phi_j = sum_j N_j = 1), darum kommt ein
+gleichmaessiger Druck p mit der konsistenten Knotenlast p D_j auch am Rand
+genau als p int_gamma N_i^m am Master-Knoten an; bei voller Ueberdeckung
+sind es die bisherigen dualen Gewichte. Eine mehr als einmal ueberdeckte
+Facette (zwei Master-Lagen) gilt als fehlerhaft: ihre Knoten behalten die
+Projektion.
+
 Nur Geometrie und Integration, kein Zustand; contact.py setzt die Gewichte
 ein. Facetten: Dreiecke (3 Knoten) und Vierecke (4 Knoten, bilinear).
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
+
+#: Eine Slave-Facette gilt als ganz ueberdeckt, wenn die Summe ihrer
+#: Schnittstuecke mit den Master-Facetten bis auf diesen Anteil ihrer Flaeche
+#: reicht; darueber hinaus ist sie mehrfach ueberdeckt. Deckungsgleiche und
+#: ineinander aufgehende Netze (K6) treffen die Flaeche auf 1e-15.
+VOLL_TOL = 1e-6
+
+
+class Gewicht(NamedTuple):
+    """Mortar-Integrale eines Slave-Knotens: ``D`` der Nenner (int N_j ueber
+    die ganz ueberdeckten Facetten plus int_{e cap gamma} N_j ueber die
+    teilweise ueberdeckten), ``M`` je Master-Knoten der Zaehler, ``D_ganz``
+    int N_j ueber alle Facetten (Ueberdeckung = D / D_ganz), ``rand``: eine
+    Facette des Knotens liegt nur teilweise oder gar nicht auf dem Master,
+    ``doppelt``: eine Facette ist mehr als einmal ueberdeckt."""
+    D: float
+    M: dict
+    D_ganz: float
+    rand: bool
+    doppelt: bool
 
 #: Dunavant, Grad 5, 7 Punkte: (a, b) baryzentrisch und Gewicht (Summe 1)
 _DUN5 = np.array([
@@ -217,8 +258,8 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
     dann zaehlen nur Master-Facetten, die der Slave-Facette zugewandt sind
     (Aussennormalen entgegengesetzt). Ohne sie haette eine duenne
     Master-Platte zwei Seiten im Suchradius, und die Ueberdeckung waere 2.
-    Rueckgabe {slave_knoten: (D_j, {master_knoten: M_ji})}; ein Knoten ist
-    ganz ueberdeckt, wenn sum_i M_ji = D_j."""
+    Rueckgabe {slave_knoten: Gewicht}; die Gewichte sind M_ji / D_j, ihre
+    Summe ist 1, wenn keine Facette des Knotens mehrfach ueberdeckt ist."""
     from scipy.spatial import cKDTree
     if not slave_facetten or not master_facetten:
         return {}
@@ -243,6 +284,9 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
     alle_kand = baum.query_ball_point(SC, SR + rmax + suchradius) if len(sf) else []
     D: dict = {}
     M: dict = {}
+    D_ganz: dict = {}
+    rand: set = set()
+    doppelt: set = set()
     for si, f in enumerate(sf):
         n = SN[si]
         if not np.any(n):
@@ -266,10 +310,11 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
         De, Me = facetten_integrale(P2)
         Ae = np.diag(De) @ np.linalg.inv(Me)      # duale Formfunktionen Phi = Ae N
         for j, dj in zip(f, De):
-            D[j] = D.get(j, 0.0) + float(dj)
+            D_ganz[j] = D_ganz.get(j, 0.0) + float(dj)
         re = float(SR[si])
         kand = np.asarray(alle_kand[si], dtype=int)
         if not kand.size:
+            rand.update(f)                        # nichts gegenueber: unueberdeckt
             continue
         # gebuendelt vorfiltern: gegenueber (Normalen hoechstens 60 Grad
         # auseinander), im Suchradius laengs der Normalen, und in der Ebene
@@ -291,6 +336,7 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
         a_e = abs(_flaeche_py(P2l))
         E = np.column_stack([e1, e2])
         pts, wts, stuecke = [], [], []          # stuecke: (Q2c, Master-Knoten, von, bis)
+        a_ueb = 0.0                             # ueberdeckte Flaeche, exakt aus den Polygonen
         for fi in kand[ok]:
             Q2 = (MP[fi] - c) @ E
             ql = [(float(x), float(y)) for x, y in Q2]
@@ -308,6 +354,7 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
             poly = _schneiden_py(P2l, ql)
             if len(poly) < 3 or abs(_flaeche_py(poly)) <= 1e-14 * a_e:
                 continue
+            a_ueb += abs(_flaeche_py(poly))
             von = len(pts)
             ax, ay = poly[0]
             for k in range(1, len(poly) - 1):
@@ -318,11 +365,27 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
                     pts.append((ax + l1 * (bx - ax) + l2 * (cx - ax), ay + l1 * (by - ay) + l2 * (cy - ay)))
                     wts.append(w * ak)
             stuecke.append((np.array(ql), [mf[fi][i] for i in q_ord], von, len(pts)))
+        if a_ueb > (1.0 + VOLL_TOL) * a_e:
+            doppelt.update(f)                     # zwei Master-Lagen: kein Gewicht
+            continue
+        voll = abs(a_ueb - a_e) <= VOLL_TOL * a_e
+        if not voll:
+            rand.update(f)
         if not stuecke:
             continue
         pts_a = np.array(pts)
         wts_a = np.array(wts)
-        Phi = formfunktionen(P2, pts_a) @ Ae.T          # (k, ns), einmal je Slave-Facette
+        Ns = formfunktionen(P2, pts_a)                  # (k, ns), einmal je Slave-Facette
+        if voll:
+            Phi = Ns @ Ae.T                             # dual: int_e Phi_j N_k = delta_jk int_e N_j
+            for j, dj in zip(f, De):
+                D[j] = D.get(j, 0.0) + float(dj)
+        else:
+            # teilweise ueberdeckt: Standard-Formfunktionen auf den Stuecken -
+            # nichtnegativ, und sum_i M_ji = int_{e cap gamma} N_j genau
+            Phi = Ns
+            for a_, j in enumerate(f):
+                D[j] = D.get(j, 0.0) + float(Ns[:, a_] @ wts_a)
         for Q2c, mknoten, von, bis in stuecke:
             Nm = formfunktionen(Q2c, pts_a[von:bis])
             I = (Phi[von:bis] * wts_a[von:bis, None]).T @ Nm
@@ -330,4 +393,5 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
                 zeile = M.setdefault(j, {})
                 for b_, i in enumerate(mknoten):
                     zeile[i] = zeile.get(i, 0.0) + float(I[a_, b_])
-    return {j: (D[j], M.get(j, {})) for j in D}
+    return {j: Gewicht(D.get(j, 0.0), M.get(j, {}), D_ganz[j], j in rand, j in doppelt)
+            for j in D_ganz}
