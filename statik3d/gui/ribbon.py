@@ -10,12 +10,18 @@ kleine fuer die Nebenbefehle.
 
 Der Grundsatz der Vorgabe lautet: **jede Funktion existiert genau einmal**.
 Darum gibt es hier keine Menueleiste und keine zweite Werkzeugleiste daneben;
-was im Ribbon steht, steht nirgends sonst. Vier Ausnahmen sind ausdruecklich
+was im Ribbon steht, steht nirgends sonst. Sechs Ausnahmen sind ausdruecklich
 gewollt und keine Doppelung, weil sie denselben Befehl nur schneller erreichbar
 machen:
 
-* die **Schnellzugriffsleiste** (Speichern, Rueckgaengig, Wiederholen,
-  Berechnen, Auswahl aufheben) - dieselben Aktionsobjekte, nicht neue Befehle,
+* die **Schnellzugriffsleiste** in der Kopfzeile (Speichern, Rueckgaengig,
+  Wiederholen, Berechnen) - dieselben Aktionsobjekte, nicht neue Befehle,
+* die **Glasleiste** ueber der Ansicht (Darstellung, Zeigen, Sicht, Klick
+  waehlt, Intelligente Auswahl, Fang, Ergebnisse an/aus, Alles deselektieren) -
+  dieselben Aktionsobjekte wie die Schalter und Befehle im Ribbon, ein Schalter
+  zeigt an beiden Stellen denselben Zustand,
+* der zweite blaue Knopf **Berechnen** im Register Berechnung
+  (``MainWindow._ribbon_knopf``) - dieselbe Aktion wie der in Start,
 * die **Tastenkuerzel** - sie haengen am Fenster und gelten darum in jedem
   Register; jede Tastenfolge gehoert genau einem Befehl (:meth:`Ribbon.kuerzel_setzen`),
 * die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein),
@@ -93,19 +99,23 @@ class Befehl:
     #: Ort, wenn der Befehl nicht in einem Register steht (die Befehlssuche
     #: oben rechts, 03.10.2026); leer = „Register › Gruppe“
     ort: str = ""
+    #: frühere Gruppennamen, unter denen die Suche den Befehl weiter findet
+    #: (Ribbon.fruehere_gruppe, 03.10.2026): zaehlen wie der Gruppenname, nicht
+    #: wie der Befehlsname - Enter fuehrt darum nie allein deshalb einen aus
+    frueher: str = ""
 
     def ort_text(self) -> str:
         """Wo der Befehl zu finden ist - fuer die Trefferliste und die Kuerzelliste."""
         return self.ort or f"{self.register} › {self.gruppe}"
 
     def suchtext(self) -> str:
-        return f"{self.text} {self.register} {self.gruppe} {self.hinweis}".lower()
+        return f"{self.text} {self.register} {self.gruppe} {self.frueher} {self.hinweis}".lower()
 
     def namenswoerter(self) -> list:
         return woerter(self.text) + woerter(SYNONYME.get(self.text, ""))
 
     def alle_woerter(self) -> list:
-        return self.namenswoerter() + woerter(f"{self.register} {self.gruppe} {self.hinweis}")
+        return self.namenswoerter() + woerter(f"{self.register} {self.gruppe} {self.frueher} {self.hinweis}")
 
     def nicht_aus_suche(self) -> bool:
         return self.vorsicht or (self.text not in NUR_ANSICHT
@@ -811,6 +821,17 @@ class Ribbon(QtWidgets.QWidget):
         # ein vorlaeufig aufgeklapptes Register klappt nach dem Befehl zu
         b.aktion.triggered.connect(lambda *_a: self._nach_befehl())
 
+    def fruehere_gruppe(self, name: str, *aktionen: QtGui.QAction):
+        """Diese Befehle hiessen frueher in der Gruppe ``name`` (Teilpaket 12d:
+        das Register Start bekam andere Gruppen): wer in der Befehlssuche nach
+        dem alten Gruppennamen sucht - „Auswahl“, „Zwischenablage“, „Modell
+        prüfen“ -, findet sie weiter. Der Name zaehlt wie ein Gruppenname, nicht
+        wie ein Befehlsname: er fuehrt in die Trefferliste, Enter fuehrt davon
+        nie einen allein aus."""
+        for b in self.befehle:
+            if b.aktion in aktionen:
+                b.frueher = f"{b.frueher} {name}".strip()
+
     def vorsicht(self, *aktionen: QtGui.QAction):
         """Diese Befehle ersetzen oder leeren das Modell: die Suche fuehrt sie
         nie aus, sie zeigt nur ihr Register."""
@@ -905,7 +926,10 @@ class Ribbon(QtWidgets.QWidget):
         if not such:
             return []
         t = (text or "").strip().lower()
-        genau = [b for b in self.befehle if b.text.lower() == t]
+        # gleichlautend ohne Satzzeichen: „Bearbeiten ▾“ (Menue in Start) und
+        # „Bearbeiten“ (Unterlagen › Skizze) sind beide „Bearbeiten“ - in der
+        # Reihenfolge des Aufbaus, Start steht vor Unterlagen
+        genau = [b for b in self.befehle if b.text.lower() == t or woerter(b.text) == such]
         namen = [b for b in self.namenstreffer(text) if b not in genau]
         rest = [b for b in self.befehle if b not in genau and b not in namen
                 and all(any(wort_passt(w, x) for x in b.alle_woerter()) for w in such)]

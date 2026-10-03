@@ -149,16 +149,45 @@ def _ruhe(n: int = 4):
         app.processEvents()
 
 
+def _aktiv_machen(w) -> bool:
+    """Das Hauptfenster zum aktiven Fenster machen: Qt löst Kürzel und
+    QTest-Tastendrücke nur im aktiven Fenster aus. Erst ein paar Versuche mit
+    show, raise_ und activateWindow; klappt es nicht, sagt die Prüfung es laut
+    (kein stilles Ausweichen auf aktion.trigger())."""
+    for _ in range(6):
+        if w.isActiveWindow():
+            return True
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        _ruhe()
+    return w.isActiveWindow()
+
+
+def _start_offen(w):
+    """Das Register Start aufgeklappt und vorn, wirklich sichtbar. Nach einer
+    Größenänderung schaltet die Fensteraufteilung die Kompaktstufe über einen
+    Zeitgeber (fenster.Fensteranordnung.nachfuehren) und klappt das Ribbon ein -
+    kommt sie nach dem Aufklappen, wäre das Register beim Messen verborgen.
+    Darum erst ausruhen, dann aufklappen, und nachsehen."""
+    rb = w.ribbon
+    _ruhe(10)
+    reg = rb._register["Start"]
+    for _ in range(4):
+        if rb.eingeklappt():
+            rb.einklappen(False)
+        rb.zeigen("Start")
+        _ruhe(10)
+        if reg.isVisible():
+            break
+    return reg
+
+
 def _start(w):
     """Das Register Start, aufgeklappt und vorn, und seine Knöpfe von links nach
     rechts (bei gleichem x von oben nach unten): [(Knopf, Gruppe, x)]."""
     from PySide6 import QtCore, QtWidgets
-    rb = w.ribbon
-    if rb.eingeklappt():
-        rb.einklappen(False)
-    rb.zeigen("Start")
-    _ruhe()
-    reg = rb._register["Start"]
+    reg = _start_offen(w)
     aus = []
     for b in reg.findChildren(QtWidgets.QToolButton):
         g = b.parent()
@@ -252,9 +281,11 @@ def test_dieselben_befehle():
     # (Befehlssuche und Kürzelliste führen weiter zu den Originalen), und jeder
     # der anderen Ablaufbefehle ist in seinem Register genau einmal vermerkt.
     # (Der Schalter „Knoten“ in Ansicht heißt ebenso wie der Befehl in Geometrie.)
+    # (Dazu kommt nur der Sucheintrag „Bearbeiten ▾“: er klappt das Menü auf.)
     in_start = sorted(b.text for b in w.ribbon.befehle if b.register == "Start")
-    check("kein Befehl ist hinzugekommen: das Register Start vermerkt genau seine elf früheren Befehle",
-          in_start == sorted(FRUEHER), str(in_start))
+    check("kein Befehl ist hinzugekommen: das Register Start vermerkt seine elf früheren Befehle und "
+          "als Sucheintrag das Menü „Bearbeiten ▾“", in_start == sorted([*FRUEHER, "Bearbeiten ▾"]),
+          str(in_start))
     # (Berechnen ist in Start vermerkt; sein zweiter Knopf in Berechnung ist kein Befehl)
     zu_viel = [f"{t} in {r}" for t, _g, r, *_x in ABLAUF if r not in ("", "Berechnung")
                and len(_befehl(w, r, t)) != 1]
@@ -362,7 +393,9 @@ def test_kuerzel():
     meldungen = []
     alt = QtCore.qInstallMessageHandler(lambda _t, _c, m: meldungen.append(m))
     try:
-        aktiv = w.isActiveWindow()
+        aktiv = _aktiv_machen(w)
+        check("Vorbereitung: das Hauptfenster ist das aktive Fenster, echte Tastendrücke kommen an",
+              aktiv, "isActiveWindow() ist auch nach raise_() und activateWindow() falsch")
         w.ribbon.zeigen("Start")
         w.plotter.interactor.setFocus()
         _ruhe()
@@ -371,25 +404,16 @@ def test_kuerzel():
                 (QtCore.Qt.Key_R, QtCore.Qt.ControlModifier, "make_report", (),
                  _befehl(w, "Bericht", "Bericht")[0].aktion)):
             AUFRUFE.clear()
-            if aktiv:
-                QtTest.QTest.keyClick(w, taste, mod)
-            else:
-                aktion.trigger()
+            QtTest.QTest.keyClick(w, taste, mod)
             _ruhe()
             check(f"{aktion.shortcut().toString()} im Register Start ruft {fn} genau einmal auf",
-                  AUFRUFE == [(fn, arg)], f"{AUFRUFE}" + ("" if aktiv else " (Aktion direkt ausgelöst)"))
+                  AUFRUFE == [(fn, arg)], f"{AUFRUFE}, Fenster aktiv: {w.isActiveWindow()}")
         w.selection = np.arange(0)
-        if aktiv:
-            QtTest.QTest.keyClick(w, QtCore.Qt.Key_A, QtCore.Qt.ControlModifier)
-        else:
-            _befehl(w, "Start", "Alles auswählen")[0].aktion.trigger()
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_A, QtCore.Qt.ControlModifier)
         _ruhe()
         check("Strg+A (jetzt im Menü „Bearbeiten ▾“) wählt alle Knoten",
               len(w.selection) == w.model.nn and w.model.nn > 0, f"{len(w.selection)} von {w.model.nn}")
-        if aktiv:
-            QtTest.QTest.keyClick(w, QtCore.Qt.Key_Escape)
-        else:
-            w.act_auswahl_weg.trigger()
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_Escape)
         _ruhe()
         check("Esc (Alles deselektieren, ebenfalls im Menü) hebt die Auswahl auf", len(w.selection) == 0,
               str(len(w.selection)))
@@ -398,26 +422,27 @@ def test_kuerzel():
     check("Qt meldete bei keiner dieser Tasten „Ambiguous shortcut“",
           not [m for m in meldungen if "mbiguous" in m], str([m for m in meldungen if "mbiguous" in m]))
     # Gegenprobe der Prüfung selbst: eine zweite Aktion mit F5 blockiert die Taste.
-    # Sähe der Aufbau des Registers so etwas vor, schlüge der Test oben an.
-    if w.isActiveWindow():
-        probe = QtGui.QAction("Probe F5", w)
-        probe.setShortcut(QtGui.QKeySequence("F5"))
-        probe.setShortcutContext(QtCore.Qt.ApplicationShortcut)
-        w.addAction(probe)
-        gemeldet = []
-        alt = QtCore.qInstallMessageHandler(lambda _t, _c, m: gemeldet.append(m))
-        try:
-            AUFRUFE.clear()
-            QtTest.QTest.keyClick(w, QtCore.Qt.Key_F5)
-            _ruhe()
-        finally:
-            QtCore.qInstallMessageHandler(alt)
-            probe.setShortcut(QtGui.QKeySequence())
-            w.removeAction(probe)
-            probe.deleteLater()
-        check("Gegenprobe der Prüfung: eine zweite Aktion mit F5 wird als „Ambiguous shortcut“ gemeldet, "
-              "und die Taste tut dann nichts", any("mbiguous" in m for m in gemeldet) and not AUFRUFE,
-              f"{[m[:50] for m in gemeldet][:2]}, Aufrufe {AUFRUFE}")
+    # Sähe der Aufbau des Registers so etwas vor, schlüge der Test oben an. Sie
+    # läuft immer: ist das Fenster nicht aktiv, schlägt sie fehl und sagt es.
+    _aktiv_machen(w)
+    probe = QtGui.QAction("Probe F5", w)
+    probe.setShortcut(QtGui.QKeySequence("F5"))
+    probe.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+    w.addAction(probe)
+    gemeldet = []
+    alt = QtCore.qInstallMessageHandler(lambda _t, _c, m: gemeldet.append(m))
+    try:
+        AUFRUFE.clear()
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_F5)
+        _ruhe()
+    finally:
+        QtCore.qInstallMessageHandler(alt)
+        probe.setShortcut(QtGui.QKeySequence())
+        w.removeAction(probe)
+        probe.deleteLater()
+    check("Gegenprobe der Prüfung: eine zweite Aktion mit F5 wird als „Ambiguous shortcut“ gemeldet, "
+          "und die Taste tut dann nichts", any("mbiguous" in m for m in gemeldet) and not AUFRUFE,
+          f"{[m[:50] for m in gemeldet][:2]}, Aufrufe {AUFRUFE}, Fenster aktiv: {w.isActiveWindow()}")
     AUFRUFE.clear()
 
 
@@ -472,6 +497,11 @@ def test_nichts_verschwunden():
     _ruhe()
     check("… und umgekehrt: der Menüeintrag schaltet die Glasleiste zurück",
           eintrag.isChecked() == start_an and kn["auswahl_klug"].isChecked() == start_an)
+    check("Das Menü „Bearbeiten ▾“ trägt ein eigenes Symbol (einen Bleistift), nicht den Auswahlpfeil von "
+          "„Alles auswählen“",
+          menue.icon().cacheKey() != next(a for a in menue.menu().actions()
+                                          if a.text() == "Alles auswählen").icon().cacheKey()
+          and not menue.icon().isNull())
     # die Prüfwerkzeuge sind Knöpfe geblieben
     check("Die drei Prüfwerkzeuge stehen weiter als Knöpfe in der Gruppe „Prüfen“",
           all(any(b.text() == t and g == "Prüfen" for b, g, _x in knoepfe)
@@ -481,6 +511,149 @@ def test_nichts_verschwunden():
     treffer = [w.ribbon.anzeige(b) for b in w.ribbon.finden("Alles auswählen") if b.text == "Alles auswählen"]
     check("Befehlssuche: „Alles auswählen“ steht in Start › Bearbeiten",
           treffer == ["Alles auswählen   (Start › Bearbeiten)"], str(treffer))
+
+
+def test_bearbeiten_menue():
+    """Das Menü „Bearbeiten ▾“ verhält sich wie vorher die Knöpfe: Rückgängig und
+    Wiederholen sind grau, solange nichts zu tun ist, nennen den Schritt im
+    Hinweis, und Strg+Z und Strg+Y nehmen genau einen Schritt zurück oder
+    wiederholen ihn. Esc bei offenem Menü schließt nur das Menü."""
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    w.resize(1920, 1080)
+    _ruhe()
+    reg, knoepfe = _start(w)
+    knopf = next((b for b, _g, _x in knoepfe if b.text() == "Bearbeiten ▾"), None)
+    if not check("das Menü „Bearbeiten ▾“ steht im Register Start", knopf is not None):
+        return
+    menue = knopf.menu()
+    eintrag = {a.text(): a for a in menue.actions() if not a.isSeparator()}
+    w._undo, w._redo = [], []
+    w._undo_knoepfe()
+    _ruhe()
+    check("nichts zu tun: Rückgängig und Wiederholen im Menü sind grau, der Hinweis sagt es",
+          not eintrag["Rückgängig"].isEnabled() and not eintrag["Wiederholen"].isEnabled()
+          and "Nichts rückgängig" in eintrag["Rückgängig"].toolTip(),
+          f"{eintrag['Rückgängig'].isEnabled()} {eintrag['Wiederholen'].isEnabled()} "
+          f"{eintrag['Rückgängig'].toolTip()!r}")
+    n0 = w.model.nn
+    w.merken("Knoten angelegt")
+    w.model.add_node(1.0, 2.0, 3.0)
+    _ruhe()
+    tip = eintrag["Rückgängig"].toolTip()
+    check("nach merken(): Rückgängig ist frei, der Hinweis nennt den Schritt und das Kürzel",
+          eintrag["Rückgängig"].isEnabled() and not eintrag["Wiederholen"].isEnabled()
+          and tip.startswith("Rückgängig: Knoten angelegt") and "(Strg+Z)" in tip, repr(tip))
+    meldungen = []
+    alt = QtCore.qInstallMessageHandler(lambda _t, _c, m: meldungen.append(m))
+    try:
+        aktiv = _aktiv_machen(w)
+        check("Vorbereitung: das Hauptfenster ist das aktive Fenster, echte Tastendrücke kommen an",
+              aktiv, "isActiveWindow() ist auch nach raise_() und activateWindow() falsch")
+        w.plotter.interactor.setFocus()
+        _ruhe()
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_Z, QtCore.Qt.ControlModifier)
+        _ruhe()
+        nach_z = (w.model.nn, len(w._undo), len(w._redo))
+        check("Strg+Z nimmt genau einen Schritt zurück (der Knoten ist weg, ein Schritt zum Wiederholen)",
+              nach_z == (n0, 0, 1), f"Knoten {nach_z[0]} (vorher {n0}), Rückgängig {nach_z[1]}, "
+                                    f"Wiederholen {nach_z[2]}")
+        check("… dann ist Wiederholen frei, Rückgängig wieder grau",
+              eintrag["Wiederholen"].isEnabled() and not eintrag["Rückgängig"].isEnabled()
+              and eintrag["Wiederholen"].toolTip().startswith("Wiederholen: "),
+              repr(eintrag["Wiederholen"].toolTip()))
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_Y, QtCore.Qt.ControlModifier)
+        _ruhe()
+        nach_y = (w.model.nn, len(w._undo), len(w._redo))
+        check("Strg+Y stellt genau diesen Schritt wieder her (Knoten wieder da)",
+              nach_y == (n0 + 1, 1, 0), f"Knoten {nach_y[0]}, Rückgängig {nach_y[1]}, Wiederholen {nach_y[2]}")
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_Z, QtCore.Qt.ControlModifier)
+        _ruhe()
+    finally:
+        QtCore.qInstallMessageHandler(alt)
+    check("Qt meldete bei Strg+Z und Strg+Y kein „Ambiguous shortcut“",
+          not [m for m in meldungen if "mbiguous" in m], str([m for m in meldungen if "mbiguous" in m]))
+    # Esc bei offenem Menü schließt das Menü und hebt die Auswahl nicht auf
+    w._set_selection([0, 1, 2])
+    _ruhe()
+    ausgeloest = []
+
+    def esc_gelaufen(*_a):
+        ausgeloest.append(1)
+    w.act_auswahl_weg.triggered.connect(esc_gelaufen)
+    menue.popup(knopf.mapToGlobal(QtCore.QPoint(0, knopf.height())))
+    _ruhe()
+    offen = menue.isVisible()
+    QtTest.QTest.keyClick(menue, QtCore.Qt.Key_Escape)
+    _ruhe()
+    check("Esc bei offenem Menü „Bearbeiten ▾“ schließt nur das Menü: die Auswahl bleibt, "
+          "„Alles deselektieren“ läuft nicht",
+          offen and not menue.isVisible() and len(w.selection) == 3 and not ausgeloest,
+          f"offen {offen}, danach sichtbar {menue.isVisible()}, Auswahl {len(w.selection)}, "
+          f"Esc-Aktion {len(ausgeloest)}x")
+    w.act_auswahl_weg.triggered.disconnect(esc_gelaufen)
+    w._set_selection([])
+    _ruhe()
+
+
+def test_suche():
+    """Die Befehlssuche findet die verschobenen Befehle weiter: unter den alten
+    Gruppennamen (Auswahl, Zwischenablage, Modell prüfen) und unter dem Namen
+    des Menüs. „Bearbeiten“ führt in die Trefferliste mit dem Menü an erster
+    Stelle, Enter führt nicht allein Unterlagen › Skizze › Bearbeiten aus."""
+    w, app = _fenster()
+    rb = w.ribbon
+
+    def texte(frage):
+        return [b.text for b in rb.finden(frage)]
+    t = texte("Auswahl")
+    check("„Auswahl“ findet Alles auswählen und Alles deselektieren (Gruppe bis zum 03.10.2026) "
+          "und weiter Auswahl umkehren und Intelligente Auswahl",
+          {"Alles auswählen", "Alles deselektieren", "Auswahl umkehren", "Intelligente Auswahl"} <= set(t),
+          str(t[:8]))
+    t = texte("Zwischenablage")
+    check("„Zwischenablage“ findet Rückgängig und Wiederholen", {"Rückgängig", "Wiederholen"} <= set(t), str(t))
+    t = texte("Modell prüfen")
+    check("„Modell prüfen“ findet die drei Prüfwerkzeuge",
+          {"Doppelte Knoten zusammenführen", "Freie Stabenden anschließen…", "Freie Bewegungen suchen"} <= set(t),
+          str(t))
+    check("… die alten Gruppennamen zählen wie Gruppennamen: Enter führt davon nichts allein aus "
+          "(kein Namenstreffer)",
+          not [b for b in rb.namenstreffer("Zwischenablage") if b.text in ("Rückgängig", "Wiederholen")]
+          and not rb.namenstreffer("Modell prüfen"), str([b.text for b in rb.namenstreffer("Modell prüfen")]))
+    treffer = rb.finden("Bearbeiten")
+    check("„Bearbeiten“: der Treffer in Start steht vorn, die Skizze (Unterlagen) danach",
+          [(b.register, b.text) for b in treffer[:2]] == [("Start", "Bearbeiten ▾"), ("Unterlagen", "Bearbeiten")],
+          str([(b.register, b.text) for b in treffer[:3]]))
+    ausgefuehrt, gemeldet = [], []
+    rb.gesucht.connect(ausgefuehrt.append)
+    rb.meldung.connect(gemeldet.append)
+    try:
+        rb.suche.setText("Bearbeiten")
+        rb._suche_ausfuehren()
+        _ruhe()
+    finally:
+        rb.gesucht.disconnect(ausgefuehrt.append)
+        rb.meldung.disconnect(gemeldet.append)
+    check("„Bearbeiten“ + Enter führt nichts aus (zwei Namenstreffer), die Trefferliste erscheint",
+          not ausgefuehrt and any("Treffer" in m for m in gemeldet),
+          f"ausgeführt {ausgefuehrt}, Meldung {gemeldet[-1:]}")
+    rb._vervollstaendigung.popup().hide()
+    rb.suche.clear()
+    # ein Klick auf den Treffer: Start nach vorn, das Menü klappt auf
+    w.resize(1920, 1080)
+    rb.zeigen("Datei")
+    _ruhe()
+    rb._ausfuehren(treffer[0])
+    _ruhe()
+    vorn = rb.tabs.tabText(rb.tabs.currentIndex())
+    from PySide6 import QtWidgets
+    knopf = next(b for b in rb._register["Start"].findChildren(QtWidgets.QToolButton)
+                 if b.text() == "Bearbeiten ▾")
+    check("der Treffer „Bearbeiten ▾“ holt Start nach vorn und klappt das Menü auf",
+          vorn == "Start" and knopf.menu().isVisible(), f"Register {vorn}, Menü sichtbar {knopf.menu().isVisible()}")
+    knopf.menu().hide()
+    _ruhe()
 
 
 # --------------------------------------------------------------------------
@@ -500,14 +673,10 @@ def _start_messen(w):
     from PySide6 import QtWidgets
     from tests import test_glasleiste_ribbon as gl
     rb = w.ribbon
+    _ruhe(10)
     war_zu = rb.eingeklappt()
-    if war_zu:
-        rb.einklappen(False)
-        _ruhe()
     vorher = rb.tabs.currentIndex()
-    rb.zeigen("Start")
-    _ruhe()
-    reg = rb._register["Start"]
+    reg = _start_offen(w)
     pfeile = [k for k in rb.tabs.tabBar().findChildren(QtWidgets.QToolButton) if k.isVisible()]
     aus = (reg.sizeHint().width(), reg.width(), gl._gekuerzt(reg), len(pfeile), reg.isVisible())
     rb.tabs.setCurrentIndex(vorher)
@@ -602,6 +771,19 @@ def test_handbuch():
           "früherer Stand",
           all(s in a for s in ("Modell", "Auswerten", "dieselben", "Bearbeiten ▾", "Schnellzugriff",
                                "Bis zum 03.10.2026")), a[:100])
+    check("Handbuch: bei 1366 × 768 ist das Ribbon eingeklappt (Kompaktstufe), jeder Ablaufschritt kostet "
+          "zwei Klicks",
+          all(s in a for s in ("1366 × 768", "eingeklappt", "Kompaktstufe", "zwei Klicks")), a[:80])
+    check("Handbuch: die Befehlssuche findet die umgezogenen Befehle unter den alten Gruppennamen, "
+          "„Bearbeiten“ nennt das Menü zuerst",
+          all(s in a for s in ("Befehlssuche", "„Auswahl“", "„Zwischenablage“", "„Modell prüfen“", "„Bearbeiten“")),
+          a[:80])
+    e = absatz("Das Register **Start** fasst die häufigsten Befehle")
+    check("Handbuch, Kapitel „Arbeitsablauf“: die Reihe in Start ist eine Auswahl, nicht die Liste noch einmal - "
+          "„Netz“ meint dort Stabzüge und Platten, Nachweise EC3 steht hinter dem Berechnen",
+          all(s in e for s in ("Reihenfolge, in der man ein Modell aufbaut und auswertet", "„Netz“ meint dort",
+                               "hinter dem Berechnen", "Nachweise EC3"))
+          and "Befehle dieser Schritte" not in e, e[:80])
     b = absatz("zerfällt zunächst in Teile")
     c = absatz("*Register Start →")
     d = absatz("Der Schalter in der Glasleiste (auch *Start →")
@@ -619,7 +801,7 @@ def main():
         sys.stdout.flush()
         os._exit(code)
     for t in (test_reihenfolge, test_dieselben_befehle, test_berechnen_zwei_knoepfe, test_kuerzel,
-              test_nichts_verschwunden, test_breite, test_150_prozent, test_start_und_f5, test_handbuch):
+              test_bearbeiten_menue, test_nichts_verschwunden, test_suche, test_breite, test_150_prozent, test_start_und_f5, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

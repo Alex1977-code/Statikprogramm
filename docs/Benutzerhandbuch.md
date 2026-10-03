@@ -155,9 +155,19 @@ Register auf 1431 px gebracht, bei 1366 px wären Beschriftungen gekürzt
 gewesen („Knotenlager“ bekam 69 von 82 px). Mit dem Menü ist das Register
 offscreen mit der Schrift Segoe UI 1224 px breit und passt bei 1366 px und bei
 1280 px (das sind 1920 px bei 150 % Skalierung) ohne gekürzte Beschriftung und
-ohne Rollpfeile; erlaubt sind 97 % der Fensterbreite, bei 1280 px also 1241 px. Das Programm startet weiter im
-Register Start, und nach der Rechnung springt das Ribbon wie bisher auf
-*Ergebnisse*. Geprüft in `tests/test_register_start.py`.
+ohne Rollpfeile; erlaubt sind 97 % der Fensterbreite, bei 1280 px also 1241 px.
+**Bei 1366 × 768 und kleiner ist das Ribbon eingeklappt** (Kompaktstufe, siehe
+*Fensteraufteilung*): Dort kostet jeder Ablaufschritt zwei Klicks, erst auf den
+Reiter *Start*, der das Register vorläufig aufklappt, dann auf den Befehl; danach
+klappt das Register wieder zu. „Passt bei 1366 px“ heißt also: Das Register ist
+breit genug, sobald es aufgeklappt ist, es steht dort aber nicht ständig offen.
+Die Befehlssuche findet die umgezogenen Befehle weiter auch unter den alten
+Gruppennamen („Auswahl“ findet *Alles auswählen*, „Zwischenablage“ findet
+*Rückgängig* und *Wiederholen*, „Modell prüfen“ die drei Prüfwerkzeuge), und
+„Bearbeiten“ nennt in der Trefferliste zuerst das Menü *Bearbeiten ▾* in Start
+und klappt es auf, statt mit Enter die Skizze in *Unterlagen* zu bearbeiten.
+Das Programm startet weiter im Register Start, und nach der Rechnung springt das
+Ribbon wie bisher auf *Ergebnisse*. Geprüft in `tests/test_register_start.py`.
 
 **Reihenfolge der Register und zusammengerückte Gruppen** (seit 02.10.2026).
 Nach dem Rechnen kommt das Ergebnis, danach der Nachweis: *Ergebnisse* steht
@@ -3741,10 +3751,16 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 8. **Bericht**: Bericht → Bericht (HTML, im Browser druckbar/als PDF
    speichern; PDF direkt bei installiertem reportlab).
 
-Im Register **Start** stehen die Befehle dieser Schritte in einer Reihe (Knoten,
-Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen, Berechnen,
-Ergebnisse, Nachweise EC3, Bericht); es sind dieselben Befehle wie in den
-Fachregistern.
+Das Register **Start** fasst die häufigsten Befehle dieses Ablaufs in einer Reihe
+zusammen, in der Reihenfolge, in der man ein Modell aufbaut und auswertet:
+Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen, Berechnen,
+Ergebnisse, Nachweise EC3, Bericht. Die Reihe ist nicht die Liste oben noch
+einmal. „Netz“ meint dort das Anlegen von Stabzügen und Platten (in Start
+*Knoten* und *Stab*), *Vernetzen* ist das Vernetzen von Flächen und Volumen. Der
+Knopf *Nachweise EC3* steht hinter dem Berechnen, weil er die Ergebnisse der
+Rechnung prüft („Zuerst berechnen“, wenn es noch keine gibt); die Parameter der
+Stäbe aus Schritt 5 stellt man vor der Rechnung in der Maske *Nachweise* ein.
+Es sind dieselben Befehle wie in den Fachregistern, keine neuen.
 
 Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die

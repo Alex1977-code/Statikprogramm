@@ -437,6 +437,17 @@ def z_wiederholen(s: Stift):
     s.p.restore()
 
 
+def z_bearbeiten(s: Stift):
+    """Ein Bleistift: das Menue „Bearbeiten ▾“ im Register Start (Rueckgaengig,
+    Wiederholen, Auswahl). Der Pfeil „auswahl“ gehoert dem Befehl „Alles
+    auswählen“ im Menue, nicht dem Menue selbst (03.10.2026)."""
+    s.stift(breite=1.6)
+    s.zug([(8, 16), (16, 8), (19, 11), (11, 19)], True)        # Schaft
+    s.zug([(16, 8), (18, 6), (21, 9), (19, 11)], True)         # Radierer
+    s.fuellung()
+    s.zug([(4, 20), (8, 16), (11, 19)], True)                   # Spitze
+
+
 def z_loeschen(s: Stift):
     s.stift()
     s.linie(5, 7, 19, 7)

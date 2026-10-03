@@ -4109,7 +4109,7 @@ class MainWindow(QtWidgets.QMainWindow):
         menu = g.menueknopf("Bearbeiten ▾", "Rückgängig, Wiederholen und die Auswahl: alles wählen, "
                                             "Auswahl umkehren, Intelligente Auswahl, alles deselektieren "
                                             "(Rückgängig und Wiederholen auch oben in der "
-                                            "Schnellzugriffsleiste)", symbol="auswahl")
+                                            "Schnellzugriffsleiste)", symbol="bearbeiten")
         self.act_undo = g.eintrag(menu, "Rückgängig", self.undo, "Ctrl+Z",
                                   "Letzte Änderung zurücknehmen", symbol="rueckgaengig")
         self.act_redo = g.eintrag(menu, "Wiederholen", self.redo, "Ctrl+Y",
@@ -4119,27 +4119,39 @@ class MainWindow(QtWidgets.QMainWindow):
             menu, "Alles deselektieren", self._esc_gedrueckt, "Esc",
             "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste); "
             "läuft gerade etwas mit Balken, hält Esc das an", symbol="auswahl_weg")
-        g.eintrag(menu, "Alles auswählen", self.select_all, "Ctrl+A",
-                  "Alle Knoten des Modells wählen", symbol="auswahl")
-        g.eintrag(menu, "Auswahl umkehren", self.invert_selection,
-                  hinweis="Gewählte Knoten abwählen, alle anderen wählen", symbol="kehren")
+        a_alle = g.eintrag(menu, "Alles auswählen", self.select_all, "Ctrl+A",
+                           "Alle Knoten des Modells wählen", symbol="auswahl")
+        a_umkehren = g.eintrag(menu, "Auswahl umkehren", self.invert_selection,
+                               hinweis="Gewählte Knoten abwählen, alle anderen wählen", symbol="kehren")
         self.act_klug = g.eintrag(
             menu, "Intelligente Auswahl", None,
             hinweis="Linien und Stäbe: gibt es am Ende genau eine Fortsetzung, "
                     "wird sie mit gewählt - und beim Abwählen mit abgewählt. "
                     "Umschalt+Klick erzwingt es auch bei ausgeschaltetem Schalter.",
             symbol="auswahl_klug", schalter=True, an=True)
+        # Das Menü selbst findet die Befehlssuche auch: „Bearbeiten“ führt in die
+        # Trefferliste (neben Unterlagen › Skizze › Bearbeiten), und ein Klick auf
+        # den Treffer holt Start nach vorn und klappt das Menü auf. Ohne diesen
+        # Eintrag führte Enter bei „Bearbeiten“ allein die Skizze aus.
+        # (m=menu: ``menu`` heißt weiter unten im Aufbau andere Menüs)
+        g.nur_suche("Bearbeiten ▾", lambda m=menu: self._menue_aufklappen(m), symbol="bearbeiten",
+                    hinweis="Das Menü Bearbeiten im Register Start aufklappen: Rückgängig, Wiederholen, "
+                            "Alles deselektieren, Alles auswählen, Auswahl umkehren, Intelligente Auswahl")
+        # unter den alten Gruppennamen weiter zu finden (Befehlssuche)
+        rb.fruehere_gruppe("Zwischenablage", self.act_undo, self.act_redo)
+        rb.fruehere_gruppe("Auswahl", self.act_auswahl_weg, a_alle, a_umkehren, self.act_klug)
         g = start["Prüfen"]
         g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen",
                 symbol="pruefen")
-        g.klein("Doppelte Knoten zusammenführen", self.do_merge,
-                hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD",
-                symbol="knoten_vereinen")
-        g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen,
-                hinweis="Freie Stabenden auf die Achse des nächsten Stabes loten und ihn dort teilen (Suchradius in mm)")
-        g.klein("Freie Bewegungen suchen", self.do_singular,
-                hinweis="Welches Bauteil kann sich wie bewegen? Nennt Teil, Richtung "
-                        "und Ursache und stellt die Bewegung als Pfeil in die Ansicht")
+        a_merge = g.klein("Doppelte Knoten zusammenführen", self.do_merge,
+                          hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD",
+                          symbol="knoten_vereinen")
+        a_enden = g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen,
+                          hinweis="Freie Stabenden auf die Achse des nächsten Stabes loten und ihn dort teilen (Suchradius in mm)")
+        a_frei = g.klein("Freie Bewegungen suchen", self.do_singular,
+                         hinweis="Welches Bauteil kann sich wie bewegen? Nennt Teil, Richtung "
+                                 "und Ursache und stellt die Bewegung als Pfeil in die Ansicht")
+        rb.fruehere_gruppe("Modell prüfen", a_merge, a_enden, a_frei)
         g = start["Rechnen"]
         self.act_rechnen = g.gross("Berechnen", "▶", lambda: self.do_solve("all"),
                                    "F5", "Alle Lastfälle und Kombinationen rechnen",
@@ -5030,6 +5042,17 @@ class MainWindow(QtWidgets.QMainWindow):
                     ("Netz", "Netz", "Vernetzen"),
                     ("Auswerten", "Ergebnisse", "Ergebnisse"), ("Auswerten", "Nachweise", "Nachweise EC3"),
                     ("Auswerten", "Bericht", "Bericht"))
+
+    def _menue_aufklappen(self, menue):
+        """Das Menü eines Ribbon-Knopfs aufklappen (Befehlssuche: „Bearbeiten ▾“).
+        Steht der Knopf nicht auf dem Bildschirm - das Ribbon ist eingeklappt -,
+        klappt es am Mauszeiger auf."""
+        knopf = menue.parentWidget()
+        if knopf is not None and knopf.isVisible():
+            ort = knopf.mapToGlobal(QtCore.QPoint(0, knopf.height()))
+        else:
+            ort = QtGui.QCursor.pos()
+        menue.popup(ort)
 
     def _start_ablauf(self, gruppen: dict):
         """Die Befehle des Arbeitsablaufs aus den anderen Registern in das

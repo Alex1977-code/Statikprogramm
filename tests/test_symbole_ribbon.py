@@ -92,6 +92,7 @@ NEUE = (
     "vorspannung", "wind", "wasserdruck", "skala", "lager_linie", "lager_flaeche",
     "knoten_vereinen", "anhang", "skizze", "tastatur", "layer", "ks_knoten", "verschneiden",
     "abstand", "masslinie", "masskette", "netz_trennen", "netz_adaptiv", "laenge_flaeche",
+    "bearbeiten",
 )
 
 #: Gruppen, in denen zwei Knoepfe bewusst dasselbe Symbol tragen:
