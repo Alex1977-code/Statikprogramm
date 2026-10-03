@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
+from .entsorgen import entsorgen
 from .. import zahlen as zl
 from .. import elemente as _EL
 
@@ -1199,7 +1200,7 @@ class Datentabelle(QtWidgets.QWidget):
         for e in self.felder:
             e.textChanged.disconnect(self._filterfeld_geaendert)
             e.hide()
-            e.deleteLater()
+            entsorgen(e)                    # die eine Stelle zum Loeschen (C15)
         self.felder = []
         self._filterfelder_anlegen(neu)
         for k in range(len(neu)):
