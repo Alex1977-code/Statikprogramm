@@ -26,7 +26,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from . import zahlenfeld as zf
-from .entsorgen import entsorgen
 from .. import zahlen as zl
 
 
@@ -1257,10 +1256,7 @@ class Maskenrand(QtCore.QObject):
                 m.geschlossen.emit()
             except (RuntimeError, AttributeError):
                 pass
-            # ueber entsorgen loeschen (Plan-Teilpaket C15): bliebe das
-            # deleteLater bis os._exit liegen, stuerzte der Prozess beim Beenden
-            # ab, wenn an einem Feld ein Lambda haengt (statik3d.gui.entsorgen)
-            entsorgen(m)
+            m.deleteLater()
 
     def _anfang(self) -> int:
         """Die Stelle im Ziel, an die eine Maske kommt: hinter die Widgets,

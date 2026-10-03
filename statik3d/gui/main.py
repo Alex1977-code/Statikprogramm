@@ -45,7 +45,6 @@ from .ermuedungsmaske import Ermuedungsmaske
 from . import elementmasken as elm
 from .. import elementauswahl as ea
 from . import tabellen as tab
-from .entsorgen import entsorgen
 
 
 def _lebt(obj) -> bool:
@@ -1273,7 +1272,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # (tests/test_rechtsklick.py). Bis zum 03.10.2026 blieb jedes stehen.
         alt = getattr(self, "_kontextmenue_zuletzt", None)
         if alt is not None and _lebt(alt):
-            entsorgen(alt)                  # seine Eintraege haengen an Lambdas (C15)
+            alt.deleteLater()
         menu = self._kontextmenue(pos)
         self._kontextmenue_zuletzt = menu
         # Strg und Umschalt des Klicks (_rechts_los -> _mit_tasten) galten fuer
@@ -19438,7 +19437,7 @@ class MainWindow(QtWidgets.QMainWindow):
             box.exec()
             gedrueckt = box.clickedButton()
         finally:
-            entsorgen(box)
+            box.deleteLater()
         return next((k for k, b in knoepfe.items() if b is gedrueckt), "abbrechen")
 
     def _ungespeichert_fragen(self, anlass: str, wunsch=None) -> bool:
@@ -23091,7 +23090,7 @@ class MainWindow(QtWidgets.QMainWindow):
         alt = getattr(self, "rechenliste", None)
         if alt is not None:
             alt.close()                       # das Fenster des vorigen Laufs
-            entsorgen(alt)
+            alt.deleteLater()
         self.rechenliste = None
         if not posten:
             return
@@ -27481,7 +27480,7 @@ class MainWindow(QtWidgets.QMainWindow):
         alt = getattr(self, "_kuerzelliste", None)
         if alt is not None:
             alt.close()
-            entsorgen(alt)
+            alt.deleteLater()
         f = Kuerzelliste(self, self.ribbon.kuerzel_liste())
         self._kuerzelliste = f
         f.show()
@@ -27637,7 +27636,7 @@ class MainWindow(QtWidgets.QMainWindow):
             box.exec()
             return box.clickedButton() is b_ja
         finally:
-            entsorgen(box)
+            box.deleteLater()
 
     # ---- Fensterrahmen: Version und Modell -----------------------------
     def _refresh_title(self):

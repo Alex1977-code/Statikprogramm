@@ -8,38 +8,43 @@ exception: access violation“. Ursache: Ein ``deleteLater``, das bei ``os._exit
 noch vorgemerkt ist, an einem Widget mit einem Lambda am Signal (PySide haengt
 dafuer eine eigene Verbindung an ``destroyed``) oder an einem Fenster, das schon
 zu sehen war. In einer Pruefung bleibt jedes ``deleteLater`` vorgemerkt, denn
-``processEvents`` ausserhalb von ``exec`` loescht nichts. Seit C15 holt
-``statik3d.gui.entsorgen`` vor ``os._exit`` alle vorgemerkten Loeschungen nach.
+``processEvents`` ausserhalb von ``exec`` loescht nichts. Seit C15 fuehrt
+``os._exit`` in den Pruefungen (tests/__init__.py) vorher alle vorgemerkten
+Loeschungen aus; das Programm selbst bleibt dabei unveraendert.
 
-Die erste Fassung von C15 trennte stattdessen vor dem Loeschen alle Signale und
-gab Fenster mit ``destroy()`` frei. Das liess die Rauchpruefung auf dem Desktop
-beim normalen Ende (sys.exit) abstuerzen, schnitt Empfaenger ab, die nach dem
-Schliessen noch an der Reihe waren, und liess Qts Stilblatt-Zwischenspeicher
-wachsen. Diese Pruefung verlangt darum auch: Entsorgen trennt nichts und
-zerstoert kein Fenster nativ.
+Die erste Fassung von C15 trennte stattdessen im Programm vor dem Loeschen alle
+Signale und gab Fenster mit ``destroy()`` frei. Das liess die Rauchpruefung auf
+dem Desktop beim normalen Ende (sys.exit) abstuerzen, schnitt Empfaenger ab,
+die nach dem Schliessen noch an der Reihe waren, und liess Qts
+Stilblatt-Zwischenspeicher wachsen. Diese Pruefung verlangt darum auch, dass
+beim Schliessen nichts getrennt und kein Fenster nativ zerstoert wird.
 
-Ablauf: Ein kleines Programm-Skript (``--kind``) laeuft in eigenen Prozessen,
-sechsmal mit ``os._exit(0)`` am Ende (wie die anderen Pruefungen) und dreimal
-mit ``w.close()`` und ``sys.exit(0)`` (wie die Rauchpruefung). Es oeffnet und
-schliesst eine Stab-Maske, eine Uebersicht aus dem Baum, eine Maske mit der
-Leiste „Übernehmen | Verwerfen“ (13m), das Kontextregister, die
-Ergebnissteuerung nach einer Rechnung mit Masken darunter, das
-Rechtsklickmenue, die Kuerzelliste, den Werkzeug-Dialog (Qt ersetzt dessen
-Knoepfe), ein Beulfeld mit geloeschter Zeile (Qt loescht das Zell-Widget) und
-die Maske „Darstellung“, entsorgt in einer inneren Schleife und mitten in einer
-Signalausgabe. Verlangt wird in jedem Lauf Exitcode 0 und keine Zeile „Windows
-fatal exception“ oder „Fatal Python error“ von faulthandler.
+Ablauf:
+
+* Ein kleines Programm-Skript (``--kind``) laeuft in eigenen Prozessen,
+  sechsmal mit ``os._exit(0)`` am Ende (wie die anderen Pruefungen) und dreimal
+  mit ``w.close()`` und ``sys.exit(0)`` (wie die Rauchpruefung). Es oeffnet und
+  schliesst eine Stab-Maske, eine Uebersicht aus dem Baum, eine Maske mit der
+  Leiste „Übernehmen | Verwerfen“ (13m), das Kontextregister, die
+  Ergebnissteuerung nach einer Rechnung mit Masken darunter, das
+  Rechtsklickmenue, die Kuerzelliste, den Werkzeug-Dialog (Qt ersetzt dessen
+  Knoepfe), ein Beulfeld mit geloeschter Zeile (Qt loescht das Zell-Widget) und
+  die Maske „Darstellung“; es loescht in einer inneren Schleife und mitten in
+  einer Signalausgabe. Verlangt wird in jedem Lauf Exitcode 0 und keine Zeile
+  „Windows fatal exception“ oder „Fatal Python error“ von faulthandler.
+* Der Ersatz von ``os._exit`` in tests/__init__.py allein, in reinem PySide6
+  (``--ersatz``): ohne Vorgemerktes, mit Lambdas am Sender, mit einem gezeigten
+  Dialog, aus einem anderen Faden und ohne QApplication; zur Gegenprobe
+  dieselben Faelle mit dem echten ``os._exit``, die abstuerzen muessen.
 
 Aufruf:  python -m tests.test_beenden_ohne_absturz
 """
-import io
 import os
 import re
 import subprocess
 import sys
 import tempfile
 import time
-import tokenize
 
 HIER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HIER)
@@ -183,11 +188,9 @@ def _kind(ende: str) -> None:
         if obj is not None and name not in zu:
             zu[name] = (obj, _verbunden(obj))
 
-    try:
-        from statik3d.gui import entsorgen as E
-    except ImportError:
-        E = None
-    _melden("ende_holt_loeschungen_nach", E is not None and os._exit.__name__ == "_exit_nach_loeschen",
+    # das Kind laeuft als tests.test_beenden_ohne_absturz: das Paket tests ist
+    # geladen, und os._exit holt die vorgemerkten Loeschungen nach
+    _melden("ende_holt_loeschungen_nach", os._exit.__name__ == "_os_exit_nach_loeschen",
             getattr(os._exit, "__name__", "?"))
 
     w.load_example("hall")
@@ -201,7 +204,7 @@ def _kind(ende: str) -> None:
     w._viewport_menu(pos)
     _ruhe(app)
 
-    # B. Entsorgen in einer kurzen inneren Schleife: danach bleibt es bis zum
+    # B. Loeschen in einer kurzen inneren Schleife: danach bleibt es bis zum
     #    Ende vorgemerkt. Danach laeuft keine Schleife mehr - alles, was ab
     #    hier geschlossen wird, wartet bis zum Ende auf sein deleteLater.
     innen = QtWidgets.QWidget(w)
@@ -212,10 +215,7 @@ def _kind(ende: str) -> None:
     schleife = QtCore.QEventLoop()
 
     def _in_der_schleife():
-        if E is not None:
-            E.entsorgen(innen)
-        else:
-            innen.deleteLater()
+        innen.deleteLater()
         schleife.quit()
     QtCore.QTimer.singleShot(0, _in_der_schleife)
     schleife.exec()
@@ -346,7 +346,7 @@ def _kind(ende: str) -> None:
             f"Empfaenger {n0} -> {n1} -> {w.sl_lager.receivers(sig)}, geloescht {geloescht}, "
             f"Fehler {fehler[:1]}")
 
-    # 10. Entsorgen mitten in einer Signalausgabe: wer danach an der Reihe ist,
+    # 10. Loeschen mitten in einer Signalausgabe: wer danach an der Reihe ist,
     #     bekommt das Signal noch (die erste Fassung von C15 schnitt ihn ab)
     class _Maske(QtWidgets.QWidget):
         angewendet = QtCore.Signal(object)
@@ -365,27 +365,12 @@ def _kind(ende: str) -> None:
     _BEHALTEN.append(f_)
     m_ = _Maske(w)
     m_.angewendet.connect(f_.erster)
-    m_.angewendet.connect(lambda _x: (f_.log.append("zweiter entsorgt"), E.entsorgen(m_) if E else m_.deleteLater()))
+    m_.angewendet.connect(lambda _x: (f_.log.append("zweiter loescht"), m_.deleteLater()))
     m_.angewendet.connect(f_.dritter)
     m_.angewendet.emit({})
-    _melden("spaetere_empfaenger_bekommen_das_signal", f_.log == ["erster", "zweiter entsorgt", "dritter"],
+    _melden("spaetere_empfaenger_bekommen_das_signal", f_.log == ["erster", "zweiter loescht", "dritter"],
             str(f_.log))
     merken("maske_mitten_im_signal", m_)
-
-    # 11. Entsorgen trennt nichts: Qts eigenes Aufraeumen und PySides
-    #     Buchfuehrung an destroyed bleiben, bis wirklich geloescht wird
-    probe = QtWidgets.QLabel("Probe", w.centralWidget())
-    probe.show()
-    knopf_probe = QtWidgets.QPushButton("y", probe)
-    knopf_probe.clicked.connect(lambda *_a: None)
-    _ruhe(app)
-    vorher = _verbunden(probe)
-    if E is not None:
-        E.entsorgen(probe)
-    else:
-        probe.deleteLater()
-    nachher = _verbunden(probe) if shiboken6.isValid(probe) else -1
-    _melden("entsorgen_trennt_nichts", vorher > 0 and nachher >= vorher, f"{vorher} -> {nachher}")
 
     # zuletzt: geschlossene Objekte trennt niemand; was noch lebt, wartet bis
     # zum Ende auf sein deleteLater (das Ende holt es nach)
@@ -464,63 +449,105 @@ def test_beenden_nach_masken_ohne_absturz():
           ", ".join(sorted(abweichend))[:200])
 
 
-def _loeschstellen(pfad: str) -> list:
-    """Stellen einer Datei, die an entsorgen() vorbei loeschen: ``.deleteLater``
-    (gerufen oder weitergereicht, auch mit Leerzeichen), der Name als Text
-    (``getattr(x, "deleteLater")``) und ``WA_DeleteOnClose``. Kommentare und
-    Texte zaehlen nicht (tokenize, kein Schnitt am ersten #)."""
-    with open(pfad, "rb") as f:
-        toks = list(tokenize.tokenize(io.BytesIO(f.read()).readline))
-    funde = []
-    vorher = None
-    for t in toks:
-        if t.type in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT):
-            continue
-        if t.type == tokenize.NAME and t.string == "deleteLater" and vorher is not None \
-                and vorher.type == tokenize.OP and vorher.string == ".":
-            funde.append(t.start[0])
-        elif t.type == tokenize.STRING and t.string.strip("rbuRBU").strip("'\"") == "deleteLater":
-            funde.append(t.start[0])
-        elif t.type == tokenize.NAME and t.string == "WA_DeleteOnClose":
-            funde.append(t.start[0])
-        vorher = t
-    return funde
+def _ersatz_kind(fall: str) -> None:
+    """Reines PySide6, ohne Statik3D: der Ersatz von os._exit allein.
+
+    leer        QApplication und ein Fenster, nichts vorgemerkt
+    lambda      drei Widgets mit Lambda am Knopf, deleteLater vorgemerkt
+    dialog      ein gezeigter, geschlossener QDialog, deleteLater vorgemerkt
+    faden       wie lambda ohne Vorgemerktes, os._exit(7) aus einem anderen Faden
+    ohne_app    keine QApplication, os._exit(5)
+    *_echt      lambda und dialog mit dem echten os._exit (Gegenprobe)
+    """
+    import faulthandler
+    import threading
+    import tests
+    faulthandler.enable()
+    print(f"ERSATZ {os._exit.__name__}", flush=True)
+    if fall == "ohne_app":
+        os._exit(5)
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    haupt = QtWidgets.QWidget()
+    haupt.show()
+    app.processEvents()
+    if fall.startswith("lambda"):
+        for _ in range(3):
+            halter = QtWidgets.QWidget(haupt)
+            knopf = QtWidgets.QPushButton("x", halter)
+            knopf.clicked.connect(lambda *_a: haupt.update())
+            halter.show()
+            app.processEvents()
+            halter.hide()
+            halter.deleteLater()
+            app.processEvents()
+    elif fall.startswith("dialog"):
+        d = QtWidgets.QDialog(haupt)
+        d.show()
+        app.processEvents()
+        d.close()
+        d.deleteLater()
+        app.processEvents()
+    elif fall == "faden":
+        knopf = QtWidgets.QPushButton("x", haupt)
+        knopf.clicked.connect(lambda *_a: haupt.update())
+        print("fertig", flush=True)
+        threading.Thread(target=lambda: os._exit(7)).start()
+        threading.Event().wait(30)
+    print("fertig", flush=True)
+    sys.stdout.flush()
+    if fall.endswith("_echt"):
+        tests._os_exit_echt(0)
+    os._exit(0)
 
 
-def test_kein_deletelater_an_entsorgen_vorbei():
-    """Jedes Loeschen in statik3d geht ueber entsorgen() - die eine Stelle."""
-    wurzel = os.path.join(HIER, "statik3d")
-    funde = []
-    for ordner, _dirs, dateien in os.walk(wurzel):
-        for name in sorted(dateien):
-            pfad = os.path.join(ordner, name)
-            if not name.endswith(".py") or os.path.normpath(pfad) == os.path.normpath(
-                    os.path.join(wurzel, "gui", "entsorgen.py")):
-                continue
-            funde += [f"{os.path.relpath(pfad, HIER)}:{nr}" for nr in _loeschstellen(pfad)]
-    check("kein deleteLater in statik3d an entsorgen() vorbei", not funde, ", ".join(funde))
-    # der Waechter selbst: er findet alle Schreibweisen, und Kommentare und Texte nicht
-    probe = os.path.join(tempfile.mkdtemp(prefix="statik3d_waechter_"), "probe.py")
-    with open(probe, "w", encoding="utf-8") as f:
-        f.write('a.deleteLater()\n'
-                'b . deleteLater ()\n'
-                'QtCore.QTimer.singleShot(0, c.deleteLater)\n'
-                'getattr(d, "deleteLater")()\n'
-                'e.setAttribute(QtCore.Qt.WA_DeleteOnClose)\n'
-                'x = "# kein Kommentar"; f.deleteLater()\n'
-                '# g.deleteLater() im Kommentar\n'
-                's = "h.deleteLater() im Text"\n')
-    gefunden = _loeschstellen(probe)
-    check("… der Wächter findet jede Schreibweise, Kommentare und Texte nicht",
-          gefunden == [1, 2, 3, 4, 5, 6], str(gefunden))
+def _ersatz_lauf(fall: str) -> tuple:
+    env = dict(os.environ)
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    env["PYTHONUTF8"] = "1"
+    r = subprocess.run([sys.executable, "-X", "faulthandler", "-m", "tests.test_beenden_ohne_absturz",
+                        "--ersatz", fall], cwd=HIER, env=env, capture_output=True, timeout=300)
+    text = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
+    absturz = ("Windows fatal exception" in text) or ("Fatal Python error" in text)
+    return r.returncode, absturz, text
+
+
+def test_ersatz_von_os_exit():
+    """Der Ersatz in tests/__init__.py holt vorgemerkte Loeschungen nach - mit
+    und ohne Vorgemerktes, mit Lambda am Sender und mit einem gezeigten Dialog;
+    aus einem anderen Faden und ohne QApplication ruft er das echte os._exit."""
+    import tests
+    check("tests/__init__.py ersetzt os._exit", os._exit.__name__ == "_os_exit_nach_loeschen"
+          and tests._os_exit_echt is not os._exit, os._exit.__name__)
+    for fall, laeufe in (("leer", 2), ("lambda", 3), ("dialog", 3)):
+        ergebnisse = [_ersatz_lauf(fall) for _ in range(laeufe)]
+        ok = all(rc == 0 and not ab and "ERSATZ _os_exit_nach_loeschen" in t and "fertig" in t
+                 for rc, ab, t in ergebnisse)
+        check(f"Ersatz, {fall}: Exitcode 0, kein Absturz, in {laeufe} Läufen", ok,
+              str([(rc, ab) for rc, ab, _t in ergebnisse]))
+    rc, ab, t = _ersatz_lauf("faden")
+    check("Ersatz, Aufruf aus einem anderen Faden: das echte os._exit mit seinem Code",
+          rc == 7 and not ab and "fertig" in t, f"Exitcode {rc}, Absturz {ab}")
+    rc, ab, t = _ersatz_lauf("ohne_app")
+    check("Ersatz ohne QApplication: das echte os._exit mit seinem Code", rc == 5 and not ab,
+          f"Exitcode {rc}, Absturz {ab}")
+    # Gegenprobe: dieselben Faelle mit dem echten os._exit stuerzen ab (gemessen
+    # 6 von 6); einer von zwei Laeufen genuegt als Nachweis
+    for fall in ("lambda_echt", "dialog_echt"):
+        ergebnisse = [_ersatz_lauf(fall) for _ in range(2)]
+        check(f"Gegenprobe {fall}: mit dem echten os._exit stürzt es ab",
+              any(ab for _rc, ab, _t in ergebnisse), str([(rc, ab) for rc, ab, _t in ergebnisse]))
 
 
 def main():
+    if "--ersatz" in sys.argv:
+        _ersatz_kind(sys.argv[sys.argv.index("--ersatz") + 1])
+        return 0
     if "--kind" in sys.argv:
         ende = sys.argv[sys.argv.index("--kind") + 1] if len(sys.argv) > sys.argv.index("--kind") + 1 else "os"
         _kind(ende)
         return 0
-    for t in (test_beenden_nach_masken_ohne_absturz, test_kein_deletelater_an_entsorgen_vorbei):
+    for t in (test_ersatz_von_os_exit, test_beenden_nach_masken_ohne_absturz):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
