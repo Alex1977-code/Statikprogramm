@@ -111,10 +111,10 @@ Fünfzehn Register nach Arbeitsschritt:
 | **Start** | der Arbeitsablauf in einer Reihe: Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen (mit den Prüfwerkzeugen *Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…*, *Freie Bewegungen suchen*), Berechnen, Ergebnisse, Nachweise EC3, Bericht; am Ende das Menü *Bearbeiten ▾* (Rückgängig, Wiederholen, Auswahl) |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, das ist der Stab mit Nachweis samt seinem Stabelement; Stabzug; *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen, Stab aus Stabelementen…), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, **Kontakt** (mit *Alle Kontakte löschen…*), **Fugen / Passungen** (Spalt / Toleranz, Kontaktbedingung, Kontaktfugen ausführen, Passung, Übermaß, Spiel geben), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | **Lastfälle** (Lastfälle, Lastfälle nach DIN 19704, Ermüdungslasten), **Kombinationen** (*EN 1990…* und *DIN 19704* nebeneinander), Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen; **Elemente** (Stabelement: ein einzelnes finites Stabelement ohne Stab, seit 03.10.2026) |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, Stellung anlegen, Einstellungen, Bedienung im Browser |
 | **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
 | **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
@@ -438,7 +438,7 @@ Die Arbeitsfläche in drei Spalten:
 
   | Gruppe → Zweig | Inhalt |
   |---|---|
-  | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lastfälle und die Abmessungen |
+  | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe und Stabelemente, Flächen, Volumen, Lager, Lastfälle und die Abmessungen (bis zum 03.10.2026 hieß die Zeile der Stäbe „Stäbe mit Nachweis“ und stand hinter den Stabelementen) |
   | **Eigenschaften** → Werkstoffe, Querschnitte, Dicken | die Eigenschaften, auf die Stäbe, Flächen und Volumen verweisen (bis zum 03.10.2026 standen die Querschnitte zuerst) |
   | **Geometrie** → Knoten | die **Knoten der Konstruktion** numerisch untereinander (K0, K1, …) mit Koordinaten |
   | Geometrie → Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
@@ -3332,6 +3332,28 @@ neuer Erzeuge-Befehl löst die vorige Maske ab — es ist immer höchstens eine
 offen. Hat die vorige noch nicht übernommene Änderungen, fragt vorher die
 Leiste „Übernehmen | Verwerfen“ (unten, *Nicht übernommene Änderungen*).
 
+**Der Befehl „Stab“ legt einen Stab mit Nachweis an** (seit 03.10.2026, wie
+in RFEM). Man klickt in der Maske *Stab* zwei Knoten an und wählt Querschnitt
+und Werkstoff; dann entsteht ein Stab S… samt seinem Stabelement E…. Der Stab
+steht im Modellbaum unter *Geometrie → Stäbe*, sein Element unter *FE-Netz →
+Stabelemente*. Denselben Befehl erreicht man über *Struktur → Stab*, *Start →
+Stab*, die Taste S in der Ansicht, die Befehlssuche und am Zweig *Stäbe* über
+den Rechtsklick „Neu: Stab …“ oder den Doppelklick. Der Stab rechnet genau wie
+dasselbe Stabelement ohne Stab: An einem Rahmen aus drei Stäben sind
+Verschiebungen, Auflagerkräfte und Stabendkräfte gleich, der Stab kommt nur zu
+den Nachweisen nach EC3 dazu. Ein einzelnes Stabelement ohne Stab legt *Netz →
+Stabelement* an, mit derselben Maske unter dem Titel „Stabelement“; der
+Rechtsklick „Neu: Stabelement …“ am Zweig *Stabelemente* legt eines mit allen
+Angaben an (Art, Versatz, Wölbkrafttorsion). Einen Stab aus vorhandenen
+Stabelementen bildet *Struktur → Nachweisstäbe ▾ → Stab aus Stabelementen…*,
+dort trägt man die Nummern der Elemente ein. Wer einen Stab löscht, behält
+seine Stabelemente, und die Rückfrage sagt das. Masken, Rückfragen,
+Statuszeile und Protokoll schreiben „Stab S…“ für den Stab und „Stabelement
+E…“ für das Element. Bis zum 03.10.2026 legte der Befehl „Stab“ nur das
+Stabelement an, das ohne Nachweis unter *FE-Netz* stand, und der Rechtsklick
+„Neu: Stab …“ öffnete die Maske mit den Elementnummern; Masken und Rückfragen
+nannten das Element „Stab E…“.
+
 **Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
 die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
 wenn sie auf mehrere Zeilen umbricht. In der Mitte liegen die Felder. Reicht
@@ -3824,7 +3846,8 @@ Elemente löschen“ im Register Netz, zwischen den Netzbefehlen) entfernt alles
 außer Werkstoffen, Querschnitten, Dicken und Projektangaben. Das Programm fragt
 vorher und **nennt mit Anzahl, was tatsächlich verschwindet**, etwa „Netz
 (221 Knoten, 240 Elemente), Knotenlager (43), Lastfälle mit ihren Lasten (3),
-Kombinationen (23), Stäbe mit Nachweis (3), Ermüdungslasten (1)“ — dazu
+Kombinationen (23), Stäbe (3), Ermüdungslasten (1)“ (bis zum 03.10.2026 „Stäbe
+mit Nachweis (3)“) — dazu
 Kontakte, Berichtsbilder, Stellungen, Unterlagen oder Layer, wenn es sie gibt;
 die Modelleinstellungen (Bemessung, Netzvorgaben, Einheiten, Plastizität,
 Berichtsrahmen) gehen auf die Vorgabe zurück. Sind die **Ergebnisse der
@@ -3935,10 +3958,12 @@ Knoten anklicken:
 | Spline | 3 oder mehr Knoten | B-Spline vom gewählten Grad durch den ersten und letzten Punkt |
 | Parabel | 2 Knoten + Stich | Parabel mit dem angegebenen Stich in der Mitte |
 
-Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt — die
-Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
-ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
-Sehnenzugs).
+Mit „Stabelemente daraus erzeugen“ (bis zum 03.10.2026 „Stäbe daraus
+erzeugen“) wird die Linie gleich in Stabelemente geteilt — die Teilung steht in
+der Maske. Einen Stab mit Nachweis legt der Haken nicht an; den bilden danach
+*Stäbe automatisch erkennen* oder *Stab aus Stabelementen…*. Die Linie bleibt
+als Geometrie erhalten und kennt ihre exakte Länge (ein Halbkreis r = 2 m misst
+6,283 m, nicht die Länge des Sehnenzugs).
 
 ### Flächen: eben oder Regelfläche; Flächen verschneiden
 
@@ -5522,8 +5547,9 @@ Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
 ## 8 Nachweise nach EC3
 
-Stäbe (Kette von Stabelementen) werden beim Erzeugen von Stabzügen und beim
-Import automatisch angelegt („Stäbe automatisch erkennen“ verkettet
+Stäbe (Kette von Stabelementen) legt der Befehl *Struktur → Stab* an (seit
+03.10.2026 samt seinem Stabelement), beim Erzeugen von Stabzügen und beim
+Import entstehen sie automatisch („Stäbe automatisch erkennen“ verkettet
 kollineare Elemente gleichen Querschnitts). Je Stab:
 
 * Querschnittsnachweise an allen Nachweisstellen (Klasse, N, V, M, M+V, M+N,
@@ -8782,7 +8808,7 @@ wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
 |---|---|
 | **Entf** | löscht alles Gewählte, gleich welcher Art |
 | **K** | öffnet die Maske *Knoten* (Befehl *Geometrie → Knoten*) |
-| **S** | öffnet die Maske *Stab* (*Struktur → Stab*) |
+| **S** | öffnet die Maske *Stab* (*Struktur → Stab*): zwei Knoten anklicken, es entsteht ein Stab mit Nachweis samt seinem Stabelement (bis zum 03.10.2026 nur das Stabelement) |
 | **L** | öffnet die Maske *Lager* (*Lager / Kontakt → Knotenlager*) |
 | **B** | öffnet die Maske der Last, die zur Auswahl passt: *Linienlast* bei gewählten Stäben oder Linien, *Flächenlast* bei gewählten Flächen oder Volumen, sonst *Knotenlast* |
 | **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
@@ -8802,8 +8828,9 @@ Modell, auf dem gerade gerechnet wurde).
 Entf fragt **einmal** und nennt dabei, was gelöscht wird, etwa „2 Stäbe und 3
 Knoten wirklich löschen?“; mit *Ja* geht alles Gewählte in einem Zug weg, und ein
 einziges Strg+Z holt es zurück. Unter der Frage stehen, knapp, die Folgen: dass
-bei einem Stab mit Nachweis die Elemente stehen bleiben und seine Linienlasten
-mitgehen, dass eine Linie ihre Linienlasten mitnimmt, dass Flächen und Volumen
+bei einem Stab seine Stabelemente stehen bleiben und seine Linienlasten
+mitgehen (die Zeile beginnt seit 03.10.2026 mit „Stäbe:“, vorher mit „Stäbe mit
+Nachweis:“), dass eine Linie ihre Linienlasten mitnimmt, dass Flächen und Volumen
 ihre Elemente mitnehmen, dass mit einem Knoten sein Lager, seine Knotenlasten,
 Zwangsverformungen und Punktmassen gehen, dass **vorhandene Ergebnisse verworfen
 werden und Rückgängig sie nicht zurückholt**, und dass eine offene Maske mit nicht

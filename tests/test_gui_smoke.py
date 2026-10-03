@@ -822,21 +822,24 @@ def main():
               str(np.round(w.model.nodes[-1], 2)))
         check("Maske bleibt fuer das naechste Objekt offen", m.isVisible())
 
-        w.maske_stab()
+        # Seit 03.10.2026 (C14) legt „Stab“ den Stab mit Nachweis an
+        # (tests.test_befehl_stab); das einzelne Element, das hier geprueft
+        # wird, legt der Befehl „Stabelement“ an
+        w.maske_stabelement()
         m = w.maskenrand.maske
         check("Erzeuge-Befehl loest die vorige Maske ab",
-              m.titel == "Stab" and m.n_knoten == 2)
+              m.titel == "Stabelement" and m.n_knoten == 2)
         ne0 = len(w.model.elements)
         m.knoten_angeklickt(0)
         check("Erster Klick erzeugt noch nichts",
               len(w.model.elements) == ne0 and len(m.gewaehlt) == 1)
         m.knoten_angeklickt(3)
-        check("Zweiter Klick erzeugt den Stab", len(w.model.elements) == ne0 + 1,
+        check("Zweiter Klick erzeugt das Stabelement", len(w.model.elements) == ne0 + 1,
               str(len(w.model.elements) - ne0))
-        check("Maske ist gleich fuer den naechsten Stab bereit",
+        check("Maske ist gleich fuer das naechste Stabelement bereit",
               m.gewaehlt == [] and m.isVisible())
         e = w.model.elements[-1]
-        check("Stab bekommt Querschnitt und Material aus der Maske",
+        check("Stabelement bekommt Querschnitt und Material aus der Maske",
               e.sec in w.model.sections and e.mat in w.model.materials,
               f"{e.sec} / {e.mat}")
 
@@ -958,7 +961,7 @@ def main():
         check("Bogenlaenge stimmt (Halbkreis r = 2)",
               abs(ln.laenge(w.model) - 2 * np.pi) < 1e-9,
               f"{ln.laenge(w.model):.6f}")
-        check("Staebe entlang des Bogens erzeugt",
+        check("Stabelemente entlang des Bogens erzeugt",
               len(w.model.elements) - ne0 == 8, str(len(w.model.elements) - ne0))
         w.undo()
         check("Linie laesst sich zuruecknehmen", len(w.model.lines) == nl0)
@@ -3102,7 +3105,7 @@ def main():
         check("Klick auf die Wurzel zeigt rechts das Register „Modell“ mit den Angaben",
               w.eingaben_dock.windowTitle() == "Modell" and not w.tabs.isHidden()
               and angaben["Knoten"] == str(m_.nn)
-              and angaben["Stäbe mit Nachweis"] == str(len(m_.members))
+              and angaben["Stäbe"] == str(len(m_.members))
               and "Abmessungen" in w.lbl_modellangaben.text(),
               f"{w.eingaben_dock.windowTitle()} {angaben.get('Knoten')}")
         from statik3d.gui import symbole as symq

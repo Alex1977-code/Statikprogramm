@@ -838,8 +838,8 @@ def test_rueckfrage_nennt_die_folgen():
         QtTest.QTest.keyClick(ia, K.Key_Delete)
         app.processEvents()
         text = fragen[0] if fragen else ""
-        check("Die Rückfrage nennt die Folgen: Stab (Elemente bleiben), Linie, Fläche (Elemente gehen mit), Knoten",
-              "die Elemente bleiben stehen" in text and "Linienlasten" in text
+        check("Die Rückfrage nennt die Folgen: Stab (Stabelemente bleiben), Linie, Fläche (Elemente gehen mit), "
+              "Knoten", "Stäbe: ihre Stabelemente bleiben stehen" in text and "Linienlasten" in text
               and "nehmen ihre Elemente mit" in text and "sein Lager" in text and "Knotenlasten" in text,
               text.replace("\n", " | "))
         check("… die erste Zeile ist die Frage mit den Zahlen",

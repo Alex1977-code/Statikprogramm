@@ -551,7 +551,7 @@ MASKEN = [
     ("Übersicht Knoten", "_baum_geklickt", ("knoten", "Knoten")),
     ("Neu: Berichtsbild", "_baum_neu", ("bericht",)),
 ]
-for _m in ("maske_knoten", "maske_linie", "maske_stab", "maske_schale", "maske_platte",
+for _m in ("maske_knoten", "maske_linie", "maske_stab", "maske_stabelement", "maske_schale", "maske_platte",
            "maske_quader", "maske_stabzug", "maske_lager", "maske_knotenlast",
            "maske_linienlast", "maske_flaechenlast", "maske_temperaturlast",
            "maske_zwangsverformung", "maske_vorspannung", "maske_spalt", "maske_spiel",

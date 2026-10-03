@@ -61,7 +61,9 @@ WEITERE_TASTEN = (
      "Öffnet die Maske „Knoten“. Die Einzeltasten K, S, L, B und F wirken nur, wenn die Ansicht den Fokus hat "
      "(Linksklick), nie in einem Textfeld, einer Tabelle oder einer Maske, nie mit Strg, Umschalt oder Alt, nie "
      "während einer Rechnung. Eine offene Maske mit nicht übernommenen Änderungen ersetzen sie nicht."),
-    ("Stab anlegen", "S", "Ansicht", "Öffnet die Maske „Stab“."),
+    ("Stab anlegen", "S", "Ansicht",
+     "Öffnet die Maske „Stab“: zwei Knoten anklicken, es entsteht ein Stab mit Nachweis samt seinem "
+     "Stabelement, wie in RFEM."),
     ("Lager setzen", "L", "Ansicht", "Öffnet die Maske „Lager“ (Knotenlager)."),
     ("Last aufbringen", "B", "Ansicht",
      "Belastung nach der Auswahl: Linienlast bei gewählten Stäben oder Linien, Flächenlast bei gewählten "

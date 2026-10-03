@@ -955,7 +955,8 @@ def test_ergebnis_passt_nicht_mehr():
         "Knoten": lambda: w._maske_knoten_anlegen({"x": 30.0, "y": 9.0, "z": 9.0}),
         "Stabzug": lambda: w._stabzug_erzeugen({"mat": mat, "sec": sec, "x1": 20, "y1": 0, "z1": 0,
                                                 "x2": 25, "y2": 0, "z2": 0, "n": 4}),
-        "Stab (Maske)": lambda: w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}),
+        # das einzelne Element (bis 03.10.2026 der Befehl „Stab“, seit C14 „Stabelement“)
+        "Stabelement (Maske)": lambda: w._maske_stabelement_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}),
         "Fläche": lambda: w._platte_erzeugen({"mat": mat, "dicke": "T10", "lx": 2, "ly": 2, "z": 20.0,
                                              "nx": 2, "ny": 2, "vierecke": True}),
     }
@@ -1078,7 +1079,7 @@ def test_ergebnis_passt_nach_stand():
     neu()
     ne0, nn0 = len(w.model.elements), w.model.nn
     w.model.elemente_loeschen([0])
-    w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
+    w._maske_stabelement_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
     w.redraw(); app.processEvents()
     passt, kopf = zustand()
     check("Element gelöscht und eines angelegt (gleiche Anzahl): „anders“, kein Ergebnis "
@@ -1168,7 +1169,7 @@ def test_speichern_nur_passendes():
     def umbauen():
         mat, sec = list(w.model.materials)[0], list(w.model.sections)[0]
         w.model.elemente_loeschen([0])
-        w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
+        w._maske_stabelement_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
         w.redraw(); app.processEvents()
 
     # unveraendert: geschrieben, geladen, passt (die Gegenprobe zur Kur)
@@ -1296,7 +1297,7 @@ def test_zusaetze_nach_stand():
     neu()
     mat, sec = list(w.model.materials)[0], list(w.model.sections)[0]
     w.model.elemente_loeschen([0])
-    w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
+    w._maske_stabelement_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
     erg = w._ergebnisliste()
     neu_rechnen = getattr(vp, "NEU_RECHNEN", "neu rechnen")
     for gruppe in ("Verformungen", "Schnittgrößen"):

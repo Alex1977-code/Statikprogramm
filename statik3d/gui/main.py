@@ -2568,7 +2568,7 @@ class MainWindow(QtWidgets.QMainWindow):
         arten = {art for art, _namen in gruppen}
         z = []
         if "stab" in arten:
-            z.append("Stäbe mit Nachweis: die Elemente bleiben stehen, ihre Linienlasten gehen mit.")
+            z.append("Stäbe: ihre Stabelemente bleiben stehen, ihre Linienlasten gehen mit.")
         if "linie" in arten:
             z.append("Mit einer Linie gehen ihre Linienlasten.")
         if arten & {"flaeche", "volumen"}:
@@ -5398,18 +5398,27 @@ class MainWindow(QtWidgets.QMainWindow):
         # Nach Objektart gegliedert: Staebe, Flaechen, Volumen, Gelenke - und
         # in jeder Gruppe die Befehle, die zu dieser Art gehoeren
         g = r.gruppe("Stäbe")
+        # „Stab“ im Sinn von RFEM (Teilpaket C14, 03.10.2026; Antwort 2 vom
+        # 24.09.2026): der Stab mit Nachweis samt seinem Stabelement. Bis dahin
+        # legte der Befehl nur das Stabelement an - das tut jetzt Netz → Stabelement.
         g.gross("Stab", "╲", self.maske_stab, "",
-                "Zwei Knoten anklicken oder ihre Nummern eintragen")
+                "Stab mit Nachweis anlegen wie in RFEM: zwei Knoten anklicken, Querschnitt und "
+                "Werkstoff wählen - sein Stabelement entsteht mit")
         g.gross("Stabzug", "╱", self.maske_stabzug,
                 hinweis="Stabzug zwischen zwei Punkten, in n Elemente geteilt")
         # beide Befehle zu den Staeben mit Nachweis in einem Menue - die Spalte
         # mit „Stäbe automatisch erkennen“ war 192 px breit (25.09.2026)
         menu = g.menueknopf("Nachweisstäbe ▾", "Stäbe mit Nachweis: Maske mit Knick- und "
-                                              "Kipplängen, automatisch erkennen", symbol="staebe")
+                                              "Kipplängen, automatisch erkennen, aus Stabelementen "
+                                              "bilden", symbol="staebe")
         g.eintrag(menu, "Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
                   hinweis="Stäbe mit Knick- und Kipplängen")
         g.eintrag(menu, "Stäbe automatisch erkennen", self.auto_members,
                   hinweis="Zusammenhängende Stabelemente gleicher Richtung zu Stäben mit Nachweis zusammenfassen")
+        # bis zum 03.10.2026 der Rechtsklick „Neu: Stab“ am Zweig „Stäbe“ (C14)
+        g.eintrag(menu, "Stab aus Stabelementen…", self.stab_aus_stabelementen,
+                  hinweis="Einen Stab mit Nachweis aus vorhandenen Stabelementen bilden: rechts die "
+                          "Maske „Neu: Stab …“, dort die Nummern der Stabelemente eintragen")
         # Doppelungen nur noch in der Suche (25.09.2026, Paket 7): Zuweisen und
         # Gelenke setzen fuehren nur ins Kontextregister „Auswahl“, Vernetzen
         # ist Netz → Vernetzen, die Tabellen haben unten ihren Reiter
@@ -5626,6 +5635,15 @@ class MainWindow(QtWidgets.QMainWindow):
                                          "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
+        # Das einzelne finite Stabelement (Teilpaket C14, 03.10.2026): bis dahin
+        # der Befehl Struktur → Stab. Es steht im Modellbaum unter FE-Netz →
+        # Stabelemente, darum hier; im Register Struktur fehlte auch der Platz
+        # (bei 1280 px 1214 von 1241 px, tests.test_glasleiste_ribbon).
+        g = r.gruppe("Elemente")
+        g.gross("Stabelement", "╲", self.maske_stabelement, symbol="stab",
+                hinweis="Ein einzelnes finites Stabelement zwischen zwei Knoten anlegen, ohne Stab mit "
+                        "Nachweis - es steht unter FE-Netz → Stabelemente. Den Stab wie in RFEM legt "
+                        "Struktur → Stab an")
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
@@ -6875,7 +6893,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Wie der Anwender ein Objekt sieht (Modellbaum, Maskentitel) - fuer
     #: Meldungen zu verschwundenen Objekten (zweite Nachbesserung 13m)
     OBJEKTNAMEN = {
-        "knoten": "Knoten K{}", "stabelement": "Stab E{}", "linie": "Linie {}", "stab": "Stab {}",
+        "knoten": "Knoten K{}", "stabelement": "Stabelement E{}", "linie": "Linie {}", "stab": "Stab {}",
         "geoflaeche": "Fläche {}", "geokoerper_einzeln": "Volumen {}", "lastfall": "Lastfall {}",
         "kombination": "Kombination {}", "werkstoff": "Werkstoff {}", "dicke": "Dicke {}",
         "querschnitt": "Querschnitt {}", "gelenk": "Gelenk {}", "kontaktbedingung": "Kontaktbedingung {}",
@@ -7986,7 +8004,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     "im Ergebnis steht das Bimoment. Der Querschnitt braucht "
                                     "einen Wölbwiderstand I_w > 0"
                                     + (f" (hier I_w = {zl.zahl_text(sec_o.Iw, stellen=3)} m⁶)" if sec_o else ""))]
-                titel = f"Stab E{i}"
+                titel = f"Stabelement E{i}"
         elif art in ("staebe", "stab"):
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.members))),
@@ -10315,7 +10333,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # der Stab 0-1)
                 knoten = self._zahlenliste(w.get("kn"), anzahl=2, feld="Knoten Anfang, Ende")
                 if len(knoten) != 2 or any(not 0 <= n < m.nn for n in knoten) or knoten[0] == knoten[1]:
-                    return self.error("Ein Stab braucht zwei verschiedene vorhandene Knoten")
+                    return self.error("Ein Stabelement braucht zwei verschiedene vorhandene Knoten")
                 typ = self.STABARTEN.get(str(w.get("typ", "")), "beam")
                 mat, sec = w.get("mat", ""), w.get("sec", "")
                 if mat not in m.materials or sec not in m.sections:
@@ -10326,12 +10344,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 ra = self._zahlenliste(w.get("ex_a"), zahl=float, anzahl=2, feld="Versatz Anfang y, z [mm]")
                 re = self._zahlenliste(w.get("ex_e"), zahl=float, anzahl=2, feld="Versatz Ende y, z [mm]")
                 if neu:
-                    self.merken("Stab angelegt")
+                    self.merken("Stabelement angelegt")
                     i = m.add_element(typ, knoten, mat, sec)
                     name = str(i)
                 else:
                     i = int(name)
-                    self.merken(f"Stab E{i}")
+                    self.merken(f"Stabelement E{i}")
                 e = m.elements[int(name)]
                 e.nodes, e.typ, e.mat, e.sec = knoten, typ, mat, sec
                 e.nur = self.NUR_ARTEN.get(str(w.get("nur", "")), "")
@@ -10929,7 +10947,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._objektmaske("stellung", m.naechster_name("St", [s.name for s in m.stellungen]),
                                      neu=True)
         if zweigart == "staebe":
-            return self._objektmaske("stab", m.naechster_name("S", m.members), neu=True)
+            # wie der Befehl „Stab“ (Teilpaket C14, 03.10.2026): zwei Knoten, ein
+            # Stab mit Nachweis samt Stabelement. Die Maske mit Elementnummern,
+            # die hier bis dahin kam, ist Struktur → „Stab aus Stabelementen…“
+            return self.maske_stab()
         if zweigart == "geoflaechen":
             return self._objektmaske("geoflaeche", m.naechster_name("F", m.flaechen), neu=True)
         if zweigart == "geokoerper":
@@ -11308,8 +11329,8 @@ class MainWindow(QtWidgets.QMainWindow):
         Grund, warum es nicht ging (leer = geloescht).
         """
         m = self.model
-        was = {"knoten": f"Knoten K{name}", "linie": f"Linie {name}", "stabelement": f"Stab E{name}",
-               "stab": f"Stab mit Nachweis {name} (die Elemente bleiben)",
+        was = {"knoten": f"Knoten K{name}", "linie": f"Linie {name}", "stabelement": f"Stabelement E{name}",
+               "stab": f"Stab {name} (seine Stabelemente bleiben)",
                "geoflaeche": f"Fläche {name} samt ihren Elementen",
                "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
                "querschnitt": f"Querschnitt {name}",
@@ -11351,7 +11372,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if not 0 <= i < len(m.elements):
                 grund = "Element gibt es nicht"
             else:
-                self.merken(f"Stab E{i} gelöscht")
+                self.merken(f"Stabelement E{i} gelöscht")
                 m.elemente_loeschen([i])
         elif art == "stab":
             grund = m.stab_loeschen(name)
@@ -13126,8 +13147,10 @@ class MainWindow(QtWidgets.QMainWindow):
             masse = "–"
         return [("Name", m.name or "–"),
                 ("Knoten", str(m.nn)), ("Linien", str(len(m.lines))),
+                # „Stäbe“ wie im Modellbaum (bis 03.10.2026 „Stäbe mit Nachweis“),
+                # vor ihren Elementen wie Flächen und Volumen
+                ("Stäbe", str(len(m.members))),
                 ("Stabelemente", str(zahl(self.BAUM_ELEMENTARTEN["stabelemente"]))),
-                ("Stäbe mit Nachweis", str(len(m.members))),
                 ("Flächen", str(len(m.flaechen))),
                 ("Flächenelemente", str(zahl(self.BAUM_ELEMENTARTEN["flaechen"]))),
                 ("Volumen", str(len(m.koerper))),
@@ -18785,7 +18808,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "supports": "Knotenlager", "line_supports": "Linienlager",
         "surface_supports": "Flächenlager", "lines": "Linien", "hinges": "Gelenke",
         "load_cases": "Lastfälle mit ihren Lasten", "combinations": "Kombinationen",
-        "fatigue_loads": "Ermüdungslasten", "members": "Stäbe mit Nachweis",
+        "fatigue_loads": "Ermüdungslasten", "members": "Stäbe",
         "joints": "Anschlüsse", "verformungsgrenzen": "Verformungsnachweise",
         "beulfelder": "Beulfelder", "volumenbereiche": "Volumenbereiche",
         "lasteinleitungen": "Lasteinleitungen", "kontaktbedingungen": "Kontaktbedingungen",
@@ -19295,7 +19318,7 @@ class MainWindow(QtWidgets.QMainWindow):
                      _namen(self.model.sections)),
             msk.Feld("teilung", "Teilung", "ganz", 8, breite=60),
             msk.Feld("radius", "Radius / Stich [m]", "zahl", 2.0),
-            msk.Feld("staebe", "Stäbe daraus erzeugen", "haken", True)],
+            msk.Feld("staebe", "Stabelemente daraus erzeugen", "haken", True)],
             knoten=3, knopf="Linie anlegen")
         m._arten = dict((t, k) for k, t in arten)
         m.angewendet.connect(self._maske_linie_anlegen)
@@ -19339,7 +19362,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(str(ex))
         self.info(f"{ln.kurve(self.model).beschreibung()}: {name}, "
                   f"L = {laenge:.3f} m"
-                  + (f", {n_el} Stäbe erzeugt" if n_el else ""))
+                  + (f", {n_el} Stabelemente erzeugt" if n_el else ""))
         if maske is not None:
             maske.auswahl_leeren()
         self.refresh_all()
@@ -19362,31 +19385,92 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"({zl.zahl_text(w['x'], punkt=True)}, {zl.zahl_text(w['y'], punkt=True)}, {zl.zahl_text(w['z'], punkt=True)}) m")
         self.refresh_all()
 
-    @_maskenweg()
-    def maske_stab(self):
-        """Stab anlegen: zwei Knoten anklicken oder ihre Nummern eintragen."""
-        m = msk.Maske("Stab", [
+    def _stabmaske(self, titel: str, knopf: str):
+        """Die Maske der Befehle „Stab“ und „Stabelement“: zwei Knoten
+        anklicken, Werkstoff, Querschnitt, Fachwerkstab - fuer beide gleich."""
+        return msk.Maske(titel, [
             msk.Feld("mat", "Material", "wahl", self._erst(self.model.materials),
                      _namen(self.model.materials)),
             msk.Feld("sec", "Querschnitt", "wahl", self._erst(self.model.sections),
                      _namen(self.model.sections)),
             msk.Feld("fachwerk", "Fachwerkstab (nur N)", "haken", False)],
-            knoten=2, knopf="Stab anlegen")
+            knoten=2, knopf=knopf)
+
+    @_maskenweg()
+    def maske_stab(self):
+        """Stab anlegen wie in RFEM: zwei Knoten anklicken, Querschnitt und
+        Werkstoff waehlen - es entsteht ein Stab mit Nachweis (S…) samt seinem
+        Stabelement (E…).
+
+        Teilpaket C14 (03.10.2026; Antwort 2 des Anwenders vom 24.09.2026).
+        Bis dahin legte der Befehl nur das Stabelement an, das ohne Nachweis
+        unter FE-Netz → Stabelemente stand; das tut jetzt
+        :meth:`maske_stabelement`. Der Stab entsteht aus zwei Knoten und nicht
+        aus vorhandenen Elementen, weil man ihn in RFEM so anlegt und die Maske
+        dieselbe bleibt (Klick, Werkstoff, Querschnitt). Aus vorhandenen
+        Stabelementen bildet ihn :meth:`stab_aus_stabelementen`, ganze Ketten
+        „Stäbe automatisch erkennen“."""
+        m = self._stabmaske("Stab", "Stab anlegen")
         m.angewendet.connect(self._maske_stab_anlegen)
-        self.maske_erzeugen(m)
+        return self.maske_erzeugen(m)
 
     def _maske_stab_anlegen(self, w: dict):
+        """Das Stabelement zwischen den zwei Knoten und der Stab mit Nachweis
+        darum, in einem Rueckgaengig-Schritt. Das Element ist dasselbe, das
+        :meth:`_maske_stabelement_anlegen` anlegt: der Stab rechnet darum
+        genau wie es und kommt nur zu den Nachweisen dazu (gemessen in
+        tests.test_befehl_stab an einem Rahmen: Verschiebungen,
+        Auflagerkraefte und Stabendkraefte gleich)."""
+        kn = w["knoten"]
+        if len(kn) < 2:
+            return self.error("Zwei Knoten in der Ansicht anklicken")
+        m = self.model
+        mat, sec = w.get("mat", ""), w.get("sec", "")
+        # Ein Stab ohne Werkstoff oder Querschnitt scheiterte erst beim Rechnen
+        # oder im Nachweis - darum hier abweisen, wie die Maske „Neu: Stabelement“
+        if mat not in m.materials or sec not in m.sections:
+            return self.error("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
+        typ = "truss" if w.get("fachwerk") else "beam"
+        name = m.naechster_name("S", m.members)
+        self.merken(f"Stab {name} angelegt")
+        e = m.add_element(typ, [kn[0], kn[1]], mat, sec)
+        m.add_member(name, [e])
+        self.info(f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} {name} mit Stabelement E{e} "
+                  f"angelegt: {kn[0] + 1}–{kn[1] + 1}, {sec}")
+        if self.maskenrand.maske is not None:
+            self.maskenrand.maske.auswahl_leeren()
+        self.refresh_all()
+
+    @_maskenweg()
+    def maske_stabelement(self):
+        """Ein einzelnes finites Stabelement anlegen (Netz → Stabelement):
+        zwei Knoten anklicken. Bis zum 03.10.2026 war das der Befehl „Stab“.
+        Das Element steht im Modellbaum unter FE-Netz → Stabelemente und hat
+        keinen Nachweis."""
+        m = self._stabmaske("Stabelement", "Stabelement anlegen")
+        m.angewendet.connect(self._maske_stabelement_anlegen)
+        return self.maske_erzeugen(m)
+
+    def _maske_stabelement_anlegen(self, w: dict):
         kn = w["knoten"]
         if len(kn) < 2:
             return self.error("Zwei Knoten in der Ansicht anklicken")
         typ = "truss" if w.get("fachwerk") else "beam"
-        self.merken("Stab angelegt")
-        self.model.add_element(typ, [kn[0], kn[1]], w["mat"], w["sec"])
-        self.info(f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} "
-                  f"{kn[0] + 1}–{kn[1] + 1} mit {w['sec']} angelegt")
+        self.merken("Stabelement angelegt")
+        i = self.model.add_element(typ, [kn[0], kn[1]], w["mat"], w["sec"])
+        self.info(f"Stabelement E{i} angelegt: {kn[0] + 1}–{kn[1] + 1}, "
+                  f"{'Fachwerkstab, ' if typ == 'truss' else ''}{w['sec']}")
         if self.maskenrand.maske is not None:
             self.maskenrand.maske.auswahl_leeren()
         self.refresh_all()
+
+    @_maskenweg()
+    def stab_aus_stabelementen(self):
+        """Einen Stab mit Nachweis aus vorhandenen Stabelementen bilden: rechts
+        die Maske „Neu: Stab S…“ mit den Elementnummern (Struktur →
+        Nachweisstäbe ▾). Bis zum 03.10.2026 oeffnete sie der Rechtsklick
+        „Neu: Stab“ am Zweig „Stäbe“; der fuehrt seitdem zum Befehl „Stab“."""
+        return self._objektmaske("stab", self.model.naechster_name("S", self.model.members), neu=True)
 
     @_maskenweg()
     def maske_schale(self):
