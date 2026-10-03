@@ -185,11 +185,14 @@ elf große Knöpfe nur diesen Buchstaben: *Übernehmen*, *Prüfen*, *Verschieben
 den Pfeil heraus), *Prüfen* eine Lupe mit Haken, *Verschieben* das Stück mit
 seinem gestrichelten Ziel, *Lot / Projektion* einen Punkt über einer Ebene mit
 Lot und rechtem Winkel, *Spalt / Toleranz* zwei Wände mit einem Doppelpfeil
-dazwischen, *Alle Stellungen* dieselbe Last an drei Orten auf dem Träger,
-*Konfiguration* drei Schieberegler, *Verschluss* die Tafel zwischen zwei
+dazwischen, *Alle Stellungen* einen Arm in drei Stellungen um sein Drehlager
+mit einem Drehpfeil, *Konfiguration* drei Schieberegler, *Verschluss* die Tafel zwischen zwei
 Führungen über dem Wasser mit einem Schwingungspfeil, *Einheiten* ein Lineal,
 *Fenster ▾* ein Fenster mit Seitenbereich und zwei Feldern, *Zuweisen* ein
-Etikett, das einem Stab gegeben wird.
+Etikett, das einem Stab gegeben wird. Für *Alle Stellungen* zeigte die erste
+Zeichnung vom 03.10.2026 noch dieselbe Last an drei Orten auf einem Träger; das
+las sich wie eine Last, darum trägt der Knopf seit demselben Tag den Arm um das
+Drehlager.
 
 Die fünf Knöpfe *Vorspannung*, *Übermaß*, *Spiel geben*, *Passung* und *Wind*
 trugen bis zum 03.10.2026 alle dasselbe Symbol, die Pfeilreihe der Lasten, und

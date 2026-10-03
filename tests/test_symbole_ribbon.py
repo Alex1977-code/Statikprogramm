@@ -24,6 +24,7 @@ Gemalt wird mit QPainter, ohne Schrift: die Pruefung laeuft offscreen.
 
 Aufruf:  python -m tests.test_symbole_ribbon
 """
+import math
 import os
 import sys
 import tempfile
@@ -279,6 +280,69 @@ def test_fuenf_lastknoepfe():
     check("… jede der fünf Zeichnungen gibt es", all(sym.hat_zeichnung(n) for n in namen))
 
 
+def _gezeichnete_formen(name: str) -> list:
+    """Die Grundformen, die eine Vorschrift zeichnet: (art, Koordinaten)."""
+    from PySide6 import QtGui
+    from statik3d.gui import symbole as sym
+
+    class Mitschrift(sym.Stift):
+        def __init__(self, p, farbe, akzent):
+            super().__init__(p, farbe, akzent)
+            self.formen = []
+
+        def linie(self, x1, y1, x2, y2):
+            self.formen.append(("linie", (x1, y1, x2, y2)))
+            super().linie(x1, y1, x2, y2)
+
+        def pfeil(self, x1, y1, x2, y2, kopf: float = 3.2):
+            # die Spitze zeichnet pfeil() mit linie(); nur der Schaft zaehlt als Pfeil
+            n = len(self.formen)
+            super().pfeil(x1, y1, x2, y2, kopf)
+            del self.formen[n:]
+            self.formen.append(("pfeil", (x1, y1, x2, y2)))
+
+        def kreis(self, x, y, r):
+            self.formen.append(("kreis", (x, y, r)))
+            super().kreis(x, y, r)
+
+    bild = QtGui.QImage(48, 48, QtGui.QImage.Format_ARGB32_Premultiplied)
+    bild.fill(0)
+    p = QtGui.QPainter(bild)
+    p.scale(2.0, 2.0)
+    s = Mitschrift(p, QtGui.QColor("#333333"), QtGui.QColor("#1565c0"))
+    try:
+        sym.VORSCHRIFTEN[name](s)
+    finally:
+        p.end()
+    return s.formen
+
+
+def test_stellungen_ohne_lastpfeile():
+    """„Alle Stellungen“ zeigte bis zum 03.10.2026 drei Pfeile von oben auf einen
+    Träger - der Anwender und die Sichtprüfung lasen das als Last. Jetzt: ein
+    Teil in drei Stellungen um sein Drehlager."""
+    _fenster()
+    formen = _gezeichnete_formen("stellungen")
+    nach_unten = [k for a, k in formen if a == "pfeil" and k[3] - k[1] > 0
+                  and abs(k[2] - k[0]) < 0.3 * (k[3] - k[1])]
+    check("„Alle Stellungen“ hat keinen senkrecht nach unten zeigenden Pfeil wie eine Last",
+          not nach_unten, str(nach_unten))
+    striche = [k for a, k in formen if a in ("linie", "pfeil")]
+    anfaenge = [(round(k[0], 1), round(k[1], 1)) for k in striche]
+    drehpunkt = max(set(anfaenge), key=anfaenge.count) if anfaenge else None
+    stellungen = [k for k in striche if (round(k[0], 1), round(k[1], 1)) == drehpunkt]
+    richtungen = {round(math.degrees(math.atan2(k[1] - k[3], k[2] - k[0]))) for k in stellungen}
+    check("… drei Stellungen gehen von einem gemeinsamen Drehpunkt aus, in drei Richtungen",
+          len(stellungen) >= 3 and len(richtungen) >= 3, f"{drehpunkt}: {sorted(richtungen)}")
+    lager = [k for a, k in formen if a == "kreis" and drehpunkt
+             and math.hypot(k[0] - drehpunkt[0], k[1] - drehpunkt[1]) < 0.6]
+    check("… am Drehpunkt sitzt ein Lager (Kreis)", bool(lager), str(lager))
+    lasten = _bild("lasten", 28)
+    check("… und das Bild ist in 28 px deutlich anders als das Lastsymbol",
+          _unterschied(_bild("stellungen", 28), lasten) >= 40,
+          str(_unterschied(_bild("stellungen", 28), lasten)))
+
+
 def test_falsch_geratene_symbole_korrigiert():
     w, app = _fenster()
     knoepfe = _knoepfe(w)
@@ -376,7 +440,7 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
     for t in (test_grosse_knoepfe_haben_eine_zeichnung, test_fuenf_lastknoepfe,
-              test_falsch_geratene_symbole_korrigiert, test_neue_zeichnungen_zeichnen,
+              test_stellungen_ohne_lastpfeile, test_falsch_geratene_symbole_korrigiert, test_neue_zeichnungen_zeichnen,
               test_keine_gleichen_symbole_in_einer_gruppe, test_jeder_genannte_name_hat_eine_zeichnung):
         print(f"\n--- {t.__name__} ---")
         try:
