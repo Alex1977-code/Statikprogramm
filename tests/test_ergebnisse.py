@@ -85,7 +85,7 @@ def test_schreiben_lesen():
         erg.lesen(epfad, m3)
         check("anderes Modell (Lastfaelle): Fehler mit Grund", False)
     except ValueError as ex:
-        check("anderes Modell (Lastfaelle): Fehler mit Grund", "Lastfaelle" in str(ex), str(ex)[:70])
+        check("anderes Modell (Lastfaelle): Fehler mit Grund", "die Lastfälle sind andere" in str(ex), str(ex)[:70])
     m4 = Model.load(pfad)
     m4.nodes[0, 0] += 0.5
     ok, grund = erg.passt(erg.kennung(m), m4)

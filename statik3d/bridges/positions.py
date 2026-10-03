@@ -197,7 +197,7 @@ class Stellung:
         for c in m.combinations.values():
             c.situation = name
         if log is not None:
-            log.append(f"  {self.name}: {len(els)} Elemente ohne Wirkung ("
+            log.append(f"  {self.name}: {len(els)} {'Element' if len(els) == 1 else 'Elemente'} ohne Wirkung ("
                        + ", ".join(self.staebe_aus + self.flaechen_aus + self.koerper_aus) + ")")
 
     def _gelenke(self, m: Model, log: list = None):

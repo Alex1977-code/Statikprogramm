@@ -45,6 +45,7 @@ sonst stuenden zwei verschiedene Umhuellende unter demselben Namen
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -109,8 +110,20 @@ def anzahl(n, einzahl: str, mehrzahl: str) -> str:
     1 Staebe, 1 Kombinationen“, „Netz: 2 Knoten · 1 Elemente“, „1 Zeilen“.
     Wo sich auch das Verb oder ein Begleitwort mit der Zahl aendert („1 Knoten
     trägt“, „3 Knoten tragen“), entscheidet die Stelle selbst ueber ``n == 1``.
+
+    Eine ganze Zahl als Gleitkommazahl (1.0, numpy.float64) zaehlt wie die
+    ganze Zahl und steht ohne „.0“ da: bis zur Gegenpruefung vom 03.10.2026
+    hiess es „1.0 Stab“ und „2.0 Stäbe“. Eine gebrochene Zahl (1,5) und ein
+    Wort („alle“) nehmen die Mehrzahl und stehen, wie sie sind.
     """
-    return f"{n} {einzahl if n == 1 else mehrzahl}"
+    try:
+        x = float(n)
+    except (TypeError, ValueError):
+        return f"{n} {mehrzahl}"
+    if math.isfinite(x) and x.is_integer():
+        z = int(x)
+        return f"{z} {einzahl if z == 1 else mehrzahl}"
+    return f"{n} {mehrzahl}"
 
 
 def typ_kurz(typ) -> str:

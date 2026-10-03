@@ -238,6 +238,76 @@ def test_ergebnisprotokoll():
           str((kb1.fuge(), kb2.fuge(), kb3.fuge())))
 
 
+def test_runde3():
+    """Gegenpruefung 03.10.2026: anzahl mit 1.0, Kontakt-Zusammenfassung,
+    Plastizitaet in Protokoll und Fortschritt, Diagnose (Pronomen und Verb bei
+    einem Element), Grund einer nicht passenden Ergebnisdatei."""
+    import numpy as np
+    from statik3d.begriffe import anzahl
+    from statik3d import contact as ct, diagnose, solver, plastizitaet as pl
+    from statik3d.model import Model, Material, NodalLoad
+    from statik3d.gui import rechenliste as rl
+    check("anzahl: 1.0 ist Einzahl, ganze Zahlen ohne „.0“, 1,5 bleibt Mehrzahl",
+          (anzahl(1.0, "Stab", "Stäbe"), anzahl(2.0, "Stab", "Stäbe"), anzahl(np.float64(1.0), "Stab", "Stäbe"),
+           anzahl(1.5, "Stab", "Stäbe"), anzahl("alle", "Objekt", "Objekte"))
+          == ("1 Stab", "2 Stäbe", "1 Stab", "1.5 Stäbe", "alle Objekte"),
+          str((anzahl(1.0, "Stab", "Stäbe"), anzahl(2.0, "Stab", "Stäbe"), anzahl(1.5, "Stab", "Stäbe"))))
+    k1 = ct.summary([{"status": "Haften", "Fn": 1e3}])
+    k2 = ct.summary([{"status": "Haften", "Fn": 1e3}, {"status": "offen", "Fn": 0.0}])
+    check("Kontakt: „1 von 1 Bedingung aktiv“, „1 von 2 Bedingungen aktiv“",
+          k1.startswith("Kontakt: 1 von 1 Bedingung aktiv,") and k2.startswith("Kontakt: 1 von 2 Bedingungen aktiv,"),
+          f"{k1} | {k2}")
+    # Plastizitaet: ein Hexaeder unter Zug ueber f_y (wie tests/test_plastizitaet)
+    E, NU, FY = 210e9, 0.3, 355e6
+    m = Model("Zug")
+    m.add_material(Material("S355", E=E, nu=NU, rho=7850, fy=FY))
+    n = [m.add_node(x, y, z) for z in (0.0, 1.0) for x, y in ((0, 0), (1, 0), (1, 1), (0, 1))]
+    m.add_element("hex8", n, "S355", "")
+    for i in n[:4]:
+        m.fix(i, [2])
+    m.fix(n[0], [0, 1]); m.fix(n[1], [1]); m.fix(n[3], [0])
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    for i in n[4:]:
+        lc.nodal_loads.append(NodalLoad(i, [0, 0, 1.1 * FY / 4.0, 0, 0, 0]))
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2, iterationen=60, toleranz=1e-8)
+    texte = []
+    r = solver.solve_static(m, progress=lambda t, *a: texte.append(str(t)))
+    log = (r.info.get("plastizitaet") or {}).get("log", [])
+    zeile = [z for z in log if z.startswith("Plastizität: ") and "ε_p,eq max" in z]
+    check("Plastizität im Protokoll: „Plastizität: 1 Element fließt, ε_p,eq max …, … in 2 Laststufen“",
+          bool(zeile) and zeile[0].startswith("Plastizität: 1 Element fließt, ε_p,eq max ")
+          and "in 2 Laststufen" in zeile[0], str(zeile[:1]))
+    schritt = [t for t in texte if t.startswith("Plastizität: Laststufe") and "fließt" in t]
+    check("Plastizität im Fortschritt: „… 1 Element fließt, Änderung …“, die Rechenliste liest die Änderung weiter",
+          bool(schritt) and "1 Element fließt, Änderung " in schritt[0] and rl.MASS.search(schritt[0]) is not None,
+          str(schritt[:1]))
+    # Diagnose: ein entartetes Element, eine Umwandlung
+    d = {"entartete_elemente": [(4, "hex8", "alle Knoten auf einer Ebene")],
+         "entartet_umgewandelt": {"hex8→pent6": 1},
+         "unvernetzte_flaechen": [], "unvernetzte_koerper": [], "ohne_lager": [], "nur_kontakt": [], "lose_knoten": 0}
+    t = diagnose.meldungen(m, d)
+    print("     meldungen:", t)
+    check("Diagnose: „1 entartetes Element … trägt es nichts und wird … übergangen … Wo es stört“",
+          any(z.startswith("WARNUNG: 1 entartetes Element ohne Ausdehnung - ohne Steifigkeit trägt es nichts "
+                           "und wird bei der Rechnung übergangen") and "Wo es stört" in z for z in t), str(t))
+    check("Diagnose: „1 Element aus einem entarteten Volumenelement … wurde umgewandelt … - seine Genauigkeit“",
+          any(z.startswith("Hinweis: 1 Element aus einem entarteten Volumenelement") and "wurde umgewandelt" in z
+              and " - seine Genauigkeit ist die des Keils" in z for z in t), str(t))
+    d2 = dict(d, entartet_umgewandelt={"hex8→pent6": 2},
+              entartete_elemente=[(4, "hex8", "eben"), (5, "hex8", "eben")])
+    t2 = diagnose.meldungen(m, d2)
+    check("Diagnose, Mehrzahl daneben: „tragen sie nichts“, „ - ihre Genauigkeit“",
+          any("tragen sie nichts und werden" in z for z in t2)
+          and any(" - ihre Genauigkeit ist die des Keils" in z for z in t2), str(t2))
+    from statik3d import ergebnisse as erg
+    k = erg.kennung(m)
+    k["lastfaelle"] = list(k.get("lastfaelle", [])) + ["Neu"]
+    ok, grund = erg.passt(k, m)
+    check("Ergebnisdatei passt nicht: „die Lastfälle sind andere“", not ok and grund == "die Lastfälle sind andere",
+          grund)
+
+
 def test_kerbfallvorschlag():
     from statik3d.ec3 import kerbfaelle
     log = []
@@ -334,6 +404,30 @@ def test_oberflaeche():
     titel = mr.maske.titel if mr.offen() and mr.maske is not None else None
     check("Sammelmaske eines Elements: „1 Element bearbeiten“", titel == "1 Element bearbeiten", repr(titel))
     _abbruch_mit_teilergebnis(w, app)
+    # Kopfzeile mit „Kontakte zeigen“: eine Bedingung (zwei Darsteller je Bedingung)
+    w.act_kontakte.blockSignals(True)
+    w.act_kontakte.setChecked(True)
+    alt_d = list(getattr(w, "_kontakt_darsteller", []) or [])
+    w._kontakt_darsteller = ["kontaktflaeche0", "kontakttext0"]
+    sicht = w._sicht_text()
+    w._kontakt_darsteller = alt_d
+    w.act_kontakte.setChecked(False)
+    w.act_kontakte.blockSignals(False)
+    check("Kopfzeile: „Kontakte: 1 Bedingung farbig mit Schild“", "Kontakte: 1 Bedingung farbig mit Schild" in sicht,
+          sicht)
+    # Abnahme des Netzes vor dem Rechnen: eine Verletzung
+    import types
+    from statik3d import diagnose as dg
+    echt, fragen = dg.abnahme, []
+    alt_f = w._fragen
+    dg.abnahme = lambda *a, **k: [types.SimpleNamespace(stufe="FEHLER", pruefung="Elementgüte", text="Probe")]
+    w._fragen = lambda titel, text: (fragen.append(text), False)[1]
+    try:
+        w._abnahme_bestaetigen()
+    finally:
+        dg.abnahme, w._fragen = echt, alt_f
+    check("Abnahme vor dem Rechnen: „Das Netz reißt 1 Prüfung:“",
+          bool(fragen) and fragen[0].startswith("Das Netz reißt 1 Prüfung:"), str(fragen[:1])[:80])
     mel = _FENSTER["meldungen"]
     check("Oberfläche: unterwegs kein Fehler und kein Hinweis", not mel.alle, str(mel.alle[:3]))
 
@@ -382,7 +476,7 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_anzahl, test_ec3, test_torsion, test_ermuedung, test_weitere_nachweise,
-              test_ergebnisprotokoll, test_kerbfallvorschlag, test_pruefen, test_oberflaeche):
+              test_ergebnisprotokoll, test_runde3, test_kerbfallvorschlag, test_pruefen, test_oberflaeche):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

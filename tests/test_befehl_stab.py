@@ -615,10 +615,19 @@ def test_leerer_stab():
           str(pruefung))
     an = solver.solve_all(m, design=True)
     # seit Runde 2 (G2) steht S2 als nicht geführt im Ergebnis, nicht nur als Warnzeile
-    check("Nachweis EC3: S1 und S3 nachgewiesen, S2 als nicht geführt (kein Stabelement), kein „alle erfüllt“",
+    # Positiv (11c, Gegenpruefung 03.10.2026): bis dahin stand hier
+    # "alle erfuellt" not in … - seit den Umlauten immer wahr. Jetzt: das
+    # Urteil am Ende der Zeile ist „1 nicht geführt“, und ohne S2 endet
+    # dieselbe Zeile auf „alle erfüllt“.
+    zeile = an.design.summary().splitlines()[0]
+    check("Nachweis EC3: S1 und S3 nachgewiesen, S2 als nicht geführt (kein Stabelement); die Zeile endet so",
           sorted(an.design.members) == ["S1", "S2", "S3"] and an.design.members["S2"].fehler
-          and "nicht geführt: S2 (kein Stabelement" in an.design.summary()
-          and "alle erfuellt" not in an.design.summary(), an.design.summary()[-160:])
+          and zeile.endswith(") - 1 nicht geführt: S2 (kein Stabelement – Stab löschen oder neu zeichnen)"),
+          zeile[-160:])
+    from statik3d.ec3.design import check_members
+    ohne_s2 = check_members(m, an, members=["S1", "S3"], use_jobs=False).summary().splitlines()[0]
+    check("… Gegenstück: nur S1 und S3 - dieselbe Zeile endet auf „ - alle erfüllt“",
+          ohne_s2.startswith("Nachweise EC3: 2 Stäbe, ") and ohne_s2.endswith(" m) - alle erfüllt"), ohne_s2[-120:])
     neu = _rechnen_wie_f5(w, app)
     check("Berechnen (F5) bricht nicht ab: Ergebnis und Nachweis da, die Meldung im Protokoll",
           w.analysis is not None and getattr(w.analysis, "design", None) is not None

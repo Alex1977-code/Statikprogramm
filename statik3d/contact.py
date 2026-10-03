@@ -2819,6 +2819,6 @@ def summary(results: list[dict]) -> str:
     n_act = sum(1 for r in results if r["status"] != "offen")
     n_slip = sum(1 for r in results if r["status"] == "Gleiten")
     fmax = max((r["Fn"] for r in results), default=0.0)
-    return (f"Kontakt: {n_act} von {len(results)} Bedingungen aktiv"
+    return (f"Kontakt: {n_act} von {len(results)} {'Bedingung' if len(results) == 1 else 'Bedingungen'} aktiv"
             + (f", {n_slip} gleitend" if n_slip else "")
             + f", max. Kontaktkraft {fmax/1e3:.2f} kN")

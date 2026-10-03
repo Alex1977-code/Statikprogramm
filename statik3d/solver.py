@@ -4367,7 +4367,7 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
     threads = threads_je_kette(st.solver_threads, len(bloecke))
     _melde(progress, f"{len(names)} {'Lastfall' if len(names) == 1 else 'Lastfälle'} in "
                      f"{len(bloecke)} {'Kette' if len(bloecke) == 1 else 'Ketten'} "
-                     f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
+                     f"({je} Arbeiter und {threads} {'Löser-Thread' if threads == 1 else 'Löser-Threads'} je Kette)")
     pfad = None
     # vor dem Pickeln bzw. to_dict umwandeln (parallel.vor_dem_pickeln): jede
     # Kette rechnete sonst die Umwandlung noch einmal selbst

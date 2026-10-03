@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .begriffe import anzahl
 from .model import Model, Verformungsgrenze
 from . import solver as _s
 
@@ -171,7 +172,6 @@ class GZGResults:
         schlecht = [c.name for c in self.checks.values() if c.util > 1.0]
         fehler = [c.name for c in self.checks.values() if c.fehler]
         worst = max(self.checks.values(), key=lambda c: c.util)
-        from .begriffe import anzahl
         s = (f"Verformungen (GZG): {anzahl(len(self.checks), 'Nachweis', 'Nachweise')}, max. Ausnutzung "
              f"{worst.util:.3f} ({worst.name}: {worst.werttext()} von {worst.grenztext}"
              + (f", {worst.kombination}" if worst.kombination else "") + ")")

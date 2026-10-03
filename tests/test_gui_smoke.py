@@ -6925,13 +6925,14 @@ def main():
               f"{kb.gegenflaechen if kb else None}, {fehler_[n_f:]}")
         w._baum_geklickt("kontaktbedingung", "KB1"); app.processEvents()
         check("jetzt leuchten beide Seiten der Fuge - Kontaktfläche und Gegenfläche",
-              w.sel_flaechen == ["FugeO", "FugeU"] and "1 Gegenflächen" in w.lbl_sel.text(),
+              w.sel_flaechen == ["FugeO", "FugeU"] and "1 Gegenfläche" in w.lbl_sel.text()
+              and "1 Gegenflächen" not in w.lbl_sel.text(),
               f"{w.sel_flaechen}, „{w.lbl_sel.text()}“")
         w.act_kontakte.setChecked(True); w.redraw(); app.processEvents()
         akt_ = [a for a in w.plotter.renderer.actors if a.startswith("kontakt")]
         check("„Kontakte zeigen“: die Fuge farbig im Bild, mit Schild aus Name und Wirkung",
               any(a.startswith("kontaktflaeche") for a in akt_) and any(a.startswith("kontakttext") for a in akt_)
-              and "Kontakte: 1 Bedingungen" in w._sicht_text(), str(akt_))
+              and "Kontakte: 1 Bedingung farbig mit Schild" in w._sicht_text(), str(akt_))
         from PySide6 import QtGui as _QtGk
         soll_ = _QtGk.QColor(kt_.wirkungsfarbe(kb)).getRgbF()[:3]
         ist_ = dict(w.plotter.renderer.actors)["kontaktflaeche0"].GetProperty().GetColor()

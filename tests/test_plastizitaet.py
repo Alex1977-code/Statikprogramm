@@ -138,7 +138,10 @@ def test_loeser():
     check("Zusammenfassung nennt die Plastizität: „1 Element fließt“, „2 Laststufen“",
           "Plastizität" in z and "1 Element fließt, " in z and "2 Laststufen" in z,
           [x for x in z.splitlines() if "Plastizit" in x][:1])
-    check("das Protokoll steht in res.info['plastizitaet']['log']", any("fließen" in x for x in info.get("log", [])))
+    # Einzahl seit der Gegenpruefung 11c (03.10.2026): ein Element „fließt“
+    check("das Protokoll steht in res.info['plastizitaet']['log']: „Plastizität: 1 Element fließt, …“",
+          any(x.startswith("Plastizität: 1 Element fließt, ") for x in info.get("log", [])),
+          str(info.get("log", [])[-1:])[:120])
     # Einstellung ohne Streckgrenze: elastisch, mit Hinweis
     m2, n2 = _wuerfel_zug(p)
     m2.materials["S355"].fy = None

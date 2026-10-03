@@ -83,7 +83,7 @@ def passt(k: dict, model) -> tuple:
     if abs(float(k.get("koordinaten", 0.0)) - jetzt["koordinaten"]) > 1e-6 * max(1.0, abs(jetzt["koordinaten"])):
         return False, "die Knotenkoordinaten sind andere"
     if list(k.get("lastfaelle", [])) != jetzt["lastfaelle"]:
-        return False, "die Lastfaelle sind andere"
+        return False, "die Lastfälle sind andere"
     if "elemente" in k and k["elemente"] != jetzt["elemente"]:
         return False, "die Elemente sind andere (Typ oder Knoten)"
     return True, ""

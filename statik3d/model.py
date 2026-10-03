@@ -41,7 +41,7 @@ import numpy as np
 from .einheiten import Einheiten
 from .plastizitaet import Plastizitaet
 from . import elemente as _EL
-from .begriffe import umhuellende_kurz
+from .begriffe import anzahl, umhuellende_kurz
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
@@ -3053,7 +3053,6 @@ class Subsystem:
     beschreibung: str = ""
 
     def bezug(self) -> str:
-        from .begriffe import anzahl
         t = f"{anzahl(len(self.elemente), 'Element', 'Elemente')}, {len(self.knoten)} Knoten"
         if self.beruehrung:
             t += f", {anzahl(len(self.beruehrung), 'Berührungselement', 'Berührungselemente')}"

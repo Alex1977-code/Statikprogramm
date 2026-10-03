@@ -281,8 +281,14 @@ def test_a9_leerer_stab_ec3():
     m = rahmen_leer()
     an = solver.solve_all(m, design=True)
     s = an.design.summary()
-    check("A9 leerer Stab, EC3: Zusammenfassung ohne „alle erfüllt“, nennt S2 als nicht geführt",
-          "alle erfuellt" not in s and "nicht geführt: S2" in s and "kein Stabelement" in s, s)
+    # Positiv (11c, Gegenpruefung 03.10.2026): bis dahin "alle erfuellt" not in s,
+    # seit den Umlauten immer wahr
+    check("A9 leerer Stab, EC3: die Zeile endet mit „ - 1 nicht geführt: S2 (kein Stabelement …)“",
+          s.splitlines()[0].endswith(") - 1 nicht geführt: S2 (kein Stabelement – Stab löschen oder neu zeichnen)"), s)
+    from statik3d.ec3.design import check_members
+    s_ohne = check_members(m, an, members=["S1", "S3"], use_jobs=False).summary().splitlines()[0]
+    check("A9 Gegenstück: ohne S2 endet dieselbe Zeile auf „ - alle erfüllt“",
+          s_ohne.startswith("Nachweise EC3: 2 Stäbe, ") and s_ohne.endswith(" m) - alle erfüllt"), s_ohne)
     st = srv.State(m)
     st.analysis = an
     pl = srv.design_payload(st)["design"]

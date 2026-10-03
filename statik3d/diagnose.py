@@ -307,15 +307,19 @@ ENTARTUNG_GENAUIGKEIT_QUADRATISCH = ("der quadratische Keil (pent15) rechnet wie
                                      "1 359 FHG (hex20); der tet10 +4,1 bei 2 295 FHG")
 
 
-def entartung_genauigkeit(zahl: dict) -> str:
+def entartung_genauigkeit(zahl: dict, einzahl: bool = False) -> str:
     """Der Genauigkeitshinweis zu einer Umwandlungszaehlung {"hex8→pent6": n,
-    ...}: der des linearen Keils, der des quadratischen oder beide."""
+    ...}: der des linearen Keils, der des quadratischen oder beide.
+    ``einzahl``: der Satz davor nennt ein einzelnes Element - „seine“ statt
+    „ihre Genauigkeit“ (Gegenpruefung 11c, 03.10.2026)."""
     ziele = {k.split("→")[-1] for k in (zahl or {})}
     quad = bool(ziele & {"pent15", "tet10"})
     lin = bool(ziele - {"pent15", "tet10"}) or not ziele
     if quad and lin:
-        return ENTARTUNG_GENAUIGKEIT + "; " + ENTARTUNG_GENAUIGKEIT_QUADRATISCH
-    return ENTARTUNG_GENAUIGKEIT_QUADRATISCH if quad else ENTARTUNG_GENAUIGKEIT
+        text = ENTARTUNG_GENAUIGKEIT + "; " + ENTARTUNG_GENAUIGKEIT_QUADRATISCH
+    else:
+        text = ENTARTUNG_GENAUIGKEIT_QUADRATISCH if quad else ENTARTUNG_GENAUIGKEIT
+    return text.replace("ihre Genauigkeit", "seine Genauigkeit", 1) if einzahl else text
 
 
 def _entartung(model, i: int) -> tuple:
@@ -764,7 +768,9 @@ def _abnahme_huellen(model) -> list:
             aus.append(Befund(
                 pruefung="Hülle offen", objekt=str(name),
                 wert=float(len(offen)), grenze=0.0,
-                text=f"Volumen {name}: {len(offen)} Randlinien gehören nicht zu "
+                text=f"Volumen {name}: "
+                     + ("1 Randlinie gehört" if len(offen) == 1 else f"{len(offen)} Randlinien gehören")
+                     + " nicht zu "
                      f"genau zwei Flächenrändern (z. B. "
                      + ", ".join(offen[:5]) + (" …" if len(offen) > 5 else "")
                      + ") - dort fehlt eine Fläche, die Hülle ist nicht dicht."))
@@ -1641,8 +1647,11 @@ def _abnahme_faltung(model, bilanz: dict = None) -> list:
         aus.append(Befund(
             pruefung="Netz gefaltet", objekt=", ".join(namen), element=els[0],
             elemente=els, knoten=sorted(gemeinsam), wert=float(len(els)), grenze=0.0,
-            text=f"{wo}: {len(els)} Tetraeder liegen umgestülpt zwischen ihren "
-                 f"Nachbarn (Elemente {liste}{am}) - an {seiten} gemeinsamen Seiten "
+            text=f"{wo}: "
+                 + ("1 Tetraeder liegt umgestülpt zwischen seinen" if len(els) == 1
+                    else f"{len(els)} Tetraeder liegen umgestülpt zwischen ihren")
+                 + f" Nachbarn ({'Element' if len(els) == 1 else 'Elemente'} {liste}{am}) - an "
+                 + f"{seiten} {'gemeinsamen Seite' if seiten == 1 else 'gemeinsamen Seiten'} "
                  "liegen beide Nachbarn auf derselben Seite. Dort ist das Netz "
                  "gefaltet: die Elemente überdecken sich, und die Rechnung nimmt "
                  "jedes mit dem Betrag seines Volumens, als stünde es aufrecht. Ins "
@@ -3959,9 +3968,12 @@ def meldungen(model, d: dict = None) -> list:
         # und keine Masse. Es wegzulassen ist exakt, nicht genaehert - die
         # Rechnung darf daran nicht scheitern. Gesagt wird es trotzdem, denn
         # es zeigt eine Schwaeche im Netz oder in der Quelldatei.
-        z.append(f"WARNUNG: {wort} ohne Ausdehnung - ohne Steifigkeit tragen sie "
-                 f"nichts und werden bei der Rechnung übergangen ({beispiel}"
-                 + (" …" if len(ent) > 3 else "") + "). Wo sie stören, das Netz "
+        eins = len(ent) == 1
+        z.append(f"WARNUNG: {wort} ohne Ausdehnung - ohne Steifigkeit "
+                 + ("trägt es nichts und wird" if eins else "tragen sie nichts und werden")
+                 + f" bei der Rechnung übergangen ({beispiel}"
+                 + (" …" if len(ent) > 3 else "") + "). "
+                 + ("Wo es stört" if eins else "Wo sie stören") + ", das Netz "
                  "dort neu erzeugen (Netz → Vernetzen); bei importierten Netzen "
                  "die doppelten Knoten zusammenlegen")
     fe = d.get("entartet_fehler") or []
@@ -3988,7 +4000,7 @@ def meldungen(model, d: dict = None) -> list:
             wann = "werden beim Rechnen" if wa else "wurden"
             wer = f"{n} Elemente aus entarteten Volumenelementen"
         z.append(f"Hinweis: {wer} (zusammenfallende "
-                 f"Knoten) {wann} umgewandelt ({teile}) - {entartung_genauigkeit(zahl)}")
+                 f"Knoten) {wann} umgewandelt ({teile}) - {entartung_genauigkeit(zahl, einzahl=n == 1)}")
     nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
     if nf or nk:
         z.append("WARNUNG: " + " und ".join(x for x in (_anzahl(nf, "Fläche", "Flächen") if nf else "",

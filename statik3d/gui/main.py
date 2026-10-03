@@ -4516,8 +4516,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_linien = list(linien)
         self.auswahlart_setzen("Linie")
         self.refresh_all()
-        self.info(f"{namen[0]} ∩ {namen[1]}: {len(linien)} Schnittlinien ({', '.join(linien)}), "
-                  f"{neue_knoten} neue Knoten")
+        self.info(f"{namen[0]} ∩ {namen[1]}: {bg.anzahl(len(linien), 'Schnittlinie', 'Schnittlinien')} "
+                  f"({', '.join(linien)}), {neue_knoten} {'neuer' if neue_knoten == 1 else 'neue'} Knoten")
 
     # ---- Messen und Bemassen (Register Messen) -----------------------------
     MESSARTEN = {"abstand": ("Abstand messen", 2), "winkel": ("Winkel messen", 3),
@@ -4786,7 +4786,8 @@ class MainWindow(QtWidgets.QMainWindow):
         e.versatz = float(w.get("versatz", 0.0) or 0.0)
         e.hoehen_bezug = float(w.get("hoehen_bezug", 0.0) or 0.0)
         e.farbe = str(w.get("farbe", e.farbe)).strip() or e.farbe
-        self.info(f"Bemaßung: {e.einheit}, {e.nachkomma} Nachkommastellen, {e.textgroesse} pt")
+        self.info(f"Bemaßung: {e.einheit}, {bg.anzahl(e.nachkomma, 'Nachkommastelle', 'Nachkommastellen')}, "
+                  f"{e.textgroesse} pt")
         self.refresh_all()
 
     # ------------------------------------------------------------------
@@ -9745,7 +9746,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for kb in offen:
                 self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
         if erg["neu"] or erg["entfernt"]:
-            self.log.appendPlainText(f"Berührungen geprüft: {erg['beruehrungen']} Körperpaare, "
+            self.log.appendPlainText(f"Berührungen geprüft: {bg.anzahl(erg['beruehrungen'], 'Körperpaar', 'Körperpaare')}, "
                                      f"{bg.anzahl(len(erg['neu']), 'Kontakt', 'Kontakte')} angelegt, "
                                      f"{len(erg['entfernt'])} entfernt "
                                      f"({time.perf_counter() - t0:.1f} s)")
@@ -12966,10 +12967,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"{bg.anzahl(n_ohne, 'Objekt', 'Objekte')} {'hat' if n_ohne == 1 else 'haben'} kein Netz, "
                         f"{mit} {'hat' if mit == 1 else 'haben'} eins"
                         + (f":\n{teile}\n\n" if teile else ".\n\n")
-                        + "Nur diese vernetzen geht schnell und lässt die übrigen Netze stehen. "
+                        + ("Nur dieses vernetzen" if n_ohne == 1 else "Nur diese vernetzen")
+                        + " geht schnell und lässt die übrigen Netze stehen. "
                           "Alles neu zu vernetzen ist nötig, wenn sich die Netzdichte geändert hat - "
                           "das dauert bei einem großen Modell Minuten.",
-                        ja=f"Nur die {n_ohne} ohne Netz", nein="Alles neu vernetzen"):
+                        ja=("Nur das Objekt ohne Netz" if n_ohne == 1 else f"Nur die {n_ohne} ohne Netz"),
+                        nein="Alles neu vernetzen"):
                     flaechen, koerper = ohne_f, ohne_k
                     self.log.appendPlainText(
                         ("Vernetzen: nur das Objekt ohne Netz" if n_ohne == 1
@@ -13025,7 +13028,8 @@ class MainWindow(QtWidgets.QMainWindow):
         _sperre = _es.sperre_anwenden(m)
         if _sperre:
             log.append(_sperre)
-        self._fortschritt_beginnen(1000, f"Adaptiv vernetzen: {runden} Runden, Lastfall {lastfall} …")
+        self._fortschritt_beginnen(1000, f"Adaptiv vernetzen: {bg.anzahl(runden, 'Runde', 'Runden')}, "
+                                         f"Lastfall {lastfall} …")
 
         def fortschritt(anteil, text):
             return self._fortschritt(int(1000 * float(anteil or 0.0)), text or "Adaptiv vernetzen …")
@@ -13099,7 +13103,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.analysis = None
             self.results = None
         self.refresh_all()
-        self.info(f"{ges['fugen']} Kontaktfugen ausgeführt, {ges['offen']} offen"
+        self.info(f"{bg.anzahl(ges['fugen'], 'Kontaktfuge', 'Kontaktfugen')} ausgeführt, {ges['offen']} offen"
                   if ges["fugen"] else
                   "Keine Kontaktfuge ausgeführt - das Protokoll sagt, warum")
 
@@ -16718,7 +16722,7 @@ class MainWindow(QtWidgets.QMainWindow):
             text += " · Kontaktmarken: grün haftet, orange gleitet, grau offen, blau Kontakt"
         if getattr(self, "act_kontakte", None) is not None and self.act_kontakte.isChecked():
             n = len(getattr(self, "_kontakt_darsteller", []) or []) // 2
-            text += f" · Kontakte: {n} Bedingungen farbig mit Schild"
+            text += f" · Kontakte: {bg.anzahl(n, 'Bedingung', 'Bedingungen')} farbig mit Schild"
         return text
 
     def _werte_text(self) -> str:
@@ -20290,7 +20294,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif wahl and wahl != self.PASSUNG_KEINE:
             return self.hinweis("Passung gewählt, aber keine Abmaße eingetragen - das Programm bringt "
                               "keine Abmaßtabelle mit, die vier Werte stehen auf der Zeichnung")
-        self.merken(f"Passung an {len(kontakte)} Kontaktfugen")
+        self.merken(f"Passung an {bg.anzahl(len(kontakte), 'Kontaktfuge', 'Kontaktfugen')}")
         # Eine ausgefuehrte Fuge muss zurueckgenommen werden, sonst behaelt ihr
         # Kontaktpaar die alten Werte: kontaktfuge_ausfuehren steigt bei
         # ausgefuehrten Fugen mit "schon ausgefuehrt" aus, und gerechnet wird
@@ -20298,7 +20302,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # einmal fuer alle - am Drehlager kostet sie je Aufruf 2,5 s.
         from .. import fugen
         self._fortschritt_beginnen(len(kontakte) + 1,
-                                   f"Passung an {len(kontakte)} Kontaktfugen …", abbrechbar=False)
+                                   f"Passung an {bg.anzahl(len(kontakte), 'Kontaktfuge', 'Kontaktfugen')} …",
+                                   abbrechbar=False)
         try:
             gruppen = None
             if m.elements:
@@ -20333,16 +20338,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Übermaß {uebermass * 1e6:.0f} µm auf {bg.anzahl(len(kontakte), 'Fuge', 'Fugen')} im Lastfall "
                 f"{m.active_case} - die Fuge steht damit schon vor der Last unter Druck")
         self.log.appendPlainText(
-            f"Passung gesetzt an {len(kontakte)} Kontaktfugen ({', '.join(kontakte[:8])}"
+            f"Passung gesetzt an {bg.anzahl(len(kontakte), 'Kontaktfuge', 'Kontaktfugen')} ({', '.join(kontakte[:8])}"
             + (" …" if len(kontakte) > 8 else "") + f"): Spiel {spiel * 1e3:.3f} mm, "
-            f"Lochleibungsgrenze {grenze / 1e6:.0f} N/mm², Randabminderung {reihen} Reihen"
+            f"Lochleibungsgrenze {grenze / 1e6:.0f} N/mm², Randabminderung {bg.anzahl(reihen, 'Reihe', 'Reihen')}"
             + (f", Reibbeiwert μ = {zl.zahl_text(mu, punkt=True)}" if mu is not None else "")
             + (f" - für die Volumen {', '.join(koerper[:6])}" if koerper else " - für alle Fugen"))
         if pass_text:
             self.log.appendPlainText("Passung: " + pass_text)
             self.log.appendPlainText("Passung: " + pss.ARTEN[pss.art(*abmasse)][1])
         self.refresh_all()
-        self.info(f"Passung an {len(kontakte)} Kontaktfugen gesetzt"
+        self.info(f"Passung an {bg.anzahl(len(kontakte), 'Kontaktfuge', 'Kontaktfugen')} gesetzt"
                   + (f": {pass_text.split(':')[0]}" if pass_text else ""))
 
     @_maskenweg()
@@ -21045,8 +21050,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fortschritt_ende()
         self.analysis = None
         self.results = None
-        self.info(f"Wasserdruck {wd.name} ({kw.get('verfahren', 'analytisch')}): {kw['objektlasten']} Objektlasten, "
-                  f"{kw['elementlasten']} Elementlasten in {', '.join(kw['lastfaelle'])} (Nr. {kw.get('lastfall_nr', 0)}); "
+        self.info(f"Wasserdruck {wd.name} ({kw.get('verfahren', 'analytisch')}): "
+                  f"{bg.anzahl(kw['objektlasten'], 'Objektlast', 'Objektlasten')}, "
+                  f"{bg.anzahl(kw['elementlasten'], 'Elementlast', 'Elementlasten')} in {', '.join(kw['lastfaelle'])} "
+                  f"(Nr. {kw.get('lastfall_nr', 0)}); "
                   f"F = {kw['F'] / 1e3:.1f} kN bei z = {kw['z_R']:.2f} m, "
                   f"Kontrollsumme {kw['kontrolle']['betrag'] / 1e3:.1f} kN"
                   + (f", q = {kw['q']:.3f} m³/(s·m), v_max = {kw['v_max']:.2f} m/s, p_max = {kw['p_max'] / 1e3:.1f} kN/m²"
@@ -23314,7 +23321,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(
             f"ABBRUCH: gezeigt wird die Verformung der letzten Kontakt-Iteration ({it}) als Ergebnis "
             f"„{res.name}“ - kein Gleichgewicht, keine Auflagerkräfte. "
-            + (f"{n} Zeiger stehen im Modellbaum unter Ergebnisse → Freie Bewegungen; der erste ist eingestellt."
+            + (("1 Zeiger steht im Modellbaum unter Ergebnisse → Freie Bewegungen; er ist eingestellt."
+                if n == 1 else
+                f"{n} Zeiger stehen im Modellbaum unter Ergebnisse → Freie Bewegungen; der erste ist eingestellt.")
                if n else "Kein Teil ohne geschlossene Kontaktbedingung gefunden - die Ursache liegt in der Fugenebene "
                          "oder in der Lagerung."))
         if n:
@@ -23680,7 +23689,7 @@ class MainWindow(QtWidgets.QMainWindow):
             zahl[b.pruefung] = zahl.get(b.pruefung, 0) + 1
         text = "\n".join(f"{n}x {p}" for p, n in sorted(zahl.items(), key=lambda x: -x[1]))
         return self._fragen(
-            "Abnahme des Netzes", f"Das Netz reißt {len(befunde)} Prüfungen:\n\n{text}"
+            "Abnahme des Netzes", f"Das Netz reißt {bg.anzahl(len(befunde), 'Prüfung', 'Prüfungen')}:\n\n{text}"
             "\n\nJede Verletzung steht einzeln im Protokoll, mit Bauteil, Element, "
             "gemessenem Wert und Grenze.\n\nTrotzdem rechnen?")
 

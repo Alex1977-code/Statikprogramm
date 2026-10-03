@@ -4776,15 +4776,49 @@ Masken nennen ein Objekt in der Einzahl („1 Stab, 1 Linie“ statt „1 Stäbe
 der Maske *Neu: Subsystem* und die Zeile einer Kontaktbedingung in der
 Statuszeile („1 Kontaktfläche“).
 
-Gespeichert oder eingelesen wird keiner dieser Texte; eine ältere Datei lädt
-also unverändert. Unverändert bleiben auch Einstellungsnamen, Schlüssel in
-Dateien und Beschreibungen, die mit dem Modell gespeichert werden, etwa die
-Beschreibung eines Lastfalls der Kategorie FAT („Ermuedungslast (nur fuer
-Ermuedungsnachweis)“). Ebenso bleiben Kennwörter, die das Programm vergleicht,
-etwa die Arten der Rechenschritte der Plastizität („Fliessschritt“) und der
-Zustand „Fliessen“ eines Kontakts. Noch ohne Umlaute oder mit fester Mehrzahl
-stehen die Protokolle von Import und Export, die Browser-Oberfläche und Teile
-des Berichts.
+Seit der Gegenprüfung am selben Tag gilt das auch für die Kontaktzeile der
+Zusammenfassung („Kontakt: 1 von 1 Bedingung aktiv“) und für die Zeilen der
+Plastizität im Protokoll und im Fortschritt („Plastizität: 1 Element fließt,
+…“). Es gilt außerdem für diese Meldungen:
+
+* „Modell prüfen“ zu entarteten Elementen („1 entartetes Element … trägt es
+  nichts und wird … übergangen“, „… wurde umgewandelt … - seine
+  Genauigkeit …“);
+* die Abnahme des Netzes („1 Randlinie gehört nicht …“, „1 Tetraeder liegt
+  umgestülpt zwischen seinen Nachbarn“, die Rückfrage „Das Netz reißt
+  1 Prüfung“);
+* das Setzen einer Passung („Passung an 1 Kontaktfuge“, „1 Reihe“), das
+  Ausführen der Kontaktfugen, der Wasserdruck, das Schneiden von Flächen
+  („1 Schnittlinie, 1 neuer Knoten“) und die Bemaßung („1 Nachkommastelle“);
+* der Kopf der Ansicht mit „Kontakte zeigen“ („Kontakte: 1 Bedingung farbig
+  mit Schild“);
+* die Zeile „1 Element ohne Wirkung“ bei einer Stellung oder Situation;
+* der Grund, aus dem eine Ergebnisdatei nicht zum Modell passt („die Lastfälle
+  sind andere“).
+
+Eine Zahl wie 1,0 zählt dabei wie 1 und steht ohne „,0“ da.
+
+Eingelesen wird keiner dieser Texte, eine ältere Modelldatei lädt also
+unverändert. Einige entstehen aber beim Rechnen und werden mit dem Ergebnis
+gespeichert, zum Beispiel der maßgebende Ort der Ermüdung („…, 1 Stufe)“), die
+Texte der einzelnen Prüfungen (etwa „Torsion schöpft die Schubtragfähigkeit
+allein aus“) und die Protokolle von Kontakt und Plastizität. Eine
+Ergebnisdatei von vor dem 03.10.2026 zeigt diese Stellen darum in der alten
+Schreibung („1 Stufen)“, „Torsion schoepft …“), bis neu gerechnet wird. Die
+Zeilen, die erst beim Anzeigen gebildet werden, etwa „Nachweise EC3: 1 Stab,
+…“, stehen auch dann gleich in der neuen. Unverändert bleiben
+Einstellungsnamen, Schlüssel in Dateien und Beschreibungen, die mit dem Modell
+gespeichert werden, etwa die Beschreibung eines Lastfalls der Kategorie FAT
+(„Ermuedungslast (nur fuer Ermuedungsnachweis)“). Ebenso bleiben Kennwörter,
+die das Programm vergleicht, etwa die Arten der Rechenschritte der
+Plastizität („Fliessschritt“) und der Zustand „Fliessen“ eines Kontakts.
+
+Noch nicht umgestellt sind die Kommandozeile, die Browser-Oberfläche, die
+Protokolle von Import und Export (auch das des RFEM-Imports), Teile des
+Berichts, die Rückfragen und Meldungen beim Löschen und die Vorgabe-Dateinamen
+beim Speichern einer Tabelle als CSV oder Excel („Stabkraefte.csv“). Was der
+Browser aus der Rechnung anzeigt, kommt aus dem Programm und steht dort schon
+in der neuen Schreibung.
 
 ### Übermaß: die Presspassung als Last
 

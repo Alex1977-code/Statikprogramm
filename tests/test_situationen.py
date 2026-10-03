@@ -765,7 +765,7 @@ def test_echte_stellung_namens_grundstellung():
     check("situationsmodell wendet die Stellung an (Kopie ohne Rolle, M2 aus)",
           ms is not m and len(ms.supports) == 1 and len(m.supports) == 2
           and aktiv is not None and aktiv.tolist() == [True, False]
-          and any("1 Elemente ohne Wirkung" in z for z in log), "; ".join(log))
+          and any("1 Element ohne Wirkung" in z for z in log), "; ".join(log))
     zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
     check("Modellpruefung: keine Zeile zu Stellung oder Situation", not zeilen, "; ".join(zeilen))
     an = solver.solve_all(m)
