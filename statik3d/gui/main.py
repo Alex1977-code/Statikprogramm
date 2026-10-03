@@ -7132,77 +7132,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self.baum_dock = dock
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
 
-    #: Zweig des Modellbaums -> Register der Eingaben
-    #: Zweig des Modellbaums -> Register der Eingaben rechts.
-    #: Es gelten nur die Register, die es wirklich gibt: Modell, Netz,
-    #: Lager/Lasten, Lastfaelle, Stellungen, Kontakt, Nachweise, Berechnung,
-    #: Ergebnisse.
+    #: Register rechts je Art des Modellbaums. Seit Teilpaket 8b (03.10.2026)
+    #: holt ein Zweig sein Register nicht mehr beim Klick: er zeigt seine
+    #: Uebersicht und bietet das Register dort als Knopf an („Register
+    #: „Lastfälle““, :meth:`_zweig_uebersicht`). Direkt holen es nur noch die
+    #: Wurzel (Angaben zum Modell) und die einzelnen Kontaktobjekte (einseitige
+    #: Lager, Spaltelemente, Kontaktpaare), die im Baum keine Liste haben. Bis
+    #: dahin holten Gruppen, Verbindungen, Kontaktbedingungen, Flaechen- und
+    #: Volumenelemente, Ergebnisse und Bericht beim Klick ihr Register; die
+    #: Eintraege fuer Querschnitte, Stabelemente, Staebe, Stellungen, Lager und
+    #: Lasten standen hier, ohne dass ein Klick sie je erreichte. Mit ihnen ist
+    #: auch BAUM_MASKE entfallen (Knoten, Linien, Gelenke -> Erzeuge-Maske):
+    #: ihre Arten fing OBJEKT_ARTEN immer vorher ab.
     BAUM_ZIEL = {
         "modell": "Modell",
-        "querschnitte": "Modell", "querschnitt": "Modell",
-        "elemente": "Netz", "stabelemente": "Netz", "flaechen": "Netz",
-        "volumen": "Netz",
-        "lager": "Lager/Lasten", "lager_einzeln": "Lager/Lasten",
-        "linienlager": "Lager/Lasten", "linienlager_einzeln": "Lager/Lasten",
-        "flaechenlager": "Lager/Lasten", "flaechenlager_einzeln": "Lager/Lasten",
-        "lasten": "Lager/Lasten", "last": "Lager/Lasten",
+        "flaechen": "Netz", "volumen": "Netz",
         "kontakt": "Kontakt",
-        "staebe": "Nachweise", "stab": "Nachweise",
-        "stellungen": "Stellungen", "stellung": "Stellungen",
-        "ergebnisse": "Ergebnisse", "ergebnisgruppe": "Ergebnisse",
-        "ergebnis": "Ergebnisse", "nachweis": "Ergebnisse",
-        "bericht": "Ergebnisse", "berichtseintrag": "Ergebnisse",
+        "lastfaelle": "Lastfälle", "kombinationen": "Lastfälle", "ermuedungslasten": "Lastfälle",
+        "ergebnisse": "Ergebnisse", "ergebnisgruppe": "Ergebnisse", "bericht": "Ergebnisse",
     }
 
-    #: Zweige, zu denen es kein festes Register gibt: sie oeffnen die
-    #: Erzeuge-Maske, die dazu gehoert - ebenfalls rechts.
-    BAUM_MASKE = {
-        "knoten": "maske_knoten",
-        "linien": "maske_linie", "linie": "maske_linie",
-        "gelenke": "add_hinge", "gelenk": "add_hinge",
-    }
-
-    #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske.
-    #: Die Elementtabelle heisst seit 03.10.2026 „Elemente“ (vorher „Stäbe“,
-    #: obwohl sie alle Elemente fuehrt; Antwort 2 vom 24.09.2026). Die
+    #: Zweige und Eintraege des Modellbaums, die unten ihre Tabelle nach vorn
+    #: holen. Die Elementtabelle heisst seit 03.10.2026 „Elemente“ (vorher
+    #: „Stäbe“, obwohl sie alle Elemente fuehrt; Antwort 2 vom 24.09.2026). Die
     #: Zaehlzeile „Netzknoten“ unter „FE-Netz“ holt die Knotentabelle.
-    BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
-                    "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
-                    "gelenke": "Gelenke", "gelenk": "Gelenke", "berichtseintrag": "Bericht",
-                    "liniengelenke": "Flächen", "liniengelenk": "Flächen",
-                    "kontaktbedingung": "Kontaktbedingungen",
-                    "lager": "Lager", "lager_einzeln": "Lager", "linienlager": "Lager",
-                    "linienlager_einzeln": "Lager", "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
+    #: Lastfaelle, Kombinationen und Schweissnaehte stehen seit 8b hier - ihre
+    #: Tabellen gab es, der Baum holte sie nicht.
+    BAUM_TABELLE = {"querschnitte": "Querschnitte", "querschnitt": "Querschnitte",
+                    "werkstoffe": "Werkstoffe", "werkstoff": "Werkstoffe",
                     "dicken": "Dicken", "dicke": "Dicken",
-                    "knoten": "Knoten", "netzknoten": "Knoten", "elemente": "Elemente",
-                    "stabelemente": "Elemente", "flaechen": "Elemente",
-                    "volumen": "Elemente", "linien": "Linien", "linie": "Linien",
+                    "knoten": "Knoten", "netzknoten": "Knoten",
+                    "linien": "Linien", "linie": "Linien",
+                    "stabelemente": "Elemente", "flaechen": "Elemente", "volumen": "Elemente",
+                    "geoflaechen": "Flächen", "geoflaeche": "Flächen",
+                    "geokoerper": "Volumenkörper", "geokoerper_einzeln": "Volumenkörper",
+                    "schweissnaehte": "Schweißnähte",
                     "lager": "Lager", "lager_einzeln": "Lager",
                     "linienlager": "Lager", "linienlager_einzeln": "Lager",
                     "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
                     "gelenke": "Gelenke", "gelenk": "Gelenke",
-                    "lasten": "Lasten", "last": "Lasten",
-                    "geoflaechen": "Flächen", "geoflaeche": "Flächen",
-                    "geokoerper": "Volumenkörper",
-                    "geokoerper_einzeln": "Volumenkörper",
-                    "berichtseintrag": "Bericht", "bericht": "Bericht",
-                    "unterlage": "Unterlagen", "unterlagen": "Unterlagen",
-                    "kontaktbedingungen": "Kontaktbedingungen",
-                    "kontaktbedingung": "Kontaktbedingungen",
+                    "liniengelenke": "Flächen", "liniengelenk": "Flächen",
+                    "kontaktbedingungen": "Kontaktbedingungen", "kontaktbedingung": "Kontaktbedingungen",
+                    "lastfaelle": "Lastfälle", "lastfall": "Lastfälle",
+                    "kombinationen": "Kombinationen", "kombination": "Kombinationen",
+                    "bericht": "Bericht", "berichtseintrag": "Bericht",
+                    "unterlagen": "Unterlagen", "unterlage": "Unterlagen",
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
                     "verformungen": "Verformungen", "verformung": "Verformungen",
                     "beulfelder": "Beulfelder", "beulfeld": "Beulfelder",
-                    "lasteinleitung": "Lasteinleitung",
-                    "lasteinleitung_einzeln": "Lasteinleitung",
-                    "volumenbereiche": "Volumen", "volumenbereich": "Volumen"}
+                    "volumenbereiche": "Volumen", "volumenbereich": "Volumen",
+                    "lasteinleitung": "Lasteinleitung", "lasteinleitung_einzeln": "Lasteinleitung"}
 
     #: Elementarten je Zweig - fuer die Auswahl im Viewport
     BAUM_ELEMENTARTEN = {"stabelemente": vp.TYPEN_STAEBE,
                          "flaechen": vp.TYPEN_FLAECHEN,
                          "volumen": vp.TYPEN_VOLUMEN}
 
-    #: Zweige und Eintraege des Modellbaums, die ein Objekt meinen: Klick waehlt
-    #: es in der Ansicht und zeigt rechts seine Maske.
+    #: Arten des Modellbaums, deren Eintrag ein Objekt meint: der Klick waehlt
+    #: es in der Ansicht und zeigt rechts seine Maske. Die Zweigarten darunter
+    #: (Knoten, Linien, Lastfaelle, Lager …) zeigen ihre Uebersicht ueber
+    #: dieselbe Maske (:meth:`_objektmaske` ohne Eintrag) und waehlen seit 8b
+    #: nichts mehr.
     OBJEKT_ARTEN = {"knoten", "linien", "linie", "stabelemente", "stabelement", "staebe",
                     "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln",
                     "lastfaelle", "lastfall", "kombinationen", "kombination",
@@ -7224,15 +7214,37 @@ class MainWindow(QtWidgets.QMainWindow):
         "grenzschicht": ("grenzschichten", "Grenzschichten", "Grenzschicht"),
     }
 
-    #: Zweige und Eintraege fuer Subsysteme und Situationen
-    SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
-                    "layerliste", "layer", "layer_neu",
-                    "unterlagen", "unterlage", "unterlage_neu",
-                    "bemassungen", "bemassung", "bemassung_neu",
-                    "situationen", "situation", "situation_neu",
-                    "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
-                    "schweissnaehte", "schweissnaht", "schweissnaht_neu",
-                    "ermuedungslasten", "ermuedungslast", "ermuedungslast_neu"}
+    #: Eintraege und Zeilen „+ … anlegen“ der Hilfs- und Systemobjekte, die
+    #: :meth:`_baum_system_geklickt` oeffnet. Ihre Zweige (Subsysteme, Layer,
+    #: Unterlagen, Bemassungen, Situationen, Lastgenerierer, Schweissnaehte,
+    #: Ermuedungslasten) zeigen seit 8b ihre Uebersicht wie jeder Zweig; bis
+    #: dahin oeffneten sie hier ihre Anlegemaske (Bemassungen mit Punktfang),
+    #: ein eigenes Fenster (Layer) oder nur die Tabelle.
+    SYSTEM_ARTEN = {"subsystem", "subsystem_neu", "layer", "layer_neu",
+                    "unterlage", "unterlage_neu", "bemassung", "bemassung_neu",
+                    "situation", "situation_neu",
+                    "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
+                    "schweissnaht", "schweissnaht_neu", "ermuedungslast", "ermuedungslast_neu"}
+
+    #: Arten, die nur an Zweigen stehen (Teilpaket 8b): ihr Klick zeigt die
+    #: Uebersicht und waehlt nichts. Knoten, Daempfer und starre Koerper teilen
+    #: ihre Art mit ihren Eintraegen, „modell“ steht an der Wurzel und an den
+    #: Gruppen, „kontakt“ an Gruppen und einzelnen Kontaktobjekten - dort
+    #: entscheidet :meth:`_baum_ist_zweig` nach dem Namen.
+    ZWEIG_ARTEN = frozenset({
+        "netzknoten", "linien", "stabelemente", "staebe", "geoflaechen", "geokoerper",
+        "flaechen", "volumen", "werkstoffe", "querschnitte", "dicken",
+        "lager", "linienlager", "flaechenlager", "punktmassen", "federn", "grenzschichten",
+        "gelenke", "liniengelenke", "kontaktbedingungen",
+        "lastfaelle", "kombinationen", "ermuedungslasten", "generierer",
+        "ergebnisse", "ergebnisgruppe", "bericht", "unterlagen",
+        "subsysteme", "stellungen", "situationen",
+        "schweissnaehte", "anschluesse", "verformungen", "beulfelder", "volumenbereiche",
+        "lasteinleitung", "bemassungen", "layerliste"})
+    #: So viele Zeilen zeigt die Liste einer Uebersicht hoechstens; der Rest
+    #: steht in der Tabelle (wie bei den Lasten eines Lastfalls, 40 Zeilen in
+    #: :meth:`_lastart_geklickt`)
+    UEBERSICHT_MAX = 40
 
     #: Baumklicks, die rechts nichts ersetzen (die Ansicht wird Berichtsbild):
     #: sie halten nicht an der Leiste „Übernehmen | Verwerfen“
@@ -7249,14 +7261,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._baum_system_geklickt(art, name)
         if art == "lastart":
             return self._lastart_geklickt(name)
-        if art == "querschnitte":
-            # Der Zweig: Tabelle unten, rechts gleich die Maske fuer einen neuen
-            self.tabelle_zeigen("Querschnitte")
-            self.maske_zeigen("Modell")
-            return self.querschnitt_neu()
+        if self._baum_ist_zweig(art, name):
+            # Ein Zweig waehlt nichts und legt nichts an (Teilpaket 8b): rechts
+            # seine Uebersicht mit Liste, unten seine Tabelle
+            return self._zweig_geklickt(art, name)
         if art in self.OBJEKT_ARTEN:
-            # Links waehlen: der Zweig alle, der Eintrag das eine; rechts die
-            # Maske mit Anzahl und Nummern oder den Feldern des Objekts.
+            # Ein Eintrag: links waehlen, rechts die Felder des Objekts
             self._baum_objekt_waehlen(art, name)
             tab = self.BAUM_TABELLE.get(art)
             if tab:
@@ -7270,58 +7280,261 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "gelenk_neu":
             return self._baum_neu("gelenke")
         if art == "bericht_neu":
+            # „+ Ansicht übernehmen“ bleibt ein Befehl und nimmt die Ansicht beim
+            # Klick auf (Entscheidung 8b, 03.10.2026): die Zeile sagt, was sie
+            # tut, wie Strg+B, und Rueckgaengig nimmt das Bild zurueck. Ohne
+            # sofortiges Bild: Doppelklick oder „Neu“ am Zweig (berichtsbild_neu).
             return self.ansicht_in_bericht()
         if art == "ergebnis":
             return self.ergebnis_zeigen(name)
-        if art in ("ergebnisse", "ergebnisgruppe"):
-            return self.maske_zeigen("Ergebnisse")
-        if art == "berichtseintrag":
-            return self.tabelle_zeigen("Bericht")
-        if art == "last" and name in self.model.load_cases:
-            self.cb_lastfilter.setCurrentText(name)
-        elif art == "lasten":
-            self.cb_lastfilter.setCurrentText("(alle)")
         if art == "anschluss_neu":
             return self.add_joint()
         if art == "verformung_neu":
             return self.add_verformungsgrenze()
-        if art == "stellung":
-            self._stellung_gewaehlt(name.split("·", 1)[-1].strip())
         if art == "anschluss":
             self._anschluss_gewaehlt(name)
         if art == "verformung":
             self.tabelle_zeigen("Verformungen")
             self.tbl_gzg.markieren([name])
             self._tabelle_verformung(name)
-        # Ein Zweig, der ein Objekt meint, zeigt es auch in der Ansicht.
-        self._baum_auswaehlen(art, name)
-        # Links waehlen, rechts einstellen: der Zweig holt seine Tabelle nach
-        # vorn UND oeffnet die Maske, die dazu gehoert. Frueher war es
-        # entweder-oder; wer eine Fläche anklickte, sah die Tabelle, aber die
-        # Einstellungen musste er sich selbst suchen.
+        # Die uebrigen Eintraege (Anschluss, Verformungsnachweis, Beulfeld,
+        # Volumenbereich, Lasteinleitung, die einzelnen Kontaktobjekte) und die
+        # Wurzel: ihre Tabelle unten, ihr Register rechts, wo es eines gibt. Bis
+        # zum 03.10.2026 waehlten hier die Zweige „Flächenelemente“ und
+        # „Volumenelemente“ die Knoten aller ihrer Elemente (_baum_auswaehlen),
+        # und Berichtsbild, Stellung, „last“ und „lasten“ hatten eigene Faelle,
+        # die kein Klick erreichte (OBJEKT_ARTEN fing sie vorher ab, die
+        # letzten beiden Arten gibt es im Baum nicht).
         tab = self.BAUM_TABELLE.get(art)
         if tab:
             self.tabelle_zeigen(tab)
         ziel = self.BAUM_ZIEL.get(art)
         if ziel:
             self.maske_zeigen(ziel)
+
+    def _baum_ist_zweig(self, art: str, name: str) -> bool:
+        """Meint der Klick einen Zweig (eine Art) statt eines Objekts? (8b)
+
+        Die Ergebnisgruppen (Verformungen, Lastfaelle, … unter „Ergebnisse“)
+        tragen im Baum einen Schluessel und gelten trotzdem als Zweig: unter
+        ihnen stehen die einzelnen Ergebnisse. Die einseitigen Lager,
+        Spaltelemente und Kontaktpaare dagegen sind Zeilen ohne Eintraege
+        darunter; sie holen wie bisher das Register Kontakt, in dem sie stehen.
+        Die Wurzel zeigt wie bisher die Angaben zum Modell (Register Modell)."""
+        if art in self.ZWEIG_ARTEN:
+            return True
+        if art in ("knoten", "daempfer", "starrkoerper"):
+            return not self._baum_ist_eintrag(art, name)
+        if art == "kontakt":
+            return str(name) not in ("supports", "gaps", "pairs")
+        if art == "modell":
+            baum = getattr(self, "baum", None)
+            it = baum.currentItem() if baum is not None else None
+            if it is not None and baum._schluessel(it) == (art, str(name)):
+                return it.parent() is not None
+            return (str(name) in {t for _k, t in dsg.Modellbaum.GRUPPEN}
+                    and str(name) != (self.model.name or "Modell"))
+        return False
+
+    def _zweig_geklickt(self, art: str, name: str):
+        """Klick auf einen Zweig (Teilpaket 8b, 03.10.2026; Antwort 4 vom
+        24.09.2026: „Klick auf einen Zweig wählt nichts“): die Auswahl bleibt,
+        nichts wird angelegt, nichts Modales geht auf. Unten kommt die Tabelle
+        des Zweigs nach vorn, wo es eine gibt; rechts steht seine Uebersicht mit
+        Anzahl, Liste und „Neu …“. Zweige mit eigenen Angaben (Knoten: Nummern,
+        Flaechen: vernetzt, Lastfaelle: aktiver Lastfall …) bekommen sie aus
+        :meth:`_objektmaske`, die uebrigen und alle Gruppen die allgemeine
+        Uebersicht (:meth:`_zweig_uebersicht`).
+
+        Bis dahin waehlte der Klick auf neun Zweige alle Objekte ihrer Art
+        (Knoten, Linien, Stabelemente, Staebe, Flaechen, Volumen, Knoten-,
+        Linien- und Flaechenlager), dazu die Verbindungen, Liniengelenke,
+        Flaechen- und Volumenelemente; Querschnitte, Schweissnaehte, Bemassungen
+        (mit Punktfang) und Lastgenerierer oeffneten ihre Anlegemaske, Layer ein
+        eigenes Fenster, Gruppen und Ergebnisse ein Register."""
+        baum = getattr(self, "baum", None)
+        item = baum.zweig_finden(art, name) if baum is not None else None
+        tab = self.BAUM_TABELLE.get(art)
+        if tab:
+            self.tabelle_zeigen(tab)
+        if art in self.OBJEKT_ARTEN and not (baum is not None and baum.ist_gruppe(item)):
+            return self._objektmaske(art, name)
+        return self._zweig_uebersicht(art, name)
+
+    def _zweig_inhalt(self, item) -> tuple:
+        """(Anzahl, Zeilen, Zeilen gesamt) eines Zweigs aus dem Baum.
+
+        Die Anzahl ist der Zaehler des Zweigs (Spalte 1), bei einer Gruppe die
+        Zahl ihrer Zweige. Gelesen werden hoechstens :attr:`UEBERSICHT_MAX`
+        Zeilen - nicht die Befehlszeilen „+ …“ und nicht die Sammelzeile; den
+        Rest sagt der Zaehler, eine Schleife ueber alle Eintraege gibt es nicht
+        (am Drehlager hat „Knoten“ Zehntausende Zeilen). Nur eine Gruppe, deren
+        Zaehler etwas anderes zaehlt als ihre Zweige, wird ganz gelesen - sie
+        hat hoechstens ein Dutzend Zeilen."""
+        baum = getattr(self, "baum", None)
+        if item is None or baum is None:
+            return 0, [], 0
+        t = str(item.text(1)).strip()
+        zaehler = int(t) if t.isdigit() else None
+        gruppe = baum.ist_gruppe(item)
+        zeilen, n = [], 0
+        for i in range(item.childCount()):
+            k = item.child(i)
+            if baum._schluessel(k)[0].endswith("_neu") or k.data(0, baum.FUER_ZWEIG):
+                continue
+            n += 1
+            if len(zeilen) < self.UEBERSICHT_MAX:
+                zeilen.append(k)
+            elif zaehler is not None and not gruppe:
+                break
+        if gruppe or zaehler is None:
+            return n, zeilen, n
+        return zaehler, zeilen, zaehler
+
+    @_maskenweg(bezug=_bezug_art_name, danach="öffnet sich die Übersicht des Zweigs")
+    def _zweig_uebersicht(self, art: str, name: str):
+        """Rechts die Uebersicht eines Zweigs ohne eigene Angaben in
+        :meth:`_objektmaske` und jeder Gruppe (Teilpaket 8b): die Anzahl, die
+        Liste (:meth:`_uebersicht_liste`) und „Neu …“, wenn es fuer die Art eine
+        Anlegemaske gibt (dieselbe wie Doppelklick und Rechtsklick → Neu). Eine
+        Maske ohne Eingabefelder: sie traegt nie den Punkt aus Paket 13m."""
+        F = msk.Feld
+        baum = getattr(self, "baum", None)
+        item = baum.zweig_finden(art, name) if baum is not None else None
+        gruppe = baum is not None and baum.ist_gruppe(item)
+        anzahl, _zeilen, gesamt = self._zweig_inhalt(item)
+        titel = item.text(0).strip() if item is not None else str(name or art)
+        if art == "ergebnisgruppe":
+            titel = f"Ergebnisse – {titel}"
+        if gruppe:
+            felder = [F("anzahl", "Zweige", "info", str(gesamt), anzeige=True)]
+            if item is not None and str(item.text(1)).strip():
+                felder.append(F("inhalt", "zusammen", "info", str(item.text(1)).strip(), anzeige=True))
+        else:
+            felder = [F("anzahl", "Anzahl", "info", str(anzahl), anzeige=True)]
+        neu = art if (not gruppe and baum is not None and art in self.BAUM_DOPPELKLICK_NEU) else ""
+        zusatz = []
+        if art == "layerliste":
+            # bis zum 03.10.2026 der Klick auf den Zweig
+            zusatz.append(("Layerliste …", self.layerliste_zeigen))
+        hinweis = ((item.toolTip(0) if item is not None else "")
+                   or "Ein Klick auf eine Zeile wirkt wie der Klick auf den Eintrag im Modellbaum.")
+        maske = msk.Maske(titel, felder, knopf=f"Neu: {baum.NEU_ARTEN[neu]} …" if neu else "",
+                          hinweis=hinweis, zusatz=zusatz)
+        if neu:
+            maske.angewendet.connect(lambda _w, z=neu: self._baum_neu(z))
+        self._uebersicht_liste(maske, art, name)
+        # die Folge einer Auswahl: die Tastatur bleibt im Baum
+        return self.maske_erzeugen(maske, fokus=False)
+
+    def _uebersicht_liste(self, maske, art: str, name: str) -> None:
+        """Die Liste der Uebersicht eines Zweigs in die Maske setzen (Teilpaket
+        8b): je Zeile Name und Kennzahl, dieselben Zeilen wie im Baum in
+        derselben Folge, hoechstens :attr:`UEBERSICHT_MAX`. Darunter „… N
+        weitere – alle in der Tabelle“ mit einem Knopf zur Tabelle und, wo die
+        Art eines hat, ein Knopf zu ihrem Register (:attr:`BAUM_ZIEL`). Ein
+        Klick auf eine Zeile wirkt wie der Klick auf den Eintrag im Baum
+        (:meth:`_uebersicht_zeile`). Hat die Art kein „Neu …“, verschwindet der
+        leere Hauptknopf der Maske."""
+        maske.uebersicht = (art, name)
+        if not maske.btn_anwenden.text():
+            maske.btn_anwenden.setEnabled(False)
+            maske.btn_anwenden.hide()
+        baum = getattr(self, "baum", None)
+        if baum is None:
             return
-        befehl = self.BAUM_MASKE.get(art)
-        if befehl and hasattr(self, befehl) and art not in ("gelenk", "gelenke"):
-            getattr(self, befehl)()
+        item = baum.zweig_finden(art, name)
+        _anzahl, kinder, gesamt = self._zweig_inhalt(item)
+        ziel = self.BAUM_ZIEL.get(art) if art != "modell" else None
+        halter = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(halter)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(4)
+        lw = QtWidgets.QTreeWidget(halter)
+        lw.setObjectName("uebersichtliste")
+        lw.setColumnCount(2)
+        lw.setHeaderHidden(True)
+        lw.setRootIsDecorated(False)
+        lw.setUniformRowHeights(True)
+        lw.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        lw.header().setStretchLastSection(False)
+        lw.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        lw.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        #: je Zeile die Zeile im Baum, ihr Schluessel und ob sie ein Eintrag ist
+        lw.baumzeilen = []
+        for k in kinder:
+            z = QtWidgets.QTreeWidgetItem(lw, [k.text(0), k.text(1)])
+            z.setToolTip(0, k.toolTip(0) or k.text(0))
+            if k.text(1):
+                z.setToolTip(1, k.text(1))
+            farbe = k.data(0, QtCore.Qt.ForegroundRole)
+            if farbe is not None:
+                z.setForeground(0, farbe)
+            lw.baumzeilen.append((k, baum._schluessel(k), baum._ist_eintrag(k)))
+        if kinder:
+            hoehe = lw.sizeHintForRow(0) if lw.sizeHintForRow(0) > 0 else 21
+            lw.setFixedHeight(min(len(kinder), 15) * hoehe + 2 * lw.frameWidth() + 2)
+            # an eine Methode des Fensters, nicht an ein Lambda: ein Lambda an
+            # einem Signal der Liste liess das Programm nach dem Loeschen der
+            # Maske beim Beenden mit einer Zugriffsverletzung abstuerzen
+            # (gemessen 03.10.2026, PySide6 offscreen: zwei Uebersichten
+            # nacheinander genuegten; mit der Methode nicht)
+            lw.itemClicked.connect(self._uebersicht_zeile)
+            lay.addWidget(lw)
+        else:
+            lw.hide()
+        rest = gesamt - len(kinder)
+        if rest > 0:
+            tab = self.BAUM_TABELLE.get(art)
+            ort = "in der Tabelle" if tab else "im Modellbaum"
+            text = (f"… {rest} weitere – alle {ort}" if kinder else
+                    f"Alle {gesamt} stehen in der Tabelle „{tab}“." if tab else f"{gesamt} – alle {ort}")
+            lb = QtWidgets.QLabel(text, halter)
+            lb.setObjectName("uebersichtweitere")
+            lb.setWordWrap(True)
+            lay.addWidget(lb)
+            if tab:
+                b = QtWidgets.QPushButton(f"Tabelle „{tab}“", halter)
+                b.setObjectName("uebersichttabelle")
+                b.clicked.connect(lambda _c=False, t=tab: self.tabelle_zeigen(t))
+                lay.addWidget(b, 0, QtCore.Qt.AlignLeft)
+        if ziel:
+            # das Register, das der Klick bis zum 03.10.2026 holte (Kontakt,
+            # Netz, Ergebnisse) oder das es gibt und das fehlte (Lastfälle)
+            r = QtWidgets.QPushButton(f"Register „{ziel}“", halter)
+            r.setObjectName("uebersichtregister")
+            r.clicked.connect(lambda _c=False, z=ziel: self.maske_zeigen(z))
+            lay.addWidget(r, 0, QtCore.Qt.AlignLeft)
+        maske.inhalt_einfuegen(halter)
+
+    def _uebersicht_zeile(self, z, _spalte: int = 0):
+        """Klick auf eine Zeile der Uebersicht: wie der Klick auf den Eintrag
+        (oder Unterzweig) im Baum - der Baum waehlt die Zeile, die Tastatur
+        geht dorthin, und es laeuft derselbe Weg (:meth:`_baum_geklickt`).
+        Ist der Baum inzwischen neu aufgebaut, wird die Zeile neu gesucht."""
+        try:
+            lw = z.treeWidget()
+            k, (art, key), eintrag = lw.baumzeilen[lw.indexOfTopLevelItem(z)]
+        except (IndexError, ValueError, AttributeError, RuntimeError):
+            return None
+        baum = self.baum
+        if not (_lebt(k) and baum._schluessel(k) == (art, key)):
+            k = None if eintrag else baum.zweig_finden(art, key)
+            if eintrag:
+                baum.eintrag_waehlen(art, key)
+        if k is not None:
+            baum.zeile_waehlen(k)
+        return self._baum_geklickt(art, key)
 
     def _baum_auswaehlen(self, art: str, name: str):
         """Was im Baum angeklickt wurde, im Viewport hervorheben."""
         m = self.model
         knoten: list[int] = []
+        # Die Zweige „Flächenelemente“ und „Volumenelemente“ waehlten hier bis
+        # zum 03.10.2026 die Knoten aller ihrer Elemente; seit 8b waehlt ein
+        # Zweig nichts und kommt nicht mehr hierher
         if art == "knoten" and name.isdigit():
             knoten = [int(name)]
-        elif art in self.BAUM_ELEMENTARTEN:
-            typen = (name,) if name in self.BAUM_ELEMENTARTEN[art] \
-                else self.BAUM_ELEMENTARTEN[art]
-            for e in m.elements:
-                if e.typ in typen:
-                    knoten += [int(x) for x in e.nodes]
         elif art == "linie" and name in m.lines:
             knoten = [int(x) for x in m.lines[name].nodes]
         elif art == "geoflaeche" and name in m.flaechen:
@@ -7371,21 +7584,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
 
     def _baum_objekt_waehlen(self, art: str, name: str):
-        """Klick im Modellbaum: Zweig = alle Objekte der Art, Eintrag = das eine."""
+        """Klick auf einen Eintrag im Modellbaum: das eine Objekt waehlen.
+
+        Ein Zweig waehlt nichts und kommt hier nicht an (Teilpaket 8b,
+        03.10.2026; Antwort 4 vom 24.09.2026: „Klick auf einen Zweig wählt
+        nichts“). Bis dahin waehlte der Zweig alle Objekte seiner Art - alle
+        Knoten, Linien, Stabelemente, Staebe, Flaechen, Volumen, Lager und
+        Liniengelenke, bei den Verbindungen die Knoten aller Objekte -, und
+        ein Name, den es nicht mehr gab, waehlte ebenso alles. Jetzt waehlt er
+        nichts."""
         m = self.model
-        eintrag = self._baum_ist_eintrag(art, name)
+        if not self._baum_ist_eintrag(art, name):
+            return
         self.leuchtet = []
         self.leuchtet_kontakt = ""
-        if art in self.VERBINDUNGEN or art in ("punktmassen", "federn", "grenzschichten"):
-            # Die Knoten des Objekts (oder aller Objekte der Art) leuchten
-            einzeln = {"punktmassen": "punktmasse", "federn": "feder",
-                       "grenzschichten": "grenzschicht"}.get(art, art)
+        if art in self.VERBINDUNGEN:
+            # Die Knoten des Objekts leuchten
+            einzeln = art
             feld = self.VERBINDUNGEN[einzeln][0]
             sammlung = getattr(m, feld, None) or ({} if einzeln in ("feder", "grenzschicht") else [])
-            objekte = ([sammlung[name]] if eintrag and isinstance(sammlung, dict) and name in sammlung
-                       else [sammlung[int(name)]] if eintrag and not isinstance(sammlung, dict)
-                       and str(name).isdigit() and 0 <= int(name) < len(sammlung)
-                       else list(sammlung.values()) if isinstance(sammlung, dict) else list(sammlung))
+            objekte = ([sammlung[name]] if isinstance(sammlung, dict) and name in sammlung
+                       else [sammlung[int(name)]] if not isinstance(sammlung, dict)
+                       and 0 <= int(name) < len(sammlung) else [])
             knoten = []
             for o in objekte:
                 for schluessel in ("node", "node_a", "node_b", "master"):
@@ -7394,9 +7614,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         knoten.append(int(v))
                 knoten += [int(x) for x in (getattr(o, "slaves", None) or []) if 0 <= int(x) < m.nn]
             if isinstance(sammlung, dict):
-                # Feder- und Grenzschichteigenschaften: die Elemente, die sie benutzen
-                namen = ([name] if eintrag else list(sammlung))
-                elems = [i for i, e in enumerate(m.elements) if e.sec in namen
+                # Feder- und Grenzschichteigenschaft: die Elemente, die sie benutzen
+                elems = [i for i, e in enumerate(m.elements) if e.sec == name
                          and (e.typ == "feder" or e.typ.startswith("grenzschicht"))]
                 self.leuchtet = elems
                 knoten += [int(n) for i in elems for n in m.elements[i].nodes]
@@ -7409,65 +7628,56 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "knoten":
             self.auswahlart_setzen("Knoten")
             self._auswahl_vergessen()
-            knoten = [int(name)] if eintrag else list(range(m.nn))
-            self.selection = np.array([n for n in knoten if 0 <= n < m.nn], dtype=int)
+            self.selection = np.array([n for n in [int(name)] if 0 <= n < m.nn], dtype=int)
             self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt (Modellbaum)")
-        elif art in ("linien", "linie"):
+        elif art == "linie":
             self.auswahlart_setzen("Linie")
             self._auswahl_vergessen()
-            self.sel_linien = [name] if eintrag and name in m.lines else list(m.lines)
+            self.sel_linien = [name]
             self.lbl_sel.setText(f"{len(self.sel_linien)} Linien ausgewählt (Modellbaum)")
-        elif art in ("stabelemente", "stabelement"):
+        elif art == "stabelement":
             self.auswahlart_setzen("Knoten")
             self._auswahl_vergessen()
-            if eintrag:
-                elems = [int(name)] if 0 <= int(name) < len(m.elements) else []
-            else:
-                elems = [i for i, e in enumerate(m.elements) if e.typ in vp.TYPEN_STAEBE]
+            elems = [int(name)] if 0 <= int(name) < len(m.elements) else []
             knoten = [int(n) for i in elems for n in m.elements[i].nodes]
             self.selection = np.array(list(dict.fromkeys(knoten)), dtype=int)
             self.leuchtet = elems
             self.lbl_sel.setText(f"{len(elems)} Stabelemente ausgewählt (Modellbaum)")
-        elif art in ("staebe", "stab"):
+        elif art == "stab":
             self.auswahlart_setzen("Stab")
             self._auswahl_vergessen()
-            self.sel_staebe = [name] if eintrag and name in m.members else list(m.members)
-            if eintrag and name in m.members:
-                self.leuchtet = [int(e) for e in m.members[name].elements]
+            self.sel_staebe = [name]
+            self.leuchtet = [int(e) for e in m.members[name].elements]
             self.lbl_sel.setText(f"{len(self.sel_staebe)} Stäbe ausgewählt (Modellbaum)")
-        elif art in ("geoflaechen", "geoflaeche"):
+        elif art == "geoflaeche":
             self.auswahlart_setzen("Fläche")
             self._auswahl_vergessen()
-            self.sel_flaechen = [name] if eintrag and name in m.flaechen else list(m.flaechen)
-            if eintrag and name in m.flaechen:
-                self.leuchtet = [int(e) for e in (m.flaechen[name].elemente or [])]
+            self.sel_flaechen = [name]
+            self.leuchtet = [int(e) for e in (m.flaechen[name].elemente or [])]
             self.lbl_sel.setText(f"{len(self.sel_flaechen)} Flächen ausgewählt (Modellbaum)")
-        elif art in ("geokoerper", "geokoerper_einzeln"):
+        elif art == "geokoerper_einzeln":
             self.auswahlart_setzen("Volumen")
             self._auswahl_vergessen()
-            self.sel_koerper = [name] if eintrag and name in m.koerper else list(m.koerper)
-            if eintrag and name in m.koerper:
-                self.leuchtet = [int(e) for e in (m.koerper[name].elemente or [])]
+            self.sel_koerper = [name]
+            self.leuchtet = [int(e) for e in (m.koerper[name].elemente or [])]
             self.lbl_sel.setText(f"{len(self.sel_koerper)} Volumen ausgewählt (Modellbaum)")
-        elif art == "querschnitt" and eintrag:
+        elif art == "querschnitt":
             self.leuchtet = [i for i, e in enumerate(m.elements) if getattr(e, "sec", "") == name]
             self.lbl_sel.setText(f"Querschnitt {name}: {len(self.leuchtet)} Elemente (Modellbaum)")
-        elif art in ("gelenke", "gelenk"):
-            h = m.hinges.get(name) if eintrag else None
+        elif art == "gelenk":
+            h = m.hinges.get(name)
             self.leuchtet = [int(e) for e in (getattr(h, "elemente", []) or [])
-                             if 0 <= int(e) < len(m.elements)] if h is not None else []
-            if h is not None:
-                self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
-        elif art in ("liniengelenke", "liniengelenk"):
-            # Die Gelenklinien leuchten, die Flaechen dazu blass mit
+                             if 0 <= int(e) < len(m.elements)]
+            self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
+        elif art == "liniengelenk":
+            # Die Gelenklinien leuchten, die Flaeche dazu blass mit
             self.auswahlart_setzen("Linie")
             self._auswahl_vergessen()
-            fl = ([name] if eintrag and name in m.flaechen
-                  else [n for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)])
+            fl = [name]
             self.sel_flaechen = fl
             self.sel_linien = [ln for n in fl for ln in (m.flaechen[n].gelenklinien or []) if ln in m.lines]
             self.lbl_sel.setText(f"Liniengelenke: {len(self.sel_linien)} Linien an {len(fl)} Flächen (Modellbaum)")
-        elif art == "kontaktbedingung" and eintrag:
+        elif art == "kontaktbedingung":
             kb = m.kontaktbedingungen.get(name)
             self.auswahlart_setzen("Fläche")
             self._auswahl_vergessen()
@@ -7498,7 +7708,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_sel.setText(f"Kontaktbedingung {name}: "
                                  + (", ".join(teile) if teile else "keine Flächen zugeordnet")
                                  + " (Modellbaum)")
-        elif art == "stellung" and eintrag:
+        elif art == "stellung":
             st = m.stellung(name)
             if st is not None:
                 self._auswahl_vergessen()
@@ -7509,22 +7719,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.lbl_sel.setText(f"Stellung {name}: {len(self.leuchtet)} Elemente ohne Wirkung "
                                      "(Modellbaum)")
                 self._stellung_gewaehlt(name)
-        elif art in self.LAGER_ARTEN or art in ("lager", "linienlager", "flaechenlager"):
+        elif art in self.LAGER_ARTEN:
             self.auswahlart_setzen("Lager")
             self._auswahl_vergessen()
-            if eintrag:
-                kurz = self.LAGER_KURZ[art]
-                liste = self._lagerliste_von(kurz)
-                obj = liste[int(name)]
-                self.sel_lager = [(kurz, int(name))]
-                kn = [int(obj.node)] if hasattr(obj, "node") else [int(n) for n in (obj.nodes or [])]
-                self.selection = np.array([n for n in dict.fromkeys(kn) if 0 <= n < m.nn], dtype=int)
-                self.lbl_sel.setText(f"{self._lagername((kurz, int(name)))} ausgewählt (Modellbaum)")
-            else:
-                kurz = {"lager": "lager", "linienlager": "linienlager", "flaechenlager": "flaechenlager"}[art]
-                self.sel_lager = [(kurz, i) for i in range(len(self._lagerliste_von(kurz)))]
-                self.selection = np.array([], dtype=int)
-                self.lbl_sel.setText(f"{len(self.sel_lager)} {self.AUSWAHL_TEXT[kurz]} ausgewählt (Modellbaum)")
+            kurz = self.LAGER_KURZ[art]
+            liste = self._lagerliste_von(kurz)
+            obj = liste[int(name)]
+            self.sel_lager = [(kurz, int(name))]
+            kn = [int(obj.node)] if hasattr(obj, "node") else [int(n) for n in (obj.nodes or [])]
+            self.selection = np.array([n for n in dict.fromkeys(kn) if 0 <= n < m.nn], dtype=int)
+            self.lbl_sel.setText(f"{self._lagername((kurz, int(name)))} ausgewählt (Modellbaum)")
         self._auswahl_register()
         self.redraw()
 
@@ -7617,9 +7821,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _objektmaske(self, art: str, name: str, neu: bool = False):
         """Rechts die Maske zum angeklickten Zweig oder Eintrag.
 
-        Ein Zweig zeigt Anzahl, kleinste und groesste Nummer und den Knopf
-        fuer ein neues Objekt; ein Eintrag seine Felder zum Bearbeiten. Bei
-        ``neu`` bekommt die Maske "OK" und "Abbrechen".
+        Ein Zweig zeigt seine Uebersicht: Anzahl, kleinste und groesste Nummer,
+        seit Teilpaket 8b (03.10.2026) die Liste seiner Eintraege
+        (:meth:`_uebersicht_liste`) und den Knopf fuer ein neues Objekt; ein
+        Eintrag seine Felder zum Bearbeiten. Bei ``neu`` bekommt die Maske
+        "OK" und "Abbrechen".
         """
         m = self.model
         eintrag = neu or self._baum_ist_eintrag(art, name)
@@ -7632,12 +7838,23 @@ class MainWindow(QtWidgets.QMainWindow):
         halter: dict = {}
         if art == "knoten":
             if not eintrag:
-                nrn = [f"K{i}" for i in range(m.nn)]
-                felder = [F("anzahl", "Anzahl", "info", str(m.nn)),
-                          F("spanne", "Nummern", "info", self._spanne(nrn)),
+                # Dieselben Knoten wie der Zweig (8b, Hinweis der Hauptsitzung vom
+                # 03.10.2026): die Konstruktionsknoten aus 8c, ueber dieselbe
+                # Funktion wie Modellbaum.fuellen. Bis dahin zaehlte die
+                # Uebersicht alle Knoten samt Netzknoten und sortierte dafuer die
+                # Namen aller Knoten natuerlich, nur um den ersten und den
+                # letzten zu nennen.
+                kons = vp.konstruktionsknoten(m) if m.nn else np.zeros(0, int)
+                felder = [F("anzahl", "Anzahl", "info", str(len(kons))),
+                          F("spanne", "Nummern", "info",
+                            f"K{int(kons[0])} … K{int(kons[-1])}" if len(kons) > 1
+                            else f"K{int(kons[0])}" if len(kons) else "–"),
+                          F("alle", "alle Knoten (mit Netz)", "info", str(m.nn)),
                           F("frei", "ohne Element", "info", str(len(vp.unbelegte_knoten(m))))]
                 titel, knopf = "Knoten", "Neuer Knoten"
-                hinweis = "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."
+                hinweis = ("Die Knoten der Konstruktion; die Netzknoten zählt „FE-Netz → Netzknoten“. "
+                           "Ein Eintrag der Liste wählt den Knoten. Rechtsklick auf den Zweig: Neu. "
+                           "Entf löscht den gewählten Eintrag.")
             else:
                 i = int(name)
                 x, y, z = (m.nodes[i] if 0 <= i < m.nn else (0.0, 0.0, 0.0))
@@ -8202,10 +8419,9 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art in ("lager", "linienlager", "flaechenlager"):
             liste = self._lagerliste_von(art)
             titel_art = {"lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}[art]
-            felder = [F("anzahl", "Anzahl", "info", str(len(liste))),
-                      F("namen", "Namen", "info",
-                        ", ".join((getattr(x, "name", "") or f"{titel_art} {i + 1}") for i, x in enumerate(liste[:12]))
-                        + (" …" if len(liste) > 12 else "") if liste else "–")]
+            # die Namen stehen seit 8b in der Liste der Uebersicht (bis dahin hier
+            # die ersten zwoelf in einer Zeile)
+            felder = [F("anzahl", "Anzahl", "info", str(len(liste)))]
             titel, knopf = titel_art, f"Neues {titel_art}"
             hinweis = {"lager": "Knoten in der Ansicht wählen, dann „Neues Knotenlager“ - die Maske "
                                 "fragt die Freiheitsgrade ab.",
@@ -8266,6 +8482,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                               geaendert=_maskenaenderung(mk)))
             if neu:
                 maske.abgebrochen.connect(lambda a=art, n=name: self._objekt_neu_abbrechen(a, n))
+        if not eintrag:
+            # die Uebersicht eines Zweigs: dazu die Liste seiner Eintraege (8b)
+            self._uebersicht_liste(maske, art, name)
         # Ein neu angelegtes Objekt will gleich ausgefuellt werden - dort darf
         # die Maske die Tastatur haben. Beim blossen Anklicken im Modellbaum
         # nicht: dort blaettert der Benutzer mit den Pfeiltasten weiter.
@@ -10582,6 +10801,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_ermuedungslasten(neu=True)
         if zweigart == "bemassungen":
             return self.bemassung_neu("linear")
+        if zweigart == "bericht":
+            return self.berichtsbild_neu()
         if zweigart == "knoten":
             self.merken("Knoten angelegt")
             i = m.add_node(0.0, 0.0, 0.0)
@@ -10619,22 +10840,25 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     def _baum_system_geklickt(self, art: str, name: str):
         # Ein Klick im Baum ist nur die Folge einer Auswahl: die Tastatur
-        # bleibt im Baum (fokus=False, wie maske_erzeugen es beschreibt)
-        if art == "ermuedungslasten":
-            return self.maske_ermuedungslasten(fokus=False)
+        # bleibt im Baum (fokus=False, wie maske_erzeugen es beschreibt). Die
+        # Zweige kommen seit 8b nicht mehr hierher (SYSTEM_ARTEN): bis zum
+        # 03.10.2026 oeffneten Ermuedungslasten ihre Maske, Bemassungen,
+        # Schweissnaehte und Lastgenerierer ihre Anlegemaske, Layer die
+        # Layerliste, Unterlagen nur die Tabelle, Subsysteme und Situationen je
+        # eine eigene Uebersicht ohne Liste.
         if art == "ermuedungslast":
             return self.maske_ermuedungslasten(name=name, fokus=False)
         if art == "ermuedungslast_neu":
             return self.maske_ermuedungslasten(neu=True)
-        if art in ("bemassungen", "bemassung_neu"):
+        if art == "bemassung_neu":
             return self.bemassung_neu("linear")
         if art == "bemassung":
             return self.bemassung_bearbeiten(name)
-        if art in ("schweissnaehte", "schweissnaht_neu"):
+        if art == "schweissnaht_neu":
             return self.maske_schweissnaht()
         if art == "schweissnaht":
             return self.maske_schweissnaht(name)
-        if art in ("generierer", "wasserdruck_neu"):
+        if art == "wasserdruck_neu":
             return self.maske_wasserdruck()
         if art == "wasserdruck":
             return self.maske_wasserdruck(name)
@@ -10642,8 +10866,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_wind()
         if art == "wind":
             return self.maske_wind(name)
-        if art == "unterlagen":
-            return self.tabelle_zeigen("Unterlagen")
         if art == "unterlage_neu":
             return self.unterlage_skizze_neu()
         if art == "unterlage":
@@ -10652,8 +10874,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if name in liste:
                 self.tbl_unterlagen.markieren([str(liste.index(name))])
             return None
-        if art == "layerliste":
-            return self.layerliste_zeigen()
         if art == "layer_neu":
             return self.layer_aus_auswahl()
         if art == "layer":
@@ -10662,10 +10882,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.subsystem_neu()
         if art == "situation_neu":
             return self.situation_neu()
-        if art == "subsysteme":
-            return self._subsysteme_maske()
-        if art == "situationen":
-            return self._situationen_maske()
         if art == "subsystem":
             return self._subsystem_zeigen(name)
         return self._situation_zeigen(name)
@@ -10685,20 +10901,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return "keine (alles aktiv)"
         return f"{len(el)} Elemente: " + ", ".join(f"E{i}" for i in el[:12]) \
             + (" …" if len(el) > 12 else "")
-
-    @_maskenweg()
-    def _subsysteme_maske(self):
-        m = self.model
-        F = msk.Feld
-        felder = [F("anzahl", "Subsysteme", "info", str(1 + len(m.subsysteme))),
-                  F("namen", "Namen", "info", ", ".join(m.subsystemnamen())),
-                  F("auswahl", "Auswahl", "info", self._auswahl_beschreibung(), anzeige=True)]
-        maske = msk.Maske("Subsysteme", felder, knopf="Neues Subsystem",
-                          hinweis="Das Gesamtsystem ist immer die ganze Struktur. Ein weiteres "
-                                  "Subsystem entsteht aus angeklickten Stäben, Flächen oder "
-                                  "Volumen - mit allem, was dazugehört.")
-        maske.angewendet.connect(lambda _w: self.subsystem_neu())
-        return self.maske_erzeugen(maske)
 
     @_maskenweg()
     def subsystem_neu(self):
@@ -10809,21 +11011,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Subsystem {neu} übernommen")
 
     # ---- Situationen ---------------------------------------------------
-    @_maskenweg()
-    def _situationen_maske(self):
-        m = self.model
-        F = msk.Feld
-        felder = [F("anzahl", "Situationen", "info", str(1 + len(m.situationen))),
-                  F("namen", "Namen", "info", ", ".join(m.situationsnamen())),
-                  F("stellungen", "Stellungen", "info",
-                    ", ".join(s.name for s in m.stellungen) or "keine angelegt")]
-        maske = msk.Maske("Situationen", felder, knopf="Neue Situation",
-                          hinweis="Die Grundstellung ist unbewegt mit allen Elementen. Eine "
-                                  "Situation nennt eine Stellung und die Elemente, die nicht "
-                                  "wirken; Lastfälle und Kombinationen nennen ihre Situation.")
-        maske.angewendet.connect(lambda _w: self.situation_neu())
-        return self.maske_erzeugen(maske)
-
+    # (Die Uebersicht „Situationen“ mit Namen und Stellungen in einer Zeile
+    # ist mit 8b entfallen: der Zweig zeigt die allgemeine Uebersicht mit
+    # Liste, _zweig_uebersicht; ebenso „Subsysteme“.)
     def _situation_vorschau(self, aus):
         """Die abgeschalteten Elemente einer Situation in der Ansicht ausblenden;
         ``None`` stellt die Sicht von vorher wieder her."""
@@ -11399,12 +11589,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 for n in m.lines[nm].nodes]
 
     def _elemente_zu(self, art: str, name: str) -> list[int]:
-        """Die Elemente, die zu einem Zweig des Modellbaums gehoeren."""
+        """Die Elemente, die zu einem Eintrag des Modellbaums gehoeren (die
+        Zweige der Elemente gingen bis 8b auch hierher, :meth:`_baum_auswaehlen`)."""
         m = self.model
-        if art in self.BAUM_ELEMENTARTEN:
-            typen = (name,) if name in self.BAUM_ELEMENTARTEN[art] \
-                else self.BAUM_ELEMENTARTEN[art]
-            return [i for i, e in enumerate(m.elements) if e.typ in typen]
         if art == "geoflaeche" and name in m.flaechen:
             return list(m.flaechen[name].elemente or [])
         if art == "geokoerper_einzeln" and name in m.koerper:
@@ -11418,14 +11605,27 @@ class MainWindow(QtWidgets.QMainWindow):
         return []
 
     #: Zweige, deren Doppelklick die rechte Anlegemaske „Neu …“ oeffnet (wie
-    #: Rechtsklick → Neu). Bis zum 24.09.2026 fuehrte der Doppelklick einen
-    #: Befehl aus: „Stäbe mit Nachweis“ legte ohne Rueckfrage Staebe an
-    #: (Rahmen: 0 -> 3), „Bericht“ nahm ein Bild auf, andere Zweige oeffneten
-    #: modale Dialoge. Antwort 11 des Anwenders: Anlegemaske, nicht modal,
-    #: ohne sofort anzulegen. Nicht dabei, weil ihr „Neu“ sofort anlegt oder
-    #: ohne Auswahl nur einen Fehler meldet: Knoten (legt K an, Abbrechen
-    #: nimmt ihn zurueck), Layer aus Auswahl, Skizze, Linien- und
-    #: Flaechenlager. Die uebrigen Zweige klappen nur auf und zu (Qt).
+    #: Rechtsklick → Neu). Antwort 11 des Anwenders vom 24.09.2026: Anlegemaske,
+    #: nicht modal, ohne sofort anzulegen. Der einfache Klick, den Qt vor dem
+    #: Doppelklick meldet, zeigt seit 8b nur die Uebersicht und waehlt nichts -
+    #: der Doppelklick muss nichts davon zuruecknehmen (bis zum 03.10.2026
+    #: waehlte er dabei etwa alle Knoten aus). Bis zum 24.09.2026 fuehrte der
+    #: Doppelklick einen Befehl aus: „Stäbe mit Nachweis“ legte ohne Rueckfrage
+    #: Staebe an (Rahmen: 0 -> 3), „Bericht“ nahm ein Bild auf, andere Zweige
+    #: oeffneten modale Dialoge. Seit 8b gehoert der Bericht dazu
+    #: (berichtsbild_neu). Nicht dabei, weil ihr „Neu“ keine nicht-modale
+    #: Anlegemaske ist:
+    #:
+    #: * Knoten: „Neu“ legt den Knoten sofort an (Abbrechen nimmt ihn zurueck);
+    #:   ein Doppelklick, der zugleich auf- und zuklappt, soll nichts anlegen;
+    #: * Layer: „Layer aus Auswahl“ fragt modal nach dem Namen und legt den
+    #:   Layer aus der Auswahl sofort an (Umbau modaler Dialoge: Block D);
+    #: * Unterlagen: „Skizze“ oeffnet ein eigenes Zeichenfenster;
+    #: * Linien- und Flaechenlager: „Neu“ meldet ohne Auswahl nur einen Fehler
+    #:   und oeffnet mit Auswahl einen modalen Dialog (SupportNonlinearDialog,
+    #:   Block D).
+    #:
+    #: Ihr Doppelklick klappt nur auf und zu (Qt); die Uebersicht bleibt stehen.
     BAUM_DOPPELKLICK_NEU = frozenset(dsg.Modellbaum.NEU_ARTEN) - {
         "knoten", "layerliste", "unterlagen", "linienlager", "flaechenlager"}
 
@@ -11638,12 +11838,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"buckling:{self.cb_mode.currentIndex()}"
         return "modell:"
 
-    def ansicht_in_bericht(self):
+    def ansicht_in_bericht(self, *, name: str = None, beschriftung: str = None, bemerkung: str = "",
+                           nach: str = ""):
         """Die Ansicht so, wie sie gerade steht, in den Bericht uebernehmen.
 
         Aufgenommen wird das Bild **und** die Einstellung, aus der es
         entstanden ist - Ergebnis, Faerbung, Verlauf, Ueberhoehung. Im Bericht
         steht damit nicht nur eine Grafik, sondern auch, was sie zeigt.
+        Name, Bildunterschrift, Bemerkung und Platz (``nach``) kommen aus der
+        Anlegemaske „Neu: Berichtsbild“ (:meth:`berichtsbild_neu`, 8b); ohne
+        sie (Strg+B, „+ Ansicht übernehmen“) heisst das Bild „Bild N“, und die
+        Unterschrift sagt, was es zeigt. Nur mit Schluesselwoertern: der Knopf
+        im Register reicht beim Klick sonst seinen Zustand als Namen herein.
         """
         import base64
         import tempfile
@@ -11660,7 +11866,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..model import Berichtseintrag
         quelle = self._aktuelle_quelle()
         e = Berichtseintrag(
-            name=f"Bild {len(self.model.bericht) + 1}", quelle=quelle,
+            name=str(name or "").strip() or f"Bild {len(self.model.bericht) + 1}", quelle=quelle,
             feld=self.cb_field.currentText(), verlauf=self.cb_diagram.currentText(),
             # der Faktor, mit dem das Bild gezeichnet ist (25.09.2026) - bis
             # dahin die Stellung des Schiebers (Vorgabe 30), die im Bericht
@@ -11669,12 +11875,50 @@ class MainWindow(QtWidgets.QMainWindow):
             # Faktor 0,03 wurde sonst 0, und die Zeile fehlte (25.09.2026)
             ueberhoehung=vp.faktor_runden(getattr(self, "_ueberhoehung_faktor", 0.0)),
             bild=bild)
-        e.beschriftung = e.bezug()
+        e.beschriftung = str(beschriftung or "").strip() or e.bezug()
+        e.bemerkung = str(bemerkung or "")
+        e.nach = str(nach or "")
         self.merken("Ansicht in den Bericht übernommen")
         self.model.bericht.append(e)
         self.refresh_all()
         self.tabelle_zeigen("Bericht")
         self.info(f"„{e.name}“ in den Bericht übernommen ({e.bezug()})")
+        return e
+
+    @_maskenweg(danach="öffnet sich „Neu: Berichtsbild“")
+    def berichtsbild_neu(self):
+        """Rechts die Anlegemaske „Neu: Berichtsbild“ (Teilpaket 8b,
+        03.10.2026; Antwort 11 vom 24.09.2026): Doppelklick und Rechtsklick
+        „Neu“ am Zweig „Bericht“. Die Ansicht wird erst mit OK aufgenommen, so
+        wie sie dann steht; Abbrechen legt nichts an. Danach steht rechts die
+        Maske des neuen Bilds. Bis dahin hatte der Zweig kein „Neu“, und
+        aufnehmen ging nur sofort (Strg+B, „+ Ansicht übernehmen“)."""
+        from ..report.html import Report
+        from ..model import Berichtseintrag
+        F = msk.Feld
+        m = self.model
+        kapitel = [tx for _s, tx in Report.KAPITEL_WAHL]
+        zeigt = Berichtseintrag(quelle=self._aktuelle_quelle(), feld=self.cb_field.currentText(),
+                                verlauf=self.cb_diagram.currentText()).bezug()
+        felder = [F("name", "Name", "text", f"Bild {len(m.bericht) + 1}", breite=170),
+                  F("beschriftung", "Bildunterschrift", "text", "", breite=170,
+                    hinweis="leer = was das Bild zeigt"),
+                  F("bemerkung", "Bemerkung", "text", "", breite=170),
+                  F("nach", "Platz im Bericht", "wahl", kapitel[0], kapitel),
+                  F("zeigt", "zeigt jetzt", "info", zeigt, anzeige=True)]
+        maske = msk.Maske("Neu: Berichtsbild", felder, knopf="OK", abbrechen="Abbrechen",
+                          hinweis="Die Ansicht so einstellen, wie das Bild sie zeigen soll; OK nimmt "
+                                  "sie auf. Abbrechen legt nichts an.")
+
+        def anlegen(w):
+            nach = next((s for s, tx in Report.KAPITEL_WAHL if tx == w.get("nach")), "")
+            e = self.ansicht_in_bericht(name=w.get("name"), beschriftung=w.get("beschriftung"),
+                                        bemerkung=str(w.get("bemerkung") or "").strip(), nach=nach)
+            if e is not None and m.bericht and m.bericht[-1] is e:
+                # rechts bleibt das neue Bild, jetzt im Bearbeiten-Zustand
+                self._objektmaske("berichtseintrag", str(len(m.bericht) - 1))
+        maske.angewendet.connect(anlegen)
+        return self.maske_erzeugen(maske)
 
     def berichtstext_einfuegen(self, text: str = None, nach: str = ""):
         """Eigenen Text in den Bericht einfuegen (Gliederung analog InfoCAD):

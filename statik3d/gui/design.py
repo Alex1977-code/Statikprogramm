@@ -684,9 +684,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
     Kombinationen und die Nachweisobjekte stehen hier mit ihrer Anzahl,
     seit 03.10.2026 in Gruppen nach dem Ablauf (:attr:`GRUPPEN`).
 
-    Ein **Klick** waehlt den Zweig aus (und zeigt die zugehoerige Tabelle oder
-    Maske), ein **Doppelklick** oeffnet ihn zum Bearbeiten. Beides laeuft ueber
-    zwei Signale, damit das Fenster entscheidet, was daraus wird.
+    Ein **Klick auf einen Eintrag** waehlt das Objekt aus und zeigt rechts
+    seine Maske, ein **Doppelklick** oeffnet es zum Bearbeiten. Ein **Klick auf
+    einen Zweig** waehlt nichts und legt nichts an (Teilpaket 8b, 03.10.2026;
+    Antwort 4 vom 24.09.2026): rechts steht die Uebersicht des Zweigs mit
+    Anzahl und Liste, unten seine Tabelle. Der **Doppelklick auf einen Zweig**
+    oeffnet die Anlegemaske „Neu …“, nicht modal; angelegt wird erst mit OK
+    (Antwort 11). Bis zum 03.10.2026 waehlte der Klick auf neun Zweige alle
+    Objekte der Art aus, und vier Zweige oeffneten schon beim einfachen Klick
+    ihre Anlegemaske. Alles laeuft ueber Signale, damit das Fenster entscheidet,
+    was daraus wird; :meth:`zweig_finden` sagt ihm, welcher Zweig gemeint ist.
     """
 
     angeklickt = QtCore.Signal(str, str)      # (Art, Name)
@@ -714,7 +721,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "werkstoffe": "Werkstoff", "dicken": "Dicke",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
                  "kontaktbedingungen": "Kontaktbedingung",
-                 "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
+                 "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager",
+                 # seit 03.10.2026 (8b): die Anlegemaske nimmt die Ansicht erst mit OK auf
+                 "bericht": "Berichtsbild"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
@@ -846,6 +855,69 @@ class Modellbaum(QtWidgets.QTreeWidget):
         ein Zweig meint die Art."""
         return item is not None and item.data(0, QtCore.Qt.UserRole + 1) is not None
 
+    #: Datenrolle der Zeilen, die fuer ihren Zweig stehen: die Sammelzeile
+    #: „… N weitere“ und „noch nicht gerechnet“ (Teilpaket 8b). Ihr Klick
+    #: meint den Zweig darueber.
+    FUER_ZWEIG = QtCore.Qt.UserRole + 5
+    #: Datenrolle der Gruppen (fett: die Wurzel und die Zweige, die nur
+    #: Unterzweige zusammenfassen, :meth:`_zweig`)
+    GRUPPE = QtCore.Qt.UserRole + 6
+
+    @classmethod
+    def ist_gruppe(cls, item) -> bool:
+        """Fasst der Zweig nur Unterzweige zusammen (Gruppe, „Lager“,
+        „Verbindungen“, „Kontaktbedingungen“, „Ergebnisse“)?"""
+        return item is not None and bool(item.data(0, cls.GRUPPE))
+
+    def zweig_finden(self, art: str, name: str = ""):
+        """Der Zweig zu einem Zweigklick (Art, Name), sonst ``None``.
+
+        Gesucht wird im aktuellen Eintrag (dem angeklickten), dann unter den
+        Zweigen des letzten Aufbaus (``_zweige``, wenige hundert) und den
+        Zeilen der Gruppen (die Zaehlzeile „Netzknoten“) - nie in den Zeilen
+        der Listen, am Drehlager sind das Zehntausende. Eine Zeile, die fuer
+        ihren Zweig steht (:attr:`FUER_ZWEIG`), meint den Zweig darueber.
+        Passt kein Name (Aufruf ohne Namen), gilt der erste Zweig dieser Art,
+        der keine Gruppe ist - „lager“ ist dann „Knotenlager“, nicht „Lager“.
+        """
+        ziel = (str(art), str(name))
+
+        def fuer(it):
+            return it.parent() if it.data(0, self.FUER_ZWEIG) and it.parent() is not None else it
+
+        try:
+            it = self.currentItem()
+            if it is not None and self._schluessel(it) == ziel:
+                return fuer(it)
+            kandidaten = []
+            for z in self._zweige:
+                kandidaten.append(z)
+                if self.ist_gruppe(z):
+                    kandidaten += [z.child(i) for i in range(z.childCount())]
+            for z in kandidaten:
+                if self._schluessel(z) == ziel:
+                    return fuer(z)
+            gleich = [z for z in kandidaten if self._schluessel(z)[0] == ziel[0]
+                      and not z.data(0, self.FUER_ZWEIG)]
+            return next((z for z in gleich if not self.ist_gruppe(z)), gleich[0] if gleich else None)
+        except RuntimeError:            # ein Eintrag war schon weg (Neuaufbau)
+            return None
+
+    def zeile_waehlen(self, item) -> None:
+        """Eine Zeile waehlen und die Tastatur dorthin legen, ohne Signale -
+        wie :meth:`eintrag_waehlen`, wenn die Zeile schon bekannt ist (Klick
+        in die Liste einer Uebersicht, Teilpaket 8b)."""
+        gesperrt = self.blockSignals(True)
+        try:
+            self.clearSelection()
+            item.setSelected(True)
+            self.setCurrentItem(item)
+            self.scrollToItem(item)
+        finally:
+            self.blockSignals(gesperrt)
+        self._gemeldet = False
+        self.setFocus(QtCore.Qt.OtherFocusReason)
+
     def gruppe(self, kennung: str):
         """Die Gruppe der obersten Ebene mit dieser Kennung (:attr:`GRUPPEN`),
         sonst ``None``; „ergebnisse“ ist der Zweig der Ergebnisse."""
@@ -952,16 +1024,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         for it in self._alle_eintraege():
             a, n = self._schluessel(it)
             if a == art and n == ziel:
-                gesperrt = self.blockSignals(True)
-                try:
-                    self.clearSelection()
-                    it.setSelected(True)
-                    self.setCurrentItem(it)
-                    self.scrollToItem(it)
-                finally:
-                    self.blockSignals(gesperrt)
-                self._gemeldet = False
-                self.setFocus(QtCore.Qt.OtherFocusReason)
+                self.zeile_waehlen(it)
                 return True
         return False
 
@@ -1236,6 +1299,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
             f = it.font(0)
             f.setBold(True)
             it.setFont(0, f)
+            it.setData(0, self.GRUPPE, True)
         it.setForeground(1, QtGui.QColor(FARBEN["matt"]))
         if farbe is None and schluessel is None and str(zahl) == "0":
             farbe = FARBEN["matt"]
@@ -1272,10 +1336,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
             text, zahl, key, tip = e[:4]
             farbe = e[4] if len(e) > 4 else None
             if i >= BAUM_MAX:
+                # steht fuer den Zweig: ihr Klick zeigt dessen Uebersicht (8b)
                 self._zweig(eltern, f"… {anzahl - BAUM_MAX} weitere",
                             "", sammelart or art, farbe=FARBEN["matt"], blatt=True,
                             hinweis="Die vollständige Liste steht in der "
-                                    "Tabelle unten – dort mit Filter.")
+                                    "Tabelle unten – dort mit Filter.").setData(0, self.FUER_ZWEIG, True)
                 break
             self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe,
                         blatt=True)
@@ -1427,8 +1492,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if kennung == "ergebnisse":
                 gr[kennung] = self._zweig(wurzel, text, anzahl or "", "ergebnisse", fett=True,
                                           farbe=None if anzahl else FARBEN["matt"],
-                                          hinweis="Klick zeigt das Ergebnis, Doppelklick "
-                                                  "übernimmt es in den Bericht")
+                                          hinweis="Ein Ergebnis anklicken stellt es in der Ansicht ein. "
+                                                  "In den Bericht: Strg+B oder „Bericht → "
+                                                  "+ Ansicht übernehmen“")
             else:
                 n_el = len(model.elements) if kennung == "fe_netz" else 0
                 gr[kennung] = self._zweig(wurzel, text, f"{n_el} El" if n_el else "", "modell",
@@ -1452,7 +1518,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                  "gesetzten Elemente, frei gesetzte Knoten und jeder Knoten mit Lager, "
                                  "Last, Punktmasse, Dämpfer, Feder oder starrem Körper. Die übrigen "
                                  "Knoten der Flächen- und Körpernetze zählt „FE-Netz → Netzknoten“. "
-                                 "Ein Eintrag wählt seinen Knoten. Rechtsklick: Neu, Löschen.")
+                                 "Klick zeigt rechts die Übersicht und wählt nichts, ein Eintrag wählt "
+                                 "den einen Knoten. Rechtsklick: Neu, Löschen; der Doppelklick legt "
+                                 "keinen Knoten an.")
         # Nur die Knoten bauen, die der Zweig zeigt - sie stehen schon in ihrer
         # Nummernfolge, das natuerliche Sortieren ueber alle entfaellt. Am
         # Drehlager entstanden sonst 158 780 Eintraege samt Koordinatentext und
@@ -1463,8 +1531,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          for i in kons[:BAUM_MAX + 1].tolist()], "knoten",
                     sortieren=False, gesamt=n_kons)
         # Die Netzknoten als eine Zaehlzeile (Antwort 3) statt bis zu BAUM_MAX
-        # Eintraegen. Ihr Klick holt die Knotentabelle (BAUM_TABELLE im
-        # Fenster), dort stehen alle Knoten.
+        # Eintraegen. Ihr Klick zeigt ihre Zahl und holt die Knotentabelle
+        # (BAUM_TABELLE im Fenster), dort stehen alle Knoten.
         n_netz = int(model.nn) - n_kons
         self._zweig(netz, "Netzknoten", n_netz, "netzknoten", blatt=True,
                     hinweis=f"Die Knoten der Flächen- und Körpernetze, auf die außer dem Netz nichts "
@@ -1539,7 +1607,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
         bms = getattr(model, "bemassungen", {}) or {}
         bmz = self._zweig(gr["hilfsobjekte"], "Bemaßungen", len(bms), "bemassungen",
                           hinweis="Linearmaße, Maßketten, Höhenkoten, Winkel und Radien "
-                                  "(Register Messen); Klick bearbeitet, Entf löscht")
+                                  "(Register Messen). Ein Maß anklicken bearbeitet es, Entf löscht; "
+                                  "Doppelklick auf den Zweig: Neu: Linearmaß")
         self._liste(bmz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                           for name, x in bms.items()], "bemassung", "bemassungen")
         self._zweig(bmz, "+ Linearmaß anlegen", "", "bemassung_neu", farbe=FARBEN["akzent"])
@@ -1731,7 +1800,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if i >= BAUM_MAX:
                 self._zweig(lf, f"… {len(model.load_cases) - BAUM_MAX} weitere", "", "lastfaelle",
                             farbe=FARBEN["matt"],
-                            hinweis="Die vollständige Liste steht in der Tabelle unten.")
+                            hinweis="Die vollständige Liste steht in der Tabelle unten."
+                            ).setData(0, self.FUER_ZWEIG, True)
                 break
             nr = int(getattr(lc, "nummer", 0) or 0)
             it = self._zweig(lf, name, f"{lc.category} · {lc.n_loads}"
@@ -1773,8 +1843,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         fls = getattr(model, "fatigue_loads", {}) or {}
         el = self._zweig(ew, "Ermüdungslasten", len(fls), "ermuedungslasten",
                          hinweis="Lastkollektiv für den Ermüdungsnachweis (Palmgren-Miner: "
-                                 "D = Σ nᵢ / Nᵢ über alle Zeilen am selben Ort). Klick öffnet "
-                                 "die Maske; Rechtsklick: Neu, Löschen.")
+                                 "D = Σ nᵢ / Nᵢ über alle Zeilen am selben Ort). Eine Last "
+                                 "anklicken öffnet die Maske mit ihrer Zeile; Doppelklick oder "
+                                 "Rechtsklick auf den Zweig: Neu, Rechtsklick auf die Last: Löschen.")
         self._liste(el, [(name, n_text(f, model), name, f"Ermüdungslast {name}: {kurztext(f, model)}")
                          for name, f in fls.items()], "ermuedungslast", "ermuedungslasten",
                     sortieren=False)
@@ -1796,12 +1867,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Ergebnisse -------------------------------------------------
         # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet
         # wurde, steht dort, wo man es sucht. Ein Klick stellt das Ergebnis in
-        # der Ansicht ein, ein Doppelklick uebernimmt es in den Bericht. Der
-        # Zweig selbst entsteht mit den Gruppen (oben).
+        # der Ansicht ein; ein Doppelklick tut dasselbe und legt seit dem
+        # 25.09.2026 kein Berichtsbild mehr an. Der Zweig selbst entsteht mit
+        # den Gruppen (oben).
         ew2 = gr["ergebnisse"]
         if not anzahl:
             self._zweig(ew2, "noch nicht gerechnet", "", "ergebnisse",
-                        farbe=FARBEN["matt"], blatt=True)
+                        farbe=FARBEN["matt"], blatt=True).setData(0, self.FUER_ZWEIG, True)
         for gruppe, eintraege in erg.items():
             if not eintraege:
                 continue
@@ -1827,7 +1899,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
         uz = self._zweig(gr["bericht_unterlagen"], "Unterlagen", len(unt), "unterlagen",
                          hinweis="Dateien (PDF, Bilder, Word, Excel), übernommene Ansichten und Skizzen "
                                  "zum Modell - mit dem Modell gespeichert, auf Wunsch im Bericht. "
-                                 "Doppelklick öffnet; Rechtsklick: Neu (Skizze), Löschen.")
+                                 "Doppelklick auf eine Unterlage öffnet sie; Rechtsklick: Neu "
+                                 "(Skizze), Löschen.")
         self._liste(uz, [(name, x.bezug(), name,
                           f"{name}: {x.bezug()}" + (f"\n{x.beschriftung}" if x.beschriftung else ""))
                          for name, x in unt.items()], "unterlage", "unterlagen")
@@ -1887,8 +1960,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         lay = getattr(model, "layer", {}) or {}
         lyz = self._zweig(gr["hilfsobjekte"], "Layer", len(lay), "layerliste",
                           hinweis="Benannte Objektgruppen (RFEM: Objektselektionen) - sichtbar oder "
-                                  "ausgeblendet, gesperrt oder frei. Klick wählt die Objekte, "
-                                  "Doppelklick öffnet die Layerliste; Rechtsklick: Neu, Löschen.")
+                                  "ausgeblendet, gesperrt oder frei. Ein Layer angeklickt wählt seine "
+                                  "Objekte, doppelt angeklickt öffnet er die Layerliste; Rechtsklick: "
+                                  "Neu, Löschen.")
         self._liste(lyz, [(name, ("ausgeblendet · " if not L.sichtbar else "")
                            + ("gesperrt · " if L.gesperrt else "") + L.bezug(), name,
                            f"{name}: {L.bezug()}" + ("\nausgeblendet" if not L.sichtbar else "")

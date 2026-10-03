@@ -398,18 +398,28 @@ def test_staebe_im_sinn_von_rfem():
           _unter(nw, "Schweißnähte") is not None and _element(_unter(nw, "Schweißnähte"))[0] == "schweissnaehte")
     check("„Stäbe mit Nachweis“ gibt es nicht mehr als eigenen Zweig (er heißt „Stäbe“)",
           _zweig(b, "Stäbe mit Nachweis") is None and st is not None)
+    # Seit 8b (03.10.2026) waehlt der Klick auf einen Zweig nichts; die
+    # Uebersicht nennt die Stäbe bzw. Stabelemente in ihrer Liste
+    w.clear_selection()
+    app.processEvents()
     w._baum_geklickt("staebe", "Stäbe")
     app.processEvents()
     mk = w.maskenrand.maske
-    check("Klick auf „Stäbe“ wie bisher: alle Stäbe, Übersicht „Stäbe“",
-          set(w.sel_staebe) == set(m.members) and mk is not None and mk.titel == "Stäbe",
-          f"{w.sel_staebe} {mk.titel if mk else None}")
+    from PySide6 import QtWidgets
+    lw = mk.findChild(QtWidgets.QTreeWidget, "uebersichtliste") if mk is not None else None
+    zeilen = [lw.topLevelItem(i).text(0) for i in range(lw.topLevelItemCount())] if lw is not None else []
+    check("Klick auf „Stäbe“: Übersicht „Stäbe“ mit den Stäben in der Liste, gewählt wird nichts",
+          not w.sel_staebe and mk is not None and mk.titel == "Stäbe" and sorted(zeilen) == sorted(m.members),
+          f"{w.sel_staebe} {mk.titel if mk else None} {zeilen}")
     w._baum_geklickt("stabelemente", "Stabelemente")
     app.processEvents()
     mk = w.maskenrand.maske
-    check("Klick auf „Stabelemente“ wie bisher: die Stabelemente leuchten, Übersicht „Stabelemente“",
-          sorted(w.leuchtet) == [int(i) for i in n_stab] and mk is not None and mk.titel == "Stabelemente",
-          f"{len(w.leuchtet)} {mk.titel if mk else None}")
+    lw = mk.findChild(QtWidgets.QTreeWidget, "uebersichtliste") if mk is not None else None
+    zeilen = [lw.topLevelItem(i).text(0) for i in range(lw.topLevelItemCount())] if lw is not None else []
+    check("Klick auf „Stabelemente“: Übersicht „Stabelemente“ mit den Stabelementen, nichts leuchtet",
+          not w.leuchtet and mk is not None and mk.titel == "Stabelemente"
+          and zeilen == [f"E{i}" for i in n_stab][:len(zeilen)] and zeilen,
+          f"{len(w.leuchtet)} {mk.titel if mk else None} {zeilen[:3]}")
     check("Rechtsklick → Neu heißt „Stab“ an den Stäben und „Stabelement“ an den Stabelementen",
           b.NEU_ARTEN.get("staebe") == "Stab" and b.NEU_ARTEN.get("stabelemente") == "Stabelement",
           f"{b.NEU_ARTEN.get('staebe')} / {b.NEU_ARTEN.get('stabelemente')}")

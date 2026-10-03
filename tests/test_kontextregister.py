@@ -858,12 +858,15 @@ def test_lager_zaehlt_einmal():
     _ruhe()
     check("Lagertabelle: ein Klick auf Zeile 0 wählt „Auswahl: 1 Lager“", _reiter(w) == "Auswahl: 1 Lager",
           f"{_reiter(w)!r} {w.sel_lager}")
-    _leeren(w)
-    w._baum_geklickt("lager", "")
+    # Der Zweig waehlt nichts (Teilpaket 8b, 03.10.2026): bis dahin waehlte er
+    # alle Knotenlager, und der Reiter hiess „Auswahl: N Lager“
+    _waehlen(w, lager=[("lager", 0)])
+    w._baum_geklickt("lager", "Knotenlager")
     _ruhe()
-    n = len(w.sel_lager)
-    check("Zweig „Knotenlager“: alle Lager, keine Knoten", n > 1 and _reiter(w) == f"Auswahl: {n} Lager",
-          f"{_reiter(w)!r}")
+    mk = w.maskenrand.maske
+    check("Zweig „Knotenlager“ (8b): die Auswahl bleibt „Auswahl: 1 Lager“, rechts die Übersicht",
+          w.sel_lager == [("lager", 0)] and _reiter(w) == "Auswahl: 1 Lager"
+          and mk is not None and mk.titel == "Knotenlager", f"{_reiter(w)!r} {w.sel_lager}")
     _leeren(w)
 
 
@@ -894,13 +897,24 @@ def test_register_zieht_in_allen_wegen_nach():
     m = w.model
     m.add_feder_prop("F", [1e6] * 6)
     m.add_element("feder", [0, 1], "S355", "F")
+    # eine zweite Feder an anderen Knoten: der Zweig waehlte bis 8b die Knoten
+    # beider, der Eintrag „F“ nur die seiner Feder
+    m.add_feder_prop("F2", [1e6] * 6)
+    m.add_element("feder", [2, 3], "S355", "F2")
     w.refresh_all()
     _leeren(w)
-    w._baum_geklickt("federn", "")
+    # Der Eintrag „F“ (bis zum 03.10.2026 waehlte auch der Zweig „Federn“ die
+    # Knoten aller Federn; seit 8b waehlt ein Zweig nichts)
+    w._baum_geklickt("feder", "F")
     _ruhe()
-    check("Baum, Zweig „Federn“: die Knoten der Feder sind gewählt und das Register nennt sie",
-          len(w.selection) >= 2 and _reiter(w) == f"Auswahl: {len(w.selection)} Knoten",
+    check("Baum, Eintrag „F“ unter „Federn“: die Knoten der Feder sind gewählt und das Register nennt sie",
+          sorted(int(i) for i in w.selection) == [0, 1] and _reiter(w) == "Auswahl: 2 Knoten",
           f"{_reiter(w)!r} {list(w.selection)}")
+    vorher = (list(w.selection), _reiter(w))
+    w._baum_geklickt("federn", "Federn")
+    _ruhe()
+    check("… der Zweig „Federn“ lässt diese Auswahl stehen (8b)",
+          (list(w.selection), _reiter(w)) == vorher, f"{_reiter(w)!r} {list(w.selection)}")
     # d) Klickmodus einer Maske (Randlinien einer Flaeche)
     _leeren(w)
     w.maskenrand.schliessen()

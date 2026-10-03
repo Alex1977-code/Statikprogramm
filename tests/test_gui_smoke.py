@@ -1673,9 +1673,12 @@ def main():
               w._lastfall_aendern(0, 3, "Eigenlast Dach")
               and mb.load_cases[lf0].description == "Eigenlast Dach")
 
-        # Modellbaum: Klick waehlt aus, Doppelklick oeffnet
-        w._baum_geklickt("stabelemente", "beam")
-        check("Klick auf „Stabelemente“ wählt die Stabknoten", len(w.selection) > 0,
+        # Modellbaum: ein Eintrag waehlt aus, ein Zweig nicht (8b, 03.10.2026),
+        # Doppelklick oeffnet
+        w.clear_selection()
+        w._baum_geklickt("stabelemente", "Stabelemente")
+        check("Klick auf „Stabelemente“ wählt nichts, rechts die Übersicht (8b; bis dahin die Stabknoten)",
+              len(w.selection) == 0 and getattr(w.maskenrand.maske, "uebersicht", None) is not None,
               f"{len(w.selection)} Knoten")
         w._baum_geklickt("lager_einzeln", "0")
         check("Klick auf ein Lager wählt seinen Knoten",
@@ -2988,9 +2991,10 @@ def main():
               and se_zweig.childCount() == sum(1 for e in m_.elements if e.typ in ("beam", "truss"))
               and nw_.child(0).text(0) == "Schweißnähte",
               f"{st_zweig.childCount()} Stäbe, {se_zweig.childCount()} Stabelemente")
+        w.clear_selection()
         w._baum_geklickt("knoten", "Knoten")
-        check("Klick auf „Knoten“ wählt alle Knoten", len(w.selection) == m_.nn
-              and w.eingaben_dock.windowTitle() == "Knoten", str(len(w.selection)))
+        check("Klick auf „Knoten“ wählt nichts, rechts die Übersicht „Knoten“ (8b; bis dahin alle Knoten)",
+              len(w.selection) == 0 and w.eingaben_dock.windowTitle() == "Knoten", str(len(w.selection)))
         w._baum_geklickt("knoten", "3")
         mk = w.maskenrand.maske
         check("Klick auf K3 wählt nur K3 und zeigt Nummer und Koordinaten editierbar",
@@ -3005,9 +3009,10 @@ def main():
         check("eine andere Nummer tauscht die Knoten", np.allclose(m_.nodes[5], x_alt)
               and np.allclose(m_.nodes[3], x5))
         w._objekt_uebernehmen("knoten", "5", {"nr": 3, "x": x_alt[0], "y": x_alt[1], "z": x_alt[2]})
+        w.clear_selection()
         w._baum_geklickt("staebe", "Stäbe")
-        check("Klick auf „Stäbe“ (mit Nachweis) wählt alle Stäbe", set(w.sel_staebe) == set(m_.members)
-              and w.auswahlart == "Stab")
+        check("Klick auf „Stäbe“ (mit Nachweis) wählt nichts, rechts die Übersicht „Stäbe“ (8b; bis dahin alle)",
+              not w.sel_staebe and w.eingaben_dock.windowTitle() == "Stäbe", str(w.sel_staebe))
         w._baum_geklickt("linien", "Linien")
         mk = w.maskenrand.maske
         check("Klick auf „Linien“ zeigt Anzahl und Namen von … bis",
@@ -3204,8 +3209,13 @@ def main():
         n0 = len(m_.sections)
         w._baum_geklickt("querschnitte", "Querschnitte")
         app.processEvents()
+        check("Klick auf „Querschnitte“ zeigt rechts die Übersicht mit der Liste (8b; bis dahin die Maske)",
+              getattr(w.maskenrand.maske, "uebersicht", None) is not None
+              and w.eingaben_dock.windowTitle() == "Querschnitte", w.eingaben_dock.windowTitle())
+        w._baum_neu("querschnitte")
+        app.processEvents()
         mk = w.maskenrand.maske
-        check("Klick auf „Querschnitte“ zeigt rechts die Querschnittsmaske",
+        check("„Neu: Querschnitt“ (Doppelklick, Rechtsklick) zeigt rechts die Querschnittsmaske",
               isinstance(mk, pm.QuerschnittMaske) and w.eingaben_dock.windowTitle() == "Neuer Querschnitt",
               w.eingaben_dock.windowTitle())
         check("Normprofile nach Art: Doppel-T, U, Hohl, T, L",
@@ -5026,7 +5036,7 @@ def main():
         # ---- Kontur zeichnen (16.09.2026): Querschnitt aus dem Skizzenfenster ----
         from statik3d.gui import profilmaske as pm_k
         from statik3d import sections as secs_k
-        w._baum_geklickt("querschnitte", "Querschnitte")
+        w._baum_neu("querschnitte")         # seit 8b zeigt der Klick auf den Zweig die Übersicht
         app.processEvents()
         mk = w.maskenrand.maske
         m_ = w.model
@@ -5129,8 +5139,10 @@ def main():
               and w.eingaben_dock.windowTitle() == f"Liniengelenk an {fn_}", w.eingaben_dock.windowTitle())
         w._baum_geklickt("liniengelenke", "Liniengelenke")
         app.processEvents()
-        check("Liniengelenke: der Zweig zeigt die Übersicht (Flächen, Linien, Wirkung)",
-              w.eingaben_dock.windowTitle() == "Liniengelenke" and len(w.sel_linien) == 2)
+        check("Liniengelenke: der Zweig zeigt die Übersicht (Flächen, Linien, Wirkung) und lässt die "
+              "Auswahl des Eintrags stehen (8b)",
+              w.eingaben_dock.windowTitle() == "Liniengelenke"
+              and sorted(w.sel_linien) == sorted(f_.gelenklinien) and w.sel_flaechen == [fn_])
         w._baum_geklickt("gelenk_neu", "+ Gelenk anlegen")
         app.processEvents()
         check("„+ Gelenk anlegen“ öffnet die Gelenkmaske", "Gelenk" in w.eingaben_dock.windowTitle(), w.eingaben_dock.windowTitle())
@@ -7043,8 +7055,9 @@ def main():
         w._tabelle_lager("1"); app.processEvents()
         check("Klick in der Lagertabelle wählt das Lager auch als Lager", w.sel_lager == [("lager", 1)], str(w.sel_lager))
         w._baum_geklickt("lager", "Knotenlager"); app.processEvents()
-        check("Zweig Knotenlager: Übersichtsmaske, alle Knotenlager gewählt",
-              w.maskenrand.maske.titel == "Knotenlager" and len(w.sel_lager) == 4)
+        check("Zweig Knotenlager: Übersichtsmaske mit den vier Knotenlagern, die Auswahl bleibt (8b)",
+              w.maskenrand.maske.titel == "Knotenlager" and w.maskenrand.maske.werte().get("anzahl") == "4"
+              and w.sel_lager == [("lager", 1)], str(w.sel_lager))
         w._baum_loeschen("linienlager_einzeln", "0"); app.processEvents()
         check("Linienlager über den Baum gelöscht, Rückgängig holt es zurück",
               not w.model.line_supports and (w.undo() or True) and len(w.model.line_supports) == 1)
