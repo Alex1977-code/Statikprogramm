@@ -145,7 +145,7 @@ Die Arbeitsfläche in drei Spalten:
   | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
-  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026) |
+  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
   | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
@@ -3346,7 +3346,7 @@ Nichtlineare Lager):
 | **Ausfall bei Druck** | Das Lager nimmt nur Zug auf (Zuganker, Hänger). |
 | **Schlupf** | Freier Weg, bevor das Lager wirkt (Lagerspiel, Fuge). |
 | **Reibung μ** | Die Kraft quer zur Stützrichtung ist auf μ·|F| der Bezugskraft begrenzt; „μ bezogen auf“ nennt den Freiheitsgrad der Normalkraft (meist uz). |
-| **Grenzkraft** | Ab dieser Kraft fließt das Lager plastisch weiter (Zustand „Fließen“). |
+| **Grenzkraft** | Ab dieser Kraft fließt das Lager plastisch weiter (Zustand „Fließen“). Knotenlager in kN bzw. kNm, Linienlager je m, Flächenlager je m²; 0 = unbegrenzt. Sie braucht einen Ausfall bei Zug oder Druck oder einen Schlupf: ohne beides trüge das Lager im Löser nur Druck, deshalb nimmt der Dialog sie dann nicht an. Eine aus RFEM gelesene Grenzkraft steht in der Spalte und bleibt beim OK erhalten. |
 
 **Vorzeichen:** Das Lager wirkt entlang der positiven Achse seines
 Freiheitsgrads. Bewegt sich der Knoten in das Lager hinein, entsteht **Druck**;

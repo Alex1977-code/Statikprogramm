@@ -667,7 +667,7 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         die Maske, die der Doppelklick im Modellbaum oeffnet."""
         super().__init__(parent)
         self.setWindowTitle(f"{kind}: Wirkung je Freiheitsgrad")
-        self.resize(760, 380 if stammdaten else 330)
+        self.resize(860, 380 if stammdaten else 330)
         self.support = support
         self.name_ed = self.groesse_ed = None
         lay = QtWidgets.QVBoxLayout(self)
@@ -689,12 +689,19 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         lay.addWidget(QtWidgets.QLabel(
             "Das Lager wirkt entlang der positiven Achse. Bewegt sich der Knoten in das Lager "
             "hinein, entsteht <b>Druck</b>; zieht er daran, <b>Zug</b>.<br>"
-            "Steifigkeit: Knotenlager [kN/m] bzw. [kNm/rad], Linienlager je m, Flächenlager je m²."))
-        self.tbl = QtWidgets.QTableWidget(6, 6)
+            "Steifigkeit: Knotenlager [kN/m] bzw. [kNm/rad], Linienlager je m, Flächenlager je m².<br>"
+            "Grenzkraft: Knotenlager [kN] bzw. [kNm], Linienlager je m, Flächenlager je m²; "
+            "0 = unbegrenzt; nur zusammen mit Ausfall oder Schlupf."))
+        self.tbl = QtWidgets.QTableWidget(6, 7)
         self.tbl.setHorizontalHeaderLabels(
-            ["Wirkung", "Steifigkeit", "Ausfall", "Schlupf [mm]", "Reibung μ", "μ bezogen auf"])
+            ["Wirkung", "Steifigkeit", "Ausfall", "Schlupf [mm]", "Reibung μ", "μ bezogen auf",
+             "Grenzkraft [kN]"])
         self.tbl.setVerticalHeaderLabels(self.DOFS)
         self.rows = []
+        # Die Grenzkraft hat eine eigene Liste (01.10.2026): bis dahin fehlte die
+        # Spalte, und ein OK setzte eine aus RFEM gelesene Grenzkraft still auf
+        # 0 = unbegrenzt. self.rows bleibt bei sechs Feldern je Zeile.
+        self.grenzen = []
         for d in range(6):
             typ = QtWidgets.QComboBox(); typ.addItems(["frei", "starr", "Feder"])
             k = NumEdit(0.0, 90)
@@ -703,9 +710,11 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
             slip = NumEdit(0.0, 80)
             mu = NumEdit(0.0, 70)
             ref = QtWidgets.QComboBox(); ref.addItems(["-"] + self.DOFS[:3])
-            for c, wdg in enumerate((typ, k, fail, slip, mu, ref)):
+            grenze = NumEdit(0.0, 80)
+            for c, wdg in enumerate((typ, k, fail, slip, mu, ref, grenze)):
                 self.tbl.setCellWidget(d, c, wdg)
             self.rows.append((typ, k, fail, slip, mu, ref))
+            self.grenzen.append(grenze)
         lay.addWidget(self.tbl)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
                                         | QtWidgets.QDialogButtonBox.Cancel)
@@ -725,6 +734,32 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
             slip.set(float(b.slip) * 1000)
             mu.set(float(b.mu))
             ref.setCurrentIndex(0 if b.mu_ref is None else int(b.mu_ref) + 1)
+            self.grenzen[d].set(float(getattr(b, "limit", 0.0) or 0.0) / 1e3)
+
+    def grenzkraft_fehler(self) -> str:
+        """Was an den Grenzkraefte nicht stimmt - leer, wenn alles passt.
+
+        Der Loeser fuehrt eine Grenzkraft als Kontaktbedingung: ohne Ausfall und
+        ohne Schlupf nur in Druckrichtung (contact.py, ``dirs = [+1.0]``). Eine
+        Grenzkraft allein machte das Lager also still einseitig - das darf die
+        Spalte nicht anbieten. An einem freien Freiheitsgrad wirkt sie nicht."""
+        for d, (typ, _k, fail, slip, _mu, _ref) in enumerate(self.rows):
+            g = self.grenzen[d].value()
+            if g < 0:
+                return f"{self.DOFS[d]}: Die Grenzkraft ist ein Betrag, 0 oder größer (0 = unbegrenzt)."
+            if g > 0 and typ.currentIndex() == 0:
+                return f"{self.DOFS[d]}: An einem freien Freiheitsgrad wirkt keine Grenzkraft."
+            if g > 0 and fail.currentIndex() == 0 and slip.value() <= 0:
+                return (f"{self.DOFS[d]}: Eine Grenzkraft braucht einen Ausfall (bei Zug oder Druck) oder "
+                        "einen Schlupf - ohne beides trüge das Lager im Löser nur Druck.")
+        return ""
+
+    def accept(self):
+        fehler = self.grenzkraft_fehler()
+        if fehler:
+            QtWidgets.QMessageBox.warning(self, "Grenzkraft", fehler)
+            return
+        super().accept()
 
     def behaviours(self) -> dict:
         """{FHG: DofBehaviour} aus der Tabelle."""
@@ -735,7 +770,8 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
                              k.value() * 1e3,
                              ["", "zug", "druck"][fail.currentIndex()],
                              slip.value() / 1000.0, mu.value(),
-                             None if ref.currentIndex() == 0 else ref.currentIndex() - 1)
+                             None if ref.currentIndex() == 0 else ref.currentIndex() - 1,
+                             limit=self.grenzen[d].value() * 1e3)
             if b.acts or b.failure or b.slip or b.mu:
                 out[d] = b
         return out

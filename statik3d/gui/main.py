@@ -5254,7 +5254,12 @@ class MainWindow(QtWidgets.QMainWindow):
             sammlung = getattr(m, feld, None) or ([] if not isinstance(getattr(m, feld, None), dict) else {})
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(sammlung)))]
-                titel, knopf = klartext, f"Neue{'' if einzahl.endswith('r') else ''} {einzahl}"
+                # Kein Knopf „Neue …“ (01.10.2026): _baum_neu kennt diese Zweige
+                # nicht, der Knopf tat still nichts. Angelegt werden sie heute
+                # ueber den Import; bearbeiten laesst sich jeder Eintrag.
+                titel, knopf = klartext, ""
+                hinweis = (f"{klartext}: Eintrag anklicken zum Bearbeiten. Neu anlegen lassen sich diese "
+                           "Objekte in der Oberfläche noch nicht, sie kommen aus dem Import.")
             elif einzeln == "punktmasse":
                 i = int(name)
                 pm = m.punktmassen[i] if 0 <= i < len(m.punktmassen) else None
@@ -5582,7 +5587,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self._elemente_text(getattr(h, "elemente", []) or []) if h else "–"))
                 titel = f"Gelenk {name}"
                 hinweis = ("Je Freiheitsgrad: biegesteif, gelenkig oder Feder (Steifigkeit in kN/m bzw. "
-                           "kNm/rad). Gesetzt wird das Gelenk über „Gelenke setzen“ im Register Struktur.")
+                           "kNm/rad). Zum Setzen die Stäbe in der Ansicht wählen (alle Knoten eines "
+                           "Stabelements) und „Auf gewählte Stäbe setzen“ drücken.")
+                if not neu:
+                    zusatz = [("Auf gewählte Stäbe setzen", lambda n_=name: self._gelenk_auf_auswahl(n_))]
         elif art == "berichtseintrag":
             i = int(name)
             e = m.bericht[i]
@@ -16814,7 +16822,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Zuweisen", "⇄", self.assign_props,
                 hinweis="Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben")
         g = r.gruppe("Elemente")
-        g.gross("Gelenke", "○", lambda: self.maske_zeigen("Lager/Lasten"),
+        g.gross("Gelenke", "○", lambda: self.zuweisen_zeigen("gelenke"),
                 hinweis="Gelenke an den Stabenden setzen")
         g.klein("Elemente löschen", self.delete_elements,
                 hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
@@ -16828,6 +16836,54 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Auswahl umkehren", self.invert_selection,
                 hinweis="Gewählte Knoten abwählen, alle anderen wählen")
 
+    def _gelenk_auf_auswahl(self, name: str):
+        """Ein Gelenk auf die Stabelemente der Auswahl legen (alle Knoten des
+        Elements gewaehlt, wie „Zuweisen“) - der Weg, der bis zum 01.10.2026
+        in der Oberflaeche fehlte."""
+        m = self.model
+        if name not in m.hinges:
+            return self.error(f"Gelenk „{name}“ gibt es nicht mehr")
+        els = self._gelenk_ziele(m.hinges[name])
+        if not els:
+            return self.error("Zuerst die Stäbe in der Ansicht wählen (Auswahlart Stab, oder alle Knoten der "
+                              "Stabelemente, die das Gelenk bekommen sollen)")
+        self.merken(f"Gelenk {name} an {len(els)} Stabelementen")
+        for i in els:
+            m.apply_hinge(i, name)
+        self.info(f"Gelenk {name} an {len(els)} Stabelemente gesetzt")
+        self.refresh_all()
+        self._objektmaske("gelenk", name)
+        return True
+
+    def _gelenk_ziele(self, gelenk) -> list[int]:
+        """Die Stabelemente, die ein Gelenk aus der Auswahl bekommt.
+
+        Ein Stab besteht meist aus mehreren Elementen (vier, wenn die Oberflaeche
+        ihn anlegt). Ist er ganz gewaehlt - in der Auswahlart Stab oder ueber alle
+        seine Knoten -, sitzt das Gelenk nur an seinem Anfang oder Ende (erstes
+        bzw. letztes Element, wie der RFEM-Import), sonst waere er an jeder
+        Elementgrenze gelenkig. Einzeln gewaehlte Elemente eines Stabs und
+        Elemente ohne Stab bekommen es selbst (Gegenpruefung Paket F, 01.10.2026)."""
+        m = self.model
+        stab_von = {}
+        for sname, mem in m.members.items():
+            for e in mem.elements or []:
+                stab_von[int(e)] = sname
+        gewaehlt = {i for i in self._elements_from_text("") if m.elements[i].typ == "beam"}
+        ganze = {s for s in (getattr(self, "sel_staebe", None) or []) if s in m.members}
+        for sname, mem in m.members.items():
+            eigene = {int(e) for e in mem.elements or []}
+            if eigene and eigene <= gewaehlt:
+                ganze.add(sname)
+        ziele = set()
+        for sname in ganze:
+            reihe = [int(e) for e in m.members[sname].elements or []
+                     if 0 <= int(e) < len(m.elements) and m.elements[int(e)].typ == "beam"]
+            if reihe:
+                ziele.add(reihe[-1] if int(getattr(gelenk, "end", 0) or 0) == 1 else reihe[0])
+        ziele |= {i for i in gewaehlt if stab_von.get(i) not in ganze}
+        return sorted(ziele)
+
     def zuweisen_zeigen(self, was: str = "querschnitt"):
         """Struktur → „Querschnitt/Dicke zuweisen…“, „Gelenke setzen…“: die
         Befehle liegen im Kontextregister „Auswahl“, das erscheint, sobald
@@ -16840,7 +16896,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self.ribbon, "kontext_zeigen"):
             self.ribbon.kontext_zeigen()
         if was == "gelenke":
-            self.maske_zeigen("Lager/Lasten")
+            # Bis zum 01.10.2026 zeigte das die Maske Lager/Lasten - dort gibt es
+            # kein Gelenkfeld, ein Gelenk liess sich in der Oberflaeche keinem Stab
+            # zuweisen. Jetzt die Gelenkmaske mit „Auf gewählte Stäbe setzen“.
+            m = self.model
+            if len(m.hinges) == 1:
+                self._objektmaske("gelenk", next(iter(m.hinges)))
+            elif m.hinges:
+                self._objektmaske("gelenke", "")
+                self.info("Gelenk im Modellbaum unter „Gelenke“ anklicken und „Auf gewählte Stäbe setzen“")
+            else:
+                self._objektmaske("gelenk", m.naechster_name("G", m.hinges), neu=True)
             return True
         feld = self.cb_assign_shell if was == "dicke" else self.cb_assign_sec
         if feld is not None:
@@ -17223,9 +17289,9 @@ class MainWindow(QtWidgets.QMainWindow):
         d = SupportNonlinearDialog(self, None, "Linienlager")
         if not d.exec():
             return
+        self.merken("Linienlager angelegt")
         ls = self.model.add_line_support([int(n) for n in self.selection])
         ls.behaviour = d.behaviours()
-        self._aenderung()
         self.info(f"Linienlager über {len(self.selection)} Knoten angelegt")
         self.refresh_all()
 
@@ -17237,9 +17303,9 @@ class MainWindow(QtWidgets.QMainWindow):
         d = SupportNonlinearDialog(self, None, "Flächenlager (Bettung)")
         if not d.exec():
             return
+        self.merken("Flächenlager angelegt")
         ss = self.model.add_surface_support(els)
         ss.behaviour = d.behaviours()
-        self._aenderung()
         self.info(f"Flächenlager auf {len(els)} Elementen angelegt")
         self.refresh_all()
 
