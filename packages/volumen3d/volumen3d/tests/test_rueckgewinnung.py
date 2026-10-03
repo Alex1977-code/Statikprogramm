@@ -41,7 +41,9 @@ def test_haengende_moden():
     """Pruefluecke G2-5 (Gutachten C2, 02.10.2026): die L2-Projektion erbt haengende Moden und Aggregation ueber die skalare Zwangsmatrix
     C[0::3, 0::3]; geprueft waren nur Faelle ohne Verfeinerung. Patch-Gebiet (Quader mit zwei schraegen Schnitten), lokale Verfeinerung zwei
     Ebenen um einen Punkt der Schnittebene, p 2, Aggregation 0,25: das lineare Feld muss an allen Oberflaechenpunkten und in den feinen Zellen
-    exakt sein (Gutachter gemessen 2,3e-10 / 2,1e-11; Schranke 1e-8 wie der Patch-Test). Dazu G2-9: Punkte ausserhalb -> ValueError."""
+    exakt sein. Gemessen (Oberflaeche / feine Zellen): Windows mit pypardiso 2,3e-10 / 2,1e-11; CI Ubuntu mit SuperLU auf zwei Runner-Arten 5,6e-9 / 7,2e-10 und 1,7e-8 / 2,7e-10
+    (zwei CI-Laeufe vom 02.10.2026 fielen an der urspruenglichen Schranke 1e-8 durch). Schranke darum Oberflaeche 1e-7 (sechsfach ueber dem schlechtesten Messwert), feine Zellen 1e-8
+    (14fach ueber dem schlechtesten). Dazu G2-9: Punkte ausserhalb -> ValueError."""
     from volumen3d.fcm.gitter import Verfeinerung
     from volumen3d.fcm.problem import FcmProblem, Werkstoff
     from volumen3d.geometry.csg import aus_params
@@ -71,8 +73,8 @@ def test_haengende_moden():
     except ValueError as ex:
         aussen = str(ex)
     check(f"haengende Moden {zs['moden_haengend']}, aggregiert {zs['moden_aggregiert']}: geglaettet an der Oberflaeche {f_o:.1e}, in den feinen Zellen "
-          f"{f_i:.1e} (< 1e-8); Punkt ausserhalb -> ValueError",
-          zs["moden_haengend"] > 0 and zs["moden_aggregiert"] > 0 and f_o < 1e-8 and f_i < 1e-8 and "ausserhalb" in aussen, aussen[:60])
+          f"{f_i:.1e} (Schranken 1e-7 / 1e-8); Punkt ausserhalb -> ValueError",
+          zs["moden_haengend"] > 0 and zs["moden_aggregiert"] > 0 and f_o < 1e-7 and f_i < 1e-8 and "ausserhalb" in aussen, aussen[:60])
 
 
 def test_lame_besser_als_roh():

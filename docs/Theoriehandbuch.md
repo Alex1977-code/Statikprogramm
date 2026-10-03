@@ -12121,7 +12121,8 @@ sind jetzt der betragsgrößte Wert mit Vorzeichen (vorher unter Druck der betra
 **Niedrige Befunde, behoben.** Die Hüllenzelle fittet mit q = max(fit_grad, 2p), unabhängig vom Schalter (G1-5); der Windungsbaum bildet seine Momente relativ zur
 Mitte des Hüllquaders (Versatz 10⁶ mm: |Δw| 1,5·10⁻⁴ statt 3,5·10⁻³, G1-6); leere Nahtpolylinie gibt einen Fehler statt eines IndexError aus dem ganzen Lauf (G2-3);
 geschlossene Polylinien werden zyklisch behandelt (G2-4); die L²-Projektion mit hängenden Moden und Aggregation ist geprüft (2 501 hängende, 1 018 aggregierte
-Moden: 2,5·10⁻¹⁰ an der Oberfläche, 2,3·10⁻¹¹ in den feinen Zellen, G2-5); ein Referenzpunkt außerhalb der Zellen kostet nur seinen Nahtpunkt (G2-7); die
+Moden: 2,5·10⁻¹⁰ an der Oberfläche, 2,3·10⁻¹¹ in den feinen Zellen, G2-5; auf den CI-Läufern, Ubuntu mit SuperLU auf zwei Runner-Arten, 5,6·10⁻⁹ und 1,7·10⁻⁸ an der Oberfläche und
+2,7·10⁻¹⁰ bis 7,2·10⁻¹⁰ in den feinen Zellen – zwei CI-Läufe fielen an der zuerst gesetzten Schranke 10⁻⁸ durch, sie gilt seit C4 mit 10⁻⁷ an der Oberfläche und 10⁻⁸ in den feinen Zellen); ein Referenzpunkt außerhalb der Zellen kostet nur seinen Nahtpunkt (G2-7); die
 gebündelte Nachbarsuche ist an allen 98 Proben je feiner Zelle gegen Einzelabfragen geprüft (G2-8); `L2Rueckgewinnung.spannung` wirft für Punkte außerhalb statt
 still die letzte Zelle zu nehmen (G2-9); Glätterblöcke über 320 Koordinaten werden über Cholesky invertiert, ein nicht positiv definiter fällt auf (G2-10); der
 STEP-Cache hängt am Inhalt (Hash), eigene Netzoptionen gelten auch bei laufendem gmsh und werden danach zurückgestellt, eine Sperre verhindert zwei
