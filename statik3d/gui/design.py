@@ -857,6 +857,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._filter = ""
         #: die Zeile, die vor dem Filter oben stand (fuer das Aufheben)
         self._filter_oben = None
+        #: Art -> Zweig (:meth:`_zweig_der_art`), je Aufbau beim ersten Bedarf
+        self._zweig_je_art = None
         #: Die Filterzeile ueber dem Baum (:class:`Baumfilter` setzt sie)
         self.filterzeile = None
 
@@ -1039,12 +1041,38 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
     def _zeile_zu(self, alternativen):
         """Die erste vorhandene Zeile zu (Art, Schluessel)-Paaren; ein leerer
-        Schluessel meint den Zweig der Art (:meth:`zweig_finden`)."""
+        Schluessel meint den Zweig der Art (:meth:`_zweig_der_art`)."""
         for art, key in alternativen:
-            it = self.zweig_finden(art, "") if str(key) == "" else self.zeile_finden(art, key)
+            it = self._zweig_der_art(art) if str(key) == "" else self.zeile_finden(art, key)
             if it is not None:
                 return it
         return None
+
+    def _zweig_der_art(self, art: str):
+        """Der Zweig einer Art wie :meth:`zweig_finden` ohne Namen: der erste,
+        der keine Gruppe ist, sonst die erste Gruppe; Sammelzeilen nie. Das
+        Verzeichnis entsteht beim ersten Aufruf nach einem Aufbau (eine Schleife
+        ueber die Zweige, nie ueber die Listen); danach kostet ein Klick auf
+        einen Netzknoten keine Schleife mehr (gemessen am Drehlager: 10 ms je
+        Klick mit zweig_finden, 03.10.2026)."""
+        je = self._zweig_je_art
+        if je is None:
+            kandidaten = []
+            for z in self._zweige:
+                kandidaten.append(z)
+                if self.ist_gruppe(z):
+                    kandidaten += [z.child(i) for i in range(z.childCount())]
+            erste, gruppen = {}, {}
+            for z in kandidaten:
+                if z.data(0, self.FUER_ZWEIG):
+                    continue
+                (gruppen if self.ist_gruppe(z) else erste).setdefault(self._schluessel(z)[0], z)
+            je = self._zweig_je_art = {**gruppen, **erste}
+        it = je.get(str(art))
+        try:
+            return it if it is not None and it.treeWidget() is self else None
+        except RuntimeError:            # ein Aufbau hat die Zeile schon freigegeben
+            return None
 
     def auswahl_nachfuehren(self, ziele, aktuell=None) -> int:
         """Ansicht -> Baum (Teilpaket 8d, 03.10.2026; Plan vom 24.09.2026: „Eine
@@ -1886,6 +1914,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._verzeichnis = {}
         self._reste = {}
         self._filter_oben = None
+        self._zweig_je_art = None
         self.clear()
         self._zweige = []
         wurzel = self._zweig(self, model.name or "Modell", f"{model.nn} Kn",
