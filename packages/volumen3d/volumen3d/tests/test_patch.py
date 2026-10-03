@@ -156,7 +156,10 @@ def test_patch_hoeherer_ordnung():
     """Patch-Test hoeherer Ordnung (Plan TP 5 O5, Theorie 11.21): ein Polynomfeld vom Gesamtgrad k <= p liegt im Ansatzraum und muss am schraeg geschnittenen
     Koerper bis auf Rundung reproduziert werden. Bis 03.10.2026 galt das nur fuer k = 1: die Tetraederregel der schraegen Stuecke war bis zum Gesamtgrad 3p - 1
     (p gerade) exakt, noetig sind 3p + k - 2; die Flaechenregel bis 3p (p ungerade), noetig sind 3p + k - 1. Gemessen vorher / jetzt (Spannung am Rand):
-    p 2 k 2 2,6e-4 / 2,1e-11; p 3 k 2 1,9e-4 / 1,2e-9; p 3 k 3 2,2e-4 / 8,5e-10. Schranke 1e-8 (Rundungsniveau; rund das Achtfache des groessten Messwerts)."""
+    p 2 k 2 2,6e-4 / 2,0e-11 bis 2,6e-11; p 3 k 2 1,9e-4 / 1,2e-9 bis 2,3e-9; p 3 k 3 2,2e-4 / 8,1e-10 bis 1,4e-9 (je sechs Laeufe am 03.10.2026: der Wert liegt auf
+    Rundungsniveau und streut von Lauf zu Lauf um den Faktor 2). Schranke 1e-8 bei p 2 und 1e-7 bei p 3: bei p 3 gibt die Zwangsmatrix Polynome nur auf rund 1e-9
+    wieder (11.21, H4), und 1e-8 liess dem groessten Messwert nur das Vierfache - eine Pruefung gleicher Art (test_haengende_moden, 1e-8) fiel am selben Tag in
+    der CI mit 1,7e-8 durch. Der alte Weg liegt mit 1e-5 bis 1e-4 um mehr als zwei Groessenordnungen ueber beiden Schranken."""
     from volumen3d.fcm import quadratur as Q
     # Gegenprobe der Volumenlast am quadratischen Feld: f_i = -[lambda Q_mmi + mu (Q_ijj + Q_jij)], unabhaengig vom Differenzenquotienten
     u, sig, f, Q2 = _polynomfeld(2)
@@ -168,8 +171,10 @@ def test_patch_hoeherer_ordnung():
         t = time.perf_counter()
         es, eo, pr = _polynomfehler(p, k)
         st = pr.quadratur.statistik
-        check(f"p {p}, Feld vom Grad {k}: Spannung innen {es:.1e} und am Rand {eo:.1e} (< 1e-8)", es < 1e-8 and eo < 1e-8,
-              f"{st['stuecke_exakt']} von {st['stuecke']} Stuecken mit exakten Momenten, Flaechenordnung {pr.ordnung_flaeche}, "
+        schranke = 1e-8 if p == 2 else 1e-7
+        check(f"p {p}, Feld vom Grad {k}: Spannung innen {es:.1e} und am Rand {eo:.1e} (< {schranke:.0e})", es < schranke and eo < schranke,
+              f"{st['stuecke_exakt']} schraege Stuecke mit exakten Momenten (von {st['stuecke']} Stuecken, die uebrigen achsparallele Teilboxen), "
+              f"Flaechenordnung {pr.ordnung_flaeche}, "
               f"Zellen ohne Wurzel {pr.protokoll['aggregation']['zellen_ohne_wurzel'] if pr.protokoll.get('aggregation') else pr.aggregation.statistik['zellen_ohne_wurzel']}, "
               f"{time.perf_counter() - t:.1f} s")
     # ohne die beiden Aenderungen (zum Vergleich, damit die Pruefung oben nicht leer ist): Tetraederregel bei p 2, alte Flaechenordnung 5 bei p 3

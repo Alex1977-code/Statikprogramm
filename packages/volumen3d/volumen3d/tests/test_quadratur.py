@@ -336,6 +336,40 @@ def test_stuecke_exakt():
     box = box_flaechen([0, 0, 0], [1, 2, 3])
     check("geschlossen(): Box ja; ohne eine Flaeche, einzelne Flaeche, zwei Gegenflaechen nein",
           geschlossen(box) and not geschlossen(box[:5]) and not geschlossen(box[:1]) and not geschlossen([box[0], box[0][::-1]]))
+    # Gegenprobe der vektorisierten Pruefung: Summe der Flaechenvektoren hier ein zweites Mal je Dreieck mit np.cross, an 400 zufaellig
+    # geclippten Boxen - jede einmal ganz (geschlossen) und einmal ohne eine ihrer Flaechen (offen)
+    from volumen3d.geometry.polyeder import clippen
+
+    def geschlossen_schleife(flaechen, tol=1e-9):
+        if len(flaechen) < 4:
+            return False
+        summe, betrag = np.zeros(3), 0.0
+        for F in flaechen:
+            a = np.zeros(3)
+            for i in range(1, len(F) - 1):
+                a += np.cross(F[i] - F[0], F[i + 1] - F[0])
+            summe += a
+            betrag += float(np.linalg.norm(a))
+        return betrag > 0.0 and float(np.linalg.norm(summe)) <= tol * betrag
+
+    rng = np.random.default_rng(11)
+    gleich = n_zu = n_offen = 0
+    for _ in range(400):
+        fl = box_flaechen([0, 0, 0], [1, 1, 1])
+        for _e in range(int(rng.integers(1, 4))):
+            nrm = rng.normal(size=3)
+            fl = clippen(fl, rng.uniform(0.2, 0.8, 3), nrm / np.linalg.norm(nrm), 1e-12)
+            if not fl:
+                break
+        if len(fl) < 4:
+            continue
+        weg = int(rng.integers(len(fl)))
+        teil = fl[:weg] + fl[weg + 1:]
+        gleich += int(geschlossen(fl) == geschlossen_schleife(fl) and geschlossen(teil) == geschlossen_schleife(teil))
+        n_zu += int(geschlossen(fl))
+        n_offen += int(not geschlossen(teil))
+    check(f"geschlossen() vektorisiert = Schleife je Dreieck an {gleich} geclippten Boxen: alle ganzen geschlossen ({n_zu}), alle ohne eine Flaeche offen ({n_offen})",
+          gleich > 300 and n_zu == gleich and n_offen == gleich)
     # Waechter in _fitten: ein offenes Stueck (Box ohne Deckel), an der Pruefung vorbei eingereicht, faellt auf die Tetraederregel zurueck
     Gw = Gitter(g, h=2.0, polster=0.0)
     Gw.moden_nummerieren(2)

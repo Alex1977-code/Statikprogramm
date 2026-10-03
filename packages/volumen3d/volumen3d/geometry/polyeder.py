@@ -107,15 +107,15 @@ def geschlossen(flaechen: list[np.ndarray], tol: float = 1e-9) -> bool:
     mit Symmetrieebenen auf Zellflaechen, 03.10.2026: zwei Zellen mit je 61,6 mm3 zu viel, K_t 1,77 statt 3,75)."""
     if len(flaechen) < 4:
         return False
-    summe = np.zeros(3)
-    betrag = 0.0
-    for F in flaechen:
-        a = np.zeros(3)
-        for i in range(1, len(F) - 1):
-            a += np.cross(F[i] - F[0], F[i + 1] - F[0])
-        summe += a
-        betrag += float(np.linalg.norm(a))
-    return betrag > 0.0 and float(np.linalg.norm(summe)) <= tol * betrag
+    # Faecher aller Flaechen in zwei Feldern, das Kreuzprodukt von Hand: die Pruefung laeuft je schraegem Stueck, und die Schleife ueber die
+    # Dreiecke mit np.cross kostete an der Kugel R 43 in h 10 mit Tiefe 3 (23 999 Stuecke) 9,0 von 30,1 s der Zellquadratur (03.10.2026).
+    # Bezugsgroesse ist die Summe der Dreiecksbetraege; fuer ebene konvexe Polygone ist das der Betrag des Flaechenvektors.
+    A = np.concatenate([F[1:-1] - F[0] for F in flaechen])
+    B = np.concatenate([F[2:] - F[0] for F in flaechen])
+    n = np.stack([A[:, 1] * B[:, 2] - A[:, 2] * B[:, 1], A[:, 2] * B[:, 0] - A[:, 0] * B[:, 2], A[:, 0] * B[:, 1] - A[:, 1] * B[:, 0]], axis=1)
+    summe = n.sum(axis=0)
+    betrag = float(np.sqrt((n * n).sum(axis=1)).sum())
+    return betrag > 0.0 and float(np.sqrt(summe @ summe)) <= tol * betrag
 
 
 @lru_cache(maxsize=None)
