@@ -779,7 +779,11 @@ linearer Volumenlast. Schalter: `ordnung_tet` Vorgabe / 2p / 3p, `ordnung_flaech
 (Gauß p + 2), der Rest ist r = Cᵀ(K_vol a − f_Volumenlast − ∫(σ_exakt n)·v) mit der Flächenregel des Problems, bezogen auf den größten Betrag von Cᵀ K_vol a; Gegenprobe der Konstruktion: C angewandt
 auf die freien Einträge von a ergibt a (unter 10⁻⁹). *Berichtigt vor der Messreihe (03.10.2026):* die erste Fassung r = Cᵀ(K a − F), bezogen auf CᵀF, war blind – die Nitsche-Strafterme verschwinden für das
 exakte Feld punktweise, tragen aber β mal die Rundung der Zwangsmatrix ein (C gibt das Feld auf 2 bis 5·10⁻¹⁰ wieder): im Probelauf mit den Vorgaben lag der Rest des linearen und des quadratischen Felds gleich
-bei 5·10⁻¹¹ (Streifen 30°, p 2), in der berichtigten Fassung bei 8·10⁻¹⁰ und 9·10⁻⁶. Die Schranke der Gegenprobe ist auf 10⁻⁹ gesetzt (gemessen 2 bis 5·10⁻¹⁰). Beide müssen im
+bei 5·10⁻¹¹ (Streifen 30°, p 2), in der berichtigten Fassung bei 8·10⁻¹⁰ und 9·10⁻⁶. Die Schranke der Gegenprobe ist auf 10⁻⁹ gesetzt (gemessen 2 bis 5·10⁻¹⁰). *Zweite Berichtigung (03.10.2026, nach den ersten 50 Läufen der Reihe, die danach vollständig wiederholt wird):* der Rest wird mit den exakten Koeffizienten a je Zelle gebildet, nicht mit C x. Die Zwangsmatrix gibt ein
+Polynom nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder; am Biegefeld, dessen Verschiebungen groß gegen seine Dehnungen sind, lag der Rest mit C x deshalb bei 1,3·10⁻⁷, gleichgültig welcher Schalter stand, während der
+Spannungsfehler auf 10⁻¹⁰ fiel. Mit a ist der Boden 10⁻¹² (lineares Feld, Streifen 10°); der Rest mit C x und die Gegenprobe werden mitgeschrieben. Die Genauigkeit der Zwangsmatrix selbst ist kein Gegenstand von O5 (Liste).
+*Zur Urteilsregel:* im ersten Durchgang fiel der Spannungsfehler des quadratischen Felds am Streifen mit Tetraederordnung 4 von 2,5·10⁻⁴ auf 1,2·10⁻¹⁰, das lineare Feld liegt bei 1,0·10⁻¹¹ – nach dem Wortlaut („höchstens das Dreifache
+des linearen Felds“) nicht erfüllt, obwohl beide weit unter Rundungsniveau liegen. Die Regel hätte das Rundungsniveau als Boden nennen müssen; die Auswertung weist darum beides getrennt aus (Wortlaut und „unter 10⁻⁸“), der Wortlaut wird nicht nachträglich geändert. Beide müssen im
 Urteil übereinstimmen (derselbe Schalter beseitigt Fehler und Rest); berichtet wird nur, was beide tragen. Das Verhältnis Fehler zu Rest ist die Verstärkung (H4).
 
 **Kur und ihre Prüfung.** Erwartete Kur, wenn H1 bis H3 zutreffen: (K1) die Momente schräg geschnittener Stücke exakt über den Divergenzsatz (`geometry/huelle.huellenmomente` auf den Polygonen
