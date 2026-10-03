@@ -326,10 +326,17 @@ class CombinationDialog(QtWidgets.QDialog):
         self.setWindowTitle("Kombination")
         self.name = QtWidgets.QLineEdit(combo.name if combo else f"K{len(model.combinations)+1}")
         # Der Typ im Klartext („GZT (STR/GEO)“), die lange Form am Zeiger, der
-        # Schluessel als Daten - result() liest ihn (03.10.2026, Teilpaket 11b)
+        # Schluessel als Daten - result() liest ihn (03.10.2026, Teilpaket 11b).
+        # Dieselben Typen wie die Maske, also auch FAT; ein Typ, den die Liste
+        # nicht kennt, steht unveraendert mit zur Wahl. Bis zum 03.10.2026
+        # wurde aus beidem beim OK still ULS (Befund L3: am Drehlager sind 50
+        # von 52 Kombinationen FAT).
         from .. import begriffe as bg
         self.typ = QtWidgets.QComboBox()
-        for t in ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"]:
+        typen = list(bg.KOMBINATIONSTYPEN)
+        if combo and combo.typ and combo.typ not in typen:
+            typen.append(combo.typ)
+        for t in typen:
             self.typ.addItem(bg.typ_kurz(t), t)
             self.typ.setItemData(self.typ.count() - 1, bg.typ_lang(t), QtCore.Qt.ToolTipRole)
         if combo and self.typ.findData(combo.typ) >= 0:
@@ -1908,9 +1915,14 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
         self.lbl_wert = QtWidgets.QLabel("Nenner x")
         form.addRow(self.lbl_wert, self.ed_wert)
 
+        # die Situationen heissen wie die Kombinationstypen („GZG
+        # charakteristisch“), die lange Form am Zeiger; bis zum 03.10.2026
+        # stand hier „charakteristisch (SLS_CH)“ (Befund L2)
+        from .. import begriffe as bg
         self.cb_sit = QtWidgets.QComboBox()
-        for k, text in SITUATIONEN.items():
-            self.cb_sit.addItem(f"{text} ({k})", k)
+        for k in SITUATIONEN:
+            self.cb_sit.addItem(bg.typ_kurz(k), k)
+            self.cb_sit.setItemData(self.cb_sit.count() - 1, bg.typ_lang(k), QtCore.Qt.ToolTipRole)
         self.cb_sit.addItem("alle GZG-Kombinationen", "")
         if g:
             self.cb_sit.setCurrentIndex(max(0, self.cb_sit.findData(g.situation)))

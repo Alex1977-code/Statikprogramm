@@ -1,0 +1,3310 @@
+Statischer Bericht – Fachbegriffe
+@page { size: A4; margin: 18mm 16mm 20mm 20mm; }
+html { color-scheme: light; }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 10.5pt; color: #111; background: #fff;
+max-width: 190mm; margin: 0 auto; padding: 10mm 6mm; line-height: 1.35; }
+h1, h2, h3, h4, h5 { color: #1f3b73; page-break-after: avoid; break-after: avoid; }
+h1.doctitle { font-size: 26pt; margin: 6mm 0 2mm; border: none; }
+h1.chapter, h2.chapter { font-size: 16pt; margin-top: 2em; padding-bottom: 2px;
+border-bottom: 2px solid #1f3b73; page-break-before: always; break-before: page; }
+h3 { font-size: 13pt; margin: 1.4em 0 0.5em; }
+h4 { font-size: 11.5pt; margin: 1.2em 0 0.4em; }
+h5 { font-size: 10.5pt; margin: 1em 0 0.3em; }
+p { margin: 0.4em 0 0.7em; }
+ul { margin: 0.3em 0 0.8em 1.2em; padding: 0; }
+li { margin: 0.15em 0; }
+.brand { font-size: 10pt; color: #666; letter-spacing: 0.08em; text-transform: uppercase; }
+.subtitle { font-size: 14pt; color: #333; margin-bottom: 6mm; }
+.titlepage { page-break-after: always; break-after: page; }
+.toc { page-break-after: always; break-after: page; }
+.toc h2 { font-size: 14pt; border-bottom: 1px solid #1f3b73; }
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc li.l1 { font-weight: bold; margin-top: 0.5em; }
+.toc li.l2 { margin-left: 1.6em; font-weight: normal; }
+.toc a { color: inherit; text-decoration: none; }
+.toc .no { display: inline-block; min-width: 2.6em; }
+.tbl { margin: 0.4em 0 1em; overflow-x: auto; }
+.caption { font-size: 9.5pt; font-weight: bold; color: #333; margin: 0.6em 0 0.2em; }
+table { border-collapse: collapse; width: 100%; font-size: 9pt; page-break-inside: auto; }
+table.compact { font-size: 8pt; }
+thead { display: table-header-group; }
+tfoot { display: table-footer-group; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+th, td { border: 1px solid #b5b5b5; padding: 2px 5px; vertical-align: top; text-align: left; }
+th { background: #e8edf5; font-weight: bold; }
+td.num, th.num { text-align: right; font-family: "DejaVu Sans Mono", Consolas, "Courier New", monospace;
+white-space: nowrap; }
+td.ctr, th.ctr { text-align: center; }
+table.kv th { width: 34%; background: #f3f5f9; font-weight: normal; }
+table.kv td { font-family: inherit; }
+table.meta { font-size: 10.5pt; }
+table.meta th { width: 30%; }
+.util { font-family: "DejaVu Sans Mono", Consolas, monospace; font-weight: bold; }
+.util.ok { color: #1e7b34; }
+.util.nok { color: #b00020; background: #fde8e8; }
+figure { margin: 0.6em 0 1em; text-align: center; page-break-inside: avoid; break-inside: avoid; }
+figure svg { max-width: 100%; height: auto; border: 1px solid #ddd; }
+figcaption { font-size: 9pt; color: #444; margin-top: 0.3em; }
+.status { padding: 0.6em 0.9em; margin: 0.8em 0; font-weight: bold; border-left: 6px solid; }
+.status.ok { background: #e6f4ea; border-color: #1e7b34; color: #1e5a2a; }
+.status.nok { background: #fdecea; border-color: #b00020; color: #7a0015; }
+.note { font-size: 9pt; color: #555; font-style: italic; }
+.footer { margin-top: 3em; font-size: 8.5pt; color: #777; border-top: 1px solid #ccc;
+padding-top: 0.4em; }
+@media print {
+body { max-width: none; padding: 0; margin: 0; font-size: 10pt; }
+.tbl { overflow: visible; }
+td.num, th.num { white-space: normal; }
+a { color: inherit; text-decoration: none; }
+figure svg { border: none; }
+}
+@page { size: A4; margin: 18mm 16mm 20mm 20mm; }
+body { font-size: 10.5pt; }
+.kopfzeile { font-size: 8.5pt; color: #444; border-bottom: 1px solid #888; padding-bottom: 2px; margin-bottom: 4mm; display: flex; justify-content: space-between; }
+.fusszeile { font-size: 8.5pt; color: #444; border-top: 1px solid #888; padding-top: 2px; margin-top: 6mm; display: flex; justify-content: space-between; }
+.logo { width: 30mm; float: right; margin: 0 0 4mm 6mm; }
+@media print { .kopfzeile { position: fixed; top: 0; left: 0; right: 0; background: #fff; } .fusszeile { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; } body { padding-top: 8mm; padding-bottom: 8mm; } }
+Statischer Bericht – Fachbegriffe
+Statik3D – Tragwerksberechnung
+Statischer Bericht
+Fachbegriffe
+Projekt
+–
+Bauteil / Position
+–
+Auftraggeber
+–
+Bearbeiter
+–
+Datum
+DATUM
+Programm
+Statik3D, Version 2.1.0
+Modell
+Fachbegriffe
+Prüffähige Dokumentation der Eingaben, Ergebnisse und Nachweise. Alle Werte in
+kN, kNm, mm und N/mm², sofern nicht anders angegeben. Dieses Dokument lässt sich im Browser mit
+Strg+P als PDF speichern. Umfang: Langform.
+Inhalt
+1 Allgemeines
+1.1 Programm und Grundlagen
+1.2 Einheiten
+1.3 Vorzeichenkonvention
+1.4 Rechenverfahren
+1.5 Gültigkeitsbereich und Hinweise
+2 System
+2.1 Geometrie
+2.2 Materialien
+2.3 Querschnitte
+2.4 Lagerung
+2.5 Systemdarstellung
+3 Einwirkungen
+3.1 Lastfälle
+3.2 Kombinationen
+4 Ergebnisse
+4.1 Übersicht
+4.2 Ergebnisse je Lastfall
+4.3 Ergebnisse je Kombination
+4.4 Umhüllende
+5 Nachweise nach DIN EN 1993-1-1
+6 Beulnachweise nach DIN EN 1993-1-5
+7 Ermüdungsnachweis nach DIN EN 1993-1-9
+8 Anschlüsse nach DIN EN 1993-1-8
+9 Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)
+10 Übernommene Ergebnisse
+10.1 Bild 1
+10.2 Bild 2
+10.3 Tabelle 1
+10.4 Tabelle 2
+11 Zusammenfassung
+A Anhang
+A.1 Modellprüfung
+A.2 Rechenlauf und Parallelisierung
+1&nbsp;&nbsp;Allgemeines
+1.1&nbsp;&nbsp;Programm und Grundlagen
+Die Berechnung wurde mit dem Programm Statik3D, Version 2.1.0, durchgeführt (Finite-Elemente-Programm für Stab-, Flächen- und Volumentragwerke des Stahlbaus). Der vorliegende Bericht dokumentiert System, Einwirkungen, Ergebnisse und Nachweise in prüffähiger Form.
+Zugrunde gelegte Normen
+Norm
+Inhalt / Anwendung
+DIN EN 1990
+Grundlagen der Tragwerksplanung – Kombinationsregeln, Teilsicherheits- und Kombinationsbeiwerte (mit Nationalem Anhang)
+DIN EN 1991
+Einwirkungen auf Tragwerke – Einwirkungskategorien und ψ-Beiwerte
+DIN EN 1993-1-1
+Stahlbau, allgemeine Bemessungsregeln – Querschnittsklassifizierung, Querschnittsnachweise (6.2), Stabilitätsnachweise (6.3, Anhang B)
+DIN EN 1993-1-5
+Plattenförmige Bauteile – wirksame Querschnitte der Klasse 4, Hinweis auf Schubbeulen
+DIN EN 1993-1-9
+Ermüdung – Nennspannungskonzept, Wöhlerlinien, Schadensakkumulation nach Palmgren-Miner
+DIN 1080
+Begriffe, Formelzeichen und Einheiten im Bauingenieurwesen – Vorzeichenkonvention der Schnittgrößen
+1.2&nbsp;&nbsp;Einheiten
+Einheiten
+Größe
+Rechenwert (intern)
+Angabe im Bericht
+Länge, Koordinaten
+m
+m
+Verschiebung
+m
+mm
+Verdrehung
+rad
+mrad
+Kraft
+N
+kN
+Moment
+Nm
+kNm
+Streckenlast
+N/m
+kN/m
+Flächenlast
+Pa (N/m²)
+kN/m²
+Spannung, Festigkeit, E-Modul
+Pa
+N/mm² (MPa)
+Querschnittswerte
+m², m³, m⁴, m⁶
+cm², cm³, cm⁴, cm⁶
+Dichte
+kg/m³
+kg/m³
+Temperatur
+K
+K
+1.3&nbsp;&nbsp;Vorzeichenkonvention
+Globales Koordinatensystem x, y, z rechtshändig; z zeigt in der Regel nach oben. Verschiebungen und Lasten sind positiv in Richtung der positiven Achsen.
+Schnittgrößen der Stäbe nach DIN 1080: am positiven Schnittufer wirken positive Schnittgrößen in Richtung der positiven lokalen Achsen. Normalkraft N &gt; 0 ist Zug; My &gt; 0 erzeugt Zug auf der +z-Seite des Querschnitts.
+Lokale Stabachsen: x von Anfangs- zu Endknoten, y und z Hauptachsen (y = starke Achse, Steg in lokaler z-Richtung bei I-Profilen); die Bezugsrichtung ist die globale z-Achse (bei lotrechten Stäben die globale x-Achse), zusätzlich der Rollwinkel des Elements.
+Auflagerreaktionen sind Kräfte vom Lager auf das Tragwerk, positiv in Richtung der globalen Achsen.
+Schnittgrößenverläufe: positive Werte sind nach oben aufgetragen.
+1.4&nbsp;&nbsp;Rechenverfahren
+Lineare Finite-Elemente-Berechnung (Theorie I. Ordnung, linear-elastisches Werkstoffverhalten, kleine Verformungen). Die Lastfälle werden mit einer Faktorisierung der Gesamtsteifigkeitsmatrix gelöst; Kombinationen entstehen durch lineare Überlagerung (Superposition) der Lastfallergebnisse.
+Elementtypen im Modell: Balken 3D (12 FHG, Timoshenko-Schub; mit Exzentrizität und Wölbkrafttorsion als 7. FHG) (4 Stück).
+Gleichungslöser: pardiso (direkt, sparse).
+Kombinationsbildung nach DIN EN 1990 mit Gleichung 6.10 (γ_G,sup = 1.35, γ_G,inf = 1, γ_Q = 1.5); ψ-Beiwerte nach DIN EN 1990/NA Tabelle A.1.1 je Einwirkungskategorie. Gebrauchstauglichkeit: charakteristisch (6.14b), häufig (6.15b), quasi-ständig (6.16b). Umhüllende: Extremwerte aller Kombinationen je Bemessungssituation mit Angabe der maßgebenden Kombination.
+Stabnachweise nach DIN EN 1993-1-1: Querschnittsklassifizierung (Tabelle 5.2), Querschnittsnachweise nach 6.2 (N, V, M, Interaktion, Torsion, Vergleichsspannung) an 9 Nachweisstellen je Element, Stabilitätsnachweise nach 6.3 (Biegeknicken, Drillknicken, Biegedrillknicken mit M_cr nach NCCI SN003, Interaktion nach Anhang B); γ_M0 = 1, γ_M1 = 1.1, γ_M2 = 1.25.
+Ermüdungsnachweis nach DIN EN 1993-1-9 (Nennspannungskonzept, Kerbfallklassen, Wöhlerlinien mit m = 3/5 bzw. m = 5 für Schub, Schadensakkumulation D = Σ n_i/N_Ri ≤ 1; γ_Ff = 1, γ_Mf nach Tabelle 3.1).
+1.5&nbsp;&nbsp;Gültigkeitsbereich und Hinweise
+Die Berechnung ist elastisch (keine Plastizität, keine Theorie III. Ordnung/große Verformungen). Gerechnet wird nach Theorie I. Ordnung; ob das nach 5.2.1(3) zulässig ist (α_cr ≥ 10), ist gesondert zu prüfen – Statik3D kann α_cr je Kombination bestimmen und das Gleichgewicht am verformten System aufstellen (Einstellungen der Nachweise). Imperfektionen sind über die Knicklinien der Nachweise beziehungsweise über die Herstelltoleranzklasse der Schalen erfasst.
+Stabilitätsnachweise setzen die angegebenen Knicklängen, seitlichen Halterungen und Randbedingungsbeiwerte voraus; diese sind vom Anwender zu verantworten.
+Schubbeulen der Stegbleche wird nach DIN EN 1993-1-5, Abschnitt 5 nachgewiesen (V_b,Rd ohne Flanschanteil, Interaktion M–V nach 7.1). Blechfelder werden – soweit im Modell als Beulfeld festgelegt – nach Abschnitt 10 geführt, längs- und quer versteifte Felder mit σ_cr,p nach Anhang A und den Steifennachweisen nach Abschnitt 9; die Lasteinleitung wird nach Abschnitt 6 und 7.2 geprüft. Zylinderschalen werden nach DIN EN 1993-1-6, Abschnitt 8.5 geführt; andere Schalenformen (Kegel, Kugel) sind nicht enthalten.
+Anschlüsse, Schweißnähte und Schrauben nach DIN EN 1993-1-8 werden für die im Modell angelegten Anschlüsse in Kapitel 7 nachgewiesen; nicht angelegte Anschlüsse sind gesondert nachzuweisen.
+Ermüdung: Nennspannungen an den Querschnittsrändern aus N, My, Mz; Schub aus V/A_v; Reihenfolgeeffekte werden nicht berücksichtigt.
+Alle Ergebnisse sind vom Aufsteller auf Plausibilität zu prüfen (Gleichgewicht der Auflagerkräfte, Größenordnung der Verformungen).
+2&nbsp;&nbsp;System
+2.1&nbsp;&nbsp;Geometrie
+Modellkennwerte
+Modell
+Fachbegriffe
+Knoten
+5
+Elemente
+4 (4 beam)
+Abmessungen x / y / z [m]
+2.000 / 0.000 / 0.000
+Koordinatenbereich
+x: 0.000 … 2.000, y: 0.000 … 0.000, z: 0.000 … 0.000 m
+Freiheitsgrade
+30 (6 je Knoten)
+Stäbe (Nachweise)
+0
+Knotenkoordinaten
+Knoten
+x [m]
+y [m]
+z [m]
+0
+0.000
+0.000
+0.000
+1
+0.500
+0.000
+0.000
+2
+1.000
+0.000
+0.000
+3
+1.500
+0.000
+0.000
+4
+2.000
+0.000
+0.000
+Elemente
+Element
+Typ
+Knoten
+Material
+Querschnitt / Dicke
+L [m]
+0
+beam
+0 1
+S
+R
+0.500
+1
+beam
+1 2
+S
+R
+0.500
+2
+beam
+2 3
+S
+R
+0.500
+3
+beam
+3 4
+S
+R
+0.500
+2.2&nbsp;&nbsp;Materialien
+Materialkennwerte
+Material
+Stahlsorte
+E [N/mm²]
+ν
+G [N/mm²]
+ρ [kg/m³]
+α_T [1/K]
+f_y [N/mm²]
+f_u [N/mm²]
+S
+–
+210000
+0.30
+80769
+0
+1.20e-05
+–
+–
+2.3&nbsp;&nbsp;Querschnitte
+Querschnittswerte (Bruttoquerschnitt)
+Querschnitt
+Typ
+h [mm]
+b [mm]
+t_w [mm]
+t_f [mm]
+r [mm]
+A [cm²]
+A_vy [cm²]
+A_vz [cm²]
+I_y [cm⁴]
+I_z [cm⁴]
+I_t [cm⁴]
+I_w [cm⁶]
+W_el,y [cm³]
+W_el,z [cm³]
+W_pl,y [cm³]
+W_pl,z [cm³]
+Herstellung
+R
+rect
+200.0
+100.0
+0.0
+0.0
+0.0
+200.00
+166.67
+166.67
+6666.7
+1666.7
+4577.60
+0.0
+666.7
+333.3
+1000.0
+500.0
+gewalzt
+R: Rechteck 100x200 mm
+2.4&nbsp;&nbsp;Lagerung
+Lagerbedingungen
+Knoten
+x [m]
+y [m]
+z [m]
+gehaltene FHG
+Vorgabe
+Feder [kN/m, kNm/rad]
+0
+0.000
+0.000
+0.000
+ux uy uz rx ry rz
+–
+starr
+2.5&nbsp;&nbsp;Systemdarstellung
+System – Ansicht (x-z) 0 1 2 3 4 0 1 2 3 System – Ansicht (x-z) Ansicht (x-z) x z Statisches System, Ansicht (x-z) (mit Knoten- und Elementnummern)
+3&nbsp;&nbsp;Einwirkungen
+3.1&nbsp;&nbsp;Lastfälle
+Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)
+Lastfall
+Kategorie
+Einwirkung
+Beschreibung
+ψ_0
+ψ_1
+ψ_2
+γ_sup
+γ_inf
+Gruppe
+Situation
+Theorie
+Lasten
+LF1
+G
+Staendige Einwirkung
+Eigengewicht / staendige Lasten
+1.00
+1.00
+1.00
+1.35
+1.00
+–
+Grundstellung
+I
+1
+LF2
+Q
+Veraenderliche Einwirkung, allgemein
+–
+0.80
+0.70
+0.50
+1.50
+0.00
+–
+Grundstellung
+I
+1
+LF3
+W
+Wind
+–
+0.60
+0.20
+0.00
+1.50
+0.00
+–
+Grundstellung
+I
+1
+3.1.1&nbsp;&nbsp;Lastfall LF1 – Eigengewicht / staendige Lasten
+Knotenlasten Lastfall LF1
+Knoten
+Anzahl
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+4
+1
+0.000
+0.000
+-10.000
+0.000
+0.000
+0.000
+Lastfall LF1 F = 10 kN Lastfall LF1 Ansicht (x-z) Lastfall LF1 x z Lasten des Lastfalls LF1
+3.1.2&nbsp;&nbsp;Lastfall LF2
+Knotenlasten Lastfall LF2
+Knoten
+Anzahl
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+4
+1
+0.000
+5.000
+0.000
+0.000
+0.000
+0.000
+Lastfall LF2 F = 5 kN Lastfall LF2 Ansicht (x-z) Lastfall LF2 x z Lasten des Lastfalls LF2
+3.1.3&nbsp;&nbsp;Lastfall LF3
+Knotenlasten Lastfall LF3
+Knoten
+Anzahl
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+4
+1
+0.000
+0.000
+0.000
+2.000
+0.000
+0.000
+Lastfall LF3 M = 2 kNm Lastfall LF3 Ansicht (x-z) Lastfall LF3 x z Lasten des Lastfalls LF3
+3.2&nbsp;&nbsp;Kombinationen
+Lastfallkombinationen (Faktoren je Lastfall)
+Kombination
+Typ
+Leit
+Situation
+Theorie
+LF1
+LF2
+LF3
+Beschreibung
+K1
+GZT (STR/GEO)
+Grundstellung
+I
+1
+0.5
+Typ ULS
+K2
+GZT (EQU)
+Grundstellung
+I
+1.1
+0.5
+Typ EQU
+K3
+außergewöhnlich
+Grundstellung
+I
+1.2
+0.5
+Typ ACC
+K4
+GZG charakteristisch
+Grundstellung
+I
+1.3
+0.5
+Typ SLS_CH
+K5
+GZG häufig
+Grundstellung
+I
+1.4
+0.5
+Typ SLS_FR
+K6
+GZG quasi-ständig
+Grundstellung
+I
+1.5
+0.5
+Typ SLS_QP
+K7
+FAT
+Grundstellung
+I
+1.6
+0.5
+Typ FAT
+K8
+benutzerdefiniert
+Grundstellung
+I
+1.7
+0.5
+Typ USER
+GZT
+GZT (STR/GEO)
+Grundstellung
+I
+Ermüdung
+FAT
+Grundstellung
+I
+Kombinationsregel: Gleichung 6.10 nach DIN EN 1990; GZT = Grenzzustand der Tragfähigkeit (STR/GEO), GZG = Gebrauchstauglichkeit.
+4&nbsp;&nbsp;Ergebnisse
+4.1&nbsp;&nbsp;Übersicht
+Übersicht aller Ergebnisse (Summe der Auflagerkräfte = Reaktionen vom Lager auf das Tragwerk)
+Ergebnis
+Art
+max |u| [mm]
+Knoten
+ΣF_x [kN]
+ΣF_y [kN]
+ΣF_z [kN]
+max σ_v [N/mm²]
+Kontakt
+LF1
+Lastfall
+1.920
+4
+0.00
+0.00
+10.00
+30.0
+–
+LF2
+Lastfall
+3.817
+4
+0.00
+-5.00
+0.00
+30.0
+–
+LF3
+Lastfall
+0.000
+0
+0.00
+0.00
+0.00
+0.0
+–
+K1
+Kombination (GZT (STR/GEO))
+2.707
+4
+0.00
+-2.50
+10.00
+45.0
+–
+K2
+Kombination (GZT (EQU))
+2.846
+4
+0.00
+-2.50
+11.00
+48.0
+–
+K3
+Kombination (außergewöhnlich)
+2.991
+4
+0.00
+-2.50
+12.00
+51.0
+–
+K4
+Kombination (GZG charakteristisch)
+3.142
+4
+0.00
+-2.50
+13.00
+54.0
+–
+K5
+Kombination (GZG häufig)
+3.296
+4
+0.00
+-2.50
+14.00
+57.0
+–
+K6
+Kombination (GZG quasi-ständig)
+3.454
+4
+0.00
+-2.50
+15.00
+60.0
+–
+K7
+Kombination (FAT)
+3.616
+4
+0.00
+-2.50
+16.00
+63.0
+–
+K8
+Kombination (benutzerdefiniert)
+3.780
+4
+0.00
+-2.50
+17.00
+66.0
+–
+Verformung – K8 Verformung – K8 Ansicht (x-z) x z Verformte Lage, Überhöhung 42-fach (max |u| = 3.78 mm)
+Verschiebung |u| 0 mm 3.78 mm Verformte Lage für K8 (Ausgangslage gestrichelt, Farbe: Verschiebungsbetrag)
+4.2&nbsp;&nbsp;Ergebnisse je Lastfall
+4.2.1&nbsp;&nbsp;Lastfall LF1
+Kennwerte LF1
+max. Verschiebung |u|
+1.920 mm am Knoten 4 (u_x = 0.000, u_y = 0.000, u_z = -1.920 mm)
+max. Verdrehung
+1.429 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+30.0 N/mm² am Knoten 0
+Lastfaktoren
+1·LF1
+Auflagerreaktionen LF1
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+0.00
+10.00
+0.00
+-20.00
+0.00
+Summe
+0.00
+0.00
+10.00
+0.00
+-20.00
+0.00
+Extremwerte der Stabschnittgrößen LF1 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vz [kN]
+-10.00
+2
+0.00
+-10.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+20.00
+0
+0.00
+Mz [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+4.2.2&nbsp;&nbsp;Lastfall LF2
+Kennwerte LF2
+max. Verschiebung |u|
+3.817 mm am Knoten 4 (u_x = 0.000, u_y = 3.817, u_z = 0.000 mm)
+max. Verdrehung
+2.857 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+30.0 N/mm² am Knoten 0
+Lastfaktoren
+1·LF2
+Auflagerreaktionen LF2
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-5.00
+0.00
+0.00
+0.00
+-10.00
+Summe
+0.00
+-5.00
+0.00
+0.00
+0.00
+-10.00
+Extremwerte der Stabschnittgrößen LF2 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+5.00
+1
+0.00
+5.00
+2
+0.00
+Vz [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+10.00
+0
+0.00
+4.2.3&nbsp;&nbsp;Lastfall LF3
+Kennwerte LF3
+max. Verschiebung |u|
+0.000 mm am Knoten 0 (u_x = 0.000, u_y = 0.000, u_z = 0.000 mm)
+max. Verdrehung
+1.082 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+0.0 N/mm² am Knoten 0
+Lastfaktoren
+1·LF3
+Auflagerreaktionen LF3
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+0.00
+0.00
+-2.00
+0.00
+0.00
+Summe
+0.00
+0.00
+0.00
+-2.00
+0.00
+0.00
+Extremwerte der Stabschnittgrößen LF3 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vz [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Mt [kNm]
+2.00
+2
+0.00
+2.00
+3
+0.00
+My [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Mz [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+4.3&nbsp;&nbsp;Ergebnisse je Kombination
+4.3.1&nbsp;&nbsp;Kombination K1 (GZT (STR/GEO)): 1·LF1 + 0.5·LF2
+Kennwerte K1
+max. Verschiebung |u|
+2.707 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -1.920 mm)
+max. Verdrehung
+2.020 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+45.0 N/mm² am Knoten 0
+Lastfaktoren
+1·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K1
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+10.00
+0.00
+-20.00
+-5.00
+Summe
+0.00
+-2.50
+10.00
+0.00
+-20.00
+-5.00
+Extremwerte der Stabschnittgrößen K1 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-10.00
+2
+0.00
+-10.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+20.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.2&nbsp;&nbsp;Kombination K2 (GZT (EQU)): 1.1·LF1 + 0.5·LF2
+Kennwerte K2
+max. Verschiebung |u|
+2.846 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -2.112 mm)
+max. Verdrehung
+2.124 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+48.0 N/mm² am Knoten 0
+Lastfaktoren
+1.1·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K2
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+11.00
+0.00
+-22.00
+-5.00
+Summe
+0.00
+-2.50
+11.00
+0.00
+-22.00
+-5.00
+Extremwerte der Stabschnittgrößen K2 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-11.00
+2
+0.00
+-11.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+22.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.3&nbsp;&nbsp;Kombination K3 (außergewöhnlich): 1.2·LF1 + 0.5·LF2
+Kennwerte K3
+max. Verschiebung |u|
+2.991 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -2.304 mm)
+max. Verdrehung
+2.231 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+51.0 N/mm² am Knoten 0
+Lastfaktoren
+1.2·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K3
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+12.00
+0.00
+-24.00
+-5.00
+Summe
+0.00
+-2.50
+12.00
+0.00
+-24.00
+-5.00
+Extremwerte der Stabschnittgrößen K3 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-12.00
+2
+0.00
+-12.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+24.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.4&nbsp;&nbsp;Kombination K4 (GZG charakteristisch): 1.3·LF1 + 0.5·LF2
+Kennwerte K4
+max. Verschiebung |u|
+3.142 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -2.496 mm)
+max. Verdrehung
+2.343 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+54.0 N/mm² am Knoten 0
+Lastfaktoren
+1.3·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K4
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+13.00
+0.00
+-26.00
+-5.00
+Summe
+0.00
+-2.50
+13.00
+0.00
+-26.00
+-5.00
+Extremwerte der Stabschnittgrößen K4 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-13.00
+2
+0.00
+-13.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+26.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.5&nbsp;&nbsp;Kombination K5 (GZG häufig): 1.4·LF1 + 0.5·LF2
+Kennwerte K5
+max. Verschiebung |u|
+3.296 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -2.687 mm)
+max. Verdrehung
+2.458 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+57.0 N/mm² am Knoten 0
+Lastfaktoren
+1.4·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K5
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+14.00
+0.00
+-28.00
+-5.00
+Summe
+0.00
+-2.50
+14.00
+0.00
+-28.00
+-5.00
+Extremwerte der Stabschnittgrößen K5 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-14.00
+2
+0.00
+-14.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+28.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.6&nbsp;&nbsp;Kombination K6 (GZG quasi-ständig): 1.5·LF1 + 0.5·LF2
+Kennwerte K6
+max. Verschiebung |u|
+3.454 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -2.879 mm)
+max. Verdrehung
+2.575 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+60.0 N/mm² am Knoten 0
+Lastfaktoren
+1.5·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K6
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+15.00
+0.00
+-30.00
+-5.00
+Summe
+0.00
+-2.50
+15.00
+0.00
+-30.00
+-5.00
+Extremwerte der Stabschnittgrößen K6 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-15.00
+2
+0.00
+-15.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+30.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.7&nbsp;&nbsp;Kombination K7 (FAT): 1.6·LF1 + 0.5·LF2
+Kennwerte K7
+max. Verschiebung |u|
+3.616 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -3.071 mm)
+max. Verdrehung
+2.695 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+63.0 N/mm² am Knoten 0
+Lastfaktoren
+1.6·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K7
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+16.00
+0.00
+-32.00
+-5.00
+Summe
+0.00
+-2.50
+16.00
+0.00
+-32.00
+-5.00
+Extremwerte der Stabschnittgrößen K7 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-16.00
+2
+0.00
+-16.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+32.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.3.8&nbsp;&nbsp;Kombination K8 (benutzerdefiniert): 1.7·LF1 + 0.5·LF2
+Kennwerte K8
+max. Verschiebung |u|
+3.780 mm am Knoten 4 (u_x = 0.000, u_y = 1.908, u_z = -3.263 mm)
+max. Verdrehung
+2.818 mrad am Knoten 4
+max. Vergleichsspannung (Knotenmittel)
+66.0 N/mm² am Knoten 0
+Lastfaktoren
+1.7·LF1 + 0.5·LF2
+Ermittlung
+lineare Überlagerung der Lastfallergebnisse
+Auflagerreaktionen K8
+Knoten
+F_x [kN]
+F_y [kN]
+F_z [kN]
+M_x [kNm]
+M_y [kNm]
+M_z [kNm]
+0
+0.00
+-2.50
+17.00
+0.00
+-34.00
+-5.00
+Summe
+0.00
+-2.50
+17.00
+0.00
+-34.00
+-5.00
+Extremwerte der Stabschnittgrößen K8 (x ab Elementanfang)
+Schnittgröße
+min
+Element
+x [m]
+max
+Element
+x [m]
+N [kN]
+0.00
+0
+0.00
+0.00
+0
+0.00
+Vy [kN]
+2.50
+1
+0.00
+2.50
+2
+0.00
+Vz [kN]
+-17.00
+2
+0.00
+-17.00
+0
+0.00
+Mt [kNm]
+0.00
+0
+0.00
+0.00
+0
+0.00
+My [kNm]
+0.00
+3
+0.50
+34.00
+0
+0.00
+Mz [kNm]
+0.00
+3
+0.50
+5.00
+0
+0.00
+4.4&nbsp;&nbsp;Umhüllende
+4.4.1&nbsp;&nbsp;Umhüllende Grenzzustand der Tragfähigkeit (GZT)
+Extremwerte aus 6 Ergebnissen: K1, K2, K3, K8, GZT [1], GZT [2].
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+K1
+0.000
+0
+K1
+uy [mm]
+0.000
+0
+K1
+5.725
+4
+GZT [2]
+uz [mm]
+-3.263
+4
+K8
+0.000
+0
+K1
+rx [mrad]
+0.000
+0
+K1
+0.000
+0
+K1
+ry [mrad]
+0.000
+0
+K1
+2.429
+4
+K8
+rz [mrad]
+0.000
+0
+K1
+4.286
+4
+GZT [2]
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_y
+-7.50
+GZT [2]
+0.00
+GZT [1]
+0
+F_z
+10.00
+K1
+17.00
+K8
+0
+M_y
+-34.00
+K8
+-20.00
+K1
+0
+M_z
+-15.00
+GZT [2]
+0.00
+GZT [1]
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 0
+Vz [kN]
+-17.00
+0.00
+K8
+-10.00
+0.00
+K1
+Element 0
+My [kNm]
+15.00
+0.50
+K1
+34.00
+0.00
+K8
+Element 0
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+15.00
+0.00
+GZT [2]
+Element 1
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 1
+Vz [kN]
+-17.00
+0.00
+K8
+-10.00
+0.00
+K1
+Element 1
+My [kNm]
+10.00
+0.50
+K1
+25.50
+0.00
+K8
+Element 1
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+11.25
+0.00
+GZT [2]
+Element 2
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 2
+Vz [kN]
+-17.00
+0.00
+K8
+-10.00
+0.00
+K1
+Element 2
+My [kNm]
+5.00
+0.50
+K1
+17.00
+0.00
+K8
+Element 2
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 3
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 3
+Vz [kN]
+-17.00
+0.00
+K8
+-10.00
+0.00
+K1
+Element 3
+My [kNm]
+0.00
+0.50
+K1
+8.50
+0.00
+K8
+Element 3
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+3.75
+0.00
+GZT [2]
+Maximale Vergleichsspannung (Knotenmittel) 85.5 N/mm² am Knoten 0.
+4.4.2&nbsp;&nbsp;Umhüllende Gebrauchstauglichkeit, charakteristisch
+Extremwerte aus 1 Ergebnissen: K4.
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+K4
+0.000
+0
+K4
+uy [mm]
+0.000
+0
+K4
+1.908
+4
+K4
+uz [mm]
+-2.496
+4
+K4
+0.000
+0
+K4
+rx [mrad]
+0.000
+0
+K4
+0.000
+0
+K4
+ry [mrad]
+0.000
+0
+K4
+1.857
+4
+K4
+rz [mrad]
+0.000
+0
+K4
+1.429
+4
+K4
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_y
+-2.50
+K4
+-2.50
+K4
+0
+F_z
+13.00
+K4
+13.00
+K4
+0
+M_y
+-26.00
+K4
+-26.00
+K4
+0
+M_z
+-5.00
+K4
+-5.00
+K4
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vy [kN]
+2.50
+0.00
+K4
+2.50
+0.00
+K4
+Element 0
+Vz [kN]
+-13.00
+0.00
+K4
+-13.00
+0.00
+K4
+Element 0
+My [kNm]
+19.50
+0.50
+K4
+26.00
+0.00
+K4
+Element 0
+Mz [kNm]
+3.75
+0.50
+K4
+5.00
+0.00
+K4
+Element 1
+Vy [kN]
+2.50
+0.00
+K4
+2.50
+0.00
+K4
+Element 1
+Vz [kN]
+-13.00
+0.00
+K4
+-13.00
+0.00
+K4
+Element 1
+My [kNm]
+13.00
+0.50
+K4
+19.50
+0.00
+K4
+Element 1
+Mz [kNm]
+2.50
+0.50
+K4
+3.75
+0.00
+K4
+Element 2
+Vy [kN]
+2.50
+0.00
+K4
+2.50
+0.00
+K4
+Element 2
+Vz [kN]
+-13.00
+0.00
+K4
+-13.00
+0.00
+K4
+Element 2
+My [kNm]
+6.50
+0.50
+K4
+13.00
+0.00
+K4
+Element 2
+Mz [kNm]
+1.25
+0.50
+K4
+2.50
+0.00
+K4
+Element 3
+Vy [kN]
+2.50
+0.00
+K4
+2.50
+0.00
+K4
+Element 3
+Vz [kN]
+-13.00
+0.00
+K4
+-13.00
+0.00
+K4
+Element 3
+My [kNm]
+0.00
+0.50
+K4
+6.50
+0.00
+K4
+Element 3
+Mz [kNm]
+0.00
+0.50
+K4
+1.25
+0.00
+K4
+Maximale Vergleichsspannung (Knotenmittel) 54.0 N/mm² am Knoten 0.
+4.4.3&nbsp;&nbsp;Umhüllende Gebrauchstauglichkeit, häufig
+Extremwerte aus 1 Ergebnissen: K5.
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+K5
+0.000
+0
+K5
+uy [mm]
+0.000
+0
+K5
+1.908
+4
+K5
+uz [mm]
+-2.687
+4
+K5
+0.000
+0
+K5
+rx [mrad]
+0.000
+0
+K5
+0.000
+0
+K5
+ry [mrad]
+0.000
+0
+K5
+2.000
+4
+K5
+rz [mrad]
+0.000
+0
+K5
+1.429
+4
+K5
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_y
+-2.50
+K5
+-2.50
+K5
+0
+F_z
+14.00
+K5
+14.00
+K5
+0
+M_y
+-28.00
+K5
+-28.00
+K5
+0
+M_z
+-5.00
+K5
+-5.00
+K5
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vy [kN]
+2.50
+0.00
+K5
+2.50
+0.00
+K5
+Element 0
+Vz [kN]
+-14.00
+0.00
+K5
+-14.00
+0.00
+K5
+Element 0
+My [kNm]
+21.00
+0.50
+K5
+28.00
+0.00
+K5
+Element 0
+Mz [kNm]
+3.75
+0.50
+K5
+5.00
+0.00
+K5
+Element 1
+Vy [kN]
+2.50
+0.00
+K5
+2.50
+0.00
+K5
+Element 1
+Vz [kN]
+-14.00
+0.00
+K5
+-14.00
+0.00
+K5
+Element 1
+My [kNm]
+14.00
+0.50
+K5
+21.00
+0.00
+K5
+Element 1
+Mz [kNm]
+2.50
+0.50
+K5
+3.75
+0.00
+K5
+Element 2
+Vy [kN]
+2.50
+0.00
+K5
+2.50
+0.00
+K5
+Element 2
+Vz [kN]
+-14.00
+0.00
+K5
+-14.00
+0.00
+K5
+Element 2
+My [kNm]
+7.00
+0.50
+K5
+14.00
+0.00
+K5
+Element 2
+Mz [kNm]
+1.25
+0.50
+K5
+2.50
+0.00
+K5
+Element 3
+Vy [kN]
+2.50
+0.00
+K5
+2.50
+0.00
+K5
+Element 3
+Vz [kN]
+-14.00
+0.00
+K5
+-14.00
+0.00
+K5
+Element 3
+My [kNm]
+0.00
+0.50
+K5
+7.00
+0.00
+K5
+Element 3
+Mz [kNm]
+0.00
+0.50
+K5
+1.25
+0.00
+K5
+Maximale Vergleichsspannung (Knotenmittel) 57.0 N/mm² am Knoten 0.
+4.4.4&nbsp;&nbsp;Umhüllende Gebrauchstauglichkeit, quasi-ständig
+Extremwerte aus 1 Ergebnissen: K6.
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+K6
+0.000
+0
+K6
+uy [mm]
+0.000
+0
+K6
+1.908
+4
+K6
+uz [mm]
+-2.879
+4
+K6
+0.000
+0
+K6
+rx [mrad]
+0.000
+0
+K6
+0.000
+0
+K6
+ry [mrad]
+0.000
+0
+K6
+2.143
+4
+K6
+rz [mrad]
+0.000
+0
+K6
+1.429
+4
+K6
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_y
+-2.50
+K6
+-2.50
+K6
+0
+F_z
+15.00
+K6
+15.00
+K6
+0
+M_y
+-30.00
+K6
+-30.00
+K6
+0
+M_z
+-5.00
+K6
+-5.00
+K6
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vy [kN]
+2.50
+0.00
+K6
+2.50
+0.00
+K6
+Element 0
+Vz [kN]
+-15.00
+0.00
+K6
+-15.00
+0.00
+K6
+Element 0
+My [kNm]
+22.50
+0.50
+K6
+30.00
+0.00
+K6
+Element 0
+Mz [kNm]
+3.75
+0.50
+K6
+5.00
+0.00
+K6
+Element 1
+Vy [kN]
+2.50
+0.00
+K6
+2.50
+0.00
+K6
+Element 1
+Vz [kN]
+-15.00
+0.00
+K6
+-15.00
+0.00
+K6
+Element 1
+My [kNm]
+15.00
+0.50
+K6
+22.50
+0.00
+K6
+Element 1
+Mz [kNm]
+2.50
+0.50
+K6
+3.75
+0.00
+K6
+Element 2
+Vy [kN]
+2.50
+0.00
+K6
+2.50
+0.00
+K6
+Element 2
+Vz [kN]
+-15.00
+0.00
+K6
+-15.00
+0.00
+K6
+Element 2
+My [kNm]
+7.50
+0.50
+K6
+15.00
+0.00
+K6
+Element 2
+Mz [kNm]
+1.25
+0.50
+K6
+2.50
+0.00
+K6
+Element 3
+Vy [kN]
+2.50
+0.00
+K6
+2.50
+0.00
+K6
+Element 3
+Vz [kN]
+-15.00
+0.00
+K6
+-15.00
+0.00
+K6
+Element 3
+My [kNm]
+0.00
+0.50
+K6
+7.50
+0.00
+K6
+Element 3
+Mz [kNm]
+0.00
+0.50
+K6
+1.25
+0.00
+K6
+Maximale Vergleichsspannung (Knotenmittel) 60.0 N/mm² am Knoten 0.
+4.4.5&nbsp;&nbsp;Umhüllende FAT
+Extremwerte aus 3 Ergebnissen: K7, LF1, LF3.
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+K7
+0.000
+0
+K7
+uy [mm]
+0.000
+0
+K7
+1.908
+4
+K7
+uz [mm]
+-3.071
+4
+K7
+0.000
+0
+K7
+rx [mrad]
+0.000
+0
+K7
+1.082
+4
+LF3
+ry [mrad]
+0.000
+0
+K7
+2.286
+4
+K7
+rz [mrad]
+0.000
+0
+K7
+1.429
+4
+K7
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_y
+-2.50
+K7
+0.00
+LF1
+0
+F_z
+0.00
+LF3
+16.00
+K7
+0
+M_x
+-2.00
+LF3
+0.00
+K7
+0
+M_y
+-32.00
+K7
+0.00
+LF3
+0
+M_z
+-5.00
+K7
+0.00
+LF1
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vy [kN]
+0.00
+0.00
+LF1
+2.50
+0.00
+K7
+Element 0
+Vz [kN]
+-16.00
+0.00
+K7
+0.00
+0.00
+LF3
+Element 0
+Mt [kNm]
+0.00
+0.00
+K7
+2.00
+0.00
+LF3
+Element 0
+My [kNm]
+0.00
+0.00
+LF3
+32.00
+0.00
+K7
+Element 0
+Mz [kNm]
+0.00
+0.00
+LF1
+5.00
+0.00
+K7
+Element 1
+Vy [kN]
+0.00
+0.00
+LF1
+2.50
+0.00
+K7
+Element 1
+Vz [kN]
+-16.00
+0.00
+K7
+0.00
+0.00
+LF3
+Element 1
+Mt [kNm]
+0.00
+0.00
+K7
+2.00
+0.00
+LF3
+Element 1
+My [kNm]
+0.00
+0.00
+LF3
+24.00
+0.00
+K7
+Element 1
+Mz [kNm]
+0.00
+0.00
+LF1
+3.75
+0.00
+K7
+Element 2
+Vy [kN]
+0.00
+0.00
+LF1
+2.50
+0.00
+K7
+Element 2
+Vz [kN]
+-16.00
+0.00
+K7
+0.00
+0.00
+LF3
+Element 2
+Mt [kNm]
+0.00
+0.00
+K7
+2.00
+0.00
+LF3
+Element 2
+My [kNm]
+0.00
+0.00
+LF3
+16.00
+0.00
+K7
+Element 2
+Mz [kNm]
+0.00
+0.00
+LF1
+2.50
+0.00
+K7
+Element 3
+Vy [kN]
+0.00
+0.00
+LF1
+2.50
+0.00
+K7
+Element 3
+Vz [kN]
+-16.00
+0.00
+K7
+0.00
+0.00
+LF3
+Element 3
+Mt [kNm]
+0.00
+0.00
+K7
+2.00
+0.00
+LF3
+Element 3
+My [kNm]
+0.00
+0.00
+LF3
+8.00
+0.00
+K7
+Element 3
+Mz [kNm]
+0.00
+0.00
+LF1
+1.25
+0.00
+K7
+Maximale Vergleichsspannung (Knotenmittel) 63.0 N/mm² am Knoten 0.
+4.4.6&nbsp;&nbsp;Umhüllende GZT
+Extremwerte aus 2 Ergebnissen: GZT [1], GZT [2].
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+GZT [1]
+0.000
+0
+GZT [1]
+uy [mm]
+0.000
+0
+GZT [1]
+5.725
+4
+GZT [2]
+uz [mm]
+-2.591
+4
+GZT [1]
+0.000
+0
+GZT [1]
+rx [mrad]
+0.000
+0
+GZT [1]
+0.000
+0
+GZT [1]
+ry [mrad]
+0.000
+0
+GZT [1]
+1.929
+4
+GZT [1]
+rz [mrad]
+0.000
+0
+GZT [1]
+4.286
+4
+GZT [2]
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_y
+-7.50
+GZT [2]
+0.00
+GZT [1]
+0
+F_z
+13.50
+GZT [1]
+13.50
+GZT [1]
+0
+M_y
+-27.00
+GZT [1]
+-27.00
+GZT [1]
+0
+M_z
+-15.00
+GZT [2]
+0.00
+GZT [1]
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 0
+Vz [kN]
+-13.50
+0.00
+GZT [1]
+-13.50
+0.00
+GZT [1]
+Element 0
+My [kNm]
+20.25
+0.50
+GZT [1]
+27.00
+0.00
+GZT [1]
+Element 0
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+15.00
+0.00
+GZT [2]
+Element 1
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 1
+Vz [kN]
+-13.50
+0.00
+GZT [1]
+-13.50
+0.00
+GZT [1]
+Element 1
+My [kNm]
+13.50
+0.50
+GZT [1]
+20.25
+0.00
+GZT [1]
+Element 1
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+11.25
+0.00
+GZT [2]
+Element 2
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 2
+Vz [kN]
+-13.50
+0.00
+GZT [1]
+-13.50
+0.00
+GZT [1]
+Element 2
+My [kNm]
+6.75
+0.50
+GZT [1]
+13.50
+0.00
+GZT [1]
+Element 2
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 3
+Vy [kN]
+0.00
+0.00
+GZT [1]
+7.50
+0.00
+GZT [2]
+Element 3
+Vz [kN]
+-13.50
+0.00
+GZT [1]
+-13.50
+0.00
+GZT [1]
+Element 3
+My [kNm]
+0.00
+0.50
+GZT [1]
+6.75
+0.00
+GZT [1]
+Element 3
+Mz [kNm]
+0.00
+0.00
+GZT [1]
+3.75
+0.00
+GZT [2]
+Maximale Vergleichsspannung (Knotenmittel) 85.5 N/mm² am Knoten 0.
+4.4.7&nbsp;&nbsp;Umhüllende Ermüdung
+Extremwerte aus 2 Ergebnissen: LF1, LF3.
+Extremwerte der Verschiebungen und Verdrehungen
+Größe
+min
+Knoten
+Kombination
+max
+Knoten
+Kombination
+ux [mm]
+0.000
+0
+LF1
+0.000
+0
+LF1
+uy [mm]
+0.000
+0
+LF1
+0.000
+0
+LF1
+uz [mm]
+-1.920
+4
+LF1
+0.000
+0
+LF1
+rx [mrad]
+0.000
+0
+LF1
+1.082
+4
+LF3
+ry [mrad]
+0.000
+0
+LF1
+1.429
+4
+LF1
+rz [mrad]
+0.000
+0
+LF1
+0.000
+0
+LF1
+Extremwerte der Auflagerreaktionen
+Knoten
+Komponente
+min [kN, kNm]
+Kombination
+max [kN, kNm]
+Kombination
+0
+F_z
+0.00
+LF3
+10.00
+LF1
+0
+M_x
+-2.00
+LF3
+0.00
+LF1
+0
+M_y
+-20.00
+LF1
+0.00
+LF3
+Extremwerte der Stabschnittgrößen je Element (x ab Elementanfang)
+Stab / Element
+Schnittgröße
+min
+x [m]
+Kombination
+max
+x [m]
+Kombination
+Element 0
+Vz [kN]
+-10.00
+0.00
+LF1
+0.00
+0.00
+LF3
+Element 0
+Mt [kNm]
+0.00
+0.00
+LF1
+2.00
+0.00
+LF3
+Element 0
+My [kNm]
+0.00
+0.00
+LF3
+20.00
+0.00
+LF1
+Element 1
+Vz [kN]
+-10.00
+0.00
+LF1
+0.00
+0.00
+LF3
+Element 1
+Mt [kNm]
+0.00
+0.00
+LF1
+2.00
+0.00
+LF3
+Element 1
+My [kNm]
+0.00
+0.00
+LF3
+15.00
+0.00
+LF1
+Element 2
+Vz [kN]
+-10.00
+0.00
+LF1
+0.00
+0.00
+LF3
+Element 2
+Mt [kNm]
+0.00
+0.00
+LF1
+2.00
+0.00
+LF3
+Element 2
+My [kNm]
+0.00
+0.00
+LF3
+10.00
+0.00
+LF1
+Element 3
+Vz [kN]
+-10.00
+0.00
+LF1
+0.00
+0.00
+LF3
+Element 3
+Mt [kNm]
+0.00
+0.00
+LF1
+2.00
+0.00
+LF3
+Element 3
+My [kNm]
+0.00
+0.00
+LF3
+5.00
+0.00
+LF1
+Maximale Vergleichsspannung (Knotenmittel) 30.0 N/mm² am Knoten 0.
+5&nbsp;&nbsp;Nachweise nach DIN EN 1993-1-1
+Es wurden keine Nachweise geführt (keine Stäbe definiert).
+6&nbsp;&nbsp;Beulnachweise nach DIN EN 1993-1-5
+Es sind keine Beulfelder festgelegt. Das Beulen schlanker Blechfelder ist gesondert nachzuweisen; das Schubbeulen der Stegbleche wird in Kapitel 5 bei den Querschnittsnachweisen geführt.
+7&nbsp;&nbsp;Ermüdungsnachweis nach DIN EN 1993-1-9
+Kein Ermüdungsnachweis erforderlich (keine Ermüdungslasten definiert).
+8&nbsp;&nbsp;Anschlüsse nach DIN EN 1993-1-8
+Im Modell ist kein Anschluss angelegt. Anschlüsse sind dann gesondert nachzuweisen.
+9&nbsp;&nbsp;Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)
+Es sind keine Verformungsgrenzen festgelegt. Die Gebrauchstauglichkeit ist gesondert nachzuweisen.
+10&nbsp;&nbsp;Übernommene Ergebnisse
+Die folgenden Abbildungen wurden aus der Ansicht des Programms übernommen. Unter jedem Bild steht, welches Ergebnis es zeigt, wonach eingefärbt wurde, welcher Schnittgrößenverlauf angetragen ist und mit welcher Überhöhung die Verformung dargestellt wird.
+10.1&nbsp;&nbsp;Bild 1
+Zeigt
+Umhüllende ULS
+Färbung
+|u| Verschiebung
+&lt;i&gt;Zu diesem Eintrag liegt kein Bild vor.&lt;/i&gt;
+10.2&nbsp;&nbsp;Bild 2
+Zeigt
+Umhüllende GZT
+Färbung
+|u| Verschiebung
+&lt;i&gt;Zu diesem Eintrag liegt kein Bild vor.&lt;/i&gt;
+10.3&nbsp;&nbsp;Tabelle 1
+Auflagerkräfte gibt es zu Lastfall oder Kombination (env:SLS_CH).
+10.4&nbsp;&nbsp;Tabelle 2
+Kombinationen
+Kombination
+Typ
+Leit
+Situation
+Theorie
+LF1
+LF2
+LF3
+Beschreibung
+K1
+ULS
+Grundstellung
+I
+1
+0.5
+Typ ULS
+K2
+EQU
+Grundstellung
+I
+1.1
+0.5
+Typ EQU
+K3
+ACC
+Grundstellung
+I
+1.2
+0.5
+Typ ACC
+K4
+SLS_CH
+Grundstellung
+I
+1.3
+0.5
+Typ SLS_CH
+K5
+SLS_FR
+Grundstellung
+I
+1.4
+0.5
+Typ SLS_FR
+K6
+SLS_QP
+Grundstellung
+I
+1.5
+0.5
+Typ SLS_QP
+K7
+FAT
+Grundstellung
+I
+1.6
+0.5
+Typ FAT
+K8
+USER
+Grundstellung
+I
+1.7
+0.5
+Typ USER
+GZT
+ULS
+Grundstellung
+I
+Ermüdung
+FAT
+Grundstellung
+I
+11&nbsp;&nbsp;Zusammenfassung
+Wesentliche Ergebnisse
+Modell
+Fachbegriffe: 5 Knoten, 4 Elemente, 0 Stäbe
+Lastfälle / Kombinationen
+3 / 8
+max. Verschiebung (Gebrauchstauglichkeit, charakteristisch)
+3.142 mm am Knoten 4
+max. Vergleichsspannung (GZT)
+85.5 N/mm²
+Es wurden keine Nachweise geführt; die Ergebnisse dienen der Schnittgrößen- und Verformungsermittlung.
+Es liegen keine offenen Hinweise oder Warnungen vor.
+A&nbsp;&nbsp;Anhang
+A.1&nbsp;&nbsp;Modellprüfung
+Die Modellprüfung ergab keine Beanstandungen (Knoten, Elemente, Materialien, Querschnitte, Lager, Lasten, Kombinationen, Stäbe und Kontaktdefinitionen sind konsistent).
+A.2&nbsp;&nbsp;Rechenlauf und Parallelisierung
+Rechenlauf
+Programm
+Statik3D VERSION
+Gesamtrechenzeit
+0.274 s
+Parallelisierung
+lokal, 31 von 32 Kernen
+Gleichungslöser
+pardiso
+Freiheitsgrade gesamt / aktiv
+30 / 24
+Rechenzeiten je Ergebnis
+Ergebnis
+Art
+Rechenzeit [s]
+Löser
+Kontakt-Iterationen
+LF1
+Lastfall
+0.241
+pardiso
+–
+LF2
+Lastfall
+0.189
+pardiso
+–
+LF3
+Lastfall
+0.189
+pardiso
+–
+K1
+Überlagerung
+–
+–
+–
+K2
+Überlagerung
+–
+–
+–
+K3
+Überlagerung
+–
+–
+–
+K4
+Überlagerung
+–
+–
+–
+K5
+Überlagerung
+–
+–
+–
+K6
+Überlagerung
+–
+–
+–
+K7
+Überlagerung
+–
+–
+–
+K8
+Überlagerung
+–
+–
+–
+Statik3D VERSION – Statischer Bericht – Fachbegriffe
+DATUM · Statik3D Statik3D VERSION

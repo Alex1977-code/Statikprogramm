@@ -1108,14 +1108,18 @@ def stil() -> str:
 # ==========================================================================
 # Glasleiste und Ansichtswuerfel ueber der Ansicht
 # ==========================================================================
+def _listenfeld(cb) -> int:
+    """Breite des Textfelds einer Aufklappliste (ohne Pfeil und Rand)."""
+    opt = QtWidgets.QStyleOptionComboBox()
+    cb.initStyleOption(opt)
+    return cb.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
+                                     QtWidgets.QStyle.SC_ComboBoxEditField, cb).width()
+
+
 def _listen_bedarf(cb) -> int:
     """Breite einer Aufklappliste, in der ihr laengster waehlbarer Eintrag ganz
     zu lesen ist: Text plus der Rand, den der Stil um das Textfeld legt."""
-    opt = QtWidgets.QStyleOptionComboBox()
-    cb.initStyleOption(opt)
-    feld = cb.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
-                                     QtWidgets.QStyle.SC_ComboBoxEditField, cb).width()
-    rand = max(0, cb.width() - feld)
+    rand = max(0, cb.width() - _listenfeld(cb))
     fm = QtGui.QFontMetrics(cb.font())
     laengste = max((fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())
                     if cb.itemData(i) is not None), default=0)
@@ -1147,8 +1151,8 @@ class Glasleiste(QtWidgets.QFrame):
     LISTE_MIN = 120
     #: So breit darf sie fuer einen langen Namen werden (03.10.2026): ueber
     #: ihre Vorgabebreite hinaus, damit „Umhüllende GZG charakteristisch“
-    #: ganz zu lesen ist, aber nicht beliebig breit fuer einen sehr langen
-    #: Namen aus einer Quelldatei
+    #: ganz zu lesen ist - aber nur in freien Platz (einpassen), und nicht
+    #: beliebig breit fuer einen sehr langen Namen aus einer Quelldatei
     LISTE_MAX = 280
 
     def __init__(self, ansicht: QtWidgets.QWidget):
@@ -1171,6 +1175,9 @@ class Glasleiste(QtWidgets.QFrame):
         #: (Trenner oder None, Teile) - ein Trenner steht vor seiner Gruppe
         self._gruppen: list = [(None, [])]
         self._listenbreite: dict = {}
+        #: der Hinweis je Liste (liste()); ist der gewaehlte Name abgeschnitten,
+        #: steht er im Hinweis davor (_listen_tooltip, 03.10.2026)
+        self._listenhinweis: dict = {}
         self.ueberlauf: QtWidgets.QToolButton | None = None
         self._stand = None
         self._geplant = False
@@ -1254,11 +1261,28 @@ class Glasleiste(QtWidgets.QFrame):
         self._teil(cb)
         self.listen[schluessel or hinweis] = cb
         self._listenbreite[cb] = int(breite)
+        self._listenhinweis[cb] = hinweis
         # Neuer Inhalt kann einen laengeren Namen bringen: neu einpassen
         # (gebuendelt wie bei LayoutRequest, 03.10.2026)
         for signal in (cb.model().rowsInserted, cb.model().rowsRemoved, cb.model().modelReset):
             signal.connect(self._einpassen_planen)
+        cb.currentIndexChanged.connect(lambda _i, c=cb: self._listen_tooltip(c))
+        # auch erst beim Zeigen des Hinweises: die Liste wird oft mit
+        # gesperrten Signalen nachgezogen (_lastwahl_nachziehen)
+        cb.installEventFilter(self)
         return cb
+
+    def _listen_tooltip(self, cb) -> None:
+        """Hinweis der Liste: ist der gewaehlte Name abgeschnitten, steht er
+        vollstaendig davor, darunter der Hinweis aus liste() (03.10.2026)."""
+        hinweis = self._listenhinweis.get(cb, "")
+        text = cb.currentText()
+        rand = max(0, cb.width() - _listenfeld(cb))
+        breit = QtGui.QFontMetrics(cb.font()).horizontalAdvance(text) + rand + 2
+        if text and breit > cb.minimumWidth():
+            cb.setToolTip(f"{text}\n\n{hinweis}" if hinweis else text)
+        else:
+            cb.setToolTip(hinweis)
 
     def _einpassen_planen(self, *_a) -> None:
         """Nach dem laufenden Ereignis neu einpassen - einmal, auch wenn viele
@@ -1268,10 +1292,10 @@ class Glasleiste(QtWidgets.QFrame):
             QtCore.QTimer.singleShot(0, self.nachziehen)
 
     def _listenziel(self, cb, b: int) -> int:
-        """Die Breite, die eine Liste haben will: ihre Vorgabe, bei einem
-        laengeren Namen so viel, dass er ganz zu lesen ist (hoechstens
-        LISTE_MAX). Bis zum 03.10.2026 war die Vorgabe zugleich die Grenze;
-        mit den Fachbegriffen (Teilpaket 11b) blieben „Umhüllende GZG
+        """Die Breite, die eine Liste in **freiem** Platz annehmen darf: ihre
+        Vorgabe, bei einem laengeren Namen so viel, dass er ganz zu lesen ist
+        (hoechstens LISTE_MAX). Bis zum 03.10.2026 war die Vorgabe zugleich die
+        Grenze; mit den Fachbegriffen (Teilpaket 11b) blieben „Umhüllende GZG
         charakteristisch“ und „… quasi-ständig“ bei 190 px abgeschnitten."""
         return max(int(b), min(_listen_bedarf(cb), self.LISTE_MAX))
 
@@ -1317,6 +1341,8 @@ class Glasleiste(QtWidgets.QFrame):
     def eventFilter(self, obj, ev):
         if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize:
             self.nachziehen()
+        elif ev.type() == QtCore.QEvent.ToolTip and obj in self._listenbreite:
+            self._listen_tooltip(obj)
         return False
 
     def event(self, ev):
@@ -1376,7 +1402,11 @@ class Glasleiste(QtWidgets.QFrame):
         haupt = [w for w in rangfolge if self._weicht[w] < 10]
         for w in rangfolge:
             w.setVisible(True)
-        for cb, b in ziele.items():
+        # Welche Knoepfe stehen, entscheidet die Vorgabebreite der Liste, nicht
+        # ihr Wunsch: ein langer Name verdraengt keinen Knopf (03.10.2026; der
+        # erste Stand von 11b setzte hier den Wunsch und schob bei 1536 px
+        # „Auswahl ausblenden“, bei 1280 px „Darstellung ▾“ in „»“)
+        for cb, b in self._listenbreite.items():
             cb.setMinimumWidth(b)
         if self.ueberlauf is not None:
             self.ueberlauf.setVisible(False)
@@ -1394,7 +1424,7 @@ class Glasleiste(QtWidgets.QFrame):
             if self._wunschbreite() <= breite:
                 break
             weg(w)
-        for cb, b in ziele.items():
+        for cb, b in self._listenbreite.items():
             ueber = self._wunschbreite() - breite
             if ueber > 0:
                 # nicht unter den laengsten Namen (02.10.2026): mit der
@@ -1409,17 +1439,30 @@ class Glasleiste(QtWidgets.QFrame):
             if self._wunschbreite() <= breite:
                 break
             weg(w)
+        # Immer noch zu breit, obwohl alle Hauptknoepfe gewichen sind
+        # (schmale Ansicht, lange Namen): die Liste schrumpft bis LISTE_MIN,
+        # der volle Name steht dann im Hinweis (03.10.2026). Vorher blieb sie
+        # bei einem Namen ueber 190 px bei 190 px stehen, und die Leiste ragte
+        # ueber die Ansicht hinaus - mit RFEM-langen Namen bei 260 px Ansicht.
+        for cb in self._listenbreite:
+            ueber = self._wunschbreite() - breite
+            if ueber > 0:
+                cb.setMinimumWidth(max(self.LISTE_MIN, cb.minimumWidth() - ueber))
         # Was das Weichen der Hauptknoepfe frei macht, bekommt die Liste
         # zurueck (25.09.2026): sonst blieb sie bei LISTE_MIN = 120 px, obwohl
         # daneben Platz frei war - bei 1366 und 1536 px Fensterbreite waren
         # 75 von 81 Namen der gerechneten Halle abgeschnitten („Kombination
         # GZ“), und die Liste ist dort die einzige Anzeige des Ergebnisses.
-        for cb, b in ziele.items():
+        # Seit 03.10.2026 waechst sie in **freien** Platz auch ueber ihre
+        # Vorgabe hinaus, bis ihr laengster Name ganz zu lesen ist (Ziel).
+        for cb, z in ziele.items():
             frei = breite - self._wunschbreite()
-            if frei > 0 and cb.minimumWidth() < b:
-                cb.setMinimumWidth(min(b, cb.minimumWidth() + frei))
+            if frei > 0 and cb.minimumWidth() < z:
+                cb.setMinimumWidth(min(z, cb.minimumWidth() + frei))
         self._ueberlauf_fuellen(versteckt)
         self.resize(self.sizeHint())
+        for cb in self._listenbreite:
+            self._listen_tooltip(cb)
         self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile),
                        tuple(self._listenziel(cb, b) for cb, b in self._listenbreite.items()))
 

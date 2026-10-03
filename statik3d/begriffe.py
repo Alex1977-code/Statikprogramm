@@ -31,13 +31,17 @@ Die Kurzformen folgen DIN EN 1990 und der deutschen Gewohnheit:
   „Umhüllende GZT“ ohne Nachweisart.
 
 Die Kurzformen der Kombinationstypen und die Langformen der Umhuellenden sind
-genau die Texte, die der Bericht seit jeher schreibt (report/html.py,
-COMBO_TYPES und ENVELOPE_NAMES); der Bericht nimmt sie seitdem von hier und
-schreibt dasselbe wie vorher.
+die Texte, die der Bericht schon vor dem 03.10.2026 schrieb (report/html.py,
+COMBO_TYPES und ENVELOPE_NAMES); der Bericht nimmt sie seitdem von hier. Neu
+sind dort „Ermüdung“ statt „FAT“ und der Klartext an den Stellen, die bis dahin
+den Schluessel zeigten (Zeile „Zeigt“, Hinweise, Tabelle Kombinationen).
 
 Was kein bekannter Schluessel ist, erscheint unveraendert - etwa die
 Umhuellende einer RFEM-Ergebniskombination, die unter dem Namen der
-Kombination steht („Umhüllende EK3“).
+Kombination steht („Umhüllende EK3“). Lautet ein solcher Name wie ein
+Fachbegriff („GZT“, „Ermüdung“), bekommt er den Zusatz „(Ergebniskombination)“:
+sonst stuenden zwei verschiedene Umhuellende unter demselben Namen
+(Nachbesserung 03.10.2026, Befund F2 der Gegenpruefung).
 """
 from __future__ import annotations
 
@@ -121,16 +125,33 @@ def typ_schluessel(text) -> str:
     return t
 
 
+#: Zusatz fuer den Namen einer Ergebniskombination, der wie ein Fachbegriff lautet
+ZUSATZ_ERGEBNISKOMBINATION = " (Ergebniskombination)"
+
+
+def _name_ergebniskombination(key) -> str:
+    """Der Name einer unbekannten Umhuellenden (in der Regel die einer
+    Ergebniskombination) - mit Zusatz, wenn er wie ein Fachbegriff lautet:
+    „Umhüllende GZT“ oder „Umhüllende Ermüdung“ als kurze, „Ermüdung“ oder
+    „Lastfälle“ als lange Form."""
+    k = str(key)
+    if f"Umhüllende {k}" in {b.kurz for b in UMHUELLENDE.values()}             or k in {b.lang for b in UMHUELLENDE.values()}:
+        return k + ZUSATZ_ERGEBNISKOMBINATION
+    return k
+
+
 def umhuellende_kurz(key) -> str:
     """„Umhüllende GZT“ zu ``ULS`` - fuer Listen, Baum, Kopfzeile. Eine
     unbekannte Umhuellende (etwa die einer RFEM-Ergebniskombination) heisst
-    „Umhüllende <Name>“."""
+    „Umhüllende <Name>“, bei einem Namen wie ein Fachbegriff mit Zusatz
+    („Umhüllende GZT (Ergebniskombination)“)."""
     b = UMHUELLENDE.get(str(key))
-    return b.kurz if b is not None else f"Umhüllende {key}"
+    return b.kurz if b is not None else f"Umhüllende {_name_ergebniskombination(key)}"
 
 
 def umhuellende_lang(key) -> str:
     """„Grenzzustand der Tragfähigkeit (GZT)“ zu ``ULS`` - wofuer die
-    Umhuellende steht (Bericht, Hinweis am Zeiger). Unbekannt: der Name."""
+    Umhuellende steht (Bericht, Hinweis am Zeiger). Unbekannt: der Name,
+    bei einem Namen wie ein Fachbegriff mit Zusatz."""
     b = UMHUELLENDE.get(str(key))
-    return b.lang if b is not None else str(key)
+    return b.lang if b is not None else _name_ergebniskombination(key)

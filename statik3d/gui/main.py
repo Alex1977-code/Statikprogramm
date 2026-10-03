@@ -68,6 +68,10 @@ from .. import skizze as sk
 from .. import spannungen as spn
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
+#: Daten-Rolle der langen Form eines Eintrags der Ergebnisauswahl (Teilpaket
+#: 11b); _aufklappliste_breit setzt daraus den Hinweis am Zeiger zusammen
+LANGFORM_ROLLE = QtCore.Qt.UserRole + 1
+
 #: Faerbungen der Ansicht: Verschiebungen, Verdrehungen [mrad], Vergleichsspannung, dann die
 #: Spannungsgroessen je Art (spannungen.FELDER, analog ANSYS: Grund-, Haupt-,
 #: Vergleichs- und Kontaktspannungen), zuletzt die Ausnutzungen
@@ -6300,8 +6304,13 @@ class MainWindow(QtWidgets.QMainWindow):
                             if c is not None and c.ist_umhuellende else
                             F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
                               hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"))
+                # ein Typ, den die Liste nicht kennt (aus einer Quelldatei),
+                # steht unveraendert mit zur Wahl - bis zum 03.10.2026 zeigte die
+                # Maske dann „ULS“, und „Übernehmen“ schrieb ULS (Befund L3)
+                if c is not None and c.typ and c.typ not in typen:
+                    typtexte = typtexte + [bg.typ_kurz(c.typ)]
                 felder = [F("name", "Name", "text", name, breite=140),
-                          F("typ", "Typ", "wahl", bg.typ_kurz(c.typ if c and c.typ in typen else "ULS"),
+                          F("typ", "Typ", "wahl", bg.typ_kurz(c.typ if c and c.typ else "ULS"),
                             typtexte, hinweis="\n".join(f"{bg.typ_kurz(t)}: {bg.typ_lang(t)}"
                                                          for t in typen)),
                           F("beschreibung", "Beschreibung", "text", (c.description if c else ""), breite=180),
@@ -13950,13 +13959,17 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(cb.count()):
             t = cb.itemText(i)
             breit = max(breit, fm.horizontalAdvance(t))
-            cb.setItemData(i, t, QtCore.Qt.ToolTipRole)
+            # darunter die lange Form, wo es eine gibt („Umhüllende GZT“ ->
+            # „Grenzzustand der Tragfähigkeit (GZT)“, 03.10.2026); bis dahin
+            # ueberschrieb diese Stelle sie mit dem Namen allein
+            lang = cb.itemData(i, LANGFORM_ROLLE)
+            cb.setItemData(i, f"{t}\n{lang}" if lang else t, QtCore.Qt.ToolTipRole)
         try:
             grenze = cb.screen().availableGeometry().width() - 40
         except Exception:                   # noqa: BLE001
             grenze = 1200
         cb.view().setMinimumWidth(max(0, min(breit + 48, grenze)))
-        cb.setToolTip(cb.currentText())
+        cb.setToolTip(cb.itemData(cb.currentIndex(), QtCore.Qt.ToolTipRole) or cb.currentText())
 
     def _tabfolge_ergebnissteuerung(self) -> None:
         """Tab laeuft von der Steuerung in das Register darunter.
@@ -20866,9 +20879,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # damit in der Kopfzeile „Umhüllende ULS“
             for k in an.envelopes:
                 self.cb_result.addItem(bg.umhuellende_kurz(k), ("env", k))
-                if bg.umhuellende_lang(k) != str(k):
+                if k in bg.UMHUELLENDE:
+                    # _aufklappliste_breit setzt daraus den Hinweis zusammen
                     self.cb_result.setItemData(self.cb_result.count() - 1,
-                                               bg.umhuellende_lang(k), QtCore.Qt.ToolTipRole)
+                                               bg.umhuellende_lang(k), LANGFORM_ROLLE)
             for k in an.combinations:
                 self.cb_result.addItem(f"Kombination {k}: {self.model.combinations[k].formula()}", ("combo", k))
             for k in an.cases:

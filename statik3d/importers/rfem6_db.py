@@ -3844,12 +3844,14 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
         # die Arten im Klartext („2x GZT (STR/GEO)“, „1x Ermüdung“) - bis zum
         # 03.10.2026 standen hier die Schluessel ULS, FAT (Teilpaket 11b)
         from .. import begriffe as bg
-        C.say(log, f"{n} Kombinationen uebernommen"
+        # einheitlich mit Umlauten (03.10.2026, Muster B090: bis dahin
+        # „uebernommen“ und „Ermuedungssituationen“ neben „Umhüllende Ermüdung“)
+        C.say(log, f"{n} Kombinationen übernommen"
                    + (" (" + ", ".join(f"{k}x {bg.typ_kurz(a)}" for a, k in sorted(arten.items())) + ")"
                       if arten else ""))
     fat = sum(k for a, k in arten.items() if a == "FAT")
     if fat:
-        C.say(log, f"  {fat} davon sind Ermuedungssituationen (GZT FAT). Sie bekommen "
+        C.say(log, f"  {fat} davon sind Ermüdungssituationen (GZT FAT). Sie bekommen "
                    "eine eigene „Umhüllende Ermüdung“ und gehen **nicht** in die "
                    "Querschnittsnachweise im GZT ein.")
         _ermuedungslasten_aus_fat(m, log)

@@ -9,15 +9,23 @@ der Kombinationstypen und Umhuellenden: „Umhüllende ULS“, „Umhüllende SL
 sie fuer alle aus statik3d/begriffe.py. Geprueft wird:
 
 * das Modul liefert je Kombinationstyp und je Umhuellende die kurze und die
-  lange Form, unbekannte Schluessel bleiben, wie sie sind;
-* der Bericht schreibt dieselben Texte wie vorher und nimmt sie aus dem Modul;
+  lange Form, unbekannte Schluessel bleiben, wie sie sind - ausser ein Name
+  lautet wie ein Fachbegriff, dann bekommt er „(Ergebniskombination)“;
+* der Bericht nimmt seine Texte aus dem Modul; verglichen mit dem Bericht
+  von 68db45b (tests/daten/fachbegriffe_68db45b) aendern sich genau die
+  erwarteten Zeilen (BERICHT_AENDERUNGEN), alle anderen nicht;
 * nach einer Rechnung mit Kombinationen aller Typen zeigen Ergebnisbaum,
   Ergebnisauswahl, Glasleiste, Kopfzeile, Kombinationsmaske, Dialog,
   Tabellen und Protokoll die Klartexte und keinen Schluessel;
 * die Daten dahinter sind unveraendert (("env", "ULS"), env:ULS,
   Combination.typ), eine Auswahl waehlt weiter das richtige Ergebnis, und
   „Übernehmen“ schreibt den Schluessel;
-* die Weboberflaeche nennt die Klartexte, die Kennungen (env:ULS) bleiben.
+* die Weboberflaeche nennt die Klartexte, die Kennungen (env:ULS) bleiben;
+  ohne node reisst die Pruefung, ausser STATIK3D_OHNE_NODE=1 (wie test_web);
+* Nachbesserung nach der Gegenpruefung (03.10.2026): gleichlautende
+  Umhuellende (F2), die lange Form am Zeiger der Ergebnisauswahl (F3), der
+  Dialog Verformungsnachweis (L2), Kombinationsdialog und -maske mit FAT und
+  unbekanntem Typ (L3), eine alte Ergebnisdatei (S2).
 
 Aufruf:  python -m tests.test_fachbegriffe
 """
@@ -49,7 +57,7 @@ KURZ_HUELLE = {"ULS": "Umhüllende GZT", "SLS_CH": "Umhüllende GZG charakterist
                "FAT": "Umhüllende Ermüdung", "CASES": "Umhüllende Lastfälle"}
 
 #: Die Texte des Berichts bis zum 03.10.2026 (report/html.py auf 68db45b,
-#: COMBO_TYPES und ENVELOPE_NAMES) - der Bericht schreibt genau sie weiter
+#: COMBO_TYPES und ENVELOPE_NAMES) - sie bleiben, FAT kommt dazu
 BERICHT_TYPEN_ALT = {"ULS": "GZT (STR/GEO)", "EQU": "GZT (EQU)", "ACC": "außergewöhnlich",
                      "SLS_CH": "GZG charakteristisch", "SLS_FR": "GZG häufig",
                      "SLS_QP": "GZG quasi-ständig", "USER": "benutzerdefiniert"}
@@ -58,6 +66,41 @@ BERICHT_HUELLEN_ALT = {"ULS": "Grenzzustand der Tragfähigkeit (GZT)",
                        "SLS_FR": "Gebrauchstauglichkeit, häufig",
                        "SLS_QP": "Gebrauchstauglichkeit, quasi-ständig",
                        "CASES": "Lastfälle"}
+
+#: Referenz: Modell, Ergebnisdatei und Bericht von 68db45b (vor 11b)
+REFERENZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "daten", "fachbegriffe_68db45b")
+
+#: Die Zeilen, die sich im Bericht der Referenz aendern duerfen: (vorher,
+#: nachher) -> Anzahl. Entscheidung der Hauptsitzung (03.10.2026): der Bericht
+#: benutzt dieselben Begriffe wie die Oberflaeche.
+BERICHT_AENDERUNGEN = {
+    # Typ FAT: Tabelle Kombinationen (K7 und die Ergebniskombination
+    # „Ermüdung“), im Kapitel und im Tabelleneintrag „Kombinationen“
+    ("FAT", "Ermüdung"): 4,
+    ("Kombination (FAT)", "Kombination (Ermüdung)"): 1,
+    ("4.3.7&nbsp;&nbsp;Kombination K7 (FAT): 1.6·LF1 + 0.5·LF2",
+     "4.3.7&nbsp;&nbsp;Kombination K7 (Ermüdung): 1.6·LF1 + 0.5·LF2"): 1,
+    # die Umhuellende der Ermuedung heisst wie an der Oberflaeche
+    ("4.4.5&nbsp;&nbsp;Umhüllende FAT", "4.4.5&nbsp;&nbsp;Umhüllende Ermüdung"): 1,
+    # Ergebniskombinationen, die wie Fachbegriffe heissen (F2)
+    ("4.4.6&nbsp;&nbsp;Umhüllende GZT", "4.4.6&nbsp;&nbsp;Umhüllende GZT (Ergebniskombination)"): 1,
+    ("4.4.7&nbsp;&nbsp;Umhüllende Ermüdung",
+     "4.4.7&nbsp;&nbsp;Umhüllende Ermüdung (Ergebniskombination)"): 1,
+    # Zeile „Zeigt“ der uebernommenen Bilder
+    ("Umhüllende ULS", "Umhüllende GZT"): 1,
+    ("Umhüllende GZT", "Umhüllende GZT (Ergebniskombination)"): 1,
+    # Hinweis einer Tabelle ohne passendes Ergebnis
+    ("Auflagerkräfte gibt es zu Lastfall oder Kombination (env:SLS_CH).",
+     "Auflagerkräfte gibt es zu Lastfall oder Kombination (Umhüllende GZG charakteristisch)."): 1,
+    # Tabelleneintrag „Kombinationen“: der Typ im Klartext
+    ("ULS", "GZT (STR/GEO)"): 2,
+    ("EQU", "GZT (EQU)"): 1,
+    ("ACC", "außergewöhnlich"): 1,
+    ("SLS_CH", "GZG charakteristisch"): 1,
+    ("SLS_FR", "GZG häufig"): 1,
+    ("SLS_QP", "GZG quasi-ständig"): 1,
+    ("USER", "benutzerdefiniert"): 1,
+}
 
 SCHLUESSEL = ("ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "FAT", "USER", "CASES")
 _SCHLUESSEL_RE = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(SCHLUESSEL) + r")(?![A-Za-z0-9_])")
@@ -107,17 +150,47 @@ def test_modul_kurz_und_lang():
     check("Spaltenverzeichnis TYP_KURZ = kurze Formen", bg.TYP_KURZ == KURZ_TYP, str(bg.TYP_KURZ))
 
 
-def test_bericht_textgleich():
+def test_bericht_vorher_nachher():
     from statik3d.report import html as H
-    check("Bericht: Typen der Kombinationen wie vor dem 03.10.2026",
-          H.COMBO_TYPES == BERICHT_TYPEN_ALT, str(H.COMBO_TYPES))
-    check("Bericht: Namen der Umhüllenden wie vor dem 03.10.2026",
-          H.ENVELOPE_NAMES == BERICHT_HUELLEN_ALT, str(H.ENVELOPE_NAMES))
     from statik3d import begriffe as bg
+    check("Bericht: die Typen wie vor dem 03.10.2026, dazu FAT = Ermüdung",
+          H.COMBO_TYPES == dict(BERICHT_TYPEN_ALT, FAT="Ermüdung"), str(H.COMBO_TYPES))
+    check("Bericht: die Umhüllenden wie vor dem 03.10.2026, dazu FAT = Ermüdung",
+          H.ENVELOPE_NAMES == dict(BERICHT_HUELLEN_ALT, FAT="Ermüdung"), str(H.ENVELOPE_NAMES))
     check("Bericht nimmt die Typen aus dem gemeinsamen Modul",
-          all(H.COMBO_TYPES[k] == bg.typ_kurz(k) for k in BERICHT_TYPEN_ALT))
+          all(H.COMBO_TYPES[k] == bg.typ_kurz(k) for k in bg.KOMBINATIONSTYPEN))
     check("Bericht nimmt die Umhüllenden aus dem gemeinsamen Modul",
-          all(H.ENVELOPE_NAMES[k] == bg.umhuellende_lang(k) for k in BERICHT_HUELLEN_ALT))
+          all(H.ENVELOPE_NAMES[k] == bg.umhuellende_lang(k) for k in bg.UMHUELLENDE))
+    # Bericht aus Modell und Ergebnisdatei von 68db45b, Zeile fuer Zeile
+    import collections
+    import difflib
+    import runpy
+    from statik3d.model import Model
+    from statik3d import ergebnisse
+    from statik3d.report import Report
+    ref = runpy.run_path(os.path.join(REFERENZ, "erzeugen.py"))
+    pfad = os.path.join(REFERENZ, "modell.json")
+    m = Model.load(pfad)
+    an = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m)
+    neu = ref["bericht_text"](Report(m, an).html()).splitlines()
+    with open(os.path.join(REFERENZ, "bericht.txt"), encoding="utf-8") as f:
+        alt = f.read().splitlines()
+    paare, sonst = collections.Counter(), []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, alt, neu, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        if op == "replace" and i2 - i1 == j2 - j1:
+            paare.update(zip(alt[i1:i2], neu[j1:j2]))
+        else:
+            sonst.append((op, alt[i1:i2][:3], neu[j1:j2][:3]))
+    check("Bericht 68db45b → jetzt: keine Zeile eingefügt oder entfernt", not sonst, str(sonst[:3]))
+    unerwartet = paare - collections.Counter(BERICHT_AENDERUNGEN)
+    fehlt = collections.Counter(BERICHT_AENDERUNGEN) - paare
+    check("… genau die erwarteten Zeilen geändert, keine anderen",
+          not unerwartet and not fehlt,
+          f"unerwartet {dict(unerwartet)}, fehlt {dict(fehlt)}")
+    check("… und es sind alle %d" % sum(BERICHT_AENDERUNGEN.values()),
+          sum(paare.values()) == sum(BERICHT_AENDERUNGEN.values()), str(sum(paare.values())))
     # ein ganzer Bericht mit Kombinationen aller Typen
     from statik3d import solver
     from statik3d.report import Report
@@ -140,6 +213,113 @@ def test_berichtseintrag_quelle():
     e2 = Berichtseintrag("Bild 2", "env:EK3", "", "", 0.0, "")
     check("… eine Umhüllende mit Namen (EK3) bleibt „Umhüllende EK3“",
           e2.quelle_text() == "Umhüllende EK3", e2.quelle_text())
+    e3 = Berichtseintrag("Bild 3", "env:GZT", "", "", 0.0, "")
+    check("… eine Ergebniskombination „GZT“ heißt „Umhüllende GZT (Ergebniskombination)“",
+          e3.quelle_text() == "Umhüllende GZT (Ergebniskombination)", e3.quelle_text())
+
+
+def test_namensgleiche_ergebniskombination():
+    """Befund F2 der Gegenpruefung: eine Ergebniskombination, die wie ein
+    Fachbegriff heisst („GZT“, „Ermüdung“), ergab zwei gleichlautende
+    Umhuellende. Jetzt traegt sie den Zusatz „(Ergebniskombination)“ - in
+    Web, Ergebnisauswahl, Glasleiste, Baum und Bericht (Referenz oben)."""
+    from statik3d import begriffe as bg, solver
+    from statik3d.model import Combination
+    from statik3d.web import server as S
+    check("Modul: „GZT“ und „Ermüdung“ als Ergebniskombination mit Zusatz",
+          bg.umhuellende_kurz("GZT") == "Umhüllende GZT (Ergebniskombination)"
+          and bg.umhuellende_kurz("Ermüdung") == "Umhüllende Ermüdung (Ergebniskombination)"
+          and bg.umhuellende_lang("Ermüdung") == "Ermüdung (Ergebniskombination)"
+          and bg.umhuellende_lang("Lastfälle") == "Lastfälle (Ergebniskombination)",
+          f"{bg.umhuellende_kurz('GZT')!r} {bg.umhuellende_lang('Ermüdung')!r}")
+    w, app, _an = _gerechnet()
+    m = w.model
+    lf = list(m.load_cases)
+    m.combinations["GZT"] = Combination("GZT", {}, "ULS",
+                                        alternativen=[{lf[0]: 1.35}, {lf[0]: 1.35, lf[1]: 1.5}])
+    m.combinations["Ermüdung"] = Combination("Ermüdung", {}, "FAT",
+                                             alternativen=[{lf[0]: 1.0}, {lf[1]: 1.0}])
+    w.refresh_all()
+    app.processEvents()
+    an = solver.solve_all(m, design=False)
+    st = S.State(m)
+    st.analysis = an
+    texte = [e["label"] for e in S.result_entries(st) if e["id"].startswith("env:")]
+    check("Web: alle Umhüllenden heißen verschieden", len(texte) == len(set(texte)), str(texte))
+    check("… die Ergebniskombinationen mit Zusatz",
+          "Umhüllende GZT (Ergebniskombination)" in texte
+          and "Umhüllende Ermüdung (Ergebniskombination)" in texte
+          and "Umhüllende GZT" in texte and "Umhüllende Ermüdung" in texte, str(texte))
+    w._solve_done("all", an)
+    app.processEvents()
+    for titel, cb in (("Ergebnisauswahl", w.cb_result), ("Glasleiste", w.cb_lastwahl)):
+        t = [cb.itemText(i) for i in range(cb.count())
+             if cb.itemData(i) is not None and cb.itemData(i)[0] == "env"]
+        check(f"{titel}: alle Umhüllenden heißen verschieden",
+              len(t) == len(set(t)) and "Umhüllende GZT (Ergebniskombination)" in t, str(t))
+    # Baum: Ergebnisse > Umhüllende
+    from PySide6 import QtCore
+    baum = [x.text(0) for x in QtWidgets_iter(w.baum)
+            if x.parent() is not None and x.parent().data(0, QtCore.Qt.UserRole) == "ergebnisgruppe"
+            and x.parent().text(0) == "Umhüllende"]
+    check("Modellbaum: alle Umhüllenden heißen verschieden",
+          len(baum) == len(set(baum)) and "Umhüllende Ermüdung (Ergebniskombination)" in baum, str(baum))
+    del m.combinations["GZT"], m.combinations["Ermüdung"]
+    _FENSTER.pop("an", None)        # das Fenster zeigt jetzt diese Rechnung
+
+
+def test_verformungsdialog():
+    """Befund L2: der Dialog Verformungsnachweis zeigte „charakteristisch
+    (SLS_CH)“; jetzt die Texte aus begriffe.py, die Daten bleiben."""
+    from PySide6 import QtCore
+    from statik3d.gui.dialogs import VerformungsgrenzeDialog
+    from statik3d.examples_lib import hall_frame_example
+    w, app = _fenster()
+    d = VerformungsgrenzeDialog(w, hall_frame_example(), knoten=[])
+    texte = [d.cb_sit.itemText(i) for i in range(d.cb_sit.count())]
+    daten = [d.cb_sit.itemData(i) for i in range(d.cb_sit.count())]
+    check("Verformungsnachweis: Bemessungssituation im Klartext",
+          texte == ["GZG charakteristisch", "GZG häufig", "GZG quasi-ständig", "alle GZG-Kombinationen"],
+          str(texte))
+    check("… die Daten bleiben die Schlüssel", daten == ["SLS_CH", "SLS_FR", "SLS_QP", ""], str(daten))
+    check("… die lange Form am Zeiger",
+          "charakteristische Kombination" in str(d.cb_sit.itemData(0, QtCore.Qt.ToolTipRole)),
+          str(d.cb_sit.itemData(0, QtCore.Qt.ToolTipRole)))
+    d.deleteLater()
+
+
+def test_alte_ergebnisdatei():
+    """Befund S2: eine Ergebnisdatei von vor 11b traegt die Namen
+    „Umhuellende ULS“ mit; beim Laden heissen bekannte Schluessel wie an der
+    Oberflaeche, Protokoll und Zusammenfassung nennen den Klartext."""
+    from statik3d.model import Model
+    from statik3d import ergebnisse
+    tmp = tempfile.mkdtemp(prefix="statik3d_fachbegriffe_datei_")
+    for n in ("modell.json", "modell.ergebnisse"):
+        shutil.copy(os.path.join(REFERENZ, n), os.path.join(tmp, n))
+    pfad = os.path.join(tmp, "modell.json")
+    m = Model.load(pfad)
+    an = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m)
+    namen = {k: v.name for k, v in an.envelopes.items()}
+    check("alte Datei: bekannte Umhüllende heißen wie an der Oberfläche",
+          all(namen[k] == KURZ_HUELLE[k] for k in namen if k in KURZ_HUELLE)
+          and {"ULS", "FAT"} <= set(namen), str(namen))
+    check("… die Umhüllenden der Ergebniskombinationen behalten ihren Namen",
+          namen.get("GZT") == "GZT" and namen.get("Ermüdung") == "Ermüdung", str(namen))
+    w, app = _fenster()
+    ok = w.modell_laden(pfad, fragen=False)     # beginnt ein neues Protokoll
+    for _ in range(4):
+        app.processEvents()
+    log = w.log.toPlainText().splitlines()
+    umh = [z for z in log if z.startswith(("Umhüllende", "Umhuellende"))]
+    check("alte Datei im Fenster geladen, Protokoll nennt „Umhüllende GZT: … Ergebnisse“",
+          ok and any(z.startswith("Umhüllende GZT: ") for z in umh), str(umh[:3]))
+    check("… keine Umhüllende mit Schlüssel im Protokoll und in der Zusammenfassung",
+          not any(schluessel_in(z) for z in umh)
+          and not schluessel_in(" ".join(z for z in w.txt_summary.toPlainText().splitlines()
+                                         if z.startswith("Umh"))),
+          str([z for z in umh if schluessel_in(z)]))
+    _FENSTER.pop("an", None)
 
 
 # --------------------------------------------------------------------------
@@ -238,6 +418,13 @@ def test_ergebnisbaum_und_auswahl():
     alle = [cbr.itemText(i) for i in range(cbr.count())]
     check("Ergebnisauswahl: kein Eintrag zeigt einen Schlüssel",
           not any(schluessel_in(t) for t in alle), str([t for t in alle if schluessel_in(t)]))
+    # Befund F3: _aufklappliste_breit ueberschrieb die lange Form mit dem Namen
+    tips = {d[1]: cbr.itemData(i, QtCore.Qt.ToolTipRole)
+            for i in range(cbr.count()) for d in [cbr.itemData(i)] if d and d[0] == "env"}
+    check("Ergebnisauswahl: am Zeiger Name und lange Form",
+          tips.get("ULS") == "Umhüllende GZT\nGrenzzustand der Tragfähigkeit (GZT)"
+          and tips.get("SLS_CH") == "Umhüllende GZG charakteristisch\nGebrauchstauglichkeit, charakteristisch",
+          str(tips))
     i = _index(cbr, ("env", "SLS_CH"))
     cbr.setCurrentIndex(i); app.processEvents()
     check("Auswahl „Umhüllende GZG charakteristisch“ wählt die Umhüllende SLS_CH",
@@ -331,6 +518,34 @@ def test_kombinationsdialog():
     d.typ.setCurrentIndex(d.typ.findText("GZT (EQU)"))
     check("… „GZT (EQU)“ gewählt ergibt den Schlüssel EQU", d.result().typ == "EQU", d.result().typ)
     d.deleteLater()
+    # Befund L3: aus FAT und aus einem unbekannten Typ wurde beim OK still ULS
+    texte = None
+    for typ in ("FAT", "XYZ"):
+        c = m.combinations.get("H3")
+        alt = c.typ
+        c.typ = typ
+        d = CombinationDialog(w, m, c)
+        texte = [d.typ.itemText(i) for i in range(d.typ.count())]
+        check(f"Kombinationsdialog mit Typ {typ}: steht auf „{KURZ_TYP.get(typ, typ)}“, "
+              f"OK behält {typ}",
+              d.typ.currentText() == KURZ_TYP.get(typ, typ) and d.result().typ == typ,
+              f"{d.typ.currentText()!r} -> {d.result().typ!r}")
+        d.deleteLater()
+        c.typ = alt
+    check("… der Dialog bietet dieselben Typen wie die Maske, auch Ermüdung",
+          texte[:len(KURZ_TYP)] == list(KURZ_TYP.values()), str(texte))
+    # dasselbe in der Maske: ein unbekannter Typ bleibt beim Übernehmen
+    m.combinations["H3"].typ = "XYZ"
+    w._objektmaske("kombination", "H3"); app.processEvents()
+    mk = w.maskenrand.maske
+    cb = mk._felder.get("typ")
+    check("Kombinationsmaske mit unbekanntem Typ XYZ: steht auf „XYZ“",
+          cb is not None and cb.currentText() == "XYZ", cb.currentText() if cb else "-")
+    mk.anwenden(); app.processEvents()
+    check("… „Übernehmen“ ohne Änderung behält XYZ", m.combinations["H3"].typ == "XYZ",
+          m.combinations["H3"].typ)
+    m.combinations["H3"].typ = "FAT"
+    w.refresh_all(); app.processEvents()
 
 
 def test_tabellen():
@@ -376,7 +591,13 @@ def test_web():
           str(zustand.get("kombinationstypen")))
     node = shutil.which("node") or shutil.which("nodejs")
     if not node:
-        print("HINWEIS  node fehlt - die Darstellung der Weboberflaeche wurde nicht geprueft")
+        # wie test_web (_ohne_node): ohne node reisst die Pruefung, ausser
+        # STATIK3D_OHNE_NODE=1 erlaubt das Auslassen ausdruecklich
+        if os.environ.get("STATIK3D_OHNE_NODE") == "1":
+            print("SKIP Darstellung der Weboberflaeche: node fehlt (STATIK3D_OHNE_NODE=1)")
+        else:
+            check("Web: Darstellung geprüft (node vorhanden)", False,
+                  "node nicht gefunden - node installieren oder STATIK3D_OHNE_NODE=1 setzen")
         return
     result = json.loads(json.dumps(S.result_payload(st, "env:ULS"), default=str))
     hier = os.path.dirname(os.path.abspath(__file__))
@@ -456,9 +677,10 @@ console.log(JSON.stringify(aus));
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
-    for t in (test_modul_kurz_und_lang, test_bericht_textgleich, test_berichtseintrag_quelle,
+    for t in (test_modul_kurz_und_lang, test_bericht_vorher_nachher, test_berichtseintrag_quelle,
               test_ergebnisbaum_und_auswahl, test_kombinationsmaske, test_kombinationsdialog,
-              test_tabellen, test_web):
+              test_tabellen, test_web, test_namensgleiche_ergebniskombination,
+              test_verformungsdialog, test_alte_ergebnisdatei):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

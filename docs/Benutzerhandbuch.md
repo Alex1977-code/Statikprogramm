@@ -2103,18 +2103,32 @@ erscheint beim Überfahren mit der Maus. Von links nach rechts:
 außerhalb des Bildes. Jetzt hat sie höchstens 12 Knöpfe neben der
 Ergebnisauswahl, und was bei einer schmalen Ansicht nicht mehr passt, wandert
 in die **Überlaufliste „»“** vor *Alles deselektieren*: zuerst die Knöpfe der
-Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler
-(bis 120 px), dann folgen Fang, *Klick wählt*, *Darstellung*, *Zeigen* und
-*Ergebnisse* — ein Menüknopf erscheint in der Liste als Untermenü. Den Platz,
-den die weichenden Knöpfe frei machen, bekommt die Ergebnisauswahl zurück, bis
-zu ihren vollen 190 px: bei 1366 und 1536 px Fensterbreite zeigt sie so jeden
-Namen der gerechneten Halle ganz („Kombination GZT12“ statt „Kombination GZ“,
-Nachbesserung 25.09.2026). Seit dem 03.10.2026 wird sie für einen längeren
-Namen auch breiter als 190 px, so weit, dass er ganz zu lesen ist, höchstens
-aber 280 px. Anlass sind die Fachbegriffe der Umhüllenden: „Umhüllende GZG
-charakteristisch“ und „Umhüllende GZG quasi-ständig“ waren bei 190 px
-abgeschnitten. Die Liste passt sich gleich nach der Rechnung an, nicht erst,
-wenn sich die Fenstergröße ändert. Das Untermenü *Klick wählt* in „»“ nennt die
+Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler,
+bis 120 px, aber nicht schmaler als ihr längster Name, solange dieser in ihre
+Vorgabebreite von 190 px passt; dann folgen Fang, *Klick wählt*, *Darstellung*,
+*Zeigen* und *Ergebnisse* — ein Menüknopf erscheint in der Liste als
+Untermenü. Ist die Ansicht so schmal, dass auch das nicht reicht, wird die
+Ergebnisauswahl bis 120 px schmaler, auch wenn Namen dann nicht mehr ganz
+hineinpassen. Den Platz, den die weichenden Knöpfe frei machen,
+bekommt die Ergebnisauswahl zurück, bis zu ihren vollen 190 px: bei 1366 und
+1536 px Fensterbreite zeigt sie so jeden Namen der gerechneten Halle ganz
+(„Kombination GZT12“ statt „Kombination GZ“, Nachbesserung 25.09.2026).
+
+**Lange Namen** (seit 03.10.2026). Ist danach noch Platz frei, wächst die
+Ergebnisauswahl für einen Namen, der länger ist als 190 px, über diese Breite
+hinaus, bis er ganz zu lesen ist, höchstens auf 280 px. Sie wächst nur in
+freien Platz und verdrängt dafür keinen Knopf; welche Knöpfe stehen,
+entscheidet ihre Vorgabebreite. Ist kein Platz frei, bleibt ein langer Name
+abgeschnitten, und der Hinweis am Mauszeiger nennt ihn vollständig, darunter
+die Erklärung der Liste. Anlass sind die Fachbegriffe der Umhüllenden:
+„Umhüllende GZG charakteristisch“ und „Umhüllende GZG quasi-ständig“ brauchen
+mehr als 190 px, ebenso lange Namen aus RFEM („Kombination
+Bemessungskombination im GZT“). Bis zum 03.10.2026 blieb ein solcher Name
+immer abgeschnitten, ohne dass der Hinweis ihn nannte, und in einer sehr
+schmalen Ansicht ragte die Leiste mit ihm über die Ansicht hinaus (gemessen
+mit RFEM-langen Namen bei 260 px Ansicht: Leiste 274 px auf 236 px Platz). Die
+Liste passt sich gleich nach der Rechnung an, nicht erst, wenn sich die
+Fenstergröße ändert. Das Untermenü *Klick wählt* in „»“ nennt die
 geltende Auswahlart („Klick wählt: Lager“) — steht der Knopf dort, ist es die
 einzige Anzeige in der Leiste. Die
 Ergebnisauswahl, „»“ und *Alles deselektieren* bleiben immer stehen. Wird die
@@ -3939,9 +3953,10 @@ des Kombinationsdialogs und an den Umhüllenden der Ergebnisauswahl rechts.
 | Umhüllende Ermüdung | Ermüdung | die Kombinationen der Ermüdung |
 | Umhüllende Lastfälle | Lastfälle | alle Lastfälle, wenn das Modell keine Kombination hat |
 
-Damit die längeren Namen in der Glasleiste ganz zu lesen sind, wird die
-Ergebnisauswahl dort nach Bedarf breiter (siehe Kapitel *Darstellung in der
-Ansicht*, Absatz *Nie breiter als die Ansicht* unter *Die Glasleiste*).
+Für die längeren Namen wird die Ergebnisauswahl der Glasleiste breiter,
+soweit dort Platz frei ist; sonst nennt der Hinweis am Mauszeiger den vollen
+Namen (siehe Kapitel *Darstellung in der Ansicht*, Absatz *Lange Namen* unter
+*Die Glasleiste*).
 
 Die kurzen Formen folgen der deutschen Fassung von DIN EN 1990: GZT und GZG
 sind dort die Abkürzungen der beiden Grenzzustände, EQU, STR, GEO und FAT
@@ -3949,19 +3964,54 @@ heißen die Nachweise im GZT (Abschnitt 6.4.1), und im GZG heißen die
 Kombinationen charakteristisch, häufig und quasi-ständig (Abschnitt 6.5.3).
 Die Umhüllende GZT heißt ohne Nachweisart, weil sie mehrere Typen
 zusammenfasst. Die Umhüllende einer Ergebniskombination aus RFEM trägt weiter
-den Namen der Kombination, etwa „Umhüllende EK3“.
+den Namen der Kombination, etwa „Umhüllende EK3“. Lautet dieser Name wie ein
+Fachbegriff, etwa „GZT“ oder „Ermüdung“, bekommt er den Zusatz
+„(Ergebniskombination)“: „Umhüllende GZT (Ergebniskombination)“ steht dann
+neben der „Umhüllende GZT“ aller GZT-Kombinationen, in den Listen, im
+Modellbaum, im Browser und im Bericht. Ohne den Zusatz hießen zwei
+verschiedene Umhüllende gleich.
+
+Der Kombinationsdialog (Doppelklick in der Tabelle *Kombinationen* oder im
+Register *Lastfälle*) bietet dieselben Typen wie die Maske, also auch
+*Ermüdung*. Hat eine Kombination einen Typ, den die Liste nicht kennt (aus
+einer Quelldatei), steht er unverändert mit zur Wahl, in Dialog und Maske, und
+„OK“ beziehungsweise „Übernehmen“ behält ihn. Bis zum 03.10.2026 machte der
+Dialog aus einer Kombination der Ermüdung und aus jedem unbekannten Typ beim
+„OK“ still eine Kombination GZT (STR/GEO), die Maske aus einem unbekannten Typ
+ebenso. Der
+Dialog *Verformungsnachweis* nennt die Bemessungssituation ebenso im Klartext
+(„GZG charakteristisch“; bis zum 03.10.2026 „charakteristisch (SLS_CH)“).
 
 Gespeichert, gerechnet und eingelesen wird weiter mit den Schlüsseln (ULS,
 EQU, ACC, SLS_CH, SLS_FR, SLS_QP, FAT, USER und CASES). Eine ältere Datei lädt
 also unverändert, und ein Bild, das schon im Bericht steht, zeigt weiter
 dieselbe Umhüllende. Seine Beschriftung bleibt, wie sie beim Übernehmen
-geschrieben wurde. Wo der Bericht ein übernommenes Bild oder eine übernommene
-Tabelle ihrem Ergebnis zuordnet (die Zeile „Zeigt“ unter dem Bild und der
-Titel der Tabelle), steht jetzt der Klartext. Alle übrigen Texte schreibt der
-Bericht genau wie vor dem 03.10.2026. Dazu gehört, dass die Ermüdung dort
-weiter mit ihrem Schlüssel steht: als Typ „FAT“ in der Tabelle der
-Kombinationen und in der Übersicht der Ergebnisse und als Überschrift
-„Umhüllende FAT“.
+geschrieben wurde. Eine Ergebnisdatei von vor dem 03.10.2026 trägt die alten
+Namen der Umhüllenden mit („Umhuellende ULS“); beim Laden bekommen die
+Umhüllenden mit bekanntem Schlüssel den Klartext, sodass Protokoll und
+Zusammenfassung zum Beispiel „Umhüllende GZT: 42 Ergebnisse“ schreiben (Halle).
+
+**Bericht.** Der Bericht benutzt dieselben Begriffe wie die Oberfläche. Bis
+zum 03.10.2026 stand dort an einigen Stellen der Schlüssel, und jetzt steht
+der Klartext:
+
+* Die Ermüdung hieß „FAT“, als Typ in der Tabelle der Kombinationen, in der
+  Übersicht der Ergebnisse („Kombination (FAT)“), in den Überschriften der
+  Ergebnisse je Kombination („Kombination … (FAT): …“) und als „Umhüllende FAT“. Jetzt heißt sie „Ermüdung“ und die
+  Umhüllende „Umhüllende Ermüdung“.
+* Die Zeile „Zeigt“ unter einem übernommenen Bild und der Titel einer
+  übernommenen Tabelle nannten „Umhüllende ULS“, jetzt „Umhüllende GZT“.
+* Der Hinweis einer übernommenen Tabelle, zu der das Ergebnis nicht passt,
+  nannte den Schlüssel („Auflagerkräfte gibt es zu Lastfall oder Kombination
+  (env:SLS_CH)“), jetzt „(Umhüllende GZG charakteristisch)“.
+* Der übernommene Tabelleneintrag *Kombinationen* führte den Typ als Schlüssel
+  („ULS“, „SLS_CH“), während die Tabelle im Kapitel Kombinationen schon den
+  Klartext hatte. Jetzt steht in beiden „GZT (STR/GEO)“, „GZG charakteristisch“
+  und so weiter.
+* Eine Ergebniskombination, die wie ein Fachbegriff heißt, trägt den Zusatz
+  „(Ergebniskombination)“, siehe oben.
+
+Alle übrigen Texte des Berichts bleiben, wie sie waren.
 
 Die Tabelle *Kombinationen* gibt beim Kopieren und in CSV und Excel den
 Klartext aus, so wie die Spalte *Art* der Elemente. Im Browser gilt dasselbe
