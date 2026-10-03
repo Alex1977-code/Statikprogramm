@@ -826,12 +826,44 @@ jetzt als wohlgestellt, die Zahl der aggregierten Moden ändert sich (p 2: 1 758
 Anteil (`_rang`, seit dem 30.09. für die Rangfolge der Wurzeln) auch für den Schwellenvergleich nehmen; Test: Zelle mit Anteil genau an der Schwelle, beide Quadraturwege. Empfehlung: mit O16 erledigen. Sonnet 5.5, niedrig.
 **O20 – Nachiteration im SuperLU-Weg des Direktlösers:** ohne `pypardiso` (CI, künftig Linux) löst SuperLU das schlecht konditionierte System des geneigten Streifens (30°, p 3, 78 von 89 Zellen aggregiert) nur auf 10⁻⁵:
 Rest der Spannung 1,0·10⁻⁵ lokal und 8,2·10⁻⁶ in der CI, mit PARDISO 2,5·10⁻⁸. Eine Nachiteration in `linalg/direkt.Direktloeser.loesen` (Residuum mit der Matrix, noch einmal lösen) gibt 1,6·10⁻⁸; sie kostet ein
-Matrix-Vektor-Produkt und eine Rücksubstitution je Lösung. Empfehlung: bauen (Test: Streifen 30° p 3 mit erzwungenem SuperLU unter 10⁻⁶), danach die Schranke in `test_schale` wieder auf 10⁻⁵. Sonnet 5.5, mittel.
+Matrix-Vektor-Produkt und eine Rücksubstitution je Lösung. Empfehlung: bauen (Test: Streifen 30° p 3 mit erzwungenem SuperLU unter 10⁻⁶), danach die Schranke in `test_schale` wieder auf 10⁻⁵. Sonnet 5.5, mittel. **Gebaut am 03.10.2026, Ergebnis und Berichtigung der Regeln unten.**
 
 *Nachtrag CI (03.10.2026, nach dem Push von 617595c).* Die CI war an einer Prüfung rot: `test_schale`, geneigt 30° p 3, Gleichgewicht 1,2·10⁻⁵ und Rest 8,2·10⁻⁶ gegen die Schranke 10⁻⁵ (lokal 5,6·10⁻⁷ und 2,5·10⁻⁸;
 vor O5 in der CI 2,5·10⁻⁶ und 3,9·10⁻⁶). Lokal mit erzwungenem SuperLU nachgestellt (1,0·10⁻⁵ und 1,0·10⁻⁵): die Ursache ist der Löser ohne Nachiteration, nicht die Kur (O20). Die Prüfung nimmt seither bei 30° p 3
 die Schranke 10⁻⁵ mit PARDISO und 10⁻⁴ mit SuperLU, bei 10° p 3 im Rest 10⁻⁷ statt 10⁻⁸ (CI 2,1·10⁻⁹). Der Patch-Test höherer Ordnung lag in der CI bei p 3 am Rand bei 3,6·10⁻⁹ und 5,2·10⁻⁹ – die Schranke 10⁻⁷
 statt 10⁻⁸ war nötig.
+
+*Regeln O20, vor der Messung festgelegt (03.10.2026, nach Freigabe durch den Anwender: Pull Request 21 gemergt, „merge dann O20“).* **Frage:** Löst eine Nachiteration im SuperLU-Weg den Fall Streifen 30° p 3
+(CI: Rest 8,2·10⁻⁶, Gleichgewicht 1,2·10⁻⁵) auf das Niveau von PARDISO, und was kostet sie? **Kur:** In `linalg/direkt.Direktloeser.loesen` wird im SuperLU-Weg nach dem Lösen das Residuum r = F − K U je rechte Seite
+gebildet; solange ‖r‖∞ / ‖F‖∞ über 10⁻¹³ liegt, höchstens dreimal, und der letzte Schritt das Residuum mindestens auf die Hälfte gesenkt hat, wird U um die Lösung für r ergänzt. Der PARDISO-Weg bleibt unverändert. Das
+Grobgitter des Mehrgitters (`fcm/mehrgitter.py`) bekommt `nachiteration=0`: sein Löser ist ein fester, symmetrischer Vorkonditionierer, und die Nullraumerkennung des Grobgitters (`grob_nullkandidaten`) hängt am Verhalten der
+einfachen Zerlegung. **Zwei unabhängige Größen:** (A) das relative Residuum ‖F − K U‖∞ / ‖F‖∞ des Systems selbst, (B) Rest, Gleichgewicht und Schnittgrößen am Streifen über den Vertragsweg; beide müssen im Urteil übereinstimmen
+(Kur wirkt ⇒ A und B fallen). **Abnahme:** (1) Mit erzwungenem SuperLU (`sys.modules["pypardiso"] = None`) liegen alle fünf Größen des Streifens 30° p 3 unter 10⁻⁶ (PARDISO 2,5·10⁻⁸, ohne Kur 1,0·10⁻⁵) und der Rest bei 10° p 3
+unter 10⁻⁸ (PARDISO 4,2·10⁻¹⁰); (2) mit PARDISO sind die Zahlen von `test_schale` Ziffer für Ziffer die vom 03.10. (der PARDISO-Zweig bleibt unberührt); (3) die Mehrkosten der Nachiteration betragen an zwei Modellen
+(Streifen 30° p 3, Kirsch h 20 p 3) höchstens 10 % der Zeit von Faktorisierung und Lösen mit SuperLU, gemessen an derselben Faktorisierung abwechselnd mit und ohne Nachiteration in einem Prozess; (4) die Kernsuite ist mit
+erzwungenem SuperLU grün (so rechnet die CI); (5) ein Test, der ohne die Kur fehlschlägt: der Fall 30° p 3 mit erzwungenem SuperLU über 10⁻⁶ ohne Nachiteration und unter 10⁻⁶ mit ihr, dazu eine Einheitsprüfung am
+Direktlöser mit einer schlecht konditionierten Matrix. Danach steht die Schranke von `test_schale` für beide Löser wieder bei 10⁻⁵. Wird eine Regel verfehlt, entscheidet der Anwender mit Empfehlung.
+
+*Berichtigung der Regeln O20, vor der vollständigen Reihe (03.10.2026).* Die erste Fassung der Kur brach nach dem normweisen Residuum ab (‖F − K U‖∞ / ‖F‖∞ ≤ 10⁻¹³) und nahm es als Größe A. Die erste Messung zeigte es blind:
+am Streifen 30° p 3 liegt es mit 6,4·10⁻¹³ schon vor dem Schritt am Boden seiner eigenen Auswertung und danach bei 4,1·10⁻¹³, während der Spannungsfehler von 1·10⁻⁵ auf 1,6·10⁻⁸ fällt (die Korrektur des ersten Schritts ist
+1,2·10⁻⁶ relativ zu |U|, die des zweiten 7·10⁻¹⁰, danach Rundung). Das komponentenweise Rückwärtsfehlermaß ω = max_i |r_i| / (|K| |U| + |F|)_i (Oettli–Prager, wie LAPACK xGERFS es zum Abbruch nimmt) zeigt die Wirkung:
+2,6·10⁻⁷ vor dem Schritt, 6,9·10⁻¹⁴ nach dem ersten, 6,8·10⁻¹⁵ nach dem zweiten, dann 3·10⁻¹⁵ (Rundung); an den drei anderen Fällen 8,5·10⁻¹³ (p 2, 10°), 1,0·10⁻¹³ (p 2, 30°) und 1,6·10⁻¹⁰ (p 3, 10°) vor, 5·10⁻¹⁶ bis
+9·10⁻¹⁶ nach einem Schritt. Seither gilt: Größe A und Abbruchmaß ist ω mit der Toleranz 10⁻¹⁴ (über dem Boden aller vier Fälle, 5·10⁻¹⁶ bis 7·10⁻¹⁵); ein Schritt, der ω nicht senkt, wird verworfen, ein Schritt, der es nicht
+mindestens halbiert, beendet die Iteration, höchstens drei Schritte. Alles Übrige der Regeln bleibt. Die Berichtigung fiel vor der Streifenreihe, den Kosten und der Kernsuite; die erste Fassung gab am Streifen Spannungen auf
+demselben Niveau (30° p 3: Rest 1,6·10⁻⁸ gegen 2,7·10⁻⁸ jetzt), sie hat den Ausgang also nicht bestimmt.
+
+**Ergebnis O20 (03.10.2026, Commit 5219246 auf `feature/volumen3d`).** *Größe A* (ω des Systems, erzwungenes SuperLU, ohne → mit Nachiteration): p 2 10° 8,5·10⁻¹³ → 5,0·10⁻¹⁶, p 2 30° 1,0·10⁻¹³ → 4,6·10⁻¹⁶,
+p 3 10° 1,6·10⁻¹⁰ → 9,0·10⁻¹⁶, p 3 30° 2,6·10⁻⁷ → 6,8·10⁻¹⁵ (ein, ein, ein und zwei Schritte). *Größe B* (Streifen über den Vertragsweg), 30° p 3: Kraft 8,0·10⁻⁸ → 7,2·10⁻¹⁰, Moment 2,3·10⁻⁷ → 3,9·10⁻⁹,
+σ_x′ 5,0·10⁻⁶ → 5,4·10⁻⁷ (der Auswertepunkt liegt 10⁻⁷ h unter der Oberfläche, 5·10⁻⁷ ist dort der Boden), Rest 1,0·10⁻⁵ → 2,7·10⁻⁸, Gleichgewicht 1,0·10⁻⁵ → 7,7·10⁻⁸; 10° p 3: Rest 1,8·10⁻⁹ → 3,6·10⁻¹⁰; p 2 auf
+Rundungsniveau wie zuvor. A und B stimmen im Urteil überein (A fällt in allen vier Fällen, B dort, wo es über dem Boden lag). **Regel (1) erfüllt:** alle fünf Größen des Streifens 30° p 3 unter 10⁻⁶ (PARDISO 2,5·10⁻⁸), der Rest
+bei 10° p 3 unter 10⁻⁸. **Regel (2) erfüllt:** mit PARDISO und der Standard-Threadzahl sind die Zahlen von `test_schale` Ziffer für Ziffer die des Suitenlaufs vom 03.10. (bei 2 statt der Standard-Threadzahl streuen sie am
+Rundungsboden: 30° p 3 Rest 2,0·10⁻⁸ statt 2,5·10⁻⁸); der PARDISO-Zweig des Lösers ist unverändert. **Regel (3) knapp verfehlt am kleinsten Modell:** die Mehrkosten der Nachiteration betragen am Streifen (1 734 Unbekannte,
+Faktorisierung 0,10 bis 0,15 s, Lösen mit drei rechten Seiten 0,007 s ohne und 0,018 s mit einem Schritt) in drei unveränderten Wiederholungen 10,1 / 10,3 / 7,3 % von Faktorisierung und Lösen, in zwei von drei Messungen also
+knapp über 10 %; an Kirsch h 20 p 3 (22 584 Unbekannte, Faktorisierung 3,3 bis 3,8 s, zufällige rechte Seite: das System hat die freie z-Verschiebung, ω bleibt dort bei 10⁻³, ein Schritt wird ausgeführt und die Iteration endet am
+Boden) 4,5 / 4,1 / 4,1 %. Der Anteil sinkt mit der Größe, weil die Faktorisierung schneller wächst als Lösen und Nachiteration; absolut sind es 11 ms je Lösung am Streifen. Der Anwender hat die verfehlte Regel am 03.10.2026 mit der Empfehlung „annehmen“ angenommen („Regel (3) von O20 annehmen“).
+**Regel (4) erfüllt:** Kernsuite mit erzwungenem SuperLU 374/374 (536 s), mit PARDISO 374/374 (287 s; je zwei Threads, auf dem Entwicklungsrechner). **Regel (5) erfüllt:**
+`test_direkt` (8 Prüfungen: gesunde, um 10⁻⁹ gestörte und divergierende Zerlegung, Schalter 0, Nullseite, Vektor, PARDISO-Weg) und `test_schale.test_schale_geneigt_p3_superlu` (30° p 3 mit erzwungenem SuperLU unter 10⁻⁶ mit und
+über 10⁻⁶ ohne Nachiteration, 10° p 3 im Rest unter 10⁻⁸). Die Schranke von `test_schale` für 30° p 3 steht für beide Löser wieder bei 10⁻⁵. Das Grobgitter des Mehrgitters rechnet ohne Nachiteration (`nachiteration=0`).
 
 ## Modell je Schritt
 
@@ -875,5 +907,5 @@ nachgetragen.
 | O17 Genauigkeit der Zwangsmatrix | Opus 5.5 | hoch | Fortsetzung genauer bauen | Entscheidung offen (Empfehlung: zurückstellen) |
 | O18 Tetraederordnung ohne Moment Fitting | Sonnet 5.5 | niedrig | n = 2p im Rückfallweg | Entscheidung offen (Empfehlung: mit Teilprojekt 7) |
 | O19 Schwellenvergleich der Aggregation bei Gleichstand | Sonnet 5.5 | niedrig | gerundeten Anteil vergleichen | Entscheidung offen (Empfehlung: mit O16) |
-| O20 Nachiteration im SuperLU-Weg des Direktlösers | Sonnet 5.5 | mittel | ohne pypardiso nur 10⁻⁵ am schlecht konditionierten System | Entscheidung offen (Empfehlung: bauen) |
+| O20 Nachiteration im SuperLU-Weg des Direktlösers | Sonnet 5.5 | mittel | ohne pypardiso nur 10⁻⁵ am schlecht konditionierten System | gebaut auf `feature/volumen3d` (5219246): Streifen 30° p 3 mit SuperLU 2,7·10⁻⁸ statt 1,0·10⁻⁵; Regel (3) am kleinsten Modell knapp verfehlt (7 bis 10 % statt 10 %), vom Anwender angenommen (03.10.2026); Merge nur auf Freigabe |
 | O15 Reihenfolgefehler der 2:1-Balancierung (Gitter) | Sonnet 5.5 | mittel | Einzeiler mit Obergrenze, Test und Wiederholung der Suiten | erledigt (250e607): Korrektur, Durchlaufgrenze und Test; 391 von 393 verglichenen Gittern unverändert, kein bestehendes Ergebnis ändert sich; t/8 bei p 4 mit 6,4 Mio. Freiheitsgraden nicht rechenbar |

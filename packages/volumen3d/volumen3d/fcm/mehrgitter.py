@@ -523,7 +523,7 @@ class PMehrgitter:
         if self.n_zwaenge:
             B1 = sp.csr_matrix(grob.B)
             A1s = sp.bmat([[A1s, B1.T], [B1, sp.csr_matrix((self.n_zwaenge, self.n_zwaenge))]], format="csr")
-        grob.direkt = Direktloeser(A1s)
+        grob.direkt = Direktloeser(A1s, nachiteration=0)         # fester symmetrischer Vorkonditionierer, Nullraumerkennung unten (O20)
         # Singularitaet erkennen (grob_nullkandidaten): fuer Zufallsproben X liefert die Loesung von
         # A1s Y = A1 X den Nullraumanteil nicht zurueck; zwei Schritte inverser Iteration trennen ihn ab.
         # grob_residuum (Probe einer Spalte) bleibt nur als Kennzahl im Protokoll, entscheidet nichts mehr.
