@@ -54,7 +54,7 @@ class Elementuebersicht(msk.Maske):
                   F("fingerabdruck", "Netz-Fingerabdruck", "info", "–",
                     hinweis="Hash über Typ und Knoten jedes Elements - derselbe steht in der "
                             "Kennung der Ergebnisdatei; Ergebnisse werden nur zu einem Netz mit "
-                            "gleichem Fingerabdruck geladen")]
+                            "gleichem Fingerabdruck geladen", anzeige=True)]
         super().__init__(
             TITEL_UEBERSICHT, felder, parent, knopf="Im Bild nach Elementtyp färben",
             hinweis="Welche Elemente das Netz hat, je Typ und je Körper. Klick auf eine Zeile "

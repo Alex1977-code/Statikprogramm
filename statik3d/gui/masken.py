@@ -19,6 +19,7 @@ sich vor das Modell (harte Regel 5 der Vorgabe).
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass, field
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -61,6 +62,41 @@ class Feld:
     #: „leer = Norm“): werte() liefert dann "" statt 0. Bis 25.09.2026 waren
     #: solche Felder Textfelder und lasen „1.000“ still als 1.
     leer: bool = False
+    #: Reine Anzeige (Paket 13m): das Programm schreibt hier Anzahlen,
+    #: Kennwerte oder einen Fingerabdruck nach, uebernommen wird davon nichts -
+    #: eine Aenderung setzt keinen Punkt im Titel. Ausdruecklich je Feld und
+    #: nicht nach der Art: ein Anzeigefeld wie „Gilt für“ (Schweißnaht, Wind,
+    #: Wasserdruck) traegt den Zustand, den „Übernehmen“ schreibt.
+    anzeige: bool = False
+
+
+class Uebernahmesignal:
+    """„angewendet“ einer Maske (Paket 13m, Nachbesserung 03.10.2026).
+
+    Wie ein Qt-Signal mit ``connect`` und ``emit`` - aber ``emit`` ruft die
+    Empfaenger selbst, der Reihe nach, und meldet zurueck, ob das „Übernehmen“
+    gelang. Ein Qt-Signal kann das nicht: eine Ausnahme im Empfaenger schluckt
+    es, und wann alle Empfaenger durch sind, sagt es nicht. Das Ende an einer
+    0-ms-Uhr festzumachen ging schief - die Uhr lief in jeder verschachtelten
+    Ereignisschleife (Fortschritt bei Wasserdruck und Wind, refresh_all ab
+    100 000 Elementen, modale Fenster), und ein gescheitertes oder
+    abgebrochenes Übernehmen galt als gelungen."""
+
+    def __init__(self, maske):
+        self._maske = maske
+        self._empfaenger: list = []
+
+    def connect(self, f) -> None:
+        self._empfaenger.append(f)
+
+    def disconnect(self, f=None) -> None:
+        if f is None:
+            self._empfaenger.clear()
+        elif f in self._empfaenger:
+            self._empfaenger.remove(f)
+
+    def emit(self, werte) -> bool:
+        return self._maske._uebernehmen(werte, list(self._empfaenger))
 
 
 def _fenster_fest() -> bool:
@@ -338,21 +374,22 @@ class Maske(QtWidgets.QFrame):
     """Eine nicht-modale Eingabemaske.
 
     angewendet(dict)  - „Anwenden" gedrueckt oder genug Knoten angeklickt
+                        (ein :class:`Uebernahmesignal`, emit() sagt, ob es gelang)
     geschlossen()     - Maske zu (Esc oder Kreuz)
     geaendert_gemeldet(bool) - der Aenderungsmerker kommt (True) oder geht
     """
 
-    angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
     abgebrochen = QtCore.Signal()
     #: Der Aenderungsmerker (Punkt im Titel, Paket 13m) kommt oder geht: das
     #: Fenster nimmt darueber die Leiste „Übernehmen | Verwerfen“ wieder weg
     geaendert_gemeldet = QtCore.Signal(bool)
-    #: Aufruf, der die Zahl der Fehlermeldungen des Fensters liefert (setzt das
-    #: Fenster beim Zeigen). Steigt sie waehrend „Übernehmen“, ist es gescheitert
-    #: (Pruefung im Fenster, Meldung per error()) - die Maske gilt dann weiter
-    #: als geaendert. Ohne Fenster zaehlt jedes ausgeloeste „Übernehmen“.
-    fehlerzaehler = None
+    #: Rahmen des Fensters um ein „Übernehmen“ (setzt das Fenster beim Zeigen):
+    #: lauf(rufen, maske) ruft rufen() - das ruft die Empfaenger und liefert eine
+    #: Ausnahme oder None - und sagt, ob es gelang (keine Fehlermeldung, keine
+    #: Ablehnung, keine Ausnahme). Ohne Fenster gelingt jedes „Übernehmen“ ohne
+    #: Ausnahme.
+    uebernahme_lauf = None
     #: Ein Feld hat die Tastatur bekommen (Name des Feldes). Das Fenster
     #: schaltet darueber die Auswahl per Maus auf dieses Feld („bei Klick in
     #: Feld Auswahl per Maus", 15.09.2026).
@@ -410,19 +447,11 @@ class Maske(QtWidgets.QFrame):
         kopf.addWidget(t)
         #: die Titelzeile - vorn steht der Punkt des Aenderungsmerkers
         self.lbl_titel = t
-        #: „Übernehmen“ laeuft gerade: ersetzt der Handler die Maske dabei durch
-        #: ihre frische Fassung, ist das der normale Weg und kein Wechsel, der
-        #: die Leiste braucht. Gesetzt vom ersten Empfaenger von ``angewendet``
-        #: (hier, vor allen anderen verbunden) - so gilt es auch, wenn jemand das
-        #: Signal selbst ausloest statt ueber anwenden() (die Pruefungen tun das)
+        #: „Übernehmen“ laeuft gerade (von emit bis zu seiner Rueckkehr):
+        #: ersetzt der Handler die Maske dabei durch ihre frische Fassung, ist
+        #: das der normale Weg und kein Wechsel, der die Leiste braucht
         self._uebernimmt = False
-        self._uebernahme_ok = True
-        self._fehler_vorher = None
-        self._ende_uhr = QtCore.QTimer(self)
-        self._ende_uhr.setSingleShot(True)
-        self._ende_uhr.setInterval(0)
-        self._ende_uhr.timeout.connect(self._uebernahme_ende)
-        self.angewendet.connect(self._uebernahme_beginnt)
+        self.angewendet = Uebernahmesignal(self)
         kopf.addStretch(1)
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
@@ -741,15 +770,16 @@ class Maske(QtWidgets.QFrame):
         die Ergebnisse verwerfen muss: eine Bemerkung oder Symbolgroesse
         aendert die Rechnung nicht.
 
-        Anzeigefelder (Art „info“) zaehlen nicht (03.10.2026, Paket 13m): das
-        Programm schreibt dort Anzahlen, Kennwerte und Fingerabdruecke nach,
-        uebernehmen laesst sich davon nichts - sonst trueg die Maske nach dem
-        Knopf „Fingerabdruck“ den Punkt der nicht uebernommenen Aenderungen."""
+        Reine Anzeigen (Feld.anzeige, Paket 13m) zaehlen nicht: das Programm
+        schreibt dort Anzahlen, Kennwerte und Fingerabdruecke nach, uebernehmen
+        laesst sich davon nichts. Die Unterscheidung steht am Feld, nicht an
+        seiner Art - „Gilt für“ ist auch ein Anzeigefeld und traegt doch den
+        Zustand, den „Übernehmen“ schreibt."""
         jetzt = self._werte_roh()
         anfang = getattr(self, "_anfang", {}) or {}
-        felder = getattr(self, "_felder", {}) or {}
+        anzeigen = getattr(self, "_anzeigen", ()) or ()
         return {k for k in set(jetzt) | set(anfang) if jetzt.get(k) != anfang.get(k)
-                and not isinstance(felder.get(k), QtWidgets.QLabel)}
+                and k not in anzeigen}
 
     def stand_merken(self, namen=None) -> None:
         """Den jetzigen Stand als den Stand beim Oeffnen nehmen - nach einem
@@ -776,6 +806,8 @@ class Maske(QtWidgets.QFrame):
         aller Felder; so ist es einer, gleich nach dem Ereignis."""
         self._merker = False
         self._feldtexte = {f.name: (f.text or f.name) for f in felder}
+        #: reine Anzeigen (Feld.anzeige): zaehlen nicht als Aenderung
+        self._anzeigen = {f.name for f in felder if getattr(f, "anzeige", False)}
         self._merker_uhr = QtCore.QTimer(self)
         self._merker_uhr.setSingleShot(True)
         self._merker_uhr.setInterval(0)
@@ -846,6 +878,9 @@ class Maske(QtWidgets.QFrame):
                 it.setCheckState(QtCore.Qt.Checked if it.text() in gewaehlt else QtCore.Qt.Unchecked)
         elif isinstance(w, QtWidgets.QLabel):
             w.setText(str(wert))
+            # ein Anzeigefeld meldet keine Aenderung von selbst - „Gilt für“ nach
+            # „Auswahl übernehmen“ setzt den Punkt trotzdem (Paket 13m, L2)
+            self._merker_anstossen()
         else:
             # ohne Tausender: ein Textfeld kann eine Liste sein, dort trennt
             # das Leerzeichen Eintraege; nie „1e-05“ (25.09.2026)
@@ -913,10 +948,10 @@ class Maske(QtWidgets.QFrame):
 
     # -- Bedienung -------------------------------------------------------
     def anwenden(self) -> bool:
-        """„Übernehmen“. True, wenn es gelang: die Werte gingen hinaus, und das
-        Fenster hat dabei keinen Fehler gemeldet (:attr:`fehlerzaehler`). Dann
-        gilt der jetzige Stand als uebernommen, der Punkt im Titel geht. Die
-        Leiste „Übernehmen | Verwerfen“ fuehrt den Wunsch nur bei True aus."""
+        """„Übernehmen“. True, wenn es gelang: kein Handler hat abgelehnt, einen
+        Fehler gemeldet oder eine Ausnahme geworfen (:attr:`uebernahme_lauf`).
+        Dann gilt der jetzige Stand als uebernommen, der Punkt im Titel geht.
+        Die Leiste „Übernehmen | Verwerfen“ fuehrt den Wunsch nur bei True aus."""
         # Ungueltige Zahl: nichts uebernehmen. Mehrdeutige („33.000“): beim
         # ersten Mal nachfragen, beim zweiten Mal gilt sie (24.09.2026)
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
@@ -924,34 +959,38 @@ class Maske(QtWidgets.QFrame):
             self._zahlmeldung_nachfuehren()
             return False
         self._zahlmeldung_nachfuehren()
-        self.angewendet.emit(self.werte())
-        try:
-            return self._uebernahme_ende()
-        except RuntimeError:                # Maske schon freigegeben
-            return True
+        return self.angewendet.emit(self.werte())
 
-    def _uebernahme_beginnt(self, _werte=None) -> None:
-        """Erster Empfaenger von ``angewendet``: die Uebernahme laeuft. Ihr Ende
-        meldet anwenden() gleich nach den Handlern - wer das Signal selbst
-        ausloest, bekommt es mit der naechsten Runde der Ereignisschleife."""
-        zaehler = self.fehlerzaehler
-        self._fehler_vorher = zaehler() if callable(zaehler) else None
+    def _uebernehmen(self, werte: dict, empfaenger: list) -> bool:
+        """Die Empfaenger von ``angewendet`` rufen - entschieden wird, wenn sie
+        zurueckgekehrt sind, nicht an einer Uhr. Eine Ausnahme beendet die
+        Reihe: die uebrigen Empfaenger (etwa „Maske schliessen“) laufen dann
+        nicht mehr, und die Eingaben bleiben stehen."""
+
+        def rufen():
+            for f in empfaenger:
+                try:
+                    f(werte)
+                except Exception as ex:     # noqa: BLE001 - gemeldet und als gescheitert gewertet
+                    sys.excepthook(*sys.exc_info())
+                    return ex
+            return None
+
         self._uebernimmt = True
-        self._ende_uhr.start()
-
-    def _uebernahme_ende(self) -> bool:
-        """Die Uebernahme ist durch. Gelang sie - kein Fehler gemeldet, solange
-        sie lief -, gilt der jetzige Stand als uebernommen und der Punkt geht.
-        Ein zweiter Aufruf (Uhr und anwenden) liefert dasselbe Ergebnis."""
-        self._ende_uhr.stop()
-        if not self._uebernimmt:
-            return self._uebernahme_ok
-        self._uebernimmt = False
-        zaehler, vorher = self.fehlerzaehler, self._fehler_vorher
-        self._uebernahme_ok = vorher is None or not callable(zaehler) or zaehler() == vorher
-        if self._uebernahme_ok:
-            self.stand_merken()
-        return self._uebernahme_ok
+        try:
+            lauf = self.uebernahme_lauf
+            ok = bool(lauf(rufen, self)) if callable(lauf) else rufen() is None
+        finally:
+            try:
+                self._uebernimmt = False
+            except RuntimeError:            # Maske schon freigegeben
+                pass
+        if ok:
+            try:
+                self.stand_merken()
+            except RuntimeError:
+                pass
+        return ok
 
     def abbrechen(self):
         """Abbrechen: erst melden (das Fenster nimmt ein neues Objekt zurueck),

@@ -1914,8 +1914,10 @@ die Ergebnisse stehen im Register *Ergebnisse* und im Modellbaum. Bis dahin
 ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg. Seit dem
 03.10.2026 steht dann über ihr die Leiste „Übernehmen | Verwerfen“ (Kapitel 2,
 *Maske oder Klick*): Einer der beiden Knöpfe zeigt danach die Maske
-*Ergebnisse*. *Übernehmen* ändert das Modell und verwirft damit die eben
-gerechneten Ergebnisse, *Verwerfen* behält sie.
+*Ergebnisse*. *Übernehmen* wirkt wie der Knopf der Maske: Ändert es etwas, das
+in die Rechnung eingeht, sind die eben gerechneten Ergebnisse verworfen; eine
+geänderte Bezeichnung, Beschreibung oder Bemerkung behält sie. *Verwerfen*
+behält sie immer.
 
 Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
 bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie
@@ -3186,33 +3188,52 @@ etwas ändert, steht vor ihrem Titel ein Punkt, etwa „● Knoten K1“; der Hi
 am Titel nennt die geänderten Felder. Der Punkt geht wieder, wenn alle Felder
 so stehen wie beim Öffnen, wenn „Übernehmen“ (oder „Anlegen“, „Last
 aufbringen“ …) gelungen ist, und mit der Maske, wenn man sie abbricht oder
-schließt. Scheitert „Übernehmen“, bleibt er stehen. Felder, die nur anzeigen
-(Anzahl, Kennwerte, „hängt an“), zählen nicht. Zieht man die Schnittebene im
+schließt. Scheitert „Übernehmen“, bleibt er stehen. Was zählt, steht am Feld
+selbst: Reine Anzeigen, in die das Programm Anzahlen, Kennwerte oder den
+Fingerabdruck des Netzes schreibt, zählen nicht. Ein Anzeigefeld, das trägt,
+was „Übernehmen“ schreibt, zählt dagegen – etwa „Gilt für“ bei Schweißnaht,
+Wind und Wasserdruck nach „Auswahl übernehmen“. Zieht man die Schnittebene im
 Bild, gelten die Werte, die das Programm dabei in ihre Maske schreibt, als
 übernommen, denn das Bild zeigt sie schon.
 
 Soll eine Maske mit Punkt einer anderen weichen, geschieht das nicht still.
 Das gilt für einen Klick oder Doppelklick im Modellbaum, für *Neu* im
-Rechtsklickmenü des Baums, für einen Befehl im Ribbon oder im Register
-„Auswahl“, für einen Klick in einer Tabelle oder in der Ansicht, der eine
-Maske öffnet, für die Einzeltasten K, S, L und B und für das Ende einer
-Rechnung. Oben im rechten Bereich, unter der Ergebnisdarstellung und direkt
-über der Maske, erscheint dann die Leiste „„Knoten K1“ hat nicht übernommene
-Änderungen“ mit den Knöpfen **Übernehmen** und **Verwerfen**.
+Rechtsklickmenü des Baums, für einen Befehl im Ribbon, im Register „Auswahl“
+oder in einem Rechtsklickmenü, für einen Klick in einer Tabelle oder in der
+Ansicht, der eine Maske öffnet, für die Einzeltasten K, S, L und B und für das
+Ende einer Rechnung. Oben im rechten Bereich, unter der Ergebnisdarstellung und
+direkt über der Maske, erscheint dann die Leiste „„Knoten K1“ hat nicht
+übernommene Änderungen“ mit den Knöpfen **Übernehmen** und **Verwerfen**.
+Angehalten wird, bevor etwas geschieht: Die neue Maske ist noch nicht gebaut,
+und ein Klick im Modellbaum, in einer Tabelle oder auf „Lager bearbeiten…“
+hat die Auswahl der Ansicht noch nicht umgestellt.
 
 * **Übernehmen** übernimmt die Maske genau wie ihr eigener Knopf, mit denselben
   Prüfungen und einem Rückgängig-Schritt, und führt danach aus, was man
-  wollte: die neue Maske, die Taste oder die Ergebnisse. Scheitert es (eine
-  ungültige Zahl, eine Prüfung mit Meldung), bleibt alles stehen; die Meldung
-  erscheint wie beim Knopf der Maske, und die Leiste wartet weiter.
+  wollte. Die neue Maske entsteht erst dann, mit dem Stand nach dem
+  Übernehmen: Hat man in der Maske *Einheiten* die Kraft umgestellt oder einen
+  Lastfall umbenannt, zeigt sie schon den neuen Wert. Sie gilt dem Objekt, das
+  man angeklickt hatte, auch wenn das Übernehmen dessen Namen oder Nummer
+  verschoben hat – etwa die Last an K7, wenn die übernommene Last aus der
+  Liste davor in einen anderen Lastfall gewandert ist, oder den angeklickten
+  Knoten nach einem Nummerntausch. Gibt es das Objekt danach nicht mehr,
+  öffnet sich nichts, und die Statuszeile sagt es.
+* **Scheitert** das Übernehmen, bleibt alles stehen: Maske, Punkt und Leiste,
+  und das Gewünschte wartet weiter. Gescheitert ist es bei einer ungültigen
+  Zahl, bei einer Prüfung mit Meldung, wenn man den Fortschritt abbricht
+  (Wasserdruck, Wind) und bei einem Programmfehler, den eine Meldung nennt.
+  Die Meldung erscheint wie beim Knopf der Maske. Hatte das Übernehmen schon
+  etwas geschrieben, ist das Modell danach wieder wie vorher, und es bleibt
+  kein Rückgängig-Schritt zurück. Die Knotenmaske prüft eine neue Nummer jetzt,
+  bevor sie die Koordinaten schreibt; bis zum 03.10.2026 standen die neuen
+  Koordinaten schon im Modell, wenn die Nummer abgewiesen wurde.
 * **Verwerfen** verwirft die Eingaben und führt dann aus, was man wollte. Eine
   Maske „Neu: …“ wird dabei abgebrochen wie mit ihrem Knopf *Abbrechen*: ein
   schon angelegter Knoten geht wieder weg.
 * **Ohne Knopfdruck** bleibt alles, wie es ist. Die Maske steht weiter, man
-  kann darin weitertippen und in der Ansicht klicken. Ein Klick im Modellbaum
-  stellt die Auswahl der Ansicht erst um, wenn einer der beiden Knöpfe
-  gedrückt ist; *Übernehmen* bringt eine Knotenlast also auf die Knoten, die
-  vorher gewählt waren, und nicht auf den eben im Baum angeklickten.
+  kann darin weitertippen und in der Ansicht klicken. Wählt man dabei in der
+  Ansicht etwas anderes, gilt beim Druck auf *Übernehmen* die Auswahl in
+  diesem Moment – wie beim Knopf der Maske.
 
 Die Leiste geht von selbst, wenn die Maske auf ihrem eigenen Weg übernommen,
 abgebrochen oder geschlossen wird oder wieder unverändert ist; was man wollte,
@@ -3221,14 +3242,25 @@ letzte. Die Leiste ist kein eigenes Fenster und sperrt nichts, auch nicht
 während einer Rechnung; eine Fehlermeldung beim Übernehmen steht dann wie jede
 andere im Protokoll.
 
-Nicht über die Leiste gehen die Wege, die ohnehin fragen oder das ganze Modell
-ersetzen. **Entf** nennt die geänderte Maske in seiner Rückfrage, und mit *Ja*
-wird sie geschlossen; *Neu*, *Öffnen* und die Beispiele fragen nach
-ungespeicherten Änderungen am Modell und schließen die Maske. Die Taste **F**
-öffnet keine Maske, sondern den Dialog *Fläche aus Linien*, und lässt die
-offene Maske stehen. Die Ermüdungsmaske und die Querschnittsmaske tragen keinen
-Punkt, ihre Tabellen und Profile zählen nicht mit; die Register (*Berechnung*,
-*Ergebnisse* …) auch nicht.
+**Neu, Öffnen, Beispiel, Importieren und Beenden** gehen ebenfalls über die
+Leiste, auch wenn das Modell gespeichert ist; nach dem Knopf folgt der Befehl
+mit seiner eigenen Rückfrage nach ungespeicherten Änderungen. Bis zum
+03.10.2026 schlossen sie die Maske ohne Frage. **Rückgängig und Wiederholen**
+sind gesperrt, solange eine Maske nicht übernommene Änderungen hat: Die Leiste
+erscheint, die Statuszeile nennt die Maske, und es wird nichts zurückgenommen.
+Ein Rückgängig vor dem Übernehmen konnte Knotennummern unter der offenen Maske
+verschieben, sodass sie einen anderen Knoten beschrieb; ein Rückgängig danach
+nähme genau das Übernommene zurück. Strg+Z in einem Textfeld der Maske nimmt
+weiter nur die Eingabe im Feld zurück.
+
+Die Wege, die ohnehin fragen, gehen nicht über die Leiste, nennen die Maske
+aber in ihrer Rückfrage: **Entf** in der Ansicht, Löschen im Modellbaum (auch
+für Lager und für mehrere Einträge), *Löschen* im Rechtsklickmenü der Auswahl,
+„Diese Lasten löschen“ und das Löschen einer einzelnen Last. Mit *Ja* wird die
+Maske geschlossen. Die Taste **F** öffnet keine Maske, sondern den Dialog
+*Fläche aus Linien*, und lässt die offene Maske stehen. Die Ermüdungsmaske und
+die Querschnittsmaske tragen keinen Punkt, ihre Tabellen und Profile zählen
+nicht mit; die Register (*Berechnung*, *Ergebnisse* …) auch nicht.
 
 Bis zum 03.10.2026 ersetzten Baumklick, Doppelklick, Ribbon, das Register
 „Auswahl“ und die Tabellen eine geänderte Maske ohne Rückfrage, und die
@@ -3414,7 +3446,10 @@ Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
 ### Rückgängig und Wiederholen
 
 **Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
-für alles: Geometrie, Netz, Lager, Lasten, Linien. Gesichert wird jeweils das
+für alles: Geometrie, Netz, Lager, Lasten, Linien. Solange eine Maske nicht
+übernommene Änderungen hat (Punkt im Titel), sind beide gesperrt; die Leiste
+„Übernehmen | Verwerfen“ erscheint (seit 03.10.2026, Kapitel 2, *Maske oder
+Klick*). Gesichert wird jeweils das
 ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
 einmal betrifft. Die letzten 50 Schritte werden vorgehalten. Der Knopf
 **nennt, was er zurücknimmt**: der Hinweis beim Überfahren lautet etwa

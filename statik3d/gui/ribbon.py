@@ -195,7 +195,7 @@ class Gruppe(QtWidgets.QWidget):
     def _aktion(self, text: str, fn, kuerzel: str, hinweis: str, ort: str = "") -> QtGui.QAction:
         a = QtGui.QAction(text, self)
         if fn is not None:
-            a.triggered.connect(lambda _=False, f=fn: f())
+            a.triggered.connect(lambda _=False, f=fn: self._ribbon.ausfuehren(f))
         if kuerzel:
             self._ribbon.kuerzel_setzen(a, kuerzel)
         h = hinweis or text
@@ -473,6 +473,10 @@ class Ribbon(QtWidgets.QWidget):
         self.setObjectName("ribbon")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.befehle: list[Befehl] = []
+        #: Rahmen des Fensters um jeden Befehl (Paket 13m): rahmen(fn) fuehrt fn
+        #: aus und weiss dabei, welcher Befehl laeuft - ersetzt er eine Maske mit
+        #: nicht uebernommenen Aenderungen, ist er selbst der Wunsch der Leiste
+        self.befehlsrahmen = None
         self._register: dict[str, Register] = {}
         self._kontext: Register | None = None
         self._kontext_name = ""
@@ -815,6 +819,11 @@ class Ribbon(QtWidgets.QWidget):
         steht, ist markiert - der naechste Buchstabe ersetzt es."""
         self.suche.setFocus(QtCore.Qt.ShortcutFocusReason)
         self.suche.selectAll()
+
+    def ausfuehren(self, fn):
+        """Einen Befehl ausfuehren - im Rahmen des Fensters, wenn es einen gibt."""
+        rahmen = self.befehlsrahmen
+        return rahmen(fn) if callable(rahmen) else fn()
 
     def merken(self, b: Befehl):
         self.befehle.append(b)

@@ -15,6 +15,20 @@ vom 24.09.2026: eine nicht-modale Leiste, nicht automatisch uebernehmen).
   alles. Scheitert „Übernehmen“, bleibt alles stehen.
 * Eine unveraenderte Maske wird ersetzt wie bisher, ohne Leiste.
 
+Nachbesserung nach der Gegenpruefung (03.10.2026), je ein Fall:
+F1 gelungen oder gescheitert wird entschieden, wenn der Handler zurueckkehrt,
+   auch wenn er eine Ereignisschleife dreht (Wasserdruck mit Fortschritt);
+   Ablehnung, Abbruch und Ausnahme gelten als gescheitert, ein halber Schritt
+   wird zurueckgenommen, die Knotenmaske prueft vor dem Schreiben;
+F2 der Wunsch baut die Maske neu (Einheiten, Lastfall umbenannt), und jeder
+   Weg, der eine Maske baut, haelt vorher an (Quelltextpruefung);
+F3 Tabelle, Doppelklick und Rechtsklick halten, bevor die Auswahl umgestellt wird;
+F4 der Wunsch meint das Objekt: die Last, den Knoten nach einem Nummerntausch;
+   gibt es es nicht mehr, oeffnet sich nichts;
+F5 Rueckgaengig und Wiederholen sind bei einer geaenderten Maske gesperrt;
+L1 Neu, Beispiel, Import und Beenden gehen ueber die Leiste, Loeschwege nennen die Maske;
+L2 „Gilt für“ zaehlt als Aenderung, der Fingerabdruck nicht.
+
 Aufruf:  python -m tests.test_aenderungsmerker
 """
 import os
@@ -60,6 +74,9 @@ def _modal_abfangen():
     B.information = melden("information", B.Ok)
     B.question = melden("question", B.No)
     QtWidgets.QDialog.exec = lambda self, *a, **k: (MODAL.append(("exec", type(self).__name__)), 0)[1]
+    D = QtWidgets.QFileDialog
+    D.getOpenFileName = staticmethod(lambda *a, **k: (MODAL.append(("datei", "öffnen")), ("", ""))[1])
+    D.getSaveFileName = staticmethod(lambda *a, **k: (MODAL.append(("datei", "speichern")), ("", ""))[1])
 
 
 def _fenster():
@@ -766,7 +783,9 @@ def test_frische_masken_ohne_punkt():
             if mk.geaenderte_felder() or _titel(mk) != mk.titel:
                 schlecht.append(f"{art}/{name}: {sorted(mk.geaenderte_felder())}")
     for befehl in ("maske_knoten", "maske_stab", "maske_lager", "maske_knotenlast", "maske_linie",
-                   "maske_schale", "maske_vorspannung", "maske_schnittebene"):
+                   "maske_schale", "maske_vorspannung", "maske_schnittebene", "maske_einheiten",
+                   "maske_darstellung", "maske_netzeinstellungen", "maske_netzguete", "maske_elementuebersicht",
+                   "maske_schweissnaht", "maske_temperaturlast", "bemassung_einstellungen", "subsystem_neu"):
         w.maskenrand.schliessen()
         getattr(w, befehl)()
         _ruhe(app, 2)
@@ -822,6 +841,521 @@ def test_merker_kostet_kein_neuzeichnen():
     _aufraeumen(w, app)
 
 
+# ---------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung (03.10.2026)
+# ---------------------------------------------------------------------------
+def _wasserdruck(w, app):
+    """Ein Wasserdruck WD1 auf einer Flaeche FA (wie szenarien3.py der Gegenpruefung)."""
+    from statik3d.wasserdruck import Wasserdruck
+    m = w.model
+    k = [m.add_node(*xyz) for xyz in ((0, 2, 0), (5, 2, 0), (5, 2, 3), (0, 2, 3))]
+    m.add_line("LA1", [k[0], k[1]]); m.add_line("LA2", [k[1], k[2]])
+    m.add_line("LA3", [k[2], k[3]]); m.add_line("LA4", [k[3], k[0]])
+    m.add_flaeche("FA", ["LA1", "LA2", "LA3", "LA4"])
+    m.wasserdruecke["WD1"] = Wasserdruck("WD1", flaechen=["FA"], h_ow=3.0)
+    w.refresh_all()
+    _ruhe(app)
+
+
+def test_f1_entscheidung_nach_dem_handler():
+    """Der Handler dreht eine Ereignisschleife (Fortschritt): bis d07b48f lief
+    dort die 0-ms-Uhr, und ein gescheitertes Übernehmen galt als gelungen."""
+    import statik3d.wasserdruck as wdm
+    from statik3d import stroemung as strm
+    w, app = _fenster()
+    alt = wdm.lasten_erzeugen
+    for art, titel in (("fehler", "Rechnung scheitert (Fehlermeldung)"),
+                       ("abbruch", "Anwender bricht den Fortschritt ab")):
+        _halle(w, app)
+        _wasserdruck(w, app)
+        w.maske_wasserdruck("WD1")
+        _ruhe(app)
+        mk = _maske(w)
+        mk.setzen("h_ow", 4.5)
+        _ruhe(app)
+        w.baum.angeklickt.emit("knoten", "2")
+        _ruhe(app)
+        schleifen = []
+
+        def ersatz(m, wd, fortschritt=None, art=art):
+            from PySide6 import QtWidgets
+            for _ in range(3):                  # wie der Fortschritt: die Ereignisschleife dreht
+                QtWidgets.QApplication.processEvents()
+                schleifen.append(1)
+            if fortschritt is not None:
+                fortschritt(0.5, "halb")
+            if art == "fehler":
+                raise ValueError("simuliert: Strömungsrechnung gescheitert")
+            raise strm.Abgebrochen()
+        wdm.lasten_erzeugen = ersatz
+        try:
+            _druecken(w, app, "Übernehmen")
+        finally:
+            wdm.lasten_erzeugen = alt
+        check(f"{titel} über die Leiste (die Schleife drehte {len(schleifen)}-mal): Maske, Punkt und Leiste "
+              "bleiben, kein Wunsch, h_ow unverändert",
+              _maske(w) is mk and _titel(mk) == PUNKT + mk.titel and _leiste(w) is not None
+              and w.model.wasserdruecke["WD1"].h_ow == 3.0 and len(schleifen) == 3,
+              f"rechts {getattr(_maske(w), 'titel', None)!r}, Leiste {_leiste(w) is not None}, "
+              f"h_ow {w.model.wasserdruecke['WD1'].h_ow}")
+        _aufraeumen(w, app)
+    # derselbe Weg ueber den eigenen Knopf: anwenden() sagt False, der Punkt bleibt
+    _halle(w, app)
+    _wasserdruck(w, app)
+    w.maske_wasserdruck("WD1")
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("h_ow", 4.5)
+    _ruhe(app)
+
+    def abbruch(m, wd, fortschritt=None):
+        from PySide6 import QtWidgets
+        QtWidgets.QApplication.processEvents()
+        raise strm.Abgebrochen()
+    wdm.lasten_erzeugen = abbruch
+    try:
+        erg = mk.anwenden()
+        _ruhe(app)
+    finally:
+        wdm.lasten_erzeugen = alt
+    check("Abbruch über den eigenen Knopf: anwenden() = False, der Punkt bleibt",
+          erg is False and _titel(mk) == PUNKT + mk.titel, f"{erg!r}, {_titel(mk)!r}")
+    _aufraeumen(w, app)
+    # umbenannt und abgebrochen: der alte Wasserdruck war vor der Rechnung schon
+    # geloescht - danach steht er wieder da, und kein halber Schritt bleibt
+    _halle(w, app)
+    _wasserdruck(w, app)
+    w.maske_wasserdruck("WD1")
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("name", "WD2")
+    _ruhe(app)
+    schritte = len(w._undo)
+    wdm.lasten_erzeugen = abbruch
+    try:
+        erg = mk.anwenden()
+        _ruhe(app)
+    finally:
+        wdm.lasten_erzeugen = alt
+    check("Umbenannt und abgebrochen: WD1 steht wieder im Modell, WD2 nicht, kein Rückgängig-Schritt",
+          erg is False and "WD1" in w.model.wasserdruecke and "WD2" not in w.model.wasserdruecke
+          and len(w._undo) == schritte, f"{sorted(w.model.wasserdruecke)}, Schritte {schritte} -> {len(w._undo)}")
+    _aufraeumen(w, app)
+
+
+def test_f1_ausnahme_und_halber_schritt():
+    w, app = _fenster()
+    _halle(w, app)
+    # eine Ausnahme im Handler (S2 der Gegenpruefung)
+
+    def kaputt(_werte):
+        raise TypeError("simulierter Programmfehler")
+    w._maske_knoten_anlegen = kaputt
+    try:
+        w.maske_knoten()
+        _ruhe(app)
+        mk = _maske(w)
+        mk.setzen("x", 3.25)
+        _ruhe(app)
+        w.baum.angeklickt.emit("knoten", "2")
+        _ruhe(app)
+        MODAL.clear()
+        nn = w.model.nn
+        _druecken(w, app, "Übernehmen")
+        check("Ausnahme im Handler: gilt als gescheitert - Maske und Leiste bleiben, Meldung, kein Wunsch",
+              _maske(w) is mk and _leiste(w) is not None and w.model.nn == nn
+              and any("simulierter Programmfehler" in t for _a, t in MODAL), str(MODAL[-1:]))
+    finally:
+        del w._maske_knoten_anlegen
+    _aufraeumen(w, app)
+    # ein Handler, der erst schreibt und dann ablehnt: kein halber Zustand
+
+    def halb(werte):
+        w.merken("halber Schritt")
+        w.model.add_node(77.0, 0.0, 0.0)
+        w.error("simuliert: nach dem Schreiben abgelehnt")
+    w._maske_knoten_anlegen = halb
+    try:
+        w.maske_knoten()
+        _ruhe(app)
+        mk = _maske(w)
+        mk.setzen("x", 1.0)
+        _ruhe(app)
+        nn, schritte = w.model.nn, len(w._undo)
+        erg = mk.anwenden()
+        _ruhe(app)
+        check("Handler schreibt und lehnt dann ab: das Modell ist wie vorher, kein Rückgängig-Schritt bleibt",
+              erg is False and w.model.nn == nn and len(w._undo) == schritte and _titel(mk) == PUNKT + mk.titel,
+              f"{erg!r}, nn {nn} -> {w.model.nn}, Schritte {schritte} -> {len(w._undo)}")
+    finally:
+        del w._maske_knoten_anlegen
+    _aufraeumen(w, app)
+    # Knotenmaske: x geaendert, Nummer ungueltig (U3) - erst pruefen, dann schreiben
+    mk = _k1_geaendert(w, app, x=11.0)
+    mk.setzen("nr", 999)
+    _ruhe(app)
+    schritte = len(w._undo)
+    erg = mk.anwenden()
+    _ruhe(app)
+    check("Knotenmaske, Nummer 999 ungültig: x bleibt im Modell unverändert, kein Schritt",
+          erg is False and float(w.model.nodes[1][0]) == 0.0 and len(w._undo) == schritte,
+          f"x = {w.model.nodes[1][0]}, Schritte {schritte} -> {len(w._undo)}")
+    _aufraeumen(w, app)
+
+
+def test_f2_wunsch_baut_neu():
+    from statik3d import einheiten as eh
+    w, app = _fenster()
+    _halle(w, app)
+    # Einheiten (S3): die zweite Maske entsteht nach dem Übernehmen
+    w.act_einheiten.trigger()
+    _ruhe(app)
+    mk = _maske(w)
+    alt = w.model.einheiten.kraft
+    neu = next(x for x in eh.WAHL["kraft"] if x != alt)
+    mk.setzen("kraft", neu)
+    _ruhe(app)
+    w.act_einheiten.trigger()
+    _ruhe(app)
+    _druecken(w, app, "Übernehmen")
+    mk2 = _maske(w)
+    check(f"Ribbon „Einheiten“ wartet, „Übernehmen“: die neue Maske zeigt die übernommene Kraft ({neu})",
+          w.model.einheiten.kraft == neu and mk2 is not None and mk2 is not mk and mk2.werte().get("kraft") == neu,
+          f"Modell {w.model.einheiten.kraft}, Maske {mk2.werte().get('kraft') if mk2 else None}")
+    _aufraeumen(w, app)
+    # Lastfall umbenannt, Ribbon „Knotenlast“ wartet (U4)
+    fall = w.model.active_case
+    w._objektmaske("lastfall", fall)
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("name", fall + "_neu")
+    _ruhe(app)
+    _befehl(w, "Lasten", "Knotenlast").aktion.trigger()
+    _ruhe(app)
+    _druecken(w, app, "Übernehmen")
+    mk2 = _maske(w)
+    werte = mk2.werte() if mk2 is not None else {}
+    liste = [mk2._felder["fall"].itemText(i) for i in range(mk2._felder["fall"].count())] if mk2 else []
+    check("Lastfall umbenannt, Ribbon „Knotenlast“ wartet: die neue Maske kennt nur den neuen Namen",
+          getattr(mk2, "titel", "") == "Knotenlast" and werte.get("fall") == fall + "_neu" and fall not in liste,
+          f"fall {werte.get('fall')!r}, Liste {liste[:4]}")
+    _aufraeumen(w, app)
+
+
+def test_f2_jeder_bau_haelt_vorher():
+    """Quelltextpruefung: jede Methode, die selbst maske_erzeugen ruft oder die
+    Auswahl umstellt und eine Objektmaske oeffnet, haelt vorher an (_maskenweg)."""
+    import ast
+    import inspect
+    from statik3d.gui import main as gm
+    baum = ast.parse(inspect.getsource(gm))
+    klasse = next(n for n in baum.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+
+    def deko(f):
+        return {getattr(d.func if isinstance(d, ast.Call) else d, "id", "") for d in f.decorator_list}
+
+    def rufe(f):
+        return {n.func.attr for n in ast.walk(f) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name) and n.func.value.id == "self"}
+    ohne, gesehen = [], 0
+    for f in klasse.body:
+        if not isinstance(f, ast.FunctionDef) or f.name == "maske_erzeugen":
+            continue
+        r = rufe(f)
+        baut = "maske_erzeugen" in r
+        waehlt_und_oeffnet = "_baum_objekt_waehlen" in r and bool(r & {"_objektmaske", "_lastmaske", "sammelmaske"})
+        if baut or waehlt_und_oeffnet:
+            gesehen += 1
+            if "_maskenweg" not in deko(f):
+                ohne.append(f"{f.name} (Zeile {f.lineno})")
+    check(f"{gesehen} Wege bauen eine Maske oder wählen und öffnen: jeder hält vorher an (_maskenweg)",
+          gesehen >= 50 and not ohne, "; ".join(ohne[:6]))
+    check("… auch die Elementübersicht (Modul elementmasken) läuft über einen solchen Weg",
+          getattr(gm.MainWindow.maske_elementuebersicht, "maskenweg", False))
+
+
+def test_f2_spaete_stelle():
+    """Kommt ein Weg ohne _maskenweg doch bis maske_erzeugen, erscheint die fertig
+    gebaute Maske nie: im Ribbon-Befehl ist der Befehl der Wunsch, sonst gibt es
+    keinen, und die Statuszeile sagt es."""
+    from statik3d.gui import masken as msk
+    w, app = _fenster()
+    _halle(w, app)
+    mk = _k1_geaendert(w, app)
+    fremd = msk.Maske("Fremd", [msk.Feld("a", "a")])
+    w.maske_erzeugen(fremd)
+    _ruhe(app)
+    check("Späte Stelle ohne Befehl: die fertige Maske erscheint nicht, Leiste ohne Wunsch, Statuszeile",
+          _maske(w) is mk and _leiste(w) is not None and w._leiste_wunsch is None
+          and "noch einmal wählen" in w.statusBar().currentMessage(), w.statusBar().currentMessage())
+    _aufraeumen(w, app)
+    mk = _k1_geaendert(w, app)
+    gebaut = []
+
+    def befehl():
+        gebaut.append(1)
+        w.maske_erzeugen(msk.Maske("Fremd", [msk.Feld("a", "a")]))
+    w._befehl_ausfuehren(befehl)
+    _ruhe(app)
+    _druecken(w, app, "Übernehmen")
+    check("… im Befehl aus Ribbon oder Menü: „Übernehmen“ führt den Befehl noch einmal aus, die Maske neu gebaut",
+          len(gebaut) == 2 and getattr(_maske(w), "titel", "") == "Fremd", f"{len(gebaut)} Läufe")
+    _aufraeumen(w, app)
+
+
+def test_f3_auswahl_bleibt():
+    w, app = _fenster()
+    _halle(w, app)
+    m = w.model
+    # Rechtsklick „Lager bearbeiten…“ (L1 der Gegenpruefung)
+    w._set_selection([3, 4])
+    _ruhe(app)
+    w.maske_knotenlast()
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("Fz", -12.0)
+    _ruhe(app)
+    fall = mk.werte().get("fall")
+    vorher = len(m.load_cases[fall].nodal_loads)
+    w.lager_bearbeiten(0)
+    _ruhe(app)
+    check("Rechtsklick „Lager bearbeiten…“: Leiste, die Auswahl bleibt bei K3, K4",
+          _leiste(w) is not None and sorted(int(i) for i in w.selection) == [3, 4],
+          str(sorted(int(i) for i in w.selection)))
+    _druecken(w, app, "Übernehmen")
+    dazu = sorted(int(nl.node) for nl in m.load_cases[fall].nodal_loads[vorher:])
+    check("… „Übernehmen“: die Last kommt auf K3 und K4, danach das Knotenlager",
+          dazu == [3, 4] and "lager" in getattr(_maske(w), "titel", "").lower(),
+          f"{dazu}, {getattr(_maske(w), 'titel', None)!r}")
+    _aufraeumen(w, app)
+    # Lasttabelle: die Auswahl der Lastzeile kommt erst nach der Entscheidung
+    m.load_node(9, Fz=-1e3, case=m.active_case)
+    w.refresh_all()
+    _ruhe(app)
+    w._set_selection([3, 4])
+    w.maske_knotenlast()
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("Fz", -13.0)
+    _ruhe(app)
+    k = len(m.load_cases[m.active_case].nodal_loads) - 1
+    w._last_ziel_zeigen(m.active_case, "nodal_loads", k)
+    _ruhe(app)
+    check("Klick in der Lasttabelle: Leiste, die Auswahl bleibt bei K3, K4 (nicht K9 der Lastzeile)",
+          _leiste(w) is not None and sorted(int(i) for i in w.selection) == [3, 4],
+          str(sorted(int(i) for i in w.selection)))
+    _aufraeumen(w, app)
+
+
+def test_f4_wunsch_meint_das_objekt():
+    w, app = _fenster()
+    _halle(w, app)
+    m = w.model
+    fall = m.active_case
+    ziel = next(k for k in m.load_cases if k != fall)
+    lc = m.load_cases[fall]
+    n0 = len(lc.nodal_loads)
+    for node in (5, 6, 7, 8):
+        m.load_node(node, Fz=-1e3 * node, case=fall)
+    w.refresh_all()
+    _ruhe(app)
+    w._last_waehlen(fall, "nodal_loads", n0)            # Last an K5
+    _ruhe(app)
+    mk = _maske(w)
+    mk.setzen("fall", ziel)
+    mk.setzen("Fz", -99.0)
+    _ruhe(app)
+    gewollt = lc.nodal_loads[n0 + 2]                   # Last an K7
+    w._last_waehlen(fall, "nodal_loads", n0 + 2)
+    _ruhe(app)
+    _druecken(w, app, "Übernehmen")
+    gezeigt = w.sel_lasten[0] if w.sel_lasten else None
+    obj = (getattr(m.load_cases[gezeigt[0]], gezeigt[1])[gezeigt[2]] if gezeigt else None)
+    check("Last verschoben, Wunsch „Last an K7“: rechts steht die Last an K7, nicht der alte Listenplatz",
+          obj is gewollt and "K7" in getattr(_maske(w), "titel", ""),
+          f"{getattr(_maske(w), 'titel', None)!r}, {gezeigt}")
+    _aufraeumen(w, app)
+    # Nummerntausch K1 <-> K2: Baumklick und Sammelmaske meinen danach den Knoten selbst
+    x2 = tuple(float(v) for v in m.nodes[2])
+    mk = _k1_geaendert(w, app, x=float(m.nodes[1][0]))
+    mk.setzen("nr", 2)
+    _ruhe(app)
+    w.baum.angeklickt.emit("knoten", "2")
+    _ruhe(app)
+    _druecken(w, app, "Übernehmen")
+    neu = _maske(w)
+    check("Knoten K1 bekommt die Nummer 2, Baumklick auf K2 wartete: rechts der angeklickte Knoten (jetzt K1)",
+          getattr(neu, "titel", "") == "Knoten K1"
+          and tuple(float(v) for v in m.nodes[1]) == x2, f"{getattr(neu, 'titel', None)!r}")
+    _aufraeumen(w, app)
+    mk = _k1_geaendert(w, app, x=float(m.nodes[1][0]))
+    mk.setzen("nr", 2)
+    _ruhe(app)
+    w.sammelmaske("knoten", [2, 3])
+    _ruhe(app)
+    _druecken(w, app, "Übernehmen")
+    sm = _maske(w)
+    text = sm._felder["objekte"].text() if sm is not None and "objekte" in sm._felder else ""
+    check("… ebenso die Sammelmaske K2, K3: nach dem Tausch zeigt sie K1 und K3",
+          "K1" in text and "K3" in text and "K2" not in text, repr(text))
+    _aufraeumen(w, app)
+    # gibt es das Objekt nicht mehr, oeffnet sich nichts, und die Statuszeile sagt es
+    weg = next(k for k in m.load_cases if k != m.active_case)
+    b = w._bezug_merken("lastfall", weg)
+    m.load_cases.pop(weg)
+    gerufen = []
+    w._bezug_ausfuehren(b, lambda n: gerufen.append(n))
+    check("Objekt nach dem Übernehmen verschwunden: nichts geöffnet, die Statuszeile sagt es",
+          not gerufen and "nicht mehr" in w.statusBar().currentMessage(), w.statusBar().currentMessage())
+
+
+def test_f5_rueckgaengig_gesperrt():
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    _halle(w, app)
+    w.merken("Knoten A")
+    w.model.add_node(30.0, 0.0, 0.0)
+    w.merken("Knoten B")
+    w.model.add_node(40.0, 0.0, 0.0)
+    w.undo()                                # ein Schritt zum Wiederholen
+    w.refresh_all()
+    _ruhe(app)
+    nn = w.model.nn
+    mk = _k1_geaendert(w, app, x=2.5)
+    w.act_undo.trigger()
+    _ruhe(app)
+    check("Rückgängig bei geänderter Maske: gesperrt - nichts zurückgenommen, die Leiste steht",
+          w.model.nn == nn and _leiste(w) is not None and _maske(w) is mk, f"nn {nn} -> {w.model.nn}")
+    check("… die Statuszeile nennt die Maske", "Rückgängig ist gesperrt" in w.statusBar().currentMessage()
+          and "Knoten K1" in w.statusBar().currentMessage(), w.statusBar().currentMessage())
+    w.act_redo.trigger()
+    _ruhe(app)
+    check("… Wiederholen ebenso gesperrt", "Wiederholen ist gesperrt" in w.statusBar().currentMessage(),
+          w.statusBar().currentMessage())
+    _druecken(w, app, "Verwerfen")
+    check("„Verwerfen“: die Maske ist zu, es wird nichts rückgängig gemacht (kein Wunsch)",
+          _maske(w) is None and w.model.nn == nn, f"nn {w.model.nn}")
+    w.act_undo.trigger()
+    _ruhe(app)
+    check("… danach wirkt Rückgängig wieder", w.model.nn == nn - 1, f"nn {w.model.nn}")
+    # Strg+Z in einem Textfeld der Maske bleibt das Rueckgaengig des Felds
+    mk = _k1_geaendert(w, app, x=2.5)
+    feld = mk._felder["y"]
+    feld.setFocus()
+    _ruhe(app)
+    feld.selectAll()
+    QtTest.QTest.keyClicks(feld, "9")
+    _ruhe(app)
+    nn = w.model.nn
+    QtTest.QTest.keyClick(feld, QtCore.Qt.Key_Z, QtCore.Qt.ControlModifier)
+    _ruhe(app)
+    check("Strg+Z im Feld der Maske: das Feld nimmt die Eingabe zurück, das Modell bleibt",
+          feld.text() != "9" and w.model.nn == nn and _maske(w) is mk, f"{feld.text()!r}, nn {w.model.nn}")
+    _aufraeumen(w, app)
+
+
+def test_l1_modellwechsel_und_loeschen():
+    import os as _os
+    w, app = _fenster()
+    _halle(w, app)
+    w._als_gespeichert()
+    alt_env = _os.environ.pop("STATIK3D_UNGESPEICHERT", None)
+    fragen = []
+    w._frage_speichern_verwerfen = lambda anlass, grund: (fragen.append(anlass), "verwerfen")[1]
+    try:
+        modell = w.model
+        mk = _k1_geaendert(w, app, x=6.5)
+        w.load_example("frame")
+        _ruhe(app)
+        check("Gespeichertes Modell, geänderte Maske, „Beispiel öffnen“: Leiste statt still schließen",
+              _leiste(w) is not None and w.model is modell and _maske(w) is mk, f"Leiste {_leiste(w) is not None}")
+        _druecken(w, app, "Übernehmen")
+        check("… „Übernehmen“: übernommen, danach das Beispiel mit seiner eigenen Rückfrage",
+              w.model is not modell and fragen == ["Beispiel öffnen"], f"Fragen {fragen}")
+        fragen.clear()
+        _halle(w, app)
+        modell = w.model
+        mk = _k1_geaendert(w, app, x=6.5)
+        w.new_model()
+        _ruhe(app)
+        check("„Neu“: ebenso die Leiste, das Modell bleibt", _leiste(w) is not None and w.model is modell)
+        _druecken(w, app, "Verwerfen")
+        check("… „Verwerfen“: danach „Neu“", w.model is not modell and w.model.nn == 0, str(w.model.nn))
+        _halle(w, app)
+        mk = _k1_geaendert(w, app, x=6.5)
+        MODAL.clear()
+        w.import_file()
+        _ruhe(app)
+        check("„Importieren“: die Leiste kommt vor dem Dateidialog",
+              _leiste(w) is not None and not any(a == "datei" for a, _t in MODAL), str(MODAL))
+        _aufraeumen(w, app)
+        mk = _k1_geaendert(w, app, x=6.5)
+        w.close()
+        _ruhe(app)
+        check("Beenden: die Leiste steht, das Fenster bleibt offen", _leiste(w) is not None and w.isVisible())
+        mk.setzen("x", float(w.model.nodes[1][0]))
+        _ruhe(app)
+        check("… wieder unverändert: die Leiste geht, der Wunsch (Beenden) verfällt",
+              _leiste(w) is None and w.isVisible())
+    finally:
+        if alt_env is not None:
+            _os.environ["STATIK3D_UNGESPEICHERT"] = alt_env
+        w.__dict__.pop("_frage_speichern_verwerfen", None)
+    _aufraeumen(w, app)
+    # Loeschwege nennen die geaenderte Maske in ihrer Rueckfrage (nur der Text)
+    _halle(w, app)
+    frei = w.model.add_node(30.0, 0.0, 0.0)
+    w.refresh_all()
+    _ruhe(app)
+    gestellt = []
+    w._bestaetigen = lambda text: (gestellt.append(text), False)[1]
+    try:
+        for titel, tun in (("Löschen im Baum", lambda: w._baum_loeschen("knoten", str(frei))),
+                           ("Rechtsklick „Löschen“", lambda: w.auswahl_loeschen("knoten", [frei])),
+                           ("mehrere im Baum", lambda: w._baum_viele_loeschen("knoten", [str(frei)]))):
+            mk = _k1_geaendert(w, app, x=8.0)
+            gestellt.clear()
+            tun()
+            _ruhe(app)
+            text = gestellt[0] if gestellt else ""
+            check(f"{titel}: die Rückfrage nennt „Knoten K1“ und dass sie geschlossen wird",
+                  "„Knoten K1“" in text and "nicht übernommene Änderungen" in text and "geschlossen" in text,
+                  text.replace("\n", " | "))
+            _aufraeumen(w, app)
+    finally:
+        w.__dict__.pop("_bestaetigen", None)
+    _aufraeumen(w, app)
+
+
+def test_l2_zustand_oder_anzeige():
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    _halle(w, app)
+    w.maske_schweissnaht()
+    _ruhe(app)
+    mk = _maske(w)
+    w.sel_staebe = [next(iter(w.model.members))]
+    mk.zusatzknoepfe["Auswahl übernehmen"].click()
+    _ruhe(app)
+    check("Schweißnaht: „Auswahl übernehmen“ füllt „Gilt für“ - das zählt als Änderung, Punkt im Titel",
+          "ziele" in mk.geaenderte_felder() and _titel(mk) == PUNKT + mk.titel, repr(_titel(mk)))
+    QtTest.QTest.keyClick(_ansicht(w, app), QtCore.Qt.Key_K)
+    _ruhe(app)
+    check("… Taste K danach: die Leiste statt still ersetzen", _leiste(w) is not None and _maske(w) is mk)
+    _aufraeumen(w, app)
+    w.maske_elementuebersicht()
+    _ruhe(app)
+    mk = _maske(w)
+    knopf = (getattr(mk, "zusatzknoepfe", {}) or {}).get("Fingerabdruck")
+    if knopf is not None:
+        knopf.click()
+        _ruhe(app)
+    check("Elementübersicht: „Fingerabdruck“ ist eine reine Anzeige - kein Punkt",
+          mk is not None and knopf is not None and not mk.geaenderte_felder() and _titel(mk) == mk.titel,
+          f"{sorted(mk.geaenderte_felder()) if mk else None}")
+    _aufraeumen(w, app)
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
@@ -831,7 +1365,10 @@ def main():
               test_verwerfen_fuehrt_den_wunsch_aus, test_gescheitertes_uebernehmen_laesst_alles_stehen,
               test_unveraenderte_maske_ohne_leiste, test_ohne_knopfdruck_bleibt_alles, test_ort_der_leiste,
               test_waehrend_der_rechnung, test_entf_nennt_die_maske_weiter, test_frische_masken_ohne_punkt,
-              test_merker_kostet_kein_neuzeichnen):
+              test_merker_kostet_kein_neuzeichnen,
+              test_f1_entscheidung_nach_dem_handler, test_f1_ausnahme_und_halber_schritt, test_f2_wunsch_baut_neu,
+              test_f2_jeder_bau_haelt_vorher, test_f2_spaete_stelle, test_f3_auswahl_bleibt, test_f4_wunsch_meint_das_objekt,
+              test_f5_rueckgaengig_gesperrt, test_l1_modellwechsel_und_loeschen, test_l2_zustand_oder_anzeige):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
