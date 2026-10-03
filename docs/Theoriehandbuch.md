@@ -10691,7 +10691,8 @@ Stücke (Box ∩ Halbräume, Löcher über S ∖ ∩h_j = ∪_j S ∩ ¬h_j ∩ 
 gegen seine Halbräume geclippt (Sutherland–Hodgman auf den Polyederflächen, Deckelpolygon aus
 den Schnittkanten), vom Schwerpunkt aus in Tetraeder zerlegt und mit der konischen Produktregel
 (Gauß–Jacobi in u und v, Gauß–Legendre in w, n = ⌈3p/2⌉ Punkte je Richtung, exakt bis
-Gesamtgrad 2n−1 ≥ 3p−1) integriert; achsparallele Stücke direkt mit Tensor-Gauß.
+Gesamtgrad 2n−1 ≥ 3p−1) integriert; achsparallele Stücke direkt mit Tensor-Gauß. (Stand Teilprojekt 1. Seit O5, 03.10.2026, gehen schräg geschnittene Stücke bei Moment Fitting mit ihren
+exakten Momenten ein, 11.21: die Regel bis zum Gesamtgrad 3p − 1 genügt dem linearen Patch-Test, aber keinem Feld höheren Grades.)
 
 | Prüfkörper (h = 10 bzw. 20, `test_quadratur`) | Volumenfehler |
 |---|---|
@@ -11466,7 +11467,8 @@ achsparallel geschnittene Zellen (Kragarmsegment) haben schon (p+1)³ Punkte und
 jeder Richtung vom Grad höchstens 2p. Mit q = 2p liegen sie im Raum, den die gefittete Regel exakt integriert –
 exakt im Sinne der Referenz: die Regel reproduziert für jedes f aus diesem Raum den Wert Σ W_k f(P_k) der
 Referenzregel, auch dort, wo die Referenz selbst (Tetraeder bis Gesamtgrad 3p−1) nicht exakt ist. Die Zellmatrix
-ist damit bis auf Rundung dieselbe, unabhängig davon, wie die Gewichte aussehen. Und die sehen wild aus: an einer
+ist damit bis auf Rundung dieselbe, unabhängig davon, wie die Gewichte aussehen. (Diese Ungenauigkeit der Referenz war die Ursache des
+Konsistenzfehlers quadratischer Felder; seit O5 kommen die Momente der schrägen Stücke exakt aus dem Divergenzsatz, 11.21.) Und die sehen wild aus: an einer
 zu 65 % gefüllten, eben geschnittenen Zelle ist das kleinste Gewicht −0,16 des mittleren, an Schnittzellen der
 Lamé- und Kirsch-Geometrie −17 bis −29, die negative Gewichtsmasse erreicht 87 % der positiven. Für q < 2p ist
 die Exaktheit nicht gegeben, und die negativen Gewichte schlagen durch: mit q = p sind Zellmatrizen indefinit
@@ -11748,6 +11750,10 @@ Zellen um die Naht, auch in vollen Zellen. Teilursachen sind belegt: die Tetraed
 p-2-Fehler auf 3,7·10⁻⁷) und α (p 3: 1,1·10⁻⁵ bei 10⁻⁸, 1,2·10⁻⁶ bei 10⁻¹²); ein Rest ist ungeklärt. Gegen den Diskretisierungsfehler der
 Strukturspannung (1 %) ist das klein, gegen das Patch-Niveau nicht; die Prüfung nimmt die gemessene Schranke 10⁻⁴.
 
+**Nachtrag (O5, 03.10.2026): geklärt in 11.21.** Der Fehler des quadratischen Felds bei p 2 kam von der Tetraederregel der schräg geschnittenen Stücke (behoben), der Fehler des linearen Felds und der ganze Fehler bei p 3
+von α in drei bzw. neun schlecht geschnittenen Zellen ohne Wurzel am Querblech (10 mm dick in 20-mm-Zellen, Nachbarn feiner); dort ist der Fehler bei p 2 genau proportional zu α. Der „ungeklärte Rest“ war dieser α-Anteil
+und, bei α 10⁻¹², die Rundung über die schwach gestützten Moden. „Kein Rundungsfehler, weil das Residuum 4·10⁻¹⁶ ist“ war kein gültiger Schluss: das Residuum sagt nichts über die Verstärkung.
+
 **Neuer Fahrplan seit 01.10.2026 (Entscheidung des Anwenders: zuerst lokal h bis t/4, dann p + 1).** Die Zielzellgröße an der Naht i ist
 nach k Halbierungen max(h₀/2ᵏ, tᵢ/4); gehalbiert wird, solange eine Naht darüber liegt (`_fahrplan` in `api.py`, als reine Funktion gegen die Formel
 geprüft: sechs Fälle mit Basis 20, 10 und 2,5, einer und zwei Nähten, ohne Naht, p 4), danach p + 1 bis p = 4, dann Ende mit Warnung. Am T-Stoß
@@ -11959,7 +11965,7 @@ Der Baum entscheidet jetzt auch ohne aktive Form (inaktive Formen zählen als vo
 Das Volumen war nicht betroffen (Zellklassifikation), wohl aber Ausgabepunkte und Flächenlasten auf Hüllenflächen hinter Schnittebenen. Prüfung: Kugelhülle ∩ Halbraum, Oberfläche
 gegen die unabhängige Summe aus geclippten Facetten und konvexer Kappe auf 3·10⁻¹⁵, keine Punkte hinter der Ebene (`test_huelle.test_flaeche_hinter_schnittebene`).
 
-**Befund 3 (offen): Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt.** Das Feld liegt im Ansatzraum (quadratisch), p 2 reproduziert es am geneigten Streifen aber nur auf
+**Befund 3 (geklärt und behoben mit O5, 11.21): Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt.** Das Feld liegt im Ansatzraum (quadratisch), p 2 reproduziert es am geneigten Streifen aber nur auf
 2·10⁻⁴ bis 3,5·10⁻³ in der Spannung, p 3 auf 10⁻⁶, der achsparallele Fall auf 10⁻⁷. Ohne Einfluss sind α (10⁻⁸ gegen 10⁻¹²), Moment Fitting (an/aus), die Flächenquadraturordnung (Vorgabe, 6, 10) und die
 Teilungstiefe (2, 3); deutlichen Einfluss hat die Aggregationsschwelle (Spannung bei 10°: Schwelle 0,4 → 3,5·10⁻³, 0,2 → 1,7·10⁻², ohne Aggregation 1,3·10⁻¹). Die Hüllenintegration (B6) verbessert den Fall
 (30°: 1,2·10⁻³ → 2,2·10⁻⁴). Das passt zum schon bekannten offenen Konsistenzfehler 10⁻⁶ bis 10⁻⁴ am T-Stoß (Theorie 11.14); die Ursache ist nicht geklärt und kein Teil von B7. Der Fehler
@@ -12200,3 +12206,124 @@ sobald die Maschine frei ist: (b) Nahtziel t/8 und seine Wirkung auf die Streuun
 in der PR-13-Referenz keine Vergleichspunkte hat (Tet10 an 0,5 t und 1,5 t müsste die Hauptsitzung liefern, am besten zusammen mit dem Lauf am lokal verfeinerten Netz, O2).
 
 **Nachtrag (O2, 02.10.2026): die Lagen gegen die verfeinerte Referenz.** Die Hauptsitzung hat die Referenz am lokal verfeinerten Netz gerechnet (11.18; Median der Kantenlänge am Übergang 0,687 mm, σ_hs(y 40) 143,03 / 143,00 N/mm², gegenüber dem 1-mm-Netz höchstens 0,31 % Änderung). Gegen sie liegen die vier Lagen der Streuungsmessung bei y 40 so: δ = 0 rechts +0,14 %, links −2,84 %; δ = 0,625 rechts +0,44 %, links +2,05 %; δ = 1,25 rechts +2,90 %, links +0,08 %; δ = 1,875 rechts +0,28 %, links +0,01 %. Über alle vier Lagen und je 18 Punkte liegen die Abweichungen zwischen −2,95 % und +2,96 %. **Die Abnahme „unter 3 %“ hält damit an allen gemessenen Lagen, mit 0,04 % Reserve;** dass sie gegen die 1-mm-Referenz bei einer Lage mit +3,10 % verfehlt wurde, lag an der Netzabhängigkeit dieser Referenz (rechts bei y 40 +0,20 % Änderung zum feineren Netz): mit ihr sinkt die Abweichung der Lage δ = 1,25 rechts von +3,10 % auf +2,90 %. Die Streuung der FCM-Werte selbst (S 5,7 %) ändert sich nicht – nur der Bezug. Der Bezug ist die verfeinerte Referenz der Hauptsitzung; sie ist seit Pull Request 18 (b6f96a6, 03.10.2026) die Referenz auf `main`.
+
+### 11.21 Teilprojekt 5: Konsistenz der Schnittzellen-Integration (O5, 03.10.2026)
+
+**Frage.** Ein Feld, das im Ansatzraum liegt, muss die Rechnung bis auf Rundung zurückgeben. Für lineare Felder tat sie das (Patch-Test, 10⁻¹⁰ bis 10⁻¹³). Für quadratische nicht: am
+T-Stoß mit lokaler Verfeinerung 3,3·10⁻⁶ (11.14), am schräg geschnittenen Plattenstreifen über den Vertragsweg 2,2·10⁻⁴ bis 3,5·10⁻³ bei p 2 und bis 2,5·10⁻⁶ bei p 3 (11.17). Gesucht waren
+die Ursachen mit ihrem Anteil und eine Kur. Hypothesen, Vorhersagen und Auswertung sind im Plan TP 5 (O5) vor der Messung festgelegt.
+
+**Bedingung.** Das Verfahren ist konsistent, wenn für das exakte Feld u und jede Testfunktion v die Volumen- und die Flächenregel zusammen den Gaußschen Satz erfüllen:
+[∫σ(u):ε(v) dV] − [∫(σ(u)n)·v dA] − [∫f·v dV] = 0. Die Strafterme des Nitsche-Verfahrens verschwinden für u = g an jedem Punkt und stören nicht. Für ein Feld vom Gesamtgrad k und den Ansatz
+vom Tensorgrad p (v bis zum Gesamtgrad 3p) hat der Volumenintegrand den Gesamtgrad 3p + k − 2, der Flächenintegrand 3p + k − 1. Ausgelegt waren beide Regeln auf k = 1: die Tetraederregel
+der schräg geschnittenen Stücke mit n = ⌈1,5 p⌉ Punkten je Richtung (exakt bis 2n − 1 = 5 / 9 / 11 bei p 2 / 3 / 4), die Flächenregel mit n = ⌈(3p + 1)/2⌉ (exakt bis 7 / 9 / 13).
+Für k = 2 sind 6 / 9 / 12 im Volumen und 7 / 10 / 13 auf der Fläche nötig: im Volumen fehlt bei geradem p ein Grad, auf der Fläche bei ungeradem p.
+
+**Messung.** Zwei Modelle mit Verschiebungsrand auf der ganzen Oberfläche: (T) der T-Stoß mit Kehlnähten und lokaler Verfeinerung (Basis 20, Nahtziel 5 bei p 2 und 10 bei p 3), (S) der
+Plattenstreifen als STL-Hülle, um 10° und 30° geneigt und mit den beiden schrägen Halbräumen des Vertragswegs geschnitten (Basis 25). Felder: linear (k 1), quadratisch (k 2: an T u = (c x²/2, 0, 0)
+mit Volumenlast, an S die reine Biegung), kubisch (k 3, nur T bei p 3). Zwei unabhängige Größen: (A1) der größte relative Fehler der rohen Spannung an 1 500 Werkstoffpunkten, über die Lösung;
+(A2) der Konsistenzrest des exakten Felds ohne Lösung, r = Cᵀ(K_vol a − f − ∫(σ n)·v), mit den exakten Koeffizienten a je Zelle, bezogen auf den größten Betrag von Cᵀ K_vol a.
+Die erste Fassung von A2 (Rest des ganzen Systems, bezogen auf die rechte Seite) war blind, weil die Strafterme β mal die Rundung der Zwangsmatrix eintragen; die zweite (mit C x statt a) hatte am
+Biegefeld einen Boden von 1,3·10⁻⁷. Beides wurde vor der vollständigen Reihe berichtigt und steht im Plan.
+
+| Modell | p | Feld | Vorgabe A1 / A2 | nur Tetraeder 2p | nur Fläche 2p | beide, α 10⁻¹² | nach der Kur A1 / A2 |
+|---|---|---|---|---|---|---|---|
+| S 10° | 2 | k 2 | 2,5·10⁻⁴ / 8,2·10⁻⁵ | 1,2·10⁻¹⁰ | (unverändert 4) | 3,4·10⁻¹⁰ | 2,3·10⁻¹⁰ / 2,1·10⁻¹⁰ |
+| S 30° | 2 | k 2 | 2,5·10⁻⁵ / 9,5·10⁻⁶ | 1,7·10⁻¹⁰ | (unverändert 4) | 2,8·10⁻¹⁰ | 2,4·10⁻¹⁰ / 8,8·10⁻¹¹ |
+| S 10° | 3 | k 2 | 6,9·10⁻⁸ / 1,9·10⁻⁹ | 6,9·10⁻⁸ | 2,1·10⁻⁹ | 4,5·10⁻⁹ | 2,4·10⁻⁹ / 2,0·10⁻⁹ |
+| S 30° | 3 | k 2 | 2,5·10⁻⁸ / 5,9·10⁻¹⁰ | 2,5·10⁻⁸ | 2,4·10⁻⁸ | 3,2·10⁻⁸ | 2,5·10⁻⁸ / 4,0·10⁻¹⁰ |
+| T (3 Zellen ohne Wurzel) | 2 | k 1 | 1,0·10⁻⁶ / 6,0·10⁻⁹ | 1,0·10⁻⁶ | (unverändert 4) | 9,3·10⁻¹¹ | 1,0·10⁻⁶ / 6,0·10⁻⁹ |
+| T | 2 | k 2 | 3,3·10⁻⁶ / 4,8·10⁻⁸ | 3,7·10⁻⁷ | (unverändert 4) | 3,5·10⁻¹¹ | 3,7·10⁻⁷ / 5,6·10⁻⁹ |
+| T (9 Zellen ohne Wurzel) | 3 | k 1 | 6,6·10⁻⁵ / 1,4·10⁻¹⁰ | 6,6·10⁻⁵ | 6,7·10⁻⁵ | 2,6·10⁻⁷ | 6,7·10⁻⁵ / 1,4·10⁻¹⁰ |
+| T | 3 | k 2 | 2,6·10⁻⁵ / 1,3·10⁻⁹ | 2,6·10⁻⁵ | 2,6·10⁻⁵ | 2,4·10⁻⁷ | 2,6·10⁻⁵ / 1,6·10⁻¹⁰ |
+| T | 3 | k 3 | 1,1·10⁻⁵ / 2,4·10⁻⁹ | 1,1·10⁻⁵ | 1,1·10⁻⁵ | 9,2·10⁻⁸ | 1,1·10⁻⁵ / 1,8·10⁻¹⁰ |
+
+Das lineare Feld liegt am Streifen überall auf Rundungsniveau (A1 7·10⁻¹² bis 1,5·10⁻⁹). Über den Vertragsweg (Schalen-Geber, Kopplung über die Schnittebenen) dieselben Ursachen: der Rest der
+Spannungskomponenten fällt bei p 2 von 1,3·10⁻³ (10°) und 8,2·10⁻⁵ (30°) auf 8·10⁻¹² und 1,2·10⁻¹⁰, das Gleichgewicht der Resultierenden von 4,6·10⁻⁴ und 4,2·10⁻³ auf 1,3·10⁻¹⁰ und 1,9·10⁻⁹;
+bei p 3 und 10° der Rest von 1,0·10⁻⁶ auf 4,2·10⁻¹⁰.
+
+**Ursachen.** (H1) *Tetraederregel.* Bei p 2 trägt sie den ganzen Fehler des quadratischen Felds: mit n = 4 fällt er am Streifen um den Faktor 2·10⁶ (10°) und 1,5·10⁵ (30°), die Flächenordnung und α
+ändern nichts. Umgekehrt erzeugt n = 4 bei p 3 (statt 5) denselben Fehler dort, wo vorher keiner war (Vertragsweg 10°: 2,8·10⁻³). Die Aggregationsschwelle, an der der Fehler in B7 hing, bestimmt
+nur die Verstärkung des Rests durch schwach gestützte Moden, nicht den Rest. (H2) *Flächenregel.* Bei p 3 trägt sie den Fehler des quadratischen Felds, wo er über dem Boden liegt (Streifen 10°: 6,9·10⁻⁸ → 2,1·10⁻⁹,
+Vertragsweg 1,0·10⁻⁶ → 4,2·10⁻¹⁰); an einem allgemeinen quadratischen Feld mit Traktion auf allen Flächen ist sie groß (Patch-Körper, Spannung am Rand 1,9·10⁻⁴). (H3) *α in Zellen ohne Wurzel.*
+Der Fehler des linearen Felds an T ist bei p 2 genau proportional zu α (1,0·10⁻⁶ / 1,0·10⁻⁸ / 1,2·10⁻¹⁰ bei α 10⁻⁸ / 10⁻¹⁰ / 10⁻¹²). Die Zellen sind schlecht geschnittene Zellen der Ebene 0 am Querblech
+(10 mm dick in 20-mm-Zellen), deren Nachbarn alle schlecht geschnitten oder feiner sind; sie behalten α, weil keine Wurzel gleicher oder gröberer Ebene da ist. In den Modellen des Vertragswegs mit Basiszelle
+gleich der Blechdicke (Knotenblech in allen Zyklen, T-Stoß Basis 10) gibt es keine solche Zelle. (H4) *Rundung über die Zwangsmatrix.* Was bleibt (Streifen 30° p 3: 2,5·10⁻⁸ bei einem Konsistenzrest von 4·10⁻¹⁰), hängt
+an der Genauigkeit, mit der die Zwangsmatrix das Feld wiedergibt (Fortsetzung der Wurzelpolynome über bis zu zwei Zellen, 78 von 89 Zellen aggregiert): derselbe Spannungszustand mit einem Viertel der
+Verschiebung gibt 3,7·10⁻⁹, mit einer zusätzlichen Starrkörperverschiebung von 30 mm 4,7·10⁻⁷ (p 2: 2,4·10⁻¹⁰, 4,4·10⁻¹¹, 6,3·10⁻⁹). Am Patch-Körper bei p 4 liegt dieser Boden bei 1,6·10⁻⁸ im Inneren und 2,7·10⁻⁷ am
+Rand, auch für das lineare Feld.
+
+**Urteil nach der vorab gesetzten Regel.** Die Regel verlangte, dass der Fehler mit dem vorhergesagten Schalter auf höchstens das Dreifache des linearen Felds fällt und vorher mindestens das Zehnfache betrug.
+Nach diesem Wortlaut ist keine der Vorhersagen erfüllt, obwohl die Fehler um bis zu sechs Größenordnungen fallen: am Streifen liegen lineares und quadratisches Feld nach dem Schalter beide unter Rundungsniveau
+(10⁻¹¹ und 10⁻¹⁰, Verhältnis 12), an T trägt das lineare Feld selbst den α-Fehler. Die Regel hätte das Rundungsniveau als Boden nennen und das lineare Feld nicht als Maßstab nehmen dürfen, wo es einen eigenen
+Fehler hat. In der Sache: V1 (p 2: Tetraederordnung, nicht Flächenordnung) bestätigt; V2 (p 3, k 2: Flächenordnung) bestätigt, wo der Fehler über dem Boden liegt (10°), nicht messbar bei 30°;
+V3 (p 3, k 3: beide Ordnungen nötig) nicht bestätigt – der Rest hängt nur an der Flächenordnung (2,4·10⁻⁹ → 1,8·10⁻¹⁰), die Tetraederordnung ändert ihn nicht; V4 (α) bestätigt.
+
+**Kur.** (K1) *Exakte Momente der schrägen Stücke.* Mit Moment Fitting merkt die Zellquadratur von jedem schräg geschnittenen Stück nur die Polygone; `geometry/huelle.polyedermomente` rechnet die Momente
+der Tensor-Legendre-Basis vom Grad 2p über den Divergenzsatz (dieselbe Formel wie für Hüllen in 11.16, Flächen ohne x-Komponente der Normalen tragen nichts), und `gefittete_regel` nimmt sie zu den Momenten der
+übrigen Punkte. Die Zellmatrix ist damit auf ebener Geometrie für den ganzen Ansatzraum exakt, nicht nur bis zu einem Feldgrad: an der Eckzelle (Würfel, Ecke x + y + z ≤ 1,5) stimmen alle zentrierten Monome
+bis Grad 2p je Richtung mit der Dirichlet-Formel auf 8·10⁻¹⁶ des Volumens und die Zellmatrix mit der Tetraederregel der Ordnung 3p + 1 auf 4·10⁻¹⁵ überein; der alte Weg wich in den Momenten um 2,5·10⁻⁴ (p 2)
+und 2,6·10⁻⁶ (p 3), in der Zellmatrix um 3,6·10⁻⁴ und 1,3·10⁻⁵ ab. Am Patch-Körper (110 Schnittzellen, p 2) weichen die Zellmatrizen des neuen Wegs von der exakten Referenz um höchstens 10⁻¹⁴ des
+Vollzellmaßstabs ab, auch bei einem Werkstoffanteil von 2,8·10⁻⁵; die des alten Wegs um bis zu 5,7·10⁻³ (fast volle, schräg geschnittene Zellen). Ohne Moment Fitting (Schalter, künftig plastische Körper)
+bleibt die Tetraederregel. *Wächter:* Der Divergenzsatz setzt geschlossene, nach außen orientierte Stücke voraus – die Tetraederzerlegung nicht. Der erste Suitenlauf der Kur fand den Unterschied: liegt eine
+Ebene genau auf einer Zellfläche (Kirsch-Platte, Symmetrieebenen auf Zellflächen bei Versatz 0,4), berührt die Nachbarbox den Halbraum nur mit dieser Fläche, und `polyeder.clippen` lässt genau diese eine Fläche
+als „Stück“ stehen – ohne Volumen, aber nicht geschlossen. Die Tetraederregel gab dafür null, der Divergenzsatz Fläche mal Abstand: zwei Zellen mit je 61,6 mm³ zu viel, K_t 1,77 statt 3,75 (h 10, p 2; in der
+Suite 1,67 bis 1,85 statt 3,1). Seither gilt: Stücke ohne Volumen werden übersprungen (`stuecke_leer`), nur geschlossene Stücke (`polyeder.geschlossen`: mindestens vier Flächen, Summe der Flächenvektoren null)
+gehen in den Divergenzweg, andere über die Tetraederregel (`stuecke_offen`), und je Zelle muss das Volumen aus dem Divergenzsatz das der Tetraederzerlegung sein, sonst fällt die Zelle auf die Tetraederregel
+zurück (`stuecke_rueckfall`). Kirsch h 10 p 2 bei Versatz 0,4 danach: K_t 3,7541 und Volumen 796 854,089184 wie der alte Weg; die Suite gibt alle K_t wie vor der Kur.
+Die Prüfungen laufen je schrägem Stück und kosten an der Kugel R 43 in h 10 mit Tiefe 3 (23 999 Stücke) 2,6 von 21 s der Zellquadratur. Die erste Fassung der Geschlossenheitsprüfung (Schleife über die Dreiecke) kostete dort
+9,0 von 30 s und wurde vektorisiert (bc0dc59: 1,4 s); die Zellquadratur ist dabei an sechs Modellen (Kugel, Patch-Körper, verfeinerter Patch-Körper, Kirsch mit Versatz 0 und 0,4, Knotenblech) Bit für Bit dieselbe geblieben
+(SHA-256 über Punkte, Gewichte und Masken aller Zellen). In keinem dieser Modelle kommt ein offenes Stück oder ein Rückfall vor; leere Reste gibt es am Knotenblech (14) und an der Kirsch-Platte mit Versatz 0,4 (54). (K2) *Flächenordnung 2p* (exakt bis 4p − 1, also für alle
+Felder bis zum Gesamtgrad p): unverändert bei p 1 und p 2, 6 statt 5 bei p 3, 8 statt 7 bei p 4; die Quadraturpunkte der Oberfläche werden bei p 3 um 44 %, bei p 4 um 31 % mehr, die Ausgabepunkte
+des Ergebnisses (Ecken der Oberflächendreiecke) bleiben dieselben. Am Lamé-Zylinder, dessen Zellen bei h 10 alle Schnittzellen sind (286 von 286; Flächenpunkte bei p 3 218 143 → 314 046, bei p 4 427 382 → 558 137, bei p 2 unverändert 139 640), braucht die Suite mit p 2 bis p 4 222 statt 221 s (+1 %; eigene CPU-Zeit +3 %; unmittelbar nacheinander gemessen, Fremdlast 9,8 und 5,6 Kerne – der alte Stand lief unter der größeren Fremdlast, der Unterschied ist also eher größer). Die Phasen, in denen die Flächenpunkte zählen, brauchen länger: Assemblierung bei p 3 6,6 → 8,2 s und bei p 4 26,0 → 32,0 s, Lösen mit Lastvektor 4,9 → 6,5 s und 18,3 → 22,2 s (+22 bis +32 %); bei p 2 bleiben sie gleich. Die Gesamtzeit bestimmt der Aufbau der Quadratur, der sich nicht verlängert (je Fall 34,1 → 34,8 s, 46,9 → 47,1 s und 93,4 → 97,5 s).
+(K3) Für α in Zellen ohne Wurzel gibt es keine Kur in O5 (Liste).
+
+**Patch-Test höherer Ordnung** (`test_patch.test_patch_hoeherer_ordnung`; Patch-Körper mit zwei schrägen Halbräumen, allgemeine Polynomfelder mit allen Komponenten, Volumenlast aus dem Differenzenquotienten
+der Spannung, am quadratischen Feld gegen die Formel auf 2·10⁻¹⁴ geprüft). Spannungsfehler innen / am Rand:
+
+| p | Feldgrad | vorher | mit der Kur |
+|---|---|---|---|
+| 2 | 2 | 1,1·10⁻⁴ / 2,6·10⁻⁴ | 9,4·10⁻¹² / 2,3·10⁻¹¹ |
+| 3 | 2 | 1,8·10⁻⁵ / 1,9·10⁻⁴ | 2,9·10⁻¹⁰ / 2,2·10⁻⁹ |
+| 3 | 3 | 1,7·10⁻⁵ / 2,2·10⁻⁴ | 2,1·10⁻¹⁰ / 8,1·10⁻¹⁰ |
+| 4 | 1 | 1,8·10⁻⁸ / 3,5·10⁻⁷ | 1,6·10⁻⁸ / 2,7·10⁻⁷ |
+| 4 | 3 | 2,1·10⁻⁶ / 1,4·10⁻⁵ | 8,5·10⁻⁹ / 5,5·10⁻⁸ |
+
+Bei p 4 ist das der Boden des linearen Felds (H4), nicht mehr die Quadratur. Die Werte nach der Kur liegen auf Rundungsniveau und streuen von Lauf zu Lauf um etwa den Faktor 2 (p 3, Feldgrad 2, am Rand in
+sechs Läufen 1,2·10⁻⁹ bis 2,3·10⁻⁹; p 2 2,0·10⁻¹¹ bis 2,6·10⁻¹¹).
+
+**Kontrolllauf am Knotenblech** (Stand auf `main` 372ac59 gegen die Kur 79d4a4f, je aus einem festen Arbeitsbaum, nacheinander; vier Zyklen bis p 4):
+
+| Zyklus | Schritt | p | Freiheitsgrade | σ_hs,max vorher | mit der Kur | Änderung | Zeit vorher (s) | mit der Kur (s) |
+|---|---|---|---|---|---|---|---|---|
+| 0 | Start | 2 | 14 295 | 181,060 | 181,067 | +0,004 % | 1,4 | 1,9 |
+| 1 | h-Halbierung Naht | 2 | 36 009 | 175,419 | 175,420 | +0,001 % | 10,1 | 10,4 |
+| 2 | h-Halbierung Naht | 2 | 150 411 | 157,135 | 157,132 | −0,001 % | 31,0 | 32,7 |
+| 3 | p-Erhöhung | 3 | 477 702 | 142,601 | 142,601 | +0,000 % | 94,3 | 92,7 |
+| 4 | p-Erhöhung | 4 | 1 096 107 | 143,229 | 143,229 | +0,000 % | 401,6 | 409,0 |
+
+σ_hs(y 40) ändert sich im letzten Zyklus rechts von 143,2290 auf 143,2291 N/mm² und links von 138,9425 auf 138,9421 N/mm²
+(beides unter 0,001 %); über alle 18 Nahtpunkte höchstens 0,002 %. Im Zyklus 0 (h 10, p 2) sind es höchstens 0,011 %. Die Konvergenzaussage bleibt
+„letzte relative Aenderung 0.44 % < 3 %: konvergiert; Folge nicht monoton (Aenderungen -5.647, -18.29, -14.53, +0.6283 N/mm2)“. Das Ergebnis hat unverändert 3 050 Oberflächenpunkte (vorher 3 050). Die Rechenzeit ist getrennt nachgemessen, weil der Lauf auf 79d4a4f unter fremder Last stand (573,9 s gegen 496,5 s, alle fünf Zyklen langsamer): viermal unmittelbar nacheinander aus den festen Arbeitsbäumen, je Lauf mit der belegten CPU-Zeit fremder Prozesse – alt a 543,3 s (Fremdlast 7,4 Kerne), neu a 553,2 s (Fremdlast 8,0 Kerne), alt b 549,3 s (Fremdlast 9,0 Kerne), neu b 551,1 s (Fremdlast 10,9 Kerne). Gewertet nach der vorab im Plan festgelegten Regel nur Paar a, weil die Fremdlast der vier Läufe weiter als einen Kern auseinanderliegt: Wanduhr +1,8 %, eigene CPU-Zeit −1,6 %; die Regel (höchstens +10 %) ist erfüllt. Die Zykluszeiten der Tabelle sind die der gewerteten Läufe. Im Zyklus 0 gehen 28 schräge
+Stücke mit exakten Momenten ein, 14 Reste ohne Volumen werden übersprungen, kein Stück ist offen oder im Rückfall; die Referenzpunkte gehen von 34 074 auf 23 814 zurück.
+Gegen die Tet10-Referenz auf `main` (lokal 0,5 mm) bleibt die Abnahme unverändert: rechts +0,14 %, links −2,84 %, über alle 18 Punkte 2,95 %. Für das Knotenblech ist die Kur also ohne praktische Wirkung – die schräg geschnittenen Zellen sind die wenigen an den Nahtflanken (28 von 476 Stücken im Zyklus 0), und der Hot-Spot wird auf der Blechseite ausgewertet.
+
+**Nicht behandelt (Liste im Plan).** Zellen ohne Wurzel behalten α und begrenzen dort selbst das lineare Feld auf α mal Verstärkung (T: 10⁻⁶ bei p 2, 7·10⁻⁵ bei p 3) – sie entstehen, wenn die Basiszelle gröber ist als
+die Wanddicke und die Nachbarn feiner sind; das Protokoll nennt ihre Zahl (`aggregation.zellen_ohne_wurzel`), eine Warnung gibt es nicht. Die Zwangsmatrix gibt Polynome nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder,
+wenn fast alle Zellen aggregiert sind. Ohne Moment Fitting bleibt die Tetraederregel mit n = ⌈1,5 p⌉ und damit der alte Konsistenzfehler; `ordnung_tet` lässt sich setzen. Gekrümmte Geometrie bleibt durch die
+Tangentialebenen genähert (11.3); exakt ist die Integration des genäherten Körpers. Beim Suitenvergleich fiel außerdem auf: der Schwellenvergleich der Aggregation hängt bei einem Werkstoffanteil genau an der Schwelle 0,4 an der
+letzten Rundungsstelle. Im verfeinerten Patch-Körper (`test_zwaenge`) wechselt eine Zelle mit den exakten Momenten von 0,4 − 2·10⁻¹⁶ auf 0,4 + 2·10⁻¹⁶ und gilt jetzt als wohlgestellt (aggregierte Moden bei p 2: 1 758 → 1 746);
+beide Einteilungen bestehen den Patch-Test (Liste O19).
+
+**Zwei Prüfungen hingen am alten Weg.** `test_patch.test_ohne_aggregation` verlangte, dass der Fehler ohne Aggregation mit α skaliert (Faktor über 30 zwischen 10⁻⁸ und 10⁻¹⁰). Über α = 10⁻⁶ … 10⁻¹² ist er in beiden
+Wegen nicht monoton (alt 3,5·10⁻² / 6,0·10⁻³ / 1,4·10⁻² / 4,1·10⁻⁴ / 1,4·10⁻⁴ / 1,0·10⁻⁵, neu 3,2·10⁻² / 5,1·10⁻² / 7,8·10⁻⁴ / 4,3·10⁻⁴ / 1,8·10⁻⁴ / 2,5·10⁻⁵); das eine Wertepaar war kein Gesetz. Geprüft wird jetzt,
+dass der Fehler ohne Aggregation über 10⁻⁵ liegt. `test_pcg` verglich am Patch-Körper den Jacobi-PCG bei Toleranz 10⁻¹⁰ mit dem Direktlöser auf 10⁻⁴ und lag nur um den Faktor 2 über seinem Messwert; der Abstand hängt an
+der Abbruchtoleranz (neu 1,2·10⁻⁴ / 6,3·10⁻⁶ / 1,6·10⁻⁶ bei 10⁻¹⁰ / 10⁻¹¹ / 10⁻¹², alt 4,5·10⁻⁵ / 3,7·10⁻⁵ / 1,4·10⁻⁶). Jetzt Toleranz 10⁻¹² und Schranke 10⁻⁵.
+
+**Prüfungen.** `test_quadratur.test_stuecke_exakt` (Eckzelle gegen die Dirichlet-Formel in Brüchen und gegen die Tetraederregel der Ordnung 3p + 1; der alte Weg zum Vergleich; Ebene auf Zellflächen; Geschlossenheit, die vektorisierte Fassung gegen die Schleife je Dreieck an 385 zufällig geclippten Boxen; Rückfall
+des Wächters), `test_patch.test_patch_hoeherer_ordnung`
+(Feldgrad bis p; Schranke 10⁻⁸ bei p 2 und 10⁻⁷ bei p 3, gemessen höchstens 2,6·10⁻¹¹ und 2,3·10⁻⁹ – die engere Schranke 10⁻⁸ ließe bei p 3 nur das Vierfache Abstand, und eine Prüfung gleicher Art fiel am selben Tag
+in der CI mit 1,7·10⁻⁸ gegen 10⁻⁸ durch; ohne K1 bzw. mit der alten Flächenordnung über 10⁻⁵ bzw. 10⁻⁶), `test_schale` mit Schranken aus den neuen Messwerten (geneigt p 2: Schnittgrößen und Rest unter 10⁻⁸ statt 1 %),
+`test_quadratur.test_momentfitting` gegen die exakte Referenz. Alle 26 Paketsuiten grün auf 79d4a4f (fester Arbeitsbaum, nacheinander): `kern` 362/362, `quadratur` 54/54, `patch` 19/19, `schale` 18/18, `oktree` 30/30, `gitter` 26/26, `zwaenge` 24/24, `stl` 27/27, `step` 12/12, `huelle` 22/22, `rueckgewinnung` 6/6, `vertrag_fcm` 51/51, `hotspot` 10/10, `basis` 22/22, `elastizitaet` 6/6, `geometrie` 46/46, `operator` 10/10, `paket` 4/4, `pcg` 7/7, `lame` 7/7, `kragarm` 15/15, `adaptiv` 18/18, `mehrgitter` 27/27, `operator_gpu` 14/14, `knotenblech` 9/9, `kirsch` 8/8. Nach der Vektorisierung der Geschlossenheitsprüfung (bc0dc59, Zellquadratur Bit für Bit gleich) liefen die Kernsuite und die Suiten, in denen der Wächter greift, erneut: `kern` 363/363, `quadratur` 55/55, `patch` 19/19, `kirsch` 8/8, `knotenblech` 9/9; `mypy --strict` und `lint-imports` sauber.
+
+**Geänderte dokumentierte Zahlen** (Regel 3: über die letzte angegebene Stelle hinaus, Stand vor der Kur → nach der Kur). (a) Lamé h 10 – p 3: σ_r 0,380 → 0,379 %, σ_φ 0,062 → 0,069 %, u_r 0,014 → 0,029 %, σ_z 0,143 → 0,147 %; p 4: σ_φ 0,093 → 0,085 %, u_r 0,037 → 0,006 %, σ_z 0,137 → 0,138 %; p 2 unverändert (Flächenordnung 6 und 8 statt 5 und 7); Lamé aus STL p 3: σ_r 0,070 → 0,069 %, σ_φ 0,024 → 0,023 %. (b) Hot-Spot am exakten Feld p 3: roh 1,6·10⁻⁷ → 5,8·10⁻¹¹, geglättet 6,2·10⁻⁸ → 5,6·10⁻¹¹. (c) Knotenblech h 10 p 2: σ_hs(y 40) rechts 164,802 → 164,803, links 180,111 → 180,097 N/mm², Symmetrie 8,79 → 8,78 %; der lange Lauf wie in der Tabelle oben. (d) Quadratisches Feld am T-Stoß mit zwei lokalen Halbierungen (11.14): 3,3·10⁻⁶ → 3,7·10⁻⁷. (e) Geneigter Plattenstreifen über den Vertragsweg (11.17): 30° p 2 Schnittgrößen 3,7·10⁻⁵ / 4,7·10⁻⁵ → 1,6·10⁻¹¹ / 7,1·10⁻¹¹, σ_x′ 2,2·10⁻⁴ → 5,0·10⁻⁷ (Versatz des Auswertepunkts), übrige Komponenten 8,2·10⁻⁵ → 1,2·10⁻¹⁰, Gleichgewicht 4,2·10⁻³ → 1,9·10⁻⁹; 10° p 3 Rest 1,0·10⁻⁶ → 4,2·10⁻¹⁰; 30° p 3 Rest 1,4·10⁻⁷ → 2,5·10⁻⁸, Gleichgewicht 2,2·10⁻⁷ → 5,6·10⁻⁷. (f) Aggregierte Moden im verfeinerten Patch-Körper (`test_zwaenge`): eine Ebene p 2 1 758 → 1 746, p 3 5 661 → 5 589; Bereich an einer Ecke p 1 158 → 152, p 2 1 008 → 1 004, p 3 3 189 → 3 225 – im Fall „eine Ebene“ bei p 2 nachgemessen: eine Zelle mit dem Werkstoffanteil genau 0,4 wechselt die Seite der Schwelle (Liste O19); die übrigen Fälle sind nicht einzeln nachgemessen. (g) Iterationszahlen des Jacobi-PCG um höchstens 1 % (Patch-Körper 5 060 → 5 015, Kirsch h 20 p 3 26 007 → 25 942), des Mehrgitter-PCG um höchstens zwei Schritte. (h) Nullwerte des Globalmodells in `test_vertrag_fcm` (Verhältnisse von Rundungsgrößen): 0,660 / 0,340 → 0,751 / 0,249. Auf alle angegebenen Stellen unverändert: Kirsch (alle K_t, Streuungen 6,98 %, 1,34 % und 0,17 %), Kragarm, Lamé p 2, die Abnahme des Knotenblechs gegen Tet10 (+0,14 % / −2,84 %). Neu gefasst und darum nicht vergleichbar: `test_patch.test_ohne_aggregation` und der Patch-Fall in `test_pcg` (siehe oben).

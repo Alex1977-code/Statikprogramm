@@ -802,6 +802,29 @@ Maßgebend bleibt die Wanduhr des ganzen Laufs. Gewertet wird das Mittel beider 
 und einander näheren Fremdlast, das andere wird berichtet und nicht gewertet. Gegenprobe ist die eigene CPU-Zeit mit derselben Verhältnisbildung. Wanduhr und CPU-Zeit müssen im Urteil (über oder unter +10 %)
 übereinstimmen; sonst gilt die Regel als nicht entscheidbar gemessen und geht mit beiden Zahlen an den Anwender.
 
+**Ergebnis O5 (03.10.2026, Theorie 11.21; Kur in den Commits f1988a8, 79d4a4f und bc0dc59 auf `feature/volumen3d`, nicht auf main).** Messreihe: sechs Modellfälle (Streifen 10° und 30°, T-Stoß; p 2 und p 3), je zehn Schaltersätze, Felder k 1 bis 3; Logs im
+Scratchpad (`o5_*.log`, `o5_kur/`). *Ursachen:* H1 Tetraederregel – trägt bei p 2 den ganzen Fehler des quadratischen Felds (Streifen 2,5·10⁻⁴ / 2,5·10⁻⁵ → 1,2·10⁻¹⁰ / 1,7·10⁻¹⁰ mit n = 4; T 3,3·10⁻⁶ → 3,7·10⁻⁷, der Rest ist α); H2 Flächenregel –
+trägt bei p 3 den Fehler, wo er über dem Boden liegt (Streifen 10° 6,9·10⁻⁸ → 2,1·10⁻⁹, Vertragsweg Rest 1,0·10⁻⁶ → 4,2·10⁻¹⁰; allgemeines quadratisches Feld am Patch-Körper 1,9·10⁻⁴ am Rand); H3 α – an T genau proportional (p 2: 1,0·10⁻⁶ / 1,0·10⁻⁸ / 1,2·10⁻¹⁰),
+drei bzw. neun schlecht geschnittene Zellen ohne Wurzel am Querblech (10 mm dick in 20-mm-Zellen); in den Modellen des Vertragswegs mit Basiszelle gleich Blechdicke gibt es keine; H4 Rundung über die Zwangsmatrix – der Rest am Streifen 30° p 3 (2,5·10⁻⁸)
+skaliert mit der Verschiebung (ein Viertel: 3,7·10⁻⁹; plus 30 mm Starrkörper: 4,7·10⁻⁷). *Vorhersagen nach dem Wortlaut der Regel:* keine erfüllt (die Regel verglich mit dem linearen Feld, das am Streifen unter Rundungsniveau und an T auf dem α-Niveau liegt);
+in der Sache V1, V4 bestätigt, V2 bestätigt wo messbar, V3 nicht bestätigt (bei p 3, k 3 hängt der Rest nur an der Flächenordnung). *Kur:* K1 exakte Stückmomente, K2 Flächenordnung 2p, K3 keine.
+*Was der erste Suitenlauf der Kur fand:* Kirsch mit Versatz 0,4 gab K_t 1,7 bis 1,9 statt 3,1 – `clippen` lässt bei bloßer Berührung eine einzelne Fläche als „Stück“ stehen, und der Divergenzsatz zählte dafür Volumen. Seit 79d4a4f
+prüft ein Wächter je Stück Volumen und Geschlossenheit und je Zelle das Volumen gegen die Tetraederzerlegung; die erste Fassung der Geschlossenheitsprüfung kostete an der Kugel mit Tiefe 3 9,0 von 30 s und ist seit bc0dc59
+vektorisiert (2,6 von 21 s für beide Prüfungen, Zellquadratur an sechs Modellen Bit für Bit gleich).
+*Abnahme der Kur:* (1) Spannungsfehler unter 10⁻⁸ bei k ≤ p: am Streifen p 2 2,3·10⁻¹⁰ und 2,4·10⁻¹⁰, p 3 10° 2,4·10⁻⁹ erfüllt; **p 3 30° 2,5·10⁻⁸ verfehlt** (Ursache H4, keine Quadraturfrage); an T (Zellen ohne Wurzel) auf dem α-Niveau des linearen Felds
+erfüllt (p 2: 3,7·10⁻⁷ gegen 1,0·10⁻⁶; p 3: 2,6·10⁻⁵ und 1,1·10⁻⁵ gegen 6,7·10⁻⁵). (2) Zellmatrix gegen Tetraederordnung 3p + 1: 2,7·10⁻¹⁵ (p 2), 3,7·10⁻¹⁵ (p 3) – erfüllt. (3) Suiten: alle 26 Paketsuiten grün auf 79d4a4f, Kernsuite (363), `quadratur`, `patch`, `kirsch` und `knotenblech` erneut grün auf bc0dc59 – erfüllt; die geänderten dokumentierten Zahlen stehen in Theorie 11.21. (4) Aufbauzeit Knotenblech
+(langer Lauf): Wanduhr +1,8 %, eigene CPU-Zeit −1,6 % (Nachmessung alt/neu im Wechsel mit Fremdlast, gewertet Paar a) – erfüllt (Schranke +10 %). Änderung von σ_hs am Knotenblech: höchstens 0,002 % (letzter Zyklus), 0,011 % (Zyklus 0) – unter der Schwelle 0,5 %.
+
+*Neue Punkte der Liste (aus O5, nicht behandelt; O19 fiel beim Suitenvergleich an).* **O16 – α in schlecht geschnittenen Zellen ohne Wurzel:** sie begrenzen selbst das lineare Feld auf α mal Verstärkung (T-Stoß Basis 20: 10⁻⁶ bei p 2, 7·10⁻⁵ bei p 3). Möglichkeiten: Warnung im Ergebnis,
+sobald `zellen_ohne_wurzel` > 0 (klein), oder solche Zellen teilen bzw. an eine feinere Wurzel binden (größer, berührt die Zwangsketten). Empfehlung: Warnung. Sonnet 5.5, niedrig. **O17 – Genauigkeit der Zwangsmatrix:** die Fortsetzung der Wurzelpolynome
+gibt Polynome nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder, wenn fast alle Zellen aggregiert sind; eine Starrkörperverschiebung von 30 mm erzeugt 4,7·10⁻⁷ Spannungsfehler (p 3), bei p 4 liegt der Boden bei 2,7·10⁻⁷ am Rand. Praktisch ohne Belang; zu entscheiden
+ist, ob die Fortsetzung genauer gebaut wird (etwa als Kronecker-Produkt dreier 1D-Fortsetzungen). Empfehlung: zurückstellen. Opus 5.5, hoch. **O18 – Tetraederordnung ohne Moment Fitting:** der Rückfallweg (`momentfitting=False`, künftig plastische Körper)
+hat weiter n = ⌈1,5 p⌉ und damit den alten Konsistenzfehler; n = 2p machte ihn für Felder bis zum Grad p exakt (2,4-fache Punktzahl bei p 2). Empfehlung: mit Teilprojekt 7 (Plastizität) entscheiden. Sonnet 5.5, niedrig.
+**O19 – Schwellenvergleich der Aggregation bei Gleichstand:** `Zellaggregation` vergleicht den ungerundeten Werkstoffanteil mit der Schwelle 0,4. Im verfeinerten Patch-Körper (`test_zwaenge`, „Schnittzellen eine Ebene“) haben zwei Zellen
+den Anteil geometrisch genau 0,4; die eine (Box [78, 88] × [−2, 8] × [68, 78]) lag mit der Tetraederregel bei 0,4 − 2·10⁻¹⁶ und liegt mit den exakten Momenten bei 0,4 + 2·10⁻¹⁶, die andere bleibt darunter (0,4 − 4·10⁻¹⁶, jetzt 0,4 − 2·10⁻¹⁶). Die erste gilt
+jetzt als wohlgestellt, die Zahl der aggregierten Moden ändert sich (p 2: 1 758 → 1 746). Beide Einteilungen bestehen den Patch-Test, aber die Einteilung hängt an der letzten Rundungsstelle. Kur: den auf neun Stellen gerundeten
+Anteil (`_rang`, seit dem 30.09. für die Rangfolge der Wurzeln) auch für den Schwellenvergleich nehmen; Test: Zelle mit Anteil genau an der Schwelle, beide Quadraturwege. Empfehlung: mit O16 erledigen. Sonnet 5.5, niedrig.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
@@ -830,7 +853,7 @@ nachgetragen.
 | O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | erledigt: letzte Änderung < 3 % konvergiert, Monotonie zusätzlich (Knotenblech 0,44 %, T-Stoß 0,45 %) |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | erledigt: Theorie 11 konsolidiert, Entwurf 4e neu, `Volumenmodul.md` nach Stufen; unabhängiger Prüfer (Opus) gegen die Quellen, 16 Befunde bearbeitet; Berichtigungen 0,47 → 0,45 %, 24 → 23 Befunde in C2; Nebenbefund O15 (Gitter) |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
-| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | angenommen (03.10.); Hypothesen und Messregeln festgelegt, Messung läuft |
+| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | erledigt auf `feature/volumen3d` (f1988a8, 79d4a4f, bc0dc59): Ursachen gemessen, Kur exakte Stückmomente mit Wächter + Flächenordnung 2p; Patch-Test bis Feldgrad p unter 10⁻⁸; Regel (1) am Streifen 30° p 3 verfehlt (2,5·10⁻⁸ statt unter 10⁻⁸, Rundung der Zwangsmatrix) – Entscheidung beim Anwender; Merge nur auf Freigabe |
 | O6 Ebenen durch gekrümmte Hülle (B6 Teil 3) | Fable 5.1 | sehr hoch | Divergenzweg eine Dimension tiefer | Entscheidung offen: bauen oder Warnung lassen (Empfehlung: bei Bedarf) |
 | O7 Vertragsvorschlag 2.2.0 Volumenlast je Lastfall | Sonnet 5.5 | mittel | Anschluss in `api.py` nach dem Vertrags-PR | Entscheidung offen: ganz, nur Punkt 1 oder ablehnen (Empfehlung: Punkt 1, Kombinationen im Hauptprogramm) |
 | O8 Abbruch in `prepare` | Sonnet 5.5 | mittel | Vertragsvorschlag schreiben | Entscheidung offen: Vorschlag (Minor) oder hinnehmen (Empfehlung: Vorschlag mit O9) |
@@ -840,4 +863,8 @@ nachgetragen.
 | O12 mehrere Kinder derselben Hülle | Sonnet 5.5 | niedrig | Prüfung in `Csg` | keine Entscheidung nötig; Empfehlung: mit Fehler abweisen |
 | O13 GPU-Einrichtzeit nach Cholesky | Sonnet 5.5 | mittel | Messreihe gegen A3 | keine Entscheidung, nur Messung |
 | O14 Oberflächenquadratur der Hüllenfacetten | Opus 5.5 | hoch | numba-Schleifen, Leistung | Entscheidung offen: jetzt oder nach PR 3 (Empfehlung: nach PR 3) |
+| O16 α in Zellen ohne Wurzel | Sonnet 5.5 | niedrig | Warnung im Ergebnis | Entscheidung offen (Empfehlung: Warnung) |
+| O17 Genauigkeit der Zwangsmatrix | Opus 5.5 | hoch | Fortsetzung genauer bauen | Entscheidung offen (Empfehlung: zurückstellen) |
+| O18 Tetraederordnung ohne Moment Fitting | Sonnet 5.5 | niedrig | n = 2p im Rückfallweg | Entscheidung offen (Empfehlung: mit Teilprojekt 7) |
+| O19 Schwellenvergleich der Aggregation bei Gleichstand | Sonnet 5.5 | niedrig | gerundeten Anteil vergleichen | Entscheidung offen (Empfehlung: mit O16) |
 | O15 Reihenfolgefehler der 2:1-Balancierung (Gitter) | Sonnet 5.5 | mittel | Einzeiler mit Obergrenze, Test und Wiederholung der Suiten | erledigt (250e607): Korrektur, Durchlaufgrenze und Test; 391 von 393 verglichenen Gittern unverändert, kein bestehendes Ergebnis ändert sich; t/8 bei p 4 mit 6,4 Mio. Freiheitsgraden nicht rechenbar |

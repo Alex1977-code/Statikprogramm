@@ -141,7 +141,8 @@ hat der Anwender bei der Durchsicht von Pull Request 8 am 27.09.2026 bestätigt.
   (Sutherland–Hodgman auf den Polyederflächen samt Deckelpolygon), vom Schwerpunkt aus in
   Tetraeder zerlegt und mit der konischen Produktregel (Gauß–Jacobi, n = ⌈3p/2⌉ je Richtung,
   exakt bis Gesamtgrad 2n−1 ≥ 3p−1) integriert – genau die Exaktheit, die der Patch-Test für
-  ∫∇v braucht. Ebene Geometrie ist damit auf jeder Tiefe exakt (keine Teilung nötig);
+  ∫∇v braucht. (Seit O5, 03.10.2026: mit Moment Fitting gehen schräg geschnittene Stücke mit exakten Momenten ein, 4e.6;
+  die Tetraederregel bleibt der Weg ohne Moment Fitting.) Ebene Geometrie ist damit auf jeder Tiefe exakt (keine Teilung nötig);
   gekrümmte Flächen werden bis Tiefe k (Standard 2) geteilt, Fehler O(κ·Blattkante²) statt
   O(Blattkante). Gemessen am Lamé-Zylinder (h = 10, R = 50): Tiefe 2 begrenzt σ_r auf etwa
   0,3 % unabhängig von p ≥ 3, Tiefe 3 bringt 0,09 % (p = 3) bei vierfacher Punktzahl – die
@@ -898,12 +899,18 @@ dieser Abschnitt hält die Entscheidungen und ihre Folgen fest. Die Einträge st
   von σ(0,4 t); berichtet als Band (Mittel 143,6, Spanne 138,9 bis 147,2 N/mm²). Konvergenzaussage: letzte relative Änderung unter 3 % = konvergiert, Monotonie und Aitken-Grenzwert zusätzlich.
 - **O4, Berichtigung (C3, 02.10.2026):** die Planregeln nannten für die letzte Änderung der T-Stoß-p-Phase 0,47 %, gerechnet aus den gerundeten Werten 107,4 und 107,9; die gemessenen
   Werte 107,446 und 107,932 ergeben 0,45 %. Handbuch, Plan und Test sind berichtigt.
+- **O5, Konsistenz der Schnittzellen (03.10.2026, Theorie 11.21):** Ursachen des Konsistenzfehlers gemessen (zwei Modelle, zwei unabhängige Größen): Tetraederregel der schräg geschnittenen Stücke
+  (exakt bis Gesamtgrad 3p − 1, ein Feld vom Grad k braucht 3p + k − 2: Fehler des quadratischen Felds bei p 2), Flächenregel (exakt bis 3p bei ungeradem p, nötig 3p + k − 1: Fehler bei p 3), α in schlecht geschnittenen
+  Zellen ohne Wurzel (nur wenn die Basiszelle gröber ist als die Wanddicke), Rundung über die Zwangsmatrix. Kur: `geometry/huelle.polyedermomente` liefert die Momente schräger Stücke exakt über den Divergenzsatz
+  (`Zellquadratur(stuecke_exakt=…)`, `STUECKE_EXAKT_STANDARD`; nur mit Moment Fitting und q ≥ 2p), `FcmProblem.ordnung_flaeche` = 2p. Die Zellmatrix ist auf ebener Geometrie für den ganzen Ansatzraum exakt;
+  Patch-Test mit Feldern bis zum Grad p unter 10⁻⁸ (vorher 10⁻⁴). Knotenblech: σ_hs ändert sich um höchstens 0,002 % (letzter Zyklus). Nicht behandelt: α in Zellen ohne Wurzel,
+  Genauigkeit der Zwangsmatrix, Tetraederordnung ohne Moment Fitting, Schwellenvergleich der Aggregation bei Gleichstand (Plan, Liste O16 bis O19).
 - **O15 (02.10.2026, Commit 250e607):** Reihenfolgefehler der 2:1-Balancierung des Gitters behoben (`Gitter._aufbauen` teilte unsortierte statt der sortierten Felder; ab drei Ebenen Kaskade, t/8 am Knotenblech), mit
   Durchlaufgrenze und Test `test_oktree.test_verfeinerung_drei_ebenen`. 393 Gitter aus 26 Suiten verglichen (alte und neue Reihenfolge, Blattmengen aus `ebene` und `ijk` exakt): 391 gleich, 0 verschieden, 2 Kaskade im alten Verfahren – das ist der absichtlich gebaute Dreiebenenfall des neuen Tests (2 100 Blätter in 519 / 155 / 306 / 1 120), gebaut in `test_oktree` und `test_kern`: kein bestehendes Gitter und damit kein bestehendes Ergebnis ändert sich. t/8 (Nahtziel 1,25 mm): 31 531 Blätter, 0,9 s,
   841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4, bei p 4 nicht rechenbar.
 
 ### 4e.7 Prüfungen
-Stand 02.10.2026 (nach O15): Kernsuite `volumen3d.tests.test_kern` 347 Prüfungen (342 vor O15, fünf neue), Vertragsschicht `test_vertrag_fcm` 51, Knotenblech mit `VOLUMEN3D_LANG=1` 9 (Konvergenz „konvergiert“ mit letzter
+Stand 03.10.2026 (nach O5): Kernsuite `volumen3d.tests.test_kern` 363 Prüfungen (347 nach O15), Vertragsschicht `test_vertrag_fcm` 51, Knotenblech mit `VOLUMEN3D_LANG=1` 9 (Konvergenz „konvergiert“ mit letzter
 Änderung 0,44 %, Streuband: der Lauf liegt im gemessenen Band 138,9 bis 147,2 N/mm² (Regressionsprüfung, keine Abnahmeschranke), Abnahme gegen Tet10 rechts +0,34 %, links −2,93 %), `mypy --strict` für `api.py` und `postprocess/konvergenz.py` sauber, `lint-imports` 3 Regeln gehalten. Mit C2 (0ee938c) liefen alle
 25 Suiten und die GPU-Suite (14 Prüfungen) grün. Prüfungen, die in Teilprojekt 5 entstanden (Auswahl): `test_quadratur` (Moment Fitting, innere Trennfläche, deckungsgleiche Flächen), `test_rueckgewinnung`,
 `test_hotspot`, `test_adaptiv` (Zyklen, Konvergenzaussage, maßgebender Hot-Spot), `test_step`, `test_huelle` (Hüllenintegration, Windungsbaum), `test_stl` (durchdringende Schalen), `test_schale`,
@@ -911,7 +918,7 @@ Stand 02.10.2026 (nach O15): Kernsuite `volumen3d.tests.test_kern` 347 Prüfunge
 `test_zwaenge.test_wurzelwahl_rundungsfest`, `test_zwaenge.test_unverwurzelte_grobe_zelle` und `test_zwaenge.test_gebuendelte_nachbarsuche`. Schwere Abnahmen vor jedem Merge: `test_kragarm`, `test_lame`, `test_kirsch`, `test_mehrgitter`, `test_operator_gpu`.
 
 ### 4e.8 Offen
-Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“: O3 Messung von Nahtziel t/8 und 0,5 t / 1,5 t (Größe von t/8 gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar, Theorie 11.20); O5 Konsistenzfehler der Schnittzellen (10⁻⁶ bis 10⁻⁴ am T-Stoß, 2·10⁻⁴ bis 3,5·10⁻³ in der Spannung bei p 2 am schrägen Schnitt; Empfehlung: vor Teilprojekt 6); O6 Ebenen durch den gekrümmten Teil einer
+Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“: O3 Messung von Nahtziel t/8 und 0,5 t / 1,5 t (Größe von t/8 gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar, Theorie 11.20); O5 (Konsistenzfehler der Schnittzellen) ist geklärt und behoben, 4e.6; daraus offen: O16 Zellen ohne Wurzel behalten α, O17 Genauigkeit der Zwangsmatrix, O18 Tetraederordnung ohne Moment Fitting, O19 Schwellenvergleich der Aggregation bei Gleichstand; O6 Ebenen durch den gekrümmten Teil einer
 Hülle; O7 Vertragsvorschlag 2.2.0 (Volumenlast je Lastfall); O8 Abbruch während `prepare`; O9 `summary()` nach Zyklen; O10 Torsion in der Kopplungskontrolle; O11 Zeiten je Zyklus; O12 mehrere Kinder derselben Hülle;
 O13 Einrichtzeit der Glätterblöcke auf der GPU nach der Cholesky-Umstellung; O14 Oberflächenquadratur der Hüllenfacetten (17 von 27 s am Block mit Bohrung N 120); O15 (Reihenfolgefehler der 2:1-Balancierung) ist behoben, 4e.6. Aus Teilprojekt 2 offen: die Vierteilung der
 Randpolygone an gekrümmten Formen.
