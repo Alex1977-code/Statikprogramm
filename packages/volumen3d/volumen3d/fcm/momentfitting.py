@@ -79,16 +79,22 @@ def _bewerten(w: np.ndarray) -> tuple[float, float]:
 
 
 def gefittete_regel(lo: np.ndarray, hi: np.ndarray, P_ref: np.ndarray, W_ref: np.ndarray, q: int, p: int,
-                    neg_schwelle: float = 1e-2, nnls_toleranz: float = 1e-10) -> FitErgebnis:
+                    neg_schwelle: float = 1e-2, nnls_toleranz: float = 1e-10, mu_zusatz: np.ndarray | None = None) -> FitErgebnis:
     """Regel fuer die Werkstoffdomaene einer Zelle [lo, hi] aus der Referenzregel (P_ref, W_ref, global).
 
     Rueckgabe 'rueckfall' traegt die Referenzregel selbst. Bei q >= 2p werden negative Gewichte hingenommen
-    (Zellsteifigkeit exakt, siehe Modulkopf), sonst greift die Schwelle."""
+    (Zellsteifigkeit exakt, siehe Modulkopf), sonst greift die Schwelle. ``mu_zusatz`` (q+1)^3: Momente von Werkstoffteilen,
+    die nicht als Punkte vorliegen (schraeg geschnittene Stuecke, exakt ueber den Divergenzsatz, Plan TP 5 O5); nur mit q >= 2p,
+    weil NNLS und Rueckfall die Referenzpunkte brauchen."""
     lo = np.asarray(lo, float)
     hi = np.asarray(hi, float)
     s = 0.5 * (hi - lo)
     xi = (np.asarray(P_ref, float) - lo) / s - 1.0
     mu = momente(xi, W_ref, q)
+    if mu_zusatz is not None:
+        if q < 2 * p:
+            raise ValueError("mu_zusatz verlangt q >= 2p (ohne Referenzpunkte kein NNLS und kein Rueckfall)")
+        mu = mu + mu_zusatz
     w = gewichte_kronecker(mu, q)
     X, _ = gauss_3d(q + 1)
     min_g, neg = _bewerten(w)

@@ -72,6 +72,117 @@ def test_patch():
         check(f"p={p}: Spannung innen und am Rand relativ < 1e-6", es < 1e-6 and eo < 1e-6)
 
 
+def _polynomfeld(k):
+    """Allgemeines Polynomfeld vom Gesamtgrad k (alle Komponenten gekoppelt): lineares Feld des Patch-Tests plus quadratischer und kubischer Anteil um die
+    Koerpermitte. Rueckgabe u(P), sigma(P) (Voigt xx yy zz xy yz xz), f(P) = -div sigma aus dem zentralen Differenzenquotienten der Spannung - fuer sigma bis
+    zum Grad 2 exakt (bis auf Rundung)."""
+    from volumen3d.fcm.elastizitaet import d_matrix
+    D = d_matrix(E, NU)
+    rng = np.random.default_rng(7)
+    Q2 = rng.uniform(-1, 1, (3, 3, 3)) * 1e-5
+    Q2 = 0.5 * (Q2 + Q2.transpose(0, 2, 1))                                    # symmetrisch in den beiden Ortsindizes
+    C3 = rng.uniform(-1, 1, (3, 3, 3, 3)) * 1e-7
+    C3 = (C3 + C3.transpose(0, 1, 3, 2) + C3.transpose(0, 2, 1, 3) + C3.transpose(0, 2, 3, 1) + C3.transpose(0, 3, 1, 2) + C3.transpose(0, 3, 2, 1)) / 6.0
+    x0 = np.array([50.0, 50.0, 50.0])
+
+    def u(P):
+        x = np.asarray(P, float).reshape(-1, 3) - x0
+        v = u_exakt(P).copy()
+        if k >= 2:
+            v += 0.5 * np.einsum("ijk,nj,nk->ni", Q2, x, x)
+        if k >= 3:
+            v += np.einsum("ijkl,nj,nk,nl->ni", C3, x, x, x) / 6.0
+        return v
+
+    def sig(P):
+        x = np.asarray(P, float).reshape(-1, 3) - x0
+        G = np.broadcast_to(A, (len(x), 3, 3)).copy()
+        if k >= 2:
+            G += np.einsum("ilk,nk->nil", Q2, x)
+        if k >= 3:
+            G += 0.5 * np.einsum("imkl,nk,nl->nim", C3, x, x)
+        e = 0.5 * (G + G.transpose(0, 2, 1))
+        return np.stack([e[:, 0, 0], e[:, 1, 1], e[:, 2, 2], 2 * e[:, 0, 1], 2 * e[:, 1, 2], 2 * e[:, 0, 2]], axis=1) @ D.T
+
+    voigt = ((0, 3, 5), (3, 1, 4), (5, 4, 2))                                  # Voigt-Index von sigma_ij
+
+    def f(P):
+        P = np.asarray(P, float).reshape(-1, 3)
+        aus = np.zeros((len(P), 3))
+        for j in range(3):
+            e = np.zeros(3)
+            e[j] = 1.0
+            d = 0.5 * (sig(P + e) - sig(P - e))                                # d sigma / d x_j
+            for i in range(3):
+                aus[:, i] -= d[:, voigt[i][j]]
+        return aus
+    return u, sig, f, Q2
+
+
+def _lastvektor(pr, f):
+    """Volumenlast f(P) ueber die Zellquadratur (rand.volumenlast kennt nur konstante Lasten)."""
+    from volumen3d.fcm.basis import basis_3d
+    g = pr.gitter
+    F = np.zeros(g.n_dof)
+    for c in range(len(g.ijk)):
+        P, W, I = pr.quadratur.zelle(c)
+        if len(P) and I.any():
+            N, _ = basis_3d(g.p, g.lokal(P[I], np.full(int(I.sum()), c)))
+            F[g.zell_dofs(c)] += ((N * W[I][:, None]).T @ f(P[I])).ravel()
+    return F
+
+
+def _polynomfehler(p, k, **kw):
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.geometry.csg import aus_params
+    g = aus_params({"csg": {"typ": "schnitt", "teile": [
+        {"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100], "name": "quader"},
+        {"typ": "halbraum", "punkt": [60, 50, 50], "normale": [1, 2, 3], "name": "s1"},
+        {"typ": "halbraum", "punkt": [30, 40, 70], "normale": [-2, 1, 1.5], "name": "s2"}]}})
+    pr = FcmProblem(g, h=20.0, p=p, werkstoff=Werkstoff(E, NU), **kw)
+    pr.verschiebungsrand("alles", None, projektion="voll")
+    u, sig, f, _ = _polynomfeld(k)
+    U = pr.loesen({"alles": u}, zusatzlasten=[_lastvektor(pr, f)])[:, 0]
+    aus = pr.auswertung(U)
+    rng = np.random.default_rng(4)
+    P = rng.uniform(0, 100, (4000, 3))
+    P = P[pr.geometrie.abstand(P) < -0.5][:1500]
+    Po = (pr.oberflaeche.punkte - 1e-6 * pr.gitter.h * pr.oberflaeche.normalen)[::7]
+    gross = np.abs(sig(P)).max()
+    return (float(np.abs(aus.spannung(P) - sig(P)).max() / gross), float(np.abs(aus.spannung(Po) - sig(Po)).max() / gross), pr)
+
+
+def test_patch_hoeherer_ordnung():
+    """Patch-Test hoeherer Ordnung (Plan TP 5 O5, Theorie 11.21): ein Polynomfeld vom Gesamtgrad k <= p liegt im Ansatzraum und muss am schraeg geschnittenen
+    Koerper bis auf Rundung reproduziert werden. Bis 03.10.2026 galt das nur fuer k = 1: die Tetraederregel der schraegen Stuecke war bis zum Gesamtgrad 3p - 1
+    (p gerade) exakt, noetig sind 3p + k - 2; die Flaechenregel bis 3p (p ungerade), noetig sind 3p + k - 1. Gemessen vorher / jetzt (Spannung am Rand):
+    p 2 k 2 2,6e-4 / 2,1e-11; p 3 k 2 1,9e-4 / 1,2e-9; p 3 k 3 2,2e-4 / 8,5e-10. Schranke 1e-8 (Rundungsniveau; rund das Achtfache des groessten Messwerts)."""
+    from volumen3d.fcm import quadratur as Q
+    # Gegenprobe der Volumenlast am quadratischen Feld: f_i = -[lambda Q_mmi + mu (Q_ijj + Q_jij)], unabhaengig vom Differenzenquotienten
+    u, sig, f, Q2 = _polynomfeld(2)
+    lam, mu = E * NU / ((1 + NU) * (1 - 2 * NU)), E / (2 * (1 + NU))
+    f_formel = -(lam * np.einsum("mmi->i", Q2) + mu * (np.einsum("ijj->i", Q2) + np.einsum("jij->i", Q2)))
+    d_f = float(np.abs(f(np.array([[10.0, 20.0, 30.0], [70.0, 5.0, 90.0]])) - f_formel).max() / np.abs(f_formel).max())
+    check(f"Volumenlast des quadratischen Felds: Differenzenquotient der Spannung gleich der Formel ({d_f:.1e} < 1e-12)", d_f < 1e-12)
+    for p, k in ((2, 2), (3, 2), (3, 3)):
+        t = time.perf_counter()
+        es, eo, pr = _polynomfehler(p, k)
+        st = pr.quadratur.statistik
+        check(f"p {p}, Feld vom Grad {k}: Spannung innen {es:.1e} und am Rand {eo:.1e} (< 1e-8)", es < 1e-8 and eo < 1e-8,
+              f"{st['stuecke_exakt']} von {st['stuecke']} Stuecken mit exakten Momenten, Flaechenordnung {pr.ordnung_flaeche}, "
+              f"Zellen ohne Wurzel {pr.protokoll['aggregation']['zellen_ohne_wurzel'] if pr.protokoll.get('aggregation') else pr.aggregation.statistik['zellen_ohne_wurzel']}, "
+              f"{time.perf_counter() - t:.1f} s")
+    # ohne die beiden Aenderungen (zum Vergleich, damit die Pruefung oben nicht leer ist): Tetraederregel bei p 2, alte Flaechenordnung 5 bei p 3
+    Q.STUECKE_EXAKT_STANDARD = False
+    try:
+        es2, eo2, _ = _polynomfehler(2, 2)
+    finally:
+        Q.STUECKE_EXAKT_STANDARD = True
+    es3, eo3, _ = _polynomfehler(3, 2, ordnung_flaeche=5)
+    check(f"zum Vergleich: p 2 k 2 mit der Tetraederregel {es2:.1e} / {eo2:.1e} (> 1e-5), p 3 k 2 mit der Flaechenordnung 5 {es3:.1e} / {eo3:.1e} (> 1e-6)",
+          min(es2, eo2) > 1e-5 and max(es3, eo3) > 1e-6)
+
+
 def test_ohne_aggregation():
     """Messung des alpha-Effekts ohne Zellaggregation (Begruendung der Massnahme): Fehler ~ alpha / Anteil."""
     werte = {}
@@ -135,4 +246,4 @@ def test_normalprojektion():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_patch, test_ohne_aggregation, test_kleine_schnittzellen, test_alpha_und_beta, test_normalprojektion]))
+    sys.exit(lauf([test_patch, test_patch_hoeherer_ordnung, test_ohne_aggregation, test_kleine_schnittzellen, test_alpha_und_beta, test_normalprojektion]))

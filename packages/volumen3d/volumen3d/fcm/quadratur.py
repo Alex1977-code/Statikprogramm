@@ -4,10 +4,15 @@ INSIDE-Zellen: Tensor-Gauss (p+1)^3. CUT-Zellen: rekursive Oktantteilung; eine T
 sicher innen/aussen, wenn |d(Mitte)| die halbe Raumdiagonale uebersteigt (konservative
 CSG-Abstaende, geometry/csg.py). Geschnittene Teilboxen werden **ebenen-exakt** integriert:
 die Geometrie nennt ihre lokalen konvexen Stuecke (Box ∩ Halbraeume; Halbraum und
-Quaderseiten exakt, Zylinder und Kugel als Tangentialebene), jedes Stueck wird geclippt, in
-Tetraeder zerlegt und mit der konischen Produktregel exakt bis Gesamtgrad 3p-1 integriert.
-Ebene Geometrie ist damit auf jeder Tiefe exakt; gekruemmte Flaechen werden bis ``tiefe``
-geteilt (Fehler O(Kruemmung * Blattkante^2)).
+Quaderseiten exakt, Zylinder und Kugel als Tangentialebene), jedes Stueck wird geclippt. Mit
+Moment Fitting (Vorgabe) gehen schraeg geschnittene Stuecke mit ihren exakten Momenten ein
+(Divergenzsatz ueber die Polygone des Stuecks, geometry/huelle.polyedermomente): die
+Zellmatrix ist dann auf ebener Geometrie fuer den ganzen Ansatzraum exakt. Ohne Moment Fitting
+wird das Stueck in Tetraeder zerlegt und mit der konischen Produktregel integriert - exakt bis
+zum Gesamtgrad 2 ordnung_tet - 1 = 3p-1 (p gerade) bzw. 3p (p ungerade); das genuegt dem linearen
+Patch-Test, aber nicht Feldern hoeheren Grades (Plan TP 5 O5, Theorie 11.21: ein quadratisches
+Feld wurde bei p 2 nur auf 1e-4 bis 1e-3 reproduziert). Gekruemmte Flaechen werden bis
+``tiefe`` geteilt (Fehler O(Kruemmung * Blattkante^2)).
 
 Fiktives Gebiet ohne negative Gewichte: die ganze Teilbox mit Gauss (p+1)^3 und Gewicht
 alpha, die Werkstoffstuecke mit Gewicht (1 - alpha). Kann die Geometrie die lokale Semantik
@@ -43,11 +48,15 @@ HUELLEN_EXAKT_STANDARD = True
 # plastische Koerper brauchen nach Vertrag 6a die Unterteilung (im Paket noch keine Plastizitaet).
 MOMENTFITTING_STANDARD = True
 
+# Schraeg geschnittene Stuecke mit exakten Momenten statt ueber die Tetraederregel (Plan TP 5 O5, Theorie 11.21); nur mit Moment
+# Fitting und fit_grad >= 2p. False stellt den Weg bis 03.10.2026 wieder her (Referenz der Momente: Tetraederregel, Gesamtgrad 3p-1).
+STUECKE_EXAKT_STANDARD = True
+
 
 class Zellquadratur:
     def __init__(self, gitter, p: int, tiefe: int = 2, alpha: float = 1e-8, ordnung: int | None = None,
                  tiefe_punkttest: int = 2, ordnung_tet: int | None = None, momentfitting: bool | None = None,
-                 fit_grad: int | None = None, huellen_exakt: bool | None = None) -> None:
+                 fit_grad: int | None = None, huellen_exakt: bool | None = None, stuecke_exakt: bool | None = None) -> None:
         if tiefe < 0 or tiefe_punkttest < 0:
             raise ValueError("tiefe und tiefe_punkttest muessen >= 0 sein")
         if not 0.0 <= alpha < 1.0:
@@ -68,9 +77,15 @@ class Zellquadratur:
         self.momentfitting = MOMENTFITTING_STANDARD if momentfitting is None else bool(momentfitting)
         self.fit_grad = int(fit_grad) if fit_grad is not None else fit_grad_standard(p)
         self.huellen_exakt = HUELLEN_EXAKT_STANDARD if huellen_exakt is None else bool(huellen_exakt)
+        # exakte Stueckmomente brauchen die gefittete Regel als Traeger (q >= 2p: kein NNLS, kein Rueckfall auf Referenzpunkte)
+        self.stuecke_exakt = ((STUECKE_EXAKT_STANDARD if stuecke_exakt is None else bool(stuecke_exakt))
+                              and self.momentfitting and self.fit_grad >= 2 * p)
+        self._exakt: list | None = None                         # Flaechenpolygone der schraegen Stuecke der Zelle in Arbeit
         self._hat_huelle = any(hasattr(f, "dreiecke_ecken") for f in gitter.geometrie.grundformen()) if hasattr(gitter.geometrie, "grundformen") else False
         if self.huellen_exakt and self._hat_huelle:
             self.statistik.update({"huellenzellen": 0, "huellenzellen_leer": 0})
+        if self.stuecke_exakt:
+            self.statistik["stuecke_exakt"] = 0
         if self.momentfitting:
             self.statistik.update({"fit_grad": self.fit_grad, "fit_zellen": 0, "fit_nnls": 0, "fit_rueckfall": 0,
                                    "fit_min_gewicht": 1.0, "fit_neg_anteil_max": 0.0,
@@ -92,15 +107,23 @@ class Zellquadratur:
             aus = h
         else:
             teile: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-            self._teilbox(lo, hi, 0, teile)
+            self._exakt = [] if self.stuecke_exakt else None
+            try:
+                self._teilbox(lo, hi, 0, teile)
+                exakt = self._exakt or []
+            finally:
+                self._exakt = None
             teile = [t for t in teile if len(t[0])]
-            if not teile:                                    # zu vorsichtig als CUT eingestuft, alpha = 0
+            if not teile and not exakt:                      # zu vorsichtig als CUT eingestuft, alpha = 0
                 aus = (np.zeros((0, 3)), np.zeros(0), np.zeros(0, bool))
             else:
-                aus = (np.concatenate([t[0] for t in teile]), np.concatenate([t[1] for t in teile]),
-                       np.concatenate([t[2] for t in teile]))
-                if self.momentfitting and aus[2].any():
-                    aus = self._fitten(lo, hi, aus)
+                if teile:
+                    aus = (np.concatenate([t[0] for t in teile]), np.concatenate([t[1] for t in teile]),
+                           np.concatenate([t[2] for t in teile]))
+                else:
+                    aus = (np.zeros((0, 3)), np.zeros(0), np.zeros(0, bool))
+                if self.momentfitting and (aus[2].any() or exakt):
+                    aus = self._fitten(lo, hi, aus, exakt)
         self._cache[c] = aus
         return aus
 
@@ -156,18 +179,24 @@ class Zellquadratur:
                     np.concatenate([np.ones(len(P), bool), np.zeros(len(Pa), bool)]))
         return P, w, np.ones(len(P), bool)
 
-    def _fitten(self, lo, hi, referenz):
-        """Werkstoffteil der Referenzregel durch die gefittete Regel ersetzen, alpha-Teil durch einen Satz."""
+    def _fitten(self, lo, hi, referenz, exakt=()):
+        """Werkstoffteil der Referenzregel durch die gefittete Regel ersetzen, alpha-Teil durch einen Satz. ``exakt``: Flaechenpolygone
+        schraeg geschnittener Stuecke der Zelle; ihre Momente kommen exakt ueber den Divergenzsatz dazu (keine Referenzpunkte)."""
         P, W, I = referenz
         st = self.statistik
         st["punkte_referenz"] += int(len(P))
         # nur wo es Punkte spart: achsparallel geschnittene Zellen haben schon (p+1)^3 Punkte (Kragarmsegment 64
         # gegen 343 + 64 gefittet), die Regel ist so oder so exakt
-        if len(P) <= (self.fit_grad + 1) ** 3 + (self.ordnung ** 3 if self.alpha > 0 else 0):
+        if not exakt and len(P) <= (self.fit_grad + 1) ** 3 + (self.ordnung ** 3 if self.alpha > 0 else 0):
             st["fit_unnoetig"] = st.get("fit_unnoetig", 0) + 1
             st["punkte_gefittet"] += int(len(P))
             return referenz
-        erg = gefittete_regel(lo, hi, P[I], W[I], self.fit_grad, self.p)
+        mu_zusatz = None
+        if exakt:
+            from ..geometry.huelle import polyedermomente
+            # derselbe Faktor (1 - alpha) wie an den Werkstoffpunkten, damit alpha_entfernen einheitlich zurueckskaliert
+            mu_zusatz = (1.0 - self.alpha) * polyedermomente(exakt, lo, hi, self.fit_grad)
+        erg = gefittete_regel(lo, hi, P[I], W[I], self.fit_grad, self.p, mu_zusatz=mu_zusatz)
         st["fit_min_gewicht"] = min(st["fit_min_gewicht"], erg.min_gewicht)
         st["fit_neg_anteil_max"] = max(st["fit_neg_anteil_max"], erg.neg_anteil)
         if erg.art == "rueckfall":
@@ -266,6 +295,12 @@ class Zellquadratur:
                     if not flaechen:
                         break
                 if not flaechen:
+                    continue
+                if self._exakt is not None:
+                    # schraeg geschnittenes Stueck: nur die Polygone merken, die Momente rechnet _fitten exakt (Plan TP 5 O5)
+                    self._exakt.append(flaechen)
+                    self.statistik["stuecke"] += 1
+                    self.statistik["stuecke_exakt"] += 1
                     continue
                 Pt, Wt = polyeder_quadratur(flaechen, self.ordnung_tet)
             if len(Pt):

@@ -107,8 +107,11 @@ class FcmProblem:
             self.quadratur.alpha_entfernen(np.flatnonzero((self.gitter.klasse == CUT) & ~behalten))
         # haengende Freiheitsgrade des Oktrees und Aggregation in einer Zwangsmatrix
         self.zwaenge = Zwaenge(self.gitter, self.aggregation)
-        # int (sigma n).v exakt fuer v vom Tensorgrad p (Gesamtgrad 3p auf der Flaeche): 2n-1 >= 3p
-        self.ordnung_flaeche = ordnung_flaeche or int(np.ceil((3 * self.p + 1) / 2))
+        # int (sigma(u) n).v exakt fuer v vom Tensorgrad p (Gesamtgrad 3p auf der Flaeche) und u bis zum Gesamtgrad p (sigma vom
+        # Grad p - 1): 2n - 1 >= 4p - 1, also n = 2p. Bis 03.10.2026 n = ceil((3p + 1)/2), ausgelegt auf konstantes sigma (Patch-Test);
+        # bei p 3 fehlte fuer ein quadratisches Feld ein Grad (exakt bis 9, noetig 10): geneigter Streifen 10 Grad sigma 2,5e-6,
+        # Gleichgewicht 1,2e-7 statt 1e-9 (Plan TP 5 O5, Theorie 11.21). Fuer p 1 und p 2 ist n unveraendert (2 und 4).
+        self.ordnung_flaeche = ordnung_flaeche or 2 * self.p
         self.facette_mm = facette_mm
         self.oberflaeche = Flaechenquadratur.aus_geometrie(geometrie, self.gitter, self.ordnung_flaeche,
                                                            facette_mm=facette_mm, tiefe=self.tiefe)
