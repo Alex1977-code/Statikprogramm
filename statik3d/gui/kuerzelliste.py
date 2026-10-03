@@ -7,7 +7,7 @@ nicht von Hand gepflegt - ein neues Kuerzel steht beim naechsten Oeffnen
 darin, und ein Kuerzel, das nicht gilt, steht nicht darin.
 
 Dahinter steht der Abschnitt „Weitere Tasten“: Tasten ohne Befehl im Ribbon,
-die ein Fenster selbst abfaengt (Modellbaum, Masken, Skizzenfenster, Esc).
+die ein Fenster selbst abfaengt (Ansicht, Modellbaum, Masken, Skizzenfenster, Esc).
 Fuer sie gibt es keine Befehlsliste, aus der man sie erzeugen koennte; sie
 stehen darum in ``WEITERE_TASTEN`` - ``tests/test_ribbon_ordnung.py`` drueckt
 sie echt und prueft, dass sie tun, was hier steht.
@@ -30,10 +30,12 @@ from PySide6 import QtCore, QtWidgets
 from .sprache import kuerzel_text
 
 #: Tasten ohne Befehl im Ribbon: (Befehl, Taste, Ort, Hinweis). Esc steht hier
-#: nur als Abbruch: Esc in der rechten Maske und im Skizzenfenster tut nichts
+#: fuer das Programmfenster nur als Abbruch: Esc in der rechten Maske tut nichts
 #: Eigenes, weil das Hauptfenster die Taste als Kuerzel verbraucht (gemessen
 #: 03.10.2026) - eine Taste, die nicht tut, was die Liste sagt, gehoert nicht
-#: hinein. Dasselbe gilt fuer Strg+Z im Skizzenfenster.
+#: hinein. Das Skizzenfenster nimmt Esc, Strg+Z und Strg+Y seit dem 03.10.2026
+#: selbst an (``ShortcutOverride``), darum stehen sie dort; ``tests/test_tasten_fokus.py``
+#: drueckt sie echt.
 WEITERE_TASTEN = (
     ("Eintrag löschen", "Entf, Rücktaste", "Modellbaum",
      "Der gewählte Eintrag; sind mehrere derselben Art gewählt, alle. Der Fokus muss im Baum stehen."),
@@ -48,8 +50,27 @@ WEITERE_TASTEN = (
      "Vernetzen, Berechnung, Nachweise, Wind und Wasserdruck (Vorgänge mit Balken und Abbrechen-Knopf) "
      "und ein aufgezogenes Auswahlfenster. Steht das Klickfeld einer Maske scharf (orange), beendet Esc "
      "zuerst das Klicken. Läuft nichts, wirkt Esc wie „Alles deselektieren“."),
+    ("Auswahl löschen", "Entf", "Ansicht",
+     "Alles Gewählte (Knoten, Linien, Stäbe, Flächen, Volumen, Elemente, Lager, Lasten) nach einer einzigen "
+     "Rückfrage, die nennt, was gelöscht wird; ein Rückgängig-Schritt. Der Fokus muss in der Ansicht stehen "
+     "(ein Klick hinein genügt); in einem Textfeld, einer Tabelle oder im Baum gilt Entf dort."),
+    ("Knoten anlegen", "K", "Ansicht",
+     "Öffnet die Maske „Knoten“. Die Einzeltasten K, S, L, B und F wirken nur, wenn die Ansicht den Fokus hat, "
+     "nie in einem Textfeld, einer Tabelle oder einer Maske, und nie mit Strg, Umschalt oder Alt."),
+    ("Stab anlegen", "S", "Ansicht", "Öffnet die Maske „Stab“."),
+    ("Lager setzen", "L", "Ansicht", "Öffnet die Maske „Lager“ (Knotenlager)."),
+    ("Last aufbringen", "B", "Ansicht",
+     "Belastung nach der Auswahl: Linienlast bei gewählten Stäben oder Linien, Flächenlast bei gewählten "
+     "Flächen oder Volumen, sonst Knotenlast."),
+    ("Fläche aus Linien", "F", "Ansicht",
+     "Wie der Befehl „Fläche aus Linien“: aus den gewählten Linien (mindestens drei) eine Fläche anlegen."),
+    ("Schritt zurück, wiederholen", "Strg+Z, Strg+Y", "Skizzenfenster",
+     "Nimmt den letzten Schritt der Skizze zurück beziehungsweise stellt ihn wieder her; das Modell bleibt "
+     "unverändert. In einem Textfeld des Fensters gelten die Tasten dem Feld."),
+    ("Element abbrechen", "Esc", "Skizzenfenster",
+     "Verwirft das angefangene Element; die Auswahl im Modell bleibt, das Fenster bleibt offen."),
     ("Gewähltes Element löschen", "Entf, Rücktaste", "Skizzenfenster",
-     "Das in der Skizze hervorgehobene Element."),
+     "Das in der Skizze hervorgehobene Element; der Fokus muss auf dem Blatt stehen."),
 )
 
 
@@ -74,7 +95,8 @@ class Kuerzelliste(QtWidgets.QDialog):
             "Programmfenster oder eines seiner nicht modalen Fenster aktiv ist; unter einem modalen "
             "Dialog (Rückfrage, Dateiauswahl) ruhen die Kürzel. Die Liste entsteht aus den Befehlen "
             "des Ribbons; darunter stehen die Tasten ohne Befehl. In diesem Fenster schließt Esc die "
-            "Liste, und Strg+F setzt den Cursor ins Filterfeld.")
+            "Liste, und Strg+F setzt den Cursor ins Filterfeld; das Skizzenfenster nimmt Strg+Z, "
+            "Strg+Y, Esc, Entf und Rücktaste ebenfalls selbst an.")
         self.hinweis.setWordWrap(True)
 
         self.filter = QtWidgets.QLineEdit(self)
@@ -127,7 +149,7 @@ class Kuerzelliste(QtWidgets.QDialog):
         schrift.setBold(True)
         kopf.setFont(schrift)
         kopf.setFlags(QtCore.Qt.ItemIsEnabled)
-        kopf.setToolTip("Tasten, die ein Fenster selbst abfängt: Modellbaum, Masken, Skizzenfenster, Esc. "
+        kopf.setToolTip("Tasten, die ein Fenster selbst abfängt: Ansicht, Modellbaum, Masken, Skizzenfenster, Esc. "
                         "Sie gelten im Programmfenster und in seinen nicht modalen Fenstern, "
                         "nicht unter einem modalen Dialog.")
         self.tabelle.setItem(self._kopf_zeile, 0, kopf)

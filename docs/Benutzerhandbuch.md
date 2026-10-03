@@ -464,7 +464,10 @@ Die Arbeitsfläche in drei Spalten:
   **Entf** drücken. Das Programm fragt nach. Ein Knoten, an dem noch etwas
   hängt, wird mit Grund abgewiesen; eine Fläche oder ein Volumen nimmt seine
   Elemente mit, ein Stab mit Nachweis lässt seine Elemente stehen. Wie alles
-  ist auch das Löschen mit **Rückgängig** zurückzunehmen.
+  ist auch das Löschen mit **Rückgängig** zurückzunehmen. Entf gilt dem Baum
+  nur, solange der Baum die Tastatur hat; steht sie in der 3D-Ansicht, löscht
+  Entf dort die Auswahl der Ansicht (Kapitel 11, „Entf und Einzeltasten in der
+  Ansicht“).
 
   **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske rechts
   (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
@@ -2228,7 +2231,9 @@ Zeichenfenster, Dateien im Programm des Systems).
   *Text*. Der **Fang** rastet an Enden, Mitten, Mittelpunkten und Quadranten
   ein, sonst greift das **Raster** (Schritt einstellbar). Das Rad zoomt zum
   Zeiger, die mittlere Taste schiebt, Entf löscht das gewählte Element,
-  Strg+Z nimmt den letzten Schritt zurück. **Maßstab** (1 mm auf dem Blatt =
+  Strg+Z nimmt den letzten Schritt zurück, Strg+Y stellt ihn wieder her (seit
+  dem 03.10.2026 wirken diese Tasten im Zeichenfenster auf die Skizze und nicht
+  mehr auf das Modell, siehe Kapitel 11). **Maßstab** (1 mm auf dem Blatt =
   x mm am Bauteil) und **Einheit** (mm, cm, m) bestimmen die Maßzahlen; sie
   werden aus der gezeichneten Länge gerechnet, ein eigener Text geht vor.
 * **Skizze aus Ansicht** (und im Zeichenfenster *Ansicht* /
@@ -2733,7 +2738,9 @@ gingen nicht mehr. Jetzt gilt der zweite Druck wie ein Druck, und eine Bewegung
 ohne Taste beendet einen hängenden Zustand. Die **Taste r** setzte die Kamera
 auf die Gesamtansicht zurück (VTK-Standard; w und s schalteten Draht und
 Fläche, Pfeil auf/ab zoomten): Buchstaben, Ziffern und Pfeiltasten tun in der
-Ansicht jetzt nichts, Kürzel mit Strg oder Alt bleiben. Und der **Doppelklick
+Ansicht jetzt nichts, Kürzel mit Strg oder Alt bleiben. Seit dem 03.10.2026
+gibt es zwei Ausnahmen: die Taste **Entf** und die fünf Einzeltasten **K, S, L,
+B und F** (Kapitel 11, „Entf und Einzeltasten in der Ansicht“). Und der **Doppelklick
 Mitte** zählt nur noch ohne Zug und nicht beim Rollen (s. o.).
 
 **Auswahlfenster.** Mit gedrückter **linker** Maustaste aufziehen: der
@@ -2822,7 +2829,10 @@ solange man nichts einträgt - ein eingetragener Wert gilt für alle. So
 bekommen zwanzig Stäbe in einem Schritt denselben Knicklängenbeiwert oder
 zehn Flächen dieselbe Dicke. *Löschen* entfernt die ganze Gruppe nach einer
 Rückfrage; was nicht gelöscht werden kann (Knoten mit Linien oder
-Elementen), nennt die Statuszeile. Rückgängig nimmt beides zurück.
+Elementen), nennt die Statuszeile. Rückgängig nimmt beides zurück. Alles
+Gewählte auf einmal, auch verschiedener Art, löscht die Taste **Entf**, wenn
+die Ansicht die Tastatur hat: mit einer einzigen Rückfrage und einem einzigen
+Rückgängig-Schritt (Kapitel 11).
 
 ### Lastwerte in der Ansicht
 
@@ -7987,7 +7997,8 @@ schließt Esc die Liste, und Strg+F setzt den Cursor in ihr Filterfeld. Bis zum
 03.10.2026 wirkten beide Tasten dort im Hauptfenster: Esc hob die Auswahl auf
 oder brach einen laufenden Vorgang ab, Strg+F sprang in die Befehlssuche des
 Hauptfensters, weil die Kürzel des Ribbons für das ganze Programm gelten und das
-Fenster der Liste sie nicht abfing.
+Fenster der Liste sie nicht abfing. Dasselbe galt für das Skizzenfenster, siehe
+unten.
 
 **Weitere Tasten.** Hinter den Befehlen steht ein Abschnitt „Weitere Tasten“ mit
 den Tasten, die kein Befehl des Ribbons trägt, sondern ein Fenster selbst
@@ -8001,10 +8012,62 @@ Vorgang mit Abbrechen-Knopf ab (Vernetzen, Berechnung, Nachweise, Wind,
 Wasserdruck) oder ein aufgezogenes Auswahlfenster; steht das Klickfeld einer
 Maske scharf, beendet Esc zuerst das Klicken, und läuft nichts, wirkt Esc wie
 „Alles deselektieren“. Im Skizzenfenster löschen Entf und Rücktaste das
-gewählte Element. Diese Zeilen entstehen nicht aus den Befehlen, sondern stehen
-in `statik3d/gui/kuerzelliste.py`; `tests/test_ribbon_ordnung.py` drückt die
-Tasten wirklich und prüft, dass sie tun, was dort steht, ebenso, dass Esc und
-Strg+F im Fenster der Liste ihr gehören.
+gewählte Element, Strg+Z nimmt den letzten Schritt der Skizze zurück, Strg+Y
+stellt ihn wieder her, und Esc verwirft das angefangene Element. In der Ansicht
+löscht Entf die Auswahl, und die Einzeltasten K, S, L, B und F rufen ihren
+Befehl (siehe den nächsten Absatz). Diese Zeilen entstehen nicht aus den
+Befehlen, sondern stehen in `statik3d/gui/kuerzelliste.py`;
+`tests/test_ribbon_ordnung.py` drückt die Tasten wirklich und prüft, dass sie
+tun, was dort steht, ebenso, dass Esc und Strg+F im Fenster der Liste ihr
+gehören.
+
+**Entf und Einzeltasten in der Ansicht (seit 03.10.2026).** Wenn die 3D-Ansicht
+die Tastatur hat, genügt eine einzelne Taste; ein Klick in die Ansicht legt die
+Tastatur dorthin. In einem Textfeld, in einer Tabelle, im Modellbaum und im Feld
+einer Maske wirkt keine dieser Tasten für die Ansicht: dort wird der Buchstabe
+getippt, und Entf gilt dem Feld, der Tabelle oder dem Baum. Mit Strg, Umschalt
+oder Alt gedrückt sind es keine Einzeltasten, sondern Kürzel wie bisher. Hält
+man eine Taste gedrückt, wirkt nur der erste Druck.
+
+| Taste | Wirkung in der Ansicht |
+|---|---|
+| **Entf** | löscht alles Gewählte, gleich welcher Art |
+| **K** | öffnet die Maske *Knoten* (Befehl *Geometrie → Knoten*) |
+| **S** | öffnet die Maske *Stab* (*Struktur → Stab*) |
+| **L** | öffnet die Maske *Lager* (*Lager / Kontakt → Knotenlager*) |
+| **B** | öffnet die Maske der Last, die zur Auswahl passt: *Linienlast* bei gewählten Stäben oder Linien, *Flächenlast* bei gewählten Flächen oder Volumen, sonst *Knotenlast* |
+| **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
+
+Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Entf fragt **einmal**
+und nennt dabei, was gelöscht wird, etwa „2 Stäbe und 3 Knoten wirklich
+löschen?“; mit *Ja* geht alles Gewählte in einem Zug weg, und ein einziges
+Strg+Z holt es zurück. Gelöscht wird, was die Auswahl nennt (der Reiter
+„Auswahl: …“ zählt dasselbe): Knoten, Linien, Stäbe mit Nachweis, Flächen,
+Volumen, Netzelemente, Lager und Lasten. Die Knoten eines gewählten Lagers
+zählen nicht als gewählt, ein Lager an einem gewählten Knoten geht nur mit dem
+Knoten. Was sich nicht löschen lässt, bleibt stehen und wird mit Grund genannt,
+etwa ein Knoten, an dem noch ein Element hängt („erst diese löschen“); der Rest
+wird trotzdem gelöscht. Lässt sich nichts löschen, bleibt nichts zurück: kein
+Rückgängig-Schritt, keine Änderungsmarke, die Auswahl bleibt. Ist nichts
+gewählt, meldet die Statuszeile das ohne Rückfrage. Die Antwort „Nein“ lässt alles
+unverändert.
+
+Bis zum 03.10.2026 tat Entf in der Ansicht nichts, und die fünf Buchstaben taten
+dort ebenfalls nichts; gelöscht wurde über den Rechtsklick (*Löschen* je Art,
+eine Rückfrage je Art, ein Rückgängig-Schritt je Art) oder im Modellbaum.
+
+**Skizzenfenster (seit 03.10.2026).** Die Kürzel des Ribbons gelten auch im
+Zeichenfenster der Skizzen, weil es ein nicht modales Fenster des Programms ist.
+Bis zum 03.10.2026 nahm darum Strg+Z im Zeichenfenster den letzten Schritt des
+**Modells** zurück (gemessen: ein Knoten weniger), die Skizze blieb, wie sie war,
+und Esc hob die Auswahl im Modell auf. Jetzt nimmt das Zeichenfenster Strg+Z,
+Strg+Y, Esc, Entf und Rücktaste selbst an: Strg+Z nimmt den letzten Schritt der
+Skizze zurück, Strg+Y stellt ihn wieder her (neu, auch als Knopf
+*Wiederholen*), Esc verwirft das angefangene Element, und die Auswahl im Modell
+bleibt stehen. Steht der Cursor in einem Textfeld des Fensters, etwa im Namen der
+Skizze, gehören Strg+Z, Entf und Rücktaste dem Feld. Entf und Rücktaste löschen
+das hervorgehobene Element nur, wenn das Blatt die Tastatur hat. Geprüft in
+`tests/test_tasten_fokus.py` mit echten Tastendrücken im aktiven Fenster.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.

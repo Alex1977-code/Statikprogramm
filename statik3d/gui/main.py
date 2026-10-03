@@ -517,6 +517,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         # wird als Kurzbefehl verbraucht (:meth:`_esc_gedrueckt`);
                         # der Zweig gilt fuer zugeschickte Tastenereignisse.
                         return True
+                    if self._ansicht_taste(ereignis):
+                        return True         # Entf und K S L B F: der Befehl der Taste
                     if self._vtk_taste(ereignis):
                         return True         # Buchstaben, Ziffern, Pfeile: nicht an VTK
         except Exception:                   # noqa: BLE001
@@ -623,6 +625,57 @@ class MainWindow(QtWidgets.QMainWindow):
                     ende()                  # jedes prueft selbst, ob sein Zustand laeuft
         except Exception:                   # noqa: BLE001
             pass
+
+    #: Einzeltasten in der 3D-Ansicht (Plan-Paket 14a, 03.10.2026; Vorschlag
+    #: vom 24.09.2026, Antwort 10): Taste -> Befehl. Sie wirken nur, wenn die
+    #: Ansicht den Fokus hat: der Filter haengt an ihr (:meth:`eventFilter`),
+    #: ein Textfeld, eine Tabelle oder eine Maske sieht die Taste nie hier.
+    #: Mit Strg, Umschalt oder Alt wirkt keine; das sind die Kuerzel des Ribbons.
+    ANSICHT_TASTEN = {int(QtCore.Qt.Key_K): "maske_knoten",
+                      int(QtCore.Qt.Key_S): "maske_stab",
+                      int(QtCore.Qt.Key_L): "maske_lager",
+                      int(QtCore.Qt.Key_B): "maske_belastung",
+                      int(QtCore.Qt.Key_F): "add_flaeche_aus_auswahl"}
+    #: Die Befehle im Ribbon, deren Hinweis die Taste nennt: (Register, Befehl, Taste)
+    ANSICHT_TASTEN_BEFEHLE = (("Geometrie", "Knoten", "K"), ("Struktur", "Stab", "S"),
+                              ("Lager / Kontakt", "Knotenlager", "L"),
+                              ("Lasten", "Knotenlast", "B"), ("Lasten", "Linienlast", "B"),
+                              ("Lasten", "Flächenlast", "B"), ("Struktur", "Fläche aus Linien", "F"))
+
+    def _ansichtstasten_vermerken(self) -> None:
+        """Den Hinweis der Befehle, die in der Ansicht eine Taste tragen, um die
+        Taste ergaenzen - die Kuerzel des Ribbons stehen schon in ihrem Hinweis."""
+        for register, text, taste in self.ANSICHT_TASTEN_BEFEHLE:
+            for b in self.ribbon.befehle:
+                if b.register == register and b.text == text:
+                    zusatz = (": je nach Auswahl Knoten-, Linien- oder Flächenlast" if taste == "B" else "")
+                    b.aktion.setToolTip(f"{b.aktion.toolTip()}   (Taste {taste} in der Ansicht{zusatz})")
+
+    def _ansicht_taste(self, ereignis) -> bool:
+        """Eine Taste, die in der 3D-Ansicht gedrueckt wurde: Entf loescht die
+        Auswahl (:meth:`auswahl_alles_loeschen`), K S L B F rufen ihren Befehl
+        (:attr:`ANSICHT_TASTEN`). True, wenn die Taste verbraucht ist.
+
+        Gehalten wirkt eine Taste nur beim ersten Druck: ein wiederholtes K
+        oeffnete die Maske immer wieder, ein wiederholtes Entf stellte die
+        Rueckfrage immer wieder."""
+        if ereignis.modifiers() & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier
+                                   | QtCore.Qt.MetaModifier | QtCore.Qt.ShiftModifier):
+            return False
+        k = int(ereignis.key())
+        if k == int(QtCore.Qt.Key_Delete):
+            befehl, name = self.auswahl_alles_loeschen, "Entf"
+        elif k in self.ANSICHT_TASTEN:
+            befehl, name = getattr(self, self.ANSICHT_TASTEN[k]), chr(k)
+        else:
+            return False
+        if ereignis.isAutoRepeat():
+            return True
+        try:
+            befehl()
+        except Exception as ex:             # noqa: BLE001 - eine Taste darf die Ansicht nicht lahmlegen
+            self.error(f"Taste {name}: {ex}")
+        return True
 
     def _vtk_taste(self, ereignis) -> bool:
         """Tasten, auf die VTK oder pyvista von sich aus reagieren: r setzt die
@@ -1335,15 +1388,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"{self.AUSWAHL_TEXT[art]}: {geaendert} Werte an {len(namen)} Objekten geändert")
         self.refresh_all()
 
-    def auswahl_loeschen(self, art: str, namen: list):
-        """Alle gewaehlten Objekte einer Art loeschen - eine Rueckfrage fuer alle."""
+    def _art_loeschen(self, art: str, namen: list):
+        """Eine Art der Auswahl aus dem Modell nehmen - ohne Rueckfrage, ohne
+        Sicherung, ohne Neuzeichnen: das tun die Aufrufer einmal fuer alles
+        (:meth:`auswahl_loeschen` fuer eine Art, :meth:`auswahl_alles_loeschen`
+        fuer die ganze Auswahl).
+
+        Rueckgabe: die Gruende, warum etwas stehen blieb (leer = alles weg);
+        ``None``, wenn es fuer die Art keinen Loeschweg gibt."""
         m = self.model
-        namen = list(namen)
-        if not namen:
-            return
-        if not self._bestaetigen(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} wirklich löschen?"):
-            return
-        self.merken(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht")
         gruende = []
         if art == "knoten":
             for i in sorted(int(x) for x in namen)[::-1]:
@@ -1361,16 +1414,41 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "kontakt":
             for n in namen:
                 m.kontaktbedingungen.pop(n, None)
+        elif art == "last":
+            # (Lastfall, Liste, Platz): je Liste von hinten, sonst rueckt der
+            # naechste Platz auf und der zweite Treffer loescht die falsche Last
+            for fall, liste, k in sorted(namen, key=lambda t: (t[0], t[1], -int(t[2]))):
+                lc, _obj = self._lastobjekt(fall, liste, k)
+                if lc is None:
+                    continue
+                if liste == "gravity":
+                    lc.gravity = [0.0, 0.0, 0.0]
+                else:
+                    getattr(lc, liste).pop(int(k))
+            m.lasten_verteilen()
         else:
             f = {"linie": m.linie_loeschen, "stab": m.stab_loeschen, "flaeche": m.flaeche_loeschen,
                  "volumen": m.koerper_loeschen}.get(art)
             if f is None:
-                self._merken_zuruecknehmen()
-                return self.error(f"{art}: kein Löschweg")
+                return None
             for n in namen:
                 g = f(n)
                 if g:
                     gruende.append(f"{n}: {g}")
+        return gruende
+
+    def auswahl_loeschen(self, art: str, namen: list):
+        """Alle gewaehlten Objekte einer Art loeschen - eine Rueckfrage fuer alle."""
+        namen = list(namen)
+        if not namen:
+            return
+        if not self._bestaetigen(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} wirklich löschen?"):
+            return
+        self.merken(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht")
+        gruende = self._art_loeschen(art, namen)
+        if gruende is None:
+            self._merken_zuruecknehmen()
+            return self.error(f"{art}: kein Löschweg")
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
@@ -1378,6 +1456,101 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maskenrand.schliessen()
         self.info(f"{len(namen) - len(gruende)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht"
                   + (f"; nicht gelöscht: {'; '.join(gruende[:4])}" if gruende else ""))
+        self.refresh_all()
+
+    #: Was Entf in der Ansicht loescht, in der Reihenfolge des Loeschens (und
+    #: der Rueckfrage): (Art, Einzahl, Mehrzahl). Abhaengiges zuerst, Knoten zuletzt:
+    #: Lasten haengen mit Listenplaetzen an den Lastfaellen, Elemente verschieben
+    #: die Nummern der Elemente, ein Volumen braucht seine Flaechen, eine Flaeche
+    #: ihre Linien, eine Linie ihre Knoten - in dieser Reihenfolge laeuft jede
+    #: Art vor dem, was sie traegt, und ein Knoten faellt zuletzt (er rueckt
+    #: dabei alle Knotennummern auf).
+    ENTF_ARTEN = (("last", "Last", "Lasten"), ("lager", "Knotenlager", "Knotenlager"),
+                  ("linienlager", "Linienlager", "Linienlager"),
+                  ("flaechenlager", "Flächenlager", "Flächenlager"),
+                  ("element", "Element", "Elemente"), ("volumen", "Volumen", "Volumen"),
+                  ("flaeche", "Fläche", "Flächen"), ("stab", "Stab", "Stäbe"),
+                  ("linie", "Linie", "Linien"), ("knoten", "Knoten", "Knoten"))
+
+    def _loeschgruppen(self) -> list:
+        """Alles, was in der Ansicht gewaehlt ist: [(Art, Namen)] in der
+        Reihenfolge von :attr:`ENTF_ARTEN`; Arten ohne Auswahl fehlen.
+
+        Gezaehlt wird wie im Register „Auswahl: …“ (:meth:`_auswahl_arten`):
+        die Knoten eines gewaehlten Lagers sind nicht mit gewaehlt - Baum und
+        Tabelle waehlen sie nur mit, damit sie leuchten -, und Lager an
+        gewaehlten Knoten gehen nur mit dem Knoten, nicht als eigene Art. Die
+        Kontaktbedingungen gewaehlter Flaechen gehoeren nicht dazu: sie sind
+        nicht gewaehlt, nur dort befestigt (das Menue der Rechtsklicks bietet
+        sie einzeln an)."""
+        gruppen = []
+        lasten = list(dict.fromkeys(tuple(x) for x in self.sel_lasten))
+        if lasten:
+            gruppen.append(("last", lasten))
+        for art in ("lager", "linienlager", "flaechenlager"):
+            idx = sorted({int(i) for a, i in self.sel_lager if a == art})
+            if idx:
+                gruppen.append((art, idx))
+        if self.sel_elemente:
+            gruppen.append(("element", sorted({int(i) for i in self.sel_elemente})))
+        for art, liste in (("volumen", self.sel_koerper), ("flaeche", self.sel_flaechen),
+                           ("stab", self.sel_staebe), ("linie", self.sel_linien)):
+            if liste:
+                gruppen.append((art, list(dict.fromkeys(liste))))
+        knoten = {int(i) for i in self.selection}
+        if self.sel_lager:
+            knoten -= self._lagerknoten()
+        if knoten:
+            gruppen.append(("knoten", sorted(knoten)))
+        return gruppen
+
+    @classmethod
+    def _loesch_text(cls, gruppen) -> str:
+        """„2 Stäbe und 3 Knoten“ - jede Art mit Zahl und richtiger Einzahl oder Mehrzahl."""
+        woerter = {art: (ein, mehr) for art, ein, mehr in cls.ENTF_ARTEN}
+        teile = [f"{len(namen)} {woerter[art][0] if len(namen) == 1 else woerter[art][1]}"
+                 for art, namen in gruppen]
+        return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
+
+    def auswahl_alles_loeschen(self) -> None:
+        """Die Taste Entf in der Ansicht (03.10.2026): alles Gewaehlte loeschen -
+        **eine** Rueckfrage, die nennt, was geloescht wird („2 Stäbe und 3
+        Knoten wirklich löschen?“), und **ein** Rueckgaengig-Schritt.
+
+        Bis zum 03.10.2026 tat Entf in der Ansicht nichts; der Rechtsklick bot
+        „Loeschen“ je Art an (:meth:`auswahl_loeschen`, eine Frage je Art). Was
+        nicht geht (ein Knoten, an dem noch ein Element haengt), bleibt stehen
+        und wird mit Grund genannt - der Rest geht trotzdem. Ging gar nichts,
+        bleibt weder ein Schritt noch eine Aenderungsmarke zurueck, und die
+        Auswahl bleibt."""
+        gruppen = self._loeschgruppen()
+        if not gruppen:
+            self.statusBar().showMessage("Nichts gewählt - es gibt nichts zu löschen", 4000)
+            return
+        text = self._loesch_text(gruppen)
+        if not self._bestaetigen(f"{text} wirklich löschen?"):
+            return
+        self.merken(f"{text} gelöscht")
+        gruende, weg = [], []
+        for art, namen in gruppen:
+            g = self._art_loeschen(art, namen)
+            if g is None:                   # kein Loeschweg - bei den Arten oben nicht zu erwarten
+                g = [f"{art}: kein Löschweg"]
+            gruende += g
+            if len(namen) - len(g) > 0:
+                weg.append((art, namen[:len(namen) - len(g)]))
+        grund_text = "; ".join(gruende[:4]) + (" …" if len(gruende) > 4 else "")
+        if not weg:
+            self._merken_zuruecknehmen()
+            self.info(f"Nichts gelöscht: {grund_text}")
+            return
+        self.analysis = None
+        self.results = None
+        self.selection = np.array([], dtype=int)
+        self._objektauswahl_leeren()
+        self.maskenrand.schliessen()
+        self.info(f"{self._loesch_text(weg)} gelöscht"
+                  + (f"; nicht gelöscht: {grund_text}" if gruende else ""))
         self.refresh_all()
 
     def lagergroesse_einstellen(self, idx=None):
@@ -4686,6 +4859,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Das ganze Protokoll als Textdatei sichern - zum Nachlesen, "
                         "Ablegen oder Weitergeben")
 
+        # die Einzeltasten in der Ansicht (K S L B F) im Hinweis ihrer Befehle nennen
+        self._ansichtstasten_vermerken()
         # „Alles deselektieren“ steht in der Glasleiste, nicht mehr ganz oben
         rb.schnell(self.act_speichern, self.act_undo, self.act_redo, self.act_rechnen)
         self._undo_knoepfe()
@@ -16334,6 +16509,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Lager an {len(self.selection)} Knoten: "
                   + ", ".join(DOF_NAMES[d] for d in dofs))
         self.refresh_all()
+
+    def maske_belastung(self):
+        """Die Taste B in der Ansicht (03.10.2026): die Maske der Last, die zur
+        Auswahl passt - Linienlast bei gewaehlten Staeben oder Linien,
+        Flaechenlast bei gewaehlten Flaechen oder Volumen, sonst Knotenlast.
+        Staebe und Linien gehen vor, wenn zugleich Knoten gewaehlt sind: die
+        Knoten gehoeren dann meist zu ihnen."""
+        if self.sel_staebe or self.sel_linien:
+            return self.maske_linienlast()
+        if self.sel_flaechen or self.sel_koerper:
+            return self.maske_flaechenlast()
+        return self.maske_knotenlast()
 
     def maske_knotenlast(self):
         """Knotenlast aufbringen: Knoten wählen, Kräfte in der Maske."""

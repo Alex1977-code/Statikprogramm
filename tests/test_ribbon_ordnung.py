@@ -438,6 +438,15 @@ WEITERE = {
     ("Erster / letzter Eintrag", "Pos1, Ende", "Modellbaum"),
     ("Maske übernehmen", "Eingabetaste", "Maske rechts"),
     ("Laufenden Vorgang abbrechen", "Esc", "Programmfenster"),
+    # Paket 14a (03.10.2026): Entf und die Einzeltasten in der Ansicht, die Tasten des Skizzenfensters
+    ("Auswahl löschen", "Entf", "Ansicht"),
+    ("Knoten anlegen", "K", "Ansicht"),
+    ("Stab anlegen", "S", "Ansicht"),
+    ("Lager setzen", "L", "Ansicht"),
+    ("Last aufbringen", "B", "Ansicht"),
+    ("Fläche aus Linien", "F", "Ansicht"),
+    ("Schritt zurück, wiederholen", "Strg+Z, Strg+Y", "Skizzenfenster"),
+    ("Element abbrechen", "Esc", "Skizzenfenster"),
     ("Gewähltes Element löschen", "Entf, Rücktaste", "Skizzenfenster"),
 }
 
@@ -454,7 +463,7 @@ def test_weitere_tasten_in_der_liste():
         dlg.close()
         return
     weitere = {tuple(z) for z in zeilen[kopf[0] + 1:]}
-    check("… mit allen Tasten ohne Befehl: Modellbaum, Maske, Esc, Skizzenfenster (Esc nur als Abbruch)",
+    check("… mit allen Tasten ohne Befehl: Modellbaum, Maske, Esc, Ansicht, Skizzenfenster",
           weitere == WEITERE, str(sorted(weitere ^ WEITERE))[:200])
     check("… die Trennzeile steht über alle drei Spalten", tbl.columnSpan(kopf[0], 0) == 3)
     text = dlg.hinweis.text()
