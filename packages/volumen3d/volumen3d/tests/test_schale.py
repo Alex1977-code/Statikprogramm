@@ -185,25 +185,50 @@ def test_schale_geneigt_p3():
     Genauigkeit, mit der die Zwangsmatrix das Feld wiedergibt (78 von 89 Zellen aggregiert, Theorie 11.21 H4), keine Quadraturfrage. sigma_x' 5e-7 wie bei p 2
     (Auswertepunkt).
 
-    Der 30-Grad-Fall haengt am Direktloeser (CI 03.10.2026, lokal nachgestellt): mit PARDISO Rest 2,5e-8 und Gleichgewicht 5,6e-7, mit SuperLU (ohne pypardiso,
-    so rechnet die CI) Rest 1,0e-5 und Gleichgewicht 1,0e-5 (CI: 8,2e-6 und 1,2e-5; vor O5 dort 3,9e-6 und 2,5e-6). Eine Nachiteration im SuperLU-Weg gibt
-    1,6e-8 und 7,3e-8 - das System ist schlecht konditioniert, SuperLU loest es ohne Nachiteration nur auf 1e-5 (Plan TP 5, Liste O20). Die anderen Faelle sind
-    mit beiden Loesern gleich (10 Grad p 3: Rest 4,2e-10 / 1,8e-9, CI 2,1e-9).
-    Schranken: 10 Grad Schnittgroessen 1e-8, Rest und Gleichgewicht 1e-7 (Rest rund das Fuenfzigfache des CI-Werts; vor O5 1,0e-6); 30 Grad 1e-5 mit PARDISO
-    (rund das Zwanzigfache) und 1e-4 mit SuperLU (rund das Achtfache, auf zwei Rechnern auf 20 % gleich)."""
+    Der 30-Grad-Fall hing am Direktloeser (CI 03.10.2026): mit PARDISO Rest 2,5e-8 und Gleichgewicht 5,6e-7, mit SuperLU ohne Nachiteration (so rechnete die CI) Rest
+    1,0e-5 und Gleichgewicht 1,0e-5 (CI: 8,2e-6 und 1,2e-5). Seit der Nachiteration im SuperLU-Weg (Plan TP 5, O20) gibt SuperLU 2,7e-8 und 7,7e-8; die Schranke
+    steht damit fuer beide Loeser bei 1e-5 (rund das Dreihundertfache des groessten Messwerts mit Nachiteration, das Zehnfache des Werts ohne sie; den SuperLU-Fall
+    mit und ohne Nachiteration prueft test_schale_geneigt_p3_superlu). 10 Grad: Schnittgroessen 1e-8, Rest und Gleichgewicht 1e-7 (CI vor O20: Rest 2,1e-9)."""
     for grad in (10.0, 30.0):
         schl, zeilen, dauer, disc = _fall("B3", _drehung_y(grad), p=3)
         if grad == 10.0:
             ok = max(schl["kraft"], schl["moment"]) < 1e-8 and max(schl["rest"], schl["gleichgewicht"]) < 1e-7 and schl["sigma"] < 5e-6
             text = "Schnittgroessen < 1e-8, Rest und Gleichgewicht < 1e-7, sigma < 5e-6"
         else:
-            loeser = str(disc.problem.protokoll.get("loeser"))
-            schranke = 1e-5 if loeser == "pardiso" else 1e-4
-            ok = max(schl[k] for k in ("kraft", "moment", "sigma", "rest", "gleichgewicht")) < schranke
-            text = f"alle < {schranke:.0e}, Loeser {loeser}"
+            ok = max(schl[k] for k in ("kraft", "moment", "sigma", "rest", "gleichgewicht")) < 1e-5
+            text = f"alle < 1e-5, Loeser {disc.problem.protokoll.get('loeser')}"
         check(f"geneigt {grad:.0f} Grad p 3: Schnittgroessen Kraft {schl['kraft']:.1e}, Moment {schl['moment']:.1e}, sigma_x' {schl['sigma']:.1e}, Rest {schl['rest']:.1e}, "
               f"Gleichgewicht {schl['gleichgewicht']:.1e} ({text}), keine Kopplungswarnung, Flaechenordnung {disc.problem.ordnung_flaeche}",
               ok and schl["warn"] == 0 and disc.problem.ordnung_flaeche == 6, f"{dauer:.0f} s")
+
+
+def test_schale_geneigt_p3_superlu():
+    """Der Streifen mit erzwungenem SuperLU (ohne pypardiso rechnet so die CI), mit und ohne Nachiteration (Plan TP 5, O20, 03.10.2026). Gemessen lokal, 30 Grad p 3:
+    ohne Nachiteration Kraft 8,0e-8, Moment 2,3e-7, sigma 5,0e-6, Rest 1,0e-5, Gleichgewicht 1,0e-5 (omega des Systems 2,6e-7); mit ihr in zwei Schritten Kraft 7,2e-10,
+    Moment 3,9e-9, sigma 5,4e-7, Rest 2,7e-8, Gleichgewicht 7,7e-8 (omega 6,8e-15). 10 Grad p 3: Rest 1,8e-9 / 3,6e-10. Schranke mit Nachiteration 1e-6 (rund das
+    Zwanzigfache), ohne sie muss der Fall ueber 1e-6 liegen - sonst prueft der Test nichts."""
+    from volumen3d.linalg import direkt
+    from volumen3d.tests.test_direkt import ohne_pardiso
+    erg = {}
+    alt = direkt.NACHITERATION_STANDARD
+    try:
+        with ohne_pardiso():
+            for nach in (3, 0):
+                direkt.NACHITERATION_STANDARD = nach
+                for grad in (10.0, 30.0):
+                    schl, _, dauer, disc = _fall("B3", _drehung_y(grad), p=3)
+                    erg[(nach, grad)] = (schl, str(disc.problem.protokoll.get("loeser")))
+    finally:
+        direkt.NACHITERATION_STANDARD = alt
+    groessen = ("kraft", "moment", "sigma", "rest", "gleichgewicht")
+    mit, ohne = erg[(3, 30.0)][0], erg[(0, 30.0)][0]
+    check(f"SuperLU, 30 Grad p 3 mit Nachiteration: Kraft {mit['kraft']:.1e}, Moment {mit['moment']:.1e}, sigma_x' {mit['sigma']:.1e}, Rest {mit['rest']:.1e}, "
+          f"Gleichgewicht {mit['gleichgewicht']:.1e} (alle < 1e-6)", all(mit[k] < 1e-6 for k in groessen) and erg[(3, 30.0)][1] == "superlu" and mit["warn"] == 0)
+    check(f"SuperLU, 30 Grad p 3 ohne Nachiteration: Rest {ohne['rest']:.1e}, Gleichgewicht {ohne['gleichgewicht']:.1e} (> 1e-6, sonst prueft der Test nichts)",
+          max(ohne["rest"], ohne["gleichgewicht"]) > 1e-6 and erg[(0, 30.0)][1] == "superlu")
+    z10 = erg[(3, 10.0)][0]
+    check(f"SuperLU, 10 Grad p 3 mit Nachiteration: Rest {z10['rest']:.1e} (< 1e-8), Gleichgewicht {z10['gleichgewicht']:.1e} (< 1e-7)",
+          z10["rest"] < 1e-8 and z10["gleichgewicht"] < 1e-7)
 
 
 class _Schnitt:
@@ -264,7 +289,7 @@ def test_kopplungsabweichung():
           dM < 1e-15 and abs(sref - 100.0) < 1e-9, f"{sref:.3f}, {dM:.1e}")
 
 
-TESTS = [test_kopplungsabweichung, test_schale_achsparallel, test_schale_geneigt, test_schale_geneigt_p3]
+TESTS = [test_kopplungsabweichung, test_schale_achsparallel, test_schale_geneigt, test_schale_geneigt_p3, test_schale_geneigt_p3_superlu]
 
 if __name__ == "__main__":
     sys.exit(lauf(TESTS))

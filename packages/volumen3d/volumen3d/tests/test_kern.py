@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from volumen3d.tests import (test_adaptiv, test_basis, test_elastizitaet, test_geometrie, test_gitter, test_hotspot, test_huelle,  # noqa: E402
+from volumen3d.tests import (test_adaptiv, test_basis, test_direkt, test_elastizitaet, test_geometrie, test_gitter, test_hotspot, test_huelle,  # noqa: E402
                              test_knotenblech, test_oktree, test_paket, test_schale, test_step,
                              test_mehrgitter, test_operator, test_patch, test_quadratur, test_rueckgewinnung, test_stl, test_vertrag_fcm,
                              test_zwaenge)
@@ -38,6 +38,7 @@ TESTS = [
     test_huelle.test_stammfunktionen, test_huelle.test_polyeder_momente, test_huelle.test_baum_und_zellquadratur, test_huelle.test_windungsbaum,
     test_huelle.test_flaeche_hinter_schnittebene, test_huelle.test_offene_huelle, test_huelle.test_huelle_in_abgezogenem_teilbaum,
     test_schale.test_kopplungsabweichung, test_schale.test_schale_achsparallel, test_schale.test_schale_geneigt, test_schale.test_schale_geneigt_p3,
+    test_schale.test_schale_geneigt_p3_superlu, test_direkt.test_nachiteration, test_direkt.test_pardiso_weg_unveraendert,
     test_knotenblech.test_knotenblech_h10, test_knotenblech.test_knotenblech_konvergenz,
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_patch_hoeherer_ordnung, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
