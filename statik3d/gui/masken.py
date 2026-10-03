@@ -1257,10 +1257,9 @@ class Maskenrand(QtCore.QObject):
                 m.geschlossen.emit()
             except (RuntimeError, AttributeError):
                 pass
-            # ueber entsorgen loeschen: laeuft keine Ereignisschleife (in den
-            # Pruefungen), trennt es vorher alle Signale der Maske und ihrer
-            # Kinder - ein Lambda an einem Feld liess das Programm sonst beim
-            # Beenden abstuerzen (Plan-Teilpaket C15, statik3d.gui.entsorgen)
+            # ueber entsorgen loeschen (Plan-Teilpaket C15): bliebe das
+            # deleteLater bis os._exit liegen, stuerzte der Prozess beim Beenden
+            # ab, wenn an einem Feld ein Lambda haengt (statik3d.gui.entsorgen)
             entsorgen(m)
 
     def _anfang(self) -> int:

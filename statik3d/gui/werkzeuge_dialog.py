@@ -11,7 +11,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import parallel
 from .. import werkzeuge as wz
-from .entsorgen import vor_dem_loeschen
 from .worker import SolveWorker
 
 
@@ -82,10 +81,6 @@ class WerkzeugeDialog(QtWidgets.QDialog):
     def _fuellen(self):
         st = wz.stand_alle()
         self.tabelle.setRowCount(len(wz.WERKZEUGE))
-        # Die alten Knoepfe ersetzt setCellWidget, Qt loescht sie dann mit
-        # deleteLater - ihre Lambdas wie beim Entsorgen sichern (C15)
-        for b in self.knoepfe.values():
-            vor_dem_loeschen(b)
         self.knoepfe.clear()
         for i, (key, w) in enumerate(wz.WERKZEUGE.items()):
             s = st.get(key)

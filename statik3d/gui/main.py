@@ -5115,12 +5115,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     quelle.valueChanged.disconnect(fn)
                 except (RuntimeError, TypeError):
                     pass
-            schieber.clear()                # nur einmal
-        # Beim Schliessen abhaengen, nicht erst bei destroyed: seit C15 trennt
-        # der Maskenrand vor dem Loeschen alle Signale der Maske, solange keine
-        # Ereignisschleife laeuft - destroyed kaeme dann nicht mehr an
-        # (statik3d.gui.entsorgen)
-        maske.geschlossen.connect(trennen)
+        maske.destroyed.connect(lambda *_: trennen())
         maske.angewendet.connect(lambda _w: self.maskenrand.schliessen())
         return self.maske_erzeugen(maske)
 
