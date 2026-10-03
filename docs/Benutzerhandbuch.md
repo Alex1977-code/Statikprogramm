@@ -8133,7 +8133,12 @@ löschen*: der nimmt die gewählten Knoten **mitsamt** ihren Elementen mit (nur
 Knoten, die eine Linie braucht, bleiben), Entf in der Ansicht weist benutzte Knoten
 ab, wie die Tabelle „Knoten“. Sind nur Knoten gewählt und lässt sich keiner löschen
 (Strg+A, Entf an einem vernetzten Modell), fragt das Programm gar nicht erst,
-sondern nennt in der Statuszeile und im Protokoll den Grund. Lässt sich sonst
+sondern nennt in der Statuszeile und im Protokoll den Grund. Lässt sich nur ein
+Teil löschen, nennt die Rückfrage nur die freien Knoten und sagt, wie viele
+stehen bleiben („62 Knoten wirklich löschen? 133004 der 133066 gewählten Knoten
+bleiben stehen, weil an ihnen Elemente oder Linien hängen.“), und gelöscht werden
+nur die freien. Bis zum 03.10.2026 fragte sie am Drehlager nach Strg+A „133066
+Knoten wirklich löschen?“ und löschte die 62 freien. Lässt sich sonst
 nichts löschen, bleibt nichts zurück: kein Rückgängig-Schritt, keine
 Änderungsmarke, und auch der Wiederholen-Stapel bleibt (bis zum 03.10.2026 leerte
 schon der Versuch ihn). Viele Knoten löscht das Programm in einem Zug: fünftausend

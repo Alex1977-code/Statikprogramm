@@ -975,6 +975,36 @@ def test_entf_grosse_auswahl_ist_schnell():
         w._undo.clear()
 
 
+def test_entf_teils_benutzte_knoten():
+    """Nur Knoten gewaehlt, ein Teil haengt an Elementen: die Rueckfrage nennt nur die
+    freien und sagt, wie viele bleiben; geloescht werden nur die freien. Am Drehlager
+    fragte Entf nach Strg+A „133066 Knoten wirklich löschen?“ und loeschte 62 freie
+    (gemessen 03.10.2026)."""
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    n0 = _halle(w, app)                       # 19 Knoten an Staeben, 3 freie
+    ia = _ansicht(w, app)
+    fragen = _fragen(w, True)
+    try:
+        _waehlen(w, knoten=range(n0))
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        f = fragen[-1] if fragen else ""
+        check("Strg+A-artig, 3 von 22 Knoten frei: die Rückfrage nennt 3 Knoten, nicht 22",
+              f.startswith("3 Knoten wirklich löschen?") and "22 Knoten" not in f.split("?")[0], f[:120])
+        check("… und sagt, dass 19 der 22 bleiben", "19 der 22 gewählten Knoten bleiben stehen" in f, f[:200])
+        check("… gelöscht sind genau die 3 freien", w.model.nn == n0 - 3, str(w.model.nn))
+        check("… die Meldung nennt beides",
+              "3 Knoten gelöscht" in w.log.toPlainText()[-400:]
+              and "19 der 22 gewählten Knoten bleiben stehen" in w.log.toPlainText()[-400:],
+              w.log.toPlainText()[-200:])
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
 def test_stab_loeschen_ueberall_gleich():
     """Entf in der Ansicht, Rechtsklick und Baum nehmen die abgeleiteten Elementlasten
     eines Stabs mit (``Model.stab_loeschen``): dieselbe Last, dieselbe Rechnung."""
@@ -1020,7 +1050,8 @@ def main():
               test_entf_nimmt_nur_hervorgehobenes_nicht_mit, test_ansicht_nimmt_den_fokus_nur_per_linksklick,
               test_einzeltaste_ersetzt_keine_geaenderte_maske, test_entf_und_tasten_waehrend_der_rechnung,
               test_rueckfrage_nennt_die_folgen, test_nichts_geloescht_laesst_die_stapel_in_ruhe,
-              test_entf_grosse_auswahl_ist_schnell, test_stab_loeschen_ueberall_gleich):
+              test_entf_grosse_auswahl_ist_schnell, test_entf_teils_benutzte_knoten,
+              test_stab_loeschen_ueberall_gleich):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

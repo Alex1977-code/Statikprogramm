@@ -1624,15 +1624,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Nichts gewählt - die Objekte leuchten nur, weil ihre Lasten gezeigt werden"
                 if leuchtet else "Nichts gewählt - es gibt nichts zu löschen", 5000)
             return
+        bleiben = ""
         if len(gruppen) == 1 and gruppen[0][0] == "knoten":
             # nur Knoten, und keiner laesst sich loeschen: gar nicht erst fragen
-            gesperrt = self.model.knoten_gesperrt(gruppen[0][1])
-            if len(gesperrt) == len(gruppen[0][1]):
+            alle = [int(k) for k in gruppen[0][1]]
+            gesperrt = self.model.knoten_gesperrt(alle)
+            if len(gesperrt) == len(alle):
                 erste = [f"K{i}: {g}" for i, g in sorted(gesperrt.items())[:4]]
                 self.info("Nichts gelöscht: " + "; ".join(erste) + (" …" if len(gesperrt) > 4 else ""))
                 return
+            if gesperrt:
+                # Nur die freien fragen und loeschen. Am Drehlager fragte Entf nach Strg+A
+                # „133066 Knoten wirklich löschen?“ und loeschte 62 freie (03.10.2026) - die
+                # Frage las sich wie „alles“. Bei gemischter Auswahl bleibt es beim
+                # Versuch je Knoten: dort koennen erst geloeschte Elemente Knoten freimachen.
+                gruppen = [("knoten", [k for k in alle if k not in gesperrt])]
+                bleiben = (f"{len(gesperrt)} der {len(alle)} gewählten Knoten bleiben stehen, "
+                           "weil an ihnen Elemente oder Linien hängen")
         text = self._loesch_text(gruppen)
-        if not self._bestaetigen(f"{text} wirklich löschen?{self._loesch_folgen(gruppen)}"):
+        if not self._bestaetigen(f"{text} wirklich löschen?"
+                                 + (f"\n\n{bleiben}." if bleiben else "")
+                                 + self._loesch_folgen(gruppen)):
             return
         # Gesichert wird jetzt, abgelegt erst, wenn etwas weg ist (_sicherung_ablegen)
         kopie, stand = self.model.copy(), self._stand
@@ -1662,6 +1674,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objektauswahl_leeren()
         self.maskenrand.schliessen()
         self.info(f"{self._loesch_text(weg)} gelöscht"
+                  + (f"; {bleiben}" if bleiben else "")
                   + (f"; nicht gelöscht: {grund_text}" if gruende else ""))
         self.refresh_all()
 
