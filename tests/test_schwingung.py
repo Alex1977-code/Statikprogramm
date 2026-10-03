@@ -262,9 +262,11 @@ def test_oberflaeche_prueft_das_modell():
     m = modell()
     fehler = [x for x in m.check() if x.startswith("FEHLER")]
     s, erg, spion = fuehren(m)
+    # Fehler und Hinweise (Paket 9b): eine Attrappe schluckt s.hinweis still
+    from tests.meldungen import aus_attrappe
     check("Gegenprobe ohne FEHLER: der Nachweis wird gerechnet",
           not fehler and spion.called and erg is not None and len(erg.moden) == 2
-          and not texte(s.error), f"FEHLER {fehler}, error {texte(s.error)}")
+          and not aus_attrappe(s).alle, f"FEHLER {fehler}, Meldungen {aus_attrappe(s).alle}")
 
 
 def test_ausweichen_erreicht_bericht():

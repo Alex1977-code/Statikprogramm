@@ -2061,7 +2061,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if art in ("verschieben", "kopieren"):
                 v = P[1] - P[0] if len(P) >= 2 else np.array([zahl("dx"), zahl("dy"), zahl("dz")])
                 if float(np.linalg.norm(v)) <= 0:
-                    return self.error("Der Vektor ist null - dx, dy, dz eintragen oder zwei Punkte anklicken")
+                    return self.hinweis("Der Vektor ist null - dx, dy, dz eintragen oder zwei Punkte anklicken")
                 R, t = tr.verschiebung(v)
             elif art == "drehen":
                 if len(P) >= 2:
@@ -2069,7 +2069,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     wahl = str(w.get("achse", "z"))
                     if wahl.startswith("durch"):
-                        return self.error("Zwei Punkte der Drehachse in der Ansicht anklicken - oder x, y, z wählen")
+                        return self.hinweis("Zwei Punkte der Drehachse in der Ansicht anklicken - oder x, y, z wählen")
                     punkt = np.array([zahl("px"), zahl("py"), zahl("pz")])
                     achse = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[wahl]
                 R, t = tr.drehung(punkt, achse, zahl("winkel", 90.0))
@@ -2079,7 +2079,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     wahl = str(w.get("ebene", ""))
                     if wahl.startswith("durch"):
-                        return self.error("Drei Punkte der Spiegelebene in der Ansicht anklicken - oder eine Ebene wählen")
+                        return self.hinweis("Drei Punkte der Spiegelebene in der Ansicht anklicken - oder eine Ebene wählen")
                     normale = np.array({"yz": (1, 0, 0), "xz": (0, 1, 0), "xy": (0, 0, 1)}[wahl[:2]], float)
                     punkt = normale * zahl("lage")
                 R, t = tr.spiegelung(punkt, normale)
@@ -4285,30 +4285,30 @@ class MainWindow(QtWidgets.QMainWindow):
         lotlinie = bool(w.get("lotlinie")) and not verschieben
         knoten = [int(i) for i in knoten if 0 <= int(i) < m.nn]
         if not knoten:
-            return self.error("Die Quellknoten gibt es nicht mehr - Knoten wählen und die Maske neu öffnen")
+            return self.hinweis("Die Quellknoten gibt es nicht mehr - Knoten wählen und die Maske neu öffnen")
         if ziel.startswith("Arbeitsebene"):
             fuss = self.arbeitsebene.projizieren
             wohin = "die Arbeitsebene"
         elif ziel.startswith("Ebene"):
             f = m.flaechen.get(obj)
             if f is None:
-                return self.error("Eine Fläche ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
+                return self.hinweis("Eine Fläche ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
             e = ko.ebene_der_flaeche(m, f)
             if e is None:
-                return self.error(f"Fläche {obj} ist gewölbt - „Fläche (nächster Punkt)“ wählen")
+                return self.hinweis(f"Fläche {obj} ist gewölbt - „Fläche (nächster Punkt)“ wählen")
             fuss = lambda p, o=e[0], n=e[1]: ko.lot_auf_ebene(p, o, n)   # noqa: E731
             wohin = f"die Ebene von {obj}"
         elif ziel.startswith("Fläche"):
             f = m.flaechen.get(obj)
             if f is None:
-                return self.error("Eine Fläche ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
+                return self.hinweis("Eine Fläche ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
             fuss = lambda p, f_=f: ko.lot_auf_flaeche(m, f_, p, self._raender(), self._randseiten(),   # noqa: E731
                                                        self._loecher())
             wohin = f"Fläche {obj}"
         else:
             ln = m.lines.get(obj)
             if ln is None:
-                return self.error("Eine Linie ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
+                return self.hinweis("Eine Linie ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
             fuss = lambda p, l_=ln: ko.lot_auf_linie(m, l_, p)           # noqa: E731
             wohin = f"Linie {obj}"
         self.merken(f"Lot / Projektion: {len(knoten)} Knoten")
@@ -4421,7 +4421,7 @@ class MainWindow(QtWidgets.QMainWindow):
         P = list(w.get("punkte") or [])
         noetig = {"koordinaten": 1, "abstand": 2, "radius": 2, "winkel": 3, "flaeche": 3}[art]
         if len(P) < noetig:
-            return self.error(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
+            return self.hinweis(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
         einst = self.model.bemassung_einstellungen()
         text = bm.messung_text(art, P, einst.einheit, einst.nachkomma)
         self.messungen.append({"art": art, "punkte": P, "text": text})
@@ -4521,7 +4521,7 @@ class MainWindow(QtWidgets.QMainWindow):
         P = list(w.get("punkte") or [])
         noetig = {"linear": 2, "kette": 2, "hoehenkote": 1, "winkel": 3, "radius": 2}[art]
         if len(P) < noetig:
-            return self.error(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
+            return self.hinweis(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
         if art == "linear":
             P = P[:2]
         elif art == "hoehenkote":
@@ -4580,7 +4580,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._ablehnen(f"Bemaßung {alt} gibt es nicht mehr - nichts übernommen")
         neu = str(w.get("name", "")).strip() or alt
         if neu != alt and neu in m.bemassungen:
-            return self.error(f"Bemaßung „{neu}“ gibt es schon")
+            return self.hinweis(f"Bemaßung „{neu}“ gibt es schon")
 
         def zahl(key):
             # Regel der Zahlenfelder (25.09.2026); leer = Einstellung
@@ -6563,8 +6563,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.maskenrand.schliessen()
 
     def _fehlerstand(self) -> int:
-        """Zahl der Fehlermeldungen und Ablehnungen bisher: steigt sie waehrend
-        „Übernehmen“, ist es gescheitert (_uebernahme_lauf)."""
+        """Zahl der Fehlermeldungen, Hinweise und Ablehnungen bisher: steigt sie
+        waehrend „Übernehmen“, ist es gescheitert (_uebernahme_lauf)."""
         return int(getattr(self, "_fehlerzahl", 0))
 
     def _ablehnen(self, text: str):
@@ -6581,7 +6581,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rufen() ruft ihre Empfaenger und liefert eine Ausnahme oder None.
 
         Gelungen ist es, wenn keine Ausnahme kam und waehrend des Laufs weder
-        error() noch _ablehnen() gerufen wurde - entschieden, wenn rufen()
+        error() noch hinweis() noch _ablehnen() gerufen wurde - entschieden, wenn rufen()
         zurueckkehrt, auch wenn ein Handler dazwischen eine Ereignisschleife
         dreht.
 
@@ -8658,7 +8658,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pm = m.punktmassen[i]
             n = knoten("node")
             if not 0 <= n < m.nn:
-                self.error(f"Knoten {n} gibt es nicht")
+                self.hinweis(f"Knoten {n} gibt es nicht")
                 return None
             pm.node = n
             pm.masse = max(0.0, float(w.get("masse", 0.0) or 0.0))
@@ -8674,7 +8674,7 @@ class MainWindow(QtWidgets.QMainWindow):
             dp = m.daempfer[i]
             a, b = knoten("node_a"), knoten("node_b", -1)
             if not 0 <= a < m.nn or (b >= 0 and b >= m.nn):
-                self.error("Knoten A (und B, wenn nicht −1) müssen vorhanden sein")
+                self.hinweis("Knoten A (und B, wenn nicht −1) müssen vorhanden sein")
                 return None
             dp.node_a, dp.node_b = a, b
             dp.c = [float(w.get(k, 0.0) or 0.0) for k in ("cx", "cy", "cz")] + [0.0, 0.0, 0.0]
@@ -8724,7 +8724,7 @@ class MainWindow(QtWidgets.QMainWindow):
         master = knoten("master")
         slaves = [n for n in self._zahlenliste(w.get("slaves")) if 0 <= n < m.nn and n != master]
         if not 0 <= master < m.nn or not slaves:
-            self.error("Masterknoten und mindestens ein angeschlossener Knoten nötig")
+            self.hinweis("Masterknoten und mindestens ein angeschlossener Knoten nötig")
             return None
         sk.master, sk.slaves = master, slaves
         sk.art = "RBE3" if str(w.get("art", "RBE2")).upper() == "RBE3" else "RBE2"
@@ -8787,16 +8787,16 @@ class MainWindow(QtWidgets.QMainWindow):
             E = float(w.get("E_cm", 33000.0)) * 1e6          # N/m²
             d = float(w.get("d_bett", 100.0)) / 1e3          # m
         except (TypeError, ValueError):
-            return self.error("E_cm und wirksame Dicke als Zahlen eingeben")
+            return self.hinweis("E_cm und wirksame Dicke als Zahlen eingeben")
         if E <= 0 or d <= 0:
-            return self.error("E_cm und wirksame Dicke müssen größer als null sein")
+            return self.hinweis("E_cm und wirksame Dicke müssen größer als null sein")
         faktor = 1.0
         if art == "lager_einzeln":
             faktor = float(w.get("A_bett", 0.01) or 0.0)
         elif art == "linienlager_einzeln":
             faktor = float(w.get("b_bett", 0.1) or 0.0)
         if faktor <= 0:
-            return self.error("Einflussfläche bzw. Einflussbreite größer als null eingeben")
+            return self.hinweis("Einflussfläche bzw. Einflussbreite größer als null eingeben")
         if wahl.startswith("auf"):
             k = E / d * faktor
             maske.setzen("typ2", "Feder")
@@ -9377,10 +9377,10 @@ class MainWindow(QtWidgets.QMainWindow):
             n_ = str((maske.werte() or {}).get("name", "") or "") if maske is not None else ""
             kb = m.kontaktbedingungen.get(n_)
         if kb is None:
-            return self.error("Erst eine Kontaktbedingung im Modellbaum wählen")
+            return self.hinweis("Erst eine Kontaktbedingung im Modellbaum wählen")
         erg = sp.fugen_zylinder(m, kb)
         if not erg.get("ok"):
-            return self.error(f"Kontaktbedingung {kb.name}: {erg.get('grund', '')} - "
+            return self.hinweis(f"Kontaktbedingung {kb.name}: {erg.get('grund', '')} - "
                               "ein Spalt lässt sich nur zwischen Welle und Bohrung geben")
         # Der Wert aus der offenen Maske gilt, sonst der gespeicherte
         mm = self._maskenzahl("spalt")
@@ -10241,7 +10241,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Nummer abgewiesen wurde - mit Rueckgaengig-Schritt
                 ziel = int(w.get("nr", i))
                 if ziel != i and not 0 <= ziel < m.nn:
-                    return self.error(f"Nummer {ziel} gibt es nicht - Knoten sind 0 bis {m.nn - 1}")
+                    return self.hinweis(f"Nummer {ziel} gibt es nicht - Knoten sind 0 bis {m.nn - 1}")
                 if not neu:            # ein neuer Knoten ist schon beim Anlegen gemerkt
                     self.merken(f"Knoten K{i}")
                 m.nodes[i] = [float(w.get("x", 0.0)), float(w.get("y", 0.0)), float(w.get("z", 0.0))]
@@ -10253,7 +10253,7 @@ class MainWindow(QtWidgets.QMainWindow):
             elif art == "linie":
                 knoten = self._zahlenliste(w.get("kn"))
                 if len(knoten) < 2 or any(not 0 <= n < m.nn for n in knoten):
-                    return self.error("Eine Linie braucht mindestens zwei vorhandene Knoten")
+                    return self.hinweis("Eine Linie braucht mindestens zwei vorhandene Knoten")
                 neuname = (w.get("name") or name).strip()
                 self.merken(f"Linie {neuname}")
                 if neu:
@@ -10282,7 +10282,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 typ = self.STABARTEN.get(str(w.get("typ", "")), "beam")
                 mat, sec = w.get("mat", ""), w.get("sec", "")
                 if mat not in m.materials or sec not in m.sections:
-                    return self.error("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
+                    return self.hinweis("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
                 # Versatz vor dem ersten Schreiben lesen (25.09.2026): „1.000, 0“
                 # und eine andere Anzahl als y, z („12,5 1 000“, „1; 2; 3“)
                 # werden abgewiesen, und dann bleibt der Stab, wie er war
@@ -10312,7 +10312,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 els = self._zahlenliste(w.get("elemente"))
                 els = [e for e in els if 0 <= e < len(m.elements) and m.elements[e].typ in vp.TYPEN_STAEBE]
                 if not els:
-                    return self.error("Elemente (Nummern von Stabelementen) angeben")
+                    return self.hinweis("Elemente (Nummern von Stabelementen) angeben")
                 neuname = (w.get("name") or name).strip()
                 self.merken(f"Stab {neuname}")
                 if neu:
@@ -10344,7 +10344,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 linien = self._namensliste(w.get("linien"))
                 fehlt = [x for x in linien if x not in m.lines]
                 if fehlt:
-                    return self.error("Unbekannte Linien: " + ", ".join(fehlt[:5]))
+                    return self.hinweis("Unbekannte Linien: " + ", ".join(fehlt[:5]))
                 # eine Zahl fuer beide Richtungen oder zwei (25.09.2026: mehr
                 # wurden still gespeichert, Buchstaben fielen still weg)
                 teilung = self._zahlenliste(w.get("teilung"), anzahl=(1, 2), feld="Teilung") or [4, 4]
@@ -10377,7 +10377,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 flaechen = self._namensliste(w.get("flaechen"))
                 fehlt = [x for x in flaechen if x not in m.flaechen]
                 if fehlt:
-                    return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
+                    return self.hinweis("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
                 # eine Zahl fuer alle Richtungen oder drei (25.09.2026)
                 teilung = self._zahlenliste(w.get("teilung"), anzahl=(1, 3), feld="Teilung") or [4, 4, 4]
                 teilung = teilung * 3 if len(teilung) == 1 else teilung
@@ -10438,9 +10438,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if art == "lastfall":
             if neu and neuname in m.load_cases:
-                return self.error(f"Lastfall „{neuname}“ gibt es schon")
+                return self.hinweis(f"Lastfall „{neuname}“ gibt es schon")
             if not neu and neuname != name and neuname in m.load_cases:
-                return self.error(f"Lastfall „{neuname}“ gibt es schon")
+                return self.hinweis(f"Lastfall „{neuname}“ gibt es schon")
             kat = str(w.get("kategorie", "G")).split(":")[0].strip() or "G"
             if kat not in ACTION_CATEGORIES:
                 kat = "G"
@@ -10453,11 +10453,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 try:
                     psi_werte = [zl.feldwert(t) for t in psi.replace(";", "/").split("/") if t.strip()]
                 except ValueError as ex:
-                    return self.error(f"ψ0/ψ1/ψ2: {ex}")
+                    return self.hinweis(f"ψ0/ψ1/ψ2: {ex}")
                 try:
                     zl.anzahl_pruefen(psi_werte, 3, "ψ0/ψ1/ψ2 (leer = aus Kategorie)", psi)
                 except ValueError as ex:
-                    return self.error(str(ex))
+                    return self.hinweis(str(ex))
             self.merken(f"Lastfall {neuname}")
             if neu:
                 m.add_load_case(neuname, kat, str(w.get("beschreibung", "") or ""),
@@ -10515,10 +10515,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         k, v = teil.split(tr, 1)
                         break
                 else:
-                    return self.error(f"Faktor „{teil.strip()}“: bitte als „Lastfall: Faktor“ schreiben")
+                    return self.hinweis(f"Faktor „{teil.strip()}“: bitte als „Lastfall: Faktor“ schreiben")
                 k = k.strip()
                 if k not in m.load_cases:
-                    return self.error(f"Lastfall „{k}“ gibt es nicht")
+                    return self.hinweis(f"Lastfall „{k}“ gibt es nicht")
                 try:
                     # Ausnahme von der Zahlenregel (25.09.2026): die Faktoren
                     # sind eine Formel, das Komma trennt Eintraege und ist oben
@@ -10526,15 +10526,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     # mehrdeutig abgewiesen werden
                     faktoren[k] = float(v.strip().replace(",", "."))
                 except ValueError:
-                    return self.error(f"Faktor von {k} ist keine Zahl: {v.strip()}")
+                    return self.hinweis(f"Faktor von {k} ist keine Zahl: {v.strip()}")
             if (neu or neuname != name) and neuname in m.combinations:
-                return self.error(f"Kombination „{neuname}“ gibt es schon")
+                return self.hinweis(f"Kombination „{neuname}“ gibt es schon")
             sit = str(w.get("situation", "") or "")
             sit = "" if sit in ("", GRUNDSTELLUNG) else sit
             fremd = [k for k in (vorher.lastfaelle() if umh else faktoren) if k in m.load_cases
                      and (getattr(m.load_cases[k], "situation", "") or "") != sit]
             if fremd:
-                return self.error("Lastfälle einer anderen Situation lassen sich nicht kombinieren: "
+                return self.hinweis("Lastfälle einer anderen Situation lassen sich nicht kombinieren: "
                                   + ", ".join(fremd))
             self.merken(f"Kombination {neuname}")
             # die Maske zeigt den Klartext, gespeichert wird der Schluessel
@@ -10551,7 +10551,7 @@ class MainWindow(QtWidgets.QMainWindow):
             name = neuname
         elif art == "werkstoff":
             if (neu or neuname != name) and neuname in m.materials:
-                return self.error(f"Werkstoff „{neuname}“ gibt es schon")
+                return self.hinweis(f"Werkstoff „{neuname}“ gibt es schon")
             self.merken(f"Werkstoff {neuname}")
             fy, fu = zahl("fy"), zahl("fu")
             mt = Material(neuname, E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
@@ -10578,7 +10578,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if sec is None:
                 return self.error(f"Querschnitt {name} gibt es nicht")
             if neuname != name and neuname in m.sections:
-                return self.error(f"Querschnitt „{neuname}“ gibt es schon")
+                return self.hinweis(f"Querschnitt „{neuname}“ gibt es schon")
             werte = {}
             for key, faktor in (("A", 1e-4), ("Iy", 1e-8), ("Iz", 1e-8), ("It", 1e-8), ("Iw", 1e-12),
                                 ("Wel_y", 1e-6), ("Wel_z", 1e-6), ("Wpl_y", 1e-6), ("Wpl_z", 1e-6),
@@ -10586,7 +10586,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 ("tf", 1e-3), ("r", 1e-3)):
                 werte[key] = float(zahl(key, getattr(sec, key) / faktor)) * faktor
             if werte["A"] <= 0 or werte["Iy"] <= 0 or werte["Iz"] <= 0:
-                return self.error("A, Iy und Iz müssen größer als null sein")
+                return self.hinweis("A, Iy und Iz müssen größer als null sein")
             self.merken(f"Querschnitt {neuname}")
             neu_sec = dataclasses.replace(sec, name=neuname, fabrication=str(w.get("fabrication", sec.fabrication)),
                                           **werte)
@@ -10603,13 +10603,13 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "gelenk":
             from ..model import MemberHinge
             if (neu or neuname != name) and neuname in m.hinges:
-                return self.error(f"Gelenk „{neuname}“ gibt es schon")
+                return self.hinweis(f"Gelenk „{neuname}“ gibt es schon")
             rueck = {v: k for k, v in self.GELENKART.items()}
             typen = [rueck.get(str(w.get(f"typ{d}", "biegesteif")), "fixed") for d in range(6)]
             federn = [float(zahl(f"k{d}", 0.0)) * 1e3 for d in range(6)]
             for d in range(6):
                 if typen[d] == "spring" and federn[d] <= 0:
-                    return self.error(f"Feder {self.GELENK_FHG[d][0]}: Steifigkeit größer als null eingeben")
+                    return self.hinweis(f"Feder {self.GELENK_FHG[d][0]}: Steifigkeit größer als null eingeben")
             end = self.GELENKLAGE.index(str(w.get("end", self.GELENKLAGE[0]))) \
                 if str(w.get("end", "")) in self.GELENKLAGE else 0
             self.merken(f"Gelenk {neuname}")
@@ -10647,38 +10647,38 @@ class MainWindow(QtWidgets.QMainWindow):
             if kb is None and not neu:
                 return self.error(f"Kontaktbedingung {name} gibt es nicht")
             if neuname in m.kontaktbedingungen and (neu or neuname != name):
-                return self.error(f"Kontaktbedingung „{neuname}“ gibt es schon")
+                return self.hinweis(f"Kontaktbedingung „{neuname}“ gibt es schon")
             flaechen = self._namensliste(w.get("flaechennamen"))
             gegen = self._namensliste(w.get("gegenflaechen"))
             fehlt = [x for x in flaechen + gegen if x not in m.flaechen]
             if fehlt:
-                return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
+                return self.hinweis("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
             a_wert = str(w.get("koerper_a", "") or "").strip()
             koerper_a = self._namensliste(a_wert) if a_wert and a_wert != "–" else []
             fehlt = [x for x in koerper_a if x not in m.koerper]
             if fehlt:
-                return self.error("Unbekannte Volumen: " + ", ".join(fehlt[:5]))
+                return self.hinweis("Unbekannte Volumen: " + ", ".join(fehlt[:5]))
             b_wert = str(w.get("koerper_b", "") or "").strip()
             koerper_b = [b_wert] if b_wert and b_wert != self.KONTAKT_ALLE else []
             if koerper_b and koerper_b[0] not in m.koerper:
-                return self.error(f"Unbekanntes Volumen: {koerper_b[0]}")
+                return self.hinweis(f"Unbekanntes Volumen: {koerper_b[0]}")
             if koerper_a and koerper_b and set(koerper_a) & set(koerper_b):
-                return self.error("Körper A und Körper B müssen verschieden sein")
+                return self.hinweis("Körper A und Körper B müssen verschieden sein")
             # Eine neue Bedingung braucht mindestens eine Flaeche; eine eingelesene
             # darf auch nur ueber Koerper und Gegenflaechen der Quelldatei stehen
             if neu and not flaechen and not (koerper_a and gegen):
-                return self.error("Mindestens eine Kontaktfläche angeben - ins Feld klicken und in der "
+                return self.hinweis("Mindestens eine Kontaktfläche angeben - ins Feld klicken und in der "
                                   "Ansicht wählen (oder Körper A und Gegenflächen)")
             fremd = [f for f in flaechen if koerper_a and f not in
                      {x for k in koerper_a for x in (m.koerper[k].flaechen or [])}]
             if fremd:
-                return self.error("Diese Flächen gehören nicht zu Körper A: " + ", ".join(fremd[:5]))
+                return self.hinweis("Diese Flächen gehören nicht zu Körper A: " + ", ".join(fremd[:5]))
             zug, sx, sy, dreh, mu = self._kontakt_richtungen(w)
             if mu < 0:
-                return self.error("Der Reibbeiwert kann nicht negativ sein")
+                return self.hinweis("Der Reibbeiwert kann nicht negativ sein")
             c = float(zahl("c", 0.0) or 0.0) * 1e3
             if "feder" in (zug, sx, sy) and c <= 0:
-                return self.error("Für „Feder“ eine Federsteifigkeit größer als null eingeben")
+                return self.hinweis("Für „Feder“ eine Federsteifigkeit größer als null eingeben")
 
             def wirkung(art_):
                 if art_ == "starr":
@@ -10748,7 +10748,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 typ = rueck_typ.get(str(w.get(f"typ{d}", "frei")), "free")
                 k = float(zahl(f"k{d}", 0.0)) * 1e3
                 if typ == "spring" and k <= 0:
-                    return self.error(f"{self.LAGER_FHG[d]}: Federsteifigkeit größer als null eingeben")
+                    return self.hinweis(f"{self.LAGER_FHG[d]}: Federsteifigkeit größer als null eingeben")
                 b = DofBehaviour(typ, k if typ == "spring" else 0.0,
                                  rueck_aus.get(str(w.get(f"aus{d}", "–")), ""),
                                  float(getattr(alt_b, "slip", 0.0) or 0.0), float(getattr(alt_b, "mu", 0.0) or 0.0),
@@ -10772,16 +10772,16 @@ class MainWindow(QtWidgets.QMainWindow):
             liste = self._stellungen_obj()
             alt = m.stellung(name) if not neu else None
             if not neuname:
-                return self.error("Bitte eine Bezeichnung für die Stellung eingeben")
+                return self.hinweis("Bitte eine Bezeichnung für die Stellung eingeben")
             if (neu or neuname != name) and m.stellung(neuname) is not None:
-                return self.error(f"Stellung „{neuname}“ gibt es schon")
+                return self.hinweis(f"Stellung „{neuname}“ gibt es schon")
             st = self._stellung_aus_maske(w, alt)
             fehlt = ([x for x in st.staebe_aus if x not in m.members]
                      + [x for x in st.flaechen_aus if x not in m.flaechen]
                      + [x for x in st.koerper_aus if x not in m.koerper]
                      + [x for x in st.gelenke_aus if x not in m.hinges])
             if fehlt:
-                return self.error("Unbekannt: " + ", ".join(fehlt[:6]))
+                return self.hinweis("Unbekannt: " + ", ".join(fehlt[:6]))
             if st.basis and m.stellung(st.basis) is None:
                 return self.error(f"Ausgangsstellung „{st.basis}“ gibt es nicht")
             self.merken(f"Stellung {neuname}")
@@ -10800,10 +10800,10 @@ class MainWindow(QtWidgets.QMainWindow):
             name = neuname
         elif art == "dicke":
             if (neu or neuname != name) and neuname in m.shells:
-                return self.error(f"Dicke „{neuname}“ gibt es schon")
+                return self.hinweis(f"Dicke „{neuname}“ gibt es schon")
             t = float(w.get("t", 10.0) or 10.0) * 1e-3
             if t <= 0:
-                return self.error("Die Dicke muss größer als null sein")
+                return self.hinweis("Die Dicke muss größer als null sein")
             self.merken(f"Dicke {neuname}")
             if not neu and neuname != name and name in m.shells:
                 del m.shells[name]
@@ -10991,12 +10991,12 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         name = str(w.get("name", "")).strip()
         if not name or name == GESAMTSYSTEM:
-            return self.error("Bitte einen eigenen Namen für das Subsystem eingeben")
+            return self.hinweis("Bitte einen eigenen Namen für das Subsystem eingeben")
         if name in m.subsysteme:
-            return self.error(f"Subsystem „{name}“ gibt es schon")
+            return self.hinweis(f"Subsystem „{name}“ gibt es schon")
         if not (self.sel_staebe or self.sel_flaechen or self.sel_koerper
                 or self.sel_elemente or len(self.selection)):
-            return self.error("Zuerst Stäbe, Flächen oder Volumen in der Ansicht anklicken")
+            return self.hinweis("Zuerst Stäbe, Flächen oder Volumen in der Ansicht anklicken")
         self.merken(f"Subsystem {name}")
         try:
             sub = m.subsystem_bilden(name, elemente=self.sel_elemente, staebe=self.sel_staebe,
@@ -11062,7 +11062,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         neu = str(w.get("name", "")).strip() or alt
         if neu != alt and (neu in m.subsysteme or neu == GESAMTSYSTEM):
-            return self.error(f"Subsystem „{neu}“ gibt es schon")
+            return self.hinweis(f"Subsystem „{neu}“ gibt es schon")
         self.merken(f"Subsystem {alt}")
         sub = m.subsysteme.pop(alt)
         sub.name = neu
@@ -11185,9 +11185,9 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..model import Situation
         name = str(w.get("name", "")).strip()
         if not name or name == GRUNDSTELLUNG:
-            return self.error("Bitte einen eigenen Namen für die Situation eingeben")
+            return self.hinweis("Bitte einen eigenen Namen für die Situation eingeben")
         if name != alt and name in m.situationen:
-            return self.error(f"Situation „{name}“ gibt es schon")
+            return self.hinweis(f"Situation „{name}“ gibt es schon")
         stellung = str(w.get("stellung", ""))
         stellung = "" if stellung.startswith("–") else stellung
         # Der Eintrag „… (fehlt)“ der Maske laesst die unbekannte Stellung,
@@ -11205,11 +11205,11 @@ class MainWindow(QtWidgets.QMainWindow):
         kombis = self._namensliste(w.get("kombinationen"))
         fehlt = [x for x in faelle if x not in m.load_cases] + [x for x in kombis if x not in m.combinations]
         if fehlt:
-            return self.error("Unbekannt: " + ", ".join(fehlt[:6]))
+            return self.hinweis("Unbekannt: " + ", ".join(fehlt[:6]))
         if stellung and not behalten and m.elements:
             st = m.stellung(stellung)
             if len(st.deaktivierte_elemente(m)) >= len(m.elements):
-                return self.error("In dieser Stellung wirkt kein Element - so bleibt nichts zu rechnen")
+                return self.hinweis("In dieser Stellung wirkt kein Element - so bleibt nichts zu rechnen")
         self.merken(f"Situation {name}")
         if alt and alt in m.situationen:
             sit = m.situationen.pop(alt)
@@ -12158,7 +12158,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def berichtseintrag_loeschen(self):
         i = self._zeilenzahl(self.tbl_bericht)
         if not (0 <= i < len(self.model.bericht)):
-            return self.error("Zuerst eine Zeile wählen")
+            return self.hinweis("Zuerst eine Zeile wählen")
         self.merken(f"Berichtsbild {self.model.bericht[i].name} gelöscht")
         del self.model.bericht[i]
         self.refresh_all()
@@ -14061,7 +14061,7 @@ class MainWindow(QtWidgets.QMainWindow):
         nr = self._zeilenzahl(self.tbl_last)
         lc, liste, k = self._lastzeiger(nr)
         if lc is None or not liste:
-            return self.error("Zuerst eine Zeile wählen")
+            return self.hinweis("Zuerst eine Zeile wählen")
         self.merken("Last gelöscht")
         if liste == "gravity":
             lc.gravity = [0.0, 0.0, 0.0]
@@ -14403,7 +14403,7 @@ class MainWindow(QtWidgets.QMainWindow):
         i = self._zeilenzahl(self.tbl_lager)
         liste = self._lagerliste()
         if not (0 <= i < len(liste)):
-            return self.error("Zuerst eine Zeile wählen")
+            return self.hinweis("Zuerst eine Zeile wählen")
         art, obj = liste[i]
         self.merken(f"{art} gelöscht")
         for gruppe in (self.model.supports, self.model.line_supports,
@@ -15334,7 +15334,7 @@ class MainWindow(QtWidgets.QMainWindow):
         z = self.tbl_stellung.currentRow()
         liste = self._stellungen_obj()
         if not (0 <= z < len(liste)):
-            return self.error("Zuerst eine Stellung in der Liste wählen")
+            return self.hinweis("Zuerst eine Stellung in der Liste wählen")
         name = liste[z].name
         self._baum_objekt_waehlen("stellung", name)
         return self._objektmaske("stellung", name)
@@ -15343,7 +15343,7 @@ class MainWindow(QtWidgets.QMainWindow):
         z = self.tbl_stellung.currentRow()
         liste = self._stellungen_obj()
         if not (0 <= z < len(liste)):
-            return self.error("Zuerst eine Stellung in der Liste wählen")
+            return self.hinweis("Zuerst eine Stellung in der Liste wählen")
         name = liste.pop(z).name
         self.umhuellende = None
         self.info(f"Stellung {name} entfernt")
@@ -15413,7 +15413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..bridges.lastenheft import lastfaelle_anlegen
         auswahl = [k[2:] for k, v in w.items() if k.startswith("e_") and v]
         if not auswahl:
-            return self.error("Keine Einwirkung angehakt")
+            return self.hinweis("Keine Einwirkung angehakt")
         try:
             start = int(float(w.get("start", 0) or 0))
         except (TypeError, ValueError):
@@ -16732,6 +16732,53 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(self, "Fehler", str(msg))
         self.log.appendPlainText("FEHLER: " + str(msg))
 
+    def hinweis(self, msg):
+        """Ein Bedienhinweis statt eines Fehlerfensters (Paket 9b, 03.10.2026):
+        er sagt, was der Anwender anders machen soll - fehlende Auswahl,
+        ungueltige Eingabe, „gibt es schon“. Kein modales Fenster: der Hinweis
+        steht in der Statuszeile (gelb hinterlegt), in der Meldungszeile der
+        offenen Maske (gelb, ueber ihren Knoepfen) und im Protokoll mit
+        „HINWEIS:“. Das rote Fenster „Fehler“ (error) bleibt echten Fehlern
+        vorbehalten: Ausnahmen, Dateien, gescheiterte Rechnungen. Bis dahin
+        unterbrach jeder Bedienschritt mit einem Fenster, das man wegklicken
+        musste (Oberflaechenplan, Paket 9).
+
+        Gezaehlt wie error(), hier und nicht beim Aufrufer, damit es keiner
+        vergessen kann: ein „Übernehmen“, das ein Hinweis abweist, ist
+        gescheitert - Maske, Punkt und Leiste bleiben stehen, die Eingaben gehen
+        nicht verloren (_uebernahme_lauf, Paket 13m, Fehler F1)."""
+        self._fehlerzahl = getattr(self, "_fehlerzahl", 0) + 1
+        text = str(msg)
+        self.log.appendPlainText("HINWEIS: " + text)
+        erste = text.splitlines()[0] if text.strip() else text
+        self._hinweis_statuszeile(f"Hinweis: {erste}")
+        rand = getattr(self, "maskenrand", None)
+        mk = getattr(rand, "maske", None)
+        zeigen = getattr(mk, "hinweis_zeigen", None)
+        if mk is not None and _lebt(mk) and not mk.isHidden() and callable(zeigen):
+            zeigen(text)
+
+    #: Statuszeile bei einem Hinweis: dieselben Farben wie die gelbe
+    #: Meldungszeile der Masken (zahlenfeld.meldungszeile_setzen)
+    HINWEIS_STATUSSTIL = "QStatusBar { background: #fff6d0; color: #6b5000; border-top: 1px solid #e0a800; }"
+
+    def _hinweis_statuszeile(self, text: str) -> None:
+        """Den Hinweis in die Statuszeile, gelb hinterlegt - bis eine andere
+        Meldung kommt oder er nach 15 s ablaeuft (_hinweis_statuszeile_aus)."""
+        sb = self.statusBar()
+        if not getattr(self, "_hinweis_status_verbunden", False):
+            sb.messageChanged.connect(self._hinweis_statuszeile_aus)
+            self._hinweis_status_verbunden = True
+        self._hinweis_statustext = text
+        sb.setStyleSheet(self.HINWEIS_STATUSSTIL)
+        sb.showMessage(text, 15000)
+
+    def _hinweis_statuszeile_aus(self, text: str) -> None:
+        """Eine andere Meldung der Statuszeile (oder keine mehr) nimmt das Gelb weg."""
+        if text != getattr(self, "_hinweis_statustext", None) and self.statusBar().styleSheet():
+            self._hinweis_statustext = None
+            self.statusBar().setStyleSheet("")
+
     def warnung(self, msg):
         """Etwas stimmt nicht, aber es geht weiter - anders als bei error()."""
         if self._modal_gesperrt("WARNUNG", msg):
@@ -16776,11 +16823,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _delete_row(self, tbl, mapping: dict):
         key = self._tabellenschluessel(tbl)
         if key is None:
-            return self.error("Zuerst eine Zeile wählen")
+            return self.hinweis("Zuerst eine Zeile wählen")
         if key not in mapping:
             return
         if len(mapping) <= 1:
-            return self.error(f"„{key}“ ist der letzte Eintrag und bleibt bestehen")
+            return self.hinweis(f"„{key}“ ist der letzte Eintrag und bleibt bestehen")
         self.merken(f"„{key}“ gelöscht")
         del mapping[key]
         self.refresh_all()
@@ -16990,7 +17037,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             sn = self._schwingung_aus_maske(w, vorlage)
         except ValueError as ex:
-            return self.error(f"Eingabe: {ex}")
+            return self.hinweis(f"Eingabe: {ex}")
         if sn.wasserdruck not in m.wasserdruecke:
             return self.error(f"Wasserdruck „{sn.wasserdruck}“ gibt es nicht")
         if alt and alt != sn.name and alt in m.schwingungen:
@@ -17182,11 +17229,11 @@ class MainWindow(QtWidgets.QMainWindow):
             n = self._naht_aus_maske(w, vorlage)
             kf = swn.kerbfall(n)
         except ValueError as ex:
-            return self.error(f"Eingabe: {ex}")
+            return self.hinweis(f"Eingabe: {ex}")
         if n.name != alt and n.name in m.schweissnaehte:
-            return self.error(f"Schweißnaht „{n.name}“ gibt es schon")
+            return self.hinweis(f"Schweißnaht „{n.name}“ gibt es schon")
         if not (n.staebe or n.linien or n.flaechen or n.aequivalent):
-            return self.error("Zuerst Stäbe, Linien oder Flächen wählen und „Auswahl übernehmen“ - "
+            return self.hinweis("Zuerst Stäbe, Linien oder Flächen wählen und „Auswahl übernehmen“ - "
                               "oder die Naht als äquivalente Ersatznaht für alle Stäbe kennzeichnen")
         self.merken(f"Schweißnaht {n.name}")
         if alt and alt != n.name and alt in m.schweissnaehte:
@@ -17249,7 +17296,7 @@ class MainWindow(QtWidgets.QMainWindow):
         key = self._tabellenschluessel(self.tbl_gzg)
         g = self.model.verformungsgrenzen.get(key) if key else None
         if g is None:
-            return self.error("Zuerst einen Nachweis in der Tabelle wählen")
+            return self.hinweis("Zuerst einen Nachweis in der Tabelle wählen")
         d = VerformungsgrenzeDialog(self, self.model, g)
         if not d.exec():
             return
@@ -17267,7 +17314,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def delete_verformungsgrenze(self):
         key = self._tabellenschluessel(self.tbl_gzg)
         if not key or key not in self.model.verformungsgrenzen:
-            return self.error("Zuerst einen Nachweis in der Tabelle wählen")
+            return self.hinweis("Zuerst einen Nachweis in der Tabelle wählen")
         self.merken(f"Verformungsnachweis {key} gelöscht")
         del self.model.verformungsgrenzen[key]
         self.info(f"Verformungsnachweis „{key}“ entfernt")
@@ -17305,7 +17352,7 @@ class MainWindow(QtWidgets.QMainWindow):
         key = self._tabellenschluessel(self.tbl_beul)
         bf = self.model.beulfelder.get(key) if key else None
         if bf is None:
-            return self.error("Zuerst ein Beulfeld in der Tabelle wählen")
+            return self.hinweis("Zuerst ein Beulfeld in der Tabelle wählen")
         d = BeulfeldDialog(self, self.model, bf)
         if not d.exec():
             return
@@ -17347,7 +17394,7 @@ class MainWindow(QtWidgets.QMainWindow):
         key = self._tabellenschluessel(self.tbl_le)
         le = self.model.lasteinleitungen.get(key) if key else None
         if le is None:
-            return self.error("Zuerst eine Stelle in der Tabelle wählen")
+            return self.hinweis("Zuerst eine Stelle in der Tabelle wählen")
         d = LasteinleitungDialog(self, self.model, le)
         if not d.exec():
             return
@@ -17365,7 +17412,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def delete_lasteinleitung(self):
         key = self._tabellenschluessel(self.tbl_le)
         if not key or key not in self.model.lasteinleitungen:
-            return self.error("Zuerst eine Stelle in der Tabelle wählen")
+            return self.hinweis("Zuerst eine Stelle in der Tabelle wählen")
         self.merken(f"Lasteinleitung {key} gelöscht")
         del self.model.lasteinleitungen[key]
         self.info(f"Lasteinleitung „{key}“ entfernt")
@@ -17400,7 +17447,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def delete_beulfeld(self):
         key = self._tabellenschluessel(self.tbl_beul)
         if not key or key not in self.model.beulfelder:
-            return self.error("Zuerst ein Beulfeld in der Tabelle wählen")
+            return self.hinweis("Zuerst ein Beulfeld in der Tabelle wählen")
         self.merken(f"Beulfeld {key} gelöscht")
         del self.model.beulfelder[key]
         self.info(f"Beulfeld „{key}“ entfernt")
@@ -17438,7 +17485,7 @@ class MainWindow(QtWidgets.QMainWindow):
         key = self._tabellenschluessel(self.tbl_vol)
         vb = self.model.volumenbereiche.get(key) if key else None
         if vb is None:
-            return self.error("Zuerst einen Volumenbereich in der Tabelle wählen")
+            return self.hinweis("Zuerst einen Volumenbereich in der Tabelle wählen")
         d = VolumenbereichDialog(self, self.model, vb)
         if d.exec() != QtWidgets.QDialog.Accepted:
             return
@@ -17456,7 +17503,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def delete_volumenbereich(self):
         key = self._tabellenschluessel(self.tbl_vol)
         if not key or key not in self.model.volumenbereiche:
-            return self.error("Zuerst einen Volumenbereich in der Tabelle wählen")
+            return self.hinweis("Zuerst einen Volumenbereich in der Tabelle wählen")
         self.merken(f"Volumenbereich {key} gelöscht")
         del self.model.volumenbereiche[key]
         self.info(f"Volumenbereich „{key}“ entfernt")
@@ -17911,7 +17958,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _querschnitt_anlegen(self, sec):
         """Ein Querschnitt aus der Maske kommt ins Modell."""
         if sec.name in self.model.sections:
-            return self.error(f"Querschnitt „{sec.name}“ gibt es schon - anderen Namen eingeben")
+            return self.hinweis(f"Querschnitt „{sec.name}“ gibt es schon - anderen Namen eingeben")
         self.merken(f"Querschnitt {sec.name}")
         self.model.add_section(sec)
         self.refresh_all()
@@ -18363,7 +18410,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             netz = self._netz_aus_maske(w)
         except (ValueError, TypeError) as ex:
-            return self.error(f"Eingabe: {ex}")
+            return self.hinweis(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
         self.model.netz = netz
         # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
@@ -18393,7 +18440,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _stabzug_erzeugen(self, w: dict):
         m = self.model
         if not m.materials or not m.sections:
-            return self.error("Werkstoff und Querschnitt anlegen")
+            return self.hinweis("Werkstoff und Querschnitt anlegen")
         self.merken("Stabzug")
         try:
             e0 = len(m.elements)
@@ -18429,7 +18476,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _platte_erzeugen(self, w: dict):
         m = self.model
         if not m.materials or not m.shells:
-            return self.error("Werkstoff und Schalendicke anlegen")
+            return self.hinweis("Werkstoff und Schalendicke anlegen")
         self.merken("Platte")
         e0 = len(m.elements)
         try:
@@ -18461,7 +18508,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _quader_erzeugen(self, w: dict):
         m = self.model
         if not m.materials:
-            return self.error("Werkstoff anlegen")
+            return self.hinweis("Werkstoff anlegen")
         self.merken("Quader")
         e0 = len(m.elements)
         try:
@@ -19156,7 +19203,7 @@ class MainWindow(QtWidgets.QMainWindow):
         kn = list(w.get("knoten") or [])
         noetig = {"polyline": 2, "arc": 3, "circle": 1, "spline": 3, "parabola": 2}[art]
         if len(kn) < noetig:
-            return self.error(f"{noetig} Knoten in der Ansicht anklicken")
+            return self.hinweis(f"{noetig} Knoten in der Ansicht anklicken")
         self.merken(f"Linie ({art})")
         name = f"L{len(self.model.lines) + 1}"
         teilung = max(int(w.get("teilung") or 8), 1)
@@ -19253,7 +19300,7 @@ class MainWindow(QtWidgets.QMainWindow):
         kn = w["knoten"]
         n = 4 if w.get("vier") else 3
         if len(kn) < n:
-            return self.error(f"{n} Knoten in der Ansicht anklicken")
+            return self.hinweis(f"{n} Knoten in der Ansicht anklicken")
         self.merken("Schale angelegt")
         self.model.add_element("shell4" if n == 4 else "shell3", kn[:n],
                                w["mat"], w["dicke"])
@@ -19274,10 +19321,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _maske_lager_setzen(self, w: dict):
         if not len(self.selection):
-            return self.error("Zuerst Knoten in der Ansicht wählen")
+            return self.hinweis("Zuerst Knoten in der Ansicht wählen")
         dofs = [i for i in range(6) if w.get(f"d{i}")]
         if not dofs:
-            return self.error("Kein Freiheitsgrad angekreuzt")
+            return self.hinweis("Kein Freiheitsgrad angekreuzt")
         self.merken(f"Lager an {len(self.selection)} Knoten")
         for i in self.selection:
             self.model.support(int(i), dofs)
@@ -19313,10 +19360,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _maske_last_aufbringen(self, w: dict):
         if not len(self.selection):
-            return self.error("Zuerst Knoten in der Ansicht wählen")
+            return self.hinweis("Zuerst Knoten in der Ansicht wählen")
         werte = {k: w.get(k, 0.0) * 1e3 for k in ("Fx", "Fy", "Fz", "Mx", "My", "Mz")}
         if not any(werte.values()):
-            return self.error("Alle Werte sind null")
+            return self.hinweis("Alle Werte sind null")
         self.merken(f"Knotenlast auf {len(self.selection)} Knoten")
         for i in self.selection:
             self.model.load_node(int(i), case=w.get("fall") or None, **werte)
@@ -19355,11 +19402,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ziele = [(n, "stab") for n in self.sel_staebe if n in m.members] \
             + [(n, "koerper") for n in self.sel_koerper if n in m.koerper]
         if not ziele:
-            return self.error("Zuerst Stäbe oder Volumen in der Ansicht wählen "
+            return self.hinweis("Zuerst Stäbe oder Volumen in der Ansicht wählen "
                               "(Auswahlart „Stab“ oder „Volumen“)")
         F = float(w.get("F", 0.0) or 0.0) * 1e3
         if not F:
-            return self.error("Die Vorspannkraft ist null")
+            return self.hinweis("Die Vorspannkraft ist null")
         achse = {"global x": [1.0, 0.0, 0.0], "global y": [0.0, 1.0, 0.0],
                  "global z": [0.0, 0.0, 1.0]}.get(str(w.get("achse", "")))
         fall = w.get("fall") or None
@@ -19464,10 +19511,10 @@ class MainWindow(QtWidgets.QMainWindow):
         except ValueError:
             spalt = 0.0
         if spalt <= 0:
-            return self.error("Spalt größer als null eintragen")
+            return self.hinweis("Spalt größer als null eintragen")
         z = sp.zylinder(m, name)
         if not z.get("ok"):
-            return self.error(f"{name} ist kein Zylinder: {z.get('grund', '')}")
+            return self.hinweis(f"{name} ist kein Zylinder: {z.get('grund', '')}")
         wohin = str(w.get("wohin", "") or self.SPALT_WOHIN[0])
         am_zylinder = spalt if wohin == self.SPALT_WOHIN[1] else (0.0 if wohin == self.SPALT_WOHIN[2] else spalt / 2)
         an_bohrung = spalt - am_zylinder
@@ -19562,9 +19609,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except ValueError:
             spiel = 0.0
         if spiel <= 0:
-            return self.error("Spiel größer als null eintragen")
+            return self.hinweis("Spiel größer als null eintragen")
         if not zyl and not flaechen:
-            return self.error("Keine Zylinder und keine Flächen in der Auswahl")
+            return self.hinweis("Keine Zylinder und keine Flächen in der Auswahl")
         self.merken(f"Spiel {zl.zahl_text(spiel * 1e3, punkt=True)} mm")
         log: list = []
         betroffen: list = []
@@ -19691,7 +19738,7 @@ class MainWindow(QtWidgets.QMainWindow):
         koerper = [k for k in (self.sel_koerper or []) if k in m.koerper]
         kontakte = self._passung_kontakte(koerper)
         if not kontakte:
-            return self.error("Keine Kontaktfuge zu den gewählten Volumen")
+            return self.hinweis("Keine Kontaktfuge zu den gewählten Volumen")
 
         def zahl(key):
             try:
@@ -19708,7 +19755,7 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 mu = max(0.0, zl.feldwert(w.get("mu")))
             except ValueError:
-                return self.error(f"Reibbeiwert μ: „{mu_text}“ ist keine Zahl (leer lassen heißt unverändert)")
+                return self.hinweis(f"Reibbeiwert μ: „{mu_text}“ ist keine Zahl (leer lassen heißt unverändert)")
         # Passung aus den Abmassen: Spiel (Fugeneigenschaft) oder Uebermass (Last)
         abmasse = [zahl(k) * 1e-6 for k in ("es", "ei", "ES", "EI")]
         uebermass = 0.0
@@ -19728,7 +19775,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if warnung:
                     self.log.appendPlainText("Passung: " + warnung)
         elif wahl and wahl != self.PASSUNG_KEINE:
-            return self.error("Passung gewählt, aber keine Abmaße eingetragen - das Programm bringt "
+            return self.hinweis("Passung gewählt, aber keine Abmaße eingetragen - das Programm bringt "
                               "keine Abmaßtabelle mit, die vier Werte stehen auf der Zeichnung")
         self.merken(f"Passung an {len(kontakte)} Kontaktfugen")
         # Eine ausgefuehrte Fuge muss zurueckgenommen werden, sonst behaelt ihr
@@ -19844,9 +19891,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(pss.text(*abmasse,
                                               kurzzeichen=str(w.get("passmass", "") or "")))
         if not ue:
-            return self.error("Weder eine Gesamtüberdeckung noch Abmaße eingetragen")
+            return self.hinweis("Weder eine Gesamtüberdeckung noch Abmaße eingetragen")
         if ue < 0:
-            return self.error(f"Das ist Spiel, kein Übermaß ({zl.zahl_text(ue * 1e6, stellen=3)} µm) - "
+            return self.hinweis(f"Das ist Spiel, kein Übermaß ({zl.zahl_text(ue * 1e6, stellen=3)} µm) - "
                               "die Fuge bliebe offen")
         fall = w.get("fall") or None
         self.merken("Übermaß")
@@ -19884,13 +19931,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _linienlast_aufbringen(self, w: dict):
         ziele = [(n, "stab") for n in self.sel_staebe] + [(n, "linie") for n in self.sel_linien]
         if not ziele:
-            return self.error("Zuerst Stäbe oder Linien in der Ansicht wählen "
+            return self.hinweis("Zuerst Stäbe oder Linien in der Ansicht wählen "
                               "(Auswahlart „Stab“ oder „Linie“)")
         q = [float(w.get(k, 0.0) or 0.0) * 1e3 for k in ("qx", "qy", "qz")]
         q2 = ([float(w.get(k, 0.0) or 0.0) * 1e3 for k in ("q2x", "q2y", "q2z")]
               if w.get("trapez") else None)
         if not any(q) and not (q2 and any(q2)):
-            return self.error("Alle Werte sind null")
+            return self.hinweis("Alle Werte sind null")
         von = float(w.get("von", 0.0) or 0.0)
         bis = float(w.get("bis", 0.0) or 0.0) or None
         system = "local" if str(w.get("system", "")).startswith("lokal") else "global"
@@ -19939,7 +19986,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _flaechenlast_aufbringen(self, w: dict):
         ziele = [(n, "flaeche") for n in self.sel_flaechen] + [(n, "koerper") for n in self.sel_koerper]
         if not ziele:
-            return self.error("Zuerst Flächen oder Volumen in der Ansicht wählen "
+            return self.hinweis("Zuerst Flächen oder Volumen in der Ansicht wählen "
                               "(Auswahlart „Fläche“ oder „Volumen“)")
         p = float(w.get("p", 0.0) or 0.0) * 1e3
         richtung = self.LASTRICHTUNG_VEKTOR.get(str(w.get("richtung", "")))
@@ -19948,12 +19995,12 @@ class MainWindow(QtWidgets.QMainWindow):
             A = [float(w.get(k, 0.0) or 0.0) for k in ("ax", "ay", "az")]
             B = [float(w.get(k, 0.0) or 0.0) for k in ("bx", "by", "bz")]
             if np.allclose(A, B):
-                return self.error("Die Punkte A und B liegen aufeinander - so gibt es "
+                return self.hinweis("Die Punkte A und B liegen aufeinander - so gibt es "
                                   "keinen Verlauf")
             verlauf = {"art": "linear",
                        "punkte": [[*A, p], [*B, float(w.get("p2", 0.0) or 0.0) * 1e3]]}
         elif not p:
-            return self.error("p ist null")
+            return self.hinweis("p ist null")
         fall = w.get("fall") or None
         self.merken("Flächenlast")
         for name, art in ziele:
@@ -20319,11 +20366,11 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             wd = self._wind_aus_maske(w, vorlage)
         except ValueError as ex:
-            return self.error(f"Eingabe: {ex}")
+            return self.hinweis(f"Eingabe: {ex}")
         if not (wd.flaechen or wd.freie_waende or wd.schilder or wd.staebe):
-            return self.error("Zuerst Wände/Dach oder Stäbe in der Ansicht wählen und „Auswahl übernehmen“")
+            return self.hinweis("Zuerst Wände/Dach oder Stäbe in der Ansicht wählen und „Auswahl übernehmen“")
         if wd.name != alt and wd.name in m.winde:
-            return self.error(f"Wind „{wd.name}“ gibt es schon")
+            return self.hinweis(f"Wind „{wd.name}“ gibt es schon")
         self.merken(f"Wind {wd.name}")
         schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         from .. import stroemung as strm
@@ -20436,12 +20483,12 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             wd = self._wasserdruck_aus_maske(w, vorlage)
         except ValueError as ex:
-            return self.error(f"Eingabe: {ex}")
+            return self.hinweis(f"Eingabe: {ex}")
         if not (wd.flaechen or wd.koerper):
-            return self.error("Zuerst die benetzten Flächen (oder Volumen) in der Ansicht wählen "
+            return self.hinweis("Zuerst die benetzten Flächen (oder Volumen) in der Ansicht wählen "
                               "und „Auswahl übernehmen“")
         if wd.name != alt and wd.name in m.wasserdruecke:
-            return self.error(f"Wasserdruck „{wd.name}“ gibt es schon")
+            return self.hinweis(f"Wasserdruck „{wd.name}“ gibt es schon")
         self.merken(f"Wasserdruck {wd.name}")
         schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         from .. import stroemung as strm
@@ -20509,7 +20556,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dT = float(w.get("dT", 0.0) or 0.0)
         dTz = float(w.get("dTz", 0.0) or 0.0)
         if not dT and not dTz:
-            return self.error("ΔT ist null")
+            return self.hinweis("ΔT ist null")
         fall = w.get("fall") or None
         m = self.model
         n_el = 0
@@ -20536,7 +20583,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     dT_z=dTz, case=fall)
                 objekte += 1
             if not objekte:
-                return self.error("Zuerst Stäbe, Flächen oder Volumen wählen - oder "
+                return self.hinweis("Zuerst Stäbe, Flächen oder Volumen wählen - oder "
                                   "„alle Elemente“ ankreuzen")
             n_el += m.lasten_verteilen()
         self.analysis = None
@@ -20564,11 +20611,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _zwangsverformung_aufbringen(self, w: dict):
         if not len(self.selection):
-            return self.error("Zuerst Knoten in der Ansicht wählen")
+            return self.hinweis("Zuerst Knoten in der Ansicht wählen")
         werte = [float(w.get(k, 0.0) or 0.0) * 1e-3 for k in ("ux", "uy", "uz", "px", "py", "pz")]
         dofs = [d for d, v in enumerate(werte) if v]
         if not dofs:
-            return self.error("Alle Werte sind null")
+            return self.hinweis("Alle Werte sind null")
         fall = w.get("fall") or None
         m = self.model
         self.merken("Zwangsverformung")
@@ -20791,7 +20838,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"Gelenk „{name}“ gibt es nicht mehr")
         els = self._gelenk_ziele(m.hinges[name])
         if not els:
-            return self.error("Zuerst die Stäbe in der Ansicht wählen (Auswahlart Stab, oder alle Knoten der "
+            return self.hinweis("Zuerst die Stäbe in der Ansicht wählen (Auswahlart Stab, oder alle Knoten der "
                               "Stabelemente, die das Gelenk bekommen sollen)")
         self.merken(f"Gelenk {name} an {len(els)} Stabelementen")
         for i in els:
@@ -20987,7 +21034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die vordere Tabelle ausgeben - immer nur das, was der Filter zeigt."""
         t = self.aktive_tabelle()
         if t is None:
-            return self.error("Unten liegt gerade keine Tabelle vorn")
+            return self.hinweis("Unten liegt gerade keine Tabelle vorn")
         if hasattr(t, "nachholen"):
             t.nachholen()
         if art == "clip":
@@ -21001,7 +21048,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def tabelle_filter_leeren(self):
         t = self.aktive_tabelle()
         if t is None:
-            return self.error("Unten liegt gerade keine Tabelle vorn")
+            return self.hinweis("Unten liegt gerade keine Tabelle vorn")
         t.filter_leeren()
 
     def tabelle_zeigen(self, name: str) -> bool:
@@ -21183,7 +21230,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Den in der Tabelle gewaehlten Anschluss entfernen."""
         key = self._tabellenschluessel(self.tbl_joint)
         if key is None or key not in self.model.joints:
-            return self.error("Zuerst einen Anschluss in der Tabelle wählen")
+            return self.hinweis("Zuerst einen Anschluss in der Tabelle wählen")
         self.merken(f"Anschluss {key} gelöscht")
         del self.model.joints[key]
         self.info(f"Anschluss „{key}“ entfernt")
@@ -25070,7 +25117,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"Schnittebene: {ex}")
         ln = float(np.linalg.norm(n))
         if not np.isfinite(ln) or ln < 1e-12:
-            return self.error("Die Normale darf nicht der Nullvektor sein")
+            return self.hinweis("Die Normale darf nicht der Nullvektor sein")
         n = n / ln
         frei["normale"] = tuple(float(x) for x in n)
         frei["ursprung"] = tuple(float(x) for x in o)
@@ -25526,7 +25573,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return liste[i]
         if len(liste) == 1:
             return liste[0]
-        self.error("Zuerst eine Unterlage in der Tabelle „Unterlagen“ markieren "
+        self.hinweis("Zuerst eine Unterlage in der Tabelle „Unterlagen“ markieren "
                    "(Ribbon Unterlagen → Unterlagen zeigen)")
         return None
 
@@ -25971,7 +26018,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def layer_auswahl_hinzufuegen(self, name: str) -> None:
         L = self.model.layer.get(name)
         if L is None or not self._auswahl_vorhanden():
-            return self.error("Zuerst in der Ansicht auswählen, was in den Layer soll")
+            return self.hinweis("Zuerst in der Ansicht auswählen, was in den Layer soll")
         self.merken(f"Layer {name} ergänzt")
         self.model.layer_ergaenzen(L, **self._auswahl_als_layer())
         self._layer_geaendert(f"Layer „{name}“: {L.bezug()}")
@@ -25979,7 +26026,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def layer_auswahl_entfernen(self, name: str) -> None:
         L = self.model.layer.get(name)
         if L is None or not self._auswahl_vorhanden():
-            return self.error("Zuerst in der Ansicht auswählen, was aus dem Layer soll")
+            return self.hinweis("Zuerst in der Ansicht auswählen, was aus dem Layer soll")
         self.merken(f"Layer {name} verkleinert")
         self.model.layer_entfernen(L, **self._auswahl_als_layer())
         self._layer_geaendert(f"Layer „{name}“: {L.bezug()}")
@@ -26018,7 +26065,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if alt not in m.layer or not neu:
             return False
         if neu in m.layer:
-            self.error(f"Layer „{neu}“ gibt es schon")
+            self.hinweis(f"Layer „{neu}“ gibt es schon")
             return False
         self.merken(f"Layer {alt} umbenannt")
         L = m.layer.pop(alt)

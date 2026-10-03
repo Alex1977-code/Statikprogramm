@@ -3516,6 +3516,47 @@ Eingaben waren weg. Die Einzeltasten wurden mit einer Meldung in der
 Statuszeile abgewiesen, und nach einer Rechnung blieb die Maske mit einer
 Zeile im Protokoll stehen, ohne dass man von dort weiterkam.
 
+### Hinweis oder Fehler (seit 03.10.2026)
+
+Das Programm meldet sich auf zwei Arten. Ein **Hinweis** sagt, was man anders
+machen soll: Es fehlt eine Auswahl („Zuerst Knoten in der Ansicht wählen“),
+eine Eingabe ist ungültig („Spiel größer als null eintragen“), ein Name ist
+schon vergeben („Lastfall „S“ gibt es schon“), oder in einer Tabelle ist keine
+Zeile gewählt („Zuerst eine Zeile wählen“). Ein Hinweis öffnet kein Fenster.
+Er steht an drei Stellen zugleich: gelb hinterlegt in der Statuszeile als
+„Hinweis: …“, bis eine andere Meldung kommt oder nach 15 Sekunden; gelb in der
+Meldungszeile über den Knöpfen der offenen Maske; und im Protokoll als Zeile,
+die mit „HINWEIS:“ beginnt. Diese Zeile bleibt im Protokoll schwarz, rot sind
+dort nur FEHLER-Zeilen. Die Maske bleibt mit allen Eingaben offen: Man
+verbessert die Eingabe und drückt noch einmal „Übernehmen“. Das nächste
+Übernehmen oder eine Änderung an einem Zahlenfeld nimmt den Hinweis aus der
+Meldungszeile wieder weg.
+
+Ein **Fehler** deutet auf ein Problem im Programm oder in den Daten: eine
+Ausnahme, eine Datei, die sich nicht lesen oder schreiben lässt, eine
+gescheiterte Rechnung. Er erscheint weiter im roten Fenster „Fehler“, das man
+wegklicken muss, und im Protokoll als FEHLER-Zeile. Während einer Rechnung
+öffnet auch ein Fehler kein Fenster; er steht dann im Protokoll und in der
+Statuszeile.
+
+Ein Hinweis beim Übernehmen zählt wie ein Fehler: Das Übernehmen ist
+gescheitert. Steht gerade die Leiste „… hat nicht übernommene Änderungen“,
+bleiben Maske, Punkt im Titel und Leiste stehen, und was man wollte, wartet
+weiter. Hatte das Übernehmen schon etwas geschrieben, ist das Modell danach
+wieder so wie zu Beginn.
+
+Hinweise ohne Fenster geben seit dem 03.10.2026 die Masken am rechten Rand
+(etwa Knoten, Linie, Lager, Knoten-, Linien- und Flächenlast, Lastfall,
+Kombination, Werkstoff, Querschnitt, Gelenk, Kontaktbedingung, Stellung,
+Situation, Subsystem, Wind, Wasserdruck, Spalt, Spiel, Passung, Übermaß,
+Schweißnaht, Netzeinstellungen) und die Knöpfe an den Tabellen (Löschen,
+Ändern, Entfernen ohne gewählte Zeile, die Layerliste). Bis zum 03.10.2026 kam
+jede dieser Meldungen im roten Fenster „Fehler“, und man musste es
+wegklicken, bevor man die Eingabe verbessern konnte. Befehle, die ohne
+passende Auswahl gar keine Maske öffnen (etwa *Lot* ohne gewählte Knoten),
+und Meldungen nach einem schon geschlossenen Dialog kommen vorerst weiter im
+Fenster; sie folgen in einem späteren Schritt.
+
 ### Zahlen eingeben (seit 24.09.2026)
 
 Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere

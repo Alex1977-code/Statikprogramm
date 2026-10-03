@@ -494,7 +494,10 @@ def _fenster():
     w.show()
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
-    w.error = lambda msg: FEHLER.append(str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, FEHLER)
     _FENSTER.update(w=w, app=app)
     return w, app
 

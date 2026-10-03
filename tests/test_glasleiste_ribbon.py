@@ -97,7 +97,10 @@ def _fenster():
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
     fehler = []
-    w.error = lambda *a, **k: fehler.append(" ".join(str(x) for x in a)[:120])
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, fehler)
     mb = QtWidgets.QMessageBox
     for name in ("critical", "warning", "information"):
         setattr(mb, name, staticmethod(lambda *a, **k: mb.StandardButton.Ok))

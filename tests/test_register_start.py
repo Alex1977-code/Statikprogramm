@@ -127,7 +127,10 @@ def _fenster():
     # Rückfragen und Meldungen nie auf dem Bildschirm stehen lassen
     w._fragen_knoepfe = lambda *a, **k: True
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: w.fehler_liste.append(str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste)
     mb = QtWidgets.QMessageBox
     for name in ("critical", "warning", "information"):
         setattr(mb, name, staticmethod(lambda *a, **k: mb.StandardButton.Ok))

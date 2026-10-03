@@ -46,7 +46,10 @@ def _fenster():
     w.show()
     app.processEvents()
     w.fehler_liste = []
-    w.error = lambda msg: (w.fehler_liste.append(str(msg)), w.log.appendPlainText("FEHLER: " + str(msg)))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste, protokoll=True)
     _FENSTER.update(w=w, app=app)
     return w, app
 
@@ -160,9 +163,11 @@ def test_gelenk_zuweisen():
     w._objektmaske("gelenk", "G1"); app.processEvents()
     n_f = len(w.fehler_liste)
     w.maskenrand.maske.zusatzknoepfe["Auf gewählte Stäbe setzen"].click(); app.processEvents()
+    # seit 9b ein Hinweis (ohne Fenster), kein Fehler
     check("F2 ohne Auswahl: Hinweis, nichts gesetzt",
-          len(w.fehler_liste) == n_f + 1 and "wählen" in w.fehler_liste[-1] and not w.model.elements[0].hinges,
-          str(w.fehler_liste[-1:]))
+          len(w.fehler_liste) == n_f + 1 and w.meldungen.zuletzt_hinweis("wählen")
+          and not w.model.elements[0].hinges,
+          str(w.meldungen.eintraege[-1:]))
 
 
 def test_verbindungszweige():

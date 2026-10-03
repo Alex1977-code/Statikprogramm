@@ -386,9 +386,9 @@ class Maske(QtWidgets.QFrame):
     geaendert_gemeldet = QtCore.Signal(bool)
     #: Rahmen des Fensters um ein „Übernehmen“ (setzt das Fenster beim Zeigen):
     #: lauf(rufen, maske) ruft rufen() - das ruft die Empfaenger und liefert eine
-    #: Ausnahme oder None - und sagt, ob es gelang (keine Fehlermeldung, keine
-    #: Ablehnung, keine Ausnahme). Ohne Fenster gelingt jedes „Übernehmen“ ohne
-    #: Ausnahme.
+    #: Ausnahme oder None - und sagt, ob es gelang (keine Fehlermeldung, kein
+    #: Hinweis, keine Ablehnung, keine Ausnahme). Ohne Fenster gelingt jedes
+    #: „Übernehmen“ ohne Ausnahme.
     uebernahme_lauf = None
     #: Ein Feld hat die Tastatur bekommen (Name des Feldes). Das Fenster
     #: schaltet darueber die Auswahl per Maus auf dieses Feld („bei Klick in
@@ -860,6 +860,13 @@ class Maske(QtWidgets.QFrame):
 
     def _zahlmeldung_setzen(self, text: str, farbe: str = None) -> None:
         zf.meldungszeile_setzen(self.lbl_zahlmeldung, text, farbe)
+
+    def hinweis_zeigen(self, text: str) -> None:
+        """Ein Bedienhinweis des Fensters (hinweis(), Paket 9b, 03.10.2026) in
+        der Meldungszeile ueber den Knoepfen - gelb wie eine mehrdeutige Zahl,
+        dort, wo man nach „Übernehmen“ hinsieht. Das naechste „Übernehmen“ oder
+        eine Aenderung an einem Zahlenfeld nimmt ihn wieder weg."""
+        self._zahlmeldung_setzen(str(text), zf.GELB)
 
     def setzen(self, name: str, wert):
         w = self._felder.get(name)

@@ -65,7 +65,10 @@ def _fenster():
     w = MainWindow()
     w.show()
     app.processEvents()
-    w.error = lambda msg: w.log.appendPlainText("FEHLER: " + str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, protokoll=True)
     _FENSTER.update(w=w, app=app)
     return w, app
 

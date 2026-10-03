@@ -217,7 +217,10 @@ def _fenster():
     w._fragen_knoepfe = lambda *a, **k: True
     # ein Fehlerfenster wuerde die Pruefung anhalten - es wird mitgeschrieben
     w._fehler = []
-    w.error = lambda msg, *a, **k: w._fehler.append(str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w._fehler)
     _FENSTER.update(w=w, app=app)
     return w, app
 

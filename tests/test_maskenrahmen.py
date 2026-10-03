@@ -489,7 +489,10 @@ def _fenster():
     # Offscreen haelt ein modales Meldungsfenster den Lauf an: Fehler nur
     # mitschreiben (eine Maske, die mit einer Meldung abbricht, zaehlt dann
     # als „ohne Maske“)
-    w.error = lambda *a, **k: _FEHLER.append(" ".join(str(x) for x in a)[:120])
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, _FEHLER)
     from PySide6 import QtWidgets
     mb = QtWidgets.QMessageBox
     for name in ("critical", "warning", "information"):

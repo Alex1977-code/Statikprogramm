@@ -160,6 +160,9 @@ def main():
     from statik3d import solver
     from statik3d.gui.main import MainWindow, FIELDS, DIAGRAMS
     from statik3d.gui import dialogs as dg
+    # Fehler und Hinweise gemeinsam abfangen (Paket 9b): abfangen(w, liste) gibt
+    # beide Arten in die Liste, getrennt auswertbar am zurueckgegebenen Objekt
+    from tests.meldungen import abfangen
     from statik3d.model import Model
     # Gespeicherte Einstellungen (Loeser, Threads, Nachladen) in eine
     # Wegwerfdatei - die Pruefung darf die des Anwenders nicht ueberschreiben
@@ -1768,7 +1771,7 @@ def main():
     try:
         from statik3d.gui import viewport as vpg
         w.new_model()
-        w.error = lambda msg: check("Geometrie: unerwarteter Fehler", False, str(msg)[:60])
+        abfangen(w, rufen=lambda art, msg: check("Geometrie: unerwarteter Fehler", False, f"{art}: {str(msg)[:60]}"))   # Fehler und Hinweise (9b)
         mg = w.model
         mg.netz.teilung_uebersteuern = False     # die Teilung der Flächen gilt hier
         mg.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0.]]))
@@ -2109,7 +2112,7 @@ def main():
               f"{g3.bounds[1] - g3.bounds[0]:.3f} / {b0[1] - b0[0]:.3f} m")
         # Eine berandende Fläche darf nicht einfach weg
         gemeldet = []
-        w.error = lambda msg: gemeldet.append(str(msg))
+        abfangen(w, gemeldet)   # Fehler und Hinweise (9b)
         w.tbl_geoflaeche.view.selectRow(0)
         w._geometrie_loeschen(w.tbl_geoflaeche, mv2.flaechen)
         check("berandende Fläche wird nicht gelöscht",
@@ -2176,8 +2179,7 @@ def main():
 
     # ---- Ergebnisse neben der Modelldatei (12.09.2026) -----------------------
     try:
-        _alt_error = w.error
-        w.error = lambda msg: check("Ergebnisdatei: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
+        abf_d = abfangen(w, rufen=lambda art, msg: check("Ergebnisdatei: unerwarteter Fehler (Dialog)", False, f"{art}: {str(msg)[:90]}"))   # Fehler und Hinweise (9b)
         import tempfile as _tf2
         from statik3d import ergebnisse as _erg
         w.load_example("frame"); app.processEvents()
@@ -2205,12 +2207,11 @@ def main():
         traceback.print_exc()
         check("Ergebnisse neben der Modelldatei", False, str(ex)[:80])
     finally:
-        w.error = _alt_error
+        abf_d.zurueck()
 
     # ---- Werte im Bild und Sonde (12.09.2026) --------------------------------
     try:
-        _alt_error = w.error
-        w.error = lambda msg: check("Werte im Bild: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
+        abf_d = abfangen(w, rufen=lambda art, msg: check("Werte im Bild: unerwarteter Fehler (Dialog)", False, f"{art}: {str(msg)[:90]}"))   # Fehler und Hinweise (9b)
         from statik3d.gui import viewport as vpw
         w.load_example("hall"); app.processEvents()
         an = solver.solve_all(w.model, design=True); w._solve_done("all", an); app.processEvents()
@@ -2289,12 +2290,11 @@ def main():
         traceback.print_exc()
         check("Werte im Bild und Sonde", False, str(ex)[:80])
     finally:
-        w.error = _alt_error
+        abf_d.zurueck()
 
     # ---- Spannungen im Modellbaum und Werteskala (12.09.2026) ----------------
     try:
-        _alt_error = w.error
-        w.error = lambda msg: check("Spannungen: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
+        abf_d = abfangen(w, rufen=lambda art, msg: check("Spannungen: unerwarteter Fehler (Dialog)", False, f"{art}: {str(msg)[:90]}"))   # Fehler und Hinweise (9b)
         from statik3d import spannungen as spn
         from statik3d.model import Model as _Mdl
         from statik3d.gui import viewport as vpx
@@ -2484,11 +2484,11 @@ def main():
         traceback.print_exc()
         check("Spannungen und Werteskala", False, str(ex)[:80])
     finally:
-        w.error = _alt_error
+        abf_d.zurueck()
 
     # ---- Ergebnisse im Modellbaum und Übernahme in den Bericht -------------
     try:
-        w.error = lambda msg: check("Bericht: unerwarteter Fehler", False, str(msg)[:60])
+        abfangen(w, rufen=lambda art, msg: check("Bericht: unerwarteter Fehler", False, f"{art}: {str(msg)[:60]}"))   # Fehler und Hinweise (9b)
         w.load_example("hall")
         an = solver.solve_all(w.model, design=True)
         w._solve_done("all", an)
@@ -2599,7 +2599,7 @@ def main():
     # ---- Lasten, Fang, Glasleiste, Masken rechts --------------------------
     try:
         from statik3d.gui import viewport as vpl
-        w.error = lambda msg: check("Ansicht: unerwarteter Fehler", False, str(msg)[:60])
+        abfangen(w, rufen=lambda art, msg: check("Ansicht: unerwarteter Fehler", False, f"{art}: {str(msg)[:60]}"))   # Fehler und Hinweise (9b)
         w.load_example("hall")
         app.processEvents()
         ml = w.model
@@ -2646,8 +2646,7 @@ def main():
             check("Beispiel hat Stablasten für den Unterpunkt-Test", False)
         # Vorspannung als Last (#131): Maske, Lastfall-Unterpunkt, Tabelle, Ansicht
         fehler_v = []
-        alt_error_v = w.error
-        w.error = lambda text: fehler_v.append(str(text))
+        abf_v = abfangen(w, fehler_v)   # Fehler und Hinweise (9b)
         check("Ribbon Lasten hat „Vorspannung“",
               any(b.register == "Lasten" and b.text == "Vorspannung" for b in w.ribbon.befehle))
         w.maske_vorspannung()
@@ -2658,7 +2657,7 @@ def main():
               str(mk_.werte() if mk_ else None)[:120])
         mk_.anwenden()
         app.processEvents()
-        check("Vorspannung ohne Auswahl: Hinweis", bool(fehler_v) and "wählen" in fehler_v[-1], str(fehler_v[-1:]))
+        check("Vorspannung ohne Auswahl: Hinweis", abf_v.zuletzt_hinweis("wählen"), str(abf_v.eintraege[-1:]))
         stab_ = next(iter(ml.members))
         w.sel_staebe = [stab_]
         mk_.setzen("F", 150.0)
@@ -2689,14 +2688,13 @@ def main():
         check("Vorspannung überlebt Speichern und Laden",
               len(fr_.case().vorspannungen) == 1 and fr_.case().vorspannungen[0].kommentar == "Zugstange")
         lc_.vorspannungen.clear()
-        w.error = alt_error_v
+        abf_v.zurueck()
         w.clear_selection()
         w.refresh_all()
         app.processEvents()
         # Lasten anklicken (#130): Auswahlart „Last“, Maske je Last, ändern, verschieben, löschen
         fehler_l = []
-        alt_error_l = w.error
-        w.error = lambda text: fehler_l.append(str(text))
+        abf_l = abfangen(w, fehler_l)   # Fehler und Hinweise (9b)
         hatte_best = "_bestaetigen" in w.__dict__
         w._bestaetigen = lambda text: True
         check("Auswahlart „Last“ in der Glasleiste", "Last" in w.AUSWAHLARTEN and "Last" in w.act_auswahlart)
@@ -2777,7 +2775,7 @@ def main():
         else:
             check("Beispiel hat Knotenlasten für den Klick-Test", False)
         w.auswahlart_setzen("Knoten")
-        w.error = alt_error_l
+        abf_l.zurueck()
         if not hatte_best:
             del w._bestaetigen
         w.clear_selection()
@@ -3064,10 +3062,9 @@ def main():
         w._baum_loeschen("knoten", str(n0))
         check("und den freien Knoten", m_.nn == n0)
         fehler = []
-        fehler_alt = w.error
-        w.error = lambda msg: fehler.append(str(msg))
+        abf_f = abfangen(w, fehler)   # Fehler und Hinweise (9b)
         w._baum_loeschen("knoten", "0")
-        w.error = fehler_alt
+        abf_f.zurueck()
         check("ein benutzter Knoten wird mit Grund abgewiesen", m_.nn == n0 and fehler
               and "benutzt" in fehler[0], str(fehler[:1]))
         # Entf-Taste im Baum loescht den gewaehlten Eintrag (mit Rueckfrage)
@@ -3241,11 +3238,10 @@ def main():
               isinstance(mk, pm.QuerschnittMaske) and f"{n0 + 1} Querschnitte" in mk.lbl_vorhanden.text(),
               mk.lbl_vorhanden.text() if mk else None)
         fehler = []
-        fehler_alt = w.error
-        w.error = lambda msg: fehler.append(str(msg))
+        abf_f = abfangen(w, fehler)   # Fehler und Hinweise (9b)
         mk.anwenden_norm()
-        w.error = fehler_alt
-        check("ein doppelter Name wird abgewiesen", bool(fehler) and "gibt es schon" in fehler[0])
+        abf_f.zurueck()
+        check("ein doppelter Name wird abgewiesen", abf_f.hinweis_mit("gibt es schon"), str(abf_f.eintraege[:1]))
         mk.cb_art.setCurrentText("T geschweißt")
         app.processEvents()
         check("Parameterprofil mit Vorschau und Wpl",
@@ -3300,9 +3296,9 @@ def main():
         app.processEvents()
         check("Baum: ein unbenutzter Querschnitt lässt sich löschen", "Frei" not in m_.sections)
         fehler = []
-        w.error = lambda msg: fehler.append(str(msg))
+        abfangen(w, fehler)   # Fehler und Hinweise (9b)
         w._baum_loeschen("querschnitt", "IPE 500")
-        w.error = fehler_alt
+        abf_f.zurueck()
         del w._bestaetigen
         check("Baum: ein benutzter Querschnitt wird mit Grund abgewiesen",
               "IPE 500" in m_.sections and bool(fehler) and "benutzt" in fehler[0], str(fehler[:1]))
@@ -3349,7 +3345,7 @@ def main():
         app.processEvents()
         check("Subsystem umbenennen", "Stiel A" in m_.subsysteme and "Stiel" not in m_.subsysteme)
         fehler = []
-        w.error = lambda msg: fehler.append(str(msg))
+        abfangen(w, fehler)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
         w._baum_loeschen("subsystem", GESAMT)
         check("Gesamtsystem lässt sich nicht löschen", bool(fehler) and "Gesamtsystem" in fehler[0])
@@ -3510,7 +3506,7 @@ def main():
         w._baum_loeschen("stellung", "hoch")
         check("eine freie Stellung lässt sich löschen", w.model.stellung("hoch") is None and len(fehler) == 2)
         m_ = w.model
-        w.error = fehler_alt
+        abf_f.zurueck()
         del w._bestaetigen
         check("Modellangaben nennen Subsysteme, Situationen, Stellungen",
               dict(w.modellangaben())["Situationen"] == "2" and dict(w.modellangaben())["Subsysteme"] == "2"
@@ -3859,8 +3855,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w.maske_schwingung()
         app.processEvents()
         check("Schwingung ohne Wasserdruck: Hinweis statt Maske", bool(fehler_) and "Wasserdruck" in fehler_[-1])
@@ -3904,7 +3899,7 @@ def main():
         check("Bericht: Kapitel Schwingungsnachweis mit drei Tabellen, Erläuterung und Frequenzbild",
               sum(1 for x in bl_ if x[0] == "table") == 3 and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
               and any(x[0] == "p" and "Westergaard" in x[1] for x in bl_), str([x[0] for x in bl_]))
-        w.error = alt_error
+        abf.zurueck()
 
         # ---- Klick in der Ansicht: Fangradius, Objekt unter dem Zeiger, Auswahlfenster ----
         from statik3d.model import Member as Mb
@@ -4016,8 +4011,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         check("Baum: Zweig Schweißnähte mit „+ Schweißnaht anlegen“",
               "Schweißnähte" in zweige(w.baum) and "+ Schweißnaht anlegen" in zweige(w.baum))
         w.sel_staebe = ["S1"]
@@ -4088,7 +4082,7 @@ def main():
         app.processEvents()
         check("Rückgängig: Knoten wieder da (Schnappschuss vor dem Löschen)", w.model.nn == nn0, str(w.model.nn))
         del w._bestaetigen
-        w.error = alt_error
+        abf.zurueck()
 
         # ---- Vor dem Rechnen: unvernetzte Geometrie und Teiltragwerke ohne Lager ----
         w.new_model()
@@ -4108,8 +4102,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         # Ein Teiltragwerk ohne Lager wird nicht mehr abgewiesen: das Programm
         # fragt, haelt die freien Bewegungen fest und weist danach aus, welche
         # Last in welcher Bewegung ins Nichts geht.
@@ -4160,7 +4153,7 @@ def main():
               w._vor_rechnung_vernetzen() is True and len(m_.flaechen["F1"].elemente or []) == 16
               and not [x for x in m_.check() if x.startswith("FEHLER")], str(len(m_.flaechen["F1"].elemente or [])))
         del w._fragen
-        w.error = alt_error
+        abf.zurueck()
 
         # ---- Messen und Bemaßen (Register Messen) ----
         w.new_model()
@@ -4179,8 +4172,7 @@ def main():
         w.zoom_alles()
         app.processEvents()
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
 
         def akteure():
             return list(w.plotter.renderer.actors)
@@ -4282,7 +4274,7 @@ def main():
         app.processEvents()
         check("„Alle Bemaßungen löschen“", not w.model.bemassungen and "bemassung" not in akteure())
         del w._bestaetigen
-        w.error = alt_error
+        abf.zurueck()
 
         # ---- Fortschrittsbalken beim Vernetzen, Abbrechen ----
         w.new_model()
@@ -4299,8 +4291,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
         werte_ = []
         alt_setvalue = w.progress_bar.setValue
@@ -4333,14 +4324,13 @@ def main():
               and not w.progress_bar.isVisible() and not w._abbruch, str(n_el))
         w.progress_bar.setValue = alt_setvalue
         del w._bestaetigen
-        w.error = alt_error
+        abf.zurueck()
 
         # ---- Rechts nur Modellinformation; Ribbon Netz: Vernetzen, Netzeinstellungen, Generator-Masken ----
         w.new_model()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
 
         def tab_():
@@ -4449,13 +4439,15 @@ def main():
         mk = w.maskenrand.maske
         mk.setzen("nachbessern", "MMG3D (nicht installiert)" if not da_["mmg3d"][1] else "keine")
         fehler_n = []
-        alt_error = w.error
-        w.error = lambda msg: fehler_n.append(str(msg))
+        abf = abfangen(w, fehler_n)   # Fehler und Hinweise (9b)
         mk.anwenden(); app.processEvents()
-        w.error = alt_error
+        abf.zurueck()
         check("eine nicht installierte Nachbesserung wird abgewiesen, das Modell bleibt",
-              (bool(fehler_n) and "nicht installiert" in fehler_n[0]) if not da_["mmg3d"][1] else not fehler_n,
+              abf.hinweis_mit("nicht installiert") if not da_["mmg3d"][1] else not fehler_n,
               str(fehler_n[:1]))
+        # Seit 9b zaehlt der Hinweis wie ein Fehler (Paket 13m): die abgewiesene
+        # Maske behaelt ihre Eingabe, das Beispiel danach hielte an der Leiste
+        w._leiste_weg(); w._maske_verwerfen(mk)
         # --- Stabmaske: Knoten, Laenge, Querschnitt mit Massen und Kennwerten, Werkstoff -----
         w.load_example("hall"); app.processEvents()          # Hallenrahmen: Staebe mit Nachweis
         ms_ = w.model
@@ -4876,14 +4868,13 @@ def main():
               and all(m_.elements[e].typ == "shell4" for e in f_.elemente),
               str((f_.teilung, len(f_.elemente))))
         del w._bestaetigen
-        w.error = alt_error
+        abf.zurueck()
 
         # ---- Lastwerte in der Ansicht; Kontextmenü der Auswahl mit Sammelmaske ----
         w.new_model()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
         mat_ = list(m_.materials)[0]
         sec_ = list(m_.sections)[0]
@@ -5020,7 +5011,7 @@ def main():
         w.maske_transformieren("verschieben"); app.processEvents()
         check("ohne Auswahl: Hinweis statt Maske", fehler_ and "Zuerst" in fehler_[-1], str(fehler_[-1:]))
         del w._bestaetigen
-        w.error = alt_error
+        abf.zurueck()
 
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
@@ -6211,12 +6202,11 @@ def main():
               f"{len(lc.linienlasten)} Linienlasten, {len(lc.beam_loads) - n0} Elementlasten")
         w.sel_staebe = []
         meldungen = []
-        fehler_alt = w.error
-        w.error = lambda msg: meldungen.append(str(msg))
+        abf_f = abfangen(w, meldungen)   # Fehler und Hinweise (9b)
         w._linienlast_aufbringen({"qz": -1.0, "fall": lc.name})
-        w.error = fehler_alt
+        abf_f.zurueck()
         check("ohne Auswahl sagt die Maske es (keine zweite Last)",
-              len(lc.linienlasten) == 1 and meldungen and "wählen" in meldungen[0])
+              len(lc.linienlasten) == 1 and abf_f.hinweis_mit("wählen"))
         w.sel_staebe = [stab]
         w._temperaturlast_aufbringen({"dT": 25.0, "dTz": 0.0, "alle": False, "fall": lc.name})
         n_t = len(lc.temp_loads)
@@ -6327,8 +6317,7 @@ def main():
         app.processEvents()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
         w._baum_geklickt("lastfall", "LF1")
         app.processEvents()
@@ -6371,7 +6360,11 @@ def main():
         mk.setzen("faktoren", "gibtsnicht: 1")
         mk.anwenden()
         app.processEvents()
-        check("unbekannter Lastfall in den Faktoren wird abgewiesen", fehler_ and "gibtsnicht" in fehler_[-1])
+        check("unbekannter Lastfall in den Faktoren wird abgewiesen", abf.zuletzt_hinweis("gibtsnicht"),
+              str(abf.eintraege[-1:]))
+        # Seit 9b zaehlt der Hinweis wie ein Fehler (Paket 13m): die abgewiesene
+        # Maske behaelt ihre Eingabe, der Klick auf den Werkstoff hielte an der Leiste
+        w._leiste_weg(); w._maske_verwerfen(mk)
         fehler_.clear()
         wname_ = list(m_.materials)[0]
         w._baum_geklickt("werkstoff", wname_)
@@ -6402,7 +6395,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         check("Kontextregister weg: refresh_all greift nicht auf gelöschte Felder zu", True)
-        w.error = alt_error
+        abf.zurueck()
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()
@@ -6416,8 +6409,7 @@ def main():
         w.new_model()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         mat_ = list(m_.materials)[0]
         m_.add_material(Mat_("S2"))
         t0_ = list(m_.shells)[0]
@@ -6476,7 +6468,7 @@ def main():
         w.undo()
         app.processEvents()
         check("Zelländerung ist rückgängig machbar", w.model.schweissnaehte["N1"].lage == "längs")
-        w.error = alt_error
+        abf.zurueck()
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()
@@ -6489,8 +6481,7 @@ def main():
         w.new_model()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         mat_, t0_, sec_ = list(m_.materials)[0], list(m_.shells)[0], list(m_.sections)[0]
         # Kette 0-1-2-3, an 3 Verzweigung nach 4 und 5; Ring 6-7-8-9 als Fläche F1
         P_ = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 1, 0), (4, -1, 0),
@@ -6592,7 +6583,7 @@ def main():
               len(w.model.flaechen["F1"].elemente) > 0 and not fehler_, str(fehler_[:1]))
         w.undo(); app.processEvents()
         check("Rückgängig nimmt das Netz wieder", not w.model.flaechen["F1"].elemente)
-        w.error = alt_error
+        abf.zurueck()
         w.new_model()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -6607,8 +6598,7 @@ def main():
         app.processEvents()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
         gruppen_ = list(dict.fromkeys(b.gruppe for b in w.ribbon.befehle if b.register == "Struktur"))
         texte_ = {(b.gruppe, b.text) for b in w.ribbon.befehle if b.register == "Struktur"}
@@ -6842,10 +6832,10 @@ def main():
         mk.setzen("mu", 0.3)
         mk.setzen("koerper_a", "Oben"); mk.setzen("koerper_b", "Unten"); mk.setzen("flaechennamen", "")
         mk.anwenden(); app.processEvents()
-        check("ohne Kontaktfläche: Hinweis statt Anlage", bool(fehler_) and "Kontaktfläche" in fehler_[-1] and not m_.kontaktbedingungen, str(fehler_[-1:]))
+        check("ohne Kontaktfläche: Hinweis statt Anlage", abf.zuletzt_hinweis("Kontaktfläche") and not m_.kontaktbedingungen, str(abf.eintraege[-1:]))
         mk = w.maskenrand.maske
         mk.setzen("flaechennamen", "FugeU"); mk.anwenden(); app.processEvents()
-        check("Fläche eines anderen Körpers: Hinweis", "gehören nicht zu Körper A" in fehler_[-1], str(fehler_[-1:]))
+        check("Fläche eines anderen Körpers: Hinweis", abf.zuletzt_hinweis("gehören nicht zu Körper A"), str(abf.eintraege[-1:]))
         mk = w.maskenrand.maske
         mk.setzen("flaechennamen", "FugeO")
         n_f = len(fehler_)
@@ -6951,7 +6941,7 @@ def main():
               fr.standard == "Verbund" and fr.gegenkoerper == ["Unten"] and fr.suchweite == 0.0 and fr.spalt_schliessen is False, fr.describe())
         w._baum_loeschen("kontaktbedingung", "KB1"); app.processEvents()
         check("Löschen im Modellbaum nimmt Bedingung und Kontaktpaar", "KB1" not in m_.kontaktbedingungen and not m_.contact_pairs, str(fehler_[n_f:]))
-        w.error = alt_error
+        abf.zurueck()
         del w._bestaetigen
         w.new_model()
     except Exception as ex:      # noqa: BLE001
@@ -6965,8 +6955,7 @@ def main():
         w.new_model()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w._bestaetigen = lambda text: True
         mat_, t_ = list(m_.materials)[0], list(m_.shells)[0]
         m_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [4, 0, 0], [6, 0, 0], [0, 2, 0], [2, 2, 0], [4, 2, 0], [6, 2, 0]], float))
@@ -7061,7 +7050,7 @@ def main():
         w._baum_loeschen("linienlager_einzeln", "0"); app.processEvents()
         check("Linienlager über den Baum gelöscht, Rückgängig holt es zurück",
               not w.model.line_supports and (w.undo() or True) and len(w.model.line_supports) == 1)
-        w.error = alt_error
+        abf.zurueck()
         del w._bestaetigen
         w.new_model()
     except Exception as ex:      # noqa: BLE001
@@ -7076,8 +7065,7 @@ def main():
         app.processEvents()
         m_ = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         n_alt = len(m_.load_cases)
         mk = w.maske_din19704_lastfaelle()
         app.processEvents()
@@ -7116,7 +7104,7 @@ def main():
                 os.remove(pfad_)
         check("Ribbon Bericht hat den Befehl „Lastenheft“",
               any(b.register == "Bericht" and b.text == "Lastenheft" for b in w.ribbon.befehle))
-        w.error = alt_error
+        abf.zurueck()
         w.new_model()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -7127,8 +7115,7 @@ def main():
     try:
         from statik3d.gui import masken as msk_
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         # A1: Elemente und Knoten löschen bei Stäben mit Nachweis - ohne IndexError, rücknehmbar
         w.load_example("hall")
         app.processEvents()
@@ -7307,7 +7294,7 @@ def main():
               bool(w.ribbon.finden("Tabelle Nachweise EC3")))
         check("Nachweise: Befehl „Volumenbereich“, Beispiel „Abhebendes Lager“",
               bool(w.ribbon.finden("Volumenbereich")) and bool(w.ribbon.finden("Abhebendes Lager")))
-        w.error = alt_error
+        abf.zurueck()
         w.new_model()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -7320,8 +7307,7 @@ def main():
         app.processEvents()
         mg = w.model
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         n6 = 6
         wk_ = np.arange(n6) * 2 * np.pi / n6
         ring_ = np.column_stack([np.cos(wk_), np.sin(wk_)])
@@ -7391,7 +7377,7 @@ def main():
               not k1_.elemente and not k2_.elemente and "abgebrochen" in w.log.toPlainText()
               and not w.progress_bar.isVisible() and not w._abbruch,
               str((len(k1_.elemente), len(k2_.elemente))))
-        w.error = alt_error
+        abf.zurueck()
         w.new_model()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -7513,14 +7499,13 @@ def main():
         alt_exec = dlg_.ReportDialog.exec
         dlg_.ReportDialog.exec = lambda self: 0
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda text: fehler_.append(str(text))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w.analysis = None
         w.results = None
         w.make_report()
         app.processEvents()
         dlg_.ReportDialog.exec = alt_exec
-        w.error = alt_error
+        abf.zurueck()
         check("Bericht ohne Berechnung: kein „Zuerst berechnen“, Dialog öffnet, Hinweis im Protokoll",
               not fehler_ and "Bericht ohne Berechnung" in w.log.toPlainText(), str(fehler_))
         from statik3d.report.html import Report as Rep_
@@ -8209,7 +8194,7 @@ def main():
               w.sel_flaechen == ["Boden"] and not w.sel_koerper,
               f"{w.sel_flaechen} / {w.sel_koerper}")
         gemeldet = []
-        w.error = lambda msg: gemeldet.append(str(msg))
+        abfangen(w, gemeldet)   # Fehler und Hinweise (9b)
         w.nur_auswahl_zeigen()
         check("und lässt sich isolieren statt „Erst etwas auswählen“",
               not gemeldet and "X1" in w.versteckt["linien"],
@@ -8768,13 +8753,14 @@ def main():
         # Der zweite Durchgang darf gar nicht mehr fragen - sonst laeuft man
         # in eine Schleife aus Nachfrage und FEHLER, wie am Drehlager-Modell
         gefragt, fehler = [], []
-        alt_fragen, alt_fehler = w._fragen, w.error
+        alt_fragen = w._fragen
         w._fragen = lambda t, x: (gefragt.append(t), True)[1]
-        w.error = lambda t: fehler.append(t)
+        alt_fehler = abfangen(w, fehler)   # Fehler und Hinweise (9b)
         try:
             ok = w._vor_rechnung_vernetzen()
         finally:
-            w._fragen, w.error = alt_fragen, alt_fehler
+            w._fragen = alt_fragen
+            alt_fehler.zurueck()
         check("zweiter Durchgang: keine Nachfrage mehr", ok and not gefragt, str(gefragt))
         check("und kein FEHLER „weiterhin ohne Netz“", not fehler, str(fehler)[:90])
 
@@ -8804,10 +8790,10 @@ def main():
         m.koerper["V_gut"].elemente = []
         m.koerper["V_gut"].kommentar = ""
         gefragt, gewarnt, fehler = [], [], []
-        alt_fragen, alt_warn, alt_err = w._fragen, w.warnung, w.error
+        alt_fragen, alt_warn = w._fragen, w.warnung
         w._fragen = lambda t, x: (gefragt.append(x), True)[1]
         w.warnung = lambda t: gewarnt.append(t)
-        w.error = lambda t: fehler.append(t)
+        alt_err = abfangen(w, fehler)   # Fehler und Hinweise (9b)
         alt_vernetzen = w.geometrie_vernetzen
         # Vernetzen, das den Körper ablehnt - wie beim Null-Volumen
         def _abgelehnt():
@@ -8818,7 +8804,8 @@ def main():
             ok = w._vor_rechnung_vernetzen()
         finally:
             w.geometrie_vernetzen = alt_vernetzen
-            w._fragen, w.warnung, w.error = alt_fragen, alt_warn, alt_err
+            w._fragen, w.warnung = alt_fragen, alt_warn
+            alt_err.zurueck()
         check("nach erfolglosem Vernetzen wird trotzdem gerechnet", ok is True, str(ok))
         check("und es kommt eine Warnung statt eines Abbruchs",
               len(gewarnt) == 1 and not fehler,
@@ -9202,8 +9189,7 @@ def main():
     try:
         from statik3d import ks as ksm
         fehler_ = []
-        alt_error = w.error
-        w.error = lambda msg: fehler_.append(str(msg))
+        abf = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w.new_model(); app.processEvents()
         m_ = w.model
         m_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0], [0.5, 0.5, 1.0], [1.5, 0.25, 2.0]]))
@@ -9302,7 +9288,7 @@ def main():
               w.sel_linien == neu_l and not w.sel_flaechen, str(w.sel_linien))
         w.sel_flaechen = ["F1"]; w.flaechen_verschneiden(); app.processEvents()
         check("mit einer Fläche: Hinweis", "zwei" in fehler_[-1].lower(), str(fehler_[-1:]))
-        w.error = alt_error
+        abf.zurueck()
         w.new_model()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -9495,11 +9481,10 @@ def main():
         check("… und die Sperre räumt Stab und Knoten des Layers aus jeder Auswahl",
               w.sel_staebe == ["S1"] and sorted(int(i) for i in w.selection) == [ka_], f"{w.sel_staebe} {w.selection}")
         fehler_ = []
-        alt_error_ = w.error
-        w.error = lambda msg: fehler_.append(str(msg))
+        abf_ = abfangen(w, fehler_)   # Fehler und Hinweise (9b)
         w.knoten_bearbeiten(ke_); app.processEvents()
         w._objektmaske("stab", "S2"); app.processEvents()
-        w.error = alt_error_
+        abf_.zurueck()
         check("gesperrter Layer: Knotendialog und Stabmaske öffnen nicht, die Meldung nennt den Layer",
               len(fehler_) == 2 and all("Traeger" in f for f in fehler_), str(fehler_))
         # Layerliste
