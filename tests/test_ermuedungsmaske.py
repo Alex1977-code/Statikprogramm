@@ -571,6 +571,9 @@ def _fenster(m):
     s.refresh_cases = lambda: G.MainWindow.refresh_cases(s)
     s.refresh_all = s.refresh_cases
     s.merken = lambda was, beschriftung=False: G.MainWindow.merken(s, was, beschriftung)
+    # merken legt seit Paket 14a (03.10.2026) ueber _sicherung_ablegen ab
+    # (Entf kopiert vorher und legt erst ab, wenn etwas weg ist)
+    s._sicherung_ablegen = lambda was, kopie, stand: G.MainWindow._sicherung_ablegen(s, was, kopie, stand)
     s.undo = lambda: G.MainWindow.undo(s)
     s.redo = lambda: G.MainWindow.redo(s)
 
