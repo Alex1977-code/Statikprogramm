@@ -14,7 +14,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
           "tests.test_spannungen", "tests.test_ergebnisse", "tests.test_ergebnisbaum", "tests.test_maskenrahmen", "tests.test_nachweisampel", "tests.test_ergebnisbild", "tests.test_ungespeichert", "tests.test_paket_f", "tests.test_stellungen_zuweisung", "tests.test_register_berechnung", "tests.test_kontextregister", "tests.test_kleinigkeiten", "tests.test_qt_deutsch", "tests.test_protokoll_lesbar", "tests.test_baum_ruhig", "tests.test_baum_gruppen", "tests.test_tabelleninhalte", "tests.test_zahlenfeld", "tests.test_fachbegriffe",
           "tests.test_netzfeld", "tests.test_netzfehler", "tests.test_sweep", "tests.test_sweep_feld", "tests.test_fensteraufteilung", "tests.test_ergebnisdarstellung", "tests.test_glasleiste_ribbon", "tests.test_ribbon_ordnung", "tests.test_symbole_ribbon", "tests.test_tasten_fokus", "tests.test_loeschen", "tests.test_aenderungsmerker",
            "tests.test_neuvernetzen", "tests.test_elementwahl", "tests.test_randspannung",
-           "tests.test_klickauswahl",
+           "tests.test_klickauswahl", "tests.test_rechtsklick",
            "tests.test_tetp", "tests.test_tetp_rechnung", "tests.test_entartung",
            "tests.test_vertraeglich", "tests.test_nachlauf_parallel", "tests.test_pool_speicher", "tests.test_sweep_aus",
            "tests.test_register_start",
