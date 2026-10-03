@@ -205,8 +205,9 @@ def test_schale_geneigt_p3():
 def test_schale_geneigt_p3_superlu():
     """Der Streifen mit erzwungenem SuperLU (ohne pypardiso rechnet so die CI), mit und ohne Nachiteration (Plan TP 5, O20, 03.10.2026). Gemessen lokal, 30 Grad p 3:
     ohne Nachiteration Kraft 8,0e-8, Moment 2,3e-7, sigma 5,0e-6, Rest 1,0e-5, Gleichgewicht 1,0e-5 (omega des Systems 2,6e-7); mit ihr in zwei Schritten Kraft 7,2e-10,
-    Moment 3,9e-9, sigma 5,4e-7, Rest 2,7e-8, Gleichgewicht 7,7e-8 (omega 6,8e-15). 10 Grad p 3: Rest 1,8e-9 / 3,6e-10. Schranke mit Nachiteration 1e-6 (rund das
-    Zwanzigfache), ohne sie muss der Fall ueber 1e-6 liegen - sonst prueft der Test nichts."""
+    Moment 3,9e-9, sigma 5,4e-7, Rest 2,7e-8, Gleichgewicht 7,7e-8 (omega 6,8e-15). 10 Grad p 3: Rest 1,8e-9 / 3,6e-10. In der CI (SuperLU, 03.10.2026): mit Nachiteration Rest
+    2,8e-8, Gleichgewicht 1,7e-7, ohne sie 8,2e-6 und 1,2e-5. Schranke mit Nachiteration 1e-6 (lokal rund das Dreizehnfache, in der CI das Sechsfache des groessten
+    Messwerts und ein Achtel des Werts ohne Nachiteration), ohne sie muss der Fall ueber 1e-6 liegen - sonst prueft der Test nichts."""
     from volumen3d.linalg import direkt
     from volumen3d.tests.test_direkt import ohne_pardiso
     erg = {}
