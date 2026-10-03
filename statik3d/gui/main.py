@@ -208,6 +208,72 @@ def _uebernahmeweg(f):
     return huelle
 
 
+#: Statuszeile, solange ein „Übernehmen“ laeuft (Paket 13m, zweite Nachbesserung)
+_SPERRTEXT = "Übernehmen läuft – erst abwarten oder abbrechen"
+
+
+def _uebernahme_offen(fenster) -> bool:
+    """Laeuft gerade ein „Übernehmen“ (MainWindow._uebernahme_lauf)? Eine
+    Attrappe der Pruefungen (SimpleNamespace, MagicMock) hat keine Liste der
+    laufenden und gilt als frei."""
+    staende = getattr(fenster, "_uebernahme_staende", None)
+    return isinstance(staende, list) and bool(staende)
+
+
+def _gesperrt(fenster) -> bool:
+    """Rechnet ein „Übernehmen“ gerade mit Fortschritt? Dann ist die Oberflaeche
+    gesperrt (MainWindow._uebernahme_sperrt) - eine Attrappe nie."""
+    if not _uebernahme_offen(fenster) or getattr(fenster, "_fortschritt_laeuft", False) is not True:
+        return False
+    return any(b.get("fortschritt") for b in fenster._uebernahme_staende)
+
+
+class _Uebernahmesperre(QtCore.QObject):
+    """Solange ein „Übernehmen“ laeuft, ist die Oberflaeche gesperrt wie waehrend
+    einer Rechnung (Paket 13m, zweite Nachbesserung 03.10.2026).
+
+    Ein langes „Übernehmen“ (Wasserdruck, Wind) dreht die Ereignisschleife, und bis
+    dahin war das Fenster dabei voll bedienbar: ein Baumklick ersetzte die
+    rechnende Maske samt ihren Eingaben, ein zweiter Klick auf die Leiste
+    rechnete noch einmal, Rueckgaengig tauschte das Modell unter der Rechnung.
+    Dieser Filter am Programm nimmt dem Hauptfenster Maus- und Tastatureingaben
+    weg; durch kommen nur der Knopf „Abbrechen“ neben dem Balken und Esc (hier
+    ebenfalls Abbrechen). Rueckfragen (QDialog) bleiben bedienbar. Wege, die
+    nicht ueber eine Eingabe kommen (Signale, Uhren, der Browser), sperren die
+    Methoden selbst (MainWindow._uebernahme_sperrt)."""
+
+    EINGABEN = frozenset({QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseButtonDblClick,
+                          QtCore.QEvent.KeyPress, QtCore.QEvent.ShortcutOverride, QtCore.QEvent.Wheel,
+                          QtCore.QEvent.ContextMenu, QtCore.QEvent.Drop, QtCore.QEvent.DragEnter})
+
+    def __init__(self, fenster):
+        super().__init__(fenster)
+        self._fenster = fenster
+
+    def eventFilter(self, obj, ev):
+        try:
+            art = ev.type()
+            if art not in self.EINGABEN or not isinstance(obj, QtWidgets.QWidget):
+                return False
+            if isinstance(obj.window(), QtWidgets.QDialog):
+                return False                    # eine Rueckfrage des Handlers
+            f = self._fenster
+            knopf = getattr(f, "btn_abbrechen", None)
+            if knopf is not None and _lebt(knopf) and (obj is knopf or knopf.isAncestorOf(obj)):
+                return False
+            if art == QtCore.QEvent.ShortcutOverride:
+                ev.accept()                     # kein Kuerzel: Strg+Z, F5, Esc als „Alles deselektieren“
+                return True
+            if art == QtCore.QEvent.KeyPress and ev.key() == QtCore.Qt.Key_Escape:
+                f._fortschritt_abbrechen()      # Esc ist hier „Abbrechen“
+                return True
+            if art != QtCore.QEvent.Wheel:
+                f._sperre_melden()
+            return True
+        except Exception:                       # noqa: BLE001 - ein Filter darf nie die Oberflaeche lahmlegen
+            return False
+
+
 #: Baumklicks, die rechts nichts ersetzen (die Ansicht wird Berichtsbild): sie
 #: halten nicht an der Leiste „Übernehmen | Verwerfen“
 _BAUM_OHNE_MASKE = frozenset({"bericht_neu"})
@@ -230,20 +296,42 @@ def _maskenweg(bezug=None, ohne=None, danach: str = "öffnet sich die neue Maske
     ersetzen.
 
     Eine Attrappe ohne _geaenderte_maske (Pruefungen) laeuft einfach durch, und
-    nur ein echtes True haelt an - eine MagicMock-Attrappe auch nicht."""
+    nur ein echtes True haelt an - eine MagicMock-Attrappe auch nicht.
+
+    Zweite Nachbesserung (03.10.2026): solange ein „Übernehmen“ rechnet, ist der
+    Weg gesperrt (:meth:`MainWindow._uebernahme_sperrt`). Und die Maske, die der
+    Weg baut, bekommt ``neu_bauen`` - denselben Wunsch, mit dem Objekt ueber
+    stabile Schluessel: Rueckgaengig, Wiederholen und der Browser bauen eine
+    unveraenderte Maske damit neu (:meth:`MainWindow._maske_nachziehen`). Der
+    innerste Weg setzt ihn, der baut die Maske wirklich."""
     def deko(f):
         @functools.wraps(f)
         def huelle(self, *a, **k):
+            if _gesperrt(self):
+                self._sperre_melden()
+                return None
             pruefen = getattr(self, "_geaenderte_maske", None)
             # beim Sammeln einer Mehrfachauswahl (Tabelle) entsteht ohnehin keine Maske
             sammeln = getattr(self, "_auswahl_sammeln", False) is True
-            if callable(pruefen) and not sammeln and not (ohne is not None and ohne(self, *a, **k)) \
+            ausgenommen = ohne is not None and bool(ohne(self, *a, **k))
+            if callable(pruefen) and not sammeln and not ausgenommen \
                     and isinstance(pruefen(), msk.Maske):
                 wunsch = (bezug(self, huelle, a, k) if bezug is not None
                           else (lambda: huelle(self, *a, **k)))
                 if self._maskenwechsel_halten(wunsch, danach) is True:
                     return None
-            return f(self, *a, **k)
+            rand = getattr(self, "maskenrand", None)
+            vorher = getattr(rand, "maske", None)
+            erg = f(self, *a, **k)
+            nachher = getattr(rand, "maske", None)
+            if not sammeln and not ausgenommen and isinstance(nachher, QtWidgets.QWidget) and nachher is not vorher \
+                    and getattr(nachher, "neu_bauen", None) is None:
+                try:
+                    nachher.neu_bauen = (bezug(self, huelle, a, k) if bezug is not None
+                                         else (lambda: huelle(self, *a, **k)))
+                except Exception:               # noqa: BLE001 - ohne Neubau wird sie nur geschlossen
+                    pass
+            return erg
         huelle.maskenweg = True
         return huelle
     return deko
@@ -294,11 +382,12 @@ def _bezug_namen(fenster, huelle, a, k):
 
     def wunsch():
         neu = [fenster._bezug_aufloesen(b) for b in bezuege]
-        weg = [str(n) for n, x in zip(namen, neu) if x is None]
+        weg = [fenster._objektname(b["art"], n) for n, b, x in zip(namen, bezuege, neu) if x is None]
         bleiben = [x for x in neu if x is not None]
         if weg:
-            fenster._wunsch_ins_leere(f"{len(weg)} der gewählten Objekte gibt es nach dem Übernehmen nicht "
-                                      f"mehr ({', '.join(weg[:5])})" + ("" if bleiben else " – nichts geöffnet"))
+            nach, folge = fenster._wunsch_anlass()
+            fenster._wunsch_ins_leere(f"{len(weg)} der gewählten Objekte gibt es {nach} nicht "
+                                      f"mehr ({', '.join(weg[:5])})" + ("" if bleiben else f" – {folge}"))
         if bleiben:
             huelle(fenster, art, bleiben, *rest, **k)
     return wunsch
@@ -835,6 +924,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             return False
         if ereignis.isAutoRepeat():
+            return True
+        if _gesperrt(self):
+            self._sperre_melden()
             return True
         if self._rechnung_laeuft() or getattr(self, "_rechnet_gerade", False):
             # die Rechnung liest das Modell, das Entf und die Befehle aendern wuerden,
@@ -1521,6 +1613,7 @@ class MainWindow(QtWidgets.QMainWindow):
         anfang = anfang or {}
         felder = getattr(maske, "_felder", {}) or {}
         self.merken(f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeitet")
+        schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         for key, text, fart, _lesen, schreiben, _werte in spec:
             v = w.get(key, "")
             if fart in ("jn", "wahl"):
@@ -1558,7 +1651,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.error("\n".join(fehler[:5]))
             return self.info("Nichts geändert - alle Felder unverändert bzw. leer")
         if fehler:
+            # Ein Objekt hat den Wert abgewiesen: das „Übernehmen“ ist gescheitert,
+            # nichts davon gilt (zweite Nachbesserung 13m). Bis dahin meldete die
+            # Statuszeile „1 Werte an 2 Objekten geändert“, waehrend der Rahmen
+            # alles zuruecknahm - Statuszeile und Protokoll sagen jetzt dasselbe.
+            self._schritt_zurueckholen(schritt)
             self.error("\n".join(fehler[:5]))
+            titel = getattr(maske, "titel", "") or f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeiten"
+            return self.info(f"„{titel}“ nicht übernommen - {fehler[0]}; das Modell ist wie vorher")
         # Nur Kommentare (und Lagernamen, die keine Stellung nennt) behalten
         # die Ergebnisse (24.09.2026) - alles andere ist Rechnung. Geschrieben
         # wird nur, was sich geaendert hat, darum entscheidet ``geschrieben``
@@ -5460,6 +5560,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if getattr(self, "_auswahl_sammeln", False):
             return maske                    # Mehrfachauswahl: keine Maske je Zeile
+        if maske is not self.maskenrand.maske and _gesperrt(self):
+            self._sperre_melden()           # waehrend ein „Übernehmen“ rechnet: nichts ersetzen
+            return maske
         # Jede neue Maske kommt hier vorbei. Angehalten wird schon vorher, am
         # Anfang ihres Wegs (_maskenweg): hier ist sie fertig gebaut, mit dem
         # Stand von vor dem Uebernehmen, und duerfte danach nicht mehr erscheinen.
@@ -5504,6 +5607,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.eingaben_dock.show()
             self.eingaben_dock.raise_()
         self._fensterhoehe_halten(hoehe_vorher, maske)
+        nachfuehren = getattr(self, "_web_sperre_nachfuehren", None)
+        if callable(nachfuehren):
+            nachfuehren()
         return maske
 
     # ---- Aenderungsmerker: die eine Stelle fuer jeden Maskenwechsel (Paket 13m) ----
@@ -5539,7 +5645,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         Bis zum 03.10.2026 ersetzten Baumklick, Ribbon, Kontextregister und
         Tabellen eine geaenderte Maske still, und die Eingaben waren weg; nur
-        die Einzeltasten, Entf und die Rechnung hatten je eine eigene Regel."""
+        die Einzeltasten, Entf und die Rechnung hatten je eine eigene Regel.
+
+        Solange ein „Übernehmen“ rechnet, haelt jeder Weg an, ohne Leiste und
+        ohne Wunsch (zweite Nachbesserung, :meth:`_uebernahme_sperrt`)."""
+        if _gesperrt(self):
+            self._sperre_melden()
+            return True
         mk = self._geaenderte_maske()
         if mk is None:
             return False
@@ -5568,13 +5680,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def rueckgaengig_befehl(self):
         """Rückgängig aus Ribbon, Schnellzugriff und Strg+Z - gesperrt bei einer
         geaenderten Maske (:meth:`_maskenwechsel_sperren`). Strg+Z in einem
-        Textfeld der Maske ist das Rueckgaengig des Felds und kommt hier nicht an."""
+        Textfeld der Maske ist das Rueckgaengig des Felds und kommt hier nicht an.
+        Waehrend ein „Übernehmen“ rechnet, ist es ebenfalls gesperrt."""
+        if _gesperrt(self):
+            return self._sperre_melden()
         if self._maskenwechsel_sperren("Rückgängig"):
             return None
         return self.undo()
 
     def wiederholen_befehl(self):
         """Wiederholen aus Ribbon, Schnellzugriff und Strg+Y - wie Rückgängig gesperrt."""
+        if _gesperrt(self):
+            return self._sperre_melden()
         if self._maskenwechsel_sperren("Wiederholen"):
             return None
         return self.redo()
@@ -5586,6 +5703,8 @@ class MainWindow(QtWidgets.QMainWindow):
         vorher an einem _maskenweg angehalten zu haben."""
         if getattr(self, "_befehl_laeuft", None) is not None:
             return fn()
+        if _gesperrt(self):
+            return self._sperre_melden()    # waehrend ein „Übernehmen“ rechnet: kein Befehl
         self._befehl_laeuft = fn
         try:
             return fn()
@@ -5602,6 +5721,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Der Testschalter STATIK3D_UNGESPEICHERT ersetzt auch diese Entscheidung,
         wie er das Fenster „Ungespeicherte Änderungen“ ersetzt: „verwerfen“
         verwirft die Eingaben, „speichern“ uebernimmt sie, „abbrechen“ haelt an."""
+        if _gesperrt(self):
+            self._sperre_melden()           # waehrend ein „Übernehmen“ rechnet: kein Modellwechsel
+            return True
         mk = self._geaenderte_maske()
         if mk is None:
             return False
@@ -5664,6 +5786,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _leiste_pruefen(self, *_a) -> None:
         """Die Leiste geht, sobald ihre Maske zu, uebernommen oder wieder
         unveraendert ist - der Wunsch verfaellt dann, die Maske bleibt."""
+        # der Browser erfaehrt hier, ob am Desktop eine geaenderte Maske offen ist
+        nachfuehren = getattr(self, "_web_sperre_nachfuehren", None)
+        if callable(nachfuehren):
+            nachfuehren()
         leiste = getattr(self, "aenderungsleiste", None)
         if leiste is None or not _lebt(leiste) or leiste.isHidden():
             return
@@ -5679,6 +5805,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ihr Knopf -, dann den Wunsch ausfuehren. Scheitert es (ungueltige Zahl,
         Pruefung mit Fehlermeldung), bleibt alles stehen: die Meldung kam wie
         beim Knopf der Maske, Maske, Leiste und Wunsch warten weiter."""
+        if _uebernahme_offen(self):
+            return self._sperre_melden()    # ein zweiter Klick, waehrend es rechnet (Fehler 4)
         mk, wunsch = getattr(self, "_leiste_maske", None), getattr(self, "_leiste_wunsch", None)
         if mk is None or not _lebt(mk) or self.maskenrand.maske is not mk:
             self._leiste_weg()
@@ -5695,6 +5823,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """„Verwerfen“: die Eingaben gehen verloren, dann der Wunsch. Eine Maske
         mit „Abbrechen“ (ein neues Objekt) wird abgebrochen - wie ihr Knopf:
         ein schon angelegter Knoten geht wieder weg."""
+        if _uebernahme_offen(self):
+            return self._sperre_melden()
         mk, wunsch = getattr(self, "_leiste_maske", None), getattr(self, "_leiste_wunsch", None)
         self._leiste_weg()
         self._maske_verwerfen(mk)
@@ -5730,47 +5860,177 @@ class MainWindow(QtWidgets.QMainWindow):
         Gelungen ist es, wenn keine Ausnahme kam und waehrend des Laufs weder
         error() noch _ablehnen() gerufen wurde - entschieden, wenn rufen()
         zurueckkehrt, auch wenn ein Handler dazwischen eine Ereignisschleife
-        dreht. Gescheitert und doch schon geschrieben (der Handler hat merken()
-        gerufen und dann abgebrochen): das Modell kommt auf den Stand davor
-        zurueck, und der Schritt verschwindet wieder - kein halber Zustand."""
+        dreht.
+
+        Zweite Nachbesserung (03.10.2026): solange der Rahmen laeuft, ist die
+        Oberflaeche gesperrt wie waehrend einer Rechnung (_sperre_setzen) - nur
+        „Abbrechen“ wirkt. Und zu Beginn merkt er sich den Stand: das
+        Modellobjekt, beide Stapel, den Aenderungsstand und den ersten Schritt,
+        den dieses „Übernehmen“ anlegt (_sicherung_ablegen). Scheitert es oder wird
+        es abgebrochen, stellt :meth:`_uebernahme_zurueckbauen` genau diesen
+        Stand her - nie „den obersten Schritt“: der war bis dahin gemeint, und
+        ein Abbruch bei 92 % liess die schon geschriebenen Wasserlasten stehen."""
+        titel = getattr(maske, "titel", "") or "Maske"
+        if _gesperrt(self):
+            self._sperre_melden()           # ein zweites „Übernehmen“, waehrend das erste rechnet
+            return False
         fehler0 = self._fehlerstand()
-        stapel = getattr(self, "_undo", None)
-        oben = stapel[-1] if stapel else None
-        self._uebernahme_tiefe = getattr(self, "_uebernahme_tiefe", 0) + 1
+        if not hasattr(self, "_undo"):
+            self._undo_init()
+        beginn = {"modell": self.model, "undo": list(self._undo), "redo": list(self._redo),
+                  "stand": self._stand, "tausch": len(getattr(self, "_knotentausch", None) or []),
+                  "erster": None}
+        staende = getattr(self, "_uebernahme_staende", None)
+        if staende is None:
+            staende = self._uebernahme_staende = []
+        staende.append(beginn)
+        if len(staende) == 1:
+            self._sperre_setzen(True)
+        ausnahme = None
         try:
-            ausnahme = rufen()
+            self._uebernahme_tiefe = getattr(self, "_uebernahme_tiefe", 0) + 1
+            try:
+                ausnahme = rufen()
+            finally:
+                self._uebernahme_tiefe -= 1
+            if ausnahme is not None:
+                self.error(f"„{titel}“ übernehmen ist gescheitert ({type(ausnahme).__name__}: {ausnahme}) - "
+                           "die Eingaben bleiben stehen")
+            ok = ausnahme is None and self._fehlerstand() == fehler0
+            if not ok:
+                # noch unter der Sperre: der Rueckbau baut die Oberflaeche neu auf
+                self._uebernahme_zurueckbauen(beginn, titel)
         finally:
-            self._uebernahme_tiefe -= 1
-        if ausnahme is not None:
-            titel = getattr(maske, "titel", "") or "Maske"
-            self.error(f"„{titel}“ übernehmen ist gescheitert ({type(ausnahme).__name__}: {ausnahme}) - "
-                       "die Eingaben bleiben stehen")
-        ok = ausnahme is None and self._fehlerstand() == fehler0
-        if not ok:
-            self._halbe_uebernahme_zuruecknehmen(oben, getattr(maske, "titel", ""))
+            if beginn in staende:
+                staende.remove(beginn)
+            if not staende:
+                self._sperre_setzen(False)
         return ok
 
-    def _halbe_uebernahme_zuruecknehmen(self, oben, titel: str = "") -> None:
-        """Was ein gescheitertes „Übernehmen“ schon geschrieben hat, wieder
-        wegnehmen: die Schritte, die es angelegt hat, und ihr Modell."""
-        stapel = getattr(self, "_undo", None) or []
-        if oben is None:
-            ab = 0
+    def _uebernahme_sperrt(self) -> bool:
+        """True, solange ein „Übernehmen“ mit Fortschritt rechnet: dann dreht die
+        Ereignisschleife, und jeder Weg, der das Modell aendert oder eine Maske
+        ersetzt, weist ab (zweite Nachbesserung 13m). Vorbild ist die Sperre
+        waehrend einer Rechnung (_rechnung_laeuft). Gefragt wird nur, solange ein
+        Fortschritt laeuft, der in diesem „Übernehmen“ begann - davor und danach
+        ist es der Handler selbst, der schreibt und seine Maske neu oeffnet;
+        Eingaben des Anwenders haelt dann der Ereignisfilter (_Uebernahmesperre) ab."""
+        return _gesperrt(self)
+
+    def _sperre_melden(self) -> None:
+        """Die Statuszeile sagt, warum nichts geschieht - und der Fortschritt
+        behaelt den Satz ein paar Sekunden vor seinem eigenen Text."""
+        self._sperre_gemeldet = time.time()
+        self.statusBar().showMessage(_SPERRTEXT, 5000)
+
+    def _sperre_setzen(self, an: bool) -> None:
+        """Die Sperre waehrend eines „Übernehmen“ an- oder abschalten: der
+        Ereignisfilter am Programm, die Knoepfe der Leiste und der Browser."""
+        app = QtWidgets.QApplication.instance()
+        filt = getattr(self, "_sperrfilter", None)
+        if an:
+            if filt is None:
+                filt = self._sperrfilter = _Uebernahmesperre(self)
+            if app is not None:
+                app.installEventFilter(filt)
+        elif filt is not None and app is not None:
+            app.removeEventFilter(filt)
+        leiste = getattr(self, "aenderungsleiste", None)
+        if leiste is not None and _lebt(leiste):
+            for b in (getattr(leiste, "btn_uebernehmen", None), getattr(leiste, "btn_verwerfen", None)):
+                if b is not None:
+                    b.setEnabled(not an)
+        self._web_sperre_nachfuehren()
+
+    def _web_sperre_nachfuehren(self) -> None:
+        """Was der Browser zu hoeren bekommt, wenn er das Modell aendern will
+        (Paket 13m, zweite Nachbesserung, Luecke 3): leer, wenn er darf. Der
+        Web-Server liest es in seinem Faden (web.server._desktop_frei) - darum
+        ein einfacher Text, den nur dieser Faden hier schreibt."""
+        if _uebernahme_offen(self):
+            grund = ("Am Desktop läuft gerade ein „Übernehmen“ – bitte warten und die Änderung "
+                     "dann noch einmal senden")
         else:
-            ab = next((i + 1 for i in range(len(stapel) - 1, -1, -1) if stapel[i] is oben), None)
-            if ab is None:
-                return                      # nicht mehr zu finden (Stapel gekuerzt) - nichts anfassen
-        if ab >= len(stapel):
+            # die offene Maske selbst - auch in dem Augenblick, in dem sie gerade
+            # uebernimmt (_geaenderte_maske zaehlt sie dann nicht)
+            rand = getattr(self, "maskenrand", None)
+            mk = getattr(rand, "maske", None)
+            offen = mk is not None and _lebt(mk) and (rand.offen() or (self.isVisible() and not mk.isHidden()))
+            mk = mk if offen and _maskenaenderung(mk) else None
+            grund = (f"Am Desktop ist die Maske „{getattr(mk, 'titel', '')}“ mit nicht übernommenen Änderungen "
+                     "offen – dort erst „Übernehmen“ oder „Verwerfen“, dann die Änderung hier noch einmal senden"
+                     if mk is not None else "")
+        self.web_sperrgrund = grund
+
+    def _modell_herstellen(self, ziel, quelle) -> bool:
+        """``ziel`` bekommt den Inhalt von ``quelle`` (einer Sicherung) und ist
+        danach das Modell: dasselbe Objekt wie vorher - wer es haelt (die
+        Rechnung des Handlers, der Browser, eine Pruefung), sieht den
+        hergestellten Stand. True, wenn sich etwas geaendert hat."""
+        neu = False
+        if quelle is not None and quelle is not ziel:
+            a, b = vars(ziel), vars(quelle)
+            if a.keys() != b.keys() or any(a[k] is not b[k] for k in b):
+                a.clear()
+                a.update(b)
+                neu = True
+        if self.model is not ziel:
+            self.model = ziel
+            neu = True
+        return neu
+
+    def _schritt_zurueckholen(self, eintrag) -> None:
+        """Genau diesen merken()-Schritt zuruecknehmen und sein Modell herstellen -
+        nicht den obersten des Stapels (zweite Nachbesserung 13m, Fehler 1 und 2):
+        oben kann ein anderer liegen. Das Modell bleibt dasselbe Objekt."""
+        if eintrag is None:
             return
-        erster = stapel[ab]
-        del stapel[ab:]
-        self.model = erster[1]
-        if len(erster) > 2:
-            self._stand = erster[2]
+        stapel = getattr(self, "_undo", None) or []
+        for i in range(len(stapel) - 1, -1, -1):
+            if stapel[i] is eintrag:
+                del stapel[i]
+                break
+        self._modell_herstellen(self.model, eintrag[1])
+        if len(eintrag) > 2:
+            self._stand = eintrag[2]
             self._titel_nachziehen()
         self._undo_knoepfe()
         self.refresh_all()
-        self.log.appendPlainText(f"„{titel}“ nicht übernommen - das Modell ist wieder wie vorher")
+
+    def _uebernahme_zurueckbauen(self, beginn: dict, titel: str = "") -> None:
+        """Ein gescheitertes oder abgebrochenes „Übernehmen“ zuruecknehmen: genau
+        der Stand von seinem Beginn - der Inhalt aus dem ersten Schritt, den es
+        angelegt hat, im selben Modellobjekt, dazu beide Stapel, der
+        Aenderungsstand und das Protokoll der Nummerntausche. Auch ein fremder
+        Schritt, der waehrenddessen entstand, verschwindet: der Stand vom Beginn
+        kennt ihn nicht. Hat das „Übernehmen“ nichts angelegt und nichts
+        verschoben, bleibt alles, wie es ist."""
+        geaendert = False
+        erster = beginn.get("erster")
+        if erster is not None:
+            geaendert = self._modell_herstellen(beginn["modell"], erster[1])
+        elif self.model is not beginn["modell"]:
+            self.model = beginn["modell"]
+            geaendert = True
+
+        def gleich(a, b):
+            return len(a) == len(b) and all(x is y for x, y in zip(a, b))
+        if not gleich(self._undo, beginn["undo"]) or not gleich(self._redo, beginn["redo"]):
+            self._undo[:] = beginn["undo"]
+            self._redo[:] = beginn["redo"]
+            geaendert = True
+        tausch = getattr(self, "_knotentausch", None)
+        if tausch is not None:
+            del tausch[beginn["tausch"]:]
+        if not geaendert and self._stand == beginn["stand"]:
+            return
+        self._stand = beginn["stand"]
+        self._titel_nachziehen()
+        self._undo_knoepfe()
+        self.refresh_all()
+        text = f"„{titel}“ nicht übernommen - das Modell ist wieder wie vorher"
+        self.log.appendPlainText(text)
+        self.statusBar().showMessage(text, 10000)
 
     # ---- Wuensche zeigen auf Objekte, nicht auf Namen oder Plaetze (Paket 13m, F4) ----
     #: Art im Modellbaum und in den Masken -> Sammlung am Modell. Ein Wunsch
@@ -5794,16 +6054,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _bezug_merken(self, art: str, name) -> dict:
         """Das Objekt hinter (art, name) festhalten, bevor ein „Übernehmen“
-        Namen oder Nummern verschiebt."""
+        Namen oder Nummern verschiebt.
+
+        Gefunden wird es spaeter ueber stabile Schluessel, nicht ueber die
+        Identitaet des Modellobjekts (zweite Nachbesserung 13m, Fehler 5): nach
+        einem Rueckbau oder Rueckgaengig sind Modell und Unterobjekte Kopien, das
+        Objekt aber ist noch da. Ein Knoten: Nummer, Nummerntausche und - wenn
+        Knoten dazukamen oder wegfielen - sein Ort, sofern dort nur er steht."""
         m = self.model
-        b = {"art": art, "name": name, "modell": id(m), "obj": None}
+        b = {"art": art, "name": name, "obj": None}
         if art == "knoten":
             try:
                 i = int(name)
             except (TypeError, ValueError):
                 return b
+            ort = tuple(float(x) for x in m.nodes[i]) if 0 <= i < m.nn else None
+            eindeutig = True
+            if ort is not None:
+                try:
+                    eindeutig = int(np.all(np.asarray(m.nodes, float) == np.asarray(ort), axis=1).sum()) == 1
+                except Exception:           # noqa: BLE001
+                    eindeutig = False
             b.update(knoten=i, nn=int(m.nn), tausch=len(getattr(self, "_knotentausch", [])),
-                     ort=(tuple(float(x) for x in m.nodes[i]) if 0 <= i < m.nn else None))
+                     ort=ort, eindeutig=eindeutig)
             return b
         sammlung = getattr(m, self.BEZUG_SAMMLUNG.get(art, ""), None)
         try:
@@ -5825,8 +6098,6 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         name = b["name"]
         if b["art"] == "knoten" and "knoten" in b:
-            if id(m) != b["modell"]:
-                return None
             i = b["knoten"]
             for a_, z_ in getattr(self, "_knotentausch", [])[b["tausch"]:]:
                 i = z_ if i == a_ else (a_ if i == z_ else i)
@@ -5834,15 +6105,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Knoten sind weggefallen oder dazugekommen: am Ort wiederfinden
                 if not (0 <= i < m.nn and tuple(float(x) for x in m.nodes[i]) == b["ort"]):
                     treffer = [j for j in range(m.nn) if tuple(float(x) for x in m.nodes[j]) == b["ort"]]
-                    i = treffer[0] if len(treffer) == 1 else -1
+                    # stand dort noch ein Knoten, ist der Ort kein Schluessel (ein neuer
+                    # Knoten bei 0, 0, 0 fiele sonst auf einen alten am Ursprung)
+                    i = treffer[0] if len(treffer) == 1 and b.get("eindeutig", True) else -1
             if not 0 <= i < m.nn:
                 return None
             return i if isinstance(name, int) else str(i)
         obj = b.get("obj")
         if obj is None:
             return name                     # kein Einzelobjekt (Zweig, Schluessel): wie gerufen
-        if id(m) != b["modell"]:
-            return None
+        # erst das Objekt selbst (umbenannt, verschoben), sonst der stabile
+        # Schluessel: sein Name oder Platz - nach einem Rueckbau ist es eine Kopie
         sammlung = getattr(m, self.BEZUG_SAMMLUNG.get(b["art"], ""), None)
         if isinstance(sammlung, dict):
             for k, v in sammlung.items():
@@ -5863,9 +6136,51 @@ class MainWindow(QtWidgets.QMainWindow):
         dass es das Objekt nicht mehr gibt, und nichts oeffnen."""
         neu = self._bezug_aufloesen(b)
         if neu is None:
-            return self._wunsch_ins_leere(f"{b['art']} {b['name']} gibt es nach dem Übernehmen nicht mehr - "
-                                          "nichts geöffnet")
+            nach, folge = self._wunsch_anlass()
+            return self._wunsch_ins_leere(f"{self._objektname(b['art'], b['name'])} gibt es {nach} nicht mehr "
+                                          f"– {folge}")
         return aufruf(neu)
+
+    #: Wie der Anwender ein Objekt sieht (Modellbaum, Maskentitel) - fuer
+    #: Meldungen zu verschwundenen Objekten (zweite Nachbesserung 13m)
+    OBJEKTNAMEN = {
+        "knoten": "Knoten K{}", "stabelement": "Stab E{}", "linie": "Linie {}", "stab": "Stab {}",
+        "geoflaeche": "Fläche {}", "geokoerper_einzeln": "Volumen {}", "lastfall": "Lastfall {}",
+        "kombination": "Kombination {}", "werkstoff": "Werkstoff {}", "dicke": "Dicke {}",
+        "querschnitt": "Querschnitt {}", "gelenk": "Gelenk {}", "kontaktbedingung": "Kontaktbedingung {}",
+        "situation": "Situation {}", "subsystem": "Subsystem {}", "bemassung": "Bemaßung {}",
+        "stellung": "Stellung {}", "wasserdruck": "Wasserdruck {}", "wind": "Wind {}",
+        "schwingung": "Schwingung {}", "schweissnaht": "Schweißnaht {}", "ermuedungslast": "Ermüdungslast {}",
+        "punktmasse": "Punktmasse {}", "daempfer": "Dämpfer {}", "feder": "Feder {}",
+        "starrkoerper": "Starrer Körper {}", "grenzschicht": "Grenzschicht {}"}
+    #: Arten, deren Name ein Listenplatz ist: der Anwender zaehlt ab 1
+    OBJEKTNAMEN_AB_EINS = {"lager_einzeln": "Knotenlager {}", "linienlager_einzeln": "Linienlager {}",
+                           "flaechenlager_einzeln": "Flächenlager {}", "berichtseintrag": "Berichtsbild {}"}
+
+    def _objektname(self, art: str, name) -> str:
+        """„Knoten K2“, „Fläche FA“, „Knotenlager 3“ - nicht „knoten 2“."""
+        if art in self.OBJEKTNAMEN_AB_EINS and str(name).isdigit():
+            return self.OBJEKTNAMEN_AB_EINS[art].format(int(name) + 1)
+        muster = self.OBJEKTNAMEN.get(art)
+        return muster.format(name) if muster else f"„{name}“"
+
+    def _wunsch_anlass(self) -> tuple:
+        """(wonach, was dann geschieht) fuer die Meldung eines Wunsches ins Leere:
+        nach „Übernehmen“ nichts oeffnen, nach Rueckgaengig die Maske schliessen
+        (:meth:`_maske_nachziehen`)."""
+        anlass = getattr(self, "_nachzieh_anlass", None)
+        if anlass:
+            return f"nach „{anlass}“", "die Maske ist geschlossen"
+        return "nach dem Übernehmen", "nichts geöffnet"
+
+    @staticmethod
+    def _lastsignatur(obj):
+        """Inhalt einer Last als Text - der stabile Schluessel, wenn das Objekt
+        selbst nach einem Rueckbau eine Kopie ist."""
+        try:
+            return repr(sorted(vars(obj).items()))
+        except Exception:                   # noqa: BLE001
+            return None
 
     def _lastbezug_merken(self, fall: str, liste: str, k: int) -> dict:
         lc = self.model.load_cases.get(fall)
@@ -5874,30 +6189,91 @@ class MainWindow(QtWidgets.QMainWindow):
             objekte = getattr(lc, liste, None) or []
             if 0 <= int(k) < len(objekte):
                 obj = objekte[int(k)]
-        return {"fall": fall, "liste": liste, "k": int(k), "lc": lc, "obj": obj, "modell": id(self.model)}
+        return {"fall": fall, "liste": liste, "k": int(k), "lc": lc, "obj": obj,
+                "signatur": self._lastsignatur(obj) if obj is not None else None}
 
     def _lastbezug_ausfuehren(self, b: dict, aufruf) -> None:
         """Die Last nach dem Uebernehmen wiederfinden: in jedem Lastfall, ueber
         das Objekt - nicht ueber den Listenplatz (S1 der Gegenpruefung: die Last
-        an K7 wurde sonst zur Last an K8)."""
+        an K7 wurde sonst zur Last an K8). Ist das Objekt eine Kopie geworden
+        (Rueckbau, Rueckgaengig), gilt der stabile Schluessel: derselbe Lastfall,
+        dieselbe Liste, am selben Platz dieselbe Last - sonst die eine Last mit
+        diesem Inhalt (zweite Nachbesserung 13m, Fehler 5)."""
         m = self.model
-        if id(m) == b["modell"]:
-            if b["liste"] == "gravity":
-                for name, lc in m.load_cases.items():
-                    if lc is b["lc"]:
-                        return aufruf(name, "gravity", 0)
-            elif b["obj"] is not None:
-                for name, lc in m.load_cases.items():
-                    for i, o in enumerate(getattr(lc, b["liste"], None) or []):
-                        if o is b["obj"]:
-                            return aufruf(name, b["liste"], i)
-        return self._wunsch_ins_leere("Die angeklickte Last gibt es nach dem Übernehmen nicht mehr - "
-                                      "nichts geöffnet")
+        if b["liste"] == "gravity":
+            for name, lc in m.load_cases.items():
+                if lc is b["lc"]:
+                    return aufruf(name, "gravity", 0)
+            if b["fall"] in m.load_cases:
+                return aufruf(b["fall"], "gravity", 0)
+        elif b["obj"] is not None:
+            for name, lc in m.load_cases.items():
+                for i, o in enumerate(getattr(lc, b["liste"], None) or []):
+                    if o is b["obj"]:
+                        return aufruf(name, b["liste"], i)
+            sig = b.get("signatur")
+            if sig is not None:
+                lc = m.load_cases.get(b["fall"])
+                objekte = (getattr(lc, b["liste"], None) or []) if lc is not None else []
+                if 0 <= b["k"] < len(objekte) and self._lastsignatur(objekte[b["k"]]) == sig:
+                    return aufruf(b["fall"], b["liste"], b["k"])
+                treffer = [(name, i) for name, lc in m.load_cases.items()
+                           for i, o in enumerate(getattr(lc, b["liste"], None) or [])
+                           if self._lastsignatur(o) == sig]
+                if len(treffer) == 1:
+                    return aufruf(treffer[0][0], b["liste"], treffer[0][1])
+        nach, folge = self._wunsch_anlass()
+        return self._wunsch_ins_leere(f"Die angeklickte Last gibt es {nach} nicht mehr – {folge}")
 
     def _wunsch_ins_leere(self, text: str) -> None:
         """Ein Wunsch, dessen Objekt es nach dem Uebernehmen nicht mehr gibt:
         nichts oeffnen, sagen warum."""
         self.info(text)
+
+    def _maske_nachziehen(self, anlass: str, neu_bauen: bool = True) -> None:
+        """Rueckgaengig, Wiederholen, der Browser oder ein Import haben das
+        Modell unter der offenen Maske geaendert (Paket 13m, zweite
+        Nachbesserung, Luecke 1). Ist sie unveraendert, wird sie mit dem Stand
+        von jetzt neu gebaut - ueber ihren Weg (``neu_bauen``, _maskenweg), das
+        Objekt ueber stabile Schluessel. Gibt es ihr Objekt nicht mehr, bleibt
+        sie zu, und die Statuszeile sagt es. Bis dahin zeigte sie die alten
+        Werte, und ein spaeteres „Übernehmen“ schrieb sie zurueck (pruef_c U1).
+
+        Eine geaenderte Maske bleibt: Rueckgaengig und Wiederholen sind dann
+        gesperrt, der Browser wird abgewiesen. Waehrend eines „Übernehmen“ (ein
+        Handler nimmt mit Rueckgaengig zurueck) geschieht nichts - dort stellt der
+        Rahmen den Stand her. ``neu_bauen=False``: das Modell ist ein anderes
+        (im Browser ausgetauscht) - die Maske geht zu, wie bei Neu."""
+        if _uebernahme_offen(self):
+            return
+        rand = getattr(self, "maskenrand", None)
+        mk = getattr(rand, "maske", None)
+        if mk is None or not _lebt(mk) or not isinstance(mk, QtWidgets.QWidget):
+            return
+        offen = rand.offen() or (self.isVisible() and not mk.isHidden())
+        if not offen or _maskenaenderung(mk):
+            return
+        neu = getattr(mk, "neu_bauen", None) if neu_bauen else None
+        titel = getattr(mk, "titel", "") or "Maske"
+        fokus = QtWidgets.QApplication.focusWidget()
+        self._leiste_weg()
+        rand.schliessen()
+        if callable(neu):
+            self._nachzieh_anlass = anlass
+            try:
+                neu()
+            except Exception:               # noqa: BLE001 - dann bleibt sie zu, mit Grund
+                self.log.appendPlainText(traceback.format_exc())
+                self.statusBar().showMessage(f"„{titel}“ ist geschlossen – nach „{anlass}“ "
+                                             "ließ sie sich nicht neu aufbauen", 10000)
+            finally:
+                self._nachzieh_anlass = None
+        else:
+            self.statusBar().showMessage(f"„{titel}“ ist geschlossen – „{anlass}“ hat das Modell geändert, "
+                                         "bitte neu öffnen", 10000)
+        # die Tastatur bleibt, wo sie war (Strg+Z in der Ansicht)
+        if fokus is not None and _lebt(fokus) and fokus.isVisible() and not mk.isAncestorOf(fokus):
+            fokus.setFocus()
 
     def _knotentausch_melden(self, a: int, b: int) -> None:
         """Zwei Knoten haben ihre Nummern getauscht (Knotenmaske, Feld Nummer):
@@ -8393,7 +8769,11 @@ class MainWindow(QtWidgets.QMainWindow):
             art = "temperatur"
         return art
 
-    @_maskenweg(bezug=_bezug_last, danach="öffnet sich die Maske der Last")
+    @_maskenweg(bezug=_bezug_last, danach="öffnet sich die Maske der Last",
+                # Strg+Klick auf eine gewaehlte Last nimmt sie nur heraus - ihre
+                # Maske bleibt stehen, es wird nichts ersetzt (zweite Nachbesserung)
+                ohne=lambda f, fall, liste, k, ersetzen=None: (
+                    ersetzen is False and (fall, liste, int(k)) in (getattr(f, "sel_lasten", None) or [])))
     def _last_waehlen(self, fall: str, liste: str, k: int, ersetzen=None):
         """Eine Last waehlen (Klick in der Ansicht oder in der Tabelle): sie
         leuchtet, rechts steht ihre Maske.
@@ -10186,6 +10566,14 @@ class MainWindow(QtWidgets.QMainWindow):
                          "linienlager_einzeln", "flaechenlager_einzeln",
                          "berichtseintrag"}
 
+    #: Arten, die sich im Modellbaum zu mehreren waehlen lassen (_baum_mehrfach)
+    BAUM_MEHRFACH = frozenset({"knoten", "linie", "stab", "geoflaeche", "geokoerper_einzeln", "stabelement"})
+
+    # Wie der einzelne Klick im Baum haelt die Mehrfachwahl an der Leiste, bevor
+    # sie die Auswahl leert (Paket 13m, zweite Nachbesserung, Luecke 2): sonst
+    # brachte „Übernehmen“ eine Knotenlast auf eine leere oder eine andere
+    # Auswahl. Der Wunsch sucht die Eintraege danach neu (Nummern koennen rutschen).
+    @_maskenweg(bezug=_bezug_namen, danach="werden die Einträge im Modellbaum gewählt")
     def _baum_mehrfach(self, art: str, namen: list):
         """Mehrere Eintraege im Modellbaum gewaehlt: alle zusammen auswaehlen.
 
@@ -10196,6 +10584,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         m = self.model
         namen = [str(x) for x in namen]
+        if art not in self.BAUM_MEHRFACH:
+            # Keine eigene Mehrfachdarstellung: der zuletzt gewaehlte zaehlt - vor
+            # dem Leeren der Auswahl, wie der einzelne Klick
+            return self._baum_geklickt(art, namen[-1])
         self.leuchtet = []
         self.leuchtet_kontakt = ""
         self._auswahl_vergessen()
@@ -10235,8 +10627,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 int(n) for i in elems for n in m.elements[i].nodes)), dtype=int)
             text = f"{len(elems)} Stabelemente"
         else:
-            # Keine eigene Mehrfachdarstellung: der zuletzt gewaehlte zaehlt
-            return self._baum_geklickt(art, namen[-1])
+            return None
         self.lbl_sel.setText(f"{text} ausgewählt (Modellbaum)")
         tab = self.BAUM_TABELLE.get(art)
         if tab:
@@ -10836,6 +11227,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         self._abbruch = False
         self._fortschritt_laeuft = True
+        # ein Fortschritt, der in einem „Übernehmen“ beginnt, sperrt die
+        # Oberflaeche, bis er endet (_uebernahme_sperrt, Paket 13m)
+        for beginn in (self._uebernahme_staende if _uebernahme_offen(self) else ()):
+            beginn["fortschritt"] = True
         self.progress_bar.setRange(0, max(1, int(gesamt)))
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
@@ -10950,7 +11345,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if wert is not None:
             self.progress_bar.setValue(int(wert))
         dt = time.time() - getattr(self, "_fortschritt_t0", time.time())
-        self.statusBar().showMessage(f"{text}  ({dt:.0f} s)")
+        zeile = f"{text}  ({dt:.0f} s)"
+        if time.time() - getattr(self, "_sperre_gemeldet", 0.0) < 4.0:
+            # eben abgewiesen (waehrend „Übernehmen“ rechnet): der Grund bleibt stehen
+            zeile = f"{_SPERRTEXT} · {zeile}"
+        self.statusBar().showMessage(zeile)
         jetzt = time.time()
         if sofort or jetzt - getattr(self, "_fortschritt_tick", 0.0) >= 0.15:
             self._fortschritt_tick = jetzt
@@ -17028,6 +17427,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_all()
             if target is None:
                 self._neues_modell_abschliessen()
+            else:
+                self._maske_nachziehen("Importieren")
             self.zoom_alles()
             # Das uebernommene Modell steht in keiner Statik3D-Datei - ein
             # neuer Import (RFEM-Datei am Drehlager: Minuten) waere der Preis
@@ -17127,7 +17528,9 @@ class MainWindow(QtWidgets.QMainWindow):
         m0 = self.model
         ne = len(m0.elements)
         rueck = ne <= self.MODELL_LEEREN_KOPIE_BIS
-        text = self._leeren_text(m0, rueck)
+        # die geaenderte Maske nennen - sie wird danach geschlossen, wie bei den
+        # Loeschwegen (Paket 13m, zweite Nachbesserung, Luecke 4)
+        text = self._leeren_text(m0, rueck) + _loeschhinweis(self)
         # Vorgabe Abbrechen: Enter leert nicht (Gegenpruefung 25.09.2026)
         if not self._fragen_knoepfe("Modell leeren", text, "Modell leeren", "Abbrechen", vorgabe="nein"):
             return
@@ -17151,6 +17554,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # ein anderes, leeres Modell: nichts von der alten Auswahl gilt noch (Staebe,
         # Elemente, Lager ...), sonst stuende das Kontextregister ueber dem leeren Modell
         self._auswahl_vergessen()
+        # die Maske rechts gehoert zum geleerten Modell: zu (bis 03.10.2026 blieb
+        # sie offen, ihr „Übernehmen“ schrieb in das leere Modell)
+        self._leiste_weg()
+        if getattr(self, "maskenrand", None) is not None and self.maskenrand.maske is not None:
+            self.maskenrand.schliessen()
         self.refresh_all()
 
     # ---- Rueckgaengig / Wiederholen ----------------------------------
@@ -17192,10 +17600,18 @@ class MainWindow(QtWidgets.QMainWindow):
         :meth:`merken` kopiert und legt in einem; wer erst nach der Aenderung
         weiss, ob es eine gab (Entf in der Ansicht: ging ueberhaupt etwas weg?),
         kopiert vorher und legt danach ab - sonst leerte schon der Versuch den
-        Wiederholen-Stapel und verdraengte bei grossen Modellen alte Schritte."""
+        Wiederholen-Stapel und verdraengte bei grossen Modellen alte Schritte.
+
+        Laeuft ein „Übernehmen“, merkt sich sein Rahmen den ersten Schritt, den
+        es anlegt - auch wenn der Handler ihn danach selbst wieder wegnimmt: aus
+        ihm stellt ein Rueckbau den Stand vom Beginn her (_uebernahme_lauf)."""
         if not hasattr(self, "_undo"):
             self._undo_init()
-        self._undo.append((was, kopie, stand))
+        eintrag = (was, kopie, stand)
+        for beginn in (self._uebernahme_staende if _uebernahme_offen(self) else ()):
+            if beginn.get("erster") is None:
+                beginn["erster"] = eintrag
+        self._undo.append(eintrag)
         del self._undo[:-self.SCHRITTE]
         # Und nach Elementen: 50 Sicherungen eines Modells mit 2 Mio.
         # Elementen waeren rund 70 GB (669 Byte je Element, gemessen). Es
@@ -17251,6 +17667,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # ein reiner Beschriftungsschritt behaelt die Ergebnisse (24.09.2026)
         self._modell_setzen(m, ergebnisse_behalten=isinstance(was, _Beschriftungsschritt))
         self.info(f"Rückgängig: {was}")
+        # eine offene, unveraenderte Maske zeigt danach den Stand von jetzt (13m, Luecke 1)
+        nachziehen = getattr(self, "_maske_nachziehen", None)   # Attrappen der Pruefungen haben es nicht
+        if callable(nachziehen):
+            nachziehen("Rückgängig")
 
     def redo(self):
         if not getattr(self, "_redo", None):
@@ -17261,6 +17681,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # ein reiner Beschriftungsschritt behaelt die Ergebnisse (24.09.2026)
         self._modell_setzen(m, ergebnisse_behalten=isinstance(was, _Beschriftungsschritt))
         self.info(f"Wiederholt: {was}")
+        nachziehen = getattr(self, "_maske_nachziehen", None)   # Attrappen der Pruefungen haben es nicht
+        if callable(nachziehen):
+            nachziehen("Wiederholen")
 
     def _schritt_beschriftung(self):
         """Den zuletzt gemerkten Schritt als reine Beschriftung markieren
@@ -17431,7 +17854,13 @@ class MainWindow(QtWidgets.QMainWindow):
         ungefragt verworfen (am Drehlager Stunden), und ihr Ergebnis waere
         danach auf das neue Modell getroffen. Beenden fragt eigens
         (closeEvent). Der Testschalter aendert daran nichts, er ersetzt nur
-        das Fenster."""
+        das Fenster.
+
+        Waehrend ein „Übernehmen“ rechnet, unterbleibt jeder dieser Befehle,
+        auch Beenden (Paket 13m, zweite Nachbesserung)."""
+        if _gesperrt(self):
+            self._sperre_melden()
+            return False
         if self._rechnung_laeuft() and anlass != "Beenden":
             text = f"„{anlass}“ erst nach der Rechnung – sie gehört zum offenen Modell (anhalten: Esc)"
             self.log.appendPlainText(text)
@@ -18738,23 +19167,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if wd.name != alt and wd.name in m.winde:
             return self.error(f"Wind „{wd.name}“ gibt es schon")
         self.merken(f"Wind {wd.name}")
+        schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         from .. import stroemung as strm
         self._fortschritt_beginnen(100, f"Wind {wd.name}: " + ("Windkanal …" if wd.windkanal() else "Lasten …"))
         try:
             kw = wm.lasten_erzeugen(m, wd, fortschritt=lambda a, t: self._fortschritt(int(round(100 * a)), t))
         except strm.Abgebrochen:
-            # erst gerechnet, dann geschrieben: beim Abbruch ist das Modell
-            # unberuehrt - auch ein umbenannter Wind steht noch (Paket 13m)
-            self._merken_zuruecknehmen()
+            # Die Rechnung kann schon geschrieben haben - wind.py nimmt die alten
+            # Lasten vor der letzten Fortschrittsmeldung heraus und legt die neuen
+            # an. Darum genau diesen Schritt zurueckholen, nicht den obersten des
+            # Stapels (Paket 13m, zweite Nachbesserung, Fehler 1 und 2); danach
+            # stimmt „unverändert“, auch ein umbenannter Wind steht noch.
+            self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
             # der Abbruch im Fortschritt lehnt ab: die Eingaben bleiben stehen (Paket 13m)
             return self._ablehnen(f"Wind {wd.name}: abgebrochen - das Modell ist unverändert")
         except (ValueError, KeyError) as ex:
-            self._merken_wiederherstellen()
+            self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
             return self.error(ex)
         except Exception:                        # noqa: BLE001
-            self._merken_wiederherstellen()
+            self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
             self.log.appendPlainText(traceback.format_exc())
             return self.error("Wind: Strömungsberechnung fehlgeschlagen - siehe Protokoll")
@@ -18852,23 +19285,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if wd.name != alt and wd.name in m.wasserdruecke:
             return self.error(f"Wasserdruck „{wd.name}“ gibt es schon")
         self.merken(f"Wasserdruck {wd.name}")
+        schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         from .. import stroemung as strm
         self._fortschritt_beginnen(100, f"Wasserdruck {wd.name}: Strömungsberechnung …")
         try:
             kw = wdm.lasten_erzeugen(m, wd, fortschritt=lambda a, t: self._fortschritt(int(round(100 * a)), t))
         except strm.Abgebrochen:
-            # erst gerechnet, dann geschrieben: beim Abbruch ist das Modell
-            # unberuehrt - auch ein umbenannter Wasserdruck steht noch (Paket 13m)
-            self._merken_zuruecknehmen()
+            # Die Rechnung kann schon geschrieben haben - wasserdruck.py nimmt die
+            # alten Lasten vor der Meldung bei 92 % heraus und traegt h_ow vor der
+            # bei 100 % ein (gemessen 03.10.2026). Darum genau diesen Schritt
+            # zurueckholen, nicht den obersten des Stapels (Paket 13m, zweite
+            # Nachbesserung, Fehler 1 und 2); danach stimmt „unverändert“.
+            self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
             # der Abbruch im Fortschritt lehnt ab: die Eingaben bleiben stehen (Paket 13m)
             return self._ablehnen(f"Wasserdruck {wd.name}: abgebrochen - das Modell ist unverändert")
         except ValueError as ex:
-            self._merken_wiederherstellen()
+            self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
             return self.error(ex)
         except Exception:                        # noqa: BLE001
-            self._merken_wiederherstellen()
+            self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
             self.log.appendPlainText(traceback.format_exc())
             return self.error("Wasserdruck: Strömungsberechnung fehlgeschlagen - siehe Protokoll")
@@ -19235,7 +19672,9 @@ class MainWindow(QtWidgets.QMainWindow):
         ziele |= {i for i in gewaehlt if stab_von.get(i) not in ganze}
         return sorted(ziele)
 
-    @_maskenweg()
+    # nur „Gelenke setzen…“ oeffnet eine Maske; Querschnitt und Dicke zeigen das
+    # Kontextregister und lassen die Maske stehen - kein Anhalten (zweite Nachbesserung)
+    @_maskenweg(ohne=lambda _f, was="querschnitt": was != "gelenke")
     def zuweisen_zeigen(self, was: str = "querschnitt"):
         """Struktur → „Querschnitt/Dicke zuweisen…“, „Gelenke setzen…“: die
         Befehle liegen im Kontextregister „Auswahl“, das erscheint, sobald
@@ -24954,13 +25393,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self.worker is not None and self.worker.isRunning():
             return
+        if _uebernahme_offen(self):
+            return                     # erst nach dem laufenden „Übernehmen“ (Paket 13m)
         self.web_version = st.version
         self._aenderung()              # geaendert im Browser, gespeichert ist es damit nicht
         # Die Web-Befehle (Neu, Beispiel, Modell ersetzen, Import) tauschen das
         # Modell ueber State.bound aus: ein anderes Objekt heisst anderes Modell,
         # der Baum beginnt dann im Grundzustand
         zeigt = getattr(self, "_baum_modell", None)
-        if zeigt is not None and zeigt() is not self.model:
+        ersetzt = zeigt is not None and zeigt() is not self.model
+        if ersetzt:
             self._baum_neu_beginnen()
         try:
             self.selection = self.selection[self.selection < self.model.nn]
@@ -24968,6 +25410,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fill_result_selector()
             self.show_results()
             self.info("Aktualisiert (Änderung aus dem Browser)")
+            # eine offene, unveraenderte Maske zeigt den Stand von jetzt - in einem
+            # ausgetauschten Modell gibt es ihr Objekt nicht mehr, sie geht zu; eine
+            # geaenderte gibt es hier nicht, der Browser wurde abgewiesen (13m)
+            self._maske_nachziehen("Änderung aus dem Browser", neu_bauen=not ersetzt)
         except Exception:      # noqa: BLE001
             self.log.appendPlainText(traceback.format_exc())
 

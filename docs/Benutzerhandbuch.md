@@ -3223,8 +3223,15 @@ hat die Auswahl der Ansicht noch nicht umgestellt.
   Zahl, bei einer Prüfung mit Meldung, wenn man den Fortschritt abbricht
   (Wasserdruck, Wind) und bei einem Programmfehler, den eine Meldung nennt.
   Die Meldung erscheint wie beim Knopf der Maske. Hatte das Übernehmen schon
-  etwas geschrieben, ist das Modell danach wieder wie vorher, und es bleibt
-  kein Rückgängig-Schritt zurück. Die Knotenmaske prüft eine neue Nummer jetzt,
+  etwas geschrieben, ist das Modell danach genau so wie zu Beginn des
+  Übernehmens, mit denselben Schritten zum Rückgängigmachen und Wiederholen;
+  das gilt auch, wenn man Wasserdruck oder Wind erst ganz am Ende abbricht,
+  wenn die Rechnung die alten Lasten schon entfernt hat. Bis zum 03.10.2026
+  blieben dann die halb geschriebenen Lasten stehen, obwohl die Meldung „das
+  Modell ist unverändert“ lautete. Ändert man in der Sammelmaske einen Wert,
+  den eines der Objekte abweist, gilt er für keines; Statuszeile und Protokoll
+  sagen das gleichlautend. Das Gewünschte findet sein Objekt auch danach
+  wieder. Die Knotenmaske prüft eine neue Nummer jetzt,
   bevor sie die Koordinaten schreibt; bis zum 03.10.2026 standen die neuen
   Koordinaten schon im Modell, wenn die Nummer abgewiesen wurde.
 * **Verwerfen** verwirft die Eingaben und führt dann aus, was man wollte. Eine
@@ -3233,14 +3240,32 @@ hat die Auswahl der Ansicht noch nicht umgestellt.
 * **Ohne Knopfdruck** bleibt alles, wie es ist. Die Maske steht weiter, man
   kann darin weitertippen und in der Ansicht klicken. Wählt man dabei in der
   Ansicht etwas anderes, gilt beim Druck auf *Übernehmen* die Auswahl in
-  diesem Moment – wie beim Knopf der Maske.
+  diesem Moment – wie beim Knopf der Maske. Eine Mehrfachwahl im Modellbaum
+  (Strg+Klick auf mehrere Knoten, Flächen oder Lastfälle) hält dagegen wie
+  der einzelne Klick an, bevor sie die Auswahl umstellt.
 
 Die Leiste geht von selbst, wenn die Maske auf ihrem eigenen Weg übernommen,
 abgebrochen oder geschlossen wird oder wieder unverändert ist; was man wollte,
 verfällt dann. Kommt ein weiterer Wunsch, während die Leiste steht, gilt der
 letzte. Die Leiste ist kein eigenes Fenster und sperrt nichts, auch nicht
 während einer Rechnung; eine Fehlermeldung beim Übernehmen steht dann wie jede
-andere im Protokoll.
+andere im Protokoll. Nicht an der Leiste halten Wege, die keine Maske
+ersetzen: „Querschnitt zuweisen…“ und „Dicke zuweisen…“ zeigen nur das
+Register „Auswahl“, und ein Strg+Klick auf eine schon gewählte Last nimmt sie
+nur aus der Auswahl.
+
+**Während ein Übernehmen rechnet, ist die Oberfläche gesperrt.** Wasserdruck
+und Wind rechnen beim Übernehmen mit Fortschrittsbalken, und bis zum
+03.10.2026 ließ sich das Fenster dabei voll bedienen: Ein Klick im Modellbaum
+ersetzte die rechnende Maske samt ihren Eingaben, ein zweiter Klick auf
+*Übernehmen* rechnete noch einmal, und Rückgängig tauschte das Modell unter der
+laufenden Rechnung aus. Jetzt wirkt in dieser Zeit wie während einer Rechnung
+nur **Abbrechen** neben dem Balken (oder Esc). Klicks im Modellbaum, in den
+Tabellen, in der Ansicht und im Ribbon, Tasten, die Leiste, Rückgängig,
+*Neu*, *Öffnen*, die Beispiele und Beenden werden abgewiesen, und die
+Statuszeile sagt „Übernehmen läuft – erst abwarten oder abbrechen“. Eine
+Änderung aus dem Browser wird ebenfalls abgewiesen; der Browser bekommt den
+Grund als Meldung.
 
 **Neu, Öffnen, Beispiel, Importieren und Beenden** gehen ebenfalls über die
 Leiste, auch wenn das Modell gespeichert ist; nach dem Knopf folgt der Befehl
@@ -3253,11 +3278,33 @@ verschieben, sodass sie einen anderen Knoten beschrieb; ein Rückgängig danach
 nähme genau das Übernommene zurück. Strg+Z in einem Textfeld der Maske nimmt
 weiter nur die Eingabe im Feld zurück.
 
+Ist die offene Maske **unverändert**, wirken Rückgängig und Wiederholen wie
+immer, und die Maske wird danach mit dem Stand von jetzt neu aufgebaut; ebenso
+nach einer Änderung aus dem Browser und nach einem Import, der an das Modell
+angehängt wird. Sie gilt weiter demselben Objekt: Holt Rückgängig einen
+gelöschten Knoten zurück, zeigt die Maske des Knotens bei x = 40 danach
+„Knoten K20“ statt „Knoten K19“, mit seinen Werten. Gibt es ihr Objekt nicht
+mehr, bleibt sie geschlossen, und die Statuszeile sagt es, etwa „Knoten K20
+gibt es nach „Rückgängig“ nicht mehr – die Maske ist geschlossen“. Bis zum
+03.10.2026 zeigte die Maske dann die alten Werte, und ein späteres Übernehmen
+schrieb sie zurück. Hat der Browser das Modell gegen ein anderes getauscht,
+geht die Maske zu wie bei *Neu*.
+
+Ist am Desktop eine Maske mit nicht übernommenen Änderungen offen, weist das
+Programm Änderungen aus dem **Browser** ab, auch *Neu*, ein Beispiel und den
+Import dort. Der Browser bekommt die Meldung „Am Desktop ist die Maske
+„Knoten K1“ mit nicht übernommenen Änderungen offen – dort erst „Übernehmen“
+oder „Verwerfen“, dann die Änderung hier noch einmal senden“. Bis zum
+03.10.2026 ersetzte der Browser das Modell unter der Maske, und ihr
+Übernehmen schrieb die alten Eingaben in das neue Modell.
+
 Die Wege, die ohnehin fragen, gehen nicht über die Leiste, nennen die Maske
 aber in ihrer Rückfrage: **Entf** in der Ansicht, Löschen im Modellbaum (auch
 für Lager und für mehrere Einträge), *Löschen* im Rechtsklickmenü der Auswahl,
-„Diese Lasten löschen“ und das Löschen einer einzelnen Last. Mit *Ja* wird die
-Maske geschlossen. Die Taste **F** öffnet keine Maske, sondern den Dialog
+„Diese Lasten löschen“, das Löschen einer einzelnen Last und *Modell leeren*.
+Mit *Ja* wird die Maske geschlossen; *Modell leeren* schließt jede offene
+Maske, denn ihr Objekt gibt es danach nicht mehr. Die Taste **F** öffnet
+keine Maske, sondern den Dialog
 *Fläche aus Linien*, und lässt die offene Maske stehen. Die Ermüdungsmaske und
 die Querschnittsmaske tragen keinen Punkt, ihre Tabellen und Profile zählen
 nicht mit; die Register (*Berechnung*, *Ergebnisse* …) auch nicht.
@@ -3449,7 +3496,9 @@ Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
 für alles: Geometrie, Netz, Lager, Lasten, Linien. Solange eine Maske nicht
 übernommene Änderungen hat (Punkt im Titel), sind beide gesperrt; die Leiste
 „Übernehmen | Verwerfen“ erscheint (seit 03.10.2026, Kapitel 2, *Maske oder
-Klick*). Gesichert wird jeweils das
+Klick*). Eine offene Maske ohne Änderungen wird danach mit dem neuen Stand
+aufgebaut oder, wenn es ihr Objekt nicht mehr gibt, geschlossen; während ein
+Übernehmen rechnet, sind beide gesperrt. Gesichert wird jeweils das
 ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
 einmal betrifft. Die letzten 50 Schritte werden vorgehalten. Der Knopf
 **nennt, was er zurücknimmt**: der Hinweis beim Überfahren lautet etwa
@@ -8638,7 +8687,11 @@ Statik3D startet dann bildschirmfüllend wie eine App.
 Aus der Desktop-GUI: **Berechnung → Bedienung im Browser / auf dem Handy…**
 startet den Server für das geöffnete Modell. Handy und PC arbeiten dann am
 selben Modell: Eingaben vom Handy erscheinen in der GUI, Ergebnisse vom PC
-auf dem Handy.
+auf dem Handy. Ist am PC eine Maske mit nicht übernommenen Änderungen offen
+(Punkt im Titel) oder läuft dort gerade ein Übernehmen, weist der Server
+Änderungen vom Handy mit einer Meldung ab, die die Maske nennt (seit
+03.10.2026, Kapitel 2, *Maske oder Klick*); nach *Übernehmen* oder *Verwerfen*
+am PC geht es weiter.
 
 | Option | Bedeutung |
 |---|---|

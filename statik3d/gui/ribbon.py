@@ -34,8 +34,8 @@ Aufbau::
     ribbon = Ribbon(fenster)
     start = ribbon.register("Start")
     g = start.gruppe("Bearbeiten")
-    g.gross("Rueckgaengig", "↶", self.undo, "Ctrl+Z", "Letzte Aenderung zuruecknehmen")
-    g.klein("Wiederholen", self.redo, "Ctrl+Y")
+    g.gross("Rueckgaengig", "↶", self.rueckgaengig_befehl, "Ctrl+Z", "Letzte Aenderung zuruecknehmen")
+    g.klein("Wiederholen", self.wiederholen_befehl, "Ctrl+Y")
 
 Jeder Befehl wird zentral vermerkt; die Suche findet ihn ueber Registername,
 Gruppe und Beschriftung.

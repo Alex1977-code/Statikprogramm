@@ -215,6 +215,7 @@ class State:
     @model.setter
     def model(self, m: Model):
         if self.bound is not None:
+            _desktop_frei(self)
             self.bound.model = m
         else:
             self._model = m
@@ -259,6 +260,18 @@ class State:
         elif what == "design" and self.analysis is not None:
             self.analysis.design = None
             self.analysis.fatigue = None
+
+
+def _desktop_frei(st: State) -> None:
+    """Darf der Browser das Modell jetzt aendern? Die Desktop-Oberflaeche
+    (State.bound) sagt nein, solange dort eine Maske mit nicht uebernommenen
+    Aenderungen offen ist oder ein „Übernehmen“ laeuft (Paket 13m, zweite
+    Nachbesserung 03.10.2026): ihr „Übernehmen“ schriebe sonst die alten Werte
+    in das vom Browser geaenderte - oder gar ausgetauschte - Modell. Der
+    Browser bekommt den Grund als Meldung (409)."""
+    grund = getattr(st.bound, "web_sperrgrund", "") if st.bound is not None else ""
+    if isinstance(grund, str) and grund:
+        raise ApiError(grund, 409)
 
 
 # --------------------------------------------------------------------------
@@ -2037,6 +2050,8 @@ def apply_op(st: State, d: dict) -> dict:
     with st.lock:
         if st.busy() and name not in KEEP_ALL:
             raise ApiError("Es läuft gerade eine Berechnung - bitte warten", 409)
+        if name not in KEEP_ALL:
+            _desktop_frei(st)
         m = st.model
         try:
             res = fn(st, m, d)
@@ -2170,6 +2185,7 @@ def load_example(st: State, name: str) -> dict:
     with st.lock:
         if st.busy():
             raise ApiError("Es läuft gerade eine Berechnung", 409)
+        _desktop_frei(st)
         st.model = build_example(name)
         st.invalidate()
         st.touch()
@@ -2182,6 +2198,7 @@ def replace_model(st: State, d: dict) -> dict:
     with st.lock:
         if st.busy():
             raise ApiError("Es läuft gerade eine Berechnung", 409)
+        _desktop_frei(st)
         try:
             m = Model.from_dict(d)
         except Exception as ex:      # noqa: BLE001
@@ -2212,6 +2229,7 @@ def import_bytes(st: State, name: str, data: bytes, unit: float = None) -> dict:
     with st.lock:
         if st.busy():
             raise ApiError("Es läuft gerade eine Berechnung", 409)
+        _desktop_frei(st)
         try:
             m = import_file(path, log=msgs, **opts)
         except Exception as ex:      # noqa: BLE001

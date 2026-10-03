@@ -951,7 +951,13 @@ class Maske(QtWidgets.QFrame):
         """„Übernehmen“. True, wenn es gelang: kein Handler hat abgelehnt, einen
         Fehler gemeldet oder eine Ausnahme geworfen (:attr:`uebernahme_lauf`).
         Dann gilt der jetzige Stand als uebernommen, der Punkt im Titel geht.
-        Die Leiste „Übernehmen | Verwerfen“ fuehrt den Wunsch nur bei True aus."""
+        Die Leiste „Übernehmen | Verwerfen“ fuehrt den Wunsch nur bei True aus.
+
+        Waehrend die Maske schon uebernimmt (ein langes „Übernehmen“ dreht die
+        Ereignisschleife), tut ein zweiter Druck nichts - bis zum 03.10.2026
+        rechnete er noch einmal (Paket 13m, zweite Nachbesserung, Fehler 4)."""
+        if getattr(self, "_uebernimmt", False):
+            return False
         # Ungueltige Zahl: nichts uebernehmen. Mehrdeutige („33.000“): beim
         # ersten Mal nachfragen, beim zweiten Mal gilt sie (24.09.2026)
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
