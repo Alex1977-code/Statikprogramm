@@ -738,12 +738,15 @@ def test_kontakt_hinweis():
     check("Modell ohne Kontakt, Lastfall-Ergebnis: auch hier kein Hinweis",
           "Kontaktkräfte gibt es" not in w.tbl_contact.lbl_zeilen.text(),
           w.tbl_contact.lbl_zeilen.text())
-    # Auflager der Umhuellenden: Komma, kein -0,00
+    # Auflager der Umhuellenden: Komma, kein -0,00 - seit 03.10.2026 (10c)
+    # stehen min und max in eigenen Zahlenspalten, vorher als „min / max“-Text
     w.cb_result.setCurrentIndex(0); app.processEvents()
     t = w.tbl_react.modell
     zellen = [str(t.data(t.index(r, k))) for r in range(t.rowCount()) for k in range(1, t.columnCount())]
-    check("Auflager der Umhüllenden: „min / max“ mit Komma, kein Punkt, kein „-0,00“",
-          zellen and all("," in z and "." not in z for z in zellen)
+    check("Auflager der Umhüllenden: min und max in eigenen Zahlenspalten, mit Komma, kein Punkt, kein „-0,00“",
+          zellen and [sp.name for sp in t.spalten][1:3] == ["Rx min", "Rx max"]
+          and all(isinstance(x, float) for z in t.zeilen for x in z[1:])
+          and all("," in z and "." not in z and "/" not in z for z in zellen)
           and not any(re.search(r"-0,0+(?!\d)", z) for z in zellen), str(zellen[:3]))
 
 

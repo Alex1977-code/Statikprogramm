@@ -2606,12 +2606,57 @@ Schleife über alle Elemente kostete dort 1,0 s je Klick), und kein gewähltes
 Element fand seine Zeile; jetzt läuft sie über ein Netzverzeichnis, das einmal
 je Netz entsteht (0,9 s) und die Frage danach in 13 ms beantwortet.
 
-**Stabkräfte zur Umhüllenden.** Die Tabelle „Stabkräfte" führt Stabendkräfte
-je Element und gehört zu einem Lastfall oder einer Kombination. Ist das
-gezeigte Ergebnis eine Umhüllende, bleibt sie leer und sagt in der leeren
-Tabelle, warum: die Extremwerte stehen im Register „Umhüllende", auf das
-der Bereich unten dann selbst springt — und zurück auf „Stabkräfte", sobald
-wieder ein Lastfall oder eine Kombination gezeigt wird.
+**Ergebniszeile unten.** In den Gruppen *Ergebnisse* und *Nachweise* steht in
+der Kopfzeile unten gleich rechts neben der Gruppe die Ergebniswahl. Sie führt
+dieselbe Liste wie *Ergebnis* in der Ergebnissteuerung oben rechts und zeigt
+dieselbe Wahl wie die Glasleiste: Wer an einer der drei Stellen ein Ergebnis
+wählt, sieht es an allen dreien, im Bild und in den Tabellen. Geschlossen zeigt
+das Feld nur den Namen („Kombination GZT7“, „Umhüllende GZT“), die aufgeklappte
+Liste und der Tooltip nennen die ganze Kombination. Sind die Ergebnisse mit dem
+Knopf *Ergebnisse* ausgeblendet, blendet eine Wahl unten sie wieder ein. Die
+Wahl steht in der Kopfzeile und nicht in einer eigenen Zeile darunter, weil
+diese der Tabelle 29 px genommen hätte: Bei 1920 × 1080 wären von den
+Stabkräften 5 statt 7 Zeilen zu sehen gewesen, in der Kompaktstufe bei
+1366 × 768 von den Nachweisen EC3 3 statt 5. In der Kopfzeile kostet sie keine
+Höhe; dafür rollen die Reiter früher mit Pfeilen. Bei 1366 × 768 ist von den
+fünf Reitern der Ergebnisse einer ganz zu sehen statt drei, der gewählte aber
+immer. Gemessen am Hallenrahmen mit Segoe UI. Wird der Bereich noch schmaler,
+wird der Name in der Wahl gekürzt, und hat neben Gruppe, Reitern und dem Menü
+„»“ nicht einmal der gekürzte Name Platz, fällt die Wahl unten weg; sie steht
+dann weiter oben rechts und in der Glasleiste, und der Bereich rollt nicht
+waagerecht. Bis zum 03.10.2026 stand unten nirgends, zu welchem Ergebnis die
+Tabellen gehören.
+
+**Stabkräfte und Auflager einer Umhüllenden.** Zu einem Lastfall oder einer
+Kombination führt die Tabelle *Stabkräfte* die Stabendkräfte je Element. Ist
+eine Umhüllende gezeigt, stehen dort je Element min und max von N, Vz, My und
+Mz über die Länge des Elements und alle Kombinationen der Umhüllenden, und
+neben jedem Wert nennt die Spalte *Komb.* die Kombination, aus der er stammt.
+Alle sechs Schnittgrößen stehen weiter im Register *Umhüllende*. Die Werte
+kommen aus der Umhüllenden selbst; es wird nichts neu gerechnet. Fehlen sie,
+etwa bei einer Umhüllenden aus einer älteren Ergebnisdatei, sagt die leere
+Tabelle das und nennt den Weg (*Start → Berechnen*). Die *Auflagerkräfte*
+einer Umhüllenden stehen in Zahlenspalten *Rx min*, *Rx max* bis *Mz max*,
+die sich wie alle Zahlen sortieren und filtern lassen. Unter den
+Auflagerkräften eines Lastfalls oder einer Kombination steht eine
+Summenzeile **Σ** mit der Summe der Reaktionen Rx, Ry und Rz (mit Filter die
+der sichtbaren Zeilen), zum Abgleich mit der Summe der Lasten. Die Momente
+einzelner Lager haben dort keine Summe, weil sie ohne ihre Hebelarme keine
+Gesamtgröße ergeben. Bei einer Umhüllenden steht in der Zeile Σ **keine
+Summe**, sondern der Grund: Das Minimum am einen Lager stammt meist aus einer
+anderen Kombination als das am nächsten, beide wirken nie zugleich, und ihre
+Summe gleicht keiner Last. Kopieren, CSV und Excel geben die Summe mit aus,
+den Satz nicht. Ein **Klick** auf eine Zelle mit der maßgebenden Kombination
+in *Stabkräfte*, im Register *Umhüllende* und in *Nachweise EC3* zeigt dieses
+Ergebnis in der Ergebniszeile, oben rechts, in der Glasleiste, im Bild und in
+den Tabellen; diese Zellen sind dafür blau unterstrichen. Das angeklickte
+Element bleibt gewählt, und seine Zeile steht in der neu gefüllten Tabelle
+markiert. Ein Name ohne eigenes Ergebnis, etwa eine Alternative einer
+Ergebniskombination, schaltet nicht, und die Statuszeile sagt es. Bis zum
+03.10.2026 blieb *Stabkräfte* bei einer Umhüllenden leer mit einem Hinweis,
+und der Bereich unten sprang auf das Register *Umhüllende*; die
+Auflagerkräfte standen als Text „min / max“ in einer Zelle, eine Summenzeile
+gab es nicht, und die Zelle mit der Kombination war nur Text.
 
 **Kopfzeile unten.** Der Bereich unten hat eine einzige Kopfzeile. Links
 steht die Gruppe als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager,
@@ -2648,8 +2693,8 @@ und eine falsche Zahl steht nirgends. Eine leere Tabelle sagt in ihrer Mitte,
 wie sie sich füllt, etwa „Noch keine Lasten – Lasten → Knotenlast“ oder
 „Noch keine Verformungsnachweise – Nachweise → Verformung ▾ → Neu …“; die
 Verweise nennen Register und Knopf genau so, wie sie im Ribbon stehen.
-Gehört zum gezeigten Ergebnis ein eigener Hinweis (Stabkräfte zu einer
-Umhüllenden), steht er an dieser Stelle. Bis zum 03.10.2026 stand über einer
+Gehört zum gezeigten Ergebnis ein eigener Hinweis (etwa Stabkräfte zu einer
+Umhüllenden aus einer älteren Ergebnisdatei), steht er an dieser Stelle. Bis zum 03.10.2026 stand über einer
 leeren Tabelle nur „0 Zeilen“, und am Reiter war nicht zu sehen, ob sie
 etwas enthält.
 
@@ -2817,7 +2862,8 @@ Textspalte, und „nan“ als Zahl in einer xlsx-Zelle ist keine gültige Datei
 02.10.2026 mit Dezimalpunkt („q = (0.000, 0.000, -12.500) kN/m“, „von 1.5 m“,
 „F_v = 150 kN“ mit Punkt bei Dezimalstellen) und das „min / max“ der
 Auflagerkräfte ebenso. Beides steht jetzt mit Komma („q = (0,000; 0,000;
--12,500) kN/m“). Weil das Komma nun das Dezimalzeichen ist, trennt die
+-12,500) kN/m“); min und max der Auflagerkräfte stehen seit dem 03.10.2026 in
+eigenen Zahlenspalten. Weil das Komma nun das Dezimalzeichen ist, trennt die
 Lasttabelle die Teile eines Vektors mit Semikolon („Fy = 2,000; Fz = -5,000“,
 „Richtung (0,707; 0; -0,707)“) und nicht mehr mit Komma. Die 3D-Ansicht und die
 Beschriftungen im Bild behalten den

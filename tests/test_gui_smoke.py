@@ -1141,8 +1141,15 @@ def main():
         app.processEvents()
         check("Umhuellende fuellt ihre Tabelle", w.tbl_env.zeilenzahl() > 0,
               f"{w.tbl_env.zeilenzahl()} Zeilen")
-        check("Stabkraefte sind dabei leer", w.tbl_beam.zeilenzahl() == 0)
-        check("Leere Tabelle zeigt keine Kennwerte", w.tbl_beam.fuss.isHidden())
+        # seit 03.10.2026 (10c) zeigen die Stabkraefte bei einer Umhuellenden
+        # min und max je Element - bis dahin waren sie leer
+        check("Stabkräfte zeigen dabei min und max je Element mit Kombination, darunter Max/Min",
+              w.tbl_beam.zeilenzahl() == len(w.current_result().beam) > 0
+              and [sp.name for sp in w.tbl_beam.modell.spalten][1:3] == ["N min", "Komb."]
+              and not w.tbl_beam.fuss.isHidden() and w.tbl_beam.fussmodell.rowCount() == 2,
+              f"{w.tbl_beam.zeilenzahl()} Zeilen")
+        check("Leere Tabelle zeigt keine Kennwerte (Kontakt ist zur Umhüllenden leer)",
+              w.tbl_contact.zeilenzahl() == 0 and w.tbl_contact.fuss.isHidden())
 
         # Eingabetabellen: editierbar, mit Formel, mit Grenzen, ruecknehmbar
         name = list(w.model.materials)[0]
@@ -2547,9 +2554,11 @@ def main():
         w._baum_geklickt("ergebnis", "combo:GZT7")
         check("Klick im Baum stellt das Ergebnis ein",
               "GZT7" in w.cb_result.currentText(), w.cb_result.currentText()[:40])
-        # Ergebnistabellen (12.09.2026): die Umhüllende leert „Stabkräfte“ mit
-        # Hinweis und stellt das Register auf „Umhüllende“; ein gewähltes Element
-        # findet seine Zeile auch ohne die alte Grenze von 50 000 Elementen
+        # Ergebnistabellen: die Umhüllende zeigt in „Stabkräfte“ min und max je
+        # Element, das Register bleibt (seit 03.10.2026, 10c; vom 12.09.2026 bis
+        # dahin blieb die Tabelle leer, und das Register sprang auf „Umhüllende“);
+        # ein gewähltes Element findet seine Zeile auch ohne die alte Grenze von
+        # 50 000 Elementen
         from statik3d.gui import viewport as vpx
         tabs = w.tab_unten
         tabs.setCurrentIndex(tabs.indexOf(w.tbl_beam)); app.processEvents()
@@ -2558,13 +2567,15 @@ def main():
               w.tbl_beam.lbl_zeilen.text()[:60])
         env_key = erg["Umhüllende"][0][2]
         w._baum_geklickt("ergebnis", env_key); app.processEvents()
-        check("Umhüllende: „Stabkräfte“ leer mit Hinweis, Register springt auf „Umhüllende“",
-              len(w.tbl_beam.modell.zeilen) == 0 and "Umhüllende" in w.tbl_beam.lbl_zeilen.text()
-              and tabs.currentWidget() is w.tbl_env and len(w.tbl_env.modell.zeilen) > 0,
+        check("Umhüllende: „Stabkräfte“ mit min und max je Element, ohne Hinweis, das Register bleibt",
+              len(w.tbl_beam.modell.zeilen) > 0 and "N min" in [sp.name for sp in w.tbl_beam.modell.spalten]
+              and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text()
+              and tabs.currentWidget() is w.tbl_beam and len(w.tbl_env.modell.zeilen) > 0,
               w.tbl_beam.lbl_zeilen.text()[:70])
         w._baum_geklickt("ergebnis", "combo:GZT7"); app.processEvents()
-        check("zurück zur Kombination: Register wieder „Stabkräfte“, Hinweis weg",
-              tabs.currentWidget() is w.tbl_beam and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text(),
+        check("zurück zur Kombination: Register „Stabkräfte“ mit den Spalten des einzelnen Ergebnisses",
+              tabs.currentWidget() is w.tbl_beam and [sp.name for sp in w.tbl_beam.modell.spalten][1] == "N1"
+              and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text(),
               w.tbl_beam.lbl_zeilen.text()[:60])
         mx = w.model
         e0 = next(i for i, e in enumerate(mx.elements) if e.typ in vpx.TYPEN_STAEBE)
@@ -7585,7 +7596,15 @@ def main():
               and not any(z.startswith(("Rz", "ux", "sig_v")) for z in w._kennwerte_zeilen),
               str(w._kennwerte_zeilen[:3]))
         rk_ = w.tbl_react.modell
-        # Auflagerkraefte stehen als „min / max“-Paar (Umhuellende) oder als Zahl
+        # Die Einheiten werden an den Auflagerkraeften des Lastfalls geprueft
+        # (Spalten Rx … Mz): zur Umhuellenden, die nach der Rechnung vorn steht,
+        # heissen sie seit 03.10.2026 (10c) „Rx min“, „Rx max“ … - bis dahin
+        # stand dort „min / max“ als Text in einer Zelle
+        for i_ in range(w.cb_result.count()):
+            if (w.cb_result.itemData(i_) or ("",))[0] == "case":
+                w.cb_result.setCurrentIndex(i_)
+                break
+        app.processEvents()
         roh_ = str(rk_.zeilen[0][3])
         rz_kN = float(roh_.split("/")[0].replace(",", "."))
         paar_ = "/" in roh_

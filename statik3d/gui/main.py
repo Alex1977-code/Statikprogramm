@@ -14693,6 +14693,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self._zelle_uebernommen(f"Dicke {name}: t = {zl.zahl_text(wert, punkt=True)} m")
         return True
 
+    #: Schnittgroessen der Stabkraefte bei einer Umhuellenden - dieselben wie
+    #: beim einzelnen Ergebnis (N, Vz, My, Mz); alle sechs stehen im Register
+    #: „Umhüllende“
+    STAB_HUELLE = (("N", "kN"), ("Vz", "kN"), ("My", "kNm"), ("Mz", "kNm"))
+    AUFLAGER = (("Rx", "kN"), ("Ry", "kN"), ("Rz", "kN"), ("Mx", "kNm"), ("My", "kNm"), ("Mz", "kNm"))
+
+    def _stab_spalten(self, huelle: bool) -> list:
+        """Spalten der Stabkraefte - zu Lastfall oder Kombination die Werte an
+        den Stabenden, zu einer Umhuellenden je Groesse min und max mit der
+        massgebenden Kombination (03.10.2026, Teilpaket 10c; vorher blieb die
+        Tabelle bei einer Umhuellenden leer)."""
+        kN, kNm = "kN", "kNm"
+        if not huelle:
+            return [Spalte("Element", "", "ganz"),
+                    Spalte("N1", kN, "zahl", 2), Spalte("N2", kN, "zahl", 2),
+                    Spalte("Vz1", kN, "zahl", 2), Spalte("Vz2", kN, "zahl", 2),
+                    Spalte("My1", kNm, "zahl", 2), Spalte("My2", kNm, "zahl", 2),
+                    Spalte("Mz max", kNm, "zahl", 2),
+                    Spalte("σ", "MPa", "zahl", 1),
+                    Spalte("Ausn.", "", "zahl", 3, hinweis="Ausnutzung; Filter z. B. > 0,9")]
+        sp = [Spalte("Element", "", "ganz")]
+        for g, einheit in self.STAB_HUELLE:
+            for s in ("min", "max"):
+                sp += [Spalte(f"{g} {s}", einheit, "zahl", 2,
+                              hinweis=f"{'kleinster' if s == 'min' else 'größter'} Wert von {g} über "
+                                      "die Länge des Elements und alle Kombinationen der Umhüllenden"),
+                       Spalte("Komb.", hinweis=f"maßgebende Kombination für {g} {s} – ein Klick "
+                                               "zeigt dieses Ergebnis", ergebnis=True)]
+        sp.append(Spalte("Ausn.", "", "zahl", 3,
+                         hinweis="größte Ausnutzung über die Kombinationen; Filter z. B. > 0,9"))
+        return sp
+
+    def _auflager_spalten(self, huelle: bool) -> list:
+        """Spalten der Auflagerkraefte: zu Lastfall oder Kombination je
+        Komponente eine Zahl (Kraefte mit Summe Σ), zu einer Umhuellenden min und
+        max als zwei Zahlenspalten - bis zum 03.10.2026 stand dort „min / max“
+        als Text in einer Zelle (Teilpaket 10c)."""
+        if not huelle:
+            # Σ nur fuer die Kraefte: Lagermomente einzelner Knoten ergeben ohne
+            # ihre Hebelarme keine Gesamtgroesse
+            return [Spalte("Knoten", "", "ganz")] + [
+                Spalte(g, e, "zahl", 2, summe=e == "kN") for g, e in self.AUFLAGER]
+        return [Spalte("Knoten", "", "ganz")] + [
+            Spalte(f"{g} {s}", e, "zahl", 2) for g, e in self.AUFLAGER for s in ("min", "max")]
+
     def _build_ergebnistabellen(self, tabs):
         """Die Ergebnistabellen: filterbar, sortierbar, mit Max- und Min-Zeile.
 
@@ -14701,44 +14746,40 @@ class MainWindow(QtWidgets.QMainWindow):
         zugehoerigen Zeilen (Vorgabe Kap. 3.6).
         """
         kN, kNm = "kN", "kNm"
-        self.tbl_beam = tab.Datentabelle([
-            Spalte("Element", "", "ganz"),
-            Spalte("N1", kN, "zahl", 2), Spalte("N2", kN, "zahl", 2),
-            Spalte("Vz1", kN, "zahl", 2), Spalte("Vz2", kN, "zahl", 2),
-            Spalte("My1", kNm, "zahl", 2), Spalte("My2", kNm, "zahl", 2),
-            Spalte("Mz max", kNm, "zahl", 2),
-            Spalte("σ", "MPa", "zahl", 1),
-            Spalte("Ausn.", "", "zahl", 3, hinweis="Ausnutzung; Filter z. B. > 0,9")],
-            "Stabkraefte", self, mit_kennwerten=True)
+        self.tbl_beam = tab.Datentabelle(self._stab_spalten(False), "Stabkraefte", self,
+                                         mit_kennwerten=True)
         self.tbl_beam.zeile_gewaehlt.connect(self._tabelle_element)
         tabs.addTab(self.tbl_beam, "Stabkräfte")
 
-        self.tbl_react = tab.Datentabelle([
-            Spalte("Knoten", "", "ganz"),
-            Spalte("Rx", kN, "zahl", 2), Spalte("Ry", kN, "zahl", 2),
-            Spalte("Rz", kN, "zahl", 2), Spalte("Mx", kNm, "zahl", 2),
-            Spalte("My", kNm, "zahl", 2), Spalte("Mz", kNm, "zahl", 2)],
-            "Auflagerkraefte", self, mit_kennwerten=True)
+        self.tbl_react = tab.Datentabelle(self._auflager_spalten(False), "Auflagerkraefte", self,
+                                          mit_kennwerten=True)
         self.tbl_react.zeile_gewaehlt.connect(self._tabelle_knoten)
         tabs.addTab(self.tbl_react, "Auflagerkräfte")
 
+        # die Zellen „Kombination“ schalten das gezeigte Ergebnis (10c)
+        hin = "maßgebende Kombination – ein Klick zeigt dieses Ergebnis"
         self.tbl_env = tab.Datentabelle([
             Spalte("Element", "", "ganz"), Spalte("Größe"),
-            Spalte("min", "", "zahl", 2), Spalte("Kombination"),
-            Spalte("max", "", "zahl", 2), Spalte("Kombination ")],
+            Spalte("min", "", "zahl", 2), Spalte("Kombination", hinweis=hin, ergebnis=True),
+            Spalte("max", "", "zahl", 2), Spalte("Kombination ", hinweis=hin, ergebnis=True)],
             "Umhuellende", self, mit_kennwerten=True)
         self.tbl_env.zeile_gewaehlt.connect(self._tabelle_element)
         tabs.addTab(self.tbl_env, "Umhüllende")
+        for t in (self.tbl_beam, self.tbl_env):
+            t.ergebnis_gewaehlt.connect(self._ergebnis_aus_zelle)
 
         self.tbl_design = tab.Datentabelle([
             Spalte("Stab"), Spalte("Querschnitt"), Spalte("Material"),
             Spalte("L", "m", "zahl", 2), Spalte("Klasse", "", "ganz"),
             Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1 zeigt alle Überschreitungen",
                    ampel=True),
-            Spalte("maßgebender Nachweis"), Spalte("Kombination"),
+            Spalte("maßgebender Nachweis"),
+            Spalte("Kombination", hinweis="maßgebende Kombination – ein Klick zeigt dieses Ergebnis",
+                   ergebnis=True),
             Spalte("x", "m", "zahl", 2), Spalte("Status", ampel=True)],
             "Nachweise_EC3", self, mit_kennwerten=True)
         self.tbl_design.zeile_gewaehlt.connect(self._tabelle_stab)
+        self.tbl_design.ergebnis_gewaehlt.connect(self._ergebnis_aus_zelle)
         tabs.addTab(self.tbl_design, "Nachweise EC3")
 
         self.tbl_fat = tab.Datentabelle([
@@ -14994,6 +15035,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self.log, "Protokoll")
         self._build_eingabetabellen(tabs)
         self._build_ergebnistabellen(tabs)
+        self._ergebniszeile_bauen(tabs)
         # Alle Tabellen zeigen in den Einheiten und Nachkommastellen des
         # Modells (Ansicht -> Einheiten); die Zeilen bleiben in Grundeinheiten.
         for t in tabs.findChildren(tab.Datentabelle):
@@ -23625,6 +23667,182 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lastwahl_fuellen()
         # die Ergebnissteuerung oben rechts gibt es, solange es ein Ergebnis gibt
         self._ergebnissteuerung_zeigen()
+        # die Wahl unten teilt die Liste; sie zeigt den Eintrag von oben (10c)
+        self._ergebniszeile_nachziehen()
+
+    # ---- Ergebniszeile unten (03.10.2026, Teilpaket 10c) ---------------------
+    #: Was in der Summenzeile der Auflager einer Umhuellenden steht (show_results)
+    SUMME_UMHUELLENDE = ("keine Summe: min und max stammen aus verschiedenen Kombinationen und "
+                         "wirken nie zugleich – die Summe der Reaktionen steht bei Lastfall oder "
+                         "Kombination")
+
+    def _ergebniszeile_bauen(self, tabs) -> None:
+        """Die Ergebniswahl im Kopf des unteren Bereichs, zu sehen in den Gruppen
+        Ergebnisse und Nachweise, sobald es ein Ergebnis gibt.
+
+        Sie teilt das Listenmodell mit der Ergebnissteuerung oben rechts
+        (cb_result): dieselben Eintraege, ohne dass eine Liste der anderen
+        nachgefuehrt werden muss. Gewaehlt wird immer ueber cb_result; von dort
+        ziehen show_results und _fill_result_selector die Glasleiste und diese
+        Wahl mit gesperrten Signalen nach - so schaukelt nichts zurueck.
+        Warum im Kopf und nicht darunter: Tabellenbereich.kopf_zusatz_setzen."""
+        # Ohne Etikett „Ergebnis“ und geschlossen nur mit dem Namen des
+        # Eintrags (tab.Kurzwahl): beides kostete den Reitern daneben Platz,
+        # und „Umhüllende GZT“ oder „Kombination GZT7“ sagt selbst, was es ist
+        cb = tab.Kurzwahl()
+        cb.setObjectName("ergebniswahl")
+        cb.setAccessibleName("Ergebnis")
+        cb.setModel(self.cb_result.model())
+        cb.view().setTextElideMode(QtCore.Qt.ElideNone)
+        cb.currentIndexChanged.connect(self._ergebniszeile_gewaehlt)
+        self.cb_ergebnis_unten = cb
+        tabs.kopf_zusatz_setzen(cb, ("Ergebnisse", "Nachweise"))
+        self._ergebniszeile_nachziehen()
+
+    def _ergebniszeile_nachziehen(self) -> None:
+        """Die Wahl unten auf den Eintrag von oben rechts stellen, ohne dabei
+        einen Wechsel zu melden; zu sehen nur, wenn es ein Ergebnis gibt."""
+        cb = getattr(self, "cb_ergebnis_unten", None)
+        cbr = getattr(self, "cb_result", None)
+        if cb is None or cbr is None or not _lebt(cb) or not _lebt(cbr):
+            return
+        i = cbr.currentIndex()
+        if cb.currentIndex() != i:
+            cb.blockSignals(True)
+            try:
+                cb.setCurrentIndex(i)
+            finally:
+                cb.blockSignals(False)
+        lang = cbr.itemData(i, QtCore.Qt.ToolTipRole) if i >= 0 else None
+        cb.setToolTip("Ergebnis der Tabellen unten und im Bild – dieselbe Wahl wie oben rechts "
+                      f"und in der Glasleiste\n{lang or cbr.currentText()}")
+        if getattr(self, "_ergebniszeile_anzahl", -1) != cbr.count():
+            # die Aufklappliste so breit wie der laengste Eintrag (wie oben rechts)
+            self._ergebniszeile_anzahl = cbr.count()
+            fm = cb.fontMetrics()
+            breit = max((fm.horizontalAdvance(cbr.itemText(k)) for k in range(cbr.count())), default=0)
+            try:
+                grenze = cb.screen().availableGeometry().width() - 40
+            except Exception:                   # noqa: BLE001
+                grenze = 1200
+            cb.view().setMinimumWidth(max(0, min(breit + 48, grenze)))
+        tu = getattr(self, "tab_unten", None)
+        if tu is not None and _lebt(tu):
+            tu.kopf_zusatz_zeigen(cbr.count() > 0)
+
+    def _ergebniszeile_gewaehlt(self, i: int) -> None:
+        """Unten gewaehlt: ueber die Ergebnissteuerung oben rechts zeigen.
+        Waehrend cb_result neu gefuellt wird (Signale gesperrt), meldet die
+        geteilte Liste hier Zwischenstaende - die zaehlen nicht."""
+        cbr = self.cb_result
+        if cbr.signalsBlocked() or not 0 <= i < cbr.count() or i == cbr.currentIndex():
+            return
+        self._ergebnis_zeigen(i)
+
+    def _ergebnis_zeigen(self, i: int) -> None:
+        """Den Eintrag *i* der Ergebnissteuerung zeigen - auch im Bild: sind
+        die Ergebnisse ausgeblendet (Knopf „Ergebnisse“), werden sie
+        eingeblendet, sonst zeigten Glasleiste und Bild etwas anderes als die
+        Tabellen."""
+        act = getattr(self, "act_ergebnisse", None)
+        if act is not None and not self.ergebnisse_sichtbar():
+            act.setChecked(True)            # zeichnet neu, zieht die Glasleiste nach
+        if i != self.cb_result.currentIndex():
+            self.cb_result.setCurrentIndex(i)   # show_results: Tabellen, Bild, Glasleiste, unten
+
+    def _ergebnis_aus_zelle(self, name: str) -> None:
+        """Klick auf die Zelle mit der massgebenden Kombination (Stabkraefte
+        einer Umhuellenden, Register Umhüllende, Nachweise EC3): dieses Ergebnis
+        zeigen. Erst nach dem Klick, nicht in ihm - die Tabelle, in die
+        geklickt wurde, wird dabei neu gefuellt."""
+        name = str(name or "").strip()
+        cbr = getattr(self, "cb_result", None)
+        ziel = -1
+        if cbr is not None and _lebt(cbr) and self.results is None and self.analysis is not None:
+            for art in ("combo", "case", "env"):
+                ziel = next((i for i in range(cbr.count())
+                             if tuple(cbr.itemData(i) or ()) == (art, name)), -1)
+                if ziel >= 0:
+                    break
+        if ziel < 0:
+            self.info(f"„{name}“ ist kein einzeln gespeichertes Ergebnis (etwa eine Alternative "
+                      "einer Ergebniskombination) und lässt sich nicht für sich zeigen")
+            return
+        QtCore.QTimer.singleShot(0, lambda i=ziel: self._ergebnis_aus_zelle_zeigen(i))
+
+    def _ergebnis_aus_zelle_zeigen(self, i: int) -> None:
+        cbr = getattr(self, "cb_result", None)
+        if cbr is None or not _lebt(cbr) or not 0 <= i < cbr.count():
+            return
+        self._ergebnis_zeigen(i)
+        # die angeklickte Zeile steht in der neu gefuellten Tabelle wieder markiert
+        self._tabellen_markieren()
+
+    def _stabkraefte_umhuellende(self, env) -> tuple:
+        """Zeilen der Stabkraefte zu einer Umhuellenden: je Element min und max
+        von N, Vz, My, Mz ueber alle Stationen und Ergebnisse, je Wert der Name
+        des massgebenden Ergebnisses - gelesen aus ``Envelope.beam``, ohne neue
+        Rechnung. Rueckgabe (Zeilen, Satz fuer die leere Tabelle).
+
+        Je Groesse in einem Zug mit numpy ueber alle Elemente: bei 100 000
+        Staeben mit 11 Stationen und 128 Ergebnissen 1,5 s, die Schleife je
+        Element und Groesse (wie extreme_table) 2,1 s; am Drehlager (64 Staebe)
+        faellt es nicht ins Gewicht (scratchpad/c10c_zeit.py)."""
+        beam = getattr(env, "beam", None) or {}
+        if not beam:
+            stab = self._netzverzeichnis()[3]
+            if len(stab) and bool(np.any(stab)):
+                return [], ("Zu dieser Umhüllenden sind keine Schnittgrößen je Stab gespeichert "
+                            "(ältere Ergebnisdatei) – Start → Berechnen bildet sie neu, dann stehen "
+                            "hier min und max je Element")
+            return [], ""
+        namen = np.array([str(x) for x in (getattr(env, "names", None) or [])] + ["–"], dtype=object)
+        ids = sorted(beam)
+        reihe = np.arange(len(ids))
+        spalten = []
+        for g, _einheit in self.STAB_HUELLE:
+            mn, mx, imn, imx = self._huelle_felder(beam, ids, g)
+            j1, j2 = np.argmin(mn, axis=1), np.argmax(mx, axis=1)
+            for werte, j, herkunft in ((mn, j1, imn), (mx, j2, imx)):
+                spalten.append((werte[reihe, j] / 1e3).tolist())
+                if herkunft is None:
+                    spalten.append(["–"] * len(ids))
+                else:
+                    k = herkunft[reihe, j]
+                    k = np.where((k >= 0) & (k < len(namen) - 1), k, len(namen) - 1)
+                    spalten.append(namen[k].tolist())
+        util_map = self._util_map("Ausnutzung EC3") or {}
+        util_env = getattr(env, "util", None) or {}
+        ausn = []
+        for e in ids:
+            u = util_map.get(e, util_env.get(e))
+            ausn.append(float(u) if u is not None else "-")
+        zeilen = [list(z) for z in zip(ids, *spalten, ausn)]
+        return zeilen, ""
+
+    @staticmethod
+    def _huelle_felder(beam: dict, ids: list, g: str) -> tuple:
+        """(min, max, Herkunft min, Herkunft max) einer Groesse als Matrizen
+        Element x Station; Herkunft None, wo die Umhuellende sie nicht kennt.
+        Elemente mit abweichender Stationszahl werden auf die kleinste gekuerzt
+        - eine Umhuellende hat je Element dieselbe (n_stations)."""
+        teile = [beam[i][g] for i in ids]
+        mit = all(len(t) >= 4 for t in teile)
+
+        def matrix(k, art):
+            try:
+                # der uebliche Fall: je Element gleich viele Stationen (np.array
+                # statt np.stack: an 100 000 Staeben 1,5 statt 2,7 s fuer die
+                # ganze Tabelle, scratchpad/c10c_zeit.py)
+                a = np.array([t[k] for t in teile], art)
+                if a.ndim == 2:
+                    return a
+            except ValueError:
+                pass
+            n = min(len(np.atleast_1d(t[0])) for t in teile)
+            return np.array([np.atleast_1d(np.asarray(t[k], art))[:n] for t in teile], art)
+        return (matrix(0, float), matrix(1, float),
+                matrix(2, int) if mit else None, matrix(3, int) if mit else None)
 
     def current_result(self):
         """Aktuell gewaehltes Ergebnisobjekt (Results oder Envelope) oder None."""
@@ -23674,6 +23892,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 and d[1] != self.model.active_case:
             self._aktiven_lastfall_setzen(d[1])
         self._lastwahl_nachziehen()     # die Glasleiste zeigt dasselbe an
+        self._ergebniszeile_nachziehen()    # ... und die Ergebniswahl unten (10c)
         # Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) bei
         # jedem Aufruf aus dem, was die statische Analyse (self.analysis)
         # jetzt hat - EC3, Ermuedung, beides oder nichts -, nicht aus dem
@@ -23744,6 +23963,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Tabellen
         if hasattr(r, "beam_forces"):
             util_map = self._util_map("Ausnutzung EC3") or {}
+            # zu einer Umhuellenden standen andere Spalten da (10c)
+            self.tbl_beam.spalten_setzen(self._stab_spalten(False))
+            self.tbl_react.spalten_setzen(self._auflager_spalten(False))
             rows = []
             for e, d in sorted(r.beam_forces.items()):
                 u = util_map.get(e, d["util"])
@@ -23758,6 +23980,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 R = r.reactions[s]
                 react.append([s] + [float(v) / 1e3 for v in R])
             self._fill(self.tbl_react, react)
+            # darunter Σ der Reaktionen - zum Abgleich mit der Summe der Lasten
+            self.tbl_react.summe_setzen("summe")
             self._fill(self.tbl_contact, [[c["node"], c["kind"], c["status"], c["Fn"] / 1e3,
                                            c["Ft"] / 1e3, c["gap"] * 1e3,
                                            str(c.get("label", "")).split(":")[0]] for c in r.contact])
@@ -23776,9 +24000,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tbl_env.hinweis_setzen("Extremwerte gibt es zur Umhüllenden - Ergebnis „Umhüllende“ wählen")
             self._ergebnistabelle_nachziehen(self.tbl_env, self.tbl_beam)
         elif hasattr(r, "extreme_table"):
-            rows = [[e, k, mn / 1e3, c1, mx / 1e3, c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
+            rows = ([[e, k, mn / 1e3, c1, mx / 1e3, c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
+                    if getattr(r, "beam", None) else [])
             self._fill(self.tbl_env, rows)
-            self._fill(self.tbl_beam, [])
+            # Stabkraefte je Element: min und max mit der massgebenden
+            # Kombination je Wert, aus der Umhuellenden selbst (03.10.2026,
+            # Teilpaket 10c). Bis dahin blieb die Tabelle leer mit dem Satz
+            # „die Umhüllende zeigt ihre Extremwerte im Register „Umhüllende“
+            # …“, und das Register sprang dorthin.
+            self.tbl_beam.spalten_setzen(self._stab_spalten(True))
+            zeilen, warum = self._stabkraefte_umhuellende(r)
+            self._fill(self.tbl_beam, zeilen)
             # Kontaktkraefte gibt es je Lastfall oder Kombination, nicht zur
             # Umhuellenden - die Tabellen bleiben leer statt veraltet
             self._fill(self.tbl_contact, [])
@@ -23792,18 +24024,23 @@ class MainWindow(QtWidgets.QMainWindow):
             for tb in (self.tbl_contact, self.tbl_kontaktpaare):
                 tb.hinweis_setzen("Kontaktkräfte gibt es zu Lastfall oder Kombination - "
                                   "Ergebnis wählen" if hat_kontakt else "")
-            # Stabkraefte je Element gibt es nur zu Lastfall oder Kombination;
-            # die Umhuellende traegt ihre Extremwerte im Register Umhuellende
-            self.tbl_beam.hinweis_setzen("die Umhüllende zeigt ihre Extremwerte im Register "
-                                         "„Umhüllende“; Stabkräfte je Element gibt es zu "
-                                         "Lastfall oder Kombination (Ergebnis wählen)")
+            self.tbl_beam.hinweis_setzen(warum)
             self.tbl_env.hinweis_setzen("")
-            self._ergebnistabelle_nachziehen(self.tbl_beam, self.tbl_env)
-            react = []
-            for s in sorted({s.node for s in self.model.supports}):
-                react.append([s] + [f"{tab.festkomma(r.r_min[s, i] / 1e3, 2)} / "
-                                    f"{tab.festkomma(r.r_max[s, i] / 1e3, 2)}" for i in range(6)])
+            # Auflager: min und max als zwei Zahlenspalten je Komponente - bis
+            # zum 03.10.2026 „min / max“ als Text in einer Zelle (10c)
+            self.tbl_react.spalten_setzen(self._auflager_spalten(True))
+            react = [[s] + [float(v) / 1e3 for i in range(6) for v in (r.r_min[s, i], r.r_max[s, i])]
+                     for s in sorted({s.node for s in self.model.supports})]
             self._fill(self.tbl_react, react)
+            # Keine Summe der Minima oder Maxima: das Minimum am einen Lager
+            # stammt meist aus einer anderen Kombination als das am naechsten,
+            # beide wirken nie zugleich - ihre Summe gleicht keiner Last, die es
+            # gibt, und taugt nicht zum Abgleich mit der Summe der Lasten. Was
+            # Sinn haette, min und max der Summe je Kombination, traegt die
+            # Umhuellende nicht (dafuer muesste jede Kombination neu
+            # ausgewertet werden). Darum steht dort, warum, und wo die Summe
+            # zu finden ist.
+            self.tbl_react.summe_setzen(self.SUMME_UMHUELLENDE)
         # Zusaetze im Modellbaum (Verformungen, Schnittgroessen) zum gezeigten
         # Ergebnis - sie blieben beim alten stehen (Befund 24.09.2026). Aendern
         # sich die Gruppen, wird neu aufgebaut, aber erst nach dem laufenden
