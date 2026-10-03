@@ -911,14 +911,23 @@ def _kind_baum():
                 ab += 1
                 beispiele.append(text)
         it += 1
+    # „nur_anlegen“ prueft alle abgeschnittenen Zeilen, nicht nur die ersten
+    # sechs der Beispiele (Nachbesserung 03.10.2026, Teilpaket 8c)
     print("MESSUNG " + json.dumps({"baum": b.width(), "eintraege": n, "abgeschnitten": ab,
                                    "beispiele": beispiele[:6], "ansicht": list(_ansicht(w)),
+                                   "nur_anlegen": all("anlegen" in t or t.startswith("+") for t in beispiele),
                                    "fenster": [w.width(), w.height()]}), flush=True)
 
 
 #: am Stand 562dc3a (Baum 290 px) bei 1366 x 768 mit Segoe UI: 6 von 196
 #: Namen abgeschnitten, alle „+ … anlegen“ (Gegenpruefung 25.09.2026)
 BAUM_ABGESCHNITTEN_ALT = 6
+#: Seit Teilpaket 8c (03.10.2026) ist der Baum nach Gruppen geordnet, und die
+#: Zeilen „+ … anlegen“ unter Subsystemen, Nachweisen, Bericht und
+#: Hilfsobjekten stehen eine Ebene (14 px) tiefer: gemessen 7 von 204 Zeilen
+#: abgeschnitten, weiter nur „+ … anlegen“. Die Namen der Objekte und Zweige
+#: bleiben ganz lesbar (geprueft ueber alle abgeschnittenen Zeilen).
+BAUM_ABGESCHNITTEN = 7
 
 
 def test_baum_namen_lesbar():
@@ -928,9 +937,10 @@ def test_baum_namen_lesbar():
     fonts = r"C:\Windows\Fonts"
     extra = {"QT_QPA_FONTDIR": fonts} if os.path.isdir(fonts) else {}
     e = _bildschirm_lauf(1366, 768, arg="--baum", env_extra=extra)
-    ok = e is not None and e["eintraege"] >= 150 and e["abgeschnitten"] <= BAUM_ABGESCHNITTEN_ALT
-    check(f"1366 x 768, Beispiel hall aufgeklappt: höchstens {BAUM_ABGESCHNITTEN_ALT} Namen abgeschnitten "
-          "(so viele wie am Stand 562dc3a)", ok and all("anlegen" in t or t.startswith("+") for t in e["beispiele"]),
+    ok = e is not None and e["eintraege"] >= 150 and e["abgeschnitten"] <= BAUM_ABGESCHNITTEN
+    check(f"1366 x 768, Beispiel hall aufgeklappt: höchstens {BAUM_ABGESCHNITTEN} Zeilen abgeschnitten, alle "
+          f"„+ … anlegen“ ({BAUM_ABGESCHNITTEN_ALT} am Stand 562dc3a, seit 8c eine Gruppenebene mehr)",
+          ok and e.get("nur_anlegen") and all("anlegen" in t or t.startswith("+") for t in e["beispiele"]),
           str(e)[:200])
     if e is not None:
         fb, fh = e["fenster"]

@@ -686,7 +686,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
     Knoten, Linien, Staebe, Flaechen, Volumen, Lager (Knoten, Linie, Flaeche),
     Gelenke, Kontaktbedingungen, Querschnitte, Werkstoffe, Dicken, Lastfaelle,
-    Kombinationen und die Nachweisobjekte stehen hier mit ihrer Anzahl.
+    Kombinationen und die Nachweisobjekte stehen hier mit ihrer Anzahl,
+    seit 03.10.2026 in Gruppen nach dem Ablauf (:attr:`GRUPPEN`).
 
     Ein **Klick** waehlt den Zweig aus (und zeigt die zugehoerige Tabelle oder
     Maske), ein **Doppelklick** oeffnet ihn zum Bearbeiten. Beides laeuft ueber
@@ -704,12 +705,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
     viele_bearbeiten = QtCore.Signal(str, list)   # (Art, [Namen]) - Sammelmaske
     viele_loeschen = QtCore.Signal(str, list)     # (Art, [Namen]) - auf einmal loeschen
 
-    #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
+    #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst.
+    #: „Stab“ ist seit 03.10.2026 der Stab im Sinn von RFEM (mit Nachweis), das
+    #: FE-Element darunter heisst „Stabelement“ (Antwort 2 vom 24.09.2026).
     NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
                  "situationen": "Situation", "generierer": "Wasserdruck",
                  "layerliste": "Layer aus Auswahl", "unterlagen": "Skizze",
-                 "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
-                 "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
+                 "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stabelement",
+                 "staebe": "Stab", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
                  "kombinationen": "Kombination", "ermuedungslasten": "Ermüdungslast",
@@ -778,15 +781,48 @@ class Modellbaum(QtWidgets.QTreeWidget):
         #: und Rolle, aber nicht die Auswahl (die Ansicht leert ihre auch)
         self._auswahl_verwerfen = False
 
+    #: Die Gruppen der obersten Ebene in dieser Folge, je (Kennung, Text)
+    #: (Teilpaket 8c, 03.10.2026; Antworten 2 bis 4 des Anwenders vom
+    #: 24.09.2026: nach Gruppen, Eigenschaften vor der Geometrie, Nachweise
+    #: gebuendelt). Die Folge ist die des Ablaufs und die der Navigation in
+    #: RFEM 6: dort beginnen die Basisobjekte mit Werkstoffen, Querschnitten und
+    #: Dicken, auf die Staebe, Flaechen und Volumen verweisen; es folgen Lager
+    #: und Gelenke, die Lastfaelle und Kombinationen, die Ergebnisse und zuletzt
+    #: die Hilfsobjekte (Bemassungen, Objektselektionen = Layer). Das FE-Netz
+    #: steht nach den Einwirkungen, weil in dieser Folge gearbeitet wird
+    #: (Register Start: Lastfaelle, Vernetzen, Berechnen), die Stellungen danach,
+    #: weil sie Teile des fertigen Modells ab- und zuschalten. Die Gruppen
+    #: tragen die Art „modell“ und ihre Kennung (:meth:`pfad_von`); nur
+    #: „Ergebnisse“ behaelt seine Art und damit seinen Pfad von vorher.
+    GRUPPEN = (("eigenschaften", "Eigenschaften"), ("geometrie", "Geometrie"),
+               ("lager_verbindungen", "Lager und Verbindungen"), ("einwirkungen", "Einwirkungen"),
+               ("fe_netz", "FE-Netz"), ("systeme", "Systeme und Stellungen"),
+               ("nachweise", "Nachweise"), ("ergebnisse", "Ergebnisse"),
+               ("bericht_unterlagen", "Bericht und Unterlagen"), ("hilfsobjekte", "Hilfsobjekte"))
+    #: Die Zweige der Gruppe „Systeme und Stellungen“ in dieser Folge: erst
+    #: die Teile, dann die Lagen, dann die Situationen, die einer Stellung ihre
+    #: Lastfaelle zuordnen. „detailmodelle“ ist der Platz fuer den Knoten
+    #: „Detailmodelle (Volumen)“ (Vorgabe FCM-Volumenloeser, Abschnitt 15.1:
+    #: „auf gleicher Ebene wie die Stellungen als Subsysteme“; Vertrag 10.4,
+    #: gespeist aus DetailModelSpec). Gebaut wird er erst, wenn das Modell
+    #: Detailmodelle kennt - Teilpaket 8c laesst nur den Platz (in
+    #: :meth:`fuellen` zwischen Subsystemen und Stellungen).
+    SYSTEM_ZWEIGE = ("subsysteme", "detailmodelle", "stellungen", "situationen")
+
     #: Grundzustand eines Modells: nur diese Zweige sind aufgeklappt (Pfade).
     #: Die Wurzel, damit man den Baum sieht; „Lager“ und „Stellungen“ waren im
     #: Quelltext schon immer als offen gedacht (``(lg, True)`` und
     #: ``st.setExpanded(True)``) und blieben es nur wegen der doppelt belegten
-    #: Namen nicht (Teilpaket 8a, 02.10.2026).
+    #: Namen nicht (Teilpaket 8a, 02.10.2026). Seit 8c (03.10.2026) stehen sie
+    #: in Gruppen; offen sind darum auch diese Gruppen und die Geometrie, deren
+    #: Zweige bis dahin direkt unter der Wurzel zu sehen waren.
     GRUNDZUSTAND_OFFEN = frozenset({
         (("modell", ""),),
-        (("modell", ""), ("lager", "")),
-        (("modell", ""), ("stellungen", "")),
+        (("modell", ""), ("modell", "geometrie")),
+        (("modell", ""), ("modell", "lager_verbindungen")),
+        (("modell", ""), ("modell", "lager_verbindungen"), ("lager", "")),
+        (("modell", ""), ("modell", "systeme")),
+        (("modell", ""), ("modell", "systeme"), ("stellungen", "")),
     })
     #: So viele gewaehlte Eintraege merkt der Baum ueber einen Neuaufbau; wer
     #: mehr gewaehlt hat (Strg+A in der Knotenliste), behaelt nur den aktuellen
@@ -810,6 +846,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
         """Ein Eintrag meint ein einzelnes Objekt (traegt einen Schluessel);
         ein Zweig meint die Art."""
         return item is not None and item.data(0, QtCore.Qt.UserRole + 1) is not None
+
+    def gruppe(self, kennung: str):
+        """Die Gruppe der obersten Ebene mit dieser Kennung (:attr:`GRUPPEN`),
+        sonst ``None``; „ergebnisse“ ist der Zweig der Ergebnisse."""
+        wurzel = self.topLevelItem(0)
+        for i in range(wurzel.childCount() if wurzel is not None else 0):
+            k = wurzel.child(i)
+            if self._element(k) == ("modell", kennung) or (
+                    kennung == "ergebnisse" and self._element(k) == ("ergebnisse", "")):
+                return k
+        return None
 
     def gewaehlte_eintraege(self) -> tuple[str, list]:
         """(Art, [Namen]) der gewaehlten **Eintraege** einer gemeinsamen Art.
@@ -1009,17 +1056,27 @@ class Modellbaum(QtWidgets.QTreeWidget):
         teile.reverse()
         return tuple(teile)
 
+    @staticmethod
+    def _stand(item) -> str:
+        """Der Zaehler einer Liste fuer :meth:`_auffinden`: ein eigener Stand
+        (``stand`` in :meth:`_zweig`), sonst der Zusatz in Spalte 1. Der Zweig
+        „Knoten“ zeigt seit 03.10.2026 nur die Konstruktionsknoten; sein Stand
+        nennt auch die Zahl aller Knoten, weil die Nummern beim Loeschen eines
+        Netzknotens ebenso aufruecken."""
+        v = item.data(0, QtCore.Qt.UserRole + 4)
+        return str(v) if v is not None else item.text(1)
+
     def _ort(self, item) -> tuple:
         """(Pfad des Elternteils, Art und Kennung, Stelle unter dem Elternteil,
         Zaehler des Elternteils): wiederzufinden, ohne die Kinder durchzugehen
-        (die Stelle wird zuerst geprueft). Der Zaehler (Spalte 1 des Zweigs, die
-        Zahl der Objekte, nicht der Zeilen) zeigt bei nummerierten Arten, ob
-        sich die Liste geaendert hat."""
+        (die Stelle wird zuerst geprueft). Der Zaehler (:meth:`_stand`, meist
+        Spalte 1 des Zweigs, die Zahl der Objekte, nicht der Zeilen) zeigt bei
+        nummerierten Arten, ob sich die Liste geaendert hat."""
         eltern = item.parent()
         if eltern is None:
             return (), self._element(item), 0, ""
         return (self.pfad_von(eltern), self._element(item), eltern.indexOfChild(item),
-                eltern.text(1))
+                self._stand(eltern))
 
     def _auffinden(self, ort: tuple, verzeichnis: dict, naechster: bool = False,
                    pruefen: bool = True):
@@ -1040,7 +1097,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         eltern = verzeichnis.get(eltern_pfad)
         if eltern is None:
             return None
-        if pruefen and element[0] in self.NUMMERIERT and eltern.text(1) != zaehler:
+        if pruefen and element[0] in self.NUMMERIERT and self._stand(eltern) != zaehler:
             return None
         n = eltern.childCount()
         if 0 <= nr < n and self._element(eltern.child(nr)) == element:
@@ -1143,7 +1200,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 self.scrollToItem(ziel, QtWidgets.QAbstractItemView.PositionAtTop)
 
     def _zweig(self, eltern, text, zahl="", art="", fett=False, farbe=None,
-               schluessel=None, hinweis="", kennung=None, blatt=False):
+               schluessel=None, hinweis="", kennung=None, blatt=False, stand=None):
         """Einen Eintrag anlegen.
 
         Schriftregel (02.10.2026): **grau = leer** (Zaehler 0), **normal =
@@ -1154,10 +1211,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
         ``kennung``: feste Kennung eines Zweigs, wo Art und Elternpfad ihn nicht
         eindeutig machen (:meth:`pfad_von`). ``blatt``: der Eintrag bekommt nie
         Kinder (Zeilen der Listen) und wird nicht fuer den Aufklappzustand
-        vorgemerkt.
+        vorgemerkt. ``stand``: der Zaehler der Liste fuer die Auswahl nach
+        einem Neuaufbau, wenn ihn ``zahl`` nicht ganz sagt (:meth:`_stand`).
         """
         it = QtWidgets.QTreeWidgetItem(eltern, [text, str(zahl)])
         it.setData(0, QtCore.Qt.UserRole, art)
+        if stand is not None:
+            it.setData(0, QtCore.Qt.UserRole + 4, str(stand))
         if schluessel is not None:
             it.setData(0, QtCore.Qt.UserRole + 1, str(schluessel))
         elif kennung is not None:
@@ -1324,9 +1384,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
         acht Zweige wieder her - ein neues Modell erbte ihn dabei, soweit die
         Texte gleich waren.
 
+        Gegliedert ist der Baum nach :attr:`GRUPPEN` (Teilpaket 8c,
+        03.10.2026): die Gruppen entstehen zuerst in ihrer Folge, dann werden
+        sie gefuellt. Bis dahin hingen Knoten, Linien, Staebe, Flaechen,
+        Volumen, Bemassungen, Lager, Gelenke, Stellungen und die
+        Nachweisobjekte einzeln an der Wurzel, die FE-Elemente unter ihren
+        Geometrieobjekten, und „Knoten“ zeigte auch jeden Netzknoten.
+
         Fett stehen nur Gruppen, also Zweige, die Unterzweige zusammenfassen
-        (Wurzel, Eigenschaften, Lager, Verbindungen, Kontaktbedingungen,
-        Einwirkungen, Ergebnisse).
+        (Wurzel, die Gruppen der obersten Ebene, Lager, Verbindungen,
+        Kontaktbedingungen).
         """
         ansicht = self._ansicht_merken()
         self.clear()
@@ -1334,12 +1401,60 @@ class Modellbaum(QtWidgets.QTreeWidget):
         wurzel = self._zweig(self, model.name or "Modell", f"{model.nn} Kn",
                              "modell", fett=True)
 
-        # ---- Knoten, Linien, Staebe, Flaechen, Volumen ---------------------
-        # Je ein eigener Zweig, alle Eintraege numerisch untereinander - ohne
-        # Gruppen "Geometrie" und "Elemente" dazwischen. Unter "Staebe" stehen
-        # die Stabelemente und, als erster Eintrag, die Staebe mit Nachweis.
-        kn = self._zweig(wurzel, "Knoten", model.nn, "knoten",
-                         hinweis="Klick wählt alle Knoten, ein Eintrag den einen. "
+        # ---- Die Gruppen in ihrer Folge (GRUPPEN) ----------------------------
+        # „Ergebnisse“ behaelt seine Art „ergebnisse“ (und damit den Pfad von
+        # vorher), die anderen tragen „modell“ und ihre Kennung.
+        erg = ergebnisse or {}
+        anzahl = sum(len(v) for v in erg.values())
+        hinweise = {
+            "eigenschaften": "Werkstoffe, Querschnitte und Dicken – Stäbe, Flächen und Volumen "
+                             "verweisen auf sie, darum stehen sie wie in RFEM vor der Geometrie",
+            "geometrie": "Knoten der Konstruktion, Linien, Stäbe, Flächen und Volumen; die finiten "
+                         "Elemente stehen unter „FE-Netz“",
+            "lager_verbindungen": "Knoten-, Linien- und Flächenlager, Verbindungselemente, Gelenke, "
+                                  "Liniengelenke und Kontaktbedingungen",
+            "einwirkungen": "Lastfälle, Kombinationen, Ermüdungslasten und Lastgenerierer",
+            "fe_netz": "Was das Vernetzen erzeugt: die Netzknoten als Zählzeile, dazu die Stab-, "
+                       "Flächen- und Volumenelemente",
+            "systeme": "Teile des Tragwerks, ihre Lagen und die Situationen, die einer Stellung "
+                       "ihre Lastfälle zuordnen",
+            "nachweise": "Was die Nachweise brauchen: Schweißnähte, Anschlüsse, Verformungsgrenzen, "
+                         "Beulfelder, Volumenbereiche und Lasteinleitung. Die Stäbe mit Nachweis "
+                         "stehen als „Stäbe“ unter „Geometrie“.",
+            "bericht_unterlagen": "Die übernommenen Ergebnisbilder und die Dateien, Ansichten und "
+                                  "Skizzen zum Modell",
+            "hilfsobjekte": "Bemaßungen und Layer (in RFEM: Hilfsobjekte, dort heißen die Layer "
+                            "Objektselektionen)",
+        }
+        gr = {}
+        for kennung, text in self.GRUPPEN:
+            if kennung == "ergebnisse":
+                gr[kennung] = self._zweig(wurzel, text, anzahl or "", "ergebnisse", fett=True,
+                                          farbe=None if anzahl else FARBEN["matt"],
+                                          hinweis="Klick zeigt das Ergebnis, Doppelklick "
+                                                  "übernimmt es in den Bericht")
+            else:
+                n_el = len(model.elements) if kennung == "fe_netz" else 0
+                gr[kennung] = self._zweig(wurzel, text, f"{n_el} El" if n_el else "", "modell",
+                                          fett=True, kennung=kennung, hinweis=hinweise.get(kennung, ""))
+        geo, netz, nw = gr["geometrie"], gr["fe_netz"], gr["nachweise"]
+
+        # ---- Geometrie: Knoten, Linien, Staebe, Flaechen, Volumen -----------
+        # Je ein eigener Zweig, alle Eintraege numerisch untereinander.
+        # „Knoten“ zeigt nur die Knoten der Konstruktion (Antwort 3 vom
+        # 24.09.2026), dieselben wie die Ansicht unter „Knoten“
+        # (viewport.netzknoten_maske: Linienknoten, Stabenden, Knotenlager, frei
+        # gesetzte Knoten, Knoten direkt gesetzter Elemente). Die Netzknoten
+        # zaehlt eine Zeile unter „FE-Netz“. Die Maske wird einmal je Netzstand
+        # gerechnet, meist schon von der Ansicht; der Aufbau bekommt dadurch
+        # keine neue Schleife ueber alle Knoten.
+        from .viewport import konstruktionsknoten
+        kons = konstruktionsknoten(model) if model.nn else np.zeros(0, int)
+        n_kons = len(kons)
+        kn = self._zweig(geo, "Knoten", n_kons, "knoten", stand=f"{n_kons}/{model.nn}",
+                         hinweis="Die Knoten der Konstruktion: Linienknoten, Stabenden, Knotenlager, "
+                                 "frei gesetzte Knoten. Die Netzknoten zählt „FE-Netz → Netzknoten“. "
+                                 "Klick wählt alle Knoten, ein Eintrag den einen. "
                                  "Rechtsklick: Neu, Löschen.")
         # Nur die Knoten bauen, die der Zweig zeigt - sie stehen schon in ihrer
         # Nummernfolge, das natuerliche Sortieren ueber alle entfaellt. Am
@@ -1348,44 +1463,58 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(kn, [(f"K{i}", _kurz(model.nodes[i]), str(i),
                           "Knoten {}: x = {:.4f}  y = {:.4f}  z = {:.4f} m".format(
                               i, *model.nodes[i]))
-                         for i in range(min(model.nn, BAUM_MAX + 1))], "knoten",
-                    sortieren=False, gesamt=model.nn)
-        lin = self._zweig(wurzel, "Linien", len(model.lines), "linien")
+                         for i in kons[:BAUM_MAX + 1].tolist()], "knoten",
+                    sortieren=False, gesamt=n_kons)
+        # Die Netzknoten als eine Zaehlzeile (Antwort 3) statt bis zu BAUM_MAX
+        # Eintraegen. Ihr Klick holt die Knotentabelle (BAUM_TABELLE im
+        # Fenster), dort stehen alle Knoten.
+        n_netz = int(model.nn) - n_kons
+        self._zweig(netz, "Netzknoten", n_netz, "netzknoten", blatt=True,
+                    hinweis=f"Die Knoten des FE-Netzes, an denen keine Linie, kein Stabende und kein "
+                            f"Knotenlager hängt: {n_netz} von {model.nn} Knoten. Sie stehen in der "
+                            "Tabelle „Knoten“ unten; die Ansicht zeigt sie mit Netz → Netzknoten.")
+        lin = self._zweig(geo, "Linien", len(model.lines), "linien")
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
                           for name, ln in sorted(model.lines.items(),
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "linie", "linien")
-        stab_els = [(i, e) for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
-        stb = self._zweig(wurzel, "Stäbe", len(stab_els), "stabelemente",
-                          hinweis="Stabelemente (Balken und Fachwerkstäbe); darunter "
-                                  "die Stäbe mit Nachweis")
-        mem = self._zweig(stb, "Stäbe mit Nachweis", len(model.members), "staebe",
-                          hinweis="Physische Stäbe (Ketten von Stabelementen) für die "
-                                  "Nachweise nach EC3")
+        # „Stäbe“ im Sinn von RFEM (Antwort 2 vom 24.09.2026): die Staebe mit
+        # Nachweis. Ihre FE-Stabelemente stehen unter „FE-Netz“, die
+        # Schweissnaehte bei den Nachweisen. Bis zum 03.10.2026 hiess der Zweig
+        # der Stabelemente „Stäbe“ und trug „Stäbe mit Nachweis“ und die
+        # Schweissnaehte als Unterzweige.
+        mem = self._zweig(geo, "Stäbe", len(model.members), "staebe",
+                          hinweis="Stäbe im Sinn von RFEM: physische Stäbe mit Querschnitt und "
+                                  "Nachweis nach EC3, je eine Kette von Stabelementen "
+                                  "(FE-Netz → Stabelemente)")
         self._liste(mem, [(name, f"{len(mm.elements)} El", name,
                            f"{name}: {len(mm.elements)} Elemente")
                           for name, mm in sorted(model.members.items(),
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "stab", "staebe")
-        naehte = getattr(model, "schweissnaehte", {}) or {}
-        nz = self._zweig(stb, "Schweißnähte", len(naehte), "schweissnaehte",
-                         hinweis="Nahtart, Lage und Ausführung → Kerbfall nach EN 1993-1-9; "
-                                 "„äquivalent“ = Ersatznaht für alle nicht einzeln "
-                                 "modellierten Nähte. Rechtsklick: Neu, Löschen.")
-        self._liste(nz, [(name, x.bezug(), name, f"Schweißnaht {name}: {x.bezug()}")
-                         for name, x in naehte.items()], "schweissnaht", "schweissnaehte")
-        self._zweig(nz, "+ Schweißnaht anlegen", "", "schweissnaht_neu", farbe=FARBEN["akzent"])
+        # Die finiten Elemente nach Familie in einem Durchgang (bis zum
+        # 03.10.2026 drei Schleifen ueber alle Elemente)
+        stab_els, n_schalen, n_vol = [], 0, 0
+        for i, e in enumerate(model.elements):
+            if e.typ in EL.STAB_TYPEN:
+                stab_els.append((i, e))
+            elif e.typ in EL.SCHALEN_TYPEN:
+                n_schalen += 1
+            elif e.typ in EL.VOLUMEN_TYPEN:
+                n_vol += 1
+        stb = self._zweig(netz, "Stabelemente", len(stab_els), "stabelemente",
+                          hinweis="Die finiten Stabelemente (Balken, Fachwerkstäbe, Seile); ein Stab "
+                                  "unter „Geometrie“ besteht aus einem oder mehreren davon")
         self._liste(stb, [(f"E{i}", (e.sec or "") if e.typ == "beam" else f"Fachwerk {e.sec or ''}",
                            str(i), "Element {}: {} K{}–K{}, {}, {}".format(
                                i, "Balken" if e.typ == "beam" else "Fachwerkstab",
                                e.nodes[0], e.nodes[-1], e.sec or "-", e.mat or "-"))
                           for i, e in stab_els], "stabelement", "stabelemente")
         gf = getattr(model, "flaechen", {}) or {}
-        flae = self._zweig(wurzel, "Flächen", len(gf), "geoflaechen")
-        n_schalen = sum(1 for e in model.elements if e.typ in EL.SCHALEN_TYPEN)
+        flae = self._zweig(geo, "Flächen", len(gf), "geoflaechen")
         if n_schalen:
-            self._zweig(flae, "Flächenelemente", n_schalen, "flaechen",
+            self._zweig(netz, "Flächenelemente", n_schalen, "flaechen",
                         hinweis="Schalenelemente aller Flächen")
         self._liste(flae, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
                             f"{name}: {x.bezug()}"
@@ -1398,48 +1527,50 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Warnfarbe am Zweig, solange ein Koerper ohne Netz geblieben ist, den
         # der Vernetzer haette vernetzen sollen - so sieht man es auch zugeklappt
         mangel = any(z[4] == FARBEN["warn"] for z in koerper_zeilen)
-        vo = self._zweig(wurzel, "Volumen", len(gk), "geokoerper",
+        vo = self._zweig(geo, "Volumen", len(gk), "geokoerper",
                          farbe=FARBEN["warn"] if mangel else None,
                          hinweis=("⚠ Bei mindestens einem Volumen ist das Vernetzen gescheitert "
                                   "oder abgebrochen - der Hinweis am Eintrag nennt den Grund."
                                   if mangel else ""))
-        n_vol = sum(1 for e in model.elements if e.typ in EL.VOLUMEN_TYPEN)
         if n_vol:
-            self._zweig(vo, "Volumenelemente", n_vol, "volumen",
+            self._zweig(netz, "Volumenelemente", n_vol, "volumen",
                         hinweis="Volumenelemente (Tetraeder, Hexaeder) aller Körper")
         self._liste(vo, koerper_zeilen, "geokoerper_einzeln", "geokoerper")
 
-        # ---- Bemassungen ---------------------------------------------------
+        # ---- Hilfsobjekte: Bemassungen (die Layer folgen unten) -------------
         bms = getattr(model, "bemassungen", {}) or {}
-        bmz = self._zweig(wurzel, "Bemaßungen", len(bms), "bemassungen",
+        bmz = self._zweig(gr["hilfsobjekte"], "Bemaßungen", len(bms), "bemassungen",
                           hinweis="Linearmaße, Maßketten, Höhenkoten, Winkel und Radien "
                                   "(Register Messen); Klick bearbeitet, Entf löscht")
         self._liste(bmz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                           for name, x in bms.items()], "bemassung", "bemassungen")
         self._zweig(bmz, "+ Linearmaß anlegen", "", "bemassung_neu", farbe=FARBEN["akzent"])
 
-        # ---- Eigenschaften ----------------------------------------------
-        eig = self._zweig(wurzel, "Eigenschaften", "", "modell", fett=True,
-                          kennung="eigenschaften")
-        qs = self._zweig(eig, "Querschnitte", len(model.sections), "querschnitte")
-        self._liste(qs, [(name, getattr(x, "typ", "") or "", name,
-                          f"{name}: A = {getattr(x, 'A', 0) * 1e4:.1f} cm²")
-                         for name, x in model.sections.items()], "querschnitt",
-                    "querschnitte")
+        # ---- Eigenschaften: Werkstoffe, Querschnitte, Dicken -----------------
+        # Werkstoffe zuerst, wie in RFEM und in der Tabellengruppe
+        # „Eigenschaften“ unten (bis zum 03.10.2026 Querschnitte zuerst)
+        eig = gr["eigenschaften"]
         wk = self._zweig(eig, "Werkstoffe", len(model.materials), "werkstoffe")
         self._liste(wk, [(name, getattr(x, "grade", "") or "", name,
                           f"{name}: E = {getattr(x, 'E', 0) / 1e9:.0f} GPa")
                          for name, x in model.materials.items()], "werkstoff",
                     "werkstoffe")
+        qs = self._zweig(eig, "Querschnitte", len(model.sections), "querschnitte")
+        self._liste(qs, [(name, getattr(x, "typ", "") or "", name,
+                          f"{name}: A = {getattr(x, 'A', 0) * 1e4:.1f} cm²")
+                         for name, x in model.sections.items()], "querschnitt",
+                    "querschnitte")
         dk = self._zweig(eig, "Dicken", len(model.shells), "dicken")
         self._liste(dk, [(name, f"{zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm", name,
                           f"{name}: t = {zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm")
                          for name, x in model.shells.items()], "dicke", "dicken")
 
-        # ---- Lager und Kopplungen ---------------------------------------
+        # ---- Lager und Verbindungen: Lager, Verbindungselemente, Gelenke,
+        # Liniengelenke, Kontaktbedingungen --------------------------------
+        lv = gr["lager_verbindungen"]
         n_lager = (len(model.supports) + len(model.line_supports)
                    + len(model.surface_supports))
-        lag = self._zweig(wurzel, "Lager", n_lager, "lager", fett=True)
+        lag = self._zweig(lv, "Lager", n_lager, "lager", fett=True)
         kl = self._zweig(lag, "Knotenlager", len(model.supports), "lager")
         self._liste(kl, [(x.name or f"Lager {i + 1}", f"K{x.node}", str(i),
                           f"Knoten {x.node}: {self._lagertext(x)}")
@@ -1469,7 +1600,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         gs = getattr(model, "grenzschichten", None) or {}
         n_verb = len(pm) + len(dp) + len(fed) + len(sk) + len(gs)
         if n_verb:
-            vbd = self._zweig(wurzel, "Verbindungen", n_verb, "kontakt", fett=True,
+            vbd = self._zweig(lv, "Verbindungen", n_verb, "kontakt", fett=True,
                               kennung="verbindungen",
                               hinweis="Punktmassen, Dämpfer, Federn, starre Körper "
                                       "(RBE2/RBE3) und Grenzschichten ohne Dicke")
@@ -1510,7 +1641,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # sein"): ohne Gelenke bietet er das Anlegen an, wie die Kontakte.
         # Weg nachgezogen 25.09.2026: „Gelenke setzen…“ hat im Register
         # Struktur keinen Knopf mehr (Paket 7)
-        gel = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke",
+        gel = self._zweig(lv, "Gelenke", len(model.hinges), "gelenke",
                           hinweis="Stabendgelenke: je Freiheitsgrad biegesteif, gelenkig oder Feder; "
                                   "gesetzt an Stabelementen (Kontextregister „Auswahl“ → Gelenke, "
                                   "oder Befehlssuche „Gelenke setzen“).")
@@ -1524,7 +1655,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # zeigt jede Flaeche mit ihren Gelenklinien und der Wirkung
         lg_fl = [(n, f) for n, f in model.flaechen.items() if getattr(f, "gelenklinien", None)]
         if lg_fl:
-            lgz = self._zweig(wurzel, "Liniengelenke", len(lg_fl), "liniengelenke",
+            lgz = self._zweig(lv, "Liniengelenke", len(lg_fl), "liniengelenke",
                               hinweis="Liniengelenke (RFEM: LineHinge) an den Randlinien von Flächen: "
                                       "was die Fläche dort an die Nachbarschaft weitergibt. Am Drehlager "
                                       "die Ränder der starren Kreisscheiben.")
@@ -1544,7 +1675,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
             # Ein Warnzeichen nur, wo es einen Mangel gibt: Netz da, Fuge nicht
             # getrennt. Vor dem Vernetzen ist „noch nicht getrennt" der Normalfall.
             offen_noch = sum(1 for x in flaechenkontakte.values() if x.zu_steif(model))
-            kt = self._zweig(wurzel, "Kontaktbedingungen", n_kontakt, "kontakt",
+            kt = self._zweig(lv, "Kontaktbedingungen", n_kontakt, "kontakt",
                              fett=True,
                              farbe=FARBEN["warn"] if offen_noch else None,
                              hinweis="Kontaktfugen zwischen Flächen und Körpern "
@@ -1595,8 +1726,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             "kontakt", schluessel="pairs")
 
         # ---- Einwirkungen -------------------------------------------------
-        ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True,
-                         kennung="einwirkungen")
+        ew = gr["einwirkungen"]
         from ..model import LASTARTEN_NAMEN
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
         for i, (name, lc) in enumerate(model.load_cases.items()):
@@ -1668,13 +1798,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Ergebnisse -------------------------------------------------
         # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet
         # wurde, steht dort, wo man es sucht. Ein Klick stellt das Ergebnis in
-        # der Ansicht ein, ein Doppelklick uebernimmt es in den Bericht.
-        erg = ergebnisse or {}
-        anzahl = sum(len(v) for v in erg.values())
-        ew2 = self._zweig(wurzel, "Ergebnisse", anzahl or "", "ergebnisse", fett=True,
-                          farbe=None if anzahl else FARBEN["matt"],
-                          hinweis="Klick zeigt das Ergebnis, Doppelklick "
-                                  "übernimmt es in den Bericht")
+        # der Ansicht ein, ein Doppelklick uebernimmt es in den Bericht. Der
+        # Zweig selbst entsteht mit den Gruppen (oben).
+        ew2 = gr["ergebnisse"]
         if not anzahl:
             self._zweig(ew2, "noch nicht gerechnet", "", "ergebnisse",
                         farbe=FARBEN["matt"], blatt=True)
@@ -1689,7 +1815,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             for e in eintraege],
                         "ergebnis", "ergebnisgruppe", sortieren=False)
         eintraege = list(getattr(model, "bericht", None) or [])
-        ber = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",
+        ber = self._zweig(gr["bericht_unterlagen"], "Bericht", len(eintraege), "bericht",
                           hinweis="Die aus der Ansicht übernommenen Ergebnisse")
         self._liste(ber, [(x.name or f"Bild {i + 1}", x.bezug(), str(i),
                            f"{x.name}: {x.bezug()}")
@@ -1700,7 +1826,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026) ------------
         unt = getattr(model, "unterlagen", {}) or {}
-        uz = self._zweig(wurzel, "Unterlagen", len(unt), "unterlagen",
+        uz = self._zweig(gr["bericht_unterlagen"], "Unterlagen", len(unt), "unterlagen",
                          hinweis="Dateien (PDF, Bilder, Word, Excel), übernommene Ansichten und Skizzen "
                                  "zum Modell - mit dem Modell gespeichert, auf Wunsch im Bericht. "
                                  "Doppelklick öffnet; Rechtsklick: Neu (Skizze), Löschen.")
@@ -1712,11 +1838,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Subsysteme, Stellungen, Situationen ---------------------------
         # Das Gesamtsystem und die Grundstellung sind immer da; alles weitere
         # legt der Anwender an (Rechtsklick: Neu, oder der Eintrag "+ …").
-        # Reihenfolge: erst die Teile (Subsysteme), dann die Lagen (Stellungen),
-        # dann die Situationen, die einer Stellung ihre Lastfaelle zuordnen.
+        # Reihenfolge (SYSTEM_ZWEIGE): erst die Teile (Subsysteme), dann die
+        # Lagen (Stellungen), dann die Situationen, die einer Stellung ihre
+        # Lastfaelle zuordnen.
         from ..model import GRUNDSTELLUNG, GESAMTSYSTEM
+        sy = gr["systeme"]
         subs = getattr(model, "subsysteme", {}) or {}
-        sz = self._zweig(wurzel, "Subsysteme", 1 + len(subs), "subsysteme",
+        sz = self._zweig(sy, "Subsysteme", 1 + len(subs), "subsysteme",
                          hinweis="Teile des Tragwerks mit allem, was dazugehört; "
                                  "Berührungselemente gehören beiden")
         self._zweig(sz, GESAMTSYSTEM, f"{len(model.elements)} El", "subsystem",
@@ -1725,24 +1853,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          for name, s in subs.items()], "subsystem", "subsysteme")
         self._zweig(sz, "+ Subsystem anlegen", "", "subsystem_neu", farbe=FARBEN["akzent"])
 
-        # ---- Layer (RFEM: Objektselektionen) -------------------------------
-        lay = getattr(model, "layer", {}) or {}
-        lyz = self._zweig(wurzel, "Layer", len(lay), "layerliste",
-                          hinweis="Benannte Objektgruppen (RFEM: Objektselektionen) - sichtbar oder "
-                                  "ausgeblendet, gesperrt oder frei. Klick wählt die Objekte, "
-                                  "Doppelklick öffnet die Layerliste; Rechtsklick: Neu, Löschen.")
-        self._liste(lyz, [(name, ("ausgeblendet · " if not L.sichtbar else "")
-                           + ("gesperrt · " if L.gesperrt else "") + L.bezug(), name,
-                           f"{name}: {L.bezug()}" + ("\nausgeblendet" if not L.sichtbar else "")
-                           + ("\ngesperrt - nicht wählbar, nicht änderbar" if L.gesperrt else "")
-                           + ("\naus der RFEM-Objektselektion" if L.quelle == "rfem" else ""),
-                           FARBEN["matt"] if not L.sichtbar else None)
-                          for name, L in lay.items()], "layer", "layerliste")
-        self._zweig(lyz, "+ Layer aus Auswahl", "", "layer_neu", farbe=FARBEN["akzent"])
+        # ---- Platz fuer „Detailmodelle (Volumen)“ ---------------------------
+        # Hier, nach den Subsystemen und vor den Stellungen (SYSTEM_ZWEIGE;
+        # Vorgabe FCM-Volumenloeser 15.1, Vertrag 10.4): ein Zweig mit je einem
+        # Eintrag je DetailModelSpec, sobald das Modell Detailmodelle kennt.
+        # Teilpaket 8c baut ihn nicht.
 
         # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
         # der Zweig traegt die Schaltflaeche zum Anlegen.
-        stl = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
+        stl = self._zweig(sy, "Stellungen", len(stellungen or []), "stellungen",
                           hinweis="Lagen des Systems: Ausgangsstellung, Verschiebung, "
                                   "Verdrehung, deaktivierte Stäbe, Flächen, Volumen, "
                                   "Gelenke und Lager")
@@ -1757,7 +1876,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     farbe=FARBEN["akzent"], blatt=True)
 
         sits = getattr(model, "situationen", {}) or {}
-        siz = self._zweig(wurzel, "Situationen", 1 + len(sits), "situationen",
+        siz = self._zweig(sy, "Situationen", 1 + len(sits), "situationen",
                           hinweis="Eine Stellung und die Lastfälle und Kombinationen, "
                                   "die in ihr gelten")
         self._zweig(siz, GRUNDSTELLUNG, "alles aktiv", "situation", schluessel=GRUNDSTELLUNG,
@@ -1766,10 +1885,35 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           for name, s in sits.items()], "situation", "situationen")
         self._zweig(siz, "+ Situation anlegen", "", "situation_neu", farbe=FARBEN["akzent"])
 
-        # ---- Nachweisobjekte -------------------------------------------------
+        # ---- Hilfsobjekte: Layer (RFEM: Objektselektionen) ------------------
+        lay = getattr(model, "layer", {}) or {}
+        lyz = self._zweig(gr["hilfsobjekte"], "Layer", len(lay), "layerliste",
+                          hinweis="Benannte Objektgruppen (RFEM: Objektselektionen) - sichtbar oder "
+                                  "ausgeblendet, gesperrt oder frei. Klick wählt die Objekte, "
+                                  "Doppelklick öffnet die Layerliste; Rechtsklick: Neu, Löschen.")
+        self._liste(lyz, [(name, ("ausgeblendet · " if not L.sichtbar else "")
+                           + ("gesperrt · " if L.gesperrt else "") + L.bezug(), name,
+                           f"{name}: {L.bezug()}" + ("\nausgeblendet" if not L.sichtbar else "")
+                           + ("\ngesperrt - nicht wählbar, nicht änderbar" if L.gesperrt else "")
+                           + ("\naus der RFEM-Objektselektion" if L.quelle == "rfem" else ""),
+                           FARBEN["matt"] if not L.sichtbar else None)
+                          for name, L in lay.items()], "layer", "layerliste")
+        self._zweig(lyz, "+ Layer aus Auswahl", "", "layer_neu", farbe=FARBEN["akzent"])
+
+        # ---- Nachweise, gebuendelt (Antwort 4 vom 24.09.2026) ---------------
+        # Die Schweissnaehte zuerst; bis zum 03.10.2026 hingen sie am Zweig der
+        # Stabelemente, die uebrigen Nachweisobjekte einzeln an der Wurzel.
+        naehte = getattr(model, "schweissnaehte", {}) or {}
+        nz = self._zweig(nw, "Schweißnähte", len(naehte), "schweissnaehte",
+                         hinweis="Nahtart, Lage und Ausführung → Kerbfall nach EN 1993-1-9; "
+                                 "„äquivalent“ = Ersatznaht für alle nicht einzeln "
+                                 "modellierten Nähte. Rechtsklick: Neu, Löschen.")
+        self._liste(nz, [(name, x.bezug(), name, f"Schweißnaht {name}: {x.bezug()}")
+                         for name, x in naehte.items()], "schweissnaht", "schweissnaehte")
+        self._zweig(nz, "+ Schweißnaht anlegen", "", "schweissnaht_neu", farbe=FARBEN["akzent"])
         # Anschluesse gehoeren zum Modell und stehen darum hier - der Zweig
         # traegt wie bei den Stellungen die Schaltflaeche zum Anlegen.
-        an = self._zweig(wurzel, "Anschlüsse", len(getattr(model, "joints", {}) or {}),
+        an = self._zweig(nw, "Anschlüsse", len(getattr(model, "joints", {}) or {}),
                          "anschluesse")
         self._liste(an, [(name, j.ort(), name, f"{name}: {j.typ} an {j.ort()}")
                          for name, j in (getattr(model, "joints", {}) or {}).items()],
@@ -1777,7 +1921,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._zweig(an, "+ Anschluss anlegen", "", "anschluss_neu",
                     farbe=FARBEN["akzent"])
         grenzen = getattr(model, "verformungsgrenzen", {}) or {}
-        vf = self._zweig(wurzel, "Verformungsnachweise", len(grenzen), "verformungen")
+        vf = self._zweig(nw, "Verformungsnachweise", len(grenzen), "verformungen")
         self._liste(vf, [(name, g.grenztext(), name,
                           f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
                          for name, g in grenzen.items()], "verformung", "verformungen")
@@ -1785,19 +1929,19 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     farbe=FARBEN["akzent"])
         felder = getattr(model, "beulfelder", {}) or {}
         if felder:
-            bl = self._zweig(wurzel, "Beulfelder", len(felder), "beulfelder")
+            bl = self._zweig(nw, "Beulfelder", len(felder), "beulfelder")
             self._liste(bl, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                              for name, x in felder.items()], "beulfeld", "beulfelder")
         bereiche = getattr(model, "volumenbereiche", {}) or {}
         if bereiche:
-            vbe = self._zweig(wurzel, "Volumenbereiche", len(bereiche),
+            vbe = self._zweig(nw, "Volumenbereiche", len(bereiche),
                               "volumenbereiche")
             self._liste(vbe, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                               for name, x in bereiche.items()], "volumenbereich",
                         "volumenbereiche")
         stellen = getattr(model, "lasteinleitungen", {}) or {}
         if stellen:
-            li = self._zweig(wurzel, "Lasteinleitung", len(stellen), "lasteinleitung")
+            li = self._zweig(nw, "Lasteinleitung", len(stellen), "lasteinleitung")
             self._liste(li, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                              for name, x in stellen.items()], "lasteinleitung_einzeln",
                         "lasteinleitung")

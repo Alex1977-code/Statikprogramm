@@ -703,11 +703,12 @@ def main():
         check("Viewport bleibt frei - kein Filmstreifen mehr", not hasattr(w, "film"))
         def stellungszweig():
             """Der Zweig 'Stellungen' - nach jedem Auffrischen neu zu holen,
-            weil der Baum dabei neu aufgebaut wird."""
-            wurzel = w.baum.topLevelItem(0)
-            for i in range(wurzel.childCount()):
-                if wurzel.child(i).text(0) == "Stellungen":
-                    return wurzel.child(i)
+            weil der Baum dabei neu aufgebaut wird. Seit 03.10.2026 (8c) steht
+            er in der Gruppe „Systeme und Stellungen“."""
+            gruppe = w.baum.gruppe("systeme")
+            for i in range(gruppe.childCount() if gruppe is not None else 0):
+                if gruppe.child(i).text(0) == "Stellungen":
+                    return gruppe.child(i)
             return None
 
         zweig = stellungszweig()
@@ -1167,9 +1168,9 @@ def main():
         check("vor der Rechnung steht „nicht gerechnet“",
               w.tbl_joint.modell.zeilen[0][-1] == "nicht gerechnet",
               str(w.tbl_joint.modell.zeilen[0][-1]))
-        zweige = [w.baum.topLevelItem(0).child(i).text(0)
-                  for i in range(w.baum.topLevelItem(0).childCount())]
-        check("Anschlüsse stehen im Modellbaum", "Anschlüsse" in zweige, str(zweige[-3:]))
+        nachweise_ = w.baum.gruppe("nachweise")         # seit 03.10.2026 gebuendelt (8c)
+        zweige = [nachweise_.child(i).text(0) for i in range(nachweise_.childCount())]
+        check("Anschlüsse stehen im Modellbaum unter „Nachweise“", "Anschlüsse" in zweige, str(zweige))
         check("Register „Anschlüsse“ unten vorhanden",
               w.tabelle_zeigen("Anschlüsse"))
 
@@ -1260,10 +1261,10 @@ def main():
               f"{w.tbl_gzg.zeilenzahl()} Zeilen")
         check("vor der Rechnung steht „nicht gerechnet“",
               w.tbl_gzg.modell.zeilen[0][-1] == "nicht gerechnet")
-        zweige = [w.baum.topLevelItem(0).child(i).text(0)
-                  for i in range(w.baum.topLevelItem(0).childCount())]
-        check("Verformungsnachweise stehen im Modellbaum",
-              "Verformungsnachweise" in zweige, str(zweige[-2:]))
+        nachweise_ = w.baum.gruppe("nachweise")         # seit 03.10.2026 gebuendelt (8c)
+        zweige = [nachweise_.child(i).text(0) for i in range(nachweise_.childCount())]
+        check("Verformungsnachweise stehen im Modellbaum unter „Nachweise“",
+              "Verformungsnachweise" in zweige, str(zweige))
         check("Register „Verformungen“ unten vorhanden",
               w.tabelle_zeigen("Verformungen"))
 
@@ -1332,9 +1333,9 @@ def main():
         check("Beulfeldtabelle unten gefüllt", w.tbl_beul.zeilenzahl() == 1,
               f"{w.tbl_beul.zeilenzahl()} Zeilen")
         check("Register „Beulfelder“ vorhanden", w.tabelle_zeigen("Beulfelder"))
-        zweige = [w.baum.topLevelItem(0).child(i).text(0)
-                  for i in range(w.baum.topLevelItem(0).childCount())]
-        check("Beulfelder stehen im Modellbaum", "Beulfelder" in zweige, str(zweige[-2:]))
+        nachweise_ = w.baum.gruppe("nachweise")         # seit 03.10.2026 gebuendelt (8c)
+        zweige = [nachweise_.child(i).text(0) for i in range(nachweise_.childCount())]
+        check("Beulfelder stehen im Modellbaum unter „Nachweise“", "Beulfelder" in zweige, str(zweige))
 
         an = solver.solve_all(m, design=True)
         w._solve_done("all", an)
@@ -1441,10 +1442,10 @@ def main():
         check("Register „Volumen“ vorhanden", w.tabelle_zeigen("Volumen"))
         check("Volumentabelle gefüllt", w.tbl_vol.zeilenzahl() == 1,
               f"{w.tbl_vol.zeilenzahl()} Zeilen")
-        zweige = [w.baum.topLevelItem(0).child(i).text(0)
-                  for i in range(w.baum.topLevelItem(0).childCount())]
-        check("Volumenbereiche stehen im Modellbaum",
-              "Volumenbereiche" in zweige, str(zweige[-3:]))
+        nachweise_ = w.baum.gruppe("nachweise")         # seit 03.10.2026 gebuendelt (8c)
+        zweige = [nachweise_.child(i).text(0) for i in range(nachweise_.childCount())]
+        check("Volumenbereiche stehen im Modellbaum unter „Nachweise“",
+              "Volumenbereiche" in zweige, str(zweige))
 
         an = solver.solve_all(mv, design=True)
         w._solve_done("all", an)
@@ -1607,14 +1608,16 @@ def main():
             return namen
 
         namen = zweige(w.baum)
-        for zweig in ("Knoten", "Linien", "Stäbe", "Stäbe mit Nachweis", "Flächen",
+        # Seit 03.10.2026 (8c): „Stäbe“ sind die Stäbe mit Nachweis, die
+        # Stabelemente stehen unter „FE-Netz“, das Register heißt „Elemente“
+        for zweig in ("Geometrie", "Knoten", "Linien", "Stäbe", "Flächen",
                       "Volumen", "Eigenschaften", "Querschnitte", "Werkstoffe", "Dicken",
-                      "Lager", "Knotenlager", "Gelenke", "Einwirkungen",
-                      "Lastfälle", "Kombinationen"):
+                      "Lager und Verbindungen", "Lager", "Knotenlager", "Gelenke", "Einwirkungen",
+                      "Lastfälle", "Kombinationen", "FE-Netz", "Netzknoten", "Stabelemente"):
             check(f"Modellbaum: Zweig „{zweig}“", zweig in namen)
 
         register = [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())]
-        for reg in ("Knoten", "Linien", "Stäbe", "Lager", "Gelenke",
+        for reg in ("Knoten", "Linien", "Elemente", "Lager", "Gelenke",
                     "Lastfälle", "Kombinationen"):
             check(f"Tabelle unten: „{reg}“", reg in register)
         check("Knotentabelle gefüllt", len(w.tbl_knoten.modell.zeilen) == mb.nn,
@@ -1664,7 +1667,7 @@ def main():
 
         # Modellbaum: Klick waehlt aus, Doppelklick oeffnet
         w._baum_geklickt("stabelemente", "beam")
-        check("Klick auf „Stäbe“ wählt die Stabknoten", len(w.selection) > 0,
+        check("Klick auf „Stabelemente“ wählt die Stabknoten", len(w.selection) > 0,
               f"{len(w.selection)} Knoten")
         w._baum_geklickt("lager_einzeln", "0")
         check("Klick auf ein Lager wählt seinen Knoten",
@@ -2149,7 +2152,7 @@ def main():
             check("Tabelle hinten: 40 Zeilen (> Grenze) bleiben ausstehend, die Zeilenzahl sagt es",
                   w.tbl_elem.ausstehend() and "beim Anzeigen" in w.tbl_elem.lbl_zeilen.text()
                   and w.tbl_elem.modell.rowCount() != 40, w.tbl_elem.lbl_zeilen.text())
-            w.tabelle_zeigen("Stäbe"); app.processEvents(); app.processEvents()
+            w.tabelle_zeigen("Elemente"); app.processEvents(); app.processEvents()
             check("… beim Anzeigen wird sie gefuellt", not w.tbl_elem.ausstehend()
                   and w.tbl_elem.modell.rowCount() == 40, str(w.tbl_elem.modell.rowCount()))
         finally:
@@ -2953,21 +2956,30 @@ def main():
         w.load_example("hall")
         app.processEvents()
         m_ = w.model
+        # Seit 03.10.2026 (8c) nach Gruppen: Eigenschaften vor der Geometrie
         wurzel = w.baum.topLevelItem(0)
-        oben = [wurzel.child(i).text(0) for i in range(wurzel.childCount())]
-        check("Baum: Knoten, Linien, Stäbe, Flächen, Volumen ganz oben, ohne Geometrie/Elemente",
-              oben[:5] == ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"]
-              and "Geometrie" not in oben and "Elemente" not in oben, str(oben[:7]))
-        kn_zweig = wurzel.child(0)
+        gruppen_ = [wurzel.child(i).text(0) for i in range(wurzel.childCount())]
+        geo_ = w.baum.gruppe("geometrie")
+        oben = [geo_.child(i).text(0) for i in range(geo_.childCount())] if geo_ is not None else []
+        check("Baum: Eigenschaften, dann Geometrie mit Knoten, Linien, Stäbe, Flächen, Volumen",
+              gruppen_[:2] == ["Eigenschaften", "Geometrie"]
+              and oben == ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"], str((gruppen_[:3], oben)))
+        kn_zweig = geo_.child(0)
         check("alle Knoten numerisch untereinander",
               kn_zweig.childCount() == m_.nn and kn_zweig.child(0).text(0) == "K0"
               and kn_zweig.child(m_.nn - 1).text(0) == f"K{m_.nn - 1}",
               f"{kn_zweig.childCount()} Einträge")
-        st_zweig = wurzel.child(2)
-        check("unter Stäbe zuerst die Stäbe mit Nachweis und die Schweißnähte, dann alle Stabelemente",
-              st_zweig.child(0).text(0) == "Stäbe mit Nachweis" and st_zweig.child(1).text(0) == "Schweißnähte"
-              and st_zweig.childCount() == 2 + sum(1 for e in m_.elements if e.typ in ("beam", "truss")),
-              f"{st_zweig.childCount()} Einträge")
+        st_zweig = geo_.child(2)
+        netz_ = w.baum.gruppe("fe_netz")
+        se_zweig = next(netz_.child(i) for i in range(netz_.childCount())
+                        if netz_.child(i).text(0) == "Stabelemente")
+        nw_ = w.baum.gruppe("nachweise")
+        check("unter „Stäbe“ die Stäbe mit Nachweis, die Stabelemente unter „FE-Netz“, "
+              "die Schweißnähte unter „Nachweise“",
+              st_zweig.text(0) == "Stäbe" and st_zweig.childCount() == len(m_.members)
+              and se_zweig.childCount() == sum(1 for e in m_.elements if e.typ in ("beam", "truss"))
+              and nw_.child(0).text(0) == "Schweißnähte",
+              f"{st_zweig.childCount()} Stäbe, {se_zweig.childCount()} Stabelemente")
         w._baum_geklickt("knoten", "Knoten")
         check("Klick auf „Knoten“ wählt alle Knoten", len(w.selection) == m_.nn
               and w.eingaben_dock.windowTitle() == "Knoten", str(len(w.selection)))
@@ -2985,8 +2997,8 @@ def main():
         check("eine andere Nummer tauscht die Knoten", np.allclose(m_.nodes[5], x_alt)
               and np.allclose(m_.nodes[3], x5))
         w._objekt_uebernehmen("knoten", "5", {"nr": 3, "x": x_alt[0], "y": x_alt[1], "z": x_alt[2]})
-        w._baum_geklickt("staebe", "Stäbe mit Nachweis")
-        check("Klick auf „Stäbe mit Nachweis“ wählt alle Stäbe", set(w.sel_staebe) == set(m_.members)
+        w._baum_geklickt("staebe", "Stäbe")
+        check("Klick auf „Stäbe“ (mit Nachweis) wählt alle Stäbe", set(w.sel_staebe) == set(m_.members)
               and w.auswahlart == "Stab")
         w._baum_geklickt("linien", "Linien")
         mk = w.maskenrand.maske
@@ -3048,7 +3060,7 @@ def main():
         # Entf-Taste im Baum loescht den gewaehlten Eintrag (mit Rueckfrage)
         w.refresh_all()
         app.processEvents()
-        stab_zweig = w.baum.topLevelItem(0).child(2).child(0)
+        stab_zweig = w.baum.gruppe("geometrie").child(2)            # „Stäbe“ (8c)
         eintrag = stab_zweig.child(0)
         stabname = eintrag.data(0, QtCore.Qt.UserRole + 1)
         w.baum.setCurrentItem(eintrag)
@@ -3160,7 +3172,7 @@ def main():
               and tu.tabText(tu.currentIndex()) == "Nachweise EC3"
               and tu.currentWidget() is w.tbl_design, tu.currentGroup())
         check("Reihenfolge in der Gruppe folgt der Vorgabe",
-              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Stäbe",
+              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
                                         "Schweißnähte"],
               str(tu.tabellen("Modell")))
         check("eine Gruppe mit nur einer Tabelle zeigt keine zweite Leiste",
@@ -3374,7 +3386,7 @@ def main():
               st2 is not None and st2.basis == "ohne Riegel" and st2.verschiebung == (0.0, 0.0, 0.5)
               and st2.dreh_winkel == 10.0 and st2.winkel == 10.0, str(st2))
         m_ = w.model
-        wurzel_ = w.baum.topLevelItem(0)
+        wurzel_ = w.baum.gruppe("systeme")                    # seit 03.10.2026 (8c)
         oben_ = [wurzel_.child(i).text(0) for i in range(wurzel_.childCount())]
         check("Baum: Subsysteme vor Stellungen vor Situationen",
               oben_.index("Subsysteme") < oben_.index("Stellungen") < oben_.index("Situationen"), str(oben_))
@@ -6376,8 +6388,8 @@ def main():
         m_.schweissnaehte["N1"] = Sn_("N1", art="Kehlnaht", a=5.0)
         w.refresh_all()
         app.processEvents()
-        check("Tabelle „Stäbe“ (statt „Elemente“) in der Gruppe Modell",
-              "Stäbe" in w.tab_unten.tabellen("Modell") and "Elemente" not in w.tab_unten.tabellen("Modell"),
+        check("Tabelle „Elemente“ (bis 03.10.2026 „Stäbe“) in der Gruppe Modell",
+              "Elemente" in w.tab_unten.tabellen("Modell") and "Stäbe" not in w.tab_unten.tabellen("Modell"),
               str(w.tab_unten.tabellen("Modell")))
 
         def setz_(tbl, zeile, spalte, wert):

@@ -256,8 +256,11 @@ def test_grundzustand_im_baum():
     b.fuellen(m, STELLUNGEN, ERGEBNISSE)
     app.processEvents()
     offen = sorted(i.text(0) for i in _alle(b) if i.childCount() and i.isExpanded())
-    check("nach dem Vergessen gilt der Grundzustand: Wurzel, Lager und Stellungen offen, sonst zu",
-          offen == sorted([m.name, "Lager", "Stellungen"]), str(offen))
+    # Seit 8c (03.10.2026) stehen Lager und Stellungen in Gruppen; offen sind
+    # darum auch ihre Gruppen und die Geometrie (bis dahin direkt unter der Wurzel)
+    check("nach dem Vergessen gilt der Grundzustand: Wurzel, Geometrie, Lager und Verbindungen mit Lager, "
+          "Systeme und Stellungen mit Stellungen offen, sonst zu",
+          offen == sorted([m.name] + GRUNDZUSTAND_OFFEN), str(offen))
     # und es bleibt ein ganz gewöhnlicher Zustand: der nächste Neuaufbau erhält ihn
     _finden(b, "Lager").setExpanded(False)
     _finden(b, "Knoten").setExpanded(True)
@@ -420,7 +423,13 @@ def test_kosten_haengen_nicht_an_der_listenlaenge():
 # 4. Schriftregel
 # ---------------------------------------------------------------------------
 GRUPPEN = {"Eigenschaften", "Einwirkungen", "Lager", "Verbindungen", "Kontaktbedingungen",
-           "Ergebnisse"}
+           "Ergebnisse",
+           # die Gruppen der obersten Ebene seit 8c (03.10.2026)
+           "Geometrie", "Lager und Verbindungen", "FE-Netz", "Systeme und Stellungen", "Nachweise",
+           "Bericht und Unterlagen", "Hilfsobjekte"}
+#: Offen im Grundzustand ausser der Wurzel (seit 8c mit den Gruppen darüber)
+GRUNDZUSTAND_OFFEN = ["Geometrie", "Lager und Verbindungen", "Lager", "Systeme und Stellungen",
+                      "Stellungen"]
 
 
 def _zaehlzweige(baum):
@@ -462,8 +471,8 @@ def test_schriftregel():
                 grau_falsch.append(f"{i.text(0)}:{farbe}")
             if int(zahl) > 0 and farbe not in (None, dsg.FARBEN["warn"]):
                 normal_falsch.append(f"{i.text(0)}:{farbe}")
-        check(f"{titel}: fett nur für Gruppen (Wurzel, Eigenschaften, Einwirkungen, Lager, "
-              "Verbindungen, Kontaktbedingungen, Ergebnisse)", not fett_falsch, ", ".join(fett_falsch[:8]))
+        check(f"{titel}: fett nur für Gruppen (Wurzel, die Gruppen der obersten Ebene, Lager, "
+              "Verbindungen, Kontaktbedingungen)", not fett_falsch, ", ".join(fett_falsch[:8]))
         check(f"{titel}: Zähler 0 steht grau", not grau_falsch, ", ".join(grau_falsch[:8]))
         check(f"{titel}: gefüllte Zweige stehen in der Normalfarbe (nicht blau)", not normal_falsch,
               ", ".join(normal_falsch[:8]))
@@ -538,11 +547,16 @@ def _unterzweig_gefuellt(baum, i) -> bool:
 
 def test_grau_nur_wenn_der_zweig_leer_ist():
     """„Volumen 0“ über „Volumenelemente 960“ (Beispiel Quader, Platte, Block
-    mit Reibung, Stauwand: Elemente ohne Körper) stand grau - grau heißt leer."""
+    mit Reibung, Stauwand: Elemente ohne Körper) stand grau - grau heißt leer.
+
+    Seit 8c (03.10.2026) stehen die Elemente unter „FE-Netz“; „Volumen 0“ und
+    „Flächen 0“ sind dann wirklich leer und stehen grau, die Elemente in der
+    Normalfarbe."""
     from statik3d.examples_lib import build_example
     from statik3d.gui import design as dsg
     b, app = _baum(900)
     gefunden = []
+    ohne_objekt = []
     for name in ("solid", "plate", "friction", "gate"):
         m = build_example(name)
         b.fuellen(m)
@@ -557,9 +571,22 @@ def test_grau_nur_wenn_der_zweig_leer_ist():
             check(f"{name}: „{i.text(0)} 0“ steht " + ("normal, ein Unterzweig hat Inhalt" if gefuellt
                                                        else "grau, alles darunter ist leer"),
                   ist_grau == (not gefuellt), f"Farbe {_farbe(i)}")
-    check("Vorbereitung: es gab Zweige mit Zähler 0 über gefülltem Unterzweig",
-          any("Volumen" in g for g in gefunden) and any("Flächen" in g for g in gefunden),
-          str(gefunden))
+        netz = _finden(b, "FE-Netz")
+        for zweig, art, elemente in (("Volumen", "geokoerper", "Volumenelemente"),
+                                     ("Flächen", "geoflaechen", "Flächenelemente")):
+            z = _finden(b, zweig, art)
+            e = next((netz.child(k) for k in range(netz.childCount())
+                      if netz.child(k).text(0) == elemente), None) if netz is not None else None
+            if z is None or z.text(1) != "0" or e is None or not e.text(1).isdigit() or int(e.text(1)) == 0:
+                continue
+            ohne_objekt.append(f"{name}: {zweig}")
+            check(f"{name}: „{zweig} 0“ grau, „{elemente} {e.text(1)}“ unter „FE-Netz“ in der Normalfarbe",
+                  _farbe(z) == dsg.FARBEN["matt"] and _farbe(e) is None, f"{_farbe(z)} / {_farbe(e)}")
+    check("Vorbereitung: es gab Volumen- und Flächenelemente ohne Körper und ohne Fläche",
+          any("Volumen" in g for g in ohne_objekt) and any("Flächen" in g for g in ohne_objekt),
+          str(ohne_objekt))
+    check("… und keinen Zweig mit Zähler 0 mehr über gefülltem Unterzweig (die Elemente stehen unter "
+          "„FE-Netz“)", not gefunden, str(gefunden))
     # ganz leer bleibt grau
     from statik3d.model import Model
     b.fuellen(Model())
@@ -764,7 +791,7 @@ def _grundzustand(w):
     b = w.baum
     offen = sorted(i.text(0) for i in _alle(b) if i.childCount() and i.isExpanded())
     wurzel = b.topLevelItem(0).text(0)
-    return offen, sorted([wurzel, "Lager", "Stellungen"])
+    return offen, sorted([wurzel] + GRUNDZUSTAND_OFFEN)
 
 
 def test_fenster_neues_modell_erbt_nichts():
@@ -795,7 +822,8 @@ def test_fenster_neues_modell_erbt_nichts():
         offen, erwartet = _grundzustand(w)
         # Zweige, die es im neuen Modell nicht gibt, fehlen in der Liste von selbst
         erwartet = [e for e in erwartet if e in [i.text(0) for i in _alle(b)]]
-        check(f"{titel}: Grundzustand (Wurzel, Lager, Stellungen offen, alles andere zu)",
+        check(f"{titel}: Grundzustand (Wurzel, Geometrie, Lager und Verbindungen, Lager, Systeme und "
+              "Stellungen, Stellungen offen, alles andere zu)",
               offen == erwartet, f"offen {offen}")
         check(f"{titel}: nichts gewählt, Rolle ganz oben",
               not b.selectedItems() and b.verticalScrollBar().value() == 0,

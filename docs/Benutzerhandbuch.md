@@ -386,27 +386,54 @@ Die Arbeitsfläche in drei Spalten:
   *Bearbeiten…* (eine Sammelmaske für alle, unterschiedliche Werte stehen als
   „verschieden“) und *Löschen* mit **einer** Rückfrage für alle. Was nicht
   gelöscht werden kann, bleibt stehen und der Grund steht in der Meldung.
+
+  **Der Baum ist nach Gruppen geordnet** (seit 03.10.2026, Antworten 2 bis 4
+  vom 24.09.2026). Die oberste Ebene folgt dem Ablauf, in dem man ein Modell
+  aufbaut und rechnet: zuerst die Eigenschaften, auf die Stäbe, Flächen und
+  Volumen verweisen, dann die Geometrie, Lager und Verbindungen, die
+  Einwirkungen, das FE-Netz, die Systeme und Stellungen, die Nachweise, die
+  Ergebnisse, Bericht und Unterlagen und zuletzt die Hilfsobjekte. So ist auch
+  die Navigation in RFEM 6 aufgebaut: dort beginnen die Basisobjekte mit
+  Werkstoffen, Querschnitten und Dicken, und Bemaßungen und Objektselektionen
+  stehen unter den Hilfsobjekten. **„Stab“ meint wie in RFEM den Stab mit
+  Nachweis**: der Zweig *Stäbe* unter *Geometrie* zeigt ihn, die finiten
+  Stabelemente stehen unter *FE-Netz*. Der Rechtsklick bietet darum am Zweig
+  *Stäbe* „Neu: Stab …“ und am Zweig *Stabelemente* „Neu: Stabelement …“.
+  **Der Zweig *Knoten* zeigt nur die Knoten der
+  Konstruktion**, dieselben, die die Ansicht unter *Knoten* zeichnet:
+  Linienknoten, Stabenden, Knotenlager, frei gesetzte Knoten und die Knoten
+  direkt gesetzter Elemente. Die Netzknoten stehen unter *FE-Netz* als **eine
+  Zählzeile** mit ihrer Zahl; ein Klick darauf holt die Tabelle *Knoten*, in
+  der alle Knoten stehen. Bis zum 03.10.2026 hingen Knoten, Linien, Stäbe,
+  Flächen, Volumen, Bemaßungen, Lager, Gelenke, Stellungen und die
+  Nachweisobjekte einzeln an der Wurzel. Der Zweig *Stäbe* führte damals die
+  Stabelemente und darunter die Zweige *Stäbe mit Nachweis* und
+  *Schweißnähte*, Flächen und Volumen trugen ihre Elemente als Unterzweig, und
+  *Knoten* führte auch jeden Netzknoten (in der Liste bis zu 20 000).
+
   Der Baum enthält:
 
-  | Zweig | Inhalt |
+  | Gruppe → Zweig | Inhalt |
   |---|---|
   | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lastfälle und die Abmessungen |
-  | Knoten | alle Knoten **numerisch untereinander** (K0, K1, …) mit Koordinaten |
-  | Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
-  | Stäbe | zuerst der Zweig **Stäbe mit Nachweis**, darunter alle Stabelemente E0, E1, … |
-  | Flächen | die Flächenobjekte, darunter der Zweig „Flächenelemente“ |
-  | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
-  | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
-  | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
-  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
-  | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
-  | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
-  | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
-  | Einwirkungen | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
-  | Subsysteme → Stellungen → Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen |
-  | Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
+  | **Eigenschaften** → Werkstoffe, Querschnitte, Dicken | die Eigenschaften, auf die Stäbe, Flächen und Volumen verweisen (bis zum 03.10.2026 standen die Querschnitte zuerst) |
+  | **Geometrie** → Knoten | die **Knoten der Konstruktion** numerisch untereinander (K0, K1, …) mit Koordinaten |
+  | Geometrie → Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
+  | Geometrie → Stäbe | die **Stäbe im Sinn von RFEM**, also die Stäbe mit Nachweis; jeder ist eine Kette von Stabelementen |
+  | Geometrie → Flächen, Volumen | die Flächenobjekte und die Volumenkörper |
+  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
+  | Lager und Verbindungen → Verbindungen | Punktmassen, Dämpfer, Federn, starre Körper und Grenzschichten, sobald es welche gibt |
+  | Lager und Verbindungen → Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
+  | Lager und Verbindungen → Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
+  | Lager und Verbindungen → Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
+  | Lager und Verbindungen → Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
+  | **Einwirkungen** → Lastfälle, Kombinationen, Ermüdungslasten, Lastgenerierer | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
+  | **FE-Netz** → Netzknoten, Stabelemente, Flächenelemente, Volumenelemente | was das Vernetzen erzeugt: die Netzknoten als eine Zählzeile, die Stabelemente E0, E1, … einzeln, die Flächen- und Volumenelemente mit ihrer Zahl |
+  | **Systeme und Stellungen** → Subsysteme, Stellungen, Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen. Zwischen den Subsystemen und den Stellungen bekommt das Volumenmodul später seinen Zweig „Detailmodelle (Volumen)“ |
+  | **Nachweise** → Schweißnähte, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte, gebündelt; die Stäbe mit Nachweis stehen als *Stäbe* unter *Geometrie* |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
-  | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
+  | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
+  | **Hilfsobjekte** → Bemaßungen, Layer | Maße und benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) |
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -437,22 +464,27 @@ Die Arbeitsfläche in drei Spalten:
   Ein anderes Modell erbt von alledem nichts: nach *Datei → Neu*, *Öffnen*,
   einem Beispiel, einem Import, der nicht an das Modell anhängt, und einem
   Modell, das der Browser (Handy) an die Stelle des geöffneten setzt, beginnt
-  der Baum im Grundzustand. Darin sind nur die Wurzel, *Lager* und
-  *Stellungen* aufgeklappt, alles andere ist zu, nichts ist gewählt, und der
-  Baum steht ganz oben. Bis zum 02.10.2026 galt der Zustand eines Zweigs
-  gleichen Namens aus dem vorigen Modell weiter, und *Lager* war nie offen,
-  obwohl es so gedacht war.
+  der Baum im Grundzustand. Darin sind nur die Wurzel, *Geometrie*, *Lager und
+  Verbindungen* mit *Lager* und *Systeme und Stellungen* mit *Stellungen*
+  aufgeklappt, alles andere ist zu, nichts ist gewählt, und der Baum steht
+  ganz oben. Bis zum 03.10.2026 waren es die Wurzel, *Lager* und *Stellungen*,
+  die damals direkt an der Wurzel hingen. Bis zum 02.10.2026 galt der Zustand
+  eines Zweigs gleichen Namens aus dem vorigen Modell weiter, und *Lager* war
+  nie offen, obwohl es so gedacht war.
 
   **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht ein Zweig nur,
   wenn er **samt allem darunter** leer ist: Zähler 0 und kein Unterzweig mit
-  Inhalt. „Volumen 0“ über „Volumenelementen 960“ (Elemente, die ohne Körper
-  angelegt wurden, wie beim Beispiel Quader, bei Platte, Stauwand und Block mit
-  Reibung) steht darum in der gewöhnlichen Schriftfarbe, ebenso „Flächen 0“ über
-  den Flächenelementen und „Stäbe 0“ über Stäben mit Nachweis oder
-  Schweißnähten. Was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Fett
-  stehen nur Gruppen, also Zweige, die andere Zweige zusammenfassen: der
-  Modellname, *Eigenschaften*, *Lager*, *Verbindungen*, *Kontaktbedingungen*,
-  *Einwirkungen* und *Ergebnisse*. Bis zum 02.10.2026 waren manche gefüllten
+  Inhalt. Was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Seit dem
+  03.10.2026 stehen die Elemente unter *FE-Netz*; bei Elementen, die ohne Körper
+  oder Fläche angelegt wurden (Beispiel Quader, Platte, Stauwand, Block mit
+  Reibung), steht „Volumen 0“ oder „Flächen 0“ darum grau, und die
+  „Volumenelemente 960“ stehen unter *FE-Netz* in der gewöhnlichen Schriftfarbe.
+  Bis zum 03.10.2026 hingen die Elemente unter „Volumen 0“ und „Flächen 0“, und
+  diese Zweige standen deshalb in der gewöhnlichen Schriftfarbe, ebenso „Stäbe
+  0“ über Stäben mit Nachweis oder Schweißnähten. Fett stehen nur Gruppen, also
+  Zweige, die andere Zweige zusammenfassen: der Modellname, die Gruppen der
+  obersten Ebene, *Lager*, *Verbindungen* und *Kontaktbedingungen*. Bis zum
+  02.10.2026 waren manche gefüllten
   Zweige fett oder blau und andere nicht, ohne dass eine Regel dahinterstand,
   und jeder Zweig mit Zähler 0 stand grau, auch über gefüllten Unterzweigen.
   Die Warnfarbe steht nur noch bei Warnungen. Blau stehen die Zeilen
@@ -529,10 +561,11 @@ Die Arbeitsfläche in drei Spalten:
   Situation, Berichtsbild, Kontaktbedingung …); Lager öffnen ihren Dialog.
 
   **Ein Doppelklick auf einen Zweig** (die Art, etwa „Werkstoffe“ oder
-  „Stäbe mit Nachweis“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
+  „Stäbe“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
   wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
   *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
-  Linien, Stäbe, Stäbe mit Nachweis, Flächen, Volumen, Gelenke, Knotenlager,
+  Linien, Stäbe (bis zum 03.10.2026 „Stäbe mit Nachweis“), Stabelemente (bis
+  dahin „Stäbe“), Flächen, Volumen, Gelenke, Knotenlager,
   Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
   Situationen, Subsysteme, Schweißnähte, Bemaßungen und den Wasserdruck.
   Zweige ohne Anlegemaske — darunter Knoten (dort legt *Neu* sofort einen
@@ -1183,7 +1216,9 @@ F9). Der Schalter „Knoten“ im Register *Ansicht* meint die Knoten der
 Konstruktion; Netzknoten sind die Knoten der beim Vernetzen erzeugten
 Elemente, an denen keine Linie und kein Stabende hängt. Ein Modell ohne
 Geometrieobjekte (nur Elemente, etwa ein Import aus Nastran) hat keine
-Netzknoten — seine Knoten sind die Konstruktion.
+Netzknoten — seine Knoten sind die Konstruktion. Der Modellbaum teilt die
+Knoten seit dem 03.10.2026 ebenso: *Geometrie → Knoten* führt die Knoten der
+Konstruktion, *FE-Netz → Netzknoten* ist eine Zählzeile für die übrigen.
 
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
 Ansicht danach ein: grün gut, rot schlecht. Ein FE-Ergebnis ist nur so gut
@@ -2475,7 +2510,7 @@ passende Tabelle nach vorn — samt ihrer Gruppe.
 | Gruppe | Tabellen |
 |---|---|
 | Protokoll | das Protokoll der Berechnung und der Modellprüfung |
-| Modell | Knoten, Linien, Flächen, Volumenkörper, Stäbe (alle Elemente), Schweißnähte |
+| Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente, Schweißnähte. Die Tabelle *Elemente* führt alle finiten Elemente; bis zum 03.10.2026 hieß sie „Stäbe“, obwohl auch Schalen und Volumen darin stehen. Ein Klick auf *FE-Netz → Stabelemente*, *Flächenelemente* oder *Volumenelemente* im Modellbaum holt sie nach vorn |
 | Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog zeigt die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
 | Lager | Lager, Gelenke, Kontaktbedingungen |
 | Lasten | Lastfälle, Lasten, Kombinationen |
@@ -3023,7 +3058,7 @@ Statuszeile und im Protokoll und wird orange in die Ansicht gezeichnet;
 *Messungen löschen* nimmt es wieder weg. Die Maske bleibt für die nächste
 Messung offen.
 
-**Bemaßung** legt Maße als Objekte des Modells an (Modellbaum → Bemaßungen,
+**Bemaßung** legt Maße als Objekte des Modells an (Modellbaum → Hilfsobjekte → Bemaßungen,
 werden mit der Datei gespeichert und erscheinen in Bildern für den
 Bericht):
 
@@ -4167,8 +4202,8 @@ Wasserspiegel als feste Deckel, keine Wechselsprünge, keine Wellen.
 
 ### Lastgenerierer Wind (DIN EN 1991-1-4)
 
-*Lasten → Generierer → Wind* (oder Modellbaum → Lastgenerierer → „+ Wind
-anlegen“). Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab)
+*Lasten → Generierer → Wind* (oder Modellbaum → Einwirkungen → Lastgenerierer
+→ „+ Wind anlegen“). Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab)
 in der Ansicht wählen, „Auswahl übernehmen“, dann:
 
 | Angabe | Bedeutung |
@@ -5695,8 +5730,9 @@ Tabelle steht auch im Bericht.
 
 ### Schweißnähte und Kerbfälle
 
-*Nachweise → Führen → Schweißnähte…* oder Modellbaum → Stäbe → Schweißnähte →
-„+ Schweißnaht anlegen“ (Tabelle unten in der Gruppe *Modell*). Vorher die
+*Nachweise → Führen → Schweißnähte…* oder Modellbaum → Nachweise → Schweißnähte →
+„+ Schweißnaht anlegen“ (bis zum 03.10.2026 unter *Stäbe*; Tabelle unten in
+der Gruppe *Modell*). Vorher die
 Stäbe (Auswahlart Stab), Linien oder Flächen wählen, an denen die Naht
 liegt, dann „Auswahl übernehmen“.
 

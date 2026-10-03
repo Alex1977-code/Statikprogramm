@@ -762,9 +762,11 @@ def test_doppelklick_zweig():
         return getattr(getattr(w.maskenrand, "maske", None), "titel", "")
     try:
         fp = _fingerabdruck(w.model)
-        titel = doppel("Stäbe mit Nachweis")
-        check("Doppelklick „Stäbe mit Nachweis“: nichts angelegt, rechts „Neu: Stab …“",
+        # Der Zweig der Stäbe mit Nachweis heißt seit 03.10.2026 „Stäbe“ (Teilpaket 8c)
+        titel = doppel("Stäbe")
+        check("Doppelklick „Stäbe“ (die Stäbe mit Nachweis): nichts angelegt, rechts „Neu: Stab …“",
               _fingerabdruck(w.model) == fp and len(w.model.members) == 0
+              and w.baum._schluessel(finden("Stäbe"))[0] == "staebe"
               and str(titel).startswith("Neu: Stab"), str(titel))
         for text, erwartet in (("Werkstoffe", "Neu: Werkstoff"), ("Lastfälle", "Neu: Lastfall"),
                                ("Kombinationen", "Neu: Kombination"), ("Linien", "Neu: Linie")):

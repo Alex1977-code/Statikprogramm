@@ -5506,7 +5506,10 @@ class MainWindow(QtWidgets.QMainWindow):
         "gelenke": "add_hinge", "gelenk": "add_hinge",
     }
 
-    #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
+    #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske.
+    #: Die Elementtabelle heisst seit 03.10.2026 „Elemente“ (vorher „Stäbe“,
+    #: obwohl sie alle Elemente fuehrt; Antwort 2 vom 24.09.2026). Die
+    #: Zaehlzeile „Netzknoten“ unter „FE-Netz“ holt die Knotentabelle.
     BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
                     "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
                     "gelenke": "Gelenke", "gelenk": "Gelenke", "berichtseintrag": "Bericht",
@@ -5515,9 +5518,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     "lager": "Lager", "lager_einzeln": "Lager", "linienlager": "Lager",
                     "linienlager_einzeln": "Lager", "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
                     "dicken": "Dicken", "dicke": "Dicken",
-                    "knoten": "Knoten", "elemente": "Stäbe",
-                    "stabelemente": "Stäbe", "flaechen": "Stäbe",
-                    "volumen": "Stäbe", "linien": "Linien", "linie": "Linien",
+                    "knoten": "Knoten", "netzknoten": "Knoten", "elemente": "Elemente",
+                    "stabelemente": "Elemente", "flaechen": "Elemente",
+                    "volumen": "Elemente", "linien": "Linien", "linie": "Linien",
                     "lager": "Lager", "lager_einzeln": "Lager",
                     "linienlager": "Lager", "linienlager_einzeln": "Lager",
                     "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
@@ -5994,8 +5997,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 nrn = [f"E{i}" for i, e in enumerate(m.elements) if e.typ in vp.TYPEN_STAEBE]
                 felder = [F("anzahl", "Stabelemente", "info", str(len(nrn))),
                           F("spanne", "Nummern", "info", self._spanne(nrn)),
-                          F("nachweis", "Stäbe mit Nachweis", "info", str(len(m.members)))]
-                titel, knopf = "Stäbe", "Neuer Stab"
+                          F("nachweis", "Stäbe", "info", str(len(m.members)))]
+                # Titel wie der Zweig im Baum (bis 03.10.2026 „Stäbe“, Antwort 2)
+                titel, knopf = "Stabelemente", "Neues Stabelement"
             else:
                 i = int(name)
                 e = m.elements[i] if 0 <= i < len(m.elements) else None
@@ -6035,7 +6039,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.members))),
                           F("spanne", "Namen", "info", self._spanne(m.members))]
-                titel, knopf = "Stäbe mit Nachweis", "Neuer Stab mit Nachweis"
+                titel, knopf = "Stäbe", "Neuer Stab"
             else:
                 mem = m.members.get(name)
                 els = [int(e) for e in (mem.elements if mem else [])]
@@ -11286,12 +11290,14 @@ class MainWindow(QtWidgets.QMainWindow):
                    hinweis="Verdrehung der lokalen Achsen um die Stabachse"),
             Spalte("Länge / Fläche", "", "zahl", 4),
             Spalte("Gelenke", "", "text")],
-            "Staebe", self, mit_kennwerten=True)
+            "Elemente", self, mit_kennwerten=True)
         self.tbl_elem.modell.aendern = self._elem_aendern
         self.tbl_elem.zeile_gewaehlt.connect(self._tabelle_element)
         be = QtWidgets.QPushButton("Element löschen")
         be.clicked.connect(self.element_loeschen)
-        tabs.addTab(self._eingabetabelle(self.tbl_elem, be), "Stäbe")
+        # „Elemente“ seit 03.10.2026 (vorher „Stäbe“): die Tabelle fuehrt alle
+        # Elemente, und „Stab“ meint wie in RFEM den Stab mit Nachweis
+        tabs.addTab(self._eingabetabelle(self.tbl_elem, be), "Elemente")
 
         # ---- Lager --------------------------------------------------------
         self.tbl_lager = tab.Datentabelle([
@@ -12711,7 +12717,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Tabelle. Beides in derselben Ordnung zu halten spart das Suchen.
     TABELLENGRUPPEN = [
         ("Protokoll", ["Protokoll"]),
-        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Stäbe", "Schweißnähte"]),
+        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente", "Schweißnähte"]),
         ("Eigenschaften", ["Werkstoffe", "Querschnitte", "Dicken"]),
         ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
         ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),
