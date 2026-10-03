@@ -750,6 +750,43 @@ Theorie 11.8 (Nachtrag), 11.20, Entwurf 4b.1 und 4e.8, `Volumenmodul.md`.
 
 *Ergebnis O15 (02.10.2026, Commit 250e607; Läufe aus einem festen Arbeitsbaum auf diesem Commit, Suiten nacheinander).* (1) und (2) wie festgelegt in `fcm/gitter.py`. (3) `test_oktree.test_verfeinerung_drei_ebenen` (in der Kernsuite) besteht; mit der alten Reihenfolge und der Grenze schlägt er fehl (`RuntimeError`, Kaskade nach 8 Durchläufen; die beiden Prüfungen der Zwei-Ebenen-Fälle bestehen auch alt). Kugel Ziel 1,3 mm: 2 100 Blätter in vier Ebenen (519 / 155 / 306 / 1 120), Überlappungen, Lücken und 2:1-Verstöße je 0. (4) Vergleich alt gegen neu: 393 Gitter aus 26 Suiten verglichen (alte und neue Reihenfolge, Blattmengen aus `ebene` und `ijk` exakt): 391 gleich, 0 verschieden, 2 Kaskade im alten Verfahren – das ist der absichtlich gebaute Dreiebenenfall des neuen Tests (2 100 Blätter in 519 / 155 / 306 / 1 120), gebaut in `test_oktree` und `test_kern`. Kein bestehendes Gitter ändert sich, also kann sich keine Zahl dieser Suiten ändern; größtes Gitter 65082 Blätter. Das Paket baut keine Gitter in Arbeitsprozessen (kein `multiprocessing`), die Messung ist vollständig. (5) t/8 mit dem Code des Repositorys: 31 531 Blätter (208 / 622 / 1 721 / 28 980), Aufbau 0,9 s, 841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4 – gleich der Messung mit dem Monkeypatch im Scratchpad; 2,5 mm unverändert 5 146 Blätter und 150 411 / 477 702 / 1 096 107 Freiheitsgrade. (6) Alle Suiten grün: `oktree` 30/30, `gitter` 26/26, `zwaenge` 24/24, `patch` 14/14, `kern` 347/347, `stl` 27/27, `step` 12/12, `huelle` 22/22, `schale` 17/17, `rueckgewinnung` 6/6, `vertrag_fcm` 51/51, `quadratur` 45/45, `lame` 7/7, `kragarm` 15/15, `adaptiv` 18/18, `mehrgitter` 27/27, `operator_gpu` 14/14, `kirsch` 8/8, `knotenblech` 9/9, `basis` 22/22, `elastizitaet` 6/6, `geometrie` 46/46, `hotspot` 10/10, `operator` 10/10, `paket` 4/4, `pcg` 7/7; mypy `--strict` und `lint-imports` sauber.
 
+*Entscheidung O5 (Anwender 03.10.2026):* Empfehlung angenommen, die Ursache des Konsistenzfehlers wird jetzt gesucht (nach Pull Request 3, vor Teilprojekt 6).
+
+*Regeln O5, vor der Messung festgelegt (03.10.2026).* **Frage:** Warum wird ein Feld des Ansatzraums an Schnittzellen nicht auf Rundungsniveau reproduziert, wie groß ist der
+Anteil jeder Ursache, und welche Kur beseitigt sie? Die Arbeit ist fertig, wenn je Modell, Polynomgrad und Feldgrad feststeht, welcher Schalter den Fehler beseitigt, und eine Kur mit
+Wirkung und Kosten vorliegt; neue Befunde, die dabei auffallen, kommen auf die Liste und werden nicht mitbehandelt.
+
+**Hypothesen aus dem Quelltext (vor jeder Messung).** Für ein Feld u vom Gesamtgrad k im Ansatzraum (Tensorgrad p, Testfunktion v vom Gesamtgrad bis 3p) verlangt die Konsistenz
+des Verfahrens, dass Volumen- und Flächenregel den Gaußschen Satz für σ(u)·v erfüllen: ∫σ(u):ε(v) hat den Gesamtgrad 3p + k − 2, ∫(σ(u)n)·v den Grad 3p + k − 1.
+- **H1 Tetraederregel.** `ordnung_tet = ceil(1,5 p)` ist exakt bis zum Gesamtgrad 2n − 1 = 5 / 9 / 11 (p 2 / 3 / 4), ausgelegt auf k = 1 (Patch-Test, Grad 3p − 1). Für k = 2 sind 6 / 9 / 12 nötig:
+  bei p 2 und p 4 verfehlt, bei p 3 erfüllt; für k = 3 bei p 3 sind 10 nötig: verfehlt. Betroffen sind nur Stücke mit schrägen Ebenen (achsparallele Stücke und Hüllenzellen rechnen anders).
+- **H2 Flächenregel.** `ordnung_flaeche = ceil((3p + 1)/2)` ist exakt bis 7 / 9 / 13, ausgelegt auf k = 1 (Grad 3p). Für k = 2 sind 7 / 10 / 13 nötig: bei p 3 verfehlt, bei p 2 und p 4 erfüllt.
+- **H3 α in schlecht geschnittenen Zellen ohne Wurzel.** Solche Zellen behalten die fiktive Steifigkeit; der Konsistenzfehler ist proportional zu α und trifft auch lineare Felder.
+- **H4 Rundung.** Was danach bleibt, ist Kondition mal Rechengenauigkeit.
+
+**Vorhersagen.** (V1) p 2, k 2, Modell mit schrägen Ebenen: der Fehler verschwindet mit `ordnung_tet` ≥ 4, nicht mit der Flächenordnung. (V2) p 3, k 2: die Tetraederordnung ändert
+nichts, die Flächenordnung 6 beseitigt den Fehler. (V3) p 3, k 3: beide Ordnungen sind nötig (Tetraeder ≥ 6, Fläche ≥ 6). (V4) k 1 am Modell mit Zellen ohne Wurzel: der Fehler ist
+proportional zu α; an einem Modell ohne solche Zellen liegt er auf Rundungsniveau. „Verschwinden“ heißt: der Fehler fällt auf das Niveau des linearen Felds (k 1) derselben Einstellung, höchstens
+das Dreifache davon, und lag in der Vorgabe mindestens beim Zehnfachen. „Rundungsniveau“ heißt: relativer Spannungsfehler unter 10⁻⁸.
+
+**Modelle und Felder.** (T) T-Stoß aus `test_hotspot` mit lokaler Verfeinerung an den Nähten (Nahtziel 5 mm bei p 2, 10 mm bei p 3, Basis 20 – wie in B4), Verschiebungsrand „voll“ auf der ganzen Oberfläche.
+(S) Plattenstreifen aus `test_schale`, um 10° und 30° geneigt (STL-Hülle, geschnitten mit den beiden schrägen Halbräumen wie im Vertragsweg), Basis 25, ebenfalls Rand „voll“. Felder: k 1 das lineare Feld des
+Patch-Tests; k 2 an (T) u = (c x²/2, 0, 0) mit konstanter Volumenlast, an (S) die reine Biegung in den gedrehten Achsen (ohne Volumenlast); k 3 (nur p 3, nur T) u = (c x³/6, 0, 0) mit
+linearer Volumenlast. Schalter: `ordnung_tet` Vorgabe / 2p / 3p, `ordnung_flaeche` Vorgabe / 2p / 3p, α 10⁻⁸ / 10⁻¹⁰ / 10⁻¹².
+
+**Zwei unabhängige Auswertungen.** (A1) Größter relativer Fehler der rohen Spannung σ = D B u an 1 500 festen Werkstoffpunkten (mehr als 0,5 mm vom Rand), bezogen auf den größten Sollbetrag –
+über die Lösung des Gleichungssystems. (A2) Konsistenzrest des exakten Felds ohne Lösung: der Koeffizientenvektor a des exakten Felds entsteht je Zelle aus einer L²-Projektion über die volle Zelle
+(Gauß p + 2), der Rest ist r = Cᵀ(K a − F), bezogen auf den größten Betrag von CᵀF; Gegenprobe der Konstruktion: C angewandt auf die freien Einträge von a ergibt a (unter 10⁻¹⁰). Beide müssen im
+Urteil übereinstimmen (derselbe Schalter beseitigt Fehler und Rest); berichtet wird nur, was beide tragen. Das Verhältnis Fehler zu Rest ist die Verstärkung (H4).
+
+**Kur und ihre Prüfung.** Erwartete Kur, wenn H1 bis H3 zutreffen: (K1) die Momente schräg geschnittener Stücke exakt über den Divergenzsatz (`geometry/huelle.huellenmomente` auf den Polygonen
+des geclippten Stücks) statt über die Tetraederregel – dann ist die Zellmatrix auf ebener Geometrie für den ganzen Ansatzraum exakt; (K2) Flächenordnung 2p (exakt bis 4p − 1, also für alle Felder
+bis zum Gesamtgrad p); (K3) für α nach der Messung. Jede Kur wird am Kontrolllauf gemessen, nicht nur am Prüfkörper: Knotenblech h 10 p 2 und der lange Lauf (vier Zyklen bis p 4) mit und ohne Kur –
+Änderung von σ_hs an den 18 Nahtpunkten, Zahl der Quadratur- und Oberflächenpunkte, Aufbauzeit. Abnahme der Kur: (1) an (T) und (S), p 2 und p 3, k ≤ p: Spannungsfehler unter 10⁻⁸, wo keine
+Zelle ohne Wurzel bleibt, sonst auf dem α-Niveau des linearen Felds; (2) die Zellmatrix eines schräg geschnittenen Stücks stimmt mit einer Tetraederregel der Ordnung 3p + 1 (exakt bis 6p + 1) auf 10⁻¹² überein;
+(3) alle Suiten grün; ändert sich eine dokumentierte Zahl über ihre letzte angegebene Stelle hinaus, wird sie mit altem und neuem Wert aufgelistet; (4) die Aufbauzeit des Knotenblechs (langer Lauf)
+steigt um höchstens 10 %. Wird eine Regel verfehlt oder ändert die Kur σ_hs am Knotenblech um mehr als 0,5 %, entscheidet der Anwender mit Empfehlung. Gemergt wird nur auf Freigabe.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
@@ -778,7 +815,7 @@ nachgetragen.
 | O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | erledigt: letzte Änderung < 3 % konvergiert, Monotonie zusätzlich (Knotenblech 0,44 %, T-Stoß 0,45 %) |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | erledigt: Theorie 11 konsolidiert, Entwurf 4e neu, `Volumenmodul.md` nach Stufen; unabhängiger Prüfer (Opus) gegen die Quellen, 16 Befunde bearbeitet; Berichtigungen 0,47 → 0,45 %, 24 → 23 Befunde in C2; Nebenbefund O15 (Gitter) |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
-| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |
+| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | angenommen (03.10.); Hypothesen und Messregeln festgelegt, Messung läuft |
 | O6 Ebenen durch gekrümmte Hülle (B6 Teil 3) | Fable 5.1 | sehr hoch | Divergenzweg eine Dimension tiefer | Entscheidung offen: bauen oder Warnung lassen (Empfehlung: bei Bedarf) |
 | O7 Vertragsvorschlag 2.2.0 Volumenlast je Lastfall | Sonnet 5.5 | mittel | Anschluss in `api.py` nach dem Vertrags-PR | Entscheidung offen: ganz, nur Punkt 1 oder ablehnen (Empfehlung: Punkt 1, Kombinationen im Hauptprogramm) |
 | O8 Abbruch in `prepare` | Sonnet 5.5 | mittel | Vertragsvorschlag schreiben | Entscheidung offen: Vorschlag (Minor) oder hinnehmen (Empfehlung: Vorschlag mit O9) |
