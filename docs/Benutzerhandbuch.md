@@ -2512,9 +2512,12 @@ findet die Befehlssuche weiter. **Ein
 Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes Menü: oben sein Name,
 dann „Bearbeiten…“ (die Maske rechts), beim Knotenlager „Größe dieses Lagers…“,
 bei Linien- und Flächenlagern „Lagerdichte…“, dazu „Größe aller Lager…“, „In
-der Tabelle zeigen“, „Im Baum zeigen“ und „Löschen“. Bis zum 03.10.2026 hießen
-die Einträge „Lager bearbeiten…“ und „Lager löschen“, und darunter folgte das
-übrige Menü der Ansicht. Die eingestellte Größe wird mitgespeichert.
+der Tabelle zeigen“, „Im Baum zeigen“ und „Lager löschen“; darunter stehen die
+Befehle der Auswahl. In der Auswahlart Knoten trifft ein Rechtsklick auf den
+Knoten selbst den Knoten: dann stehen die Einträge seines Lagers im Untermenü
+mit dem Namen des Lagers, etwa „Knotenlager 1 (K0)“. Bis zum 03.10.2026 hieß
+„Bearbeiten…“ „Lager bearbeiten…“, und darunter folgte das übrige Menü der
+Ansicht. Die eingestellte Größe wird mitgespeichert.
 
 **Lager folgen dem Netz.** Ein Linien- oder Flächenlager mit Geometriebezug
 wirkt nach dem Vernetzen auf **alle Netzknoten** seiner Linien bzw. Flächen
@@ -2977,43 +2980,65 @@ Fenster aufzieht.
 
 **Rechtsklick in der Ansicht.** Ein Rechtsklick ohne Ziehbewegung öffnet ein
 Menü, das sich nach dem richtet, was unter dem Zeiger liegt. Getroffen wird wie
-beim Linksklick in der eingestellten Auswahlart; ein Knoten-, Linien- oder
-Flächenlager trifft der Rechtsklick in jeder Auswahlart, wenn sein Symbol unter
-dem Zeiger liegt. Liegt dort ein Objekt (Knoten, Stab, Linie, Fläche, Volumen,
-Element des Netzes, Lager oder Last), steht oben fett sein Name, etwa „Knoten
-K12“, „Stab S2“ oder „Knotenlager 1 (K0)“, und darunter stehen seine Befehle.
-*Bearbeiten…* öffnet rechts seine Maske. Dann folgen die Befehle seiner Art:
-beim Knoten *Knotenlager…* und *Knotenlast…*, beim Stab *Gelenke…*, die Gelenke
-an ihm und *Stablast…*, bei der Linie *Linienlast…*, bei Fläche und Volumen
-*Flächenlast…* und die Kontaktbedingungen daran, beim Lager seine Symbolgröße
-oder die Lagerdichte. *In der Tabelle zeigen* holt unten seine Tabelle nach vorn
-und markiert seine Zeile, *Im Baum zeigen* wählt seinen Eintrag im Modellbaum
-(Netzknoten, Flächen- und Volumenelemente und Lasten stehen dort nicht einzeln,
-dann fehlt der Eintrag), *Ausblenden* und *Nur dieses zeigen* wirken wie die
-Befehle der Sicht, und *Löschen* entfernt das Objekt nach einer Rückfrage. Ins
-Leere geklickt zeigt das Menü Sicht und Zoom: *Isometrisch*, die sechs Ansichten
-von ±X, ±Y und ±Z, *Rückseite (180°)*, *Zoom alles*, *Vorherige Sicht* und
-*Alles zeigen*, dazu die Untermenüs *Darstellung* (Darstellungsart, FE-Netz,
-Knoten, Größe aller Lager und Lagerdichte) und *Nummern*. Ist etwas gewählt,
-folgen darunter die Befehle der Auswahl mit *Auswahl löschen* (wie Entf) und
-*Auswahl aufheben* (wie Esc); die Auswahl bleibt dabei stehen. Liegt das
-angeklickte Objekt außerhalb der Auswahl, wird es gewählt und ersetzt die
-Auswahl wie ein Linksklick. Liegt es in der Auswahl, bleibt die Auswahl, und
-das Menü bietet unter den Befehlen des Objekts zusätzlich die Befehle der ganzen
-Auswahl an, so wie Windows und RFEM es tun. Ein Befehl des Objekts, der auf die
-Auswahl wirkt (*Knotenlast…*, *Ausblenden* und ähnliche), gilt dann nur dem
-angeklickten Objekt; dafür wird vorher nur dieses gewählt. Hat die offene Maske
-nicht übernommene Änderungen, stellt der Rechtsklick die Auswahl nicht um. Ein
-Eintrag, der eine Maske öffnet oder die Auswahl umstellt, hält dann zuerst an
-der Leiste „Übernehmen | Verwerfen“, und erst danach wird das Objekt gewählt.
-So übernimmt die geänderte Maske die Auswahl, für die sie gedacht war: eine
-Knotenlast landet auf den Knoten, die vorher gewählt waren, und nicht auf dem
-angeklickten. *In der Tabelle zeigen*, *Im Baum zeigen* und *Löschen* laufen
-sofort, und *Löschen* fragt selbst und nennt die Maske. Während einer Rechnung
-zeigt jeder Rechtsklick nur Sicht und Zoom und wählt nichts. Läuft ein
-Auswahlfenster, schließt der Rechtsklick es wie bisher als zweite Ecke ab, und
-es kommt kein Menü. *Zoom auf Auswahl* und *Zoom auf Fenster* gibt es im
-Programm nicht. Bis zum 03.10.2026 war das Menü für jeden Rechtsklick dasselbe:
+beim Linksklick in der eingestellten Auswahlart, in derselben Reihenfolge und
+mit denselben Meldungen: Ist das Objekt ausgeblendet oder liegt es auf einem
+gesperrten Layer, sagt es die Statuszeile, und das Menü kommt ohne Objekt. Erst
+wo der Linksklick nichts träfe, sucht der Rechtsklick noch ein Lagersymbol; so
+erkennt er ein Knoten-, Linien- oder Flächenlager auch außerhalb der Auswahlart
+Lager. Liegt dort ein Objekt (Knoten, Stab, Linie, Fläche, Volumen, Element des
+Netzes, Lager oder Last), steht oben fett sein Name, etwa „Knoten K12“, „Stab
+S2“ oder „Knotenlager 1 (K0)“, und darunter stehen seine Befehle. *Bearbeiten…*
+öffnet rechts seine Maske. Dann folgen die Befehle seiner Art: beim Knoten
+*Knotenlager…* (hat er ein Lager, ein Untermenü mit dessen Einträgen) und
+*Knotenlast…*, beim Stab *Gelenke…*, die Gelenke an ihm und *Stablast…*, bei
+der Linie *Linienlast…*, bei Fläche und Volumen *Flächenlast…* und die
+Kontaktbedingungen daran, beim Lager seine Symbolgröße oder die Lagerdichte. *In
+der Tabelle zeigen* holt unten seine Tabelle nach vorn und markiert seine Zeile,
+*Im Baum zeigen* wählt seinen Eintrag im Modellbaum (Netzknoten, Flächen- und
+Volumenelemente und Lasten stehen dort nicht einzeln, dann fehlt der Eintrag),
+*Ausblenden* und *Nur dieses zeigen* wirken wie die Befehle der Sicht. Zuletzt
+löscht *Knoten löschen*, *Stab löschen*, *Lager löschen* und so fort das Objekt
+nach einer Rückfrage, die es nennt („Stab S2 wirklich löschen?“); die übrige
+Auswahl bleibt dabei gewählt. Darunter stehen in jedem Objektmenü die Befehle
+der Auswahl, auch wenn nur dieses Objekt gewählt ist: *Verschieben…*,
+*Kopieren…*, *Drehen…* und *Spiegeln…*, *Selektiertes anzeigen* und
+*Selektiertes ausblenden*, je Art *Bearbeiten…* und *Löschen*, *Auswahl löschen*
+(wie Entf) und *Auswahl aufheben* (wie Esc). Ins Leere geklickt zeigt das Menü
+Sicht und Zoom: *Isometrisch*, die sechs Ansichten von ±X, ±Y und ±Z,
+*Rückseite (180°)*, *Zoom alles*, *Vorherige Sicht* und *Alles zeigen*, dazu die
+Untermenüs *Darstellung* (Darstellungsart, FE-Netz, Knoten, Größe aller Lager
+und Lagerdichte) und *Nummern*; ist etwas gewählt, folgen darunter die Befehle
+der Auswahl, und die Auswahl bleibt stehen. Was nur leuchtet, weil der
+Modellbaum oder die Lasttabelle Lasten zeigt, zählt dabei nicht als Auswahl.
+Liegt das angeklickte Objekt außerhalb der Auswahl, wählt es der Rechtsklick wie
+der Linksklick: ohne Taste ersetzt es die Auswahl, mit **Strg** kommt es dazu,
+mit **Umschalt** oder dem Schalter *Intelligente Auswahl* samt seiner Kette;
+Strg nimmt nie etwas weg. Liegt es in der Auswahl, bleibt die Auswahl, so wie
+Windows und RFEM es tun. Ein Befehl des Objekts, der auf die Auswahl wirkt
+(*Knotenlast…*, *Ausblenden* und ähnliche), gilt dem angeklickten Objekt allein;
+ist beim Ausführen mehr gewählt, wird vorher nur dieses gewählt. Hat die offene
+Maske nicht übernommene Änderungen, stellt der Rechtsklick die Auswahl nicht
+um. Ein Eintrag, der eine Maske öffnet oder die Auswahl umstellt oder leert,
+hält dann zuerst an der Leiste „Übernehmen | Verwerfen“, und erst danach wird
+das Objekt gewählt. So übernimmt die geänderte Maske die Auswahl, für die sie
+gedacht war: eine Knotenlast landet auf den Knoten, die vorher gewählt waren,
+und nicht auf dem angeklickten. *In der Tabelle zeigen*, *Im Baum zeigen* und
+das Löschen laufen sofort, und das Löschen fragt selbst und nennt die Maske.
+Mit einer geänderten Maske wählt ein Eintrag das angeklickte Objekt nach der
+Entscheidung allein, ohne Strg und ohne Kette. Ein Eintrag wirkt nur auf dem
+Modell, auf dem das Menü aufging: Hat sich das Modell geändert, solange es offen
+war (etwa durch Strg+Z, Löschen, ein anderes Modell oder das Ende einer
+Rechnung), tut er nichts, und die Statuszeile sagt es. Während einer Rechnung
+zeigt jeder Rechtsklick nur Sicht und Zoom, wählt nichts, und kein Eintrag
+eines vorher geöffneten Menüs wirkt; *Größe aller Lager…* und *Lagerdichte…*
+sind dann gesperrt. Läuft ein Auswahlfenster, schließt der Rechtsklick es wie
+bisher als zweite Ecke ab, und es kommt kein Menü. *Zoom auf Auswahl* und *Zoom
+auf Fenster* gibt es im Programm nicht. Bis zur Nachbesserung am 03.10.2026
+standen die Befehle der Auswahl nur bei einer größeren Auswahl im Objektmenü,
+Strg+Rechtsklick ersetzte die Auswahl, ein Lager ging in der Auswahlart Knoten
+den Stäben, Flächen und Linien vor, und das Löschen hieß nur *Löschen* und
+fragte „1 Stäbe wirklich löschen?“. Bis zum 03.10.2026 war das Menü für jeden
+Rechtsklick dasselbe:
 oben die Befehle der Auswahl, dann ein Lager, wenn eines unter dem Zeiger lag,
 sonst die Größe aller Lager und die Lagerdichte, darunter Darstellung, FE-Netz,
 Knoten, Nummern und *Zoom alles*. Knoten, Stäbe, Linien, Flächen, Volumen,
@@ -3114,8 +3139,8 @@ Typ außer hex8 still als tet4 gebaut: am Stand ec6448c ergaben „hex20“,
 
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
-bietet der Rechtsklick ins Leere oder auf ein gewähltes Objekt die Befehle
-der ganzen Auswahl (siehe „Rechtsklick in der Ansicht“): oben ihr Umfang
+bietet der Rechtsklick ins Leere oder auf ein Objekt die Befehle der ganzen
+Auswahl (siehe „Rechtsklick in der Ansicht“): oben ihr Umfang
 („Auswahl: 2 Knoten, 1 Stab“), dann *Selektiertes
 anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, dann
 **Verschieben…**, **Kopieren…**, **Drehen…**, **Spiegeln…** (siehe
@@ -3132,10 +3157,12 @@ Elementen), nennt die Statuszeile. Rückgängig nimmt beides zurück. Alles
 Gewählte auf einmal, auch verschiedener Art, löscht die Taste **Entf**, wenn
 die Ansicht die Tastatur hat: mit einer einzigen Rückfrage und einem einzigen
 Rückgängig-Schritt (Kapitel 11). Dasselbe tut *Auswahl löschen* am Ende dieser
-Befehle, und *Auswahl aufheben* hebt die Auswahl auf wie Esc. Bis zum 03.10.2026
-standen die Befehle der Auswahl oben in jedem Rechtsklickmenü, auch über einem
-Lager unter dem Zeiger, und es gab weder *Auswahl löschen* noch *Auswahl
-aufheben* darin.
+Befehle, und *Auswahl aufheben* hebt die Auswahl auf wie Esc. Mit einer Maske,
+die nicht übernommene Änderungen hat, halten *Selektiertes anzeigen*,
+*Selektiertes ausblenden*, *Auswahl aufheben* und alles, was eine Maske öffnet,
+vorher an der Leiste „Übernehmen | Verwerfen“. Bis zum 03.10.2026 standen die
+Befehle der Auswahl oben in jedem Rechtsklickmenü, auch über einem Lager unter
+dem Zeiger, und es gab weder *Auswahl löschen* noch *Auswahl aufheben* darin.
 
 ### Lastwerte in der Ansicht
 
@@ -3419,12 +3446,12 @@ oder „Verwerfen“, dann die Änderung hier noch einmal senden“. Bis zum
 
 Die Wege, die ohnehin fragen, gehen nicht über die Leiste, nennen die Maske
 aber in ihrer Rückfrage: **Entf** in der Ansicht, Löschen im Modellbaum (auch
-für Lager und für mehrere Einträge), *Löschen* im Rechtsklickmenü (eines
-Objekts oder je Art der Auswahl) und *Auswahl löschen* darin,
-„Diese Lasten löschen“, das Löschen einer einzelnen Last und *Modell leeren*.
-Mit *Ja* wird die Maske geschlossen; *Modell leeren* schließt jede offene
-Maske, denn ihr Objekt gibt es danach nicht mehr. Die Taste **F** öffnet
-keine Maske, sondern den Dialog
+für Lager und für mehrere Einträge), *Knoten löschen*, *Stab löschen* und so
+fort im Rechtsklickmenü eines Objekts, *Löschen* je Art der Auswahl und
+*Auswahl löschen* darin, „Diese Lasten löschen“, das Löschen einer einzelnen
+Last und *Modell leeren*. Mit *Ja* wird die Maske geschlossen; *Modell leeren*
+schließt jede offene Maske, denn ihr Objekt gibt es danach nicht mehr. Die
+Taste **F** öffnet keine Maske, sondern den Dialog
 *Fläche aus Linien*, und lässt die offene Maske stehen. Die Ermüdungsmaske und
 die Querschnittsmaske tragen keinen Punkt, ihre Tabellen und Profile zählen
 nicht mit; die Register (*Berechnung*, *Ergebnisse* …) auch nicht.
@@ -3584,8 +3611,9 @@ verwirft sie beim Zurücknehmen wie bisher.
 
 Was in der Ansicht gewählt ist — Knoten, Linien, Stäbe, Flächen, Volumen,
 auch gemischt —, lässt sich seit 15.09.2026 **verschieben, kopieren, drehen
-und spiegeln**: Rechtsklick in die Ansicht (ins Leere oder auf ein gewähltes
-Objekt, unter den Befehlen der Auswahl) oder *Geometrie → Ändern*. Rechts
+und spiegeln**: Rechtsklick in die Ansicht (ins Leere oder auf ein Objekt, das
+der Rechtsklick dann wählt; die Einträge stehen unter den Befehlen der Auswahl)
+oder *Geometrie → Ändern*. Rechts
 erscheint die Maske; jede hat zwei Wege:
 
 | Befehl | tippen | klicken |

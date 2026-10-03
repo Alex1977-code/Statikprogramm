@@ -403,14 +403,36 @@ def _bezug_kontextziel(fenster, huelle, a, k):
     """Wunsch fuer einen Eintrag des Rechtsklickmenues (ziel, befehl, …): das
     angeklickte Objekt nach dem Uebernehmen neu suchen (Teilpaket 14c) - ein
     Knotentausch, Umbenennen oder Loeschen in der uebernommenen Maske aendert
-    Name und Platz, nicht das Objekt."""
+    Name und Platz, nicht das Objekt. Ebenso das zweite Objekt eines Eintrags
+    (``zweit``: das Gelenk am Stab, die Kontaktbedingung an der Flaeche;
+    Nachbesserung S5 vom 03.10.2026)."""
     (art, name), rest = a[0], a[1:]
+    zweit = k.get("zweit")
+    b2 = fenster._bezug_merken(zweit[0], zweit[1]) if zweit else None
+
+    def weiter(ziel):
+        kw = dict(k)
+        if b2 is not None:
+            neu = fenster._bezug_aufloesen(b2)
+            if neu is None:
+                return fenster._wunsch_ins_leere(f"{zweit[0]} {zweit[1]} gibt es nach dem Übernehmen nicht mehr - "
+                                                 "nichts geöffnet")
+            kw["zweit"] = (zweit[0], neu)
+        return huelle(fenster, ziel, *rest, **kw)
     if art == "last":
         b = fenster._lastbezug_merken(*name)
-        return lambda: fenster._lastbezug_ausfuehren(
-            b, lambda f_, l_, n_: huelle(fenster, ("last", (f_, l_, n_)), *rest, **k))
+        return lambda: fenster._lastbezug_ausfuehren(b, lambda f_, l_, n_: weiter(("last", (f_, l_, n_))))
     b = fenster._bezug_merken(_KONTEXT_BEZUG.get(art, art), name)
-    return lambda: fenster._bezug_ausfuehren(b, lambda n: huelle(fenster, (art, n), *rest, **k))
+    return lambda: fenster._bezug_ausfuehren(b, lambda n: weiter((art, n)))
+
+
+def _bezug_auswahlbefehl(fenster, huelle, a, k):
+    """Wunsch fuer einen Befehl der ganzen Auswahl im Rechtsklickmenue (ziel,
+    befehl, …): mit aufgeschobener Auswahl (``ziel``) wie ein Eintrag des
+    Objekts, sonst derselbe Aufruf noch einmal."""
+    if a[0] is None:
+        return lambda: huelle(fenster, *a, **k)
+    return _bezug_kontextziel(fenster, huelle, a, k)
 
 
 class _Beschriftungsschritt(str):
@@ -724,6 +746,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                              self._fenster_abschliessen, pos)
                             return True
                         self._rechts_start = QtCore.QPoint(int(pos.x()), int(pos.y()))
+                        # Strg und Umschalt zaehlen beim Druecken oder Loslassen (_rechts_los)
+                        self._rechts_tasten = ereignis.modifiers()
                         self._schieben_beginnen()
                         return True
                 elif t == QtCore.QEvent.MouseButtonRelease:
@@ -735,7 +759,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._mitte_los(pos)
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
-                        self._rechts_los(pos)
+                        self._rechts_los(pos, ereignis.modifiers()
+                                         | (getattr(self, "_rechts_tasten", None) or QtCore.Qt.NoModifier))
                         return True
                 elif t == QtCore.QEvent.MouseMove:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
@@ -997,10 +1022,16 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             pass
 
-    def _rechts_los(self, pos) -> None:
-        """Rechte Taste losgelassen: Schieben beenden, ohne Zug das Menue."""
+    def _rechts_los(self, pos, tasten=None) -> None:
+        """Rechte Taste losgelassen: Schieben beenden, ohne Zug das Menue.
+
+        ``tasten``: die Umschalttasten beim Druecken und beim Loslassen. Der
+        Rechtsklick waehlt wie der Linksklick (:meth:`_mit_tasten`): Strg nimmt
+        das Objekt dazu, Umschalt waehlt die Kette (Nachbesserung S1 vom
+        03.10.2026; bis dahin ersetzte auch Strg+Rechtsklick die Auswahl)."""
         start = getattr(self, "_rechts_start", None)
         self._rechts_start = None
+        self._rechts_tasten = QtCore.Qt.NoModifier
         try:
             self.plotter.iren.style.EndPan()
         except Exception:                   # noqa: BLE001
@@ -1008,7 +1039,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if start is None:
             return
         if max(abs(pos.x() - start.x()), abs(pos.y() - start.y())) <= self.KLICK_TOLERANZ:
-            self._viewport_menu(QtCore.QPoint(int(pos.x()), int(pos.y())))
+            self._mit_tasten(tasten, self._viewport_menu, QtCore.QPoint(int(pos.x()), int(pos.y())))
 
     def _rad(self, ereignis) -> None:
         """Ein Mausradschritt: zoomen und den Punkt unter dem Zeiger festhalten."""
@@ -1239,58 +1270,65 @@ class MainWindow(QtWidgets.QMainWindow):
             alt.deleteLater()
         menu = self._kontextmenue(pos)
         self._kontextmenue_zuletzt = menu
+        # Strg und Umschalt des Klicks (_rechts_los -> _mit_tasten) galten fuer
+        # das Waehlen beim Bau, nicht fuer die Eintraege
+        self._klick_strg = self._klick_umschalt = False
         menu.exec(self.plotter.interactor.mapToGlobal(pos))
 
     def _kontextmenue(self, pos):
         """Das Menue des Rechtsklicks an ``pos`` bauen, ohne es zu zeigen.
 
-        Ins Leere: Sicht und Zoom (:meth:`_sichtmenue`), mit Auswahl dazu ihre
-        Befehle (:meth:`_auswahlbefehle`); die Auswahl bleibt. Auf ein Objekt
-        (:meth:`_rechtsklick_ziel`): seine Befehle (:meth:`_objektmenue`).
-        Liegt es ausserhalb der Auswahl, ersetzt es sie wie ein Klick (14b);
-        liegt es in ihr, bleibt sie, und das Menue bietet dazu die Befehle der
-        ganzen Auswahl - wie Windows und RFEM.
+        Getroffen wird wie beim Linksklick (:meth:`_rechtsklick_ziel`). Ins
+        Leere: Sicht und Zoom (:meth:`_sichtmenue`), die Auswahl bleibt. Auf ein
+        Objekt: seine Befehle (:meth:`_objektmenue`). Liegt es ausserhalb der
+        Auswahl, waehlt es der Rechtsklick wie der Linksklick - ohne Taste
+        ersetzt es die Auswahl, mit Strg kommt es dazu, mit Umschalt oder dem
+        Schalter „Intelligente Auswahl“ samt Kette (14b). Liegt es in ihr,
+        bleibt sie. Darunter stehen immer die Befehle der ganzen Auswahl
+        (:meth:`_auswahlbefehle`), auch wenn nur dieses Objekt gewaehlt ist:
+        Verschieben, Kopieren, Drehen und Spiegeln gehoeren seit dem 15.09.2026
+        in den Rechtsklick (Nachbesserung F1 vom 03.10.2026).
 
         Hat die offene Maske nicht uebernommene Aenderungen (Paket 13m), stellt
         der Rechtsklick die Auswahl nicht um: die Auswahl wird erst umgestellt,
         wenn ein Eintrag ausgefuehrt wird, und ein Eintrag, der eine Maske
-        oeffnet oder die Auswahl umstellt, haelt vorher an der Leiste
-        „Übernehmen | Verwerfen“ (:meth:`_kontextbefehl`). So bekommt
-        „Übernehmen“ die Auswahl, fuer die die Maske gedacht war - eine
-        Knotenlast landet auf den Knoten, die gewaehlt waren, nicht auf dem
+        oeffnet oder die Auswahl umstellt oder leert, haelt vorher an der Leiste
+        „Übernehmen | Verwerfen“ (:meth:`_kontextbefehl`, :meth:`_auswahlbefehl`).
+        So bekommt „Übernehmen“ die Auswahl, fuer die die Maske gedacht war -
+        eine Knotenlast landet auf den Knoten, die gewaehlt waren, nicht auf dem
         angeklickten. Das Menue selbst erscheint sofort: „Zoom alles“, die
         Tabelle oder der Baum brauchen keine Entscheidung ueber die Maske.
 
-        Waehrend einer Rechnung nur Sicht und Zoom, und die Auswahl bleibt: die
+        Jeder Eintrag wirkt nur auf dem Modellstand, auf dem das Menue gebaut
+        wurde (:meth:`_eintrag_gilt`), und nie waehrend einer Rechnung. Waehrend
+        einer Rechnung gibt es nur Sicht und Zoom, und die Auswahl bleibt: die
         Rechnung liest das Modell, das die Befehle aendern wuerden, und waehrend
         ihr oeffnet das Programm nichts Modales (wie bei Entf und den
         Einzeltasten, :meth:`_ansicht_taste`)."""
         menu = QtWidgets.QMenu(self)
-        if self._rechnung_laeuft() or getattr(self, "_rechnet_gerade", False):
+        if self._rechnet():
             hinweis = menu.addAction("Rechnung läuft – nur Sicht und Zoom")
             hinweis.setEnabled(False)
             menu.addSeparator()
             self._sichtmenue(menu)
             return menu
+        # die Tasten des Klicks, gelesen wie beim Linksklick (_mit_tasten)
+        ersetzen, kette = self._klick_ersetzt(), self._klug_aktiv()
         ziel = self._rechtsklick_ziel(self._weltpunkt(pos.x(), pos.y()))
+        aufgeschoben = False
+        if ziel is not None and not self._ziel_drin(ziel):
+            if isinstance(self._geaenderte_maske(), msk.Maske):
+                aufgeschoben = True
+            else:
+                self._ziel_waehlen(ziel, ersetzen=ersetzen, kette=kette)
+        stand = self._menuestand()
         if ziel is None:
             self._sichtmenue(menu)
-            if self._auswahl_arten():
-                menu.addSeparator()
-                self._auswahlbefehle(menu)
-            return menu
-        drin = self._ziel_drin(ziel)
-        aufgeschoben = not drin and isinstance(self._geaenderte_maske(), msk.Maske)
-        if not drin and not aufgeschoben:
-            self._ziel_waehlen(ziel)
-            drin = self._ziel_drin(ziel)
-        # allein: genau das Ziel ist gewaehlt - Befehle, die auf die Auswahl
-        # wirken, brauchen sie dann nicht erst darauf zu stellen
-        allein = drin and sum(n for _k, n, *_r in self._auswahl_arten()) == 1
-        self._objektmenue(menu, ziel, aufgeschoben, allein)
-        if drin and not allein:
+        else:
+            self._objektmenue(menu, ziel, aufgeschoben, stand)
+        if aufgeschoben or self._auswahl_echt():
             menu.addSeparator()
-            self._auswahlbefehle(menu)
+            self._auswahlbefehle(menu, stand, ziel if aufgeschoben else None)
         return menu
 
     #: Ziel eines Rechtsklicks -> (Wort im Titel, Auswahlart, Liste der Auswahl, Wort der Statuszeile)
@@ -1299,23 +1337,58 @@ class MainWindow(QtWidgets.QMainWindow):
                     "flaeche": ("Fläche", "Fläche", "sel_flaechen", "Flächen"),
                     "volumen": ("Volumen", "Volumen", "sel_koerper", "Volumen"),
                     "element": ("Element", "Netz", "sel_elemente", "Elemente")}
+    #: Ziel eines Rechtsklicks -> Wort im Eintrag „… löschen“ (er sagt, was er loescht)
+    RECHTS_LOESCHEN = {"knoten": "Knoten", "stab": "Stab", "linie": "Linie", "flaeche": "Fläche",
+                       "volumen": "Volumen", "element": "Element", "lager": "Lager", "linienlager": "Lager",
+                       "flaechenlager": "Lager", "last": "Last"}
 
-    def _treffbar(self, art: str, name) -> bool:
-        """Trifft der Rechtsklick dieses Objekt? Wie beim Linksklick nur, was
-        dargestellt ist und nicht auf einem gesperrten Layer liegt - ohne
-        Meldung, sonst kaeme das Menue ins Leere mit einem Hinweis."""
-        return self._objekt_sichtbar(art, name) and not self._layer_sperre(art, name)
+    def _rechnet(self) -> bool:
+        """Laeuft eine Rechnung (Worker oder Rechnung im Vordergrund)?"""
+        return self._rechnung_laeuft() or bool(getattr(self, "_rechnet_gerade", False))
+
+    def _menuestand(self) -> tuple:
+        """Der Stand, auf dem ein Rechtsklickmenue gebaut wurde: Modell,
+        Aenderungsstand und Ergebnisse. Rueckgaengig und Wiederholen, Loeschen,
+        ein anderes Modell und das Ende einer Rechnung aendern ihn."""
+        return (id(self.model), self._stand, id(self.analysis), id(self.results))
+
+    def _eintrag_gilt(self, stand) -> bool:
+        """Darf ein Eintrag des Rechtsklickmenues jetzt wirken? Nicht waehrend
+        einer Rechnung (dann nur Sicht und Zoom) und nicht, wenn sich das Modell
+        geaendert hat, seit das Menue aufging (``stand``, :meth:`_menuestand`) -
+        sonst traefe „Löschen“ nach Strg+Z bei offenem Menue einen nachgerueckten
+        Knoten (Nachbesserung F2 und L1 vom 03.10.2026). Die Statuszeile sagt,
+        warum nichts geschieht."""
+        if self._rechnet():
+            self.statusBar().showMessage("Rechnung läuft: der Eintrag wirkt nicht – während einer Rechnung gibt "
+                                         "es im Rechtsklick nur Sicht und Zoom", 8000)
+            return False
+        if stand is not None and stand != self._menuestand():
+            self.statusBar().showMessage("Das Modell hat sich geändert, seit das Menü aufging – der Eintrag wirkt "
+                                         "nicht; bitte noch einmal rechts klicken", 8000)
+            return False
+        return True
+
+    def _ausser_rechnung(self, befehl):
+        """Einen Eintrag aus Sicht und Zoom ausfuehren, der ein Fenster fragt
+        (Lagergroesse, Lagerdichte) - nicht waehrend einer Rechnung."""
+        if not self._eintrag_gilt(None):
+            return None
+        return befehl()
 
     def _rechtsklick_ziel(self, punkt):
-        """Was der Rechtsklick trifft: (Art, Name) - oder None (ins Leere).
+        """Was der Rechtsklick trifft: (Art, Name) - oder None.
 
-        Getroffen wird wie beim Linksklick (:meth:`_picked`): in der Auswahlart
-        Knoten der Knoten, sonst der Stab, die Flaeche, das Volumen oder die
-        Linie unter dem Zeiger; in den anderen Arten ihr Objekt. Lager trifft
-        der Rechtsklick in jeder Art (wie vorher) - nach dem, was die Art in
-        Bildschirmpunkten trifft, und vor dem Rueckfall ueber den Weltpunkt
-        ``punkt``, der sonst das naechste Element naehme, auch wenn der Zeiger
-        auf dem Lagersymbol steht."""
+        Getroffen wird genau wie beim Linksklick (:meth:`_picked`), in derselben
+        Reihenfolge und mit denselben Meldungen: ist das getroffene Objekt
+        ausgeblendet oder liegt es auf einem gesperrten Layer, sagt es die
+        Statuszeile, und das Menue kommt ohne Objekt. Erst wo der Linksklick
+        nichts traefe, sucht der Rechtsklick noch ein Lagersymbol (Knoten-,
+        Linien- oder Flaechenlager) - so erkennt er Lager wie vor dem 03.10.2026
+        auch ausserhalb der Auswahlart Lager. Bis zur Nachbesserung vom
+        03.10.2026 gingen die Lager in der Auswahlart Knoten den Staeben,
+        Flaechen und Linien vor; eine Flaeche mit Flaechenlager bekam so nie ihr
+        Menue, und ein gesperrter Knoten liess den Stab daneben waehlen."""
         m = self.model
         if not m.nn:
             return None
@@ -1330,19 +1403,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def lager():
             t = probe(lambda: vp.lager_at(m, punkt, size, self.lagergroesse, self.lagerdichte))
-            return (t[0], int(t[1])) if t and self._treffbar("Lager", (t[0], int(t[1]))) else None
+            if not t:
+                return None
+            key = (t[0], int(t[1]))
+            return key if self._wenn_sichtbar("Lager", key) is not None else None
 
-        def erst(schl, schirm, welt=None):
-            """Das Objekt der Art auf dem Bildschirm, dann ein Lager, dann der Weltpunkt."""
-            name = probe(schirm)
-            if name is not None and self._treffbar(art, name):
-                return (schl, name)
-            t = lager()
-            if t is not None or welt is None or punkt is None:
-                return t
-            name = probe(welt)
-            return (schl, name) if name is not None and self._treffbar(art, name) else None
-
+        if art != "Knoten" and not self._dargestellt(art):
+            # wie beim Linksklick: was nicht dargestellt ist, laesst sich nicht waehlen
+            self.info(f"{art}: ausgeblendet - erst wieder einblenden (Glasleiste), dann wählen")
+            return None
         if art == "Lager":
             return lager()
         if art == "Last":
@@ -1352,39 +1421,64 @@ class MainWindow(QtWidgets.QMainWindow):
                 fall = getattr(self, "_lastfall_im_bild", None) or m.active_case
                 return ("last", (fall, str(t[0]), int(t[1])))
             return lager()
-        if art == "Netz":
-            e = probe(self._element_am_zeiger)
-            return erst("element", lambda: None if e is None else int(e))
-        if art == "Stab":
-            return erst("stab", lambda: self._stab_am_zeiger() or self._objekt_am_zeiger("Stab"),
-                        lambda: vp.member_at(m, punkt))
-        if art == "Linie":
-            return erst("linie", self._linie_am_zeiger, lambda: vp.line_at(m, punkt, size))
-        if art == "Fläche":
-            return erst("flaeche", lambda: self._objekt_am_zeiger("Fläche"),
-                        lambda: vp.flaeche_at(m, punkt, size))
-        if art == "Volumen":
-            return erst("volumen", lambda: self._objekt_am_zeiger("Volumen"),
-                        lambda: vp.koerper_at(m, punkt, size))
-        # Auswahlart Knoten: der Knoten, dann das Lager, dann das Objekt unter dem Zeiger
+        proben = {"Netz": ("element", self._element_am_zeiger),
+                  "Stab": ("stab", lambda: self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
+                           or vp.member_at(m, punkt)),
+                  "Linie": ("linie", lambda: self._linie_am_zeiger() or vp.line_at(m, punkt, size)),
+                  "Fläche": ("flaeche", lambda: self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, punkt, size)),
+                  "Volumen": ("volumen", lambda: self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, punkt, size))}
+        if art in proben:
+            schl, finder = proben[art]
+            roh = probe(finder)
+            if roh is None or roh == "":
+                return lager()
+            name = self._wenn_sichtbar(art, int(roh) if art == "Netz" else roh)
+            return (schl, name) if name is not None else None
+        # Auswahlart Knoten: der Knoten, sonst das Objekt unter dem Zeiger
+        # (_objekt_unter_zeiger_waehlen), zuletzt ein Lager
         _p, _fangart, i = probe(self._fangpunkt) or (None, "", -1)
-        if i is not None and int(i) >= 0 and self._treffbar("Knoten", int(i)):
-            return ("knoten", int(i))
-        t = lager()
-        if t is not None:
-            return t
-        for a, schl, finder in (("Stab", "stab", lambda: self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")),
-                                ("Fläche", "flaeche", lambda: self._objekt_am_zeiger("Fläche")),
-                                ("Volumen", "volumen", lambda: self._objekt_am_zeiger("Volumen")),
-                                ("Linie", "linie", self._linie_am_zeiger)):
-            name = probe(finder)
-            if name and self._treffbar(a, name):
-                return (schl, name)
-        return None
+        if i is not None and int(i) >= 0:
+            i = int(i)
+            if not self._objekt_sichtbar("Knoten", i):
+                self.info(f"Knoten {i}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
+                return None
+            sperre = self._layer_sperre("Knoten", i)
+            if sperre:
+                self.info(f"Knoten {i}: gesperrt (Layer „{sperre}“) - nicht wählbar")
+                return None
+            return ("knoten", i)
+        if len(m.elements) or getattr(m, "lines", None) or m.flaechen:
+            for a, schl, finder in (("Stab", "stab", lambda: self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")),
+                                    ("Fläche", "flaeche", lambda: self._objekt_am_zeiger("Fläche")),
+                                    ("Volumen", "volumen", lambda: self._objekt_am_zeiger("Volumen")),
+                                    ("Linie", "linie", self._linie_am_zeiger)):
+                name = probe(finder)
+                if name and not self._objekt_sichtbar(a, name):
+                    name = None                 # nicht dargestellt: nicht waehlbar
+                if name:
+                    sperre = self._layer_sperre(a, name)
+                    if sperre:
+                        self.info(f"{name}: gesperrt (Layer „{sperre}“) - nicht wählbar; "
+                                  "Layerliste: Haken „gesperrt“ weg")
+                        return None
+                    return (schl, name)
+        return lager()
+
+    def _auswahl_echt(self) -> list:
+        """Die Arten der Auswahl wie im Register (:meth:`_auswahl_arten`) -
+        ohne das, was nur leuchtet (Vermerk „nur leuchten“ aus 14b,
+        :meth:`_hervorhebung_gilt`): dann sind nur die Lasten gewaehlt. Ein
+        Leuchten ist keine Auswahl (Nachbesserung L2 vom 03.10.2026)."""
+        if self._hervorhebung_gilt() is not None:
+            n = len(self.sel_lasten)
+            return [("lasten", n, "Last", "Lasten")] if n else []
+        return self._auswahl_arten()
 
     def _ziel_drin(self, ziel) -> bool:
-        """Ist das Ziel des Rechtsklicks schon gewaehlt?"""
+        """Ist das Ziel des Rechtsklicks gewaehlt? Was nur leuchtet, zaehlt nicht."""
         art, name = ziel
+        if self._hervorhebung_gilt() is not None:
+            return art == "last" and tuple(name) in [tuple(x) for x in self.sel_lasten]
         if art == "knoten":
             return int(name) in {int(i) for i in self.selection}
         if art in self.LAGER_KURZ.values():
@@ -1394,9 +1488,13 @@ class MainWindow(QtWidgets.QMainWindow):
         liste = getattr(self, self.RECHTS_ARTEN[art][2])
         return (int(name) in [int(x) for x in liste]) if art == "element" else name in liste
 
+    def _nur_ziel(self, ziel) -> bool:
+        """Ist genau das Ziel gewaehlt und sonst nichts?"""
+        return self._ziel_drin(ziel) and sum(n for _k, n, *_r in self._auswahl_echt()) == 1
+
     def _ziel_titel(self, ziel) -> str:
-        """Der Name des Ziels im Titel des Menues: „Knoten K12“, „Stab S2“,
-        „Knotenlager 1 (K0)“, „Knotenlast K3 (LF1)“."""
+        """Der Name des Ziels im Titel des Menues und in der Rueckfrage:
+        „Knoten K12“, „Stab S2“, „Knotenlager 1 (K0)“, „Knotenlast K3 (LF1)“."""
         art, name = ziel
         if art == "knoten":
             return f"Knoten K{int(name)}"
@@ -1414,70 +1512,114 @@ class MainWindow(QtWidgets.QMainWindow):
             return " ".join(x for x in (self.LASTLISTEN.get(liste, ("", "Last"))[1], ort, f"({fall})") if x)
         return f"{self.RECHTS_ARTEN[art][0]} {name}"
 
-    def _ziel_waehlen(self, ziel) -> None:
-        """Das Ziel des Rechtsklicks waehlen: wie ein Klick ohne Strg ersetzt es
-        die Auswahl (Teilpaket 14b), mit einem Neuzeichnen. Ein Stab, eine
-        Flaeche, ein Volumen oder eine Linie, die in der Auswahlart Knoten
-        getroffen wurden, stellen die Auswahlart um wie der Linksklick. Eine Last
-        oeffnet dabei ihre Maske nicht (das tut „Bearbeiten…“), ein Lager
-        laesst die Auswahlart, wie sie ist."""
+    def _ziel_waehlen(self, ziel, ersetzen: bool = True, kette: bool = False) -> None:
+        """Das Ziel des Rechtsklicks waehlen wie ein Linksklick (Teilpaket 14b),
+        mit einem Neuzeichnen: ``ersetzen`` (ohne Strg) ersetzt die Auswahl, sonst
+        kommt es dazu - herausgenommen wird nie etwas; ``kette`` (Umschalt oder
+        der Schalter „Intelligente Auswahl“) nimmt bei Staeben und Linien den
+        eindeutigen Zug mit. Ein Stab, eine Flaeche, ein Volumen oder eine
+        Linie, die in der Auswahlart Knoten getroffen wurden, stellen die
+        Auswahlart um wie der Linksklick. Eine Last oeffnet dabei ihre Maske
+        nicht (das tut „Bearbeiten…“), ein Lager laesst die Auswahlart, wie sie ist."""
         art, name = ziel
         if art == "knoten":
             i = int(name)
             self._hervorhebung = None       # die Auswahl aendert sich wirklich
-            self._klickauswahl_leeren()
-            self.selection = np.array([i], dtype=int)
-            self.lbl_sel.setText(f"1 Knoten ausgewählt (zuletzt {i}: {np.round(self.model.nodes[i], 3)})")
+            if ersetzen:
+                self._klickauswahl_leeren()
+                self.selection = np.array([i], dtype=int)
+            elif i not in {int(x) for x in self.selection}:
+                self.selection = np.append(self.selection, i).astype(int)
+            self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt (zuletzt {i}: "
+                                 f"{np.round(self.model.nodes[i], 3)})")
             return self._auswahl_nachziehen()
         if art in self.LAGER_KURZ.values():
-            return self._lager_umschalten((art, int(name)), ersetzen=True)
+            key = (art, int(name))
+            if not ersetzen and key in self.sel_lager:
+                return None                 # Strg nimmt nie etwas weg
+            return self._lager_umschalten(key, ersetzen=ersetzen)
         if art == "last":
             fall, liste, k = name
             _lc, obj = self._lastobjekt(fall, liste, k)
+            schluessel = (fall, liste, int(k))
             self._hervorhebung = None
-            self._klickauswahl_leeren()
-            self.sel_lasten.append((fall, liste, int(k)))
+            if ersetzen:
+                self._klickauswahl_leeren()
+            if schluessel not in self.sel_lasten:
+                self.sel_lasten.append(schluessel)
             self.lbl_sel.setText(f"Last gewählt ({fall}): {self._lasttext(self._lastart_von(liste, obj), obj)}")
             return self._auswahl_nachziehen()
-        _wort, auswahlart, liste, was = self.RECHTS_ARTEN[art]
+        _wort, auswahlart, liste_name, was = self.RECHTS_ARTEN[art]
         if self.auswahlart != auswahlart:
             # die Hervorhebung unter dem Zeiger nimmt das Neuzeichnen gleich mit weg
             self.auswahlart_setzen(auswahlart, zeichnen=False)
-        return self._objekt_umschalten(getattr(self, liste), int(name) if art == "element" else name, was,
-                                       ersetzen=True)
+        liste = getattr(self, liste_name)
+        name = int(name) if art == "element" else name
+        if not ersetzen and name in liste:
+            return None                     # Strg nimmt nie etwas weg
+        if kette and art in ("stab", "linie"):
+            enden = self._stabenden() if art == "stab" else self._linienenden()
+            alt = getattr(self, "_klick_umschalt", False)
+            self._klick_umschalt = True     # die Kette, wie Umschalt beim Linksklick
+            try:
+                return self._objekt_umschalten_klug(liste, name, was, enden, ersetzen=ersetzen)
+            finally:
+                self._klick_umschalt = alt
+        return self._objekt_umschalten(liste, name, was, ersetzen=ersetzen)
 
-    @_maskenweg(bezug=_bezug_kontextziel, ohne=lambda _f, _ziel, _befehl, maske=False, waehlen=False:
-                not (maske or waehlen), danach="führt das Rechtsklickmenü seinen Eintrag aus")
-    def _kontextbefehl(self, ziel, befehl, maske=False, waehlen=False):
+    def _kontexteintrag(self, ziel, befehl, stand, **kw):
+        """Ein Eintrag des Objektmenues wurde gewaehlt: er wirkt nur auf dem
+        Stand, auf dem das Menue gebaut wurde (:meth:`_eintrag_gilt`)."""
+        if not self._eintrag_gilt(stand):
+            return None
+        return self._kontextbefehl(ziel, befehl, **kw)
+
+    @_maskenweg(bezug=_bezug_kontextziel, ohne=lambda _f, _ziel, _befehl, maske=False, auswahl=False, **_k:
+                not (maske or auswahl), danach="führt das Rechtsklickmenü seinen Eintrag aus")
+    def _kontextbefehl(self, ziel, befehl, maske=False, auswahl=False, aufgeschoben=False, zweit=None):
         """Ein Eintrag des Rechtsklickmenues auf ein Objekt: ``befehl(name)``
-        mit dem Namen des Ziels.
+        mit dem Namen des Ziels, mit ``zweit`` (Gelenk, Kontaktbedingung)
+        ``befehl(name, zweitname)``.
 
-        ``maske``: der Befehl oeffnet eine Maske. ``waehlen``: vorher das Ziel
-        waehlen - die Auswahl des Rechtsklicks war aufgeschoben (geaenderte
-        Maske), oder der Befehl wirkt auf die Auswahl und soll nur dem Ziel
-        gelten. Mit einer Maske, die nicht uebernommene Aenderungen hat, haelt
-        ein solcher Eintrag an der Leiste, **bevor** die Auswahl umgestellt wird
-        (_maskenweg); nach „Übernehmen“ oder „Verwerfen“ laeuft er mit dem neu
-        gesuchten Ziel (:func:`_bezug_kontextziel`). Die anderen (Tabelle, Baum,
-        Loeschen, Lagergroesse) laufen sofort - Loeschen fragt selbst und nennt
-        die Maske."""
-        if waehlen:
+        ``maske``: der Befehl oeffnet eine Maske. ``auswahl``: er wirkt auf die
+        Auswahl (Knotenlast…, Ausblenden …) und gilt dem Ziel allein - ist beim
+        Ausfuehren nicht genau das Ziel gewaehlt (die Auswahl war groesser oder
+        hat sich im offenen Menue geaendert, Strg+A), wird es vorher gewaehlt.
+        ``aufgeschoben``: der Rechtsklick hat wegen einer geaenderten Maske noch
+        nicht gewaehlt; ein Eintrag mit Maske waehlt dann jetzt.
+
+        Mit einer Maske, die nicht uebernommene Aenderungen hat, haelt ein
+        Eintrag mit ``maske`` oder ``auswahl`` an der Leiste, **bevor** die
+        Auswahl umgestellt wird (_maskenweg); nach „Übernehmen“ oder „Verwerfen“
+        laeuft er mit dem neu gesuchten Ziel und zweiten Objekt
+        (:func:`_bezug_kontextziel`). Die anderen (Tabelle, Baum, Loeschen,
+        Lagergroesse) laufen sofort - Loeschen fragt selbst und nennt die Maske.
+        Waehrend einer Rechnung wirkt keiner."""
+        if not self._eintrag_gilt(None):
+            return None
+        if aufgeschoben and (maske or auswahl) and not self._ziel_drin(ziel):
             self._ziel_waehlen(ziel)
-        return befehl(ziel[1])
+        if auswahl and not self._nur_ziel(ziel):
+            self._ziel_waehlen(ziel)
+        return befehl(ziel[1]) if zweit is None else befehl(ziel[1], zweit[1])
 
-    def _objektmenue(self, menu, ziel, aufgeschoben: bool, allein: bool) -> None:
+    def _objektmenue(self, menu, ziel, aufgeschoben: bool, stand) -> None:
         """Die Eintraege eines Objekts (Teilpaket 14c): oben sein Name, dann
         „Bearbeiten…“ und die Befehle seiner Art, „In der Tabelle zeigen“, „Im
-        Baum zeigen“, „Ausblenden“ und „Nur dieses zeigen“, „Löschen“ - nur
-        Befehle, die es schon gibt (Ribbon, Kontextregister, Baum, Tabellen)."""
+        Baum zeigen“, „Ausblenden“ und „Nur dieses zeigen“, „… löschen“ - nur
+        Befehle, die es schon gibt (Ribbon, Kontextregister, Baum, Tabellen).
+        Ein Knoten mit Lager traegt die Eintraege des Lagers in einem
+        Untermenue mit dem Namen des Lagers."""
         m = self.model
         art, name = ziel
 
-        def eintrag(text, befehl, maske=False, auswahl=False):
-            # auswahl: der Befehl wirkt auf die Auswahl - sie muss dann genau das Ziel sein
-            waehlen = (aufgeschoben and (maske or auswahl)) or (auswahl and not allein)
-            return menu.addAction(text, lambda _c=False, z=ziel, b=befehl, mk=maske, wa=waehlen:
-                                  self._kontextbefehl(z, b, maske=mk, waehlen=wa))
+        def eintrag(text, befehl, maske=False, auswahl=False, zweit=None, anderes=None, unter=None):
+            # anderes: ein anderes Ziel als das angeklickte (das Lager am Knoten)
+            z = ziel if anderes is None else anderes
+            auf = aufgeschoben and anderes is None
+            return (unter or menu).addAction(text, lambda _c=False, z=z, b=befehl, mk=maske, au=auswahl, af=auf,
+                                             zw=zweit: self._kontexteintrag(z, b, stand, maske=mk, auswahl=au,
+                                                                            aufgeschoben=af, zweit=zw))
 
         titel = menu.addAction(self._ziel_titel(ziel))
         titel.setEnabled(False)
@@ -1487,9 +1629,19 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addSeparator()
         if art == "knoten":
             eintrag("Bearbeiten…", lambda n: self._objektmaske("knoten", str(n)), maske=True)
-            hat_lager = any(int(s.node) == int(name) for s in m.supports)
-            eintrag("Knotenlager bearbeiten…" if hat_lager else "Knotenlager…", self._knotenlager_befehl,
-                    maske=True, auswahl=not hat_lager)
+            idx = next((j for j, s in enumerate(m.supports) if int(s.node) == int(name)), None)
+            if idx is None:
+                eintrag("Knotenlager…", lambda _n: self.maske_lager(), maske=True, auswahl=True)
+            else:
+                # das Knotenlager am Knoten (der Rechtsklick trifft in der Auswahlart
+                # Knoten den Knoten, nicht sein Symbol): seine Eintraege
+                lz = ("lager", idx)
+                um = menu.addMenu(self._ziel_titel(lz))
+                eintrag("Bearbeiten…", lambda n: self._objektmaske("lager_einzeln", str(n)), maske=True,
+                        anderes=lz, unter=um)
+                eintrag("Größe dieses Lagers…", lambda n: self.lagergroesse_einstellen(int(n)), anderes=lz, unter=um)
+                um.addSeparator()
+                eintrag("Lager löschen", lambda n: self._objekt_loeschen(("lager", int(n))), anderes=lz, unter=um)
             eintrag("Knotenlast…", lambda _n: self.maske_knotenlast(), maske=True, auswahl=True)
         elif art == "stab":
             eintrag("Bearbeiten…", lambda n: self._objektmaske("stab", n), maske=True)
@@ -1498,7 +1650,8 @@ class MainWindow(QtWidgets.QMainWindow):
             els = {int(e) for e in (mem.elements if mem is not None else [])}
             for g, h in m.hinges.items():
                 if els & {int(e) for e in (getattr(h, "elemente", None) or [])}:
-                    eintrag(f"Gelenk {g} bearbeiten…", lambda _n, g_=g: self._objektmaske("gelenk", g_), maske=True)
+                    eintrag(f"Gelenk {g} bearbeiten…", lambda _n, g_: self._objektmaske("gelenk", g_), maske=True,
+                            zweit=("gelenk", g))
             eintrag("Stablast…", lambda _n: self.maske_linienlast(), maske=True, auswahl=True)
         elif art == "linie":
             eintrag("Bearbeiten…", lambda n: self._objektmaske("linie", n), maske=True)
@@ -1513,7 +1666,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       if art == "flaeche" else self._kontakt_koerper(kb))
                 if name in an:
                     eintrag(f"Kontaktbedingung {kb_name}…",
-                            lambda _n, k_=kb_name: self._objektmaske("kontaktbedingung", k_), maske=True)
+                            lambda _n, k_: self._objektmaske("kontaktbedingung", k_), maske=True,
+                            zweit=("kontaktbedingung", kb_name))
         elif art == "element":
             if self._ziel_im_baum_moeglich(ziel):     # ein Stabelement: seine eigene Maske
                 eintrag("Bearbeiten…", lambda n: self._objektmaske("stabelement", str(n)), maske=True)
@@ -1538,17 +1692,82 @@ class MainWindow(QtWidgets.QMainWindow):
             eintrag("Ausblenden", lambda _n: self.auswahl_ausblenden(), auswahl=True)
             eintrag("Nur dieses zeigen", lambda _n: self.nur_auswahl_zeigen(), auswahl=True)
         menu.addSeparator()
-        # der Loeschweg des Rechtsklicks wie bisher: eine Rueckfrage, die eine
-        # geaenderte Maske nennt (_loeschhinweis), dann ein Rueckgaengig-Schritt
-        eintrag("Löschen", lambda n, a_=art: self.auswahl_loeschen(a_, [n]))
+        eintrag(f"{self.RECHTS_LOESCHEN[art]} löschen", lambda n, a_=art: self._objekt_loeschen((a_, n)))
 
-    def _knotenlager_befehl(self, knoten) -> None:
-        """„Knotenlager…“ eines Knotens: hat er ein Lager, dessen Maske, sonst
-        die Maske „Lager“ fuer den gewaehlten Knoten (wie die Taste L)."""
-        i = next((j for j, s in enumerate(self.model.supports) if int(s.node) == int(knoten)), None)
-        if i is not None:
-            return self._objektmaske("lager_einzeln", str(i))
-        return self.maske_lager()
+    def _objekt_loeschen(self, ziel) -> None:
+        """„… löschen“ im Menue eines Objekts: nur dieses Objekt, nach einer
+        Rueckfrage in der Einzahl, die es nennt („Stab S2 wirklich löschen?“,
+        dazu die Folgen wie bei Entf, :meth:`_loesch_folgen`), als ein
+        Rueckgaengig-Schritt. Die uebrige Auswahl bleibt gewaehlt - ueber
+        Bezuege, denn Knoten-, Element-, Lager- und Lastnummern ruecken beim
+        Loeschen auf. Ein Knoten, an dem noch etwas haengt, wird gar nicht erst
+        erfragt. Bis zur Nachbesserung vom 03.10.2026 fragte der Eintrag
+        „1 Stäbe wirklich löschen?“ und hob danach die ganze Auswahl auf."""
+        art, name = ziel
+        titel = self._ziel_titel(ziel)
+        if art == "knoten":
+            gesperrt = self.model.knoten_gesperrt([int(name)])
+            if gesperrt:
+                return self.info(f"Nichts gelöscht: K{int(name)}: {gesperrt.get(int(name), '')}")
+        if not self._bestaetigen(f"{titel} wirklich löschen?" + self._loesch_folgen([(art, [name])])):
+            return None
+        rest = self._auswahl_merken(ohne=ziel)
+        kopie, stand = self.model.copy(), self._stand
+        try:
+            gruende = self._art_loeschen(art, [name])
+        except Exception:
+            # mitten im Loeschen: das Modell kann halb geaendert sein - Rueckgaengig stellt es her
+            self._sicherung_ablegen(f"{titel} gelöscht", kopie, stand)
+            raise
+        if gruende is None or gruende:
+            return self.info("Nichts gelöscht: " + ("; ".join(gruende) if gruende else f"{art}: kein Löschweg"))
+        self._sicherung_ablegen(f"{titel} gelöscht", kopie, stand)
+        self.analysis = None
+        self.results = None
+        self.maskenrand.schliessen()
+        self._auswahl_zurueck(rest)
+        self.info(f"{titel} gelöscht")
+        self.refresh_all()
+
+    def _auswahl_merken(self, ohne=None) -> dict:
+        """Die Auswahl als Bezuege, die ein Loeschen ueberstehen (ohne das Ziel
+        ``ohne``): Knoten am Ort, Elemente, Lager und Lasten als Objekte, die
+        benannten Objekte ueber ihren Namen."""
+        art0, name0 = ohne if ohne is not None else (None, None)
+
+        def nicht(art, name):
+            return not (art == art0 and name == name0)
+        r = {"knoten": [self._bezug_merken("knoten", int(i)) for i in self.selection
+                        if nicht("knoten", int(i))],
+             "elemente": [self._bezug_merken("stabelement", int(i)) for i in self.sel_elemente
+                          if nicht("element", int(i))],
+             "lager": [(a, self._bezug_merken(_KONTEXT_BEZUG[a], int(i))) for a, i in self.sel_lager
+                       if nicht(a, int(i))],
+             "lasten": [self._lastbezug_merken(*x) for x in self.sel_lasten if nicht("last", tuple(x))]}
+        for liste, art in (("sel_linien", "linie"), ("sel_staebe", "stab"), ("sel_flaechen", "flaeche"),
+                           ("sel_koerper", "volumen")):
+            r[liste] = [n for n in getattr(self, liste) if nicht(art, n)]
+        return r
+
+    def _auswahl_zurueck(self, r: dict) -> None:
+        """Die Auswahl aus :meth:`_auswahl_merken` wieder setzen - was es nicht
+        mehr gibt, faellt weg."""
+        m = self.model
+        knoten = [self._bezug_aufloesen(b) for b in r["knoten"]]
+        self.selection = np.array([int(i) for i in knoten if i is not None], dtype=int)
+        self.sel_elemente = [int(i) for i in (self._bezug_aufloesen(b) for b in r["elemente"]) if i is not None]
+        self.sel_lager = [(a, int(i)) for a, b in r["lager"] for i in [self._bezug_aufloesen(b)] if i is not None]
+        lasten = []
+        for b in r["lasten"]:
+            for fall, lc in m.load_cases.items():
+                if lc is b["lc"]:
+                    for k, o in enumerate(getattr(lc, b["liste"], None) or []):
+                        if o is b["obj"]:
+                            lasten.append((fall, b["liste"], k))
+        self.sel_lasten = lasten
+        for liste, sammlung in (("sel_linien", m.lines), ("sel_staebe", m.members), ("sel_flaechen", m.flaechen),
+                                ("sel_koerper", m.koerper)):
+            setattr(self, liste, [n for n in r[liste] if n in sammlung])
 
     def _ziel_im_baum_moeglich(self, ziel) -> bool:
         """Steht das Ziel im Modellbaum? Lasten nicht (nur ihre Lastfaelle),
@@ -1563,7 +1782,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "element":
             return 0 <= int(name) < len(m.elements) and m.elements[int(name)].typ in vp.EL.STAB_TYPEN
         return True
-
     def _ziel_im_baum(self, ziel) -> bool:
         """„Im Baum zeigen“: den Eintrag im Modellbaum waehlen und ins Bild holen
         (ohne Rueckkopplung in die Ansicht, Modellbaum.eintrag_waehlen)."""
@@ -1675,8 +1893,15 @@ class MainWindow(QtWidgets.QMainWindow):
         a.setCheckable(True)
         a.setChecked(self.act_knoten.isChecked())
         dm.addSeparator()
-        dm.addAction("Größe aller Lager…", lambda: self.lagergroesse_einstellen(None))
-        dm.addAction("Lagerdichte (Linien-/Flächenlager)…", self.lagerdichte_einstellen)
+        # die beiden fragen in einem Fenster nach der Zahl: waehrend einer
+        # Rechnung gesperrt (Nachbesserung S6 vom 03.10.2026)
+        rechnet = self._rechnet()
+        a = dm.addAction("Größe aller Lager…",
+                         lambda: self._ausser_rechnung(lambda: self.lagergroesse_einstellen(None)))
+        a.setEnabled(not rechnet)
+        a = dm.addAction("Lagerdichte (Linien-/Flächenlager)…",
+                         lambda: self._ausser_rechnung(self.lagerdichte_einstellen))
+        a.setEnabled(not rechnet)
         # Nummern: dieselben Schalter wie im Ribbon Ansicht, hier mit einem
         # Griff erreichbar, ohne das Register zu wechseln
         nm = menu.addMenu("Nummern")
@@ -1689,19 +1914,80 @@ class MainWindow(QtWidgets.QMainWindow):
         aus = nm.addAction("Alle Nummern aus", self.nummern_aus)
         aus.setEnabled(any(x.isChecked() for x in self.act_nummern.values()))
 
-    def _auswahlbefehle(self, menu) -> None:
+    def _auswahlbefehle(self, menu, stand, ziel=None) -> None:
         """Die Befehle fuer die ganze Auswahl (Teilpaket 14c): oben ihr Umfang
         („Auswahl: 2 Knoten, 1 Stab“), dann wie bisher Selektiertes anzeigen und
         ausblenden, Verschieben … Spiegeln und je Art Bearbeiten und Loeschen
         (:meth:`_auswahlmenue`), zuletzt „Auswahl löschen“ (wie Entf) und
-        „Auswahl aufheben“ (wie Esc)."""
-        _reiter, lang = self._auswahl_texte(self._auswahl_arten())
-        titel = menu.addAction(f"Auswahl: {lang}")
-        titel.setEnabled(False)
-        if self._auswahlmenue(menu):
-            menu.addSeparator()
-        menu.addAction("Auswahl löschen\tEntf", self.auswahl_alles_loeschen)
-        menu.addAction("Auswahl aufheben\tEsc", self.clear_selection)
+        „Auswahl aufheben“ (wie Esc). Was nur leuchtet, gehoert nicht dazu
+        (:meth:`_auswahl_echt`): dann bleiben nur die gewaehlten Lasten.
+
+        ``ziel``: die Auswahl des Rechtsklicks ist aufgeschoben (geaenderte
+        Maske) - die Befehle gelten der Auswahl, die er waehlen wird, also dem
+        Ziel allein, und jeder waehlt es vorher, nach der Leiste.
+        ``stand``: der Modellstand des Menues (:meth:`_eintrag_gilt`)."""
+        def rufe(befehl, haelt=False):
+            return lambda _c=False: self._auswahleintrag(befehl, stand, haelt, ziel)
+
+        def bauen():
+            _reiter, lang = self._auswahl_texte(self._auswahl_echt())
+            titel = menu.addAction(f"Auswahl: {lang}")
+            titel.setEnabled(False)
+            if self._hervorhebung_gilt() is None and self._auswahlmenue(menu, rufe):
+                menu.addSeparator()
+            menu.addAction("Auswahl löschen\tEntf", rufe(self.auswahl_alles_loeschen))
+            menu.addAction("Auswahl aufheben\tEsc", rufe(self.clear_selection, True))
+        if ziel is None:
+            return bauen()
+        return self._mit_ziel_als_auswahl(ziel, bauen)
+
+    def _mit_ziel_als_auswahl(self, ziel, fn):
+        """``fn()`` ausfuehren, waehrend die Auswahl nur aus dem Ziel besteht -
+        fuer den Bau des Menues bei aufgeschobener Auswahl, ohne Neuzeichnen,
+        Register oder Tabellen. Danach ist die Auswahl wieder die alte."""
+        namen = ["selection", "_hervorhebung"] + ["sel_" + s for s, _e, _m in self.AUSWAHL_LISTEN]
+        alt = {n: getattr(self, n, None) for n in namen}
+        try:
+            self.selection = np.array([], dtype=int)
+            self._hervorhebung = None
+            for s, _e, _m in self.AUSWAHL_LISTEN:
+                setattr(self, "sel_" + s, [])
+            art, name = ziel
+            if art == "knoten":
+                self.selection = np.array([int(name)], dtype=int)
+            elif art in self.LAGER_KURZ.values():
+                self.sel_lager = [(art, int(name))]
+            elif art == "last":
+                self.sel_lasten = [tuple(name)]
+            else:
+                getattr(self, self.RECHTS_ARTEN[art][2]).append(int(name) if art == "element" else name)
+            return fn()
+        finally:
+            for n, v in alt.items():
+                setattr(self, n, v)
+
+    def _auswahleintrag(self, befehl, stand, haelt=False, ziel=None):
+        """Ein Befehl der ganzen Auswahl im Rechtsklickmenue wurde gewaehlt: nur
+        auf dem Stand des Menues und nicht waehrend einer Rechnung."""
+        if not self._eintrag_gilt(stand):
+            return None
+        return self._auswahlbefehl(ziel, befehl, haelt=bool(haelt or ziel is not None))
+
+    @_maskenweg(bezug=_bezug_auswahlbefehl, ohne=lambda _f, _ziel, _befehl, haelt=False: not haelt,
+                danach="führt das Rechtsklickmenü seinen Eintrag aus")
+    def _auswahlbefehl(self, ziel, befehl, haelt=False):
+        """Ein Befehl der ganzen Auswahl. ``haelt``: er leert die Auswahl
+        (Selektiertes anzeigen und ausblenden, Auswahl aufheben), oeffnet eine
+        Maske, oder die Auswahl des Rechtsklicks war aufgeschoben (``ziel``) -
+        mit einer geaenderten Maske haelt er dann an der Leiste, bevor sich die
+        Auswahl aendert. Bis zur Nachbesserung L3 vom 03.10.2026 leerten diese
+        Eintraege die Auswahl ohne Halt, und eine offene Knotenlast fand beim
+        Übernehmen keine Knoten mehr."""
+        if not self._eintrag_gilt(None):
+            return None
+        if ziel is not None and not self._nur_ziel(ziel):
+            self._ziel_waehlen(ziel)
+        return befehl()
 
     #: Verschieben, Kopieren, Drehen, Spiegeln: (Beschriftung, Art)
     TRANSFORMATIONEN = (("Verschieben", "verschieben"), ("Kopieren", "kopieren"),
@@ -1860,32 +2146,39 @@ class MainWindow(QtWidgets.QMainWindow):
                 gruppen.append(("kontakt", kb))
         return gruppen
 
-    def _auswahlmenue(self, menu) -> bool:
-        """Die Eintraege der Auswahl in ein Menue schreiben; False ohne Auswahl."""
+    def _auswahlmenue(self, menu, rufe=None) -> bool:
+        """Die Eintraege der Auswahl in ein Menue schreiben; False ohne Auswahl.
+
+        ``rufe(befehl, haelt)`` macht aus jedem Befehl den Aufruf des Eintrags
+        (Rechtsklickmenue: Modellstand, Rechnung und die Leiste aus 13m,
+        :meth:`_auswahlbefehle`); ``haelt``: der Befehl leert die Auswahl oder
+        oeffnet eine Maske. Ohne ``rufe`` ruft der Eintrag den Befehl selbst."""
         gruppen = self._auswahlgruppen()
         if not gruppen:
             return False
-        menu.addAction("Selektiertes anzeigen", self.nur_auswahl_zeigen)
-        menu.addAction("Selektiertes ausblenden", self.auswahl_ausblenden)
+        rufe = rufe or (lambda befehl, haelt=False: befehl)
+        menu.addAction("Selektiertes anzeigen", rufe(self.nur_auswahl_zeigen, True))
+        menu.addAction("Selektiertes ausblenden", rufe(self.auswahl_ausblenden, True))
         menu.addSeparator()
         # Verschieben, Kopieren, Drehen, Spiegeln der Auswahl (15.09.2026, „per
         # Rechtsklick auf Knoten, Linie, Stab, Fläche, Volumen")
         for text, art in self.TRANSFORMATIONEN:
-            menu.addAction(f"{text}…", lambda _c=False, a=art: self.maske_transformieren(a))
+            menu.addAction(f"{text}…", rufe(lambda _c=False, a=art: self.maske_transformieren(a), True))
         menu.addSeparator()
         for art, namen in gruppen:
             sub = menu.addMenu(f"{self.AUSWAHL_TEXT[art]} ({len(namen)})")
             if art in ("lager", "linienlager", "flaechenlager"):
                 # Lager: die Maske des ersten - jedes Lager hat seine eigene
                 lang = {v: k for k, v in self.LAGER_KURZ.items()}[art]
-                sub.addAction("Bearbeiten…", lambda _c=False, a=lang, n=list(namen):
-                              self._objektmaske(a, str(n[0])))
+                sub.addAction("Bearbeiten…", rufe(lambda _c=False, a=lang, n=list(namen):
+                                                  self._objektmaske(a, str(n[0])), True))
                 sub.addAction("Symbolgröße…" if art == "lager" else "Lagerdichte…",
-                              (lambda _c=False, n=list(namen): self.lagergroesse_einstellen(int(n[0])))
-                              if art == "lager" else (lambda _c=False: self.lagerdichte_einstellen()))
+                              rufe((lambda _c=False, n=list(namen): self.lagergroesse_einstellen(int(n[0])))
+                                   if art == "lager" else (lambda _c=False: self.lagerdichte_einstellen())))
             else:
-                sub.addAction("Bearbeiten…", lambda _c=False, a=art, n=list(namen): self.sammelmaske(a, n))
-            sub.addAction("Löschen", lambda _c=False, a=art, n=list(namen): self.auswahl_loeschen(a, n))
+                sub.addAction("Bearbeiten…", rufe(lambda _c=False, a=art, n=list(namen): self.sammelmaske(a, n),
+                                                  True))
+            sub.addAction("Löschen", rufe(lambda _c=False, a=art, n=list(namen): self.auswahl_loeschen(a, n)))
         return True
 
     def _sammelfelder(self, art: str, namen: list) -> list:
