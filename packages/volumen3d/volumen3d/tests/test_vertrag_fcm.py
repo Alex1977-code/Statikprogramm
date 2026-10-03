@@ -463,5 +463,27 @@ def test_hybrid_platzhalter():
     check("prepare wirft SolverError mit Verweis auf Teilprojekt 7", f)
 
 
+def test_wurzelwarnung_verdrahtung():
+    """Die Warnung bei Zellen ohne Wurzel (Plan TP 5, O16, 03.10.2026) gelangt in DetailResult.warnings: mit einem Platzhalter-Text fuer api._wurzelwarnung steht er im
+    Ergebnis, ohne ihn steht keine Aggregationswarnung darin (Kragarm-Ausschnitt: keine Zellen ohne Wurzel). Der Text selbst und die Zaehlung sind in
+    test_zwaenge.test_wurzelwarnung und test_unverwurzelte_grobe_zelle geprueft."""
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d import api
+    s = api.FcmSolver()
+    disc = s.prepare(_spec(), Material("S355", "S355", 210000.0, 0.3, fy=355.0))
+    prov = StubGlobalFieldProvider(1000.0, 100.0, 200.0, 210000.0, 10000.0)
+    ohne = s.solve(disc, prov, [ResultKey("LF1")])[0]
+    alt = api._wurzelwarnung
+    api._wurzelwarnung = lambda aggregation, alpha: "PLATZHALTER Wurzelwarnung"
+    try:
+        mit = s.solve(disc, prov, [ResultKey("LF1")])[0]
+    finally:
+        api._wurzelwarnung = alt
+    check("Warnung bei Zellen ohne Wurzel: der Text von api._wurzelwarnung steht in DetailResult.warnings, ohne ihn keine Aggregationswarnung",
+          "PLATZHALTER Wurzelwarnung" in mit.warnings and not any(w.startswith("Aggregation:") for w in ohne.warnings), f"{len(ohne.warnings)} Warnungen ohne, {len(mit.warnings)} mit")
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl, test_loeserwahl, test_hotspot_vertragsweg]))
+    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl, test_loeserwahl, test_hotspot_vertragsweg,
+                   test_wurzelwarnung_verdrahtung]))

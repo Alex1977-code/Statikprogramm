@@ -213,6 +213,10 @@ def test_unverwurzelte_grobe_zelle():
                 verstoesse += 1
     check(f"T-Stoss h 20 Ziel 5 p 2 ({len(g.ijk)} Zellen, {len(frei_unverwurzelt)} unverwurzelte schlechte): Konstruktor ohne Zwangszyklus, "
           f"kein durch Aggregation gebundener Mode mit groeberem unverwurzeltem Besitzer", verstoesse == 0, f"{verstoesse} Verstoesse")
+    from volumen3d.api import _wurzelwarnung
+    w = _wurzelwarnung(ag, pr.alpha)
+    check(f"T-Stoss: die Statistik zaehlt {ag.statistik['zellen_ohne_wurzel']} Zellen ohne Wurzel = unverwurzelte schlechte, die Warnung (O16) nennt sie",
+          ag.statistik["zellen_ohne_wurzel"] == len(frei_unverwurzelt) > 0 and w is not None and f"{len(frei_unverwurzelt)} schlecht geschnittene Zellen" in w, str(w)[:90])
     lam, mu = H.E * H.NU / ((1 + H.NU) * (1 - 2 * H.NU)), H.E / (2 * (1 + H.NU))
     c0 = 1e-5
     pr.verschiebungsrand("alles", None, projektion="voll")
@@ -277,5 +281,58 @@ def test_gebuendelte_nachbarsuche():
           f"Aggregation {n_n} Abfragen, {abw_n} verschieden; Flaechenproben {n_p}, {abw_p} verschieden; alle Proben {n_alle}, {abw_alle} verschieden")
 
 
+def test_schwellenvergleich():
+    """Schwellenvergleich der Aggregation auf neun Stellen gerundet (Plan TP 5, O19, 03.10.2026). Im verfeinerten Patch-Koerper (Schnittzellen eine Ebene, p 2) haben
+    zwei Zellen geometrisch genau den Werkstoffanteil 0,4: die eine lag mit der Tetraederregel bei 0,4 - 2e-16, mit den exakten Stueckmomenten bei 0,4 + 2e-16, die
+    andere bei 0,4 - 4e-16 bzw. 0,4 - 1e-16; ungerundet verglichen war die Einteilung vom Quadraturweg abhaengig (aggregierte Moden 1758 gegen 1746). Geprueft:
+    (1) die Einteilung synthetischer Anteile; (2) schlecht und wurzel sind an zwei verfeinerten Patch-Koerpern mit exakten Stueckmomenten und mit der Tetraederregel gleich."""
+    from volumen3d.fcm import quadratur as Q
+    from volumen3d.fcm.aggregation import schlecht_gestellt
+    from volumen3d.fcm.gitter import Verfeinerung
+    anteile = np.array([0.4 - 2e-16, 0.4, 0.4 + 2e-16, 0.4 - 4e-10, 0.4 - 1e-9, 0.4 - 1e-8, 0.4 + 1e-8, 0.0, 1.0])
+    soll = np.array([False, False, False, False, True, True, False, True, False])
+    ist = schlecht_gestellt(anteile, 0.4)
+    check("Schwellenvergleich auf 9 Stellen: 0,4 -/+ 2e-16, 0,4 und 0,4 - 4e-10 wohlgestellt, 0,4 - 1e-9 und darunter schlecht, 0,4 + 1e-8, 1 wohl, 0 schlecht",
+          np.array_equal(ist, soll), str(ist.astype(int)))
+    faelle = [("Schnittzellen eine Ebene", Verfeinerung(schnitt_ebenen=1)),
+              ("Bereich Ebene 2 an einer Ecke", Verfeinerung(bereiche=((np.array([100.0, 100, 0]), 25.0, 5.0),)))]
+    alt = Q.STUECKE_EXAKT_STANDARD
+    try:
+        for name, v in faelle:
+            erg = {}
+            for exakt in (True, False):
+                Q.STUECKE_EXAKT_STANDARD = exakt
+                pr = _problem(2, v)
+                erg[exakt] = (pr.aggregation.schlecht.copy(), pr.aggregation.wurzel.copy(), int(pr.aggregation.statistik["zellen_schlecht"]), pr.quadratur.stuecke_exakt)
+            gleich = np.array_equal(erg[True][0], erg[False][0]) and np.array_equal(erg[True][1], erg[False][1])
+            nahe = int((np.abs(pr.aggregation.anteil - 0.4) < 1e-9).sum())
+            check(f"{name}, p 2: schlecht und wurzel mit exakten Stueckmomenten und mit der Tetraederregel gleich ({erg[True][2]} schlechte Zellen, {nahe} Zellen auf der Schwelle)",
+                  gleich and erg[True][3] and not erg[False][3], f"schlecht {erg[True][2]} / {erg[False][2]}")
+    finally:
+        Q.STUECKE_EXAKT_STANDARD = alt
+
+
+def test_wurzelwarnung():
+    """Warnung bei Zellen ohne Wurzel (Plan TP 5, O16, 03.10.2026): keine Warnung ohne solche Zellen und ohne Aggregation, mit ihnen eine Warnung mit Zahl, Schwelle, alpha,
+    gemessener Folge und Abhilfe; am Patch-Koerper (keine Zellen ohne Wurzel) keine Warnung."""
+    from volumen3d.api import _wurzelwarnung
+    from volumen3d.fcm.gitter import Verfeinerung
+
+    class _Ag:
+        schwelle = 0.4
+
+        def __init__(self, n):
+            self.statistik = {"zellen_ohne_wurzel": n}
+    w = _wurzelwarnung(_Ag(3), 1e-8)
+    check("keine Aggregation oder keine Zelle ohne Wurzel: keine Warnung", _wurzelwarnung(None, 1e-8) is None and _wurzelwarnung(_Ag(0), 1e-8) is None)
+    check("3 Zellen ohne Wurzel: Warnung nennt Zahl, Schwelle, alpha, Messung am T-Stoss und die Abhilfe",
+          w is not None and "3 schlecht geschnittene Zellen" in w and "unter 0.4" in w and "alpha = 1e-08" in w and "T-Stoss" in w and "7e-5" in w and "Basiszelle" in w,
+          str(w)[:120])
+    pr = _problem(2, Verfeinerung())
+    check(f"Patch-Koerper h 20 p 2: {pr.aggregation.statistik['zellen_ohne_wurzel']} Zellen ohne Wurzel, keine Warnung",
+          pr.aggregation.statistik["zellen_ohne_wurzel"] == 0 and _wurzelwarnung(pr.aggregation, pr.alpha) is None)
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_wurzelwahl_rundungsfest, test_unverwurzelte_grobe_zelle, test_patch_verfeinert]))
+    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_wurzelwahl_rundungsfest, test_unverwurzelte_grobe_zelle, test_patch_verfeinert,
+                   test_schwellenvergleich, test_wurzelwarnung]))

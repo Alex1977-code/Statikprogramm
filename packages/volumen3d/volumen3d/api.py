@@ -701,6 +701,9 @@ class FcmSolver:
                 w_int = _integrationswarnung(pr.quadratur.statistik, pr.oberflaeche.statistik)
                 if w_int:
                     warn.append(w_int)
+                w_wurzel = _wurzelwarnung(pr.aggregation, pr.alpha)
+                if w_wurzel:
+                    warn.append(w_wurzel)
                 mg = getattr(pr, "_mehrgitter", None)
                 if pr.loeser == "mehrgitter" and mg is not None:
                     warn += [str(w) for w in mg.statistik.get("warnungen", [])]
@@ -896,6 +899,21 @@ def _integrationswarnung(quad: dict[str, Any], flaeche: dict[str, Any]) -> str |
     return (f"Geometrie: {n_pt} Blaetter der Volumenintegration im Punkttest (erste Ordnung, Volumenfehler bis 0,5 %) und {n_rf} "
             f"Flaechenstuecke im Rueckfall - typisch fuer STL- und STEP-Huellen mit unregelmaessig tesselliertem gekruemmtem Rand; "
             f"feinere Zellen, gleichmaessigere Tessellierung oder CSG verbessern das")
+
+
+def _wurzelwarnung(aggregation: Any, alpha: float) -> str | None:
+    """Warnung, wenn schlecht geschnittene Zellen keine Wurzel haben und alpha behalten (Plan TP 5, O16, 03.10.2026). Der Fehler ist proportional zu alpha: am
+    T-Stoss mit Basiszelle 20 mm und Blechdicke 10 mm gemessen 1e-6 (p 2, drei Zellen) und 7e-5 (p 3, neun Zellen) bei alpha = 1e-8 in der Spannung des linearen
+    Felds (Theorie 11.21); an der Kirsch-Scheibe mit 454 solchen Zellen (Basiszelle 20 mm bei 10 mm Dicke, p 3) aenderte sich K_t zwischen alpha 1e-8 und 1e-12 um
+    weniger als 1e-4. Solche Zellen entstehen, wenn Zellen dicker sind als die Wand und alle Nachbarn gleicher oder groeberer Ebene ebenfalls schlecht geschnitten
+    sind; in den Modellen der Suiten mit Basiszelle gleich Wanddicke (Kirsch h 10, Knotenblech h 10) gab es keine."""
+    n = 0 if aggregation is None else int(aggregation.statistik.get("zellen_ohne_wurzel", 0))
+    if n == 0:
+        return None
+    return (f"Aggregation: {n} schlecht geschnittene Zellen (Werkstoffanteil unter {aggregation.schwelle:g}) haben keine wohlgestellte Nachbarzelle gleicher oder "
+            f"groeberer Ebene und damit keine Wurzel; sie behalten das fiktive Material alpha = {alpha:g}. Der Fehler ist proportional zu alpha, gemessen hoechstens "
+            f"7e-5 in der Spannung bei alpha = 1e-8 (T-Stoss, p 3, Basiszelle 20 mm bei 10 mm Blechdicke). Das kommt vor, wenn Zellen dicker sind als die Wand; mit "
+            f"einer Basiszelle von hoechstens der Wanddicke gab es in den gemessenen Modellen keine solche Zelle")
 
 
 def _iterationen(pr: FcmProblem, k: int) -> int | None:
