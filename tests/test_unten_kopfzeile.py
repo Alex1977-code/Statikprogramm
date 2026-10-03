@@ -487,7 +487,7 @@ def _wartend_gefiltert(w):
         n, soll = t.zeilenzahl(), t.sichtbar()
         j = tu.tabellen("Modell").index("Knoten")
         gefiltert = rb.zahl(j)
-        rb.setCurrentIndex(tu.tabellen("Modell").index("Stäbe"))
+        rb.setCurrentIndex(tu.tabellen("Modell").index("Elemente"))   # seit 8c: „Elemente“ statt „Stäbe“
         _ruhe()
         w.refresh_all()
         _ruhe()
