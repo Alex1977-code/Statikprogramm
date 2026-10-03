@@ -100,6 +100,24 @@ def volumen(flaechen: list[np.ndarray]) -> float:
     return float(np.abs(np.linalg.det(T[:, 1:] - T[:, :1])).sum() / 6.0)
 
 
+def geschlossen(flaechen: list[np.ndarray], tol: float = 1e-9) -> bool:
+    """Bilden die Flaechenpolygone einen geschlossenen Koerper? Notwendig: mindestens vier Flaechen, und die Summe der Flaechenvektoren
+    verschwindet (Gauss fuer ein konstantes Feld). clippen liefert fuer ein Polyeder, das den Halbraum nur mit einer Flaeche beruehrt, diese
+    eine Flaeche zurueck - ohne Volumen, aber nicht geschlossen; die Tetraederzerlegung gibt dafuer null, der Divergenzsatz nicht (Kirsch-Platte
+    mit Symmetrieebenen auf Zellflaechen, 03.10.2026: zwei Zellen mit je 61,6 mm3 zu viel, K_t 1,77 statt 3,75)."""
+    if len(flaechen) < 4:
+        return False
+    summe = np.zeros(3)
+    betrag = 0.0
+    for F in flaechen:
+        a = np.zeros(3)
+        for i in range(1, len(F) - 1):
+            a += np.cross(F[i] - F[0], F[i + 1] - F[0])
+        summe += a
+        betrag += float(np.linalg.norm(a))
+    return betrag > 0.0 and float(np.linalg.norm(summe)) <= tol * betrag
+
+
 @lru_cache(maxsize=None)
 def tet_regel(n: int) -> tuple[np.ndarray, np.ndarray]:
     """Konische Produktregel auf dem Einheitstetraeder (0,0,0),(1,0,0),(0,1,0),(0,0,1):
@@ -133,4 +151,4 @@ def polyeder_quadratur(flaechen: list[np.ndarray], n: int) -> tuple[np.ndarray, 
     return P.reshape(-1, 3), Wt.ravel()
 
 
-__all__ = ["box_flaechen", "polygon_clippen", "clippen", "tetraeder", "volumen", "tet_regel", "polyeder_quadratur"]
+__all__ = ["box_flaechen", "polygon_clippen", "clippen", "tetraeder", "volumen", "geschlossen", "tet_regel", "polyeder_quadratur"]

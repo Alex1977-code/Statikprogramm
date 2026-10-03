@@ -317,6 +317,36 @@ def test_stuecke_exakt():
     check("ohne Moment Fitting und mit fit_grad < 2p bleibt es bei der Tetraederregel (stuecke_exakt aus)",
           not Zellquadratur(G, p=2, momentfitting=False).stuecke_exakt and not Zellquadratur(G, p=2, fit_grad=2).stuecke_exakt
           and Zellquadratur(G, p=2).stuecke_exakt)
+    # Ebene auf einer Zellflaeche (Kirsch-Platte mit Symmetrieebenen auf Zellflaechen, Versatz 0,4, 03.10.2026: K_t 1,77 statt 3,75): die Nachbarzelle
+    # beruehrt den Werkstoff nur mit einer Flaeche, clippen laesst diese eine Flaeche als "Stueck" stehen - ohne Volumen, aber nicht geschlossen. Der
+    # Divergenzsatz zaehlte dafuer Flaeche mal Abstand: hier 2,25 in der Zelle [-2, 0] x [0, 2]^2, Gesamtvolumen 2,8125 statt 0,5625 (Stand f1988a8).
+    from volumen3d.geometry.polyeder import box_flaechen, geschlossen, volumen as polyeder_volumen
+    for p in (2, 3):
+        G3 = Gitter(g, h=2.0, polster=1.0)                              # Zellen [-2, 0], [0, 2], [2, 4] je Richtung: Quaderflaechen auf Zellflaechen
+        G3.moden_nummerieren(p)
+        Q3 = Zellquadratur(G3, p=p, alpha=0.0)
+        mit_gewicht = [c for c in range(len(G3.ijk)) if len(Q3.zelle(c)[1]) and abs(float(Q3.zelle(c)[1].sum())) > 1e-12]
+        st = Q3.statistik
+        check(f"Ebene auf Zellflaechen, p {p}: Volumen {Q3.volumen():.12f} = 0,5625 (< 1e-12), nur die Eckzelle traegt Gewicht, leere Reste uebersprungen "
+              f"({st['stuecke_leer']}), kein offenes Stueck, kein Rueckfall",
+              abs(Q3.volumen() - volumen) < 1e-12 and len(mit_gewicht) == 1 and np.allclose(G3.zellbox(mit_gewicht[0])[0], 0.0)
+              and st["stuecke_leer"] == 3 and st["stuecke_exakt"] == 1 and st["stuecke_offen"] == 0 and st["stuecke_rueckfall"] == 0,
+              f"{len(G3.ijk)} Zellen")
+    # Geschlossenheit als reine Funktion: Box ja; Box ohne eine Flaeche, einzelne Flaeche und zwei deckungsgleiche Gegenflaechen nein
+    box = box_flaechen([0, 0, 0], [1, 2, 3])
+    check("geschlossen(): Box ja; ohne eine Flaeche, einzelne Flaeche, zwei Gegenflaechen nein",
+          geschlossen(box) and not geschlossen(box[:5]) and not geschlossen(box[:1]) and not geschlossen([box[0], box[0][::-1]]))
+    # Waechter in _fitten: ein offenes Stueck (Box ohne Deckel), an der Pruefung vorbei eingereicht, faellt auf die Tetraederregel zurueck
+    Gw = Gitter(g, h=2.0, polster=0.0)
+    Gw.moden_nummerieren(2)
+    Qw = Zellquadratur(Gw, p=2, alpha=0.0)
+    offen = box_flaechen([0.2, 0.2, 0.2], [1.2, 1.0, 0.9])[:5] + [box_flaechen([0.2, 0.2, 0.2], [1.2, 1.0, 0.9])[5] + np.array([0.3, 0.0, 0.0])]
+    v_offen = polyeder_volumen(offen)
+    leer = (np.zeros((0, 3)), np.zeros(0), np.zeros(0, bool))
+    P_w, W_w, I_w = Qw._fitten(np.zeros(3), np.full(3, 2.0), leer, [(offen, v_offen)])
+    check(f"Volumenwaechter: Stueck, dessen Divergenz-Volumen nicht das der Tetraederzerlegung ist -> Rueckfall auf die Tetraederregel (gezaehlt), "
+          f"Gewichtssumme = Tetraedervolumen {v_offen:.6f}",
+          Qw.statistik["stuecke_rueckfall"] == 1 and abs(float(W_w.sum()) - v_offen) < 1e-12 and I_w.all())
 
 
 def test_verschachtelter_baum():

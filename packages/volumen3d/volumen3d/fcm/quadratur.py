@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..geometry.polyeder import box_flaechen, clippen, polyeder_quadratur
+from ..geometry.polyeder import box_flaechen, clippen, geschlossen, polyeder_quadratur, volumen as polyeder_volumen
 from .basis import gauss_3d
 from .gitter import INSIDE
 from .momentfitting import fit_grad_standard, gefittete_regel, gewichte_kronecker
@@ -85,7 +85,7 @@ class Zellquadratur:
         if self.huellen_exakt and self._hat_huelle:
             self.statistik.update({"huellenzellen": 0, "huellenzellen_leer": 0})
         if self.stuecke_exakt:
-            self.statistik["stuecke_exakt"] = 0
+            self.statistik.update({"stuecke_exakt": 0, "stuecke_leer": 0, "stuecke_offen": 0, "stuecke_rueckfall": 0})
         if self.momentfitting:
             self.statistik.update({"fit_grad": self.fit_grad, "fit_zellen": 0, "fit_nnls": 0, "fit_rueckfall": 0,
                                    "fit_min_gewicht": 1.0, "fit_neg_anteil_max": 0.0,
@@ -194,8 +194,23 @@ class Zellquadratur:
         mu_zusatz = None
         if exakt:
             from ..geometry.huelle import polyedermomente
-            # derselbe Faktor (1 - alpha) wie an den Werkstoffpunkten, damit alpha_entfernen einheitlich zurueckskaliert
-            mu_zusatz = (1.0 - self.alpha) * polyedermomente(exakt, lo, hi, self.fit_grad)
+            mu = polyedermomente([fl for fl, _ in exakt], lo, hi, self.fit_grad)
+            # Waechter: das Volumen aus dem Divergenzsatz (Moment der Konstanten, N_0 + N_1 = 1) muss das der Tetraederzerlegung sein.
+            # Der Divergenzsatz setzt geschlossene, nach aussen orientierte Stuecke voraus; ist das verletzt, faellt die Zelle auf die
+            # Tetraederregel zurueck (gezaehlt), statt still falsches Volumen zu tragen.
+            v_div = float(mu[0:2, 0:2, 0:2].sum())
+            v_tet = float(sum(v for _, v in exakt))
+            if abs(v_div - v_tet) > 1e-9 * float(np.prod(np.asarray(hi, float) - np.asarray(lo, float))):
+                st["stuecke_rueckfall"] += len(exakt)
+                st["stuecke_exakt"] -= len(exakt)
+                teile = [polyeder_quadratur(fl, self.ordnung_tet) for fl, _ in exakt]
+                P = np.concatenate([P] + [t[0] for t in teile])
+                W = np.concatenate([W] + [(1.0 - self.alpha) * t[1] for t in teile])
+                I = np.concatenate([I, np.ones(sum(len(t[1]) for t in teile), bool)])
+                st["punkte_referenz"] += int(sum(len(t[1]) for t in teile))
+            else:
+                # derselbe Faktor (1 - alpha) wie an den Werkstoffpunkten, damit alpha_entfernen einheitlich zurueckskaliert
+                mu_zusatz = (1.0 - self.alpha) * mu
         erg = gefittete_regel(lo, hi, P[I], W[I], self.fit_grad, self.p, mu_zusatz=mu_zusatz)
         st["fit_min_gewicht"] = min(st["fit_min_gewicht"], erg.min_gewicht)
         st["fit_neg_anteil_max"] = max(st["fit_neg_anteil_max"], erg.neg_anteil)
@@ -298,10 +313,17 @@ class Zellquadratur:
                     continue
                 if self._exakt is not None:
                     # schraeg geschnittenes Stueck: nur die Polygone merken, die Momente rechnet _fitten exakt (Plan TP 5 O5)
-                    self._exakt.append(flaechen)
-                    self.statistik["stuecke"] += 1
-                    self.statistik["stuecke_exakt"] += 1
-                    continue
+                    v_stueck = polyeder_volumen(flaechen)
+                    if v_stueck <= 1e-13 * float(np.prod(np.asarray(hi, float) - np.asarray(lo, float))):
+                        # Rest ohne Volumen: die Box beruehrt den Halbraum nur mit einer Flaeche, clippen laesst diese Flaeche stehen
+                        self.statistik["stuecke_leer"] += 1
+                        continue
+                    if geschlossen(flaechen):
+                        self._exakt.append((flaechen, v_stueck))
+                        self.statistik["stuecke"] += 1
+                        self.statistik["stuecke_exakt"] += 1
+                        continue
+                    self.statistik["stuecke_offen"] += 1               # nicht geschlossen: Tetraederregel
                 Pt, Wt = polyeder_quadratur(flaechen, self.ordnung_tet)
             if len(Pt):
                 teile.append((Pt, (1.0 - self.alpha) * Wt, np.ones(len(Pt), bool)))
