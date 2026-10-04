@@ -4,7 +4,7 @@
 
 Kein Teil von run_all - ein Werkzeug fuer die Pruefsitzung am echten Modell.
 Dialoge werden global auf "Abbrechen" gesetzt, Rueckfragen verneint; je
-Befehl stehen Dauer, Meldungen (info/error), neue Protokollzeilen und ein
+Befehl stehen Dauer, Meldungen (info/error/hinweis), neue Protokollzeilen und ein
 etwaiger Traceback in <MODELL>_menudurchgang.jsonl - Zeile fuer Zeile, damit
 ein Haenger (Waechter, Vorgabe 300 s je Befehl) nichts verschluckt; der
 Waechter schreibt den Traceback des haengenden Befehls nach
@@ -127,7 +127,11 @@ def main():
     app.processEvents()
     meldungen: list = []
     w._fragen = lambda titel, text: (meldungen.append(("frage", f"{titel}: {text}")), False)[1]
-    w.error = lambda msg: meldungen.append(("error", str(msg)))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): seit
+    # 9b weist eine Maske oder Tabelle mit hinweis() ab - ohne Fenster, aber
+    # nicht still; der Status sagt „hinweis“ statt „ok“
+    from tests.meldungen import abfangen
+    abfangen(w, rufen=lambda art, text: meldungen.append(("error" if art == "fehler" else "hinweis", text)))
     w.info = lambda msg: meldungen.append(("info", str(msg)))
 
     out = open(AUSGABE, "a" if START > 1 else "w", encoding="utf-8")
@@ -193,7 +197,8 @@ def main():
         traceback_im_protokoll = "Traceback" in neu
         status = "ausnahme" if fehler else ("traceback im protokoll" if traceback_im_protokoll
                                            else ("fehlermeldung" if any(a == "error" for a, _ in meldungen)
-                                                 else "ok"))
+                                                 else ("hinweis" if any(a == "hinweis" for a, _ in meldungen)
+                                                       else "ok")))
         schreibe({"nr": i, "register": b.register, "gruppe": b.gruppe, "text": b.text,
                   "ort": orte[i - 1], "status": status,
                   "dauer": dauer, "meldungen": list(meldungen), "protokoll": neu[-1500:], "fehler": fehler})

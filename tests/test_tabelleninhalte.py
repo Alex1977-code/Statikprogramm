@@ -59,8 +59,10 @@ def _fenster():
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: (w.fehler_liste.append(str(msg)),
-                                     w.log.appendPlainText("FEHLER: " + str(msg)))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste, protokoll=True)
     _FENSTER.update(w=w, app=app)
     return w, app
 
@@ -384,6 +386,15 @@ def test_auswahlfarbe():
         c = QtGui.QColor(b)
         return abs(a.red() - c.red()) + abs(a.green() - c.green()) + abs(a.blue() - c.blue())
 
+    # Den Fokus nimmt fuer „ohne Fokus“ ein Filterfeld - die Filterzeile
+    # erscheint seit 03.10.2026 (10b) erst auf Knopfdruck, verborgen nimmt das
+    # Feld keinen Fokus, und beide Durchgaenge pruefen sonst dasselbe
+    t.filterzeile_zeigen(True)
+    app.processEvents()
+    t.felder[0].setFocus()
+    app.processEvents()
+    check("Vorbedingung „ohne Fokus“: das Filterfeld nimmt den Fokus, die Tabelle hat ihn nicht",
+          t.felder[0].hasFocus() and not v.hasFocus())
     stile = []                                       # die Stilobjekte muessen leben
     for stil in QtWidgets.QStyleFactory.keys():
         s = QtWidgets.QStyleFactory.create(stil)
@@ -727,12 +738,15 @@ def test_kontakt_hinweis():
     check("Modell ohne Kontakt, Lastfall-Ergebnis: auch hier kein Hinweis",
           "Kontaktkräfte gibt es" not in w.tbl_contact.lbl_zeilen.text(),
           w.tbl_contact.lbl_zeilen.text())
-    # Auflager der Umhuellenden: Komma, kein -0,00
+    # Auflager der Umhuellenden: Komma, kein -0,00 - seit 03.10.2026 (10c)
+    # stehen min und max in eigenen Zahlenspalten, vorher als „min / max“-Text
     w.cb_result.setCurrentIndex(0); app.processEvents()
     t = w.tbl_react.modell
     zellen = [str(t.data(t.index(r, k))) for r in range(t.rowCount()) for k in range(1, t.columnCount())]
-    check("Auflager der Umhüllenden: „min / max“ mit Komma, kein Punkt, kein „-0,00“",
-          zellen and all("," in z and "." not in z for z in zellen)
+    check("Auflager der Umhüllenden: min und max in eigenen Zahlenspalten, mit Komma, kein Punkt, kein „-0,00“",
+          zellen and [sp.name for sp in t.spalten][1:3] == ["Rx min", "Rx max"]
+          and all(isinstance(x, float) for z in t.zeilen for x in z[1:])
+          and all("," in z and "." not in z and "/" not in z for z in zellen)
           and not any(re.search(r"-0,0+(?!\d)", z) for z in zellen), str(zellen[:3]))
 
 

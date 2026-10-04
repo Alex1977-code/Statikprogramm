@@ -176,12 +176,17 @@ def test_objektmaske_behaelt_die_alternativen():
         s.model = m
         s._baum_ist_eintrag.return_value = True
         s._layer_sperre_melden.return_value = False
+        # keine geaenderte Maske rechts: _objektmaske haelt nicht an der Leiste
+        # „Übernehmen | Verwerfen“ (Paket 13m, 03.10.2026)
+        s._maskenwechsel_halten.return_value = False
         for n in ("_objektmaske", "_objekt_uebernehmen", "_eigenschaften_uebernehmen"):
             setattr(s, n, getattr(G.MainWindow, n).__get__(s))
         return s
 
     def fehler(s):
-        return [str(c.args[0]) for c in s.error.call_args_list if c.args]
+        # Fehler und Hinweise (Paket 9b): eine Attrappe schluckt s.hinweis still
+        from tests.meldungen import aus_attrappe
+        return aus_attrappe(s).alle
 
     # Die ganze Pruefung lang ersetzt: nach „Übernehmen“ baut
     # _eigenschaften_uebernehmen die Maske neu auf, ein echter QFrame ohne

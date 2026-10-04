@@ -19,6 +19,7 @@ sich vor das Modell (harte Regel 5 der Vorgabe).
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass, field
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -43,7 +44,7 @@ def listenhinweis(text: str, hinweis: str = "") -> str:
     if not teile:
         return hinweis or "leer"
     zeilen = [", ".join(teile[i:i + 10]) for i in range(0, len(teile), 10)]
-    kopf = f"{len(teile)} Einträge:"
+    kopf = f"{len(teile)} {'Eintrag' if len(teile) == 1 else 'Einträge'}:"
     return "\n".join(([hinweis] if hinweis else []) + [kopf] + zeilen)
 
 
@@ -61,6 +62,41 @@ class Feld:
     #: „leer = Norm“): werte() liefert dann "" statt 0. Bis 25.09.2026 waren
     #: solche Felder Textfelder und lasen „1.000“ still als 1.
     leer: bool = False
+    #: Reine Anzeige (Paket 13m): das Programm schreibt hier Anzahlen,
+    #: Kennwerte oder einen Fingerabdruck nach, uebernommen wird davon nichts -
+    #: eine Aenderung setzt keinen Punkt im Titel. Ausdruecklich je Feld und
+    #: nicht nach der Art: ein Anzeigefeld wie „Gilt für“ (Schweißnaht, Wind,
+    #: Wasserdruck) traegt den Zustand, den „Übernehmen“ schreibt.
+    anzeige: bool = False
+
+
+class Uebernahmesignal:
+    """„angewendet“ einer Maske (Paket 13m, Nachbesserung 03.10.2026).
+
+    Wie ein Qt-Signal mit ``connect`` und ``emit`` - aber ``emit`` ruft die
+    Empfaenger selbst, der Reihe nach, und meldet zurueck, ob das „Übernehmen“
+    gelang. Ein Qt-Signal kann das nicht: eine Ausnahme im Empfaenger schluckt
+    es, und wann alle Empfaenger durch sind, sagt es nicht. Das Ende an einer
+    0-ms-Uhr festzumachen ging schief - die Uhr lief in jeder verschachtelten
+    Ereignisschleife (Fortschritt bei Wasserdruck und Wind, refresh_all ab
+    100 000 Elementen, modale Fenster), und ein gescheitertes oder
+    abgebrochenes Übernehmen galt als gelungen."""
+
+    def __init__(self, maske):
+        self._maske = maske
+        self._empfaenger: list = []
+
+    def connect(self, f) -> None:
+        self._empfaenger.append(f)
+
+    def disconnect(self, f=None) -> None:
+        if f is None:
+            self._empfaenger.clear()
+        elif f in self._empfaenger:
+            self._empfaenger.remove(f)
+
+    def emit(self, werte) -> bool:
+        return self._maske._uebernehmen(werte, list(self._empfaenger))
 
 
 def _fenster_fest() -> bool:
@@ -338,12 +374,22 @@ class Maske(QtWidgets.QFrame):
     """Eine nicht-modale Eingabemaske.
 
     angewendet(dict)  - „Anwenden" gedrueckt oder genug Knoten angeklickt
+                        (ein :class:`Uebernahmesignal`, emit() sagt, ob es gelang)
     geschlossen()     - Maske zu (Esc oder Kreuz)
+    geaendert_gemeldet(bool) - der Aenderungsmerker kommt (True) oder geht
     """
 
-    angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
     abgebrochen = QtCore.Signal()
+    #: Der Aenderungsmerker (Punkt im Titel, Paket 13m) kommt oder geht: das
+    #: Fenster nimmt darueber die Leiste „Übernehmen | Verwerfen“ wieder weg
+    geaendert_gemeldet = QtCore.Signal(bool)
+    #: Rahmen des Fensters um ein „Übernehmen“ (setzt das Fenster beim Zeigen):
+    #: lauf(rufen, maske) ruft rufen() - das ruft die Empfaenger und liefert eine
+    #: Ausnahme oder None - und sagt, ob es gelang (keine Fehlermeldung, kein
+    #: Hinweis, keine Ablehnung, keine Ausnahme). Ohne Fenster gelingt jedes
+    #: „Übernehmen“ ohne Ausnahme.
+    uebernahme_lauf = None
     #: Ein Feld hat die Tastatur bekommen (Name des Feldes). Das Fenster
     #: schaltet darueber die Auswahl per Maus auf dieses Feld („bei Klick in
     #: Feld Auswahl per Maus", 15.09.2026).
@@ -399,6 +445,13 @@ class Maske(QtWidgets.QFrame):
         t = QtWidgets.QLabel(titel)
         t.setObjectName("maskentitel")
         kopf.addWidget(t)
+        #: die Titelzeile - vorn steht der Punkt des Aenderungsmerkers
+        self.lbl_titel = t
+        #: „Übernehmen“ laeuft gerade (von emit bis zu seiner Rueckkehr):
+        #: ersetzt der Handler die Maske dabei durch ihre frische Fassung, ist
+        #: das der normale Weg und kein Wechsel, der die Leiste braucht
+        self._uebernimmt = False
+        self.angewendet = Uebernahmesignal(self)
         kopf.addStretch(1)
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
@@ -510,7 +563,7 @@ class Maske(QtWidgets.QFrame):
             zeile = QtWidgets.QHBoxLayout()
             for text, ruf in zusatz:
                 b = QtWidgets.QPushButton(text, self)
-                b.clicked.connect(lambda _c=False, r=ruf: r())
+                b.clicked.connect(lambda _c=False, r=ruf: self._knopf_rufen(r))
                 zeile.addWidget(b)
                 self.zusatzknoepfe[text] = b
             fuss.addLayout(zeile)
@@ -524,6 +577,7 @@ class Maske(QtWidgets.QFrame):
                 w.zustand_geaendert.connect(self._zahlmeldung_nachfuehren)
         #: Stand beim Oeffnen - geaenderte_felder() vergleicht dagegen
         self._anfang = self._werte_roh()
+        self._merker_einrichten(felder)
         self.tabfolge_setzen()
         # Das Feld mit dem Fokus in der Rollflaeche sichtbar halten - auch bei
         # Klick, Programmfokus und Tab aus dem Fuss zurueck in die Felder
@@ -714,12 +768,94 @@ class Maske(QtWidgets.QFrame):
 
         Danach entscheidet das Fenster Feld fuer Feld, ob ein „Übernehmen“
         die Ergebnisse verwerfen muss: eine Bemerkung oder Symbolgroesse
-        aendert die Rechnung nicht."""
+        aendert die Rechnung nicht.
+
+        Reine Anzeigen (Feld.anzeige, Paket 13m) zaehlen nicht: das Programm
+        schreibt dort Anzahlen, Kennwerte und Fingerabdruecke nach, uebernehmen
+        laesst sich davon nichts. Die Unterscheidung steht am Feld, nicht an
+        seiner Art - „Gilt für“ ist auch ein Anzeigefeld und traegt doch den
+        Zustand, den „Übernehmen“ schreibt."""
         jetzt = self._werte_roh()
         anfang = getattr(self, "_anfang", {}) or {}
-        return {k for k in set(jetzt) | set(anfang) if jetzt.get(k) != anfang.get(k)}
+        anzeigen = getattr(self, "_anzeigen", ()) or ()
+        return {k for k in set(jetzt) | set(anfang) if jetzt.get(k) != anfang.get(k)
+                and k not in anzeigen}
+
+    def stand_merken(self, namen=None) -> None:
+        """Den jetzigen Stand als den Stand beim Oeffnen nehmen - nach einem
+        gelungenen „Übernehmen“ (alle Felder) oder fuer ``namen``, die das
+        Programm selbst nachfuehrt, weil sie schon gelten (die Schnittebene,
+        die man im Bild zieht). Der Merker folgt sofort."""
+        jetzt = self._werte_roh()
+        if namen is None:
+            self._anfang = jetzt
+        else:
+            anfang = dict(getattr(self, "_anfang", {}) or {})
+            for k in namen:
+                if k in jetzt:
+                    anfang[k] = jetzt[k]
+            self._anfang = anfang
+        self._merker_nachfuehren()
+
+    # -- Aenderungsmerker (Paket 13m, 03.10.2026) ------------------------
+    def _merker_einrichten(self, felder) -> None:
+        """Ein Punkt vor dem Titel, solange die Felder anders sind als beim
+        Oeffnen. Nachgefuehrt wird nur bei einer Feldaenderung - nie beim
+        Neuzeichnen - und gesammelt ueber eine Uhr mit 0 ms: „Alle Lastfälle
+        anhaken“ setzt am Drehlager 422 Haken, das waeren sonst 422 Vergleiche
+        aller Felder; so ist es einer, gleich nach dem Ereignis."""
+        self._merker = False
+        self._feldtexte = {f.name: (f.text or f.name) for f in felder}
+        #: reine Anzeigen (Feld.anzeige): zaehlen nicht als Aenderung
+        self._anzeigen = {f.name for f in felder if getattr(f, "anzeige", False)}
+        self._merker_uhr = QtCore.QTimer(self)
+        self._merker_uhr.setSingleShot(True)
+        self._merker_uhr.setInterval(0)
+        self._merker_uhr.timeout.connect(self._merker_nachfuehren)
+        for w in self._felder.values():
+            if isinstance(w, QtWidgets.QLineEdit):          # auch das Zahlenfeld
+                w.textChanged.connect(self._merker_anstossen)
+            elif isinstance(w, QtWidgets.QCheckBox):
+                w.toggled.connect(self._merker_anstossen)
+            elif isinstance(w, QtWidgets.QComboBox):
+                w.currentTextChanged.connect(self._merker_anstossen)
+            elif isinstance(w, QtWidgets.QListWidget):
+                w.itemChanged.connect(self._merker_anstossen)
+
+    def _merker_anstossen(self, *_a) -> None:
+        # Jede Aenderung in einem Feld nimmt einen Hinweis des Fensters aus der
+        # Meldungszeile (Nachbesserung 9b, H1): bis dahin nur eine, die den
+        # Zustand eines Zahlenfelds wechselte (gueltig/ungueltig/mehrdeutig)
+        if getattr(self, "_hinweis", ""):
+            try:
+                self._zahlmeldung_nachfuehren()
+            except (RuntimeError, AttributeError):
+                pass
+        try:
+            self._merker_uhr.start()
+        except (RuntimeError, AttributeError):
+            pass
+
+    def _merker_nachfuehren(self) -> None:
+        """Punkt im Titel setzen oder nehmen; meldet, wenn er kommt oder geht."""
+        try:
+            geaendert = self.geaenderte_felder()
+            an = bool(geaendert)
+            text = ("● " if an else "") + str(self.titel)
+            if self.lbl_titel.text() != text:
+                self.lbl_titel.setText(text)
+            texte = getattr(self, "_feldtexte", {})
+            self.lbl_titel.setToolTip(
+                "Nicht übernommen: " + ", ".join(sorted(str(texte.get(k, k)) for k in geaendert))
+                + " – „Übernehmen“ schreibt es ins Modell" if an else "")
+        except (RuntimeError, AttributeError):
+            return
+        if an != getattr(self, "_merker", False):
+            self._merker = an
+            self.geaendert_gemeldet.emit(an)
 
     def _zahlmeldung_nachfuehren(self) -> None:
+        self._hinweis = ""          # die Zeile zeigt danach die Zahlenfelder (oder nichts)
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
         # ein Zwischenstand beim Tippen („-“) meldet nichts (meldung leer)
         schlecht = next((w for w in felder if w.ungueltig() and w.meldung()), None)
@@ -733,6 +869,27 @@ class Maske(QtWidgets.QFrame):
 
     def _zahlmeldung_setzen(self, text: str, farbe: str = None) -> None:
         zf.meldungszeile_setzen(self.lbl_zahlmeldung, text, farbe)
+
+    def hinweis_zeigen(self, text: str) -> None:
+        """Ein Bedienhinweis des Fensters (hinweis(), Paket 9b, 03.10.2026) in
+        der Meldungszeile ueber den Knoepfen - gelb wie eine mehrdeutige Zahl,
+        dort, wo man nach „Übernehmen“ hinsieht. Das naechste „Übernehmen“ oder
+        eine Aenderung in einem Feld der Maske nimmt ihn wieder weg."""
+        self._zahlmeldung_setzen(str(text), zf.GELB)
+        self._hinweis = str(text)
+
+    def _knopf_rufen(self, ruf):
+        """Ein Zusatzknopf der Maske („Bettung übernehmen“, „Spalt-Vorschau“ …):
+        solange er laeuft, gehoert ein Hinweis des Fensters in die Meldungszeile
+        dieser Maske (Nachbesserung 9b, S2)."""
+        self._knopf_laeuft = True
+        try:
+            return ruf()
+        finally:
+            try:
+                self._knopf_laeuft = False
+            except RuntimeError:            # Maske schon freigegeben
+                pass
 
     def setzen(self, name: str, wert):
         w = self._felder.get(name)
@@ -751,6 +908,9 @@ class Maske(QtWidgets.QFrame):
                 it.setCheckState(QtCore.Qt.Checked if it.text() in gewaehlt else QtCore.Qt.Unchecked)
         elif isinstance(w, QtWidgets.QLabel):
             w.setText(str(wert))
+            # ein Anzeigefeld meldet keine Aenderung von selbst - „Gilt für“ nach
+            # „Auswahl übernehmen“ setzt den Punkt trotzdem (Paket 13m, L2)
+            self._merker_anstossen()
         else:
             # ohne Tausender: ein Textfeld kann eine Liste sein, dort trennt
             # das Leerzeichen Eintraege; nie „1e-05“ (25.09.2026)
@@ -817,15 +977,56 @@ class Maske(QtWidgets.QFrame):
             if n else self._klickhinweis())
 
     # -- Bedienung -------------------------------------------------------
-    def anwenden(self):
+    def anwenden(self) -> bool:
+        """„Übernehmen“. True, wenn es gelang: kein Handler hat abgelehnt, einen
+        Fehler gemeldet oder eine Ausnahme geworfen (:attr:`uebernahme_lauf`).
+        Dann gilt der jetzige Stand als uebernommen, der Punkt im Titel geht.
+        Die Leiste „Übernehmen | Verwerfen“ fuehrt den Wunsch nur bei True aus.
+
+        Waehrend die Maske schon uebernimmt (ein langes „Übernehmen“ dreht die
+        Ereignisschleife), tut ein zweiter Druck nichts - bis zum 03.10.2026
+        rechnete er noch einmal (Paket 13m, zweite Nachbesserung, Fehler 4)."""
+        if getattr(self, "_uebernimmt", False):
+            return False
         # Ungueltige Zahl: nichts uebernehmen. Mehrdeutige („33.000“): beim
         # ersten Mal nachfragen, beim zweiten Mal gilt sie (24.09.2026)
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
         if felder and not zf.freigeben(felder):
             self._zahlmeldung_nachfuehren()
-            return
+            return False
         self._zahlmeldung_nachfuehren()
-        self.angewendet.emit(self.werte())
+        return self.angewendet.emit(self.werte())
+
+    def _uebernehmen(self, werte: dict, empfaenger: list) -> bool:
+        """Die Empfaenger von ``angewendet`` rufen - entschieden wird, wenn sie
+        zurueckgekehrt sind, nicht an einer Uhr. Eine Ausnahme beendet die
+        Reihe: die uebrigen Empfaenger (etwa „Maske schliessen“) laufen dann
+        nicht mehr, und die Eingaben bleiben stehen."""
+
+        def rufen():
+            for f in empfaenger:
+                try:
+                    f(werte)
+                except Exception as ex:     # noqa: BLE001 - gemeldet und als gescheitert gewertet
+                    sys.excepthook(*sys.exc_info())
+                    return ex
+            return None
+
+        self._uebernimmt = True
+        try:
+            lauf = self.uebernahme_lauf
+            ok = bool(lauf(rufen, self)) if callable(lauf) else rufen() is None
+        finally:
+            try:
+                self._uebernimmt = False
+            except RuntimeError:            # Maske schon freigegeben
+                pass
+        if ok:
+            try:
+                self.stand_merken()
+            except RuntimeError:
+                pass
+        return ok
 
     def abbrechen(self):
         """Abbrechen: erst melden (das Fenster nimmt ein neues Objekt zurueck),
@@ -911,6 +1112,65 @@ class Maske(QtWidgets.QFrame):
                 continue
             w.setStyleSheet("border: 2px solid #ff8800; background: #fff6e5;"
                             if feld == name else "")
+
+
+class Aenderungsleiste(QtWidgets.QFrame):
+    """Nicht-modale Leiste „Übernehmen | Verwerfen“ (Paket 13m, 03.10.2026).
+
+    Antwort 5 des Anwenders vom 24.09.2026: Wird eine Maske mit nicht
+    uebernommenen Aenderungen ersetzt, erscheint eine nicht-modale Leiste -
+    nicht automatisch uebernehmen. Sie steht oben im rechten Bereich, an dem
+    Platz, den Paket 6b fuer die Ergebnissteuerung geschaffen hat
+    (``bleibt_oben``: der Maskenrand setzt Masken darunter), und nennt die
+    Maske. Was die Knoepfe tun, entscheidet das Fenster (``uebernehmen``,
+    ``verwerfen``); ohne Knopfdruck bleibt alles, wie es ist."""
+
+    uebernehmen = QtCore.Signal()
+    verwerfen = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("aenderungsleiste")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setProperty("bleibt_oben", True)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
+        self.setAccessibleName("Nicht übernommene Änderungen")
+        # Zwei Zeilen: oben der Satz ueber die ganze Breite, darunter rechts die
+        # Knoepfe. In einer Zeile neben den Knoepfen brach der Satz im rechten
+        # Bereich (460 px) in drei und mehr Zeilen um.
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(8, 4, 6, 4)
+        lay.setSpacing(3)
+        # umbrechend: ein langer Maskenname nimmt eine zweite Zeile, statt den
+        # rechten Bereich zu verbreitern
+        self.text = Hinweiszeile("", self)
+        self.text.setObjectName("aenderungstext")
+        self.text.setMinimumWidth(60)
+        lay.addWidget(self.text)
+        zeile = QtWidgets.QHBoxLayout()
+        zeile.setContentsMargins(0, 0, 0, 0)
+        zeile.setSpacing(6)
+        zeile.addStretch(1)
+        self.btn_uebernehmen = QtWidgets.QPushButton("Übernehmen", self)
+        self.btn_verwerfen = QtWidgets.QPushButton("Verwerfen", self)
+        self.btn_uebernehmen.clicked.connect(self.uebernehmen.emit)
+        self.btn_verwerfen.clicked.connect(self.verwerfen.emit)
+        zeile.addWidget(self.btn_uebernehmen)
+        zeile.addWidget(self.btn_verwerfen)
+        lay.addLayout(zeile)
+        self.titel = ""
+        self.hide()
+
+    def setze(self, titel: str, danach: str = "") -> None:
+        """Die Maske nennen; ``danach`` sagt im Hinweis, was nach dem Knopf geschieht."""
+        self.titel = str(titel)
+        self.text.setText(f"„{self.titel}“ hat nicht übernommene Änderungen")
+        folge = f", danach {danach}" if danach else ""
+        self.btn_uebernehmen.setToolTip(f"„{self.titel}“ übernehmen wie mit ihrem eigenen Knopf{folge}. "
+                                        "Scheitert es, bleibt die Maske stehen")
+        self.btn_verwerfen.setToolTip(f"Die Eingaben in „{self.titel}“ verwerfen{folge}")
+        self.setToolTip("Ohne Knopfdruck bleibt die Maske stehen; man kann weiter darin tippen "
+                        "oder in der Ansicht klicken")
 
 
 class Maskenrand(QtCore.QObject):
@@ -1067,6 +1327,10 @@ QScrollArea#maskenrolle {{ background: transparent; border: 0; }}
 QWidget#maskenmitte {{ background: transparent; }}
 QToolButton#maskezu {{ border: 0; color: {matt}; font-size: 13px;
     padding: 0 4px; }}
+/* Leiste „Übernehmen | Verwerfen“ ueber einer geaenderten Maske (Paket 13m) */
+QFrame#aenderungsleiste {{ background: #fff6e5; border: 1px solid {warn};
+    border-radius: 8px; }}
+QLabel#aenderungstext {{ color: {text}; background: transparent; border: 0; }}
 QToolButton#maskezu:hover {{ color: {schlecht}; }}
 /* einklappbarer Abschnitt (Paket 13r): flacher Kopf, Fokus als blauer Rand */
 QToolButton#einklappkopf {{ border: 1px solid transparent; border-radius: 4px;
@@ -1108,14 +1372,18 @@ def stil() -> str:
 # ==========================================================================
 # Glasleiste und Ansichtswuerfel ueber der Ansicht
 # ==========================================================================
+def _listenfeld(cb) -> int:
+    """Breite des Textfelds einer Aufklappliste (ohne Pfeil und Rand)."""
+    opt = QtWidgets.QStyleOptionComboBox()
+    cb.initStyleOption(opt)
+    return cb.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
+                                     QtWidgets.QStyle.SC_ComboBoxEditField, cb).width()
+
+
 def _listen_bedarf(cb) -> int:
     """Breite einer Aufklappliste, in der ihr laengster waehlbarer Eintrag ganz
     zu lesen ist: Text plus der Rand, den der Stil um das Textfeld legt."""
-    opt = QtWidgets.QStyleOptionComboBox()
-    cb.initStyleOption(opt)
-    feld = cb.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
-                                     QtWidgets.QStyle.SC_ComboBoxEditField, cb).width()
-    rand = max(0, cb.width() - feld)
+    rand = max(0, cb.width() - _listenfeld(cb))
     fm = QtGui.QFontMetrics(cb.font())
     laengste = max((fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())
                     if cb.itemData(i) is not None), default=0)
@@ -1145,6 +1413,11 @@ class Glasleiste(QtWidgets.QFrame):
     RAND = 12
     #: So schmal darf die Ergebnisauswahl werden, bevor Hauptknoepfe weichen
     LISTE_MIN = 120
+    #: So breit darf sie fuer einen langen Namen werden (03.10.2026): ueber
+    #: ihre Vorgabebreite hinaus, damit „Umhüllende GZG charakteristisch“
+    #: ganz zu lesen ist - aber nur in freien Platz (einpassen), und nicht
+    #: beliebig breit fuer einen sehr langen Namen aus einer Quelldatei
+    LISTE_MAX = 280
 
     def __init__(self, ansicht: QtWidgets.QWidget):
         super().__init__(ansicht)
@@ -1166,6 +1439,9 @@ class Glasleiste(QtWidgets.QFrame):
         #: (Trenner oder None, Teile) - ein Trenner steht vor seiner Gruppe
         self._gruppen: list = [(None, [])]
         self._listenbreite: dict = {}
+        #: der Hinweis je Liste (liste()); ist der gewaehlte Name abgeschnitten,
+        #: steht er im Hinweis davor (_listen_tooltip, 03.10.2026)
+        self._listenhinweis: dict = {}
         self.ueberlauf: QtWidgets.QToolButton | None = None
         self._stand = None
         self._geplant = False
@@ -1249,7 +1525,43 @@ class Glasleiste(QtWidgets.QFrame):
         self._teil(cb)
         self.listen[schluessel or hinweis] = cb
         self._listenbreite[cb] = int(breite)
+        self._listenhinweis[cb] = hinweis
+        # Neuer Inhalt kann einen laengeren Namen bringen: neu einpassen
+        # (gebuendelt wie bei LayoutRequest, 03.10.2026)
+        for signal in (cb.model().rowsInserted, cb.model().rowsRemoved, cb.model().modelReset):
+            signal.connect(self._einpassen_planen)
+        cb.currentIndexChanged.connect(lambda _i, c=cb: self._listen_tooltip(c))
+        # auch erst beim Zeigen des Hinweises: die Liste wird oft mit
+        # gesperrten Signalen nachgezogen (_lastwahl_nachziehen)
+        cb.installEventFilter(self)
         return cb
+
+    def _listen_tooltip(self, cb) -> None:
+        """Hinweis der Liste: ist der gewaehlte Name abgeschnitten, steht er
+        vollstaendig davor, darunter der Hinweis aus liste() (03.10.2026)."""
+        hinweis = self._listenhinweis.get(cb, "")
+        text = cb.currentText()
+        rand = max(0, cb.width() - _listenfeld(cb))
+        breit = QtGui.QFontMetrics(cb.font()).horizontalAdvance(text) + rand + 2
+        if text and breit > cb.minimumWidth():
+            cb.setToolTip(f"{text}\n\n{hinweis}" if hinweis else text)
+        else:
+            cb.setToolTip(hinweis)
+
+    def _einpassen_planen(self, *_a) -> None:
+        """Nach dem laufenden Ereignis neu einpassen - einmal, auch wenn viele
+        Eintraege nacheinander kommen."""
+        if not self._geplant:
+            self._geplant = True
+            QtCore.QTimer.singleShot(0, self.nachziehen)
+
+    def _listenziel(self, cb, b: int) -> int:
+        """Die Breite, die eine Liste in **freiem** Platz annehmen darf: ihre
+        Vorgabe, bei einem laengeren Namen so viel, dass er ganz zu lesen ist
+        (hoechstens LISTE_MAX). Bis zum 03.10.2026 war die Vorgabe zugleich die
+        Grenze; mit den Fachbegriffen (Teilpaket 11b) blieben „Umhüllende GZG
+        charakteristisch“ und „… quasi-ständig“ bei 190 px abgeschnitten."""
+        return max(int(b), min(_listen_bedarf(cb), self.LISTE_MAX))
 
     def ueberlauf_knopf(self) -> QtWidgets.QToolButton:
         """Die Ueberlaufliste „»“ an dieser Stelle - sichtbar nur, wenn etwas
@@ -1293,6 +1605,8 @@ class Glasleiste(QtWidgets.QFrame):
     def eventFilter(self, obj, ev):
         if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize:
             self.nachziehen()
+        elif ev.type() == QtCore.QEvent.ToolTip and obj in self._listenbreite:
+            self._listen_tooltip(obj)
         return False
 
     def event(self, ev):
@@ -1340,7 +1654,11 @@ class Glasleiste(QtWidgets.QFrame):
         haben - sonst stiesse jeder Aufruf ueber die Layoutanfrage den
         naechsten an."""
         teile = [w for _t, ws in self._gruppen for w in ws if w is not self.ueberlauf]
-        stand = (int(breite), tuple(w.sizeHint().width() for w in teile))
+        # die Breiten, die die Listen fuer ihre Namen wollen, gehoeren zum
+        # Stand: sonst passte die Leiste nach der Rechnung nicht neu ein
+        ziele = {cb: self._listenziel(cb, b) for cb, b in self._listenbreite.items()}
+        stand = (int(breite), tuple(w.sizeHint().width() for w in teile),
+                 tuple(ziele.values()))
         if stand == self._stand:
             return
         rangfolge = sorted(self._weicht, key=lambda w: -self._weicht[w])
@@ -1348,6 +1666,10 @@ class Glasleiste(QtWidgets.QFrame):
         haupt = [w for w in rangfolge if self._weicht[w] < 10]
         for w in rangfolge:
             w.setVisible(True)
+        # Welche Knoepfe stehen, entscheidet die Vorgabebreite der Liste, nicht
+        # ihr Wunsch: ein langer Name verdraengt keinen Knopf (03.10.2026; der
+        # erste Stand von 11b setzte hier den Wunsch und schob bei 1536 px
+        # „Auswahl ausblenden“, bei 1280 px „Darstellung ▾“ in „»“)
         for cb, b in self._listenbreite.items():
             cb.setMinimumWidth(b)
         if self.ueberlauf is not None:
@@ -1381,18 +1703,32 @@ class Glasleiste(QtWidgets.QFrame):
             if self._wunschbreite() <= breite:
                 break
             weg(w)
+        # Immer noch zu breit, obwohl alle Hauptknoepfe gewichen sind
+        # (schmale Ansicht, lange Namen): die Liste schrumpft bis LISTE_MIN,
+        # der volle Name steht dann im Hinweis (03.10.2026). Vorher blieb sie
+        # bei einem Namen ueber 190 px bei 190 px stehen, und die Leiste ragte
+        # ueber die Ansicht hinaus - mit RFEM-langen Namen bei 260 px Ansicht.
+        for cb in self._listenbreite:
+            ueber = self._wunschbreite() - breite
+            if ueber > 0:
+                cb.setMinimumWidth(max(self.LISTE_MIN, cb.minimumWidth() - ueber))
         # Was das Weichen der Hauptknoepfe frei macht, bekommt die Liste
         # zurueck (25.09.2026): sonst blieb sie bei LISTE_MIN = 120 px, obwohl
         # daneben Platz frei war - bei 1366 und 1536 px Fensterbreite waren
         # 75 von 81 Namen der gerechneten Halle abgeschnitten („Kombination
         # GZ“), und die Liste ist dort die einzige Anzeige des Ergebnisses.
-        for cb, b in self._listenbreite.items():
+        # Seit 03.10.2026 waechst sie in **freien** Platz auch ueber ihre
+        # Vorgabe hinaus, bis ihr laengster Name ganz zu lesen ist (Ziel).
+        for cb, z in ziele.items():
             frei = breite - self._wunschbreite()
-            if frei > 0 and cb.minimumWidth() < b:
-                cb.setMinimumWidth(min(b, cb.minimumWidth() + frei))
+            if frei > 0 and cb.minimumWidth() < z:
+                cb.setMinimumWidth(min(z, cb.minimumWidth() + frei))
         self._ueberlauf_fuellen(versteckt)
         self.resize(self.sizeHint())
-        self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile))
+        for cb in self._listenbreite:
+            self._listen_tooltip(cb)
+        self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile),
+                       tuple(self._listenziel(cb, b) for cb, b in self._listenbreite.items()))
 
     def _ueberlauf_fuellen(self, versteckt: list):
         """Die Ueberlaufliste in der Reihenfolge der Leiste, Gruppen durch

@@ -62,7 +62,9 @@ def test_modell():
     check("Layer angelegt: nur Vorhandenes kommt hinein",
           L.koerper == ["V1"] and L.staebe == ["S1"] and L.linien == ["L1"] and L.knoten == [0]
           and L.elemente == [1] and L.quelle == "rfem" and "Deckel" in m.layer, L.bezug())
-    check("bezug nennt die Arten", L.bezug() == "1 Volumen, 1 Stäbe, 1 Linien, 1 Knoten, 1 Elemente", L.bezug())
+    # Einzahl seit 03.10.2026 (Teilpaket 11c): bis dahin „1 Stäbe, 1 Linien, … 1 Elemente“
+    check("bezug nennt die Arten in der Einzahl", L.bezug() == "1 Volumen, 1 Stab, 1 Linie, 1 Knoten, 1 Element",
+          L.bezug())
     m.layer_anlegen("Deckel", staebe=["S2", "S1"], knoten=[0, 2])
     check("gleicher Name ergaenzt ohne Doppelte", L.staebe == ["S1", "S2"] and L.knoten == [0, 2], str(L.staebe))
     m.layer_entfernen(L, staebe=["S1"], knoten=[2])

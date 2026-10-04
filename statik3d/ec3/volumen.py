@@ -48,6 +48,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..begriffe import anzahl
+
 #: Ab welchem Verhaeltnis Spitzenspannung / Mittelwert im Bereich auf eine
 #: moegliche Singularitaet hingewiesen wird
 SPITZE_GRENZE = 5.0
@@ -191,7 +193,7 @@ class VolumenResults:
         nur = [c.name for c in self.bereiche.values()
                if c.singular and not c.ausgeschaltet]
         aus = [c.name for c in self.bereiche.values() if c.ausgeschaltet]
-        s = f"Volumen (EN 1993-1-1, 6.2.1(5)): {len(self.bereiche)} Bereiche"
+        s = f"Volumen (EN 1993-1-1, 6.2.1(5)): {anzahl(len(self.bereiche), 'Bereich', 'Bereiche')}"
         if gefuehrt:
             worst = max(gefuehrt, key=lambda c: c.util)
             s += (f", max. Ausnutzung {worst.util:.3f} ({worst.name}: "

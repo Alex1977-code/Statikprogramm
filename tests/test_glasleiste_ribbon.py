@@ -97,7 +97,10 @@ def _fenster():
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
     fehler = []
-    w.error = lambda *a, **k: fehler.append(" ".join(str(x) for x in a)[:120])
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, fehler)
     mb = QtWidgets.QMessageBox
     for name in ("critical", "warning", "information"):
         setattr(mb, name, staticmethod(lambda *a, **k: mb.StandardButton.Ok))
@@ -248,6 +251,11 @@ def test_150_prozent():
     check("150 % (QT_SCALE_FACTOR=1.5, 1280 px logisch): kein Register gekürzt, keines zu breit",
           r.returncode == 0 and ergebnis and ergebnis[-1].endswith("0 gekuerzt, 0 zu breit"),
           (ergebnis[-1] if ergebnis else r.stderr[-160:]))
+    glas = [z for z in zeilen if z.startswith("SKALIERT GLAS")]
+    check("150 %: Glasleiste nach der Rechnung, auch mit RFEM-langen Namen, dieselben Knöpfe, "
+          "in der Ansicht",
+          bool(glas) and glas[-1].startswith("SKALIERT GLAS ERGEBNIS") and glas[-1].endswith(" 0 abweichend"),
+          "; ".join(glas)[-200:] if glas else r.stderr[-160:])
 
 
 def _skaliert_lauf():
@@ -262,6 +270,13 @@ def _skaliert_lauf():
         print(f"SKALIERT {z}", flush=True)
     print(f"SKALIERT ERGEBNIS {len(zeilen)} Register, {len(gekuerzt)} gekuerzt, "
           f"{len(zu_breit)} zu breit", flush=True)
+    # Glasleiste (Nachbesserung 11b): dieselben Knoepfe vor und nach der Rechnung
+    glas = _glas_vergleich(w, ((1280, 720), (1366, 768)))
+    for titel, ok, detail in glas:
+        if not ok:
+            print(f"SKALIERT GLAS {titel}: {detail}", flush=True)
+    print(f"SKALIERT GLAS ERGEBNIS {len(glas)} Fälle, {sum(1 for _t, ok, _d in glas if not ok)} "
+          f"abweichend", flush=True)
     return 0 if not gekuerzt and not zu_breit and _schrift_ok() else 1
 
 
@@ -670,14 +685,162 @@ def test_ergebnisliste_lesbar():
     n = sum(1 for i in range(cb.count()) if cb.itemData(i) is not None)
     check("gerechnete Halle: die Ergebnisauswahl führt Lastfälle und Kombinationen",
           n >= 40, f"{n} Einträge")
+    # Seit 03.10.2026 (Fachbegriffe, Teilpaket 11b) heissen die Umhuellenden
+    # „Umhüllende GZG charakteristisch“ usw. - laenger als die 190 px der
+    # Vorgabe. Die Liste waechst dafuer nur in freien Platz (Nachbesserung
+    # nach der Gegenpruefung, Befund L1): ein Name, der in die Vorgabe passt,
+    # ist nie abgeschnitten; ein laengerer nur, wenn kein Platz frei ist.
+    # Sie passt sich nach der Rechnung an, ohne dass sich das Fenster aendert.
+    breit_vorher = cb.minimumWidth()
+    gl._stand = None
+    gl.nachziehen()
+    check("nach der Rechnung, ohne Größenänderung: die Liste ist schon eingepasst",
+          cb.minimumWidth() == breit_vorher and "Umhüllende GZG charakteristisch"
+          in [cb.itemText(i) for i in range(cb.count())],
+          f"{breit_vorher} px, neu eingepasst {cb.minimumWidth()} px")
     for breite, hoehe in ((1366, 768), (1536, 864), (1920, 1080)):
         w.resize(breite, hoehe)
         _ruhe()
-        weg = _abgeschnitten(cb)
+        kurz, lang = _abgeschnitten_kurz_lang(cb, gl)
         g = gl.geometry()
-        check(f"{breite} px: kein Name der Ergebnisauswahl abgeschnitten",
-              not weg and g.right() < gl.parentWidget().width(),
-              f"Liste {cb.width()} px, Feld {_listenfeld(cb)} px, {len(weg)} von {n}: {weg[:2]}")
+        platz = gl.parentWidget().width() - 2 * gl.RAND
+        check(f"{breite} px: kein Name abgeschnitten, der in die Vorgabebreite passt",
+              not kurz and g.right() < gl.parentWidget().width(),
+              f"Liste {cb.width()} px, Feld {_listenfeld(cb)} px, {len(kurz)} von {n}: {kurz[:2]}")
+        check(f"{breite} px: ein längerer Name nur abgeschnitten, wenn kein Platz frei ist",
+              not lang or gl.sizeHint().width() >= platz - 1,
+              f"Leiste {gl.sizeHint().width()} von {platz} px, abgeschnitten {lang[:2]}")
+    w.resize(1920, 1080)
+    _ruhe()
+
+
+def _abgeschnitten_kurz_lang(cb, gl) -> tuple:
+    """Die abgeschnittenen Namen der Liste, getrennt: die in die
+    Vorgabebreite der Liste passen (das darf nie sein) und die laengeren."""
+    from PySide6 import QtGui
+    fm = QtGui.QFontMetrics(cb.font())
+    rand = cb.width() - _listenfeld(cb)
+    vorgabe = gl._listenbreite.get(cb, 190) - rand
+    weg = _abgeschnitten(cb)
+    return ([t for t in weg if fm.horizontalAdvance(t) <= vorgabe],
+            [t for t in weg if fm.horizontalAdvance(t) > vorgabe])
+
+
+#: Fenstergroessen fuer den Vergleich der Glasleiste vor und nach der Rechnung
+GLAS_GROESSEN = ((1920, 1080), (1536, 864), (1366, 768), (1280, 720))
+
+
+def _glasknoepfe(gl) -> tuple:
+    """Die sichtbaren Knoepfe und Menueknoepfe der Glasleiste."""
+    namen = {b: k for k, b in gl.knoepfe.items()}
+    namen.update({b: "menü:" + k for k, b in gl.menues.items()})
+    return tuple(sorted(n for b, n in namen.items() if b.isVisibleTo(gl)))
+
+
+def _glas_stand(w, groessen) -> dict:
+    """Je Fensterbreite: (sichtbare Knoepfe, Leiste in der Ansicht?, Text)."""
+    gl = w.glasleiste
+    out = {}
+    for b, h in groessen:
+        w.resize(b, h)
+        _ruhe()
+        g = gl.geometry()
+        drin = g.x() >= 0 and g.right() < gl.parentWidget().width()
+        out[b] = (_glasknoepfe(gl), drin,
+                  f"Leiste {g.width()} (rechts {g.right()}) / Ansicht {gl.parentWidget().width()}, "
+                  f"Liste {w.cb_lastwahl.minimumWidth()}")
+    return out
+
+
+def _glas_vergleich(w, groessen) -> list:
+    """Halle vor der Rechnung (kurze Namen, wie vor 11b) gegen die Halle
+    nach der Rechnung und gegen die Halle mit RFEM-langen Namen vor und nach
+    der Rechnung: dieselben Knoepfe, die Leiste immer in der Ansicht.
+    Rueckgabe: [(Titel, ok, Detail)] je Fall und Breite."""
+    from statik3d import solver
+    from statik3d.model import Combination
+    # die Rueckfrage „Ungespeicherte Änderungen“ abfangen, nie anzeigen
+    w._frage_speichern_verwerfen = lambda *a, **k: "verwerfen"
+    w.load_example("hall")
+    _ruhe()
+    vorher = _glas_stand(w, groessen)
+    out = []
+
+    def vergleichen(titel, stand):
+        for b, (knoepfe, drin, text) in stand.items():
+            gleich = knoepfe == vorher[b][0]
+            out.append((f"{titel}, {b} px: dieselben Knöpfe wie mit kurzen Namen, Leiste in der Ansicht",
+                        gleich and drin,
+                        text if gleich else f"{text}; vorher {vorher[b][0]}, jetzt {knoepfe}"))
+
+    an = solver.solve_all(w.model, design=False)
+    w._solve_done("all", an)
+    _ruhe()
+    vergleichen("Halle nach der Rechnung", _glas_stand(w, groessen))
+    # Namen so lang wie die des Drehlagermodells aus RFEM
+    m = w.model
+    lf = list(m.load_cases)
+    m.combinations["Bemessungskombination im GZT"] = Combination(
+        "Bemessungskombination im GZT", {}, "ULS",
+        alternativen=[{lf[0]: 1.35}, {lf[0]: 1.35, lf[1]: 1.5}])
+    m.combinations["Massgebende char.Kombination"] = Combination(
+        "Massgebende char.Kombination", {}, "SLS_CH",
+        alternativen=[{lf[0]: 1.0}, {lf[0]: 1.0, lf[1]: 1.0}])
+    w.refresh_all()
+    _ruhe()
+    vergleichen("RFEM-lange Namen vor der Rechnung", _glas_stand(w, groessen))
+    an = solver.solve_all(m, design=False)
+    w._solve_done("all", an)
+    _ruhe()
+    vergleichen("RFEM-lange Namen nach der Rechnung", _glas_stand(w, groessen))
+    return out
+
+
+def test_ergebnisliste_verdraengt_nichts():
+    """Nachbesserung 11b (03.10.2026, Befunde F1 und L1 der Gegenpruefung):
+    der erste Stand liess die Ergebnisauswahl fuer die laengeren Fachbegriffe
+    wachsen und schob dafuer Knoepfe in „»“ (1536 px „Auswahl ausblenden“,
+    1280 px „Darstellung ▾“); in schmaler Ansicht ragte die Leiste nach der
+    Rechnung ueber die Ansicht hinaus (1024 x 768: Ansicht 292 px, Leiste bis
+    302 px). Jetzt waechst sie nur in freien Platz, verdraengt keinen Knopf und
+    schrumpft notfalls bis LISTE_MIN; der volle Name steht dann im Hinweis."""
+    w, app = _fenster()
+    gl = w.glasleiste
+    for titel, ok, detail in _glas_vergleich(w, GLAS_GROESSEN):
+        check(titel, ok, detail)
+    # schmale Ansicht nach der Rechnung, mit RFEM-langen Namen (wie
+    # test_glasleiste_passt, dort vor der Rechnung)
+    alle = _glasaktionen(w)
+    schmal = []
+    for b in range(900, 219, -40):
+        gl.einpassen(b - 24)
+        if gl.sizeHint().width() > b - 24 and b >= 260:
+            schmal.append(f"{b}: {gl.sizeHint().width()}")
+        if not alle <= _erreichbar(w):
+            schmal.append(f"{b}: nicht alles erreichbar")
+    check("nach der Rechnung, lange Namen, Ansicht 900 … 260 px: die Leiste passt immer hinein",
+          not schmal, "; ".join(schmal)[:160])
+    # der abgeschnittene Name steht im Hinweis (gesetzt, wenn er erscheint)
+    from PySide6 import QtCore, QtGui, QtWidgets
+    w.resize(1280, 720)
+    _ruhe()
+    cb = w.cb_lastwahl
+    ziel = ("env", "Bemessungskombination im GZT")
+    i = next((k for k in range(cb.count()) if cb.itemData(k) is not None
+              and tuple(cb.itemData(k)) == ziel), -1)
+    cb.setCurrentIndex(i)
+    _ruhe()
+    punkt = QtCore.QPoint(5, 5)
+    QtWidgets.QApplication.sendEvent(cb, QtGui.QHelpEvent(QtCore.QEvent.ToolTip, punkt,
+                                                          cb.mapToGlobal(punkt)))
+    weg = cb.currentText() in _abgeschnitten(cb)
+    check("1280 px: der abgeschnittene Name steht vollständig im Hinweis, darunter die Erklärung",
+          tuple(cb.currentData() or ()) == ziel and weg
+          and cb.toolTip().startswith("Umhüllende Bemessungskombination im GZT\n")
+          and "Was die Ansicht zeigt" in cb.toolTip(),
+          f"{cb.currentText()!r}, abgeschnitten {weg}: {cb.toolTip()[:90]!r}")
+    QtWidgets.QToolTip.hideText()
+    w.load_example("hall")
     w.resize(1920, 1080)
     _ruhe()
 
@@ -800,7 +963,8 @@ def main():
               test_glasleiste_passt, test_ribbon_ansicht, test_ribbon_nachweise,
               test_doppelte_knoepfe, test_kuerzel_bleiben, test_schalter_sichtbar,
               test_berechnen_weiss, test_klickart_im_ueberlauf, test_loeschbefehle_haben_einen_knopf,
-              test_gelenkhinweise, test_ergebnisliste_lesbar, test_handbuch):
+              test_gelenkhinweise, test_ergebnisliste_lesbar, test_ergebnisliste_verdraengt_nichts,
+              test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

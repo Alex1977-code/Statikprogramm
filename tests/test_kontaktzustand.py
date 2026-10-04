@@ -163,7 +163,7 @@ def test_warmstart():
     # Auflagersummen gleich); die Pruefung darunter misst es auf 1e-4.
     check("umgekehrte Last: der fremde Zustand wird verworfen oder an den Knoten gegen ihre "
           "Richtung zurueckgesetzt (steht im Protokoll)",
-          any("Warmstart verworfen" in str(z) or "zurueckgesetzt" in str(z)
+          any("Warmstart verworfen" in str(z) or "zurückgesetzt" in str(z)
               for z in warm4.info.get("contact_log", [])),
           str([z for z in warm4.info.get("contact_log", []) if "Warmstart" in str(z)])[:120])
     check("umgekehrte Last: dieselben Auflagerkraefte wie kalt, u auf 1e-4",

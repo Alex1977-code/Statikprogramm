@@ -489,7 +489,10 @@ def _fenster():
     # Offscreen haelt ein modales Meldungsfenster den Lauf an: Fehler nur
     # mitschreiben (eine Maske, die mit einer Meldung abbricht, zaehlt dann
     # als „ohne Maske“)
-    w.error = lambda *a, **k: _FEHLER.append(" ".join(str(x) for x in a)[:120])
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, _FEHLER)
     from PySide6 import QtWidgets
     mb = QtWidgets.QMessageBox
     for name in ("critical", "warning", "information"):
@@ -541,8 +544,14 @@ MASKEN = [
     ("Lastfall LF1", "_baum_geklickt", ("lastfall", "LF1")),
     ("Neu: Schweißnaht", "_baum_neu", ("schweissnaehte",)),
     ("Neu: Stellung", "_baum_neu", ("stellungen",)),
+    # Teilpaket 8b (03.10.2026): die Uebersicht eines Zweigs mit ihrer Liste
+    # (bis zu 15 Zeilen hoch, die Kombinationen der Halle fuellen sie) und die
+    # Anlegemaske „Neu: Berichtsbild“
+    ("Übersicht Kombinationen", "_baum_geklickt", ("kombinationen", "Kombinationen")),
+    ("Übersicht Knoten", "_baum_geklickt", ("knoten", "Knoten")),
+    ("Neu: Berichtsbild", "_baum_neu", ("bericht",)),
 ]
-for _m in ("maske_knoten", "maske_linie", "maske_stab", "maske_schale", "maske_platte",
+for _m in ("maske_knoten", "maske_linie", "maske_stab", "maske_stabelement", "maske_schale", "maske_platte",
            "maske_quader", "maske_stabzug", "maske_lager", "maske_knotenlast",
            "maske_linienlast", "maske_flaechenlast", "maske_temperaturlast",
            "maske_zwangsverformung", "maske_vorspannung", "maske_spalt", "maske_spiel",

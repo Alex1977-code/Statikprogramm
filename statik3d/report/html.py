@@ -34,6 +34,7 @@ import numpy as np
 from .. import __version__
 from ..model import ACTION_CATEGORIES, DOF_NAMES, Combination
 from .. import elemente as _EL
+from .. import begriffe as _BG
 from ..combinations import combination_table
 from . import svg as sv
 
@@ -55,15 +56,15 @@ NORMS = [
 #: Klartext je Elementtyp - aus dem Elementverzeichnis (statik3d.elemente)
 ELEMENT_TYPES = {t: a.name for t, a in _EL.ELEMENTE.items()}
 
-COMBO_TYPES = {"ULS": "GZT (STR/GEO)", "EQU": "GZT (EQU)", "ACC": "außergewöhnlich",
-               "SLS_CH": "GZG charakteristisch", "SLS_FR": "GZG häufig",
-               "SLS_QP": "GZG quasi-ständig", "USER": "benutzerdefiniert"}
+#: Klartexte der Kombinationstypen und Umhuellenden - seit 03.10.2026 aus dem
+#: gemeinsamen Modul statik3d/begriffe.py, das auch die Oberflaeche liest
+#: (Teilpaket 11b): die Typen in der kurzen, die Umhuellenden in der langen
+#: Form. Bis zum 03.10.2026 fehlte FAT in beiden - eine Umhuellende der
+#: Ermuedung hiess hier „Umhüllende FAT“, an der Oberflaeche „Umhüllende
+#: Ermüdung“ (Entscheidung der Hauptsitzung: dieselben Begriffe).
+COMBO_TYPES = dict(_BG.TYP_KURZ)
 
-ENVELOPE_NAMES = {"ULS": "Grenzzustand der Tragfähigkeit (GZT)",
-                  "SLS_CH": "Gebrauchstauglichkeit, charakteristisch",
-                  "SLS_FR": "Gebrauchstauglichkeit, häufig",
-                  "SLS_QP": "Gebrauchstauglichkeit, quasi-ständig",
-                  "CASES": "Lastfälle"}
+ENVELOPE_NAMES = {k: b.lang for k, b in _BG.UMHUELLENDE.items()}
 
 KIND_NAMES = {"Querschnitt": "Querschnittsnachweis", "Stabilitaet": "Stabilitätsnachweis",
               "section": "Querschnittsnachweis"}
@@ -685,9 +686,13 @@ class Report:
         m = self.model
         rows: list = []
         titel = f"{name} – {e.quelle_text()}" if e.quelle else name
+        # was in den Hinweisen steht, wenn das Ergebnis nicht passt: Klartext
+        # („Umhüllende GZG charakteristisch“) - bis zum 03.10.2026 der
+        # Schluessel („env:SLS_CH“)
+        quelle = e.quelle_text() if e.quelle else "kein Ergebnis"
         if name == "Stabkräfte":
             if res is None or not hasattr(res, "beam_forces"):
-                return [("note", f"Stabkräfte gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+                return [("note", f"Stabkräfte gibt es zu Lastfall oder Kombination ({quelle}).")]
             rows = [["Element", "N1 [kN]", "N2 [kN]", "Vz1 [kN]", "Vz2 [kN]", "My1 [kNm]",
                      "My2 [kNm]", "Mz max [kNm]", "σ [N/mm²]"]]
             for i, d in sorted(res.beam_forces.items()):
@@ -698,13 +703,13 @@ class Report:
                              fmt(d["sig_max"] / 1e6, 1)])
         elif name == "Auflagerkräfte":
             if res is None or getattr(res, "reactions", None) is None:
-                return [("note", f"Auflagerkräfte gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+                return [("note", f"Auflagerkräfte gibt es zu Lastfall oder Kombination ({quelle}).")]
             rows = [["Knoten", "F_x [kN]", "F_y [kN]", "F_z [kN]", "M_x [kNm]", "M_y [kNm]", "M_z [kNm]"]]
             for n in self._support_nodes():
                 rows.append([str(n)] + [fmt(v / 1e3, 2) for v in res.reactions[n]])
         elif name == "Umhüllende":
             if res is None or not hasattr(res, "extreme_table"):
-                return [("note", f"Eine Umhüllende ist zu nennen (env:…), nicht {e.quelle or 'nichts'}.")]
+                return [("note", f"Hier gehört eine Umhüllende hin, nicht {quelle if e.quelle else 'nichts'}.")]
             rows = [["Element", "Größe", "min", "aus", "max", "aus"]]
             for el, k, mn, c1, mx, c2 in res.extreme_table():
                 rows.append([str(el), k, fmt(mn / 1e3, 2), str(c1), fmt(mx / 1e3, 2), str(c2)])
@@ -718,14 +723,14 @@ class Report:
             rows = [list(map(str, r)) for r in self.fatigue.table()]
         elif name == "Kontakt":
             if res is None or not getattr(res, "contact", None):
-                return [("note", f"Kontaktergebnisse gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+                return [("note", f"Kontaktergebnisse gibt es zu Lastfall oder Kombination ({quelle}).")]
             rows = [["Knoten", "Paar", "Art", "Zustand", "F_n [kN]", "F_t [kN]", "Spalt [mm]"]]
             for c in res.contact:
                 rows.append([str(c["node"]), str(c.get("label", "")).split(":")[0], c["kind"], c["status"],
                              fmt(c["Fn"] / 1e3, 2), fmt(c["Ft"] / 1e3, 2), fmt(c["gap"] * 1e3, 3)])
         elif name == "Kontaktpaare":
             if res is None or not getattr(res, "contact", None):
-                return [("note", f"Kontaktkräfte gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+                return [("note", f"Kontaktkräfte gibt es zu Lastfall oder Kombination ({quelle}).")]
             from .. import spannungen as spn
             rows = [self._kontaktpaar_kopf()]
             for k in spn.kontaktkraefte(m, res):
@@ -1545,15 +1550,8 @@ class Report:
         b.append(self._h(2, "Kombinationen"))
         if m.combinations:
             # die gerechnete Theorie, nicht die eingestellte (Befund B132)
+            # der Typ steht schon im Klartext (combination_table, 03.10.2026)
             rows = combination_table(m, self._theorie_spalte)
-            head = list(rows[0])
-            head[1] = "Typ"
-            body = []
-            for r in rows[1:]:
-                r = list(r)
-                r[1] = COMBO_TYPES.get(r[1], r[1])
-                body.append(r)
-            rows = [head] + body
             rows, note = self._truncate(rows)
             b.append(("table", rows, "Lastfallkombinationen (Faktoren je Lastfall)", None,
                       "compact"))
@@ -2404,7 +2402,7 @@ class Report:
         if self.opt("envelopes") and self.envelopes:
             b.append(self._h(2, "Umhüllende"))
             for key, env in self.envelopes.items():
-                b.append(self._h(3, f"Umhüllende {ENVELOPE_NAMES.get(key, key)}"))
+                b.append(self._h(3, f"Umhüllende {_BG.umhuellende_lang(key)}"))
                 b.append(("p", f"Extremwerte aus {len(env.names)} Ergebnissen: "
                                + ", ".join(env.names[:30])
                                + (" …" if len(env.names) > 30 else "") + "."))
@@ -4129,7 +4127,7 @@ class Report:
                 best = (key, float(um[i]), i)
                 break
         if best is not None:
-            kv.append((f"max. Verschiebung ({ENVELOPE_NAMES.get(best[0], best[0])})",
+            kv.append((f"max. Verschiebung ({_BG.umhuellende_lang(best[0])})",
                        f"{best[1] * 1e3:.3f} mm am Knoten {best[2]}"))
         else:
             gname, gres = self._governing_result()

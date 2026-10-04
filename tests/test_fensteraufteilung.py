@@ -281,8 +281,12 @@ def _reiter_klick(leiste, i: int, doppelt: bool = False):
     """Ein echter (Doppel-)Klick auf den Reiter i einer QTabBar. Gegenpruefung
     25.09.2026: tabBarDoubleClicked.emit() allein verbarg, dass QTabBar nach
     dem Doppelklick selbst noch einen Klick sendet."""
+    _klick_bei(leiste, leiste.tabRect(i).center(), doppelt)
+
+
+def _klick_bei(leiste, p, doppelt: bool = False):
+    """Ein echter (Doppel-)Klick auf die Stelle *p* eines Widgets."""
     from PySide6 import QtCore, QtTest
-    p = leiste.tabRect(i).center()
     if doppelt:
         # wie vom Betriebssystem: Druecken, Loslassen, Doppelklick, Loslassen -
         # QTest.mouseDClick allein sendet nur das Doppelklick-Ereignis
@@ -407,23 +411,50 @@ def test_kompaktstufe():
     kopf = w.menuWidget().height()
     check("1366 x 768 (unter 900 px Höhe): Kompaktstufe, Ribbon eingeklappt",
           an.kompakt and w.ribbon.eingeklappt() and kopf <= 80, f"Kopf {kopf} px")
-    check("… unten nur die Registerzeile (höchstens 40 px)",
-          w.unten_dock.height() <= 40 and an.unten_eingeklappt(), f"{w.unten_dock.height()} px")
+    check("… unten nur die Kopfzeile mit Gruppe, Reitern und Knöpfen (höchstens 40 px)",
+          w.unten_dock.height() <= 40 and an.unten_eingeklappt() and w.tab_unten.kopf.isVisible(),
+          f"{w.unten_dock.height()} px")
     check("… der Ansichtswürfel ist kleiner, die Farbskala waagerecht",
           w.ansichtswuerfel.width() < breite_wuerfel and w._farbskala().get("vertical") is False,
           f"Würfel {breite_wuerfel} -> {w.ansichtswuerfel.width()} px")
     bb, hh = _ansicht(w)
     check("… die Ansicht hat mindestens 30 % der Fensterfläche",
           bb * hh >= 0.30 * w.width() * w.height(), f"{bb} x {hh} = {100 * bb * hh / (w.width() * w.height()):.1f} %")
-    leiste = w.tab_unten.leiste
+    # Seit 03.10.2026 (10b) stehen Gruppe (Aufklappfeld) und Reiter in einer
+    # Kopfzeile. Das Programm startet mit der Gruppe Protokoll, die keinen
+    # Reiter hat: geklickt wird dort auf eine freie Stelle des Kopfes
+    # (Gegenpruefung L1 - vorher liess sich der Bereich so nicht umschalten)
+    from PySide6 import QtCore
+    tu = w.tab_unten
+    p = QtCore.QPoint(tu.gruppenwahl.geometry().right() + 40, tu.kopf.height() // 2)
+    check("… unten steht die Gruppe Protokoll ohne Reiter, rechts vom Aufklappfeld ist der Kopf frei",
+          tu.currentGroup() == "Protokoll" and tu.reiter.isHidden() and tu.kopf.childAt(p) is None
+          and p.x() < tu.kopf.width(),
+          f"{tu.currentGroup()}, Reiter verborgen {tu.reiter.isHidden()}")
+    _klick_bei(tu.kopf, p)
+    check("Protokoll: ein Klick auf den Kopf unten klappt den Bereich auf",
+          not an.unten_eingeklappt() and w.unten_dock.height() >= 150 and w.log.isVisible(),
+          f"{w.unten_dock.height()} px")
+    _klick_bei(tu.kopf, p, doppelt=True)
+    check("… ein echter Doppelklick auf den Kopf wieder zu",
+          an.unten_eingeklappt() and w.unten_dock.height() <= 40, f"{w.unten_dock.height()} px")
+    _klick_bei(tu.kopf, p, doppelt=True)
+    check("… und ein echter Doppelklick auf den eingeklappten Kopf wieder auf",
+          not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
+    an.unten_einklappen(True)
+    _ruhe(6)
+    # dasselbe mit den Reitern einer Gruppe, die welche hat
+    tu.zeigen("Knoten")
+    _ruhe()
+    leiste = tu.reiter
     _reiter_klick(leiste, 1)
-    check("ein Klick auf eine Gruppe unten klappt den Bereich auf",
+    check("ein Klick auf einen Reiter unten klappt den Bereich auf",
           not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
     _reiter_klick(leiste, 1, doppelt=True)
-    check("… ein echter Doppelklick auf die Leiste wieder zu",
+    check("… ein echter Doppelklick auf die Reiter wieder zu",
           an.unten_eingeklappt() and w.unten_dock.height() <= 40, f"{w.unten_dock.height()} px")
     _reiter_klick(leiste, 1, doppelt=True)
-    check("… und ein echter Doppelklick auf die eingeklappte Leiste wieder auf",
+    check("… und ein echter Doppelklick auf die eingeklappten Reiter wieder auf",
           not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
     an.unten_einklappen(True)
     _ruhe(6)
@@ -911,14 +942,24 @@ def _kind_baum():
                 ab += 1
                 beispiele.append(text)
         it += 1
+    # „nur_anlegen“ prueft alle abgeschnittenen Zeilen, nicht nur die ersten
+    # sechs der Beispiele (Nachbesserung 03.10.2026, Teilpaket 8c)
     print("MESSUNG " + json.dumps({"baum": b.width(), "eintraege": n, "abgeschnitten": ab,
                                    "beispiele": beispiele[:6], "ansicht": list(_ansicht(w)),
+                                   "nur_anlegen": all("anlegen" in t or t.startswith("+") for t in beispiele),
                                    "fenster": [w.width(), w.height()]}), flush=True)
 
 
 #: am Stand 562dc3a (Baum 290 px) bei 1366 x 768 mit Segoe UI: 6 von 196
 #: Namen abgeschnitten, alle „+ … anlegen“ (Gegenpruefung 25.09.2026)
 BAUM_ABGESCHNITTEN_ALT = 6
+#: Seit Teilpaket 8c (03.10.2026) ist der Baum nach Gruppen geordnet, und
+#: alles steht eine Ebene tiefer. Die Einrueckung ist darum 10 statt 14 px
+#: (Modellbaum.__init__): am Stand vor 8c waren 3 Zeilen abgeschnitten, mit
+#: den Gruppen und 14 px 7, mit 10 px 2 (gemessen 03.10.2026, Gegenpruefung
+#: baum_breite.py). Die Grenze bleibt die des Stands vor 8c; abgeschnitten
+#: sein duerfen nur Zeilen „+ … anlegen“ (geprueft ueber alle Zeilen).
+BAUM_ABGESCHNITTEN = 3
 
 
 def test_baum_namen_lesbar():
@@ -928,9 +969,10 @@ def test_baum_namen_lesbar():
     fonts = r"C:\Windows\Fonts"
     extra = {"QT_QPA_FONTDIR": fonts} if os.path.isdir(fonts) else {}
     e = _bildschirm_lauf(1366, 768, arg="--baum", env_extra=extra)
-    ok = e is not None and e["eintraege"] >= 150 and e["abgeschnitten"] <= BAUM_ABGESCHNITTEN_ALT
-    check(f"1366 x 768, Beispiel hall aufgeklappt: höchstens {BAUM_ABGESCHNITTEN_ALT} Namen abgeschnitten "
-          "(so viele wie am Stand 562dc3a)", ok and all("anlegen" in t or t.startswith("+") for t in e["beispiele"]),
+    ok = e is not None and e["eintraege"] >= 150 and e["abgeschnitten"] <= BAUM_ABGESCHNITTEN
+    check(f"1366 x 768, Beispiel hall aufgeklappt: höchstens {BAUM_ABGESCHNITTEN} Zeilen abgeschnitten, alle "
+          f"„+ … anlegen“ (so viele wie vor 8c, trotz der Gruppenebene)",
+          ok and e.get("nur_anlegen") and all("anlegen" in t or t.startswith("+") for t in e["beispiele"]),
           str(e)[:200])
     if e is not None:
         fb, fh = e["fenster"]
@@ -950,8 +992,8 @@ def test_handbuch():
           "Nur Ansicht" in b and "Strg+F1" in b and "Anordnung zurücksetzen" in b
           and "einstellungen.json" in b and "Doppelklick" in b, b[:80])
     c = absatz("**Kompaktstufe**")
-    check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Registerzeile, Würfel, Farbskala",
-          "900 px" in c and "700 × 400" in c and "Registerzeile" in c and "Würfel" in c
+    check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Kopfzeile unten, Würfel, Farbskala",
+          "900 px" in c and "700 × 400" in c and "nur die Kopfzeile" in c and "Würfel" in c
           and "waagerecht" in c, c[:80])
     # Nachbesserung nach der Gegenpruefung (25.09.2026)
     check("Handbuch: Baum mindestens 260 px, Zusatzspalte höchstens ein Viertel",

@@ -41,6 +41,7 @@ import numpy as np
 from .einheiten import Einheiten
 from .plastizitaet import Plastizitaet
 from . import elemente as _EL
+from .begriffe import anzahl, umhuellende_kurz
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
@@ -2027,8 +2028,10 @@ class Berichtseintrag:
 
     def quelle_text(self) -> str:
         art, _, wert = (self.quelle or "").partition(":")
+        # die Umhuellende im Klartext („Umhüllende GZT“), die Quelle bleibt
+        # der Schluessel env:ULS (03.10.2026, Teilpaket 11b)
         return {"case": f"Lastfall {wert}", "combo": f"Kombination {wert}",
-                "env": f"Umhüllende {wert}", "modal": f"Eigenform {wert}",
+                "env": umhuellende_kurz(wert), "modal": f"Eigenform {wert}",
                 "buckling": f"Knickfigur {wert}"}.get(art, self.quelle or "-")
 
 
@@ -2640,13 +2643,17 @@ class Kontaktbedingung:
         unter ``releasedSurfaces`` die ganze Aussenhaut des Koerpers und nicht
         die Fuge; die Fuge sind die zugeordneten Flaechen.
         """
+        # Einzahl bei einer Fläche (Teilpaket 11c, 03.10.2026): bis dahin
+        # „V1 an 1 Flächen“
+        def flaechen(n, wort="Fläche"):
+            return f"{n} {wort if n == 1 else wort + 'n'}"
         if self.flaechennamen:
-            return f"{len(self.flaechennamen)} Kontaktflächen"
+            return flaechen(len(self.flaechennamen), "Kontaktfläche")
         if self.koerpernamen and self.gegenflaechen:
-            return (f"{', '.join(self.koerpernamen)} an {len(self.gegenflaechen)} Flächen")
+            return (f"{', '.join(self.koerpernamen)} an {flaechen(len(self.gegenflaechen))}")
         if self.gegenflaechen:
-            return f"{len(self.gegenflaechen)} zugeordnete Flächen"
-        return f"{len(self.flaechen)} Flächen"
+            return flaechen(len(self.gegenflaechen), "zugeordnete Fläche")
+        return flaechen(len(self.flaechen))
 
     def bezug(self, model=None) -> str:
         teile = ([self.standard] if self.standard else []) + [self.fuge()]
@@ -3046,14 +3053,14 @@ class Subsystem:
     beschreibung: str = ""
 
     def bezug(self) -> str:
-        t = f"{len(self.elemente)} Elemente, {len(self.knoten)} Knoten"
+        t = f"{anzahl(len(self.elemente), 'Element', 'Elemente')}, {len(self.knoten)} Knoten"
         if self.beruehrung:
-            t += f", {len(self.beruehrung)} Berührungselemente"
+            t += f", {anzahl(len(self.beruehrung), 'Berührungselement', 'Berührungselemente')}"
         n_lager = len(self.lager) + len(self.linienlager) + len(self.flaechenlager)
         if n_lager:
             t += f", {n_lager} Lager"
         if self.kontakte:
-            t += f", {len(self.kontakte)} Kontakte"
+            t += f", {anzahl(len(self.kontakte), 'Kontakt', 'Kontakte')}"
         return t
 
 
@@ -3085,6 +3092,9 @@ class Layer:
     #: die Objektarten eines Layers (Feldname, Beschriftung)
     ARTEN = (("koerper", "Volumen"), ("flaechen", "Flächen"), ("staebe", "Stäbe"),
              ("linien", "Linien"), ("knoten", "Knoten"), ("elemente", "Elemente"))
+    #: Einzahl je Art - bezug() schrieb bis zum 03.10.2026 „1 Stäbe, 1 Linien“
+    EINZAHL = {"koerper": "Volumen", "flaechen": "Fläche", "staebe": "Stab",
+               "linien": "Linie", "knoten": "Knoten", "elemente": "Element"}
 
     def leer(self) -> bool:
         return not any(getattr(self, a) for a, _ in self.ARTEN)
@@ -3093,7 +3103,8 @@ class Layer:
         return sum(len(getattr(self, a)) for a, _ in self.ARTEN)
 
     def bezug(self) -> str:
-        teile = [f"{len(getattr(self, a))} {text}" for a, text in self.ARTEN if getattr(self, a)]
+        teile = [f"{len(getattr(self, a))} {self.EINZAHL[a] if len(getattr(self, a)) == 1 else text}"
+                 for a, text in self.ARTEN if getattr(self, a)]
         return ", ".join(teile) or "leer"
 
     def enthaelt(self, art: str, name) -> bool:
@@ -3132,7 +3143,7 @@ class Situation:
     def bezug(self) -> str:
         t = self.stellung if self.stellung else "unbewegt"
         if self.deaktiviert:
-            t += f", {len(self.deaktiviert)} Elemente aus"
+            t += f", {len(self.deaktiviert)} {'Element' if len(self.deaktiviert) == 1 else 'Elemente'} aus"
         else:
             t += ", alles aktiv"
         return t
@@ -5655,7 +5666,6 @@ class Model:
 
         used = set()
         members = []
-        k = len(self.members)
         for start in beams:
             if start in used:
                 continue
@@ -5683,9 +5693,487 @@ class Model:
                     else:
                         chain.insert(0, nx)
                     cur = nx
-            k += 1
-            members.append(self.add_member(f"{prefix}{k}", chain))
+            # naechster freier Name: bis zum 03.10.2026 zaehlte k = len(members)
+            # weiter - nach dem Loeschen von S1 wurde der vorhandene S2 still
+            # ueberschrieben (C14 Nachbesserung F5)
+            members.append(self.add_member(self.naechster_name(prefix, self.members), chain))
         return members
+
+    # -- Staebe mit Nachweis: leere Staebe, Ketten, Zusammenfassen, Teilen --
+    # Teilpaket C14, Nachbesserung 03.10.2026: seit der Befehl „Stab“ jeden
+    # gezeichneten Abschnitt als eigenen Stab mit Nachweis anlegt, sind diese
+    # Faelle der Regelfall und nicht mehr die Ausnahme eines Imports.
+    def _stab_elemente(self, mem) -> list:
+        """Die vorhandenen Elemente eines Stabs (Nummern im Bereich)."""
+        ne = len(self.elements)
+        return [int(e) for e in (mem.elements or []) if 0 <= int(e) < ne]
+
+    def staebe_ohne_element(self) -> list:
+        """Die Staebe ohne vorhandenes Stabelement - etwa nachdem ihr Element
+        geloescht wurde. Der Nachweis nach EC3 uebergeht sie (bis zum
+        03.10.2026 brach er mit IndexError ab, die Berechnung mit ihm)."""
+        return [n for n, mem in self.members.items() if not self._stab_elemente(mem)]
+
+    def staebe_der_elemente(self, elemente) -> dict:
+        """{Stab: [Elemente]} - zu welchen Staeben die genannten Elemente gehoeren."""
+        gefragt = {int(e) for e in elemente}
+        out: dict = {}
+        for name, mem in self.members.items():
+            drin = [int(e) for e in (mem.elements or []) if int(e) in gefragt]
+            if drin:
+                out[name] = drin
+        return out
+
+    def _elementrichtung(self, i: int) -> np.ndarray:
+        e = self.elements[int(i)]
+        d = (np.asarray(self.nodes[int(e.nodes[-1])], float)
+             - np.asarray(self.nodes[int(e.nodes[0])], float))
+        return d / (np.linalg.norm(d) or 1.0)
+
+    #: Elemente, die als Glieder einer Kette zaehlen (C14): Balken und
+    #: Fachwerkstaebe. Seile knicken nicht, Federelemente halten den Knoten.
+    KETTEN_TYPEN = ("beam", "truss")
+
+    def _haltende_richtungen(self) -> dict:
+        """{Knoten: Menge der gehaltenen globalen Verschiebungsrichtungen 0..2}.
+
+        Ein Lager haelt eine Richtung, wenn sein Freiheitsgrad dort wirkt -
+        starr oder als Feder; eine Feder zaehlt als Halt, eine Schwelle gibt es
+        nicht (Benutzerhandbuch, Kapitel 8). Ein Lager nur gegen Drehung haelt
+        keine Verschiebung. Kontaktlager, Kopplungen, Spaltelemente und starre
+        Koerper halten in jeder Richtung (wie bisher)."""
+        out: dict = {}
+
+        def dazu(k, richtungen):
+            out.setdefault(int(k), set()).update(richtungen)
+        for sp in self.supports:
+            dazu(sp.node, {d for d in range(3) if sp.dof_behaviour(d).acts})
+        for grp in (self.line_supports, self.surface_supports):
+            for x in grp:
+                halt = ({d for d in range(3) if x.dof_behaviour(d).acts}
+                        if hasattr(x, "dof_behaviour") else {0, 1, 2})
+                for k in (getattr(x, "nodes", None) or []):
+                    dazu(k, halt)
+        for c in (getattr(self, "contact_supports", None) or []):
+            dazu(c.node, {0, 1, 2})
+        for x in list(getattr(self, "kopplungen", None) or []) + list(getattr(self, "gap_elements", None) or []):
+            dazu(x.node_a, {0, 1, 2})
+            dazu(x.node_b, {0, 1, 2})
+        for sk in (getattr(self, "starrkoerper", None) or []):
+            for k in [sk.master] + list(sk.slaves or []):
+                dazu(k, {0, 1, 2})
+        return out
+
+    def stabketten_frei(self, winkel_tol: float = 1e-3) -> list:
+        """Ketten kollinearer Stabelemente, die an Zwischenknoten ohne Halt
+        quer zur Achse zusammenstossen - je Kette ein Eintrag (C14, Runde 2):
+        {"staebe": Nachweisstaebe, die gewarnt werden, "glieder": alle Glieder
+        in Folge (Stab oder Stabelement ohne Stab), "knoten": die freien
+        Zwischenknoten, "achsen": "yz", "y" oder "z" (Knicken um diese lokale
+        Achse), "zusammenfassbar": ob „Stäbe zusammenfassen“ die Kette zu
+        einem Stab machen kann}.
+
+        Jeder gezeichnete Stab ist ein eigener Stab mit Knicklaenge =
+        Stablaenge (Entscheidung der Hauptsitzung vom 03.10.2026, wie RFEM).
+        Haelt an einem Stoss nichts, knickt die Kette als Ganzes, und die
+        Knicklaenge des einzelnen Stabs liegt auf der unsicheren Seite (Stuetze
+        6 m aus drei Staeben: Ausnutzung 0,2856 statt 0,7969, gemessen in
+        tests.test_befehl_stab). Gewarnt wird je Ausweichrichtung: ein Knoten
+        ist fuer das Knicken um die lokale y-Achse frei, wenn nichts das
+        Ausweichen in lokaler z-Richtung haelt, und umgekehrt - ein Lager nur in
+        Achsrichtung oder nur gegen Drehung haelt nicht. Ein drittes Element am
+        Knoten (Querstab, Schale, Feder) haelt in jeder Richtung. Glieder ohne
+        Nachweis (design = False, Stabelement ohne Stab) gehoeren zur Kette,
+        gewarnt werden die Nachweisstaebe darin - nicht fuer eine Achse, fuer
+        die der Anwender eine feste Knicklaenge gesetzt hat. Gleiche Toleranz
+        wie :meth:`auto_members` (1 - |cos| <= 1e-3).
+
+        Erst die Kandidaten aus den Staeben, ein Durchgang durch alle Elemente
+        nur, wenn es welche gibt - ein Volumenmodell ohne Staebe zahlt nichts."""
+        from .elements import beam3d as _bm
+        if not any(mem.design for mem in self.members.values()):
+            return []
+        ne = len(self.elements)
+        glied_von: dict = {}                 # Element -> Stab
+        for name, mem in self.members.items():
+            for e in mem.elements:
+                if 0 <= int(e) < ne:
+                    glied_von.setdefault(int(e), name)
+        # Stabelemente je Knoten (nur Balken und Fachwerk), dann die Kandidaten:
+        # genau zwei kollineare an einem Knoten, mindestens eines in einem Stab
+        an: dict = {}
+        for i, e in enumerate(self.elements):
+            if e.typ in self.KETTEN_TYPEN and len(e.nodes) >= 2:
+                for k in {int(e.nodes[0]), int(e.nodes[-1])}:
+                    an.setdefault(k, []).append(i)
+        kandidaten = {}
+        for k, els in an.items():
+            if len(els) != 2:
+                continue
+            a, b = els
+            cos = float(np.dot(self._elementrichtung(a), self._elementrichtung(b)))
+            if abs(abs(cos) - 1.0) <= winkel_tol:
+                kandidaten[k] = (a, b)
+        if not kandidaten:
+            return []
+        # ein drittes Element irgendeiner Art am Knoten haelt ihn
+        alle = dict.fromkeys(kandidaten, 0)
+        for e in self.elements:
+            for n in {int(x) for x in e.nodes}:
+                if n in alle:
+                    alle[n] += 1
+        halt = self._haltende_richtungen()
+
+        def glied(i):
+            return ("stab", glied_von[i]) if i in glied_von else ("element", i)
+
+        def frei(k, a, achse):
+            """Ist der Stoss k fuer das Knicken um ``achse`` frei? Die
+            Ausweichrichtung ist lokal z (Knicken um y) bzw. y (um z) des
+            Elements a - gehalten, wenn jede ihrer globalen Komponenten
+            gehalten ist."""
+            e = self.elements[a]
+            T3, _L = _bm.local_axes(self.nodes[int(e.nodes[0])], self.nodes[int(e.nodes[-1])],
+                                    float(getattr(e, "roll", 0.0) or 0.0))
+            v = T3[2] if achse == "y" else T3[1]
+            gehalten = halt.get(k, set())
+            return not all(d in gehalten for d in range(3) if abs(float(v[d])) > 1e-6)
+        stoesse = {k: ab for k, ab in kandidaten.items() if alle[k] == 2}
+        eintraege: dict = {}
+        for achse in ("y", "z"):
+            # Glieder ueber freie Stoesse verbinden
+            eltern: dict = {}
+
+            def wurzel(x):
+                while eltern.setdefault(x, x) != x:
+                    eltern[x] = eltern[eltern[x]]
+                    x = eltern[x]
+                return x
+            knoten_von: dict = {}
+            for k, (a, b) in stoesse.items():
+                ga, gb = glied(a), glied(b)
+                if ga == gb or not frei(k, a, achse):
+                    continue
+                eltern[wurzel(ga)] = wurzel(gb)
+                knoten_von.setdefault(k, (ga, gb))
+            gruppen: dict = {}
+            for k, (ga, _gb) in knoten_von.items():
+                gruppen.setdefault(wurzel(ga), {"knoten": set(), "glieder": set()})
+            for g in list(eltern):
+                r = wurzel(g)
+                if r in gruppen:
+                    gruppen[r]["glieder"].add(g)
+            for k, (ga, _gb) in knoten_von.items():
+                gruppen[wurzel(ga)]["knoten"].add(k)
+            feld = "Lcr_y" if achse == "y" else "Lcr_z"
+            for g in gruppen.values():
+                if len(g["glieder"]) < 2:
+                    continue
+                staebe = sorted(n for art, n in g["glieder"] if art == "stab"
+                                and self.members[n].design and getattr(self.members[n], feld) is None)
+                if not staebe:
+                    continue
+                schluessel = (tuple(staebe), tuple(sorted(g["knoten"])), tuple(sorted(g["glieder"], key=str)))
+                eintraege.setdefault(schluessel, set()).add(achse)
+        out = []
+        for (staebe, knoten, glieder), achsen in eintraege.items():
+            out.append(self._kette_beschreiben(list(staebe), list(knoten), list(glieder),
+                                               "".join(sorted(achsen))))
+        return sorted(out, key=lambda x: (self._natuerlich(x["staebe"][0]), x["knoten"], x["achsen"]))
+
+    @staticmethod
+    def _natuerlich(s) -> list:
+        """Sortierschluessel S2 vor S10."""
+        import re
+        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(s))]
+
+    def _kette_beschreiben(self, staebe: list, knoten: list, glieder: list, achsen: str) -> dict:
+        """Ein Eintrag von :meth:`stabketten_frei`: die Glieder in Folge entlang
+        der Achse und ob „Stäbe zusammenfassen“ die Kette vereinen kann (alle
+        Glieder Staebe mit Nachweis, gleicher Querschnitt, Werkstoff und Art)."""
+        ne = len(self.elements)
+
+        def elemente(g):
+            art, n = g
+            return [int(e) for e in self.members[n].elements if 0 <= int(e) < ne] if art == "stab" else [int(n)]
+        e0 = elemente(glieder[0])[0]
+        p0 = np.asarray(self.nodes[int(self.elements[e0].nodes[0])], float)
+        d = self._elementrichtung(e0)
+
+        def lage(g):
+            return float(np.mean([np.dot(np.asarray(self.nodes[int(k)], float) - p0, d)
+                                  for e in elemente(g) for k in self.elements[e].nodes]))
+        folge = sorted(glieder, key=lage)
+        arten = {(self.elements[e].sec, self.elements[e].mat, self.elements[e].typ)
+                 for g in folge for e in elemente(g)}
+        if len({a[0] for a in arten}) > 1:
+            grund = "verschiedene Querschnitte"
+        elif not all(art == "stab" and self.members[n].design for art, n in folge):
+            grund = "nicht jedes Glied ist ein Stab mit Nachweis"
+        elif len(arten) > 1:
+            grund = "verschiedene Werkstoffe oder Elementarten"
+        elif any(getattr(self.members[n], f) is not None for _a, n in folge for f in ("Lcr_y", "Lcr_z", "L_LT")):
+            grund = "ein Stab der Kette hat eine feste Knick- oder Kipplänge"
+        else:
+            grund = ""
+        return {"staebe": staebe, "glieder": folge, "knoten": knoten, "achsen": achsen,
+                "zusammenfassbar": not grund, "grund": grund}
+
+    def stabkette_text(self, kette: dict) -> str:
+        """Die Warnung zu einer Kette - einmal je Kette, mit ihren Staeben:
+        „Stäbe S1, S2 und S3 bilden eine Kette mit freien Zwischenknoten K1 und
+        K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““. Laesst sich die
+        Kette nicht zusammenfassen (verschiedene Querschnitte, ein Glied ohne
+        Nachweis), raet der Text, die Knicklaenge von Hand zu setzen."""
+        def liste(teile):
+            teile = [str(t) for t in teile]
+            return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
+        namen = []
+        for art, n in kette["glieder"]:
+            if art == "stab":
+                namen.append(n + ("" if self.members[n].design else " (ohne Nachweis)"))
+            else:
+                namen.append(f"Stabelement E{n}")
+        n_staebe = sum(1 for art, _n in kette["glieder"] if art == "stab")
+        vorn = "Stäbe " if n_staebe > 1 else "Stab "
+        if kette["glieder"][0][0] != "stab":
+            vorn = ""
+        kn = kette["knoten"]
+        text = (f"{vorn}{liste(namen)} bilden eine Kette mit "
+                f"{'freiem Zwischenknoten' if len(kn) == 1 else 'freien Zwischenknoten'} "
+                f"{liste(f'K{k}' for k in kn)}")
+        if kette["achsen"] != "yz":
+            text += f" (Knicken um {kette['achsen']})"
+        if kette["zusammenfassbar"]:
+            return text + " – Knicklänge prüfen oder „Stäbe zusammenfassen“"
+        return text + f" – Knicklänge von {liste(kette['staebe'])} prüfen und von Hand setzen ({kette['grund']})"
+
+    def stab_verweise(self, name: str) -> list:
+        """Was auf diesen Stab verweist, im Klartext - ohne die Lasten am Stab
+        (Linienlasten und Vorspannungen vergleicht :meth:`_stablasten`)."""
+        out = []
+        for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            if getattr(g, "art", "") == "stab" and getattr(g, "stab", "") == name:
+                out.append(f"Verformungsnachweis {nm}")
+        for nm, x in (getattr(self, "lasteinleitungen", None) or {}).items():
+            if getattr(x, "stab", "") == name:
+                out.append(f"Lasteinleitung {nm}")
+        for wort, sammlung, feld in (("Subsystem", "subsysteme", "staebe"), ("Layer", "layer", "staebe"),
+                                     ("Wind", "winde", "staebe"), ("Schweißnaht", "schweissnaehte", "staebe")):
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                if name in (getattr(x, feld, None) or []):
+                    out.append(f"{wort} {nm}")
+        for st in (getattr(self, "stellungen", None) or []):
+            if name in (getattr(st, "staebe_aus", None) or []):
+                out.append(f"Stellung {getattr(st, 'name', '')}")
+        return out
+
+    def _stablasten(self, name: str) -> tuple:
+        """Die Lasten am Stab, je Lastfall vergleichbar (ohne Kommentar):
+        Linienlasten (q, q2, System, von, bis) und Vorspannungen (Kraft)."""
+        out = []
+        for fall, lc in self.load_cases.items():
+            for ll in lc.linienlasten:
+                if ll.art == "stab" and ll.ziel == name:
+                    out.append((fall, "Linienlast", tuple(ll.q), None if ll.q2 is None else tuple(ll.q2),
+                                ll.system, float(ll.von), None if ll.bis is None else float(ll.bis)))
+            for v in (getattr(lc, "vorspannungen", None) or []):
+                if getattr(v, "art", "stab") == "stab" and v.ziel == name:
+                    out.append((fall, "Vorspannung", float(v.kraft)))
+        return tuple(sorted(out, key=repr))
+
+    #: Felder eines Stabs, die Nachweise lesen, im Klartext (Meldung von
+    #: „Stäbe zusammenfassen“); was hier fehlt, nennt die Meldung mit seinem Namen
+    STABFELDER = {"design": "Nachweis nach EC3", "aus": "deaktiviert", "beta_y": "β_y", "beta_z": "β_z",
+                  "k_z": "k_z", "k_w": "k_w", "C1": "C1", "load_position": "Lastangriff",
+                  "lt_check": "Biegedrillknicken", "sway_y": "verschieblich um y", "sway_z": "verschieblich um z",
+                  "a_steifen": "Steifenabstand", "starre_endsteife": "starre Endsteife",
+                  "woelb_start": "Wölbung Anfang", "woelb_ende": "Wölbung Ende",
+                  "woelb_check": "Wölbkrafttorsion", "detail_category": "Kerbfall",
+                  "detail_category_shear": "Kerbfall Schub", "kerbfall_vorschlag": "Kerbfall nur Vorschlag",
+                  "fatigue_points": "Spannungspunkte Ermüdung", "consequence": "Schadensfolge",
+                  "assessment": "Bemessungskonzept"}
+
+    @staticmethod
+    def _stabwert(feld: str, wert) -> str:
+        if wert is None:
+            return "–"
+        if isinstance(wert, bool):
+            return "ja" if wert else "nein"
+        if feld.startswith("detail_category"):
+            return f"{float(wert) / 1e6:g} N/mm²"
+        if isinstance(wert, float):
+            return f"{wert:g}".replace(".", ",")
+        return str(wert)
+
+    def staebe_zusammenfassen(self, namen) -> tuple:
+        """Gewaehlte kollineare, zusammenhaengende Staebe zu einem Stab
+        zusammenfassen (Werkzeug „Stäbe zusammenfassen“, C14).
+
+        Es verliert nichts und aendert keine Bedeutung (Runde 2, Grundsatz G1):
+        kann es etwas verlieren oder die Bedeutung einer Angabe aendern, weist
+        es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
+        Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
+        Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
+        Lasten oder Vorspannungen am Stab, und jeder Verweis auf irgendeinen
+        Stab der Kette, auch den ersten (danach meinte er die ganze Kette).
+        Bis zur Runde 2 setzte es feste Laengen still auf β · L zurueck und
+        uebernahm die Parameter des ersten Stabs.
+
+        Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
+        Elemente aller in Reihenfolge; die anderen entfallen. Gleiche
+        Linienlasten gehen mit, um die Laenge der Staebe davor verschoben (die
+        Elementlasten daraus bleiben dieselben); gleiche Vorspannungen bleiben
+        einmal stehen, denn eine Vorspannung wirkt auf jedes Element ihres
+        Stabs. Die Elemente bleiben, wie sie sind: es wird nichts umgedreht,
+        darum muss jeder Stab in Richtung der Kette laufen.
+
+        Rueckgabe (Name, [Hinweise]); ValueError mit den Gruenden, wenn es
+        nicht geht - dann ist nichts geaendert."""
+        namen = list(dict.fromkeys(str(n) for n in namen))
+        if len(namen) < 2:
+            raise ValueError("Mindestens zwei Stäbe wählen")
+        fehlt = [n for n in namen if n not in self.members]
+        if fehlt:
+            raise ValueError("Stab " + ", ".join(fehlt) + " gibt es nicht")
+        leer = [n for n in namen if not self._stab_elemente(self.members[n])]
+        if leer:
+            raise ValueError("Stab " + ", ".join(leer) + " hat kein Stabelement")
+        enden = {}
+        for n in namen:
+            els = self._stab_elemente(self.members[n])
+            for a_, b_ in zip(els, els[1:]):
+                if int(self.elements[a_].nodes[-1]) != int(self.elements[b_].nodes[0]):
+                    raise ValueError(f"Stab {n} läuft nicht durchgehend in einer Richtung (E{a_}, E{b_})")
+            enden[n] = (int(self.elements[els[0]].nodes[0]), int(self.elements[els[-1]].nodes[-1]))
+        anfang, ende = {}, {}
+        for n, (a, b) in enden.items():
+            anfang.setdefault(a, []).append(n)
+            ende.setdefault(b, []).append(n)
+        for knoten, wort in ((ende, "enden"), (anfang, "beginnen")):
+            for k, v in knoten.items():
+                if len(v) > 1:
+                    raise ValueError(f"Stab {' und '.join(v[:2])} {wort} beide an K{k}: einer ist gegen die "
+                                     "Kette gezeichnet - ihn in Richtung der Kette neu zeichnen")
+        kopf = [n for n, (a, _b) in enden.items() if a not in ende]
+        folge = kopf[:1]
+        while folge:
+            weiter = anfang.get(enden[folge[-1]][1], [])
+            if not weiter or weiter[0] in folge:
+                break
+            folge.append(weiter[0])
+        if len(kopf) != 1 or len(folge) != len(namen):
+            raise ValueError("Die Stäbe hängen nicht in einer offenen Kette zusammen")
+        elemente = [e for n in folge for e in self._stab_elemente(self.members[n])]
+        d0 = self._elementrichtung(elemente[0])
+        for e in elemente[1:]:
+            if float(np.dot(d0, self._elementrichtung(e))) < 1.0 - 1e-3:
+                raise ValueError(f"Die Stäbe liegen nicht auf einer Geraden (E{e} knickt ab)")
+        arten = {(self.elements[e].sec, self.elements[e].mat, self.elements[e].typ) for e in elemente}
+        if len(arten) > 1:
+            raise ValueError("Die Stäbe haben verschiedene Querschnitte, Werkstoffe oder Elementarten")
+        # -- G1: was verloren ginge oder seine Bedeutung aenderte, mit Stab und Wert
+        gruende = []
+        fest = []
+        for n in folge:
+            mem = self.members[n]
+            teile = [f"{f} = {self._stabwert(f, float(getattr(mem, f)))} m"
+                     for f in ("Lcr_y", "Lcr_z", "L_LT") if getattr(mem, f) is not None]
+            if teile:
+                fest.append(f"{n}: feste {'Kipplänge' if teile[0].startswith('L_LT') else 'Knicklänge'} "
+                            + ", ".join(teile))
+        if fest:
+            gruende.append("; ".join(fest) + ". Feste Längen gelten für den einzelnen Stab; erst auf β·L "
+                           "zurücksetzen, dann zusammenfassen")
+        felder = [f.name for f in fields(Member) if f.name not in ("name", "elements", "Lcr_y", "Lcr_z", "L_LT")]
+        for f in felder:
+            werte = [getattr(self.members[n], f) for n in folge]
+            if any(w != werte[0] for w in werte[1:]):
+                gruende.append(f"{self.STABFELDER.get(f, f)} verschieden: "
+                               + ", ".join(f"{n} {self._stabwert(f, w)}" for n, w in zip(folge, werte)))
+        lasten = [self._stablasten(n) for n in folge]
+        if any(x != lasten[0] for x in lasten[1:]):
+            def lasttext(n, x):
+                if not x:
+                    return f"{n} keine"
+                t = []
+                for z in x:
+                    if z[1] == "Vorspannung":
+                        t.append(f"Vorspannung {z[2] / 1e3:g} kN in {z[0]}")
+                    else:
+                        t.append(f"Linienlast ({', '.join(f'{q / 1e3:g}' for q in z[2])}) kN/m in {z[0]}")
+                return f"{n} " + ", ".join(t)
+            gruende.append("Lasten am Stab verschieden: " + "; ".join(lasttext(n, x) for n, x in zip(folge, lasten)))
+        for n in folge:
+            verweise = self.stab_verweise(n)
+            if verweise:
+                gruende.append(f"{n} wird verwendet von {', '.join(verweise)} - erst dort lösen")
+        if gruende:
+            raise ValueError(" | ".join(gruende))
+        bleibt = self.members[folge[0]]
+        hinweise = []
+        # gleiche Linienlasten: um die Laenge der Staebe davor verschieben,
+        # „bis zum Ende“ wird die Laenge des alten Stabs
+        lage, s = {}, 0.0
+        for n in folge:
+            L = sum(self.element_length(e) for e in self._stab_elemente(self.members[n]))
+            lage[n] = (s, L)
+            s += L
+        bewegt = 0
+        for lc in self.load_cases.values():
+            for ll in lc.linienlasten:
+                if ll.art == "stab" and ll.ziel in lage:
+                    o, L = lage[ll.ziel]
+                    bis = L if ll.bis is None else min(float(ll.bis), L)
+                    ll.von, ll.bis, ll.ziel = o + max(0.0, float(ll.von)), o + bis, bleibt.name
+                    bewegt += 1
+            # gleiche Vorspannungen: einmal am Stab (sie wirkt auf jedes Element)
+            weg = set(folge[1:])
+            lc.vorspannungen = [v for v in (getattr(lc, "vorspannungen", None) or [])
+                                if not (getattr(v, "art", "stab") == "stab" and v.ziel in weg)]
+        bleibt.elements = elemente
+        for n in folge[1:]:
+            del self.members[n]
+        if bewegt:
+            self.lasten_verteilen()
+            hinweise.append(f"{bewegt} Linienlasten mitgenommen")
+        return bleibt.name, hinweise
+
+    def stabelement_geteilt(self, alt: int, neu: int) -> list:
+        """Das Stabelement ``alt`` wurde geteilt, ``neu`` ist sein anderer Teil
+        (sie teilen einen Knoten): ``neu`` kommt in jeden Stab, zu dem ``alt``
+        gehoert, an seine Stelle entlang der Achse. Rueckgabe: die Staebe.
+
+        Bis zum 03.10.2026 blieb das neue Element ohne Stab, und die Laenge
+        des Stabs halbierte sich („Freie Stabenden anschließen…“). Die
+        Linienlasten des Stabs werden gleich neu verteilt (Runde 2, G4): sonst
+        trug das verkuerzte alte Element seine Elementlast nur noch auf seiner
+        neuen Laenge, und die Rechnung verlor ein Viertel der Last (Balken 8 m,
+        10 kN/m: Auflager 60 statt 80 kN), bis irgendeine andere Last neu
+        verteilt wurde."""
+        alt, neu = int(alt), int(neu)
+        kn_neu = {int(n) for n in self.elements[neu].nodes}
+        out = []
+        for name, mem in self.members.items():
+            els = [int(e) for e in mem.elements]
+            if alt not in els or neu in els:
+                continue
+            i = els.index(alt)
+            vor = els[i - 1] if i > 0 else None
+            nach = els[i + 1] if i + 1 < len(els) else None
+            if nach is not None:
+                hinter = bool(kn_neu & {int(n) for n in self.elements[nach].nodes})
+            elif vor is not None:
+                hinter = not (kn_neu & {int(n) for n in self.elements[vor].nodes})
+            else:
+                hinter = int(self.elements[alt].nodes[-1]) in kn_neu
+            els.insert(i + 1 if hinter else i, neu)
+            mem.elements = els
+            out.append(name)
+        if out and any(ll.art == "stab" and ll.ziel in out
+                       for lc in self.load_cases.values() for ll in lc.linienlasten):
+            self.lasten_verteilen()
+        return out
 
     def berichtsrahmen(self) -> "Berichtsrahmen":
         """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""
@@ -5922,6 +6410,13 @@ class Model:
                     msgs.append(f"FEHLER: Stab '{m.name}': Element {i} existiert nicht")
                 elif self.elements[i].typ not in _EL.STAB_TYPEN:
                     msgs.append(f"FEHLER: Stab '{m.name}': Element {i} ist kein Stabelement")
+        # Teilpaket C14 (03.10.2026): ein Stab ohne Element wird nicht
+        # nachgewiesen; Ketten freier Staebe knicken als Ganzes
+        for n in self.staebe_ohne_element():
+            msgs.append(f"WARNUNG: Stab {n} hat kein Stabelement - er wird nicht nachgewiesen; "
+                        "ihn löschen oder neu zeichnen (oder „Stab aus Stabelementen…“)")
+        for kette in self.stabketten_frei():
+            msgs.append("WARNUNG: " + self.stabkette_text(kette))
         n_loads = sum(lc.n_loads for lc in self.load_cases.values())
         if n_loads == 0:
             msgs.append("WARNUNG: keine Lasten definiert")
@@ -5941,18 +6436,18 @@ class Model:
             # schon **vor** dem Rechnen und mit dem Lastfall dabei.
             for l in lc.face_loads:
                 if not 0 <= int(l.elem) < len(self.elements):
-                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flächenlast auf "
                                 f"Element {l.elem} - das Element gibt es nicht")
                     continue
                 el = self.elements[int(l.elem)]
                 if el.typ in _EL.VOLUMEN_TYPEN:
                     n_s = len(_sl.FLAECHEN[el.typ])
                     if not 0 <= int(l.face) < n_s:
-                        msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                        msgs.append(f"FEHLER: Lastfall '{lc.name}': Flächenlast auf "
                                     f"Element {l.elem} ({el.typ}): Seite {l.face} gibt "
                                     f"es nicht (0..{n_s - 1}) - die Last wirkt nicht")
                 if l.direction is not None and not any(float(x) for x in l.direction):
-                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flächenlast auf "
                                 f"Element {l.elem}: Richtung ist der Nullvektor - "
                                 "die Last wirkt mit 0 N")
             msgs += self._flaechenlasten_ohne_seitenflaeche(lc, _sl)
@@ -5966,7 +6461,7 @@ class Model:
                             "ist der Nullvektor - das Lager kann nie tragen")
         for cp in self.contact_pairs:
             if not cp.master_elements and not cp.master_faces:
-                msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")
+                msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Fläche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne

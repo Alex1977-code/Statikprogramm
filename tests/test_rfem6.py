@@ -14,6 +14,7 @@ Aufruf:  python -m tests.test_rfem6
 """
 import math
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -1189,7 +1190,7 @@ def test_kontaktbedingungen():
         check("die freigegebenen Flaechen sind nicht die Kontaktseite",
               kb.flaechennamen == [], str(kb.flaechennamen))
         check("die Fuge nennt Koerper und zugeordnete Flaechen",
-              kb.fuge() == "V1 an 1 Flächen", kb.fuge())
+              kb.fuge() == "V1 an 1 Fläche", kb.fuge())
         check("das Protokoll sagt, woran getrennt wird",
               "Fuge: der Koerper V1 wird an den 1 zugeordneten Flaechen" in txt,
               next((x for x in log if "Fuge:" in x), "-"))
@@ -1405,9 +1406,18 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
               k_fat.bemessungssituation == "GZT (FAT) - Ermuedung - Zeitpunkt 1",
               k_fat.bemessungssituation)
         check("die andere bleibt GZT", k_gzt.typ == "ULS" and k_gzt.is_uls, k_gzt.typ)
-        check("das Protokoll zaehlt die Arten",
-              "1x FAT" in txt and "2x ULS" in txt,
-              next((x for x in log if "Kombinationen uebernommen" in x), "-"))
+        # seit 03.10.2026 im Klartext (Teilpaket 11b), vorher „1x FAT“, „2x ULS“;
+        # die ganze Meldung einheitlich mit Umlauten (Muster B090: vorher
+        # „uebernommen“ und „Ermuedungssituationen“ neben „Umhüllende Ermüdung“)
+        zeile = next((x for x in log if "Kombinationen übernommen" in x), "")
+        check("das Protokoll zaehlt die Arten im Klartext, ganze Zeile mit Umlauten",
+              re.fullmatch(r"\d+ Kombinationen übernommen \(1x Ermüdung, 2x GZT \(STR/GEO\)\)", zeile),
+              zeile or next((x for x in log if "Kombinationen" in x and "bernommen" in x), "-"))
+        fat_zeile = ("  1 davon sind Ermüdungssituationen (GZT FAT). Sie bekommen eine eigene "
+                     "„Umhüllende Ermüdung“ und gehen **nicht** in die Querschnittsnachweise im "
+                     "GZT ein.")
+        check("die Zeile zur Ermüdung, ganz und mit Umlauten", fat_zeile in log,
+              next((x for x in log if "davon sind Erm" in x), "-"))
         check("und leitet daraus eine Ermuedungslast ab (ein Zustand gegen Null)",
               "Ermüdungslasten" in txt and list(m.fatigue_loads)
               == [c.name for c in m.combinations.values() if c.typ == "FAT"]
@@ -2339,7 +2349,7 @@ def test_lasten_und_kombinationen():
         check("Bemessungssituation uebernommen", k.typ == "ULS", k.typ)
         check("GZG als SLS gefuehrt", m.combinations["GZG selten"].typ == "SLS_CH",
               m.combinations["GZG selten"].typ)
-        check("Zahl genannt", "2 Kombinationen uebernommen" in txt)
+        check("Zahl genannt", "2 Kombinationen übernommen" in txt)
 
         # ---- Netzeinstellungen
         close("Ziellaenge aus mesh.xml", m.netz.ziellaenge, 0.075, 1e-12, " m")

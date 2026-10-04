@@ -85,8 +85,10 @@ def _fenster():
     w._fragen_knoepfe = lambda *a, **k: True
     w._bestaetigen = lambda *a, **k: True
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: (w.fehler_liste.append(str(msg)),
-                                    w.log.appendPlainText("FEHLER: " + str(msg)))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste, protokoll=True)
     w.load_example("hall")
     app.processEvents()
     _FENSTER.update(w=w, app=app)
@@ -858,11 +860,25 @@ def test_lager_zaehlt_einmal():
     _ruhe()
     check("Lagertabelle: ein Klick auf Zeile 0 wählt „Auswahl: 1 Lager“", _reiter(w) == "Auswahl: 1 Lager",
           f"{_reiter(w)!r} {w.sel_lager}")
-    _leeren(w)
-    w._baum_geklickt("lager", "")
+    # Der Zweig waehlt nichts (Teilpaket 8b, 03.10.2026): bis dahin waehlte er
+    # alle Knotenlager, und der Reiter hiess „Auswahl: N Lager“
+    _waehlen(w, lager=[("lager", 0)])
+    w._baum_geklickt("lager", "Knotenlager")
     _ruhe()
+    mk = w.maskenrand.maske
+    check("Zweig „Knotenlager“ (8b): die Auswahl bleibt „Auswahl: 1 Lager“, rechts die Übersicht",
+          w.sel_lager == [("lager", 0)] and _reiter(w) == "Auswahl: 1 Lager"
+          and mk is not None and mk.titel == "Knotenlager", f"{_reiter(w)!r} {w.sel_lager}")
+    # Die Mehrzahl, die bis 8b der Zweig waehlte: alle Knotenlager gewaehlt
+    # heisst „Auswahl: N Lager“ (keine Knoten), und der Zweig laesst sie stehen
+    alle = [("lager", i) for i in range(len(w.model.supports))]
+    _waehlen(w, lager=alle)
     n = len(w.sel_lager)
-    check("Zweig „Knotenlager“: alle Lager, keine Knoten", n > 1 and _reiter(w) == f"Auswahl: {n} Lager",
+    check("alle Knotenlager gewählt: „Auswahl: N Lager“, keine Knoten",
+          n > 1 and _reiter(w) == f"Auswahl: {n} Lager" and len(w.selection) == 0, f"{_reiter(w)!r}")
+    w._baum_geklickt("lager", "Knotenlager")
+    _ruhe()
+    check("… der Zweig „Knotenlager“ lässt sie stehen", w.sel_lager == alle and _reiter(w) == f"Auswahl: {n} Lager",
           f"{_reiter(w)!r}")
     _leeren(w)
 
@@ -894,13 +910,24 @@ def test_register_zieht_in_allen_wegen_nach():
     m = w.model
     m.add_feder_prop("F", [1e6] * 6)
     m.add_element("feder", [0, 1], "S355", "F")
+    # eine zweite Feder an anderen Knoten: der Zweig waehlte bis 8b die Knoten
+    # beider, der Eintrag „F“ nur die seiner Feder
+    m.add_feder_prop("F2", [1e6] * 6)
+    m.add_element("feder", [2, 3], "S355", "F2")
     w.refresh_all()
     _leeren(w)
-    w._baum_geklickt("federn", "")
+    # Der Eintrag „F“ (bis zum 03.10.2026 waehlte auch der Zweig „Federn“ die
+    # Knoten aller Federn; seit 8b waehlt ein Zweig nichts)
+    w._baum_geklickt("feder", "F")
     _ruhe()
-    check("Baum, Zweig „Federn“: die Knoten der Feder sind gewählt und das Register nennt sie",
-          len(w.selection) >= 2 and _reiter(w) == f"Auswahl: {len(w.selection)} Knoten",
+    check("Baum, Eintrag „F“ unter „Federn“: die Knoten der Feder sind gewählt und das Register nennt sie",
+          sorted(int(i) for i in w.selection) == [0, 1] and _reiter(w) == "Auswahl: 2 Knoten",
           f"{_reiter(w)!r} {list(w.selection)}")
+    vorher = (list(w.selection), _reiter(w))
+    w._baum_geklickt("federn", "Federn")
+    _ruhe()
+    check("… der Zweig „Federn“ lässt diese Auswahl stehen (8b)",
+          (list(w.selection), _reiter(w)) == vorher, f"{_reiter(w)!r} {list(w.selection)}")
     # d) Klickmodus einer Maske (Randlinien einer Flaeche)
     _leeren(w)
     w.maskenrand.schliessen()
@@ -1039,26 +1066,28 @@ def test_klick_waehlt():
     _leeren(w)
     w.ribbon.zeigen("Geometrie")
     w.auswahlart_setzen("Stab")
-    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe")
+    # ersetzen=True ist der Klick ohne Taste, ersetzen=False Strg+Klick: dazu oder
+    # heraus (seit 03.10.2026, tests/test_klickauswahl.py)
+    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe", ersetzen=True)
     _ruhe()
     check("Klick auf einen Stab: Register „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
     reg = w.ribbon._kontext
-    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe")
+    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe", ersetzen=False)
     _ruhe()
-    check("… zweiter Stab: dasselbe Register, „Auswahl: 2 Stäbe“",
+    check("… Strg+Klick auf einen zweiten Stab: dasselbe Register, „Auswahl: 2 Stäbe“",
           w.ribbon._kontext is reg and _reiter(w) == "Auswahl: 2 Stäbe", repr(_reiter(w)))
-    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe")
+    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe", ersetzen=False)
     _ruhe()
-    check("… einen abgewählt: „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
-    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe")
+    check("… Strg+Klick wählt einen ab: „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
+    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe", ersetzen=False)
     _ruhe()
-    check("… den letzten abgewählt: kein Register", w.ribbon._kontext is None and _vorn(w) == "Geometrie",
+    check("… Strg+Klick wählt den letzten ab: kein Register", w.ribbon._kontext is None and _vorn(w) == "Geometrie",
           f"{_reiter(w)!r} vorn {_vorn(w)}")
     # intelligente Auswahl: der Zug kommt mit, der Reiter zaehlt ihn
     alt = w.act_klug.isChecked()
     w.act_klug.setChecked(True)
     try:
-        w._objekt_umschalten_klug(w.sel_staebe, "Riegel", "Stäbe", w._stabenden())
+        w._objekt_umschalten_klug(w.sel_staebe, "Riegel", "Stäbe", w._stabenden(), ersetzen=True)
     finally:
         w.act_klug.setChecked(alt)
     _ruhe()
@@ -1067,15 +1096,15 @@ def test_klick_waehlt():
           n >= 1 and _reiter(w) == f"Auswahl: {n} {'Stab' if n == 1 else 'Stäbe'}", f"{n}: {_reiter(w)!r}")
     _leeren(w)
     w.auswahlart_setzen("Lager")
-    w._lager_umschalten(("lager", 0))
+    w._lager_umschalten(("lager", 0), ersetzen=True)
     _ruhe()
     check("Klick auf ein Lager: „Auswahl: 1 Lager“", _reiter(w) == "Auswahl: 1 Lager", repr(_reiter(w)))
-    w._lager_umschalten(("lager", 0))
+    w._lager_umschalten(("lager", 0), ersetzen=False)
     _ruhe()
-    check("… nochmal: abgewählt, kein Register", w.ribbon._kontext is None, repr(_reiter(w)))
+    check("… Strg+Klick noch einmal: abgewählt, kein Register", w.ribbon._kontext is None, repr(_reiter(w)))
     w.auswahlart_setzen("Last")
     fall = next(n for n, c in w.model.load_cases.items() if c.beam_loads)
-    w._last_waehlen(fall, "beam_loads", 0)
+    w._last_waehlen(fall, "beam_loads", 0, ersetzen=True)
     _ruhe()
     check("Klick auf eine Last: „Auswahl: 1 Last“", _reiter(w) == "Auswahl: 1 Last", repr(_reiter(w)))
     w._klick_ins_leere()

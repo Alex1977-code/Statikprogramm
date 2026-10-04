@@ -108,13 +108,13 @@ Fünfzehn Register nach Arbeitsschritt:
 | Register | Inhalt |
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
-| **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
+| **Start** | der Arbeitsablauf in einer Reihe: Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen (mit den Prüfwerkzeugen *Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…*, *Freie Bewegungen suchen*), Berechnen, Ergebnisse, Nachweise EC3, Bericht; am Ende das Menü *Bearbeiten ▾* (Rückgängig, Wiederholen, Auswahl) |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, das ist der Stab mit Nachweis samt seinem Stabelement; Stabzug; *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen, Stab aus Stabelementen…, Stäbe zusammenfassen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, **Kontakt** (mit *Alle Kontakte löschen…*), **Fugen / Passungen** (Spalt / Toleranz, Kontaktbedingung, Kontaktfugen ausführen, Passung, Übermaß, Spiel geben), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | **Lastfälle** (Lastfälle, Lastfälle nach DIN 19704, Ermüdungslasten), **Kombinationen** (*EN 1990…* und *DIN 19704* nebeneinander), Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen; **Elemente** (Stabelement: ein einzelnes finites Stabelement ohne Stab, seit 03.10.2026) |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, Stellung anlegen, Einstellungen, Bedienung im Browser |
 | **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
 | **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
@@ -122,6 +122,52 @@ Fünfzehn Register nach Arbeitsschritt:
 | **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher (F1), **Tastenkürzel** (die Liste aller Kürzel), Info, Update |
+
+**Das Register Start ist der Arbeitsablauf** (seit 03.10.2026). Von links nach
+rechts stehen die elf Befehle, mit denen man ein Modell aufbaut und auswertet,
+in Gruppen nach Arbeitsschritt: in *Modell* **Knoten** und **Stab**, in *Lager*
+das **Knotenlager**, in *Lasten* die **Linienlast** und die **Lastfälle**, in
+*Netz* **Vernetzen**, in *Prüfen* **Prüfen** (daneben die drei Prüfwerkzeuge
+*Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…* und *Freie
+Bewegungen suchen*), in *Rechnen* der blaue Knopf **Berechnen** und in
+*Auswerten* **Ergebnisse**, **Nachweise EC3** und **Bericht**. Es sind
+dieselben Befehle wie in den Fachregistern, keine neuen: Jeder Knopf führt
+dieselbe Aktion wie sein Original (*Geometrie → Knoten*, *Struktur → Stab*,
+*Lager / Kontakt → Knotenlager*, *Lasten → Linienlast* und *Lastfälle*, *Netz →
+Vernetzen*, *Ergebnisse → Ergebnisse*, *Nachweise → Nachweise EC3*, *Bericht →
+Bericht*), also dieselbe Funktion mit demselben Symbol, demselben Hinweis und
+demselben Tastenkürzel. F5 und Strg+R bleiben bei ihren Befehlen, ein Kürzel
+ist nicht dazugekommen, und die Befehlssuche führt weiter zum Original. Ganz
+rechts steht das Menü **Bearbeiten ▾** mit *Rückgängig*, *Wiederholen*, *Alles
+deselektieren*, *Alles auswählen*, *Auswahl umkehren* und dem Schalter
+*Intelligente Auswahl*. Rückgängig und Wiederholen stehen außerdem in der
+Schnellzugriffsleiste oben links, *Alles deselektieren* und *Intelligente
+Auswahl* in der Glasleiste über der Ansicht; es sind dieselben Aktionen, ein
+Schalter zeigt darum an allen Stellen denselben Zustand. **Bis zum 03.10.2026**
+hatte das Register Start die Gruppen *Zwischenablage* (Rückgängig und
+Wiederholen als große Knöpfe), *Auswahl* (*Alles deselektieren* groß, dazu
+*Alles auswählen*, *Auswahl umkehren* und *Intelligente Auswahl*), *Modell
+prüfen* und *Berechnen*, aber keinen der Befehle zum Aufbau des Modells; die
+standen nur in ihren Fachregistern. Das Menü *Bearbeiten ▾* ersetzt die beiden
+ersten Gruppen, weil der Ablauf allein schon den größten Teil der Breite
+braucht: Die sechs Befehle als kleine Knöpfe in zwei Spalten hätten das
+Register auf 1431 px gebracht, bei 1366 px wären Beschriftungen gekürzt
+gewesen („Knotenlager“ bekam 69 von 82 px). Mit dem Menü ist das Register
+offscreen mit der Schrift Segoe UI 1224 px breit und passt bei 1366 px und bei
+1280 px (das sind 1920 px bei 150 % Skalierung) ohne gekürzte Beschriftung und
+ohne Rollpfeile; erlaubt sind 97 % der Fensterbreite, bei 1280 px also 1241 px.
+**Bei 1366 × 768 und kleiner ist das Ribbon eingeklappt** (Kompaktstufe, siehe
+*Fensteraufteilung*): Dort kostet jeder Ablaufschritt zwei Klicks, erst auf den
+Reiter *Start*, der das Register vorläufig aufklappt, dann auf den Befehl; danach
+klappt das Register wieder zu. „Passt bei 1366 px“ heißt also: Das Register ist
+breit genug, sobald es aufgeklappt ist, es steht dort aber nicht ständig offen.
+Die Befehlssuche findet die umgezogenen Befehle weiter auch unter den alten
+Gruppennamen („Auswahl“ findet *Alles auswählen*, „Zwischenablage“ findet
+*Rückgängig* und *Wiederholen*, „Modell prüfen“ die drei Prüfwerkzeuge), und
+„Bearbeiten“ nennt in der Trefferliste zuerst das Menü *Bearbeiten ▾* in Start
+und klappt es auf, statt mit Enter die Skizze in *Unterlagen* zu bearbeiten.
+Das Programm startet weiter im Register Start, und nach der Rechnung springt das
+Ribbon wie bisher auf *Ergebnisse*. Geprüft in `tests/test_register_start.py`.
 
 **Reihenfolge der Register und zusammengerückte Gruppen** (seit 02.10.2026).
 Nach dem Rechnen kommt das Ergebnis, danach der Nachweis: *Ergebnisse* steht
@@ -185,11 +231,14 @@ elf große Knöpfe nur diesen Buchstaben: *Übernehmen*, *Prüfen*, *Verschieben
 den Pfeil heraus), *Prüfen* eine Lupe mit Haken, *Verschieben* das Stück mit
 seinem gestrichelten Ziel, *Lot / Projektion* einen Punkt über einer Ebene mit
 Lot und rechtem Winkel, *Spalt / Toleranz* zwei Wände mit einem Doppelpfeil
-dazwischen, *Alle Stellungen* dieselbe Last an drei Orten auf dem Träger,
-*Konfiguration* drei Schieberegler, *Verschluss* die Tafel zwischen zwei
+dazwischen, *Alle Stellungen* einen Arm in drei Stellungen um sein Drehlager
+mit einem Drehpfeil, *Konfiguration* drei Schieberegler, *Verschluss* die Tafel zwischen zwei
 Führungen über dem Wasser mit einem Schwingungspfeil, *Einheiten* ein Lineal,
 *Fenster ▾* ein Fenster mit Seitenbereich und zwei Feldern, *Zuweisen* ein
-Etikett, das einem Stab gegeben wird.
+Etikett, das einem Stab gegeben wird. Für *Alle Stellungen* zeigte die erste
+Zeichnung vom 03.10.2026 noch dieselbe Last an drei Orten auf einem Träger; das
+las sich wie eine Last, darum trägt der Knopf seit demselben Tag den Arm um das
+Drehlager.
 
 Die fünf Knöpfe *Vorspannung*, *Übermaß*, *Spiel geben*, *Passung* und *Wind*
 trugen bis zum 03.10.2026 alle dasselbe Symbol, die Pfeilreihe der Lasten, und
@@ -239,7 +288,8 @@ den genannten.
 Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
-**Befehlssuche** (Strg+F setzt den Cursor hinein): Namen eintippen, darunter
+**Befehlssuche** (Strg+F setzt den Cursor hinein; nur im Modellbaum öffnet
+Strg+F seine Filterzeile): Namen eintippen, darunter
 erscheint die Trefferliste mit dem Ort jedes Befehls („Spiel geben   (Lager /
 Kontakt › Fugen / Passungen)“). Gesucht wird
 am **Wortanfang** — „spiel“ findet „Spiel geben“, aber nicht die Gruppe
@@ -272,8 +322,8 @@ drei „+ … anlegen“. Der rechte Bereich bekommt 460 px, der untere Bereich
 25 % der Höhe; Baum und
 rechter Bereich reichen über die **volle Höhe** vom Ribbon bis zur
 Statusleiste, der untere Bereich steht nur unter der Ansicht und hat keine
-eigene Titelzeile mehr („Protokoll und Tabellen“) — die Gruppenleiste sagt
-dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
+eigene Titelzeile mehr („Protokoll und Tabellen“) — das Aufklappfeld der
+Gruppe in seiner Kopfzeile sagt dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
 die Maße der Fenstergröße; wer eine zieht, behält seine Maße. Bei 1920 × 1080
 hat die Ansicht so 1137 × 610 px statt 1142 × 470 px (maximiert), bei
 1366 × 768 630 × 639 px statt 588 × 158 px (offscreen gemessen, Prüfung
@@ -284,7 +334,13 @@ führt es bis dahin als offen. Eine Maske mit breiten Zeilen (Wind,
 Kontaktbedingung) macht den rechten Bereich nicht mehr breiter: ihre Mitte
 rollt dann auch waagerecht — bis zum 24.09.2026 zog die Windmaske ihn auf
 1170 px, die Ansicht blieb bei 128 px. Reicht die Breite unten nicht für die
-Knopfzeilen der Tabellen, rollt der untere Bereich waagerecht.
+Knopfzeile unter einer Tabelle, rollt nur diese Zeile waagerecht. Bis zum
+03.10.2026 rollte der ganze untere Bereich samt Kopfzeile, und die breiteste
+Knopfzeile aller Tabellen (Bericht) bestimmte die Breite jeder Tabelle: bei
+1024 × 700 rollte er so bei jeder Tabelle um 250 px. Jetzt rollt dort bei
+manchen Gruppen noch der Kopf um bis zu 26 px, weil Gruppe, ganzer Reiter und
+der Knopf „»“ nicht schmaler werden (mit Segoe UI gemessen; bei 1366 × 768
+rollt nichts, weder vorher noch jetzt).
 
 **Ansicht → Fenster** (Knopf „Fenster ▾“ im Register Ansicht): Schalter
 *Modellbaum zeigen*, *Rechten Bereich zeigen*, *Unteren Bereich zeigen*;
@@ -295,9 +351,11 @@ daneben klickt, etwa in die Ansicht); *Nur
 Ansicht* blendet Baum, rechten und unteren Bereich aus und klappt das Ribbon
 ein, noch einmal gewählt ist alles wie vorher (auch wenn das Fenster
 inzwischen größer oder kleiner geworden ist); *Anordnung zurücksetzen* zeigt
-alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Gruppenleiste
-unten klappt den unteren Bereich auf die Registerzeile zusammen und wieder
-auf. Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
+alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Kopfzeile
+unten — auf einen Reiter oder eine freie Stelle — klappt den unteren Bereich
+auf seine Kopfzeile zusammen und wieder auf, ein einfacher Klick dort klappt
+ihn auf. Das gilt auch beim Protokoll, das keinen Reiter hat und mit dem das
+Programm startet (bis zum 03.10.2026 ging das nur über die Gruppenleiste). Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
 Querschnitte, Werkstoffe, ein Klick auf einen Baumzweig), klappen den Bereich
 auf; nach einer gescheiterten Rechnung steht dort das Protokoll mit der
 FEHLER-Zeile. Bis zum 25.09.2026 wechselte eingeklappt nur die Gruppe in der
@@ -315,8 +373,10 @@ gelten nicht.
 **Kompaktstufe**: Ist das Fenster niedriger als 900 px oder bliebe die
 Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
 1920er-Bildschirm mit 125 % oder 150 % Skalierung, ein schmal gezogenes
-Fenster), ist das Ribbon eingeklappt, unten steht nur die Registerzeile
-(ein Klick auf eine Gruppe klappt den Bereich auf), der Würfel ist kleiner
+Fenster), ist das Ribbon eingeklappt, unten steht nur die Kopfzeile mit
+Gruppe, Reitern und Tabellenknöpfen (ein Klick auf einen Reiter, die Wahl
+einer Gruppe oder der Knopf *Filter* klappt den Bereich auf; bis zum
+03.10.2026 war es die Registerzeile der Gruppen), der Würfel ist kleiner
 und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
 unten links (bis zum 25.09.2026 lag sie auf ihnen, „73.52 Knoten 14“ war
 nicht zu lesen — auch im Berichtsbild aus der Ansicht). Wird das Fenster
@@ -337,27 +397,67 @@ Die Arbeitsfläche in drei Spalten:
   *Bearbeiten…* (eine Sammelmaske für alle, unterschiedliche Werte stehen als
   „verschieden“) und *Löschen* mit **einer** Rückfrage für alle. Was nicht
   gelöscht werden kann, bleibt stehen und der Grund steht in der Meldung.
+
+  **Der Baum ist nach Gruppen geordnet** (seit 03.10.2026, Antworten 2 bis 4
+  vom 24.09.2026). Die oberste Ebene folgt dem Ablauf, in dem man ein Modell
+  aufbaut und rechnet: zuerst die Eigenschaften, auf die Stäbe, Flächen und
+  Volumen verweisen, dann die Geometrie, Lager und Verbindungen, die
+  Einwirkungen, das FE-Netz, die Systeme und Stellungen, die Nachweise, die
+  Ergebnisse, Bericht und Unterlagen und zuletzt die Hilfsobjekte. So ist auch
+  die Navigation in RFEM 6 aufgebaut: dort beginnen die Basisobjekte mit
+  Werkstoffen, Querschnitten und Dicken, und Bemaßungen und Objektselektionen
+  stehen unter den Hilfsobjekten. **„Stab“ meint wie in RFEM den Stab mit
+  Nachweis**: der Zweig *Stäbe* unter *Geometrie* zeigt ihn, die finiten
+  Stabelemente stehen unter *FE-Netz*. Der Rechtsklick bietet darum am Zweig
+  *Stäbe* „Neu: Stab …“ und am Zweig *Stabelemente* „Neu: Stabelement …“.
+  **Der Zweig *Knoten* zeigt nur die Knoten der
+  Konstruktion**, dieselben, die die Ansicht unter *Knoten* zeichnet. Zur
+  Konstruktion gehört jeder Knoten, der an keinem Element eines Flächen- oder
+  Körpernetzes hängt (frei gesetzte Knoten, die Knoten direkt gesetzter
+  Elemente und alle Knoten von Stäben), und jeder Knoten eines Netzes, auf den
+  noch etwas anderes verweist: eine Linie, eine Flächenecke, ein Stab oder
+  eine Feder, ein Knotenlager, eine Knotenlast oder Zwangsverformung, ein
+  einseitiges Lager, ein Spaltelement, eine Punktmasse, ein Dämpfer, ein
+  starrer Körper, eine Lasteinleitung oder eine Verformungsgrenze. Die
+  übrigen Knoten der Flächen- und Körpernetze sind Netzknoten; sie stehen
+  unter *FE-Netz* als **eine Zählzeile** mit ihrer Zahl, und ein Klick darauf
+  holt die Tabelle *Knoten*, in der alle Knoten stehen. Ob das Programm einen
+  Stab beim Anlegen geteilt hat, lässt sich am Modell nicht erkennen; darum
+  stehen auch die Zwischenknoten eines geteilten Stabzugs im Zweig, lieber
+  ein Knoten zu viel als ein selbst gesetzter zu wenig. In der ersten Fassung
+  vom 03.10.2026 galten die Zwischenknoten jedes Stabs aus mehreren Elementen
+  als Netzknoten, und ein Netzknoten mit Last, Masse oder Feder fehlte im
+  Zweig: am Beispiel *Rahmen* blieben nach „Stäbe automatisch erkennen“ 4
+  von 17 Knoten, am Beispiel *Kontakt* fehlte der Lastknoten K10. Bis zum 03.10.2026 hingen Knoten, Linien, Stäbe,
+  Flächen, Volumen, Bemaßungen, Lager, Gelenke, Stellungen und die
+  Nachweisobjekte einzeln an der Wurzel. Der Zweig *Stäbe* führte damals die
+  Stabelemente und darunter die Zweige *Stäbe mit Nachweis* und
+  *Schweißnähte*, Flächen und Volumen trugen ihre Elemente als Unterzweig, und
+  *Knoten* führte auch jeden Netzknoten (in der Liste bis zu 20 000).
+
   Der Baum enthält:
 
-  | Zweig | Inhalt |
+  | Gruppe → Zweig | Inhalt |
   |---|---|
-  | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lastfälle und die Abmessungen |
-  | Knoten | alle Knoten **numerisch untereinander** (K0, K1, …) mit Koordinaten |
-  | Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
-  | Stäbe | zuerst der Zweig **Stäbe mit Nachweis**, darunter alle Stabelemente E0, E1, … |
-  | Flächen | die Flächenobjekte, darunter der Zweig „Flächenelemente“ |
-  | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
-  | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
-  | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
-  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
-  | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
-  | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
-  | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
-  | Einwirkungen | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
-  | Subsysteme → Stellungen → Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen |
-  | Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
+  | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe und Stabelemente, Flächen, Volumen, Lager, Lastfälle und die Abmessungen (bis zum 03.10.2026 hieß die Zeile der Stäbe „Stäbe mit Nachweis“ und stand hinter den Stabelementen) |
+  | **Eigenschaften** → Werkstoffe, Querschnitte, Dicken | die Eigenschaften, auf die Stäbe, Flächen und Volumen verweisen (bis zum 03.10.2026 standen die Querschnitte zuerst) |
+  | **Geometrie** → Knoten | die **Knoten der Konstruktion** numerisch untereinander (K0, K1, …) mit Koordinaten |
+  | Geometrie → Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
+  | Geometrie → Stäbe | die **Stäbe im Sinn von RFEM**, also die Stäbe mit Nachweis; jeder ist eine Kette von Stabelementen |
+  | Geometrie → Flächen, Volumen | die Flächenobjekte und die Volumenkörper |
+  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
+  | Lager und Verbindungen → Verbindungen | Punktmassen, Dämpfer, Federn, starre Körper und Grenzschichten, sobald es welche gibt |
+  | Lager und Verbindungen → Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
+  | Lager und Verbindungen → Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
+  | Lager und Verbindungen → Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
+  | Lager und Verbindungen → Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
+  | **Einwirkungen** → Lastfälle, Kombinationen, Ermüdungslasten, Lastgenerierer | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
+  | **FE-Netz** → Netzknoten, Stabelemente, Flächenelemente, Volumenelemente | die finiten Elemente des Modells, ob vom Vernetzen erzeugt oder direkt gesetzt: die Stabelemente E0, E1, … einzeln, die Flächen- und Volumenelemente mit ihrer Zahl, dazu die Netzknoten als eine Zählzeile |
+  | **Systeme und Stellungen** → Subsysteme, Stellungen, Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen. Zwischen den Subsystemen und den Stellungen bekommt das Volumenmodul später seinen Zweig „Detailmodelle (Volumen)“ |
+  | **Nachweise** → Schweißnähte, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte, gebündelt; die Stäbe mit Nachweis stehen als *Stäbe* unter *Geometrie* |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
-  | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
+  | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
+  | **Hilfsobjekte** → Bemaßungen, Layer | Maße und benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) |
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -388,34 +488,149 @@ Die Arbeitsfläche in drei Spalten:
   Ein anderes Modell erbt von alledem nichts: nach *Datei → Neu*, *Öffnen*,
   einem Beispiel, einem Import, der nicht an das Modell anhängt, und einem
   Modell, das der Browser (Handy) an die Stelle des geöffneten setzt, beginnt
-  der Baum im Grundzustand. Darin sind nur die Wurzel, *Lager* und
-  *Stellungen* aufgeklappt, alles andere ist zu, nichts ist gewählt, und der
-  Baum steht ganz oben. Bis zum 02.10.2026 galt der Zustand eines Zweigs
-  gleichen Namens aus dem vorigen Modell weiter, und *Lager* war nie offen,
-  obwohl es so gedacht war.
+  der Baum im Grundzustand. Darin sind nur die Wurzel, *Geometrie*, *Lager und
+  Verbindungen* mit *Lager* und *Systeme und Stellungen* mit *Stellungen*
+  aufgeklappt, alles andere ist zu, nichts ist gewählt, und der Baum steht
+  ganz oben. Bis zum 03.10.2026 waren es die Wurzel, *Lager* und *Stellungen*,
+  die damals direkt an der Wurzel hingen. Bis zum 02.10.2026 galt der Zustand
+  eines Zweigs gleichen Namens aus dem vorigen Modell weiter, und *Lager* war
+  nie offen, obwohl es so gedacht war.
+
+  **Was in der Ansicht gewählt wird, markiert die Zeile im Modellbaum** (seit
+  03.10.2026). Ein Klick auf einen Knoten, eine Linie, einen Stab, eine Fläche,
+  ein Volumen, ein Stabelement oder ein Lager wählt seine Zeile im Baum, klappt
+  die Zweige darüber auf und rollt sie ins Bild; mit Strg+Klick sind es mehrere
+  Zeilen, und ein Klick ins Leere hebt die Markierung auf. Die Tastatur bleibt
+  in der Ansicht, Entf und die Einzeltasten wirken also weiter dort. Rechts
+  öffnet sich dabei nichts: Das Markieren ist kein Klick in den Baum, es legt
+  keine Maske an und hält auch nicht an der Leiste „Übernehmen | Verwerfen“,
+  wenn rechts eine Maske mit nicht übernommenen Änderungen steht. Ein Netzknoten
+  steht nicht einzeln im Baum; für ihn wird die Zählzeile *FE-Netz →
+  Netzknoten* markiert, für ein Flächen- oder Volumenelement die Zeile
+  *Flächenelemente* oder *Volumenelemente* und für eine Last die Zeile ihrer
+  Lastart unter dem Lastfall. Steht der Eintrag hinter einer Sammelzeile „… N
+  weitere“, lädt der Baum seine Zeile vor der Sammelzeile nach, und die
+  Sammelzeile zählt einen weniger; die Zeile bleibt bis zum nächsten Neuaufbau,
+  und ist sie dann gewählt, wird sie wieder nachgeladen. Gesucht wird in einem
+  Verzeichnis, das der Baum bei jedem Aufbau mitbaut, nicht mehr Zeile für
+  Zeile. Nachgeladene Zeilen stehen an ihrem Platz in der Nummernfolge, K3 also
+  vor K10, auch wenn K10 zuerst kam. Die Markierung im Baum zeigt immer die
+  Auswahl der Ansicht: Das gilt ebenso für die Auswahlbefehle des Ribbons
+  (*Alles auswählen*, *Auswahl umkehren*, die Auswahl nach Koordinaten oder
+  Nummern) und für einen Klick in die Tabellen der Knoten, Linien, Elemente,
+  Flächen, Volumen und Lasten. Wer mehr als 200 Objekte auf einmal wählt, etwa
+  mit *Alles auswählen* oder einem Auswahlfenster über viele Knoten, sieht im
+  Baum keine Markierung. Ist nichts gewählt, nach *Auswahl aufheben*, Esc oder
+  einem Klick ins Leere, hat der Baum auch keine aktuelle Zeile mehr; Entf im
+  Baum löscht dann nichts. Die eine Ausnahme ist ein Klick im Baum selbst: Wählt
+  der Eintrag eines Verformungsnachweises oder eines Anschlusses seine Knoten,
+  bleibt im Baum die angeklickte Zeile markiert und nicht die der Knoten. Bis
+  zum 03.10.2026 ließ ein Klick in der Ansicht den Baum stehen; nur *Im Baum
+  zeigen* im Rechtsklickmenü suchte den Eintrag, und zwar Zeile für Zeile durch
+  den ganzen Baum, legte die Tastatur in den Baum und fand keinen Eintrag hinter
+  „… N weitere“. In der ersten Fassung vom 03.10.2026 ließen die Auswahlbefehle
+  des Ribbons und die Tabellen den Baum noch stehen, und nach *Auswahl
+  aufheben* blieb die alte aktuelle Zeile, die Entf im Baum dann löschte.
+
+  **Filterzeile über dem Modellbaum** (seit 03.10.2026). **Strg+F im
+  Modellbaum** öffnet über dem Baum eine Filterzeile und setzt den Cursor
+  hinein; steht dort schon etwas, ist es markiert. Gefiltert wird, sobald man
+  150 Millisekunden lang nicht weitertippt, nicht bei jedem Buchstaben; Leeren
+  und Esc wirken sofort. Treffer sind Einträge und Zweige, deren Name den Text
+  enthält, gleich ob groß oder klein geschrieben („k1“ findet K1, K10 und
+  K100). Die Zweige darüber bleiben sichtbar und klappen auf. Der Modellname
+  und die Gruppen der obersten Ebene (*Eigenschaften*, *Geometrie*, *Lager und
+  Verbindungen* und so fort) sind nie selbst Treffer; sie stehen nur da, wenn
+  unter ihnen etwas passt. Passt der Name eines Zweigs, etwa „Knoten“ oder
+  „Knotenlager“, bleibt der Zweig mit seiner Zahl sichtbar und zugeklappt;
+  aufgeklappt zeigt er nur die Einträge, die selbst passen. Ein Zweig ohne
+  Treffer verschwindet. Hinter einer Sammelzeile „… N weitere“ sucht der Filter
+  mit und lädt die Treffer als Zeilen nach, wenn es höchstens 500 sind; sind es
+  mehr, lädt er keinen nach, und die Sammelzeile nennt sie („… 1000 weitere
+  Treffer“), bis ein längerer Text sie eingrenzt. Der Baum wirkt nie auf etwas,
+  das der Filter ausblendet: Entf, die Eingabetaste und das Rechtsklickmenü
+  nehmen nur sichtbare Zeilen, und blendet der Filter die aktuelle Zeile aus,
+  wird die erste sichtbare gewählte Zeile aktuell oder gar keine. Wählt man in
+  der Ansicht ein Objekt, das der Filter ausblendet, markiert der Baum nichts,
+  und die Statuszeile sagt es („K3 ist durch den Filter „S1“ ausgeblendet“).
+  Der Filter überlebt
+  jeden Neuaufbau des Baums, etwa nach „Übernehmen“ in einer Maske oder nach
+  Rückgängig; ein anderes Modell (Neu, Öffnen, ein Beispiel) beginnt ohne Filter.
+  **Esc** in der Filterzeile hebt den Filter auf, schließt die Zeile und gibt
+  die Tastatur dem Baum; ein leeres Feld hebt den Filter ebenso auf, die Zeile
+  bleibt dann offen. In beiden Fällen kommt der Aufklappzustand von vor dem
+  Filter wieder, die nachgeladenen Treffer verschwinden (außer gewählten), und
+  der gewählte Eintrag ist zu sehen, auch wenn sein Zweig vor dem Filter zu war;
+  ohne gewählten Eintrag rollt der Baum dorthin, wo er vor dem Filter stand.
+  Pfeil nach unten oder die Eingabetaste in der Filterzeile geben die Tastatur
+  dem Baum und wählen die erste sichtbare Trefferzeile, wie ein Pfeil im Baum
+  (rechts erscheint ihre Maske); Pos1 und Ende springen zum ersten und letzten
+  sichtbaren Eintrag. Überall sonst bleibt Strg+F die Befehlssuche, auch in der
+  Ansicht und in den Feldern einer Maske. Bis zum 03.10.2026 gab es keine
+  Filterzeile, und Strg+F setzte immer den Cursor in die Befehlssuche. In der
+  ersten Fassung vom 03.10.2026 filterte jeder Buchstabe sofort, ein passender
+  Modellname oder Gruppenname ließ alles sichtbar, ein passender Zweigname zeigte
+  alle seine Einträge, Entf und die Eingabetaste wirkten auf eine ausgeblendete
+  aktuelle Zeile, und nachgeladene Zeilen standen in der Folge des Ladens.
 
   **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht ein Zweig nur,
   wenn er **samt allem darunter** leer ist: Zähler 0 und kein Unterzweig mit
-  Inhalt. „Volumen 0“ über „Volumenelementen 960“ (Elemente, die ohne Körper
-  angelegt wurden, wie beim Beispiel Quader, bei Platte, Stauwand und Block mit
-  Reibung) steht darum in der gewöhnlichen Schriftfarbe, ebenso „Flächen 0“ über
-  den Flächenelementen und „Stäbe 0“ über Stäben mit Nachweis oder
-  Schweißnähten. Was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Fett
-  stehen nur Gruppen, also Zweige, die andere Zweige zusammenfassen: der
-  Modellname, *Eigenschaften*, *Lager*, *Verbindungen*, *Kontaktbedingungen*,
-  *Einwirkungen* und *Ergebnisse*. Bis zum 02.10.2026 waren manche gefüllten
+  Inhalt. Was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Seit dem
+  03.10.2026 stehen die Elemente unter *FE-Netz*; bei Elementen, die ohne Körper
+  oder Fläche angelegt wurden (Beispiel Quader, Platte, Stauwand, Block mit
+  Reibung), steht „Volumen 0“ oder „Flächen 0“ darum grau, und die
+  „Volumenelemente 960“ stehen unter *FE-Netz* in der gewöhnlichen Schriftfarbe.
+  Bis zum 03.10.2026 hingen die Elemente unter „Volumen 0“ und „Flächen 0“, und
+  diese Zweige standen deshalb in der gewöhnlichen Schriftfarbe, ebenso „Stäbe
+  0“ über Stäben mit Nachweis oder Schweißnähten. Fett stehen nur Gruppen, also
+  Zweige, die andere Zweige zusammenfassen: der Modellname, die Gruppen der
+  obersten Ebene, *Lager*, *Verbindungen* und *Kontaktbedingungen*. Bis zum
+  02.10.2026 waren manche gefüllten
   Zweige fett oder blau und andere nicht, ohne dass eine Regel dahinterstand,
   und jeder Zweig mit Zähler 0 stand grau, auch über gefüllten Unterzweigen.
   Die Warnfarbe steht nur noch bei Warnungen. Blau stehen die Zeilen
   „+ … anlegen“, und die Flächenkontakte behalten die Farbe ihrer Wirkung (zum
   Beispiel starr grau, nur Druck rot, Zug und Druck blau, wie in der Ansicht).
 
-  **Ein Klick wählt aus** — links im Baum, gleichzeitig in der Ansicht: der
-  Zweig „Knoten“ wählt **alle** Knoten, der Eintrag „K3“ nur diesen; ebenso
-  bei Linien, Stäben, Flächen und Volumen. Die Auswahlart springt mit um.
-  Rechts folgt die Anzeige: beim Zweig eine Info mit **Anzahl** und
-  **kleinster und größter Nummer**, beim Einzelobjekt seine Felder
-  **editierbar** — Nummer und Koordinaten des Knotens, Name und Knoten der
+  **Ein Klick auf einen Zweig wählt nichts.** Ein Zweig meint die Art, etwa
+  „Knoten“, „Werkstoffe“ oder „Bericht“; dazu zählen die Gruppen der obersten
+  Ebene, Unterzweige wie „Knotenlager“ oder „Federn“, die Zählzeile
+  „Netzknoten“, die Ergebnisgruppen und die Zeilen „… N weitere“. Sein Klick
+  lässt die Auswahl in der Ansicht stehen, legt nichts an und öffnet nichts
+  Modales (seit 03.10.2026, Antwort 4 vom 24.09.2026). Rechts steht die
+  **Übersicht** des Zweigs: die Anzahl, eine **Liste** seiner Einträge mit
+  Name und einer kurzen Kennzahl (bei einer Gruppe ihre Zweige mit ihrer
+  Zahl) und, wo es für die Art eine Anlegemaske gibt, der Knopf
+  „Neu: Werkstoff …“ (dieselbe Form wie im Rechtsklick). Die Liste nimmt
+  höchstens 40 Zeilen auf und zeigt bis zu 15 davon ganz, die übrigen rollen.
+  Gibt es mehr Einträge, steht darunter, wo es eine Tabelle zur Art gibt,
+  „… N weitere – alle in der Tabelle“ mit einem Knopf zu ihr, sonst „… N
+  weitere – alle im Modellbaum“. Ein Klick auf eine Zeile der Liste wirkt wie
+  der Klick auf den Eintrag im Baum. Ändert sich das Modell, während die
+  Übersicht offen ist, wird sie neu gefüllt; bis dahin blieb sie stehen,
+  außer nach Rückgängig und Wiederholen. Die Übersicht „Knoten“ zählt
+  dieselben Knoten wie der Zweig, die Knoten der Konstruktion; die Zählzeile
+  „Netzknoten“ nennt die Zahl der Netzknoten und führt zur Tabelle „Knoten“.
+  Unten kommt die Tabelle des Zweigs nach vorn, wo es eine gibt, jetzt auch
+  bei Lastfällen, Kombinationen und Schweißnähten. Die Übersicht von
+  Lastfällen, Kombinationen und Ermüdungslasten trägt einen Knopf zum
+  Register „Lastfälle“, die von Verbindungen, Kontaktbedingungen, Flächen-
+  und Volumenelementen, Ergebnissen und Bericht einen zu ihrem Register, die
+  der Layer einen zur Layerliste. Die Übersicht hat keine Eingabefelder; steht
+  rechts eine Maske mit nicht übernommenen Änderungen, hält auch der
+  Zweigklick an der Leiste „Übernehmen | Verwerfen“. Bis zum 03.10.2026 wählte
+  der Klick auf neun Zweige alle Objekte ihrer Art aus (Knoten, Linien,
+  Stabelemente, Stäbe, Flächen, Volumen und die drei Lagerarten), ebenso die
+  Verbindungen, Liniengelenke, Flächen- und Volumenelemente. Querschnitte,
+  Schweißnähte, Bemaßungen (mit eingeschaltetem Punktfang) und Lastgenerierer
+  öffneten schon beim einfachen Klick ihre Anlegemaske, Layer die Layerliste,
+  Gruppen und Ergebnisse ein Register, und die Übersicht nannte nur Anzahl und
+  Nummernspanne, ohne Liste.
+
+  **Ein Klick auf einen Eintrag wählt aus** — links im Baum, gleichzeitig in
+  der Ansicht: der Eintrag „K3“ wählt diesen Knoten, ebenso bei Linien, Stäben,
+  Flächen und Volumen. Die Auswahlart springt mit um. Rechts stehen die Felder
+  des Objekts **editierbar** — Nummer und Koordinaten des Knotens, Name und Knoten der
   Linie, Querschnitt und Werkstoff des Stabs, Linien der Fläche, Flächen des
   Volumens. Die **Stabmaske** beginnt seit 13.09.2026 mit dem, was man beim
   Anklicken wissen will, zum Lesen: **Knoten** (Anfang → Ende mit
@@ -438,7 +653,10 @@ Die Arbeitsfläche in drei Spalten:
   fortlaufenden Nummer** an (K17, L8, S3, F5, V2); rechts erscheint seine
   Maske mit **OK** und **Abbrechen**. Ein Knoten steht sofort im Modell (bei
   Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück), alles
-  andere entsteht erst mit OK.
+  andere entsteht erst mit OK. Hat die offene Maske noch nicht übernommene
+  Änderungen, entsteht der Knoten erst nach „Übernehmen“ oder „Verwerfen“ in
+  der Leiste oben rechts; „Verwerfen“ in einer Maske „Neu: …“ wirkt wie ihr
+  *Abbrechen*.
 
   **Mit der Tastatur.** Ein Klick in den Baum legt die Tastatur dorthin, und
   sie bleibt dort — auch wenn rechts die Maske des angeklickten Objekts
@@ -480,16 +698,35 @@ Die Arbeitsfläche in drei Spalten:
   Situation, Berichtsbild, Kontaktbedingung …); Lager öffnen ihren Dialog.
 
   **Ein Doppelklick auf einen Zweig** (die Art, etwa „Werkstoffe“ oder
-  „Stäbe mit Nachweis“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
+  „Stäbe“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
   wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
   *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
-  Linien, Stäbe, Stäbe mit Nachweis, Flächen, Volumen, Gelenke, Knotenlager,
+  Linien, Stabelemente (bis zum 03.10.2026 „Stäbe“), Flächen, Volumen,
+  Gelenke, Knotenlager,
   Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
-  Situationen, Subsysteme, Schweißnähte, Bemaßungen und den Wasserdruck.
-  Zweige ohne Anlegemaske — darunter Knoten (dort legt *Neu* sofort einen
-  Knoten an), Linien- und Flächenlager (brauchen erst eine Auswahl), Bericht,
-  Anschlüsse und die Nachweisobjekte — klappen beim Doppelklick nur auf und
-  zu. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
+  Situationen, Subsysteme, Schweißnähte, Bemaßungen, den Wasserdruck und seit
+  dem 03.10.2026 den Bericht: „Neu: Berichtsbild“ fragt Name,
+  Bildunterschrift, Bemerkung und Platz im Bericht ab und nimmt die Ansicht
+  erst mit OK auf. Ihr Feld „zeigt jetzt“ folgt der Ansicht, und ein
+  Ergebnis, das man im Baum anklickt, lässt sie stehen, denn die Ansicht
+  einzustellen ist genau ihr Schritt. Am Zweig *Stäbe* (bis zum 03.10.2026 „Stäbe
+  mit Nachweis“) öffnet der Doppelklick seit 03.10.2026 die Maske *Stab* des
+  gleichnamigen Befehls: Sie hat kein OK, der zweite angeklickte Knoten legt
+  den Stab an; bis dahin kam die Maske „Neu: Stab …“ mit den Elementnummern.
+  Der einfache Klick, den Qt vor jedem
+  Doppelklick meldet, zeigt nur die Übersicht; bis zum 03.10.2026 wählte er dabei schon
+  alle Objekte der Art aus. Ausgenommen sind Zweige, deren *Neu* keine
+  Anlegemaske ist: Knoten (dort legt *Neu* sofort einen Knoten an), Layer
+  (*Neu* fragt in einem eigenen Fenster nach dem Namen und legt den Layer aus
+  der Auswahl an), Unterlagen (*Neu* öffnet das Zeichenfenster einer Skizze)
+  sowie Linien- und Flächenlager (brauchen erst eine Auswahl und fragen in
+  einem eigenen Fenster). Sie, die Zweige ohne *Neu* (Anschlüsse,
+  Nachweisobjekte) und alle Gruppen klappen beim Doppelklick nur auf und zu,
+  die Übersicht bleibt stehen. Das gilt auch für die Gruppe „Lager“: bis zum
+  03.10.2026 öffnete ihr Doppelklick die Anlegemaske des Knotenlagers, weil
+  sie die Art mit „Knotenlager“ teilt. Die Zeilen „+ … anlegen“ sind Befehle und tun beim
+  einfachen Klick, was sie sagen; „+ Ansicht übernehmen“ nimmt die Ansicht
+  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
   Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
   Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
   einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein
@@ -505,7 +742,10 @@ Die Arbeitsfläche in drei Spalten:
   Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
   nennt sie. Eine Maske trägt ihren Titel selbst, die Titelzeile des Bereichs
   darüber entfällt dann. Ist nichts gewählt und kein Befehl aktiv, ist der
-  Bereich leer.
+  Bereich leer. Ein Punkt vor dem Titel („● Knoten K1“) heißt: In der Maske
+  steht etwas, das noch nicht übernommen ist. Eine solche Maske wird nicht
+  still ersetzt, darüber erscheint dann die Leiste „Übernehmen | Verwerfen“
+  (Abschnitt *Maske oder Klick*, seit 03.10.2026).
   Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
   Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
   Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
@@ -526,7 +766,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
-| Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (auch **FAT** für Ermüdung), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
+| Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (im Klartext wie „GZT (STR/GEO)“ oder „GZG häufig“, auch **Ermüdung**; siehe Kapitel 4, *Kombinationstypen und Umhüllende im Klartext*), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt, per **Klick ins Feld** und dann in der Ansicht (seit 15.09.2026) oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 
@@ -551,8 +791,11 @@ Knoten-, Strecken-, Flächen- und Linienlasten, die Temperaturpunkte, Zwangs-
 und Vorspannungspfeile. Die getroffene Last leuchtet gelb, rechts steht ihre
 Maske mit den Werten (Kräfte, q und q2, Abschnitt, p, ΔT, u, F_v) und dem
 Lastfall: Werte ändern und „Übernehmen“, ein anderer Lastfall verschiebt die
-Last dorthin, „Löschen“ nimmt sie heraus. Dasselbe geschieht beim Klick auf
-eine Zeile der Lastentabelle unten.
+Last dorthin, „Löschen“ nimmt sie heraus. Seit dem 03.10.2026 ersetzt der Klick
+in der Ansicht dabei die ganze Auswahl, und Strg+Klick nimmt eine weitere Last
+dazu. Dasselbe geschieht beim Klick auf eine Zeile der Lastentabelle unten, nur
+ersetzt die Zeile nicht die ganze Auswahl: Sie setzt die Last und lässt ihr Ziel
+leuchten, gewählte Objekte anderer Arten bleiben stehen.
 
 **Vorspannung als Last** (*Lasten → Vorspannung*): Stäbe (Zugstange, Seil,
 Anker) oder Volumen (Schraubenschaft) in der Ansicht wählen, die Vorspannkraft
@@ -1028,8 +1271,10 @@ Ansicht ausgewählt ist:
 
 Wonach ein Klick in der Ansicht greift, stellt das Auswahlfeld
 **Geometrie → Auswahl in der Ansicht** ein: *Knoten, Linie, Fläche, Volumen,
-Stab*. Ein zweiter Klick auf dasselbe Objekt nimmt es wieder aus der Auswahl;
-das Gewählte ist orange hervorgehoben.
+Stab*. Ein Klick ersetzt die Auswahl, ein Strg+Klick nimmt das Objekt dazu, und
+ein Strg+Klick auf ein gewähltes Objekt nimmt es wieder heraus (siehe „Auswahl
+per Klick“; bis zum 03.10.2026 nahm schon ein zweiter Klick ohne Taste es
+heraus). Das Gewählte ist orange hervorgehoben.
 
 Fläche und Volumenkörper sind **Geometrie** — sie tragen erst dann Elemente,
 wenn sie **vernetzt** werden (*Vernetzen* in derselben Gruppe, oder das
@@ -1161,10 +1406,19 @@ der Güte 0,1 liegt, steht mit Elementnummer im Protokoll.
 **Netz → Netzknoten** zeigt die Knoten des FE-Netzes als kleine graue
 Punkte — nur, solange das FE-Netz dargestellt ist (*Ansicht → FE-Netz*,
 F9). Der Schalter „Knoten“ im Register *Ansicht* meint die Knoten der
-Konstruktion; Netzknoten sind die Knoten der beim Vernetzen erzeugten
-Elemente, an denen keine Linie und kein Stabende hängt. Ein Modell ohne
-Geometrieobjekte (nur Elemente, etwa ein Import aus Nastran) hat keine
-Netzknoten — seine Knoten sind die Konstruktion.
+Konstruktion; Netzknoten sind die Knoten der Flächen- und Körpernetze, auf
+die außer dem Netz nichts verweist – keine Linie, kein Stab, kein Lager,
+keine Last, keine Masse, keine Feder (die ganze Liste steht beim Modellbaum).
+Ein Modell ohne Flächen- und Körpernetz (nur Elemente, etwa ein Import aus
+Nastran) hat keine Netzknoten — seine Knoten sind die Konstruktion. Der
+Modellbaum teilt die Knoten seit dem 03.10.2026 ebenso: *Geometrie → Knoten*
+führt die Knoten der Konstruktion, *FE-Netz → Netzknoten* ist eine Zählzeile
+für die übrigen. Bis zum 03.10.2026 galten in der Ansicht auch die
+Zwischenknoten jedes Stabs aus mehreren Elementen als Netzknoten, und nur
+Linien, Stabenden und Knotenlager hielten einen Netzknoten in der
+Konstruktion: am Beispiel *Rahmen* blieben nach „Stäbe automatisch erkennen“
+4 von 17 Knoten als Punkt und Nummer, und ein Knoten mit Knotenlast oder
+Punktmasse auf einem Netz hatte keinen Punkt.
 
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
 Ansicht danach ein: grün gut, rot schlecht. Ein FE-Ergebnis ist nur so gut
@@ -1592,8 +1846,9 @@ zur Berechnung gestartet … es wäre gut wenn gerechnete Ergebnisse erhalten
 blieben“). Jetzt stehen die fertigen Lastfälle und Kombinationen nach dem
 Abbruch in der Ergebnisauswahl und im Modellbaum wie nach einem ganzen Lauf.
 Die Statuszeile sagt, was blieb und was offen ist: „Berechnung abgebrochen
-(nach 94 s) - 1 Lastfälle bleiben erhalten, 4 Lastfälle und 72 Kombinationen
-offen“. Zwei Dinge fehlen ausdrücklich, und das Protokoll sagt es:
+(nach 94 s) - 1 Lastfall bleibt erhalten, 4 Lastfälle und 72 Kombinationen
+offen“ (bis zum 03.10.2026 stand dort „1 Lastfälle bleiben erhalten“). Zwei
+Dinge fehlen ausdrücklich, und das Protokoll sagt es:
 
 * **Keine Umhüllenden.** Eine Umhüllende über zwei von fünf Lastfällen sieht
   aus wie eine über alle fünf und wäre schlicht falsch.
@@ -1812,7 +2067,8 @@ sie dazu. Die Kopfzeile sagt es in einer eigenen Zeile: „Lasten ausgeblendet
 *Ergebnisse → Lasten im Ergebnisbild* ein (derselbe Schalter steht in der
 Glasleiste unter *Zeigen ▾*); die Kopfzeile nennt dann den
 Lastfall („Lasten LF1 [kN/m]“). Ausgenommen ist eine **Umhüllende aus genau
-einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie ist
+einem Lastfall**, etwa die „Umhüllende Lastfälle“ (bis zum 03.10.2026
+„Umhüllende CASES“) eines Modells mit nur LF1: sie ist
 dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
 Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
 (Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
@@ -1830,7 +2086,13 @@ höher (die Steuerung hat darum nur drei Zeilen, etwa 96 px). Rechts erscheint
 die Maske *Ergebnisse* — außer eine offene Maske hat noch nicht übernommene
 Änderungen: die **bleibt stehen** (seit 02.10.2026), das Protokoll sagt es, und
 die Ergebnisse stehen im Register *Ergebnisse* und im Modellbaum. Bis dahin
-ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg.
+ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg. Seit dem
+03.10.2026 steht dann über ihr die Leiste „Übernehmen | Verwerfen“ (Kapitel 2,
+*Maske oder Klick*): Einer der beiden Knöpfe zeigt danach die Maske
+*Ergebnisse*. *Übernehmen* wirkt wie der Knopf der Maske: Ändert es etwas, das
+in die Rechnung eingeht, sind die eben gerechneten Ergebnisse verworfen; eine
+geänderte Bezeichnung, Beschreibung oder Bemerkung behält sie. *Verwerfen*
+behält sie immer.
 
 Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
 bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie
@@ -1916,7 +2178,11 @@ Geprüft in `tests/test_ergebnisdarstellung.py`.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
-Modellbaum. Ein Doppelklick auf einen Ergebniseintrag nimmt seit dem
+Modellbaum. Wer Name und Bildunterschrift vorher festlegen will, nimmt am
+Zweig „Bericht“ den Doppelklick oder Rechtsklick → *Neu: Berichtsbild …*:
+rechts öffnet sich eine Anlegemaske, und die Ansicht wird erst mit OK
+aufgenommen (seit 03.10.2026; bis dahin hatte der Zweig kein *Neu*). Ein
+Doppelklick auf einen Ergebniseintrag nimmt seit dem
 25.09.2026 nichts mehr auf, er zeigt nur. Aufgenommen wird das
 Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
 wonach eingefärbt, welcher Verlauf, welche Überhöhung. Ohne diese Angabe wäre
@@ -1933,7 +2199,7 @@ Kapitel lässt sich in der Berichtsmaske abwählen.
 
 Vier Darstellungsarten, im Register *Ansicht* im Menü *Darstellung ▾*, in
 der Glasleiste ebenso, auf **Strg+1 … Strg+4** und im Rechtsklickmenü der
-Ansicht:
+Ansicht (Rechtsklick ins Leere, Untermenü *Darstellung*):
 
 | Art | Taste | Bild |
 |---|---|---|
@@ -1988,11 +2254,15 @@ die die gefüllte Ansicht verschluckt hatte.
 
 **F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
 „Knoten" zeigt die **Knoten der Konstruktion** als Punkte: Linienknoten,
-Stabenden, frei gesetzte Knoten und die Knoten direkt gesetzter Elemente.
+die Knoten der Stäbe und direkt gesetzten Elemente, frei gesetzte Knoten und
+jeden Knoten eines Netzes, an dem ein Lager, eine Last, eine Masse, eine
+Feder oder ein anderes Objekt hängt (seit 03.10.2026, siehe *Netz →
+Netzknoten*).
 Knoten, an denen noch **kein Element** hängt, sind orange und etwas größer —
 so sieht man beim Modellieren, wo man schon war, auch wenn dort noch nichts
-steht. Die **Netzknoten** — die Knoten, die das Vernetzen einer Fläche,
-eines Körpers oder eines geteilten Stabzugs erzeugt — gehören zum Netz und
+steht. Die **Netzknoten** — die Knoten, die das Vernetzen einer Fläche
+oder eines Körpers erzeugt (bis zum 03.10.2026 auch die eines geteilten
+Stabzugs) — gehören zum Netz und
 werden hier nicht gezeigt (seit 13.09.2026; vorher standen am Drehlager
 380 000 Netzkugeln im Bild). Sie schaltet *Netz → Netzknoten* zu: kleine
 graue Punkte, solange das FE-Netz dargestellt ist. Die **Knotennummern**
@@ -2048,7 +2318,7 @@ Objektart, jeder für sich:
 Die benannten Objekte tragen ihren **Namen**, nicht eine laufende Nummer: in
 der Ansicht steht damit dasselbe wie im Modellbaum und in den Tabellen.
 
-Dieselben Schalter liegen im **Rechtsklickmenü der Ansicht** unter *Nummern*,
+Dieselben Schalter liegen im **Rechtsklickmenü der Ansicht** (Rechtsklick ins Leere) unter *Nummern*,
 dort mit den kurzen Namen und mit **„Alle Nummern aus"** als einem Griff. So
 lässt sich die Beschriftung beim Arbeiten umlegen, ohne das Register zu
 wechseln.
@@ -2083,13 +2353,32 @@ erscheint beim Überfahren mit der Maus. Von links nach rechts:
 außerhalb des Bildes. Jetzt hat sie höchstens 12 Knöpfe neben der
 Ergebnisauswahl, und was bei einer schmalen Ansicht nicht mehr passt, wandert
 in die **Überlaufliste „»“** vor *Alles deselektieren*: zuerst die Knöpfe der
-Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler
-(bis 120 px), dann folgen Fang, *Klick wählt*, *Darstellung*, *Zeigen* und
-*Ergebnisse* — ein Menüknopf erscheint in der Liste als Untermenü. Den Platz,
-den die weichenden Knöpfe frei machen, bekommt die Ergebnisauswahl zurück, bis
-zu ihren vollen 190 px: bei 1366 und 1536 px Fensterbreite zeigt sie so jeden
-Namen der gerechneten Halle ganz („Kombination GZT12“ statt „Kombination GZ“,
-Nachbesserung 25.09.2026). Das Untermenü *Klick wählt* in „»“ nennt die
+Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler,
+bis 120 px, aber nicht schmaler als ihr längster Name, solange dieser in ihre
+Vorgabebreite von 190 px passt; dann folgen Fang, *Klick wählt*, *Darstellung*,
+*Zeigen* und *Ergebnisse* — ein Menüknopf erscheint in der Liste als
+Untermenü. Ist die Ansicht so schmal, dass auch das nicht reicht, wird die
+Ergebnisauswahl bis 120 px schmaler, auch wenn Namen dann nicht mehr ganz
+hineinpassen. Den Platz, den die weichenden Knöpfe frei machen,
+bekommt die Ergebnisauswahl zurück, bis zu ihren vollen 190 px: bei 1366 und
+1536 px Fensterbreite zeigt sie so jeden Namen der gerechneten Halle ganz
+(„Kombination GZT12“ statt „Kombination GZ“, Nachbesserung 25.09.2026).
+
+**Lange Namen** (seit 03.10.2026). Ist danach noch Platz frei, wächst die
+Ergebnisauswahl für einen Namen, der länger ist als 190 px, über diese Breite
+hinaus, bis er ganz zu lesen ist, höchstens auf 280 px. Sie wächst nur in
+freien Platz und verdrängt dafür keinen Knopf; welche Knöpfe stehen,
+entscheidet ihre Vorgabebreite. Ist kein Platz frei, bleibt ein langer Name
+abgeschnitten, und der Hinweis am Mauszeiger nennt ihn vollständig, darunter
+die Erklärung der Liste. Anlass sind die Fachbegriffe der Umhüllenden:
+„Umhüllende GZG charakteristisch“ und „Umhüllende GZG quasi-ständig“ brauchen
+mehr als 190 px, ebenso lange Namen aus RFEM („Kombination
+Bemessungskombination im GZT“). Bis zum 03.10.2026 blieb ein solcher Name
+immer abgeschnitten, ohne dass der Hinweis ihn nannte, und in einer sehr
+schmalen Ansicht ragte die Leiste mit ihm über die Ansicht hinaus (gemessen
+mit RFEM-langen Namen bei 260 px Ansicht: Leiste 274 px auf 236 px Platz). Die
+Liste passt sich gleich nach der Rechnung an, nicht erst, wenn sich die
+Fenstergröße ändert. Das Untermenü *Klick wählt* in „»“ nennt die
 geltende Auswahlart („Klick wählt: Lager“) — steht der Knopf dort, ist es die
 einzige Anzeige in der Leiste. Die
 Ergebnisauswahl, „»“ und *Alles deselektieren* bleiben immer stehen. Wird die
@@ -2313,9 +2602,11 @@ mehreren Layern liegen; die Layer werden mit dem Modell gespeichert.
   nicht änderbar (die Maske öffnet nicht, die Meldung nennt den Layer). So
   bleibt ein fertiges Bauteil unangetastet, während daneben modelliert wird.
   Der Fang trifft gesperrte Knoten weiterhin.
-* **Modellbaum**: der Zweig *Layer* listet alle; Klick wählt die Objekte,
-  Doppelklick öffnet die Layerliste, Rechtsklick legt einen Layer aus der
-  Auswahl an oder löscht einen.
+* **Modellbaum**: der Zweig *Layer* listet alle; ein Klick auf einen Layer
+  wählt seine Objekte, ein Doppelklick öffnet die Layerliste, Rechtsklick legt
+  einen Layer aus der Auswahl an oder löscht einen. Der Klick auf den Zweig
+  selbst zeigt seit dem 03.10.2026 die Übersicht mit dem Knopf „Layerliste …“;
+  bis dahin öffnete er die Layerliste.
 
 **Zoomen auf eine Bohrung.** Das Mausrad zoomt auf die **Fläche unter dem
 Zeiger** zu, nicht auf die Brennebene der Kamera. Vorher fuhr die Kamera auf
@@ -2382,15 +2673,22 @@ kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
 Darstellung ▾ → Symbolgrößen…*; 1,0 = alle 5 % der Modellgröße ein Symbol;
 die Ansicht folgt dem Schieber sofort, *Zurücksetzen* stellt 1,0 ein),
-Rechtsklick in die Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager.
+Rechtsklick ins Leere → *Darstellung* → „Lagerdichte (Linien-/Flächenlager)…“
+oder Rechtsklick auf ein Linien- oder Flächenlager → „Lagerdichte…“.
 Die **Größe** stellt der Schieber „Lagergröße" darüber für alle zusammen ein.
 Bis zum 25.09.2026 standen beide Schieber im Register *Ansicht → Symbole*;
 dort nahmen sie mit 666 px den Platz, der den übrigen Knöpfen des Registers
 fehlte. Die Befehle *Lagergröße zurücksetzen* und *Lagerdichte zurücksetzen*
 findet die Befehlssuche weiter. **Ein
-Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes Menü mit „Größe
-dieses Lagers…", „Größe aller Lager…", „Lager bearbeiten…" (die Maske
-rechts) und „Lager löschen". Die eingestellte Größe wird mitgespeichert.
+Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes Menü: oben sein Name,
+dann „Bearbeiten…“ (die Maske rechts), beim Knotenlager „Größe dieses Lagers…“,
+bei Linien- und Flächenlagern „Lagerdichte…“, dazu „Größe aller Lager…“, „In
+der Tabelle zeigen“, „Im Baum zeigen“ und „Lager löschen“; darunter stehen die
+Befehle der Auswahl. In der Auswahlart Knoten trifft ein Rechtsklick auf den
+Knoten selbst den Knoten: dann stehen die Einträge seines Lagers im Untermenü
+mit dem Namen des Lagers, etwa „Knotenlager 1 (K0)“. Bis zum 03.10.2026 hieß
+„Bearbeiten…“ „Lager bearbeiten…“, und darunter folgte das übrige Menü der
+Ansicht. Die eingestellte Größe wird mitgespeichert.
 
 **Lager folgen dem Netz.** Ein Linien- oder Flächenlager mit Geometriebezug
 wirkt nach dem Vernetzen auf **alle Netzknoten** seiner Linien bzw. Flächen
@@ -2401,8 +2699,9 @@ Netzes (zurück auf die Eckknoten) und vor jeder Rechnung von selbst.
 **Lager auswählen**: mit der Auswahlart **Lager** (Glasleiste) trifft ein
 Klick ein Knotenlager an seinem Symbol, ein Linien- oder Flächenlager an
 einem seiner Symbole; auch das Auswahlfenster fasst Lager. Gewählte Lager
-leuchten; Rechtsklick zeigt sie als Gruppe (Bearbeiten, Symbolgröße bzw.
-Lagerdichte, Löschen), *Alles deselektieren* leert auch sie.
+leuchten; der Rechtsklick ins Leere zeigt sie unter den Befehlen der Auswahl
+als Gruppe (Bearbeiten, Symbolgröße bzw. Lagerdichte, Löschen), *Alles
+deselektieren* leert auch sie.
 
 ### Tabellen: filtern, sortieren, ausgeben
 
@@ -2421,22 +2720,127 @@ Schleife über alle Elemente kostete dort 1,0 s je Klick), und kein gewähltes
 Element fand seine Zeile; jetzt läuft sie über ein Netzverzeichnis, das einmal
 je Netz entsteht (0,9 s) und die Frage danach in 13 ms beantwortet.
 
-**Stabkräfte zur Umhüllenden.** Die Tabelle „Stabkräfte" führt Stabendkräfte
-je Element und gehört zu einem Lastfall oder einer Kombination. Ist das
-gezeigte Ergebnis eine Umhüllende, bleibt sie leer und sagt neben der
-Zeilenzahl, warum: die Extremwerte stehen im Register „Umhüllende", auf das
-der Bereich unten dann selbst springt — und zurück auf „Stabkräfte", sobald
-wieder ein Lastfall oder eine Kombination gezeigt wird.
+**Ergebniszeile unten.** In den Gruppen *Ergebnisse* und *Nachweise* steht in
+der Kopfzeile unten gleich rechts neben der Gruppe die Ergebniswahl. Sie führt
+dieselbe Liste wie *Ergebnis* in der Ergebnissteuerung oben rechts und zeigt
+dieselbe Wahl wie die Glasleiste: Wer an einer der drei Stellen ein Ergebnis
+wählt, sieht es an allen dreien, im Bild und in den Tabellen. Geschlossen zeigt
+das Feld nur den Namen („Kombination GZT7“, „Umhüllende GZT“), die aufgeklappte
+Liste und der Tooltip nennen die ganze Kombination. Sind die Ergebnisse mit dem
+Knopf *Ergebnisse* ausgeblendet, blendet eine Wahl unten oder oben rechts sie
+wieder ein, ebenso wie eine Kombination oder Umhüllende in der Glasleiste; ein
+Lastfall in der Glasleiste bleibt dort die Wahl des aktiven Lastfalls und zeigt
+dessen Lasten. Bis zur Nachbesserung am 03.10.2026 blendete die Wahl oben
+rechts nicht ein, und die Glasleiste zeigte weiter den aktiven Lastfall.
+Verwirft eine Änderung die Ergebnisse, etwa ein neuer E-Modul in der Tabelle
+*Werkstoffe*, sind Ergebnisliste, Wahl unten und Ergebnistabellen sofort leer;
+bis dahin zeigten sie nach einer Zelländerung weiter die alte Umhüllende. Die
+Wahl steht in der Kopfzeile und nicht in einer eigenen Zeile darunter, weil
+diese der Tabelle 29 px genommen hätte: Bei 1920 × 1080 wären von den
+Stabkräften 5 statt 7 Zeilen zu sehen gewesen, in der Kompaktstufe bei
+1366 × 768 von den Nachweisen EC3 3 statt 5. In der Kopfzeile kostet sie keine
+Höhe; dafür rollen die Reiter früher mit Pfeilen. Bei 1366 × 768 ist von den
+fünf Reitern der Ergebnisse einer ganz zu sehen statt drei, der gewählte aber
+immer. Gemessen am Hallenrahmen mit Segoe UI. Wird der Bereich noch schmaler,
+wird der Name in der Wahl gekürzt, und hat neben Gruppe, Reitern und dem Menü
+„»“ nicht einmal der gekürzte Name Platz, fällt die Wahl unten weg; sie steht
+dann weiter oben rechts und in der Glasleiste, und der Bereich rollt nicht
+waagerecht. Bis zum 03.10.2026 stand unten nirgends, zu welchem Ergebnis die
+Tabellen gehören.
 
-Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
-ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
-Bericht) zeigt keine zweite Leiste. Ein Klick im Modellbaum holt die
-passende Tabelle nach vorn — samt ihrer Gruppe.
+**Stabkräfte und Auflager einer Umhüllenden.** Zu einem Lastfall oder einer
+Kombination führt die Tabelle *Stabkräfte* die Stabendkräfte je Element. Ist
+eine Umhüllende gezeigt, stehen dort je Element min und max von N, Vz, My und
+Mz über die Länge des Elements und alle Kombinationen der Umhüllenden, und
+neben jedem Wert nennt die Spalte *Komb.* die Kombination, aus der er stammt.
+Die Spalte *Ausn.* steht nur bei Umhüllenden des GZT, zu denen die
+Ausnutzung nach EC3 gehört; bei den Umhüllenden der Gebrauchstauglichkeit und
+der Lastfälle fehlt sie (bis zur Nachbesserung am 03.10.2026 stand sie auch
+dort, mit der Ausnutzung aus dem GZT). Alle sechs Schnittgrößen stehen weiter
+im Register *Umhüllende*. Die Werte
+kommen aus der Umhüllenden selbst; es wird nichts neu gerechnet. Fehlen sie,
+etwa bei einer Umhüllenden aus einer älteren Ergebnisdatei, sagt die leere
+Tabelle das und nennt den Weg (*Start → Berechnen*). Die *Auflagerkräfte*
+einer Umhüllenden stehen in Zahlenspalten *Rx min*, *Rx max* bis *Mz max*,
+die sich wie alle Zahlen sortieren und filtern lassen; jede dieser Zellen
+nennt am Zeiger die Kombination, aus der der Wert stammt. Unter den
+Auflagerkräften eines Lastfalls oder einer Kombination steht eine
+Summenzeile **Σ** mit der Summe der Reaktionen Rx, Ry und Rz (mit Filter die
+der sichtbaren Zeilen), zum Abgleich mit der Summe der Lasten. Die Momente
+einzelner Lager haben dort keine Summe, weil sie ohne ihre Hebelarme keine
+Gesamtgröße ergeben. Bei einer Umhüllenden steht unter der Tabelle **keine
+Summe**, sondern der kurze Satz „keine Summe – min und max stammen aus
+verschiedenen Kombinationen“; am Zeiger steht der ganze Grund: Das Minimum am
+einen Lager stammt meist aus einer anderen Kombination als das am nächsten,
+beide wirken nie zugleich, und ihre Summe gleicht keiner Last. Der Satz rollt
+nicht mit der Tabelle und ist bei 1366 × 768 in der Kompaktstufe ganz zu lesen
+(467 von 634 px, mit Segoe UI gemessen); bis zur Nachbesserung am 03.10.2026
+war er 1001 px breit, und den Rest sah man nur durch waagerechtes Rollen.
+Kopieren, CSV und Excel geben die Summe mit aus, den Satz nicht. Ein
+**Klick** auf eine Zelle mit der maßgebenden Kombination in *Stabkräfte*, im
+Register *Umhüllende*, in *Nachweise EC3* und auf eine min- oder max-Zelle der
+Auflager einer Umhüllenden zeigt dieses Ergebnis in der Ergebniszeile, oben
+rechts, in der Glasleiste, im Bild und in den Tabellen, und das Bild wird
+dafür einmal gezeichnet. Blau unterstrichen sind nur Zellen, deren
+Kombination ein eigenes Ergebnis hat; eine Alternative einer
+Ergebniskombination („EK1 [4]“) steht als gewöhnlicher Text da und schaltet
+nicht. Werden gerade Eigenformen gezeigt, sagt die Statuszeile das, statt zu
+schalten. Das angeklickte Element bleibt gewählt, und seine Zeile steht in der
+neu gefüllten Tabelle markiert und im Bild. Filter und Sortierung bleiben beim
+Wechsel zwischen Umhüllender und einzelnem Ergebnis für jede Spalte erhalten,
+die es in beiden gibt (etwa *Element*); fällt die gefilterte oder sortierte
+Spalte weg, sagt die Statuszeile das. Bis zur Nachbesserung am 03.10.2026
+gingen dabei alle Filter verloren, die angeklickte Zeile konnte außerhalb des
+Sichtfensters liegen, und ein Klick zeichnete das Bild zweimal. Bis zum
+03.10.2026 blieb *Stabkräfte* bei einer Umhüllenden leer mit einem Hinweis,
+und der Bereich unten sprang auf das Register *Umhüllende*; die
+Auflagerkräfte standen als Text „min / max“ in einer Zelle, eine Summenzeile
+gab es nicht, und die Zelle mit der Kombination war nur Text.
+
+**Kopfzeile unten.** Der Bereich unten hat eine einzige Kopfzeile. Links
+steht die Gruppe als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager,
+Lasten, Ergebnisse, Nachweise, Bericht), daneben stehen die Tabellen dieser
+Gruppe als Reiter und rechts die Knöpfe *Spalten…*, *Filter*, *Kopieren*,
+*CSV…* und *Excel…* für die Tabelle, die vorn liegt. Reicht die Breite für
+die Knöpfe mit Text nicht, stehen nur ihre Symbole da, und der Tooltip nennt
+sie; reicht sie auch dafür nicht, wandern die letzten Knöpfe in das Menü „»“
+am rechten Ende. Die Reiter rollen dann mit Pfeilen, kein Name wird gekürzt,
+und der gewählte Reiter ist immer ganz zu sehen. Beim Protokoll gibt es
+weder Reiter noch Tabellenknöpfe. Ein Klick im Modellbaum holt die passende
+Tabelle nach vorn — samt ihrer Gruppe. Bis zum 03.10.2026 standen
+untereinander eine Gruppenleiste, die Register der Gruppe, über jeder Tabelle
+eine eigene Zeile mit Zeilenzahl und Knöpfen und eine immer offene
+Filterzeile. Von 270 px unten blieben bei 1920 × 1080 der Knotentabelle
+78 px (zwei Zeilen) und den Stabkräften 108 px (drei Zeilen), jetzt sind es
+207 px und 188 px (je sieben Zeilen). In der Kompaktstufe bei 1366 × 768
+(aufgeklappt) sind es 129 statt 68 px und 110 statt 98 px; dort war der Inhalt
+vorher 260 px hoch im 217 px hohen Bereich, und von den Zeilen Max und Min der
+Stabkräfte waren 3 von 46 px zu sehen, jetzt stehen sie ganz da. Gemessen am
+Hallenrahmen mit Segoe UI (offscreen mit nachgeladener Schrift, Prüfung
+`tests/test_unten_kopfzeile.py`).
+
+**Zähler am Reiter.** Am Reiter jeder Tabelle steht klein ihre Zeilenzahl,
+und die Reiter leerer Tabellen sind grau; nach dem Rechnen sieht man so,
+welche Tabellen etwas enthalten. Die graue Schrift hat mindestens 3 : 1
+Kontrast zum Grund und ist doch deutlich heller als die gefüllter Reiter; ein
+gewählter leerer Reiter steht hellblau mit dem Strich des gewählten da. Die
+Zahl steht neben dem Namen, nicht in ihm. Eine große Tabelle, die nicht vorn
+liegt, füllt sich erst beim Anzeigen; ihr Zähler nennt die Zahl trotzdem
+schon, ohne sie zu füllen. Wirkt dabei ein Filter, steht dort „?/19“: wie
+viele Zeilen der Filter übrig lässt, zeigt die Tabelle erst beim Anzeigen,
+und eine falsche Zahl steht nirgends. Eine leere Tabelle sagt in ihrer Mitte,
+wie sie sich füllt, etwa „Noch keine Lasten – Lasten → Knotenlast“ oder
+„Noch keine Verformungsnachweise – Nachweise → Verformung ▾ → Neu …“; die
+Verweise nennen Register und Knopf genau so, wie sie im Ribbon stehen.
+Gehört zum gezeigten Ergebnis ein eigener Hinweis (etwa Stabkräfte zu einer
+Umhüllenden aus einer älteren Ergebnisdatei), steht er an dieser Stelle. Bis zum 03.10.2026 stand über einer
+leeren Tabelle nur „0 Zeilen“, und am Reiter war nicht zu sehen, ob sie
+etwas enthält.
 
 | Gruppe | Tabellen |
 |---|---|
 | Protokoll | das Protokoll der Berechnung und der Modellprüfung |
-| Modell | Knoten, Linien, Flächen, Volumenkörper, Stäbe (alle Elemente), Schweißnähte |
+| Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente, Schweißnähte. Die Tabelle *Elemente* führt alle finiten Elemente; bis zum 03.10.2026 hieß sie „Stäbe“, obwohl auch Schalen und Volumen darin stehen. Ein Klick auf *FE-Netz → Stabelemente*, *Flächenelemente* oder *Volumenelemente* im Modellbaum holt sie nach vorn |
 | Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog zeigt die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
 | Lager | Lager, Gelenke, Kontaktbedingungen |
 | Lasten | Lastfälle, Lasten, Kombinationen |
@@ -2444,11 +2848,23 @@ passende Tabelle nach vorn — samt ihrer Gruppe.
 | Nachweise | Nachweise EC3, Ermüdung, Anschlüsse, Verformungen, Beulfelder, Volumen, Lasteinleitung |
 | Bericht | die Einträge des Berichts |
 
-Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
-Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
-oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist. Zahlen-
-spalten stehen in den Einheiten aus *Ansicht → Einheiten*; Filterwerte werden
-in derselben Einheit eingegeben. **Direkt bearbeiten:** in den Modelltabellen
+**Filterzeile auf Knopfdruck.** Über der Kopfzeile einer Tabelle liegt
+eine **Filterzeile** mit einem Feld je Spalte. Sie erscheint mit dem Knopf
+*Filter* und verschwindet mit ihm wieder. Was in den Feldern steht, gilt
+sofort; mehrere Felder wirken zusammen (und, nicht oder). Solange ein Filter
+Zeilen weglässt, bleibt die Filterzeile offen, der Knopf heißt *Filter
+aktiv* und ist farbig hinterlegt, sein Tooltip nennt die Zahlen („5 von 19
+Zeilen sichtbar“), und der Zähler am Reiter steht als „5/19“ da — so hält
+niemand gefilterte Zeilen für alle. Wer die Filterzeile mit dem Knopf
+ausblendet, hat den Filter damit aufgehoben, wie beim Autofilter in Excel;
+*Filter leeren* (Register Ergebnisse) leert die Felder und lässt die Zeile
+offen. Lässt der Filter nichts übrig, sagt die Tabelle es („Keine der 19
+Zeilen passt zum Filter.“). Bis zum 03.10.2026 stand die Filterzeile immer
+offen über jeder Tabelle und nahm ihr 22 px, und die Zählung („17 von 240
+Zeilen“) stand in einer eigenen Zeile darüber.
+
+Zahlenspalten der Tabellen stehen in den Einheiten aus *Ansicht →
+Einheiten*; Filterwerte werden in derselben Einheit eingegeben. **Direkt bearbeiten:** in den Modelltabellen
 sind die Eigenschaften in der Zelle editierbar (Doppelklick oder F2) - Knoten
 x/y/z, bei Linien die Knotenfolge und die Bemerkung, bei Stäben die Knoten,
 Werkstoff, Querschnitt bzw. Dicke und die Drehung, bei Flächen Randlinien,
@@ -2491,9 +2907,21 @@ Objekte aufgezählt werden: im **Modellbaum**, in den **Tabellen** und in den
 **Aufklapplisten** der Masken. **Spalten** lassen sich über „Spalten…" ein- und
 ausblenden und mit der Maus verschieben.
 
-Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie
-bezieht sich auf das, was der Filter gerade übrig lässt, und bleibt beim
-Sortieren an ihrem Platz.
+Unter jeder Ergebnistabelle — in den Gruppen Ergebnisse und Nachweise —
+steht ab 5 Zeilen eine feste **Zeile „Max"/„Min"**. Sie bezieht sich auf das,
+was der Filter gerade übrig lässt, und bleibt beim Sortieren und Filtern an
+ihrem Platz; ob sie steht, entscheidet die Zeilenzahl ohne Filter. Bis zum
+03.10.2026 stand sie auch unter den Eingabetabellen Knoten, Stäbe, Flächen,
+Volumenkörper und Schweißnähte und schon ab einer Zeile; unter der
+Knotentabelle nahm sie bei 1920 × 1080 46 px neben 78 px Tabelle. Dasselbe
+gilt für *Kopieren*, *CSV…* und *Excel…*: Eingabetabellen und Tabellen mit
+weniger als 5 Zeilen geben seit dem 03.10.2026 keine Zeilen Max und Min mehr
+aus, Ergebnistabellen ab 5 Zeilen wie bisher beide am Ende. Max und Min stehen
+nur unter Zahlenspalten; unter Textspalten wie *Komb.* bleibt der Fuß leer,
+auch wenn der Text wie eine Zahl aussieht. Verschiebt man eine Spalte mit der
+Maus, wandern ihre Werte im Fuß mit. Bis zur Nachbesserung am 03.10.2026 stand
+unter *Komb.* bei den Lastfällen „1“ und „2“ als Max „2,0“, und der Fuß blieb
+beim Verschieben stehen, sodass unter *Rz* die Werte von *Rx* standen.
 
 **Nicht erfüllte Nachweise fallen auf** (seit 24.09.2026). In den
 Nachweistabellen – Nachweise EC3, Ermüdung, Anschlüsse, Verformungen,
@@ -2539,7 +2967,9 @@ Zahlen (nicht als Text) — in Excel lässt sich damit sofort weiterrechnen.
 
 **Tabelle und Ansicht hängen zusammen**: ein Klick auf eine Zeile wählt das
 Element beziehungsweise den Knoten in der 3D-Ansicht; umgekehrt markiert eine
-Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild.
+Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild. Bis
+zum 03.10.2026 galt das nach einem Klick in der Ansicht nicht: die Tabelle
+behielt die vorige Markierung.
 
 #### Tabelleninhalte: Reihenfolge, Zahlen, Klartext, Farben (seit 02.10.2026)
 
@@ -2576,7 +3006,8 @@ Textspalte, und „nan“ als Zahl in einer xlsx-Zelle ist keine gültige Datei
 02.10.2026 mit Dezimalpunkt („q = (0.000, 0.000, -12.500) kN/m“, „von 1.5 m“,
 „F_v = 150 kN“ mit Punkt bei Dezimalstellen) und das „min / max“ der
 Auflagerkräfte ebenso. Beides steht jetzt mit Komma („q = (0,000; 0,000;
--12,500) kN/m“). Weil das Komma nun das Dezimalzeichen ist, trennt die
+-12,500) kN/m“); min und max der Auflagerkräfte stehen seit dem 03.10.2026 in
+eigenen Zahlenspalten. Weil das Komma nun das Dezimalzeichen ist, trennt die
 Lasttabelle die Teile eines Vektors mit Semikolon („Fy = 2,000; Fz = -5,000“,
 „Richtung (0,707; 0; -0,707)“) und nicht mehr mit Komma. Die 3D-Ansicht und die
 Beschriftungen im Bild behalten den
@@ -2584,7 +3015,8 @@ Punkt, so wie bisher; die Regel „Tabellen Komma, Ansicht Punkt“ gilt weiter.
 In keiner Tabelle steht ein Ergebniswert wissenschaftlich („2,39e+03“).
 
 **Die Art steht im Klartext.** Wo eine Tabelle bisher den Schlüssel aus dem
-Modell zeigte, steht jetzt das Wort: in der Tabelle der Stäbe die Elementart
+Modell zeigte, steht jetzt das Wort: in der Tabelle *Elemente* (bis zum
+03.10.2026 „Stäbe“) die Elementart
 („Balken 3D“ statt „beam“, „Schale, Viereck“ statt „shell4“, „Tetraeder,
 quadratisch“ statt „tet10“), bei den Linien „Polylinie“, „Bogen“, „Kreis“ …
 statt „polyline“, „arc“, „circle“, bei den Querschnitten „I-Profil“,
@@ -2598,9 +3030,10 @@ gleichem Kurznamen erscheint mit ihrem vollen Namen aus dem Elementverzeichnis.
 Im Filter schreibt man, was dasteht („Balken“, nicht „beam“); die
 Spalte sortiert nach dem Klartext, und Kopieren, CSV und Excel geben ihn aus.
 Gespeichert und gerechnet wird weiter mit dem Schlüssel, eine ältere Datei
-lädt also unverändert. Noch als Schlüssel stehen die Einwirkungskategorie der
-Lastfälle („G“, „Q_A“, „W“) und der Typ der Kombinationen („ULS“, „SLS_CH“);
-sie bekommen ihre Fachbegriffe mit dem Paket „Fachbegriffe statt Schlüssel“.
+lädt also unverändert. Den Typ der Kombinationen zeigt die Tabelle seit dem
+03.10.2026 ebenso im Klartext, etwa „GZT (STR/GEO)“ statt „ULS“ (siehe Kapitel 4,
+*Kombinationstypen und Umhüllende im Klartext*). Als Kürzel steht weiter die
+Einwirkungskategorie der Lastfälle („G“, „Q_A“, „W“).
 
 **Der Kontakt-Hinweis erscheint nur bei Modellen mit Kontakt.** Die Tabellen
 „Kontakt“ und „Kontaktpaare“ sagten bei einer Umhüllenden bisher immer
@@ -2705,7 +3138,7 @@ einem Leerzeichen am Zeilenanfang; diese Kopfzeile steht fett. Das sind
 beim Wechsel des Modells, „--- Modellprüfung ---“, „--- Freie Bewegungen ---“,
 „--- Berechnung gestartet ---“, „--- Abnahme des Netzes: … ---“ und
 „--- Objekte ohne Netz ---“. Die Regel ist bewusst klein: andere Zeilen, die
-wie Überschriften wirken („Umhuellende ULS: 42 Ergebnisse“), bleiben normal,
+wie Überschriften wirken („Umhüllende GZT: 42 Ergebnisse“), bleiben normal,
 und eingerückte oder mitten in der Zeile stehende Striche zählen nicht.
 
 **Der Text ändert sich nicht.** Die Farben sind nur Anzeige. Markierter Text,
@@ -2741,7 +3174,8 @@ der Grafik, in Millisekunden). Erst wenn dort nichts liegt, sucht das
 Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
 **Auswahlart** — *Klick wählt: … ▾* in der Glasleiste oder das Feld unter
 *Geometrie → Auswahl in der Ansicht*; der Modellbaum stellt sie beim
-Anklicken eines Zweigs passend um.
+Anklicken eines Eintrags passend um (bis zum 03.10.2026 auch beim Anklicken
+eines Zweigs, der damals alle Objekte seiner Art wählte).
 Mit der Auswahlart **Netz** trifft ein Klick ein einzelnes Element des
 FE-Netzes (Stab-, Flächen- oder Volumenelement); die gewählten Elemente
 leuchten in der Ansicht. Steht die Auswahlart auf **Knoten** und liegt unter
@@ -2752,13 +3186,39 @@ stellt die Auswahlart darauf um. Gemessen wird in Bildpunkten um den Zeiger
 ein Klick knapp neben einem Knoten, einer Linie oder einer Stabachse trifft
 noch.
 
+**Klick ersetzt, Strg+Klick nimmt dazu.** Ein Klick ohne Taste wählt das
+getroffene Objekt und hebt alles andere auf, auch die Auswahl anderer Arten und
+was aus dem Modellbaum heraus leuchtet. Mit gedrückter **Strg**-Taste kommt das
+Objekt zur Auswahl dazu, und ein Strg+Klick auf ein schon gewähltes Objekt nimmt
+es wieder heraus. So ist es in RFEM und in Windows (Antwort 7 vom 24.09.2026).
+Strg und Umschalt zählen, wenn sie beim Drücken oder beim Loslassen der
+Maustaste gedrückt sind. **Umschalt + Klick** erzwingt wie bisher die
+intelligente Auswahl und ersetzt dabei die Auswahl durch den ganzen Zug, so wie
+Umschalt+Klick in Windows einen Bereich wählt; **Strg + Umschalt + Klick** nimmt
+den Zug dazu oder, auf einem gewählten Objekt, heraus. Ein Klick ins Leere hebt
+die Auswahl auf, auch was nur aus dem Modellbaum heraus leuchtet; ein
+Strg+Klick ins Leere lässt sie stehen, denn Strg nimmt nie etwas weg, das man
+nicht angeklickt hat. Klicks, die das Klickfeld einer offenen Maske füllen,
+Messpunkte und Sonden ändern die Auswahl nicht. Die unveränderte Maske einer
+Last, die nach dem Klick nicht mehr gewählt ist, geht zu; eine geänderte Maske
+bleibt stehen, damit getippte Werte nicht verloren gehen. Bis zum 03.10.2026
+schaltete jeder Klick das getroffene Objekt hinzu oder weg, und Strg tat nichts.
+Bei Lasten ersetzte ein Klick schon damals die gewählte Last; die Auswahl anderer
+Arten blieb aber bei jeder Art stehen, und die Maske einer abgewählten Last blieb
+offen. Ein Klick zeichnet die Ansicht einmal neu, gleicht das Kontextregister
+einmal ab und markiert in den Tabellen, was gewählt ist; bis dahin lief das
+Register je Klick zweimal, und die Tabellen behielten nach einem Klick die
+vorige Markierung. Seit dem 03.10.2026 markiert der Klick auch die Zeile im
+Modellbaum, ohne dem Baum die Tastatur zu geben (Kapitel 2, Abschnitt zum
+Modellbaum).
+
 **Die Maustasten in der 3D-Ansicht.**
 
 | Taste | tut |
 |---|---|
-| **links** | kurzer Klick wählt, was unter dem Zeiger liegt — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
+| **links** | kurzer Klick wählt, was unter dem Zeiger liegt, und ersetzt die Auswahl; mit **Strg** kommt es dazu (seit 03.10.2026) — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026; mit Strg bleibt sie); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
 | **Mitte** gedrückt halten | **drehen**; Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
-| **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü |
+| **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü: auf einem Objekt seine Befehle, im Leeren Sicht und Zoom (seit 03.10.2026) |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
 
 Seit 15.09.2026 dreht die mittlere und schiebt die rechte Taste; vorher war
@@ -2767,6 +3227,74 @@ es umgekehrt.
 Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
 gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
 Fenster aufzieht.
+
+**Rechtsklick in der Ansicht.** Ein Rechtsklick ohne Ziehbewegung öffnet ein
+Menü, das sich nach dem richtet, was unter dem Zeiger liegt. Getroffen wird wie
+beim Linksklick in der eingestellten Auswahlart, in derselben Reihenfolge und
+mit denselben Meldungen: Ist das Objekt ausgeblendet oder liegt es auf einem
+gesperrten Layer, sagt es die Statuszeile, und das Menü kommt ohne Objekt. Erst
+wo der Linksklick nichts träfe, sucht der Rechtsklick noch ein Lagersymbol; so
+erkennt er ein Knoten-, Linien- oder Flächenlager auch außerhalb der Auswahlart
+Lager. Liegt dort ein Objekt (Knoten, Stab, Linie, Fläche, Volumen, Element des
+Netzes, Lager oder Last), steht oben fett sein Name, etwa „Knoten K12“, „Stab
+S2“ oder „Knotenlager 1 (K0)“, und darunter stehen seine Befehle. *Bearbeiten…*
+öffnet rechts seine Maske. Dann folgen die Befehle seiner Art: beim Knoten
+*Knotenlager…* (hat er ein Lager, ein Untermenü mit dessen Einträgen) und
+*Knotenlast…*, beim Stab *Gelenke…*, die Gelenke an ihm und *Stablast…*, bei
+der Linie *Linienlast…*, bei Fläche und Volumen *Flächenlast…* und die
+Kontaktbedingungen daran, beim Lager seine Symbolgröße oder die Lagerdichte. *In
+der Tabelle zeigen* holt unten seine Tabelle nach vorn und markiert seine Zeile,
+*Im Baum zeigen* wählt seinen Eintrag im Modellbaum, holt den Baum ins Bild, wenn er
+ausgeblendet ist, und gibt ihm die Tastatur; markiert ist die Zeile seit dem
+03.10.2026 schon durch die Auswahl (Netzknoten, Flächen- und Volumenelemente und
+Lasten stehen dort nicht einzeln, dann fehlt der Eintrag),
+*Ausblenden* und *Nur dieses zeigen* wirken wie die Befehle der Sicht. Zuletzt
+löscht *Knoten löschen*, *Stab löschen*, *Lager löschen* und so fort das Objekt
+nach einer Rückfrage, die es nennt („Stab S2 wirklich löschen?“); die übrige
+Auswahl bleibt dabei gewählt. Darunter stehen in jedem Objektmenü die Befehle
+der Auswahl, auch wenn nur dieses Objekt gewählt ist: *Verschieben…*,
+*Kopieren…*, *Drehen…* und *Spiegeln…*, *Selektiertes anzeigen* und
+*Selektiertes ausblenden*, je Art *Bearbeiten…* und *Löschen*, *Auswahl löschen*
+(wie Entf) und *Auswahl aufheben* (wie Esc). Ins Leere geklickt zeigt das Menü
+Sicht und Zoom: *Isometrisch*, die sechs Ansichten von ±X, ±Y und ±Z,
+*Rückseite (180°)*, *Zoom alles*, *Vorherige Sicht* und *Alles zeigen*, dazu die
+Untermenüs *Darstellung* (Darstellungsart, FE-Netz, Knoten, Größe aller Lager
+und Lagerdichte) und *Nummern*; ist etwas gewählt, folgen darunter die Befehle
+der Auswahl, und die Auswahl bleibt stehen. Was nur leuchtet, weil der
+Modellbaum oder die Lasttabelle Lasten zeigt, zählt dabei nicht als Auswahl.
+Liegt das angeklickte Objekt außerhalb der Auswahl, wählt es der Rechtsklick wie
+der Linksklick: ohne Taste ersetzt es die Auswahl, mit **Strg** kommt es dazu,
+mit **Umschalt** oder dem Schalter *Intelligente Auswahl* samt seiner Kette;
+Strg nimmt nie etwas weg. Liegt es in der Auswahl, bleibt die Auswahl, so wie
+Windows und RFEM es tun. Ein Befehl des Objekts, der auf die Auswahl wirkt
+(*Knotenlast…*, *Ausblenden* und ähnliche), gilt dem angeklickten Objekt allein;
+ist beim Ausführen mehr gewählt, wird vorher nur dieses gewählt. Hat die offene
+Maske nicht übernommene Änderungen, stellt der Rechtsklick die Auswahl nicht
+um. Ein Eintrag, der eine Maske öffnet oder die Auswahl umstellt oder leert,
+hält dann zuerst an der Leiste „Übernehmen | Verwerfen“, und erst danach wird
+das Objekt gewählt. So übernimmt die geänderte Maske die Auswahl, für die sie
+gedacht war: eine Knotenlast landet auf den Knoten, die vorher gewählt waren,
+und nicht auf dem angeklickten. *In der Tabelle zeigen*, *Im Baum zeigen* und
+das Löschen laufen sofort, und das Löschen fragt selbst und nennt die Maske.
+Mit einer geänderten Maske wählt ein Eintrag das angeklickte Objekt nach der
+Entscheidung allein, ohne Strg und ohne Kette. Ein Eintrag wirkt nur auf dem
+Modell, auf dem das Menü aufging: Hat sich das Modell geändert, solange es offen
+war (etwa durch Strg+Z, Löschen, ein anderes Modell oder das Ende einer
+Rechnung), tut er nichts, und die Statuszeile sagt es. Während einer Rechnung
+zeigt jeder Rechtsklick nur Sicht und Zoom, wählt nichts, und kein Eintrag
+eines vorher geöffneten Menüs wirkt; *Größe aller Lager…* und *Lagerdichte…*
+sind dann gesperrt. Läuft ein Auswahlfenster, schließt der Rechtsklick es wie
+bisher als zweite Ecke ab, und es kommt kein Menü. *Zoom auf Auswahl* und *Zoom
+auf Fenster* gibt es im Programm nicht. Bis zur Nachbesserung am 03.10.2026
+standen die Befehle der Auswahl nur bei einer größeren Auswahl im Objektmenü,
+Strg+Rechtsklick ersetzte die Auswahl, ein Lager ging in der Auswahlart Knoten
+den Stäben, Flächen und Linien vor, und das Löschen hieß nur *Löschen* und
+fragte „1 Stäbe wirklich löschen?“. Bis zum 03.10.2026 war das Menü für jeden
+Rechtsklick dasselbe:
+oben die Befehle der Auswahl, dann ein Lager, wenn eines unter dem Zeiger lag,
+sonst die Größe aller Lager und die Lagerdichte, darunter Darstellung, FE-Netz,
+Knoten, Nummern und *Zoom alles*. Knoten, Stäbe, Linien, Flächen, Volumen,
+Elemente und Lasten erkannte es nicht, und der Rechtsklick wählte nichts.
 
 **Tasten und Doppelklicks im Bild** (16.09.2026, Meldung „beim Heranzoomen
 springt der Zoom auf die Vollansicht zurück“). Nachgestellt wurden drei Wege
@@ -2799,24 +3327,30 @@ Statuszeile meldete nur „Gefangen: raster“).
 | von **rechts nach links** | grün, gestrichelt | alles im Fenster **und** alles, was das Fenster nur **anschneidet** |
 
 Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
-Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
-Auswahl; **Esc** bricht es ab, *Alles deselektieren* (Glasleiste, Esc) leert
-alles. **Klicken und Ziehen wählt nichts**: gezählt wird der Klick erst beim
-Loslassen, und nur, wenn der Zeiger dazwischen höchstens vier Bildpunkte
-gewandert ist — wer die Ansicht mit gedrückter Taste dreht, ändert die
-Auswahl nicht.
+Volumen oder Elemente des Netzes. Das Fenster ersetzt die Auswahl wie ein
+Klick; ist beim Loslassen **Strg** gedrückt, kommt sein Inhalt zur vorhandenen
+Auswahl dazu (Entscheidung E5 vom 01.10.2026). Bis zum 03.10.2026 ergänzte das
+Fenster immer die vorhandene Auswahl. In der Auswahlart Last fasst das Fenster
+nichts, Lasten wählt nur der Klick; dort lässt es die Auswahl stehen, und die
+Statuszeile sagt es. **Esc** bricht es ab, *Alles
+deselektieren* (Glasleiste, Esc) leert alles. **Klicken und Ziehen wählt
+nichts**: gezählt wird der Klick erst beim Loslassen, und nur, wenn der
+Zeiger dazwischen höchstens vier Bildpunkte gewandert ist — wer die Ansicht
+mit gedrückter Taste dreht, ändert die Auswahl nicht.
 
 **Intelligente Auswahl.** Der Schalter in der Glasleiste (auch *Start →
-Auswahl*, Vorgabe: an) nimmt bei Linien und Stäben die **eindeutige
+Bearbeiten ▾*, Vorgabe: an) nimmt bei Linien und Stäben die **eindeutige
 Fortsetzung** gleich mit: Hängt am Endknoten der angeklickten Linie genau
 eine weitere Linie, gehört sie dazu, und so weiter — bis zu einer
 Verzweigung (mehrere Linien am Knoten), einem freien Ende oder dem Schluss
 eines Rings. Ein Zug aus zwölf Linien ohne Abzweig ist so ein einziger
-Klick. Dieselbe Regel gilt **beim Abwählen**: der Klick auf eine gewählte
-Linie nimmt den Zug wieder heraus, soweit er gewählt ist. Bei Stäben zählt
-der physische Stab (Kette von Elementen) mit seinen beiden Enden. Ist der
-Schalter aus, erzwingt **Umschalt + Klick** die Kette für diesen einen
-Klick. Der Klickmodus der Flächenmaske (*Randlinien anklicken*) nutzt
+Klick, und die alte Auswahl geht dabei. Dieselbe Regel gilt **beim
+Abwählen**: der Strg+Klick auf eine gewählte Linie nimmt den Zug wieder heraus,
+soweit er gewählt ist (bis zum 03.10.2026 tat das schon der Klick ohne Taste).
+Bei Stäben zählt der physische Stab (Kette von Elementen) mit seinen beiden
+Enden. Ist der Schalter aus, erzwingt **Umschalt + Klick** die Kette für diesen
+einen Klick; er ersetzt die Auswahl, Strg + Umschalt + Klick nimmt die Kette
+dazu. Der Klickmodus der Flächenmaske (*Randlinien anklicken*) nutzt
 dieselbe Kette — ein Klick auf eine Randlinie holt den ganzen geschlossenen
 Rand, wenn er sonst nirgends abzweigt.
 
@@ -2857,7 +3391,9 @@ Typ außer hex8 still als tet4 gebaut: am Stand ec6448c ergaben „hex20“,
 
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
-öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
+bietet der Rechtsklick ins Leere oder auf ein Objekt die Befehle der ganzen
+Auswahl (siehe „Rechtsklick in der Ansicht“): oben ihr Umfang
+(„Auswahl: 2 Knoten, 1 Stab“), dann *Selektiertes
 anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, dann
 **Verschieben…**, **Kopieren…**, **Drehen…**, **Spiegeln…** (siehe
 „Verschieben, Kopieren, Drehen, Spiegeln“), darunter
@@ -2872,7 +3408,13 @@ Rückfrage; was nicht gelöscht werden kann (Knoten mit Linien oder
 Elementen), nennt die Statuszeile. Rückgängig nimmt beides zurück. Alles
 Gewählte auf einmal, auch verschiedener Art, löscht die Taste **Entf**, wenn
 die Ansicht die Tastatur hat: mit einer einzigen Rückfrage und einem einzigen
-Rückgängig-Schritt (Kapitel 11).
+Rückgängig-Schritt (Kapitel 11). Dasselbe tut *Auswahl löschen* am Ende dieser
+Befehle, und *Auswahl aufheben* hebt die Auswahl auf wie Esc. Mit einer Maske,
+die nicht übernommene Änderungen hat, halten *Selektiertes anzeigen*,
+*Selektiertes ausblenden*, *Auswahl aufheben* und alles, was eine Maske öffnet,
+vorher an der Leiste „Übernehmen | Verwerfen“. Bis zum 03.10.2026 standen die
+Befehle der Auswahl oben in jedem Rechtsklickmenü, auch über einem Lager unter
+dem Zeiger, und es gab weder *Auswahl löschen* noch *Auswahl aufheben* darin.
 
 ### Lastwerte in der Ansicht
 
@@ -2951,7 +3493,7 @@ Statuszeile und im Protokoll und wird orange in die Ansicht gezeichnet;
 *Messungen löschen* nimmt es wieder weg. Die Maske bleibt für die nächste
 Messung offen.
 
-**Bemaßung** legt Maße als Objekte des Modells an (Modellbaum → Bemaßungen,
+**Bemaßung** legt Maße als Objekte des Modells an (Modellbaum → Hilfsobjekte → Bemaßungen,
 werden mit der Datei gespeichert und erscheinen in Bildern für den
 Bericht):
 
@@ -2985,7 +3527,62 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. Geschlossen wird die Maske mit **✕** oben rechts. Ein
 neuer Erzeuge-Befehl löst die vorige Maske ab — es ist immer höchstens eine
-offen.
+offen. Hat die vorige noch nicht übernommene Änderungen, fragt vorher die
+Leiste „Übernehmen | Verwerfen“ (unten, *Nicht übernommene Änderungen*).
+
+**Der Befehl „Stab“ legt einen Stab mit Nachweis an** (seit 03.10.2026, wie
+in RFEM). Man klickt in der Maske *Stab* zwei Knoten an und wählt Querschnitt
+und Werkstoff; dann entsteht ein Stab S… samt seinem Stabelement E…. Der Stab
+steht im Modellbaum unter *Geometrie → Stäbe*, sein Element unter *FE-Netz →
+Stabelemente*. Denselben Befehl erreicht man über *Struktur → Stab*, *Start →
+Stab*, die Taste S in der Ansicht, die Befehlssuche und am Zweig *Stäbe* über
+den Rechtsklick „Neu: Stab …“ oder den Doppelklick. Der Stab rechnet genau wie
+dasselbe Stabelement ohne Stab: An einem Rahmen aus drei Stäben sind
+Verschiebungen, Auflagerkräfte und Stabendkräfte gleich, der Stab kommt nur zu
+den Nachweisen nach EC3 dazu. Ein einzelnes Stabelement ohne Stab legt *Netz →
+Stabelement* an, mit derselben Maske unter dem Titel „Stabelement“; der
+Rechtsklick „Neu: Stabelement …“ am Zweig *Stabelemente* legt eines mit allen
+Angaben an (Art, Versatz, Wölbkrafttorsion). Einen Stab aus vorhandenen
+Stabelementen bildet *Struktur → Nachweisstäbe ▾ → Stab aus Stabelementen…*,
+dort trägt man die Nummern der Elemente ein. Wer einen Stab löscht, behält
+seine Stabelemente, und die Rückfrage sagt das. Masken, Rückfragen,
+Statuszeile und Protokoll schreiben „Stab S…“ für den Stab und „Stabelement
+E…“ für das Element. Bis zum 03.10.2026 legte der Befehl „Stab“ nur das
+Stabelement an, das ohne Nachweis unter *FE-Netz* stand, und der Rechtsklick
+„Neu: Stab …“ öffnete die Maske mit den Elementnummern; Masken und Rückfragen
+nannten das Element „Stab E…“.
+
+**Was beim Stab mit Nachweis zu beachten ist** (seit 03.10.2026). Liegt
+zwischen den beiden Knoten schon ein Stabelement ohne Stab, legt *Stab* kein
+zweites daneben, sondern den Stab um das vorhandene; Querschnitt, Werkstoff und
+Art bleiben die des Elements, und die Statuszeile sagt es. Gehört das Element
+schon zu einem Stab, weist der Befehl ab. Zwei parallele Elemente zwischen
+denselben Knoten trügen doppelt: an einem Rahmen fiel die Verschiebung auf
+62 %, und der Nachweis kam zu günstig heraus. *Netz → Stabelement* legt ein
+paralleles Element weiter an, sagt es aber in der Statuszeile. Wird das
+Stabelement eines Stabs gelöscht, bleibt der Stab ohne Stabelement stehen:
+*Prüfen* meldet ihn, der Nachweis nach EC3 führt ihn als nicht geführt („kein
+Stabelement“), die Ermüdung ebenso, wenn er einen Kerbfall trägt, und die
+Rückfrage beim Löschen (Baum, Rechtsklick, Entf in der Ansicht) sagt es
+vorher. Darum heißt es dann nicht „alle erfüllt“, die Ampel im Browser steht
+nicht auf grün, und der Bericht zählt EC3 und Ermüdung als nicht geführt. Bis
+zum 03.10.2026 brach die Berechnung ab; in der ersten Fassung danach stand der
+Stab nur als Warnzeile hinter „alle erfüllt“ und fehlte in der Ermüdung ganz.
+Jeder gezeichnete Stab hat die Knicklänge seiner eigenen Länge. Bilden
+kollineare Stäbe eine Kette mit freien Zwischenknoten, warnen *Prüfen* und der
+Nachweis, und *Stäbe zusammenfassen* macht einen Stab daraus, wenn dabei nichts
+verloren geht (Kapitel 8; an einer Stütze aus drei Stäben 0,7969 statt 0,2856).
+Alte Modelle, deren Stäbe noch aus einzelnen Stabelementen ohne Stab bestehen,
+bekommen ihre Stäbe mit *Stäbe automatisch erkennen* oder mit *Struktur →
+Nachweisstäbe ▾ → Stab aus Stabelementen…*. Diese Maske nimmt kein Element an,
+das schon zu einem Stab gehört, sonst würde es doppelt nachgewiesen. *Freie
+Stabenden anschließen…* teilt das Element eines Stabs, hängt den neuen Teil in
+denselben Stab und verteilt die Linienlasten des Stabs gleich neu, sodass sie
+wieder die ganze Stablänge belasten. Bis zum 03.10.2026 gehörte der neue Teil
+zu keinem Stab, und in der ersten Fassung danach trug der verkürzte alte Teil
+seine Last nur noch auf seiner neuen Länge (Balken 8 m mit 10 kN/m: Auflager
+60 statt 80 kN). Zusammenfassen, Teilen und *Stab* um ein vorhandenes Element
+verwerfen die Ergebnisse wie jede andere Änderung am Modell.
 
 **Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
 die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
@@ -3037,6 +3634,200 @@ hatte gar keinen. Was ein Feld selbst meldet, geht vor: Ein Zahlenfeld mit
 ungültiger Eingabe zeigt seine Fehlermeldung und danach, sobald die Zahl
 stimmt, wieder den Hinweis; ein Listenfeld nennt die Anzahl und alle Einträge,
 der Hinweis steht darin mit an erster Stelle.
+
+**Nicht übernommene Änderungen (seit 03.10.2026).** Sobald man in einer Maske
+etwas ändert, steht vor ihrem Titel ein Punkt, etwa „● Knoten K1“; der Hinweis
+am Titel nennt die geänderten Felder. Der Punkt geht wieder, wenn alle Felder
+so stehen wie beim Öffnen, wenn „Übernehmen“ (oder „Anlegen“, „Last
+aufbringen“ …) gelungen ist, und mit der Maske, wenn man sie abbricht oder
+schließt. Scheitert „Übernehmen“, bleibt er stehen. Was zählt, steht am Feld
+selbst: Reine Anzeigen, in die das Programm Anzahlen, Kennwerte oder den
+Fingerabdruck des Netzes schreibt, zählen nicht. Ein Anzeigefeld, das trägt,
+was „Übernehmen“ schreibt, zählt dagegen – etwa „Gilt für“ bei Schweißnaht,
+Wind und Wasserdruck nach „Auswahl übernehmen“. Zieht man die Schnittebene im
+Bild, gelten die Werte, die das Programm dabei in ihre Maske schreibt, als
+übernommen, denn das Bild zeigt sie schon.
+
+Soll eine Maske mit Punkt einer anderen weichen, geschieht das nicht still.
+Das gilt für einen Klick oder Doppelklick im Modellbaum, für *Neu* im
+Rechtsklickmenü des Baums, für einen Befehl im Ribbon, im Register „Auswahl“
+oder in einem Rechtsklickmenü, für einen Klick in einer Tabelle oder in der
+Ansicht, der eine Maske öffnet, für die Einzeltasten K, S, L und B und für das
+Ende einer Rechnung. Oben im rechten Bereich, unter der Ergebnisdarstellung und
+direkt über der Maske, erscheint dann die Leiste „„Knoten K1“ hat nicht
+übernommene Änderungen“ mit den Knöpfen **Übernehmen** und **Verwerfen**.
+Angehalten wird, bevor etwas geschieht: Die neue Maske ist noch nicht gebaut,
+und ein Klick im Modellbaum, in einer Tabelle oder auf einen Eintrag des
+Rechtsklickmenüs hat die Auswahl der Ansicht noch nicht umgestellt.
+
+* **Übernehmen** übernimmt die Maske genau wie ihr eigener Knopf, mit denselben
+  Prüfungen und einem Rückgängig-Schritt, und führt danach aus, was man
+  wollte. Die neue Maske entsteht erst dann, mit dem Stand nach dem
+  Übernehmen: Hat man in der Maske *Einheiten* die Kraft umgestellt oder einen
+  Lastfall umbenannt, zeigt sie schon den neuen Wert. Sie gilt dem Objekt, das
+  man angeklickt hatte, auch wenn das Übernehmen dessen Namen oder Nummer
+  verschoben hat – etwa die Last an K7, wenn die übernommene Last aus der
+  Liste davor in einen anderen Lastfall gewandert ist, oder den angeklickten
+  Knoten nach einem Nummerntausch. Gibt es das Objekt danach nicht mehr,
+  öffnet sich nichts, und die Statuszeile sagt es.
+* **Scheitert** das Übernehmen, bleibt alles stehen: Maske, Punkt und Leiste,
+  und das Gewünschte wartet weiter. Gescheitert ist es bei einer ungültigen
+  Zahl, bei einer Prüfung mit Meldung, wenn man den Fortschritt abbricht
+  (Wasserdruck, Wind) und bei einem Programmfehler, den eine Meldung nennt.
+  Die Meldung erscheint wie beim Knopf der Maske. Hatte das Übernehmen schon
+  etwas geschrieben, ist das Modell danach genau so wie zu Beginn des
+  Übernehmens, mit denselben Schritten zum Rückgängigmachen und Wiederholen;
+  das gilt auch, wenn man Wasserdruck oder Wind erst ganz am Ende abbricht,
+  wenn die Rechnung die alten Lasten schon entfernt hat. Bis zum 03.10.2026
+  blieben dann die halb geschriebenen Lasten stehen, obwohl die Meldung „das
+  Modell ist unverändert“ lautete. Ändert man in der Sammelmaske einen Wert,
+  den eines der Objekte abweist, gilt er für keines; Statuszeile und Protokoll
+  sagen das gleichlautend. Das Gewünschte findet sein Objekt auch danach
+  wieder. Die Knotenmaske prüft eine neue Nummer jetzt,
+  bevor sie die Koordinaten schreibt; bis zum 03.10.2026 standen die neuen
+  Koordinaten schon im Modell, wenn die Nummer abgewiesen wurde.
+* **Verwerfen** verwirft die Eingaben und führt dann aus, was man wollte. Eine
+  Maske „Neu: …“ wird dabei abgebrochen wie mit ihrem Knopf *Abbrechen*: ein
+  schon angelegter Knoten geht wieder weg.
+* **Ohne Knopfdruck** bleibt alles, wie es ist. Die Maske steht weiter, man
+  kann darin weitertippen und in der Ansicht klicken. Wählt man dabei in der
+  Ansicht etwas anderes, gilt beim Druck auf *Übernehmen* die Auswahl in
+  diesem Moment – wie beim Knopf der Maske. Eine Mehrfachwahl im Modellbaum
+  (Strg+Klick auf mehrere Knoten, Flächen oder Lastfälle) hält dagegen wie
+  der einzelne Klick an, bevor sie die Auswahl umstellt.
+
+Die Leiste geht von selbst, wenn die Maske auf ihrem eigenen Weg übernommen,
+abgebrochen oder geschlossen wird oder wieder unverändert ist; was man wollte,
+verfällt dann. Kommt ein weiterer Wunsch, während die Leiste steht, gilt der
+letzte. Die Leiste ist kein eigenes Fenster und sperrt nichts, auch nicht
+während einer Rechnung; eine Fehlermeldung beim Übernehmen steht dann wie jede
+andere im Protokoll. Nicht an der Leiste halten Wege, die keine Maske
+ersetzen: „Querschnitt zuweisen…“ und „Dicke zuweisen…“ zeigen nur das
+Register „Auswahl“, und ein Strg+Klick auf eine schon gewählte Last nimmt sie
+nur aus der Auswahl.
+
+**Während ein Übernehmen rechnet, ist die Oberfläche gesperrt.** Wasserdruck
+und Wind rechnen beim Übernehmen mit Fortschrittsbalken, und bis zum
+03.10.2026 ließ sich das Fenster dabei voll bedienen: Ein Klick im Modellbaum
+ersetzte die rechnende Maske samt ihren Eingaben, ein zweiter Klick auf
+*Übernehmen* rechnete noch einmal, und Rückgängig tauschte das Modell unter der
+laufenden Rechnung aus. Jetzt wirkt in dieser Zeit wie während einer Rechnung
+nur **Abbrechen** neben dem Balken (oder Esc). Klicks im Modellbaum, in den
+Tabellen, in der Ansicht und im Ribbon, Tasten, die Leiste, Rückgängig,
+*Neu*, *Öffnen*, die Beispiele und Beenden werden abgewiesen, und die
+Statuszeile sagt „Übernehmen läuft – erst abwarten oder abbrechen“. Eine
+Änderung aus dem Browser wird ebenfalls abgewiesen; der Browser bekommt den
+Grund als Meldung.
+
+**Neu, Öffnen, Beispiel, Importieren und Beenden** gehen ebenfalls über die
+Leiste, auch wenn das Modell gespeichert ist; nach dem Knopf folgt der Befehl
+mit seiner eigenen Rückfrage nach ungespeicherten Änderungen. Bis zum
+03.10.2026 schlossen sie die Maske ohne Frage. **Rückgängig und Wiederholen**
+sind gesperrt, solange eine Maske nicht übernommene Änderungen hat: Die Leiste
+erscheint, die Statuszeile nennt die Maske, und es wird nichts zurückgenommen.
+Ein Rückgängig vor dem Übernehmen konnte Knotennummern unter der offenen Maske
+verschieben, sodass sie einen anderen Knoten beschrieb; ein Rückgängig danach
+nähme genau das Übernommene zurück. Strg+Z in einem Textfeld der Maske nimmt
+weiter nur die Eingabe im Feld zurück.
+
+Ist die offene Maske **unverändert**, wirken Rückgängig und Wiederholen wie
+immer, und die Maske wird danach mit dem Stand von jetzt neu aufgebaut; ebenso
+nach einer Änderung aus dem Browser und nach einem Import, der an das Modell
+angehängt wird. Sie gilt weiter demselben Objekt: Holt Rückgängig einen
+gelöschten Knoten zurück, zeigt die Maske des Knotens bei x = 40 danach
+„Knoten K20“ statt „Knoten K19“, mit seinen Werten. Gibt es ihr Objekt nicht
+mehr, bleibt sie geschlossen, und die Statuszeile sagt es, etwa „Knoten K20
+gibt es nach „Rückgängig“ nicht mehr – die Maske ist geschlossen“. Bis zum
+03.10.2026 zeigte die Maske dann die alten Werte, und ein späteres Übernehmen
+schrieb sie zurück. Hat der Browser das Modell gegen ein anderes getauscht,
+geht die Maske zu wie bei *Neu*.
+
+Ist am Desktop eine Maske mit nicht übernommenen Änderungen offen, weist das
+Programm Änderungen aus dem **Browser** ab, auch *Neu*, ein Beispiel und den
+Import dort. Der Browser bekommt die Meldung „Am Desktop ist die Maske
+„Knoten K1“ mit nicht übernommenen Änderungen offen – dort erst „Übernehmen“
+oder „Verwerfen“, dann die Änderung hier noch einmal senden“. Bis zum
+03.10.2026 ersetzte der Browser das Modell unter der Maske, und ihr
+Übernehmen schrieb die alten Eingaben in das neue Modell.
+
+Die Wege, die ohnehin fragen, gehen nicht über die Leiste, nennen die Maske
+aber in ihrer Rückfrage: **Entf** in der Ansicht, Löschen im Modellbaum (auch
+für Lager und für mehrere Einträge), *Knoten löschen*, *Stab löschen* und so
+fort im Rechtsklickmenü eines Objekts, *Löschen* je Art der Auswahl und
+*Auswahl löschen* darin, „Diese Lasten löschen“, das Löschen einer einzelnen
+Last und *Modell leeren*. Mit *Ja* wird die Maske geschlossen; *Modell leeren*
+schließt jede offene Maske, denn ihr Objekt gibt es danach nicht mehr. Die
+Taste **F** öffnet keine Maske, sondern den Dialog
+*Fläche aus Linien*, und lässt die offene Maske stehen. Die Ermüdungsmaske und
+die Querschnittsmaske tragen keinen Punkt, ihre Tabellen und Profile zählen
+nicht mit; die Register (*Berechnung*, *Ergebnisse* …) auch nicht.
+
+Bis zum 03.10.2026 ersetzten Baumklick, Doppelklick, Ribbon, das Register
+„Auswahl“ und die Tabellen eine geänderte Maske ohne Rückfrage, und die
+Eingaben waren weg. Die Einzeltasten wurden mit einer Meldung in der
+Statuszeile abgewiesen, und nach einer Rechnung blieb die Maske mit einer
+Zeile im Protokoll stehen, ohne dass man von dort weiterkam.
+
+### Hinweis oder Fehler (seit 03.10.2026)
+
+Das Programm meldet sich auf zwei Arten. Ein **Hinweis** sagt, was man anders
+machen soll: Es fehlt eine Auswahl („Zuerst Knoten in der Ansicht wählen“),
+eine Eingabe ist ungültig („Spiel größer als null eintragen“), ein Name ist
+schon vergeben („Lastfall „S“ gibt es schon“), oder in einer Tabelle ist keine
+Zeile gewählt („Zuerst eine Zeile wählen“). Ungültig ist auch eine Liste in
+einem Textfeld der Maske, etwa der Versatz „1.000, 0“, eine Teilung, eine
+Ersatzachse oder RBE3-Gewichte mit falscher Anzahl oder die Stabknoten „0, 1,
+x“. Ein Hinweis öffnet kein Fenster. Er steht gelb hinterlegt in der
+Statuszeile als „Hinweis: …“, bis eine andere Meldung kommt oder nach 15
+Sekunden, und im Protokoll als Zeile, die mit „HINWEIS:“ beginnt. Diese Zeile
+bleibt im Protokoll schwarz, rot sind dort nur FEHLER-Zeilen. Kommt der
+Hinweis aus dem Übernehmen einer Maske oder von einem ihrer Knöpfe (etwa
+„Bettung übernehmen“), steht er außerdem gelb in ihrer Meldungszeile über den
+Knöpfen. Ein Hinweis aus einer Tabelle oder der Layerliste steht dagegen nicht
+in der Zeile einer Maske, die gerade offen ist. Die Maske bleibt mit allen
+Eingaben offen: Man verbessert die Eingabe und drückt noch einmal
+„Übernehmen“. Das nächste Übernehmen oder eine Änderung in irgendeinem Feld
+der Maske nimmt den Hinweis aus der Meldungszeile wieder weg.
+
+**Während einer Rechnung** schreiben Fortschrittsbalken und Uhr die
+Statuszeile mehrmals in der Sekunde neu. Ein Hinweis steht dann bis zum Ablauf
+der 15 Sekunden vorn, vor dem Fortschrittstext, und die Statuszeile bleibt
+gelb. Das Protokoll kommt bei einem Hinweis nicht nach vorn, denn unten springt
+der Reiter nur bei Fehlern und Warnungen, und ein Hinweis aus einer Tabelle
+nähme sonst genau die Tabelle weg, an der man arbeitet.
+
+Ein **Fehler** deutet auf ein Problem im Programm oder in den Daten: eine
+Ausnahme, eine Datei, die sich nicht lesen oder schreiben lässt, eine
+gescheiterte Rechnung, ein Wert, den das Programm nicht kennt (etwa eine
+unbekannte Nahtart). Er erscheint weiter im roten Fenster „Fehler“, das man
+wegklicken muss, und im Protokoll als FEHLER-Zeile. Während einer Rechnung
+öffnet auch ein Fehler kein Fenster; er steht dann im Protokoll und in der
+Statuszeile.
+
+Ein Hinweis beim Übernehmen zählt wie ein Fehler: Das Übernehmen ist
+gescheitert. Steht gerade die Leiste „… hat nicht übernommene Änderungen“,
+bleiben Maske, Punkt im Titel und Leiste stehen, und was man wollte, wartet
+weiter. Hatte das Übernehmen schon etwas geschrieben, ist das Modell danach
+wieder so wie zu Beginn; der Satz „… nicht übernommen – das Modell ist wieder
+wie vorher“ hängt sich dann in der Statuszeile an den Hinweis an, statt ihn zu
+ersetzen.
+
+Hinweise ohne Fenster geben seit dem 03.10.2026 die Masken am rechten Rand
+(etwa Knoten, Linie, Lager, Knoten-, Linien- und Flächenlast, Lastfall,
+Kombination, Werkstoff, Querschnitt, Gelenk, Kontaktbedingung, Stellung,
+Situation, Subsystem, Wind, Wasserdruck, Spalt, Spiel, Passung, Übermaß,
+Schweißnaht, Netzeinstellungen) und die Knöpfe an den Tabellen (Löschen,
+Ändern, Entfernen ohne gewählte Zeile, die Layerliste). Auch der Rechtsklick
+meldet sich mit Hinweisen: bei einem ausgeblendeten oder gesperrten Objekt,
+bei einem Eintrag während einer Rechnung oder nach einer Änderung des Modells
+und bei „Nichts gelöscht“. Bis zum 03.10.2026 kam jede Meldung der Masken und
+Tabellen im roten Fenster „Fehler“, und man musste es wegklicken, bevor man die
+Eingabe verbessern konnte; in der ersten Fassung vom 03.10.2026 galt das noch
+für die Listenfelder (Versatz, Teilung, Ersatzachse, Gewichte, Stabknoten),
+und die Hinweise des Rechtsklicks standen nur kurz in der Statuszeile. Befehle, die ohne
+passende Auswahl gar keine Maske öffnen (etwa *Lot* ohne gewählte Knoten),
+und Meldungen nach einem schon geschlossenen Dialog kommen vorerst weiter im
+Fenster; sie folgen in einem späteren Schritt.
 
 ### Zahlen eingeben (seit 24.09.2026)
 
@@ -3187,7 +3978,9 @@ verwirft sie beim Zurücknehmen wie bisher.
 
 Was in der Ansicht gewählt ist — Knoten, Linien, Stäbe, Flächen, Volumen,
 auch gemischt —, lässt sich seit 15.09.2026 **verschieben, kopieren, drehen
-und spiegeln**: Rechtsklick in die Ansicht oder *Geometrie → Ändern*. Rechts
+und spiegeln**: Rechtsklick in die Ansicht (ins Leere oder auf ein Objekt, das
+der Rechtsklick dann wählt; die Einträge stehen unter den Befehlen der Auswahl)
+oder *Geometrie → Ändern*. Rechts
 erscheint die Maske; jede hat zwei Wege:
 
 | Befehl | tippen | klicken |
@@ -3216,7 +4009,12 @@ Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
 ### Rückgängig und Wiederholen
 
 **Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
-für alles: Geometrie, Netz, Lager, Lasten, Linien. Gesichert wird jeweils das
+für alles: Geometrie, Netz, Lager, Lasten, Linien. Solange eine Maske nicht
+übernommene Änderungen hat (Punkt im Titel), sind beide gesperrt; die Leiste
+„Übernehmen | Verwerfen“ erscheint (seit 03.10.2026, Kapitel 2, *Maske oder
+Klick*). Eine offene Maske ohne Änderungen wird danach mit dem neuen Stand
+aufgebaut oder, wenn es ihr Objekt nicht mehr gibt, geschlossen; während ein
+Übernehmen rechnet, sind beide gesperrt. Gesichert wird jeweils das
 ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
 einmal betrifft. Die letzten 50 Schritte werden vorgehalten. Der Knopf
 **nennt, was er zurücknimmt**: der Hinweis beim Überfahren lautet etwa
@@ -3278,7 +4076,8 @@ Elemente löschen“ im Register Netz, zwischen den Netzbefehlen) entfernt alles
 außer Werkstoffen, Querschnitten, Dicken und Projektangaben. Das Programm fragt
 vorher und **nennt mit Anzahl, was tatsächlich verschwindet**, etwa „Netz
 (221 Knoten, 240 Elemente), Knotenlager (43), Lastfälle mit ihren Lasten (3),
-Kombinationen (23), Stäbe mit Nachweis (3), Ermüdungslasten (1)“ — dazu
+Kombinationen (23), Stäbe (3), Ermüdungslasten (1)“ (bis zum 03.10.2026 „Stäbe
+mit Nachweis (3)“) — dazu
 Kontakte, Berichtsbilder, Stellungen, Unterlagen oder Layer, wenn es sie gibt;
 die Modelleinstellungen (Bemessung, Netzvorgaben, Einheiten, Plastizität,
 Berichtsrahmen) gehen auf die Vorgabe zurück. Sind die **Ergebnisse der
@@ -3389,10 +4188,12 @@ Knoten anklicken:
 | Spline | 3 oder mehr Knoten | B-Spline vom gewählten Grad durch den ersten und letzten Punkt |
 | Parabel | 2 Knoten + Stich | Parabel mit dem angegebenen Stich in der Mitte |
 
-Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt — die
-Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
-ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
-Sehnenzugs).
+Mit „Stabelemente daraus erzeugen“ (bis zum 03.10.2026 „Stäbe daraus
+erzeugen“) wird die Linie gleich in Stabelemente geteilt — die Teilung steht in
+der Maske. Einen Stab mit Nachweis legt der Haken nicht an; den bilden danach
+*Stäbe automatisch erkennen* oder *Stab aus Stabelementen…*. Die Linie bleibt
+als Geometrie erhalten und kennt ihre exakte Länge (ein Halbkreis r = 2 m misst
+6,283 m, nicht die Länge des Sehnenzugs).
 
 ### Flächen: eben oder Regelfläche; Flächen verschneiden
 
@@ -3438,9 +4239,11 @@ Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen dieselben Richtung
 
 ### Querschnitte anlegen: Normprofile, eigene Profile, freier Editor
 
-Ein Klick auf **Querschnitte** im Modellbaum (oder Rechtsklick → *Neu:
-Querschnitt*, oder *Struktur → Querschnitt hinzufügen*) zeigt rechts die
-Querschnittsmaske. Sie hat drei Teile, von oben nach unten:
+Ein Doppelklick auf **Querschnitte** im Modellbaum (oder Rechtsklick → *Neu:
+Querschnitt*, der Knopf „Neu: Querschnitt …“ in der Übersicht des Zweigs oder
+*Struktur → Querschnitt hinzufügen*) zeigt rechts die Querschnittsmaske. Bis
+zum 03.10.2026 tat das schon der einfache Klick; er zeigt jetzt die Übersicht
+mit der Liste der Querschnitte. Die Maske hat drei Teile, von oben nach unten:
 
 1. **Normprofile** aus der Profildatenbank. Oben das Land mit seiner Norm,
    darunter die **Art** als Knöpfe — *Doppel-T* (IPE, HEA, HEB, HEM; UB, UC;
@@ -3648,7 +4451,7 @@ gerechnet wurde.
 
 Sobald in der Ansicht etwas gewählt ist, erscheint rechts im Ribbon ein
 zusätzliches Register **„Auswahl: …"** mit genau den Befehlen, die auf die
-Auswahl passen. Im Register *Start → Auswahl* steht daneben der Schalter
+Auswahl passen. Im Register *Start → Bearbeiten ▾* steht daneben der Schalter
 **Intelligente Auswahl** (siehe „Auswahl per Klick“). Einen Bereich „Elemente
 ändern" im rechten Panel gibt es dafür nicht mehr.
 
@@ -3762,6 +4565,17 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 8. **Bericht**: Bericht → Bericht (HTML, im Browser druckbar/als PDF
    speichern; PDF direkt bei installiertem reportlab).
 
+Das Register **Start** fasst die häufigsten Befehle dieses Ablaufs in einer Reihe
+zusammen, in der Reihenfolge, in der man ein Modell aufbaut und auswertet:
+Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen, Berechnen,
+Ergebnisse, Nachweise EC3, Bericht. Die Reihe ist nicht die Liste oben noch
+einmal. „Netz“ meint dort das Anlegen von Stabzügen und Platten (in Start
+*Knoten* und *Stab*), *Vernetzen* ist das Vernetzen von Flächen und Volumen. Der
+Knopf *Nachweise EC3* steht hinter dem Berechnen, weil er die Ergebnisse der
+Rechnung prüft („Zuerst berechnen“, wenn es noch keine gibt); die Parameter der
+Stäbe aus Schritt 5 stellt man vor der Rechnung in der Maske *Nachweise* ein.
+Es sind dieselben Befehle wie in den Fachregistern, keine neuen.
+
 Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
@@ -3857,6 +4671,214 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Kombinationstypen und Umhüllende im Klartext (seit 03.10.2026)
+
+Jede Kombination hat einen Typ, und nach der Berechnung bildet das Programm je
+Grenzzustand eine Umhüllende. Beide heißen an der Oberfläche so, wie man sie
+aus DIN EN 1990 kennt. Bis zum 03.10.2026 standen in Modellbaum,
+Ergebnisauswahl, Glasleiste, Kopfzeile der Ansicht, Kombinationsmaske,
+Kombinationsdialog, Tabellen, Protokoll und Browser die internen Schlüssel,
+etwa „Umhüllende ULS“, „Umhüllende CASES“ oder „SLS_CH“; nur der Bericht
+schrieb schon Klartext. Die Texte kommen jetzt für alle Stellen aus einem
+gemeinsamen Verzeichnis, auch für den Bericht.
+
+Jeder Begriff hat eine kurze und eine lange Form. Die kurze steht in den
+Auswahllisten, im Modellbaum, in der Kopfzeile der Ansicht, in den Tabellen und
+im Protokoll. Die lange steht im Bericht und erscheint als Hinweis am
+Mauszeiger, etwa an der Auswahl *Typ* der Kombinationsmaske, an den Einträgen
+des Kombinationsdialogs und an den Umhüllenden der Ergebnisauswahl rechts.
+
+| Typ der Kombination | lange Form |
+|---|---|
+| GZT (STR/GEO) | Grenzzustand der Tragfähigkeit (GZT), Versagen von Tragwerk und Baugrund (STR/GEO), ständige und vorübergehende Bemessungssituation nach DIN EN 1990, Gl. 6.10 |
+| GZT (EQU) | Grenzzustand der Tragfähigkeit (GZT), Verlust der Lagesicherheit (EQU) nach DIN EN 1990 |
+| außergewöhnlich | Grenzzustand der Tragfähigkeit (GZT), außergewöhnliche Bemessungssituation nach DIN EN 1990, Gl. 6.11 |
+| GZG charakteristisch | Grenzzustand der Gebrauchstauglichkeit (GZG), charakteristische Kombination nach DIN EN 1990, Gl. 6.14 |
+| GZG häufig | Grenzzustand der Gebrauchstauglichkeit (GZG), häufige Kombination nach DIN EN 1990, Gl. 6.15 |
+| GZG quasi-ständig | Grenzzustand der Gebrauchstauglichkeit (GZG), quasi-ständige Kombination nach DIN EN 1990, Gl. 6.16 |
+| Ermüdung | Ermüdung (FAT), nur für den Ermüdungsnachweis nach DIN EN 1993-1-9, nicht in den Querschnittsnachweisen im GZT |
+| benutzerdefiniert | benutzerdefinierte Kombination, sie geht in die Umhüllende GZT ein |
+
+| Umhüllende | lange Form | was sie zusammenfasst |
+|---|---|---|
+| Umhüllende GZT | Grenzzustand der Tragfähigkeit (GZT) | alle Kombinationen der Typen GZT (STR/GEO), GZT (EQU), außergewöhnlich und benutzerdefiniert |
+| Umhüllende GZG charakteristisch | Gebrauchstauglichkeit, charakteristisch | die charakteristischen Kombinationen |
+| Umhüllende GZG häufig | Gebrauchstauglichkeit, häufig | die häufigen Kombinationen |
+| Umhüllende GZG quasi-ständig | Gebrauchstauglichkeit, quasi-ständig | die quasi-ständigen Kombinationen |
+| Umhüllende Ermüdung | Ermüdung | die Kombinationen der Ermüdung |
+| Umhüllende Lastfälle | Lastfälle | alle Lastfälle, wenn das Modell keine Kombination hat |
+
+Für die längeren Namen wird die Ergebnisauswahl der Glasleiste breiter,
+soweit dort Platz frei ist; sonst nennt der Hinweis am Mauszeiger den vollen
+Namen (siehe Kapitel *Darstellung in der Ansicht*, Absatz *Lange Namen* unter
+*Die Glasleiste*).
+
+Die kurzen Formen folgen der deutschen Fassung von DIN EN 1990: GZT und GZG
+sind dort die Abkürzungen der beiden Grenzzustände, EQU, STR, GEO und FAT
+heißen die Nachweise im GZT (Abschnitt 6.4.1), und im GZG heißen die
+Kombinationen charakteristisch, häufig und quasi-ständig (Abschnitt 6.5.3).
+Die Umhüllende GZT heißt ohne Nachweisart, weil sie mehrere Typen
+zusammenfasst. Die Umhüllende einer Ergebniskombination aus RFEM trägt weiter
+den Namen der Kombination, etwa „Umhüllende EK3“. Lautet dieser Name wie ein
+Fachbegriff, etwa „GZT“ oder „Ermüdung“, bekommt er den Zusatz
+„(Ergebniskombination)“: „Umhüllende GZT (Ergebniskombination)“ steht dann
+neben der „Umhüllende GZT“ aller GZT-Kombinationen, in den Listen, im
+Modellbaum, im Browser und im Bericht. Ohne den Zusatz hießen zwei
+verschiedene Umhüllende gleich.
+
+Der Kombinationsdialog (Doppelklick in der Tabelle *Kombinationen* oder im
+Register *Lastfälle*) bietet dieselben Typen wie die Maske, also auch
+*Ermüdung*. Hat eine Kombination einen Typ, den die Liste nicht kennt (aus
+einer Quelldatei), steht er unverändert mit zur Wahl, in Dialog und Maske, und
+„OK“ beziehungsweise „Übernehmen“ behält ihn. Bis zum 03.10.2026 machte der
+Dialog aus einer Kombination der Ermüdung und aus jedem unbekannten Typ beim
+„OK“ still eine Kombination GZT (STR/GEO), die Maske aus einem unbekannten Typ
+ebenso. Der
+Dialog *Verformungsnachweis* nennt die Bemessungssituation ebenso im Klartext
+(„GZG charakteristisch“; bis zum 03.10.2026 „charakteristisch (SLS_CH)“).
+
+Gespeichert, gerechnet und eingelesen wird weiter mit den Schlüsseln (ULS,
+EQU, ACC, SLS_CH, SLS_FR, SLS_QP, FAT, USER und CASES). Eine ältere Datei lädt
+also unverändert, und ein Bild, das schon im Bericht steht, zeigt weiter
+dieselbe Umhüllende. Seine Beschriftung bleibt, wie sie beim Übernehmen
+geschrieben wurde. Eine Ergebnisdatei von vor dem 03.10.2026 trägt die alten
+Namen der Umhüllenden mit („Umhuellende ULS“); beim Laden bekommen die
+Umhüllenden mit bekanntem Schlüssel den Klartext, sodass Protokoll und
+Zusammenfassung zum Beispiel „Umhüllende GZT: 42 Ergebnisse“ schreiben (Halle).
+
+**Bericht.** Der Bericht benutzt dieselben Begriffe wie die Oberfläche. Bis
+zum 03.10.2026 stand dort an einigen Stellen der Schlüssel, und jetzt steht
+der Klartext:
+
+* Die Ermüdung hieß „FAT“, als Typ in der Tabelle der Kombinationen, in der
+  Übersicht der Ergebnisse („Kombination (FAT)“), in den Überschriften der
+  Ergebnisse je Kombination („Kombination … (FAT): …“) und als „Umhüllende FAT“. Jetzt heißt sie „Ermüdung“ und die
+  Umhüllende „Umhüllende Ermüdung“.
+* Die Zeile „Zeigt“ unter einem übernommenen Bild und der Titel einer
+  übernommenen Tabelle nannten „Umhüllende ULS“, jetzt „Umhüllende GZT“.
+* Der Hinweis einer übernommenen Tabelle, zu der das Ergebnis nicht passt,
+  nannte den Schlüssel („Auflagerkräfte gibt es zu Lastfall oder Kombination
+  (env:SLS_CH)“), jetzt „(Umhüllende GZG charakteristisch)“.
+* Der übernommene Tabelleneintrag *Kombinationen* führte den Typ als Schlüssel
+  („ULS“, „SLS_CH“), während die Tabelle im Kapitel Kombinationen schon den
+  Klartext hatte. Jetzt steht in beiden „GZT (STR/GEO)“, „GZG charakteristisch“
+  und so weiter.
+* Eine Ergebniskombination, die wie ein Fachbegriff heißt, trägt den Zusatz
+  „(Ergebniskombination)“, siehe oben.
+
+Alle übrigen Texte des Berichts bleiben, wie sie waren.
+
+Die Tabelle *Kombinationen* gibt beim Kopieren und in CSV und Excel den
+Klartext aus, so wie die Spalte *Art* der Elemente. Im Browser gilt dasselbe
+wie im Programm; die Kennungen der Ergebnisse (env:ULS) bleiben.
+
+### Umlaute und Einzahl in Meldungen und Nachweiszeilen (seit 03.10.2026)
+
+Die Zeilen, die das Programm nach einer Rechnung und bei der Arbeit am Modell
+schreibt, stehen mit Umlauten und nennen ein einzelnes Objekt in der Einzahl.
+Am Einfeldträger aus einem Stab heißt die Zeile der EC3-Nachweise jetzt
+„Nachweise EC3: 1 Stab, 1 Kombination, max. Ausnutzung 0.633 (…) - alle
+erfüllt“. Bis zum 03.10.2026 stand dort „Nachweise EC3: 1 Staebe,
+1 Kombinationen, … - alle erfuellt“, ein überschrittener Stab hieß „1 Staebe
+NICHT erfuellt“, und die Statusleiste zeigte bei einem Element „Netz: 2 Knoten
+· 1 Elemente“.
+
+Das gilt für diese Texte:
+
+* die Nachweiszeilen im Protokoll, in der Statuszeile, im Etikett der Maske
+  *Nachweise* und im Textfeld der Maske *Ergebnisse*: EC3 („1 Stab“,
+  „1 Kombination“, „erfüllt“), Ermüdung („Ermüdung: 1 Stab, …“ und beim
+  maßgebenden Ort „1 Stufe“), Volumen („1 Bereich“), Beulen („1 Feld“),
+  Lasteinleitung („1 Stelle“), Verformungen („1 Nachweis“) und die
+  Knicklängen aus der Knickfigur („1 von 1 Stab beteiligt“);
+* der Fortschritt dieser Nachweise in der Statuszeile, etwa „Ermüdung: 1 Stab
+  mit Kerbfall“ und „Ermüdung fertig“ statt „Ermuedung: 1 Staebe mit
+  Kerbfall“ und „Ermuedung fertig“, und der Vorschlag der Kerbfälle im
+  Protokoll („1 Stab mit gewalztem Querschnitt“);
+* der Hinweis bei großer Torsion („Torsion schöpft die Schubtragfähigkeit
+  allein aus“), der Kopf der Nachweistabellen im Bericht und auf der
+  Kommandozeile („maßgebender Nachweis“, „maßgebend“) und die Beispiele der
+  Kerbfälle in der Auswahlliste der Stabmaske und im Bericht („Längsnaht
+  durchgeschweißt, geprüft“, „Stumpfstoß“, „Schweißnahtüberhöhung“);
+* „Modell prüfen“: „Flächenlast auf Element …“, „ohne Master-Fläche“,
+  „1 Fläche ohne Netz“, „1 Teiltragwerk ist nur durch Kontakt gehalten“ und
+  „1 Knoten trägt kein Element“;
+* die Statusleiste („Netz: 2 Knoten · 1 Element“, „Solver: 1 Ergebnis“), der
+  Fuß jeder Tabelle („1 Zeile“), die Auswahl im Modellbaum („1 Stab
+  ausgewählt (Modellbaum)“), die Sammelmaske („1 Element bearbeiten“), die
+  Rückfrage vor dem Rechnen („1 Fläche (F1) …“) und die Meldungen beim
+  Vernetzen, beim Anlegen von Lasten, Gelenken und Kombinationen, beim
+  Erkennen von Stäben, beim Laden von Ergebnissen und beim Abbruch einer
+  Rechnung („1 Lastfall bleibt erhalten“);
+* die Hinweise zu den Darstellungsarten der Ansicht („gefüllte Flächen, Stäbe
+  mit ihrer Querschnittskontur“) und der Bildtext „überschritten!“ unter der
+  größten Ausnutzung.
+
+Wo mit der Zahl auch das Verb wechselt, folgt es ihr: „1 Bauteil ist nicht
+gehalten“, „1 Stabelement gehört schon zu einem Stab“, „1 Objekt hat kein
+Netz“. Bei null und bei mehr als einem Objekt bleibt der Text, wie er war.
+
+Dasselbe gilt für die Zusammenfassung der Rechnung im Protokoll, in der Maske
+*Berechnung* und im Browser. Ihre erste Zeile heißt „Lastfälle: 5
+Kombinationen: 72 …“ statt „Lastfaelle: …“. Je Ergebnis heißen die Zeilen
+„Gleichungslöser“, „Summe Auflagerkräfte“, „Starrkörperformen“ und „Löser“
+statt „Gleichungsloeser“, „Summe Auflagerkraefte“, „Starrkoerperformen“ und
+„Loeser“, und die Doppelpunkte stehen weiter untereinander. Bei der
+Plastizität steht „1 Element fließt“, „1 Schritt“ und „1 Laststufe“, bei einer
+Umhüllenden mit einem Ergebnis „Umhüllende GZT: 1 Ergebnis“. Die Meldungen
+des Gleichungslösers schreiben „Gleichungssystem numerisch singulär“,
+„Singuläres System - Lagerung oder Vernetzung prüfen“ und „Keine Normalkräfte
+vorhanden - Knicknachweis nicht möglich“. Die Beschreibungen von Layern,
+Subsystemen, Situationen und Kontaktbedingungen im Modellbaum und in den
+Masken nennen ein Objekt in der Einzahl („1 Stab, 1 Linie“ statt „1 Stäbe,
+1 Linien“, „V1 an 1 Fläche“ statt „V1 an 1 Flächen“), ebenso die Auswahl in
+der Maske *Neu: Subsystem* und die Zeile einer Kontaktbedingung in der
+Statuszeile („1 Kontaktfläche“).
+
+Seit der Gegenprüfung am selben Tag gilt das auch für die Kontaktzeile der
+Zusammenfassung („Kontakt: 1 von 1 Bedingung aktiv“) und für die Zeilen der
+Plastizität im Protokoll und im Fortschritt („Plastizität: 1 Element fließt,
+…“). Es gilt außerdem für diese Meldungen:
+
+* „Modell prüfen“ zu entarteten Elementen („1 entartetes Element … trägt es
+  nichts und wird … übergangen“, „… wurde umgewandelt … - seine
+  Genauigkeit …“);
+* die Abnahme des Netzes („1 Randlinie gehört nicht …“, „1 Tetraeder liegt
+  umgestülpt zwischen seinen Nachbarn“, die Rückfrage „Das Netz reißt
+  1 Prüfung“);
+* das Setzen einer Passung („Passung an 1 Kontaktfuge“, „1 Reihe“), das
+  Ausführen der Kontaktfugen, der Wasserdruck, das Schneiden von Flächen
+  („1 Schnittlinie, 1 neuer Knoten“) und die Bemaßung („1 Nachkommastelle“);
+* der Kopf der Ansicht mit „Kontakte zeigen“ („Kontakte: 1 Bedingung farbig
+  mit Schild“);
+* die Zeile „1 Element ohne Wirkung“ bei einer Stellung oder Situation;
+* der Grund, aus dem eine Ergebnisdatei nicht zum Modell passt („die Lastfälle
+  sind andere“).
+
+Eine Zahl wie 1,0 zählt dabei wie 1 und steht ohne „,0“ da.
+
+Eingelesen wird keiner dieser Texte, eine ältere Modelldatei lädt also
+unverändert. Einige entstehen aber beim Rechnen und werden mit dem Ergebnis
+gespeichert, zum Beispiel der maßgebende Ort der Ermüdung („…, 1 Stufe)“), die
+Texte der einzelnen Prüfungen (etwa „Torsion schöpft die Schubtragfähigkeit
+allein aus“) und die Protokolle von Kontakt und Plastizität. Eine
+Ergebnisdatei von vor dem 03.10.2026 zeigt diese Stellen darum in der alten
+Schreibung („1 Stufen)“, „Torsion schoepft …“), bis neu gerechnet wird. Die
+Zeilen, die erst beim Anzeigen gebildet werden, etwa „Nachweise EC3: 1 Stab,
+…“, stehen auch dann gleich in der neuen. Unverändert bleiben
+Einstellungsnamen, Schlüssel in Dateien und Beschreibungen, die mit dem Modell
+gespeichert werden, etwa die Beschreibung eines Lastfalls der Kategorie FAT
+(„Ermuedungslast (nur fuer Ermuedungsnachweis)“). Ebenso bleiben Kennwörter,
+die das Programm vergleicht, etwa die Arten der Rechenschritte der
+Plastizität („Fliessschritt“) und der Zustand „Fliessen“ eines Kontakts.
+
+Noch nicht umgestellt sind die Kommandozeile, die Browser-Oberfläche, die
+Protokolle von Import und Export (auch das des RFEM-Imports), Teile des
+Berichts, die Rückfragen und Meldungen beim Löschen und die Vorgabe-Dateinamen
+beim Speichern einer Tabelle als CSV oder Excel („Stabkraefte.csv“). Was der
+Browser aus der Rechnung anzeigt, kommt aus dem Programm und steht dort schon
+in der neuen Schreibung.
 
 ### Übermaß: die Presspassung als Last
 
@@ -4008,8 +5030,8 @@ Wasserspiegel als feste Deckel, keine Wechselsprünge, keine Wellen.
 
 ### Lastgenerierer Wind (DIN EN 1991-1-4)
 
-*Lasten → Generierer → Wind* (oder Modellbaum → Lastgenerierer → „+ Wind
-anlegen“). Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab)
+*Lasten → Generierer → Wind* (oder Modellbaum → Einwirkungen → Lastgenerierer
+→ „+ Wind anlegen“). Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab)
 in der Ansicht wählen, „Auswahl übernehmen“, dann:
 
 | Angabe | Bedeutung |
@@ -4097,7 +5119,7 @@ eine Scheibe unter Zug krümmt sich dann.
 Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**.
 Eingestellt wird das **in der Lagermaske rechts** (Klick auf das Lager im
 Modellbaum, in der Tabelle „Lager" oder in der Ansicht mit der Auswahlart
-Lager; Rechtsklick auf das Symbol → „Lager bearbeiten…"): je Freiheitsgrad
+Lager; Rechtsklick auf das Symbol → „Bearbeiten…“): je Freiheitsgrad
 Wirkung, Federsteifigkeit (Knotenlager kN/m bzw. kNm/rad, Linienlager je m,
 Flächenlager je m²) und Ausfall; Schlupf, Reibung und Grenzkraft öffnet der
 Knopf „Schlupf, Reibung, Grenzkraft …" (Register Lager / Kontakt →
@@ -4651,7 +5673,7 @@ hier, die Kombination von Hand anzulegen).
 
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
-zerfällt zunächst in Teile. Unter **Start → Modell prüfen**
+zerfällt zunächst in Teile. Unter **Start → Prüfen**
 schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
@@ -4900,9 +5922,54 @@ Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
 ## 8 Nachweise nach EC3
 
-Stäbe (Kette von Stabelementen) werden beim Erzeugen von Stabzügen und beim
-Import automatisch angelegt („Stäbe automatisch erkennen“ verkettet
-kollineare Elemente gleichen Querschnitts). Je Stab:
+Stäbe (Kette von Stabelementen) legt der Befehl *Struktur → Stab* an (seit
+03.10.2026 samt seinem Stabelement), beim Erzeugen von Stabzügen und beim
+Import entstehen sie automatisch („Stäbe automatisch erkennen“ verkettet
+kollineare Stabelemente gleichen Querschnitts, die noch zu keinem Stab gehören,
+und sagt, wie viele es übergangen hat). Jeder gezeichnete Stab ist ein eigener
+Stab mit der Knicklänge β · L seiner eigenen Länge, wie in RFEM. Wer eine
+Stütze aus drei Stücken zeichnet, bekommt drei Stäbe mit je einem Drittel der
+Knicklänge; hält an den Stößen nichts, liegt das auf der unsicheren Seite.
+Darum warnen seit 03.10.2026 *Prüfen* und das Protokoll des Nachweises, wenn
+kollineare Stäbe eine Kette mit freien Zwischenknoten bilden, einmal je Kette
+und mit ihren Stäben („Stäbe S1, S2 und S3 bilden eine Kette mit freien
+Zwischenknoten K1 und K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““);
+das Urteil des Nachweises ändert die Warnung nicht. Frei ist ein Zwischenknoten
+je Ausweichrichtung: Er gilt für das Knicken um die lokale y-Achse als
+gehalten, wenn ein Lager die Verschiebung in lokaler z-Richtung hält, und
+umgekehrt. Ein Lager nur in Achsrichtung oder nur gegen Drehung hält nicht;
+eine Feder (Knotenlager mit Feder, Federelement) hält, wie weich sie auch ist,
+und ebenso ein drittes Bauteil am Knoten (Querstab, Schale), ein Kontaktlager,
+eine Kopplung oder ein starrer Körper. Hält ein Lager nur eine Querrichtung,
+warnt die Kette für die andere Achse („(Knicken um z)“). Ein Glied ohne
+Nachweis (Stab mit ausgeschaltetem Nachweis, Stabelement ohne Stab) gehört zur
+Kette; gewarnt werden die Stäbe mit Nachweis darin. Hat ein Stab für eine
+Achse eine feste Knicklänge, warnt die Kette für ihn und diese Achse nicht.
+Lässt sich die Kette nicht zusammenfassen – verschiedene Querschnitte, ein
+Glied ohne Nachweis, eine feste Knicklänge –, rät der Text, die Knicklänge von
+Hand zu setzen. Das Etikett der Maske Nachweise zeigt höchstens acht
+Warnzeilen und danach „… und n weitere, siehe Prüfen“; Protokoll und *Prüfen*
+behalten die volle Liste (am Modell CBG mit 648 Stäben 87 Ketten, vorher 116
+Zeilen, eine je Stoß). *Struktur → Nachweisstäbe ▾ → Stäbe zusammenfassen*
+(auch im Rechtsklick auf die gewählten Stäbe) macht aus den gewählten Stäben
+einer geraden Kette einen Stab, in einem Rückgängig-Schritt. Es verliert
+nichts und ändert keine Bedeutung: Es weist ab und nennt jeden Grund mit Stab
+und Wert, wenn ein Stab eine feste Knick- oder Kipplänge hat (sie gilt für den
+einzelnen Stab; erst auf β·L zurücksetzen, dann zusammenfassen), wenn die
+Nachweisparameter nicht gleich sind (Kerbfall, β-Werte, Wölbrandbedingung und
+jedes andere Feld des Stabs), wenn „deaktiviert“ oder die Lasten und
+Vorspannungen am Stab nicht bei allen gleich sind, und wenn irgendein Stab der
+Kette, auch der erste, von einem anderen Objekt verwendet wird (Stellung,
+Verformungsnachweis, Layer, Subsystem, Wind, Schweißnaht, Lasteinleitung).
+Sind alle gleich, bleiben die Parameter erhalten, gleiche Linienlasten gehen
+um die Länge der Stäbe davor verschoben mit, und eine gleiche Vorspannung
+bleibt einmal stehen. Jeder Stab muss in Richtung der Kette gezeichnet sein.
+Bis zur zweiten Fassung vom 03.10.2026 setzte das Zusammenfassen feste
+Knicklängen still auf β · L zurück und übernahm die Parameter, Verweise und
+den Schalter „deaktiviert“ des ersten Stabs. An der Stütze HEB 200, 6 m,
+600 kN ergibt das Zusammenfassen L = 6 m und die Ausnutzung 0,7969 statt
+dreimal 0,2856. Ein Stab ohne Stabelement – sein Element wurde gelöscht – wird
+nicht nachgewiesen; der Nachweis führt ihn als nicht geführt. Je Stab:
 
 * Querschnittsnachweise an allen Nachweisstellen (Klasse, N, V, M, M+V, M+N,
   Torsion, Vergleichsspannung),
@@ -5397,7 +6464,7 @@ erkannt wird —, wird sein Nachweis **nicht geführt**. Die Tabelle zeigt dann
 Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
 (sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
 (nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
-(Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
+(Werkstoff … ohne Streckgrenze)“ statt „- alle erfüllt“, und die größte
 Ausnutzung dort stammt nur von geführten Stäben. In der Färbung
 „Ausnutzung EC3“ bekommt er keinen Wert und bleibt grau wie jedes Element
 ohne Wert; die Stabtabelle der Maske *Ergebnisse* zeigt in der Spalte
@@ -5549,8 +6616,9 @@ Tabelle steht auch im Bericht.
 
 ### Schweißnähte und Kerbfälle
 
-*Nachweise → Führen → Schweißnähte…* oder Modellbaum → Stäbe → Schweißnähte →
-„+ Schweißnaht anlegen“ (Tabelle unten in der Gruppe *Modell*). Vorher die
+*Nachweise → Führen → Schweißnähte…* oder Modellbaum → Nachweise → Schweißnähte →
+„+ Schweißnaht anlegen“ (bis zum 03.10.2026 unter *Stäbe*; Tabelle unten in
+der Gruppe *Modell*). Vorher die
 Stäbe (Auswahlart Stab), Linien oder Flächen wählen, an denen die Naht
 liegt, dann „Auswahl übernehmen“.
 
@@ -6306,7 +7374,8 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Modelle nicht. Eine singuläre Matrix wird weiter als solche gemeldet
   („Lagerung prüfen“), mit dem Grund des Ausweichens: beim Scheitern der
   Zerlegung als „(vorher: …)“, beim Verfehlen der Residuumsschranke als
-  „Gleichungssystem numerisch singulaer (Residuum …) (Löser ausgewichen - …)“.
+  „Gleichungssystem numerisch singulär (Residuum …) (Löser ausgewichen - …)“
+  (bis zum 03.10.2026 „singulaer“).
   Dort fehlte er bis zum 23.09.2026 (zwei Würfel mit nur einem gemeinsamen
   Knoten, PARDISO zum Scheitern gebracht, SuperLU löste mit Residuum 1,5).
   Zur Wahl
@@ -6876,7 +7945,8 @@ Lösungen                : 22× MKL PARDISO (einkernig, mtype 11); 16 Faktorisie
   nicht eindeutig; das Residuum zeigt, ob die Lösung trotzdem das
   Gleichungssystem erfüllt.
 
-Die Zeile „Gleichungsloeser“ darüber bleibt, wie sie war. Im Ergebnis
+Die Zeile „Gleichungslöser“ darüber bleibt, wie sie war (bis zum 03.10.2026
+hieß sie „Gleichungsloeser“). Im Ergebnis
 (`Results.info["loeser_nachweis"]`) stehen zusätzlich die Einstellung
 `MKL_CBWR`, wie sie galt, als das Programm MKL zum ersten Mal lud — später
 gesetzt wirkt sie nicht mehr —, und was MKL dazu meldet (Reproduzierbarkeit,
@@ -7661,7 +8731,7 @@ eine *Vorspannung* an den Schraubenfugen, oder die Deckel-Fugen als Verbund.
 
 ### Freie Bewegungen (Singularitäten)
 
-*Register Start → Modell prüfen → „Freie Bewegungen suchen“*, und nach jeder
+*Register Start → Prüfen → „Freie Bewegungen suchen“*, und nach jeder
 Rechnung im Modellbaum unter *Ergebnisse → Freie Bewegungen*.
 
 „Factor is exactly singular“ nennt weder das Bauteil noch die Richtung. Bei
@@ -7816,7 +8886,9 @@ jedes Neuzeichnen 3,9 s, davon im Profil 6,2 von 7,3 s allein die Suche
 nach Knoten ohne Element — sie lief bei jedem Bild über alle Elemente. Seit
 12.09.2026 wird sie einmal je Netz gemerkt: **0,8 s je Neuzeichnen**. Große
 Tabellen (ab 50 000 Zeilen) füllen sich erst, wenn ihr Register nach vorn
-kommt; solange steht „wird beim Anzeigen gefüllt" neben der Zeilenzahl (die
+kommt; solange nennt der Zähler am Reiter schon ihre Zeilenzahl, und sein
+Tooltip sagt „wird beim Anzeigen gefüllt" (bis zum 03.10.2026 stand das neben
+der Zeilenzahl über der Tabelle; die
 Elementtabelle des Drehlagers kostete 61 s bei jedem Modellstand, ihre
 Kennwerte 44 s — jetzt spaltenweise mit numpy; ein Modellstand dauert 22 s
 statt 51 s). Ist das **FE-Netz** ausgeschaltet, zeigt das unverformte
@@ -8095,7 +9167,11 @@ Hilfe und Suche (seit 02.10.2026): F1 öffnet das Benutzerhandbuch, Strg+F
 setzt den Cursor in die Befehlssuche oben rechts - was schon darin steht, ist
 markiert und wird vom nächsten Buchstaben ersetzt. Strg+F1 klappt das Ribbon
 ein. Bis zum 02.10.2026 trugen weder F1 noch Strg+F einen Befehl; die
-Befehlssuche erreichte man nur mit der Maus.
+Befehlssuche erreichte man nur mit der Maus. Seit dem 03.10.2026 gilt eine
+Ausnahme: Hat der Modellbaum oder seine Filterzeile die Tastatur, öffnet
+Strg+F die Filterzeile über dem Baum (Kapitel 2, Abschnitt zum Modellbaum); in
+der Ansicht, in den Feldern einer Maske und überall sonst bleibt Strg+F die
+Befehlssuche.
 
 **Liste der Tastenkürzel.** *Extras → Tastenkürzel* öffnet ein Fenster mit allen
 Kürzeln: der Befehl, sein Kürzel mit den Namen der Tasten auf der deutschen
@@ -8123,7 +9199,9 @@ den Tasten, die kein Befehl des Ribbons trägt, sondern ein Fenster selbst
 abfängt. Im Modellbaum (der Fokus steht im Baum) löschen Entf und Rücktaste den
 gewählten Eintrag, bei mehreren gewählten derselben Art alle; die Eingabetaste
 öffnet die Maske des gewählten Eintrags, wie ein Doppelklick; Pos1 und Ende
-springen zum ersten und zum letzten Eintrag. In der rechten Maske löst die
+springen zum ersten und zum letzten Eintrag; Strg+F öffnet die Filterzeile über
+dem Baum, und Esc in der Filterzeile hebt den Filter auf (seit 03.10.2026). In
+der rechten Maske löst die
 Eingabetaste den Hauptknopf aus, von jedem Feld aus; in einer Tabelle oder Liste
 der Maske blättert sie nur. Im Programmfenster bricht Esc einen laufenden
 Vorgang mit Abbrechen-Knopf ab (Vernetzen, Berechnung, Nachweise, Wind,
@@ -8157,26 +9235,29 @@ wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
 |---|---|
 | **Entf** | löscht alles Gewählte, gleich welcher Art |
 | **K** | öffnet die Maske *Knoten* (Befehl *Geometrie → Knoten*) |
-| **S** | öffnet die Maske *Stab* (*Struktur → Stab*) |
+| **S** | öffnet die Maske *Stab* (*Struktur → Stab*): zwei Knoten anklicken, es entsteht ein Stab mit Nachweis samt seinem Stabelement (bis zum 03.10.2026 nur das Stabelement) |
 | **L** | öffnet die Maske *Lager* (*Lager / Kontakt → Knotenlager*) |
 | **B** | öffnet die Maske der Last, die zur Auswahl passt: *Linienlast* bei gewählten Stäben oder Linien, *Flächenlast* bei gewählten Flächen oder Volumen, sonst *Knotenlast* |
 | **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
 
 Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Eine **offene Maske mit
-nicht übernommenen Änderungen** bleibt, wie sie ist: die Einzeltaste öffnet dann
-keine andere Maske, sondern die Statuszeile sagt, dass die Maske erst übernommen
-oder abgebrochen werden muss (bis zum 03.10.2026 ersetzte die Taste die Maske
-ohne Rückfrage, die Eingaben waren weg). **Während einer Rechnung** sind Entf und
-die Einzeltasten gesperrt, die Statuszeile sagt es: die Rechnung liest das
-Modell, und das Programm öffnet währenddessen kein modales Fenster (bis zum
-03.10.2026 öffnete F den Flächendialog und Entf löschte im Modell, auf dem
-gerade gerechnet wurde).
+nicht übernommenen Änderungen** ersetzen K, S, L und B nicht still: Oben rechts
+erscheint die Leiste „Übernehmen | Verwerfen“, und erst nach einem der beiden
+Knöpfe öffnet sich die Maske der Taste (Kapitel 2, *Maske oder Klick*). F lässt
+die Maske stehen und öffnet den Flächendialog. Bis zum 03.10.2026 ersetzte die
+Taste die Maske ohne Rückfrage, und die Eingaben waren weg; eine erste Abhilfe
+wies die Taste nur mit einer Meldung in der Statuszeile ab. **Während einer
+Rechnung** sind Entf und die Einzeltasten gesperrt, die Statuszeile sagt es: die
+Rechnung liest das Modell, und das Programm öffnet währenddessen kein modales
+Fenster (bis zum 03.10.2026 öffnete F den Flächendialog und Entf löschte im
+Modell, auf dem gerade gerechnet wurde).
 
 Entf fragt **einmal** und nennt dabei, was gelöscht wird, etwa „2 Stäbe und 3
 Knoten wirklich löschen?“; mit *Ja* geht alles Gewählte in einem Zug weg, und ein
 einziges Strg+Z holt es zurück. Unter der Frage stehen, knapp, die Folgen: dass
-bei einem Stab mit Nachweis die Elemente stehen bleiben und seine Linienlasten
-mitgehen, dass eine Linie ihre Linienlasten mitnimmt, dass Flächen und Volumen
+bei einem Stab seine Stabelemente stehen bleiben und seine Linienlasten
+mitgehen (die Zeile beginnt seit 03.10.2026 mit „Stäbe:“, vorher mit „Stäbe mit
+Nachweis:“), dass eine Linie ihre Linienlasten mitnimmt, dass Flächen und Volumen
 ihre Elemente mitnehmen, dass mit einem Knoten sein Lager, seine Knotenlasten,
 Zwangsverformungen und Punktmassen gehen, dass **vorhandene Ergebnisse verworfen
 werden und Rückgängig sie nicht zurückholt**, und dass eine offene Maske mit nicht
@@ -8332,7 +9413,11 @@ Statik3D startet dann bildschirmfüllend wie eine App.
 Aus der Desktop-GUI: **Berechnung → Bedienung im Browser / auf dem Handy…**
 startet den Server für das geöffnete Modell. Handy und PC arbeiten dann am
 selben Modell: Eingaben vom Handy erscheinen in der GUI, Ergebnisse vom PC
-auf dem Handy.
+auf dem Handy. Ist am PC eine Maske mit nicht übernommenen Änderungen offen
+(Punkt im Titel) oder läuft dort gerade ein Übernehmen, weist der Server
+Änderungen vom Handy mit einer Meldung ab, die die Maske nennt (seit
+03.10.2026, Kapitel 2, *Maske oder Klick*); nach *Übernehmen* oder *Verwerfen*
+am PC geht es weiter.
 
 | Option | Bedeutung |
 |---|---|
@@ -8361,7 +9446,7 @@ darunter, rechts die Register als Arbeitsblatt.
 
 | Register | Inhalt |
 |---|---|
-| **Modell** | Projektdaten, Materialien, Querschnitte (Profildatenbank und parametrisch), Schalendicken, Netzgeneratoren (Stabzug, Platte, Quader), Knoten, Elemente (Stab, Schale, Zuweisen, Gelenke, Löschen), Lager, Stäbe mit Nachweisparametern, Kontakt, Nachweiseinstellungen |
+| **Modell** | Projektdaten, Materialien, Querschnitte (Profildatenbank und parametrisch), Schalendicken, Netzgeneratoren (Stabzug, Platte, Quader), Knoten, Elemente (Stabelement, Schale, Zuweisen, Gelenke, Löschen; der Knopf hieß bis zum 03.10.2026 „+ Stab“ und legt nur ein Stabelement an, einen Stab mit Nachweis bildet „+ Stab“ unter *Stäbe für Nachweise* aus Elementen), Lager, Stäbe mit Nachweisparametern, Kontakt, Nachweiseinstellungen |
 | **Lasten** | Lastfälle mit Einwirkungskategorie, Lasten des aktiven Lastfalls (Knoten-, Strecken-, Flächen-, Temperaturlast, Eigengewicht), Kombinationen (automatisch/manuell), Ermüdungslasten |
 | **Rechnen** | Analyseart, Nachweise, Prozesse, Rechnerfarm, Start; Fortschritt und Zusammenfassung |
 | **Ergebnisse** | Ergebnis (Umhüllende / Kombination / Lastfall / Eigenform), Färbung, Überhöhung, Schnittgrößenverlauf, Stabdiagramm N/Vz/My, Tabellen Stabkräfte, Umhüllende, Auflagerkräfte, Kontakt |

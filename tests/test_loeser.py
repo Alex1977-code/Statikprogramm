@@ -1346,7 +1346,7 @@ def test_singulaer_nach_ausweichen_nennt_den_grund():
         except RuntimeError as ex:
             kopf = str(ex).splitlines()[0]
             check("ausgewichen und singulaer: die Meldung nennt den Grund",
-                  "numerisch singulaer" in kopf and "ausgewichen" in kopf
+                  "numerisch singulär" in kopf and "ausgewichen" in kopf
                   and "Probe: PARDISO verweigert" in kopf, kopf[:240])
     finally:
         pypardiso.PyPardisoSolver.factorize = echt
@@ -1358,7 +1358,7 @@ def test_singulaer_nach_ausweichen_nennt_den_grund():
         except RuntimeError as ex:
             kopf = str(ex).splitlines()[0]
             check("ohne Ausweichen: singulaer, aber ohne Zusatz",
-                  "numerisch singulaer" in kopf and "ausgewichen" not in kopf, kopf[:240])
+                  "numerisch singulär" in kopf and "ausgewichen" not in kopf, kopf[:240])
     finally:
         parallel.configure(solver_backend=alt_backend)
 

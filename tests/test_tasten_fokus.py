@@ -55,7 +55,10 @@ def _fenster():
     w.activateWindow()
     app.processEvents()
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: w.fehler_liste.append(str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste)
     _FENSTER.update(w=w, app=app)
     return w, app
 
@@ -745,6 +748,7 @@ def test_einzeltaste_ersetzt_keine_geaenderte_maske():
     check("Vorbereitung: die Maske „Knoten“ meldet eine nicht übernommene Änderung",
           bool(mk.geaenderte_felder()), str(mk.geaenderte_felder()))
     w.statusBar().clearMessage()
+    w.fehler_liste.clear()
     for taste in (K.Key_S, K.Key_L, K.Key_B, K.Key_F, K.Key_K):
         _ansicht(w, app)
         QtTest.QTest.keyClick(ia, taste)
@@ -754,6 +758,15 @@ def test_einzeltaste_ersetzt_keine_geaenderte_maske():
           f"{_maske(w)!r}, {mk.geaenderte_felder()}")
     check("… die Statuszeile sagt, warum", "nicht übernommene Änderungen" in w.statusBar().currentMessage(),
           repr(w.statusBar().currentMessage()))
+    # Seit Paket 13m (03.10.2026) halten K, S, L und B an der Leiste „Übernehmen |
+    # Verwerfen“ oben rechts, wie jeder andere Weg; F oeffnet keine Maske (den
+    # Flaechendialog) und wirkt wie ohne offene Maske - ohne drei Linien die Meldung
+    leiste = getattr(w, "aenderungsleiste", None)
+    check("… K, S, L, B: oben rechts die Leiste „Übernehmen | Verwerfen“ (Paket 13m)",
+          leiste is not None and leiste.isVisible())
+    check("… F öffnet keine Maske und wirkt wie ohne Maske: ohne drei Linien die Meldung",
+          any("drei Linien" in f for f in w.fehler_liste), str(w.fehler_liste))
+    w.fehler_liste.clear()
     w.maskenrand.schliessen()
 
 
@@ -825,8 +838,8 @@ def test_rueckfrage_nennt_die_folgen():
         QtTest.QTest.keyClick(ia, K.Key_Delete)
         app.processEvents()
         text = fragen[0] if fragen else ""
-        check("Die Rückfrage nennt die Folgen: Stab (Elemente bleiben), Linie, Fläche (Elemente gehen mit), Knoten",
-              "die Elemente bleiben stehen" in text and "Linienlasten" in text
+        check("Die Rückfrage nennt die Folgen: Stab (Stabelemente bleiben), Linie, Fläche (Elemente gehen mit), "
+              "Knoten", "Stäbe: ihre Stabelemente bleiben stehen" in text and "Linienlasten" in text
               and "nehmen ihre Elemente mit" in text and "sein Lager" in text and "Knotenlasten" in text,
               text.replace("\n", " | "))
         check("… die erste Zeile ist die Frage mit den Zahlen",

@@ -405,9 +405,21 @@ def _fenster():
     w.show()
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
-    w.error = lambda text, *a, **k: w.info("FEHLER " + str(text))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b); ein
+    # Fehler geht wie bisher als „FEHLER …“ in Protokoll und Statuszeile
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, rufen=_fehler_als_info(w))
     _FENSTER.update(w=w, app=app)
     return w, app
+
+
+def _fehler_als_info(w):
+    """Ein abgefangener Fehler geht als „FEHLER …“ in Protokoll und
+    Statuszeile; ein Hinweis schreibt dort schon selbst (hinweis())."""
+    def rufen(art, text):
+        if art == "fehler":
+            w.info("FEHLER " + text)
+    return rufen
 
 
 def _label(w, anfang: str) -> str:
@@ -740,6 +752,14 @@ def test_nachbesserung():
     app.processEvents()
     check("… „33 000“ gilt sofort: k2 = 3 300 000 kN/m", mk._felder["k2"].text() == "3 300 000",
           mk._felder["k2"].text())
+    # Die Bettung steht nur in der Maske, uebernommen ist sie nicht: seit Paket 13m
+    # (03.10.2026) traegt die Maske dann den Punkt, und die Sammelmaske weiter unten
+    # ersetzte sie nicht mehr still, sondern hielte an der Leiste „Übernehmen |
+    # Verwerfen“. Darum hier schliessen.
+    check("… die Bettung ist noch nicht übernommen: die Lagermaske meldet k2 als geändert",
+          "k2" in mk.geaenderte_felder(), str(sorted(mk.geaenderte_felder())))
+    w.maskenrand.schliessen()
+    app.processEvents()
 
     # Kontaktmaske: ungueltiges μ, dann ein Standardkontakt
     F = msk.Feld
@@ -998,8 +1018,8 @@ def test_textfelder_zahlenregel():
     from statik3d.gui import zahlenfeld as zf
     w, app = _fenster()
     fehler = []
-    alt_error = w.error
-    w.error = lambda text, *a, **k: (fehler.append(str(text)), w.info("FEHLER " + str(text)))
+    from tests.meldungen import abfangen
+    abf = abfangen(w, fehler, rufen=_fehler_als_info(w))     # Fehler und Hinweise (9b)
 
     # die Regel fuer Werte aus Masken, Listen und Zellen
     fw = getattr(zl, "feldwert", None)
@@ -1085,9 +1105,10 @@ def test_textfelder_zahlenregel():
         mk.setzen("ex_a", "1.000, 0")
         mk.anwenden()
         app.processEvents()
+        # seit der Nachbesserung 9b ein Hinweis (ohne Fenster), kein Fehler
         check("Stab-Versatz „1.000, 0“: abgewiesen mit Meldung, Versatz unverändert",
               list(getattr(m.elements[e0], "exzentrizitaet", []) or []) == ex_vorher
-              and any("1.000" in t for t in fehler), f"{m.elements[e0].exzentrizitaet} {fehler[-1:]}")
+              and abf.zuletzt_hinweis("1.000"), f"{m.elements[e0].exzentrizitaet} {abf.eintraege[-1:]}")
         mk = w._objektmaske("stabelement", str(e0)) or w.maskenrand.maske
         mk.setzen("ex_a", "12,5, 0")
         mk.anwenden()
@@ -1108,9 +1129,10 @@ def test_textfelder_zahlenregel():
     mk.setzen("psi", "1.000/0,5/0,3")
     mk.anwenden()
     app.processEvents()
+    # seit 9b ein Hinweis (ohne Fenster), kein Fehler
     check("Lastfall ψ „1.000/0,5/0,3“: abgewiesen, ψ unverändert",
-          m.load_cases[lf].psi == psi_vorher and any("1.000" in t for t in fehler),
-          f"{m.load_cases[lf].psi} {fehler[-1:]}")
+          m.load_cases[lf].psi == psi_vorher and abf.zuletzt_hinweis("1.000"),
+          f"{m.load_cases[lf].psi} {abf.eintraege[-1:]}")
 
     # Beulfeld: Steifentabelle
     from statik3d.gui import dialogs as dg
@@ -1159,7 +1181,7 @@ def test_textfelder_zahlenregel():
           ok_vorher and not pe.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled()
           and "1.000" in info, info[:80])
     pe.deleteLater()
-    w.error = alt_error
+    abf.zurueck()
 
 
 def test_listen_anzahl():
@@ -1173,8 +1195,8 @@ def test_listen_anzahl():
     from statik3d import zahlen as zl
     w, app = _fenster()
     fehler = []
-    alt_error = w.error
-    w.error = lambda text, *a, **k: (fehler.append(str(text)), w.info("FEHLER " + str(text)))
+    from tests.meldungen import abfangen
+    abf = abfangen(w, fehler, rufen=_fehler_als_info(w))     # Fehler und Hinweise (9b)
 
     def meldung(fn, *a):
         try:
@@ -1212,17 +1234,27 @@ def test_listen_anzahl():
     w.refresh_all()
     app.processEvents()
 
-    def fall(titel, art, name, key, eingabe, lesen, soll):
+    def fall(titel, art, name, key, eingabe, lesen, soll, meldung="hinweis"):
+        # meldung: „fehler“ oder „hinweis“ - seit 9b weisen die Masken eine
+        # ungueltige Eingabe mit einem Hinweis ab (ohne Fenster; Versatz,
+        # Stabknoten, Ersatzachse und Gewichte seit der Nachbesserung, L2)
         fehler.clear()
+        # Eine abgewiesene Maske behaelt ihre Eingabe (Paket 13m), die naechste
+        # hielte an der Leiste - seit 9b ist das hier ein Hinweis, und der zaehlt
+        w._leiste_weg()
+        w._maske_verwerfen(w.maskenrand.maske)
+        n0 = len(abf.eintraege)
         mk = w._objektmaske(art, name) or w.maskenrand.maske
         vorher, u0 = lesen(), _undo_n(w)
         mk.setzen(key, eingabe)
         mk.anwenden()
         app.processEvents()
         nachher, u1 = lesen(), _undo_n(w)
+        neu = abf.eintraege[n0:]
         check(f"{titel} „{eingabe}“: abgewiesen, Meldung, Objekt und Rückgängig unverändert",
-              nachher == vorher and u1 == u0 and bool(fehler) and all(s in fehler[-1] for s in soll),
-              f"{vorher} -> {nachher} | undo {u0}->{u1} | {fehler[-1:]}")
+              nachher == vorher and u1 == u0 and bool(neu) and neu[-1][0] == meldung
+              and all(s in neu[-1][1] for s in soll),
+              f"{vorher} -> {nachher} | undo {u0}->{u1} | {neu[-1:]}")
 
     def versatz():
         return [list(x) for x in (m.elements[0].exzentrizitaet or [])]
@@ -1232,6 +1264,10 @@ def test_listen_anzahl():
     kn = ", ".join(str(n) for n in m.elements[0].nodes)
     fall("Stab-Knoten", "stabelement", "0", "kn", kn + ", x", versatz, ("Knoten", "x"))
     fehler.clear()
+    # Eine abgewiesene Maske behaelt ihre Eingabe (Paket 13m), die naechste
+    # hielte an der Leiste - seit 9b ist das hier ein Hinweis, und der zaehlt
+    w._leiste_weg()
+    w._maske_verwerfen(w.maskenrand.maske)
     mk = w._objektmaske("stabelement", "0") or w.maskenrand.maske
     mk.setzen("ex_a", "12,5; 1 000")
     mk.anwenden()
@@ -1252,6 +1288,10 @@ def test_listen_anzahl():
     fall("RBE3 Gewichte", "starrkoerper", i_sk, "gewichte", "1 000, 2", gewichte, ("1 000", ";"))
     fall("RBE3 Gewichte", "starrkoerper", i_sk, "gewichte", "1; 2; 3", gewichte, ("Gewichte", "2", "3"))
     fehler.clear()
+    # Eine abgewiesene Maske behaelt ihre Eingabe (Paket 13m), die naechste
+    # hielte an der Leiste - seit 9b ist das hier ein Hinweis, und der zaehlt
+    w._leiste_weg()
+    w._maske_verwerfen(w.maskenrand.maske)
     mk = w._objektmaske("starrkoerper", i_sk) or w.maskenrand.maske
     mk.setzen("gewichte", "1 000; 2")
     mk.anwenden()
@@ -1275,7 +1315,7 @@ def test_listen_anzahl():
     except (ValueError, TypeError):
         ok = False
     check("… „4 × 5“ und „4“ gelesen", ok)
-    w.error = alt_error
+    abf.zurueck()
 
 
 def test_anzeige_nie_wissenschaftlich():

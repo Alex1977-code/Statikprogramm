@@ -527,6 +527,9 @@ def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
     # ueber den Modellbaum mit dem der Maske oben mitgeprueft.
     fenster = mock.MagicMock()
     fenster.model = bau()
+    # keine geaenderte Maske rechts: der Doppelklick haelt nicht an der Leiste
+    # „Übernehmen | Verwerfen“ (Paket 13m, 03.10.2026)
+    fenster._maskenwechsel_halten.return_value = False
     G.MainWindow._baum_bearbeiten(fenster, "lastfall", "LF2")
     check("Oberfläche: Doppelklick im Modellbaum öffnet die Maske rechts",
           fenster._objektmaske.call_args_list == [mock.call("lastfall", "LF2")]

@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..begriffe import anzahl
+
 E_STAHL = 210e9
 NU = 0.3
 
@@ -956,8 +958,8 @@ class BeulResults:
         schlecht = [c.name for c in self.felder.values() if c.util > 1.0]
         fehler = [c.name for c in self.felder.values() if c.fehler]
         worst = max(self.felder.values(), key=lambda c: c.util)
-        s = (f"Beulen (EN 1993-1-5): {len(self.felder)} Felder, "
-             f"{len(self.kombinationen)} Kombinationen, max. Ausnutzung "
+        s = (f"Beulen (EN 1993-1-5): {anzahl(len(self.felder), 'Feld', 'Felder')}, "
+             f"{anzahl(len(self.kombinationen), 'Kombination', 'Kombinationen')}, max. Ausnutzung "
              f"{worst.util:.3f} ({worst.name}"
              + (f", {worst.kombination}" if worst.kombination else "") + ")")
         if schlecht:
@@ -1030,7 +1032,7 @@ class EinleitungResults:
                     if c.util > 1.0 or not (c.interaktion or {}).get("ok", True)]
         fehler = [c.name for c in self.stellen.values() if c.fehler]
         worst = max(self.stellen.values(), key=lambda c: c.util)
-        s = (f"Lasteinleitung (EN 1993-1-5, 6): {len(self.stellen)} Stellen, "
+        s = (f"Lasteinleitung (EN 1993-1-5, 6): {anzahl(len(self.stellen), 'Stelle', 'Stellen')}, "
              f"max. Ausnutzung {worst.util:.3f} ({worst.name}: "
              f"{worst.F_Ed / 1e3:.0f} von {worst.F_Rd / 1e3:.0f} kN"
              + (f", {worst.kombination}" if worst.kombination else "") + ")")

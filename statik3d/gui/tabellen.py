@@ -270,6 +270,10 @@ def kennwerte(zeilen: list, spalten: list) -> tuple:
     Spaltenweise mit numpy: die Zellenschleife (_zahl je Zelle) kostete am
     Drehlager 44 s je Modellstand fuer 1,8 Mio. Elementzeilen (12.09.2026);
     Spalten, die sich nicht in einem Zug wandeln lassen, gehen den alten Weg.
+
+    Textspalten bleiben leer, auch wenn ihr Text wie eine Zahl aussieht: bis
+    zur Nachbesserung vom 03.10.2026 (10c) stand unter „Komb.“ bei Lastfaellen
+    „1“ und „2“ als Max „2.0“ - eine Zahl, die nichts bedeutet.
     """
     if not zeilen:
         return [], []
@@ -277,6 +281,10 @@ def kennwerte(zeilen: list, spalten: list) -> tuple:
     n_sp = len(spalten)
     breit = all(len(r) >= n_sp for r in zeilen) if len(zeilen) <= 1000 else (len(zeilen[0]) >= n_sp)
     for k in range(1, n_sp):
+        if spalten[k].art not in ("zahl", "ganz"):
+            hoch.append("")
+            tief.append("")
+            continue
         werte = None
         if breit:
             try:
@@ -321,6 +329,11 @@ class Spalte:
     #: gezeigt, sortiert, gefiltert und exportiert wird der Klartext
     #: (02.10.2026, Teilpaket 10a). Was nicht im Verzeichnis steht, bleibt wie es ist.
     klartext: dict = None
+    #: Die Zelle nennt ein Ergebnis (die massgebende Kombination): ein Klick
+    #: darauf zeigt es (Datentabelle.ergebnis_gewaehlt; 03.10.2026, Teilpaket 10c)
+    ergebnis: bool = False
+    #: Die Summenzeile Σ addiert diese Spalte (Datentabelle.summe_setzen, 10c)
+    summe: bool = False
 
     def text_von(self, wert):
         """Der Klartext zu *wert* - oder *wert* selbst."""
@@ -383,6 +396,31 @@ KONTAKTART_TEXT = {"support": "Einseitiges Lager", "gap": "Spaltelement",
 LASTSYSTEM_TEXT = {"global": "global", "local": "lokal"}
 
 
+#: Rollen und Ausrichtungen als Konstanten fuer TabellenModell.data und
+#: flags, die Qt fuer jede Zelle beim Messen und Zeichnen mehrfach aufruft. Der
+#: Zugriff ueber den Kurznamen (QtCore.Qt.DisplayRole) geht in PySide6 ueber
+#: einen Rueckfall und kostet 2,1 µs, ueber die Aufzaehlung 0,1 µs, der Test
+#: „rolle in (QtCore.Qt.DisplayRole, QtCore.Qt.EditRole)“ 4,4 µs statt 0,03 µs
+#: (gemessen 03.10.2026, Teilpaket 10c). Ein Wechsel auf die Umhuellende am
+#: Drehlager (Stabkraefte mit 64 Zeilen und 18 Spalten) kostete ohne
+#: Neuzeichnen 0,51 bis 0,65 s, davon 0,26 s in data(); mit den Konstanten
+#: 0,24 bis 0,37 s (am Stand 7a4a895, Stabkraefte dort leer: 0,39 bis 0,50 s;
+#: scratchpad/c10c_zeit.py).
+_ROLLE = QtCore.Qt.ItemDataRole
+R_ANZEIGE, R_EDIT, R_USER = _ROLLE.DisplayRole, _ROLLE.EditRole, _ROLLE.UserRole
+R_VORDER, R_HINTER, R_SCHRIFT = _ROLLE.ForegroundRole, _ROLLE.BackgroundRole, _ROLLE.FontRole
+R_TIP, R_AUSRICHTUNG = _ROLLE.ToolTipRole, _ROLLE.TextAlignmentRole
+_ROLLEN_TEXT = (R_ANZEIGE, R_EDIT)
+_ROLLEN_FARBE = (R_VORDER, R_HINTER, R_SCHRIFT)
+_ROLLEN_VERWEIS = (R_VORDER, R_SCHRIFT, R_TIP)
+#: alle Rollen, auf die data() etwas sagt - die uebrigen gleich mit None
+_ROLLEN_DATEN = frozenset(_ROLLEN_TEXT + _ROLLEN_FARBE + (R_TIP, R_AUSRICHTUNG, R_USER))
+_AUSRICHTUNG = QtCore.Qt.AlignmentFlag
+_RECHTS = int(_AUSRICHTUNG.AlignRight | _AUSRICHTUNG.AlignVCenter)
+_FLAGS = QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
+_FLAGS_EDIT = _FLAGS | QtCore.Qt.ItemFlag.ItemIsEditable
+
+
 class TabellenModell(QtCore.QAbstractTableModel):
     """Zeilen und Spalten; Aenderungen laufen ueber einen Rueckruf."""
 
@@ -408,6 +446,15 @@ class TabellenModell(QtCore.QAbstractTableModel):
         #: Zeilen in der Reihenfolge, in der sie gesetzt wurden - damit die
         #: Modellreihenfolge nach einer Spaltensortierung wiederkommt
         self._ur = None
+        #: Verweise auf Ergebnisse (Spalte.ergebnis, herkunft): Namen, die ein
+        #: eigenes Ergebnis haben - nur sie sehen aus wie ein Verweis und
+        #: schalten beim Klick; None: jeder Name. Die Fusszeile zeigt nie
+        #: Verweise (verweise False). Nachbesserung 10c, 03.10.2026.
+        self.ergebnisnamen = None
+        self.verweise = True
+        #: {(Schluessel der Zeile, Spalte): Name des massgebenden Ergebnisses}
+        #: fuer Zahlenzellen, die eines haben (Auflager einer Umhuellenden)
+        self.herkunft: dict = {}
 
     # -- Einheiten -------------------------------------------------------
     def anzeige(self, k: int) -> tuple:
@@ -477,56 +524,79 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return self.spalten[i].hinweis or self.kopf(i)
         return None
 
-    def data(self, index, rolle=QtCore.Qt.DisplayRole):
-        if not index.isValid():
+    def data(self, index, rolle=R_ANZEIGE):
+        # Rollen ueber die Konstanten R_… vor der Klasse: je Zelle fragt Qt
+        # hier sieben, acht Rollen ab, und der Kurzname QtCore.Qt.DisplayRole
+        # kostet in PySide6 je Zugriff 2,1 µs statt 0,1 µs (10c)
+        if rolle not in _ROLLEN_DATEN or not index.isValid():
             return None
         z, k = index.row(), index.column()
         wert = self.zeilen[z][k] if k < len(self.zeilen[z]) else ""
-        if rolle in (QtCore.Qt.DisplayRole, QtCore.Qt.EditRole):
+        if rolle in _ROLLEN_TEXT:
             sp = self.spalten[k]
             if sp.art == "zahl" and isinstance(wert, (int, float)):
                 f, _e, nk = self.anzeige(k)
-                if rolle == QtCore.Qt.EditRole:
+                if rolle == R_EDIT:
                     # Volle Genauigkeit mit Komma (24.09.2026): „:g“ kuerzte
                     # auf sechs Stellen - F2 und Enter machten aus 1234,5678 m
                     # still 1234,57 m (gui_analyse/unten/editrolle2.py)
                     return zl.zahl_text(float(wert) * f, tausender=False)
                 return festkomma(float(wert) * f, nk)
-            if sp.art == "zahl" and rolle == QtCore.Qt.DisplayRole and _paar(wert) is not None:
+            if sp.art == "zahl" and rolle == R_ANZEIGE and _paar(wert) is not None:
                 # auch ohne Umrechnung neu geschrieben: der Rechenteil liefert
                 # „-0.00 / 1.23“ mit Punkt (Auflager der Umhuellenden)
                 f, _e, nk = self.anzeige(k)
                 return " / ".join(festkomma(x * f, nk) for x in _paar(wert))
-            if rolle == QtCore.Qt.EditRole:
+            if rolle == R_EDIT:
                 return str(wert)
             if sp.klartext:
                 return str(sp.text_von(wert))
             if sp.art == "ganz" and isinstance(wert, (int, float)):
                 return str(int(wert))
             return str(wert)
-        if rolle in (QtCore.Qt.ForegroundRole, QtCore.Qt.BackgroundRole, QtCore.Qt.FontRole):
+        if rolle in _ROLLEN_VERWEIS and self.verweise and (self.spalten[k].ergebnis or self.herkunft):
+            # Die massgebende Kombination sieht aus wie ein Verweis, wo ein
+            # Klick sie zeigt (10c) - sonst ahnt niemand, dass die Zelle mehr
+            # kann als die uebrigen. Ein Name ohne eigenes Ergebnis (die
+            # Alternative „EK1 [4]“) bleibt gewoehnlicher Text.
+            name = self.ergebnisname(z, k)
+            if name:
+                verweis = self.ist_verweis(name)
+                if rolle == R_TIP:
+                    if self.spalten[k].ergebnis:
+                        return (f"Klick zeigt das Ergebnis {name} – im Bild und in den Tabellen"
+                                if verweis else None)
+                    return (f"maßgebend: {name}"
+                            + (" – ein Klick zeigt dieses Ergebnis" if verweis else ""))
+                if verweis and rolle == R_VORDER:
+                    return QtGui.QBrush(QtGui.QColor(dsg.FARBEN["akzent"]))
+                if verweis and rolle == R_SCHRIFT:
+                    f = QtGui.QFont()
+                    f.setUnderline(True)
+                    return f
+        if rolle in _ROLLEN_FARBE:
             # Nur die Anzeige: Zwischenablage, CSV und Excel lesen die Zeilen
             # und bleiben ohne Farbe (24.09.2026)
             if not self.spalten[k].ampel:
-                if rolle == QtCore.Qt.BackgroundRole and self.zellfarben:
+                if rolle == R_HINTER and self.zellfarben:
                     # Eingabetabelle: weiss = hier darf man tippen, grau = nicht
                     return QtGui.QBrush(QtGui.QColor(
                         ZELLE_EDIT if self.spalten[k].editierbar else ZELLE_FEST))
                 return None
             stufe = ampelstufe(wert)
             if stufe == "rot":
-                if rolle == QtCore.Qt.ForegroundRole:
+                if rolle == R_VORDER:
                     return QtGui.QBrush(QtGui.QColor(AMPEL_ROT))
-                if rolle == QtCore.Qt.FontRole:
+                if rolle == R_SCHRIFT:
                     f = QtGui.QFont()
                     f.setBold(True)
                     return f
-            elif stufe == "gelb" and rolle == QtCore.Qt.BackgroundRole:
+            elif stufe == "gelb" and rolle == R_HINTER:
                 return QtGui.QBrush(QtGui.QColor(AMPEL_GELB))
             return None
-        if rolle == QtCore.Qt.TextAlignmentRole and self.spalten[k].art != "text":
-            return int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        if rolle == QtCore.Qt.UserRole:
+        if rolle == R_AUSRICHTUNG and self.spalten[k].art != "text":
+            return _RECHTS
+        if rolle == R_USER:
             # Sortieren, Filtern und Markieren in der Anzeigeeinheit
             if self.spalten[k].art in ("zahl", "ganz"):
                 z = _zahl(wert)
@@ -534,11 +604,28 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return self.spalten[k].text_von(wert)
         return None
 
+    def ergebnisname(self, z: int, k: int) -> str:
+        """Der Name des Ergebnisses, auf das die Zelle (z, k) verweist - der
+        Text einer Spalte „Komb.“ oder die Herkunft einer Zahlenzelle; „“
+        ohne Verweis."""
+        zeile = self.zeilen[z] if 0 <= z < len(self.zeilen) else ()
+        if self.spalten[k].ergebnis:
+            name = str(zeile[k]).strip() if k < len(zeile) else ""
+        elif self.herkunft and zeile:
+            name = str(self.herkunft.get((_schluessel_wert(zeile[0]), k), ""))
+        else:
+            return ""
+        return "" if name in ("–", "-") else name
+
+    def ist_verweis(self, name: str) -> bool:
+        """Hat *name* ein eigenes Ergebnis, das ein Klick zeigen kann?"""
+        return bool(name) and self.verweise and (self.ergebnisnamen is None
+                                                 or name in self.ergebnisnamen)
+
     def flags(self, index):
-        f = QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
         if index.isValid() and self.spalten[index.column()].editierbar:
-            f |= QtCore.Qt.ItemIsEditable
-        return f
+            return _FLAGS_EDIT
+        return _FLAGS
 
     def setData(self, index, wert, rolle=QtCore.Qt.EditRole) -> bool:
         if rolle != QtCore.Qt.EditRole or not index.isValid():
@@ -815,17 +902,33 @@ def zeilenbereiche(zeilen) -> list:
 
 
 class Datentabelle(QtWidgets.QWidget):
-    """Tabelle mit Kopfzeilenfilter, Sortierung, Spaltenwahl und Export."""
+    """Tabelle mit Filterzeile auf Knopfdruck, Sortierung, Spaltenwahl und Export."""
 
     #: Zeile angeklickt - der erste Spaltenwert (meist die Objektnummer)
     zeile_gewaehlt = QtCore.Signal(object)
     #: mehrere Zeilen markiert (Umschalt/Strg): die Werte der ersten Spalte
     zeilen_gewaehlt = QtCore.Signal(list)
+    #: Zeilenzahl, Filter oder Filterzeile geaendert - der untere Bereich zieht
+    #: daran den Zaehler am Reiter und den Knopf Filter nach (03.10.2026, 10b)
+    stand_geaendert = QtCore.Signal()
+    #: Klick auf eine Zelle, die auf ein Ergebnis verweist (Spalte.ergebnis
+    #: oder herkunft): sein Name (03.10.2026, Teilpaket 10c). Gesendet vor
+    #: zeile_gewaehlt, damit beides zusammen nur einmal zeichnet
+    ergebnis_gewaehlt = QtCore.Signal(str)
+    #: Ein Satz fuer die Statuszeile (etwa: eine Sortierung entfaellt mit
+    #: ihrer Spalte, spalten_setzen)
+    hinweis = QtCore.Signal(str)
     #: Hoehe der Filterzeile
     FILTER_HOEHE = 22
     #: Breiter wird keine Spalte aus ihrem Inhalt (eine Elementliste mit
     #: tausend Nummern bekommt sonst eine Spalte ueber die ganze Wand)
     SPALTE_MAX = 360
+    #: Max und Min erst ab so vielen Zeilen (03.10.2026, Teilpaket 10b): bei
+    #: zwei, drei Zeilen liest man das Groesste selbst ab, und die beiden
+    #: Zeilen (46 px) sind dort so hoch wie die Tabelle selbst
+    KENNWERTE_AB = 5
+    #: Tooltip der Filterfelder - die Filtersprache steht in ``passt``
+    FILTER_HINWEIS = "Filter: > 0,9   1..5   = HEB 200   HEB   !Riegel"
 
     def __init__(self, spalten: list, titel: str = "", parent=None,
                  mit_kennwerten: bool = False, modellreihenfolge: bool = False):
@@ -838,6 +941,8 @@ class Datentabelle(QtWidgets.QWidget):
         self.modell.meldung.connect(self._meldung)
         #: die zuletzt gezeigte Meldung einer abgewiesenen Eingabe
         self.letzte_meldung = ""
+        #: was eine leere Tabelle sagt: wie sie sich fuellt (10b)
+        self.leertext = ""
         self.filter = Filtermodell(self)
         self.filter.setSourceModel(self.modell)
 
@@ -845,8 +950,12 @@ class Datentabelle(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(3)
 
-        # Werkzeugzeile
-        werkzeug = QtWidgets.QHBoxLayout()
+        # Werkzeugzeile einer Tabelle, die allein steht. Im unteren Bereich
+        # gehen Zeilenzahl und Knoepfe in dessen Kopfzeile auf (kopf_abgeben,
+        # 03.10.2026, Teilpaket 10b); lbl_zeilen fuehrt den Text dann weiter
+        # als Tooltip des Zaehlers am Reiter.
+        self.werkzeug = QtWidgets.QWidget(self)
+        werkzeug = QtWidgets.QHBoxLayout(self.werkzeug)
         werkzeug.setContentsMargins(4, 2, 4, 0)
         self.lbl_zeilen = QtWidgets.QLabel("0 Zeilen")
         self.lbl_zeilen.setObjectName("tabellenzahl")
@@ -860,17 +969,22 @@ class Datentabelle(QtWidgets.QWidget):
         werkzeug.addStretch(1)
         for text, fn, hinweis in (
                 ("Spalten…", self._spaltenwahl, "Spalten ein- und ausblenden"),
-                ("Filter leeren", self.filter_leeren, "Alle Kopfzeilenfilter löschen"),
+                ("Filter", None, "Filterzeile ein- und ausblenden - ausblenden hebt den Filter auf"),
                 ("Kopieren", self.in_zwischenablage, "Sichtbare Zeilen in die Zwischenablage"),
                 ("CSV…", self.export_csv, "Sichtbare Zeilen als CSV speichern"),
                 ("Excel…", self.export_xlsx, "Sichtbare Zeilen als xlsx speichern")):
-            b = QtWidgets.QToolButton(self)
+            b = QtWidgets.QToolButton(self.werkzeug)
             b.setText(text)
             b.setToolTip(hinweis)
             b.setObjectName("tabellenknopf")
-            b.clicked.connect(fn)
+            if fn is None:
+                b.setCheckable(True)
+                b.clicked.connect(lambda an: self.filterzeile_zeigen(an, fokus=True))
+                self.btn_filter = b
+            else:
+                b.clicked.connect(fn)
             werkzeug.addWidget(b)
-        lay.addLayout(werkzeug)
+        lay.addWidget(self.werkzeug)
 
         # Filterzeile: ein Feld je Spalte, ueber der Kopfzeile ausgerichtet.
         # Bewusst **ohne Layout**: ein Layout machte die Summe der Spalten-
@@ -878,18 +992,15 @@ class Datentabelle(QtWidgets.QWidget):
         # zur Mindestbreite des Fensters, das mit jeder breiten Spalte wuchs
         # und sich dann nicht mehr verkleinern liess. Die Felder werden in
         # _filterbreiten auf die Kopfzeile gelegt und mit ihr gerollt.
+        # Seit 03.10.2026 (10b) erscheint sie auf Knopfdruck: immer offen nahm
+        # sie jeder Tabelle 22 px, auch wenn niemand filterte.
         self.filterzeile = QtWidgets.QWidget(self)
         self.filterzeile.setFixedHeight(self.FILTER_HOEHE)
         self.filterzeile.setMinimumWidth(0)
         self.filterzeile.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
         self.felder: list[QtWidgets.QLineEdit] = []
-        for k, sp in enumerate(spalten):
-            e = QtWidgets.QLineEdit(self.filterzeile)
-            e.setObjectName("tabellenfilter")
-            e.setPlaceholderText(sp.name[:14])
-            e.setToolTip("Filter: > 0,9   1..5   = HEB 200   !Riegel")
-            e.textChanged.connect(lambda t, i=k: self._filter(i, t))
-            self.felder.append(e)
+        self._filterfelder_anlegen(spalten)
+        self.filterzeile.hide()
         lay.addWidget(self.filterzeile)
 
         self.view = QtWidgets.QTableView(self)
@@ -931,11 +1042,25 @@ class Datentabelle(QtWidgets.QWidget):
         # Wahlspalten bekommen eine Aufklappliste, alles andere den Standard
         self.view.setItemDelegate(WahlDelegate(self))
         lay.addWidget(self.view, 1)
+        # Eine leere Tabelle sagt, wie sie sich fuellt (10b): „0 Zeilen“ unter
+        # einer leeren Kopfzeile liess offen, ob noch etwas kommt. Der Satz
+        # liegt mitten in der Tabelle und nimmt keine Maus an.
+        self.lbl_leer = QtWidgets.QLabel(self.view.viewport())
+        self.lbl_leer.setObjectName("tabelleleer")
+        self.lbl_leer.setAlignment(QtCore.Qt.AlignCenter)
+        self.lbl_leer.setWordWrap(True)
+        self.lbl_leer.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        self.lbl_leer.hide()
+        self.view.viewport().installEventFilter(self)
 
-        # Fusszeile: Max und Min der *sichtbaren* Zeilen. Sie steht in einer
-        # eigenen Ansicht, damit Sortieren und Filtern sie nicht verschieben.
+        # Fusszeile: Max und Min der *sichtbaren* Zeilen, darunter auf Wunsch
+        # die Summenzeile Σ (10c). Sie steht in einer eigenen Ansicht, damit
+        # Sortieren und Filtern sie nicht verschieben.
         self.kennwerte_zeigen = bool(mit_kennwerten)
+        #: Summenzeile: None, "summe" (Spalten mit Spalte.summe) oder ein Satz
+        self._summe = None
         self.fussmodell = TabellenModell(spalten, [], self)
+        self.fussmodell.verweise = False         # Max/Min/Σ verweisen auf nichts
         self.fuss = QtWidgets.QTableView(self)
         self.fuss.setObjectName("tabellenfuss")
         self.fuss.setModel(self.fussmodell)
@@ -950,6 +1075,16 @@ class Datentabelle(QtWidgets.QWidget):
         self.fuss.setFixedHeight(2 * 22 + 2)
         self.fuss.hide()
         lay.addWidget(self.fuss)
+        # Statt einer Summe ein Satz (Auflager einer Umhuellenden): eine eigene
+        # Zeile ueber die Breite der Tabelle, die nicht mit ihr waagerecht rollt
+        # und einen zu langen Satz mit „…“ kuerzt; der ganze steht am Zeiger.
+        # Bis zur Nachbesserung vom 03.10.2026 (10c) war er eine Zeile des
+        # Fusses ueber alle Spalten: bei 1366 x 768 lagen von 1001 px Text
+        # 622 px im Bild, der Rest nur durch Rollen (Segoe UI gemessen).
+        self.lbl_summe = Satzzeile(self)
+        self.lbl_summe.setObjectName("tabellensumme")
+        self.lbl_summe.hide()
+        lay.addWidget(self.lbl_summe)
 
         self.view.horizontalHeader().sectionResized.connect(
             lambda *_a: self._filterbreiten())
@@ -978,12 +1113,146 @@ class Datentabelle(QtWidgets.QWidget):
             self.kennwerte_zeigen = bool(mit_kennwerten)
         if len(zeilen) > self.VERZOEGERT_AB and not self.isVisible():
             self._ausstehend = zeilen
-            self.lbl_zeilen.setText(f"{len(zeilen)} Zeilen – wird beim Anzeigen gefüllt")
+            gefiltert = ", gefiltert" if self.filter_wirkt() else ""
+            self.lbl_zeilen.setText(f"{len(zeilen)} Zeilen{gefiltert} – wird beim Anzeigen gefüllt")
+            self.lbl_leer.hide()
+            # der Zaehler am Reiter nimmt die Zahl, ohne die Tabelle zu fuellen
+            self.stand_geaendert.emit()
             return
         self._ausstehend = None
         self.modell.setzen(zahlen_wandeln(zeilen, self.modell.spalten))
         self._spaltenbreiten()
         self._nachfuehren()
+
+    def _filterfelder_anlegen(self, spalten: list) -> None:
+        # Die Spalte steht als Eigenschaft am Feld, verbunden wird eine
+        # gebundene Methode und kein Lambda: spalten_setzen ersetzt die Felder
+        # mit deleteLater, und ein Lambda an einem geloeschten Feld ist die
+        # Art Verbindung, die beim Beenden Zugriffsverletzungen macht
+        for k, sp in enumerate(spalten):
+            e = QtWidgets.QLineEdit(self.filterzeile)
+            e.setObjectName("tabellenfilter")
+            e.setPlaceholderText(sp.name[:14])
+            e.setToolTip(self.FILTER_HINWEIS)
+            e.setProperty("spalte", k)
+            e.textChanged.connect(self._filterfeld_geaendert)
+            self.felder.append(e)
+
+    def _filterfeld_geaendert(self, text: str) -> None:
+        e = self.sender()
+        k = e.property("spalte") if e is not None else None
+        if k is not None:
+            self._filter(int(k), text)
+
+    @staticmethod
+    def _spaltenschluessel(spalten: list) -> list:
+        """(Name, wievielte Spalte dieses Namens) - „Komb.“ steht mehrfach da."""
+        gezaehlt: dict = {}
+        aus = []
+        for sp in spalten:
+            gezaehlt[sp.name] = gezaehlt.get(sp.name, 0) + 1
+            aus.append((sp.name, gezaehlt[sp.name]))
+        return aus
+
+    @staticmethod
+    def _spaltenkennung(spalten: list) -> list:
+        return [(sp.name, sp.einheit, sp.art, sp.nachkomma, sp.ergebnis, sp.summe) for sp in spalten]
+
+    def spalten_setzen(self, spalten: list, melden: bool = True) -> bool:
+        """Andere Spalten fuer dieselbe Tabelle (03.10.2026, Teilpaket 10c).
+
+        Die Stab- und Auflagerkraefte zeigen zu einem Lastfall oder einer
+        Kombination andere Spalten als zu einer Umhuellenden (min und max je
+        Groesse). Die Tabelle bleibt dieselbe - ihr Reiter, ihre Verbindungen
+        zur Ansicht und ihr Platz im unteren Bereich -, neu angelegt werden
+        Spalten, Filterfelder und Fusszeile; die Zeilen sind danach leer.
+        Filter und Sortierung bleiben fuer jede Spalte, die es in beiden
+        Fassungen gibt (gleicher Name, bei „Komb.“ an gleicher Stelle unter
+        den gleichnamigen); faellt die gefilterte oder sortierte Spalte weg,
+        sagt das Signal ``hinweis`` es (nicht mit *melden* False, etwa beim
+        Leeren nach verworfenen Ergebnissen). Bis zur Nachbesserung vom 03.10.2026
+        (10c) ging jeder Filter verloren - auch der auf „Element“. False, wenn
+        es schon diese Spalten sind - dann geschieht nichts."""
+        neu = list(spalten)
+        if self._spaltenkennung(neu) == self._spaltenkennung(self.modell.spalten):
+            return False
+        alt_schl = self._spaltenschluessel(self.modell.spalten)
+        neu_schl = self._spaltenschluessel(neu)
+        kopf = self.view.horizontalHeader()
+        k_alt = kopf.sortIndicatorSection()
+        sort_alt = alt_schl[k_alt] if 0 <= k_alt < len(alt_schl) else None
+        richtung = kopf.sortIndicatorOrder()
+        filter_alt = {alt_schl[k]: e.text() for k, e in enumerate(self.felder)
+                      if k < len(alt_schl) and e.text().strip()}
+        offen = self.filterzeile_offen()
+        if self.filter_wirkt():
+            self.filter.leeren()
+        self._ausstehend = None
+        for mdl in (self.modell, self.fussmodell):
+            mdl.beginResetModel()
+            mdl.spalten = list(neu)
+            mdl.zeilen = []
+            mdl._ur = []
+            mdl._index = None
+            mdl.herkunft = {}
+            mdl.endResetModel()
+        for e in self.felder:
+            e.textChanged.disconnect(self._filterfeld_geaendert)
+            e.hide()
+            e.deleteLater()
+        self.felder = []
+        self._filterfelder_anlegen(neu)
+        for k in range(len(neu)):
+            self.view.setColumnHidden(k, False)
+            self.fuss.setColumnHidden(k, False)
+        weg = []
+        for schl, text in filter_alt.items():
+            if schl in neu_schl:
+                self.felder[neu_schl.index(schl)].setText(text)
+            else:
+                weg.append(f"Filter auf „{schl[0]}“")
+        if sort_alt in neu_schl:
+            self.view.sortByColumn(neu_schl.index(sort_alt), richtung)
+        else:
+            if sort_alt is not None and not (k_alt == 0 and richtung == QtCore.Qt.AscendingOrder):
+                weg.append(f"Sortierung nach „{sort_alt[0]}“")
+            if not self.modellreihenfolge:
+                self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+        self.filterzeile.setVisible(offen or self.filter_wirkt())
+        self._spaltenbreiten()
+        self._nachfuehren()
+        if weg and melden:
+            self.hinweis.emit(" und ".join(weg) + (" entfällt" if len(weg) == 1 else " entfallen")
+                              + " – die Spalte gibt es beim gezeigten Ergebnis nicht")
+        return True
+
+    def summe_setzen(self, art=None, erklaerung: str = "") -> None:
+        """Die Summenzeile Σ unter der Tabelle (03.10.2026, Teilpaket 10c).
+
+        ``"summe"``: die Spalten mit ``Spalte.summe`` ueber die sichtbaren
+        Zeilen addiert - mit Filter die gefilterten, wie Max und Min. Ein Text
+        steht als Satz in einer eigenen Zeile unter dem Fuss (etwa bei einer
+        Umhuellenden, warum es dort keine Summe gibt), *erklaerung* am Zeiger;
+        er geht nicht in den Export. None: keine Summenzeile."""
+        self._summe = art or None
+        self._summe_erklaerung = str(erklaerung or "")
+        self._kennwerte()
+
+    def _summenzeile(self, sicht: list) -> list:
+        """Die Zeile Σ zu den sichtbaren Zeilen (leer, wenn es keine gibt
+        oder sie ein Satz ist)."""
+        if self._summe != "summe" or not sicht:
+            return []
+        n = len(self.modell.spalten)
+        zeile = ["Σ"]
+        for k in range(1, n):
+            if not self.modell.spalten[k].summe:
+                zeile.append("")
+                continue
+            werte = [x for x in (_zahl(r[k]) for r in sicht if k < len(r)) if x is not None]
+            werte = [x for x in werte if math.isfinite(x)]
+            zeile.append(float(math.fsum(werte)) if werte else "")
+        return zeile
 
     def ausstehend(self) -> bool:
         """Wartet die Tabelle noch auf ihre Zeilen?"""
@@ -1008,13 +1277,27 @@ class Datentabelle(QtWidgets.QWidget):
         super().showEvent(ev)
         if getattr(self, "_ausstehend", None) is not None:
             QtCore.QTimer.singleShot(0, self.nachholen)
+        elif getattr(self, "_breiten_offen", False):
+            self._spaltenbreiten()
 
     #: Ab so vielen Zeilen kommen die Spaltenbreiten aus einer Stichprobe -
     #: Qt misst sonst jede Zelle, bei 490 000 Zeilen dauert das Minuten
     STICHPROBE_AB = 3000
 
     def _spaltenbreiten(self):
-        """Spaltenbreiten aus dem Inhalt, nach oben gedeckelt."""
+        """Spaltenbreiten aus dem Inhalt, nach oben gedeckelt.
+
+        Eine Tabelle, die gerade nicht zu sehen ist, misst erst beim Anzeigen
+        (showEvent; 03.10.2026, Teilpaket 10c). Qt misst jede Zelle ueber den
+        Delegaten, in PySide rund 0,2 ms je Zelle: seit die Stabkraefte einer
+        Umhuellenden gefuellt sind (18 Spalten), kostete ein Wechsel auf die
+        Umhuellende am Drehlager ohne Neuzeichnen 0,65 bis 0,98 s statt 0,39 bis
+        0,50 s - zum grossen Teil fuer Tabellen, die hinten lagen
+        (scratchpad/c10c_zeit.py)."""
+        if not self.isVisible():
+            self._breiten_offen = True
+            return
+        self._breiten_offen = False
         n_z = self.modell.rowCount()
         if n_z <= self.STICHPROBE_AB:
             self.view.resizeColumnsToContents()
@@ -1057,6 +1340,95 @@ class Datentabelle(QtWidgets.QWidget):
     def sichtbar(self) -> int:
         """Wie viele Zeilen der Filter uebrig laesst."""
         return self.filter.rowCount()
+
+    def zaehler(self) -> tuple:
+        """(Zeilen, davon sichtbar) fuer den Zaehler am Reiter - ohne die
+        Tabelle zu fuellen: eine, die noch auf das Anzeigen wartet (ab
+        VERZOEGERT_AB Zeilen, am Drehlager etwa die Knoten), nennt die Zahl
+        ihrer ausstehenden Zeilen. Wirkt dabei ein Filter, steht die Zahl der
+        sichtbaren Zeilen erst nach dem Fuellen fest: dann None statt der
+        Gesamtzahl. Bis zur Nachbesserung vom 03.10.2026 stand dort die
+        Gesamtzahl - Reiter „19“ und „19 von 19 sichtbar“, waehrend Export und
+        Tabelle gefiltert waren."""
+        z = getattr(self, "_ausstehend", None)
+        if z is not None:
+            return len(z), (None if self.filter_wirkt() else len(z))
+        return self.modell.rowCount(), self.filter.rowCount()
+
+    def kennwerte_aktiv(self) -> bool:
+        """Stehen Max und Min unter der Tabelle? Nur an Ergebnistabellen
+        (``mit_kennwerten``) und erst ab KENNWERTE_AB Zeilen - gezaehlt ohne
+        Filter, damit die beiden Zeilen beim Filtern nicht kommen und gehen."""
+        return bool(self.kennwerte_zeigen) and self.modell.rowCount() >= self.KENNWERTE_AB
+
+    def leertext_setzen(self, text: str) -> None:
+        """Was die Tabelle sagt, solange sie leer ist: wie sie sich fuellt
+        („Noch keine Lasten – Lasten → Knotenlast …“)."""
+        self.leertext = str(text or "")
+        self._leer_nachfuehren()
+
+    def kopf_abgeben(self) -> None:
+        """Zeilenzahl und Knoepfe stehen ab jetzt in der Kopfzeile des unteren
+        Bereichs (Tabellenbereich), nicht mehr in einer eigenen Zeile."""
+        self.werkzeug.hide()
+
+    # -- Filterzeile -----------------------------------------------------
+    def filterzeile_offen(self) -> bool:
+        return not self.filterzeile.isHidden()
+
+    def filter_wirkt(self) -> bool:
+        """Laesst ein Filterausdruck Zeilen weg (oder koennte er es)?"""
+        return bool(self.filter.ausdruecke)
+
+    def filterzeile_zeigen(self, an: bool = True, fokus: bool = False) -> None:
+        """Die Filterzeile ein- oder ausblenden (Knopf Filter, 10b).
+
+        Ausblenden hebt die Filter auf - wie das Ausschalten des Autofilters
+        in Excel. Ein Filter, der wirkt, steht so immer sichtbar ueber der
+        Tabelle, und niemand haelt gefilterte Zeilen fuer alle. *fokus*: das
+        Feld der gewaehlten Spalte bekommt die Eingabe."""
+        an = bool(an)
+        if not an and self.filter_wirkt():
+            self.filter_leeren()
+        self.filterzeile.setVisible(an)
+        if an:
+            self._filterbreiten()
+            if fokus:
+                k = self.view.currentIndex().column()
+                k = k if 0 <= k < len(self.felder) and not self.view.isColumnHidden(k) else next(
+                    (i for i in range(len(self.felder)) if not self.view.isColumnHidden(i)), -1)
+                if k >= 0:
+                    self.felder[k].setFocus()
+        self._filterknopf_nachziehen()
+        self.stand_geaendert.emit()
+
+    def _filterknopf_nachziehen(self) -> None:
+        b = self.btn_filter
+        b.blockSignals(True)
+        b.setChecked(self.filterzeile_offen())
+        b.blockSignals(False)
+        b.setText("Filter aktiv" if self.filter_wirkt() else "Filter")
+
+    def _leer_nachfuehren(self) -> None:
+        """Den Satz in der leeren Tabelle setzen: der Hinweis zum gezeigten
+        Ergebnis (hinweis_setzen) vor dem allgemeinen Satz; laesst der Filter
+        nichts uebrig, sagt sie das."""
+        n, m = self.filter.rowCount(), self.modell.rowCount()
+        text = ""
+        if self.ausstehend():
+            text = ""
+        elif m == 0:
+            text = getattr(self, "_hinweis", "") or self.leertext
+        elif n == 0:
+            text = ("Die Zeile passt nicht zum Filter." if m == 1
+                    else f"Keine der {zl.zahl_text(m)} Zeilen passt zum Filter.")
+        self.lbl_leer.setText(text)
+        self.lbl_leer.setVisible(bool(text))
+
+    def eventFilter(self, obj, ev):
+        if obj is self.view.viewport() and ev.type() == QtCore.QEvent.Resize:
+            self.lbl_leer.setGeometry(obj.rect().adjusted(12, 4, -12, -4))
+        return super().eventFilter(obj, ev)
 
     def kopfzeile(self) -> list:
         return [self.modell.kopf(k) for k in range(len(self.modell.spalten))]
@@ -1115,6 +1487,11 @@ class Datentabelle(QtWidgets.QWidget):
             auswahl.select(self.filter.index(a, 0), self.filter.index(b, letzte_spalte))
         sm.select(auswahl, QtCore.QItemSelectionModel.Select
                   | QtCore.QItemSelectionModel.Rows)
+        # Erst den aufgeschobenen Aufbau der Ansicht nachholen: gleich nach dem
+        # Neufuellen (Klick auf eine Kombinationszelle) war der Rollbereich
+        # noch 0, scrollTo blieb bei 0 stehen, und die markierte Zeile 17 von
+        # 18 lag ausserhalb des Sichtfensters (Gegenpruefung 03.10.2026, 10c)
+        self.view.doItemsLayout()
         self.view.scrollTo(self.filter.index(min(zeilen), 0),
                            QtWidgets.QAbstractItemView.EnsureVisible)
         return len(zeilen)
@@ -1122,6 +1499,10 @@ class Datentabelle(QtWidgets.QWidget):
     # -- Bedienung -------------------------------------------------------
     def _filter(self, spalte: int, text: str):
         self.filter.setze_filter(spalte, text)
+        if text.strip() and self.filterzeile.isHidden():
+            # ein Filter, der wirkt, bleibt sichtbar - auch wenn er nicht
+            # ueber den Knopf gesetzt wurde
+            self.filterzeile.show()
         self._nachfuehren()
 
     def filter_leeren(self):
@@ -1148,25 +1529,34 @@ class Datentabelle(QtWidgets.QWidget):
         """Ein Satz neben der Zeilenzahl, solange die Tabelle leer ist - warum
         sie leer ist und wo die Werte stehen (12.09.2026: „Stabkräfte 0 Zeilen“
         bei einer Umhüllenden, deren Extremwerte im Register Umhüllende
-        liegen)."""
+        liegen). Seit 03.10.2026 (10b) steht er mitten in der leeren Tabelle,
+        vor dem allgemeinen Satz (leertext_setzen)."""
         self._hinweis = str(text or "")
         self._nachfuehren()
 
     def _nachfuehren(self):
         n, m = self.filter.rowCount(), self.modell.rowCount()
-        text = f"{n} von {m} Zeilen" if n != m else f"{m} Zeilen"
+        # „1 Zeile“ statt „1 Zeilen“ (Teilpaket 11c, 03.10.2026)
+        text = (f"{n} von {m} {'Zeile' if m == 1 else 'Zeilen'}" if n != m
+                else f"{m} {'Zeile' if m == 1 else 'Zeilen'}")
         hinweis = getattr(self, "_hinweis", "")
         if m == 0 and hinweis:
             text += " – " + hinweis
         self.lbl_zeilen.setText(text)
         self.lbl_zeilen.setToolTip(text)
+        self._leer_nachfuehren()
+        self._filterknopf_nachziehen()
         self._kennwerte()
         self._filterbreiten()
+        self.stand_geaendert.emit()
 
     def _kennwerte(self):
-        """Max- und Min-Zeile aus dem, was gerade zu sehen ist."""
-        if not self.kennwerte_zeigen:
+        """Max- und Min-Zeile aus dem, was gerade zu sehen ist - darunter die
+        Summenzeile Σ, wenn die Tabelle eine hat (summe_setzen, 10c)."""
+        aktiv = self.kennwerte_aktiv()
+        if not aktiv and self._summe is None:
             self.fuss.hide()
+            self.lbl_summe.hide()
             return
         # Ohne wirksamen Filter direkt aus dem Modell - der Weg ueber den
         # Filter fragt jede Zeile einzeln ab und kostet bei grossen Tabellen Sekunden
@@ -1174,9 +1564,22 @@ class Datentabelle(QtWidgets.QWidget):
             sicht = self.modell.zeilen
         else:
             sicht = self.sichtbare_zeilen()
-        hoch, tief = kennwerte(sicht, self.modell.spalten)
-        self.fussmodell.setzen([hoch, tief] if hoch else [])
-        self.fuss.setVisible(bool(hoch))
+        zeilen = []
+        if aktiv:
+            hoch, tief = kennwerte(sicht, self.modell.spalten)
+            if hoch:
+                zeilen = [hoch, tief]
+        summe = self._summenzeile(sicht)
+        if summe:
+            zeilen.append(summe)
+        self.fussmodell.setzen(zeilen)
+        self.fuss.setFixedHeight(len(zeilen) * 22 + 2)
+        self.fuss.setVisible(bool(zeilen))
+        satz = self._summe not in (None, "summe") and bool(sicht)
+        if satz:
+            self.lbl_summe.satz_setzen(f"Σ  {self._summe}",
+                                       getattr(self, "_summe_erklaerung", "") or str(self._summe))
+        self.lbl_summe.setVisible(satz)
 
     def _filterbreiten(self):
         """Filterfelder und Fusszeile auf die Spalten legen - Lage und Breite
@@ -1194,6 +1597,14 @@ class Datentabelle(QtWidgets.QWidget):
                 e.setGeometry(x + 1, 1, max(30, kopf.sectionSize(k) - 2), max(16, h - 2))
             self.fuss.setColumnHidden(k, versteckt)
             self.fuss.setColumnWidth(k, kopf.sectionSize(k))
+        # dieselbe Reihenfolge wie die Kopfzeile: bis zur Nachbesserung vom
+        # 03.10.2026 (10c) blieb der Fuss beim Verschieben einer Spalte stehen,
+        # und unter „Rz“ standen Max, Min und Σ von Rx
+        fk = self.fuss.horizontalHeader()
+        for v in range(min(kopf.count(), fk.count())):
+            k = kopf.logicalIndex(v)
+            if fk.visualIndex(k) != v:
+                fk.moveSection(fk.visualIndex(k), v)
 
     def _spaltenwahl(self):
         m = QtWidgets.QMenu(self)
@@ -1208,6 +1619,15 @@ class Datentabelle(QtWidgets.QWidget):
     def _geklickt(self, index):
         wert = self.filter.data(self.filter.index(index.row(), 0), QtCore.Qt.UserRole)
         werte = self.gewaehlte_schluessel()
+        # Eine Zelle, die auf ein eigenes Ergebnis verweist (10c): zuerst das
+        # melden, dann die Zeile - so kann das Fenster beides in einem Bild
+        # zeichnen (Nachbesserung 03.10.2026: vorher zweimal je Klick)
+        k = index.column()
+        if 0 <= k < len(self.modell.spalten) and len(werte) <= 1:
+            q = self.filter.mapToSource(index)
+            name = self.modell.ergebnisname(q.row(), k)
+            if self.modell.ist_verweis(name):
+                self.ergebnis_gewaehlt.emit(name)
         if len(werte) > 1:
             self.zeilen_gewaehlt.emit(werte)
         else:
@@ -1227,10 +1647,14 @@ class Datentabelle(QtWidgets.QWidget):
         """Was gerade zu sehen ist, samt Max- und Min-Zeile - in den
         Anzeigeeinheiten, so wie der Kopf sie nennt."""
         z = self.sichtbare_zeilen()
-        if self.kennwerte_zeigen and z:
+        dazu = []
+        if self.kennwerte_aktiv() and z:
             hoch, tief = kennwerte(z, self.modell.spalten)
-            z = z + [hoch, tief]
-        return self.modell.zeilen_angezeigt(z)
+            dazu = [hoch, tief]
+        if self._summe == "summe":
+            # die Summe als Zahlen; ein Satz statt der Summe bleibt in der Ansicht
+            dazu += [s for s in (self._summenzeile(z),) if s]
+        return self.modell.zeilen_angezeigt(z + dazu)
 
     def text(self) -> str:
         return als_csv(self.kopfzeile(), self.zeilen_fuer_export())
@@ -1261,6 +1685,857 @@ class Datentabelle(QtWidgets.QWidget):
                         self.zeilen_fuer_export())
 
 
+# --------------------------------------------------------------------------
+# Der untere Bereich: eine Kopfzeile, darunter die Tabelle
+# --------------------------------------------------------------------------
+class Knopfzeile(QtWidgets.QScrollArea):
+    """Die Knopfzeile unter einer Eingabetabelle; reicht die Breite nicht,
+    rollt sie allein waagerecht (03.10.2026, Teilpaket 10b).
+
+    Bis dahin machte die breiteste Knopfzeile (Bericht, sieben Knoepfe) den
+    ganzen unteren Bereich so breit: bei 1024 x 700 rollte er am Stand 5734a94
+    samt Kopfzeile um 250 px, bei jeder Tabelle (Segoe UI, offscreen mit
+    nachgeladener Schrift gemessen; bei 1366 x 768 rollte er nicht). Jetzt
+    rollt nur die Zeile, die zu breit ist; sie wird dann um den Rollbalken
+    hoeher."""
+
+    def __init__(self, inhalt: QtWidgets.QWidget, parent=None):
+        super().__init__(parent)
+        self.setWidget(inhalt)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        self.horizontalScrollBar().rangeChanged.connect(lambda *_a: self.updateGeometry())
+
+    def rollt(self) -> bool:
+        return self.horizontalScrollBar().maximum() > 0
+
+    def _hoehe(self) -> int:
+        h = self.widget().sizeHint().height()
+        if self.rollt():
+            h += self.horizontalScrollBar().sizeHint().height()
+        return h
+
+    def sizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(self.widget().sizeHint().width(), self._hoehe())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(60, self._hoehe())
+
+
+class Gruppenwahl(QtWidgets.QComboBox):
+    """Die Gruppe als Aufklappfeld im Kopf unten - so breit wie der Name der
+    gewaehlten Gruppe, nicht wie der laengste (03.10.2026, Teilpaket 10b).
+    Mit Segoe UI ist es 69 px (Lager) bis 120 px (Eigenschaften) breit, das
+    Protokoll 91 px; mit dem laengsten Namen waeren es immer 120 px - Platz,
+    der den Reitern daneben fehlt. Die Liste zeigt weiter alle Namen ganz."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        # nie breiter als der Name: steht daneben kein Reiter (Protokoll),
+        # zog das Layout das Feld sonst ueber den ganzen Kopf (Gegenpruefung
+        # 03.10.2026, Segoe UI: 626 px statt 91 px bei 1366 x 768)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.currentIndexChanged.connect(lambda _i: self.updateGeometry())
+
+    def sizeHint(self) -> QtCore.QSize:
+        s = super().sizeHint()
+        if self.count() == 0:
+            return s
+        fm = self.fontMetrics()
+        laengster = max(fm.horizontalAdvance(self.itemText(i)) for i in range(self.count()))
+        return QtCore.QSize(s.width() - laengster + fm.horizontalAdvance(self.currentText()), s.height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return self.sizeHint()
+
+
+class Kurzwahl(QtWidgets.QComboBox):
+    """Ein Aufklappfeld, das geschlossen nur den Namen des Eintrags zeigt - den
+    Text bis zum ersten „: “ („Kombination GZT7“ statt „Kombination GZT7:
+    1.35·LF1 + 1.5·S + …“) - und so breit ist wie dieser, hoechstens BREIT_MAX
+    (03.10.2026, Teilpaket 10c: die Ergebniswahl im Kopf unten). Die Liste
+    zeigt die Eintraege ganz.
+
+    Mit Segoe UI nahm ein Feld fuer 16 Zeichen samt Etikett „Ergebnis“ 239 px
+    im Kopf und machte ihn 2 px hoeher, die Kurzwahl mit „Kombination GZT1“
+    148 px ohne Zuwachs (Stil wie die Gruppenwahl); bei 1920 x 1080 sind so
+    von den neun Reitern der Nachweise sechs statt fuenf ganz zu sehen
+    (offscreen mit nachgeladener Schrift, scratchpad/c10c_mess.py)."""
+
+    #: breiter wird das Feld nicht; ein laengerer Name wird gekuerzt (…)
+    BREIT_MAX = 220
+    #: so schmal darf es werden, wenn der Platz knapp ist (Platz fuer
+    #: „Kombinat…“); wie breit es ist, setzt der Kopf (Tabellenbereich)
+    MIN_TEXT = "Kombinat…"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.currentIndexChanged.connect(self._index_geaendert)
+
+    def _index_geaendert(self, _i: int) -> None:
+        self.updateGeometry()
+
+    @staticmethod
+    def kurz(text) -> str:
+        return str(text or "").split(": ", 1)[0]
+
+    def _textbreite(self) -> int:
+        fm = self.fontMetrics()
+        return min(self.BREIT_MAX, fm.horizontalAdvance(self.kurz(self.currentText())) + 2)
+
+    def _groesse(self, textbreite: int) -> QtCore.QSize:
+        opt = QtWidgets.QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        inhalt = QtCore.QSize(max(40, textbreite), self.fontMetrics().height())
+        s = self.style().sizeFromContents(QtWidgets.QStyle.CT_ComboBox, opt, inhalt, self)
+        return QtCore.QSize(s.width(), super().sizeHint().height())
+
+    def sizeHint(self) -> QtCore.QSize:
+        return self._groesse(self._textbreite())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return self._groesse(min(self._textbreite(), self.fontMetrics().horizontalAdvance(self.MIN_TEXT)))
+
+    def paintEvent(self, ev):
+        # wie QComboBox::paintEvent, nur mit dem kurzen Text
+        p = QtWidgets.QStylePainter(self)
+        p.setPen(self.palette().color(QtGui.QPalette.Text))
+        opt = QtWidgets.QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        p.drawComplexControl(QtWidgets.QStyle.CC_ComboBox, opt)
+        r = self.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
+                                        QtWidgets.QStyle.SC_ComboBoxEditField, self)
+        opt.currentText = self.fontMetrics().elidedText(self.kurz(opt.currentText),
+                                                       QtCore.Qt.ElideRight, max(10, r.width()))
+        p.drawControl(QtWidgets.QStyle.CE_ComboBoxLabel, opt)
+
+
+class Satzzeile(QtWidgets.QLabel):
+    """Ein Satz in einer Zeile: zu lang, wird er mit „…“ gekuerzt; der ganze
+    steht am Zeiger (die Zeile Σ der Auflager einer Umhuellenden, 10c)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._voll = ""
+        self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        self.setMinimumWidth(0)
+        self.setFixedHeight(22)
+
+    def satz_setzen(self, text: str, erklaerung: str = "") -> None:
+        self._voll = str(text or "")
+        self.setToolTip(str(erklaerung or text or ""))
+        self._kuerzen()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._kuerzen()
+
+    def _kuerzen(self) -> None:
+        breit = self.contentsRect().width()
+        text = (self.fontMetrics().elidedText(self._voll, QtCore.Qt.ElideRight, breit)
+                if breit > 0 else self._voll)
+        if text != self.text():
+            self.setText(text)
+
+
+class Gruppenseite(QtWidgets.QTabWidget):
+    """Die Seite einer Gruppe im unteren Bereich. Ihre Reiter stehen im Kopf
+    (Reiterleiste), die eigene Leiste ist verborgen - und zaehlt hier auch
+    nicht zur Mindesthoehe. QTabWidget rechnet eine verborgene Leiste mit
+    (nur eine automatisch verborgene nicht): mit dem Stilblatt 29 px, die der
+    Seite nie zugute kamen. Seit der Summenzeile Σ der Auflagerkraefte
+    (03.10.2026, 10c) war die Seite damit in der Kompaktstufe hoeher als der
+    Bereich, und von Max, Min und Σ fehlten unten 13 px (Kaestchenwert bei
+    1280 x 720; mit Segoe UI 21 px)."""
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        s = super().minimumSizeHint()
+        if self.tabBar().isHidden():
+            s.setHeight(max(0, s.height() - self.tabBar().minimumSizeHint().height()))
+        return s
+
+
+def reiter_frei(leiste: QtWidgets.QTabBar) -> QtCore.QRect:
+    """Der Teil einer QTabBar, den ihre Rollpfeile nicht verdecken."""
+    links, rechts = 0, leiste.width()
+    for pfeil in leiste.findChildren(QtWidgets.QToolButton):
+        if pfeil.parent() is not leiste or not pfeil.isVisible():
+            continue
+        g = pfeil.geometry()
+        if g.center().x() < leiste.width() / 2:
+            links = max(links, g.right() + 1)
+        else:
+            rechts = min(rechts, g.left())
+    return QtCore.QRect(links, 0, max(0, rechts - links), leiste.height())
+
+
+#: Schrift leerer Reiter (Teilpaket 10b, Nachbesserung 03.10.2026): 3,2 : 1
+#: gegen den Grund des Kopfes (#f4f6f8) - die Schrift gefuellter Reiter (matt,
+#: #66717c) hat 4,6 : 1. Der erste Schleier ueber der Schrift kam laut
+#: Gegenpruefung auf etwa 1,6 : 1, und ein gewaehlter leerer Reiter war kaum
+#: von den anderen zu unterscheiden.
+REITER_LEER = "#808a94"
+#: ... und gewaehlt: ein helleres Akzentblau, 3,2 : 1 (Akzent #1467c6: 5,1 : 1)
+REITER_LEER_GEWAEHLT = "#5a8bd0"
+
+
+class Reiterleiste(QtWidgets.QTabBar):
+    """Die Reiter der gewaehlten Gruppe im Kopf des unteren Bereichs, jeder mit
+    seiner Zeilenzahl (03.10.2026, Teilpaket 10b).
+
+    Die Zahl steht als kleine Marke rechts am Reiter und nicht im Text: der
+    Text bleibt der Name der Tabelle, den Befehle und Pruefungen woertlich
+    vergleichen. Leere Reiter sind grau (REITER_LEER), ein gewaehlter leerer
+    Reiter hellblau mit dem Strich des gewaehlten. Die Schriftfarbe der Reiter
+    setzt das Stilblatt (QTabBar::tab) und uebergeht dabei setTabTextColor -
+    offscreen geprueft, kein einziger Bildpunkt in der gesetzten Farbe. Darum
+    zeichnet der Stil bei leeren Reitern Form und Strich ohne Text
+    (initStyleOption), und paintEvent schreibt den Namen in der eigenen Farbe
+    an dieselbe Stelle (SE_TabBarTabText)."""
+
+    RECHTS = QtWidgets.QTabBar.ButtonPosition.RightSide
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("tabellenreiter")
+        self.setExpanding(False)
+        self.setDrawBase(False)
+        # Reicht die Breite nicht, rollen die Reiter mit Pfeilen - gekuerzt
+        # wird kein Name
+        self.setUsesScrollButtons(True)
+        self.setElideMode(QtCore.Qt.ElideNone)
+        #: waehrend paintEvent: leere Reiter ohne Text an den Stil geben
+        self._ohne_leertext = False
+
+    def zahl_setzen(self, j: int, gesamt: int, sichtbar, hinweis: str = "") -> None:
+        """Die Marke am Reiter *j*: „19“, gefiltert „5/19“, leer grau.
+        ``sichtbar`` None: ein Filter wirkt, aber wie viele Zeilen er uebrig
+        laesst, steht erst nach dem Fuellen fest - dann „?/19“, nie eine
+        falsche Zahl (Nachbesserung 03.10.2026)."""
+        if not 0 <= j < self.count():
+            return
+        if sichtbar is None:
+            text = f"?/{zl.zahl_text(gesamt)}"
+        elif sichtbar == gesamt:
+            text = zl.zahl_text(gesamt)
+        else:
+            text = f"{zl.zahl_text(sichtbar)}/{zl.zahl_text(gesamt)}"
+        leer = gesamt == 0
+        marke = self.tabButton(j, self.RECHTS)
+        neu = not isinstance(marke, QtWidgets.QLabel)
+        if neu:
+            marke = QtWidgets.QLabel(self)
+            marke.setObjectName("reiterzahl")
+            marke.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        elif marke.text() == text and self.ist_leer(j) == leer and marke.toolTip() == hinweis:
+            return
+        marke.setText(text)
+        marke.setToolTip(hinweis)
+        marke.setProperty("leer", leer)
+        marke.setProperty("gefiltert", sichtbar != gesamt)
+        marke.style().unpolish(marke)
+        marke.style().polish(marke)
+        marke.adjustSize()
+        self.setTabData(j, leer)
+        self.setTabToolTip(j, f"{self.tabText(j)}: {hinweis}" if hinweis else self.tabText(j))
+        if neu:
+            self.setTabButton(j, self.RECHTS, marke)
+        else:
+            # Reiter neu vermessen - die Marke ist breiter oder schmaler geworden
+            self.setTabText(j, self.tabText(j))
+        self.update()
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        """Mindestens so breit, dass der breiteste Reiter samt Rollpfeilen ganz
+        zu sehen ist. QTabBar verlangt sonst nur Platz fuer die Pfeile und ein
+        Stueck: mit Segoe UI blieben ihr bei 1024 x 700 so 123 px, und bei 13
+        Tabellen war der gewaehlte Reiter nicht ganz zu sehen („Kontaktbedingungen“
+        braucht 146 px), waehrend die Knoepfe rechts ihren Platz behielten. So
+        weichen zuerst die Knoepfe ins Menue „»“."""
+        s = super().minimumSizeHint()
+        if self.count() == 0:
+            return s
+        # so breit legt QTabBar ihre Pfeile an (layoutTabs)
+        pfeil = self.style().pixelMetric(QtWidgets.QStyle.PM_TabBarScrollButtonWidth, None, self)
+        breit = max(self.tabSizeHint(j).width() for j in range(self.count()))
+        return QtCore.QSize(max(s.width(), breit + 2 * max(pfeil, 12)), s.height())
+
+    def zahl(self, j: int) -> str:
+        """Der Text der Marke am Reiter *j* („“ ohne Marke)."""
+        marke = self.tabButton(j, self.RECHTS) if 0 <= j < self.count() else None
+        return marke.text() if isinstance(marke, QtWidgets.QLabel) else ""
+
+    def ist_leer(self, j: int) -> bool:
+        return bool(self.tabData(j)) if 0 <= j < self.count() else False
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        if self._ohne_leertext and self.ist_leer(index):
+            option.text = ""
+
+    def paintEvent(self, ev):
+        leere = [j for j in range(self.count()) if self.ist_leer(j)]
+        self._ohne_leertext = bool(leere)
+        try:
+            super().paintEvent(ev)
+        finally:
+            self._ohne_leertext = False
+        if not leere:
+            return
+        p = QtGui.QPainter(self)
+        try:
+            # die Schrift der Reiter: Gewicht 500 wie im Stilblatt (::tab)
+            f = QtGui.QFont(self.font())
+            f.setWeight(QtGui.QFont.Weight.Medium)
+            p.setFont(f)
+            frei = reiter_frei(self)
+            p.setClipRect(frei)
+            for j in leere:
+                opt = QtWidgets.QStyleOptionTab()
+                self.initStyleOption(opt, j)
+                r = self.style().subElementRect(QtWidgets.QStyle.SE_TabBarTabText, opt, self)
+                p.setPen(QtGui.QColor(REITER_LEER_GEWAEHLT if j == self.currentIndex() else REITER_LEER))
+                p.drawText(r, int(QtCore.Qt.AlignCenter), opt.text)
+        finally:
+            p.end()
+
+
+class Tabellenbereich(QtWidgets.QWidget):
+    """Der untere Bereich: **eine Kopfzeile**, darunter die Tabelle.
+
+    Die Kopfzeile (03.10.2026, Teilpaket 10b) traegt in einer Zeile die Gruppe
+    als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager, Lasten,
+    Ergebnisse, Nachweise, Bericht), die Reiter der Tabellen dieser Gruppe mit
+    ihrer Zeilenzahl und die Knoepfe Spalten, Filter, Kopieren, CSV und Excel
+    fuer die Tabelle vorn. Bis dahin standen untereinander eine Gruppenleiste,
+    die Register der Gruppe, je Tabelle eine Werkzeugzeile und eine immer
+    offene Filterzeile: von 270 px unten blieben bei 1920 x 1080 der
+    Knotentabelle 78 px (zwei Zeilen) und den Stabkraeften 108 px (drei
+    Zeilen), jetzt sind es 207 px und 188 px (je sieben Zeilen; Segoe UI,
+    offscreen mit nachgeladener Schrift gemessen, tests/test_unten_kopfzeile.py).
+
+    Reicht die Breite nicht fuer Knoepfe mit Text, stehen nur ihre Symbole da
+    (der Tooltip nennt sie); reicht sie auch dafuer nicht, nimmt die
+    Werkzeugleiste den Rest in ihr Menue „»“. Die Reiter rollen dann mit
+    Pfeilen, gekuerzt wird kein Name.
+
+    Nach aussen verhaelt sich der Bereich wie ein flaches ``QTabWidget``
+    (``count``, ``tabText``, ``setCurrentIndex``, ``currentIndex``,
+    ``currentWidget``, ``addTab``): wer eine Tabelle nach vorn holt, muss
+    ihre Gruppe nicht kennen. Die Reihenfolge innerhalb einer Gruppe ist die
+    der Vorgabe, nicht die des Anlegens. Bis zum 03.10.2026 stand die Klasse
+    in design.py (dort bleibt der Name als Verweis).
+    """
+
+    #: Gruppe fuer Tabellen, die keiner Gruppe zugeordnet sind
+    SONST = "Weitere"
+    #: Ein Knopf, der die Tabelle sichtbar braucht (Filter, Spalten), wurde
+    #: bedient - die Fensteranordnung klappt dann einen eingeklappten Bereich auf
+    bedient = QtCore.Signal()
+    #: Klick bzw. Doppelklick auf eine freie Stelle des Kopfes - wie auf einen
+    #: Reiter: die Fensteranordnung klappt auf bzw. um. So geht das auch in
+    #: der Gruppe Protokoll, die keinen Reiter hat (Nachbesserung 03.10.2026)
+    kopf_geklickt = QtCore.Signal()
+    kopf_doppelt = QtCore.Signal()
+
+    def __init__(self, gruppen, parent=None):
+        super().__init__(parent)
+        from . import symbole
+        self.gruppen: list[tuple[str, list[str]]] = [(g, list(n)) for g, n in gruppen]
+        #: Seite (Widget eines Reiters) -> ihre Datentabelle
+        self._tabellen: dict = {}
+        #: Widget -> seine eigene Groessenregel (siehe _groessen_regeln)
+        self._politik: dict = {}
+        self._aufbau = False
+        #: Feld im Kopf neben der Gruppe, nur in einigen Gruppen (kopf_zusatz_setzen)
+        self._zusatz = None
+        self._zusatz_gruppen: set = set()
+        self._zusatz_an = False
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self.kopf = QtWidgets.QWidget(self)
+        self.kopf.setObjectName("unterkopf")
+        self.kopf.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        kl = QtWidgets.QHBoxLayout(self.kopf)
+        kl.setContentsMargins(4, 2, 4, 2)
+        kl.setSpacing(6)
+        self.gruppenwahl = Gruppenwahl(self.kopf)
+        self.gruppenwahl.setObjectName("gruppenwahl")
+        self.gruppenwahl.setToolTip("Gruppe der Tabellen unten")
+        self.reiter = Reiterleiste(self.kopf)
+        self.werkzeug = QtWidgets.QToolBar(self.kopf)
+        self.werkzeug.setObjectName("tabellenwerkzeug")
+        self.werkzeug.setIconSize(QtCore.QSize(16, 16))
+        self.werkzeug.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.werkzeug.setMovable(False)
+        self.werkzeug.setFloatable(False)
+
+        def knopf(text, symbol, hinweis, fn, pruefbar=False):
+            a = QtGui.QAction(symbole.symbol(symbol), text, self)
+            a.setToolTip(hinweis)
+            a.setCheckable(pruefbar)
+            a.triggered.connect(fn)
+            self.werkzeug.addAction(a)
+            return a
+        self.act_spalten = knopf("Spalten…", "tabelle", "Spalten ein- und ausblenden",
+                                 lambda: self._an_tabelle("_spaltenwahl", zeigen=True))
+        self.act_filter = knopf("Filter", "filter", "", self._filter_geschaltet, pruefbar=True)
+        self.act_kopieren = knopf("Kopieren", "zwischenablage", "Sichtbare Zeilen in die Zwischenablage",
+                                  lambda: self._an_tabelle("in_zwischenablage"))
+        self.act_csv = knopf("CSV…", "csv", "Sichtbare Zeilen als CSV speichern",
+                             lambda: self._an_tabelle("export_csv"))
+        self.act_excel = knopf("Excel…", "excel", "Sichtbare Zeilen als Excel-Datei (xlsx) speichern",
+                               lambda: self._an_tabelle("export_xlsx"))
+        kl.addWidget(self.gruppenwahl, 0, QtCore.Qt.AlignVCenter)
+        kl.addWidget(self.reiter, 1, QtCore.Qt.AlignVCenter)
+        # ohne Reiter (Protokoll) haelt der Leerraum das Feld links; sonst
+        # stand es mitten im Kopf (mit Segoe UI gesehen, Nachbesserung 10b)
+        kl.addStretch(0)
+        kl.addWidget(self.werkzeug, 0, QtCore.Qt.AlignVCenter)
+
+        self.stapel = QtWidgets.QStackedWidget(self)
+        self.seiten: dict[str, QtWidgets.QTabWidget] = {}
+        for g, _ in self.gruppen:
+            self._gruppe_anlegen(g)
+        self.gruppenwahl.currentIndexChanged.connect(self._gruppe_gewechselt)
+        self.reiter.currentChanged.connect(self._reiter_gewechselt)
+        self.kopf.installEventFilter(self)
+        lay.addWidget(self.kopf)
+        lay.addWidget(self.stapel, 1)
+        self._reiter_aufbauen()
+
+    # ---- Aufbau ----------------------------------------------------------
+    def _gruppe_anlegen(self, g: str) -> QtWidgets.QTabWidget:
+        seite = Gruppenseite(self.stapel)
+        seite.setObjectName("tabellenregister")
+        # die Reiter stehen im Kopf, die Seite zeigt keine eigenen
+        seite.tabBar().setVisible(False)
+        seite.currentChanged.connect(lambda _j, g=g: self._seite_gewechselt(g))
+        self.seiten[g] = seite
+        self.stapel.addWidget(seite)
+        self.gruppenwahl.addItem(g)
+        return seite
+
+    def gruppe_von(self, name: str) -> str:
+        for g, namen in self.gruppen:
+            if name in namen:
+                return g
+        return self.SONST
+
+    def gruppennamen(self) -> list[str]:
+        return [self.gruppenwahl.itemText(i) for i in range(self.gruppenwahl.count())]
+
+    def tabellen(self, gruppe: str) -> list[str]:
+        seite = self.seiten.get(gruppe)
+        return [seite.tabText(i) for i in range(seite.count())] if seite else []
+
+    @staticmethod
+    def _datentabelle_in(w):
+        if isinstance(w, Datentabelle):
+            return w
+        return w.findChild(Datentabelle) if w is not None else None
+
+    def addTab(self, w: QtWidgets.QWidget, name: str) -> int:
+        g = self.gruppe_von(name)
+        seite = self.seiten.get(g)
+        if seite is None:
+            self.gruppen.append((g, []))
+            seite = self._gruppe_anlegen(g)
+        folge = dict(self.gruppen).get(g, [])
+        rang = folge.index(name) if name in folge else len(folge)
+        pos = 0
+        for i in range(seite.count()):
+            t = seite.tabText(i)
+            if (folge.index(t) if t in folge else len(folge)) <= rang:
+                pos = i + 1
+        seite.insertTab(pos, w, name)
+        t = self._datentabelle_in(w)
+        if t is not None:
+            self._tabellen[w] = t
+            t.kopf_abgeben()
+            t.stand_geaendert.connect(lambda w=w: self._stand_geaendert(w))
+        if g == self.currentGroup():
+            self._reiter_aufbauen()
+        self._groessen_regeln()
+        return self.indexOf(w)
+
+    def _groessen_regeln(self) -> None:
+        """Nur die Seite vorn bestimmt die Mindestgroesse des Bereichs.
+
+        QStackedWidget und QTabWidget nehmen sonst das Groesste aller Seiten:
+        mit Segoe UI am Stand 5734a94 gemessen war der Inhalt unten in der
+        Kompaktstufe 260 px hoch im 217 px hohen Bereich - von Max und Min der
+        Stabkraefte waren 3 von 46 px zu sehen -, und bei 1024 x 700 rollte
+        der Bereich samt Kopfzeile um 250 px, weil die breiteste Knopfzeile
+        (Bericht) jede Tabelle so breit machte. Seiten, die nicht vorn liegen,
+        bekommen darum die Groessenregel Ignored - so zaehlen sie in
+        QStackedLayout nicht zur Mindestgroesse -, die vordere behaelt ihre
+        eigene."""
+        aus = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
+        vorn_g = self.stapel.currentWidget()
+
+        def regel(w, vorn: bool):
+            if w is None:
+                return
+            if w not in self._politik:
+                self._politik[w] = w.sizePolicy()
+            w.setSizePolicy(self._politik[w] if vorn else aus)
+        for seite in self.seiten.values():
+            regel(seite, seite is vorn_g)
+            for j in range(seite.count()):
+                regel(seite.widget(j), seite is vorn_g and j == seite.currentIndex())
+            seite.updateGeometry()
+        self.stapel.updateGeometry()
+        self.updateGeometry()
+
+    # ---- Kopfzeile -------------------------------------------------------
+    def kopf_zusatz_setzen(self, w: QtWidgets.QWidget, gruppen) -> None:
+        """Ein Feld im Kopf gleich rechts neben der Gruppe, zu sehen nur in den
+        Gruppen *gruppen* (03.10.2026, Teilpaket 10c: die Ergebniswahl in
+        Ergebnisse und Nachweise).
+
+        Im Kopf und nicht in einer Zeile darunter: eine eigene Zeile nahm der
+        Tabelle 29 px - bei 1920 x 1080 sah man von den Stabkraeften 5 statt 7
+        Zeilen (159 statt 188 px), in der Kompaktstufe bei 1366 x 768 von den
+        Nachweisen EC3 3 statt 5 (130 statt 159 px; Segoe UI, offscreen mit
+        nachgeladener Schrift, scratchpad/c10c_mess.py). Im Kopf kostet es
+        keine Hoehe. Die Breite geht den Reitern ab, die dann mit Pfeilen
+        rollen (bei 1366 x 768 ist von den fuenf Reitern der Ergebnisse einer
+        statt drei ganz zu sehen, der gewaehlte immer), und den Knoepfen, die
+        zuerst zu Symbolen und dann ins Menue „»“ weichen - wie sonst bei
+        schmalem Fenster auch. Wie breit es wird, regelt _zusatz_einpassen."""
+        self._zusatz = w
+        self._zusatz_gruppen = set(gruppen)
+        w.setParent(self.kopf)
+        self.kopf.layout().insertWidget(1, w, 0, QtCore.Qt.AlignVCenter)
+        self._zusatz_nachziehen()
+
+    def kopf_zusatz_zeigen(self, an: bool) -> None:
+        """Das Feld im Kopf zeigen (in seinen Gruppen) oder ganz verbergen -
+        und neu einpassen: es kann breiter oder schmaler geworden sein
+        (Kurzwahl, anderer Eintrag)."""
+        self._zusatz_an = bool(an)
+        self._zusatz_nachziehen()
+
+    def _zusatz_nachziehen(self) -> None:
+        if self._zusatz is not None:
+            self._zusatz_einpassen()
+            self._knopfart_waehlen()
+
+    def _verfuegbar(self) -> int:
+        """Die Breite, die der Bereich zeigen kann: in einer Rollflaeche die
+        ihres Sichtfensters - der Bereich selbst wird dort so breit wie sein
+        Inhalt verlangt."""
+        p = self.parentWidget()
+        rolle = p.parentWidget() if p is not None else None
+        if isinstance(rolle, QtWidgets.QAbstractScrollArea) and p is rolle.viewport():
+            return p.width()
+        return self.width()
+
+    def zusatz_platz(self) -> int:
+        """Wie viel Platz das Feld im Kopf hat [px]: die Breite des Bereichs
+        abzueglich Gruppe, des breitesten Reiters samt Pfeilen und der
+        Mindestbreite der Knoepfe (Menue „»“)."""
+        kl = self.kopf.layout()
+        m = kl.contentsMargins()
+        andere = (m.left() + m.right() + 3 * kl.spacing() + self.gruppenwahl.sizeHint().width()
+                  + (0 if self.reiter.isHidden() else self.reiter.minimumSizeHint().width())
+                  + (0 if self.werkzeug.isHidden() else self.werkzeug.minimumSizeHint().width()))
+        return self._verfuegbar() - andere
+
+    def _zusatz_einpassen(self) -> None:
+        """Das Feld bekommt seine volle Breite, solange daneben Gruppe, der
+        breiteste Reiter samt Pfeilen und das Menue „»“ Platz haben; sonst so
+        viel, wie bleibt (der Name wird gekuerzt), und unter seiner
+        Mindestbreite gar keinen. Der Kopf wird so nie breiter als der
+        Bereich, der sonst samt Kopf waagerecht rollte: ohne Schrift (Kaestchen
+        statt Segoe UI) rollte er, selbst mit dem Feld auf seiner Mindestbreite,
+        bei 1366 x 768 um 29 px und bei 1280 x 720 um 115 px (Kaestchenwerte,
+        tests/test_unten_kopfzeile.py). Vor den Knoepfen hat das Feld Vorrang -
+        sie weichen erst zu Symbolen, dann ins Menue."""
+        w = self._zusatz
+        if w is None:
+            return
+        breite = 0
+        if self._zusatz_an and self.currentGroup() in self._zusatz_gruppen:
+            platz = self.zusatz_platz()
+            if platz >= w.minimumSizeHint().width():
+                breite = min(w.sizeHint().width(), platz)
+        if breite and w.minimumWidth() != breite:
+            w.setFixedWidth(breite)
+        if w.isHidden() == bool(breite):
+            w.setVisible(bool(breite))
+
+    def _gruppe_gewechselt(self, i: int) -> None:
+        if 0 <= i < self.stapel.count():
+            self.stapel.setCurrentIndex(i)
+        self._zusatz_nachziehen()
+        self._reiter_aufbauen()
+        self._groessen_regeln()
+
+    def _reiter_aufbauen(self) -> None:
+        """Die Reiter der gewaehlten Gruppe in den Kopf legen, mit Zaehlern.
+        Eine Gruppe mit nur einem Eintrag, der keine Tabelle ist (Protokoll),
+        zeigt keinen Reiter - das Aufklappfeld sagt dasselbe."""
+        seite = self.seiten.get(self.currentGroup())
+        rb = self.reiter
+        einzeln = seite is None or (seite.count() <= 1 and self._tabellen.get(seite.widget(0)) is None)
+        # erst sichtbar, dann fuellen: eine verborgene QTabBar vermisst ihre
+        # Reiter nicht und holt den gewaehlten dann nicht ins Bild
+        rb.setVisible(not einzeln)
+        self._aufbau = True
+        rb.blockSignals(True)
+        try:
+            while rb.count():
+                rb.removeTab(rb.count() - 1)
+            if seite is not None:
+                for j in range(seite.count()):
+                    rb.addTab(seite.tabText(j))
+                    t = self._tabellen.get(seite.widget(j))
+                    if t is not None:
+                        gesamt, sichtbar = t.zaehler()
+                        rb.zahl_setzen(j, gesamt, sichtbar, t.lbl_zeilen.text())
+                rb.setCurrentIndex(max(0, seite.currentIndex()))
+        finally:
+            rb.blockSignals(False)
+            self._aufbau = False
+        rb.updateGeometry()
+        self._kopf_nachziehen()
+        self._reiter_ins_bild()
+        # ... und noch einmal, wenn der Kopf die Reiter neu verteilt hat
+        QtCore.QTimer.singleShot(0, self._reiter_ins_bild)
+
+    def _reiter_ins_bild(self) -> None:
+        """Den gewaehlten Reiter in den sichtbaren Teil rollen. QTabBar tut das
+        bei setCurrentIndex nur mit der Breite, die sie gerade hat - nach dem
+        Umbau der Reiter einer Gruppe stand der gewaehlte sonst hinter den
+        Pfeilen (offscreen mit Kaestchen statt Schrift gesehen: „Lasteinleitung“
+        bei 1366 x 768)."""
+        rb = self.reiter
+        try:
+            j = rb.currentIndex()
+        except RuntimeError:                # beim Beenden schon geloescht
+            return
+        if rb.isHidden() or rb.count() < 2 or j < 0 or reiter_frei(rb).contains(rb.tabRect(j)):
+            return
+        rb.blockSignals(True)
+        try:
+            rb.setCurrentIndex(1 if j == 0 else 0)
+            rb.setCurrentIndex(j)
+        finally:
+            rb.blockSignals(False)
+
+    def _reiter_gewechselt(self, j: int) -> None:
+        if self._aufbau:
+            return
+        seite = self.seiten.get(self.currentGroup())
+        if seite is not None and 0 <= j < seite.count() and seite.currentIndex() != j:
+            seite.setCurrentIndex(j)
+
+    def _seite_gewechselt(self, g: str) -> None:
+        self._groessen_regeln()
+        if g != self.currentGroup() or self._aufbau:
+            return
+        j = self.seiten[g].currentIndex()
+        if self.reiter.currentIndex() != j and 0 <= j < self.reiter.count():
+            self.reiter.blockSignals(True)
+            self.reiter.setCurrentIndex(j)
+            self.reiter.blockSignals(False)
+        self._kopf_nachziehen()
+        self._reiter_ins_bild()
+
+    def _stand_geaendert(self, w) -> None:
+        """Zeilenzahl, Filter oder Filterzeile einer Tabelle geaendert."""
+        t = self._tabellen.get(w)
+        seite = self.seiten.get(self.currentGroup())
+        j = seite.indexOf(w) if seite is not None else -1
+        if t is None or j < 0 or self._aufbau:
+            return
+        gesamt, sichtbar = t.zaehler()
+        self.reiter.zahl_setzen(j, gesamt, sichtbar, t.lbl_zeilen.text())
+        if w is self.currentWidget():
+            self._filterknopf_nachziehen()
+        self._knopfart_waehlen()
+
+    def aktive_tabelle(self):
+        """Die Datentabelle vorn (oder None - etwa beim Protokoll)."""
+        return self._tabellen.get(self.currentWidget())
+
+    def _kopf_nachziehen(self) -> None:
+        self.werkzeug.setVisible(self.aktive_tabelle() is not None)
+        self._filterknopf_nachziehen()
+        self._knopfart_waehlen()
+
+    def _filterknopf_nachziehen(self) -> None:
+        """Der Knopf Filter zeigt den Stand der Tabelle vorn: gedrueckt, wenn
+        ihre Filterzeile offen ist, „Filter aktiv“ und hervorgehoben, wenn ein
+        Filter Zeilen weglaesst."""
+        t = self.aktive_tabelle()
+        a = self.act_filter
+        wirkt = bool(t is not None and t.filter_wirkt())
+        a.blockSignals(True)
+        a.setChecked(bool(t is not None and t.filterzeile_offen()))
+        a.blockSignals(False)
+        text = "Filter aktiv" if wirkt else "Filter"
+        if wirkt:
+            gesamt, sichtbar = t.zaehler()
+            wie_viele = (f"{zl.zahl_text(sichtbar)} von {zl.zahl_text(gesamt)} Zeilen sichtbar"
+                         if sichtbar is not None else
+                         f"wie viele der {zl.zahl_text(gesamt)} Zeilen er übrig lässt, zeigt die "
+                         "Tabelle beim Anzeigen")
+            tip = (f"Filter aktiv: {wie_viele}. "
+                   "Ein Klick blendet die Filterzeile aus und hebt den Filter auf.")
+        else:
+            tip = ("Filterzeile ein- und ausblenden - ausblenden hebt den Filter auf. "
+                   + Datentabelle.FILTER_HINWEIS)
+        if a.text() != text:
+            a.setText(text)
+        a.setToolTip(tip)
+        b = self.werkzeug.widgetForAction(a)
+        if b is not None and b.property("aktiv") != wirkt:
+            b.setProperty("aktiv", wirkt)
+            b.style().unpolish(b)
+            b.style().polish(b)
+
+    def _filter_geschaltet(self, an: bool) -> None:
+        t = self.aktive_tabelle()
+        if t is None:
+            return
+        self.bedient.emit()
+        t.filterzeile_zeigen(bool(an), fokus=True)
+        self._filterknopf_nachziehen()
+
+    def _an_tabelle(self, methode: str, zeigen: bool = False):
+        t = self.aktive_tabelle()
+        if t is None:
+            return None
+        if zeigen:
+            self.bedient.emit()
+        t.nachholen()
+        return getattr(t, methode)()
+
+    def _werkzeugbreite(self, art) -> int:
+        """Breite der Knopfleiste in der Darstellung *art* [px] - aus den
+        Knoepfen selbst (ein QToolButton vermisst sich nach dem Umstellen
+        sofort, die Leiste erst nach dem naechsten Zeichnen)."""
+        summe, n = 0, 0
+        for a in self.werkzeug.actions():
+            b = self.werkzeug.widgetForAction(a)
+            if b is None:
+                continue
+            alt = b.toolButtonStyle()
+            if alt != art:
+                b.setToolButtonStyle(art)
+            summe += b.sizeHint().width()
+            n += 1
+            if alt != art:
+                b.setToolButtonStyle(alt)
+        lay = self.werkzeug.layout()
+        m = lay.contentsMargins() if lay is not None else QtCore.QMargins()
+        abstand = lay.spacing() if lay is not None else 0
+        return summe + max(0, abstand) * max(0, n - 1) + m.left() + m.right() + 4
+
+    def _knopfart_waehlen(self) -> None:
+        """Knoepfe mit Text, wenn Gruppe, alle Reiter und die Knoepfe in die
+        Zeile passen; sonst nur Symbole mit Tooltip."""
+        # zuerst das Feld neben der Gruppe (es hat Vorrang vor den Knoepfen)
+        self._zusatz_einpassen()
+        if self.werkzeug.isHidden() or not self.kopf.isVisible():
+            return
+        kl = self.kopf.layout()
+        m = kl.contentsMargins()
+        frei = (self.kopf.width() - m.left() - m.right() - 2 * kl.spacing()
+                - self.gruppenwahl.sizeHint().width()
+                - (0 if self.reiter.isHidden() else self.reiter.sizeHint().width()))
+        if self._zusatz is not None and not self._zusatz.isHidden():
+            frei -= self._zusatz.minimumWidth() + kl.spacing()
+        mit_text = QtCore.Qt.ToolButtonTextBesideIcon
+        art = mit_text if frei >= self._werkzeugbreite(mit_text) else QtCore.Qt.ToolButtonIconOnly
+        if art != self.werkzeug.toolButtonStyle():
+            self.werkzeug.setToolButtonStyle(art)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.kopf:
+            typ = ev.type()
+            if typ in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
+                self._knopfart_waehlen()
+            elif typ == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton:
+                self.kopf_geklickt.emit()
+            elif typ == QtCore.QEvent.MouseButtonDblClick and ev.button() == QtCore.Qt.LeftButton:
+                self.kopf_doppelt.emit()
+        return super().eventFilter(obj, ev)
+
+    # ---- flache Sicht (wie ein QTabWidget) ---------------------------------
+    def _eintraege(self) -> list[tuple[str, QtWidgets.QWidget, str, int]]:
+        out = []
+        for g in self.gruppennamen():
+            seite = self.seiten[g]
+            for j in range(seite.count()):
+                out.append((seite.tabText(j), seite.widget(j), g, j))
+        return out
+
+    def count(self) -> int:
+        return len(self._eintraege())
+
+    def tabText(self, k: int) -> str:
+        e = self._eintraege()
+        return e[k][0] if 0 <= k < len(e) else ""
+
+    def widget(self, k: int):
+        e = self._eintraege()
+        return e[k][1] if 0 <= k < len(e) else None
+
+    def indexOf(self, w) -> int:
+        for k, (_n, wi, _g, _j) in enumerate(self._eintraege()):
+            if wi is w:
+                return k
+        return -1
+
+    def currentIndex(self) -> int:
+        g = self.currentGroup()
+        seite = self.seiten.get(g)
+        if seite is None:
+            return -1
+        j = seite.currentIndex()
+        for k, (_n, _w, gr, jj) in enumerate(self._eintraege()):
+            if gr == g and jj == j:
+                return k
+        return -1
+
+    def currentWidget(self):
+        seite = self.stapel.currentWidget()
+        return seite.currentWidget() if isinstance(seite, QtWidgets.QTabWidget) else None
+
+    def currentGroup(self) -> str:
+        return self.gruppenwahl.currentText()
+
+    def setCurrentIndex(self, k: int):
+        e = self._eintraege()
+        if not 0 <= k < len(e):
+            return
+        _name, _w, g, j = e[k]
+        self.gruppenwahl.setCurrentIndex(self.gruppennamen().index(g))
+        self.seiten[g].setCurrentIndex(j)
+
+    def zeigen(self, name: str) -> bool:
+        """Die Tabelle mit diesem Namen nach vorn holen (Gruppe folgt)."""
+        for k, (n, _w, _g, _j) in enumerate(self._eintraege()):
+            if n == name:
+                self.setCurrentIndex(k)
+                return True
+        return False
+
+    def tabBar(self) -> QtWidgets.QTabBar:
+        return self.reiter
+
+
 #: Zusatz zum Stilblatt
 STIL = """
 QLineEdit#tabellenfilter {{ border: 1px solid {linie}; border-radius: 4px;
@@ -1269,11 +2544,29 @@ QLineEdit#tabellenfilter:focus {{ border-color: {akzent}; background: {flaeche};
 QToolButton#tabellenknopf {{ border: 1px solid {linie}; border-radius: 6px;
     padding: 2px 8px; font-size: 12px; background: {flaeche}; }}
 QToolButton#tabellenknopf:hover {{ background: {akzent_hell}; color: {akzent}; }}
+QToolButton#tabellenknopf:checked {{ background: {akzent_hell}; color: {akzent};
+    border-color: {akzent}; }}
 QLabel#tabellenzahl {{ color: {matt}; font-size: 12px; }}
 QTableView#tabellenfuss {{ background: {akzent_hell}; border: 0;
     border-top: 1px solid {linie}; font-weight: 600; color: {text}; }}
+QLabel#tabelleleer {{ color: {matt}; font-size: 12px; background: transparent; }}
+QLabel#tabellensumme {{ background: {akzent_hell}; border-top: 1px solid {linie};
+    font-weight: 600; color: {text}; padding: 0px 6px; }}
+QWidget#unterkopf {{ background: {grund}; border-bottom: 1px solid {linie}; }}
+QComboBox#gruppenwahl {{ padding: 2px 8px; border-radius: 6px; font-weight: 600; }}
+QComboBox#ergebniswahl {{ padding: 2px 8px; border-radius: 6px; }}
+QTabBar#tabellenreiter {{ background: transparent; }}
+QTabBar#tabellenreiter::tab {{ padding: 5px 8px; font-weight: 500; }}
+QLabel#reiterzahl {{ color: {matt}; font-size: 10px; background: transparent; }}
+QLabel#reiterzahl[leer="true"] {{ color: {reiter_leer}; }}
+QLabel#reiterzahl[gefiltert="true"] {{ color: {akzent2}; font-weight: 600; }}
+QToolBar#tabellenwerkzeug {{ background: transparent; border: 0; padding: 0px; spacing: 3px; }}
+QToolBar#tabellenwerkzeug QToolButton {{ padding: 2px 6px; border-radius: 6px;
+    font-weight: 500; }}
+QToolBar#tabellenwerkzeug QToolButton[aktiv="true"] {{ background: {akzent2};
+    border-color: {akzent2}; color: #ffffff; }}
 """
 
 
 def stil() -> str:
-    return STIL.format(**dsg.FARBEN)
+    return STIL.format(**dsg.FARBEN, reiter_leer=REITER_LEER)

@@ -437,6 +437,17 @@ def z_wiederholen(s: Stift):
     s.p.restore()
 
 
+def z_bearbeiten(s: Stift):
+    """Ein Bleistift: das Menue „Bearbeiten ▾“ im Register Start (Rueckgaengig,
+    Wiederholen, Auswahl). Der Pfeil „auswahl“ gehoert dem Befehl „Alles
+    auswählen“ im Menue, nicht dem Menue selbst (03.10.2026)."""
+    s.stift(breite=1.6)
+    s.zug([(8, 16), (16, 8), (19, 11), (11, 19)], True)        # Schaft
+    s.zug([(16, 8), (18, 6), (21, 9), (19, 11)], True)         # Radierer
+    s.fuellung()
+    s.zug([(4, 20), (8, 16), (11, 19)], True)                   # Spitze
+
+
 def z_loeschen(s: Stift):
     s.stift()
     s.linie(5, 7, 19, 7)
@@ -1175,14 +1186,29 @@ def z_spiel(s: Stift):
 
 
 def z_stellungen(s: Stift):
-    """Alle Stellungen: dieselbe Last an drei Orten auf dem Traeger."""
-    s.stift(breite=2.2)
-    s.linie(2.5, 16.5, 21.5, 16.5)
-    for x, a in ((5.5, 90), (12, 160), (18.5, 255)):
-        s.stift(_mit_alpha(s.akzent, a), 1.9)
-        s.pfeil(x, 3.5, x, 13.5, 3.0)
-    s.stift(breite=1.2)
-    s.pfeil(5, 21, 20, 21, 2.6)
+    """Alle Stellungen: ein Teil in drei Stellungen um sein Drehlager, die
+    frueheren blass, aussen der Drehpfeil. Bis zum 03.10.2026 drei Pfeile von
+    oben auf einem Traeger - das las sich wie eine Last."""
+    px, py, laenge = 4.5, 19.5, 14.0
+    for winkel, a in ((0, 115), (35, 175), (70, 255)):
+        w = math.radians(winkel)
+        s.stift(_mit_alpha(s.akzent, a), 2.6)
+        s.linie(px, py, px + laenge * math.cos(w), py - laenge * math.sin(w))
+    # Drehpfeil auf einem Kreis um das Lager, gegen den Uhrzeigersinn
+    r, von, bis = 17.5, 8.0, 62.0
+    s.stift(breite=1.4)
+    p = QtGui.QPainterPath()
+    p.arcMoveTo(QtCore.QRectF(px - r, py - r, 2 * r, 2 * r), von)
+    p.arcTo(QtCore.QRectF(px - r, py - r, 2 * r, 2 * r), von, bis - von)
+    s.p.drawPath(p)
+    b = math.radians(bis)
+    ex, ey = px + r * math.cos(b), py - r * math.sin(b)
+    s.pfeil(ex + 2.0 * math.sin(b), ey + 2.0 * math.cos(b), ex, ey, 2.8)
+    # das Lager und der Grund darunter
+    s.stift(breite=1.6)
+    s.linie(1.0, 23.0, 9.0, 23.0)
+    s.fuellung(QtGui.QColor("#ffffff"), s.farbe)
+    s.kreis(px, py, 2.4)
 
 
 def z_konfiguration(s: Stift):

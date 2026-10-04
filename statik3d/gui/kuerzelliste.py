@@ -44,6 +44,14 @@ WEITERE_TASTEN = (
      "Öffnet die Maske des gewählten Eintrags, wie ein Doppelklick."),
     ("Erster / letzter Eintrag", "Pos1, Ende", "Modellbaum",
      "Springt zum ersten beziehungsweise zum letzten Eintrag des Baums."),
+    # seit 03.10.2026 (Teilpaket 8d): Strg+F gehoert dem Baum, solange er oder
+    # seine Filterzeile die Tastatur hat; sonst bleibt es die Befehlssuche
+    ("Modellbaum filtern", "Strg+F", "Modellbaum",
+     "Öffnet die Filterzeile über dem Baum und setzt den Cursor hinein, wenn der Baum oder seine "
+     "Filterzeile den Fokus hat; überall sonst setzt Strg+F den Cursor in die Befehlssuche."),
+    ("Filter aufheben", "Esc", "Filterzeile des Modellbaums",
+     "Leert den Filter, schließt die Filterzeile und gibt die Tastatur dem Baum; der Aufklappzustand "
+     "von vor dem Filter kommt wieder. Ein leeres Feld hebt den Filter ebenso auf."),
     ("Maske übernehmen", "Eingabetaste", "Maske rechts",
      "Löst den Hauptknopf der Maske aus, von jedem Feld aus; in einer Tabelle oder Liste der Maske "
      "blättert die Eingabetaste nur."),
@@ -61,7 +69,9 @@ WEITERE_TASTEN = (
      "Öffnet die Maske „Knoten“. Die Einzeltasten K, S, L, B und F wirken nur, wenn die Ansicht den Fokus hat "
      "(Linksklick), nie in einem Textfeld, einer Tabelle oder einer Maske, nie mit Strg, Umschalt oder Alt, nie "
      "während einer Rechnung. Eine offene Maske mit nicht übernommenen Änderungen ersetzen sie nicht."),
-    ("Stab anlegen", "S", "Ansicht", "Öffnet die Maske „Stab“."),
+    ("Stab anlegen", "S", "Ansicht",
+     "Öffnet die Maske „Stab“: zwei Knoten anklicken, es entsteht ein Stab mit Nachweis samt seinem "
+     "Stabelement, wie in RFEM."),
     ("Lager setzen", "L", "Ansicht", "Öffnet die Maske „Lager“ (Knotenlager)."),
     ("Last aufbringen", "B", "Ansicht",
      "Belastung nach der Auswahl: Linienlast bei gewählten Stäben oder Linien, Flächenlast bei gewählten "

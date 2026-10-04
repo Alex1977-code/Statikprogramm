@@ -47,6 +47,7 @@ import numpy as np
 from ..model import (Model, Material, Section, ShellProp, NodalLoad, BeamLoad, FaceLoad,
                      TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF, DOF_NAMES)
 from .. import solver, parallel, mesher, profiles
+from .. import begriffe as bg
 from ..assemble import SOLID_FACES
 from ..elements import beam3d as bm
 from ..examples_lib import EXAMPLES, build_example
@@ -214,6 +215,7 @@ class State:
     @model.setter
     def model(self, m: Model):
         if self.bound is not None:
+            _desktop_frei(self)
             self.bound.model = m
         else:
             self._model = m
@@ -258,6 +260,18 @@ class State:
         elif what == "design" and self.analysis is not None:
             self.analysis.design = None
             self.analysis.fatigue = None
+
+
+def _desktop_frei(st: State) -> None:
+    """Darf der Browser das Modell jetzt aendern? Die Desktop-Oberflaeche
+    (State.bound) sagt nein, solange dort eine Maske mit nicht uebernommenen
+    Aenderungen offen ist oder ein „Übernehmen“ laeuft (Paket 13m, zweite
+    Nachbesserung 03.10.2026): ihr „Übernehmen“ schriebe sonst die alten Werte
+    in das vom Browser geaenderte - oder gar ausgetauschte - Modell. Der
+    Browser bekommt den Grund als Meldung (409)."""
+    grund = getattr(st.bound, "web_sperrgrund", "") if st.bound is not None else ""
+    if isinstance(grund, str) and grund:
+        raise ApiError(grund, 409)
 
 
 # --------------------------------------------------------------------------
@@ -447,7 +461,10 @@ def state_summary(st: State) -> dict:
                          for s in m.supports[:MAX_ROWS]],
             "n_supports": len(m.supports),
             "load_cases": cases, "active_case": m.active_case,
-            "combinations": [{"name": c.name, "typ": c.typ, "description": c.description,
+            # typ bleibt der Schluessel (ULS), typ_text/typ_lang sind, was der
+            # Browser zeigt (03.10.2026, Teilpaket 11b)
+            "combinations": [{"name": c.name, "typ": c.typ, "typ_text": bg.typ_kurz(c.typ),
+                              "typ_lang": bg.typ_lang(c.typ), "description": c.description,
                               "leading": c.leading, "formula": c.formula(),
                               "factors": _clean(c.factors),
                               "alternativen": len(c.alternativen)} for c in m.combinations.values()],
@@ -478,6 +495,8 @@ def state_summary(st: State) -> dict:
             "settings": dict(st.settings), "cpu": parallel.cpu_count(),
             "parallel": parallel.describe(),
             "categories": {k: {"text": v[0], "psi": list(v[1])} for k, v in ACTION_CATEGORIES.items()},
+            # [Schluessel, kurz, lang] je Kombinationstyp - fuer die Auswahl „Art“
+            "kombinationstypen": [[k, b.kurz, b.lang] for k, b in bg.KOMBINATIONSTYPEN.items()],
             "grades": list(STEEL_GRADES), "families": list(profiles.FAMILIES),
             "examples": {k: EXAMPLE_LABELS.get(k, k) for k in EXAMPLES},
             "export_formats": _export_formats(),
@@ -607,8 +626,9 @@ def result_entries(st: State) -> list[dict]:
         return []
     m = st.model
     out = []
+    # die Kennung bleibt env:ULS, die Beschriftung ist der Klartext (03.10.2026)
     for k in an.envelopes:
-        out.append({"id": f"env:{k}", "label": f"Umhüllende {k}"})
+        out.append({"id": f"env:{k}", "label": bg.umhuellende_kurz(k)})
     for k in an.combinations:
         c = m.combinations.get(k)
         out.append({"id": f"combo:{k}", "label": f"{k}: {c.formula() if c else ''}"})
@@ -2030,6 +2050,8 @@ def apply_op(st: State, d: dict) -> dict:
     with st.lock:
         if st.busy() and name not in KEEP_ALL:
             raise ApiError("Es läuft gerade eine Berechnung - bitte warten", 409)
+        if name not in KEEP_ALL:
+            _desktop_frei(st)
         m = st.model
         try:
             res = fn(st, m, d)
@@ -2100,7 +2122,7 @@ def start_solve(st: State, opts: dict) -> dict:
             elif kind == "case":
                 r = solver.solve_static(m, progress, case=case)
                 an = solver.Analysis(m, cases={r.name: r})
-                an.envelopes["CASES"] = solver.Envelope(m, an.cases, "Umhüllende Lastfälle")
+                an.envelopes["CASES"] = solver.Envelope(m, an.cases, bg.umhuellende_kurz("CASES"))
                 text = r.summary()
                 with st.lock:
                     st.analysis, st.results = an, None
@@ -2163,6 +2185,7 @@ def load_example(st: State, name: str) -> dict:
     with st.lock:
         if st.busy():
             raise ApiError("Es läuft gerade eine Berechnung", 409)
+        _desktop_frei(st)
         st.model = build_example(name)
         st.invalidate()
         st.touch()
@@ -2175,6 +2198,7 @@ def replace_model(st: State, d: dict) -> dict:
     with st.lock:
         if st.busy():
             raise ApiError("Es läuft gerade eine Berechnung", 409)
+        _desktop_frei(st)
         try:
             m = Model.from_dict(d)
         except Exception as ex:      # noqa: BLE001
@@ -2205,6 +2229,7 @@ def import_bytes(st: State, name: str, data: bytes, unit: float = None) -> dict:
     with st.lock:
         if st.busy():
             raise ApiError("Es läuft gerade eine Berechnung", 409)
+        _desktop_frei(st)
         try:
             m = import_file(path, log=msgs, **opts)
         except Exception as ex:      # noqa: BLE001

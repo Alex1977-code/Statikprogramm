@@ -574,7 +574,8 @@ class QuerschnittMaske(QtWidgets.QFrame):
         namen = list(self.vorhandene)
         if namen:
             self.lbl_vorhanden.setText(
-                f"{len(namen)} Querschnitte im Modell: " + ", ".join(namen[:8])
+                f"{len(namen)} {'Querschnitt' if len(namen) == 1 else 'Querschnitte'} im Modell: "
+                + ", ".join(namen[:8])
                 + (" …" if len(namen) > 8 else ""))
         else:
             self.lbl_vorhanden.setText("Noch kein Querschnitt im Modell.")

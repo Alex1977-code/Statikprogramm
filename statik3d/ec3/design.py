@@ -12,6 +12,7 @@ import os
 import numpy as np
 
 from ..model import Model, Member
+from ..begriffe import anzahl
 from .section_class import classify
 from .resistance import section_check
 from .stability import member_stability
@@ -64,6 +65,10 @@ class DesignResults:
     #: _gleiche_zusammenfassen. Ergebnisse von vor dem 23.09.2026 kennen das
     #: Feld nicht (getattr).
     gleiche: dict = field(default_factory=dict)
+    #: Hinweise zu gefuehrten Nachweisen, die das Urteil nicht aendern: Ketten
+    #: kollinearer Staebe mit freiem Zwischenknoten (Knicklaenge pruefen,
+    #: Model.stabketten_frei, C14 03.10.2026). Aeltere Ergebnisse: getattr.
+    hinweise: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
@@ -93,7 +98,7 @@ class DesignResults:
 
     def summary(self) -> str:
         if not self.members:
-            return "Nachweise EC3: keine Staebe" + warnzeilen(self)
+            return "Nachweise EC3: keine Stäbe" + warnzeilen(self) + hinweiszeilen(self)
         # Nicht gefuehrte Staebe (``fehler``, etwa Werkstoff ohne
         # Streckgrenze) zaehlen weder als erfuellt noch fuer die groesste
         # Ausnutzung. Bis zum 22.09.2026 stand hier nur ``util > 1``: ein
@@ -107,19 +112,23 @@ class DesignResults:
         # Textfeld der Maske Berechnung (txt_summary, _solve_done).
         # Wie VolumenResults.summary(): "alle erfuellt" nur, wenn nichts offen
         # blieb.
+        # Bis zum 03.10.2026 stand die Zeile ohne Umlaute und immer in der
+        # Mehrzahl: "1 Staebe, 1 Kombinationen ... - alle erfuellt"
+        # (Teilpaket 11c).
         gefuehrt = [m for m in self.members.values() if not m.fehler]
         ohne = [m for m in self.members.values() if m.fehler]
         nf = sum(1 for m in gefuehrt if m.util > 1.0)
-        s = f"Nachweise EC3: {len(self.members)} Staebe, {len(self.combinations)} Kombinationen"
+        s = (f"Nachweise EC3: {anzahl(len(self.members), 'Stab', 'Stäbe')}, "
+             f"{anzahl(len(self.combinations), 'Kombination', 'Kombinationen')}")
         if gefuehrt:
             worst = max(gefuehrt, key=lambda m: m.util)
             g = worst.governing
             s += (f", max. Ausnutzung {worst.util:.3f} ({worst.member}: {g.get('name', '')}, "
                   f"{g.get('combo', '')}, x = {g.get('x', 0):.2f} m)")
         if nf:
-            s += f" - {nf} Staebe NICHT erfuellt"
+            s += f" - {anzahl(nf, 'Stab', 'Stäbe')} NICHT erfüllt"
         elif gefuehrt and not ohne:
-            s += " - alle erfuellt"
+            s += " - alle erfüllt"
         if ohne:
             # Namen und Grund, damit man weiss, wo man nachtragen muss; ein
             # Import kann Hunderte Staebe ohne f_y bringen - die Zeile steht
@@ -130,11 +139,11 @@ class DesignResults:
             gruende = list(dict.fromkeys(m.fehler for m in ohne))
             s += (f" - {len(ohne)} nicht geführt: {namen} ("
                   + "; ".join(gruende[:3]) + (" …" if len(gruende) > 3 else "") + ")")
-        return s + warnzeilen(self)
+        return s + warnzeilen(self) + hinweiszeilen(self)
 
     def table(self) -> list[list]:
         rows = [["Stab", "Querschnitt", "Material", "L [m]", "Klasse", "Ausnutzung",
-                 "massgebender Nachweis", "Kombination", "x [m]", "Status"]]
+                 "maßgebender Nachweis", "Kombination", "x [m]", "Status"]]
         for m in self.members.values():
             g = m.governing
             rows.append([m.member, m.section, m.material, f"{m.L:.2f}", str(m.cls),
@@ -149,6 +158,14 @@ def warnzeilen(ergebnis) -> str:
     ``warnungen`` noch nicht."""
     w = getattr(ergebnis, "warnungen", None) or []
     return "".join(f"\nWARNUNG: {x}" for x in w)
+
+
+def hinweiszeilen(ergebnis) -> str:
+    """Die Hinweise eines Nachweisergebnisses (DesignResults.hinweise) als
+    eigene Zeilen "WARNUNG (Knicklänge): ..." - sie stehen im Protokoll, aendern
+    aber das Urteil nicht (anders als ``warnungen``: nicht nachgewiesen)."""
+    w = getattr(ergebnis, "hinweise", None) or []
+    return "".join(f"\nWARNUNG (Knicklänge): {x}" for x in w)
 
 
 # --------------------------------------------------------------------------
@@ -469,6 +486,23 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     from .. import parallel
     warnungen: list = []
     names = members if members is not None else [k for k, m in model.members.items() if m.design]
+    # Ein Stab ohne Stabelement (sein Element wurde geloescht) wird nicht
+    # nachgewiesen, sondern gemeldet: bis zum 03.10.2026 brach check_member an
+    # member.elements[0] mit IndexError ab - und mit ihm die ganze Berechnung
+    # (F5, gemessen in der Gegenpruefung von C14)
+    # Runde 2 (G2): er steht als **nicht gefuehrt** im Ergebnis (MemberCheck.fehler)
+    # wie ein Stab aus einem Werkstoff ohne Streckgrenze - dann sagt die
+    # Zusammenfassung nicht „alle erfuellt“, die Ampel im Browser steht nicht
+    # auf „ok“, und der Bericht zaehlt EC3 als nicht gefuehrt. Bis dahin war er
+    # nur eine Warnzeile hinter „… - alle erfuellt“.
+    ne = len(model.elements)
+    leer = [k for k in names if k in model.members
+            and not any(0 <= int(e) < ne for e in model.members[k].elements)]
+    if leer:
+        names = [k for k in names if k not in leer]
+    gefuehrt_namen = set(names)
+    # je Kette eine Zeile (Runde 2, G5); das Urteil aendern sie nicht
+    hinweise = [model.stabkette_text(k) for k in model.stabketten_frei() if set(k["staebe"]) & gefuehrt_namen]
     # Ohne einen Stab mit Nachweis wird nichts nachgewiesen - dann darf auch
     # keine Kombination als "nicht nachgewiesen" gemeldet werden. Sonst kam
     # hier mit nur GZG-Kombinationen und allen Staeben auf design = False die
@@ -481,11 +515,11 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     out = DesignResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",
-        "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche)
+        "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche, hinweise=hinweise)
     if not names or not results:
-        _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis" if not names else
+        _melde(progress, "Nachweise EC3: keine Stäbe mit Nachweis" if not names else
                "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))
-        return out
+        return _leere_eintragen(out, model, leer)
     st = parallel.settings()
     if use_jobs is None:
         use_jobs = st.backend == "farm" or (st.workers > 1 and len(names) >= 24)
@@ -509,7 +543,8 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         try:
             jobs = [Job("design_members", {"paket": paket, "members": c})
                     for c in chunks]
-            _melde(progress, f"Nachweise: {len(names)} Staebe in {len(jobs)} Auftraegen",
+            _melde(progress, f"Nachweise: {anzahl(len(names), 'Stab', 'Stäbe')} in "
+                             f"{anzahl(len(jobs), 'Auftrag', 'Aufträgen')}",
                    _anteil(anteil, 0.0))
             for r in run_jobs(jobs, workers=workers,
                               progress=(lambda a, b: _melde(progress, f"Nachweise {a}/{b}",
@@ -523,12 +558,26 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
                 os.unlink(paket)
             except OSError:
                 pass
-        return out
+        return _leere_eintragen(out, model, leer)
     for k, nm in enumerate(names):
         out.members[nm] = check_member(model, model.members[nm], results)
         if progress and (k % 10 == 0 or k == len(names) - 1):
             _melde(progress, f"Nachweis {nm} ({k+1}/{len(names)})",
                    _anteil(anteil, (k + 1) / len(names)))
+    return _leere_eintragen(out, model, leer)
+
+
+def _leere_eintragen(out: DesignResults, model: Model, leer: list) -> DesignResults:
+    """Die Staebe ohne Stabelement als nicht gefuehrte Eintraege in ``out``,
+    alle Eintraege in der Folge der Staebe im Modell (C14, Runde 2)."""
+    for k in leer:
+        mc = MemberCheck(k, "", "", 0.0, elements=[])
+        mc.fehler = "kein Stabelement – Stab löschen oder neu zeichnen"
+        mc.warnings.append(f"Stab {k} hat kein Stabelement – nicht nachgewiesen; ihn löschen oder neu zeichnen")
+        out.members[k] = mc
+    if leer:
+        out.members = {k: out.members[k] for k in model.members if k in out.members} | {
+            k: v for k, v in out.members.items() if k not in model.members}
     return out
 
 

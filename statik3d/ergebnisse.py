@@ -83,7 +83,7 @@ def passt(k: dict, model) -> tuple:
     if abs(float(k.get("koordinaten", 0.0)) - jetzt["koordinaten"]) > 1e-6 * max(1.0, abs(jetzt["koordinaten"])):
         return False, "die Knotenkoordinaten sind andere"
     if list(k.get("lastfaelle", [])) != jetzt["lastfaelle"]:
-        return False, "die Lastfaelle sind andere"
+        return False, "die Lastfälle sind andere"
     if "elemente" in k and k["elemente"] != jetzt["elemente"]:
         return False, "die Elemente sind andere (Typ oder Knoten)"
     return True, ""
@@ -193,6 +193,14 @@ def lesen(pfad: str, model, fortschritt=None):
         if feld in ("kennung",) + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
+    # Die Umhuellenden mit bekanntem Schluessel heissen wie an der Oberflaeche
+    # („Umhüllende GZT“). Der Name ist mit gespeichert: eine Datei von vor dem
+    # 03.10.2026 traegt „Umhuellende ULS“, und so stand es dann in Protokoll
+    # und Zusammenfassung (Befund S2 der Gegenpruefung von 11b).
+    from .begriffe import UMHUELLENDE, umhuellende_kurz
+    for k, env in (getattr(an, "envelopes", None) or {}).items():
+        if k in UMHUELLENDE and hasattr(env, "name"):
+            env.name = umhuellende_kurz(k)
     if fortschritt:
         fortschritt(1.0, "Ergebnisse geladen")
     return an

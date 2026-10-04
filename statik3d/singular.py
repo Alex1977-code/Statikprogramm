@@ -931,7 +931,7 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
             f"die Faktorisierung von K + ε·I ({Kf.shape[0]} Freiheitsgrade) "
             f"scheiterte - {type(ex).__name__}: {ex}") from ex
     if melden:
-        melden(f"Diagnose: weichster Modus ueber {lu.beschreibung()} "
+        melden(f"Diagnose: weichster Modus über {lu.beschreibung()} "
                f"({Kf.shape[0]} Freiheitsgrade, {schritte} Schritte)")
     rng = np.random.default_rng(0)
     v = rng.standard_normal(Kf.shape[0])

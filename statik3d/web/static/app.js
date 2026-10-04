@@ -628,8 +628,14 @@ function caseOpts(s, extra = []) { return extra.concat(s.load_cases.map(c => [c.
 // Formular bot bis zum 23.09.2026 nur Lastfaelle an (Befund B134)
 function fatOpts(s, extra = []) {
   const lf = new Map(s.load_cases.map(c => [c.name, `${c.name} (${c.category})`]));
-  const ko = new Map(s.combinations.map(c => [c.name, `${c.name} (Kombination ${c.typ})`]));
+  const ko = new Map(s.combinations.map(c => [c.name, `${c.name} (Kombination ${c.typ_text || c.typ})`]));
   return extra.concat((s.ermuedungszustaende || []).map(n => [n, lf.get(n) || ko.get(n) || n]));
+}
+// Die Arten einer neuen Kombination im Klartext vom Server (statik3d/begriffe.py,
+// 03.10.2026) - bis dahin standen hier eigene Texte („GZT (ULS)“, „EQU“, „frei“).
+// Ermuedungskombinationen legt die Weboberflaeche wie bisher nicht an.
+function kombiTypen(s) {
+  return (s.kombinationstypen || []).filter(t => t[0] !== 'FAT').map(t => [t[0], t[1]]);
 }
 function opBtn(payload, label, cls = 'btn small', confirm = '') {
   return `<button class="${cls}" data-action="op" data-payload="${esc(JSON.stringify(payload))}" ${confirm ? `data-confirm="${esc(confirm)}"` : ''}>${label}</button>`;
@@ -720,7 +726,7 @@ function renderModell() {
 
 <details><summary>Elemente <span class="n">${s.ne}</span></summary><div class="body">
   ${selE.length ? `<div class="msg">Gewählt: ${selE.slice(0, 20).map(e => `E${e} (${esc(S.geom.types[e])})`).join(', ')}${selE.length > 20 ? ' …' : ''}</div>` : ''}
-  <form data-op="add_element" data-reset><h3>Stab zwischen zwei Knoten</h3><div class="row">${selInput('nodes', 'Knoten A, B')}${sel('typ', 'Typ', [['beam', 'Balken'], ['truss', 'Fachwerkstab']])}${sel('mat', 'Material', matOpts(s))}${sel('sec', 'Querschnitt', secOpts(s))}<button class="btn small primary">+ Stab</button></div></form>
+  <form data-op="add_element" data-reset><h3>Stabelement zwischen zwei Knoten</h3><div class="row">${selInput('nodes', 'Knoten A, B')}${sel('typ', 'Typ', [['beam', 'Balken'], ['truss', 'Fachwerkstab']])}${sel('mat', 'Material', matOpts(s))}${sel('sec', 'Querschnitt', secOpts(s))}<button class="btn small primary">+ Stabelement</button></div></form>
   <form data-op="add_element" data-reset><h3>Schalenelement (3 oder 4 Knoten)</h3><div class="row">${selInput('nodes', 'Knoten')}<input type="hidden" name="typ" value="shell3" data-type="str" id="shell-typ">${sel('mat', 'Material', matOpts(s))}${sel('prop', 'Dicke', shellOpts(s))}<button class="btn small primary" data-action="add-shell">+ Schale</button></div></form>
   <form data-op="assign"><h3>Zuweisen (gewählte Elemente)</h3><div class="row">${selInput('elems')}${sel('mat', 'Material', [['', '– unverändert –']].concat(matOpts(s)))}${sel('sec', 'Querschnitt', [['', '– unverändert –']].concat(secOpts(s)))}${sel('prop', 'Dicke', [['', '– unverändert –']].concat(shellOpts(s)))}<button class="btn small">Zuweisen</button></div></form>
   <form data-op="hinges"><h3>Momentengelenke (Balken)</h3><div class="row">${selInput('elems')}${sel('mode', 'Gelenk', [[0, 'keine'], [1, 'Anfang (My, Mz)'], [2, 'Ende (My, Mz)'], [3, 'beide Enden'], [4, 'beide Enden + Torsion']], 0, 'data-type="int"')}<button class="btn small">Setzen</button></div></form>
@@ -844,9 +850,9 @@ function renderLasten() {
 
 <details ${s.combinations.length ? 'open' : ''}><summary>Kombinationen <span class="n">${s.combinations.length}</span></summary><div class="body">
   <form data-op="auto_combinations"><div class="row">${sel('rule', 'Regel DIN EN 1990', [['6.10', 'Gl. 6.10'], ['6.10ab', 'Gl. 6.10a/b']], s.design.combination_rule)}<label class="w">${chk('uls', 'GZT', true)}</label><label class="w">${chk('sls', 'GZG', true)}</label><label class="w">${chk('accidental', 'außergew.', true)}</label><button class="btn small primary">Automatisch erzeugen</button></div></form>
-  <form data-op="add_combination" data-reset><div class="row">${inp('name', 'Manuell: Name', '')}${sel('typ', 'Art', [['ULS', 'GZT (ULS)'], ['EQU', 'EQU'], ['ACC', 'außergewöhnlich'], ['SLS_CH', 'GZG charakteristisch'], ['SLS_FR', 'GZG häufig'], ['SLS_QP', 'GZG quasi-ständig'], ['USER', 'frei']])}${inp('factors', 'Faktoren', '', 'placeholder="LF1=1.35, LF2=1.5" data-type="str"')}<button class="btn small">+ Kombination</button></div></form>
+  <form data-op="add_combination" data-reset><div class="row">${inp('name', 'Manuell: Name', '')}${sel('typ', 'Art', kombiTypen(s))}${inp('factors', 'Faktoren', '', 'placeholder="LF1=1.35, LF2=1.5" data-type="str"')}<button class="btn small">+ Kombination</button></div></form>
   <div class="btns">${s.combinations.length ? opBtn({op: 'clear_combinations'}, 'Alle entfernen', 'btn small danger', 'Alle Kombinationen entfernen?') : ''}</div>
-  <ul class="list">${s.combinations.slice(0, 120).map(c => `<li><span class="txt">${esc(c.name)} <span class="chip">${esc(c.typ)}</span><span class="sub">${esc(c.formula)}${c.leading ? ' · Leiteinwirkung ' + esc(c.leading) : ''}</span></span>${opBtn({op: 'remove_combination', name: c.name}, '✕', 'btn small danger')}</li>`).join('') || '<li class="muted">keine – „Automatisch erzeugen“ bildet GZT/GZG-Kombinationen aus den Lastfällen</li>'}</ul>
+  <ul class="list">${s.combinations.slice(0, 120).map(c => `<li><span class="txt">${esc(c.name)} <span class="chip" title="${esc(c.typ_lang || '')}">${esc(c.typ_text || c.typ)}</span><span class="sub">${esc(c.formula)}${c.leading ? ' · Leiteinwirkung ' + esc(c.leading) : ''}</span></span>${opBtn({op: 'remove_combination', name: c.name}, '✕', 'btn small danger')}</li>`).join('') || '<li class="muted">keine – „Automatisch erzeugen“ bildet GZT/GZG-Kombinationen aus den Lastfällen</li>'}</ul>
   ${s.combinations.length > 120 ? `<div class="muted">… ${s.combinations.length - 120} weitere</div>` : ''}
 </div></details>
 

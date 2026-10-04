@@ -45,7 +45,8 @@ def situationsmodell(model: Model, name: str = "") -> tuple:
         aktiv = maske
         if not aktiv.any():
             raise ValueError(f"Situation '{sit.name}': alle Elemente deaktiviert")
-        log.append(f"  {sit.name}: {int((~aktiv).sum())} Elemente ohne Wirkung")
+        n_aus = int((~aktiv).sum())
+        log.append(f"  {sit.name}: {n_aus} {'Element' if n_aus == 1 else 'Elemente'} ohne Wirkung")
     return m, aktiv, log
 
 

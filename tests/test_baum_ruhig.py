@@ -256,8 +256,11 @@ def test_grundzustand_im_baum():
     b.fuellen(m, STELLUNGEN, ERGEBNISSE)
     app.processEvents()
     offen = sorted(i.text(0) for i in _alle(b) if i.childCount() and i.isExpanded())
-    check("nach dem Vergessen gilt der Grundzustand: Wurzel, Lager und Stellungen offen, sonst zu",
-          offen == sorted([m.name, "Lager", "Stellungen"]), str(offen))
+    # Seit 8c (03.10.2026) stehen Lager und Stellungen in Gruppen; offen sind
+    # darum auch ihre Gruppen und die Geometrie (bis dahin direkt unter der Wurzel)
+    check("nach dem Vergessen gilt der Grundzustand: Wurzel, Geometrie, Lager und Verbindungen mit Lager, "
+          "Systeme und Stellungen mit Stellungen offen, sonst zu",
+          offen == sorted([m.name] + GRUNDZUSTAND_OFFEN), str(offen))
     # und es bleibt ein ganz gewöhnlicher Zustand: der nächste Neuaufbau erhält ihn
     _finden(b, "Lager").setExpanded(False)
     _finden(b, "Knoten").setExpanded(True)
@@ -420,7 +423,13 @@ def test_kosten_haengen_nicht_an_der_listenlaenge():
 # 4. Schriftregel
 # ---------------------------------------------------------------------------
 GRUPPEN = {"Eigenschaften", "Einwirkungen", "Lager", "Verbindungen", "Kontaktbedingungen",
-           "Ergebnisse"}
+           "Ergebnisse",
+           # die Gruppen der obersten Ebene seit 8c (03.10.2026)
+           "Geometrie", "Lager und Verbindungen", "FE-Netz", "Systeme und Stellungen", "Nachweise",
+           "Bericht und Unterlagen", "Hilfsobjekte"}
+#: Offen im Grundzustand ausser der Wurzel (seit 8c mit den Gruppen darüber)
+GRUNDZUSTAND_OFFEN = ["Geometrie", "Lager und Verbindungen", "Lager", "Systeme und Stellungen",
+                      "Stellungen"]
 
 
 def _zaehlzweige(baum):
@@ -462,8 +471,8 @@ def test_schriftregel():
                 grau_falsch.append(f"{i.text(0)}:{farbe}")
             if int(zahl) > 0 and farbe not in (None, dsg.FARBEN["warn"]):
                 normal_falsch.append(f"{i.text(0)}:{farbe}")
-        check(f"{titel}: fett nur für Gruppen (Wurzel, Eigenschaften, Einwirkungen, Lager, "
-              "Verbindungen, Kontaktbedingungen, Ergebnisse)", not fett_falsch, ", ".join(fett_falsch[:8]))
+        check(f"{titel}: fett nur für Gruppen (Wurzel, die Gruppen der obersten Ebene, Lager, "
+              "Verbindungen, Kontaktbedingungen)", not fett_falsch, ", ".join(fett_falsch[:8]))
         check(f"{titel}: Zähler 0 steht grau", not grau_falsch, ", ".join(grau_falsch[:8]))
         check(f"{titel}: gefüllte Zweige stehen in der Normalfarbe (nicht blau)", not normal_falsch,
               ", ".join(normal_falsch[:8]))
@@ -526,42 +535,86 @@ def test_volumen_ohne_netz():
 # ---------------------------------------------------------------------------
 # 5. Nachbesserung 02.10.2026 (Gegenpruefung): grau nur, wenn alles darunter leer ist
 # ---------------------------------------------------------------------------
-def _unterzweig_gefuellt(baum, i) -> bool:
+def _unterzweig_gefuellt(baum, i):
+    """Der erste Unterzweig (in jeder Tiefe) mit Zähler > 0, sonst None."""
     for k in range(i.childCount()):
         c = i.child(k)
         if c.text(0).startswith("+") or baum._ist_eintrag(c):
             continue
         if c.text(1).isdigit() and int(c.text(1)) > 0:
-            return True
-    return False
+            return c
+        tiefer = _unterzweig_gefuellt(baum, c)
+        if tiefer is not None:
+            return tiefer
+    return None
+
+
+def _verstoesse(baum) -> list:
+    """Verstöße gegen „grau heißt leer samt allem darunter“: ein Zweig mit
+    Zähler 0 über einem gefüllten Unterzweig (in jeder Tiefe), ein Zweig mit
+    Zähler 0, der nicht grau steht, ein gefüllter, der grau steht."""
+    from statik3d.gui import design as dsg
+    out = []
+    for i in _alle(baum):
+        if baum._ist_eintrag(i) or i.text(0).startswith("+") or not i.text(1).isdigit():
+            continue
+        grau = _farbe(i) == dsg.FARBEN["matt"]
+        if int(i.text(1)) == 0:
+            voll = _unterzweig_gefuellt(baum, i)
+            if voll is not None:
+                out.append(f"„{i.text(0)} 0“ über „{voll.text(0)} {voll.text(1)}“")
+            if not grau:
+                out.append(f"„{i.text(0)} 0“ nicht grau")
+        elif grau:
+            out.append(f"„{i.text(0)} {i.text(1)}“ grau")
+    return out
 
 
 def test_grau_nur_wenn_der_zweig_leer_ist():
     """„Volumen 0“ über „Volumenelemente 960“ (Beispiel Quader, Platte, Block
-    mit Reibung, Stauwand: Elemente ohne Körper) stand grau - grau heißt leer."""
+    mit Reibung, Stauwand: Elemente ohne Körper) stand grau - grau heißt leer.
+
+    Seit 8c (03.10.2026) stehen die Elemente unter „FE-Netz“; „Volumen 0“ und
+    „Flächen 0“ sind dann wirklich leer und stehen grau, die Elemente in der
+    Normalfarbe."""
     from statik3d.examples_lib import build_example
     from statik3d.gui import design as dsg
-    b, app = _baum(900)
-    gefunden = []
-    for name in ("solid", "plate", "friction", "gate"):
-        m = build_example(name)
-        b.fuellen(m)
-        app.processEvents()
-        for i in _alle(b):
-            if not i.childCount() or i.text(1) != "0" or b._ist_eintrag(i):
-                continue
-            gefuellt = _unterzweig_gefuellt(b, i)
-            if gefuellt:
-                gefunden.append(f"{name}: {i.text(0)}")
-            ist_grau = _farbe(i) == dsg.FARBEN["matt"]
-            check(f"{name}: „{i.text(0)} 0“ steht " + ("normal, ein Unterzweig hat Inhalt" if gefuellt
-                                                       else "grau, alles darunter ist leer"),
-                  ist_grau == (not gefuellt), f"Farbe {_farbe(i)}")
-    check("Vorbereitung: es gab Zweige mit Zähler 0 über gefülltem Unterzweig",
-          any("Volumen" in g for g in gefunden) and any("Flächen" in g for g in gefunden),
-          str(gefunden))
-    # ganz leer bleibt grau
     from statik3d.model import Model
+    b, app = _baum(900)
+    ohne_objekt = []
+    for name, m in [(n, build_example(n)) for n in ("solid", "plate", "friction", "gate", "hall", "contact")]             + [("Modell mit allem", _reiches_modell()), ("leeres Modell", Model())]:
+        b.fuellen(m, STELLUNGEN, ERGEBNISSE)
+        app.processEvents()
+        v = _verstoesse(b)
+        n_null = sum(1 for i in _alle(b) if not b._ist_eintrag(i) and i.text(1) == "0")
+        check(f"{name}: jeder Zweig mit Zähler 0 grau und ohne gefüllten Unterzweig, jeder gefüllte "
+              f"normal ({n_null} Zweige mit 0)", not v and n_null > 0, "; ".join(v[:4]))
+        netz = _finden(b, "FE-Netz")
+        for zweig, art, elemente in (("Volumen", "geokoerper", "Volumenelemente"),
+                                     ("Flächen", "geoflaechen", "Flächenelemente")):
+            z = _finden(b, zweig, art)
+            e = next((netz.child(k) for k in range(netz.childCount())
+                      if netz.child(k).text(0) == elemente), None) if netz is not None else None
+            if z is None or z.text(1) != "0" or e is None or not e.text(1).isdigit() or int(e.text(1)) == 0:
+                continue
+            ohne_objekt.append(f"{name}: {zweig}")
+            check(f"{name}: „{zweig} 0“ grau, „{elemente} {e.text(1)}“ unter „FE-Netz“ in der Normalfarbe",
+                  _farbe(z) == dsg.FARBEN["matt"] and _farbe(e) is None, f"{_farbe(z)} / {_farbe(e)}")
+    check("Vorbereitung: es gab Volumen- und Flächenelemente ohne Körper und ohne Fläche",
+          any("Volumen" in g for g in ohne_objekt) and any("Flächen" in g for g in ohne_objekt),
+          str(ohne_objekt))
+    # Seit 03.10.2026 gibt es keinen Zweig mehr, der Zweige ueber einem
+    # gefuellten Unterzweig wieder entgraut (Modellbaum._zweig): die Gliederung
+    # schliesst den Fall aus. Kaeme er wieder, steht der Zweig darueber grau -
+    # die Pruefung oben meldet das, wie dieser kuenstliche Fall zeigt.
+    b.fuellen(build_example("solid"))
+    app.processEvents()
+    null = next(i for i in _alle(b) if not b._ist_eintrag(i) and i.text(1) == "0" and i.childCount())
+    b._zweig(null, "Probe", 5, "probe")
+    v = _verstoesse(b)
+    check("Gegenprobe der Prüfung: ein gefüllter Unterzweig unter einem Zweig mit 0 wird gemeldet",
+          any(f"„{null.text(0)} 0“ über „Probe 5“" == x for x in v), "; ".join(v[:3]))
+    # ganz leer bleibt grau
     b.fuellen(Model())
     app.processEvents()
     vol = _finden(b, "Volumen", "geokoerper")
@@ -644,8 +697,10 @@ def _fenster():
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: (w.fehler_liste.append(str(msg)),
-                                    w.log.appendPlainText("FEHLER: " + str(msg)))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste, protokoll=True)
     _FENSTER.update(w=w, app=app)
     return w, app
 
@@ -764,7 +819,7 @@ def _grundzustand(w):
     b = w.baum
     offen = sorted(i.text(0) for i in _alle(b) if i.childCount() and i.isExpanded())
     wurzel = b.topLevelItem(0).text(0)
-    return offen, sorted([wurzel, "Lager", "Stellungen"])
+    return offen, sorted([wurzel] + GRUNDZUSTAND_OFFEN)
 
 
 def test_fenster_neues_modell_erbt_nichts():
@@ -795,7 +850,8 @@ def test_fenster_neues_modell_erbt_nichts():
         offen, erwartet = _grundzustand(w)
         # Zweige, die es im neuen Modell nicht gibt, fehlen in der Liste von selbst
         erwartet = [e for e in erwartet if e in [i.text(0) for i in _alle(b)]]
-        check(f"{titel}: Grundzustand (Wurzel, Lager, Stellungen offen, alles andere zu)",
+        check(f"{titel}: Grundzustand (Wurzel, Geometrie, Lager und Verbindungen, Lager, Systeme und "
+              "Stellungen, Stellungen offen, alles andere zu)",
               offen == erwartet, f"offen {offen}")
         check(f"{titel}: nichts gewählt, Rolle ganz oben",
               not b.selectedItems() and b.verticalScrollBar().value() == 0,

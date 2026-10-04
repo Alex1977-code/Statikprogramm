@@ -10,23 +10,32 @@ kleine fuer die Nebenbefehle.
 
 Der Grundsatz der Vorgabe lautet: **jede Funktion existiert genau einmal**.
 Darum gibt es hier keine Menueleiste und keine zweite Werkzeugleiste daneben;
-was im Ribbon steht, steht nirgends sonst. Drei Ausnahmen sind ausdruecklich
+was im Ribbon steht, steht nirgends sonst. Sechs Ausnahmen sind ausdruecklich
 gewollt und keine Doppelung, weil sie denselben Befehl nur schneller erreichbar
 machen:
 
-* die **Schnellzugriffsleiste** (Speichern, Rueckgaengig, Wiederholen,
-  Berechnen, Auswahl aufheben) - dieselben Aktionsobjekte, nicht neue Befehle,
+* die **Schnellzugriffsleiste** in der Kopfzeile (Speichern, Rueckgaengig,
+  Wiederholen, Berechnen) - dieselben Aktionsobjekte, nicht neue Befehle,
+* die **Glasleiste** ueber der Ansicht (Darstellung, Zeigen, Sicht, Klick
+  waehlt, Intelligente Auswahl, Fang, Ergebnisse an/aus, Alles deselektieren) -
+  dieselben Aktionsobjekte wie die Schalter und Befehle im Ribbon, ein Schalter
+  zeigt an beiden Stellen denselben Zustand,
+* der zweite blaue Knopf **Berechnen** im Register Berechnung
+  (``MainWindow._ribbon_knopf``) - dieselbe Aktion wie der in Start,
 * die **Tastenkuerzel** - sie haengen am Fenster und gelten darum in jedem
   Register; jede Tastenfolge gehoert genau einem Befehl (:meth:`Ribbon.kuerzel_setzen`),
-* die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein).
+* die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein),
+* das Register **Start**: der Arbeitsablauf zeigt Befehle aus anderen Registern
+  noch einmal als Knopf (:meth:`Gruppe.nochmal`) - dieselbe Aktion, kein neuer
+  Befehl und kein neues Kuerzel (Teilpaket 12d, 03.10.2026).
 
 Aufbau::
 
     ribbon = Ribbon(fenster)
     start = ribbon.register("Start")
-    g = start.gruppe("Zwischenablage")
-    g.gross("Rueckgaengig", "↶", self.undo, "Ctrl+Z", "Letzte Aenderung zuruecknehmen")
-    g.klein("Wiederholen", self.redo, "Ctrl+Y")
+    g = start.gruppe("Bearbeiten")
+    g.gross("Rueckgaengig", "↶", self.rueckgaengig_befehl, "Ctrl+Z", "Letzte Aenderung zuruecknehmen")
+    g.klein("Wiederholen", self.wiederholen_befehl, "Ctrl+Y")
 
 Jeder Befehl wird zentral vermerkt; die Suche findet ihn ueber Registername,
 Gruppe und Beschriftung.
@@ -90,19 +99,23 @@ class Befehl:
     #: Ort, wenn der Befehl nicht in einem Register steht (die Befehlssuche
     #: oben rechts, 03.10.2026); leer = „Register › Gruppe“
     ort: str = ""
+    #: frühere Gruppennamen, unter denen die Suche den Befehl weiter findet
+    #: (Ribbon.fruehere_gruppe, 03.10.2026): zaehlen wie der Gruppenname, nicht
+    #: wie der Befehlsname - Enter fuehrt darum nie allein deshalb einen aus
+    frueher: str = ""
 
     def ort_text(self) -> str:
         """Wo der Befehl zu finden ist - fuer die Trefferliste und die Kuerzelliste."""
         return self.ort or f"{self.register} › {self.gruppe}"
 
     def suchtext(self) -> str:
-        return f"{self.text} {self.register} {self.gruppe} {self.hinweis}".lower()
+        return f"{self.text} {self.register} {self.gruppe} {self.frueher} {self.hinweis}".lower()
 
     def namenswoerter(self) -> list:
         return woerter(self.text) + woerter(SYNONYME.get(self.text, ""))
 
     def alle_woerter(self) -> list:
-        return self.namenswoerter() + woerter(f"{self.register} {self.gruppe} {self.hinweis}")
+        return self.namenswoerter() + woerter(f"{self.register} {self.gruppe} {self.frueher} {self.hinweis}")
 
     def nicht_aus_suche(self) -> bool:
         return self.vorsicht or (self.text not in NUR_ANSICHT
@@ -182,7 +195,7 @@ class Gruppe(QtWidgets.QWidget):
     def _aktion(self, text: str, fn, kuerzel: str, hinweis: str, ort: str = "") -> QtGui.QAction:
         a = QtGui.QAction(text, self)
         if fn is not None:
-            a.triggered.connect(lambda _=False, f=fn: f())
+            a.triggered.connect(lambda _=False, f=fn: self._ribbon.ausfuehren(f))
         if kuerzel:
             self._ribbon.kuerzel_setzen(a, kuerzel)
         h = hinweis or text
@@ -201,6 +214,11 @@ class Gruppe(QtWidgets.QWidget):
         """
         a = self._aktion(text, fn, kuerzel, hinweis)
         a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
+        self._grosser_knopf(a, text, rolle)
+        return a
+
+    def _grosser_knopf(self, a: QtGui.QAction, text: str, rolle: str = "") -> QtWidgets.QToolButton:
+        """Der grosse Knopf zu einer Aktion (Symbol ueber der Beschriftung)."""
         b = Startknopf(self) if rolle == "start" else QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
@@ -214,7 +232,21 @@ class Gruppe(QtWidgets.QWidget):
         b.setFixedHeight(INHALT_HOEHE)
         self.spalte = None
         self.reihe.addWidget(b, 0, QtCore.Qt.AlignTop)
-        return a
+        return b
+
+    def nochmal(self, aktion: QtGui.QAction, rolle: str = "") -> QtGui.QAction:
+        """Einen Befehl, der in einem anderen Register steht, hier noch einmal
+        als grossen Knopf zeigen (Teilpaket 12d, 03.10.2026: das Register
+        Start als Arbeitsablauf).
+
+        Es ist **dieselbe** Aktion, kein neuer Befehl: Symbol, Hinweis,
+        Tastenkuerzel, Sperre und - bei einem Schalter - der Haken kommen von
+        ihr, der Klick fuehrt dieselbe Funktion aus. Darum legt diese Methode
+        weder einen ``Befehl`` an (die Suche fuehrt weiter zum Original) noch
+        ein Kuerzel (Qt loest bei zwei Aktionen mit derselben Tastenfolge gar
+        nichts aus, siehe :meth:`Ribbon.kuerzel_setzen`)."""
+        self._grosser_knopf(aktion, aktion.text(), rolle)
+        return aktion
 
     def klein(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
               zeichen: str = "", symbol: str = "", anzeige: str = "") -> QtGui.QAction:
@@ -441,6 +473,10 @@ class Ribbon(QtWidgets.QWidget):
         self.setObjectName("ribbon")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.befehle: list[Befehl] = []
+        #: Rahmen des Fensters um jeden Befehl (Paket 13m): rahmen(fn) fuehrt fn
+        #: aus und weiss dabei, welcher Befehl laeuft - ersetzt er eine Maske mit
+        #: nicht uebernommenen Aenderungen, ist er selbst der Wunsch der Leiste
+        self.befehlsrahmen = None
         self._register: dict[str, Register] = {}
         self._kontext: Register | None = None
         self._kontext_name = ""
@@ -765,16 +801,45 @@ class Ribbon(QtWidgets.QWidget):
         # stabil: innerhalb eines Registers bleibt die Reihenfolge des Aufbaus
         return sorted(tragen, key=lambda b: reihe.get(b.register, len(reihe)))
 
+    def aktion(self, register: str, text: str) -> QtGui.QAction:
+        """Die Aktion des Befehls ``text`` im Register ``register``.
+
+        Wer einen Befehl noch einmal zeigen will (:meth:`Gruppe.nochmal`),
+        holt sich hier das Original, statt es beim Aufbau in eine Variable
+        zu legen. Fehlt der Befehl oder gibt es ihn dort zweimal, meldet das
+        ein ``KeyError`` beim Start des Programms - ein umbenannter Befehl
+        faellt so sofort auf und laeuft nicht still ins Leere."""
+        treffer = [b.aktion for b in self.befehle if b.register == register and b.text == text]
+        if len(treffer) != 1:
+            raise KeyError(f"Befehl „{text}“ im Register {register}: {len(treffer)} Treffer")
+        return treffer[0]
+
     def suche_fokussieren(self) -> None:
         """Strg+F: den Cursor in die Befehlssuche setzen. Was schon darin
         steht, ist markiert - der naechste Buchstabe ersetzt es."""
         self.suche.setFocus(QtCore.Qt.ShortcutFocusReason)
         self.suche.selectAll()
 
+    def ausfuehren(self, fn):
+        """Einen Befehl ausfuehren - im Rahmen des Fensters, wenn es einen gibt."""
+        rahmen = self.befehlsrahmen
+        return rahmen(fn) if callable(rahmen) else fn()
+
     def merken(self, b: Befehl):
         self.befehle.append(b)
         # ein vorlaeufig aufgeklapptes Register klappt nach dem Befehl zu
         b.aktion.triggered.connect(lambda *_a: self._nach_befehl())
+
+    def fruehere_gruppe(self, name: str, *aktionen: QtGui.QAction):
+        """Diese Befehle hiessen frueher in der Gruppe ``name`` (Teilpaket 12d:
+        das Register Start bekam andere Gruppen): wer in der Befehlssuche nach
+        dem alten Gruppennamen sucht - „Auswahl“, „Zwischenablage“, „Modell
+        prüfen“ -, findet sie weiter. Der Name zaehlt wie ein Gruppenname, nicht
+        wie ein Befehlsname: er fuehrt in die Trefferliste, Enter fuehrt davon
+        nie einen allein aus."""
+        for b in self.befehle:
+            if b.aktion in aktionen:
+                b.frueher = f"{b.frueher} {name}".strip()
 
     def vorsicht(self, *aktionen: QtGui.QAction):
         """Diese Befehle ersetzen oder leeren das Modell: die Suche fuehrt sie
@@ -870,7 +935,10 @@ class Ribbon(QtWidgets.QWidget):
         if not such:
             return []
         t = (text or "").strip().lower()
-        genau = [b for b in self.befehle if b.text.lower() == t]
+        # gleichlautend ohne Satzzeichen: „Bearbeiten ▾“ (Menue in Start) und
+        # „Bearbeiten“ (Unterlagen › Skizze) sind beide „Bearbeiten“ - in der
+        # Reihenfolge des Aufbaus, Start steht vor Unterlagen
+        genau = [b for b in self.befehle if b.text.lower() == t or woerter(b.text) == such]
         namen = [b for b in self.namenstreffer(text) if b not in genau]
         rest = [b for b in self.befehle if b not in genau and b not in namen
                 and all(any(wort_passt(w, x) for x in b.alle_woerter()) for w in such)]

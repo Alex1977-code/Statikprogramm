@@ -26,6 +26,7 @@ from __future__ import annotations
 import itertools
 
 from .model import Model, Combination, LoadCase, DesignSettings
+from .begriffe import typ_kurz
 
 
 def _variable_sets(cases: list[LoadCase]) -> list[list[LoadCase]]:
@@ -212,7 +213,10 @@ def combination_table(model: Model, theorie=None) -> list[list[str]]:
     if theorie is None:
         theorie = model.theorie_von if hasattr(model, "theorie_von") else (lambda _c: "I")
     for c in model.combinations.values():
-        rows.append([c.name, c.typ, c.leading, getattr(c, "situation", "") or "Grundstellung",
+        # der Typ im Klartext („GZT (STR/GEO)“) - bis zum 03.10.2026 der
+        # Schluessel („ULS“), den der Bericht an einer Stelle nachtraeglich
+        # uebersetzte und an der anderen (Tabelleneintrag) nicht
+        rows.append([c.name, typ_kurz(c.typ), c.leading, getattr(c, "situation", "") or "Grundstellung",
                      theorie(c)]
                     + [f"{c.factors.get(n, 0):g}" if c.factors.get(n, 0) else "" for n in names]
                     + [c.description])

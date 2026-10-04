@@ -265,6 +265,11 @@ def test_situationsmaske_unbekannte_stellung():
     def texte(aufrufe):
         return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
 
+    def meldungen(s):
+        # Fehler und Hinweise (Paket 9b): eine Attrappe schluckt s.hinweis still
+        from tests.meldungen import aus_attrappe
+        return aus_attrappe(s).alle
+
     check("vorher: die Modellprüfung meldet die unbekannte Stellung",
           any(meldung in x for x in m.check()), str(m.check()))
     with mock.patch.object(G.msk, "Maske", _Maskenrekorder):
@@ -280,12 +285,12 @@ def test_situationsmaske_unbekannte_stellung():
         sit = m.situationen.get("S")
         check("Übernehmen ohne Änderung: die Stellung bleibt 'Offen_2'",
               sit is not None and sit.stellung == "Offen_2",
-              f"stellung {getattr(sit, 'stellung', None)!r}, error {texte(s.error)}")
+              f"stellung {getattr(sit, 'stellung', None)!r}, Meldungen {meldungen(s)}")
         check("… die Modellprüfung meldet sie weiter",
               any(meldung in x for x in m.check()), str([x for x in m.check() if "FEHLER" in x]))
         check("… und die Rückmeldung sagt, dass die Stellung fehlt",
-              any("Offen_2" in t and "gibt es nicht" in t for t in texte(s.info) + texte(s.error)),
-              str(texte(s.info) + texte(s.error)))
+              any("Offen_2" in t and "gibt es nicht" in t for t in texte(s.info) + meldungen(s)),
+              str(texte(s.info) + meldungen(s)))
         try:
             solver.solve_cases(m, ["LF-S"], workers=1)
             gerechnet = "gerechnet (unbewegt)"
@@ -303,7 +308,7 @@ def test_situationsmaske_unbekannte_stellung():
         mk.ok(w)
         check("ausdrücklich „– (unbewegt)“ gewählt: Stellung leer, keine Meldung mehr",
               m.situationen["S"].stellung == "" and not any(meldung in x for x in m.check()),
-              f"stellung {m.situationen['S'].stellung!r}, error {texte(s.error)}")
+              f"stellung {m.situationen['S'].stellung!r}, Meldungen {meldungen(s)}")
 
 
 def test_stellung_lage_und_wirkung():
@@ -760,7 +765,7 @@ def test_echte_stellung_namens_grundstellung():
     check("situationsmodell wendet die Stellung an (Kopie ohne Rolle, M2 aus)",
           ms is not m and len(ms.supports) == 1 and len(m.supports) == 2
           and aktiv is not None and aktiv.tolist() == [True, False]
-          and any("1 Elemente ohne Wirkung" in z for z in log), "; ".join(log))
+          and any("1 Element ohne Wirkung" in z for z in log), "; ".join(log))
     zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
     check("Modellpruefung: keine Zeile zu Stellung oder Situation", not zeilen, "; ".join(zeilen))
     an = solver.solve_all(m)

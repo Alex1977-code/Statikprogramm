@@ -34,6 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from ..begriffe import anzahl
+
 #: Tabelle 8.1, Kerbfall 14: Stange mit Gewinde unter Zug [Pa]
 ZUGSTAB = 50e6
 #: Tabelle 8.1, Kerbfall 1: gewalzte Erzeugnisse, Grundwerkstoff [Pa]
@@ -138,10 +140,10 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
     if log is not None:
         teile = []
         if n["zugstab"]:
-            teile.append(f"{n['zugstab']} Zugstäbe: Kerbfall 50 N/mm² (Tab. 8.1, Kerbfall 14: "
+            teile.append(f"{anzahl(n['zugstab'], 'Zugstab', 'Zugstäbe')}: Kerbfall 50 N/mm² (Tab. 8.1, Kerbfall 14: "
                          "Stange mit Gewinde unter Zug)")
         if n["gewalzt"]:
-            teile.append(f"{n['gewalzt']} Stäbe mit gewalztem Querschnitt: Kerbfall 160 N/mm² "
+            teile.append(f"{anzahl(n['gewalzt'], 'Stab', 'Stäbe')} mit gewalztem Querschnitt: Kerbfall 160 N/mm² "
                          "(Tab. 8.1, Kerbfall 1: Grundwerkstoff)")
         if n["koerper"]:
             teile.append(f"{n['koerper']} Volumen: Kerbfall 160 N/mm² (Grundwerkstoff, "
@@ -153,8 +155,10 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
                        + ". Vorschläge - in der Stab- bzw. Volumenmaske zu prüfen; Anschlüsse, "
                          "Steifen und Nähte mindern den Kerbfall (Nachweise → Schweißnähte).")
         if n["naht"]:
-            log.append(f"  {n['naht']} Stäbe tragen den Kerbfall ihrer Schweißnähte.")
+            log.append("  1 Stab trägt den Kerbfall seiner Schweißnähte." if n["naht"] == 1 else
+                       f"  {n['naht']} Stäbe tragen den Kerbfall ihrer Schweißnähte.")
         if behalten:
-            log.append(f"  {len(behalten)} behalten den eingegebenen Kerbfall: "
+            log.append(f"  {len(behalten)} {'behält' if len(behalten) == 1 else 'behalten'} "
+                       "den eingegebenen Kerbfall: "
                        + ", ".join(behalten[:8]) + (", …" if len(behalten) > 8 else ""))
     return n

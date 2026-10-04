@@ -1038,7 +1038,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
         info["verlauf"].append((k, it, diff, s_info["fliessend"]))
         if progress is not None:
             progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
-                     f"{s_info['fliessend']} Elemente fließen, Änderung {diff:.2e}")
+                     f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
         if diff <= tol and not kontakt.abgekuerzt():
             if getattr(kontakt, "deckel_in_stufe", lambda: False)():
                 # ein voller Kontaktlauf dieser Stufe endete am Deckel: nicht
@@ -1201,7 +1201,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
             if progress is not None:
                 progress(f"Plastizität: Laststufe {k}/{len(faktoren)}, Newton-Schritt {it}: "
-                         f"{s_info['fliessend']} Elemente fließen, Änderung {diff:.2e}")
+                         f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
             if diff <= float(einst.toleranz):
                 erreicht = True
                 break
@@ -1283,7 +1283,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 info["verlauf"].append((stufen_gerechnet, -nach, rest, s_info["fliessend"]))
                 if progress is not None:
                     progress(f"Plastizität: Abschluss verfehlt (Änderung {rest:.2e}), Nachschritt {nach}: "
-                             f"{s_info['fliessend']} Elemente fließen")
+                             f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}")
                 dK = s_info["dK"]
                 if dK.nnz == 0:
                     u = _loesen(F + F_p_neu, None, "Newton", stufen_gerechnet, -nach)
@@ -1308,9 +1308,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     info["fliessend"] = len(basis.fliessend())
     info["eps_p_max"] = basis.eq_max()
     if log is not None:
-        log.append(f"Plastizität: {info['fliessend']} Elemente fließen, ε_p,eq max "
-                   f"{info['eps_p_max'] * 100:.3f} %, {info['iterationen']} Newton-Schritte in "
-                   f"{stufen_gerechnet} Laststufen"
+        log.append(f"Plastizität: {info['fliessend']} {'Element fließt' if info['fliessend'] == 1 else 'Elemente fließen'}, ε_p,eq max "
+                   f"{info['eps_p_max'] * 100:.3f} %, {info['iterationen']} "
+                   f"{'Newton-Schritt' if info['iterationen'] == 1 else 'Newton-Schritte'} in "
+                   f"{stufen_gerechnet} {'Laststufe' if stufen_gerechnet == 1 else 'Laststufen'}"
                    + (f" ({info['halbiert']}-mal halbiert)" if info.get("halbiert") else "")
                    + f" ({info['faktorisierungen']} Faktorisierungen, konsistente Tangente)"
                    + ("" if info["konvergiert"] else " - nicht konvergiert"))
@@ -1484,8 +1485,9 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     info["fliessend"] = len(zustand.fliessend())
     info["eps_p_max"] = zustand.eq_max()
     if log is not None:
-        log.append(f"Plastizität: {info['fliessend']} Elemente fließen, ε_p,eq max {info['eps_p_max'] * 100:.3f} %, "
-                   f"{info['iterationen']} Schritte in {stufen} Laststufen"
+        log.append(f"Plastizität: {info['fliessend']} {'Element fließt' if info['fliessend'] == 1 else 'Elemente fließen'}, ε_p,eq max {info['eps_p_max'] * 100:.3f} %, "
+                   f"{info['iterationen']} {'Schritt' if info['iterationen'] == 1 else 'Schritte'} in "
+                   f"{stufen} {'Laststufe' if stufen == 1 else 'Laststufen'}"
                    + ("" if info["konvergiert"] else " - nicht konvergiert"))
     return u, zustand, F_p, info
 

@@ -70,7 +70,10 @@ def _fenster():
     w.activateWindow()
     app.processEvents()
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: w.fehler_liste.append(str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, w.fehler_liste)
     _FENSTER.update(w=w, app=app)
     return w, app
 
@@ -436,6 +439,9 @@ WEITERE = {
     ("Eintrag löschen", "Entf, Rücktaste", "Modellbaum"),
     ("Eintrag bearbeiten", "Eingabetaste", "Modellbaum"),
     ("Erster / letzter Eintrag", "Pos1, Ende", "Modellbaum"),
+    # Teilpaket 8d (03.10.2026): Strg+F im Baum, Esc in seiner Filterzeile
+    ("Modellbaum filtern", "Strg+F", "Modellbaum"),
+    ("Filter aufheben", "Esc", "Filterzeile des Modellbaums"),
     ("Maske übernehmen", "Eingabetaste", "Maske rechts"),
     ("Laufenden Vorgang abbrechen", "Esc", "Programmfenster"),
     # Paket 14a (03.10.2026): Entf und die Einzeltasten in der Ansicht, die Tasten des Skizzenfensters
@@ -506,6 +512,25 @@ def test_weitere_tasten_wirken():
         QtWidgets.QDialog.exec = exec_alt
     check("Modellbaum: die Eingabetaste bearbeitet den gewählten Eintrag",
           gesehen == [b._schluessel(ziel)], str(gesehen))
+    # Modellbaum: Strg+F öffnet die Filterzeile, Esc in ihr hebt den Filter auf (8d)
+    f = getattr(w, "baum_filter", None)
+    w.activateWindow()
+    b.setFocus()
+    app.processEvents()
+    QtTest.QTest.keyClick(b, K.Key_F, K.ControlModifier)
+    app.processEvents()
+    check("Modellbaum: Strg+F öffnet die Filterzeile, nicht die Befehlssuche",
+          f is not None and f.isVisible() and QtWidgets.QApplication.focusWidget() is f
+          and not w.ribbon.suche.hasFocus(), str(QtWidgets.QApplication.focusWidget()))
+    if f is not None:
+        f.setText("zzz")
+        app.processEvents()
+        QtTest.QTest.keyClick(f, K.Key_Escape)
+        app.processEvents()
+        check("Filterzeile des Modellbaums: Esc hebt den Filter auf, schließt sie, der Baum hat die Tastatur",
+              f.text() == "" and f.isHidden() and QtWidgets.QApplication.focusWidget() is b
+              and not [i for i in b._alle_eintraege() if i.isHidden()],
+              f"{f.text()!r}, {f.isHidden()}, {QtWidgets.QApplication.focusWidget()}")
     # Maske: Eingabetaste übernimmt (Esc gehört dem Programmfenster, siehe die Prüfung oben)
     w.maske_knoten()
     app.processEvents()

@@ -65,7 +65,10 @@ def _fenster():
     w = MainWindow()
     w.show()
     app.processEvents()
-    w.error = lambda msg: w.log.appendPlainText("FEHLER: " + str(msg))
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, Paket 9b): die
+    # Liste bekommt beide, w.meldungen wertet sie getrennt aus
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, protokoll=True)
     _FENSTER.update(w=w, app=app)
     return w, app
 
@@ -523,7 +526,7 @@ def test_modell_leeren_rueckfrage():
     w.clear_mesh(); app.processEvents()
     text = gefragt[0][1] if gefragt else ""
     check("Text nennt Stäbe mit Nachweis und Ermüdungslasten",
-          "Stäbe mit Nachweis (3)" in text and "Ermüdungslasten (1)" in text and gefragt[0][4] == "nein",
+          "Stäbe (3)" in text and "Ermüdungslasten (1)" in text and gefragt[0][4] == "nein",
           text[:200])
     check("… ohne Rechnung kein Wort von Ergebnissen", "Ergebnis" not in text)
     an = solver.solve_all(w.model, design=False)
@@ -762,10 +765,26 @@ def test_doppelklick_zweig():
         return getattr(getattr(w.maskenrand, "maske", None), "titel", "")
     try:
         fp = _fingerabdruck(w.model)
-        titel = doppel("Stäbe mit Nachweis")
-        check("Doppelklick „Stäbe mit Nachweis“: nichts angelegt, rechts „Neu: Stab …“",
+        # Der Zweig der Stäbe mit Nachweis heißt seit 03.10.2026 „Stäbe“, die
+        # FE-Stabelemente stehen unter „FE-Netz → Stabelemente“ (Teilpaket 8c).
+        # Seit C14 (03.10.2026) oeffnet der Doppelklick auf „Stäbe“ die Maske des
+        # Befehls „Stab“ (zwei Knoten anklicken: Stab S… samt Stabelement), der
+        # auf „Stabelemente“ die Maske „Neu: Stabelement E…“
+        import re
+        n_el = len(w.model.elements)
+        titel = doppel("Stäbe")
+        mk = w.maskenrand.maske
+        check("Doppelklick „Stäbe“ (die Stäbe mit Nachweis): nichts angelegt, rechts die Maske „Stab“ "
+              "(zwei Knoten anklicken)",
               _fingerabdruck(w.model) == fp and len(w.model.members) == 0
-              and str(titel).startswith("Neu: Stab"), str(titel))
+              and w.baum._schluessel(finden("Stäbe"))[0] == "staebe"
+              and titel == "Stab" and mk is not None and mk.n_knoten == 2, str(titel))
+        titel = doppel("Stabelemente")
+        check("Doppelklick „Stabelemente“: nichts angelegt, rechts die Maske eines neuen Stabelements "
+              "„Neu: Stabelement E…“",
+              _fingerabdruck(w.model) == fp and len(w.model.elements) == n_el
+              and w.baum._schluessel(finden("Stabelemente"))[0] == "stabelemente"
+              and re.fullmatch(r"Neu: Stabelement E\d+", str(titel)) is not None, str(titel))
         for text, erwartet in (("Werkstoffe", "Neu: Werkstoff"), ("Lastfälle", "Neu: Lastfall"),
                                ("Kombinationen", "Neu: Kombination"), ("Linien", "Neu: Linie")):
             modal.clear()

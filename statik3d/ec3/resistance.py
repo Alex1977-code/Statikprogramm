@@ -106,7 +106,7 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
         else:
             tau = tau_t + (aVz / R["Avz"] if R["Avz"] > 0 else 0.0)
             checks["V_z + tau_t (6.2.6/6.2.7)"] = (
-                tau / fvd, f"Torsion schoepft die Schubtragfaehigkeit allein aus: "
+                tau / fvd, f"Torsion schöpft die Schubtragfähigkeit allein aus: "
                 f"(tau_t + tau_V)/f_vd = {tau/1e6:.1f}/{fvd/1e6:.1f} MPa")
     if aVy > 0:
         if VyRd > 0:
@@ -115,7 +115,7 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
         else:
             tau = tau_t + (aVy / R["Avy"] if R["Avy"] > 0 else 0.0)
             checks["V_y + tau_t (6.2.6/6.2.7)"] = (
-                tau / fvd, f"Torsion schoepft die Schubtragfaehigkeit allein aus: "
+                tau / fvd, f"Torsion schöpft die Schubtragfähigkeit allein aus: "
                 f"(tau_t + tau_V)/f_vd = {tau/1e6:.1f}/{fvd/1e6:.1f} MPa")
     if sec.typ == "I" and sec.tw > 0 and sec.h > 2 * sec.tf:
         # Schubbeulen des Stegblechs: der Nachweis wird gefuehrt, nicht nur

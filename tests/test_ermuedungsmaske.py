@@ -469,7 +469,11 @@ def test_modellbaum_und_hauptfenster():
           and baum.ELTERNART.get("ermuedungslast") == "ermuedungslasten")
     # Klick oeffnet die Maske mit dieser Zeile
     aufrufe = []
+    # die Attrappe hat keine geaenderte Maske rechts: Baumklick und „Neu“ halten
+    # nicht an der Leiste „Übernehmen | Verwerfen“ (Paket 13m, 03.10.2026)
     s = types.SimpleNamespace(model=m, SYSTEM_ARTEN=G.MainWindow.SYSTEM_ARTEN,
+                              BAUM_OHNE_MASKE=G.MainWindow.BAUM_OHNE_MASKE,
+                              _maskenwechsel_halten=lambda *a, **k: False,
                               maske_ermuedungslasten=lambda *a, **k: aufrufe.append((a, k)))
     s._baum_system_geklickt = lambda a, n: G.MainWindow._baum_system_geklickt(s, a, n)
     G.MainWindow._baum_geklickt(s, "ermuedungslast", "Global")
