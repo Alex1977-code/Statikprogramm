@@ -103,6 +103,9 @@ class FcmProblem:
             # Werkstoffferne leere Zellen brauchen alpha nicht: ihre Moden sind null gesetzt oder von
             # Werkstoffzellen getragen (Zellaggregation.roh_zwaenge).
             ag = self.aggregation
+            # Zellen ohne Wurzel behalten alpha. Ihre Wirkung ist klein (T-Stoss mit Basiszelle 20 mm: 1e-6 bei p 2, 7e-5 bei p 3 in der Spannung; Kirsch-Scheibe mit
+            # 454 solchen Zellen: K_t zwischen alpha 1e-8 und 1e-12 gleich auf vier Stellen) und nicht vorhersagbar; eine Warnung waere ein Fehlalarm. Die Zahl steht im
+            # Protokoll (aggregation.zellen_ohne_wurzel); Plan TP 5, O16, 03.10.2026.
             behalten = ag.schlecht & (ag.wurzel < 0) & ~ag.werkstofffern
             self.quadratur.alpha_entfernen(np.flatnonzero((self.gitter.klasse == CUT) & ~behalten))
         # haengende Freiheitsgrade des Oktrees und Aggregation in einer Zwangsmatrix

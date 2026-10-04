@@ -228,8 +228,13 @@ def test_unverwurzelte_grobe_zelle():
     s = pr.auswertung(U).spannung(P)[:, 0]
     soll = (lam + 2 * mu) * c0 * P[:, 0]
     f = float(np.abs(s - soll).max() / np.abs(soll).max())
-    check(f"Quadratisches Feld auf dem T-Stoss mit zwei lokalen Halbierungen reproduziert (sigma_xx an {len(P)} Punkten < 1e-4, gemessen 3,3e-6)",
+    check(f"Quadratisches Feld auf dem T-Stoss mit zwei lokalen Halbierungen reproduziert (sigma_xx an {len(P)} Punkten < 1e-4, gemessen 3,7e-7)",
           f < 1e-4, f"Abweichung {f:.1e}")
+    # Zellen ohne Wurzel behalten alpha; ihre Zahl steht im Protokoll, eine Warnung gibt es nicht (Plan TP 5, O16, 03.10.2026: Wirkung 1e-6 bis 7e-5, Fehlalarm an der
+    # Kirsch-Scheibe mit 20-mm-Zellen)
+    n_prot = pr.protokoll["aggregation"]["zellen_ohne_wurzel"]
+    check(f"T-Stoss: das Protokoll nennt {n_prot} Zellen ohne Wurzel = Statistik = unverwurzelte schlechte Zellen",
+          n_prot == ag.statistik["zellen_ohne_wurzel"] == len(frei_unverwurzelt) > 0, f"{len(frei_unverwurzelt)} unverwurzelte schlechte")
 
 
 def test_gebuendelte_nachbarsuche():
@@ -277,5 +282,37 @@ def test_gebuendelte_nachbarsuche():
           f"Aggregation {n_n} Abfragen, {abw_n} verschieden; Flaechenproben {n_p}, {abw_p} verschieden; alle Proben {n_alle}, {abw_alle} verschieden")
 
 
+def test_schwellenvergleich():
+    """Schwellenvergleich der Aggregation auf neun Stellen gerundet (Plan TP 5, O19, 03.10.2026). Im verfeinerten Patch-Koerper (Schnittzellen eine Ebene, p 2) haben
+    zwei Zellen geometrisch genau den Werkstoffanteil 0,4: die eine lag mit der Tetraederregel bei 0,4 - 2e-16, mit den exakten Stueckmomenten bei 0,4 + 2e-16, die
+    andere bei 0,4 - 4e-16 bzw. 0,4 - 1e-16; ungerundet verglichen war die Einteilung vom Quadraturweg abhaengig (aggregierte Moden 1758 gegen 1746). Geprueft:
+    (1) die Einteilung synthetischer Anteile; (2) schlecht und wurzel sind an zwei verfeinerten Patch-Koerpern mit exakten Stueckmomenten und mit der Tetraederregel gleich."""
+    from volumen3d.fcm import quadratur as Q
+    from volumen3d.fcm.aggregation import schlecht_gestellt
+    from volumen3d.fcm.gitter import Verfeinerung
+    anteile = np.array([0.4 - 2e-16, 0.4, 0.4 + 2e-16, 0.4 - 4e-10, 0.4 - 1e-9, 0.4 - 1e-8, 0.4 + 1e-8, 0.0, 1.0])
+    soll = np.array([False, False, False, False, True, True, False, True, False])
+    ist = schlecht_gestellt(anteile, 0.4)
+    check("Schwellenvergleich auf 9 Stellen: 0,4 -/+ 2e-16, 0,4 und 0,4 - 4e-10 wohlgestellt, 0,4 - 1e-9 und darunter schlecht, 0,4 + 1e-8, 1 wohl, 0 schlecht",
+          np.array_equal(ist, soll), str(ist.astype(int)))
+    faelle = [("Schnittzellen eine Ebene", Verfeinerung(schnitt_ebenen=1)),
+              ("Bereich Ebene 2 an einer Ecke", Verfeinerung(bereiche=((np.array([100.0, 100, 0]), 25.0, 5.0),)))]
+    alt = Q.STUECKE_EXAKT_STANDARD
+    try:
+        for name, v in faelle:
+            erg = {}
+            for exakt in (True, False):
+                Q.STUECKE_EXAKT_STANDARD = exakt
+                pr = _problem(2, v)
+                erg[exakt] = (pr.aggregation.schlecht.copy(), pr.aggregation.wurzel.copy(), int(pr.aggregation.statistik["zellen_schlecht"]), pr.quadratur.stuecke_exakt)
+            gleich = np.array_equal(erg[True][0], erg[False][0]) and np.array_equal(erg[True][1], erg[False][1])
+            nahe = int((np.abs(pr.aggregation.anteil - 0.4) < 1e-9).sum())
+            check(f"{name}, p 2: schlecht und wurzel mit exakten Stueckmomenten und mit der Tetraederregel gleich ({erg[True][2]} schlechte Zellen, {nahe} Zellen auf der Schwelle)",
+                  gleich and erg[True][3] and not erg[False][3], f"schlecht {erg[True][2]} / {erg[False][2]}")
+    finally:
+        Q.STUECKE_EXAKT_STANDARD = alt
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_wurzelwahl_rundungsfest, test_unverwurzelte_grobe_zelle, test_patch_verfeinert]))
+    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_wurzelwahl_rundungsfest, test_unverwurzelte_grobe_zelle, test_patch_verfeinert,
+                   test_schwellenvergleich]))

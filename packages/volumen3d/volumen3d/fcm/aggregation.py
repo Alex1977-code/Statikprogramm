@@ -62,6 +62,18 @@ def _chebyshev_lobatto_3d(p: int) -> np.ndarray:
     return np.stack(np.meshgrid(x, x, x, indexing="ij"), axis=-1).reshape(-1, 3)
 
 
+ANTEIL_STELLEN = 9                                                  # Rundung des Werkstoffanteils fuer Rangfolge und Schwellenvergleich
+
+
+def schlecht_gestellt(anteil, schwelle: float) -> np.ndarray:
+    """Zellen mit Werkstoffanteil unter der Schwelle, verglichen auf ``ANTEIL_STELLEN`` Stellen gerundet. Ein Anteil, der geometrisch genau auf der Schwelle liegt
+    (Ebene durch eine Zellflaeche oder durch die Mitte, Anteil 0,4), schwankt je nach Quadraturweg um 1e-16 auf beide Seiten: im verfeinerten Patch-Koerper
+    (test_zwaenge, 'Schnittzellen eine Ebene', p 2) lag eine Zelle mit der Tetraederregel bei 0,4 - 2e-16 und mit den exakten Momenten bei 0,4 + 2e-16, die
+    Zahl der aggregierten Moden wechselte von 1758 auf 1746 (Plan TP 5, O19, 03.10.2026). Auf 9 Stellen gerundet gilt der Anteil als auf der Schwelle, also als
+    wohlgestellt, unabhaengig vom Weg."""
+    return np.round(np.asarray(anteil, float), ANTEIL_STELLEN) < float(schwelle)
+
+
 class Zellaggregation:
     def __init__(self, gitter, quadratur, schwelle: float = 0.4) -> None:
         self.gitter = gitter
@@ -70,9 +82,9 @@ class Zellaggregation:
         # Rangfolge der Wurzeln nur nach dem gerundeten Anteil: zwei volle Nachbarn unterschieden sich um 3e-15 je
         # nach Quadratur (Referenz gegen Moment Fitting, Lame h 20 p 3), der Zufallssieger aenderte C und die
         # Spannungen am Rand um 4e-3 (30.09.2026). Gleichstand entscheidet die feste Nachbarreihenfolge.
-        self._rang = np.round(self.anteil, 9)
+        self._rang = np.round(self.anteil, ANTEIL_STELLEN)
         self.wurzel = np.full(len(gitter.ijk), -1, int)             # -1: wohlgestellt oder ohne Wurzel
-        self.schlecht = self.anteil < self.schwelle
+        self.schlecht = schlecht_gestellt(self.anteil, self.schwelle)
         self.leer = self.schlecht & (self.anteil <= 0.0)             # geschnitten klassifiziert, aber ohne Werkstoff
         self.werkstofffern = self._werkstofffern()                    # leer und ohne Beruehrung mit Werkstoff
         self.zu_teilen: tuple = ()
@@ -281,4 +293,4 @@ class Zellaggregation:
         return roh
 
 
-__all__ = ["werkstoffanteile", "Zellaggregation"]
+__all__ = ["werkstoffanteile", "schlecht_gestellt", "Zellaggregation"]
