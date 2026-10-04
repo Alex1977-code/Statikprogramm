@@ -929,6 +929,25 @@ angegebene Stelle hinaus ändern, mit altem und neuem Wert aufgelistet; (4) die 
 abwechselnd); nnz von C wird berichtet; (5) ein Test, der ohne die Kur fehlschlägt (Wiedergabe eines Polynoms über eine Eck-Fortsetzung bei p 4 und die exakte 1D-Abbildung gegen direkte Auswertung). **Gilt H4:** keine Kur in O17;
 berichtet werden der Anteil von C und der des Gleichungssystems mit Empfehlung. Wird eine Regel verfehlt, entscheidet der Anwender mit Empfehlung.
 
+**Ergebnis O17 (04.10.2026; Messung `o17_messung.py`, `o17_rauschen.py` im Scratchpad, auf ac600f3 mit Haken, Paket unverändert).** *Prüfung der Referenz:* die exakte 1D-Abbildung gibt ψ_j(s ξ + t) an 50 Zufallspunkten auf 2·10⁻¹⁶
+(p 1) bis 7,5·10⁻¹⁶ (p 4) wieder. *Größe A:* die Einträge der jetzigen C weichen von C_ref je Zeile um bis zu 6·10⁻¹⁴ (p 2), 2,7·10⁻¹¹ (p 3, Streifen 30°, größter Fortsetzungskoeffizient 34 153) und 1,1·10⁻¹¹ (p 4, Patch-Körper) relativ
+ab, haengende Moden und Ketten um höchstens 1,3·10⁻¹³. Für Felder mit exakt bekannten Koeffizienten fällt der Wiedergabefehler mit C_ref auf den Rundungsboden der Auswertung: Streifen 30° p 3 lineares Feld 1,4·10⁻¹⁴ → 1,3·10⁻¹⁵,
+Starrkörper 2,2·10⁻¹⁴ → 9,5·10⁻¹⁶; Patch-Körper p 4 lineares Feld 2,0·10⁻¹⁴ → 5,3·10⁻¹⁶ (b_C 1,8·10⁻¹⁵ bis 1,0·10⁻¹⁴). Für interpolierte Felder (Biegefeld, kubisches Feld) ist er mit C und C_ref gleich (Streifen 30° p 3 2,7·10⁻¹¹, Patch-Körper p 4
+3,4·10⁻¹¹): dort begrenzt das Rundungsrauschen der Wurzelkoeffizienten, mal den Fortsetzungskoeffizienten, nicht C. *Größe B:* an keinem Modell fällt der Spannungsfehler mit C_ref um den Faktor 10; er ändert sich in beide Richtungen, höchstens um den Faktor 2,5 nach unten
+(Starrkörper am Streifen 30° p 2) und 5,7 nach oben (Kraft über den Vertragsweg 30° p 2: 1,6·10⁻¹¹ / 9,4·10⁻¹¹). Streifen 30° p 3 (voller Verschiebungsrand): Biegefeld 4,7·10⁻⁹ / 2,6·10⁻⁹, Biegefeld mit Starrkörper 30 mm 4,5·10⁻⁷ / 5,5·10⁻⁷; über den Vertragsweg Rest 3,1·10⁻⁸ / 2,4·10⁻⁸, Gleichgewicht 1,1·10⁻⁷ / 4,1·10⁻⁷;
+Patch-Körper p 4 lineares Feld innen 1,3·10⁻⁸ / 1,3·10⁻⁸, am Rand 2,0·10⁻⁷ / 3,1·10⁻⁷; verfeinerter Patch-Körper p 3 (haengende Freiheitsgrade) 1,2·10⁻⁹ / 8,7·10⁻¹⁰; bei p 2 ohne Starrkörperanteil 10⁻¹¹ bis 10⁻¹⁰ (Gleichgewicht über den Vertragsweg bis 1,9·10⁻⁹), mit 30 mm Starrkörperanteil 2,4·10⁻⁹ bis 1,3·10⁻⁸, mit beiden gleich. **Urteil: H4.** A fällt, B nicht;
+H1 und H2 sind widerlegt, H3 war nicht zu prüfen (A liegt mit C_ref am Boden b_C). Die Regeln (1) bis (5) einer Kur entfallen.
+*Mechanismus (Diagnose nach dem Urteil, `o17_rauschen.py`):* mit C_ref und den exakten Koeffizienten der Starrkörperverschiebung (30, −20, 10) mm ist die Spannung an den 1 500 Werkstoffpunkten 1,4·10⁻¹⁰ bis 2,7·10⁻¹⁰ N/mm²
+(Auswertung); Rauschen der Größe eps · 30 mm in den freien Koeffizienten hebt sie auf 5·10⁻⁹ / 3·10⁻⁸ / 2·10⁻⁷ / 1,2·10⁻⁶ N/mm² (Streifen 10° und 30° bei p 2 und p 3, größter Fortsetzungskoeffizient 118 / 353 / 6 831 / 34 153); die Lösung des
+Gleichungssystems liegt bei 1,7·10⁻⁷ / 2,6·10⁻⁷ / 8,7·10⁻⁶ / 5,1·10⁻⁵ N/mm², also beim 7- bis 54-Fachen des reinen Rauschens, und geteilt durch den größten Fortsetzungskoeffizienten bei 0,7·10⁻⁹ bis 1,5·10⁻⁹ N/mm² in allen vier
+Modellen. Der Boden ist damit der Vorwärtsfehler der Lösung in den freien Koeffizienten (einige zehn eps relativ zur Verschiebung), verstärkt durch die Größe der Fortsetzung in die aggregierten Zellen. Diese Größe ist geometrisch: ein
+Polynom vom Grad p, das auf der Wurzel von der Größe eps ist, wächst in der Entfernung d (in Halbweiten) wie d^p je Richtung; eine genauere C ändert daran nichts. Darum skaliert der Boden mit dem Betrag der Verschiebung
+(Starrkörperanteil) und mit p, nicht mit der Spannung. *Nebenbefund:* die exakte Kronecker-Abbildung liefert die strukturellen Nullen exakt, C wird dünner (nnz Streifen 30° p 3 58 407 → 32 232, Patch-Körper p 4 191 955 → 56 931, p 2
+unverändert bis −2 %); ob das Zeit spart, ist nicht gemessen. **Empfehlung (Entscheidung beim Anwender):** O17 ohne Änderung schließen. Der Boden liegt bei höchstens 5,5·10⁻⁷ relativ auch mit 30 mm Starrkörperanteil bei p 3, vier bis fünf
+Größenordnungen unter dem Diskretisierungsfehler der Strukturspannung; O5 Regel (1) am Streifen 30° p 3 bleibt damit verfehlt wie angenommen. Senken ließe er sich nur über die Größe der Fortsetzung, also kürzere Wurzelabstände in der
+Aggregation (etwa nur Flächen- und Kantennachbarn bis zu einem Höchstwert des Fortsetzungskoeffizienten); das ändert die Wurzelwahl und die Zahl der zu teilenden Zellen und wäre ein eigener Punkt mit eigener Messung. Die dünnere C
+nicht ohne Bedarf weiter verfolgen.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
@@ -968,7 +987,7 @@ nachgetragen.
 | O13 GPU-Einrichtzeit nach Cholesky | Sonnet 5.5 | mittel | Messreihe gegen A3 | keine Entscheidung, nur Messung |
 | O14 Oberflächenquadratur der Hüllenfacetten | Opus 5.5 | hoch | numba-Schleifen, Leistung | Entscheidung offen: jetzt oder nach PR 3 (Empfehlung: nach PR 3) |
 | O16 α in Zellen ohne Wurzel | Sonnet 5.5 | niedrig | Warnung im Ergebnis | erledigt ohne Warnung (Anwender, 04.10.2026): die Messung zeigt einen Fehlalarm (Kirsch-Scheibe mit 20-mm-Zellen: K_t unabhängig von α; T-Stoß: 10⁻⁶ bis 7·10⁻⁵); die Zahl bleibt im Protokoll |
-| O17 Genauigkeit der Zwangsmatrix | Opus 5.5 | hoch | Fortsetzung genauer bauen | Entscheidung offen (Empfehlung: zurückstellen) |
+| O17 Genauigkeit der Zwangsmatrix | Opus 5.5 | hoch | Fortsetzung genauer bauen | gemessen (04.10.2026): Urteil H4 – der Boden kommt nicht aus C, sondern aus dem Vorwärtsfehler der Lösung mal der Größe der Fortsetzung; keine Kur; Entscheidung beim Anwender (Empfehlung: ohne Änderung schließen) |
 | O18 Tetraederordnung ohne Moment Fitting | Sonnet 5.5 | niedrig | n = 2p im Rückfallweg | Entscheidung offen (Empfehlung: mit Teilprojekt 7) |
 | O19 Schwellenvergleich der Aggregation bei Gleichstand | Sonnet 5.5 | niedrig | gerundeten Anteil vergleichen | gebaut auf `feature/volumen3d` (3823a9c): Einteilung unabhängig von Quadraturweg und α, alle Regeln erfüllt; Merge nur auf Freigabe |
 | O20 Nachiteration im SuperLU-Weg des Direktlösers | Sonnet 5.5 | mittel | ohne pypardiso nur 10⁻⁵ am schlecht konditionierten System | gebaut auf `feature/volumen3d` (5219246): Streifen 30° p 3 mit SuperLU 2,7·10⁻⁸ statt 1,0·10⁻⁵; Regel (3) am kleinsten Modell knapp verfehlt (7 bis 10 % statt 10 %), vom Anwender angenommen (03.10.2026); Merge nur auf Freigabe |
