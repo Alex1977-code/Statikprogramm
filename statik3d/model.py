@@ -5950,7 +5950,8 @@ class Model:
 
     def stab_verweise(self, name: str) -> list:
         """Was auf diesen Stab verweist, im Klartext - ohne die Lasten am Stab
-        (Linienlasten und Vorspannungen vergleicht :meth:`_stablasten`)."""
+        (Vorspannungen vergleicht :meth:`_stabvorspannungen`, Linienlasten
+        prueft :meth:`_linienlast_abschnitt`)."""
         out = []
         for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
             if getattr(g, "art", "") == "stab" and getattr(g, "stab", "") == name:
@@ -5968,19 +5969,51 @@ class Model:
                 out.append(f"Stellung {getattr(st, 'name', '')}")
         return out
 
-    def _stablasten(self, name: str) -> tuple:
-        """Die Lasten am Stab, je Lastfall vergleichbar (ohne Kommentar):
-        Linienlasten (q, q2, System, von, bis) und Vorspannungen (Kraft)."""
+    def _stabvorspannungen(self, name: str) -> tuple:
+        """Die Vorspannungen am Stab, je Lastfall vergleichbar (ohne
+        Kommentar). Eine Vorspannung wirkt auf jedes Element ihres Stabs:
+        beim Zusammenfassen geht sie nur mit, wenn alle Staebe dieselbe haben."""
         out = []
         for fall, lc in self.load_cases.items():
-            for ll in lc.linienlasten:
-                if ll.art == "stab" and ll.ziel == name:
-                    out.append((fall, "Linienlast", tuple(ll.q), None if ll.q2 is None else tuple(ll.q2),
-                                ll.system, float(ll.von), None if ll.bis is None else float(ll.bis)))
             for v in (getattr(lc, "vorspannungen", None) or []):
                 if getattr(v, "art", "stab") == "stab" and v.ziel == name:
-                    out.append((fall, "Vorspannung", float(v.kraft)))
+                    out.append((fall, float(v.kraft)))
         return tuple(sorted(out, key=repr))
+
+    @staticmethod
+    def _linienlast_abschnitt(ll: "Linienlast", L: float) -> tuple:
+        """((von, bis), Grund): der Abschnitt [m], auf dem eine Linienlast
+        ihren Stab der Laenge L belegt - so, wie :meth:`_linienlast_legen` sie
+        liest -, und "" oder der Grund, warum sie beim Zusammenfassen nicht
+        verlustfrei als Abschnittslast auf den laengeren Stab geht (Nachtrag
+        zu C14, 04.10.2026).
+
+        Verlustfrei geht jede Last, deren q und q2 an denselben Stellen
+        stehen bleiben: gleichmaessig oder trapezfoermig, global oder lokal
+        (das lokale System ist das jedes Elements, und die Elemente bleiben),
+        von „von“ bis „bis“ oder bis zum Stabende. Eine gleichmaessige Last,
+        die ueber das Stabende hinausreicht, wirkt nur bis dorthin und geht so
+        mit. Nicht verlustfrei: eine trapezfoermige, die ueber den Stab
+        hinausreicht - _linienlast_legen setzt q und q2 dann an die Stabenden,
+        zusammengefasst muessten ihre Stellen geaendert werden -, und eine,
+        die ausserhalb des Stabs liegt und nicht wirkt (verschoben laege sie
+        auf einem anderen Stab der Kette)."""
+        def zahl(x):
+            return f"{x:g}".replace(".", ",")
+        von = float(ll.von)
+        bis = L if ll.bis is None else float(ll.bis)
+        a, b = max(0.0, von), min(bis, L)
+        stelle = f"von {zahl(von)} m bis " + ("zum Ende" if ll.bis is None else f"{zahl(bis)} m")
+        if b - a <= 1e-12:
+            return (a, b), (f"liegt {stelle} außerhalb des Stabs ({zahl(L)} m lang) oder ist leer und wirkt "
+                            "nicht; zusammengefasst läge sie auf einem anderen Stab – erst löschen oder berichtigen")
+        tol = 1e-9 * max(1.0, L)
+        trapez = ll.q2 is not None and [float(x) for x in ll.q2] != [float(x) for x in ll.q]
+        if trapez and (von < -tol or bis > L + tol):
+            return (a, b), (f"ist trapezförmig und reicht {stelle} über den Stab ({zahl(L)} m lang) hinaus; "
+                            "q und q2 wirken heute an den Stabenden, zusammengefasst müssten ihre Stellen "
+                            "geändert werden – erst „von“ und „bis“ auf den Stab setzen (bis 0 = Ende)")
+        return (a, b), ""
 
     #: Felder eines Stabs, die Nachweise lesen, im Klartext (Meldung von
     #: „Stäbe zusammenfassen“); was hier fehlt, nennt die Meldung mit seinem Namen
@@ -6015,18 +6048,23 @@ class Model:
         es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
         Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
         Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
-        Lasten oder Vorspannungen am Stab, und jeder Verweis auf irgendeinen
-        Stab der Kette, auch den ersten (danach meinte er die ganze Kette).
-        Bis zur Runde 2 setzte es feste Laengen still auf β · L zurueck und
-        uebernahm die Parameter des ersten Stabs.
+        Vorspannungen, eine Linienlast, die sich nicht verlustfrei als
+        Abschnittslast schreiben laesst (:meth:`_linienlast_abschnitt`), und
+        jeder Verweis auf irgendeinen Stab der Kette, auch den ersten (danach
+        meinte er die ganze Kette). Bis zur Runde 2 setzte es feste Laengen
+        still auf β · L zurueck und uebernahm die Parameter des ersten Stabs.
 
         Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
-        Elemente aller in Reihenfolge; die anderen entfallen. Gleiche
-        Linienlasten gehen mit, um die Laenge der Staebe davor verschoben (die
-        Elementlasten daraus bleiben dieselben); gleiche Vorspannungen bleiben
-        einmal stehen, denn eine Vorspannung wirkt auf jedes Element ihres
-        Stabs. Die Elemente bleiben, wie sie sind: es wird nichts umgedreht,
-        darum muss jeder Stab in Richtung der Kette laufen.
+        Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
+        geht mit und gilt auf dem Abschnitt, auf dem sie vorher lag: um die
+        Laenge der Staebe davor verschoben, „bis zum Ende“ wird das Ende ihres
+        alten Stabs. Die Elementlasten jedes Elements bleiben dieselben, die
+        Rechnung auch. Bis zum 04.10.2026 (Runde 2) wies es verschiedene
+        Linienlasten ab und nahm nur gleiche mit; der Anwender wollte es
+        lockerer. Gleiche Vorspannungen bleiben einmal stehen, denn eine
+        Vorspannung wirkt auf jedes Element ihres Stabs. Die Elemente bleiben,
+        wie sie sind: es wird nichts umgedreht, darum muss jeder Stab in
+        Richtung der Kette laufen.
 
         Rueckgabe (Name, [Hinweise]); ValueError mit den Gruenden, wenn es
         nicht geht - dann ist nichts geaendert."""
@@ -6091,19 +6129,30 @@ class Model:
             if any(w != werte[0] for w in werte[1:]):
                 gruende.append(f"{self.STABFELDER.get(f, f)} verschieden: "
                                + ", ".join(f"{n} {self._stabwert(f, w)}" for n, w in zip(folge, werte)))
-        lasten = [self._stablasten(n) for n in folge]
-        if any(x != lasten[0] for x in lasten[1:]):
-            def lasttext(n, x):
-                if not x:
-                    return f"{n} keine"
-                t = []
-                for z in x:
-                    if z[1] == "Vorspannung":
-                        t.append(f"Vorspannung {z[2] / 1e3:g} kN in {z[0]}")
-                    else:
-                        t.append(f"Linienlast ({', '.join(f'{q / 1e3:g}' for q in z[2])}) kN/m in {z[0]}")
-                return f"{n} " + ", ".join(t)
-            gruende.append("Lasten am Stab verschieden: " + "; ".join(lasttext(n, x) for n, x in zip(folge, lasten)))
+        vsp = [self._stabvorspannungen(n) for n in folge]
+        if any(x != vsp[0] for x in vsp[1:]):
+            def vtext(n, x):
+                return f"{n} " + (", ".join(f"Vorspannung {k / 1e3:g} kN in {f}" for f, k in x) or "keine")
+            gruende.append("Vorspannungen verschieden: " + "; ".join(vtext(n, x) for n, x in zip(folge, vsp)))
+        # Linienlasten gehen mit, jede auf ihrem Abschnitt (Nachtrag 04.10.2026),
+        # ausser denen, die sich nicht verlustfrei so schreiben lassen. Die
+        # Laenge wie in _linienlast_legen: Elementlaengen der Reihe nach addiert
+        laenge = {}
+        for n in folge:
+            L = 0.0
+            for e in self._stab_elemente(self.members[n]):
+                L += self.element_length(e)
+            laenge[n] = L
+        nicht = []
+        for fall, lc in self.load_cases.items():
+            for ll in lc.linienlasten:
+                if ll.art == "stab" and ll.ziel in laenge:
+                    _ab, grund = self._linienlast_abschnitt(ll, laenge[ll.ziel])
+                    if grund:
+                        nicht.append(f"{ll.ziel}: Linienlast ({', '.join(f'{q / 1e3:g}' for q in ll.q)}) kN/m "
+                                     f"in {fall} {grund}")
+        if nicht:
+            gruende.append("Linienlast geht nicht verlustfrei mit: " + "; ".join(nicht))
         for n in folge:
             verweise = self.stab_verweise(n)
             if verweise:
@@ -6112,20 +6161,22 @@ class Model:
             raise ValueError(" | ".join(gruende))
         bleibt = self.members[folge[0]]
         hinweise = []
-        # gleiche Linienlasten: um die Laenge der Staebe davor verschieben,
-        # „bis zum Ende“ wird die Laenge des alten Stabs
-        lage, s = {}, 0.0
+        # jede Linienlast auf den Abschnitt, auf dem sie lag: um die Laenge der
+        # Staebe davor verschoben, „bis zum Ende“ wird das Ende des alten Stabs.
+        # Der Versatz wie in _linienlast_legen auf dem neuen Stab: alle
+        # Elementlaengen der Kette der Reihe nach addiert
+        versatz, s = {}, 0.0
         for n in folge:
-            L = sum(self.element_length(e) for e in self._stab_elemente(self.members[n]))
-            lage[n] = (s, L)
-            s += L
+            versatz[n] = s
+            for e in self._stab_elemente(self.members[n]):
+                s += self.element_length(e)
         bewegt = 0
         for lc in self.load_cases.values():
             for ll in lc.linienlasten:
-                if ll.art == "stab" and ll.ziel in lage:
-                    o, L = lage[ll.ziel]
-                    bis = L if ll.bis is None else min(float(ll.bis), L)
-                    ll.von, ll.bis, ll.ziel = o + max(0.0, float(ll.von)), o + bis, bleibt.name
+                if ll.art == "stab" and ll.ziel in versatz:
+                    (a, b), _g = self._linienlast_abschnitt(ll, laenge[ll.ziel])
+                    o = versatz[ll.ziel]
+                    ll.von, ll.bis, ll.ziel = o + a, o + b, bleibt.name
                     bewegt += 1
             # gleiche Vorspannungen: einmal am Stab (sie wirkt auf jedes Element)
             weg = set(folge[1:])

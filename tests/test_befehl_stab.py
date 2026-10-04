@@ -760,7 +760,8 @@ def test_kette_und_zusammenfassen():
 
 
 def test_zusammenfassen_grenzen():
-    """Was „Stäbe zusammenfassen“ abweist, und Linienlasten gehen mit."""
+    """Was „Stäbe zusammenfassen“ abweist, und Linienlasten gehen mit - auch
+    verschiedene, jede auf ihrem Abschnitt (Nachtrag 04.10.2026)."""
     import numpy as np
     from statik3d import solver
     w, app = _fenster()
@@ -803,17 +804,29 @@ def test_zusammenfassen_grenzen():
     for a, b in ((0, 1), (1, 2)):
         w._maske_stab_anlegen({"knoten": [a, b], "mat": MAT, "sec": "IPE 300"})
     g = next(iter(m.load_cases))
-    # verschiedene Lasten an den Staeben: abgewiesen (Runde 2, G1 - bis dahin
-    # gingen sie verschoben mit)
+    # verschiedene Lasten an den Staeben: sie gehen mit, jede auf ihrem
+    # Abschnitt (Nachtrag 04.10.2026, der Anwender wollte es lockerer; in
+    # Runde 2 abgewiesen, davor verschoben mitgenommen)
     m.add_linienlast("S1", [0, 0, -5e3], case=g)                      # bis zum Ende
     m.add_linienlast("S2", [0, 0, -8e3], case=g, von=1.0, bis=2.5, q2=[0, 0, -2e3])
     m.lasten_verteilen()
+    u0 = solver.solve_all(m, design=False).cases[g].u
     w.fehler_liste.clear()
-    w.staebe_zusammenfassen(["S2", "S1"])
-    check("Verschiedene Linienlasten an S1 und S2: abgewiesen, der Grund nennt beide",
-          sorted(m.members) == ["S1", "S2"] and any("Lasten am Stab verschieden: S1 Linienlast" in f
-                                                    and "S2 Linienlast" in f for f in w.fehler_liste),
-          str(w.fehler_liste))
+    name = w.staebe_zusammenfassen(["S2", "S1"])
+    lasten = [(ll.ziel, round(ll.von, 9), None if ll.bis is None else round(ll.bis, 9))
+              for ll in w.model.load_cases[g].linienlasten]
+    check("Verschiedene Linienlasten an S1 und S2: zusammengefasst, jede auf ihrem Abschnitt (0–3 m, 4–5,5 m)",
+          name == "S1" and not w.fehler_liste and sorted(w.model.members) == ["S1"]
+          and lasten == [("S1", 0.0, 3.0), ("S1", 4.0, 5.5)], f"{lasten} {w.fehler_liste}")
+    u1 = solver.solve_all(w.model, design=False).cases[g].u
+    du = float(np.max(np.abs(u1 - u0)))
+    check("… die Rechnung bleibt (Verschiebungen gleich bis auf 1e-12 relativ)",
+          name == "S1" and du <= 1e-12 * float(np.max(np.abs(u0))) and float(np.max(np.abs(u0))) > 0,
+          f"max |Δu| = {du:.3e} bei |u|max = {float(np.max(np.abs(u0))):.3e}")
+    if name:
+        w.undo()                        # wieder S1 und S2 fuer den naechsten Fall
+        app.processEvents()
+    m = w.model
     # gleiche Linienlasten an beiden: sie gehen mit, die Rechnung bleibt
     m.load_cases[g].linienlasten = []
     m.add_linienlast("S1", [0, 0, -8e3], case=g, von=1.0, bis=2.5, q2=[0, 0, -2e3])

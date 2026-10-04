@@ -3572,6 +3572,10 @@ Jeder gezeichnete Stab hat die Knicklänge seiner eigenen Länge. Bilden
 kollineare Stäbe eine Kette mit freien Zwischenknoten, warnen *Prüfen* und der
 Nachweis, und *Stäbe zusammenfassen* macht einen Stab daraus, wenn dabei nichts
 verloren geht (Kapitel 8; an einer Stütze aus drei Stäben 0,7969 statt 0,2856).
+Haben die Stäbe verschiedene Linienlasten, gehen sie mit: Jede gilt auf dem
+zusammengefassten Stab auf dem Abschnitt, auf dem sie vorher lag, und die
+Rechnung bleibt dieselbe. Bis zum 04.10.2026 wies das Zusammenfassen
+verschiedene Linienlasten ab.
 Alte Modelle, deren Stäbe noch aus einzelnen Stabelementen ohne Stab bestehen,
 bekommen ihre Stäbe mit *Stäbe automatisch erkennen* oder mit *Struktur →
 Nachweisstäbe ▾ → Stab aus Stabelementen…*. Diese Maske nimmt kein Element an,
@@ -5957,13 +5961,30 @@ nichts und ändert keine Bedeutung: Es weist ab und nennt jeden Grund mit Stab
 und Wert, wenn ein Stab eine feste Knick- oder Kipplänge hat (sie gilt für den
 einzelnen Stab; erst auf β·L zurücksetzen, dann zusammenfassen), wenn die
 Nachweisparameter nicht gleich sind (Kerbfall, β-Werte, Wölbrandbedingung und
-jedes andere Feld des Stabs), wenn „deaktiviert“ oder die Lasten und
-Vorspannungen am Stab nicht bei allen gleich sind, und wenn irgendein Stab der
-Kette, auch der erste, von einem anderen Objekt verwendet wird (Stellung,
-Verformungsnachweis, Layer, Subsystem, Wind, Schweißnaht, Lasteinleitung).
-Sind alle gleich, bleiben die Parameter erhalten, gleiche Linienlasten gehen
-um die Länge der Stäbe davor verschoben mit, und eine gleiche Vorspannung
-bleibt einmal stehen. Jeder Stab muss in Richtung der Kette gezeichnet sein.
+jedes andere Feld des Stabs), wenn „deaktiviert“ oder die Vorspannungen nicht
+bei allen gleich sind (eine Vorspannung wirkt auf jedes Element ihres Stabs),
+wenn sich eine Linienlast nicht verlustfrei mitnehmen lässt, und wenn
+irgendein Stab der Kette, auch der erste, von einem anderen Objekt verwendet
+wird (Stellung, Verformungsnachweis, Layer, Subsystem, Wind, Schweißnaht,
+Lasteinleitung). Sonst bleiben die Parameter erhalten, und jede Linienlast
+geht mit, auch wenn die Stäbe verschiedene haben: Sie gilt auf dem
+zusammengefassten Stab auf dem Abschnitt, auf dem sie vorher lag, um die Länge
+der Stäbe davor verschoben, und „bis zum Ende“ wird das Ende ihres alten
+Stabs. Das gilt für gleichmäßige und trapezförmige Lasten, global und lokal
+(das lokale System ist das jedes Stabelements, und die Elemente bleiben, wie
+sie sind), und für eine gleichmäßige Last, die über ihren Stab hinausreicht,
+auf dem Stück, auf dem sie wirkt. Die Elementlasten jedes Elements bleiben
+dieselben, Auflagerkräfte und Verschiebungen auch; an einem Träger aus zwei
+Stäben mit −5 und −9 kN/m ergibt der zusammengefasste Stab dieselben
+Verschiebungen und denselben Nachweis wie ein von vornherein ganzer Stab mit
+diesen beiden Abschnittslasten. Nicht verlustfrei mitnehmen lässt sich eine
+trapezförmige Last, die über ihren Stab hinausreicht (das Programm setzt q
+und q2 dann an die Stabenden, zusammengefasst müssten ihre Stellen geändert
+werden), und eine Last, die außerhalb ihres Stabs liegt und nicht wirkt
+(verschoben läge sie auf einem anderen Stab); dann nennt die Meldung Stab,
+Lastfall und Abschnitt. Eine gleiche Vorspannung bleibt einmal stehen. Jeder
+Stab muss in Richtung der Kette gezeichnet sein. Bis zum 04.10.2026 wies das
+Zusammenfassen verschiedene Linienlasten ab und nahm nur gleiche mit.
 Bis zur zweiten Fassung vom 03.10.2026 setzte das Zusammenfassen feste
 Knicklängen still auf β · L zurück und übernahm die Parameter, Verweise und
 den Schalter „deaktiviert“ des ersten Stabs. An der Stütze HEB 200, 6 m,
