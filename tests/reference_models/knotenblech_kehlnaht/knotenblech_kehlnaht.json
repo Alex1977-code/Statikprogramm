@@ -1,0 +1,431 @@
+{
+ "name": "Knotenblech mit Kehlnaht (Laengsrippe, IIW Typ a)",
+ "einheiten": "mm, N, N/mm2",
+ "werkstoff": {
+  "E": 210000.0,
+  "nu": 0.3
+ },
+ "grundblech": {
+  "min": [
+   -5.0,
+   0.0,
+   -10.0
+  ],
+  "max": [
+   205.0,
+   80.0,
+   0.0
+  ]
+ },
+ "knotenblech": {
+  "min": [
+   70.0,
+   36.0,
+   0.0
+  ],
+  "max": [
+   130.0,
+   44.0,
+   40.0
+  ]
+ },
+ "kehlnaht": {
+  "schenkel": 6.0,
+  "quader_min": [
+   64.0,
+   30.0,
+   0.0
+  ],
+  "quader_max": [
+   136.0,
+   50.0,
+   6.0
+  ],
+  "halbraeume_innen": [
+   {
+    "punkt": [
+     136.0,
+     0,
+     0
+    ],
+    "normale": [
+     1,
+     0,
+     1
+    ]
+   },
+   {
+    "punkt": [
+     64.0,
+     0,
+     0
+    ],
+    "normale": [
+     -1,
+     0,
+     1
+    ]
+   },
+   {
+    "punkt": [
+     0,
+     50.0,
+     0
+    ],
+    "normale": [
+     0,
+     1,
+     1
+    ]
+   },
+   {
+    "punkt": [
+     0,
+     30.0,
+     0
+    ],
+    "normale": [
+     0,
+     -1,
+     1
+    ]
+   }
+  ]
+ },
+ "schnittebenen": [
+  {
+   "punkt": [
+    0.0,
+    40.0,
+    -5.0
+   ],
+   "normale": [
+    -1,
+    0,
+    0
+   ]
+  },
+  {
+   "punkt": [
+    200.0,
+    40.0,
+    -5.0
+   ],
+   "normale": [
+    1,
+    0,
+    0
+   ]
+  }
+ ],
+ "last": {
+  "art": "Verschiebungsfeld an den Schnittebenen",
+  "sigma_n": 100.0,
+  "u": "(eps x, -nu eps (y - 40), -nu eps (z + 5)), eps = sigma_n / E",
+  "schnittkraft_N": 80000.0
+ },
+ "nahtlinien": {
+  "stirn_rechts": [
+   [
+    136.0,
+    32.0,
+    0.0
+   ],
+   [
+    136.0,
+    34.0,
+    0.0
+   ],
+   [
+    136.0,
+    36.0,
+    0.0
+   ],
+   [
+    136.0,
+    38.0,
+    0.0
+   ],
+   [
+    136.0,
+    40.0,
+    0.0
+   ],
+   [
+    136.0,
+    42.0,
+    0.0
+   ],
+   [
+    136.0,
+    44.0,
+    0.0
+   ],
+   [
+    136.0,
+    46.0,
+    0.0
+   ],
+   [
+    136.0,
+    48.0,
+    0.0
+   ]
+  ],
+  "stirn_links": [
+   [
+    64.0,
+    32.0,
+    0.0
+   ],
+   [
+    64.0,
+    34.0,
+    0.0
+   ],
+   [
+    64.0,
+    36.0,
+    0.0
+   ],
+   [
+    64.0,
+    38.0,
+    0.0
+   ],
+   [
+    64.0,
+    40.0,
+    0.0
+   ],
+   [
+    64.0,
+    42.0,
+    0.0
+   ],
+   [
+    64.0,
+    44.0,
+    0.0
+   ],
+   [
+    64.0,
+    46.0,
+    0.0
+   ],
+   [
+    64.0,
+    48.0,
+    0.0
+   ]
+  ]
+ },
+ "hot_spot": {
+  "verfahren": "IIW Typ a, Referenzpunkte 0,4 t und 1,0 t senkrecht zur Naht auf der Blechoberseite (z = 0)",
+  "formel": "sigma_hs = 5/3 sigma_xx(0,4 t) - 2/3 sigma_xx(1,0 t)",
+  "punkte_rechts": {
+   "0.4t": [
+    [
+     140.0,
+     32.0,
+     0.0
+    ],
+    [
+     140.0,
+     34.0,
+     0.0
+    ],
+    [
+     140.0,
+     36.0,
+     0.0
+    ],
+    [
+     140.0,
+     38.0,
+     0.0
+    ],
+    [
+     140.0,
+     40.0,
+     0.0
+    ],
+    [
+     140.0,
+     42.0,
+     0.0
+    ],
+    [
+     140.0,
+     44.0,
+     0.0
+    ],
+    [
+     140.0,
+     46.0,
+     0.0
+    ],
+    [
+     140.0,
+     48.0,
+     0.0
+    ]
+   ],
+   "1.0t": [
+    [
+     146.0,
+     32.0,
+     0.0
+    ],
+    [
+     146.0,
+     34.0,
+     0.0
+    ],
+    [
+     146.0,
+     36.0,
+     0.0
+    ],
+    [
+     146.0,
+     38.0,
+     0.0
+    ],
+    [
+     146.0,
+     40.0,
+     0.0
+    ],
+    [
+     146.0,
+     42.0,
+     0.0
+    ],
+    [
+     146.0,
+     44.0,
+     0.0
+    ],
+    [
+     146.0,
+     46.0,
+     0.0
+    ],
+    [
+     146.0,
+     48.0,
+     0.0
+    ]
+   ]
+  },
+  "punkte_links": {
+   "0.4t": [
+    [
+     60.0,
+     32.0,
+     0.0
+    ],
+    [
+     60.0,
+     34.0,
+     0.0
+    ],
+    [
+     60.0,
+     36.0,
+     0.0
+    ],
+    [
+     60.0,
+     38.0,
+     0.0
+    ],
+    [
+     60.0,
+     40.0,
+     0.0
+    ],
+    [
+     60.0,
+     42.0,
+     0.0
+    ],
+    [
+     60.0,
+     44.0,
+     0.0
+    ],
+    [
+     60.0,
+     46.0,
+     0.0
+    ],
+    [
+     60.0,
+     48.0,
+     0.0
+    ]
+   ],
+   "1.0t": [
+    [
+     54.0,
+     32.0,
+     0.0
+    ],
+    [
+     54.0,
+     34.0,
+     0.0
+    ],
+    [
+     54.0,
+     36.0,
+     0.0
+    ],
+    [
+     54.0,
+     38.0,
+     0.0
+    ],
+    [
+     54.0,
+     40.0,
+     0.0
+    ],
+    [
+     54.0,
+     42.0,
+     0.0
+    ],
+    [
+     54.0,
+     44.0,
+     0.0
+    ],
+    [
+     54.0,
+     46.0,
+     0.0
+    ],
+    [
+     54.0,
+     48.0,
+     0.0
+    ]
+   ]
+  }
+ },
+ "toleranz": {
+  "sigma_hs_gegen_referenz": 0.03,
+  "symmetrie_rechts_links": 0.01
+ },
+ "referenz": {
+  "entscheidung": "E2 (29.09.2026): Tet10-Rechnung des Hauptprogramms statik3d; E3: Ablage tests/reference_models/knotenblech_kehlnaht/ durch die Hauptsitzung",
+  "geometrie": "knotenblech.step (Blech nur zwischen den Schnittebenen x 0 und 200; identisch mit der CSG des Volumenmoduls ohne das Polster)",
+  "netz_angebot": "knotenblech_tet10_0.5mm.inp (gmsh 4.15.2: C3D10, 0.5 mm in 12 mm um die Nahtuebergaenge, 2,5 mm im Blech, 5 mm fern; Knotenmengen stirn_x0, stirn_x200); eigenes Netz des Hauptprogramms ist ebenso willkommen",
+  "randbedingungen": "u_x = eps x auf den Stirnflaechen x 0 (u_x = 0) und x 200 (u_x = 200 eps = 0,095238 mm), eps = 100/210000; Querbewegung frei; Starrkoerper statisch bestimmt sperren (z. B. u_y = u_z = 0 am Knoten (0, 40, -5), u_z = 0 am Knoten (0, 80, -5))",
+  "auswertung": "sigma_xx an den Blechoberflaechenpunkten (140, y, 0) und (146, y, 0) [rechts] sowie (60, y, 0) und (54, y, 0) [links] fuer y = 32, 34, ..., 48 (Knotenwerte oder an die Punkte interpoliert - bitte angeben), daraus sigma_hs = 5/3 sigma(0,4t) - 2/3 sigma(1,0t); dazu die Reaktionskraft in x an x 200, Knoten- und Elementzahl, Elementgroesse am Uebergang",
+  "lieferung": "Rohwerte (sigma_xx an allen 36 Punkten) und sigma_hs je Punkt als JSON; Toleranz der Abnahme 3 % (Vorgabe 13); Netzkonvergenz: dieselben Werte mit halbiertem Netz am Uebergang (0,5 mm), falls die Abweichung zum Volumenmodul ueber 3 % liegt"
+ }
+}

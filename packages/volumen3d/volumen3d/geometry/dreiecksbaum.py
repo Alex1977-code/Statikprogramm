@@ -99,6 +99,18 @@ class Dreiecksbaum:
         n = _im_radius_nb(P, float(r) * (1 + 1e-9), self.T, self.lo, self.hi, self.links, self.rechts, self.start, self.ende, 2 * self.tiefe + 4, aus)
         return np.sort(self.perm[aus[:n]])
 
+    def in_box(self, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+        """Indizes der Dreiecke, deren Huellbox die Box [lo, hi] beruehrt (Obermenge der schneidenden; +-inf erlaubt).
+        Fuer die Saeule einer Zelle bei der Huellenintegration (geometry/huelle.py): alle Dreiecke mit x >= x_lo in der
+        y-z-Scheibe der Zelle, auch weit entfernte."""
+        if len(self.T) == 0:
+            return np.zeros(0, int)
+        lo = np.ascontiguousarray(np.asarray(lo, float).reshape(3))
+        hi = np.ascontiguousarray(np.asarray(hi, float).reshape(3))
+        aus = np.empty(len(self.T), np.int64)
+        n = _in_box_nb(lo, hi, self.T, self.lo, self.hi, self.links, self.rechts, self.start, self.ende, 2 * self.tiefe + 4, aus)
+        return np.sort(self.perm[aus[:n]])
+
 
 if _NUMBA:
     @numba.njit(cache=True, inline="always")
@@ -230,6 +242,35 @@ if _NUMBA:
                 for t in range(start[k], ende[k]):
                     qx, qy, qz = _punkt_dreieck(px, py, pz, T, t)
                     if (qx - px) ** 2 + (qy - py) ** 2 + (qz - pz) ** 2 <= r2:
+                        aus[n] = t
+                        n += 1
+            else:
+                stapel[sp] = links[k]
+                stapel[sp + 1] = rechts[k]
+                sp += 2
+        return n
+
+    @numba.njit(cache=True)
+    def _in_box_nb(blo, bhi, T, lo, hi, links, rechts, start, ende, stapelgroesse, aus):   # pragma: no cover - numba
+        n = 0
+        stapel = np.empty(stapelgroesse, np.int64)
+        sp = 1
+        stapel[0] = 0
+        while sp > 0:
+            sp -= 1
+            k = stapel[sp]
+            if hi[k, 0] < blo[0] or lo[k, 0] > bhi[0] or hi[k, 1] < blo[1] or lo[k, 1] > bhi[1] or hi[k, 2] < blo[2] or lo[k, 2] > bhi[2]:
+                continue
+            if links[k] < 0:
+                for t in range(start[k], ende[k]):
+                    ok = True
+                    for d in range(3):
+                        mn = min(T[t, 0, d], T[t, 1, d], T[t, 2, d])
+                        mx = max(T[t, 0, d], T[t, 1, d], T[t, 2, d])
+                        if mx < blo[d] or mn > bhi[d]:
+                            ok = False
+                            break
+                    if ok:
                         aus[n] = t
                         n += 1
             else:

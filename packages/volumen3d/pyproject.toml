@@ -12,6 +12,8 @@ dependencies = ["numpy>=1.24", "scipy>=1.10", "statik3d-contracts>=2.0,<3"]
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x>=13"]
 schnell = ["numba>=0.59", "pypardiso>=0.4"]
+# STEP-Eingang ueber gmsh-Tessellierung (Plan TP 5 B5); gmsh steht unter der GPL und ist darum nur optional
+step = ["gmsh>=4.11"]
 
 # Registrierung nach Vertrag Abschnitt 7 und 7a. 'hybrid' ist bis Teilprojekt 7 ein
 # ehrlicher Platzhalter (capabilities leer, prepare wirft SolverError).

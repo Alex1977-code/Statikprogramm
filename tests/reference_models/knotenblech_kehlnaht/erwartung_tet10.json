@@ -1,0 +1,520 @@
+{
+ "modell": "knotenblech_kehlnaht",
+ "beschreibung": "Tet10-Referenz des Hauptprogramms statik3d (Entscheidung E2 des Anwenders, 29.09.2026)",
+ "programmstand": {
+  "commit": "f56281a6f6042e9d61c1284d0b0eb6b5a5afae4b",
+  "zweig": "main"
+ },
+ "netz": {
+  "quelle": "knotenblech_tet10_lokal05.inp",
+  "sha256": "abcde7a8ba8ec4cbf5bf279e8d81bdee5c7ab2ddb328b45dd8eff033c65d0acc",
+  "erzeuger": "gmsh (Session B), C3D10, 0,5 mm am Uebergang",
+  "elemente_tet10": 305689,
+  "knoten": 445946,
+  "kantenlaenge_uebergang_mm": {
+   "median_mm": 0.687,
+   "p90_mm": 0.894,
+   "max_mm": 1.259
+  },
+  "hinweis": "nur die C3D10-Elemente der Datei; die CPS6-Stirnflaechen sind weggelassen",
+  "anforderung_kante_uebergang_mm": 1.0,
+  "anforderung_erfuellt": true,
+  "hinweis_kante": "Groessenfeld des Erzeugers 0,5 mm in Kaesten um Nahtuebergang und Auswertepunkte, sonst wie das 1-mm-Netz; gemessen wie beim 1-mm-Netz an allen Kanten der Tetraeder mit einer Ecke hoechstens 1,5 mm vom Uebergang: Median 0.687 mm, 90 % unter 0.894 mm, laengste 1.259 mm"
+ },
+ "werkstoff": {
+  "E_N_mm2": 210000.0,
+  "nu": 0.3
+ },
+ "randbedingungen": {
+  "ux_x0_mm": 0.0,
+  "ux_x200_mm": 0.095238095,
+  "quer": "frei",
+  "starrkoerper": {
+   "uy_uz_0_bei_mm": [
+    0.0,
+    39.375,
+    -4.962294
+   ],
+   "uz_0_bei_mm": [
+    0.0,
+    80.0,
+    -5.0
+   ]
+  }
+ },
+ "reaktion_x_an_x200_N": 81843.404,
+ "auswertung": {
+  "primaer": "sigma_xx = Spannungsfeld des Tet10-Elements am Punkt (interpoliert, Rohwert), gemittelt ueber die Elemente, die den Punkt enthalten",
+  "zum_vergleich": "sigma_xx_knoten = geglaettete Eckspannung des Loesers (res.solid_knoten), linear im Oberflaechendreieck interpoliert",
+  "einheit": "N/mm2"
+ },
+ "punkte": [
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.8421,
+   "sigma_xx_knoten": 125.9052
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.7864,
+   "sigma_xx_knoten": 118.7866
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.2248,
+   "sigma_xx_knoten": 130.2422
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4124,
+   "sigma_xx_knoten": 120.422
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.8126,
+   "sigma_xx_knoten": 132.9718
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.6515,
+   "sigma_xx_knoten": 121.6537
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.4304,
+   "sigma_xx_knoten": 134.468
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.417,
+   "sigma_xx_knoten": 122.4185
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.8834,
+   "sigma_xx_knoten": 134.9524
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.6672,
+   "sigma_xx_knoten": 122.6722
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.4304,
+   "sigma_xx_knoten": 134.4547
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4178,
+   "sigma_xx_knoten": 122.4189
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.8541,
+   "sigma_xx_knoten": 132.9283
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.6547,
+   "sigma_xx_knoten": 121.6505
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.1452,
+   "sigma_xx_knoten": 130.1976
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4104,
+   "sigma_xx_knoten": 120.4147
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.8173,
+   "sigma_xx_knoten": 125.8696
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.7885,
+   "sigma_xx_knoten": 118.7902
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.7892,
+   "sigma_xx_knoten": 125.8719
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.7805,
+   "sigma_xx_knoten": 118.7859
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.1367,
+   "sigma_xx_knoten": 130.2248
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4172,
+   "sigma_xx_knoten": 120.417
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.892,
+   "sigma_xx_knoten": 132.9334
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.6503,
+   "sigma_xx_knoten": 121.6544
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.4733,
+   "sigma_xx_knoten": 134.517
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4129,
+   "sigma_xx_knoten": 122.4154
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.8698,
+   "sigma_xx_knoten": 134.9305
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.6695,
+   "sigma_xx_knoten": 122.6708
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.3818,
+   "sigma_xx_knoten": 134.4555
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4131,
+   "sigma_xx_knoten": 122.4177
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.8542,
+   "sigma_xx_knoten": 132.9543
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.6503,
+   "sigma_xx_knoten": 121.6548
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.1152,
+   "sigma_xx_knoten": 130.1921
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4105,
+   "sigma_xx_knoten": 120.414
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.842,
+   "sigma_xx_knoten": 125.8665
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.7815,
+   "sigma_xx_knoten": 118.7808
+  }
+ ],
+ "hot_spot": [
+  {
+   "seite": "rechts",
+   "y_mm": 32.0,
+   "sigma_hs": 130.5459,
+   "sigma_hs_knoten": 130.6509
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 34.0,
+   "sigma_hs": 136.7665,
+   "sigma_hs_knoten": 136.7891
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 36.0,
+   "sigma_hs": 140.2532,
+   "sigma_hs_knoten": 140.5171
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 38.0,
+   "sigma_hs": 142.4393,
+   "sigma_hs_knoten": 142.501
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 40.0,
+   "sigma_hs": 143.0276,
+   "sigma_hs_knoten": 143.1392
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 42.0,
+   "sigma_hs": 142.4387,
+   "sigma_hs_knoten": 142.4785
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 44.0,
+   "sigma_hs": 140.3203,
+   "sigma_hs_knoten": 140.4469
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 46.0,
+   "sigma_hs": 136.635,
+   "sigma_hs_knoten": 136.7195
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 48.0,
+   "sigma_hs": 130.5032,
+   "sigma_hs_knoten": 130.5891
+  },
+  {
+   "seite": "links",
+   "y_mm": 32.0,
+   "sigma_hs": 130.4616,
+   "sigma_hs_knoten": 130.596
+  },
+  {
+   "seite": "links",
+   "y_mm": 34.0,
+   "sigma_hs": 136.6164,
+   "sigma_hs_knoten": 136.7633
+  },
+  {
+   "seite": "links",
+   "y_mm": 36.0,
+   "sigma_hs": 140.3865,
+   "sigma_hs_knoten": 140.4528
+  },
+  {
+   "seite": "links",
+   "y_mm": 38.0,
+   "sigma_hs": 142.5135,
+   "sigma_hs_knoten": 142.5847
+  },
+  {
+   "seite": "links",
+   "y_mm": 40.0,
+   "sigma_hs": 143.0033,
+   "sigma_hs_knoten": 143.1037
+  },
+  {
+   "seite": "links",
+   "y_mm": 42.0,
+   "sigma_hs": 142.3609,
+   "sigma_hs_knoten": 142.4808
+  },
+  {
+   "seite": "links",
+   "y_mm": 44.0,
+   "sigma_hs": 140.3235,
+   "sigma_hs_knoten": 140.4873
+  },
+  {
+   "seite": "links",
+   "y_mm": 46.0,
+   "sigma_hs": 136.5849,
+   "sigma_hs_knoten": 136.7108
+  },
+  {
+   "seite": "links",
+   "y_mm": 48.0,
+   "sigma_hs": 130.549,
+   "sigma_hs_knoten": 130.5904
+  }
+ ],
+ "aenderung_gegen_1mm": {
+  "links 32": -0.000107,
+  "links 34": 0.000421,
+  "links 36": -0.001716,
+  "links 38": -0.001865,
+  "links 40": -0.000961,
+  "links 42": 0.001418,
+  "links 44": -0.00099,
+  "links 46": -0.003103,
+  "links 48": 0.001684,
+  "rechts 32": 0.003136,
+  "rechts 34": 0.002224,
+  "rechts 36": -0.000544,
+  "rechts 38": 7.4e-05,
+  "rechts 40": 0.002004,
+  "rechts 42": -0.000802,
+  "rechts 44": 0.001231,
+  "rechts 46": -0.000255,
+  "rechts 48": 0.00066
+ },
+ "pruefung": {
+  "eichung_max_abweichung_N_mm2": 3.750983523786999e-09,
+  "primaer_gegen_knoten_hs_max": 0.001881,
+  "symmetrie_rechts_links_max": 0.001098,
+  "symmetrie_y40_max": 0.001068
+ },
+ "vorgaenger": {
+  "datei": "erwartung_tet10_1mm.json",
+  "netz": "knotenblech_tet10_1mm.inp",
+  "programmstand": "7da3571",
+  "hinweis": "aenderung_gegen_1mm = sigma_hs dieses Netzes gegen das 1-mm-Netz, relativ"
+ },
+ "status": "verbindlich; Netzkonvergenz belegt: sigma_hs aendert sich gegen das 1-mm-Netz an keinem Nahtpunkt um mehr als 0,31 % (Schranke 1 %); ersetzt seit 03.10.2026 die 1-mm-Werte"
+}

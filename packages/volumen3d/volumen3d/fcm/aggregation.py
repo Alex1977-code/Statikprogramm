@@ -41,8 +41,10 @@ import numpy as np
 from .basis import basis_3d
 from .gitter import CUT
 
+_NACHBARN_TAB: dict = {}                                            # wird unten aus _NACHBARN gefuellt
 _NACHBARN = sorted(((dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dy, dz) != (0, 0, 0)),
                    key=lambda v: (abs(v[0]) + abs(v[1]) + abs(v[2])))     # Flaechen-, dann Kanten-, dann Eckennachbarn
+_NACHBARN_TAB.update({d: i for i, d in enumerate(_NACHBARN)})
 
 
 def werkstoffanteile(gitter, quadratur) -> np.ndarray:
@@ -65,11 +67,16 @@ class Zellaggregation:
         self.gitter = gitter
         self.schwelle = float(schwelle)
         self.anteil = werkstoffanteile(gitter, quadratur)
+        # Rangfolge der Wurzeln nur nach dem gerundeten Anteil: zwei volle Nachbarn unterschieden sich um 3e-15 je
+        # nach Quadratur (Referenz gegen Moment Fitting, Lame h 20 p 3), der Zufallssieger aenderte C und die
+        # Spannungen am Rand um 4e-3 (30.09.2026). Gleichstand entscheidet die feste Nachbarreihenfolge.
+        self._rang = np.round(self.anteil, 9)
         self.wurzel = np.full(len(gitter.ijk), -1, int)             # -1: wohlgestellt oder ohne Wurzel
         self.schlecht = self.anteil < self.schwelle
         self.leer = self.schlecht & (self.anteil <= 0.0)             # geschnitten klassifiziert, aber ohne Werkstoff
         self.werkstofffern = self._werkstofffern()                    # leer und ohne Beruehrung mit Werkstoff
         self.zu_teilen: tuple = ()
+        self._nachbar_tab: dict[int, np.ndarray] = {}
         self._wurzeln_zuordnen()
         self.statistik = {"schwelle": self.schwelle, "zellen_schlecht": int(self.schlecht.sum()),
                           "zellen_leer": int(self.leer.sum()), "zellen_werkstofffern": int(self.werkstofffern.sum()),
@@ -90,8 +97,28 @@ class Zellaggregation:
             fern[c] = not bool(np.any(self.anteil[g.blaetter_in_box(lo - eps, hi + eps)] > 0.0))
         return fern
 
+    def _nachbarn_vorberechnen(self, zellen: np.ndarray) -> None:
+        """Blaetter hinter allen 26 Flaechen, Kanten und Ecken der Zellen in einem Aufruf von zelle_finden.
+        Einzeln waren es 50 492 Aufrufe mit je einem Punkt, 6,4 s von 23 s Konstruktor bei Kirsch h 8 p 3 (Profil
+        29.09.2026, A2 Plan TP 5); die Suche ist punktweise, die Nachbarn sind dieselben."""
+        zellen = np.asarray(zellen, int)
+        if len(zellen) == 0:
+            return
+        g = self.gitter
+        lo, hi = g.zellbox(zellen)
+        m = 0.5 * (lo + hi)
+        hl = np.asarray(g.h_zelle(zellen), float).reshape(-1, 1, 1)
+        D = np.asarray(_NACHBARN, float)                               # (26, 3)
+        P = m[:, None, :] + (0.5 * hl + 1e-4 * hl) * D[None, :, :]
+        n = g.zelle_finden(P.reshape(-1, 3)).reshape(len(zellen), len(_NACHBARN))
+        for c, zeile in zip(zellen, n):
+            self._nachbar_tab[int(c)] = zeile
+
     def _nachbar(self, c: int, d) -> int:
         """Blatt hinter der Flaeche/Kante/Ecke in Richtung d (per Punktsuche, ebenenunabhaengig)."""
+        zeile = self._nachbar_tab.get(int(c))
+        if zeile is not None:
+            return int(zeile[_NACHBARN_TAB[tuple(d)]])
         lo, hi = self.gitter.zellbox(c)
         m = 0.5 * (lo + hi)
         hl = float(self.gitter.h_zelle(c))
@@ -108,6 +135,7 @@ class Zellaggregation:
         und baut das Gitter neu, dann liegen ihre Kinder auf der Ebene der Nachbarn."""
         g = self.gitter
         offen = list(np.flatnonzero(self.schlecht & ~self.werkstofffern))
+        self._nachbarn_vorberechnen(np.asarray(offen, int))
         rest = []
         nur_feiner: set[int] = set()
         for c in offen:
@@ -121,7 +149,7 @@ class Zellaggregation:
                     feiner_gesehen = True
                     continue
                 stufe = abs(d[0]) + abs(d[1]) + abs(d[2])
-                schluessel = (stufe, -self.anteil[n])
+                schluessel = (stufe, -self._rang[n])
                 if schluessel < best_schluessel:
                     beste, best_schluessel = n, schluessel
             if beste >= 0:
@@ -143,7 +171,7 @@ class Zellaggregation:
                     if n >= 0 and n != c and vorher[n] >= 0 and g.ebene[vorher[n]] <= g.ebene[c]:
                         kandidaten.add(int(vorher[n]))
                 if kandidaten:
-                    vergeben[c] = min(kandidaten, key=lambda r: (self._abstand_zu(c, r), -self.anteil[r]))
+                    vergeben[c] = min(kandidaten, key=lambda r: (self._abstand_zu(c, r), -self._rang[r], r))
                 else:
                     neu.append(c)
             for c, r in vergeben.items():
@@ -208,17 +236,28 @@ class Zellaggregation:
         # (test_zwaenge, duenne Wand, 27.09.2026: Mode 582 -> 6605 -> 582). Mit dem groebsten Eigentuemer
         # laufen alle Zwangsketten monoton zu groeberen Ebenen. Auf gleicher Ebene gewinnt die naechste
         # Wurzel (kleinste Fortsetzungskoeffizienten), dann die mit dem groessten Anteil.
+        #
+        # Die groebste schlechte Zelle zaehlt auch ohne Wurzel (sie behaelt alpha, FcmProblem): Ihre Moden sind frei und
+        # duerfen nicht ueber eine feinere Zelle an deren Wurzel haengen. Sonst band Z54 (Ebene 1) die Ecke, die sie mit der
+        # unverwurzelten Z11 (Ebene 0, Anteil 0,18) teilt, an die Wurzel Z66, waehrend ein haengender Mode der Nachbarzelle
+        # Z50 an Z11 haengt und die Wurzel denselben Mode enthaelt: 803 -> 192 -> 803, Zwangszyklus mit Koeffizient 1 und Rest
+        # 2,45 (T-Stoss mit zwei lokalen Halbierungen an den Kehlnaehten, Plan TP 5 B4, 30.09.2026). Ohne die Sperre lief die
+        # Kette nicht monoton zu groeberen Ebenen.
+        ebene_frei = np.full(g.n_moden, 1 << 30, int)
+        for c in np.flatnonzero(self.schlecht & (self.wurzel < 0) & ~self.werkstofffern):
+            mo = g.zell_moden[c]
+            ebene_frei[mo] = np.minimum(ebene_frei[mo], int(g.ebene[c]))
         mit_wurzel = np.flatnonzero(self.schlecht & (self.wurzel >= 0))
         abstand = {int(c): self._abstand(int(c)) for c in mit_wurzel}
         self.statistik["wurzelabstand_max"] = round(max(abstand.values(), default=0.0), 3)
-        reihenfolge = sorted(mit_wurzel, key=lambda c: (int(g.ebene[c]), abstand[int(c)], -self.anteil[self.wurzel[c]]))
+        reihenfolge = sorted(mit_wurzel, key=lambda c: (int(g.ebene[c]), abstand[int(c)], -self._rang[self.wurzel[c]]))
         for c in reihenfolge:
             for i in g.zell_moden[c]:
                 # alle Moden einer Zelle mit Wurzel werden gebunden, auch nicht relevante: eine leere Zelle
                 # kann einen Werkstoffsplitter unterhalb der Quadraturaufloesung beruehren, und dort
                 # ausgewertete Randspannungen verfehlten sonst das lineare Feld (Patch-Test duenne Waende
                 # p 3: 2,8e-6 statt < 1e-6)
-                if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in haengend:
+                if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in haengend and ebene_frei[i] >= g.ebene[c]:
                     eigentuemer[i] = c
         roh: dict[int, list[tuple[int, float]]] = {}
         for c in reihenfolge:
