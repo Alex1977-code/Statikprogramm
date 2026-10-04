@@ -907,6 +907,28 @@ Strukturspannung (am Knotenblech 2,95 %). Die Größe der Wirkung ist nicht vorh
 **Entscheidung:** keine Warnung, weil jede Warnung ohne Wirkung die Warnungen entwertet, die ein Nachweis lesen muss; die Zahl bleibt im Protokoll (`aggregation.zellen_ohne_wurzel`). Im Stand ohne Warnung (Commit dieser Entscheidung) trägt `fcm/problem.py`
 an der Stelle, die α für Zellen ohne Wurzel behält, einen Kommentar mit den gemessenen Größen, und `test_zwaenge.test_unverwurzelte_grobe_zelle` prüft, dass das Protokoll am T-Stoß die Zahl nennt (3 Zellen = Statistik = unverwurzelte schlechte Zellen).
 
+*Regeln O17, vor der Messung festgelegt (04.10.2026, nach Anweisung des Anwenders „O17“; Pull Request 24 ist auf main, e7e7877).* **Frage:** Wie genau gibt die Zwangsmatrix C Felder des Ansatzraums wieder, woher
+kommt der Boden von rund 2·10⁻⁸ in der Spannung (Streifen 30° p 3, O5 Regel (1) dort verfehlt; Starrkörperverschiebung 30 mm: 4,7·10⁻⁷; Patch-Körper p 4, lineares Feld: 1,6·10⁻⁸ innen, 2,7·10⁻⁷ am Rand), und lässt er sich auf
+Rundungsniveau senken? **Bekannt vor der Messung:** die Fortsetzung des Wurzelpolynoms in eine aggregierte Zelle (`Zellaggregation._fortsetzung`) löst ein volles (p+1)³-System V_c M = V_r an Tensor-Chebyshev-Lobatto-Punkten; seine
+Kondition ist das Produkt der drei 1D-Konditionen (1D 2,7 / 4,0 / 5,7, 3D 19 / 66 / 185 bei p 2 / 3 / 4). Die Einträge von M sind schon im exakten Fall groß, weil V_r außerhalb der Wurzel ausgewertet wird: Flächennachbar gleicher Größe
+19 / Kantennachbar 360 / Ecknachbar 6 831 bei p 3, bis 557 776 bei p 4. Die haengenden Freiheitsgrade (`Zwaenge._spur_binden`) lösen ebenso ein (p+1)²-System, aber ohne Extrapolation. Beide Abbildungen sind auf achsparallelen
+Zellen Kronecker-Produkte dreier 1D-Abbildungen; die 1D-Abbildung (ein Polynom ψ_j(s ξ + t) der Wurzel in der Basis der Zelle) ist in rationalen Zahlen exakt berechenbar, die Normierungen sqrt(2(2j − 1)) kommen erst am Ende als Faktor
+dazu. **Hypothesen:** (H1) die Rundung der 3D-Lösung in M (Fehler ~ eps · cond(V_c) · |V_r|) trägt den Boden; (H2) das Einsetzen der Ketten (`_ketten_aufloesen`) rundet Summen großer Produkte; (H3) die absoluten Schwellen beim
+Speichern (10⁻¹³ für haengende, 10⁻¹⁴ für aggregierte Moden und Ketten) schneiden Koeffizienten ab; (H4) der Boden kommt nicht aus C, sondern aus dem Gleichungssystem (Vorwärtsfehler eps · cond(K_red) · |x|, die Kondition wächst mit den
+Fortsetzungskoeffizienten im Quadrat) oder aus der Quadratur. **Referenz C_ref:** C mit allen Fortsetzungs- und Spurabbildungen aus der exakten rationalen 1D-Abbildung (Python `fractions`, s und t aus den Zellboxen, Normierung als
+Gleitkommafaktor, Kronecker-Produkt), sonst unverändert (Ketten, Schwellen). Vor dem Gebrauch geprüft: die 1D-Abbildung gibt ψ_j(s ξ + t) an 50 Zufallspunkten auf 10⁻¹⁴ relativ wieder, und C_ref stimmt mit C dort überein, wo C gut gestellt
+ist (Flächennachbar), auf 10⁻¹² relativ zum Eintrag. **Größe A (Eigenschaft von C):** der Wiedergabefehler e_C = max |C x − a| / max |a| für Felder, deren Zellkoeffizienten a exakt bekannt sind (Starrkörperverschiebung 30 mm:
+Eckmoden = 30, sonst 0; lineares Feld: Eckmoden = Funktionswert an der Ecke, sonst 0; quadratisches Feld: in jeder Zelle durch Interpolation in ihrer eigenen Basis, 1D-Kondition höchstens 5,7), x = a auf den freien Moden; dazu der Abstand
+|C − C_ref| je Zeile, getrennt nach haengenden und aggregierten Moden und Kettenlänge. Der Rundungsboden der Auswertung selbst ist b_C = eps · max_i Σ_j |C_ij| |x_j| / max |a|. **Größe B (Eigenschaft der Lösung):** der größte relative
+Spannungsfehler an 1 500 Werkstoffpunkten (wie in O5, A1) und am Streifen über den Vertragsweg Kraft, Moment, Rest, Gleichgewicht, je mit C und mit C_ref, mit PARDISO. **Modelle:** Streifen 10° und 30° p 2 und p 3 (Biegefeld und
+Starrkörper 30 mm zusätzlich bei 30° p 3), Patch-Körper p 3 und p 4 (lineares und kubisches Feld), verfeinerter Patch-Körper aus `test_zwaenge` (haengende Freiheitsgrade) p 3. **Urteil:** H1/H2 gelten, wenn A mit C_ref mindestens um
+den Faktor 10 fällt und B am selben Modell ebenfalls um mindestens den Faktor 10; H4 gilt, wenn A fällt und B nicht. H3 wird getrennt geprüft (Schwellen relativ statt absolut, nur wenn A mit C_ref über 10 · b_C bleibt).
+**Abnahme einer Kur (nur wenn H1 oder H2 gilt; Kur: die exakte 1D-Abbildung im Paket, für Fortsetzung und Spur):** (1) e_C ≤ 10 · b_C an allen Modellen und Feldern; (2) Streifen 30° p 3 über den Vertragsweg: Rest und
+Spannungsfehler unter 10⁻⁸ (damit wäre O5 Regel (1) dort erfüllt), Starrkörper 30 mm unter 10⁻⁸, Patch-Körper p 4 lineares Feld innen und am Rand unter 10⁻⁸; (3) alle Suiten grün, dokumentierte Zahlen, die sich über die letzte
+angegebene Stelle hinaus ändern, mit altem und neuem Wert aufgelistet; (4) die Bauzeit von Aggregation und Zwängen steigt an Kirsch h 10 p 3 und Knotenblech h 10 p 2 um höchstens 10 % (gepaart im selben Prozess gemessen, alt und neu
+abwechselnd); nnz von C wird berichtet; (5) ein Test, der ohne die Kur fehlschlägt (Wiedergabe eines Polynoms über eine Eck-Fortsetzung bei p 4 und die exakte 1D-Abbildung gegen direkte Auswertung). **Gilt H4:** keine Kur in O17;
+berichtet werden der Anteil von C und der des Gleichungssystems mit Empfehlung. Wird eine Regel verfehlt, entscheidet der Anwender mit Empfehlung.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
