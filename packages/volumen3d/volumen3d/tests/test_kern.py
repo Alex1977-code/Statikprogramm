@@ -27,7 +27,7 @@ TESTS = [
     test_zwaenge.test_zaehlung_und_spur, test_zwaenge.test_leere_zellen, test_stl.test_kern_stl, test_operator.test_kern, test_mehrgitter.test_kern, test_mehrgitter.test_nullkandidaten, test_mehrgitter.test_grosse_bloecke_spd,
     test_quadratur.test_polyeder, test_quadratur.test_ebene_geometrie_exakt, test_quadratur.test_kleine_radien, test_quadratur.test_inside_zelle,
     test_quadratur.test_momentfitting, test_quadratur.test_stuecke_exakt, test_zwaenge.test_wurzelwahl_rundungsfest,
-    test_zwaenge.test_schwellenvergleich, test_zwaenge.test_wurzelwarnung, test_vertrag_fcm.test_wurzelwarnung_verdrahtung,
+    test_zwaenge.test_schwellenvergleich,
     test_rueckgewinnung.test_patch_exakt, test_rueckgewinnung.test_haengende_moden, test_rueckgewinnung.test_reine_biegung, test_rueckgewinnung.test_mehrere_lastfaelle,
     test_quadratur.test_verschachtelter_baum, test_quadratur.test_innere_trennflaeche, test_quadratur.test_deckungsgleiche_flaechen, test_hotspot.test_geometrie_und_lineares_feld, test_hotspot.test_uneindeutig, test_hotspot.test_anwendbarkeit, test_hotspot.test_polylinien,
     test_hotspot.test_exaktes_feld,

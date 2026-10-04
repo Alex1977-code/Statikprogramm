@@ -213,10 +213,6 @@ def test_unverwurzelte_grobe_zelle():
                 verstoesse += 1
     check(f"T-Stoss h 20 Ziel 5 p 2 ({len(g.ijk)} Zellen, {len(frei_unverwurzelt)} unverwurzelte schlechte): Konstruktor ohne Zwangszyklus, "
           f"kein durch Aggregation gebundener Mode mit groeberem unverwurzeltem Besitzer", verstoesse == 0, f"{verstoesse} Verstoesse")
-    from volumen3d.api import _wurzelwarnung
-    w = _wurzelwarnung(ag, pr.alpha)
-    check(f"T-Stoss: die Statistik zaehlt {ag.statistik['zellen_ohne_wurzel']} Zellen ohne Wurzel = unverwurzelte schlechte, die Warnung (O16) nennt sie",
-          ag.statistik["zellen_ohne_wurzel"] == len(frei_unverwurzelt) > 0 and w is not None and f"{len(frei_unverwurzelt)} schlecht geschnittene Zellen" in w, str(w)[:90])
     lam, mu = H.E * H.NU / ((1 + H.NU) * (1 - 2 * H.NU)), H.E / (2 * (1 + H.NU))
     c0 = 1e-5
     pr.verschiebungsrand("alles", None, projektion="voll")
@@ -232,8 +228,13 @@ def test_unverwurzelte_grobe_zelle():
     s = pr.auswertung(U).spannung(P)[:, 0]
     soll = (lam + 2 * mu) * c0 * P[:, 0]
     f = float(np.abs(s - soll).max() / np.abs(soll).max())
-    check(f"Quadratisches Feld auf dem T-Stoss mit zwei lokalen Halbierungen reproduziert (sigma_xx an {len(P)} Punkten < 1e-4, gemessen 3,3e-6)",
+    check(f"Quadratisches Feld auf dem T-Stoss mit zwei lokalen Halbierungen reproduziert (sigma_xx an {len(P)} Punkten < 1e-4, gemessen 3,7e-7)",
           f < 1e-4, f"Abweichung {f:.1e}")
+    # Zellen ohne Wurzel behalten alpha; ihre Zahl steht im Protokoll, eine Warnung gibt es nicht (Plan TP 5, O16, 03.10.2026: Wirkung 1e-6 bis 7e-5, Fehlalarm an der
+    # Kirsch-Scheibe mit 20-mm-Zellen)
+    n_prot = pr.protokoll["aggregation"]["zellen_ohne_wurzel"]
+    check(f"T-Stoss: das Protokoll nennt {n_prot} Zellen ohne Wurzel = Statistik = unverwurzelte schlechte Zellen",
+          n_prot == ag.statistik["zellen_ohne_wurzel"] == len(frei_unverwurzelt) > 0, f"{len(frei_unverwurzelt)} unverwurzelte schlechte")
 
 
 def test_gebuendelte_nachbarsuche():
@@ -312,27 +313,6 @@ def test_schwellenvergleich():
         Q.STUECKE_EXAKT_STANDARD = alt
 
 
-def test_wurzelwarnung():
-    """Warnung bei Zellen ohne Wurzel (Plan TP 5, O16, 03.10.2026): keine Warnung ohne solche Zellen und ohne Aggregation, mit ihnen eine Warnung mit Zahl, Schwelle, alpha,
-    gemessener Folge und Abhilfe; am Patch-Koerper (keine Zellen ohne Wurzel) keine Warnung."""
-    from volumen3d.api import _wurzelwarnung
-    from volumen3d.fcm.gitter import Verfeinerung
-
-    class _Ag:
-        schwelle = 0.4
-
-        def __init__(self, n):
-            self.statistik = {"zellen_ohne_wurzel": n}
-    w = _wurzelwarnung(_Ag(3), 1e-8)
-    check("keine Aggregation oder keine Zelle ohne Wurzel: keine Warnung", _wurzelwarnung(None, 1e-8) is None and _wurzelwarnung(_Ag(0), 1e-8) is None)
-    check("3 Zellen ohne Wurzel: Warnung nennt Zahl, Schwelle, alpha, Messung am T-Stoss und die Abhilfe",
-          w is not None and "3 schlecht geschnittene Zellen" in w and "unter 0.4" in w and "alpha = 1e-08" in w and "T-Stoss" in w and "7e-5" in w and "Basiszelle" in w,
-          str(w)[:120])
-    pr = _problem(2, Verfeinerung())
-    check(f"Patch-Koerper h 20 p 2: {pr.aggregation.statistik['zellen_ohne_wurzel']} Zellen ohne Wurzel, keine Warnung",
-          pr.aggregation.statistik["zellen_ohne_wurzel"] == 0 and _wurzelwarnung(pr.aggregation, pr.alpha) is None)
-
-
 if __name__ == "__main__":
     sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_wurzelwahl_rundungsfest, test_unverwurzelte_grobe_zelle, test_patch_verfeinert,
-                   test_schwellenvergleich, test_wurzelwarnung]))
+                   test_schwellenvergleich]))
