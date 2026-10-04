@@ -5961,12 +5961,14 @@ nichts und ändert keine Bedeutung: Es weist ab und nennt jeden Grund mit Stab
 und Wert, wenn ein Stab eine feste Knick- oder Kipplänge hat (sie gilt für den
 einzelnen Stab; erst auf β·L zurücksetzen, dann zusammenfassen), wenn die
 Nachweisparameter nicht gleich sind (Kerbfall, β-Werte, Wölbrandbedingung und
-jedes andere Feld des Stabs), wenn sich am Stoß zweier Stäbe der Drehwinkel
-der Elemente unterscheidet („Drehwinkel verschieden: S1 0°, S2 25°“; ein Stab
-wird im Nachweis mit einem Achsensystem geführt, Unterschiede unter 1e-9 rad
-zählen nicht, und ein Stab, dessen Elemente schon in sich verschieden gedreht
-sind, etwa nach *Stäbe automatisch erkennen*, wird nur an seinem Stoß
-verglichen), wenn „deaktiviert“ oder die Vorspannungen nicht
+jedes andere Feld des Stabs), wenn nicht alle Elemente aller Stäbe denselben
+Drehwinkel haben („Drehwinkel verschieden: S1 0°, S2 25°“; ein Stab wird im
+Nachweis mit einem Achsensystem geführt, Unterschiede bis 1e-5 rad zählen als
+Rundung, und verschiedene Winkel zeigt die Meldung mit so vielen Stellen, dass
+sie verschieden aussehen; ein Stab, dessen Elemente schon in sich verschieden
+gedreht sind, etwa nach *Stäbe automatisch erkennen*, heißt in der Meldung „in
+sich verschieden“, bleibt, wie er ist, lässt sich aber nicht zusammenfassen),
+wenn „deaktiviert“ oder die Vorspannungen nicht
 bei allen gleich sind (eine Vorspannung wirkt auf jedes Element ihres Stabs),
 wenn sich eine Linienlast nicht verlustfrei mitnehmen lässt, und wenn
 irgendein Stab der Kette, auch der erste, von einem anderen Objekt verwendet
@@ -5974,20 +5976,22 @@ wird (Stellung, Verformungsnachweis, Layer, Subsystem, Wind, Schweißnaht,
 Lasteinleitung). Sonst bleiben die Parameter erhalten, und jede Linienlast
 geht mit, auch wenn die Stäbe verschiedene haben: Sie gilt auf dem
 zusammengefassten Stab auf dem Abschnitt, auf dem sie vorher lag, um die Länge
-der Stäbe davor verschoben, und „bis zum Ende“ wird das Ende ihres alten
-Stabs. Das gilt für gleichmäßige und trapezförmige Lasten, global und lokal
-(das lokale System ist das jedes Stabelements, und die Elemente bleiben, wie
-sie sind), und für eine gleichmäßige Last, die über ihren Stab hinausreicht,
-auf dem Stück, auf dem sie wirkt. Die Elementlasten jedes Elements bleiben
+der Stäbe davor verschoben. Das gilt für gleichmäßige und trapezförmige
+Lasten, global und lokal (das lokale System ist das jedes Stabelements, und
+die Elemente bleiben, wie sie sind), auch für eine Last, die über ihren Stab
+hinausreicht: Sie wirkt nur auf dem Stück im Stab, und das Programm setzt q
+und q2 schon an die Enden dieses Stücks. Die Stäbe vor dem letzten bekommen
+ein festes „bis“ am Ende ihres alten Stabs. Am letzten Stab bleibt „bis zum
+Ende“ stehen, ebenso ein „bis“ über sein Ende hinaus und ein „von“ vor dem
+Anfang des ersten Stabs, sodass die Last einer späteren Verlängerung folgt
+wie vorher. Die Elementlasten jedes Elements bleiben
 dieselben, Auflagerkräfte und Verschiebungen auch; an einem Träger aus zwei
 Stäben mit −5 und −9 kN/m ergibt der zusammengefasste Stab dieselben
 Verschiebungen und denselben Nachweis wie ein von vornherein ganzer Stab mit
-diesen beiden Abschnittslasten. Nicht verlustfrei mitnehmen lässt sich eine
-trapezförmige Last, die über ihren Stab hinausreicht (das Programm setzt q
-und q2 dann an die Stabenden, zusammengefasst müssten ihre Stellen geändert
-werden), und eine Last, die außerhalb ihres Stabs liegt und nicht wirkt
-(verschoben läge sie auf einem anderen Stab); dann nennt die Meldung Stab,
-Lastfall und Abschnitt. Eine gleiche Vorspannung bleibt einmal stehen. Jeder
+diesen beiden Abschnittslasten. Nicht verlustfrei mitnehmen lässt sich nur
+eine Last, die außerhalb ihres Stabs liegt und nicht wirkt (verschoben läge
+sie auf einem anderen Stab); dann nennt die Meldung Stab, Lastfall und
+Abschnitt. Eine gleiche Vorspannung bleibt einmal stehen. Jeder
 Stab muss in Richtung der Kette gezeichnet sein. Bis zum 04.10.2026 wies das
 Zusammenfassen verschiedene Linienlasten ab und nahm nur gleiche mit, fasste
 aber Stäbe mit verschiedenem Drehwinkel zusammen.

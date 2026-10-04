@@ -5984,35 +5984,27 @@ class Model:
     def _linienlast_abschnitt(ll: "Linienlast", L: float) -> tuple:
         """((von, bis), Grund): der Abschnitt [m], auf dem eine Linienlast
         ihren Stab der Laenge L belegt - so, wie :meth:`_linienlast_legen` sie
-        liest -, und "" oder der Grund, warum sie beim Zusammenfassen nicht
-        verlustfrei als Abschnittslast auf den laengeren Stab geht (Nachtrag
-        zu C14, 04.10.2026).
+        liest: von max(0, von) bis min(bis, L), q am Anfang dieses Stuecks, q2
+        an seinem Ende -, und "" oder der Grund, warum sie beim Zusammenfassen
+        nicht verlustfrei mitgeht (Nachtrag zu C14, 04.10.2026).
 
-        Verlustfrei geht jede Last, deren q und q2 an denselben Stellen
-        stehen bleiben: gleichmaessig oder trapezfoermig, global oder lokal
-        (das lokale System ist das jedes Elements, und die Elemente bleiben),
-        von „von“ bis „bis“ oder bis zum Stabende. Eine gleichmaessige Last,
-        die ueber das Stabende hinausreicht, wirkt nur bis dorthin und geht so
-        mit. Nicht verlustfrei: eine trapezfoermige, die ueber den Stab
-        hinausreicht - _linienlast_legen setzt q und q2 dann an die Stabenden,
-        zusammengefasst muessten ihre Stellen geaendert werden -, und eine,
-        die ausserhalb des Stabs liegt und nicht wirkt (verschoben laege sie
-        auf einem anderen Stab der Kette)."""
+        Verlustfrei geht jede Last, die auf ihrem Stab wirkt: gleichmaessig
+        oder trapezfoermig, global oder lokal (das lokale System ist das jedes
+        Elements, und die Elemente bleiben), auf einem Abschnitt, bis zum Ende
+        oder ueber den Stab hinaus, denn _linienlast_legen setzt q und q2 schon
+        an das beschnittene Stueck. Bis zur Nachpruefung von fe408d1 wurde die
+        trapezfoermige ueber den Stab hinaus abgewiesen; gemessen ist ΔF = 0.
+        Nicht verlustfrei: eine Last, die ausserhalb des Stabs liegt und nicht
+        wirkt (verschoben laege sie auf einem anderen Stab der Kette)."""
         def zahl(x):
             return f"{x:g}".replace(".", ",")
         von = float(ll.von)
         bis = L if ll.bis is None else float(ll.bis)
         a, b = max(0.0, von), min(bis, L)
-        stelle = f"von {zahl(von)} m bis " + ("zum Ende" if ll.bis is None else f"{zahl(bis)} m")
         if b - a <= 1e-12:
+            stelle = f"von {zahl(von)} m bis " + ("zum Ende" if ll.bis is None else f"{zahl(bis)} m")
             return (a, b), (f"liegt {stelle} außerhalb des Stabs ({zahl(L)} m lang) oder ist leer und wirkt "
                             "nicht; zusammengefasst läge sie auf einem anderen Stab – erst löschen oder berichtigen")
-        tol = 1e-9 * max(1.0, L)
-        trapez = ll.q2 is not None and [float(x) for x in ll.q2] != [float(x) for x in ll.q]
-        if trapez and (von < -tol or bis > L + tol):
-            return (a, b), (f"ist trapezförmig und reicht {stelle} über den Stab ({zahl(L)} m lang) hinaus; "
-                            "q und q2 wirken heute an den Stabenden, zusammengefasst müssten ihre Stellen "
-                            "geändert werden – erst „von“ und „bis“ auf den Stab setzen (bis 0 = Ende)")
         return (a, b), ""
 
     #: Felder eines Stabs, die Nachweise lesen, im Klartext (Meldung von
@@ -6048,8 +6040,9 @@ class Model:
         es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
         Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
         Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
-        Drehwinkel der Elemente am Stoss zweier Staebe (ein Stab wird im
-        Nachweis mit einem Achsensystem gefuehrt), verschiedene Vorspannungen,
+        Drehwinkel irgendwelcher Elemente der Kette, auch innerhalb eines
+        Glieds (ein Stab wird im Nachweis mit einem Achsensystem gefuehrt),
+        verschiedene Vorspannungen,
         eine Linienlast, die sich nicht verlustfrei als Abschnittslast
         schreiben laesst (:meth:`_linienlast_abschnitt`), und jeder Verweis
         auf irgendeinen Stab der Kette, auch den ersten (danach meinte er die
@@ -6060,8 +6053,10 @@ class Model:
         Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
         Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
         geht mit und gilt auf dem Abschnitt, auf dem sie vorher lag: um die
-        Laenge der Staebe davor verschoben, „bis zum Ende“ wird das Ende ihres
-        alten Stabs. Die Elementlasten jedes Elements bleiben dieselben, die
+        Laenge der Staebe davor verschoben; die Glieder vor dem letzten
+        bekommen ein festes „bis“, am letzten bleibt „bis zum Ende“ stehen
+        (ebenso ein „bis“ ueber sein Ende hinaus und ein „von“ vor dem Anfang
+        des ersten). Die Elementlasten jedes Elements bleiben dieselben, die
         Rechnung auch. Bis zum 04.10.2026 (Runde 2) wies es verschiedene
         Linienlasten ab und nahm nur gleiche mit; der Anwender wollte es
         lockerer. Gleiche Vorspannungen bleiben einmal stehen, denn eine
@@ -6132,23 +6127,43 @@ class Model:
             if any(w != werte[0] for w in werte[1:]):
                 gruende.append(f"{self.STABFELDER.get(f, f)} verschieden: "
                                + ", ".join(f"{n} {self._stabwert(f, w)}" for n, w in zip(folge, werte)))
-        # Drehwinkel am Stoss (Nachtrag 04.10.2026): ein Stab wird im Nachweis
-        # mit einem Achsensystem gefuehrt - knicken seine Haelften um
-        # verschiedene Achsen, aendert sich die Bedeutung. Verglichen wird nur
-        # am Stoss, letztes Element gegen erstes: ein Stab kann schon in sich
-        # gemischt sein (Stäbe automatisch erkennen, Stab aus Stabelementen,
-        # Elementtabelle) und bekommt dadurch keinen anderen Status. 1e-9 rad
-        # Toleranz und modulo 360°, damit Rundungsrauschen nicht abweist.
-        stoesse = []
-        for n0, n1 in zip(folge, folge[1:]):
-            r0 = float(self.elements[self._stab_elemente(self.members[n0])[-1]].roll or 0.0)
-            r1 = float(self.elements[self._stab_elemente(self.members[n1])[0]].roll or 0.0)
-            if abs((r1 - r0 + np.pi) % (2.0 * np.pi) - np.pi) > 1e-9:
-                stoesse.append(f"{n0} {self._stabwert('roll', float(np.degrees(r0)))}°, "
-                               f"{n1} {self._stabwert('roll', float(np.degrees(r1)))}° (Stoß K{enden[n0][1]})")
-        if stoesse:
-            gruende.append("Drehwinkel verschieden: " + "; ".join(stoesse) + ". Ein Stab wird im Nachweis mit "
-                           "einem Achsensystem geführt; erst die Drehwinkel angleichen")
+        # Drehwinkel (Nachtrag 04.10.2026): ein Stab wird im Nachweis mit
+        # einem Achsensystem gefuehrt. Zusammengefasst wird nur, wenn alle
+        # Elemente aller Glieder denselben Drehwinkel haben. Bis zur
+        # Nachpruefung von fe408d1 zaehlte nur der Stoss, und ein in sich
+        # gemischtes Glied lief mit einem einheitlichen zusammen (S1 [0°, 90°]
+        # mit S2 [90°]: S2 von 0,4026 auf 1,2889). Ein Glied, das schon in sich
+        # gemischt ist (Stäbe automatisch erkennen, Stab aus Stabelementen,
+        # Elementtabelle), bleibt, wie es ist, laesst sich aber nicht
+        # zusammenfassen. Toleranz 1e-5 rad modulo 360° gegen Importrauschen
+        # (cbg: 1e-6 rad zwischen S22 und S28); die Meldung zeigt so viele
+        # Stellen, dass verschiedene Winkel verschieden aussehen.
+        gruppen, je_stab = [], {}            # Vertreter je Drehwinkel [rad]; Gruppen je Glied
+        for n in folge:
+            je_stab[n] = []
+            for e in self._stab_elemente(self.members[n]):
+                r = float(self.elements[e].roll or 0.0)
+                i = next((j for j, g in enumerate(gruppen)
+                          if abs((r - g + np.pi) % (2.0 * np.pi) - np.pi) <= 1e-5), None)
+                if i is None:
+                    gruppen.append(r)
+                    i = len(gruppen) - 1
+                if i not in je_stab[n]:
+                    je_stab[n].append(i)
+        if len(gruppen) > 1:
+            for stellen in range(6, 18):
+                texte = [f"{float(np.degrees(g)):.{stellen}g}".replace(".", ",") for g in gruppen]
+                if len(set(texte)) == len(texte):
+                    break
+            gemischt = [n for n in folge if len(je_stab[n]) > 1]
+            teile = [f"{n} " + "/".join(texte[i] + "°" for i in je_stab[n])
+                     + (" (in sich verschieden)" if n in gemischt else "") for n in folge]
+            text = ("Drehwinkel verschieden: " + ", ".join(teile) + ". Ein Stab wird im Nachweis mit einem "
+                    "Achsensystem geführt; erst die Drehwinkel angleichen")
+            if gemischt:
+                text += (f". Ein Stab, dessen Elemente in sich verschieden gedreht sind ({', '.join(gemischt)}), "
+                         "lässt sich nicht zusammenfassen; er bleibt, wie er ist")
+            gruende.append(text)
         vsp = [self._stabvorspannungen(n) for n in folge]
         if any(x != vsp[0] for x in vsp[1:]):
             def vtext(n, x):
@@ -6182,7 +6197,11 @@ class Model:
         bleibt = self.members[folge[0]]
         hinweise = []
         # jede Linienlast auf den Abschnitt, auf dem sie lag: um die Laenge der
-        # Staebe davor verschoben, „bis zum Ende“ wird das Ende des alten Stabs.
+        # Staebe davor verschoben. Die Glieder vor dem letzten bekommen ein
+        # festes „bis“ (ihr Ende liegt jetzt im Stab). Am letzten bleibt „bis“,
+        # wie es ist - „bis zum Ende“ und ein „bis“ ueber das Ende hinaus
+        # folgen so einer spaeteren Verlaengerung wie vorher (Nachpruefung von
+        # fe408d1) -, ebenso „von“ am ersten Glied (der Versatz ist dort null).
         # Der Versatz wie in _linienlast_legen auf dem neuen Stab: alle
         # Elementlaengen der Kette der Reihe nach addiert
         versatz, s = {}, 0.0
@@ -6194,9 +6213,15 @@ class Model:
         for lc in self.load_cases.values():
             for ll in lc.linienlasten:
                 if ll.art == "stab" and ll.ziel in versatz:
-                    (a, b), _g = self._linienlast_abschnitt(ll, laenge[ll.ziel])
-                    o = versatz[ll.ziel]
-                    ll.von, ll.bis, ll.ziel = o + a, o + b, bleibt.name
+                    n = ll.ziel
+                    (a, b), _g = self._linienlast_abschnitt(ll, laenge[n])
+                    o = versatz[n]
+                    von = float(ll.von) if n == folge[0] else o + a
+                    if n != folge[-1]:
+                        bis = o + b
+                    else:
+                        bis = None if ll.bis is None else o + float(ll.bis)
+                    ll.von, ll.bis, ll.ziel = von, bis, bleibt.name
                     bewegt += 1
             # gleiche Vorspannungen: einmal am Stab (sie wirkt auf jedes Element)
             weg = set(folge[1:])

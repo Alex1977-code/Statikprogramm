@@ -17,9 +17,11 @@ pruef_gui2.py, pruef_extra.py) und sind dort gemessen. Gepruefte Grundsaetze:
   Linienlasten gehen mit, jede auf dem Abschnitt, auf dem sie vorher lag; die
   Elementlasten jedes Elements bleiben, Auflagerkraefte und Verschiebungen
   auch (L1 bis L8);
-* G1 Drehwinkel (Nachtrag 04.10.2026): verschiedene Drehwinkel der Elemente
-  am Stoss zweier Staebe weisen ab - ein Stab wird im Nachweis mit einem
-  Achsensystem gefuehrt (L9);
+* G1 Drehwinkel (Nachtrag 04.10.2026): zusammengefasst wird nur, wenn alle
+  Elemente aller Glieder denselben Drehwinkel haben (1e-5 rad) - ein Stab
+  wird im Nachweis mit einem Achsensystem gefuehrt (L9);
+* „bis zum Ende“ am letzten Glied bleibt, die Glieder davor bekommen ein
+  festes „bis“ (L10).
 * G2: ein leerer Stab ist im EC3-Nachweis, in der Web-Ampel, in der Ermuedung
   und im Bericht als nicht nachgewiesen sichtbar (A8, A9);
 * G3: Zusammenfassen, Teilen und „Stab“ um ein vorhandenes Element verwerfen
@@ -323,9 +325,9 @@ def test_l1_verschiedene_linienlasten():
     b0, an0 = elementlasten(m), solver.solve_all(m, design=False)
     name, hinweise = zusammenfassen(m, ["S1", "S2"])
     lasten = linienlasten(m, g)
-    check("L1 S1 −5 kN/m, S2 −9 kN/m: zusammengefasst, jede Last auf ihrem Abschnitt (0–3 m, 3–6 m)",
+    check("L1 S1 −5 kN/m, S2 −9 kN/m: zusammengefasst, jede Last auf ihrem Abschnitt (0–3 m, 3 m–Ende)",
           name == "S1" and list(m.members) == ["S1"] and m.members["S1"].elements == [0, 1, 2, 3]
-          and lasten == [("S1", 0.0, 3.0), ("S1", 3.0, 6.0)], f"{lasten} {hinweise}"[:200])
+          and lasten == [("S1", 0.0, 3.0), ("S1", 3.0, None)], f"{lasten} {hinweise}"[:200])
     d = abweichung(b0, elementlasten(m))
     check("L1 … Elementlasten jedes Elements gleich wie vorher", name == "S1" and d <= 1e-9,
           f"größte Abweichung {d:.3e}")
@@ -358,21 +360,28 @@ def test_l3_lastarten():
     import numpy as np
     from statik3d import solver
 
+    from statik3d import assemble
+
+    def lastvektor(m):
+        return {k: np.asarray(assemble.load_vector(m, lc), float) for k, lc in m.load_cases.items()}
+
     def mitnehmen(titel, lasten_setzen, erwartet, rollen=0.0):
         m, g = traeger()
         for e in m.elements:
             e.roll = rollen
         lasten_setzen(m, g)
         fertig(m)
-        b0, an0 = elementlasten(m), solver.solve_all(m, design=False)
+        b0, an0, F0 = elementlasten(m), solver.solve_all(m, design=False), lastvektor(m)
         name, hinweise = zusammenfassen(m, ["S1", "S2"])
         lasten = [(ll.ziel, ll.von, ll.bis, ll.system, None if ll.q2 is None else ll.q2[2] / 1e3)
                   for ll in m.load_cases[g].linienlasten]
         d = abweichung(b0, elementlasten(m))
+        F1 = lastvektor(m)
+        dF = max(float(np.max(np.abs(F1[k] - F0[k]))) for k in F0) / max(float(np.max(np.abs(F0[k]))) for k in F0)
         r = rechnung_gleich(an0, solver.solve_all(m, design=False), g) if name else (1.0, 0.0, 1.0, 0.0)
-        check(f"L3 {titel}: verlustfrei zusammengefasst", name == "S1" and lasten == erwartet
-              and d <= 1e-9 and _rechnung_ok(r),
-              f"{lasten} Abw. {d:.1e} max|du| {r[0]:.1e} {hinweise}"[:200])
+        check(f"L3 {titel}: verlustfrei zusammengefasst, Lastvektor gleich", name == "S1" and lasten == erwartet
+              and d <= 1e-9 and dF <= 1e-12 and _rechnung_ok(r),
+              f"{lasten} Abw. {d:.1e} ΔF {dF:.1e} max|du| {r[0]:.1e} {hinweise}"[:200])
 
     def abweisen(titel, lasten_setzen, teile):
         m, g = traeger()
@@ -385,7 +394,7 @@ def test_l3_lastarten():
     mitnehmen("Trapezlast über S1 (−5 … −9 kN/m bis zum Ende), gleichmäßige Last über S2",
               lambda m, g: (m.add_linienlast("S1", [0, 0, -5e3], q2=[0, 0, -9e3], case=g),
                             m.add_linienlast("S2", [0, 0, -9e3], case=g)),
-              [("S1", 0.0, 3.0, "global", -9.0), ("S1", 3.0, 6.0, "global", None)])
+              [("S1", 0.0, 3.0, "global", -9.0), ("S1", 3.0, None, "global", None)])
     mitnehmen("Trapezlast auf einem Abschnitt von S2 (0,5–2,5 m), gleichmäßige auf S1",
               lambda m, g: (m.add_linienlast("S1", [0, 0, -5e3], case=g),
                             m.add_linienlast("S2", [0, 0, -2e3], q2=[0, 0, -8e3], von=0.5, bis=2.5, case=g)),
@@ -393,14 +402,24 @@ def test_l3_lastarten():
     mitnehmen("Last im lokalen System auf S2 (Elemente um 10° gedreht), globale auf S1",
               lambda m, g: (m.add_linienlast("S1", [0, 0, -5e3], case=g),
                             m.add_linienlast("S2", [0, 3e3, -9e3], system="local", case=g)),
-              [("S1", 0.0, 3.0, "global", None), ("S1", 3.0, 6.0, "local", None)], rollen=np.radians(10.0))
+              [("S1", 0.0, 3.0, "global", None), ("S1", 3.0, None, "local", None)], rollen=np.radians(10.0))
     mitnehmen("gleichmäßige Last auf S1 mit „bis“ 5 m über das Stabende (3 m) hinaus",
               lambda m, g: (m.add_linienlast("S1", [0, 0, -5e3], von=1.0, bis=5.0, case=g),
                             m.add_linienlast("S2", [0, 0, -9e3], case=g)),
-              [("S1", 1.0, 3.0, "global", None), ("S1", 3.0, 6.0, "global", None)])
-    abweisen("Trapezlast auf S1 mit „bis“ 5 m über das Stabende (3 m) hinaus",
-             lambda m, g: m.add_linienlast("S1", [0, 0, -5e3], q2=[0, 0, -9e3], bis=5.0, case=g),
-             ("S1", "trapezförmig", "bis 5 m", "3 m"))
+              [("S1", 1.0, 3.0, "global", None), ("S1", 3.0, None, "global", None)])
+    # Trapezlast ueber den Stab hinaus: _linienlast_legen setzt q und q2 schon
+    # heute an das beschnittene Stueck - sie geht verlustfrei mit (Nachpruefung
+    # von fe408d1, S-2; bis dahin abgewiesen)
+    mitnehmen("Trapezlast auf S1 mit „bis“ 5 m über das Stabende (3 m) hinaus, gleichmäßige auf S2",
+              lambda m, g: (m.add_linienlast("S1", [0, 0, -5e3], q2=[0, 0, -9e3], bis=5.0, case=g),
+                            m.add_linienlast("S2", [0, 0, -9e3], case=g)),
+              [("S1", 0.0, 3.0, "global", -9.0), ("S1", 3.0, None, "global", None)])
+    # vor dem Anfang des ersten und hinter dem Ende des letzten Glieds bleiben
+    # „von“ und „bis“ stehen - sie wirken wie vorher bis an das Stabende
+    mitnehmen("Trapezlast auf S1 von −0,5 m bis zum Ende, Trapezlast auf S2 bis 5 m (über das Ende)",
+              lambda m, g: (m.add_linienlast("S1", [0, 0, -5e3], q2=[0, 0, -9e3], von=-0.5, case=g),
+                            m.add_linienlast("S2", [0, 0, -9e3], q2=[0, 0, -3e3], bis=5.0, case=g)),
+              [("S1", -0.5, 3.0, "global", -9.0), ("S1", 3.0, 8.0, "global", -3.0)])
     abweisen("Linienlast auf S1 ganz außerhalb des Stabs (ab 4 m, Stab 3 m)",
              lambda m, g: m.add_linienlast("S1", [0, 0, -5e3], von=4.0, case=g),
              ("S1", "außerhalb", "von 4 m"))
@@ -428,8 +447,8 @@ def test_l5_gleiche_linienlast():
     name, hinweise = zusammenfassen(m, ["S1", "S2", "S3"])
     lasten = linienlasten(m, g)
     r = rechnung_gleich(an0, solver.solve_all(m, design=False), g)
-    check("L5 gleiche Linienlast an allen drei Stäben: wie bisher zusammengefasst, max|du| = 0",
-          name == "S1" and lasten == [("S1", 0.0, 3.0), ("S1", 3.0, 6.0), ("S1", 6.0, 9.0)]
+    check("L5 gleiche Linienlast an allen drei Stäben: zusammengefasst, das letzte „bis zum Ende“ bleibt, max|du| = 0",
+          name == "S1" and lasten == [("S1", 0.0, 3.0), ("S1", 3.0, 6.0), ("S1", 6.0, None)]
           and abweichung(b0, elementlasten(m)) <= 1e-9 and r[0] == 0.0,
           f"{lasten} max|du| = {r[0]:.3e} {hinweise}"[:200])
 
@@ -477,7 +496,7 @@ def test_l7_speichern_laden():
     m.save(pfad)
     m2 = Model.load(pfad)
     check("L7 Speichern und Laden nach L1: dieselben Linienlasten und Elementlasten",
-          name == "S1" and linienlasten(m2, g) == linienlasten(m, g) == [("S1", 0.0, 3.0), ("S1", 3.0, 6.0)]
+          name == "S1" and linienlasten(m2, g) == linienlasten(m, g) == [("S1", 0.0, 3.0), ("S1", 3.0, None)]
           and elementlasten(m2) == elementlasten(m) and abweichung(b0, elementlasten(m2)) <= 1e-9,
           f"{linienlasten(m2, g)} Abw. {abweichung(b0, elementlasten(m2)):.1e}")
 
@@ -512,10 +531,13 @@ def test_l8_nachweise():
 
 
 def test_l9_drehwinkel():
-    """Verschiedene Drehwinkel am Stoss weisen ab (G1: ein Stab wird im
-    Nachweis mit einem Achsensystem gefuehrt); verglichen wird mit 1e-9 rad.
-    Ein Stab, der in sich schon gemischt ist (Stäbe automatisch erkennen,
-    Stab aus Stabelementen, Elementtabelle), zaehlt nur an seinem Stoss."""
+    """Zusammengefasst wird nur, wenn alle Elemente aller Glieder denselben
+    Drehwinkel haben (G1: ein Stab wird im Nachweis mit einem Achsensystem
+    gefuehrt); Toleranz 1e-5 rad, modulo 360°. Ein Stab, der in sich schon
+    gemischt ist (Stäbe automatisch erkennen, Stab aus Stabelementen,
+    Elementtabelle), bleibt, wie er ist, laesst sich aber nicht zusammenfassen
+    (Nachpruefung von fe408d1, L-1: bis dahin zaehlte nur der Stoss, und
+    S1 [0°, 90°] mit S2 [90°] wurde ein Stab - S2 von 0,4026 auf 1,2889)."""
     import numpy as np
 
     def mit_winkel(grad=None, rad=None):
@@ -540,17 +562,69 @@ def test_l9_drehwinkel():
     name, hinweise = zusammenfassen(m, ["S1", "S2"])
     m2 = mit_winkel([0, 0, 360, 360])
     name2, hinweise2 = zusammenfassen(m2, ["S1", "S2"])
-    check("L9 Rundungsrauschen 1e-12 rad und 0° gegen 360°: zusammengefasst (Toleranz 1e-9 rad)",
+    check("L9 Rundungsrauschen 1e-12 rad und 0° gegen 360°: zusammengefasst (Toleranz 1e-5 rad)",
           name == "S1" and name2 == "S1", f"{hinweise} {hinweise2}"[:200])
-    m = mit_winkel([0, 25, 25, 25])
+    # in sich gemischte Glieder: abgewiesen, die Meldung sagt es (L9d, L9e, L9f)
+    for winkel, text in (([0, 25, 25, 25], "S1 0°/25° (in sich verschieden), S2 25°"),
+                         ([25, 0, 25, 25], "S1 25°/0° (in sich verschieden), S2 25°"),
+                         ([0, 90, 90, 90], "S1 0°/90° (in sich verschieden), S2 90°"),
+                         ([0, 0, 0, 90], "S1 0°, S2 0°/90° (in sich verschieden)")):
+        m = mit_winkel(winkel)
+        r0 = rollen(m)
+        grund, gleich = abgewiesen(m, ("S1", "S2"))
+        check(f"L9 Glieder {winkel[:2]}° und {winkel[2:]}°: abgewiesen, „{text}“, Modell und Winkel unverändert",
+              f"Drehwinkel verschieden: {text}" in grund and "lässt sich nicht zusammenfassen" in grund
+              and gleich and rollen(m) == r0, grund[:220])
+    # L9g: Importrauschen 1e-6 rad geht, 0 gegen π nicht; knapp verschiedene
+    # Winkel zeigt die Meldung mit so vielen Stellen, dass sie verschieden aussehen
+    m = mit_winkel(rad=[6.137883, 6.137883, 6.137882, 6.137882])
     name, hinweise = zusammenfassen(m, ["S1", "S2"])
-    check("L9 S1 in sich gemischt (0°, 25°), am Stoß 25° wie S2: zusammengefasst, Winkel bleiben",
-          name == "S1" and [round(float(np.degrees(e.roll)), 9) for e in m.elements] == [0, 25, 25, 25],
-          str(hinweise)[:200])
-    m = mit_winkel([25, 0, 25, 25])
-    grund, gleich = abgewiesen(m, ("S1", "S2"))
-    check("L9 S1 in sich gemischt (25°, 0°), am Stoß 0° gegen 25°: abgewiesen, Modell unverändert",
-          "Drehwinkel verschieden: S1 0°, S2 25°" in grund and gleich, grund[:200])
+    m2 = mit_winkel(rad=[0.0, 0.0, np.pi, np.pi])
+    grund2, gleich2 = abgewiesen(m2, ("S1", "S2"))
+    check("L9 6.137883 und 6.137882 rad: zusammengefasst; 0 und π: abgewiesen („S1 0°, S2 180°“)",
+          name == "S1" and "Drehwinkel verschieden: S1 0°, S2 180°" in grund2 and gleich2,
+          f"{hinweise} | {grund2}"[:220])
+    w1 = np.radians(351.6756)
+    m3 = mit_winkel(rad=[w1, w1, w1 + 1.1e-5, w1 + 1.1e-5])
+    grund3, _g = abgewiesen(m3, ("S1", "S2"))
+    teile = re.search(r"S1 (\S+)°, S2 (\S+)°", grund3)
+    check("L9 351,6756° gegen 1,1e-5 rad mehr: abgewiesen, die Meldung zeigt zwei verschiedene Winkel",
+          teile is not None and teile.group(1) != teile.group(2), grund3[:160])
+
+
+def test_l10_ende_bleibt():
+    """„bis zum Ende“ am letzten Glied bleibt „bis zum Ende“, die Glieder
+    davor bekommen ein festes „bis“ (Nachpruefung von fe408d1): die Last
+    folgt einer spaeteren Verlaengerung am Ende wie vorher am Einzelstab."""
+    import numpy as np
+
+    def verlaengert(m, stab):
+        """Den Stab am Ende um ein Element von 1 m verlaengern; Rueckgabe das Element."""
+        k0 = int(m.elements[m.members[stab].elements[-1]].nodes[-1])
+        k = m.add_node(*(np.asarray(m.nodes[k0], float) + [1.0, 0.0, 0.0]))
+        e = m.add_element("beam", [k0, k], "S355", "IPE 300")
+        m.members[stab].elements = list(m.members[stab].elements) + [e]
+        m.lasten_verteilen()
+        return e
+
+    def l1():
+        m, g = traeger()
+        m.add_linienlast("S1", [0, 0, -5e3], case=g)
+        m.add_linienlast("S2", [0, 0, -9e3], case=g)
+        fertig(m)
+        return m, g
+    m, g = l1()
+    name, hinweise = zusammenfassen(m, ["S1", "S2"])
+    lasten = linienlasten(m, g)
+    check("L10 nach L1: S1 bekommt das feste „bis“ 3 m, das „bis zum Ende“ von S2 bleibt",
+          name == "S1" and lasten == [("S1", 0.0, 3.0), ("S1", 3.0, None)], f"{lasten} {hinweise}"[:200])
+    ref, g_r = l1()
+    e_ref = verlaengert(ref, "S2")
+    e = verlaengert(m, "S1") if name else -1
+    neu = [x for x in elementlasten(m)[g] if x[0] == e]
+    neu_ref = [x for x in elementlasten(ref)[g_r] if x[0] == e_ref]
+    check("L10 … eine spätere Verlängerung am Ende um 1 m trägt −9 kN/m wie am Einzelstab S2",
+          name == "S1" and neu == neu_ref and len(neu) == 1 and neu[0][1][2] == -9e3, f"{neu} / {neu_ref}")
 
 
 # ---------------------------------------------------------------------------
@@ -912,10 +986,13 @@ def test_handbuch():
           and "auch der erste" in k and "Bis zur zweiten Fassung vom 03.10.2026" in k, k[:100])
     check("Handbuch Kapitel 8: verschiedene Linienlasten gehen mit, was nicht verlustfrei geht, Stand vor dem 04.10.2026",
           "auch wenn die Stäbe verschiedene haben" in k and "auf dem Abschnitt, auf dem sie vorher lag" in k
-          and "trapezförmige Last, die über ihren Stab hinausreicht" in k and "außerhalb ihres Stabs" in k
+          and "auch für eine Last, die über ihren Stab hinausreicht" in k
+          and "Nicht verlustfrei mitnehmen lässt sich nur eine Last, die außerhalb ihres Stabs liegt" in k
+          and "Am letzten Stab bleibt „bis zum Ende“ stehen" in k
           and "Bis zum 04.10.2026 wies das Zusammenfassen verschiedene Linienlasten ab" in k, k[:100])
-    check("Handbuch Kapitel 8: Drehwinkel am Stoß weist ab, Toleranz, in sich gemischter Stab, Stand vorher",
-          "„Drehwinkel verschieden: S1 0°, S2 25°“" in k and "1e-9 rad" in k and "nur an seinem Stoß" in k
+    check("Handbuch Kapitel 8: Drehwinkel aller Elemente gleich, Toleranz 1e-5 rad, in sich gemischter Stab, Stand vorher",
+          "„Drehwinkel verschieden: S1 0°, S2 25°“" in k and "1e-5 rad" in k and "in sich verschieden" in k
+          and "lässt sich aber nicht zusammenfassen" in k
           and "fasste aber Stäbe mit verschiedenem Drehwinkel zusammen" in k, k[:100])
     check("Handbuch Kapitel 8: Kettenwarnung je Ausweichrichtung, Federn halten, einmal je Kette, Etikett 8 Zeilen",
           "einmal je Kette" in k and "je Ausweichrichtung" in k and "Federelement" in k
@@ -935,7 +1012,7 @@ def main():
               test_a4_gleiche_parameter, test_a5_aus, test_a6_verweise_und_vorspannung, test_a7_ohne_unterschiede,
               test_l1_verschiedene_linienlasten, test_l2_last_nur_auf_dem_mittleren, test_l3_lastarten,
               test_l4_vorspannung, test_l5_gleiche_linienlast, test_l6_rueckgaengig, test_l7_speichern_laden,
-              test_l8_nachweise, test_l9_drehwinkel,
+              test_l8_nachweise, test_l9_drehwinkel, test_l10_ende_bleibt,
               test_a8_leerer_stab_ermuedung, test_a9_leerer_stab_ec3, test_a10_ergebnis_veraltet,
               test_a11_teilen_erhaelt_lasten, test_a12_lager_je_richtung, test_a13_glieder_ohne_nachweis,
               test_a14_feste_knicklaengen, test_a15_querschnitte_verschieden, test_a16_etikett,
