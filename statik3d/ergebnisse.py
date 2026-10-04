@@ -173,6 +173,41 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
     return os.path.getsize(pfad)
 
 
+def _huellen_umhaengen(an, model) -> None:
+    """Ergebnisdatei von vor dem 04.10.2026 (Befund R1): dort steht die
+    Umhuellende einer Ergebniskombination immer unter ihrem Namen. Heisst sie
+    wie ein Schluessel des Programms („ULS“), hatte sie die Umhuellende unter
+    diesem Schluessel ueberschrieben, soweit es die gab - unter ULS liegt dann
+    die Umhuellende der Ergebniskombination, die Umhuellende GZT fehlt. Sie kommt unter den
+    Schluessel, den solve_all ihr heute gibt („ULS (Ergebniskombination)“),
+    und die Zusammenfassung nennt, was fehlt, statt unter „Umhüllende GZT“ die
+    einer einzelnen Ergebniskombination zu zeigen.
+
+    Erkannt wird sie am gespeicherten Namen: die Umhuellende einer
+    Ergebniskombination heisst seit jeher wie diese (umhuellende_der_kombination),
+    die einer Art nie nur wie ihr Schluessel („Umhuellende ULS“, seit dem
+    03.10.2026 „Umhüllende GZT“). Eine Datei ohne Kollision und jede neue
+    bleiben unberuehrt."""
+    from .solver import umhuellende_art, umhuellende_schluessel_im_modell
+    envs = getattr(an, "envelopes", None)
+    if not envs:
+        return
+    neu = {}
+    for n, k in umhuellende_schluessel_im_modell(model).items():
+        env = envs.get(n)
+        if k != n and env is not None and k not in envs and getattr(env, "name", None) == n:
+            neu[n] = k
+    if not neu:
+        return
+    arten = {umhuellende_art(c.typ) for c in model.combinations.values()}
+    an.envelopes = {neu.get(k, k): v for k, v in envs.items()}
+    for n, k in neu.items():
+        an.envelopes[k].kombination = n
+        an.info.setdefault("umhuellende_schluessel", {})[n] = k
+        if n in arten:
+            an.info.setdefault("umhuellende_ueberschrieben", {})[n] = n
+
+
 def lesen(pfad: str, model, fortschritt=None):
     """Die Analyse zum Modell lesen; ValueError, wenn die Datei nicht passt."""
     from .solver import Analysis
@@ -193,6 +228,7 @@ def lesen(pfad: str, model, fortschritt=None):
         if feld in ("kennung",) + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
+    _huellen_umhaengen(an, model)
     # Die Umhuellenden mit bekanntem Schluessel heissen wie an der Oberflaeche
     # („Umhüllende GZT“). Der Name ist mit gespeichert: eine Datei von vor dem
     # 03.10.2026 traegt „Umhuellende ULS“, und so stand es dann in Protokoll

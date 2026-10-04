@@ -1,0 +1,37 @@
+{
+"envelope_keys": [
+"ULS",
+"SLS_CH",
+"FAT",
+"EK1",
+"EK2"
+],
+"envelope_names": {
+"ULS": "Umhüllende GZT",
+"SLS_CH": "Umhüllende GZG charakteristisch",
+"FAT": "Umhüllende Ermüdung",
+"EK1": "EK1",
+"EK2": "EK2"
+},
+"cases": {
+"LF1": "81b8b142fe94c9f121c212a3",
+"LF2": "14e5acf00a68442b035c38e1",
+"LF3": "e51f1dd18b773614b4332077"
+},
+"combinations": {
+"K1": "9deea5af05f68501aa8d033e",
+"K2": "36cea4e41dec4584868e2745",
+"K3": "22a5a83d520450f6251f68c5",
+"K4": "e61e4dd2502fcd7e45424a3c"
+},
+"alternativen": {},
+"envelopes": {
+"ULS": "eecb0f4ca56b39edbc1b06ce",
+"SLS_CH": "f30239b712ef89800c50691f",
+"FAT": "7897685ccb09c856d3a96433",
+"EK1": "7a05b6bae0776365c94f63eb",
+"EK2": "5a4b15e9135d04b29c8ed300"
+},
+"design": "74234e98afe7498fb5daf1f3",
+"fatigue": "74234e98afe7498fb5daf1f3"
+}

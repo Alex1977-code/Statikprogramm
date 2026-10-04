@@ -25,7 +25,7 @@ from scipy import sparse
 from scipy.sparse.linalg import splu, eigsh
 
 from .model import Model, NDOF, Combination, LoadCase, Member, GRUNDSTELLUNG
-from .begriffe import umhuellende_kurz
+from .begriffe import umhuellende_kurz, umhuellende_schluessel
 from . import assemble as asm
 from .elements import beam3d as bm
 from .elements import shell as sh
@@ -6117,6 +6117,11 @@ class Envelope:
     """
 
     KOMPONENTEN = ("N", "Vy", "Vz", "Mt", "My", "Mz")
+    #: Name der Ergebniskombination, deren Umhuellende das ist (solve_all) -
+    #: None bei der Umhuellenden einer Art und in Ergebnisdateien von vor dem
+    #: 04.10.2026. Der Schluessel in Analysis.envelopes ist nicht immer der
+    #: Name (umhuellende_schluessel_im_modell, Befund R1).
+    kombination = None
 
     def __init__(self, model: Model, results: dict = None, name: str = "Umhuellende",
                  n_stations: int = None):
@@ -6349,6 +6354,24 @@ class Envelope:
 # ==========================================================================
 # Gesamtanalyse
 # ==========================================================================
+def umhuellende_art(typ) -> str:
+    """Schluessel der Umhuellenden, in die eine Kombination dieses Typs
+    eingeht: ULS fuer alle Typen des GZT (ULS, EQU, ACC, USER), sonst der Typ
+    selbst - auch ein unbekannter aus einer Quelldatei."""
+    return "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
+
+
+def umhuellende_schluessel_im_modell(model: Model) -> dict:
+    """{Name der Ergebniskombination: Schluessel ihrer Umhuellenden in
+    Analysis.envelopes} fuer alle Ergebniskombinationen des Modells - der
+    Name, ausser er gehoert schon einer Umhuellenden des Programms
+    (begriffe.umhuellende_schluessel). Reserviert sind die Schluessel aus
+    begriffe.UMHUELLENDE und die Arten aller Kombinationen des Modells."""
+    arten = {umhuellende_art(c.typ) for c in model.combinations.values()}
+    return umhuellende_schluessel([n for n, c in model.combinations.items() if c.ist_umhuellende],
+                                  arten)
+
+
 @dataclass
 class Analysis:
     model: Model
@@ -6393,6 +6416,17 @@ class Analysis:
         s += dilatation_gebuendelt(self.all_results().items())
         for k, env in self.envelopes.items():
             s.append(env.summary())
+        # Ergebniskombinationen, deren Umhuellende nicht unter ihrem Namen
+        # steht, und Umhuellende, die eine alte Ergebnisdatei nicht mehr hat
+        # (Befund R1, 04.10.2026)
+        for n, k in (self.info.get("umhuellende_schluessel") or {}).items():
+            s.append(f"Hinweis: Die Umhüllende der Ergebniskombination „{n}“ heißt "
+                     f"„{umhuellende_kurz(k)}“ – unter ihrem Namen wäre sie nicht von der "
+                     f"„{umhuellende_kurz(n)}“ zu unterscheiden.")
+        for n, a in (self.info.get("umhuellende_ueberschrieben") or {}).items():
+            s.append(f"Hinweis: In dieser Ergebnisdatei (vor dem 04.10.2026 geschrieben) hatte die "
+                     f"Umhüllende der Ergebniskombination „{n}“ die „{umhuellende_kurz(a)}“ "
+                     "überschrieben – diese fehlt, Berechnung → Berechnen bildet sie neu.")
         if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
             s.append(self.theorie2.summary())
         if self.theorie3 is not None and getattr(self.theorie3, "kombinationen", None):
@@ -6762,8 +6796,7 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():
-            typ = model.combinations[n].typ
-            key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
+            key = umhuellende_art(model.combinations[n].typ)
             groups.setdefault(key, {})[n] = r
         # Der Name ist der Klartext („Umhüllende GZT“): er steht in der
         # Zusammenfassung und damit im Protokoll. Bis zum 03.10.2026 stand dort
@@ -6777,15 +6810,25 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         # Hier stand bis zum 22.09.2026, die Nachweise saehen so die
         # Alternativen - das traf nie zu (Befund FE11).
         for n, env in umhuellende_ek.items():
-            typ = model.combinations[n].typ
-            key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
+            key = umhuellende_art(model.combinations[n].typ)
             if key not in an.envelopes:
                 an.envelopes[key] = Envelope(model, {}, umhuellende_kurz(key))
             an.envelopes[key].aufnehmen_umhuellende(env)
         if not an.combinations and not umhuellende_ek:
             an.envelopes["CASES"] = Envelope(model, an.cases, umhuellende_kurz("CASES"))
+    # Die Umhuellende einer Ergebniskombination steht unter ihrem Namen, ausser
+    # er ist der Schluessel einer Umhuellenden des Programms (ULS, FAT, CASES,
+    # ...) oder wird wie eine andere angezeigt: dann unter „<Name>
+    # (Ergebniskombination)“ (begriffe.umhuellende_schluessel). Bis zum
+    # 04.10.2026 stand hier an.envelopes[n] = env, und eine Ergebniskombination
+    # „ULS“ ueberschrieb still die Umhuellende GZT (Befund R1).
+    schluessel = umhuellende_schluessel_im_modell(model)
     for n, env in umhuellende_ek.items():
-        an.envelopes[n] = env
+        k = schluessel.get(n, n)
+        env.kombination = n
+        an.envelopes[k] = env
+        if k != n:
+            an.info.setdefault("umhuellende_schluessel", {})[n] = k
     _melde(progress, "Umhüllende gebildet", 0.92)
     if design and model.members:
         from .ec3.design import check_members

@@ -4731,6 +4731,32 @@ neben der „Umhüllende GZT“ aller GZT-Kombinationen, in den Listen, im
 Modellbaum, im Browser und im Bericht. Ohne den Zusatz hießen zwei
 verschiedene Umhüllende gleich.
 
+Denselben Zusatz bekommt eine Ergebniskombination, deren Name genau einer der
+Schlüssel ist, unter denen das Programm die Umhüllenden der Arten führt (ULS,
+SLS_CH, SLS_FR, SLS_QP, FAT und CASES, dazu ein unbekannter Typ einer
+Kombination aus der Quelldatei). Eine Ergebniskombination „ULS“ steht dann als
+„Umhüllende ULS (Ergebniskombination)“ neben der „Umhüllende GZT“, und die
+„Umhüllende GZT“ fasst weiter alle GZT-Ergebnisse zusammen, die Alternativen
+dieser Ergebniskombination eingeschlossen. Nach der Rechnung nennt die
+Zusammenfassung im Protokoll jeden solchen Fall in einer Zeile, die mit
+„Hinweis:“ beginnt. Dasselbe gilt, wenn der Name einer Ergebniskombination
+sonst genauso angezeigt würde wie eine andere Umhüllende. Bis zum 04.10.2026
+überschrieb eine Ergebniskombination „ULS“ still die Umhüllende GZT: Ergebnisauswahl,
+Glasleiste, Modellbaum, Tabellen, Bild, Bericht und Browser zeigten unter
+„Umhüllende GZT“ nur die Alternativen dieser einen Ergebniskombination statt
+aller GZT-Ergebnisse, und eine Ergebniskombination „FAT“ ersetzte ebenso die
+Umhüllende der Ermüdung. Die Nachweise waren davon nicht betroffen, denn sie
+lesen keine Umhüllende; auch der Ermüdungsnachweis aus FAT-Kombinationen
+rechnet mit den Lastfällen. Eine Ergebnisdatei aus dieser Zeit lädt weiter:
+die Umhüllende der Ergebniskombination steht dann unter ihrem neuen Namen, und
+die Zusammenfassung sagt, dass die überschriebene Umhüllende in der Datei
+fehlt und Berechnung → Berechnen sie neu bildet. Ein Berichtseintrag, der
+damals aus der „Umhüllende GZT“ eines solchen Modells übernommen wurde,
+verweist weiter auf den Schlüssel ULS: eine übernommene Tabelle zeigt nach der
+neuen Rechnung die echte Umhüllende GZT, ein übernommenes Bild bleibt, wie es
+aufgenommen wurde, und gehört neu übernommen. Ohne eine solche
+Namensgleichheit rechnet und zeigt das Programm alles wie vorher.
+
 Der Kombinationsdialog (Doppelklick in der Tabelle *Kombinationen* oder im
 Register *Lastfälle*) bietet dieselben Typen wie die Maske, also auch
 *Ermüdung*. Hat eine Kombination einen Typ, den die Liste nicht kennt (aus

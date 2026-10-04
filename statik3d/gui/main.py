@@ -14906,10 +14906,25 @@ class MainWindow(QtWidgets.QMainWindow):
         (ULS, EQU, ACC, USER - wie solve_all sie gruppiert) und zu den
         Ergebniskombinationen dieser Arten. Bis zur Nachbesserung vom
         03.10.2026 (10c) stand die Spalte auch bei „Umhüllende GZG …“, mit der
-        Ausnutzung aus dem GZT."""
+        Ausnutzung aus dem GZT.
+
+        Die Ergebniskombination nennt die Umhuellende selbst (kombination):
+        seit dem 04.10.2026 ist der Schluessel nicht immer ihr Name („ULS
+        (Ergebniskombination)“, Befund R1). Bis dahin galt der Schluessel als
+        Name, und eine Ergebniskombination „SLS_CH“ vom Typ GZT gab der
+        Umhuellenden GZG charakteristisch die Spalte Ausnutzung. Eine aeltere
+        Ergebnisdatei kennt kombination nicht: dort ist der Schluessel der
+        Name, ausser bei den Umhuellenden einer Art."""
         if schluessel == "ULS":
             return True
-        kombi = (self.model.combinations or {}).get(schluessel)
+        an = getattr(self, "analysis", None)
+        env = (getattr(an, "envelopes", None) or {}).get(schluessel)
+        name = getattr(env, "kombination", None)
+        if name is None:
+            if schluessel in bg.UMHUELLENDE:
+                return False
+            name = schluessel
+        kombi = (self.model.combinations or {}).get(name)
         return kombi is not None and kombi.typ in ("ULS", "EQU", "ACC", "USER")
 
     def _auflager_spalten(self, huelle: bool) -> list:
