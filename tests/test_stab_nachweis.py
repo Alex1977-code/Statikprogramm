@@ -17,6 +17,9 @@ pruef_gui2.py, pruef_extra.py) und sind dort gemessen. Gepruefte Grundsaetze:
   Linienlasten gehen mit, jede auf dem Abschnitt, auf dem sie vorher lag; die
   Elementlasten jedes Elements bleiben, Auflagerkraefte und Verschiebungen
   auch (L1 bis L8);
+* G1 Drehwinkel (Nachtrag 04.10.2026): verschiedene Drehwinkel der Elemente
+  am Stoss zweier Staebe weisen ab - ein Stab wird im Nachweis mit einem
+  Achsensystem gefuehrt (L9);
 * G2: ein leerer Stab ist im EC3-Nachweis, in der Web-Ampel, in der Ermuedung
   und im Bericht als nicht nachgewiesen sichtbar (A8, A9);
 * G3: Zusammenfassen, Teilen und „Stab“ um ein vorhandenes Element verwerfen
@@ -508,6 +511,48 @@ def test_l8_nachweise():
           f1 is not None and round(f1, 9) == round(f_r, 9) and f_r > 0, f"D = {f1} / {f_r}")
 
 
+def test_l9_drehwinkel():
+    """Verschiedene Drehwinkel am Stoss weisen ab (G1: ein Stab wird im
+    Nachweis mit einem Achsensystem gefuehrt); verglichen wird mit 1e-9 rad.
+    Ein Stab, der in sich schon gemischt ist (Stäbe automatisch erkennen,
+    Stab aus Stabelementen, Elementtabelle), zaehlt nur an seinem Stoss."""
+    import numpy as np
+
+    def mit_winkel(grad=None, rad=None):
+        m, g = traeger()
+        for e, w in zip(m.elements, rad if rad is not None else np.radians(grad)):
+            e.roll = float(w)
+        fertig(m)
+        return m
+
+    def rollen(m):
+        return [float(e.roll) for e in m.elements]
+    m = mit_winkel([0, 0, 25, 25])
+    r0 = rollen(m)
+    grund, gleich = abgewiesen(m, ("S1", "S2"))
+    check("L9 S1 0°, S2 25°: abgewiesen, „Drehwinkel verschieden: S1 0°, S2 25°“, Modell unverändert",
+          "Drehwinkel verschieden: S1 0°, S2 25°" in grund and gleich and rollen(m) == r0, grund[:200])
+    m = mit_winkel([25, 25, 25, 25])
+    name, hinweise = zusammenfassen(m, ["S1", "S2"])
+    check("L9 beide 25°: zusammengefasst", name == "S1" and list(m.members) == ["S1"], str(hinweise)[:200])
+    w = np.radians(25.0)
+    m = mit_winkel(rad=[w, w, w + 1e-12, w + 1e-12])
+    name, hinweise = zusammenfassen(m, ["S1", "S2"])
+    m2 = mit_winkel([0, 0, 360, 360])
+    name2, hinweise2 = zusammenfassen(m2, ["S1", "S2"])
+    check("L9 Rundungsrauschen 1e-12 rad und 0° gegen 360°: zusammengefasst (Toleranz 1e-9 rad)",
+          name == "S1" and name2 == "S1", f"{hinweise} {hinweise2}"[:200])
+    m = mit_winkel([0, 25, 25, 25])
+    name, hinweise = zusammenfassen(m, ["S1", "S2"])
+    check("L9 S1 in sich gemischt (0°, 25°), am Stoß 25° wie S2: zusammengefasst, Winkel bleiben",
+          name == "S1" and [round(float(np.degrees(e.roll)), 9) for e in m.elements] == [0, 25, 25, 25],
+          str(hinweise)[:200])
+    m = mit_winkel([25, 0, 25, 25])
+    grund, gleich = abgewiesen(m, ("S1", "S2"))
+    check("L9 S1 in sich gemischt (25°, 0°), am Stoß 0° gegen 25°: abgewiesen, Modell unverändert",
+          "Drehwinkel verschieden: S1 0°, S2 25°" in grund and gleich, grund[:200])
+
+
 # ---------------------------------------------------------------------------
 # G2: leerer Stab
 # ---------------------------------------------------------------------------
@@ -869,6 +914,9 @@ def test_handbuch():
           "auch wenn die Stäbe verschiedene haben" in k and "auf dem Abschnitt, auf dem sie vorher lag" in k
           and "trapezförmige Last, die über ihren Stab hinausreicht" in k and "außerhalb ihres Stabs" in k
           and "Bis zum 04.10.2026 wies das Zusammenfassen verschiedene Linienlasten ab" in k, k[:100])
+    check("Handbuch Kapitel 8: Drehwinkel am Stoß weist ab, Toleranz, in sich gemischter Stab, Stand vorher",
+          "„Drehwinkel verschieden: S1 0°, S2 25°“" in k and "1e-9 rad" in k and "nur an seinem Stoß" in k
+          and "fasste aber Stäbe mit verschiedenem Drehwinkel zusammen" in k, k[:100])
     check("Handbuch Kapitel 8: Kettenwarnung je Ausweichrichtung, Federn halten, einmal je Kette, Etikett 8 Zeilen",
           "einmal je Kette" in k and "je Ausweichrichtung" in k and "Federelement" in k
           and "höchstens acht" in k and "87 Ketten" in k, k[:100])
@@ -887,7 +935,7 @@ def main():
               test_a4_gleiche_parameter, test_a5_aus, test_a6_verweise_und_vorspannung, test_a7_ohne_unterschiede,
               test_l1_verschiedene_linienlasten, test_l2_last_nur_auf_dem_mittleren, test_l3_lastarten,
               test_l4_vorspannung, test_l5_gleiche_linienlast, test_l6_rueckgaengig, test_l7_speichern_laden,
-              test_l8_nachweise,
+              test_l8_nachweise, test_l9_drehwinkel,
               test_a8_leerer_stab_ermuedung, test_a9_leerer_stab_ec3, test_a10_ergebnis_veraltet,
               test_a11_teilen_erhaelt_lasten, test_a12_lager_je_richtung, test_a13_glieder_ohne_nachweis,
               test_a14_feste_knicklaengen, test_a15_querschnitte_verschieden, test_a16_etikett,

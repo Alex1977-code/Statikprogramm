@@ -6048,11 +6048,14 @@ class Model:
         es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
         Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
         Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
-        Vorspannungen, eine Linienlast, die sich nicht verlustfrei als
-        Abschnittslast schreiben laesst (:meth:`_linienlast_abschnitt`), und
-        jeder Verweis auf irgendeinen Stab der Kette, auch den ersten (danach
-        meinte er die ganze Kette). Bis zur Runde 2 setzte es feste Laengen
-        still auf β · L zurueck und uebernahm die Parameter des ersten Stabs.
+        Drehwinkel der Elemente am Stoss zweier Staebe (ein Stab wird im
+        Nachweis mit einem Achsensystem gefuehrt), verschiedene Vorspannungen,
+        eine Linienlast, die sich nicht verlustfrei als Abschnittslast
+        schreiben laesst (:meth:`_linienlast_abschnitt`), und jeder Verweis
+        auf irgendeinen Stab der Kette, auch den ersten (danach meinte er die
+        ganze Kette). Bis zur Runde 2 setzte es feste Laengen still auf β · L
+        zurueck und uebernahm die Parameter des ersten Stabs; bis zum
+        04.10.2026 fasste es auch Staebe mit verschiedenem Drehwinkel zusammen.
 
         Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
         Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
@@ -6129,6 +6132,23 @@ class Model:
             if any(w != werte[0] for w in werte[1:]):
                 gruende.append(f"{self.STABFELDER.get(f, f)} verschieden: "
                                + ", ".join(f"{n} {self._stabwert(f, w)}" for n, w in zip(folge, werte)))
+        # Drehwinkel am Stoss (Nachtrag 04.10.2026): ein Stab wird im Nachweis
+        # mit einem Achsensystem gefuehrt - knicken seine Haelften um
+        # verschiedene Achsen, aendert sich die Bedeutung. Verglichen wird nur
+        # am Stoss, letztes Element gegen erstes: ein Stab kann schon in sich
+        # gemischt sein (Stäbe automatisch erkennen, Stab aus Stabelementen,
+        # Elementtabelle) und bekommt dadurch keinen anderen Status. 1e-9 rad
+        # Toleranz und modulo 360°, damit Rundungsrauschen nicht abweist.
+        stoesse = []
+        for n0, n1 in zip(folge, folge[1:]):
+            r0 = float(self.elements[self._stab_elemente(self.members[n0])[-1]].roll or 0.0)
+            r1 = float(self.elements[self._stab_elemente(self.members[n1])[0]].roll or 0.0)
+            if abs((r1 - r0 + np.pi) % (2.0 * np.pi) - np.pi) > 1e-9:
+                stoesse.append(f"{n0} {self._stabwert('roll', float(np.degrees(r0)))}°, "
+                               f"{n1} {self._stabwert('roll', float(np.degrees(r1)))}° (Stoß K{enden[n0][1]})")
+        if stoesse:
+            gruende.append("Drehwinkel verschieden: " + "; ".join(stoesse) + ". Ein Stab wird im Nachweis mit "
+                           "einem Achsensystem geführt; erst die Drehwinkel angleichen")
         vsp = [self._stabvorspannungen(n) for n in folge]
         if any(x != vsp[0] for x in vsp[1:]):
             def vtext(n, x):
