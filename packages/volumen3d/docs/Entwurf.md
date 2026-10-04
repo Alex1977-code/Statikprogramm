@@ -141,7 +141,8 @@ hat der Anwender bei der Durchsicht von Pull Request 8 am 27.09.2026 bestätigt.
   (Sutherland–Hodgman auf den Polyederflächen samt Deckelpolygon), vom Schwerpunkt aus in
   Tetraeder zerlegt und mit der konischen Produktregel (Gauß–Jacobi, n = ⌈3p/2⌉ je Richtung,
   exakt bis Gesamtgrad 2n−1 ≥ 3p−1) integriert – genau die Exaktheit, die der Patch-Test für
-  ∫∇v braucht. Ebene Geometrie ist damit auf jeder Tiefe exakt (keine Teilung nötig);
+  ∫∇v braucht. (Seit O5, 03.10.2026: mit Moment Fitting gehen schräg geschnittene Stücke mit exakten Momenten ein, 4e.6;
+  die Tetraederregel bleibt der Weg ohne Moment Fitting.) Ebene Geometrie ist damit auf jeder Tiefe exakt (keine Teilung nötig);
   gekrümmte Flächen werden bis Tiefe k (Standard 2) geteilt, Fehler O(κ·Blattkante²) statt
   O(Blattkante). Gemessen am Lamé-Zylinder (h = 10, R = 50): Tiefe 2 begrenzt σ_r auf etwa
   0,3 % unabhängig von p ≥ 3, Tiefe 3 bringt 0,09 % (p = 3) bei vierfacher Punktzahl – die
@@ -440,6 +441,8 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   Ebene teilen), `bereiche` (`RefinementRegion` des Vertrags: Kugel um `center` mit
   `target_cell_size_mm` → Ebene), `duenne_waende` (Werkstoffstrecke durch die Zellmitte längs
   einer Achse kürzer als zwei Zellkanten → teilen; Vorgabe Abschnitt 4).
+- **Balancierung (O15, 02.10.2026):** geteilt werden die von `_indizieren` sortierten Felder (die Maske aus `_unbalanciert` gilt für sie), höchstens `2·max_ebene + 2` Durchläufe, sonst `RuntimeError`;
+  vorher teilte die Balancierung bei drei Ebenen ohne Ende (Theorie 11.8, Nachtrag).
 - **Punktsuche vektorisiert:** je Ebene ein sortiertes Feld flacher Indizes; für Punkte werden die
   Indizes aller Ebenen berechnet und von grob nach fein per `searchsorted` gesucht – der erste
   Treffer ist das Blatt. Zellen-in-Box-Abfrage über die Blattlisten der Wurzelzellen (für die
@@ -790,3 +793,132 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   34,4 / 57,4 s; bei h 14 und h 20 ist der Direktlöser schneller (Tabelle in Theorie 11.10).
   Vertragsschicht: `backend='auto'` wählt ab 200 000 Freiheitsgraden das GPU-Mehrgitter (bei genug
   Speicher), sonst direkt; `'gpu'` erzwingt es mit Rückfall, `'cpu'` rechnet direkt.
+
+## 4e. Teilprojekt 5 im Einzelnen (Stufe 2c, 29.09. bis 02.10.2026)
+
+Plan: `docs/plaene/2026-09-29-tp5-effizienz-nachweise.md` (Regeln vor jeder Messung, Ergebnisse, offene Entscheidungen O1 bis O15). Der Plan hat zwei Phasen: Phase A (A1 bis A6) ist der Rest der Leistungsarbeit aus Stufe 2 (Mehrgitter, GPU-Speicher, Löserwahl), Phase B ist Teilprojekt 5
+selbst: Genauigkeit (B1, B2), Nachweise (B3, B4), Geometrie (B5, B6) und Abnahmen (B7, C1, C2). Beide Phasen liegen auf `feature/volumen3d`, nicht auf `main`. Formeln, Messwerte und Begründungen stehen in `docs/Theoriehandbuch.md` 11.10 bis 11.20;
+dieser Abschnitt hält die Entscheidungen und ihre Folgen fest. Die Einträge standen bis 02.10.2026 in 4d.4 und sind hierher verschoben; überholte Stände sind berichtigt.
+
+### 4e.1 Phase A: Leistung des iterativen Wegs und Löserwahl (A1 bis A6)
+- **Plan TP 5, A1/A2 (29.09.2026):** Aufbau vermessen (zwei Skripte, 10 % gleich): kein Doppelaufwand
+  zwischen Zelldaten und Assemblieren; große Glätterblöcke (> 320) einzeln invertiert (Block der Größe 2463:
+  8,6 → 0,17 s), Nachbarsuche der Aggregation und Probepunkte der hängenden Zwänge in einem Aufruf
+  (Konstruktor Kirsch h 8: 23 → 12 s). Mehrgitter einrichten überall < 4,5 s, Block h 14 Gesamtweg 58 gegen
+  75 s direkt.
+- **Plan TP 5, A3 (30.09.2026):** `fcm/bloecke_gpu.py` – symmetrisch gepackte Blöcke mit zweiteiligem Kern
+  (Faden je Zeile für die untere, Warp je Spalte für die gespiegelte Hälfte), Aufträge zu 256 Zeilen,
+  Einsammeln über die Inzidenz (bitgleich wiederholbar); Operator und Schwarz-Glätter nutzen ihn.
+  Blockauszug auf der CPU, Pool-Freigabe je Größengruppe bei < 2 GB frei. 10⁶ Freiheitsgrade: Block h 9
+  4 425 MB Höchststand, 29 Iterationen, wie direkt auf 2,8·10⁻¹⁴; Kirsch h 5,5 4 822 MB, 36 Iterationen,
+  Spannungen wie direkt auf 1,6·10⁻¹² (vorher 10,8 bzw. 12,2 GB geschätzt). Schätzung der Vertragsschicht neu
+  geeicht (3–26 % über dem Höchststand). A4 (h-Mehrgitter) entfällt: Grobgitter 12 % des Lösens.
+- **A5, Streuung über die Schnittlagen (30.09.2026, Theorie 11.10):** Kirsch p 3, je fünf Lagen h 10 und h 8,
+  zwei Skripte mit gleichen Iterationszahlen. Gewichteter Schwarz-Glätter W M⁻¹ W verworfen (h 10 Versatz 0:
+  29 → 230 Iterationen, λ_max 33 → 394). Chebyshev-Fenster [λ_max/100, λ_max] statt [λ_max/16, λ_max]:
+  Iterationen im Mittel 33,0 → 24,8 (h 10) und 39,6 → 30,6 (h 8), Lösen 15,0 → 11,7 s und 26,6 → 21,2 s in
+  Summe, Spannungen gleich. Die relative Streuung bleibt (−25 bis +29 %): langsame Moden am Oktree-Übergang
+  am Loch und in den halb gefüllten Zellschichten der dünnen Scheibe, nicht an der Aggregationsschwelle.
+- **A6, Löserwahl und Leistungsabnahme (30.09.2026, Theorie 11.10):** 23 Fälle p 3, dazu p 2, p 4 und 10⁶
+  Freiheitsgrade, zwei Skripte. `auto` bleibt beim Direktlöser (kein N₀ nach der vorher festgelegten Regel): das
+  Mehrgitter gewinnt am kompakten Block (0,73 bis 0,88 ab 185 000 FHG, spart die Faktorisierung), verliert an der
+  dünnen Scheibe (Summe 1,10). Bei 10⁶ FHG vorn (Block 115 statt 280 s, Kirsch 62 statt 83 s). Kriterium 10⁶ FHG
+  unter 60 s: Lösen allein 7,1 und 8,3 s erfüllt; Aufbau plus Lösen 115 und 62 s nicht – 68 % am Block sind die
+  Zellsteifigkeiten der Schnittzellen (`Zelldaten`, 78 s), löserunabhängig.
+
+### 4e.2 Genauigkeit: Moment Fitting und Spannungsrückgewinnung (B1, B2)
+- **B1, Moment Fitting (30.09.2026, Theorie 11.11):** `fcm/momentfitting.py`, Schalter `Zellquadratur(momentfitting,
+  fit_grad)`. Gefittete Regel auf Tensor-Gauß (q+1)³ je Schnittzelle, Gewichte per Kronecker-Lösung aus den Momenten der
+  Referenzintegration; q = 2p macht die Zellmatrizen bis auf Rundung gleich (gemessen 2·10⁻¹³), negative Gewichte (bis
+  −29 des mittleren) sind dann unschädlich; q < 2p liefert indefinite Matrizen (−3,3·10⁻³) und Fehler bis 10⁻³. Punkte je
+  Schnittzelle: Lamé 22- bis 34-fach, Kirsch 17- bis 19-fach, ebener Patch 2,6- bis 4,2-fach weniger, achsparallel unverändert
+  (Fitting nur, wo es Punkte spart). Nebenbefund behoben: Wurzelwahl der Aggregation hing an 3·10⁻¹⁵ im Anteil (jetzt auf
+  neun Stellen gerundet, Gleichstand nach fester Nachbarreihenfolge). Vorgabe seit 30.09.2026 an (Anwender),
+  `momentfitting=False` schaltet zurück (plastische Körper, Vertrag 6a).
+- **B2, Spannungsrückgewinnung (30.09.2026, Theorie 11.12):** globale L²-Projektion der sechs Komponenten auf den
+  stetigen Raum vom Grad p mit der skalaren Zwangsmatrix (C[0::3, 0::3]), Massenmatrix einmal je Problem faktorisiert
+  (`postprocess/rueckgewinnung.py`). Patch und reine Biegung exakt; Lamé an allen Oberflächenpunkten besser als roh
+  (p 2 h 20: 15 statt 57 %, p 3 h 10: 2,23 statt 2,29 %); Kirsch K_t um 0,2 bis 0,4 % verschoben, Randresiduum 17–20 %
+  kleiner. Nach der Regel Ausgabe des Vertragswegs (`DetailResult.stress`, Protokoll `stress_recovery`).
+- **B1/B2 auf freier Maschine (30.09.2026):** Fitting senkt die Quadraturpunkte um 92–96 %, den Gesamtweg um 11–27 %
+  (Block h 9: 149 → 109 s mit Mehrgitter); Aufbau plus Lösen bei 10⁶ FHG 41 s (Lesart b der Vorgabe 13 erfüllt).
+  Rückgewinnung bei 10⁶ FHG: 5 s Aufbau, 13 s rechte Seiten (für alle Keys zusammen), 2 s Auswertung.
+
+### 4e.3 Nachweise: Hot-Spot, adaptive Zyklen, Konvergenzaussage (B3, B4)
+- **B3, Hot-Spot IIW Typ a (30.09.2026, Theorie 11.13):** `postprocess/hotspot.py`, Blechseite aus der Werkstofftiefe
+  (Kreis um den Übergang, zwei Oberflächenäste), Warnung statt Wert bei Mehrdeutigkeit; `DetailResult.hot_spots` und
+  Protokoll `hot_spot`. Dazu verschachtelte CSG-Bäume ebenen-exakt (`Csg._baum_stuecke`, Flächenpolygone an allen
+  Ebenen geteilt): T-Stoß mit Kehlnähten ohne Punkttest, Volumen und Flächen exakt. T-Stoß unter Zug: σ_hs 0,99–1,02 σ_n,
+  Spanne σ_n ≤ σ_hs verfehlt (h 10: 98,75); auf Entscheidung des Anwenders 0,95…1,5 σ_n, Absolutwert in C1 gegen Tet10.
+- **B4, adaptive Zyklen und Konvergenzkurve (30.09.2026, Theorie 11.14):** `FcmSolver.solve` fährt `adaptive_cycles` (0–4) als lokale
+  h-Halbierung an den Nähten (ungerade Zyklen) und p + 1 (gerade; Fahrplan bis 01.10.2026, seither zuerst lokal h bis t/4, dann p + 1, siehe unten), ohne Naht nur p; `convergence` je Zyklus mit Schritt, Freiheitsgraden,
+  Hot-Spot, Laufzeit; `protocol["settings"]` mit allen Einstellungen, `convergence_statement` aus `postprocess/konvergenz.py`
+  (Kriterium seit O4: letzte relative Änderung unter 3 %, Aitken nur bei monotoner Folge). Die vorab festgelegte Konvergenzforderung war am T-Stoß nicht erfüllt
+  (81,1–119,0–134,2–91,0 N/mm², nicht monoton, Referenzpunkte in der ersten Zellschicht an der Kerbe); daraus der Fahrplan „h zuerst bis t/4“ (Anwender, 01.10.2026, unten)
+  und das Kriterium der letzten Änderung (O4, 4e.6).
+  Befund behoben: Zwangszyklus in `Zellaggregation.roh_zwaenge`, wenn eine unverwurzelte grobe schlechte Zelle Ecken mit feineren
+  verwurzelten teilt. Offen: Konsistenzfehler 1e-6…1e-4 am T-Stoß mit lokaler Verfeinerung.
+  Fahrplan seit 01.10.2026 (Anwender): zuerst lokal h bis t/4, dann p + 1 (`_fahrplan`); T-Stoß: 119,8–127,6–111,0 (2,5 mm) → p 3 107,4 → p 4 107,9 N/mm²,
+  letzte Änderung 0,45 %, die Aussage war wegen der groben Anfangsschritte „nicht monoton“ (Vorschlag: nur die p-Phase) und wurde mit O4 durch das Kriterium der letzten Änderung ersetzt.
+
+### 4e.4 Geometrie: STEP, Hüllenintegration, Windungszahl (B5, B6)
+- **B5, STEP über gmsh (01.10.2026, Theorie 11.15):** `geometry/step.py`, Extra `step` (gmsh optional, GPL), `GeometrySource.params`
+  `tessellation_mm`/`elements_per_circle`, Einheit nach mm, Protokoll `step_tessellation`; Tessellierung gegen die Formel (Bohrung N 120 +0,0047 %), STEP-Quader
+  durch den Vertragsweg gleich CSG. Befund: gekrümmte unstrukturierte Tessellierungen sind im STL-Weg langsam (N 16 Block mit Bohrung 206 s, CSG-Block 4,6 s) und nur erster
+  Ordnung; Warnung `_integrationswarnung`; Abhilfe (Integration über die Dreiecke) in B6.
+- **B6, Hüllenintegration und Windungszahl-Baum (01.10.2026, Theorie 11.16):** `geometry/huelle.py` integriert tessellierte Hüllen je Zelle exakt über den
+  Divergenzsatz (Momente der Tensor-Legendre-Basis in geschlossener Form, keine lokalen Ebenen, kein Punkttest; `Csg.huellenzelle` wertet den Baum über
+  {leer, voll, Hülle, Komplement} aus, Flächenpolygone auf Facetten clippen nur die anderen Formen). Block mit Bohrung N 120 h 25 p 3: Konstruktor 388 → 26,8 s,
+  Volumen = Tessellierung auf 2e-16, kein Punkttest; durch den Vertragsweg K_t gegen CSG 0,12 % (p 2) und 0,25 % (p 3) – die offene Prüfung aus B5.
+  `geometry/windung.py`: Barill-Baum mit exakten Dreiecksmomenten bis zweiter Ordnung auf der BVH, Vorgabe ab 20 000 Facetten für `Stl.innen`; N 240 (107 636
+  Dreiecke), 100 000 Punkte: gleiche Entscheidung, |Δw| 2,6e-4, 28-mal schneller mit β 4 (β 2 aus dem Plan: 9,9e-3, Schranke 1e-3 verfehlt). Teil 3
+  (Ebenen durch den gekrümmten Teil einer Hülle) nicht gebaut, weil die Zellen an den Schnittebenen nur ebene Facetten treffen.
+
+### 4e.5 Abnahmen: Schale, Knotenblech, zweite Sicht (B7, C1, C2)
+- **B7, Schale → Volumen (01.10.2026, Theorie 11.17):** Prüfung mit einem Schalen-Provider-Stub (Reissner-Mindlin, lineare Verteilung über die Dicke) am Plattenstreifen,
+  achsparallel und 10°/30° geneigt (STL-Hülle, schräge Ebenen): Schnittgrößenabweichung ≤ 7·10⁻⁴ (p 2), ≤ 6·10⁻⁸ (p 3), Vorgabe 1 %. Befunde: Kopplungskontrolle meldete bei reiner Biegung
+  100 % Kraftabweichung (Kraftbezug ohne Momentenanteil; gemeinsames Lastmaß `_kopplungsabweichung`, seit C2 als Spannung bewertet); Hüllenfacetten hinter einer Schnittebene blieben als Oberfläche stehen (Fehler aus B6,
+  behoben, `Csg._stuecke_ohne`); offen: Konsistenzfehler p 2 am schrägen Schnitt 2·10⁻⁴ bis 3,5·10⁻³ in der Spannung (hängt an der Aggregationsschwelle).
+- **C1, Abnahme am Knotenblech mit Kehlnaht (01.10.2026, Theorie 11.18):** Längsrippe auf Zugblech (CSG, Nahtstumpf als Prismatoid), vier Zyklen h 5, h 2,5, p 3, p 4
+  (1,10 Mio. FHG, 329 s, 59 GB): σ_hs 181 → 175 → 157 → 142,6 → 143,2 N/mm², letzte Änderung 0,44 %. Gegen die Tet10-Referenz der Hauptsitzung (PR 13 auf main,
+  gmsh-Netz 1 mm, 1,09 Mio. FHG, main 7da3571; Session B hatte den Lauf vorab identisch): rechts +0,34 %, links −2,93 % – Abnahme hält,
+  links knapp; die Differenz rechts/links (3,1 %) ist Gitterphase am Übergang (Planschranke 1 % verfehlt, mit O3 als Streuband berichtet, Hebel t/8 wird gemessen, sobald die Maschine frei ist). Befunde behoben: Probenprüfung der
+  Baumzerlegung an inneren Trennflächen, deckungsgleiche Flächen zweier Formen doppelt.
+- **C2, zweite Sicht (02.10.2026, Theorie 11.19):** drei Gutachter (je ein anderes Modell als die Umsetzung), 23 verschiedene Befunde, alle bestätigt;
+  behoben: durchdringende Körper (STEP vereinigen, STL Fehler), deckungsgleiche Flächen auf dem flachen Weg und Scheindeckel, offene Hüllen im Divergenzweg,
+  Blechseite am Nahtübergang (eben über 1,0 t + Tiefe), Hülle in abgezogenem Teilbaum, Konvergenzaussage und wirkungslose Zyklen, Kopplungskontrolle als
+  Spannung, zwei Prüfungen ohne Aussage, maßgebender Hot-Spot mit Vorzeichen, dazu zwölf niedrige. Aufgelistet: Abbruch in `prepare`, `summary()` nach Zyklen.
+
+### 4e.6 Entscheidungen nach der zweiten Sicht (O1 bis O4)
+- **O1 (02.10.2026):** die Tet10-Referenz des Knotenblechs liegt als Pull Request 13 auf `main`; `test_knotenblech` liest `tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json`.
+- **O2 (02.10.2026, Quelle `REFERENZ-KNOTENBLECH-2026-10-01/lauf_05mm/ABNAHME-05MM.md`):** der 0,5-mm-Lauf der Hauptsitzung am vollen Netz passt nicht in den Speicher; stattdessen rechnet sie am lokal verfeinerten Netz von Session B
+  (`REFERENZ-KNOTENBLECH-2026-10-01/knotenblech_tet10_lokal05.inp`: 445 946 Knoten, 305 689 Tet10, 1,34 Mio. Freiheitsgrade, Kantenlänge am Übergang im Median 0,66 mm gegen 1,23 mm
+  im 1-mm-Netz; Median der Kanten mit Mitte höchstens 1 mm von der Übergangslinie – die Hauptsitzung nennt für das 1-mm-Netz 1,33 mm nach einer anderen Vorschrift: Kanten mit einer Ecke höchstens 1,5 mm vom Übergang). Ergebnis (19:12): alle Kriterien erfüllt, Netzkonvergenz der Referenz belegt (σ_hs gegen 1 mm höchstens 0,31 % Änderung), σ_hs(y 40) 143,03 / 143,00 N/mm²; FCM gegen diese Referenz −2,95 % bis +2,96 % über vier Gitterlagen und
+  je 18 Punkte (Theorie 11.18, 11.20, Nachträge O2).
+- **O3/O4 (02.10.2026, Theorie 11.20, 11.14):** Hot-Spot-Streuung mit der Gitterlage am Knotenblech gemessen (vier Lagen, p 3 und p 4): S 5,7 % bei (a) 0,4 t / 1,0 t, 3,3 % bei (c) 0,5 t / 1,5 t, allein
+  von σ(0,4 t); berichtet als Band (Mittel 143,6, Spanne 138,9 bis 147,2 N/mm²). Konvergenzaussage: letzte relative Änderung unter 3 % = konvergiert, Monotonie und Aitken-Grenzwert zusätzlich.
+- **O4, Berichtigung (C3, 02.10.2026):** die Planregeln nannten für die letzte Änderung der T-Stoß-p-Phase 0,47 %, gerechnet aus den gerundeten Werten 107,4 und 107,9; die gemessenen
+  Werte 107,446 und 107,932 ergeben 0,45 %. Handbuch, Plan und Test sind berichtigt.
+- **O5, Konsistenz der Schnittzellen (03.10.2026, Theorie 11.21):** Ursachen des Konsistenzfehlers gemessen (zwei Modelle, zwei unabhängige Größen): Tetraederregel der schräg geschnittenen Stücke
+  (exakt bis Gesamtgrad 3p − 1, ein Feld vom Grad k braucht 3p + k − 2: Fehler des quadratischen Felds bei p 2), Flächenregel (exakt bis 3p bei ungeradem p, nötig 3p + k − 1: Fehler bei p 3), α in schlecht geschnittenen
+  Zellen ohne Wurzel (nur wenn die Basiszelle gröber ist als die Wanddicke), Rundung über die Zwangsmatrix. Kur: `geometry/huelle.polyedermomente` liefert die Momente schräger Stücke exakt über den Divergenzsatz
+  (`Zellquadratur(stuecke_exakt=…)`, `STUECKE_EXAKT_STANDARD`; nur mit Moment Fitting und q ≥ 2p), `FcmProblem.ordnung_flaeche` = 2p. Die Zellmatrix ist auf ebener Geometrie für den ganzen Ansatzraum exakt;
+  Patch-Test mit Feldern bis zum Grad p unter 10⁻⁸ (vorher 10⁻⁴). Knotenblech: σ_hs ändert sich um höchstens 0,002 % (letzter Zyklus). Nicht behandelt: α in Zellen ohne Wurzel,
+  Genauigkeit der Zwangsmatrix, Tetraederordnung ohne Moment Fitting, Schwellenvergleich der Aggregation bei Gleichstand (Plan, Liste O16 bis O19). Der SuperLU-Weg des Direktlösers nachiteriert seit O20 (Theorie 11.21, Nachtrag).
+- **O15 (02.10.2026, Commit 250e607):** Reihenfolgefehler der 2:1-Balancierung des Gitters behoben (`Gitter._aufbauen` teilte unsortierte statt der sortierten Felder; ab drei Ebenen Kaskade, t/8 am Knotenblech), mit
+  Durchlaufgrenze und Test `test_oktree.test_verfeinerung_drei_ebenen`. 393 Gitter aus 26 Suiten verglichen (alte und neue Reihenfolge, Blattmengen aus `ebene` und `ijk` exakt): 391 gleich, 0 verschieden, 2 Kaskade im alten Verfahren – das ist der absichtlich gebaute Dreiebenenfall des neuen Tests (2 100 Blätter in 519 / 155 / 306 / 1 120), gebaut in `test_oktree` und `test_kern`: kein bestehendes Gitter und damit kein bestehendes Ergebnis ändert sich. t/8 (Nahtziel 1,25 mm): 31 531 Blätter, 0,9 s,
+  841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4, bei p 4 nicht rechenbar.
+
+### 4e.7 Prüfungen
+Stand 03.10.2026 (nach O20): Kernsuite `volumen3d.tests.test_kern` 374 Prüfungen (363 nach O5, 347 nach O15; mit PARDISO und mit erzwungenem SuperLU grün), Vertragsschicht `test_vertrag_fcm` 51, Knotenblech mit `VOLUMEN3D_LANG=1` 9 (Konvergenz „konvergiert“ mit letzter
+Änderung 0,44 %, Streuband: der Lauf liegt im gemessenen Band 138,9 bis 147,2 N/mm² (Regressionsprüfung, keine Abnahmeschranke), Abnahme gegen Tet10 rechts +0,34 %, links −2,93 %), `mypy --strict` für `api.py` und `postprocess/konvergenz.py` sauber, `lint-imports` 3 Regeln gehalten. Mit C2 (0ee938c) liefen alle
+25 Suiten und die GPU-Suite (14 Prüfungen) grün. Prüfungen, die in Teilprojekt 5 entstanden (Auswahl): `test_quadratur` (Moment Fitting, innere Trennfläche, deckungsgleiche Flächen), `test_rueckgewinnung`,
+`test_hotspot`, `test_adaptiv` (Zyklen, Konvergenzaussage, maßgebender Hot-Spot), `test_step`, `test_huelle` (Hüllenintegration, Windungsbaum), `test_stl` (durchdringende Schalen), `test_schale`,
+`test_knotenblech`, `test_oktree.test_verfeinerung_drei_ebenen` sowie `test_mehrgitter.test_grosse_bloecke_spd`, `test_mehrgitter.test_chebyshev_fenster`, `test_operator_gpu.test_gepackte_bloecke`, `test_operator_gpu.test_million_gpu`,
+`test_zwaenge.test_wurzelwahl_rundungsfest`, `test_zwaenge.test_unverwurzelte_grobe_zelle` und `test_zwaenge.test_gebuendelte_nachbarsuche`. Schwere Abnahmen vor jedem Merge: `test_kragarm`, `test_lame`, `test_kirsch`, `test_mehrgitter`, `test_operator_gpu`.
+
+### 4e.8 Offen
+Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“: O3 Messung von Nahtziel t/8 und 0,5 t / 1,5 t (Größe von t/8 gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar, Theorie 11.20); O5 (Konsistenzfehler der Schnittzellen) ist geklärt und behoben, 4e.6; daraus offen: O16 Zellen ohne Wurzel behalten α, O17 Genauigkeit der Zwangsmatrix, O18 Tetraederordnung ohne Moment Fitting, O19 Schwellenvergleich der Aggregation bei Gleichstand (O20, die Nachiteration im SuperLU-Weg des Direktlösers, ist gebaut, 11.21); O6 Ebenen durch den gekrümmten Teil einer
+Hülle; O7 Vertragsvorschlag 2.2.0 (Volumenlast je Lastfall); O8 Abbruch während `prepare`; O9 `summary()` nach Zyklen; O10 Torsion in der Kopplungskontrolle; O11 Zeiten je Zyklus; O12 mehrere Kinder derselben Hülle;
+O13 Einrichtzeit der Glätterblöcke auf der GPU nach der Cholesky-Umstellung; O14 Oberflächenquadratur der Hüllenfacetten (17 von 27 s am Block mit Bohrung N 120); O15 (Reihenfolgefehler der 2:1-Balancierung) ist behoben, 4e.6. Aus Teilprojekt 2 offen: die Vierteilung der
+Randpolygone an gekrümmten Formen.

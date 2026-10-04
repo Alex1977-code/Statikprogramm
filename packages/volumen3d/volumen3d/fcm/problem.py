@@ -50,7 +50,7 @@ class FcmProblem:
                  polster: float = 0.1, beta_faktor: float = 10.0, facette_mm: float | None = None,
                  ordnung_flaeche: int | None = None, aggregation: float | None = 0.4,
                  verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8,
-                 backend: str = "cpu") -> None:
+                 backend: str = "cpu", momentfitting: bool | None = None, fit_grad: int | None = None) -> None:
         # aggregation: Werkstoffanteil, unter dem eine Schnittzelle an eine Wurzel gebunden wird. 0,4 statt
         # 0,25 (Plan TP 4, Aufgabe 3, gemessen 28.09.2026): Zellen knapp ueber 0,25 galten als wohlgestellt,
         # ihre hohen Moden tragen aber kaum Werkstoff; Kirsch h 8 p 3 Versatz 0,3: 109 statt 40 Iterationen
@@ -71,6 +71,8 @@ class FcmProblem:
         self.werkstoff = werkstoff
         self.alpha = float(alpha)
         self.tiefe = int(tiefe)
+        self.momentfitting = momentfitting                  # None: Vorgabe der Zellquadratur (Plan TP 5, B1)
+        self.fit_grad = fit_grad
         self.beta_faktor = float(beta_faktor)
         self.verfeinerung = verfeinerung or Verfeinerung()
         # Gitter, Quadratur, Aggregation - und noch einmal, wenn die Aggregation Zellen teilen
@@ -82,7 +84,8 @@ class FcmProblem:
             v = dataclasses.replace(self.verfeinerung, zellen=zwang) if zwang else self.verfeinerung
             self.gitter = Gitter(geometrie, h, polster, v)
             self.gitter.moden_nummerieren(self.p)
-            self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha)
+            self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha, momentfitting=momentfitting,
+                                           fit_grad=fit_grad)
             # Zellaggregation (Vorgabe 8.3): Moden schlecht geschnittener Zellen an die Fortsetzung
             # des Nachbarpolynoms binden; None/0 = aus (nur zum Messen des alpha-Effekts)
             self.aggregation = Zellaggregation(self.gitter, self.quadratur, aggregation) if aggregation else None
@@ -104,8 +107,11 @@ class FcmProblem:
             self.quadratur.alpha_entfernen(np.flatnonzero((self.gitter.klasse == CUT) & ~behalten))
         # haengende Freiheitsgrade des Oktrees und Aggregation in einer Zwangsmatrix
         self.zwaenge = Zwaenge(self.gitter, self.aggregation)
-        # int (sigma n).v exakt fuer v vom Tensorgrad p (Gesamtgrad 3p auf der Flaeche): 2n-1 >= 3p
-        self.ordnung_flaeche = ordnung_flaeche or int(np.ceil((3 * self.p + 1) / 2))
+        # int (sigma(u) n).v exakt fuer v vom Tensorgrad p (Gesamtgrad 3p auf der Flaeche) und u bis zum Gesamtgrad p (sigma vom
+        # Grad p - 1): 2n - 1 >= 4p - 1, also n = 2p. Bis 03.10.2026 n = ceil((3p + 1)/2), ausgelegt auf konstantes sigma (Patch-Test);
+        # bei p 3 fehlte fuer ein quadratisches Feld ein Grad (exakt bis 9, noetig 10): geneigter Streifen 10 Grad sigma 2,5e-6,
+        # Gleichgewicht 1,2e-7 statt 1e-9 (Plan TP 5 O5, Theorie 11.21). Fuer p 1 und p 2 ist n unveraendert (2 und 4).
+        self.ordnung_flaeche = ordnung_flaeche or 2 * self.p
         self.facette_mm = facette_mm
         self.oberflaeche = Flaechenquadratur.aus_geometrie(geometrie, self.gitter, self.ordnung_flaeche,
                                                            facette_mm=facette_mm, tiefe=self.tiefe)

@@ -111,13 +111,23 @@ class Gitter:
             if not teilen.any():
                 break
             ebene, ijk, klasse = self._teilen(ebene, ijk, klasse, teilen)
-        # 2:1-Balancierung ueber 26 Nachbarn
+        # 2:1-Balancierung ueber 26 Nachbarn. _indizieren sortiert die Felder von self, und die Maske aus _unbalanciert gilt fuer diese
+        # sortierte Reihenfolge; geteilt werden darum die sortierten Felder. Mit den unsortierten lokalen Feldern wurden andere Zellen
+        # geteilt als gemeint: bei zwei Ebenen ohne sichtbare Folge, ab drei Ebenen entstanden Blaetter ueber max_ebene und eine Kaskade
+        # ohne Ende (Plan O15). Ein Durchlauf loest alle Verstoesse, ein neuer entsteht nur an einem Nachbarn, der um zwei Ebenen
+        # nachhinkt, und die Kette laeuft eine Ebene tiefer: hoechstens max_ebene Durchlaeufe (gemessen 1 bei zwei, 2 bei drei Ebenen);
+        # die Grenze macht einen Rueckfall in die Kaskade zu einem Fehler statt zu einem Aufbau ohne Ende.
+        grenze = 2 * self.max_ebene + 2
+        durchlaeufe = 0
         while True:
             self._indizieren(ebene, ijk, klasse)
             teilen = self._unbalanciert()
             if not teilen.any():
                 break
-            ebene, ijk, klasse = self._teilen(ebene, ijk, klasse, teilen)
+            durchlaeufe += 1
+            if durchlaeufe > grenze:
+                raise RuntimeError(f"2:1-Balancierung des Gitters endet nicht ({grenze} Durchlaeufe, max_ebene {self.max_ebene}, {len(self.ijk)} Blaetter)")
+            ebene, ijk, klasse = self._teilen(self.ebene, self.ijk, self.klasse, teilen)
         self._indizieren(ebene, ijk, klasse)
 
     def _regel_teilen(self, ebene, ijk, klasse) -> np.ndarray:

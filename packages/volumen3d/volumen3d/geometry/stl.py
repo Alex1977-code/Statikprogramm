@@ -211,7 +211,79 @@ def naechste_punkte(P: np.ndarray, D: np.ndarray, block: int = 256) -> tuple[np.
     return best_d, best_q, best_t
 
 
-def _konsistent_orientieren(D: np.ndarray) -> tuple[np.ndarray, int, int]:
+def _durchdringung(D: np.ndarray, komp: np.ndarray, k: int) -> tuple[int, np.ndarray] | None:
+    """Kreuzt eine Kante einer Komponente eine Facette einer anderen? Dann durchdringen sich die Schalen (Gutachten C2, G3-1/G1-3:
+    die Windungszahl ist im Ueberlapp 2, die Huellenintegration zaehlt ihn doppelt, und das Wenden zum Hohlraum macht 'A minus B').
+
+    Jede Schnittkurve zweier Dreiecksnetze hat ihre Ecken dort, wo eine Kante des einen Netzes eine Facette des anderen kreuzt;
+    es genuegt also, die Kanten aller Facetten ausser denen der groessten Komponente gegen die Facetten fremder Komponenten zu
+    pruefen (beide Richtungen stecken in jedem Paar). Kandidat: Vorzeichenwechsel des Ebenenabstands (echt, nicht auf der Ebene -
+    beruehrende Schalen mit gemeinsamer Flaeche haben dort Abstand null) und Schnittpunkt in der abgeschlossenen Facette;
+    bestaetigt wird nur, wenn Punkte knapp im Inneren der eigenen Schale am Schnittpunkt im Inneren der fremden liegen (|w| > 3/4):
+    die Inneren ueberlappen. Beruehrende Schalen (gemeinsame Flaeche, Teilflaeche, Kante) haben disjunkte Innere und bestehen. Rueckgabe: (Facette, Kandidaten) des ersten Treffers oder None."""
+    if k < 2:
+        return None
+    groesste = int(np.argmax(np.bincount(komp)))
+    klein = np.flatnonzero(komp != groesste)
+    V = D.reshape(-1, 3)
+    L = max(float(np.ptp(V, axis=0).max()), 1e-300)
+    tol = 1e-9 * L
+    mn, mx = D.min(axis=1), D.max(axis=1)
+    baum = None
+    if _NUMBA:
+        from .dreiecksbaum import Dreiecksbaum
+        baum = Dreiecksbaum(D)
+    for t in klein:
+        if baum is not None:
+            kand = baum.in_box(mn[t] - tol, mx[t] + tol)
+        else:
+            kand = np.flatnonzero(np.all((mx >= mn[t] - tol) & (mn <= mx[t] + tol), axis=1))
+        kand = kand[komp[kand] != komp[t]]
+        if not len(kand):
+            continue
+        C = D[kand]
+        T = np.broadcast_to(D[t], C.shape)
+        # Kanten von t gegen die Kandidaten und Kanten der Kandidaten gegen t
+        for S, F in ((T, C), (C, T)):
+            for i in range(3):
+                P, Q = S[:, i], S[:, (i + 1) % 3]
+                A, B, Cc = F[:, 0], F[:, 1], F[:, 2]
+                n = np.cross(B - A, Cc - A)
+                ln = np.linalg.norm(n, axis=1)
+                ok = ln > 0
+                dp = np.einsum("ij,ij->i", P - A, n) / np.where(ok, ln, 1.0)
+                dq = np.einsum("ij,ij->i", Q - A, n) / np.where(ok, ln, 1.0)
+                kreuz = ok & (dp * dq < 0) & (np.abs(dp) > tol) & (np.abs(dq) > tol)
+                if not kreuz.any():
+                    continue
+                X = P + (dp / np.where(kreuz, dp - dq, 1.0))[:, None] * (Q - P)
+                innen = kreuz.copy()
+                for E0, E1 in ((A, B), (B, Cc), (Cc, A)):
+                    e = E1 - E0
+                    le = np.maximum(np.linalg.norm(e, axis=1), 1e-300)
+                    innen &= np.einsum("ij,ij->i", np.cross(e, X - E0), n) / (np.where(ok, ln, 1.0) * le) >= -tol
+                if not innen.any():
+                    continue
+                # Bestaetigung: Punkte knapp im Inneren der eigenen Schale nahe X (von der Facette der Kante nach innen und zu ihrer
+                # Mitte hin, beidseits laengs der Kante) liegen im Inneren der fremden Schale. Die Windungszahl auf einer fremden
+                # Flaeche selbst ist nicht eindeutig (0, 1/2 oder 1 je nach Facette), darum wird sie dort nicht ausgewertet.
+                j = np.flatnonzero(innen)
+                d = (Q[j] - P[j]) / np.linalg.norm(Q[j] - P[j], axis=1, keepdims=True)
+                eigen = S[j]
+                n_e = np.cross(eigen[:, 1] - eigen[:, 0], eigen[:, 2] - eigen[:, 0])
+                n_e /= np.maximum(np.linalg.norm(n_e, axis=1, keepdims=True), 1e-300)
+                zur_mitte = eigen.mean(axis=1) - X[j]
+                zur_mitte /= np.maximum(np.linalg.norm(zur_mitte, axis=1, keepdims=True), 1e-300)
+                eps = 1e-6 * L
+                proben = np.concatenate([X[j] + a * eps * d + eps * zur_mitte - eps * n_e for a in (-1.0, 0.0, 1.0)])
+                eigene_komp = komp[t] if S is T else komp[kand[j[0]]]
+                w = windungszahl(proben, D[komp != eigene_komp])
+                if np.any(np.abs(w) > 0.75):
+                    return int(t), kand
+    return None
+
+
+def _konsistent_orientieren(D: np.ndarray) -> tuple[np.ndarray, int, int, int]:
     """Facetten einheitlich wickeln und nach aussen richten.
 
     Eine einzeln verkehrt gewickelte Facette ist mit der Windungszahl an ihrer eigenen Probe
@@ -222,10 +294,10 @@ def _konsistent_orientieren(D: np.ndarray) -> tuple[np.ndarray, int, int]:
     Vorzeichenvolumen nach aussen, (3) Komponenten in ungerader Verschachtelungstiefe
     (Hohlraeume: Windungszahl der uebrigen, nach aussen gerichteten Komponenten an einer
     ihrer Facetten) nach innen. Rueckgabe: D, Zahl gewendeter Facetten, Zahl nicht
-    mannigfaltiger Kanten."""
+    mannigfaltiger Kanten, Zahl offener Kanten (nur eine Facette: Luecke)."""
     m = len(D)
     if m == 0:
-        return D, 0, 0
+        return D, 0, 0, 0
     V = D.reshape(-1, 3)
     skala = max(float(np.ptp(V, axis=0).max()), 1e-300) * 1e-9
     _, ids = np.unique(np.round(V / skala).astype(np.int64), axis=0, return_inverse=True)
@@ -242,6 +314,7 @@ def _konsistent_orientieren(D: np.ndarray) -> tuple[np.ndarray, int, int]:
     enden = np.concatenate([grenzen, [len(s_sort)]])
     zwei = (enden - starts) == 2
     nichtmannig = int(((enden - starts) > 2).sum())
+    offen = int(((enden - starts) == 1).sum())
     f1, f2 = f_sort[starts[zwei]], f_sort[starts[zwei] + 1]
     verh = -(r_sort[starts[zwei]] * r_sort[starts[zwei] + 1])      # +1: gleiches Vorzeichen, -1: Nachbar wenden
     von = np.concatenate([f1, f2])
@@ -276,18 +349,39 @@ def _konsistent_orientieren(D: np.ndarray) -> tuple[np.ndarray, int, int]:
             D2[maske] = D2[maske][:, [0, 2, 1], :]
             flip[maske] = ~flip[maske]
     if k > 1:
-        # Verschachtelungstiefe mit allen Komponenten nach aussen gerichtet, erst danach wenden
+        treffer = _durchdringung(D2, komp, k)
+        if treffer is not None:
+            t, _ = treffer
+            raise ValueError(f"STL: Schalen durchdringen sich (eine Kante der Komponente {int(komp[t])} kreuzt eine fremde Facette bei "
+                             f"{np.round(D2[t].mean(axis=0), 3).tolist()}); eine Huelle braucht getrennte oder verschachtelte Schalen - "
+                             f"die Koerper vorher vereinigen (bei STEP geschieht das beim Lesen)")
+        # Verschachtelungstiefe mit allen Komponenten nach aussen gerichtet, erst danach wenden. Bestimmt an bis zu acht ueber die
+        # Komponente verteilten Facetten: eine einzige reichte nicht - zwei sich durchdringende Schalen bekamen so still eine
+        # Tiefe aus der Facette, die zufaellig in der anderen lag (Gutachten C2, G3-1). Proben auf einer fremden Flaeche
+        # (Windungszahl nahe 1/2, beruehrende Koerper) entscheiden nicht.
         tiefe = np.zeros(k, int)
+        eps_in = 1e-6 * max(float(np.ptp(V, axis=0).max()), 1e-300)
         for kk in range(k):
-            maske = komp == kk
-            s = D2[maske][0].mean(axis=0)
-            tiefe[kk] = int(round(float(windungszahl(s[None], D2[~maske])[0])))
+            idx = np.flatnonzero(komp == kk)
+            wahl = idx[np.unique(np.linspace(0, len(idx) - 1, min(8, len(idx))).round().astype(int))]
+            # Proben knapp innerhalb der eigenen Schale: auf einer beruehrenden fremden Flaeche ist die Windungszahl nicht eindeutig
+            # (0, 1/2 oder 1 je nach Facette); die Inneren sind nach der Kreuzungspruefung disjunkt, nach innen ist also frei
+            n_w = np.cross(D2[wahl, 1] - D2[wahl, 0], D2[wahl, 2] - D2[wahl, 0])
+            n_w /= np.maximum(np.linalg.norm(n_w, axis=1, keepdims=True), 1e-300)
+            w = windungszahl(D2[wahl].mean(axis=1) - eps_in * n_w, D2[komp != kk])
+            klar = np.abs(w - np.round(w)) < 0.25
+            werte = np.unique(np.round(w[klar]).astype(int))
+            if len(werte) > 1:
+                raise ValueError(f"STL: Schalen durchdringen sich (Komponente {kk} mit {len(idx)} Facetten liegt teils innerhalb, teils ausserhalb der "
+                                 f"uebrigen, Windungszahlen {sorted(set(np.round(w, 3).tolist()))}); eine Huelle braucht getrennte oder verschachtelte "
+                                 f"Schalen - die Koerper vorher vereinigen")
+            tiefe[kk] = int(werte[0]) if len(werte) else 0
         for kk in range(k):
             if tiefe[kk] % 2 == 1:
                 maske = komp == kk
                 D2[maske] = D2[maske][:, [0, 2, 1], :]
                 flip[maske] = ~flip[maske]
-    return np.ascontiguousarray(D2), int(flip.sum()), nichtmannig
+    return np.ascontiguousarray(D2), int(flip.sum()), nichtmannig, offen
 
 
 class _DreieckIndex:
@@ -380,6 +474,13 @@ class _DreieckIndex:
             d_aus[s:s + block], q_aus[s:s + block], t_aus[s:s + block] = d0, q0, self.eltern[t0]
         return d_aus, q_aus, t_aus
 
+    def in_box(self, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+        """Facetten, deren Huellbox die Box [lo, hi] beruehrt (ohne Baum: alle pruefen)."""
+        lo = np.asarray(lo, float).reshape(3)
+        hi = np.asarray(hi, float).reshape(3)
+        mn, mx = self.D.min(axis=1), self.D.max(axis=1)
+        return np.flatnonzero(np.all((mx >= lo) & (mn <= hi), axis=1))
+
     def beruehrende(self, P: np.ndarray, r: float) -> np.ndarray:
         """Indizes der Facetten mit Abstand <= r (1 + 1e-9) zum Punkt P, aufsteigend."""
         P = np.asarray(P, float).reshape(3)
@@ -404,7 +505,9 @@ class Stl:
     defekt: float = 0.0                 # groesste Abweichung der Windungszahl von 0/1 an der Stichprobe
     umgedreht: int = 0                  # beim Laden gewendete Facetten (verkehrte Wicklung, Hohlraeume)
     nicht_mannigfaltig: int = 0         # Kanten mit mehr als zwei Facetten (innere Doppelflaechen)
+    offene_kanten: int = 0              # Kanten mit nur einer Facette: die Huelle ist nicht geschlossen (Divergenzsatz gilt nicht)
     _index: Any = field(default=None, repr=False, compare=False)
+    _windung: Any = field(default=None, repr=False, compare=False)     # Windungsbaum (windung.py), erst beim ersten innen()
     gekruemmt = False
     kruemmungsradius = np.inf
 
@@ -425,7 +528,7 @@ class Stl:
         ok = flaeche > 1e-14 * max(float(np.abs(D).max()), 1.0) ** 2
         D = D[ok]
         # einheitlich wickeln (Kantennachbarn), Komponenten nach aussen, Hohlraeume nach innen
-        D, umgedreht, nichtmannig = _konsistent_orientieren(D)
+        D, umgedreht, nichtmannig, offen = _konsistent_orientieren(D)
         n = np.cross(D[:, 1] - D[:, 0], D[:, 2] - D[:, 0])
         n /= np.linalg.norm(n, axis=1, keepdims=True)
         # Sicherung ueber die Windungszahl: innen ist |w| ~ 1, aussen ~ 0 - unabhaengig vom
@@ -443,7 +546,7 @@ class Stl:
         # geschlossenen, einheitlich orientierten Huelle; Luecken und gekippte Facetten heben ihn
         w = np.concatenate([w_plus, w_minus])
         defekt = float(np.abs(w - np.round(w)).max()) if len(w) else 0.0
-        return cls(D, n, name, defekt=defekt, umgedreht=umgedreht, nicht_mannigfaltig=nichtmannig)
+        return cls(D, n, name, defekt=defekt, umgedreht=umgedreht, nicht_mannigfaltig=nichtmannig, offene_kanten=offen)
 
     @classmethod
     def aus_datei(cls, pfad: str, name: str | None = None) -> "Stl":
@@ -457,6 +560,15 @@ class Stl:
         return windungszahl(P, self.dreiecke_ecken)
 
     def innen(self, P) -> np.ndarray:
+        """Innen/Aussen-Entscheidung; ab WINDUNG_BAUM_AB Facetten ueber den Windungszahl-Baum (Barill 2018, windung.py:
+        Block mit Bohrung N 240 28-mal schneller, gleiche Entscheidung an 100 000 Punkten), sonst exakt."""
+        P = np.ascontiguousarray(np.asarray(P, float).reshape(-1, 3))
+        if self._windung is None and _NUMBA and hasattr(self._index, "links"):
+            from .windung import WINDUNG_BAUM_AB, Windungsbaum        # hier, nicht oben: windung braucht den numba-Kern von stl
+            if len(self.dreiecke_ecken) >= WINDUNG_BAUM_AB:
+                object.__setattr__(self, "_windung", Windungsbaum(self._index))
+        if self._windung is not None:
+            return self._windung.innen(P)
         return self.windungszahl(P) > 0.5
 
     def naechste_punkte(self, P) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -493,6 +605,10 @@ class Stl:
 
     def _beruehrende(self, P, r: float) -> np.ndarray:
         return self._index.beruehrende(P, r)
+
+    def in_box(self, lo, hi) -> np.ndarray:
+        """Facetten, deren Huellbox die Box [lo, hi] beruehrt (Saeule einer Zelle, geometry/huelle.py)."""
+        return self._index.in_box(lo, hi)
 
     def _ebenen(self, idx: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
         """Ebenen der Facetten idx, koplanare zusammengefasst."""
