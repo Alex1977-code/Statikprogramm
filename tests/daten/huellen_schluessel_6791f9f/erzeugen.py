@@ -20,11 +20,19 @@ zahlen ausserhalb von Feldern stehen als float.hex() darin.
 * ``mit_kollision.json/.ergebnisse`` - derselbe Kragarm mit der
   Ergebniskombination „ULS“: in dieser Datei steht unter dem Schluessel ULS
   die Umhuellende der Ergebniskombination, die Umhuellende GZT fehlt (der
-  Befund).
+  Befund);
+* ``alt/<fall>.json/.ergebnisse`` (Nachbesserung 04.10.2026) - die Faelle der
+  Gegenpruefung (scratchpad r1_pruef, alt_dateien.py und umbenannt.py) mit
+  einem kleineren Kragarm: zwoelf Ergebnisdateien mit und ohne Kollision und
+  drei, deren Ergebniskombination nach der Rechnung umbenannt oder geloescht
+  wurde (ALTE_DATEIEN, NACH_DER_RECHNUNG). Dazu ``alt_gelesen_dc80e1f.json``:
+  wie dc80e1f, die erste Fassung der Behebung, sie liest - fuer die zwoelf
+  hat die Gegenpruefung das als richtig bestaetigt.
 
-Erzeugt mit dem Baum von 6791f9f:
+Erzeugt mit dem Baum von 6791f9f, die Lesung mit dem Baum von dc80e1f:
 
     python tests/daten/huellen_schluessel_6791f9f/erzeugen.py <baum 6791f9f> <zielordner>
+    python tests/daten/huellen_schluessel_6791f9f/erzeugen.py <baum dc80e1f> <zielordner> --lesen
 """
 import dataclasses
 import hashlib
@@ -124,19 +132,20 @@ def verdichtet(abdruck: dict) -> dict:
     }
 
 
-def kragarm(ek_name: str = "EK1", ek_typ: str = "ULS", weitere_ek=None, typen=None):
+def kragarm(ek_name: str = "EK1", ek_typ: str = "ULS", weitere_ek=None, typen=None,
+            elemente: int = 4):
     """Kragarm mit drei Lastfaellen in drei Richtungen (Min und Max je
     Freiheitsgrad aus verschiedenen Ergebnissen), zwei GZT-Kombinationen, je
     einer GZG- und Ermuedungskombination und einer RFEM-Ergebniskombination
     *ek_name* vom Typ *ek_typ* mit drei Alternativen. ``weitere_ek``:
     {Name: Typ} weiterer Ergebniskombinationen; ``typen``: Typen weiterer
-    gewoehnlicher Kombinationen (je eine)."""
+    gewoehnlicher Kombinationen (je eine); ``elemente``: Stabelemente."""
     from statik3d.model import Model, Material, Section, Combination
     from statik3d import mesher
     m = Model("Huellenschluessel")
     m.add_material(Material("S", E=210e9, rho=0.0))
     m.add_section(Section.rectangle("R", 0.1, 0.2))
-    ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (2.0, 0, 0), 4)
+    ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (2.0, 0, 0), elemente)
     m.fix(ids[0], "all")
     m.case().category = "G"
     lf1 = m.active_case
@@ -180,6 +189,54 @@ def hallenrahmen_ermuedung(ek_name: str = "EK_FAT"):
     return m
 
 
+#: Ergebnisdateien der Gegenpruefung (alt_dateien.py): Fall -> (Ergebnis-
+#: kombinationen [(Name, Typ)], weitere Typen, ohne GZT-Kombinationen, nur
+#: Ergebniskombinationen)
+ALTE_DATEIEN = {
+    "ohne": ([("EK1", "ULS"), ("EK2", "FAT")], (), False, False),
+    "uls": ([("ULS", "ULS"), ("EK2", "FAT")], (), False, False),
+    "fat": ([("EK1", "ULS"), ("FAT", "FAT")], (), False, False),
+    "zwei": ([("ULS", "ULS"), ("FAT", "FAT")], (), False, False),
+    "zwei_gzg": ([("ULS", "ULS"), ("SLS_CH", "SLS_CH")], (), False, False),
+    "kreuz": ([("SLS_CH", "ULS")], (), False, False),
+    "uls_gzg_ohne_gzt": ([("ULS", "SLS_CH")], (), True, False),
+    "cases": ([("CASES", "ULS")], (), False, True),
+    "unbekannt": ([("XYZ", "ULS")], ("XYZ",), False, False),
+    "ekek": ([("GZT", "ULS"), ("GZT (Ergebniskombination)", "ULS")], (), False, False),
+    "doppelt": ([("ULS", "ULS"), ("ULS (Ergebniskombination)", "ULS")], (), False, False),
+    "fachwort": ([("Ermüdung", "FAT")], (), False, False),
+}
+#: nach der Rechnung umbenannt oder geloescht (umbenannt.py): Fall -> (alter
+#: Name, neuer Name oder None)
+NACH_DER_RECHNUNG = {"ULS_zu_EK9": ("ULS", "EK9"), "ULS_geloescht": ("ULS", None),
+                     "EK1_zu_ULS": ("EK1", "ULS")}
+
+
+def kragarm_fall(fall: str):
+    """Das Modell eines Falls aus ALTE_DATEIEN oder NACH_DER_RECHNUNG (vor dem
+    Umbenennen), mit zwei Stabelementen - die Dateien bleiben klein."""
+    if fall in NACH_DER_RECHNUNG:
+        eks, typen, ohne_gzt, nur_ek = [(NACH_DER_RECHNUNG[fall][0], "ULS")], (), False, False
+    else:
+        eks, typen, ohne_gzt, nur_ek = ALTE_DATEIEN[fall]
+    m = kragarm(eks[0][0], eks[0][1], weitere_ek=dict(eks[1:]), typen=typen, elemente=2)
+    for n in [n for n, c in m.combinations.items() if not c.ist_umhuellende
+              and (nur_ek or (ohne_gzt and c.typ == "ULS"))]:
+        del m.combinations[n]
+    return m
+
+
+def gelesen(an) -> dict:
+    """Was eine Fassung aus einer alten Datei macht: Schluessel, Namen,
+    Herkunft und die Eintraege in info."""
+    return {"schluessel": list(an.envelopes),
+            "namen": {k: e.name for k, e in an.envelopes.items()},
+            "names": {k: list(e.names) for k, e in an.envelopes.items()},
+            "kombination": {k: getattr(e, "kombination", None) for k, e in an.envelopes.items()},
+            "info_schluessel": an.info.get("umhuellende_schluessel"),
+            "info_ueberschrieben": an.info.get("umhuellende_ueberschrieben")}
+
+
 def main():
     baum = os.path.abspath(sys.argv[1])
     ziel = os.path.abspath(sys.argv[2])
@@ -195,6 +252,30 @@ def main():
         with open(os.path.join(ziel, name), "w", encoding="utf-8", newline="\n") as f:
             json.dump(d, f, ensure_ascii=False, indent=0, sort_keys=False)
             f.write("\n")
+
+    alt = os.path.join(ziel, "alt")
+    if "--lesen" in sys.argv:
+        aus = {}
+        for fall in list(ALTE_DATEIEN) + list(NACH_DER_RECHNUNG):
+            pfad = os.path.join(alt, fall + ".json")
+            aus[fall] = gelesen(ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad)))
+        schreiben_json("alt_gelesen_dc80e1f.json", aus)
+        print("gelesen:", {f: v["schluessel"] for f, v in aus.items()})
+        return
+    os.makedirs(alt, exist_ok=True)
+    for fall in list(ALTE_DATEIEN) + list(NACH_DER_RECHNUNG):
+        m = kragarm_fall(fall)
+        an = solver.solve_all(m, design=False, fatigue=False)
+        if fall in NACH_DER_RECHNUNG:
+            vorher, nachher = NACH_DER_RECHNUNG[fall]
+            c = m.combinations.pop(vorher)
+            if nachher:
+                c.name = nachher
+                m.combinations[nachher] = c
+        pfad = os.path.join(alt, fall + ".json")
+        m.save(pfad)
+        ergebnisse.schreiben(ergebnisse.pfad_zu(pfad), m, an)
+        print(f"alt/{fall}:", {k: v.name for k, v in an.envelopes.items()})
 
     schreiben_json("beispiele.json", {
         b: verdichtet(analyse(solver.solve_all(build_example(b), design=True, fatigue=True)))

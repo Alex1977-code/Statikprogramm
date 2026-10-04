@@ -6334,8 +6334,11 @@ class Envelope:
                              float(mx[j2]), self.names[imx[j2]]])
         return rows
 
-    def summary(self) -> str:
-        s = [f"{self.name}: {len(self.names)} {'Ergebnis' if len(self.names) == 1 else 'Ergebnisse'}"]
+    def summary(self, name: str = None) -> str:
+        """``name``: wie die Umhuellende in der Zusammenfassung heisst - die
+        Analyse gibt den Anzeigenamen ihres Schluessels (umhuellende_kurz)."""
+        s = [f"{name or self.name}: {len(self.names)} "
+             f"{'Ergebnis' if len(self.names) == 1 else 'Ergebnisse'}"]
         if self.u_max.size and self.names:
             um = self.umag_max
             i = int(np.argmax(um))
@@ -6414,15 +6417,25 @@ class Analysis:
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
         s += dilatation_gebuendelt(self.all_results().items())
+        # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen
+        # (umhuellende_kurz). Bis zur Nachbesserung vom 04.10.2026 (Befund S3)
+        # stand hier env.name, bei einer Ergebniskombination ihr blosser Name:
+        # „ULS: 3 Ergebnisse“ neben „Umhüllende ULS (Ergebniskombination)“ in
+        # der Liste, „EK1: 3 Ergebnisse“ neben „Umhüllende EK1“.
         for k, env in self.envelopes.items():
-            s.append(env.summary())
+            s.append(env.summary(name=umhuellende_kurz(k)))
         # Ergebniskombinationen, deren Umhuellende nicht unter ihrem Namen
         # steht, und Umhuellende, die eine alte Ergebnisdatei nicht mehr hat
-        # (Befund R1, 04.10.2026)
+        # (Befund R1, 04.10.2026). Genannt wird nur eine Umhuellende, die es
+        # in dieser Rechnung gibt (Befund S2: bis dahin auch die „Umhüllende
+        # Lastfälle“ neben einer Ergebniskombination „CASES“, die es nicht gab).
         for n, k in (self.info.get("umhuellende_schluessel") or {}).items():
+            ziel = umhuellende_kurz(n)
+            da = any(x != k and umhuellende_kurz(x) == ziel for x in self.envelopes)
             s.append(f"Hinweis: Die Umhüllende der Ergebniskombination „{n}“ heißt "
-                     f"„{umhuellende_kurz(k)}“ – unter ihrem Namen wäre sie nicht von der "
-                     f"„{umhuellende_kurz(n)}“ zu unterscheiden.")
+                     f"„{umhuellende_kurz(k)}“ – "
+                     + (f"unter ihrem Namen wäre sie nicht von der „{ziel}“ zu unterscheiden."
+                        if da else f"der Name „{n}“ ist im Programm schon vergeben."))
         for n, a in (self.info.get("umhuellende_ueberschrieben") or {}).items():
             s.append(f"Hinweis: In dieser Ergebnisdatei (vor dem 04.10.2026 geschrieben) hatte die "
                      f"Umhüllende der Ergebniskombination „{n}“ die „{umhuellende_kurz(a)}“ "
@@ -6614,7 +6627,15 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
               envelopes: bool = True, design: bool = False, fatigue: bool = False) -> Analysis:
     """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise -
     mit einem stehenden Prozesspool fuer alle Elementschleifen der Rechnung
-    (parallel.arbeiter)."""
+    (parallel.arbeiter).
+
+    Heissen Ergebnisse so, dass sie einander verdecken (Lastfall und
+    Kombination gleich, Kombination wie eine Alternative, Model.namenskollisionen),
+    startet die Rechnung nicht: sonst kaeme still ein falsches Ergebnis heraus
+    (Gegenpruefung R1, 04.10.2026: Ermuedung D = 0 statt 27,6)."""
+    kollision = getattr(model, "namenskollisionen", list)()
+    if kollision:
+        raise ValueError("Die Rechnung startet nicht:\n" + "\n".join(kollision))
     with parallel.arbeiter(model, workers):
         return _solve_all_innen(model, workers, progress, combinations, envelopes, design, fatigue)
 

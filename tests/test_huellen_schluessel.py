@@ -30,6 +30,22 @@ Die Abnahme (vorher festgelegt, R1a bis R1f):
 * R1f - Beispiele frame, truss, hall, gate, contact: Lastfaelle,
   Kombinationen, Umhuellende, EC3 und Ermuedung bitgleich mit 6791f9f.
 
+Nachbesserung nach der Gegenpruefung von dc80e1f (04.10.2026, R1g bis R1j):
+
+* R1g (F1) - die Spalte Ausnutzung gehoert nicht zur Umhuellenden eines
+  unbekannten Typs „XYZ“, wohl aber zur Umhuellenden der Ergebniskombination
+  „XYZ“ vom Typ GZT;
+* R1h (L1) - eine alte Ergebnisdatei, deren Ergebniskombination „ULS“ nach
+  der Rechnung umbenannt oder geloescht wurde, wird erkannt und umgehaengt;
+  bei den zwoelf Dateien der Gegenpruefung keine Fehlerkennung (Lesung wie
+  dc80e1f);
+* R1i - Sicherheitsnetz bis R2: Lastfall und Kombination gleichen Namens und
+  eine Kombination „EK1 [2]“ neben der Ergebniskombination EK1 sind FEHLER der
+  Modellpruefung; solve_all und „Berechnen“ starten nicht; die Beispiele
+  melden nichts;
+* R1j (S2, S3) - die Hinweiszeile nennt nur Umhuellende der Rechnung, das
+  Protokoll jede Umhuellende mit ihrem Anzeigenamen wie Liste und Baum.
+
 Die Referenz von 6791f9f liegt in tests/daten/huellen_schluessel_6791f9f
 (erzeugen.py dort; Fingerabdruck = Hash der Bytes je Ergebnisfeld).
 
@@ -493,6 +509,194 @@ def test_r1f_beispiele():
 
 
 # --------------------------------------------------------------------------
+# Nachbesserung 04.10.2026: R1g bis R1j
+# --------------------------------------------------------------------------
+def _ausnutzung(m, an, key) -> bool:
+    """MainWindow._ausnutzung_zur_huelle mit Modell und Analysis (liest nur sie)."""
+    import types
+    from statik3d.gui.main import MainWindow
+    return MainWindow._ausnutzung_zur_huelle(types.SimpleNamespace(model=m, analysis=an), key)
+
+
+def test_r1g_ausnutzung_unbekannter_typ():
+    """Befund F1: die Umhuellende eines unbekannten Typs „XYZ“ bekam die Spalte
+    Ausnutzung, weil eine Ergebniskombination vom Typ GZT „XYZ“ hiess."""
+    from statik3d import solver, ergebnisse
+    from statik3d.model import Model
+    m = ref()["kragarm"]("XYZ", "ULS", typen=("XYZ",))
+    an = solver.solve_all(m, design=False, fatigue=False)
+    ks = _ek_huellen(an, m, "XYZ")
+    a_art = _ausnutzung(m, an, "XYZ")
+    a_ek = _ausnutzung(m, an, ks[0]) if len(ks) == 1 else None
+    check("R1g: Umhüllende XYZ (unbekannter Typ): keine Spalte Ausnutzung", a_art is False,
+          f"_ausnutzung_zur_huelle('XYZ') = {a_art} (names={list(an.envelopes['XYZ'].names)})")
+    check("R1g: Umhüllende der Ergebniskombination „XYZ“ (Typ GZT): Spalte Ausnutzung",
+          a_ek is True, f"_ausnutzung_zur_huelle({ks}) = {a_ek}")
+    # dasselbe aus einer Ergebnisdatei von 6791f9f (dort ohne kombination)
+    pfad = os.path.join(REFERENZ, "alt", "unbekannt.json")
+    m2 = Model.load(pfad)
+    an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m2)
+    ks2 = [k for k, e in an2.envelopes.items() if getattr(e, "kombination", None) == "XYZ"]
+    check("R1g: alte Datei: Umhüllende der Ergebniskombination „XYZ“ mit Spalte, GZT mit, "
+          "GZG ohne",
+          len(ks2) == 1 and _ausnutzung(m2, an2, ks2[0]) is True
+          and _ausnutzung(m2, an2, "ULS") is True and _ausnutzung(m2, an2, "SLS_CH") is False,
+          f"{ks2}")
+
+
+def test_r1h_alte_datei_ohne_modellbezug():
+    """Befund L1: _huellen_umhaengen erkannte nur Ergebniskombinationen, die
+    das geladene Modell noch hat. War „ULS“ nach der Rechnung umbenannt oder
+    geloescht, blieb ihre Umhuellende die „Umhüllende GZT“."""
+    from statik3d import ergebnisse, begriffe as bg
+    from statik3d.model import Model
+    R = ref()
+    alt = os.path.join(REFERENZ, "alt")
+    for fall in ("ULS_zu_EK9", "ULS_geloescht"):
+        pfad = os.path.join(alt, fall + ".json")
+        m = Model.load(pfad)
+        an = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m)
+        anzeige = [bg.umhuellende_kurz(k) for k in an.envelopes]
+        env = an.envelopes.get("ULS (Ergebniskombination)")
+        check(f"R1h {fall}: Umhüllende der Ergebniskombination „ULS“ erkannt und umgehängt",
+              env is not None and list(env.names) == ["ULS [1]", "ULS [2]", "ULS [3]"]
+              and env.kombination == "ULS" and "ULS" not in an.envelopes
+              and "Umhüllende GZT" not in anzeige, str(anzeige))
+        s = an.summary()
+        check(f"R1h {fall}: … mit Hinweis, dass die Umhüllende GZT fehlt",
+              "„ULS“" in s and "„Umhüllende GZT“ überschrieben" in s and "fehlt" in s,
+              [z for z in s.splitlines() if z.startswith("Hinweis")][-1:])
+    # keine Fehlerkennung: die zwoelf Dateien wie dc80e1f, auch EK1 -> ULS
+    soll = _json("alt_gelesen_dc80e1f.json")
+    anders = []
+    for fall in list(R["ALTE_DATEIEN"]) + ["EK1_zu_ULS"]:
+        pfad = os.path.join(alt, fall + ".json")
+        ist = R["gelesen"](ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad)))
+        if ist != soll[fall]:
+            anders.append(fall)
+    check("R1h: keine Fehlerkennung - zwölf Dateien der Gegenprüfung und „EK1 → ULS“ wie dc80e1f",
+          not anders, f"anders: {anders}" if anders else f"{len(R['ALTE_DATEIEN']) + 1} Dateien gleich")
+
+
+def _modell_lastfall_wie_kombination(name="X"):
+    m = ref()["kragarm"]("EK1", "ULS")
+    m.add_load_case("X", "Q", activate=False)
+    m.load_node(4, Fz=-30e3, case="X")
+    m.add_combination(name, {"LF1": 0.2}, "ULS", "klein")
+    m.add_fatigue_load("FX", "X", None, 2e6)
+    return m
+
+
+def _modell_kombination_wie_alternative(name="EK1 [2]"):
+    m = ref()["kragarm"]("EK1", "ULS")
+    m.add_combination(name, {"LF1": 0.1}, "ULS", "klein")
+    return m
+
+
+def test_r1i_sicherheitsnetz():
+    """Bis zur Namensregel LF/LK/EK (R2): Namen, unter denen Ergebnisse
+    einander verdecken, sind FEHLER der Modellpruefung, und die Rechnung
+    startet nicht (Gegenpruefung R1: Ermuedung D = 0 statt 27,6; EC3 1,10
+    statt 1,49, beides ohne Meldung)."""
+    from statik3d import solver
+    from statik3d.examples_lib import EXAMPLES, build_example
+    faelle = (("Lastfall und Kombination „X“", _modell_lastfall_wie_kombination, "X",
+               ("Lastfall 'X'", "Kombination 'X'", "umbenennen")),
+              ("Kombination „EK1 [2]“ neben der Ergebniskombination EK1",
+               _modell_kombination_wie_alternative, "EK1 [2]",
+               ("Kombination 'EK1 [2]'", "Ergebniskombination 'EK1'", "umbenennen")))
+    for titel, bauen, name, teile in faelle:
+        m = bauen(name)
+        fehler = [z for z in m.check() if z.startswith("FEHLER")]
+        check(f"R1i {titel}: check() meldet FEHLER, nennt beide, sagt „umbenennen“",
+              any(all(t in z for t in teile) for z in fehler), str(fehler[-1:]))
+        try:
+            solver.solve_all(m, design=False, fatigue=False)
+            ausnahme = None
+        except ValueError as ex:
+            ausnahme = str(ex)
+        check(f"R1i {titel}: solve_all startet nicht", ausnahme is not None
+              and all(t in ausnahme for t in teile), str(ausnahme)[:120])
+        # im Fenster: „Berechnen“ weist ab, nichts wird gestartet
+        w, app = _fenster()
+        w.model = m
+        w.analysis = None
+        w.results = None
+        w.refresh_all(); app.processEvents()
+        w.meldungen.leeren()
+        gestartet = []
+        w._run_background = lambda *a, **k: gestartet.append(a)
+        try:
+            w.do_solve("all")
+            app.processEvents()
+        finally:
+            del w._run_background
+        check(f"R1i {titel}: „Berechnen“ startet nicht, die Meldung nennt den FEHLER",
+              not gestartet and w.analysis is None and w.meldungen.fehler_mit(*teile),
+              str(w.meldungen.fehler[-1:])[:160])
+        # Gegenstueck: anders benannt meldet nichts und rechnet
+        m2 = bauen("X_K" if name == "X" else "K_x")
+        neu = [z for z in m2.check() if "heißen gleich" in z or "wie die Alternative" in z]
+        an2 = solver.solve_all(m2, design=False, fatigue=False)
+        check(f"R1i {titel}: Gegenstück mit anderem Namen meldet nichts und rechnet",
+              not neu and an2 is not None and len(an2.combinations) > 0, str(neu))
+    neu = {b: [z for z in build_example(b).check() if "heißen gleich" in z or "wie die Alternative" in z]
+           for b in EXAMPLES}
+    check("R1i: die Beispiele melden nichts Neues", not any(neu.values()),
+          f"{len(EXAMPLES)} Beispiele: " + ", ".join(EXAMPLES))
+
+
+def test_r1j_hinweis_und_protokoll():
+    """Befunde S2 und S3: die Hinweiszeile nannte die „Umhüllende Lastfälle“
+    neben einer Ergebniskombination „CASES“, die es nicht gab; das Protokoll
+    nannte die Umhuellende einer Ergebniskombination mit ihrem blossen Namen
+    („ULS: 3 Ergebnisse“), Liste und Baum mit „Umhüllende ULS
+    (Ergebniskombination)“."""
+    import re as _re
+    from statik3d import solver, begriffe as bg
+    m = ref()["kragarm"]("CASES", "ULS")
+    for n in [n for n, c in m.combinations.items() if not c.ist_umhuellende]:
+        del m.combinations[n]
+    an = solver.solve_all(m, design=False, fatigue=False)
+    hinweise = [z for z in an.summary().splitlines() if z.startswith("Hinweis")]
+    anzeigen = {bg.umhuellende_kurz(k) for k in an.envelopes}
+    genannt = _re.findall(r"„(Umhüllende [^“]+)“", " ".join(hinweise))
+    check("R1j „CASES“: die Hinweiszeile nennt nur Umhüllende dieser Rechnung",
+          bool(hinweise) and all(g in anzeigen for g in genannt), str(hinweise))
+    for titel, ek, weitere in (("„CASES“", None, None), ("„ULS“ und EK1", "ULS", {"EK1": "ULS"})):
+        if ek is not None:
+            m = ref()["kragarm"](ek, "ULS", weitere_ek=weitere)
+            an = solver.solve_all(m, design=False, fatigue=False)
+        zeilen = an.summary().splitlines()
+        fehlt = [bg.umhuellende_kurz(k) for k in an.envelopes
+                 if not any(z.startswith(f"{bg.umhuellende_kurz(k)}: ") for z in zeilen)]
+        nackt = [z for z in zeilen if _re.match(r"^(ULS|CASES|EK1): \d+ Ergebnis", z)]
+        check(f"R1j {titel}: das Protokoll nennt jede Umhüllende mit ihrem Anzeigenamen",
+              not fehlt and not nackt,
+              f"fehlt {fehlt}, nackt {nackt}" if fehlt or nackt
+              else str([z for z in zeilen if z.startswith("Umhüllende")]))
+    # im Fenster: Protokoll und Text zur gewaehlten Umhuellenden
+    w, app = _fenster()
+    w.model = m
+    w.analysis = None
+    w.results = None
+    w.refresh_all(); app.processEvents()
+    w._solve_done("all", an); app.processEvents()
+    log = w.log.toPlainText().splitlines()
+    i = next((i for i in range(w.cb_result.count())
+              if w.cb_result.itemText(i) == "Umhüllende ULS (Ergebniskombination)"), -1)
+    if i >= 0:
+        w.cb_result.setCurrentIndex(i); app.processEvents()
+    text = w.txt_res.toPlainText().splitlines()
+    check("R1j Fenster: Protokoll „Umhüllende ULS (Ergebniskombination): 3 Ergebnisse“, "
+          "der Text zur Wahl ebenso",
+          "Umhüllende ULS (Ergebniskombination): 3 Ergebnisse" in log
+          and "Umhüllende EK1: 2 Ergebnisse" in log
+          and bool(text) and text[0] == "Umhüllende ULS (Ergebniskombination): 3 Ergebnisse",
+          str(text[:1]))
+
+
+# --------------------------------------------------------------------------
 # Zusatz: Lastfaelle und gewoehnliche Kombinationen mit reservierten Namen
 # --------------------------------------------------------------------------
 def test_zusatz_lastfall_und_kombination_reserviert():
@@ -538,6 +742,8 @@ def main():
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_r1a_uls, test_r1b_uebrige_schluessel, test_r1c_ergebnisdatei,
               test_r1d_auswahl_bericht_web, test_r1e_ermuedung, test_r1f_beispiele,
+              test_r1g_ausnutzung_unbekannter_typ, test_r1h_alte_datei_ohne_modellbezug,
+              test_r1i_sicherheitsnetz, test_r1j_hinweis_und_protokoll,
               test_zusatz_lastfall_und_kombination_reserviert):
         print(f"\n--- {t.__name__} ---")
         try:

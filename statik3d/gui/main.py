@@ -14914,14 +14914,19 @@ class MainWindow(QtWidgets.QMainWindow):
         Name, und eine Ergebniskombination „SLS_CH“ vom Typ GZT gab der
         Umhuellenden GZG charakteristisch die Spalte Ausnutzung. Eine aeltere
         Ergebnisdatei kennt kombination nicht: dort ist der Schluessel der
-        Name, ausser bei den Umhuellenden einer Art."""
+        Name, ausser bei den Umhuellenden einer Art - auch der eines
+        unbekannten Typs aus einer Quelldatei. Bis zur Nachbesserung vom
+        04.10.2026 (Befund F1) zaehlten dazu nur die Schluessel aus
+        begriffe.UMHUELLENDE, und die Umhuellende des Typs „XYZ“ bekam die
+        Spalte, weil eine Ergebniskombination vom Typ GZT „XYZ“ hiess."""
         if schluessel == "ULS":
             return True
         an = getattr(self, "analysis", None)
         env = (getattr(an, "envelopes", None) or {}).get(schluessel)
         name = getattr(env, "kombination", None)
         if name is None:
-            if schluessel in bg.UMHUELLENDE:
+            arten = {solver.umhuellende_art(c.typ) for c in (self.model.combinations or {}).values()}
+            if schluessel in bg.UMHUELLENDE or schluessel in arten:
                 return False
             name = schluessel
         kombi = (self.model.combinations or {}).get(name)
@@ -24307,7 +24312,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.txt_res.setPlainText("")
             self._neu_zeichnen()
             return
-        lines = [r.summary()]
+        # eine Umhuellende unter ihrem Anzeigenamen wie in der Liste darueber
+        # (Befund S3, 04.10.2026: dort „Umhüllende ULS (Ergebniskombination)“,
+        # hier „ULS: 3 Ergebnisse“); getattr: test_ec3 ruft mit einer Attrappe
+        d = getattr(getattr(self, "cb_result", None), "currentData", lambda: None)()
+        if isinstance(d, (tuple, list)) and len(d) == 2 and d[0] == "env":
+            lines = [r.summary(name=bg.umhuellende_kurz(d[1]))]
+        else:
+            lines = [r.summary()]
         if an is not None and an.design is not None:
             lines.append(an.design.summary())
             self._fill(self.tbl_design, an.design.table()[1:], an.design.table()[0])

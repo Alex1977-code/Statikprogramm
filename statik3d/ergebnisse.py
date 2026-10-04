@@ -183,28 +183,40 @@ def _huellen_umhaengen(an, model) -> None:
     und die Zusammenfassung nennt, was fehlt, statt unter „Umhüllende GZT“ die
     einer einzelnen Ergebniskombination zu zeigen.
 
-    Erkannt wird sie am gespeicherten Namen: die Umhuellende einer
-    Ergebniskombination heisst seit jeher wie diese (umhuellende_der_kombination),
-    die einer Art nie nur wie ihr Schluessel („Umhuellende ULS“, seit dem
-    03.10.2026 „Umhüllende GZT“). Eine Datei ohne Kollision und jede neue
-    bleiben unberuehrt."""
-    from .solver import umhuellende_art, umhuellende_schluessel_im_modell
+    Erkannt wird sie an der Datei allein, nicht am Modell: die Umhuellende
+    einer Ergebniskombination heisst seit jeher genau wie diese
+    (umhuellende_der_kombination), die einer Art nie nur wie ihr Schluessel
+    (seit a81fa7b „Umhuellende ULS“, seit dem 03.10.2026 „Umhüllende GZT“).
+    ``env.name == Schluessel`` heisst darum sicher: Ergebniskombination. In
+    der Nachbesserung vom 04.10.2026 (Befund L1 der Gegenpruefung) ersetzt
+    das die erste Fassung, die nur Ergebniskombinationen des geladenen Modells
+    erkannte: war „ULS“ nach der Rechnung umbenannt oder geloescht, blieb ihre
+    Umhuellende die „Umhüllende GZT“, und nach dem naechsten Speichern war
+    das Merkmal endgueltig weg. Eine Datei ab dem 04.10.2026 (eine
+    Umhuellende traegt ``kombination``) und jede ohne Kollision bleiben
+    unberuehrt."""
+    from .begriffe import umhuellende_schluessel
+    from .solver import umhuellende_art
     envs = getattr(an, "envelopes", None)
-    if not envs:
+    if not envs or any(getattr(e, "kombination", None) is not None for e in envs.values()):
         return
-    neu = {}
-    for n, k in umhuellende_schluessel_im_modell(model).items():
-        env = envs.get(n)
-        if k != n and env is not None and k not in envs and getattr(env, "name", None) == n:
-            neu[n] = k
+    eks = [k for k, e in envs.items() if getattr(e, "name", None) == k]
+    if not eks:
+        return
+    arten_modell = {umhuellende_art(c.typ) for c in model.combinations.values()}
+    # die Arten des Modells und die, die in der Datei stehen (auch ein
+    # unbekannter Typ, dessen Kombination es im Modell nicht mehr gibt)
+    arten = arten_modell | {k for k in envs if k not in eks}
+    neu = {n: k for n, k in umhuellende_schluessel(eks, arten).items() if k != n}
     if not neu:
         return
-    arten = {umhuellende_art(c.typ) for c in model.combinations.values()}
     an.envelopes = {neu.get(k, k): v for k, v in envs.items()}
     for n, k in neu.items():
         an.envelopes[k].kombination = n
         an.info.setdefault("umhuellende_schluessel", {})[n] = k
-        if n in arten:
+        # fehlt: das Modell hat Kombinationen dieser Art, die Datei keine
+        # Umhuellende mehr unter ihrem Schluessel
+        if n in arten_modell and n not in an.envelopes:
             an.info.setdefault("umhuellende_ueberschrieben", {})[n] = n
 
 
