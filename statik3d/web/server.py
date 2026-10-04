@@ -1768,6 +1768,13 @@ def _op_add_case(st, m, d):
 def _op_edit_case(st, m, d):
     lc = _case(m, {"case": d.get("name")})
     f = d.get("fields") or {}
+    new = (f.get("new_name") or "").strip()
+    if new and new != lc.name:
+        # vor jeder Aenderung: ein vergebener Name (Lastfall, Kombination,
+        # Alternative „<EK> [k]“) weist die ganze Operation ab (R2-A1)
+        grund = m.namenskonflikt(new, lc.name, "lastfall")
+        if grund:
+            raise ApiError(grund)
     if "category" in f:
         if f["category"] not in ACTION_CATEGORIES:
             raise ApiError(f"Einwirkungskategorie '{f['category']}' unbekannt")
@@ -1781,21 +1788,12 @@ def _op_edit_case(st, m, d):
     for k in ("gamma_sup", "gamma_inf"):
         if k in f:
             setattr(lc, k, _f(f, k, None) if f[k] not in (None, "") else None)
-    new = (f.get("new_name") or "").strip()
     if new and new != lc.name:
-        if new in m.load_cases:
-            raise ApiError(f"Lastfall '{new}' existiert bereits")
-        old = lc.name
-        lc.name = new
-        m.load_cases = {(new if k == old else k): v for k, v in m.load_cases.items()}
-        for c in m.combinations.values():
-            c.lastfall_umbenennen(old, new)
-        # beide Zustaende und der Verlauf - bis zum 23.09.2026 blieb der
-        # Verlauf beim alten Namen (tests/test_ermuedung_verlauf.py)
-        for fl in m.fatigue_loads.values():
-            fl.lastfall_umbenennen(old, new)
-        if m.active_case == old:
-            m.active_case = new
+        # alle Verweise an einer Stelle (Model.lastfall_umbenennen, R2-A1):
+        # bis zum 04.10.2026 zog der Webserver nur Kombinationen und
+        # Ermuedungslasten nach - Stellungen, Leiteinwirkung, Wind,
+        # Wasserdruck und Berichtsbilder behielten den alten Namen
+        m.lastfall_umbenennen(lc.name, new)
     return f"Lastfall {lc.name} geändert"
 
 

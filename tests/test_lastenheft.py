@@ -56,7 +56,12 @@ def test_lastfaelle():
     check("Standard-Lastfälle angelegt", namen == lh.STANDARD, str(namen))
     check("Einwirkungsart = Schlüssel, Beschreibung = Einwirkung",
           all(m.load_cases[n].category == n and m.load_cases[n].description == EINWIRKUNGEN[n] for n in namen))
-    check("fortlaufende Nummern ab 1", [m.load_cases[n].nummer for n in namen] == list(range(1, len(namen) + 1)))
+    # Seit R2-A1 (04.10.2026) gehoert Nr. 1 dem Vorgabelastfall LF1 (Name und
+    # Feld); bis dahin bekam G noch einmal die Nr. 1 (Model.naechste_nummer)
+    check("fortlaufende Nummern ab der nächsten freien (2, LF1 hat Nr. 1)",
+          m.load_cases["LF1"].nummer == 1
+          and [m.load_cases[n].nummer for n in namen] == list(range(2, len(namen) + 2)),
+          str([m.load_cases[n].nummer for n in namen]))
     check("Eigengewicht mit g", m.load_cases["G"].gravity == [0.0, 0.0, -9.81]
           and m.load_cases["W_S"].gravity == [0.0, 0.0, 0.0])
     check("aktiver Lastfall bleibt gesetzt (vorhandener LF1 oder G)", m.active_case in ("G", "LF1"), str(m.active_case))
@@ -81,8 +86,9 @@ def test_dokument():
     check("jede Einwirkung ein Abschnitt", all(f"{e.key} - {e.titel}" in html for e in lh.EINWIRKUNGSTEXTE))
     check("Skizzen enthalten", html.count("<svg") >= len(EINWIRKUNGEN) - 1, str(html.count("<svg")))
     check("Vorgaben sind gekennzeichnet", "zu bestätigen" in html and "* = Voreinstellung" in html)
+    # G bekommt die naechste freie Nummer: LF1 des Beispiels hat Nr. 1 (R2-A1)
     check("Modellwerte: Wasserdruck-Generierer und Lastfälle genannt",
-          "Wasserdruck " in html and "Lastfall G (Nr. 1)" in html)
+          "Wasserdruck " in html and "Lastfall G (Nr. 2)" in html)
     check("normativer Rahmen nennt DIN 19704-1 und ZTV-ING", "DIN 19704-1" in html and "ZTV-ING" in html)
     md = doc.to_markdown()
     check("Markdown-Fassung", md.startswith("# Lastenheft") and "Eisdruck" in md)

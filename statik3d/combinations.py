@@ -77,7 +77,15 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
 
     Kombiniert wird **je Situation**: Lastfaelle verschiedener Situationen
     (Stellung, abgeschaltete Elemente) stehen nie in einer Kombination; jede
-    erzeugte Kombination traegt ihre Situation."""
+    erzeugte Kombination traegt ihre Situation.
+
+    Die Nummer im Namen zaehlt ab der Zahl der verbleibenden Kombinationen
+    weiter und ueberspringt jeden vergebenen Namen: eine erzeugte
+    Kombination ueberschreibt nie eine vorhandene (R2-A1, 04.10.2026). Bis
+    dahin ersetzte sie still eine Handkombination gleichen Namens - gemessen:
+    „GZT2“ mit 9,99·LF2 war danach die erzeugte mit 1,35·LF1
+    (tests/test_namen_lf_lk.py, N6). Die Namen bleiben GZT<n>, GZT-A<n> und
+    GZG<n>; LK<n> kommt mit Paket R2-C1."""
     ds = model.design
     rule = rule or ds.combination_rule
     combos: list[Combination] = []
@@ -115,6 +123,12 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
             return
         seen.add(key)
         zaehler[0] += 1
+        # die naechste freie Nummer - ein vergebener Name (Handkombination,
+        # Lastfall) wird uebersprungen, nie ueberschrieben (R2-A1). Ein Name
+        # GZT<n> kann nicht wie eine Alternative „<EK> [k]“ heissen.
+        while (f"{name_prefix}{zaehler[0]}" in model.combinations
+               or f"{name_prefix}{zaehler[0]}" in model.load_cases):
+            zaehler[0] += 1
         c = Combination(f"{name_prefix}{zaehler[0]}", factors, typ, "auto: " + desc + zusatz,
                         leading, situation=sit)
         combos.append(c)

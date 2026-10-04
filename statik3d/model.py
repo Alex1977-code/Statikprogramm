@@ -1222,7 +1222,23 @@ LASTARTEN_NAMEN = (("eigengewicht", "Eigengewicht"), ("knoten", "Knotenlasten"),
 
 @dataclass
 class LoadCase:
-    """Ein Lastfall mit eigener Lastzusammenstellung."""
+    """Ein Lastfall mit eigener Lastzusammenstellung.
+
+    **Name, Bezeichnung, Beschreibung** (Paket R2, Entscheidung des Anwenders
+    vom 04.10.2026: „lastfal soll immer ein LF und dann die nummer tragen“):
+
+    * ``name`` ist der Schluessel, unter dem Kombinationen, Ermuedungslasten,
+      Stellungen, Lastgenerierer, Berichtseintraege und Ergebnisse den
+      Lastfall nennen - kuenftig immer „LF<Nummer>“. Umbenannt wird nur ueber
+      :meth:`Model.lastfall_umbenennen`, die jeden Verweis mitnimmt.
+    * ``bezeichnung`` ist der kurze freie Name, der neben der Nummer steht:
+      „LF3 W_links“ (:func:`begriffe.anzeige_lastfall`). Bis R2 war er der
+      Name selbst; leer heisst, es wird nur der Name gezeigt.
+    * ``description`` ist die **Beschreibung** (so heisst das Feld in Maske,
+      Tabelle und Bericht): ein erklaerender Text („Wind von links, Böen nach
+      Zone 2“), der nie als Name dient und nicht in Listen neben der Nummer
+      steht.
+    """
     name: str
     category: str = "G"
     description: str = ""
@@ -1231,6 +1247,9 @@ class LoadCase:
     situation: str = ""                    # Situation (Stellung + wirksame Elemente); "" = Grundstellung
     theorie: str = ""                      # "" (wie Einstellung) | I | II | III
     nummer: int = 0                        # Lastfallnummer (0 = keine vergeben)
+    #: Kurzer freier Name neben der Nummer („W_links“ in „LF3 W_links“), nicht
+    #: die Beschreibung (description) - siehe oben
+    bezeichnung: str = ""
     #: Grundlast: wirkt in jeder **direkt** geloesten Rechnung mit (Modelle mit
     #: Kontakt oder Ausfallstaeben) - Lastfaelle, Kombinationen und die
     #: Zustaende der Ermuedungslasten -, auch wenn sie dort nicht genannt ist.
@@ -1317,6 +1336,7 @@ class LoadCase:
             "situation": self.situation,
             "theorie": self.theorie,
             "nummer": int(self.nummer or 0),
+            "bezeichnung": str(getattr(self, "bezeichnung", "") or ""),
             "grundlast": bool(getattr(self, "grundlast", False)),
             # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
@@ -1341,6 +1361,8 @@ class LoadCase:
         lc.situation = d.get("situation", "") or ""
         lc.theorie = d.get("theorie", "") or ""
         lc.nummer = int(d.get("nummer", 0) or 0)
+        # Dateien vor R2-A1 (04.10.2026) kennen das Feld nicht: leer
+        lc.bezeichnung = str(d.get("bezeichnung", "") or "")
         lc.grundlast = bool(d.get("grundlast", False))
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
@@ -1373,12 +1395,29 @@ class Combination:
     die Kombination da ist, und aendert am Gleichungssystem nichts. Wer beides
     verwechselt, laesst den Loeser nach einer Stellung suchen, die es nicht
     gibt.
+
+    **Name, Nummer, Art, Bezeichnung, Beschreibung** (Paket R2, 04.10.2026):
+    ``name`` ist der Schluessel (kuenftig „LK<Nummer>“ oder „EK<Nummer>“),
+    umbenannt nur ueber :meth:`Model.kombination_umbenennen`. ``art`` ist
+    „LK“ (Lastkombination: eine Summe) oder „EK“ (Ergebniskombination:
+    Umhuellende ueber Alternativen) und wird **gespeichert**, weil sie der
+    Herkunft folgt und nicht dem Aufbau: RFEM macht aus einer
+    Ergebniskombination mit nur einer Alternative eine gewoehnliche Summe
+    (am Modell cbg 887 von 923, Bestandsaufnahme R2), sie bleibt trotzdem
+    EK. Ohne Angabe gilt
+    beim Anlegen und beim Laden einer Datei ohne das Feld: EK, wenn
+    Alternativen da sind, sonst LK. Wer die Alternativen erst nachtraeglich
+    setzt, setzt die Art selbst. LK und EK zaehlen ihre ``nummer`` getrennt
+    (cbg: 871 Nummern gibt es als LK und als EK). ``bezeichnung`` ist der
+    kurze freie Name neben der Nummer („LK7 GZT“,
+    :func:`begriffe.anzeige_kombination`), ``description`` die Beschreibung,
+    ein erklaerender Text wie „auto: 6.10 Leit W_links“.
     """
     name: str
     factors: dict[str, float] = field(default_factory=dict)
     typ: str = "ULS"
     description: str = ""
-    leading: str = ""       # Leiteinwirkung (Information)
+    leading: str = ""       # Leiteinwirkung: Name eines Lastfalls (Information)
     situation: str = ""     # Situation, in der die Kombination gilt; "" = Grundstellung
     theorie: str = ""       # "" (wie Einstellung) | I | II | III (grosse Verformungen)
     #: Name der Bemessungssituation aus der Norm oder der Quelldatei (Information)
@@ -1391,18 +1430,34 @@ class Combination:
     #: physikalisch sinnlos waere. Eine Kombination mit Alternativen hat
     #: ``factors`` leer.
     alternativen: list = field(default_factory=list)
+    #: Nummer der Kombination (0 = keine vergeben); LK und EK zaehlen getrennt
+    nummer: int = 0
+    #: "LK" oder "EK" (siehe oben); leer beim Anlegen = nach den Alternativen
+    art: str = ""
+    #: Kurzer freier Name neben der Nummer, nicht die Beschreibung
+    bezeichnung: str = ""
+
+    def __post_init__(self):
+        # Vorgabe der Art: nur, wenn niemand sie angegeben hat - eine Datei
+        # ohne das Feld (vor R2-A1) laedt so wie eine neue Kombination
+        if not self.art:
+            self.art = "EK" if self.alternativen else "LK"
 
     @property
     def ist_umhuellende(self) -> bool:
         return bool(self.alternativen)
 
     def lastfall_umbenennen(self, alt: str, neu: str) -> None:
-        """Ein umbenannter Lastfall heisst auch in den Faktoren und in jeder
-        Alternative neu - sonst zeigte die Umhuellende ins Leere."""
+        """Ein umbenannter Lastfall heisst auch in den Faktoren, in jeder
+        Alternative und als Leiteinwirkung neu - sonst zeigte die Umhuellende
+        ins Leere. Die Leiteinwirkung zog bis zum 04.10.2026 nicht mit
+        (Bestandsaufnahme R2, Abschnitt 2.1)."""
         if alt in self.factors:
             self.factors = {(neu if k == alt else k): v for k, v in self.factors.items()}
         self.alternativen = [{(neu if k == alt else k): v for k, v in a.items()}
                              for a in self.alternativen]
+        if self.leading == alt:
+            self.leading = neu
 
     def lastfall_entfernen(self, name: str) -> None:
         """Ein geloeschter Lastfall faellt aus den Faktoren und aus jeder
@@ -3149,6 +3204,29 @@ class Situation:
         return t
 
 
+class NameVergeben(ValueError):
+    """Der neue Name eines Lastfalls oder einer Kombination ist schon vergeben
+    (Model.lastfall_umbenennen, kombination_umbenennen); der Text sagt, an wen.
+    Die Oberflaeche zeigt ihn als Hinweis, der Webserver als Fehlermeldung."""
+
+
+def _namensnummer(name) -> tuple:
+    """("LF", 3) zu „LF3“ (auch „LF 3“), ("LK", 7) zu „LK7“, sonst ("", 0):
+    ein Name dieser Form belegt seine Nummer (R2-A1)."""
+    import re
+    t = re.fullmatch(r"(LF|LK|EK)\s*(\d+)", str(name))
+    return (t.group(1), int(t.group(2))) if t else ("", 0)
+
+
+def _schluessel_tauschen(d: dict, alt, neu) -> None:
+    """Den Schluessel *alt* in *d* durch *neu* ersetzen - an seinem Platz in
+    der Reihenfolge und im selben Woerterbuch, damit niemand, der es haelt,
+    eine veraltete Fassung sieht."""
+    eintraege = [((neu if k == alt else k), v) for k, v in d.items()]
+    d.clear()
+    d.update(eintraege)
+
+
 class Model:
     def __init__(self, name: str = "Modell"):
         self.name = name
@@ -3178,7 +3256,10 @@ class Model:
         self.combinations: dict[str, Combination] = {}
         self.fatigue_loads: dict[str, FatigueLoad] = {}
         self.active_case: str = ""
-        self.add_load_case("LF1", "G", "Eigengewicht / staendige Lasten")
+        # Name und Nummer passen zusammen (R2-A1): bis zum 04.10.2026 hatte
+        # der Vorgabelastfall Nr. 0, und „Neu“ schlug danach „LF2“ mit
+        # „Nr. 1“ vor
+        self.add_load_case("LF1", "G", "Eigengewicht / staendige Lasten", nummer=1)
         # Nachweise
         self.members: dict[str, Member] = {}
         self.joints: dict[str, Joint] = {}
@@ -3343,7 +3424,7 @@ class Model:
         if self.active_case == name:
             self.active_case = next(iter(self.load_cases), "")
         if not self.load_cases:
-            self.add_load_case("LF1", "G")
+            self.add_load_case("LF1", "G", nummer=1)
         return aus
 
     def case(self, name: str = None) -> LoadCase:
@@ -3355,8 +3436,12 @@ class Model:
         return self.load_cases[name]
 
     def add_combination(self, name: str, factors: dict, typ: str = "ULS",
-                        description: str = "", leading: str = "") -> Combination:
-        c = Combination(name, dict(factors), typ, description, leading)
+                        description: str = "", leading: str = "", **kw) -> Combination:
+        """Eine Kombination anlegen; ``kw`` setzt weitere Felder (nummer, art,
+        bezeichnung, situation, ...). Ein vorhandener Name wird noch
+        ueberschrieben - erzwungen wird erst mit Paket R2-E; wer pruefen
+        will, fragt vorher :meth:`namenskonflikt`."""
+        c = Combination(name, dict(factors), typ, description, leading, **kw)
         self.combinations[name] = c
         return c
 
@@ -3394,9 +3479,18 @@ class Model:
           Ergebniskombination („EK1 [2]“): in den GZT-Nachweisen
           (ec3.design._uls_results) verdraengt die eine die andere -
           Ausnutzung des Riegels 1,10 statt 1,49, ohne Warnung.
+        * Ein Lastfall heisst wie eine Alternative (seit R2-A1, 04.10.2026):
+          ein Lastfall nach Theorie II./III. Ordnung steht in
+          ``theorie2/3.kombinationen`` unter seinem Namen
+          (solver._lastfaelle_hoeherer_ordnung), und
+          solver._bei_theorie_I_geblieben sucht die Alternative dort unter
+          demselben Namen; in der Herkunft einer Umhuellenden waeren beide
+          nicht zu unterscheiden. Lesart des Quelltexts, nicht gemessen.
 
         Beides liess check() bis dahin durch. Die Rechnung startet mit
-        diesen Zeilen nicht (check, solve_all)."""
+        diesen Zeilen nicht (check, solve_all). Umbenennen und Anlegen in der
+        Oberflaeche weisen solche Namen seit R2-A1 vorher ab
+        (:meth:`namenskonflikt`)."""
         import re
         msgs = []
         for n in self.combinations:
@@ -3411,7 +3505,282 @@ class Model:
                 msgs.append(f"FEHLER: Kombination '{n}' heißt wie die Alternative {t.group(2)} der "
                             f"Ergebniskombination '{t.group(1)}' - in den Nachweisen verdrängt die "
                             "eine die andere. Die Kombination umbenennen.")
+        for n in self.load_cases:
+            t = re.fullmatch(r"(.+) \[(\d+)\]", n)
+            if t and t.group(1) in eks:
+                msgs.append(f"FEHLER: Lastfall '{n}' heißt wie die Alternative {t.group(2)} der "
+                            f"Ergebniskombination '{t.group(1)}' - rechnet er nach Theorie II./III. "
+                            "Ordnung, stehen beide in deren Ergebnissen unter diesem Namen. Den "
+                            "Lastfall umbenennen.")
         return msgs
+
+    # ---------------- Namen und Nummern (Paket R2-A1) ----------------
+    def namenskonflikt(self, neu: str, alt: str = "", art: str = "lastfall") -> str:
+        """Warum *neu* nicht der Name eines Lastfalls (``art`` "lastfall") oder
+        einer Kombination ("kombination") sein kann - "" heisst: frei. *alt*
+        ist der bisherige Name des umbenannten Objekts (leer beim Anlegen); er
+        zaehlt nicht als vergeben.
+
+        Lastfaelle und Kombinationen teilen einen Namensraum, und die
+        Alternativen einer Ergebniskombination heissen „<EK> [k]“
+        (solver.alternativen_der_kombination): unter gleichem Namen verdecken
+        die Ergebnisse einander (:meth:`namenskollisionen`). Eine
+        Ergebniskombination darf darum auch nicht so heissen, dass eine ihrer
+        Alternativen wie ein vorhandener Lastfall oder eine vorhandene
+        Kombination hiesse. Bis zum 04.10.2026 sahen die Umbenennstellen nur
+        die eigene Sammlung (Bestandsaufnahme R2, Abschnitt 1.4)."""
+        import re
+        neu, alt = str(neu or ""), str(alt or "")
+        if not neu.strip():
+            return "Bitte einen Namen eingeben"
+        ist_lf = art == "lastfall"
+        if neu in self.load_cases and not (ist_lf and neu == alt):
+            return (f"Lastfall „{neu}“ gibt es schon" if ist_lf else
+                    f"„{neu}“ ist schon der Name eines Lastfalls - ein Lastfall und eine Kombination "
+                    "dürfen nicht gleich heißen, ihre Ergebnisse verdeckten einander")
+        if neu in self.combinations and not (not ist_lf and neu == alt):
+            return (f"Kombination „{neu}“ gibt es schon" if not ist_lf else
+                    f"„{neu}“ ist schon der Name einer Kombination - ein Lastfall und eine Kombination "
+                    "dürfen nicht gleich heißen, ihre Ergebnisse verdeckten einander")
+        if neu == alt:
+            return ""
+        # Ergebniskombinationen nach dem Umbenennen
+        eks = {n for n, c in self.combinations.items() if c.ist_umhuellende}
+        umh = not ist_lf and alt in eks
+        if umh:
+            eks = (eks - {alt}) | {neu}
+        t = re.fullmatch(r"(.+) \[(\d+)\]", neu)
+        if t and t.group(1) in eks and t.group(1) != neu:
+            return (f"„{neu}“ heißt wie die Alternative {t.group(2)} der Ergebniskombination "
+                    f"„{t.group(1)}“ - in den Nachweisen verdrängte die eine die andere")
+        if umh:
+            vorsilbe = neu + " ["
+            for n in list(self.load_cases) + list(self.combinations):
+                if n != alt and n.startswith(vorsilbe) and re.fullmatch(r"\d+\]", n[len(vorsilbe):]):
+                    was = "der Lastfall" if n in self.load_cases else "die Kombination"
+                    return (f"Die Alternativen der Ergebniskombination hießen „{n}“ wie {was} „{n}“ - "
+                            "in den Nachweisen verdrängte die eine die andere")
+        return ""
+
+    def lastfall_umbenennen(self, alt: str, neu: str) -> list[str]:
+        """Den Lastfall *alt* in *neu* umbenennen - mit **jedem** Verweis.
+
+        Mit geht, was die Bestandsaufnahme R2 (Abschnitt 2.1) als Verweis auf
+        einen Lastfall gefunden hat: der Schluessel in ``load_cases`` (die
+        Reihenfolge bleibt), ``active_case``, Faktoren, Alternativen und
+        Leiteinwirkung (``leading``) jeder Kombination, beide Zustaende und
+        der Verlauf jeder Ermuedungslast, die Lastfallliste jeder Stellung
+        (``faelle``), der Lastfall jedes Wind- und Wasserdruckgenerators
+        (``lastfall``, ``lastfall_dyn``) und jeder Berichtseintrag mit der
+        Quelle „case:<alt>“ samt seinen eingefrorenen Texten
+        (:meth:`_bericht_umbenennen`). Situationen und Subsysteme nennen
+        keinen Lastfall (nur Stellung, Elemente, Objekte).
+
+        Heisst eine Kombination wie der Lastfall (eine Kollision, die
+        :meth:`namenskollisionen` meldet), bleiben die Zustaende der
+        Ermuedungslasten bei ihr: Rechnung und Nachweis lesen dann die
+        Kombination (Analysis.all_results), wie in :meth:`remove_load_case`.
+
+        Ein vergebener Name wird mit :class:`NameVergeben` abgewiesen, bevor
+        sich etwas aendert (:meth:`namenskonflikt`).
+
+        Bis zum 04.10.2026 stand das Umbenennen viermal von Hand in Oberflaeche
+        und Webserver, und keine Stelle zog Berichtsbilder, Wind, Wasserdruck
+        und ``leading`` nach, der Webserver auch die Stellungen nicht
+        (Bestandsaufnahme R2, Befund 3): ein Wind auf einem umbenannten
+        Lastfall legte beim naechsten „Lasten erzeugen“ einen neuen Lastfall
+        unter dem alten Namen an (tests/test_namen_lf_lk.py, N5).
+
+        Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
+        if alt == neu:
+            return []
+        if alt not in self.load_cases:
+            raise KeyError(f"Lastfall '{alt}' existiert nicht")
+        grund = self.namenskonflikt(neu, alt, "lastfall")
+        if grund:
+            raise NameVergeben(grund)
+        aus: list[str] = []
+        lc = self.load_cases[alt]
+        _schluessel_tauschen(self.load_cases, alt, neu)
+        lc.name = neu
+        for c in self.combinations.values():
+            if alt in c.factors or c.leading == alt or any(alt in a for a in c.alternativen):
+                c.lastfall_umbenennen(alt, neu)
+                aus.append(f"Kombination '{c.name}'")
+        if alt not in self.combinations:
+            for fl in self.fatigue_loads.values():
+                if alt in (fl.case_max, fl.case_min) or alt in (fl.folge or []):
+                    fl.lastfall_umbenennen(alt, neu)
+                    aus.append(f"Ermüdungslast '{fl.name}'")
+        for s in getattr(self, "stellungen", None) or []:
+            if alt in (getattr(s, "faelle", None) or []):
+                s.lastfall_umbenennen(alt, neu)
+                aus.append(f"Stellung '{s.name}'")
+        for w in (getattr(self, "winde", None) or {}).values():
+            if getattr(w, "lastfall", "") == alt:
+                w.lastfall = neu
+                aus.append(f"Wind '{w.name}'")
+        for wd in (getattr(self, "wasserdruecke", None) or {}).values():
+            for feld in ("lastfall", "lastfall_dyn"):
+                if getattr(wd, feld, "") == alt:
+                    setattr(wd, feld, neu)
+                    aus.append(f"Wasserdruck '{wd.name}' ({feld})")
+        if self.active_case == alt:
+            self.active_case = neu
+        aus += self._bericht_umbenennen({f"case:{alt}": f"case:{neu}"}, alt, neu)
+        return aus
+
+    def kombination_umbenennen(self, alt: str, neu: str) -> list[str]:
+        """Die Kombination *alt* in *neu* umbenennen - mit jedem Verweis.
+
+        Mit geht: der Schluessel in ``combinations`` (die Reihenfolge bleibt;
+        das Objekt bleibt dasselbe, mit Leiteinwirkung, Bemessungssituation,
+        Nummer, Art und Bezeichnung), jeder Zustand und jedes Glied des
+        Verlaufs einer Ermuedungslast, das die Kombination nennt, die
+        Kombinationsliste jeder Stellung (``kombinationen``, gespeichert, bis
+        heute nirgends gelesen) und jeder Berichtseintrag mit der Quelle
+        „combo:<alt>“ oder der Quelle der Umhuellenden dieser
+        Ergebniskombination („env:<Schluessel>“). Der Schluessel der
+        Umhuellenden ist der Name, ausser er gehoert schon einer Umhuellenden
+        des Programms (R1: „ULS (Ergebniskombination)“); er wird vorher und
+        nachher mit solver.umhuellende_schluessel_im_modell gebildet, damit das
+        Bild der Umhuellenden GZT („env:ULS“) nie einer Ergebniskombination
+        „ULS“ folgt. Die Alternativen „<alt> [k]“ heissen danach „<neu> [k]“;
+        sie stehen nur in Ergebnissen.
+
+        Ein vergebener Name wird mit :class:`NameVergeben` abgewiesen.
+
+        Bis zum 04.10.2026 legte die Oberflaeche dafuer eine neue Kombination
+        an und loeschte die alte: kein Verweis folgte, und Leiteinwirkung,
+        Bemessungssituation (Dialog) gingen verloren (Bestandsaufnahme R2,
+        Abschnitt 1.4).
+
+        Rueckgabe: Klartextzeilen, was mitging."""
+        from .solver import umhuellende_schluessel_im_modell
+        alt, neu = str(alt), str(neu)
+        if alt == neu:
+            return []
+        if alt not in self.combinations:
+            raise KeyError(f"Kombination '{alt}' existiert nicht")
+        grund = self.namenskonflikt(neu, alt, "kombination")
+        if grund:
+            raise NameVergeben(grund)
+        aus: list[str] = []
+        vorher = umhuellende_schluessel_im_modell(self)
+        c = self.combinations[alt]
+        _schluessel_tauschen(self.combinations, alt, neu)
+        c.name = neu
+        nachher = umhuellende_schluessel_im_modell(self)
+        quellen = {f"combo:{alt}": f"combo:{neu}"}
+        for n, k in vorher.items():
+            k2 = nachher.get(neu if n == alt else n)
+            if k2 is not None and k2 != k:
+                quellen[f"env:{k}"] = f"env:{k2}"
+        # Ein Zustand nennt einen Lastfall oder eine Kombination; heissen
+        # beide gleich, lesen Rechnung und Nachweis die Kombination
+        # (Analysis.all_results) - der Verweis meint also sie
+        for fl in self.fatigue_loads.values():
+            if alt in (fl.case_max, fl.case_min) or alt in (fl.folge or []):
+                fl.lastfall_umbenennen(alt, neu)
+                aus.append(f"Ermüdungslast '{fl.name}'")
+        for s in getattr(self, "stellungen", None) or []:
+            if alt in (getattr(s, "kombinationen", None) or []):
+                s.kombinationen = [neu if k == alt else k for k in s.kombinationen]
+                aus.append(f"Stellung '{s.name}'")
+        aus += self._bericht_umbenennen(quellen, alt, neu)
+        return aus
+
+    def _bericht_umbenennen(self, quellen: dict, alt: str, neu: str) -> list[str]:
+        """Berichtseintraege mit einer Quelle aus *quellen* (alt -> neu)
+        zeigen auf die neue. Ihre eingefrorenen Texte - Name und
+        Bildunterschrift, beim Uebernehmen aus der Quelle gebildet („Lastfall
+        W · Verschiebung“, „Stabkräfte · Lastfall W“) - folgen, wo sie den
+        Klartext der alten Quelle oder den alten Namen **als Ganzes**
+        enthalten: ein Wort, das den Namen nur enthaelt („Windlast“ zu „W“),
+        bleibt, ebenso die Bemerkung und die Texte jedes Eintrags mit einer
+        anderen Quelle. Vorher zeigte ein Bildeintrag still den alten Namen und
+        ein Tabelleneintrag ins Leere (report/html.py, _ergebnis_zu)."""
+        import re
+
+        def ganz(wort):
+            return re.compile(rf"(?<!\w){re.escape(wort)}(?!\w)")
+        name_alt = ganz(alt)
+        aus = []
+        for e in getattr(self, "bericht", None) or []:
+            q = quellen.get(e.quelle)
+            if q is None:
+                continue
+            text_alt = e.quelle_text()
+            e.quelle = q
+            text_neu = e.quelle_text()
+            quelle_alt = ganz(text_alt)
+            for feld in ("name", "beschriftung"):
+                t = str(getattr(e, feld, "") or "")
+                if quelle_alt.search(t):
+                    t2 = quelle_alt.sub(lambda _m: text_neu, t)
+                else:
+                    t2 = name_alt.sub(lambda _m: neu, t)
+                if t2 != t:
+                    setattr(e, feld, t2)
+            aus.append(f"Berichtseintrag '{e.name}'")
+        return aus
+
+    def naechste_nummer(self, art: str = "LF") -> int:
+        """Die naechste freie Nummer eines Lastfalls ("LF"), einer
+        Lastkombination ("LK") oder einer Ergebniskombination ("EK") - die
+        eine Stelle, an der Nummern vergeben werden (R2-A1, 04.10.2026).
+
+        Belegt ist eine Nummer durch das Feld ``nummer`` eines Objekts dieser
+        Art **und** durch einen Namen der Form LF<n>, LK<n> oder EK<n> unter
+        allen Lastfaellen und Kombinationen: bis zur Umstellung traegt nur
+        der Name die Zahl (``LoadCase.nummer`` war in allen Beispielen und an
+        den Modellen Drehlager und cbg ueberall 0). Bis zum 04.10.2026 sah
+        naechste_lastfallnummer nur das Feld und der Modellbaum nur den Namen:
+        ein leeres Modell schlug „LF2“ mit „Nr. 1“ vor. LK und EK zaehlen
+        getrennt; die Nummern 1 + hoechste sind alle frei."""
+        art = str(art or "").upper()
+        if art not in ("LF", "LK", "EK"):
+            raise ValueError(f"Art „{art}“ unbekannt - LF, LK oder EK")
+        objekte = (list(self.load_cases.values()) if art == "LF" else
+                   [c for c in self.combinations.values() if getattr(c, "art", "") == art])
+        hoechste = max([int(getattr(o, "nummer", 0) or 0) for o in objekte] + [0])
+        for n in list(self.load_cases) + list(self.combinations):
+            a, z = _namensnummer(n)
+            if a == art:
+                hoechste = max(hoechste, z)
+        return hoechste + 1
+
+    def nummernkonflikt(self, art: str, nr, ausser: str = "") -> str:
+        """Wem die Nummer *nr* der Art *art* (LF, LK, EK) schon gehoert, als
+        Hinweistext - "" heisst frei. Belegt wie in :meth:`naechste_nummer`:
+        durch das Feld ``nummer`` und durch einen Namen LF<nr>. *ausser* ist
+        der Name des Objekts, dessen Nummer gerade gesetzt wird; 0 heisst
+        „keine Nummer“ und ist nie belegt. Bis zum 04.10.2026 schrieben Maske
+        und Tabelle jede Nummer ohne Pruefung (Bestandsaufnahme R2, 1.3)."""
+        art = str(art or "").upper()
+        try:
+            nr = int(nr or 0)
+        except (TypeError, ValueError):
+            return ""
+        if nr <= 0:
+            return ""
+        wer = ""
+        objekte = (list(self.load_cases.values()) if art == "LF" else
+                   [c for c in self.combinations.values() if getattr(c, "art", "") == art])
+        for o in objekte:
+            if o.name != ausser and int(getattr(o, "nummer", 0) or 0) == nr:
+                wer = o.name
+                break
+        if not wer:
+            for n in list(self.load_cases) + list(self.combinations):
+                if n != ausser and _namensnummer(n) == (art, nr):
+                    wer = n
+                    break
+        if not wer:
+            return ""
+        was = "der Lastfall" if wer in self.load_cases else "die Kombination"
+        return f"Nr. {nr} hat schon {was} „{wer}“ - frei ist Nr. {self.naechste_nummer(art)}"
 
     # Kompatible Ein-Lastfall-API -> aktiver Lastfall
     @property
@@ -4582,8 +4951,12 @@ class Model:
 
     # ---------------- Situationen ----------------
     def naechste_lastfallnummer(self) -> int:
-        """Die naechste freie Lastfallnummer (1 + groesste vergebene)."""
-        return 1 + max([int(getattr(lc, "nummer", 0) or 0) for lc in self.load_cases.values()] + [0])
+        """Die naechste freie Lastfallnummer - seit R2-A1 (04.10.2026) aus
+        :meth:`naechste_nummer`, die auch Namen LF<n> beachtet. Bis dahin war
+        sie 1 + groesste vergebene Nummer im Feld: Wind, Wasserdruck und
+        Lastenheft vergaben in einem Modell mit „LF1“ (Nr. 0) die Nr. 1 ein
+        zweites Mal."""
+        return self.naechste_nummer("LF")
 
     def situationsnamen(self) -> list[str]:
         return [GRUNDSTELLUNG] + list(self.situationen)
@@ -6754,7 +7127,7 @@ class Model:
                 lc = LoadCase.from_dict(lcd)
                 m.load_cases[lc.name] = lc
             if not m.load_cases:
-                m.add_load_case("LF1", "G")
+                m.add_load_case("LF1", "G", nummer=1)
             m.active_case = d.get("active_case") or next(iter(m.load_cases))
         else:   # Format 1: ein Lastfall
             lc = m.case()

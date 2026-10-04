@@ -185,6 +185,20 @@ def _listenzahl(x) -> str:
     return zl.zahl_text(x, tausender=False)
 
 
+def _kombination_schreiben(c, aus) -> None:
+    """Was der Kombinationsdialog aendert - Faktoren, Typ, Beschreibung,
+    Situation, Theorie -, in die **vorhandene** Kombination *c* schreiben
+    (R2-A1, 04.10.2026). Bis dahin ersetzte das Ergebnis des Dialogs (*aus*)
+    die Kombination, und Leiteinwirkung, Nummer, Art und Bezeichnung gingen
+    verloren. Alternativen und Bemessungssituation fuehrt der Dialog nur
+    durch; sie bleiben, wie sie sind. Eine Funktion, keine Methode: die
+    Pruefungen rufen die Wege auch mit einer Attrappe als Fenster."""
+    if not c.ist_umhuellende:
+        c.factors = dict(aus.factors)
+    c.typ, c.description = aus.typ, aus.description
+    c.situation, c.theorie = aus.situation, aus.theorie
+
+
 def _maskenaenderung(maske):
     """Die geaenderten Felder einer Maske - None, wenn sie es nicht weiss
     (dann wird wie bisher verworfen; 24.09.2026)."""
@@ -10693,10 +10707,25 @@ class MainWindow(QtWidgets.QMainWindow):
             return zl.feldwert(w.get(key), vorgabe)
 
         if art == "lastfall":
-            if neu and neuname in m.load_cases:
-                return self.hinweis(f"Lastfall „{neuname}“ gibt es schon")
-            if not neu and neuname != name and neuname in m.load_cases:
-                return self.hinweis(f"Lastfall „{neuname}“ gibt es schon")
+            # Ein vergebener Name - Lastfall, Kombination oder Alternative
+            # „<EK> [k]“ - wird abgewiesen (Model.namenskonflikt, R2-A1). Bis
+            # zum 04.10.2026 sah diese Stelle nur die Lastfaelle: ein Lastfall
+            # durfte wie eine Kombination heissen
+            if neu or neuname != name:
+                grund = m.namenskonflikt(neuname, "" if neu else name, "lastfall")
+                if grund:
+                    return self.hinweis(grund)
+            # Eine geaenderte Nummer, die schon ein anderer Lastfall traegt
+            # (im Feld oder im Namen LF<n>), wird abgewiesen
+            try:
+                nummer = max(0, int(round(float(w.get("nummer", 0) or 0))))
+            except (TypeError, ValueError):
+                nummer = 0
+            vorher_nr = 0 if neu or name not in m.load_cases else int(m.load_cases[name].nummer or 0)
+            if nummer != vorher_nr:
+                grund = m.nummernkonflikt("LF", nummer, "" if neu else name)
+                if grund:
+                    return self.hinweis(grund)
             kat = str(w.get("kategorie", "G")).split(":")[0].strip() or "G"
             if kat not in ACTION_CATEGORIES:
                 kat = "G"
@@ -10722,16 +10751,10 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 lc = m.load_cases[name]
                 if neuname != name:
-                    m.load_cases = {(neuname if k == name else k): v for k, v in m.load_cases.items()}
-                    lc.name = neuname
-                    for c in m.combinations.values():
-                        c.lastfall_umbenennen(name, neuname)
-                    for fl in m.fatigue_loads.values():
-                        fl.lastfall_umbenennen(name, neuname)
-                    for s in getattr(m, "stellungen", None) or []:
-                        s.lastfall_umbenennen(name, neuname)
-                    if m.active_case == name:
-                        m.active_case = neuname
+                    # alle Verweise an einer Stelle (R2-A1): Kombinationen samt
+                    # Leiteinwirkung, Ermuedung, Stellungen, Wind, Wasserdruck,
+                    # Berichtseintraege, aktiver Lastfall
+                    m.lastfall_umbenennen(name, neuname)
                 lc.category = kat
                 lc.description = str(w.get("beschreibung", "") or "")
                 lc.exclusive_group = str(w.get("gruppe", "") or "").strip()
@@ -10739,10 +10762,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.situation = "" if sit in ("", GRUNDSTELLUNG) else sit
             lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
             lc.grundlast = bool(w.get("grundlast", False))
-            try:
-                lc.nummer = max(0, int(round(float(w.get("nummer", 0) or 0))))
-            except (TypeError, ValueError):
-                lc.nummer = 0
+            lc.nummer = nummer          # oben gelesen und geprueft
             g = zahl("g_z", 0.0)
             grav = list(lc.gravity) + [0.0] * (3 - len(lc.gravity))
             grav[2] = float(g)
@@ -10783,8 +10803,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     faktoren[k] = float(v.strip().replace(",", "."))
                 except ValueError:
                     return self.hinweis(f"Faktor von {k} ist keine Zahl: {v.strip()}")
-            if (neu or neuname != name) and neuname in m.combinations:
-                return self.hinweis(f"Kombination „{neuname}“ gibt es schon")
+            # Ein vergebener Name - Kombination, Lastfall oder Alternative
+            # „<EK> [k]“ - wird abgewiesen (Model.namenskonflikt, R2-A1); bis
+            # zum 04.10.2026 sah diese Stelle nur die Kombinationen
+            if vorher is None or neuname != name:
+                grund = m.namenskonflikt(neuname, "" if vorher is None else name, "kombination")
+                if grund:
+                    return self.hinweis(grund)
             sit = str(w.get("situation", "") or "")
             sit = "" if sit in ("", GRUNDSTELLUNG) else sit
             fremd = [k for k in (vorher.lastfaelle() if umh else faktoren) if k in m.load_cases
@@ -10794,15 +10819,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                   + ", ".join(fremd))
             self.merken(f"Kombination {neuname}")
             # die Maske zeigt den Klartext, gespeichert wird der Schluessel
-            c = Combination(neuname, faktoren, bg.typ_schluessel(w.get("typ", "")) or "ULS",
-                            str(w.get("beschreibung", "") or ""), situation=sit,
-                            theorie=next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), ""))
-            if umh:
-                c.bemessungssituation = vorher.bemessungssituation
-                c.alternativen = [dict(a) for a in vorher.alternativen]
-            if not neu and name in m.combinations and neuname != name:
-                del m.combinations[name]
-            m.combinations[neuname] = c
+            typ = bg.typ_schluessel(w.get("typ", "")) or "ULS"
+            theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
+            if vorher is None:
+                c = Combination(neuname, faktoren, typ, str(w.get("beschreibung", "") or ""),
+                                situation=sit, theorie=theorie)
+                m.combinations[neuname] = c
+            else:
+                # Dasselbe Objekt bleibt (R2-A1, 04.10.2026): bis dahin entstand
+                # hier eine neue Kombination, und Leiteinwirkung (leading),
+                # bei einer Summe auch die Bemessungssituation, gingen
+                # verloren; umbenannt wird mit allen Verweisen im Modell
+                c = vorher
+                if neuname != name:
+                    m.kombination_umbenennen(name, neuname)
+                if not umh:
+                    c.factors = faktoren
+                c.typ, c.description = typ, str(w.get("beschreibung", "") or "")
+                c.situation, c.theorie = sit, theorie
             self.info(f"Kombination {neuname}: {c.formula()}")
             name = neuname
         elif art == "werkstoff":
@@ -11091,7 +11125,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # neue Knoten schon im Modell, waehrend die Leiste noch wartet
         m = self.model
         if zweigart == "lastfaelle":
-            return self._objektmaske("lastfall", m.naechster_name("LF", m.load_cases), neu=True)
+            # Name und Nummer aus einer Hand (Model.naechste_nummer, R2-A1): bis
+            # zum 04.10.2026 kam der Name aus den Namen und die Nummer aus den
+            # Feldern - ein leeres Modell schlug „LF2“ mit „Nr. 1“ vor
+            return self._objektmaske("lastfall", f"LF{m.naechste_nummer('LF')}", neu=True)
         if zweigart == "kombinationen":
             return self._objektmaske("kombination", m.naechster_name("K", m.combinations), neu=True)
         if zweigart == "werkstoffe":
@@ -13220,22 +13257,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         nm, cat, desc, grp = d.values()
+        # Ein vergebener Name bringt einen Hinweis, und nichts aendert sich
+        # (R2-A1). Bis zum 04.10.2026 blieb der Name hier still, wie er war,
+        # waehrend die uebrigen Felder geschrieben wurden.
+        if nm != name:
+            grund = self.model.namenskonflikt(nm, name, "lastfall")
+            if grund:
+                return self.hinweis(grund)
         self.merken(f"Lastfall {name}")
         lc.category, lc.description, lc.exclusive_group = cat, desc, grp
         lc.situation = d.situation_name()
         lc.theorie = d.theorie_name()
-        if nm != name and nm not in self.model.load_cases:
-            self.model.load_cases = {(nm if k == name else k): v
-                                     for k, v in self.model.load_cases.items()}
-            lc.name = nm
-            for c in self.model.combinations.values():
-                c.lastfall_umbenennen(name, nm)
-            for fl in self.model.fatigue_loads.values():
-                fl.lastfall_umbenennen(name, nm)
-            for s in getattr(self.model, "stellungen", None) or []:
-                s.lastfall_umbenennen(name, nm)
-            if self.model.active_case == name:
-                self.model.active_case = nm
+        if nm != name:
+            self.model.lastfall_umbenennen(name, nm)
         self.refresh_all()
 
     def kombination_bearbeiten(self, name: str):
@@ -13245,11 +13279,19 @@ class MainWindow(QtWidgets.QMainWindow):
         d = dg.CombinationDialog(self, self.model, c)
         if not d.exec():
             return
-        self.merken(f"Kombination {name}")
         neu = d.result()
         if neu.name != name:
-            del self.model.combinations[name]
-        self.model.combinations[neu.name] = neu
+            grund = self.model.namenskonflikt(neu.name, name, "kombination")
+            if grund:
+                return self.hinweis(grund)
+        self.merken(f"Kombination {name}")
+        # Dasselbe Objekt bleibt, umbenannt mit allen Verweisen (R2-A1): bis
+        # zum 04.10.2026 ersetzte der Dialog es durch ein neues - die
+        # Leiteinwirkung ging verloren, kein Verweis folgte, und ein
+        # vorhandener Name wurde still ueberschrieben
+        if neu.name != name:
+            self.model.kombination_umbenennen(name, neu.name)
+        _kombination_schreiben(c, neu)
         self.refresh_all()
 
     def add_support_dialog(self):
@@ -14637,14 +14679,23 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = self.model.load_cases.get(name)
         if lc is None or k not in (1, 3):
             return False
-        self.merken(f"Lastfall {name}")
         if k == 1:
             try:
-                lc.nummer = max(0, int(round(float(wert))))
+                nr = max(0, int(round(float(wert))))
             except (TypeError, ValueError):
-                lc.nummer = 0
+                nr = 0
+            # Eine Nummer, die schon ein anderer Lastfall traegt (im Feld oder
+            # im Namen LF<n>), wird abgewiesen (Model.nummernkonflikt, R2-A1);
+            # bis zum 04.10.2026 schrieb die Zelle jede Nummer
+            grund = self.model.nummernkonflikt("LF", nr, name) if nr != int(lc.nummer or 0) else ""
+            if grund:
+                self.hinweis(grund)
+                return False
+            self.merken(f"Lastfall {name}")
+            lc.nummer = nr
             self._zelle_uebernommen(f"Lastfall {name}: Nr = {lc.nummer}")
             return True
+        self.merken(f"Lastfall {name}")
         lc.description = str(wert)
         self._zelle_uebernommen(f"Lastfall {name}: Beschreibung = {wert}", behalten=True)
         return True
@@ -22275,8 +22326,11 @@ class MainWindow(QtWidgets.QMainWindow):
                            situationen=self.model.situationsnamen())
         if d.exec():
             name, cat, desc, grp = d.values()
-            if name in self.model.load_cases:
-                return self.error(f"Lastfall '{name}' existiert bereits")
+            # vergeben: auch der Name einer Kombination oder einer Alternative
+            # (R2-A1); ein Bedienhinweis, kein Fehlerfenster (Regel 9b)
+            grund = self.model.namenskonflikt(name, "", "lastfall")
+            if grund:
+                return self.hinweis(grund)
             self.merken(f"Lastfall {name}")
             self.model.add_load_case(name, cat, desc, exclusive_group=grp)
             self.model.load_cases[name].situation = d.situation_name()
@@ -22289,20 +22343,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if d.exec():
             name, cat, desc, grp = d.values()
             old = lc.name
+            # Ein vergebener Name bringt einen Hinweis (R2-A1). Bis zum
+            # 04.10.2026 ersetzte diese Stelle ohne Pruefung den Schluessel:
+            # der umbenannte Lastfall verschwand samt seinen Lasten aus dem
+            # Modell, der gleichnamige blieb.
+            if name != old:
+                grund = self.model.namenskonflikt(name, old, "lastfall")
+                if grund:
+                    return self.hinweis(grund)
             self.merken(f"Lastfall {old}")
             lc.category, lc.description, lc.exclusive_group = cat, desc, grp
             lc.situation = d.situation_name()
             lc.theorie = d.theorie_name()
             if name != old:
-                self.model.load_cases = {(name if k == old else k): v for k, v in self.model.load_cases.items()}
-                lc.name = name
-                for c in self.model.combinations.values():
-                    c.lastfall_umbenennen(old, name)
-                for fl in self.model.fatigue_loads.values():
-                    fl.lastfall_umbenennen(old, name)
-                for s in getattr(self.model, "stellungen", None) or []:
-                    s.lastfall_umbenennen(old, name)
-                self.model.active_case = name
+                self.model.lastfall_umbenennen(old, name)
             self.refresh_all()
 
     def copy_case(self):
@@ -22345,6 +22399,10 @@ class MainWindow(QtWidgets.QMainWindow):
         d = CombinationDialog(self, self.model)
         if d.exec():
             c = d.result()
+            # kein stilles Ueberschreiben einer gleichnamigen (R2-A1)
+            grund = self.model.namenskonflikt(c.name, "", "kombination")
+            if grund:
+                return self.hinweis(grund)
             self.merken(f"Kombination {c.name}")
             self.model.combinations[c.name] = c
             self.refresh_all()
@@ -22357,9 +22415,16 @@ class MainWindow(QtWidgets.QMainWindow):
             d = CombinationDialog(self, self.model, c)
             if d.exec():
                 new = d.result()
+                if new.name != c.name:
+                    grund = self.model.namenskonflikt(new.name, c.name, "kombination")
+                    if grund:
+                        return self.hinweis(grund)
                 self.merken(f"Kombination {new.name}")
-                del self.model.combinations[names[r]]
-                self.model.combinations[new.name] = new
+                # dasselbe Objekt, umbenannt mit allen Verweisen (R2-A1) - wie
+                # kombination_bearbeiten
+                if new.name != c.name:
+                    self.model.kombination_umbenennen(c.name, new.name)
+                _kombination_schreiben(c, new)
                 self.refresh_all()
 
     def remove_combination(self):
