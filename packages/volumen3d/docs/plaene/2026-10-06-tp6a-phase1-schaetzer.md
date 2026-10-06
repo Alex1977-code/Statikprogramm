@@ -916,6 +916,15 @@ Aggregationsregeln auf (aggregierte Zellen erben p der Wurzel), deshalb O21 davo
 **Entscheidung des Anwenders (06.10.2026): „O21 vor Phase 2“.** Phase 1 wird mit Regel 5 als verfehlt abgeschlossen und dokumentiert (Aufgabe 7). Danach O21 mit vorab
 festgelegten Regeln messen und beheben, Regel 5 mit denselben Zahlen erneut prüfen (Kirsch mit so vielen Zyklen, bis die Größe des feinsten Glieds erreicht ist), erst dann Phase 2.
 
+**Aufgabe 7, Suiten (06./07.10.2026).** Alle Paketsuiten liefen nacheinander aus zwei festen Arbeitsbäumen, 35cdfdd (vor dem Schätzer) und 9fc6966 (mit Schätzer), mit 8 Threads:
+in beiden alle grün, im neuen Baum zusätzlich `test_schaetzer` 14/14 und die Kernsuite 390 statt 377. Der Vergleich Zahl für Zahl (`p1_suiten_zahlen.py`, Zeiten ausgeblendet) über
+504 Prüfzeilen und die 377 alten Zeilen der Kernsuite findet über 10⁻⁶ nur Zeiten und eine Größe in `test_pcg`, den Verschiebungsunterschied zwischen Jacobi-PCG und Direktlöser im
+Starrkörperanteil (2,2·10⁻² gegen 7,7·10⁻³). Unter 10⁻⁶ ändern sich Werte auf Rundungsniveau um höchstens den Faktor 4. Zwei Läufe aus **demselben** alten Baum (`test_patch`,
+`test_pcg`) unterscheiden sich genauso: der PCG-Wert springt auch dort zwischen 2,2·10⁻² und 7,7·10⁻³, die Patch-Werte streuen um bis zu den Faktor 2. Bit für Bit lässt sich die
+Gleichheit über Prüfzeilen darum nicht zeigen, weil schon derselbe Stand von Lauf zu Lauf in den letzten Stellen streut (MKL mit mehreren Threads); alle Unterschiede alt gegen neu
+liegen in diesem Band. `lint-imports` sauber; `mypy --strict` für `api.py` sauber mit `MYPYPATH=packages/statik3d_contracts` (ohne den Suchpfad sieht mypy die lokale editierbare
+Installation des Vertragspakets nicht).
+
 ## Modell je Schritt
 
 | Schritt | Modell | Denkstufe | Stand |
