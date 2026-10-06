@@ -1648,7 +1648,11 @@ im Fließbereich zu steif macht (Theoriehandbuch, Knotendilatation). Das geht nu
 Werkstoffe mit 0 ≤ ν < 0,5; Bauteile aus anderen Werkstoffen rechnen mit dem
 gewöhnlichen Tetraeder weiter, und das steht seit dem 24.09.2026 in der
 Zusammenfassung und in den Hinweisen des Berichts („Knotendilatation: Werkstoff …,
-Querdehnzahl … (n tet4)“) — vorher nirgends, wo man es las.
+Querdehnzahl … (n tet4)“) — vorher nirgends, wo man es las. Bis zum 06.10.2026
+fehlte die Zeile noch bei *Nur aktiver Lastfall* und bei der Kommandozeile mit
+`--analyse lastfall`, denn sie stand nur in der Zusammenfassung aller
+Lastfälle. Seither steht sie auch in der Zusammenfassung jedes einzelnen
+Ergebnisses.
 
 **Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
 Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
@@ -1692,6 +1696,14 @@ Volumen der Randhülle (Gaußscher Satz), die **Güte** der Elemente (1 = regul�
 Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
 auf der Geometrie liegt. Ist die Randhülle nicht dicht, wird gar nicht
 vernetzt: ein Netz aus einer undichten Hülle wäre stillschweigend falsch.
+
+Lässt sich die Randtreue nicht messen (etwa weil der Speicher dafür nicht
+reicht), warnt das Protokoll („die Randtreue ließ sich nicht messen … - das
+Netz ist an der Hülle ungeprüft“), der Körper merkt sich den Grund, und die
+Abnahme vor dem Rechnen meldet die Warnung „Randtreue nicht geprüft“. Bis zum
+06.10.2026 galt die nicht gemessene Randtreue als Messwert 0 %: der Vernetzer
+vernetzte deshalb zweimal vergeblich feiner, und die Abnahme meldete
+„bestanden“, ohne zu sagen, dass niemand die Randtreue geprüft hatte.
 
 **Nachverfeinerung der Hülle ohne Splitter.** Wo der Netzrand nach dem
 ersten Durchgang neben der Geometrie liegt (einspringende Ecken, der
@@ -1991,13 +2003,28 @@ gemeinsam“ unter *Berechnung → Einstellungen*) - weder als nicht konvergiert
 noch in „N von M“;
 der letzte Lauf muss trotzdem konvergiert sein. Seit dem 24.09.2026 ebenso die
 **verworfenen**: Läufe einer Laststufe, die die gemeinsame Iteration
-aufgegeben und vom Startwert an verschachtelt wiederholt hat. **Noch nicht
-angeschlossen**: Zusammenfassung und Bericht zeigen weiter
-`contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen.
-Ebenso die Rechenliste während des Laufs: sie liest die Meldungen, und die
-Deckelmeldung des Vorlaufs ist eine davon. Ist allein der Vorlauf gedeckelt,
-steht dort „nicht konvergiert“, während `zustand_aus_info` „konvergiert“
-sagt - die Abweichung geht zur vorsichtigen Seite.
+aufgegeben und vom Startwert an verschachtelt wiederholt hat.
+
+Seit dem 06.10.2026 lesen **Zusammenfassung, Bericht und Rechenliste dieselbe
+Regel**. Sie steht im Rechenkern (`solver.konvergenz_zustand`, für den Kontakt
+allein `solver.kontakt_konvergiert`); `rechenliste.zustand_aus_info` ruft sie
+auf. Bis zum 06.10.2026 zeigten Zusammenfassung und Bericht dagegen
+`contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen,
+und die Rechenliste behielt am Ende den Stand aus den Meldungen, unter denen
+auch die Deckelmeldung des Vorlaufs steht. War allein der Vorlauf gedeckelt
+und der letzte Lauf konvergiert, stand darum an allen drei Stellen „nicht
+konvergiert“, während `zustand_aus_info` „konvergiert“ sagte. Jetzt steht
+dort „konvergiert“, und der Vorlauf bleibt als Hinweis stehen: in der
+Zusammenfassung als „Kontakt-Iterationen … (konvergiert; gedeckelt war nur
+der elastische Vorlauf, er zählt nicht)“, im Bericht in den Kennwerten des
+Ergebnisses, in der Rechenliste in der Spalte „Meldung“. Die Rechenliste
+liest den Stand jedes Postens, sobald die Rechnung fertig ist, aus seinem
+Ergebnis; während des Laufs folgt sie wie bisher den Meldungen. Die
+Protokollzeile des gedeckelten Vorlaufs („Nachprüfung der Reibung … abgebrochen
+… (Kontaktlauf 1)“) steht weiter unter den Hinweisen des Berichts. Ein
+gedeckelter Lauf, der zählt, heißt überall weiter „nicht konvergiert“.
+Geprüft in `tests/test_fehler_p15.py` am Block mit Reibung, einmal mit
+gedeckeltem Vorlauf und einmal mit gedeckeltem einzigen Lauf.
 
 ### Ergebnisse und Bericht
 
@@ -2058,6 +2085,14 @@ an, kommt diese Schnittgröße mit dem Stab dazu. Bei *keine Färbung* ohne
 Verlauf bleibt die Ecke leer. Der Text gehört zum Bild und kommt darum mit in
 den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
 Kennwerte im Bild*.
+
+Zu einer **Eigenform oder Knickform** steht unter u, ux, uy oder uz „normierte
+Form - kein Wert in mm“ (in der eingestellten Einheit): die Form ist normiert
+und hat keine Verschiebung in Millimetern, und Verdrehungen stehen dazu
+ebenfalls nicht da. Bis zum 06.10.2026 standen dort Zahlen, die zu keiner
+gezeigten Form gehören: unter der Eigenform „u 0.00 Knoten 0“, unter der
+Knickform die statische Verschiebung des Lastfalls (am Rahmen „u 16.89 Knoten
+13“, der Größtwert von LF1).
 
 Die Kennwerte kommen aus **demselben Feld wie Färbung und Legende**, auch bei
 einer Umhüllenden: zu |u| das größte |u| einer einzelnen Kombination, dieselbe
@@ -2506,7 +2541,9 @@ genau dort) oder **aus der Arbeitsebene**; mit **Ebene im Bild ziehen** steht
 sie als Werkzeug in der Ansicht: der Pfeil dreht die Normale, die Fläche
 lässt sich schieben, beim Loslassen wird neu geschnitten, und die Maske
 zeigt die neuen Werte. Der Schieber im Ribbon verschiebt die freie Ebene
-längs ihrer Normalen (Mitte = durch den Ursprung). Geschnitten wird immer
+längs ihrer Normalen (Mitte = durch den Ursprung), und das Werkzeug im Bild
+wandert mit. Bis zum 06.10.2026 blieb es dabei am Ursprung stehen und zeigte
+eine andere Ebene als den Schnitt. Geschnitten wird immer
 das, was gerade **gezeichnet** ist — mit Ergebnisfarben: im Schnitt stehen
 die Spannungen und Verschiebungen auf den Elementen des Inneren, und
 ausgeblendete Teile bleiben ausgeblendet. So lassen sich Ergebnisse im
@@ -8015,6 +8052,12 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   der in den Schritten rechnete, an denen PARDISO scheiterte (geprüft am Block
   mit Reibung, PARDISO beim ersten von sieben Versuchen zum Scheitern gebracht:
   „pardiso“ im Ergebnis, „stattdessen rechnete SuperLU“ in der Hinweiszeile).
+  Ist ein Ergebnis ausgewichen, sagen es der Anhang und die
+  Berechnungsgrundlagen (Kapitel *Rechenverfahren*) gleich: „Gleichungslöser:
+  pardiso (direkt, sparse) – ausgewichen auf SuperLU (direkt, einkernig), Grund
+  unter den Hinweisen der Zusammenfassung“. Bis zum 06.10.2026 stand in den
+  Berechnungsgrundlagen auch dann nur „Gleichungslöser: pardiso (direkt,
+  sparse)“.
   Die Spalte „Löser“ der Tabelle „Rechenzeiten je Ergebnis“ im Anhang sagt
   das seit dem 23.09.2026 je Ergebnis: „pardiso – ausgewichen auf SuperLU
   (direkt, einkernig)“, bei einem Ergebnis, das ganz mit dem Ausweichlöser
@@ -8685,6 +8728,7 @@ nichts stillschweigend Übergangenes:
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
+| Randtreue nicht geprüft (Warnung): die Messung der Randtreue ist beim Vernetzen gescheitert, der Text nennt den Grund | – |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, hängende Knoten, Hohlraum, Netzrand, der die Randfläche verfehlt – der Text nennt, was gefunden wurde) | 0 |
 | Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten oder hängenden Knoten | 0 |
@@ -8694,7 +8738,9 @@ nichts stillschweigend Übergangenes:
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
-Hauptzweigs vom 22.09.2026 hatte keine davon.
+Hauptzweigs vom 22.09.2026 hatte keine davon. Die Warnung „Randtreue nicht
+geprüft“ gibt es seit dem 06.10.2026; bis dahin meldete die Abnahme einen
+Körper, dessen Randtreue sich nicht messen ließ, als „bestanden“.
 
 **Der verdrehte Sechsflächner** (seit 23.09.2026). Stimmen die acht Knoten
 eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →

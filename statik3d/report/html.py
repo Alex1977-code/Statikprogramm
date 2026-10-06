@@ -907,7 +907,9 @@ class Report:
             items.append("Elementtypen im Modell: " + "; ".join(
                 f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + ".")
         if self.info.get("solver"):
-            items.append(f"Gleichungslöser: {self.info['solver']} (direkt, sparse).")
+            # mit dem Ausweichen wie im Anhang (F37, 06.10.2026)
+            items.append(f"Gleichungslöser: {self.info['solver']} (direkt, sparse)"
+                         + self._ausweich_zusatz() + ".")
         if m.has_contact:
             items.append(
                 "Kontakt (einseitige Lager, Spaltelemente, Knoten-Flächen-Kontakt) wird mit dem "
@@ -2214,7 +2216,11 @@ class Report:
         if res.contact:
             n_act = sum(1 for c in res.contact if c.get("status") != "offen")
             ct = f"{n_act}/{len(res.contact)} aktiv"
-            if res.info.get("contact_converged") is False:
+            # nach derselben Regel wie die Rechenliste: ein gedeckelter
+            # elastischer Vorlauf zaehlt nicht (F39, 06.10.2026; bis dahin
+            # contact_converged, das ueber alle Laeufe klebt)
+            from ..solver import kontakt_konvergiert
+            if not kontakt_konvergiert(res.info):
                 ct += " (nicht konvergiert)"
         return [name, art, umax, node] + R + [vm, ct]
 
@@ -2246,9 +2252,11 @@ class Report:
         if res.info.get("superposition"):
             kv.append(("Ermittlung", "lineare Überlagerung der Lastfallergebnisse"))
         elif res.info.get("contact_iterations") is not None:
+            from ..solver import kontakt_hinweis, kontakt_konvergiert
+            hinweis = kontakt_hinweis(res.info)
             kv.append(("Kontakt-Iterationen", f"{res.info['contact_iterations']}"
-                       + ("" if res.info.get("contact_converged", True)
-                          else " – NICHT konvergiert")))
+                       + (" – NICHT konvergiert" if not kontakt_konvergiert(res.info)
+                          else f" – konvergiert; {hinweis}" if hinweis else "")))
         b.append(("kv", kv, f"Kennwerte {name}"))
         # Auflagerreaktionen
         if getattr(res, "reactions", None) is not None and res.reactions.size:
@@ -2487,7 +2495,9 @@ class Report:
                     if log:
                         b.append(("list", log))
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
-                    if res.info.get("contact_converged") is False:
+                    # gedeckelter elastischer Vorlauf allein: konvergiert (F39)
+                    from ..solver import kontakt_konvergiert
+                    if not kontakt_konvergiert(res.info):
                         self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
                 # Die uebrigen Ergebnisse bekommen im Vorgabeumfang keine
                 # Einzeltabelle - ihre WARNUNGEN duerfen deshalb nicht mit
@@ -2519,8 +2529,9 @@ class Report:
                             # Ergebnisse, nicht Zeilen
                             if not namen_art or namen_art[-1] != _name:
                                 namen_art.append(_name)
+                from ..solver import kontakt_konvergiert
                 nicht_konv = [_name for _name, _res, _kk in rest
-                              if _res.info.get("contact_converged") is False]
+                              if not kontakt_konvergiert(_res.info)]
                 for s, namen in weitere.items():
                     self._warnings.append(
                         f"Kontakt ({len(namen)} weitere Ergebnisse, "
@@ -4494,6 +4505,25 @@ class Report:
                 return f"{gerechnet} (statt {gewuenscht}: nicht gerechnet)"
         return gewuenscht
 
+    def _ausweich_zusatz(self) -> str:
+        """Zusatz hinter dem Gleichungsloeser der Rechnung, wenn ein Ergebnis
+        auf einen anderen Loeser ausgewichen ist - sonst "".
+
+        ``info["solver"]`` ist der Loeser der letzten Faktorisierung -
+        scheitert PARDISO nur in einem Teil der Ergebnisse oder Kontaktschritte,
+        steht dort wieder "pardiso" (23.09.2026). Der Grund selbst steht einmal
+        in den Hinweisen der Zusammenfassung; hier nur, dass nicht der
+        gewaehlte Loeser rechnete und auf welchen ausgewichen wurde. Anhang
+        und Berechnungsgrundlagen sagen es gleich: bis zum 06.10.2026 nannten
+        die Berechnungsgrundlagen nur „Gleichungslöser: pardiso“ (F37)."""
+        from ..solver import ausweich_arten, ausweichloeser_text
+        arten = ausweich_arten(self.all_results())
+        if not arten:
+            return ""
+        mit = ausweichloeser_text(dict.fromkeys(lo for e in arten for lo in e["loeser"]))
+        return (" – ausgewichen" + (f" auf {mit}" if mit else "")
+                + ", Grund unter den Hinweisen der Zusammenfassung")
+
     # ============================================================ Anhang
     def chapter_appendix(self) -> list:
         m = self.model
@@ -4519,13 +4549,7 @@ class Report:
             # und auf welchen ausgewichen wurde. info["solver"] ist der Loeser
             # der letzten Faktorisierung - scheitert PARDISO nur in einem Teil
             # der Kontaktschritte, steht dort wieder "pardiso" (23.09.2026).
-            from ..solver import ausweich_arten, ausweichloeser_text
-            arten = ausweich_arten(self.all_results())
-            mit = ausweichloeser_text(dict.fromkeys(lo for e in arten for lo in e["loeser"]))
-            kv.append(("Gleichungslöser", str(info["solver"])
-                       + ((" – ausgewichen" + (f" auf {mit}" if mit else "")
-                           + ", Grund unter den Hinweisen der Zusammenfassung")
-                          if arten else "")))
+            kv.append(("Gleichungslöser", str(info["solver"]) + self._ausweich_zusatz()))
         if info.get("ndof") is not None:
             kv.append(("Freiheitsgrade gesamt / aktiv",
                        f"{info.get('ndof')} / {info.get('nfree', '–')}"))

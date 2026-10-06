@@ -345,8 +345,10 @@ def test_ausweichen_erreicht_bericht():
           bool(zeilen) and "in Luft" in zeilen[0] and "im Wasser" in zeilen[0]
           and wd.lastfall_dyn in zeilen[0], zeilen[0][:160] if zeilen else "")
     html = Report(m, an).html()
+    # die Hinweiszeile, nicht die Berechnungsgrundlagen: dort steht seit dem
+    # 06.10.2026 „Gleichungslöser: … – ausgewichen auf …“ (F37)
     punkte = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html, re.S)
-              if "ausgewichen" in p]
+              if "Gleichungslöser ausgewichen" in p]
     # Rechnet nur der Nachweis (die Analyse ist leer), steht er allein in der
     # Zeile und damit beim Namen
     check("der Bericht nennt es unter den Hinweisen - genau eine Zeile mit Grund",
@@ -374,7 +376,7 @@ def test_ausweichen_erreicht_bericht():
           and wd_a.lastfall_dyn not in zeilen_a[0], zeilen_a[0][:110] if zeilen_a else "keine Zeile")
     html_a = Report(m_a, an_a).html()
     punkte_a = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_a, re.S)
-                if "ausgewichen" in p]
+                if "Gleichungslöser ausgewichen" in p]
     namen_a = [n for n, r in list(an_a.cases.items()) + list((getattr(an_a, "combinations", None) or {}).items())
                if "verweigert" in str((getattr(r, "info", None) or {}).get("ausweichgrund", ""))]
     check("Vorbedingung: drei Lastfälle der Analyse tragen denselben Grund",
@@ -415,7 +417,7 @@ def test_ausweichen_erreicht_bericht():
     for umfang in ("lang", "kurz"):
         html_o = Report(m_o, erg_o.res_wasser, options={"umfang": umfang}).html()
         punkte_o = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_o, re.S)
-                    if "ausgewichen" in p]
+                    if "Gleichungslöser ausgewichen" in p]
         check(f"ohne Analyse ({umfang}): eine Hinweiszeile, nur die Modalanalyse im Wasser",
               len(punkte_o) == 1 and "Probe: PARDISO verweigert" in punkte_o[0]
               and f"bei 1 Ergebnis (Eigenschwingungen im Wasser ({wd_o.name})): " in punkte_o[0],
@@ -443,7 +445,7 @@ def test_ausweichen_erreicht_bericht():
         for umfang in ("lang", "kurz"):
             html_f = Report(m_f, erg_f.res_wasser, options={"umfang": umfang}).html()
             punkte_f = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_f, re.S)
-                        if "ausgewichen" in p]
+                        if "Gleichungslöser ausgewichen" in p]
             check(f"ohne Wasser-Modalanalyse ({fall}, {umfang}): eine Zeile, die Rechnung in Luft",
                   len(punkte_f) == 1 and "Probe: PARDISO verweigert" in punkte_f[0]
                   and "bei 1 Ergebnis (Modalanalyse): " in punkte_f[0]

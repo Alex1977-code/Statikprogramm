@@ -2784,6 +2784,7 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
         els: list = []
         n_frei = 0
         randtreue = 1.0
+        randtreue_fehler = ""
         for namen, erk in sorted(bl, key=lambda x: x[1] is None):
             pseudo = Volumenkoerper(koerper.name, list(namen), material=koerper.material,
                                     teilung=list(koerper.teilung or [4, 4, 4]))
@@ -2795,6 +2796,8 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
                 e = M3.mesh_koerper_frei(model, pseudo, h=h, log=log, cache=cache, ordnung=ordnung,
                                          fortschritt=fortschritt, karten=karten)
                 randtreue = min(randtreue, float(getattr(pseudo, "randtreue", 0.0) or 0.0))
+                # ein Block, dessen Randtreue sich nicht messen liess (F35)
+                randtreue_fehler = randtreue_fehler or str(getattr(pseudo, "randtreue_fehler", "") or "")
             els += [int(x) for x in (e or [])]
         koerper.elemente = els
         z = {"hex8": 0, "pent6": 0, "tet4": 0}
@@ -2805,6 +2808,7 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
                              + (f"{z['pyr5']} Pyramiden + " if z.get("pyr5") else "")
                              + f"{z.get('tet4', 0) + z.get('tet10', 0)} Tetraeder (zerlegt in {len(bl)} Blöcke)")
         koerper.randtreue = randtreue
+        koerper.randtreue_fehler = randtreue_fehler
         koerper.netzgrund = ""
         koerper.netzkanten = []
         C.say(log, f"Volumen {koerper.name}: {len(els)} Elemente aus {len(bl)} Blöcken "

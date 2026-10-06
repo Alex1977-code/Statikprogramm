@@ -685,6 +685,9 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     # gesweept wuerde: Sechsflaechner zweiter Ordnung neben tet4-Nachbarn
     # koppelt heute niemand (Anweisung V1, 22./23.09.2026).
     ordnung = koerper_ordnung(model, koerper, ordnung)
+    # Der Grund einer gescheiterten Randtreue-Messung gilt nur fuer das Netz,
+    # an dem sie scheiterte (F35); jeder Weg unten misst neu oder gar nicht
+    koerper.randtreue_fehler = ""
     if ordnung >= 2 and frei and getattr(koerper, "ordnung", None) == 2:
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,

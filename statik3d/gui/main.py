@@ -23760,7 +23760,9 @@ class MainWindow(QtWidgets.QMainWindow):
             fenster.posten_setzen(posten)
             fenster.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
             self.worker.progress.connect(fenster.melden)
-            self.worker.finished_ok.connect(lambda _r: fenster.beenden("fertig"))
+            # am Ende entscheidet das Ergebnis, nicht die klebende Meldung
+            # (F39, 06.10.2026) - gebundene Methode statt Lambda
+            self.worker.finished_ok.connect(fenster.fertig_mit)
             self.worker.failed.connect(lambda _m, _t: fenster.beenden("Fehler"))
             self.worker.abgebrochen.connect(lambda _d: fenster.beenden("abgebrochen"))
         except Exception as ex:                # noqa: BLE001
@@ -26640,7 +26642,43 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.schnitt is None or getattr(self, "_schnitt_sperre", False):
             return
         self.schnitt = self._schnitt_tupel()
+        self._schnittwidget_nachziehen()
         self.redraw()
+
+    def _schnittwidget_nachziehen(self):
+        """Das Ebenen-Werkzeug auf die Ebene setzen, die der Schnitt legt.
+
+        Der Schieber im Ribbon verschiebt die freie Ebene laengs der Normalen
+        (vp.freie_schnittebene, dieselbe Rechnung wie vp.schneiden). Bis zum
+        06.10.2026 blieb das Werkzeug dabei am Ursprung stehen und zeigte eine
+        andere Ebene als den Schnitt (F45). Das Werkzeug meldet sich darauf
+        nicht zurueck: _schnittwidget_bewegt kommt nur am Ende einer Bewegung
+        mit der Maus."""
+        wz = getattr(self, "_schnittwidget", None)
+        s = self.schnitt
+        if wz is None or s is None or len(s) < 5 or s[0] != "frei":
+            return
+        X = np.asarray(self.model.nodes, float).reshape(-1, 3)
+        if not len(X):
+            return
+        # wie das Gitter, das geschnitten wird: alle Modellknoten (vp.to_grid)
+        lo, hi = X.min(axis=0), X.max(axis=0)
+        ebene = vp.freie_schnittebene((lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]), s[1], s[3], s[4])
+        if ebene is None:
+            return
+        n, p = np.asarray(ebene[0], float), np.asarray(ebene[1], float)
+        try:
+            wz.SetOrigin(*p)
+            # Das Werkzeug haelt seinen Ursprung in seinem Quader und setzt
+            # einen Punkt ausserhalb je Koordinate auf den Rand - das waere
+            # ein Punkt einer anderen Ebene. Dann der Punkt der Ebene, der der
+            # Modellmitte am naechsten liegt.
+            o = np.asarray(wz.GetOrigin(), float)
+            if abs(float((o - p) @ n)) > 1e-9 * max(1.0, float(np.abs(hi - lo).max())):
+                c = 0.5 * (lo + hi)
+                wz.SetOrigin(*(c + float((p - c) @ n) * n))
+        except Exception as ex:                 # noqa: BLE001 - das Werkzeug ist Beiwerk
+            self.log.appendPlainText(f"Ebene im Bild: {ex}")
 
     def _schnitt_tupel(self) -> tuple:
         """Der Schnitt aus den Reglern: (Achse, Lage, andere Seite) - bei der

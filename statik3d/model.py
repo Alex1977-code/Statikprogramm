@@ -2405,6 +2405,11 @@ class Volumenkoerper:
     #: Anteil der Huelle, den das Netz wirklich abdeckt (0 … 1, aus dem
     #: Vernetzer). Die Abnahme vor dem Rechnen prueft ihn; 0 = nicht gemessen.
     randtreue: float = 0.0
+    #: Warum die Randtreue beim Vernetzen nicht gemessen werden konnte
+    #: (Ausnahme der Messung, etwa MemoryError) - "" = gemessen oder nie
+    #: versucht. Die Abnahme meldet dann „Randtreue nicht geprüft“; bis zum
+    #: 06.10.2026 stand dort nichts, und das Netz galt als abgenommen (F35).
+    randtreue_fehler: str = ""
     #: Kerbfall Delta-sigma_C [Pa] fuer den Ermuedungsnachweis, 0 = keiner.
     #: Die Spannung im Element ist eine Struktur- oder Kerbspannung, keine
     #: Nennspannung - der Kerbfall muss zu diesem Konzept passen.

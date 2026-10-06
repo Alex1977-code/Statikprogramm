@@ -1160,6 +1160,30 @@ TYPEN_VOLUMEN = EL.VOLUMEN_TYPEN + ("grenzschicht6", "grenzschicht8")
 SCHNITTACHSEN = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
 
 
+def freie_schnittebene(bounds, lage: float, normale, ursprung):
+    """(Normale, Punkt) der freien Schnittebene, wie :func:`schneiden` sie legt
+    - None, wenn Normale oder Ursprung fehlen.
+
+    ``lage`` verschiebt die Ebene laengs der Normalen um ihren Anteil am
+    Huellquader ``bounds`` (0,5 = durch den Ursprung). Eine Stelle fuer
+    Schnitt und Ebenen-Werkzeug: bis zum 06.10.2026 rechnete nur der Schnitt
+    die Verschiebung, und das Werkzeug im Bild blieb beim Schieben am
+    Ursprung stehen (F45)."""
+    if normale is None or ursprung is None:
+        return None
+    n = np.asarray(normale, float)
+    ln = float(np.linalg.norm(n))
+    if not np.isfinite(ln) or ln < 1e-12:
+        return None
+    n = n / ln
+    t = min(max(float(lage), 0.0), 1.0)
+    b = bounds
+    ecken = np.array([[b[i], b[j], b[k]] for i in (0, 1) for j in (2, 3) for k in (4, 5)], float)
+    s = ecken @ n
+    punkt = np.asarray(ursprung, float) + (t - 0.5) * float(s.max() - s.min()) * n
+    return tuple(float(x) for x in n), [float(x) for x in punkt]
+
+
 def schneiden(grid, achse: str, lage: float, umgekehrt: bool = False,
               normale=None, ursprung=None):
     """Das Gitter an einer Ebene aufschneiden - Blick ins Innere.
@@ -1192,18 +1216,10 @@ def schneiden(grid, achse: str, lage: float, umgekehrt: bool = False,
     b = grid.bounds
     t = min(max(float(lage), 0.0), 1.0)
     if str(achse).lower() == "frei":
-        if normale is None or ursprung is None:
+        ebene = freie_schnittebene(b, t, normale, ursprung)
+        if ebene is None:
             return grid
-        n = np.asarray(normale, float)
-        ln = float(np.linalg.norm(n))
-        if not np.isfinite(ln) or ln < 1e-12:
-            return grid
-        n = n / ln
-        ecken = np.array([[b[i], b[j], b[k]] for i in (0, 1) for j in (2, 3) for k in (4, 5)], float)
-        s = ecken @ n
-        ursprung = np.asarray(ursprung, float) + (t - 0.5) * float(s.max() - s.min()) * n
-        n = tuple(float(x) for x in n)
-        ursprung = [float(x) for x in ursprung]
+        n, ursprung = ebene
     else:
         n = SCHNITTACHSEN.get(str(achse).lower())
         if n is None:
@@ -3884,7 +3900,20 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         return E.text(wert_si, art, mit_einheit=False)
 
     u = displacement_of(res)
-    if u is not None and len(u) and (gewaehlt("u") or any(gewaehlt(c) for c in ("ux", "uy", "uz"))):
+    formen = any(getattr(res, a, None) is not None for a in ("modes", "buckling_modes"))
+    if formen and (gewaehlt("u") or any(gewaehlt(c) for c in ("ux", "uy", "uz"))):
+        # Eine Eigen- oder Knickform ist normiert und hat keine Verschiebung
+        # in mm. res.u ist dort die Null (Eigenform) oder
+        # die statische Verschiebung des Lastfalls (Knickform) - bis zum
+        # 06.10.2026 standen genau diese Zahlen hier: am Rahmen „u 0.00
+        # Knoten 0“ unter der Eigenform und „u 16.89 Knoten 13“ unter der
+        # Knickform, der statische Groesstwert von LF1 (F38). Ebenso keine
+        # Verdrehungen aus res.u (siehe unten).
+        namen = ["u"] if alle or gewaehlt("u") else [c for c in ("ux", "uy", "uz") if gewaehlt(c)]
+        for nm in namen:
+            zeilen.append(f"{nm:<6s}normierte Form - kein Wert in {E.einheit('verformung')}")
+        u = None
+    elif u is not None and len(u) and (gewaehlt("u") or any(gewaehlt(c) for c in ("ux", "uy", "uz"))):
         # Die Werte kommen aus demselben Feld wie die Faerbung (result_field,
         # dort in mm). Bis zum 24.09.2026 wurde |u| hier aus displacement_of
         # gebildet - bei einer Umhuellenden je Richtung das betragsgroessere
@@ -3904,7 +3933,6 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
                 zeilen.append(zeile(nm, z(np.nanmin(w_), "verformung"), "",
                                     z(np.nanmax(w_), "verformung"), "", E.einheit("verformung")))
         u = nur_sicht(np.asarray(u, float)) if sicht is not None else u
-    formen = any(getattr(res, a, None) is not None for a in ("modes", "buckling_modes"))
     if not alle and feld in VERDREHUNGEN and not formen:
         # dieselben Werte wie die Faerbung (Umhuellende: |phi| aus phimag_max),
         # mrad fest; Knoten ohne Drehsteifigkeit zaehlen nicht. Zu einer

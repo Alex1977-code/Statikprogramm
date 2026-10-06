@@ -349,6 +349,12 @@ def test_kontaktwarnungen_der_uebrigen_ergebnisse():
             # die Buendelung muss sie uebergehen, sonst zerfiele die Meldung
             r.info["contact_log"] = [f"Reibiteration am Deckel abgebrochen (Kontaktlauf {_i + 2})"]
             r.info["contact_converged"] = False
+            # so, wie der Loeser einen gedeckelten letzten Lauf zaehlt: der
+            # Bericht liest seit dem 06.10.2026 die Laufzahlen
+            # (solver.kontakt_konvergiert, F39), nicht mehr contact_converged
+            # allein - das klebt auch an einem gedeckelten Vorlauf
+            r.info["contact_laeufe_nicht_konvergiert"] = 1
+            r.info["contact_letzter_lauf_konvergiert"] = False
     rep = Report(m, an, options={"max_contact_results": 1})
     html = rep.html()
     warn = "\n".join(getattr(rep, "_warnings", []) or [])

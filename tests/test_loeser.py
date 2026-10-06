@@ -1253,7 +1253,10 @@ def test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse():
         check("jedes Ergebnis traegt ihn, auch die ueberlagerte Kombination",
               traeger == ["K1", "LF1", "LF2"], str(traeger))
         html = Report(m, an).html()
-        punkte = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S) if "ausgewichen" in p]
+        # die Hinweiszeile, nicht die Berechnungsgrundlagen: dort steht seit dem
+        # 06.10.2026 „Gleichungslöser: … – ausgewichen auf …“ (F37)
+        punkte = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S)
+                  if "Gleichungslöser ausgewichen" in p]
         check("der Bericht nennt ihn unter den Hinweisen - eine Zeile fuer drei Ergebnisse",
               len(punkte) == 1 and "verweigert" in punkte[0] and "3 Ergebnis" in punkte[0],
               f"{len(punkte)} Zeilen: " + (punkte[0][:90] if punkte else ""))
@@ -1420,7 +1423,10 @@ def test_ausweichloeser_und_buendelung_je_art():
             check("ebenso die Zusammenfassung des Ergebnisses",
                   len(zr) == 1 and "SuperLU" in zr[0], (zr[0] if zr else "keine Zeile")[:160])
             html = Report(m, an).html()
-            li = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S) if "ausgewichen" in p]
+            # die Hinweiszeile, nicht die Berechnungsgrundlagen: dort steht seit dem
+            # 06.10.2026 „Gleichungslöser: … – ausgewichen auf …“ (F37)
+            li = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S)
+                  if "Gleichungslöser ausgewichen" in p]
             check("der Bericht nennt SuperLU, nicht PARDISO",
                   len(li) == 1 and "stattdessen rechnete SuperLU" in li[0]
                   and "MKL PARDISO" not in li[0], (li[0] if li else "keine Zeile")[60:200])
