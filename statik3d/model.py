@@ -122,6 +122,29 @@ STEEL_GRADES = {
 }
 
 
+def stahlsorte_schluessel(text) -> Optional[str]:
+    """Der Schluessel von ``STEEL_GRADES`` zu einer getippten Stahlsorte, sonst
+    ``None``.
+
+    Gross-/Kleinschreibung und Leerzeichen jeder Art zaehlen nicht: „s235“,
+    „S 235“ und „ S235 “ sind S235. Die Tabelle kennt keine Untersorten (S235JR
+    ...); sie sind unbekannt, bis sie als eigener Schluessel in ``STEEL_GRADES``
+    stehen - dann erkennt diese Funktion sie ebenso. Bis zum 06.10.2026
+    verglich jede Stelle den getippten Text unveraendert mit der Tabelle: eine
+    Sorte „s235“ fiel durch, mit eingetragenem f_y entfiel ueber 40 mm still die
+    Dickenabminderung, mit leerem f_y war die Streckgrenze 0 (Fehlerliste F08)."""
+    g = "".join(str(text or "").split()).upper()
+    return g if g in STEEL_GRADES else None
+
+
+def stahlsorte_normiert(text) -> str:
+    """Die Sorte so, wie sie gespeichert wird: eine Sorte der Tabelle in der
+    Schreibweise der Tabelle („s 235“ -> „S235“), jede andere getrimmt und
+    sonst unveraendert (der Anwender darf eine eigene Sorte mit eigenem f_y
+    eintragen)."""
+    return stahlsorte_schluessel(text) or str(text or "").strip()
+
+
 @dataclass
 class Material:
     name: str
@@ -138,6 +161,18 @@ class Material:
     #: leer = nur fy/fu, dann gilt die Zweistufen-Regel der Stahlsorte
     fy_dicke: list = field(default_factory=list)
     fu_dicke: list = field(default_factory=list)
+
+    def __post_init__(self):
+        # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
+        # nach dem Laden einer Datei, in der sie „s235“ oder „S 235“ heisst
+        # (F08, 06.10.2026); eine leere Sorte (null in alten Dateien) wird ""
+        self.grade = stahlsorte_normiert(self.grade)
+
+    def _sorte(self) -> Optional[str]:
+        """Der Tabellenschluessel der Sorte oder None. Ueber ihn laufen alle
+        Nachschlagen in ``STEEL_GRADES``: wer ``grade`` nachtraeglich von Hand
+        setzt (Tabellenzelle, Skript), umgeht ``__post_init__``."""
+        return stahlsorte_schluessel(self.grade)
 
     @property
     def G(self) -> float:
@@ -166,8 +201,8 @@ class Material:
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
         """Baustahl nach EN 10025-2 (t <= 40 mm)."""
-        g = grade.upper().replace(" ", "")
-        if g not in STEEL_GRADES:
+        g = stahlsorte_schluessel(grade)
+        if g is None:
             raise KeyError(f"Stahlsorte '{grade}' unbekannt: {list(STEEL_GRADES)}")
         fy, fu, _, _ = STEEL_GRADES[g]
         return Material(name or g, 210e9, 0.3, 7850.0, 1.2e-5, fy, fu, g)
@@ -179,26 +214,29 @@ class Material:
         wert = self._nach_dicke(self.fy_dicke, t)
         if wert is not None:
             return wert
-        if self.grade in STEEL_GRADES and t > 0.040:
-            return STEEL_GRADES[self.grade][2]
+        sorte = self._sorte()
+        if sorte and t > 0.040:
+            return STEEL_GRADES[sorte][2]
         # Ein leeres f_y nimmt bis 40 mm den Wert der Sorte - so sagt es der
         # Werkstoffdialog ("leer = aus der Stahlsorte"). Bis zum 23.09.2026
         # kam hier 0 heraus: ein IPE 300 mit Sorte S235 und leerem f_y war
-        # "nicht geführt" (Befund B060)
-        if not self.fy and self.grade in STEEL_GRADES:
-            return STEEL_GRADES[self.grade][0]
+        # "nicht geführt" (Befund B060). Die Sorte wird ueber ihren Schluessel
+        # gefunden, auch als „s235“ (F08, bis 06.10.2026 war dann 0)
+        if not self.fy and sorte:
+            return STEEL_GRADES[sorte][0]
         return self.fy or 0.0
 
     def ultimate_strength(self, t: float = 0.0) -> float:
         wert = self._nach_dicke(self.fu_dicke, t)
         if wert is not None:
             return wert
-        if self.grade in STEEL_GRADES and t > 0.040:
-            return STEEL_GRADES[self.grade][3]
+        sorte = self._sorte()
+        if sorte and t > 0.040:
+            return STEEL_GRADES[sorte][3]
         # Ohne f_u und ohne f_y die Sorte (wie yield_strength); mit f_y bleibt
         # es bei 1,3 f_y
-        if not self.fu and not self.fy and self.grade in STEEL_GRADES:
-            return STEEL_GRADES[self.grade][1]
+        if not self.fu and not self.fy and sorte:
+            return STEEL_GRADES[sorte][1]
         return self.fu or (1.3 * self.fy if self.fy else 0.0)
 
 

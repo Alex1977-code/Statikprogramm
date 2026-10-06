@@ -7,7 +7,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..model import (Model, Material, Section, LoadCase, Combination, Member,
-                     ACTION_CATEGORIES, STEEL_GRADES, DesignSettings)
+                     ACTION_CATEGORIES, STEEL_GRADES, DesignSettings, stahlsorte_schluessel)
 from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
@@ -77,7 +77,8 @@ class MaterialDialog(QtWidgets.QDialog):
         m = mat or Material.steel("S355")
         self.grade = QtWidgets.QComboBox()
         self.grade.addItems(list(STEEL_GRADES) + ["benutzerdefiniert"])
-        self.grade.setCurrentText(m.grade if m.grade in STEEL_GRADES else "benutzerdefiniert")
+        # eine Sorte „s 235“ steht als S235 da, nicht als „benutzerdefiniert“ (F08)
+        self.grade.setCurrentText(stahlsorte_schluessel(m.grade) or "benutzerdefiniert")
         self.grade.currentTextChanged.connect(self._grade_changed)
         self.name = QtWidgets.QLineEdit(m.name)
         self.E = NumEdit(m.E / 1e9, 100)

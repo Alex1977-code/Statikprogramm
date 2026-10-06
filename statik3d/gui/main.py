@@ -470,6 +470,40 @@ def _stellung_fehlt_text(name: str) -> str:
     return f"{name} (fehlt)"
 
 
+def _stahlsorte_lesen(text, fy_vorhanden: bool):
+    """Die Stahlsorte aus der Werkstoffmaske oder der Tabellenzelle: ``(Sorte
+    zum Speichern, Art der Meldung, Text der Meldung)``.
+
+    Eine Sorte der Tabelle (``STEEL_GRADES``) wird in deren Schreibweise
+    gespeichert, gleich wie sie getippt wurde: „s235“ und „S 235“ sind S235.
+    Bis zum 06.10.2026 stand sie so da, wie sie getippt war, und die Tabelle
+    kannte „s235“ nicht: mit f_y entfiel ueber 40 mm still die
+    Dickenabminderung, ohne f_y war die Streckgrenze 0 (Fehlerliste F08).
+    Eine leere Sorte bleibt leer, ohne Meldung.
+
+    Eine Sorte, die die Tabelle nicht kennt, wird gemeldet (Art ``"info"``:
+    die Eingabe ist gueltig und wird uebernommen, wie getippt; ein Werkstoff
+    darf eine eigene Sorte tragen, S690 oder auch „C30/37“ eines Betons). Mit
+    f_y rechnet der Stab mit dem eingetragenen Wert, die Meldung sagt, dass es
+    dann keine Dickenabminderung gibt. Ohne f_y gaebe die Sorte keine
+    Streckgrenze her, obwohl „leer = aus der Stahlsorte“ gilt: die Meldung sagt,
+    dass Staebe aus diesem Werkstoff dann nicht nachgewiesen werden."""
+    from ..model import STEEL_GRADES, stahlsorte_normiert, stahlsorte_schluessel
+    roh = str(text or "").strip()
+    if not roh or stahlsorte_schluessel(roh):
+        return stahlsorte_normiert(roh), "", ""
+    bekannt = ", ".join(STEEL_GRADES)
+    if fy_vorhanden:
+        return roh, "info", (
+            f"Stahlsorte „{roh}“ steht nicht in der Sortentabelle ({bekannt}): es gilt das "
+            f"eingetragene f_y, eine Dickenabminderung über 40 mm gibt es dafür nicht.")
+    return roh, "info", (
+        f"Stahlsorte „{roh}“ steht nicht in der Sortentabelle ({bekannt}), und f_y ist leer: "
+        f"der Werkstoff hat keine Streckgrenze, Stäbe daraus werden nicht nachgewiesen. "
+        f"Eine Sorte der Tabelle schreiben (Groß- und Kleinschreibung und Leerzeichen sind "
+        f"gleich) oder f_y eintragen.")
+
+
 #: Aenderungsstaende des Modells (MainWindow._aenderung): jede Nummer nur einmal,
 #: damit ein Stand nach Rueckgaengig nie mit einem neuen verwechselt wird
 _STAENDE = itertools.count(1)
@@ -8512,7 +8546,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("fu", "f_u [N/mm²]", "zahl", (mt.fu / 1e6 if mt and mt.fu else None), breite=78,
                             leer=True),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
-                            hinweis="S235, S355 … für die Nachweise"),
+                            hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
                           F("benutzt", "benutzt von", "info",
                             f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
                 titel = f"Werkstoff {name}"
@@ -10850,11 +10884,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.hinweis(f"Werkstoff „{neuname}“ gibt es schon")
             self.merken(f"Werkstoff {neuname}")
             fy, fu = zahl("fy"), zahl("fu")
+            # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
+            # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
+            # _stahlsorte_lesen)
+            sorte, sorte_art, sorte_text = _stahlsorte_lesen(w.get("grade"), bool(fy))
             mt = Material(neuname, E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
                           rho=float(w.get("rho", 7850.0) or 7850.0),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=str(w.get("grade", "") or "").strip())
+                          grade=sorte)
             if not neu and neuname != name and name in m.materials:
                 del m.materials[name]
                 for e in m.elements:
@@ -10868,6 +10906,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         k.material = neuname
             m.materials[neuname] = mt
             name = neuname
+            if sorte_art == "info":
+                self.info(sorte_text)
         elif art == "querschnitt":
             import dataclasses
             sec = m.sections.get(name)
@@ -14871,9 +14911,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if v is None or k == 0:
             return False
         if k == 5:                       # Stahlsorte ist Text
+            # wie die Maske (F08, 06.10.2026): eine Sorte der Tabelle in deren
+            # Schreibweise („s 235“ -> S235); bis dahin machte die Zelle aus
+            # jedem Text Grossbuchstaben, aber „S 235“ blieb mit Leerzeichen
+            sorte, sorte_art, sorte_text = _stahlsorte_lesen(wert, bool(v.fy))
             self.merken(f"Werkstoff {name}")
-            v.grade = str(wert).strip().upper()
+            v.grade = sorte
             self._zelle_uebernommen(f"Werkstoff {name}: Sorte = {v.grade}")
+            if sorte_art == "info":
+                self.info(sorte_text)
             return True
         w = float(wert)
         if k == 1 and not self._pruefen(w, unten=0.0, was="E-Modul"):

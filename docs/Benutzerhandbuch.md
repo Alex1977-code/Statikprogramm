@@ -6822,6 +6822,31 @@ Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
 Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
 EC3-Prüfung).
 
+**Schreibweise der Stahlsorte.** Die Sorte wird ohne Rücksicht auf Groß- und
+Kleinschreibung und auf Leerzeichen erkannt: „s235“, „S 235“ und „ S235 “ sind
+S235. Das gilt überall, wo das Programm eine Sorte liest: in der Werkstoffmaske
+(rechts) und in der Zelle *Stahlsorte* der Werkstofftabelle, im Werkstoffdialog,
+beim Öffnen einer Datei und beim Import, wo die Sorte aus dem Namen des
+Werkstoffs kommt („Baustahl s  355“ wird S355, auch mit mehreren Leerzeichen).
+Gespeichert wird immer die Schreibweise der Tabelle, also „S235“; eine Datei,
+in der die Sorte klein oder mit Leerzeichen steht, rechnet nach dem Öffnen wie
+mit „S235“ und zeigt sie auch so. Bis zum 06.10.2026 blieb eine Sorte in der
+Maske so stehen, wie sie getippt war, und die Sortentabelle kannte „s235“
+nicht: Mit eingetragenem f_y entfiel über 40 mm still die Dickenabminderung
+(f_y = 235 statt 215 N/mm² bei 50 mm Erzeugnisdicke, f_u = 305,5 statt
+360 N/mm²), und mit leerem f_y war die Streckgrenze null, der Stab also „nicht
+geführt“, obwohl das Feld „leer = aus der Stahlsorte“ verspricht (gemessen am
+Stand 60fe253). Die Tabelle kennt nur S235, S275, S355, S420 und S460, keine
+Untersorten: „S235JR“ ist ihr unbekannt. Eine solche Sorte nimmt die Maske
+trotzdem, wie getippt (ein Werkstoff darf eine eigene Sorte tragen, etwa S690),
+und sagt es im Protokoll und in der Statuszeile. Mit eingetragenem f_y rechnet
+der Stab mit diesem f_y, und die Meldung nennt, dass es dann keine
+Dickenabminderung über 40 mm gibt. Ist f_y leer, gäbe die unbekannte Sorte keine
+Streckgrenze her: Die Meldung sagt dann, dass Stäbe aus diesem Werkstoff nicht
+nachgewiesen werden, und rät zu einer Sorte der Tabelle oder zu einem
+eingetragenen f_y. Die Zelle der Werkstofftabelle handelt ebenso. Eine leere
+Sorte bleibt leer, ohne Meldung.
+
 ### Schwingungsnachweis des Verschlusses
 
 *Nachweise → Schwingung → Verschluss* (Ergebnis unten in der Tabelle
