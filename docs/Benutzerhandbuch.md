@@ -4654,7 +4654,8 @@ Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
 Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf
 seinen Elementen, eine Linienlast auf einer Linie zu Knotenlasten der
-Netzknoten auf dieser Linie (nach Zutrittslängen, linear veränderlich), eine
+Netzknoten auf dieser Linie (linear veränderlich, verteilt mit den
+Formfunktionen der Elementkanten, siehe unten), eine
 Flächenlast zu Elementflächenlasten, eine Temperatur zu Temperaturlasten
 aller Elemente. Die abgeleiteten Elementlasten stehen weder in der Tabelle
 noch im Bericht einzeln (bei einem Volumenmodell wären es Hunderttausende);
@@ -4662,6 +4663,21 @@ die Objektlast steht dafür mit dem Vermerk, wie viele Elementlasten sie
 erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
 trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
 RFEM-Modells.
+
+**Linienlast auf quadratischen Kanten.** Eine Linie besteht im Netz aus
+Elementkanten, und jeder Knoten bekommt den Anteil der Linienlast, den die
+Formfunktion seiner Kante ihm zuweist. Auf einer linearen Kante (tet4, hex8,
+Schalen und Scheiben mit drei oder vier Knoten) ist das die Aufteilung nach
+dem Hebelgesetz. Auf einer quadratischen Kante mit Kantenmitte (tet10, hex20,
+pent15, shell6, shell8, ebene6, ebene8) bekommt bei gleichmäßiger Last jede
+Ecke ein Sechstel und die Kantenmitte zwei Drittel der Last dieser Kante;
+Trapezlasten und Teilstrecken werden ebenso über die Kante integriert. Bis
+zum 06.10.2026 wurde auch eine quadratische Kante wie zwei lineare Stücke
+behandelt, mit einem Viertel an jeder Ecke und der Hälfte an der
+Kantenmitte. Die Summe stimmte, die Verteilung nicht: Ein Scheibenstreifen
+aus shell8, der in seiner Ebene gezogen wird, verschob sich an der gezogenen
+Kante zwischen 186,0 und 203,0 µm statt überall um 190,5 µm. Für federnde
+Linienlager gilt dasselbe (siehe *Linienlager*).
 
 **Flächenlast auf einer Elementseite ohne Fläche.** Liegen die Ecken einer
 Volumenseite auf einer Linie oder in einem Punkt (zusammengelegte Knoten mit
@@ -5365,7 +5381,16 @@ schreibt die Zahlen in die Felder — sie sind ein Vorschlag und **vor
 
 **Linienlager** (Knopf *Linienlager…*): Lager entlang der gewählten Knoten in
 Auswahlreihenfolge. Die Steifigkeit wird **je Meter** angegeben und über die
-Einflusslänge (halbe Nachbarabschnitte) auf die Knoten verteilt.
+Einflusslänge auf die Knoten verteilt: auf einer linearen Elementkante sind
+das die halben Nachbarabschnitte, auf einer quadratischen Kante (tet10,
+hex20, shell8 und die anderen Typen mit Kantenmitte) ein Sechstel der
+Kantenlänge an jede Ecke und zwei Drittel an die Kantenmitte. So hält das
+Lager eine gleichmäßige Verschiebung mit genau den Knotenkräften, die das
+Element an seiner Kante hat. Bis zum 06.10.2026 bekam auch die quadratische
+Kante halbe Nachbarabschnitte (ein Viertel, die Hälfte, ein Viertel); an
+einem Scheibenstreifen aus shell8 auf einem federnden Linienlager wich die
+Verschiebung der gelagerten Kante dadurch um bis zu 4,3 % vom
+gleichmäßigen Wert ab.
 
 **Flächenlager / Bettung** (Knopf *Flächenlager…*): Lager auf Schalen- oder
 Volumenelementen. Die Steifigkeit wird **je m²** angegeben (Bettungsmodul) und

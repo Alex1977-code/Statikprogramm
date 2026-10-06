@@ -1089,7 +1089,7 @@ class Linienlast:
     Die Last haengt am Objekt und ueberlebt das Neuvernetzen: beim Verteilen
     (:meth:`Model.lasten_verteilen`) wird sie auf die Stabelemente
     (Abschnittslasten) oder die Knoten der vernetzten Linie (Knotenlasten
-    aus den Zutrittslaengen) gelegt.
+    int N_i q ds aus den Formfunktionen ihrer Elementkanten) gelegt.
     """
     ziel: str = ""
     art: str = "stab"                  # stab | linie
@@ -4304,12 +4304,14 @@ class Model:
         * Geometrielast "temperatur": Temperaturlasten auf alle Elemente
         * Linienlast auf einem Stab: Abschnittslasten auf seine Elemente
         * Linienlast auf einer Linie: Knotenlasten auf die Knoten der
-          vernetzten Linie (Zutrittslaengen, linear veraenderlich)
+          vernetzten Linie (int N_i q ds ueber ihre Elementkanten, linear
+          veraenderlich - linienverteilung)
 
         Rueckgabe: Zahl der erzeugten Elementlasten.
         """
         erzeugt = 0
         offen = 0
+        kanten_cache: dict = {}       # Kantentabellen des Netzes, einmal je Aufruf
         for lc in self.load_cases.values():
             # Alles wegwerfen, was aus Objektlasten stammt - auch dann, wenn
             # die letzte Objektlast eben geloescht wurde: sonst blieben ihre
@@ -4328,7 +4330,7 @@ class Model:
                 gl.kommentar = f"{len(neue)} Elementlasten" if neue else self._warum_leer(gl)
                 offen += not neue
             for ll in lc.linienlasten:
-                neue = self._linienlast_legen(ll)
+                neue = self._linienlast_legen(ll, kanten_cache)
                 for f in neue:
                     f._geo = True
                     (lc.beam_loads if isinstance(f, BeamLoad) else lc.nodal_loads).append(f)
@@ -5618,8 +5620,11 @@ class Model:
         treffer = np.where(best <= tol)[0]
         return sorted(((int(i), float(lage[i])) for i in treffer), key=lambda x: x[1])
 
-    def _linienlast_legen(self, ll: "Linienlast") -> list:
-        """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist."""
+    def _linienlast_legen(self, ll: "Linienlast", cache: dict = None) -> list:
+        """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist.
+
+        ``cache`` (ein dict) teilt die Kantentabellen des Netzes zwischen den
+        Linienlasten einer Verteilung (linienverteilung.kantenmitten_an)."""
         out: list = []
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1.copy()
@@ -5653,7 +5658,11 @@ class Model:
                                     a=float(lo - s0),
                                     b=None if hi >= s1 - 1e-12 else float(hi - s0)))
             return out
-        # Linie: Knotenlasten aus den Zutrittslaengen
+        # Linie: Knotenlasten int N_i q ds aus den Formfunktionen ihrer
+        # Elementkanten (linienverteilung). Bis zum 06.10.2026 lief die Kette
+        # auch ueber Kantenmitten hinweg in linearen Teilstuecken - auf einer
+        # quadratischen Kante L/4, L/2, L/4 statt L/6, 2L/3, L/6 (F11).
+        from .linienverteilung import kantenintegral, kantenmitten_an, linie_in_kanten
         knoten = self.knoten_auf_linie(ll.ziel)
         if len(knoten) < 2:
             return out
@@ -5667,13 +5676,22 @@ class Model:
         def q_bei(x):
             t = (x - A) / (B - A)
             return (1 - t) * q1 + t * q2
-        for (n0, s0), (n1, s1) in zip(knoten[:-1], knoten[1:]):
+        nr = [n for n, _s in knoten]
+        lage = [s for _n, s in knoten]
+        for kante in linie_in_kanten(nr, lage, kantenmitten_an(self, nr, cache)):
+            (n0, s0), (n1, s1) = knoten[kante[0]], knoten[kante[-1]]
             lo, hi = max(A, s0), min(B, s1)
             if hi - lo <= 1e-12 or s1 <= s0:
                 continue
-            # Last auf [lo, hi] linear; auf die beiden Knoten nach dem
-            # Hebelgesetz (Resultierende und Lage), das ist fuer lineare
-            # Ansaetze die verteilungstreue Aufteilung
+            if len(kante) == 3:
+                # quadratische Kante: Ecke, Mitte, Ecke mit ihren Formfunktionen
+                f = kantenintegral([lage[j] for j in kante], lo, hi, q_bei)
+                for j, fj in zip(kante, f):
+                    F[nr[j]] = F.get(nr[j], np.zeros(3)) + fj
+                continue
+            # Lineare Kante: Last auf [lo, hi] linear; auf die beiden Knoten
+            # nach dem Hebelgesetz (Resultierende und Lage), das ist fuer
+            # lineare Ansaetze genau int N_i q ds
             qa, qb = q_bei(lo), q_bei(hi)
             l = hi - lo
             R = 0.5 * (qa + qb) * l

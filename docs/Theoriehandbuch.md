@@ -684,8 +684,25 @@ Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaf
   Auf dem Stab werden sie in Abschnittslasten der Elemente zerlegt (q am
   Elementanfang und -ende linear interpoliert). Auf einer Linie — dem Rand
   einer Schale, der Kante eines Körpers — gehen sie auf die Netzknoten der
-  Linie: je Teilstück zwischen zwei Knoten Resultierende ½(qₐ+q_b)·l und
-  Schwerpunkt l(qₐ+2q_b)/(3(qₐ+q_b)), aufgeteilt nach dem Hebelgesetz.
+  Linie, und zwar als konsistente Knotenlasten F_i = ∫ N_i q ds mit den
+  Formfunktionen der Elementkante, an der der Knoten liegt
+  (`statik3d/linienverteilung.py`). Auf einer linearen Kante ist das je
+  Teilstück Resultierende ½(qₐ+q_b)·l und Schwerpunkt
+  l(qₐ+2q_b)/(3(qₐ+q_b)), aufgeteilt nach dem Hebelgesetz. Auf einer
+  quadratischen Kante (Ecke, Kantenmitte, Ecke) wird die Kante über die
+  Lagen ihrer Knoten parametrisiert, s(ξ) = Σ N_i(ξ) s_i; die Grenzen einer
+  Teilstrecke werden auf ξ zurückgerechnet, integriert wird mit 3-Punkt-Gauß
+  (exakt für Trapezlasten). Bei gleichmäßiger Last ergibt das l/6, 2l/3,
+  l/6. Als quadratisch gilt eine Kante, wenn der mittlere von drei
+  aufeinanderfolgenden Knoten der Linie die Kantenmitte eines Elements
+  zwischen den beiden anderen ist. Bis zum 06.10.2026 lief auch die
+  quadratische Kante als zwei lineare Teilstücke (l/4, l/2, l/4,
+  Fehlerliste F11). Geprüft in `tests/test_fehler_p7.py`: Knoten für Knoten
+  gegen eine unabhängige Integration (gleichmäßig, Trapez, Teilstrecke,
+  Stichprobe), Resultierende, statisches Moment und ∫ q x² dx, die
+  Kantenmitte je zur Hälfte auf ihre Ecken gelegt gegen das lineare Netz,
+  und als Patch-Test der in seiner Ebene gezogene Scheibenstreifen aus
+  shell8 und shell6, dessen Kante sich überall um q·L/(E·t) verschiebt.
 * **Zwangsverformungen** (vorgegebene Verschiebungen und Verdrehungen an
   gelagerten Knoten, je Lastfall): K_ff u_f = F_f − K_fs u_s mit den
   vorgegebenen Werten u_s; die Auflagerkräfte folgen aus R_s = K_sf u_f +
@@ -2992,8 +3009,10 @@ Kontaktläufe des Ausfallwegs (siehe „Grenzen").
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
 Knotenfreiheitsgrade umgelegt (`statik3d/supports.py`): Linienlager über die
-Einflusslänge (halbe Nachbarabschnitte), Flächenlager über die Einflussfläche
-der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
+Einflusslänge ∫ N_i ds der Elementkanten (linear die halben
+Nachbarabschnitte, quadratisch l/6, 2l/3, l/6; bis zum 06.10.2026 auch dort
+die halben Nachbarabschnitte, Fehlerliste F11), Flächenlager über die
+Einflussfläche der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
 Steifigkeitsmatrix, nichtlineare Anteile in dieselbe Aktivmengen-Iteration wie
 der Kontakt.
 
