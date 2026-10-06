@@ -232,6 +232,18 @@ def lesen(pfad: str, model, fortschritt=None):
         raise ValueError(f"Die Ergebnisdatei passt nicht zum Modell: {grund}")
     if fortschritt:
         fortschritt(0.6, "Ergebnisse entpacken")
+    # Ergebnisse folgen jedem Namen (R2-A1, Nachbesserung G1, 04.10.2026): die
+    # Kennung vergleicht nur die Lastfallnamen. Eine Kombination der Datei, die
+    # das Modell nicht (mehr) hat - umbenannt oder geloescht, nachdem die
+    # Datei geschrieben war -, liess die Ergebnisliste beim Oeffnen mit
+    # KeyError scheitern (gui/main.py, _fill_result_selector) und stand sonst
+    # unter ihrem alten Namen. Die Umstellung beim Laden (R2-A2) wird die
+    # Tabelle alt -> neu mitgeben.
+    fremd = [n for n in (inhalt.get("combinations") or {}) if n not in model.combinations]
+    if fremd:
+        raise ValueError("Die Ergebnisdatei passt nicht zum Modell: Kombination "
+                         + ", ".join(f"'{n}'" for n in fremd[:5]) + (" …" if len(fremd) > 5 else "")
+                         + " gibt es im Modell nicht (umbenannt oder gelöscht)")
     an = Analysis(model)
     for gruppe in _ERGEBNISGRUPPEN:
         for name, d in (inhalt.get(gruppe) or {}).items():

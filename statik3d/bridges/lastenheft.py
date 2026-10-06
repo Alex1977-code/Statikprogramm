@@ -498,11 +498,42 @@ SKIZZEN = {
 # ==========================================================================
 # Lastfaelle anlegen
 # ==========================================================================
+def lastfaelle_pruefen(model: Model, auswahl=None, start_nr: int = 0) -> str:
+    """Warum :func:`lastfaelle_anlegen` mit dieser ersten Nummer nicht anlegen
+    kann - "" heisst: es geht. Belegt ist eine Nummer der Folge, wenn sie
+    schon einem Lastfall gehoert (Model.nummernkonflikt). Ohne eigene erste
+    Nummer ist die Folge immer frei."""
+    if not start_nr:
+        return ""
+    auswahl = list(auswahl if auswahl is not None else STANDARD)
+    gueltig = [k for k in auswahl if k in ACTION_CATEGORIES]
+    nr = int(start_nr)
+    for j in range(len(gueltig)):
+        grund = model.nummernkonflikt("LF", nr + j)
+        if grund:
+            return f"Lastfälle ab Nr. {nr}: {grund}"
+    return ""
+
+
 def lastfaelle_anlegen(model: Model, auswahl=None, start_nr: int = 0, log: list = None) -> list:
     """Lastfaelle fuer die gewaehlten Einwirkungen anlegen (Namen = Schluessel,
     Beschreibung = Einwirkung, Kategorie = Schluessel, fortlaufende Nummer).
-    Schon vorhandene Namen bekommen eine Zahl angehaengt. Rueckgabe: Namen."""
+    Schon vergebene Namen - als Lastfall, als Kombination oder in anderer
+    Schreibweise - bekommen eine Zahl angehaengt (Model.freier_name).
+    Rueckgabe: Namen.
+
+    Eine ausdrueckliche erste Nummer (*start_nr*), deren Folge schon belegt
+    ist (Model.nummernkonflikt), weist die ganze Anlage mit NameVergeben ab,
+    bevor etwas angelegt ist. Ohne sie beginnt die Folge bei der naechsten
+    freien Nummer, und alle Nummern dahinter sind frei. Bis zur Nachbesserung
+    G3 von R2-A1 (04.10.2026) sah die Namenswahl nur die Lastfaelle - neben
+    einer Kombination „G“ entstand ein Lastfall „G“ -, und eine eingetragene
+    erste Nummer wurde ohne Pruefung vergeben."""
+    from ..model import NameVergeben
     auswahl = list(auswahl if auswahl is not None else STANDARD)
+    grund = lastfaelle_pruefen(model, auswahl, start_nr)
+    if grund:
+        raise NameVergeben(grund)
     nr = int(start_nr) if start_nr else model.naechste_lastfallnummer()
     angelegt = []
     for key in auswahl:
@@ -510,11 +541,7 @@ def lastfaelle_anlegen(model: Model, auswahl=None, start_nr: int = 0, log: list 
             if log is not None:
                 log.append(f"  {key}: keine Einwirkungskategorie - übersprungen")
             continue
-        name = key
-        k = 2
-        while name in model.load_cases:
-            name = f"{key} {k}"
-            k += 1
+        name = model.freier_name(key, "lastfall")
         lc = model.add_load_case(name, key, EINWIRKUNGEN.get(key, ACTION_CATEGORIES[key][0]),
                                  activate=False)
         lc.nummer = nr

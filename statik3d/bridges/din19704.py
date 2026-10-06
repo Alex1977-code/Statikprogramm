@@ -82,6 +82,10 @@ def _f(w: float, quelle: str = "") -> Faktor:
     return Faktor(w, quelle or "Voreinstellung - gegen die geltende Norm zu bestätigen")
 
 
+#: Name dieses Generators in Combination.erzeugt (R2-A1, Nachbesserung G5)
+GENERATOR = "DIN 19704"
+
+
 class Regelwerk:
     """Teilsicherheits- und Kombinationsbeiwerte je Lastfallklasse.
 
@@ -198,13 +202,43 @@ class Regelwerk:
         Die Namen tragen den Präfix "DIN ", damit sie nicht mit den
         Lastfallnamen des Modells verwechselt werden.
 
+        Ersetzt wird nur eine Kombination, die dieser Generator selbst
+        erzeugt hat und die seitdem niemand angefasst hat
+        (Combination.unberuehrt, Nachbesserung R2-A1 vom 04.10.2026). Heisst
+        eine Kombination des Anwenders schon so, bekommt die erzeugte einen
+        freien Namen („DIN LF1.1 2“), und das Protokoll sagt es. Bis dahin
+        ueberschrieb der Generator still eine Handkombination „DIN LF1“. Jede
+        neue Kombination bekommt die naechste freie Nummer einer
+        Lastkombination (Model.naechste_nummer), eine ersetzte behaelt ihre.
+
         Rückgabe: Namen der angelegten Kombinationen.
         """
+        from ..model import Combination
         klassen = list(klassen or ("LF1", "LF2", "LF3"))
         nach_art: dict[str, list[str]] = {}
         for name, lc in model.load_cases.items():
             nach_art.setdefault((lc.category or "Q").strip(), []).append(name)
         angelegt = []
+        belegt_jetzt: set = set()
+
+        def anlegen(nm: str, faktoren: dict, beschreibung: str) -> str:
+            ziel, k = nm, 2
+            while True:
+                da = model.combinations.get(ziel)
+                if ziel not in belegt_jetzt and (
+                        (da is not None and da.unberuehrt(GENERATOR))
+                        or (da is None and not model.namenskonflikt(ziel, "", "kombination"))):
+                    break
+                ziel, k = f"{nm} {k}", k + 1
+            if ziel != nm and log is not None:
+                log.append(f"  „{nm}“ gibt es schon (Anwender) - die erzeugte heißt „{ziel}“")
+            da = model.combinations.get(ziel)
+            nummer = da.nummer if da is not None else model.naechste_nummer("LK")
+            model.combinations[ziel] = Combination(ziel, faktoren, "ULS", beschreibung,
+                                                   nummer=nummer).als_erzeugt(GENERATOR)
+            belegt_jetzt.add(ziel)
+            angelegt.append(ziel)
+            return ziel
         for kl in klassen:
             erlaubt = set(KLASSEN.get(kl, []))
             staendig = [(a, n) for a, ns in nach_art.items() if a in self.staendig
@@ -215,10 +249,7 @@ class Regelwerk:
                 continue
             if not veraenderlich:
                 faktoren = {n: float(self.gamma_F[kl].get(a, _f(1.0))) for a, n in staendig}
-                nm = f"{praefix}{kl}"
-                model.add_combination(nm, faktoren, typ="ULS",
-                                      description=f"{kl} - nur ständige Einwirkungen")
-                angelegt.append(nm)
+                anlegen(f"{praefix}{kl}", faktoren, f"{kl} - nur ständige Einwirkungen")
                 continue
             for k, (art_l, leit) in enumerate(veraenderlich, 1):
                 faktoren = {n: float(self.gamma_F[kl].get(a, _f(1.0))) for a, n in staendig}
@@ -229,12 +260,8 @@ class Regelwerk:
                     g = float(self.gamma_F[kl].get(art_j, _f(1.0)))
                     psi = float(self.psi0.get(art_j, _f(1.0)))
                     faktoren[begleit] = g * psi
-                nm = f"{praefix}{kl}.{k}"
-                model.add_combination(
-                    nm, faktoren, typ="ULS",
-                    description=f"{kl}, Leiteinwirkung {art_l} ({leit}) - "
-                                f"{KLASSEN_TEXT[kl]}")
-                angelegt.append(nm)
+                anlegen(f"{praefix}{kl}.{k}", faktoren,
+                        f"{kl}, Leiteinwirkung {art_l} ({leit}) - {KLASSEN_TEXT[kl]}")
         if log is not None:
             log.append(f"{len(angelegt)} Kombinationen nach {self.name} gebildet "
                        f"({', '.join(klassen)})")

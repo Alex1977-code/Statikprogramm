@@ -77,25 +77,66 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
 
     Kombiniert wird **je Situation**: Lastfaelle verschiedener Situationen
     (Stellung, abgeschaltete Elemente) stehen nie in einer Kombination; jede
-    erzeugte Kombination traegt ihre Situation."""
+    erzeugte Kombination traegt ihre Situation.
+
+    Die Nummer im Namen zaehlt ab der Zahl der verbleibenden Kombinationen
+    weiter und ueberspringt jeden vergebenen Namen: eine erzeugte
+    Kombination ueberschreibt nie eine vorhandene (R2-A1, 04.10.2026). Bis
+    dahin ersetzte sie still eine Handkombination gleichen Namens - gemessen:
+    „GZT2“ mit 9,99·LF2 war danach die erzeugte mit 1,35·LF1
+    (tests/test_namen_lf_lk.py, N6). Die Namen bleiben GZT<n>, GZT-A<n> und
+    GZG<n>; LK<n> kommt mit Paket R2-C1.
+
+    Ersetzt wird nur, was dieser Generator selbst erzeugt hat und was
+    seitdem niemand angefasst hat (:func:`gehoert_dem_generator`,
+    Nachbesserung G5 vom 04.10.2026). Bis dahin entschied die Beschreibung
+    („auto: …“): eine erzeugte Kombination, die der Anwender in LK50
+    umbenannt hatte, verschwand beim naechsten Lauf, und eine
+    Ermuedungslast auf LK50 zeigte ins Leere."""
     ds = model.design
     rule = rule or ds.combination_rule
     combos: list[Combination] = []
     if replace:
         model.combinations = {k: c for k, c in model.combinations.items()
-                              if not c.description.startswith("auto")}
+                              if not gehoert_dem_generator(c)}
     zaehler = [len(model.combinations)]
     seen: set = set()
+    # Namen in ihrer Form (Gross/Klein, Leerzeichen): einmal gebildet statt
+    # je Kombination namenskonflikt - am Generator sind es bis 2000
+    vergeben = model.namensformen()
     for sit, namen in model.lastfaelle_je_situation().items():
         faelle = [model.load_cases[k] for k in namen]
         _kombinationen_bilden(model, faelle, sit, uls, sls, accidental, rule, g_favourable,
-                              max_combinations, combos, seen, zaehler)
+                              max_combinations, combos, seen, zaehler, vergeben)
     return combos
+
+
+#: Name dieses Generators in Combination.erzeugt
+GENERATOR = "EN 1990"
+
+
+def gehoert_dem_generator(c: Combination) -> bool:
+    """Ob der Generator die Kombination *c* ersetzen darf: er hat sie selbst
+    erzeugt, und niemand hat sie seitdem angefasst (Combination.unberuehrt -
+    umbenannt, Faktoren, Typ, Beschreibung, Leiteinwirkung geaendert macht
+    sie zur Kombination des Anwenders).
+
+    Eine Kombination aus einer Datei von vor dem 04.10.2026 traegt kein
+    Merkmal. Fuer sie gilt die alte Regel - Beschreibung „auto…“ -, aber nur,
+    solange sie noch den Namen des Generators traegt (GZT<n>, GZT-A<n>,
+    GZG<n>): eine umbenannte bleibt. Mehr laesst sich ohne Merkmal nicht
+    sagen; die Umstellung beim Laden (Paket R2-A2) kann es setzen."""
+    import re
+    if getattr(c, "erzeugt", ""):
+        return c.unberuehrt(GENERATOR)
+    return (str(c.description or "").startswith("auto")
+            and re.fullmatch(r"(GZT|GZT-A|GZG)\d+", str(c.name)) is not None)
 
 
 def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool, sls: bool,
                           accidental: bool, rule: str, g_favourable: bool,
-                          max_combinations: int, combos: list, seen: set, zaehler: list):
+                          max_combinations: int, combos: list, seen: set, zaehler: list,
+                          vergeben: set = None):
     """Die Kombinationen einer Situation nach DIN EN 1990 (6.10, 6.10a/b,
     6.11b, 6.14b, 6.15b, 6.16b)."""
     from .model import GRUNDSTELLUNG
@@ -103,8 +144,11 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
     perm = [lc for lc in faelle if lc.is_permanent]
     var = [lc for lc in faelle if lc.is_variable]
     acc = [lc for lc in faelle if lc.is_accidental]
+    from .model import _namensform
     sit = "" if situation == GRUNDSTELLUNG else situation
     zusatz = f" [{situation}]" if sit else ""
+    if vergeben is None:
+        vergeben = model.namensformen()
 
     def add(name_prefix, factors, typ, desc, leading=""):
         factors = {k: round(v, 6) for k, v in factors.items() if abs(v) > 1e-12}
@@ -115,10 +159,17 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
             return
         seen.add(key)
         zaehler[0] += 1
+        # die naechste freie Nummer - ein vergebener Name (Handkombination,
+        # Lastfall, auch in anderer Gross-/Kleinschreibung) wird
+        # uebersprungen, nie ueberschrieben (R2-A1). Ein Name GZT<n> kann
+        # nicht wie eine Alternative „<EK> [k]“ heissen.
+        while _namensform(f"{name_prefix}{zaehler[0]}") in vergeben:
+            zaehler[0] += 1
         c = Combination(f"{name_prefix}{zaehler[0]}", factors, typ, "auto: " + desc + zusatz,
-                        leading, situation=sit)
+                        leading, situation=sit).als_erzeugt(GENERATOR)
         combos.append(c)
         model.combinations[c.name] = c
+        vergeben.add(_namensform(c.name))
 
     g_variants = [False, True] if (g_favourable and var) else [False]
     var_sets = _variable_sets(var) if var else [[]]

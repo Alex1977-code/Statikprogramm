@@ -245,3 +245,24 @@ def umhuellende_schluessel(namen, arten=()) -> dict:
         belegt.add(k)
         nehmen(k)
     return {n: aus[n] for n in namen}
+
+
+def _name_mit_bezeichnung(obj) -> str:
+    name = str(getattr(obj, "name", "") or "")
+    bez = str(getattr(obj, "bezeichnung", "") or "").strip()
+    return f"{name} {bez}" if bez and bez != name else name
+
+
+def anzeige_lastfall(lc) -> str:
+    """„LF3 W_links“: der Name (kuenftig LF<Nummer>) und die Bezeichnung, der
+    kurze freie Name (Paket R2, Entscheidung des Anwenders vom 04.10.2026:
+    der bisherige freie Name wird zur Bezeichnung und wird mitgezeigt).
+    Ohne Bezeichnung nur der Name. Nicht die Beschreibung
+    (``LoadCase.description``): sie ist ein erklaerender Text und steht nur in
+    Maske, Tabelle und Bericht. Benutzt wird die Anzeige erst ab Paket R2-B."""
+    return _name_mit_bezeichnung(lc)
+
+
+def anzeige_kombination(c) -> str:
+    """„LK7 GZT“ oder „EK3 Umhüllende Wind“ - wie :func:`anzeige_lastfall`."""
+    return _name_mit_bezeichnung(c)

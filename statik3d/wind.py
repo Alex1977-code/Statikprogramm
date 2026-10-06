@@ -678,8 +678,11 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
         feld = st.feld_packen(wk["schnitt"], cp, wk["fluid"], wk["block"], nachkomma=3,
                               aufriss=bool(wk["aufriss"]), stempel=uuid.uuid4().hex)
         st._melden(fortschritt, 0.96, f"Wind {w.name}: Lasten auf das Netz")
-    if not w.lastfall:
-        w.lastfall = f"Wind {w.name}"
+    # Name und Nummer des Lastfalls pruefen, bevor sich etwas aendert: ein
+    # vergebener Name oder eine belegte Nummer weist ab (NameVergeben), ohne
+    # eigene Wahl gilt „Wind <Name>“ oder ein freier (R2-A1, Nachbesserung G3)
+    w.lastfall = model.generator_lastfall(f"Wind {w.name}", w.lastfall, int(w.lastfall_nr or 0),
+                                          f"Wind {w.name}")
     for lc in model.load_cases.values():
         lc.geometrielasten = [gl for gl in lc.geometrielasten
                               if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == w.name)]
@@ -690,7 +693,7 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     lc = model.load_cases[w.lastfall]
     lc.situation = "" if w.situation == GRUNDSTELLUNG else w.situation
     if not getattr(lc, "nummer", 0):
-        lc.nummer = int(w.lastfall_nr) if int(w.lastfall_nr or 0) > 0 else model.naechste_lastfallnummer()
+        lc.nummer = int(w.lastfall_nr) if int(w.lastfall_nr or 0) > 0 else model.nummer_fuer(w.lastfall, "LF", lc)
     param = asdict(w)
     n_obj = 0
     zonen: dict = {}

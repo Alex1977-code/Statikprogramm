@@ -277,10 +277,13 @@ def theorie_feld(wert: str = "") -> QtWidgets.QComboBox:
 
 
 class LoadCaseDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, lc: LoadCase = None, existing=(), situationen=()):
+    def __init__(self, parent=None, lc: LoadCase = None, existing=(), situationen=(), vorschlag: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Lastfall")
-        self.name = QtWidgets.QLineEdit(lc.name if lc else f"LF{len(existing)+1}")
+        # ``vorschlag`` aus der Nummernvergabe des Modells (Model.naechste_nummer,
+        # R2-A1): bis zum 04.10.2026 „LF{Anzahl+1}“, neben LF1 und LF3 das
+        # vergebene „LF3“
+        self.name = QtWidgets.QLineEdit(lc.name if lc else (vorschlag or f"LF{len(existing)+1}"))
         # Die Situation, in der der Lastfall gilt (Stellung + wirksame Elemente)
         self.situation = QtWidgets.QComboBox()
         namen = list(situationen) or ["Grundstellung"]

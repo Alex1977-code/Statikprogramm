@@ -254,9 +254,16 @@ class State:
         return self.job is not None and self.job.status == "laeuft"
 
     def invalidate(self, what: str = "all"):
-        if what == "all":
+        if what in ("all", "namen"):
             self.analysis = None
             self.results = None
+        if what == "namen":
+            # Stellungsreihe und ihre Umhuellende fuehren Ergebnisse unter den
+            # Namen von vorher (R2-A1, G1); an der Oberflaeche ebenso
+            for ziel in (self, self.bound):
+                if ziel is not None:
+                    ziel.stellungsreihe = None
+                    ziel.umhuellende = None
         elif what == "design" and self.analysis is not None:
             self.analysis.design = None
             self.analysis.fatigue = None
@@ -950,6 +957,12 @@ def design_payload(st: State) -> dict:
 # --------------------------------------------------------------------------
 OPS: dict = {}
 KEEP_ALL = {"check", "meta", "rename", "select_box", "set_active_case"}
+#: Operationen, die Lastfaelle oder Kombinationen anlegen, umbenennen,
+#: kopieren oder loeschen: sie verwerfen ausser der Analyse auch die
+#: Stellungsreihe und ihre Umhuellende (R2-A1, Nachbesserung G1) - beide
+#: fuehren Ergebnisse unter den alten Namen
+NAMEN_OPS = {"add_case", "edit_case", "copy_case", "remove_case", "add_combination",
+             "remove_combination", "clear_combinations", "auto_combinations", "din19704"}
 KEEP_DESIGN = {"design_settings", "set_member", "remove_member", "auto_members",
                "add_fatigue_load", "remove_fatigue_load"}
 GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "clear_mesh",
@@ -1753,14 +1766,18 @@ def _op_add_case(st, m, d):
     name = (d.get("name") or "").strip()
     if not name:
         raise ApiError("Lastfallname fehlt")
-    if name in m.load_cases:
-        raise ApiError(f"Lastfall '{name}' existiert bereits")
+    # vergeben auch als Kombination, Alternative oder Nummer (R2-A1, G3/G4) -
+    # bis dahin sah diese Stelle nur die Lastfaelle
+    grund = m.namenskonflikt(name, "", "lastfall")
+    if grund:
+        raise ApiError(grund)
     cat = d.get("category") or "Q"
     if cat not in ACTION_CATEGORIES:
         raise ApiError(f"Einwirkungskategorie '{cat}' unbekannt")
     psi = _vec(d, "psi", 3, None)
+    nummer = m.nummer_fuer(name, "LF")
     m.add_load_case(name, cat, d.get("description") or "", activate=bool(d.get("activate", True)),
-                    psi=psi, exclusive_group=d.get("exclusive_group") or "")
+                    psi=psi, exclusive_group=d.get("exclusive_group") or "", nummer=nummer)
     return f"Lastfall {name} ({cat}) angelegt"
 
 
@@ -1768,6 +1785,13 @@ def _op_add_case(st, m, d):
 def _op_edit_case(st, m, d):
     lc = _case(m, {"case": d.get("name")})
     f = d.get("fields") or {}
+    new = (f.get("new_name") or "").strip()
+    if new and new != lc.name:
+        # vor jeder Aenderung: ein vergebener Name (Lastfall, Kombination,
+        # Alternative „<EK> [k]“) weist die ganze Operation ab (R2-A1)
+        grund = m.namenskonflikt(new, lc.name, "lastfall")
+        if grund:
+            raise ApiError(grund)
     if "category" in f:
         if f["category"] not in ACTION_CATEGORIES:
             raise ApiError(f"Einwirkungskategorie '{f['category']}' unbekannt")
@@ -1781,21 +1805,18 @@ def _op_edit_case(st, m, d):
     for k in ("gamma_sup", "gamma_inf"):
         if k in f:
             setattr(lc, k, _f(f, k, None) if f[k] not in (None, "") else None)
-    new = (f.get("new_name") or "").strip()
     if new and new != lc.name:
-        if new in m.load_cases:
-            raise ApiError(f"Lastfall '{new}' existiert bereits")
-        old = lc.name
-        lc.name = new
-        m.load_cases = {(new if k == old else k): v for k, v in m.load_cases.items()}
-        for c in m.combinations.values():
-            c.lastfall_umbenennen(old, new)
-        # beide Zustaende und der Verlauf - bis zum 23.09.2026 blieb der
-        # Verlauf beim alten Namen (tests/test_ermuedung_verlauf.py)
-        for fl in m.fatigue_loads.values():
-            fl.lastfall_umbenennen(old, new)
-        if m.active_case == old:
-            m.active_case = new
+        # alle Verweise an einer Stelle (Model.lastfall_umbenennen, R2-A1):
+        # bis zum 04.10.2026 zog der Webserver nur Kombinationen und
+        # Ermuedungslasten nach - Stellungen, Leiteinwirkung, Wind,
+        # Wasserdruck und Berichtsbilder behielten den alten Namen
+        alt = lc.name
+        m.lastfall_umbenennen(alt, new)
+        # Die Stellungen des Browsers haelt der Zustand, nicht das Modell
+        # (_stellungen) - sie folgen ebenso (sonst scheiterte die naechste
+        # Stellungsrechnung am alten Namen)
+        for s in _stellungen(st) if st is not None else []:
+            s.lastfall_umbenennen(alt, new)
     return f"Lastfall {lc.name} geändert"
 
 
@@ -1811,11 +1832,20 @@ def _op_remove_case(st, m, d):
 @op("copy_case")
 def _op_copy_case(st, m, d):
     lc = _case(m, {"case": d.get("name")})
-    new = (d.get("new") or f"{lc.name} Kopie").strip()
-    if new in m.load_cases:
-        raise ApiError(f"Lastfall '{new}' existiert bereits")
+    # Ein gewaehlter Name muss frei sein; ohne Wahl „<Name> Kopie“ oder ein
+    # freier. Die Kopie erbt keine Nummer (R2-A1, G3) - bis dahin legte eine
+    # Kopie einen Lastfall neben einer gleichnamigen Kombination an, und sie
+    # trug die Nummer ihres Vorbilds
+    new = (d.get("new") or "").strip()
+    if new:
+        grund = m.namenskonflikt(new, "", "lastfall")
+        if grund:
+            raise ApiError(grund)
+    else:
+        new = m.freier_name(f"{lc.name} Kopie", "lastfall")
     dd = lc.to_dict()
     dd["name"] = new
+    dd["nummer"] = m.nummer_fuer(new, "LF")
     from ..model import LoadCase
     m.load_cases[new] = LoadCase.from_dict(json.loads(json.dumps(_clean(dd))))
     m.active_case = new
@@ -1845,6 +1875,11 @@ def _op_add_combo(st, m, d):
     name = (d.get("name") or "").strip()
     if not name:
         raise ApiError("Kombinationsname fehlt")
+    # kein stilles Ueberschreiben, auch kein Lastfall- oder Alternativen-Name
+    # (R2-A1, G3) - bis dahin ersetzte eine Kombination „K1“ die vorhandene
+    grund = m.namenskonflikt(name, "", "kombination")
+    if grund:
+        raise ApiError(grund)
     factors = d.get("factors") or {}
     if isinstance(factors, str):
         fd = {}
@@ -1860,7 +1895,8 @@ def _op_add_combo(st, m, d):
             raise ApiError(f"Lastfall '{k}' unbekannt")
     typ = d.get("typ") or "ULS"
     m.add_combination(name, {k: float(v) for k, v in factors.items()}, typ,
-                      d.get("description") or "manuell", d.get("leading") or "")
+                      d.get("description") or "manuell", d.get("leading") or "",
+                      nummer=m.nummer_fuer(name, "LK"), art="LK")
     return f"Kombination {name} angelegt"
 
 
@@ -2062,6 +2098,8 @@ def apply_op(st: State, d: dict) -> dict:
         if name not in KEEP_ALL:
             st.invalidate("design" if name in KEEP_DESIGN else "all")
             st.touch()
+        if name in NAMEN_OPS:
+            st.invalidate("namen")
         extra = res if isinstance(res, dict) else {}
         msg = extra.get("message", res if isinstance(res, str) else name)
         if name not in ("check", "select_box"):
