@@ -120,6 +120,9 @@ class FcmProblem:
                                                            facette_mm=facette_mm, tiefe=self.tiefe)
         self.raender: dict[str, Verschiebungsrand] = {}
         self.lasten: list[np.ndarray] = []
+        # fuer den Fehlerschaetzer (Teilprojekt 6a): Soll-Traktion je Oberflaechenpunkt und konstante Volumenlasten neben dem Lastvektor
+        self.flaechenlasten: list[tuple[Flaechenquadratur, np.ndarray]] = []
+        self.volumenlasten: list[np.ndarray] = []
         self.K: sp.csr_matrix | None = None
         self._loeser: Direktloeser | None = None
         self.protokoll: dict = {}
@@ -155,7 +158,9 @@ class FcmProblem:
         if len(fq.punkte) == 0:
             raise ValueError(f"Traktion: keine Oberflaechenpunkte fuer {flaechen!r}")
         T = t(fq.punkte, fq.normalen) if callable(t) else np.broadcast_to(np.asarray(t, float), (len(fq.punkte), 3))
-        self.lasten.append(rand.flaechenlast(self.gitter, fq, np.asarray(T, float)))
+        T = np.asarray(T, float).copy()
+        self.lasten.append(rand.flaechenlast(self.gitter, fq, T))
+        self.flaechenlasten.append((fq, T))
 
     def druck(self, flaechen, p_druck: float, quadratur: Flaechenquadratur | None = None) -> None:
         """Druck positiv = auf die Flaeche drueckend: t = -p n."""
@@ -163,6 +168,7 @@ class FcmProblem:
 
     def volumenlast(self, b) -> None:
         self.lasten.append(rand.volumenlast(self.gitter, self.quadratur, np.asarray(b, float)))
+        self.volumenlasten.append(np.asarray(b, float).reshape(3).copy())
 
     # -- Aufbau und Loesung -----------------------------------------------------------
     def aufbauen(self, fortschritt=None) -> None:

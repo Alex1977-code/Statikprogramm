@@ -39,5 +39,23 @@ def test_hesse():
           and np.allclose(d2[:, 4], np.sqrt(3.5) * (15 * x ** 2 - 3) / 2))
 
 
+def _wuerfel(p=1, h=50.0):
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.geometry.csg import aus_params
+    g = aus_params({"csg": {"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100], "name": "q"}})
+    return FcmProblem(g, h=h, p=p, werkstoff=Werkstoff(210000.0, 0.3))
+
+
+def test_lasten_aufgezeichnet():
+    """Der Schaetzer braucht die Soll-Traktion je Oberflaechenpunkt und die Volumenlast; das Problem zeichnet sie neben dem Lastvektor auf."""
+    pr = _wuerfel()
+    pr.druck("q", 5.0)
+    pr.volumenlast([0.0, 0.0, -7.85e-5])
+    fq, T = pr.flaechenlasten[-1]
+    check("druck: aufgezeichnete Traktion = -p n an allen Punkten, Volumenlast aufgezeichnet",
+          len(pr.flaechenlasten) == 1 and np.allclose(T, -5.0 * fq.normalen) and len(fq.punkte) == len(pr.oberflaeche.punkte)
+          and len(pr.volumenlasten) == 1 and np.allclose(pr.volumenlasten[0], [0.0, 0.0, -7.85e-5]))
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_hesse]))
+    sys.exit(lauf([test_hesse, test_lasten_aufgezeichnet]))
