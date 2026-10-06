@@ -772,8 +772,9 @@ def main():
               and mk._felder["lastfaelle"].count() == len(w.model.load_cases), str(len(w.model.load_cases)))
         if mk is not None and lf:
             mk.setzen("lastfaelle", lf)
+            # seit 06.10.2026 (F21) als Liste: ein Name mit Komma bleibt ein Name
             check("Anhaken eines Lastfalls: die Maske liefert seinen Namen",
-                  mk.werte().get("lastfaelle") == lf, str(mk.werte().get("lastfaelle")))
+                  mk.werte().get("lastfaelle") == [lf], str(mk.werte().get("lastfaelle")))
             mk.zusatzknoepfe["Alle Lastfälle und Kombinationen"].click(); app.processEvents()
             check("„Alle Lastfälle und Kombinationen“ hakt alle an",
                   w._namensliste(mk.werte().get("lastfaelle")) == list(w.model.load_cases),

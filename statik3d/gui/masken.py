@@ -34,6 +34,21 @@ def listeneintraege(text: str) -> list:
     return [x.strip() for x in str(text or "").split(",") if x.strip()]
 
 
+def listenwert(wert) -> list:
+    """Die Eintraege eines Feldwerts (Fehlerliste F21, 06.10.2026): eine Liste
+    bleibt, wie sie ist - ein Name mit Komma („W, links“) ist darin **ein**
+    Eintrag -, ein Text wird an Kommas geteilt (:func:`listeneintraege`).
+
+    Die Haken der Mehrfachwahl (Stellung: Lastfaelle, Gelenke, Lager;
+    Situation: Lastfaelle, Kombinationen) gehen als Liste durch die Maske. Bis
+    zum 06.10.2026 gingen sie als Text mit Komma, und die Maske zerlegte ihn
+    wieder an jedem Komma: ein Lastfall mit Komma im Namen blieb beim Oeffnen
+    unangehakt und fiel beim „Übernehmen“ still aus der Stellung."""
+    if isinstance(wert, (list, tuple, set, frozenset)):
+        return [str(x) for x in wert if str(x) != ""]
+    return listeneintraege(wert)
+
+
 def listenhinweis(text: str, hinweis: str = "") -> str:
     """Der Hinweis am Zeiger: Anzahl und die **ganze** Liste, umbrochen.
 
@@ -718,10 +733,11 @@ class Maske(QtWidgets.QFrame):
             return w
         if f.art == "mehrfach":
             # Mehrere aus einer Liste: Haken setzen statt Namen tippen. Der
-            # Wert ist wie beim Listenfeld die Namen, durch Komma - so bleibt
-            # alles, was Listen liest (Stellungen, Situationen), unveraendert.
+            # Wert ist die Liste der angehakten Namen (Feld.wert: eine Liste
+            # oder ein Text mit Komma, werte(): immer eine Liste) - ein Name
+            # mit Komma bleibt so ein Name (F21, 06.10.2026).
             w = QtWidgets.QListWidget(self)
-            gewaehlt = set(listeneintraege(str(f.wert)))
+            gewaehlt = set(listenwert(f.wert))
             for name in f.werte:
                 it = QtWidgets.QListWidgetItem(str(name))
                 it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
@@ -771,7 +787,12 @@ class Maske(QtWidgets.QFrame):
     def werte(self) -> dict:
         """Die Feldwerte. Ein Zahlenfeld liefert seine Zahl (leer = 0, bei
         Feld.leer ""); ein ungueltiges liefert seinen Text - nie still 0.
-        „Anwenden“ laesst ungueltige Felder gar nicht erst durch."""
+        „Anwenden“ laesst ungueltige Felder gar nicht erst durch.
+
+        Eine Mehrfachwahl liefert die **Liste** der angehakten Namen. Bis zum
+        06.10.2026 war es ein Text mit Komma („LF1, W, links“), den jeder
+        Leser wieder an den Kommas zerlegte - ein Name mit Komma ging dabei
+        verloren (F21)."""
         out: dict = {}
         leer_erlaubt = getattr(self, "_leer_erlaubt", ())
         for name, w in self._felder.items():
@@ -787,8 +808,8 @@ class Maske(QtWidgets.QFrame):
             elif isinstance(w, QtWidgets.QComboBox):
                 out[name] = w.currentText()
             elif isinstance(w, QtWidgets.QListWidget):
-                out[name] = ", ".join(w.item(i).text() for i in range(w.count())
-                                      if w.item(i).checkState() == QtCore.Qt.Checked)
+                out[name] = [w.item(i).text() for i in range(w.count())
+                             if w.item(i).checkState() == QtCore.Qt.Checked]
             else:
                 out[name] = w.text().strip()
         out["knoten"] = list(self.gewaehlt)
@@ -878,6 +899,8 @@ class Maske(QtWidgets.QFrame):
                 w.blockSignals(gesperrt)
             if isinstance(anfang.get(name), str):
                 anfang[name] = namen_ersetzen(anfang[name], alt, neu, v)
+            elif isinstance(anfang.get(name), list):        # Mehrfachwahl (F21)
+                anfang[name] = [neu if x == alt else x for x in anfang[name]]
         if hasattr(self, "_anfang"):
             self._anfang = anfang
             self._merker_nachfuehren()
@@ -1004,7 +1027,7 @@ class Maske(QtWidgets.QFrame):
         elif isinstance(w, QtWidgets.QComboBox):
             w.setCurrentText(str(wert))
         elif isinstance(w, QtWidgets.QListWidget):
-            gewaehlt = set(listeneintraege(str(wert)))
+            gewaehlt = set(listenwert(wert))
             for i in range(w.count()):
                 it = w.item(i)
                 it.setCheckState(QtCore.Qt.Checked if it.text() in gewaehlt else QtCore.Qt.Unchecked)
@@ -1016,6 +1039,8 @@ class Maske(QtWidgets.QFrame):
         else:
             # ohne Tausender: ein Textfeld kann eine Liste sein, dort trennt
             # das Leerzeichen Eintraege; nie „1e-05“ (25.09.2026)
+            if isinstance(wert, (list, tuple)):
+                wert = ", ".join(str(x) for x in wert)         # eine Liste in ein Listenfeld
             w.setText(zl.zahl_text(wert, tausender=False) if isinstance(wert, float) else str(wert))
             eintrag = self._listen.get(name)
             if eintrag is not None:

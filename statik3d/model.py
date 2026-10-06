@@ -3311,6 +3311,27 @@ def _namensform(name) -> str:
     return " ".join(str(name).split()).casefold()
 
 
+def _namenstrenner(name) -> str:
+    """„ein Komma“, „ein Semikolon“ oder „Komma und Semikolon“, wenn *name*
+    ein Zeichen traegt, das in den Listenfeldern der Masken Namen trennt
+    (Fehlerliste F21); sonst ""."""
+    name = str(name or "")
+    komma, semikolon = "," in name, ";" in name
+    if komma and semikolon:
+        return "Komma und Semikolon"
+    return "ein Komma" if komma else "ein Semikolon" if semikolon else ""
+
+
+def _ohne_trenner(name) -> str:
+    """*name* ohne Komma und Semikolon (je durch ein Leerzeichen ersetzt,
+    mehrere Leerzeichen zu einem) - der Vorschlag der Meldung und die Basis
+    von :meth:`Model.freier_name`."""
+    text = str(name or "")
+    for z in (",", ";"):
+        text = text.replace(z, " ")
+    return " ".join(text.split())
+
+
 def _schluessel_tauschen(d: dict, alt, neu) -> None:
     """Den Schluessel *alt* in *d* durch *neu* ersetzen - an seinem Platz in
     der Reihenfolge und im selben Woerterbuch, damit niemand, der es haelt,
@@ -3634,7 +3655,17 @@ class Model:
         Ende ist abgewiesen. Und ein Name der Form LF<n>, LK<n> oder EK<n>
         ist vergeben, wenn seine Nummer schon einem anderen Objekt gehoert -
         im Feld ``nummer`` oder im Namen („LF 3“ und „LF03“ neben LF3, „LF7“
-        neben LF3 mit Nr. 7)."""
+        neben LF3 mit Nr. 7).
+
+        Komma und Semikolon im Namen weist die Pruefung seit dem 06.10.2026
+        ab (Fehlerliste F21): sie trennen die Namen in den Listenfeldern der
+        Masken (Stellungen, Situationen, Faktoren, Ermuedungsverlauf), und ein
+        Name mit Trenner wurde dort zerlegt - eine Stellung rechnete den
+        Lastfall „W, links“ danach still nicht mehr. Das gilt, bis die
+        Namensregel R2 Namen und Bezeichnungen trennt. Ein **vorhandener**
+        Name mit Trenner (aus einer aelteren Datei oder einem Import) bleibt,
+        wie er ist: ``neu == alt`` ist frei, damit sich seine uebrigen
+        Eigenschaften aendern lassen."""
         import re
         neu, alt = str(neu or ""), str(alt or "")
         if not neu.strip():
@@ -3653,6 +3684,12 @@ class Model:
                     "dürfen nicht gleich heißen, ihre Ergebnisse verdeckten einander")
         if neu == alt:
             return ""
+        trenner = _namenstrenner(neu)
+        if trenner:
+            vorschlag = _ohne_trenner(neu)
+            return (f"„{neu}“ enthält {trenner} – Komma und Semikolon trennen die Namen in den "
+                    "Listenfeldern (Stellung, Situation, Faktoren); bitte ohne schreiben"
+                    + (f", etwa „{vorschlag}“" if vorschlag else ""))
         form = _namensform(neu)
         for n, o in list(self.load_cases.items()) + list(self.combinations.items()):
             if o is not eigen and _namensform(n) == form:
@@ -3709,6 +3746,12 @@ class Model:
         bilden (Kopieren, Lastenheft, DIN 19704, Wind, Wasserdruck) und nie
         etwas ueberschreiben duerfen."""
         basis = str(basis or "").strip() or "Neu"
+        # Komma und Semikolon nimmt die Namenspruefung nicht an (F21): aus einem
+        # Vorschlag, der sie traegt (Kopie von „W, links“), wird ein Name ohne
+        # sie. Sonst liefe die Schleife ins Leere - ein Zaehler macht den
+        # Trenner nicht weg.
+        if _namenstrenner(basis):
+            basis = _ohne_trenner(basis) or "Neu"
         name, k = basis, 2
         while self.namenskonflikt(name, "", art) and k < 100000:
             name, k = f"{basis} {k}", k + 1

@@ -173,6 +173,22 @@ class Zahlenfeld(QtWidgets.QLineEdit):
             self._bestaetigt = self.text()
             self._pruefen()
 
+    def _bestaetigung_pruefen(self) -> None:
+        """Die Bestaetigung gilt nur fuer den Text, den man bestaetigt hat
+        (F41, 06.10.2026): ist der Text ein anderer, ist sie weg. Bis dahin
+        blieb ``_bestaetigt`` stehen - „1.000“ bestaetigt, „5“ getippt, wieder
+        „1.000“ getippt: keine Frage mehr, an einem dauerhaften Feld wie Fz im
+        Register also nie wieder."""
+        if self._bestaetigt is not None and self.text() != self._bestaetigt:
+            self._bestaetigt = None
+
+    def setText(self, text: str) -> None:               # noqa: N802 - Qt-Name
+        """Schreibt das Programm den Text (auch bei blockierten Signalen, wie
+        die Parameterprofile), faellt die Bestaetigung eines anderen Texts mit
+        weg - textChanged kaeme dann nicht an."""
+        super().setText(text)
+        self._bestaetigung_pruefen()
+
     def meldung(self) -> str:
         if self.ungueltig():
             return "" if self.unfertig() else self.lesung.meldung
@@ -262,6 +278,7 @@ class Zahlenfeld(QtWidgets.QLineEdit):
         self._haken.setVisible(self.offene_frage())
 
     def _pruefen(self, *_a) -> None:
+        self._bestaetigung_pruefen()
         self.lesung = zl.lesen(self.text(), self.ganz)
         if self.lesung.status != zl.FRAGE:
             self._gewarnt = None

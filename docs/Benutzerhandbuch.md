@@ -3933,12 +3933,25 @@ Anzahl still „alle gleich“.
   Beiwert von tausend kommt nicht vor), die Lastspielzahl daneben weist
   „500.000“ dagegen ab;
 * **Nummernlisten** in den Masken (Knoten einer Linie, Elemente eines
-  Stabs, angeschlossene Knoten) lesen nur ganze Nummern, anderes fällt
-  weg. Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
+  Stabs, angeschlossene Knoten eines starren Körpers) und in der
+  Linientabelle lesen nur ganze Nummern. Ein Eintrag, der keine ganze Zahl
+  ist („2,5“, „x“, „1x“), wird mit einer Meldung abgewiesen, die ihn nennt;
+  die Maske bleibt mit der Eingabe offen, und im Modell ändert sich nichts.
+  Das Komma zwischen Ziffern ist ein Dezimalkomma, Nummern trennt man darum
+  mit Leerzeichen oder mit Komma und Leerzeichen („1, 2, 5“). Bis zum
+  06.10.2026 fiel ein solcher Eintrag ohne Meldung weg: „3, 4, x, 5“ legte
+  die Linie mit den Knoten 3, 4 und 5 an, „1, 2,5“ machte aus den
+  angeschlossenen Knoten nur den Knoten 1, und „+3“ fiel ebenfalls weg.
+  Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
   die Knoten eines Elements in der Tabelle, die Teilung (eine Zahl für
   alle Richtungen oder zwei bei einer Fläche, drei bei einem Volumen,
   „4 × 4“ geht auch) – weisen seit 25.09.2026 einen Eintrag, der keine
-  ganze Zahl ist, und eine falsche Anzahl mit Meldung ab;
+  ganze Zahl ist, und eine falsche Anzahl mit Meldung ab. Die Teilung ist
+  mindestens 1: Die Masken Fläche und Volumen und die Sammelmaske weisen
+  eine 0 oder eine negative Zahl seit dem 06.10.2026 mit einem Hinweis ab
+  („Teilung: ganze Zahlen ab 1 erwartet, „0, -3“ enthält 0“), die Tabelle
+  tat es schon. Bis dahin nahmen die Masken die Teilung 0 oder −3 an und
+  speicherten sie, und der Vernetzer machte daraus still 1 × 1;
 * **Formeln** in Tabellenzellen („= 2*3,5“) und die **Filterzeile** der
   Tabellen („> 1000“, „2..5“) lesen Komma oder Punkt ohne Tausender;
 * **noch nicht umgestellt** sind die Drehfelder mit Pfeilen (z. B. Teilungen,
@@ -3956,7 +3969,11 @@ Anzahl still „alle gleich“.
 Eine mehrdeutige Eingabe gilt erst, wenn sie bestätigt ist: in der Maske mit
 einem zweiten „Übernehmen“ oder einer zweiten Eingabetaste, im Dialog mit dem
 Haken im Feld oder zweimal Eingabetaste, im Register mit einem zweiten Klick
-auf den Knopf. Wer 33 000 meint, schreibt es mit Leerzeichen. Eine ungültige
+auf den Knopf. Wer 33 000 meint, schreibt es mit Leerzeichen. Die Bestätigung
+gilt nur für den Text, der bestätigt wurde: Ändert man das Feld und schreibt
+später wieder „33.000“, fragt es erneut. Bis zum 06.10.2026 blieb die
+Bestätigung stehen, und ein dauerhaftes Feld wie Fz im Register fragte beim
+selben Text nie wieder. Eine ungültige
 Eingabe wird nie still zu 0 oder zu einer anderen Zahl; ein leeres Feld zählt
 wie bisher als 0. Nach dem Verlassen steht die Zahl formatiert da: mit Komma,
 Tausender mit Leerzeichen, nie als „2e+06“ (die Ansicht bleibt beim Punkt).
@@ -4352,6 +4369,10 @@ mit der Liste der Querschnitte. Die Maske hat drei Teile, von oben nach unten:
 
    Rechts stehen Bild und Kennwerte, die bei jeder Änderung mitlaufen; ein
    Fehler (Knoten fehlt, Element ohne Länge) steht rot dort und sperrt OK.
+   Knoten- und Elementnummern (auch die Knoten eines Flächenpolygons) sind
+   ganze Zahlen: „2,5“ als Knotennummer oder „1,9“ als Element-von meldet
+   „… hier ist eine ganze Zahl verlangt“ und sperrt OK. Bis zum 06.10.2026
+   wurde „2,5“ still zu Knoten 2 und überschrieb ihn, „1,9“ zu Element 1.
    Das Ergebnis ist ein zusammengesetzter Querschnitt nach dem Satz von
    Steiner mit Hauptachsen und Hauptachsenwinkel; der Editorinhalt reist mit
    und lässt sich über den Editor wieder öffnen. It ist bei Elementen der
@@ -4905,6 +4926,28 @@ Name gehört, etwa „„K1“ ist schon der Name einer Kombination - ein Lastfa
 und eine Kombination dürfen nicht gleich heißen, ihre Ergebnisse verdeckten
 einander“. Im Browser weist das Umbenennen eines Lastfalls einen vergebenen
 Namen ebenso ab.
+
+**Komma und Semikolon im Namen (seit 06.10.2026).** Einen Namen mit Komma
+oder Semikolon weist dieselbe Prüfung ab, beim Anlegen und Umbenennen in den
+Masken und Dialogen, im Browser und bei den Generatoren, mit einem Hinweis wie
+„„W, links“ enthält ein Komma – … bitte ohne schreiben, etwa „W links““. Der
+Grund: In den Listenfeldern trennen Komma und Semikolon die Namen, und ein
+Name mit Trenner wurde dort zerlegt. Die Stellungsmaske ließ den Lastfall „W,
+links“ beim Öffnen unangehakt und nahm ihn beim Übernehmen still aus der
+Stellung – die Stellung rechnete ihn danach nicht mehr –, und die
+Situationsmaske meldete „Unbekannt: W, links“. In den Textfeldern, in denen
+man Namen tippt (die Faktoren einer Kombination, der Verlauf einer
+Ermüdungslast), lässt sich ein solcher Name ohnehin nicht schreiben. Die
+Regel gilt, bis die Namensregel Namen und Bezeichnungen trennt; dann darf die
+Bezeichnung ein Komma tragen. Ein Name mit Komma, der schon da ist (aus
+einer älteren Datei oder einem Import, die Importe prüfen ihre Namen noch
+nicht), bleibt, wie er ist: Die Haken der Stellungs- und der Situationsmaske
+tragen die Namen seit dem 06.10.2026 als Liste und nicht mehr als Text mit
+Komma, so dass er dort angehakt, abgehakt und übernommen wird, und die übrigen
+Eigenschaften des Lastfalls lassen sich weiter ändern. Das gilt ebenso für die
+Gelenke und Lager der Stellungsmaske. Bildet das Programm den Namen selbst
+und enthält der Vorschlag Komma oder Semikolon, lässt es sie weg: Die Kopie
+von „W, links“ heißt „W links_Kopie“.
 
 ### Kombinationstypen und Umhüllende im Klartext (seit 03.10.2026)
 

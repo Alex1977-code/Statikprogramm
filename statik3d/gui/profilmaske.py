@@ -612,6 +612,22 @@ def _zahl(text: str, vorgabe: float = 0.0) -> float:
     return zl.feldwert(text, vorgabe)
 
 
+def _ganz(text: str, wo: str) -> int:
+    """Eine Nummer aus einer Zelle (Knoten, Element von/bis, Flaechenpolygon):
+    nur eine ganze Zahl (F23, 06.10.2026). Bis dahin las der Editor sie mit
+    ``int(_zahl(...))``: „2,5“ wurde still zu 2 und ueberschrieb Knoten 2, „1,9“
+    als Element-von wurde still zu 1. Jetzt wirft jeder andere Eintrag
+    zl.Eingabefehler - ``aktualisieren`` zeigt ihn rot und sperrt OK. ``wo``
+    steht vorn in der Meldung („Knotennummer“, „Element von“)."""
+    try:
+        wert = zl.feldwert(text, None, ganz=True)
+    except zl.Eingabefehler as ex:
+        raise zl.Eingabefehler(f"{wo} {ex}") from None
+    if wert is None:
+        raise zl.Eingabefehler(f"{wo}: leer")
+    return int(wert)
+
+
 def _nummer(text: str, vorgabe: int = 0) -> int:
     """Eine Knotennummer aus einer Zelle (Nummer, keine Masszahl): was keine
     ganze Zahl ist, liefert ``vorgabe`` - nur zum Weiterzaehlen."""
@@ -849,17 +865,17 @@ class ProfilEditor(QtWidgets.QDialog):
         for r in range(self.tb_knoten.rowCount()):
             nr = self._text(self.tb_knoten, r, 0).strip()
             if nr:
-                knoten[int(_zahl(nr))] = (_zahl(self._text(self.tb_knoten, r, 1)) * MM,
-                                          _zahl(self._text(self.tb_knoten, r, 2)) * MM)
+                knoten[_ganz(nr, "Knotennummer")] = (_zahl(self._text(self.tb_knoten, r, 1)) * MM,
+                                                     _zahl(self._text(self.tb_knoten, r, 2)) * MM)
         elemente = []
         for r in range(self.tb_elemente.rowCount()):
             a, b = self._text(self.tb_elemente, r, 0).strip(), self._text(self.tb_elemente, r, 1).strip()
             if a and b:
-                elemente.append((int(_zahl(a)), int(_zahl(b)),
+                elemente.append((_ganz(a, "Element von"), _ganz(b, "Element bis"),
                                  _zahl(self._text(self.tb_elemente, r, 2)) * MM))
         flaechen = []
         for r in range(self.tb_flaechen.rowCount()):
-            nrn = [int(_zahl(x)) for x in re.split(r"[,;\s]+", self._text(self.tb_flaechen, r, 0)) if x]
+            nrn = [_ganz(x, "Flächenknoten") for x in re.split(r"[,;\s]+", self._text(self.tb_flaechen, r, 0)) if x]
             if nrn:
                 flaechen.append({"knoten": nrn, "loch": self._haken(self.tb_flaechen, r, 1)})
         return {"teile": teile, "knoten": knoten, "elemente": elemente, "flaechen": flaechen}

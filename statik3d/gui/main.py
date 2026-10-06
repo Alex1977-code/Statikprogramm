@@ -2407,6 +2407,29 @@ class MainWindow(QtWidgets.QMainWindow):
         from .. import zahlen as zl
         anfang = anfang or {}
         felder = getattr(maske, "_felder", {}) or {}
+
+        def lies(key, fart, v):
+            """Die Zahl eines Zahlenfelds der Maske (None = leer)."""
+            feld = felder.get(key)
+            return feld.wert(None) if isinstance(feld, zf.Zahlenfeld) else \
+                (float(v) if isinstance(v, (int, float)) else zl.zahl_wert(v, fart == "ganz"))
+
+        # Die Teilungen (Felder „ganz“) sind mindestens 1 (F24, 06.10.2026) - geprueft,
+        # bevor etwas gemerkt oder geschrieben wird: eine Teilung 0 oder -2 nahm die
+        # Maske bis dahin an, und der Vernetzer machte daraus still 1. Nur was sich
+        # gegen den Stand beim Oeffnen geaendert hat, zaehlt.
+        zu_klein = []
+        for key, text, fart, _l, _s, _w in spec:
+            if fart != "ganz":
+                continue
+            try:
+                wert = lies(key, fart, w.get(key, ""))
+            except ValueError:
+                continue                    # ungueltig: meldet die Schleife unten
+            if wert is not None and wert < 1 and wert != anfang.get(key, None):
+                zu_klein.append(f"{text}: ganze Zahl ab 1 erwartet, „{zl.zahl_text(wert)}“ eingetragen")
+        if zu_klein:
+            return self.hinweis("\n".join(zu_klein[:5]) + " - nichts übernommen")
         self.merken(f"{self._auswahl_anzahl(art, len(namen))} bearbeitet")
         schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         for key, text, fart, _lesen, schreiben, _werte in spec:
@@ -2416,12 +2439,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 wert = (v == "ja") if fart == "jn" else v
             elif fart in ("zahl", "ganz"):
-                feld = felder.get(key)
                 try:
                     # leer = unveraendert; „Übernehmen“ hat ungueltige und
                     # unbestaetigte Eingaben schon abgewiesen (freigeben)
-                    wert = feld.wert(None) if isinstance(feld, zf.Zahlenfeld) else \
-                        (float(v) if isinstance(v, (int, float)) else zl.zahl_wert(v, fart == "ganz"))
+                    wert = lies(key, fart, v)
                 except ValueError as ex:
                     if str(v).strip():
                         fehler.append(f"{text}: {ex}")
@@ -8090,11 +8111,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return False
 
     @staticmethod
-    def _zahlenliste(text, zahl=int, anzahl=None, feld: str = "") -> list:
+    def _zahlenliste(text, zahl=int, anzahl=None, feld: str = "", minimum=None) -> list:
         """Die Zahlen einer Eingabe („1, 2 3“) - ganz oder mit Komma.
 
-        Ganz: Nummernlisten (Knoten, Elemente, Teilung) - ohne ``anzahl``
-        faellt weg, was keine Nummer ist. Mit Komma (Stab-Versatz y, z;
+        Ganz: Nummernlisten (Knoten, Elemente, Teilung). Ein Eintrag, der
+        keine ganze Zahl ist („2,5“, „x“, „1x“), wirft zl.Eingabefehler - mit
+        und ohne ``anzahl``. Bis zum 06.10.2026 liess eine Liste ohne
+        ``anzahl`` solche Eintraege still weg („1, 2,5“ war [1], „3, 4, x, 5“
+        war [3, 4, 5]: die Linie bekam ohne Meldung andere Knoten; Fehlerliste
+        F22). ``minimum``: kleinster erlaubter Eintrag (Teilung: 1) - sonst
+        Eingabefehler; bis zum 06.10.2026 nahmen die Masken Flaeche und
+        Volumen eine Teilung 0 oder -3 an, und der Vernetzer machte daraus
+        still 1 (F24). Mit Komma (Stab-Versatz y, z;
         Ersatzachse; Gewichte): jede Zahl nach der Regel der Zahlenfelder, ein
         mehrdeutiger („1.000“) oder ungueltiger Eintrag wirft zl.Eingabefehler, einen
         ValueError (25.09.2026; bis dahin wurde „1.000“ still 1 und „1,0,0“ fiel
@@ -8109,17 +8137,34 @@ class MainWindow(QtWidgets.QMainWindow):
         if zahl is int:
             roh = str(text or "").replace("×", " ").strip()
             teile = [t.strip() for t in zl.LISTENTRENNER.split(roh) if t.strip()]
-            if anzahl is None:
-                return [int(t) for t in teile if t.lstrip("-").isdigit()]
-            falsch = next((t for t in teile if not t.lstrip("+-").isdigit()), None)
+            wo = f"{feld}: " if feld else ""
+            falsch = next((t for t in teile if not re.fullmatch(r"[+-]?[0-9]+", t)), None)
             if falsch is not None:
-                raise zl.Eingabefehler(f"{feld + ': ' if feld else ''}„{falsch}“ ist keine ganze Zahl.")
-            return zl.anzahl_pruefen([int(t) for t in teile], anzahl, feld, text)
+                # „1,2“ als zwei Nummern gemeint? Das Komma zwischen Ziffern ist ein
+                # Dezimalkomma - Nummern mit Leerzeichen oder „, “ trennen
+                tipp = (" Nummern mit Leerzeichen oder Komma und Leerzeichen trennen."
+                        if re.fullmatch(r"[+-]?[0-9]+(,[0-9]+)+", falsch) else "")
+                raise zl.Eingabefehler(f"{wo}„{falsch}“ ist keine ganze Zahl.{tipp}")
+            werte = [int(t) for t in teile]
+            if anzahl is not None:
+                zl.anzahl_pruefen(werte, anzahl, feld, text)
+            if minimum is not None:
+                klein = next((v for v in werte if v < minimum), None)
+                if klein is not None:
+                    raise zl.Eingabefehler(
+                        f"{wo}ganze Zahlen ab {minimum} erwartet, „{roh}“ enthält {klein}.")
+            return werte
         return zl.zahlenliste(text, anzahl, feld)
 
     @staticmethod
     def _namensliste(text) -> list:
-        import re
+        """Die Namen eines Listenfelds: ein Text wird an Komma, Semikolon und
+        mehreren Leerzeichen getrennt; eine **Liste** (die Haken der
+        Mehrfachwahl, Maske.werte) bleibt, wie sie ist - ein Name mit Komma ist
+        darin ein Name (F21, 06.10.2026; bis dahin gingen auch die Haken als
+        Text durch und wurden hier zerlegt)."""
+        if isinstance(text, (list, tuple, set, frozenset)):
+            return [str(t).strip() for t in text if str(t).strip()]
         return [t.strip() for t in re.split(r"[,;]+|\s{2,}", str(text or "").strip()) if t.strip()]
 
     @staticmethod
@@ -8679,12 +8724,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 def liste(attr):
                     return ", ".join(getattr(st, attr, []) or []) if st else ""
 
+                def eintraege(attr):
+                    # die Haken der Mehrfachwahl gehen als Liste in die Maske: ein
+                    # Name mit Komma bleibt ein Name (F21, 06.10.2026)
+                    return list(getattr(st, attr, []) or []) if st else []
+
                 def lagernamen(lart):
                     return [((getattr(x, "name", "") or "").strip() or str(i))
                             for i, x in enumerate(self._lagerliste_von(lart))]
 
                 felder = [F("name", "Bezeichnung", "text", name, breite=150),
-                          F("faelle", "Lastfälle dieser Stellung", "mehrfach", liste("faelle"),
+                          F("faelle", "Lastfälle dieser Stellung", "mehrfach", eintraege("faelle"),
                             list(m.load_cases),
                             hinweis="Nur angehakte Lastfälle rechnet „Alle Stellungen“; ohne Haken "
                                     "rechnet die Stellung nichts, und das Protokoll sagt es",
@@ -8715,16 +8765,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             hinweis="Namen, durch Komma - oder in der Ansicht wählen und „Auswahl deaktivieren“"),
                           F("flaechen_aus", "Deaktivierte Flächen", "text", liste("flaechen_aus"), breite=170),
                           F("koerper_aus", "Deaktivierte Volumen", "text", liste("koerper_aus"), breite=170),
-                          F("gelenke_aus", "Deaktivierte Gelenke", "mehrfach", liste("gelenke_aus"),
+                          F("gelenke_aus", "Deaktivierte Gelenke", "mehrfach", eintraege("gelenke_aus"),
                             list(m.hinges), hinweis="angehakte Gelenke sind in der Stellung biegesteif"),
-                          F("lager_aus", "Deaktivierte Knotenlager", "mehrfach", liste("lager_aus"),
+                          F("lager_aus", "Deaktivierte Knotenlager", "mehrfach", eintraege("lager_aus"),
                             lagernamen("lager"), hinweis="Namen oder Nummern wie im Modellbaum - anhaken; "
                                                           "oder Knoten in der Ansicht wählen und „Auswahl "
                                                           "deaktivieren“"),
-                          F("linienlager_aus", "Deaktivierte Linienlager", "mehrfach", liste("linienlager_aus"),
+                          F("linienlager_aus", "Deaktivierte Linienlager", "mehrfach", eintraege("linienlager_aus"),
                             lagernamen("linienlager")),
                           F("flaechenlager_aus", "Deaktivierte Flächenlager", "mehrfach",
-                            liste("flaechenlager_aus"), lagernamen("flaechenlager"))]
+                            eintraege("flaechenlager_aus"), lagernamen("flaechenlager"))]
                 titel = f"Stellung {name}"
                 hinweis = ("Lage gegen die Ausgangsstellung und alles, was in dieser Stellung nicht wirkt. "
                            "Stab, Fläche oder Volumen in der Ansicht anklicken: aus - noch einmal: wieder "
@@ -8889,7 +8939,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 master = int(float(w.get("master", 0)))
             except (TypeError, ValueError):
                 master = 0
-            slaves = [n for n in self._zahlenliste(w.get("slaves")) if 0 <= n < self.model.nn and n != master]
+            slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
+                      if 0 <= n < self.model.nn and n != master]
             return {"gewichte": self._zahlenliste(
                 w.get("gewichte"), zahl=float, anzahl=len(slaves) or None,
                 feld="Gewichte (RBE3, eines je angeschlossenem Knoten)")}
@@ -8920,7 +8971,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         if art == "starrkoerper":
             master = knoten("master")
-            slaves = [n for n in self._zahlenliste(w.get("slaves")) if 0 <= n < m.nn and n != master]
+            slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
+                      if 0 <= n < m.nn and n != master]
             if not 0 <= master < m.nn or not slaves:
                 return "Masterknoten und mindestens ein angeschlossener Knoten nötig"
         return None
@@ -9008,7 +9060,8 @@ class MainWindow(QtWidgets.QMainWindow):
             i = len(m.starrkoerper) - 1
         sk = m.starrkoerper[i]
         master = knoten("master")
-        slaves = [n for n in self._zahlenliste(w.get("slaves")) if 0 <= n < m.nn and n != master]
+        slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
+                  if 0 <= n < m.nn and n != master]
         sk.master, sk.slaves = master, slaves       # geprueft in _verbindung_pruefen
         sk.art = "RBE3" if str(w.get("art", "RBE2")).upper() == "RBE3" else "RBE2"
         sk.gewichte =gew if len(gew) == len(slaves) else []
@@ -9233,7 +9286,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 namen += [x for x in neue if x not in namen]
             else:
                 namen = [x for x in namen if x not in neue]
-            maske.setzen(feld, ", ".join(namen))
+            maske.setzen(feld, namen)           # als Liste: ein Lagername darf ein Komma tragen (F21)
         self._stellung_vorschau(maske, name)
         self.statusBar().showMessage("Auswahl in der Stellung " + ("deaktiviert" if aus else "aktiviert"), 3000)
 
@@ -10535,7 +10588,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.info(f"Knoten {i} und {ziel} haben die Nummern getauscht")
                     name = str(ziel)
             elif art == "linie":
-                knoten = self._zahlenliste(w.get("kn"))
+                knoten = self._zahlenliste(w.get("kn"), feld="Knoten")
                 if len(knoten) < 2 or any(not 0 <= n < m.nn for n in knoten):
                     return self.hinweis("Eine Linie braucht mindestens zwei vorhandene Knoten")
                 neuname = (w.get("name") or name).strip()
@@ -10600,7 +10653,7 @@ class MainWindow(QtWidgets.QMainWindow):
                               "der Stab rechnet ohne Wölbkrafttorsion")
                 m.stab_woelb_setzen(int(name), woelb)
             elif art == "stab":
-                els = self._zahlenliste(w.get("elemente"))
+                els = self._zahlenliste(w.get("elemente"), feld="Elemente")
                 els = [e for e in els if 0 <= e < len(m.elements) and m.elements[e].typ in vp.TYPEN_STAEBE]
                 if not els:
                     return self.hinweis("Elemente (Nummern von Stabelementen) angeben")
@@ -10648,7 +10701,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self.hinweis("Unbekannte Linien: " + ", ".join(fehlt[:5]))
                 # eine Zahl fuer beide Richtungen oder zwei (25.09.2026: mehr
                 # wurden still gespeichert, Buchstaben fielen still weg)
-                teilung = self._zahlenliste(w.get("teilung"), anzahl=(1, 2), feld="Teilung") or [4, 4]
+                teilung = self._zahlenliste(w.get("teilung"), anzahl=(1, 2), feld="Teilung",
+                                            minimum=1) or [4, 4]
                 teilung = teilung * 2 if len(teilung) == 1 else teilung
                 neuname = (w.get("name") or name).strip()
                 self.merken(f"Fläche {neuname}")
@@ -10680,7 +10734,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if fehlt:
                     return self.hinweis("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
                 # eine Zahl fuer alle Richtungen oder drei (25.09.2026)
-                teilung = self._zahlenliste(w.get("teilung"), anzahl=(1, 3), feld="Teilung") or [4, 4, 4]
+                teilung = self._zahlenliste(w.get("teilung"), anzahl=(1, 3), feld="Teilung",
+                                            minimum=1) or [4, 4, 4]
                 teilung = teilung * 3 if len(teilung) == 1 else teilung
                 kerbfall = (zl.feldwert(w.get("kerbfall"), 0.0) or 0.0) * 1e6
                 kerbfall_naht = (zl.feldwert(w.get("kerbfall_naht"), 0.0) or 0.0) * 1e6
@@ -11461,9 +11516,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("stellung", "Stellung", "wahl", wahl, stellungen,
                     hinweis="die Lage des Systems samt allem, was darin nicht wirkt"),
                   F("beschreibung", "Beschreibung", "text", sit.beschreibung, breite=170),
-                  F("lastfaelle", "Lastfälle", "mehrfach", ", ".join(faelle), list(m.load_cases),
+                  F("lastfaelle", "Lastfälle", "mehrfach", list(faelle), list(m.load_cases),
                     hinweis="Lastfälle, die in dieser Situation gelten - anhaken", verweis="lastfall"),
-                  F("kombinationen", "Kombinationen", "mehrfach", ", ".join(kombis), list(m.combinations),
+                  F("kombinationen", "Kombinationen", "mehrfach", list(kombis), list(m.combinations),
                     hinweis="Kombinationen dieser Situation - sie überlagern nur ihre Lastfälle",
                     verweis="kombination")]
         halter: dict = {}
@@ -11474,8 +11529,8 @@ class MainWindow(QtWidgets.QMainWindow):
             aus = set()
 
         def alle_faelle():
-            halter["m"].setzen("lastfaelle", ", ".join(m.load_cases))
-            halter["m"].setzen("kombinationen", ", ".join(m.combinations))
+            halter["m"].setzen("lastfaelle", list(m.load_cases))
+            halter["m"].setzen("kombinationen", list(m.combinations))
 
         zusatz = [("Alle Lastfälle und Kombinationen", alle_faelle)]
         maske = msk.Maske("Neu: Situation" if neu else f"Situation {sit.name}", felder,
@@ -14489,7 +14544,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if ln is None or k not in (4, 5):
             return False
         if k == 4:
-            knoten = self._zahlenliste(wert)
+            # ein Eintrag, der keine Nummer ist, wird abgewiesen statt wegzufallen
+            # (F22, 06.10.2026)
+            try:
+                knoten = self._zahlenliste(wert, feld="Knoten")
+            except zl.Eingabefehler as ex:
+                self.hinweis(f"{str(ex).rstrip('.')} - nicht übernommen")
+                return False
             if len(knoten) < 2 or any(not 0 <= n < self.model.nn for n in knoten):
                 self.info("Eine Linie braucht mindestens zwei vorhandene Knoten - nicht übernommen")
                 return False
