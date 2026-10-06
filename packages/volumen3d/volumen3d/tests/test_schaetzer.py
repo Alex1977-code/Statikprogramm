@@ -128,5 +128,56 @@ def test_flaechen_punkte():
           voll > 0 and schraeg > 0 and fehler < 1e-12)
 
 
+def _energie(pr, sig):
+    from volumen3d.fcm.schaetzer import energiefehler
+    return energiefehler(pr, np.zeros(pr.gitter.n_dof), sig)[1]
+
+
+def test_konsistenz():
+    """Felder im Ansatzraum ergeben eta auf Rundungsniveau (Regel 3): Zellresiduum, Spruenge und Randreste verschwinden fuer die exakte Loesung. Schranken wie
+    test_patch_hoeherer_ordnung: 1e-8 bei p 2, 1e-7 bei p 3 (die Zwangsmatrix gibt Polynome bei p 3 nur auf rund 1e-9 wieder, Theorie 11.21 H4)."""
+    from volumen3d.fcm.schaetzer import schaetzen
+    from volumen3d.tests import test_patch as T
+    pr = T._problem(2, 1e-8)
+    s0 = T.sigma_exakt()
+    U = pr.loesen({"alles": T.u_exakt})[:, 0]
+    eta = schaetzen(pr, U, {"alles": T.u_exakt}).gesamt
+    ref = _energie(pr, lambda P: np.broadcast_to(s0, (len(P), 6)))
+    check(f"Patch-Koerper p 2, lineares Feld: eta / ||u||_E = {eta / ref:.1e} (< 1e-8)", eta / ref < 1e-8)
+    for p, k in ((2, 2), (3, 3)):
+        u, sig, f, _ = T._polynomfeld(k)
+        _, _, pr = T._polynomfehler(p, k)
+        U = pr.loesen({"alles": u}, zusatzlasten=[T._lastvektor(pr, f)])[:, 0]
+        eta = schaetzen(pr, U, {"alles": u}, volumenlast=f).gesamt
+        ref = _energie(pr, sig)
+        schranke = 1e-8 if p == 2 else 1e-7
+        check(f"Patch-Koerper p {p}, Feld vom Grad {k} mit Volumenlast: eta / ||u||_E = {eta / ref:.1e} (< {schranke:.0e})", eta / ref < schranke)
+
+
+def _lame_sigma(P):
+    from volumen3d.tests import test_lame as L
+    P = np.asarray(P, float).reshape(-1, 3)
+    r = np.hypot(P[:, 0], P[:, 1])
+    c, s = P[:, 0] / r, P[:, 1] / r
+    sr, sphi = L._lame(r)
+    o = np.zeros(len(P))
+    return np.stack([sr * c * c + sphi * s * s, sr * s * s + sphi * c * c, L.NU * (sr + sphi), (sr - sphi) * s * c, o, o], axis=1)
+
+
+def test_lame():
+    """Lame p 2, h 20 und h 10: eta faellt, Effektivitaetsindex gegen die exakte Loesung in [0,1; 10] und zwischen beiden Gittern um hoechstens den Faktor 3."""
+    from volumen3d.fcm.schaetzer import energiefehler, schaetzen
+    from volumen3d.tests import test_lame as L
+    werte = []
+    for h in (20.0, 10.0):
+        pr, aus = L._rechnen(2, h)
+        eta = schaetzen(pr, aus.U).gesamt
+        e = energiefehler(pr, aus.U, _lame_sigma)[1]
+        werte.append((h, eta, e, eta / e))
+    (_, eta1, e1, t1), (_, eta2, e2, t2) = werte
+    check(f"Lame p 2: eta {eta1:.3e} -> {eta2:.3e}, ||e||_E {e1:.3e} -> {e2:.3e}, Effektivitaet {t1:.2f} / {t2:.2f}",
+          eta2 < eta1 and e2 < e1 and all(0.1 < t < 10.0 for t in (t1, t2)) and max(t1, t2) / min(t1, t2) < 3.0)
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_hesse, test_lasten_aufgezeichnet, test_flaechen_paare, test_flaechen_punkte]))
+    sys.exit(lauf([test_hesse, test_lasten_aufgezeichnet, test_flaechen_paare, test_flaechen_punkte, test_konsistenz, test_lame]))
