@@ -86,6 +86,41 @@ def basis_3d(p: int, xi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return N, dN
 
 
+def legendre_1d_d2(p: int, xi: np.ndarray) -> np.ndarray:
+    """Zweite Ableitungen d2N/dxi2 (n,p+1) der 1D-Basis: 0 fuer die linearen Moden, fuer j >= 2 phi_j'' = sqrt((2j-1)/2) P'_{j-1}
+    mit P'_k = sum_{i = k-1, k-3, ...} (2i+1) P_i (Fehlerschaetzer: Zellresiduum div sigma, Teilprojekt 6a)."""
+    xi = np.asarray(xi, float).ravel()
+    d2 = np.zeros((len(xi), p + 1))
+    if p >= 2:
+        P = L.legvander(xi, p)
+        for j in range(2, p + 1):
+            k = j - 1
+            dPk = np.zeros(len(xi))
+            for i in range(k - 1, -1, -2):
+                dPk += (2 * i + 1) * P[:, i]
+            d2[:, j] = np.sqrt((2 * j - 1) / 2.0) * dPk
+    return d2
+
+
+def basis_3d_hesse(p: int, xi: np.ndarray) -> np.ndarray:
+    """Hesse-Matrizen d2N/dxi_a dxi_b (n,m,3,3) in Referenzkoordinaten, Modenordnung wie basis_3d."""
+    xi = np.asarray(xi, float).reshape(-1, 3)
+    Na, da = legendre_1d(p, xi[:, 0])
+    Nb, db = legendre_1d(p, xi[:, 1])
+    Nc, dc = legendre_1d(p, xi[:, 2])
+    ea, eb, ec = legendre_1d_d2(p, xi[:, 0]), legendre_1d_d2(p, xi[:, 1]), legendre_1d_d2(p, xi[:, 2])
+    abc = _indizes(p)
+    A, B, C = abc[:, 0], abc[:, 1], abc[:, 2]
+    H = np.empty((len(xi), len(abc), 3, 3))
+    H[:, :, 0, 0] = ea[:, A] * Nb[:, B] * Nc[:, C]
+    H[:, :, 1, 1] = Na[:, A] * eb[:, B] * Nc[:, C]
+    H[:, :, 2, 2] = Na[:, A] * Nb[:, B] * ec[:, C]
+    H[:, :, 0, 1] = H[:, :, 1, 0] = da[:, A] * db[:, B] * Nc[:, C]
+    H[:, :, 0, 2] = H[:, :, 2, 0] = da[:, A] * Nb[:, B] * dc[:, C]
+    H[:, :, 1, 2] = H[:, :, 2, 1] = Na[:, A] * db[:, B] * dc[:, C]
+    return H
+
+
 @lru_cache(maxsize=None)
 def gauss_1d(n: int) -> tuple[np.ndarray, np.ndarray]:
     """Gauss-Legendre mit n Punkten auf [-1,1]: exakt bis Grad 2n-1."""
@@ -102,4 +137,4 @@ def gauss_3d(n: int) -> tuple[np.ndarray, np.ndarray]:
     return X, W
 
 
-__all__ = ["legendre_1d", "anzahl_moden", "modenklassen", "basis_3d", "gauss_1d", "gauss_3d"]
+__all__ = ["legendre_1d", "legendre_1d_d2", "anzahl_moden", "modenklassen", "basis_3d", "basis_3d_hesse", "gauss_1d", "gauss_3d"]
