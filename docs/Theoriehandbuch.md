@@ -5103,6 +5103,26 @@ Anwender, frühestens nach einer Messung am Drehlager. Ein unbekannter Wert
 der Einstellung rechnet verschachtelt und steht im Protokoll der
 Plastizität (`solver._kontakt_weg_melden`).
 
+**Stand 06.10.2026: als Versuch gekennzeichnet** (Fehlerliste F12). Bis zum
+06.10.2026 warnte vor dem anderen Weg durch die Reibung nur der Tooltip der
+Auswahl; ein gemeinsam gerechnetes Ergebnis sah aus wie ein verschachtelt
+gerechnetes. Seitdem heißt die Auswahl „gemeinsam (Versuch)“, und
+`solver._plastizitaet_rechnen` setzt bei jedem Ergebnis, das wirklich gemeinsam
+gerechnet ist (`solver._gemeinsam`), `res.info["plastizitaet"]["kontakt"] =
+"gemeinsam"` und hängt als letzte Zeile des Protokolls der Plastizität
+„WARNUNG: Iteration „gemeinsam“ (Versuch) …“ an (`plastizitaet.GEMEINSAM_WARNUNG`).
+Die Zeile geht mit dem Protokoll in den Fortschritt, also ins Protokoll der
+Oberfläche und in die Spalte „Meldung“ der Rechenliste, soweit der Posten
+seinen Fortschritt meldet (Kombinationen und Lastfälle in Ketten tun das
+nicht). `Results.summary` nennt die Warnung je Ergebnis, `Analysis.summary` und
+die Hinweise des Berichts gebündelt über alle Ergebnisse
+(`solver.gemeinsam_gebuendelt`) - auf demselben Weg wie
+`ausweichen_gebuendelt` und `dilatation_gebuendelt`. Die Rechnung selbst ist
+unverändert: am fließenden Block mit Reibung sind Verschiebungen und
+Auflagerkräfte von Lastfall und Kombination in beiden Einstellungen bitgleich
+zum Stand davor (`tests/test_fehler_p8.py`). Ein verschachtelt gerechnetes
+Ergebnis trägt weder den Eintrag noch die Zeile.
+
 **Das Problem.** Bis hierher war jede Lösung der Fließ-Iteration eine volle
 Kontakt-Iteration: der Newton ruft `loesen`, der Löser iteriert den Kontakt
 aus (warm vom letzten Zustand), erst dann kommt der nächste Newton-Schritt.

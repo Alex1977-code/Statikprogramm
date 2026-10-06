@@ -90,8 +90,28 @@ _P_DEV = np.array([
 WEGE = ("tangente", "anfangsdehnung")
 
 #: Wie Newton und Kontakt zusammen iterieren - siehe :func:`_newton`; der
-#: erste ist die Vorgabe
+#: erste ist die Vorgabe. "gemeinsam" ist seit dem 06.10.2026 als Versuch
+#: gekennzeichnet (Fehlerliste F12): die Oberflaeche nennt ihn „gemeinsam
+#: (Versuch)“, und jedes so gerechnete Ergebnis traegt GEMEINSAM_WARNUNG.
 KONTAKT_WEGE = ("verschachtelt", "gemeinsam")
+
+#: Die Warnung eines Ergebnisses, das mit ``kontakt = "gemeinsam"`` gerechnet
+#: ist (Fehlerliste vom 06.10.2026, F12; vorher warnte nur der Tooltip der
+#: Auswahl): an Reibung nahe der Grenzlast endet die gemeinsame Iteration in
+#: einem anderen Zustand als die verschachtelte, beide "konvergiert" (bis
+#: 78 N/mm2, Theoriehandbuch § 5e.3). Der Loeser setzt dann
+#: ``res.info["plastizitaet"]["kontakt"] = "gemeinsam"`` und schreibt
+#: "WARNUNG: Iteration „gemeinsam“ (Versuch) ..." ins Protokoll der
+#: Plastizitaet und in den Fortschritt (solver._plastizitaet_rechnen); die
+#: Zusammenfassung des Ergebnisses nennt sie (solver.Results.summary), die der
+#: Rechnung und die Hinweise des Berichts gebuendelt ueber alle Ergebnisse
+#: (solver.gemeinsam_gebuendelt). Der Text sagt mit Absicht nichts ueber die
+#: Konvergenz - die Rechenliste liest den Zustand eines Postens aus den
+#: Meldungen (gui.rechenliste.zustand_aus_meldung) -, und mit dem Vorsatz
+#: "WARNUNG: Iteration „gemeinsam“ (Versuch) " passt er in die 160 Zeichen
+#: ihrer Spalte "Meldung".
+GEMEINSAM_WARNUNG = ("kann nahe der Grenzlast einen anderen Weg durch die Reibung nehmen als "
+                     "„verschachtelt“; mit „verschachtelt“ gegenprüfen")
 
 #: Kleinster Verfestigungsmodul **der Tangente**, bezogen auf 3G. Bei sehr
 #: kleiner Verfestigung ist D_ep in Fliessrichtung fast singulaer (Eigenwert
@@ -124,8 +144,10 @@ class Plastizitaet:
     Loeser die Kontaktiteration innerhalb einer Laststufe abkuerzen (und in
     beiden Wegen den elastischen Vorlauf weg) - weniger Zerlegungen, an
     Reibung nahe der Grenzlast aber ein anderes Ergebnis; siehe
-    :func:`_newton`. Ein unbekannter Wert rechnet verschachtelt, und der
-    Loeser meldet ihn.
+    :func:`_newton`. Seit dem 06.10.2026 ist "gemeinsam" als Versuch
+    gekennzeichnet und jedes so gerechnete Ergebnis traegt eine Warnung
+    (:data:`GEMEINSAM_WARNUNG`). Ein unbekannter Wert rechnet verschachtelt,
+    und der Loeser meldet ihn.
     """
     an: bool = False
     verfestigung: float = 0.01
@@ -1120,7 +1142,12 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     Reibung: an Modellen nahe der Grenzlast lag die Vergleichsspannung bis zu
     78 N/mm2 neben der verschachtelten, beide "konvergiert"
     (Theoriehandbuch § 5e.3). Darum ist sie nicht die Vorgabe; ob sie es
-    wird, entscheidet der Anwender.
+    wird, entscheidet der Anwender. Bis zum 06.10.2026 warnte davor nur der
+    Tooltip der Auswahl - das Ergebnis selbst sah aus wie ein verschachtelt
+    gerechnetes (Fehlerliste F12). Seitdem heisst sie in der Oberflaeche
+    „gemeinsam (Versuch)“, und der Loeser haengt jedem so gerechneten
+    Ergebnis :data:`GEMEINSAM_WARNUNG` an (solver._plastizitaet_rechnen);
+    die Rechnung selbst ist dieselbe geblieben.
 
     Mit Kontakt steht jeder Loeseraufruf mit seiner Art in ``info["aufrufe"]``
     (Art, Laststufe, Schritt) - daraus baut der Loeser das Laufbuch.

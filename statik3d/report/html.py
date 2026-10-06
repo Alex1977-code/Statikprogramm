@@ -4384,7 +4384,7 @@ class Report:
         # eine Zeile je Grund ueber alle Ergebnisse. Bis zum 22.09.2026 stand
         # es nirgends im Bericht; der Anhang nannte nur den Loeser, der am Ende
         # gerechnet hat (Befund K2).
-        from ..solver import ausweichen_gebuendelt, dilatation_gebuendelt
+        from ..solver import ausweichen_gebuendelt, dilatation_gebuendelt, gemeinsam_gebuendelt
         ergebnisse = self.all_results()
         # Der Schwingungsnachweis rechnet seine Modalanalysen und den
         # Druckschwankungs-Lastfall selbst; sein Ausweichen steht in
@@ -4401,6 +4401,9 @@ class Report:
         self._warnings.extend(ausweichen_gebuendelt(mit_sw))
         # wo die Knotendilatation nicht greift (Befund B032, 24.09.2026)
         self._warnings.extend(dilatation_gebuendelt(ergebnisse))
+        # Ergebnisse aus der Iteration „gemeinsam“, einem Versuch (Fehlerliste
+        # F12, 06.10.2026; bis dahin stand davon nichts im Bericht)
+        self._warnings.extend(gemeinsam_gebuendelt(ergebnisse))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]

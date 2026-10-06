@@ -16421,20 +16421,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_kontakt = QtWidgets.QComboBox()
         # Erster Eintrag = Vorgabe (plastizitaet.KONTAKT_WEGE[0]); ein
         # unbekannter Wert aus einer Datei zeigt ihn an, und der Loeser
-        # rechnet ihn auch (24.09.2026)
+        # rechnet ihn auch (24.09.2026). „gemeinsam“ ist seit dem 06.10.2026
+        # als Versuch gekennzeichnet (Fehlerliste F12): der Wert bleibt, damit
+        # alte Modelle weiter laden und rechnen, und jedes so gerechnete
+        # Ergebnis traegt eine Warnung (plastizitaet.GEMEINSAM_WARNUNG)
         for t_, v_ in (("verschachtelt (Vorgabe)", "verschachtelt"),
-                       ("gemeinsam", "gemeinsam")):
+                       ("gemeinsam (Versuch)", "gemeinsam")):
             self.cb_plast_kontakt.addItem(t_, v_)
         self.cb_plast_kontakt.setToolTip(
             "Nur mit Kontakt.\n\n"
             "Verschachtelt (Vorgabe): jeder Newton-Schritt iteriert den Kontakt aus.\n\n"
-            "Gemeinsam: jede Laststufe beginnt mit voll auskonvergiertem Kontakt, die "
+            "Gemeinsam (Versuch): jede Laststufe beginnt mit voll auskonvergiertem Kontakt, die "
             "Newton-Schritte der Stufe rechnen je einen Kontaktschritt, und die Stufe endet "
             "erst mit voll auskonvergiertem Kontakt (abgekürzt wird nur mit der konsistenten "
             "Tangente). Läuft das weg, wird die Stufe verschachtelt wiederholt. Der elastische "
             "Vorlauf entfällt. Weniger Faktorisierungen an vielen Modellen, aber mit Reibung "
             "nahe der Grenzlast ein anderes Ergebnis (in den Proben bis 78 N/mm², beide "
-            "„konvergiert“) und dort auch teurer - siehe Benutzerhandbuch.")
+            "„konvergiert“) und dort auch teurer - siehe Benutzerhandbuch.\n\n"
+            "Darum ist „gemeinsam“ ein Versuch: jedes so gerechnete Ergebnis trägt eine Warnung "
+            "in seiner Zusammenfassung und in den Hinweisen des Berichts, ein Lastfall auch im "
+            "Protokoll und in der Rechenliste - es ist mit „verschachtelt“ gegenzuprüfen.")
         self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
         self.sp_plast_verf.setRange(0.0, 50.0)
         self.sp_plast_verf.setDecimals(2)

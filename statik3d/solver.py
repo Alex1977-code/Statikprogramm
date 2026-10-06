@@ -745,6 +745,41 @@ def dilatation_gebuendelt(ergebnisse) -> list:
     return list(zeilen)
 
 
+def gemeinsam_gerechnet(info) -> bool:
+    """Ist das Ergebnis mit der gemeinsamen Iteration von Fliessen und Kontakt
+    gerechnet? Das steht seit dem 06.10.2026 in
+    ``res.info["plastizitaet"]["kontakt"]`` (:func:`_plastizitaet_rechnen`,
+    nur wenn sie wirklich gerechnet wurde - :func:`_gemeinsam`). Aeltere
+    Ergebnisse tragen den Eintrag nicht, auch gemeinsam gerechnete."""
+    pz = info.get("plastizitaet") if isinstance(info, dict) else None
+    return isinstance(pz, dict) and pz.get("kontakt") == "gemeinsam"
+
+
+def gemeinsam_warnung() -> str:
+    """Die Warnung eines Ergebnisses, das mit „gemeinsam“ gerechnet ist
+    (Fehlerliste F12, 06.10.2026) - plastizitaet.GEMEINSAM_WARNUNG mit dem
+    Namen der Iteration davor."""
+    from . import plastizitaet as pl
+    return f"Iteration „gemeinsam“ (Versuch) {pl.GEMEINSAM_WARNUNG}"
+
+
+def gemeinsam_gebuendelt(ergebnisse) -> list:
+    """Die Warnung zur Iteration „gemeinsam“ (Fehlerliste F12, 06.10.2026)
+    ueber alle Ergebnisse in **einer** Zeile, mit den ersten drei Namen - fuer
+    die Hinweise des Berichts und die Zusammenfassung der Rechnung, auf
+    demselben Weg wie :func:`ausweichen_gebuendelt` und
+    :func:`dilatation_gebuendelt`. Am Drehlager stuende sie sonst je Lastfall
+    einmal da. ``ergebnisse``: (Name, Results)-Paare."""
+    from . import plastizitaet as pl
+    namen = [str(n) for n, r in ergebnisse if gemeinsam_gerechnet(getattr(r, "info", None))]
+    if not namen:
+        return []
+    n = len(namen)
+    return [f"Iteration „gemeinsam“ (Versuch) bei {n} Ergebnis{'' if n == 1 else 'sen'} "
+            f"({', '.join(namen[:3])}{' …' if n > 3 else ''}): sie {pl.GEMEINSAM_WARNUNG} "
+            "(Berechnung → Einstellungen → Plastizität, „Verfahren mit Kontakt“)."]
+
+
 def ausweichen_gebuendelt(ergebnisse) -> list:
     """Je Art von Ausweichgrund **eine** Zeile ueber alle Ergebnisse - fuer
     die Hinweise des Berichts und die Zusammenfassung der Oberflaeche.
@@ -1649,6 +1684,11 @@ class Results:
                      + (f", davon {pz['faktorisierungen']} mit neuer Faktorisierung "
                         "(konsistente Tangente)" if pz.get("faktorisierungen") else "")
                      + ("" if pz.get("konvergiert", True) else " - NICHT KONVERGIERT"))
+            # Fehlerliste F12 (06.10.2026): die gemeinsame Iteration ist ein
+            # Versuch - bis dahin sah ihr Ergebnis aus wie ein verschachtelt
+            # gerechnetes, nur der Tooltip der Auswahl warnte
+            if gemeinsam_gerechnet(self.info):
+                s.append(f"WARNUNG                 : {gemeinsam_warnung()}")
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
@@ -3582,6 +3622,12 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
         _schlussabnahme_kontakt(res)
+        # Fehlerliste F12 (06.10.2026): die Warnung als letzte Zeile des
+        # Protokolls der Plastizitaet - sie geht unten mit ihm in den
+        # Fortschritt (Protokoll der Oberflaeche, Spalte „Meldung“ der
+        # Rechenliste: die letzte Zeile vor der Marke des Postens bleibt dort
+        # stehen) und nach res.info["plastizitaet"]["log"]
+        log.append(f"WARNUNG: {gemeinsam_warnung()}")
     if not isinstance(temp, dict):
         temp = {}
     sig0 = temp.setdefault("sigma0", {})
@@ -3596,6 +3642,11 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
     res.info["plastizitaet"]["log"] = list(log)
+    if gemeinsam:
+        # woraus Zusammenfassung und Bericht die Warnung lesen
+        # (gemeinsam_gerechnet); verschachtelt bleibt der Eintrag weg, das
+        # Ergebnis ist dort dasselbe wie vor dem 06.10.2026
+        res.info["plastizitaet"]["kontakt"] = "gemeinsam"
     # eps_p_eq steht je Gausspunkt; gemeldet wird der groesste Wert des
     # Elements - ein Element gilt als fliessend, sobald ein Punkt fliesst.
     res.info["plastisch"] = {int(i): float(np.max(v)) for i, v in zustand.eps_p_eq.items()
@@ -6417,6 +6468,8 @@ class Analysis:
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
         s += dilatation_gebuendelt(self.all_results().items())
+        # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
+        s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen
         # (umhuellende_kurz). Bis zur Nachbesserung vom 04.10.2026 (Befund S3)
         # stand hier env.name, bei einer Ergebniskombination ihr blosser Name:

@@ -8214,6 +8214,32 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Wert der Einstellung (etwa „Gemeinsam“ aus einer Datei) rechnet die
   Vorgabe, die Maske zeigt sie, und das Protokoll der Plastizität nennt den
   Wert.
+
+  **Seit dem 06.10.2026 ist „gemeinsam“ als Versuch gekennzeichnet.** Die
+  Auswahl heißt „gemeinsam (Versuch)“, die Vorgabe bleibt „verschachtelt“,
+  und ein Modell, in dem „gemeinsam“ gespeichert ist, lädt und rechnet
+  weiter damit. Jedes Ergebnis, das so gerechnet ist, trägt eine Warnung. In
+  seiner Zusammenfassung steht unter der Zeile „Plastizität“ eine Zeile
+  „WARNUNG“ mit dem Text „Iteration „gemeinsam“ (Versuch) kann nahe der
+  Grenzlast einen anderen Weg durch die Reibung nehmen als „verschachtelt“;
+  mit „verschachtelt“ gegenprüfen“. Die
+  Zusammenfassung der ganzen Rechnung und die Liste „Offene Hinweise und
+  Warnungen“ im Bericht fassen alle betroffenen Ergebnisse in einer Zeile
+  zusammen und nennen die ersten drei beim Namen. Ein Lastfall, der seinen
+  Fortschritt meldet, schreibt dieselbe Warnung als letzte Zeile der
+  Plastizität ins Protokoll, wo sie orange erscheint, und sie bleibt danach
+  in der Spalte „Meldung“ der Rechenliste stehen. Kombinationen und
+  Lastfälle, die in Ketten rechnen, melden unterwegs nichts; bei ihnen steht
+  die Warnung nur in den Zusammenfassungen und im Bericht. Die Warnung
+  erscheint nur, wenn wirklich gemeinsam gerechnet wurde, also mit Fließen
+  und Kontakt. Ohne Kontakt, im Probelauf der adaptiven Vernetzung, mit
+  eingefrorenem Kontaktzustand und mit ausfallenden Zugstäben rechnet auch die
+  Einstellung „gemeinsam“ verschachtelt, und das Ergebnis trägt keine
+  Warnung. Gerechnet wird in beiden Einstellungen genau wie vorher. Bis zum
+  06.10.2026 hieß der Eintrag nur „gemeinsam“, und vor dem anderen Weg durch
+  die Reibung warnte allein der Tooltip der Auswahl; das Ergebnis sah aus wie
+  ein verschachtelt gerechnetes. Ergebnisse, die vor dem 06.10.2026 gerechnet
+  und gespeichert wurden, tragen die Warnung auch nach dem Öffnen nicht.
 * **Schlussabnahme der Plastizität** (23.09.2026, in beiden Einstellungen,
   wenn der Lösungsweg selbst iteriert — Kontakt oder ausfallende Zugstäbe):
   „konvergiert“ heißt jetzt auch, dass die plastischen Knotenlasten zur
