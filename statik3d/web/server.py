@@ -2245,6 +2245,10 @@ def replace_model(st: State, d: dict) -> dict:
         st.invalidate()
         st.touch()
         st.info(f"Modell geladen: {m.name} ({m.nn} Knoten, {len(m.elements)} Elemente)")
+        # was das Laden umgestellt hat (E6; Namen LF/LK/EK und die Tabelle
+        # alt -> neu seit R2-A2) - wie beim Oeffnen in der Oberflaeche
+        for z in getattr(m, "_ladehinweise", None) or []:
+            st.info("Hinweis: " + z)
         return {"ok": True, "message": "Modell geladen", "geometry_changed": True,
                 "state": state_summary(st)}
 

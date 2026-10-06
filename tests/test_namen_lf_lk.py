@@ -765,25 +765,34 @@ def test_n8_speichern_laden():
                           for c in mm.combinations.values()])
     check("N8 Speichern und Laden: bezeichnung, nummer und art gleich", felder(m2) == felder(m),
           str(felder(m2)))
-    check("N8 Dateifassung bleibt 8", d.get("format") == 8, str(d.get("format")))
+    # Fassung 9 seit R2-A2 (06.10.2026); A1 liess sie bei 8
+    check("N8 Dateifassung 9 (seit R2-A2)", d.get("format") == 9, str(d.get("format")))
 
-    # Alte Datei ohne die Felder (Fassung 8, 68db45b)
+    # Alte Datei ohne die Felder (Fassung 8, 68db45b). Seit R2-A2 wird sie
+    # beim Laden umgestellt: K1…K8 heissen LK1…LK8, die Ergebniskombinationen
+    # GZT und Ermüdung EK1 und EK2, der alte Name ist die Bezeichnung (bis zum
+    # 06.10.2026 lud sie mit den alten Namen, Nummer 0, Bezeichnung leer)
     alt_pfad = os.path.join(HIER, "daten", "fachbegriffe_68db45b", "modell.json")
     with open(alt_pfad, encoding="utf-8") as f:
         alt = json.load(f)
     ma = Model.from_dict(json.loads(json.dumps(alt)))
-    arten = {n: c.art for n, c in ma.combinations.items()}
-    check("N8 alte Datei: Art aus den Alternativen (GZT, Ermüdung EK, K1…K8 LK), Nummer 0, Bezeichnung leer",
-          arten == {**{f"K{i}": "LK" for i in range(1, 9)}, "GZT": "EK", "Ermüdung": "EK"}
-          and all(c.nummer == 0 and c.bezeichnung == "" for c in ma.combinations.values())
-          and all(lc.bezeichnung == "" for lc in ma.load_cases.values()), str(arten))
+    arten = {n: (c.art, c.nummer, c.bezeichnung) for n, c in ma.combinations.items()}
+    check("N8 alte Datei: umgestellt - LK1…LK8 und EK1, EK2 mit Nummer, Art aus den Alternativen, alter Name "
+          "als Bezeichnung; Lastfälle LF1…LF3 behalten ihren Namen",
+          arten == {**{f"LK{i}": ("LK", i, f"K{i}") for i in range(1, 9)},
+                    "EK1": ("EK", 1, "GZT"), "EK2": ("EK", 2, "Ermüdung")}
+          and [(n, lc.nummer, lc.bezeichnung) for n, lc in ma.load_cases.items()]
+          == [("LF1", 1, ""), ("LF2", 2, ""), ("LF3", 3, "")], str(arten))
     neu = ma.to_dict()
+    rueck = {c.name: c.bezeichnung for c in ma.combinations.values()}
     for lc in neu["load_cases"]:
         lc.pop("bezeichnung", None)
+        lc["nummer"] = 0
     for c in neu["combinations"]:
+        c["name"] = rueck[c["name"]]
         for k in ("nummer", "art", "bezeichnung", "erzeugt", "erzeugt_merkmal"):
             c.pop(k, None)
-    check("N8 alte Datei lädt wie bisher: Lastfälle, Kombinationen, aktiver Lastfall gleich",
+    check("N8 alte Datei lädt wie bisher bis auf Namen und Nummern: Lastfälle, Kombinationen, aktiver Lastfall",
           neu["load_cases"] == alt["load_cases"] and neu["combinations"] == alt["combinations"]
           and neu["active_case"] == alt["active_case"],
           f"{len(neu['combinations'])} Kombinationen")

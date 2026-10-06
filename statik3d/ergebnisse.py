@@ -61,13 +61,20 @@ def kennung(model) -> dict:
     alte Datei passte dann zum neuen Modell, die Werte standen an anderen
     Elementen (Gegenpruefung von 97be9ff). Die Dateiversion bleibt 1: alte
     Dateien ohne den Eintrag werden weiter gelesen (passt prueft ihn nur, wo
-    er steht), und ein aelteres Programm uebergeht den zusaetzlichen."""
+    er steht), und ein aelteres Programm uebergeht den zusaetzlichen.
+
+    „modellfassung“ (R2-A2, 06.10.2026): die Fassung der Modelldatei, zu der
+    die Namen der Ergebnisse gehoeren. Eine Datei ohne den Eintrag stammt von
+    vor der Umstellung auf LF/LK/EK und traegt die alten Namen; lesen
+    schluesselt sie mit der Tabelle der Umstellung um (_namen_umschluesseln)."""
+    from .model import FORMAT_VERSION
     knoten = np.asarray(model.nodes, float).reshape(-1, 3) if model.nn else np.zeros((0, 3))
     return {"version": VERSION, "name": str(model.name), "nn": int(model.nn),
             "ne": int(len(model.elements)),
             "koordinaten": float(np.round(knoten.sum(), 6)) if knoten.size else 0.0,
             "lastfaelle": sorted(model.load_cases),
-            "elemente": elementhash(model)}
+            "elemente": elementhash(model),
+            "modellfassung": FORMAT_VERSION}
 
 
 def passt(k: dict, model) -> tuple:
@@ -163,6 +170,10 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
         # bei der naechsten Rechnung neu
         if feld in ("model", "systeme", "modelle") + _ERGEBNISGRUPPEN:
             continue
+        if feld == "info" and isinstance(wert, dict) and "umstellung" in wert:
+            # die Hinweise des Umschluesselns gelten der gelesenen alten Datei,
+            # nicht der neu geschriebenen (R2-A2)
+            wert = {k: v for k, v in wert.items() if k != "umstellung"}
         inhalt[feld] = wert
     if fortschritt:
         fortschritt(0.4, "Ergebnisse schreiben")
@@ -220,6 +231,316 @@ def _huellen_umhaengen(an, model) -> None:
             an.info.setdefault("umhuellende_ueberschrieben", {})[n] = n
 
 
+class _Unsicher(Exception):
+    """Ein Name der Ergebnisdatei laesst sich nicht sicher umschluesseln."""
+
+
+#: Felder der Nachweisergebnisse, die den Namen einer Kombination, eines
+#: Lastfalls oder einer Alternative „<EK> [k]“ tragen (Anzeige): EC3
+#: (MemberCheck.governing, section_checks, stability, woelb: "combo"), GZG,
+#: Beulen, Lasteinleitung, Volumen, Anschluesse (kombination, je_kombination),
+#: Theorie II. Ordnung (Th2Info.kombination)
+_NAMENSFELDER = ("kombination", "combo")
+#: Listen solcher Namen (DesignResults/AnschlussResults.combinations,
+#: GZG-/Beul-/Einleitungs-/VolumenResults.kombinationen) - bei Theorie II./III.
+#: Ordnung ist ``kombinationen`` ein Woerterbuch {Name: Info}
+_LISTENFELDER = ("kombinationen", "combinations")
+#: Freie Texte, in denen ein Name nach seinem Klartext steht („Kombination K1
+#: nicht nachgewiesen“, „Ergebnis 'K1' fehlt“)
+_TEXTFELDER = ("warnungen", "warnings", "hinweise")
+#: Nachweise und Ergebnisse der Analyse, die Namen tragen koennen
+_NACHWEISE = (("design", "Nachweise EC3"), ("gzg", "Verformungsnachweise (GZG)"),
+              ("beulen", "Beulnachweise"), ("lasteinleitung", "Lasteinleitung"),
+              ("volumen", "Volumennachweise"), ("joints", "Anschlüsse"),
+              ("fatigue", "Ermüdung"), ("schwingung", "Schwingung"),
+              ("knicklaengen", "Knicklängen"), ("theorie2", "Theorie II. Ordnung"),
+              ("theorie3", "Theorie III. Ordnung"))
+
+
+def _namen_umschluesseln(an, model, tab: dict) -> None:
+    """Eine Ergebnisdatei von vor Fassung 9 auf die Namen der Umstellung
+    beim Laden bringen (Model._namen_umstellen, Paket R2-A2) - dieselben
+    Zahlen unter den neuen Namen, ohne Neurechnung.
+
+    Umgeschluesselt werden die Schluessel von ``cases``, ``combinations``
+    und ``alternativen`` („<EK> [k]“ wird „<EK neu> [k]“), ``Results.name``
+    und die Namen in ``Results.info`` (Grundlast, eingefrorener Zustand,
+    Herkunft des Starts), die Umhuellenden mit Schluessel, Herkunft
+    (``names``), ``kombination`` und ``name`` - nach _huellen_umhaengen, also
+    auch die R1-Schluessel „<Name> (Ergebniskombination)“ -, die Tabellen der
+    Theorie II./III. Ordnung, die Felder der Nachweise mit einem Namen
+    (_NAMENSFELDER, _LISTENFELDER, ``gleiche`` der EC3-Nachweise, auch
+    zusammengefasste Eintraege „A [1] = B [1]“), ihre Warnungstexte (nur der
+    Klartext „Lastfall X“, „Kombination X“, „Ergebnis 'X'“ - nie „Ermüdungslast
+    'X'“: RFEM-Ermuedungslasten heissen wie ihre FAT-Kombination) und die
+    Eintraege von
+    ``info`` mit Namen. Die Stellungsreihe steht nicht in der Ergebnisdatei
+    (sie lebt nur in der Sitzung) und kommt mit der naechsten Rechnung.
+
+    Ein Name, den das alte Modell nicht kannte (etwa die Umhuellende einer
+    danach geloeschten Ergebniskombination), bleibt, wie er ist - ausser er
+    gliche einem neuen Namen oder war schon im alten Modell mehrdeutig
+    (Lastfall und Kombination gleichen Namens). Dann wird verworfen, was ihn
+    traegt, und die Zusammenfassung nennt es: lieber neu rechnen als ein
+    Ergebnis unter einem falschen Namen zeigen. Die Hinweise stehen in
+    ``an.info["umstellung"]`` (Analysis.summary); geschrieben werden sie
+    nicht."""
+    import re
+    from .model import Model
+    from .solver import Results, Envelope, umhuellende_schluessel_im_modell
+    lf = dict(tab.get("lastfaelle") or {})
+    ko = dict(tab.get("kombinationen") or {})
+    zweideutig = set(tab.get("zweideutig") or ())
+    neue = set(model.load_cases) | set(model.combinations)
+    alt_muster = re.compile(r"(.+) \[(\d+)\]")
+    hinweise = []
+
+    def alternative(n):
+        t = alt_muster.fullmatch(n)
+        if t and t.group(1) in ko:
+            return f"{ko[t.group(1)]} [{t.group(2)}]"
+        return None
+
+    def name(n):
+        """Ein Name ohne Angabe, ob Lastfall, Kombination oder Alternative."""
+        if not isinstance(n, str):
+            return n
+        if n in zweideutig:
+            raise _Unsicher(n)
+        if n in lf:
+            return lf[n]
+        if n in ko:
+            return ko[n]
+        a = alternative(n)
+        if a is not None:
+            return a
+        # unbekannt (veraltet): bleibt, solange er keinen neuen Namen vortaeuscht
+        t = alt_muster.fullmatch(n)
+        if n in neue or (t is not None and t.group(1) in neue):
+            raise _Unsicher(n)
+        return n
+
+    def eintrag(n):
+        """Wie name, auch fuer zusammengefasste Eintraege „A [1] = B [1] = …“
+        (ec3.design._gleich_name)."""
+        if not isinstance(n, str) or " = " not in n or n in lf or n in ko or alternative(n):
+            return name(n)
+        return " = ".join(t if t.startswith("… (") else name(t) for t in n.split(" = "))
+
+    # Klartext in freien Texten: ein Durchgang, damit ein neuer Name nicht
+    # noch einmal ersetzt wird (K1 -> LK1, LK1 -> LK5)
+    geaendert_lf = {a: b for a, b in lf.items() if a != b}
+    geaendert_ko = {a: b for a, b in ko.items() if a != b}
+    muster_text = None
+    if (geaendert_lf or geaendert_ko) and not zweideutig:
+        namen = sorted(set(geaendert_lf) | set(geaendert_ko), key=len, reverse=True)
+        alternativen = "|".join(re.escape(n) for n in namen)
+        muster_text = re.compile(
+            rf"(?P<p>Lastfall |Lastfalls |Kombination |Ergebniskombination |Lastkombination )"
+            rf"(?P<n>{alternativen})(?!\w)|(?P<q>(?:Ergebnis|Überlagerung) ')(?P<m>{alternativen})(?P<e>')")
+
+    def text(t):
+        if muster_text is None or not isinstance(t, str):
+            return t
+
+        def ersetzen(mt):
+            if mt.group("p"):
+                p, n = mt.group("p"), mt.group("n")
+                tafel = geaendert_lf if p.startswith("Lastfall") else geaendert_ko
+                return p + tafel.get(n, n)
+            n = mt.group("m")
+            neu = geaendert_ko.get(n) if n not in lf else geaendert_lf.get(n)
+            return mt.group("q") + (neu or n) + mt.group("e")
+        return muster_text.sub(ersetzen, t)
+
+    def results_umschluesseln(r, neu_name) -> None:
+        if getattr(r, "name", None) is not None and isinstance(r.name, str):
+            r.name = neu_name
+        info = getattr(r, "info", None)
+        if not isinstance(info, dict):
+            return
+        if isinstance(info.get("grundlast"), list):
+            info["grundlast"] = [lf.get(x, x) for x in info["grundlast"]]
+        if info.get("contact_frozen_from"):
+            try:
+                info["contact_frozen_from"] = name(info["contact_frozen_from"])
+            except _Unsicher:
+                info.pop("contact_frozen_from")
+        for schl in ("start_angeboten_von", "theorie_fehler"):
+            if isinstance(info.get(schl), str):
+                info[schl] = text(info[schl])
+
+    # --- Lastfaelle, Kombinationen, Alternativen ---
+    neu_cases = {}
+    for n, r in an.cases.items():
+        n2 = lf.get(n)
+        if n2 is None:
+            hinweise.append(f"Lastfall „{n}“ der Ergebnisdatei gibt es im Modell nicht - verworfen")
+            continue
+        results_umschluesseln(r, n2)
+        neu_cases[n2] = r
+    an.cases = neu_cases
+    neu_k = {}
+    for n, r in an.combinations.items():
+        n2 = ko[n]                      # lesen hat fremde Kombinationen abgewiesen
+        results_umschluesseln(r, n2)
+        neu_k[n2] = r
+    an.combinations = neu_k
+    neu_alt = {}
+    for n, r in (getattr(an, "alternativen", None) or {}).items():
+        try:
+            n2 = alternative(n) or name(n)
+        except _Unsicher:
+            hinweise.append(f"Ergebnis der Alternative „{n}“ verworfen: der Name lässt sich nicht "
+                            "sicher zuordnen – neu rechnen")
+            continue
+        if n2 in neu_alt:
+            hinweise.append(f"Ergebnis der Alternative „{n}“ verworfen: „{n2}“ gibt es schon – neu rechnen")
+            continue
+        results_umschluesseln(r, n2)
+        neu_alt[n2] = r
+    an.alternativen = neu_alt
+
+    # --- Umhuellende (nach _huellen_umhaengen: kombination ist gesetzt, wo
+    # R1 den Schluessel geaendert hat; sonst heisst die Umhuellende einer
+    # Ergebniskombination wie ihr Schluessel) ---
+    schluessel = umhuellende_schluessel_im_modell(model)
+    neu_env = {}
+    for key, env in (getattr(an, "envelopes", None) or {}).items():
+        besitzer = getattr(env, "kombination", None)
+        if besitzer is None and getattr(env, "name", None) == key:
+            besitzer = key
+        try:
+            alt_namen = list(getattr(env, "names", None) or [])
+            namen = [name(x) for x in alt_namen]
+            if len(set(namen)) != len(set(alt_namen)):
+                raise _Unsicher(", ".join(alt_namen))
+            if besitzer is None:
+                k2 = key
+            elif besitzer in ko:
+                k2 = schluessel.get(ko[besitzer], ko[besitzer])
+            elif besitzer in neue or key in neue or besitzer in zweideutig:
+                raise _Unsicher(besitzer)
+            else:
+                k2 = key
+            if k2 in neu_env:
+                raise _Unsicher(k2)
+        except _Unsicher as ex:
+            hinweise.append(f"Umhüllende „{key}“ verworfen: der Name „{ex}“ lässt sich nicht sicher "
+                            "zuordnen – neu rechnen")
+            continue
+        if besitzer is not None and besitzer in ko:
+            env.kombination = ko[besitzer]
+            env.name = ko[besitzer]
+        if hasattr(env, "names"):
+            env.names = namen
+        neu_env[k2] = env
+    an.envelopes = neu_env
+
+    # --- info: Eintraege unter Namen; einer, der sich nicht sicher zuordnen
+    # laesst (eine veraltete „EK1“ neben der neuen EK1), faellt weg ---
+    info = an.info if isinstance(getattr(an, "info", None), dict) else {}
+
+    def neu_geschluesselt(d: dict, wert=lambda v: v) -> dict:
+        aus = {}
+        for n, v in d.items():
+            try:
+                aus[name(n)] = wert(v)
+            except _Unsicher:
+                continue
+        return aus
+    if isinstance(info.get("umhuellende"), dict):
+        info["umhuellende"] = neu_geschluesselt(info["umhuellende"])
+    if isinstance(info.get("umhuellende_schluessel"), dict):
+        # der R1-Schluessel einer umbenannten Ergebniskombination ist ihr
+        # neuer Name - der Hinweis „heißt … (Ergebniskombination)“ entfaellt
+        neu = {}
+        for n, kk in info["umhuellende_schluessel"].items():
+            if n in ko:
+                k2 = schluessel.get(ko[n], ko[n])
+                if k2 != ko[n]:
+                    neu[ko[n]] = k2
+            else:
+                neu.update(neu_geschluesselt({n: kk}))
+        info["umhuellende_schluessel"] = neu
+        if not neu:
+            info.pop("umhuellende_schluessel")
+    if isinstance(info.get("umhuellende_ueberschrieben"), dict):
+        info["umhuellende_ueberschrieben"] = neu_geschluesselt(info["umhuellende_ueberschrieben"])
+    if isinstance(info.get("kontakt_eingefroren"), dict):
+        neu = {}
+        for n, r in info["kontakt_eingefroren"].items():
+            try:
+                neu[name(n)] = name(r)
+            except _Unsicher:
+                continue
+        info["kontakt_eingefroren"] = neu
+    if isinstance(info.get("warnungen"), list):
+        info["warnungen"] = [text(z) for z in info["warnungen"]]
+
+    # --- Nachweise ---
+    def walk(obj, tiefe=0):
+        if tiefe > 12 or obj is None or isinstance(obj, (str, bytes, int, float, bool, np.ndarray,
+                                                            np.generic, Model, Results, Envelope)):
+            return
+        if isinstance(obj, dict):
+            felder = list(obj.items())
+            setzen = obj.__setitem__
+        elif isinstance(obj, (list, tuple, set)):
+            for x in obj:
+                walk(x, tiefe + 1)
+            return
+        else:
+            d = getattr(obj, "__dict__", None)
+            if not isinstance(d, dict):
+                return
+            felder = list(d.items())
+
+            def setzen(k, v, _o=obj):
+                setattr(_o, k, v)
+        for k, v in felder:
+            if k in _NAMENSFELDER and isinstance(v, str):
+                setzen(k, eintrag(v))
+            elif k in _LISTENFELDER and isinstance(v, list) and all(isinstance(x, str) for x in v):
+                setzen(k, [eintrag(x) for x in v])
+            elif k in _LISTENFELDER and isinstance(v, dict):
+                neu = {}
+                for n, info_n in v.items():
+                    n2 = eintrag(n)
+                    # Th3Info nennt sich ``name``, Th2Info ``kombination``
+                    if isinstance(getattr(info_n, "name", None), str) and info_n.name == n:
+                        info_n.name = n2
+                    walk(info_n, tiefe + 1)
+                    neu[n2] = info_n
+                setzen(k, neu)
+            elif k == "gleiche" and isinstance(v, dict):
+                setzen(k, {eintrag(n): [name(x) for x in liste] for n, liste in v.items()})
+            elif k in _TEXTFELDER and isinstance(v, list):
+                setzen(k, [text(x) for x in v])
+            else:
+                walk(v, tiefe + 1)
+
+    for feld, titel in _NACHWEISE:
+        wert = getattr(an, feld, None)
+        if wert is None:
+            continue
+        try:
+            walk(wert)
+        except _Unsicher as ex:
+            setattr(an, feld, None)
+            hinweise.append(f"{titel} verworfen: der Name „{ex}“ lässt sich nicht sicher zuordnen – "
+                            "neu rechnen")
+    if zweideutig:
+        hinweise.append("Die Warnungstexte der Nachweise nennen die alten Namen - die alte Datei hatte "
+                        "mehrdeutige Namen (" + ", ".join(f"„{n}“" for n in sorted(zweideutig)[:5]) + ")")
+    if geaendert_lf or geaendert_ko:
+        hinweise.insert(0, "Ergebnisse aus einer Datei vor Fassung 9 - unter den neuen Namen geladen "
+                           "(Tabelle alt → neu beim Öffnen), dieselben Zahlen ohne Neurechnung")
+    if hinweise:
+        info["umstellung"] = hinweise
+    an.info = info
+
+
 def lesen(pfad: str, model, fortschritt=None):
     """Die Analyse zum Modell lesen; ValueError, wenn die Datei nicht passt."""
     from .solver import Analysis
@@ -227,7 +548,22 @@ def lesen(pfad: str, model, fortschritt=None):
         fortschritt(0.05, "Ergebnisse lesen")
     with open(pfad, "rb") as fh:
         inhalt = _Leser(fh, model).load()
-    ok, grund = passt(inhalt.get("kennung"), model)
+    k = inhalt.get("kennung")
+    # R2-A2: eine Datei ohne „modellfassung“ (vor Fassung 9) traegt die alten
+    # Namen. Hat das Laden das Modell umgestellt, schluesselt die Tabelle
+    # alt -> neu sie um; sonst passen ihre Namen nicht zum Modell, und sie
+    # wird verworfen, statt Ergebnisse unter fremden Namen zu zeigen (am
+    # Drehlager - nur Ergebniskombinationen, keine Kombination in der Datei -
+    # liess die Pruefung auf fremde Kombinationen unten sie sonst durch).
+    tab = None
+    if isinstance(k, dict) and int(k.get("modellfassung", 0) or 0) < 9:
+        tab = getattr(model, "_umbenennung", None)
+        if tab is None:
+            raise ValueError("Die Ergebnisdatei passt nicht zum Modell: sie trägt die Namen von vor der "
+                             "Umstellung auf LF/LK/EK, das Modell schon die neuen – neu rechnen")
+        lf = tab.get("lastfaelle") or {}
+        k = dict(k, lastfaelle=sorted(lf.get(n, n) for n in k.get("lastfaelle", [])))
+    ok, grund = passt(k, model)
     if not ok:
         raise ValueError(f"Die Ergebnisdatei passt nicht zum Modell: {grund}")
     if fortschritt:
@@ -237,9 +573,10 @@ def lesen(pfad: str, model, fortschritt=None):
     # das Modell nicht (mehr) hat - umbenannt oder geloescht, nachdem die
     # Datei geschrieben war -, liess die Ergebnisliste beim Oeffnen mit
     # KeyError scheitern (gui/main.py, _fill_result_selector) und stand sonst
-    # unter ihrem alten Namen. Die Umstellung beim Laden (R2-A2) wird die
-    # Tabelle alt -> neu mitgeben.
-    fremd = [n for n in (inhalt.get("combinations") or {}) if n not in model.combinations]
+    # unter ihrem alten Namen. Seit R2-A2 mit der Tabelle alt -> neu.
+    ko = (tab.get("kombinationen") or {}) if tab is not None else {}
+    fremd = [n for n in (inhalt.get("combinations") or {})
+             if (ko.get(n) if tab is not None else n) not in model.combinations]
     if fremd:
         raise ValueError("Die Ergebnisdatei passt nicht zum Modell: Kombination "
                          + ", ".join(f"'{n}'" for n in fremd[:5]) + (" …" if len(fremd) > 5 else "")
@@ -252,7 +589,12 @@ def lesen(pfad: str, model, fortschritt=None):
         if feld in ("kennung",) + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
+    # erst die Schluessel aus R1 („ULS (Ergebniskombination)“), dann die
+    # Tabelle: sonst traefe die Tabelle den alten Namen „ULS“ und haengte die
+    # Umhuellende GZT um (Bestandsaufnahme R2, Risiko 3)
     _huellen_umhaengen(an, model)
+    if tab is not None:
+        _namen_umschluesseln(an, model, tab)
     # Die Umhuellenden mit bekanntem Schluessel heissen wie an der Oberflaeche
     # („Umhüllende GZT“). Der Name ist mit gespeichert: eine Datei von vor dem
     # 03.10.2026 traegt „Umhuellende ULS“, und so stand es dann in Protokoll

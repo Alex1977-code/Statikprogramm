@@ -307,9 +307,13 @@ def test_r1c_ergebnisdatei():
     m3 = Model.load(pfad)
     an3 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m3)
     soll = _json("ohne_kollision_geladen.json")
-    ist = R["verdichtet"](R["analyse"](an3))
-    check("R1c: Ergebnisdatei von 6791f9f ohne Kollision lädt unverändert (bitgleich)",
-          ist == soll, str([k for k in soll if ist.get(k) != soll[k]]))
+    # Seit R2-A2 (06.10.2026) heissen K1…K4 nach dem Oeffnen LK1…LK4: die
+    # Zahlen sind dieselben, die Namen folgen der Tabelle alt -> neu. Mit den
+    # alten Namen zurueckgerechnet gleicht die Lesung der von 6791f9f.
+    ist = R["verdichtet"](_alte_namen(R["analyse"](an3), m3))
+    check("R1c: Ergebnisdatei von 6791f9f ohne Kollision lädt bitgleich, unter den neuen Namen (LK1…LK4)",
+          ist == soll and list(an3.combinations) == ["LK1", "LK2", "LK3", "LK4"],
+          str([k for k in soll if ist.get(k) != soll[k]]) + f" {list(an3.combinations)}")
     check("R1c: … und meldet nichts", "Ergebniskombination" not in an3.summary(),
           [z for z in an3.summary().splitlines() if "Ergebniskombination" in z][:1])
     # eine Datei von 6791f9f mit Kollision: die Umhuellende unter ULS ist die
@@ -318,12 +322,16 @@ def test_r1c_ergebnisdatei():
     pfad = os.path.join(tmp, "mit_kollision.json")
     m4 = Model.load(pfad)
     an4 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m4)
-    alt_namen = [f"ULS [{k}]" for k in (1, 2, 3)]
+    # Seit R2-A2 (06.10.2026) heisst die Ergebniskombination „ULS“ nach dem
+    # Oeffnen EK3 (EK2 ist vergeben) und ihre Umhuellende „Umhüllende EK3“ -
+    # der Zusatz „(Ergebniskombination)“ (R1) ist nicht mehr noetig
+    ek = m4._umbenennung["kombinationen"]["ULS"]
+    alt_namen = [f"{ek} [{k}]" for k in (1, 2, 3)]
     ks = [k for k, e in an4.envelopes.items() if list(e.names) == alt_namen]
     texte = [bg.umhuellende_kurz(k) for k in an4.envelopes]
     check("R1c: Datei von 6791f9f mit Kollision: Umhüllende der Ergebniskombination „ULS“ "
-          "heißt „Umhüllende ULS (Ergebniskombination)“",
-          [bg.umhuellende_kurz(k) for k in ks] == ["Umhüllende ULS (Ergebniskombination)"],
+          "heißt nach der Umstellung „Umhüllende EK3“",
+          ek == "EK3" and [bg.umhuellende_kurz(k) for k in ks] == ["Umhüllende EK3"],
           f"{ks} {texte}")
     check("R1c: … keine „Umhüllende GZT“ vorgetäuscht", "Umhüllende GZT" not in texte, str(texte))
     s = an4.summary()
@@ -336,8 +344,9 @@ def test_r1c_ergebnisdatei():
     for _ in range(4):
         app.processEvents()
     log = w.log.toPlainText()
-    check("R1c: … und das Protokoll beim Öffnen im Fenster",
-          ok and "„ULS“" in log and "Umhüllende GZT" in log and "fehlt" in log,
+    check("R1c: … und das Protokoll beim Öffnen im Fenster (die Ergebniskombination unter ihrem neuen "
+          "Namen EK3)",
+          ok and f"„{ek}“" in log and "Umhüllende GZT" in log and "fehlt" in log,
           [z for z in log.splitlines() if "fehlt" in z][:1])
 
 
@@ -536,8 +545,10 @@ def test_r1g_ausnutzung_unbekannter_typ():
     pfad = os.path.join(REFERENZ, "alt", "unbekannt.json")
     m2 = Model.load(pfad)
     an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m2)
-    ks2 = [k for k, e in an2.envelopes.items() if getattr(e, "kombination", None) == "XYZ"]
-    check("R1g: alte Datei: Umhüllende der Ergebniskombination „XYZ“ mit Spalte, GZT mit, "
+    # seit R2-A2 heisst die Ergebniskombination „XYZ“ nach dem Oeffnen EK1
+    ek = m2._umbenennung["kombinationen"]["XYZ"]
+    ks2 = [k for k, e in an2.envelopes.items() if getattr(e, "kombination", None) == ek]
+    check("R1g: alte Datei: Umhüllende der Ergebniskombination „XYZ“ (jetzt EK1) mit Spalte, GZT mit, "
           "GZG ohne",
           len(ks2) == 1 and _ausnutzung(m2, an2, ks2[0]) is True
           and _ausnutzung(m2, an2, "ULS") is True and _ausnutzung(m2, an2, "SLS_CH") is False,
@@ -566,16 +577,85 @@ def test_r1h_alte_datei_ohne_modellbezug():
         check(f"R1h {fall}: … mit Hinweis, dass die Umhüllende GZT fehlt",
               "„ULS“" in s and "„Umhüllende GZT“ überschrieben" in s and "fehlt" in s,
               [z for z in s.splitlines() if z.startswith("Hinweis")][-1:])
-    # keine Fehlerkennung: die zwoelf Dateien wie dc80e1f, auch EK1 -> ULS
+    # keine Fehlerkennung: die zwoelf Dateien wie dc80e1f, auch EK1 -> ULS -
+    # seit R2-A2 (06.10.2026) unter den neuen Namen (_wie_dc80e1f_umgestellt)
     soll = _json("alt_gelesen_dc80e1f.json")
     anders = []
     for fall in list(R["ALTE_DATEIEN"]) + ["EK1_zu_ULS"]:
         pfad = os.path.join(alt, fall + ".json")
-        ist = R["gelesen"](ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad)))
-        if ist != soll[fall]:
+        m = Model.load(pfad)
+        ist = R["gelesen"](ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m))
+        if ist != _wie_dc80e1f_umgestellt(soll[fall], m):
             anders.append(fall)
-    check("R1h: keine Fehlerkennung - zwölf Dateien der Gegenprüfung und „EK1 → ULS“ wie dc80e1f",
-          not anders, f"anders: {anders}" if anders else f"{len(R['ALTE_DATEIEN']) + 1} Dateien gleich")
+    check("R1h: keine Fehlerkennung - zwölf Dateien der Gegenprüfung und „EK1 → ULS“ wie dc80e1f, unter den "
+          "neuen Namen", not anders,
+          f"anders: {anders}" if anders else f"{len(R['ALTE_DATEIEN']) + 1} Dateien gleich")
+
+
+def _alte_namen(abdruck: dict, m) -> dict:
+    """Ein Fingerabdruck (erzeugen.py, analyse) mit den alten Namen statt der
+    neuen - zurueckgerechnet ueber die Tabelle der Umstellung beim Laden
+    (R2-A2): so laesst er sich mit der Lesung von 6791f9f vergleichen."""
+    tab = m._umbenennung or {}
+    rueck = {b: a for a, b in list((tab.get("lastfaelle") or {}).items())
+             + list((tab.get("kombinationen") or {}).items())}
+
+    def name(n):
+        if n in rueck:
+            return rueck[n]
+        t = re.fullmatch(r"(.+) \[(\d+)\]", str(n))
+        return f"{rueck[t.group(1)]} [{t.group(2)}]" if t and t.group(1) in rueck else n
+    aus = dict(abdruck)
+    for g in ("cases", "combinations", "alternativen"):
+        aus[g] = {name(k): v for k, v in abdruck[g].items()}
+    aus["envelope_keys"] = [name(k) for k in abdruck["envelope_keys"]]
+    aus["envelopes"] = {name(k): dict(v, name=name(v["name"]), names=[name(x) for x in v["names"]])
+                        for k, v in abdruck["envelopes"].items()}
+    return aus
+
+
+def _wie_dc80e1f_umgestellt(soll: dict, m) -> dict:
+    """Die Lesung von dc80e1f (gelesen) unter den Namen der Umstellung beim
+    Laden (R2-A2): die Umhuellende einer Ergebniskombination des Modells heisst
+    und liegt unter deren neuem Namen; eine, deren Ergebniskombination das
+    Modell nicht mehr hat, bleibt - ausser ein Name in ihr gleicht einem
+    neuen Namen (EK1_zu_ULS: die alte „EK1“ war umbenannt, die neue EK1 ist
+    die Ergebniskombination „ULS“), dann ist sie verworfen."""
+    tab = m._umbenennung or {}
+    lf, ko = tab.get("lastfaelle") or {}, tab.get("kombinationen") or {}
+    neue = set(m.load_cases) | set(m.combinations)
+
+    def name(n):
+        if n in lf:
+            return lf[n]
+        if n in ko:
+            return ko[n]
+        t = re.fullmatch(r"(.+) \[(\d+)\]", str(n))
+        if t and t.group(1) in ko:
+            return f"{ko[t.group(1)]} [{t.group(2)}]"
+        if n in neue or (t and t.group(1) in neue):
+            raise KeyError(n)
+        return n
+    aus = {"schluessel": [], "namen": {}, "names": {}, "kombination": {}}
+    for k in soll["schluessel"]:
+        besitzer = soll["kombination"][k] or (k if soll["namen"][k] == k else None)
+        try:
+            names = [name(x) for x in soll["names"][k]]
+            if besitzer is not None and besitzer not in ko and besitzer in neue:
+                raise KeyError(besitzer)
+        except KeyError:
+            continue
+        if besitzer in ko:
+            k2 = name_ = komb = ko[besitzer]
+        else:
+            k2, name_, komb = k, soll["namen"][k], soll["kombination"][k]
+        aus["schluessel"].append(k2)
+        aus["namen"][k2], aus["names"][k2], aus["kombination"][k2] = name_, names, komb
+    sch = {n: k for n, k in (soll["info_schluessel"] or {}).items() if n not in ko and n not in neue}
+    aus["info_schluessel"] = sch or None
+    ueb = {ko.get(n, n): a for n, a in (soll["info_ueberschrieben"] or {}).items() if n in ko or n not in neue}
+    aus["info_ueberschrieben"] = ueb or None
+    return aus
 
 
 def _modell_lastfall_wie_kombination(name="X"):

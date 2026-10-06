@@ -6440,6 +6440,10 @@ class Analysis:
             s.append(f"Hinweis: In dieser Ergebnisdatei (vor dem 04.10.2026 geschrieben) hatte die "
                      f"Umhüllende der Ergebniskombination „{n}“ die „{umhuellende_kurz(a)}“ "
                      "überschrieben – diese fehlt, Berechnung → Berechnen bildet sie neu.")
+        # Ergebnisdatei vor Fassung 9, beim Laden auf LF/LK/EK umgeschluesselt
+        # (ergebnisse._namen_umschluesseln, R2-A2) - und was dabei verworfen wurde
+        for z in (self.info.get("umstellung") or []):
+            s.append(f"Hinweis: {z}")
         if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
             s.append(self.theorie2.summary())
         if self.theorie3 is not None and getattr(self.theorie3, "kombinationen", None):
