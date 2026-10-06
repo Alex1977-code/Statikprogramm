@@ -68,6 +68,46 @@ class Feld:
     #: nicht nach der Art: ein Anzeigefeld wie „Gilt für“ (Schweißnaht, Wind,
     #: Wasserdruck) traegt den Zustand, den „Übernehmen“ schreibt.
     anzeige: bool = False
+    #: Das Feld nennt Lastfaelle ("lastfall"), Kombinationen ("kombination"),
+    #: beides ("zustand") oder ist eine Formel „Lastfall: Faktor, …“
+    #: ("faktoren"). Benennt jemand einen Namen um, waehrend die Maske offen
+    #: ist, folgt das Feld (Maske.namen_umbenennen, R2-A1 Nachbesserung G2):
+    #: bis dahin schrieb „Übernehmen“ der Windmaske den alten Lastfall zurueck.
+    verweis: str = ""
+
+
+def _verweis_passt(verweis: str, art: str) -> bool:
+    """Ob ein Feld mit *verweis* Namen der *art* ("lastfall"/"kombination") traegt."""
+    return bool(verweis) and (verweis == art or verweis == "zustand"
+                              or (verweis in ("faktoren", "formel") and art == "lastfall"))
+
+
+def namen_ersetzen(text: str, alt: str, neu: str, verweis: str) -> str:
+    """*alt* durch *neu* in einem Feldtext: der ganze Text, ein Eintrag einer
+    Liste „A, B, C“, bei ``verweis == "faktoren"`` ein Lastfall vor seinem
+    Faktor („W: 1,5“), bei ``"formel"`` einer hinter ihm („1.5·W“,
+    Combination.formula). Nie ein Teil eines Wortes."""
+    import re
+    text = str(text or "")
+    if verweis == "faktoren":
+        muster = re.compile(rf"(^|[,;]\s*){re.escape(alt)}(\s*[:=×*])")
+        return muster.sub(lambda m_: m_.group(1) + neu + m_.group(2), text)
+    if verweis == "formel":
+        muster = re.compile(rf"(·){re.escape(alt)}(?=$|\s)")
+        return muster.sub(lambda m_: m_.group(1) + neu, text)
+    if text.strip() == alt:
+        return neu
+    teile = [x.strip() for x in text.split(",")]
+    if len(teile) > 1 and alt in teile:
+        return ", ".join(neu if x == alt else x for x in teile if x)
+    return text
+
+
+def nennt_namen(text: str, alt: str) -> bool:
+    """Ob *text* den Namen *alt* als Ganzes nennt (nicht als Teil eines
+    Wortes): „Lastfall W · u“ nennt W, „Windlast“ nicht."""
+    import re
+    return re.search(rf"(?<![\w-]){re.escape(alt)}(?![\w-])", str(text or "")) is not None
 
 
 class Uebernahmesignal:
@@ -431,6 +471,8 @@ class Maske(QtWidgets.QFrame):
         #: Felder mit Hinweis: Name -> Hinweis (Feld.hinweis); er steht an der
         #: Beschriftung und seit 02.10.2026 auch am Feld selbst
         self._hinweise = {f.name: f.hinweis for f in felder if f.hinweis}
+        #: Felder, die Namen von Lastfaellen oder Kombinationen tragen (Feld.verweis)
+        self._verweise = {f.name: f.verweis for f in felder if getattr(f, "verweis", "")}
 
         # Gemeinsamer Rahmen (24.09.2026, Paket 1 des Oberflaechenplans):
         # fester Kopf (Titel, Hinweiszeile), rollbare Mitte (die Felder),
@@ -796,6 +838,66 @@ class Maske(QtWidgets.QFrame):
                     anfang[k] = jetzt[k]
             self._anfang = anfang
         self._merker_nachfuehren()
+
+    # -- Umbenennen waehrend die Maske offen ist (R2-A1, Nachbesserung G2) --
+    def namen_umbenennen(self, art: str, alt: str, neu: str) -> bool:
+        """Ein Lastfall (*art* "lastfall") oder eine Kombination
+        ("kombination") heisst jetzt *neu*. Die Felder mit passendem Verweis
+        (Feld.verweis) folgen - Wert, Eintraege einer Auswahl, Haken einer
+        Liste -, und ihr Stand beim Oeffnen folgt mit: das Nachziehen ist
+        keine Eingabe und setzt keinen Punkt in den Titel. Eingaben, die der
+        Anwender schon gemacht hat, bleiben.
+
+        Rueckgabe: ob die Maske den alten Namen danach noch nennt - in einem
+        Feld ohne Verweis (der Name ihres eigenen Objekts, eine Anzeige).
+        Dann kann sie nicht folgen; das Fenster schliesst sie mit Hinweis.
+        Bis zum 04.10.2026 blieb jede Maske, wie sie war: „Übernehmen“ der
+        Windmaske legte den Lastfall „Wind W1“ wieder an, die Stellungsmaske
+        schrieb den alten Namen in die Lastfallliste."""
+        verweise = getattr(self, "_verweise", {}) or {}
+        anfang = dict(getattr(self, "_anfang", {}) or {})
+        for name, w in self._felder.items():
+            v = verweise.get(name, "")
+            if not _verweis_passt(v, art):
+                continue
+            gesperrt = w.blockSignals(True)
+            try:
+                if isinstance(w, QtWidgets.QComboBox):
+                    for i in range(w.count()):
+                        if w.itemText(i) == alt:
+                            w.setItemText(i, neu)
+                elif isinstance(w, QtWidgets.QListWidget):
+                    for i in range(w.count()):
+                        if w.item(i).text() == alt:
+                            w.item(i).setText(neu)
+                elif isinstance(w, QtWidgets.QLabel):
+                    w.setText(namen_ersetzen(w.text(), alt, neu, v))
+                elif isinstance(w, QtWidgets.QLineEdit) and not isinstance(w, zf.Zahlenfeld):
+                    w.setText(namen_ersetzen(w.text(), alt, neu, v))
+            finally:
+                w.blockSignals(gesperrt)
+            if isinstance(anfang.get(name), str):
+                anfang[name] = namen_ersetzen(anfang[name], alt, neu, v)
+        if hasattr(self, "_anfang"):
+            self._anfang = anfang
+            self._merker_nachfuehren()
+        return self.nennt(alt)
+
+    def nennt(self, alt: str) -> bool:
+        """Ob ein Feld der Maske den Namen *alt* als Ganzes nennt - als Wert,
+        als Eintrag einer Auswahl oder einer Liste."""
+        for w in self._felder.values():
+            if isinstance(w, QtWidgets.QComboBox):
+                texte = [w.itemText(i) for i in range(w.count())] + [w.currentText()]
+            elif isinstance(w, QtWidgets.QListWidget):
+                texte = [w.item(i).text() for i in range(w.count())]
+            elif isinstance(w, (QtWidgets.QLabel, QtWidgets.QLineEdit)) and not isinstance(w, zf.Zahlenfeld):
+                texte = [w.text()]
+            else:
+                texte = []
+            if any(nennt_namen(t, alt) for t in texte):
+                return True
+        return False
 
     # -- Aenderungsmerker (Paket 13m, 03.10.2026) ------------------------
     def _merker_einrichten(self, felder) -> None:

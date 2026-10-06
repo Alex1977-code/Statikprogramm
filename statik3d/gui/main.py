@@ -24,7 +24,7 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 
 from ..model import (Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM,
-                     FLAECHENARTEN)
+                     FLAECHENARTEN, NameVergeben)
 from .. import solver, mesher, parallel, supports, __version__
 from .. import passungen as pss
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
@@ -8472,7 +8472,8 @@ class MainWindow(QtWidgets.QMainWindow):
                               "- hier nicht änderbar")
                             if c is not None and c.ist_umhuellende else
                             F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
-                              hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"))
+                              hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation",
+                              verweis="faktoren"))
                 # ein Typ, den die Liste nicht kennt (aus einer Quelldatei),
                 # steht unveraendert mit zur Wahl - bis zum 03.10.2026 zeigte die
                 # Maske dann „ULS“, und „Übernehmen“ schrieb ULS (Befund L3)
@@ -8487,7 +8488,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             (c.situation if c and c.situation in situationen else situationen[0]), situationen),
                           F("theorie", "Theorie", "wahl", th, [t for t, _v in THEORIEN]),
                           feld_fak,
-                          F("formel", "Formel", "info", c.formula() if c else "–")]
+                          F("formel", "Formel", "info", c.formula() if c else "–", verweis="formel")]
                 # Die Bemessungssituation aus der Quelldatei ist eine Angabe,
                 # keine Einstellung: sie sagt, wofuer die Kombination da ist.
                 if c is not None and getattr(c, "bemessungssituation", ""):
@@ -8652,7 +8653,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("faelle", "Lastfälle dieser Stellung", "mehrfach", liste("faelle"),
                             list(m.load_cases),
                             hinweis="Nur angehakte Lastfälle rechnet „Alle Stellungen“; ohne Haken "
-                                    "rechnet die Stellung nichts, und das Protokoll sagt es"),
+                                    "rechnet die Stellung nichts, und das Protokoll sagt es",
+                            verweis="lastfall"),
                           F("faelle_alle", "Alle Lastfälle anhaken", "haken",
                             bool(st is not None and m.load_cases
                                  and set(m.load_cases) <= set(st.faelle or [])),
@@ -10066,7 +10068,7 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = []
         if liste != "gravity":
             felder.append(F("fall", "Lastfall", "wahl", fall, _namen(m.load_cases),
-                            hinweis="ein anderer Lastfall verschiebt die Last dorthin"))
+                            hinweis="ein anderer Lastfall verschiebt die Last dorthin", verweis="lastfall"))
         if liste == "nodal_loads":
             titel = f"Knotenlast K{obj.node}"
             Fw = (list(obj.F or []) + [0.0] * 6)[:6]
@@ -10748,6 +10750,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 m.add_load_case(neuname, kat, str(w.get("beschreibung", "") or ""),
                                 exclusive_group=str(w.get("gruppe", "") or "").strip(), activate=False)
                 lc = m.load_cases[neuname]
+                self._namen_geaendert(eigene_maske=True)
             else:
                 lc = m.load_cases[name]
                 if neuname != name:
@@ -10755,6 +10758,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Leiteinwirkung, Ermuedung, Stellungen, Wind, Wasserdruck,
                     # Berichtseintraege, aktiver Lastfall
                     m.lastfall_umbenennen(name, neuname)
+                    self._namen_geaendert(("lastfall", name, neuname), eigene_maske=True)
                 lc.category = kat
                 lc.description = str(w.get("beschreibung", "") or "")
                 lc.exclusive_group = str(w.get("gruppe", "") or "").strip()
@@ -10823,8 +10827,9 @@ class MainWindow(QtWidgets.QMainWindow):
             theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
             if vorher is None:
                 c = Combination(neuname, faktoren, typ, str(w.get("beschreibung", "") or ""),
-                                situation=sit, theorie=theorie)
+                                situation=sit, theorie=theorie, nummer=m.nummer_fuer(neuname, "LK"))
                 m.combinations[neuname] = c
+                self._namen_geaendert(eigene_maske=True)
             else:
                 # Dasselbe Objekt bleibt (R2-A1, 04.10.2026): bis dahin entstand
                 # hier eine neue Kombination, und Leiteinwirkung (leading),
@@ -10833,6 +10838,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 c = vorher
                 if neuname != name:
                     m.kombination_umbenennen(name, neuname)
+                    self._namen_geaendert(("kombination", name, neuname), eigene_maske=True)
                 if not umh:
                     c.factors = faktoren
                 c.typ, c.description = typ, str(w.get("beschreibung", "") or "")
@@ -11414,9 +11420,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     hinweis="die Lage des Systems samt allem, was darin nicht wirkt"),
                   F("beschreibung", "Beschreibung", "text", sit.beschreibung, breite=170),
                   F("lastfaelle", "Lastfälle", "mehrfach", ", ".join(faelle), list(m.load_cases),
-                    hinweis="Lastfälle, die in dieser Situation gelten - anhaken"),
+                    hinweis="Lastfälle, die in dieser Situation gelten - anhaken", verweis="lastfall"),
                   F("kombinationen", "Kombinationen", "mehrfach", ", ".join(kombis), list(m.combinations),
-                    hinweis="Kombinationen dieser Situation - sie überlagern nur ihre Lastfälle")]
+                    hinweis="Kombinationen dieser Situation - sie überlagern nur ihre Lastfälle",
+                    verweis="kombination")]
         halter: dict = {}
         if not neu:
             aus = set(int(i) for i in np.where(~m.aktive_elemente(sit.name))[0]) if m.elements else set()
@@ -11622,6 +11629,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Derselbe Weg wie der Knopf "Löschen" unter den Lastfaellen:
                 # auch die Ermuedungslasten verlieren ihn (Befund B105, 23.09.2026)
                 mit = m.remove_load_case(name)
+                self._namen_geaendert()
                 if mit:
                     self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
         elif art == "kombination":
@@ -11629,6 +11637,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 grund = "gibt es nicht"
             else:
                 del m.combinations[name]
+                self._namen_geaendert()
         elif art == "ermuedungslast":
             if name not in m.fatigue_loads:
                 grund = "gibt es nicht"
@@ -13270,6 +13279,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lc.theorie = d.theorie_name()
         if nm != name:
             self.model.lastfall_umbenennen(name, nm)
+        # die Ergebnisse gelten nicht mehr - wie nach „Übernehmen“ der Maske
+        self._namen_geaendert(("lastfall", name, nm) if nm != name else None)
         self.refresh_all()
 
     def kombination_bearbeiten(self, name: str):
@@ -13292,6 +13303,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if neu.name != name:
             self.model.kombination_umbenennen(name, neu.name)
         _kombination_schreiben(c, neu)
+        self._namen_geaendert(("kombination", name, neu.name) if neu.name != name else None)
         self.refresh_all()
 
     def add_support_dialog(self):
@@ -15836,7 +15848,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.maske_erzeugen(maske)
 
     def _din19704_lastfaelle_anlegen(self, w: dict):
-        from ..bridges.lastenheft import lastfaelle_anlegen
+        from ..bridges.lastenheft import lastfaelle_anlegen, lastfaelle_pruefen
         auswahl = [k[2:] for k, v in w.items() if k.startswith("e_") and v]
         if not auswahl:
             return self.hinweis("Keine Einwirkung angehakt")
@@ -15844,11 +15856,17 @@ class MainWindow(QtWidgets.QMainWindow):
             start = int(float(w.get("start", 0) or 0))
         except (TypeError, ValueError):
             start = 0
+        # eine belegte Nummer weist ab, bevor etwas angelegt ist (R2-A1, G3) -
+        # vor merken, damit kein leerer Rueckgaengig-Schritt entsteht
+        grund = lastfaelle_pruefen(self.model, auswahl, start)
+        if grund:
+            return self.hinweis(grund)
         self.merken("Lastfälle nach DIN 19704")
         log: list = []
         namen = lastfaelle_anlegen(self.model, auswahl, start, log)
         for z in log:
             self.info(z)
+        self._namen_geaendert()
         self.refresh_all()
         self.tabelle_zeigen("Lastfälle")
         self.maskenrand.schliessen()
@@ -15919,6 +15937,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"{bg.anzahl(len(namen), 'Kombination', 'Kombinationen')} nach DIN 19704 gebildet"
                   + (("; 1 Beiwert ist noch zu bestätigen" if len(offen) == 1 else
                       f"; {len(offen)} Beiwerte sind noch zu bestätigen") if offen else ""))
+        self._namen_geaendert()
         self.refresh_all()
 
     def _tab_contact(self):
@@ -17314,6 +17333,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.hinweis(f"„{key}“ ist der letzte Eintrag und bleibt bestehen")
         self.merken(f"„{key}“ gelöscht")
         del mapping[key]
+        if mapping is self.model.combinations or mapping is self.model.load_cases:
+            self._namen_geaendert()
         self.refresh_all()
 
     # ---- Tabelle und Ansicht auseinander halten ------------------------
@@ -20686,7 +20707,8 @@ class MainWindow(QtWidgets.QMainWindow):
         verfahren = self.WASSERVERFAHREN[0 if wd.numerisch() else 1]
         felder = [F("name", "Name", "text", wd.name, breite=140),
                   F("situation", "Situation", "wahl", wd.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140),
+                  F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140,
+                    verweis="lastfall"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(wd.lastfall_nr or m.naechste_lastfallnummer()),
                     hinweis="Nummer des Lastfalls (0 = nächste freie)"),
                   F("verfahren", "Verfahren", "wahl", verfahren, list(self.WASSERVERFAHREN),
@@ -20854,7 +20876,8 @@ class MainWindow(QtWidgets.QMainWindow):
         situationen = m.situationsnamen()
         felder = [F("name", "Name", "text", w.name, breite=140),
                   F("situation", "Situation", "wahl", w.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140),
+                  F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140,
+                    verweis="lastfall"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(w.lastfall_nr or m.naechste_lastfallnummer())),
                   F("verfahren", "Verfahren", "wahl", self.WINDVERFAHREN[1 if w.windkanal() else 0],
                     list(self.WINDVERFAHREN),
@@ -21014,6 +21037,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt_ende()
             # der Abbruch im Fortschritt lehnt ab: die Eingaben bleiben stehen (Paket 13m)
             return self._ablehnen(f"Wind {wd.name}: abgebrochen - das Modell ist unverändert")
+        except NameVergeben as ex:
+            # Name oder Nummer des Lastfalls vergeben (R2-A1, G3): eine Eingabe,
+            # kein Programmfehler - ein Hinweis, die Maske bleibt
+            self._schritt_zurueckholen(schritt)
+            self._fortschritt_ende()
+            return self.hinweis(str(ex))
         except (ValueError, KeyError) as ex:
             self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
@@ -21033,8 +21062,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {alt}:")]
             del m.winde[alt]
         self._fortschritt_ende()
-        self.analysis = None
-        self.results = None
+        self._namen_geaendert()             # ein neuer Lastfall kann entstanden sein
         wk_ = kw.get("windkanal")
         self.info(f"Wind {wd.name} ({kw.get('verfahren', 'norm')}): "
                   f"{bg.anzahl(kw['objektlasten'], 'Fläche', 'Flächen')}, {bg.anzahl(len(kw['staebe']), 'Stab', 'Stäbe')}, "
@@ -21136,6 +21164,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt_ende()
             # der Abbruch im Fortschritt lehnt ab: die Eingaben bleiben stehen (Paket 13m)
             return self._ablehnen(f"Wasserdruck {wd.name}: abgebrochen - das Modell ist unverändert")
+        except NameVergeben as ex:
+            # Name oder Nummer des Lastfalls vergeben (R2-A1, G3): ein Hinweis
+            self._schritt_zurueckholen(schritt)
+            self._fortschritt_ende()
+            return self.hinweis(str(ex))
         except ValueError as ex:
             self._schritt_zurueckholen(schritt)
             self._fortschritt_ende()
@@ -21155,8 +21188,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                               and gl.verlauf.get("name") == alt)]
             del m.wasserdruecke[alt]
         self._fortschritt_ende()
-        self.analysis = None
-        self.results = None
+        self._namen_geaendert()             # neue Lastfaelle koennen entstanden sein
         self.info(f"Wasserdruck {wd.name} ({kw.get('verfahren', 'analytisch')}): "
                   f"{bg.anzahl(kw['objektlasten'], 'Objektlast', 'Objektlasten')}, "
                   f"{bg.anzahl(kw['elementlasten'], 'Elementlast', 'Elementlasten')} in {', '.join(kw['lastfaelle'])} "
@@ -22321,9 +22353,58 @@ class MainWindow(QtWidgets.QMainWindow):
             self._lastwahl_nachziehen()
             self.redraw()
 
+    def _namen_geaendert(self, umbenannt: tuple = None, eigene_maske: bool = False) -> None:
+        """Ein Lastfall oder eine Kombination wurde angelegt, umbenannt,
+        kopiert oder geloescht (R2-A1, Nachbesserung G1 und G2, 04.10.2026).
+
+        Die Analyse, die Stellungsreihe und deren Umhuellende fuehren ihre
+        Ergebnisse unter den Namen von vorher: sie werden verworfen, wie es die
+        Maske nach „Übernehmen“ schon immer tat (refresh_all leert danach Liste,
+        Wahl und Tabellen ueber _ergebnisse_verworfen_nachziehen). Bis dahin
+        behielten Dialog, Register, Kopieren, Anlegen und Loeschen die
+        Analyse: nach dem Umbenennen von K1 scheiterte die Ergebnisliste mit
+        KeyError 'K1', auch beim naechsten Oeffnen der gespeicherten Datei, und
+        ein neu angelegter Lastfall „W“ zeigte die Ergebnisse seines
+        Vorgaengers.
+
+        ``umbenannt`` = (art, alt, neu): der Lastfilter und die offene Maske
+        folgen (masken.Maske.namen_umbenennen); eine Maske, die nicht folgen
+        kann, wird geschlossen, und ein Hinweis sagt es. ``eigene_maske``:
+        die offene Maske ist die, die gerade umbenennt - sie baut sich danach
+        ohnehin neu auf."""
+        self.analysis = None
+        self.results = None
+        self.stellungsreihe = None
+        self.umhuellende = None
+        if not umbenannt:
+            return
+        art, alt, neu = umbenannt
+        cb = getattr(self, "cb_lastfilter", None)
+        if art == "lastfall" and cb is not None and _lebt(cb):
+            i = cb.findText(alt)
+            if i >= 0:
+                gesperrt = cb.blockSignals(True)
+                cb.setItemText(i, neu)
+                cb.blockSignals(gesperrt)
+        if eigene_maske:
+            return
+        rand = getattr(self, "maskenrand", None)
+        mk = getattr(rand, "maske", None)
+        if mk is None or not _lebt(mk) or not callable(getattr(mk, "namen_umbenennen", None)):
+            return
+        if mk.namen_umbenennen(art, alt, neu):
+            titel = str(getattr(mk, "titel", "") or "")
+            rand.schliessen()
+            was = "der Lastfall" if art == "lastfall" else "die Kombination"
+            self.hinweis(f"Die Maske „{titel}“ nannte „{alt}“ und ist geschlossen - {was} heißt "
+                         f"jetzt „{neu}“. Bitte neu öffnen.")
+
     def add_case(self):
+        # der Vorschlag kommt aus der Nummernvergabe (R2-A1, G3) - bis zum
+        # 04.10.2026 „LF{Anzahl+1}“, neben LF1 und LF3 also das vergebene „LF3“
         d = LoadCaseDialog(self, existing=list(self.model.load_cases),
-                           situationen=self.model.situationsnamen())
+                           situationen=self.model.situationsnamen(),
+                           vorschlag=f"LF{self.model.naechste_nummer('LF')}")
         if d.exec():
             name, cat, desc, grp = d.values()
             # vergeben: auch der Name einer Kombination oder einer Alternative
@@ -22332,9 +22413,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if grund:
                 return self.hinweis(grund)
             self.merken(f"Lastfall {name}")
-            self.model.add_load_case(name, cat, desc, exclusive_group=grp)
+            self.model.add_load_case(name, cat, desc, exclusive_group=grp,
+                                     nummer=self.model.nummer_fuer(name, "LF"))
             self.model.load_cases[name].situation = d.situation_name()
             self.model.load_cases[name].theorie = d.theorie_name()
+            self._namen_geaendert()
             self.refresh_all()
 
     def edit_case(self):
@@ -22357,22 +22440,30 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.theorie = d.theorie_name()
             if name != old:
                 self.model.lastfall_umbenennen(old, name)
+            self._namen_geaendert(("lastfall", old, name) if name != old else None)
             self.refresh_all()
 
     def copy_case(self):
+        """Den aktiven Lastfall kopieren: „<Name>_Kopie“ oder ein freier Name,
+        die naechste freie Nummer (R2-A1, G3). Bis zum 04.10.2026 ueberschrieb
+        die Kopie still einen Lastfall „<Name>_Kopie“, legte sich neben eine
+        gleichnamige Kombination und erbte die Nummer ihres Vorbilds."""
         import copy
         lc = self.model.case()
         new = copy.deepcopy(lc)
-        new.name = lc.name + "_Kopie"
+        new.name = self.model.freier_name(lc.name + "_Kopie", "lastfall")
+        new.nummer = self.model.nummer_fuer(new.name, "LF")
         self.merken(f"Lastfall {new.name}")
         self.model.load_cases[new.name] = new
         self.model.active_case = new.name
+        self._namen_geaendert()
         self.refresh_all()
 
     def remove_case(self):
         name = self.model.active_case
         self.merken(f"Lastfall {name} gelöscht")
         mit = self.model.remove_load_case(name)
+        self._namen_geaendert()
         self.refresh_all()
         if mit:
             self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
@@ -22393,6 +22484,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception as ex:
                 return self.error(ex)
             self.info(f"{bg.anzahl(len(cs), 'Kombination', 'Kombinationen')} erzeugt")
+            self._namen_geaendert()
             self.refresh_all()
 
     def add_combination(self):
@@ -22404,7 +22496,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if grund:
                 return self.hinweis(grund)
             self.merken(f"Kombination {c.name}")
+            c.nummer = self.model.nummer_fuer(c.name, c.art)
             self.model.combinations[c.name] = c
+            self._namen_geaendert()
             self.refresh_all()
 
     def edit_combination(self):
@@ -22422,9 +22516,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.merken(f"Kombination {new.name}")
                 # dasselbe Objekt, umbenannt mit allen Verweisen (R2-A1) - wie
                 # kombination_bearbeiten
-                if new.name != c.name:
-                    self.model.kombination_umbenennen(c.name, new.name)
+                alt = c.name
+                if new.name != alt:
+                    self.model.kombination_umbenennen(alt, new.name)
                 _kombination_schreiben(c, new)
+                self._namen_geaendert(("kombination", alt, new.name) if new.name != alt else None)
                 self.refresh_all()
 
     def remove_combination(self):
@@ -22433,12 +22529,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if 0 <= r < len(names):
             self.merken(f"Kombination {names[r]} gelöscht")
             del self.model.combinations[names[r]]
+            self._namen_geaendert()
             self.refresh_all()
 
     def clear_combinations(self):
         if self.model.combinations:
             self.merken("Alle Kombinationen gelöscht")
         self.model.combinations.clear()
+        self._namen_geaendert()
         self.refresh_all()
 
     def add_fatigue_load(self):

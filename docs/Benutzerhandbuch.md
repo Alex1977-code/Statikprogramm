@@ -4678,6 +4678,21 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   gibt. Bis dahin begann die Zählung bei der Zahl der vorhandenen
   Kombinationen, und eine von Hand angelegte Kombination „GZT2“ mit
   9,99 · LF2 war nach dem Erzeugen still die erzeugte „GZT2“ mit 1,35 · LF1.
+  Ersetzt wird beim erneuten Erzeugen außerdem nur, was der Generator selbst
+  erzeugt hat und was seitdem niemand angefasst hat. Wer eine erzeugte
+  Kombination umbenennt oder ihre Faktoren, ihren Typ oder ihre Beschreibung
+  ändert, macht sie zu seiner eigenen; sie bleibt, und eine Ermüdungslast,
+  die sie nennt, findet sie weiter. Das Programm erkennt das an einem
+  Fingerabdruck, den es beim Erzeugen mit der Kombination speichert; die
+  Beschreibung bleibt dafür Freitext. Bis zum 04.10.2026 entschied allein die
+  Beschreibung „auto: …“, und eine in LK50 umbenannte erzeugte Kombination
+  verschwand beim nächsten Erzeugen. Das Umbenennen oder Löschen eines
+  Lastfalls zählt dabei nicht als Änderung der Kombination. Für erzeugte
+  Kombinationen aus Dateien von vor dem 04.10.2026, die noch keinen
+  Fingerabdruck tragen, gilt die alte Regel, aber nur, solange sie noch
+  GZT…, GZT-A… oder GZG… heißen. „Kombinationen nach DIN 19704“ hält es
+  genauso: Heißt eine eigene Kombination schon „DIN LF1.1“, bekommt die
+  erzeugte einen freien Namen („DIN LF1.1 2“), und das Protokoll sagt es.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
 
@@ -4704,10 +4719,12 @@ bleibt, wie sie ist, und dient nie als Name.
 
 Eine Kombination trägt außerdem ihre **Art**: Lastkombination (LK, eine Summe
 von Lastfällen mit Faktoren) oder Ergebniskombination (EK, die Umhüllende über
-Alternativen). Die Art wird gespeichert und folgt der Herkunft. Eine
-Ergebniskombination aus RFEM bleibt also EK, auch wenn RFEM sie mit nur einer
-Alternative als gewöhnliche Summe liefert. Ohne Angabe gilt EK, wenn die
-Kombination Alternativen hat, sonst LK. Lastkombinationen und
+Alternativen). Die Art wird gespeichert und soll der Herkunft folgen: Eine
+Ergebniskombination aus RFEM soll EK bleiben, auch wenn RFEM sie mit nur einer
+Alternative als gewöhnliche Summe liefert. So wird es erst mit dem Paket C2
+sein: bis zum Paket C2 setzt der RFEM-Import die Art nicht, und eine solche
+Ergebniskombination wird wie jede Summe als LK gespeichert. Ohne Angabe gilt
+EK, wenn die Kombination Alternativen hat, sonst LK. Lastkombinationen und
 Ergebniskombinationen zählen ihre Nummern getrennt; LK7 und EK7 dürfen
 nebeneinander stehen.
 
@@ -4724,7 +4741,21 @@ weist die Maske Lastfall und die Spalte Nr der Tabelle „Lastfälle“ mit eine
 Hinweis ab, etwa „Nr. 1 hat schon der Lastfall „LF1“ - frei ist Nr. 4“.
 Bis zum 04.10.2026 nahmen beide jede Nummer. Eine Nummer, die ein Lastfall aus
 einer älteren Datei schon doppelt trägt, bleibt stehen, solange man sie nicht
-ändert.
+ändert. Die Modellprüfung nennt sie als WARNUNG, etwa „Nr. 2 (LF) gehört
+mehreren: 'W', 'LF3'“; die Rechnung startet trotzdem, denn an der Nummer hängt
+keine Rechnung.
+
+Ein Name der Form LF3, LK7 oder EK2 trägt seine Nummer. Er ist darum auch
+dann vergeben, wenn seine Nummer schon einem anderen gehört: „LF7“ neben einem
+Lastfall LF3 mit der Nr. 7, „LF 3“ oder „LF03“ neben LF3. Ebenso gelten Namen,
+die sich nur in Groß- und Kleinschreibung oder in Leerzeichen unterscheiden,
+als derselbe Name, etwa „lf1“ neben LF1 oder „k1“ neben K1; ein Leerzeichen am
+Anfang oder Ende weist das Programm ab. Bis zum 04.10.2026 galten solche Namen
+als frei. Auch „Lastfall hinzufügen…“ im Register Lastfälle schlägt die
+nächste freie Nummer vor; bis dahin schlug es „LF“ mit der Anzahl der
+Lastfälle plus eins vor, neben LF1 und LF3 also das vergebene LF3. Ein neuer
+Lastfall, der LF8 heißt, bekommt die Nr. 8, jeder andere die nächste freie
+Nummer.
 
 Alle neuen Angaben stehen in der Modelldatei. Die Dateifassung bleibt 8: Eine
 ältere Datei ohne diese Angaben lädt wie bisher, jede Kombination bekommt die
@@ -4763,9 +4794,21 @@ Prüfung das Sicherheitsnetz.
 
 Wer seit dem 04.10.2026 in einer Maske oder einem Dialog einen Lastfall oder
 eine Kombination anlegt oder umbenennt, bekommt bei einem vergebenen Namen
-einen Hinweis, und es ändert sich nichts. „Lastfall kopieren“, die
-Lastgeneratoren und die Importe prüfen ihre Namen noch nicht so; das folgt in
-späteren Schritten. Vergeben
+einen Hinweis, und es ändert sich nichts. Dieselbe Prüfung gilt beim
+Kopieren eines Lastfalls, im Browser beim Anlegen und Kopieren eines
+Lastfalls und beim Anlegen einer Kombination, für „Kombinationen nach DIN
+19704“, „Lastfälle nach DIN 19704“ und die Generatoren Wind und Wasserdruck.
+Wo das Programm den Namen selbst bildet, nimmt es einen freien: Die Kopie von
+W heißt „W_Kopie“ oder, wenn es den Namen schon gibt, „W_Kopie 2“, und sie
+bekommt die nächste freie Nummer statt der Nummer von W. Wo der Anwender den
+Namen oder die Nummer gewählt hat, etwa im Feld Lastfall der Windmaske oder
+mit der ersten Nummer der Lastfälle nach DIN 19704, kommt bei einem
+vergebenen Namen oder einer vergebenen Nummer ein Hinweis, und es wird nichts
+angelegt. Bis zum 04.10.2026 überschrieb die Kopie still einen Lastfall
+„W_Kopie“ und erbte die Nummer, im Browser überschrieb eine neue Kombination
+„K1“ die vorhandene, und Generatoren legten Lastfälle neben gleichnamigen
+Kombinationen an. Die Importe prüfen ihre Namen noch nicht so; das folgt in
+einem späteren Schritt. Vergeben
 ist ein Name, wenn ihn schon ein Lastfall oder eine Kombination trägt oder wenn
 er wie eine Alternative heißt („EK1 [2]“). Eine Ergebniskombination lässt sich
 außerdem nicht so umbenennen, dass ihre Alternativen wie ein vorhandener
@@ -6326,9 +6369,13 @@ Ermüdungslast, in der Lastfallliste jeder Stellung, als Lastfall der Wind- und
 Wasserdruckgeneratoren (auch der Lastfall der Druckschwankung), als aktiver
 Lastfall und in jedem Berichtsbild und jeder Berichtstabelle, die diesen
 Lastfall zeigt. Name und Bildunterschrift eines solchen Berichtseintrags
-folgen dort, wo sie den alten Namen als ganzes Wort enthalten, etwa
-„Lastfall W · Verschiebung“ zu „Lastfall LF9 · Verschiebung“; ein Wort wie
-„Windlast“ bleibt, ebenso die Bemerkung. Bis zum 04.10.2026 behielten die
+folgen dort, wo sie den Klartext der Quelle enthalten, etwa „Lastfall W ·
+Verschiebung“ zu „Lastfall LF9 · Verschiebung“ oder „Stabkräfte · Lastfall W“
+zu „Stabkräfte · Lastfall LF9“. Ein Text, den der Anwender selbst geschrieben
+hat, bleibt: „W-Richtung, Bild W“ ist kein Verweis auf den Lastfall, ebenso
+wenig die Bemerkung. In der ersten Fassung vom 04.10.2026 folgte auch der
+Name als ganzes Wort, und aus „W-Richtung“ wurde „LF9-Richtung“; das hat die
+Nachbesserung zurückgenommen. Bis zum 04.10.2026 behielten die
 Leiteinwirkung, die Generatoren und die Berichtseinträge den alten Namen,
 und im Browser auch die Stellungen. Ein Windgenerator legte darum beim
 nächsten „Lasten erzeugen“ einen neuen Lastfall unter dem alten Namen an, und
@@ -6340,6 +6387,37 @@ dem Modell, und der gleichnamige blieb.
 Die Rechnung bleibt beim Umbenennen gleich; am Kragarm mit allen Verweisarten
 waren alle Verschiebungen, Umhüllenden und Ausnutzungen vorher und nachher
 gleich (`tests/test_namen_lf_lk.py`).
+
+**Ergebnisse nach dem Umbenennen, Anlegen, Kopieren und Löschen.** Die
+Ergebnisse tragen die Namen, unter denen gerechnet wurde. Seit dem 04.10.2026
+verwirft darum jeder Weg, der einen Lastfall oder eine Kombination
+umbenennt, anlegt, kopiert oder löscht, die Ergebnisse, die Stellungsreihe und
+deren Umhüllende - so, wie es die Maske nach „Übernehmen“ schon immer tat.
+Das gilt für die Maske rechts, die Dialoge aus den Tabellen, das Register
+Lastfälle und Kombinationen, den Modellbaum, „Kombinationen erzeugen“, die
+beiden Wege nach DIN 19704, die Generatoren Wind und Wasserdruck und für den
+Browser. Bis dahin behielten Dialog, Register, Kopieren, Anlegen und Löschen
+die Ergebnisse: Nach dem Umbenennen der Kombination K1 im Dialog brach die
+Ergebnisliste mit einem Programmfehler ab, auch beim nächsten Öffnen der
+gespeicherten Datei, und ein neu angelegter Lastfall „W“ zeigte die
+Ergebnisse des umbenannten alten W. Eine Ergebnisdatei, die eine Kombination
+nennt, die es im Modell nicht mehr gibt, lädt das Programm nicht; das
+Protokoll sagt „Ergebnisdatei nicht geladen: … Kombination 'K1' gibt es im
+Modell nicht (umbenannt oder gelöscht)“.
+
+**Offene Masken folgen.** Ist beim Umbenennen eine Maske offen, die den
+Namen nennt, zieht sie ihn nach: das Feld Lastfall der Wind- und der
+Wasserdruckmaske, der obere und untere Zustand und der Verlauf im Editor der
+Ermüdungsmaske, die Lastfallliste der Stellungsmaske, die Faktoren und die
+Formel der Kombinationsmaske und der Lastfilter über der Tabelle Lasten;
+ebenso die Lastfall- und Kombinationslisten der Situationsmaske und der
+Lastfall einer Lastmaske, die dasselbe Verfahren nutzen. Eine Eingabe, die der Anwender dort schon gemacht hat, bleibt
+stehen, und das Nachziehen zählt nicht als Änderung. Eine Maske, die den Namen
+nicht nachziehen kann - etwa die Maske des umbenannten Lastfalls selbst -,
+schließt das Programm und sagt es als Hinweis: „Die Maske „Lastfall W“ nannte
+„W“ und ist geschlossen …“. Bis zum 04.10.2026 blieben alle Masken, wie sie
+waren: „Übernehmen“ der Windmaske legte den alten Lastfall „Wind W1“ wieder
+an, und die Ermüdungsmaske wies „Übernehmen“ mit „W (nicht verfügbar)“ ab.
 
 **Kombination umbenennen.** Auch eine Kombination lässt sich in ihrer Maske
 rechts, per Doppelklick in der Tabelle „Kombinationen“ unten und im Register

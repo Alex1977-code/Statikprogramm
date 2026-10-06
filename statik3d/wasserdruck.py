@@ -544,12 +544,15 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
         fr = kw["_feld"]
         feld = st.feld_packen(fr["schnitt"], fr["feld"]["p"], fr["feld"]["fluid"], fr["feld"]["block"],
                               nachkomma=1, z_sohle=fr["z_sohle"], stempel=uuid.uuid4().hex)
-    if not wd.lastfall:
-        wd.lastfall = f"Wasser {wd.name}"
+    # Name und Nummer der Lastfaelle pruefen, bevor sich etwas aendert (R2-A1,
+    # Nachbesserung G3): ein vergebener Name oder eine belegte Nummer weist ab
+    # (NameVergeben), ohne eigene Wahl gilt „Wasser <Name>“ oder ein freier
+    nr = int(wd.lastfall_nr or 0)
+    wd.lastfall = model.generator_lastfall(f"Wasser {wd.name}", wd.lastfall, nr, f"Wasserdruck {wd.name}")
     lastfaelle = [(wd.lastfall, False)]
     if wd.cp_dyn and kw["dp_dyn"] > 0:
-        if not wd.lastfall_dyn:
-            wd.lastfall_dyn = f"Wasser {wd.name} dyn"
+        wd.lastfall_dyn = model.generator_lastfall(f"Wasser {wd.name} dyn", wd.lastfall_dyn,
+                                                   nr + 1 if nr > 0 else 0, f"Wasserdruck {wd.name}")
         lastfaelle.append((wd.lastfall_dyn, True))
     # Alte Lasten dieses Generierers entfernen (in allen Lastfaellen)
     for lc in model.load_cases.values():
@@ -567,7 +570,7 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
         lc.situation = "" if wd.situation == GRUNDSTELLUNG else wd.situation
         if not getattr(lc, "nummer", 0):
             lc.nummer = (int(wd.lastfall_nr) + j) if int(wd.lastfall_nr or 0) > 0 \
-                else model.naechste_lastfallnummer()
+                else model.nummer_fuer(fall, "LF", lc)
         verlauf = {"art": "wasser", "name": wd.name, "param": param, "geometrie": g,
                    "dyn": dyn, "dp_dyn": kw["dp_dyn"]}
         if feld is not None:

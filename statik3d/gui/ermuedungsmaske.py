@@ -577,6 +577,28 @@ class Ermuedungsmaske(msk.Maske):
             self.zeile_waehlen(alt)
             self.meldung(f"Zeile „{alt}“ neu geladen (Rückgängig/Wiederholen).")
 
+    def namen_umbenennen(self, art: str, alt: str, neu: str) -> bool:
+        """Ein Lastfall oder eine Kombination heisst jetzt *neu* (R2-A1,
+        Nachbesserung G2): der Editor folgt - oberer und unterer Zustand,
+        jedes Glied des Verlaufs -, die Auswahllisten und die Tabelle fuellt
+        danach tabelle_fuellen neu. Eingaben im Editor bleiben. Bis zum
+        04.10.2026 blieb dort der alte Name stehen („W (nicht verfügbar)“),
+        und „Übernehmen“ wurde abgewiesen. Rueckgabe False: die Maske folgt
+        und bleibt offen."""
+        for combo in (self.oben, self.unten):
+            gesperrt = combo.blockSignals(True)
+            try:
+                for i in range(combo.count()):
+                    if combo.itemData(i) == alt:
+                        combo.setItemData(i, neu)
+                        combo.setItemText(i, neu)
+            finally:
+                combo.blockSignals(gesperrt)
+        namen = self.folge()
+        if alt in namen:
+            self._verlauf_setzen([neu if n == alt else n for n in namen])
+        return False
+
     def _tabelle_markieren(self, name):
         namen = list(self.modell().fatigue_loads)
         t = self.tabelle
