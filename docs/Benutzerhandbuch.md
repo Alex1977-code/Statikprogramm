@@ -6285,6 +6285,47 @@ jeweils 0.
 Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
 Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
+**SAF-Export: Stablasten und Ergebniskombinationen (seit 06.10.2026).** Der
+SAF-Export (Datei → Exportieren, Endung `.xlsx`) schreibt eine Stablast so, wie
+SAF sie beschreibt: gleichmäßig (Distribution „Uniform“), trapezförmig („Trapez“,
+Value 1 am Anfang und Value 2 am Ende) oder abschnittsweise (Extent „Span“ mit
+Start point und End point, in Metern vom Anfang des Stabes), global oder im
+Stabsystem, in kN/m. Die Last steht am **Stab**, nicht am Element: Liegt sie auf
+dem zweiten von zwei Elementen eines Stabes, zählen ihre Positionen vom Anfang
+des ganzen Stabes, und ein Element, das entgegen dem Stab gezeichnet ist, wird
+dafür umgedreht (Value 1 und Value 2 tauschen die Plätze). Eine Last mit
+mehreren Richtungen steht mit je einer Zeile je Richtung im Blatt. Eine
+**Ergebniskombination** kennt SAF nicht als Umhüllende, wohl aber als Summe: der
+Export schreibt jede Alternative als gewöhnliche Kombination („EK3 [1]“,
+„EK3 [2]“ …), und eine zusätzliche Spalte „Envelope“, die SAF nicht kennt, hält
+sie zusammen. Statik3D macht daraus beim Import wieder die Ergebniskombination;
+ein anderes Programm liest jede Alternative als eigene Kombination, und das
+Protokoll des Exports sagt es. Was sich nicht schreiben lässt, etwa eine Last auf
+einem Stab, dessen Elemente keine Kette bilden, steht als Zeile „WARNUNG: SAF: …
+nicht geschrieben“ im Protokoll des Exports; im Blatt fehlt dann die Zeile, statt
+dass sie verfälscht erscheint.
+
+Bis zum 06.10.2026 schrieb der SAF-Export von jeder Stablast nur ihren Wert q:
+ein Trapez und ein Abschnitt von a bis b gingen als volle Gleichlast hinaus, der
+Stab hieß „E1“ statt wie im Blatt der Stäbe, und der SAF-Import fand ihn nicht
+(„Stab 'E1' unbekannt“): beim Export und Wiedereinlesen kam keine einzige
+Stablast zurück. Die Ergebniskombination fehlte im Blatt, ohne dass das Protokoll ein
+Wort darüber verlor, und die Faktoren einer gewöhnlichen Kombination kamen als 1,0
+zurück, weil der Export die Spalte „Coefficient“ nannte und der Import „Factor“
+las (er liest „Coefficient“ aus älteren Dateien weiter). Jetzt kommt das Lastbild
+an jedem Messpunkt jedes Stabes wieder an: gemessen an Gleich-, Trapez- und
+Abschnittslasten, global und lokal, an vorwärts und rückwärts gezeichneten
+Elementen und einem Stab aus zwei verschieden gerollten Elementen, an 360
+Messpunkten, größte Abweichung 9,1 · 10⁻¹³ N/m bei einer größten Last von
+18 880 N/m. Der **SAF-Import** liest dazu den Abschnitt: Extent „Span“ mit Start
+point und End point, absolut in Metern oder relativ als Anteil von 0 bis 1 der
+Stablänge, vom Anfang oder vom Ende des Stabes gezählt (Origin „From start“ oder
+„From end“). Bis zum 06.10.2026 las er jeden Abschnitt ohne Meldung als Last über
+die ganze Länge: im Versuch mit drei Zeilen „Span“ (−5 kN/m, ein Trapez von −1 bis
+−3 kN/m und −7 kN/m ohne Positionen) auf einem 8 m langen Stab standen bei 1 m,
+3 m und 7,5 m −13,25, −13,75 und −14,88 kN/m statt 0, −5 und 0 kN/m. Ein Abschnitt ohne Start point und End point wird
+nicht übernommen, und das Importprotokoll sagt es, statt eine Volllast zu raten.
+
 ## 8 Nachweise nach EC3
 
 Stäbe (Kette von Stabelementen) legt der Befehl *Struktur → Stab* an (seit
@@ -7725,6 +7766,23 @@ Programm schreibt die Datei in einem Zug (erst in eine Hilfsdatei, dann ersetzt 
 die alte), und lässt sie sich nicht lesen, schreibt es nichts hinein, damit
 Löser, Threads und Fensteraufteilung nicht verloren gehen; der Zustand der
 Experten gilt dann nur bis zum Beenden.
+
+Dieselbe Sorgfalt gilt seit dem 06.10.2026 für die Werte des Registers selbst
+(Löser, Threads, Genauigkeit, Ketten, Nachladen von MUMPS), die ein Druck auf
+„Übernehmen“ und das Kästchen im Werkzeugdialog in `einstellungen.json`
+schreiben. Bis zum 06.10.2026 schrieb Statik3D die Einstellungsdatei nicht in
+einem Zug und ohne Rücksicht darauf, ob es sie lesen konnte: Brach das Schreiben
+ab (Platte voll, Absturz), blieb eine leere oder halbe Datei zurück (im Versuch
+16 von 147 Byte), und ließ sich die vorhandene Datei nicht lesen (gesperrt, kein
+Zugriff), schrieb es sie nur mit den eigenen Schlüsseln neu, und die Fenstergröße,
+die Aufteilung und der Zustand der Abschnitte gingen verloren. Jetzt schreibt es
+erst in eine Hilfsdatei im selben Ordner und ersetzt dann die alte; die
+Schlüssel, die es nicht kennt, bleiben stehen. Lässt sich die vorhandene Datei
+nicht lesen, schreibt es nichts, und das Protokoll sagt es („Einstellungen nicht
+gespeichert: … lässt sich nicht lesen … nichts geschrieben, die Datei bleibt, wie
+sie ist“, im Werkzeugdialog „Einstellung nicht gespeichert: …“). Eine fehlende
+oder kaputte Datei (kein gültiges JSON) gilt wie bisher als leer und wird neu
+geschrieben; aus ihr ist nichts mehr zu retten.
 
 Bis zum 02.10.2026 stand „BERECHNEN (F5)“ ganz unten im Register, hinter der
 offenen Gruppe „Parallelisierung“ mit zehn Zeilen und hinter der Plastizität;

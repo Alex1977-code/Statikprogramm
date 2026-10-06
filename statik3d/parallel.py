@@ -110,25 +110,70 @@ def einstellungen_laden() -> dict:
     return d
 
 
-def einstellungen_speichern() -> str:
-    """Die gespeicherten Einstellungen schreiben; Rueckgabe der Dateipfad."""
+def einstellungen_lesen_streng() -> tuple:
+    """(Inhalt, Fehler) der Einstellungsdatei. ``Fehler`` ist ein OSError, wenn
+    die Datei da ist, sich aber nicht lesen laesst (gesperrt, kein Zugriff) - dann
+    ist der Inhalt unbekannt, und wer schreibt, loescht, was darin stand. Eine
+    fehlende oder kaputte Datei (kein JSON, kein Objekt) gilt als leer: es gibt
+    nichts zu retten, und sie wird neu geschrieben. Einziger Ort dieser Regel; die
+    Fensteraufteilung (gui/fenster.py) liest ueber dieselbe Funktion."""
     import json
-    p = einstellungsdatei()
-    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-    # Andere Schluessel der Datei bleiben stehen (25.09.2026): die Oberflaeche
-    # merkt dort Groesse und Aufteilung des Fensters („fenster“, gui/fenster.py),
-    # und ein Druck auf „Übernehmen“ im Register Berechnung loeschte sie sonst
     try:
-        with open(p, encoding="utf-8") as f:
+        with open(einstellungsdatei(), encoding="utf-8") as f:
             d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except (OSError, ValueError):
-        d = {}
-    d.update({k: getattr(_settings, k) for k in GESPEICHERT})
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=1)
+    except FileNotFoundError:
+        return {}, None
+    except OSError as ex:
+        return {}, ex
+    except ValueError:
+        return {}, None
+    return (d if isinstance(d, dict) else {}), None
+
+
+def einstellungen_schreiben(d: dict) -> str:
+    """Die Einstellungsdatei **atomar** schreiben: erst in eine Hilfsdatei im selben
+    Ordner, dann ``os.replace``. Bricht das Schreiben ab (Platte voll, Absturz),
+    bleibt die alte Datei ganz - bis zum 06.10.2026 schrieb
+    ``einstellungen_speichern`` mit ``open(p, "w")``, und ein Abbruch liess eine
+    leere oder halbe Datei zurueck (gemessen: 16 von 147 Byte). Wirft OSError; die
+    Hilfsdatei wird dann entfernt. Rueckgabe der Dateipfad."""
+    import json
+    import tempfile
+    p = einstellungsdatei()
+    ordner = os.path.dirname(p) or "."
+    os.makedirs(ordner, exist_ok=True)
+    fd, hilfe = tempfile.mkstemp(dir=ordner, prefix=".einstellungen_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(hilfe, p)
+    except BaseException:
+        try:
+            os.remove(hilfe)
+        except OSError:
+            pass
+        raise
     return p
+
+
+def einstellungen_speichern() -> str:
+    """Die gespeicherten Einstellungen schreiben; Rueckgabe der Dateipfad.
+
+    Andere Schluessel der Datei bleiben stehen (25.09.2026): die Oberflaeche
+    merkt dort Groesse und Aufteilung des Fensters („fenster“, gui/fenster.py)
+    und den Zustand der Abschnitte, und ein Druck auf „Übernehmen“ im Register
+    Berechnung loeschte sie sonst. Laesst sich die vorhandene Datei nicht lesen,
+    wird **nicht geschrieben** (bis zum 06.10.2026 ueberschrieb die Funktion sie
+    dann nur mit den eigenen Schluesseln): sie wirft OSError, und der Aufrufer
+    - das Register Berechnung und der Werkzeugdialog fangen ihn - sagt es im
+    Protokoll."""
+    p = einstellungsdatei()
+    d, fehler = einstellungen_lesen_streng()
+    if fehler is not None:
+        raise OSError(f"{p} lässt sich nicht lesen ({fehler.strerror or fehler}) - nichts "
+                      "geschrieben, die Datei bleibt, wie sie ist")
+    d.update({k: getattr(_settings, k) for k in GESPEICHERT})
+    return einstellungen_schreiben(d)
 
 
 def configure(**kw) -> Settings:

@@ -1474,7 +1474,7 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 | `.sdnf` | SDNF 3.0 | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Verdrehung; Bleche mit Eckpunkten und Dicke |
 | `.nc1` / `.zip` | DSTV-NC | je Stab eine Datei: Kopfblock, Profil, Länge, Werkstoff, Kontur |
 | `.ifc` | IFC 4 (Structural Analysis View) | Knoten, Stäbe, Flächen, Lagerbedingungen, Lastfälle mit Knotenlasten |
-| `.xlsx` | SAF | Knoten, Stäbe, Flächen, Querschnitte, Materialien, Lager, Lastfälle, Kombinationen, Lasten |
+| `.xlsx` | SAF | Knoten, Stäbe, Flächen, Querschnitte, Materialien, Lager, Lastfälle, Kombinationen (auch Ergebniskombinationen), Lasten (Stablasten gleichmäßig, trapezförmig, abschnittsweise) |
 | `.csv` | Tabellen im RFEM-Aufbau | zehn Blätter in einem Ordner, vom eigenen Tabellenimport wieder lesbar |
 | `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und Volumenaußenflächen als 3DFACE, Lager und Beschriftung auf eigenen Layern |
 | `.inp` | Abaqus / CalculiX | Knoten, Elemente, Materialien, Querschnitte, Randbedingungen, ein Step je Lastfall |
@@ -1486,6 +1486,38 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 **Der Rückweg ist geprüft:** Was Statik3D auch lesen kann, wird in
 `tests/test_exporters.py` exportiert, wieder eingelesen und verglichen —
 Knotenzahl, Stäbe, Profilkennwerte, Lager, Lastfälle.
+
+### Zum SAF-Export: Stablasten und Ergebniskombinationen
+
+Was SAF darstellen kann, geht vollständig hinaus; was nicht, steht im Protokoll
+des Exports (Fehlerliste 06.10.2026, F26). Das Blatt **StructuralCurveAction**
+trägt die Spalten der SAF-Beschreibung (gitbook.saf.guide, am 06.10.2026
+nachgelesen): `Name`, `Type` (Standard), `Force action` (On beam), `Distribution`
+(Uniform, Trapez), `Direction` (X, Y, Z), `Value 1 [kN/m]`, `Value 2 [kN/m]`,
+`Member`, `Load case`, `Coordinate system` (Global, Local), `Location` (Length),
+`Coordinate definition` (Absolute), `Origin` (From start), `Extent` (Full, Span),
+`Start point [m]`, `End point [m]`. Je Stablast und nicht verschwindender
+Richtung steht eine Zeile. `Member` ist der Name aus dem Blatt der Stäbe; die
+Positionen laufen vom SAF-Anfangsknoten des Stabes, den auch das Blatt der Stäbe
+nennt. Lokale Werte stehen in den Achsen des Stabes, den der Import aus
+Anfangsknoten, Endknoten und der Rotation des ersten Elements bildet. Ist ein
+Stab nicht gerade, führt SAF ihn hier als Verbindung seiner Endknoten, und das
+Protokoll nennt die beiden Längen.
+
+Eine **Ergebniskombination** geht als eine gewöhnliche Kombination je Alternative
+hinaus (`<Name> [k]`, derselbe Name wie in den Ergebnissen), mit der zusätzlichen
+Spalte `Envelope`, die den Namen der Ergebniskombination trägt. `Envelope` ist
+eine Erweiterung von Statik3D, die SAF nicht beschreibt; der Import legt daraus
+wieder eine Ergebniskombination mit Alternativen an. Der Faktor der Kombination
+steht in der Spalte `Factor` (der Import liest aus älteren Dateien auch
+`Coefficient`).
+
+Der SAF-Import liest dazu den **Abschnitt** einer Stablast: `Extent` Span mit
+`Start point` und `End point`, `Coordinate definition` Absolute (Meter) oder
+Relative (Anteil 0 bis 1 der Stablänge), `Origin` From start oder From end; Value 1
+gehört zum Start point, Value 2 zum End point. Ein Span ohne Positionen wird nicht
+übernommen (Warnung). Geprüft in `tests/test_fehler_p13.py`: Export, Wiedereinlesen
+und Vergleich des Lastbildes an Messpunkten entlang der Stäbe.
 
 ### Zum HiCAD-Archiv (.sza)
 

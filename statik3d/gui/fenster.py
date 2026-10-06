@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 
 from PySide6 import QtCore, QtWidgets
 
@@ -99,38 +98,19 @@ def _lesen_streng() -> tuple:
     lesen laesst (gesperrt, kein Zugriff: OSError). Dann darf niemand schreiben: der
     Inhalt ist unbekannt, und ein Schreiben mit {} loescht Loeser, Threads und die
     Fensteraufteilung (Nachzug 03.10.2026). Eine fehlende oder kaputte Datei gilt wie
-    bisher als leer und wird neu geschrieben."""
-    try:
-        with open(_datei(), encoding="utf-8") as f:
-            d = json.load(f)
-    except FileNotFoundError:
-        return {}, True
-    except OSError:
-        return {}, False
-    except ValueError:
-        return {}, True
-    return (d if isinstance(d, dict) else {}), True
+    bisher als leer und wird neu geschrieben. Die Regel steht seit dem 06.10.2026
+    (F27) an einer Stelle, ``parallel.einstellungen_lesen_streng``; dieselbe Datei
+    schreibt auch ``parallel.einstellungen_speichern``."""
+    from .. import parallel
+    d, fehler = parallel.einstellungen_lesen_streng()
+    return d, fehler is None
 
 
 def _datei_schreiben(d: dict) -> str:
-    """Die Datei atomar schreiben: erst in eine Hilfsdatei im selben Ordner, dann
-    ``os.replace`` - bricht das Schreiben ab (Platte voll, Absturz), bleibt die alte
-    Datei ganz. Wirft OSError; die Hilfsdatei wird dann entfernt."""
-    p = _datei()
-    ordner = os.path.dirname(p) or "."
-    os.makedirs(ordner, exist_ok=True)
-    fd, hilfe = tempfile.mkstemp(dir=ordner, prefix=".einstellungen_", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(hilfe, p)
-    except BaseException:
-        try:
-            os.remove(hilfe)
-        except OSError:
-            pass
-        raise
-    return p
+    """Die Datei atomar schreiben (``parallel.einstellungen_schreiben``): bricht das
+    Schreiben ab, bleibt die alte Datei ganz. Wirft OSError."""
+    from .. import parallel
+    return parallel.einstellungen_schreiben(d)
 
 
 def laden() -> dict | None:

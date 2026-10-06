@@ -15,6 +15,13 @@ def say(log: Optional[list], msg: str) -> None:
         log.append(msg)
 
 
+def warn(log: Optional[list], msg: str) -> None:
+    """Eine Warnung ins Protokoll des Exports - wie bei den Importern
+    (importers/_common.warn): was das Zielformat nicht darstellen kann, steht
+    hier, statt still zu fehlen oder verfaelscht hinauszugehen."""
+    say(log, "WARNUNG: " + msg)
+
+
 def beam_elements(model: Model) -> list[int]:
     return [i for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
 

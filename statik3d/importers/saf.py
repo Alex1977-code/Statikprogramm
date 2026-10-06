@@ -13,6 +13,15 @@ Einheiten laut SAF: Koordinaten m, Querschnittsabmessungen mm (A mm², I mm⁴),
 Dicken mm, E-Modul MPa, Lasten kN / kN/m / kN/m², Federn MN/m bzw. MNm/rad.
 Abweichende Einheiten in eckigen Klammern der Kopfzeile werden erkannt.
 Globales Z zeigt nach oben (Eigengewicht -> g = -9.81 m/s² in Z).
+
+Stablasten (StructuralCurveAction): Uniform und Trapez, ueber die ganze Laenge
+(Extent Full) oder einen Abschnitt (Extent Span mit Start und End point,
+Coordinate definition Absolute in m oder Relative als Anteil 0 bis 1 der
+Stablaenge, Origin From start oder From end). Bis zum 06.10.2026 wurde jeder
+Span ohne ein Wort als Volllast gelesen.
+Kombinationen: die Spalte "Envelope" (eine Erweiterung von Statik3D, siehe
+exporters/saf.py) fasst Alternativen wieder zu einer Ergebniskombination
+zusammen; der Faktor heisst "Factor" (aeltere Dateien von Statik3D: "Coefficient").
 """
 from __future__ import annotations
 
@@ -551,14 +560,20 @@ def import_saf(path: str, model: Model = None, log: list = None,
         c_desc = sh.col(r"^description")
         c_cat = sh.col(r"^category", r"^type$")
         c_lc = sh.col(r"^load ?case$", r"^load ?case( ?1)?$")
-        c_f = sh.col(r"^factor$", r"^factor( ?1)?$")
+        # Der Export von Statik3D schrieb bis zum 06.10.2026 "Coefficient", der
+        # Import las nur "Factor": jeder Faktor kam als 1,0 zurueck. Der Export
+        # schreibt jetzt "Factor"; "Coefficient" lesen wir weiter, damit eine so
+        # geschriebene Datei nicht mit lauter 1,0 hereinkommt
+        c_f = sh.col(r"^factor$", r"^factor( ?1)?$", r"^coeff")
+        c_env = sh.col(r"^envelope")
         combos: dict[str, dict] = {}
         for r in sh.data():
             name = Sheet.text(r, c_name)
             if not name:
                 continue
             cb = combos.setdefault(name, {"factors": {}, "cat": Sheet.text(r, c_cat),
-                                          "desc": Sheet.text(r, c_desc)})
+                                          "desc": Sheet.text(r, c_desc),
+                                          "env": Sheet.text(r, c_env)})
             pairs = []
             if c_lc is not None:
                 pairs.append((Sheet.text(r, c_lc), Sheet.num(r, c_f)))
@@ -570,6 +585,7 @@ def import_saf(path: str, model: Model = None, log: list = None,
             for lc, f in pairs:
                 if lc:
                     cb["factors"][case_of(lc)] = f if f is not None else 1.0
+        huellen: dict[str, object] = {}      # Spalte "Envelope" -> Ergebniskombination
         for name, cb in combos.items():
             cat = cb["cat"].lower()
             typ = "ULS"
@@ -579,9 +595,23 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 typ = "ACC"
             elif "equ" in cat:
                 typ = "EQU"
+            if cb["env"]:
+                # eine Alternative einer Ergebniskombination (F26): die erste legt sie
+                # an, jede weitere kommt als Alternative dazu - nicht als eigene Summe
+                ek = huellen.get(cb["env"])
+                if ek is None:
+                    huellen[cb["env"]] = model.add_combination(
+                        C.unique_name(model.combinations, cb["env"]), {}, typ,
+                        cb["desc"] or cb["cat"], alternativen=[cb["factors"]])
+                else:
+                    ek.alternativen.append(cb["factors"])
+                continue
             model.add_combination(C.unique_name(model.combinations, name), cb["factors"],
                                   typ, cb["desc"] or cb["cat"])
-        C.say(log, f"SAF: {len(combos)} Kombinationen")
+        n_alt = sum(len(e.alternativen) for e in huellen.values())
+        C.say(log, f"SAF: {len(combos) - n_alt + len(huellen)} Kombinationen"
+                   + (f" (davon {len(huellen)} Ergebniskombination"
+                      f"{'en' if len(huellen) != 1 else ''} aus {n_alt} Alternativen)" if huellen else ""))
 
     # ---- Knotenlasten (Kraefte und Momente) ---------------------------------------------
     for key, is_moment in (("pointaction", False), ("pointmoment", True)):
@@ -636,8 +666,14 @@ def import_saf(path: str, model: Model = None, log: list = None,
         c_cs = sh.col(r"^coordinate ?system")
         c_loc = sh.col(r"^location")
         c_ext = sh.col(r"^extent")
+        c_def = sh.col(r"^coordinate ?definition")
+        c_org = sh.col(r"^origin")
+        c_p1 = sh.col(r"^start ?point")
+        c_p2 = sh.col(r"^end ?point")
         f_v = sh.unit(c_v1, 1e3)
+        f_p = sh.unit(c_p1, 1.0)
         n_loads = 0
+        relativ_gemeldet = False
         for r in sh.data():
             try:
                 mem = Sheet.text(r, c_mem)
@@ -654,17 +690,53 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 if "proj" in Sheet.text(r, c_loc).lower():
                     C.warn(log, f"Streckenlast auf '{mem}': Projektion als wahre Laenge angesetzt")
                 ext = Sheet.text(r, c_ext).lower()
-                if ext and not ext.startswith("full") and not ext.startswith("span"):
-                    C.warn(log, f"Streckenlast auf '{mem}': Teilbereich '{ext}' als Volllast")
                 lengths = [model.element_length(e) for e in elems]
                 total = sum(lengths) or 1.0
+                # Bereich der Last entlang des Stabes: x1 bis x2 mit w1 bei x1 und w2
+                # bei x2 (Value 1 gehoert zum Start point, Value 2 zum End point)
+                x1, x2, w1, w2 = 0.0, total, v1, v2
+                if ext.startswith("span"):
+                    p1, p2 = Sheet.num(r, c_p1), Sheet.num(r, c_p2)
+                    if p1 is None or p2 is None:
+                        raise ValueError("Teilbereich (Span) ohne Start point und End point - "
+                                         "nicht übernommen, eine Volllast wäre geraten")
+                    if Sheet.text(r, c_def).lower().startswith("rel"):
+                        if not (-1e-9 <= p1 <= 1 + 1e-9 and -1e-9 <= p2 <= 1 + 1e-9):
+                            raise ValueError(f"relative Positionen {p1:g} und {p2:g} liegen nicht "
+                                             "zwischen 0 und 1 - nicht übernommen")
+                        p1, p2 = p1 * total, p2 * total
+                        if not relativ_gemeldet:
+                            relativ_gemeldet = True
+                            C.say(log, "SAF: Positionen mit Coordinate definition Relative als "
+                                       "Anteil 0 bis 1 der Stablänge gelesen")
+                    else:
+                        p1, p2 = p1 * f_p, p2 * f_p
+                    if "end" in Sheet.text(r, c_org).lower():       # From end: vom Stabende gezaehlt
+                        p1, p2 = total - p1, total - p2
+                    if p1 <= p2:
+                        x1, x2 = p1, p2
+                    else:
+                        x1, x2, w1, w2 = p2, p1, v2, v1
+                    if x2 - x1 <= 1e-9 * total:
+                        raise ValueError("Teilbereich (Span) ohne Länge - nicht übernommen")
+                    if x1 < -1e-9 * total or x2 > total * (1 + 1e-9):
+                        raise ValueError(f"Teilbereich {x1:g} m bis {x2:g} m liegt nicht auf dem Stab "
+                                         f"({total:g} m) - nicht übernommen")
+                elif ext and not ext.startswith("full"):
+                    C.warn(log, f"Streckenlast auf '{mem}': Teilbereich '{ext}' als Volllast")
+                tol = 1e-9 * total
                 pos = 0.0
                 case = case_of(Sheet.text(r, c_lc))
                 for e, L in zip(elems, lengths):
-                    qa = (d * (v1 + (v2 - v1) * pos / total)).tolist()
-                    qb = (d * (v1 + (v2 - v1) * (pos + L) / total)).tolist()
-                    model.load_beam(e, *qa, system=system, case=case,
-                                    q2=qb if qb != qa else None)
+                    s, t = max(pos, x1), min(pos + L, x2)
+                    if t - s > tol:
+                        qa = (d * (w1 + (w2 - w1) * (s - x1) / (x2 - x1))).tolist()
+                        qb = (d * (w1 + (w2 - w1) * (t - x1) / (x2 - x1))).tolist()
+                        a, b = s - pos, t - pos
+                        ganz_b = b >= L - tol
+                        model.load_beam(e, *qa, system=system, case=case,
+                                        q2=qb if qb != qa else None,
+                                        a=0.0 if a <= tol else a, b=None if ganz_b else b)
                     pos += L
                 n_loads += 1
             except Exception as ex:
