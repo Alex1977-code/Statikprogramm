@@ -775,6 +775,58 @@ def test_nachweisetikett_folgt_dem_ergebnis():
           float(t == "noch keine Nachweise"), 1.0, 0)
 
 
+def test_querschnitt_ohne_widerstandsmoment_nicht_gefuehrt():
+    """Ein freier Querschnitt ohne Widerstandsmoment (W_el = W_pl = 0, so kommt
+    er etwa aus einem Import mit nur A und I) liess den ganzen EC3-Nachweis
+    aller Staebe mit ZeroDivisionError abbrechen (stability.py:336,
+    resistance.py:165; gefunden 04.10.2026). Jetzt ist genau dieser Stab
+    **nicht gefuehrt** mit Grund, die anderen werden normal nachgewiesen, und
+    ein Stab ohne Biegung wird trotz fehlendem W nachgewiesen (Knicken braucht
+    nur A und I)."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("HEB 200"))
+    m.add_section(Section("FREI", A=5e-3, Iy=5e-5, Iz=2e-5, It=1e-7))
+    a = mesher.line_of_beams(m, "S235", "FREI", (0, 0, 0), (0, 0, 4), 4)
+    m.fix(a[0], [0, 1, 2, 3, 4, 5])
+    b = mesher.line_of_beams(m, "S235", "HEB 200", (3, 0, 0), (3, 0, 4), 4)
+    m.fix(b[0], [0, 1, 2, 3, 4, 5])
+    c = mesher.line_of_beams(m, "S235", "FREI", (6, 0, 0), (6, 0, 4), 4)
+    m.fix(c[0], [0, 1, 2, 3, 4, 5])
+    m.case().category = "G"
+    m.load_node(a[-1], Fx=2e3, Fz=-100e3)        # Druck und Biegung
+    m.load_node(b[-1], Fx=2e3, Fz=-100e3)
+    m.load_node(c[-1], Fz=-300e3)                # nur Druck, N/N_cr > 0,04
+    m.add_member("Frei_gebogen", list(range(0, 4)))
+    m.add_member("HEB", list(range(4, 8)))
+    m.add_member("Frei_gedrueckt", list(range(8, 12)))
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    try:
+        an = solver.solve_all(m, design=True)
+        fehler = ""
+    except ZeroDivisionError as ex:
+        an, fehler = None, f"ZeroDivisionError {ex}"
+    check("Querschnitt ohne W: der EC3-Nachweis bricht nicht ab " + fehler,
+          float(an is not None), 1.0, 0)
+    if an is None:
+        return
+    d = an.design.members
+    fg, heb, fd = d["Frei_gebogen"], d["HEB"], d["Frei_gedrueckt"]
+    check("… gebogener Stab ohne W ist nicht gefuehrt, Grund nennt W_y und den Querschnitt",
+          float("W_y" in (fg.fehler or "") and "FREI" in (fg.fehler or "")), 1.0, 0)
+    check("… der Hinweis steht in den Warnungen (Bericht, Offene Hinweise)",
+          float(any("nicht geführt" in w and "W_y" in w for w in fg.warnings)), 1.0, 0)
+    check("… der HEB daneben wird normal nachgewiesen (Ausnutzung > 0, kein Fehler)",
+          float(heb.util > 0 and not heb.fehler), 1.0, 0)
+    check("… der nur gedrueckte Stab ohne W wird nachgewiesen (Knicken)",
+          float(fd.util > 0 and not fd.fehler and any(
+              k.startswith("Knicken") for s in fd.stability for k in s.get("checks", {}))),
+          1.0, 0)
+    s = an.design.summary()
+    check("… die Zusammenfassung sagt nicht „alle erfüllt“, sondern nennt den Stab",
+          float("alle erfüllt" not in s and "Frei_gebogen" in s and "nicht geführt" in s), 1.0, 0)
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Verifikation EC3 (Klassifizierung, Querschnitt, Stabilitaet, Ermuedung)")
@@ -790,6 +842,7 @@ def main():
     test_schadensakkumulation()
     test_design_driver()
     test_stab_ohne_streckgrenze_nicht_gefuehrt()
+    test_querschnitt_ohne_widerstandsmoment_nicht_gefuehrt()
     test_nicht_gefuehrt_ohne_ausnutzung_in_bildern()
     test_kein_stab_gefuehrt_keine_bilder()
     test_sorte_ohne_streckgrenze()

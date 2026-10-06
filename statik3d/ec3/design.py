@@ -193,6 +193,12 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
     zg = {"top": sec.h / 2, "bottom": -sec.h / 2}.get(member.load_position, 0.0)
     ext = {k: 0.0 for k in ("N_min", "N_max", "Vy_max", "Vz_max", "Mt_max", "My_max", "Mz_max")}
     worst_cls = 1
+    # Ein freier Querschnitt ohne Widerstandsmoment (etwa aus einem Import mit
+    # nur A und I) laesst sich auf Biegung nicht nachweisen. Bis zum 06.10.2026
+    # brach dann der ganze EC3-Nachweis aller Staebe mit ZeroDivisionError ab;
+    # jetzt ist dieser Stab nicht gefuehrt, mit Grund, wie ohne Streckgrenze.
+    w_fehlt = {"W_y": not (sec.Wel_y > 0 or sec.Wpl_y > 0),
+               "W_z": not (sec.Wel_z > 0 or sec.Wpl_z > 0)}
     for cname, res in results.items():
         mf = res.member_forces(member, n)
         x = mf["x"]
@@ -201,6 +207,14 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
         ext["N_max"] = max(ext["N_max"], float(N.max()))
         for k, arr in (("Vy_max", Vy), ("Vz_max", Vz), ("Mt_max", Mt), ("My_max", My), ("Mz_max", Mz)):
             ext[k] = max(ext[k], float(np.abs(arr).max()))
+        fehlt = [w for w, arr in (("W_y", My), ("W_z", Mz))
+                 if w_fehlt[w] and float(np.abs(arr).max()) > 1e-6]
+        if fehlt:
+            mc.fehler = f"Querschnitt {sec.name} ohne Widerstandsmoment {' und '.join(fehlt)}"
+            mc.warnings.append(f"{mc.fehler} – Nachweis nicht geführt; W_el und W_pl am "
+                               "Querschnitt eintragen oder am Stab „Nachweis nach EC3“ ausschalten")
+            mc.extremes = ext
+            return mc
         # --- Woelbkrafttorsion (6.2.7) ---
         # Sie wird vor den Querschnittsnachweisen gerechnet, denn sie teilt das
         # Torsionsmoment auf: der St.-Venant-Anteil geht in die Schubspannung,
