@@ -253,7 +253,7 @@ def test_f30_haken_schaltet_das_gemeinte_lager_ab():
     w.selection = np.array([5], dtype=int)
     w._stellung_auswahl(mk, "S1", True)
     check("„Auswahl deaktivieren“ trägt das Lager des gewählten Knotens mit seinem Namen ein",
-          _liste(mk, "lager_aus") is not None and mk.werte().get("lager_aus") == "Lager 2",
+          _liste(mk, "lager_aus") is not None and mk.werte().get("lager_aus") == ["Lager 2"],   # Mehrfachwahl als Liste (F21)
           str(mk.werte().get("lager_aus")))
     mk.abbrechen()
     app.processEvents()
