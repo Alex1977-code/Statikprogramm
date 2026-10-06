@@ -6836,8 +6836,14 @@ class Model:
         trug das verkuerzte alte Element seine Elementlast nur noch auf seiner
         neuen Laenge, und die Rechnung verlor ein Viertel der Last (Balken 8 m,
         10 kN/m: Auflager 60 statt 80 kN), bis irgendeine andere Last neu
-        verteilt wurde."""
+        verteilt wurde.
+
+        Seit dem 06.10.2026 gehen auch die Gelenke und die Elementlasten des
+        alten Elements mit (:meth:`_teilung_uebertragen`); vorher wanderte ein
+        Gelenk an seinem Ende an die Teilstelle, und eine Elementlast wirkte
+        nur noch auf dem verkuerzten Teil. Einmal je Teilung aufrufen."""
         alt, neu = int(alt), int(neu)
+        self._teilung_uebertragen(alt, neu)
         kn_neu = {int(n) for n in self.elements[neu].nodes}
         out = []
         for name, mem in self.members.items():
@@ -6860,6 +6866,116 @@ class Model:
                        for lc in self.load_cases.values() for ll in lc.linienlasten):
             self.lasten_verteilen()
         return out
+
+    def _teilung_uebertragen(self, alt: int, neu: int) -> None:
+        """Gelenke und Elementlasten des geteilten Stabelements ``alt`` auf
+        beide Teile verteilen (Nachpruefung von C14, 06.10.2026).
+
+        Der Aufrufer hat ``alt`` schon verkuerzt: eines seiner Enden liegt an
+        der Teilstelle, dem Knoten, den es mit ``neu`` teilt; das andere Ende
+        von ``neu`` liegt am alten Ort dieses Endes. Bis dahin blieb alles am
+        alten Element: ein Gelenk an seinem Ende lag danach an der Teilstelle
+        (Gelenk bei x = 6 m, nach dem Teilen bei x = 4 m), und eine
+        Elementlast (load_beam) wirkte nur noch auf dem verkuerzten Teil
+        (Summe der Auflagerkraefte z 82000 statt 84000 N).
+
+        * Gelenke und Federgelenke an dem Ende, das jetzt an der Teilstelle
+          liegt, gehen an das Ende von ``neu`` am alten Ort; die Teilstelle
+          bleibt biegesteif, ein Gelenk am anderen Ende bleibt, wo es ist.
+          Das Gelenkverzeichnis (MemberHinge.elemente, daraus schalten
+          Stellungen ein Gelenk ab) nennt dann ``neu``. Die FHG-Nummern gelten
+          weiter: ``neu`` hat dieselben Achsen wie ``alt`` (gleiche Richtung
+          und gleicher Drehwinkel, so teilt an_staebe_anschliessen; laeuft es
+          gegen ``alt``, gilt das mit umgekehrtem Drehwinkel).
+        * Jede Elementlast wird an der Teilstelle geschnitten: Abschnitt und
+          Werte bleiben entlang der alten Achse, was auf dem Stueck von
+          ``neu`` liegt, wird dort eine eigene Elementlast mit den Werten an
+          seinen Enden - gleichmaessig bleibt gleichmaessig, eine Trapez- oder
+          kurze Teillast (Einzellast) liegt danach anteilig auf beiden Teilen.
+          Eine Last im lokalen System wird auf die Achsen von ``neu``
+          umgerechnet. Aus Objektlasten erzeugte Elementlasten (``_geo``)
+          bleiben, wie sie sind: sie legt lasten_verteilen neu.
+        """
+        ne = len(self.elements)
+        if alt == neu or not (0 <= alt < ne and 0 <= neu < ne):
+            return
+        ea, en = self.elements[alt], self.elements[neu]
+        if ea.typ not in _EL.STAB_TYPEN or en.typ not in _EL.STAB_TYPEN:
+            return
+        ka, kn = [int(n) for n in ea.nodes], [int(n) for n in en.nodes]
+        gemeinsam = set(ka) & set(kn)
+        if len(ka) != 2 or len(kn) != 2 or len(gemeinsam) != 1:
+            return
+        k = gemeinsam.pop()
+        ende_alt = ka.index(k)          # dieses Ende von alt liegt jetzt an der Teilstelle
+        ende_neu = 1 - kn.index(k)      # dieses Ende von neu liegt am alten Ort
+        # Gelenke: was am Ende an der Teilstelle sass, an das Ende am alten Ort
+        dort = range(6 * ende_alt, 6 * ende_alt + 6)
+        um = 6 * (ende_neu - ende_alt)
+        frei = [int(d) for d in ea.hinges if int(d) in dort]
+        if frei:
+            ea.hinges = [d for d in ea.hinges if int(d) not in dort]
+            en.hinges = sorted({int(d) for d in en.hinges} | {d + um for d in frei})
+        federn = [(int(d), kf) for d, kf in ea.hinge_springs if int(d) in dort]
+        if federn:
+            ea.hinge_springs = [(d, kf) for d, kf in ea.hinge_springs if int(d) not in dort]
+            sp = {int(d): kf for d, kf in en.hinge_springs}
+            sp.update({d + um: kf for d, kf in federn})
+            en.hinge_springs = sorted(sp.items())
+        if frei or federn:
+            for h in self.hinges.values():
+                els = [int(e) for e in (getattr(h, "elemente", None) or [])]
+                if alt in els and int(getattr(h, "end", 0) or 0) == ende_alt:
+                    h.elemente = sorted((set(els) - {alt}) | {neu})
+        # Elementlasten: Lage s entlang der alten Achse, ab ihrem Anfang. alt
+        # behaelt seine Richtung; liegt sein Anfang an der Teilstelle, lag
+        # das Stueck von neu davor
+        X = np.asarray(self.nodes, float)
+        La = float(np.linalg.norm(X[ka[1]] - X[ka[0]]))
+        Ln = float(np.linalg.norm(X[kn[1]] - X[kn[0]]))
+        if La <= 0.0 or Ln <= 0.0:
+            return
+        L0 = La + Ln
+        s_alt, s_neu = (0.0, La) if ende_alt == 1 else (Ln, 0.0)
+        gleich = float((X[kn[1]] - X[kn[0]]) @ (X[ka[1]] - X[ka[0]])) > 0.0
+        drehung = None                  # lokal alt -> lokal neu, erst bei Bedarf
+        for lc in self.load_cases.values():
+            liste = []
+            for bl in lc.beam_loads:
+                if int(bl.elem) != alt or getattr(bl, "_geo", False):
+                    liste.append(bl)
+                    continue
+                A = max(0.0, float(bl.a or 0.0))
+                B = L0 if bl.b is None else min(float(bl.b), L0)
+                if B - A <= 1e-12:      # wirkt nicht - bleibt, wie es ist
+                    liste.append(bl)
+                    continue
+                q1 = np.asarray(bl.q, float)
+                q2 = q1 if bl.q2 is None else np.asarray(bl.q2, float)
+                for wer, s0, L in (("alt", s_alt, La), ("neu", s_neu, Ln)):
+                    lo, hi = max(A, s0), min(B, s0 + L)
+                    if hi - lo <= 1e-12:
+                        continue
+                    qa = q1 + (lo - A) / (B - A) * (q2 - q1)
+                    qb = q1 + (hi - A) / (B - A) * (q2 - q1)
+                    a, b = lo - s0, hi - s0
+                    if wer == "neu" and not gleich:
+                        a, b, qa, qb = L - b, L - a, qb, qa
+                    if wer == "neu" and bl.system == "local":
+                        if drehung is None:
+                            from .elements import beam3d as _bm
+                            Ta, _ = _bm.local_axes(X[ka[0]], X[ka[1]], ea.roll)
+                            Tn, _ = _bm.local_axes(X[kn[0]], X[kn[1]], en.roll)
+                            drehung = Tn @ Ta.T
+                        qa, qb = drehung @ qa, drehung @ qb
+                    x = copy.copy(bl)
+                    x.elem = alt if wer == "alt" else neu
+                    x.q = [float(v) for v in qa]
+                    x.q2 = None if bl.q2 is None else [float(v) for v in qb]
+                    x.a = 0.0 if a <= 1e-12 else float(a)
+                    x.b = None if b >= L - 1e-12 else float(b)
+                    liste.append(x)
+            lc.beam_loads = liste
 
     def berichtsrahmen(self) -> "Berichtsrahmen":
         """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""

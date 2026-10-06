@@ -3585,8 +3585,20 @@ denselben Stab und verteilt die Linienlasten des Stabs gleich neu, sodass sie
 wieder die ganze Stablänge belasten. Bis zum 03.10.2026 gehörte der neue Teil
 zu keinem Stab, und in der ersten Fassung danach trug der verkürzte alte Teil
 seine Last nur noch auf seiner neuen Länge (Balken 8 m mit 10 kN/m: Auflager
-60 statt 80 kN). Zusammenfassen, Teilen und *Stab* um ein vorhandenes Element
-verwerfen die Ergebnisse wie jede andere Änderung am Modell.
+60 statt 80 kN). Seit dem 06.10.2026 gehen beim Teilen auch die Gelenke und
+die Elementlasten des geteilten Elements mit. Ein Gelenk oder Federgelenk am
+Ende des Elements bleibt an seinem alten Ort und sitzt danach am neuen Teil; an
+der Teilstelle entsteht kein Gelenk, ein Gelenk am Anfang bleibt am alten Teil.
+Eine Last, die direkt auf dem Element liegt (Gleich-, Trapez- oder kurze
+Teillast, also auch eine Einzellast), wird an der Teilstelle geschnitten und
+liegt danach anteilig auf beiden Teilen; eine Last im lokalen System behält
+ihre Richtung. Verschiebungen, Auflagerkräfte und Schnittgrößen bleiben damit
+an jeder Stelle, wie sie vor dem Teilen waren. Bis zum 06.10.2026 wanderte ein
+Gelenk am Ende des Elements an die Teilstelle (vom Ende bei x = 6 m nach
+x = 4 m), und eine Elementlast wirkte nur noch auf dem verkürzten alten Teil
+(Summe der Auflagerkräfte 82 statt 84 kN). Zusammenfassen, Teilen und *Stab* um
+ein vorhandenes Element verwerfen die Ergebnisse wie jede andere Änderung am
+Modell.
 
 **Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
 die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
