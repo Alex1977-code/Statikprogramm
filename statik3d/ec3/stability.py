@@ -337,8 +337,12 @@ def member_stability(sec: Section, E: float, G: float, fy: float, cls: ClassResu
         # unendlich ausgenutzt, keine Biegung zaehlt 0 (Querschnitt ohne W)
         ry = (My_i / MyRd if MyRd > 0 else (np.inf if My_i > 0 else 0.0))
         rz = (Mz_i / MzRd if MzRd > 0 else (np.inf if Mz_i > 0 else 0.0))
-        u61 = n_y + kf["kyy"] * ry + kf["kyz"] * rz
-        u62 = n_z + kf["kzy"] * ry + kf["kzz"] * rz
+        if MyRd > 0 and MzRd > 0:       # Rechenweg wie bisher, bitgleich
+            u61 = n_y + kf["kyy"] * My_i / MyRd + kf["kyz"] * Mz_i / MzRd
+            u62 = n_z + kf["kzy"] * My_i / MyRd + kf["kzz"] * Mz_i / MzRd
+        else:
+            u61 = n_y + kf["kyy"] * ry + kf["kyz"] * rz
+            u62 = n_z + kf["kzy"] * ry + kf["kzz"] * rz
         checks["Interaktion Gl. 6.61"] = (
             u61, f"{n_y:.3f} + {kf['kyy']:.3f}·{ry:.3f} + {kf['kyz']:.3f}·{rz:.3f}"
                  f" (Cmy = {Cmy:.2f} {cmy_t}){zusatz}")
