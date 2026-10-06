@@ -372,10 +372,16 @@ def kontakte_nachfuehren(model, log: list = None, tol: float = None,
         if getattr(kb, "automatisch", False) and not kb.ausgefuehrt:
             p = paar_von(kb)
             if p is None or frozenset(p) not in paare:
-                del kbs[name]
+                # ueber die eine Loeschfunktion (Fehlerliste F28, 06.10.2026):
+                # ein Uebermass und der Eintrag im Subsystem gehen mit; eine
+                # Ausnahme entsteht nicht - geloescht hat ihn niemand
+                mit: list = []
+                model.kontaktbedingung_loeschen(name, protokoll=mit, ausnahme=False)
                 entfernt.append(name)
                 if log is not None:
                     say(log, f"Kontakt {name} entfernt: die Körper berühren sich nicht mehr")
+                    for z in mit:
+                        say(log, z)
     genannt: set = set()
     koerperpaare: set = set()
     for kb in kbs.values():

@@ -2524,8 +2524,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 protokoll.extend(zeilen)
             self.sel_lager = [k for k in self.sel_lager if k[0] != art]
         elif art == "kontakt":
+            # wie der Modellbaum ueber Model.kontaktbedingung_loeschen (Fehlerliste
+            # F28, 06.10.2026): bis dahin ging hier nur der Schluessel, und das
+            # Kontaktpaar der Fuge wirkte in der Rechnung weiter
             for n in namen:
-                m.kontaktbedingungen.pop(n, None)
+                g = m.kontaktbedingung_loeschen(n, protokoll=protokoll)
+                if g:
+                    gruende.append(f"{n}: {g}")
         elif art == "last":
             # (Lastfall, Liste, Platz): je Liste von hinten, sonst rueckt der
             # naechste Platz auf und der zweite Treffer loescht die falsche Last
@@ -10706,7 +10711,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     name = neuname
                 else:
                     if neuname != name:
-                        m.stab_umbenennen(name, neuname)
+                        # mit jedem Verweis: Stellung, Naht, Wind, Layer,
+                        # Subsystem, Lasten, Nachweise (Model.stab_umbenennen, F09)
+                        mit = m.stab_umbenennen(name, neuname)
+                        if mit:
+                            self._protokollzeilen([f"Stab {name} heißt jetzt {neuname} – mit umbenannt: "
+                                                   + ", ".join(mit)])
                         name = neuname
                     mem = m.members[name]
                     mem.elements = els
@@ -11150,9 +11160,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     kb.automatisch = False           # von Hand benannt: bleibt so
             if neuname != name:
-                del m.kontaktbedingungen[name]
-                kb.name = neuname
-                m.kontaktbedingungen[neuname] = kb
+                # mit jedem Verweis - Uebermass, Subsystem, getrennte Knoten
+                # (Model.kontaktbedingung_umbenennen, Fehlerliste F10); bis zum
+                # 06.10.2026 ging nur der Schluessel, und das Uebermass wirkte
+                # danach nirgends - auch beim automatischen Namen oben
+                mit = m.kontaktbedingung_umbenennen(name, neuname)
+                if mit:
+                    self._protokollzeilen([f"Kontaktbedingung „{name}“ heißt jetzt „{neuname}“ – mit "
+                                           "umbenannt: " + ", ".join(mit)])
             name = neuname
             self._kontakt_ausfuehren_wenn_netz(kb)
         elif art in self.LAGER_ARTEN:
@@ -11778,16 +11793,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 if mit:
                     self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
         elif art == "kombination":
-            if name not in m.combinations:
-                grund = "gibt es nicht"
-            else:
-                del m.combinations[name]
+            # mit ihren Verweisen - Ermuedungslasten, Anschluesse, Stellungen,
+            # Berichtsbilder (Model.kombination_loeschen, Fehlerliste F28)
+            grund = m.kombination_loeschen(name, protokoll=zeilen)
+            if not grund:
                 self._namen_geaendert()
         elif art == "ermuedungslast":
-            if name not in m.fatigue_loads:
-                grund = "gibt es nicht"
-            else:
-                del m.fatigue_loads[name]
+            # auch aus jedem Anschluss (Model.ermuedungslast_loeschen, F29)
+            grund = m.ermuedungslast_loeschen(name, protokoll=zeilen)
         elif art == "werkstoff":
             benutzt = (sum(1 for e in m.elements if e.mat == name)
                        + sum(1 for f in m.flaechen.values() if getattr(f, "material", "") == name)
@@ -11832,23 +11845,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 del m.winde[name]
                 m.lasten_verteilen()
         elif art == "kontaktbedingung":
-            if name not in m.kontaktbedingungen:
-                grund = f"Kontaktbedingung {name} gibt es nicht"
-            else:
-                kb = m.kontaktbedingungen.pop(name)
-                self._kontakt_zuruecknehmen(kb)
-                if getattr(kb, "automatisch", False):
-                    # Ein geloeschter automatischer Kontakt kommt nicht wieder
-                    from .. import kontakte
-                    p = kontakte.paar_von(kb)
-                    if p is not None:
-                        if not hasattr(m, "kontakt_ausnahmen"):
-                            m.kontakt_ausnahmen = []
-                        if list(p) not in m.kontakt_ausnahmen:
-                            m.kontakt_ausnahmen.append(list(p))
-                        self.log.appendPlainText(f"Kontakt {name} gelöscht: zwischen {p[0]} und {p[1]} entsteht "
-                                                 "keiner mehr von selbst („+ Kontaktbedingung anlegen“ legt "
-                                                 "von Hand einen an)")
+            # Netzteile, Uebermass, Subsystem und - bei einem automatischen
+            # Kontakt - die Ausnahme gehen mit: ein geloeschter automatischer
+            # Kontakt kommt nicht wieder (Model.kontaktbedingung_loeschen,
+            # Fehlerliste F28)
+            grund = m.kontaktbedingung_loeschen(name, protokoll=zeilen)
         elif art == "bemassung":
             if name not in m.bemassungen:
                 grund = f"Bemaßung {name} gibt es nicht"
@@ -22921,16 +22922,24 @@ class MainWindow(QtWidgets.QMainWindow):
         names = list(self.model.combinations)
         if 0 <= r < len(names):
             self.merken(f"Kombination {names[r]} gelöscht")
-            del self.model.combinations[names[r]]
+            # mit ihren Verweisen wie im Modellbaum (Model.kombination_loeschen, F28)
+            zeilen = []
+            self.model.kombination_loeschen(names[r], protokoll=zeilen)
             self._namen_geaendert()
             self.refresh_all()
+            self._protokollzeilen(zeilen)
 
     def clear_combinations(self):
         if self.model.combinations:
             self.merken("Alle Kombinationen gelöscht")
-        self.model.combinations.clear()
+        # jede ueber Model.kombination_loeschen (F28): bis zum 06.10.2026 blieben
+        # Ermuedungslasten, Anschluesse und Berichtsbilder auf den Namen stehen
+        zeilen = []
+        for n in list(self.model.combinations):
+            self.model.kombination_loeschen(n, protokoll=zeilen)
         self._namen_geaendert()
         self.refresh_all()
+        self._protokollzeilen(zeilen)
 
     def add_fatigue_load(self):
         """Register Lastfaelle „Neu…“: die Maske mit einer neuen Zeile.
@@ -22969,8 +22978,12 @@ class MainWindow(QtWidgets.QMainWindow):
         names = list(self.model.fatigue_loads)
         if 0 <= r < len(names):
             self.merken(f"Ermüdungslast {names[r]} gelöscht")
-            del self.model.fatigue_loads[names[r]]
+            # auch aus jedem Anschluss (Model.ermuedungslast_loeschen, F29)
+            zeilen = []
+            self.model.ermuedungslast_loeschen(names[r], protokoll=zeilen)
             self.refresh_all()
+            if zeilen:
+                self._protokollzeilen(zeilen)
 
     # ---- Kontakt -----------------------------------------------------
     def add_contact_support(self):
@@ -23135,9 +23148,15 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.tbl_mem.currentRow()
         names = list(self.model.members)
         if 0 <= r < len(names):
+            # Was den Stab braucht (Verformungsnachweis, Lasteinleitung, die
+            # Ersatznaht mit ihm als einzigem Ziel), sperrt - vor dem Merken,
+            # damit kein leerer Rueckgaengig-Schritt entsteht (Fehlerliste F28)
+            grund = self.model.stab_gesperrt(names[r])
+            if grund:
+                return self.hinweis(grund)
             self.merken(f"Stab {names[r]} gelöscht")
-            # Model.stab_loeschen wie Baum, Rechtsklick und Entf: Linienlasten
-            # und eine Stellung, die den Stab abschaltet, ziehen nach
+            # Model.stab_loeschen wie Baum, Rechtsklick und Entf: Linienlasten,
+            # Vorspannungen, Stellung, Naht, Wind, Layer und Subsystem ziehen nach
             zeilen = []
             self.model.stab_loeschen(names[r], protokoll=zeilen)
             self._protokollzeilen(zeilen)

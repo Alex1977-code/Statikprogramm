@@ -1543,8 +1543,13 @@ class Combination:
 
     def lastfall_entfernen(self, name: str) -> None:
         """Ein geloeschter Lastfall faellt aus den Faktoren und aus jeder
-        Alternative; eine leer gewordene Alternative entfaellt."""
+        Alternative; eine leer gewordene Alternative entfaellt. Als
+        Leiteinwirkung bleibt er seit dem 06.10.2026 nicht mehr stehen
+        (Fehlerliste F28: sie hiesse sonst wie ein neuer Lastfall gleichen
+        Namens)."""
         self.factors.pop(name, None)
+        if self.leading == name:
+            self.leading = ""
         self.alternativen = [a for a in ({k: v for k, v in a.items() if k != name}
                                          for a in self.alternativen) if a]
 
@@ -3495,6 +3500,18 @@ class Model:
         ins Leere, check() meldete FEHLER, und solve_all brach mit KeyError
         "Lastfall 'LF2' existiert nicht" ab.
 
+        Seit dem 06.10.2026 (Fehlerliste F28) gehen ausserdem mit: die
+        Leiteinwirkung einer Kombination, der Lastfall jedes Winds und jedes
+        Wasserdrucks (samt der Lastfallnummer des Winds und der statischen
+        Nummer des Wasserdrucks - „Lasten erzeugen“ legt dann einen neuen
+        an), jeder Berichtseintrag mit der Quelle „case:<Name>“ und eine
+        entfallene Ermuedungslast aus der Liste jedes Anschlusses
+        (:meth:`_ermuedungslast_austragen`, F29). Bis dahin blieben sie
+        stehen: ein neuer Lastfall gleichen Namens - die Nummernvergabe
+        schlaegt nach dem Loeschen von LF2 wieder „LF2“ vor - bekam beim
+        naechsten „Lasten erzeugen“ die Windlast, und das Berichtsbild zeigte
+        seinen Namen ueber dem Bild des alten.
+
         Rueckgabe: Klartextzeilen, was mitging (leer, wenn nichts).
         """
         aus: list[str] = []
@@ -3503,7 +3520,7 @@ class Model:
         # Kombination: sie bleibt dem Generator (G5, wie lastfall_umbenennen)
         frisch = [c for c in self.combinations.values() if c.unberuehrt()]
         for c in self.combinations.values():
-            if name in c.factors or any(name in a for a in c.alternativen):
+            if name in c.factors or any(name in a for a in c.alternativen) or c.leading == name:
                 c.lastfall_entfernen(name)
                 aus.append(f"Kombination '{c.name}': Lastfall '{name}' entfernt")
         for c in frisch:
@@ -3511,40 +3528,142 @@ class Model:
         # Traegt eine Kombination denselben Namen, bleibt ein Verweis der
         # Ermuedungslast gueltig (Zustand = Lastfall oder Kombination)
         if name not in self.combinations:
-            for fl in list(self.fatigue_loads.values()):
-                if fl.folge:
-                    # Ein Verlauf liest nur seine Glieder (ec3.fatigue);
-                    # ein altes case_max/case_min wird nur geleert
-                    if fl.case_max == name:
-                        fl.case_max = ""
-                    if fl.case_min == name:
-                        fl.case_min = None
-                    if name not in fl.folge:
-                        continue
-                    rest = [k for k in fl.folge if k != name]
-                    if rest:
-                        fl.folge = rest
-                        aus.append(f"Ermüdungslast '{fl.name}': Lastfall '{name}' aus dem "
-                                   f"Verlauf entfernt ({', '.join(rest)})")
-                    else:
-                        del self.fatigue_loads[fl.name]
-                        aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr Verlauf bestand "
-                                   f"nur aus Lastfall '{name}'")
-                elif name in (fl.case_max, fl.case_min):
-                    del self.fatigue_loads[fl.name]
-                    welcher = "oberer" if fl.case_max == name else "unterer"
-                    aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr {welcher} Zustand "
-                               f"war Lastfall '{name}'")
+            zeilen, weg = self._zustand_entfernen(name, "Lastfall")
+            aus += zeilen + self._ermuedungslast_austragen(weg)
         for s in getattr(self, "stellungen", None) or []:
             if name in (getattr(s, "faelle", None) or []):
                 s.faelle = [f for f in s.faelle if f != name]
                 aus.append(f"Stellung '{s.name}': Lastfall '{name}' aus ihrer Lastfallliste genommen"
                            + ("" if s.faelle else " - ihr ist kein Lastfall mehr zugewiesen"))
+        for w in (getattr(self, "winde", None) or {}).values():
+            if getattr(w, "lastfall", "") == name:
+                w.lastfall = ""
+                w.lastfall_nr = 0
+                aus.append(f"Wind '{w.name}': sein Lastfall '{name}' ist gelöscht - „Lasten erzeugen“ "
+                           "legt einen neuen an")
+        for wd in (getattr(self, "wasserdruecke", None) or {}).values():
+            if getattr(wd, "lastfall", "") == name:
+                wd.lastfall = ""
+                wd.lastfall_nr = 0
+                aus.append(f"Wasserdruck '{wd.name}': sein Lastfall '{name}' ist gelöscht - „Lasten "
+                           "erzeugen“ legt einen neuen an")
+            if getattr(wd, "lastfall_dyn", "") == name:
+                wd.lastfall_dyn = ""
+                aus.append(f"Wasserdruck '{wd.name}': sein Lastfall '{name}' der Druckschwankung ist "
+                           "gelöscht - „Lasten erzeugen“ legt einen neuen an")
+        aus += self._bericht_entfernen({f"case:{name}"})
         if self.active_case == name:
             self.active_case = next(iter(self.load_cases), "")
         if not self.load_cases:
             self.add_load_case("LF1", "G", nummer=1)
         return aus
+
+    def _zustand_entfernen(self, name: str, wort: str) -> tuple:
+        """Den geloeschten Lastfall oder die geloeschte Kombination *name*
+        (*wort* „Lastfall“ oder „Kombination“) aus den Ermuedungslasten
+        nehmen. Ein Verlauf verliert das Glied; ein Verlauf, dem keines
+        bleibt, und eine Last aus zwei Zustaenden, deren oberer oder unterer
+        Zustand *name* war, entfallen - den Zustand still durch den
+        Nullzustand zu ersetzen, aenderte die Schwingbreite, ohne dass es
+        jemand entschieden haette (wie bridges.positions).
+
+        Rueckgabe: (Klartextzeilen, Namen der entfallenen Lasten)."""
+        aus, weg = [], []
+        for fl in list(self.fatigue_loads.values()):
+            if fl.folge:
+                # Ein Verlauf liest nur seine Glieder (ec3.fatigue);
+                # ein altes case_max/case_min wird nur geleert
+                if fl.case_max == name:
+                    fl.case_max = ""
+                if fl.case_min == name:
+                    fl.case_min = None
+                if name not in fl.folge:
+                    continue
+                rest = [k for k in fl.folge if k != name]
+                if rest:
+                    fl.folge = rest
+                    aus.append(f"Ermüdungslast '{fl.name}': {wort} '{name}' aus dem "
+                               f"Verlauf entfernt ({', '.join(rest)})")
+                else:
+                    del self.fatigue_loads[fl.name]
+                    weg.append(fl.name)
+                    aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr Verlauf bestand "
+                               f"nur aus {wort} '{name}'")
+            elif name in (fl.case_max, fl.case_min):
+                del self.fatigue_loads[fl.name]
+                weg.append(fl.name)
+                welcher = "oberer" if fl.case_max == name else "unterer"
+                aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr {welcher} Zustand "
+                           f"war {wort} '{name}'")
+        return aus, weg
+
+    def _bericht_entfernen(self, quellen: set) -> list:
+        """Berichtseintraege mit einer Quelle aus *quellen* entfernen - das
+        Ergebnis, das sie zeigen, gibt es nicht mehr (Fehlerliste F28,
+        06.10.2026). Ein Bild bliebe sonst mit dem Namen eines geloeschten
+        Lastfalls stehen, eine Tabelle zeigte ins Leere, und beide folgten
+        still einem neuen Objekt gleichen Namens. Rueckgabe: Klartextzeilen."""
+        bericht = getattr(self, "bericht", None)
+        if not bericht:
+            return []
+        aus = []
+        bleibt = []
+        for e in bericht:
+            if e.quelle and e.quelle in quellen:
+                aus.append(f"Berichtseintrag '{e.name or e.bezug()}' entfernt - er zeigte {e.quelle_text()}")
+            else:
+                bleibt.append(e)
+        if aus:
+            bericht[:] = bleibt
+        return aus
+
+    def kombination_loeschen(self, name: str, protokoll: list = None) -> str:
+        """Eine Kombination entfernen - samt ihren Verweisen (Fehlerliste F28,
+        06.10.2026). Rueckgabe "" bei Erfolg, sonst der Grund; Zeilen nach
+        ``protokoll``.
+
+        Mit geht, wie bei :meth:`remove_load_case`: jeder Zustand und jedes
+        Glied einer Ermuedungslast, das die Kombination nennt (eine Last aus
+        zwei Zustaenden entfaellt, ein Verlauf verliert das Glied,
+        :meth:`_zustand_entfernen`), eine entfallene Ermuedungslast aus jedem
+        Anschluss (:meth:`_ermuedungslast_austragen`), ihr Name aus der
+        Kombinationsliste jeder Stellung und jeder Berichtseintrag mit der
+        Quelle „combo:<Name>“ oder der Quelle ihrer Umhuellenden
+        („env:<Schluessel>“). Aendert sich dadurch der Schluessel der
+        Umhuellenden einer anderen Ergebniskombination
+        (solver.umhuellende_schluessel_im_modell), folgen ihre Bilder.
+        Heisst ein Lastfall wie die Kombination, bleiben die Zustaende der
+        Ermuedungslasten bei ihm. Kein Verweis sperrt das Loeschen.
+
+        Bis zum 06.10.2026 loeschten Oberflaeche und Webserver nur den
+        Schluessel: die Ermuedungslast meldete einen FEHLER, bis eine neue
+        Kombination gleichen Namens entstand, und zeigte dann still auf sie;
+        das Berichtsbild ebenso."""
+        from .solver import umhuellende_schluessel_im_modell
+        if name not in self.combinations:
+            return f"Kombination {name} gibt es nicht"
+        vorher = umhuellende_schluessel_im_modell(self)
+        del self.combinations[name]
+        nachher = umhuellende_schluessel_im_modell(self)
+        zeilen = []
+        if name not in self.load_cases:
+            z, weg = self._zustand_entfernen(name, "Kombination")
+            zeilen += z + self._ermuedungslast_austragen(weg)
+        for s in getattr(self, "stellungen", None) or []:
+            if name in (getattr(s, "kombinationen", None) or []):
+                s.kombinationen = [k for k in s.kombinationen if k != name]
+                zeilen.append(f"Stellung '{s.name}': Kombination '{name}' aus ihrer Kombinationsliste genommen")
+        quellen = {f"combo:{name}"}
+        if name in vorher:
+            quellen.add(f"env:{vorher[name]}")
+        zeilen += self._bericht_entfernen(quellen)
+        umbenannt = {f"env:{k}": f"env:{nachher[n]}" for n, k in vorher.items()
+                     if n != name and n in nachher and nachher[n] != k}
+        if umbenannt:
+            zeilen += self._bericht_umbenennen(umbenannt)
+        if protokoll is not None:
+            protokoll.extend(zeilen)
+        return ""
 
     def case(self, name: str = None) -> LoadCase:
         """Lastfall (default: aktiver Lastfall)."""
@@ -3569,6 +3688,84 @@ class Model:
         f = FatigueLoad(name, case_max, case_min, cycles, factor)
         self.fatigue_loads[name] = f
         return f
+
+    def ermuedungslast_umbenennen(self, alt: str, neu: str) -> list:
+        """Die Ermuedungslast *alt* in *neu* umbenennen - an ihrem Platz in der
+        Reihenfolge und mit jedem Verweis: der Liste jedes Anschlusses
+        (``Joint.ermuedung``), sonst fiele sie dort still aus dem Nachweis.
+        Eine leere Liste heisst „alle“ und bleibt leer. Bis zum 06.10.2026
+        stand das nur in der Ermuedungsmaske (gui.ermuedungsmaske.schreiben).
+
+        Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
+        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
+        if alt == neu:
+            return []
+        if alt not in self.fatigue_loads:
+            raise KeyError(f"Ermüdungslast {alt} gibt es nicht")
+        if not neu.strip():
+            raise ValueError("Bitte einen Namen eingeben")
+        if neu in self.fatigue_loads:
+            raise ValueError(f"Ermüdungslast {neu} gibt es schon")
+        fl = self.fatigue_loads[alt]
+        _schluessel_tauschen(self.fatigue_loads, alt, neu)
+        fl.name = neu
+        aus = []
+        for j in (getattr(self, "joints", None) or {}).values():
+            liste = list(getattr(j, "ermuedung", None) or [])
+            if alt in liste:
+                j.ermuedung = [neu if x == alt else x for x in liste]
+                aus.append(f"Anschluss '{j.name}'")
+        return aus
+
+    def ermuedungslast_loeschen(self, name: str, protokoll: list = None) -> str:
+        """Eine Ermuedungslast entfernen - und aus der Liste jedes Anschlusses
+        (:meth:`_ermuedungslast_austragen`, Fehlerliste F29, 06.10.2026).
+        Rueckgabe "" bei Erfolg, sonst der Grund; Zeilen nach ``protokoll``.
+
+        Bis zum 06.10.2026 blieb ihr Name im Anschlussnachweis stehen: D ohne
+        sie, mit dem Hinweis „gibt es nicht“, und eine spaeter angelegte Last
+        gleichen Namens ging still in den Nachweis ein (an der Halle D =
+        71,287 ohne Hinweis)."""
+        if name not in self.fatigue_loads:
+            return f"Ermüdungslast {name} gibt es nicht"
+        del self.fatigue_loads[name]
+        zeilen = self._ermuedungslast_austragen([name])
+        if protokoll is not None:
+            protokoll.extend(zeilen)
+        return ""
+
+    def _ermuedungslast_austragen(self, namen) -> list:
+        """Geloeschte Ermuedungslasten aus der Liste jedes Anschlusses nehmen
+        (``Joint.ermuedung``); Rueckgabe: je Anschluss eine Zeile.
+
+        Entscheidung zur leeren Liste (F29): leer heisst am Anschluss „alle
+        Ermuedungslasten“ (joints.anschluss.check_joint). Nannte ein Anschluss
+        nur geloeschte Lasten, gilt danach das - wie bei „nur diese Lager
+        aktiv“ einer Stellung (:meth:`stellungen_nachziehen`), und die Zeile
+        sagt es ausdruecklich mit den Lasten, die jetzt zaehlen. Abweisen
+        hiesse, eine Last nicht loeschen zu koennen, deren Anschlussliste die
+        Oberflaeche weder zeigt noch aendern laesst; mehr Lasten fuehren zu
+        einer groesseren Schaedigungssumme, nicht zu einer kleineren."""
+        namen = set(namen or [])
+        if not namen:
+            return []
+        aus = []
+        for j in (getattr(self, "joints", None) or {}).values():
+            liste = list(getattr(j, "ermuedung", None) or [])
+            weg = [x for x in liste if x in namen]
+            if not weg:
+                continue
+            j.ermuedung = [x for x in liste if x not in namen]
+            t = (f"Anschluss „{j.name}“: Ermüdungslast " + ", ".join(f"„{x}“" for x in weg)
+                 + " gibt es nicht mehr – aus seiner Liste genommen")
+            if not j.ermuedung:
+                rest = list(self.fatigue_loads)
+                t += (" – die Liste ist damit leer, und leer heißt „alle“: der Anschluss weist jetzt alle "
+                      "Ermüdungslasten nach (" + ", ".join(rest) + ")" if rest else
+                      " – die Liste ist damit leer; weitere Ermüdungslasten gibt es nicht")
+            aus.append(t)
+        return aus
 
     def ermuedungszustaende(self) -> list[str]:
         """Namen, die als Zustand einer Ermuedungslast taugen: Lastfaelle und
@@ -5567,24 +5764,70 @@ class Model:
             if liste:
                 kb.koerpernamen = [neu if x == alt else x for x in liste]
 
-    def stab_umbenennen(self, alt: str, neu: str) -> None:
+    #: Sammlungen, deren Objekte Staebe in einer Liste ``staebe`` beim Namen
+    #: nennen (Wort im Protokoll, Sammlung im Modell)
+    STABLISTEN = (("Schweißnaht", "schweissnaehte"), ("Wind", "winde"), ("Layer", "layer"),
+                  ("Subsystem", "subsysteme"))
+
+    def stab_umbenennen(self, alt: str, neu: str) -> list:
+        """Den Stab *alt* in *neu* umbenennen - mit **jedem** Verweis
+        (Fehlerliste F09, 06.10.2026).
+
+        Mit geht, was einen Stab beim Namen nennt: der Schluessel in
+        ``members`` (an seinem Platz in der Reihenfolge, wie
+        :meth:`lastfall_umbenennen`), die Linienlasten und Vorspannungen der
+        Lastfaelle (``art`` "stab"), der Stab jedes Verformungsnachweises und
+        jeder Lasteinleitung, die Stabliste jeder Schweissnaht, jedes Winds,
+        jedes Layers und jedes Subsystems (:data:`STABLISTEN`) und „Deaktivierte
+        Stäbe“ jeder Stellung (``staebe_aus``).
+
+        Bis zum 06.10.2026 gingen nur Linienlasten, Verformungsgrenzen und
+        Lasteinleitungen mit (F09): nach S2 -> „Riegel“ schaltete die Stellung
+        den Stab still nicht mehr ab, die Naht verlor ihren Stab samt
+        Kerbfall, und der Wind scheiterte beim naechsten Erzeugen. Der Stab
+        rueckte ausserdem ans Ende der Reihenfolge.
+
+        Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
+        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
         if alt == neu or alt not in self.members:
-            return
+            return []
         if neu in self.members:
             raise ValueError(f"Stab {neu} gibt es schon")
-        mem = self.members.pop(alt)
+        mem = self.members[alt]
+        _schluessel_tauschen(self.members, alt, neu)
         mem.name = neu
-        self.members[neu] = mem
+        aus: list = []
         for lc in self.load_cases.values():
+            n = 0
             for ll in lc.linienlasten:
                 if ll.art == "stab" and ll.ziel == alt:
                     ll.ziel = neu
-        for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
-            if getattr(x, "stab", "") == alt:
-                x.stab = neu
-        for x in (getattr(self, "lasteinleitungen", None) or {}).values():
-            if getattr(x, "stab", "") == alt:
-                x.stab = neu
+                    n += 1
+            for v in (getattr(lc, "vorspannungen", None) or []):
+                if getattr(v, "art", "stab") == "stab" and v.ziel == alt:
+                    v.ziel = neu
+                    n += 1
+            if n:
+                aus.append(f"Lastfall '{lc.name}' ({n} {'Last' if n == 1 else 'Lasten'} am Stab)")
+        for wort, sammlung in (("Verformungsnachweis", "verformungsgrenzen"),
+                               ("Lasteinleitung", "lasteinleitungen")):
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                if getattr(x, "stab", "") == alt:
+                    x.stab = neu
+                    aus.append(f"{wort} '{nm}'")
+        for wort, sammlung in self.STABLISTEN:
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                liste = list(getattr(x, "staebe", None) or [])
+                if alt in liste:
+                    x.staebe = [neu if s == alt else s for s in liste]
+                    aus.append(f"{wort} '{nm}'")
+        for st in getattr(self, "stellungen", None) or []:
+            liste = list(getattr(st, "staebe_aus", None) or [])
+            if alt in liste:
+                st.staebe_aus = [neu if s == alt else s for s in liste]
+                aus.append(f"Stellung '{st.name}'")
+        return aus
 
     def _linienlasten_entfernen(self, art: str, name: str) -> bool:
         """Die Linienlasten auf diesem Stab oder dieser Linie aus allen
@@ -5642,8 +5885,36 @@ class Model:
                                   if not (gl.art != "flaeche" and gl.ziel == name)]
         return ""
 
+    def stab_gesperrt(self, name: str) -> str:
+        """Warum sich der Stab *name* nicht loeschen laesst - "" heisst: er
+        laesst sich loeschen (:meth:`stab_loeschen` nennt denselben Grund).
+
+        Je Verweisart entschieden wie bei den Knoten (:meth:`_knotennutzer`,
+        PR #20): ein Verformungsnachweis (``art`` "stab") und eine
+        Lasteinleitung, die den Stab nennen, sperren - ohne ihn verschwaende
+        der eine still, und die andere naehme die Stegabmessungen still von
+        einem anderen Stab am Knoten (ec3.beulen._stegwerte). Eine Ersatznaht
+        (``aequivalent``), deren einziges Ziel dieser Stab ist, sperrt ebenso:
+        ohne Ziel gilt sie fuer alle Staebe (schweissnaehte.naehte_fuer_stab).
+        Alles andere geht mit dem Stab (:meth:`stab_loeschen`)."""
+        nutzer = []
+        for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            if getattr(g, "art", "") == "stab" and getattr(g, "stab", "") == name:
+                nutzer.append(f"Verformungsnachweis {nm}")
+        for nm, x in (getattr(self, "lasteinleitungen", None) or {}).items():
+            if getattr(x, "stab", "") == name:
+                nutzer.append(f"Lasteinleitung {nm}")
+        for nm, n in (getattr(self, "schweissnaehte", None) or {}).items():
+            if getattr(n, "aequivalent", False) and name in (n.staebe or []) \
+                    and not [s for s in n.staebe if s != name] and not n.linien and not n.flaechen:
+                nutzer.append(f"Ersatznaht {nm} (ihr einziger Stab - ohne ihn gälte sie für alle Stäbe)")
+        if not nutzer:
+            return ""
+        return f"Stab {name} wird benutzt von " + ", ".join(nutzer) + " - erst diese löschen oder ändern"
+
     def stab_loeschen(self, name: str, verteilen: bool = True, protokoll: list = None) -> str:
-        """Den Stab mit Nachweis entfernen - seine Elemente bleiben.
+        """Den Stab mit Nachweis entfernen - seine Elemente bleiben. Rueckgabe
+        "" bei Erfolg, sonst der Grund (:meth:`stab_gesperrt`).
 
         Seine Linienlasten gehen mit, und die Elementlasten, die
         :meth:`lasten_verteilen` daraus auf die Elemente gelegt hat
@@ -5651,13 +5922,39 @@ class Model:
         und waren in der Lasttabelle unsichtbar. ``verteilen=False`` fuer eine
         Schleife ueber viele Staebe - dann ruft der Aufrufer danach einmal
         :meth:`lasten_verteilen`. Eine Stellung, die den Stab abschaltet,
-        verliert seinen Namen (:meth:`stellungen_nachziehen`, Zeile nach
-        ``protokoll``)."""
+        verliert seinen Namen (:meth:`stellungen_nachziehen`).
+
+        Seit dem 06.10.2026 (Fehlerliste F28) gehen ausserdem seine
+        Vorspannungen mit, und er faellt aus der Stabliste jeder Schweissnaht,
+        jedes Winds, jedes Layers und jedes Subsystems; ein
+        Verformungsnachweis, der nicht am Stab haengt (``art`` "knoten"),
+        verliert den Namen. Bis dahin blieben sie stehen, und ein neuer Stab
+        gleichen Namens erbte sie still: Naht samt Kerbfall, Wind,
+        Verformungsgrenze und Lasteinleitung. Was den Stab braucht, sperrt das
+        Loeschen (:meth:`stab_gesperrt`). Zeilen nach ``protokoll``."""
         if name not in self.members:
             return "Stab gibt es nicht"
+        grund = self.stab_gesperrt(name)
+        if grund:
+            return grund
         vorher = self.stellungsbezug()
         del self.members[name]
         zeilen = self.stellungen_nachziehen(vorher)
+        for wort, sammlung in self.STABLISTEN:
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                liste = list(getattr(x, "staebe", None) or [])
+                if name in liste:
+                    x.staebe = [s for s in liste if s != name]
+                    zeilen.append(f"{wort} „{nm}“: Stab „{name}“ gibt es nicht mehr – aus der Stabliste genommen")
+        for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            if getattr(g, "stab", "") == name:
+                g.stab = ""
+        for lc in self.load_cases.values():
+            vsp = list(getattr(lc, "vorspannungen", None) or [])
+            rest = [v for v in vsp if not (getattr(v, "art", "stab") == "stab" and v.ziel == name)]
+            if len(rest) != len(vsp):
+                lc.vorspannungen = rest
+                zeilen.append(f"Lastfall „{lc.name}“: Vorspannung im Stab „{name}“ entfernt")
         if protokoll is not None:
             protokoll.extend(zeilen)
         if self._linienlasten_entfernen("stab", name) and verteilen:
@@ -6117,6 +6414,127 @@ class Model:
         fr = Kontaktbedingung(name, **kw)
         self.kontaktbedingungen[name] = fr
         return fr
+
+    def kontaktbedingung_umbenennen(self, alt: str, neu: str) -> list:
+        """Die Kontaktbedingung *alt* in *neu* umbenennen - mit **jedem**
+        Verweis (Fehlerliste F10, 06.10.2026).
+
+        Mit geht: der Schluessel in ``kontaktbedingungen`` (an seinem Platz in
+        der Reihenfolge), das Ziel jedes Uebermasses (``LoadCase.uebermasse``),
+        die Kontaktliste jedes Subsystems und, was das Ausfuehren der Fuge im
+        Netz unter ihrem Namen angelegt hat: das Kontaktpaar, die Gruppe der
+        Spaltelemente und Kopplungen und die getrennten Knotenpaare
+        (fugen.kontaktfuge_ausfuehren, fugen.kontaktfuge_zuruecknehmen).
+
+        Bis zum 06.10.2026 benannten Maske und automatischer Name nur den
+        Schluessel um: das Uebermass zeigte weiter auf den alten Namen und
+        wirkte nicht mehr, ohne Meldung der Modellpruefung; beim Rechnen stand
+        nur „wirkt nirgends“ im Protokoll (contact.py).
+
+        Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
+        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
+        if alt == neu:
+            return []
+        if alt not in self.kontaktbedingungen:
+            raise KeyError(f"Kontaktbedingung {alt} gibt es nicht")
+        if not neu.strip():
+            raise ValueError("Bitte einen Namen eingeben")
+        if neu in self.kontaktbedingungen:
+            raise ValueError(f"Kontaktbedingung {neu} gibt es schon")
+        kb = self.kontaktbedingungen[alt]
+        _schluessel_tauschen(self.kontaktbedingungen, alt, neu)
+        kb.name = neu
+        aus: list = []
+        for lc in self.load_cases.values():
+            n = 0
+            for u in (getattr(lc, "uebermasse", None) or []):
+                if u.ziel == alt:
+                    u.ziel = neu
+                    n += 1
+            if n:
+                aus.append(f"Übermaß in Lastfall '{lc.name}'")
+        for nm, sub in (getattr(self, "subsysteme", None) or {}).items():
+            if alt in (sub.kontakte or []):
+                sub.kontakte = [neu if k == alt else k for k in sub.kontakte]
+                aus.append(f"Subsystem '{nm}'")
+        n = 0
+        for cp in getattr(self, "contact_pairs", None) or []:
+            if cp.name == alt:
+                cp.name = neu
+                n += 1
+        for g in getattr(self, "gap_elements", None) or []:
+            if str(getattr(g, "group", "")) == alt:
+                g.group = neu
+                n += 1
+        for k in getattr(self, "kopplungen", None) or []:
+            if str(getattr(k, "gruppe", "")) == alt:
+                k.gruppe = neu
+                n += 1
+        getrennt = getattr(self, "getrennte_knoten", None)
+        if getrennt and alt in getrennt:
+            _schluessel_tauschen(getrennt, alt, neu)
+            n += 1
+        if n:
+            aus.append("Fuge im Netz (Kontaktpaar, Spaltelemente, Kopplungen, getrennte Knoten)")
+        return aus
+
+    def kontaktbedingung_loeschen(self, name: str, protokoll: list = None, ausnahme: bool = True) -> str:
+        """Eine Kontaktbedingung entfernen - samt allem, was nur an ihr haengt
+        (Fehlerliste F28, 06.10.2026). Rueckgabe "" bei Erfolg, sonst der Grund.
+
+        Mit geht: was ihr Ausfuehren im Netz angelegt hat (Kontaktpaar,
+        Spaltelemente, Kopplungen, fugen.kontaktfuge_zuruecknehmen) samt der
+        Liste ihrer getrennten Knotenpaare, jedes Uebermass auf sie (eine Last
+        an der Fuge, so wie eine Linienlast mit ihrem Stab geht) und ihr
+        Eintrag in jedem Subsystem. Ein automatischer Kontakt entsteht danach
+        nicht wieder von selbst (``kontakt_ausnahmen``), ausser bei
+        ``ausnahme=False``: so nimmt kontakte.kontakte_nachfuehren einen
+        Kontakt, dessen Koerper sich nicht mehr beruehren. Kein Verweis sperrt
+        das Loeschen.
+
+        Bis zum 06.10.2026 nahm der Modellbaum nur die Netzteile und die
+        Ausnahme mit, Entf in der Ansicht nur den Schluessel - dort wirkte das
+        Kontaktpaar der geloeschten Fuge in der Rechnung weiter. Uebermass,
+        Subsystem und getrennte Knoten blieben auf beiden Wegen stehen und
+        galten fuer eine neue Bedingung gleichen Namens. Zeilen nach
+        ``protokoll``."""
+        kb = self.kontaktbedingungen.get(name)
+        if kb is None:
+            return f"Kontaktbedingung {name} gibt es nicht"
+        from . import fugen
+        zeilen = []
+        del self.kontaktbedingungen[name]
+        n = fugen.kontaktfuge_zuruecknehmen(self, kb)
+        if n:
+            zeilen.append(f"Kontaktbedingung „{name}“: {n} Verbindungen im Netz zurückgenommen "
+                          "(Kontaktpaar, Spaltelemente, Kopplungen)")
+        getrennt = getattr(self, "getrennte_knoten", None)
+        if getrennt and name in getrennt:
+            del getrennt[name]
+        for lc in self.load_cases.values():
+            alle = list(getattr(lc, "uebermasse", None) or [])
+            rest = [u for u in alle if u.ziel != name]
+            if len(rest) != len(alle):
+                lc.uebermasse = rest
+                zeilen.append(f"Lastfall „{lc.name}“: Übermaß auf „{name}“ entfernt")
+        for nm, sub in (getattr(self, "subsysteme", None) or {}).items():
+            if name in (sub.kontakte or []):
+                sub.kontakte = [k for k in sub.kontakte if k != name]
+                zeilen.append(f"Subsystem „{nm}“: Kontaktbedingung „{name}“ aus der Liste genommen")
+        if ausnahme and getattr(kb, "automatisch", False):
+            from . import kontakte
+            p = kontakte.paar_von(kb)
+            if p is not None:
+                if getattr(self, "kontakt_ausnahmen", None) is None:
+                    self.kontakt_ausnahmen = []
+                if list(p) not in self.kontakt_ausnahmen:
+                    self.kontakt_ausnahmen.append(list(p))
+                zeilen.append(f"Kontakt {name} gelöscht: zwischen {p[0]} und {p[1]} entsteht keiner mehr von "
+                              "selbst („+ Kontaktbedingung anlegen“ legt von Hand einen an)")
+        if protokoll is not None:
+            protokoll.extend(zeilen)
+        return ""
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
         """Anschluss an einem Stabende in das Modell aufnehmen."""
@@ -7442,6 +7860,17 @@ class Model:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Fläche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
+        # Ein Uebermass nennt seine Fuge beim Namen: eine Kontaktbedingung oder
+        # ein Kontaktpaar (add_uebermass). Fehlt sie, wirkt es nirgends. Bis zum
+        # 06.10.2026 sagte das nur das Protokoll der Rechnung („wirkt
+        # nirgends“, contact.py) - etwa nachdem das Umbenennen der Bedingung
+        # das Ziel nicht nachzog (Fehlerliste F10)
+        fugen = set(getattr(self, "kontaktbedingungen", None) or {}) | {str(cp.name) for cp in self.contact_pairs}
+        for lc in self.load_cases.values():
+            for u in getattr(lc, "uebermasse", None) or []:
+                if str(u.ziel) not in fugen:
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Übermaß auf „{u.ziel}“ - eine Kontaktbedingung "
+                                "oder ein Kontaktpaar dieses Namens gibt es nicht, das Übermaß wirkt nirgends")
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
         # Lager (FEHLER - das Gleichungssystem waere singulaer)
         if self.elements:

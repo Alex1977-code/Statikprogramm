@@ -696,6 +696,14 @@ Die Arbeitsfläche in drei Spalten:
   Entf dort die Auswahl der Ansicht (Kapitel 11, „Entf und Einzeltasten in der
   Ansicht“).
 
+  Seit dem 06.10.2026 nimmt jeder Löschweg - Baum, Rechtsklick, Entf in der
+  Ansicht, die Register und der Browser - auch die übrigen Verweise mit, die
+  das gelöschte Objekt beim Namen nennen; was es braucht, sperrt das Löschen
+  mit Grund. Was das für Stab, Kontaktbedingung, Lastfall, Kombination und
+  Ermüdungslast heißt, steht bei *Stab umbenennen und löschen*,
+  *Kontaktbedingung umbenennen und löschen*, *Einen Lastfall löschen*, *Eine
+  Kombination löschen* und *Eine Ermüdungslast löschen*.
+
   **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske rechts
   (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
   mit Wirkung je Freiheitsgrad, Lastfall, Kombination, Stellung,
@@ -1019,6 +1027,23 @@ es bindet die beiden Netze.) Einen **gelöschten** automatischen Kontakt legt da
 wieder an (das Paar ist als Ausnahme gemerkt; „+ Kontaktbedingung anlegen“
 legt von Hand einen an); automatische Kontakte, deren Körper sich nicht mehr
 berühren, verschwinden wieder, solange sie noch nicht im Netz ausgeführt sind.
+
+**Kontaktbedingung umbenennen und löschen** (seit 06.10.2026). Bekommt eine
+Kontaktbedingung einen neuen Namen - in ihrer Maske oder von selbst, weil
+sich die Wirkung eines automatischen Kontakts geändert hat -, folgen ihr das
+Übermaß in jedem Lastfall, ihr Eintrag in jedem Subsystem und, was ihr
+Ausführen im Netz unter ihrem Namen angelegt hat: das Kontaktpaar, die
+Spaltelemente und Kopplungen und die Liste der getrennten Knoten. Bis zum
+06.10.2026 ging nur der Name der Bedingung, und das Übermaß zeigte weiter auf
+den alten Namen; es wirkte danach nicht mehr, ohne dass die Modellprüfung
+etwas sagte (beim Rechnen stand nur „wirkt nirgends“ im Protokoll). Wer eine
+Kontaktbedingung löscht - im Modellbaum oder mit Entf in der Ansicht -,
+nimmt dasselbe mit: das Übermaß auf sie, ihren Eintrag im Subsystem, das
+Kontaktpaar, die Spaltelemente und Kopplungen und die getrennten Knoten. Das
+Protokoll nennt jede dieser Zeilen. Bis zum 06.10.2026 löschte Entf in der
+Ansicht nur die Bedingung, und ihr Kontaktpaar wirkte in der Rechnung weiter;
+auf beiden Wegen blieben Übermaß, Subsystem und getrennte Knoten stehen und
+galten für eine neue Bedingung gleichen Namens (`tests/test_fehler_p5.py`).
 
 Berührung heißt: näher als 1e-5 der Modellgröße (Drehlager: 55 µm; dort
 liegen aufeinanderliegende Flächen unter 1 µm auseinander, das nächste
@@ -3565,6 +3590,29 @@ Stabelement an, das ohne Nachweis unter *FE-Netz* stand, und der Rechtsklick
 „Neu: Stab …“ öffnete die Maske mit den Elementnummern; Masken und Rückfragen
 nannten das Element „Stab E…“.
 
+**Stab umbenennen und löschen** (seit 06.10.2026). Bekommt ein Stab in seiner
+Maske einen neuen Namen, folgt ihm jeder Verweis: seine Linienlasten und
+Vorspannungen, ein Verformungsnachweis und eine Lasteinleitung, die ihn
+nennen, jede Schweißnaht, jeder Wind, jeder Layer und jedes Subsystem mit ihm
+in der Stabliste und „Deaktivierte Stäbe“ jeder Stellung. Der Stab bleibt
+dabei an seinem Platz in der Liste, und das Protokoll nennt, was mitging. Bis
+zum 06.10.2026 gingen nur Linienlasten, Verformungsnachweis und
+Lasteinleitung mit: nach dem Umbenennen von S2 in „Riegel“ schaltete die
+Stellung den Stab still nicht mehr ab, die Naht verlor ihren Stab samt
+Kerbfall, und der Wind scheiterte beim nächsten „Lasten erzeugen“. Wer einen
+Stab löscht, nimmt seine Linienlasten und Vorspannungen mit, und der Name
+fällt aus jeder Schweißnaht, jedem Wind, jedem Layer, jedem Subsystem und
+jeder Stellung; das Protokoll sagt es je Eintrag. Ein Verformungsnachweis und
+eine Lasteinleitung, die den Stab nennen, sperren das Löschen mit Grund
+(„Stab S2 wird benutzt von Verformungsnachweis VG1, Lasteinleitung LE1 - erst
+diese löschen oder ändern“), ebenso eine Ersatznaht, deren einziger Stab er
+ist: ohne Stab gälte sie für alle Stäbe. Bis zum 06.10.2026 blieben diese
+Verweise stehen, und ein neuer Stab gleichen Namens - die Nummernvergabe
+schlägt nach dem Löschen von S2 wieder „S2“ vor - erbte still Naht samt
+Kerbfall, Wind, Verformungsnachweis und Lasteinleitung. Im Browser nahm das
+Löschen eines Stabs nicht einmal seine Linienlasten mit, und die Ergebnisse
+der Rechnung blieben stehen (`tests/test_fehler_p5.py`).
+
 **Was beim Stab mit Nachweis zu beachten ist** (seit 03.10.2026). Liegt
 zwischen den beiden Knoten schon ein Stabelement ohne Stab oder eine Kette
 solcher Elemente über Zwischenknoten, die die Strecke lückenlos und in einer
@@ -5336,6 +5384,15 @@ Zeile steht nur, wenn das Modell überhaupt Kontakt rechnet; ein Modell ganz
 ohne Kontaktfuge hat kein Kontaktsystem, das sie schreiben könnte
 (`tests/test_uebermass.py`, `test_uebermass_ohne_fuge_wird_benannt`).
 
+Seit dem 06.10.2026 meldet auch die Modellprüfung ein Übermaß, dessen Name
+weder eine Kontaktbedingung noch ein Kontaktpaar trägt, als FEHLER („Lastfall
+'LF1': Übermaß auf „Weg“ - eine Kontaktbedingung oder ein Kontaktpaar dieses
+Namens gibt es nicht, das Übermaß wirkt nirgends“), und die Rechnung startet
+dann nicht. Bis dahin stand es nur im Protokoll der Rechnung. Umbenennen und
+Löschen der Kontaktbedingung lassen seither kein solches Übermaß mehr zurück
+(*Kontaktbedingung umbenennen und löschen*); die Meldung betrifft alte Dateien
+und aufgeteilte Fugen aus dem RFEM-Import.
+
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
 *Lasten → Generierer → Wasserdruck* (oder Modellbaum → Einwirkungen →
@@ -6510,6 +6567,12 @@ Dialog schrieb es bis zum 24.09.2026 zusätzlich in die Lastspiele zweier
 Zustände, die beim Verlauf niemand liest. Geprüft in
 `tests/test_ermuedungsmaske.py`.
 
+Gelöscht wird eine Zeile seit dem 06.10.2026 über dieselbe Stelle im Modell
+wie im Modellbaum und im Register: Sie geht auch aus der Liste jedes
+Anschlusses, und die Meldungszeile der Maske und das Protokoll sagen es
+(*Eine Ermüdungslast löschen*). Umbenannt wird ebenfalls im Modell; die Zeile
+bleibt an ihrer Stelle.
+
 **Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
 Ein Zustand darf ein Lastfall **oder eine Kombination** sein — die
 FAT-Kombinationen aus RFEM sind Kombinationen, und der Nachweis liest beide
@@ -6703,6 +6766,48 @@ Stellungen ließ die Stellung ohne Ergebnis („Stellung 'S1': Lastfall 'LF2'
 gibt es im Modell nicht“, gemessen 24.09.2026). Eine Stellung nennt im
 Protokoll jede Ermüdungslast, die mit ihrer Lastfallliste entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
 Glied fehlt (siehe *Stellungen anlegen*).
+
+Seit dem 06.10.2026 gehen beim Löschen eines Lastfalls auch die übrigen
+Verweise mit: die Leiteinwirkung einer Kombination, der Lastfall eines Winds
+und eines Wasserdrucks (dazu die Lastfallnummer des Winds und die des
+statischen Wasserdrucks; „Lasten erzeugen“ legt dann einen neuen Lastfall
+an), jedes Berichtsbild und jede Berichtstabelle mit diesem Lastfall und eine
+dabei entfallene Ermüdungslast aus der Liste jedes Anschlusses. Das Protokoll
+nennt jede dieser Zeilen. Bis dahin blieben sie stehen: Nach dem Löschen von
+LF2 schlägt die Nummernvergabe für den nächsten Lastfall wieder „LF2“ vor,
+und ein Wind, der in LF2 schrieb, legte seine Windlast beim nächsten „Lasten
+erzeugen“ still in diesen neuen Lastfall; das Berichtsbild trug seinen Namen
+über dem Bild des alten (`tests/test_fehler_p5.py`).
+
+**Eine Kombination löschen** (Modellbaum, Register Kombinationen, „Alle
+Kombinationen löschen“, Browser) nimmt seit dem 06.10.2026 ihre Verweise mit
+wie ein Lastfall: Eine Ermüdungslast aus zwei Zuständen, deren oberer oder
+unterer Zustand sie war, entfällt; ein Verlauf verliert das Glied und entfällt
+erst, wenn ihm keines bleibt. Eine entfallene Ermüdungslast geht aus der Liste
+jedes Anschlusses. Der Name fällt aus der Kombinationsliste jeder Stellung,
+und jedes Berichtsbild und jede Berichtstabelle der Kombination oder ihrer
+Umhüllenden geht mit. Heißt ein Lastfall wie die Kombination, bleiben die
+Zustände der Ermüdungslasten bei ihm. Bis zum 06.10.2026 löschten alle Wege
+nur die Kombination: Die Ermüdungslast meldete in der Modellprüfung einen
+FEHLER, bis eine neue Kombination gleichen Namens entstand, und zeigte dann
+still auf sie; das Berichtsbild ebenso (`tests/test_fehler_p5.py`).
+
+**Eine Ermüdungslast löschen** (Modellbaum, Register Lastfälle,
+Ermüdungsmaske, Browser) nimmt sie seit dem 06.10.2026 auch aus der Liste der
+Ermüdungslasten jedes Anschlusses. Eine leere Liste heißt am Anschluss „alle
+Ermüdungslasten“. Nannte ein Anschluss nur gelöschte Lasten, weist er danach
+alle übrigen nach, und das Protokoll sagt es ausdrücklich mit den Lasten, die
+jetzt zählen („Anschluss „K2“: Ermüdungslast „E1“ gibt es nicht mehr – aus
+seiner Liste genommen – die Liste ist damit leer, und leer heißt „alle“: der
+Anschluss weist jetzt alle Ermüdungslasten nach (E2, E3)“). Das ist eine
+Entscheidung: Abweisen hieße, eine Last nicht löschen zu können, deren
+Anschlussliste die Oberfläche weder zeigt noch ändern lässt, und mehr Lasten
+geben eine größere Schädigungssumme, keine kleinere. Bis zum 06.10.2026 blieb
+der Name in der Liste stehen; der Nachweis rechnete ohne die Last mit dem
+Hinweis „gibt es nicht“, und eine später angelegte Last gleichen Namens ging
+still in den Anschlussnachweis ein (an der Halle D = 71,287 ohne Hinweis).
+Dasselbe gilt für eine Ermüdungslast, die mit ihrem Lastfall oder ihrer
+Kombination entfällt (`tests/test_fehler_p5.py`).
 
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
