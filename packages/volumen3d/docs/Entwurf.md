@@ -922,3 +922,22 @@ Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidung
 Hülle; O7 Vertragsvorschlag 2.2.0 (Volumenlast je Lastfall); O8 Abbruch während `prepare`; O9 `summary()` nach Zyklen; O10 Torsion in der Kopplungskontrolle; O11 Zeiten je Zyklus; O12 mehrere Kinder derselben Hülle;
 O13 Einrichtzeit der Glätterblöcke auf der GPU nach der Cholesky-Umstellung; O14 Oberflächenquadratur der Hüllenfacetten (17 von 27 s am Block mit Bohrung N 120); O15 (Reihenfolgefehler der 2:1-Balancierung) ist behoben, 4e.6. Aus Teilprojekt 2 offen: die Vierteilung der
 Randpolygone an gekrümmten Formen.
+
+## 4f. Teilprojekt 6 im Einzelnen (begonnen 04.10.2026)
+
+Teilprojekt 6 ist in vier Teile zerlegt, Reihenfolge nach Entscheidung des Anwenders: **6a** Fehlerschätzer und lokale hp-Adaptivität, **6b** Kerbspannung mit
+Referenzradius 1 mm, **6c** Stellungen als Mehrfach-rechte-Seiten (die Mehrfach-rechten Seiten gibt es schon in `api._zyklus`, es fehlen Nachweis und Zeitmessung), **6d** Punktwolke
+und Voxel. Entwurf von 6a: `docs/plaene/2026-10-04-tp6a-fehlerschaetzer-hp.md` (freigegeben am 04.10.2026 mit Ansatz B, echte variable Modenzahl je Zelle).
+
+### 4f.1 6a Phase 1: residuenbasierter Schätzer bei einheitlichem p (06.10.2026)
+`fcm/schaetzer.py`: `schaetzen(problem, U, vorgaben, volumenlast, tiefe)` liefert η² je Zelle getrennt nach Zellresiduum, Sprüngen, Neumann- und Dirichlet-Rest (`Schaetzung`);
+`energiefehler` den wahren Fehler gegen ein Referenzspannungsfeld; `doerfler` markiert, `verfeinerung_nach` macht aus markierten Zellen erzwungene Teilungen der `Verfeinerung`.
+Dafür neu: `basis.legendre_1d_d2` und `basis_3d_hesse` (zweite Ableitungen), `FcmProblem.flaechenlasten` und `volumenlasten` (Soll-Traktion und konstante Volumenlast neben dem
+Lastvektor). Zellflächen werden mit Punkttest auf Unterquadraten integriert (erste Ordnung, genügt nachweislich: tiefe 2 gegen 4 höchstens 0,05 %). Formel und Messung in Theorie 11.22,
+Regeln und Ergebnis im Plan `docs/plaene/2026-10-06-tp6a-phase1-schaetzer.md`: Effektivitätsindex 4,3 bis 5,7, je Folge um höchstens den Faktor 1,26 schwankend, gleiche Rate wie der
+wahre Fehler, Felder im Ansatzraum auf Rundungsniveau. Die h-adaptive Regel ist verfehlt: an Lamé mit h 20 steigt der Fehler beim lokalen Teilen, weil die Zellaggregation die Räume
+ungeschachtelt macht (O21). Entscheidung des Anwenders am 06.10.2026: Phase 1 so abschließen, O21 vor Phase 2 beheben, die Regel danach erneut prüfen.
+
+### 4f.2 Offen aus Phase 1
+O21 Verschachtelung bei lokaler Teilung unter Zellaggregation (als Nächstes); O22 Schätzer vektorisieren (am Kragarm 143 % der Zeit für Aufbau und Lösen); O23 Flächenlasten je Lastfall
+über die Schnittstelle (`zusatzlasten`) fehlen dem Schätzer; der Schätzer ist noch nicht über den Vertrag erreichbar. Danach Phase 2 (variable Modenzahl, Ansatz B) und Phase 3 (hp-Treiber).

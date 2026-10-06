@@ -10642,7 +10642,7 @@ Bauteil schafft, zeigen erst M2 und M3. Nachweisstellen auf Kontaktseiten
 bleiben ohne Kontakt über Punkte der Seite (B4) bei 15 bis 20 N/mm².
 
 
-## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekte 1 bis 5, 27.09. bis 02.10.2026)
+## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekte 1 bis 6, 27.09. bis 06.10.2026)
 
 Das Volumenmodul rechnet Volumenbauteile ohne klassisches Vernetzen: Der Körper wird in ein
 achsparalleles Gitter würfelförmiger Zellen eingebettet, die Geometrie geht nur über eine
@@ -10651,9 +10651,9 @@ vorzeichenbehaftete Abstandsfunktion (SDF) ein. Verbindlich sind
 (`docs/Schnittstellenvertrag_Statik3D_FCM.md`, seit 28.09.2026 Version 2.1.0); die Umsetzungsentscheidungen stehen in
 `packages/volumen3d/docs/Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen
 fest, geordnet nach den Teilprojekten: 11.1 bis 11.7 Teilprojekt 1 (CPU-Referenz: assemblierte Steifigkeit, Direktlöser), 11.8 Teilprojekt 2
-(Oktree, hängende Freiheitsgrade, STL), 11.9 Teilprojekt 3 (matrixfreier Operator, PCG), 11.10 Teilprojekt 4 (p-Mehrgitter, mit den Leistungsarbeiten A1 bis A6 des Plans TP 5) und 11.11 bis 11.20
+(Oktree, hängende Freiheitsgrade, STL), 11.9 Teilprojekt 3 (matrixfreier Operator, PCG), 11.10 Teilprojekt 4 (p-Mehrgitter, mit den Leistungsarbeiten A1 bis A6 des Plans TP 5), 11.11 bis 11.21
 Teilprojekt 5 (Moment Fitting, Spannungsrückgewinnung, Hot-Spot, adaptive Zyklen, STEP, Hüllenintegration, Schale, Knotenblech, zweite Sicht,
-Streuung mit der Gitterlage). Beobachtungen und Entscheidungen, die später dazukamen, stehen als „Nachtrag“ im Abschnitt, auf den sie sich
+Streuung mit der Gitterlage, Konsistenz der Schnittzellen) und 11.22 Teilprojekt 6a (Fehlerschätzer). Beobachtungen und Entscheidungen, die später dazukamen, stehen als „Nachtrag“ im Abschnitt, auf den sie sich
 beziehen (oder in 11.19 und 11.20); ein früherer Absatz kann dadurch überholt sein. Einheiten im Modul: mm, N, N/mm².
 
 ### 11.1 Ansatz und Freiheitsgrade
@@ -12358,3 +12358,68 @@ Der Boden ist der Vorwärtsfehler der Lösung in den freien Koeffizienten, verst
 wie d^p je Richtung, die größten Fortsetzungskoeffizienten sind 118 / 353 (p 2) und 6 831 / 34 153 (p 3) an den Streifen mit 10° und 30°. Der Spannungsfehler einer Starrkörperverschiebung von 30 mm geteilt durch diesen Koeffizienten
 ist in allen vier Fällen 0,7·10⁻⁹ bis 1,5·10⁻⁹ N/mm², und Rauschen der Größe eps · 30 mm in den freien Koeffizienten allein erzeugt ein Siebtel bis ein Fünfzigstel davon. Darum skaliert der Boden mit dem Betrag der Verschiebung
 (Starrkörperanteil) und mit p. Er liegt mit höchstens 5,5·10⁻⁷ relativ vier bis fünf Größenordnungen unter dem Diskretisierungsfehler; die Zwangsmatrix bleibt unverändert (Plan TP 5, Ergebnis O17).
+
+### 11.22 Teilprojekt 6a, Phase 1: residuenbasierter Fehlerschätzer (06.10.2026)
+
+Teilprojekt 6 ist in vier Teile zerlegt (6a Fehlerschätzer und lokale hp-Adaptivität, 6b Kerbspannung mit Referenzradius 1 mm, 6c Stellungen als Mehrfach-rechte-Seiten,
+6d Punktwolke und Voxel; Entwurf 4f). 6a läuft in drei Phasen: Phase 1 der Schätzer bei einheitlichem p mit h-Adaptivität, Phase 2 eine echte variable Modenzahl je Zelle,
+Phase 3 der hp-Treiber. Der Anwender entschied am 04.10.2026 für einen residuenbasierten Schätzer (gegen Zienkiewicz-Zhu und gegen zielorientierte Schätzer) und für echtes
+lokales hp. Dieser Abschnitt beschreibt Phase 1 (`fcm/schaetzer.py`, Plan `packages/volumen3d/docs/plaene/2026-10-06-tp6a-phase1-schaetzer.md`).
+
+**Schätzer.** Je Zelle K mit Kantenlänge h und Grad p
+
+η_K² = (1/E) [ (h/p)² ‖f + div σ_h‖²_{K∩Ω} + ½ Σ_F (h_F/p) ‖[σ_h n]‖²_{F∩Ω} + (h/p) ‖t − σ_h n‖²_{Γ_N∩K} ] + E (p²/h) ‖P (u_h − g)‖²_{Γ_D∩K},
+
+Einheit N mm wie die Energienorm ‖e‖_E² = ∫ (σ_h − σ) · D⁻¹ (σ_h − σ) dV, mit der er verglichen wird; η = (Σ η_K²)^½. Das Zellresiduum braucht zweite Ableitungen: für die
+hierarchische Basis ist N_j'' = √((2j−1)/2) P'_{j−1} mit P'_k = Σ (2i+1) P_i über i = k−1, k−3, …, und bei festem Werkstoff div σ = μ Δu + (λ+μ) ∇ div u. Integriert wird über die
+Werkstoffpunkte der Zellquadratur, also mit derselben Regel wie die Steifigkeit. Die Sprünge [σ_h n] laufen über alle Flächen zwischen zwei aktiven Zellen, jede Fläche einmal und
+von der feineren Zelle aus; an einer hängenden Fläche wird die feine Teilfläche gegen die grobe Nachbarzelle integriert, der Beitrag geht je zur Hälfte an beide Zellen. Den
+Werkstoffanteil einer Fläche liefert eine Tensor-Gauß-Regel mit (p+1)² Punkten auf 4 × 4 Unterquadraten und ein Punkttest gegen die Geometrie, das ist erste Ordnung in der
+Geometrie. Die Flächenquadratur mit 16 × 16 Unterquadraten ändert η um 0,01 % (Lamé h 5 p 2) und 0,05 % (Kirsch, Ziel 5); eine eben-exakte Flächenintegration ist nicht nötig.
+
+**Ränder.** Freie und belastete Oberfläche sind alle Oberflächenpunkte, die zu keinem Verschiebungsrand gehören; ihre Soll-Traktion t zeichnet `FcmProblem` neben dem
+Lastvektor auf (`flaechenlasten`, `volumenlasten`), unbelastet ist sie null. Auf Verschiebungsrändern misst der Nitsche-Rest die verletzte Vorgabe, mit P = I (voll) oder P = n nᵀ
+(Normalenrand und Schnittebene). Dazu kommt auf Normalenrändern der tangentiale Traktionsrest (I − n nᵀ) σ_h n und auf Schnittebenen derselbe Rest nach Abzug seiner L²-Projektion auf die
+drei Starrkörpermoden in der Ebene: Querkraft und Torsion sind dort als Mittelwertzwänge gehalten (11.6), ihr Anteil an der Tangentialtraktion ist Reaktion und kein Fehler.
+
+**Markieren und teilen.** Dörfler mit θ = 0,5 (kleinste Menge der Zellen mit den größten η_K², die die Hälfte von η² trägt). Markierte Zellen werden über die erzwungenen Teilungen
+der Verfeinerung (`Verfeinerung.zellen`, wie bei den Wurzelteilungen der Aggregation, 11.4) geteilt; die 2:1-Balancierung folgt wie sonst.
+
+**Messung** (fester Arbeitsbaum 9fc6966, 8 Threads, nach Regeln, die im Plan vor der Messung feststanden; zwei unabhängige Auswertungen, gleiche Urteile). Lamé gegen die exakte
+Lösung (im ebenen Dehnungszustand σ_z = ν (σ_r + σ_φ)), Kirsch und Kragarm (L 1000, B 100, H 200, links voll eingespannt, rechts Querkraft 10 kN als Traktion) gegen die Lösung
+desselben Gitters mit p + 2:
+
+| Folge | h bzw. Zielgröße | freie Freiheitsgrade | η | ‖e‖_E | θ = η / ‖e‖_E |
+|---|---|---|---|---|---|
+| Lamé p 2 | 20 / 10 / 5 | 765 / 4 395 / 28 215 | 9,230 / 2,026 / 0,519 | 2,049 / 0,467 / 0,121 | 4,50 / 4,34 / 4,27 |
+| Lamé p 3 | 20 / 10 / 5 | 2 100 / 13 188 / 89 310 | 1,489 / 0,505 / 0,276 | 0,327 / 0,101 / 0,048 | 4,56 / 5,02 / 5,74 |
+| Kirsch p 2 | 20 / 10 / 5 | 7 713 / 8 037 / 10 677 | 18,30 / 5,725 / 1,580 | 4,886 / 1,486 / 0,436 | 3,74 / 3,85 / 3,62 |
+| Kragarm p 2 | 50 / 25 | 5 535 / 37 179 | 7,445 / 4,506 | 1,420 / 0,851 | 5,24 / 5,30 |
+
+Der Effektivitätsindex θ schwankt je Folge um höchstens den Faktor 1,26 (Regel: 3), η fällt mit derselben Rate wie der wahre Fehler (Steigungen über h: Lamé p 2 2,08 und 2,04,
+Lamé p 3 1,22 und 1,38, Kragarm 0,72 und 0,74; Regel: Differenz höchstens 0,3), und von den 10 % Zellen mit größtem η liegen an Lamé h 10 p 2 alle unter den 20 % mit größtem
+wahrem Fehler (Regel: die Hälfte). Felder im Ansatzraum ergeben am schräg geschnittenen Patch-Körper η / ‖u‖_E = 7·10⁻¹² bis 1·10⁻¹¹ (linear, p 2), 3,5·10⁻¹² bis 4,1·10⁻¹² (quadratisch, p 2) und
+1,8·10⁻¹⁰ bis 2,1·10⁻¹⁰ (kubisch, p 3, je drei Läufe); die Schranken 10⁻⁸ bei p 2 und 10⁻⁷ bei p 3 sind die der Patch-Prüfung (11.21). θ zwischen 4 und 6 heißt: η überschätzt den Energiefehler um diesen Faktor,
+gleichbleibend über die Verfeinerung. Bei Lamé ist das Zellresiduum der größte Anteil (p 2 auf h 5: 0,506 von 0,519), bei p 3 wächst der Nitsche-Rest mit der Verfeinerung und mit
+ihm θ. Die Kirsch-Folge ist nach der vorab festgelegten Referenzprüfung nicht gewertet: auf dem gröbsten Glied weicht θ mit der Referenz p 3 um 50 % von θ mit der Referenz p 4 ab,
+das Loch mit 20 mm Radius ist mit 20-mm-Zellen auch bei p 4 nicht auskonvergiert; auf den feineren Gliedern sind es 4 % und 1 %. Die Kragarm-Folge endet bei h 25, weil die Referenz
+bei h 12,5 2,5 Mio. Freiheitsgrade hätte; die niedrige Rate kommt aus den singulären Kanten der voll eingespannten Stirnfläche.
+
+**h-adaptiv: Regel verfehlt.** Die Regel verlangte, dass Dörfler-Teilung ab dem gröbsten Glied nach drei Zyklen den Fehler des feinsten Glieds mit weniger Freiheitsgraden erreicht.
+An der Kirsch-Platte fällt der Fehler in drei Zyklen von 4,886 auf 1,347 bei 7 713 → 8 085 freien Freiheitsgraden; das ist bei gleicher Größe besser als das feste Gitter (Ziel 10:
+8 037 und 1,486), erreicht aber nicht das feinste Glied (0,436). Am Lamé-Zylinder mit h 20 **steigt** der Fehler mit jedem Zyklus (2,049 / 2,184 / 2,888 / 3,116 bei 765 / 1 065 / 1 674 /
+2 388 freien Freiheitsgraden), was bei geschachtelten Ansatzräumen in der Energienorm ausgeschlossen ist. Die Ursache ist die Zellaggregation (11.4). Für den ersten Schritt
+(4 Zellen geteilt) fällt der Fehler ohne Aggregation (α = 10⁻⁸) von 1,610 auf 1,263; mit Aggregation fällt er in den geteilten Zellen (e² 1,809 → 1,467), steigt aber in den
+ungeteilten (2,390 → 3,303). Im geteilten Gitter sind 52 von 81 Zellen aggregiert, und bei 42 davon liegt die Wurzel außerhalb der eigenen Elternzelle. Die Dicke des Modells (20 mm)
+ist gleich der Basiszelle, fast jede Zelle ist an den Ebenen z = 0 und z = 20 geschnitten. Wahrscheinlich (nicht gemessen) bindet die Teilung aggregierte Zellen der Umgebung an neue,
+feinere Wurzeln, deren Fortsetzung über eine größere Entfernung (gemessen an der Wurzelgröße) reicht als die der früheren Wurzel; dann ist das frühere Polynom nicht mehr darstellbar und
+die Räume sind nicht geschachtelt. Das ist kein Fehler des Schätzers, der die richtigen Zellen markiert, sondern eine Eigenschaft der Aggregation bei lokaler Teilung (Liste O21). Der
+Anwender entschied am 06.10.2026, Phase 1 so abzuschließen und O21 vor Phase 2 zu beheben; danach wird die Regel mit denselben Zahlen erneut geprüft.
+
+**Zeit.** Der Schätzer braucht bei Lamé 2 bis 21 % und bei Kirsch 18 bis 32 % der Zeit für Aufbau und Lösen, am Kragarm mit h 25 aber 143 % (5,2 gegen 3,6 s): er läuft in
+Python-Schleifen je Zelle und je Fläche, und am kompakten Quader mit vielen inneren Zellen ist der Direktlöser schneller (Liste O22). Flächenlasten, die die Schnittstelle je Lastfall als
+fertige Lastvektoren übergibt (`zusatzlasten`), kennt der Schätzer noch nicht (Liste O23); er ist bisher nur über `FcmProblem` erreichbar, nicht über den Vertrag.
+
+**Prüfungen.** `test_schaetzer` (14 Prüfungen): Hesse-Matrizen der Basis gegen den Differenzenquotienten der Gradienten und gegen die geschlossenen 1D-Formen; Aufzeichnung der Lasten;
+Flächenpaare gegen eine unabhängige Zählung über die Zellboxen (384 Paare über zwei Ebenen); Werkstoffanteil der Flächen exakt im Werkstoff und auf erste Ordnung gegen das exakt
+geclippte Polygon; Felder im Ansatzraum; Lamé p 2 auf h 20 und h 10 (θ 4,50 und 4,34); Dörfler; Teilung einer markierten Zelle. Bis auf Lamé laufen sie in der Kernsuite (390 Prüfungen).

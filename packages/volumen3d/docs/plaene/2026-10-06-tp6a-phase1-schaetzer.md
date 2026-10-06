@@ -913,6 +913,9 @@ nächsten Punkt vor Phase 2 messen und beheben (eigene Regeln vorab, etwa „Wur
 Elternzelle“) und Regel 5 danach mit denselben Zahlen erneut prüfen, an Kirsch mit so vielen Zyklen, bis die Größe des feinsten Glieds erreicht ist. Phase 2 baut auf den
 Aggregationsregeln auf (aggregierte Zellen erben p der Wurzel), deshalb O21 davor.
 
+**Entscheidung des Anwenders (06.10.2026): „O21 vor Phase 2“.** Phase 1 wird mit Regel 5 als verfehlt abgeschlossen und dokumentiert (Aufgabe 7). Danach O21 mit vorab
+festgelegten Regeln messen und beheben, Regel 5 mit denselben Zahlen erneut prüfen (Kirsch mit so vielen Zyklen, bis die Größe des feinsten Glieds erreicht ist), erst dann Phase 2.
+
 ## Modell je Schritt
 
 | Schritt | Modell | Denkstufe | Stand |
