@@ -4676,6 +4676,29 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
 
+### Namen, unter denen Ergebnisse einander verdecken (seit 04.10.2026)
+
+Zwei Arten von Namen weist die Modellprüfung seit dem 04.10.2026 als FEHLER
+ab, und die Berechnung startet dann nicht, weder über „Berechnen“ noch im
+Browser oder über die Kommandozeile:
+
+* Ein Lastfall und eine Kombination heißen gleich. In den Ergebnissen
+  verdeckt die Kombination dann den Lastfall, und der Ermüdungsnachweis, die
+  Nachweise und die Stellungen lesen die Kombination statt des Lastfalls. In
+  der Gegenprüfung ergab eine Ermüdungslast auf den Lastfall X neben einer
+  Kombination X die Schädigung D = 0 statt 27,6, ohne jede Meldung.
+* Eine Kombination heißt wie eine Alternative einer Ergebniskombination,
+  etwa „EK1 [2]“ neben der Ergebniskombination EK1. In den GZT-Nachweisen
+  verdrängt dann die eine die andere. In der Gegenprüfung sank die Ausnutzung
+  des Riegels so ohne Warnung von 1,49 auf 1,10.
+
+Die Meldung nennt beide Objekte, zum Beispiel „FEHLER: Lastfall 'X' und
+Kombination 'X' heißen gleich … Einen der beiden umbenennen.“ Bis zum
+04.10.2026 ließ die Modellprüfung beides durch. Später sollen Lastfälle
+grundsätzlich LF mit Nummer heißen, Lastkombinationen LK mit Nummer und
+Ergebniskombinationen EK mit Nummer (LF1, LK1, EK1); bis dahin ist diese
+Prüfung das Sicherheitsnetz.
+
 ### Kombinationstypen und Umhüllende im Klartext (seit 03.10.2026)
 
 Jede Kombination hat einen Typ, und nach der Berechnung bildet das Programm je
@@ -4730,6 +4753,46 @@ Fachbegriff, etwa „GZT“ oder „Ermüdung“, bekommt er den Zusatz
 neben der „Umhüllende GZT“ aller GZT-Kombinationen, in den Listen, im
 Modellbaum, im Browser und im Bericht. Ohne den Zusatz hießen zwei
 verschiedene Umhüllende gleich.
+
+Denselben Zusatz bekommt eine Ergebniskombination, deren Name genau einer der
+Schlüssel ist, unter denen das Programm die Umhüllenden der Arten führt (ULS,
+SLS_CH, SLS_FR, SLS_QP, FAT und CASES, dazu ein unbekannter Typ einer
+Kombination aus der Quelldatei). Eine Ergebniskombination „ULS“ steht dann als
+„Umhüllende ULS (Ergebniskombination)“ neben der „Umhüllende GZT“, und die
+„Umhüllende GZT“ fasst weiter alle GZT-Ergebnisse zusammen, die Alternativen
+dieser Ergebniskombination eingeschlossen. Nach der Rechnung nennt die
+Zusammenfassung im Protokoll jeden solchen Fall in einer Zeile, die mit
+„Hinweis:“ beginnt. Dasselbe gilt, wenn der Name einer Ergebniskombination
+sonst genauso angezeigt würde wie eine andere Umhüllende. Bis zum 04.10.2026
+überschrieb eine Ergebniskombination „ULS“ still die Umhüllende GZT: Ergebnisauswahl,
+Glasleiste, Modellbaum, Tabellen, Bild, Bericht und Browser zeigten unter
+„Umhüllende GZT“ nur die Alternativen dieser einen Ergebniskombination statt
+aller GZT-Ergebnisse, und eine Ergebniskombination „FAT“ ersetzte ebenso die
+Umhüllende der Ermüdung. Die Nachweise waren davon nicht betroffen, denn sie
+lesen keine Umhüllende; auch der Ermüdungsnachweis aus FAT-Kombinationen
+rechnet mit den Lastfällen. Eine Ergebnisdatei aus dieser Zeit lädt weiter:
+die Umhüllende der Ergebniskombination steht dann unter ihrem neuen Namen, und
+die Zusammenfassung sagt, dass die überschriebene Umhüllende in der Datei
+fehlt und Berechnung → Berechnen sie neu bildet. Erkannt wird das an der
+Ergebnisdatei selbst, auch wenn die Ergebniskombination nach der Rechnung
+umbenannt oder gelöscht wurde. In der ersten Fassung vom 04.10.2026 hing das
+noch am geöffneten Modell, und eine umbenannte Ergebniskombination „ULS“ stand
+weiter als „Umhüllende GZT“ da. Ein Berichtseintrag, der
+damals aus der „Umhüllende GZT“ eines solchen Modells übernommen wurde,
+verweist weiter auf den Schlüssel ULS: eine übernommene Tabelle zeigt nach der
+neuen Rechnung die echte Umhüllende GZT, ein übernommenes Bild bleibt, wie es
+aufgenommen wurde, und gehört neu übernommen. Ohne eine solche
+Namensgleichheit rechnet und zeigt das Programm alles wie vorher.
+
+Die Zusammenfassung im Protokoll nennt jede Umhüllende so, wie sie in der
+Ergebnisauswahl und im Modellbaum heißt, also auch „Umhüllende EK1: 3
+Ergebnisse“ und „Umhüllende ULS (Ergebniskombination): 3 Ergebnisse“. Bis zum
+04.10.2026 stand dort bei einer Ergebniskombination nur ihr Name („EK1: 3
+Ergebnisse“). Die Hinweiszeile zu einem geänderten Namen nennt nur eine
+Umhüllende, die es in der Rechnung gibt. Gibt es keine gleichlautende, sagt
+sie nur, dass der Name im Programm schon vergeben ist. So ist es bei einer
+Ergebniskombination „CASES“: neben ihr gibt es keine Umhüllende der Lastfälle,
+denn die entsteht nur in einem Modell ganz ohne Kombinationen.
 
 Der Kombinationsdialog (Doppelklick in der Tabelle *Kombinationen* oder im
 Register *Lastfälle*) bietet dieselben Typen wie die Maske, also auch

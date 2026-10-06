@@ -3380,6 +3380,39 @@ class Model:
                                         if n not in self.load_cases
                                         and not c.ist_umhuellende]
 
+    def namenskollisionen(self) -> list[str]:
+        """FEHLER-Zeilen fuer Namen, unter denen die Ergebnisse einander
+        verdecken - Sicherheitsnetz bis zur Namensregel LF/LK/EK (Paket R2).
+
+        * Ein Lastfall und eine Kombination heissen gleich: in
+          ``Analysis.all_results()`` verdeckt die Kombination den Lastfall, und
+          Ermuedung, Nachweise und Stellungen lesen sie statt seiner. Gemessen
+          in der Gegenpruefung von R1 (04.10.2026): Ermuedungslast auf den
+          Lastfall X neben einer Kombination X ergab D = 0 statt 27,6, ohne
+          Meldung.
+        * Eine Kombination heisst wie eine Alternative einer
+          Ergebniskombination („EK1 [2]“): in den GZT-Nachweisen
+          (ec3.design._uls_results) verdraengt die eine die andere -
+          Ausnutzung des Riegels 1,10 statt 1,49, ohne Warnung.
+
+        Beides liess check() bis dahin durch. Die Rechnung startet mit
+        diesen Zeilen nicht (check, solve_all)."""
+        import re
+        msgs = []
+        for n in self.combinations:
+            if n in self.load_cases:
+                msgs.append(f"FEHLER: Lastfall '{n}' und Kombination '{n}' heißen gleich - in den "
+                            "Ergebnissen verdeckt die Kombination den Lastfall (Ermüdung, "
+                            "Nachweise). Einen der beiden umbenennen.")
+        eks = {n for n, c in self.combinations.items() if c.ist_umhuellende}
+        for n in self.combinations:
+            t = re.fullmatch(r"(.+) \[(\d+)\]", n)
+            if t and t.group(1) in eks:
+                msgs.append(f"FEHLER: Kombination '{n}' heißt wie die Alternative {t.group(2)} der "
+                            f"Ergebniskombination '{t.group(1)}' - in den Nachweisen verdrängt die "
+                            "eine die andere. Die Kombination umbenennen.")
+        return msgs
+
     # Kompatible Ein-Lastfall-API -> aktiver Lastfall
     @property
     def nodal_loads(self) -> list[NodalLoad]:
@@ -6431,6 +6464,8 @@ class Model:
             for k in c.lastfaelle():
                 if k not in self.load_cases:
                     msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
+        # Namen, unter denen Ergebnisse einander verdecken (04.10.2026)
+        msgs += self.namenskollisionen()
         # Situationen: jeder Lastfall und jede Kombination nennt eine, die es
         # gibt; eine Kombination ueberlagert nur Lastfaelle ihrer Situation
         namen = set(self.situationsnamen())

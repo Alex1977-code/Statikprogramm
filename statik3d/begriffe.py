@@ -41,7 +41,9 @@ Umhuellende einer RFEM-Ergebniskombination, die unter dem Namen der
 Kombination steht („Umhüllende EK3“). Lautet ein solcher Name wie ein
 Fachbegriff („GZT“, „Ermüdung“), bekommt er den Zusatz „(Ergebniskombination)“:
 sonst stuenden zwei verschiedene Umhuellende unter demselben Namen
-(Nachbesserung 03.10.2026, Befund F2 der Gegenpruefung).
+(Nachbesserung 03.10.2026, Befund F2 der Gegenpruefung). Lautet er wie ein
+Schluessel („ULS“, „FAT“), bekommt schon der Schluessel in Analysis.envelopes
+den Zusatz (umhuellende_schluessel, Befund R1, 04.10.2026).
 """
 from __future__ import annotations
 
@@ -181,3 +183,65 @@ def umhuellende_lang(key) -> str:
     bei einem Namen wie ein Fachbegriff mit Zusatz."""
     b = UMHUELLENDE.get(str(key))
     return b.lang if b is not None else _name_ergebniskombination(key)
+
+
+def umhuellende_schluessel(namen, arten=()) -> dict:
+    """{Name der Ergebniskombination: Schluessel ihrer Umhuellenden in
+    ``Analysis.envelopes``}.
+
+    Die Umhuellende einer Ergebniskombination steht unter ihrem Namen - ausser
+    der Name ist schon vergeben: als Schluessel einer Umhuellenden des
+    Programms (``UMHUELLENDE`` und die Arten *arten* der Rechnung, darunter
+    ein unbekannter Typ aus einer Quelldatei) oder als Anzeigename, kurz oder
+    lang, einer anderen Umhuellenden. Dann heisst der Schluessel „<Name>
+    (Ergebniskombination)“, im seltenen Fall, dass auch der vergeben ist,
+    „<Name> (Ergebniskombination 2)“ und so weiter. Der Schluessel ist
+    zugleich der Anzeigename: umhuellende_kurz macht daraus „Umhüllende ULS
+    (Ergebniskombination)“.
+
+    Warum (Befund R1, 04.10.2026): bis dahin legte solve_all die Umhuellende
+    jeder Ergebniskombination unter ihrem Namen ab, nachdem es die Umhuellenden
+    der Arten abgelegt hatte. Eine Ergebniskombination „ULS“ ueberschrieb so
+    still die Umhuellende GZT, und Glasleiste, Tabellen, Bild, Bericht und Web
+    zeigten unter „Umhüllende GZT“ nur noch ihre Alternativen statt aller
+    GZT-Ergebnisse. Eine Ergebniskombination „CASES“ hiess „Umhüllende
+    Lastfälle“.
+
+    Ohne Kollision bleibt jeder Schluessel der Name - Rechnung, Ergebnisdatei
+    und Anzeige wie bis dahin. Bei gleichem Anzeigenamen behaelt die erste in
+    der Reihenfolge von *namen* ihren Namen.
+    """
+    namen = list(dict.fromkeys(str(n) for n in namen))
+    vergeben = set(UMHUELLENDE) | {str(a) for a in arten}
+    # kurze Formen (Listen, Baum, Web) und lange (Bericht) getrennt: jede muss
+    # fuer sich eindeutig sein
+    kurz = {umhuellende_kurz(k) for k in vergeben}
+    lang = {umhuellende_lang(k) for k in vergeben}
+
+    def frei(k) -> bool:
+        return umhuellende_kurz(k) not in kurz and umhuellende_lang(k) not in lang
+
+    def nehmen(k) -> None:
+        kurz.add(umhuellende_kurz(k))
+        lang.add(umhuellende_lang(k))
+
+    aus, offen = {}, []
+    for n in namen:
+        if n not in vergeben and frei(n):
+            aus[n] = n
+            vergeben.add(n)
+            nehmen(n)
+        else:
+            offen.append(n)
+    belegt = vergeben | set(namen)
+    for n in offen:
+        i = 1
+        while True:
+            k = n + (ZUSATZ_ERGEBNISKOMBINATION if i == 1 else f" (Ergebniskombination {i})")
+            if k not in belegt and frei(k):
+                break
+            i += 1
+        aus[n] = k
+        belegt.add(k)
+        nehmen(k)
+    return {n: aus[n] for n in namen}

@@ -14906,10 +14906,30 @@ class MainWindow(QtWidgets.QMainWindow):
         (ULS, EQU, ACC, USER - wie solve_all sie gruppiert) und zu den
         Ergebniskombinationen dieser Arten. Bis zur Nachbesserung vom
         03.10.2026 (10c) stand die Spalte auch bei „Umhüllende GZG …“, mit der
-        Ausnutzung aus dem GZT."""
+        Ausnutzung aus dem GZT.
+
+        Die Ergebniskombination nennt die Umhuellende selbst (kombination):
+        seit dem 04.10.2026 ist der Schluessel nicht immer ihr Name („ULS
+        (Ergebniskombination)“, Befund R1). Bis dahin galt der Schluessel als
+        Name, und eine Ergebniskombination „SLS_CH“ vom Typ GZT gab der
+        Umhuellenden GZG charakteristisch die Spalte Ausnutzung. Eine aeltere
+        Ergebnisdatei kennt kombination nicht: dort ist der Schluessel der
+        Name, ausser bei den Umhuellenden einer Art - auch der eines
+        unbekannten Typs aus einer Quelldatei. Bis zur Nachbesserung vom
+        04.10.2026 (Befund F1) zaehlten dazu nur die Schluessel aus
+        begriffe.UMHUELLENDE, und die Umhuellende des Typs „XYZ“ bekam die
+        Spalte, weil eine Ergebniskombination vom Typ GZT „XYZ“ hiess."""
         if schluessel == "ULS":
             return True
-        kombi = (self.model.combinations or {}).get(schluessel)
+        an = getattr(self, "analysis", None)
+        env = (getattr(an, "envelopes", None) or {}).get(schluessel)
+        name = getattr(env, "kombination", None)
+        if name is None:
+            arten = {solver.umhuellende_art(c.typ) for c in (self.model.combinations or {}).values()}
+            if schluessel in bg.UMHUELLENDE or schluessel in arten:
+                return False
+            name = schluessel
+        kombi = (self.model.combinations or {}).get(name)
         return kombi is not None and kombi.typ in ("ULS", "EQU", "ACC", "USER")
 
     def _auflager_spalten(self, huelle: bool) -> list:
@@ -24292,7 +24312,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.txt_res.setPlainText("")
             self._neu_zeichnen()
             return
-        lines = [r.summary()]
+        # eine Umhuellende unter ihrem Anzeigenamen wie in der Liste darueber
+        # (Befund S3, 04.10.2026: dort „Umhüllende ULS (Ergebniskombination)“,
+        # hier „ULS: 3 Ergebnisse“); getattr: test_ec3 ruft mit einer Attrappe
+        d = getattr(getattr(self, "cb_result", None), "currentData", lambda: None)()
+        if isinstance(d, (tuple, list)) and len(d) == 2 and d[0] == "env":
+            lines = [r.summary(name=bg.umhuellende_kurz(d[1]))]
+        else:
+            lines = [r.summary()]
         if an is not None and an.design is not None:
             lines.append(an.design.summary())
             self._fill(self.tbl_design, an.design.table()[1:], an.design.table()[0])

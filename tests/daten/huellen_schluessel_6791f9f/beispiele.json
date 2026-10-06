@@ -1,0 +1,213 @@
+{
+"frame": {
+"envelope_keys": [
+"CASES"
+],
+"envelope_names": {
+"CASES": "Umhüllende Lastfälle"
+},
+"cases": {
+"LF1": "5eba44197c66cd5ab9b90923"
+},
+"combinations": {},
+"alternativen": {},
+"envelopes": {
+"CASES": "8f7e6bf0062c4a0e5d8499af"
+},
+"design": "74234e98afe7498fb5daf1f3",
+"fatigue": "74234e98afe7498fb5daf1f3"
+},
+"truss": {
+"envelope_keys": [
+"CASES"
+],
+"envelope_names": {
+"CASES": "Umhüllende Lastfälle"
+},
+"cases": {
+"LF1": "b8b4631735c6575a8af704cc"
+},
+"combinations": {},
+"alternativen": {},
+"envelopes": {
+"CASES": "41e043e9a0bbfdc710a30941"
+},
+"design": "74234e98afe7498fb5daf1f3",
+"fatigue": "74234e98afe7498fb5daf1f3"
+},
+"hall": {
+"envelope_keys": [
+"ULS",
+"SLS_CH",
+"SLS_QP",
+"SLS_FR"
+],
+"envelope_names": {
+"ULS": "Umhüllende GZT",
+"SLS_CH": "Umhüllende GZG charakteristisch",
+"SLS_QP": "Umhüllende GZG quasi-ständig",
+"SLS_FR": "Umhüllende GZG häufig"
+},
+"cases": {
+"LF1": "14fbe81764f6f8e2fb9cd045",
+"S": "8caf6e175e5fb3d67ec0732f",
+"W_links": "5a0829078b333f841875b2ad",
+"W_rechts": "697ed81a2b195848e5f26cd0",
+"Kran": "d6b3d429c929ef1ddb79d2e2"
+},
+"combinations": {
+"GZT1": "ebdf0348f02e5469acbe0376",
+"GZT2": "c6b9460b3630881bf847c4f4",
+"GZT3": "579d5b65152e9ec73fb07e53",
+"GZT4": "ccdb5be9c3476877b8d940ea",
+"GZT5": "069eef58a4c628a2ccce291b",
+"GZT6": "c3276efab12c2b9f2a539fa0",
+"GZT7": "5678d937f53e50d645cbf8e9",
+"GZT8": "897092e70540128de7cfa0c8",
+"GZT9": "7e6e13132c6e1c53e0bad2a9",
+"GZT10": "7b34ae6e4b4f0ebea778c9e5",
+"GZT11": "71bd2442b5d279f59e65802a",
+"GZT12": "0959783bc9d67587ebe98a23",
+"GZT13": "e63ab6ef25c337fca6c46c74",
+"GZT14": "29786085415779078005703e",
+"GZT15": "50a9b6b2aa13d1a9e874ba20",
+"GZT16": "bb1ab6ca37e46ef1d94cf739",
+"GZT17": "48207a7e7949f366d9238d37",
+"GZT18": "aa69010d17d127eb151fdf7a",
+"GZT19": "def4f57bd18bf6d0e3528425",
+"GZT20": "01309cdb2f957640da1adac2",
+"GZT21": "f05827ed86c0b3e54470269c",
+"GZT22": "14fbe81764f6f8e2fb9cd045",
+"GZT23": "efdebfebba3a5c3eefe88071",
+"GZT24": "02e98591c04935aa4e6a1846",
+"GZT25": "73327e5f0293b2a8d99bf1f2",
+"GZT26": "b6385f02668ca3248f1bcb40",
+"GZT27": "c58aede1007c9945a46fd801",
+"GZT28": "5876a8fa29e315c2e9ace879",
+"GZT29": "2c48032d07860b0c15f99c03",
+"GZT30": "b799016281922999f2dfdf48",
+"GZT31": "5d6052f91fcfb6d6226edf6a",
+"GZT32": "b811e69e27f41c7d0f71016d",
+"GZT33": "b37980a834637f60a2e24fb8",
+"GZT34": "93096b1a914f0d9e63d9b0a1",
+"GZT35": "140b9ae89664ab4206e4e143",
+"GZT36": "a65f36938ce4db34961b0af1",
+"GZT37": "9592716483912bfbbe60f6ac",
+"GZT38": "6f1cfeaf3a7951e2838962e2",
+"GZT39": "067555a49d6d0a8f6a2e2244",
+"GZT40": "cfdf43698718afb43eb10c07",
+"GZT41": "0842f15cfaf14f17bb67ef20",
+"GZT42": "04fc55a76e1abaf46530f5fe",
+"GZG43": "14fbe81764f6f8e2fb9cd045",
+"GZG44": "14fbe81764f6f8e2fb9cd045",
+"GZG45": "183acec8fc4f70db86a9dbcf",
+"GZG46": "6f2130efed52d2bd225f0293",
+"GZG47": "f6128b11ffd43ff86b1b1f54",
+"GZG48": "12e4dea60db5616bff8ea69c",
+"GZG49": "7ff2271685861650304986ce",
+"GZG50": "751c0aa7076b577e87c0a828",
+"GZG51": "36a110ef30b10877e1da6e85",
+"GZG52": "21ea64facf6d64e4fbf0dedd",
+"GZG53": "0725f4d2c3a80e8aeb1db01f",
+"GZG54": "958fea1fedfe0f20d92076ac",
+"GZG55": "f0ee07853c80dfc61a9fc46b",
+"GZG56": "0529f050c70926c6fa00f98a",
+"GZG57": "fa1a280c8c013d5e16194a3e",
+"GZG58": "94608a178d424a782529d65d",
+"GZG59": "35bc2e3a7f5b33a823e6c464",
+"GZG60": "f3484694156e0e225233b5eb",
+"GZG61": "bb6335e9055e6a148b8e2258",
+"GZG62": "f9032b55e9994e0fd5d57794",
+"GZG63": "ed9c8392868d41c043cdcec0",
+"GZG64": "21e42d3d14674f5a183e7968",
+"GZG65": "12ec734be26c24129aef642f",
+"GZG66": "5bf84e1c02602bb36e8e6267",
+"GZG67": "07aaaaeb16a890e94a778286",
+"GZG68": "14a7e006a8e3e0477c24fe9a",
+"GZG69": "2c37561ab2f3aa3bfd03adc4",
+"GZG70": "85951f8f72bbb772e3894c2e",
+"GZG71": "0ae814c203b36f40771ecf00",
+"GZG72": "cbc15880089eef49f00072ee"
+},
+"alternativen": {},
+"envelopes": {
+"ULS": "6e96356b7ab6bb4ed33d4c6b",
+"SLS_CH": "7bc758461553d63109248f52",
+"SLS_QP": "84e847156ebc2390992f69c3",
+"SLS_FR": "78b5baba2a30928c89cfd36d"
+},
+"design": "0539c96d9f3e6a3381d37f1a",
+"fatigue": "c4a7bf3426d62310e2b557b9"
+},
+"gate": {
+"envelope_keys": [
+"ULS",
+"SLS_CH",
+"SLS_QP",
+"SLS_FR"
+],
+"envelope_names": {
+"ULS": "Umhüllende GZT",
+"SLS_CH": "Umhüllende GZG charakteristisch",
+"SLS_QP": "Umhüllende GZG quasi-ständig",
+"SLS_FR": "Umhüllende GZG häufig"
+},
+"cases": {
+"LF1": "9291bdfedbf03ac406b1bc65",
+"Wasser": "fd302a2354ba1cb0625e590b",
+"Wasser_Wellen": "ef376db8cf0ec7038675d164"
+},
+"combinations": {
+"GZT1": "77d2dba0ddda5be8ece2d5cf",
+"GZT2": "49d5bb6cc81493319bebec00",
+"GZT3": "aa866beb5ba5b21e79b7da3d",
+"GZT4": "ebfa78257aa99268e18a964f",
+"GZT5": "f9db14192812d28a68caeef9",
+"GZT6": "e0cd7bd77b3cb4e8f6e41e19",
+"GZT7": "71af321d9aa4d07b50927d15",
+"GZT8": "d30aa4706698d038c3d89381",
+"GZT9": "ccbd52e70a62b77549881bfe",
+"GZT10": "55d390144b477de113a683e8",
+"GZG11": "e0cd7bd77b3cb4e8f6e41e19",
+"GZG12": "e0cd7bd77b3cb4e8f6e41e19",
+"GZG13": "d0b31c40a694a712f4fac319",
+"GZG14": "d0b31c40a694a712f4fac319",
+"GZG15": "d0b31c40a694a712f4fac319",
+"GZG16": "a6bc39957d77946dbe6ba7f9",
+"GZG17": "2ec93df1f9221ddf5e58129c",
+"GZG18": "3e91794d413e5a7bbc242068",
+"GZG19": "5b7c410bc3fd15ebab6cad16",
+"GZG20": "adb6a40c601a6e0b2b9a81eb",
+"GZG21": "9c1ace282dcf85246ca498d8",
+"GZG22": "6e86141465fb4bfea24eeded",
+"GZG23": "adb6a40c601a6e0b2b9a81eb"
+},
+"alternativen": {},
+"envelopes": {
+"ULS": "78e709bfb364d22d53a02bf3",
+"SLS_CH": "24438b90459989842bcb6a56",
+"SLS_QP": "e0941e7f08b764452acbaa4f",
+"SLS_FR": "f4a7e5ac67488a7c28d5b6be"
+},
+"design": "2b71eca1da2ec7c20e1e9a2a",
+"fatigue": "d18589d2655ce908b0e966a5"
+},
+"contact": {
+"envelope_keys": [
+"CASES"
+],
+"envelope_names": {
+"CASES": "Umhüllende Lastfälle"
+},
+"cases": {
+"LF1": "778eb078e25a59eb05ca28b6"
+},
+"combinations": {},
+"alternativen": {},
+"envelopes": {
+"CASES": "f47386d341669446a1280eeb"
+},
+"design": "237dbe3819786a81a0c4e355",
+"fatigue": "74234e98afe7498fb5daf1f3"
+}
+}
