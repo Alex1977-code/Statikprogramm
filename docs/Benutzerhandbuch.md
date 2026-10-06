@@ -3553,12 +3553,28 @@ Stabelement an, das ohne Nachweis unter *FE-Netz* stand, und der Rechtsklick
 nannten das Element „Stab E…“.
 
 **Was beim Stab mit Nachweis zu beachten ist** (seit 03.10.2026). Liegt
-zwischen den beiden Knoten schon ein Stabelement ohne Stab, legt *Stab* kein
-zweites daneben, sondern den Stab um das vorhandene; Querschnitt, Werkstoff und
-Art bleiben die des Elements, und die Statuszeile sagt es. Gehört das Element
-schon zu einem Stab, weist der Befehl ab. Zwei parallele Elemente zwischen
-denselben Knoten trügen doppelt: an einem Rahmen fiel die Verschiebung auf
-62 %, und der Nachweis kam zu günstig heraus. *Netz → Stabelement* legt ein
+zwischen den beiden Knoten schon ein Stabelement ohne Stab oder eine Kette
+solcher Elemente über Zwischenknoten, die die Strecke lückenlos und in einer
+Richtung überdeckt, legt *Stab* kein neues Element daneben, sondern den Stab
+aus genau diesen Elementen; Querschnitt, Werkstoff und Art bleiben die der
+Elemente, und die Statuszeile sagt es („Stab S1 aus den vorhandenen
+Stabelementen E0 und E1 angelegt: K0–K2“). Gehört eines davon schon zu einem
+Stab, weist der Befehl mit einem Hinweis ab, der Element und Stab nennt;
+mehrere Stäbe macht *Stäbe zusammenfassen* zu einem. Ebenso weist er ab, wenn
+Stabelemente die Strecke nur teilweise, über sie hinaus oder doppelt
+überdecken – der Hinweis nennt die Elemente im Weg –, und wenn sie
+gegeneinander laufen, denn ein Stab läuft durchgehend in einer Richtung. Auf
+der Strecke liegt ein Knoten, der höchstens 1 ‰ ihrer Länge neben ihr liegt.
+Der Stabzug, mit der Maske *Stabzug erzeugen* wie mit der Tafel im Register
+*Netz*, macht es je Abschnitt genauso und ist ein Rückgängig-Schritt. Zwei
+parallele Elemente trügen doppelt: an einem Rahmen fiel die Verschiebung auf
+62 %, und der Nachweis kam zu günstig heraus; an einem Kragarm von 6 m aus zwei
+Elementen halbierte ein drittes über beide die Durchbiegung (27,56 mm auf
+13,78 mm). Bis zum 06.10.2026 sah *Stab* nur ein Element mit genau denselben
+Endknoten: K0–K2 über S1 (K0–K1) und S2 (K1–K2) legte still ein drittes,
+paralleles Element an, der Stabzug über einem Stab ebenso, und die Tafel
+*Stabzug* im Register *Netz* hatte keinen Rückgängig-Schritt, sodass
+Rückgängig danach den Stab davor zurücknahm. *Netz → Stabelement* legt ein
 paralleles Element weiter an, sagt es aber in der Statuszeile. Wird das
 Stabelement eines Stabs gelöscht, bleibt der Stab ohne Stabelement stehen:
 *Prüfen* meldet ihn, der Nachweis nach EC3 führt ihn als nicht geführt („kein

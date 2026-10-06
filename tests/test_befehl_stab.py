@@ -45,6 +45,20 @@ Stab mit Nachweis ist, werden alte Schwachstellen zum Regelfall. Geprueft wird:
   keinen Stab; S2: ein Element gehoert zu hoechstens einem Stab; L1, L2: der
   Rechtsklick und der Browser sagen „Stabelement“.
 
+Nachbesserung vom 06.10.2026 (Abschnitt 9): „Stab“ K0–K2, gezeichnet ueber S1
+(K0–K1) und S2 (K1–K2), legte still ein drittes, paralleles Element an
+(„Elemente 2 -> 3“), der Stabzug ueber S1 ebenso; die Sperre griff nur bei
+denselben Endknoten. Und der Stabzug im Register Netz hatte keinen
+Rueckgaengig-Schritt. Geprueft wird:
+
+* „Stab“ ueber eine lueckenlose, gleichgerichtete Kette freier Stabelemente
+  bildet den Stab aus genau ihnen, ohne neues Element, und rechnet wie
+  vorher; Stichprobe ueber Lage, Richtung, Laenge und Teilung;
+* gehoeren sie schon Staeben, ueberdecken sie die Strecke nur teilweise oder
+  laufen sie gegeneinander: abgewiesen mit Hinweis, Modell unveraendert;
+* der Stabzug (Register Netz und Maske) je Abschnitt genauso;
+* ein Stabzug ist ein Rueckgaengig-Schritt, Wiederholen bringt ihn wieder.
+
 Aufruf:  python -m tests.test_befehl_stab
 """
 import os
@@ -95,20 +109,21 @@ def _fenster():
     for name in ("critical", "warning", "information"):
         setattr(mb, name, staticmethod(lambda *a, **k: mb.StandardButton.Ok))
     mb.question = staticmethod(lambda *a, **k: mb.StandardButton.No)
-    _FENSTER.update(w=w, app=app)
+    # die Abfangliste kennt die Art jeder Meldung (Hinweis oder Fehler, 9b)
+    _FENSTER.update(w=w, app=app, meld=w.hinweis.__self__)
     return w, app
 
 
-def _modell(w, app):
+def _modell(w, app, punkte=((0, 0, 0), (0, 0, 4), (6, 0, 4), (6, 0, 0))):
     """Ein leeres Modell mit S355, HEB 300 und vier Knoten eines Rahmens:
-    K0 (0, 0, 0), K1 (0, 0, 4), K2 (6, 0, 4), K3 (6, 0, 0)."""
+    K0 (0, 0, 0), K1 (0, 0, 4), K2 (6, 0, 4), K3 (6, 0, 0) - oder ``punkte``."""
     import numpy as np
     from statik3d.model import Material, Section
     w.new_model()
     m = w.model
     m.add_material(Material.steel(MAT))
     m.add_section(Section.from_profile(SEC))
-    for p in ((0, 0, 0), (0, 0, 4), (6, 0, 4), (6, 0, 0)):
+    for p in punkte:
         m.add_node(*p)
     w.refresh_all()
     app.processEvents()
@@ -543,6 +558,11 @@ def test_handbuch():
           "schon ein Stabelement ohne Stab" in n and "ohne Stabelement" in n and "freien Zwischenknoten" in n
           and "Stäbe zusammenfassen" in n and "Stab aus Stabelementen" in n and "Entf" in n
           and "0,7969" in n, n[:100])
+    check("Handbuch: Kette über Zwischenknoten, abgewiesen (Stab, im Weg, gegeneinander), Stabzug je Abschnitt "
+          "mit einem Rückgängig-Schritt, Stand vorher („Bis zum 06.10.2026“)",
+          "eine Kette solcher Elemente über Zwischenknoten" in n and "die Elemente im Weg" in n
+          and "gegeneinander laufen" in n and "je Abschnitt genauso und ist ein Rückgängig-Schritt" in n
+          and "Bis zum 06.10.2026" in n and "27,56 mm auf 13,78 mm" in n, n[:100])
     k = absatz("Stäbe (Kette von Stabelementen) legt der Befehl")
     check("Handbuch Kapitel 8: jeder gezeichnete Stab ist ein Stab, Knicklänge, Warnung, zusammenfassen",
           "Knicklänge" in k and "Stäbe zusammenfassen" in k and "Kette" in k, k[:100])
@@ -945,6 +965,300 @@ def test_web_stabelement():
           "<h3>Stabelement zwischen zwei Knoten</h3>" in zeile and ">+ Stabelement</button>" in zeile, zeile[:120])
 
 
+# ---------------------------------------------------------------------------
+# 9. Nachbesserung 06.10.2026: „Stab“ ueber mehrere Elemente, Stabzug
+# ---------------------------------------------------------------------------
+def _gerade(w, app):
+    """Vier Knoten auf einer Geraden: K0 (0, 0, 0), K1 (3, 0, 0), K2 (6, 0, 0),
+    K3 (9, 0, 0); ein Kragarm, an K0 eingespannt, 20 kN nach unten an K2. Ein
+    zweites Element K0–K2 neben der Kette truege mit (zwischen zwei
+    eingespannten Knoten truege es nichts, und die Rechnung bliebe gleich)."""
+    m = _modell(w, app, ((0, 0, 0), (3, 0, 0), (6, 0, 0), (9, 0, 0)))
+    m.support(0, "all")
+    g = next(iter(m.load_cases))
+    m.load_node(2, Fz=-20e3, case=g)
+    # die Tafel „Stabzug“ im Register Netz nimmt Werkstoff und Querschnitt von dort
+    w.cb_mat.setCurrentText(MAT)
+    w.cb_sec.setCurrentText(SEC)
+    _FENSTER["meld"].leeren()
+    return m, g
+
+
+def _abbild(m) -> tuple:
+    """Was „Modell unverändert“ heisst: Knoten, Elemente samt Knoten, Stäbe."""
+    return (int(m.nn), [(e.typ, [int(k) for k in e.nodes]) for e in m.elements],
+            {k: [int(e) for e in v.elements] for k, v in m.members.items()})
+
+
+def _staebe(m) -> dict:
+    return {k: [int(e) for e in v.elements] for k, v in m.members.items()}
+
+
+def _tafel_stabzug(w, p1, p2, n):
+    """Die Tafel „Stabzug“ im Register Netz ausfuellen und „Stäbe erzeugen“."""
+    for feld, v in zip(w.beam_p1, p1):
+        feld.set(v)
+    for feld, v in zip(w.beam_p2, p2):
+        feld.set(v)
+    w.beam_n.setValue(n)
+    w.make_beams()
+
+
+def _maske_stabzug(w, app, p1, p2, n):
+    """Die Maske „Stabzug erzeugen“ (Ribbon) ausfuellen und übernehmen."""
+    w.maske_stabzug()
+    app.processEvents()
+    mk = _maske(w)
+    for k, v in zip(("x1", "y1", "z1", "x2", "y2", "z2"), tuple(p1) + tuple(p2)):
+        mk.setzen(k, v)
+    mk.setzen("n", n)
+    mk.setzen("mat", MAT)
+    mk.setzen("sec", SEC)
+    mk.anwenden()
+    app.processEvents()
+    w.maskenrand.schliessen()
+    app.processEvents()
+
+
+def test_stab_ueber_freie_elemente():
+    """„Stab“ über eine lückenlose, gleichgerichtete Kette freier Stabelemente."""
+    import numpy as np
+    from statik3d import solver
+    w, app = _fenster()
+    meld = _FENSTER["meld"]
+    m, g = _gerade(w, app)
+    for a, b in ((0, 1), (1, 2)):
+        w._maske_stabelement_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+    u0 = solver.solve_all(m, design=False).cases[g].u
+    meld.leeren()
+    n_undo = len(w._undo)
+    w._maske_stab_anlegen({"knoten": [0, 2], "mat": MAT, "sec": SEC})
+    st = _statuszeile(w)
+    check("„Stab“ K0–K2 über die freien Stabelemente E0 (K0–K1) und E1 (K1–K2): Stab S1 aus genau E0 und E1, "
+          "kein neues Element, ein Rückgängig-Schritt",
+          _staebe(m) == {"S1": [0, 1]} and len(m.elements) == 2 and not meld.eintraege
+          and len(w._undo) == n_undo + 1 and abs(m.member_length(m.members["S1"]) - 6.0) < 1e-12,
+          f"Elemente {len(m.elements)}, Stäbe {_staebe(m)}, {meld}")
+    check("… die Statuszeile nennt beide Elemente",
+          st == "Stab S1 aus den vorhandenen Stabelementen E0 und E1 angelegt: K0–K2, HEB 300", repr(st))
+    an = solver.solve_all(m, design=True)
+    du = float(np.max(np.abs(an.cases[g].u - u0)))
+    umax = float(np.max(np.abs(u0)))
+    check("… Rechnung gleich wie vorher (Unterschied 0, |u|max > 0)", du == 0.0 and umax > 0,
+          f"max |Δu| = {du:.3e}, |u|max = {umax:.3e}")
+    ref, _g = _gerade(w, app)
+    for a, b in ((0, 1), (1, 2)):
+        w._maske_stabelement_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+    w._objekt_uebernehmen("stab", "S1", {"name": "S1", "elemente": "0, 1", "design": True}, True)
+    an_ref = solver.solve_all(ref, design=True)
+    eta = {k: round(float(x.util), 6) for k, x in an.design.members.items()}
+    eta_ref = {k: round(float(x.util), 6) for k, x in an_ref.design.members.items()}
+    check("… Nachweis wie „Stab aus Stabelementen“ mit E0, E1 (L = 6 m)",
+          eta == eta_ref and len(eta) == 1 and abs(an.design.members["S1"].L - 6.0) < 1e-9,
+          f"{eta} / {eta_ref}")
+    # Richtung: andersherum geklickt, Elemente andersherum gezeichnet
+    for text, elemente, klick, erwartet in (
+            ("andersherum geklickt (K2, dann K0)", ((0, 1), (1, 2)), [2, 0], [0, 1]),
+            ("Elemente laufen von K2 nach K0", ((1, 0), (2, 1)), [0, 2], [1, 0])):
+        m, g = _gerade(w, app)
+        for a, b in elemente:
+            w._maske_stabelement_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+        meld.leeren()
+        w._maske_stab_anlegen({"knoten": klick, "mat": MAT, "sec": SEC})
+        check(f"„Stab“ über zwei freie Elemente, {text}: Stab S1 = {erwartet} in Richtung der Elemente, kein neues",
+              _staebe(m) == {"S1": erwartet} and len(m.elements) == 2 and not meld.eintraege,
+              f"{_staebe(m)} {len(m.elements)} {meld}")
+    # gegeneinander laufende Elemente: kein Stab, der nicht in einer Richtung laeuft
+    m, g = _gerade(w, app)
+    for a, b in ((0, 1), (2, 1)):
+        w._maske_stabelement_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+    vorher, n_undo = _abbild(m), len(w._undo)
+    meld.leeren()
+    w._maske_stab_anlegen({"knoten": [0, 2], "mat": MAT, "sec": SEC})
+    check("Freie Elemente gegeneinander (E0 K0→K1, E1 K2→K1): abgewiesen mit Hinweis, Modell unverändert",
+          _abbild(m) == vorher and len(w._undo) == n_undo and not meld.fehler
+          and meld.zuletzt_hinweis("laufen die Stabelemente nicht in einer Richtung", "E1 von K2 nach K1"),
+          str(meld))
+
+
+def test_stab_ueber_kette_stichprobe():
+    """Stichprobe: Ketten in beliebiger Lage, Richtung, Länge und Teilung,
+    die Knoten wie ein Stabzug gerechnet (p1 + (p2 - p1) · i / n)."""
+    import numpy as np
+    from statik3d.model import Material, Section
+    w, app = _fenster()
+    rng = np.random.default_rng(20261006)
+    fehl, daneben, rauschen = [], [], []
+    for k in range(12):
+        n = int(rng.integers(2, 6))
+        p1 = rng.uniform(-50.0, 50.0, 3)
+        d = rng.normal(size=3)
+        d /= np.linalg.norm(d)
+        L = float(rng.uniform(0.5, 30.0))
+        p2 = p1 + L * d
+        w.new_model()
+        m = w.model
+        m.add_material(Material.steel(MAT))
+        m.add_section(Section.from_profile(SEC))
+        ids = [m.add_node(*(p1 + (p2 - p1) * i / n)) for i in range(n + 1)]
+        for i in range(n):
+            m.add_element("beam", [ids[i], ids[i + 1]], MAT, SEC)
+        a, b = (ids[0], ids[-1]) if k % 2 == 0 else (ids[-1], ids[0])
+        w._maske_stab_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+        if _staebe(m) != {"S1": list(range(n))} or len(m.elements) != n:
+            fehl.append((k, n, round(L, 3), _staebe(m), len(m.elements)))
+        quer = np.cross(d, [1.0, 0.0, 0.0] if abs(d[0]) < 0.9 else [0.0, 1.0, 0.0])
+        quer /= np.linalg.norm(quer)
+        # Gegenstueck: dieselbe Kette mit eigenen Knoten 1 % der Laenge neben
+        # der Geraden - eine andere Linie, der Stab bekommt sein eigenes Element
+        for liste, versatz, erwartet in ((daneben, "ganz", lambda m_: _staebe(m_) == {"S1": [n]}
+                                          and len(m_.elements) == n + 1),
+                                         (rauschen, "innen", lambda m_: _staebe(m_) == {"S1": list(range(n))}
+                                          and len(m_.elements) == n)):
+            w.new_model()
+            m = w.model
+            m.add_material(Material.steel(MAT))
+            m.add_section(Section.from_profile(SEC))
+            if versatz == "ganz":
+                a, b = m.add_node(*p1), m.add_node(*p2)
+                ids = [m.add_node(*(p1 + (p2 - p1) * i / n + 0.01 * L * quer)) for i in range(n + 1)]
+            else:
+                # Zwischenknoten 0,5 ‰ der Laenge daneben (halbe Toleranz, wie gerundete Importe)
+                ids = [m.add_node(*(p1 + (p2 - p1) * i / n + (5e-4 * L * quer if 0 < i < n else 0.0)))
+                       for i in range(n + 1)]
+                a, b = ids[0], ids[-1]
+            for i in range(n):
+                m.add_element("beam", [ids[i], ids[i + 1]], MAT, SEC)
+            w._maske_stab_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+            if not erwartet(m):
+                liste.append((k, n, round(L, 3), _staebe(m), len(m.elements)))
+    check("Stichprobe 12 gerade Ketten (2–5 Elemente, 0,5–30 m, beliebige Richtung): je ein Stab aus genau ihnen, "
+          "kein neues Element", not fehl, str(fehl[:3]))
+    check("… mit Zwischenknoten 0,5 ‰ der Länge neben der Geraden (innerhalb der Toleranz): ebenso", not rauschen,
+          str(rauschen[:3]))
+    check("… dieselben Ketten 1 % der Länge neben der Geraden (eine andere Linie): der Stab bekommt sein eigenes "
+          "Element", not daneben, str(daneben[:3]))
+
+
+def test_stab_ueber_staebe_abgewiesen():
+    """„Stab“ über Elemente, die schon Stäben gehören: abgewiesen."""
+    w, app = _fenster()
+    meld = _FENSTER["meld"]
+    m, g = _gerade(w, app)
+    for a, b in ((0, 1), (1, 2)):
+        w._maske_stab_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+    vorher, n_undo = _abbild(m), len(w._undo)
+    meld.leeren()
+    w._maske_stab_anlegen({"knoten": [0, 2], "mat": MAT, "sec": SEC})
+    check("„Stab“ K0–K2 über S1 (E0, K0–K1) und S2 (E1, K1–K2): kein Element, kein Stab, kein Rückgängig-Schritt",
+          _abbild(m) == vorher and len(w._undo) == n_undo, f"{_abbild(m)} / {vorher}")
+    check("… ein Hinweis (kein Fehler) nennt beide Elemente mit ihrem Stab und „Stäbe zusammenfassen“",
+          not meld.fehler and len(meld.hinweise) == 1 and meld.zuletzt_hinweis(
+              "Zwischen K0 und K2 liegen schon Stabelement E0 von Stab S1 und Stabelement E1 von Stab S2 – "
+              "kein zweiter Stab angelegt", "„Stäbe zusammenfassen“"), str(meld))
+    # gemischt: E0 frei, E1 gehoert S1
+    m, g = _gerade(w, app)
+    w._maske_stabelement_anlegen({"knoten": [0, 1], "mat": MAT, "sec": SEC})
+    w._maske_stab_anlegen({"knoten": [1, 2], "mat": MAT, "sec": SEC})
+    vorher = _abbild(m)
+    meld.leeren()
+    w._maske_stab_anlegen({"knoten": [0, 2], "mat": MAT, "sec": SEC})
+    check("„Stab“ K0–K2 über das freie E0 und E1 von S1: abgewiesen, der Hinweis nennt E1 von Stab S1",
+          _abbild(m) == vorher and not meld.fehler
+          and meld.zuletzt_hinweis("Zwischen K0 und K2 liegt schon Stabelement E1 von Stab S1 – kein zweiter Stab"),
+          str(meld))
+
+
+def test_stab_teilweise_ueberdeckt():
+    """„Stab“ über Elemente, die die Strecke nicht genau einmal überdecken."""
+    w, app = _fenster()
+    meld = _FENSTER["meld"]
+    for text, elemente, staebe, klick, nennt in (
+            ("nur E0 (K0–K1) auf K0–K2", ((0, 1),), (), [0, 2], ("Stabelement E0 (K0–K1) im Weg",)),
+            ("E0 (K0–K3) reicht über K0–K1 hinaus", ((0, 3),), (), [0, 1], ("Stabelement E0 (K0–K3) im Weg",)),
+            ("S1 (K0–K1) auf K0–K2", (), ((0, 1),), [0, 2], ("Stabelement E0 (K0–K1, Stab S1) im Weg",)),
+            ("E1 (K1–K2) auf K1–K3, dahinter nichts", ((0, 1), (1, 2)), (), [1, 3],
+             ("Stabelement E1 (K1–K2) im Weg",)),
+            ("zwei parallele Elemente E0, E1 auf K0–K1", ((0, 1), (0, 1)), (), [0, 1],
+             ("die Stabelemente E0 (K0–K1) und E1 (K0–K1) im Weg",))):
+        m, g = _gerade(w, app)
+        for a, b in elemente:
+            w._maske_stabelement_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+        for a, b in staebe:
+            w._maske_stab_anlegen({"knoten": [a, b], "mat": MAT, "sec": SEC})
+        vorher, n_undo = _abbild(m), len(w._undo)
+        meld.leeren()
+        w._maske_stab_anlegen({"knoten": klick, "mat": MAT, "sec": SEC})
+        check(f"Teilweise überdeckt, {text}: abgewiesen mit Hinweis, der das Element im Weg nennt; Modell unverändert",
+              _abbild(m) == vorher and len(w._undo) == n_undo and not meld.fehler
+              and meld.zuletzt_hinweis(*nennt, "nicht genau einmal von Knoten zu Knoten", "kein Stab angelegt"),
+              f"{_abbild(m) == vorher} {meld}")
+
+
+def test_stabzug_ueber_staebe():
+    """Der Stabzug je Abschnitt wie „Stab“ - Tafel im Register Netz und Maske."""
+    w, app = _fenster()
+    meld = _FENSTER["meld"]
+    for weg, stabzug in (("Register Netz", lambda p1, p2, n: _tafel_stabzug(w, p1, p2, n)),
+                         ("Maske „Stabzug erzeugen“", lambda p1, p2, n: _maske_stabzug(w, app, p1, p2, n))):
+        # ueber S1: kein paralleles Element (gemessen: E1 [0, 1] und S2 entstanden still)
+        m, g = _gerade(w, app)
+        w._maske_stab_anlegen({"knoten": [0, 1], "mat": MAT, "sec": SEC})
+        vorher, n_undo = _abbild(w.model), len(w._undo)
+        meld.leeren()
+        stabzug((0, 0, 0), (3, 0, 0), 1)
+        check(f"Stabzug ({weg}) über S1: kein paralleles Element, kein zweiter Stab, kein Rückgängig-Schritt",
+              _abbild(w.model) == vorher and len(w._undo) == n_undo, f"{_abbild(w.model)} / {vorher}")
+        check(f"… ein Hinweis nennt E0 von Stab S1",
+              not meld.fehler and meld.hinweis_mit("Auf dem Stabzug liegt schon Stabelement E0 von Stab S1",
+                                                   "kein Stabzug angelegt"), str(meld))
+        # zwei Abschnitte ueber S1: E0 ueberdeckt jeden nur teilweise
+        m, g = _gerade(w, app)
+        w._maske_stab_anlegen({"knoten": [0, 1], "mat": MAT, "sec": SEC})
+        vorher = _abbild(w.model)
+        meld.leeren()
+        stabzug((0, 0, 0), (3, 0, 0), 2)
+        check(f"Stabzug ({weg}) in zwei Abschnitten über S1: abgewiesen, E0 im Weg, kein neuer Knoten",
+              _abbild(w.model) == vorher and not meld.fehler
+              and meld.hinweis_mit("Auf dem Stabzug liegt Stabelement E0 (Stab S1) im Weg", "kein Stabzug angelegt"),
+              f"{_abbild(w.model)} {meld}")
+        # ueber ein freies Element: der Stab nimmt es, nur der freie Abschnitt ist neu
+        m, g = _gerade(w, app)
+        w._maske_stabelement_anlegen({"knoten": [0, 1], "mat": MAT, "sec": SEC})
+        meld.leeren()
+        stabzug((0, 0, 0), (6, 0, 0), 2)
+        m = w.model
+        check(f"Stabzug ({weg}) K0–K2 in zwei Abschnitten über das freie E0 (K0–K1): Stab S1 = [E0, E1], "
+              "nur E1 (K1–K2) neu, kein neuer Knoten",
+              _staebe(m) == {"S1": [0, 1]} and [[int(k) for k in e.nodes] for e in m.elements] == [[0, 1], [1, 2]]
+              and m.nn == 4 and not meld.eintraege, f"{_staebe(m)} {[list(e.nodes) for e in m.elements]} {meld}")
+        check(f"… die Statuszeile sagt es", "Stabzug: 1 neues Element und das vorhandene Stabelement E0 im Stab S1"
+              in _statuszeile(w), repr(_statuszeile(w)))
+
+
+def test_stabzug_rueckgaengig():
+    """Ein Stabzug ist ein Rückgängig-Schritt; Wiederholen bringt ihn wieder."""
+    w, app = _fenster()
+    for weg, stabzug in (("Register Netz", lambda p1, p2, n: _tafel_stabzug(w, p1, p2, n)),
+                         ("Maske „Stabzug erzeugen“", lambda p1, p2, n: _maske_stabzug(w, app, p1, p2, n))):
+        m, g = _gerade(w, app)
+        w._maske_stab_anlegen({"knoten": [0, 1], "mat": MAT, "sec": SEC})
+        vorher, n_undo = _abbild(w.model), len(w._undo)
+        stabzug((0, 0, 4), (6, 0, 4), 2)
+        nach = _abbild(w.model)
+        check(f"Stabzug ({weg}) neben S1: S2 mit zwei neuen Elementen, ein Rückgängig-Schritt „Stabzug“",
+              _staebe(w.model) == {"S1": [0], "S2": [1, 2]} and len(w._undo) == n_undo + 1
+              and w._undo[-1][0] == "Stabzug", f"{_staebe(w.model)} {[u[0] for u in w._undo[n_undo - 1:]]}")
+        w.undo()
+        app.processEvents()
+        check(f"… Rückgängig nimmt genau den Stabzug zurück, S1 bleibt", _abbild(w.model) == vorher
+              and _statuszeile(w) == "Rückgängig: Stabzug", f"{_abbild(w.model)} {_statuszeile(w)!r}")
+        w.redo()
+        app.processEvents()
+        check(f"… Wiederholen stellt ihn wieder her", _abbild(w.model) == nach
+              and _statuszeile(w) == "Wiederholt: Stabzug", f"{_abbild(w.model)} {_statuszeile(w)!r}")
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
@@ -952,7 +1266,9 @@ def main():
               test_rechnet_wie_das_element, test_stabelement, test_stab_aus_stabelementen,
               test_begriffe, test_kuerzel, test_handbuch, test_leerer_stab, test_kein_paralleles_element,
               test_kette_und_zusammenfassen, test_zusammenfassen_grenzen, test_teilen_im_stab, test_namen,
-              test_rechtsklick_stabelement, test_web_stabelement):
+              test_rechtsklick_stabelement, test_web_stabelement, test_stab_ueber_freie_elemente,
+              test_stab_ueber_kette_stichprobe, test_stab_ueber_staebe_abgewiesen, test_stab_teilweise_ueberdeckt,
+              test_stabzug_ueber_staebe, test_stabzug_rueckgaengig):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
