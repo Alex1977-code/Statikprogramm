@@ -179,5 +179,31 @@ def test_lame():
           eta2 < eta1 and e2 < e1 and all(0.1 < t < 10.0 for t in (t1, t2)) and max(t1, t2) / min(t1, t2) < 3.0)
 
 
+def test_doerfler():
+    """Doerfler: kleinste Menge der groessten Indikatoren, deren Summe mindestens theta der Gesamtsumme traegt."""
+    from volumen3d.fcm.schaetzer import doerfler
+    check("Doerfler theta 0,5 auf [1, 4, 2, 3]: Zellen 1 und 3 (4 + 3 >= 5); theta 1: alle; leer bei Summe 0",
+          list(doerfler(np.array([1.0, 4.0, 2.0, 3.0]), 0.5)) == [1, 3] and list(doerfler(np.array([1.0, 4.0, 2.0, 3.0]), 1.0)) == [0, 1, 2, 3]
+          and len(doerfler(np.zeros(3), 0.5)) == 0)
+
+
+def test_verfeinerung_nach():
+    """Die markierte Zelle wird geteilt: im neuen Gitter liegen in ihrer Box acht Blaetter der naechsten Ebene. Eine Zelle ganz im Werkstoff, damit kein Kind
+    als OUTSIDE wegfaellt."""
+    from volumen3d.fcm.gitter import INSIDE
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.fcm.schaetzer import verfeinerung_nach
+    pr = _wuerfel(p=1, h=25.0)                      # bei h 50 ist keine Zelle INSIDE (Kugeltest der Klassifikation ueber die halbe Raumdiagonale)
+    c = int(np.flatnonzero((pr.gitter.ebene == 0) & (pr.gitter.klasse == INSIDE))[0])
+    lo, hi = pr.gitter.zellbox(c)
+    v = verfeinerung_nach(pr.gitter, pr.verfeinerung, [c])
+    G2 = FcmProblem(pr.geometrie, h=25.0, p=1, werkstoff=Werkstoff(210000.0, 0.3), verfeinerung=v).gitter
+    lo2, hi2 = G2.zellbox(np.arange(len(G2.ijk)))
+    m = 0.5 * (lo2 + hi2)
+    drin = np.flatnonzero(((m > lo) & (m < hi)).all(axis=1))
+    check(f"verfeinerung_nach: Zelle {c} geteilt, {len(drin)} Blaetter der Ebene 1 in ihrer Box", len(drin) == 8 and (G2.ebene[drin] == 1).all())
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_hesse, test_lasten_aufgezeichnet, test_flaechen_paare, test_flaechen_punkte, test_konsistenz, test_lame]))
+    sys.exit(lauf([test_hesse, test_lasten_aufgezeichnet, test_flaechen_paare, test_flaechen_punkte, test_konsistenz, test_lame, test_doerfler,
+                   test_verfeinerung_nach]))

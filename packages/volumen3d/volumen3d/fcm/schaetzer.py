@@ -9,6 +9,7 @@ die Raender sind Auswahlen der Oberflaechenquadratur); ihre Soll-Traktion kommt 
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 import numpy as np
@@ -222,3 +223,23 @@ def energiefehler(problem, U, sigma_ref) -> tuple[np.ndarray, float]:
         s = _spannung(problem, D, c, g.lokal(Pm, np.full(len(Pm), c)), _koeff(problem, U, c)) - np.asarray(sigma_ref(Pm), float).reshape(-1, 6)
         e2[c] = float((Wm * np.einsum("qi,ij,qj->q", s, C, s)).sum())
     return e2, float(np.sqrt(e2.sum()))
+
+
+def doerfler(eta2_zelle, theta: float = 0.5) -> np.ndarray:
+    """Indizes (aufsteigend) der kleinsten Menge von Zellen mit den groessten eta^2, deren Summe mindestens theta der Gesamtsumme ist."""
+    eta2 = np.asarray(eta2_zelle, float).ravel()
+    summe = float(eta2.sum())
+    if summe <= 0.0:
+        return np.zeros(0, int)
+    ordnung = np.argsort(eta2)[::-1]
+    k = int(np.searchsorted(np.cumsum(eta2[ordnung]), theta * summe * (1.0 - 1e-12))) + 1
+    return np.sort(ordnung[:k])
+
+
+def verfeinerung_nach(gitter, verfeinerung, zellen):
+    """Verfeinerung mit den genannten Zellen als erzwungene Teilungen (ebene, i, j, k) zusaetzlich zu den bisherigen."""
+    neu = tuple((int(gitter.ebene[c]), int(gitter.ijk[c, 0]), int(gitter.ijk[c, 1]), int(gitter.ijk[c, 2])) for c in zellen)
+    return dataclasses.replace(verfeinerung, zellen=tuple(verfeinerung.zellen) + neu)
+
+
+__all__ = ["ANTEILE", "Schaetzung", "schaetzen", "energiefehler", "flaechen_paare", "flaechen_punkte", "doerfler", "verfeinerung_nach"]

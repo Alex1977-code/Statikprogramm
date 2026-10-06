@@ -1,5 +1,5 @@
 """Kernsuite des Volumenmoduls volumen3d fuer tests.run_all und die CI (nur CPU, unter 5 min):
-Paket, Basis, Geometrie, Gitter, Quadratur, Elastizitaet, Patch-Test, Vertragsschicht.
+Paket, Basis, Geometrie, Gitter, Quadratur, Elastizitaet, Patch-Test, Fehlerschaetzer, Vertragsschicht.
 Die Abnahmen mit laengerer Laufzeit (Kragarm, Lame, Kirsch) laufen als eigene Suiten
 (volumen3d.tests.test_kragarm, test_lame, test_kirsch) vor jedem Merge.
 
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from volumen3d.tests import (test_adaptiv, test_basis, test_direkt, test_elastizitaet, test_geometrie, test_gitter, test_hotspot, test_huelle,  # noqa: E402
                              test_knotenblech, test_oktree, test_paket, test_schale, test_step,
-                             test_mehrgitter, test_operator, test_patch, test_quadratur, test_rueckgewinnung, test_stl, test_vertrag_fcm,
+                             test_mehrgitter, test_operator, test_patch, test_quadratur, test_rueckgewinnung, test_schaetzer, test_stl, test_vertrag_fcm,
                              test_zwaenge)
 from volumen3d.tests._pruef import lauf  # noqa: E402
 
@@ -43,6 +43,8 @@ TESTS = [
     test_knotenblech.test_knotenblech_h10, test_knotenblech.test_knotenblech_konvergenz,
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_patch_hoeherer_ordnung, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
+    test_schaetzer.test_hesse, test_schaetzer.test_lasten_aufgezeichnet, test_schaetzer.test_flaechen_paare, test_schaetzer.test_flaechen_punkte,
+    test_schaetzer.test_konsistenz, test_schaetzer.test_doerfler, test_schaetzer.test_verfeinerung_nach,
     test_vertrag_fcm.test_protokoll_und_registrierung, test_vertrag_fcm.test_ablauf, test_vertrag_fcm.test_gutachten_faelle,
     test_vertrag_fcm.test_hybrid_platzhalter, test_vertrag_fcm.test_lasten, test_vertrag_fcm.test_zylinderauswahl, test_vertrag_fcm.test_loeserwahl,
 ]
