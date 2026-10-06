@@ -6228,9 +6228,21 @@ warnt die Kette für die andere Achse („(Knicken um z)“). Ein Glied ohne
 Nachweis (Stab mit ausgeschaltetem Nachweis, Stabelement ohne Stab) gehört zur
 Kette; gewarnt werden die Stäbe mit Nachweis darin. Hat ein Stab für eine
 Achse eine feste Knicklänge, warnt die Kette für ihn und diese Achse nicht.
-Lässt sich die Kette nicht zusammenfassen – verschiedene Querschnitte, ein
-Glied ohne Nachweis, eine feste Knicklänge –, rät der Text, die Knicklänge von
-Hand zu setzen. Das Etikett der Maske Nachweise zeigt höchstens acht
+Der Text rät nur dann zu „Stäbe zusammenfassen“, wenn es auch gelingt; er
+fragt dafür dieselbe Prüfung, die das Zusammenfassen selbst benutzt. Würde es
+abweisen, rät er stattdessen, die Knicklänge von Hand zu setzen, und nennt den
+Grund, den das Zusammenfassen nennen würde: zum Beispiel „Stab S1 und S2 enden
+beide an K1: einer ist gegen die Kette gezeichnet - ihn in Richtung der Kette
+neu zeichnen“, verschiedene Querschnitte oder Werkstoffe, verschiedene
+Drehwinkel, Nachweisparameter oder Vorspannungen, ein Glied ohne Stab, eine
+feste Knicklänge, ein Verweis auf einen Stab der Kette oder eine Linienlast,
+die nicht verlustfrei mitgeht. Bis zum 06.10.2026 prüfte der Text nur
+Querschnitt, Werkstoff, feste Länge und ob jedes Glied ein Stab mit Nachweis
+ist; war ein Stab gegen die Kette gezeichnet oder hatten die Stäbe verschiedene
+Drehwinkel, Vorspannungen oder Verweise, riet er trotzdem zum Zusammenfassen,
+und das Zusammenfassen wies ab (am Modell CBG bei 2 der 46 Ketten mit diesem
+Rat: ein gegen die Kette gezeichneter Stab und ein Drehwinkel von 180°). Das
+Etikett der Maske Nachweise zeigt höchstens acht
 Warnzeilen und danach „… und n weitere, siehe Prüfen“; Protokoll und *Prüfen*
 behalten die volle Liste (am Modell CBG mit 648 Stäben 87 Ketten, vorher 116
 Zeilen, eine je Stoß). *Struktur → Nachweisstäbe ▾ → Stäbe zusammenfassen*

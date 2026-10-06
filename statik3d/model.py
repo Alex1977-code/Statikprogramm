@@ -6417,7 +6417,8 @@ class Model:
         in Folge (Stab oder Stabelement ohne Stab), "knoten": die freien
         Zwischenknoten, "achsen": "yz", "y" oder "z" (Knicken um diese lokale
         Achse), "zusammenfassbar": ob „Stäbe zusammenfassen“ die Kette zu
-        einem Stab machen kann}.
+        einem Stab machen wuerde, "grund": warum nicht (der Grund, den das
+        Zusammenfassen selbst nennt, :meth:`_zusammenfassen_pruefen`)}.
 
         Jeder gezeichnete Stab ist ein eigener Stab mit Knicklaenge =
         Stablaenge (Entscheidung der Hauptsitzung vom 03.10.2026, wie RFEM).
@@ -6535,8 +6536,14 @@ class Model:
 
     def _kette_beschreiben(self, staebe: list, knoten: list, glieder: list, achsen: str) -> dict:
         """Ein Eintrag von :meth:`stabketten_frei`: die Glieder in Folge entlang
-        der Achse und ob „Stäbe zusammenfassen“ die Kette vereinen kann (alle
-        Glieder Staebe mit Nachweis, gleicher Querschnitt, Werkstoff und Art)."""
+        der Achse und ob „Stäbe zusammenfassen“ die Kette vereinen wuerde.
+
+        Das fragt dieselbe Pruefung wie das Zusammenfassen selbst
+        (:meth:`_zusammenfassen_pruefen`) und uebernimmt ihren Grund, statt
+        die Regeln noch einmal zu schreiben (F42, 06.10.2026: der Text riet
+        zum Zusammenfassen, wo es einen gegen die Kette gezeichneten Stab
+        abwies). Nur ein Glied ohne Stab, das Stabelement allein, kennt das
+        Werkzeug nicht: es nimmt Staebe."""
         ne = len(self.elements)
 
         def elemente(g):
@@ -6550,27 +6557,29 @@ class Model:
             return float(np.mean([np.dot(np.asarray(self.nodes[int(k)], float) - p0, d)
                                   for e in elemente(g) for k in self.elements[e].nodes]))
         folge = sorted(glieder, key=lage)
-        arten = {(self.elements[e].sec, self.elements[e].mat, self.elements[e].typ)
-                 for g in folge for e in elemente(g)}
-        if len({a[0] for a in arten}) > 1:
-            grund = "verschiedene Querschnitte"
-        elif not all(art == "stab" and self.members[n].design for art, n in folge):
-            grund = "nicht jedes Glied ist ein Stab mit Nachweis"
-        elif len(arten) > 1:
-            grund = "verschiedene Werkstoffe oder Elementarten"
-        elif any(getattr(self.members[n], f) is not None for _a, n in folge for f in ("Lcr_y", "Lcr_z", "L_LT")):
-            grund = "ein Stab der Kette hat eine feste Knick- oder Kipplänge"
+        lose = [n for art, n in folge if art != "stab"]
+        if lose:
+            grund = (f"Stabelement E{lose[0]} gehört zu keinem Stab" if len(lose) == 1 else
+                     f"Stabelemente {', '.join(f'E{n}' for n in lose)} gehören zu keinem Stab")
         else:
             grund = ""
+            try:
+                self._zusammenfassen_pruefen([n for _a, n in folge])
+            except ValueError as ex:
+                grund = str(ex)
         return {"staebe": staebe, "glieder": folge, "knoten": knoten, "achsen": achsen,
                 "zusammenfassbar": not grund, "grund": grund}
 
     def stabkette_text(self, kette: dict) -> str:
         """Die Warnung zu einer Kette - einmal je Kette, mit ihren Staeben:
         „Stäbe S1, S2 und S3 bilden eine Kette mit freien Zwischenknoten K1 und
-        K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““. Laesst sich die
-        Kette nicht zusammenfassen (verschiedene Querschnitte, ein Glied ohne
-        Nachweis), raet der Text, die Knicklaenge von Hand zu setzen."""
+        K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““. Der Text raet nur
+        dann zum Zusammenfassen, wenn es gelingt. Sonst raet er, die
+        Knicklaenge von Hand zu setzen, und nennt den Grund, den das
+        Zusammenfassen selbst nennen wuerde (verschiedene Querschnitte, ein Stab
+        gegen die Kette gezeichnet, verschiedene Drehwinkel, Verweise auf einen
+        Stab …). Bis zum 06.10.2026 riet er auch dann zum Zusammenfassen, wenn
+        es abwies."""
         def liste(teile):
             teile = [str(t) for t in teile]
             return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
@@ -6677,41 +6686,20 @@ class Model:
             return f"{wert:g}".replace(".", ",")
         return str(wert)
 
-    def staebe_zusammenfassen(self, namen) -> tuple:
-        """Gewaehlte kollineare, zusammenhaengende Staebe zu einem Stab
-        zusammenfassen (Werkzeug „Stäbe zusammenfassen“, C14).
+    def _zusammenfassen_pruefen(self, namen) -> tuple:
+        """Die Pruefung von :meth:`staebe_zusammenfassen`, ohne etwas zu
+        aendern: ob die Staebe ``namen`` zu einem Stab werden koennen, und
+        sonst jeder Grund mit Stab und Wert.
 
-        Es verliert nichts und aendert keine Bedeutung (Runde 2, Grundsatz G1):
-        kann es etwas verlieren oder die Bedeutung einer Angabe aendern, weist
-        es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
-        Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
-        Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
-        Drehwinkel irgendwelcher Elemente der Kette, auch innerhalb eines
-        Glieds (ein Stab wird im Nachweis mit einem Achsensystem gefuehrt),
-        verschiedene Vorspannungen,
-        eine Linienlast, die sich nicht verlustfrei als Abschnittslast
-        schreiben laesst (:meth:`_linienlast_abschnitt`), und jeder Verweis
-        auf irgendeinen Stab der Kette, auch den ersten (danach meinte er die
-        ganze Kette). Bis zur Runde 2 setzte es feste Laengen still auf β · L
-        zurueck und uebernahm die Parameter des ersten Stabs; bis zum
-        04.10.2026 fasste es auch Staebe mit verschiedenem Drehwinkel zusammen.
-
-        Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
-        Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
-        geht mit und gilt auf dem Abschnitt, auf dem sie vorher lag: um die
-        Laenge der Staebe davor verschoben; die Glieder vor dem letzten
-        bekommen ein festes „bis“, am letzten bleibt „bis zum Ende“ stehen
-        (ebenso ein „bis“ ueber sein Ende hinaus und ein „von“ vor dem Anfang
-        des ersten). Die Elementlasten jedes Elements bleiben dieselben, die
-        Rechnung auch. Bis zum 04.10.2026 (Runde 2) wies es verschiedene
-        Linienlasten ab und nahm nur gleiche mit; der Anwender wollte es
-        lockerer. Gleiche Vorspannungen bleiben einmal stehen, denn eine
-        Vorspannung wirkt auf jedes Element ihres Stabs. Die Elemente bleiben,
-        wie sie sind: es wird nichts umgedreht, darum muss jeder Stab in
-        Richtung der Kette laufen.
-
-        Rueckgabe (Name, [Hinweise]); ValueError mit den Gruenden, wenn es
-        nicht geht - dann ist nichts geaendert."""
+        Rueckgabe (folge, elemente, laenge): die Staebe in Richtung der
+        Kette, ihre Elemente der Reihe nach und die Laenge jedes Stabs [m];
+        ValueError mit den Gruenden, wenn es nicht geht. Das Zusammenfassen
+        selbst und der Kettentext (:meth:`_kette_beschreiben`) fragen
+        dieselbe Pruefung - bis zum 06.10.2026 schrieb der Kettentext einen
+        Teil der Regeln noch einmal und riet zum Zusammenfassen, wo es
+        abwies (Stab gegen die Kette gezeichnet, verschiedene Drehwinkel,
+        Verweise, Vorspannungen, Linienlasten, verschiedene Parameter).
+        """
         namen = list(dict.fromkeys(str(n) for n in namen))
         if len(namen) < 2:
             raise ValueError("Mindestens zwei Stäbe wählen")
@@ -6840,6 +6828,44 @@ class Model:
                 gruende.append(f"{n} wird verwendet von {', '.join(verweise)} - erst dort lösen")
         if gruende:
             raise ValueError(" | ".join(gruende))
+        return folge, elemente, laenge
+
+    def staebe_zusammenfassen(self, namen) -> tuple:
+        """Gewaehlte kollineare, zusammenhaengende Staebe zu einem Stab
+        zusammenfassen (Werkzeug „Stäbe zusammenfassen“, C14).
+
+        Es verliert nichts und aendert keine Bedeutung (Runde 2, Grundsatz G1):
+        kann es etwas verlieren oder die Bedeutung einer Angabe aendern, weist
+        es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
+        Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
+        Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
+        Drehwinkel irgendwelcher Elemente der Kette, auch innerhalb eines
+        Glieds (ein Stab wird im Nachweis mit einem Achsensystem gefuehrt),
+        verschiedene Vorspannungen,
+        eine Linienlast, die sich nicht verlustfrei als Abschnittslast
+        schreiben laesst (:meth:`_linienlast_abschnitt`), und jeder Verweis
+        auf irgendeinen Stab der Kette, auch den ersten (danach meinte er die
+        ganze Kette). Bis zur Runde 2 setzte es feste Laengen still auf β · L
+        zurueck und uebernahm die Parameter des ersten Stabs; bis zum
+        04.10.2026 fasste es auch Staebe mit verschiedenem Drehwinkel zusammen.
+
+        Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
+        Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
+        geht mit und gilt auf dem Abschnitt, auf dem sie vorher lag: um die
+        Laenge der Staebe davor verschoben; die Glieder vor dem letzten
+        bekommen ein festes „bis“, am letzten bleibt „bis zum Ende“ stehen
+        (ebenso ein „bis“ ueber sein Ende hinaus und ein „von“ vor dem Anfang
+        des ersten). Die Elementlasten jedes Elements bleiben dieselben, die
+        Rechnung auch. Bis zum 04.10.2026 (Runde 2) wies es verschiedene
+        Linienlasten ab und nahm nur gleiche mit; der Anwender wollte es
+        lockerer. Gleiche Vorspannungen bleiben einmal stehen, denn eine
+        Vorspannung wirkt auf jedes Element ihres Stabs. Die Elemente bleiben,
+        wie sie sind: es wird nichts umgedreht, darum muss jeder Stab in
+        Richtung der Kette laufen.
+
+        Rueckgabe (Name, [Hinweise]); ValueError mit den Gruenden, wenn es
+        nicht geht - dann ist nichts geaendert."""
+        folge, elemente, laenge = self._zusammenfassen_pruefen(namen)
         bleibt = self.members[folge[0]]
         hinweise = []
         # jede Linienlast auf den Abschnitt, auf dem sie lag: um die Laenge der
