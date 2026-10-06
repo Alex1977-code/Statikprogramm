@@ -27,7 +27,8 @@ Ablauf:
 * Ein kleines Programm-Skript (``--kind``) laeuft in eigenen Prozessen,
   sechsmal mit ``os._exit(0)`` am Ende (wie die anderen Pruefungen) und dreimal
   mit ``w.close()`` und ``sys.exit(0)`` (wie die Rauchpruefung). Es oeffnet und
-  schliesst eine Stab-Maske, eine Uebersicht aus dem Baum, eine Maske mit der
+  schliesst eine Stab-Maske, eine Maske ueber ✕ und eine ueber „Abbrechen“
+  (F44), eine Uebersicht aus dem Baum, eine Maske mit der
   Leiste „Übernehmen | Verwerfen“ (13m), das Kontextregister, die
   Ergebnissteuerung nach einer Rechnung mit Masken darunter, das
   Rechtsklickmenue, die Kuerzelliste, den Werkzeug-Dialog (Qt ersetzt dessen
@@ -231,6 +232,29 @@ def _kind(ende: str) -> None:
     merken("stabmaske", mk)
     w.maskenrand.schliessen()
     _ruhe(app)
+
+    # 1b. Eine Maske ueber ihr ✕ und eine Neu-Maske ueber „Abbrechen“ (F44,
+    #     06.10.2026): sie gehen weg wie eine ersetzte, ihr deleteLater wartet
+    #     wie dort bis zum Ende
+    w._objektmaske("knoten", "1")
+    _ruhe(app)
+    mk = _maske(w)
+    _melden("knotenmaske_kreuz_offen", mk is not None, getattr(mk, "titel", ""))
+    if mk is not None:
+        merken("knotenmaske_kreuz", mk)
+        mk.btn_zu.click()
+        _ruhe(app)
+        _melden("knotenmaske_kreuz_heraus", w.maskenrand.maske is None and w.maskenplatz.indexOf(mk) < 0)
+    w._baum_neu("lastfaelle")
+    _ruhe(app)
+    mk = _maske(w)
+    weg = False
+    if mk is not None and getattr(mk, "btn_abbrechen", None) is not None:
+        merken("neumaske_abbrechen", mk)
+        mk.btn_abbrechen.click()
+        _ruhe(app)
+        weg = w.maskenrand.maske is None and w.maskenplatz.indexOf(mk) < 0
+    _melden("neumaske_abbrechen_heraus", weg, getattr(mk, "titel", "") if mk is not None else "keine Maske")
 
     # 2. Uebersicht aus dem Baum, ersetzt durch die naechste
     _klick(w, app, _eintrag(w, text="Lastfälle"))

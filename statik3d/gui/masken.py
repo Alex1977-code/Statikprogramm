@@ -614,12 +614,17 @@ class Maske(QtWidgets.QFrame):
             knoepfe.addWidget(b)
         fuss.addLayout(knoepfe)
         # Weitere Knoepfe (Situation: Auswahl deaktivieren / aktivieren,
-        # Löschen …) - auch sie stehen im festen Fuss
+        # Löschen …) - auch sie stehen im festen Fuss. Ein Eintrag ist
+        # (Text, Ruf) oder (Text, Ruf, Hinweis): ein kurzer Text nennt im
+        # Hinweis alles (F40, 06.10.2026 - die Zeile bricht nicht um)
         self.zusatzknoepfe: dict[str, QtWidgets.QPushButton] = {}
         if zusatz:
             zeile = QtWidgets.QHBoxLayout()
-            for text, ruf in zusatz:
+            for eintrag in zusatz:
+                text, ruf = eintrag[0], eintrag[1]
                 b = QtWidgets.QPushButton(text, self)
+                if len(eintrag) > 2 and eintrag[2]:
+                    b.setToolTip(str(eintrag[2]))
                 b.clicked.connect(lambda _c=False, r=ruf: self._knopf_rufen(r))
                 zeile.addWidget(b)
                 self.zusatzknoepfe[text] = b
@@ -1373,9 +1378,7 @@ class Maskenrand(QtCore.QObject):
     def schliessen(self):
         if self.maske is not None:
             m, self.maske = self.maske, None
-            if self.ziel is not None:
-                self.ziel.removeWidget(m)
-            m.hide()
+            self._herausnehmen(m)
             # Auch eine ersetzte Maske ist „zu“: wer auf ihr Schliessen hoert
             # (etwa die Vorschau einer Stellung, die Elemente ausblendet),
             # muss es erfahren - sonst blieben die Elemente ausgeblendet
@@ -1398,8 +1401,38 @@ class Maskenrand(QtCore.QObject):
             n += 1
         return n
 
+    def _herausnehmen(self, m) -> None:
+        """Die Maske aus dem rechten Bereich nehmen und verbergen - der erste
+        Teil von :meth:`schliessen`, auch fuer :meth:`_vergessen`."""
+        if self.ziel is not None:
+            self.ziel.removeWidget(m)
+        m.hide()
+
     def _vergessen(self):
+        """Die offene Maske ist selbst zugegangen: ✕, „Abbrechen“ oder Esc an
+        der Maske (Maske.schliessen hat sie verborgen und ``geschlossen``
+        gemeldet - darauf laeuft dies hier). Sie geht weg wie eine ersetzte
+        (:meth:`schliessen`): aus dem rechten Bereich heraus und ueber
+        deleteLater entsorgt. Nichts wird getrennt und ``geschlossen`` nicht
+        noch einmal gesendet; wer danach an der Reihe ist (das Fenster: rechts
+        leeren, Leiste, Vorschau, Ebene im Bild), bekommt das Signal noch, die
+        Maske lebt bis zur Ereignisschleife (Regeln aus C15, 03.10.2026).
+
+        Bis zum 06.10.2026 vergass der Rand sie nur: sie blieb verborgen samt
+        ihren Verbindungen im rechten Bereich liegen, nach drei Masken mit ✕
+        lebten alle drei weiter (F44). Esc im Programmfenster schliesst keine
+        Maske, das Kuerzel heisst dort „Alles deselektieren“.
+
+        Nur die offene Maske zaehlt: ``geschlossen`` einer ersetzten kommt aus
+        :meth:`schliessen`, wenn schon nichts mehr offen ist - und eine Maske,
+        die waehrend ihres Schliessens eine neue oeffnen liess, nimmt diese
+        nicht mit."""
+        m = self.sender()
+        if m is None or m is not self.maske:
+            return
         self.maske = None
+        self._herausnehmen(m)
+        m.deleteLater()
 
     def offen(self) -> bool:
         return self.maske is not None and self.maske.isVisible()

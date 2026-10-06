@@ -7056,7 +7056,7 @@ def main():
               and {"typ0", "k0", "aus0", "typ5", "beton", "E_cm", "d_bett", "A_bett", "groesse"} <= set(mk.werte())
               and mk.werte()["typ2"] == "starr" and mk.werte()["typ4"] == "frei"
               and w.sel_lager == [("lager", 1)] and w.auswahlart == "Lager"
-              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung, Grenzkraft …", "Lager löschen"},
+              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung …", "Lager löschen"},
               str(getattr(mk, "titel", mk)))
         mk.setzen("typ2", "Feder"); mk.setzen("k2", 1000.0); mk.setzen("typ4", "starr"); mk.setzen("name", "Gelenk B")
         mk.anwenden(); app.processEvents()

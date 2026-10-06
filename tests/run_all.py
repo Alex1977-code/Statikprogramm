@@ -29,6 +29,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_fehler_p12",
            "tests.contracts.test_vertrag", "tests.test_kontakt_exakt",
            "tests.test_fehler_p7",
+           "tests.test_fehler_p16",
            "volumen3d.tests.test_kern"]
 
 

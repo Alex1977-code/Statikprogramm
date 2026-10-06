@@ -8939,8 +8939,13 @@ class MainWindow(QtWidgets.QMainWindow):
         hinweis = ("Je Freiheitsgrad: frei, starr oder Feder (Steifigkeit in " + e_kraft + " bzw. "
                    + e_moment + "), dazu der Ausfall bei Zug oder Druck. „Bettung übernehmen“ trägt den "
                    "Vorschlag für Beton in die Felder ein - vor „Übernehmen“ prüfen.")
+        # Kurzer Text, der Hinweis nennt alles (F40, 06.10.2026): „Schlupf,
+        # Reibung, Grenzkraft …“ brauchte mit Segoe UI 211 px und bekam in der
+        # 460 px breiten Maske 160 - der Text war vorn und hinten abgeschnitten
         zusatz = [("Bettung übernehmen", lambda: self._bettung_beton(halter.get("m"), art)),
-                  ("Schlupf, Reibung, Grenzkraft …", lambda: self._lager_nichtlinear(art, i)),
+                  ("Schlupf, Reibung …", lambda: self._lager_nichtlinear(art, i),
+                   "Schlupf, Reibung und Grenzkraft je Freiheitsgrad - öffnet den Dialog für "
+                   "dieses Lager"),
                   ("Lager löschen", lambda: self._baum_loeschen(art, str(i)))]
         return felder, titel, hinweis, zusatz
 

@@ -3563,7 +3563,13 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
   zweiter Klick auf denselben Knoten nimmt ihn wieder heraus.
 
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
-bis man sie ändert. Geschlossen wird die Maske mit **✕** oben rechts. Ein
+bis man sie ändert. Geschlossen wird die Maske mit **✕** oben rechts, bei
+einem neuen Objekt auch mit „Abbrechen“. Sie wird dabei ganz entfernt, genauso
+wie eine Maske, die ein neuer Befehl ablöst, und was zu ihr gehört, endet mit
+ihr: die Auswahl per Maus, die Vorschau einer Stellung, die Ebene im Bild der
+Schnittebene und die Leiste „Übernehmen | Verwerfen“. Bis zum 06.10.2026 wurde
+eine Maske mit ✕ oder „Abbrechen“ nur ausgeblendet und blieb samt ihren
+Verbindungen unsichtbar im rechten Bereich liegen. Ein
 neuer Erzeuge-Befehl löst die vorige Maske ab — es ist immer höchstens eine
 offen. Hat die vorige noch nicht übernommene Änderungen, fragt vorher die
 Leiste „Übernehmen | Verwerfen“ (unten, *Nicht übernommene Änderungen*).
@@ -5535,9 +5541,12 @@ Modellbaum, in der Tabelle „Lager" oder in der Ansicht mit der Auswahlart
 Lager; Rechtsklick auf das Symbol → „Bearbeiten…“): je Freiheitsgrad
 Wirkung, Federsteifigkeit (Knotenlager kN/m bzw. kNm/rad, Linienlager je m,
 Flächenlager je m²) und Ausfall; Schlupf, Reibung und Grenzkraft öffnet der
-Knopf „Schlupf, Reibung, Grenzkraft …" (Register Lager / Kontakt →
-**Nichtlinearität…** für die gewählten Knoten; auf dem Handy Modell →
-Nichtlineare Lager):
+Knopf „Schlupf, Reibung …“ unten in der Lagermaske, sein Hinweis nennt alle
+drei (ebenso Register Lager / Kontakt → **Nichtlinearität…** für die gewählten
+Knoten; auf dem Handy Modell → Nichtlineare Lager). Bis zum 06.10.2026 hieß der
+Knopf „Schlupf, Reibung, Grenzkraft …“ und war abgeschnitten: Die drei Knöpfe
+im Fuß der Maske stehen nebeneinander, und er bekam im 460 px breiten rechten
+Bereich 160 statt der nötigen 211 px. Die Einstellungen im Einzelnen:
 
 | Einstellung | Bedeutung |
 |---|---|
