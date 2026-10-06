@@ -838,12 +838,85 @@ if __name__ == "__main__":
 
 ## Ergebnis Phase 1
 
-(wird nach der Messung eingetragen)
+Gemessen am 06.10.2026 aus einem festen Arbeitsbaum auf 9fc6966, nacheinander, mit 8 Threads (auf Bitte der Hauptsitzung, die nebenher Prüfungen ohne
+Zeitmessung rechnete). Ausgewertet von zwei unabhängig geschriebenen Skripten (`p1_auswertung_a.py`, `p1_auswertung_b.py` im Scratchpad); beide kommen zu
+denselben Urteilen. Die Lesart der Regeln stand vor dem ersten Ergebnis im Kopf der Auswertung A: Weicht bei Kirsch oder Kragarm an einem Glied der
+Effektivitätsindex mit Referenz p + 1 um mehr als 20 % von dem mit Referenz p + 2 ab, werden die Regeln 1, 2 und 4 an diesem Modell nicht gewertet; Regel 5 gilt
+für den Stand nach Zyklus 3.
+
+| Folge | h bzw. Ziel | freie FHG | η | ‖e‖_E | θ = η/‖e‖_E | Treffer | Zeit Schätzer / Aufbau und Lösen (s) |
+|---|---|---|---|---|---|---|---|
+| Lamé p 2 | 20 / 10 / 5 | 765 / 4 395 / 28 215 | 9,230 / 2,026 / 0,519 | 2,049 / 0,467 / 0,121 | 4,50 / 4,34 / 4,27 | 1,00 / 1,00 / 1,00 | 0,2 / 9,9; 0,8 / 20,7; 4,1 / 45,8 |
+| Lamé p 3 | 20 / 10 / 5 | 2 100 / 13 188 / 89 310 | 1,489 / 0,505 / 0,276 | 0,327 / 0,101 / 0,048 | 4,56 / 5,02 / 5,74 | 1,00 / 1,00 / 0,92 | 1,1 / 12,9; 4,1 / 31,7; 17,6 / 82,1 |
+| Kirsch p 2 | 20 / 10 / 5 | 7 713 / 8 037 / 10 677 | 18,30 / 5,725 / 1,580 | 4,886 / 1,486 / 0,436 | 3,74 / 3,85 / 3,62 | 1,00 / 0,92 / 1,00 | 0,4 / 2,0; 0,5 / 1,9; 1,1 / 3,3 |
+| Kragarm p 2 | 50 / 25 | 5 535 / 37 179 | 7,445 / 4,506 | 1,420 / 0,851 | 5,24 / 5,30 | 1,00 / 1,00 | 0,8 / 1,1; 5,2 / 3,6 |
+
+Bei Lamé ist das Zellresiduum der größte Anteil von η (p 2 auf h 5: Residuum 0,506, Sprünge 0,078, Neumann 0,085, Dirichlet 0,021); bei p 3 wächst der
+Nitsche-Rest mit der Verfeinerung (0,216 / 0,329 / 0,235) und mit ihm θ. Die Kragarm-Folge endet nach der Regel bei h 25, weil die Referenz p 4 bei h 12,5
+2 489 175 Freiheitsgrade hätte (h 25: 384 615). Die Rate des Kragarms ist mit 0,72 bis 0,74 niedrig, weil die voll eingespannte Stirnfläche an ihren Kanten singulär ist; η folgt ihr.
+
+**Regel 1 (θ konstant bis Faktor 3): erfüllt.** max θ / min θ ist 1,05 (Lamé p 2), 1,26 (Lamé p 3) und 1,01 (Kragarm). Kirsch ist nach der Referenzprüfung nicht gewertet: auf dem
+gröbsten Glied (Ziel 20) weicht θ mit Referenz p 3 um 50 % von θ mit Referenz p 4 ab (5,63 gegen 3,74), auf den feineren um 4 % und 1 %. Die Lochplatte ist mit 20-mm-Zellen
+um ein Loch mit 20 mm Radius auf demselben Gitter auch mit p 4 noch nicht auskonvergiert. Ungewertet liegt die Spanne bei 1,06.
+
+**Regel 2 (gleiche Rate, Differenz der Steigungen ≤ 0,3): erfüllt.** Steigungen von η und ‖e‖_E über h: Lamé p 2 2,08 und 2,04 (Differenz 0,04), Lamé p 3 1,22 und 1,38 (0,17),
+Kragarm 0,72 und 0,74 (0,02); Kirsch ungewertet 1,77 und 1,74.
+
+**Regel 3 (Felder im Ansatzraum): erfüllt.** η / ‖u‖_E am Patch-Körper in drei Läufen von `test_konsistenz` (Schätzer seit 01e3ec6 unverändert): lineares Feld p 2 6,7·10⁻¹² bis 1,0·10⁻¹¹, quadratisches p 2
+3,5·10⁻¹² bis 4,1·10⁻¹² (Schranke 10⁻⁸), kubisches p 3 1,8·10⁻¹⁰ bis 2,1·10⁻¹⁰ (Schranke 10⁻⁷).
+
+**Regel 4 (die 10 % Zellen mit größtem η liegen zu mindestens der Hälfte unter den 20 % mit größtem wahrem Fehler): erfüllt** an Lamé h 10 p 2 mit 1,00. Kirsch Ziel 5 ist ungewertet (1,00).
+
+**Regel 5 (h-adaptiv erreicht nach drei Zyklen den Fehler des feinsten Glieds mit weniger Freiheitsgraden): verfehlt, an beiden Modellen.**
+
+| Zyklus | Lamé: freie FHG | Lamé: ‖e‖_E | Kirsch: freie FHG | Kirsch: ‖e‖_E |
+|---|---|---|---|---|
+| 0 | 765 | 2,049 | 7 713 | 4,886 |
+| 1 | 1 065 | 2,184 | 7 713 | 3,940 |
+| 2 | 1 674 | 2,888 | 7 821 | 2,549 |
+| 3 | 2 388 | 3,116 | 8 085 | 1,347 |
+| Vergleich (feinstes Glied) | 28 215 | 0,121 | 10 677 | 0,436 |
+
+Kirsch: Der Fehler fällt in drei Zyklen auf ein Viertel. Bei gleicher Größe ist das adaptive Gitter besser als das feste (Zyklus 3 mit 8 085 Freiheitsgraden 1,35 gegen Ziel 10 mit
+8 037 und 1,49). Für den Fehler des feinsten Glieds reichen drei Dörfler-Zyklen mit θ 0,5 aber nicht; die Regel war mit drei Zyklen zu knapp gesetzt. Dass Zyklus 1 dieselbe Zahl freier
+Freiheitsgrade hat wie Zyklus 0 (7 713, 7 Zellen mehr), liegt daran, dass die geteilten Zellen aggregiert werden.
+
+Lamé: Der wahre Fehler **steigt** mit jedem Zyklus, obwohl nur geteilt wird; bei geschachtelten Ansatzräumen ist das in der Energienorm ausgeschlossen. Der Diagnoselauf
+(`p1_diag_lame.py`, Kriterium vor dem Lauf festgelegt: Die Vermutung „die Zellaggregation macht die Räume ungeschachtelt“ gilt als gestützt, wenn derselbe Schritt ohne Aggregation den Fehler
+senkt und mit Aggregation hebt) ergibt für den Schritt von Zyklus 0 zu Zyklus 1 (4 Zellen markiert):
+
+| | ‖e‖_E vorher → nachher | e² der geteilten Zellen | e² der übrigen Zellen | freie FHG |
+|---|---|---|---|---|
+| mit Aggregation (0,4) | 2,049 → 2,184 | 1,809 → 1,467 | 2,390 → 3,303 | 765 → 1 065 |
+| ohne Aggregation (α 10⁻⁸) | 1,610 → 1,263 | 1,191 → 0,246 | 1,400 → 1,350 | 2 055 → 2 574 |
+
+Die Vermutung ist damit gestützt. In den geteilten Zellen fällt der Fehler auch mit Aggregation; er steigt in den **ungeteilten** Zellen, und das nur mit Aggregation. Im verfeinerten
+Gitter sind 52 von 81 Zellen aggregiert, und bei 42 davon liegt die Wurzel außerhalb der eigenen Elternzelle. Das Lamé-Modell mit h 20 ist dafür ein harter Fall: die Dicke (20 mm) ist
+gleich der Basiszelle, fast jede Zelle ist an den Ebenen z = 0 und z = 20 geschnitten. Wahrscheinlicher Mechanismus (nicht gemessen): Die Teilung schafft neue, feinere wohlgestellte
+Zellen, an die aggregierte Zellen der Umgebung neu gebunden werden. Deren Fortsetzung reicht dann über eine größere Entfernung, gemessen an der Wurzelgröße, und das Polynom der
+früheren, gröberen Wurzel ist nicht mehr darstellbar. Ohne Aggregation gibt es das nicht (dort steht das α-Verfahren mit seinen bekannten Nachteilen, Theorie 11.4).
+
+**Regel 6 (Flächenquadratur tiefe 2 gegen 4 ≤ 10 %): erfüllt.** Lamé h 5 p 2 +0,01 %, Kirsch Ziel 5 p 2 +0,05 %. Der Punkttest erster Ordnung genügt; eine eben-exakte
+Flächenintegration ist nicht nötig.
+
+**Zeit (berichtet, keine Regel).** Der Schätzer braucht bei Lamé 2 bis 21 % der Zeit für Aufbau und Lösen, bei Kirsch 18 bis 32 %, am Kragarm mit h 25 aber 143 % (5,2 gegen 3,6 s).
+Er läuft in Python-Schleifen je Zelle und je Fläche; am kompakten Quader mit vielen ganz inneren Zellen ist das langsamer als der Direktlöser.
+
+**Neu auf der Liste (nicht bearbeitet).** *O21 Verschachtelung bei lokaler Teilung unter Zellaggregation:* Die Teilung einzelner Zellen kann den Fehler in ungeteilten aggregierten Zellen
+erhöhen (Lamé h 20: +38 % in e² der übrigen Zellen), weil sich Wurzeln umhängen. Ein hp-Treiber (Phase 3) setzt voraus, dass Verfeinern den Fehler nicht erhöht. *O22 Schätzer
+vektorisieren:* Flächen und Zellen in Blöcken statt einzeln. *O23 Lasten je Lastfall:* Die Schnittstelle übergibt Flächenlasten je Lastfall als fertige Lastvektoren (`api`, `zusatzlasten`);
+schätzt man dort, fehlt dem Schätzer die Soll-Traktion. Das wird wichtig, wenn der Schätzer an die Schnittstelle kommt.
+
+**Empfehlung an den Anwender.** Der Schätzer erfüllt alle Regeln über sich selbst (1, 2, 3, 4, 6). Regel 5 verfehlt er nicht, weil er falsch markiert: An Kirsch wirkt die
+Adaptivität, an Lamé verhindert die Aggregation, dass Verfeinern den Fehler senkt. Empfehlung: Phase 1 mit Regel 5 als „verfehlt“ abschließen und dokumentieren, O21 als
+nächsten Punkt vor Phase 2 messen und beheben (eigene Regeln vorab, etwa „Wurzeln ungeteilter Zellen bleiben bei lokaler Teilung erhalten“ oder „Wurzel nur innerhalb der
+Elternzelle“) und Regel 5 danach mit denselben Zahlen erneut prüfen, an Kirsch mit so vielen Zyklen, bis die Größe des feinsten Glieds erreicht ist. Phase 2 baut auf den
+Aggregationsregeln auf (aggregierte Zellen erben p der Wurzel), deshalb O21 davor.
 
 ## Modell je Schritt
 
 | Schritt | Modell | Denkstufe | Stand |
 |---|---|---|---|
-| Aufgaben 1 bis 5: Basis, Lasten, Flächen, Schätzer, Markierung | Opus 5.5 | hoch | offen |
-| Aufgabe 6: Messung nach den Regeln | Opus 5.5 | hoch | offen |
+| Aufgaben 1 bis 5: Basis, Lasten, Flächen, Schätzer, Markierung | Opus 5.5 | hoch | fertig (9fc6966) |
+| Aufgabe 6: Messung nach den Regeln | Opus 5.5 | hoch | gemessen; Regel 5 verfehlt, Entscheidung beim Anwender |
 | Aufgabe 7: Dokumentation, Suiten, Push | Sonnet 5.5 | niedrig | offen |
