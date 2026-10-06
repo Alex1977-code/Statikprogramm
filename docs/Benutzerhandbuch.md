@@ -3844,9 +3844,10 @@ Rechtsklickmenüs hat die Auswahl der Ansicht noch nicht umgestellt.
 Die Leiste geht von selbst, wenn die Maske auf ihrem eigenen Weg übernommen,
 abgebrochen oder geschlossen wird oder wieder unverändert ist; was man wollte,
 verfällt dann. Kommt ein weiterer Wunsch, während die Leiste steht, gilt der
-letzte. Die Leiste ist kein eigenes Fenster und sperrt nichts, auch nicht
-während einer Rechnung; eine Fehlermeldung beim Übernehmen steht dann wie jede
-andere im Protokoll. Nicht an der Leiste halten Wege, die keine Maske
+letzte. Die Leiste ist kein eigenes Fenster und sperrt nichts. Während einer
+Rechnung weist ihr *Übernehmen* seit dem 06.10.2026 ab wie der Knopf der
+Maske (Kapitel 9), *Verwerfen* wirkt weiter; bis dahin übernahm sie auch
+während einer Rechnung. Nicht an der Leiste halten Wege, die keine Maske
 ersetzen: „Querschnitt zuweisen…“ und „Dicke zuweisen…“ zeigen nur das
 Register „Auswahl“, und ein Strg+Klick auf eine schon gewählte Last nimmt sie
 nur aus der Auswahl.
@@ -8554,6 +8555,24 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Netz, wie es war. Die bis dahin fertigen Lastfälle und Kombinationen
   bleiben als Ergebnis stehen, ohne Umhüllende und ohne Nachweise
   (Kapitel 2, „Statuszeile“).
+* **Während der Rechnung gehört das Modell der Rechnung.** Das Fenster bleibt
+  bedienbar, aber „Übernehmen“ in einer Maske wird bis zum Ende der Rechnung
+  abgewiesen: Ein Hinweis sagt „Rechnung läuft: … erst nach der Rechnung
+  übernehmen“, die Eingaben bleiben stehen, und nach der Rechnung genügt
+  derselbe Knopf. Masken, die nur die Ansicht stellen (Darstellung, Messen,
+  Netzqualität, Schnittebene), wirken weiter. Ändert ein anderer Weg das
+  Modell während der Rechnung, etwa eine Tabelle, der Haken Eigengewicht im
+  Register Lager/Lasten, Rückgängig oder der Browser, passt ihr Ergebnis
+  nicht: Es kommt nicht ins Bild, die Kopfzeile sagt „Ergebnis passt nicht
+  mehr zum Modell – neu rechnen“, ein Hinweis nennt den Grund, und Speichern
+  schreibt keine Ergebnisdatei. Das gilt auch, wenn die Änderung vor dem Ende
+  wieder zurückgenommen wurde, denn die Rechnung liest das Modell
+  währenddessen. Nachweise, Ermüdung und die Suche nach freien Bewegungen
+  verwerfen ihr Ergebnis in diesem Fall, und aus einer solchen Knickfigur
+  ermittelt das Programm keine Knicklängen. Bis zum 06.10.2026 ließ
+  sich jede Maske während der Rechnung übernehmen, und eine Last- oder
+  Eigengewichtsänderung galt am Ende als passend: Das Ergebnis des alten
+  Stands wurde gezeigt und gespeichert.
 * **Das Protokoll überlebt einen Absturz.** Jede Zeile geht sofort in eine
   Mitschrift unter `%LOCALAPPDATA%\Statik3D\Protokolle` (unter Linux
   `~/.local/share/Statik3D/Protokolle`), eine Datei je Programmstart. Stürzt
@@ -9759,15 +9778,28 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
 **Ergebnisse neben der Modelldatei.** Speichern schreibt die Rechnung —
 Lastfälle, Kombinationen, Umhüllende, Nachweise — in eine zweite Datei
 `<modell>.ergebnisse` neben die Modelldatei; Öffnen liest sie wieder ein,
-wenn sie zum Modell passt (Knoten- und Elementzahl, Koordinaten,
-Lastfallnamen), und das Programm steht danach wieder auf „berechnet“. Bis
-zum 12.09.2026 war nach dem Öffnen jede Rechnung weg — am Drehlager 18
-Minuten je Lastfall. Ein Modell, das nach der Rechnung verändert wurde,
-passt nicht mehr; das Protokoll sagt es, und die Datei bleibt liegen. Ohne
-Rechnung entfernt Speichern eine alte Ergebnisdatei. Die Datei enthält das
+wenn sie zum Modell passt (Knoten- und Elementzahl, die Lage jedes Knotens,
+je Element Typ und Knoten, Lastfallnamen), und das Programm steht danach
+wieder auf „berechnet“. Bis zum 12.09.2026 war nach dem Öffnen jede Rechnung
+weg — am Drehlager 18 Minuten je Lastfall. Ein Modell, das nach der Rechnung
+verändert wurde, passt nicht mehr; ein Hinweis in der Statuszeile und im
+Protokoll nennt den Grund, und die Datei bleibt liegen (bis zum 06.10.2026
+stand das nur im Protokoll). Ohne Rechnung entfernt Speichern eine alte
+Ergebnisdatei. Die Datei enthält das
 Modell nicht (es steht in der Modelldatei) und kann groß werden: je
 Lastfall die Verschiebungen aller Knoten und die Spannungen aller Elemente
 (Drehlager: rund 90 MB je Lastfall). Geprüft in `tests/test_ergebnisse.py`.
+
+Die Lage der Knoten prüft das Programm seit dem 06.10.2026 Knoten für Knoten.
+Bis zum 06.10.2026 verglich es nur die Summe aller Koordinaten: Wurde ein
+Knoten so verschoben, dass die Summe gleich blieb, und die Modelldatei ohne
+die Ergebnisse neu geschrieben (Export als .json, Kommandozeile), zeigte das
+Öffnen die Verschiebungen des alten Stands, als passten sie. Eine
+Ergebnisdatei von vor dem 06.10.2026 kennt nur diese Summe. Sie wird weiter
+geladen, aber mit dem Hinweis „mit Vorbehalt geladen“: Wer das Modell seitdem
+ohne die Ergebnisse geändert hat, rechnet neu. Speichern ohne neue Rechnung
+behält den Vorbehalt, erst die nächste Rechnung schreibt die neue Kennung.
+Geprüft in `tests/test_fehler_p6.py`.
 
 **Netz und Elemente im Bericht (seit 25.09.2026).** Für den Prüfer — „wie kann
 ich dem Prüfer beweisen, dass an dieser Stelle dieses Element verwendet wurde“

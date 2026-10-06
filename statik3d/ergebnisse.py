@@ -5,8 +5,8 @@ jede Rechnung weg - am Drehlager 18 Minuten je Lastfall. Jetzt schreibt das
 Programm beim Speichern die Analyse (Lastfälle, Kombinationen, Umhüllende,
 Nachweise) in eine zweite Datei ``<modell>.ergebnisse`` und liest sie beim
 Öffnen wieder ein, wenn sie zum Modell passt (Kennung: Knoten- und
-Elementzahl, Summe der Koordinaten, Lastfallnamen, seit dem 24.09.2026 ein
-Hash der Elemente).
+Elementzahl, Lastfallnamen, seit dem 24.09.2026 ein Hash der Elemente, seit
+dem 06.10.2026 ein Hash der Knotenkoordinaten statt ihrer Summe).
 
 Form: ein Pickle (Protokoll 5). Das Modell selbst steht nicht in der Datei -
 jede Referenz auf das Modell (Results.model, Envelope.model, Nachweise) wird
@@ -53,6 +53,29 @@ def elementhash(model) -> str:
     return h.hexdigest()
 
 
+def knotenhash(model) -> str:
+    """Hash der Knotenmatrix (alle Koordinaten in ihrer Reihenfolge, Bit fuer
+    Bit) als Hex-Text - seit dem 06.10.2026 Teil der Kennung (Fehlerliste F06).
+
+    Bis dahin stand in der Kennung nur die Summe aller Koordinaten. Ein Knoten
+    um (+0,3; 0; -0,3) m verschoben aenderte sie nicht, und eine
+    Ergebnisdatei, neben der die Modelldatei ohne sie neu geschrieben worden
+    war (Export als .json, Kommandozeile), galt beim Oeffnen als passend - mit
+    den Verschiebungen des alten Stands. Verglichen wird genau: die
+    Modelldatei haelt jede Koordinate als JSON-Zahl, und die kommt beim Lesen
+    Bit fuer Bit wieder. ``+ 0.0`` macht aus -0.0 ein 0.0, beides ist
+    derselbe Ort."""
+    knoten = np.asarray(model.nodes, float).reshape(-1, 3) if model.nn else np.zeros((0, 3))
+    knoten = np.ascontiguousarray(knoten + 0.0, dtype="<f8")
+    return hashlib.blake2b(knoten.tobytes(), digest_size=16).hexdigest()
+
+
+#: Vorbehalt einer Ergebnisdatei von vor dem 06.10.2026 (passt, F06)
+ALTE_KENNUNG = ("sie stammt von vor dem 06.10.2026 und prüft die Knotenlage nur als Summe der "
+                "Koordinaten – wurde das Modell ohne sie geändert (Export als .json, Kommandozeile), "
+                "bitte neu rechnen")
+
+
 def kennung(model) -> dict:
     """Woran die Ergebnisdatei erkennt, dass sie zu diesem Modell gehoert.
 
@@ -61,17 +84,28 @@ def kennung(model) -> dict:
     alte Datei passte dann zum neuen Modell, die Werte standen an anderen
     Elementen (Gegenpruefung von 97be9ff). Die Dateiversion bleibt 1: alte
     Dateien ohne den Eintrag werden weiter gelesen (passt prueft ihn nur, wo
-    er steht), und ein aelteres Programm uebergeht den zusaetzlichen."""
+    er steht), und ein aelteres Programm uebergeht den zusaetzlichen.
+
+    „knoten“ (06.10.2026, F06): der Hash der Knotenmatrix (knotenhash) statt
+    der Summe der Koordinaten. „koordinaten“ bleibt fuer aeltere Programme
+    in der Datei, die nur ihn kennen."""
     knoten = np.asarray(model.nodes, float).reshape(-1, 3) if model.nn else np.zeros((0, 3))
     return {"version": VERSION, "name": str(model.name), "nn": int(model.nn),
             "ne": int(len(model.elements)),
             "koordinaten": float(np.round(knoten.sum(), 6)) if knoten.size else 0.0,
+            "knoten": knotenhash(model),
             "lastfaelle": sorted(model.load_cases),
             "elemente": elementhash(model)}
 
 
 def passt(k: dict, model) -> tuple:
-    """(True, "") wenn die Kennung zum Modell passt, sonst (False, Grund)."""
+    """(True, "") wenn die Kennung zum Modell passt, sonst (False, Grund).
+
+    Eine Kennung ohne „knoten“ (Ergebnisdatei von vor dem 06.10.2026) laesst
+    sich nur ueber die Summe der Koordinaten pruefen. Sie wird nicht still als
+    passend angenommen (Fehlerliste F06): Rueckgabe (True, ALTE_KENNUNG), und
+    wer liest, sagt es dem Anwender (lesen legt den Vorbehalt in die Analyse,
+    die Oberflaeche zeigt ihn als Hinweis)."""
     jetzt = kennung(model)
     if not isinstance(k, dict):
         return False, "keine Kennung"
@@ -80,13 +114,19 @@ def passt(k: dict, model) -> tuple:
     for feld, text in (("nn", "Knotenzahl"), ("ne", "Elementzahl")):
         if k.get(feld) != jetzt[feld]:
             return False, f"{text} {k.get(feld)} statt {jetzt[feld]}"
-    if abs(float(k.get("koordinaten", 0.0)) - jetzt["koordinaten"]) > 1e-6 * max(1.0, abs(jetzt["koordinaten"])):
-        return False, "die Knotenkoordinaten sind andere"
+    vorbehalt = ""
+    if "knoten" in k:
+        if k["knoten"] != jetzt["knoten"]:
+            return False, "die Knotenkoordinaten sind andere"
+    else:
+        if abs(float(k.get("koordinaten", 0.0)) - jetzt["koordinaten"]) > 1e-6 * max(1.0, abs(jetzt["koordinaten"])):
+            return False, "die Knotenkoordinaten sind andere"
+        vorbehalt = ALTE_KENNUNG
     if list(k.get("lastfaelle", [])) != jetzt["lastfaelle"]:
         return False, "die Lastfälle sind andere"
     if "elemente" in k and k["elemente"] != jetzt["elemente"]:
         return False, "die Elemente sind andere (Typ oder Knoten)"
-    return True, ""
+    return True, vorbehalt
 
 
 class _Schreiber(pickle.Pickler):
@@ -150,6 +190,12 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
     if fortschritt:
         fortschritt(0.05, "Ergebnisse packen")
     inhalt = {"kennung": kennung(model)}
+    if (getattr(analysis, "info", None) or {}).get("kennung_vorbehalt"):
+        # aus einer Datei von vor dem 06.10.2026 geladen und nicht neu
+        # gerechnet (F06): die neue Kennung behauptete, die Knotenlage sei
+        # geprueft. Die Datei behaelt die alte Form, und das naechste Oeffnen
+        # sagt den Vorbehalt wieder.
+        inhalt["kennung"].pop("knoten", None)
     # alternativen: Ergebnisse von Alternativen einer Ergebniskombination, die
     # die Nachweise nicht aus den Lastfaellen wiedergewinnen koennen
     # (Kontaktmodell, Theorie II./III. Ordnung) - gepackt wie die Lastfaelle
@@ -230,6 +276,7 @@ def lesen(pfad: str, model, fortschritt=None):
     ok, grund = passt(inhalt.get("kennung"), model)
     if not ok:
         raise ValueError(f"Die Ergebnisdatei passt nicht zum Modell: {grund}")
+    vorbehalt = grund                   # passt, aber nur mit der alten Kennung (F06)
     if fortschritt:
         fortschritt(0.6, "Ergebnisse entpacken")
     # Ergebnisse folgen jedem Namen (R2-A1, Nachbesserung G1, 04.10.2026): die
@@ -252,6 +299,11 @@ def lesen(pfad: str, model, fortschritt=None):
         if feld in ("kennung",) + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
+    # der Vorbehalt der alten Kennung (F06) gilt fuer diese Analyse, bis neu
+    # gerechnet wird: schreiben behaelt dann die alte Form der Kennung
+    an.info.pop("kennung_vorbehalt", None)
+    if vorbehalt:
+        an.info["kennung_vorbehalt"] = vorbehalt
     _huellen_umhaengen(an, model)
     # Die Umhuellenden mit bekanntem Schluessel heissen wie an der Oberflaeche
     # („Umhüllende GZT“). Der Name ist mit gespeichert: eine Datei von vor dem

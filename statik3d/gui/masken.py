@@ -445,6 +445,11 @@ class Maske(QtWidgets.QFrame):
     #: Hinweis, keine Ablehnung, keine Ausnahme). Ohne Fenster gelingt jedes
     #: „Übernehmen“ ohne Ausnahme.
     uebernahme_lauf = None
+    #: Die Maske stellt nur die Ansicht (Darstellung, Messen, Netzqualitaet,
+    #: Schnittebene) und aendert das Modell nicht: ihr „Übernehmen“ wirkt auch
+    #: waehrend einer Rechnung. Jede andere weist das Fenster dann ab
+    #: (Fehlerliste F05, 06.10.2026).
+    nur_ansicht = False
     #: Ein Feld hat die Tastatur bekommen (Name des Feldes). Das Fenster
     #: schaltet darueber die Auswahl per Maus auf dieses Feld („bei Klick in
     #: Feld Auswahl per Maus", 15.09.2026).

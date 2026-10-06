@@ -3619,6 +3619,10 @@ class Modellstand(NamedTuple):
     knoten: np.ndarray
     #: hash der Elementliste als Tupel (Typ, Knoten) je Element
     elemente: int
+    #: das Modell wurde waehrend der Rechnung geaendert (Fehlerliste F05,
+    #: 06.10.2026): ihr Ergebnis gehoert zu keinem Stand, ergebnis_passt sagt
+    #: „anders“. Gesetzt am Ende der Rechnung (MainWindow._rechnung_geaendert).
+    veraendert: bool = False
 
 
 def _elementhash(elements, n: int) -> int:
@@ -3681,6 +3685,10 @@ def ergebnis_passt(model, res, stand: Modellstand = None) -> str:
         return "anders"
     if stand is None:
         return "passt" if n_res is None or n_res == nn else "gewachsen"
+    if stand.veraendert:
+        # waehrend der Rechnung geaendert - auch Lasten, Werkstoffe, Lager, die
+        # die Vergleiche darunter nicht kennen (F05, 06.10.2026)
+        return "anders"
     # die billigen Vergleiche zuerst, der Elementhash zuletzt
     if stand.nn > nn or stand.ne > ne:
         return "anders"

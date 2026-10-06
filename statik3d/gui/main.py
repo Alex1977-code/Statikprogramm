@@ -4647,6 +4647,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "wird orange in die Ansicht gezeichnet (Messen → Messungen löschen "
                                   "nimmt es wieder weg). Die Maske bleibt für die nächste Messung offen.")
         maske.angewendet.connect(lambda w, art=art: self._messung_anwenden(art, w))
+        maske.nur_ansicht = True            # auch waehrend einer Rechnung (F05)
         return self.maske_erzeugen(maske)
 
     def _messung_anwenden(self, art: str, w: dict):
@@ -5213,6 +5214,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     pass
         maske.destroyed.connect(lambda *_: trennen())
         maske.angewendet.connect(lambda _w: self.maskenrand.schliessen())
+        maske.nur_ansicht = True            # auch waehrend einer Rechnung (F05)
         return self.maske_erzeugen(maske)
 
     def _darstellungsmaske_nachziehen(self):
@@ -6851,6 +6853,17 @@ class MainWindow(QtWidgets.QMainWindow):
         titel = getattr(maske, "titel", "") or "Maske"
         if _gesperrt(self):
             self._sperre_melden()           # ein zweites „Übernehmen“, waehrend das erste rechnet
+            return False
+        if self._rechnet() and not getattr(maske, "nur_ansicht", False):
+            # Waehrend einer Rechnung (Fehlerliste F05, 06.10.2026): die
+            # Rechnung liest das Modell des Fensters. Bis dahin ging das
+            # „Übernehmen“ durch - ein anderes Eigengewicht galt am Ende als
+            # „passt“, und das Ergebnis des alten Stands wurde gezeigt und
+            # gespeichert. Abgewiesen wie in 13m: die Eingaben bleiben stehen,
+            # nach der Rechnung genuegt derselbe Knopf. Masken, die nur die
+            # Ansicht stellen (Maske.nur_ansicht), bleiben frei.
+            self.hinweis(f"Rechnung läuft: „{titel}“ erst nach der Rechnung übernehmen – die Eingaben "
+                         "bleiben stehen (anhalten: Esc)")
             return False
         fehler0 = self._fehlerstand()
         if not hasattr(self, "_undo"):
@@ -17577,8 +17590,12 @@ class MainWindow(QtWidgets.QMainWindow):
             stand = vp.modellstand(m)
 
             def fertig(res):
-                self._solve_done("buckling", res, stand)
-                self._knicklaengen_auswerten(res)
+                # der Stand mit der Marke „veraendert“, wenn das Modell waehrend
+                # der Rechnung geaendert wurde (F05) - dann keine Knicklaengen
+                jetzt = self._rechnung_stand
+                self._solve_done("buckling", res, jetzt)
+                if not getattr(jetzt, "veraendert", False):
+                    self._knicklaengen_auswerten(res)
             self._run_background(func, fertig, "Knicken für Knicklängen", stand=stand)
             return None
         return self._knicklaengen_auswerten(r)
@@ -19022,6 +19039,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           zusatz=[("Schlechte wählen", schlechte_waehlen), ("Aus", aus)])
         halter["m"] = maske
         maske.angewendet.connect(lambda _w: rechnen())
+        maske.nur_ansicht = True            # auch waehrend einer Rechnung (F05)
         rahmen = self.maske_erzeugen(maske)
         rechnen(anzeigen=False)
         return rahmen
@@ -19710,7 +19728,11 @@ class MainWindow(QtWidgets.QMainWindow):
     #
     # Keine Aenderung sind Anzeige und Auswahl, auch der aktive Lastfall und
     # die Werteskala der Faerbung, obwohl beide mit gespeichert werden.
-    _stand = 0
+    #: der Aenderungsstand selbst - gelesen und gesetzt ueber _stand
+    _stand_nr = 0
+    #: wie oft der Aenderungsstand gewechselt hat, auch zurueck auf eine alte
+    #: Nummer (Rueckgaengig); eine Rechnung merkt ihn sich beim Start (F05)
+    _stand_wechsel = 0
     _stand_gespeichert = 0
     _signatur_gespeichert = None
     _ergebnis_ungespeichert = False
@@ -19720,6 +19742,22 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Aenderungen auf, eine modale Frage hielte ihn an; tests/__init__.py
     #: setzt ihn darum fuer alle Pruefungen auf „verwerfen“.
     TESTSCHALTER_UNGESPEICHERT = "STATIK3D_UNGESPEICHERT"
+
+    @property
+    def _stand(self) -> int:
+        """Der Aenderungsstand (siehe oben). Eine Eigenschaft seit dem
+        06.10.2026 (Fehlerliste F05): jede Zuweisung, die ihn wechselt, zaehlt
+        _stand_wechsel hoch - auch Rueckgaengig, das eine alte Nummer
+        zurueckholt. Eine Rechnung liest das Modell des Fensters; was waehrend
+        ihr geaendert wird, und sei es nur fuer einen Augenblick, erkennt sie
+        am Ende daran (_rechnung_geaendert)."""
+        return self._stand_nr
+
+    @_stand.setter
+    def _stand(self, wert) -> None:
+        if wert != self._stand_nr:
+            self._stand_wechsel += 1
+        self._stand_nr = wert
 
     def _aenderung(self):
         """Das Modell hat sich geaendert (fuer Wege ohne merken())."""
@@ -23700,6 +23738,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error("Es läuft bereits eine Berechnung")
         self._rechnung_stand = stand
         self._rechnung_modellwechsel = self._modellwechsel
+        # jede Aenderung waehrend der Rechnung wechselt den Aenderungsstand
+        # (_rechnung_geaendert, F05)
+        self._rechnung_wechsel = self._stand_wechsel
         self.btn_solve.setEnabled(False)
         # Bestimmter Balken, sobald der Rechenkern meldet, wie weit er ist
         # (:meth:`_rechnung_fortschritt`). Bis dahin - und fuer Laeufe, die
@@ -23857,6 +23898,8 @@ class MainWindow(QtWidgets.QMainWindow):
     #: merkt sich den Zaehler beim Start (_run_background)
     _modellwechsel = 0
     _rechnung_modellwechsel = None
+    #: _stand_wechsel beim Start der laufenden Rechnung (F05, _rechnung_geaendert)
+    _rechnung_wechsel = None
 
     def _rechnung_gehoert_zum_modell(self) -> bool:
         """Am Ende einer Hintergrundrechnung: rechnete sie das offene Modell?
@@ -23874,11 +23917,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(text, 0)
         return False
 
+    def _rechnung_geaendert(self) -> str:
+        """Am Ende einer Hintergrundrechnung: wurde das Modell waehrend ihr
+        geaendert (Fehlerliste F05, 06.10.2026)? Rueckgabe der Hinweis dazu,
+        leer, wenn nicht.
+
+        Die Rechnung liest das Modell des Fensters, und die Oberflaeche bleibt
+        bedienbar. „Übernehmen“ einer Maske ist waehrend der Rechnung gesperrt
+        (_uebernahme_lauf); jeder andere Weg - Tabelle, Register, Rueckgaengig,
+        Browser - wechselt den Aenderungsstand, und daran erkennt es dieser
+        Vergleich, auch wenn der Stand am Ende wieder derselbe ist. Bis dahin
+        verglich nur der Modellstand Knoten und Elemente: ein anderes
+        Eigengewicht galt am Ende als „passt“, das Ergebnis des alten Stands
+        wurde gezeigt und gespeichert.
+
+        Mit Modellstand (_rechnung_stand, Rechnungen aus do_solve und den
+        Knicklaengen) bekommt er die Marke ``veraendert``: vp.ergebnis_passt
+        sagt dann „anders“ - kein Ergebnis im Bild, die Kopfzeile sagt „neu
+        rechnen“, Speichern schreibt keine Ergebnisdatei. Ohne Modellstand
+        (Nachweise, Ermuedung, freie Bewegungen) verwirft _bg_done das
+        Ergebnis. Ohne gemerkten Start (Pruefungen rufen _bg_done direkt)
+        gilt nichts als geaendert."""
+        start, self._rechnung_wechsel = self._rechnung_wechsel, None
+        if start is None or start == self._stand_wechsel:
+            return ""
+        stand = getattr(self, "_rechnung_stand", None)
+        if stand is None:
+            return "Ergebnis verworfen: das Modell wurde während der Rechnung geändert – bitte neu rechnen"
+        self._rechnung_stand = stand._replace(veraendert=True)
+        return ("Das Modell wurde während der Rechnung geändert – ihr Ergebnis passt nicht dazu, es wird "
+                "nicht gezeigt und nicht gespeichert; bitte neu rechnen")
+
     def _bg_done(self, on_done, result):
         self._rechnet_gerade = False
         self.btn_solve.setEnabled(True)
         self._rechnung_ende()
         if not self._rechnung_gehoert_zum_modell():
+            self._rechnung_wechsel = None
+            return
+        geaendert = self._rechnung_geaendert()
+        if geaendert and getattr(self, "_rechnung_stand", None) is None:
+            self.hinweis(geaendert)       # ohne Modellstand: verworfen (F05)
             return
         vorher = (self.analysis, self.results)
         try:
@@ -23887,6 +23966,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))
         self._ergebnis_neu_vermerken(vorher)
+        if geaendert:
+            # zuletzt, damit er in der Statuszeile stehen bleibt
+            self.hinweis(geaendert)
 
     def _ergebnis_neu_vermerken(self, vorher) -> None:
         """Eine Hintergrundrechnung hat Ergebnisse hinterlassen: sie gelten
@@ -23947,8 +24029,11 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                  # noqa: BLE001
             pass
         teil = getattr(getattr(w, "ausnahme", None), "teilergebnis", None)
+        geaendert = self._rechnung_geaendert()     # markiert _rechnung_stand (F05)
         if teil is not None:
             self._abbruch_zeigen(teil)
+            if geaendert:
+                self.hinweis(geaendert)
 
     def _abbruch_zeigen(self, res) -> None:
         """Nach einem Abbruch der Kontakt-Iteration (16.09.2026): die Verformung
@@ -24003,10 +24088,14 @@ class MainWindow(QtWidgets.QMainWindow):
         teil = getattr(teil, "teilanalyse", None)
         if not self._rechnung_gehoert_zum_modell():
             teil = None
+        geaendert = self._rechnung_geaendert()     # markiert _rechnung_stand (F05)
         if teil is not None and (teil.cases or teil.combinations):
             vorher = (self.analysis, self.results)
             self._abbruch_teil_zeigen(teil, dauer)
-            return self._ergebnis_neu_vermerken(vorher)
+            self._ergebnis_neu_vermerken(vorher)
+            if geaendert:
+                self.hinweis(geaendert)
+            return None
         text = f"{name} abgebrochen (nach {float(dauer):.0f} s) - Ergebnis und Netz unverändert"
         self._rechnung_ende(text, dauer=0)
         self.log.appendPlainText(text)
@@ -24279,9 +24368,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # inzwischen verschiebt, loescht oder per Undo zuruecknimmt, gehoert
         # nicht zu diesem Ergebnis. Bis zum 24.09.2026 zog _solve_done den
         # Stand erst am Ende - solche Aenderungen galten dann als „passt“
-        # (Gegenpruefung von 97be9ff)
+        # (Gegenpruefung von 97be9ff). _solve_done bekommt _rechnung_stand:
+        # das ist dieser Stand, mit der Marke „veraendert“, wenn das Modell
+        # waehrend der Rechnung geaendert wurde (_rechnung_geaendert, F05)
         stand = vp.modellstand(model)
-        self._run_background(func, lambda r: self._solve_done(kind, r, stand), "Berechnung",
+        self._run_background(func, lambda r: self._solve_done(kind, r, self._rechnung_stand), "Berechnung",
                              posten=posten, stand=stand)
 
     def _kontaktzustand_zuletzt(self):
@@ -26750,6 +26841,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Bohrung liegt der Blickpunkt auf ihr - „aus der Ansicht“ schneidet dann dort.")
         m.angewendet.connect(self._maske_schnittebene_anwenden)
         m.geschlossen.connect(self._schnittwidget_entfernen)
+        m.nur_ansicht = True                # auch waehrend einer Rechnung (F05)
         self.maske_erzeugen(m)
 
     def _maske_schnittebene_anwenden(self, w: dict):
@@ -27918,18 +28010,31 @@ class MainWindow(QtWidgets.QMainWindow):
         if os.path.exists(epfad):
             self._fortschritt_beginnen(1000, f"Ergebnisse laden: {os.path.basename(epfad)} …",
                                        abbrechbar=False)
+            passt_nicht = ""
             try:
                 an = erg.lesen(epfad, self.model, fortschritt=self._dateifortschritt)
-            except Exception as ex:          # noqa: BLE001 - alte oder fremde Datei
+            except ValueError as ex:
+                # passt nicht zum Modell: ein Hinweis, nicht nur das Protokoll
+                # (06.10.2026, F06) - sonst fehlen die Ergebnisse ohne Grund
+                passt_nicht, an = str(ex), None
+            except Exception as ex:          # noqa: BLE001 - fremde oder beschaedigte Datei
                 self.log.appendPlainText(f"Ergebnisdatei nicht geladen: {ex}")
                 an = None
             finally:
                 self._fortschritt_ende()
+            if passt_nicht:
+                self.hinweis(f"Ergebnisdatei nicht geladen ({os.path.basename(epfad)}): {passt_nicht} – "
+                             "bitte neu rechnen")
             if an is not None:
                 self._solve_done("all", an)
                 self.info(f"Ergebnisse geladen: {bg.anzahl(len(an.cases), 'Lastfall', 'Lastfälle')}, "
                           f"{bg.anzahl(len(an.combinations), 'Kombination', 'Kombinationen')} "
                           f"({os.path.basename(epfad)})")
+                vorbehalt = (getattr(an, "info", None) or {}).get("kennung_vorbehalt")
+                if vorbehalt:
+                    # Datei von vor dem 06.10.2026: geladen, aber nicht still als
+                    # passend (F06) - Statuszeile und Protokoll sagen es
+                    self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True
