@@ -34,7 +34,8 @@ from .sprache import kuerzel_text
 #: Eigenes, weil das Hauptfenster die Taste als Kuerzel verbraucht (gemessen
 #: 03.10.2026) - eine Taste, die nicht tut, was die Liste sagt, gehoert nicht
 #: hinein. Das Skizzenfenster nimmt Esc, Strg+Z und Strg+Y seit dem 03.10.2026
-#: selbst an (``ShortcutOverride``), darum stehen sie dort. Die Tasten des Modellbaums, der
+#: selbst an (``ShortcutOverride``), darum stehen sie dort, die Layerliste seit dem
+#: 06.10.2026 ebenso. Die Tasten des Modellbaums, der
 #: Masken und der Liste drueckt ``tests/test_ribbon_ordnung.py`` echt, Entf und die
 #: Einzeltasten der Ansicht und das Skizzenfenster ``tests/test_tasten_fokus.py``.
 WEITERE_TASTEN = (
@@ -85,6 +86,14 @@ WEITERE_TASTEN = (
      "Verwirft das angefangene Element; die Auswahl im Modell bleibt, das Fenster bleibt offen."),
     ("Gewähltes Element löschen", "Entf, Rücktaste", "Skizzenfenster",
      "Das in der Skizze hervorgehobene Element; der Fokus muss auf dem Blatt stehen."),
+    ("Schritt zurück, wiederholen", "Strg+Z, Strg+Y", "Layerliste",
+     "Nimmt den letzten Schritt der Layerliste (Layer anlegen, ergänzen, verkleinern, umbenennen, löschen) "
+     "zurück beziehungsweise stellt ihn wieder her, solange es auch der letzte Schritt des Modells ist; ein "
+     "anderer Schritt bleibt, wie er ist (Rückgängig im Hauptfenster nimmt ihn zurück). Beim Umbenennen in der "
+     "Tabelle gelten die Tasten dem Feld."),
+    ("Fenster schließen", "Esc", "Layerliste",
+     "Schließt die Layerliste; die Auswahl im Modell bleibt. Beim Umbenennen in der Tabelle beendet Esc "
+     "zuerst das Umbenennen."),
 )
 
 
@@ -110,7 +119,7 @@ class Kuerzelliste(QtWidgets.QDialog):
             "Dialog (Rückfrage, Dateiauswahl) ruhen die Kürzel. Die Liste entsteht aus den Befehlen "
             "des Ribbons; darunter stehen die Tasten ohne Befehl. In diesem Fenster schließt Esc die "
             "Liste, und Strg+F setzt den Cursor ins Filterfeld; das Skizzenfenster nimmt Strg+Z, "
-            "Strg+Y, Esc, Entf und Rücktaste ebenfalls selbst an.")
+            "Strg+Y, Esc, Entf und Rücktaste ebenfalls selbst an, die Layerliste Esc, Strg+Z und Strg+Y.")
         self.hinweis.setWordWrap(True)
 
         self.filter = QtWidgets.QLineEdit(self)
@@ -163,7 +172,7 @@ class Kuerzelliste(QtWidgets.QDialog):
         schrift.setBold(True)
         kopf.setFont(schrift)
         kopf.setFlags(QtCore.Qt.ItemIsEnabled)
-        kopf.setToolTip("Tasten, die ein Fenster selbst abfängt: Ansicht, Modellbaum, Masken, Skizzenfenster, Esc. "
+        kopf.setToolTip("Tasten, die ein Fenster selbst abfängt: Ansicht, Modellbaum, Masken, Skizzenfenster, Layerliste, Esc. "
                         "Sie gelten im Programmfenster und in seinen nicht modalen Fenstern, "
                         "nicht unter einem modalen Dialog.")
         self.tabelle.setItem(self._kopf_zeile, 0, kopf)

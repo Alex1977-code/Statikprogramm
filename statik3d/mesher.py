@@ -216,6 +216,17 @@ def line_of_beams(model: Model, mat: str, sec: str, p1, p2, n: int) -> list[int]
 
 
 # --------------------------------------------------------------------------
+def doppelte_knoten(model: Model, tol: float = 1e-6) -> int:
+    """Wie viele Knoten :func:`merge_nodes` entfernen wuerde - ohne etwas zu
+    aendern (gleicher Schluessel). Fuer Befehle, die vor der Aenderung einen
+    Rueckgaengig-Schritt anlegen und bei „nichts zu tun“ keinen hinterlassen
+    sollen (Fehlerliste 06.10.2026, F32)."""
+    if model.nn == 0:
+        return 0
+    key = np.round(model.nodes / tol).astype(np.int64)
+    return int(model.nn - len(np.unique(key, axis=0)))
+
+
 def merge_nodes(model: Model, tol: float = 1e-6) -> int:
     """Doppelte Knoten zusammenfuehren (z.B. nach mehrfachem Import)."""
     if model.nn == 0:

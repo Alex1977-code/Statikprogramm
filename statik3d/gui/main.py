@@ -11204,6 +11204,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if zweigart == "knoten":
             self.merken("Knoten angelegt")
             i = m.add_node(0.0, 0.0, 0.0)
+            # der Schritt gehört zu diesem Knoten: „Abbrechen“ nimmt ihn mit weg (F43)
+            self._neu_knoten_schritt = (str(i), self._undo[-1])
             self.refresh_all()
             self._baum_objekt_waehlen("knoten", str(i))
             return self._objektmaske("knoten", str(i), neu=True)
@@ -11584,13 +11586,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maskenrand.schliessen()
 
     def _objekt_neu_abbrechen(self, art: str, name: str):
-        """Abbrechen in der Neu-Maske: ein schon angelegter Knoten geht wieder weg."""
+        """Abbrechen in der Neu-Maske: ein schon angelegter Knoten geht wieder weg,
+        samt seinem Rückgängig-Schritt „Knoten angelegt“. Bis zum 06.10.2026 blieb
+        der Schritt als leerer stehen: Strg+Z nahm danach scheinbar nichts zurück
+        (F43). Liegt inzwischen ein anderer Schritt obenauf, ist das Entfernen ein
+        eigener Schritt; ein Knoten, der sich nicht entfernen lässt, bleibt samt
+        seinem Schritt."""
         if art == "knoten" and name.isdigit():
+            eigener = getattr(self, "_neu_knoten_schritt", None)
+            self._neu_knoten_schritt = None
+            oben = bool(eigener and eigener[0] == name and getattr(self, "_undo", None)
+                        and self._undo[-1] is eigener[1])
+            if not oben:
+                self.merken(f"Knoten K{name} entfernt")
             grund = self.model.knoten_loeschen(int(name))
-            if not grund:
-                self.info(f"Knoten K{name} wieder entfernt")
-                self.selection = np.array([], dtype=int)
-                self.refresh_all()
+            if grund:
+                if not oben:
+                    self._merken_zuruecknehmen()
+                return
+            if oben:
+                self._merken_zuruecknehmen()
+            self.info(f"Knoten K{name} wieder entfernt")
+            self.selection = np.array([], dtype=int)
+            self.refresh_all()
 
     def _bestaetigen(self, text: str) -> bool:
         """Rueckfrage vor dem Loeschen - die Tests ueberschreiben sie."""
@@ -17686,6 +17704,10 @@ class MainWindow(QtWidgets.QMainWindow):
             n.staebe = list(self.sel_staebe)
             n.linien = list(self.sel_linien)
             n.flaechen = list(self.sel_flaechen)
+        else:
+            # eine Kopie: „Auswahl übernehmen“ ändert das Modell erst mit „Übernehmen“ (F31)
+            import copy
+            n = copy.deepcopy(n)
         F = msk.Feld
 
         def txt(v):
@@ -17763,7 +17785,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # nicht still 1
             return zl.feldwert(w.get(key), vorgabe)
 
-        return replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+        import copy
+        return replace(copy.deepcopy(vorlage), name=str(w.get("name", "")).strip() or vorlage.name,
                        art=str(w.get("art", vorlage.art)), lage=str(w.get("lage", vorlage.lage)),
                        a=float(w.get("a", 0.0) or 0.0), t=float(w.get("t", 0.0) or 0.0),
                        l_anschluss=float(w.get("l", 0.0) or 0.0),
@@ -19092,16 +19115,24 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.maske_erzeugen(maske)
 
     def _platte_erzeugen(self, w: dict):
+        return self._platte_anlegen(
+            str(w.get("mat")), str(w.get("dicke")), float(w.get("lx", 4)), float(w.get("ly", 3)),
+            max(1, int(float(w.get("nx", 10) or 10))), max(1, int(float(w.get("ny", 10) or 10))),
+            float(w.get("z", 0)), bool(w.get("vierecke", True)))
+
+    def _platte_anlegen(self, mat: str, dicke: str, lx: float, ly: float, nx: int, ny: int,
+                        z: float, vierecke: bool):
+        """Ein Rechtecknetz aus Schalen in einem Rückgängig-Schritt „Platte“ - für die
+        Maske „Platte / Scheibe erzeugen“ und die Tafel im Register Netz. Bis zum
+        06.10.2026 legte die Tafel keinen Schritt an: Strg+Z danach nahm den Schritt
+        davor zurück, das Netz blieb (F32)."""
         m = self.model
         if not m.materials or not m.shells:
             return self.hinweis("Werkstoff und Schalendicke anlegen")
         self.merken("Platte")
         e0 = len(m.elements)
         try:
-            mesher.grid_plate(m, str(w.get("mat")), str(w.get("dicke")),
-                              float(w.get("lx", 4)), float(w.get("ly", 3)),
-                              max(1, int(float(w.get("nx", 10) or 10))), max(1, int(float(w.get("ny", 10) or 10))),
-                              origin=(0, 0, float(w.get("z", 0))), quad=bool(w.get("vierecke", True)))
+            mesher.grid_plate(m, mat, dicke, lx, ly, nx, ny, origin=(0, 0, z), quad=vierecke)
             mesher.merge_nodes(m)
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
@@ -19124,18 +19155,24 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.maske_erzeugen(maske)
 
     def _quader_erzeugen(self, w: dict):
+        return self._quader_anlegen(
+            str(w.get("mat")), float(w.get("lx", 2)), float(w.get("ly", .4)), float(w.get("lz", .4)),
+            max(1, int(float(w.get("nx", 10) or 10))), max(1, int(float(w.get("ny", 3) or 3))),
+            max(1, int(float(w.get("nz", 3) or 3))),
+            (float(w.get("x0", 0)), float(w.get("y0", 0)), float(w.get("z0", 0))), str(w.get("typ", "hex8")))
+
+    def _quader_anlegen(self, mat: str, lx: float, ly: float, lz: float, nx: int, ny: int, nz: int,
+                        origin: tuple, typ: str):
+        """Ein Quader aus Hexaedern oder Tetraedern in einem Rückgängig-Schritt
+        „Quader“ - für die Maske „Quader erzeugen“ und die Tafel im Register Netz
+        (bis zum 06.10.2026 ohne Schritt, F32)."""
         m = self.model
         if not m.materials:
             return self.hinweis("Werkstoff anlegen")
         self.merken("Quader")
         e0 = len(m.elements)
         try:
-            mesher.grid_box(m, str(w.get("mat")),
-                            float(w.get("lx", 2)), float(w.get("ly", .4)), float(w.get("lz", .4)),
-                            max(1, int(float(w.get("nx", 10) or 10))), max(1, int(float(w.get("ny", 3) or 3))),
-                            max(1, int(float(w.get("nz", 3) or 3))),
-                            origin=(float(w.get("x0", 0)), float(w.get("y0", 0)), float(w.get("z0", 0))),
-                            typ=str(w.get("typ", "hex8")))
+            mesher.grid_box(m, mat, lx, ly, lz, nx, ny, nz, origin=origin, typ=typ)
             mesher.merge_nodes(m)
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
@@ -19153,36 +19190,23 @@ class MainWindow(QtWidgets.QMainWindow):
                               self.beam_n.value(), self.beam_truss.isChecked())
 
     def make_plate(self):
+        """Die Tafel „Platte / Scheibe“ im Register Netz: dasselbe Netz wie die Maske,
+        mit Rückgängig-Schritt (bis zum 06.10.2026 ohne, F32)."""
         if not zf.freigeben(self.pl, self._zahlmeldung):
             return
-        try:
-            mesher.grid_plate(self.model, self._mat(), self.cb_shell.currentText(),
-                              self.pl[0].value(), self.pl[1].value(),
-                              self.pn[0].value(), self.pn[1].value(),
-                              origin=(0, 0, self.pl[2].value()),
-                              quad=self.pl_quad.isChecked())
-            mesher.merge_nodes(self.model)
-            self._aenderung()
-            self.refresh_all()
-        except Exception as ex:
-            self._aenderung()
-            self.error(str(ex))
+        self._platte_anlegen(self._mat(), self.cb_shell.currentText(),
+                             self.pl[0].value(), self.pl[1].value(),
+                             self.pn[0].value(), self.pn[1].value(),
+                             self.pl[2].value(), self.pl_quad.isChecked())
 
     def make_box(self):
+        """Die Tafel „Quader (Volumen)“ im Register Netz: derselbe Quader wie die Maske,
+        mit Rückgängig-Schritt (bis zum 06.10.2026 ohne, F32)."""
         if not zf.freigeben(self.bl + self.bo, self._zahlmeldung):
             return
-        try:
-            mesher.grid_box(self.model, self._mat(),
-                            *[e.value() for e in self.bl],
-                            *[s.value() for s in self.bn],
-                            origin=tuple(e.value() for e in self.bo),
-                            typ=self.b_typ.currentText())
-            mesher.merge_nodes(self.model)
-            self._aenderung()
-            self.refresh_all()
-        except Exception as ex:
-            self._aenderung()
-            self.error(str(ex))
+        self._quader_anlegen(self._mat(), *[e.value() for e in self.bl],
+                             *[s.value() for s in self.bn],
+                             tuple(e.value() for e in self.bo), self.b_typ.currentText())
 
     def import_file(self):
         # vor dem Dateidialog: eine geaenderte Maske haelt an der Leiste (Paket 13m)
@@ -19265,9 +19289,19 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QApplication.restoreOverrideCursor()
 
     def do_merge(self):
+        """Doppelte Knoten zusammenführen (Ribbon Start und Register Netz): ein
+        Rückgängig-Schritt, und nur, wenn es doppelte Knoten gibt - sonst bleibt alles,
+        wie es war (kein Schritt, der Wiederholen-Stapel bleibt, nichts ungespeichert).
+        Die Knoten werden umnummeriert, darum gelten die Ergebnisse danach nicht mehr.
+        Bis zum 06.10.2026 gab es keinen Schritt: Strg+Z danach nahm den Schritt davor
+        zurück, die Knoten blieben zusammengeführt (F32)."""
+        if not mesher.doppelte_knoten(self.model):
+            self.info("0 doppelte Knoten entfernt")
+            return
+        self.merken("Doppelte Knoten zusammenführen")
         n = mesher.merge_nodes(self.model)
-        if n:
-            self._aenderung()
+        self.analysis = None
+        self.results = None
         self.info(f"{n} doppelte Knoten entfernt")
         self.refresh_all()
 
@@ -20923,6 +20957,11 @@ class MainWindow(QtWidgets.QMainWindow):
             wd.lastfall_nr = m.naechste_lastfallnummer()
             if wd.flaechen:
                 wd.ow_flaeche = wd.flaechen[0]
+        else:
+            # eine Kopie: „Auswahl übernehmen“ und die Klickmodi (benetzt, Dichtung,
+            # Ober- und Unterwasser) ändern das Modell erst mit „Lasten erzeugen“ (F31)
+            import copy
+            wd = copy.deepcopy(wd)
         F = msk.Feld
 
         def txt(v):
@@ -21088,6 +21127,13 @@ class MainWindow(QtWidgets.QMainWindow):
             w = Wind(m.naechster_name("Wind", m.winde))
             w.flaechen = list(self.sel_flaechen)
             w.staebe = list(self.sel_staebe)
+        else:
+            # Eine Kopie: „Auswahl übernehmen“ schreibt nur in die Maske, das Modell
+            # ändert erst „Lasten erzeugen“ (Paket 13m). Bis zum 06.10.2026 schrieb es
+            # sofort ins Modellobjekt - ohne Rückgängig-Schritt, und nach dem Schließen
+            # standen Ziele und Lasten nicht mehr beieinander (F31).
+            import copy
+            w = copy.deepcopy(w)
         F = msk.Feld
 
         def txt(v):
@@ -21228,7 +21274,9 @@ class MainWindow(QtWidgets.QMainWindow):
             schritte = min(50000, max(100, int(round(float(w.get("schritte", 3000) or 3000)))))
         except (TypeError, ValueError):
             gitter, schritte = 24, 3000
-        return replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+        import copy
+        # Listen und Zahlen gehören dem neuen Objekt allein: die Maske behält ihre Kopie
+        return replace(copy.deepcopy(vorlage), name=str(w.get("name", "")).strip() or vorlage.name,
                        situation="" if situation == GRUNDSTELLUNG else situation,
                        lastfall=str(w.get("fall", "")).strip(), zone=zone, v_b=v_b,
                        lastfall_nr=fall_nr, verfahren=verfahren, schnittart=schnittart,
@@ -21351,7 +21399,8 @@ class MainWindow(QtWidgets.QMainWindow):
             gitter = min(400, max(8, int(round(float(w.get("gitter", 40) or 40)))))
         except (TypeError, ValueError):
             gitter = 40
-        wd = replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+        import copy
+        wd = replace(copy.deepcopy(vorlage), name=str(w.get("name", "")).strip() or vorlage.name,
                      situation="" if situation == GRUNDSTELLUNG else situation,
                      lastfall=str(w.get("fall", "")).strip(), lastfall_nr=fall_nr, verfahren=verfahren,
                      h_ow=float(w.get("h_ow", 0.0) or 0.0), h_uw=zahl("h_uw"),
@@ -22286,16 +22335,34 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         dT, dTz = self.ed_dT.value(), self.ed_dTz.value()
         els = self._elements_from_text(self.ed_qelems.text()) or list(range(len(self.model.elements)))
+        # vor merken pruefen: eine Last, die nichts bewirkt, hinterlaesst keinen Schritt
+        if not dT and not dTz:
+            return self.hinweis("ΔT ist null")
+        if not els:
+            return self.hinweis("Es gibt keine Elemente für die Temperaturlast")
+        # ein Rückgängig-Schritt, die Ergebnisse gehören nicht mehr zum Modell (bis zum
+        # 06.10.2026 weder Schritt noch verworfen: Strg+Z nahm den Schritt davor zurück, F32)
+        self.merken("Temperaturlast")
         for i in els:
             self.model.load_temp(i, dT, dTz)
-        self._aenderung()
+        self.analysis = None
+        self.results = None
         self.info(f"Temperaturlast auf {bg.anzahl(len(els), 'Element', 'Elemente')}")
         self.refresh_all()
 
     def toggle_gravity(self, on):
-        self.model.set_gravity(-9.81 if on else 0.0)
-        self._aenderung()
-        self.refresh_cases()
+        """Haken „Eigengewicht“ im Register Lager/Lasten: g_z = -9,81 m/s² im aktiven
+        Lastfall oder 0. Ein Rückgängig-Schritt, und das vorhandene Ergebnis gilt danach
+        nicht mehr. Bis zum 06.10.2026 gab es weder Schritt noch verworfenes Ergebnis:
+        das Bild zeigte weiter die Rechnung ohne Eigengewicht als passend (F33)."""
+        g = -9.81 if on else 0.0
+        if np.allclose(np.asarray(self.model.case().gravity, float), [0.0, 0.0, g]):
+            return                              # schon so: keine Änderung, kein Schritt
+        self.merken(f"Eigengewicht {'an' if on else 'aus'} ({self.model.active_case})")
+        self.model.set_gravity(g)
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
 
     def clear_loads(self):
         # geloescht wird ohne Rueckfrage - dann wenigstens rueckgaengig (24.09.2026)

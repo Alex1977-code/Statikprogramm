@@ -652,8 +652,12 @@ Die Arbeitsfläche in drei Spalten:
   **Rechtsklick → Neu** legt am Zweig ein neues Objekt mit der **nächsten
   fortlaufenden Nummer** an (K17, L8, S3, F5, V2); rechts erscheint seine
   Maske mit **OK** und **Abbrechen**. Ein Knoten steht sofort im Modell (bei
-  Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück), alles
-  andere entsteht erst mit OK. Hat die offene Maske noch nicht übernommene
+  Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück, samt
+  seinem Rückgängig-Schritt „Knoten angelegt“), alles
+  andere entsteht erst mit OK. Bis zum 06.10.2026 blieb dieser Schritt nach
+  *Abbrechen* oder *Verwerfen* als leerer stehen: der Rückgängig-Knopf nannte
+  „Knoten angelegt“, und Strg+Z nahm scheinbar nichts zurück. Hat die offene
+  Maske noch nicht übernommene
   Änderungen, entsteht der Knoten erst nach „Übernehmen“ oder „Verwerfen“ in
   der Leiste oben rechts; „Verwerfen“ in einer Maske „Neu: …“ wirkt wie ihr
   *Abbrechen*.
@@ -2593,7 +2597,16 @@ mehreren Layern liegen; die Layer werden mit dem Modell gespeichert.
   **gesperrt**, dazu *Neu aus Auswahl*, *Auswahl hinzufügen*, *Auswahl
   herausnehmen*, *Objekte wählen*, *Nur diesen zeigen*, *Alle zeigen*,
   *Löschen* (die Objekte bleiben) und das Umbenennen in der Tabelle. Jede
-  Änderung wirkt sofort und lässt sich mit *Rückgängig* zurücknehmen.
+  Änderung wirkt sofort und lässt sich mit *Rückgängig* zurücknehmen. Im
+  Fenster schließt **Esc** die Liste, und **Strg+Z** und **Strg+Y** nehmen den
+  letzten Schritt der Layerliste (Layer anlegen, ergänzen, verkleinern,
+  umbenennen, löschen) zurück beziehungsweise stellen ihn wieder her, solange er
+  auch der letzte Schritt des Modells ist; ist es ein anderer Schritt, bleibt er,
+  wie er ist, und ein Hinweis nennt ihn (*Rückgängig* im Hauptfenster nimmt ihn
+  zurück). Beim Umbenennen in der Tabelle gehören die Tasten dem Feld. Bis zum
+  06.10.2026 nahm Strg+Z im Layerfenster den letzten **Modell**schritt zurück
+  (gemessen: ein Knoten weniger), und Esc hob die Auswahl im Modell auf, statt das
+  Fenster zu schließen.
 * **Ausgeblendet** ist ein Objekt, sobald *einer* seiner Layer ausgeblendet
   ist. Die Layer wirken neben *Auswahl ausblenden* und *Selektion anzeigen*;
   *Alles zeigen* und *Vorherige Sicht* betreffen nur das von Hand
@@ -3680,6 +3693,15 @@ Wind und Wasserdruck nach „Auswahl übernehmen“. Zieht man die Schnittebene 
 Bild, gelten die Werte, die das Programm dabei in ihre Maske schreibt, als
 übernommen, denn das Bild zeigt sie schon.
 
+„Auswahl übernehmen“ und beim Wasserdruck die Klickmodi („Benetzt anklicken“,
+„Dichtlinie anklicken“, Ober- und Unterwasserfläche) schreiben also nur in die
+Maske; das Modell ändert sich erst mit „Übernehmen“ („Lasten erzeugen“), mit einem
+Rückgängig-Schritt, und „Verwerfen“ oder das Schließen der Maske lässt es, wie es
+war. Bis zum 06.10.2026 schrieben sie bei einer vorhandenen Schweißnaht, einem
+vorhandenen Wind und Wasserdruck sofort ins Modellobjekt, ohne „Übernehmen“ und ohne
+Rückgängig-Schritt: Nach dem Schließen der Maske stand die neue Auswahl im Modell
+(Wind auf „Mast2“), die Lasten aber lagen noch auf der alten („Mast“).
+
 Soll eine Maske mit Punkt einer anderen weichen, geschieht das nicht still.
 Das gilt für einen Klick oder Doppelklick im Modellbaum, für *Neu* im
 Rechtsklickmenü des Baums, für einen Befehl im Ribbon, im Register „Auswahl“
@@ -4056,6 +4078,26 @@ abgewiesen, der Wasserdruck abgebrochen), fällt der Schritt wieder weg, und
 der Knopf nennt wieder den vorigen — bis zum 24.09.2026 nannte er an 13 von 15
 solchen Stellen noch den verworfenen.
 
+**Jede Änderung am Modell ist genau ein Schritt (seit 06.10.2026).** Die
+Tafeln *Schalennetz erzeugen* („Platte“) und *Volumennetz erzeugen* („Quader“)
+im Register *Netz* legen denselben Schritt an wie die Masken *Platte / Scheibe*
+und *Quader erzeugen*, ebenso *Doppelte Knoten zusammenführen* im Ribbon
+(„Doppelte Knoten zusammenführen“), die *Temperaturlast* und der Haken
+*Eigengewicht* im Register *Lager/Lasten* („Temperaturlast“, „Eigengewicht an
+(LF1)“, „Eigengewicht aus (LF1)“). Der Rückgängig-Knopf nennt den Schritt, und
+Strg+Z nimmt genau diese Änderung zurück. Bis zum 06.10.2026 hatten diese fünf
+Wege und die Tafel *Stäbe erzeugen* (siehe *Stab*) keinen Schritt: Strg+Z nahm
+danach den Schritt davor zurück, und das Netz, die zusammengeführten Knoten, die
+Temperatur oder das Eigengewicht blieben stehen. Außerdem galt nach dem Haken
+*Eigengewicht* das vorhandene Ergebnis weiter als passend, obwohl es ohne
+Eigengewicht gerechnet war. Jetzt verwerfen Temperaturlast und Eigengewicht die
+Ergebnisse wie jede andere Last, und *Doppelte Knoten zusammenführen* tut es
+ebenfalls, denn die Knoten bekommen dabei neue Nummern. Eine Änderung, die nichts
+ändert, hinterlässt keinen Schritt und lässt den Wiederholen-Stapel stehen: Gibt
+es keine doppelten Knoten, meldet die Statuszeile „0 doppelte Knoten entfernt“;
+eine Temperaturlast mit ΔT = 0 oder ohne Elemente weist ein Hinweis ab; der Haken
+*Eigengewicht* in einem Zustand, in dem er schon steht, tut nichts.
+
 ### Nichts geht ungefragt verloren (seit 24.09.2026)
 
 **Stern im Fenstertitel.** Sobald das Modell vom gespeicherten Stand abweicht,
@@ -4135,10 +4177,12 @@ Stabenden anschließen*; der Rückgängig-Knopf nennt jeweils den Schritt.
 
 **Projektangaben** (Projekt, Bauteil, Position, Bearbeiter) lassen sich bis
 100 000 Elemente rückgängig machen. Darüber gelten sie nur als ungespeichert
-(Stern), wie Eigengewicht und Temperaturlast: ein Rückgängig-Schritt kopiert
+(Stern): ein Rückgängig-Schritt kopiert
 das ganze Modell — am Drehlager rund 11 s je geändertem Textfeld —, und dort
 passen nur zwei Sicherungen in den Speicher; zwei geänderte Projektfelder
-hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026).
+hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026). Eigengewicht
+und Temperaturlast im Register Lager/Lasten gelten nicht mehr als solche
+Ausnahme: Seit dem 06.10.2026 sind sie Rückgängig-Schritte wie jede andere Last.
 
 **Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
 Knöpfen, von denen jeder das Modell ersetzte.
@@ -9684,6 +9728,12 @@ bleibt stehen. Steht der Cursor in einem Textfeld des Fensters, etwa im Namen de
 Skizze, gehören Strg+Z, Entf und Rücktaste dem Feld. Entf und Rücktaste löschen
 das hervorgehobene Element nur, wenn das Blatt die Tastatur hat. Geprüft in
 `tests/test_tasten_fokus.py` mit echten Tastendrücken im aktiven Fenster.
+
+**Layerliste (seit 06.10.2026).** Auch die Layerliste ist ein nicht modales
+Fenster des Programms und nimmt Esc, Strg+Z und Strg+Y selbst an: Esc schließt
+das Fenster und lässt die Auswahl im Modell stehen, Strg+Z und Strg+Y betreffen
+die Schritte der Layerliste (siehe *Layer*). Die Liste der Tastenkürzel nennt
+beide Zeilen unter „Weitere Tasten“. Geprüft in `tests/test_fehler_p14.py`.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
