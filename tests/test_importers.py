@@ -2177,7 +2177,7 @@ def test_json_anhaengen_stellung_protokoll():
     gruppe = int(bewegt(m, Stellung("Klappe", verschiebung=(0.0, 0.0, 1.0),
                                     dreh_gruppen=["Klappe"])).sum())
     m = examples_lib.build_example("frame")
-    nur_lager = int(bewegt(m, Stellung("Riegel", lager_aus=["0"])).sum())
+    nur_lager = int(bewegt(m, Stellung("Riegel", lager_aus=[m.lagerschluessel("lager", m.supports)[0]])).sum())
     m = examples_lib.build_example("frame")
     fest = {s.node for s in m.supports}
     auf_linienlager = [i for i in range(m.nn) if i not in fest][:2]

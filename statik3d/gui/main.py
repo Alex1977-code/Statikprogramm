@@ -2330,7 +2330,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       for d, text in enumerate(("u_x gesperrt", "u_y gesperrt", "u_z gesperrt",
                                                 "φ_x gesperrt", "φ_y gesperrt", "φ_z gesperrt"))]
             felder.append(("name", "Name", "text", lambda i: m.supports[i].name or "",
-                           lambda i, v: setattr(m.supports[i], "name", v), None))
+                           lambda i, v: self._lager_benennen(m.supports[i], v), None))
             return felder
         if art == "element":
             def sec_les(i):
@@ -8730,8 +8730,24 @@ class MainWindow(QtWidgets.QMainWindow):
                     return list(getattr(st, attr, []) or []) if st else []
 
                 def lagernamen(lart):
-                    return [((getattr(x, "name", "") or "").strip() or str(i))
-                            for i, x in enumerate(self._lagerliste_von(lart))]
+                    # derselbe Schluessel wie im Modellbaum und in der Stellung
+                    # (Model.lagerschluessel); bis zum 06.10.2026 hiess ein Lager ohne
+                    # Namen hier „0“, „1“, im Baum aber „Lager 1“, „Lager 2“ (F30)
+                    return self.model.lagerschluessel(lart, self._lagerliste_von(lart))
+
+                def lagerliste(attr, lart):
+                    """Die angehakten Lager: die Schluessel der Lager, die die Eintraege der
+                    Stellung nennen. Ein Name, den mehrere Lager tragen (RFEM „Fest“ an 16
+                    Knoten), nennt sie alle - ohne diesen Schritt stuende er in der Liste
+                    ohne Haken, und „Übernehmen“ liesse ihn still fallen."""
+                    eintraege = set(getattr(st, attr, []) or []) if st else set()
+                    gewaehlt = []
+                    for k, o in zip(lagernamen(lart), self._lagerliste_von(lart)):
+                        nm = (o.name or "").strip()
+                        if k in eintraege or (nm and nm in eintraege):
+                            gewaehlt.append(k)
+                    # als Liste: ein Name mit Komma bleibt ein Name (F21)
+                    return gewaehlt
 
                 felder = [F("name", "Bezeichnung", "text", name, breite=150),
                           F("faelle", "Lastfälle dieser Stellung", "mehrfach", eintraege("faelle"),
@@ -8767,14 +8783,14 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("koerper_aus", "Deaktivierte Volumen", "text", liste("koerper_aus"), breite=170),
                           F("gelenke_aus", "Deaktivierte Gelenke", "mehrfach", eintraege("gelenke_aus"),
                             list(m.hinges), hinweis="angehakte Gelenke sind in der Stellung biegesteif"),
-                          F("lager_aus", "Deaktivierte Knotenlager", "mehrfach", eintraege("lager_aus"),
-                            lagernamen("lager"), hinweis="Namen oder Nummern wie im Modellbaum - anhaken; "
+                          F("lager_aus", "Deaktivierte Knotenlager", "mehrfach", lagerliste("lager_aus", "lager"),
+                            lagernamen("lager"), hinweis="Namen wie im Modellbaum - anhaken; "
                                                           "oder Knoten in der Ansicht wählen und „Auswahl "
                                                           "deaktivieren“"),
-                          F("linienlager_aus", "Deaktivierte Linienlager", "mehrfach", eintraege("linienlager_aus"),
-                            lagernamen("linienlager")),
+                          F("linienlager_aus", "Deaktivierte Linienlager", "mehrfach",
+                            lagerliste("linienlager_aus", "linienlager"), lagernamen("linienlager")),
                           F("flaechenlager_aus", "Deaktivierte Flächenlager", "mehrfach",
-                            eintraege("flaechenlager_aus"), lagernamen("flaechenlager"))]
+                            lagerliste("flaechenlager_aus", "flaechenlager"), lagernamen("flaechenlager"))]
                 titel = f"Stellung {name}"
                 hinweis = ("Lage gegen die Ausgangsstellung und alles, was in dieser Stellung nicht wirkt. "
                            "Stab, Fläche oder Volumen in der Ansicht anklicken: aus - noch einmal: wieder "
@@ -9272,9 +9288,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         m = self.model
         gewaehlt = {int(n) for n in self.selection}
-        # Knotenlager der gewaehlten Knoten - mit Namen, sonst mit ihrer Nummer
-        lager = [((s.name or "").strip() or str(i))
-                 for i, s in enumerate(m.supports) if int(s.node) in gewaehlt]
+        # Knotenlager der gewaehlten Knoten - mit ihrem Namen wie im Modellbaum
+        schluessel = m.lagerschluessel("lager", m.supports)
+        lager = [schluessel[i] for i, s in enumerate(m.supports) if int(s.node) in gewaehlt]
         for feld, neue in (("staebe_aus", [x for x in self.sel_staebe if x in m.members]),
                            ("flaechen_aus", [x for x in self.sel_flaechen if x in m.flaechen]),
                            ("koerper_aus", [x for x in self.sel_koerper if x in m.koerper]),
@@ -10474,13 +10490,29 @@ class MainWindow(QtWidgets.QMainWindow):
         "flaechenlager_einzeln": ("name",),
     }
 
+    def _lager_benennen(self, obj, name) -> None:
+        """Einem Lager einen Namen geben oder ihn streichen. Eine Stellung, die das
+        Lager mit dem alten Namen nannte - ein Lager ohne Namen heisst in ihr „Lager 2“ -,
+        folgt ihm (Model.stellungen_nachziehen); sonst waere seine Abschaltung beim
+        Benennen still verloren (F30, 06.10.2026: dort stand die Nummer, die jedes
+        Umbenennen ueberlebte). Die Zeilen stehen im Protokoll."""
+        m = self.model
+        neu = str(name or "").strip()
+        if (getattr(obj, "name", "") or "").strip() == neu:
+            obj.name = neu
+            return
+        vorher = m.stellungsbezug()
+        obj.name = neu
+        self._protokollzeilen(m.stellungen_nachziehen(vorher))
+
     def _lagernamen_rechnen(self) -> bool:
         """Waehlt eine Stellung Lager beim Namen (lager_aus, lager_aktiv, ...)?
 
         Dann ist ein Lagername Rechnung: ein unbenanntes Lager heisst dort
-        nach seiner Nummer, ein neuer Name kann einen genannten treffen oder
-        verfehlen, und „Lager ohne Namen bleiben immer aktiv“. Statt das
-        einzeln nachzuvollziehen, verwirft eine Umbenennung dann die
+        „Lager 2“ (sein Platz im Modellbaum), ein neuer Name kann einen
+        genannten treffen oder verfehlen, und „Lager ohne Namen bleiben immer
+        aktiv“. Die Stellung folgt dem Umbenennen zwar (:meth:`_lager_benennen`),
+        aber statt jeden Fall nachzuvollziehen, verwirft eine Umbenennung dann die
         Ergebnisse (im Zweifel verwerfen)."""
         for st in getattr(self.model, "stellungen", []) or []:
             for attr in ("lager_aus", "lager_aktiv", "linienlager_aus", "flaechenlager_aus"):
@@ -10533,7 +10565,7 @@ class MainWindow(QtWidgets.QMainWindow):
             obj = liste[i]
             self.merken(f"{self.LAGER_ARTEN[art][1]} {i + 1} beschriftet", beschriftung=True)
             if "name" in geaendert:
-                obj.name = str(w.get("name", "") or "").strip()
+                self._lager_benennen(obj, w.get("name", ""))
             if "groesse" in geaendert and hasattr(obj, "groesse"):
                 obj.groesse = max(0.05, float(w.get("groesse") or 1.0))
         elif art == "lastfall":
@@ -11153,7 +11185,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(obj, "dofs"):
                 obj.dofs = sorted(d for d, b in neu_beh.items() if b.acts)
                 obj.stiffness = None
-            obj.name = neuname if neuname != name else str(w.get("name", "") or "").strip()
+            self._lager_benennen(obj, neuname if neuname != name else w.get("name", ""))
             if hasattr(obj, "groesse"):
                 obj.groesse = max(0.05, float(zahl("groesse", 1.0) or 1.0))
             if "woelb" in w and hasattr(obj, "woelb"):
@@ -14772,7 +14804,7 @@ class MainWindow(QtWidgets.QMainWindow):
         behalten = k == 6 or not self._lagernamen_rechnen()
         self.merken("Lager bearbeitet")
         if k == 2:
-            obj.name = str(wert).strip()
+            self._lager_benennen(obj, wert)
         else:
             obj.groesse = max(0.05, float(wert))
         self._zelle_uebernommen(f"Lager {i}: "

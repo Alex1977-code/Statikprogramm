@@ -4807,94 +4807,141 @@ class Model:
             self.tetp_kantenmitten = {(a, b): p for (a, b), p in km.items()
                                       if int(a) not in weg and int(b) not in weg}
 
-    # ---- Stellungen nennen Lager und Staebe beim Namen oder bei der Nummer ----
+    # ---- Stellungen nennen Lager und Staebe beim Namen ------------------------
     #: Lagerart -> Liste im Modell und Wort im Protokoll
     STELLUNG_LAGERARTEN = {"lager": ("supports", "Knotenlager"),
                            "linienlager": ("line_supports", "Linienlager"),
                            "flaechenlager": ("surface_supports", "Flächenlager")}
-    #: Felder einer Stellung, die Lager nennen: (Feld, Lagerarten, deren Namen
-    #: gelten, Lagerart der Nummern, Text im Protokoll) - so, wie
-    #: Stellung._lager sie liest: Namen in lager_aus und lager_aktiv gelten fuer
-    #: Lager jeder Art, die in linienlager_aus und flaechenlager_aus nur fuer
-    #: ihre Art; eine Nummer in lager_aus ist die eines Knotenlagers (so schreibt
-    #: die Maske Stellung sie, lagernamen("lager")), lager_aktiv liest keine Nummern.
+    #: Der Name eines Lagers ohne Namen, je Art - so steht er im Modellbaum, in der
+    #: Stellungsmaske und in der Stellung („Lager 2“, „Linienlager 1“,
+    #: „Flächenlager 1“; die Zahl zaehlt ab 1, der Anwender zaehlt so)
+    LAGER_STANDARDNAME = {"lager": "Lager", "linienlager": "Linienlager",
+                          "flaechenlager": "Flächenlager"}
+    #: Felder einer Stellung, die Lager nennen: (Feld, Lagerarten, nur Namen,
+    #: Text im Protokoll) - so, wie Stellung._lager sie liest: jede Art liest nur ihre
+    #: eigene Liste und meint ihre Lager mit dem Schluessel (:meth:`lagerschluessel`)
+    #: oder dem Namen; „nur diese Lager aktiv“ (lager_aktiv) nennt nur Namen, und
+    #: zwar die von Lagern jeder Art - ein Lager ohne Namen bleibt dort immer aktiv.
     STELLUNG_LAGERFELDER = (
-        ("lager_aus", ("lager", "linienlager", "flaechenlager"), "lager", "Deaktivierte Knotenlager"),
-        ("lager_aktiv", ("lager", "linienlager", "flaechenlager"), "", "nur diese Lager aktiv"),
-        ("linienlager_aus", ("linienlager",), "linienlager", "Deaktivierte Linienlager"),
-        ("flaechenlager_aus", ("flaechenlager",), "flaechenlager", "Deaktivierte Flächenlager"))
+        ("lager_aus", ("lager",), False, "Deaktivierte Knotenlager"),
+        ("lager_aktiv", ("lager", "linienlager", "flaechenlager"), True, "nur diese Lager aktiv"),
+        ("linienlager_aus", ("linienlager",), False, "Deaktivierte Linienlager"),
+        ("flaechenlager_aus", ("flaechenlager",), False, "Deaktivierte Flächenlager"))
+
+    @staticmethod
+    def lagerschluessel(art: str, lager) -> list:
+        """Der Schluessel jedes Lagers der Liste *lager* (Art ``"lager"``,
+        ``"linienlager"`` oder ``"flaechenlager"``), eindeutig in seiner Art: der
+        Name des Lagers, sonst der Standardname mit seinem Platz („Lager 2“,
+        „Linienlager 1“). Dieselbe Beschriftung zeigen der Modellbaum, die
+        Stellungsmaske und die Stellung (F30; bis zum 06.10.2026 stand in der
+        Maske „1“ und im Baum „Lager 2“ fuer dasselbe Lager).
+
+        Tragen mehrere Lager denselben Namen - ein RFEM-Lager „Fest“ an 16
+        Knoten ist 16 Knotenlager -, bekommt jedes seinen Platz dahinter:
+        „Fest (Lager 3)“. Sonst liesse sich eines davon nicht allein nennen."""
+        wort = Model.LAGER_STANDARDNAME[art]
+        lager = list(lager)
+        namen = [(getattr(s, "name", "") or "").strip() for s in lager]
+        standard = [f"{wort} {i + 1}" for i in range(len(lager))]
+        kandidat = [n or standard[i] for i, n in enumerate(namen)]
+        anzahl: dict = {}
+        for k in kandidat:
+            anzahl[k] = anzahl.get(k, 0) + 1
+        return [k if anzahl[k] == 1 or k == standard[i] else f"{k} ({standard[i]})"
+                for i, k in enumerate(kandidat)]
 
     def stellungsbezug(self) -> dict:
-        """Was Stellungen beim Namen oder bei der Nummer nennen: die drei
-        Lagerlisten (die Objekte selbst) und die Namen der Staebe - der Stand
-        **vor** einem Loeschen, fuer :meth:`stellungen_nachziehen`."""
+        """Was Stellungen beim Namen nennen: die drei Lagerlisten (die Objekte
+        selbst), ihre Schluessel und Namen von jetzt und die Namen der Staebe - der
+        Stand **vor** einem Loeschen oder Umbenennen, fuer
+        :meth:`stellungen_nachziehen`."""
         bezug = {art: list(getattr(self, liste)) for art, (liste, _w) in self.STELLUNG_LAGERARTEN.items()}
         bezug["staebe"] = set(self.members)
+        if getattr(self, "stellungen", None):
+            # nur mit Stellungen: bei vielen Lagern kostet das einen Durchgang je Aufruf
+            bezug["schluessel"] = {art: self.lagerschluessel(art, bezug[art])
+                                   for art in self.STELLUNG_LAGERARTEN}
+            bezug["namen"] = {art: [(getattr(s, "name", "") or "").strip() for s in bezug[art]]
+                              for art in self.STELLUNG_LAGERARTEN}
         return bezug
 
     def stellungen_nachziehen(self, vorher: dict) -> list:
-        """Stellungen an das Loeschen von Lagern und Staeben anpassen; Rueckgabe:
-        je geaenderter Angabe eine Zeile fuer das Protokoll.
+        """Stellungen an das Loeschen und Umbenennen von Lagern und das Loeschen
+        von Staeben anpassen; Rueckgabe: je geaenderter Angabe eine Zeile fuer das
+        Protokoll.
 
-        ``vorher`` ist :meth:`stellungsbezug` vor dem Loeschen. Ein Name, den es
-        vorher gab und jetzt nicht mehr, geht aus der Stellung; eine Lagernummer
-        folgt ihrem Lager (die dahinter ruecken auf) oder geht mit ihm. Bis zum
-        03.10.2026 blieben beide stehen: ein Lager, das spaeter so hiess, war in
-        der Stellung still abgeschaltet, und eine Nummer zeigte nach dem
-        Loeschen eines Lagers davor auf das naechste (Gegenpruefung zu 14a).
+        ``vorher`` ist :meth:`stellungsbezug` vor der Aenderung. Ein Eintrag folgt
+        seinem Lager: ruecken die Lager nach einem Loeschen auf, heisst der Eintrag
+        danach wie das Lager jetzt („Lager 3“ wird „Lager 2“); wird das Lager
+        umbenannt, bekommt er den neuen Namen; ist das Lager weg, geht er. Bis zum
+        06.10.2026 standen Nummern in den Listen (und die Nummer hing am Platz, nicht
+        am Lager); bis zum 03.10.2026 blieben alle Eintraege stehen: ein Lager, das
+        spaeter so hiess, war in der Stellung still abgeschaltet (Gegenpruefung zu
+        14a). Ein Name, den mehrere Lager tragen, bleibt, solange eines so heisst.
 
         Wird „nur diese Lager aktiv“ dabei leer, greifen in der Stellung alle
         Lager (leer heisst dort alle) - die Zeile sagt es ausdruecklich."""
         stellungen = getattr(self, "stellungen", None) or []
-        if not stellungen:
+        if not stellungen or "schluessel" not in vorher:
             return []
         jetzt = self.stellungsbezug()
-
-        def namen(stand, arten):
-            return {(getattr(s, "name", "") or "").strip() for art in arten for s in stand[art]} - {""}
         platz = {art: {id(s): j for j, s in enumerate(jetzt[art])} for art in self.STELLUNG_LAGERARTEN}
+        # Name/Schluessel -> Plaetze, einmal je Stand (Listen mit tausenden Lagern)
+        index = {}
+        for stand, tag in ((vorher, "vor"), (jetzt, "jetzt")):
+            for art in self.STELLUNG_LAGERARTEN:
+                nur_namen, mit_schluessel = {}, {}
+                for k, n in enumerate(stand["namen"][art]):
+                    if n:
+                        nur_namen.setdefault(n, []).append(k)
+                        mit_schluessel.setdefault(n, []).append(k)
+                for k, sl in enumerate(stand["schluessel"][art]):
+                    if sl != stand["namen"][art][k]:
+                        mit_schluessel.setdefault(sl, []).append(k)
+                index[(tag, art, True)] = nur_namen
+                index[(tag, art, False)] = mit_schluessel
         zeilen = []
         for st in stellungen:
-            for feld, namensarten, nummernart, text in self.STELLUNG_LAGERFELDER:
+            for feld, arten, nur_namen, text in self.STELLUNG_LAGERFELDER:
                 liste = list(getattr(st, feld, None) or [])
                 if not liste:
                     continue
-                n_vor, n_jetzt = namen(vorher, namensarten), namen(jetzt, namensarten)
                 neu, hier = [], []
                 for x in liste:
                     s = str(x).strip()
-                    lebt, war = s in n_jetzt, s in n_vor
-                    # Stellung._gemeint trifft Name **und** Nummer; isdecimal, nicht
-                    # isdigit: „²“ ist eine Ziffer, aber int("²") scheitert
-                    if not (nummernart and s.isdecimal() and int(s) < len(vorher[nummernart])):
-                        if war and not lebt:
-                            hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
-                                        f"aus „{text}“ genommen")
-                        else:
-                            neu.append(x)
-                        continue
-                    j = platz[nummernart].get(id(vorher[nummernart][int(s)]))
-                    wort = self.STELLUNG_LAGERARTEN[nummernart][1]
-                    if j == int(s):
+                    # die Lager, die dieser Eintrag vorher meinte: (Art, Platz vorher)
+                    traf = [(art, k) for art in arten for k in index[("vor", art, nur_namen)].get(s, [])]
+                    if not s or not traf:
                         neu.append(x)
                         continue
-                    if j is not None:
-                        neu.append(str(j))
-                    if lebt or (j is not None and str(j) in n_jetzt):
-                        # Ein Lager heisst wie eine Nummer: derselbe Eintrag meint dann
-                        # zwei Lager, und nach dem Loeschen laesst sich das mit einer
-                        # Liste von Namen nicht mehr eindeutig sagen - also laut
-                        if lebt:
-                            neu.append(x)
-                        hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ ist der Name "
-                                    f"eines Lagers und die Nummer eines {wort}s – nach dem Löschen "
-                                    "nicht eindeutig; bitte die Stellung prüfen")
-                    elif j is None:
-                        hier.append(f"Stellung „{st.name}“: das {wort} mit der Nummer „{s}“ ist "
-                                    f"gelöscht – aus „{text}“ genommen")
-                    else:
-                        hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ heißt jetzt "
-                                    f"„{j}“ – ein {wort} davor ist gelöscht")
+                    lebt = [(art, k, platz[art][id(vorher[art][k])]) for art, k in traf
+                            if id(vorher[art][k]) in platz[art]]
+                    if not lebt:
+                        hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
+                                    f"aus „{text}“ genommen")
+                        continue
+                    noch = {(art, j) for art in arten for j in index[("jetzt", art, nur_namen)].get(s, [])}
+                    if any((art, j) in noch for art, _k, j in lebt):
+                        neu.append(x)               # nennt weiter ein Lager, das es gibt
+                        continue
+                    schluessel = jetzt["namen" if nur_namen else "schluessel"]
+                    neue = []
+                    for art, _k, j in lebt:
+                        n = schluessel[art][j]
+                        if n and n not in neue:
+                            neue.append(n)
+                    if not neue:
+                        hier.append(f"Stellung „{st.name}“: Lager „{s}“ hat keinen Namen mehr – "
+                                    f"aus „{text}“ genommen")
+                        continue
+                    for n in neue:
+                        if n not in neu:
+                            neu.append(n)
+                    umbenannt = any(vorher["namen"][art][k] != jetzt["namen"][art][j] for art, k, j in lebt)
+                    hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ heißt jetzt „"
+                                + "“, „".join(neue) + "“ – "
+                                + ("das Lager ist umbenannt" if umbenannt else "ein Lager davor ist gelöscht"))
                 if not hier:
                     continue
                 setattr(st, feld, neu)
@@ -7666,6 +7713,11 @@ class Model:
                 s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
+                # F07/F30 (06.10.2026): bis dahin standen Lager mit ihrer Nummer in den
+                # Listen, und ``lager_aus`` traf Lager jeder Art. Ein Name oder
+                # Schluessel bleibt, eine Nummer wird zum Namen wie im Modellbaum -
+                # die Zeilen kommen ins Protokoll (Oeffnen und Importieren)
+                m._ladehinweise.extend(s.lagerschluessel_umstellen(m))
             # E6 (01.10.2026): bis Fassung 7 hiess eine leere Zuordnung „alle
             # Lastfaelle“ - so bleiben die Ergebnisse aelterer Dateien gleich,
             # und die Zuordnung steht sichtbar in der Stellung

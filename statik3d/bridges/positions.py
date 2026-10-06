@@ -66,8 +66,16 @@ class Stellung:
     beschreibung: Klartext, z. B. "im Öffnen, Riegel gezogen"
     lager_aktiv:  Namen der Lager, die in dieser Stellung greifen. Leer =
                   alle Lager greifen. Lager ohne Namen bleiben immer aktiv.
-    lager_aus:    Namen der Lager, die in dieser Stellung ausdrücklich nicht
-                  greifen (wirkt zusätzlich zu lager_aktiv).
+    lager_aus:    Knotenlager, die in dieser Stellung ausdrücklich nicht
+                  greifen (wirkt zusätzlich zu lager_aktiv). Jede Lagerart hat
+                  ihre eigene Liste (lager_aus, linienlager_aus,
+                  flaechenlager_aus) und ihren eigenen Schlüssel: den Namen des
+                  Lagers, sonst seinen Standardnamen wie im Modellbaum („Lager 2“,
+                  „Linienlager 1“, „Flächenlager 1“; Model.lagerschluessel). Bis
+                  zum 06.10.2026 stand hier die Nummer ab 0, und ein Eintrag in
+                  lager_aus schaltete zugleich das Linien- und das Flächenlager
+                  mit derselben Nummer ab; ältere Dateien werden beim Laden
+                  umgestellt (lagerschluessel_umstellen).
     faelle:       Lastfälle, die in dieser Stellung gelten - nur sie rechnet die
                   Stellungsreihe. Leer = keine (seit 02.10.2026, Zusage an den
                   Anwender: „nur das gerechnet wird was auch zugewiesen wurde“;
@@ -242,40 +250,141 @@ class Stellung:
             log.append(f"  {self.name}: {len(idx)} Knoten um {self.dreh_winkel:g}° "
                        f"um die Achse {tuple(self.dreh_achse)} gedreht")
 
+    #: Die drei Lagerarten: (Art, Liste im Modell, Feld der Stellung, Wort, Titel
+    #: des Feldes in der Maske). Jede Art liest nur ihr Feld.
+    _LAGERFELDER = (("lager", "supports", "lager_aus", "Knotenlager", "Deaktivierte Knotenlager"),
+                    ("linienlager", "line_supports", "linienlager_aus", "Linienlager",
+                     "Deaktivierte Linienlager"),
+                    ("flaechenlager", "surface_supports", "flaechenlager_aus", "Flächenlager",
+                     "Deaktivierte Flächenlager"))
+
     @staticmethod
-    def _gemeint(s, i: int, namen: set) -> bool:
-        """Ist das Lager *s* (Nummer *i* in seiner Liste) in *namen* genannt -
-        mit seinem Namen oder seiner Nummer (so wie der Modellbaum sie fuehrt)?"""
-        nm = (getattr(s, "name", "") or "").strip()
-        return (bool(nm) and nm in namen) or str(i) in namen
+    def _eintraege(liste) -> list:
+        return [str(x).strip() for x in (liste or []) if str(x).strip()]
 
     def _lager(self, m: Model, log: list = None):
-        aus = set(self.lager_aus)
-        ein = set(self.lager_aktiv)
-        behalten = []
+        """Die Lager, die in dieser Stellung nicht greifen, aus der Kopie nehmen.
+
+        Jede Lagerart liest nur ihre eigene Liste und nennt ihre Lager mit dem
+        Schluessel, den auch der Modellbaum zeigt (Model.lagerschluessel: der Name,
+        sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“). Bis zum 06.10.2026
+        las jede Art auch ``lager_aus``, mit Namen **und** Nummer: ein Eintrag „0“
+        schaltete das Knotenlager 0, das Linienlager 0 und das Flaechenlager 0
+        zugleich ab (F07). ``lager_aktiv`` gilt weiter fuer die Namen aller Arten.
+        Ein Eintrag, der kein Lager seiner Art nennt, steht im Protokoll."""
+        ein = set(self._eintraege(self.lager_aktiv))
+        schluessel = {art: Model.lagerschluessel(art, getattr(m, liste))
+                      for art, liste, _feld, _wort, _titel in self._LAGERFELDER}
+        namen = {art: {(s.name or "").strip() for s in getattr(m, liste)} - {""}
+                 for art, liste, _feld, _wort, _titel in self._LAGERFELDER}
         entfernt = []
-        for i, s in enumerate(m.supports):
-            nm = (s.name or "").strip() or f"Knotenlager {i}"
-            if self._gemeint(s, i, aus):
-                entfernt.append(nm)
-                continue
-            if ein and s.name and s.name.strip() not in ein:
-                entfernt.append(nm)
-                continue
-            behalten.append(s)
-        m.supports = behalten
-        for coll, art, extra in ((m.line_supports, "Linienlager", set(self.linienlager_aus)),
-                                 (m.surface_supports, "Flächenlager", set(self.flaechenlager_aus))):
+        ohne = []
+        for art, liste, feld, wort, titel in self._LAGERFELDER:
+            eintraege = self._eintraege(getattr(self, feld))
+            aus = set(eintraege)
             rest = []
-            for i, s in enumerate(coll):
-                nm = (s.name or "").strip() or f"{art} {i}"
-                if self._gemeint(s, i, aus | extra) or (ein and s.name and s.name.strip() not in ein):
-                    entfernt.append(nm)
+            for key, s in zip(schluessel[art], getattr(m, liste)):
+                nm = (s.name or "").strip()
+                # ein Eintrag ist der Schluessel (Model.lagerschluessel) oder der Name; ein
+                # Name, den mehrere Lager tragen, meint sie alle - so wie bisher
+                if key in aus or (nm and nm in aus) or (ein and nm and nm not in ein):
+                    entfernt.append(key)
                     continue
                 rest.append(s)
-            coll[:] = rest
-        if entfernt and log is not None:
-            log.append(f"  {self.name}: Lager ohne Wirkung: " + ", ".join(sorted(set(entfernt))))
+            # Eintraege, die kein Lager dieser Art nennen
+            for x in eintraege:
+                if x in schluessel[art] or x in namen[art]:
+                    continue
+                woanders = [(w2, t2) for a2, _l2, _f2, w2, t2 in self._LAGERFELDER
+                            if a2 != art and (x in schluessel[a2] or x in namen[a2])]
+                text = f"  {self.name}: „{x}“ in „{titel}“ nennt kein {wort}"
+                if woanders:
+                    text += (" – " + " und ".join(f"ein {w2}" for w2, _t in woanders) + " heißt so; es gehört in „"
+                             + "“ bzw. „".join(t2 for _w, t2 in woanders) + "“")
+                elif x.isdecimal():
+                    text += " – seit dem 06.10.2026 zählt der Name wie im Modellbaum, nicht die Nummer"
+                ohne.append(text + " (ohne Wirkung)")
+            setattr(m, liste, rest)
+        if log is not None:
+            if entfernt:
+                log.append(f"  {self.name}: Lager ohne Wirkung: " + ", ".join(sorted(set(entfernt))))
+            log.extend(ohne)
+
+    def lagerschluessel_umstellen(self, m: Model) -> list:
+        """Lagerlisten einer **alten** Stellung auf die Namen wie im Modellbaum umstellen.
+
+        Bis zum 06.10.2026 standen unbenannte Lager mit ihrer Nummer ab 0 in den
+        Listen, und ``lager_aus`` traf ein Lager jeder Art, beim Namen oder bei der
+        Nummer (F07, F30). Jetzt hat jede Art ihre Liste und ihren Schluessel
+        (Model.lagerschluessel). Beim Laden wird, so wie es damals gemeint war:
+
+        * eine Nummer in einer Lagerliste zum Schluessel des Lagers dieser Nummer in
+          der Art der Liste - die Maske schrieb sie fuer Knotenlager („0“ wird „Lager 1“,
+          hat das Lager einen Namen, wird es dieser);
+        * ein Name in ``lager_aus``, der **kein** Knotenlager, wohl aber ein Linien-
+          oder Flaechenlager nennt, in die Liste dieser Art (er traf es bisher dort);
+        * ein Eintrag, der schon ein Schluessel oder ein Name ist, bleibt.
+
+        Was die alte Nummer ausserdem traf (das Linien- und das Flaechenlager mit
+        derselben Nummer), trifft sie nicht mehr; die Zeilen sagen es. Ein zweites
+        Umstellen aendert nichts mehr. Rueckgabe: die Zeilen fuer das Protokoll
+        (leer, wenn nichts umzustellen war)."""
+        schluessel = {art: Model.lagerschluessel(art, getattr(m, liste))
+                      for art, liste, _feld, _wort, _titel in self._LAGERFELDER}
+        namen = {art: {(s.name or "").strip() for s in getattr(m, liste)} - {""}
+                 for art, liste, _feld, _wort, _titel in self._LAGERFELDER}
+        wort = {art: w for art, _l, _f, w, _t in self._LAGERFELDER}
+        titel = {art: t for art, _l, _f, _w, t in self._LAGERFELDER}
+        feld_von = {art: f for art, _l, f, _w, _t in self._LAGERFELDER}
+        neu = {feld: [] for _a, _l, feld, _w, _t in self._LAGERFELDER}
+        umgestellt = []         # „0“ → „Lager 1“, je Liste
+        mehr = []               # was die alte Nummer ausserdem traf
+        verschoben = []         # Namen, die in eine andere Liste gehen
+
+        def trifft(art, x) -> bool:
+            return x in schluessel[art] or x in namen[art]
+
+        for art, _liste, feld, _w, _t in self._LAGERFELDER:
+            eintraege = self._eintraege(getattr(self, feld))
+            if not eintraege:
+                continue
+            ziel = neu[feld]
+            for x in eintraege:
+                if trifft(art, x):
+                    ziel.append(x)
+                    continue
+                if x.isdecimal() and int(x) < len(schluessel[art]):
+                    neuer = schluessel[art][int(x)]
+                    ziel.append(neuer)
+                    umgestellt.append(f"„{titel[art]}“: „{x}“ → „{neuer}“")
+                    if feld == "lager_aus":
+                        for art2 in ("linienlager", "flaechenlager"):
+                            if int(x) < len(schluessel[art2]) and not trifft(art2, x):
+                                mehr.append(f"die Nummer „{x}“ in „{titel[art]}“ schaltete bisher auch das "
+                                            f"{wort[art2]} „{schluessel[art2][int(x)]}“ ab - jetzt nur noch das "
+                                            f"{wort[art]} „{neuer}“; war das {wort[art2]} gemeint, es in „"
+                                            f"{titel[art2]}“ anhaken")
+                    continue
+                if feld == "lager_aus":
+                    ziel_art = [a2 for a2 in ("linienlager", "flaechenlager") if x in namen[a2]]
+                    if ziel_art:
+                        for a2 in ziel_art:
+                            neu[feld_von[a2]].append(x)
+                        verschoben.append(f"„{x}“ stand in „{titel[art]}“, nennt aber ein "
+                                          + " und ein ".join(wort[a2] for a2 in ziel_art)
+                                          + " - jetzt in „" + "“ bzw. „".join(titel[a2] for a2 in ziel_art) + "“")
+                        continue
+                ziel.append(x)
+        zeilen = []
+        for _art, _liste, feld, _w, _t in self._LAGERFELDER:
+            neue_liste = list(dict.fromkeys(neu[feld]))          # ohne Doppelte, in der Reihenfolge
+            if neue_liste != self._eintraege(getattr(self, feld)):
+                setattr(self, feld, neue_liste)
+        if umgestellt:
+            zeilen.append(f"Stellung {self.name}: Lager stehen jetzt mit ihrem Namen wie im Modellbaum statt "
+                          "mit ihrer Nummer - " + "; ".join(umgestellt))
+        zeilen += [f"Stellung {self.name}: {z}" for z in mehr + verschoben]
+        return zeilen
 
     def _faelle(self, m: Model, log: list = None):
         if not self.faelle:

@@ -4440,7 +4440,7 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind die Knoten der Elementgruppen der Stellung; ohne Gruppen alle Knoten ohne Knotenlager — Knoten auf Linien- und Flächenlagern bewegen sich mit) |
 | Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten |
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
-| Deaktivierte Knoten-, Linien-, Flächenlager | Listen zum Anhaken (Namen oder Nummern wie im Modellbaum): sie greifen in dieser Stellung nicht |
+| Deaktivierte Knoten-, Linien-, Flächenlager | drei Listen zum Anhaken, je Lagerart eine; die Lager heißen darin wie im Modellbaum (ihr Name, sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“): sie greifen in dieser Stellung nicht |
 
 **Per Maus statt Tippen.** Solange der Haken *Klick in der Ansicht schaltet
 Stab, Fläche oder Volumen aus / ein* oben in der Maske steht, gehen Klicks in
@@ -4461,23 +4461,62 @@ schreibt je Angabe eine Zeile ins Protokoll, etwa „Stellung „S1“: Lager
 gilt für jeden Löschweg: Entf in der Ansicht, Rechtsklick, Modellbaum,
 Kontextmenü des Lagers, die Knöpfe unter den Tabellen, „Alle Lager löschen“, den
 Befehl *Knoten löschen* und das Knotenlager, das mit seinem Knoten geht. Ein Lager
-ohne Namen steht in der Liste mit seiner Nummer. Diese Nummern sind die der
-Stellungsmaske und zählen ab 0; der Modellbaum nennt dasselbe Lager „Lager 1“.
-Wird ein Lager mit kleinerer Nummer gelöscht, rücken die Nummern dahinter auf, und
-die Stellung zieht mit („Eintrag „3“ in „Deaktivierte Knotenlager“ heißt jetzt
-„2““). Heißt ein Lager selbst wie eine Nummer, etwa „3“, meint ein solcher Eintrag
-zwei Lager, eines beim Namen und eines bei der Nummer. Nach dem Löschen eines
-Lagers davor lässt er sich nicht mehr eindeutig nachziehen; das Protokoll sagt
-dann „nicht eindeutig; bitte die Stellung prüfen“. Bis zum 03.10.2026 blieben Namen und
-Nummern stehen; gemessen am Stand vor der Änderung schaltete die Stellung danach
-mit der Nummer des gelöschten Lagers das nächste ab, und die Nummer des
-nachgerückten Lagers traf ein anderes oder keines. Leert das Löschen die Liste
+ohne Namen steht in der Liste mit dem Namen, den der Modellbaum ihm gibt, etwa
+„Lager 2“. Wird ein Lager davor gelöscht, rückt es im Baum auf, und die Stellung
+zieht mit („Eintrag „Lager 3“ in „Deaktivierte Knotenlager“ heißt jetzt „Lager 2“ –
+ein Lager davor ist gelöscht“); wird ein Lager umbenannt, bekommt der Eintrag den
+neuen Namen. Bis zum 06.10.2026 standen an dieser Stelle die Nummern ab 0, die nur
+die Maske so nannte (siehe „Lagernamen in Stellungen“ unten); wer ein Lager ohne
+Namen benannte, verlor damit nichts, denn die Nummer blieb. Bis zum 03.10.2026
+blieben Namen und Nummern nach dem Löschen stehen; gemessen am Stand vor der
+Änderung schaltete die Stellung danach mit der Nummer des gelöschten Lagers das
+nächste ab, und die Nummer des nachgerückten Lagers traf ein anderes oder keines.
+Leert das Löschen die Liste
 „nur diese Lager aktiv“ (Python: `lager_aktiv`), greifen in der Stellung alle
 Lager, denn leer heißt dort „alle“. Die Protokollzeile sagt das ausdrücklich,
 weil sich damit die Rechnung der Stellung ändert. Der Knoten, an dem das
 Antriebsmoment einer Stellung angreift, lässt sich nicht löschen, solange die
 Stellung ihn nennt. Geprüft in `tests/test_loeschen.py` und
 `tests/test_tasten_fokus.py` (alle Löschwege der Oberfläche).
+
+**Lagernamen in Stellungen (seit 06.10.2026).** Jede Lagerart hat in der
+Stellung ihre eigene Liste („Deaktivierte Knotenlager“, „Deaktivierte
+Linienlager“, „Deaktivierte Flächenlager“) und ihren eigenen Schlüssel: den
+Namen des Lagers, sonst den Namen, den der Modellbaum ihm gibt („Lager 2“,
+„Linienlager 1“, „Flächenlager 1“; die Zahl zählt ab 1). Die Stellungsmaske, der
+Modellbaum und die gespeicherte Stellung benutzen genau diese Namen: Wer
+„Lager 1“ anhakt, schaltet das Lager ab, das der Baum „Lager 1“ nennt. Tragen
+mehrere Lager denselben Namen – ein RFEM-Lager „Fest“ an 16 Knoten ist 16
+Knotenlager –, steht hinter jedem sein Platz („Fest (Lager 3)“), im Baum, in der
+Maske und in der Stellung, und der RFEM-Import schaltet damit genau eines davon
+ab; der gemeinsame Name „Fest“ nennt weiter alle, und die Maske hakt dann jedes
+dieser Lager an. Bis zum 06.10.2026 hieß ein
+Lager ohne Namen in der Maske „0“, „1“ und so weiter, im Modellbaum aber „Lager 1“,
+„Lager 2“ – wer „1“ anhakte und „Lager 1“ meinte, schaltete das zweite Lager ab –,
+und ein Eintrag in „Deaktivierte Knotenlager“ schaltete zugleich das Linienlager
+und das Flächenlager mit derselben Nummer ab. Gemessen an einem Modell mit je
+einem solchen Lager: Mit dem Eintrag „0“ gingen von zwei Knotenlagern, einem
+Linienlager und einem Flächenlager drei Lager aus statt einem, und das Protokoll
+nannte „Lager ohne Wirkung: Flächenlager 0, Knotenlager 0, Linienlager 0“.
+
+Eine alte Datei mit Nummern wird beim Öffnen und beim Importieren umgestellt, so
+wie die Nummern damals gemeint waren. Eine Nummer wird zum Namen des
+Knotenlagers mit dieser Nummer („0“ wird „Lager 1“; hat das Lager einen Namen,
+wird es dieser), in „Deaktivierte Linienlager“ und „Deaktivierte Flächenlager“ zum
+Namen des Lagers dieser Art. Ein Name in „Deaktivierte Knotenlager“, der kein
+Knotenlager, wohl aber ein Linien- oder Flächenlager nennt, wandert in die Liste
+dieser Art, denn dort hat er bisher gewirkt. Das Protokoll sagt es je Stellung
+(„Hinweis: Stellung S1: Lager stehen jetzt mit ihrem Namen wie im Modellbaum
+statt mit ihrer Nummer – …“) und nennt auch, dass die alte Nummer das Linien- oder
+Flächenlager mit derselben Nummer mit abgeschaltet hat und jetzt nicht mehr; war
+es gemeint, hakt man es in seiner Liste an. Ein zweites Öffnen aus der
+gespeicherten Datei ändert nichts mehr. Ein Eintrag, der kein Lager seiner Art
+nennt – eine Nummer, ein Tippfehler, ein Lager, das es nicht mehr gibt –, steht
+beim Rechnen im Protokoll der Stellung („… nennt kein Knotenlager … (ohne
+Wirkung)“) und schaltet nichts ab. In Python gilt dasselbe:
+`lager_aus=["Lager 1"]`, `linienlager_aus=[…]`, `flaechenlager_aus=[…]`;
+`modell.lagerschluessel("lager", modell.supports)` liefert die Namen. Geprüft in
+`tests/test_fehler_p4.py`.
 
 ### Situationen: Stellung und ihre Lastfälle
 
@@ -9985,7 +10024,8 @@ Je Stellung lässt sich einstellen:
 
 | Angabe | Wirkung |
 |---|---|
-| `lager_aktiv` / `lager_aus` | welche benannten Lager in dieser Stellung greifen |
+| `lager_aktiv` | nur diese benannten Lager greifen (leer: alle); Lager ohne Namen greifen immer |
+| `lager_aus`, `linienlager_aus`, `flaechenlager_aus` | diese Knoten-, Linien- und Flächenlager greifen nicht, je Art eine Liste, mit dem Namen des Lagers oder „Lager 2“ wie im Modellbaum (bis zum 06.10.2026 las `lager_aus` auch Linien- und Flächenlager und Nummern) |
 | `dreh_achse`, `dreh_punkt`, `dreh_winkel`, `dreh_gruppen` | die bewegten Bauteile werden gedreht; das Eigengewicht wirkt dadurch anders |
 | `faelle` | welche Lastfälle diese Stellung rechnet — nur diese; ohne Zuordnung rechnet sie nichts |
 | `kombinationen` | welche Kombinationen in dieser Stellung gelten |

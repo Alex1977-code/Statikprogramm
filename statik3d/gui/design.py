@@ -2246,15 +2246,19 @@ class Modellbaum(QtWidgets.QTreeWidget):
         n_lager = (len(model.supports) + len(model.line_supports)
                    + len(model.surface_supports))
         lag = self._zweig(lv, "Lager", n_lager, "lager", fett=True)
+        # Die Beschriftung der Lager ist ihr Schluessel (Model.lagerschluessel): dieselbe
+        # steht in der Stellungsmaske und in der Stellung (F30, 06.10.2026)
         kl = self._zweig(lag, "Knotenlager", len(model.supports), "lager")
-        self._liste(kl, [(x.name or f"Lager {i + 1}", f"K{x.node}", str(i),
+        schl = model.lagerschluessel("lager", model.supports)
+        self._liste(kl, [(schl[i], f"K{x.node}", str(i),
                           f"Knoten {x.node}: {self._lagertext(x)}")
                          for i, x in enumerate(model.supports)], "lager_einzeln",
                     "lager")
         if model.line_supports:
             ll = self._zweig(lag, "Linienlager", len(model.line_supports),
                              "linienlager")
-            self._liste(ll, [(x.name or f"Linienlager {i + 1}",
+            schl = model.lagerschluessel("linienlager", model.line_supports)
+            self._liste(ll, [(schl[i],
                               f"{len(x.nodes)} Kn", str(i),
                               f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
                              for i, x in enumerate(model.line_supports)],
@@ -2262,7 +2266,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
         if model.surface_supports:
             fll = self._zweig(lag, "Flächenlager", len(model.surface_supports),
                               "flaechenlager")
-            self._liste(fll, [(x.name or f"Flächenlager {i + 1}",
+            schl = model.lagerschluessel("flaechenlager", model.surface_supports)
+            self._liste(fll, [(schl[i],
                                f"{len(x.nodes)} Kn", str(i),
                                f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
                               for i, x in enumerate(model.surface_supports)],

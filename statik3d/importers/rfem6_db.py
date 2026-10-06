@@ -3308,6 +3308,11 @@ def _strukturmodifikationen(db: Db, m: Model, log: list, member_user: dict,
     lager_am_knoten: dict[int, list[int]] = {}
     for i, sup in enumerate(m.supports):
         lager_am_knoten.setdefault(int(sup.node), []).append(i)
+    # Die Stellung nennt das Lager mit seinem Schluessel wie im Modellbaum
+    # (Model.lagerschluessel: „Fest (Lager 3)“, wenn mehrere Lager so heissen); bis
+    # zum 06.10.2026 schrieb sie hier die Nummer ab 0, die auch Linien- und
+    # Flaechenlager traf (F07)
+    lager_schluessel = m.lagerschluessel("lager", m.supports)
     for h, impl in db.impls("StructureModification"):
         name = (impl.get("name") or "").strip() or f"Strukturmodifikation {h.get('userID') or h['id']}"
         staebe: list[str] = []
@@ -3326,7 +3331,7 @@ def _strukturmodifikationen(db: Db, m: Model, log: list, member_user: dict,
                 knoten = node_user.get(int(nr))
                 idx = lager_am_knoten.get(knoten, []) if knoten is not None else []
                 if idx:
-                    lager.extend(str(i) for i in idx)
+                    lager.extend(lager_schluessel[i] for i in idx)
                 else:
                     offen.append(f"Knotenlager an Knoten {nr}")
         for schalter, wahlfeld, art, ziel, ablage in (
