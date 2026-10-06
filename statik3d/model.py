@@ -1061,6 +1061,10 @@ class Linienlast:
     von: float = 0.0
     bis: Optional[float] = None
     kommentar: str = ""
+    # Wer die Last erzeugt hat (etwa "wind:W1"); leer = vom Anwender. Das
+    # Verteilen ueberschreibt ``kommentar`` mit „n Elementlasten“, darum
+    # erkennt ein Generator seine Lasten an diesem Feld (seit 06.10.2026).
+    erzeuger: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1345,7 +1349,9 @@ class LoadCase:
             "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
-            "linienlasten": [asdict(l) for l in self.linienlasten],
+            # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei
+            "linienlasten": [{k: v for k, v in asdict(l).items() if k != "erzeuger" or v}
+                             for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
             "uebermasse": [asdict(l) for l in (getattr(self, "uebermasse", None) or [])],
@@ -1369,7 +1375,7 @@ class LoadCase:
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
         lc.geometrielasten = [Geometrielast(**l)
                               for l in d.get("geometrielasten", [])]
-        lc.linienlasten = [Linienlast(**l) for l in d.get("linienlasten", [])]
+        lc.linienlasten = [_dc(Linienlast, l) for l in d.get("linienlasten", [])]
         lc.zwangsverformungen = [Zwangsverformung(**l)
                                  for l in d.get("zwangsverformungen", [])]
         lc.vorspannungen = [_dc(Vorspannung, l) for l in d.get("vorspannungen", [])]

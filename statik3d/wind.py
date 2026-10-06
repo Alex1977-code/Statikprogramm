@@ -36,6 +36,8 @@ import math
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+import re
+
 import numpy as np
 
 RHO = 1.25            # Luftdichte [kg/m³]
@@ -647,6 +649,27 @@ def kennwerte(w: Wind, model=None, geo: dict = None) -> dict:
     return out
 
 
+def _vom_wind(ll, w: Wind, lc, alt_erkennen: bool) -> bool:
+    """Ist die Linienlast eine Stablast dieses Winds? Am Merkmal ``erzeuger``;
+    in Dateien vor dem 06.10.2026 (``alt_erkennen``) am Kommentar „Wind <Name>:“
+    oder - weil das Verteilen ihn durch „n Elementlasten“ ersetzt hat - an
+    Lastfall, Stab und Richtung (global, parallel zur Windrichtung)."""
+    if ll.erzeuger:
+        return ll.erzeuger == f"wind:{w.name}"
+    if not alt_erkennen:
+        return False
+    k = ll.kommentar or ""
+    if k.startswith(f"Wind {w.name}:"):
+        return True
+    if not (lc.name == w.lastfall and ll.art == "stab" and ll.ziel in w.staebe
+            and ll.system == "global" and re.fullmatch(r"\d+ Elementlasten", k)):
+        return False
+    d = np.asarray(w.richtung, float)
+    q = np.asarray(ll.q, float)
+    nd, nq = float(np.linalg.norm(d)), float(np.linalg.norm(q))
+    return nd > 0 and nq > 0 and abs(abs(float(q @ d)) - nq * nd) <= 1e-9 * nq * nd
+
+
 def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     """Objektlasten an Flächen und Linienlasten auf Stäbe schreiben (alte des
     Generierers entfernen), verteilen; Rückgabe: Kennwerte samt Zahlen. Mit
@@ -683,10 +706,15 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     # eigene Wahl gilt „Wind <Name>“ oder ein freier (R2-A1, Nachbesserung G3)
     w.lastfall = model.generator_lastfall(f"Wind {w.name}", w.lastfall, int(w.lastfall_nr or 0),
                                           f"Wind {w.name}")
+    # Dateien vor dem 06.10.2026 tragen kein Merkmal ``erzeuger``: dann werden die
+    # Stablasten des Winds an Lastfall, Stab und Richtung erkannt, einmalig
+    marke = f"wind:{w.name}"
+    alt_erkennen = not any(ll.erzeuger == marke for lc_ in model.load_cases.values()
+                           for ll in lc_.linienlasten)
     for lc in model.load_cases.values():
         lc.geometrielasten = [gl for gl in lc.geometrielasten
                               if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == w.name)]
-        lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {w.name}:")]
+        lc.linienlasten = [ll for ll in lc.linienlasten if not _vom_wind(ll, w, lc, alt_erkennen)]
     if w.lastfall not in model.load_cases:
         model.add_load_case(w.lastfall, "W" if "W" in ACTION_CATEGORIES else "Q",
                             f"Wind {w.name}", activate=False)
@@ -720,6 +748,7 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
         sb["abschirmung"] = faktor
         ll = model.add_linienlast(name, (sb["w1"] * faktor * d).tolist(), art="stab",
                                   q2=(sb["w2"] * faktor * d).tolist(), system="global", case=w.lastfall)
+        ll.erzeuger = marke
         ll.kommentar = f"Wind {w.name}: c_f = {sb['cf']:.2f}, b_ref = {sb['b_ref']:.3f} m" \
             + (f", Windkanal (v/v∞)² = {faktor:.2f}" if wk is not None else "")
         staebe.append(sb)

@@ -321,8 +321,67 @@ def test_windkanal():
           svg_cp.startswith("<svg") and "data:image/png" in svg_cp and "v/v∞" in svg_v)
 
 
+def _mast():
+    m = Model("Mast")
+    m.add_material(Material("S"))
+    m.add_section(Section.pipe("CHS", 0.2, 0.006))
+    ids = [m.add_node(0, 0, i * 1.0) for i in range(7)]
+    el = [m.add_element("beam", [ids[i], ids[i + 1]], "S", "CHS") for i in range(6)]
+    m.members["Mast"] = Member("Mast", el)
+    m.fix(ids[0], "all")
+    return m
+
+
+def _stablasten(m, fall):
+    lc = m.load_cases[fall]
+    return (len(lc.linienlasten), len(lc.beam_loads),
+            sum(float(np.linalg.norm(ll.q)) for ll in lc.linienlasten))
+
+
+def test_zweimal_erzeugen_verdoppelt_nicht():
+    """Ein zweites „Lasten erzeugen“ ersetzt die Stablasten des Winds, statt sie
+    zu verdoppeln. Bis zum 06.10.2026 ueberschrieb das Verteilen den Kommentar
+    „Wind W:“ mit „6 Elementlasten“, und das Aufraeumen fand die alte
+    Linienlast nicht mehr: aus 1 Linienlast wurden 2, aus 6 Elementlasten 12."""
+    m = _mast()
+    w = Wind("W", zone=3, profil="II", richtung=[1, 0, 0], staebe=["Mast"])
+    wm.lasten_erzeugen(m, w)
+    erst = _stablasten(m, w.lastfall)
+    wm.lasten_erzeugen(m, w)
+    zweit = _stablasten(m, w.lastfall)
+    check(f"zweimal erzeugt: Linien- und Elementlasten wie nach dem ersten Mal {erst} -> {zweit}",
+          erst[:2] == zweit[:2] and abs(erst[2] - zweit[2]) < 1e-9 * max(erst[2], 1.0))
+    # Gespeichert und wieder geladen: das Merkmal bleibt, ein drittes Erzeugen verdoppelt nicht
+    m2 = Model.from_dict(m.to_dict())
+    wm.lasten_erzeugen(m2, m2.winde["W"])
+    check("nach Speichern und Laden: drittes Erzeugen verdoppelt nicht",
+          _stablasten(m2, w.lastfall)[:2] == erst[:2], str(_stablasten(m2, w.lastfall)))
+    # Datei von vorher: Kommentar schon „6 Elementlasten“, kein Merkmal
+    m3 = _mast()
+    w3 = Wind("W", zone=3, profil="II", richtung=[1, 0, 0], staebe=["Mast"])
+    wm.lasten_erzeugen(m3, w3)
+    for ll in m3.load_cases[w3.lastfall].linienlasten:
+        ll.kommentar = "6 Elementlasten"
+        if hasattr(ll, "erzeuger"):
+            ll.erzeuger = ""
+    wm.lasten_erzeugen(m3, w3)
+    check("alte Datei (nur „6 Elementlasten“): Erzeugen verdoppelt nicht",
+          _stablasten(m3, w3.lastfall)[:2] == erst[:2], str(_stablasten(m3, w3.lastfall)))
+    # eine Linienlast des Anwenders im selben Lastfall bleibt
+    m4 = _mast()
+    w4 = Wind("W", zone=3, profil="II", richtung=[1, 0, 0], staebe=["Mast"])
+    wm.lasten_erzeugen(m4, w4)
+    eigen = m4.add_linienlast("Mast", [0.0, 500.0, 0.0], art="stab", case=w4.lastfall)
+    eigen.kommentar = "von Hand"
+    wm.lasten_erzeugen(m4, w4)
+    check("eine eigene Linienlast im Windlastfall bleibt stehen",
+          any(ll is eigen or (ll.q == [0.0, 500.0, 0.0]) for ll in m4.load_cases[w4.lastfall].linienlasten)
+          and len(m4.load_cases[w4.lastfall].linienlasten) == 2)
+
+
 def main():
-    for t in (test_profil, test_beiwerte, test_gebaeude, test_staebe, test_windkanal):
+    for t in (test_profil, test_beiwerte, test_gebaeude, test_staebe,
+              test_zweimal_erzeugen_verdoppelt_nicht, test_windkanal):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
