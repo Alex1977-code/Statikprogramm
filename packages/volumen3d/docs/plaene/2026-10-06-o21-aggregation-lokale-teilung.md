@@ -192,13 +192,33 @@ def aggregate_ergaenzen(problem, zellen) -> np.ndarray:
 
 ## Ergebnis O21
 
-(wird nach der Messung eingetragen)
+**Teil A (07.10.2026, fester Arbeitsbaum 9fc6966, 8 Threads, `o21_mechanismus.py` wörtlich aus diesem Plan): Mechanismus nicht belegt.** Markiert waren 4 Zellen; 3 ungeteilte Zellen
+hatten eine markierte Wurzel, Bedingung (i) ist also erfüllt. Die ungeteilten Zellen verteilen sich so:
+
+| Klasse | Zellen | Summe Δe² | positive Δe² |
+|---|---|---|---|
+| Wurzel gleich | 34 | +0,193 | 0,230 |
+| Wurzel gewechselt | 3 | +0,247 | 0,247 |
+| Wurzel verloren | 0 | 0 | 0 |
+| Wurzel neu | 0 | 0 | 0 |
+| ohne Wurzel vorher und nachher | 15 | +0,473 | 0,813 |
+
+Gewechselte und verlorene Wurzeln tragen 0,247 / 1,291 = 19 % der positiven Zunahme (Regel: mindestens 80 %; von Hand aus den Klassensummen nachgerechnet). Nicht markierte Zellen
+wurden nicht geteilt. Die Klasse „ohne Wurzel“ besteht ganz aus wohlgestellten Zellen (15, keine schlecht gestellte bei α; `zellen_ohne_wurzel` vorher und nachher 0, `o21_ohne.py`):
+63 % der Zunahme liegen in Zellen mit freien Polynomen. Ihr Fehler steigt nicht wegen ihrer eigenen Wurzel, sondern weil die Lösung insgesamt schlechter wird; die Einschränkung des
+Raums sitzt woanders. Naheliegend, aber nicht gemessen: in den geteilten Zellen selbst, wenn sich schlecht gestellte Kinder an Wurzeln außerhalb ihrer Elternzelle binden und das Polynom
+der Elternzelle dort nicht mehr darstellbar ist. Nach der Regel wird K1 nicht gebaut, bevor der Anwender entscheidet.
+
+**Empfehlung.** Zuerst eine Schachtelungsprobe (A2) mit vorab festgelegter Regel: die alte Lösung u_h,0 im neuen Raum bestmöglich darstellen (L²-Ausgleich über die Werkstoffpunkte, im neuen
+Raum mit allen Zwängen) und den Rest je Zelle messen. Bei geschachtelten Räumen ist er null bis auf Rundung; wo er es nicht ist, liegt die Verletzung. Danach die Kur dort ansetzen:
+K1 (ganze Aggregate teilen), wenn der Rest an Zellen mit gewechselter Wurzel sitzt, K2 (schlecht gestellte Kinder bevorzugt an Geschwister in derselben Elternzelle binden), wenn er an
+geteilten Zellen mit Wurzel außerhalb der Elternzelle sitzt. K2 ändert die Wurzelwahl in allen verfeinerten Gittern und damit Zahlen in mehreren Suiten.
 
 ## Modell je Schritt
 
 | Schritt | Modell | Denkstufe | Stand |
 |---|---|---|---|
-| Aufgabe 1: Mechanismus messen | Opus 5.5 | hoch | offen |
+| Aufgabe 1: Mechanismus messen | Opus 5.5 | hoch | gemessen: nicht belegt (19 % statt 80 %), Entscheidung beim Anwender |
 | Aufgabe 2: Kur K1 mit Prüfungen | Opus 5.5 | hoch | offen |
 | Aufgabe 3: Messung B1, B2 | Opus 5.5 | hoch | offen |
 | Aufgabe 4: Dokumentation | Sonnet 5.5 | niedrig | offen |
