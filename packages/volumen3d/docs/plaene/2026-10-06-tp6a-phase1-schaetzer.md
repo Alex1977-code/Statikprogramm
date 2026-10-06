@@ -922,4 +922,4 @@ festgelegten Regeln messen und beheben, Regel 5 mit denselben Zahlen erneut prü
 |---|---|---|---|
 | Aufgaben 1 bis 5: Basis, Lasten, Flächen, Schätzer, Markierung | Opus 5.5 | hoch | fertig (9fc6966) |
 | Aufgabe 6: Messung nach den Regeln | Opus 5.5 | hoch | gemessen; Regel 5 verfehlt, Entscheidung beim Anwender |
-| Aufgabe 7: Dokumentation, Suiten, Push | Sonnet 5.5 | niedrig | offen |
+| Aufgabe 7: Dokumentation, Suiten, Push | Sonnet 5.5 | niedrig | fertig (17a4701, Suiten 07.10.) |

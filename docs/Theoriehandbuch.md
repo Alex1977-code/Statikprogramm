@@ -12422,4 +12422,4 @@ fertige Lastvektoren übergibt (`zusatzlasten`), kennt der Schätzer noch nicht 
 
 **Prüfungen.** `test_schaetzer` (14 Prüfungen): Hesse-Matrizen der Basis gegen den Differenzenquotienten der Gradienten und gegen die geschlossenen 1D-Formen; Aufzeichnung der Lasten;
 Flächenpaare gegen eine unabhängige Zählung über die Zellboxen (384 Paare über zwei Ebenen); Werkstoffanteil der Flächen exakt im Werkstoff und auf erste Ordnung gegen das exakt
-geclippte Polygon; Felder im Ansatzraum; Lamé p 2 auf h 20 und h 10 (θ 4,50 und 4,34); Dörfler; Teilung einer markierten Zelle. Bis auf Lamé laufen sie in der Kernsuite (390 Prüfungen).
+geclippte Polygon; Felder im Ansatzraum; Lamé p 2 auf h 20 und h 10 (θ 4,50 und 4,34); Dörfler; Teilung einer markierten Zelle. Bis auf Lamé laufen sie in der Kernsuite (390 Prüfungen). Alle Paketsuiten sind mit und ohne den Schätzer grün; der Vergleich Zahl für Zahl findet nur Zeiten und Rundungsunterschiede, die genauso zwischen zwei Läufen desselben Stands auftreten (MKL mit mehreren Threads streut in den letzten Stellen), also keine geänderte Rechnung.
