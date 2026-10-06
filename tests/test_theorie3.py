@@ -735,8 +735,22 @@ def test_handbuch_kontaktmodell_rechnet_die_kombination_direkt():
               bool(absatz) and nennt == direkt, f"{len(absatz)} Zeichen")
 
 
+def test_ergebnis_traegt_den_namen_der_kombination():
+    """Das Ergebnis heisst wie die Kombination, nicht wie ihr letzter Lastfall.
+    Bis zum 06.10.2026 ueberschrieb die Schleife ueber die Faktoren den
+    Parameter ``name`` (theorie3.py:249)."""
+    ne, L = 10, 2.0
+    m, sec = kragarm(ne, L)
+    m.add_load_case("LF2", "Q")
+    m.load_node(ne, Fz=-1000.0)
+    res, info = solve_theorie3(m, {"LF1": 1.0, "LF2": 1.5}, "K7", schritte=5)
+    check("Ergebnisname = Kombination „K7“, nicht der letzte Lastfall",
+          res.name == "K7" and info.name == "K7", f"{res.name!r}, {info.name!r}")
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
+              test_ergebnis_traegt_den_namen_der_kombination,
               test_druckstab_II_gegen_III, test_theoriewahl,
               test_gescheiterte_theorie_meldet_sich,
               test_gelungene_theorie_steht_schlicht_in_der_tabelle,

@@ -246,8 +246,8 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     # Seile rechnen als Kettenlinie: ihr Eigengewicht steckt in der
     # Kettenlinie selbst und darf nicht noch einmal als Knotenlast wirken.
     g_ges = np.zeros(3)
-    for name, f in factors.items():
-        lc = model.load_cases.get(name)
+    for lf, f in factors.items():        # nicht ``name``: der ist das Ergebnis
+        lc = model.load_cases.get(lf)
         if lc is not None:
             g_ges = g_ges + float(f) * np.asarray(lc.gravity, float)
     seile = [_Seil(model, i, g_ges) for i in wirksam if model.elements[i].typ == "seil"]
