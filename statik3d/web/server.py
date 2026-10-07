@@ -1432,6 +1432,9 @@ def _op_line_support(st, m, d):
     _check_nodes(m, nodes)
     if len(nodes) < 2:
         raise ApiError("Linienlager braucht mindestens zwei Knoten")
+    grund = m.objektname_konflikt(str(d.get("name") or "").strip(), "", "Linienlager")    # N12
+    if grund:
+        raise ApiError(grund)
     ls = m.add_line_support(nodes, name=d.get("name") or "")
     for key, val in (d.get("behaviour") or {}).items():
         ls.behaviour[dof_index(key)] = DofBehaviour(**{k: (_f(val, k) if k in
@@ -1446,6 +1449,9 @@ def _op_surface_support(st, m, d):
     from ..model import DofBehaviour, dof_index
     elems = _ilist(d, "elems")
     _check_elems(m, elems)
+    grund = m.objektname_konflikt(str(d.get("name") or "").strip(), "", "Flächenlager")   # N12
+    if grund:
+        raise ApiError(grund)
     ss = m.add_surface_support(elems, name=d.get("name") or "", face=_i(d, "face", -1))
     for key, val in (d.get("behaviour") or {}).items():
         ss.behaviour[dof_index(key)] = DofBehaviour(**{k: (_f(val, k) if k in
@@ -1477,6 +1483,9 @@ def _op_remove_surface_support(st, m, d):
 def _op_add_hinge(st, m, d):
     from ..model import dof_index
     name = (d.get("name") or f"G{len(m.hinges) + 1}").strip()
+    grund = m.objektname_konflikt(name, name if name in m.hinges else "", "Gelenk")      # N12
+    if grund:
+        raise ApiError(grund)
     h = m.add_hinge(name, end=_i(d, "end", 0))
     for key, val in (d.get("dofs") or {}).items():
         dof = dof_index(key)
@@ -2020,6 +2029,11 @@ def _op_set_member(st, m, d):
     if not name:
         raise ApiError("Stabname fehlt")
     if name not in m.members:
+        # Komma und Semikolon trennen die Namen in den getippten Listen
+        # (Nachtrag N12, 07.10.2026)
+        grund = m.objektname_konflikt(name, "", "Stab")
+        if grund:
+            raise ApiError(grund)
         elems = _ilist(d, "elements")
         _check_elems(m, elems)
         m.add_member(name, elems)

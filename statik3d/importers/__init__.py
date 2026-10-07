@@ -303,6 +303,8 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     if model is None:
         model = Model(stem)
     n_nodes0, n_elems0 = model.nn, len(model.elements)
+    # was schon im Modell steht, behaelt seine Namen (Nachbearbeitung der Namen unten)
+    namen0 = set(model.load_cases) | set(model.combinations)
 
     if kind == "cad":
         if not mesher.HAVE_GMSH:
@@ -410,6 +412,16 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
             C.say(log, f"{len(members)} Staebe aus kollinearen Stabelementen gebildet")
     if fresh and C.drop_empty_default_case(model):
         pass
+    # Komma und Semikolon trennen die Namen in den Listenfeldern der Masken
+    # (Faktoren einer Kombination, Verlauf einer Ermuedungslast, Stellung).
+    # Ein Lastfall oder eine Kombination der Datei, die sie im Namen traegt,
+    # wird umbenannt - mit jedem Verweis, eindeutig - und das Protokoll nennt
+    # es (Nachtrag N15, 07.10.2026). Bis dahin kamen solche Namen unveraendert
+    # herein: die Haken der Masken trugen sie, getippte Faktoren und der
+    # Ermuedungsverlauf zerlegten sie. Was schon vor dem Import im Modell
+    # stand, bleibt, wie es ist.
+    for z in model.namenstrenner_ersetzen(ausser=namen0):
+        C.say(log, z)
     if model.active_case not in model.load_cases and model.load_cases:
         model.active_case = next(iter(model.load_cases))
     model.meta["quelle"] = path

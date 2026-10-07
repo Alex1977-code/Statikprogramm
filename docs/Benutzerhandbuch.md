@@ -4113,6 +4113,17 @@ Anzahl still „alle gleich“.
   06.10.2026 fiel ein solcher Eintrag ohne Meldung weg: „3, 4, x, 5“ legte
   die Linie mit den Knoten 3, 4 und 5 an, „1, 2,5“ machte aus den
   angeschlossenen Knoten nur den Knoten 1, und „+3“ fiel ebenfalls weg.
+  Ebenso weist die Maske eine Nummer **außerhalb des Bereichs** ab: ein
+  Element, das es nicht gibt oder das kein Stabelement ist (Elemente eines
+  Stabs), und einen Knoten, den es nicht gibt (angeschlossene Knoten eines
+  starren Körpers). Die Meldung nennt den Eintrag und den Bereich
+  („Elemente: „99“ gibt es nicht - Elemente sind 0 bis 15.“, „Elemente:
+  „16“ ist kein Stabelement - einen Stab bilden nur Stabelemente.“). Bis
+  zum 07.10.2026 fiel auch ein solcher Eintrag still weg: Der Stab aus
+  „0, 99“ bestand nur aus dem Element 0, die angeschlossenen Knoten „1, 2,
+  9999“ nur aus den Knoten 1 und 2, und niemand sah es. Der Masterknoten
+  selbst bleibt aus der Liste der angeschlossenen Knoten heraus, wie
+  bisher.
   Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
   die Knoten eines Elements in der Tabelle, die Teilung (eine Zahl für
   alle Richtungen oder zwei bei einer Fläche, drei bei einem Volumen,
@@ -4544,6 +4555,13 @@ mit der Liste der Querschnitte. Die Maske hat drei Teile, von oben nach unten:
    ganze Zahlen: „2,5“ als Knotennummer oder „1,9“ als Element-von meldet
    „… hier ist eine ganze Zahl verlangt“ und sperrt OK. Bis zum 06.10.2026
    wurde „2,5“ still zu Knoten 2 und überschrieb ihn, „1,9“ zu Element 1.
+   Jede Knotennummer steht nur einmal in der Knotentabelle („2“ und „02“ sind
+   dieselbe Nummer): Tragen zwei Zeilen dieselbe, steht rot unter dem Bild,
+   welche („Knotennummer 2 steht zweimal in der Knotentabelle (Zeile 2 und 3
+   von oben) – jede Nummer nur einmal“), und OK bleibt gesperrt. Bis zum
+   07.10.2026 gewann die letzte Zeile still, OK blieb frei, und der
+   Querschnitt wurde mit dem zweiten Knoten gerechnet, ohne dass es jemand
+   sah.
    Das Ergebnis ist ein zusammengesetzter Querschnitt nach dem Satz von
    Steiner mit Hauptachsen und Hauptachsenwinkel; der Editorinhalt reist mit
    und lässt sich über den Editor wieder öffnen. It ist bei Elementen der
@@ -5150,14 +5168,38 @@ man Namen tippt (die Faktoren einer Kombination, der Verlauf einer
 Ermüdungslast), lässt sich ein solcher Name ohnehin nicht schreiben. Die
 Regel gilt, bis die Namensregel Namen und Bezeichnungen trennt; dann darf die
 Bezeichnung ein Komma tragen. Ein Name mit Komma, der schon da ist (aus
-einer älteren Datei oder einem Import, die Importe prüfen ihre Namen noch
-nicht), bleibt, wie er ist: Die Haken der Stellungs- und der Situationsmaske
+einer älteren Datei; ein Import ersetzt Komma und Semikolon seit dem
+07.10.2026 selbst), bleibt, wie er ist: Die Haken der Stellungs- und der Situationsmaske
 tragen die Namen seit dem 06.10.2026 als Liste und nicht mehr als Text mit
 Komma, so dass er dort angehakt, abgehakt und übernommen wird, und die übrigen
 Eigenschaften des Lastfalls lassen sich weiter ändern. Das gilt ebenso für die
 Gelenke und Lager der Stellungsmaske. Bildet das Programm den Namen selbst
 und enthält der Vorschlag Komma oder Semikolon, lässt es sie weg: Die Kopie
 von „W, links“ heißt „W links_Kopie“.
+
+**Komma und Semikolon im Namen von Stäben, Linien, Flächen, Volumen, Lagern
+und Gelenken (seit 07.10.2026).** Dieselbe Regel gilt für die Objekte, deren
+Namen in getippten Listen stehen: die Randlinien einer Fläche, die
+Randflächen eines Volumens, die Kontaktflächen und Gegenflächen, die Stab-,
+Flächen- und Volumenlisten der Stellung und „Gilt für“ der Schweißnaht. Die
+Masken zum Anlegen und Ändern, die Lagertabelle und die Sammelmaske der
+Lager, die Dialoge „Linie“, „Fläche aus Linien“ und „Volumen aus Flächen“,
+das Umbenennen im Modell und der Browser (Stab, Gelenk, Linienlager,
+Flächenlager) weisen einen neuen Namen mit Komma oder Semikolon mit einem
+Hinweis ab, etwa „Stab „S, 1“ enthält ein Komma – … bitte ohne schreiben,
+etwa „S 1““. Es entsteht nichts, und es bleibt kein leerer
+Rückgängig-Schritt. Bis zum 07.10.2026 prüfte das nichts: Ein Stab „S, 1“
+ließ sich anlegen und zerfiel danach in den Listen in „S“ und „1“, die
+Stellung schaltete ihn nicht mehr ab, und die Naht verlor ihren Stab. Ein
+Name mit Komma, der schon da ist (aus einer älteren Datei oder einem
+Import), bleibt, wie er ist: Die übrigen Eigenschaften des Objekts lassen
+sich weiter ändern, und das Umbenennen weg vom Komma geht. Ausgenommen sind
+nur die Aufrufer in Python: `add_member`, `add_line` und ihre Geschwister
+nehmen jeden Namen, damit die Importe und alte Dateien weiter gelesen
+werden; wer Namen von Hand vergibt, fragt vorher
+`Model.objektname_konflikt`. Die Namen von Lastfällen und Kombinationen
+ersetzen die Importe selbst (Kapitel Import, „Komma und Semikolon in Namen
+der Datei“).
 
 ### Kombinationstypen und Umhüllende im Klartext (seit 03.10.2026)
 
@@ -6201,6 +6243,24 @@ Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
 Schnittstellenhandbuch).
+
+**Komma und Semikolon in Namen der Datei** (seit 07.10.2026). Trägt ein
+Lastfall oder eine Kombination der Datei Komma oder Semikolon im Namen („Nutzlast,
+links“, „Wind; quer“), ersetzt der Import jedes dieser Zeichen durch ein
+Leerzeichen („Nutzlast links“, „Wind quer“) und hängt, wenn der Name damit
+schon vergeben ist, eine Zahl an („Wind quer 2“). Umbenannt wird mit jedem
+Verweis – die Faktoren der Kombinationen, ihre Alternativen, die Ermüdungslasten,
+die Stellungen und die Lasten bleiben an ihrem Lastfall –, und das
+Importprotokoll nennt jede Umbenennung mit altem und neuem Namen. Der Grund:
+In den Textfeldern, in denen man Namen tippt (die Faktoren einer Kombination,
+der Verlauf einer Ermüdungslast), trennen Komma und Semikolon die Namen, und
+ein Name mit Trenner wurde dort zerlegt; einen Namen mit Komma in solchen
+Feldern lesbar zu machen, ginge nur mit einer Regel, die im Zweifel anders
+liest als gemeint. Beim Anhängen an ein vorhandenes Modell bleiben dessen
+Namen, wie sie sind. Bis zum 07.10.2026 kamen solche Namen unverändert herein:
+Die Haken der Masken trugen sie, getippte Faktoren und der Ermüdungsverlauf
+nicht. Ein Statik3D-Modell (JSON) wird nicht umbenannt, auch nicht beim
+Anhängen: Seine Namen sind die des Anwenders.
 
 **Eine nicht übernommene Kombination von Hand anlegen.** Beide Wege, eine
 Kombination anzulegen – die Maske mit dem Feld „Faktoren (Lastfall:

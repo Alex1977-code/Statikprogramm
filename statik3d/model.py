@@ -3972,6 +3972,83 @@ class Model:
                             "in den Nachweisen verdrängte die eine die andere")
         return ""
 
+    def objektname_konflikt(self, neu: str, alt: str = "", wort: str = "Name") -> str:
+        """Warum *neu* nicht der Name eines Stabs, einer Linie, Flaeche, eines
+        Volumens, Lagers oder Gelenks sein kann - "" heisst: frei (Nachtrag
+        N12, 07.10.2026). *wort* („Stab“, „Linie“, „Fläche“, „Volumen“,
+        „Lager“, „Gelenk“) steht vorn in der Meldung.
+
+        Komma und Semikolon trennen die Namen in den getippten Listen der
+        Masken: die Randlinien einer Flaeche, die Randflaechen eines Volumens,
+        die Kontaktflaechen und Gegenflaechen, die Stab-, Flaechen- und
+        Volumenlisten der Stellung, „Gilt für“ der Naht. Ein Stab „S, 1“ liess
+        sich bis zum 07.10.2026 anlegen und zerbrach dort in „S“ und „1“ (die
+        Stellung schaltete ihn danach still nicht mehr ab, die Naht verlor
+        ihn). Dieselbe Regel gilt seit dem 06.10.2026 fuer Lastfaelle und
+        Kombinationen (:meth:`namenskonflikt`, Fehlerliste F21); sie gilt, bis
+        die Namensregel R2 Namen und Bezeichnungen trennt.
+
+        Geprueft wird nur der Trenner - ob der Name schon vergeben ist,
+        melden die Aufrufer wie bisher selbst, jeder auf seine Art. Ein
+        **vorhandener** Name mit Trenner (aus einer aelteren Datei oder einem
+        Import) bleibt, wie er ist: ``neu == alt`` ist frei, damit sich die
+        uebrigen Eigenschaften des Objekts aendern lassen. Die Anlage- und
+        Umbenennwege der Oberflaeche, des Browsers und
+        :meth:`stab_umbenennen`, :meth:`linie_umbenennen`,
+        :meth:`flaeche_umbenennen`, :meth:`koerper_umbenennen` fragen hier;
+        ``add_member``, ``add_line`` & Co. nehmen jeden Namen, damit die
+        Importe und alte Dateien weiter gelesen werden."""
+        neu, alt = str(neu or ""), str(alt or "")
+        if neu == alt:
+            return ""
+        trenner = _namenstrenner(neu)
+        if not trenner:
+            return ""
+        vorschlag = _ohne_trenner(neu)
+        return (f"{wort} „{neu}“ enthält {trenner} – Komma und Semikolon trennen die Namen in den "
+                "Listenfeldern (Stellung, Randlinien, Randflächen, Naht, Kontakt); bitte ohne schreiben"
+                + (f", etwa „{vorschlag}“" if vorschlag else ""))
+
+    def namenstrenner_ersetzen(self, ausser=()) -> list[str]:
+        """Komma und Semikolon aus den Namen von Lastfaellen und Kombinationen
+        nehmen (Nachtrag N15, 07.10.2026) - fuer Importe, deren Quelle solche
+        Namen kennt. Jedes Zeichen wird zum Leerzeichen („Wind, links“ wird
+        „Wind links“), und ist der Name damit vergeben, haengt
+        :meth:`freier_name` eine Zahl an („Wind links 2“). Umbenannt wird mit
+        :meth:`lastfall_umbenennen` und :meth:`kombination_umbenennen`, also
+        mit jedem Verweis (Faktoren, Alternativen, Ermuedungslasten,
+        Stellungen, Wind, Berichtsbilder).
+
+        Warum beim Import und nicht in den Textfeldern: die Faktoren einer
+        Kombination („LF1: 1,35, Wind: 1,5“) und der Verlauf einer
+        Ermuedungslast sind Text mit Komma als Trenner und Dezimalkomma; ein
+        Name mit Komma ist darin nicht eindeutig zu lesen, und eine Regel, die
+        es versucht, liest im Zweifel anders als gemeint. Das Umbenennen
+        beruehrt dagegen nur die Namen der Importe.
+
+        *ausser*: Namen, die bleiben, wie sie sind (was schon vor dem Import
+        im Modell stand: vorhandene Namen bleiben zulaessig).
+
+        Rueckgabe: Zeilen fuer das Importprotokoll, je Umbenennung eine; eine
+        Umbenennung, die nicht gelingt, steht als WARNUNG da, der Name bleibt."""
+        ausser = set(ausser or ())
+        zeilen: list[str] = []
+        for art, wort, sammlung, umbenennen in (
+                ("lastfall", "Lastfall", self.load_cases, self.lastfall_umbenennen),
+                ("kombination", "Kombination", self.combinations, self.kombination_umbenennen)):
+            for alt in [n for n in list(sammlung) if n not in ausser and _namenstrenner(n)]:
+                neu = self.freier_name(_ohne_trenner(alt) or "Neu", art)
+                try:
+                    mit = umbenennen(alt, neu)
+                except (NameVergeben, KeyError) as ex:
+                    zeilen.append(f"WARNUNG: {wort} „{alt}“ trägt Komma oder Semikolon im Namen und "
+                                  f"ließ sich nicht umbenennen ({ex}) - in den Listenfeldern wird er zerlegt")
+                    continue
+                zeilen.append(f"{wort} „{alt}“ heißt jetzt „{neu}“ – Komma und Semikolon trennen die "
+                              "Namen in den Listenfeldern (Faktoren, Stellung, Ermüdungsverlauf)"
+                              + (f"; mit umbenannt: {', '.join(mit)}" if mit else ""))
+        return zeilen
+
     def _nummer_inhaber(self, art: str, nr: int, ohne=None):
         """Das Objekt, dem die Nummer *nr* der Art *art* (LF, LK, EK) gehoert -
         im Feld ``nummer`` (Lastfaelle bzw. Kombinationen dieser Art) oder im
@@ -5763,6 +5840,9 @@ class Model:
             return
         if neu in self.lines:
             raise ValueError(f"Linie {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Linie")
+        if grund:
+            raise NameVergeben(grund)
         ln = self.lines.pop(alt)
         ln.name = neu
         self.lines[neu] = ln
@@ -5782,6 +5862,9 @@ class Model:
             return
         if neu in self.flaechen:
             raise ValueError(f"Fläche {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Fläche")
+        if grund:
+            raise NameVergeben(grund)
         f = self.flaechen.pop(alt)
         f.name = neu
         self.flaechen[neu] = f
@@ -5805,6 +5888,9 @@ class Model:
             return
         if neu in self.koerper:
             raise ValueError(f"Volumen {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Volumen")
+        if grund:
+            raise NameVergeben(grund)
         k = self.koerper.pop(alt)
         k.name = neu
         self.koerper[neu] = k
@@ -5841,12 +5927,17 @@ class Model:
         rueckte ausserdem ans Ende der Reihenfolge.
 
         Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
-        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        aendert, ebenso ein neuer mit Komma oder Semikolon (NameVergeben,
+        :meth:`objektname_konflikt`, Nachtrag N12 vom 07.10.2026).
+        Rueckgabe: Klartextzeilen, was mitging."""
         alt, neu = str(alt), str(neu)
         if alt == neu or alt not in self.members:
             return []
         if neu in self.members:
             raise ValueError(f"Stab {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Stab")
+        if grund:
+            raise NameVergeben(grund)
         mem = self.members[alt]
         _schluessel_tauschen(self.members, alt, neu)
         mem.name = neu

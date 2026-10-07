@@ -2430,6 +2430,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 zu_klein.append(f"{text}: ganze Zahl ab 1 erwartet, „{zl.zahl_text(wert)}“ eingetragen")
         if zu_klein:
             return self.hinweis("\n".join(zu_klein[:5]) + " - nichts übernommen")
+        if art == "lager":
+            # Komma und Semikolon im Lagernamen (Nachtrag N12): auch hier ein Hinweis
+            # vor dem Merken, nicht erst der Fehler des ersten Lagers
+            gewuenscht = str(w.get("name", "") or "").strip()
+            if gewuenscht and gewuenscht != anfang.get("name", None):
+                for n in namen:
+                    grund = self.model.objektname_konflikt(
+                        gewuenscht, (getattr(self.model.supports[int(n)], "name", "") or "").strip(), "Knotenlager")
+                    if grund:
+                        return self.hinweis(grund + " - nichts übernommen")
         self.merken(f"{self._auswahl_anzahl(art, len(namen))} bearbeitet")
         schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         for key, text, fart, _lesen, schreiben, _werte in spec:
@@ -8129,7 +8139,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return False
 
     @staticmethod
-    def _zahlenliste(text, zahl=int, anzahl=None, feld: str = "", minimum=None) -> list:
+    def _zahlenliste(text, zahl=int, anzahl=None, feld: str = "", minimum=None, bereich=None) -> list:
         """Die Zahlen einer Eingabe („1, 2 3“) - ganz oder mit Komma.
 
         Ganz: Nummernlisten (Knoten, Elemente, Teilung). Ein Eintrag, der
@@ -8140,7 +8150,13 @@ class MainWindow(QtWidgets.QMainWindow):
         F22). ``minimum``: kleinster erlaubter Eintrag (Teilung: 1) - sonst
         Eingabefehler; bis zum 06.10.2026 nahmen die Masken Flaeche und
         Volumen eine Teilung 0 oder -3 an, und der Vernetzer machte daraus
-        still 1 (F24). Mit Komma (Stab-Versatz y, z;
+        still 1 (F24). ``bereich`` = (Anzahl, Mehrzahl-Wort), etwa
+        (n, "Knoten"): jeder Eintrag muss eine vorhandene Nummer 0 bis n-1
+        sein, sonst Eingabefehler, der die Eintraege nennt. Bis zum
+        07.10.2026 liessen die Masken solche Eintraege still weg (Nachtrag
+        N13: der Stab aus „0, 99“ hatte nur das Element 0, die
+        angeschlossenen Knoten „1, 2, 9999“ eines starren Koerpers nur 1 und
+        2). Mit Komma (Stab-Versatz y, z;
         Ersatzachse; Gewichte): jede Zahl nach der Regel der Zahlenfelder, ein
         mehrdeutiger („1.000“) oder ungueltiger Eintrag wirft zl.Eingabefehler, einen
         ValueError (25.09.2026; bis dahin wurde „1.000“ still 1 und „1,0,0“ fiel
@@ -8150,7 +8166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         (Versatz, Achse, Gewichte, Stabknoten, Teilung) weisen zu viele oder
         zu wenige Eintraege mit Meldung ab - bis 25.09.2026 wurden sie still
         gekuerzt. Dann ist auch ein Eintrag, der keine ganze Zahl ist, ein
-        Fehler statt still wegzufallen („0, 1, x“ war der Stab 0-1). „ד
+        Fehler statt still wegzufallen („0, 1, x“ war der Stab 0-1). „×“
         trennt immer (Teilung „4 × 4“)."""
         if zahl is int:
             roh = str(text or "").replace("×", " ").strip()
@@ -8171,6 +8187,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 if klein is not None:
                     raise zl.Eingabefehler(
                         f"{wo}ganze Zahlen ab {minimum} erwartet, „{roh}“ enthält {klein}.")
+            if bereich is not None:
+                n_da, was = bereich
+                aus = [v for v in werte if not 0 <= v < n_da]
+                if aus:
+                    eintraege = ", ".join(f"„{v}“" for v in aus[:5]) + (" …" if len(aus) > 5 else "")
+                    raise zl.Eingabefehler(
+                        f"{wo}{eintraege} gibt es nicht - "
+                        + (f"{was} sind 0 bis {n_da - 1}." if n_da else f"es gibt noch keine {was}."))
             return werte
         return zl.zahlenliste(text, anzahl, feld)
 
@@ -8978,12 +9002,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 master = int(float(w.get("master", 0)))
             except (TypeError, ValueError):
                 master = 0
-            slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
-                      if 0 <= n < self.model.nn and n != master]
+            slaves = self._slaves_lesen(w, master)
             return {"gewichte": self._zahlenliste(
                 w.get("gewichte"), zahl=float, anzahl=len(slaves) or None,
                 feld="Gewichte (RBE3, eines je angeschlossenem Knoten)")}
         return {}
+
+    def _slaves_lesen(self, w: dict, master: int) -> list:
+        """Die angeschlossenen Knoten eines starren Koerpers aus der Maske:
+        jeder Eintrag muss ein vorhandener Knoten sein, sonst Eingabefehler,
+        der ihn nennt (Nachtrag N13, 07.10.2026; bis dahin fiel ein Knoten
+        ausserhalb still weg: „1, 2, 9999“ war 1 und 2). Der Masterknoten
+        selbst bleibt wie bisher aussen vor - er kann nicht zugleich
+        angeschlossen sein."""
+        return [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten",
+                                             bereich=(self.model.nn, "Knoten"))
+                if n != master]
 
     @staticmethod
     def _verbindung_knoten(w: dict, schluessel: str, vorgabe=0) -> int:
@@ -9010,8 +9044,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         if art == "starrkoerper":
             master = knoten("master")
-            slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
-                      if 0 <= n < m.nn and n != master]
+            slaves = self._slaves_lesen(w, master)
             if not 0 <= master < m.nn or not slaves:
                 return "Masterknoten und mindestens ein angeschlossener Knoten nötig"
         return None
@@ -9099,8 +9132,7 @@ class MainWindow(QtWidgets.QMainWindow):
             i = len(m.starrkoerper) - 1
         sk = m.starrkoerper[i]
         master = knoten("master")
-        slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
-                  if 0 <= n < m.nn and n != master]
+        slaves = self._slaves_lesen(w, master)
         sk.master, sk.slaves = master, slaves       # geprueft in _verbindung_pruefen
         sk.art = "RBE3" if str(w.get("art", "RBE2")).upper() == "RBE3" else "RBE2"
         sk.gewichte =gew if len(gew) == len(slaves) else []
@@ -10524,6 +10556,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if (getattr(obj, "name", "") or "").strip() == neu:
             obj.name = neu
             return
+        # Netz unter den Wegen, die vorher gefragt haben (Nachtrag N12): Komma und
+        # Semikolon trennen die Namen in den Listen der Stellung
+        grund = m.objektname_konflikt(neu, getattr(obj, "name", "") or "", "Lager")
+        if grund:
+            raise NameVergeben(grund)
         vorher = m.stellungsbezug()
         obj.name = neu
         self._protokollzeilen(m.stellungen_nachziehen(vorher))
@@ -10586,6 +10623,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if not 0 <= i < len(liste):
                 return self.error(f"{self.LAGER_ARTEN[art][1]} {i + 1} gibt es nicht mehr")
             obj = liste[i]
+            if "name" in geaendert:
+                grund = m.objektname_konflikt(str(w.get("name", "") or "").strip(),
+                                              (getattr(obj, "name", "") or "").strip(),
+                                              self.LAGER_ARTEN[art][1])                    # N12
+                if grund:
+                    return self.hinweis(grund)
             self.merken(f"{self.LAGER_ARTEN[art][1]} {i + 1} beschriftet", beschriftung=True)
             if "name" in geaendert:
                 self._lager_benennen(obj, w.get("name", ""))
@@ -10647,6 +10690,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 if len(knoten) < 2 or any(not 0 <= n < m.nn for n in knoten):
                     return self.hinweis("Eine Linie braucht mindestens zwei vorhandene Knoten")
                 neuname = (w.get("name") or name).strip()
+                # Komma und Semikolon trennen die Namen in den getippten Listen
+                # (Nachtrag N12, 07.10.2026): vor dem Merken, kein leerer Schritt
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Linie")
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(f"Linie {neuname}")
                 if neu:
                     m.add_line(neuname, knoten)
@@ -10708,11 +10756,26 @@ class MainWindow(QtWidgets.QMainWindow):
                               "der Stab rechnet ohne Wölbkrafttorsion")
                 m.stab_woelb_setzen(int(name), woelb)
             elif art == "stab":
-                els = self._zahlenliste(w.get("elemente"), feld="Elemente")
-                els = [e for e in els if 0 <= e < len(m.elements) and m.elements[e].typ in vp.TYPEN_STAEBE]
+                # jeder Eintrag muss ein vorhandenes Stabelement sein: bis zum
+                # 07.10.2026 fiel ein anderer still weg (Nachtrag N13: „0, 99“
+                # war der Stab aus dem Element 0)
+                els = self._zahlenliste(w.get("elemente"), feld="Elemente",
+                                        bereich=(len(m.elements), "Elemente"))
+                kein_stab = [e for e in els if m.elements[e].typ not in vp.TYPEN_STAEBE]
+                if kein_stab:
+                    nr = ", ".join(f"„{e}“" for e in kein_stab[:5]) + (" …" if len(kein_stab) > 5 else "")
+                    raise zl.Eingabefehler(
+                        f"Elemente: {nr} " + ("ist kein Stabelement" if len(kein_stab) == 1
+                                              else "sind keine Stabelemente")
+                        + " - einen Stab bilden nur Stabelemente.")
                 if not els:
                     return self.hinweis("Elemente (Nummern von Stabelementen) angeben")
                 neuname = (w.get("name") or name).strip()
+                # Komma und Semikolon trennen die Namen in den getippten Listen
+                # (Nachtrag N12, 07.10.2026)
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Stab")
+                if grund:
+                    return self.hinweis(grund)
                 # ein Stabelement gehoert zu hoechstens einem Stab: sonst weist
                 # EC3 es zweimal nach (C14 S2, 03.10.2026)
                 fremd = {s: v for s, v in m.staebe_der_elemente(els).items() if neu or s != name}
@@ -10770,6 +10833,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                             minimum=1) or [4, 4]
                 teilung = teilung * 2 if len(teilung) == 1 else teilung
                 neuname = (w.get("name") or name).strip()
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Fläche")      # N12
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(f"Fläche {neuname}")
                 typ = FLAECHENARTEN.get(str(w.get("typ", "") or ""), "")
                 if neu:
@@ -10805,6 +10871,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 kerbfall = (zl.feldwert(w.get("kerbfall"), 0.0) or 0.0) * 1e6
                 kerbfall_naht = (zl.feldwert(w.get("kerbfall_naht"), 0.0) or 0.0) * 1e6
                 neuname = (w.get("name") or name).strip()
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Volumen")     # N12
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(f"Volumen {neuname}")
                 if neu:
                     m.add_koerper(neuname, flaechen, material=w.get("material", ""), teilung=teilung,
@@ -11066,6 +11135,9 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..model import MemberHinge
             if (neu or neuname != name) and neuname in m.hinges:
                 return self.hinweis(f"Gelenk „{neuname}“ gibt es schon")
+            grund = m.objektname_konflikt(neuname, "" if neu else name, "Gelenk")           # N12
+            if grund:
+                return self.hinweis(grund)
             rueck = {v: k for k, v in self.GELENKART.items()}
             typen = [rueck.get(str(w.get(f"typ{d}", "biegesteif")), "fixed") for d in range(6)]
             federn = [float(zahl(f"k{d}", 0.0)) * 1e3 for d in range(6)]
@@ -11207,6 +11279,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if not 0 <= i < len(liste):
                 return self.error(f"{titel_art} {i + 1} gibt es nicht mehr")
             obj = liste[i]
+            # Komma und Semikolon trennen die Namen in den Listen (N12), vor dem Merken
+            grund = m.objektname_konflikt(str(neuname if neuname != name else w.get("name", "") or "").strip(),
+                                          (getattr(obj, "name", "") or "").strip(), titel_art)
+            if grund:
+                return self.hinweis(grund)
             rueck_typ = {v: k for k, v in self.LAGERWIRKUNG.items()}
             rueck_aus = {v: k for k, v in self.LAGERAUSFALL.items()}
             neu_beh = {}
@@ -12294,6 +12371,9 @@ class MainWindow(QtWidgets.QMainWindow):
         d = dg.LinienDialog(self, vorlage, self.model.nn)
         if d.exec():
             w = d.werte()
+            grund = self.model.objektname_konflikt(w["name"], "", "Linie")                 # N12
+            if grund:
+                return self.hinweis(grund)
             if len(w["nodes"]) < 2:
                 return self.error("Eine Linie braucht mindestens zwei Knoten.")
             self.merken(f"Linie {w['name']}")
@@ -12311,6 +12391,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         w = d.werte()
+        grund = self.model.objektname_konflikt(w["name"], name, "Linie")                   # N12
+        if grund:
+            return self.hinweis(grund)
         if len(w["nodes"]) < 2:
             return self.error("Eine Linie braucht mindestens zwei Knoten.")
         self.merken(f"Linie {name}")
@@ -12683,6 +12766,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         w = d.werte()
+        grund = self.model.objektname_konflikt(w["name"], "", "Fläche")                    # N12
+        if grund:
+            return self.hinweis(grund)
         try:
             self.merken(f"Fläche {w['name']}")
             f = self.model.add_flaeche(w["name"], w["linien"], dicke=w["dicke"],
@@ -12721,6 +12807,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         w = d.werte()
+        grund = self.model.objektname_konflikt(w["name"], "", "Volumen")                   # N12
+        if grund:
+            return self.hinweis(grund)
         try:
             self.merken(f"Volumen {w['name']}")
             k = self.model.add_koerper(w["name"], w["flaechen"],
@@ -14837,6 +14926,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Symbolgroesse ist Darstellung; der Name nur, solange keine Stellung
         # Lager beim Namen waehlt (24.09.2026)
         behalten = k == 6 or not self._lagernamen_rechnen()
+        if k == 2:
+            grund = self.model.objektname_konflikt(str(wert or "").strip(),
+                                                   (getattr(obj, "name", "") or "").strip(), liste[i][0])
+            if grund:                                                                   # N12
+                self.hinweis(grund)
+                return False
         self.merken("Lager bearbeitet")
         if k == 2:
             self._lager_benennen(obj, wert)

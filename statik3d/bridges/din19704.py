@@ -211,9 +211,23 @@ class Regelwerk:
         neue Kombination bekommt die naechste freie Nummer einer
         Lastkombination (Model.naechste_nummer), eine ersetzte behaelt ihre.
 
+        Das Präfix steht vorn in jedem erzeugten Namen und muss darum ein
+        zulässiger Namensanfang sein: ohne Komma und Semikolon (sie trennen die
+        Namen in den Listenfeldern, Model.namenskonflikt) und ohne Leerzeichen
+        am Anfang. Sonst wirft die Funktion NameVergeben, bevor sich etwas
+        ändert (Nachtrag N16, 07.10.2026). Bis dahin lief ``anlegen`` bei
+        „DIN, “ endlos: ein angehängter Zähler macht den Trenner nicht weg,
+        und jeder Name blieb abgewiesen. Die Oberfläche übergibt nie ein
+        Präfix, nur Python-Aufrufer.
+
         Rückgabe: Namen der angelegten Kombinationen.
         """
-        from ..model import Combination
+        from ..model import Combination, NameVergeben
+        grund = model.objektname_konflikt(praefix, "", "Präfix")
+        if not grund and praefix != praefix.lstrip():
+            grund = f"Präfix „{praefix}“ beginnt mit einem Leerzeichen - bitte ohne"
+        if grund:
+            raise NameVergeben(f"{grund} (mit dem Präfix hießen alle erzeugten Kombinationen so)")
         klassen = list(klassen or ("LF1", "LF2", "LF3"))
         nach_art: dict[str, list[str]] = {}
         for name, lc in model.load_cases.items():
@@ -224,6 +238,10 @@ class Regelwerk:
         def anlegen(nm: str, faktoren: dict, beschreibung: str) -> str:
             ziel, k = nm, 2
             while True:
+                if k > 100000:
+                    # Sicherung gegen eine Endlosschleife (N16): so viele Namen
+                    # sind nie vergeben, hier stimmt etwas mit dem Namen nicht
+                    raise NameVergeben(f"Für „{nm}“ findet sich kein freier Name")
                 da = model.combinations.get(ziel)
                 if ziel not in belegt_jetzt and (
                         (da is not None and da.unberuehrt(GENERATOR))
