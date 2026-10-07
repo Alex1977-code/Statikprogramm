@@ -371,15 +371,24 @@ def _stellungen_summary(st: State) -> dict:
                                     "nachgewiesen": bool(e.nachgewiesen),
                                     "fuehrt": bool(fuehrend is not None
                                                    and e is fuehrend and not e.fehler)}
+    m = st.model
     out = {
         "liste": [{"name": s.name, "winkel": float(s.winkel),
                    "beschreibung": s.beschreibung,
                    "lager_aktiv": list(s.lager_aktiv), "lager_aus": list(s.lager_aus),
+                   # je Lagerart eine eigene Liste, wie in der Maske des Desktops
+                   # (Nachtrag N19, 07.10.2026)
+                   "linienlager_aus": list(s.linienlager_aus),
+                   "flaechenlager_aus": list(s.flaechenlager_aus),
                    "faelle": list(s.faelle), "dreh_winkel": float(s.dreh_winkel),
                    "gruppen": list(s.dreh_gruppen),
                    "antrieb": bool(s.antrieb),
                    "ergebnis": erg.get(s.name)} for s in liste],
         "gerechnet": umh is not None,
+        # die Namen der Lager je Art, so wie Modellbaum, Maske und Stellung sie
+        # nennen (Model.lagerschluessel): das Formular zeigt sie als Hilfe
+        "lager_schluessel": {art: m.lagerschluessel(art, getattr(m, liste_))
+                             for art, (liste_, _w) in m.STELLUNG_LAGERARTEN.items()},
     }
     if umh is not None:
         out.update({"eta": float(umh.eta), "u_max": float(umh.u_max),
@@ -1492,6 +1501,14 @@ def _stellungen(st) -> list:
     return st.stellungen
 
 
+def _namensliste(d: dict, key: str) -> list:
+    """Eine Namensliste aus dem Formular: Text mit Kommas (oder schon eine Liste)."""
+    wert = d.get(key) or ""
+    if isinstance(wert, (list, tuple)):
+        return [str(x).strip() for x in wert if str(x).strip()]
+    return [x.strip() for x in str(wert).split(",") if x.strip()]
+
+
 @op("stellung")
 def _op_stellung(st, m, d):
     """Stellung anlegen oder aendern."""
@@ -1511,13 +1528,17 @@ def _op_stellung(st, m, d):
         name=name,
         winkel=_f(d, "winkel", 0.0),
         beschreibung=(d.get("beschreibung") or "").strip(),
-        lager_aktiv=[x.strip() for x in (d.get("lager_aktiv") or "").split(",") if x.strip()],
-        lager_aus=[x.strip() for x in (d.get("lager_aus") or "").split(",") if x.strip()],
-        faelle=[x.strip() for x in (d.get("faelle") or "").split(",") if x.strip()],
+        lager_aktiv=_namensliste(d, "lager_aktiv"),
+        lager_aus=_namensliste(d, "lager_aus"),
+        # jede Lagerart liest nur ihre Liste (Stellung._lager); bis zum
+        # 07.10.2026 hatte der Browser nur „Lager aus“ (N19)
+        linienlager_aus=_namensliste(d, "linienlager_aus"),
+        flaechenlager_aus=_namensliste(d, "flaechenlager_aus"),
+        faelle=_namensliste(d, "faelle"),
         dreh_achse=(_f(d, "achse_x", 0.0), _f(d, "achse_y", 1.0), _f(d, "achse_z", 0.0)),
         dreh_punkt=(_f(d, "punkt_x", 0.0), _f(d, "punkt_y", 0.0), _f(d, "punkt_z", 0.0)),
         dreh_winkel=_f(d, "dreh_winkel", 0.0),
-        dreh_gruppen=[x.strip() for x in (d.get("gruppen") or "").split(",") if x.strip()],
+        dreh_gruppen=_namensliste(d, "gruppen"),
         antrieb=antrieb)
     if vorhanden is not None:
         liste[liste.index(vorhanden)] = neu

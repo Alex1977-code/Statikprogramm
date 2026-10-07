@@ -10721,7 +10721,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self.hinweis(f"E{v[0]} gehört schon zu Stab {s} – ein Stabelement gehört zu höchstens "
                                       "einem Stab (sonst wird es doppelt nachgewiesen); erst dort herausnehmen "
                                       "oder „Stäbe zusammenfassen“")
-                if neu and neuname in m.members:
+                # Der Name wird **vor** dem Merken geprueft, beim Anlegen wie beim
+                # Umbenennen (N20, 07.10.2026): bis dahin merkte die Funktion
+                # den Schritt und liess Model.stab_umbenennen den vorhandenen
+                # Namen abweisen (ValueError, rotes Fenster). Den leeren Schritt
+                # nahm nur der Rahmen des „Uebernehmen“ einer Maske wieder weg.
+                if neuname in m.members and (neu or neuname != name):
                     return self.hinweis(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
                 self.merken(f"Stab {neuname}")
                 if neu:
@@ -11988,7 +11993,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if grund:
             if art not in SELBST and self._undo and self._undo[-1][0] == f"{was} gelöscht":
                 self._merken_zuruecknehmen()
-            return grund if sammel else self.error(grund)
+            # Ein Sperrgrund sagt, was der Anwender zuerst tun soll („erst diese
+            # loeschen oder aendern“): ein Bedienhinweis nach der 9b-Regel, kein
+            # Fehler (N21, 07.10.2026). Bis dahin oeffnete das rote Fenster
+            # „Fehler“ - beim Loeschen eines benutzten Knotens, Stabs, Querschnitts.
+            return grund if sammel else self.hinweis(grund)
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
@@ -18520,6 +18529,7 @@ class MainWindow(QtWidgets.QMainWindow):
         schritt("Modellbaum aufbauen …")
         self._refresh_baum()
         self._layer_combo_fuellen()
+        self._layerliste_nachziehen()
         schritt("Ansicht aufbauen …")
         self.redraw()
         if gross:
@@ -27661,13 +27671,25 @@ class MainWindow(QtWidgets.QMainWindow):
         Fenster und Modellbaum nachziehen, neu zeichnen."""
         self._layer_version = getattr(self, "_layer_version", 0) + 1
         self._layer_combo_fuellen()
-        f = getattr(self, "_layer_fenster", None)
-        if f is not None and _lebt(f):
-            f.fuellen()
+        self._layerliste_nachziehen()
         self._refresh_baum()
         if text:
             self.info(text)
         self.redraw()
+
+    def _layerliste_nachziehen(self) -> None:
+        """Die Tabelle der Layerliste (falls es sie gibt) aus dem Modell neu lesen.
+
+        Sie hing bis zum 07.10.2026 nur an ``_layer_geaendert``, also an den
+        Befehlen der Layerliste selbst. Rueckgaengig, Wiederholen, Neu, Oeffnen
+        und Beispiel tauschen das ganze Modell und gehen alle ueber refresh_all:
+        nach „Layer anlegen“ und Rueckgaengig stand der Layer weiter in der
+        Tabelle, obwohl das Modell keinen mehr hatte (Nachtrag N10). Ein Fenster,
+        das es noch nicht gibt, wird nicht angelegt - ``layerliste_zeigen``
+        liest die Tabelle ohnehin beim Oeffnen."""
+        f = getattr(self, "_layer_fenster", None)
+        if f is not None and _lebt(f) and getattr(self, "model", None) is not None:
+            f.fuellen()
 
     def _layer_combo_fuellen(self) -> None:
         cb = getattr(self, "cb_layer", None)

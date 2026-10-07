@@ -585,6 +585,9 @@ class QuerschnittMaske(QtWidgets.QFrame):
         self.geschlossen.emit()
 
     def keyPressEvent(self, ev):
+        # Wie Maske.keyPressEvent (Kopf von masken.py): im Programmfenster kommt
+        # Esc hier nie an, es ist dort das Kuerzel „Alles deselektieren“; der
+        # Zweig gilt nur ohne Hauptfenster (N35, 07.10.2026)
         if ev.key() == QtCore.Qt.Key_Escape:
             return self.schliessen()
         super().keyPressEvent(ev)

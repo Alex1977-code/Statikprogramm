@@ -2700,7 +2700,13 @@ mehreren Layern liegen; die Layer werden mit dem Modell gespeichert.
   zurück). Beim Umbenennen in der Tabelle gehören die Tasten dem Feld. Bis zum
   06.10.2026 nahm Strg+Z im Layerfenster den letzten **Modell**schritt zurück
   (gemessen: ein Knoten weniger), und Esc hob die Auswahl im Modell auf, statt das
-  Fenster zu schließen.
+  Fenster zu schließen. Die Tabelle zeigt immer den Stand des Modells: auch
+  nach *Rückgängig* oder *Wiederholen* im Hauptfenster, nach *Neu* und nach
+  *Öffnen* (oder einem Beispiel) liest sie die Layer neu. Bis zum 07.10.2026 tat
+  sie das nur nach den Befehlen der Layerliste selbst: Nach *Neu aus Auswahl*
+  und *Rückgängig* im Hauptfenster stand der Layer „Deckel“ weiter in der
+  Tabelle, obwohl das Modell keinen Layer mehr hatte, und nach *Neu* oder
+  *Öffnen* zeigte sie die Layer des vorigen Modells (`tests/test_nachtrag_q10.py`).
 * **Ausgeblendet** ist ein Objekt, sobald *einer* seiner Layer ausgeblendet
   ist. Die Layer wirken neben *Auswahl ausblenden* und *Selektion anzeigen*;
   *Alles zeigen* und *Vorherige Sicht* betreffen nur das von Hand
@@ -3688,6 +3694,15 @@ Kerbfall, Wind, Verformungsnachweis und Lasteinleitung. Im Browser nahm das
 Löschen eines Stabs nicht einmal seine Linienlasten mit, und die Ergebnisse
 der Rechnung blieben stehen (`tests/test_fehler_p5.py`).
 
+Wer einen Stab auf einen Namen umbenennt, den es schon gibt, bekommt den
+Hinweis „Stab S1 gibt es schon - einen anderen Namen wählen“; geprüft wird vor
+dem ersten Schreiben, es entsteht also kein Rückgängig-Schritt, und die Namen
+bleiben, wie sie waren. Bis zum 07.10.2026 legte die Funktion den Schritt an und
+wies den Namen erst danach ab, als rotes Fenster „Fehler“. In der Maske nahm der
+Rahmen des Übernehmens den Schritt wieder weg; wer die Funktion selbst rief,
+behielt einen leeren Schritt (gemessen: Schritte 0 → 1, Modell unverändert;
+`tests/test_nachtrag_q10.py`).
+
 **Was beim Stab mit Nachweis zu beachten ist** (seit 03.10.2026). Liegt
 zwischen den beiden Knoten schon ein Stabelement ohne Stab oder eine Kette
 solcher Elemente über Zwischenknoten, die die Strecke lückenlos und in einer
@@ -3765,7 +3780,20 @@ die Höhe nicht, rollt nur diese Mitte (Mausrad oder Rollbalken). Unten steht
 ein fester Fuß mit den Knöpfen der Maske: dem Hauptknopf („Übernehmen“,
 „Anlegen“, „Last aufbringen“ …), bei einem neuen Objekt „Abbrechen“ und, wo es
 sie gibt, „Löschen“ oder „Auswahl übernehmen“. Der Fuß rollt nie mit weg, der
-Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
+Hauptknopf bleibt immer zu sehen. Die weiteren Knöpfe einer Maske („Auswahl
+übernehmen“, „Kennwerte“, die Klickmodi der Wasserdruckmaske …) stehen darunter
+und **brechen um**, wenn die Breite nicht reicht: Jeder Knopf bekommt mindestens
+die Breite, die sein Text braucht, die Knöpfe folgen einander, und was in der
+Zeile nicht mehr Platz hat, beginnt die nächste; der Rest einer Zeile wird auf
+ihre Knöpfe verteilt. Die Wasserdruckmaske zeigt so ihre sechs Knöpfe in drei
+Zeilen, der Fuß ist dafür zwei Zeilen höher und die rollbare Mitte entsprechend
+niedriger. Gemessen mit Segoe UI bei 1920 × 1000 und bei 1366 × 740, jeweils in
+der 460 px breiten Maske: kein Text ist abgeschnitten, und kein Knopf liegt auf
+einem anderen oder auf dem Hauptknopf. Bis zum 07.10.2026 standen alle
+Zusatzknöpfe in einer Zeile ohne Umbruch und teilten sich die Breite: Bei der
+Wasserdruckmaske bekam jeder der sechs Knöpfe 68 px, gebraucht wurden 91 bis
+159 px, und jeder Text war vorn und hinten abgeschnitten
+(`tests/test_nachtrag_q10.py`). Kurze Masken stehen oben im rechten Bereich,
 ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
 Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
 mehr über den Bildschirm hinaus wachsen, auch nicht im maximierten Fenster.
@@ -3799,7 +3827,11 @@ nichts wird übernommen. Steht der Fokus auf einem anderen Knopf, etwa
 „Abbrechen“, drückt die Eingabetaste diesen Knopf. **Esc** schließt im
 Programmfenster keine Maske: Ist ein Feld gerade orange (die Maus füllt es),
 beendet das erste Esc nur diese Auswahl per Maus; jedes weitere Esc hebt wie
-überall die Auswahl in der Ansicht auf („Alles deselektieren“).
+überall die Auswahl in der Ansicht auf („Alles deselektieren“). Der Tastendruck
+kommt an der Maske gar nicht an, auch ein an sie geschicktes Esc nicht; nur eine
+Maske ohne Hauptfenster, wie in den Prüfungen, schließt sich bei Esc selbst
+(`tests/test_nachtrag_q10.py`). Bis zum 07.10.2026 sagte der Kopfkommentar von
+`masken.py` noch „Esc schließt“; das galt nie für das Programmfenster.
 
 Der **Hinweis** zu einem Feld erscheint, wenn man mit der Maus auf dem Feld
 verweilt, nicht nur auf seiner Beschriftung; bei einem Haken steht er am Haken
@@ -4012,6 +4044,15 @@ und die Hinweise des Rechtsklicks standen nur kurz in der Statuszeile. Befehle, 
 passende Auswahl gar keine Maske öffnen (etwa *Lot* ohne gewählte Knoten),
 und Meldungen nach einem schon geschlossenen Dialog kommen vorerst weiter im
 Fenster; sie folgen in einem späteren Schritt.
+
+Auch der **Sperrgrund beim Löschen im Modellbaum** ist ein Hinweis: „Knoten 1
+wird benutzt von 2 Elemente - erst diese löschen oder ändern“, „Stab S2 wird
+benutzt von Verformungsnachweis VG1 - …“, ebenso ein benutzter Querschnitt, eine
+benutzte Stellung oder Situation. Er steht gelb in der Statuszeile und im
+Protokoll, das Objekt bleibt, und es entsteht kein Rückgängig-Schritt. Bis zum
+07.10.2026 öffnete jeder dieser Gründe das rote Fenster „Fehler“, das man
+wegklicken musste. Löscht man mehrere Einträge auf einmal, stehen die Gründe wie
+bisher in der Zusammenfassung („2 von 3 Einträgen gelöscht - …“).
 
 ### Zahlen eingeben (seit 24.09.2026)
 
@@ -5621,8 +5662,10 @@ Knopf „Schlupf, Reibung …“ unten in der Lagermaske, sein Hinweis nennt all
 drei (ebenso Register Lager / Kontakt → **Nichtlinearität…** für die gewählten
 Knoten; auf dem Handy Modell → Nichtlineare Lager). Bis zum 06.10.2026 hieß der
 Knopf „Schlupf, Reibung, Grenzkraft …“ und war abgeschnitten: Die drei Knöpfe
-im Fuß der Maske stehen nebeneinander, und er bekam im 460 px breiten rechten
-Bereich 160 statt der nötigen 211 px. Die Einstellungen im Einzelnen:
+im Fuß der Maske standen nebeneinander, und er bekam im 460 px breiten rechten
+Bereich 160 statt der nötigen 211 px. Seit dem 07.10.2026 bricht die Zeile der
+Zusatzknöpfe um (siehe *Aufbau jeder Maske*); der kürzere Name bleibt. Die
+Einstellungen im Einzelnen:
 
 | Einstellung | Bedeutung |
 |---|---|
@@ -10651,7 +10694,14 @@ Kapitel 12). Das Register **⟳ Stellungen** führt den ganzen Ablauf:
    ausfallen, welche Lastfälle gelten, um welchen Winkel welche Gruppe gedreht
    wird und an welchem Knoten das Antriebsmoment angreift. Ein zweites Anlegen
    unter demselben Namen **ändert** die Stellung, statt sie zu verdoppeln; die
-   Liste bleibt nach Winkel sortiert.
+   Liste bleibt nach Winkel sortiert. Wie in der Maske des Desktops hat jede
+   Lagerart ihre eigene Liste: **Knotenlager aus**, **Linienlager aus** und
+   **Flächenlager aus**, mit den Namen wie im Modellbaum („Lager 2“, „Rand“,
+   „Flächenlager 1“); unter den Feldern stehen die Namen der vorhandenen Lager
+   als Hilfe, die Karte und die Tabelle der Stellungen nennen alle drei Listen
+   unter „Lager aus“. Bis zum 07.10.2026 gab es im Browser nur ein Feld „Lager
+   aus“, und seit die Arten getrennt lesen (06.10.2026) ließ sich im Browser
+   kein Linien- und kein Flächenlager mehr abschalten (`tests/test_web.py`).
 2. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln und bildet die
    Umhüllende. Jede Karte zeigt danach ihr η, die maßgebende Stellung ist
    hervorgehoben, und die Kurve **η über den Stellungswinkel** steht darunter.
