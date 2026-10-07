@@ -939,5 +939,5 @@ wahre Fehler, Felder im Ansatzraum auf Rundungsniveau. Die h-adaptive Regel ist 
 ungeschachtelt macht (O21). Entscheidung des Anwenders am 06.10.2026: Phase 1 so abschließen, O21 vor Phase 2 beheben, die Regel danach erneut prüfen.
 
 ### 4f.2 Offen aus Phase 1
-O21 Verschachtelung bei lokaler Teilung unter Zellaggregation (als Nächstes); O22 Schätzer vektorisieren (am Kragarm 143 % der Zeit für Aufbau und Lösen); O23 Flächenlasten je Lastfall
+O21 Verschachtelung bei lokaler Teilung unter Zellaggregation (behoben am 07.10.2026: ganze Aggregate teilen, `schaetzer.aggregate_ergaenzen`; der Fehler fällt danach an Lamé und Kirsch in jedem Zyklus, Theorie 11.22, Nachtrag; adaptiv schlägt das feinste Vergleichsglied weiterhin nicht); O22 Schätzer vektorisieren (am Kragarm 143 % der Zeit für Aufbau und Lösen); O23 Flächenlasten je Lastfall
 über die Schnittstelle (`zusatzlasten`) fehlen dem Schätzer; der Schätzer ist noch nicht über den Vertrag erreichbar. Danach Phase 2 (variable Modenzahl, Ansatz B) und Phase 3 (hp-Treiber).

@@ -12421,3 +12421,25 @@ fertige Lastvektoren übergibt (`zusatzlasten`), kennt der Schätzer noch nicht 
 **Prüfungen.** `test_schaetzer` (14 Prüfungen): Hesse-Matrizen der Basis gegen den Differenzenquotienten der Gradienten und gegen die geschlossenen 1D-Formen; Aufzeichnung der Lasten;
 Flächenpaare gegen eine unabhängige Zählung über die Zellboxen (384 Paare über zwei Ebenen); Werkstoffanteil der Flächen exakt im Werkstoff und auf erste Ordnung gegen das exakt
 geclippte Polygon; Felder im Ansatzraum; Lamé p 2 auf h 20 und h 10 (θ 4,50 und 4,34); Dörfler; Teilung einer markierten Zelle. Bis auf Lamé laufen sie in der Kernsuite (390 Prüfungen). Alle Paketsuiten sind mit und ohne den Schätzer grün; der Vergleich Zahl für Zahl findet nur Zeiten und Rundungsunterschiede, die genauso zwischen zwei Läufen desselben Stands auftreten (MKL mit mehreren Threads streut in den letzten Stellen), also keine geänderte Rechnung.
+
+**Nachtrag (O21, 07.10.2026): ganze Aggregate teilen.** Werden markierte Zellen um ihr ganzes Aggregat ergänzt (die Wurzel und alle Zellen mit derselben Wurzel,
+`schaetzer.aggregate_ergaenzen`), fällt der wahre Fehler in jedem Zyklus. Gemessen mit Dörfler 0,5 aus einem festen Arbeitsbaum:
+
+| Zyklus | Lamé: freie FHG | Lamé: ‖e‖_E | Kirsch: freie FHG | Kirsch: ‖e‖_E |
+|---|---|---|---|---|
+| 0 | 765 | 2,049 | 7 713 | 4,886 |
+| 1 | 1 701 | 0,994 | 7 821 | 2,549 |
+| 2 | 2 229 | 0,715 | 8 319 | 1,126 |
+| 3 | 5 397 | 0,534 | 8 961 | 0,669 |
+| 4 | 9 399 | 0,293 | 10 149 | 0,477 |
+| 5 | 15 345 | 0,204 | 12 879 | 0,293 |
+| 6 | 31 485 | 0,179 | 15 837 | 0,224 |
+| Vergleichsglied | 28 215 (gleichmäßig h 5) | 0,1215 | 10 677 (Ziel 5 am Loch) | 0,4363 |
+
+Ohne die Ergänzung stieg der Fehler an Lamé in drei Zyklen auf 3,116 (siehe oben). Die Ursache ist eingegrenzt, aber nicht bis ins Letzte gemessen: die Aggregation wählt nie eine
+feinere Wurzel, wird eine Wurzel allein geteilt, binden sich die an ihr hängenden Zellen an andere Nachbarn (im ersten Lamé-Schritt drei Zellen), und die Zunahme zeigt sich vor allem
+in wohlgestellten Nachbarzellen. Bindet man stattdessen schlecht gestellte Kinder bevorzugt an Geschwister derselben Elternzelle, bleibt der Fehleranstieg. Die Regel, adaptiv das feinste
+Vergleichsglied mit weniger Freiheitsgraden zu erreichen, bleibt verfehlt: an Lamé liegen adaptives und gleichmäßiges Gitter bei gleicher Größe etwa gleich (der Fehler ist über den ganzen
+Querschnitt verteilt), an Kirsch erreicht die adaptive Folge bei gleicher Größe etwa das von Hand am Loch verfeinerte Gitter (auf 10 677 Freiheitsgrade interpoliert etwa 0,43 gegen 0,436),
+mit 10 149 Freiheitsgraden 0,477. Die Aggregation selbst ist unverändert, Rechnungen ohne adaptive Teilung bleiben gleich; `test_schaetzer.test_teilen_ohne_fehlerzunahme` prüft den
+ersten Lamé-Schritt mit Ergänzung (2,049 → 0,994) und ohne (2,049 → 2,184).

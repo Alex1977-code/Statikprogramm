@@ -214,11 +214,35 @@ Raum mit allen Zwängen) und den Rest je Zelle messen. Bei geschachtelten Räume
 K1 (ganze Aggregate teilen), wenn der Rest an Zellen mit gewechselter Wurzel sitzt, K2 (schlecht gestellte Kinder bevorzugt an Geschwister in derselben Elternzelle binden), wenn er an
 geteilten Zellen mit Wurzel außerhalb der Elternzelle sitzt. K2 ändert die Wurzelwahl in allen verfeinerten Gittern und damit Zahlen in mehreren Suiten.
 
+
+**Kurversuch und Teil B (07.10.2026).** Auf die Ansage des Anwenders („allerletzte Chance, los“) wurden die Kuren direkt am Ziel geprüft statt weiter die Ursache: sechs
+Dörfler-Zyklen an Lamé h 20 p 2, der wahre Fehler muss in jedem fallen (`o21_kurprobe.py`). K1 (ganze Aggregate) erfüllt das, K2 (Kinder an Geschwister) allein nicht (der Fehler steigt
+wie ohne Kur: 2,049 / 2,184 / 2,888 / 3,117, dann 1,196 / 1,351 / 0,610), K1 und K2 zusammen sind nicht besser als K1 (0,177 gegen 0,179 nach sechs Zyklen). Gebaut ist K1
+(`schaetzer.aggregate_ergaenzen`, 1221915); die Aggregation selbst ist unverändert, kein Modul außer den Prüfungen ruft den neuen Weg auf, die Kernsuite läuft mit 391/391. Messung aus dem
+festen Arbeitsbaum 1221915 (`o21_messung.py`, 8 Threads), zwei unabhängige Auswertungen mit gleichen Urteilen:
+
+| Zyklus | Lamé: freie FHG | Lamé: ‖e‖_E | Kirsch: freie FHG | Kirsch: ‖e‖_E |
+|---|---|---|---|---|
+| 0 | 765 | 2,049 | 7 713 | 4,886 |
+| 1 | 1 701 | 0,994 | 7 821 | 2,549 |
+| 2 | 2 229 | 0,715 | 8 319 | 1,126 |
+| 3 | 5 397 | 0,534 | 8 961 | 0,669 |
+| 4 | 9 399 | 0,293 | 10 149 | 0,477 |
+| 5 | 15 345 | 0,204 | 12 879 | 0,293 |
+| 6 | 31 485 | 0,179 | 15 837 | 0,224 |
+| Vergleichsglied | 28 215 (gleichmäßig h 5) | 0,1215 | 10 677 (Ziel 5 am Loch) | 0,4363 |
+
+**B1 (Fehler fällt in jedem der sechs Zyklen): erfüllt** an Lamé und Kirsch. **B2 (Regel 5 erneut): verfehlt** an beiden. Lamé: der beste Zustand unter 28 215 Freiheitsgraden ist
+Zyklus 5 mit 15 345 und 0,204, das gleichmäßige Gitter h 5 erreicht 0,1215; adaptiv und gleichmäßig liegen bei gleicher Größe etwa gleich (gleichmäßig zwischen h 10 und h 5 auf 15 345
+Freiheitsgrade interpoliert etwa 0,20). Kirsch: Zyklus 4 mit 10 149 Freiheitsgraden und 0,477 gegen das von Hand am Loch verfeinerte Glied mit 10 677 und 0,436; auf 10 677 interpoliert
+liegt die adaptive Folge bei etwa 0,43. Die Adaptivität findet also selbst, was die Verfeinerung von Hand am Loch leistet, schlägt sie aber nicht, und am Lamé-Zylinder, dessen Fehler über
+den ganzen Querschnitt verteilt ist, schlägt sie das gleichmäßige Gitter nicht. Ob Regel 5 so stehen bleibt, entscheidet der Anwender.
+
 ## Modell je Schritt
 
 | Schritt | Modell | Denkstufe | Stand |
 |---|---|---|---|
 | Aufgabe 1: Mechanismus messen | Opus 5.5 | hoch | gemessen: nicht belegt (19 % statt 80 %), Entscheidung beim Anwender |
-| Aufgabe 2: Kur K1 mit Prüfungen | Opus 5.5 | hoch | offen |
-| Aufgabe 3: Messung B1, B2 | Opus 5.5 | hoch | offen |
-| Aufgabe 4: Dokumentation | Sonnet 5.5 | niedrig | offen |
+| Aufgabe 2: Kur K1 mit Prüfungen | Opus 5.5 | hoch | fertig (1221915), Kern 391 |
+| Aufgabe 3: Messung B1, B2 | Opus 5.5 | hoch | B1 erfüllt, B2 verfehlt |
+| Aufgabe 4: Dokumentation | Sonnet 5.5 | niedrig | fertig |

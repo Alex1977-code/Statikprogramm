@@ -56,7 +56,7 @@ Zweig `feature/volumen3d` (Worktree `Desktop/Statik3D/statik3d-volumen3d`, eigen
 | 1 (Teilprojekte 1 und 2) | Gitter, Integration, Nitsche, Oktree, hängende Freiheitsgrade, STL | auf `main` seit 28.09.2026 (Pull Request 8, Merge c54af91) |
 | 2a und 2b (Teilprojekte 3 und 4) | matrixfreier Operator, PCG, p-Mehrgitter (CPU und GPU), Löserwahl | auf `main` seit 29.09.2026 (Pull Request 10, Merge 7a6c922) |
 | 2c (Teilprojekt 5, Plan TP 5) | Leistung des Mehrgitters (A1 bis A6), Moment Fitting, Spannungsrückgewinnung, Hot-Spot, adaptive Zyklen, STEP, Hüllenintegration, Schale, Abnahme am Knotenblech | auf `main` seit 03. und 04.10.2026 (Pull Requests 19, 21, 22 und 24, zuletzt Merge e7e7877) |
-| Teilprojekt 6a, Phase 1 | residuenbasierter Fehlerschätzer je Zelle, Dörfler-Markierung, lokale Teilung (Theorie 11.22); h-adaptive Regel verfehlt wegen der Zellaggregation (O21, wird vor Phase 2 behoben) | auf `feature/volumen3d` seit 06.10.2026, nicht gemergt; an der Schnittstelle ändert sich nichts |
+| Teilprojekt 6a, Phase 1 | residuenbasierter Fehlerschätzer je Zelle, Dörfler-Markierung, lokale Teilung (Theorie 11.22); Fehler fällt bei adaptiver Teilung in jedem Zyklus, seit ganze Aggregate geteilt werden (O21); das feinste Vergleichsglied mit weniger Freiheitsgraden erreicht die Adaptivität nicht | auf `feature/volumen3d` seit 06.10.2026, nicht gemergt; an der Schnittstelle ändert sich nichts |
 
 ### Bausteine
 
@@ -156,7 +156,7 @@ Entscheidung beim Anwender, Plan O7) sowie zwei noch nicht geschriebene Vorschl�
 
 ### Offen (Session B)
 
-Aus Teilprojekt 6a, Phase 1 (Plan `2026-10-06-tp6a-phase1-schaetzer.md`, Entwurf 4f.2): O21, lokale Teilung unter Zellaggregation ist nicht geschachtelt (der Fehler kann beim Verfeinern steigen; wird vor Phase 2 behoben), O22, den Schätzer vektorisieren, und O23, Flächenlasten je Lastfall über die Schnittstelle fehlen dem Schätzer.
+Aus Teilprojekt 6a, Phase 1 (Plan `2026-10-06-tp6a-phase1-schaetzer.md`, Entwurf 4f.2): O21, lokale Teilung unter Zellaggregation (behoben am 07.10.2026: ganze Aggregate werden geteilt, der Fehler fällt in jedem Zyklus), O22, den Schätzer vektorisieren, und O23, Flächenlasten je Lastfall über die Schnittstelle fehlen dem Schätzer.
 
 Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“, und in Entwurf 4e.8: die Messung von Nahtziel t/8 (Größe gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar) und 0,5 t / 1,5 t (O3), der Boden von einigen 10⁻⁸ in der Spannung bei p 3 und p 4 (O17: gemessen, er kommt aus dem Vorwärtsfehler der Lösung mal der Größe der Fortsetzung in aggregierte Zellen, nicht aus der Zwangsmatrix; vom Anwender ohne Änderung geschlossen), die Tetraederordnung ohne Moment Fitting (O18), Ebenen durch gekrümmte
 Hüllen (O6), der Vertragsvorschlag 2.2.0 (O7), Abbruch in `prepare` und `summary()` nach Zyklen (O8, O9), Torsion in der Kopplungskontrolle (O10), Zeiten je Zyklus (O11), mehrere Kinder derselben
