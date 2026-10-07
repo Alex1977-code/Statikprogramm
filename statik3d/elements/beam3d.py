@@ -45,13 +45,22 @@ def transform_matrix(T3: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
+def schubparameter(E, G, Iy, Iz, L, Asy=0.0, Asz=0.0) -> tuple:
+    """Schubparameter (phi_y, phi_z) = 12 E I / (G A_s L^2) der beiden
+    Biegeebenen: phi_y fuer x-z (Iy, Asz), phi_z fuer x-y (Iz, Asy); 0 ohne
+    Schubflaeche (Bernoulli). Steifigkeit und Ersatzknotenlasten
+    (assemble.trapezoid_fixed_end_forces) nehmen ihn von hier."""
+    phy = 12.0 * E * Iy / (G * Asz * L ** 2) if Asz > 0 else 0.0   # Biegung x-z
+    phz = 12.0 * E * Iz / (G * Asy * L ** 2) if Asy > 0 else 0.0   # Biegung x-y
+    return phy, phz
+
+
 def k_local_beam(E, G, A, Iy, Iz, It, L, Asy=0.0, Asz=0.0) -> np.ndarray:
     """Lokale Steifigkeitsmatrix 12x12."""
     k = np.zeros((12, 12))
 
     # Schubparameter
-    phy = 12.0 * E * Iy / (G * Asz * L ** 2) if Asz > 0 else 0.0   # Biegung x-z
-    phz = 12.0 * E * Iz / (G * Asy * L ** 2) if Asy > 0 else 0.0   # Biegung x-y
+    phy, phz = schubparameter(E, G, Iy, Iz, L, Asy, Asz)
 
     # Normalkraft
     ea = E * A / L
@@ -174,7 +183,12 @@ def k_local_truss(E, A, L) -> np.ndarray:
 
 def fixed_end_forces(q_local, L, Asy=0.0, Asz=0.0) -> np.ndarray:
     """Volleinspannschnittgroessen fuer Gleichstreckenlast im lokalen System.
-    Rueckgabe: Vektor der aequivalenten Knotenlasten (= -Volleinspannkraefte)."""
+    Rueckgabe: Vektor der aequivalenten Knotenlasten (= -Volleinspannkraefte).
+
+    Gilt mit und ohne Schubverformung: fuer eine Gleichlast ueber das ganze
+    Element haengen qL/2 und qL^2/12 nicht vom Schubparameter ab (der
+    Schubanteil der Ansaetze ist punktsymmetrisch zur Stabmitte, siehe
+    assemble.trapezoid_fixed_end_forces). Asy, Asz bleiben darum ungenutzt."""
     qx, qy, qz = q_local
     f = np.zeros(12)
     # axial

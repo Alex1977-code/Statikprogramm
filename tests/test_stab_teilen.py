@@ -16,11 +16,14 @@ Jeder Fall teilt E1 eines 8-m-Balkens bei x = 4 m und vergleicht danach
 Verschiebungen, Auflagerkraefte und Schnittgroessen an den alten Orten mit
 dem Stand vor dem Teilen (1e-9 relativ). Der Querstab, der die Teilung
 ausloest, haengt danach unbelastet als Kragarm am Balken und aendert dort
-nichts. Der Querschnitt hat fuer diese Vergleiche keine Schubflaechen: die
-Ersatzknotenlasten einer Trapez- oder Teillast folgen den Bernoulli-
-Ansatzfunktionen, mit Schubverformung aendert schon ein zusaetzlicher Knoten
-die Rechnung (gemessen bis 3e-3, auch bei richtiger Teilung). Die Summe der
-Auflagerkraefte bleibt auch dann; das prueft der Fall mit HEB 200 samt
+nichts. Die meisten Faelle rechnen ohne Schubflaechen; test_mit_schubflaechen
+wiederholt die Lastfaelle mit dem HEB 200 samt Schubflaechen. Bis zum
+07.10.2026 folgten die Ersatzknotenlasten einer Trapez- oder Teillast dort den
+Bernoulli-Ansatzfunktionen, die Steifigkeit aber der Schubverformung, und
+schon ein zusaetzlicher Knoten aenderte die Rechnung (N01 nennt bis 3e-3; die
+Faelle dieser Suite mit Schubflaechen am 07.10.2026 bis 2,0e-3 in u; Nachtrag
+N01, tests/test_nachtrag_q3.py). Die Summe der
+Auflagerkraefte blieb auch dann; das prueft der Fall mit HEB 200 samt
 Schubflaechen.
 
 Aufruf:  python -m tests.test_stab_teilen
@@ -318,6 +321,24 @@ def test_neues_element_gegenlaeufig():
           + f" Gelenk neu {m1.elements[neu].hinges}")
 
 
+def test_mit_schubflaechen():
+    """Dieselben Lasten mit Schubflaechen (HEB 200, Nachtrag N01): seit dem
+    07.10.2026 sind die Ersatzknotenlasten die des Stabes mit Schubverformung,
+    das Teilen aendert dann auch hier nichts (vorher bis 2e-3)."""
+    _vergleich("mit Schubflächen: Trapez-Elementlast über ganz E1", schub=True,
+               lasten=[dict(qz=-1e3, q2=[0, -2e3, -5e3])])
+    _vergleich("mit Schubflächen: Trapez-Teillast über die Teilstelle", schub=True,
+               lasten=[dict(qz=-2e3, q2=[0, 0, -6e3], a=0.5, b=3.5)])
+    _vergleich("mit Schubflächen: Einzellast nahe der Teilstelle (1,995 m)", schub=True,
+               lasten=[dict(qz=-8e3 / 2e-3, a=1.994, b=1.996)])
+    # am alten Stand die groesste Abweichung der Faelle dieser Suite: u 2,0e-3
+    _vergleich("mit Schubflächen: Einzellast in der Mitte des neuen Teils (3 m)", schub=True,
+               lasten=[dict(qz=-8e3 / 2e-3, a=2.999, b=3.001)])
+    _vergleich("mit Schubflächen: lokale Trapez-Teillast, gedreht, mit Gelenk", schub=True,
+               roll=np.radians(15.0), gelenk=(1, {"phiy": 5e6, "phiz": "free"}), linienlast=True,
+               lasten=[dict(qz=-1e3), dict(qy=-2e3, q2=[0, -1e3, 0], a=1.0, b=3.5, system="local")])
+
+
 def test_summe_auflager_mit_schub():
     """Der gemeldete Fall: HEB 200 mit Schubflaechen, Linienlast 10 kN/m auf
     S1 und 1 kN/m direkt auf E1: Summe der Auflagerkraefte z 84000 N."""
@@ -409,7 +430,7 @@ def main():
     for t in (test_gelenk_am_ende, test_gelenk_am_anfang, test_federgelenk, test_gedrehtes_element,
               test_gegenlaeufiges_element, test_gleichmaessige_elementlast, test_trapez_elementlast,
               test_einzellast, test_elementlast_lokal, test_neues_element_gegenlaeufig,
-              test_summe_auflager_mit_schub, test_rueckgaengig, test_handbuch):
+              test_mit_schubflaechen, test_summe_auflager_mit_schub, test_rueckgaengig, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

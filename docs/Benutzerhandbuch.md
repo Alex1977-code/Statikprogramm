@@ -3745,7 +3745,13 @@ Eine Last, die direkt auf dem Element liegt (Gleich-, Trapez- oder kurze
 Teillast, also auch eine Einzellast), wird an der Teilstelle geschnitten und
 liegt danach anteilig auf beiden Teilen; eine Last im lokalen System behält
 ihre Richtung. Verschiebungen, Auflagerkräfte und Schnittgrößen bleiben damit
-an jeder Stelle, wie sie vor dem Teilen waren. Bis zum 06.10.2026 wanderte ein
+an jeder Stelle, wie sie vor dem Teilen waren. Seit dem 07.10.2026 gilt das
+auch für Stäbe mit Schubflächen, also mit Schubverformung: Trapez-, Teil- und
+Einzellasten rechnen dort mit denselben Ansätzen wie die Steifigkeit des
+Stabes. Bis zum 07.10.2026 nahmen ihre Ersatzknotenlasten den schubstarren
+Stab an, und schon die Teilung änderte die Verschiebungen um bis zu 2·10⁻³
+(HEB 200, 8 m, kurze Last in der Mitte des neuen Teils); die Summe der
+Auflagerkräfte blieb gleich. Bis zum 06.10.2026 wanderte ein
 Gelenk am Ende des Elements an die Teilstelle (vom Ende bei x = 6 m nach
 x = 4 m), und eine Elementlast wirkte nur noch auf dem verkürzten alten Teil
 (Summe der Auflagerkräfte 82 statt 84 kN). Zusammenfassen, Teilen und *Stab* um
