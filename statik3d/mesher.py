@@ -1810,6 +1810,16 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
         t0 = time.time()
         supports.lager_auf_netz(model, log)
         zeiten["Lager auf das Netz"] = time.time() - t0
+        # Seitenmitten an Kontakt- und Lagerseiten binden und auf die Sehne
+        # setzen (Q1, 08.10.2026) - im Netz, das die Ansicht zeigt
+        t0 = time.time()
+        from . import assemble as _asm
+        try:
+            _asm.mittelknoten_auf_sehne(model, log)
+        except fugen.QuadratischeSeiten as ex:
+            # Das Netz bleibt; die Rechnung bricht an derselben Stelle laut ab
+            C.warn(log, f"Seitenmitten: {ex}")
+        zeiten["Seitenmitten binden"] = time.time() - t0
     finally:
         for f in flaechen:
             if eigene_teilung.get(f.name):

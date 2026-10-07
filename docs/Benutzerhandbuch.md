@@ -1570,13 +1570,18 @@ Zahl im Protokoll; reicht auch die gröbste Stufe nicht, bleibt deren Netz,
 und das Programm warnt. Entwurf und Mittel werden nie selbsttätig gröber. Bis
 zum 07.10.2026 vernetzte Fein ohne Grenze.
 
-**Kontakt: Mittel und Fein noch gesperrt.** Kontakt, Fugen und Flächenlager
-nehmen von einer Elementseite heute nur die Eckknoten; an quadratischen
-Elementen bräche die Rechnung ab (Abschnitt „Quadratische Elemente an Fugen …“
-unten). Damit Kontakt und Plastizität in jeder wählbaren Stufe rechnen, sind
-**Mittel und Fein an einem Modell mit Kontaktbedingung, Kontaktpaar oder
-Flächenlager sichtbar, aber gesperrt**, mit dem Hinweis „mit Kontakt noch nicht
-verfügbar – Kontakt für quadratische Elemente folgt“ am Eintrag. Die Maske
+**Kontakt: was Mittel und Fein noch sperrt.** Seit dem 08.10.2026 rechnen
+Kontaktbedingungen, Kontaktpaare und Flächenlager an Volumen auch mit tet10,
+hex20 und pent15: eine Fuge trennt Ecken und Seitenmitten, und die Seitenmitten
+jeder Kontakt- und Lagerseite sind an ihre Ecken gebunden (Abschnitte „Quadratische
+Elemente an Fugen …“ und „Fugen trennen auch die Seitenmitten“ unten); solche
+Modelle lassen sich mit Mittel und Fein vernetzen. Gesperrt bleiben
+Kontaktbedingungen, Kontaktpaare und Flächenlager an **Schalen** (eine Fläche mit
+Dicke; der Grund steht dann mit „(an Schalen)“ in der Maske). Bis zum 08.10.2026
+sperrte jede Kontaktbedingung, jedes Kontaktpaar und jedes Flächenlager. An einem
+gesperrten Modell sind **Mittel und Fein sichtbar, aber gesperrt**, mit dem
+Hinweis „mit Kontakt noch nicht verfügbar – Kontakt für quadratische Elemente
+folgt“ am Eintrag. Die Maske
 steht dann auf Entwurf und sagt in der Zeile *Kontakt*, woran es liegt
 („Kontaktbedingung Fuge …“). Eine verschweißte Bedingung an gemeinsamer
 Fläche (starr in allen Richtungen) und eine abgeschaltete sperren nicht. Steht
@@ -1586,11 +1591,12 @@ schreibt es ins Protokoll („Elemente: Entwurf statt Mittel – Mittel ist mit
 Kontakt noch nicht verfügbar – … (Kontaktbedingung Fuge). Vernetzt wird mit
 tet4/hex8; die Stufe steht jetzt auf Entwurf.“); still herabgestuft wird
 nicht, abgebrochen auch nicht. Dasselbe gilt für *Adaptiv vernetzen* und die
-Befehlszeile. Kommt der Kontakt für quadratische Seiten, fällt die Sperre an
-einer Stelle weg (`elementstufe.quadratisch_gesperrt`). Geprüft
+Befehlszeile. Die Sperre hängt an einer Stelle
+(`elementstufe.quadratisch_gesperrt`). Geprüft
 (`tests/test_elementstufe.py`): zwei Würfel mit Kontaktfuge rechnen in jeder
-wählbaren Stufe, die Kontaktfuge trägt den Druck (Auflager = Last); ohne die
-Sperre bräche das Vernetzen mit Mittel ab.
+wählbaren Stufe, seit dem 08.10.2026 Mittel und Fein mit tet10 bzw. hex20, die
+Kontaktfuge trägt den Druck (Auflager = Last); bis dahin wurde dieses Modell mit
+Entwurf vernetzt. Gesperrt wird eine Schale auf einem Flächenlager.
 
 **Plastizität** rechnet mit tet4, tet10, hex8, hex20, pent6, pent15 und pyr5
 – also in jeder Stufe; ihr Haken bleibt, wie er ist. Geprüft am Würfel
@@ -1715,23 +1721,50 @@ fehlte die Zeile noch bei *Nur aktiver Lastfall* und bei der Kommandozeile mit
 Lastfälle. Seither steht sie auch in der Zusammenfassung jedes einzelnen
 Ergebnisses.
 
-**Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
-Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
-Eckknoten. Die Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8
-werden dabei übergangen. Beim Trennen einer Fuge blieben sie beiden Körpern
-gemeinsam, bei einem Flächenlager ungelagert, und das Ergebnis wäre still falsch.
+**Quadratische Elemente an Fugen, Kontakten und Flächenlagern.** Kontakt, Fugen
+und Flächenlager nehmen von einer Elementseite nur die Eckknoten. Die
+Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8 wurden dabei
+übergangen: beim Trennen einer Fuge blieben sie beiden Körpern gemeinsam, bei
+einem Flächenlager ungelagert, und das Ergebnis wäre still falsch gewesen.
 Gemessen an zwei Würfeln mit 0,5 m Netz: Eine Fuge ohne Zugfestigkeit trug 53 %
 des Zuges (bei eigenen Fugenflächen 37 %), ein starres Flächenlager ließ 41 % mehr
-Setzung zu als festgehaltene Bodenknoten. Mit linearen Elementen stimmt beides
-exakt. Deshalb bricht das Programm ab, sobald eine Kontaktbedingung, ein
-Kontaktpaar oder ein Flächenlager an einem quadratischen Element liegt. Die
-Meldung nennt Bedingung, Elementtyp und Elementnummern. Seit den
-Elementstufen (25.09.2026) kommt es dazu über die Oberfläche nicht mehr: an
-einem Modell mit Kontakt sind Mittel und Fein gesperrt, und es wird mit
-Entwurf vernetzt, mit Hinweis in Maske und Protokoll (Abschnitt
-„Elementstufe: Entwurf, Mittel, Fein“). Erlaubt bleibt eine verschweißte Fuge
-(starr in allen Richtungen, passende Netze), denn sie trennt nichts. Der
-Kontakt über quadratische Seiten ist in Arbeit.
+Setzung zu als festgehaltene Bodenknoten. Bis zum 08.10.2026 brach das Programm
+darum ab, sobald eine Kontaktbedingung, ein Kontaktpaar oder ein Flächenlager an
+einem quadratischen Element lag.
+
+Seit dem 08.10.2026 sind die Seitenmitten jeder **Kontakt- und Lagerseite** eines
+tet10, hex20 oder pent15 exakt an die beiden Ecken ihrer Kante gebunden: die
+Mitte bewegt sich genau mit dem Mittel ihrer Ecken. Eine Kontakt- oder
+Lagerseite ist jede Randseite eines Volumenelements, deren Ecken alle
+Kontaktknoten sind, also Knoten eines Kontaktpaars (Slave-Knoten und die
+Master-Seiten in Reichweite), eines Spaltelements, einer Fugenkopplung oder
+eines Flächenlagers. Die Seite ist damit so eben wie bei Entwurf, und Kontakt,
+Reibung, Fugen und Flächenlager rechnen auf den Ecken wie mit tet4 und hex8; das
+Innere der Körper bleibt quadratisch. Seitenmitten neben der Kantenmitte (an
+gekrümmten Flächen setzt der Vernetzer sie auf die Geometrie) werden auf die
+Kantenmitte gesetzt; das Protokoll des Vernetzens sagt, wie viele Mitten
+gebunden und wie viele versetzt wurden und wie weit höchstens („Seitenmitten:
+… gebunden …, … davon auf die Kantenmitte gesetzt, höchstens … mm daneben“).
+Die Kontaktfläche ist dort also so facettiert wie bei Entwurf; eine
+Pressungsspitze löst Mittel an der Kontaktfläche nicht feiner auf als Entwurf
+bei gleicher Kantenlänge, Spannungen im Bauteil darunter haben die Genauigkeit
+von tet10 bzw. hex20. Geprüft mit der Prüfmatrix (Fuge unter Druck, Presspassung,
+Reibung, ungleiche Netze, Fuge und Presspassung mit Fließen in Mittel und Fein
+auf 0,00 N/mm² genau; ohne die Bindung +290 bis +1 044 N/mm² daneben) und an den
+Würfeln oben: das starre Flächenlager hält an tet10 wie festgehaltene
+Bodenknoten, ein Kontaktpaar an tet10 gibt die Setzung des Stabes exakt.
+
+Laut abgebrochen wird weiterhin, wenn eine Seite nicht gebunden werden kann:
+an **quadratischen Schalen** (shell6, shell8) an Kontakt oder Flächenlager, wenn
+eine Seitenmitte selbst ein Lager, eine Feder, eine Kopplung oder einen
+Starrkörper trägt (ein starres Lager an Mitte und beiden Ecken ist erlaubt),
+und wenn Seitenmitten über eine getrennte Fuge beiden Körpern gemeinsam
+geblieben sind (seit dem Trennen der Seitenmitten, nächster Absatz, geschieht
+das nicht mehr). Über die Oberfläche wird ein Modell mit Schalen an Kontakt oder
+Flächenlager mit Entwurf vernetzt, mit Hinweis in Maske und Protokoll (Abschnitt
+„Elementstufe: Entwurf, Mittel, Fein“). Die Meldung nennt Bedingung, Elementtyp
+und Elementnummern. Eine verschweißte Fuge (starr in allen Richtungen, passende
+Netze) trennt nichts und bindet nichts.
 
 **Fugen trennen auch die Seitenmitten** (Paket Q2, 08.10.2026). Bis zum 07.10.2026
 verdoppelte das Ausführen einer Kontaktfuge nur die Eckknoten der Fugenseite. An
@@ -1749,11 +1782,13 @@ an denselben Würfeln trägt die Fuge unter Zug jetzt 0 kN (tet10 mit passenden 
 und mit eigenen Flächen, hex20), und danach gehört kein Knoten mehr zwei Bauteilen;
 am pent15 sind es die drei Ecken und die drei Seitenmitten des gemeinsamen Dreiecks.
 Spaltelemente, Kopplungen und das Kontaktpaar bleiben an den Eckknoten. Jede Seite
-hat nun ihre eigenen Mitten an ihren eigenen Ecken, damit der Kontakt für
-quadratische Seiten sie an diese Ecken binden kann (in Arbeit). Bis dahin bleibt
-die Sperre bestehen, und die Rechnung an einer Fuge mit tet10 bricht weiter ab: Die
-Trennung allein trägt noch keinen Druck, denn die freien Mitten der Seite liefen
-sonst durch die Gegenseite. Die Fuge an tet4 und hex8 ist unverändert (Netz,
+hat nun ihre eigenen Mitten an ihren eigenen Ecken, und die Bindung der
+Kontaktseiten (Abschnitt davor) hängt sie dort an. Erst beides zusammen rechnet
+richtig: die Trennung allein trägt keinen Druck, denn die freien Mitten der Seite
+liefen sonst durch die Gegenseite (gemessen an der Prüfmatrix: Fuge unter Druck
+ohne Bindung +290 N/mm² und 44 % zu viel Setzung, mit Bindung 0,00 N/mm²). Seit dem
+08.10.2026 ist die Sperre für Fugen an tet10, hex20 und pent15 darum gefallen.
+Die Fuge an tet4 und hex8 ist unverändert (Netz,
 Fugenobjekte und Ergebnisse stimmen Bit für Bit mit dem Stand davor überein).
 Geprüft in `tests/test_fugen.py` (tet10 mit passenden Netzen, eigenen Flächen und
 angeschweißter Rippe, hex20, pent15).
@@ -1767,10 +1802,10 @@ der Netzeinstellungen, die Eingabe in der Oberfläche folgt. Fertig sind die Tei
 dahinter: `elementwahl.vorschlag` schlägt je Körper tet10 vor, wo ein Nachweis geführt
 wird und ein Vorlauf Biegung oder einen großen Fehler zeigt (eine gesetzte Ordnung
 gewinnt; Theoriehandbuch § 6b-2), und ein gemischtes Netz aus tet4- und tet10-Körpern
-rechnet, die Seitenmitten an der Grenze bindet das Programm selbst. **Vorsicht an
-Kontaktfugen:** Ein Körper mit Ordnung 2 an einer Kontaktfuge oder einem nichtlinearen
-Flächenlager wird von der tet10-Sperre angehalten (`fugen.quadratische_seiten_sperren`),
-bis der Kontakt für tet10 fertig ist; das Protokoll sagt es laut.
+rechnet, die Seitenmitten an der Grenze bindet das Programm selbst. An Kontaktpaaren
+und Flächenlagern bindet es seit dem 08.10.2026 auch die Seitenmitten der Kontakt- und
+Lagerseiten, und eine Fuge trennt auch die Seitenmitten; bis dahin hielt die
+tet10-Sperre einen solchen Körper an einer Kontaktfuge oder einem Flächenlager an.
 
 **Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
 Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,

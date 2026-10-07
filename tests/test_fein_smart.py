@@ -64,7 +64,10 @@ H_PLATTE = 0.05
 HASH_F3FE832 = {
     ("platte", "mittel"): "445a614bc6c0d902",
     ("platte", "entwurf"): "fe75528e0bf6d404",
-    ("bloecke", "mittel"): "832867fa2368b9b8",
+    # Seit Q2 (08.10.2026) trennt die Fuge auch die Seitenmitten: das Mittel-Netz
+    # des Kontaktmodells hat mehr Knoten (36 673, gemessen auf cc4dc5c); Q1 setzt
+    # dort keine Mitte um (gleicher Hash mit Q1). Am Stand f3fe832: 832867fa2368b9b8
+    ("bloecke", "mittel"): "b4c798f62895464e",
     ("bloecke", "entwurf"): "9bacd6a952210984",
 }
 

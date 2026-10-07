@@ -869,8 +869,10 @@ class ContactSystem:
         # Fuge auch gibt.
         self._paarnamen = {str(cp.name or "") for cp in m.contact_pairs}
         if m.contact_pairs:
-            # Slave-Knoten und Master-Facetten kennen nur Ecken; an quadratischen
-            # Elementen blieben die Seitenmitten ohne Kontakt (fugen.QuadratischeSeiten).
+            # Slave-Knoten und Master-Facetten kennen nur Ecken. An tet10, hex20
+            # und pent15 sind die Seitenmitten der Kontaktseiten gebunden (Q1);
+            # die Sperre faengt, was dann noch falsch waere - quadratische
+            # Schalen, ungebundene Seitenmitten (fugen.QuadratischeSeiten).
             from .fugen import quadratische_knoten, quadratische_seiten_sperren
             q = quadratische_knoten(m)
             for cp in (m.contact_pairs if q else []):
@@ -1109,10 +1111,13 @@ class ContactSystem:
 
     def _slave_facetten(self, cp):
         """Randflaechen der Slave-Koerper, deren Ecken alle Slave-Knoten sind -
-        die Traeger der Slave-Formfunktionen fuer die Mortar-Gewichte. None,
-        wenn ein beteiligter Koerper nicht linear ist (tet4, hex8, pent6,
-        pyr5): Kontakt an quadratischen Elementen ist gesperrt, und ihre
-        Seitenmitten kennt mortar.py nicht."""
+        die Traeger der Slave-Formfunktionen fuer die Mortar-Gewichte, als
+        Eckseiten (SOLID_FACES). An tet10, hex20 und pent15 sind das dieselben
+        Eckseiten: ihre Seitenmitten sind an Kontaktseiten an die Ecken
+        gebunden (assemble.mittelknoten_bindungen, Q1 08.10.2026), die Seite ist
+        also linear wie bei tet4/hex8/pent6. None, wenn ein beteiligter Koerper
+        einen anderen Typ hat. Bis zum 08.10.2026 auch an quadratischen Typen
+        (Kontakt war dort gesperrt)."""
         from .assemble import SOLID_FACES
         S = {int(x) for x in cp.slave_nodes}
         ke = self._knoten_elemente()
@@ -1122,7 +1127,7 @@ class ContactSystem:
         zaehl, form, innen = {}, {}, {}
         for ei in kand:
             e = self.model.elements[ei]
-            if e.typ not in ("tet4", "hex8", "pent6", "pyr5"):
+            if e.typ not in ("tet4", "hex8", "pent6", "pyr5", "tet10", "hex20", "pent15"):
                 return None
             cen = self.model.nodes[e.nodes].mean(axis=0)
             for f in SOLID_FACES[e.typ]:
@@ -1230,6 +1235,13 @@ class ContactSystem:
         if not facets:
             self.log.append(f"Kontaktpaar '{cp.name}': keine Master-Facetten")
             return
+        # Gebundene Seitenmitten (Kontaktseiten an tet10/hex20/pent15, Q1) sind
+        # keine Kontaktknoten: sie folgen ihren Ecken und tragen keine eigenen
+        # FHG. Ein Import kann sie unter den Slave-Knoten fuehren.
+        from .assemble import mittelknoten_bindungen
+        gebunden = {mm for mm, _a, _b in mittelknoten_bindungen(m)}
+        slaves = [s for s in cp.slave_nodes if int(s) not in gebunden] if gebunden \
+            else list(cp.slave_nodes)
         from .assemble import SHELL_TYPES
         cen_of = _solid_outward(m, cp)
         # Schalen haben kein Innen: ihre Facetten werden zum Slave-Knoten hin
@@ -1301,7 +1313,7 @@ class ContactSystem:
         neben: list = []
         erste = len(self.cons)          # ab hier gehoeren die Bedingungen zu cp
         normalen: list = []
-        for s in cp.slave_nodes:
+        for s in slaves:
             p = m.nodes[s]
             fund = _deckender_knoten(p, s, mbaum, mknoten, knorm, tol_deck)
             if fund is not None:
@@ -1384,8 +1396,10 @@ class ContactSystem:
             for c in self.cons[erste:]:
                 c.g0 -= ueber
         self.log.append(
-            f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
+            f"Kontaktpaar '{cp.name}': {n_paired} von {len(slaves)} "
             f"Slave-Knoten zugeordnet, davon {deckend} deckungsgleich"
+            + (f" ({len(cp.slave_nodes) - len(slaves)} gebundene Seitenmitten folgen ihren Ecken)"
+               if len(slaves) < len(cp.slave_nodes) else "")
             + (f"; Spalt {verteilungstext(spalte, band)}, bis {band * 1e3:.2g} mm als "
                "Berührung gesetzt" if spalte else "")
             + (f" - {len(ohne)} ohne Master-Facette im Suchradius "

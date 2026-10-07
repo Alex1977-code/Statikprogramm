@@ -679,6 +679,10 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
             raise ValueError(f"Model.ndof = {vorher}, nachgezaehlt {soll}: die Zusatz-FHG "
                              "der Tetraeder mit Ordnung p haben sich geaendert, ohne dass "
                              "model._tetp_version erhoeht wurde")
+    # Gebundene Seitenmitten vor dem ersten Aufstellen auf die Sehne (Q1); ein
+    # zweiter Aufruf aendert nichts mehr. Bricht laut ab, wenn eine Kontaktseite
+    # nicht gebunden werden kann (mittelknoten_bindungen).
+    mittelknoten_auf_sehne(model)
     K = _assemble_triplets(model, _matrix_chunk, workers, aktive_indizes(model, aktiv))
     if getattr(model, "knotendilatation", False):
         Kv = knotendilatation(model, aktiv)
@@ -700,55 +704,79 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
 
 
 def mittelknoten_bindungen(model: Model) -> list:
-    """[(Mittelknoten, Ecke a, Ecke b)] der Seitenmitten quadratischer
-    Volumenelemente, deren Seite ein **lineares** Volumenelement mit denselben
-    Ecken teilt - der Uebergang tet4/tet10 (hex8/hex20, pent6/pent15) an einer
-    verbundenen Grenze (Auftrag B5 an die Element-Sitzung, 22.09.2026).
+    """[(Mittelknoten, Ecke a, Ecke b)] gebundener Seitenmitten quadratischer
+    Volumenelemente (tet10, hex20, pent15): u_m = (u_a + u_b)/2. Zwei Quellen:
 
+    **B5, Uebergang linear/quadratisch** (Auftrag an die Element-Sitzung,
+    22.09.2026): die Seite teilt ein **lineares** Volumenelement mit denselben
+    Ecken - tet4/tet10, hex8/hex20, pent6/pent15 an einer verbundenen Grenze.
     Das lineare Element kennt dort keinen Mittelknoten. Laeuft die
     Verschiebung des quadratischen Elements an der Seite frei, klafft die
     Grenze, und das lineare Feld ist kein Gleichgewicht mehr (gemessen
     22.09.2026: Patch-Test um 2,5e-1 daneben, tests/test_elemente_volumen.py,
-    t_uebergang_linear_quadratisch). Gebunden wird u_m = (u_a + u_b)/2 -
-    **exakt**, nicht im Strafverfahren (mit der Strafe 1e4 lag der
-    Patch-Test bei 6e-6): der Dehnungsoperator der quadratischen Elemente
+    t_uebergang_linear_quadratisch).
+
+    **Kontaktseiten** (Paket Q1, 08.10.2026, Bauplan PLAN-KONTAKT-QUADRATISCH):
+    jede Randseite, deren Ecken alle Kontaktknoten sind (:func:`kontaktknoten`
+    - Slave- und nahe Master-Facettenknoten der Kontaktpaare, Knoten der
+    Spaltelemente und der Fugenkopplungen, Knoten der Flaechenlager).
+    Kontakt, Mortar, Reibung, Fugen und Flaechenlager rechnen auf den Ecken;
+    mit freien Seitenmitten waere das falsch, denn unter gleichmaessiger
+    Pressung gehoert die konsistente Kraft einer tri6-Seite ganz den Mitten
+    und an den Ecken einer quad8-Seite ist sie negativ. Gebunden ist die Seite
+    genau die lineare Seite, fuer die Kontakt und Lager den Patch-Test
+    bestehen (Pruefmatrix K3-K6, KP2: vorher gesperrt, ohne Bindung gemessen
+    +314 bis +1044 N/mm2 daneben). Das Innere bleibt quadratisch. Getrennte
+    Fugen muessen dazu auch die Mitten trennen; jede Seite bindet dann ihre
+    Mitten an ihre eigenen Ecken. Eine Mitte, die zwei verschiedenen
+    Eckpaaren zugeordnet wuerde (gemeinsam ueber eine getrennte Fuge), oder
+    die selbst ein Lager, eine Feder, eine Kopplung oder einen Starrkoerper
+    traegt, bricht laut ab (fugen.mittenbindung_sperren), statt still falsch
+    zu rechnen. Schalter fuer die Ruecknahmeprobe: KONTAKTSEITEN_BINDEN.
+
+    Gebunden wird **exakt**, nicht im Strafverfahren (mit der Strafe 1e4 lag
+    der Patch-Test bei 6e-6): der Dehnungsoperator der quadratischen Elemente
     schlaegt den Gradienten von m je zur Haelfte auf a und b
     (solid._binde_mittelknoten), Lasten und Massen an m gehen ebenso auf a
     und b (load_vector, mass), und die Verschiebung von m wird nach dem Loesen
-    aus a und b eingetragen (mittelknoten_nachfuehren).
-
-    Rein topologisch (unabhaengig von einer Situation): die Bindung haengt
-    nur daran, dass die Seite geteilt ist. An einer **Kontaktfuge** wird
-    nichts gebunden - dort haben beide Seiten eigene Knoten (fugen.py), die
-    Ecken stimmen nicht ueberein.
+    aus a und b eingetragen (mittelknoten_nachfuehren). Die gebundenen Mitten
+    stehen vor dem ersten Aufstellen auf der Sehne (mittelknoten_auf_sehne).
     """
     import itertools
+    from . import parallel as _par
+    if _par._WORKER_MODEL is model and getattr(model, "_mittelknoten_arbeiter", None) is not None:
+        return model._mittelknoten_arbeiter      # im Arbeitsprozess: die des Hauptprozesses
     typen = {e.typ for e in model.elements}
-    if not (typen & set(SOLID_TYPES)) or not any(EL.ist_quadratisch(t) for t in typen & set(SOLID_TYPES)) \
-            or all(EL.ist_quadratisch(t) for t in typen & set(SOLID_TYPES)):
+    vol = typen & set(SOLID_TYPES)
+    if not any(EL.ist_quadratisch(t) for t in vol):
         return []
-    kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
-    schluessel = (len(model.elements), model.nn, hash(kn.tobytes()),
-                  hash(tuple(e.typ for e in model.elements)))
+    gemischt = not all(EL.ist_quadratisch(t) for t in vol)
+    kontakt = bool(KONTAKTSEITEN_BINDEN) and _hat_kontaktseiten(model)
+    if not gemischt and not kontakt:
+        return []
+    schluessel = netz_schluessel(model) + (_kontaktsignatur(model) if kontakt else None,)
     alt = getattr(model, "_mittelknoten", None)
     if alt is not None and alt[0] == schluessel:
         return alt[1]
-    lineare: set = set()
-    for e in model.elements:
-        if e.typ in SOLID_TYPES and not EL.ist_quadratisch(e.typ):
-            for fe in sl.FLAECHEN_ECKEN[e.typ]:
-                lineare.add(frozenset(int(e.nodes[a]) for a in fe))
     bindung: dict = {}
-    for e in model.elements:
-        if e.typ not in SOLID_TYPES or not EL.ist_quadratisch(e.typ):
-            continue
-        for f, fe in zip(sl.FLAECHEN[e.typ], sl.FLAECHEN_ECKEN[e.typ]):
-            if frozenset(int(e.nodes[a]) for a in fe) not in lineare:
+    if gemischt:
+        lineare: set = set()
+        for e in model.elements:
+            if e.typ in SOLID_TYPES and not EL.ist_quadratisch(e.typ):
+                for fe in sl.FLAECHEN_ECKEN[e.typ]:
+                    lineare.add(frozenset(int(e.nodes[a]) for a in fe))
+        for e in model.elements:
+            if e.typ not in SOLID_TYPES or not EL.ist_quadratisch(e.typ):
                 continue
-            ne = len(fe)
-            for k in range(ne, len(f)):             # Kantenmitten in Kantenreihenfolge
-                a, b = fe[k - ne], fe[(k - ne + 1) % ne]
-                bindung[int(e.nodes[f[k]])] = (int(e.nodes[a]), int(e.nodes[b]))
+            for f, fe in zip(sl.FLAECHEN[e.typ], sl.FLAECHEN_ECKEN[e.typ]):
+                if frozenset(int(e.nodes[a]) for a in fe) not in lineare:
+                    continue
+                ne = len(fe)
+                for k in range(ne, len(f)):             # Kantenmitten in Kantenreihenfolge
+                    a, b = fe[k - ne], fe[(k - ne + 1) % ne]
+                    bindung[int(e.nodes[f[k]])] = (int(e.nodes[a]), int(e.nodes[b]))
+    if kontakt:
+        _kontaktseiten_binden(model, bindung)
     aus = [(m, a, b) for m, (a, b) in sorted(bindung.items())]
     try:
         model._mittelknoten = (schluessel, aus)
@@ -757,17 +785,350 @@ def mittelknoten_bindungen(model: Model) -> list:
     return aus
 
 
+#: Seitenmitten an Kontaktseiten binden (Paket Q1, 08.10.2026). Der Schalter
+#: ist nur fuer die Ruecknahmeprobe da (Kontrolllauf ohne Bindung, wie
+#: contact.EXAKTE_NORMALBEDINGUNG); im Programm steht er immer auf an.
+KONTAKTSEITEN_BINDEN = True
+#: Volumentypen mit Kantenmitten auf den Seiten
+QUADRATISCHE_VOLUMEN = ("tet10", "hex20", "pent15")
+
+
+def _hat_kontaktseiten(model) -> bool:
+    """Gibt es ueberhaupt etwas, das an Elementseiten angreift?"""
+    return bool(getattr(model, "contact_pairs", None) or getattr(model, "gap_elements", None)
+                or getattr(model, "surface_supports", None)
+                or any(_ist_fugenkopplung(model, kp) for kp in (getattr(model, "kopplungen", None) or [])))
+
+
+def _ist_fugenkopplung(model, kp) -> bool:
+    """Kopplung einer Kontaktbedingung (nicht Stabende, nicht starre Flaeche)."""
+    return str(getattr(kp, "gruppe", "") or "") in (getattr(model, "kontaktbedingungen", None) or {})
+
+
+def _hash_knoten(liste) -> int:
+    a = np.asarray([int(x) for x in (liste or [])], np.int64)
+    return hash(a.tobytes())
+
+
+def _kontaktsignatur(model) -> tuple:
+    """Was die Kontaktseiten bestimmt, ausser dem Netz selbst - fuer den
+    Zwischenspeicher von mittelknoten_bindungen."""
+    paare = tuple((len(cp.slave_nodes or []), _hash_knoten(cp.slave_nodes),
+                   _hash_knoten([n for f in (cp.master_faces or []) for n in f]),
+                   _hash_knoten(cp.master_elements), float(cp.search_radius or 0.0))
+                  for cp in (model.contact_pairs or []))
+    spalt = _hash_knoten([n for g in (model.gap_elements or []) for n in (g.node_a, g.node_b)])
+    kopp = hash(tuple((int(k.node_a), int(k.node_b), str(getattr(k, "gruppe", "") or ""))
+                      for k in (getattr(model, "kopplungen", None) or [])))
+    lager = tuple((tuple(getattr(ss, "flaechen", None) or []), _hash_knoten(ss.nodes),
+                   _hash_knoten(ss.elements), int(getattr(ss, "face", -1) or -1),
+                   bool(getattr(ss, "lokal", False)))
+                  for ss in (model.surface_supports or []))
+    belegt = (hash(tuple((int(s.node), tuple(s.dofs or []), tuple(s.values or []),
+                          tuple(s.stiffness or []), repr(sorted(s.behaviour.items(), key=str)))
+                         for s in (model.supports or []))),
+              hash(tuple((_hash_knoten(ls.nodes), repr(sorted(ls.behaviour.items(), key=str)))
+                         for ls in (model.line_supports or []))),
+              _hash_knoten([c.node for c in (getattr(model, "contact_supports", None) or [])]),
+              _hash_knoten([n for sk in (getattr(model, "starrkoerper", None) or [])
+                            for n in [sk.master] + list(sk.slaves)]))
+    return (paare, spalt, kopp, lager, belegt,
+            tuple(sorted(getattr(model, "kontaktbedingungen", {}) or {})))
+
+
+def _master_facetten_nah(model, cp) -> list:
+    """Master-Facetten eines Kontaktpaars, an denen Kontakt entstehen kann.
+
+    Genannte Facetten (master_faces, so legen die Fugen ihre Paare an) gelten
+    alle. Kommt die Master-Seite aus ganzen Elementen (master_elements), waere
+    das die ganze Oberflaeche des Koerpers - gebunden wuerde dann jede
+    Randseite, auch fern vom Kontakt. Darum nur die Facetten, die ein
+    Slave-Knoten im Suchradius des Paars erreicht (wie contact._build_pair:
+    eigener Radius oder ein Zehntel der Modellgroesse)."""
+    from .contact import master_facets
+    facets = master_facets(model, cp)
+    n_genannt = len(cp.master_faces or [])
+    if not cp.master_elements or len(facets) <= n_genannt:
+        return facets
+    slaves = [int(x) for x in (cp.slave_nodes or []) if 0 <= int(x) < model.nn]
+    if not slaves:
+        return facets[:n_genannt]
+    from scipy.spatial import cKDTree
+    radius = float(cp.search_radius or 0.0) or 0.1 * model.characteristic_size()
+    X = np.asarray(model.nodes, float)
+    baum = cKDTree(X[slaves])
+    aus = list(facets[:n_genannt])
+    for f in facets[n_genannt:]:
+        P = X[list(f)]
+        c = P.mean(axis=0)
+        r = float(np.sqrt(((P - c) ** 2).sum(axis=1)).max())
+        if np.isfinite(baum.query(c, distance_upper_bound=radius + r)[0]):
+            aus.append(f)
+    return aus
+
+
+def _flaechenlager_knoten(model, ss) -> list:
+    """Knoten, auf die ein Flaechenlager wirkt - wie supports.expand sie
+    nimmt, aber ohne das Lager zu veraendern (mit Flaechenangabe aus dem Netz
+    der Flaechen, wie supports.lager_auf_netz)."""
+    from . import supports as sup
+    flaechen = getattr(model, "flaechen", {}) or {}
+    namen = [n for n in (getattr(ss, "flaechen", None) or []) if n in flaechen]
+    if namen:
+        trib = sup.flaechen_einflussflaechen(model, [flaechen[n] for n in namen])
+        if trib:
+            return [int(n) for n in trib]
+    if getattr(ss, "lokal", False) and getattr(ss, "gruppen", None):
+        return [int(n) for g in ss.gruppen for n in g[2]]
+    if ss.nodes and len(ss.nodes) == len(ss.areas):
+        return [int(n) for n in ss.nodes]
+    return [int(n) for n in sup.tributary_areas(model, ss.elements, ss.face)]
+
+
+def kontaktknoten(model) -> np.ndarray:
+    """Alle Knoten, an denen Kontakt, Fugen oder Flaechenlager angreifen
+    (sortiert, ohne Doppelte): Slave-Knoten und nahe Master-Facettenknoten der
+    Kontaktpaare, Knoten der Spaltelemente, Knoten der Fugenkopplungen (die
+    mit dem Namen einer Kontaktbedingung - nicht Stabenden oder starre
+    Flaechen) und die Knoten der Flaechenlager."""
+    K: list = []
+    for cp in (model.contact_pairs or []):
+        K.extend(int(x) for x in (cp.slave_nodes or []))
+        K.extend(int(n) for f in _master_facetten_nah(model, cp) for n in f)
+    for g in (model.gap_elements or []):
+        K.extend((int(g.node_a), int(g.node_b)))
+    for kp in (getattr(model, "kopplungen", None) or []):
+        if _ist_fugenkopplung(model, kp):
+            K.extend((int(kp.node_a), int(kp.node_b)))
+    for ss in (model.surface_supports or []):
+        K.extend(_flaechenlager_knoten(model, ss))
+    K = np.unique(np.asarray(K, np.int64))
+    return K[(K >= 0) & (K < model.nn)]
+
+
+def netz_schluessel(model) -> tuple:
+    """(Elementzahl, Knotenzahl, Knoten aller Elemente, Typen) - der
+    Schluessel der Zwischenspeicher, die nur am Netz haengen (am Drehlager
+    mit 623 000 tet10 gemessen 0,3 s)."""
+    import itertools
+    kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
+    return (len(model.elements), model.nn, hash(kn.tobytes()),
+            hash(tuple(e.typ for e in model.elements)))
+
+
+def _volumen_bloecke(model, schluessel=None) -> dict:
+    """{Typ: (Elementindizes, Knotenmatrix)} der Volumenelemente mit Seiten,
+    am Modell zwischengespeichert (Schluessel netz_schluessel)."""
+    schluessel = netz_schluessel(model) if schluessel is None else schluessel
+    alt = getattr(model, "_volumen_bloecke", None)
+    if alt is not None and alt[0] == schluessel:
+        return alt[1]
+    je: dict = {}
+    for i, e in enumerate(model.elements):
+        if e.typ in sl.FLAECHEN:
+            je.setdefault(e.typ, []).append(i)
+    aus = {typ: (np.asarray(idx, np.int64),
+                 np.asarray([model.elements[i].nodes for i in idx], np.int64))
+           for typ, idx in je.items()}
+    try:
+        model._volumen_bloecke = (schluessel, aus)
+    except AttributeError:
+        pass
+    return aus
+
+
+def seitenmitten_an(model, maske: np.ndarray, nur_rand: bool = True, bloecke: dict = None):
+    """Kantenmitten quadratischer Volumenseiten, deren Ecken alle in
+    ``maske`` (bool je Knoten) liegen: Arrays (m, a, b, Element), je Seite und
+    Kante eine Zeile - eine Mitte kann mehrfach vorkommen. ``nur_rand``: nur
+    Randseiten, also Seiten genau eines Volumenelements (gezaehlt ueber alle
+    Volumentypen, auch die linearen). Blockweise je (Typ, Seite)."""
+    bloecke = _volumen_bloecke(model) if bloecke is None else bloecke
+    leer = np.zeros(0, np.int64)
+    schluessel, kandidaten = [], []
+    for typ, (idx, E) in bloecke.items():
+        for f, fe in zip(sl.FLAECHEN[typ], sl.FLAECHEN_ECKEN[typ]):
+            C = E[:, list(fe)]
+            sel = np.flatnonzero(maske[C].all(axis=1))
+            if not sel.size:
+                continue
+            nr = None
+            if nur_rand:
+                S = np.sort(C[sel], axis=1)
+                if S.shape[1] == 3:
+                    S = np.hstack([S, np.full((len(S), 1), -1, np.int64)])
+                nr = len(schluessel)
+                schluessel.append(S)
+            if typ in QUADRATISCHE_VOLUMEN:
+                kandidaten.append((f, fe, idx, E, sel, nr))
+    if not kandidaten:
+        return leer, leer, leer, leer
+    rand = None
+    if nur_rand:
+        alle = np.vstack(schluessel)
+        _u, inv, zahl = np.unique(alle, axis=0, return_inverse=True, return_counts=True)
+        einmal = zahl[np.asarray(inv).ravel()] == 1
+        grenzen = np.cumsum([0] + [len(s) for s in schluessel])
+        rand = [einmal[grenzen[i]:grenzen[i + 1]] for i in range(len(schluessel))]
+    M, A, B, EL_ = [], [], [], []
+    for f, fe, idx, E, sel, nr in kandidaten:
+        if rand is not None:
+            sel = sel[rand[nr]]
+        if not sel.size:
+            continue
+        ne = len(fe)
+        for k in range(ne, len(f)):                  # Kantenmitten in Kantenreihenfolge
+            M.append(E[sel, f[k]])
+            A.append(E[sel, fe[k - ne]])
+            B.append(E[sel, fe[(k - ne + 1) % ne]])
+            EL_.append(idx[sel])
+    if not M:
+        return leer, leer, leer, leer
+    return np.concatenate(M), np.concatenate(A), np.concatenate(B), np.concatenate(EL_)
+
+
+def _starr_ohne_vorgabe(b, wert=0.0) -> bool:
+    """Ein starrer FHG ohne Nichtlinearitaet und ohne vorgegebene Verschiebung."""
+    return b.typ == "rigid" and not b.nonlinear and not wert
+
+
+def _belegte_knoten(model) -> tuple:
+    """(hart, starr) der Knoten, die selbst ein Lager, eine Feder, eine
+    Kopplung oder einen Starrkoerper tragen. ``starr`` {Knoten: FHG 0..2}:
+    starre Knoten- und Linienlager ohne Vorgabe - an einer gebundenen Mitte
+    unschaedlich, wenn beide Ecken dieselben FHG starr halten (dann ist auch
+    die Mitte gehalten). ``hart`` {Knoten: Text}: alles andere."""
+    hart: dict = {}
+    starr: dict = {}
+    for s in (model.supports or []):
+        n = int(s.node)
+        for d in range(3):
+            b = s.dof_behaviour(d)
+            if not b.acts:
+                continue
+            wert = 0.0
+            if s.values and d in s.dofs and s.dofs.index(d) < len(s.values):
+                wert = float(s.values[s.dofs.index(d)])
+            if _starr_ohne_vorgabe(b, wert):
+                starr.setdefault(n, set()).add(d)
+            else:
+                hart.setdefault(n, f"Knotenlager {s.name or n}")
+    for ls in (model.line_supports or []):
+        bs = [ls.dof_behaviour(d) for d in range(3)]
+        for n in (ls.nodes or []):
+            for d, b in enumerate(bs):
+                if not b.acts:
+                    continue
+                if _starr_ohne_vorgabe(b):
+                    starr.setdefault(int(n), set()).add(d)
+                else:
+                    hart.setdefault(int(n), f"Linienlager {ls.name or ''}".strip())
+    for c in (getattr(model, "contact_supports", None) or []):
+        hart.setdefault(int(c.node), f"einseitiges Lager Knoten {c.node}")
+    for g in (model.gap_elements or []):
+        for n in (g.node_a, g.node_b):
+            hart.setdefault(int(n), f"Spaltelement {g.node_a}-{g.node_b}")
+    for k in (getattr(model, "kopplungen", None) or []):
+        for n in (k.node_a, k.node_b):
+            hart.setdefault(int(n), f"Kopplung {getattr(k, 'gruppe', '') or ''}".strip())
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        for n in [sk.master] + list(sk.slaves):
+            hart.setdefault(int(n), f"Starrkörper {getattr(sk, 'name', '') or ''}".strip())
+    for ss in (model.surface_supports or []):
+        for n in _flaechenlager_knoten(model, ss):
+            hart.setdefault(int(n), f"Flächenlager {ss.name or ''}".strip())
+    return hart, starr
+
+
+def _kontaktseiten_binden(model, bindung: dict) -> None:
+    """Die Mitten der Kontaktseiten in ``bindung`` eintragen (siehe
+    mittelknoten_bindungen). Eine Mitte mit zwei verschiedenen Eckpaaren oder
+    mit eigenem Lager bleibt ungebunden und wird gesperrt
+    (fugen.mittenbindung_sperren)."""
+    K = kontaktknoten(model)
+    if not K.size:
+        return
+    M, A, B, _E = seitenmitten_an(model, _knotenfeld(model.nn, K), nur_rand=True)
+    if not M.size:
+        return
+    paare: dict = {}
+    konflikt: dict = {}
+    for m, a, b in zip(M.tolist(), A.tolist(), B.tolist()):
+        alt = paare.get(m)
+        if alt is None:
+            alt = bindung.get(m)
+        if alt is not None and {alt[0], alt[1]} != {a, b}:
+            konflikt.setdefault(m, [tuple(alt), (a, b)])
+            continue
+        if m not in paare:
+            paare[m] = (a, b) if alt is None else tuple(alt)
+    hart, starr = _belegte_knoten(model)
+    belegt: dict = {}
+    for m, (a, b) in paare.items():
+        if m in hart:
+            belegt[m] = hart[m]
+        elif m in starr and not (starr[m] <= starr.get(a, set()) and starr[m] <= starr.get(b, set())):
+            belegt[m] = "starres Lager an der Mitte, nicht an beiden Ecken"
+    if konflikt or belegt:
+        from .fugen import mittenbindung_sperren
+        mittenbindung_sperren(model, konflikt, belegt)
+    for m, ab in paare.items():
+        if m not in konflikt and m not in belegt:
+            bindung[m] = ab
+
+
+def _knotenfeld(n: int, knoten) -> np.ndarray:
+    """bool je Knoten, wahr an den genannten (gueltigen) Knoten."""
+    maske = np.zeros(int(n), bool)
+    k = np.asarray(knoten, np.int64).ravel()
+    maske[k[(k >= 0) & (k < n)]] = True
+    return maske
+
+
+def mittelknoten_auf_sehne(model: Model, log: list = None) -> tuple:
+    """Gebundene Seitenmitten, die nicht auf der Mitte ihrer Kante liegen,
+    dorthin setzen (Q1). Der Vernetzer setzt die Mitten an gekruemmten Flaechen
+    auf die Geometrie (am Drehlager 54 969 Kontaktmitten bis 1,11 mm daneben,
+    gemessen 07.10.2026); gebunden heisst u_m = (u_a + u_b)/2, und nur auf der
+    Sehne bleibt dann ein affines Feld (Starrkoerperdrehung, gleichmaessige
+    Dehnung) exakt darstellbar. Die Kontaktseite ist danach so facettiert wie
+    bei Entwurf; den Spalt gleichen die Flaechenquadriken aus.
+
+    Rueckgabe (gebunden, versetzt, groesster Abstand [m]); mit ``log`` eine
+    Zeile. Ein zweiter Aufruf aendert nichts."""
+    bind = mittelknoten_bindungen(model)
+    if not bind:
+        return 0, 0, 0.0
+    t = np.asarray(bind, np.int64)
+    X = np.asarray(model.nodes, float)
+    soll = 0.5 * (X[t[:, 1]] + X[t[:, 2]])
+    d = np.linalg.norm(X[t[:, 0]] - soll, axis=1)
+    L = np.linalg.norm(X[t[:, 1]] - X[t[:, 2]], axis=1)
+    weg = d > 1e-12 * np.maximum(L, 1e-300)
+    gross = float(d[weg].max()) if weg.any() else 0.0
+    if weg.any():
+        model.nodes[t[weg, 0]] = soll[weg]
+    if log is not None:
+        from .importers import _common as C
+        C.say(log, f"Seitenmitten: {len(t)} gebunden (Kontaktseiten, Flächenlager, Übergang "
+                   f"linear/quadratisch), {int(weg.sum())} davon auf die Kantenmitte gesetzt"
+                   + (f", höchstens {gross * 1e3:.3f} mm daneben" if weg.any() else ""))
+    return len(t), int(weg.sum()), gross
+
+
 def mittelknoten_umlenken(model: Model, F: np.ndarray, bind=None) -> np.ndarray:
     """F an gebundenen Mittelknoten je zur Haelfte auf die Ecken a und b
-    (F' = T^T F fuer u_m = (u_a + u_b)/2); F selbst wird geaendert."""
+    (F' = T^T F fuer u_m = (u_a + u_b)/2); F selbst wird geaendert.
+    Blockweise, je Richtung in der Reihenfolge der Mitten (erst a, dann b)."""
     bind = mittelknoten_bindungen(model) if bind is None else bind
-    for m, a, b in bind:
-        for r in range(3):
-            f = F[NDOF * m + r]
-            if f:
-                F[NDOF * a + r] += 0.5 * f
-                F[NDOF * b + r] += 0.5 * f
-                F[NDOF * m + r] = 0.0
+    if not len(bind):
+        return F
+    t = np.asarray(bind, np.int64).reshape(-1, 3)
+    for r in range(3):
+        f = np.array(F[NDOF * t[:, 0] + r], float)
+        ziel = np.column_stack([NDOF * t[:, 1] + r, NDOF * t[:, 2] + r]).ravel()
+        np.add.at(F, ziel, np.repeat(0.5 * f, 2))
+        F[NDOF * t[:, 0] + r] = 0.0
     return F
 
 
@@ -779,9 +1140,9 @@ def mittelknoten_nachfuehren(model: Model, u: np.ndarray) -> np.ndarray:
     if not bind:
         return u
     u = np.array(u, float, copy=True)
-    for m, a, b in bind:
-        for r in range(3):
-            u[NDOF * m + r] = 0.5 * (u[NDOF * a + r] + u[NDOF * b + r])
+    t = np.asarray(bind, np.int64)
+    for r in range(3):
+        u[NDOF * t[:, 0] + r] = 0.5 * (u[NDOF * t[:, 1] + r] + u[NDOF * t[:, 2] + r])
     return u
 
 

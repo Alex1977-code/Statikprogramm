@@ -27,16 +27,20 @@ doch nicht wissen“. „Sauber“ (Vernetzer-Sitzung, sweep.betriebsart) sweept
 nur Koerper, deren jedes Element sauber wird, sonst Tetraeder. Welche
 Elemente wirklich entstanden sind, zeigt danach die Elementuebersicht.
 
-**Kontakt sperrt Mittel und Fein - an einer Stelle.** Kontakt, Fugen und
-Flaechenlager nehmen von einer Elementseite heute nur die Eckknoten;
-an quadratischen Elementen bricht die Rechnung darum laut ab
-(fugen.QuadratischeSeiten). Der Anwender: „kontakt und plastizität muss in
-allen stufen funktionieren“ - und nicht still herabstufen. Solange die
-Loeser-Sitzung den Kontakt fuer quadratische Seiten nicht geliefert hat,
-sind Mittel und Fein an solchen Modellen sichtbar, aber gesperrt, und das
+**Was Mittel und Fein noch sperrt - an einer Stelle.** Kontakt, Fugen und
+Flaechenlager nehmen von einer Elementseite nur die Eckknoten. Seit dem
+08.10.2026 (Paket Q1) sind an tet10, hex20 und pent15 die Seitenmitten jeder
+Kontakt- und Lagerseite an ihre Ecken gebunden (assemble.mittelknoten_bindungen);
+Kontaktpaare, Kontaktbedingungen (die Fuge trennt seit Paket Q2 auch die
+Seitenmitten, fugen.SEITENMITTEN_GETRENNT) und Flaechenlager rechnen an Volumen
+in jeder Stufe. Gesperrt bleiben quadratische **Schalen** an Kontakt oder
+Flaechenlager (die Bindung wirkt nur in Volumen, Entscheidung E3 des
+Bauplans). Der Anwender: „kontakt und plastizität
+muss in allen stufen funktionieren“ - und nicht still herabstufen. An einem
+gesperrten Modell sind Mittel und Fein sichtbar, aber gesperrt, und das
 Modell steht mit Hinweis in Maske und Protokoll auf Entwurf. Die Sperre
-haengt allein an :func:`quadratisch_gesperrt`; mit der Lieferung gibt sie
-eine leere Liste zurueck, und alles andere bleibt.
+haengt allein an :func:`quadratisch_gesperrt`. Bis zum 08.10.2026 sperrte
+jede Kontaktbedingung, jedes Kontaktpaar und jedes Flaechenlager.
 
 Die Plastizitaet rechnet mit tet4, tet10, hex8, hex20, pent6, pent15 und
 pyr5 (plastizitaet.py) - also in jeder Stufe; ihr Haken bleibt, wie er ist.
@@ -130,28 +134,64 @@ def setzen(netz, s: str):
 def quadratisch_gesperrt(model) -> list:
     """Was quadratische Elemente heute sperrt - leer, wenn nichts.
 
-    Kontaktbedingungen (ausser abgeschalteten und verschweissten an
-    gemeinsamen Flaechen, die nichts trennen), Kontaktpaare und
-    Flaechenlager: sie nehmen von einer Elementseite nur die Eckknoten, und
-    an tet10/hex20/shell8 bricht die Rechnung darum laut ab
-    (fugen.QuadratischeSeiten). Zurueckgegeben werden die Objekte mit
+    Seit dem 08.10.2026 (Paket Q1) nur noch zweierlei: Kontaktbedingungen,
+    Kontaktpaare und Flaechenlager an **Schalen** (Flaechen mit Dicke bzw.
+    Schalenelemente) - die Bindung der Seitenmitten wirkt nur in Volumen,
+    an shell6/shell8 bricht die Rechnung laut ab (fugen.QuadratischeSeiten).
+    Trennende Kontaktbedingungen an Volumen sperren nur, solange das Trennen
+    einer Fuge die Seitenmitten nicht mittrennt (fugen.SEITENMITTEN_GETRENNT;
+    seit Paket Q2 tut es das). Kontaktbedingungen, Kontaktpaare und
+    Flaechenlager an tet10, hex20 und pent15 sperren nicht mehr. Zurueckgegeben werden die Objekte mit
     Namen, damit Maske und Protokoll sagen koennen, woran es liegt.
 
-    **Die eine Stelle** (25.09.2026): liefert die Loeser-Sitzung den Kontakt
-    fuer quadratische Seiten, gibt diese Funktion eine leere Liste zurueck
-    (bzw. nur noch das, was dann noch sperrt) - Maske, Vernetzen und Import
-    fragen nur hier."""
+    **Die eine Stelle** (25.09.2026) - Maske, Vernetzen und Import fragen nur
+    hier. Bis zum 08.10.2026 sperrte jede Kontaktbedingung, jedes
+    Kontaktpaar und jedes Flaechenlager."""
     from .kontakte import ist_verschweisst
+    from .fugen import SEITENMITTEN_GETRENNT
+    schalen = _schalen_an(model)
     gruende = []
     for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
         if getattr(kb, "aus", False) or ist_verschweisst(model, kb):
             continue
-        gruende.append(f"Kontaktbedingung {kb.name}")
+        if schalen(flaechen=list(kb.flaechennamen or []) + list(kb.gegenflaechen or [])):
+            gruende.append(f"Kontaktbedingung {kb.name} (an Schalen)")
+        elif not SEITENMITTEN_GETRENNT:
+            gruende.append(f"Kontaktbedingung {kb.name}")
     for cp in (getattr(model, "contact_pairs", None) or []):
-        gruende.append(f"Kontaktpaar {cp.name}")
+        if schalen(elemente=cp.master_elements,
+                   knoten=list(cp.slave_nodes or []) + [n for f in (cp.master_faces or []) for n in f]):
+            gruende.append(f"Kontaktpaar {cp.name} (an Schalen)")
     for ss in (getattr(model, "surface_supports", None) or []):
-        gruende.append(f"Flächenlager {ss.name}")
+        if schalen(flaechen=getattr(ss, "flaechen", None) or [], elemente=ss.elements,
+                   knoten=ss.nodes):
+            gruende.append(f"Flächenlager {ss.name} (an Schalen)")
     return gruende
+
+
+def _schalen_an(model):
+    """f(flaechen=, elemente=, knoten=) -> bool: liegt das Objekt an einer
+    Schale - eine genannte Flaeche traegt als Schale (Model.flaeche_traegt),
+    ein genanntes Element ist eine Schale, oder ein genannter Knoten haengt an
+    einer? Die Schalenknoten werden nur gesammelt, wenn es Schalen gibt."""
+    from . import elemente as EL
+    schalentypen = set(EL.SCHALEN_TYPEN)
+    traegt = getattr(model, "flaeche_traegt", None)
+    els = getattr(model, "elements", None) or []
+    knoten_s = None
+
+    def an(flaechen=(), elemente=(), knoten=()):
+        nonlocal knoten_s
+        if traegt is not None and any(traegt(str(f)) for f in (flaechen or [])):
+            return True
+        if any(0 <= int(i) < len(els) and els[int(i)].typ in schalentypen for i in (elemente or [])):
+            return True
+        if not knoten:
+            return False
+        if knoten_s is None:
+            knoten_s = {int(n) for e in els if e.typ in schalentypen for n in e.nodes}
+        return bool(knoten_s) and any(int(n) in knoten_s for n in knoten)
+    return an
 
 
 def frei(model, s: str, gruende: list = None) -> bool:

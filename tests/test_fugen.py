@@ -2563,32 +2563,45 @@ def _ohne_sperre(f):
         fugen.quadratische_knoten = alt
 
 
-def test_tet10_fuge_gesperrt():
-    """Getrennt wird an den Ecken; die tet10-Seitenmitten blieben beiden
-    Koerpern gemeinsam, und eine Fuge ohne Zugfestigkeit truege Zug.
-    Gemessen am 22.09.2026 (Kantenlaenge 0,5, Einkern): 525,8 kN von 1000 kN
-    bei passenden Netzen, 371,2 kN bei eigenen Flaechen, tet4 0 kN."""
+def test_tet10_fuge_ohne_sperre():
+    """Eine Fuge an tet10 laesst sich trennen und rechnet - ohne die Sperre zu
+    umgehen (Q1 mit Q2, 08.10.2026): jede Seite hat eigene Seitenmitten (Q2),
+    und die Mitten der Fugenseiten sind an ihre eigenen Ecken gebunden (Q1).
+    Unter Zug traegt eine Fuge ohne Zugfestigkeit nichts (die Oberseite haengt
+    in Federn), unter Druck geht die Last ganz durch, mit der Stauchung des
+    durchgehenden tet10-Koerpers. Bis zum 08.10.2026 brach das Trennen hier
+    laut ab (QuadratischeSeiten); gemessen am 22.09.2026 trug dieselbe Fuge
+    ohne Sperre 525,8 kN bzw. 371,2 kN von 1000 kN Zug."""
+    from statik3d import assemble as asm
+    verbunden = rechnen(zwei_bloecke("gemeinsam", ordnung=2), 1.0e6)
     for art in ("gemeinsam", "eigene"):
-        m = zwei_bloecke(art, ordnung=2)
-        check(f"{art}: das Netz ist tet10", {e.typ for e in m.elements} == {"tet10"},
-              str(sorted({e.typ for e in m.elements})))
-        nn, ne = m.nn, len(m.elements)
-        kb = kontaktbedingung(m, art)
-        try:
-            fugen.kontaktfuge_ausfuehren(m, kb, [])
-            gesperrt, text = False, ""
-        except fugen.QuadratischeSeiten as ex:
-            gesperrt, text = True, str(ex)
-        check(f"{art}: das Trennen an tet10 bricht laut ab", gesperrt, text[:90])
-        check(f"{art}: die Meldung nennt die Bedingung, den Typ und die Abhilfe",
-              "Kontaktbedingung Fuge" in text and "tet10" in text and "linear" in text)
-        check(f"{art}: das Modell bleibt unverändert (keine halbe Trennung)",
-              m.nn == nn and len(m.elements) == ne and not kb.ausgefuehrt,
-              f"Knoten {nn} -> {m.nn}")
-
-        # Bis zum 07.10.2026 stand hier der Beleg, dass die Fuge ohne Sperre Zug
-        # traegt (die Seitenmitten blieben gemeinsam). Seit Q2 trennt die Fuge
-        # sie mit: test_tet10_fuge_trennt_die_mitten belegt das Gegenteil.
+        for p, was in ((-1.0e6, "Zug"), (1.0e6, "Druck")):
+            F = abs(p) * A_FUGE
+            m = zwei_bloecke(art, ordnung=2)
+            kb = kontaktbedingung(m, art)
+            try:
+                b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+                text = ""
+            except fugen.QuadratischeSeiten as ex:
+                b, text = {}, str(ex)
+            check(f"{art}, {was}: das Trennen an tet10 läuft ohne Sperre, Ecken und Mitten verdoppelt",
+                  kb.ausgefuehrt and b.get("knoten", 0) > 0 and b.get("mitten", 0) > 0,
+                  text[:90] or f"{b.get('knoten')} Ecken, {b.get('mitten')} Mitten")
+            if not kb.ausgefuehrt:
+                continue
+            if p < 0:
+                g = rechnen(m, p, federn=1.0e11)
+                gebunden = len(asm.mittelknoten_bindungen(m))
+                check(f"{art}, {was}: das Fundament trägt nichts (≤ 1 % von 1000 kN)",
+                      abs(g["R_fundament"]) <= 0.01 * F,
+                      f"R = {g['R_fundament'] / 1e3:.3f} kN, {gebunden} Mitten gebunden")
+            else:
+                g = rechnen(m, p)
+                gebunden = len(asm.mittelknoten_bindungen(m))
+                close(f"{art}, {was}: das Fundament trägt die volle Last ({gebunden} Mitten gebunden)",
+                      g["R_fundament"], F, F * 1e-6, " N")
+                close(f"{art}, {was}: dieselbe Stauchung wie der durchgehende tet10-Körper (≤ 1 %)",
+                      g["u_oben"], verbunden["u_oben"], abs(verbunden["u_oben"]) * 0.01, " m")
 
 
 def test_tet10_verschweisst_erlaubt():
@@ -2619,34 +2632,80 @@ def test_tet10_verschweisst_erlaubt():
           g["R_fundament"], ganz["R_fundament"], abs(F) * 1e-6, " N")
 
 
-def test_tet10_kontaktpaar_gesperrt():
-    """Ein Kontaktpaar an tet10 (etwa aus einer Datei) sieht nur die Ecken -
-    die Seitenmitten des Slave laufen ungehindert durch den Master."""
-    m = zwei_bloecke("eigene", ordnung=2)
-    unten = {i for i, e in enumerate(m.elements) if str(e.group) == "Unten"}
-    oben_knoten = [n for n in _flaechenknoten(m, 1.0)
-                   if any(n in m.elements[i].nodes for i, e in enumerate(m.elements)
-                          if str(e.group) == "Oben")]
-    m.add_contact_pair("Paar", oben_knoten[:4], master_elements=sorted(unten))
-    for i in _flaechenknoten(m, 0.0):
-        m.fix(i, [0, 1, 2])
+def _ohne_bindung(f):
+    """f() ohne die Bindung der Kontaktseiten (assemble.KONTAKTSEITEN_BINDEN,
+    die Ruecknahmeprobe) - nur um zu belegen, was sie bewirkt."""
+    from statik3d import assemble
+    alt = assemble.KONTAKTSEITEN_BINDEN
+    assemble.KONTAKTSEITEN_BINDEN = False
+    try:
+        return f()
+    finally:
+        assemble.KONTAKTSEITEN_BINDEN = alt
+
+
+def _paar_druck(ordnung: int) -> dict:
+    """Zwei Bloecke mit eigenen Flaechen (gemeinsam nur der Rand), oben gegen
+    unten ein Kontaktpaar (Slave: die Knoten des oberen Blocks auf z = 1 ausser
+    dem Rand, Master: die Elemente des unteren), oben Druck p. Gelagert wie
+    ein Stab unter Laengsdruck: Boden in z, die Ebenen x = 0 und y = 0 in x
+    bzw. y - dann ist sigma_zz = -p ueberall und u_oben = -p L/E exakt."""
+    p = 1.0e7
+    m = zwei_bloecke("eigene", ordnung=ordnung)
+    unten = sorted(i for i, e in enumerate(m.elements) if str(e.group) == "Unten")
+    in_unten = {int(n) for i in unten for n in m.elements[i].nodes}
+    slave = [n for n in _flaechenknoten(m, 1.0)
+             if n not in in_unten]
+    m.add_contact_pair("Paar", slave, master_elements=unten)
+    im = np.zeros(m.nn, bool)
+    im[[int(x) for e in m.elements for x in e.nodes]] = True
+    for i in np.flatnonzero(im):
+        x = m.nodes[i]
+        dofs = [d for d, ok in ((0, abs(x[0]) < 1e-9), (1, abs(x[1]) < 1e-9), (2, abs(x[2]) < 1e-9)) if ok]
+        if dofs:
+            m.fix(int(i), dofs)
     lc = m.add_load_case("LF1")
     lc.gravity = [0, 0, 0]
-    m.add_geometrielast("Dach", 1.0e6, "flaeche", case="LF1")
+    m.add_geometrielast("Dach", p, "flaeche", case="LF1")
     m.lasten_verteilen()
-    try:
-        solver.solve_static(m, case="LF1")
-        gesperrt, text = False, ""
-    except fugen.QuadratischeSeiten as ex:
-        gesperrt, text = True, str(ex)
-    check("Kontaktpaar an tet10: die Rechnung bricht laut ab",
-          gesperrt and "Kontaktpaar Paar" in text, text[:90])
+    r = solver.solve_static(m, case="LF1")
+    oben = _flaechenknoten(m, 2.0)
+    return {"u": float(r.u.reshape(-1, 6)[oben, 2].mean()), "soll": -p * L_STAB / E_STAHL,
+            "konv": (r.info or {}).get("contact_converged"), "m": m, "slave": slave}
 
 
-def test_tet10_flaechenlager_gesperrt():
-    """Ein starres Flaechenlager hielt an tet10 nur die Ecken: gemessen am
-    22.09.2026 24 von 77 Bodenknoten, die Oberseite sank um 41 % mehr als
-    mit festgehaltenen Bodenknoten. An tet4 stimmt es und bleibt erlaubt."""
+def test_tet10_kontaktpaar_wie_tet4():
+    """Ein Kontaktpaar an tet10 rechnet wie an tet4 (Paket Q1, 08.10.2026):
+    die Seitenmitten der Kontaktseiten sind an ihre Ecken gebunden. Bis dahin
+    sah das Paar nur die Ecken - die Seitenmitten des Slave liefen ungehindert
+    durch den Master -, und die Rechnung brach laut ab (QuadratischeSeiten)."""
+    from statik3d import assemble as asm
+    t4 = _paar_druck(1)
+    close("tet4: u_oben = -p L/E (Kontaktpaar, gleichmaessiger Druck)", t4["u"], t4["soll"],
+          abs(t4["soll"]) * 1e-6, " m")
+    t10 = _paar_druck(2)
+    m = t10["m"]
+    check("tet10: das Netz ist tet10, Kontakt konvergiert",
+          {e.typ for e in m.elements} == {"tet10"} and t10["konv"] is True, str(t10["konv"]))
+    gebunden = {mm for mm, _a, _b in asm.mittelknoten_bindungen(m)}
+    mitten_slave = [n for n in t10["slave"] if n in gebunden]
+    check("tet10: die Seitenmitten unter den Slave-Knoten sind gebunden",
+          len(mitten_slave) > 0 and len(gebunden) >= len(mitten_slave),
+          f"{len(mitten_slave)} von {len(t10['slave'])} Slave-Knoten, {len(gebunden)} gebunden")
+    close("tet10: u_oben = -p L/E wie tet4 (≤ 1e-6)", t10["u"], t10["soll"], abs(t10["soll"]) * 1e-6, " m")
+    ohne = _ohne_bindung(lambda: _paar_druck(2))
+    abw = (ohne["u"] / ohne["soll"] - 1) * 100
+    check("ohne Bindung (Rücknahmeprobe) weicht die Setzung deutlich ab (> 1 %)",
+          abs(abw) > 1.0, f"{abw:+.2f} %")
+
+
+def test_tet10_flaechenlager_wie_knoten_fest():
+    """Ein starres Flaechenlager haelt an tet10 wie festgehaltene
+    Bodenknoten (Paket Q1, 08.10.2026): die Seitenmitten der gelagerten Seiten
+    sind an ihre Ecken gebunden. Gemessen am 22.09.2026 hielt das Lager nur
+    die Ecken (24 von 77 Bodenknoten), die Oberseite sank um 41 % mehr; bis
+    zum 08.10.2026 brach die Rechnung darum laut ab. An tet4 stimmt es wie
+    vorher."""
     from statik3d import supports
     p = 1.0e6
 
@@ -2672,22 +2731,19 @@ def test_tet10_flaechenlager_gesperrt():
     u_lager, _ = rechne(1, True)
     close("tet4: das starre Flächenlager hält wie feste Bodenknoten", u_lager, u_fest,
           abs(u_fest) * 1e-9, " m")
-    try:
-        rechne(2, True)
-        gesperrt, text = False, ""
-    except fugen.QuadratischeSeiten as ex:
-        gesperrt, text = True, str(ex)
-    check("tet10: das Flächenlager bricht laut ab", gesperrt and "Flächenlager Starr" in text,
-          text[:90])
-    u_fest2, m2 = rechne(2, False)
-    check("tet10 ohne Flächenlager (Knoten fest) rechnet weiter", u_fest2 < 0,
-          f"u = {u_fest2 * 1e3:.6f} mm")
-    check("die Lagerzusammenfassung nennt die Sperre, statt abzubrechen",
-          "gesperrt" in supports.summary(_mit_flaechenlager(_wuerfel(0.5, ordnung=2))))
-    u_ohne, _ = _ohne_sperre(lambda: rechne(2, True))
-    check("ohne Sperre sänke die Oberseite deutlich mehr (Seitenmitten ungelagert)",
-          abs(u_ohne) > 1.2 * abs(u_fest2),
-          f"{u_ohne * 1e3:.6f} mm gegen {u_fest2 * 1e3:.6f} mm")
+    u_fest2, _ = rechne(2, False)
+    u_lager2, m2 = rechne(2, True)
+    check("tet10: das Netz ist tet10", {e.typ for e in m2.elements} == {"tet10"})
+    close("tet10: das starre Flächenlager hält wie feste Bodenknoten (≤ 1 %, gemessen bis "
+          "08.10.2026: +41 %)", u_lager2, u_fest2, abs(u_fest2) * 1e-2, " m")
+    close("… und genauer als 1e-6", u_lager2, u_fest2, abs(u_fest2) * 1e-6, " m")
+    z = supports.summary(_mit_flaechenlager(_wuerfel(0.5, ordnung=2)))
+    check("die Lagerzusammenfassung zählt das Flächenlager an tet10", z.startswith("Lager: ")
+          and "1 Flaechenlager" in z, z[:120])
+    u_ohne, _ = _ohne_bindung(lambda: rechne(2, True))
+    abw = (u_ohne / u_fest2 - 1) * 100
+    check("ohne Bindung (Rücknahmeprobe) sänke die Oberseite deutlich mehr (Seitenmitten ungelagert)",
+          abw > 20.0, f"{u_ohne * 1e3:.6f} mm gegen {u_fest2 * 1e3:.6f} mm, {abw:+.1f} %")
 
 
 def _mit_flaechenlager(m: Model) -> Model:
@@ -2698,8 +2754,8 @@ def _mit_flaechenlager(m: Model) -> Model:
 
 
 def main():
-    for t in (test_tet10_fuge_gesperrt, test_tet10_verschweisst_erlaubt,
-              test_tet10_kontaktpaar_gesperrt, test_tet10_flaechenlager_gesperrt,
+    for t in (test_tet10_fuge_ohne_sperre, test_tet10_verschweisst_erlaubt,
+              test_tet10_kontaktpaar_wie_tet4, test_tet10_flaechenlager_wie_knoten_fest,
               test_viereckfuge_zaehlt_ganz,test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,

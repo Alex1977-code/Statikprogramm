@@ -384,6 +384,18 @@ def vor_dem_pickeln(model) -> None:
         return
     from .diagnose import entartete_menge
     entartete_menge(model)
+    # Gebundene Seitenmitten auf die Sehne (Q1, 08.10.2026) - wie die
+    # Assemblierung es tut (assemble.stiffness), aber vor dem Pickeln, sonst
+    # rechneten die Arbeiter mit den alten Koordinaten. Die Bindungen selbst
+    # gehen mit: die Arbeiter nehmen genau die des Hauptprozesses
+    # (assemble.mittelknoten_bindungen) - auch mit abgeschalteter Bindung
+    # (Ruecknahmeprobe) oder Sperre, die nur im Hauptprozess gesetzt sind.
+    from .assemble import mittelknoten_auf_sehne, mittelknoten_bindungen
+    mittelknoten_auf_sehne(model)
+    try:
+        model._mittelknoten_arbeiter = list(mittelknoten_bindungen(model))
+    except AttributeError:
+        pass
 
 
 class Arbeiter:
