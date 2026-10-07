@@ -698,8 +698,10 @@ def test_ort_der_leiste():
 
 def test_waehrend_der_rechnung():
     """Waehrend einer Rechnung oeffnet das Programm nichts Modales: die Leiste
-    erscheint ohne Fenster, eine Fehlermeldung beim Uebernehmen geht ins
-    Protokoll, und kein Knopf der Leiste startet eine Rechnung."""
+    erscheint ohne Fenster, „Übernehmen“ wird abgewiesen (seit dem 06.10.2026,
+    Fehlerliste F05; bis dahin lief der Handler, und seine Fehlermeldung ging
+    ins Protokoll), der Hinweis steht im Protokoll, und kein Knopf der Leiste
+    startet eine Rechnung."""
 
     class _Laeuft:
         def isRunning(self):
@@ -724,9 +726,9 @@ def test_waehrend_der_rechnung():
         n_log = len(w.log.toPlainText().splitlines())
         _druecken(w, app, "Übernehmen")
         neu = w.log.toPlainText().splitlines()[n_log:]
-        check("… „Übernehmen“ scheitert: die Meldung steht im Protokoll, kein Fenster, alles bleibt",
-              not MODAL and any("zwei verschiedene" in z for z in neu) and _maske(w) is mk
-              and _leiste(w) is not None, f"{MODAL}, {neu[-2:]}")
+        check("… „Übernehmen“ wird abgewiesen (F05): der Hinweis steht im Protokoll, kein Fenster, alles bleibt",
+              not MODAL and any("Rechnung läuft" in z and "erst nach der Rechnung übernehmen" in z for z in neu)
+              and _maske(w) is mk and _leiste(w) is not None, f"{MODAL}, {neu[-2:]}")
         _druecken(w, app, "Verwerfen")
         check("… „Verwerfen“: der Wunsch läuft (Knoten K2), keine neue Rechnung, kein Fenster",
               getattr(_maske(w), "titel", "") == "Knoten K2" and isinstance(w.worker, _Laeuft) and not MODAL,

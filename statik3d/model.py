@@ -122,6 +122,29 @@ STEEL_GRADES = {
 }
 
 
+def stahlsorte_schluessel(text) -> Optional[str]:
+    """Der Schluessel von ``STEEL_GRADES`` zu einer getippten Stahlsorte, sonst
+    ``None``.
+
+    Gross-/Kleinschreibung und Leerzeichen jeder Art zaehlen nicht: „s235“,
+    „S 235“ und „ S235 “ sind S235. Die Tabelle kennt keine Untersorten (S235JR
+    ...); sie sind unbekannt, bis sie als eigener Schluessel in ``STEEL_GRADES``
+    stehen - dann erkennt diese Funktion sie ebenso. Bis zum 06.10.2026
+    verglich jede Stelle den getippten Text unveraendert mit der Tabelle: eine
+    Sorte „s235“ fiel durch, mit eingetragenem f_y entfiel ueber 40 mm still die
+    Dickenabminderung, mit leerem f_y war die Streckgrenze 0 (Fehlerliste F08)."""
+    g = "".join(str(text or "").split()).upper()
+    return g if g in STEEL_GRADES else None
+
+
+def stahlsorte_normiert(text) -> str:
+    """Die Sorte so, wie sie gespeichert wird: eine Sorte der Tabelle in der
+    Schreibweise der Tabelle („s 235“ -> „S235“), jede andere getrimmt und
+    sonst unveraendert (der Anwender darf eine eigene Sorte mit eigenem f_y
+    eintragen)."""
+    return stahlsorte_schluessel(text) or str(text or "").strip()
+
+
 @dataclass
 class Material:
     name: str
@@ -138,6 +161,18 @@ class Material:
     #: leer = nur fy/fu, dann gilt die Zweistufen-Regel der Stahlsorte
     fy_dicke: list = field(default_factory=list)
     fu_dicke: list = field(default_factory=list)
+
+    def __post_init__(self):
+        # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
+        # nach dem Laden einer Datei, in der sie „s235“ oder „S 235“ heisst
+        # (F08, 06.10.2026); eine leere Sorte (null in alten Dateien) wird ""
+        self.grade = stahlsorte_normiert(self.grade)
+
+    def _sorte(self) -> Optional[str]:
+        """Der Tabellenschluessel der Sorte oder None. Ueber ihn laufen alle
+        Nachschlagen in ``STEEL_GRADES``: wer ``grade`` nachtraeglich von Hand
+        setzt (Tabellenzelle, Skript), umgeht ``__post_init__``."""
+        return stahlsorte_schluessel(self.grade)
 
     @property
     def G(self) -> float:
@@ -166,8 +201,8 @@ class Material:
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
         """Baustahl nach EN 10025-2 (t <= 40 mm)."""
-        g = grade.upper().replace(" ", "")
-        if g not in STEEL_GRADES:
+        g = stahlsorte_schluessel(grade)
+        if g is None:
             raise KeyError(f"Stahlsorte '{grade}' unbekannt: {list(STEEL_GRADES)}")
         fy, fu, _, _ = STEEL_GRADES[g]
         return Material(name or g, 210e9, 0.3, 7850.0, 1.2e-5, fy, fu, g)
@@ -179,26 +214,29 @@ class Material:
         wert = self._nach_dicke(self.fy_dicke, t)
         if wert is not None:
             return wert
-        if self.grade in STEEL_GRADES and t > 0.040:
-            return STEEL_GRADES[self.grade][2]
+        sorte = self._sorte()
+        if sorte and t > 0.040:
+            return STEEL_GRADES[sorte][2]
         # Ein leeres f_y nimmt bis 40 mm den Wert der Sorte - so sagt es der
         # Werkstoffdialog ("leer = aus der Stahlsorte"). Bis zum 23.09.2026
         # kam hier 0 heraus: ein IPE 300 mit Sorte S235 und leerem f_y war
-        # "nicht geführt" (Befund B060)
-        if not self.fy and self.grade in STEEL_GRADES:
-            return STEEL_GRADES[self.grade][0]
+        # "nicht geführt" (Befund B060). Die Sorte wird ueber ihren Schluessel
+        # gefunden, auch als „s235“ (F08, bis 06.10.2026 war dann 0)
+        if not self.fy and sorte:
+            return STEEL_GRADES[sorte][0]
         return self.fy or 0.0
 
     def ultimate_strength(self, t: float = 0.0) -> float:
         wert = self._nach_dicke(self.fu_dicke, t)
         if wert is not None:
             return wert
-        if self.grade in STEEL_GRADES and t > 0.040:
-            return STEEL_GRADES[self.grade][3]
+        sorte = self._sorte()
+        if sorte and t > 0.040:
+            return STEEL_GRADES[sorte][3]
         # Ohne f_u und ohne f_y die Sorte (wie yield_strength); mit f_y bleibt
         # es bei 1,3 f_y
-        if not self.fu and not self.fy and self.grade in STEEL_GRADES:
-            return STEEL_GRADES[self.grade][1]
+        if not self.fu and not self.fy and sorte:
+            return STEEL_GRADES[sorte][1]
         return self.fu or (1.3 * self.fy if self.fy else 0.0)
 
 
@@ -1051,7 +1089,7 @@ class Linienlast:
     Die Last haengt am Objekt und ueberlebt das Neuvernetzen: beim Verteilen
     (:meth:`Model.lasten_verteilen`) wird sie auf die Stabelemente
     (Abschnittslasten) oder die Knoten der vernetzten Linie (Knotenlasten
-    aus den Zutrittslaengen) gelegt.
+    int N_i q ds aus den Formfunktionen ihrer Elementkanten) gelegt.
     """
     ziel: str = ""
     art: str = "stab"                  # stab | linie
@@ -1061,6 +1099,10 @@ class Linienlast:
     von: float = 0.0
     bis: Optional[float] = None
     kommentar: str = ""
+    # Wer die Last erzeugt hat (etwa "wind:W1"); leer = vom Anwender. Das
+    # Verteilen ueberschreibt ``kommentar`` mit „n Elementlasten“, darum
+    # erkennt ein Generator seine Lasten an diesem Feld (seit 06.10.2026).
+    erzeuger: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1345,7 +1387,9 @@ class LoadCase:
             "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
-            "linienlasten": [asdict(l) for l in self.linienlasten],
+            # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei
+            "linienlasten": [{k: v for k, v in asdict(l).items() if k != "erzeuger" or v}
+                             for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
             "uebermasse": [asdict(l) for l in (getattr(self, "uebermasse", None) or [])],
@@ -1369,7 +1413,7 @@ class LoadCase:
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
         lc.geometrielasten = [Geometrielast(**l)
                               for l in d.get("geometrielasten", [])]
-        lc.linienlasten = [Linienlast(**l) for l in d.get("linienlasten", [])]
+        lc.linienlasten = [_dc(Linienlast, l) for l in d.get("linienlasten", [])]
         lc.zwangsverformungen = [Zwangsverformung(**l)
                                  for l in d.get("zwangsverformungen", [])]
         lc.vorspannungen = [_dc(Vorspannung, l) for l in d.get("vorspannungen", [])]
@@ -1499,8 +1543,13 @@ class Combination:
 
     def lastfall_entfernen(self, name: str) -> None:
         """Ein geloeschter Lastfall faellt aus den Faktoren und aus jeder
-        Alternative; eine leer gewordene Alternative entfaellt."""
+        Alternative; eine leer gewordene Alternative entfaellt. Als
+        Leiteinwirkung bleibt er seit dem 06.10.2026 nicht mehr stehen
+        (Fehlerliste F28: sie hiesse sonst wie ein neuer Lastfall gleichen
+        Namens)."""
         self.factors.pop(name, None)
+        if self.leading == name:
+            self.leading = ""
         self.alternativen = [a for a in ({k: v for k, v in a.items() if k != name}
                                          for a in self.alternativen) if a]
 
@@ -2356,6 +2405,11 @@ class Volumenkoerper:
     #: Anteil der Huelle, den das Netz wirklich abdeckt (0 … 1, aus dem
     #: Vernetzer). Die Abnahme vor dem Rechnen prueft ihn; 0 = nicht gemessen.
     randtreue: float = 0.0
+    #: Warum die Randtreue beim Vernetzen nicht gemessen werden konnte
+    #: (Ausnahme der Messung, etwa MemoryError) - "" = gemessen oder nie
+    #: versucht. Die Abnahme meldet dann „Randtreue nicht geprüft“; bis zum
+    #: 06.10.2026 stand dort nichts, und das Netz galt als abgenommen (F35).
+    randtreue_fehler: str = ""
     #: Kerbfall Delta-sigma_C [Pa] fuer den Ermuedungsnachweis, 0 = keiner.
     #: Die Spannung im Element ist eine Struktur- oder Kerbspannung, keine
     #: Nennspannung - der Kerbfall muss zu diesem Konzept passen.
@@ -3267,6 +3321,27 @@ def _namensform(name) -> str:
     return " ".join(str(name).split()).casefold()
 
 
+def _namenstrenner(name) -> str:
+    """„ein Komma“, „ein Semikolon“ oder „Komma und Semikolon“, wenn *name*
+    ein Zeichen traegt, das in den Listenfeldern der Masken Namen trennt
+    (Fehlerliste F21); sonst ""."""
+    name = str(name or "")
+    komma, semikolon = "," in name, ";" in name
+    if komma and semikolon:
+        return "Komma und Semikolon"
+    return "ein Komma" if komma else "ein Semikolon" if semikolon else ""
+
+
+def _ohne_trenner(name) -> str:
+    """*name* ohne Komma und Semikolon (je durch ein Leerzeichen ersetzt,
+    mehrere Leerzeichen zu einem) - der Vorschlag der Meldung und die Basis
+    von :meth:`Model.freier_name`."""
+    text = str(name or "")
+    for z in (",", ";"):
+        text = text.replace(z, " ")
+    return " ".join(text.split())
+
+
 def _schluessel_tauschen(d: dict, alt, neu) -> None:
     """Den Schluessel *alt* in *d* durch *neu* ersetzen - an seinem Platz in
     der Reihenfolge und im selben Woerterbuch, damit niemand, der es haelt,
@@ -3430,6 +3505,18 @@ class Model:
         ins Leere, check() meldete FEHLER, und solve_all brach mit KeyError
         "Lastfall 'LF2' existiert nicht" ab.
 
+        Seit dem 06.10.2026 (Fehlerliste F28) gehen ausserdem mit: die
+        Leiteinwirkung einer Kombination, der Lastfall jedes Winds und jedes
+        Wasserdrucks (samt der Lastfallnummer des Winds und der statischen
+        Nummer des Wasserdrucks - „Lasten erzeugen“ legt dann einen neuen
+        an), jeder Berichtseintrag mit der Quelle „case:<Name>“ und eine
+        entfallene Ermuedungslast aus der Liste jedes Anschlusses
+        (:meth:`_ermuedungslast_austragen`, F29). Bis dahin blieben sie
+        stehen: ein neuer Lastfall gleichen Namens - die Nummernvergabe
+        schlaegt nach dem Loeschen von LF2 wieder „LF2“ vor - bekam beim
+        naechsten „Lasten erzeugen“ die Windlast, und das Berichtsbild zeigte
+        seinen Namen ueber dem Bild des alten.
+
         Rueckgabe: Klartextzeilen, was mitging (leer, wenn nichts).
         """
         aus: list[str] = []
@@ -3438,7 +3525,7 @@ class Model:
         # Kombination: sie bleibt dem Generator (G5, wie lastfall_umbenennen)
         frisch = [c for c in self.combinations.values() if c.unberuehrt()]
         for c in self.combinations.values():
-            if name in c.factors or any(name in a for a in c.alternativen):
+            if name in c.factors or any(name in a for a in c.alternativen) or c.leading == name:
                 c.lastfall_entfernen(name)
                 aus.append(f"Kombination '{c.name}': Lastfall '{name}' entfernt")
         for c in frisch:
@@ -3446,40 +3533,142 @@ class Model:
         # Traegt eine Kombination denselben Namen, bleibt ein Verweis der
         # Ermuedungslast gueltig (Zustand = Lastfall oder Kombination)
         if name not in self.combinations:
-            for fl in list(self.fatigue_loads.values()):
-                if fl.folge:
-                    # Ein Verlauf liest nur seine Glieder (ec3.fatigue);
-                    # ein altes case_max/case_min wird nur geleert
-                    if fl.case_max == name:
-                        fl.case_max = ""
-                    if fl.case_min == name:
-                        fl.case_min = None
-                    if name not in fl.folge:
-                        continue
-                    rest = [k for k in fl.folge if k != name]
-                    if rest:
-                        fl.folge = rest
-                        aus.append(f"Ermüdungslast '{fl.name}': Lastfall '{name}' aus dem "
-                                   f"Verlauf entfernt ({', '.join(rest)})")
-                    else:
-                        del self.fatigue_loads[fl.name]
-                        aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr Verlauf bestand "
-                                   f"nur aus Lastfall '{name}'")
-                elif name in (fl.case_max, fl.case_min):
-                    del self.fatigue_loads[fl.name]
-                    welcher = "oberer" if fl.case_max == name else "unterer"
-                    aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr {welcher} Zustand "
-                               f"war Lastfall '{name}'")
+            zeilen, weg = self._zustand_entfernen(name, "Lastfall")
+            aus += zeilen + self._ermuedungslast_austragen(weg)
         for s in getattr(self, "stellungen", None) or []:
             if name in (getattr(s, "faelle", None) or []):
                 s.faelle = [f for f in s.faelle if f != name]
                 aus.append(f"Stellung '{s.name}': Lastfall '{name}' aus ihrer Lastfallliste genommen"
                            + ("" if s.faelle else " - ihr ist kein Lastfall mehr zugewiesen"))
+        for w in (getattr(self, "winde", None) or {}).values():
+            if getattr(w, "lastfall", "") == name:
+                w.lastfall = ""
+                w.lastfall_nr = 0
+                aus.append(f"Wind '{w.name}': sein Lastfall '{name}' ist gelöscht - „Lasten erzeugen“ "
+                           "legt einen neuen an")
+        for wd in (getattr(self, "wasserdruecke", None) or {}).values():
+            if getattr(wd, "lastfall", "") == name:
+                wd.lastfall = ""
+                wd.lastfall_nr = 0
+                aus.append(f"Wasserdruck '{wd.name}': sein Lastfall '{name}' ist gelöscht - „Lasten "
+                           "erzeugen“ legt einen neuen an")
+            if getattr(wd, "lastfall_dyn", "") == name:
+                wd.lastfall_dyn = ""
+                aus.append(f"Wasserdruck '{wd.name}': sein Lastfall '{name}' der Druckschwankung ist "
+                           "gelöscht - „Lasten erzeugen“ legt einen neuen an")
+        aus += self._bericht_entfernen({f"case:{name}"})
         if self.active_case == name:
             self.active_case = next(iter(self.load_cases), "")
         if not self.load_cases:
             self.add_load_case("LF1", "G", nummer=1)
         return aus
+
+    def _zustand_entfernen(self, name: str, wort: str) -> tuple:
+        """Den geloeschten Lastfall oder die geloeschte Kombination *name*
+        (*wort* „Lastfall“ oder „Kombination“) aus den Ermuedungslasten
+        nehmen. Ein Verlauf verliert das Glied; ein Verlauf, dem keines
+        bleibt, und eine Last aus zwei Zustaenden, deren oberer oder unterer
+        Zustand *name* war, entfallen - den Zustand still durch den
+        Nullzustand zu ersetzen, aenderte die Schwingbreite, ohne dass es
+        jemand entschieden haette (wie bridges.positions).
+
+        Rueckgabe: (Klartextzeilen, Namen der entfallenen Lasten)."""
+        aus, weg = [], []
+        for fl in list(self.fatigue_loads.values()):
+            if fl.folge:
+                # Ein Verlauf liest nur seine Glieder (ec3.fatigue);
+                # ein altes case_max/case_min wird nur geleert
+                if fl.case_max == name:
+                    fl.case_max = ""
+                if fl.case_min == name:
+                    fl.case_min = None
+                if name not in fl.folge:
+                    continue
+                rest = [k for k in fl.folge if k != name]
+                if rest:
+                    fl.folge = rest
+                    aus.append(f"Ermüdungslast '{fl.name}': {wort} '{name}' aus dem "
+                               f"Verlauf entfernt ({', '.join(rest)})")
+                else:
+                    del self.fatigue_loads[fl.name]
+                    weg.append(fl.name)
+                    aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr Verlauf bestand "
+                               f"nur aus {wort} '{name}'")
+            elif name in (fl.case_max, fl.case_min):
+                del self.fatigue_loads[fl.name]
+                weg.append(fl.name)
+                welcher = "oberer" if fl.case_max == name else "unterer"
+                aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr {welcher} Zustand "
+                           f"war {wort} '{name}'")
+        return aus, weg
+
+    def _bericht_entfernen(self, quellen: set) -> list:
+        """Berichtseintraege mit einer Quelle aus *quellen* entfernen - das
+        Ergebnis, das sie zeigen, gibt es nicht mehr (Fehlerliste F28,
+        06.10.2026). Ein Bild bliebe sonst mit dem Namen eines geloeschten
+        Lastfalls stehen, eine Tabelle zeigte ins Leere, und beide folgten
+        still einem neuen Objekt gleichen Namens. Rueckgabe: Klartextzeilen."""
+        bericht = getattr(self, "bericht", None)
+        if not bericht:
+            return []
+        aus = []
+        bleibt = []
+        for e in bericht:
+            if e.quelle and e.quelle in quellen:
+                aus.append(f"Berichtseintrag '{e.name or e.bezug()}' entfernt - er zeigte {e.quelle_text()}")
+            else:
+                bleibt.append(e)
+        if aus:
+            bericht[:] = bleibt
+        return aus
+
+    def kombination_loeschen(self, name: str, protokoll: list = None) -> str:
+        """Eine Kombination entfernen - samt ihren Verweisen (Fehlerliste F28,
+        06.10.2026). Rueckgabe "" bei Erfolg, sonst der Grund; Zeilen nach
+        ``protokoll``.
+
+        Mit geht, wie bei :meth:`remove_load_case`: jeder Zustand und jedes
+        Glied einer Ermuedungslast, das die Kombination nennt (eine Last aus
+        zwei Zustaenden entfaellt, ein Verlauf verliert das Glied,
+        :meth:`_zustand_entfernen`), eine entfallene Ermuedungslast aus jedem
+        Anschluss (:meth:`_ermuedungslast_austragen`), ihr Name aus der
+        Kombinationsliste jeder Stellung und jeder Berichtseintrag mit der
+        Quelle „combo:<Name>“ oder der Quelle ihrer Umhuellenden
+        („env:<Schluessel>“). Aendert sich dadurch der Schluessel der
+        Umhuellenden einer anderen Ergebniskombination
+        (solver.umhuellende_schluessel_im_modell), folgen ihre Bilder.
+        Heisst ein Lastfall wie die Kombination, bleiben die Zustaende der
+        Ermuedungslasten bei ihm. Kein Verweis sperrt das Loeschen.
+
+        Bis zum 06.10.2026 loeschten Oberflaeche und Webserver nur den
+        Schluessel: die Ermuedungslast meldete einen FEHLER, bis eine neue
+        Kombination gleichen Namens entstand, und zeigte dann still auf sie;
+        das Berichtsbild ebenso."""
+        from .solver import umhuellende_schluessel_im_modell
+        if name not in self.combinations:
+            return f"Kombination {name} gibt es nicht"
+        vorher = umhuellende_schluessel_im_modell(self)
+        del self.combinations[name]
+        nachher = umhuellende_schluessel_im_modell(self)
+        zeilen = []
+        if name not in self.load_cases:
+            z, weg = self._zustand_entfernen(name, "Kombination")
+            zeilen += z + self._ermuedungslast_austragen(weg)
+        for s in getattr(self, "stellungen", None) or []:
+            if name in (getattr(s, "kombinationen", None) or []):
+                s.kombinationen = [k for k in s.kombinationen if k != name]
+                zeilen.append(f"Stellung '{s.name}': Kombination '{name}' aus ihrer Kombinationsliste genommen")
+        quellen = {f"combo:{name}"}
+        if name in vorher:
+            quellen.add(f"env:{vorher[name]}")
+        zeilen += self._bericht_entfernen(quellen)
+        umbenannt = {f"env:{k}": f"env:{nachher[n]}" for n, k in vorher.items()
+                     if n != name and n in nachher and nachher[n] != k}
+        if umbenannt:
+            zeilen += self._bericht_umbenennen(umbenannt)
+        if protokoll is not None:
+            protokoll.extend(zeilen)
+        return ""
 
     def case(self, name: str = None) -> LoadCase:
         """Lastfall (default: aktiver Lastfall)."""
@@ -3504,6 +3693,84 @@ class Model:
         f = FatigueLoad(name, case_max, case_min, cycles, factor)
         self.fatigue_loads[name] = f
         return f
+
+    def ermuedungslast_umbenennen(self, alt: str, neu: str) -> list:
+        """Die Ermuedungslast *alt* in *neu* umbenennen - an ihrem Platz in der
+        Reihenfolge und mit jedem Verweis: der Liste jedes Anschlusses
+        (``Joint.ermuedung``), sonst fiele sie dort still aus dem Nachweis.
+        Eine leere Liste heisst „alle“ und bleibt leer. Bis zum 06.10.2026
+        stand das nur in der Ermuedungsmaske (gui.ermuedungsmaske.schreiben).
+
+        Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
+        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
+        if alt == neu:
+            return []
+        if alt not in self.fatigue_loads:
+            raise KeyError(f"Ermüdungslast {alt} gibt es nicht")
+        if not neu.strip():
+            raise ValueError("Bitte einen Namen eingeben")
+        if neu in self.fatigue_loads:
+            raise ValueError(f"Ermüdungslast {neu} gibt es schon")
+        fl = self.fatigue_loads[alt]
+        _schluessel_tauschen(self.fatigue_loads, alt, neu)
+        fl.name = neu
+        aus = []
+        for j in (getattr(self, "joints", None) or {}).values():
+            liste = list(getattr(j, "ermuedung", None) or [])
+            if alt in liste:
+                j.ermuedung = [neu if x == alt else x for x in liste]
+                aus.append(f"Anschluss '{j.name}'")
+        return aus
+
+    def ermuedungslast_loeschen(self, name: str, protokoll: list = None) -> str:
+        """Eine Ermuedungslast entfernen - und aus der Liste jedes Anschlusses
+        (:meth:`_ermuedungslast_austragen`, Fehlerliste F29, 06.10.2026).
+        Rueckgabe "" bei Erfolg, sonst der Grund; Zeilen nach ``protokoll``.
+
+        Bis zum 06.10.2026 blieb ihr Name im Anschlussnachweis stehen: D ohne
+        sie, mit dem Hinweis „gibt es nicht“, und eine spaeter angelegte Last
+        gleichen Namens ging still in den Nachweis ein (an der Halle D =
+        71,287 ohne Hinweis)."""
+        if name not in self.fatigue_loads:
+            return f"Ermüdungslast {name} gibt es nicht"
+        del self.fatigue_loads[name]
+        zeilen = self._ermuedungslast_austragen([name])
+        if protokoll is not None:
+            protokoll.extend(zeilen)
+        return ""
+
+    def _ermuedungslast_austragen(self, namen) -> list:
+        """Geloeschte Ermuedungslasten aus der Liste jedes Anschlusses nehmen
+        (``Joint.ermuedung``); Rueckgabe: je Anschluss eine Zeile.
+
+        Entscheidung zur leeren Liste (F29): leer heisst am Anschluss „alle
+        Ermuedungslasten“ (joints.anschluss.check_joint). Nannte ein Anschluss
+        nur geloeschte Lasten, gilt danach das - wie bei „nur diese Lager
+        aktiv“ einer Stellung (:meth:`stellungen_nachziehen`), und die Zeile
+        sagt es ausdruecklich mit den Lasten, die jetzt zaehlen. Abweisen
+        hiesse, eine Last nicht loeschen zu koennen, deren Anschlussliste die
+        Oberflaeche weder zeigt noch aendern laesst; mehr Lasten fuehren zu
+        einer groesseren Schaedigungssumme, nicht zu einer kleineren."""
+        namen = set(namen or [])
+        if not namen:
+            return []
+        aus = []
+        for j in (getattr(self, "joints", None) or {}).values():
+            liste = list(getattr(j, "ermuedung", None) or [])
+            weg = [x for x in liste if x in namen]
+            if not weg:
+                continue
+            j.ermuedung = [x for x in liste if x not in namen]
+            t = (f"Anschluss „{j.name}“: Ermüdungslast " + ", ".join(f"„{x}“" for x in weg)
+                 + " gibt es nicht mehr – aus seiner Liste genommen")
+            if not j.ermuedung:
+                rest = list(self.fatigue_loads)
+                t += (" – die Liste ist damit leer, und leer heißt „alle“: der Anschluss weist jetzt alle "
+                      "Ermüdungslasten nach (" + ", ".join(rest) + ")" if rest else
+                      " – die Liste ist damit leer; weitere Ermüdungslasten gibt es nicht")
+            aus.append(t)
+        return aus
 
     def ermuedungszustaende(self) -> list[str]:
         """Namen, die als Zustand einer Ermuedungslast taugen: Lastfaelle und
@@ -3590,7 +3857,17 @@ class Model:
         Ende ist abgewiesen. Und ein Name der Form LF<n>, LK<n> oder EK<n>
         ist vergeben, wenn seine Nummer schon einem anderen Objekt gehoert -
         im Feld ``nummer`` oder im Namen („LF 3“ und „LF03“ neben LF3, „LF7“
-        neben LF3 mit Nr. 7)."""
+        neben LF3 mit Nr. 7).
+
+        Komma und Semikolon im Namen weist die Pruefung seit dem 06.10.2026
+        ab (Fehlerliste F21): sie trennen die Namen in den Listenfeldern der
+        Masken (Stellungen, Situationen, Faktoren, Ermuedungsverlauf), und ein
+        Name mit Trenner wurde dort zerlegt - eine Stellung rechnete den
+        Lastfall „W, links“ danach still nicht mehr. Das gilt, bis die
+        Namensregel R2 Namen und Bezeichnungen trennt. Ein **vorhandener**
+        Name mit Trenner (aus einer aelteren Datei oder einem Import) bleibt,
+        wie er ist: ``neu == alt`` ist frei, damit sich seine uebrigen
+        Eigenschaften aendern lassen."""
         import re
         neu, alt = str(neu or ""), str(alt or "")
         if not neu.strip():
@@ -3609,6 +3886,12 @@ class Model:
                     "dürfen nicht gleich heißen, ihre Ergebnisse verdeckten einander")
         if neu == alt:
             return ""
+        trenner = _namenstrenner(neu)
+        if trenner:
+            vorschlag = _ohne_trenner(neu)
+            return (f"„{neu}“ enthält {trenner} – Komma und Semikolon trennen die Namen in den "
+                    "Listenfeldern (Stellung, Situation, Faktoren); bitte ohne schreiben"
+                    + (f", etwa „{vorschlag}“" if vorschlag else ""))
         form = _namensform(neu)
         for n, o in list(self.load_cases.items()) + list(self.combinations.items()):
             if o is not eigen and _namensform(n) == form:
@@ -3665,6 +3948,12 @@ class Model:
         bilden (Kopieren, Lastenheft, DIN 19704, Wind, Wasserdruck) und nie
         etwas ueberschreiben duerfen."""
         basis = str(basis or "").strip() or "Neu"
+        # Komma und Semikolon nimmt die Namenspruefung nicht an (F21): aus einem
+        # Vorschlag, der sie traegt (Kopie von „W, links“), wird ein Name ohne
+        # sie. Sonst liefe die Schleife ins Leere - ein Zaehler macht den
+        # Trenner nicht weg.
+        if _namenstrenner(basis):
+            basis = _ohne_trenner(basis) or "Neu"
         name, k = basis, 2
         while self.namenskonflikt(name, "", art) and k < 100000:
             name, k = f"{basis} {k}", k + 1
@@ -4260,12 +4549,14 @@ class Model:
         * Geometrielast "temperatur": Temperaturlasten auf alle Elemente
         * Linienlast auf einem Stab: Abschnittslasten auf seine Elemente
         * Linienlast auf einer Linie: Knotenlasten auf die Knoten der
-          vernetzten Linie (Zutrittslaengen, linear veraenderlich)
+          vernetzten Linie (int N_i q ds ueber ihre Elementkanten, linear
+          veraenderlich - linienverteilung)
 
         Rueckgabe: Zahl der erzeugten Elementlasten.
         """
         erzeugt = 0
         offen = 0
+        kanten_cache: dict = {}       # Kantentabellen des Netzes, einmal je Aufruf
         for lc in self.load_cases.values():
             # Alles wegwerfen, was aus Objektlasten stammt - auch dann, wenn
             # die letzte Objektlast eben geloescht wurde: sonst blieben ihre
@@ -4284,7 +4575,7 @@ class Model:
                 gl.kommentar = f"{len(neue)} Elementlasten" if neue else self._warum_leer(gl)
                 offen += not neue
             for ll in lc.linienlasten:
-                neue = self._linienlast_legen(ll)
+                neue = self._linienlast_legen(ll, kanten_cache)
                 for f in neue:
                     f._geo = True
                     (lc.beam_loads if isinstance(f, BeamLoad) else lc.nodal_loads).append(f)
@@ -4718,94 +5009,141 @@ class Model:
             self.tetp_kantenmitten = {(a, b): p for (a, b), p in km.items()
                                       if int(a) not in weg and int(b) not in weg}
 
-    # ---- Stellungen nennen Lager und Staebe beim Namen oder bei der Nummer ----
+    # ---- Stellungen nennen Lager und Staebe beim Namen ------------------------
     #: Lagerart -> Liste im Modell und Wort im Protokoll
     STELLUNG_LAGERARTEN = {"lager": ("supports", "Knotenlager"),
                            "linienlager": ("line_supports", "Linienlager"),
                            "flaechenlager": ("surface_supports", "Flächenlager")}
-    #: Felder einer Stellung, die Lager nennen: (Feld, Lagerarten, deren Namen
-    #: gelten, Lagerart der Nummern, Text im Protokoll) - so, wie
-    #: Stellung._lager sie liest: Namen in lager_aus und lager_aktiv gelten fuer
-    #: Lager jeder Art, die in linienlager_aus und flaechenlager_aus nur fuer
-    #: ihre Art; eine Nummer in lager_aus ist die eines Knotenlagers (so schreibt
-    #: die Maske Stellung sie, lagernamen("lager")), lager_aktiv liest keine Nummern.
+    #: Der Name eines Lagers ohne Namen, je Art - so steht er im Modellbaum, in der
+    #: Stellungsmaske und in der Stellung („Lager 2“, „Linienlager 1“,
+    #: „Flächenlager 1“; die Zahl zaehlt ab 1, der Anwender zaehlt so)
+    LAGER_STANDARDNAME = {"lager": "Lager", "linienlager": "Linienlager",
+                          "flaechenlager": "Flächenlager"}
+    #: Felder einer Stellung, die Lager nennen: (Feld, Lagerarten, nur Namen,
+    #: Text im Protokoll) - so, wie Stellung._lager sie liest: jede Art liest nur ihre
+    #: eigene Liste und meint ihre Lager mit dem Schluessel (:meth:`lagerschluessel`)
+    #: oder dem Namen; „nur diese Lager aktiv“ (lager_aktiv) nennt nur Namen, und
+    #: zwar die von Lagern jeder Art - ein Lager ohne Namen bleibt dort immer aktiv.
     STELLUNG_LAGERFELDER = (
-        ("lager_aus", ("lager", "linienlager", "flaechenlager"), "lager", "Deaktivierte Knotenlager"),
-        ("lager_aktiv", ("lager", "linienlager", "flaechenlager"), "", "nur diese Lager aktiv"),
-        ("linienlager_aus", ("linienlager",), "linienlager", "Deaktivierte Linienlager"),
-        ("flaechenlager_aus", ("flaechenlager",), "flaechenlager", "Deaktivierte Flächenlager"))
+        ("lager_aus", ("lager",), False, "Deaktivierte Knotenlager"),
+        ("lager_aktiv", ("lager", "linienlager", "flaechenlager"), True, "nur diese Lager aktiv"),
+        ("linienlager_aus", ("linienlager",), False, "Deaktivierte Linienlager"),
+        ("flaechenlager_aus", ("flaechenlager",), False, "Deaktivierte Flächenlager"))
+
+    @staticmethod
+    def lagerschluessel(art: str, lager) -> list:
+        """Der Schluessel jedes Lagers der Liste *lager* (Art ``"lager"``,
+        ``"linienlager"`` oder ``"flaechenlager"``), eindeutig in seiner Art: der
+        Name des Lagers, sonst der Standardname mit seinem Platz („Lager 2“,
+        „Linienlager 1“). Dieselbe Beschriftung zeigen der Modellbaum, die
+        Stellungsmaske und die Stellung (F30; bis zum 06.10.2026 stand in der
+        Maske „1“ und im Baum „Lager 2“ fuer dasselbe Lager).
+
+        Tragen mehrere Lager denselben Namen - ein RFEM-Lager „Fest“ an 16
+        Knoten ist 16 Knotenlager -, bekommt jedes seinen Platz dahinter:
+        „Fest (Lager 3)“. Sonst liesse sich eines davon nicht allein nennen."""
+        wort = Model.LAGER_STANDARDNAME[art]
+        lager = list(lager)
+        namen = [(getattr(s, "name", "") or "").strip() for s in lager]
+        standard = [f"{wort} {i + 1}" for i in range(len(lager))]
+        kandidat = [n or standard[i] for i, n in enumerate(namen)]
+        anzahl: dict = {}
+        for k in kandidat:
+            anzahl[k] = anzahl.get(k, 0) + 1
+        return [k if anzahl[k] == 1 or k == standard[i] else f"{k} ({standard[i]})"
+                for i, k in enumerate(kandidat)]
 
     def stellungsbezug(self) -> dict:
-        """Was Stellungen beim Namen oder bei der Nummer nennen: die drei
-        Lagerlisten (die Objekte selbst) und die Namen der Staebe - der Stand
-        **vor** einem Loeschen, fuer :meth:`stellungen_nachziehen`."""
+        """Was Stellungen beim Namen nennen: die drei Lagerlisten (die Objekte
+        selbst), ihre Schluessel und Namen von jetzt und die Namen der Staebe - der
+        Stand **vor** einem Loeschen oder Umbenennen, fuer
+        :meth:`stellungen_nachziehen`."""
         bezug = {art: list(getattr(self, liste)) for art, (liste, _w) in self.STELLUNG_LAGERARTEN.items()}
         bezug["staebe"] = set(self.members)
+        if getattr(self, "stellungen", None):
+            # nur mit Stellungen: bei vielen Lagern kostet das einen Durchgang je Aufruf
+            bezug["schluessel"] = {art: self.lagerschluessel(art, bezug[art])
+                                   for art in self.STELLUNG_LAGERARTEN}
+            bezug["namen"] = {art: [(getattr(s, "name", "") or "").strip() for s in bezug[art]]
+                              for art in self.STELLUNG_LAGERARTEN}
         return bezug
 
     def stellungen_nachziehen(self, vorher: dict) -> list:
-        """Stellungen an das Loeschen von Lagern und Staeben anpassen; Rueckgabe:
-        je geaenderter Angabe eine Zeile fuer das Protokoll.
+        """Stellungen an das Loeschen und Umbenennen von Lagern und das Loeschen
+        von Staeben anpassen; Rueckgabe: je geaenderter Angabe eine Zeile fuer das
+        Protokoll.
 
-        ``vorher`` ist :meth:`stellungsbezug` vor dem Loeschen. Ein Name, den es
-        vorher gab und jetzt nicht mehr, geht aus der Stellung; eine Lagernummer
-        folgt ihrem Lager (die dahinter ruecken auf) oder geht mit ihm. Bis zum
-        03.10.2026 blieben beide stehen: ein Lager, das spaeter so hiess, war in
-        der Stellung still abgeschaltet, und eine Nummer zeigte nach dem
-        Loeschen eines Lagers davor auf das naechste (Gegenpruefung zu 14a).
+        ``vorher`` ist :meth:`stellungsbezug` vor der Aenderung. Ein Eintrag folgt
+        seinem Lager: ruecken die Lager nach einem Loeschen auf, heisst der Eintrag
+        danach wie das Lager jetzt („Lager 3“ wird „Lager 2“); wird das Lager
+        umbenannt, bekommt er den neuen Namen; ist das Lager weg, geht er. Bis zum
+        06.10.2026 standen Nummern in den Listen (und die Nummer hing am Platz, nicht
+        am Lager); bis zum 03.10.2026 blieben alle Eintraege stehen: ein Lager, das
+        spaeter so hiess, war in der Stellung still abgeschaltet (Gegenpruefung zu
+        14a). Ein Name, den mehrere Lager tragen, bleibt, solange eines so heisst.
 
         Wird „nur diese Lager aktiv“ dabei leer, greifen in der Stellung alle
         Lager (leer heisst dort alle) - die Zeile sagt es ausdruecklich."""
         stellungen = getattr(self, "stellungen", None) or []
-        if not stellungen:
+        if not stellungen or "schluessel" not in vorher:
             return []
         jetzt = self.stellungsbezug()
-
-        def namen(stand, arten):
-            return {(getattr(s, "name", "") or "").strip() for art in arten for s in stand[art]} - {""}
         platz = {art: {id(s): j for j, s in enumerate(jetzt[art])} for art in self.STELLUNG_LAGERARTEN}
+        # Name/Schluessel -> Plaetze, einmal je Stand (Listen mit tausenden Lagern)
+        index = {}
+        for stand, tag in ((vorher, "vor"), (jetzt, "jetzt")):
+            for art in self.STELLUNG_LAGERARTEN:
+                nur_namen, mit_schluessel = {}, {}
+                for k, n in enumerate(stand["namen"][art]):
+                    if n:
+                        nur_namen.setdefault(n, []).append(k)
+                        mit_schluessel.setdefault(n, []).append(k)
+                for k, sl in enumerate(stand["schluessel"][art]):
+                    if sl != stand["namen"][art][k]:
+                        mit_schluessel.setdefault(sl, []).append(k)
+                index[(tag, art, True)] = nur_namen
+                index[(tag, art, False)] = mit_schluessel
         zeilen = []
         for st in stellungen:
-            for feld, namensarten, nummernart, text in self.STELLUNG_LAGERFELDER:
+            for feld, arten, nur_namen, text in self.STELLUNG_LAGERFELDER:
                 liste = list(getattr(st, feld, None) or [])
                 if not liste:
                     continue
-                n_vor, n_jetzt = namen(vorher, namensarten), namen(jetzt, namensarten)
                 neu, hier = [], []
                 for x in liste:
                     s = str(x).strip()
-                    lebt, war = s in n_jetzt, s in n_vor
-                    # Stellung._gemeint trifft Name **und** Nummer; isdecimal, nicht
-                    # isdigit: „²“ ist eine Ziffer, aber int("²") scheitert
-                    if not (nummernart and s.isdecimal() and int(s) < len(vorher[nummernart])):
-                        if war and not lebt:
-                            hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
-                                        f"aus „{text}“ genommen")
-                        else:
-                            neu.append(x)
-                        continue
-                    j = platz[nummernart].get(id(vorher[nummernart][int(s)]))
-                    wort = self.STELLUNG_LAGERARTEN[nummernart][1]
-                    if j == int(s):
+                    # die Lager, die dieser Eintrag vorher meinte: (Art, Platz vorher)
+                    traf = [(art, k) for art in arten for k in index[("vor", art, nur_namen)].get(s, [])]
+                    if not s or not traf:
                         neu.append(x)
                         continue
-                    if j is not None:
-                        neu.append(str(j))
-                    if lebt or (j is not None and str(j) in n_jetzt):
-                        # Ein Lager heisst wie eine Nummer: derselbe Eintrag meint dann
-                        # zwei Lager, und nach dem Loeschen laesst sich das mit einer
-                        # Liste von Namen nicht mehr eindeutig sagen - also laut
-                        if lebt:
-                            neu.append(x)
-                        hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ ist der Name "
-                                    f"eines Lagers und die Nummer eines {wort}s – nach dem Löschen "
-                                    "nicht eindeutig; bitte die Stellung prüfen")
-                    elif j is None:
-                        hier.append(f"Stellung „{st.name}“: das {wort} mit der Nummer „{s}“ ist "
-                                    f"gelöscht – aus „{text}“ genommen")
-                    else:
-                        hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ heißt jetzt "
-                                    f"„{j}“ – ein {wort} davor ist gelöscht")
+                    lebt = [(art, k, platz[art][id(vorher[art][k])]) for art, k in traf
+                            if id(vorher[art][k]) in platz[art]]
+                    if not lebt:
+                        hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
+                                    f"aus „{text}“ genommen")
+                        continue
+                    noch = {(art, j) for art in arten for j in index[("jetzt", art, nur_namen)].get(s, [])}
+                    if any((art, j) in noch for art, _k, j in lebt):
+                        neu.append(x)               # nennt weiter ein Lager, das es gibt
+                        continue
+                    schluessel = jetzt["namen" if nur_namen else "schluessel"]
+                    neue = []
+                    for art, _k, j in lebt:
+                        n = schluessel[art][j]
+                        if n and n not in neue:
+                            neue.append(n)
+                    if not neue:
+                        hier.append(f"Stellung „{st.name}“: Lager „{s}“ hat keinen Namen mehr – "
+                                    f"aus „{text}“ genommen")
+                        continue
+                    for n in neue:
+                        if n not in neu:
+                            neu.append(n)
+                    umbenannt = any(vorher["namen"][art][k] != jetzt["namen"][art][j] for art, k, j in lebt)
+                    hier.append(f"Stellung „{st.name}“: Eintrag „{s}“ in „{text}“ heißt jetzt „"
+                                + "“, „".join(neue) + "“ – "
+                                + ("das Lager ist umbenannt" if umbenannt else "ein Lager davor ist gelöscht"))
                 if not hier:
                     continue
                 setattr(st, feld, neu)
@@ -5431,24 +5769,70 @@ class Model:
             if liste:
                 kb.koerpernamen = [neu if x == alt else x for x in liste]
 
-    def stab_umbenennen(self, alt: str, neu: str) -> None:
+    #: Sammlungen, deren Objekte Staebe in einer Liste ``staebe`` beim Namen
+    #: nennen (Wort im Protokoll, Sammlung im Modell)
+    STABLISTEN = (("Schweißnaht", "schweissnaehte"), ("Wind", "winde"), ("Layer", "layer"),
+                  ("Subsystem", "subsysteme"))
+
+    def stab_umbenennen(self, alt: str, neu: str) -> list:
+        """Den Stab *alt* in *neu* umbenennen - mit **jedem** Verweis
+        (Fehlerliste F09, 06.10.2026).
+
+        Mit geht, was einen Stab beim Namen nennt: der Schluessel in
+        ``members`` (an seinem Platz in der Reihenfolge, wie
+        :meth:`lastfall_umbenennen`), die Linienlasten und Vorspannungen der
+        Lastfaelle (``art`` "stab"), der Stab jedes Verformungsnachweises und
+        jeder Lasteinleitung, die Stabliste jeder Schweissnaht, jedes Winds,
+        jedes Layers und jedes Subsystems (:data:`STABLISTEN`) und „Deaktivierte
+        Stäbe“ jeder Stellung (``staebe_aus``).
+
+        Bis zum 06.10.2026 gingen nur Linienlasten, Verformungsgrenzen und
+        Lasteinleitungen mit (F09): nach S2 -> „Riegel“ schaltete die Stellung
+        den Stab still nicht mehr ab, die Naht verlor ihren Stab samt
+        Kerbfall, und der Wind scheiterte beim naechsten Erzeugen. Der Stab
+        rueckte ausserdem ans Ende der Reihenfolge.
+
+        Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
+        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
         if alt == neu or alt not in self.members:
-            return
+            return []
         if neu in self.members:
             raise ValueError(f"Stab {neu} gibt es schon")
-        mem = self.members.pop(alt)
+        mem = self.members[alt]
+        _schluessel_tauschen(self.members, alt, neu)
         mem.name = neu
-        self.members[neu] = mem
+        aus: list = []
         for lc in self.load_cases.values():
+            n = 0
             for ll in lc.linienlasten:
                 if ll.art == "stab" and ll.ziel == alt:
                     ll.ziel = neu
-        for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
-            if getattr(x, "stab", "") == alt:
-                x.stab = neu
-        for x in (getattr(self, "lasteinleitungen", None) or {}).values():
-            if getattr(x, "stab", "") == alt:
-                x.stab = neu
+                    n += 1
+            for v in (getattr(lc, "vorspannungen", None) or []):
+                if getattr(v, "art", "stab") == "stab" and v.ziel == alt:
+                    v.ziel = neu
+                    n += 1
+            if n:
+                aus.append(f"Lastfall '{lc.name}' ({n} {'Last' if n == 1 else 'Lasten'} am Stab)")
+        for wort, sammlung in (("Verformungsnachweis", "verformungsgrenzen"),
+                               ("Lasteinleitung", "lasteinleitungen")):
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                if getattr(x, "stab", "") == alt:
+                    x.stab = neu
+                    aus.append(f"{wort} '{nm}'")
+        for wort, sammlung in self.STABLISTEN:
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                liste = list(getattr(x, "staebe", None) or [])
+                if alt in liste:
+                    x.staebe = [neu if s == alt else s for s in liste]
+                    aus.append(f"{wort} '{nm}'")
+        for st in getattr(self, "stellungen", None) or []:
+            liste = list(getattr(st, "staebe_aus", None) or [])
+            if alt in liste:
+                st.staebe_aus = [neu if s == alt else s for s in liste]
+                aus.append(f"Stellung '{st.name}'")
+        return aus
 
     def _linienlasten_entfernen(self, art: str, name: str) -> bool:
         """Die Linienlasten auf diesem Stab oder dieser Linie aus allen
@@ -5506,8 +5890,36 @@ class Model:
                                   if not (gl.art != "flaeche" and gl.ziel == name)]
         return ""
 
+    def stab_gesperrt(self, name: str) -> str:
+        """Warum sich der Stab *name* nicht loeschen laesst - "" heisst: er
+        laesst sich loeschen (:meth:`stab_loeschen` nennt denselben Grund).
+
+        Je Verweisart entschieden wie bei den Knoten (:meth:`_knotennutzer`,
+        PR #20): ein Verformungsnachweis (``art`` "stab") und eine
+        Lasteinleitung, die den Stab nennen, sperren - ohne ihn verschwaende
+        der eine still, und die andere naehme die Stegabmessungen still von
+        einem anderen Stab am Knoten (ec3.beulen._stegwerte). Eine Ersatznaht
+        (``aequivalent``), deren einziges Ziel dieser Stab ist, sperrt ebenso:
+        ohne Ziel gilt sie fuer alle Staebe (schweissnaehte.naehte_fuer_stab).
+        Alles andere geht mit dem Stab (:meth:`stab_loeschen`)."""
+        nutzer = []
+        for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            if getattr(g, "art", "") == "stab" and getattr(g, "stab", "") == name:
+                nutzer.append(f"Verformungsnachweis {nm}")
+        for nm, x in (getattr(self, "lasteinleitungen", None) or {}).items():
+            if getattr(x, "stab", "") == name:
+                nutzer.append(f"Lasteinleitung {nm}")
+        for nm, n in (getattr(self, "schweissnaehte", None) or {}).items():
+            if getattr(n, "aequivalent", False) and name in (n.staebe or []) \
+                    and not [s for s in n.staebe if s != name] and not n.linien and not n.flaechen:
+                nutzer.append(f"Ersatznaht {nm} (ihr einziger Stab - ohne ihn gälte sie für alle Stäbe)")
+        if not nutzer:
+            return ""
+        return f"Stab {name} wird benutzt von " + ", ".join(nutzer) + " - erst diese löschen oder ändern"
+
     def stab_loeschen(self, name: str, verteilen: bool = True, protokoll: list = None) -> str:
-        """Den Stab mit Nachweis entfernen - seine Elemente bleiben.
+        """Den Stab mit Nachweis entfernen - seine Elemente bleiben. Rueckgabe
+        "" bei Erfolg, sonst der Grund (:meth:`stab_gesperrt`).
 
         Seine Linienlasten gehen mit, und die Elementlasten, die
         :meth:`lasten_verteilen` daraus auf die Elemente gelegt hat
@@ -5515,13 +5927,39 @@ class Model:
         und waren in der Lasttabelle unsichtbar. ``verteilen=False`` fuer eine
         Schleife ueber viele Staebe - dann ruft der Aufrufer danach einmal
         :meth:`lasten_verteilen`. Eine Stellung, die den Stab abschaltet,
-        verliert seinen Namen (:meth:`stellungen_nachziehen`, Zeile nach
-        ``protokoll``)."""
+        verliert seinen Namen (:meth:`stellungen_nachziehen`).
+
+        Seit dem 06.10.2026 (Fehlerliste F28) gehen ausserdem seine
+        Vorspannungen mit, und er faellt aus der Stabliste jeder Schweissnaht,
+        jedes Winds, jedes Layers und jedes Subsystems; ein
+        Verformungsnachweis, der nicht am Stab haengt (``art`` "knoten"),
+        verliert den Namen. Bis dahin blieben sie stehen, und ein neuer Stab
+        gleichen Namens erbte sie still: Naht samt Kerbfall, Wind,
+        Verformungsgrenze und Lasteinleitung. Was den Stab braucht, sperrt das
+        Loeschen (:meth:`stab_gesperrt`). Zeilen nach ``protokoll``."""
         if name not in self.members:
             return "Stab gibt es nicht"
+        grund = self.stab_gesperrt(name)
+        if grund:
+            return grund
         vorher = self.stellungsbezug()
         del self.members[name]
         zeilen = self.stellungen_nachziehen(vorher)
+        for wort, sammlung in self.STABLISTEN:
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                liste = list(getattr(x, "staebe", None) or [])
+                if name in liste:
+                    x.staebe = [s for s in liste if s != name]
+                    zeilen.append(f"{wort} „{nm}“: Stab „{name}“ gibt es nicht mehr – aus der Stabliste genommen")
+        for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            if getattr(g, "stab", "") == name:
+                g.stab = ""
+        for lc in self.load_cases.values():
+            vsp = list(getattr(lc, "vorspannungen", None) or [])
+            rest = [v for v in vsp if not (getattr(v, "art", "stab") == "stab" and v.ziel == name)]
+            if len(rest) != len(vsp):
+                lc.vorspannungen = rest
+                zeilen.append(f"Lastfall „{lc.name}“: Vorspannung im Stab „{name}“ entfernt")
         if protokoll is not None:
             protokoll.extend(zeilen)
         if self._linienlasten_entfernen("stab", name) and verteilen:
@@ -5574,8 +6012,11 @@ class Model:
         treffer = np.where(best <= tol)[0]
         return sorted(((int(i), float(lage[i])) for i in treffer), key=lambda x: x[1])
 
-    def _linienlast_legen(self, ll: "Linienlast") -> list:
-        """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist."""
+    def _linienlast_legen(self, ll: "Linienlast", cache: dict = None) -> list:
+        """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist.
+
+        ``cache`` (ein dict) teilt die Kantentabellen des Netzes zwischen den
+        Linienlasten einer Verteilung (linienverteilung.kantenmitten_an)."""
         out: list = []
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1.copy()
@@ -5609,7 +6050,11 @@ class Model:
                                     a=float(lo - s0),
                                     b=None if hi >= s1 - 1e-12 else float(hi - s0)))
             return out
-        # Linie: Knotenlasten aus den Zutrittslaengen
+        # Linie: Knotenlasten int N_i q ds aus den Formfunktionen ihrer
+        # Elementkanten (linienverteilung). Bis zum 06.10.2026 lief die Kette
+        # auch ueber Kantenmitten hinweg in linearen Teilstuecken - auf einer
+        # quadratischen Kante L/4, L/2, L/4 statt L/6, 2L/3, L/6 (F11).
+        from .linienverteilung import kantenintegral, kantenmitten_an, linie_in_kanten
         knoten = self.knoten_auf_linie(ll.ziel)
         if len(knoten) < 2:
             return out
@@ -5623,13 +6068,22 @@ class Model:
         def q_bei(x):
             t = (x - A) / (B - A)
             return (1 - t) * q1 + t * q2
-        for (n0, s0), (n1, s1) in zip(knoten[:-1], knoten[1:]):
+        nr = [n for n, _s in knoten]
+        lage = [s for _n, s in knoten]
+        for kante in linie_in_kanten(nr, lage, kantenmitten_an(self, nr, cache)):
+            (n0, s0), (n1, s1) = knoten[kante[0]], knoten[kante[-1]]
             lo, hi = max(A, s0), min(B, s1)
             if hi - lo <= 1e-12 or s1 <= s0:
                 continue
-            # Last auf [lo, hi] linear; auf die beiden Knoten nach dem
-            # Hebelgesetz (Resultierende und Lage), das ist fuer lineare
-            # Ansaetze die verteilungstreue Aufteilung
+            if len(kante) == 3:
+                # quadratische Kante: Ecke, Mitte, Ecke mit ihren Formfunktionen
+                f = kantenintegral([lage[j] for j in kante], lo, hi, q_bei)
+                for j, fj in zip(kante, f):
+                    F[nr[j]] = F.get(nr[j], np.zeros(3)) + fj
+                continue
+            # Lineare Kante: Last auf [lo, hi] linear; auf die beiden Knoten
+            # nach dem Hebelgesetz (Resultierende und Lage), das ist fuer
+            # lineare Ansaetze genau int N_i q ds
             qa, qb = q_bei(lo), q_bei(hi)
             l = hi - lo
             R = 0.5 * (qa + qb) * l
@@ -5965,6 +6419,127 @@ class Model:
         fr = Kontaktbedingung(name, **kw)
         self.kontaktbedingungen[name] = fr
         return fr
+
+    def kontaktbedingung_umbenennen(self, alt: str, neu: str) -> list:
+        """Die Kontaktbedingung *alt* in *neu* umbenennen - mit **jedem**
+        Verweis (Fehlerliste F10, 06.10.2026).
+
+        Mit geht: der Schluessel in ``kontaktbedingungen`` (an seinem Platz in
+        der Reihenfolge), das Ziel jedes Uebermasses (``LoadCase.uebermasse``),
+        die Kontaktliste jedes Subsystems und, was das Ausfuehren der Fuge im
+        Netz unter ihrem Namen angelegt hat: das Kontaktpaar, die Gruppe der
+        Spaltelemente und Kopplungen und die getrennten Knotenpaare
+        (fugen.kontaktfuge_ausfuehren, fugen.kontaktfuge_zuruecknehmen).
+
+        Bis zum 06.10.2026 benannten Maske und automatischer Name nur den
+        Schluessel um: das Uebermass zeigte weiter auf den alten Namen und
+        wirkte nicht mehr, ohne Meldung der Modellpruefung; beim Rechnen stand
+        nur „wirkt nirgends“ im Protokoll (contact.py).
+
+        Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
+        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        alt, neu = str(alt), str(neu)
+        if alt == neu:
+            return []
+        if alt not in self.kontaktbedingungen:
+            raise KeyError(f"Kontaktbedingung {alt} gibt es nicht")
+        if not neu.strip():
+            raise ValueError("Bitte einen Namen eingeben")
+        if neu in self.kontaktbedingungen:
+            raise ValueError(f"Kontaktbedingung {neu} gibt es schon")
+        kb = self.kontaktbedingungen[alt]
+        _schluessel_tauschen(self.kontaktbedingungen, alt, neu)
+        kb.name = neu
+        aus: list = []
+        for lc in self.load_cases.values():
+            n = 0
+            for u in (getattr(lc, "uebermasse", None) or []):
+                if u.ziel == alt:
+                    u.ziel = neu
+                    n += 1
+            if n:
+                aus.append(f"Übermaß in Lastfall '{lc.name}'")
+        for nm, sub in (getattr(self, "subsysteme", None) or {}).items():
+            if alt in (sub.kontakte or []):
+                sub.kontakte = [neu if k == alt else k for k in sub.kontakte]
+                aus.append(f"Subsystem '{nm}'")
+        n = 0
+        for cp in getattr(self, "contact_pairs", None) or []:
+            if cp.name == alt:
+                cp.name = neu
+                n += 1
+        for g in getattr(self, "gap_elements", None) or []:
+            if str(getattr(g, "group", "")) == alt:
+                g.group = neu
+                n += 1
+        for k in getattr(self, "kopplungen", None) or []:
+            if str(getattr(k, "gruppe", "")) == alt:
+                k.gruppe = neu
+                n += 1
+        getrennt = getattr(self, "getrennte_knoten", None)
+        if getrennt and alt in getrennt:
+            _schluessel_tauschen(getrennt, alt, neu)
+            n += 1
+        if n:
+            aus.append("Fuge im Netz (Kontaktpaar, Spaltelemente, Kopplungen, getrennte Knoten)")
+        return aus
+
+    def kontaktbedingung_loeschen(self, name: str, protokoll: list = None, ausnahme: bool = True) -> str:
+        """Eine Kontaktbedingung entfernen - samt allem, was nur an ihr haengt
+        (Fehlerliste F28, 06.10.2026). Rueckgabe "" bei Erfolg, sonst der Grund.
+
+        Mit geht: was ihr Ausfuehren im Netz angelegt hat (Kontaktpaar,
+        Spaltelemente, Kopplungen, fugen.kontaktfuge_zuruecknehmen) samt der
+        Liste ihrer getrennten Knotenpaare, jedes Uebermass auf sie (eine Last
+        an der Fuge, so wie eine Linienlast mit ihrem Stab geht) und ihr
+        Eintrag in jedem Subsystem. Ein automatischer Kontakt entsteht danach
+        nicht wieder von selbst (``kontakt_ausnahmen``), ausser bei
+        ``ausnahme=False``: so nimmt kontakte.kontakte_nachfuehren einen
+        Kontakt, dessen Koerper sich nicht mehr beruehren. Kein Verweis sperrt
+        das Loeschen.
+
+        Bis zum 06.10.2026 nahm der Modellbaum nur die Netzteile und die
+        Ausnahme mit, Entf in der Ansicht nur den Schluessel - dort wirkte das
+        Kontaktpaar der geloeschten Fuge in der Rechnung weiter. Uebermass,
+        Subsystem und getrennte Knoten blieben auf beiden Wegen stehen und
+        galten fuer eine neue Bedingung gleichen Namens. Zeilen nach
+        ``protokoll``."""
+        kb = self.kontaktbedingungen.get(name)
+        if kb is None:
+            return f"Kontaktbedingung {name} gibt es nicht"
+        from . import fugen
+        zeilen = []
+        del self.kontaktbedingungen[name]
+        n = fugen.kontaktfuge_zuruecknehmen(self, kb)
+        if n:
+            zeilen.append(f"Kontaktbedingung „{name}“: {n} Verbindungen im Netz zurückgenommen "
+                          "(Kontaktpaar, Spaltelemente, Kopplungen)")
+        getrennt = getattr(self, "getrennte_knoten", None)
+        if getrennt and name in getrennt:
+            del getrennt[name]
+        for lc in self.load_cases.values():
+            alle = list(getattr(lc, "uebermasse", None) or [])
+            rest = [u for u in alle if u.ziel != name]
+            if len(rest) != len(alle):
+                lc.uebermasse = rest
+                zeilen.append(f"Lastfall „{lc.name}“: Übermaß auf „{name}“ entfernt")
+        for nm, sub in (getattr(self, "subsysteme", None) or {}).items():
+            if name in (sub.kontakte or []):
+                sub.kontakte = [k for k in sub.kontakte if k != name]
+                zeilen.append(f"Subsystem „{nm}“: Kontaktbedingung „{name}“ aus der Liste genommen")
+        if ausnahme and getattr(kb, "automatisch", False):
+            from . import kontakte
+            p = kontakte.paar_von(kb)
+            if p is not None:
+                if getattr(self, "kontakt_ausnahmen", None) is None:
+                    self.kontakt_ausnahmen = []
+                if list(p) not in self.kontakt_ausnahmen:
+                    self.kontakt_ausnahmen.append(list(p))
+                zeilen.append(f"Kontakt {name} gelöscht: zwischen {p[0]} und {p[1]} entsteht keiner mehr von "
+                              "selbst („+ Kontaktbedingung anlegen“ legt von Hand einen an)")
+        if protokoll is not None:
+            protokoll.extend(zeilen)
+        return ""
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
         """Anschluss an einem Stabende in das Modell aufnehmen."""
@@ -6355,7 +6930,8 @@ class Model:
         in Folge (Stab oder Stabelement ohne Stab), "knoten": die freien
         Zwischenknoten, "achsen": "yz", "y" oder "z" (Knicken um diese lokale
         Achse), "zusammenfassbar": ob „Stäbe zusammenfassen“ die Kette zu
-        einem Stab machen kann}.
+        einem Stab machen wuerde, "grund": warum nicht (der Grund, den das
+        Zusammenfassen selbst nennt, :meth:`_zusammenfassen_pruefen`)}.
 
         Jeder gezeichnete Stab ist ein eigener Stab mit Knicklaenge =
         Stablaenge (Entscheidung der Hauptsitzung vom 03.10.2026, wie RFEM).
@@ -6473,8 +7049,14 @@ class Model:
 
     def _kette_beschreiben(self, staebe: list, knoten: list, glieder: list, achsen: str) -> dict:
         """Ein Eintrag von :meth:`stabketten_frei`: die Glieder in Folge entlang
-        der Achse und ob „Stäbe zusammenfassen“ die Kette vereinen kann (alle
-        Glieder Staebe mit Nachweis, gleicher Querschnitt, Werkstoff und Art)."""
+        der Achse und ob „Stäbe zusammenfassen“ die Kette vereinen wuerde.
+
+        Das fragt dieselbe Pruefung wie das Zusammenfassen selbst
+        (:meth:`_zusammenfassen_pruefen`) und uebernimmt ihren Grund, statt
+        die Regeln noch einmal zu schreiben (F42, 06.10.2026: der Text riet
+        zum Zusammenfassen, wo es einen gegen die Kette gezeichneten Stab
+        abwies). Nur ein Glied ohne Stab, das Stabelement allein, kennt das
+        Werkzeug nicht: es nimmt Staebe."""
         ne = len(self.elements)
 
         def elemente(g):
@@ -6488,27 +7070,29 @@ class Model:
             return float(np.mean([np.dot(np.asarray(self.nodes[int(k)], float) - p0, d)
                                   for e in elemente(g) for k in self.elements[e].nodes]))
         folge = sorted(glieder, key=lage)
-        arten = {(self.elements[e].sec, self.elements[e].mat, self.elements[e].typ)
-                 for g in folge for e in elemente(g)}
-        if len({a[0] for a in arten}) > 1:
-            grund = "verschiedene Querschnitte"
-        elif not all(art == "stab" and self.members[n].design for art, n in folge):
-            grund = "nicht jedes Glied ist ein Stab mit Nachweis"
-        elif len(arten) > 1:
-            grund = "verschiedene Werkstoffe oder Elementarten"
-        elif any(getattr(self.members[n], f) is not None for _a, n in folge for f in ("Lcr_y", "Lcr_z", "L_LT")):
-            grund = "ein Stab der Kette hat eine feste Knick- oder Kipplänge"
+        lose = [n for art, n in folge if art != "stab"]
+        if lose:
+            grund = (f"Stabelement E{lose[0]} gehört zu keinem Stab" if len(lose) == 1 else
+                     f"Stabelemente {', '.join(f'E{n}' for n in lose)} gehören zu keinem Stab")
         else:
             grund = ""
+            try:
+                self._zusammenfassen_pruefen([n for _a, n in folge])
+            except ValueError as ex:
+                grund = str(ex)
         return {"staebe": staebe, "glieder": folge, "knoten": knoten, "achsen": achsen,
                 "zusammenfassbar": not grund, "grund": grund}
 
     def stabkette_text(self, kette: dict) -> str:
         """Die Warnung zu einer Kette - einmal je Kette, mit ihren Staeben:
         „Stäbe S1, S2 und S3 bilden eine Kette mit freien Zwischenknoten K1 und
-        K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““. Laesst sich die
-        Kette nicht zusammenfassen (verschiedene Querschnitte, ein Glied ohne
-        Nachweis), raet der Text, die Knicklaenge von Hand zu setzen."""
+        K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““. Der Text raet nur
+        dann zum Zusammenfassen, wenn es gelingt. Sonst raet er, die
+        Knicklaenge von Hand zu setzen, und nennt den Grund, den das
+        Zusammenfassen selbst nennen wuerde (verschiedene Querschnitte, ein Stab
+        gegen die Kette gezeichnet, verschiedene Drehwinkel, Verweise auf einen
+        Stab …). Bis zum 06.10.2026 riet er auch dann zum Zusammenfassen, wenn
+        es abwies."""
         def liste(teile):
             teile = [str(t) for t in teile]
             return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
@@ -6615,41 +7199,20 @@ class Model:
             return f"{wert:g}".replace(".", ",")
         return str(wert)
 
-    def staebe_zusammenfassen(self, namen) -> tuple:
-        """Gewaehlte kollineare, zusammenhaengende Staebe zu einem Stab
-        zusammenfassen (Werkzeug „Stäbe zusammenfassen“, C14).
+    def _zusammenfassen_pruefen(self, namen) -> tuple:
+        """Die Pruefung von :meth:`staebe_zusammenfassen`, ohne etwas zu
+        aendern: ob die Staebe ``namen`` zu einem Stab werden koennen, und
+        sonst jeder Grund mit Stab und Wert.
 
-        Es verliert nichts und aendert keine Bedeutung (Runde 2, Grundsatz G1):
-        kann es etwas verlieren oder die Bedeutung einer Angabe aendern, weist
-        es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
-        Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
-        Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
-        Drehwinkel irgendwelcher Elemente der Kette, auch innerhalb eines
-        Glieds (ein Stab wird im Nachweis mit einem Achsensystem gefuehrt),
-        verschiedene Vorspannungen,
-        eine Linienlast, die sich nicht verlustfrei als Abschnittslast
-        schreiben laesst (:meth:`_linienlast_abschnitt`), und jeder Verweis
-        auf irgendeinen Stab der Kette, auch den ersten (danach meinte er die
-        ganze Kette). Bis zur Runde 2 setzte es feste Laengen still auf β · L
-        zurueck und uebernahm die Parameter des ersten Stabs; bis zum
-        04.10.2026 fasste es auch Staebe mit verschiedenem Drehwinkel zusammen.
-
-        Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
-        Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
-        geht mit und gilt auf dem Abschnitt, auf dem sie vorher lag: um die
-        Laenge der Staebe davor verschoben; die Glieder vor dem letzten
-        bekommen ein festes „bis“, am letzten bleibt „bis zum Ende“ stehen
-        (ebenso ein „bis“ ueber sein Ende hinaus und ein „von“ vor dem Anfang
-        des ersten). Die Elementlasten jedes Elements bleiben dieselben, die
-        Rechnung auch. Bis zum 04.10.2026 (Runde 2) wies es verschiedene
-        Linienlasten ab und nahm nur gleiche mit; der Anwender wollte es
-        lockerer. Gleiche Vorspannungen bleiben einmal stehen, denn eine
-        Vorspannung wirkt auf jedes Element ihres Stabs. Die Elemente bleiben,
-        wie sie sind: es wird nichts umgedreht, darum muss jeder Stab in
-        Richtung der Kette laufen.
-
-        Rueckgabe (Name, [Hinweise]); ValueError mit den Gruenden, wenn es
-        nicht geht - dann ist nichts geaendert."""
+        Rueckgabe (folge, elemente, laenge): die Staebe in Richtung der
+        Kette, ihre Elemente der Reihe nach und die Laenge jedes Stabs [m];
+        ValueError mit den Gruenden, wenn es nicht geht. Das Zusammenfassen
+        selbst und der Kettentext (:meth:`_kette_beschreiben`) fragen
+        dieselbe Pruefung - bis zum 06.10.2026 schrieb der Kettentext einen
+        Teil der Regeln noch einmal und riet zum Zusammenfassen, wo es
+        abwies (Stab gegen die Kette gezeichnet, verschiedene Drehwinkel,
+        Verweise, Vorspannungen, Linienlasten, verschiedene Parameter).
+        """
         namen = list(dict.fromkeys(str(n) for n in namen))
         if len(namen) < 2:
             raise ValueError("Mindestens zwei Stäbe wählen")
@@ -6778,6 +7341,44 @@ class Model:
                 gruende.append(f"{n} wird verwendet von {', '.join(verweise)} - erst dort lösen")
         if gruende:
             raise ValueError(" | ".join(gruende))
+        return folge, elemente, laenge
+
+    def staebe_zusammenfassen(self, namen) -> tuple:
+        """Gewaehlte kollineare, zusammenhaengende Staebe zu einem Stab
+        zusammenfassen (Werkzeug „Stäbe zusammenfassen“, C14).
+
+        Es verliert nichts und aendert keine Bedeutung (Runde 2, Grundsatz G1):
+        kann es etwas verlieren oder die Bedeutung einer Angabe aendern, weist
+        es ab und nennt jeden Grund mit Stab und Wert - feste Knick- und
+        Kipplaengen (sie gelten fuer den einzelnen Stab), verschiedene
+        Nachweisparameter (jedes Feld ausser Name und Elementen), verschiedene
+        Drehwinkel irgendwelcher Elemente der Kette, auch innerhalb eines
+        Glieds (ein Stab wird im Nachweis mit einem Achsensystem gefuehrt),
+        verschiedene Vorspannungen,
+        eine Linienlast, die sich nicht verlustfrei als Abschnittslast
+        schreiben laesst (:meth:`_linienlast_abschnitt`), und jeder Verweis
+        auf irgendeinen Stab der Kette, auch den ersten (danach meinte er die
+        ganze Kette). Bis zur Runde 2 setzte es feste Laengen still auf β · L
+        zurueck und uebernahm die Parameter des ersten Stabs; bis zum
+        04.10.2026 fasste es auch Staebe mit verschiedenem Drehwinkel zusammen.
+
+        Sonst behaelt der erste Stab der Kette seinen Namen und bekommt die
+        Elemente aller in Reihenfolge; die anderen entfallen. Jede Linienlast
+        geht mit und gilt auf dem Abschnitt, auf dem sie vorher lag: um die
+        Laenge der Staebe davor verschoben; die Glieder vor dem letzten
+        bekommen ein festes „bis“, am letzten bleibt „bis zum Ende“ stehen
+        (ebenso ein „bis“ ueber sein Ende hinaus und ein „von“ vor dem Anfang
+        des ersten). Die Elementlasten jedes Elements bleiben dieselben, die
+        Rechnung auch. Bis zum 04.10.2026 (Runde 2) wies es verschiedene
+        Linienlasten ab und nahm nur gleiche mit; der Anwender wollte es
+        lockerer. Gleiche Vorspannungen bleiben einmal stehen, denn eine
+        Vorspannung wirkt auf jedes Element ihres Stabs. Die Elemente bleiben,
+        wie sie sind: es wird nichts umgedreht, darum muss jeder Stab in
+        Richtung der Kette laufen.
+
+        Rueckgabe (Name, [Hinweise]); ValueError mit den Gruenden, wenn es
+        nicht geht - dann ist nichts geaendert."""
+        folge, elemente, laenge = self._zusammenfassen_pruefen(namen)
         bleibt = self.members[folge[0]]
         hinweise = []
         # jede Linienlast auf den Abschnitt, auf dem sie lag: um die Laenge der
@@ -6830,8 +7431,14 @@ class Model:
         trug das verkuerzte alte Element seine Elementlast nur noch auf seiner
         neuen Laenge, und die Rechnung verlor ein Viertel der Last (Balken 8 m,
         10 kN/m: Auflager 60 statt 80 kN), bis irgendeine andere Last neu
-        verteilt wurde."""
+        verteilt wurde.
+
+        Seit dem 06.10.2026 gehen auch die Gelenke und die Elementlasten des
+        alten Elements mit (:meth:`_teilung_uebertragen`); vorher wanderte ein
+        Gelenk an seinem Ende an die Teilstelle, und eine Elementlast wirkte
+        nur noch auf dem verkuerzten Teil. Einmal je Teilung aufrufen."""
         alt, neu = int(alt), int(neu)
+        self._teilung_uebertragen(alt, neu)
         kn_neu = {int(n) for n in self.elements[neu].nodes}
         out = []
         for name, mem in self.members.items():
@@ -6854,6 +7461,116 @@ class Model:
                        for lc in self.load_cases.values() for ll in lc.linienlasten):
             self.lasten_verteilen()
         return out
+
+    def _teilung_uebertragen(self, alt: int, neu: int) -> None:
+        """Gelenke und Elementlasten des geteilten Stabelements ``alt`` auf
+        beide Teile verteilen (Nachpruefung von C14, 06.10.2026).
+
+        Der Aufrufer hat ``alt`` schon verkuerzt: eines seiner Enden liegt an
+        der Teilstelle, dem Knoten, den es mit ``neu`` teilt; das andere Ende
+        von ``neu`` liegt am alten Ort dieses Endes. Bis dahin blieb alles am
+        alten Element: ein Gelenk an seinem Ende lag danach an der Teilstelle
+        (Gelenk bei x = 6 m, nach dem Teilen bei x = 4 m), und eine
+        Elementlast (load_beam) wirkte nur noch auf dem verkuerzten Teil
+        (Summe der Auflagerkraefte z 82000 statt 84000 N).
+
+        * Gelenke und Federgelenke an dem Ende, das jetzt an der Teilstelle
+          liegt, gehen an das Ende von ``neu`` am alten Ort; die Teilstelle
+          bleibt biegesteif, ein Gelenk am anderen Ende bleibt, wo es ist.
+          Das Gelenkverzeichnis (MemberHinge.elemente, daraus schalten
+          Stellungen ein Gelenk ab) nennt dann ``neu``. Die FHG-Nummern gelten
+          weiter: ``neu`` hat dieselben Achsen wie ``alt`` (gleiche Richtung
+          und gleicher Drehwinkel, so teilt an_staebe_anschliessen; laeuft es
+          gegen ``alt``, gilt das mit umgekehrtem Drehwinkel).
+        * Jede Elementlast wird an der Teilstelle geschnitten: Abschnitt und
+          Werte bleiben entlang der alten Achse, was auf dem Stueck von
+          ``neu`` liegt, wird dort eine eigene Elementlast mit den Werten an
+          seinen Enden - gleichmaessig bleibt gleichmaessig, eine Trapez- oder
+          kurze Teillast (Einzellast) liegt danach anteilig auf beiden Teilen.
+          Eine Last im lokalen System wird auf die Achsen von ``neu``
+          umgerechnet. Aus Objektlasten erzeugte Elementlasten (``_geo``)
+          bleiben, wie sie sind: sie legt lasten_verteilen neu.
+        """
+        ne = len(self.elements)
+        if alt == neu or not (0 <= alt < ne and 0 <= neu < ne):
+            return
+        ea, en = self.elements[alt], self.elements[neu]
+        if ea.typ not in _EL.STAB_TYPEN or en.typ not in _EL.STAB_TYPEN:
+            return
+        ka, kn = [int(n) for n in ea.nodes], [int(n) for n in en.nodes]
+        gemeinsam = set(ka) & set(kn)
+        if len(ka) != 2 or len(kn) != 2 or len(gemeinsam) != 1:
+            return
+        k = gemeinsam.pop()
+        ende_alt = ka.index(k)          # dieses Ende von alt liegt jetzt an der Teilstelle
+        ende_neu = 1 - kn.index(k)      # dieses Ende von neu liegt am alten Ort
+        # Gelenke: was am Ende an der Teilstelle sass, an das Ende am alten Ort
+        dort = range(6 * ende_alt, 6 * ende_alt + 6)
+        um = 6 * (ende_neu - ende_alt)
+        frei = [int(d) for d in ea.hinges if int(d) in dort]
+        if frei:
+            ea.hinges = [d for d in ea.hinges if int(d) not in dort]
+            en.hinges = sorted({int(d) for d in en.hinges} | {d + um for d in frei})
+        federn = [(int(d), kf) for d, kf in ea.hinge_springs if int(d) in dort]
+        if federn:
+            ea.hinge_springs = [(d, kf) for d, kf in ea.hinge_springs if int(d) not in dort]
+            sp = {int(d): kf for d, kf in en.hinge_springs}
+            sp.update({d + um: kf for d, kf in federn})
+            en.hinge_springs = sorted(sp.items())
+        if frei or federn:
+            for h in self.hinges.values():
+                els = [int(e) for e in (getattr(h, "elemente", None) or [])]
+                if alt in els and int(getattr(h, "end", 0) or 0) == ende_alt:
+                    h.elemente = sorted((set(els) - {alt}) | {neu})
+        # Elementlasten: Lage s entlang der alten Achse, ab ihrem Anfang. alt
+        # behaelt seine Richtung; liegt sein Anfang an der Teilstelle, lag
+        # das Stueck von neu davor
+        X = np.asarray(self.nodes, float)
+        La = float(np.linalg.norm(X[ka[1]] - X[ka[0]]))
+        Ln = float(np.linalg.norm(X[kn[1]] - X[kn[0]]))
+        if La <= 0.0 or Ln <= 0.0:
+            return
+        L0 = La + Ln
+        s_alt, s_neu = (0.0, La) if ende_alt == 1 else (Ln, 0.0)
+        gleich = float((X[kn[1]] - X[kn[0]]) @ (X[ka[1]] - X[ka[0]])) > 0.0
+        drehung = None                  # lokal alt -> lokal neu, erst bei Bedarf
+        for lc in self.load_cases.values():
+            liste = []
+            for bl in lc.beam_loads:
+                if int(bl.elem) != alt or getattr(bl, "_geo", False):
+                    liste.append(bl)
+                    continue
+                A = max(0.0, float(bl.a or 0.0))
+                B = L0 if bl.b is None else min(float(bl.b), L0)
+                if B - A <= 1e-12:      # wirkt nicht - bleibt, wie es ist
+                    liste.append(bl)
+                    continue
+                q1 = np.asarray(bl.q, float)
+                q2 = q1 if bl.q2 is None else np.asarray(bl.q2, float)
+                for wer, s0, L in (("alt", s_alt, La), ("neu", s_neu, Ln)):
+                    lo, hi = max(A, s0), min(B, s0 + L)
+                    if hi - lo <= 1e-12:
+                        continue
+                    qa = q1 + (lo - A) / (B - A) * (q2 - q1)
+                    qb = q1 + (hi - A) / (B - A) * (q2 - q1)
+                    a, b = lo - s0, hi - s0
+                    if wer == "neu" and not gleich:
+                        a, b, qa, qb = L - b, L - a, qb, qa
+                    if wer == "neu" and bl.system == "local":
+                        if drehung is None:
+                            from .elements import beam3d as _bm
+                            Ta, _ = _bm.local_axes(X[ka[0]], X[ka[1]], ea.roll)
+                            Tn, _ = _bm.local_axes(X[kn[0]], X[kn[1]], en.roll)
+                            drehung = Tn @ Ta.T
+                        qa, qb = drehung @ qa, drehung @ qb
+                    x = copy.copy(bl)
+                    x.elem = alt if wer == "alt" else neu
+                    x.q = [float(v) for v in qa]
+                    x.q2 = None if bl.q2 is None else [float(v) for v in qb]
+                    x.a = 0.0 if a <= 1e-12 else float(a)
+                    x.b = None if b >= L - 1e-12 else float(b)
+                    liste.append(x)
+            lc.beam_loads = liste
 
     def berichtsrahmen(self) -> "Berichtsrahmen":
         """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""
@@ -7148,6 +7865,17 @@ class Model:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Fläche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
+        # Ein Uebermass nennt seine Fuge beim Namen: eine Kontaktbedingung oder
+        # ein Kontaktpaar (add_uebermass). Fehlt sie, wirkt es nirgends. Bis zum
+        # 06.10.2026 sagte das nur das Protokoll der Rechnung („wirkt
+        # nirgends“, contact.py) - etwa nachdem das Umbenennen der Bedingung
+        # das Ziel nicht nachzog (Fehlerliste F10)
+        fugen = set(getattr(self, "kontaktbedingungen", None) or {}) | {str(cp.name) for cp in self.contact_pairs}
+        for lc in self.load_cases.values():
+            for u in getattr(lc, "uebermasse", None) or []:
+                if str(u.ziel) not in fugen:
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Übermaß auf „{u.ziel}“ - eine Kontaktbedingung "
+                                "oder ein Kontaktpaar dieses Namens gibt es nicht, das Übermaß wirkt nirgends")
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
         # Lager (FEHLER - das Gleichungssystem waere singulaer)
         if self.elements:
@@ -7419,6 +8147,11 @@ class Model:
                 s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
+                # F07/F30 (06.10.2026): bis dahin standen Lager mit ihrer Nummer in den
+                # Listen, und ``lager_aus`` traf Lager jeder Art. Ein Name oder
+                # Schluessel bleibt, eine Nummer wird zum Namen wie im Modellbaum -
+                # die Zeilen kommen ins Protokoll (Oeffnen und Importieren)
+                m._ladehinweise.extend(s.lagerschluessel_umstellen(m))
             # E6 (01.10.2026): bis Fassung 7 hiess eine leere Zuordnung „alle
             # Lastfaelle“ - so bleiben die Ergebnisse aelterer Dateien gleich,
             # und die Zuordnung steht sichtbar in der Stellung

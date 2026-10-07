@@ -745,6 +745,41 @@ def dilatation_gebuendelt(ergebnisse) -> list:
     return list(zeilen)
 
 
+def gemeinsam_gerechnet(info) -> bool:
+    """Ist das Ergebnis mit der gemeinsamen Iteration von Fliessen und Kontakt
+    gerechnet? Das steht seit dem 06.10.2026 in
+    ``res.info["plastizitaet"]["kontakt"]`` (:func:`_plastizitaet_rechnen`,
+    nur wenn sie wirklich gerechnet wurde - :func:`_gemeinsam`). Aeltere
+    Ergebnisse tragen den Eintrag nicht, auch gemeinsam gerechnete."""
+    pz = info.get("plastizitaet") if isinstance(info, dict) else None
+    return isinstance(pz, dict) and pz.get("kontakt") == "gemeinsam"
+
+
+def gemeinsam_warnung() -> str:
+    """Die Warnung eines Ergebnisses, das mit „gemeinsam“ gerechnet ist
+    (Fehlerliste F12, 06.10.2026) - plastizitaet.GEMEINSAM_WARNUNG mit dem
+    Namen der Iteration davor."""
+    from . import plastizitaet as pl
+    return f"Iteration „gemeinsam“ (Versuch) {pl.GEMEINSAM_WARNUNG}"
+
+
+def gemeinsam_gebuendelt(ergebnisse) -> list:
+    """Die Warnung zur Iteration „gemeinsam“ (Fehlerliste F12, 06.10.2026)
+    ueber alle Ergebnisse in **einer** Zeile, mit den ersten drei Namen - fuer
+    die Hinweise des Berichts und die Zusammenfassung der Rechnung, auf
+    demselben Weg wie :func:`ausweichen_gebuendelt` und
+    :func:`dilatation_gebuendelt`. Am Drehlager stuende sie sonst je Lastfall
+    einmal da. ``ergebnisse``: (Name, Results)-Paare."""
+    from . import plastizitaet as pl
+    namen = [str(n) for n, r in ergebnisse if gemeinsam_gerechnet(getattr(r, "info", None))]
+    if not namen:
+        return []
+    n = len(namen)
+    return [f"Iteration „gemeinsam“ (Versuch) bei {n} Ergebnis{'' if n == 1 else 'sen'} "
+            f"({', '.join(namen[:3])}{' …' if n > 3 else ''}): sie {pl.GEMEINSAM_WARNUNG} "
+            "(Berechnung → Einstellungen → Plastizität, „Verfahren mit Kontakt“)."]
+
+
 def ausweichen_gebuendelt(ergebnisse) -> list:
     """Je Art von Ausweichgrund **eine** Zeile ueber alle Ergebnisse - fuer
     die Hinweise des Berichts und die Zusammenfassung der Oberflaeche.
@@ -1593,6 +1628,11 @@ class Results:
                      + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
         if self.info.get("loeser_nachweis"):
             s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
+        # Greift die Knotendilatation fuer einen Werkstoff nicht (nu ausserhalb
+        # [0; 0,5)), steht das auch hier - nicht nur in der Zusammenfassung
+        # aller Lastfaelle (Analysis.summary). Bis zum 06.10.2026 fehlte die
+        # Zeile bei „Nur aktiver Lastfall“ und bei --analyse lastfall (F36).
+        s += dilatation_gebuendelt([(self.name, self)])
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -1615,13 +1655,17 @@ class Results:
                 n_l = int(self.info.get("contact_laeufe", 1) or 1)
                 n_f = self.info.get("contact_factorisations")
                 n_ab = int(self.info.get("contact_laeufe_abgekuerzt", 0) or 0)
+                # „NICHT konvergiert“ nach derselben Regel wie die Rechenliste
+                # (kontakt_konvergiert): ein gedeckelter elastischer Vorlauf
+                # zaehlt nicht, er steht nur als Hinweis da (F39, 06.10.2026)
+                hinweis = kontakt_hinweis(self.info)
                 s.append(f"Kontakt-Iterationen     : {self.info['contact_iterations']}"
                          + (f" in {n_l} Läufen" if n_l > 1 else "")
                          + (f" ({n_ab} davon abgekürzt)" if n_ab else "")
                          + (f", davon {int(n_f)} mit neuer Faktorisierung"
                             if n_f is not None else "")
-                         + ("" if self.info.get("contact_converged", True)
-                            else "  (NICHT konvergiert)"))
+                         + ("  (NICHT konvergiert)" if not kontakt_konvergiert(self.info)
+                            else f"  (konvergiert; {hinweis})" if hinweis else ""))
         if self.freqs is not None:
             s.append("Eigenfrequenzen [Hz]    : "
                      + ", ".join(f"{f:.3f}" for f in self.freqs[:10]))
@@ -1649,6 +1693,11 @@ class Results:
                      + (f", davon {pz['faktorisierungen']} mit neuer Faktorisierung "
                         "(konsistente Tangente)" if pz.get("faktorisierungen") else "")
                      + ("" if pz.get("konvergiert", True) else " - NICHT KONVERGIERT"))
+            # Fehlerliste F12 (06.10.2026): die gemeinsame Iteration ist ein
+            # Versuch - bis dahin sah ihr Ergebnis aus wie ein verschachtelt
+            # gerechnetes, nur der Tooltip der Auswahl warnte
+            if gemeinsam_gerechnet(self.info):
+                s.append(f"WARNUNG                 : {gemeinsam_warnung()}")
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
@@ -3258,8 +3307,129 @@ def _laufbuch_zaehlen(res) -> None:
 
 def _verworfen_voll(laeufe) -> int:
     """Verworfene Laeufe, die nicht schon als abgekuerzt zaehlen - so bleibt
-    "N von M" (rechenliste.zustand_aus_info) eine einfache Differenz."""
+    "N von M" (konvergenz_zustand) eine einfache Differenz."""
     return sum(1 for e in laeufe if e.get("verworfen") and not e.get("abgekuerzt"))
+
+
+#: Die Konvergenzstaende eines fertigen Postens (konvergenz_zustand); die
+#: Rechenliste fuehrt dieselben Woerter (gui.rechenliste)
+KONVERGIERT = "konvergiert"
+PROBELAUF = "Probelauf"
+
+
+def _kontaktlaeufe_zaehlen(info: dict):
+    """(nicht konvergiert, Laeufe, letzter konvergiert) aus den Laufzahlen in
+    ``res.info`` - ohne den elastischen Vorlauf, die abgekuerzten und die
+    verworfenen Laeufe (siehe :func:`konvergenz_zustand`). None, wenn das
+    Ergebnis keine Laufzaehlung traegt (aelter als der 22.09.2026)."""
+    if "contact_laeufe_nicht_konvergiert" not in info:
+        return None
+    n_vor = int(info.get("contact_vorlauf_laeufe", 0) or 0)
+    laeufe = (int(info.get("contact_laeufe", 0) or 0) - n_vor
+              - int(info.get("contact_laeufe_abgekuerzt", 0) or 0)
+              - int(info.get("contact_laeufe_verworfen", 0) or 0))
+    nicht = (int(info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
+             - int(info.get("contact_vorlauf_nicht_konvergiert", 0) or 0))
+    letzter = info.get("contact_letzter_lauf_konvergiert", True) is not False
+    if not letzter:
+        nicht = max(nicht, 1)
+    return nicht, laeufe, letzter
+
+
+def kontakt_konvergiert(info) -> bool:
+    """Ist der Kontakt dieses Ergebnisses konvergiert - nach der Regel von
+    :func:`konvergenz_zustand`, nur fuer den Kontakt?
+
+    Zusammenfassung und Bericht lesen das statt ``contact_converged``. Das
+    klebt ueber alle Laeufe, den elastischen Vorlauf einer Rechnung mit
+    Fliessen eingeschlossen, und bis zum 06.10.2026 stand darum
+    „NICHT konvergiert“ auch dort, wo nur der Vorlauf gedeckelt und der
+    letzte Lauf konvergiert war (F39). Aeltere Ergebnisse ohne Laufzaehlung
+    fallen auf ``contact_converged`` zurueck."""
+    info = info if isinstance(info, dict) else {}
+    z = _kontaktlaeufe_zaehlen(info)
+    if z is None:
+        return info.get("contact_converged") is not False
+    return z[0] <= 0
+
+
+def kontakt_hinweis(info) -> str:
+    """Der Hinweis, wenn ``contact_converged`` falsch ist, der Kontakt nach
+    :func:`kontakt_konvergiert` aber konvergiert: gedeckelt war nur ein Lauf,
+    der nicht zaehlt - meist der elastische Vorlauf. Sonst ""."""
+    info = info if isinstance(info, dict) else {}
+    if info.get("contact_converged") is not False or not kontakt_konvergiert(info):
+        return ""
+    if int(info.get("contact_vorlauf_nicht_konvergiert", 0) or 0) > 0:
+        return "gedeckelt war nur der elastische Vorlauf, er zählt nicht"
+    return "gedeckelt war nur ein abgekürzter oder verworfener Lauf, er zählt nicht"
+
+
+def konvergenz_zustand(info) -> str:
+    """Der Konvergenzstand eines fertigen Postens aus ``Results.info``.
+
+    Rueckgabe "konvergiert", "Probelauf" oder "NICHT konvergiert: <Gruende>".
+    Dieselbe Regel lesen die Rechenliste (``rechenliste.zustand_aus_info``),
+    die Zusammenfassung und der Bericht (:func:`kontakt_konvergiert`); bis
+    zum 06.10.2026 stand sie nur in der Rechenliste, und die beiden anderen
+    zeigten ``contact_converged`` (F39). Gelesen werden die Zahlen, die der
+    Loeser je Kontaktlauf fuehrt (_kontakt_info_sammeln), nicht der Text der
+    Meldungen:
+
+    * ``contact_laeufe_nicht_konvergiert`` - gedeckelte oder an der
+      Schrittgrenze beendete Kontaktlaeufe, ``contact_letzter_lauf_konvergiert``;
+    * ``contact_vorlauf_*`` - die Laeufe des elastischen Vorlaufs einer
+      Rechnung mit Fliessen (_solve_loads). Sie zaehlen **nicht**: der erste
+      plastische Lauf startet beim Start des Lastfalls, nicht beim Zustand
+      des Vorlaufs, und dessen u wird ueberschrieben. Gemessen am Block mit
+      Reibung: Vorlauf gedeckelt, max |du| = 0 gegen den Lauf ohne Deckel
+      (tests/test_rechenliste.test_vorlauf_mit_deckel, 22.09.2026);
+    * ``contact_laeufe_abgekuerzt`` - Laeufe, die die gemeinsame Iteration
+      von Fliessen und Kontakt mitten in einer Laststufe mit Absicht nach
+      einem Schritt beendet (23.09.2026). Sie stehen nicht unter den nicht
+      konvergierten und zaehlen auch in "N von M" nicht mit; der letzte Lauf
+      muss trotzdem konvergiert sein (``contact_letzter_lauf_konvergiert``);
+      ebenso ``contact_laeufe_verworfen`` - die vollen (nicht abgekuerzten)
+      Laeufe einer Laststufe, die die gemeinsame Iteration aufgegeben und vom
+      Startwert an verschachtelt wiederholt hat (24.09.2026): ihr u und ihr
+      Kontaktzustand gehen nicht ins Ergebnis ein;
+    * ``plastizitaet.konvergiert``, ``ausfall_log``, ``abbruch``, ``probelauf``.
+
+    Jeder andere gedeckelte Lauf macht den Posten "NICHT konvergiert", auch
+    wenn der letzte Lauf konvergiert ist: jeder plastische Lauf reicht seinen
+    Kontaktzustand an den naechsten weiter, und der bestimmt die plastische
+    Dehnung mit. Eine Zwischenstufe ("eingeschraenkt") gibt es mit Absicht
+    nicht - ob ein solcher Lastfall als Nachweis gilt, entscheidet der
+    Anwender, nicht diese Funktion.
+
+    Aeltere Ergebnisse ohne Laufzaehlung fallen auf ``contact_converged``
+    zurueck - das klebt ueber alle Laeufe, den Vorlauf eingeschlossen.
+    """
+    info = info if isinstance(info, dict) else {}
+    if info.get("probelauf"):
+        return PROBELAUF
+    gruende = []
+    if info.get("abbruch"):
+        gruende.append("abgebrochen (" + str(info["abbruch"]).splitlines()[0][:80] + ")")
+    z = _kontaktlaeufe_zaehlen(info)
+    if z is not None:
+        nicht, laeufe, letzter = z
+        if nicht > 0:
+            if laeufe <= 1:
+                gruende.append("Kontaktlauf nicht konvergiert")
+            else:
+                gruende.append(f"{nicht} von {laeufe} Kontaktläufen nicht konvergiert"
+                               + ("" if letzter else ", darunter der letzte"))
+    elif info.get("contact_converged") is False:
+        gruende.append("Kontakt nicht konvergiert")
+    pz = info.get("plastizitaet")
+    if isinstance(pz, dict) and pz.get("konvergiert", True) is False:
+        gruende.append("Plastizität nicht konvergiert")
+    if any("nicht konvergiert" in str(z_) for z_ in (info.get("ausfall_log") or [])):
+        gruende.append("Ausfall-Iteration nicht konvergiert")
+    if gruende:
+        return "NICHT konvergiert: " + "; ".join(gruende)
+    return KONVERGIERT
 
 
 def _fliessarten(info: dict, einst) -> list:
@@ -3582,6 +3752,12 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
         _schlussabnahme_kontakt(res)
+        # Fehlerliste F12 (06.10.2026): die Warnung als letzte Zeile des
+        # Protokolls der Plastizitaet - sie geht unten mit ihm in den
+        # Fortschritt (Protokoll der Oberflaeche, Spalte „Meldung“ der
+        # Rechenliste: die letzte Zeile vor der Marke des Postens bleibt dort
+        # stehen) und nach res.info["plastizitaet"]["log"]
+        log.append(f"WARNUNG: {gemeinsam_warnung()}")
     if not isinstance(temp, dict):
         temp = {}
     sig0 = temp.setdefault("sigma0", {})
@@ -3596,6 +3772,11 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
     res.info["plastizitaet"]["log"] = list(log)
+    if gemeinsam:
+        # woraus Zusammenfassung und Bericht die Warnung lesen
+        # (gemeinsam_gerechnet); verschachtelt bleibt der Eintrag weg, das
+        # Ergebnis ist dort dasselbe wie vor dem 06.10.2026
+        res.info["plastizitaet"]["kontakt"] = "gemeinsam"
     # eps_p_eq steht je Gausspunkt; gemeldet wird der groesste Wert des
     # Elements - ein Element gilt als fliessend, sobald ein Punkt fliesst.
     res.info["plastisch"] = {int(i): float(np.max(v)) for i, v in zustand.eps_p_eq.items()
@@ -3781,8 +3962,10 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # wird ueberschrieben. Ein gedeckelter Vorlauf aendert das Ergebnis
         # darum nicht: am Block mit Reibung max |du| = 0 gegen den Lauf ohne
         # Deckel (tests/test_rechenliste, 22.09.2026). Damit die Kennzeichnung
-        # (rechenliste.zustand_aus_info) ihn herausrechnen kann, stehen seine
-        # Zahlen hier eigens; contact_converged klebt weiter ueber alle Laeufe.
+        # (konvergenz_zustand, kontakt_konvergiert) ihn herausrechnen kann,
+        # stehen seine Zahlen hier eigens; contact_converged klebt weiter ueber
+        # alle Laeufe - Zusammenfassung, Bericht und Rechenliste lesen es seit
+        # dem 06.10.2026 nicht mehr (F39).
         res.info["contact_vorlauf_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0)
         res.info["contact_vorlauf_nicht_konvergiert"] = int(
             res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
@@ -6417,6 +6600,8 @@ class Analysis:
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
         s += dilatation_gebuendelt(self.all_results().items())
+        # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
+        s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen
         # (umhuellende_kurz). Bis zur Nachbesserung vom 04.10.2026 (Befund S3)
         # stand hier env.name, bei einer Ergebniskombination ihr blosser Name:

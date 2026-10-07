@@ -333,13 +333,21 @@ def member_stability(sec: Section, E: float, G: float, fy: float, cls: ClassResu
         My_i, Mz_i = My_Ed + dMy, Mz_Ed + dMz
         zusatz = (f"; ΔM_y,Ed = {dMy/1e3:.1f} kNm, ΔM_z,Ed = {dMz/1e3:.1f} kNm "
                   f"aus e_N (Klasse 4)" if (dMy or dMz) else "")
-        u61 = n_y + kf["kyy"] * My_i / MyRd + kf["kyz"] * Mz_i / MzRd
-        u62 = n_z + kf["kzy"] * My_i / MyRd + kf["kzz"] * Mz_i / MzRd
+        # M/M_Rd ohne Teilung durch null: ohne Widerstand ist jede Biegung
+        # unendlich ausgenutzt, keine Biegung zaehlt 0 (Querschnitt ohne W)
+        ry = (My_i / MyRd if MyRd > 0 else (np.inf if My_i > 0 else 0.0))
+        rz = (Mz_i / MzRd if MzRd > 0 else (np.inf if Mz_i > 0 else 0.0))
+        if MyRd > 0 and MzRd > 0:       # Rechenweg wie bisher, bitgleich
+            u61 = n_y + kf["kyy"] * My_i / MyRd + kf["kyz"] * Mz_i / MzRd
+            u62 = n_z + kf["kzy"] * My_i / MyRd + kf["kzz"] * Mz_i / MzRd
+        else:
+            u61 = n_y + kf["kyy"] * ry + kf["kyz"] * rz
+            u62 = n_z + kf["kzy"] * ry + kf["kzz"] * rz
         checks["Interaktion Gl. 6.61"] = (
-            u61, f"{n_y:.3f} + {kf['kyy']:.3f}·{My_i/MyRd:.3f} + {kf['kyz']:.3f}·{Mz_i/MzRd:.3f}"
+            u61, f"{n_y:.3f} + {kf['kyy']:.3f}·{ry:.3f} + {kf['kyz']:.3f}·{rz:.3f}"
                  f" (Cmy = {Cmy:.2f} {cmy_t}){zusatz}")
         checks["Interaktion Gl. 6.62"] = (
-            u62, f"{n_z:.3f} + {kf['kzy']:.3f}·{My_i/MyRd:.3f} + {kf['kzz']:.3f}·{Mz_i/MzRd:.3f}"
+            u62, f"{n_z:.3f} + {kf['kzy']:.3f}·{ry:.3f} + {kf['kzz']:.3f}·{rz:.3f}"
                  f" (Cmz = {Cmz:.2f} {cmz_t})")
         details.update(kf)
         details.update({"Cmy": Cmy, "Cmz": Cmz, "n_y": n_y, "n_z": n_z})

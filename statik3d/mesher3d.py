@@ -5495,7 +5495,14 @@ def netzguete(tb: dict, bericht: dict) -> dict:
         "splitteranteil": float(tb.get("splitter", 0) or 0) / n,
     }
     gerissen = []
-    if mass["randtreue"] < RANDTREUE_MIN:
+    # **Nicht gemessen ist nicht gerissen** (F35, 06.10.2026): liess sich die
+    # Randtreue nicht messen (_netzbericht, ``randtreue_fehler``), steht dort
+    # 0,0 - kein Messwert. Bis dahin riss sie damit die Grenze, und der
+    # Vernetzer vernetzte zweimal vergeblich feiner (die Messung scheitert
+    # beim feineren Netz erst recht). Im Abstandsmass bleibt die 0,0 stehen:
+    # unter zwei Anlaeufen gewinnt der, dessen Rand gemessen ist.
+    mass["randtreue_gemessen"] = not tb.get("randtreue_fehler")
+    if mass["randtreue_gemessen"] and mass["randtreue"] < RANDTREUE_MIN:
         gerissen.append(f"Randtreue {mass['randtreue'] * 100:.1f} % unter der Grenze "
                         f"{RANDTREUE_MIN * 100:.0f} %")
     if mass["volumenabweichung"] > VOLUMEN_ABW_MAX:
@@ -6018,6 +6025,9 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
                          f"Güte min {tb['guete']:.3f}")
     # Fuer die Abnahme vor dem Rechnen am Objekt festhalten, nicht nur im Text
     koerper.randtreue = float(tb.get("randtreue", 0.0) or 0.0)
+    # ... auch, dass sie sich nicht messen liess (F35): sonst sieht die
+    # Abnahme nur die 0 = „nicht gemessen“ und meldet „bestanden“
+    koerper.randtreue_fehler = str(tb.get("randtreue_fehler", "") or "")
     koerper.netzgrund = ""
     koerper.netzkanten = []
     C.say(log, f"Volumen {koerper.name}: {len(els)} Tetraeder ({art}) aus "
@@ -6094,7 +6104,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
                     f"(bis {h * 1e3:.1f} mm Kantenlänge).")
     elif aus.get("anlaeufe", 1) > 1:
         C.say(log, f"  Volumen {koerper.name}: nach {aus['anlaeufe']} Anläufen "
-                   "halten alle vier Kriterien.")
+                   + ("halten die drei gemessenen Kriterien, die Randtreue ist nicht gemessen."
+                      if koerper.randtreue_fehler else "halten alle vier Kriterien."))
     return els
 
 

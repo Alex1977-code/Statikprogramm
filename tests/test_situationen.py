@@ -365,12 +365,13 @@ def test_stellung_lage_und_wirkung():
         else solver.solve_all(m)
     close("Gelenk biegesteif: Kragarm 2L, w = F(2L)³/3EI", an.cases["LF3"].u[ids[2], 2],
           -F * (2 * L) ** 3 / (3 * EI), 1e-9, "m")
-    # Lager ueber Nummer statt Namen abschalten
-    m.fix(ids[2], "all")                          # Lager 1: Einspannung am Ende
-    st = Stellung("frei", 0.0, lager_aus=["1"])
+    # Lager ohne Namen ueber seinen Namen im Modellbaum abschalten (bis zum 06.10.2026
+    # stand dort die Nummer ab 0: „1“)
+    m.fix(ids[2], "all")                          # „Lager 2“: Einspannung am Ende
+    st = Stellung("frei", 0.0, lager_aus=["Lager 2"])
     m3 = m.copy()
     st.anwenden(m3, m)
-    check("Lager ueber seine Nummer abgeschaltet", len(m3.supports) == 1
+    check("Lager ueber seinen Namen wie im Modellbaum („Lager 2“) abgeschaltet", len(m3.supports) == 1
           and int(m3.supports[0].node) == ids[0] and len(m.supports) == 2)
     # Elemente loeschen zieht die Gelenk-Elemente nach
     m4 = m.copy()
@@ -766,7 +767,10 @@ def test_echte_stellung_namens_grundstellung():
           ms is not m and len(ms.supports) == 1 and len(m.supports) == 2
           and aktiv is not None and aktiv.tolist() == [True, False]
           and any("1 Element ohne Wirkung" in z for z in log), "; ".join(log))
-    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    # die Kettenwarnung nennt seit F42 (06.10.2026) den Grund, warum Zusammenfassen
+    # nicht geht - hier „verwendet von Stellung …“; gemeint sind Zeilen zur Stellung selbst
+    zeilen = [z for z in m.check() if ("Stellung" in z or "Situation" in z)
+              and "bilden eine Kette" not in z]
     check("Modellpruefung: keine Zeile zu Stellung oder Situation", not zeilen, "; ".join(zeilen))
     an = solver.solve_all(m)
     r1 = an.cases["LF1"]

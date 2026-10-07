@@ -781,6 +781,7 @@ def _abnahme_kontaktpaare(model) -> list:
     """Abdeckung der Kontaktseite und Gegenkoerper ohne Facette."""
     aus = []
     kbs = getattr(model, "kontaktbedingungen", None) or {}
+    karte = None
     for cp in (getattr(model, "contact_pairs", None) or []):
         a = float(getattr(cp, "abdeckung", 0.0) or 0.0)
         if 0.0 < a < ABNAHME_ABDECKUNG:
@@ -801,9 +802,13 @@ def _abnahme_kontaktpaare(model) -> list:
         # Kontaktseite, die Facetten kamen von V29 - die Fuge deckte 100 % ab
         # und trug, die Pruefung meldete trotzdem einen Mangel (18.09.2026).
         if genannt - gestellt:
+            # die Karte einmal je Abnahme holen: ihr Schluessel kostet einen
+            # Durchgang ueber alle Elemente (F46)
+            if karte is None:
+                karte = _knotenkoerper_karte(model)
             traeger = set()
             for i in (getattr(cp, "slave_nodes", None) or []):
-                for kn in _koerper_des_knotens(model, int(i)):
+                for kn in karte.get(int(i), set()):
                     traeger.add(str(kn))
             gestellt |= traeger
         for name in sorted(genannt - gestellt):
@@ -816,11 +821,23 @@ def _abnahme_kontaktpaare(model) -> list:
     return aus
 
 
-def _koerper_des_knotens(model, knoten: int) -> set:
-    """Die Bauteile, deren Elemente diesen Knoten benutzen - einmal je Modell
-    aufgebaut und am Modell gemerkt (die Abnahme fragt viele Knoten ab)."""
+def _knotenkoerper_karte(model) -> dict:
+    """Knoten -> Bauteile, deren Elemente ihn benutzen - je Netzstand einmal
+    aufgebaut und am Modell gemerkt (die Abnahme fragt viele Knoten ab).
+
+    Der Netzstand ist wie bei :func:`entartete_menge` an einem Hash
+    festgemacht, hier ueber Gruppe und Knoten jedes Elements. Bis zum
+    06.10.2026 galt die Karte, solange die Elementzahl gleich blieb: hing eine
+    Fuge Elemente an andere Knoten um, ohne ihre Zahl zu aendern, urteilte
+    die Abnahme mit der alten Karte (F46)."""
+    try:
+        stand = (len(model.elements),
+                 hash(tuple((str(getattr(el, "group", "") or ""), tuple(el.nodes))
+                            for el in model.elements)))
+    except Exception:                       # noqa: BLE001 - dann jedes Mal neu
+        stand = None
     karte = getattr(model, "_abnahme_knotenkoerper", None)
-    if karte is None or getattr(model, "_abnahme_knotenkoerper_n", -1) != len(model.elements):
+    if karte is None or stand is None or getattr(model, "_abnahme_knotenkoerper_stand", None) != stand:
         karte = {}
         for el in model.elements:
             grp = str(getattr(el, "group", "") or "")
@@ -828,9 +845,19 @@ def _koerper_des_knotens(model, knoten: int) -> set:
                 continue
             for n in el.nodes:
                 karte.setdefault(int(n), set()).add(grp)
-        model._abnahme_knotenkoerper = karte
-        model._abnahme_knotenkoerper_n = len(model.elements)
-    return karte.get(int(knoten), set())
+        try:
+            model._abnahme_knotenkoerper = karte
+            model._abnahme_knotenkoerper_stand = stand
+        except Exception:                   # noqa: BLE001 - z.B. __slots__
+            pass
+    return karte
+
+
+def _koerper_des_knotens(model, knoten: int) -> set:
+    """Die Bauteile, deren Elemente diesen Knoten benutzen
+    (:func:`_knotenkoerper_karte`). Fuer viele Knoten die Karte einmal holen -
+    jeder Aufruf prueft ihren Stand ueber alle Elemente."""
+    return _knotenkoerper_karte(model).get(int(knoten), set())
 
 
 def _abnahme_halteguete(model, guete: list = None) -> list:
@@ -1351,6 +1378,20 @@ def _abnahme_netz(model, bilanz: dict = None) -> list:
                 text=f"Volumen {name}: das Netz deckt nur {rt * 100:.1f} % der "
                      f"Hülle (Grenze {ABNAHME_RANDTREUE * 100:.0f} %) - die "
                      "Geometrie ist im Netz nicht vollständig abgebildet."))
+        # Liess sich die Randtreue beim Vernetzen nicht messen, steht dort 0 =
+        # „nicht gemessen“, und die Pruefung darueber schweigt. Bis zum
+        # 06.10.2026 hiess das „bestanden“, obwohl niemand nachgesehen hatte,
+        # ob das Netz die Huelle abbildet (F35). WARNUNG mit „nicht geprüft“
+        # im Namen, wie die anderen ausgefallenen Messungen: die Oberflaeche
+        # zaehlt sie unter „bestanden, soweit geprüft“.
+        rt_fehler = str(getattr(k, "randtreue_fehler", "") or "")
+        if els and rt_fehler and rt <= 0.0:
+            aus.append(Befund(
+                pruefung="Randtreue nicht geprüft", objekt=str(name), wert=0.0,
+                grenze=ABNAHME_RANDTREUE, stufe="WARNUNG",
+                text=f"Volumen {name}: die Randtreue ließ sich beim Vernetzen nicht messen "
+                     f"({rt_fehler[:100]}) - ob das Netz die Hülle vollständig abbildet, "
+                     "ist nicht geprüft."))
         if els:
             try:
                 aus += _abnahme_volumenbilanz(model, name, k, els, bilanz)

@@ -684,8 +684,25 @@ Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaf
   Auf dem Stab werden sie in Abschnittslasten der Elemente zerlegt (q am
   Elementanfang und -ende linear interpoliert). Auf einer Linie — dem Rand
   einer Schale, der Kante eines Körpers — gehen sie auf die Netzknoten der
-  Linie: je Teilstück zwischen zwei Knoten Resultierende ½(qₐ+q_b)·l und
-  Schwerpunkt l(qₐ+2q_b)/(3(qₐ+q_b)), aufgeteilt nach dem Hebelgesetz.
+  Linie, und zwar als konsistente Knotenlasten F_i = ∫ N_i q ds mit den
+  Formfunktionen der Elementkante, an der der Knoten liegt
+  (`statik3d/linienverteilung.py`). Auf einer linearen Kante ist das je
+  Teilstück Resultierende ½(qₐ+q_b)·l und Schwerpunkt
+  l(qₐ+2q_b)/(3(qₐ+q_b)), aufgeteilt nach dem Hebelgesetz. Auf einer
+  quadratischen Kante (Ecke, Kantenmitte, Ecke) wird die Kante über die
+  Lagen ihrer Knoten parametrisiert, s(ξ) = Σ N_i(ξ) s_i; die Grenzen einer
+  Teilstrecke werden auf ξ zurückgerechnet, integriert wird mit 3-Punkt-Gauß
+  (exakt für Trapezlasten). Bei gleichmäßiger Last ergibt das l/6, 2l/3,
+  l/6. Als quadratisch gilt eine Kante, wenn der mittlere von drei
+  aufeinanderfolgenden Knoten der Linie die Kantenmitte eines Elements
+  zwischen den beiden anderen ist. Bis zum 06.10.2026 lief auch die
+  quadratische Kante als zwei lineare Teilstücke (l/4, l/2, l/4,
+  Fehlerliste F11). Geprüft in `tests/test_fehler_p7.py`: Knoten für Knoten
+  gegen eine unabhängige Integration (gleichmäßig, Trapez, Teilstrecke,
+  Stichprobe), Resultierende, statisches Moment und ∫ q x² dx, die
+  Kantenmitte je zur Hälfte auf ihre Ecken gelegt gegen das lineare Netz,
+  und als Patch-Test der in seiner Ebene gezogene Scheibenstreifen aus
+  shell8 und shell6, dessen Kante sich überall um q·L/(E·t) verschiebt.
 * **Zwangsverformungen** (vorgegebene Verschiebungen und Verdrehungen an
   gelagerten Knoten, je Lastfall): K_ff u_f = F_f − K_fs u_s mit den
   vorgegebenen Werten u_s; die Auflagerkräfte folgen aus R_s = K_sf u_f +
@@ -2992,8 +3009,10 @@ Kontaktläufe des Ausfallwegs (siehe „Grenzen").
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
 Knotenfreiheitsgrade umgelegt (`statik3d/supports.py`): Linienlager über die
-Einflusslänge (halbe Nachbarabschnitte), Flächenlager über die Einflussfläche
-der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
+Einflusslänge ∫ N_i ds der Elementkanten (linear die halben
+Nachbarabschnitte, quadratisch l/6, 2l/3, l/6; bis zum 06.10.2026 auch dort
+die halben Nachbarabschnitte, Fehlerliste F11), Flächenlager über die
+Einflussfläche der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
 Steifigkeitsmatrix, nichtlineare Anteile in dieselbe Aktivmengen-Iteration wie
 der Kontakt.
 
@@ -5083,6 +5102,26 @@ hält sie an diesen Modellen nicht. Ob sie Vorgabe wird, entscheidet der
 Anwender, frühestens nach einer Messung am Drehlager. Ein unbekannter Wert
 der Einstellung rechnet verschachtelt und steht im Protokoll der
 Plastizität (`solver._kontakt_weg_melden`).
+
+**Stand 06.10.2026: als Versuch gekennzeichnet** (Fehlerliste F12). Bis zum
+06.10.2026 warnte vor dem anderen Weg durch die Reibung nur der Tooltip der
+Auswahl; ein gemeinsam gerechnetes Ergebnis sah aus wie ein verschachtelt
+gerechnetes. Seitdem heißt die Auswahl „gemeinsam (Versuch)“, und
+`solver._plastizitaet_rechnen` setzt bei jedem Ergebnis, das wirklich gemeinsam
+gerechnet ist (`solver._gemeinsam`), `res.info["plastizitaet"]["kontakt"] =
+"gemeinsam"` und hängt als letzte Zeile des Protokolls der Plastizität
+„WARNUNG: Iteration „gemeinsam“ (Versuch) …“ an (`plastizitaet.GEMEINSAM_WARNUNG`).
+Die Zeile geht mit dem Protokoll in den Fortschritt, also ins Protokoll der
+Oberfläche und in die Spalte „Meldung“ der Rechenliste, soweit der Posten
+seinen Fortschritt meldet (Kombinationen und Lastfälle in Ketten tun das
+nicht). `Results.summary` nennt die Warnung je Ergebnis, `Analysis.summary` und
+die Hinweise des Berichts gebündelt über alle Ergebnisse
+(`solver.gemeinsam_gebuendelt`) - auf demselben Weg wie
+`ausweichen_gebuendelt` und `dilatation_gebuendelt`. Die Rechnung selbst ist
+unverändert: am fließenden Block mit Reibung sind Verschiebungen und
+Auflagerkräfte von Lastfall und Kombination in beiden Einstellungen bitgleich
+zum Stand davor (`tests/test_fehler_p8.py`). Ein verschachtelt gerechnetes
+Ergebnis trägt weder den Eintrag noch die Zeile.
 
 **Das Problem.** Bis hierher war jede Lösung der Fließ-Iteration eine volle
 Kontakt-Iteration: der Newton ruft `loesen`, der Löser iteriert den Kontakt

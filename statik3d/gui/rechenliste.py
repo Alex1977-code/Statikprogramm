@@ -144,12 +144,17 @@ def zustand_aus_meldung(text: str, bisher: str) -> str:
     zeigte "konvergiert" also genau bei dem Lastfall, dessen Reibungs-
     nachpruefung aufgegeben hatte (Nachpruefung der Loesersitzung).
 
-    Die Verneinung **klebt**: ein Posten loest mit Plastizitaet viele Male,
-    und ein gekappter Lauf zaehlt - genauso haelt es der Bericht (solver:
-    "Nicht konvergiert klebt"). Der Probelauf klebt noch fester: bei ihm ist
-    jeder Kontaktlauf mit Absicht nach einem Schritt zu Ende, und was er
-    liefert, ist ein Netzmass - "nicht konvergiert" waere dort keine
-    Nachricht, "konvergiert" eine falsche.
+    Die Verneinung **klebt** waehrend des Laufs: ein Posten loest mit
+    Plastizitaet viele Male, und ein gekappter Lauf zaehlt. Der Probelauf
+    klebt noch fester: bei ihm ist jeder Kontaktlauf mit Absicht nach einem
+    Schritt zu Ende, und was er liefert, ist ein Netzmass - "nicht
+    konvergiert" waere dort keine Nachricht, "konvergiert" eine falsche.
+
+    Das letzte Wort hat das Ergebnis: ist die Rechnung fertig, liest die
+    Liste den Stand jedes Postens aus ``res.info`` (Rechenliste.fertig_mit,
+    zustand_aus_info). Aus den Meldungen allein laesst sich nicht sagen,
+    welcher Lauf gedeckelt war - die Deckelmeldung des elastischen Vorlaufs,
+    der nicht zaehlt, sieht aus wie jede andere (F39, 06.10.2026).
     """
     t = str(text)
     if bisher == PROBELAUF or PROBE.match(t):
@@ -167,70 +172,14 @@ def zustand_aus_info(info) -> str:
     """Der Konvergenzstand eines fertigen Postens aus ``Results.info``.
 
     Rueckgabe "konvergiert", "Probelauf" oder "NICHT konvergiert: <Gruende>".
-    Gelesen werden die Zahlen, die der Loeser je Kontaktlauf fuehrt
-    (solver._kontakt_info_sammeln), nicht der Text der Meldungen:
-
-    * ``contact_laeufe_nicht_konvergiert`` - gedeckelte oder an der
-      Schrittgrenze beendete Kontaktlaeufe, ``contact_letzter_lauf_konvergiert``;
-    * ``contact_vorlauf_*`` - die Laeufe des elastischen Vorlaufs einer
-      Rechnung mit Fliessen (solver._solve_loads). Sie zaehlen **nicht**:
-      der erste plastische Lauf startet beim Start des Lastfalls, nicht beim
-      Zustand des Vorlaufs, und dessen u wird ueberschrieben. Gemessen am
-      Block mit Reibung: Vorlauf gedeckelt, max |du| = 0 gegen den Lauf ohne
-      Deckel (tests/test_rechenliste.test_vorlauf_mit_deckel, 22.09.2026);
-    * ``contact_laeufe_abgekuerzt`` - Laeufe, die die gemeinsame Iteration
-      von Fliessen und Kontakt mitten in einer Laststufe mit Absicht nach
-      einem Schritt beendet (23.09.2026). Sie stehen nicht unter den nicht
-      konvergierten und zaehlen auch in "N von M" nicht mit; der letzte Lauf
-      muss trotzdem konvergiert sein (``contact_letzter_lauf_konvergiert``);
-      ebenso ``contact_laeufe_verworfen`` - die vollen (nicht abgekuerzten)
-      Laeufe einer Laststufe, die die gemeinsame Iteration aufgegeben und vom
-      Startwert an verschachtelt wiederholt hat (24.09.2026): ihr u und ihr
-      Kontaktzustand gehen nicht ins Ergebnis ein;
-    * ``plastizitaet.konvergiert``, ``ausfall_log``, ``abbruch``, ``probelauf``.
-
-    Jeder andere gedeckelte Lauf macht den Posten "NICHT konvergiert", auch
-    wenn der letzte Lauf konvergiert ist: jeder plastische Lauf reicht seinen
-    Kontaktzustand an den naechsten weiter, und der bestimmt die plastische
-    Dehnung mit. Eine Zwischenstufe ("eingeschraenkt") gibt es mit Absicht
-    nicht - ob ein solcher Lastfall als Nachweis gilt, entscheidet der
-    Anwender, nicht diese Funktion.
-
-    Aeltere Ergebnisse ohne Laufzaehlung fallen auf ``contact_converged``
-    zurueck - das klebt ueber alle Laeufe, den Vorlauf eingeschlossen.
+    Die Regel steht seit dem 06.10.2026 im Rechenkern
+    (:func:`statik3d.solver.konvergenz_zustand`, dort auch, welche Laeufe
+    zaehlen): Zusammenfassung und Bericht lesen dieselbe, bis dahin zeigten
+    sie ``contact_converged``, das ueber alle Laeufe klebt (F39). Erst hier
+    importiert, damit der Kopfteil ohne Rechenkern und ohne Qt pruefbar bleibt.
     """
-    info = info or {}
-    if info.get("probelauf"):
-        return PROBELAUF
-    gruende = []
-    if info.get("abbruch"):
-        gruende.append("abgebrochen (" + str(info["abbruch"]).splitlines()[0][:80] + ")")
-    if "contact_laeufe_nicht_konvergiert" in info:
-        n_vor = int(info.get("contact_vorlauf_laeufe", 0) or 0)
-        laeufe = (int(info.get("contact_laeufe", 0) or 0) - n_vor
-                  - int(info.get("contact_laeufe_abgekuerzt", 0) or 0)
-                  - int(info.get("contact_laeufe_verworfen", 0) or 0))
-        nicht = (int(info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
-                 - int(info.get("contact_vorlauf_nicht_konvergiert", 0) or 0))
-        letzter = info.get("contact_letzter_lauf_konvergiert", True) is not False
-        if not letzter:
-            nicht = max(nicht, 1)
-        if nicht > 0:
-            if laeufe <= 1:
-                gruende.append("Kontaktlauf nicht konvergiert")
-            else:
-                gruende.append(f"{nicht} von {laeufe} Kontaktläufen nicht konvergiert"
-                               + ("" if letzter else ", darunter der letzte"))
-    elif info.get("contact_converged") is False:
-        gruende.append("Kontakt nicht konvergiert")
-    pz = info.get("plastizitaet")
-    if isinstance(pz, dict) and pz.get("konvergiert", True) is False:
-        gruende.append("Plastizität nicht konvergiert")
-    if any("nicht konvergiert" in str(z) for z in (info.get("ausfall_log") or [])):
-        gruende.append("Ausfall-Iteration nicht konvergiert")
-    if gruende:
-        return "NICHT konvergiert: " + "; ".join(gruende)
-    return KONVERGIERT
+    from ..solver import konvergenz_zustand
+    return konvergenz_zustand(info)
 
 
 def farm_text(status: dict) -> str:
@@ -400,7 +349,68 @@ if QtWidgets is not None:
             self.btn_abbrechen.setEnabled(False)
             self.kopfzeile.setText(self._stand + " - " + wie)
 
+        def fertig_mit(self, ergebnis) -> None:
+            """Die Rechnung ist gut zu Ende (``SolveWorker.finished_ok``):
+            abschliessen und den Stand jedes Postens aus seinem Ergebnis lesen.
+
+            Waehrend des Laufs liest die Liste nur die Meldungen, und die
+            Verneinung klebt - auch die Deckelmeldung des elastischen
+            Vorlaufs, der nicht zaehlt. Bis zum 06.10.2026 stand ein solcher
+            Lastfall darum hier auf „nicht konvergiert“, waehrend
+            ``zustand_aus_info`` „konvergiert“ sagte (F39). Jetzt entscheidet
+            am Ende dieselbe Regel wie in Zusammenfassung und Bericht.
+            """
+            self.beenden(FERTIG)
+            try:
+                self._zustaende_aus_ergebnis(ergebnis)
+            except Exception:                                # noqa: BLE001
+                # Das Fenster ist Beiwerk; die Zeilen behalten dann den Stand
+                # aus den Meldungen
+                pass
+
         # ---- innen -------------------------------------------------------
+        def _zustaende_aus_ergebnis(self, ergebnis) -> None:
+            """Je Zeile den Stand aus ``res.info`` (zustand_aus_info).
+
+            ``ergebnis`` ist die Analyse einer Rechnung aller Lastfaelle
+            (``cases``, ``combinations``) oder das Ergebnis eines einzelnen
+            Lastfalls. Eine Zeile ohne Kontakt und ohne Fliessen bleibt
+            „fertig“; der gedeckelte Vorlauf steht als Hinweis in der Meldung.
+            """
+            faelle = getattr(ergebnis, "cases", None)
+            kombis = getattr(ergebnis, "combinations", None)
+            einzeln = (not isinstance(faelle, dict) and not isinstance(kombis, dict)
+                       and isinstance(getattr(ergebnis, "info", None), dict))
+            for (art, name), i in self._zeile_von_name.items():
+                if einzeln:
+                    passt = (len(self._zeile_von_name) == 1
+                             or str(getattr(ergebnis, "name", "")) == name)
+                    r = ergebnis if passt else None
+                else:
+                    quelle = faelle if art == "Lastfall" else kombis
+                    r = quelle.get(name) if isinstance(quelle, dict) else None
+                info = getattr(r, "info", None)
+                if not isinstance(info, dict) or not (0 <= i < len(self._zustand)):
+                    continue
+                z = zustand_aus_info(info)
+                bisher = self._zustand[i]
+                meldung = ""
+                if z == PROBELAUF:
+                    neu = PROBELAUF
+                elif z.startswith("NICHT"):
+                    neu = NICHT_KONVERGIERT
+                elif bisher:
+                    neu = KONVERGIERT
+                    if bisher == NICHT_KONVERGIERT:
+                        from ..solver import kontakt_hinweis
+                        meldung = kontakt_hinweis(info) or "gedeckelt war nur ein Lauf, der nicht zählt"
+                else:
+                    continue
+                self._zustand[i] = neu
+                self._setze(i, self.S_ZUSTAND, neu)
+                if meldung:
+                    self._setze(i, self.S_MELDUNG, meldung)
+
         def _posten_abschliessen(self, marke) -> None:
             art, name, nummer, gesamt = marke
             zeile = self._zeile_von_name.get((art, name), self._laufend)

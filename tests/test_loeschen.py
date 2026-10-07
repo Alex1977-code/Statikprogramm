@@ -409,8 +409,10 @@ def _lager_aus_orte(m, st) -> list:
 
 def _stellungen_mit_lagern():
     """Der Balken mit zwei freien Knoten k, p, je mit einem Knotenlager: das an k heisst
-    „Endlager“, das an p hat keinen Namen (Nummer 3; 0 und 1 sind die Balkenlager, 2
-    ist das Endlager). Das Lager „Mitte“ am Balkenknoten 2 bleibt immer."""
+    „Endlager“, das an p hat keinen Namen („Lager 4“: 1 und 2 sind die Balkenlager, 3
+    ist das Endlager). Das Lager „Mitte“ am Balkenknoten 2 bleibt immer. Seit dem
+    06.10.2026 nennen die Stellungen unbenannte Lager wie der Modellbaum, nicht mehr
+    mit der Nummer ab 0 (F07, F30)."""
     from statik3d.bridges.positions import Stellung
     m = _balken()
     k, p = m.add_node(20.0, 2.0, 0.0), m.add_node(21.0, 2.0, 0.0)
@@ -422,8 +424,7 @@ def _stellungen_mit_lagern():
     m.stellungen += [Stellung("S1", lager_aus=["Endlager", "Mitte"], faelle=["LF1"]),
                      Stellung("S2", lager_aktiv=["Endlager"], faelle=["LF1"]),
                      Stellung("S3", lager_aktiv=["Endlager", "Mitte"], faelle=["LF1"]),
-                     Stellung("S4", lager_aus=["3"], faelle=["LF1"]),
-                     Stellung("S5", lager_aus=["2"], faelle=["LF1"])]
+                     Stellung("S4", lager_aus=["Lager 4"], faelle=["LF1"])]
     return m, k, p
 
 
@@ -438,12 +439,17 @@ def test_stellung_lagernamen_nach_knoten_loeschen():
           str(st["S3"].lager_aktiv))
     check("… war es der einzige Name, ist die Liste leer", st["S2"].lager_aktiv == [],
           str(st["S2"].lager_aktiv))
-    check("Lagernummer: das Lager hinter dem gelöschten behält seine Wirkung (3 wird 2)",
-          st["S4"].lager_aus == ["2"] and _lager_aus_orte(m, st["S4"]) == orte_s4,
+    check("Lager ohne Namen: das Lager hinter dem gelöschten behält seine Wirkung (Lager 4 wird Lager 3)",
+          st["S4"].lager_aus == ["Lager 3"] and _lager_aus_orte(m, st["S4"]) == orte_s4,
           f"{st['S4'].lager_aus}, {orte_s4} -> {_lager_aus_orte(m, st['S4'])}")
-    check("… die Nummer des gelöschten Lagers springt nicht auf das nächste",
-          st["S5"].lager_aus == [] and _lager_aus_orte(m, st["S5"]) == [],
-          f"{st['S5'].lager_aus}, {_lager_aus_orte(m, st['S5'])}")
+    # ein Lager ohne Namen wird selbst gelöscht: sein Eintrag geht, und der Platz springt
+    # nicht auf das nächste Lager („Mitte“ rückt dorthin)
+    m, k, p = _stellungen_mit_lagern()
+    st = {s.name: s for s in m.stellungen}
+    m.knoten_loeschen(p)
+    check("… das gelöschte Lager ohne Namen: sein Eintrag geht, kein anderes Lager rückt hinein",
+          st["S4"].lager_aus == [] and _lager_aus_orte(m, st["S4"]) == [],
+          f"{st['S4'].lager_aus}, {_lager_aus_orte(m, st['S4'])}")
 
 
 def test_stellung_lagernamen_im_protokoll():
@@ -452,7 +458,7 @@ def test_stellung_lagernamen_im_protokoll():
     m.knoten_loeschen(k, protokoll=zeilen)
     text = "\n".join(zeilen)
     check("Protokoll: je Stellung eine Zeile mit dem gelöschten Lager",
-          all(f"Stellung „{s}“" in text for s in ("S1", "S2", "S3", "S5")) and "Endlager" in text,
+          all(f"Stellung „{s}“" in text for s in ("S1", "S2", "S3")) and "Endlager" in text,
           text.replace("\n", " | ")[:300])
     check("… die umnummerierte Stellung S4 wird ebenfalls genannt", "Stellung „S4“" in text, text[:300])
     s2 = next((z for z in zeilen if "„S2“" in z), "")
@@ -460,15 +466,16 @@ def test_stellung_lagernamen_im_protokoll():
     m, k, p = _stellungen_mit_lagern()
     zeilen = []
     m.knoten_loeschen_viele([k], protokoll=zeilen)
-    check("… ebenso beim Löschen vieler Knoten", sum("Stellung „" in z for z in zeilen) == 5,
+    check("… ebenso beim Löschen vieler Knoten", sum("Stellung „" in z for z in zeilen) == 4,
           " | ".join(zeilen)[:300])
 
 
-def test_stellung_name_und_nummer_zugleich():
-    """Stellung._gemeint trifft ein Lager beim Namen **und** bei der Nummer. Heisst
-    ein Lager wie eine Nummer, laesst sich der Eintrag nach dem Loeschen nicht
-    eindeutig nachziehen - das darf nicht still geschehen (Gegenpruefung 03.10.2026:
-    der Eintrag blieb stehen und schaltete still ein anderes Lager ab)."""
+def test_stellung_lager_heisst_wie_eine_nummer():
+    """Bis zum 06.10.2026 traf Stellung._gemeint ein Lager beim Namen **und** bei der
+    Nummer; hiess ein Lager wie eine Nummer, liess sich der Eintrag nach dem Loeschen
+    nicht eindeutig nachziehen (Gegenpruefung 03.10.2026). Seither ist jeder Eintrag der
+    Name oder der Standardname eines Lagers seiner Art, eine nackte Nummer nennt kein
+    Lager - ein Lager namens „3“ bleibt unter diesem Namen stehen."""
     from statik3d.bridges.positions import Stellung
     m = _balken()                                   # Lager 0, 1 am Balken
     k, p, q = (m.add_node(20.0 + i, 2.0, 0.0) for i in range(3))
@@ -477,11 +484,13 @@ def test_stellung_name_und_nummer_zugleich():
     m.supports[3].name = "3"
     st = Stellung("S1", lager_aus=["3"], faelle=["LF1"])
     m.stellungen.append(st)
+    orte = _lager_aus_orte(m, st)
     zeilen = []
     m.knoten_loeschen(k, protokoll=zeilen)
-    check("Lager heißt „3“ und steht an Platz 3: nach dem Löschen davor sagt das Protokoll, "
-          "dass der Eintrag nicht eindeutig ist",
-          any("„S1“" in z and "nicht eindeutig" in z for z in zeilen), " | ".join(zeilen))
+    check("Lager heißt „3“: nach dem Löschen davor bleibt der Eintrag, trifft dasselbe Lager, "
+          "und es gibt keine Zeile",
+          st.lager_aus == ["3"] and _lager_aus_orte(m, st) == orte and orte != [] and not zeilen,
+          f"{st.lager_aus}, {orte} -> {_lager_aus_orte(m, st)}; {zeilen}")
     m = _balken()
     k, p = m.add_node(20.0, 2.0, 0.0), m.add_node(21.0, 2.0, 0.0)
     m.fix(k, [0, 1, 2])
@@ -489,20 +498,24 @@ def test_stellung_name_und_nummer_zugleich():
     m.add_line_support([1, 2], name="3")
     st = Stellung("S2", lager_aus=["3"], faelle=["LF1"])
     m.stellungen.append(st)
-    zeilen = []
-    m.knoten_loeschen(k, protokoll=zeilen)
-    check("Ein Linienlager heißt „3“, die Nummer meint Knotenlager 3: ebenso",
-          any("„S2“" in z and "nicht eindeutig" in z for z in zeilen), " | ".join(zeilen))
+    log = []
+    sm = st.modell(m, log)
+    check("Ein Linienlager heißt „3“: „Deaktivierte Knotenlager“ trifft es nicht, und kein Knotenlager "
+          "mit der Nummer 3",
+          len(sm.line_supports) == 1 and len(sm.supports) == len(m.supports),
+          f"Linienlager {len(sm.line_supports)}, Knotenlager {len(m.supports)} -> {len(sm.supports)}")
+    check("… das Protokoll sagt, dass „3“ kein Knotenlager nennt",
+          any("„3“" in z and "kein Knotenlager" in z for z in log), str(log))
     m = _balken()
     k = m.add_node(20.0, 2.0, 0.0)
     m.fix(k, [0, 1, 2])
     m.stellungen.append(Stellung("S3", lager_aus=["²", "2"], faelle=["LF1"]))
     try:
         m.knoten_loeschen(k)
-        ok, text = m.stellungen[0].lager_aus == ["²"], str(m.stellungen[0].lager_aus)
+        ok, text = m.stellungen[0].lager_aus == ["²", "2"], str(m.stellungen[0].lager_aus)
     except ValueError as ex:
         ok, text = False, f"ValueError: {ex}"
-    check("Ein Eintrag „²“ ist keine Nummer und bricht nichts ab", ok, text)
+    check("Ein Eintrag „²“ ist keine Nummer und bricht nichts ab; ein Eintrag ohne Lager bleibt", ok, text)
 
 
 def test_stellung_staebe_nach_stab_loeschen():
@@ -528,19 +541,20 @@ def test_stellung_linien_und_flaechenlager():
     for a, b in ((0, 1), (2, 3), (3, 4)):
         m.add_line_support([a, b]).name = ""
     m.add_surface_support(nodes=[0, 1], areas=[1.0, 1.0], name="Boden")
-    st = Stellung("S1", linienlager_aus=["0", "2"], flaechenlager_aus=["Boden"], faelle=["LF1"])
+    st = Stellung("S1", linienlager_aus=["Linienlager 1", "Linienlager 3"], flaechenlager_aus=["Boden"],
+                  faelle=["LF1"])
     m.stellungen.append(st)
     vorher = m.stellungsbezug()
     del m.line_supports[0]
     del m.surface_supports[0]
     zeilen = m.stellungen_nachziehen(vorher)
-    check("Linienlager: die gelöschte Nummer geht, die dahinter rückt auf (2 wird 1)",
-          st.linienlager_aus == ["1"], str(st.linienlager_aus))
+    check("Linienlager: der Eintrag des gelöschten geht, der dahinter rückt auf (Linienlager 3 wird 2)",
+          st.linienlager_aus == ["Linienlager 2"], str(st.linienlager_aus))
     check("Flächenlager: der Name des gelöschten geht", st.flaechenlager_aus == [], str(st.flaechenlager_aus))
     check("… das Protokoll nennt alle drei", len(zeilen) == 3 and all("„S1“" in z for z in zeilen),
           str(zeilen))
     check("Ohne Änderung bleibt alles, wie es ist, und nichts steht im Protokoll",
-          m.stellungen_nachziehen(m.stellungsbezug()) == [] and st.linienlager_aus == ["1"])
+          m.stellungen_nachziehen(m.stellungsbezug()) == [] and st.linienlager_aus == ["Linienlager 2"])
 
 
 def main():
@@ -552,7 +566,7 @@ def main():
               test_viele_knoten_wie_einzeln, test_viele_knoten_schnell,
               test_benutzte_knoten_werden_abgewiesen, test_knoten_tauschen_nimmt_antrieb_und_kantenmitte_mit,
               test_verweise_gehen_mit_dem_knoten, test_stellung_lagernamen_nach_knoten_loeschen,
-              test_stellung_lagernamen_im_protokoll, test_stellung_name_und_nummer_zugleich,
+              test_stellung_lagernamen_im_protokoll, test_stellung_lager_heisst_wie_eine_nummer,
               test_stellung_staebe_nach_stab_loeschen,
               test_stellung_linien_und_flaechenlager):
         print(f"\n--- {t.__name__} ---")

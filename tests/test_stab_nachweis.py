@@ -978,6 +978,146 @@ def test_a17_gegenlaeufig():
           "Stab S1 um das vorhandene Stabelement E0 angelegt: K1–K0" in st, repr(st))
 
 
+def _kette_f42(umgekehrt=()):
+    """Senkrechte Kette aus drei Staeben (je 2 m) wie :func:`kette`; die Staebe
+    in ``umgekehrt`` (0, 1, 2) sind gegen die Kette gezeichnet (Knoten vertauscht)."""
+    from statik3d.model import Model, Material, Section
+    m = Model("KetteF42")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 200"))
+    for i in range(4):
+        m.add_node(0, 0, 2.0 * i)
+    m.support(0, "all")
+    m.support(3, [0, 1, 2])
+    for i in range(3):
+        e = m.add_element("beam", [i + 1, i] if i in umgekehrt else [i, i + 1], "S355", "HEB 200")
+        m.add_member(f"S{i + 1}", [e])
+    return m
+
+
+def _rat_und_erfolg(m):
+    """Je Kette (Stäbe, rät der Text zu „Stäbe zusammenfassen“, gelingt es auf
+    einer Kopie des Modells)."""
+    import copy
+    out = []
+    for k in m.stabketten_frei():
+        namen = [n for art, n in k["glieder"] if art == "stab"]
+        rat = "Stäbe zusammenfassen" in m.stabkette_text(k)
+        geht = False
+        if len(namen) == len(k["glieder"]):          # ein Stabelement ohne Stab kann es nicht
+            try:
+                copy.deepcopy(m).staebe_zusammenfassen(namen)
+                geht = True
+            except ValueError:
+                pass
+        out.append((list(k["staebe"]), rat, geht))
+    return out
+
+
+def test_f42_kettentext_raet_nur_was_geht():
+    """F42 (Fehlerliste 06.10.2026): ist ein Stab gegen die Kette gezeichnet,
+    riet der Kettentext trotzdem zu „Stäbe zusammenfassen“, und das
+    Zusammenfassen wies ab („… einer ist gegen die Kette gezeichnet“). Der Text
+    raet nur noch dazu, wenn es gelingt - er fragt dieselbe Pruefung, die das
+    Zusammenfassen selbst benutzt -, und nennt sonst deren Grund."""
+    import numpy as np
+    from statik3d.model import Material, Section
+    m = _kette_f42()
+    k = m.stabketten_frei()
+    t = m.stabkette_text(k[0]) if k else ""
+    check("F42 gerade Kette: der Text rät weiter zu „Stäbe zusammenfassen“, und es gelingt",
+          len(k) == 1 and k[0]["zusammenfassbar"] and "Stäbe zusammenfassen" in t
+          and _rat_und_erfolg(m) == [(["S1", "S2", "S3"], True, True)], t)
+    for welche in (1, 0, 2):
+        m = _kette_f42(umgekehrt=(welche,))
+        k = m.stabketten_frei()
+        t = m.stabkette_text(k[0]) if k else ""
+        pruef = [z for z in m.check() if "bilden eine Kette" in z]
+        check(f"F42 S{welche + 1} gegen die Kette gezeichnet: kein Rat zum Zusammenfassen, Grund und „von Hand setzen“",
+              len(k) == 1 and not k[0]["zusammenfassbar"] and "Stäbe zusammenfassen" not in t
+              and "von Hand setzen" in t and "gegen die Kette gezeichnet" in t
+              and f"S{welche + 1}" in t and _rat_und_erfolg(m) == [(["S1", "S2", "S3"], False, False)], t)
+        check(f"F42 … „Prüfen“ zeigt dieselbe Warnung, einmal",
+              len(pruef) == 1 and pruef[0] == "WARNUNG: " + t, str(pruef))
+
+    def drehwinkel():
+        m = _kette_f42()
+        m.elements[2].roll = float(np.radians(25.0))
+        return m
+
+    def beta():
+        m = _kette_f42()
+        m.members["S2"].beta_y = 0.7
+        return m
+
+    def vorspannung():
+        m = _kette_f42()
+        m.add_vorspannung("S1", 50e3, case=next(iter(m.load_cases)))
+        return m
+
+    def verweis():
+        m = _kette_f42()
+        m.add_verformungsgrenze("V1", art="stab", stab="S2", groesse="ux", wert=300.0)
+        return m
+
+    def querschnitt():
+        m = _kette_f42()
+        m.add_section(Section.from_profile("HEB 300"))
+        m.elements[1].sec = "HEB 300"
+        return m
+
+    def werkstoff():
+        m = _kette_f42()
+        m.add_material(Material.steel("S235"))
+        m.elements[1].mat = "S235"
+        return m
+
+    def linienlast_draussen():
+        m = _kette_f42()
+        m.add_linienlast("S1", [1e3, 0, 0], von=5.0, bis=6.0, case=next(iter(m.load_cases)))
+        return m
+
+    def feste_laenge():
+        m = _kette_f42()
+        m.members["S2"].Lcr_y = m.members["S2"].Lcr_z = 2.0
+        return m
+
+    def ohne_stab():
+        m = _kette_f42()
+        del m.members["S2"]
+        return m
+    for name, bau, soll in (("Drehwinkel S3 25° (S1, S2 0°)", drehwinkel, "Drehwinkel verschieden"),
+                            ("β_y verschieden", beta, "β_y verschieden"),
+                            ("Vorspannung nur an S1", vorspannung, "Vorspannungen verschieden"),
+                            ("Verformungsnachweis auf S2", verweis, "wird verwendet von Verformungsnachweis V1"),
+                            ("Querschnitt verschieden", querschnitt, "verschiedene Querschnitte"),
+                            ("Werkstoff verschieden", werkstoff, "Werkstoffe"),
+                            ("Linienlast außerhalb von S1", linienlast_draussen, "außerhalb des Stabs"),
+                            ("feste Knicklänge an S2", feste_laenge, "feste Knick")):
+        m = bau()
+        k = m.stabketten_frei()
+        t = m.stabkette_text(k[0]) if k else ""
+        r = _rat_und_erfolg(m)
+        check(f"F42 {name}: Rat und Zusammenfassen stimmen überein (kein Rat), der Text nennt den Grund",
+              len(k) == 1 and r and all(rat == geht for _s, rat, geht in r) and not r[0][1]
+              and "von Hand setzen" in t and soll in t, t[-150:])
+    m = ohne_stab()
+    k = m.stabketten_frei()
+    t = m.stabkette_text(k[0]) if k else ""
+    check("F42 S2 nur Stabelement: kein Rat zum Zusammenfassen (das Werkzeug nimmt nur Stäbe)",
+          len(k) == 1 and "Stäbe zusammenfassen" not in t and "von Hand setzen" in t and "Stabelement E1" in t, t)
+    if not os.path.exists(CBG):
+        print(f"     (cbg.json nicht gefunden: {CBG} – die Prüfung am Modell des Anwenders entfällt)")
+        return
+    from statik3d.model import Model
+    m = Model.load(CBG)
+    r = _rat_und_erfolg(m)
+    falsch = [s for s, rat, geht in r if rat != geht]
+    check(f"F42 cbg.json: bei allen {len(r)} Ketten stimmt der Rat mit dem Ergebnis des Zusammenfassens überein",
+          len(r) > 0 and not falsch, f"{len(r)} Ketten, davon {sum(1 for _s, rat, _g in r if rat)} mit Rat; "
+          f"Widerspruch bei {falsch}")
+
+
 def test_handbuch():
     from tests.handbuch import absatz
     k = absatz("Stäbe (Kette von Stabelementen) legt der Befehl")
@@ -997,6 +1137,10 @@ def test_handbuch():
     check("Handbuch Kapitel 8: Kettenwarnung je Ausweichrichtung, Federn halten, einmal je Kette, Etikett 8 Zeilen",
           "einmal je Kette" in k and "je Ausweichrichtung" in k and "Federelement" in k
           and "höchstens acht" in k and "87 Ketten" in k, k[:100])
+    check("Handbuch Kapitel 8 (F42): der Kettentext rät nur zum Zusammenfassen, wenn es gelingt, sonst Grund, Stand vorher",
+          "rät nur dann zu „Stäbe zusammenfassen“, wenn es auch gelingt" in k
+          and "dieselbe Prüfung, die das Zusammenfassen selbst benutzt" in k
+          and "einer ist gegen die Kette gezeichnet" in k and "Bis zum 06.10.2026 prüfte der Text nur" in k, k[:100])
     a = absatz("**Was beim Stab mit Nachweis zu beachten ist**")
     check("Handbuch: leerer Stab als nicht geführt, Teilen verteilt Linienlasten neu, Ergebnisse verworfen",
           "als nicht geführt" in a and "verteilt die Linienlasten" in a and "verwerfen die Ergebnisse" in a, a[:100])
@@ -1016,7 +1160,7 @@ def main():
               test_a8_leerer_stab_ermuedung, test_a9_leerer_stab_ec3, test_a10_ergebnis_veraltet,
               test_a11_teilen_erhaelt_lasten, test_a12_lager_je_richtung, test_a13_glieder_ohne_nachweis,
               test_a14_feste_knicklaengen, test_a15_querschnitte_verschieden, test_a16_etikett,
-              test_a17_gegenlaeufig, test_handbuch):
+              test_a17_gegenlaeufig, test_f42_kettentext_raet_nur_was_geht, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

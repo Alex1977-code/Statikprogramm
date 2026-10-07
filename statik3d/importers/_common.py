@@ -18,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 
-from ..model import Model, Material, Section, ShellProp, LoadCase, ACTION_CATEGORIES
+from ..model import Model, Material, Section, ShellProp, LoadCase, ACTION_CATEGORIES, STEEL_GRADES
 from .. import profiles
 
 DEFAULT_TOL = 1e-6          # Knotentoleranz [m]
@@ -543,11 +543,18 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
 # --------------------------------------------------------------------------
 # Material / Querschnitt / Schalendicke
 # --------------------------------------------------------------------------
+#: eine Sorte der Tabelle im Text: „S“, beliebig viele Leerzeichen, die Zahl
+_SORTE_IM_TEXT = re.compile(r"S\s*(" + "|".join(k[1:] for k in STEEL_GRADES) + ")")
+
+
 def steel_grade_from_text(text: str) -> Optional[str]:
-    """'S 235 JR', 'S355', 'Baustahl S235' -> 'S235' (sonst None)."""
+    """'S 235 JR', 's355', 'Baustahl S235' -> 'S235' (sonst None). Gross-/
+    Kleinschreibung und Leerzeichen jeder Anzahl zaehlen nicht (bis zum
+    06.10.2026 nur ein Leerzeichen: „S  355“ blieb unerkannt, F08); die Sorten
+    sind die der Tabelle ``STEEL_GRADES``."""
     if not text:
         return None
-    m = re.search(r"S\s?(235|275|355|420|460)", str(text).upper())
+    m = _SORTE_IM_TEXT.search(str(text).upper())
     return f"S{m.group(1)}" if m else None
 
 

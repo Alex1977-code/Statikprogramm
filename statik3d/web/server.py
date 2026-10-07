@@ -963,7 +963,11 @@ KEEP_ALL = {"check", "meta", "rename", "select_box", "set_active_case"}
 #: fuehren Ergebnisse unter den alten Namen
 NAMEN_OPS = {"add_case", "edit_case", "copy_case", "remove_case", "add_combination",
              "remove_combination", "clear_combinations", "auto_combinations", "din19704"}
-KEEP_DESIGN = {"design_settings", "set_member", "remove_member", "auto_members",
+#: Operationen, die nur die Nachweise verwerfen. remove_member gehoert seit dem
+#: 06.10.2026 nicht mehr dazu: es nimmt die Linienlasten und Vorspannungen des
+#: Stabs mit (Model.stab_loeschen, Fehlerliste F28), die Analyse gilt danach
+#: nicht mehr
+KEEP_DESIGN = {"design_settings", "set_member", "auto_members",
                "add_fatigue_load", "remove_fatigue_load"}
 GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "clear_mesh",
             "add_element", "line_of_beams", "plate", "box", "support", "remove_support",
@@ -1148,7 +1152,10 @@ def _remove_elements(m: Model, elems: set[int]):
         mem = m.members[name]
         mem.elements = [new[e] for e in mem.elements if e in new]
         if not mem.elements:
-            del m.members[name]
+            # ueber Model.stab_loeschen (Fehlerliste F28): seine Verweise gehen
+            # mit; sperrt ein Nachweis das Loeschen, bleibt der Stab ohne
+            # Element stehen wie in der Oberflaeche (check() meldet ihn)
+            m.stab_loeschen(name, verteilen=False)
     for p in m.contact_pairs:
         p.master_elements = [new[e] for e in p.master_elements if e in new]
 
@@ -1207,11 +1214,18 @@ def _op_clear_mesh(st, m, d):
     m.nodes = np.zeros((0, 3))
     m.elements = []
     m.supports = []
-    m.members = {}
+    # jeder Stab ueber Model.stab_loeschen (Fehlerliste F28), damit Naht, Wind,
+    # Stellung, Layer, Subsystem, Linienlasten und Vorspannungen nicht an einem
+    # neuen Stab gleichen Namens haengen bleiben; ein gesperrter bleibt ohne
+    # Element stehen
+    for mem in m.members.values():
+        mem.elements = []
+    bleiben = [name for name in list(m.members) if m.stab_loeschen(name, verteilen=False)]
     m.contact_supports, m.gap_elements, m.contact_pairs = [], [], []
     for lc in m.load_cases.values():
         lc.nodal_loads, lc.beam_loads, lc.face_loads, lc.temp_loads = [], [], [], []
-    return "Netz, Lager und Lasten gelöscht"
+    return "Netz, Lager und Lasten gelöscht" + (
+        f" - Stäbe {', '.join(bleiben)} bleiben ohne Element: ein Nachweis braucht sie" if bleiben else "")
 
 
 def _need_mat(m: Model, d: dict) -> str:
@@ -1902,16 +1916,23 @@ def _op_add_combo(st, m, d):
 
 @op("remove_combination")
 def _op_remove_combo(st, m, d):
-    if m.combinations.pop(d.get("name"), None) is None:
+    # mit ihren Verweisen wie in der Oberflaeche (Model.kombination_loeschen,
+    # Fehlerliste F28): bis zum 06.10.2026 ging nur der Schluessel
+    name = d.get("name")
+    if name not in m.combinations:
         raise ApiError("Kombination unbekannt")
-    return "Kombination entfernt"
+    mit = []
+    m.kombination_loeschen(name, protokoll=mit)
+    return "Kombination entfernt" + (" - " + "; ".join(mit) if mit else "")
 
 
 @op("clear_combinations")
 def _op_clear_combos(st, m, d):
     n = len(m.combinations)
-    m.combinations = {}
-    return f"{n} Kombinationen entfernt"
+    mit = []
+    for name in list(m.combinations):
+        m.kombination_loeschen(name, protokoll=mit)
+    return f"{n} Kombinationen entfernt" + (" - " + "; ".join(mit) if mit else "")
 
 
 def _ermuedungszustand(m: Model, k) -> None:
@@ -1949,9 +1970,13 @@ def _op_add_fat(st, m, d):
 
 @op("remove_fatigue_load")
 def _op_remove_fat(st, m, d):
-    if m.fatigue_loads.pop(d.get("name"), None) is None:
+    # auch aus jedem Anschluss (Model.ermuedungslast_loeschen, Fehlerliste F29)
+    name = d.get("name")
+    if name not in m.fatigue_loads:
         raise ApiError("Ermüdungslast unbekannt")
-    return "Ermüdungslast entfernt"
+    mit = []
+    m.ermuedungslast_loeschen(name, protokoll=mit)
+    return "Ermüdungslast entfernt" + (" - " + "; ".join(mit) if mit else "")
 
 
 # ---- Staebe / Nachweise ----
@@ -1999,9 +2024,19 @@ def _op_set_member(st, m, d):
 
 @op("remove_member")
 def _op_remove_member(st, m, d):
-    if m.members.pop(d.get("name"), None) is None:
+    # wie die Oberflaeche (Model.stab_loeschen, Fehlerliste F28): Linienlasten,
+    # Vorspannungen, Stellung, Naht, Wind, Layer und Subsystem ziehen nach, ein
+    # Verformungsnachweis oder eine Lasteinleitung sperrt mit Grund. Bis zum
+    # 06.10.2026 ging nur der Schluessel, und ein neuer Stab gleichen Namens
+    # erbte alles
+    name = d.get("name")
+    if name not in m.members:
         raise ApiError("Stab unbekannt")
-    return "Stab entfernt"
+    mit = []
+    grund = m.stab_loeschen(name, protokoll=mit)
+    if grund:
+        raise ApiError(grund)
+    return "Stab entfernt" + (" - " + "; ".join(mit) if mit else "")
 
 
 @op("design_settings")

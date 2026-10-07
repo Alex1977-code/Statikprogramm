@@ -1354,6 +1354,15 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
         check("und genau ein Knotenlager - nicht alle mit demselben Namen",
               len(st.lager_aus) == 1 and len(m.supports) == 2,
               f"{st.lager_aus} von {len(m.supports)} Lagern")
+        # F07/F30 (06.10.2026): der Eintrag ist der Name wie im Modellbaum - bei zwei Lagern
+        # „Fest“ mit dem Platz dahinter -, keine nackte Nummer ab 0
+        check("… der Eintrag nennt es mit dem Namen wie im Modellbaum („Fest (Lager 2)“)",
+              st.lager_aus == ["Fest (Lager 2)"], str(st.lager_aus))
+        sm = st.modell(m)
+        check("… und die Stellung schaltet genau das Lager am zweiten Knoten ab",
+              len(sm.supports) == 1 and int(sm.supports[0].node) == int(m.supports[0].node)
+              and int(sm.supports[0].node) != int(m.supports[1].node),
+              f"{[int(s.node) for s in m.supports]} -> {[int(s.node) for s in sm.supports]}")
         check("die Situation zeigt auf die Stellung",
               "Ankerausfall" in m.situationen
               and m.situationen["Ankerausfall"].stellung == "Ankerausfall",

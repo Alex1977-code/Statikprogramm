@@ -3,7 +3,8 @@ Lager auf Knotenfreiheitsgrade umlegen.
 
 Knotenlager, Linienlager und Flaechenlager werden einheitlich in eine Liste von
 NodalDof-Eintraegen umgerechnet (je Knoten und Freiheitsgrad). Linienlager
-werden ueber die Einflusslaenge (halbe Nachbarabschnitte), Flaechenlager ueber
+werden ueber die Einflusslaenge (int N_i ds der Elementkanten: linear die
+halben Nachbarabschnitte, quadratisch L/6, 2L/3, L/6), Flaechenlager ueber
 die Einflussflaeche der Knoten verteilt.
 
     from statik3d import supports
@@ -54,17 +55,31 @@ class NodalDof:
 # --------------------------------------------------------------------------
 # Einflusslaengen und -flaechen
 # --------------------------------------------------------------------------
-def tributary_lengths(model: Model, nodes: list[int]) -> dict[int, float]:
-    """Einflusslaenge je Knoten eines Linienzugs (halbe Nachbarabschnitte)."""
+def tributary_lengths(model: Model, nodes: list[int], cache: dict = None) -> dict[int, float]:
+    """Einflusslaenge je Knoten eines Linienzugs: int N_i ds ueber die
+    Elementkanten des Zugs (linienverteilung) - auf einer linearen Kante je
+    die halbe Kantenlaenge, auf einer quadratischen (Ecke, Mitte, Ecke)
+    L/6, 2L/3, L/6. So haelt ein federndes Linienlager eine gleichmaessige
+    Verschiebung mit genau den Knotenkraeften des Elements. Bis zum
+    06.10.2026 bekam auch die quadratische Kante halbe Nachbarabschnitte,
+    L/4, L/2, L/4 (Fehlerliste F11). ``cache`` wie bei kantenmitten_an."""
+    from .linienverteilung import kantenintegral, kantenmitten_an, linie_in_kanten
     nodes = [int(n) for n in nodes]
     out = {n: 0.0 for n in nodes}
     if len(nodes) < 2:
         return out
     P = model.nodes[nodes]
-    for i in range(len(nodes) - 1):
-        L = float(np.linalg.norm(P[i + 1] - P[i]))
-        out[nodes[i]] += 0.5 * L
-        out[nodes[i + 1]] += 0.5 * L
+    L = [float(np.linalg.norm(P[i + 1] - P[i])) for i in range(len(nodes) - 1)]
+    lage = np.concatenate([[0.0], np.cumsum(L)])
+    for kante in linie_in_kanten(nodes, lage, kantenmitten_an(model, nodes, cache)):
+        if len(kante) == 3:
+            w = kantenintegral(lage[list(kante)], lage[kante[0]], lage[kante[-1]])
+            for j, wj in zip(kante, w):
+                out[nodes[j]] += float(wj)
+            continue
+        i = kante[0]
+        out[nodes[i]] += 0.5 * L[i]
+        out[nodes[i + 1]] += 0.5 * L[i]
     return out
 
 
@@ -490,11 +505,12 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
             e = _entry(s.node, dof, b, 1.0, label, "node", val)
             if e is not None:
                 out.append(e)
+    kanten_cache: dict = {}           # Kantentabellen des Netzes, einmal je Aufruf
     for ls in model.line_supports:
         nodes = list(ls.nodes)
         if not nodes and ls.line and ls.line in model.lines:
             nodes = list(model.lines[ls.line].nodes)
-        trib = tributary_lengths(model, nodes)
+        trib = tributary_lengths(model, nodes, kanten_cache)
         if nodes and not any(trib.values()) and log is not None:
             log.append(f"Linienlager '{ls.name}': Laenge 0 - keine Wirkung")
         for n in nodes:

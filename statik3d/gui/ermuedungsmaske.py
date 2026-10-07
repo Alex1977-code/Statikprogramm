@@ -258,21 +258,19 @@ def schreiben(model, fl: FatigueLoad, alt: str = None) -> list:
     sonst fiele sie dort still aus dem Nachweis. Eine leere Liste am
     Anschluss heisst „alle“ und bleibt leer. Rueckgabe: die nachgezogenen
     Anschluesse.
+
+    Umbenannt wird seit dem 06.10.2026 im Modell
+    (Model.ermuedungslast_umbenennen, Fehlerliste F29) - dieselbe Stelle,
+    die auch das Loeschen kennt (Model.ermuedungslast_loeschen).
     """
     lasten = model.fatigue_loads
-    if alt and alt in lasten:
-        neu = {(fl.name if k == alt else k): (fl if k == alt else v) for k, v in lasten.items()}
-        lasten.clear()
-        lasten.update(neu)
-    else:
-        lasten[fl.name] = fl
     nachgezogen = []
-    if alt and alt != fl.name:
-        for j in getattr(model, "joints", {}).values():
-            liste = list(getattr(j, "ermuedung", None) or [])
-            if alt in liste:
-                j.ermuedung = [fl.name if x == alt else x for x in liste]
-                nachgezogen.append(j.name)
+    if alt and alt in lasten and alt != fl.name:
+        nachgezogen = [j.name for j in (getattr(model, "joints", None) or {}).values()
+                       if alt in (getattr(j, "ermuedung", None) or [])]
+        model.ermuedungslast_umbenennen(alt, fl.name)
+    # an den Platz der alten Zeile (der Schluessel steht schon dort) oder ans Ende
+    lasten[fl.name] = fl
     return nachgezogen
 
 
@@ -930,8 +928,11 @@ class Ermuedungsmaske(msk.Maske):
             return self.meldung("Keine Zeile gewählt.", fehler=True)
         namen = list(m.fatigue_loads)
         i = namen.index(name)
+        # ueber das Modell: die Anschluesse verlieren den Namen mit (Fehlerliste
+        # F29, 06.10.2026) - bis dahin blieb er dort stehen
+        zeilen: list = []
         self._aendern(f"Ermüdungslast {name} gelöscht",
-                      lambda: self.modell().fatigue_loads.pop(name, None))
+                      lambda: self.modell().ermuedungslast_loeschen(name, protokoll=zeilen))
         self._alt = None
         self.tabelle_fuellen()
         rest = list(self.modell().fatigue_loads)
@@ -939,7 +940,9 @@ class Ermuedungsmaske(msk.Maske):
             self.zeile_waehlen(rest[min(i, len(rest) - 1)])
         else:
             self.neue_zeile()
-        self.meldung(f"Zeile „{name}“ gelöscht.")
+        self.meldung(f"Zeile „{name}“ gelöscht." + (" " + " ".join(zeilen) if zeilen else ""))
+        for z in zeilen:
+            self._protokoll(z)
 
     def _zeile_schieben(self, schritt: int):
         name = self._alt

@@ -772,8 +772,9 @@ def main():
               and mk._felder["lastfaelle"].count() == len(w.model.load_cases), str(len(w.model.load_cases)))
         if mk is not None and lf:
             mk.setzen("lastfaelle", lf)
+            # seit 06.10.2026 (F21) als Liste: ein Name mit Komma bleibt ein Name
             check("Anhaken eines Lastfalls: die Maske liefert seinen Namen",
-                  mk.werte().get("lastfaelle") == lf, str(mk.werte().get("lastfaelle")))
+                  mk.werte().get("lastfaelle") == [lf], str(mk.werte().get("lastfaelle")))
             mk.zusatzknoepfe["Alle Lastfälle und Kombinationen"].click(); app.processEvents()
             check("„Alle Lastfälle und Kombinationen“ hakt alle an",
                   w._namensliste(mk.werte().get("lastfaelle")) == list(w.model.load_cases),
@@ -7055,7 +7056,7 @@ def main():
               and {"typ0", "k0", "aus0", "typ5", "beton", "E_cm", "d_bett", "A_bett", "groesse"} <= set(mk.werte())
               and mk.werte()["typ2"] == "starr" and mk.werte()["typ4"] == "frei"
               and w.sel_lager == [("lager", 1)] and w.auswahlart == "Lager"
-              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung, Grenzkraft …", "Lager löschen"},
+              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung …", "Lager löschen"},
               str(getattr(mk, "titel", mk)))
         mk.setzen("typ2", "Feder"); mk.setzen("k2", 1000.0); mk.setzen("typ4", "starr"); mk.setzen("name", "Gelenk B")
         mk.anwenden(); app.processEvents()
