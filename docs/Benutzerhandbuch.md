@@ -7289,7 +7289,8 @@ Streckgrenze oder Stahlsorte am Werkstoff eintragen (Tabelle *Eigenschaften →
 Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
 
 **Stahlsorte ohne f_y.** Bleibt im Werkstoffdialog f_y leer („leer = aus der
-Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
+Stahlsorte“) und ist eine Sorte der Tabelle eingetragen (S235 … S460, auch mit
+Zusatz wie S355M, siehe unten), nehmen die Nachweise
 die Werte der Sorte nach EN 1993-1-1 Tab. 3.1: bis 40 mm Erzeugnisdicke die
 obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
 Ist auch f_u
@@ -7319,8 +7320,9 @@ nicht: Mit eingetragenem f_y entfiel über 40 mm still die Dickenabminderung
 (f_y = 235 statt 215 N/mm² bei 50 mm Erzeugnisdicke, f_u = 305,5 statt
 360 N/mm²), und mit leerem f_y war die Streckgrenze null, der Stab also „nicht
 geführt“, obwohl das Feld „leer = aus der Stahlsorte“ verspricht (gemessen am
-Stand 60fe253). Die Tabelle kennt nur S235, S275, S355, S420 und S460, keine
-Untersorten: „S235JR“ ist ihr unbekannt. Eine solche Sorte nimmt die Maske
+Stand 60fe253). Die Tabelle kennt S235, S275, S355, S420 und S460 und die Sorten
+mit Zusatz (siehe unten), aber keine Untersorten wie J2 oder JR: „S235JR“ ist
+ihr unbekannt. Eine solche Sorte nimmt die Maske
 trotzdem, wie getippt (ein Werkstoff darf eine eigene Sorte tragen, etwa S690),
 und sagt es im Protokoll und in der Statuszeile. Mit eingetragenem f_y rechnet
 der Stab mit diesem f_y, und die Meldung nennt, dass es dann keine
@@ -7329,6 +7331,49 @@ Streckgrenze her: Die Meldung sagt dann, dass Stäbe aus diesem Werkstoff nicht
 nachgewiesen werden, und rät zu einer Sorte der Tabelle oder zu einem
 eingetragenen f_y. Die Zelle der Werkstofftabelle handelt ebenso. Eine leere
 Sorte bleibt leer, ohne Meldung.
+
+**Sorten mit Zusatz (N, NL, M, ML, W).** Neben S235, S275, S355, S420 und S460
+führt die Sortentabelle seit dem 07.10.2026 die Sorten mit Zusatz nach
+DIN EN 1993-1-1 Tabelle 3.1: S275, S355, S420 und S460 als N und NL
+(EN 10025-3) und als M und ML (EN 10025-4) sowie S235W und S355W (EN 10025-5),
+je mit Streckgrenze und Zugfestigkeit bis 40 mm und von 40 bis 80 mm
+Erzeugnisdicke. Sie stehen wie alle Sorten in der Auswahl des Werkstoffdialogs
+und werden ohne Rücksicht auf Groß- und Kleinschreibung und auf Leerzeichen
+erkannt. S355M zum Beispiel hat f_y = 355 und f_u = 470 N/mm² bis 40 mm und
+335 und 450 N/mm² von 40 bis 80 mm; S355N und S355NL haben 355 und 490 sowie
+335 und 470 N/mm². Der Import liest den Zusatz hinter der Zahl aus dem Namen
+des Werkstoffs: „S355M“ wird S355M, „S355ML“ wird S355ML, „S 355 N“ wird S355N,
+„S355J2W“ wird S355W. Die Gütegruppen J0, J2, JR und K2 sowie „+N“
+(„S355J2+N“) ändern die Sorte nicht: sie bleibt S355 nach EN 10025-2. Bis zum
+07.10.2026 las der Import nur die Zahl: aus „S355M“ wurde S355 mit den Werten
+der Zeile EN 10025-2, also f_u = 490 statt 470 N/mm² (bis 40 mm) und 470 statt
+450 N/mm² (von 40 bis 80 mm); bei S275N waren es 430 statt 390 und 410 statt
+370 N/mm², bei S235W über 40 mm 360 statt 340 N/mm² (gemessen am Stand
+63acb15). Das schlug auf Nachweise durch, die f_u brauchen, etwa die der
+Anschlüsse. Eine Sorte, die die Tabelle 3.1 nicht führt – „S235N“, „S275W“,
+„S355J0WP“ –, bleibt unbekannt: Das Programm erfindet keine Werte dafür und
+verfährt wie bei jeder unbekannten Sorte. Die Werkstoffmaske nimmt sie, wie
+getippt, und meldet es; die Importe behandeln den Namen wie einen ohne erkannte
+Sorte. Die Hohlprofilsorten (S355J2H, S355NH … nach EN 10210 und 10219) führt
+die Tabelle 3.1 mit eigenen Werten, die sich aus dem Namen nicht eindeutig einer
+der beiden Normen zuordnen lassen; sie bleiben, wie sie waren, die Sorte ohne
+Zusatz. Kommt es bei einem Hohlprofil auf f_u an, trägt man f_y und f_u des
+Werkstoffs selbst ein.
+
+**Streckgrenze null.** In der Werkstofftabelle (Spalte fy), in der
+Werkstoffmaske (rechts) und im Werkstoffdialog ist f_y = 0 – und jeder Wert
+unter null – ein Eingabefehler: Der Wert wird nicht übernommen, und die Meldung
+„Die Streckgrenze f_y muss größer als null sein …“ steht in der Statuszeile und
+im Protokoll (im Dialog in der Meldungszeile über OK, der Dialog bleibt offen).
+Hat der Werkstoff keine Streckgrenze oder soll sie aus der Stahlsorte kommen
+(ein Beton hat keine), bleibt das Feld **leer**; das ist etwas anderes als 0.
+In der Tabelle heißt eine leer getippte Zelle „kein f_y“, und ein Werkstoff ohne
+f_y zeigt eine leere Zelle statt „0“; im Dialog zeigt das Feld ebenfalls nichts.
+Bis zum 07.10.2026 galt eine eingegebene 0 still als „leer“: Tabelle und Maske
+speicherten f_y = 0, das wie „leer“ wirkte (die Stahlsorte gab die Streckgrenze
+her, ohne Sorte war der Stab „nicht geführt“), der Dialog machte daraus ohne
+Meldung „leer“, und die Tabelle zeigte f_y ohne Wert als „0“, sodass sich f_y
+nur über die 0 leeren ließ.
 
 ### Schwingungsnachweis des Verschlusses
 

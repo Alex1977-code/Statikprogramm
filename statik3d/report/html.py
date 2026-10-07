@@ -1153,9 +1153,9 @@ class Report:
                                          "Materialdatenbank der Quelldatei; die Nachweise nehmen den "
                                          "Wert der Dicke des Bauteils)", None, "compact"))
             if any(mat.grade and not getattr(mat, "fy_dicke", None) for mat in m.materials.values()):
-                b.append(("note", "Streckgrenzen für Erzeugnisdicken t ≤ 40 mm nach EN 10025-2; "
-                                  "für t > 40 mm werden die abgeminderten Werte nach "
-                                  "DIN EN 1993-1-1 Tabelle 3.1 verwendet."))
+                b.append(("note", "Streckgrenzen für Erzeugnisdicken t ≤ 40 mm nach der Erzeugnisnorm "
+                                  "der Sorte (EN 10025-2 bis -5); für t > 40 mm werden die "
+                                  "abgeminderten Werte nach DIN EN 1993-1-1 Tabelle 3.1 verwendet."))
         # ---- Querschnitte
         if self.opt("sections"):
             b.append(self._h(2, "Querschnitte"))

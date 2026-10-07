@@ -143,7 +143,9 @@ def test_import_sorte_aus_text():
     """Der Import liest die Sorte aus Namen („Baustahl s 355“, „S  235 JR“)."""
     from statik3d.importers import _common as C
     faelle = [("S 235 JR", "S235"), ("s235", "S235"), ("s 355", "S355"), ("S  355 J2", "S355"),
-              ("Baustahl s275", "S275"), ("s\t460", "S460"), ("Stahl S 420 N", "S420")]
+              ("Baustahl s275", "S275"), ("s\t460", "S460"),
+              # N06 (07.10.2026): der Zusatz N gehoert zur Sorte (EN 10025-3), bis dahin „S420“
+              ("Stahl S 420 N", "S420N")]
     for text, soll in faelle:
         check(f"steel_grade_from_text({text!r}) = {soll}", C.steel_grade_from_text(text) == soll,
               repr(C.steel_grade_from_text(text)))

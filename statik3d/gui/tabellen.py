@@ -334,6 +334,11 @@ class Spalte:
     ergebnis: bool = False
     #: Die Summenzeile Σ addiert diese Spalte (Datentabelle.summe_setzen, 10c)
     summe: bool = False
+    #: Eine Zahlenspalte, in der „leer“ etwas bedeutet („kein Wert“ - Streckgrenze
+    #: eines Betons): eine leer getippte Zelle gibt ``None`` an den Rueckruf und
+    #: steht danach leer da. Sonst gilt „leer = 0“ wie bisher (Nachtrag N07,
+    #: 07.10.2026: dort war 0 und „leer“ nicht zu trennen)
+    leer_ok: bool = False
 
     def text_von(self, wert):
         """Der Klartext zu *wert* - oder *wert* selbst."""
@@ -653,6 +658,8 @@ class TabellenModell(QtCore.QAbstractTableModel):
         try:
             if sp.art not in ("zahl", "ganz"):
                 neu = str(wert)
+            elif sp.leer_ok and not text:
+                neu = None                  # leer = „kein Wert“, nicht 0
             elif not text or text.startswith("="):
                 neu = formel(text)          # leer = 0 wie bisher, „= 2*3,5“
             else:
@@ -661,7 +668,9 @@ class TabellenModell(QtCore.QAbstractTableModel):
             if sp.art in ("zahl", "ganz"):
                 self.meldung.emit(f"{sp.name}: {ex} Nicht übernommen.")
             return False
-        if sp.art == "ganz":
+        if neu is None:
+            pass                            # leer (leer_ok): kein Wert umzurechnen
+        elif sp.art == "ganz":
             neu = int(round(neu))
         elif sp.art == "zahl":
             # eingegeben in der Anzeigeeinheit, gespeichert in der Grundeinheit
@@ -672,7 +681,7 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return False
         while len(self.zeilen[z]) <= k:
             self.zeilen[z].append("")
-        self.zeilen[z][k] = neu
+        self.zeilen[z][k] = "" if neu is None else neu
         self.dataChanged.emit(index, index)
         self.geaendert.emit(z, k, neu)
         return True

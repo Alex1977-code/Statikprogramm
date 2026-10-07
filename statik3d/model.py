@@ -113,12 +113,41 @@ ACTION_CATEGORIES = {
 # Material / Querschnitt
 # --------------------------------------------------------------------------
 STEEL_GRADES = {
-    # Name: (fy [Pa] t<=40mm, fu [Pa] t<=40mm, fy 40<t<=80, fu 40<t<=80)  EN 10025-2
+    # Name: (fy [Pa] t<=40mm, fu [Pa] t<=40mm, fy 40<t<=80, fu 40<t<=80) - die Zeilen
+    # von DIN EN 1993-1-1 Tabelle 3.1. Die fuenf Sorten ohne Zusatz gab es zuerst; sie
+    # stehen VOR den Sorten mit Zusatz (der rfem6-Import nimmt zu einem f_y die erste
+    # passende Sorte, tests/test_nachtrag_q9.py haelt das fest).
+    # EN 10025-2 (S235 bis S355 mit J0, J2, JR, K2); S420 und S460 ohne Zusatz tragen
+    # die Werte der Zeilen N/NL, EN 10025-2 kennt diese Sorten nicht
     "S235": (235e6, 360e6, 215e6, 360e6),
     "S275": (275e6, 430e6, 255e6, 410e6),
     "S355": (355e6, 490e6, 335e6, 470e6),
     "S420": (420e6, 520e6, 390e6, 520e6),
     "S460": (460e6, 540e6, 430e6, 540e6),
+    # Sorten mit Zusatz (07.10.2026, Nachtrag N06): bis dahin las der Import aus
+    # "S355M" einfach S355 und rechnete mit den Werten der Zeile EN 10025-2
+    # EN 10025-3, normalgeglueht bzw. normalisierend gewalzt (N, NL)
+    "S275N": (275e6, 390e6, 255e6, 370e6),
+    "S275NL": (275e6, 390e6, 255e6, 370e6),
+    "S355N": (355e6, 490e6, 335e6, 470e6),
+    "S355NL": (355e6, 490e6, 335e6, 470e6),
+    "S420N": (420e6, 520e6, 390e6, 520e6),
+    "S420NL": (420e6, 520e6, 390e6, 520e6),
+    "S460N": (460e6, 540e6, 430e6, 540e6),
+    "S460NL": (460e6, 540e6, 430e6, 540e6),
+    # EN 10025-4, thermomechanisch gewalzt (M, ML)
+    "S275M": (275e6, 370e6, 255e6, 360e6),
+    "S275ML": (275e6, 370e6, 255e6, 360e6),
+    "S355M": (355e6, 470e6, 335e6, 450e6),
+    "S355ML": (355e6, 470e6, 335e6, 450e6),
+    "S420M": (420e6, 520e6, 390e6, 500e6),
+    "S420ML": (420e6, 520e6, 390e6, 500e6),
+    "S460M": (460e6, 540e6, 430e6, 530e6),
+    "S460ML": (460e6, 540e6, 430e6, 530e6),
+    # EN 10025-5, wetterfest (W); die Untersorten J0W, J2W, K2W gehoeren dazu, J0WP und
+    # J2WP fuehrt die Tabelle 3.1 nicht
+    "S235W": (235e6, 360e6, 215e6, 340e6),
+    "S355W": (355e6, 490e6, 335e6, 490e6),
 }
 
 
@@ -129,12 +158,31 @@ def stahlsorte_schluessel(text) -> Optional[str]:
     Gross-/Kleinschreibung und Leerzeichen jeder Art zaehlen nicht: „s235“,
     „S 235“ und „ S235 “ sind S235. Die Tabelle kennt keine Untersorten (S235JR
     ...); sie sind unbekannt, bis sie als eigener Schluessel in ``STEEL_GRADES``
-    stehen - dann erkennt diese Funktion sie ebenso. Bis zum 06.10.2026
+    stehen - dann erkennt diese Funktion sie ebenso. Seit dem 07.10.2026 stehen
+    dort auch die Sorten mit Zusatz N, NL, M, ML und W („S355M“). Bis zum 06.10.2026
     verglich jede Stelle den getippten Text unveraendert mit der Tabelle: eine
     Sorte „s235“ fiel durch, mit eingetragenem f_y entfiel ueber 40 mm still die
     Dickenabminderung, mit leerem f_y war die Streckgrenze 0 (Fehlerliste F08)."""
     g = "".join(str(text or "").split()).upper()
     return g if g in STEEL_GRADES else None
+
+
+def stahlsorte_norm(text) -> str:
+    """Die Erzeugnisnorm, deren Zeile von DIN EN 1993-1-1 Tabelle 3.1 die Werte der
+    Sorte liefert: EN 10025-2 (S235 bis S355 ohne Zusatz), EN 10025-3 (N, NL),
+    EN 10025-4 (M, ML), EN 10025-5 (W); eine Sorte, die die Tabelle nicht kennt:
+    ``""``. S420 und S460 ohne Zusatz tragen die Werte der Zeilen N/NL (EN 10025-2
+    kennt sie nicht)."""
+    g = stahlsorte_schluessel(text)
+    if g is None:
+        return ""
+    if g.endswith(("NL", "N")) or g in ("S420", "S460"):
+        return "EN 10025-3"
+    if g.endswith(("ML", "M")):
+        return "EN 10025-4"
+    if g.endswith("W"):
+        return "EN 10025-5"
+    return "EN 10025-2"
 
 
 def stahlsorte_normiert(text) -> str:
@@ -200,7 +248,7 @@ class Material:
 
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
-        """Baustahl nach EN 10025-2 (t <= 40 mm)."""
+        """Baustahl nach der Sortentabelle, Werte fuer t <= 40 mm (EN 10025-2 bis -5)."""
         g = stahlsorte_schluessel(grade)
         if g is None:
             raise KeyError(f"Stahlsorte '{grade}' unbekannt: {list(STEEL_GRADES)}")

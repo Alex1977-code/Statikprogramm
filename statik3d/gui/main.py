@@ -11002,8 +11002,14 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "werkstoff":
             if (neu or neuname != name) and neuname in m.materials:
                 return self.hinweis(f"Werkstoff „{neuname}“ gibt es schon")
-            self.merken(f"Werkstoff {neuname}")
             fy, fu = zahl("fy"), zahl("fu")
+            # f_y = 0 ist ein Eingabefehler, nicht „leer“ (N07, 07.10.2026): hat der
+            # Werkstoff keine Streckgrenze, bleibt das Feld leer. Bis dahin wurde die 0
+            # still zu Material.fy = 0.0 und wirkte wie „leer“.
+            grund = dg.streckgrenze_fehler(fy)
+            if grund:
+                return self.hinweis(grund)
+            self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
             # _stahlsorte_lesen)
@@ -13810,7 +13816,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("E", "GPa", "zahl", 1, True, hinweis="Elastizitätsmodul"),
             Spalte("ν", "", "zahl", 2, True, hinweis="Querdehnzahl (0 … 0,5)"),
             Spalte("ρ", "kg/m³", "zahl", 0, True, hinweis="Dichte"),
-            Spalte("fy", "MPa", "zahl", 0, True, hinweis="Streckgrenze"),
+            Spalte("fy", "MPa", "zahl", 0, True, leer_ok=True,
+                   hinweis="Streckgrenze; leer = aus der Stahlsorte (0 gibt es nicht)"),
             Spalte("Sorte", "", "text", 3, True,
                    hinweis="Stahlsorte nach EN 10025 für die Nachweise")],
             "Werkstoffe", self)
@@ -15060,12 +15067,27 @@ class MainWindow(QtWidgets.QMainWindow):
             if sorte_art == "info":
                 self.info(sorte_text)
             return True
+        if k == 4:
+            # f_y: leer (None, die Zelle ist leer getippt) heisst „kein f_y“; 0 und
+            # alles darunter ist ein Eingabefehler (N07, 07.10.2026). Bis dahin war
+            # 0 hier die einzige Art, f_y zu leeren, und wirkte still wie „leer“
+            # (Material.fy = 0.0); die Zelle zeigte f_y ohne Wert als „0“.
+            fy = None if wert is None else float(wert)
+            grund = dg.streckgrenze_fehler(fy)
+            if grund:
+                self.hinweis(grund)
+                return False
+            self.merken(f"Werkstoff {name}")
+            v.fy = None if fy is None else fy * 1e6
+            self._zelle_uebernommen(f"Werkstoff {name}: {self.tbl_mat.modell.spalten[k].kopf()} = "
+                                    f"{'leer' if fy is None else wert}")
+            return True
         w = float(wert)
         if k == 1 and not self._pruefen(w, unten=0.0, was="E-Modul"):
             return False
         if k == 2 and not self._pruefen(w, unten=-1.0, oben=0.5, was="Querdehnzahl"):
             return False
-        if k in (3, 4) and not self._pruefen(w, unten=-1e-9, was=self.tbl_mat.modell.spalten[k].name):
+        if k == 3 and not self._pruefen(w, unten=-1e-9, was=self.tbl_mat.modell.spalten[k].name):
             return False
         self.merken(f"Werkstoff {name}")
         if k == 1:
@@ -15074,8 +15096,6 @@ class MainWindow(QtWidgets.QMainWindow):
             v.nu = w
         elif k == 3:
             v.rho = w
-        elif k == 4:
-            v.fy = w * 1e6
         self._zelle_uebernommen(f"Werkstoff {name}: "
                                 f"{self.tbl_mat.modell.spalten[k].kopf()} = {wert}")
         return True
@@ -18490,7 +18510,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for k, e in self.ed_meta.items():
             e.setText(m.meta.get(k, ""))
         schritt("Tabellen aufbauen …")
-        self._fill(self.tbl_mat, [[k, v.E / 1e9, v.nu, v.rho, (v.fy or 0.0) / 1e6,
+        # ein Werkstoff ohne f_y zeigt eine leere Zelle, nicht „0“ (N07, 07.10.2026)
+        self._fill(self.tbl_mat, [[k, v.E / 1e9, v.nu, v.rho, (v.fy / 1e6 if v.fy else ""),
                                    v.grade] for k, v in m.materials.items()])
         self._fill(self.tbl_sec, [[k, v.typ, v.A * 1e4, v.Iy * 1e8, v.Iz * 1e8,
                                    v.It * 1e8, v.Wpl_y * 1e6, v.h * 1e3, v.b * 1e3]

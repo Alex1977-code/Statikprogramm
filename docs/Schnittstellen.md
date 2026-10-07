@@ -1357,7 +1357,7 @@ Beispiel aus einer echten Datei:
     Verbindungsmittel: ISO 4017-M12x35 (M12), ISO 4032-M16 (M16), DIN 910-M36x1.5
 
 Führt die Werkstofftabelle andere Festigkeiten als die Norm zur Bezeichnung,
-gilt die Norm (EN 10025‑2) und die Abweichung steht im Protokoll.
+gilt die Norm der Sorte (EN 10025‑2 bis ‑5) und die Abweichung steht im Protokoll.
 
 #### Geometrie aus dem Szenenteil (SZN)
 
