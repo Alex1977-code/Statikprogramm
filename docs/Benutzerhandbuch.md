@@ -6462,6 +6462,52 @@ die ganze Länge: im Versuch mit drei Zeilen „Span“ (−5 kN/m, ein Trapez v
 3 m und 7,5 m −13,25, −13,75 und −14,88 kN/m statt 0, −5 und 0 kN/m. Ein Abschnitt ohne Start point und End point wird
 nicht übernommen, und das Importprotokoll sagt es, statt eine Volllast zu raten.
 
+**SAF-Rundlauf: Knotenlasten, Einheiten, Rollung, Temperatur, Lastfallnamen (seit
+07.10.2026).** Ein Modell, das Statik3D als SAF schreibt und wieder einliest, kommt
+mit demselben Lastbild und denselben Steifigkeitsangaben zurück; geprüft ist das an
+allen acht Beispielen. Knotenlasten stehen je Komponente in einer Zeile, Kräfte im
+Blatt StructuralPointAction (Richtung X, Y oder Z, Wert in kN) und Momente im
+Blatt StructuralPointMoment (Richtung Mx, My oder Mz, Wert in kNm). Werkstoffe und
+Querschnitte tragen die Einheiten der SAF-Beschreibung in der Kopfzeile: E- und
+G-Modul in MPa, Flächen in m², Trägheitsmomente in m⁴, Abmessungen und Blechdicken
+in mm; Streckgrenze und Zugfestigkeit stehen unter „Design properties“. Ein
+Querschnitt geht als Profil der Datenbank hinaus, wenn er ihr gleicht, als Form mit
+Abmessungen (Rechteck, Kreis, Rohr, gewalztes I), wenn der Import daraus denselben
+Querschnitt baut, und sonst mit seinen Kennwerten. Ein Stab steht mit allen Knoten
+seiner Elementkette im Blatt, so dass er mit derselben Zahl von Elementen
+zurückkommt, und seine Rollung wird umgerechnet, wenn die Datei ihn andersherum
+führt, als sein erstes Element gezeichnet ist. Ein Lastfall mit Eigengewicht
+(g = 9,81 m/s² nach unten) bekommt den Lasttyp „Self weight“, Temperaturlasten auf
+Stäben und Schalen stehen gleichmäßig oder mit Unterschied zwischen Ober- und
+Unterseite in eigenen Blättern, und Flächenlasten auf Schalen stehen im Blatt
+StructuralSurfaceAction. Was SAF nicht kennt, nennt das Protokoll des Exports als
+WARNUNG: Situation und Theorie eines Lastfalls oder einer Kombination, die
+Leiteinwirkung einer Kombination, Zwangsverformungen, Vorspannungen und Übermaße,
+Lasten auf Volumenelementen, ein Eigengewicht in anderer Richtung oder Größe, Stäbe,
+deren Elemente verschieden gerollt sind oder verschiedene Querschnitte tragen, und
+Querschnitte, die nur mit ihren Kennwerten hinausgehen. Beim Import in ein neues
+Modell ersetzt der Lastfall LF1 der Datei den leeren Vorgabelastfall.
+
+Bis zum 07.10.2026 kam ein Modell über SAF anders zurück, als es hinausging. Der
+Export schrieb Knotenlasten als Spalten Fx bis Mz ohne Richtung und Wert, der Import
+übersprang jede Zeile mit „Richtung '' unbekannt“, und sechs der acht Beispiele
+verloren alle Knotenlasten, ohne dass der Export ein Wort darüber verlor. E-Modul,
+Querschnittswerte und Blechdicken standen in SI ohne Einheit da: E kam als
+2,1 · 10¹⁷ Pa zurück, die Fläche eines Rechtecks 200 × 300 mm als 6 · 10⁻⁸ m² statt
+0,06 m² und eine 12 mm dicke Platte als 0,012 mm dicke. Ein nach unten gezeichneter
+Stab mit 0,5 rad Rollung kam um 57,3° verdreht zurück, und jeder Stab aus mehreren
+Elementen kam als ein einziges Element zurück (der Hallenrahmen mit 18
+Stabelementen mit 3). Eigengewicht, Temperatur- und Flächenlasten fehlten ohne
+Protokollzeile, und der Lastfall LF1 hieß nach dem Import „LF1_2“, weil der leere
+Vorgabelastfall noch danebenstand; die Kombinationen zeigten dann auf LF1_2. Eine
+SAF-Datei, die Statik3D vor dem 07.10.2026 geschrieben hat, erkennt der Import an der
+Spalte „Yield strength“, liest ihre Werte in SI und sagt das im Protokoll; die
+Rollung rückwärts geführter Stäbe und die Zwischenknoten der Stäbe stehen in einer
+solchen Datei nicht und lassen sich nicht wiederherstellen. Steht in der Kopfzeile
+einer fremden SAF-Datei keine Einheit, liest der Import Flächen jetzt wie die
+SAF-Beschreibung in m² und Trägheitsmomente in m⁴; bis zum 07.10.2026 las er sie als
+mm² und mm⁴.
+
 ## 8 Nachweise nach EC3
 
 Stäbe (Kette von Stabelementen) legt der Befehl *Struktur → Stab* an (seit
