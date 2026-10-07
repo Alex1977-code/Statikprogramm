@@ -415,10 +415,14 @@ def lager_auf_netz(model: Model, log: list = None) -> dict:
         groesse = float(np.ptp(np.asarray(model.nodes, float), axis=0).max() or 1.0)
     else:
         groesse = 1.0
+    maske = None
     for ls in (model.line_supports or []):
         namen = [n for n in (getattr(ls, "linien", None) or []) if n in linien]
         if not namen:
             continue
+        if maske is None:
+            from .linienverteilung import im_netz, nur_netzknoten
+            maske = im_netz(model)
         kette: list[int] = []
         for name in namen:
             ln = linien[name]
@@ -431,7 +435,10 @@ def lager_auf_netz(model: Model, log: list = None) -> dict:
                 continue
             L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
             tol = max(2e-3 * L, 1e-6 * groesse)
-            for n in knoten_auf_linie(model, P, tol):
+            # Ein Stuetzknoten der Linie, den das Netz nicht trifft, haengt an
+            # keinem Element: eine Feder darauf hielte nichts, und die
+            # Einflusslaengen der Nachbarn waeren um seine kuerzer (N09)
+            for n in nur_netzknoten(knoten_auf_linie(model, P, tol), maske):
                 if n not in kette:
                     kette.append(n)
         if kette:

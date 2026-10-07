@@ -1332,6 +1332,24 @@ folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
 Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
 
+Bei quadratischen Schalen (shell6, shell8) liegt auch die **Kantenmitte**
+einer Randkante auf der wahren Kurve, und zwar auf halber Bogenlänge zwischen
+den beiden Ecken. Bis zum 07.10.2026 lag sie auf der Sehnenmitte, am
+Viertelkreisring mit 2 m Außenradius und sechs Teilungen 17,1 mm neben dem
+Bogen. Eine Linienlast auf dem Bogen ging dann nur an die Ecken, und ein
+Linienlager auf dem Bogen hielt die Kantenmitten nicht fest.
+
+Fällt ein neuer Randknoten oder eine Kantenmitte auf einen **Stützknoten**
+der Linie, etwa auf den Zwischenpunkt eines Bogens durch drei Punkte oder auf
+den Knick einer Polylinie, nimmt das Netz diesen Knoten selbst. Bis zum
+07.10.2026 entstand daneben ein deckungsgleicher neuer Knoten. Der alte hing
+dann an keinem Element, bekam von einer Linienlast aber trotzdem seinen
+Anteil, und dieser Anteil ging verloren (am Viertelkreisring 261,8 von
+3 141,5 N, also 8,3 %). Trifft das Netz einen Stützknoten gar nicht, etwa
+bei ungerader Teilung eines linearen Netzes, bekommt er weder Linienlast noch
+Linienlager; die Abnahme vor dem Rechnen nennt ihn weiterhin als „Knoten
+ohne Element“.
+
 #### Netzdichte und Netzeinstellungen
 
 *Netz → Vernetzen* vernetzt die gewählten - sonst alle - Flächen und Volumen.
@@ -1703,7 +1721,11 @@ Netz ist an der Hülle ungeprüft“), der Körper merkt sich den Grund, und die
 Abnahme vor dem Rechnen meldet die Warnung „Randtreue nicht geprüft“. Bis zum
 06.10.2026 galt die nicht gemessene Randtreue als Messwert 0 %: der Vernetzer
 vernetzte deshalb zweimal vergeblich feiner, und die Abnahme meldete
-„bestanden“, ohne zu sagen, dass niemand die Randtreue geprüft hatte.
+„bestanden“, ohne zu sagen, dass niemand die Randtreue geprüft hatte. Seit
+dem 07.10.2026 gilt das für den eigenen Vernetzer genauso wie für gmsh,
+Netgen und MMG3D. Bis dahin blieb beim eigenen Vernetzer ein Körper, dessen
+Messung scheiterte, ohne Netz; lief das Vernetzen in einem einzigen Prozess,
+brach es sogar ganz mit einem Fehler ab.
 
 **Nachverfeinerung der Hülle ohne Splitter.** Wo der Netzrand nach dem
 ersten Durchgang neben der Geometrie liegt (einspringende Ecken, der
@@ -5011,6 +5033,16 @@ aus shell8, der in seiner Ebene gezogen wird, verschob sich an der gezogenen
 Kante zwischen 186,0 und 203,0 µm statt überall um 190,5 µm. Für federnde
 Linienlager gilt dasselbe (siehe *Linienlager*).
 
+**Linienlast auf einem Bogen.** Die Netzknoten einer krummen Linie sucht das
+Programm an ihrer wahren Kurve, und auch die Lage jedes Knotens entlang der
+Linie wird an der Kurve gemessen.
+Die Resultierende einer gleichmäßigen Linienlast ist darum q mal Bogenlänge.
+Bis zum 07.10.2026 wurde die Linie dafür nur in 64 gerade Stücke zerlegt. Am
+Viertelkreis mit 2 m Radius war die Last dadurch um 2,5·10⁻⁵ zu klein, und
+auf weiten Bögen fehlten Knoten (bei 270 Grad und sechs quadratischen
+Elementen 8 von 13). Knoten, die an keinem Element hängen, bekommen keinen
+Anteil, sobald die Linie vernetzt ist; eine Last auf ihnen ginge verloren.
+
 **Flächenlast auf einer Elementseite ohne Fläche.** Liegen die Ecken einer
 Volumenseite auf einer Linie oder in einem Punkt (zusammengelegte Knoten mit
 eigenen Nummern), oder heben sich die beiden Dreiecke eines Vierecks auf
@@ -5782,7 +5814,12 @@ Element an seiner Kante hat. Bis zum 06.10.2026 bekam auch die quadratische
 Kante halbe Nachbarabschnitte (ein Viertel, die Hälfte, ein Viertel); an
 einem Scheibenstreifen aus shell8 auf einem federnden Linienlager wich die
 Verschiebung der gelagerten Kante dadurch um bis zu 4,3 % vom
-gleichmäßigen Wert ab.
+gleichmäßigen Wert ab. Ein Linienlager, das seine Linien kennt, hält nach dem
+Vernetzen alle Netzknoten auf diesen Linien, auf einem Bogen auch die
+Kantenmitten quadratischer Schalen. Ein Stützknoten der Linie, der an keinem
+Element hängt, gehört nicht dazu, denn eine Feder an ihm hielte nichts. Bis
+zum 07.10.2026 fehlten die Kantenmitten auf einem Bogen, und ein solcher
+Stützknoten bekam einen Teil der Einflusslänge.
 
 **Flächenlager / Bettung** (Knopf *Flächenlager…*): Lager auf Schalen- oder
 Volumenelementen. Die Steifigkeit wird **je m²** angegeben (Bettungsmodul) und

@@ -6105,7 +6105,11 @@ class Model:
             self.lasten_verteilen()
         return ""
 
-    def knoten_auf_linie(self, name: str, tol: float = None) -> list:
+    #: Abschnitte, an denen knoten_auf_linie eine **krumme** Linie fuer die
+    #: Kandidaten genau abtastet (die Suche ueber alle Knoten laeuft an 64)
+    LINIE_FEIN = 1024
+
+    def knoten_auf_linie(self, name: str, tol: float = None, cache: dict = None) -> list:
         """Die Netzknoten auf einer Linie, in Reihenfolge entlang der Linie.
 
         Der Vernetzer legt seine Knoten genau auf die Kurve (oder die Sehnen)
@@ -6113,43 +6117,82 @@ class Model:
         geometrisch gesucht: jeder Knoten, der naeher als ``tol`` an der
         abgetasteten Linie liegt, gehoert dazu; sortiert nach seiner Lage
         entlang der Linie. Rueckgabe [(Knoten, Bogenlaenge s [m]), ...].
+
+        Eine krumme Linie wird in zwei Stufen gesucht: ueber alle Knoten an
+        64 Abschnitten, mit der Toleranz plus dem Sehnenpfeil dieser
+        Abtastung, dann fuer die Kandidaten an LINIE_FEIN Abschnitten - dort
+        entscheidet ``tol``, und dort liegt die Bogenlaenge s. Bis zum
+        07.10.2026 galt allein die 64er-Abtastung: ein Knoten genau auf einem
+        weiten Bogen lag zwischen zwei Stuetzstellen weiter als ``tol`` von
+        ihr weg (Ringstueck R = 2 m, quadratisch: bei 200 Grad und fuenf
+        Teilungen fehlten 4 von 11 Knoten, bei 270 Grad und sechs 8 von 13;
+        bis 190 Grad keiner), und s war um den Sehnenfehler zu kurz (am
+        Viertelkreis 3,141514 statt 3,141593 m - die Linienlast um 2,5e-5 zu
+        klein, jetzt 9,8e-8; Nachtrag N08).
+
+        Knoten, die an keinem Element haengen, gehoeren nicht dazu, sobald
+        die Linie vernetzt ist (linienverteilung.nur_netzknoten, N09).
+        ``cache`` wie bei linienverteilung.kantenmitten_an.
         """
+        from .linienverteilung import im_netz, nur_netzknoten
         ln = self.lines.get(name)
         if ln is None or self.nn == 0:
             return []
         idx = [int(n) for n in ln.nodes if 0 <= int(n) < self.nn]
         if len(idx) < 2:
             return []
-        try:
-            X = np.asarray(ln.punkte(self, 64), float)
-        except Exception:                   # noqa: BLE001
-            X = self.nodes[idx]
-        if len(X) < 2:
+
+        def abtasten(n):
+            try:
+                X = np.asarray(ln.punkte(self, n), float)
+            except Exception:               # noqa: BLE001
+                X = self.nodes[idx]
+            if len(X) < 2:
+                return None
+            seg = np.diff(X, axis=0)
+            L = np.linalg.norm(seg, axis=1)
+            gut = L > 1e-15
+            X = np.vstack([X[:1], X[1:][gut]])
+            seg, L = seg[gut], L[gut]
+            if not len(seg):
+                return None
+            return X, seg, L, np.concatenate([[0.0], np.cumsum(L)])
+
+        def naechste(N, X, seg, L, s0):
+            # Abstand der Knoten N zu allen Strecken (Fusspunkt) und ihre Lage
+            best = np.full(len(N), np.inf)
+            lage = np.zeros(len(N))
+            for k in range(len(seg)):
+                d = seg[k]
+                t = np.clip(((N - X[k]) @ d) / (L[k] ** 2), 0.0, 1.0)
+                fuss = X[k] + t[:, None] * d
+                dist = np.linalg.norm(N - fuss, axis=1)
+                naeher = dist < best
+                best[naeher] = dist[naeher]
+                lage[naeher] = s0[k] + t[naeher] * L[k]
+            return best, lage
+
+        grob = abtasten(64)
+        if grob is None:
             return []
-        seg = np.diff(X, axis=0)
-        L = np.linalg.norm(seg, axis=1)
-        gut = L > 1e-15
-        X = np.vstack([X[:1], X[1:][gut]])
-        seg, L = seg[gut], L[gut]
-        if not len(seg):
-            return []
-        s0 = np.concatenate([[0.0], np.cumsum(L)])
+        X, seg, L, s0 = grob
         if tol is None:
             tol = 1e-4 * max(float(s0[-1]), 1e-9)
-        # Abstand aller Knoten zu allen Strecken (Fusspunkt), blockweise
-        N = self.nodes
-        best = np.full(self.nn, np.inf)
-        lage = np.zeros(self.nn)
-        for k in range(len(seg)):
-            d = seg[k]
-            t = np.clip(((N - X[k]) @ d) / (L[k] ** 2), 0.0, 1.0)
-            fuss = X[k] + t[:, None] * d
-            dist = np.linalg.norm(N - fuss, axis=1)
-            naeher = dist < best
-            best[naeher] = dist[naeher]
-            lage[naeher] = s0[k] + t[naeher] * L[k]
-        treffer = np.where(best <= tol)[0]
-        return sorted(((int(i), float(lage[i])) for i in treffer), key=lambda x: x[1])
+        best, lage = naechste(self.nodes, X, seg, L, s0)
+        krumm = (ln.typ or "polyline") != "polyline"
+        fein = abtasten(self.LINIE_FEIN) if krumm else None
+        if fein is None:
+            treffer = np.where(best <= tol)[0]
+            aus = [(int(i), float(lage[i])) for i in treffer]
+        else:
+            # Sehnenpfeil der groben Abtastung: so weit liegt ein Knoten genau
+            # auf der Kurve hoechstens neben ihr
+            pfeil = float(naechste(fein[0], X, seg, L, s0)[0].max())
+            kand = np.where(best <= tol + 1.5 * pfeil)[0]
+            d_f, lage_f = naechste(self.nodes[kand], *fein)
+            aus = [(int(i), float(s)) for i, d, s in zip(kand, d_f, lage_f) if d <= tol]
+        aus = nur_netzknoten(aus, im_netz(self, cache))
+        return sorted(aus, key=lambda x: x[1])
 
     def _linienlast_legen(self, ll: "Linienlast", cache: dict = None) -> list:
         """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist.
@@ -6194,7 +6237,7 @@ class Model:
         # auch ueber Kantenmitten hinweg in linearen Teilstuecken - auf einer
         # quadratischen Kante L/4, L/2, L/4 statt L/6, 2L/3, L/6 (F11).
         from .linienverteilung import kantenintegral, kantenmitten_an, linie_in_kanten
-        knoten = self.knoten_auf_linie(ll.ziel)
+        knoten = self.knoten_auf_linie(ll.ziel, cache=cache)
         if len(knoten) < 2:
             return out
         gesamt = knoten[-1][1]

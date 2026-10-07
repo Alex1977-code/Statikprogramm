@@ -102,6 +102,41 @@ def kantenmitten_an(model, knoten, cache: dict = None) -> dict:
     return out
 
 
+def im_netz(model, cache: dict = None) -> np.ndarray:
+    """Maske (nn,) der Knoten, die an einem Element haengen. ``cache`` wie
+    bei :func:`kantenmitten_an` - ein Durchgang ueber alle Elemente je
+    Lastverteilung."""
+    if cache is not None and cache.get("im_netz") is not None \
+            and len(cache["im_netz"]) == int(model.nn):
+        return cache["im_netz"]
+    import itertools
+    nn = int(model.nn)
+    maske = np.zeros(nn, bool)
+    if model.elements:
+        kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
+        maske[kn[(kn >= 0) & (kn < nn)]] = True
+    if cache is not None:
+        cache["im_netz"] = maske
+    return maske
+
+
+def nur_netzknoten(knoten: list, maske: np.ndarray) -> list:
+    """Die Knoten einer Linie ohne die, die an keinem Element haengen -
+    sobald mindestens zwei an einem haengen, die Linie also vernetzt ist.
+    ``knoten``: Knotennummern oder Paare (Knoten, Lage).
+
+    Ein Stuetzknoten der Linie, den das Netz nicht trifft (der mittlere
+    Knoten eines Bogens bei ungerader Teilung, der Knick einer Polylinie),
+    liegt auf der Linie, traegt aber nichts: eine Last darauf ging bis zum
+    07.10.2026 verloren (Viertelkreisring, fuenf Teilungen: 314,2 von
+    3 141,5 N), eine Feder darauf hielt nichts (Nachtrag N09). Eine
+    unvernetzte Linie behaelt ihre Knoten."""
+    def nr(k):
+        return int(k[0]) if isinstance(k, (tuple, list)) else int(k)
+    drin = [k for k in knoten if 0 <= nr(k) < len(maske) and maske[nr(k)]]
+    return drin if len(drin) >= 2 else list(knoten)
+
+
 def linie_in_kanten(knoten, lage, mitten: dict) -> list:
     """Die Knotenkette einer Linie (Knoten und ihre Lagen s, nach s
     sortiert) als Folge von Elementkanten: das Indextupel (i, i+1, i+2) fuer
@@ -112,8 +147,10 @@ def linie_in_kanten(knoten, lage, mitten: dict) -> list:
     Eine Kantenmitte, die laengs der Linie um ein Viertel der Kantenlaenge
     oder mehr neben der Mitte liegt, bleibt zwei lineare Stuecke: dort waere
     s(xi) auf der Kante nicht mehr monoton und die Lage nicht eindeutig. Der
-    Vernetzer setzt die Mitte auf die Mitte der Kurve, das kommt nur bei
-    fremden Netzen vor."""
+    Vernetzer setzt die Mitte auf die Mitte der Kurve (an Flaechen seit dem
+    07.10.2026, mesher._randmitten; bis dahin auf die Sehnenmitte, und dort
+    fand Model.knoten_auf_linie sie nicht), das kommt nur bei fremden Netzen
+    vor."""
     out: list = []
     i, n = 0, len(knoten)
     while i < n - 1:
