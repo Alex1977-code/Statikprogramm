@@ -12411,9 +12411,7 @@ An der Kirsch-Platte fällt der Fehler in drei Zyklen von 4,886 auf 1,347 bei 7 
 2 388 freien Freiheitsgraden), was bei geschachtelten Ansatzräumen in der Energienorm ausgeschlossen ist. Die Ursache ist die Zellaggregation (11.4). Für den ersten Schritt
 (4 Zellen geteilt) fällt der Fehler ohne Aggregation (α = 10⁻⁸) von 1,610 auf 1,263; mit Aggregation fällt er in den geteilten Zellen (e² 1,809 → 1,467), steigt aber in den
 ungeteilten (2,390 → 3,303). Im geteilten Gitter sind 52 von 81 Zellen aggregiert, und bei 42 davon liegt die Wurzel außerhalb der eigenen Elternzelle. Die Dicke des Modells (20 mm)
-ist gleich der Basiszelle, fast jede Zelle ist an den Ebenen z = 0 und z = 20 geschnitten. Wahrscheinlich (nicht gemessen) bindet die Teilung aggregierte Zellen der Umgebung an neue,
-feinere Wurzeln, deren Fortsetzung über eine größere Entfernung (gemessen an der Wurzelgröße) reicht als die der früheren Wurzel; dann ist das frühere Polynom nicht mehr darstellbar und
-die Räume sind nicht geschachtelt. Das ist kein Fehler des Schätzers, der die richtigen Zellen markiert, sondern eine Eigenschaft der Aggregation bei lokaler Teilung (Liste O21). Der
+ist gleich der Basiszelle, fast jede Zelle ist an den Ebenen z = 0 und z = 20 geschnitten. Die zuerst vermutete Erklärung (die Teilung hängt die Wurzeln ungeteilter aggregierter Zellen um) hat die Messung widerlegt: sie erklärt 19 % der Zunahme, 63 % liegen in wohlgestellten ungeteilten Zellen mit freien Polynomen (Plan O21, Teil A). Wo die Schachtelung bricht, ist nicht gemessen. Das ist kein Fehler des Schätzers, der die richtigen Zellen markiert, sondern eine Eigenschaft der Aggregation bei lokaler Teilung (Liste O21). Der
 Anwender entschied am 06.10.2026, Phase 1 so abzuschließen und O21 vor Phase 2 zu beheben; danach wird die Regel mit denselben Zahlen erneut geprüft.
 
 **Zeit.** Der Schätzer braucht bei Lamé 2 bis 21 % und bei Kirsch 18 bis 32 % der Zeit für Aufbau und Lösen, am Kragarm mit h 25 aber 143 % (5,2 gegen 3,6 s): er läuft in

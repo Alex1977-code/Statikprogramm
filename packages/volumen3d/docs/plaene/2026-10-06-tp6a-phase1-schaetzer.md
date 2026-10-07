@@ -892,9 +892,7 @@ senkt und mit Aggregation hebt) ergibt für den Schritt von Zyklus 0 zu Zyklus 1
 
 Die Vermutung ist damit gestützt. In den geteilten Zellen fällt der Fehler auch mit Aggregation; er steigt in den **ungeteilten** Zellen, und das nur mit Aggregation. Im verfeinerten
 Gitter sind 52 von 81 Zellen aggregiert, und bei 42 davon liegt die Wurzel außerhalb der eigenen Elternzelle. Das Lamé-Modell mit h 20 ist dafür ein harter Fall: die Dicke (20 mm) ist
-gleich der Basiszelle, fast jede Zelle ist an den Ebenen z = 0 und z = 20 geschnitten. Wahrscheinlicher Mechanismus (nicht gemessen): Die Teilung schafft neue, feinere wohlgestellte
-Zellen, an die aggregierte Zellen der Umgebung neu gebunden werden. Deren Fortsetzung reicht dann über eine größere Entfernung, gemessen an der Wurzelgröße, und das Polynom der
-früheren, gröberen Wurzel ist nicht mehr darstellbar. Ohne Aggregation gibt es das nicht (dort steht das α-Verfahren mit seinen bekannten Nachteilen, Theorie 11.4).
+gleich der Basiszelle, fast jede Zelle ist an den Ebenen z = 0 und z = 20 geschnitten. Die zuerst vermutete Erklärung (die Teilung hängt die Wurzeln ungeteilter aggregierter Zellen um) hat die Messung widerlegt: sie erklärt 19 % der Zunahme, 63 % liegen in wohlgestellten ungeteilten Zellen mit freien Polynomen (Plan O21, Teil A). Wo die Schachtelung bricht, ist nicht gemessen. Ohne Aggregation gibt es das nicht (dort steht das α-Verfahren mit seinen bekannten Nachteilen, Theorie 11.4).
 
 **Regel 6 (Flächenquadratur tiefe 2 gegen 4 ≤ 10 %): erfüllt.** Lamé h 5 p 2 +0,01 %, Kirsch Ziel 5 p 2 +0,05 %. Der Punkttest erster Ordnung genügt; eine eben-exakte
 Flächenintegration ist nicht nötig.
