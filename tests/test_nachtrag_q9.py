@@ -28,11 +28,13 @@ zwei unabhaengigen Wiedergaben der Tabelle, am 07.10.2026 gelesen:
   EN 1993-1-1 Tab. 3.1 (https://docs.bentley.com/LiveContent/web/STAAD.Pro%20Help-v20/
   ja/GUID-977421E0-6039-4A98-B068-D91E10FFFBA0.html; Zeilen S355 EN 10025-2/-3/-4/-5).
 
-Beide stimmen in allen hier benutzten Zeilen ueberein. Nicht belegt ist f_u der
+Beide stimmen in allen hier benutzten Zeilen ueberein. Nicht belegt war f_u der
 Sorten S355 und S355 W bis 40 mm: Bentley vermerkt, die Tabelle der franzoesischen
 Fassung unterscheide sich von der des EC3 gerade in diesen beiden Werten (der
-Satzwert des EC3 soll 510 sein, nicht 490). Das Programm fuehrt S355 seit jeher mit
-490/470 (so auch die deutsche Praxis); S355W folgt hier derselben Linie mit 490/490.
+Satzwert des EC3 soll 510 sein, nicht 490). Q9 liess beide bei 490 (S355 seit jeher
+490/470, S355W 490/490). Der Anwender hat am 07.10.2026 entschieden: 510 nach
+Tabelle 3.1 (Nachtrag M26, tests/test_nachtrag_m26.py); NORM unten fuehrt seitdem
+S355 mit 510/470 und S355W mit 510/490.
 
 Aufruf:  python -m tests.test_nachtrag_q9
 """
@@ -80,7 +82,7 @@ NORM = {
     # EN 10025-2
     "S235": ("EN 10025-2", 235, 360, 215, 360),
     "S275": ("EN 10025-2", 275, 430, 255, 410),
-    "S355": ("EN 10025-2", 355, 490, 335, 470),
+    "S355": ("EN 10025-2", 355, 510, 335, 470),
     # EN 10025-3, normalgeglueht (N) und mit Kerbschlagarbeit bei tiefer Temperatur (NL)
     "S275N": ("EN 10025-3", 275, 390, 255, 370), "S275NL": ("EN 10025-3", 275, 390, 255, 370),
     "S355N": ("EN 10025-3", 355, 490, 335, 470), "S355NL": ("EN 10025-3", 355, 490, 335, 470),
@@ -93,7 +95,7 @@ NORM = {
     "S460M": ("EN 10025-4", 460, 540, 430, 530), "S460ML": ("EN 10025-4", 460, 540, 430, 530),
     # EN 10025-5, wetterfest (W)
     "S235W": ("EN 10025-5", 235, 360, 215, 340),
-    "S355W": ("EN 10025-5", 355, 490, 335, 490),
+    "S355W": ("EN 10025-5", 355, 510, 335, 490),
 }
 
 #: Die Zeilen S420 und S460 ohne Zusatz gab es schon: sie tragen die Werte der Zeilen

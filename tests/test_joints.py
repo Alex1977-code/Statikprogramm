@@ -646,8 +646,11 @@ def test_kopfplatte_vorschlagsreihe():
           [(z[1], z[2]) for z in r0[:32]] == [(z[1], z[2]) for z in r1[:32]])
 
     # B013: der Druckflansch ist schon bei erfuellten Nachweisen massgebend -
-    # 340/330 kNm sind die Stellen, ab denen eta > 1 wird
-    for N, zeilen, ab, voll in ((0.0, r0, 330, 340), (-100e3, r1, 300, 330)):
+    # 340/330 kNm sind die Stellen, ab denen eta > 1 wird. Mit N = -100 kN ab 320 kNm: bis
+    # 06.10.2026 war es ab 300 kNm (eta 0,933). Seit dem 07.10.2026 (M26) gilt f_u von S355 mit
+    # 510 statt 490 N/mm2; der Vorschlag waehlt die Kehlnaht am Flansch duenner, und sie ist
+    # bei 300 und 310 kNm massgebend (eta 0,961 und 0,993) - siehe unten
+    for N, zeilen, ab, voll in ((0.0, r0, 330, 340), (-100e3, r1, 320, 330)):
         df = [z[0] for z in zeilen if "Druckflansch" in z[3].massgebend]
         ok_df = [(z[0], round(z[3].eta, 3)) for z in zeilen
                  if "Druckflansch" in z[3].massgebend and z[3].ok]
@@ -657,6 +660,11 @@ def test_kopfplatte_vorschlagsreihe():
               and [x[0] for x in ok_df] == list(range(ab, voll, 10))
               and all(x[1] <= 1.0 for x in ok_df),
               f"ab {df[0] if df else '-'} kNm; erfüllt dabei {ok_df}")
+    naht = {z[0]: (z[3].massgebend, round(z[3].eta, 3), z[3].ok) for z in r1 if z[0] in (300, 310)}
+    check("N = -100 kN: bei 300 und 310 kNm ist die Kehlnaht am Flansch maßgebend (f_u von S355 = 510), "
+          "eta 0,961 und 0,993, erfüllt",
+          naht == {300: ("Kehlnaht am Flansch: Vergleichsspannung", 0.961, True),
+                   310: ("Kehlnaht am Flansch: Vergleichsspannung", 0.993, True)}, str(naht))
 
 
 def test_nachbessern_verlaengert_keine_naht():
@@ -672,7 +680,10 @@ def test_nachbessern_verlaengert_keine_naht():
     N, V_z, M_y und die Schraube. Gemessen 24.09.2026 an HEB 200 S355: mit
     welded=True wird improve nie gerufen, l_weld = 100/398/626 mm bei
     N = 200/800/2000 kN stammt allein aus der Formel in propose (eta 0,994
-    bis 0,999, massgebend die Kehlnaht)."""
+    bis 0,999, massgebend die Kehlnaht). Seit dem 07.10.2026 (M26) gilt f_u von
+    S355 mit 510 statt 490 N/mm2; dieselbe Formel liefert dann 100/383/602 mm
+    (eta 0,955, 0,998 und 0,999): die Naht traegt mit f_u mehr, also wird sie
+    kuerzer."""
     from statik3d.joints import templates as T
 
     m = Model("Diagonale")
@@ -702,7 +713,7 @@ def test_nachbessern_verlaengert_keine_naht():
         T.Gusset.improve = nachbessern
 
     check("geschweißtes Knotenblech: kein Nachbessern, Nahtlänge aus propose",
-          geschweisst_gerufen == [] and laengen == [100, 398, 626],
+          geschweisst_gerufen == [] and laengen == [100, 383, 602],
           f"improve {len(geschweisst_gerufen)}-mal gerufen, l = {laengen} mm")
     check("Dialogweg: Knotenblech geschraubt, nachgebessert ohne Naht",
           all(not g.welded for g in dialog) and gerufen == [False, False, False],

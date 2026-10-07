@@ -7586,6 +7586,48 @@ der beiden Normen zuordnen lassen; sie bleiben, wie sie waren, die Sorte ohne
 Zusatz. Kommt es bei einem Hohlprofil auf f_u an, trägt man f_y und f_u des
 Werkstoffs selbst ein.
 
+**Zugfestigkeit von S355 und S355W.** Die Sortentabelle führt f_u von S355
+und S355W bis 40 mm Erzeugnisdicke seit dem 07.10.2026 mit 510 N/mm², wie es
+DIN EN 1993-1-1 Tabelle 3.1 nennt (Entscheidung des Anwenders). Von 40 bis
+80 mm gelten unverändert S355 470 und S355W 490 N/mm²; f_y und alle übrigen
+Sorten sind geblieben, wie sie waren (S355N und S355NL haben weiter 490,
+S355M 470 N/mm²). Bis zum 07.10.2026 stand f_u von S355 und S355W bis 40 mm bei
+490 N/mm². Das wirkt nur dort, wo f_u in die Nachweise eingeht, also bei den
+Anschlüssen: in der Lochleibung der Schrauben, im Durchstanzen des Blechs, in
+den Kehlnähten, im Nettoquerschnitt und im Blockversagen. Sie tragen damit
+bis zu 510/490, also gut 4 %, mehr (beim Blockversagen weniger, weil dort auch
+f_y eingeht); die Nachweise der Stäbe nach EC3 hängen an f_y und bleiben, wie
+sie waren, ebenso alle Verformungen und Schnittgrößen. Gemessen am
+Hallenrahmen aus dem Menü Beispiele mit einer Kopfplatte und einem Laschenstoß:
+die Lochleibung der Kopfplatte steigt von 147,0 auf 153,0 kN, das Durchstanzen
+von 348,0 auf 362,2 kN, die Lochleibung der Lasche von 117,6 auf 122,4 kN und
+der Nettoquerschnitt des Trägerflansches von 925,7 auf 963,5 kN; die
+Ausnutzung der Lasche in der Lochleibung sinkt von 0,959 auf 0,921. Auch wo
+das Programm f_u bisher fest eingetragen hatte, gilt jetzt 510: ein Anschluss
+aus einem Werkstoff ohne f_u, ohne f_y und ohne Sorte rechnet mit S355, und die
+Vorgaben der Naht, des Schraubennachweises und der Anschlussvorlage stehen
+ebenfalls bei 510.
+
+*Alte Dateien.* f_u steht am Werkstoff, nicht nur in der Tabelle: eine Datei,
+die vor dem 07.10.2026 gespeichert wurde, trägt bei S355 und S355W die 490.
+Beim Öffnen einer Modelldatei – ebenso beim Importieren und Anhängen einer
+Modelldatei, beim Laden im Browser und in der Kommandozeile – folgt darum ein
+Werkstoff der Sorte S355 oder S355W, dessen f_u genau 490 N/mm² beträgt, der
+neuen Tabelle, und das Protokoll nennt jeden dieser Werkstoffe, zum Beispiel
+„Hinweis: Werkstoff S355: f_u 490 → 510 N/mm² nach EN 1993-1-1 Tab. 3.1
+(Sortentabelle seit 07.10.2026)“. Alles andere bleibt: ein von Hand
+eingetragener anderer Wert, eine andere Sorte (S355N hat 490 nach EN 10025-3),
+ein Werkstoff ohne Sorte, ein Werkstoff ohne eingetragenes f_u (er liest die
+Sorte ohnehin bei jeder Rechnung) und die Tabelle nach Erzeugnisdicke aus
+RFEM. Ein von Hand eingetragenes 490 bei der Sorte S355 lässt sich vom
+Tabellenwert nicht unterscheiden und wird mit umgestellt; wer bewusst mit 490
+rechnen will, trägt es an einem Werkstoff ohne Sorte ein. Die Ergebnisdatei
+neben einer so umgestellten Modelldatei passt danach nicht mehr zum Modell,
+weil sich der Werkstoff geändert hat („seit der Rechnung geändert:
+Werkstoffe“): sie wird nicht geladen, das Modell muss neu gerechnet werden.
+Ein Modell im Speicher, etwa aus einem Skript, bleibt dagegen, wie es ist:
+nur das Öffnen einer Datei stellt um.
+
 **Streckgrenze null.** In der Werkstofftabelle (Spalte fy), in der
 Werkstoffmaske (rechts) und im Werkstoffdialog ist f_y = 0 – und jeder Wert
 unter null – ein Eingabefehler: Der Wert wird nicht übernommen, und die Meldung
@@ -7785,7 +7827,10 @@ erfüllt sie kein Vorschlag der Reihe — 37 bzw. 38 von 70 —, bei 700 kNm ist
 η = 2,099 (N = 0). Maßgebend ist dort „Druckflansch auf die
 Platte“, die Flanschkraft gegen b·t_f·f_y/γ_M0 des Trägerflansches.
 Maßgebend ist dieser Nachweis schon vorher, bei noch erfüllten Nachweisen:
-ab 330 kNm (N = 0, η = 0,990) bzw. ab 300 kNm (N = −100 kN, η = 0,933).
+ab 330 kNm (N = 0, η = 0,990) bzw. ab 320 kNm (N = −100 kN, η = 0,993).
+Bis zum 07.10.2026 war er bei N = −100 kN schon ab 300 kNm maßgebend (η = 0,933);
+seit f_u von S355 mit 510 statt 490 N/mm² geführt wird, schlägt der Dialog die Kehlnaht
+am Flansch dünner vor, und sie ist bei 300 und 310 kNm maßgebend (η = 0,961 und 0,993).
 Von 340 bzw. 330 kNm an endet das Nachbessern mit η > 1, denn Blech,
 Schrauben und Nähte ändern diesen Nachweis nicht. Der Vorschlag sagt das im
 Hinweis — der Druckflansch des Trägers ist überlastet (bei 340 kNm, N = 0:

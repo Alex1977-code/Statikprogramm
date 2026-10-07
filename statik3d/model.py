@@ -118,10 +118,12 @@ STEEL_GRADES = {
     # stehen VOR den Sorten mit Zusatz (der rfem6-Import nimmt zu einem f_y die erste
     # passende Sorte, tests/test_nachtrag_q9.py haelt das fest).
     # EN 10025-2 (S235 bis S355 mit J0, J2, JR, K2); S420 und S460 ohne Zusatz tragen
-    # die Werte der Zeilen N/NL, EN 10025-2 kennt diese Sorten nicht
+    # die Werte der Zeilen N/NL, EN 10025-2 kennt diese Sorten nicht.
+    # S355 und S355W: f_u bis 40 mm Erzeugnisdicke 510 N/mm² nach Tabelle 3.1 (Entscheidung
+    # des Anwenders 07.10.2026, Nachtrag M26); bis dahin stand hier 490
     "S235": (235e6, 360e6, 215e6, 360e6),
     "S275": (275e6, 430e6, 255e6, 410e6),
-    "S355": (355e6, 490e6, 335e6, 470e6),
+    "S355": (355e6, 510e6, 335e6, 470e6),
     "S420": (420e6, 520e6, 390e6, 520e6),
     "S460": (460e6, 540e6, 430e6, 540e6),
     # Sorten mit Zusatz (07.10.2026, Nachtrag N06): bis dahin las der Import aus
@@ -147,8 +149,16 @@ STEEL_GRADES = {
     # EN 10025-5, wetterfest (W); die Untersorten J0W, J2W, K2W gehoeren dazu, J0WP und
     # J2WP fuehrt die Tabelle 3.1 nicht
     "S235W": (235e6, 360e6, 215e6, 340e6),
-    "S355W": (355e6, 490e6, 335e6, 490e6),
+    "S355W": (355e6, 510e6, 335e6, 490e6),
 }
+
+#: f_u der Sorten S355 und S355W bis 40 mm vor dem 07.10.2026 (Nachtrag M26): der Wert, den
+#: ein Werkstoff einer aelteren Datei traegt, wenn er aus der Sortentabelle kam
+FU_S355_VOR_M26 = 490e6
+#: f_u von S355 bis 40 mm aus der Sortentabelle - der Rueckfall der Anschluesse (Vorlagen,
+#: Naehte, Schraubennachweis), wo ein Werkstoff weder f_u noch f_y noch eine Sorte hat und sie
+#: mit S355 rechnen
+FU_S355 = STEEL_GRADES["S355"][1]
 
 
 def stahlsorte_schluessel(text) -> Optional[str]:
@@ -191,6 +201,37 @@ def stahlsorte_normiert(text) -> str:
     sonst unveraendert (der Anwender darf eine eigene Sorte mit eigenem f_y
     eintragen)."""
     return stahlsorte_schluessel(text) or str(text or "").strip()
+
+
+def werkstoffe_alter_datei_nachziehen(model) -> list:
+    """Stellt f_u der Werkstoffe einer **geoeffneten Datei** auf die Sortentabelle um (M26,
+    07.10.2026) und gibt die Zeilen fuers Protokoll zurueck.
+
+    f_u steht am Werkstoff, nicht nur in der Sortentabelle: eine Datei, die vor dem
+    07.10.2026 gespeichert wurde, traegt bei S355 und S355W den alten Tabellenwert 490 N/mm²
+    (Tabelle 3.1 nennt 510). Ein Werkstoff der Sorte S355 oder S355W mit genau diesem Wert
+    folgt der neuen Tabelle (S355N hat 490 nach EN 10025-3 und bleibt). Jeder andere Wert
+    bleibt: ein von Hand eingetragener, und ebenso ein Werkstoff ohne Sorte, ohne f_u (er liest
+    die Sorte ohnehin zur Laufzeit) oder mit einer Tabelle nach Dicke aus der Quelldatei
+    (RFEM) - die kommt nicht aus der Sortentabelle. Ein von Hand eingetragenes 490 ist vom
+    Tabellenwert nicht zu unterscheiden und wird mit umgestellt; das Protokoll sagt es.
+
+    Nur das Oeffnen stellt um, nicht ``Model.from_dict``: das tragen auch die Arbeiter der
+    Rechnung und die Nachweispakete (jobs.py) vom Modell im Speicher zu ihrem Prozess und
+    muss den Werkstoff dort genau so lesen, wie er hier steht."""
+    zeilen = []
+    for name, mt in model.materials.items():
+        sorte = stahlsorte_schluessel(mt.grade)
+        if sorte not in ("S355", "S355W") or mt.fu_dicke or mt.fu is None:
+            continue
+        if abs(float(mt.fu) - FU_S355_VOR_M26) > 0.5:
+            continue
+        neu = STEEL_GRADES[sorte][1]
+        mt.fu = neu
+        wer = name if name == sorte else f"{name} ({sorte})"
+        zeilen.append(f"Werkstoff {wer}: f_u {FU_S355_VOR_M26 / 1e6:g} → {neu / 1e6:g} N/mm² "
+                      "nach EN 1993-1-1 Tab. 3.1 (Sortentabelle seit 07.10.2026)")
+    return zeilen
 
 
 @dataclass
@@ -8796,7 +8837,7 @@ class Model:
         Datei laeuft und nicht erst danach springt."""
         if fortschritt is None:
             with open(path, encoding="utf-8") as f:
-                return Model.from_dict(json.load(f))
+                return Model._geoeffnet(Model.from_dict(json.load(f)))
         groesse = max(1, os.path.getsize(path))
         teile, gelesen = [], 0
         with open(path, "rb") as f:
@@ -8810,7 +8851,16 @@ class Model:
                        f"Datei lesen ({gelesen / 1e6:.0f} von {groesse / 1e6:.0f} MB)")
         _melde(fortschritt, 0.32, "Daten auswerten")
         d = json.loads(b"".join(teile).decode("utf-8"))
-        return Model.from_dict(d, fortschritt=lambda a, t: _melde(fortschritt, 0.4 + 0.6 * a, t))
+        return Model._geoeffnet(
+            Model.from_dict(d, fortschritt=lambda a, t: _melde(fortschritt, 0.4 + 0.6 * a, t)))
+
+    @staticmethod
+    def _geoeffnet(m: "Model") -> "Model":
+        """Was nur das Oeffnen einer Datei umstellt (nicht jedes ``from_dict``): f_u der Werkstoffe
+        nach der Sortentabelle von heute (M26). Die Zeilen stehen in ``_ladehinweise`` und kommen
+        beim Oeffnen und Importieren ins Protokoll."""
+        m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
+        return m
 
     def copy(self) -> "Model":
         """Unabhaengige Kopie - fuer Rueckgaengig, Situationen und Stellungen.

@@ -97,6 +97,9 @@ def main(argv=None) -> int:
             f"{len(m.load_cases)} Lastfaelle, {len(m.members)} Staebe")
     elif a.datei:
         m = Model.load(a.datei)
+        # was das Oeffnen umgestellt hat (M26: f_u der Werkstoffe nach der Sortentabelle von heute)
+        for z in getattr(m, "_ladehinweise", None) or []:
+            log("  Hinweis: " + z)
     else:
         ap.error("Bitte eine Modelldatei, --import oder --beispiel angeben")
 

@@ -9,13 +9,15 @@ einer Nahtgruppe in Spannungen.
 Einheiten SI: Kraefte N, Momente Nm, Laengen m, Spannungen Pa.
 
     from statik3d.joints.welds import Fillet, weld_group_stress
-    n = Fillet(a=0.005, length=0.300, fu=490e6, grade="S355")
+    n = Fillet(a=0.005, length=0.300, fu=510e6, grade="S355")
     print(n.Fw_Rd() / 1e3, "kN Tragfaehigkeit (vereinfacht)")
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+
+from ..model import FU_S355
 
 #: Korrelationsbeiwert beta_w nach EN 1993-1-8 Tab. 4.1
 BETA_W = {"S235": 0.80, "S275": 0.85, "S355": 0.90,
@@ -60,7 +62,7 @@ class Fillet:
     """
     a: float
     length: float
-    fu: float = 490e6
+    fu: float = FU_S355
     grade: str = "S355"
     double: bool = False
     gamma_M2: float = 1.25
@@ -148,7 +150,7 @@ class Butt:
     thickness: float
     length: float
     fy: float = 355e6
-    fu: float = 490e6
+    fu: float = FU_S355
     grade: str = "S355"
     full_penetration: bool = True
     gamma_M0: float = 1.0
