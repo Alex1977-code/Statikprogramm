@@ -217,7 +217,7 @@ geteilten Zellen mit Wurzel außerhalb der Elternzelle sitzt. K2 ändert die Wur
 
 **Kurversuch und Teil B (07.10.2026).** Auf die Ansage des Anwenders („allerletzte Chance, los“) wurden die Kuren direkt am Ziel geprüft statt weiter die Ursache: sechs
 Dörfler-Zyklen an Lamé h 20 p 2, der wahre Fehler muss in jedem fallen (`o21_kurprobe.py`). K1 (ganze Aggregate) erfüllt das, K2 (Kinder an Geschwister) allein nicht (der Fehler steigt
-wie ohne Kur: 2,049 / 2,184 / 2,888 / 3,117, dann 1,196 / 1,351 / 0,610), K1 und K2 zusammen sind nicht besser als K1 (0,177 gegen 0,179 nach sechs Zyklen). Gebaut ist K1
+wie ohne Kur: 2,049 / 2,184 / 2,888 / 3,116, dann 1,196 / 1,351 / 0,610), K1 und K2 zusammen sind nicht besser als K1 (0,177 gegen 0,179 nach sechs Zyklen). Gebaut ist K1
 (`schaetzer.aggregate_ergaenzen`, 1221915); die Aggregation selbst ist unverändert, kein Modul außer den Prüfungen ruft den neuen Weg auf, die Kernsuite läuft mit 391/391. Messung aus dem
 festen Arbeitsbaum 1221915 (`o21_messung.py`, 8 Threads), zwei unabhängige Auswertungen mit gleichen Urteilen:
 
