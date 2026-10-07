@@ -41,7 +41,7 @@ import numpy as np
 from .einheiten import Einheiten
 from .plastizitaet import Plastizitaet
 from . import elemente as _EL
-from .begriffe import anzahl, umhuellende_kurz
+from .begriffe import anzahl, aufzaehlung, umhuellende_kurz
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
@@ -7575,7 +7575,11 @@ class Model:
         Seit dem 06.10.2026 gehen auch die Gelenke und die Elementlasten des
         alten Elements mit (:meth:`_teilung_uebertragen`); vorher wanderte ein
         Gelenk an seinem Ende an die Teilstelle, und eine Elementlast wirkte
-        nur noch auf dem verkuerzten Teil. Einmal je Teilung aufrufen."""
+        nur noch auf dem verkuerzten Teil. Seit dem 07.10.2026 (N02) auch die
+        uebrigen Felder des Elements: Linie, Zug/Druck-Ausfall, Woelbkraft-
+        torsion, die ungedehnte Laenge eines Seils, die Exzentrizitaet, die
+        Temperaturlasten und die Anschluesse (Joint). Einmal je Teilung
+        aufrufen."""
         alt, neu = int(alt), int(neu)
         self._teilung_uebertragen(alt, neu)
         kn_neu = {int(n) for n in self.elements[neu].nodes}
@@ -7629,6 +7633,33 @@ class Model:
           Eine Last im lokalen System wird auf die Achsen von ``neu``
           umgerechnet. Aus Objektlasten erzeugte Elementlasten (``_geo``)
           bleiben, wie sie sind: sie legt lasten_verteilen neu.
+
+        Seit dem 07.10.2026 (Nachtrag N02) auch die uebrigen Felder. Bis dahin
+        legte der Aufrufer ``neu`` nur mit Werkstoff, Querschnitt, Gruppe und
+        Drehwinkel an; alles andere blieb leer, und das alte Element behielt
+        sein Ende an der Teilstelle mit allem, was dort haengt (Temperatur 40 K
+        auf E1: Verschiebung 50 % daneben; Versatz 0,2 m an beiden Enden mit
+        10 kN/m: 10 %).
+
+        * Felder, die dem Element als Ganzem gelten - ``line``, ``nur``
+          (Zug/Druck-Ausfall), ``woelb`` (Woelbkrafttorsion, ein siebter
+          Freiheitsgrad je Knoten, an der Teilstelle stetig) - gehen auf
+          ``neu``, sofern es sie nicht selbst traegt.
+        * Die ungedehnte Laenge eines Seils (``laenge0``) teilt sich im
+          Verhaeltnis der Sehnen: jedes Stueck behaelt dieselbe Vorspannung bzw.
+          denselben Durchhang je Laenge. 0 (Sehnenlaenge) bleibt 0.
+        * Die Exzentrizitaet (starrer Versatz der Stabenden, lokale Achsen)
+          ist ueber das Element linear: jedes aeussere Ende behaelt seinen
+          Versatz, die Teilstelle bekommt auf beiden Teilen den Wert dazwischen
+          (Anteil der Teilstelle an der Sehne), die gerade Achse bleibt gerade -
+          ein gleichmaessiger Versatz gilt auf beiden Teilen. Die Rechnung an
+          den alten Orten aendert das nicht (gemessen bis 3e-14); der Wert an
+          der Teilstelle entscheidet nur, wie ein Stab dort anschliesst. Fuer
+          ``neu`` wird er auf dessen lokale Achsen umgerechnet.
+        * Jede Temperaturlast (``TempLoad``, nicht aus Objektlasten erzeugt)
+          gilt gleich auf ``neu``: dT und der Gradient sind Feldgroessen.
+        * Ein Anschluss (:class:`Joint`) an dem Ende, das jetzt an der
+          Teilstelle liegt, geht an das Ende von ``neu`` am alten Ort.
         """
         ne = len(self.elements)
         if alt == neu or not (0 <= alt < ne and 0 <= neu < ne):
@@ -7661,6 +7692,28 @@ class Model:
                 els = [int(e) for e in (getattr(h, "elemente", None) or [])]
                 if alt in els and int(getattr(h, "end", 0) or 0) == ende_alt:
                     h.elemente = sorted((set(els) - {alt}) | {neu})
+        # Felder, die dem Element als Ganzem gelten (N02): sie gelten auf
+        # beiden Teilen; was ``neu`` schon traegt, bleibt
+        if ea.line and not en.line:
+            en.line = ea.line
+        if ea.nur and not en.nur:
+            en.nur = ea.nur
+        if ea.woelb and not en.woelb:
+            self.stab_woelb_setzen(neu, True)
+        # ein Anschluss am Ende an der Teilstelle sass dort nie: er geht an das
+        # Ende am alten Ort
+        for j in (getattr(self, "joints", None) or {}).values():
+            if int(j.elem) == alt and int(j.end) == ende_alt:
+                j.elem, j.end = neu, ende_neu
+        # Temperaturlasten: dT und Gradient gelten ueber das ganze Element
+        for lc in self.load_cases.values():
+            if any(int(t.elem) == neu for t in lc.temp_loads):
+                continue
+            dazu = [copy.copy(t) for t in lc.temp_loads
+                    if int(t.elem) == alt and not getattr(t, "_geo", False)]
+            for t in dazu:
+                t.elem = neu
+            lc.temp_loads += dazu
         # Elementlasten: Lage s entlang der alten Achse, ab ihrem Anfang. alt
         # behaelt seine Richtung; liegt sein Anfang an der Teilstelle, lag
         # das Stueck von neu davor
@@ -7672,6 +7725,37 @@ class Model:
         L0 = La + Ln
         s_alt, s_neu = (0.0, La) if ende_alt == 1 else (Ln, 0.0)
         gleich = float((X[kn[1]] - X[kn[0]]) @ (X[ka[1]] - X[ka[0]])) > 0.0
+        # Seil: die ungedehnte Laenge teilt sich im Verhaeltnis der Sehnen (N02)
+        if ea.laenge0 and not en.laenge0:
+            lg = float(ea.laenge0)
+            ea.laenge0, en.laenge0 = lg * La / L0, lg * Ln / L0
+        # Exzentrizitaet (N02): linear ueber das Element, in den lokalen Achsen
+        # von alt gegeben. Jedes aeussere Ende behaelt seinen Versatz, die
+        # Teilstelle bekommt auf beiden Teilen den Wert dazwischen
+        ex = ea.exzentrizitaet
+        if ex and not en.exzentrizitaet:
+            r = np.zeros((2, 3))
+            try:
+                for i in range(min(len(ex), 2)):
+                    if ex[i] is not None:
+                        v = np.asarray(ex[i], float).ravel()[:3]
+                        r[i, :len(v)] = v
+            except (TypeError, ValueError):
+                r[:] = 0.0              # wie assemble.beam_versatz: unlesbar heisst ohne
+            if np.any(r):
+                def versatz(s):
+                    t = s / L0
+                    return (1.0 - t) * r[0] + t * r[1]
+                from .elements import beam3d as _bm
+                Ta, _ = _bm.local_axes(X[ka[0]], X[ka[1]], ea.roll)
+                Tn, _ = _bm.local_axes(X[kn[0]], X[kn[1]], en.roll)
+                D = Tn @ Ta.T           # lokal alt -> lokal neu
+                if np.allclose(D, np.eye(3), atol=1e-13):
+                    D = np.eye(3)
+                paar = ((versatz(s_neu), versatz(s_neu + Ln)) if gleich
+                        else (versatz(s_neu + Ln), versatz(s_neu)))
+                ea.exzentrizitaet = [versatz(s_alt).tolist(), versatz(s_alt + La).tolist()]
+                en.exzentrizitaet = [(D @ v).tolist() for v in paar]
         drehung = None                  # lokal alt -> lokal neu, erst bei Bedarf
         for lc in self.load_cases.values():
             liste = []
@@ -7710,6 +7794,283 @@ class Model:
                     x.b = None if b >= L - 1e-12 else float(b)
                     liste.append(x)
             lc.beam_loads = liste
+
+    # ---------------- Stabelemente auf einer Strecke, Stabzug (Nachtrag N03, N04) ----------------
+    #: Ein Knoten liegt auf einer gezeichneten Strecke, wenn er hoechstens
+    #: STRECKE_TOL · ihre Laenge neben ihr liegt (6 m: 6 mm). Die Stichprobe in
+    #: tests.test_befehl_stab (Abschnitt 9, 12 Ketten in beliebiger Lage)
+    #: nimmt gerechnet geteilte Ketten und solche mit Zwischenknoten 0,5 ‰
+    #: daneben als Kette, eine Kette 1 % daneben als andere Linie.
+    STRECKE_TOL = 1e-3
+
+    def stabelemente_auf_strecken(self, abschnitte, ausser=(), X=None) -> list:
+        """Je Abschnitt (a, b) die vorhandenen Stabelemente darauf: (kette, im_weg).
+
+        ``im_weg``: alle Stabelemente ausser ``ausser``, deren beide Endknoten
+        auf der Strecke K a – K b liegen (:attr:`STRECKE_TOL`) und die sie auf
+        mehr als dieser Toleranz ueberdecken, von a nach b sortiert. ``kette``:
+        dieselben in Folge von a nach b, wenn sie die Strecke genau einmal
+        und lueckenlos ueberdecken - jedes von einem Knoten der Kette zum
+        naechsten, die Knoten mit wachsendem Abstand von a -, sonst [].
+        ``X``: die Knotenlage, wenn a oder b noch gar keine Knoten sind (Nummern
+        ab ``nn``, etwa die Punkte einer Linie vor dem Anlegen); sonst die des
+        Modells.
+
+        Dieselbe Pruefung fuer alle Befehle, die Stabelemente anlegen: „Stab“,
+        Stabzug, Stabzug im Browser (:meth:`stabzug_anlegen`), „Stabelement“
+        und die Stabelemente einer Linie. Bis zum 06.10.2026 sah der Befehl
+        „Stab“ nur ein Element mit genau den Endknoten a und b: K0–K2 ueber S1
+        (K0–K1) und S2 (K1–K2) legte still ein drittes, paralleles Element an;
+        „Stabelement“ und die Linie sahen bis zum 07.10.2026 nur dasselbe
+        (die Linie nicht einmal das). Bis zum 07.10.2026 stand die Pruefung in
+        der Oberflaeche (gui/main.py), der Stabzug im Browser kannte sie nicht."""
+        ausser = {int(i) for i in ausser}
+        kand = [(i, int(e.nodes[0]), int(e.nodes[-1])) for i, e in enumerate(self.elements)
+                if i not in ausser and e.typ in _EL.LINIEN_TYPEN]
+        if not kand:
+            return [([], []) for _ab in abschnitte]
+        nr = np.array([k[0] for k in kand])
+        anf = np.array([k[1] for k in kand])
+        end = np.array([k[2] for k in kand])
+        X = np.asarray(self.nodes if X is None else X, float)
+        ende = {k[0]: (k[1], k[2]) for k in kand}
+        out = []
+        for a, b in abschnitte:
+            a, b = int(a), int(b)
+            pa = X[a]
+            L = float(np.linalg.norm(X[b] - pa))
+            if L <= 0.0:
+                out.append(([], []))
+                continue
+            d = (X[b] - pa) / L
+            tol = self.STRECKE_TOL * L
+            tp, tq = (X[anf] - pa) @ d, (X[end] - pa) @ d
+            hp = np.linalg.norm(X[anf] - pa - np.outer(tp, d), axis=1)
+            hq = np.linalg.norm(X[end] - pa - np.outer(tq, d), axis=1)
+            ueber = np.minimum(np.maximum(tp, tq), L) - np.maximum(np.minimum(tp, tq), 0.0)
+            treffer = np.flatnonzero((hp <= tol) & (hq <= tol) & (ueber > tol))
+            im_weg = [int(nr[j]) for j in sorted(treffer, key=lambda j: (min(tp[j], tq[j]), int(nr[j])))]
+            # die Kette von a nach b: an jedem Knoten genau ein Element weiter,
+            # vorwaerts entlang der Strecke, und am Ende keins uebrig
+            rest, kette, k, t = set(im_weg), [], a, 0.0
+            while k != b:
+                weiter = [i for i in rest if k in ende[i]]
+                if len(weiter) != 1:
+                    break
+                i = weiter[0]
+                k_neu = ende[i][1] if ende[i][0] == k else ende[i][0]
+                t_neu = float((X[k_neu] - pa) @ d)
+                if t_neu <= t + tol:
+                    break
+                k, t = k_neu, t_neu
+                rest.discard(i)
+                kette.append(i)
+            out.append((kette if k == b and not rest else [], im_weg))
+        return out
+
+    def vorhandene_glieder(self, abschnitte, ausser=(), stabzug: bool = False, ort: str = None,
+                           X=None) -> tuple:
+        """Was ein gezeichneter Stab oder Stabzug mit den Stabelementen macht,
+        die schon auf seinen Abschnitten (a, b) liegen (06.10.2026; seit dem
+        07.10.2026 im Modell, damit Oberflaeche und Browser dieselbe Pruefung
+        nutzen).
+
+        Rueckgabe (glieder, umgekehrt, hinweis): ``glieder[i]`` sind die
+        vorhandenen Elemente auf Abschnitt i in Folge von a nach b - der Stab
+        nimmt sie, statt ein paralleles Element daneben zu legen, das doppelt
+        truege -, [] fuer einen freien Abschnitt. ``umgekehrt``: alle
+        vorhandenen laufen von b nach a und kein Abschnitt ist frei; der Stab
+        laeuft dann in ihrer Richtung. ``hinweis``: warum nichts angelegt
+        werden darf - die Elemente gehoeren schon Staeben (sonst wuerden sie
+        zweimal nachgewiesen, C14 S2), sie ueberdecken einen Abschnitt nicht
+        genau einmal von Knoten zu Knoten, oder sie laufen nicht in einer
+        Richtung (ein Stab laeuft durchgehend in einer, wie bei „Stäbe
+        zusammenfassen“). Beim Stabzug nennt der Hinweis keine Knoten: das
+        Verschmelzen hat sie neu nummeriert, und der Stand davor kommt zurueck.
+        ``ort`` ersetzt den Anfang der Hinweise („Zwischen K0 und K2“)."""
+        belegt = self.stabelemente_auf_strecken(abschnitte, ausser, X)
+        a0, b0 = (int(x) for x in abschnitte[0]) if abschnitte else (0, 0)
+        if ort is None:
+            ort = "Auf dem Stabzug" if stabzug else f"Zwischen K{a0} und K{b0}"
+        nichts = "kein Stabzug angelegt" if stabzug else "kein Stab angelegt"
+        alle = list(dict.fromkeys(e for _k, weg in belegt for e in weg))
+        stab_von = {e: s for s, els in self.staebe_der_elemente(alle).items() for e in els}
+        # 1. nicht genau einmal von Knoten zu Knoten: teilweise, zu lang, doppelt
+        weg = list(dict.fromkeys(e for kette, im_weg in belegt if im_weg and not kette for e in im_weg))
+        if weg:
+            def name(e):
+                el, s = self.elements[e], stab_von.get(e)
+                zusatz = [] if stabzug else [f"K{int(el.nodes[0])}–K{int(el.nodes[-1])}"]
+                zusatz += [f"Stab {s}"] if s else []
+                return f"E{e}" + (f" ({', '.join(zusatz)})" if zusatz else "")
+            eins = len(weg) == 1
+            text = (f"{ort} {'liegt Stabelement' if eins else 'liegen die Stabelemente'} "
+                    f"{aufzaehlung(name(e) for e in weg)} im Weg; {'es überdeckt' if eins else 'sie überdecken'} "
+                    f"{'seine Abschnitte' if stabzug else 'die Strecke'} nicht genau einmal von Knoten zu "
+                    f"Knoten – {nichts}, sonst trügen dort zwei Elemente nebeneinander")
+            return None, False, text
+        # 2. schon in Staeben
+        fremd = [e for e in alle if e in stab_von]
+        if fremd:
+            text = (f"{ort} {'liegt' if len(fremd) == 1 else 'liegen'} schon "
+                    + aufzaehlung(f"Stabelement E{e} von Stab {stab_von[e]}" for e in fremd)
+                    + (" – kein Stabzug angelegt" if stabzug else " – kein zweiter Stab angelegt"))
+            if len({stab_von[e] for e in fremd}) > 1:
+                text += "; mehrere Stäbe macht „Stäbe zusammenfassen“ zu einem"
+            return None, False, text
+        # 3. Richtung: jedes vorhandene Element vorwaerts (von a nach b) oder rueckwaerts
+        richtung = {}
+        for (a, _b), (kette, _w) in zip(abschnitte, belegt):
+            k = int(a)
+            for e in kette:
+                n0, n1 = int(self.elements[e].nodes[0]), int(self.elements[e].nodes[-1])
+                richtung[e] = n0 == k
+                k = n1 if n0 == k else n0
+        frei = any(not kette for kette, _w in belegt)
+        if all(richtung.values()):
+            umgekehrt = False
+        elif not any(richtung.values()) and not frei:
+            umgekehrt = True
+        elif stabzug:
+            gegen = [e for e, v in richtung.items() if not v]
+            return None, False, (f"Auf dem Stabzug {'läuft Stabelement' if len(gegen) == 1 else 'laufen die Stabelemente'} "
+                                 f"{aufzaehlung(f'E{e}' for e in gegen)} gegen seine Richtung – kein Stabzug angelegt; "
+                                 "ein Stab läuft durchgehend in einer Richtung")
+        else:
+            teile = [f"E{e} von K{int(self.elements[e].nodes[0])} nach K{int(self.elements[e].nodes[-1])}"
+                     for e in richtung]
+            return None, False, (f"{ort} laufen die Stabelemente nicht in einer Richtung ({aufzaehlung(teile)}) – "
+                                 "kein Stab angelegt; ein Stab läuft durchgehend in einer Richtung")
+        return [kette for kette, _w in belegt], umgekehrt, ""
+
+    def _knoten_der_punkte(self, punkte, tol: float = 1e-9) -> tuple:
+        """Die Knoten zu einer Punktfolge, wie :meth:`line_to_beams` sie anlegt:
+        ein vorhandener Knoten, wenn er hoechstens ``tol`` danebenliegt, sonst
+        ein neuer - hier nur als Nummer ab ``nn`` und Lage, ohne etwas anzulegen.
+        Rueckgabe (Nummern, Knotenlage mit den neuen Punkten)."""
+        X = np.asarray(self.nodes, float).reshape(-1, 3)
+        ids = []
+        for p in np.asarray(punkte, float).reshape(-1, 3):
+            if len(X):
+                d = np.linalg.norm(X - p, axis=1)
+                i = int(np.argmin(d))
+                if float(d[i]) < tol:
+                    ids.append(i)
+                    continue
+            X = np.vstack([X, p])
+            ids.append(len(X) - 1)
+        return ids, X
+
+    def stabelemente_unter_linie(self, name: str, n: int = None) -> list:
+        """Die vorhandenen Stabelemente, die auf den Abschnitten der Linie
+        ``name`` liegen (Teilung ``n``) - ohne etwas anzulegen: dort wuerde
+        :meth:`line_to_beams` parallele Elemente legen, die doppelt tragen
+        (Nachtrag N04, 07.10.2026; die Linie pruefte bis dahin nichts). In der
+        Reihenfolge der Linie, ohne Doppelte."""
+        ln = self.lines[name]
+        ids, X = self._knoten_der_punkte(ln.punkte(self, n))
+        belegt = self.stabelemente_auf_strecken(list(zip(ids[:-1], ids[1:])), X=X)
+        return list(dict.fromkeys(e for _kette, weg in belegt for e in weg))
+
+    def stabelemente_zwischen_knoten(self, a: int, b: int) -> list:
+        """Die vorhandenen Stabelemente auf der Strecke zwischen den Knoten a
+        und b - die Pruefung fuer ein einzelnes neues Stabelement (Nachtrag N04):
+        dasselbe Element mit denselben Endknoten, aber auch eine Kette oder ein
+        Stueck davon auf der Strecke."""
+        return self.stabelemente_auf_strecken([(int(a), int(b))])[0][1]
+
+    def stabzug_anlegen(self, mat: str, sec: str, p1, p2, n: int, fachwerk: bool = False,
+                        verschmelzen: bool = True) -> dict:
+        """Ein gerader Stabzug von p1 nach p2 in n Abschnitten **als ein Stab mit
+        Nachweis** - fuer die Oberflaeche (Maske „Stabzug erzeugen“, Tafel im
+        Register Netz) und den Browser (Operation ``line_of_beams``) gemeinsam
+        (Nachtrag N03, 07.10.2026).
+
+        Je Abschnitt wie der Befehl „Stab“ (:meth:`vorhandene_glieder`):
+        ueberdecken vorhandene freie Stabelemente ihn lueckenlos und in einer
+        Richtung, entsteht dort kein neues Element, der Stab nimmt sie; gehoeren
+        sie einem Stab, ueberdecken sie ihn nicht genau einmal oder laufen sie
+        gegen den Stabzug, wird nichts angelegt. Die Pruefung laeuft vor jeder
+        Aenderung an einer Probe (Knoten, Stabelemente), die genauso
+        verschmolzen wird wie das Modell danach: weist sie ab, ist das Modell
+        unberuehrt - auch dort, wo kein Rueckgaengig-Schritt es zurueckholt.
+
+        Rueckgabe: ``{"grund": Text}`` bei Abweisung, sonst ``name`` (des
+        Stabs), ``elemente`` (seine Elemente in Folge), ``neu`` (die neu
+        angelegten), ``alt`` (die vorhandenen, die er nimmt), ``nur_stab``
+        (es kam kein Element dazu, nur der Stab) und ``text`` (die Meldung).
+
+        ``verschmelzen=False`` (nur Programmierschnittstelle): die Knoten bleiben
+        neben vorhandenen stehen, es gibt keine Kette zu pruefen, und der Stab
+        bekommt die neuen Elemente.
+
+        Bis zum 07.10.2026 legte der Stabzug im Browser parallele Elemente ueber
+        eine vorhandene Kette an und nie einen Stab (Nachtrag N03); die Pruefung
+        der Oberflaeche stand in gui/main.py."""
+        n = max(1, int(n))
+        if mat not in self.materials:
+            raise KeyError(f"Werkstoff '{mat}' unbekannt")
+        if sec not in self.sections:
+            raise KeyError(f"Querschnitt '{sec}' unbekannt")
+        from . import mesher as _mesher
+        glieder, umgekehrt = None, False
+        if verschmelzen:
+            # Probe: Knoten wie das Modell, Stabelemente als Kopien (nur sie
+            # zaehlen bei der Pruefung), alles andere ein Platzhalter gleicher
+            # Nummer - merge_nodes schreibt an jedes Element, das darf nicht
+            # das echte sein
+            probe = Model("Stabzug-Probe")
+            probe.nodes = np.array(self.nodes, dtype=float, copy=True).reshape(-1, 3)
+            leer = Element("shell3", [0, 0, 0], mat)
+            probe.elements = [e.kopie() if e.typ in _EL.LINIEN_TYPEN else leer for e in self.elements]
+            probe.members = self.members
+            e0 = len(probe.elements)
+            _mesher.line_of_beams(probe, mat, sec, p1, p2, n)
+            _mesher.merge_nodes(probe)
+            glieder, umgekehrt, grund = probe.vorhandene_glieder(
+                [(int(e.nodes[0]), int(e.nodes[-1])) for e in probe.elements[e0:]],
+                ausser=range(e0, len(probe.elements)), stabzug=True)
+            if grund:
+                return {"grund": grund}
+        e0 = len(self.elements)
+        _mesher.line_of_beams(self, mat, sec, p1, p2, n)
+        if fachwerk:
+            for e in self.elements[e0:]:
+                e.typ = "truss"
+        if verschmelzen:
+            _mesher.merge_nodes(self)
+        neu = self.elements[e0:]
+        if glieder is None:
+            glieder = [[] for _e in neu]
+        # die Abschnitte mit vorhandenen Elementen bekommen kein neues; die
+        # Knoten dort sind die der vorhandenen Elemente
+        del self.elements[e0:]
+        els, alt = [], []
+        for e, g in zip(neu, glieder):
+            if g:
+                els += g
+                alt += g
+            else:
+                self.elements.append(e)
+                els.append(len(self.elements) - 1)
+        name = self.naechster_name("S", self.members)
+        els = els[::-1] if umgekehrt else els
+        self.add_member(name, els)
+        neue = list(range(e0, len(self.elements)))
+        text = f"Stabzug: {anzahl(len(neue), 'Element', 'Elemente')} im Stab {name}"
+        if alt:
+            nummern = ", ".join(f"E{e}" for e in alt[:-1]) + (" und " if len(alt) > 1 else "") + f"E{alt[-1]}"
+            text = (f"Stabzug: {anzahl(len(neue), 'neues Element', 'neue Elemente')} und "
+                    f"{'das vorhandene Stabelement' if len(alt) == 1 else 'die vorhandenen Stabelemente'} "
+                    f"{nummern} im Stab {name}")
+            arten = list(dict.fromkeys((self.elements[e].sec, self.elements[e].mat, self.elements[e].typ)
+                                       for e in alt))
+            if arten != [(sec, mat, "truss" if fachwerk else "beam")]:
+                text += (f" – Querschnitt, Werkstoff und Art bleiben die der vorhandenen ("
+                         + "; ".join(f"{s}, {mt}{', Fachwerkstab' if t == 'truss' else ''}" for s, mt, t in arten)
+                         + ")")
+        return {"name": name, "elemente": els, "neu": neue, "alt": alt,
+                "nur_stab": not neue, "text": text}
 
     def berichtsrahmen(self) -> "Berichtsrahmen":
         """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""

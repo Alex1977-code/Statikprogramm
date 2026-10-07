@@ -3717,8 +3717,15 @@ Stabelemente die Strecke nur teilweise, über sie hinaus oder doppelt
 gegeneinander laufen, denn ein Stab läuft durchgehend in einer Richtung. Auf
 der Strecke liegt ein Knoten, der höchstens 1 ‰ ihrer Länge neben ihr liegt.
 Der Stabzug, mit der Maske *Stabzug erzeugen* wie mit der Tafel im Register
-*Netz*, macht es je Abschnitt genauso und ist ein Rückgängig-Schritt. Zwei
-parallele Elemente trügen doppelt: an einem Rahmen fiel die Verschiebung auf
+*Netz*, macht es je Abschnitt genauso und ist ein Rückgängig-Schritt. Seit dem
+07.10.2026 prüft auch der Stabzug im Browser (*Netz erzeugen → Stabzug*)
+genauso: Maske, Tafel und Browser rufen dieselbe Funktion. Der Browser legt wie
+die Oberfläche einen Stab mit Nachweis an, nimmt vorhandene freie Stabelemente
+in ihn auf, statt parallele daneben zu legen, und weist dort ab, wo die
+Oberfläche abweist; der Hinweis steht als Fehlertext, und das Modell bleibt
+unverändert. Bis zum 07.10.2026 legte der Stabzug im Browser ohne Prüfung
+parallele Elemente über eine vorhandene Kette an (E0 und E1 über S1 und S2
+wurden doppelt) und nie einen Stab. Zwei parallele Elemente trügen doppelt: an einem Rahmen fiel die Verschiebung auf
 62 %, und der Nachweis kam zu günstig heraus; an einem Kragarm von 6 m aus zwei
 Elementen halbierte ein drittes über beide die Durchbiegung (27,56 mm auf
 13,78 mm). Bis zum 06.10.2026 sah *Stab* nur ein Element mit genau denselben
@@ -3726,7 +3733,19 @@ Endknoten: K0–K2 über S1 (K0–K1) und S2 (K1–K2) legte still ein drittes,
 paralleles Element an, der Stabzug über einem Stab ebenso, und die Tafel
 *Stabzug* im Register *Netz* hatte keinen Rückgängig-Schritt, sodass
 Rückgängig danach den Stab davor zurücknahm. *Netz → Stabelement* legt ein
-paralleles Element weiter an, sagt es aber in der Statuszeile. Wird das
+paralleles Element weiter an, sagt es aber in der Statuszeile. Seit dem
+07.10.2026 sagt es das auch, wenn auf der Strecke zwischen den beiden Knoten
+eine Kette von Stabelementen über Zwischenknoten oder ein Stück davon liegt
+(„Achtung: zwischen K0 und K2 lagen schon die Stabelemente E0 und E1; zwei
+parallele Elemente tragen doppelt“), ebenso in der Maske *Neu: Stabelement*
+des Rechtsklickmenüs. Bis zum 07.10.2026 prüfte der Befehl nur ein Element mit
+genau denselben Endknoten: K0–K2 über E0 (K0–K1) und E1 (K1–K2) legte ohne ein
+Wort ein drittes an. *Geometrie → Linie* mit dem Haken „Stabelemente daraus
+erzeugen“ legt seit dem 07.10.2026 nichts an, wenn auf der Linie schon
+Stabelemente liegen: der Hinweis nennt sie, es entsteht auch keine Linie, und
+mit abgewähltem Haken wird die Linie als reine Geometrie angelegt. Bis zum
+07.10.2026 prüfte die Linie gar nichts und legte parallele Elemente still an,
+auch bei gleichen Endknoten. Wird das
 Stabelement eines Stabs gelöscht, bleibt der Stab ohne Stabelement stehen:
 *Prüfen* meldet ihn, der Nachweis nach EC3 führt ihn als nicht geführt („kein
 Stabelement“), die Ermüdung ebenso, wenn er einen Kerbfall trägt, und die
@@ -3769,7 +3788,22 @@ Stab an, und schon die Teilung änderte die Verschiebungen um bis zu 2·10⁻³
 Auflagerkräfte blieb gleich. Bis zum 06.10.2026 wanderte ein
 Gelenk am Ende des Elements an die Teilstelle (vom Ende bei x = 6 m nach
 x = 4 m), und eine Elementlast wirkte nur noch auf dem verkürzten alten Teil
-(Summe der Auflagerkräfte 82 statt 84 kN). Zusammenfassen, Teilen und *Stab* um
+(Summe der Auflagerkräfte 82 statt 84 kN). Seit dem 07.10.2026 gehen beim Teilen
+außerdem alle übrigen Felder des Elements mit. Linie, Zug-/Druck-Ausfall und
+Wölbkrafttorsion gelten auf beiden Teilen, die ungedehnte Länge eines Seils
+teilt sich im Verhältnis der Sehnen. Die Exzentrizität, der starre Versatz der
+Stabenden, verläuft über das Element linear: Jedes äußere Ende behält seinen
+Versatz, die Teilstelle bekommt auf beiden Teilen den Wert dazwischen, ein
+gleichmäßiger Versatz gilt also auf beiden Teilen, und für das neue Teil wird er
+auf dessen Achsen umgerechnet. Temperaturlasten gelten gleich auf beiden
+Teilen, und Anschlüsse am Ende des Elements bleiben an ihrem alten Ort und
+gehören danach zum neuen Teil. Verschiebungen und Auflagerkräfte an den alten
+Orten bleiben damit unverändert (gemessen bis 3e-14 relativ). Bis zum
+07.10.2026 blieb das neue Teil ohne Linie, Ausfall, Wölbkrafttorsion, Seillänge,
+Versatz und Temperaturlast, der Versatz des Endes blieb am alten Teil an der
+Teilstelle, und der Anschluss blieb dort stehen: Eine Temperaturlast von 40 K
+auf dem geteilten Element ergab 50 % andere Verschiebungen, ein Versatz von
+0,2 m an beiden Enden mit 10 kN/m 10 %. Zusammenfassen, Teilen und *Stab* um
 ein vorhandenes Element verwerfen die Ergebnisse wie jede andere Änderung am
 Modell.
 
@@ -4465,7 +4499,12 @@ Knoten anklicken:
 
 Mit „Stabelemente daraus erzeugen“ (bis zum 03.10.2026 „Stäbe daraus
 erzeugen“) wird die Linie gleich in Stabelemente geteilt — die Teilung steht in
-der Maske. Einen Stab mit Nachweis legt der Haken nicht an; den bilden danach
+der Maske. Seit dem 07.10.2026 legt der Haken nichts an, wo schon Stabelemente
+liegen: liegen dort schon Stabelemente, auch eine Kette über Zwischenknoten,
+entsteht keine Linie, und der Hinweis nennt sie, denn parallele Elemente trügen
+doppelt. Mit abgewähltem Haken wird die Linie als reine Geometrie angelegt. Bis
+zum 07.10.2026 prüfte die Linie nichts und legte die Elemente daneben. Einen
+Stab mit Nachweis legt der Haken nicht an; den bilden danach
 *Stäbe automatisch erkennen* oder *Stab aus Stabelementen…*. Die Linie bleibt
 als Geometrie erhalten und kennt ihre exakte Länge (ein Halbkreis r = 2 m misst
 6,283 m, nicht die Länge des Sehnenzugs).

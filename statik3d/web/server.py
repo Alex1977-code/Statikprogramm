@@ -1302,14 +1302,21 @@ def _op_add_element(st, m, d):
 
 @op("line_of_beams")
 def _op_line(st, m, d):
+    """Der Stabzug: dieselbe Funktion wie in der Oberflaeche (Model.stabzug_anlegen,
+    Nachtrag N03, 07.10.2026) - mit derselben Pruefung (er legt kein paralleles
+    Element ueber eine vorhandene Kette) und als Stab mit Nachweis. Bis zum
+    07.10.2026 legte der Browser ohne Pruefung parallele Elemente an und nie einen
+    Stab. Eine Abweisung aendert nichts am Modell. ``fachwerk`` legt
+    Fachwerkstaebe an, ``merge`` false laesst die Knoten unverschmolzen (dann
+    entfaellt die Pruefung gegen vorhandene Elemente)."""
     mat, sec = _need_mat(m, d), _need_sec(m, d)
     p1, p2 = _vec(d, "p1", 3), _vec(d, "p2", 3)
     n = max(1, _i(d, "n", 1))
-    n0 = len(m.elements)
-    ids = mesher.line_of_beams(m, mat, sec, p1, p2, n)
-    if d.get("merge", True):
-        mesher.merge_nodes(m)
-    return {"elems": list(range(n0, len(m.elements))), "message": f"Stabzug mit {n} Elementen erzeugt"}
+    res = m.stabzug_anlegen(mat, sec, p1, p2, n, fachwerk=bool(d.get("fachwerk")),
+                            verschmelzen=bool(d.get("merge", True)))
+    if res.get("grund"):
+        raise ApiError(res["grund"])
+    return {"elems": res["neu"], "member": res["name"], "message": res["text"]}
 
 
 @op("plate")

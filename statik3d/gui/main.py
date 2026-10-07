@@ -10733,7 +10733,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ra = self._zahlenliste(w.get("ex_a"), zahl=float, anzahl=2, feld="Versatz Anfang y, z [mm]")
                 re = self._zahlenliste(w.get("ex_e"), zahl=float, anzahl=2, feld="Versatz Ende y, z [mm]")
                 if neu:
-                    parallel = self._parallel_text(self._stabelemente_zwischen(*knoten), *knoten)
+                    parallel = self._parallel_text(m.stabelemente_zwischen_knoten(*knoten), *knoten)
                     self.merken("Stabelement angelegt")
                     i = m.add_element(typ, knoten, mat, sec)
                     name = str(i)
@@ -19286,67 +19286,35 @@ class MainWindow(QtWidgets.QMainWindow):
         Nachweis, in einem Rueckgaengig-Schritt „Stabzug“ - fuer die Maske
         „Stabzug erzeugen“ und die Tafel „Stabzug“ im Register Netz.
 
-        Je Abschnitt wie der Befehl „Stab“ (_vorhandene_glieder, 06.10.2026):
-        ueberdecken vorhandene freie Stabelemente ihn lueckenlos und in einer
-        Richtung, entsteht dort kein neues Element, der Stab nimmt sie; gehoeren
-        sie einem Stab, ueberdecken sie ihn nicht genau einmal oder laufen sie
-        gegen den Stabzug, wird nichts angelegt, und ein Hinweis sagt warum.
-        Bis dahin legte ein Stabzug ueber S1 still E1 [0, 1] und den Stab S2
-        an, und die Tafel im Register Netz merkte sich keinen Schritt:
+        Das Anlegen samt Pruefung ist :meth:`Model.stabzug_anlegen`, dieselbe
+        Funktion wie im Browser (Nachtrag N03, 07.10.2026): je Abschnitt wie der
+        Befehl „Stab“ - ueberdecken vorhandene freie Stabelemente ihn lueckenlos
+        und in einer Richtung, entsteht dort kein neues Element, der Stab nimmt
+        sie; gehoeren sie einem Stab, ueberdecken sie ihn nicht genau einmal oder
+        laufen sie gegen den Stabzug, wird nichts angelegt, und ein Hinweis sagt
+        warum. Die Pruefung laeuft vor der Aenderung: das Modell bleibt dabei
+        unberuehrt, der Schritt faellt weg.
+        Bis zum 06.10.2026 legte ein Stabzug ueber S1 still E1 [0, 1] und den Stab
+        S2 an, und die Tafel im Register Netz merkte sich keinen Schritt:
         Rueckgaengig nahm danach den Stab davor zurueck („Rückgängig: Stab S1
         angelegt“), der Stabzug blieb ohne Stab stehen."""
         m = self.model
         self.merken("Stabzug")
-        schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         try:
-            e0 = len(m.elements)
-            mesher.line_of_beams(m, mat, sec, p1, p2, max(1, int(n)))
-            if fachwerk:
-                for e in m.elements[e0:]:
-                    e.typ = "truss"
-            mesher.merge_nodes(m)
-            neu = m.elements[e0:]
-            glieder, umgekehrt, grund = self._vorhandene_glieder(
-                [(int(e.nodes[0]), int(e.nodes[-1])) for e in neu], ausser=range(e0, len(m.elements)),
-                stabzug=True)
-            if grund:
-                # genau diesen Schritt zurueckholen: die Knoten sind schon
-                # verschmolzen, das Modell bleibt dasselbe Objekt
-                self._schritt_zurueckholen(schritt)
-                return self.hinweis(grund)
-            # die Abschnitte mit vorhandenen Elementen bekommen kein neues;
-            # die Knoten dort sind die der vorhandenen Elemente
-            del m.elements[e0:]
-            els, alt = [], []
-            for e, g in zip(neu, glieder):
-                if g:
-                    els += g
-                    alt += g
-                else:
-                    m.elements.append(e)
-                    els.append(len(m.elements) - 1)
-            name = m.naechster_name("S", m.members)
-            m.add_member(name, els[::-1] if umgekehrt else els)
+            res = m.stabzug_anlegen(mat, sec, p1, p2, max(1, int(n)), fachwerk)
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
             return self.error(str(ex))
-        text = f"Stabzug: {bg.anzahl(len(m.elements) - e0, 'Element', 'Elemente')}"
-        if alt:
-            if len(m.elements) == e0:
-                # nur ein Stab ist dazugekommen: die Ansicht hielte das Ergebnis
-                # fuer passend, die Nachweise kennen ihn aber nicht (wie „Stab“)
-                self.analysis = None
-                self.results = None
-            nummern = ", ".join(f"E{e}" for e in alt[:-1]) + (" und " if len(alt) > 1 else "") + f"E{alt[-1]}"
-            text = (f"Stabzug: {bg.anzahl(len(m.elements) - e0, 'neues Element', 'neue Elemente')} und "
-                    f"{'das vorhandene Stabelement' if len(alt) == 1 else 'die vorhandenen Stabelemente'} "
-                    f"{nummern} im Stab {name}")
-            arten = list(dict.fromkeys((m.elements[e].sec, m.elements[e].mat, m.elements[e].typ) for e in alt))
-            if arten != [(sec, mat, "truss" if fachwerk else "beam")]:
-                text += (f" – Querschnitt, Werkstoff und Art bleiben die der vorhandenen ("
-                         + "; ".join(f"{s}, {mt}{', Fachwerkstab' if t == 'truss' else ''}" for s, mt, t in arten)
-                         + ")")
-        self.info(text)
+        if res.get("grund"):
+            # nichts geaendert: der Schritt faellt weg, der Stand von davor gilt wieder
+            self._merken_zuruecknehmen()
+            return self.hinweis(res["grund"])
+        if res["nur_stab"]:
+            # nur ein Stab ist dazugekommen: die Ansicht hielte das Ergebnis
+            # fuer passend, die Nachweise kennen ihn aber nicht (wie „Stab“)
+            self.analysis = None
+            self.results = None
+        self.info(res["text"])
         self.refresh_all()
 
     @_maskenweg()
@@ -20139,6 +20107,18 @@ class MainWindow(QtWidgets.QMainWindow):
             laenge = ln.laenge(self.model)
             n_el = 0
             if w.get("staebe"):
+                # liegen auf der Linie schon Stabelemente, legte der Haken parallele
+                # daneben, die doppelt tragen (N04, 07.10.2026; bis dahin pruefte die
+                # Linie nichts): dann entsteht gar nichts, auch die Linie nicht
+                im_weg = self.model.stabelemente_unter_linie(name, teilung)
+                if im_weg:
+                    del self.model.lines[name]
+                    self._merken_zuruecknehmen()
+                    return self.hinweis(
+                        f"Auf der Linie {'liegt schon Stabelement' if len(im_weg) == 1 else 'liegen schon die Stabelemente'} "
+                        f"{bg.aufzaehlung((f'E{e}' for e in im_weg), maximal=6)} – keine Linie angelegt, sonst trügen dort zwei "
+                        "Elemente nebeneinander. Den Haken „Stabelemente daraus erzeugen“ abwählen, wenn die Linie "
+                        "nur Geometrie sein soll")
                 n_el = len(self.model.line_to_beams(name, w["mat"], w["sec"], teilung))
         except (geo.GeometrieFehler, ValueError, KeyError) as ex:
             self._merken_zuruecknehmen(unveraendert=False)
@@ -20195,151 +20175,6 @@ class MainWindow(QtWidgets.QMainWindow):
         m._klickhinweis = lambda: hinweis
         return m
 
-    def _stabelemente_zwischen(self, a: int, b: int) -> list:
-        """Die Stabelemente, die genau die Knoten a und b verbinden."""
-        return [i for i, e in enumerate(self.model.elements)
-                if e.typ in vp.TYPEN_STAEBE and {int(e.nodes[0]), int(e.nodes[-1])} == {int(a), int(b)}]
-
-    #: Ein Knoten liegt auf einer gezeichneten Strecke, wenn er hoechstens
-    #: STRECKE_TOL · ihre Laenge neben ihr liegt (6 m: 6 mm). Die Stichprobe in
-    #: tests.test_befehl_stab (Abschnitt 9, 12 Ketten in beliebiger Lage)
-    #: nimmt gerechnet geteilte Ketten und solche mit Zwischenknoten 0,5 ‰
-    #: daneben als Kette, eine Kette 1 % daneben als andere Linie.
-    STRECKE_TOL = 1e-3
-
-    def _stabelemente_auf_strecken(self, abschnitte, ausser=()) -> list:
-        """Je Abschnitt (a, b) die vorhandenen Stabelemente darauf: (kette, im_weg).
-
-        ``im_weg``: alle Stabelemente ausser ``ausser``, deren beide Endknoten
-        auf der Strecke K a – K b liegen (:attr:`STRECKE_TOL`) und die sie auf
-        mehr als dieser Toleranz ueberdecken, von a nach b sortiert. ``kette``:
-        dieselben in Folge von a nach b, wenn sie die Strecke genau einmal
-        und lueckenlos ueberdecken - jedes von einem Knoten der Kette zum
-        naechsten, die Knoten mit wachsendem Abstand von a -, sonst [].
-
-        Bis zum 06.10.2026 sah der Befehl „Stab“ nur ein Element mit genau den
-        Endknoten a und b (_stabelemente_zwischen): K0–K2 ueber S1 (K0–K1) und
-        S2 (K1–K2) legte still ein drittes, paralleles Element an."""
-        m = self.model
-        ausser = {int(i) for i in ausser}
-        kand = [(i, int(e.nodes[0]), int(e.nodes[-1])) for i, e in enumerate(m.elements)
-                if i not in ausser and e.typ in vp.TYPEN_STAEBE]
-        if not kand:
-            return [([], []) for _ab in abschnitte]
-        nr = np.array([k[0] for k in kand])
-        anf = np.array([k[1] for k in kand])
-        end = np.array([k[2] for k in kand])
-        X = np.asarray(m.nodes, float)
-        ende = {k[0]: (k[1], k[2]) for k in kand}
-        out = []
-        for a, b in abschnitte:
-            a, b = int(a), int(b)
-            pa = X[a]
-            L = float(np.linalg.norm(X[b] - pa))
-            if L <= 0.0:
-                out.append(([], []))
-                continue
-            d = (X[b] - pa) / L
-            tol = self.STRECKE_TOL * L
-            tp, tq = (X[anf] - pa) @ d, (X[end] - pa) @ d
-            hp = np.linalg.norm(X[anf] - pa - np.outer(tp, d), axis=1)
-            hq = np.linalg.norm(X[end] - pa - np.outer(tq, d), axis=1)
-            ueber = np.minimum(np.maximum(tp, tq), L) - np.maximum(np.minimum(tp, tq), 0.0)
-            treffer = np.flatnonzero((hp <= tol) & (hq <= tol) & (ueber > tol))
-            im_weg = [int(nr[j]) for j in sorted(treffer, key=lambda j: (min(tp[j], tq[j]), int(nr[j])))]
-            # die Kette von a nach b: an jedem Knoten genau ein Element weiter,
-            # vorwaerts entlang der Strecke, und am Ende keins uebrig
-            rest, kette, k, t = set(im_weg), [], a, 0.0
-            while k != b:
-                weiter = [i for i in rest if k in ende[i]]
-                if len(weiter) != 1:
-                    break
-                i = weiter[0]
-                k_neu = ende[i][1] if ende[i][0] == k else ende[i][0]
-                t_neu = float((X[k_neu] - pa) @ d)
-                if t_neu <= t + tol:
-                    break
-                k, t = k_neu, t_neu
-                rest.discard(i)
-                kette.append(i)
-            out.append((kette if k == b and not rest else [], im_weg))
-        return out
-
-    def _vorhandene_glieder(self, abschnitte, ausser=(), stabzug: bool = False) -> tuple:
-        """Was ein gezeichneter Stab oder Stabzug mit den Stabelementen macht,
-        die schon auf seinen Abschnitten (a, b) liegen (06.10.2026).
-
-        Rueckgabe (glieder, umgekehrt, hinweis): ``glieder[i]`` sind die
-        vorhandenen Elemente auf Abschnitt i in Folge von a nach b - der Stab
-        nimmt sie, statt ein paralleles Element daneben zu legen, das doppelt
-        truege -, [] fuer einen freien Abschnitt. ``umgekehrt``: alle
-        vorhandenen laufen von b nach a und kein Abschnitt ist frei; der Stab
-        laeuft dann in ihrer Richtung. ``hinweis``: warum nichts angelegt
-        werden darf - die Elemente gehoeren schon Staeben (sonst wuerden sie
-        zweimal nachgewiesen, C14 S2), sie ueberdecken einen Abschnitt nicht
-        genau einmal von Knoten zu Knoten, oder sie laufen nicht in einer
-        Richtung (ein Stab laeuft durchgehend in einer, wie bei „Stäbe
-        zusammenfassen“). Beim Stabzug nennt der Hinweis keine Knoten: das
-        Verschmelzen hat sie neu nummeriert, und der Stand davor kommt zurueck."""
-        m = self.model
-        belegt = self._stabelemente_auf_strecken(abschnitte, ausser)
-
-        def und(teile):
-            teile = list(teile)
-            return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
-        a0, b0 = (int(x) for x in abschnitte[0]) if abschnitte else (0, 0)
-        ort = "Auf dem Stabzug" if stabzug else f"Zwischen K{a0} und K{b0}"
-        nichts = "kein Stabzug angelegt" if stabzug else "kein Stab angelegt"
-        alle = list(dict.fromkeys(e for _k, weg in belegt for e in weg))
-        stab_von = {e: s for s, els in m.staebe_der_elemente(alle).items() for e in els}
-        # 1. nicht genau einmal von Knoten zu Knoten: teilweise, zu lang, doppelt
-        weg = list(dict.fromkeys(e for kette, im_weg in belegt if im_weg and not kette for e in im_weg))
-        if weg:
-            def name(e):
-                el, s = m.elements[e], stab_von.get(e)
-                zusatz = [] if stabzug else [f"K{int(el.nodes[0])}–K{int(el.nodes[-1])}"]
-                zusatz += [f"Stab {s}"] if s else []
-                return f"E{e}" + (f" ({', '.join(zusatz)})" if zusatz else "")
-            eins = len(weg) == 1
-            text = (f"{ort} {'liegt Stabelement' if eins else 'liegen die Stabelemente'} "
-                    f"{und(name(e) for e in weg)} im Weg; {'es überdeckt' if eins else 'sie überdecken'} "
-                    f"{'seine Abschnitte' if stabzug else 'die Strecke'} nicht genau einmal von Knoten zu "
-                    f"Knoten – {nichts}, sonst trügen dort zwei Elemente nebeneinander")
-            return None, False, text
-        # 2. schon in Staeben
-        fremd = [e for e in alle if e in stab_von]
-        if fremd:
-            text = (f"{ort} {'liegt' if len(fremd) == 1 else 'liegen'} schon "
-                    + und(f"Stabelement E{e} von Stab {stab_von[e]}" for e in fremd)
-                    + (" – kein Stabzug angelegt" if stabzug else " – kein zweiter Stab angelegt"))
-            if len({stab_von[e] for e in fremd}) > 1:
-                text += "; mehrere Stäbe macht „Stäbe zusammenfassen“ zu einem"
-            return None, False, text
-        # 3. Richtung: jedes vorhandene Element vorwaerts (von a nach b) oder rueckwaerts
-        richtung = {}
-        for (a, _b), (kette, _w) in zip(abschnitte, belegt):
-            k = int(a)
-            for e in kette:
-                n0, n1 = int(m.elements[e].nodes[0]), int(m.elements[e].nodes[-1])
-                richtung[e] = n0 == k
-                k = n1 if n0 == k else n0
-        frei = any(not kette for kette, _w in belegt)
-        if all(richtung.values()):
-            umgekehrt = False
-        elif not any(richtung.values()) and not frei:
-            umgekehrt = True
-        elif stabzug:
-            gegen = [e for e, v in richtung.items() if not v]
-            return None, False, (f"Auf dem Stabzug {'läuft Stabelement' if len(gegen) == 1 else 'laufen die Stabelemente'} "
-                                 f"{und(f'E{e}' for e in gegen)} gegen seine Richtung – kein Stabzug angelegt; "
-                                 "ein Stab läuft durchgehend in einer Richtung")
-        else:
-            teile = [f"E{e} von K{int(m.elements[e].nodes[0])} nach K{int(m.elements[e].nodes[-1])}"
-                     for e in richtung]
-            return None, False, (f"{ort} laufen die Stabelemente nicht in einer Richtung ({und(teile)}) – "
-                                 "kein Stab angelegt; ein Stab läuft durchgehend in einer Richtung")
-        return [kette for kette, _w in belegt], umgekehrt, ""
-
     @_maskenweg()
     def maske_stab(self):
         """Stab anlegen wie in RFEM: zwei Knoten anklicken, Querschnitt und
@@ -20380,9 +20215,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # auf 62 %, und der Nachweis kam zu guenstig heraus (Gegenpruefung
         # 03.10.2026). Ueberdecken freie Elemente die Strecke lueckenlos und in
         # einer Richtung, auch ueber Zwischenknoten, bekommen sie den Stab;
-        # sonst weist der Befehl ab (_vorhandene_glieder). Bis zum 06.10.2026
+        # sonst weist der Befehl ab (Model.vorhandene_glieder). Bis zum 06.10.2026
         # sah er nur ein Element mit genau den Endknoten a und b.
-        glieder, umgekehrt, grund = self._vorhandene_glieder([(a, b)])
+        glieder, umgekehrt, grund = m.vorhandene_glieder([(a, b)])
         if grund:
             return self.hinweis(grund)
         frei = glieder[0][::-1] if umgekehrt else glieder[0]
@@ -20438,7 +20273,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.hinweis("Zwei Knoten in der Ansicht anklicken")
         typ = "truss" if w.get("fachwerk") else "beam"
         a, b = int(kn[0]), int(kn[1])
-        da = self._stabelemente_zwischen(a, b)
+        da = self.model.stabelemente_zwischen_knoten(a, b)
         self.merken("Stabelement angelegt")
         i = self.model.add_element(typ, [a, b], w["mat"], w["sec"])
         self.info(f"Stabelement E{i} angelegt: K{a}–K{b}, "
@@ -20448,12 +20283,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def _parallel_text(self, da: list, a: int, b: int) -> str:
-        """Zusatz der Statuszeile, wenn zwischen a und b schon ein Stabelement
-        lag: ein paralleles zweites entsteht nie still (C14 F2)."""
+        """Zusatz der Statuszeile, wenn zwischen a und b schon Stabelemente
+        lagen (``da``, Model.stabelemente_zwischen_knoten): ein paralleles
+        zweites entsteht nie still (C14 F2). Seit dem 07.10.2026 gilt das auch
+        fuer eine Kette von Elementen oder ein Stueck davon auf der Strecke
+        (N04); bis dahin sah die Zeile nur ein Element mit genau denselben
+        Endknoten."""
         if not da:
             return ""
-        return (f" – Achtung: zwischen K{a} und K{b} lag schon Stabelement E{da[0]}; zwei parallele "
-                "Elemente tragen doppelt")
+        wer = (f"lag schon Stabelement E{da[0]}" if len(da) == 1
+               else f"lagen schon die Stabelemente {bg.aufzaehlung((f'E{e}' for e in da), maximal=6)}")
+        return f" – Achtung: zwischen K{a} und K{b} {wer}; zwei parallele Elemente tragen doppelt"
 
     @_maskenweg()
     def stab_aus_stabelementen(self):
