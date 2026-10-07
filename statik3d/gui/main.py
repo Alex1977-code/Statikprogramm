@@ -13090,7 +13090,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Vorweg: ein „immer“ aus einer alten Sitzung wird „aus“ (siehe unten),
         dann die Sperre - Mittel oder Fein an einem Modell mit Kontakt wird
         Entwurf, mit Zeile im Protokoll statt Abbruch in fugen.py -, und bei
-        Fein vernetzt :meth:`_vernetzen_netz` mit halber Kantenlaenge; die
+        Fein vernetzt :meth:`_vernetzen_netz` wie Mittel, feiner an Kontakt-,
+        Lager- und Lastflaechen und an den Boegen der Kontakt- und
+        Lagerflaechen (seit 07.10.2026, elementstufe.wirksam); die
         gespeicherten Netzeinstellungen stehen danach wieder da."""
         from .. import elementstufe as es
         from ..sweep import betriebsart as sweep_betriebsart
@@ -13405,8 +13407,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lastfall = m.active_case if m.active_case in m.load_cases else next(iter(m.load_cases))
         log: list = []
         # Die Sperre der Elementstufe gilt auch hier (25.09.2026): Mittel/Fein an
-        # einem Modell mit Kontakt wird Entwurf, gesagt. Die halbe Kantenlaenge
-        # von Fein nicht - die Schleife bestimmt die Kantenlaenge selbst.
+        # einem Modell mit Kontakt wird Entwurf, gesagt. Die Quellen von Fein
+        # nicht - die Schleife bestimmt die Kantenlaenge selbst.
         from .. import elementstufe as _es
         _sperre = _es.sperre_anwenden(m)
         if _sperre:
@@ -19024,15 +19026,18 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("elemente", "Elemente", "wahl", es.AUSWAHL[stufe_jetzt], [es.AUSWAHL[s] for s in es.STUFEN],
                     hinweis="Entwurf: tet4, hex8 (VQ83), Schalen linear – schnell, Spannungen zu niedrig. "
                             "Mittel (Vorgabe): tet10, hex20 (VQ203), Schalen quadratisch – für die "
-                            "Nachweise. Fein: wie Mittel mit halber Kantenlänge – Bohrungen, Kerben, "
-                            "Ermüdung. Sechsflächner entstehen automatisch nur dort, wo sie sauber "
+                            "Nachweise. Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
+                            "Kantenlänge) und an den Bögen der Kontakt- und Lagerflächen (9° statt 18° je "
+                            "Abschnitt) – Bohrungen, Kerben, Ermüdung. Sechsflächner entstehen "
+                            "automatisch nur dort, wo sie sauber "
                             "werden (Sweep „sauber“); welche Elemente wirklich entstanden sind, zeigt "
                             "Netz → Elementübersicht"),
                   F("elemente_info", "", "info", stufentext(stufe_jetzt), anzeige=True),
                   F("kantenlaenge", "Kantenlänge (wirksam)", "info",
                     es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model),
-                    hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein die Hälfte der "
-                            "eingestellten; die Einstellungen darunter bleiben die für Mittel", anzeige=True)]
+                    hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein dieselbe wie bei Mittel, "
+                            "dazu, welche Flächen und Bögen feiner werden; die Einstellungen darunter "
+                            "bleiben die für Mittel", anzeige=True)]
         if gruende:
             felder.append(F("sperre", "Kontakt", "info", es.sperrtext(gruende)))
         felder += [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),

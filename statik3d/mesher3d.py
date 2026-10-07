@@ -1229,7 +1229,8 @@ def _kraenze(ringe: list, h: float, wachstum: float = WACHSTUM_FLAECHE) -> np.nd
     return np.vstack(aus)
 
 
-def _verdichten_2d(K: np.ndarray, h: float, feld, ringe: list, stufen: int = 8) -> np.ndarray:
+def _verdichten_2d(K: np.ndarray, h: float, feld, ringe: list, stufen: int = 8,
+                   dreiecksgitter: bool = False) -> np.ndarray:
     """Kandidaten dort vervierfachen, wo das Groessenfeld feiner ist als die Zelle.
 
     Ein gleichmaessiges Gitter mit der feinsten Weite des Feldes ueber die
@@ -1239,7 +1240,13 @@ def _verdichten_2d(K: np.ndarray, h: float, feld, ringe: list, stufen: int = 8) 
     deren Feldwert unter 70 % ihrer Weite liegt, bekommt vier Kinder mit der
     halben Weite, hoechstens ``stufen`` Mal (Faktor 256). Die Kandidaten aller
     Stufen zusammen duennt :func:`_ausduennen_2d` danach auf die Sollweite aus.
+
+    ``dreiecksgitter`` (Fein, seit 07.10.2026): siehe
+    :func:`_verdichten_2d_dreieck` - ohne bleibt der Weg, wie er war, und
+    Mittel und Entwurf vernetzen bitgleich.
     """
+    if dreiecksgitter:
+        return _verdichten_2d_dreieck(K, h, feld, ringe, stufen)
     aus = [K]
     zellen, weite = K, float(h)
     for _ in range(stufen):
@@ -1256,6 +1263,45 @@ def _verdichten_2d(K: np.ndarray, h: float, feld, ringe: list, stufen: int = 8) 
             break
         aus.append(kinder)
         zellen = kinder
+    return np.vstack(aus)
+
+
+def _verdichten_2d_dreieck(K: np.ndarray, h: float, feld, ringe: list, stufen: int = 8) -> np.ndarray:
+    """Verdichten **im Dreiecksgitter** (Paket F1, 07.10.2026; nur mit Fein,
+    netzfeld.Groessenfeld.dreiecksgitter).
+
+    Ein Punkt, dessen Feldwert unter der Weite liegt, bleibt und bekommt die
+    sechs Kantenmitten zu seinen Nachbarn im Abstand der halben Weite - das
+    ist wieder ein gleichseitiges Gitter wie das Ausgangsgitter in
+    :func:`_dreiecke_2d`, nur halb so weit, und nirgends groeber als das
+    Feld. Im Quadtree-Weg (:func:`_verdichten_2d`) liegen die vier Kinder
+    0,35 Weiten vom Mittelpunkt, der stehen bleibt; die Ausduennung nimmt
+    aber 0,85 der Sollweite = 0,43 Weiten, der Mittelpunkt verdraengt alle
+    vier, und wo das Feld die halbe Weite verlangt, bleibt das Netz bei der
+    ganzen. Gemessen an einer Flaeche mit Feld 50 mm bei h = 100 mm:
+    Randkante im Median 96 mm im Quadtree-Weg, 50 mm im Dreiecksgitter
+    (tests/test_fein_smart.py). Fuer alle Stufen umgestellt aenderte das die
+    Netze von Mittel an jeder Flaeche mit feinem Rand (Platte mit Bohrungen:
+    15 278 -> 15 294 Elemente) - darum vorerst nur mit Fein.
+    """
+    richtungen = np.array([[np.cos(a), np.sin(a)] for a in np.radians([0.0, 60.0, 120.0, 180.0, 240.0, 300.0])])
+    aus = []
+    zellen, weite = K, float(h)
+    for _ in range(stufen):
+        soll = np.asarray(feld(zellen), float)
+        fein = soll < weite * (1.0 - 1e-9)
+        if not fein.any():
+            break
+        weite *= 0.5
+        Z = zellen[fein]
+        kinder = (Z[:, None, :] + weite * richtungen[None, :, :]).reshape(-1, 2)
+        kinder = kinder[_in_polygon_2d(kinder, ringe)]
+        aus.append(zellen[~fein])
+        neu = np.vstack([Z, kinder])
+        # Jede Kantenmitte gehoert zwei Punkten - doppelte zusammenlegen
+        _, erste = np.unique(np.round(neu / (1e-3 * weite)).astype(np.int64), axis=0, return_index=True)
+        zellen = neu[np.sort(erste)]
+    aus.append(zellen)
     return np.vstack(aus)
 
 
@@ -1353,7 +1399,8 @@ def _randfeld_dazu(feld, rand: np.ndarray, randkante: np.ndarray, h: float):
     return beides
 
 
-def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None) -> tuple:
+def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
+                 dreiecksgitter: bool = False) -> tuple:
     """Ebenes Vieleck mit Loechern in Dreiecke teilen.
 
     Randpunkte sind vorgegeben (sie sind mit den Nachbarflaechen gemeinsam).
@@ -1370,7 +1417,9 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None) -> tuple:
 
     ``feld`` ist das Groessenfeld **in der Ebene** (Punkte (n, 2) -> Weite),
     wenn es auf dieser Flaeche unter h faellt: das Gitter wird dort
-    verdichtet (:func:`_verdichten_2d`) und auf die Feldweite ausgeduennt.
+    verdichtet (:func:`_verdichten_2d`) und auf die Feldweite ausgeduennt;
+    mit ``dreiecksgitter`` (Fein) im Dreiecksgitter
+    (:func:`_verdichten_2d_dreieck`).
     """
     from scipy.spatial import Delaunay, cKDTree
     rand = np.vstack([np.asarray(R, float) for R in ringe])
@@ -1419,7 +1468,7 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None) -> tuple:
             K = np.asarray(kandidaten, float)
             K = K[_in_polygon_2d(K, ringe)]
             if len(K) and feld is not None:
-                K = _verdichten_2d(K, h, feld, ringe)
+                K = _verdichten_2d(K, h, feld, ringe, dreiecksgitter=dreiecksgitter)
             if len(K):
                 # Nicht zu nah an den Rand: sonst entstehen dort Splitter -
                 # und liegt ein Punkt **auf** einer Randstrecke, verdraengt er
@@ -1665,7 +1714,8 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     fest = [np.array([q in teilung.gem_linien for q in qs], bool) for qs in quellen]
     feld2 = _feld_in_ebene(getattr(teilung, "feld", None),
                            lambda K: c + K[:, 0:1] * e1 + K[:, 1:2] * e2, ringe, hf)
-    P2, T, fehlt = _dreiecke_2d(ringe, hf, fest, feld2)
+    P2, T, fehlt = _dreiecke_2d(ringe, hf, fest, feld2, dreiecksgitter=bool(
+        getattr(getattr(teilung, "feld", None), "dreiecksgitter", False)))
     if not len(T):
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen), [])
@@ -2127,7 +2177,8 @@ def _zylindernetz(flaeche, ringe3: list, h: float, achse: tuple, feld=None) -> t
                 + r * (np.outer(np.cos(wi), e1) + np.outer(np.sin(wi), e2)))
     ringe = [eben(R) for R in ringe3]
     feld2 = _feld_in_ebene(feld, heben, ringe, h)
-    P2, T, fehlt = _dreiecke_2d(ringe, h, None, feld2)
+    P2, T, fehlt = _dreiecke_2d(ringe, h, None, feld2,
+                                dreiecksgitter=bool(getattr(feld, "dreiecksgitter", False)))
     if not len(T):
         return np.zeros((0, 3)), np.zeros((0, 3), int), fehlt
     P = heben(P2)

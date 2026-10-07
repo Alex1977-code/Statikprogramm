@@ -154,7 +154,8 @@ def main(argv=None) -> int:
         from . import mesher as _mesher
         zeilen = []
         # wie Netz -> Vernetzen (25.09.2026): Sperre der Elementstufe am
-        # Kontaktmodell (Entwurf, gesagt) und bei Fein die halbe Kantenlaenge
+        # Kontaktmodell (Entwurf, gesagt) und bei Fein die Quellen an Kontakt-,
+        # Lager- und Lastflaechen und ihren Boegen (seit 07.10.2026)
         with _es.beim_vernetzen(m, zeilen):
             _mesher.modell_vernetzen(m, zeilen, workers=a.kerne)
         for s in zeilen:

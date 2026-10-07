@@ -206,8 +206,12 @@ def test_stufen_und_texte():
           all(x in es.ELEMENTE["entwurf"] for x in ("tet4", "hex8", "VQ83", "linear")), es.ELEMENTE["entwurf"])
     check("Mittel: tet10, hex20 (VQ203), Schalen quadratisch",
           all(x in es.ELEMENTE["mittel"] for x in ("tet10", "hex20", "VQ203", "quadratisch")))
-    check("Fein: wie Mittel mit halber Kantenlänge, ohne tetp",
-          "halbe" in es.ELEMENTE["fein"] and "tetp" not in es.ELEMENTE["fein"])
+    # Seit 07.10.2026 (Paket F1, tests/test_fein_smart.py): Fein ist Mittel,
+    # feiner an Kontakt-, Lager- und Lastflaechen und deren Boegen - bis dahin
+    # „wie Mittel mit halber Kantenlänge“
+    check("Fein: wie Mittel, feiner an Kontakt, Lagern und Lasten, ohne tetp",
+          all(x in es.ELEMENTE["fein"] for x in ("wie Mittel", "Kontakt", "Lager", "Last"))
+          and "tetp" not in es.ELEMENTE["fein"], es.ELEMENTE["fein"])
     check("Auswahltexte: Mittel trägt „(Vorgabe)“",
           [es.AUSWAHL[s] for s in es.STUFEN] == ["Entwurf", "Mittel (Vorgabe)", "Fein"])
     check("aus_text liest die Auswahl zurück", [es.aus_text(es.AUSWAHL[s]) for s in es.STUFEN]
@@ -267,9 +271,12 @@ def test_beschreibung():
     check("… Entwurf: lineare Elemente", "Elemente Entwurf" in t and "lineare Elemente" in t, t)
 
 
-def test_fein_halbe_kantenlaenge():
-    """Fein = Mittel mit halber Kantenlaenge - gemessen an dem, was der
-    Vernetzer je Objekt nimmt (netzdichte.elementlaenge)."""
+def test_fein_wie_mittel_im_feld():
+    """Fein hat im Feld die Kantenlaenge von Mittel - gemessen an dem, was
+    der Vernetzer je Objekt nimmt (netzdichte.elementlaenge). Feiner wird es
+    nur an Kontakt-, Lager- und Lastflaechen und an den Boegen der Kontakt-
+    und Lagerflaechen (seit 07.10.2026, Paket F1; geprueft in
+    tests/test_fein_smart.py). Bis dahin halbierte Fein alle Laengen."""
     from statik3d import netzdichte as nd
     es = _es()
     m = wuerfel()
@@ -283,27 +290,28 @@ def test_fein_halbe_kantenlaenge():
         f = es.setzen(n, "fein")
         h_m = nd.elementlaenge(m, n, k)["h_dichte"]
         h_f = nd.elementlaenge(m, es.wirksam(f, m), k)["h_dichte"]
-        check(f"Netzdichte {dichte}: Fein hat die halbe Kantenlänge von Mittel",
-              abs(h_f - 0.5 * h_m) < 1e-12, f"{h_m * 1e3:.2f} → {h_f * 1e3:.2f} mm")
+        check(f"Netzdichte {dichte}: Fein hat im Feld die Kantenlänge von Mittel",
+              abs(h_f - h_m) < 1e-12, f"{h_m * 1e3:.2f} → {h_f * 1e3:.2f} mm")
     f = es.setzen(Netzeinstellungen(dichte="eigene", ziellaenge=0.4, h_min=0.02, h_max=0.3,
                                     koerper_h={"V1": 0.1},
                                     verfeinerungen=[{"art": "kugel", "mitte": [0, 0, 0], "radius": 0.1,
                                                      "h": 0.01}],
                                     feldpunkte=[[0, 0, 0, 0.02], [1, 1, 1, 0.04, 0.2]]), "fein")
     w = es.wirksam(f, m)
-    check("… kleinste/größte Elementgröße, Kantenlänge je Körper, Verfeinerungen, Feldpunkte halb",
-          abs(w.h_min - 0.01) < 1e-15 and abs(w.h_max - 0.15) < 1e-15 and abs(w.koerper_h["V1"] - 0.05) < 1e-15
-          and abs(w.verfeinerungen[0]["h"] - 0.005) < 1e-15 and abs(w.feldpunkte[0][3] - 0.01) < 1e-15
-          and abs(w.feldpunkte[1][3] - 0.02) < 1e-15 and w.feldpunkte[1][4] == 0.2,
+    check("… kleinste/größte Elementgröße, Kantenlänge je Körper, Verfeinerungen, Feldpunkte wie Mittel",
+          w.h_min == 0.02 and w.h_max == 0.3 and w.koerper_h == {"V1": 0.1}
+          and w.verfeinerungen == f.verfeinerungen and w.feldpunkte == f.feldpunkte,
           f"{w.h_min} {w.h_max} {w.koerper_h} {w.verfeinerungen} {w.feldpunkte}")
     check("… die gespeicherte Einstellung bleibt", f.h_min == 0.02 and f.koerper_h == {"V1": 0.1}
           and f.feldpunkte[0][3] == 0.02)
     check("… die Höchstzahl je Objekt bleibt (Schutz, keine Kantenlänge)",
           w.max_elemente == f.max_elemente)
     t = es.kantenlaenge_text(es.setzen(Netzeinstellungen(dichte="eigene", ziellaenge=0.05), "fein"))
-    check("Text der wirksamen Kantenlänge (eigene 50 mm, Fein): 25 mm", "25 mm" in t and "50" in t, t)
+    check("Text der wirksamen Kantenlänge (eigene 50 mm, Fein): 50 mm, feiner an Kontakt, Lagern, Lasten",
+          "50 mm" in t and "Fein:" in t and "Kontakt" in t and "Last" in t, t)
     t = es.kantenlaenge_text(es.setzen(Netzeinstellungen(dichte="eigene", ziellaenge=0.5), "fein"), m)
-    check("… mit Modell: je Körper die Kantenlänge im Feld", "250 mm" in t, t)
+    check("… mit Modell: je Körper die Kantenlänge im Feld (500 mm), ohne Kontakt, Lager, Last wie Mittel",
+          "500 mm" in t and "keine Kontakt-, Lager- oder Lastflächen" in t, t)
     check("… ohne wissenschaftliche Zahl", not _wissenschaftlich(t))
 
 
@@ -411,7 +419,7 @@ def test_plastizitaet_in_jeder_stufe():
         check(f"{s}: {len(m.elements)} {'/'.join(typen)} - plastisch gerechnet, konvergiert, es fließt",
               info.get("konvergiert") and int(info.get("fliessend") or 0) > 0
               and set(typen) <= set(pl_typen()), str({k: info.get(k) for k in ("konvergiert", "fliessend")}))
-    check("Fein hat die halbe Kantenlänge: 8-mal so viele Elemente wie Mittel",
+    check("Fein am abgebildeten Würfel (doppelte Teilung): 8-mal so viele Elemente wie Mittel",
           zahl.get("fein") == 8 * zahl.get("mittel", 0), str(zahl))
     # frei vernetzt: tet4 bzw. tet10
     soll = {"entwurf": {"tet4"}, "mittel": {"tet10"}, "fein": {"tet10"}}
@@ -428,7 +436,11 @@ def test_plastizitaet_in_jeder_stufe():
               "konvergiert, es fließt",
               typen == soll[s] and info.get("konvergiert") and int(info.get("fliessend") or 0) > 0,
               str({k: info.get(k) for k in ("konvergiert", "fliessend")}))
-    check("Pyramide: Fein feiner als Mittel", zahl["fein"] > 4 * zahl["mittel"], str(zahl))
+    # Seit 07.10.2026 (Paket F1) ist Fein im Feld Mittel und nur an Kontakt-,
+    # Lager- und Lastflaechen feiner; die Last kommt hier erst nach dem
+    # Vernetzen (druck) - bis dahin war Fein ueberall feiner (> 4-mal)
+    check("Pyramide ohne Kontakt, Lager und Last beim Vernetzen: Fein wie Mittel",
+          zahl["fein"] == zahl["mittel"], str(zahl))
     # Kontakt und Fliessen zusammen: 2 fy auf das mittlere Viertel des Dachs
     # (gleichmaessig 1,3 fy ueber alles liess beide Bloecke ganz fliessen, und
     # die Kontakt-Iteration fand kein Gleichgewicht mehr - eine Frage der Last,
@@ -554,24 +566,25 @@ def test_maske():
     kl = mk._felder["kantenlaenge"].text()
     check("Fein gewählt: Text folgt (Bohrungen, Kerben, Ermüdung)", "für Bohrungen, Kerben und Ermüdung" in info,
           info)
-    check("… die wirksame Kantenlänge ist halb (500 → 250 mm)", "250 mm" in kl, kl)
+    check("… die Kantenlänge im Feld bleibt die von Mittel (500 mm), Fein sagt, was feiner wird",
+          "500 mm" in kl and "Fein: wie Mittel" in kl, kl)
     mk.anwenden()
     app.processEvents()
     n = w.model.netz
     check("Übernehmen Fein: stufe fein, ordnung 2, sweep sauber",
           es.stufe(n) == "fein" and n.ordnung == 2 and n.sweep == "sauber", f"{n.stufe} {n.ordnung} {n.sweep}")
-    check("… die gespeicherte Ziellänge bleibt (Fein halbiert beim Vernetzen)", abs(n.ziellaenge - 0.5) < 1e-12)
-    # Vernetzen im Fenster: Fein halbiert, die Einstellung bleibt
+    check("… die gespeicherte Ziellänge bleibt", abs(n.ziellaenge - 0.5) < 1e-12)
+    # Vernetzen im Fenster: Fein (abgebildet: doppelte Teilung), die Einstellung bleibt
     w._vernetzen([], [m.koerper["V1"]])
     app.processEvents()
     n_fein = len(m.elements)
-    check("Vernetzen Fein: 64 hex20 (Kantenlänge 250 mm)", n_fein == 64
+    check("Vernetzen Fein: 64 hex20 (abgebildet, doppelte Teilung)", n_fein == 64
           and {e.typ for e in m.elements} == {"hex20"}, f"{n_fein} {sorted({e.typ for e in m.elements})}")
     check("… danach stehen die Netzeinstellungen wie vorher (Fein, 500 mm)",
           es.stufe(m.netz) == "fein" and abs(m.netz.ziellaenge - 0.5) < 1e-12 and m.netz.dichte == "eigene")
     check("… und die Teilung des Körpers (2 × 2 × 2; beim Vernetzen verdoppelt)",
           list(m.koerper["V1"].teilung) == [2, 2, 2], str(m.koerper["V1"].teilung))
-    check("… das Protokoll nennt die halbe Kantenlänge", "halbe Kantenlänge" in w.log.toPlainText())
+    check("… das Protokoll nennt Fein und was feiner wird", "Elemente Fein: wie Mittel" in w.log.toPlainText())
     m.netz = es.setzen(m.netz, "mittel")
     w._vernetzen([], [m.koerper["V1"]])
     check("Vernetzen Mittel: 8 hex20", len(m.elements) == 8 and {e.typ for e in m.elements} == {"hex20"},
@@ -677,7 +690,7 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(1200, exit=True)
     for t in (test_stufen_und_texte, test_stufe_und_setzen, test_laden_und_speichern, test_beschreibung,
-              test_fein_halbe_kantenlaenge, test_sperre, test_kontakt_in_jeder_stufe,
+              test_fein_wie_mittel_im_feld, test_sperre, test_kontakt_in_jeder_stufe,
               test_plastizitaet_in_jeder_stufe, test_import_frage, test_ribbon_und_neues_modell,
               test_maske, test_maske_mit_kontakt, test_import_im_fenster):
         print(f"\n--- {t.__name__} ---")
