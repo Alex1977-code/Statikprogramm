@@ -123,7 +123,7 @@ def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0,
     return m
 
 
-def drei_bloecke() -> Model:
+def drei_bloecke(ordnung: int = 1) -> Model:
     """Wie zwei_bloecke("eigene"), dazu eine Rippe neben dem oberen Wuerfel,
     die dessen Seitenflaeche MO1 (x = 1) als eigene Randflaeche fuehrt -
     verschweisst. Ihre Unterkante ist die Linie R[1][1] auf der Fuge: die
@@ -162,6 +162,7 @@ def drei_bloecke() -> Model:
     k2 = m.add_koerper("Oben", ["FugeO", "Dach"] + oben, material="S235")
     k3 = m.add_koerper("Rippe", ["MO1", "RB", "RD", "RX", "RY0", "RY1"], material="S235")
     m.netz.ziellaenge = 0.5
+    m.netz.ordnung = ordnung
     cache = {}
     for k in (k1, k2, k3):
         M3.mesh_koerper_frei(m, k, log=[], cache=cache)
@@ -2311,6 +2312,236 @@ def test_viereckfuge_zaehlt_ganz():
 
 
 # --------------------------------------------------------------------------
+# Q2 (08.10.2026): eine Fuge trennt auch die Seitenmitten
+# --------------------------------------------------------------------------
+# Bis zum 07.10.2026 verdoppelte kontaktfuge_ausfuehren nur die Eckknoten. An
+# tet10, hex20 und pent15 blieben die Mitten der Kanten, die zwei Bauteile
+# teilen, gemeinsam, und die Fuge war dort durchverbunden (gemessen am
+# 22.09.2026: 525,8 kN von 1000 kN Zug durch eine Fuge ohne Zugfestigkeit,
+# 371,2 kN bei eigenen Flaechen). Jetzt bekommt jede Seite ihre eigenen Mitten
+# an ihren eigenen Ecken. Den Kontakt an den Ecken und die Bindung der Mitten
+# an sie baut Q1; hier steht darum die Sperre quadratischer Seiten aus
+# (_sperre_umgehen) und geprueft werden die Topologie und - wo ohne Q1
+# rechenbar - die Fuge unter Zug.
+@contextlib.contextmanager
+def _sperre_umgehen():
+    """Die Sperre quadratischer Seiten abschalten (nur fuer die Pruefung der
+    Trennung; die Rechnung ueber den Kontakt an den Ecken traegt Q1)."""
+    namen = ("quadratische_knoten", "quadratische_seiten_sperren")
+    alt = {n: getattr(fugen, n) for n in namen if hasattr(fugen, n)}
+    if "quadratische_knoten" in alt:
+        fugen.quadratische_knoten = lambda model: {}
+    if "quadratische_seiten_sperren" in alt:
+        fugen.quadratische_seiten_sperren = lambda *a, **k: None
+    try:
+        yield
+    finally:
+        for n, f in alt.items():
+            setattr(fugen, n, f)
+
+
+def _gemeinsam_ecken_mitten(m: Model) -> tuple:
+    """(gemeinsame Ecken, gemeinsame Seitenmitten): Knoten, an denen Elemente
+    von mindestens zwei Bauteilen haengen."""
+    from statik3d.elements import solid as sl
+    grp: dict = {}
+    mitten: set = set()
+    for e in m.elements:
+        n_e = len(sl.ECKEN_NATUERLICH[e.typ])
+        for i, n in enumerate(e.nodes):
+            grp.setdefault(int(n), set()).add(str(getattr(e, "group", "")))
+            if i >= n_e:
+                mitten.add(int(n))
+    gem = {n for n, g in grp.items() if len(g) > 1}
+    return len(gem - mitten), len(gem & mitten)
+
+
+def _mitten_je_kante(m: Model) -> tuple:
+    """(Mitten, die an zwei verschiedenen Kanten haengen, Mitten in zwei
+    Bauteilen): zusammen null heisst, jede Seite hat eigene Mitten, die sich an
+    die eigenen Ecken binden lassen (Q1)."""
+    from statik3d.elements import solid as sl
+    kante: dict = {}
+    grp: dict = {}
+    for e in m.elements:
+        n_e = len(sl.ECKEN_NATUERLICH[e.typ])
+        for k, (a, b) in enumerate(sl._KANTEN_QUADRATISCH[e.typ]):
+            mitte = int(e.nodes[n_e + k])
+            kante.setdefault(mitte, set()).add(frozenset((int(e.nodes[a]), int(e.nodes[b]))))
+            grp.setdefault(mitte, set()).add(str(getattr(e, "group", "")))
+    return (sum(1 for v in kante.values() if len(v) != 1),
+            sum(1 for v in grp.values() if len(v) != 1))
+
+
+def _nur_ecken_im_kontakt(m: Model) -> bool:
+    """Spaltelemente, Kopplungen und Kontaktpaare nennen nur Eckknoten."""
+    from statik3d.elements import solid as sl
+    mitten = {int(n) for e in m.elements for n in e.nodes[len(sl.ECKEN_NATUERLICH[e.typ]):]}
+    knoten = {int(x) for g in m.gap_elements for x in (g.node_a, g.node_b)}
+    knoten |= {int(x) for k in m.kopplungen for x in (k.node_a, k.node_b)}
+    knoten |= {int(x) for cp in m.contact_pairs for x in cp.slave_nodes}
+    return not (knoten & mitten)
+
+
+def _trennung_pruefen(name: str, m: Model, kb):
+    """Fuge ausfuehren und die Topologie danach pruefen; Rueckgabe (Bericht,
+    Protokoll, (gemeinsame Ecken, gemeinsame Mitten) vor der Fuge)."""
+    ecken0, mitten0 = _gemeinsam_ecken_mitten(m)
+    nn0 = m.nn
+    check(f"{name}: vor der Fuge teilen die Bauteile Ecken und Seitenmitten",
+          ecken0 > 0 and mitten0 > 0, f"{ecken0} Ecken, {mitten0} Mitten")
+    log = []
+    with _sperre_umgehen():
+        b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    ecken1, mitten1 = _gemeinsam_ecken_mitten(m)
+    check(f"{name}: danach teilt kein Knoten mehr zwei Bauteile (Ecken wie Mitten)",
+          (ecken1, mitten1) == (0, 0), f"{ecken1} Ecken, {mitten1} Mitten")
+    check(f"{name}: genau die gemeinsamen Knoten sind verdoppelt",
+          m.nn == nn0 + ecken0 + mitten0 and b["knoten"] == ecken0 and b.get("mitten", 0) == mitten0,
+          f"Knoten {nn0} -> {m.nn}, Bericht {b.get('knoten')} Ecken / {b.get('mitten')} Mitten, "
+          f"erwartet {ecken0} / {mitten0}")
+    paare = [p for ps in m.getrennte_knoten.values() for p in ps]
+    gleich = all(np.allclose(m.nodes[a], m.nodes[c]) for a, c in paare)
+    check(f"{name}: getrennte_knoten führt Ecken und Mitten, am selben Ort",
+          len(paare) == ecken0 + mitten0 and gleich, f"{len(paare)} Paare, erwartet {ecken0 + mitten0}")
+    check(f"{name}: kein Element benutzt beide Seiten (Abnahme „Fuge überbrückt“)",
+          diagnose._abnahme_fugen(m) == [], str(diagnose._abnahme_fugen(m))[:100])
+    zwei_kanten, zwei_bauteile = _mitten_je_kante(m)
+    check(f"{name}: jede Seitenmitte gehört zu einer Kante und einem Bauteil",
+          (zwei_kanten, zwei_bauteile) == (0, 0),
+          f"{zwei_kanten} an zwei Kanten, {zwei_bauteile} in zwei Bauteilen")
+    check(f"{name}: Spaltelemente, Kopplungen und Kontaktpaar bleiben an den Ecken",
+          _nur_ecken_im_kontakt(m))
+    return b, log, (ecken0, mitten0)
+
+
+def test_tet10_fuge_trennt_die_mitten():
+    """tet10, passende Netze und eigene Flaechen: nach der Fuge teilt kein
+    Knoten die Bauteile, und eine Fuge ohne Zugfestigkeit traegt unter Zug
+    nichts (heute 525,8 bzw. 371,2 kN von 1000 kN)."""
+    p = -1.0e6
+    F = -p * A_FUGE
+    for art in ("gemeinsam", "eigene"):
+        m = zwei_bloecke(art, ordnung=2)
+        check(f"{art}: das Netz ist tet10", {e.typ for e in m.elements} == {"tet10"},
+              str(sorted({e.typ for e in m.elements})))
+        kb = kontaktbedingung(m, art)
+        _trennung_pruefen(f"tet10 {art}", m, kb)
+        with _sperre_umgehen():
+            g = rechnen(m, p, federn=1.0e11)
+        check(f"tet10 {art}: das Fundament trägt unter Zug nichts (≤ 1 % von 1000 kN)",
+              abs(g["R_fundament"]) <= 0.01 * F,
+              f"R = {g['R_fundament'] / 1e3:.3f} kN von {F / 1e3:.0f} kN")
+
+
+def test_hex20_fuge_trennt_die_mitten():
+    """hex20 aus dem abgebildeten Vernetzer (Aufbau von K1/K2 der Pruefmatrix):
+    wie tet10, dazu unter Zug die Fundamentkraft von K2."""
+    from tests import pruefmatrix as pm
+    fall = pm.FugeZug()
+    m = pm.geo_modell(2, 0.5)
+    g = pm.Geo(m)
+    ku = g.quader("Unten", (0, 0, 0), (1, 1, 1), {"z1": "Fuge"})
+    ko = g.quader("Oben", (0, 0, 1), (1, 1, 2), {"z0": "Fuge"})
+    pm.vernetzen(m, [ku, ko], "hex", 0.5, 2, [])
+    check("hex20: das Netz ist hex20", {e.typ for e in m.elements} == {"hex20"},
+          str(sorted({e.typ for e in m.elements})))
+    kb = kontaktbedingung(m, "gemeinsam")
+    _trennung_pruefen("hex20", m, kb)
+    with _sperre_umgehen():
+        unten, _oben = fall.lagerung(m, -fall.p, federn=1e11)
+        res = solver.solve_static(m, workers=1)
+    R_f = float(res.reactions[unten, 2].sum())
+    check("hex20: das Fundament trägt unter Zug nichts (≤ 1 % von 100 kN)", abs(R_f) <= 0.01 * fall.p,
+          f"R = {R_f / 1e3:.3f} kN von {fall.p / 1e3:.0f} kN")
+
+
+def _zwei_keile() -> Model:
+    """Zwei pent15 uebereinander, die ein Dreieck samt Seitenmitten teilen
+    (Knoten ueber ihre Lage zusammengefuehrt), mit der Fuge als Flaeche."""
+    from statik3d.elements import solid as sl
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    dreieck = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+    ids: dict = {}
+
+    def knoten(p):
+        schl = tuple(np.round(p, 9))
+        if schl not in ids:
+            ids[schl] = m.add_node(*schl)
+        return ids[schl]
+
+    def keil(z0, z1, gruppe):
+        P = [np.array([x, y, z0]) for x, y in dreieck] + [np.array([x, y, z1]) for x, y in dreieck]
+        P += [0.5 * (P[a] + P[b]) for a, b in sl._KANTEN_QUADRATISCH["pent15"]]
+        return m.add_element("pent15", [knoten(p) for p in P], "S235", group=gruppe)
+
+    unten = keil(0.0, 1.0, "Unten")
+    oben = keil(1.0, 2.0, "Oben")
+    ecken = [knoten(np.array([x, y, 1.0])) for x, y in dreieck]
+    linien = []
+    for i in range(3):
+        m.add_line(f"L{i + 1}", [ecken[i], ecken[(i + 1) % 3]], "polyline")
+        linien.append(f"L{i + 1}")
+    f = m.add_flaeche("Fuge", linien, material="S235")
+    f.randseiten = [[unten, 1], [oben, 0]]
+    return m
+
+
+def test_pent15_fuge_trennt_die_mitten():
+    m = _zwei_keile()
+    check("pent15: das Netz ist pent15", {e.typ for e in m.elements} == {"pent15"})
+    kb = kontaktbedingung(m, "gemeinsam")
+    _b, _log, (e0, m0) = _trennung_pruefen("pent15", m, kb)
+    check("pent15: drei Ecken und drei Seitenmitten des Dreiecks", (e0, m0) == (3, 3), f"{e0} / {m0}")
+
+
+def test_tet10_fuge_mit_rippe_loest_nachbarn_samt_mitten():
+    """Die angeschweisste Rippe loest sich mit Oben (wie bei tet4): sie bekommt
+    dieselben Kopien, auch an den Seitenmitten der gemeinsamen Kante, und
+    Oben und Rippe teilen danach unveraendert alle Knoten ihrer Naht."""
+    m = drei_bloecke(ordnung=2)
+    check("Rippe: das Netz ist tet10", {e.typ for e in m.elements} == {"tet10"})
+
+    def naht(m):
+        grp: dict = {}
+        for e in m.elements:
+            for n in e.nodes:
+                grp.setdefault(int(n), set()).add(str(e.group))
+        return (sum(1 for g in grp.values() if g >= {"Oben", "Rippe"}),
+                sum(1 for g in grp.values() if "Unten" in g and len(g) > 1))
+
+    n_naht0, _ = naht(m)
+    kb = kontaktbedingung(m, "eigene")
+    with _sperre_umgehen():
+        b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+    n_naht1, n_unten = naht(m)
+    check("Rippe: mitgelöst", b.get("mitgeloest") == ["Rippe"], str(b.get("mitgeloest")))
+    check("Rippe: Oben und Rippe teilen nach der Fuge dieselben Nahtknoten (Ecken und Mitten)",
+          n_naht1 == n_naht0 and n_naht0 > 0, f"{n_naht0} -> {n_naht1}")
+    check("Rippe: Unten teilt mit keinem anderen Bauteil mehr einen Knoten", n_unten == 0, f"{n_unten}")
+    check("Rippe: kein Element überbrückt die Fuge", diagnose._abnahme_fugen(m) == [])
+    # Oben und Rippe sind verschweisst und teilen ihre Naht samt Mitten mit
+    # Absicht; jede Mitte gehoert trotzdem zu genau einer Kante
+    zwei_kanten, _zwei_bauteile = _mitten_je_kante(m)
+    check("Rippe: jede Seitenmitte gehört zu einer Kante", zwei_kanten == 0, f"{zwei_kanten}")
+
+
+def test_lineare_fuge_zaehlt_keine_mitten():
+    """tet4 hat keine Seitenmitten: der Bericht meldet keine, und das Protokoll
+    nennt sie nicht (die Zeilen bleiben, wie sie waren)."""
+    m = zwei_bloecke("gemeinsam")
+    kb = kontaktbedingung(m, "gemeinsam")
+    ecken0, mitten0 = _gemeinsam_ecken_mitten(m)
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    check("tet4: keine Seitenmitte verdoppelt, jeder gemeinsame Knoten eine Ecke",
+          mitten0 == 0 and b.get("mitten", 0) == 0 and b["knoten"] == ecken0 > 0, f"{ecken0} Ecken; {b}")
+    check("tet4: das Protokoll nennt keine Seitenmitten",
+          bool(log) and not any("Seitenmitten" in z for z in log), "; ".join(log)[:120])
+
+
+# --------------------------------------------------------------------------
 # tet10: Kontakt, Fugen und Flaechenlager sehen nur die Ecken - Sperre
 # --------------------------------------------------------------------------
 def _gemeinsame_knoten(m: Model) -> int:
@@ -2337,8 +2568,6 @@ def test_tet10_fuge_gesperrt():
     Koerpern gemeinsam, und eine Fuge ohne Zugfestigkeit truege Zug.
     Gemessen am 22.09.2026 (Kantenlaenge 0,5, Einkern): 525,8 kN von 1000 kN
     bei passenden Netzen, 371,2 kN bei eigenen Flaechen, tet4 0 kN."""
-    p = -1.0e6
-    F = -p * A_FUGE
     for art in ("gemeinsam", "eigene"):
         m = zwei_bloecke(art, ordnung=2)
         check(f"{art}: das Netz ist tet10", {e.typ for e in m.elements} == {"tet10"},
@@ -2357,17 +2586,9 @@ def test_tet10_fuge_gesperrt():
               m.nn == nn and len(m.elements) == ne and not kb.ausgefuehrt,
               f"Knoten {nn} -> {m.nn}")
 
-        # Beleg, was die Sperre verhindert: ohne sie traegt die Fuge Zug. Bei
-        # eigenen Flaechen entsteht ein Kontaktpaar, und das sperrt beim
-        # Rechnen ein zweites Mal (contact.py) - darum auch dort ohne Sperre.
-        m2 = zwei_bloecke(art, ordnung=2)
-        kb2 = kontaktbedingung(m2, art)
-        _ohne_sperre(lambda: fugen.kontaktfuge_ausfuehren(m2, kb2, []))
-        g = _ohne_sperre(lambda: rechnen(m2, p, federn=1.0e11))
-        check(f"{art}: ohne Sperre blieben Knoten gemeinsam und die Fuge trüge Zug",
-              _gemeinsame_knoten(m2) > 0 and -g["R_fundament"] > 0.3 * F,
-              f"{_gemeinsame_knoten(m2)} gemeinsame Knoten, "
-              f"R = {-g['R_fundament'] / 1e3:.1f} kN von {F / 1e3:.0f} kN")
+        # Bis zum 07.10.2026 stand hier der Beleg, dass die Fuge ohne Sperre Zug
+        # traegt (die Seitenmitten blieben gemeinsam). Seit Q2 trennt die Fuge
+        # sie mit: test_tet10_fuge_trennt_die_mitten belegt das Gegenteil.
 
 
 def test_tet10_verschweisst_erlaubt():
@@ -2497,7 +2718,11 @@ def main():
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei,
-              test_arbeiterdatei_nur_dieses_laufs, test_karten_einmal_je_lauf):
+              test_arbeiterdatei_nur_dieses_laufs, test_karten_einmal_je_lauf,
+              test_tet10_fuge_trennt_die_mitten, test_hex20_fuge_trennt_die_mitten,
+              test_pent15_fuge_trennt_die_mitten,
+              test_tet10_fuge_mit_rippe_loest_nachbarn_samt_mitten,
+              test_lineare_fuge_zaehlt_keine_mitten):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -1733,6 +1733,31 @@ Entwurf vernetzt, mit Hinweis in Maske und Protokoll (Abschnitt
 (starr in allen Richtungen, passende Netze), denn sie trennt nichts. Der
 Kontakt über quadratische Seiten ist in Arbeit.
 
+**Fugen trennen auch die Seitenmitten** (Paket Q2, 08.10.2026). Bis zum 07.10.2026
+verdoppelte das Ausführen einer Kontaktfuge nur die Eckknoten der Fugenseite. An
+einem tet10, hex20 oder pent15 blieben die Mitten der Kanten, die beide Bauteile
+teilten, gemeinsam, und die Fuge war dort durchverbunden: An zwei Würfeln mit 0,5 m
+Netz trug eine Fuge ohne Zugfestigkeit 525,8 kN von 1000 kN Zug (bei eigenen
+Fugenflächen 371,2 kN). Seither bekommt jede Seite der Fuge eigene Seitenmitten:
+Das Programm verdoppelt zusammen mit den Eckknoten auch die Mitten der Fugenkanten,
+die ein anderes Bauteil mitbenutzt, hängt die Elemente des gelösten Bauteils auf die
+neuen Knoten um und führt die Paare aus alter und neuer Nummer unter den getrennten
+Knoten mit, sodass die Abnahme „Fuge überbrückt“ auch die Mitten prüft. Im
+Protokoll steht die Zahl der Seitenmitten neben der der Eckknoten („… 24 Knoten und
+53 Seitenmitten verdoppelt …“), im Bericht der Fuge als Eintrag `mitten`. Gemessen
+an denselben Würfeln trägt die Fuge unter Zug jetzt 0 kN (tet10 mit passenden Netzen
+und mit eigenen Flächen, hex20), und danach gehört kein Knoten mehr zwei Bauteilen;
+am pent15 sind es die drei Ecken und die drei Seitenmitten des gemeinsamen Dreiecks.
+Spaltelemente, Kopplungen und das Kontaktpaar bleiben an den Eckknoten. Jede Seite
+hat nun ihre eigenen Mitten an ihren eigenen Ecken, damit der Kontakt für
+quadratische Seiten sie an diese Ecken binden kann (in Arbeit). Bis dahin bleibt
+die Sperre bestehen, und die Rechnung an einer Fuge mit tet10 bricht weiter ab: Die
+Trennung allein trägt noch keinen Druck, denn die freien Mitten der Seite liefen
+sonst durch die Gegenseite. Die Fuge an tet4 und hex8 ist unverändert (Netz,
+Fugenobjekte und Ergebnisse stimmen Bit für Bit mit dem Stand davor überein).
+Geprüft in `tests/test_fugen.py` (tet10 mit passenden Netzen, eigenen Flächen und
+angeschweißter Rippe, hex20, pent15).
+
 **Ordnung je Körper** (23.09.2026, im Aufbau): Jeder Volumenkörper trägt im Modell
 und in der Datei eine eigene Ordnung (`Volumenkoerper.ordnung`): leer heißt „wie das
 Netz bzw. automatisch“, 1 heißt tet4, 2 heißt tet10. Leer ist die Vorgabe, auch für

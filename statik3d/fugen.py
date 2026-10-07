@@ -676,6 +676,31 @@ def kontaktfuge_zuruecknehmen(model: Model, kb) -> int:
     return vorher - (len(model.gap_elements) + len(model.kopplungen) + len(model.contact_pairs))
 
 
+def seitenmitten(model: Model, seiten: list) -> set:
+    """Die Seitenmitten (Kantenmitten) der Fugenseiten.
+
+    ``seiten`` sind Eintraege von :func:`_dreiecke_der_fuge` - Element,
+    **Eckknoten** der Seite, Normale. An tet10, hex20 und pent15 hat dieselbe
+    Seite weitere Knoten auf ihren Kanten; sie stehen im Element hinter den
+    Ecken (``solid.FLAECHEN`` gegen ``solid.FLAECHEN_ECKEN``). Die Seite wird
+    ueber ihre Ecken (gleiche Reihenfolge wie in ``FLAECHEN_ECKEN``)
+    wiedergefunden. Lineare Elemente und Schalen haben keine: leere Menge.
+    """
+    from .elements import solid as sl
+    quad = _quadratische_volumentypen()
+    out: set = set()
+    for e, nd, _n in seiten:
+        el = model.elements[e]
+        if el.typ not in quad:                  # tet4, hex8, pent6, pyr5, Schalen
+            continue
+        nd = tuple(int(x) for x in nd)
+        for f, fe in zip(sl.FLAECHEN[el.typ], sl.FLAECHEN_ECKEN[el.typ]):
+            if tuple(int(el.nodes[c]) for c in fe) == nd:
+                out.update(int(el.nodes[c]) for c in f[len(fe):])
+                break
+    return out
+
+
 def gruppen_je_knoten(model: Model) -> dict:
     """{Knoten: Menge der Bauteile, deren Elemente ihn benutzen}.
 
@@ -695,8 +720,9 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
                            knotengruppen: dict = None, cache: dict = None) -> dict:
     """Eine einzelne Kontaktbedingung im Netz umsetzen.
 
-    Rueckgabe ein Bericht: verdoppelte Knoten, gesetzte Spaltelemente und
-    Kopplungen, sowie der Grund, wenn nichts geschehen ist.
+    Rueckgabe ein Bericht: verdoppelte Knoten (``knoten``: die Ecken; an
+    quadratischen Elementen dazu ``mitten``: die Seitenmitten), gesetzte
+    Spaltelemente und Kopplungen, sowie der Grund, wenn nichts geschehen ist.
     """
     from .importers import _common as C
     bericht = {"knoten": 0, "spalt": 0, "kopplung": 0,
@@ -782,6 +808,14 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     fugenknoten = {n for _e, nd, _n in seite_b for n in nd}
     gemeinsam = sorted(k for k in fugenknoten
                        if knotengruppen.get(k, set()) - geloest)
+    # Die Seitenmitten quadratischer Elemente (tet10, hex20, pent15) gehoeren
+    # zur Fuge wie die Ecken: eine Mitte, die auch ein Element ausserhalb des
+    # geloesten Bauteils benutzt, haelt beide Seiten zusammen. Bis zum
+    # 07.10.2026 blieben sie gemeinsam - eine Fuge ohne Zugfestigkeit trug mit
+    # tet10 525,8 kN von 1000 kN Zug. ``passend`` bleibt eine Frage der Ecken.
+    mitten = seitenmitten(model, seite_b)
+    gemeinsame_mitten = sorted(k for k in mitten
+                               if knotengruppen.get(k, set()) - geloest)
     #: Passen die Netze Knoten fuer Knoten zusammen? Dann - und nur dann - ist
     #: **jeder** Fugenknoten gemeinsam, und die Fuge laesst sich Knoten gegen
     #: Knoten anschreiben. Sonst traegt ein Kontaktpaar die Flaeche.
@@ -853,38 +887,49 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     neu: dict = {}
     for k in gemeinsam:
         neu[k] = int(model.add_node(*model.nodes[k]))
+    # Die Mitten danach: die Nummern der Ecken bleiben, wie sie ohne Mitten waren.
+    # Jede Seite bekommt eigene Mitten an ihren eigenen Ecken (Kante a-b des
+    # bleibenden Bauteils, Kante a'-b' des geloesten) - nur so lassen sich die
+    # Mitten spaeter an ihre Ecken binden. Die Lage bleibt die der alten Mitte.
+    neu_mitten: dict = {}
+    for k in gemeinsame_mitten:
+        neu_mitten[k] = int(model.add_node(*model.nodes[k]))
+    alle_neu = {**neu, **neu_mitten}
     # Alle Elemente der geloesten Seite umhaengen - nicht nur die an der Fuge:
     # ein Element, das mit einer Kante an der Fuge liegt, gehoert genauso dazu.
     an_neu: dict = {}               # neuer Knoten -> Elemente, die ihn jetzt benutzen
-    if neu:
-        neue = set(neu.values())
+    if alle_neu:
+        neue = set(alle_neu.values())
         for i, el in enumerate(model.elements):
             if str(getattr(el, "group", "") or "") not in geloest:
                 continue
-            el.nodes = [neu.get(int(n), int(n)) for n in el.nodes]
+            el.nodes = [alle_neu.get(int(n), int(n)) for n in el.nodes]
             for n in el.nodes:
                 if n in neue:
                     an_neu.setdefault(n, set()).add(i)
     # Die Knotenkarte nachfuehren, damit die naechste Fuge richtig sieht,
     # was noch zusammenhaengt.
-    for k, n in neu.items():
+    for k, n in alle_neu.items():
         knotengruppen[n] = set(geloest)
         knotengruppen[k] = knotengruppen.get(k, set()) - geloest
-    if neu:
+    if alle_neu:
         _randseiten_vergessen(cache, geloest)
-    _lager_mitnehmen(model, neu, log)
+    _lager_mitnehmen(model, alle_neu, log)
     _gegenfacetten_mitnehmen(model, neu, an_neu, log)
     bericht["knoten"] = len(neu)
+    if neu_mitten:
+        bericht["mitten"] = len(neu_mitten)
     bericht["mitgeloest"] = sorted(mit)
     if mit and log is not None:
         C.say(log, f"  {kb.name}: angeschweißte Nachbarn lösen sich mit: "
                    + ", ".join(sorted(mit)) + " (gemeinsame Flächen ohne Kontaktbedingung)")
-    if neu:
+    if alle_neu:
         # Fuer die Abnahme merken, welche Knoten getrennt wurden: danach darf
         # kein Element beide Seiten benutzen, sonst ueberbrueckt es genau die
         # Trennung, die hier entstanden ist, und die Fuge wirkt dort nicht.
+        # Die Seitenmitten stehen mit darin (seit 08.10.2026, Q2).
         alt = model.getrennte_knoten.setdefault(str(kb.name), [])
-        alt.extend([int(k), int(n)] for k, n in neu.items())
+        alt.extend([int(k), int(n)] for k, n in alle_neu.items())
 
     if not passend:
         # Nur der gemeinsame Rand war verschweisst; die Flaeche dazwischen
@@ -939,7 +984,8 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     kb.ausgefuehrt = True
     if log is not None:
         C.say(log, f"Kontaktbedingung {kb.name}: {bericht['knoten']} Knoten "
-                   f"verdoppelt, {bericht['spalt']} Spaltelemente, "
+                   + (f"und {len(neu_mitten)} Seitenmitten " if neu_mitten else "")
+                   + f"verdoppelt, {bericht['spalt']} Spaltelemente, "
                    f"{bericht['kopplung']} Kopplungen "
                    f"(gelöst: {', '.join(sorted(kern))}"
                    + (f", samt angeschweißter {', '.join(sorted(mit))}" if mit else "") + ")")
@@ -1318,7 +1364,9 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
         art = ("Verbund" if zug and haften else "ohne Trennung" if zug
                else "haftend" if haften else "")
         C.say(log, f"Kontaktbedingung {kb.name}: "
-                   + (f"{bericht['knoten']} Randknoten getrennt, " if bericht["knoten"] else "")
+                   + (f"{bericht['knoten']} Randknoten"
+                      + (f" und {bericht['mitten']} Seitenmitten" if bericht.get("mitten") else "")
+                      + " getrennt, " if bericht["knoten"] else "")
                    + f"Kontaktpaar mit {len(slave)} Knoten gegen {len(master)} Gegenfacetten "
                    f"({A_zu * 1e4:.0f} von {A_alle * 1e4:.0f} cm² der Kontaktseite, "
                    f"Suchradius {weite * 1e3:.0f} mm, Spalt "
@@ -1350,7 +1398,7 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
     man nicht ausfuehren konnte.
     """
     from .importers import _common as C
-    gesamt = {"fugen": 0, "knoten": 0, "spalt": 0, "kopplung": 0,
+    gesamt = {"fugen": 0, "knoten": 0, "mitten": 0, "spalt": 0, "kopplung": 0,
               "kontaktpaar": 0, "offen": 0}
     gruende: dict = {}
     offene = [kb for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values()
@@ -1371,7 +1419,7 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
             zeiten.append((dt, kb.name, int(b.get("knoten", 0) or 0)))
         if kb.ausgefuehrt and not b["grund"]:
             gesamt["fugen"] += 1
-            for x in ("knoten", "spalt", "kopplung", "kontaktpaar"):
+            for x in ("knoten", "mitten", "spalt", "kopplung", "kontaktpaar"):
                 gesamt[x] += b.get(x, 0)
         else:
             gesamt["offen"] += 1
@@ -1386,7 +1434,8 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
         if gesamt["fugen"]:
             C.say(log, f"{gesamt['fugen']} Kontaktfugen ausgeführt: "
                        f"{gesamt['knoten']} Fugenknoten, "
-                       f"{gesamt['spalt']} Spaltelemente, "
+                       + (f"{gesamt['mitten']} Seitenmitten, " if gesamt["mitten"] else "")
+                       + f"{gesamt['spalt']} Spaltelemente, "
                        f"{gesamt['kopplung']} Kopplungen, "
                        f"{gesamt['kontaktpaar']} Kontaktpaare")
         for grund, n in sorted(gruende.items()):
