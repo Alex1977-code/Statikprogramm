@@ -8480,16 +8480,23 @@ class Model:
         return msgs
 
     # ---------------- Speichern / Laden ----------------
-    def to_dict(self, fortschritt=None) -> dict:
+    def to_dict(self, fortschritt=None, netz: bool = True) -> dict:
+        """Das Modell als JSON-faehiges Woerterbuch (die Modelldatei).
+
+        ``netz=False`` laesst Knoten und Elemente leer (07.10.2026, N38): die
+        Kennung der Ergebnisdatei (ergebnisse.rechenkennung) liest alles
+        Uebrige aus genau dieser Form - was gespeichert wird, ist das, was
+        nach dem Laden wieder da ist - und hasht Knoten und Elemente selbst,
+        ohne asdict je Element (am Drehlager Sekunden)."""
         # Knoten, Elemente und Lastfaelle machen bei grossen Modellen fast die
         # ganze Zeit aus; sie werden vorweg berechnet, damit der Balken sie
         # einzeln melden kann. Die Reihenfolge der Schluessel bleibt gleich.
         _melde(fortschritt, 0.02, f"{self.nn} Knoten aufbereiten")
-        knoten = self.nodes.tolist()
-        n_el = len(self.elements)
+        knoten = self.nodes.tolist() if netz else []
+        n_el = len(self.elements) if netz else 0
         _melde(fortschritt, 0.10, f"{n_el} Elemente aufbereiten")
         elemente = []
-        for i, e in enumerate(self.elements):
+        for i, e in enumerate(self.elements if netz else ()):
             elemente.append(asdict(e))
             if fortschritt is not None and (i & 8191) == 0 and i:
                 _melde(fortschritt, 0.10 + 0.55 * i / max(1, n_el),

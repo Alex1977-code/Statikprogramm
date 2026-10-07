@@ -1399,6 +1399,23 @@ class MainWindow(QtWidgets.QMainWindow):
         """Laeuft eine Rechnung (Worker oder Rechnung im Vordergrund)?"""
         return self._rechnung_laeuft() or bool(getattr(self, "_rechnet_gerade", False))
 
+    #: eine Hintergrundrechnung laeuft: gesetzt in _run_background, zurueck in
+    #: _bg_done, _bg_failed und _bg_abgebrochen
+    _rechnet_gerade_wert = False
+
+    @property
+    def _rechnet_gerade(self) -> bool:
+        """Laeuft eine Hintergrundrechnung? Eine Eigenschaft seit dem
+        07.10.2026 (Nachtrag N40): jeder Wechsel sagt es dem Browser
+        (_web_sperre_nachfuehren). Bis dahin aenderte der Browser das Modell
+        auch waehrend der Rechnung - sie liest das Modell des Fensters."""
+        return self._rechnet_gerade_wert
+
+    @_rechnet_gerade.setter
+    def _rechnet_gerade(self, an) -> None:
+        self._rechnet_gerade_wert = bool(an)
+        self._web_sperre_nachfuehren()
+
     def _menuestand(self) -> tuple:
         """Der Stand, auf dem ein Rechtsklickmenue gebaut wurde: Modell,
         Aenderungsstand und Ergebnisse. Rueckgaengig und Wiederholen, Loeschen,
@@ -6947,8 +6964,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Was der Browser zu hoeren bekommt, wenn er das Modell aendern will
         (Paket 13m, zweite Nachbesserung, Luecke 3): leer, wenn er darf. Der
         Web-Server liest es in seinem Faden (web.server._desktop_frei) - darum
-        ein einfacher Text, den nur dieser Faden hier schreibt."""
-        if _uebernahme_offen(self):
+        ein einfacher Text, den nur dieser Faden hier schreibt.
+
+        Waehrend einer Rechnung (seit dem 07.10.2026, Nachtrag N40): die
+        Rechnung liest das Modell des Fensters, eine Aenderung aus dem
+        Browser haette sie halb gesehen. Bis dahin ging sie durch - nur ein
+        anderes Netz fiel am Ende auf, ein anderes Eigengewicht gar nicht."""
+        if getattr(self, "_rechnet_gerade_wert", False):
+            grund = ("Am Desktop läuft gerade eine Rechnung – bitte warten, bis sie fertig ist, und die "
+                     "Änderung dann noch einmal senden")
+        elif _uebernahme_offen(self):
             grund = ("Am Desktop läuft gerade ein „Übernehmen“ – bitte warten und die Änderung "
                      "dann noch einmal senden")
         else:
@@ -10573,12 +10598,14 @@ class MainWindow(QtWidgets.QMainWindow):
         genannten treffen oder verfehlen, und „Lager ohne Namen bleiben immer
         aktiv“. Die Stellung folgt dem Umbenennen zwar (:meth:`_lager_benennen`),
         aber statt jeden Fall nachzuvollziehen, verwirft eine Umbenennung dann die
-        Ergebnisse (im Zweifel verwerfen)."""
-        for st in getattr(self.model, "stellungen", []) or []:
-            for attr in ("lager_aus", "lager_aktiv", "linienlager_aus", "flaechenlager_aus"):
-                if getattr(st, attr, None):
-                    return True
-        return False
+        Ergebnisse (im Zweifel verwerfen).
+
+        Die Regel steht seit dem 07.10.2026 in ergebnisse.lagernamen_zaehlen:
+        die Kennung der Ergebnisdatei zaehlt Lagernamen genau dann mit
+        (Nachtrag N38) - sonst behielte die Oberflaeche die Ergebnisse, und
+        die Datei passte nach Speichern und Oeffnen nicht mehr."""
+        from .. import ergebnisse as erg
+        return erg.lagernamen_zaehlen(self.model)
 
     def _nur_beschriftung(self, art: str, name: str, geaendert, w: dict = None) -> bool:
         """Aendert das „Übernehmen“ nur Beschriftungen (oder gar nichts)?
@@ -19886,9 +19913,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._signatur_gespeichert is not None
                 and self._modellsignatur() != self._signatur_gespeichert):
             teile.append("Änderungen am Modell")
-        if self._ergebnis_ungespeichert and (self.analysis is not None or self.results is not None):
+        if self._ergebnis_ungespeichert and self._ergebnis_zaehlt():
             teile.append("Ergebnisse der letzten Rechnung")
         return " und ".join(teile)
+
+    def _ergebnis_zaehlt(self) -> bool:
+        """Gibt es Ergebnisse, die Speichern sichern wuerde (Nachtrag N39,
+        07.10.2026)? Eine Analyse nur, wenn sie zum Modell passt - genau dann
+        schreibt ergebnisse_speichern sie. Bis dahin genuegte, dass es eine
+        gab: ein Ergebnis, das als „anders“ galt (Modell waehrend der Rechnung
+        geaendert), nannte die Rueckfrage vor dem Beenden, und „Speichern“
+        schrieb es dann doch nicht. Einzelergebnisse (self.results:
+        Eigenformen, Knicken) zaehlen wie bisher."""
+        if self.analysis is not None and self._analyse_passt() == "passt":
+            return True
+        return self.results is not None
 
     def _titel_nachziehen(self):
         """Stern im Fenstertitel, wenn etwas ungespeichert ist - der Titel
@@ -23710,6 +23749,8 @@ class MainWindow(QtWidgets.QMainWindow):
         geben ihn an _solve_done weiter wie on_done selbst (24.09.2026)."""
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
+        if not self._browser_anhalten():
+            return self.hinweis("Im Browser wird gerade das Modell geändert – bitte gleich noch einmal rechnen")
         self._rechnung_stand = stand
         self._rechnung_modellwechsel = self._modellwechsel
         # jede Aenderung waehrend der Rechnung wechselt den Aenderungsstand
@@ -23748,6 +23789,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.abgebrochen.connect(self._bg_abgebrochen)
         self._rechenliste_oeffnen(posten)
         self.worker.start()
+
+    #: so lange wartet der Start einer Rechnung auf eine laufende Aenderung
+    #: aus dem Browser [s]
+    BROWSER_WARTEN = 5.0
+
+    def _browser_anhalten(self) -> bool:
+        """Vor dem Start einer Rechnung (Nachtrag N40, 07.10.2026): ab hier
+        weist der Browser jede Aenderung ab (_rechnet_gerade), und eine, die
+        gerade laeuft, wird erst fertig - der Web-Server aendert das Modell
+        unter seinem Schloss (web.server.State.lock), die Rechnung soll kein
+        halb geaendertes lesen. False, wenn sie nach BROWSER_WARTEN Sekunden
+        noch laeuft: dann startet die Rechnung nicht."""
+        self._rechnet_gerade = True
+        sperre = getattr(getattr(self, "web_state", None), "lock", None)
+        if sperre is None:
+            return True
+        if sperre.acquire(timeout=self.BROWSER_WARTEN):
+            sperre.release()
+            return True
+        self._rechnet_gerade = False
+        return False
 
     def _rechenliste_oeffnen(self, posten) -> None:
         """Das Fenster mit einer Zeile je Posten zeigen und an den Worker haengen.
@@ -23948,9 +24010,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Eine Hintergrundrechnung hat Ergebnisse hinterlassen: sie gelten
         als ungespeichert, bis gespeichert wird (am Drehlager kostet eine
         verlorene Rechnung Stunden). Die Ergebnisse aus der Datei beim
-        Oeffnen laufen nicht hier durch."""
+        Oeffnen laufen nicht hier durch.
+
+        Eine neue Analyse zaehlt nur, wenn Speichern sie schriebe
+        (_ergebnis_zaehlt, Nachtrag N39): eine, die als „anders“ gilt, wird
+        nie gespeichert - die Rueckfrage nannte sie bis zum 07.10.2026
+        trotzdem."""
         a, r = self.analysis, self.results
-        if (a is not vorher[0] or r is not vorher[1]) and (a is not None or r is not None):
+        neue_analyse = a is not vorher[0] and a is not None and self._analyse_passt() == "passt"
+        neues_einzel = r is not vorher[1] and r is not None
+        if neue_analyse or neues_einzel:
             self._ergebnis_ungespeichert = True
             self._titel_nachziehen()
 

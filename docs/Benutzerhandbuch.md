@@ -4014,9 +4014,9 @@ gibt es nach „Rückgängig“ nicht mehr – die Maske ist geschlossen“. Bis
 schrieb sie zurück. Hat der Browser das Modell gegen ein anderes getauscht,
 geht die Maske zu wie bei *Neu*.
 
-Ist am Desktop eine Maske mit nicht übernommenen Änderungen offen, weist das
-Programm Änderungen aus dem **Browser** ab, auch *Neu*, ein Beispiel und den
-Import dort. Der Browser bekommt die Meldung „Am Desktop ist die Maske
+Ist am Desktop eine Maske mit nicht übernommenen Änderungen offen oder läuft
+dort eine Rechnung (seit dem 07.10.2026), weist das Programm Änderungen aus
+dem **Browser** ab, auch *Neu*, ein Beispiel und den Import dort. Der Browser bekommt die Meldung „Am Desktop ist die Maske
 „Knoten K1“ mit nicht übernommenen Änderungen offen – dort erst „Übernehmen“
 oder „Verwerfen“, dann die Änderung hier noch einmal senden“. Bis zum
 03.10.2026 ersetzte der Browser das Modell unter der Maske, und ihr
@@ -4386,7 +4386,12 @@ Eingabe in einer Tabellenzelle, die Projektangaben (auch aus dem
 Berichtsdialog), die Knöpfe des Registers Lager/Lasten (Eigengewicht,
 Temperaturlast, Linien- und Flächenlager, Kombinationen), Vernetzen, ein
 Import, Änderungen aus dem Browser — und **eine fertige Rechnung**: ihre
-Ergebnisse stehen erst nach dem Speichern in der Ergebnisdatei. Keine Änderung
+Ergebnisse stehen erst nach dem Speichern in der Ergebnisdatei. Das gilt nur für
+Ergebnisse, die Speichern auch schreibt: Ein Ergebnis, das nicht mehr zum Modell
+passt (etwa weil das Modell während der Rechnung geändert wurde), nennt die
+Rückfrage nicht, denn es käme ohnehin nicht in die Datei; sie nennt dann nur
+die Änderungen am Modell. Bis zum 07.10.2026 nannte sie auch ein solches
+Ergebnis, und *Speichern* schrieb es danach doch nicht. Keine Änderung
 sind Anzeige, Auswahl, der gezeigte Lastfall und die Werteskala der Färbung.
 Was an keinem dieser Wege vorbeikommt, fängt ein Vergleich der Anzahlen aller
 Modellobjekte, der Lasten je Lastfall und der Knotenkoordinaten.
@@ -8971,10 +8976,16 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   abgewiesen: Ein Hinweis sagt „Rechnung läuft: … erst nach der Rechnung
   übernehmen“, die Eingaben bleiben stehen, und nach der Rechnung genügt
   derselbe Knopf. Masken, die nur die Ansicht stellen (Darstellung, Messen,
-  Netzqualität, Schnittebene), wirken weiter. Ändert ein anderer Weg das
-  Modell während der Rechnung, etwa eine Tabelle, der Haken Eigengewicht im
-  Register Lager/Lasten, Rückgängig oder der Browser, passt ihr Ergebnis
-  nicht: Es kommt nicht ins Bild, die Kopfzeile sagt „Ergebnis passt nicht
+  Netzqualität, Schnittebene), wirken weiter. Der **Browser** wird während
+  der Rechnung abgewiesen: Er bekommt die Meldung „Am Desktop läuft gerade
+  eine Rechnung – bitte warten, bis sie fertig ist, und die Änderung dann noch
+  einmal senden“, und eine Änderung aus dem Browser, die beim Start der
+  Rechnung gerade läuft, wird erst fertig, bevor die Rechnung das Modell
+  liest. Bis zum 07.10.2026 ging eine Änderung aus dem Browser während der
+  Rechnung durch; ein anderes Netz fiel am Ende auf, ein anderes Eigengewicht
+  nicht. Ändert ein anderer Weg das Modell während der Rechnung, etwa eine
+  Tabelle, der Haken Eigengewicht im Register Lager/Lasten oder Rückgängig,
+  passt ihr Ergebnis nicht: Es kommt nicht ins Bild, die Kopfzeile sagt „Ergebnis passt nicht
   mehr zum Modell – neu rechnen“, ein Hinweis nennt den Grund, und Speichern
   schreibt keine Ergebnisdatei. Das gilt auch, wenn die Änderung vor dem Ende
   wieder zurückgenommen wurde, denn die Rechnung liest das Modell
@@ -10190,8 +10201,8 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
 Lastfälle, Kombinationen, Umhüllende, Nachweise — in eine zweite Datei
 `<modell>.ergebnisse` neben die Modelldatei; Öffnen liest sie wieder ein,
 wenn sie zum Modell passt (Knoten- und Elementzahl, die Lage jedes Knotens,
-je Element Typ und Knoten, Lastfallnamen), und das Programm steht danach
-wieder auf „berechnet“. Bis zum 12.09.2026 war nach dem Öffnen jede Rechnung
+je Element Typ und Knoten, Lastfallnamen und alle Rechenangaben, siehe
+unten), und das Programm steht danach wieder auf „berechnet“. Bis zum 12.09.2026 war nach dem Öffnen jede Rechnung
 weg — am Drehlager 18 Minuten je Lastfall. Ein Modell, das nach der Rechnung
 verändert wurde, passt nicht mehr; ein Hinweis in der Statuszeile und im
 Protokoll nennt den Grund, und die Datei bleibt liegen (bis zum 06.10.2026
@@ -10211,6 +10222,37 @@ geladen, aber mit dem Hinweis „mit Vorbehalt geladen“: Wer das Modell seitde
 ohne die Ergebnisse geändert hat, rechnet neu. Speichern ohne neue Rechnung
 behält den Vorbehalt, erst die nächste Rechnung schreibt die neue Kennung.
 Geprüft in `tests/test_fehler_p6.py`.
+
+Seit dem 07.10.2026 prüft die Kennung auch alles andere, was das Ergebnis
+bestimmt: die Lasten jedes Lastfalls (auch Eigengewicht und die Lasten der
+Lastgeneratoren Wind und Wasserdruck), die Eigenschaften der Lastfälle
+(Einwirkung, ψ, Theorie, Situation), die Kombinationen, Werkstoffe,
+Querschnitte und Dicken, die Eigenschaften jedes Elements (Werkstoff,
+Querschnitt, Drehung, Gelenke am Stab), Linien, Flächen und Volumen, die
+Lager, Gelenke, Federn und Kopplungen, den Kontakt, Massen und Dämpfer,
+Stellungen und Situationen, die Rechenart mit ihren Einstellungen
+(Plastizität, Bemessung, Theorie II. Ordnung) und die Nachweise. Passt eine
+dieser Gruppen nicht, lädt das Öffnen die Ergebnisse nicht, und der Hinweis
+nennt, was sich geändert hat, bei Lasten auch den Lastfall, etwa
+„Ergebnisdatei nicht geladen (rahmen.ergebnisse): … seit der Rechnung
+geändert: Lasten (LF1) – bitte neu rechnen“. Nicht mitgeprüft wird, was nur
+beschriftet oder anzeigt: Kommentare, Beschreibungen und Bezeichnungen,
+Nummern von Lastfällen und Kombinationen, die Größe der Lagersymbole, die
+Namen der Lager (außer eine Stellung nennt Lager beim Namen), Layer,
+Berichtseinträge, Einheiten, der gezeigte Lastfall, Projektangaben und die
+Netzvorgaben (das Netz selbst steht in Knoten und Elementen). Das sind
+dieselben Felder, bei denen *Übernehmen* die Ergebnisse behält. Werkstoffe,
+Querschnitte und Dicken, die nichts im Modell benutzt, zählen ebenfalls nicht
+mit; das Öffnen legt einem Modell ohne Dicken die Vorgabe „t = 10 mm“ an, und
+das darf eine Ergebnisdatei nicht ungültig machen. Ein gespeichertes und
+wieder geöffnetes Modell hat dieselbe Kennung; gemessen am Drehlager kostet
+sie beim Speichern und beim Öffnen je 2,4 bis 3,6 s statt 0,6 bis 0,7 s. Bis zum 07.10.2026 prüfte die Kennung nur Knoten, Elemente und die
+Namen der Lastfälle: Wer das Eigengewicht verdoppelte und das Modell als
+.json exportierte, bekam beim Öffnen das alte Ergebnis als passend gezeigt
+(uz −15,2543 statt −15,6466 mm). Eine Ergebnisdatei von vor dem 07.10.2026
+wird wie oben mit Vorbehalt geladen; der Hinweis sagt, dass sie Lasten,
+Werkstoffe, Querschnitte, Lager und die übrigen Rechenangaben nicht prüft.
+Geprüft in `tests/test_nachtrag_q1.py`.
 
 **Netz und Elemente im Bericht (seit 25.09.2026).** Für den Prüfer — „wie kann
 ich dem Prüfer beweisen, dass an dieser Stelle dieses Element verwendet wurde“
