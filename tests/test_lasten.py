@@ -76,7 +76,9 @@ def test_teillast_einfeldtraeger():
     check("Abschnitte auf zwei Elementen (1.5 m Elemente)", n_el == 2
           and all(getattr(b, "_geo", False) for b in bl),
           str([(b.elem, round(b.a, 3), b.b) for b in bl]))
-    check("Objektlast weiss es", "2 Elementlasten" in ll.kommentar, ll.kommentar)
+    # der Stand des Verteilens steht im Feld ``verteilt``, nicht im Kommentar (N05, 07.10.2026)
+    check("Objektlast weiss es", "2 Elementlasten" in ll.verteilt and ll.kommentar == "",
+          f"{ll.verteilt!r} / {ll.kommentar!r}")
     check("n_loads zaehlt die Objektlast, nicht die Ableitungen", m.case().n_loads == 1,
           str(m.case().n_loads))
     r = solver.solve_static(m)

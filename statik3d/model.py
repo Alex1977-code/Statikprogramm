@@ -1124,6 +1124,16 @@ class Geometrielast:
         return bool(np.all(xy >= lo) and np.all(xy <= hi))
 
 
+#: Warum eine Linienlast keine Elementlast erzeugt hat (``Linienlast.verteilt``,
+#: :meth:`Model._warum_leer_linie`). Dateien vor dem 07.10.2026 tragen sie im
+#: Kommentar; :meth:`Model._verteilstand_aus_kommentar_loesen` erkennt sie daran.
+LINIENLAST_GRUENDE = ("Stab gibt es im Modell nicht", "Stab hat keine Elemente",
+                      "Abschnitt liegt ausserhalb des Stabes", "Linie gibt es im Modell nicht",
+                      "Linie noch nicht vernetzt", "Abschnitt liegt ausserhalb der Linie")
+(_L_STAB_FEHLT, _L_STAB_LEER, _L_STAB_AUSSERHALB,
+ _L_LINIE_FEHLT, _L_LINIE_UNVERNETZT, _L_LINIE_AUSSERHALB) = LINIENLAST_GRUENDE
+
+
 @dataclass
 class Linienlast:
     """Linienlast auf einem **Stab** (physischer Stab = Kette von Elementen)
@@ -1147,10 +1157,15 @@ class Linienlast:
     von: float = 0.0
     bis: Optional[float] = None
     kommentar: str = ""
-    # Wer die Last erzeugt hat (etwa "wind:W1"); leer = vom Anwender. Das
-    # Verteilen ueberschreibt ``kommentar`` mit „n Elementlasten“, darum
-    # erkennt ein Generator seine Lasten an diesem Feld (seit 06.10.2026).
+    # Wer die Last erzeugt hat (etwa "wind:W1"); leer = vom Anwender. Ein
+    # Generator erkennt seine Lasten an diesem Feld, nicht am Kommentar
+    # (seit 06.10.2026).
     erzeuger: str = ""
+    # Stand des Verteilens: „n Elementlasten“ oder der Grund, warum keine
+    # entstanden sind (LINIENLAST_GRUENDE). Setzt :meth:`Model.lasten_verteilen`;
+    # gespeichert wird er nicht, er ergibt sich beim Laden neu. Bis zum
+    # 07.10.2026 stand er im Kommentar und ueberschrieb den des Anwenders (N05).
+    verteilt: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1435,8 +1450,10 @@ class LoadCase:
             "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
-            # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei
-            "linienlasten": [{k: v for k, v in asdict(l).items() if k != "erzeuger" or v}
+            # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei;
+            # den Stand des Verteilens (verteilt) schreibt niemand, er entsteht neu
+            "linienlasten": [{k: v for k, v in asdict(l).items()
+                              if k != "verteilt" and (k != "erzeuger" or v)}
                              for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
@@ -4660,6 +4677,38 @@ class Model:
         """Alter Name von :meth:`add_kontaktbedingung`."""
         return self.add_kontaktbedingung(name, **kw)
 
+    def _verteilstand_aus_kommentar_loesen(self) -> int:
+        """Dateien vor dem 07.10.2026: den Stand des Verteilens aus dem Kommentar
+        der Linienlasten nehmen (N05). Rueckgabe: Zahl der geloesten Kommentare.
+
+        Das Verteilen schrieb „n Elementlasten“ oder den Grund, warum nichts
+        entstand (``LINIENLAST_GRUENDE``), in ``kommentar`` und ueberschrieb damit
+        den des Anwenders. Ein solcher Kommentar ist keiner mehr: er wird
+        geleert, und das Verteilen legt den Stand ins Feld ``verteilt``. Ein
+        anderer Kommentar bleibt.
+
+        Eine Windlast ohne Merkmal ``erzeuger`` (Dateien vor dem 06.10.2026)
+        bekommt es dabei: ihr Kommentar „n Elementlasten“ war der Anker, an dem
+        :func:`wind._vom_wind` sie fand (zusammen mit Lastfall, Stab und
+        Richtung); ohne ihn fiele sie beim naechsten „Lasten erzeugen“ aus der
+        Erkennung und verdoppelte sich."""
+        import re
+        from . import wind as _wind
+        n = 0
+        for lc in self.load_cases.values():
+            for ll in lc.linienlasten:
+                k = ll.kommentar or ""
+                if not (re.fullmatch(r"\d+ Elementlasten", k) or k in LINIENLAST_GRUENDE):
+                    continue
+                if not ll.erzeuger:
+                    for w in (getattr(self, "winde", None) or {}).values():
+                        if _wind._vom_wind(ll, w, lc, True):
+                            ll.erzeuger = f"wind:{w.name}"
+                            break
+                ll.kommentar = ""
+                n += 1
+        return n
+
     def lasten_verteilen(self, log: list = None) -> int:
         """Objektlasten auf die inzwischen vorhandenen Elemente legen.
 
@@ -4705,8 +4754,11 @@ class Model:
                     f._geo = True
                     (lc.beam_loads if isinstance(f, BeamLoad) else lc.nodal_loads).append(f)
                 erzeugt += len(neue)
-                ll.kommentar = (f"{len(neue)} Elementlasten" if neue
-                                else self._warum_leer_linie(ll))
+                # der Stand steht im eigenen Feld; ``kommentar`` gehoert dem Anwender
+                # (und Generatoren) - bis zum 07.10.2026 ueberschrieb ihn das
+                # Verteilen mit „n Elementlasten“ (N05)
+                ll.verteilt = (f"{len(neue)} Elementlasten" if neue
+                               else self._warum_leer_linie(ll))
                 offen += not neue
         if log is not None and (erzeugt or offen):
             from .importers import _common as C
@@ -4715,9 +4767,10 @@ class Model:
             if offen:
                 gruende: dict = {}
                 for lc in self.load_cases.values():
-                    for gl in list(lc.geometrielasten) + list(lc.linienlasten):
-                        if "Elementlasten" not in (gl.kommentar or ""):
-                            gruende[gl.kommentar] = gruende.get(gl.kommentar, 0) + 1
+                    for stand in ([g.kommentar for g in lc.geometrielasten]
+                                  + [x.verteilt for x in lc.linienlasten]):
+                        if "Elementlasten" not in (stand or ""):
+                            gruende[stand] = gruende.get(stand, 0) + 1
                 for grund, k in sorted(gruende.items()):
                     C.say(log, f"  {k} Objektlasten ohne Elementlast: {grund}")
         return erzeugt
@@ -6288,15 +6341,15 @@ class Model:
         if ll.art == "stab":
             mem = self.members.get(ll.ziel)
             if mem is None:
-                return "Stab gibt es im Modell nicht"
+                return _L_STAB_FEHLT
             if not mem.elements:
-                return "Stab hat keine Elemente"
-            return "Abschnitt liegt ausserhalb des Stabes"
+                return _L_STAB_LEER
+            return _L_STAB_AUSSERHALB
         if ll.ziel not in self.lines:
-            return "Linie gibt es im Modell nicht"
+            return _L_LINIE_FEHLT
         if len(self.knoten_auf_linie(ll.ziel)) < 2:
-            return "Linie noch nicht vernetzt"
-        return "Abschnitt liegt ausserhalb der Linie"
+            return _L_LINIE_UNVERNETZT
+        return _L_LINIE_AUSSERHALB
 
     def _warum_leer(self, gl: "Geometrielast") -> str:
         """Warum eine Geometrielast keine Elementlast erzeugt hat.
@@ -8722,6 +8775,7 @@ class Model:
         # die ``_geo``-Lasten vorher weg), und ohne Netz oder ohne
         # Objektlasten kostet es nichts - darum steht es hier und nicht im
         # Loeser: wer ein Modell laedt, hat seine Lasten.
+        m._verteilstand_aus_kommentar_loesen()
         if m.elements and any(lc.geometrielasten or lc.linienlasten
                               for lc in m.load_cases.values()):
             m.lasten_verteilen()

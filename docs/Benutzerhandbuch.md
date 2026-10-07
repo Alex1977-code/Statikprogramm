@@ -4353,6 +4353,28 @@ es keine doppelten Knoten, meldet die Statuszeile „0 doppelte Knoten entfernt�
 eine Temperaturlast mit ΔT = 0 oder ohne Elemente weist ein Hinweis ab; der Haken
 *Eigengewicht* in einem Zustand, in dem er schon steht, tut nichts.
 
+**Doppelte Knoten zusammenführen nimmt jeden Verweis mit (seit 07.10.2026).**
+Dabei bekommen die Knoten neue Nummern, und jeder Verweis folgt seinem Knoten:
+Elemente, Linien, die Lager aller drei Arten (Knoten-, Linien- und Flächenlager,
+bei einem Flächenlager addieren sich die Einflussflächen gleich gewordener
+Knoten), Knotenlasten und Zwangsverformungen, die Kontaktobjekte (Kontaktlager,
+Spaltelement, Kontaktpaar mit Slave-Knoten, Master-Facetten, Einflussflächen und
+Randknoten), Kopplungen, starre Körper, Punktmassen, Dämpfer, die Ecken und
+integrierten Knoten der Flächen, Layer, Subsysteme, Lasteinleitungen,
+Verformungsgrenzen, der Antrieb einer Stellung, die getrennten Fugenknoten und
+die gekrümmten Kantenmitten der Tetraeder mit Ordnung p – dieselben Verweisarten,
+die auch das Löschen eines Knotens kennt. Ein Knoten, der dabei gleich wird, steht
+in einer Linie, einem Lager oder einer Gruppe nur einmal. Bis zum 07.10.2026 zog
+der Befehl nur Elemente, Lager, Knotenlasten und Kontakt nach; an einem
+Probemodell mit zwei doppelten Knoten und 24 Verweisarten zeigten danach 18 auf
+einen anderen Knoten oder hinter das Ende der Knotenliste, etwa die Linie
+(0 | 0 | 0), (20 | 2 | 0), (22 | 2 | 0) m auf (20 | 2 | 0), (21 | 2 | 0) m und einen
+Punkt, den es nicht mehr gab. Die Beispiele (Rahmen, Platte, Konsole, Fachwerk,
+Halle, Kontakt, Reibblock, Stauwand) rechnen vor und nach der Änderung mit
+denselben Verschiebungen und Auflagerkräften. Die Importe führen ihre Knoten auf
+demselben Weg zusammen; neu ist, dass der Befehl in der Oberfläche, im Browser
+und in den Beispielen ihn ebenfalls geht (`tests/test_nachtrag_q6.py`).
+
 ### Nichts geht ungefragt verloren (seit 24.09.2026)
 
 **Stern im Fenstertitel.** Sobald das Modell vom gespeicherten Stand abweicht,
@@ -4729,6 +4751,21 @@ Antriebsmoment einer Stellung angreift, lässt sich nicht löschen, solange die
 Stellung ihn nennt. Geprüft in `tests/test_loeschen.py` und
 `tests/test_tasten_fokus.py` (alle Löschwege der Oberfläche).
 
+**Lager, die das Programm selbst entfernt (seit 07.10.2026).** Zwei Stellen
+nehmen Knotenlager aus dem Modell, ohne dass der Anwender sie löscht, und ziehen
+seitdem die Stellungen nach wie das Löschen: die Umwandlung eines tet10-Netzes
+in Tetraeder mit Ordnung p (`tetp.aus_tet10`; die Lager an den Mittenknoten
+fallen weg, denn diese Knoten tragen danach nichts mehr) und der RFEM-Import mit
+„nur Stabtragwerk“ (`structure_only`; Lager an Knoten ohne Element fallen weg,
+dazu Linien- und Flächenlager, deren Knoten alle ohne Element sind). Der Import
+schreibt die Zeilen ins Importprotokoll, `aus_tet10` gibt sie unter
+`"stellungen"` zurück. Bis zum 07.10.2026 blieben die Einträge stehen: In der
+Probe (vier Knotenlager, das dritte am Mittenknoten, eine Stellung mit
+„Lager 4“) nannte „Lager 4“ danach kein Lager mehr, und das Lager an der Ecke
+war in der Stellung nicht mehr abgeschaltet; beim Import traf der Eintrag
+„Lager 3“ nach dem Wegfall eines Lagers davor ebenso ins Leere
+(`tests/test_nachtrag_q6.py`).
+
 **Lagernamen in Stellungen (seit 06.10.2026).** Jede Lagerart hat in der
 Stellung ihre eigene Liste („Deaktivierte Knotenlager“, „Deaktivierte
 Linienlager“, „Deaktivierte Flächenlager“) und ihren eigenen Schlüssel: den
@@ -5017,6 +5054,31 @@ die Objektlast steht dafür mit dem Vermerk, wie viele Elementlasten sie
 erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
 trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
 RFEM-Modells.
+
+**Der Vermerk steht nicht im Kommentar der Linienlast (seit 07.10.2026).** Bei
+einer Linienlast zeigt die Lasttabelle in der Spalte „Bemerkung“ zuerst den
+Abschnitt und den Stand des Verteilens („von 1 m bis 3 m 2 Elementlasten“) und
+danach, durch ein Semikolon getrennt, den eigenen Kommentar der Last („…
+2 Elementlasten; Verkleidung“). Im Bericht heißt die Spalte mit dem Stand
+„Elementlasten“; gibt es an einer Linienlast einen Kommentar, kommt eine Spalte
+„Kommentar“ dazu. Kommt keine Elementlast zustande, steht an derselben Stelle der
+Grund („Stab hat keine Elemente“, „Linie noch nicht vernetzt“ und so weiter), und
+das Protokoll nennt ihn weiter. Das Verteilen lässt den Kommentar stehen. Bis zum
+07.10.2026 schrieb es „n Elementlasten“ oder den Grund in den Kommentar jeder
+Linienlast und überschrieb damit den eigenen; in der Probe wurde aus
+„Verkleidung, nach Statik Anlage 3“ der Text „6 Elementlasten“. Der Stand wird
+nicht gespeichert, er ergibt sich beim Öffnen und bei jedem Verteilen neu. Eine
+Datei von vorher wird beim Öffnen umgestellt: Ein Kommentar, der nur aus
+„n Elementlasten“ oder einem dieser Gründe besteht, war nie ein eigener und wird
+geleert; jeder andere Kommentar bleibt. Eine Windlast aus einer Datei vor dem
+06.10.2026 bekommt dabei ihr Merkmal (Python: `erzeuger = "wind:<Name>"`), an dem
+„Lasten erzeugen“, das Löschen und das Umbenennen des Winds sie finden – ihr
+Kommentar „n Elementlasten“ war bis dahin das Einzige, woran man sie erkannte.
+Der Kommentar, den „Lasten erzeugen“ an eine Windlast schreibt („Wind W: c_f =
+0,709, b_ref = 0,2 m“), bleibt dadurch sichtbar und steht mit Dezimalkomma in der
+Bemerkung. Flächenlasten und Temperaturen auf Flächen und Volumen behalten den
+Vermerk, wo er stand: Dort kann der Anwender keinen Kommentar eingeben
+(`tests/test_nachtrag_q6.py`).
 
 **Linienlast auf quadratischen Kanten.** Eine Linie besteht im Netz aus
 Elementkanten, und jeder Knoten bekommt den Anteil der Linienlast, den die
@@ -5717,6 +5779,20 @@ Fortschrittsbalken und ist abbrechbar. Der Bericht zeigt das c_p-Feld und das
 Geschwindigkeitsfeld v/v∞ des Schnitts. Die Beiwerte sind **qualitativ** -
 Modell-Reynolds-Zahl, ebener Schnitt - und gegen die Norm zu prüfen; der
 Lastfall trägt die Lastfall-Nr. aus der Maske.
+
+**Einen Wind löschen oder umbenennen (seit 07.10.2026).** Löschen (Modellbaum →
+Wind → Entf) und Umbenennen (Windmaske, „Lasten erzeugen“ mit neuem Namen) nehmen
+die Stablasten des Winds aus allen Lastfällen und mit ihnen die daraus verteilten
+Elementlasten; eine Linienlast des Anwenders im selben Lastfall bleibt. Erkannt
+werden die Stablasten an dem Merkmal, das „Lasten erzeugen“ an jede von ihnen
+schreibt, nicht an ihrem Kommentar; eine Datei vor dem 06.10.2026 ohne dieses
+Merkmal wird an Lastfall, Stab und Richtung erkannt (beim Öffnen bekommen die
+Stablasten das Merkmal nachgetragen). Bis zum 07.10.2026 suchten Modellbaum und
+Windmaske den Kommentar „Wind <Name>:“, den das Verteilen bis dahin überschrieb:
+In der Probe (Mast mit sechs Elementen, Wind W und eine eigene Last quer dazu)
+blieben nach dem Löschen beide Linienlasten und alle zwölf Elementlasten stehen,
+und das Umbenennen von W in W2 ergab 18 statt 12 Elementlasten, weil die alte
+Windlast neben der neuen weiterwirkte (`tests/test_nachtrag_q6.py`).
 
 ## 4a Elemente: was das Programm rechnen kann
 
@@ -7118,6 +7194,15 @@ Hinweis „gibt es nicht“, und eine später angelegte Last gleichen Namens gin
 still in den Anschlussnachweis ein (an der Halle D = 71,287 ohne Hinweis).
 Dasselbe gilt für eine Ermüdungslast, die mit ihrem Lastfall oder ihrer
 Kombination entfällt (`tests/test_fehler_p5.py`).
+
+Im Browser verwirft das Anlegen und das Löschen einer Ermüdungslast seit dem
+07.10.2026 auch den **Anschlussnachweis** (neben den Stabnachweisen und dem
+Ermüdungsnachweis); die Rechnung der Lastfälle bleibt stehen. Der Anschlussnachweis
+führt die Ermüdung der Anschlüsse mit, und an einem Anschluss mit leerer Liste
+(„alle Ermüdungslasten“) ändert jede Last, die dazukommt oder wegfällt, die
+Schädigungssumme D. Bis zum 07.10.2026 zeigte der Browser nach dem Löschen weiter
+den alten Anschlussnachweis (an der Halle mit dem Anschluss K1 und leerer Liste
+D = 10,372 mit allen Lasten, obwohl eine gelöscht war; `tests/test_nachtrag_q6.py`).
 
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder

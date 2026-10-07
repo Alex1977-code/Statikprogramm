@@ -221,44 +221,32 @@ def doppelte_knoten(model: Model, tol: float = 1e-6) -> int:
     aendern (gleicher Schluessel). Fuer Befehle, die vor der Aenderung einen
     Rueckgaengig-Schritt anlegen und bei „nichts zu tun“ keinen hinterlassen
     sollen (Fehlerliste 06.10.2026, F32)."""
-    if model.nn == 0:
-        return 0
-    key = np.round(model.nodes / tol).astype(np.int64)
-    return int(model.nn - len(np.unique(key, axis=0)))
+    from .importers import _common as C
+    return C.count_duplicate_nodes(model, tol)
 
 
 def merge_nodes(model: Model, tol: float = 1e-6) -> int:
-    """Doppelte Knoten zusammenfuehren (z.B. nach mehrfachem Import)."""
-    if model.nn == 0:
-        return 0
-    key = np.round(model.nodes / tol).astype(np.int64)
-    _, first, inverse = np.unique(key, axis=0, return_index=True,
-                                  return_inverse=True)
-    order = np.argsort(first)
-    remap = np.zeros(len(first), dtype=int)
-    remap[order] = np.arange(len(first))
-    new_index = remap[inverse]
-    n_removed = model.nn - len(first)
-    if n_removed == 0:
-        return 0
-    new_nodes = np.zeros((len(first), 3))
-    new_nodes[new_index] = model.nodes
-    model.nodes = new_nodes
-    for e in model.elements:
-        e.nodes = [int(new_index[n]) for n in e.nodes]
-    for s in model.supports:
-        s.node = int(new_index[s.node])
-    for lc in model.load_cases.values():
-        for l in lc.nodal_loads:
-            l.node = int(new_index[l.node])
-    for c in model.contact_supports:
-        c.node = int(new_index[c.node])
-    for g in model.gap_elements:
-        g.node_a = int(new_index[g.node_a])
-        g.node_b = int(new_index[g.node_b])
-    for cp in model.contact_pairs:
-        cp.slave_nodes = sorted({int(new_index[n]) for n in cp.slave_nodes})
-        cp.master_faces = [[int(new_index[n]) for n in f] for f in cp.master_faces]
+    """Doppelte Knoten zusammenfuehren (z.B. nach mehrfachem Import).
+
+    Jeder Verweis auf einen Knoten folgt: Elemente, Linien, Lager aller Arten,
+    Lasten, Kontakt, Kopplungen, starre Koerper, Flaechenecken, Layer … - dieselben
+    Verweisarten, die das Loeschen eines Knotens kennt
+    (:meth:`Model._knotenverweise_abbilden`). Die Arbeit tut
+    :func:`importers._common.merge_duplicate_nodes`, das jeden Import nach
+    dem Einlesen zusammenfuehrt; ein gleich gewordener Knoten steht dort in
+    einer Linie, einem Lager oder einer Gruppe einmal (Einflussflaechen
+    summieren sich). Bis zum 07.10.2026 hatte dieses Modul eine eigene,
+    kuerzere Fassung, die nur Elemente, Lager, Knotenlasten und Kontakt nachzog
+    (N11): Linien, Kopplungen, starre Koerper und der Rest zeigten danach auf
+    einen anderen Knoten - oder hinter das Ende der Knotenliste.
+
+    Zusaetzlich fuehrt ein Kontaktpaar gleich gewordene Slave-Knoten nur einmal
+    (sortiert), wie es dieses Modul immer tat."""
+    from .importers import _common as C
+    n_removed = C.merge_duplicate_nodes(model, tol)
+    if n_removed:
+        for cp in model.contact_pairs:
+            cp.slave_nodes = sorted({int(n) for n in cp.slave_nodes})
     return n_removed
 
 

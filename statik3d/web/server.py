@@ -264,9 +264,14 @@ class State:
                 if ziel is not None:
                     ziel.stellungsreihe = None
                     ziel.umhuellende = None
-        elif what == "design" and self.analysis is not None:
+        elif what in ("design", "ermuedung") and self.analysis is not None:
             self.analysis.design = None
             self.analysis.fatigue = None
+            if what == "ermuedung":
+                # Der Anschlussnachweis fuehrt die Ermuedung der Anschluesse mit
+                # (Joint.ermuedung; leer = alle Ermuedungslasten): eine neue oder
+                # geloeschte Last aendert D. Bis zum 07.10.2026 blieb er stehen (N22).
+                self.analysis.joints = None
 
 
 def _desktop_frei(st: State) -> None:
@@ -976,8 +981,11 @@ NAMEN_OPS = {"add_case", "edit_case", "copy_case", "remove_case", "add_combinati
 #: 06.10.2026 nicht mehr dazu: es nimmt die Linienlasten und Vorspannungen des
 #: Stabs mit (Model.stab_loeschen, Fehlerliste F28), die Analyse gilt danach
 #: nicht mehr
-KEEP_DESIGN = {"design_settings", "set_member", "auto_members",
-               "add_fatigue_load", "remove_fatigue_load"}
+KEEP_DESIGN = {"design_settings", "set_member", "auto_members"}
+#: Ermuedungslasten anlegen und loeschen: die Nachweise gehen wie bei KEEP_DESIGN,
+#: dazu der Anschlussnachweis (``analysis.joints``), in dem die Ermuedung der
+#: Anschluesse steht (State.invalidate("ermuedung"); N22)
+ERMUEDUNG_OPS = {"add_fatigue_load", "remove_fatigue_load"}
 GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "clear_mesh",
             "add_element", "line_of_beams", "plate", "box", "support", "remove_support",
             "clear_supports", "hinges", "merge_nodes", "contact_support", "gap_element",
@@ -2173,7 +2181,8 @@ def apply_op(st: State, d: dict) -> dict:
         except (KeyError, ValueError, IndexError, TypeError) as ex:
             raise ApiError(str(ex).strip('"\''))
         if name not in KEEP_ALL:
-            st.invalidate("design" if name in KEEP_DESIGN else "all")
+            st.invalidate("design" if name in KEEP_DESIGN
+                          else "ermuedung" if name in ERMUEDUNG_OPS else "all")
             st.touch()
         if name in NAMEN_OPS:
             st.invalidate("namen")

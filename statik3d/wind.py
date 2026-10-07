@@ -653,7 +653,9 @@ def _vom_wind(ll, w: Wind, lc, alt_erkennen: bool) -> bool:
     """Ist die Linienlast eine Stablast dieses Winds? Am Merkmal ``erzeuger``;
     in Dateien vor dem 06.10.2026 (``alt_erkennen``) am Kommentar „Wind <Name>:“
     oder - weil das Verteilen ihn durch „n Elementlasten“ ersetzt hat - an
-    Lastfall, Stab und Richtung (global, parallel zur Windrichtung)."""
+    Lastfall, Stab und Richtung (global, parallel zur Windrichtung).
+
+    Rufen: :func:`stablasten_entfernen` - nicht den Kommentar lesen (N23)."""
     if ll.erzeuger:
         return ll.erzeuger == f"wind:{w.name}"
     if not alt_erkennen:
@@ -668,6 +670,28 @@ def _vom_wind(ll, w: Wind, lc, alt_erkennen: bool) -> bool:
     q = np.asarray(ll.q, float)
     nd, nq = float(np.linalg.norm(d)), float(np.linalg.norm(q))
     return nd > 0 and nq > 0 and abs(abs(float(q @ d)) - nq * nd) <= 1e-9 * nq * nd
+
+
+def stablasten_entfernen(model, w: Wind) -> int:
+    """Die Linienlasten (Stablasten) des Winds ``w`` aus allen Lastfaellen nehmen;
+    Rueckgabe: ihre Zahl. Danach ist :meth:`Model.lasten_verteilen` zu rufen,
+    damit die daraus verteilten Elementlasten mitgehen.
+
+    Erkannt werden sie am Merkmal ``erzeuger`` (``wind:<Name>``); in Dateien vor
+    dem 06.10.2026, die es nicht tragen, an Lastfall, Stab und Richtung,
+    einmalig (:func:`_vom_wind`). Bis zum 07.10.2026 suchten der Modellbaum
+    beim Loeschen eines Winds und die Windmaske beim Umbenennen den Kommentar
+    „Wind <Name>:“, den das Verteilen bis dahin ueberschrieb - die Stablasten
+    blieben stehen (N23)."""
+    marke = f"wind:{w.name}"
+    alt_erkennen = not any(ll.erzeuger == marke for lc_ in model.load_cases.values()
+                           for ll in lc_.linienlasten)
+    n = 0
+    for lc in model.load_cases.values():
+        bleibt = [ll for ll in lc.linienlasten if not _vom_wind(ll, w, lc, alt_erkennen)]
+        n += len(lc.linienlasten) - len(bleibt)
+        lc.linienlasten = bleibt
+    return n
 
 
 def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
@@ -709,12 +733,10 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     # Dateien vor dem 06.10.2026 tragen kein Merkmal ``erzeuger``: dann werden die
     # Stablasten des Winds an Lastfall, Stab und Richtung erkannt, einmalig
     marke = f"wind:{w.name}"
-    alt_erkennen = not any(ll.erzeuger == marke for lc_ in model.load_cases.values()
-                           for ll in lc_.linienlasten)
     for lc in model.load_cases.values():
         lc.geometrielasten = [gl for gl in lc.geometrielasten
                               if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == w.name)]
-        lc.linienlasten = [ll for ll in lc.linienlasten if not _vom_wind(ll, w, lc, alt_erkennen)]
+    stablasten_entfernen(model, w)
     if w.lastfall not in model.load_cases:
         model.add_load_case(w.lastfall, "W" if "W" in ACTION_CATEGORIES else "Q",
                             f"Wind {w.name}", activate=False)
@@ -749,8 +771,12 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
         ll = model.add_linienlast(name, (sb["w1"] * faktor * d).tolist(), art="stab",
                                   q2=(sb["w2"] * faktor * d).tolist(), system="global", case=w.lastfall)
         ll.erzeuger = marke
-        ll.kommentar = f"Wind {w.name}: c_f = {sb['cf']:.2f}, b_ref = {sb['b_ref']:.3f} m" \
-            + (f", Windkanal (v/v∞)² = {faktor:.2f}" if wk is not None else "")
+        # Der Kommentar bleibt jetzt stehen und erscheint in Lasttabelle und Bericht (N05);
+        # darum Zahlen im Format des Programms (Dezimalkomma, nie wissenschaftlich)
+        from .zahlen import zahl_text
+        ll.kommentar = (f"Wind {w.name}: c_f = {zahl_text(sb['cf'], stellen=3)}, "
+                        f"b_ref = {zahl_text(sb['b_ref'], stellen=3)} m"
+                        + (f", Windkanal (v/v∞)² = {zahl_text(faktor, stellen=3)}" if wk is not None else ""))
         staebe.append(sb)
     model.winde[w.name] = w
     n_elem = model.lasten_verteilen()

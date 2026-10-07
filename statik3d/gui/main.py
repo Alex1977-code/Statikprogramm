@@ -11946,8 +11946,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     lc.geometrielasten = [gl for gl in lc.geometrielasten
                                           if not (gl.verlauf.get("art") == "wind"
                                                   and gl.verlauf.get("name") == name)]
-                    lc.linienlasten = [ll for ll in lc.linienlasten
-                                       if not (ll.kommentar or "").startswith(f"Wind {name}:")]
+                # die Stablasten am Merkmal ``erzeuger``, nicht am Kommentar (N23)
+                from .. import wind as wm
+                wm.stablasten_entfernen(m, m.winde[name])
                 del m.winde[name]
                 m.lasten_verteilen()
         elif art == "kontaktbedingung":
@@ -14542,9 +14543,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 if l.von or l.bis is not None:
                     abschnitt = f"von {zl.zahl_text(l.von, tausender=False)} m" + (f" bis {zl.zahl_text(l.bis, tausender=False)} m" if l.bis is not None
                                                       else " bis Ende")
+                # Abschnitt und Stand des Verteilens („n Elementlasten“), dann der
+                # Kommentar des Anwenders - der Stand steht seit dem 07.10.2026 nicht
+                # mehr im Kommentar (N05)
+                stand = " ".join(x for x in (abschnitt, l.verteilt) if x)
                 zeilen.append([i, lcname, "Linienlast", ziel, wert,
                                tab.LASTSYSTEM_TEXT.get(l.system, l.system),
-                               " ".join(x for x in (abschnitt, l.kommentar or "") if x)])
+                               "; ".join(x for x in (stand, l.kommentar or "") if x)])
                 i += 1
             for l in lc.zwangsverformungen:
                 zeilen.append([i, lcname, "Zwangsverformung", f"K{l.node}",
@@ -21449,8 +21454,11 @@ class MainWindow(QtWidgets.QMainWindow):
             for lc in m.load_cases.values():
                 lc.geometrielasten = [gl for gl in lc.geometrielasten
                                       if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == alt)]
-                lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {alt}:")]
+            # die Stablasten des alten Winds am Merkmal ``erzeuger`` (N23); danach legt
+            # das Verteilen die Elementlasten der verbliebenen neu
+            wm.stablasten_entfernen(m, m.winde[alt])
             del m.winde[alt]
+            m.lasten_verteilen()
         self._fortschritt_ende()
         self._namen_geaendert()             # ein neuer Lastfall kann entstanden sein
         wk_ = kw.get("windkanal")

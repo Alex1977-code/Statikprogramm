@@ -31,7 +31,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.contracts.test_vertrag", "tests.test_kontakt_exakt",
            "tests.test_fehler_p7",
            "tests.test_fehler_p16", "tests.test_fehler_p15",
-           "tests.test_nachtrag_q2", "tests.test_nachtrag_q3", "tests.test_nachtrag_q10", "tests.test_nachtrag_q9", "tests.test_nachtrag_q4", "tests.test_nachtrag_q5",
+           "tests.test_nachtrag_q2", "tests.test_nachtrag_q3", "tests.test_nachtrag_q10", "tests.test_nachtrag_q9", "tests.test_nachtrag_q4", "tests.test_nachtrag_q5", "tests.test_nachtrag_q6",
            "volumen3d.tests.test_kern"]
 
 

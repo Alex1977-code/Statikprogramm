@@ -1413,8 +1413,13 @@ class Report:
             if note:
                 b.append(("note", note))
         if getattr(lc, "linienlasten", None):
+            # der Kommentar des Anwenders steht in einer eigenen Spalte, wenn es einen gibt;
+            # der Stand des Verteilens („n Elementlasten“) steht seit dem 07.10.2026 nicht
+            # mehr in ihm (N05)
+            mit_kommentar = any(l.kommentar for l in lc.linienlasten)
             rows = [["Ziel", "System", "Abschnitt", "q_x [kN/m]", "q_y [kN/m]", "q_z [kN/m]",
-                     "q_x,Ende", "q_y,Ende", "q_z,Ende", "Elementlasten"]]
+                     "q_x,Ende", "q_y,Ende", "q_z,Ende", "Elementlasten"]
+                    + (["Kommentar"] if mit_kommentar else [])]
             for l in lc.linienlasten:
                 q2 = l.q2 if l.q2 is not None else l.q
                 abschnitt = "ganze Länge"
@@ -1425,7 +1430,8 @@ class Report:
                             + [fmt(v / 1e3, 3) for v in l.q]
                             + ([fmt(v / 1e3, 3) for v in q2] if list(q2) != list(l.q)
                                else ["=", "=", "="])
-                            + [l.kommentar or "–"])
+                            + [l.verteilt or "–"]
+                            + ([l.kommentar or "–"] if mit_kommentar else []))
             rows, note = self._truncate(rows)
             b.append(("table", rows, f"Linienlasten Lastfall {lc.name} (auf Stäben und Linien; "
                                      "beim Vernetzen auf Elemente und Knoten verteilt)", None, ""))
