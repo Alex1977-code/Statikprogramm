@@ -162,6 +162,44 @@ if (ohneWarnung.length) {
 }
 function esc0(s) { return ev(`esc(${JSON.stringify(s)})`); }
 
+// --- N19: Knoten-, Linien- und Flaechenlager aus (Nachtrag, 07.10.2026) -----
+// Das Formular kannte nur "Lager aus"; Linien- und Flaechenlager liessen sich
+// im Browser nicht abschalten. Die Listen kommen aus dem Zustand
+// (linienlager_aus, flaechenlager_aus), die Namen der vorhandenen Lager aus
+// stellungen.lager_schluessel.
+if (B.liste.length) {
+  const st0 = B.liste[0];
+  st0.lager_aus = ['Lager 1'];
+  st0.linienlager_aus = ['Rand'];
+  st0.flaechenlager_aus = ['Bettung', 'Platte'];
+  B.lager_schluessel = {lager: ['Lager 1', 'Lager 2'], linienlager: ['Rand'], flaechenlager: ['Bettung', 'Platte']};
+  const neu = ev('stellungForm(null)');
+  pruefe('N19 Formular neue Stellung: eigene Felder für Linien- und Flächenlager',
+         neu.includes('name="linienlager_aus"') && neu.includes('name="flaechenlager_aus"')
+         && neu.includes('name="lager_aus"'));
+  pruefe('N19 Formular: das Knotenlager heißt Knotenlager, nicht nur Lager',
+         neu.includes('Knotenlager aus') && neu.includes('Linienlager aus') && neu.includes('Flächenlager aus'));
+  const alt = ev('stellungForm(S.state.stellungen.liste[0])');
+  pruefe('N19 Formular einer Stellung: jedes Feld trägt seine Liste',
+         /name="lager_aus" value="Lager 1"/.test(alt) && /name="linienlager_aus" value="Rand"/.test(alt)
+         && /name="flaechenlager_aus" value="Bettung, Platte"/.test(alt),
+         (alt.match(/name="[a-z]*lager_aus"[^>]*>/g) || []).join(' '));
+  pruefe('N19 Formular nennt die vorhandenen Lager wie der Modellbaum',
+         alt.includes('Lager 2') && alt.includes('Rand') && alt.includes('Platte'));
+  ev(`S.stellung = ${JSON.stringify(st0.name)}`);
+  const hk = ev('renderBruecke()');
+  pruefe('N19 Karte der Stellung und Tabelle nennen alle drei Listen',
+         (hk.match(/Lager 1, Rand, Bettung, Platte/g) || []).length >= 2,
+         (hk.match(/Lager 1[^<]*/g) || []).join(' | '));
+  pruefe('N19 keine unaufgelöste Vorlage', !alt.includes('undefined') && !hk.includes('undefined')
+         && !alt.includes('[object Object]'));
+  // ohne die Felder im Zustand (Server von vor dem 07.10.2026): kein Fehler
+  delete st0.linienlager_aus; delete st0.flaechenlager_aus; delete B.lager_schluessel;
+  let ohne = '', fehler = '';
+  try { ohne = ev('stellungForm(S.state.stellungen.liste[0])') + ev('renderBruecke()'); } catch (e) { fehler = e.message; }
+  pruefe('N19 Zustand ohne die neuen Felder: rendert ohne Fehler', !fehler && !ohne.includes('undefined'), fehler);
+}
+
 const gewaehlt = B.liste.length ? B.liste[0].name : '';
 ev(`S.stellung = ${JSON.stringify(gewaehlt)}`);
 const h2 = ev('renderBruecke()');

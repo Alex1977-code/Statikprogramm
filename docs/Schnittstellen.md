@@ -1357,7 +1357,7 @@ Beispiel aus einer echten Datei:
     Verbindungsmittel: ISO 4017-M12x35 (M12), ISO 4032-M16 (M16), DIN 910-M36x1.5
 
 Führt die Werkstofftabelle andere Festigkeiten als die Norm zur Bezeichnung,
-gilt die Norm (EN 10025‑2) und die Abweichung steht im Protokoll.
+gilt die Norm der Sorte (EN 10025‑2 bis ‑5) und die Abweichung steht im Protokoll.
 
 #### Geometrie aus dem Szenenteil (SZN)
 
@@ -1474,7 +1474,7 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 | `.sdnf` | SDNF 3.0 | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Verdrehung; Bleche mit Eckpunkten und Dicke |
 | `.nc1` / `.zip` | DSTV-NC | je Stab eine Datei: Kopfblock, Profil, Länge, Werkstoff, Kontur |
 | `.ifc` | IFC 4 (Structural Analysis View) | Knoten, Stäbe, Flächen, Lagerbedingungen, Lastfälle mit Knotenlasten |
-| `.xlsx` | SAF | Knoten, Stäbe, Flächen, Querschnitte, Materialien, Lager, Lastfälle, Kombinationen (auch Ergebniskombinationen), Lasten (Stablasten gleichmäßig, trapezförmig, abschnittsweise) |
+| `.xlsx` | SAF | Knoten, Stäbe (mit allen Zwischenknoten), Flächen, Querschnitte, Materialien, Lager, Lastfälle (Eigengewicht als „Self weight“), Kombinationen (auch Ergebniskombinationen), Lasten (Knotenkräfte und -momente; Stablasten gleichmäßig, trapezförmig, abschnittsweise; Flächenlasten auf Schalen; Temperatur auf Stäben und Schalen) |
 | `.csv` | Tabellen im RFEM-Aufbau | zehn Blätter in einem Ordner, vom eigenen Tabellenimport wieder lesbar |
 | `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und Volumenaußenflächen als 3DFACE, Lager und Beschriftung auf eigenen Layern |
 | `.inp` | Abaqus / CalculiX | Knoten, Elemente, Materialien, Querschnitte, Randbedingungen, ein Step je Lastfall |
@@ -1499,10 +1499,11 @@ nachgelesen): `Name`, `Type` (Standard), `Force action` (On beam), `Distribution
 `Start point [m]`, `End point [m]`. Je Stablast und nicht verschwindender
 Richtung steht eine Zeile. `Member` ist der Name aus dem Blatt der Stäbe; die
 Positionen laufen vom SAF-Anfangsknoten des Stabes, den auch das Blatt der Stäbe
-nennt. Lokale Werte stehen in den Achsen des Stabes, den der Import aus
-Anfangsknoten, Endknoten und der Rotation des ersten Elements bildet. Ist ein
-Stab nicht gerade, führt SAF ihn hier als Verbindung seiner Endknoten, und das
-Protokoll nennt die beiden Längen.
+nennt. Lokale Werte stehen in den Achsen des Abschnitts zwischen zwei Knoten des
+Stabes, wie der Import ihn mit der Rollung des Stabes baut. Bis zum 07.10.2026
+führte die Datei einen nicht geraden Stab als Verbindung seiner Endknoten, und
+das Protokoll nannte die beiden Längen; seitdem steht er mit allen Knoten da
+(siehe unten).
 
 Eine **Ergebniskombination** geht als eine gewöhnliche Kombination je Alternative
 hinaus (`<Name> [k]`, derselbe Name wie in den Ergebnissen), mit der zusätzlichen
@@ -1518,6 +1519,62 @@ Relative (Anteil 0 bis 1 der Stablänge), `Origin` From start oder From end; Val
 gehört zum Start point, Value 2 zum End point. Ein Span ohne Positionen wird nicht
 übernommen (Warnung). Geprüft in `tests/test_fehler_p13.py`: Export, Wiedereinlesen
 und Vergleich des Lastbildes an Messpunkten entlang der Stäbe.
+
+### Zum SAF-Rundlauf: Knotenlasten, Einheiten, Rollung, Temperatur (seit 07.10.2026)
+
+Ein Modell, das Statik3D als SAF schreibt und wieder liest, kommt mit demselben
+Lastbild und denselben Steifigkeitsangaben zurück (Fehlerliste-Nachtrag N25 bis
+N30, geprüft in `tests/test_nachtrag_q8.py` an allen acht Beispielen, verglichen
+nach der Geometrie). Die Spalten folgen der SAF-Beschreibung (gitbook.saf.guide,
+Einheitentabelle am 07.10.2026 nachgelesen):
+
+* **StructuralPointAction** und **StructuralPointMoment**: je Knotenlast und
+  Komponente eine Zeile mit `Direction` (X, Y, Z bzw. Mx, My, Mz), `Force action`
+  In node, `Reference node`, `Value [kN]` bzw. `Value [kNm]`, `Coordinate system`
+  Global. Bis zum 07.10.2026 standen Fx bis Mz als Spalten ohne `Direction` und
+  `Value` da; der Import las keine Zeile davon.
+* **StructuralMaterial**: `E modulus [MPa]`, `G modulus [MPa]`, `Unit mass [kg/m3]`,
+  `Thermal expansion [1/K]`, `Design properties` „1|f_y; 2|f_u“ in MPa (Annex
+  „Supported design properties of the materials“).
+* **StructuralCrossSection**: `Cross-section type` Manufactured (Profil der
+  Datenbank mit denselben Kennwerten, Name in `Profile`), Parametric (`Shape`
+  Rectangle H; B, Circle D, Pipe D; t oder I rolled H; B; t; s; R mit
+  `Parameters [mm]`, nur wenn der Import daraus denselben Querschnitt baut) oder
+  General (nur Kennwerte, ohne Umriss; das Protokoll sagt es). Dazu `A [m2]`,
+  `Iy [m4]`, `Iz [m4]`, `It [m4]`, `Iw [m6]`, `Wply [m3]`, `Wplz [m3]`. Der Import
+  folgt `Cross-section type`: Parametric und General kommen nicht aus der
+  Datenbank, auch wenn der Name ein Profil nennt.
+* **StructuralCurveMember**: `Nodes` mit allen Knoten der Elementkette und
+  `Segments` (Line je Abschnitt), `LCS Rotation [deg]` so umgerechnet, dass die
+  lokale z-Achse bleibt, wenn die Datei den Stab andersherum führt als sein erstes
+  Element gezeichnet ist (die Datei ordnet die Endknoten nach Koordinaten).
+* **StructuralSurfaceMember**: `Thickness [mm]`.
+* **StructuralLoadCase**: `Load type` Self weight für einen Lastfall mit
+  g = 9,81 m/s² nach unten.
+* **StructuralSurfaceAction**: Flächenlast auf Schalen, senkrecht als Local Z,
+  mit Richtung als globale Komponenten X, Y, Z, `Value [kN/m2]`.
+* **StructuralCurveActionThermal** (Stäbe) und **StructuralSurfaceActionThermal**
+  (Schalen): `Variation` Constant mit `deltaT [°C]` bzw. `TempT [°C]`, Linear mit
+  `TempT` minus `TempB` gleich dem Temperaturunterschied dT_z zwischen der lokalen
+  +z- und −z-Seite; beim Stab `TempL` = `TempR` = Mitte, die Lage als `Start point`
+  und `End point` des Elements am Stab.
+
+Was SAF nicht kennt, steht als „WARNUNG: SAF: …“ im Protokoll des Exports und
+fehlt in der Datei: Situation und Theorie von Lastfällen und Kombinationen, die
+Leiteinwirkung einer Kombination, Zwangsverformungen, Vorspannungen, Übermaße,
+Lasten auf Volumen- und Scheibenelementen, ein Eigengewicht in anderer Richtung oder
+Größe, Stäbe mit verschieden gerollten Elementen oder verschiedenen Querschnitten
+(SAF führt je Stab eine Rollung und einen Querschnitt), Streckgrenzen nach
+Erzeugnisdicke und Querschnitte, die nur mit Kennwerten hinausgehen.
+
+Beim **Import** ersetzt ein Lastfall der Datei den gleichnamigen leeren
+Vorgabelastfall eines neuen Modells; bis zum 07.10.2026 hieß LF1 der Datei danach
+„LF1_2“. Ohne Einheit in der Kopfzeile gelten die Einheiten der SAF-Beschreibung,
+also A in m² und I in m⁴ (bis zum 07.10.2026 las der Import mm² und mm⁴). Eine
+Datei, die Statik3D vor dem 07.10.2026 schrieb, erkennt der Import an der Spalte
+`Yield strength` und liest E, G, Dicken und die Knotenlasten (Spalten Fx bis Mz) in
+SI; die Rollung rückwärts geführter Stäbe und die Zwischenknoten stehen in einer
+solchen Datei nicht.
 
 ### Zum HiCAD-Archiv (.sza)
 

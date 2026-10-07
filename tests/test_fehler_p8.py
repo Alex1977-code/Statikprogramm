@@ -151,23 +151,26 @@ def test_gemeinsam_traegt_die_warnung():
     check("Bericht: die Warnung steht einmal in „Offene Hinweise und Warnungen“, mit Namen",
           len(hinweise) == 1 and "LF1" in hinweise[0] and "K1" in hinweise[0],
           hinweise[0][:110] if hinweise else "fehlt")
-    # Der Strom: nur der Lastfall meldet sich unterwegs. Die Kombination rechnet
-    # ohne Fortschritt (solver.solve_combinations reicht ``progress`` nicht an
-    # solve_combination weiter, Ketten, Pool und Farm ebenso) - dorthin reicht
-    # kein Hinweis eines Ergebnisses, also auch dieser nicht.
+    # Der Strom: Lastfall und Kombination melden sich unterwegs. Bis zum
+    # 07.10.2026 rechnete die Kombination ohne Fortschritt
+    # (solver.solve_combinations reichte ``progress`` nicht an
+    # solve_combination weiter, Nachtrag N31), und die Warnung stand dort nur
+    # beim Lastfall. Ketten, Pool und Farm melden weiter nichts.
     warnzeilen = [z for z in strom if _warnt(z)]
-    marke = strom.index("Lastfall LF1 (1/1)") if "Lastfall LF1 (1/1)" in strom else -1
-    check("Strom des Rechenkerns (Protokoll): WARNUNG … als letzte Zeile vor „Lastfall LF1“",
-          len(warnzeilen) == 1 and warnzeilen[0].startswith("WARNUNG: ") and marke > 0
-          and strom[marke - 1] == warnzeilen[0] and len(warnzeilen[0]) <= 160,
-          warnzeilen[0][:110] if warnzeilen else "fehlt")
+    marken = [strom.index(t) if t in strom else -1
+              for t in ("Lastfall LF1 (1/1)", "Kombination K1 (1/1)")]
+    check("Strom des Rechenkerns (Protokoll): WARNUNG … als letzte Zeile vor „Lastfall LF1“ "
+          "und vor „Kombination K1“",
+          len(warnzeilen) == 2 and all(z.startswith("WARNUNG: ") and len(z) <= 160 for z in warnzeilen)
+          and all(i > 0 and _warnt(strom[i - 1]) for i in marken),
+          f"{len(warnzeilen)} Zeilen, Marken {marken}: " + (warnzeilen[0][:80] if warnzeilen else "fehlt"))
     check("die Zeile sagt nichts über die Konvergenz (Zustand der Rechenliste bleibt)",
           all(rlm.zustand_aus_meldung(z, x) == x and not rlm.fortschritt_aus_meldung(z)
               for z in warnzeilen for x in ("", rlm.KONVERGIERT, rlm.NICHT_KONVERGIERT)), "")
     liste = _rechenliste(m, strom)
-    check("Rechenliste: in der Spalte „Meldung“ von LF1 steht am Ende die ganze Warnung",
-          set(liste) == {"LF1", "K1"} and _warnt(liste["LF1"][1]),
-          liste.get("LF1", ("", ""))[1][:110])
+    check("Rechenliste: in der Spalte „Meldung“ von LF1 und K1 steht am Ende die ganze Warnung",
+          set(liste) == {"LF1", "K1"} and _warnt(liste["LF1"][1]) and _warnt(liste["K1"][1]),
+          liste.get("K1", ("", ""))[1][:110])
 
 
 def test_verschachtelt_ohne_warnung():

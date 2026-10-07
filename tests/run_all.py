@@ -10,6 +10,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
           "tests.test_fehler_p8",
           "tests.test_fehler_p10",
           "tests.test_fehler_p13",
+          "tests.test_nachtrag_q8",
           "tests.test_importers", "tests.test_report", "tests.test_web", "tests.test_update", "tests.test_supports", "tests.test_sections", "tests.test_rfem", "tests.test_rfem6", "tests.test_hicad", "tests.test_infocad", "tests.test_joints", "tests.test_exporters", "tests.test_bridges", "tests.test_geometrie", "tests.test_tabellen", "tests.test_gzg", "tests.test_beulen", "tests.test_klasse4", "tests.test_theorie2", "tests.test_volumen", "tests.test_geometrie_kette", "tests.test_mesher3d", "tests.test_fugen", "tests.test_kontakte", "tests.test_layer", "tests.test_skizze", "tests.test_unterlagen", "tests.test_abbruch", "tests.test_stabende", "tests.test_kontur", "tests.test_nachiteration", "tests.test_kontakthalt", "tests.test_passung", "tests.test_spiel", "tests.test_plastizitaet", "tests.test_dilatation", "tests.test_transformieren", "tests.test_konstruktion", "tests.test_verschneiden", "tests.test_woelb", "tests.test_lasten", "tests.test_situationen", "tests.test_knicklaengen", "tests.test_theorie3", "tests.test_wasserdruck", "tests.test_wind", "tests.test_schwingung", "tests.test_schweissnaehte", "tests.test_diagnose", "tests.test_singular", "tests.test_uebermass",
     "tests.test_loeser", "tests.test_startbild", "tests.test_netzverfeinerung", "tests.test_bemassung", "tests.test_netzdichte", "tests.test_einheiten", "tests.test_stroemung",
           "tests.test_lastenheft", "tests.test_ausgabe", "tests.test_umhuellende", "tests.test_kopie",
@@ -26,10 +27,11 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_stab_nachweis", "tests.test_stab_teilen", "tests.test_ergebniszeile",
            "tests.test_elementuebersicht", "tests.test_elementstufe",
            "tests.test_beenden_ohne_absturz",
-           "tests.test_fehler_p12", "tests.test_fehler_p6",
+           "tests.test_fehler_p12", "tests.test_fehler_p6", "tests.test_nachtrag_q7",
            "tests.contracts.test_vertrag", "tests.test_kontakt_exakt",
            "tests.test_fehler_p7",
            "tests.test_fehler_p16", "tests.test_fehler_p15",
+           "tests.test_nachtrag_q2", "tests.test_nachtrag_q3", "tests.test_nachtrag_q10", "tests.test_nachtrag_q9", "tests.test_nachtrag_q4", "tests.test_nachtrag_q5", "tests.test_nachtrag_q6", "tests.test_nachtrag_q1",
            "volumen3d.tests.test_kern"]
 
 

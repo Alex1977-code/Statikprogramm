@@ -3564,8 +3564,10 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
         bericht["guete"] = float(q.min())
         bericht["guete_mittel"] = float(q.mean())
         bericht["splitter"] = int(np.count_nonzero(q < 0.1))
-        bericht["randtreue"], bericht["randabweichung"] = randtreue(
-            punkte, TET, P, T, tol=0.2 * h)
+        # Abgefangen wie beim fremden Vernetzer (_randtreue_messen): bis zum
+        # 07.10.2026 brach eine gescheiterte Messung hier den Koerper ab, in
+        # einem einzigen Prozess das ganze Vernetzen (Nachtrag N37)
+        _randtreue_messen(bericht, punkte, TET, P, T, tol=0.2 * h)
     return punkte, TET, bericht
 
 
@@ -5542,8 +5544,17 @@ def _netzbericht(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray) 
     tb["guete"] = float(q.min())
     tb["guete_mittel"] = float(q.mean())
     tb["splitter"] = int(np.count_nonzero(q < 0.1))
+    _randtreue_messen(tb, Pn, TET, P, T)
+    return tb
+
+
+def _randtreue_messen(tb: dict, Pn: np.ndarray, TET: np.ndarray, P: np.ndarray,
+                      T: np.ndarray, tol: float = 0.0) -> None:
+    """``randtreue`` und ``randabweichung`` in den Bericht ``tb`` - oder,
+    wenn die Messung scheitert, 0,0 und den Grund in ``randtreue_fehler``.
+    Fuer den eigenen Vernetzer (tetraedern) und den fremden (_netzbericht)."""
     try:
-        tb["randtreue"], tb["randabweichung"] = randtreue(Pn, TET, P, T)
+        tb["randtreue"], tb["randabweichung"] = randtreue(Pn, TET, P, T, tol=tol)
     except Exception as ex:                 # noqa: BLE001 - ein Mass darf nie sperren
         # 0.0 heisst im ganzen Programm "nicht gemessen"; 1.0 waere die
         # Zusage, der Netzrand liege genau auf der Huelle - und die hat dann
@@ -5553,7 +5564,6 @@ def _netzbericht(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray) 
         # (Statik3D-Sitzung, gemessen 22.09.2026).
         tb["randtreue"], tb["randabweichung"] = 0.0, 0.0
         tb["randtreue_fehler"] = f"{type(ex).__name__}: {str(ex)[:120]}"
-    return tb
 
 
 def _feld_von(model: Model):
@@ -5760,6 +5770,10 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                                    f"{tb.get('runden', 0)} Durchgängen - "
                                    f"{tb['randluecke'] * 100:.4f} % des Rauminhalts, "
                                    f"{tb.get('dellen', 0)} freie Seiten neben der Hülle.")
+                if tb.get("randtreue_fehler"):
+                    # wie beim fremden Vernetzer (_extern_tetraedern), N37
+                    C.warn(zeilen, f"  Volumen {koerper.name}: die Randtreue ließ sich nicht messen "
+                                   f"({tb['randtreue_fehler']}) - das Netz ist an der Hülle ungeprüft.")
             if tb.get("fehler"):
                 aus["fehler"] = str(tb["fehler"])
                 return aus

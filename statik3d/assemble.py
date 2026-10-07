@@ -978,9 +978,58 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None) -> sparse.csr_m
 # --------------------------------------------------------------------------
 # Lasten
 # --------------------------------------------------------------------------
-def trapezoid_fixed_end_forces(q1, q2, L) -> np.ndarray:
+#
+# Schubverformung (Nachtrag N01, 07.10.2026). Ein Stab mit Schubflaechen
+# rechnet seine Steifigkeit nach Timoshenko (bm.k_local_beam, phi = 12 EI /
+# (G A_s L^2)). Exakt fuer die Knotenwerte sind dann die Ersatzknotenlasten
+# f_i = int N_i q dx mit den Ansaetzen, die die Steifigkeit selbst erzeugen:
+# die Biegelinie unter einer Einheitsverschiebung des FHG i bei sonst
+# festgehaltenen Enden (Satz von Betti). Fuer w und die Drehung im Sinn der
+# Neigung [w1, th1, w2, th2] sind das
+#
+#     N = H(xi) + phi / (1 + phi) * psi(xi) * [-1, -L/2, 1, -L/2],
+#     psi(xi) = xi (1 - xi) (1 - 2 xi),   xi = x / L,
+#
+# mit den kubischen Hermite-Ansaetzen H des schubstarren Stabes. Der
+# Schubanteil ist ein Gleichgewichtssystem (Summe der Kraefte und Moment um
+# den Anfang 0), die Auflagersumme bleibt also. psi ist punktsymmetrisch zur
+# Stabmitte: eine Gleichlast ueber das ganze Element bekommt nichts dazu.
+# Bis zum 07.10.2026 rechneten die Lasten nur mit H; ein Zwischenknoten
+# aenderte dann die Verschiebung (beim Teilen eines HEB 200 bis 2,0e-3 relativ),
+# ein Element allein wich an der Kragarmspitze um bis 5,9e-3 (HEB 200, 4 m,
+# kurze Last bei 1,3 m) bzw. 9,2e-3 (Rechteck 200 x 600) von der Loesung mit
+# Schubverformung ab (tests/test_nachtrag_q3.py).
+def _schubanteil(f: np.ndarray, L: float, cy: float, cz: float) -> None:
+    """Den Schubanteil der Ersatzknotenlasten zu f addieren: c = phi / (1 +
+    phi) * int q psi dx je Ebene (cy fuer x-y mit qy, cz fuer x-z mit qz).
+    In x-z ist die Drehung um y minus die Neigung von w."""
+    if cy:
+        f[1] -= cy
+        f[5] -= 0.5 * L * cy
+        f[7] += cy
+        f[11] -= 0.5 * L * cy
+    if cz:
+        f[2] -= cz
+        f[4] += 0.5 * L * cz
+        f[8] += cz
+        f[10] += 0.5 * L * cz
+
+
+def stab_schubparameter(model: Model, e, L: float) -> tuple:
+    """(phi_y, phi_z) eines Stabelements wie in seiner Steifigkeit
+    (beam_local): Fachwerkstab und Seil haben keine Biegesteifigkeit, (0, 0)."""
+    if e.typ in ("truss", "seil"):
+        return 0.0, 0.0
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    return bm.schubparameter(mat.E, mat.G, sec.Iy, sec.Iz, L, sec.Asy, sec.Asz)
+
+
+def trapezoid_fixed_end_forces(q1, q2, L, phy: float = 0.0, phz: float = 0.0) -> np.ndarray:
     """Aequivalente Knotenlasten fuer linear veraenderliche Streckenlast
-    q1 (Anfang) -> q2 (Ende) im lokalen System (Bernoulli)."""
+    q1 (Anfang) -> q2 (Ende) im lokalen System. ``phy``, ``phz``: Schubparameter
+    der Ebenen x-z und x-y (bm.schubparameter); 0 ist der schubstarre Stab
+    (Bernoulli), dann bleibt die Rechnung, wie sie war."""
     q1 = np.asarray(q1, float)
     q2 = np.asarray(q2, float)
     f = np.zeros(12)
@@ -997,15 +1046,22 @@ def trapezoid_fixed_end_forces(q1, q2, L) -> np.ndarray:
     f[8] += L * (3 * q1[2] + 7 * q2[2]) / 20.0
     f[4] += -L ** 2 * (3 * q1[2] + 2 * q2[2]) / 60.0
     f[10] += L ** 2 * (2 * q1[2] + 3 * q2[2]) / 60.0
+    if phy or phz:
+        # int_0^L q psi dx = -L (q2 - q1) / 60; Gleichlast: 0, nichts dazu
+        s = -L * (q2 - q1) / 60.0
+        _schubanteil(f, L, phz / (1.0 + phz) * s[1] if phz else 0.0,
+                     phy / (1.0 + phy) * s[2] if phy else 0.0)
     return f
 
 
-def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L) -> np.ndarray:
+def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L, phy: float = 0.0,
+                                       phz: float = 0.0) -> np.ndarray:
     """Aequivalente Knotenlasten einer Trapezlast auf dem **Abschnitt** [a, b]
-    eines Stabes (lokal, Bernoulli): q1 bei x = a, q2 bei x = b.
+    eines Stabes (lokal): q1 bei x = a, q2 bei x = b.
 
     f = Integral von a bis b ueber N(x)^T q(x) dx mit den Ansatzfunktionen des
-    Stabes (linear fuer die Laengskraft, Hermite-Polynome fuer die Biegung).
+    Stabes (linear fuer die Laengskraft, Hermite-Polynome fuer die Biegung,
+    mit Schubparameter ``phy``/``phz`` > 0 dazu der Schubanteil, siehe oben).
     Der Integrand ist hoechstens vom Grad 4; vier Gauss-Punkte sind exakt.
     Fuer a = 0, b = L ergibt sich dasselbe wie trapezoid_fixed_end_forces;
     fuer b -> a die Einzellast q (b - a) an der Stelle a.
@@ -1017,6 +1073,8 @@ def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L) -> np.ndarray:
     f = np.zeros(12)
     if b <= a or L <= 0:
         return f
+    schub = bool(phy or phz)
+    sy = sz = 0.0                       # int q psi dx je Ebene
     xg, wg = np.polynomial.legendre.leggauss(4)
     for xi_g, w in zip(xg, wg):
         x = 0.5 * (a + b) + 0.5 * (b - a) * xi_g
@@ -1039,6 +1097,13 @@ def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L) -> np.ndarray:
         f[4] += -dw * h2 * q[2]
         f[8] += dw * h3 * q[2]
         f[10] += -dw * h4 * q[2]
+        if schub:
+            psi = xi * (1.0 - xi) * (1.0 - 2.0 * xi)
+            sy += dw * psi * q[1]
+            sz += dw * psi * q[2]
+    if schub:
+        _schubanteil(f, L, phz / (1.0 + phz) * sy if phz else 0.0,
+                     phy / (1.0 + phy) * sz if phy else 0.0)
     return f
 
 
@@ -1071,10 +1136,14 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             continue
         q1, q2 = beam_load_local(model, e, bl)
         L = model.element_length(bl.elem)
+        # mit dem Schubparameter der Steifigkeit (Nachtrag N01): Lastvektor,
+        # Stabendkraefte (k u - f), Schnittgroessen im Feld und Theorie II/III
+        # lesen alle diese Ersatzknotenlasten
+        phy, phz = stab_schubparameter(model, e, L)
         if getattr(bl, "teilweise", False):
-            f = partial_trapezoid_fixed_end_forces(q1, q2, bl.a, bl.b, L)
+            f = partial_trapezoid_fixed_end_forces(q1, q2, bl.a, bl.b, L, phy, phz)
         else:
-            f = trapezoid_fixed_end_forces(q1, q2, L)
+            f = trapezoid_fixed_end_forces(q1, q2, L, phy, phz)
         out[bl.elem] = out.get(bl.elem, np.zeros(12)) + f
     if np.any(g):
         for i, e in enumerate(model.elements):

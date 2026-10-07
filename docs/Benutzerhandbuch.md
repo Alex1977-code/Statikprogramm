@@ -1332,6 +1332,24 @@ folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
 Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
 
+Bei quadratischen Schalen (shell6, shell8) liegt auch die **Kantenmitte**
+einer Randkante auf der wahren Kurve, und zwar auf halber Bogenlänge zwischen
+den beiden Ecken. Bis zum 07.10.2026 lag sie auf der Sehnenmitte, am
+Viertelkreisring mit 2 m Außenradius und sechs Teilungen 17,1 mm neben dem
+Bogen. Eine Linienlast auf dem Bogen ging dann nur an die Ecken, und ein
+Linienlager auf dem Bogen hielt die Kantenmitten nicht fest.
+
+Fällt ein neuer Randknoten oder eine Kantenmitte auf einen **Stützknoten**
+der Linie, etwa auf den Zwischenpunkt eines Bogens durch drei Punkte oder auf
+den Knick einer Polylinie, nimmt das Netz diesen Knoten selbst. Bis zum
+07.10.2026 entstand daneben ein deckungsgleicher neuer Knoten. Der alte hing
+dann an keinem Element, bekam von einer Linienlast aber trotzdem seinen
+Anteil, und dieser Anteil ging verloren (am Viertelkreisring 261,8 von
+3 141,5 N, also 8,3 %). Trifft das Netz einen Stützknoten gar nicht, etwa
+bei ungerader Teilung eines linearen Netzes, bekommt er weder Linienlast noch
+Linienlager; die Abnahme vor dem Rechnen nennt ihn weiterhin als „Knoten
+ohne Element“.
+
 #### Netzdichte und Netzeinstellungen
 
 *Netz → Vernetzen* vernetzt die gewählten - sonst alle - Flächen und Volumen.
@@ -1703,7 +1721,11 @@ Netz ist an der Hülle ungeprüft“), der Körper merkt sich den Grund, und die
 Abnahme vor dem Rechnen meldet die Warnung „Randtreue nicht geprüft“. Bis zum
 06.10.2026 galt die nicht gemessene Randtreue als Messwert 0 %: der Vernetzer
 vernetzte deshalb zweimal vergeblich feiner, und die Abnahme meldete
-„bestanden“, ohne zu sagen, dass niemand die Randtreue geprüft hatte.
+„bestanden“, ohne zu sagen, dass niemand die Randtreue geprüft hatte. Seit
+dem 07.10.2026 gilt das für den eigenen Vernetzer genauso wie für gmsh,
+Netgen und MMG3D. Bis dahin blieb beim eigenen Vernetzer ein Körper, dessen
+Messung scheiterte, ohne Netz; lief das Vernetzen in einem einzigen Prozess,
+brach es sogar ganz mit einem Fehler ab.
 
 **Nachverfeinerung der Hülle ohne Splitter.** Wo der Netzrand nach dem
 ersten Durchgang neben der Geometrie liegt (einspringende Ecken, der
@@ -1960,6 +1982,25 @@ Solange steht er in der Fußzeile des Fensters („Kombination 54 von 54 -
 Umhüllende GZT-12: 3/7“), damit die Liste dabei nicht wie eingefroren
 aussieht.
 
+**Kombinationen melden ihre Schritte wie Lastfälle** (seit dem 07.10.2026).
+Eine Kombination, die direkt gerechnet wird (mit Kontakt, Fließen oder
+ausfallenden Stäben), schreibt ihre Kontakt-Iterationen und
+Plastizitätsschritte ins Protokoll und in ihre Zeile der Rechenliste; der
+Balken wächst dabei im Abschnitt der Kombinationen, und **Abbrechen** hält
+mitten in der Kombination an. Bis zum 07.10.2026 rechnete sie ohne
+Fortschritt: Schritte, Konvergenz und Meldung jeder Kombination blieben leer,
+und ein Abbruch griff erst nach ihr. Gerechnet wird dasselbe wie vorher - am
+Block mit Reibung, der fließt, sind Lastfall und Kombination mit und ohne
+Fortschritt bitgleich (`tests/test_nachtrag_q2.py`). Das gilt, wenn die
+Kombinationen nacheinander im Programm selbst rechnen: bei einer einzigen
+direkt gerechneten Kombination oder bei einem einzigen Arbeiter im
+Prozesspool. (Überlagerte Kombinationen haben keine Schritte; sie melden sich
+wie bisher je Kombination.) Sind es mehrere direkt gerechnete
+Kombinationen und hat der Prozesspool mehr als einen Arbeiter - das ist die
+Vorgabe, alle Kerne bis auf einen -, oder ist die Rechnerfarm eingeschaltet,
+rechnet jede Kombination als Auftrag in einem eigenen Prozess. Von dort kommt
+kein Fortschritt, genau wie bei Lastfällen in Rechenketten.
+
 #### Rechenliste: ein gedeckelter Lastfall heißt „nicht konvergiert“ (22.09.2026)
 
 Bis zum 22.09.2026 zeigte die Rechenliste bei einem Lastfall, dessen
@@ -2020,9 +2061,22 @@ der elastische Vorlauf, er zählt nicht)“, im Bericht in den Kennwerten des
 Ergebnisses, in der Rechenliste in der Spalte „Meldung“. Die Rechenliste
 liest den Stand jedes Postens, sobald die Rechnung fertig ist, aus seinem
 Ergebnis; während des Laufs folgt sie wie bisher den Meldungen. Die
-Protokollzeile des gedeckelten Vorlaufs („Nachprüfung der Reibung … abgebrochen
-… (Kontaktlauf 1)“) steht weiter unter den Hinweisen des Berichts. Ein
-gedeckelter Lauf, der zählt, heißt überall weiter „nicht konvergiert“.
+Protokollzeile des gedeckelten Vorlaufs steht weiter unter den Hinweisen des
+Berichts, sagt aber seit dem 07.10.2026, dass sie den Vorlauf betrifft:
+„Kontakt: Nachprüfung der Reibung nach 40 Zustandswechseln abgebrochen
+(Kontaktlauf 1) – nur im elastischen Vorlauf, der nicht zählt; das Ergebnis
+ist konvergiert“ (ist nur der Kontakt konvergiert, die Plastizität aber
+nicht: „… der Kontakt des Ergebnisses ist konvergiert“). Ebenso, wenn der
+Kontakt konvergiert ist, die Zeile des Kontaktsystems davor, die die Runden am
+Deckel aufzählt. Bis zum 07.10.2026 stand dort „… abgebrochen - das Ergebnis
+ist nicht auskonvergiert (Kontaktlauf 1)“, auch wenn das Ergebnis konvergiert
+war. Ist der Kontakt des Ergebnisses nicht konvergiert, heißt die Zeile des
+Vorlaufs nur „… (Kontaktlauf 1) – im elastischen Vorlauf, der nicht zählt“,
+und die gedeckelten Läufe, die zählen, behalten „das Ergebnis ist nicht
+auskonvergiert“. Im Protokoll der Oberfläche steht die Zeile während der
+Rechnung weiter so, wie der Rechenkern sie meldet; dort ist noch nicht
+bekannt, wie der Lastfall endet. Ein gedeckelter Lauf, der zählt, heißt
+überall weiter „nicht konvergiert“.
 Geprüft in `tests/test_fehler_p15.py` am Block mit Reibung, einmal mit
 gedeckeltem Vorlauf und einmal mit gedeckeltem einzigen Lauf.
 
@@ -2668,7 +2722,13 @@ mehreren Layern liegen; die Layer werden mit dem Modell gespeichert.
   zurück). Beim Umbenennen in der Tabelle gehören die Tasten dem Feld. Bis zum
   06.10.2026 nahm Strg+Z im Layerfenster den letzten **Modell**schritt zurück
   (gemessen: ein Knoten weniger), und Esc hob die Auswahl im Modell auf, statt das
-  Fenster zu schließen.
+  Fenster zu schließen. Die Tabelle zeigt immer den Stand des Modells: auch
+  nach *Rückgängig* oder *Wiederholen* im Hauptfenster, nach *Neu* und nach
+  *Öffnen* (oder einem Beispiel) liest sie die Layer neu. Bis zum 07.10.2026 tat
+  sie das nur nach den Befehlen der Layerliste selbst: Nach *Neu aus Auswahl*
+  und *Rückgängig* im Hauptfenster stand der Layer „Deckel“ weiter in der
+  Tabelle, obwohl das Modell keinen Layer mehr hatte, und nach *Neu* oder
+  *Öffnen* zeigte sie die Layer des vorigen Modells (`tests/test_nachtrag_q10.py`).
 * **Ausgeblendet** ist ein Objekt, sobald *einer* seiner Layer ausgeblendet
   ist. Die Layer wirken neben *Auswahl ausblenden* und *Selektion anzeigen*;
   *Alles zeigen* und *Vorherige Sicht* betreffen nur das von Hand
@@ -3656,6 +3716,15 @@ Kerbfall, Wind, Verformungsnachweis und Lasteinleitung. Im Browser nahm das
 Löschen eines Stabs nicht einmal seine Linienlasten mit, und die Ergebnisse
 der Rechnung blieben stehen (`tests/test_fehler_p5.py`).
 
+Wer einen Stab auf einen Namen umbenennt, den es schon gibt, bekommt den
+Hinweis „Stab S1 gibt es schon - einen anderen Namen wählen“; geprüft wird vor
+dem ersten Schreiben, es entsteht also kein Rückgängig-Schritt, und die Namen
+bleiben, wie sie waren. Bis zum 07.10.2026 legte die Funktion den Schritt an und
+wies den Namen erst danach ab, als rotes Fenster „Fehler“. In der Maske nahm der
+Rahmen des Übernehmens den Schritt wieder weg; wer die Funktion selbst rief,
+behielt einen leeren Schritt (gemessen: Schritte 0 → 1, Modell unverändert;
+`tests/test_nachtrag_q10.py`).
+
 **Was beim Stab mit Nachweis zu beachten ist** (seit 03.10.2026). Liegt
 zwischen den beiden Knoten schon ein Stabelement ohne Stab oder eine Kette
 solcher Elemente über Zwischenknoten, die die Strecke lückenlos und in einer
@@ -3670,8 +3739,15 @@ Stabelemente die Strecke nur teilweise, über sie hinaus oder doppelt
 gegeneinander laufen, denn ein Stab läuft durchgehend in einer Richtung. Auf
 der Strecke liegt ein Knoten, der höchstens 1 ‰ ihrer Länge neben ihr liegt.
 Der Stabzug, mit der Maske *Stabzug erzeugen* wie mit der Tafel im Register
-*Netz*, macht es je Abschnitt genauso und ist ein Rückgängig-Schritt. Zwei
-parallele Elemente trügen doppelt: an einem Rahmen fiel die Verschiebung auf
+*Netz*, macht es je Abschnitt genauso und ist ein Rückgängig-Schritt. Seit dem
+07.10.2026 prüft auch der Stabzug im Browser (*Netz erzeugen → Stabzug*)
+genauso: Maske, Tafel und Browser rufen dieselbe Funktion. Der Browser legt wie
+die Oberfläche einen Stab mit Nachweis an, nimmt vorhandene freie Stabelemente
+in ihn auf, statt parallele daneben zu legen, und weist dort ab, wo die
+Oberfläche abweist; der Hinweis steht als Fehlertext, und das Modell bleibt
+unverändert. Bis zum 07.10.2026 legte der Stabzug im Browser ohne Prüfung
+parallele Elemente über eine vorhandene Kette an (E0 und E1 über S1 und S2
+wurden doppelt) und nie einen Stab. Zwei parallele Elemente trügen doppelt: an einem Rahmen fiel die Verschiebung auf
 62 %, und der Nachweis kam zu günstig heraus; an einem Kragarm von 6 m aus zwei
 Elementen halbierte ein drittes über beide die Durchbiegung (27,56 mm auf
 13,78 mm). Bis zum 06.10.2026 sah *Stab* nur ein Element mit genau denselben
@@ -3679,7 +3755,19 @@ Endknoten: K0–K2 über S1 (K0–K1) und S2 (K1–K2) legte still ein drittes,
 paralleles Element an, der Stabzug über einem Stab ebenso, und die Tafel
 *Stabzug* im Register *Netz* hatte keinen Rückgängig-Schritt, sodass
 Rückgängig danach den Stab davor zurücknahm. *Netz → Stabelement* legt ein
-paralleles Element weiter an, sagt es aber in der Statuszeile. Wird das
+paralleles Element weiter an, sagt es aber in der Statuszeile. Seit dem
+07.10.2026 sagt es das auch, wenn auf der Strecke zwischen den beiden Knoten
+eine Kette von Stabelementen über Zwischenknoten oder ein Stück davon liegt
+(„Achtung: zwischen K0 und K2 lagen schon die Stabelemente E0 und E1; zwei
+parallele Elemente tragen doppelt“), ebenso in der Maske *Neu: Stabelement*
+des Rechtsklickmenüs. Bis zum 07.10.2026 prüfte der Befehl nur ein Element mit
+genau denselben Endknoten: K0–K2 über E0 (K0–K1) und E1 (K1–K2) legte ohne ein
+Wort ein drittes an. *Geometrie → Linie* mit dem Haken „Stabelemente daraus
+erzeugen“ legt seit dem 07.10.2026 nichts an, wenn auf der Linie schon
+Stabelemente liegen: der Hinweis nennt sie, es entsteht auch keine Linie, und
+mit abgewähltem Haken wird die Linie als reine Geometrie angelegt. Bis zum
+07.10.2026 prüfte die Linie gar nichts und legte parallele Elemente still an,
+auch bei gleichen Endknoten. Wird das
 Stabelement eines Stabs gelöscht, bleibt der Stab ohne Stabelement stehen:
 *Prüfen* meldet ihn, der Nachweis nach EC3 führt ihn als nicht geführt („kein
 Stabelement“), die Ermüdung ebenso, wenn er einen Kerbfall trägt, und die
@@ -3713,10 +3801,31 @@ Eine Last, die direkt auf dem Element liegt (Gleich-, Trapez- oder kurze
 Teillast, also auch eine Einzellast), wird an der Teilstelle geschnitten und
 liegt danach anteilig auf beiden Teilen; eine Last im lokalen System behält
 ihre Richtung. Verschiebungen, Auflagerkräfte und Schnittgrößen bleiben damit
-an jeder Stelle, wie sie vor dem Teilen waren. Bis zum 06.10.2026 wanderte ein
+an jeder Stelle, wie sie vor dem Teilen waren. Seit dem 07.10.2026 gilt das
+auch für Stäbe mit Schubflächen, also mit Schubverformung: Trapez-, Teil- und
+Einzellasten rechnen dort mit denselben Ansätzen wie die Steifigkeit des
+Stabes. Bis zum 07.10.2026 nahmen ihre Ersatzknotenlasten den schubstarren
+Stab an, und schon die Teilung änderte die Verschiebungen um bis zu 2·10⁻³
+(HEB 200, 8 m, kurze Last in der Mitte des neuen Teils); die Summe der
+Auflagerkräfte blieb gleich. Bis zum 06.10.2026 wanderte ein
 Gelenk am Ende des Elements an die Teilstelle (vom Ende bei x = 6 m nach
 x = 4 m), und eine Elementlast wirkte nur noch auf dem verkürzten alten Teil
-(Summe der Auflagerkräfte 82 statt 84 kN). Zusammenfassen, Teilen und *Stab* um
+(Summe der Auflagerkräfte 82 statt 84 kN). Seit dem 07.10.2026 gehen beim Teilen
+außerdem alle übrigen Felder des Elements mit. Linie, Zug-/Druck-Ausfall und
+Wölbkrafttorsion gelten auf beiden Teilen, die ungedehnte Länge eines Seils
+teilt sich im Verhältnis der Sehnen. Die Exzentrizität, der starre Versatz der
+Stabenden, verläuft über das Element linear: Jedes äußere Ende behält seinen
+Versatz, die Teilstelle bekommt auf beiden Teilen den Wert dazwischen, ein
+gleichmäßiger Versatz gilt also auf beiden Teilen, und für das neue Teil wird er
+auf dessen Achsen umgerechnet. Temperaturlasten gelten gleich auf beiden
+Teilen, und Anschlüsse am Ende des Elements bleiben an ihrem alten Ort und
+gehören danach zum neuen Teil. Verschiebungen und Auflagerkräfte an den alten
+Orten bleiben damit unverändert (gemessen bis 3e-14 relativ). Bis zum
+07.10.2026 blieb das neue Teil ohne Linie, Ausfall, Wölbkrafttorsion, Seillänge,
+Versatz und Temperaturlast, der Versatz des Endes blieb am alten Teil an der
+Teilstelle, und der Anschluss blieb dort stehen: Eine Temperaturlast von 40 K
+auf dem geteilten Element ergab 50 % andere Verschiebungen, ein Versatz von
+0,2 m an beiden Enden mit 10 kN/m 10 %. Zusammenfassen, Teilen und *Stab* um
 ein vorhandenes Element verwerfen die Ergebnisse wie jede andere Änderung am
 Modell.
 
@@ -3727,7 +3836,20 @@ die Höhe nicht, rollt nur diese Mitte (Mausrad oder Rollbalken). Unten steht
 ein fester Fuß mit den Knöpfen der Maske: dem Hauptknopf („Übernehmen“,
 „Anlegen“, „Last aufbringen“ …), bei einem neuen Objekt „Abbrechen“ und, wo es
 sie gibt, „Löschen“ oder „Auswahl übernehmen“. Der Fuß rollt nie mit weg, der
-Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
+Hauptknopf bleibt immer zu sehen. Die weiteren Knöpfe einer Maske („Auswahl
+übernehmen“, „Kennwerte“, die Klickmodi der Wasserdruckmaske …) stehen darunter
+und **brechen um**, wenn die Breite nicht reicht: Jeder Knopf bekommt mindestens
+die Breite, die sein Text braucht, die Knöpfe folgen einander, und was in der
+Zeile nicht mehr Platz hat, beginnt die nächste; der Rest einer Zeile wird auf
+ihre Knöpfe verteilt. Die Wasserdruckmaske zeigt so ihre sechs Knöpfe in drei
+Zeilen, der Fuß ist dafür zwei Zeilen höher und die rollbare Mitte entsprechend
+niedriger. Gemessen mit Segoe UI bei 1920 × 1000 und bei 1366 × 740, jeweils in
+der 460 px breiten Maske: kein Text ist abgeschnitten, und kein Knopf liegt auf
+einem anderen oder auf dem Hauptknopf. Bis zum 07.10.2026 standen alle
+Zusatzknöpfe in einer Zeile ohne Umbruch und teilten sich die Breite: Bei der
+Wasserdruckmaske bekam jeder der sechs Knöpfe 68 px, gebraucht wurden 91 bis
+159 px, und jeder Text war vorn und hinten abgeschnitten
+(`tests/test_nachtrag_q10.py`). Kurze Masken stehen oben im rechten Bereich,
 ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
 Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
 mehr über den Bildschirm hinaus wachsen, auch nicht im maximierten Fenster.
@@ -3761,7 +3883,11 @@ nichts wird übernommen. Steht der Fokus auf einem anderen Knopf, etwa
 „Abbrechen“, drückt die Eingabetaste diesen Knopf. **Esc** schließt im
 Programmfenster keine Maske: Ist ein Feld gerade orange (die Maus füllt es),
 beendet das erste Esc nur diese Auswahl per Maus; jedes weitere Esc hebt wie
-überall die Auswahl in der Ansicht auf („Alles deselektieren“).
+überall die Auswahl in der Ansicht auf („Alles deselektieren“). Der Tastendruck
+kommt an der Maske gar nicht an, auch ein an sie geschicktes Esc nicht; nur eine
+Maske ohne Hauptfenster, wie in den Prüfungen, schließt sich bei Esc selbst
+(`tests/test_nachtrag_q10.py`). Bis zum 07.10.2026 sagte der Kopfkommentar von
+`masken.py` noch „Esc schließt“; das galt nie für das Programmfenster.
 
 Der **Hinweis** zu einem Feld erscheint, wenn man mit der Maus auf dem Feld
 verweilt, nicht nur auf seiner Beschriftung; bei einem Haken steht er am Haken
@@ -3888,9 +4014,9 @@ gibt es nach „Rückgängig“ nicht mehr – die Maske ist geschlossen“. Bis
 schrieb sie zurück. Hat der Browser das Modell gegen ein anderes getauscht,
 geht die Maske zu wie bei *Neu*.
 
-Ist am Desktop eine Maske mit nicht übernommenen Änderungen offen, weist das
-Programm Änderungen aus dem **Browser** ab, auch *Neu*, ein Beispiel und den
-Import dort. Der Browser bekommt die Meldung „Am Desktop ist die Maske
+Ist am Desktop eine Maske mit nicht übernommenen Änderungen offen oder läuft
+dort eine Rechnung (seit dem 07.10.2026), weist das Programm Änderungen aus
+dem **Browser** ab, auch *Neu*, ein Beispiel und den Import dort. Der Browser bekommt die Meldung „Am Desktop ist die Maske
 „Knoten K1“ mit nicht übernommenen Änderungen offen – dort erst „Übernehmen“
 oder „Verwerfen“, dann die Änderung hier noch einmal senden“. Bis zum
 03.10.2026 ersetzte der Browser das Modell unter der Maske, und ihr
@@ -3975,6 +4101,15 @@ passende Auswahl gar keine Maske öffnen (etwa *Lot* ohne gewählte Knoten),
 und Meldungen nach einem schon geschlossenen Dialog kommen vorerst weiter im
 Fenster; sie folgen in einem späteren Schritt.
 
+Auch der **Sperrgrund beim Löschen im Modellbaum** ist ein Hinweis: „Knoten 1
+wird benutzt von 2 Elemente - erst diese löschen oder ändern“, „Stab S2 wird
+benutzt von Verformungsnachweis VG1 - …“, ebenso ein benutzter Querschnitt, eine
+benutzte Stellung oder Situation. Er steht gelb in der Statuszeile und im
+Protokoll, das Objekt bleibt, und es entsteht kein Rückgängig-Schritt. Bis zum
+07.10.2026 öffnete jeder dieser Gründe das rote Fenster „Fehler“, das man
+wegklicken musste. Löscht man mehrere Einträge auf einmal, stehen die Gründe wie
+bisher in der Zusammenfassung („2 von 3 Einträgen gelöscht - …“).
+
 ### Zahlen eingeben (seit 24.09.2026)
 
 Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere
@@ -4034,6 +4169,17 @@ Anzahl still „alle gleich“.
   06.10.2026 fiel ein solcher Eintrag ohne Meldung weg: „3, 4, x, 5“ legte
   die Linie mit den Knoten 3, 4 und 5 an, „1, 2,5“ machte aus den
   angeschlossenen Knoten nur den Knoten 1, und „+3“ fiel ebenfalls weg.
+  Ebenso weist die Maske eine Nummer **außerhalb des Bereichs** ab: ein
+  Element, das es nicht gibt oder das kein Stabelement ist (Elemente eines
+  Stabs), und einen Knoten, den es nicht gibt (angeschlossene Knoten eines
+  starren Körpers). Die Meldung nennt den Eintrag und den Bereich
+  („Elemente: „99“ gibt es nicht - Elemente sind 0 bis 15.“, „Elemente:
+  „16“ ist kein Stabelement - einen Stab bilden nur Stabelemente.“). Bis
+  zum 07.10.2026 fiel auch ein solcher Eintrag still weg: Der Stab aus
+  „0, 99“ bestand nur aus dem Element 0, die angeschlossenen Knoten „1, 2,
+  9999“ nur aus den Knoten 1 und 2, und niemand sah es. Der Masterknoten
+  selbst bleibt aus der Liste der angeschlossenen Knoten heraus, wie
+  bisher.
   Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
   die Knoten eines Elements in der Tabelle, die Teilung (eine Zahl für
   alle Richtungen oder zwei bei einer Fläche, drei bei einem Volumen,
@@ -4207,6 +4353,28 @@ es keine doppelten Knoten, meldet die Statuszeile „0 doppelte Knoten entfernt�
 eine Temperaturlast mit ΔT = 0 oder ohne Elemente weist ein Hinweis ab; der Haken
 *Eigengewicht* in einem Zustand, in dem er schon steht, tut nichts.
 
+**Doppelte Knoten zusammenführen nimmt jeden Verweis mit (seit 07.10.2026).**
+Dabei bekommen die Knoten neue Nummern, und jeder Verweis folgt seinem Knoten:
+Elemente, Linien, die Lager aller drei Arten (Knoten-, Linien- und Flächenlager,
+bei einem Flächenlager addieren sich die Einflussflächen gleich gewordener
+Knoten), Knotenlasten und Zwangsverformungen, die Kontaktobjekte (Kontaktlager,
+Spaltelement, Kontaktpaar mit Slave-Knoten, Master-Facetten, Einflussflächen und
+Randknoten), Kopplungen, starre Körper, Punktmassen, Dämpfer, die Ecken und
+integrierten Knoten der Flächen, Layer, Subsysteme, Lasteinleitungen,
+Verformungsgrenzen, der Antrieb einer Stellung, die getrennten Fugenknoten und
+die gekrümmten Kantenmitten der Tetraeder mit Ordnung p – dieselben Verweisarten,
+die auch das Löschen eines Knotens kennt. Ein Knoten, der dabei gleich wird, steht
+in einer Linie, einem Lager oder einer Gruppe nur einmal. Bis zum 07.10.2026 zog
+der Befehl nur Elemente, Lager, Knotenlasten und Kontakt nach; an einem
+Probemodell mit zwei doppelten Knoten und 24 Verweisarten zeigten danach 18 auf
+einen anderen Knoten oder hinter das Ende der Knotenliste, etwa die Linie
+(0 | 0 | 0), (20 | 2 | 0), (22 | 2 | 0) m auf (20 | 2 | 0), (21 | 2 | 0) m und einen
+Punkt, den es nicht mehr gab. Die Beispiele (Rahmen, Platte, Konsole, Fachwerk,
+Halle, Kontakt, Reibblock, Stauwand) rechnen vor und nach der Änderung mit
+denselben Verschiebungen und Auflagerkräften. Die Importe führen ihre Knoten auf
+demselben Weg zusammen; neu ist, dass der Befehl in der Oberfläche, im Browser
+und in den Beispielen ihn ebenfalls geht (`tests/test_nachtrag_q6.py`).
+
 ### Nichts geht ungefragt verloren (seit 24.09.2026)
 
 **Stern im Fenstertitel.** Sobald das Modell vom gespeicherten Stand abweicht,
@@ -4218,7 +4386,12 @@ Eingabe in einer Tabellenzelle, die Projektangaben (auch aus dem
 Berichtsdialog), die Knöpfe des Registers Lager/Lasten (Eigengewicht,
 Temperaturlast, Linien- und Flächenlager, Kombinationen), Vernetzen, ein
 Import, Änderungen aus dem Browser — und **eine fertige Rechnung**: ihre
-Ergebnisse stehen erst nach dem Speichern in der Ergebnisdatei. Keine Änderung
+Ergebnisse stehen erst nach dem Speichern in der Ergebnisdatei. Das gilt nur für
+Ergebnisse, die Speichern auch schreibt: Ein Ergebnis, das nicht mehr zum Modell
+passt (etwa weil das Modell während der Rechnung geändert wurde), nennt die
+Rückfrage nicht, denn es käme ohnehin nicht in die Datei; sie nennt dann nur
+die Änderungen am Modell. Bis zum 07.10.2026 nannte sie auch ein solches
+Ergebnis, und *Speichern* schrieb es danach doch nicht. Keine Änderung
 sind Anzeige, Auswahl, der gezeigte Lastfall und die Werteskala der Färbung.
 Was an keinem dieser Wege vorbeikommt, fängt ein Vergleich der Anzahlen aller
 Modellobjekte, der Lasten je Lastfall und der Knotenkoordinaten.
@@ -4375,7 +4548,12 @@ Knoten anklicken:
 
 Mit „Stabelemente daraus erzeugen“ (bis zum 03.10.2026 „Stäbe daraus
 erzeugen“) wird die Linie gleich in Stabelemente geteilt — die Teilung steht in
-der Maske. Einen Stab mit Nachweis legt der Haken nicht an; den bilden danach
+der Maske. Seit dem 07.10.2026 legt der Haken nichts an, wo schon Stabelemente
+liegen: liegen dort schon Stabelemente, auch eine Kette über Zwischenknoten,
+entsteht keine Linie, und der Hinweis nennt sie, denn parallele Elemente trügen
+doppelt. Mit abgewähltem Haken wird die Linie als reine Geometrie angelegt. Bis
+zum 07.10.2026 prüfte die Linie nichts und legte die Elemente daneben. Einen
+Stab mit Nachweis legt der Haken nicht an; den bilden danach
 *Stäbe automatisch erkennen* oder *Stab aus Stabelementen…*. Die Linie bleibt
 als Geometrie erhalten und kennt ihre exakte Länge (ein Halbkreis r = 2 m misst
 6,283 m, nicht die Länge des Sehnenzugs).
@@ -4465,6 +4643,13 @@ mit der Liste der Querschnitte. Die Maske hat drei Teile, von oben nach unten:
    ganze Zahlen: „2,5“ als Knotennummer oder „1,9“ als Element-von meldet
    „… hier ist eine ganze Zahl verlangt“ und sperrt OK. Bis zum 06.10.2026
    wurde „2,5“ still zu Knoten 2 und überschrieb ihn, „1,9“ zu Element 1.
+   Jede Knotennummer steht nur einmal in der Knotentabelle („2“ und „02“ sind
+   dieselbe Nummer): Tragen zwei Zeilen dieselbe, steht rot unter dem Bild,
+   welche („Knotennummer 2 steht zweimal in der Knotentabelle (Zeile 2 und 3
+   von oben) – jede Nummer nur einmal“), und OK bleibt gesperrt. Bis zum
+   07.10.2026 gewann die letzte Zeile still, OK blieb frei, und der
+   Querschnitt wurde mit dem zweiten Knoten gerechnet, ohne dass es jemand
+   sah.
    Das Ergebnis ist ein zusammengesetzter Querschnitt nach dem Satz von
    Steiner mit Hauptachsen und Hauptachsenwinkel; der Editorinhalt reist mit
    und lässt sich über den Editor wieder öffnen. It ist bei Elementen der
@@ -4570,6 +4755,21 @@ weil sich damit die Rechnung der Stellung ändert. Der Knoten, an dem das
 Antriebsmoment einer Stellung angreift, lässt sich nicht löschen, solange die
 Stellung ihn nennt. Geprüft in `tests/test_loeschen.py` und
 `tests/test_tasten_fokus.py` (alle Löschwege der Oberfläche).
+
+**Lager, die das Programm selbst entfernt (seit 07.10.2026).** Zwei Stellen
+nehmen Knotenlager aus dem Modell, ohne dass der Anwender sie löscht, und ziehen
+seitdem die Stellungen nach wie das Löschen: die Umwandlung eines tet10-Netzes
+in Tetraeder mit Ordnung p (`tetp.aus_tet10`; die Lager an den Mittenknoten
+fallen weg, denn diese Knoten tragen danach nichts mehr) und der RFEM-Import mit
+„nur Stabtragwerk“ (`structure_only`; Lager an Knoten ohne Element fallen weg,
+dazu Linien- und Flächenlager, deren Knoten alle ohne Element sind). Der Import
+schreibt die Zeilen ins Importprotokoll, `aus_tet10` gibt sie unter
+`"stellungen"` zurück. Bis zum 07.10.2026 blieben die Einträge stehen: In der
+Probe (vier Knotenlager, das dritte am Mittenknoten, eine Stellung mit
+„Lager 4“) nannte „Lager 4“ danach kein Lager mehr, und das Lager an der Ecke
+war in der Stellung nicht mehr abgeschaltet; beim Import traf der Eintrag
+„Lager 3“ nach dem Wegfall eines Lagers davor ebenso ins Leere
+(`tests/test_nachtrag_q6.py`).
 
 **Lagernamen in Stellungen (seit 06.10.2026).** Jede Lagerart hat in der
 Stellung ihre eigene Liste („Deaktivierte Knotenlager“, „Deaktivierte
@@ -4860,6 +5060,31 @@ erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
 trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
 RFEM-Modells.
 
+**Der Vermerk steht nicht im Kommentar der Linienlast (seit 07.10.2026).** Bei
+einer Linienlast zeigt die Lasttabelle in der Spalte „Bemerkung“ zuerst den
+Abschnitt und den Stand des Verteilens („von 1 m bis 3 m 2 Elementlasten“) und
+danach, durch ein Semikolon getrennt, den eigenen Kommentar der Last („…
+2 Elementlasten; Verkleidung“). Im Bericht heißt die Spalte mit dem Stand
+„Elementlasten“; gibt es an einer Linienlast einen Kommentar, kommt eine Spalte
+„Kommentar“ dazu. Kommt keine Elementlast zustande, steht an derselben Stelle der
+Grund („Stab hat keine Elemente“, „Linie noch nicht vernetzt“ und so weiter), und
+das Protokoll nennt ihn weiter. Das Verteilen lässt den Kommentar stehen. Bis zum
+07.10.2026 schrieb es „n Elementlasten“ oder den Grund in den Kommentar jeder
+Linienlast und überschrieb damit den eigenen; in der Probe wurde aus
+„Verkleidung, nach Statik Anlage 3“ der Text „6 Elementlasten“. Der Stand wird
+nicht gespeichert, er ergibt sich beim Öffnen und bei jedem Verteilen neu. Eine
+Datei von vorher wird beim Öffnen umgestellt: Ein Kommentar, der nur aus
+„n Elementlasten“ oder einem dieser Gründe besteht, war nie ein eigener und wird
+geleert; jeder andere Kommentar bleibt. Eine Windlast aus einer Datei vor dem
+06.10.2026 bekommt dabei ihr Merkmal (Python: `erzeuger = "wind:<Name>"`), an dem
+„Lasten erzeugen“, das Löschen und das Umbenennen des Winds sie finden – ihr
+Kommentar „n Elementlasten“ war bis dahin das Einzige, woran man sie erkannte.
+Der Kommentar, den „Lasten erzeugen“ an eine Windlast schreibt („Wind W: c_f =
+0,709, b_ref = 0,2 m“), bleibt dadurch sichtbar und steht mit Dezimalkomma in der
+Bemerkung. Flächenlasten und Temperaturen auf Flächen und Volumen behalten den
+Vermerk, wo er stand: Dort kann der Anwender keinen Kommentar eingeben
+(`tests/test_nachtrag_q6.py`).
+
 **Linienlast auf quadratischen Kanten.** Eine Linie besteht im Netz aus
 Elementkanten, und jeder Knoten bekommt den Anteil der Linienlast, den die
 Formfunktion seiner Kante ihm zuweist. Auf einer linearen Kante (tet4, hex8,
@@ -4874,6 +5099,16 @@ Kantenmitte. Die Summe stimmte, die Verteilung nicht: Ein Scheibenstreifen
 aus shell8, der in seiner Ebene gezogen wird, verschob sich an der gezogenen
 Kante zwischen 186,0 und 203,0 µm statt überall um 190,5 µm. Für federnde
 Linienlager gilt dasselbe (siehe *Linienlager*).
+
+**Linienlast auf einem Bogen.** Die Netzknoten einer krummen Linie sucht das
+Programm an ihrer wahren Kurve, und auch die Lage jedes Knotens entlang der
+Linie wird an der Kurve gemessen.
+Die Resultierende einer gleichmäßigen Linienlast ist darum q mal Bogenlänge.
+Bis zum 07.10.2026 wurde die Linie dafür nur in 64 gerade Stücke zerlegt. Am
+Viertelkreis mit 2 m Radius war die Last dadurch um 2,5·10⁻⁵ zu klein, und
+auf weiten Bögen fehlten Knoten (bei 270 Grad und sechs quadratischen
+Elementen 8 von 13). Knoten, die an keinem Element hängen, bekommen keinen
+Anteil, sobald die Linie vernetzt ist; eine Last auf ihnen ginge verloren.
 
 **Flächenlast auf einer Elementseite ohne Fläche.** Liegen die Ecken einer
 Volumenseite auf einer Linie oder in einem Punkt (zusammengelegte Knoten mit
@@ -5071,14 +5306,38 @@ man Namen tippt (die Faktoren einer Kombination, der Verlauf einer
 Ermüdungslast), lässt sich ein solcher Name ohnehin nicht schreiben. Die
 Regel gilt, bis die Namensregel Namen und Bezeichnungen trennt; dann darf die
 Bezeichnung ein Komma tragen. Ein Name mit Komma, der schon da ist (aus
-einer älteren Datei oder einem Import, die Importe prüfen ihre Namen noch
-nicht), bleibt, wie er ist: Die Haken der Stellungs- und der Situationsmaske
+einer älteren Datei; ein Import ersetzt Komma und Semikolon seit dem
+07.10.2026 selbst), bleibt, wie er ist: Die Haken der Stellungs- und der Situationsmaske
 tragen die Namen seit dem 06.10.2026 als Liste und nicht mehr als Text mit
 Komma, so dass er dort angehakt, abgehakt und übernommen wird, und die übrigen
 Eigenschaften des Lastfalls lassen sich weiter ändern. Das gilt ebenso für die
 Gelenke und Lager der Stellungsmaske. Bildet das Programm den Namen selbst
 und enthält der Vorschlag Komma oder Semikolon, lässt es sie weg: Die Kopie
 von „W, links“ heißt „W links_Kopie“.
+
+**Komma und Semikolon im Namen von Stäben, Linien, Flächen, Volumen, Lagern
+und Gelenken (seit 07.10.2026).** Dieselbe Regel gilt für die Objekte, deren
+Namen in getippten Listen stehen: die Randlinien einer Fläche, die
+Randflächen eines Volumens, die Kontaktflächen und Gegenflächen, die Stab-,
+Flächen- und Volumenlisten der Stellung und „Gilt für“ der Schweißnaht. Die
+Masken zum Anlegen und Ändern, die Lagertabelle und die Sammelmaske der
+Lager, die Dialoge „Linie“, „Fläche aus Linien“ und „Volumen aus Flächen“,
+das Umbenennen im Modell und der Browser (Stab, Gelenk, Linienlager,
+Flächenlager) weisen einen neuen Namen mit Komma oder Semikolon mit einem
+Hinweis ab, etwa „Stab „S, 1“ enthält ein Komma – … bitte ohne schreiben,
+etwa „S 1““. Es entsteht nichts, und es bleibt kein leerer
+Rückgängig-Schritt. Bis zum 07.10.2026 prüfte das nichts: Ein Stab „S, 1“
+ließ sich anlegen und zerfiel danach in den Listen in „S“ und „1“, die
+Stellung schaltete ihn nicht mehr ab, und die Naht verlor ihren Stab. Ein
+Name mit Komma, der schon da ist (aus einer älteren Datei oder einem
+Import), bleibt, wie er ist: Die übrigen Eigenschaften des Objekts lassen
+sich weiter ändern, und das Umbenennen weg vom Komma geht. Ausgenommen sind
+nur die Aufrufer in Python: `add_member`, `add_line` und ihre Geschwister
+nehmen jeden Namen, damit die Importe und alte Dateien weiter gelesen
+werden; wer Namen von Hand vergibt, fragt vorher
+`Model.objektname_konflikt`. Die Namen von Lastfällen und Kombinationen
+ersetzen die Importe selbst (Kapitel Import, „Komma und Semikolon in Namen
+der Datei“).
 
 ### Kombinationstypen und Umhüllende im Klartext (seit 03.10.2026)
 
@@ -5526,6 +5785,20 @@ Geschwindigkeitsfeld v/v∞ des Schnitts. Die Beiwerte sind **qualitativ** -
 Modell-Reynolds-Zahl, ebener Schnitt - und gegen die Norm zu prüfen; der
 Lastfall trägt die Lastfall-Nr. aus der Maske.
 
+**Einen Wind löschen oder umbenennen (seit 07.10.2026).** Löschen (Modellbaum →
+Wind → Entf) und Umbenennen (Windmaske, „Lasten erzeugen“ mit neuem Namen) nehmen
+die Stablasten des Winds aus allen Lastfällen und mit ihnen die daraus verteilten
+Elementlasten; eine Linienlast des Anwenders im selben Lastfall bleibt. Erkannt
+werden die Stablasten an dem Merkmal, das „Lasten erzeugen“ an jede von ihnen
+schreibt, nicht an ihrem Kommentar; eine Datei vor dem 06.10.2026 ohne dieses
+Merkmal wird an Lastfall, Stab und Richtung erkannt (beim Öffnen bekommen die
+Stablasten das Merkmal nachgetragen). Bis zum 07.10.2026 suchten Modellbaum und
+Windmaske den Kommentar „Wind <Name>:“, den das Verteilen bis dahin überschrieb:
+In der Probe (Mast mit sechs Elementen, Wind W und eine eigene Last quer dazu)
+blieben nach dem Löschen beide Linienlasten und alle zwölf Elementlasten stehen,
+und das Umbenennen von W in W2 ergab 18 statt 12 Elementlasten, weil die alte
+Windlast neben der neuen weiterwirkte (`tests/test_nachtrag_q6.py`).
+
 ## 4a Elemente: was das Programm rechnen kann
 
 Das Netz besteht aus **finiten Elementen**. Welche es gibt, steht im
@@ -5583,8 +5856,10 @@ Knopf „Schlupf, Reibung …“ unten in der Lagermaske, sein Hinweis nennt all
 drei (ebenso Register Lager / Kontakt → **Nichtlinearität…** für die gewählten
 Knoten; auf dem Handy Modell → Nichtlineare Lager). Bis zum 06.10.2026 hieß der
 Knopf „Schlupf, Reibung, Grenzkraft …“ und war abgeschnitten: Die drei Knöpfe
-im Fuß der Maske stehen nebeneinander, und er bekam im 460 px breiten rechten
-Bereich 160 statt der nötigen 211 px. Die Einstellungen im Einzelnen:
+im Fuß der Maske standen nebeneinander, und er bekam im 460 px breiten rechten
+Bereich 160 statt der nötigen 211 px. Seit dem 07.10.2026 bricht die Zeile der
+Zusatzknöpfe um (siehe *Aufbau jeder Maske*); der kürzere Name bleibt. Die
+Einstellungen im Einzelnen:
 
 | Einstellung | Bedeutung |
 |---|---|
@@ -5620,7 +5895,12 @@ Element an seiner Kante hat. Bis zum 06.10.2026 bekam auch die quadratische
 Kante halbe Nachbarabschnitte (ein Viertel, die Hälfte, ein Viertel); an
 einem Scheibenstreifen aus shell8 auf einem federnden Linienlager wich die
 Verschiebung der gelagerten Kante dadurch um bis zu 4,3 % vom
-gleichmäßigen Wert ab.
+gleichmäßigen Wert ab. Ein Linienlager, das seine Linien kennt, hält nach dem
+Vernetzen alle Netzknoten auf diesen Linien, auf einem Bogen auch die
+Kantenmitten quadratischer Schalen. Ein Stützknoten der Linie, der an keinem
+Element hängt, gehört nicht dazu, denn eine Feder an ihm hielte nichts. Bis
+zum 07.10.2026 fehlten die Kantenmitten auf einem Bogen, und ein solcher
+Stützknoten bekam einen Teil der Einflusslänge.
 
 **Flächenlager / Bettung** (Knopf *Flächenlager…*): Lager auf Schalen- oder
 Volumenelementen. Die Steifigkeit wird **je m²** angegeben (Bettungsmodul) und
@@ -6121,6 +6401,24 @@ Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
 Schnittstellenhandbuch).
 
+**Komma und Semikolon in Namen der Datei** (seit 07.10.2026). Trägt ein
+Lastfall oder eine Kombination der Datei Komma oder Semikolon im Namen („Nutzlast,
+links“, „Wind; quer“), ersetzt der Import jedes dieser Zeichen durch ein
+Leerzeichen („Nutzlast links“, „Wind quer“) und hängt, wenn der Name damit
+schon vergeben ist, eine Zahl an („Wind quer 2“). Umbenannt wird mit jedem
+Verweis – die Faktoren der Kombinationen, ihre Alternativen, die Ermüdungslasten,
+die Stellungen und die Lasten bleiben an ihrem Lastfall –, und das
+Importprotokoll nennt jede Umbenennung mit altem und neuem Namen. Der Grund:
+In den Textfeldern, in denen man Namen tippt (die Faktoren einer Kombination,
+der Verlauf einer Ermüdungslast), trennen Komma und Semikolon die Namen, und
+ein Name mit Trenner wurde dort zerlegt; einen Namen mit Komma in solchen
+Feldern lesbar zu machen, ginge nur mit einer Regel, die im Zweifel anders
+liest als gemeint. Beim Anhängen an ein vorhandenes Modell bleiben dessen
+Namen, wie sie sind. Bis zum 07.10.2026 kamen solche Namen unverändert herein:
+Die Haken der Masken trugen sie, getippte Faktoren und der Ermüdungsverlauf
+nicht. Ein Statik3D-Modell (JSON) wird nicht umbenannt, auch nicht beim
+Anhängen: Seine Namen sind die des Anwenders.
+
 **Eine nicht übernommene Kombination von Hand anlegen.** Beide Wege, eine
 Kombination anzulegen – die Maske mit dem Feld „Faktoren (Lastfall:
 Faktor, …)“ und der Dialog *Kombination* mit einem Faktorfeld je Lastfall –,
@@ -6429,6 +6727,52 @@ die ganze Länge: im Versuch mit drei Zeilen „Span“ (−5 kN/m, ein Trapez v
 −3 kN/m und −7 kN/m ohne Positionen) auf einem 8 m langen Stab standen bei 1 m,
 3 m und 7,5 m −13,25, −13,75 und −14,88 kN/m statt 0, −5 und 0 kN/m. Ein Abschnitt ohne Start point und End point wird
 nicht übernommen, und das Importprotokoll sagt es, statt eine Volllast zu raten.
+
+**SAF-Rundlauf: Knotenlasten, Einheiten, Rollung, Temperatur, Lastfallnamen (seit
+07.10.2026).** Ein Modell, das Statik3D als SAF schreibt und wieder einliest, kommt
+mit demselben Lastbild und denselben Steifigkeitsangaben zurück; geprüft ist das an
+allen acht Beispielen. Knotenlasten stehen je Komponente in einer Zeile, Kräfte im
+Blatt StructuralPointAction (Richtung X, Y oder Z, Wert in kN) und Momente im
+Blatt StructuralPointMoment (Richtung Mx, My oder Mz, Wert in kNm). Werkstoffe und
+Querschnitte tragen die Einheiten der SAF-Beschreibung in der Kopfzeile: E- und
+G-Modul in MPa, Flächen in m², Trägheitsmomente in m⁴, Abmessungen und Blechdicken
+in mm; Streckgrenze und Zugfestigkeit stehen unter „Design properties“. Ein
+Querschnitt geht als Profil der Datenbank hinaus, wenn er ihr gleicht, als Form mit
+Abmessungen (Rechteck, Kreis, Rohr, gewalztes I), wenn der Import daraus denselben
+Querschnitt baut, und sonst mit seinen Kennwerten. Ein Stab steht mit allen Knoten
+seiner Elementkette im Blatt, so dass er mit derselben Zahl von Elementen
+zurückkommt, und seine Rollung wird umgerechnet, wenn die Datei ihn andersherum
+führt, als sein erstes Element gezeichnet ist. Ein Lastfall mit Eigengewicht
+(g = 9,81 m/s² nach unten) bekommt den Lasttyp „Self weight“, Temperaturlasten auf
+Stäben und Schalen stehen gleichmäßig oder mit Unterschied zwischen Ober- und
+Unterseite in eigenen Blättern, und Flächenlasten auf Schalen stehen im Blatt
+StructuralSurfaceAction. Was SAF nicht kennt, nennt das Protokoll des Exports als
+WARNUNG: Situation und Theorie eines Lastfalls oder einer Kombination, die
+Leiteinwirkung einer Kombination, Zwangsverformungen, Vorspannungen und Übermaße,
+Lasten auf Volumenelementen, ein Eigengewicht in anderer Richtung oder Größe, Stäbe,
+deren Elemente verschieden gerollt sind oder verschiedene Querschnitte tragen, und
+Querschnitte, die nur mit ihren Kennwerten hinausgehen. Beim Import in ein neues
+Modell ersetzt der Lastfall LF1 der Datei den leeren Vorgabelastfall.
+
+Bis zum 07.10.2026 kam ein Modell über SAF anders zurück, als es hinausging. Der
+Export schrieb Knotenlasten als Spalten Fx bis Mz ohne Richtung und Wert, der Import
+übersprang jede Zeile mit „Richtung '' unbekannt“, und sechs der acht Beispiele
+verloren alle Knotenlasten, ohne dass der Export ein Wort darüber verlor. E-Modul,
+Querschnittswerte und Blechdicken standen in SI ohne Einheit da: E kam als
+2,1 · 10¹⁷ Pa zurück, die Fläche eines Rechtecks 200 × 300 mm als 6 · 10⁻⁸ m² statt
+0,06 m² und eine 12 mm dicke Platte als 0,012 mm dicke. Ein nach unten gezeichneter
+Stab mit 0,5 rad Rollung kam um 57,3° verdreht zurück, und jeder Stab aus mehreren
+Elementen kam als ein einziges Element zurück (der Hallenrahmen mit 18
+Stabelementen mit 3). Eigengewicht, Temperatur- und Flächenlasten fehlten ohne
+Protokollzeile, und der Lastfall LF1 hieß nach dem Import „LF1_2“, weil der leere
+Vorgabelastfall noch danebenstand; die Kombinationen zeigten dann auf LF1_2. Eine
+SAF-Datei, die Statik3D vor dem 07.10.2026 geschrieben hat, erkennt der Import an der
+Spalte „Yield strength“, liest ihre Werte in SI und sagt das im Protokoll; die
+Rollung rückwärts geführter Stäbe und die Zwischenknoten der Stäbe stehen in einer
+solchen Datei nicht und lassen sich nicht wiederherstellen. Steht in der Kopfzeile
+einer fremden SAF-Datei keine Einheit, liest der Import Flächen jetzt wie die
+SAF-Beschreibung in m² und Trägheitsmomente in m⁴; bis zum 07.10.2026 las er sie als
+mm² und mm⁴.
 
 ## 8 Nachweise nach EC3
 
@@ -6856,6 +7200,15 @@ still in den Anschlussnachweis ein (an der Halle D = 71,287 ohne Hinweis).
 Dasselbe gilt für eine Ermüdungslast, die mit ihrem Lastfall oder ihrer
 Kombination entfällt (`tests/test_fehler_p5.py`).
 
+Im Browser verwirft das Anlegen und das Löschen einer Ermüdungslast seit dem
+07.10.2026 auch den **Anschlussnachweis** (neben den Stabnachweisen und dem
+Ermüdungsnachweis); die Rechnung der Lastfälle bleibt stehen. Der Anschlussnachweis
+führt die Ermüdung der Anschlüsse mit, und an einem Anschluss mit leerer Liste
+(„alle Ermüdungslasten“) ändert jede Last, die dazukommt oder wegfällt, die
+Schädigungssumme D. Bis zum 07.10.2026 zeigte der Browser nach dem Löschen weiter
+den alten Anschlussnachweis (an der Halle mit dem Anschluss K1 und leerer Liste
+D = 10,372 mit allen Lasten, obwohl eine gelöscht war; `tests/test_nachtrag_q6.py`).
+
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
 Ausfallstäben bei jedem Lastfall, jeder Kombination und jedem Zustand einer
@@ -7162,7 +7515,8 @@ Streckgrenze oder Stahlsorte am Werkstoff eintragen (Tabelle *Eigenschaften →
 Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
 
 **Stahlsorte ohne f_y.** Bleibt im Werkstoffdialog f_y leer („leer = aus der
-Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
+Stahlsorte“) und ist eine Sorte der Tabelle eingetragen (S235 … S460, auch mit
+Zusatz wie S355M, siehe unten), nehmen die Nachweise
 die Werte der Sorte nach EN 1993-1-1 Tab. 3.1: bis 40 mm Erzeugnisdicke die
 obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
 Ist auch f_u
@@ -7192,8 +7546,9 @@ nicht: Mit eingetragenem f_y entfiel über 40 mm still die Dickenabminderung
 (f_y = 235 statt 215 N/mm² bei 50 mm Erzeugnisdicke, f_u = 305,5 statt
 360 N/mm²), und mit leerem f_y war die Streckgrenze null, der Stab also „nicht
 geführt“, obwohl das Feld „leer = aus der Stahlsorte“ verspricht (gemessen am
-Stand 60fe253). Die Tabelle kennt nur S235, S275, S355, S420 und S460, keine
-Untersorten: „S235JR“ ist ihr unbekannt. Eine solche Sorte nimmt die Maske
+Stand 60fe253). Die Tabelle kennt S235, S275, S355, S420 und S460 und die Sorten
+mit Zusatz (siehe unten), aber keine Untersorten wie J2 oder JR: „S235JR“ ist
+ihr unbekannt. Eine solche Sorte nimmt die Maske
 trotzdem, wie getippt (ein Werkstoff darf eine eigene Sorte tragen, etwa S690),
 und sagt es im Protokoll und in der Statuszeile. Mit eingetragenem f_y rechnet
 der Stab mit diesem f_y, und die Meldung nennt, dass es dann keine
@@ -7202,6 +7557,49 @@ Streckgrenze her: Die Meldung sagt dann, dass Stäbe aus diesem Werkstoff nicht
 nachgewiesen werden, und rät zu einer Sorte der Tabelle oder zu einem
 eingetragenen f_y. Die Zelle der Werkstofftabelle handelt ebenso. Eine leere
 Sorte bleibt leer, ohne Meldung.
+
+**Sorten mit Zusatz (N, NL, M, ML, W).** Neben S235, S275, S355, S420 und S460
+führt die Sortentabelle seit dem 07.10.2026 die Sorten mit Zusatz nach
+DIN EN 1993-1-1 Tabelle 3.1: S275, S355, S420 und S460 als N und NL
+(EN 10025-3) und als M und ML (EN 10025-4) sowie S235W und S355W (EN 10025-5),
+je mit Streckgrenze und Zugfestigkeit bis 40 mm und von 40 bis 80 mm
+Erzeugnisdicke. Sie stehen wie alle Sorten in der Auswahl des Werkstoffdialogs
+und werden ohne Rücksicht auf Groß- und Kleinschreibung und auf Leerzeichen
+erkannt. S355M zum Beispiel hat f_y = 355 und f_u = 470 N/mm² bis 40 mm und
+335 und 450 N/mm² von 40 bis 80 mm; S355N und S355NL haben 355 und 490 sowie
+335 und 470 N/mm². Der Import liest den Zusatz hinter der Zahl aus dem Namen
+des Werkstoffs: „S355M“ wird S355M, „S355ML“ wird S355ML, „S 355 N“ wird S355N,
+„S355J2W“ wird S355W. Die Gütegruppen J0, J2, JR und K2 sowie „+N“
+(„S355J2+N“) ändern die Sorte nicht: sie bleibt S355 nach EN 10025-2. Bis zum
+07.10.2026 las der Import nur die Zahl: aus „S355M“ wurde S355 mit den Werten
+der Zeile EN 10025-2, also f_u = 490 statt 470 N/mm² (bis 40 mm) und 470 statt
+450 N/mm² (von 40 bis 80 mm); bei S275N waren es 430 statt 390 und 410 statt
+370 N/mm², bei S235W über 40 mm 360 statt 340 N/mm² (gemessen am Stand
+63acb15). Das schlug auf Nachweise durch, die f_u brauchen, etwa die der
+Anschlüsse. Eine Sorte, die die Tabelle 3.1 nicht führt – „S235N“, „S275W“,
+„S355J0WP“ –, bleibt unbekannt: Das Programm erfindet keine Werte dafür und
+verfährt wie bei jeder unbekannten Sorte. Die Werkstoffmaske nimmt sie, wie
+getippt, und meldet es; die Importe behandeln den Namen wie einen ohne erkannte
+Sorte. Die Hohlprofilsorten (S355J2H, S355NH … nach EN 10210 und 10219) führt
+die Tabelle 3.1 mit eigenen Werten, die sich aus dem Namen nicht eindeutig einer
+der beiden Normen zuordnen lassen; sie bleiben, wie sie waren, die Sorte ohne
+Zusatz. Kommt es bei einem Hohlprofil auf f_u an, trägt man f_y und f_u des
+Werkstoffs selbst ein.
+
+**Streckgrenze null.** In der Werkstofftabelle (Spalte fy), in der
+Werkstoffmaske (rechts) und im Werkstoffdialog ist f_y = 0 – und jeder Wert
+unter null – ein Eingabefehler: Der Wert wird nicht übernommen, und die Meldung
+„Die Streckgrenze f_y muss größer als null sein …“ steht in der Statuszeile und
+im Protokoll (im Dialog in der Meldungszeile über OK, der Dialog bleibt offen).
+Hat der Werkstoff keine Streckgrenze oder soll sie aus der Stahlsorte kommen
+(ein Beton hat keine), bleibt das Feld **leer**; das ist etwas anderes als 0.
+In der Tabelle heißt eine leer getippte Zelle „kein f_y“, und ein Werkstoff ohne
+f_y zeigt eine leere Zelle statt „0“; im Dialog zeigt das Feld ebenfalls nichts.
+Bis zum 07.10.2026 galt eine eingegebene 0 still als „leer“: Tabelle und Maske
+speicherten f_y = 0, das wie „leer“ wirkte (die Stahlsorte gab die Streckgrenze
+her, ohne Sorte war der Stab „nicht geführt“), der Dialog machte daraus ohne
+Meldung „leer“, und die Tabelle zeigte f_y ohne Wert als „0“, sodass sich f_y
+nur über die 0 leeren ließ.
 
 ### Schwingungsnachweis des Verschlusses
 
@@ -8203,7 +8601,12 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (σ = D(ε − ε_p)), die Auflagerkräfte tragen die Last. Das Protokoll nennt
   je Laststufe und Schritt die fließenden Elemente und die Änderung, die
   Zusammenfassung „Plastizität: n Elemente fließen, ε_p,eq max …, Schritte
-  in Laststufen“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
+  in Laststufen“. Der Bericht sagt unter „Gültigkeitsbereich und Hinweise“,
+  dass elastisch-plastisch gerechnet ist, in wie vielen Ergebnissen, in wie
+  vielen davon Elemente fließen und nach welchem Werkstoffgesetz (von Mises
+  mit isotroper linearer Verfestigung, E_t/E aus der Einstellung). Bis zum
+  07.10.2026 stand dort auch dann „Die Berechnung ist elastisch (keine
+  Plastizität, …)“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
   1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
   Verfahren in `docs/Theoriehandbuch.md`, Abschnitt 5e).
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
@@ -8244,7 +8647,17 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Startwert an verschachtelt wiederholt — das Protokoll sagt dann „Laststufe
   k - gemeinsam gerechnet …; die Stufe wird vom Startwert an verschachtelt
   wiederholt“. (Mit Anfangsdehnung wird nichts abgekürzt, nur der Vorlauf
-  entfällt — das Ergebnis bleibt bitgleich.)
+  entfällt. Das Ergebnis ist darum dasselbe bis auf die Toleranz der
+  Kontaktiteration, aber nicht bitgleich: verschachtelt beginnt der erste
+  plastische Lauf beim Kontaktzustand des Vorlaufs, gemeinsam beim Start des
+  Lastfalls. Gemessen am ideal plastischen Block mit Reibung der Tests:
+  der erste plastische Lauf braucht verschachtelt 21 Kontaktschritte,
+  gemeinsam 31, die übrigen Läufe gleich viele, und am Ende liegen die
+  Verschiebungen um höchstens 1,0·10⁻¹¹ m auseinander (u_max 6,1·10⁻⁴ m);
+  jeder Weg für sich ist
+  wiederholt bitgleich. Am fließenden Kontaktmodell mit gewählter
+  Anfangsdehnung sind beide Wege bitgleich. Bis zum 07.10.2026 stand hier,
+  das Ergebnis bleibe bitgleich.)
   Was man gemeinsam merkt — gemessen an 69 Probeläufen mit Reibung und
   Fließen, das Drehlager ist nicht nachgemessen (Theoriehandbuch § 5e.3):
   an Modellen wie dem der Tests „zwei Körper, Fuge mit µ 0,1“ weniger
@@ -8278,12 +8691,15 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   mit „verschachtelt“ gegenprüfen“. Die
   Zusammenfassung der ganzen Rechnung und die Liste „Offene Hinweise und
   Warnungen“ im Bericht fassen alle betroffenen Ergebnisse in einer Zeile
-  zusammen und nennen die ersten drei beim Namen. Ein Lastfall, der seinen
-  Fortschritt meldet, schreibt dieselbe Warnung als letzte Zeile der
-  Plastizität ins Protokoll, wo sie orange erscheint, und sie bleibt danach
-  in der Spalte „Meldung“ der Rechenliste stehen. Kombinationen und
-  Lastfälle, die in Ketten rechnen, melden unterwegs nichts; bei ihnen steht
-  die Warnung nur in den Zusammenfassungen und im Bericht. Die Warnung
+  zusammen und nennen die ersten drei beim Namen. Ein Lastfall oder eine
+  Kombination, die ihren Fortschritt meldet, schreibt dieselbe Warnung als
+  letzte Zeile der Plastizität ins Protokoll, wo sie orange erscheint, und
+  sie bleibt danach in der Spalte „Meldung“ der Rechenliste stehen.
+  Lastfälle, die in Ketten rechnen, und Kombinationen, die als Aufträge in
+  eigenen Prozessen rechnen, melden unterwegs nichts; bei ihnen steht die
+  Warnung nur in den Zusammenfassungen und im Bericht. Bis zum 07.10.2026
+  meldete auch eine Kombination im Programm selbst nichts (siehe „Die
+  Rechenliste“). Die Warnung
   erscheint nur, wenn wirklich gemeinsam gerechnet wurde, also mit Fließen
   und Kontakt. Ohne Kontakt, im Probelauf der adaptiven Vernetzung, mit
   eingefrorenem Kontaktzustand und mit ausfallenden Zugstäben rechnet auch die
@@ -8560,10 +8976,16 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   abgewiesen: Ein Hinweis sagt „Rechnung läuft: … erst nach der Rechnung
   übernehmen“, die Eingaben bleiben stehen, und nach der Rechnung genügt
   derselbe Knopf. Masken, die nur die Ansicht stellen (Darstellung, Messen,
-  Netzqualität, Schnittebene), wirken weiter. Ändert ein anderer Weg das
-  Modell während der Rechnung, etwa eine Tabelle, der Haken Eigengewicht im
-  Register Lager/Lasten, Rückgängig oder der Browser, passt ihr Ergebnis
-  nicht: Es kommt nicht ins Bild, die Kopfzeile sagt „Ergebnis passt nicht
+  Netzqualität, Schnittebene), wirken weiter. Der **Browser** wird während
+  der Rechnung abgewiesen: Er bekommt die Meldung „Am Desktop läuft gerade
+  eine Rechnung – bitte warten, bis sie fertig ist, und die Änderung dann noch
+  einmal senden“, und eine Änderung aus dem Browser, die beim Start der
+  Rechnung gerade läuft, wird erst fertig, bevor die Rechnung das Modell
+  liest. Bis zum 07.10.2026 ging eine Änderung aus dem Browser während der
+  Rechnung durch; ein anderes Netz fiel am Ende auf, ein anderes Eigengewicht
+  nicht. Ändert ein anderer Weg das Modell während der Rechnung, etwa eine
+  Tabelle, der Haken Eigengewicht im Register Lager/Lasten oder Rückgängig,
+  passt ihr Ergebnis nicht: Es kommt nicht ins Bild, die Kopfzeile sagt „Ergebnis passt nicht
   mehr zum Modell – neu rechnen“, ein Hinweis nennt den Grund, und Speichern
   schreibt keine Ergebnisdatei. Das gilt auch, wenn die Änderung vor dem Ende
   wieder zurückgenommen wurde, denn die Rechnung liest das Modell
@@ -9779,8 +10201,8 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
 Lastfälle, Kombinationen, Umhüllende, Nachweise — in eine zweite Datei
 `<modell>.ergebnisse` neben die Modelldatei; Öffnen liest sie wieder ein,
 wenn sie zum Modell passt (Knoten- und Elementzahl, die Lage jedes Knotens,
-je Element Typ und Knoten, Lastfallnamen), und das Programm steht danach
-wieder auf „berechnet“. Bis zum 12.09.2026 war nach dem Öffnen jede Rechnung
+je Element Typ und Knoten, Lastfallnamen und alle Rechenangaben, siehe
+unten), und das Programm steht danach wieder auf „berechnet“. Bis zum 12.09.2026 war nach dem Öffnen jede Rechnung
 weg — am Drehlager 18 Minuten je Lastfall. Ein Modell, das nach der Rechnung
 verändert wurde, passt nicht mehr; ein Hinweis in der Statuszeile und im
 Protokoll nennt den Grund, und die Datei bleibt liegen (bis zum 06.10.2026
@@ -9800,6 +10222,37 @@ geladen, aber mit dem Hinweis „mit Vorbehalt geladen“: Wer das Modell seitde
 ohne die Ergebnisse geändert hat, rechnet neu. Speichern ohne neue Rechnung
 behält den Vorbehalt, erst die nächste Rechnung schreibt die neue Kennung.
 Geprüft in `tests/test_fehler_p6.py`.
+
+Seit dem 07.10.2026 prüft die Kennung auch alles andere, was das Ergebnis
+bestimmt: die Lasten jedes Lastfalls (auch Eigengewicht und die Lasten der
+Lastgeneratoren Wind und Wasserdruck), die Eigenschaften der Lastfälle
+(Einwirkung, ψ, Theorie, Situation), die Kombinationen, Werkstoffe,
+Querschnitte und Dicken, die Eigenschaften jedes Elements (Werkstoff,
+Querschnitt, Drehung, Gelenke am Stab), Linien, Flächen und Volumen, die
+Lager, Gelenke, Federn und Kopplungen, den Kontakt, Massen und Dämpfer,
+Stellungen und Situationen, die Rechenart mit ihren Einstellungen
+(Plastizität, Bemessung, Theorie II. Ordnung) und die Nachweise. Passt eine
+dieser Gruppen nicht, lädt das Öffnen die Ergebnisse nicht, und der Hinweis
+nennt, was sich geändert hat, bei Lasten auch den Lastfall, etwa
+„Ergebnisdatei nicht geladen (rahmen.ergebnisse): … seit der Rechnung
+geändert: Lasten (LF1) – bitte neu rechnen“. Nicht mitgeprüft wird, was nur
+beschriftet oder anzeigt: Kommentare, Beschreibungen und Bezeichnungen,
+Nummern von Lastfällen und Kombinationen, die Größe der Lagersymbole, die
+Namen der Lager (außer eine Stellung nennt Lager beim Namen), Layer,
+Berichtseinträge, Einheiten, der gezeigte Lastfall, Projektangaben und die
+Netzvorgaben (das Netz selbst steht in Knoten und Elementen). Das sind
+dieselben Felder, bei denen *Übernehmen* die Ergebnisse behält. Werkstoffe,
+Querschnitte und Dicken, die nichts im Modell benutzt, zählen ebenfalls nicht
+mit; das Öffnen legt einem Modell ohne Dicken die Vorgabe „t = 10 mm“ an, und
+das darf eine Ergebnisdatei nicht ungültig machen. Ein gespeichertes und
+wieder geöffnetes Modell hat dieselbe Kennung; gemessen am Drehlager kostet
+sie beim Speichern und beim Öffnen je 2,4 bis 3,6 s statt 0,6 bis 0,7 s. Bis zum 07.10.2026 prüfte die Kennung nur Knoten, Elemente und die
+Namen der Lastfälle: Wer das Eigengewicht verdoppelte und das Modell als
+.json exportierte, bekam beim Öffnen das alte Ergebnis als passend gezeigt
+(uz −15,2543 statt −15,6466 mm). Eine Ergebnisdatei von vor dem 07.10.2026
+wird wie oben mit Vorbehalt geladen; der Hinweis sagt, dass sie Lasten,
+Werkstoffe, Querschnitte, Lager und die übrigen Rechenangaben nicht prüft.
+Geprüft in `tests/test_nachtrag_q1.py`.
 
 **Netz und Elemente im Bericht (seit 25.09.2026).** Für den Prüfer — „wie kann
 ich dem Prüfer beweisen, dass an dieser Stelle dieses Element verwendet wurde“
@@ -10549,7 +11002,14 @@ Kapitel 12). Das Register **⟳ Stellungen** führt den ganzen Ablauf:
    ausfallen, welche Lastfälle gelten, um welchen Winkel welche Gruppe gedreht
    wird und an welchem Knoten das Antriebsmoment angreift. Ein zweites Anlegen
    unter demselben Namen **ändert** die Stellung, statt sie zu verdoppeln; die
-   Liste bleibt nach Winkel sortiert.
+   Liste bleibt nach Winkel sortiert. Wie in der Maske des Desktops hat jede
+   Lagerart ihre eigene Liste: **Knotenlager aus**, **Linienlager aus** und
+   **Flächenlager aus**, mit den Namen wie im Modellbaum („Lager 2“, „Rand“,
+   „Flächenlager 1“); unter den Feldern stehen die Namen der vorhandenen Lager
+   als Hilfe, die Karte und die Tabelle der Stellungen nennen alle drei Listen
+   unter „Lager aus“. Bis zum 07.10.2026 gab es im Browser nur ein Feld „Lager
+   aus“, und seit die Arten getrennt lesen (06.10.2026) ließ sich im Browser
+   kein Linien- und kein Flächenlager mehr abschalten (`tests/test_web.py`).
 2. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln und bildet die
    Umhüllende. Jede Karte zeigt danach ihr η, die maßgebende Stellung ist
    hervorgehoben, und die Kurve **η über den Stellungswinkel** steht darunter.

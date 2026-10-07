@@ -1384,7 +1384,9 @@ def aus_tet10(model, elemente=None, ordnung: int = 3, toleranz: float = 1e-9) ->
     auf die Seite (sie wirkt dort konsistent auch auf die Zusatz-FHG).
 
     Rueckgabe {"elemente": Zahl, "gekruemmt": Zahl gekruemmter Kanten,
-    "mittenknoten": Menge der frei gewordenen Knoten}.
+    "mittenknoten": Menge der frei gewordenen Knoten, "stellungen": Zeilen
+    ueber Stellungen, die ein entferntes Lager nannten oder deren Lagernamen
+    dadurch nachrueckten (Model.stellungen_nachziehen)}.
     """
     if ordnung not in (2, 3, 4):
         raise ValueError(f"Ordnung {ordnung} (2, 3 oder 4)")
@@ -1445,11 +1447,19 @@ def aus_tet10(model, elemente=None, ordnung: int = 3, toleranz: float = 1e-9) ->
     model.tetp_kantenmitten = km
     model._tetp_version = getattr(model, "_tetp_version", 0) + 1
     # Lager an den Mittenknoten sind jetzt ohne Wirkung - weg damit, damit
-    # kein Lager an einem Knoten ohne Element steht
+    # kein Lager an einem Knoten ohne Element steht. Die Stellungen nennen ihre
+    # Lager beim Schluessel („Lager 4“): nehmen wir eines aus der Liste, rueckt
+    # der Rest nach, und ein Eintrag nannte danach ein anderes Lager - bis zum
+    # 07.10.2026 zog das niemand nach (N18; Model.stellungen_nachziehen).
     frei = set(mitte_von)
+    zeilen: list = []
     if frei and getattr(model, "supports", None):
+        vorher = model.stellungsbezug() if hasattr(model, "stellungsbezug") else None
         model.supports = [sp for sp in model.supports if int(sp.node) not in frei]
-    return {"elemente": len(idx), "gekruemmt": gekruemmt, "mittenknoten": frei}
+        if vorher is not None:
+            zeilen = model.stellungen_nachziehen(vorher)
+    return {"elemente": len(idx), "gekruemmt": gekruemmt, "mittenknoten": frei,
+            "stellungen": zeilen}
 
 
 # --------------------------------------------------------------------------

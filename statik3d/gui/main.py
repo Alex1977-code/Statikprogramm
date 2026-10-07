@@ -1399,6 +1399,23 @@ class MainWindow(QtWidgets.QMainWindow):
         """Laeuft eine Rechnung (Worker oder Rechnung im Vordergrund)?"""
         return self._rechnung_laeuft() or bool(getattr(self, "_rechnet_gerade", False))
 
+    #: eine Hintergrundrechnung laeuft: gesetzt in _run_background, zurueck in
+    #: _bg_done, _bg_failed und _bg_abgebrochen
+    _rechnet_gerade_wert = False
+
+    @property
+    def _rechnet_gerade(self) -> bool:
+        """Laeuft eine Hintergrundrechnung? Eine Eigenschaft seit dem
+        07.10.2026 (Nachtrag N40): jeder Wechsel sagt es dem Browser
+        (_web_sperre_nachfuehren). Bis dahin aenderte der Browser das Modell
+        auch waehrend der Rechnung - sie liest das Modell des Fensters."""
+        return self._rechnet_gerade_wert
+
+    @_rechnet_gerade.setter
+    def _rechnet_gerade(self, an) -> None:
+        self._rechnet_gerade_wert = bool(an)
+        self._web_sperre_nachfuehren()
+
     def _menuestand(self) -> tuple:
         """Der Stand, auf dem ein Rechtsklickmenue gebaut wurde: Modell,
         Aenderungsstand und Ergebnisse. Rueckgaengig und Wiederholen, Loeschen,
@@ -2430,6 +2447,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 zu_klein.append(f"{text}: ganze Zahl ab 1 erwartet, „{zl.zahl_text(wert)}“ eingetragen")
         if zu_klein:
             return self.hinweis("\n".join(zu_klein[:5]) + " - nichts übernommen")
+        if art == "lager":
+            # Komma und Semikolon im Lagernamen (Nachtrag N12): auch hier ein Hinweis
+            # vor dem Merken, nicht erst der Fehler des ersten Lagers
+            gewuenscht = str(w.get("name", "") or "").strip()
+            if gewuenscht and gewuenscht != anfang.get("name", None):
+                for n in namen:
+                    grund = self.model.objektname_konflikt(
+                        gewuenscht, (getattr(self.model.supports[int(n)], "name", "") or "").strip(), "Knotenlager")
+                    if grund:
+                        return self.hinweis(grund + " - nichts übernommen")
         self.merken(f"{self._auswahl_anzahl(art, len(namen))} bearbeitet")
         schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         for key, text, fart, _lesen, schreiben, _werte in spec:
@@ -6937,8 +6964,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Was der Browser zu hoeren bekommt, wenn er das Modell aendern will
         (Paket 13m, zweite Nachbesserung, Luecke 3): leer, wenn er darf. Der
         Web-Server liest es in seinem Faden (web.server._desktop_frei) - darum
-        ein einfacher Text, den nur dieser Faden hier schreibt."""
-        if _uebernahme_offen(self):
+        ein einfacher Text, den nur dieser Faden hier schreibt.
+
+        Waehrend einer Rechnung (seit dem 07.10.2026, Nachtrag N40): die
+        Rechnung liest das Modell des Fensters, eine Aenderung aus dem
+        Browser haette sie halb gesehen. Bis dahin ging sie durch - nur ein
+        anderes Netz fiel am Ende auf, ein anderes Eigengewicht gar nicht."""
+        if getattr(self, "_rechnet_gerade_wert", False):
+            grund = ("Am Desktop läuft gerade eine Rechnung – bitte warten, bis sie fertig ist, und die "
+                     "Änderung dann noch einmal senden")
+        elif _uebernahme_offen(self):
             grund = ("Am Desktop läuft gerade ein „Übernehmen“ – bitte warten und die Änderung "
                      "dann noch einmal senden")
         else:
@@ -8129,7 +8164,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return False
 
     @staticmethod
-    def _zahlenliste(text, zahl=int, anzahl=None, feld: str = "", minimum=None) -> list:
+    def _zahlenliste(text, zahl=int, anzahl=None, feld: str = "", minimum=None, bereich=None) -> list:
         """Die Zahlen einer Eingabe („1, 2 3“) - ganz oder mit Komma.
 
         Ganz: Nummernlisten (Knoten, Elemente, Teilung). Ein Eintrag, der
@@ -8140,7 +8175,13 @@ class MainWindow(QtWidgets.QMainWindow):
         F22). ``minimum``: kleinster erlaubter Eintrag (Teilung: 1) - sonst
         Eingabefehler; bis zum 06.10.2026 nahmen die Masken Flaeche und
         Volumen eine Teilung 0 oder -3 an, und der Vernetzer machte daraus
-        still 1 (F24). Mit Komma (Stab-Versatz y, z;
+        still 1 (F24). ``bereich`` = (Anzahl, Mehrzahl-Wort), etwa
+        (n, "Knoten"): jeder Eintrag muss eine vorhandene Nummer 0 bis n-1
+        sein, sonst Eingabefehler, der die Eintraege nennt. Bis zum
+        07.10.2026 liessen die Masken solche Eintraege still weg (Nachtrag
+        N13: der Stab aus „0, 99“ hatte nur das Element 0, die
+        angeschlossenen Knoten „1, 2, 9999“ eines starren Koerpers nur 1 und
+        2). Mit Komma (Stab-Versatz y, z;
         Ersatzachse; Gewichte): jede Zahl nach der Regel der Zahlenfelder, ein
         mehrdeutiger („1.000“) oder ungueltiger Eintrag wirft zl.Eingabefehler, einen
         ValueError (25.09.2026; bis dahin wurde „1.000“ still 1 und „1,0,0“ fiel
@@ -8150,7 +8191,7 @@ class MainWindow(QtWidgets.QMainWindow):
         (Versatz, Achse, Gewichte, Stabknoten, Teilung) weisen zu viele oder
         zu wenige Eintraege mit Meldung ab - bis 25.09.2026 wurden sie still
         gekuerzt. Dann ist auch ein Eintrag, der keine ganze Zahl ist, ein
-        Fehler statt still wegzufallen („0, 1, x“ war der Stab 0-1). „ד
+        Fehler statt still wegzufallen („0, 1, x“ war der Stab 0-1). „×“
         trennt immer (Teilung „4 × 4“)."""
         if zahl is int:
             roh = str(text or "").replace("×", " ").strip()
@@ -8171,6 +8212,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 if klein is not None:
                     raise zl.Eingabefehler(
                         f"{wo}ganze Zahlen ab {minimum} erwartet, „{roh}“ enthält {klein}.")
+            if bereich is not None:
+                n_da, was = bereich
+                aus = [v for v in werte if not 0 <= v < n_da]
+                if aus:
+                    eintraege = ", ".join(f"„{v}“" for v in aus[:5]) + (" …" if len(aus) > 5 else "")
+                    raise zl.Eingabefehler(
+                        f"{wo}{eintraege} gibt es nicht - "
+                        + (f"{was} sind 0 bis {n_da - 1}." if n_da else f"es gibt noch keine {was}."))
             return werte
         return zl.zahlenliste(text, anzahl, feld)
 
@@ -8978,12 +9027,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 master = int(float(w.get("master", 0)))
             except (TypeError, ValueError):
                 master = 0
-            slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
-                      if 0 <= n < self.model.nn and n != master]
+            slaves = self._slaves_lesen(w, master)
             return {"gewichte": self._zahlenliste(
                 w.get("gewichte"), zahl=float, anzahl=len(slaves) or None,
                 feld="Gewichte (RBE3, eines je angeschlossenem Knoten)")}
         return {}
+
+    def _slaves_lesen(self, w: dict, master: int) -> list:
+        """Die angeschlossenen Knoten eines starren Koerpers aus der Maske:
+        jeder Eintrag muss ein vorhandener Knoten sein, sonst Eingabefehler,
+        der ihn nennt (Nachtrag N13, 07.10.2026; bis dahin fiel ein Knoten
+        ausserhalb still weg: „1, 2, 9999“ war 1 und 2). Der Masterknoten
+        selbst bleibt wie bisher aussen vor - er kann nicht zugleich
+        angeschlossen sein."""
+        return [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten",
+                                             bereich=(self.model.nn, "Knoten"))
+                if n != master]
 
     @staticmethod
     def _verbindung_knoten(w: dict, schluessel: str, vorgabe=0) -> int:
@@ -9010,8 +9069,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         if art == "starrkoerper":
             master = knoten("master")
-            slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
-                      if 0 <= n < m.nn and n != master]
+            slaves = self._slaves_lesen(w, master)
             if not 0 <= master < m.nn or not slaves:
                 return "Masterknoten und mindestens ein angeschlossener Knoten nötig"
         return None
@@ -9099,8 +9157,7 @@ class MainWindow(QtWidgets.QMainWindow):
             i = len(m.starrkoerper) - 1
         sk = m.starrkoerper[i]
         master = knoten("master")
-        slaves = [n for n in self._zahlenliste(w.get("slaves"), feld="Angeschlossene Knoten")
-                  if 0 <= n < m.nn and n != master]
+        slaves = self._slaves_lesen(w, master)
         sk.master, sk.slaves = master, slaves       # geprueft in _verbindung_pruefen
         sk.art = "RBE3" if str(w.get("art", "RBE2")).upper() == "RBE3" else "RBE2"
         sk.gewichte =gew if len(gew) == len(slaves) else []
@@ -10524,6 +10581,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if (getattr(obj, "name", "") or "").strip() == neu:
             obj.name = neu
             return
+        # Netz unter den Wegen, die vorher gefragt haben (Nachtrag N12): Komma und
+        # Semikolon trennen die Namen in den Listen der Stellung
+        grund = m.objektname_konflikt(neu, getattr(obj, "name", "") or "", "Lager")
+        if grund:
+            raise NameVergeben(grund)
         vorher = m.stellungsbezug()
         obj.name = neu
         self._protokollzeilen(m.stellungen_nachziehen(vorher))
@@ -10536,12 +10598,14 @@ class MainWindow(QtWidgets.QMainWindow):
         genannten treffen oder verfehlen, und „Lager ohne Namen bleiben immer
         aktiv“. Die Stellung folgt dem Umbenennen zwar (:meth:`_lager_benennen`),
         aber statt jeden Fall nachzuvollziehen, verwirft eine Umbenennung dann die
-        Ergebnisse (im Zweifel verwerfen)."""
-        for st in getattr(self.model, "stellungen", []) or []:
-            for attr in ("lager_aus", "lager_aktiv", "linienlager_aus", "flaechenlager_aus"):
-                if getattr(st, attr, None):
-                    return True
-        return False
+        Ergebnisse (im Zweifel verwerfen).
+
+        Die Regel steht seit dem 07.10.2026 in ergebnisse.lagernamen_zaehlen:
+        die Kennung der Ergebnisdatei zaehlt Lagernamen genau dann mit
+        (Nachtrag N38) - sonst behielte die Oberflaeche die Ergebnisse, und
+        die Datei passte nach Speichern und Oeffnen nicht mehr."""
+        from .. import ergebnisse as erg
+        return erg.lagernamen_zaehlen(self.model)
 
     def _nur_beschriftung(self, art: str, name: str, geaendert, w: dict = None) -> bool:
         """Aendert das „Übernehmen“ nur Beschriftungen (oder gar nichts)?
@@ -10586,6 +10650,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if not 0 <= i < len(liste):
                 return self.error(f"{self.LAGER_ARTEN[art][1]} {i + 1} gibt es nicht mehr")
             obj = liste[i]
+            if "name" in geaendert:
+                grund = m.objektname_konflikt(str(w.get("name", "") or "").strip(),
+                                              (getattr(obj, "name", "") or "").strip(),
+                                              self.LAGER_ARTEN[art][1])                    # N12
+                if grund:
+                    return self.hinweis(grund)
             self.merken(f"{self.LAGER_ARTEN[art][1]} {i + 1} beschriftet", beschriftung=True)
             if "name" in geaendert:
                 self._lager_benennen(obj, w.get("name", ""))
@@ -10647,6 +10717,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 if len(knoten) < 2 or any(not 0 <= n < m.nn for n in knoten):
                     return self.hinweis("Eine Linie braucht mindestens zwei vorhandene Knoten")
                 neuname = (w.get("name") or name).strip()
+                # Komma und Semikolon trennen die Namen in den getippten Listen
+                # (Nachtrag N12, 07.10.2026): vor dem Merken, kein leerer Schritt
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Linie")
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(f"Linie {neuname}")
                 if neu:
                     m.add_line(neuname, knoten)
@@ -10685,7 +10760,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ra = self._zahlenliste(w.get("ex_a"), zahl=float, anzahl=2, feld="Versatz Anfang y, z [mm]")
                 re = self._zahlenliste(w.get("ex_e"), zahl=float, anzahl=2, feld="Versatz Ende y, z [mm]")
                 if neu:
-                    parallel = self._parallel_text(self._stabelemente_zwischen(*knoten), *knoten)
+                    parallel = self._parallel_text(m.stabelemente_zwischen_knoten(*knoten), *knoten)
                     self.merken("Stabelement angelegt")
                     i = m.add_element(typ, knoten, mat, sec)
                     name = str(i)
@@ -10708,11 +10783,26 @@ class MainWindow(QtWidgets.QMainWindow):
                               "der Stab rechnet ohne Wölbkrafttorsion")
                 m.stab_woelb_setzen(int(name), woelb)
             elif art == "stab":
-                els = self._zahlenliste(w.get("elemente"), feld="Elemente")
-                els = [e for e in els if 0 <= e < len(m.elements) and m.elements[e].typ in vp.TYPEN_STAEBE]
+                # jeder Eintrag muss ein vorhandenes Stabelement sein: bis zum
+                # 07.10.2026 fiel ein anderer still weg (Nachtrag N13: „0, 99“
+                # war der Stab aus dem Element 0)
+                els = self._zahlenliste(w.get("elemente"), feld="Elemente",
+                                        bereich=(len(m.elements), "Elemente"))
+                kein_stab = [e for e in els if m.elements[e].typ not in vp.TYPEN_STAEBE]
+                if kein_stab:
+                    nr = ", ".join(f"„{e}“" for e in kein_stab[:5]) + (" …" if len(kein_stab) > 5 else "")
+                    raise zl.Eingabefehler(
+                        f"Elemente: {nr} " + ("ist kein Stabelement" if len(kein_stab) == 1
+                                              else "sind keine Stabelemente")
+                        + " - einen Stab bilden nur Stabelemente.")
                 if not els:
                     return self.hinweis("Elemente (Nummern von Stabelementen) angeben")
                 neuname = (w.get("name") or name).strip()
+                # Komma und Semikolon trennen die Namen in den getippten Listen
+                # (Nachtrag N12, 07.10.2026)
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Stab")
+                if grund:
+                    return self.hinweis(grund)
                 # ein Stabelement gehoert zu hoechstens einem Stab: sonst weist
                 # EC3 es zweimal nach (C14 S2, 03.10.2026)
                 fremd = {s: v for s, v in m.staebe_der_elemente(els).items() if neu or s != name}
@@ -10721,7 +10811,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self.hinweis(f"E{v[0]} gehört schon zu Stab {s} – ein Stabelement gehört zu höchstens "
                                       "einem Stab (sonst wird es doppelt nachgewiesen); erst dort herausnehmen "
                                       "oder „Stäbe zusammenfassen“")
-                if neu and neuname in m.members:
+                # Der Name wird **vor** dem Merken geprueft, beim Anlegen wie beim
+                # Umbenennen (N20, 07.10.2026): bis dahin merkte die Funktion
+                # den Schritt und liess Model.stab_umbenennen den vorhandenen
+                # Namen abweisen (ValueError, rotes Fenster). Den leeren Schritt
+                # nahm nur der Rahmen des „Uebernehmen“ einer Maske wieder weg.
+                if neuname in m.members and (neu or neuname != name):
                     return self.hinweis(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
                 self.merken(f"Stab {neuname}")
                 if neu:
@@ -10765,6 +10860,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                             minimum=1) or [4, 4]
                 teilung = teilung * 2 if len(teilung) == 1 else teilung
                 neuname = (w.get("name") or name).strip()
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Fläche")      # N12
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(f"Fläche {neuname}")
                 typ = FLAECHENARTEN.get(str(w.get("typ", "") or ""), "")
                 if neu:
@@ -10800,6 +10898,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 kerbfall = (zl.feldwert(w.get("kerbfall"), 0.0) or 0.0) * 1e6
                 kerbfall_naht = (zl.feldwert(w.get("kerbfall_naht"), 0.0) or 0.0) * 1e6
                 neuname = (w.get("name") or name).strip()
+                grund = m.objektname_konflikt(neuname, "" if neu else name, "Volumen")     # N12
+                if grund:
+                    return self.hinweis(grund)
                 self.merken(f"Volumen {neuname}")
                 if neu:
                     m.add_koerper(neuname, flaechen, material=w.get("material", ""), teilung=teilung,
@@ -10997,8 +11098,14 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "werkstoff":
             if (neu or neuname != name) and neuname in m.materials:
                 return self.hinweis(f"Werkstoff „{neuname}“ gibt es schon")
-            self.merken(f"Werkstoff {neuname}")
             fy, fu = zahl("fy"), zahl("fu")
+            # f_y = 0 ist ein Eingabefehler, nicht „leer“ (N07, 07.10.2026): hat der
+            # Werkstoff keine Streckgrenze, bleibt das Feld leer. Bis dahin wurde die 0
+            # still zu Material.fy = 0.0 und wirkte wie „leer“.
+            grund = dg.streckgrenze_fehler(fy)
+            if grund:
+                return self.hinweis(grund)
+            self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
             # _stahlsorte_lesen)
@@ -11055,6 +11162,9 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..model import MemberHinge
             if (neu or neuname != name) and neuname in m.hinges:
                 return self.hinweis(f"Gelenk „{neuname}“ gibt es schon")
+            grund = m.objektname_konflikt(neuname, "" if neu else name, "Gelenk")           # N12
+            if grund:
+                return self.hinweis(grund)
             rueck = {v: k for k, v in self.GELENKART.items()}
             typen = [rueck.get(str(w.get(f"typ{d}", "biegesteif")), "fixed") for d in range(6)]
             federn = [float(zahl(f"k{d}", 0.0)) * 1e3 for d in range(6)]
@@ -11196,6 +11306,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if not 0 <= i < len(liste):
                 return self.error(f"{titel_art} {i + 1} gibt es nicht mehr")
             obj = liste[i]
+            # Komma und Semikolon trennen die Namen in den Listen (N12), vor dem Merken
+            grund = m.objektname_konflikt(str(neuname if neuname != name else w.get("name", "") or "").strip(),
+                                          (getattr(obj, "name", "") or "").strip(), titel_art)
+            if grund:
+                return self.hinweis(grund)
             rueck_typ = {v: k for k, v in self.LAGERWIRKUNG.items()}
             rueck_aus = {v: k for k, v in self.LAGERAUSFALL.items()}
             neu_beh = {}
@@ -11858,8 +11973,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     lc.geometrielasten = [gl for gl in lc.geometrielasten
                                           if not (gl.verlauf.get("art") == "wind"
                                                   and gl.verlauf.get("name") == name)]
-                    lc.linienlasten = [ll for ll in lc.linienlasten
-                                       if not (ll.kommentar or "").startswith(f"Wind {name}:")]
+                # die Stablasten am Merkmal ``erzeuger``, nicht am Kommentar (N23)
+                from .. import wind as wm
+                wm.stablasten_entfernen(m, m.winde[name])
                 del m.winde[name]
                 m.lasten_verteilen()
         elif art == "kontaktbedingung":
@@ -11988,7 +12104,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if grund:
             if art not in SELBST and self._undo and self._undo[-1][0] == f"{was} gelöscht":
                 self._merken_zuruecknehmen()
-            return grund if sammel else self.error(grund)
+            # Ein Sperrgrund sagt, was der Anwender zuerst tun soll („erst diese
+            # loeschen oder aendern“): ein Bedienhinweis nach der 9b-Regel, kein
+            # Fehler (N21, 07.10.2026). Bis dahin oeffnete das rote Fenster
+            # „Fehler“ - beim Loeschen eines benutzten Knotens, Stabs, Querschnitts.
+            return grund if sammel else self.hinweis(grund)
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
@@ -12279,6 +12399,9 @@ class MainWindow(QtWidgets.QMainWindow):
         d = dg.LinienDialog(self, vorlage, self.model.nn)
         if d.exec():
             w = d.werte()
+            grund = self.model.objektname_konflikt(w["name"], "", "Linie")                 # N12
+            if grund:
+                return self.hinweis(grund)
             if len(w["nodes"]) < 2:
                 return self.error("Eine Linie braucht mindestens zwei Knoten.")
             self.merken(f"Linie {w['name']}")
@@ -12296,6 +12419,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         w = d.werte()
+        grund = self.model.objektname_konflikt(w["name"], name, "Linie")                   # N12
+        if grund:
+            return self.hinweis(grund)
         if len(w["nodes"]) < 2:
             return self.error("Eine Linie braucht mindestens zwei Knoten.")
         self.merken(f"Linie {name}")
@@ -12668,6 +12794,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         w = d.werte()
+        grund = self.model.objektname_konflikt(w["name"], "", "Fläche")                    # N12
+        if grund:
+            return self.hinweis(grund)
         try:
             self.merken(f"Fläche {w['name']}")
             f = self.model.add_flaeche(w["name"], w["linien"], dicke=w["dicke"],
@@ -12706,6 +12835,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         w = d.werte()
+        grund = self.model.objektname_konflikt(w["name"], "", "Volumen")                   # N12
+        if grund:
+            return self.hinweis(grund)
         try:
             self.merken(f"Volumen {w['name']}")
             k = self.model.add_koerper(w["name"], w["flaechen"],
@@ -13801,7 +13933,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("E", "GPa", "zahl", 1, True, hinweis="Elastizitätsmodul"),
             Spalte("ν", "", "zahl", 2, True, hinweis="Querdehnzahl (0 … 0,5)"),
             Spalte("ρ", "kg/m³", "zahl", 0, True, hinweis="Dichte"),
-            Spalte("fy", "MPa", "zahl", 0, True, hinweis="Streckgrenze"),
+            Spalte("fy", "MPa", "zahl", 0, True, leer_ok=True,
+                   hinweis="Streckgrenze; leer = aus der Stahlsorte (0 gibt es nicht)"),
             Spalte("Sorte", "", "text", 3, True,
                    hinweis="Stahlsorte nach EN 10025 für die Nachweise")],
             "Werkstoffe", self)
@@ -14437,9 +14570,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 if l.von or l.bis is not None:
                     abschnitt = f"von {zl.zahl_text(l.von, tausender=False)} m" + (f" bis {zl.zahl_text(l.bis, tausender=False)} m" if l.bis is not None
                                                       else " bis Ende")
+                # Abschnitt und Stand des Verteilens („n Elementlasten“), dann der
+                # Kommentar des Anwenders - der Stand steht seit dem 07.10.2026 nicht
+                # mehr im Kommentar (N05)
+                stand = " ".join(x for x in (abschnitt, l.verteilt) if x)
                 zeilen.append([i, lcname, "Linienlast", ziel, wert,
                                tab.LASTSYSTEM_TEXT.get(l.system, l.system),
-                               " ".join(x for x in (abschnitt, l.kommentar or "") if x)])
+                               "; ".join(x for x in (stand, l.kommentar or "") if x)])
                 i += 1
             for l in lc.zwangsverformungen:
                 zeilen.append([i, lcname, "Zwangsverformung", f"K{l.node}",
@@ -14821,6 +14958,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Symbolgroesse ist Darstellung; der Name nur, solange keine Stellung
         # Lager beim Namen waehlt (24.09.2026)
         behalten = k == 6 or not self._lagernamen_rechnen()
+        if k == 2:
+            grund = self.model.objektname_konflikt(str(wert or "").strip(),
+                                                   (getattr(obj, "name", "") or "").strip(), liste[i][0])
+            if grund:                                                                   # N12
+                self.hinweis(grund)
+                return False
         self.merken("Lager bearbeitet")
         if k == 2:
             self._lager_benennen(obj, wert)
@@ -15051,12 +15194,27 @@ class MainWindow(QtWidgets.QMainWindow):
             if sorte_art == "info":
                 self.info(sorte_text)
             return True
+        if k == 4:
+            # f_y: leer (None, die Zelle ist leer getippt) heisst „kein f_y“; 0 und
+            # alles darunter ist ein Eingabefehler (N07, 07.10.2026). Bis dahin war
+            # 0 hier die einzige Art, f_y zu leeren, und wirkte still wie „leer“
+            # (Material.fy = 0.0); die Zelle zeigte f_y ohne Wert als „0“.
+            fy = None if wert is None else float(wert)
+            grund = dg.streckgrenze_fehler(fy)
+            if grund:
+                self.hinweis(grund)
+                return False
+            self.merken(f"Werkstoff {name}")
+            v.fy = None if fy is None else fy * 1e6
+            self._zelle_uebernommen(f"Werkstoff {name}: {self.tbl_mat.modell.spalten[k].kopf()} = "
+                                    f"{'leer' if fy is None else wert}")
+            return True
         w = float(wert)
         if k == 1 and not self._pruefen(w, unten=0.0, was="E-Modul"):
             return False
         if k == 2 and not self._pruefen(w, unten=-1.0, oben=0.5, was="Querdehnzahl"):
             return False
-        if k in (3, 4) and not self._pruefen(w, unten=-1e-9, was=self.tbl_mat.modell.spalten[k].name):
+        if k == 3 and not self._pruefen(w, unten=-1e-9, was=self.tbl_mat.modell.spalten[k].name):
             return False
         self.merken(f"Werkstoff {name}")
         if k == 1:
@@ -15065,8 +15223,6 @@ class MainWindow(QtWidgets.QMainWindow):
             v.nu = w
         elif k == 3:
             v.rho = w
-        elif k == 4:
-            v.fy = w * 1e6
         self._zelle_uebernommen(f"Werkstoff {name}: "
                                 f"{self.tbl_mat.modell.spalten[k].kopf()} = {wert}")
         return True
@@ -18481,7 +18637,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for k, e in self.ed_meta.items():
             e.setText(m.meta.get(k, ""))
         schritt("Tabellen aufbauen …")
-        self._fill(self.tbl_mat, [[k, v.E / 1e9, v.nu, v.rho, (v.fy or 0.0) / 1e6,
+        # ein Werkstoff ohne f_y zeigt eine leere Zelle, nicht „0“ (N07, 07.10.2026)
+        self._fill(self.tbl_mat, [[k, v.E / 1e9, v.nu, v.rho, (v.fy / 1e6 if v.fy else ""),
                                    v.grade] for k, v in m.materials.items()])
         self._fill(self.tbl_sec, [[k, v.typ, v.A * 1e4, v.Iy * 1e8, v.Iz * 1e8,
                                    v.It * 1e8, v.Wpl_y * 1e6, v.h * 1e3, v.b * 1e3]
@@ -18520,6 +18677,7 @@ class MainWindow(QtWidgets.QMainWindow):
         schritt("Modellbaum aufbauen …")
         self._refresh_baum()
         self._layer_combo_fuellen()
+        self._layerliste_nachziehen()
         schritt("Ansicht aufbauen …")
         self.redraw()
         if gross:
@@ -19160,67 +19318,35 @@ class MainWindow(QtWidgets.QMainWindow):
         Nachweis, in einem Rueckgaengig-Schritt „Stabzug“ - fuer die Maske
         „Stabzug erzeugen“ und die Tafel „Stabzug“ im Register Netz.
 
-        Je Abschnitt wie der Befehl „Stab“ (_vorhandene_glieder, 06.10.2026):
-        ueberdecken vorhandene freie Stabelemente ihn lueckenlos und in einer
-        Richtung, entsteht dort kein neues Element, der Stab nimmt sie; gehoeren
-        sie einem Stab, ueberdecken sie ihn nicht genau einmal oder laufen sie
-        gegen den Stabzug, wird nichts angelegt, und ein Hinweis sagt warum.
-        Bis dahin legte ein Stabzug ueber S1 still E1 [0, 1] und den Stab S2
-        an, und die Tafel im Register Netz merkte sich keinen Schritt:
+        Das Anlegen samt Pruefung ist :meth:`Model.stabzug_anlegen`, dieselbe
+        Funktion wie im Browser (Nachtrag N03, 07.10.2026): je Abschnitt wie der
+        Befehl „Stab“ - ueberdecken vorhandene freie Stabelemente ihn lueckenlos
+        und in einer Richtung, entsteht dort kein neues Element, der Stab nimmt
+        sie; gehoeren sie einem Stab, ueberdecken sie ihn nicht genau einmal oder
+        laufen sie gegen den Stabzug, wird nichts angelegt, und ein Hinweis sagt
+        warum. Die Pruefung laeuft vor der Aenderung: das Modell bleibt dabei
+        unberuehrt, der Schritt faellt weg.
+        Bis zum 06.10.2026 legte ein Stabzug ueber S1 still E1 [0, 1] und den Stab
+        S2 an, und die Tafel im Register Netz merkte sich keinen Schritt:
         Rueckgaengig nahm danach den Stab davor zurueck („Rückgängig: Stab S1
         angelegt“), der Stabzug blieb ohne Stab stehen."""
         m = self.model
         self.merken("Stabzug")
-        schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         try:
-            e0 = len(m.elements)
-            mesher.line_of_beams(m, mat, sec, p1, p2, max(1, int(n)))
-            if fachwerk:
-                for e in m.elements[e0:]:
-                    e.typ = "truss"
-            mesher.merge_nodes(m)
-            neu = m.elements[e0:]
-            glieder, umgekehrt, grund = self._vorhandene_glieder(
-                [(int(e.nodes[0]), int(e.nodes[-1])) for e in neu], ausser=range(e0, len(m.elements)),
-                stabzug=True)
-            if grund:
-                # genau diesen Schritt zurueckholen: die Knoten sind schon
-                # verschmolzen, das Modell bleibt dasselbe Objekt
-                self._schritt_zurueckholen(schritt)
-                return self.hinweis(grund)
-            # die Abschnitte mit vorhandenen Elementen bekommen kein neues;
-            # die Knoten dort sind die der vorhandenen Elemente
-            del m.elements[e0:]
-            els, alt = [], []
-            for e, g in zip(neu, glieder):
-                if g:
-                    els += g
-                    alt += g
-                else:
-                    m.elements.append(e)
-                    els.append(len(m.elements) - 1)
-            name = m.naechster_name("S", m.members)
-            m.add_member(name, els[::-1] if umgekehrt else els)
+            res = m.stabzug_anlegen(mat, sec, p1, p2, max(1, int(n)), fachwerk)
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
             return self.error(str(ex))
-        text = f"Stabzug: {bg.anzahl(len(m.elements) - e0, 'Element', 'Elemente')}"
-        if alt:
-            if len(m.elements) == e0:
-                # nur ein Stab ist dazugekommen: die Ansicht hielte das Ergebnis
-                # fuer passend, die Nachweise kennen ihn aber nicht (wie „Stab“)
-                self.analysis = None
-                self.results = None
-            nummern = ", ".join(f"E{e}" for e in alt[:-1]) + (" und " if len(alt) > 1 else "") + f"E{alt[-1]}"
-            text = (f"Stabzug: {bg.anzahl(len(m.elements) - e0, 'neues Element', 'neue Elemente')} und "
-                    f"{'das vorhandene Stabelement' if len(alt) == 1 else 'die vorhandenen Stabelemente'} "
-                    f"{nummern} im Stab {name}")
-            arten = list(dict.fromkeys((m.elements[e].sec, m.elements[e].mat, m.elements[e].typ) for e in alt))
-            if arten != [(sec, mat, "truss" if fachwerk else "beam")]:
-                text += (f" – Querschnitt, Werkstoff und Art bleiben die der vorhandenen ("
-                         + "; ".join(f"{s}, {mt}{', Fachwerkstab' if t == 'truss' else ''}" for s, mt, t in arten)
-                         + ")")
-        self.info(text)
+        if res.get("grund"):
+            # nichts geaendert: der Schritt faellt weg, der Stand von davor gilt wieder
+            self._merken_zuruecknehmen()
+            return self.hinweis(res["grund"])
+        if res["nur_stab"]:
+            # nur ein Stab ist dazugekommen: die Ansicht hielte das Ergebnis
+            # fuer passend, die Nachweise kennen ihn aber nicht (wie „Stab“)
+            self.analysis = None
+            self.results = None
+        self.info(res["text"])
         self.refresh_all()
 
     @_maskenweg()
@@ -19787,9 +19913,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._signatur_gespeichert is not None
                 and self._modellsignatur() != self._signatur_gespeichert):
             teile.append("Änderungen am Modell")
-        if self._ergebnis_ungespeichert and (self.analysis is not None or self.results is not None):
+        if self._ergebnis_ungespeichert and self._ergebnis_zaehlt():
             teile.append("Ergebnisse der letzten Rechnung")
         return " und ".join(teile)
+
+    def _ergebnis_zaehlt(self) -> bool:
+        """Gibt es Ergebnisse, die Speichern sichern wuerde (Nachtrag N39,
+        07.10.2026)? Eine Analyse nur, wenn sie zum Modell passt - genau dann
+        schreibt ergebnisse_speichern sie. Bis dahin genuegte, dass es eine
+        gab: ein Ergebnis, das als „anders“ galt (Modell waehrend der Rechnung
+        geaendert), nannte die Rueckfrage vor dem Beenden, und „Speichern“
+        schrieb es dann doch nicht. Einzelergebnisse (self.results:
+        Eigenformen, Knicken) zaehlen wie bisher."""
+        if self.analysis is not None and self._analyse_passt() == "passt":
+            return True
+        return self.results is not None
 
     def _titel_nachziehen(self):
         """Stern im Fenstertitel, wenn etwas ungespeichert ist - der Titel
@@ -20013,6 +20151,18 @@ class MainWindow(QtWidgets.QMainWindow):
             laenge = ln.laenge(self.model)
             n_el = 0
             if w.get("staebe"):
+                # liegen auf der Linie schon Stabelemente, legte der Haken parallele
+                # daneben, die doppelt tragen (N04, 07.10.2026; bis dahin pruefte die
+                # Linie nichts): dann entsteht gar nichts, auch die Linie nicht
+                im_weg = self.model.stabelemente_unter_linie(name, teilung)
+                if im_weg:
+                    del self.model.lines[name]
+                    self._merken_zuruecknehmen()
+                    return self.hinweis(
+                        f"Auf der Linie {'liegt schon Stabelement' if len(im_weg) == 1 else 'liegen schon die Stabelemente'} "
+                        f"{bg.aufzaehlung((f'E{e}' for e in im_weg), maximal=6)} – keine Linie angelegt, sonst trügen dort zwei "
+                        "Elemente nebeneinander. Den Haken „Stabelemente daraus erzeugen“ abwählen, wenn die Linie "
+                        "nur Geometrie sein soll")
                 n_el = len(self.model.line_to_beams(name, w["mat"], w["sec"], teilung))
         except (geo.GeometrieFehler, ValueError, KeyError) as ex:
             self._merken_zuruecknehmen(unveraendert=False)
@@ -20069,151 +20219,6 @@ class MainWindow(QtWidgets.QMainWindow):
         m._klickhinweis = lambda: hinweis
         return m
 
-    def _stabelemente_zwischen(self, a: int, b: int) -> list:
-        """Die Stabelemente, die genau die Knoten a und b verbinden."""
-        return [i for i, e in enumerate(self.model.elements)
-                if e.typ in vp.TYPEN_STAEBE and {int(e.nodes[0]), int(e.nodes[-1])} == {int(a), int(b)}]
-
-    #: Ein Knoten liegt auf einer gezeichneten Strecke, wenn er hoechstens
-    #: STRECKE_TOL · ihre Laenge neben ihr liegt (6 m: 6 mm). Die Stichprobe in
-    #: tests.test_befehl_stab (Abschnitt 9, 12 Ketten in beliebiger Lage)
-    #: nimmt gerechnet geteilte Ketten und solche mit Zwischenknoten 0,5 ‰
-    #: daneben als Kette, eine Kette 1 % daneben als andere Linie.
-    STRECKE_TOL = 1e-3
-
-    def _stabelemente_auf_strecken(self, abschnitte, ausser=()) -> list:
-        """Je Abschnitt (a, b) die vorhandenen Stabelemente darauf: (kette, im_weg).
-
-        ``im_weg``: alle Stabelemente ausser ``ausser``, deren beide Endknoten
-        auf der Strecke K a – K b liegen (:attr:`STRECKE_TOL`) und die sie auf
-        mehr als dieser Toleranz ueberdecken, von a nach b sortiert. ``kette``:
-        dieselben in Folge von a nach b, wenn sie die Strecke genau einmal
-        und lueckenlos ueberdecken - jedes von einem Knoten der Kette zum
-        naechsten, die Knoten mit wachsendem Abstand von a -, sonst [].
-
-        Bis zum 06.10.2026 sah der Befehl „Stab“ nur ein Element mit genau den
-        Endknoten a und b (_stabelemente_zwischen): K0–K2 ueber S1 (K0–K1) und
-        S2 (K1–K2) legte still ein drittes, paralleles Element an."""
-        m = self.model
-        ausser = {int(i) for i in ausser}
-        kand = [(i, int(e.nodes[0]), int(e.nodes[-1])) for i, e in enumerate(m.elements)
-                if i not in ausser and e.typ in vp.TYPEN_STAEBE]
-        if not kand:
-            return [([], []) for _ab in abschnitte]
-        nr = np.array([k[0] for k in kand])
-        anf = np.array([k[1] for k in kand])
-        end = np.array([k[2] for k in kand])
-        X = np.asarray(m.nodes, float)
-        ende = {k[0]: (k[1], k[2]) for k in kand}
-        out = []
-        for a, b in abschnitte:
-            a, b = int(a), int(b)
-            pa = X[a]
-            L = float(np.linalg.norm(X[b] - pa))
-            if L <= 0.0:
-                out.append(([], []))
-                continue
-            d = (X[b] - pa) / L
-            tol = self.STRECKE_TOL * L
-            tp, tq = (X[anf] - pa) @ d, (X[end] - pa) @ d
-            hp = np.linalg.norm(X[anf] - pa - np.outer(tp, d), axis=1)
-            hq = np.linalg.norm(X[end] - pa - np.outer(tq, d), axis=1)
-            ueber = np.minimum(np.maximum(tp, tq), L) - np.maximum(np.minimum(tp, tq), 0.0)
-            treffer = np.flatnonzero((hp <= tol) & (hq <= tol) & (ueber > tol))
-            im_weg = [int(nr[j]) for j in sorted(treffer, key=lambda j: (min(tp[j], tq[j]), int(nr[j])))]
-            # die Kette von a nach b: an jedem Knoten genau ein Element weiter,
-            # vorwaerts entlang der Strecke, und am Ende keins uebrig
-            rest, kette, k, t = set(im_weg), [], a, 0.0
-            while k != b:
-                weiter = [i for i in rest if k in ende[i]]
-                if len(weiter) != 1:
-                    break
-                i = weiter[0]
-                k_neu = ende[i][1] if ende[i][0] == k else ende[i][0]
-                t_neu = float((X[k_neu] - pa) @ d)
-                if t_neu <= t + tol:
-                    break
-                k, t = k_neu, t_neu
-                rest.discard(i)
-                kette.append(i)
-            out.append((kette if k == b and not rest else [], im_weg))
-        return out
-
-    def _vorhandene_glieder(self, abschnitte, ausser=(), stabzug: bool = False) -> tuple:
-        """Was ein gezeichneter Stab oder Stabzug mit den Stabelementen macht,
-        die schon auf seinen Abschnitten (a, b) liegen (06.10.2026).
-
-        Rueckgabe (glieder, umgekehrt, hinweis): ``glieder[i]`` sind die
-        vorhandenen Elemente auf Abschnitt i in Folge von a nach b - der Stab
-        nimmt sie, statt ein paralleles Element daneben zu legen, das doppelt
-        truege -, [] fuer einen freien Abschnitt. ``umgekehrt``: alle
-        vorhandenen laufen von b nach a und kein Abschnitt ist frei; der Stab
-        laeuft dann in ihrer Richtung. ``hinweis``: warum nichts angelegt
-        werden darf - die Elemente gehoeren schon Staeben (sonst wuerden sie
-        zweimal nachgewiesen, C14 S2), sie ueberdecken einen Abschnitt nicht
-        genau einmal von Knoten zu Knoten, oder sie laufen nicht in einer
-        Richtung (ein Stab laeuft durchgehend in einer, wie bei „Stäbe
-        zusammenfassen“). Beim Stabzug nennt der Hinweis keine Knoten: das
-        Verschmelzen hat sie neu nummeriert, und der Stand davor kommt zurueck."""
-        m = self.model
-        belegt = self._stabelemente_auf_strecken(abschnitte, ausser)
-
-        def und(teile):
-            teile = list(teile)
-            return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
-        a0, b0 = (int(x) for x in abschnitte[0]) if abschnitte else (0, 0)
-        ort = "Auf dem Stabzug" if stabzug else f"Zwischen K{a0} und K{b0}"
-        nichts = "kein Stabzug angelegt" if stabzug else "kein Stab angelegt"
-        alle = list(dict.fromkeys(e for _k, weg in belegt for e in weg))
-        stab_von = {e: s for s, els in m.staebe_der_elemente(alle).items() for e in els}
-        # 1. nicht genau einmal von Knoten zu Knoten: teilweise, zu lang, doppelt
-        weg = list(dict.fromkeys(e for kette, im_weg in belegt if im_weg and not kette for e in im_weg))
-        if weg:
-            def name(e):
-                el, s = m.elements[e], stab_von.get(e)
-                zusatz = [] if stabzug else [f"K{int(el.nodes[0])}–K{int(el.nodes[-1])}"]
-                zusatz += [f"Stab {s}"] if s else []
-                return f"E{e}" + (f" ({', '.join(zusatz)})" if zusatz else "")
-            eins = len(weg) == 1
-            text = (f"{ort} {'liegt Stabelement' if eins else 'liegen die Stabelemente'} "
-                    f"{und(name(e) for e in weg)} im Weg; {'es überdeckt' if eins else 'sie überdecken'} "
-                    f"{'seine Abschnitte' if stabzug else 'die Strecke'} nicht genau einmal von Knoten zu "
-                    f"Knoten – {nichts}, sonst trügen dort zwei Elemente nebeneinander")
-            return None, False, text
-        # 2. schon in Staeben
-        fremd = [e for e in alle if e in stab_von]
-        if fremd:
-            text = (f"{ort} {'liegt' if len(fremd) == 1 else 'liegen'} schon "
-                    + und(f"Stabelement E{e} von Stab {stab_von[e]}" for e in fremd)
-                    + (" – kein Stabzug angelegt" if stabzug else " – kein zweiter Stab angelegt"))
-            if len({stab_von[e] for e in fremd}) > 1:
-                text += "; mehrere Stäbe macht „Stäbe zusammenfassen“ zu einem"
-            return None, False, text
-        # 3. Richtung: jedes vorhandene Element vorwaerts (von a nach b) oder rueckwaerts
-        richtung = {}
-        for (a, _b), (kette, _w) in zip(abschnitte, belegt):
-            k = int(a)
-            for e in kette:
-                n0, n1 = int(m.elements[e].nodes[0]), int(m.elements[e].nodes[-1])
-                richtung[e] = n0 == k
-                k = n1 if n0 == k else n0
-        frei = any(not kette for kette, _w in belegt)
-        if all(richtung.values()):
-            umgekehrt = False
-        elif not any(richtung.values()) and not frei:
-            umgekehrt = True
-        elif stabzug:
-            gegen = [e for e, v in richtung.items() if not v]
-            return None, False, (f"Auf dem Stabzug {'läuft Stabelement' if len(gegen) == 1 else 'laufen die Stabelemente'} "
-                                 f"{und(f'E{e}' for e in gegen)} gegen seine Richtung – kein Stabzug angelegt; "
-                                 "ein Stab läuft durchgehend in einer Richtung")
-        else:
-            teile = [f"E{e} von K{int(m.elements[e].nodes[0])} nach K{int(m.elements[e].nodes[-1])}"
-                     for e in richtung]
-            return None, False, (f"{ort} laufen die Stabelemente nicht in einer Richtung ({und(teile)}) – "
-                                 "kein Stab angelegt; ein Stab läuft durchgehend in einer Richtung")
-        return [kette for kette, _w in belegt], umgekehrt, ""
-
     @_maskenweg()
     def maske_stab(self):
         """Stab anlegen wie in RFEM: zwei Knoten anklicken, Querschnitt und
@@ -20254,9 +20259,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # auf 62 %, und der Nachweis kam zu guenstig heraus (Gegenpruefung
         # 03.10.2026). Ueberdecken freie Elemente die Strecke lueckenlos und in
         # einer Richtung, auch ueber Zwischenknoten, bekommen sie den Stab;
-        # sonst weist der Befehl ab (_vorhandene_glieder). Bis zum 06.10.2026
+        # sonst weist der Befehl ab (Model.vorhandene_glieder). Bis zum 06.10.2026
         # sah er nur ein Element mit genau den Endknoten a und b.
-        glieder, umgekehrt, grund = self._vorhandene_glieder([(a, b)])
+        glieder, umgekehrt, grund = m.vorhandene_glieder([(a, b)])
         if grund:
             return self.hinweis(grund)
         frei = glieder[0][::-1] if umgekehrt else glieder[0]
@@ -20312,7 +20317,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.hinweis("Zwei Knoten in der Ansicht anklicken")
         typ = "truss" if w.get("fachwerk") else "beam"
         a, b = int(kn[0]), int(kn[1])
-        da = self._stabelemente_zwischen(a, b)
+        da = self.model.stabelemente_zwischen_knoten(a, b)
         self.merken("Stabelement angelegt")
         i = self.model.add_element(typ, [a, b], w["mat"], w["sec"])
         self.info(f"Stabelement E{i} angelegt: K{a}–K{b}, "
@@ -20322,12 +20327,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def _parallel_text(self, da: list, a: int, b: int) -> str:
-        """Zusatz der Statuszeile, wenn zwischen a und b schon ein Stabelement
-        lag: ein paralleles zweites entsteht nie still (C14 F2)."""
+        """Zusatz der Statuszeile, wenn zwischen a und b schon Stabelemente
+        lagen (``da``, Model.stabelemente_zwischen_knoten): ein paralleles
+        zweites entsteht nie still (C14 F2). Seit dem 07.10.2026 gilt das auch
+        fuer eine Kette von Elementen oder ein Stueck davon auf der Strecke
+        (N04); bis dahin sah die Zeile nur ein Element mit genau denselben
+        Endknoten."""
         if not da:
             return ""
-        return (f" – Achtung: zwischen K{a} und K{b} lag schon Stabelement E{da[0]}; zwei parallele "
-                "Elemente tragen doppelt")
+        wer = (f"lag schon Stabelement E{da[0]}" if len(da) == 1
+               else f"lagen schon die Stabelemente {bg.aufzaehlung((f'E{e}' for e in da), maximal=6)}")
+        return f" – Achtung: zwischen K{a} und K{b} {wer}; zwei parallele Elemente tragen doppelt"
 
     @_maskenweg()
     def stab_aus_stabelementen(self):
@@ -21483,8 +21493,11 @@ class MainWindow(QtWidgets.QMainWindow):
             for lc in m.load_cases.values():
                 lc.geometrielasten = [gl for gl in lc.geometrielasten
                                       if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == alt)]
-                lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {alt}:")]
+            # die Stablasten des alten Winds am Merkmal ``erzeuger`` (N23); danach legt
+            # das Verteilen die Elementlasten der verbliebenen neu
+            wm.stablasten_entfernen(m, m.winde[alt])
             del m.winde[alt]
+            m.lasten_verteilen()
         self._fortschritt_ende()
         self._namen_geaendert()             # ein neuer Lastfall kann entstanden sein
         wk_ = kw.get("windkanal")
@@ -23736,6 +23749,8 @@ class MainWindow(QtWidgets.QMainWindow):
         geben ihn an _solve_done weiter wie on_done selbst (24.09.2026)."""
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
+        if not self._browser_anhalten():
+            return self.hinweis("Im Browser wird gerade das Modell geändert – bitte gleich noch einmal rechnen")
         self._rechnung_stand = stand
         self._rechnung_modellwechsel = self._modellwechsel
         # jede Aenderung waehrend der Rechnung wechselt den Aenderungsstand
@@ -23774,6 +23789,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.abgebrochen.connect(self._bg_abgebrochen)
         self._rechenliste_oeffnen(posten)
         self.worker.start()
+
+    #: so lange wartet der Start einer Rechnung auf eine laufende Aenderung
+    #: aus dem Browser [s]
+    BROWSER_WARTEN = 5.0
+
+    def _browser_anhalten(self) -> bool:
+        """Vor dem Start einer Rechnung (Nachtrag N40, 07.10.2026): ab hier
+        weist der Browser jede Aenderung ab (_rechnet_gerade), und eine, die
+        gerade laeuft, wird erst fertig - der Web-Server aendert das Modell
+        unter seinem Schloss (web.server.State.lock), die Rechnung soll kein
+        halb geaendertes lesen. False, wenn sie nach BROWSER_WARTEN Sekunden
+        noch laeuft: dann startet die Rechnung nicht."""
+        self._rechnet_gerade = True
+        sperre = getattr(getattr(self, "web_state", None), "lock", None)
+        if sperre is None:
+            return True
+        if sperre.acquire(timeout=self.BROWSER_WARTEN):
+            sperre.release()
+            return True
+        self._rechnet_gerade = False
+        return False
 
     def _rechenliste_oeffnen(self, posten) -> None:
         """Das Fenster mit einer Zeile je Posten zeigen und an den Worker haengen.
@@ -23974,9 +24010,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Eine Hintergrundrechnung hat Ergebnisse hinterlassen: sie gelten
         als ungespeichert, bis gespeichert wird (am Drehlager kostet eine
         verlorene Rechnung Stunden). Die Ergebnisse aus der Datei beim
-        Oeffnen laufen nicht hier durch."""
+        Oeffnen laufen nicht hier durch.
+
+        Eine neue Analyse zaehlt nur, wenn Speichern sie schriebe
+        (_ergebnis_zaehlt, Nachtrag N39): eine, die als „anders“ gilt, wird
+        nie gespeichert - die Rueckfrage nannte sie bis zum 07.10.2026
+        trotzdem."""
         a, r = self.analysis, self.results
-        if (a is not vorher[0] or r is not vorher[1]) and (a is not None or r is not None):
+        neue_analyse = a is not vorher[0] and a is not None and self._analyse_passt() == "passt"
+        neues_einzel = r is not vorher[1] and r is not None
+        if neue_analyse or neues_einzel:
             self._ergebnis_ungespeichert = True
             self._titel_nachziehen()
 
@@ -27661,13 +27704,25 @@ class MainWindow(QtWidgets.QMainWindow):
         Fenster und Modellbaum nachziehen, neu zeichnen."""
         self._layer_version = getattr(self, "_layer_version", 0) + 1
         self._layer_combo_fuellen()
-        f = getattr(self, "_layer_fenster", None)
-        if f is not None and _lebt(f):
-            f.fuellen()
+        self._layerliste_nachziehen()
         self._refresh_baum()
         if text:
             self.info(text)
         self.redraw()
+
+    def _layerliste_nachziehen(self) -> None:
+        """Die Tabelle der Layerliste (falls es sie gibt) aus dem Modell neu lesen.
+
+        Sie hing bis zum 07.10.2026 nur an ``_layer_geaendert``, also an den
+        Befehlen der Layerliste selbst. Rueckgaengig, Wiederholen, Neu, Oeffnen
+        und Beispiel tauschen das ganze Modell und gehen alle ueber refresh_all:
+        nach „Layer anlegen“ und Rueckgaengig stand der Layer weiter in der
+        Tabelle, obwohl das Modell keinen mehr hatte (Nachtrag N10). Ein Fenster,
+        das es noch nicht gibt, wird nicht angelegt - ``layerliste_zeigen``
+        liest die Tabelle ohnehin beim Oeffnen."""
+        f = getattr(self, "_layer_fenster", None)
+        if f is not None and _lebt(f) and getattr(self, "model", None) is not None:
+            f.fuellen()
 
     def _layer_combo_fuellen(self) -> None:
         cb = getattr(self, "cb_layer", None)

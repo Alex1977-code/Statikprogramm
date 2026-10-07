@@ -675,7 +675,25 @@ Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaf
   Längskraft, Hermite-Polynome dritten Grades für die Biegung —, mit
   vier Gauß-Punkten ausgewertet (Integrand höchstens vierten Grades, also
   exakt). Für a = 0, b = L ergibt das die Volleinspannwerte der Trapezlast,
-  für b → a die der Einzellast P a b²/L² und P a² b/L². Die Schnittgrößen an
+  für b → a die der Einzellast (ohne Schubflächen P a b²/L² und P a² b/L²).
+  Hat der Querschnitt Schubflächen, rechnet die Steifigkeit mit
+  Schubverformung (Timoshenko, φ = 12EI/(G·A_s·L²) je Biegeebene), und die
+  Lasten nehmen dieselben Ansätze, aus denen die Steifigkeit folgt:
+  N = H + φ/(1+φ)·ψ(ξ)·[−1, −L/2, 1, −L/2] für [w₁, θ₁, w₂, θ₂] mit den
+  Hermite-Polynomen H, ψ(ξ) = ξ(1−ξ)(1−2ξ) und ξ = x/L. Diese Ansätze sind
+  die Biegelinien unter einer Einheitsverschiebung bei sonst festgehaltenen
+  Enden; nach dem Satz von Betti sind die Knotenwerte damit exakt, ein
+  Element rechnet wie beliebig fein geteilt. Der Schubanteil ist ein
+  Gleichgewichtssystem und ändert die Auflagersumme nicht; für eine Gleichlast
+  über das ganze Element ist er null, qL/2 und qL²/12 gelten mit und ohne
+  Schubverformung. Bis zum 07.10.2026 rechneten die Lasten auch mit
+  Schubflächen nur mit H (Bernoulli), die Steifigkeit aber mit
+  Schubverformung: ein Kragarm aus einem Element (HEB 200, 4 m, kurze Last
+  10 kN bei 1,3 m) wich an der Spitze um 5,9·10⁻³ von der Lösung mit
+  Schubverformung ab, ein Rechteck 200 × 600 mm um 9,2·10⁻³, und ein
+  Zwischenknoten änderte die Verschiebung (Nachtrag N01,
+  `tests/test_nachtrag_q3.py` gegen Kraftgrößenverfahren und Arbeitssatz mit
+  Biegung und Schub). Die Schnittgrößen an
   Zwischenstellen folgen aus den Stabendkräften und den Abschnittslasten
   durch Gleichgewicht am Teilstab: Resultierende Q(x) und ihr Moment um x je
   Abschnitt, stückweise integriert; der Querkraftverlauf knickt an den
@@ -5139,10 +5157,15 @@ Newton-Lauf nach 40 Zustandswechseln gedeckelt.
 1. Kein elastischer Vorlauf. Was er nebenbei tat — freie Bewegungen finden
    und festhalten — geschieht um den ersten plastischen Lauf. Das gilt auch,
    wenn die Fließ-Iteration mit Anfangsdehnung rechnet (gewählt, ohne
-   Verfestigung, Elementtyp ohne Stapel); abgekürzt wird dort nichts, das
-   Ergebnis bleibt bitgleich (Block mit Reibung ohne Verfestigung: 9 statt 16
-   Zerlegungen, mit Anfangsdehnung und 5 %: Laufbuch ohne den Vorlauf,
-   `test_laufbuch_mit_fliessen`).
+   Verfestigung, Elementtyp ohne Stapel); abgekürzt wird dort nichts (Block
+   mit Reibung ohne Verfestigung: 9 statt 16 Zerlegungen, mit Anfangsdehnung
+   und 5 %: Laufbuch ohne den Vorlauf, `test_laufbuch_mit_fliessen`). Das
+   Ergebnis ist dasselbe bis auf die Toleranz der Kontaktiteration, aber nicht
+   bitgleich: verschachtelt beginnt der erste plastische Lauf beim
+   Kontaktzustand des Vorlaufs, gemeinsam beim Start des Lastfalls (ideal
+   plastischer Block mit Reibung: max |Δu| 1,0·10⁻¹¹ m bei u_max 6,1·10⁻⁴ m,
+   gemessen 07.10.2026, `tests/test_nachtrag_q2.py`). Bis zum 07.10.2026
+   stand hier, das Ergebnis bleibe bitgleich.
 2. Der Startwert jeder Laststufe (elastisch mit dem bisherigen F_p) wie
    bisher mit **voll auskonvergiertem** Kontakt.
 3. Die Newton-Schritte der Stufe mit **abgekürztem** Kontakt: ein

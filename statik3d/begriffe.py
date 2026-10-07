@@ -128,6 +128,19 @@ def anzahl(n, einzahl: str, mehrzahl: str) -> str:
     return f"{n} {mehrzahl}"
 
 
+def aufzaehlung(teile, maximal: int = 0) -> str:
+    """„A“, „A und B“, „A, B und C“ - eine Aufzaehlung im Satz (Nachtrag Q4,
+    07.10.2026). ``maximal`` > 0 kuerzt eine lange Liste: „A, B, C und 7
+    weitere“. Bis dahin hatte jede Meldung ihr eigenes „und“."""
+    teile = [str(t) for t in teile]
+    if maximal and len(teile) > maximal + 1:
+        rest = len(teile) - maximal
+        teile = teile[:maximal] + [f"{rest} weitere"]
+    if len(teile) <= 1:
+        return "".join(teile)
+    return ", ".join(teile[:-1]) + " und " + teile[-1]
+
+
 def typ_kurz(typ) -> str:
     """„GZT (STR/GEO)“ zu ``ULS`` - ein unbekannter Typ bleibt, wie er ist."""
     b = KOMBINATIONSTYPEN.get(str(typ))

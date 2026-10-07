@@ -585,6 +585,9 @@ class QuerschnittMaske(QtWidgets.QFrame):
         self.geschlossen.emit()
 
     def keyPressEvent(self, ev):
+        # Wie Maske.keyPressEvent (Kopf von masken.py): im Programmfenster kommt
+        # Esc hier nie an, es ist dort das Kuerzel „Alles deselektieren“; der
+        # Zweig gilt nur ohne Hauptfenster (N35, 07.10.2026)
         if ev.key() == QtCore.Qt.Key_Escape:
             return self.schliessen()
         super().keyPressEvent(ev)
@@ -862,11 +865,20 @@ class ProfilEditor(QtWidgets.QDialog):
                           "drehung": _zahl(self._text(self.tb_teile, r, 3)),
                           "spiegeln": self._haken(self.tb_teile, r, 4)})
         knoten = {}
+        zeile_von: dict = {}
         for r in range(self.tb_knoten.rowCount()):
             nr = self._text(self.tb_knoten, r, 0).strip()
             if nr:
-                knoten[_ganz(nr, "Knotennummer")] = (_zahl(self._text(self.tb_knoten, r, 1)) * MM,
-                                                     _zahl(self._text(self.tb_knoten, r, 2)) * MM)
+                k = _ganz(nr, "Knotennummer")
+                # eine Nummer gehoert einem Knoten (Nachtrag N14, 07.10.2026): bis
+                # dahin gewann die letzte Zeile still, und OK blieb frei
+                if k in zeile_von:
+                    raise zl.Eingabefehler(
+                        f"Knotennummer {k} steht zweimal in der Knotentabelle (Zeile {zeile_von[k]} und "
+                        f"{r + 1} von oben) - jede Nummer nur einmal")
+                zeile_von[k] = r + 1
+                knoten[k] = (_zahl(self._text(self.tb_knoten, r, 1)) * MM,
+                             _zahl(self._text(self.tb_knoten, r, 2)) * MM)
         elemente = []
         for r in range(self.tb_elemente.rowCount()):
             a, b = self._text(self.tb_elemente, r, 0).strip(), self._text(self.tb_elemente, r, 1).strip()

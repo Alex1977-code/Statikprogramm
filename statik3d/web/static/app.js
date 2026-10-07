@@ -1202,6 +1202,22 @@ function etaKurve(kurve, hoehe = 112) {
     <polyline class="linie" points="${pts}"/>${punkte}${namen}</svg>`;
 }
 
+// Alle Lager, die eine Stellung abschaltet: Knoten-, Linien- und Flächenlager
+// (je Art eine eigene Liste, wie in der Maske des Desktops; Nachtrag N19).
+function lagerAusText(x) {
+  return [...(x.lager_aus || []), ...(x.linienlager_aus || []), ...(x.flaechenlager_aus || [])].join(', ') || '–';
+}
+
+// Die Namen der vorhandenen Lager je Art, wie im Modellbaum - als Hilfe unter den Feldern.
+function lagerSchluesselHinweis() {
+  const k = (((S.state || {}).stellungen) || {}).lager_schluessel || {};
+  const teil = (titel, l) => (l && l.length)
+    ? `${titel}: ${l.slice(0, 12).map(esc).join(', ')}${l.length > 12 ? ` … (${l.length})` : ''}` : '';
+  const t = [teil('Knotenlager', k.lager), teil('Linienlager', k.linienlager), teil('Flächenlager', k.flaechenlager)]
+    .filter(Boolean);
+  return t.length ? `<div class="muted">Namen wie im Modellbaum – ${t.join(' · ')}</div>` : '';
+}
+
 function stellungForm(st) {
   const s = st || {};
   const achse = s.dreh_achse || [0, 1, 0], punkt = s.dreh_punkt || [0, 0, 0];
@@ -1209,7 +1225,9 @@ function stellungForm(st) {
     ${st ? `<h2>Stellung ${esc(st.name)}</h2>` : ''}
     <div class="grid2">${inp('name', 'Name', s.name || '', 'required')}${num('winkel', 'Stellungswinkel [°]', s.winkel ?? 0)}</div>
     ${inp('beschreibung', 'Beschreibung', s.beschreibung || '')}
-    <div class="grid2">${inp('lager_aus', 'Lager aus (Namen, Komma)', (s.lager_aus || []).join(', '))}${inp('lager_aktiv', 'nur diese Lager aktiv', (s.lager_aktiv || []).join(', '))}</div>
+    <div class="grid2">${inp('lager_aus', 'Knotenlager aus (Namen, Komma)', (s.lager_aus || []).join(', '))}${inp('lager_aktiv', 'nur diese Lager aktiv', (s.lager_aktiv || []).join(', '))}</div>
+    <div class="grid2">${inp('linienlager_aus', 'Linienlager aus (Namen, Komma)', (s.linienlager_aus || []).join(', '))}${inp('flaechenlager_aus', 'Flächenlager aus (Namen, Komma)', (s.flaechenlager_aus || []).join(', '))}</div>
+    ${lagerSchluesselHinweis()}
     ${inp('faelle', 'Lastfälle dieser Stellung (Komma; nur diese werden gerechnet, leer = keine)', (s.faelle || []).join(', '))}
     <details${st && s.dreh_winkel ? ' open' : ''}><summary>Bewegtes Bauteil drehen</summary><div class="body">
       <div class="grid2">${num('dreh_winkel', 'Drehwinkel [°]', s.dreh_winkel ?? 0)}${inp('gruppen', 'Gruppen / Stäbe (Komma)', (s.gruppen || []).join(', '))}</div>
@@ -1247,7 +1265,7 @@ function renderBruecke() {
       <div class="row" style="margin:0"><b style="font-size:16px">${esc(gew.name)}</b><span class="muted">${fmt(gew.winkel, 1)}°</span><span style="flex:1"></span>
         <button class="btn small" data-action="edit-stellung" data-name="${esc(gew.name)}">Ändern</button></div>
       <div class="muted">${esc(gew.beschreibung || 'ohne Beschreibung')}</div>
-      <div class="kv"><b>Lager aus</b><span>${esc((gew.lager_aus || []).join(', ') || '–')}</span>
+      <div class="kv"><b>Lager aus</b><span>${esc(lagerAusText(gew))}</span>
         <b>nur aktiv</b><span>${esc((gew.lager_aktiv || []).join(', ') || 'alle')}</span>
         <b>Lastfälle</b><span>${esc((gew.faelle || []).join(', ') || 'keine')}</span>
         <b>Drehung</b><span>${gew.dreh_winkel ? `${fmt(gew.dreh_winkel, 1)}° · ${esc((gew.gruppen || []).join(', ') || 'ganzes Modell')}` : 'keine'}</span>
@@ -1280,7 +1298,7 @@ function renderBruecke() {
       : utilBadge(c);
     html += `<details open><summary>Stellungen <span class="n">${liste.length}</span></summary><div class="body">
       ${table(['Stellung', 'Winkel', 'Lager aus', 'Lastfälle', 'η', 'u max [mm]', ''],
-        liste.map(x => [x.name, fmt(x.winkel, 1) + '°', (x.lager_aus || []).join(', ') || '–',
+        liste.map(x => [x.name, fmt(x.winkel, 1) + '°', lagerAusText(x),
           (x.faelle || []).join(', ') || 'keine',
           x.ergebnis && !x.ergebnis.fehler ? x.ergebnis.eta : '',
           x.ergebnis && !x.ergebnis.fehler ? fmt(x.ergebnis.u_max * 1e3, 3) : (x.ergebnis && x.ergebnis.fehler ? 'Fehler' : '–'),

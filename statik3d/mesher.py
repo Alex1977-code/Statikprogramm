@@ -221,44 +221,32 @@ def doppelte_knoten(model: Model, tol: float = 1e-6) -> int:
     aendern (gleicher Schluessel). Fuer Befehle, die vor der Aenderung einen
     Rueckgaengig-Schritt anlegen und bei „nichts zu tun“ keinen hinterlassen
     sollen (Fehlerliste 06.10.2026, F32)."""
-    if model.nn == 0:
-        return 0
-    key = np.round(model.nodes / tol).astype(np.int64)
-    return int(model.nn - len(np.unique(key, axis=0)))
+    from .importers import _common as C
+    return C.count_duplicate_nodes(model, tol)
 
 
 def merge_nodes(model: Model, tol: float = 1e-6) -> int:
-    """Doppelte Knoten zusammenfuehren (z.B. nach mehrfachem Import)."""
-    if model.nn == 0:
-        return 0
-    key = np.round(model.nodes / tol).astype(np.int64)
-    _, first, inverse = np.unique(key, axis=0, return_index=True,
-                                  return_inverse=True)
-    order = np.argsort(first)
-    remap = np.zeros(len(first), dtype=int)
-    remap[order] = np.arange(len(first))
-    new_index = remap[inverse]
-    n_removed = model.nn - len(first)
-    if n_removed == 0:
-        return 0
-    new_nodes = np.zeros((len(first), 3))
-    new_nodes[new_index] = model.nodes
-    model.nodes = new_nodes
-    for e in model.elements:
-        e.nodes = [int(new_index[n]) for n in e.nodes]
-    for s in model.supports:
-        s.node = int(new_index[s.node])
-    for lc in model.load_cases.values():
-        for l in lc.nodal_loads:
-            l.node = int(new_index[l.node])
-    for c in model.contact_supports:
-        c.node = int(new_index[c.node])
-    for g in model.gap_elements:
-        g.node_a = int(new_index[g.node_a])
-        g.node_b = int(new_index[g.node_b])
-    for cp in model.contact_pairs:
-        cp.slave_nodes = sorted({int(new_index[n]) for n in cp.slave_nodes})
-        cp.master_faces = [[int(new_index[n]) for n in f] for f in cp.master_faces]
+    """Doppelte Knoten zusammenfuehren (z.B. nach mehrfachem Import).
+
+    Jeder Verweis auf einen Knoten folgt: Elemente, Linien, Lager aller Arten,
+    Lasten, Kontakt, Kopplungen, starre Koerper, Flaechenecken, Layer … - dieselben
+    Verweisarten, die das Loeschen eines Knotens kennt
+    (:meth:`Model._knotenverweise_abbilden`). Die Arbeit tut
+    :func:`importers._common.merge_duplicate_nodes`, das jeden Import nach
+    dem Einlesen zusammenfuehrt; ein gleich gewordener Knoten steht dort in
+    einer Linie, einem Lager oder einer Gruppe einmal (Einflussflaechen
+    summieren sich). Bis zum 07.10.2026 hatte dieses Modul eine eigene,
+    kuerzere Fassung, die nur Elemente, Lager, Knotenlasten und Kontakt nachzog
+    (N11): Linien, Kopplungen, starre Koerper und der Rest zeigten danach auf
+    einen anderen Knoten - oder hinter das Ende der Knotenliste.
+
+    Zusaetzlich fuehrt ein Kontaktpaar gleich gewordene Slave-Knoten nur einmal
+    (sortiert), wie es dieses Modul immer tat."""
+    from .importers import _common as C
+    n_removed = C.merge_duplicate_nodes(model, tol)
+    if n_removed:
+        for cp in model.contact_pairs:
+            cp.slave_nodes = sorted({int(n) for n in cp.slave_nodes})
     return n_removed
 
 
@@ -393,35 +381,167 @@ def _kurvenpunkte(model: Model, linie: str, n: int) -> np.ndarray | None:
     return out
 
 
+#: Abstand, bis zu dem ein neuer Randknoten als deckungsgleich mit einem
+#: Stuetzknoten der Kante gilt - bezogen auf die Laenge des Randabschnitts.
+#: Am Bogen durch drei Punkte liegen beide 2,2e-16 m auseinander; 1e-6 der
+#: Laenge (3 um an 3 m) verschiebt einen Netzknoten nirgends merklich.
+STUETZKNOTEN_TOL = 1e-6
+
+
+def _knoten_bei(model: Model, x, stuetz: list, tol: float) -> int:
+    """Der Stuetzknoten aus ``stuetz``, der bei x liegt (Abstand <= tol) -
+    sonst ein neuer Knoten bei x."""
+    x = np.asarray(x, float)
+    if stuetz:
+        d = np.linalg.norm(model.nodes[stuetz] - x, axis=1)
+        j = int(np.argmin(d))
+        if d[j] <= tol:
+            return int(stuetz[j])
+    return int(model.add_node(*x))
+
+
 def _verdichten(model: Model, kante: list[int], n: int, linie: str = "") -> list[int]:
     """Einen Randabschnitt auf n Elemente verfeinern (neue Zwischenknoten).
 
     Ist ``linie`` eine krumme Linie, folgen die neuen Knoten ihrer Kurve;
     sonst den Sehnen zwischen den vorhandenen Knoten.
+
+    Faellt ein neuer Knoten auf einen Stuetzknoten der Kante - den mittleren
+    Knoten eines Bogens durch drei Punkte, den Knick einer Polylinie -, ist
+    er dieser Stuetzknoten. Bis zum 07.10.2026 entstand daneben ein
+    deckungsgleicher neuer: der Stuetzknoten hing an keinem Element, lag
+    aber auf der Linie und bekam von einer Linienlast seinen Anteil, der
+    verloren ging (Viertelkreisring, sechs Teilungen: 261,8 von 3 141,5 N;
+    Nachtrag N09).
     """
     P = model.nodes
+    stuetz = [int(k) for k in kante[1:-1]]
     pts = _kurvenpunkte(model, linie, n)
     if pts is not None:
         # Die Kurve kann gegen die Knotenfolge laufen - am naeheren Ende anfangen
         if (np.linalg.norm(pts[0] - P[kante[0]])
                 > np.linalg.norm(pts[-1] - P[kante[0]])):
             pts = pts[::-1]
+        tol = STUETZKNOTEN_TOL * float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
         return ([int(kante[0])]
-                + [model.add_node(*x) for x in pts[1:-1]]
+                + [_knoten_bei(model, x, stuetz, tol) for x in pts[1:-1]]
                 + [int(kante[-1])])
     pts = P[kante]
     lang = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
     if lang[-1] <= 0:
         return list(kante)
+    tol = STUETZKNOTEN_TOL * float(lang[-1])
     ziel = np.linspace(0.0, lang[-1], n + 1)
     out = [int(kante[0])]
     for sl in ziel[1:-1]:
         k = int(np.searchsorted(lang, sl, side="right") - 1)
         k = min(max(k, 0), len(kante) - 2)
         t = (sl - lang[k]) / (lang[k + 1] - lang[k])
-        out.append(model.add_node(*(pts[k] + t * (pts[k + 1] - pts[k]))))
+        out.append(_knoten_bei(model, pts[k] + t * (pts[k + 1] - pts[k]), stuetz, tol))
     out.append(int(kante[-1]))
     return out
+
+
+#: Abtastung einer krummen Linie ohne geschlossene Form (Ellipse, Parabel,
+#: Spline), auf der die Kantenmitte gesucht wird
+KURVE_FEIN = 1024
+
+
+def _kurvenmitte(model: Model, linie: str):
+    """Funktion (Ecke a, Ecke b) -> Punkt der **wahren** Kurve der Linie auf
+    halber Bogenlaenge zwischen a und b - oder None fuer eine Strecke.
+
+    Bogen und Kreis rechnen geschlossen ueber den Winkel; die anderen Arten
+    ueber eine feine Abtastung (KURVE_FEIN Abschnitte), auf der die Ecken
+    ihre Lage bekommen und die Mitte dazwischen liegt."""
+    ln = (getattr(model, "lines", {}) or {}).get(linie)
+    if ln is None or (ln.typ or "polyline") == "polyline":
+        return None
+    try:
+        kurve = ln.kurve(model)
+    except Exception:            # noqa: BLE001 - wie _kurvenpunkte: dann die Sehne
+        return None
+    from .geometry import Bogen
+    if isinstance(kurve, Bogen):
+        m0 = np.asarray(kurve.mitte, float)
+        e1, e2 = np.asarray(kurve.e1, float), np.asarray(kurve.e2, float)
+        r, w = float(kurve.radius), float(kurve.winkel)
+        voll = w >= 2 * np.pi - 1e-9
+
+        def winkel(p):
+            d = np.asarray(p, float) - m0
+            t = float(np.arctan2(d @ e2, d @ e1)) % (2 * np.pi)
+            # knapp vor dem Anfang (Rundung) ist der Anfang, nicht das Ende
+            return t - 2 * np.pi if (not voll and t > w + 0.5 * (2 * np.pi - w)) else t
+
+        def mitte(a, b):
+            ta, tb = winkel(a), winkel(b)
+            if voll and abs(tb - ta) > np.pi:       # ueber den Anfang des Kreises hinweg
+                if ta < tb:
+                    ta += 2 * np.pi
+                else:
+                    tb += 2 * np.pi
+            t = 0.5 * (ta + tb)
+            return m0 + r * (np.cos(t) * e1 + np.sin(t) * e2)
+        return mitte
+    try:
+        X = np.asarray(kurve.punkte(KURVE_FEIN), float)
+    except Exception:            # noqa: BLE001
+        return None
+    seg = np.diff(X, axis=0)
+    L = np.linalg.norm(seg, axis=1)
+    if len(X) < 2 or L.sum() <= 0:
+        return None
+    s0 = np.concatenate([[0.0], np.cumsum(L)])
+    L2 = np.maximum(L * L, 1e-300)
+
+    def lage(p):
+        t = np.clip(((np.asarray(p, float) - X[:-1]) * seg).sum(axis=1) / L2, 0.0, 1.0)
+        d = np.linalg.norm(X[:-1] + t[:, None] * seg - p, axis=1)
+        k = int(np.argmin(d))
+        return float(s0[k] + t[k] * L[k])
+
+    def mitte(a, b):
+        s = 0.5 * (lage(a) + lage(b))
+        k = min(max(int(np.searchsorted(s0, s, side="right") - 1), 0), len(L) - 1)
+        t = (s - s0[k]) / L[k] if L[k] > 0 else 0.0
+        return X[k] + t * seg[k]
+    return mitte
+
+
+def _randmitten(model: Model, kette: list[int], kante: list[int], linie: str,
+                kanten: dict) -> int:
+    """Die Kantenmitten eines Randabschnitts vorab in ``kanten`` legen, damit
+    :func:`kantenknoten` sie nimmt - fuer quadratische Elemente.
+
+    Auf einer krummen Linie liegt die Mitte auf der Kurve, auf halber
+    Bogenlaenge zwischen den Ecken. Bis zum 07.10.2026 setzte
+    :func:`kantenknoten` sie auf die Sehnenmitte, am Viertelkreisring (R =
+    2 m, sechs Teilungen) 17,1 mm neben den Bogen; Model.knoten_auf_linie und
+    supports.lager_auf_netz fanden sie nicht, die Linienlast ging nur an die
+    Ecken, das Linienlager hielt die Mitten nicht (Nachtrag N08). Faellt eine
+    Mitte auf einen Stuetzknoten der Kante (``kante[1:-1]``, ungerade Teilung
+    eines Bogens durch drei Punkte), ist sie dieser Knoten (N09). Eine
+    gerade Kante ohne Stuetzknoten bleibt :func:`kantenknoten` ueberlassen.
+    Rueckgabe: Zahl der gelegten Mitten."""
+    mitte = _kurvenmitte(model, linie) if linie else None
+    stuetz = [int(k) for k in kante[1:-1]]
+    if mitte is None and not stuetz:
+        return 0
+    P = model.nodes
+    tol = STUETZKNOTEN_TOL * float(np.linalg.norm(np.diff(P[[int(k) for k in kette]], axis=0),
+                                                  axis=1).sum())
+    n = 0
+    for a, b in zip(kette[:-1], kette[1:]):
+        a, b = int(a), int(b)
+        key = (min(a, b), max(a, b))
+        if key in kanten:
+            continue
+        P = model.nodes
+        x = mitte(P[a], P[b]) if mitte is not None else 0.5 * (P[a] + P[b])
+        kanten[key] = _knoten_bei(model, x, stuetz, tol)
+        n += 1
+    return n
 
 
 def kantenknoten(model: Model, a: int, b: int, cache: dict = None) -> int:
@@ -429,6 +549,9 @@ def kantenknoten(model: Model, a: int, b: int, cache: dict = None) -> int:
 
     Quadratische Elemente teilen ihre Kantenmitten mit dem Nachbarn; ohne
     ``cache`` entstuenden doppelte Knoten und das Netz fiele auseinander.
+    Die Mitten der Randkanten einer Flaeche liegen schon im ``cache``, wenn
+    die Randlinie krumm ist oder Stuetzknoten hat (:func:`_randmitten`);
+    hier entsteht nur die Sehnenmitte.
     """
     a, b = int(a), int(b)
     key = (min(a, b), max(a, b))
@@ -500,6 +623,10 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
         rechts = _verdichten(model, seiten[1][0], nv, seiten[1][1])
         oben = _verdichten(model, seiten[2][0][::-1], nu, seiten[2][1])
         links = _verdichten(model, seiten[3][0][::-1], nv, seiten[3][1])
+        if ordnung >= 2:
+            # Kantenmitten auf krummen Randlinien auf die Kurve (N08)
+            for kette, (kante, linie) in zip((unten, rechts, oben, links), seiten):
+                _randmitten(model, kette, kante, linie, kanten)
         ids = transfinit(model, unten, oben, links, rechts)
         els = []
         for i in range(ids.shape[0] - 1):

@@ -543,19 +543,47 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
 # --------------------------------------------------------------------------
 # Material / Querschnitt / Schalendicke
 # --------------------------------------------------------------------------
-#: eine Sorte der Tabelle im Text: „S“, beliebig viele Leerzeichen, die Zahl
-_SORTE_IM_TEXT = re.compile(r"S\s*(" + "|".join(k[1:] for k in STEEL_GRADES) + ")")
+#: die Zahlen der Sorten ohne Zusatz in der Tabelle (235, 275, 355, 420, 460)
+_SORTENZAHLEN = [k[1:] for k in STEEL_GRADES if k[1:].isdigit()]
+#: eine Sorte im Text: „S“, beliebig viele Leerzeichen, die Zahl, dahinter - auch durch
+#: Leerzeichen, Unterstrich oder Strich getrennt - der Zusatz als erstes Wort
+#: („J2“, „N“, „ML“, „J2W“; „+N“ gehoert nicht dazu)
+_SORTE_IM_TEXT = re.compile(r"S\s*(" + "|".join(_SORTENZAHLEN) + r")[\s_\-]*([A-Z][A-Z0-9]*)?")
+#: wetterfest (EN 10025-5): J0W, J2W, K2W oder nur W; mit P (J0WP, J2WP) fuehrt die
+#: Tabelle 3.1 die Sorte nicht
+_ZUSATZ_W = re.compile(r"(?:J0|J2|K2)?W")
+_ZUSATZ_WP = re.compile(r"(?:J0|J2)?WP")
 
 
 def steel_grade_from_text(text: str) -> Optional[str]:
-    """'S 235 JR', 's355', 'Baustahl S235' -> 'S235' (sonst None). Gross-/
-    Kleinschreibung und Leerzeichen jeder Anzahl zaehlen nicht (bis zum
-    06.10.2026 nur ein Leerzeichen: „S  355“ blieb unerkannt, F08); die Sorten
-    sind die der Tabelle ``STEEL_GRADES``."""
+    """'S 235 JR', 's355', 'Baustahl S235' -> 'S235'; 'S355M' -> 'S355M' (sonst
+    None). Gross-/Kleinschreibung und Leerzeichen jeder Anzahl zaehlen nicht (bis
+    zum 06.10.2026 nur ein Leerzeichen: „S  355“ blieb unerkannt, F08); die
+    Sorten sind die der Tabelle ``STEEL_GRADES``.
+
+    Der Zusatz hinter der Zahl entscheidet die Zeile der Tabelle (Nachtrag N06,
+    07.10.2026; bis dahin las diese Funktion nur die Zahl, und aus „S355M“ wurde S355
+    mit den Werten von EN 10025-2, f_u 490 statt 470 N/mm²): N und NL (EN 10025-3),
+    M und ML (EN 10025-4) und W, J0W, J2W, K2W (EN 10025-5) sind eigene Sorten;
+    J0, J2, JR, K2, „+N“ und jedes andere Wort bleiben die Sorte ohne Zusatz
+    (EN 10025-2). Eine Sorte, die die Tabelle nicht fuehrt (S235N, S275W, S355J0WP),
+    ist unbekannt: ``None``, es werden keine Werte erfunden. Hohlprofilsorten (…H,
+    EN 10210 und 10219) bleiben, wie sie waren: die Sorte ohne Zusatz."""
     if not text:
         return None
     m = _SORTE_IM_TEXT.search(str(text).upper())
-    return f"S{m.group(1)}" if m else None
+    if not m:
+        return None
+    basis, zusatz = f"S{m.group(1)}", m.group(2) or ""
+    if zusatz in ("N", "NL", "M", "ML"):
+        schluessel = basis + zusatz
+    elif _ZUSATZ_W.fullmatch(zusatz):
+        schluessel = basis + "W"
+    elif _ZUSATZ_WP.fullmatch(zusatz):
+        return None
+    else:
+        return basis
+    return schluessel if schluessel in STEEL_GRADES else None
 
 
 def ensure_material(model: Model, name: str = None, log: list = None,

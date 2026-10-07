@@ -3931,6 +3931,9 @@ def keep_structure(m: Model, log: list = None) -> int:
     if not keep or len(keep) == m.nn:
         return 0
     old = m.nn
+    # Die Stellungen nennen ihre Lager beim Schluessel („Lager 4“); fallen Lager
+    # weg, ruecken die uebrigen nach (siehe unten Model.stellungen_nachziehen)
+    vorher = m.stellungsbezug()
     remap = {o: i for i, o in enumerate(keep)}
     m.nodes = m.nodes[keep]
     for e in m.elements:
@@ -3956,4 +3959,8 @@ def keep_structure(m: Model, log: list = None) -> int:
         nl.node = remap.get(nl.node, nl.node)
     C.say(log, f"Nur Stabtragwerk behalten: {old - m.nn} freie Knoten entfernt, "
                f"{m.nn} Knoten verbleiben")
+    # Stellungen: ein Eintrag folgt seinem Lager, ein entferntes verschwindet aus ihm
+    # (bis zum 07.10.2026 blieben alle stehen und nannten danach ein anderes Lager, N18)
+    for zeile in m.stellungen_nachziehen(vorher):
+        C.say(log, "  " + zeile)
     return old - m.nn

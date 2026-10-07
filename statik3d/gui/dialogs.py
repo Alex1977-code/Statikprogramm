@@ -70,6 +70,20 @@ def knopfkasten(dialog: QtWidgets.QDialog, bb: QtWidgets.QDialogButtonBox) -> Qt
 
 
 # ==========================================================================
+def streckgrenze_fehler(fy) -> str:
+    """Der Grund, warum ``fy`` [N/mm²] keine Streckgrenze sein kann - ``""``, wenn es
+    eine sein darf. ``None`` (leer) ist gueltig und etwas anderes als 0: der Werkstoff
+    hat dann kein eigenes f_y (die Stahlsorte gibt es her, oder - bei einem Beton - es
+    gibt keines). 0 und alles darunter ist ein Eingabefehler: bis zum 07.10.2026 wurde
+    es still zu „leer“ (Werkstofftabelle: Material.fy = 0.0, Dialog: None; Nachtrag N07).
+    Eine Stelle fuer Maske, Tabellenzelle und Dialog, damit der Text derselbe ist."""
+    if fy is None or fy > 0:
+        return ""
+    return (f"Die Streckgrenze f_y muss größer als null sein (eingegeben: {zl.zahl_text(fy, punkt=True)}). "
+            "Hat der Werkstoff keine – ein Beton etwa, oder f_y soll aus der Stahlsorte kommen –, "
+            "bleibt das Feld leer. Nicht übernommen.")
+
+
 class MaterialDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, mat: Material = None):
         super().__init__(parent)
@@ -85,7 +99,9 @@ class MaterialDialog(QtWidgets.QDialog):
         self.nu = NumEdit(m.nu, 100)
         self.rho = NumEdit(m.rho, 100)
         self.alpha = NumEdit(m.alpha * 1e6, 100)
-        self.fy = NumEdit((m.fy or 0) / 1e6, 100)
+        # ein Werkstoff ohne f_y zeigt ein leeres Feld, nicht „0“: „leer“ ist von 0
+        # getrennt, das accept() abweist (N07, 07.10.2026)
+        self.fy = NumEdit((m.fy / 1e6) if m.fy else None, 100)
         self.fu = NumEdit((m.fu or 0) / 1e6, 100)
         f = QtWidgets.QFormLayout(self)
         f.addRow("Stahlsorte", self.grade)
@@ -112,6 +128,21 @@ class MaterialDialog(QtWidgets.QDialog):
             self.name.setText(g)
             self.E.set(m.E / 1e9); self.nu.set(m.nu); self.rho.set(m.rho)
             self.fy.set(m.fy / 1e6); self.fu.set(m.fu / 1e6)
+
+    def accept(self):
+        """OK nimmt f_y = 0 nicht an (N07, 07.10.2026): die Meldungszeile ueber den
+        Knoepfen nennt den Grund, der Dialog bleibt offen. Ein leeres Feld geht durch
+        (kein f_y). Bis dahin wurde die 0 still zu „leer“."""
+        try:
+            fy = self.fy.wert(None)
+        except zl.Eingabefehler:
+            fy = None                  # eine ungueltige Eingabe sperrt OK ohnehin (Waechter)
+        grund = streckgrenze_fehler(fy)
+        if grund:
+            zf.meldungszeile_setzen(self.lbl_zahlmeldung, grund, zf.ROT)
+            self.fy.setFocus()
+            return
+        super().accept()
 
     def result_material(self) -> Material:
         fy = self.fy.value() * 1e6

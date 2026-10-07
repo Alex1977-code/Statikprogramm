@@ -41,7 +41,7 @@ import numpy as np
 from .einheiten import Einheiten
 from .plastizitaet import Plastizitaet
 from . import elemente as _EL
-from .begriffe import anzahl, umhuellende_kurz
+from .begriffe import anzahl, aufzaehlung, umhuellende_kurz
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
@@ -113,12 +113,41 @@ ACTION_CATEGORIES = {
 # Material / Querschnitt
 # --------------------------------------------------------------------------
 STEEL_GRADES = {
-    # Name: (fy [Pa] t<=40mm, fu [Pa] t<=40mm, fy 40<t<=80, fu 40<t<=80)  EN 10025-2
+    # Name: (fy [Pa] t<=40mm, fu [Pa] t<=40mm, fy 40<t<=80, fu 40<t<=80) - die Zeilen
+    # von DIN EN 1993-1-1 Tabelle 3.1. Die fuenf Sorten ohne Zusatz gab es zuerst; sie
+    # stehen VOR den Sorten mit Zusatz (der rfem6-Import nimmt zu einem f_y die erste
+    # passende Sorte, tests/test_nachtrag_q9.py haelt das fest).
+    # EN 10025-2 (S235 bis S355 mit J0, J2, JR, K2); S420 und S460 ohne Zusatz tragen
+    # die Werte der Zeilen N/NL, EN 10025-2 kennt diese Sorten nicht
     "S235": (235e6, 360e6, 215e6, 360e6),
     "S275": (275e6, 430e6, 255e6, 410e6),
     "S355": (355e6, 490e6, 335e6, 470e6),
     "S420": (420e6, 520e6, 390e6, 520e6),
     "S460": (460e6, 540e6, 430e6, 540e6),
+    # Sorten mit Zusatz (07.10.2026, Nachtrag N06): bis dahin las der Import aus
+    # "S355M" einfach S355 und rechnete mit den Werten der Zeile EN 10025-2
+    # EN 10025-3, normalgeglueht bzw. normalisierend gewalzt (N, NL)
+    "S275N": (275e6, 390e6, 255e6, 370e6),
+    "S275NL": (275e6, 390e6, 255e6, 370e6),
+    "S355N": (355e6, 490e6, 335e6, 470e6),
+    "S355NL": (355e6, 490e6, 335e6, 470e6),
+    "S420N": (420e6, 520e6, 390e6, 520e6),
+    "S420NL": (420e6, 520e6, 390e6, 520e6),
+    "S460N": (460e6, 540e6, 430e6, 540e6),
+    "S460NL": (460e6, 540e6, 430e6, 540e6),
+    # EN 10025-4, thermomechanisch gewalzt (M, ML)
+    "S275M": (275e6, 370e6, 255e6, 360e6),
+    "S275ML": (275e6, 370e6, 255e6, 360e6),
+    "S355M": (355e6, 470e6, 335e6, 450e6),
+    "S355ML": (355e6, 470e6, 335e6, 450e6),
+    "S420M": (420e6, 520e6, 390e6, 500e6),
+    "S420ML": (420e6, 520e6, 390e6, 500e6),
+    "S460M": (460e6, 540e6, 430e6, 530e6),
+    "S460ML": (460e6, 540e6, 430e6, 530e6),
+    # EN 10025-5, wetterfest (W); die Untersorten J0W, J2W, K2W gehoeren dazu, J0WP und
+    # J2WP fuehrt die Tabelle 3.1 nicht
+    "S235W": (235e6, 360e6, 215e6, 340e6),
+    "S355W": (355e6, 490e6, 335e6, 490e6),
 }
 
 
@@ -129,12 +158,31 @@ def stahlsorte_schluessel(text) -> Optional[str]:
     Gross-/Kleinschreibung und Leerzeichen jeder Art zaehlen nicht: „s235“,
     „S 235“ und „ S235 “ sind S235. Die Tabelle kennt keine Untersorten (S235JR
     ...); sie sind unbekannt, bis sie als eigener Schluessel in ``STEEL_GRADES``
-    stehen - dann erkennt diese Funktion sie ebenso. Bis zum 06.10.2026
+    stehen - dann erkennt diese Funktion sie ebenso. Seit dem 07.10.2026 stehen
+    dort auch die Sorten mit Zusatz N, NL, M, ML und W („S355M“). Bis zum 06.10.2026
     verglich jede Stelle den getippten Text unveraendert mit der Tabelle: eine
     Sorte „s235“ fiel durch, mit eingetragenem f_y entfiel ueber 40 mm still die
     Dickenabminderung, mit leerem f_y war die Streckgrenze 0 (Fehlerliste F08)."""
     g = "".join(str(text or "").split()).upper()
     return g if g in STEEL_GRADES else None
+
+
+def stahlsorte_norm(text) -> str:
+    """Die Erzeugnisnorm, deren Zeile von DIN EN 1993-1-1 Tabelle 3.1 die Werte der
+    Sorte liefert: EN 10025-2 (S235 bis S355 ohne Zusatz), EN 10025-3 (N, NL),
+    EN 10025-4 (M, ML), EN 10025-5 (W); eine Sorte, die die Tabelle nicht kennt:
+    ``""``. S420 und S460 ohne Zusatz tragen die Werte der Zeilen N/NL (EN 10025-2
+    kennt sie nicht)."""
+    g = stahlsorte_schluessel(text)
+    if g is None:
+        return ""
+    if g.endswith(("NL", "N")) or g in ("S420", "S460"):
+        return "EN 10025-3"
+    if g.endswith(("ML", "M")):
+        return "EN 10025-4"
+    if g.endswith("W"):
+        return "EN 10025-5"
+    return "EN 10025-2"
 
 
 def stahlsorte_normiert(text) -> str:
@@ -200,7 +248,7 @@ class Material:
 
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
-        """Baustahl nach EN 10025-2 (t <= 40 mm)."""
+        """Baustahl nach der Sortentabelle, Werte fuer t <= 40 mm (EN 10025-2 bis -5)."""
         g = stahlsorte_schluessel(grade)
         if g is None:
             raise KeyError(f"Stahlsorte '{grade}' unbekannt: {list(STEEL_GRADES)}")
@@ -1076,6 +1124,16 @@ class Geometrielast:
         return bool(np.all(xy >= lo) and np.all(xy <= hi))
 
 
+#: Warum eine Linienlast keine Elementlast erzeugt hat (``Linienlast.verteilt``,
+#: :meth:`Model._warum_leer_linie`). Dateien vor dem 07.10.2026 tragen sie im
+#: Kommentar; :meth:`Model._verteilstand_aus_kommentar_loesen` erkennt sie daran.
+LINIENLAST_GRUENDE = ("Stab gibt es im Modell nicht", "Stab hat keine Elemente",
+                      "Abschnitt liegt ausserhalb des Stabes", "Linie gibt es im Modell nicht",
+                      "Linie noch nicht vernetzt", "Abschnitt liegt ausserhalb der Linie")
+(_L_STAB_FEHLT, _L_STAB_LEER, _L_STAB_AUSSERHALB,
+ _L_LINIE_FEHLT, _L_LINIE_UNVERNETZT, _L_LINIE_AUSSERHALB) = LINIENLAST_GRUENDE
+
+
 @dataclass
 class Linienlast:
     """Linienlast auf einem **Stab** (physischer Stab = Kette von Elementen)
@@ -1099,10 +1157,15 @@ class Linienlast:
     von: float = 0.0
     bis: Optional[float] = None
     kommentar: str = ""
-    # Wer die Last erzeugt hat (etwa "wind:W1"); leer = vom Anwender. Das
-    # Verteilen ueberschreibt ``kommentar`` mit „n Elementlasten“, darum
-    # erkennt ein Generator seine Lasten an diesem Feld (seit 06.10.2026).
+    # Wer die Last erzeugt hat (etwa "wind:W1"); leer = vom Anwender. Ein
+    # Generator erkennt seine Lasten an diesem Feld, nicht am Kommentar
+    # (seit 06.10.2026).
     erzeuger: str = ""
+    # Stand des Verteilens: „n Elementlasten“ oder der Grund, warum keine
+    # entstanden sind (LINIENLAST_GRUENDE). Setzt :meth:`Model.lasten_verteilen`;
+    # gespeichert wird er nicht, er ergibt sich beim Laden neu. Bis zum
+    # 07.10.2026 stand er im Kommentar und ueberschrieb den des Anwenders (N05).
+    verteilt: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1387,8 +1450,10 @@ class LoadCase:
             "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
-            # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei
-            "linienlasten": [{k: v for k, v in asdict(l).items() if k != "erzeuger" or v}
+            # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei;
+            # den Stand des Verteilens (verteilt) schreibt niemand, er entsteht neu
+            "linienlasten": [{k: v for k, v in asdict(l).items()
+                              if k != "verteilt" and (k != "erzeuger" or v)}
                              for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
@@ -3924,6 +3989,83 @@ class Model:
                             "in den Nachweisen verdrängte die eine die andere")
         return ""
 
+    def objektname_konflikt(self, neu: str, alt: str = "", wort: str = "Name") -> str:
+        """Warum *neu* nicht der Name eines Stabs, einer Linie, Flaeche, eines
+        Volumens, Lagers oder Gelenks sein kann - "" heisst: frei (Nachtrag
+        N12, 07.10.2026). *wort* („Stab“, „Linie“, „Fläche“, „Volumen“,
+        „Lager“, „Gelenk“) steht vorn in der Meldung.
+
+        Komma und Semikolon trennen die Namen in den getippten Listen der
+        Masken: die Randlinien einer Flaeche, die Randflaechen eines Volumens,
+        die Kontaktflaechen und Gegenflaechen, die Stab-, Flaechen- und
+        Volumenlisten der Stellung, „Gilt für“ der Naht. Ein Stab „S, 1“ liess
+        sich bis zum 07.10.2026 anlegen und zerbrach dort in „S“ und „1“ (die
+        Stellung schaltete ihn danach still nicht mehr ab, die Naht verlor
+        ihn). Dieselbe Regel gilt seit dem 06.10.2026 fuer Lastfaelle und
+        Kombinationen (:meth:`namenskonflikt`, Fehlerliste F21); sie gilt, bis
+        die Namensregel R2 Namen und Bezeichnungen trennt.
+
+        Geprueft wird nur der Trenner - ob der Name schon vergeben ist,
+        melden die Aufrufer wie bisher selbst, jeder auf seine Art. Ein
+        **vorhandener** Name mit Trenner (aus einer aelteren Datei oder einem
+        Import) bleibt, wie er ist: ``neu == alt`` ist frei, damit sich die
+        uebrigen Eigenschaften des Objekts aendern lassen. Die Anlage- und
+        Umbenennwege der Oberflaeche, des Browsers und
+        :meth:`stab_umbenennen`, :meth:`linie_umbenennen`,
+        :meth:`flaeche_umbenennen`, :meth:`koerper_umbenennen` fragen hier;
+        ``add_member``, ``add_line`` & Co. nehmen jeden Namen, damit die
+        Importe und alte Dateien weiter gelesen werden."""
+        neu, alt = str(neu or ""), str(alt or "")
+        if neu == alt:
+            return ""
+        trenner = _namenstrenner(neu)
+        if not trenner:
+            return ""
+        vorschlag = _ohne_trenner(neu)
+        return (f"{wort} „{neu}“ enthält {trenner} – Komma und Semikolon trennen die Namen in den "
+                "Listenfeldern (Stellung, Randlinien, Randflächen, Naht, Kontakt); bitte ohne schreiben"
+                + (f", etwa „{vorschlag}“" if vorschlag else ""))
+
+    def namenstrenner_ersetzen(self, ausser=()) -> list[str]:
+        """Komma und Semikolon aus den Namen von Lastfaellen und Kombinationen
+        nehmen (Nachtrag N15, 07.10.2026) - fuer Importe, deren Quelle solche
+        Namen kennt. Jedes Zeichen wird zum Leerzeichen („Wind, links“ wird
+        „Wind links“), und ist der Name damit vergeben, haengt
+        :meth:`freier_name` eine Zahl an („Wind links 2“). Umbenannt wird mit
+        :meth:`lastfall_umbenennen` und :meth:`kombination_umbenennen`, also
+        mit jedem Verweis (Faktoren, Alternativen, Ermuedungslasten,
+        Stellungen, Wind, Berichtsbilder).
+
+        Warum beim Import und nicht in den Textfeldern: die Faktoren einer
+        Kombination („LF1: 1,35, Wind: 1,5“) und der Verlauf einer
+        Ermuedungslast sind Text mit Komma als Trenner und Dezimalkomma; ein
+        Name mit Komma ist darin nicht eindeutig zu lesen, und eine Regel, die
+        es versucht, liest im Zweifel anders als gemeint. Das Umbenennen
+        beruehrt dagegen nur die Namen der Importe.
+
+        *ausser*: Namen, die bleiben, wie sie sind (was schon vor dem Import
+        im Modell stand: vorhandene Namen bleiben zulaessig).
+
+        Rueckgabe: Zeilen fuer das Importprotokoll, je Umbenennung eine; eine
+        Umbenennung, die nicht gelingt, steht als WARNUNG da, der Name bleibt."""
+        ausser = set(ausser or ())
+        zeilen: list[str] = []
+        for art, wort, sammlung, umbenennen in (
+                ("lastfall", "Lastfall", self.load_cases, self.lastfall_umbenennen),
+                ("kombination", "Kombination", self.combinations, self.kombination_umbenennen)):
+            for alt in [n for n in list(sammlung) if n not in ausser and _namenstrenner(n)]:
+                neu = self.freier_name(_ohne_trenner(alt) or "Neu", art)
+                try:
+                    mit = umbenennen(alt, neu)
+                except (NameVergeben, KeyError) as ex:
+                    zeilen.append(f"WARNUNG: {wort} „{alt}“ trägt Komma oder Semikolon im Namen und "
+                                  f"ließ sich nicht umbenennen ({ex}) - in den Listenfeldern wird er zerlegt")
+                    continue
+                zeilen.append(f"{wort} „{alt}“ heißt jetzt „{neu}“ – Komma und Semikolon trennen die "
+                              "Namen in den Listenfeldern (Faktoren, Stellung, Ermüdungsverlauf)"
+                              + (f"; mit umbenannt: {', '.join(mit)}" if mit else ""))
+        return zeilen
+
     def _nummer_inhaber(self, art: str, nr: int, ohne=None):
         """Das Objekt, dem die Nummer *nr* der Art *art* (LF, LK, EK) gehoert -
         im Feld ``nummer`` (Lastfaelle bzw. Kombinationen dieser Art) oder im
@@ -4535,6 +4677,38 @@ class Model:
         """Alter Name von :meth:`add_kontaktbedingung`."""
         return self.add_kontaktbedingung(name, **kw)
 
+    def _verteilstand_aus_kommentar_loesen(self) -> int:
+        """Dateien vor dem 07.10.2026: den Stand des Verteilens aus dem Kommentar
+        der Linienlasten nehmen (N05). Rueckgabe: Zahl der geloesten Kommentare.
+
+        Das Verteilen schrieb „n Elementlasten“ oder den Grund, warum nichts
+        entstand (``LINIENLAST_GRUENDE``), in ``kommentar`` und ueberschrieb damit
+        den des Anwenders. Ein solcher Kommentar ist keiner mehr: er wird
+        geleert, und das Verteilen legt den Stand ins Feld ``verteilt``. Ein
+        anderer Kommentar bleibt.
+
+        Eine Windlast ohne Merkmal ``erzeuger`` (Dateien vor dem 06.10.2026)
+        bekommt es dabei: ihr Kommentar „n Elementlasten“ war der Anker, an dem
+        :func:`wind._vom_wind` sie fand (zusammen mit Lastfall, Stab und
+        Richtung); ohne ihn fiele sie beim naechsten „Lasten erzeugen“ aus der
+        Erkennung und verdoppelte sich."""
+        import re
+        from . import wind as _wind
+        n = 0
+        for lc in self.load_cases.values():
+            for ll in lc.linienlasten:
+                k = ll.kommentar or ""
+                if not (re.fullmatch(r"\d+ Elementlasten", k) or k in LINIENLAST_GRUENDE):
+                    continue
+                if not ll.erzeuger:
+                    for w in (getattr(self, "winde", None) or {}).values():
+                        if _wind._vom_wind(ll, w, lc, True):
+                            ll.erzeuger = f"wind:{w.name}"
+                            break
+                ll.kommentar = ""
+                n += 1
+        return n
+
     def lasten_verteilen(self, log: list = None) -> int:
         """Objektlasten auf die inzwischen vorhandenen Elemente legen.
 
@@ -4580,8 +4754,11 @@ class Model:
                     f._geo = True
                     (lc.beam_loads if isinstance(f, BeamLoad) else lc.nodal_loads).append(f)
                 erzeugt += len(neue)
-                ll.kommentar = (f"{len(neue)} Elementlasten" if neue
-                                else self._warum_leer_linie(ll))
+                # der Stand steht im eigenen Feld; ``kommentar`` gehoert dem Anwender
+                # (und Generatoren) - bis zum 07.10.2026 ueberschrieb ihn das
+                # Verteilen mit „n Elementlasten“ (N05)
+                ll.verteilt = (f"{len(neue)} Elementlasten" if neue
+                               else self._warum_leer_linie(ll))
                 offen += not neue
         if log is not None and (erzeugt or offen):
             from .importers import _common as C
@@ -4590,9 +4767,10 @@ class Model:
             if offen:
                 gruende: dict = {}
                 for lc in self.load_cases.values():
-                    for gl in list(lc.geometrielasten) + list(lc.linienlasten):
-                        if "Elementlasten" not in (gl.kommentar or ""):
-                            gruende[gl.kommentar] = gruende.get(gl.kommentar, 0) + 1
+                    for stand in ([g.kommentar for g in lc.geometrielasten]
+                                  + [x.verteilt for x in lc.linienlasten]):
+                        if "Elementlasten" not in (stand or ""):
+                            gruende[stand] = gruende.get(stand, 0) + 1
                 for grund, k in sorted(gruende.items()):
                     C.say(log, f"  {k} Objektlasten ohne Elementlast: {grund}")
         return erzeugt
@@ -5715,6 +5893,9 @@ class Model:
             return
         if neu in self.lines:
             raise ValueError(f"Linie {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Linie")
+        if grund:
+            raise NameVergeben(grund)
         ln = self.lines.pop(alt)
         ln.name = neu
         self.lines[neu] = ln
@@ -5734,6 +5915,9 @@ class Model:
             return
         if neu in self.flaechen:
             raise ValueError(f"Fläche {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Fläche")
+        if grund:
+            raise NameVergeben(grund)
         f = self.flaechen.pop(alt)
         f.name = neu
         self.flaechen[neu] = f
@@ -5757,6 +5941,9 @@ class Model:
             return
         if neu in self.koerper:
             raise ValueError(f"Volumen {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Volumen")
+        if grund:
+            raise NameVergeben(grund)
         k = self.koerper.pop(alt)
         k.name = neu
         self.koerper[neu] = k
@@ -5793,12 +5980,17 @@ class Model:
         rueckte ausserdem ans Ende der Reihenfolge.
 
         Ein vorhandener Name wird mit ValueError abgewiesen, bevor sich etwas
-        aendert. Rueckgabe: Klartextzeilen, was mitging."""
+        aendert, ebenso ein neuer mit Komma oder Semikolon (NameVergeben,
+        :meth:`objektname_konflikt`, Nachtrag N12 vom 07.10.2026).
+        Rueckgabe: Klartextzeilen, was mitging."""
         alt, neu = str(alt), str(neu)
         if alt == neu or alt not in self.members:
             return []
         if neu in self.members:
             raise ValueError(f"Stab {neu} gibt es schon")
+        grund = self.objektname_konflikt(neu, alt, "Stab")
+        if grund:
+            raise NameVergeben(grund)
         mem = self.members[alt]
         _schluessel_tauschen(self.members, alt, neu)
         mem.name = neu
@@ -5966,7 +6158,11 @@ class Model:
             self.lasten_verteilen()
         return ""
 
-    def knoten_auf_linie(self, name: str, tol: float = None) -> list:
+    #: Abschnitte, an denen knoten_auf_linie eine **krumme** Linie fuer die
+    #: Kandidaten genau abtastet (die Suche ueber alle Knoten laeuft an 64)
+    LINIE_FEIN = 1024
+
+    def knoten_auf_linie(self, name: str, tol: float = None, cache: dict = None) -> list:
         """Die Netzknoten auf einer Linie, in Reihenfolge entlang der Linie.
 
         Der Vernetzer legt seine Knoten genau auf die Kurve (oder die Sehnen)
@@ -5974,43 +6170,82 @@ class Model:
         geometrisch gesucht: jeder Knoten, der naeher als ``tol`` an der
         abgetasteten Linie liegt, gehoert dazu; sortiert nach seiner Lage
         entlang der Linie. Rueckgabe [(Knoten, Bogenlaenge s [m]), ...].
+
+        Eine krumme Linie wird in zwei Stufen gesucht: ueber alle Knoten an
+        64 Abschnitten, mit der Toleranz plus dem Sehnenpfeil dieser
+        Abtastung, dann fuer die Kandidaten an LINIE_FEIN Abschnitten - dort
+        entscheidet ``tol``, und dort liegt die Bogenlaenge s. Bis zum
+        07.10.2026 galt allein die 64er-Abtastung: ein Knoten genau auf einem
+        weiten Bogen lag zwischen zwei Stuetzstellen weiter als ``tol`` von
+        ihr weg (Ringstueck R = 2 m, quadratisch: bei 200 Grad und fuenf
+        Teilungen fehlten 4 von 11 Knoten, bei 270 Grad und sechs 8 von 13;
+        bis 190 Grad keiner), und s war um den Sehnenfehler zu kurz (am
+        Viertelkreis 3,141514 statt 3,141593 m - die Linienlast um 2,5e-5 zu
+        klein, jetzt 9,8e-8; Nachtrag N08).
+
+        Knoten, die an keinem Element haengen, gehoeren nicht dazu, sobald
+        die Linie vernetzt ist (linienverteilung.nur_netzknoten, N09).
+        ``cache`` wie bei linienverteilung.kantenmitten_an.
         """
+        from .linienverteilung import im_netz, nur_netzknoten
         ln = self.lines.get(name)
         if ln is None or self.nn == 0:
             return []
         idx = [int(n) for n in ln.nodes if 0 <= int(n) < self.nn]
         if len(idx) < 2:
             return []
-        try:
-            X = np.asarray(ln.punkte(self, 64), float)
-        except Exception:                   # noqa: BLE001
-            X = self.nodes[idx]
-        if len(X) < 2:
+
+        def abtasten(n):
+            try:
+                X = np.asarray(ln.punkte(self, n), float)
+            except Exception:               # noqa: BLE001
+                X = self.nodes[idx]
+            if len(X) < 2:
+                return None
+            seg = np.diff(X, axis=0)
+            L = np.linalg.norm(seg, axis=1)
+            gut = L > 1e-15
+            X = np.vstack([X[:1], X[1:][gut]])
+            seg, L = seg[gut], L[gut]
+            if not len(seg):
+                return None
+            return X, seg, L, np.concatenate([[0.0], np.cumsum(L)])
+
+        def naechste(N, X, seg, L, s0):
+            # Abstand der Knoten N zu allen Strecken (Fusspunkt) und ihre Lage
+            best = np.full(len(N), np.inf)
+            lage = np.zeros(len(N))
+            for k in range(len(seg)):
+                d = seg[k]
+                t = np.clip(((N - X[k]) @ d) / (L[k] ** 2), 0.0, 1.0)
+                fuss = X[k] + t[:, None] * d
+                dist = np.linalg.norm(N - fuss, axis=1)
+                naeher = dist < best
+                best[naeher] = dist[naeher]
+                lage[naeher] = s0[k] + t[naeher] * L[k]
+            return best, lage
+
+        grob = abtasten(64)
+        if grob is None:
             return []
-        seg = np.diff(X, axis=0)
-        L = np.linalg.norm(seg, axis=1)
-        gut = L > 1e-15
-        X = np.vstack([X[:1], X[1:][gut]])
-        seg, L = seg[gut], L[gut]
-        if not len(seg):
-            return []
-        s0 = np.concatenate([[0.0], np.cumsum(L)])
+        X, seg, L, s0 = grob
         if tol is None:
             tol = 1e-4 * max(float(s0[-1]), 1e-9)
-        # Abstand aller Knoten zu allen Strecken (Fusspunkt), blockweise
-        N = self.nodes
-        best = np.full(self.nn, np.inf)
-        lage = np.zeros(self.nn)
-        for k in range(len(seg)):
-            d = seg[k]
-            t = np.clip(((N - X[k]) @ d) / (L[k] ** 2), 0.0, 1.0)
-            fuss = X[k] + t[:, None] * d
-            dist = np.linalg.norm(N - fuss, axis=1)
-            naeher = dist < best
-            best[naeher] = dist[naeher]
-            lage[naeher] = s0[k] + t[naeher] * L[k]
-        treffer = np.where(best <= tol)[0]
-        return sorted(((int(i), float(lage[i])) for i in treffer), key=lambda x: x[1])
+        best, lage = naechste(self.nodes, X, seg, L, s0)
+        krumm = (ln.typ or "polyline") != "polyline"
+        fein = abtasten(self.LINIE_FEIN) if krumm else None
+        if fein is None:
+            treffer = np.where(best <= tol)[0]
+            aus = [(int(i), float(lage[i])) for i in treffer]
+        else:
+            # Sehnenpfeil der groben Abtastung: so weit liegt ein Knoten genau
+            # auf der Kurve hoechstens neben ihr
+            pfeil = float(naechste(fein[0], X, seg, L, s0)[0].max())
+            kand = np.where(best <= tol + 1.5 * pfeil)[0]
+            d_f, lage_f = naechste(self.nodes[kand], *fein)
+            aus = [(int(i), float(s)) for i, d, s in zip(kand, d_f, lage_f) if d <= tol]
+        aus = nur_netzknoten(aus, im_netz(self, cache))
+        return sorted(aus, key=lambda x: x[1])
 
     def _linienlast_legen(self, ll: "Linienlast", cache: dict = None) -> list:
         """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist.
@@ -6055,7 +6290,7 @@ class Model:
         # auch ueber Kantenmitten hinweg in linearen Teilstuecken - auf einer
         # quadratischen Kante L/4, L/2, L/4 statt L/6, 2L/3, L/6 (F11).
         from .linienverteilung import kantenintegral, kantenmitten_an, linie_in_kanten
-        knoten = self.knoten_auf_linie(ll.ziel)
+        knoten = self.knoten_auf_linie(ll.ziel, cache=cache)
         if len(knoten) < 2:
             return out
         gesamt = knoten[-1][1]
@@ -6106,15 +6341,15 @@ class Model:
         if ll.art == "stab":
             mem = self.members.get(ll.ziel)
             if mem is None:
-                return "Stab gibt es im Modell nicht"
+                return _L_STAB_FEHLT
             if not mem.elements:
-                return "Stab hat keine Elemente"
-            return "Abschnitt liegt ausserhalb des Stabes"
+                return _L_STAB_LEER
+            return _L_STAB_AUSSERHALB
         if ll.ziel not in self.lines:
-            return "Linie gibt es im Modell nicht"
+            return _L_LINIE_FEHLT
         if len(self.knoten_auf_linie(ll.ziel)) < 2:
-            return "Linie noch nicht vernetzt"
-        return "Abschnitt liegt ausserhalb der Linie"
+            return _L_LINIE_UNVERNETZT
+        return _L_LINIE_AUSSERHALB
 
     def _warum_leer(self, gl: "Geometrielast") -> str:
         """Warum eine Geometrielast keine Elementlast erzeugt hat.
@@ -7436,7 +7671,11 @@ class Model:
         Seit dem 06.10.2026 gehen auch die Gelenke und die Elementlasten des
         alten Elements mit (:meth:`_teilung_uebertragen`); vorher wanderte ein
         Gelenk an seinem Ende an die Teilstelle, und eine Elementlast wirkte
-        nur noch auf dem verkuerzten Teil. Einmal je Teilung aufrufen."""
+        nur noch auf dem verkuerzten Teil. Seit dem 07.10.2026 (N02) auch die
+        uebrigen Felder des Elements: Linie, Zug/Druck-Ausfall, Woelbkraft-
+        torsion, die ungedehnte Laenge eines Seils, die Exzentrizitaet, die
+        Temperaturlasten und die Anschluesse (Joint). Einmal je Teilung
+        aufrufen."""
         alt, neu = int(alt), int(neu)
         self._teilung_uebertragen(alt, neu)
         kn_neu = {int(n) for n in self.elements[neu].nodes}
@@ -7490,6 +7729,33 @@ class Model:
           Eine Last im lokalen System wird auf die Achsen von ``neu``
           umgerechnet. Aus Objektlasten erzeugte Elementlasten (``_geo``)
           bleiben, wie sie sind: sie legt lasten_verteilen neu.
+
+        Seit dem 07.10.2026 (Nachtrag N02) auch die uebrigen Felder. Bis dahin
+        legte der Aufrufer ``neu`` nur mit Werkstoff, Querschnitt, Gruppe und
+        Drehwinkel an; alles andere blieb leer, und das alte Element behielt
+        sein Ende an der Teilstelle mit allem, was dort haengt (Temperatur 40 K
+        auf E1: Verschiebung 50 % daneben; Versatz 0,2 m an beiden Enden mit
+        10 kN/m: 10 %).
+
+        * Felder, die dem Element als Ganzem gelten - ``line``, ``nur``
+          (Zug/Druck-Ausfall), ``woelb`` (Woelbkrafttorsion, ein siebter
+          Freiheitsgrad je Knoten, an der Teilstelle stetig) - gehen auf
+          ``neu``, sofern es sie nicht selbst traegt.
+        * Die ungedehnte Laenge eines Seils (``laenge0``) teilt sich im
+          Verhaeltnis der Sehnen: jedes Stueck behaelt dieselbe Vorspannung bzw.
+          denselben Durchhang je Laenge. 0 (Sehnenlaenge) bleibt 0.
+        * Die Exzentrizitaet (starrer Versatz der Stabenden, lokale Achsen)
+          ist ueber das Element linear: jedes aeussere Ende behaelt seinen
+          Versatz, die Teilstelle bekommt auf beiden Teilen den Wert dazwischen
+          (Anteil der Teilstelle an der Sehne), die gerade Achse bleibt gerade -
+          ein gleichmaessiger Versatz gilt auf beiden Teilen. Die Rechnung an
+          den alten Orten aendert das nicht (gemessen bis 3e-14); der Wert an
+          der Teilstelle entscheidet nur, wie ein Stab dort anschliesst. Fuer
+          ``neu`` wird er auf dessen lokale Achsen umgerechnet.
+        * Jede Temperaturlast (``TempLoad``, nicht aus Objektlasten erzeugt)
+          gilt gleich auf ``neu``: dT und der Gradient sind Feldgroessen.
+        * Ein Anschluss (:class:`Joint`) an dem Ende, das jetzt an der
+          Teilstelle liegt, geht an das Ende von ``neu`` am alten Ort.
         """
         ne = len(self.elements)
         if alt == neu or not (0 <= alt < ne and 0 <= neu < ne):
@@ -7522,6 +7788,28 @@ class Model:
                 els = [int(e) for e in (getattr(h, "elemente", None) or [])]
                 if alt in els and int(getattr(h, "end", 0) or 0) == ende_alt:
                     h.elemente = sorted((set(els) - {alt}) | {neu})
+        # Felder, die dem Element als Ganzem gelten (N02): sie gelten auf
+        # beiden Teilen; was ``neu`` schon traegt, bleibt
+        if ea.line and not en.line:
+            en.line = ea.line
+        if ea.nur and not en.nur:
+            en.nur = ea.nur
+        if ea.woelb and not en.woelb:
+            self.stab_woelb_setzen(neu, True)
+        # ein Anschluss am Ende an der Teilstelle sass dort nie: er geht an das
+        # Ende am alten Ort
+        for j in (getattr(self, "joints", None) or {}).values():
+            if int(j.elem) == alt and int(j.end) == ende_alt:
+                j.elem, j.end = neu, ende_neu
+        # Temperaturlasten: dT und Gradient gelten ueber das ganze Element
+        for lc in self.load_cases.values():
+            if any(int(t.elem) == neu for t in lc.temp_loads):
+                continue
+            dazu = [copy.copy(t) for t in lc.temp_loads
+                    if int(t.elem) == alt and not getattr(t, "_geo", False)]
+            for t in dazu:
+                t.elem = neu
+            lc.temp_loads += dazu
         # Elementlasten: Lage s entlang der alten Achse, ab ihrem Anfang. alt
         # behaelt seine Richtung; liegt sein Anfang an der Teilstelle, lag
         # das Stueck von neu davor
@@ -7533,6 +7821,37 @@ class Model:
         L0 = La + Ln
         s_alt, s_neu = (0.0, La) if ende_alt == 1 else (Ln, 0.0)
         gleich = float((X[kn[1]] - X[kn[0]]) @ (X[ka[1]] - X[ka[0]])) > 0.0
+        # Seil: die ungedehnte Laenge teilt sich im Verhaeltnis der Sehnen (N02)
+        if ea.laenge0 and not en.laenge0:
+            lg = float(ea.laenge0)
+            ea.laenge0, en.laenge0 = lg * La / L0, lg * Ln / L0
+        # Exzentrizitaet (N02): linear ueber das Element, in den lokalen Achsen
+        # von alt gegeben. Jedes aeussere Ende behaelt seinen Versatz, die
+        # Teilstelle bekommt auf beiden Teilen den Wert dazwischen
+        ex = ea.exzentrizitaet
+        if ex and not en.exzentrizitaet:
+            r = np.zeros((2, 3))
+            try:
+                for i in range(min(len(ex), 2)):
+                    if ex[i] is not None:
+                        v = np.asarray(ex[i], float).ravel()[:3]
+                        r[i, :len(v)] = v
+            except (TypeError, ValueError):
+                r[:] = 0.0              # wie assemble.beam_versatz: unlesbar heisst ohne
+            if np.any(r):
+                def versatz(s):
+                    t = s / L0
+                    return (1.0 - t) * r[0] + t * r[1]
+                from .elements import beam3d as _bm
+                Ta, _ = _bm.local_axes(X[ka[0]], X[ka[1]], ea.roll)
+                Tn, _ = _bm.local_axes(X[kn[0]], X[kn[1]], en.roll)
+                D = Tn @ Ta.T           # lokal alt -> lokal neu
+                if np.allclose(D, np.eye(3), atol=1e-13):
+                    D = np.eye(3)
+                paar = ((versatz(s_neu), versatz(s_neu + Ln)) if gleich
+                        else (versatz(s_neu + Ln), versatz(s_neu)))
+                ea.exzentrizitaet = [versatz(s_alt).tolist(), versatz(s_alt + La).tolist()]
+                en.exzentrizitaet = [(D @ v).tolist() for v in paar]
         drehung = None                  # lokal alt -> lokal neu, erst bei Bedarf
         for lc in self.load_cases.values():
             liste = []
@@ -7571,6 +7890,283 @@ class Model:
                     x.b = None if b >= L - 1e-12 else float(b)
                     liste.append(x)
             lc.beam_loads = liste
+
+    # ---------------- Stabelemente auf einer Strecke, Stabzug (Nachtrag N03, N04) ----------------
+    #: Ein Knoten liegt auf einer gezeichneten Strecke, wenn er hoechstens
+    #: STRECKE_TOL · ihre Laenge neben ihr liegt (6 m: 6 mm). Die Stichprobe in
+    #: tests.test_befehl_stab (Abschnitt 9, 12 Ketten in beliebiger Lage)
+    #: nimmt gerechnet geteilte Ketten und solche mit Zwischenknoten 0,5 ‰
+    #: daneben als Kette, eine Kette 1 % daneben als andere Linie.
+    STRECKE_TOL = 1e-3
+
+    def stabelemente_auf_strecken(self, abschnitte, ausser=(), X=None) -> list:
+        """Je Abschnitt (a, b) die vorhandenen Stabelemente darauf: (kette, im_weg).
+
+        ``im_weg``: alle Stabelemente ausser ``ausser``, deren beide Endknoten
+        auf der Strecke K a – K b liegen (:attr:`STRECKE_TOL`) und die sie auf
+        mehr als dieser Toleranz ueberdecken, von a nach b sortiert. ``kette``:
+        dieselben in Folge von a nach b, wenn sie die Strecke genau einmal
+        und lueckenlos ueberdecken - jedes von einem Knoten der Kette zum
+        naechsten, die Knoten mit wachsendem Abstand von a -, sonst [].
+        ``X``: die Knotenlage, wenn a oder b noch gar keine Knoten sind (Nummern
+        ab ``nn``, etwa die Punkte einer Linie vor dem Anlegen); sonst die des
+        Modells.
+
+        Dieselbe Pruefung fuer alle Befehle, die Stabelemente anlegen: „Stab“,
+        Stabzug, Stabzug im Browser (:meth:`stabzug_anlegen`), „Stabelement“
+        und die Stabelemente einer Linie. Bis zum 06.10.2026 sah der Befehl
+        „Stab“ nur ein Element mit genau den Endknoten a und b: K0–K2 ueber S1
+        (K0–K1) und S2 (K1–K2) legte still ein drittes, paralleles Element an;
+        „Stabelement“ und die Linie sahen bis zum 07.10.2026 nur dasselbe
+        (die Linie nicht einmal das). Bis zum 07.10.2026 stand die Pruefung in
+        der Oberflaeche (gui/main.py), der Stabzug im Browser kannte sie nicht."""
+        ausser = {int(i) for i in ausser}
+        kand = [(i, int(e.nodes[0]), int(e.nodes[-1])) for i, e in enumerate(self.elements)
+                if i not in ausser and e.typ in _EL.LINIEN_TYPEN]
+        if not kand:
+            return [([], []) for _ab in abschnitte]
+        nr = np.array([k[0] for k in kand])
+        anf = np.array([k[1] for k in kand])
+        end = np.array([k[2] for k in kand])
+        X = np.asarray(self.nodes if X is None else X, float)
+        ende = {k[0]: (k[1], k[2]) for k in kand}
+        out = []
+        for a, b in abschnitte:
+            a, b = int(a), int(b)
+            pa = X[a]
+            L = float(np.linalg.norm(X[b] - pa))
+            if L <= 0.0:
+                out.append(([], []))
+                continue
+            d = (X[b] - pa) / L
+            tol = self.STRECKE_TOL * L
+            tp, tq = (X[anf] - pa) @ d, (X[end] - pa) @ d
+            hp = np.linalg.norm(X[anf] - pa - np.outer(tp, d), axis=1)
+            hq = np.linalg.norm(X[end] - pa - np.outer(tq, d), axis=1)
+            ueber = np.minimum(np.maximum(tp, tq), L) - np.maximum(np.minimum(tp, tq), 0.0)
+            treffer = np.flatnonzero((hp <= tol) & (hq <= tol) & (ueber > tol))
+            im_weg = [int(nr[j]) for j in sorted(treffer, key=lambda j: (min(tp[j], tq[j]), int(nr[j])))]
+            # die Kette von a nach b: an jedem Knoten genau ein Element weiter,
+            # vorwaerts entlang der Strecke, und am Ende keins uebrig
+            rest, kette, k, t = set(im_weg), [], a, 0.0
+            while k != b:
+                weiter = [i for i in rest if k in ende[i]]
+                if len(weiter) != 1:
+                    break
+                i = weiter[0]
+                k_neu = ende[i][1] if ende[i][0] == k else ende[i][0]
+                t_neu = float((X[k_neu] - pa) @ d)
+                if t_neu <= t + tol:
+                    break
+                k, t = k_neu, t_neu
+                rest.discard(i)
+                kette.append(i)
+            out.append((kette if k == b and not rest else [], im_weg))
+        return out
+
+    def vorhandene_glieder(self, abschnitte, ausser=(), stabzug: bool = False, ort: str = None,
+                           X=None) -> tuple:
+        """Was ein gezeichneter Stab oder Stabzug mit den Stabelementen macht,
+        die schon auf seinen Abschnitten (a, b) liegen (06.10.2026; seit dem
+        07.10.2026 im Modell, damit Oberflaeche und Browser dieselbe Pruefung
+        nutzen).
+
+        Rueckgabe (glieder, umgekehrt, hinweis): ``glieder[i]`` sind die
+        vorhandenen Elemente auf Abschnitt i in Folge von a nach b - der Stab
+        nimmt sie, statt ein paralleles Element daneben zu legen, das doppelt
+        truege -, [] fuer einen freien Abschnitt. ``umgekehrt``: alle
+        vorhandenen laufen von b nach a und kein Abschnitt ist frei; der Stab
+        laeuft dann in ihrer Richtung. ``hinweis``: warum nichts angelegt
+        werden darf - die Elemente gehoeren schon Staeben (sonst wuerden sie
+        zweimal nachgewiesen, C14 S2), sie ueberdecken einen Abschnitt nicht
+        genau einmal von Knoten zu Knoten, oder sie laufen nicht in einer
+        Richtung (ein Stab laeuft durchgehend in einer, wie bei „Stäbe
+        zusammenfassen“). Beim Stabzug nennt der Hinweis keine Knoten: das
+        Verschmelzen hat sie neu nummeriert, und der Stand davor kommt zurueck.
+        ``ort`` ersetzt den Anfang der Hinweise („Zwischen K0 und K2“)."""
+        belegt = self.stabelemente_auf_strecken(abschnitte, ausser, X)
+        a0, b0 = (int(x) for x in abschnitte[0]) if abschnitte else (0, 0)
+        if ort is None:
+            ort = "Auf dem Stabzug" if stabzug else f"Zwischen K{a0} und K{b0}"
+        nichts = "kein Stabzug angelegt" if stabzug else "kein Stab angelegt"
+        alle = list(dict.fromkeys(e for _k, weg in belegt for e in weg))
+        stab_von = {e: s for s, els in self.staebe_der_elemente(alle).items() for e in els}
+        # 1. nicht genau einmal von Knoten zu Knoten: teilweise, zu lang, doppelt
+        weg = list(dict.fromkeys(e for kette, im_weg in belegt if im_weg and not kette for e in im_weg))
+        if weg:
+            def name(e):
+                el, s = self.elements[e], stab_von.get(e)
+                zusatz = [] if stabzug else [f"K{int(el.nodes[0])}–K{int(el.nodes[-1])}"]
+                zusatz += [f"Stab {s}"] if s else []
+                return f"E{e}" + (f" ({', '.join(zusatz)})" if zusatz else "")
+            eins = len(weg) == 1
+            text = (f"{ort} {'liegt Stabelement' if eins else 'liegen die Stabelemente'} "
+                    f"{aufzaehlung(name(e) for e in weg)} im Weg; {'es überdeckt' if eins else 'sie überdecken'} "
+                    f"{'seine Abschnitte' if stabzug else 'die Strecke'} nicht genau einmal von Knoten zu "
+                    f"Knoten – {nichts}, sonst trügen dort zwei Elemente nebeneinander")
+            return None, False, text
+        # 2. schon in Staeben
+        fremd = [e for e in alle if e in stab_von]
+        if fremd:
+            text = (f"{ort} {'liegt' if len(fremd) == 1 else 'liegen'} schon "
+                    + aufzaehlung(f"Stabelement E{e} von Stab {stab_von[e]}" for e in fremd)
+                    + (" – kein Stabzug angelegt" if stabzug else " – kein zweiter Stab angelegt"))
+            if len({stab_von[e] for e in fremd}) > 1:
+                text += "; mehrere Stäbe macht „Stäbe zusammenfassen“ zu einem"
+            return None, False, text
+        # 3. Richtung: jedes vorhandene Element vorwaerts (von a nach b) oder rueckwaerts
+        richtung = {}
+        for (a, _b), (kette, _w) in zip(abschnitte, belegt):
+            k = int(a)
+            for e in kette:
+                n0, n1 = int(self.elements[e].nodes[0]), int(self.elements[e].nodes[-1])
+                richtung[e] = n0 == k
+                k = n1 if n0 == k else n0
+        frei = any(not kette for kette, _w in belegt)
+        if all(richtung.values()):
+            umgekehrt = False
+        elif not any(richtung.values()) and not frei:
+            umgekehrt = True
+        elif stabzug:
+            gegen = [e for e, v in richtung.items() if not v]
+            return None, False, (f"Auf dem Stabzug {'läuft Stabelement' if len(gegen) == 1 else 'laufen die Stabelemente'} "
+                                 f"{aufzaehlung(f'E{e}' for e in gegen)} gegen seine Richtung – kein Stabzug angelegt; "
+                                 "ein Stab läuft durchgehend in einer Richtung")
+        else:
+            teile = [f"E{e} von K{int(self.elements[e].nodes[0])} nach K{int(self.elements[e].nodes[-1])}"
+                     for e in richtung]
+            return None, False, (f"{ort} laufen die Stabelemente nicht in einer Richtung ({aufzaehlung(teile)}) – "
+                                 "kein Stab angelegt; ein Stab läuft durchgehend in einer Richtung")
+        return [kette for kette, _w in belegt], umgekehrt, ""
+
+    def _knoten_der_punkte(self, punkte, tol: float = 1e-9) -> tuple:
+        """Die Knoten zu einer Punktfolge, wie :meth:`line_to_beams` sie anlegt:
+        ein vorhandener Knoten, wenn er hoechstens ``tol`` danebenliegt, sonst
+        ein neuer - hier nur als Nummer ab ``nn`` und Lage, ohne etwas anzulegen.
+        Rueckgabe (Nummern, Knotenlage mit den neuen Punkten)."""
+        X = np.asarray(self.nodes, float).reshape(-1, 3)
+        ids = []
+        for p in np.asarray(punkte, float).reshape(-1, 3):
+            if len(X):
+                d = np.linalg.norm(X - p, axis=1)
+                i = int(np.argmin(d))
+                if float(d[i]) < tol:
+                    ids.append(i)
+                    continue
+            X = np.vstack([X, p])
+            ids.append(len(X) - 1)
+        return ids, X
+
+    def stabelemente_unter_linie(self, name: str, n: int = None) -> list:
+        """Die vorhandenen Stabelemente, die auf den Abschnitten der Linie
+        ``name`` liegen (Teilung ``n``) - ohne etwas anzulegen: dort wuerde
+        :meth:`line_to_beams` parallele Elemente legen, die doppelt tragen
+        (Nachtrag N04, 07.10.2026; die Linie pruefte bis dahin nichts). In der
+        Reihenfolge der Linie, ohne Doppelte."""
+        ln = self.lines[name]
+        ids, X = self._knoten_der_punkte(ln.punkte(self, n))
+        belegt = self.stabelemente_auf_strecken(list(zip(ids[:-1], ids[1:])), X=X)
+        return list(dict.fromkeys(e for _kette, weg in belegt for e in weg))
+
+    def stabelemente_zwischen_knoten(self, a: int, b: int) -> list:
+        """Die vorhandenen Stabelemente auf der Strecke zwischen den Knoten a
+        und b - die Pruefung fuer ein einzelnes neues Stabelement (Nachtrag N04):
+        dasselbe Element mit denselben Endknoten, aber auch eine Kette oder ein
+        Stueck davon auf der Strecke."""
+        return self.stabelemente_auf_strecken([(int(a), int(b))])[0][1]
+
+    def stabzug_anlegen(self, mat: str, sec: str, p1, p2, n: int, fachwerk: bool = False,
+                        verschmelzen: bool = True) -> dict:
+        """Ein gerader Stabzug von p1 nach p2 in n Abschnitten **als ein Stab mit
+        Nachweis** - fuer die Oberflaeche (Maske „Stabzug erzeugen“, Tafel im
+        Register Netz) und den Browser (Operation ``line_of_beams``) gemeinsam
+        (Nachtrag N03, 07.10.2026).
+
+        Je Abschnitt wie der Befehl „Stab“ (:meth:`vorhandene_glieder`):
+        ueberdecken vorhandene freie Stabelemente ihn lueckenlos und in einer
+        Richtung, entsteht dort kein neues Element, der Stab nimmt sie; gehoeren
+        sie einem Stab, ueberdecken sie ihn nicht genau einmal oder laufen sie
+        gegen den Stabzug, wird nichts angelegt. Die Pruefung laeuft vor jeder
+        Aenderung an einer Probe (Knoten, Stabelemente), die genauso
+        verschmolzen wird wie das Modell danach: weist sie ab, ist das Modell
+        unberuehrt - auch dort, wo kein Rueckgaengig-Schritt es zurueckholt.
+
+        Rueckgabe: ``{"grund": Text}`` bei Abweisung, sonst ``name`` (des
+        Stabs), ``elemente`` (seine Elemente in Folge), ``neu`` (die neu
+        angelegten), ``alt`` (die vorhandenen, die er nimmt), ``nur_stab``
+        (es kam kein Element dazu, nur der Stab) und ``text`` (die Meldung).
+
+        ``verschmelzen=False`` (nur Programmierschnittstelle): die Knoten bleiben
+        neben vorhandenen stehen, es gibt keine Kette zu pruefen, und der Stab
+        bekommt die neuen Elemente.
+
+        Bis zum 07.10.2026 legte der Stabzug im Browser parallele Elemente ueber
+        eine vorhandene Kette an und nie einen Stab (Nachtrag N03); die Pruefung
+        der Oberflaeche stand in gui/main.py."""
+        n = max(1, int(n))
+        if mat not in self.materials:
+            raise KeyError(f"Werkstoff '{mat}' unbekannt")
+        if sec not in self.sections:
+            raise KeyError(f"Querschnitt '{sec}' unbekannt")
+        from . import mesher as _mesher
+        glieder, umgekehrt = None, False
+        if verschmelzen:
+            # Probe: Knoten wie das Modell, Stabelemente als Kopien (nur sie
+            # zaehlen bei der Pruefung), alles andere ein Platzhalter gleicher
+            # Nummer - merge_nodes schreibt an jedes Element, das darf nicht
+            # das echte sein
+            probe = Model("Stabzug-Probe")
+            probe.nodes = np.array(self.nodes, dtype=float, copy=True).reshape(-1, 3)
+            leer = Element("shell3", [0, 0, 0], mat)
+            probe.elements = [e.kopie() if e.typ in _EL.LINIEN_TYPEN else leer for e in self.elements]
+            probe.members = self.members
+            e0 = len(probe.elements)
+            _mesher.line_of_beams(probe, mat, sec, p1, p2, n)
+            _mesher.merge_nodes(probe)
+            glieder, umgekehrt, grund = probe.vorhandene_glieder(
+                [(int(e.nodes[0]), int(e.nodes[-1])) for e in probe.elements[e0:]],
+                ausser=range(e0, len(probe.elements)), stabzug=True)
+            if grund:
+                return {"grund": grund}
+        e0 = len(self.elements)
+        _mesher.line_of_beams(self, mat, sec, p1, p2, n)
+        if fachwerk:
+            for e in self.elements[e0:]:
+                e.typ = "truss"
+        if verschmelzen:
+            _mesher.merge_nodes(self)
+        neu = self.elements[e0:]
+        if glieder is None:
+            glieder = [[] for _e in neu]
+        # die Abschnitte mit vorhandenen Elementen bekommen kein neues; die
+        # Knoten dort sind die der vorhandenen Elemente
+        del self.elements[e0:]
+        els, alt = [], []
+        for e, g in zip(neu, glieder):
+            if g:
+                els += g
+                alt += g
+            else:
+                self.elements.append(e)
+                els.append(len(self.elements) - 1)
+        name = self.naechster_name("S", self.members)
+        els = els[::-1] if umgekehrt else els
+        self.add_member(name, els)
+        neue = list(range(e0, len(self.elements)))
+        text = f"Stabzug: {anzahl(len(neue), 'Element', 'Elemente')} im Stab {name}"
+        if alt:
+            nummern = ", ".join(f"E{e}" for e in alt[:-1]) + (" und " if len(alt) > 1 else "") + f"E{alt[-1]}"
+            text = (f"Stabzug: {anzahl(len(neue), 'neues Element', 'neue Elemente')} und "
+                    f"{'das vorhandene Stabelement' if len(alt) == 1 else 'die vorhandenen Stabelemente'} "
+                    f"{nummern} im Stab {name}")
+            arten = list(dict.fromkeys((self.elements[e].sec, self.elements[e].mat, self.elements[e].typ)
+                                       for e in alt))
+            if arten != [(sec, mat, "truss" if fachwerk else "beam")]:
+                text += (f" – Querschnitt, Werkstoff und Art bleiben die der vorhandenen ("
+                         + "; ".join(f"{s}, {mt}{', Fachwerkstab' if t == 'truss' else ''}" for s, mt, t in arten)
+                         + ")")
+        return {"name": name, "elemente": els, "neu": neue, "alt": alt,
+                "nur_stab": not neue, "text": text}
 
     def berichtsrahmen(self) -> "Berichtsrahmen":
         """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""
@@ -7884,16 +8480,23 @@ class Model:
         return msgs
 
     # ---------------- Speichern / Laden ----------------
-    def to_dict(self, fortschritt=None) -> dict:
+    def to_dict(self, fortschritt=None, netz: bool = True) -> dict:
+        """Das Modell als JSON-faehiges Woerterbuch (die Modelldatei).
+
+        ``netz=False`` laesst Knoten und Elemente leer (07.10.2026, N38): die
+        Kennung der Ergebnisdatei (ergebnisse.rechenkennung) liest alles
+        Uebrige aus genau dieser Form - was gespeichert wird, ist das, was
+        nach dem Laden wieder da ist - und hasht Knoten und Elemente selbst,
+        ohne asdict je Element (am Drehlager Sekunden)."""
         # Knoten, Elemente und Lastfaelle machen bei grossen Modellen fast die
         # ganze Zeit aus; sie werden vorweg berechnet, damit der Balken sie
         # einzeln melden kann. Die Reihenfolge der Schluessel bleibt gleich.
         _melde(fortschritt, 0.02, f"{self.nn} Knoten aufbereiten")
-        knoten = self.nodes.tolist()
-        n_el = len(self.elements)
+        knoten = self.nodes.tolist() if netz else []
+        n_el = len(self.elements) if netz else 0
         _melde(fortschritt, 0.10, f"{n_el} Elemente aufbereiten")
         elemente = []
-        for i, e in enumerate(self.elements):
+        for i, e in enumerate(self.elements if netz else ()):
             elemente.append(asdict(e))
             if fortschritt is not None and (i & 8191) == 0 and i:
                 _melde(fortschritt, 0.10 + 0.55 * i / max(1, n_el),
@@ -8179,6 +8782,7 @@ class Model:
         # die ``_geo``-Lasten vorher weg), und ohne Netz oder ohne
         # Objektlasten kostet es nichts - darum steht es hier und nicht im
         # Loeser: wer ein Modell laedt, hat seine Lasten.
+        m._verteilstand_aus_kommentar_loesen()
         if m.elements and any(lc.geometrielasten or lc.linienlasten
                               for lc in m.load_cases.values()):
             m.lasten_verteilen()

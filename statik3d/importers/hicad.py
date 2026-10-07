@@ -217,7 +217,7 @@ def _from_archive(path: str, model=None, log=None, **options):
     if used is None:
         C.say(log, "Keine Bauteilbezeichnungen im Archiv - es werden alle Eintraege "
                    "der Teiletabellen uebernommen.")
-    from ..model import Material, ShellProp
+    from ..model import Material, ShellProp, stahlsorte_norm
     n_sec = n_plate = n_mat = 0
     for tname, table in A.part_tables(path, log).items():
         for name, sec in A.table_sections(table, only=used).items():
@@ -237,14 +237,16 @@ def _from_archive(path: str, model=None, log=None, **options):
             grade = C.steel_grade_from_text(name) or ""
             quelle = "Teiletabelle"
             if grade:
-                # Die Bezeichnung nennt die Sorte; massgebend ist die Norm
-                # (EN 10025-2). Weicht die Teiletabelle ab, steht das im Protokoll.
+                # Die Bezeichnung nennt die Sorte; massgebend ist die Norm der Sorte
+                # (EN 10025-2 bis -5, bis 07.10.2026 immer „EN 10025-2“). Weicht die
+                # Teiletabelle ab, steht das im Protokoll.
                 ref = Material.steel(grade)
+                norm = stahlsorte_norm(grade)
                 if fy and abs(ref.fy - fy) > 0.05 * ref.fy:
                     C.warn(log, f"Werkstoff '{name}': Teiletabelle fuehrt "
-                                f"f_y = {fy / 1e6:g} N/mm^2, nach EN 10025-2 gilt "
+                                f"f_y = {fy / 1e6:g} N/mm^2, nach {norm} gilt "
                                 f"{ref.fy / 1e6:g} N/mm^2 - die Norm wird verwendet.")
-                fy, fu, quelle = ref.fy, ref.fu, f"EN 10025-2 ({grade})"
+                fy, fu, quelle = ref.fy, ref.fu, f"{norm} ({grade})"
             m.add_material(Material(name, E=210e9, nu=0.3, rho=rho,
                                     fy=fy, fu=fu, grade=grade))
             n_mat += 1

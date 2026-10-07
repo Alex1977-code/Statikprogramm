@@ -1242,10 +1242,60 @@ def test_ohne_node_nicht_bestanden():
     _assert_since(n0)
 
 
+def test_stellung_lagerarten():
+    """N19 (Nachtrag zur Fehlerliste, 07.10.2026): die Stellung im Browser kennt
+    wie die Maske des Desktops je Lagerart eine eigene Liste. Bis dahin gab es nur
+    ein Textfeld „Lager aus“; Linien- und Flaechenlager liessen sich im Browser
+    nicht abschalten (seit dem 06.10.2026 liest jede Art nur ihre Liste)."""
+    n0 = len(RESULTS)
+    from statik3d.model import Material, Section
+    server, c = _server()
+    try:
+        m = Model("Lagerarten")
+        m.add_material(Material.steel("S355"))
+        m.add_section(Section.from_profile("HEB 200"))
+        for x in (0, 3, 6):
+            m.add_node(x, 0, 0)
+        m.add_element("beam", [0, 1], "S355", "HEB 200")
+        m.add_element("beam", [1, 2], "S355", "HEB 200")
+        m.support(0, "all")
+        m.add_line_support([0, 1], name="Rand")
+        m.add_surface_support(elements=[0], name="Bettung")
+        st, j, _ = c.post("/api/model", m.to_dict())
+        check("Modell mit Knoten-, Linien- und Flächenlager hochgeladen", st == 200, str(j)[:200])
+        st, j, _ = c.op(op="stellung", name="Offen", winkel=80.0, lager_aus="Lager 1",
+                        linienlager_aus="Rand", flaechenlager_aus="Bettung, FL9")
+        check("Stellung mit allen drei Lagerlisten angelegt", st == 200, j.get("error", ""))
+        B = j["state"]["stellungen"]
+        z = next((x for x in B["liste"] if x["name"] == "Offen"), {})
+        check("Linien- und Flächenlager haben je ihre Liste (wie in der Maske des Desktops)",
+              z.get("lager_aus") == ["Lager 1"] and z.get("linienlager_aus") == ["Rand"]
+              and z.get("flaechenlager_aus") == ["Bettung", "FL9"], str(z))
+        check("die Übersicht nennt die Schlüssel der Lager wie der Modellbaum",
+              B.get("lager_schluessel") == {"lager": ["Lager 1"], "linienlager": ["Rand"],
+                                            "flaechenlager": ["Bettung"]}, str(B.get("lager_schluessel")))
+        # ändern: die Listen bleiben nicht stehen, sondern folgen dem Formular
+        st, j, _ = c.op(op="stellung", name="Offen", winkel=80.0, lager_aus="", linienlager_aus="",
+                        flaechenlager_aus="Bettung")
+        z = next((x for x in j["state"]["stellungen"]["liste"] if x["name"] == "Offen"), {})
+        check("Stellung ändern: die Listen folgen dem Formular, leer heißt leer",
+              st == 200 and z.get("lager_aus") == [] and z.get("linienlager_aus") == []
+              and z.get("flaechenlager_aus") == ["Bettung"], str(z))
+        # Kontrolle: ohne die neuen Felder (alter Aufruf) bleiben sie leer, nichts bricht
+        st, j, _ = c.op(op="stellung", name="Alt", winkel=10.0, lager_aus="Lager 1")
+        z = next((x for x in j["state"]["stellungen"]["liste"] if x["name"] == "Alt"), {})
+        check("ein Aufruf ohne die neuen Felder (wie bisher) lässt sie leer",
+              st == 200 and z.get("lager_aus") == ["Lager 1"] and z.get("linienlager_aus") == []
+              and z.get("flaechenlager_aus") == [], str(z))
+    finally:
+        server.shutdown()
+    _assert_since(n0)
+
+
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
               test_contact_and_import, test_quader_elementtyp, test_nichtlineare_lager_und_profile,
-              test_stellungen_din19704_export, test_oberflaeche_rendert,
+              test_stellungen_din19704_export, test_stellung_lagerarten, test_oberflaeche_rendert,
               test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
               test_nicht_gefuehrter_stab_tabelle_detail_verlauf,
               test_ermuedungszeile_nicht_gefuehrt_nicht_gruen,

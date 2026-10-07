@@ -264,9 +264,14 @@ class State:
                 if ziel is not None:
                     ziel.stellungsreihe = None
                     ziel.umhuellende = None
-        elif what == "design" and self.analysis is not None:
+        elif what in ("design", "ermuedung") and self.analysis is not None:
             self.analysis.design = None
             self.analysis.fatigue = None
+            if what == "ermuedung":
+                # Der Anschlussnachweis fuehrt die Ermuedung der Anschluesse mit
+                # (Joint.ermuedung; leer = alle Ermuedungslasten): eine neue oder
+                # geloeschte Last aendert D. Bis zum 07.10.2026 blieb er stehen (N22).
+                self.analysis.joints = None
 
 
 def _desktop_frei(st: State) -> None:
@@ -371,15 +376,24 @@ def _stellungen_summary(st: State) -> dict:
                                     "nachgewiesen": bool(e.nachgewiesen),
                                     "fuehrt": bool(fuehrend is not None
                                                    and e is fuehrend and not e.fehler)}
+    m = st.model
     out = {
         "liste": [{"name": s.name, "winkel": float(s.winkel),
                    "beschreibung": s.beschreibung,
                    "lager_aktiv": list(s.lager_aktiv), "lager_aus": list(s.lager_aus),
+                   # je Lagerart eine eigene Liste, wie in der Maske des Desktops
+                   # (Nachtrag N19, 07.10.2026)
+                   "linienlager_aus": list(s.linienlager_aus),
+                   "flaechenlager_aus": list(s.flaechenlager_aus),
                    "faelle": list(s.faelle), "dreh_winkel": float(s.dreh_winkel),
                    "gruppen": list(s.dreh_gruppen),
                    "antrieb": bool(s.antrieb),
                    "ergebnis": erg.get(s.name)} for s in liste],
         "gerechnet": umh is not None,
+        # die Namen der Lager je Art, so wie Modellbaum, Maske und Stellung sie
+        # nennen (Model.lagerschluessel): das Formular zeigt sie als Hilfe
+        "lager_schluessel": {art: m.lagerschluessel(art, getattr(m, liste_))
+                             for art, (liste_, _w) in m.STELLUNG_LAGERARTEN.items()},
     }
     if umh is not None:
         out.update({"eta": float(umh.eta), "u_max": float(umh.u_max),
@@ -967,8 +981,11 @@ NAMEN_OPS = {"add_case", "edit_case", "copy_case", "remove_case", "add_combinati
 #: 06.10.2026 nicht mehr dazu: es nimmt die Linienlasten und Vorspannungen des
 #: Stabs mit (Model.stab_loeschen, Fehlerliste F28), die Analyse gilt danach
 #: nicht mehr
-KEEP_DESIGN = {"design_settings", "set_member", "auto_members",
-               "add_fatigue_load", "remove_fatigue_load"}
+KEEP_DESIGN = {"design_settings", "set_member", "auto_members"}
+#: Ermuedungslasten anlegen und loeschen: die Nachweise gehen wie bei KEEP_DESIGN,
+#: dazu der Anschlussnachweis (``analysis.joints``), in dem die Ermuedung der
+#: Anschluesse steht (State.invalidate("ermuedung"); N22)
+ERMUEDUNG_OPS = {"add_fatigue_load", "remove_fatigue_load"}
 GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "clear_mesh",
             "add_element", "line_of_beams", "plate", "box", "support", "remove_support",
             "clear_supports", "hinges", "merge_nodes", "contact_support", "gap_element",
@@ -1293,14 +1310,21 @@ def _op_add_element(st, m, d):
 
 @op("line_of_beams")
 def _op_line(st, m, d):
+    """Der Stabzug: dieselbe Funktion wie in der Oberflaeche (Model.stabzug_anlegen,
+    Nachtrag N03, 07.10.2026) - mit derselben Pruefung (er legt kein paralleles
+    Element ueber eine vorhandene Kette) und als Stab mit Nachweis. Bis zum
+    07.10.2026 legte der Browser ohne Pruefung parallele Elemente an und nie einen
+    Stab. Eine Abweisung aendert nichts am Modell. ``fachwerk`` legt
+    Fachwerkstaebe an, ``merge`` false laesst die Knoten unverschmolzen (dann
+    entfaellt die Pruefung gegen vorhandene Elemente)."""
     mat, sec = _need_mat(m, d), _need_sec(m, d)
     p1, p2 = _vec(d, "p1", 3), _vec(d, "p2", 3)
     n = max(1, _i(d, "n", 1))
-    n0 = len(m.elements)
-    ids = mesher.line_of_beams(m, mat, sec, p1, p2, n)
-    if d.get("merge", True):
-        mesher.merge_nodes(m)
-    return {"elems": list(range(n0, len(m.elements))), "message": f"Stabzug mit {n} Elementen erzeugt"}
+    res = m.stabzug_anlegen(mat, sec, p1, p2, n, fachwerk=bool(d.get("fachwerk")),
+                            verschmelzen=bool(d.get("merge", True)))
+    if res.get("grund"):
+        raise ApiError(res["grund"])
+    return {"elems": res["neu"], "member": res["name"], "message": res["text"]}
 
 
 @op("plate")
@@ -1423,6 +1447,9 @@ def _op_line_support(st, m, d):
     _check_nodes(m, nodes)
     if len(nodes) < 2:
         raise ApiError("Linienlager braucht mindestens zwei Knoten")
+    grund = m.objektname_konflikt(str(d.get("name") or "").strip(), "", "Linienlager")    # N12
+    if grund:
+        raise ApiError(grund)
     ls = m.add_line_support(nodes, name=d.get("name") or "")
     for key, val in (d.get("behaviour") or {}).items():
         ls.behaviour[dof_index(key)] = DofBehaviour(**{k: (_f(val, k) if k in
@@ -1437,6 +1464,9 @@ def _op_surface_support(st, m, d):
     from ..model import DofBehaviour, dof_index
     elems = _ilist(d, "elems")
     _check_elems(m, elems)
+    grund = m.objektname_konflikt(str(d.get("name") or "").strip(), "", "Flächenlager")   # N12
+    if grund:
+        raise ApiError(grund)
     ss = m.add_surface_support(elems, name=d.get("name") or "", face=_i(d, "face", -1))
     for key, val in (d.get("behaviour") or {}).items():
         ss.behaviour[dof_index(key)] = DofBehaviour(**{k: (_f(val, k) if k in
@@ -1468,6 +1498,9 @@ def _op_remove_surface_support(st, m, d):
 def _op_add_hinge(st, m, d):
     from ..model import dof_index
     name = (d.get("name") or f"G{len(m.hinges) + 1}").strip()
+    grund = m.objektname_konflikt(name, name if name in m.hinges else "", "Gelenk")      # N12
+    if grund:
+        raise ApiError(grund)
     h = m.add_hinge(name, end=_i(d, "end", 0))
     for key, val in (d.get("dofs") or {}).items():
         dof = dof_index(key)
@@ -1492,6 +1525,14 @@ def _stellungen(st) -> list:
     return st.stellungen
 
 
+def _namensliste(d: dict, key: str) -> list:
+    """Eine Namensliste aus dem Formular: Text mit Kommas (oder schon eine Liste)."""
+    wert = d.get(key) or ""
+    if isinstance(wert, (list, tuple)):
+        return [str(x).strip() for x in wert if str(x).strip()]
+    return [x.strip() for x in str(wert).split(",") if x.strip()]
+
+
 @op("stellung")
 def _op_stellung(st, m, d):
     """Stellung anlegen oder aendern."""
@@ -1511,13 +1552,17 @@ def _op_stellung(st, m, d):
         name=name,
         winkel=_f(d, "winkel", 0.0),
         beschreibung=(d.get("beschreibung") or "").strip(),
-        lager_aktiv=[x.strip() for x in (d.get("lager_aktiv") or "").split(",") if x.strip()],
-        lager_aus=[x.strip() for x in (d.get("lager_aus") or "").split(",") if x.strip()],
-        faelle=[x.strip() for x in (d.get("faelle") or "").split(",") if x.strip()],
+        lager_aktiv=_namensliste(d, "lager_aktiv"),
+        lager_aus=_namensliste(d, "lager_aus"),
+        # jede Lagerart liest nur ihre Liste (Stellung._lager); bis zum
+        # 07.10.2026 hatte der Browser nur „Lager aus“ (N19)
+        linienlager_aus=_namensliste(d, "linienlager_aus"),
+        flaechenlager_aus=_namensliste(d, "flaechenlager_aus"),
+        faelle=_namensliste(d, "faelle"),
         dreh_achse=(_f(d, "achse_x", 0.0), _f(d, "achse_y", 1.0), _f(d, "achse_z", 0.0)),
         dreh_punkt=(_f(d, "punkt_x", 0.0), _f(d, "punkt_y", 0.0), _f(d, "punkt_z", 0.0)),
         dreh_winkel=_f(d, "dreh_winkel", 0.0),
-        dreh_gruppen=[x.strip() for x in (d.get("gruppen") or "").split(",") if x.strip()],
+        dreh_gruppen=_namensliste(d, "gruppen"),
         antrieb=antrieb)
     if vorhanden is not None:
         liste[liste.index(vorhanden)] = neu
@@ -1999,6 +2044,11 @@ def _op_set_member(st, m, d):
     if not name:
         raise ApiError("Stabname fehlt")
     if name not in m.members:
+        # Komma und Semikolon trennen die Namen in den getippten Listen
+        # (Nachtrag N12, 07.10.2026)
+        grund = m.objektname_konflikt(name, "", "Stab")
+        if grund:
+            raise ApiError(grund)
         elems = _ilist(d, "elements")
         _check_elems(m, elems)
         m.add_member(name, elems)
@@ -2131,7 +2181,8 @@ def apply_op(st: State, d: dict) -> dict:
         except (KeyError, ValueError, IndexError, TypeError) as ex:
             raise ApiError(str(ex).strip('"\''))
         if name not in KEEP_ALL:
-            st.invalidate("design" if name in KEEP_DESIGN else "all")
+            st.invalidate("design" if name in KEEP_DESIGN
+                          else "ermuedung" if name in ERMUEDUNG_OPS else "all")
             st.touch()
         if name in NAMEN_OPS:
             st.invalidate("namen")

@@ -11,7 +11,17 @@ Klick-Modus in der Ansicht. Beide Wege sind gleichwertig:
   loesen, sobald genug beisammen sind, dasselbe Erzeugen aus.
 
 Die uebrigen Angaben (Querschnitt, Material, Dicke, Lastfall) gelten fuer alle
-folgenden Objekte, bis man sie aendert. **Esc** schliesst, **Eingabe** bestaetigt.
+folgenden Objekte, bis man sie aendert. **Eingabe** bestaetigt, **✕** oben
+rechts (oder „Abbrechen“) schliesst die Maske.
+
+**Esc** schliesst im Programmfenster keine Maske: dort ist es das
+anwendungsweite Kuerzel „Alles deselektieren“ (``MainWindow._esc_gedrueckt``),
+und ``_esc_abbrechen`` beendet damit zuerst die Auswahl per Maus. Der
+Tastendruck kommt an der Maske nie an, auch ein zugeschicktes Ereignis nicht
+(QApplication.notify fragt das Kuerzel ab, gemessen 07.10.2026). Nur eine Maske
+ohne Hauptfenster (die Pruefungen, der Maskenrand fuer sich) erreicht der Esc-Zweig
+in :meth:`Maske.keyPressEvent`; er bleibt darum. Bis zum 07.10.2026 stand hier
+„Esc schliesst“ (Nachtrag N35).
 
 Die Maske schwebt ueber der Ansicht und blockiert sie nicht - kein Dialog legt
 sich vor das Modell (harte Regel 5 der Vorgabe).
@@ -425,12 +435,148 @@ class Einklappabschnitt(QtWidgets.QWidget):
         super().mousePressEvent(ev)
 
 
+class Knopfzeilen(QtWidgets.QWidget):
+    """Die Zusatzknoepfe im Fuss einer Maske, mit Umbruch (Nachtrag N34, 07.10.2026).
+
+    Die Knoepfe standen bis zum 07.10.2026 in einer Zeile ohne Umbruch und
+    teilten sich die Breite: die Wasserdruckmaske zeigte sechs Knoepfe zu je
+    68 px, gebraucht wurden 91 bis 159 px (Segoe UI), jeder Text war vorn und
+    hinten abgeschnitten (1920 x 1000 und 1366 x 740 gleich, die Maske ist
+    460 px breit). Diese Reihe legt jeden Knopf in seiner Wunschbreite
+    (``sizeHint``) in die laufende Zeile und beginnt eine neue, wenn die Breite
+    nicht reicht; der Rest einer Zeile wird gleichmaessig auf ihre Knoepfe
+    verteilt. Ein Knopf, der allein schon breiter ist als die Reihe, bekommt
+    die ganze Breite.
+
+    Wie die Hinweiszeile meldet die Reihe die Hoehe, die sie bei ihrer jetzigen
+    Breite wirklich braucht (``sizeHint``/``minimumSizeHint``): ein Dock rechnet
+    nicht mit heightForWidth. Als Breite meldet sie nur die des breitesten
+    Knopfs - eine Reihe aus sechs Knoepfen darf die Maske nicht auf 850 px
+    ziehen. Die Knoepfe stehen mit ``setGeometry`` in der Reihe, nicht in einem
+    Layout: so bleiben sie ohne Umhaengen dieselben Knoepfe (Tab-Folge,
+    ``Maske.zusatzknoepfe``, Verbindungen)."""
+
+    #: Abstand zwischen zwei Knoepfen einer Zeile und zwischen zwei Zeilen [px]
+    ABSTAND = 6
+    ZEILENABSTAND = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._knoepfe: list = []
+        #: so viele Zeilen braucht die Reihe bei der jetzigen Breite
+        self._zeilen = 1
+        #: erst nach dem ersten Resize hat die Reihe eine vom Layout gesetzte
+        #: Breite - vorher (100 px Vorgabe) waeren es sechs Zeilen
+        self._gelegt = False
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+
+    @staticmethod
+    def zeilen_verteilen(breiten, platz: int, abstand: int) -> list:
+        """Die Knopfbreiten der Reihe nach auf Zeilen verteilen: Liste von
+        Zeilen, jede eine Liste von Indizes. Ein Knopf kommt in die laufende
+        Zeile, solange Breite plus Abstaende in ``platz`` passen; ein zu breiter
+        Knopf steht allein in einer Zeile."""
+        zeilen: list = []
+        aktuell: list = []
+        summe = 0
+        for i, b in enumerate(breiten):
+            if aktuell and summe + abstand + b > platz:
+                zeilen.append(aktuell)
+                aktuell, summe = [], 0
+            summe += (abstand if aktuell else 0) + b
+            aktuell.append(i)
+        if aktuell:
+            zeilen.append(aktuell)
+        return zeilen
+
+    def aufnehmen(self, knopf: QtWidgets.QPushButton) -> QtWidgets.QPushButton:
+        """Einen Knopf in die Reihe stellen (er wird ihr Kind)."""
+        knopf.setParent(self)
+        # Aus- und Einblenden eines Knopfs ordnet die Reihe neu: ein
+        # ausgeblendeter laesst keine Luecke
+        knopf.installEventFilter(self)
+        self._knoepfe.append(knopf)
+        self._anordnen()
+        self.updateGeometry()
+        return knopf
+
+    def knoepfe(self) -> list:
+        return list(self._knoepfe)
+
+    def _sichtbare(self) -> list:
+        return [b for b in self._knoepfe if not b.isHidden()]
+
+    def _hoehe_von(self, zeilen: int) -> int:
+        sichtbar = self._sichtbare()
+        if not sichtbar:
+            return 0
+        h = max(b.sizeHint().height() for b in sichtbar)
+        return zeilen * h + (zeilen - 1) * self.ZEILENABSTAND
+
+    def _anordnen(self) -> None:
+        sichtbar = self._sichtbare()
+        if not sichtbar:
+            self._zeilen = 1
+            return
+        wunsch = [b.sizeHint().width() for b in sichtbar]
+        # noch ohne Breite vom Layout: alles in einer Zeile annehmen, nichts stellen
+        platz = self.width() if self._gelegt else sum(wunsch) + self.ABSTAND * (len(sichtbar) - 1)
+        zeilen = self.zeilen_verteilen(wunsch, platz, self.ABSTAND)
+        if self._gelegt:
+            h = max(b.sizeHint().height() for b in sichtbar)
+            y = 0
+            for z in zeilen:
+                n = len(z)
+                luft = max(0, platz - sum(wunsch[i] for i in z) - self.ABSTAND * (n - 1))
+                x = 0
+                for k, i in enumerate(z):
+                    # der Rest der Zeile gleichmaessig; was nicht aufgeht, die ersten Knoepfe
+                    breite = min(platz, wunsch[i] + luft // n + (1 if k < luft % n else 0))
+                    sichtbar[i].setGeometry(x, y, breite, h)
+                    x += breite + self.ABSTAND
+                y += h + self.ZEILENABSTAND
+        if len(zeilen) != self._zeilen:
+            self._zeilen = len(zeilen)
+            self.updateGeometry()
+
+    def sizeHint(self) -> QtCore.QSize:
+        sichtbar = self._sichtbare()
+        return QtCore.QSize(max((b.sizeHint().width() for b in sichtbar), default=0),
+                            self._hoehe_von(self._zeilen))
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return self.sizeHint()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._gelegt = True
+        self._anordnen()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._gelegt = True
+        self._anordnen()
+
+    def event(self, ev):
+        # ein Knopf hat einen neuen Text (neue Wunschbreite)
+        if ev.type() == QtCore.QEvent.LayoutRequest:
+            self._anordnen()
+        return super().event(ev)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in (QtCore.QEvent.ShowToParent, QtCore.QEvent.HideToParent):
+            self._anordnen()
+            self.updateGeometry()
+        return super().eventFilter(obj, ev)
+
+
 class Maske(QtWidgets.QFrame):
     """Eine nicht-modale Eingabemaske.
 
     angewendet(dict)  - „Anwenden" gedrueckt oder genug Knoten angeklickt
                         (ein :class:`Uebernahmesignal`, emit() sagt, ob es gelang)
-    geschlossen()     - Maske zu (Esc oder Kreuz)
+    geschlossen()     - Maske zu (✕ oder „Abbrechen“; Esc nur ohne Hauptfenster,
+                        siehe Kopf der Datei)
     geaendert_gemeldet(bool) - der Aenderungsmerker kommt (True) oder geht
     """
 
@@ -455,7 +601,9 @@ class Maske(QtWidgets.QFrame):
     #: Feld Auswahl per Maus", 15.09.2026).
     feld_fokussiert = QtCore.Signal(str)
     #: Wird gerufen, wenn Esc in einem scharfen Feld nur den Klickmodus
-    #: beenden soll (statt die Maske zu schliessen); None = schliessen.
+    #: beenden soll (statt die Maske zu schliessen); None = schliessen. Im
+    #: Programmfenster ruft ihn ``MainWindow._esc_abbrechen`` (das Kuerzel
+    #: „Alles deselektieren“), ohne Fenster :meth:`keyPressEvent`.
     klick_beenden = None
     #: Klickmodus fuer Objekte der Ansicht: "" (keiner), "linie", "flaeche"
     #: oder "objekt" (Flaeche oder Volumen). Ist er gesetzt, gehen Klicks auf
@@ -621,19 +769,24 @@ class Maske(QtWidgets.QFrame):
         # Weitere Knoepfe (Situation: Auswahl deaktivieren / aktivieren,
         # Löschen …) - auch sie stehen im festen Fuss. Ein Eintrag ist
         # (Text, Ruf) oder (Text, Ruf, Hinweis): ein kurzer Text nennt im
-        # Hinweis alles (F40, 06.10.2026 - die Zeile bricht nicht um)
+        # Hinweis alles (F40, 06.10.2026). Die Zeile bricht um, wenn die
+        # Breite nicht reicht (Knopfzeilen, N34, 07.10.2026): bis dahin teilten
+        # sich sechs Knoepfe der Wasserdruckmaske eine Zeile zu je 68 px
         self.zusatzknoepfe: dict[str, QtWidgets.QPushButton] = {}
+        #: die Reihe der Zusatzknoepfe (None ohne Zusatzknoepfe)
+        self.zusatzreihe = None
         if zusatz:
-            zeile = QtWidgets.QHBoxLayout()
+            reihe = Knopfzeilen(self)
             for eintrag in zusatz:
                 text, ruf = eintrag[0], eintrag[1]
-                b = QtWidgets.QPushButton(text, self)
+                b = QtWidgets.QPushButton(text, reihe)
                 if len(eintrag) > 2 and eintrag[2]:
                     b.setToolTip(str(eintrag[2]))
                 b.clicked.connect(lambda _c=False, r=ruf: self._knopf_rufen(r))
-                zeile.addWidget(b)
+                reihe.aufnehmen(b)
                 self.zusatzknoepfe[text] = b
-            fuss.addLayout(zeile)
+            self.zusatzreihe = reihe
+            fuss.addWidget(reihe)
         lay.addLayout(fuss)
         self.setMinimumWidth(232)
         # „Übernehmen“ gesperrt, solange ein Zahlenfeld ungueltig ist; eine
@@ -1176,6 +1329,10 @@ class Maske(QtWidgets.QFrame):
         self.geschlossen.emit()
 
     def keyPressEvent(self, ev):
+        # Im Programmfenster kommt Esc hier nie an (Kopf der Datei: Kuerzel
+        # „Alles deselektieren“, auch fuer zugeschickte Ereignisse). Der Zweig
+        # gilt fuer eine Maske ohne Hauptfenster und bleibt: test_fehler_p16 und
+        # test_nachtrag_q10 halten ihn (N35, 07.10.2026).
         if ev.key() == QtCore.Qt.Key_Escape:
             if self.objekt_modus and callable(self.klick_beenden):
                 # Esc im scharfen Feld: erst den Klickmodus beenden, die
