@@ -1034,9 +1034,176 @@ def prozesse_fuer_vernetzung() -> int:
     return max(1, min(int(par.settings().workers), par.cpu_count() - 1))
 
 
+def unbekannte(model: Model) -> int:
+    """Die Zahl der Unbekannten, an der die Grenze misst: drei je Knoten des
+    Modells (Verschiebung x, y, z), Kantenmitten quadratischer Elemente und
+    Konstruktionsknoten der Geometrie eingeschlossen.
+
+    Knoten von Schalen und Staeben haben sechs Freiheitsgrade und zaehlen hier
+    auch nur drei; die Grenze zielt auf Volumennetze (Plan Fein smart,
+    07.10.2026, S2: „die dreifache Summe“). Gezaehlt wird die Laenge des
+    Knotenfelds - das kostet nichts und geht nach jedem Koerper."""
+    return 3 * int(len(model.nodes))
+
+
+def _neue_knoten_mindestens(erg, ordnung: int) -> int:
+    """Wie viele Knoten ein fertiges, noch nicht eingebautes Ergebnis
+    (:func:`mesher3d.koerper_vorbereiten`) mindestens anlegen wird - eine
+    **untere Schranke**, damit sie nie ein Netz anhaelt, das passt.
+
+    Gezaehlt werden nur Punkte im Inneren des Koerpers (Nummer ab der Zahl der
+    Huellpunkte ``P``) und bei quadratischer Ordnung die Kanten mit wenigstens
+    einem inneren Ende: beide gehoeren keinem Nachbarn. Huellpunkte koennen
+    ein Nachbar oder eine Randlinie schon haben (mesher3d._knoten_anlegen);
+    sie zaehlen erst beim Einbau."""
+    if not isinstance(erg, dict) or erg.get("fehler") or erg.get("abgebrochen"):
+        return 0
+    TET, P = erg.get("TET"), erg.get("P")
+    if TET is None or P is None:
+        return 0
+    TET = np.asarray(TET, np.int64).reshape(-1, 4)
+    if not len(TET):
+        return 0
+    n_rand = len(P)
+    innen = int(np.unique(TET[TET >= n_rand]).size)
+    if ordnung >= 2:
+        a = TET[:, [0, 0, 0, 1, 1, 2]].ravel()
+        b = TET[:, [1, 2, 3, 2, 3, 3]].ravel()
+        lo, hi = np.minimum(a, b), np.maximum(a, b)
+        m = hi >= n_rand
+        innen += int(np.unique(lo[m] * (int(TET.max()) + 1) + hi[m]).size)
+    return innen
+
+
+def _netz_zuruecksetzen(model: Model, koerper: list, n_el0: int, n_kn0: int,
+                        cache: dict, log: list = None) -> None:
+    """Das halbe Netz eines angehaltenen Laufs zuruecknehmen: alle Elemente
+    ab ``n_el0`` (sie kamen in diesem Lauf dazu, add_element haengt an) und
+    die Knoten ab ``n_kn0``, an denen danach nichts mehr haengt. Die
+    Randseiten der Flaechen nimmt elemente_loeschen mit, die Netzkarten,
+    Flaechennetze und Linienvorgaben bildet der naechste Lauf ohnehin neu;
+    der Cache der gemeinsamen Knoten nennt geloeschte Knoten und wird leer."""
+    from .importers import _common as C
+    neu = list(range(int(n_el0), len(model.elements)))
+    if neu:
+        model.elemente_loeschen(neu)
+    for k in koerper:
+        k.elemente = []
+    if int(model.nn) > n_kn0:
+        model.netzknoten_loeschen(range(int(n_kn0), int(model.nn)))
+    cache.clear()
+    if len(model.elements) != n_el0 or int(model.nn) != n_kn0:
+        C.warn(log, f"Netzgrenze: das halbe Netz ließ sich nicht ganz zurücknehmen "
+                    f"({len(model.elements)} statt {n_el0} Elemente, {model.nn} statt {n_kn0} Knoten).")
+
+
 def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                       cache: dict = None, workers: int = None, fortschritt=None,
-                      gewicht: dict = None, ordnung: int = 0) -> dict:
+                      gewicht: dict = None, ordnung: int = 0, stufen=None,
+                      hs_fuer=None) -> dict:
+    """Mehrere Volumenkoerper vernetzen, mit der Grenze in Unbekannten.
+
+    Die Arbeit macht :func:`_koerper_lauf` (unten beschrieben). Hier liegt
+    die **Grenze** (``model.netz.hoechstens_unbekannte``, 0 = keine; Paket F2,
+    07.10.2026): der Lauf zaehlt nach jedem eingebauten Koerper die
+    Unbekannten (:func:`unbekannte`) und haelt **frueh** an, wenn sie die
+    Grenze ueberschreiten - im parallelen Weg zaehlen die fertigen, noch nicht
+    eingebauten Koerper mit ihrer unteren Schranke mit
+    (:func:`_neue_knoten_mindestens`). Dann wird das halbe Netz
+    zurueckgenommen und mit der naechsten, groeberen Stufe neu vernetzt -
+    bis es passt (Entscheidung des Anwenders vom 07.10.2026: „selbsttaetig
+    groeber“). Jede Vergroeberung steht im Protokoll mit Stufe, Grund und
+    erreichter Zahl.
+
+    ``stufen`` ist die Folge der Vergroeberung als Funktion
+    ``einstellung(k) -> Netzeinstellungen | None`` fuer k = 1, 2, …: Stufe 0
+    sind die eingestellten (wirksamen) Netzeinstellungen ``model.netz``
+    selbst, None heisst „keine groebere Stufe“. Die Stufen von Fein liefert
+    die Elementstufe (Paket F1); ohne ``stufen`` - Entwurf, Mittel - gibt es
+    nur Stufe 0. Die **letzte** Stufe (die naechste ist None) wird ohne
+    Anhalten fertig vernetzt; liegt sie ueber der Grenze, bleibt ihr Netz und
+    das Protokoll warnt (``aus["grenze_warnung"]``). Ein Netz unter der Grenze
+    ist Knoten fuer Knoten dasselbe wie ohne Grenze. Traegt eine Stufe einen
+    Text in ``quelle``, nennt das Protokoll ihn neben der Stufennummer.
+
+    ``hs_fuer(netz) -> {Name: h}`` gibt die Kantenlaenge je Koerper fuer eine
+    groebere Stufe (Vorgabe: aus der Netzdichte, netzdichte.anwenden); fuer
+    Stufe 0 gilt ``hs``. Waehrend einer Stufe steht ``model.netz`` auf ihren
+    Einstellungen, danach wieder auf den eingestellten.
+
+    Rueckgabe wie :func:`_koerper_lauf`, dazu "unbekannte" (am Ende), "stufe"
+    (die vernetzte), "grenze" und bei Ueberschreitung "grenze_warnung".
+    """
+    from .importers import _common as C
+    from .zahlen import zahl_text
+    cache = {} if cache is None else cache
+    koerper = list(koerper)
+    grenze = int(getattr(getattr(model, "netz", None), "hoechstens_unbekannte", 0) or 0)
+    if grenze <= 0 or not koerper:
+        aus = _koerper_lauf(model, koerper, hs, log, cache, workers, fortschritt, gewicht, ordnung)
+        aus.update(unbekannte=unbekannte(model), stufe=0, grenze=max(grenze, 0))
+        return aus
+    netz0 = model.netz
+    n_el0, n_kn0 = len(model.elements), int(model.nn)
+    k, netz_k, hs_k = 0, netz0, hs
+
+    def stufentext(k_, n_):
+        q = str(getattr(n_, "quelle", "") or "")
+        return f"Stufe {k_}" + (f" ({q})" if k_ and q and q != str(getattr(netz0, "quelle", "") or "") else "")
+    try:
+        while True:
+            naechste = stufen(k + 1) if stufen is not None else None
+            ruf = fortschritt
+            if k and fortschritt is not None:
+                def ruf(anteil, text, _k=k):
+                    return fortschritt(anteil, f"gröber vernetzt, Stufe {_k}: {text}")
+            model.netz = netz_k
+            aus = _koerper_lauf(model, koerper, hs_k, log, cache, workers, ruf, gewicht, ordnung,
+                                grenze=grenze if naechste is not None else 0)
+            if not (aus.get("ueber_grenze") and naechste is not None):
+                break
+            groesste = sorted((aus.get("knoten_je") or {}).items(), key=lambda x: -x[1])[:5]
+            C.say(log, f"Netzgrenze: {stufentext(k, netz_k)} bei {aus['fertig']} von {len(koerper)} Volumen "
+                       f"angehalten – {zahl_text(aus['unbekannte'])} Unbekannte über der Grenze von "
+                       f"{zahl_text(grenze)} (Höchstzahl Unbekannte)"
+                       + (f", davon mindestens {zahl_text(aus['unbekannte_vorab'])} aus fertigen, noch nicht "
+                          "eingebauten Volumen" if aus.get("unbekannte_vorab") else "")
+                       + (("; größte: " + ", ".join(f"{n} ({zahl_text(z)} Knoten)" for n, z in groesste))
+                          if groesste else "")
+                       + f". Das halbe Netz wird verworfen, vernetzt wird gröber mit {stufentext(k + 1, naechste)}.")
+            _netz_zuruecksetzen(model, koerper, n_el0, n_kn0, cache, log)
+            k, netz_k = k + 1, naechste
+            hs_k = (hs_fuer or (lambda n_: _hs_aus_netz(model, n_, koerper)))(netz_k)
+    finally:
+        model.netz = netz0
+    u = unbekannte(model)
+    aus.update(unbekannte=u, stufe=k, grenze=grenze)
+    if aus.get("abgebrochen"):
+        return aus
+    if u > grenze:
+        text = (f"Das Netz hat {zahl_text(u)} Unbekannte und liegt über der Grenze von {zahl_text(grenze)} "
+                f"(Netzeinstellungen → Höchstzahl Unbekannte)"
+                + (f", auch in der gröbsten: {stufentext(k, netz_k)}." if k else
+                   " – eine gröbere Stufe gibt es für diese Elemente nicht, das Netz bleibt, wie es ist.")
+                + " Die Rechnung kann den Speicher übersteigen; gröber vernetzen oder die Grenze anheben.")
+        C.warn(log, text)
+        aus["grenze_warnung"] = text
+    elif k:
+        C.say(log, f"Netzgrenze: vernetzt mit {stufentext(k, netz_k)} – {zahl_text(u)} Unbekannte, "
+                   f"unter der Grenze von {zahl_text(grenze)}.")
+    return aus
+
+
+def _hs_aus_netz(model: Model, netz, koerper: list) -> dict:
+    """Die Kantenlaenge je Koerper fuer eine groebere Stufe - wie beim
+    Vernetzen aus der Netzdichte, ohne die Teilung der Flaechen anzufassen."""
+    from . import netzdichte as nd
+    return nd.anwenden(model, netz, [], koerper)
+
+
+def _koerper_lauf(model: Model, koerper, hs: dict = None, log: list = None,
+                  cache: dict = None, workers: int = None, fortschritt=None,
+                  gewicht: dict = None, ordnung: int = 0, grenze: int = 0) -> dict:
     """Mehrere Volumenkoerper vernetzen - die freie Vernetzung parallel.
 
     Die Rechenarbeit je Koerper (:func:`mesher3d.koerper_vorbereiten`) laeuft
@@ -1054,8 +1221,17 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     ganzen Volumenarbeit und beendet mit False alles - laufende Prozesse
     werden abgebrochen, das bisher Eingebaute bleibt.
 
+    ``grenze`` (Unbekannte, 0 = keine; Paket F2, 07.10.2026) haelt den Lauf
+    an, sobald die Unbekannten des Modells (:func:`unbekannte`) sie
+    ueberschreiten - gezaehlt nach jedem eingebauten Koerper und im
+    parallelen Weg zusaetzlich mit den fertigen, noch nicht eingebauten
+    (untere Schranke, :func:`_neue_knoten_mindestens`), damit die feste
+    Einbaufolge den Halt nicht verzoegert. Laufende Prozesse werden beendet
+    wie beim Abbruch; das halbe Netz nimmt :func:`koerper_vernetzen` zurueck.
+
     Rueckgabe {"elemente": Zahl, "fertig": Koerper mit Netz, "abgebrochen":
-    bool, "prozesse": benutzte Prozesse}.
+    bool, "prozesse": benutzte Prozesse, "ueber_grenze": bool, "unbekannte":
+    Zahl beim Halt, "knoten_je": {Koerper: neue Knoten}}.
     """
     import time
     from . import mesher3d as M3
@@ -1066,7 +1242,8 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     koerper = list(koerper)
     if ordnung <= 0:
         ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)
-    aus = {"elemente": 0, "fertig": 0, "abgebrochen": False, "prozesse": 1}
+    aus = {"elemente": 0, "fertig": 0, "abgebrochen": False, "prozesse": 1,
+           "ueber_grenze": False, "knoten_je": {}}
     if not koerper:
         return aus
     # Balken: nach geschaetzter Elementzahl gewichtet, nicht nach Stueckzahl -
@@ -1081,8 +1258,11 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             return True
         return fortschritt((erledigt + anteil_akt * w_akt) / summe, text) is not False
 
-    def einbauen(k, els_oder_aus):
+    def einbauen(k, els_oder_aus, n_vor: int = None):
+        # n_vor: Knotenzahl vor dem Koerper - im seriellen und abgebildeten
+        # Weg legt mesh_koerper die Knoten schon vor diesem Aufruf an
         nonlocal erledigt
+        n_vor = int(model.nn) if n_vor is None else int(n_vor)
         if isinstance(els_oder_aus, dict):
             els = M3.koerper_einbauen(model, k, els_oder_aus, log, cache,
                                       koerper_ordnung(model, k, ordnung))
@@ -1090,7 +1270,21 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             els = els_oder_aus
         aus["elemente"] += len(els)
         aus["fertig"] += 1 if els else 0
+        aus["knoten_je"][k.name] = int(model.nn) - n_vor
         erledigt += w_alle[k.name]
+
+    def ueber(zusatz: int = 0) -> bool:
+        """Liegt das Modell (dazu ``zusatz`` Knoten noch nicht eingebauter
+        Koerper) ueber der Grenze? Dann steht es in ``aus``."""
+        if grenze <= 0:
+            return False
+        u = unbekannte(model) + 3 * int(zusatz)
+        if u <= grenze:
+            return False
+        aus["ueber_grenze"] = True
+        aus["unbekannte"] = u
+        aus["unbekannte_vorab"] = 3 * int(zusatz)
+        return True
 
     def fertig_melden():
         if fortschritt is not None and not aus["abgebrochen"]:
@@ -1147,9 +1341,12 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         if not melden(f"{k.name} abgebildet"):
             aus["abgebrochen"] = True
             return aus
+        n_vor = int(model.nn)
         einbauen(k, mesh_koerper(model, k, log, cache=cache,
                                  h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung,
-                                 karten=karten))
+                                 karten=karten), n_vor)
+        if ueber():
+            return aus
     if not frei:
         fertig_melden()
         return aus
@@ -1165,14 +1362,18 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             if not melden(f"{k.name}: Randhülle bilden", 0.0, w_alle[k.name]):
                 aus["abgebrochen"] = True
                 break
+            n_vor = int(model.nn)
             els = mesh_koerper(model, k, log, cache=cache,
                                h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung,
                                fortschritt=ruf, karten=karten)
-            einbauen(k, els)
+            einbauen(k, els, n_vor)
             if not els and log and any("abgebrochen" in z for z in log[-3:]):
                 aus["abgebrochen"] = True
                 break
-        fertig_melden()
+            if ueber():
+                break
+        if not aus["ueber_grenze"]:
+            fertig_melden()
         return aus
     # 2) Parallel: die Rechenarbeit in Arbeitsprozessen, der Einbau hier
     from . import parallel as par
@@ -1194,8 +1395,9 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         _datei_weg(arbeiterdatei)
         C.say(log, f"Arbeitsprozesse nicht verfügbar ({ex}) - die Volumen werden nacheinander vernetzt.")
         aus = _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
-                            aus, w_alle, summe, erledigt, karten=karten)
-        fertig_melden()
+                            aus, w_alle, summe, erledigt, karten=karten, ueber=ueber)
+        if not aus["ueber_grenze"]:
+            fertig_melden()
         return aus
     namen = {k.name: k for k in frei}
     offen = {}
@@ -1214,6 +1416,7 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         # war damit unnachpruefbar. Gerechnet wird weiter parallel; nur der
         # Einbau wartet, bis der naechste in der Reihe fertig ist.
         reihe = [k.name for k in frei]
+        vorab: dict = {}
         while offen:
             fertige = []
             while reihe and reihe[0] in offen and offen[reihe[0]].ready():
@@ -1225,6 +1428,19 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                 except Exception as ex:       # noqa: BLE001
                     erg = {"fehler": f"Fehler im Arbeitsprozess: {ex}", "log": []}
                 einbauen(namen[name], erg)
+            if grenze > 0:
+                # Die fertigen, noch nicht eingebauten Koerper zaehlen mit
+                # ihrer unteren Schranke mit - sonst wartete der Halt auf den
+                # grossen Koerper vorn in der Reihe (Plan Fein smart, S2)
+                for name, r in offen.items():
+                    if name not in vorab and r.ready():
+                        try:
+                            vorab[name] = _neue_knoten_mindestens(
+                                r.get(), koerper_ordnung(model, namen[name], ordnung))
+                        except Exception:     # noqa: BLE001 - der Fehler kommt beim Einbau
+                            vorab[name] = 0
+                if ueber(sum(vorab.get(n_, 0) for n_ in offen)):
+                    break
             laufend = [n for n in offen][:w]
             if not melden(f"{aus['fertig']} von {len(koerper)} Volumen fertig, "
                           f"{len(offen)} in Arbeit auf {w} Prozessen"
@@ -1235,10 +1451,11 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             if offen:
                 time.sleep(0.1)
                 t_tick += 0.1
-        if aus["abgebrochen"]:
+        if aus["abgebrochen"] or aus["ueber_grenze"]:
             pool.terminate()
-            C.say(log, f"Vernetzen abgebrochen: {len(offen)} Volumen bleiben ohne Netz "
-                       "(die Arbeitsprozesse wurden beendet).")
+            if aus["abgebrochen"]:
+                C.say(log, f"Vernetzen abgebrochen: {len(offen)} Volumen bleiben ohne Netz "
+                           "(die Arbeitsprozesse wurden beendet).")
         else:
             pool.close()
         pool.join()
@@ -1248,7 +1465,8 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         raise
     finally:
         _datei_weg(arbeiterdatei)
-    fertig_melden()
+    if not aus["ueber_grenze"]:
+        fertig_melden()
     return aus
 
 
@@ -1263,8 +1481,9 @@ def _datei_weg(pfad: str) -> None:
 
 
 def _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
-                  aus, w_alle, summe, erledigt, karten: tuple = None):
-    """Rueckfall ohne Prozess-Pool: die freien Koerper nacheinander."""
+                  aus, w_alle, summe, erledigt, karten: tuple = None, ueber=None):
+    """Rueckfall ohne Prozess-Pool: die freien Koerper nacheinander;
+    ``ueber()`` prueft nach jedem die Grenze in Unbekannten."""
     def melden(text, anteil_akt=0.0, w_akt=0.0):
         if fortschritt is None:
             return True
@@ -1279,6 +1498,8 @@ def _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
         erledigt += w_alle[k.name]
         if not els and log and any("abgebrochen" in z for z in log[-3:]):
             aus["abgebrochen"] = True
+            break
+        if ueber is not None and ueber():
             break
     aus["prozesse"] = 1
     return aus
@@ -1483,7 +1704,8 @@ def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
 # Das ganze Modell vernetzen - ohne Oberflaeche
 # --------------------------------------------------------------------------
 def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: int = None,
-                     flaechen: list = None, koerper: list = None, hs: dict = None) -> dict:
+                     flaechen: list = None, koerper: list = None, hs: dict = None,
+                     stufen=None) -> dict:
     """Flaechen und Volumen vernetzen und den Nachlauf ausfuehren - in
     derselben Folge wie die Oberflaeche (``gui.main._vernetzen``), aber
     ohne Qt: Netzdichte, Kontaktfugen zuruecksetzen, Flaechen, Volumen
@@ -1497,8 +1719,13 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
 
     Jeder Schritt misst sich selbst, wie in der Oberflaeche - am Drehlager
     lag die Zeit nicht im Netz (119,9 s), sondern im Nachlauf: Kontaktfugen
-    203,6 s, Lasten verteilen 86,2 s (Protokoll vom 18.09.2026). Rueckgabe
-    {"elemente", "zeiten": {Schritt: s}, "abgebrochen", "prozesse"}.
+    203,6 s, Lasten verteilen 86,2 s (Protokoll vom 18.09.2026).
+
+    ``stufen`` ist die Folge der Vergroeberung fuer die Grenze in Unbekannten
+    (:func:`koerper_vernetzen`, Paket F2); ohne sie wird ueber der Grenze nur
+    gewarnt. Rueckgabe {"elemente", "zeiten": {Schritt: s}, "abgebrochen",
+    "prozesse", "unbekannte", "stufe"} und bei Ueberschreitung
+    "grenze_warnung".
     """
     import time
     from . import fugen, netzdichte as nd, supports
@@ -1552,11 +1779,21 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
         for f in flaechen:
             aus["elemente"] += len(mesh_flaeche(model, f, log, kanten=kanten))
         if koerper:
+            # Eine groebere Stufe der Grenze bekommt ihre Kantenlaenge aus der
+            # Netzdichte; was ``hs`` hier vorgibt, gilt auch dort
+            def hs_fuer(netz_k):
+                h_k = _hs_aus_netz(model, netz_k, koerper)
+                h_k.update({k: float(v) for k, v in (hs or {}).items() if v})
+                return h_k
             erg = koerper_vernetzen(model, koerper, hs=hs_alle, log=log, cache={},
-                                    workers=workers, fortschritt=fortschritt, gewicht=gewicht)
+                                    workers=workers, fortschritt=fortschritt, gewicht=gewicht,
+                                    stufen=stufen, hs_fuer=hs_fuer)
             aus["elemente"] += erg["elemente"]
             aus["prozesse"] = erg.get("prozesse", 1)
             aus["abgebrochen"] = bool(erg.get("abgebrochen"))
+            aus["stufe"] = erg.get("stufe", 0)
+            if erg.get("grenze_warnung"):
+                aus["grenze_warnung"] = erg["grenze_warnung"]
         zeiten["Netz erzeugen"] = time.time() - t0
         t0 = time.time()
         model.lasten_verteilen(log)
@@ -1578,6 +1815,7 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
             if eigene_teilung.get(f.name):
                 f.teilung = eigene_teilung[f.name]
     aus["zeiten"] = zeiten
+    aus["unbekannte"] = unbekannte(model)
     lang = sorted(((k, v) for k, v in zeiten.items() if v >= 0.05), key=lambda x: -x[1])
     C.say(log, f"Vernetzt: {aus['elemente']} Elemente in {sum(zeiten.values()):.1f} s"
                + (f" auf {aus['prozesse']} Prozessen" if aus["prozesse"] > 1 else "")

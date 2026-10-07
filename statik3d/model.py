@@ -2094,6 +2094,19 @@ class Netzeinstellungen:
     h_min: float = 0.0
     h_max: float = 0.0
     max_elemente: int = 100000
+    #: **Grenze in Unbekannten** (07.10.2026, Paket F2): drei je Knoten des
+    #: Modells (mesher.unbekannte), gezaehlt beim Vernetzen nach jedem
+    #: eingebauten Koerper. Ueberschreitet das Netz sie, haelt der Vernetzer
+    #: frueh an, nimmt das halbe Netz zurueck und vernetzt mit der naechsten
+    #: groeberen Stufe neu (mesher.koerper_vernetzen, Entscheidung des
+    #: Anwenders vom 07.10.2026: „selbsttaetig groeber“, nicht anhalten). Gibt
+    #: es keine groebere Stufe (Entwurf, Mittel, groebste Stufe von Fein),
+    #: bleibt das Netz und das Protokoll warnt. 0 = keine Grenze. Die Vorgabe
+    #: 4 Mio. ist vorlaeufig, bis eine Zerlegung am Drehlager gemessen ist
+    #: (Plan Fein smart, E2); aeltere Dateien ohne das Feld bekommen sie.
+    #: Anders als max_elemente, das ueber die Schaetzung V/(0,12 h³) wirkt und
+    #: am Drehlager um den Faktor 758 danebenlag, zaehlt sie das echte Netz.
+    hoechstens_unbekannte: int = 4_000_000
     #: Netz selbsttaetig verfeinern, wo es die vier Guetekriterien reisst
     #: (mesher3d.netzguete). Aus schaltet man es, wenn man ein Netz zu einer
     #: bestimmten Kantenlaenge braucht - etwa um die Wirkung der Glaettung
