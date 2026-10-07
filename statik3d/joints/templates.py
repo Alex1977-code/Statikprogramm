@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..model import Model, Material, Section, ShellProp
+from ..model import Model, Material, Section, ShellProp, FU_S355
 from .bolts import Bolt, BoltGeometry, min_spacing, check_spacing
 from .welds import Fillet, min_throat, max_throat
 from .tstub import TStub, effective_lengths
@@ -90,7 +90,7 @@ class JointTemplate:
     bolt: Bolt = field(default_factory=lambda: Bolt("M20", "10.9"))
     grade: str = "S355"
     fy: float = 355e6
-    fu: float = 490e6
+    fu: float = FU_S355
     gamma_M0: float = 1.0
     gamma_M2: float = 1.25
     hinweise: list = field(default_factory=list)
@@ -175,7 +175,7 @@ class EndPlate(JointTemplate):
         sec = _section_of(model, elem)
         mat = _material_of(model, elem)
         fy = mat.yield_strength(sec.t_max) or 355e6
-        fu = mat.ultimate_strength(sec.t_max) or 490e6
+        fu = mat.ultimate_strength(sec.t_max) or FU_S355
         h = sec.h or 0.300
         b = sec.b or 0.150
         tf = sec.tf or 0.012
@@ -662,7 +662,7 @@ class Splice(JointTemplate):
         sec = _section_of(model, elem)
         mat = _material_of(model, elem)
         fy = mat.yield_strength(sec.t_max) or 355e6
-        fu = mat.ultimate_strength(sec.t_max) or 490e6
+        fu = mat.ultimate_strength(sec.t_max) or FU_S355
         h = sec.h or 0.300
         b = sec.b or 0.150
         tf = sec.tf or 0.012
@@ -939,7 +939,7 @@ class Gusset(JointTemplate):
         sec = _section_of(model, elem)
         mat = _material_of(model, elem)
         fy = mat.yield_strength(sec.t_max) or 355e6
-        fu = mat.ultimate_strength(sec.t_max) or 490e6
+        fu = mat.ultimate_strength(sec.t_max) or FU_S355
         a = Gusset(name=name or f"Diagonalanschluss {model.elements[int(elem)].sec}",
                    model=model, elem=int(elem), end=int(end),
                    grade=mat.grade or "S355", fy=fy, fu=fu, sec=sec, welded=welded)

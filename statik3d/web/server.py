@@ -45,7 +45,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 
 from ..model import (Model, Material, Section, ShellProp, NodalLoad, BeamLoad, FaceLoad,
-                     TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF, DOF_NAMES)
+                     TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF, DOF_NAMES,
+                     werkstoffe_alter_datei_nachziehen)
 from .. import solver, parallel, mesher, profiles
 from .. import begriffe as bg
 from ..assemble import SOLID_FACES
@@ -2331,6 +2332,9 @@ def replace_model(st: State, d: dict) -> dict:
         st.invalidate()
         st.touch()
         st.info(f"Modell geladen: {m.name} ({m.nn} Knoten, {len(m.elements)} Elemente)")
+        # wie beim Oeffnen einer Datei: f_u nach der Sortentabelle von heute (M26)
+        for z in werkstoffe_alter_datei_nachziehen(m):
+            st.info("Hinweis: " + z)
         return {"ok": True, "message": "Modell geladen", "geometry_changed": True,
                 "state": state_summary(st)}
 

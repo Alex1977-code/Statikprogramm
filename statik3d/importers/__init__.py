@@ -295,6 +295,10 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
                 C.say(log, "Hinweis: " + z)
         else:
             C.say(log, f"JSON-Modell '{loaded.name}' angehaengt")
+            # was das Laden umgestellt hat (M26: f_u der Werkstoffe nach der Sortentabelle
+            # von heute), gilt auch fuer das, was angehaengt wird
+            for z in getattr(loaded, "_ladehinweise", None) or []:
+                C.say(log, "Hinweis: " + z)
             model = _append_model(model, loaded, tol, log)
         model.meta["quelle"] = path
         C.say(log, f"Statik3D-Modell geladen: {model.nn} Knoten, {len(model.elements)} Elemente")

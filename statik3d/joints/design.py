@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from .bolts import Bolt, BoltGeometry, block_tearing, beta_Lf, check_spacing
 from .welds import Fillet, beta_w
+from ..model import FU_S355
 from ..ec3 import fatigue as fat
 
 #: Kerbfaelle EN 1993-1-9 Tab. 8.1 (Schrauben) und 8.5 (Naehte), Delta-sigma_C
@@ -74,7 +75,7 @@ class Check:
 
 
 def check_bolt(bolt: Bolt, Fv_Ed: float = 0.0, Ft_Ed: float = 0.0,
-               geo: BoltGeometry = None, t: float = 0.0, fu: float = 490e6,
+               geo: BoltGeometry = None, t: float = 0.0, fu: float = FU_S355,
                tp: float = 0.0, Lj: float = 0.0, sls_slip: float = None) -> list[Check]:
     """Alle Schraubennachweise einer Einzelschraube.
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, fields
 
-from ..model import Model, Joint
+from ..model import Model, Joint, FU_S355
 from .bolts import Bolt
 from .templates import TEMPLATES
 
@@ -88,7 +88,7 @@ def vorlage(model: Model, joint: Joint):
         name=joint.name, model=model, elem=int(joint.elem), end=int(joint.end),
         grade=mat.grade or "S355",
         fy=mat.yield_strength(sec.t_max) or 355e6,
-        fu=mat.ultimate_strength(sec.t_max) or 490e6,
+        fu=mat.ultimate_strength(sec.t_max) or FU_S355,
         gamma_M0=ds.gamma_M0, gamma_M2=ds.gamma_M2, sec=sec)
     if joint.schraube:
         t.bolt = Bolt(**{k: v for k, v in joint.schraube.items()
