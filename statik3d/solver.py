@@ -16,6 +16,7 @@ aus den Rohgroessen berechnet.
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -3432,6 +3433,73 @@ def konvergenz_zustand(info) -> str:
     return KONVERGIERT
 
 
+#: Was solve_with_contact an die Abbruchzeile eines gedeckelten Kontaktlaufs
+#: haengt; _kontakt_info_sammeln setzt danach " (Kontaktlauf <Nr.>)" an
+_NICHT_AUSKONVERGIERT = " - das Ergebnis ist nicht auskonvergiert"
+_KONTAKTLAUF_NR = re.compile(r" \(Kontaktlauf (\d+)\)$")
+#: Eine Zeile, die sagt, dass ein Kontaktlauf am Deckel oder an der
+#: Schrittgrenze endete: die Deckelzeilen des Kontaktsystems ("Nachpruefung
+#: der Reibung ... abgebrochen - in N Runden: ...", "Gleitrichtungen ... -
+#: abgebrochen") und die Abbruchzeile des Loesers
+_LAUF_ABGEBROCHEN = re.compile(r"abgebrochen|nicht\s+(?:aus)?konvergiert", re.IGNORECASE)
+
+
+def kontakt_log_zeilen(info) -> list:
+    """Das Kontaktprotokoll eines Ergebnisses fuer den Bericht als
+    [(Zeile, Zusatz)]; ``Zusatz`` ist "" ausser bei den Abbruchzeilen des
+    elastischen Vorlaufs einer Rechnung mit Fliessen.
+
+    Der Vorlauf zaehlt nicht (:func:`konvergenz_zustand`), seine
+    Abbruchzeile stand bis zum 07.10.2026 aber unveraendert unter den
+    Hinweisen des Berichts - „… abgebrochen - das Ergebnis ist nicht
+    auskonvergiert (Kontaktlauf 1)“, auch bei einem konvergierten Ergebnis
+    (Nachtrag N36). Jetzt verliert sie das „nicht auskonvergiert“ und sagt,
+    dass sie den Vorlauf betrifft, und ist der Kontakt des Ergebnisses
+    konvergiert (:func:`kontakt_konvergiert`), auch das. Erkannt wird sie an
+    der Laufnummer: die Laeufe des Vorlaufs sind die ersten
+    (``contact_vorlauf_laeufe``). Ist der Kontakt konvergiert, gilt das auch
+    fuer die Deckelzeile des Kontaktsystems davor, die keine Nummer traegt:
+    _kontakt_info_sammeln haengt die Zeilen jedes Laufs hinten an, die des
+    Vorlaufs stehen also vor denen der plastischen Laeufe, und ein
+    gedeckelter Lauf, der zaehlt, waere nicht konvergiert. Ist er es nicht,
+    bleibt sie, wie sie ist: eine gleichlautende Zeile eines spaeteren Laufs
+    faellt beim Zusammenfuehren weg und waere ihr nicht anzusehen.
+
+    Nur fuer die Anzeige - ``res.info`` bleibt, wie es ist, und auch
+    aeltere Ergebnisse (Laufnummern seit dem 22.09.2026) lesen so."""
+    info = info if isinstance(info, dict) else {}
+    zeilen = [str(z) for z in (info.get("contact_log") or [])]
+    n_vor = int(info.get("contact_vorlauf_laeufe", 0) or 0)
+    if (n_vor <= 0 or info.get("probelauf")
+            or int(info.get("contact_vorlauf_nicht_konvergiert", 0) or 0) <= 0):
+        return [(z, "") for z in zeilen]
+    konvergiert = kontakt_konvergiert(info)
+    if not konvergiert:
+        zusatz = " – im elastischen Vorlauf, der nicht zählt"
+    elif konvergenz_zustand(info) == KONVERGIERT:
+        zusatz = " – nur im elastischen Vorlauf, der nicht zählt; das Ergebnis ist konvergiert"
+    else:               # Kontakt konvergiert, etwas anderes nicht (etwa die Plastizitaet)
+        zusatz = (" – nur im elastischen Vorlauf, der nicht zählt; der Kontakt des "
+                  "Ergebnisses ist konvergiert")
+
+    def _vorlauf(z):
+        m = _KONTAKTLAUF_NR.search(z)
+        return m if m and int(m.group(1)) <= n_vor else None
+
+    letzte = max((i for i, z in enumerate(zeilen) if _vorlauf(z)), default=-1)
+    aus = []
+    for i, z in enumerate(zeilen):
+        m = _vorlauf(z)
+        if m:
+            aus.append((z[:m.start()].replace(_NICHT_AUSKONVERGIERT, "") + m.group(0), zusatz))
+        elif (konvergiert and i < letzte and not _KONTAKTLAUF_NR.search(z)
+              and _LAUF_ABGEBROCHEN.search(z)):
+            aus.append((z, zusatz))
+        else:
+            aus.append((z, ""))
+    return aus
+
+
 def _fliessarten(info: dict, einst) -> list:
     """Die Art jedes Loeseraufrufs von ``plastizitaet.iteration`` als Liste
     (Art, Laststufe, Schritt) - nachgezeichnet aus ``info['verlauf']``, ohne
@@ -4668,12 +4736,14 @@ def _kombination_pruefen(model: Model, combo: Combination) -> str:
 def solve_combination(model: Model, combo: Combination, case_results: dict = None,
                       system: StaticSystem = None, workers: int = None,
                       progress=None, systeme: dict = None, start=None,
-                      nichtlinear: bool = None) -> Results:
+                      nichtlinear: bool = None, fenster=None) -> Results:
     """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
     in der Situation der Kombination.
 
     ``nichtlinear`` nimmt die Antwort von :func:`_nichtlinear` entgegen, wenn
-    der Aufrufer sie schon kennt - siehe dort, warum das lohnt."""
+    der Aufrufer sie schon kennt - siehe dort, warum das lohnt. ``fenster``
+    (von, bis) ist der Anteil des Balkens fuer diese Kombination, wie bei
+    einem Lastfall (_solve_loads); nur fuer die Anzeige."""
     sit = _kombination_pruefen(model, combo)
     nl = _nichtlinear(model) if nichtlinear is None else bool(nichtlinear)
     if not nl and case_results is not None \
@@ -4701,7 +4771,7 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
     else:
         start_von = "Aufrufer"      # von aussen hineingereicht, Herkunft unbekannt
     res = _solve_loads(model, system, combo.factors, combo.name, "combination", workers,
-                       progress, start=start, start_von=start_von)
+                       progress, start=start, start_von=start_von, fenster=fenster)
     if res.kontaktzustand is not None:
         system.kontaktzustand = res.kontaktzustand
         system.kontaktzustand_von = f"Kombination {combo.name}"
@@ -4941,6 +5011,14 @@ def _teil_merken(ex, name: str, wert: dict):
     return ex
 
 
+def _kombinationsfenster(k: int, n: int) -> tuple:
+    """Der Anteil des Balkens fuer die k-te von n Kombinationen (ab 0) - das
+    Stueck zwischen ihrer Marke und der davor, im Fenster 0,60 bis 0,90 der
+    Kombinationen (solve_combinations)."""
+    n = max(1, int(n))
+    return 0.60 + 0.30 * k / n, 0.60 + 0.30 * (k + 1) / n
+
+
 def solve_combinations(model: Model, combos: list = None, case_results: dict = None,
                        system: StaticSystem = None, workers: int = None,
                        progress=None, use_jobs: bool = None, systeme: dict = None) -> dict:
@@ -4991,8 +5069,20 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
         return out
     try:
         for k, n in enumerate(names):
+            # Mit ``progress`` wie ein Lastfall (Nachtrag N31, 07.10.2026):
+            # Kontakt- und Plastizitaetsschritte gehen in Protokoll und
+            # Rechenliste, und ein Abbruch greift mitten in der Kombination.
+            # Bis dahin rief diese Schleife ohne ``progress`` - zwischen den
+            # Marken zweier Kombinationen stand nichts, und Schritte,
+            # Konvergenz und Meldung der Rechenliste blieben leer. Gerechnet
+            # wird dasselbe: der Fortschritt liest nur mit (Block mit Reibung,
+            # LF1 und K1 bitgleich mit und ohne, tests/test_nachtrag_q2.py).
+            # Auf dem Auftragsweg oben (Farm, oder mehrere Kombinationen und
+            # mehr als ein Arbeiter) rechnen die Kombinationen in anderen
+            # Prozessen; dorthin reicht kein Fortschritt.
             out[n] = solve_combination(model, model.combinations[n], None, system, workers,
-                                       systeme=systeme)
+                                       systeme=systeme, progress=progress,
+                                       fenster=_kombinationsfenster(k, len(names)))
             if progress:
                 _melde(progress, f"Kombination {n} ({k + 1}/{len(names)})",
                        0.60 + 0.30 * (k + 1) / max(1, len(names)))

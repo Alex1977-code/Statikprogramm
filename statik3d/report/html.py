@@ -971,8 +971,7 @@ class Report:
         b.append(("list", items))
         b.append(self._h(2, "Gültigkeitsbereich und Hinweise"))
         b.append(("list", [
-            ("Die Berechnung ist elastisch (keine Plastizität, keine Theorie "
-             "III. Ordnung/große Verformungen). "
+            (self._rechenart_satz()
              + ("Das Gleichgewicht wird am verformten System aufgestellt "
                 "(Theorie II. Ordnung, DIN EN 1993-1-1, 5.2) – siehe das "
                 "eigene Kapitel dazu."
@@ -1005,6 +1004,40 @@ class Report:
             "(Gleichgewicht der Auflagerkräfte, Größenordnung der Verformungen).",
         ]))
         return b
+
+    def _rechenart_satz(self) -> str:
+        """Der erste Satz unter „Gültigkeitsbereich und Hinweise“: elastisch
+        oder mit Plastizitaet, wie viele Ergebnisse, welches Werkstoffgesetz.
+
+        Ob mit Fliessen gerechnet wurde, steht am Ergebnis
+        (``res.info["plastizitaet"]``, solver._plastizitaet_rechnen), nicht
+        in der Einstellung am Modell; die Verfestigung E_t/E nur dort. Bis zum
+        07.10.2026 stand hier ohne Bedingung „Die Berechnung ist elastisch
+        (keine Plastizität, …)“, auch wenn Elemente flossen (Nachtrag N32;
+        Block mit Reibung: 4 Elemente in LF1, 14 in K1)."""
+        ergebnisse = self.all_results()
+        pz = [r.info["plastizitaet"] for _n, r in ergebnisse
+              if isinstance(getattr(r, "info", None), dict)
+              and isinstance(r.info.get("plastizitaet"), dict)]
+        if not pz:
+            return ("Die Berechnung ist elastisch (keine Plastizität, keine Theorie "
+                    "III. Ordnung/große Verformungen). ")
+        n_ges = len(ergebnisse)
+        fl = [int(p.get("fliessend", 0) or 0) for p in pz]
+        k = sum(1 for x in fl if x > 0)
+        if k == 0:
+            fliessen = "in keinem davon fließt ein Element"
+        elif max(fl) == 1:
+            fliessen = f"in {k} davon fließt je ein Element"
+        else:
+            fliessen = f"in {k} davon fließen Elemente, höchstens {max(fl)} je Ergebnis"
+        r = float(getattr(getattr(self.model, "plastizitaet", None), "verfestigung", 0.0) or 0.0)
+        return ("Die Berechnung ist elastisch-plastisch: Plastizität der Volumenelemente "
+                f"(von Mises mit isotroper linearer Verfestigung, E_t/E = {r * 100:g} %"
+                + (", ideal-plastisch" if r <= 0 else "")
+                + "; Werkstoffe ohne Streckgrenze f_y bleiben elastisch) ist in "
+                f"{len(pz)} von {n_ges} Ergebnis{'' if n_ges == 1 else 'sen'} gerechnet, "
+                f"{fliessen}; keine Theorie III. Ordnung/große Verformungen. ")
 
     # ============================================================ Kapitel 2
     def chapter_system(self) -> list:
@@ -2491,7 +2524,13 @@ class Report:
                                   None, "compact"))
                         if note:
                             b.append(("note", note))
-                    log = [s for s in res.info.get("contact_log", []) if "zugeordnet" not in s]
+                    # Die Abbruchzeilen des elastischen Vorlaufs sagen, dass
+                    # sie ihn betreffen (Nachtrag N36, 07.10.2026; bis dahin
+                    # stand dort „das Ergebnis ist nicht auskonvergiert“ auch
+                    # bei einem konvergierten Ergebnis)
+                    from ..solver import kontakt_log_zeilen
+                    log = [s + zusatz for s, zusatz in kontakt_log_zeilen(res.info)
+                           if "zugeordnet" not in s]
                     if log:
                         b.append(("list", log))
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
@@ -2508,8 +2547,9 @@ class Report:
                 # hoechstens (Zahl der verschiedenen Texte + 1) Zeilen.
                 rest = je_ergebnis[lim:]
                 weitere: dict = {}
+                from ..solver import kontakt_log_zeilen
                 for _name, _res, _kk in rest:
-                    for s in _res.info.get("contact_log", []):
+                    for s, zusatz in kontakt_log_zeilen(_res.info):
                         if "zugeordnet" not in s:
                             # Die Laufnummer ("(Kontaktlauf 7)") gehoert zum
                             # Ergebnis, nicht zur Art der Meldung - sonst
@@ -2523,6 +2563,9 @@ class Report:
                             # eine je gedeckeltem Lauf - am Drehlager bis zu
                             # 422 x 12. Die Zahlen stehen je Lauf im Laufbuch.
                             art = re.sub(r" - in \d+ Runden?: .*$", "", art)
+                            # ... nicht aber der Zusatz des Vorlaufs (N36): er
+                            # sagt, worauf sich die Zeile bezieht
+                            art += zusatz
                             namen_art = weitere.setdefault(art, [])
                             # Ein Ergebnis mit mehreren gedeckelten Laeufen
                             # traegt dieselbe Art mehrmals - gezaehlt werden

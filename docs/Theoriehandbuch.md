@@ -5139,10 +5139,15 @@ Newton-Lauf nach 40 Zustandswechseln gedeckelt.
 1. Kein elastischer Vorlauf. Was er nebenbei tat — freie Bewegungen finden
    und festhalten — geschieht um den ersten plastischen Lauf. Das gilt auch,
    wenn die Fließ-Iteration mit Anfangsdehnung rechnet (gewählt, ohne
-   Verfestigung, Elementtyp ohne Stapel); abgekürzt wird dort nichts, das
-   Ergebnis bleibt bitgleich (Block mit Reibung ohne Verfestigung: 9 statt 16
-   Zerlegungen, mit Anfangsdehnung und 5 %: Laufbuch ohne den Vorlauf,
-   `test_laufbuch_mit_fliessen`).
+   Verfestigung, Elementtyp ohne Stapel); abgekürzt wird dort nichts (Block
+   mit Reibung ohne Verfestigung: 9 statt 16 Zerlegungen, mit Anfangsdehnung
+   und 5 %: Laufbuch ohne den Vorlauf, `test_laufbuch_mit_fliessen`). Das
+   Ergebnis ist dasselbe bis auf die Toleranz der Kontaktiteration, aber nicht
+   bitgleich: verschachtelt beginnt der erste plastische Lauf beim
+   Kontaktzustand des Vorlaufs, gemeinsam beim Start des Lastfalls (ideal
+   plastischer Block mit Reibung: max |Δu| 1,0·10⁻¹¹ m bei u_max 6,1·10⁻⁴ m,
+   gemessen 07.10.2026, `tests/test_nachtrag_q2.py`). Bis zum 07.10.2026
+   stand hier, das Ergebnis bleibe bitgleich.
 2. Der Startwert jeder Laststufe (elastisch mit dem bisherigen F_p) wie
    bisher mit **voll auskonvergiertem** Kontakt.
 3. Die Newton-Schritte der Stufe mit **abgekürztem** Kontakt: ein

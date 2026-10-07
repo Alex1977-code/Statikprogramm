@@ -1960,6 +1960,25 @@ Solange steht er in der Fußzeile des Fensters („Kombination 54 von 54 -
 Umhüllende GZT-12: 3/7“), damit die Liste dabei nicht wie eingefroren
 aussieht.
 
+**Kombinationen melden ihre Schritte wie Lastfälle** (seit dem 07.10.2026).
+Eine Kombination, die direkt gerechnet wird (mit Kontakt, Fließen oder
+ausfallenden Stäben), schreibt ihre Kontakt-Iterationen und
+Plastizitätsschritte ins Protokoll und in ihre Zeile der Rechenliste; der
+Balken wächst dabei im Abschnitt der Kombinationen, und **Abbrechen** hält
+mitten in der Kombination an. Bis zum 07.10.2026 rechnete sie ohne
+Fortschritt: Schritte, Konvergenz und Meldung jeder Kombination blieben leer,
+und ein Abbruch griff erst nach ihr. Gerechnet wird dasselbe wie vorher - am
+Block mit Reibung, der fließt, sind Lastfall und Kombination mit und ohne
+Fortschritt bitgleich (`tests/test_nachtrag_q2.py`). Das gilt, wenn die
+Kombinationen nacheinander im Programm selbst rechnen: bei einer einzigen
+direkt gerechneten Kombination oder bei einem einzigen Arbeiter im
+Prozesspool. (Überlagerte Kombinationen haben keine Schritte; sie melden sich
+wie bisher je Kombination.) Sind es mehrere direkt gerechnete
+Kombinationen und hat der Prozesspool mehr als einen Arbeiter - das ist die
+Vorgabe, alle Kerne bis auf einen -, oder ist die Rechnerfarm eingeschaltet,
+rechnet jede Kombination als Auftrag in einem eigenen Prozess. Von dort kommt
+kein Fortschritt, genau wie bei Lastfällen in Rechenketten.
+
 #### Rechenliste: ein gedeckelter Lastfall heißt „nicht konvergiert“ (22.09.2026)
 
 Bis zum 22.09.2026 zeigte die Rechenliste bei einem Lastfall, dessen
@@ -2020,9 +2039,22 @@ der elastische Vorlauf, er zählt nicht)“, im Bericht in den Kennwerten des
 Ergebnisses, in der Rechenliste in der Spalte „Meldung“. Die Rechenliste
 liest den Stand jedes Postens, sobald die Rechnung fertig ist, aus seinem
 Ergebnis; während des Laufs folgt sie wie bisher den Meldungen. Die
-Protokollzeile des gedeckelten Vorlaufs („Nachprüfung der Reibung … abgebrochen
-… (Kontaktlauf 1)“) steht weiter unter den Hinweisen des Berichts. Ein
-gedeckelter Lauf, der zählt, heißt überall weiter „nicht konvergiert“.
+Protokollzeile des gedeckelten Vorlaufs steht weiter unter den Hinweisen des
+Berichts, sagt aber seit dem 07.10.2026, dass sie den Vorlauf betrifft:
+„Kontakt: Nachprüfung der Reibung nach 40 Zustandswechseln abgebrochen
+(Kontaktlauf 1) – nur im elastischen Vorlauf, der nicht zählt; das Ergebnis
+ist konvergiert“ (ist nur der Kontakt konvergiert, die Plastizität aber
+nicht: „… der Kontakt des Ergebnisses ist konvergiert“). Ebenso, wenn der
+Kontakt konvergiert ist, die Zeile des Kontaktsystems davor, die die Runden am
+Deckel aufzählt. Bis zum 07.10.2026 stand dort „… abgebrochen - das Ergebnis
+ist nicht auskonvergiert (Kontaktlauf 1)“, auch wenn das Ergebnis konvergiert
+war. Ist der Kontakt des Ergebnisses nicht konvergiert, heißt die Zeile des
+Vorlaufs nur „… (Kontaktlauf 1) – im elastischen Vorlauf, der nicht zählt“,
+und die gedeckelten Läufe, die zählen, behalten „das Ergebnis ist nicht
+auskonvergiert“. Im Protokoll der Oberfläche steht die Zeile während der
+Rechnung weiter so, wie der Rechenkern sie meldet; dort ist noch nicht
+bekannt, wie der Lastfall endet. Ein gedeckelter Lauf, der zählt, heißt
+überall weiter „nicht konvergiert“.
 Geprüft in `tests/test_fehler_p15.py` am Block mit Reibung, einmal mit
 gedeckeltem Vorlauf und einmal mit gedeckeltem einzigen Lauf.
 
@@ -8203,7 +8235,12 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (σ = D(ε − ε_p)), die Auflagerkräfte tragen die Last. Das Protokoll nennt
   je Laststufe und Schritt die fließenden Elemente und die Änderung, die
   Zusammenfassung „Plastizität: n Elemente fließen, ε_p,eq max …, Schritte
-  in Laststufen“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
+  in Laststufen“. Der Bericht sagt unter „Gültigkeitsbereich und Hinweise“,
+  dass elastisch-plastisch gerechnet ist, in wie vielen Ergebnissen, in wie
+  vielen davon Elemente fließen und nach welchem Werkstoffgesetz (von Mises
+  mit isotroper linearer Verfestigung, E_t/E aus der Einstellung). Bis zum
+  07.10.2026 stand dort auch dann „Die Berechnung ist elastisch (keine
+  Plastizität, …)“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
   1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
   Verfahren in `docs/Theoriehandbuch.md`, Abschnitt 5e).
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
@@ -8244,7 +8281,17 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Startwert an verschachtelt wiederholt — das Protokoll sagt dann „Laststufe
   k - gemeinsam gerechnet …; die Stufe wird vom Startwert an verschachtelt
   wiederholt“. (Mit Anfangsdehnung wird nichts abgekürzt, nur der Vorlauf
-  entfällt — das Ergebnis bleibt bitgleich.)
+  entfällt. Das Ergebnis ist darum dasselbe bis auf die Toleranz der
+  Kontaktiteration, aber nicht bitgleich: verschachtelt beginnt der erste
+  plastische Lauf beim Kontaktzustand des Vorlaufs, gemeinsam beim Start des
+  Lastfalls. Gemessen am ideal plastischen Block mit Reibung der Tests:
+  der erste plastische Lauf braucht verschachtelt 21 Kontaktschritte,
+  gemeinsam 31, die übrigen Läufe gleich viele, und am Ende liegen die
+  Verschiebungen um höchstens 1,0·10⁻¹¹ m auseinander (u_max 6,1·10⁻⁴ m);
+  jeder Weg für sich ist
+  wiederholt bitgleich. Am fließenden Kontaktmodell mit gewählter
+  Anfangsdehnung sind beide Wege bitgleich. Bis zum 07.10.2026 stand hier,
+  das Ergebnis bleibe bitgleich.)
   Was man gemeinsam merkt — gemessen an 69 Probeläufen mit Reibung und
   Fließen, das Drehlager ist nicht nachgemessen (Theoriehandbuch § 5e.3):
   an Modellen wie dem der Tests „zwei Körper, Fuge mit µ 0,1“ weniger
@@ -8278,12 +8325,15 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   mit „verschachtelt“ gegenprüfen“. Die
   Zusammenfassung der ganzen Rechnung und die Liste „Offene Hinweise und
   Warnungen“ im Bericht fassen alle betroffenen Ergebnisse in einer Zeile
-  zusammen und nennen die ersten drei beim Namen. Ein Lastfall, der seinen
-  Fortschritt meldet, schreibt dieselbe Warnung als letzte Zeile der
-  Plastizität ins Protokoll, wo sie orange erscheint, und sie bleibt danach
-  in der Spalte „Meldung“ der Rechenliste stehen. Kombinationen und
-  Lastfälle, die in Ketten rechnen, melden unterwegs nichts; bei ihnen steht
-  die Warnung nur in den Zusammenfassungen und im Bericht. Die Warnung
+  zusammen und nennen die ersten drei beim Namen. Ein Lastfall oder eine
+  Kombination, die ihren Fortschritt meldet, schreibt dieselbe Warnung als
+  letzte Zeile der Plastizität ins Protokoll, wo sie orange erscheint, und
+  sie bleibt danach in der Spalte „Meldung“ der Rechenliste stehen.
+  Lastfälle, die in Ketten rechnen, und Kombinationen, die als Aufträge in
+  eigenen Prozessen rechnen, melden unterwegs nichts; bei ihnen steht die
+  Warnung nur in den Zusammenfassungen und im Bericht. Bis zum 07.10.2026
+  meldete auch eine Kombination im Programm selbst nichts (siehe „Die
+  Rechenliste“). Die Warnung
   erscheint nur, wenn wirklich gemeinsam gerechnet wurde, also mit Fließen
   und Kontakt. Ohne Kontakt, im Probelauf der adaptiven Vernetzung, mit
   eingefrorenem Kontaktzustand und mit ausfallenden Zugstäben rechnet auch die
