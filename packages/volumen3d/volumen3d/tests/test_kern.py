@@ -44,7 +44,7 @@ TESTS = [
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_patch_hoeherer_ordnung, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
     test_schaetzer.test_hesse, test_schaetzer.test_lasten_aufgezeichnet, test_schaetzer.test_flaechen_paare, test_schaetzer.test_flaechen_punkte,
-    test_schaetzer.test_konsistenz, test_schaetzer.test_doerfler, test_schaetzer.test_verfeinerung_nach,
+    test_schaetzer.test_konsistenz, test_schaetzer.test_doerfler, test_schaetzer.test_verfeinerung_nach, test_schaetzer.test_aggregate_ergaenzen,
     test_vertrag_fcm.test_protokoll_und_registrierung, test_vertrag_fcm.test_ablauf, test_vertrag_fcm.test_gutachten_faelle,
     test_vertrag_fcm.test_hybrid_platzhalter, test_vertrag_fcm.test_lasten, test_vertrag_fcm.test_zylinderauswahl, test_vertrag_fcm.test_loeserwahl,
 ]

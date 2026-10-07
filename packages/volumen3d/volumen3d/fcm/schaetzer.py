@@ -236,10 +236,24 @@ def doerfler(eta2_zelle, theta: float = 0.5) -> np.ndarray:
     return np.sort(ordnung[:k])
 
 
+def aggregate_ergaenzen(problem, zellen) -> np.ndarray:
+    """Markierte Zellen zu ganzen Aggregaten ergaenzen (O21): zu jeder markierten Zelle ihre Wurzel (oder sie selbst, wenn sie keine hat) und alle Zellen mit
+    dieser Wurzel. Die Aggregation waehlt nie eine feinere Wurzel; teilt man eine Wurzel allein, binden sich die an ihr haengenden Zellen an andere Nachbarn,
+    und der Fehler kann steigen. Gemessen an Lame h 20 p 2 mit Doerfler 0,5 (07.10.2026): einzelne Zellen geteilt ||e||_E 2,049 / 2,184 / 2,888 / 3,116 in
+    drei Zyklen, ganze Aggregate 2,049 / 0,994 / 0,715 / 0,534 / 0,293 / 0,204 / 0,179 in sechs Zyklen (Plan O21)."""
+    zellen = np.asarray(zellen, int).ravel()
+    ag = getattr(problem, "aggregation", None)
+    if ag is None or len(zellen) == 0:
+        return np.unique(zellen)
+    w = np.asarray(ag.wurzel)
+    kopf = np.where(w[zellen] >= 0, w[zellen], zellen)
+    return np.unique(np.concatenate([zellen, kopf, np.flatnonzero(np.isin(w, kopf))]))
+
+
 def verfeinerung_nach(gitter, verfeinerung, zellen):
     """Verfeinerung mit den genannten Zellen als erzwungene Teilungen (ebene, i, j, k) zusaetzlich zu den bisherigen."""
     neu = tuple((int(gitter.ebene[c]), int(gitter.ijk[c, 0]), int(gitter.ijk[c, 1]), int(gitter.ijk[c, 2])) for c in zellen)
     return dataclasses.replace(verfeinerung, zellen=tuple(verfeinerung.zellen) + neu)
 
 
-__all__ = ["ANTEILE", "Schaetzung", "schaetzen", "energiefehler", "flaechen_paare", "flaechen_punkte", "doerfler", "verfeinerung_nach"]
+__all__ = ["ANTEILE", "Schaetzung", "schaetzen", "energiefehler", "flaechen_paare", "flaechen_punkte", "doerfler", "aggregate_ergaenzen", "verfeinerung_nach"]

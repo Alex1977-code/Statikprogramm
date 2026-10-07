@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -204,6 +205,43 @@ def test_verfeinerung_nach():
     check(f"verfeinerung_nach: Zelle {c} geteilt, {len(drin)} Blaetter der Ebene 1 in ihrer Box", len(drin) == 8 and (G2.ebene[drin] == 1).all())
 
 
+def test_aggregate_ergaenzen():
+    """Eine markierte aggregierte Zelle zieht ihre Wurzel und alle Zellen derselben Wurzel nach sich; eine markierte Wurzel alle an ihr haengenden Zellen; ohne
+    Aggregation bleibt die Menge, wie sie ist."""
+    from volumen3d.fcm.schaetzer import aggregate_ergaenzen
+    from volumen3d.tests import test_lame as L
+    pr, _ = L._rechnen(2, 20.0)
+    w = pr.aggregation.wurzel
+    c = int(np.flatnonzero(w >= 0)[0])
+    r = int(w[c])
+    gruppe = set(np.flatnonzero(w == r).tolist()) | {r}
+    a = set(aggregate_ergaenzen(pr, [c]).tolist())
+    b = set(aggregate_ergaenzen(pr, [r]).tolist())
+    ohne = [int(x) for x in aggregate_ergaenzen(types.SimpleNamespace(aggregation=None), [5, 3, 5])]   # Problem ohne Aggregation
+    check(f"aggregate_ergaenzen: Zelle {c} mit Wurzel {r} -> Aggregat aus {len(gruppe)} Zellen; Wurzel allein ebenso; ohne Aggregation bleibt die Menge {ohne}",
+          a == gruppe and b == gruppe and len(gruppe) > 1 and ohne == [3, 5])
+
+
+def test_teilen_ohne_fehlerzunahme():
+    """O21, Regel B4: ein Doerfler-Schritt an Lame h 20 p 2 erhoeht den wahren Fehler nicht, wenn ganze Aggregate geteilt werden. Zum Vergleich ohne die Kur: dort
+    steigt er (Phase 1: 2,049 -> 2,184), sonst waere die Pruefung leer."""
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.fcm.schaetzer import aggregate_ergaenzen, doerfler, energiefehler, schaetzen, verfeinerung_nach
+    from volumen3d.tests import test_lame as L
+    pr0, aus0 = L._rechnen(2, 20.0)
+    e0 = energiefehler(pr0, aus0.U, _lame_sigma)[1]
+    mark = doerfler(schaetzen(pr0, aus0.U).zelle ** 2, 0.5)
+    werte = {}
+    for name, zellen in (("mit Kur", aggregate_ergaenzen(pr0, mark)), ("ohne Kur", mark)):
+        pr = FcmProblem(L._geometrie(), h=20.0, p=2, werkstoff=Werkstoff(L.E, L.NU), verfeinerung=verfeinerung_nach(pr0.gitter, pr0.verfeinerung, zellen))
+        for s in ("sym_x", "sym_y", "sym_z0", "sym_z1"):
+            pr.verschiebungsrand(s, s, projektion="normal")
+        pr.druck("innen", L.PI)
+        werte[name] = (energiefehler(pr, pr.loesen({})[:, 0], _lame_sigma)[1], len(zellen))
+    check(f"Lame h 20 p 2, ein Doerfler-Schritt: ||e||_E {e0:.4f} -> mit Kur {werte['mit Kur'][0]:.4f} ({werte['mit Kur'][1]} Zellen geteilt), "
+          f"ohne Kur {werte['ohne Kur'][0]:.4f} ({werte['ohne Kur'][1]} Zellen)", werte["mit Kur"][0] <= e0 and werte["ohne Kur"][0] > e0)
+
+
 if __name__ == "__main__":
     sys.exit(lauf([test_hesse, test_lasten_aufgezeichnet, test_flaechen_paare, test_flaechen_punkte, test_konsistenz, test_lame, test_doerfler,
-                   test_verfeinerung_nach]))
+                   test_verfeinerung_nach, test_aggregate_ergaenzen, test_teilen_ohne_fehlerzunahme]))
