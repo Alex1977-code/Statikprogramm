@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import weakref
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -1625,6 +1626,14 @@ class Results:
         # einer Kombination es nicht, obwohl jeder ihrer Lastfaelle es traegt).
         out.info.update(_ausweich_eintraege(
             [p for r, f in parts if f for p in ausweich_paare(r.info or {})]))
+        # Frei bewegliche Teile eines Anteils sind es in der Ueberlagerung auch.
+        freie: list = []
+        for r, f in parts:
+            for e in ((r.info or {}).get("freie_teile") or []) if f else []:
+                if e not in freie:
+                    freie.append(e)
+        if freie:
+            out.info["freie_teile"] = freie
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1660,6 +1669,7 @@ class Results:
                      + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
         if self.info.get("loeser_nachweis"):
             s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
+        s.extend(freie_teile_zeilen(self.info.get("freie_teile")))
         # Greift die Knotendilatation fuer einen Werkstoff nicht (nu ausserhalb
         # [0; 0,5)), steht das auch hier - nicht nur in der Zusammenfassung
         # aller Lastfaelle (Analysis.summary). Bis zum 06.10.2026 fehlte die
@@ -1906,6 +1916,32 @@ class _LoeserBuch:
                 "residuum_gemessen": self.residuum_gemessen,
                 "pardiso_eingabe": self.pardiso_eingabe,
                 "mkl_cbwr": mkl_cbwr()}
+
+
+def freie_teile_zeilen(teile) -> list:
+    """Die Zeilen der Zusammenfassung zu den frei beweglichen Teilen: je Gruppe
+    gleich bewegter Teile eine WARNUNG mit Namen, Richtung und dem, was sie
+    heute haelt (singular.pivotbefund)."""
+    return ["WARNUNG: " + str(e.get("text", "")) for e in (teile or [])]
+
+
+def freie_teile_gebuendelt(ergebnisse) -> list:
+    """Die frei beweglichen Teile ueber alle Ergebnisse: je Text **eine** WARNUNG,
+    mit den ersten drei Ergebnisnamen - fuer die Zusammenfassung der Rechnung.
+    Am Drehlager haben 422 Lastfaelle dieselben Platten, und eine Zeile je
+    Lastfall waere keine Auskunft. ``ergebnisse``: (Name, Results)-Paare."""
+    gruppen: dict = {}
+    for name, r in ergebnisse:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        for e in inf.get("freie_teile") or []:
+            gruppen.setdefault(str(e.get("text", "")), []).append(str(name))
+    zeilen = []
+    for text, namen in gruppen.items():
+        n = len(namen)
+        wo = (f"bei {n} Ergebnissen: {', '.join(namen[:3])}{' …' if n > 3 else ''}"
+              if n > 1 else f"bei {namen[0]}")
+        zeilen.append(f"WARNUNG: {text} ({wo})")
+    return zeilen
 
 
 def loeser_nachweis_zeilen(nw: dict) -> list:
@@ -2180,6 +2216,44 @@ class StaticSystem:
         from . import singular as sg
         return sg.bereinigen(self._V, u)
 
+    def freie_teile(self) -> tuple:
+        """Frei bewegliche Teile des zuletzt benutzten Faktors - ``(Liste, Suche)``.
+
+        PARDISO (und ama) zaehlen die Pivots, die sie anheben mussten, weil die
+        Matrix dort null haette: jedes Bauteil, das in einer Richtung durch
+        nichts gehalten ist, gibt einen. Nur wenn der Faktor solche Pivots hat,
+        wird gesucht (:func:`singular.pivotbefund`): eine Handvoll zufaelliger
+        rechter Seiten ueber den **vorhandenen** Faktor, hoechstens sechs
+        Loesungen, nichts wird neu faktorisiert, gelagert oder veraendert. Ohne
+        gestoerte Pivots - das ist der Regelfall - kostet es nichts.
+
+        Die Antwort gehoert zum Faktor und wird mit ihm gemerkt: ein Lastfall,
+        der eine behaltene Kontaktfaktorisierung weiterbenutzt, sucht nicht
+        noch einmal. Eine Diagnose sperrt nie - eine Ausnahme ergibt „nichts
+        gefunden“.
+        """
+        from . import singular as sg
+        if not sg.PIVOTBEFUND:
+            return [], None
+        ref = getattr(self, "_letzter_loeser", None)
+        ls = ref() if ref is not None else None
+        if ls is None or getattr(ls, "_solve", None) is None:
+            return [], None
+        g = getattr(ls, "gestoerte_pivots", None)
+        if g is None:
+            g = getattr(ls, "gestoert", None)          # ama
+        if not g:
+            return [], None
+        gemerkt = getattr(self, "_freie_teile_gemerkt", None)
+        if gemerkt is not None and gemerkt[0]() is ls:
+            return gemerkt[1], gemerkt[2]
+        try:
+            liste, suche = sg.pivotbefund(self.model, self.fi, ls, int(g))
+        except Exception:                   # noqa: BLE001 - eine Diagnose darf nie sperren
+            liste, suche = [], None
+        self._freie_teile_gemerkt = (weakref.ref(ls), liste, suche)
+        return liste, suche
+
     def kontakt_loeser_freigeben(self) -> None:
         """Die behaltene Faktorisierung mit Kontaktsteifigkeit zurueckgeben."""
         ls = getattr(self, "_kontakt_loeser", None)
@@ -2355,6 +2429,10 @@ class StaticSystem:
             raise
         if buch is not None:
             buch.loesung(ls)
+        # Fuer die Suche nach frei beweglichen Teilen (freie_teile): der Faktor,
+        # der zuletzt geloest hat. Nur ein schwacher Verweis - den Speicher des
+        # Faktors gibt weiter frei, wem er gehoert.
+        self._letzter_loeser = weakref.ref(ls)
         return x
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
@@ -4120,6 +4198,15 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         _startherkunft_eintragen(res, start, start_von, model.hat_ausfallstaebe())
     if hilfs:
         u = system.ohne_starrkoerper(u)
+    # Frei bewegliche Teile (B5, 08.10.2026): gestoerte Pivots sagen, dass etwas
+    # frei ist; die Suche am Faktor sagt, was - mit Namen und Richtung. Nichts
+    # wird gelagert, die Rechnung ist davon unberuehrt.
+    if hasattr(system, "freie_teile"):
+        freie, suche = system.freie_teile()
+        if suche:
+            res.info["freie_teile_suche"] = suche
+        if freie:
+            res.info["freie_teile"] = freie
     if system.singular:
         from . import singular as _sg
         # Nach Schwere geordnet: oben steht, was die Rechnung zunichte macht,
@@ -6727,6 +6814,8 @@ class Analysis:
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
         s += dilatation_gebuendelt(self.all_results().items())
+        # frei bewegliche Teile (B5, 08.10.2026): je Text eine Zeile, nicht je Lastfall
+        s += freie_teile_gebuendelt(self.all_results().items())
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen

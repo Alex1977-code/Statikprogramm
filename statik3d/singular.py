@@ -1206,3 +1206,449 @@ def bereinigen(V, u: np.ndarray) -> np.ndarray:
         return u
     u = np.asarray(u, float).ravel()
     return u - np.asarray(V.T @ (V @ u), float).ravel()
+
+
+# --------------------------------------------------------------------------
+# Stufe 3 - frei bewegliche Teile aus den gestoerten Pivots (B5, 08.10.2026)
+# --------------------------------------------------------------------------
+#: Schalter der Suche. Nur die Pruefungen schalten ihn aus, um zu zeigen, dass
+#: die Rechnung mit und ohne Suche bitgleich bleibt; im Programm steht er immer
+#: an.
+PIVOTBEFUND = True
+
+#: Hoechstzahl der zufaelligen rechten Seiten. Ein Bauteil hat hoechstens sechs
+#: freie Starrkoerperbewegungen; mit sechs Loesungen sind sie alle aufloesbar.
+#: Weniger gestoerte Pivots brauchen weniger (Zahl der Pivots + 1, mindestens 2).
+PIVOT_LOESUNGEN_MAX = 6
+
+#: Die Antworten der Knoten (Betrag ueber alle rechten Seiten) fallen in zwei
+#: Haufen, wenn etwas frei ist: die gesunden und die um die Verstaerkung des
+#: angehobenen Pivots groesseren. Getrennt wird im Logarithmus nach Otsu (die
+#: Schwelle, die die Streuung innerhalb der beiden Haufen am kleinsten macht);
+#: es gilt nur, wenn die Haufenmitten mindestens PIVOT_DEKADEN Zehnerpotenzen
+#: auseinander liegen und die Trennung PIVOT_TRENNUNG der Gesamtstreuung
+#: erklaert. Eine feste Verstaerkung gegen den Median taugt nicht: sind mehr als
+#: drei Viertel der Knoten frei (ein Block auf einer Platte, nur ueber Kontakt),
+#: liegt der Median selbst im verstaerkten Haufen. Gemessen am Drehlager
+#: (zerlegung_entwurf_pivot, 08.10.2026): die freien Platten standen 8e8-mal
+#: ueber dem Median (rund 8 Zehnerpotenzen), in den kleinen Modellen der
+#: Pruefung liegen die Haufen 13 bis 14 auseinander; die gesunden Beispiele
+#: kommen auf hoechstens 3,3 (Tor), die meisten auf unter 1
+#: (tests/test_freie_teile.py misst beides und druckt die Zahlen). Die
+#: Trennung allein taugt nicht: gesunde Modelle liegen dort bei 0,72 bis 0,91.
+PIVOT_DEKADEN = 5.0
+PIVOT_TRENNUNG = 0.8
+
+#: Ein Bauteil gilt als frei bewegt, wenn mindestens dieser Anteil seiner Knoten
+#: verstaerkt ist ...
+PIVOT_KOERPERANTEIL = 0.5
+
+#: ... und eine Starrkoerperbewegung (6 Parameter) seine verstaerkte
+#: Verschiebung so gut erklaert (1 - Fehler/Betrag, fuer jede rechte Seite).
+#: Am Drehlager lag sie bei 1 - 7e-11 und besser.
+PIVOT_STARR = 0.999
+
+#: Singulaerwerte unter diesem Anteil des groessten zaehlen nicht als eigene
+#: freie Richtung. Die Amplituden der Richtungen eines Bauteils streuen um
+#: ein bis zwei Zehnerpotenzen (Drehlager: 1,0 gegen 0,014 zwischen zwei
+#: Platten), das Rauschen liegt bei 1e-9.
+PIVOT_RANG = 1e-5
+
+_ACHSEN = "xyz"
+
+
+def _einheit(v) -> np.ndarray:
+    v = np.asarray(v, float)
+    n = float(np.linalg.norm(v))
+    return v / n if n > 0 else v
+
+
+def _vek(v) -> str:
+    """„(0.50, 0.00, 0.87)“ - das Vorzeichen so, dass die groesste Komponente positiv ist."""
+    v = _einheit(v)
+    if v[int(np.argmax(np.abs(v)))] < 0:
+        v = -v
+    w = np.round(v, 2) + 0.0                      # + 0.0 macht aus -0.0 eine Null
+    return f"({w[0]:.2f}, {w[1]:.2f}, {w[2]:.2f})"
+
+
+def _achse(v) -> str:
+    """„z“, wenn v auf einer Koordinatenachse liegt, sonst der Vektor."""
+    v = _einheit(v)
+    i = int(np.argmax(np.abs(v)))
+    return _ACHSEN[i] if abs(v[i]) >= 0.999 else _vek(v)
+
+
+def _ebene(Q: np.ndarray) -> str:
+    """Eine Ebene (zwei Richtungen als Spalten): „(x, y)“ oder „senkrecht zu (a, b, c)“."""
+    n = _einheit(np.cross(Q[:, 0], Q[:, 1]))
+    i = int(np.argmax(np.abs(n)))
+    if abs(n[i]) >= 0.999:
+        return "(" + ", ".join(a for j, a in enumerate(_ACHSEN) if j != i) + ")"
+    return "senkrecht zu " + _vek(n)
+
+
+def _unterraum(Q: np.ndarray) -> np.ndarray:
+    """Orthonormale Basis (3 x d) der Spalten von Q ohne die Rauschrichtungen."""
+    if Q.shape[1] == 0:
+        return np.zeros((3, 0))
+    u, s, _vt = np.linalg.svd(Q, full_matrices=False)
+    d = int((s > 1e-6 * max(float(s[0]), 1e-300)).sum())
+    return u[:, :d]
+
+
+def _verschiebungstext(T: np.ndarray) -> str:
+    d = T.shape[1]
+    if d == 0:
+        return ""
+    if d == 1:
+        return f"in Richtung {_achse(T[:, 0])} frei verschieblich"
+    if d == 2:
+        return f"in der Ebene {_ebene(T)} frei verschieblich"
+    return "in allen drei Richtungen frei verschieblich"
+
+
+def _drehtext(R: np.ndarray) -> str:
+    d = R.shape[1]
+    if d == 0:
+        return ""
+    if d == 1:
+        return f"um {_achse(R[:, 0])} frei drehbar"
+    if d == 2:
+        n = _einheit(np.cross(R[:, 0], R[:, 1]))
+        i = int(np.argmax(np.abs(n)))
+        if abs(n[i]) >= 0.999:
+            a, b = (x for j, x in enumerate(_ACHSEN) if j != i)
+            return f"um {a} und {b} frei drehbar"
+        return "um alle Achsen senkrecht zu " + _vek(n) + " frei drehbar"
+    return "um alle Achsen frei drehbar"
+
+
+def _bewegungstext(S: np.ndarray) -> str:
+    """Die freien Bewegungen eines starren Bauteils in Worten.
+
+    ``S`` (6 x r) ist eine orthonormale Basis der freien Bewegungen in den
+    Unbekannten [t, L·omega] (Verschiebung des Schwerpunkts, Drehung mal
+    Bezugslaenge). Eine Verschiebung ohne Drehanteil und eine Drehung um eine
+    Achse durch den Schwerpunkt werden getrennt genannt; was sich so nicht
+    trennen laesst (Drehung um eine Achse, die den Schwerpunkt nicht trifft),
+    steht als gekoppelte Bewegung dabei.
+    """
+    r = S.shape[1]
+    if r == 0:
+        return ""
+    # reine Verschiebungen: Linearkombinationen S c, deren Drehanteil null ist
+    _u, s, vt = np.linalg.svd(S[3:, :], full_matrices=True)
+    rang = int((s > 1e-3).sum())
+    T = _unterraum(S[:3, :] @ vt[rang:].T) if rang < r else np.zeros((3, 0))
+    # reine Drehungen: Verschiebungsanteil null
+    _u, s, vt = np.linalg.svd(S[:3, :], full_matrices=True)
+    rang = int((s > 1e-3).sum())
+    R = _unterraum(S[3:, :] @ vt[rang:].T) if rang < r else np.zeros((3, 0))
+    teile = [x for x in (_verschiebungstext(T), _drehtext(R)) if x]
+    gekoppelt = r - T.shape[1] - R.shape[1]
+    if gekoppelt > 0:
+        teile.append(f"{gekoppelt} gekoppelte Bewegung{'en' if gekoppelt > 1 else ''} "
+                     "(Drehung um eine Achse, die den Schwerpunkt nicht trifft)")
+    return ", ".join(teile)
+
+
+def _natuerlich(name: str) -> list:
+    """Sortierschluessel, der „V2“ vor „V10“ stellt."""
+    import re
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(name))]
+
+
+def _namenstext(namen: list, mehr: str = "Bauteile") -> str:
+    """„V1, V2, V3, V4, V5, V6 … V28 (28 Bauteile)“ - bis sechs Namen vollstaendig."""
+    if len(namen) <= 6:
+        return ", ".join(namen)
+    return ", ".join(namen[:6]) + f" … {namen[-1]} ({len(namen)} {mehr})"
+
+
+def _halter(model, knoten, cache: dict) -> list:
+    """Was an diesen Knoten ein Lager oder eine Fuge ist - und was sie traegt.
+
+    Gesagt wird nur, was im Modell steht: Kontaktpaare (Name, Reibung) und
+    Lager (Art, Name, Reibung des Flaechenlagers).
+    """
+    from .contact import master_facets
+    maske = np.zeros(int(model.nn), bool)
+    maske[np.asarray(knoten, int)] = True
+    aus: list = []
+
+    def zahl(x) -> str:
+        return f"{float(x):g}".replace(".", ",")
+
+    for cp in getattr(model, "contact_pairs", None) or []:
+        kn = cache.get(id(cp))
+        if kn is None:
+            teile = [int(k) for k in (cp.slave_nodes or [])]
+            for f in master_facets(model, cp):
+                teile.extend(int(k) for k in f)
+            kn = cache[id(cp)] = np.unique(np.asarray(teile, int))
+        kn = kn[(kn >= 0) & (kn < model.nn)]
+        if kn.size and maske[kn].any():
+            haften = bool(getattr(cp, "haften", False) or getattr(cp, "zug", False))
+            wie = ("haftend" if haften else
+                   f"Reibung μ = {zahl(cp.mu)}" if cp.mu else
+                   "reibungsfrei: trägt nur senkrecht zur Fläche")
+            aus.append(f"Fuge „{cp.name}“ ({wie})")
+    for art, liste in (("Knotenlager", getattr(model, "supports", None) or []),
+                       ("Linienlager", getattr(model, "line_supports", None) or []),
+                       ("Flächenlager", getattr(model, "surface_supports", None) or [])):
+        for s in liste:
+            kn = [int(k) for k in (getattr(s, "nodes", None) or [getattr(s, "node", -1)])
+                  if 0 <= int(k) < model.nn]
+            if kn and maske[kn].any():
+                mus = [float(getattr(b, "mu", 0.0) or 0.0)
+                       for b in (getattr(s, "behaviour", None) or {}).values()]
+                mu = max(mus) if mus else 0.0
+                nm = str(getattr(s, "name", "") or "")
+                aus.append(art + (f" „{nm}“" if nm else "")
+                           + (f" (Reibung μ = {zahl(mu)})" if mu else ""))
+    return list(dict.fromkeys(aus))
+
+
+def zufallsantworten(model, fi, ls, zahl: int, seed: int = 20261008):
+    """Die Antwort des vorhandenen Faktors auf ``zahl`` zufaellige rechte Seiten.
+
+    Rueckgabe ``(zahl, nn, 6)``: je Lösung die Knotenverschiebungen und
+    -verdrehungen; ``None``, wenn eine Lösung nicht endlich ist. Die rechten
+    Seiten sind normalverteilt auf den Steifigkeitsfreiheitsgraden und null
+    auf den Randzeilen (Hilfsfesselung, Kontaktbedingungen); gelesen wird nur,
+    der Faktor bleibt, wie er ist.
+    """
+    nn, nf, n = int(model.nn), len(fi), int(ls.n)
+    rng = np.random.default_rng(seed)
+    A = np.zeros((zahl, nn, 6))
+    for j in range(zahl):
+        b = np.zeros(n)
+        b[:nf] = rng.standard_normal(nf)
+        x = np.asarray(ls._solve(b), float).ravel()
+        if x.size < nf or not np.all(np.isfinite(x[:nf])):
+            return None
+        U = np.zeros(model.ndof)
+        U[fi] = x[:nf]
+        A[j] = U[:nn * 6].reshape(nn, 6)
+    # gebundene Seitenmitten haben keine eigenen Unbekannten: u_m = (u_a + u_b)/2
+    from . import assemble as asm
+    bind = asm.mittelknoten_bindungen(model)
+    if bind:
+        t = np.asarray(bind, np.int64)
+        for r in range(3):
+            A[:, t[:, 0], r] = 0.5 * (A[:, t[:, 1], r] + A[:, t[:, 2], r])
+    return A
+
+
+def verstaerkte_knoten(a: np.ndarray) -> tuple:
+    """Die Knoten im oberen Haufen der Antworten - ``(Maske, Abstand, Trennung)``.
+
+    ``a`` ist der Betrag der Antwort je Knoten (ueber alle zufaelligen rechten
+    Seiten). Getrennt wird im Logarithmus nach Otsu in zwei Haufen; die Maske
+    ist nur belegt, wenn die Haufenmitten mindestens :data:`PIVOT_DEKADEN`
+    Zehnerpotenzen auseinander liegen und die Trennung mindestens
+    :data:`PIVOT_TRENNUNG` der Gesamtstreuung erklaert. ``Abstand`` und
+    ``Trennung`` (0 ... 1) stehen immer da, auch bei leerer Maske - an ihnen
+    laesst sich ablesen, wie weit ein gesundes Modell von der Schwelle liegt.
+    """
+    a = np.asarray(a, float)
+    keine = np.zeros(a.shape, bool)
+    pos = a > 0
+    m = int(pos.sum())
+    if m < 3:
+        return keine, 0.0, 0.0
+    v = np.sort(np.log10(a[pos]))
+    c1, c2 = np.cumsum(v), np.cumsum(v * v)
+    i = np.arange(m - 1)
+    n0, n1 = i + 1, m - i - 1
+    m0, m1 = c1[i] / n0, (c1[-1] - c1[i]) / n1
+    innen = (c2[i] - n0 * m0 ** 2) + ((c2[-1] - c2[i]) - n1 * m1 ** 2)
+    gesamt = c2[-1] - m * (c1[-1] / m) ** 2
+    if gesamt <= 0:
+        return keine, 0.0, 0.0
+    b = int(np.argmin(innen))
+    abstand = float(m1[b] - m0[b])
+    trennung = 1.0 - float(innen[b]) / gesamt
+    if abstand < PIVOT_DEKADEN or trennung < PIVOT_TRENNUNG:
+        return keine, abstand, trennung
+    return a > 10.0 ** (0.5 * (v[b] + v[b + 1])), abstand, trennung
+
+
+def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
+    """Stufe 3: welche Teile hat die Faktorisierung freigelassen?
+
+    PARDISO hebt ein Pivot, das null wuerde, auf einen winzigen Wert an und
+    zaehlt es (iparm(14)) - das System bleibt loesbar, jede Richtung, die die
+    Matrix nicht haelt, aber wird bei jeder Loesung um etwa 1/(1e-13·‖A‖)
+    verstaerkt. Die Zahl sagt, **dass** etwas frei ist; wo, sagt eine Handvoll
+    zufaelliger rechter Seiten ueber den vorhandenen Faktor: die Antwort ist
+    dort um viele Zehnerpotenzen groesser als irgendwo sonst. Gemessen am
+    Drehlager (Entwurf, 39 gestoerte Pivots, sechs Loesungen, 12 s): der
+    groesste Betrag stand 8e8-mal ueber dem Median, auf den Lastverteilplatten
+    V1-V28 zu 1 - 7e-11 eine Starrkoerperbewegung.
+
+    Die Vorabsuche (:func:`restfreiheiten`) sieht das nicht: sie zaehlt Reibung
+    und ein Flaechenlager mit Reibung als Halt, und gleitet ein Teil, traegt
+    Reibung in der Gleitrichtung keine Steifigkeit bei. Hier steht die
+    Messung an der Matrix selbst.
+
+    Es wird nichts gelagert und nichts an der Rechnung geaendert: gelesen wird
+    mit dem Faktor, der schon da ist; die rechten Seiten sind null ausser auf
+    den Steifigkeitsfreiheitsgraden. Rueckgabe ``(Liste, Suche)``; ``Liste``
+    nennt je Gruppe gleich bewegter Teile ``art`` (``koerper`` | ``stab`` |
+    ``knoten``), ``namen``, ``bewegung``, ``haltung``, ``text``; ``Suche``
+    haelt Zahlen fuer das Protokoll.
+    """
+    import itertools
+    nn = int(model.nn)
+    zahl = int(min(PIVOT_LOESUNGEN_MAX, max(2, gestoert + 1)))
+    suche = {"gestoerte_pivots": int(gestoert), "zusatzloesungen": zahl}
+    A = zufallsantworten(model, fi, ls, zahl, seed)
+    if A is None:
+        suche["grund"] = "die Zufallslösung war nicht endlich"
+        return [], suche
+
+    # ---- welche Knoten sind verstaerkt? --------------------------------
+    g_t, d_t, tr_t = verstaerkte_knoten(np.sqrt((A[:, :, :3] ** 2).sum(axis=(0, 2))))
+    g_r, d_r, tr_r = verstaerkte_knoten(np.sqrt((A[:, :, 3:] ** 2).sum(axis=(0, 2))))
+    gross = g_t | g_r
+    suche["knoten_verstaerkt"] = int(gross.sum())
+    suche["abstand_dekaden"] = float(max(d_t, d_r))
+    if not gross.any():
+        return [], suche
+
+    # ---- Bauteile der verstaerkten Knoten ------------------------------
+    els = model.elements
+    ne = len(els)
+    laengen = np.fromiter((len(e.nodes) for e in els), int, count=ne)
+    flach = np.fromiter(itertools.chain.from_iterable(e.nodes for e in els), int,
+                        count=int(laengen.sum()))
+    elem = np.repeat(np.arange(ne), laengen)
+    ok = (flach >= 0) & (flach < nn)
+    flach, elem = flach[ok], elem[ok]
+    codes: dict = {}
+    code = np.empty(ne, np.int64)
+    for i, e in enumerate(els):
+        code[i] = codes.setdefault(str(getattr(e, "group", "") or ""), len(codes))
+    namen_von_code = list(codes)
+    from .elemente import STAB_TYPEN
+    ist_stab = np.fromiter((e.typ in STAB_TYPEN for e in els), bool, count=ne)
+    stab_name: dict = {}
+    for mname, mem in (getattr(model, "members", None) or {}).items():
+        for ei in mem.elements:
+            stab_name[int(ei)] = str(mname)
+    cache: dict = {}
+    roh: list = []                  # (art, bewegung, namen, knoten, halter)
+    im_koerper = np.zeros(nn, bool)
+    fg = code[elem]
+    treffer = np.unique(fg[gross[flach]])
+    for c in treffer:
+        gruppe = namen_von_code[int(c)]
+        sel = fg == c
+        P = np.unique(flach[sel])
+        anteil = float(gross[P].mean())
+        stabig = bool(ist_stab[elem[sel]].mean() > 0.5)
+        if anteil < PIVOT_KOERPERANTEIL or stabig:
+            continue                          # einzelne Knoten: unten
+        X = model.nodes[P]
+        mitte = X.mean(axis=0)
+        L = 0.5 * float(np.linalg.norm(X.max(axis=0) - X.min(axis=0))) or 1.0
+        r = X - mitte
+        M = np.zeros((3 * len(P), 6))
+        M[0::3, 0] = M[1::3, 1] = M[2::3, 2] = 1.0
+        # u = t + omega x r;  Unbekannte [t, L·omega]
+        M[0::3, 4], M[0::3, 5] = r[:, 2] / L, -r[:, 1] / L
+        M[1::3, 3], M[1::3, 5] = -r[:, 2] / L, r[:, 0] / L
+        M[2::3, 3], M[2::3, 4] = r[:, 1] / L, -r[:, 0] / L
+        Y = A[:, P, :3].reshape(zahl, -1).T
+        p, *_ = np.linalg.lstsq(M, Y, rcond=None)
+        ny = np.linalg.norm(Y, axis=0)
+        guete = 1.0 - np.linalg.norm(M @ p - Y, axis=0) / np.where(ny > 0, ny, 1.0)
+        name = gruppe or "Bauteil ohne Namen"
+        im_koerper[P] = True
+        halter = _halter(model, P, cache)
+        bew = ""
+        if float(guete.min()) >= PIVOT_STARR:
+            u_, s_, _v = np.linalg.svd(p, full_matrices=False)
+            rang = int((s_ > PIVOT_RANG * s_[0]).sum())
+            bew = _bewegungstext(u_[:, :rang]) if rang else ""
+        if not bew:
+            bew = (f"ohne Steifigkeit verformbar (kein Starrkörper; {int(gross[P].sum())} von "
+                   f"{len(P)} Knoten verstärkt)")
+        roh.append(("koerper", bew, [name], [int(k) for k in P[gross[P]][:6]], halter))
+
+    # ---- einzelne Knoten (Staebe, Knoten ohne Bauteil) -----------------
+    rest = np.flatnonzero(gross & ~im_koerper)
+    if rest.size:
+        in_rest = np.zeros(nn, bool)
+        in_rest[rest] = True
+        sel = in_rest[flach]
+        je_knoten: dict = {}
+        for k, e in zip(flach[sel].tolist(), elem[sel].tolist()):
+            je_knoten.setdefault(k, []).append(e)
+        for k in rest.tolist():
+            es = je_knoten.get(k, [])
+            teile = []
+            Vt = _unterraum(A[:, k, :3].T) if g_t[k] else np.zeros((3, 0))
+            Vr = _unterraum(A[:, k, 3:].T) if g_r[k] else np.zeros((3, 0))
+            achse = None
+            for e in es:
+                if ist_stab[e] and len(els[e].nodes) >= 2:
+                    q = model.nodes[int(els[e].nodes[-1])] - model.nodes[int(els[e].nodes[0])]
+                    if float(np.linalg.norm(q)) > 0:
+                        achse = _einheit(q)
+                        break
+            if Vt.shape[1]:
+                if (achse is not None and Vt.shape[1] == 2
+                        and abs(float(_einheit(np.cross(Vt[:, 0], Vt[:, 1])) @ achse)) >= 0.999):
+                    teile.append(f"quer zur Stabachse {_ebene(Vt)} frei verschieblich")
+                elif (achse is not None and Vt.shape[1] == 1
+                        and abs(float(Vt[:, 0] @ achse)) <= 0.01):
+                    teile.append(f"quer zur Stabachse in Richtung {_achse(Vt[:, 0])} "
+                                 "frei verschieblich")
+                else:
+                    teile.append(_verschiebungstext(Vt))
+            if Vr.shape[1]:
+                teile.append(_drehtext(Vr))
+            bew = ", ".join(teile) or "ohne Steifigkeit verformbar"
+            mnamen = sorted({stab_name[e] for e in es if e in stab_name}, key=_natuerlich)
+            if mnamen:
+                art, namen = "stab", mnamen
+            else:
+                gr = sorted({namen_von_code[int(code[e])] or "Bauteil ohne Namen" for e in es},
+                            key=_natuerlich)
+                art, namen = "knoten", (gr or ["Knoten ohne Element"])
+            roh.append((art, bew, namen, [k], _halter(model, np.array([k]), cache)))
+
+    # ---- gleich bewegte Teile zu einer Zeile -----------------------------
+    gruppen: dict = {}
+    for art, bew, namen, knoten, halter in roh:
+        g = gruppen.setdefault((art, bew), {"namen": [], "knoten": [], "halter": []})
+        for nm in namen:
+            if nm not in g["namen"]:
+                g["namen"].append(nm)
+        g["knoten"].extend(knoten)
+        for h in halter:
+            if h not in g["halter"]:
+                g["halter"].append(h)
+    liste = []
+    for (art, bew), g in gruppen.items():
+        namen = sorted(g["namen"], key=_natuerlich)
+        kn = sorted(set(g["knoten"]))
+        if art == "koerper":
+            wer = _namenstext(namen)
+            bitte = "bitte lagern (Lager, Feder oder Reibung in diesen Richtungen)"
+        else:
+            wer = (_namenstext(namen, "Stäbe") + ": Knoten "
+                   + ", ".join(f"K{k}" for k in kn[:6])
+                   + (f" … ({len(kn)} Knoten)" if len(kn) > 6 else ""))
+            bitte = "bitte lagern (Lager, Feder oder Kopplung in diesen Richtungen)"
+        haltung = "; ".join(g["halter"]) if g["halter"] else "kein Lager und keine Fuge"
+        text = f"{wer}: {bew} - gehalten nur durch: {haltung}; {bitte}"
+        liste.append({"art": art, "namen": namen, "anzahl": len(namen),
+                      "knoten_anzahl": len(kn), "knoten": [int(k) for k in kn[:8]],
+                      "bewegung": bew, "haltung": haltung, "text": text})
+    liste.sort(key=lambda e: (-e["anzahl"], _natuerlich(e["namen"][0])))
+    suche["teile"] = len(liste)
+    return liste, suche

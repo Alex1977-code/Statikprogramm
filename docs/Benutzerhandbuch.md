@@ -10204,6 +10204,58 @@ sieht an der Liste, für welche nicht.
 Bei vielen losen Teilen werden höchstens 40 Bewegungen angezeigt, die
 schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
+**Frei bewegliche Teile aus den gestörten Pivots (seit 08.10.2026).** Bis zum
+08.10.2026 nannte die Zusammenfassung nur die *Zahl* der gestörten Pivots
+(„Gestörte Pivots: 4133 in 299 von 299 Faktorisierungen …“); welche Bauteile
+dahinterstanden, stand nirgends. Die Suche vor der Rechnung sieht manche Teile
+nicht: sie zählt Reibung und ein Flächenlager mit Reibung als Halt, und ein
+Teil, das auf Reibung gleitet, hat in der Gleitrichtung trotzdem keine
+Steifigkeit. Seit dem 08.10.2026 fragt das Programm darum die Matrix selbst.
+Hat die zuletzt benutzte Faktorisierung gestörte Pivots – MKL PARDISO und ama
+zählen sie –, löst es mit höchstens sechs zufälligen rechten Seiten über
+genau diesen vorhandenen Faktor. Nichts wird neu faktorisiert, gelagert oder
+verändert. Eine Richtung, die die Matrix nicht hält, antwortet dabei um viele
+Zehnerpotenzen stärker als jeder gehaltene Knoten (in den Prüfmodellen 13 bis
+14 Zehnerpotenzen, bei den gesunden Beispielen höchstens 3,3 – die Schwelle liegt
+bei 5). Aus den stark antwortenden Knoten liest das Programm ab, welches
+Bauteil sich als Starrkörper bewegt und in welche Richtungen, und welche
+Stabknoten ohne Querhalt dastehen.
+
+Das Ergebnis ist eine WARNUNG je Gruppe gleich beweglicher Teile, mit Namen,
+Richtung und dem, was sie heute hält, zum Beispiel: „V1, V2, V3, V4, V5, V6 …
+V28 (28 Bauteile): in der Ebene (x, y) frei verschieblich, um z frei drehbar –
+gehalten nur durch: Fuge „Lagerbock-Unterlegbleche“ (reibungsfrei: trägt nur
+senkrecht zur Fläche); bitte lagern …“ (der Name stammt aus dem Befund am
+Drehlager; die Meldung dort selbst ist am vollen Modell noch nicht gemessen,
+siehe unten). Sie steht in der Zusammenfassung und damit im Protokoll, im
+Ergebnis (`Results.info["freie_teile"]`, auch in einer Überlagerung) und im
+Bericht: als Kapitel „Frei bewegliche Teile“ (einmal für alle Ergebnisse, nicht
+je Lastfall) und bei den Warnungen. Geneigte Ebenen werden über ihre Normale
+genannt, Stabknoten mit Stab und Knotennummer („S7: Knoten K5: quer zur
+Stabachse …“).
+
+**Das Programm lagert nichts.** Die Teile in den genannten Richtungen zu lagern
+(Lager, Feder oder Reibung) ist Sache des Anwenders; bis dahin ist ihre
+Verschiebung unbestimmt, und ihre Spannungen gelten nur, solange die Last auf
+dem Teil im Gleichgewicht steht. Ohne gestörte Pivots – der Regelfall, auch bei
+allen Beispielen – kostet die Suche nichts und meldet nichts. Mit ihnen kostet
+sie höchstens sechs Lösungen auf dem vorhandenen Faktor; die Rechnung selbst
+bleibt bitgleich (`tests/test_freie_teile.py`). Der Bericht nennt außerdem seit
+demselben Tag bei den „Freien Bewegungen“ nur noch dann eine Hilfsfesselung, wenn
+wirklich eine festgehalten wurde; bis dahin stand der Satz auch dort, wo die
+Rechnung ohne sie gelang.
+
+*Gemessen und nicht gemessen:* Die Prüfung `tests/test_freie_teile.py` belegt
+Platte auf Block (reibungsfrei: gemeldet; mit Reibung, mit Federn, seitlich
+gehalten: still), zwölf Platten in einer Zeile, eine geneigte Platte, einen
+Stabknoten am schiefen Anschlag und die acht Beispiele ohne Meldung. Am vollen
+Drehlager wurde die Suche **nicht** über PARDISO gelaufen (die Faktorisierung
+braucht rund 52 GB); dort ist nur gemessen, dass die Zuordnung der Knoten zu
+Bauteilen am Netz mit 602 394 Elementen 3,5 s dauert und mit einer gebauten
+Antwort alle 13 gesetzten Platten findet, und von der Löser-Sitzung, dass sechs
+Lösungen über den Faktor des Entwurfs 12 s kosten und die Antwort auf den
+Lastverteilplatten zu 99,999999 % eine Starrkörperbewegung ist.
+
 ## 10 Ergebnisse und Bericht
 
 * **Färbung**: |u|, ux/uy/uz [mm], **|φ|, φx/φy/φz** [mrad] (Verdrehungen, seit

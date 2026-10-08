@@ -2604,11 +2604,18 @@ class Report:
             if not sing:
                 continue
             b.append(self._h(2, f"Freie Bewegungen ({name})"))
+            # Bis zum 08.10.2026 stand hier immer „jede Bewegung ist mit einer
+            # Hilfsfesselung festgehalten“ - auch wenn die Rechnung ohne sie
+            # gelang (x["gefesselt"] False): dann ist nichts festgehalten.
+            gefesselt = all(bool(x.get("gefesselt")) for x in sing)
             b.append(("p", "Diese Bauteile sind nicht in jeder Richtung gehalten. "
-                           "Gerechnet wurde trotzdem: jede Bewegung ist mit einer "
-                           "Hilfsfesselung festgehalten, die Spannungen bleiben davon "
-                           "unberührt. Entscheidend ist die letzte Spalte - was dort "
-                           "steht, nimmt kein Lager und keine Fuge auf."))
+                           + ("Gerechnet wurde trotzdem: jede Bewegung ist mit einer "
+                              "Hilfsfesselung festgehalten, die Spannungen bleiben davon "
+                              "unberührt. " if gefesselt else
+                              "Die Rechnung ist ohne Hilfsfesselung gelungen; festgehalten "
+                              "wurde nichts. ")
+                           + "Entscheidend ist die letzte Spalte - was dort "
+                             "steht, nimmt kein Lager und keine Fuge auf."))
             rows = [["Bauteil", "Art", "Bewegung", "Kraft [kN]", "Moment [kNm]", "Befund"]]
             for x in sing:
                 rows.append([", ".join(x.get("koerper") or []) or "–",
@@ -2625,6 +2632,40 @@ class Report:
                     self._warnings.append(
                         f"Freie Bewegung ({name}): {x.get('text', '')} – "
                         f"{x.get('befund', '')}")
+        # ---- Frei bewegliche Teile (gestoerte Pivots, singular.pivotbefund)
+        # Das Programm lagert sie nicht - es nennt sie. Wer sie lagert, ist der
+        # Anwender; bis dahin ist die Verschiebung dieser Teile nicht bestimmt.
+        # Gebuendelt ueber alle Ergebnisse: am Drehlager haben 422 Lastfaelle
+        # dieselben Platten, und ein Kapitel je Lastfall waere keines.
+        frei: dict = {}
+        for name, res in allres:
+            for e in (getattr(res, "info", None) or {}).get("freie_teile") or []:
+                frei.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+        if frei:
+            b.append(self._h(2, "Frei bewegliche Teile"))
+            b.append(("p", "Der Gleichungslöser musste bei diesen Teilen einen Pivot anheben, "
+                           "weil sie in der genannten Richtung durch nichts gehalten sind. "
+                           "Gerechnet wurde trotzdem, gelagert hat das Programm nichts: die "
+                           "Verschiebung dieser Teile in den genannten Richtungen ist nicht "
+                           "bestimmt, ihre Spannungen gelten nur, solange die Last auf ihnen "
+                           "im Gleichgewicht steht. Wer sie in diesen Richtungen lagert (Lager, "
+                           "Feder oder Reibung), macht das Ergebnis eindeutig."))
+            rows = [["Teile", "Bewegung", "Gehalten nur durch", "Ergebnisse"]]
+            for text, (e, namen) in frei.items():
+                teile = e.get("namen") or []
+                wer = ", ".join(teile[:6]) + (f" … {teile[-1]} ({len(teile)})" if len(teile) > 6 else "")
+                if e.get("art") != "koerper" and e.get("knoten"):
+                    wer += ": Knoten " + ", ".join(f"K{k}" for k in e["knoten"][:6])
+                wo = ", ".join(namen[:4]) + (f" … ({len(namen)} Ergebnisse)" if len(namen) > 4 else "")
+                rows.append([wer, e.get("bewegung", ""), e.get("haltung", ""), wo])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Frei bewegliche Teile", None, "compact"))
+            if note:
+                b.append(("note", note))
+            for text, (e, namen) in frei.items():
+                self._warnings.append(
+                    f"Frei bewegliche Teile ({namen[0]}" + (f" und {len(namen) - 1} weitere" if len(namen) > 1 else "")
+                    + f"): {text}")
         # ---- Modal
         if self.opt("modal"):
             modal = [(n, r) for n, r in allres if getattr(r, "freqs", None) is not None]
