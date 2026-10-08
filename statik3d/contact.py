@@ -1624,15 +1624,19 @@ class ContactSystem:
         return True
 
     def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False,
-                             fremd: bool = True) -> int:
+                             fremd: bool = True, ohne=None) -> int:
         """Knoten, deren Reibzustand nicht zu dieser Loesung passt: an der
         Feder gleitende Knoten, die sich gegen ihre festgehaltene Richtung
         bewegen; primal-dual (nur bei ``fremd``, Warmstart aus einem anderen
         Lastfall) Knoten, die sich gegen ihren uebernommenen Stand gedreht
         haben oder vom Gleiten ins Haften fielen. Mit ``zuruecksetzen`` werden
-        sie auf Haften gesetzt; die Iteration findet ihre Richtung dann neu."""
+        sie auf Haften gesetzt; die Iteration findet ihre Richtung dann neu.
+        ``ohne``: Indizes von Bedingungen, die nicht geprueft werden - die
+        pendelnden nach einem Abschluss nach dem Ingenieurkriterium
+        (solver.solve_with_contact); dort sind sie angenommen, wie sie sind."""
         self._pd_vorbereiten()
         n = 0
+        ohne = set(ohne) if ohne else ()
         # Die Reibkraft mu Fn der Knoten gegen ihre Richtung, als Mass fuer den
         # Loeser (28.09.2026): unter RESIDUUM_ANTEIL der Kontaktkraft ist das
         # Rauschen, kein Grund zum Zuruecksetzen oder Neustart. Am Drehlager
@@ -1647,8 +1651,8 @@ class ContactSystem:
         # Fixpunkt kippt) und nur der kalte Start mit der unterrelaxierten
         # Richtungsnachfuehrung der Phase 1 loest ihn.
         self.warmstart_gegen_kraft = 0.0
-        for c in self.cons:
-            if not (c.active and c.ct is not None):
+        for i, c in enumerate(self.cons):
+            if not (c.active and c.ct is not None) or i in ohne:
                 continue
             gegen = False
             if self._primal_dual(c):

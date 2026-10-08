@@ -6202,6 +6202,9 @@ def _neustart_vermerken(cinfo2: dict, runden_vorher: list) -> None:
 #: (Elementmaximum) um hoechstens 0,62 N/mm2, die Loesung selbst ist auf 1,3e-7 im
 #: Gleichgewicht; der Lauf waere in Runde 39 nach 84 min fertig gewesen statt am
 #: Deckel in Runde 64 nach 129 min.
+#: Seit dem 08.10.2026 abends gilt das auch fuer warm gestartete Laeufe (Newton-
+#: Schritte der Plastizitaet, Folgelastfaelle) mit denselben Schranken; dort zaehlt
+#: als Pendeln nur ein bestaetigter Zyklus (_zyklus_bestaetigt).
 ABSCHLUSS_INGENIEUR = True
 ABSCHLUSS_SPANNUNG = 1.0e6          # [Pa] = 1 N/mm2
 ABSCHLUSS_WEG_ANTEIL = 1.0e-3       # der groessten Verschiebung
@@ -6272,6 +6275,34 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
             c.Fn, c.Ft, c.g, c.zug_roh = fn, ft, g, zr
         return None
     return aus
+
+
+def _zyklus_bestaetigt(kennung_je_runde: dict, it: int, kennung):
+    """Warm gestartete Laeufe (Plastizitaet, Folgelastfaelle): pendelt die
+    Aktivmenge wirklich? Rueckgabe die Runde eine Periode zurueck oder None.
+
+    Ein warm gestarteter Lauf beginnt beim Zustand des vorigen Laufs, und der
+    liegt nahe an der Loesung. Die Iteration verlaesst ihn oft fuer zwei, drei
+    Runden und kehrt dann zu ihm zurueck, bevor sie streng konvergiert - die
+    Kennung (Aktivmenge, Haften/Gleiten, Fliessen) wiederholt sich, Kraefte und
+    Gleitrichtungen aber nicht. Gemessen (08.10.2026, Kriterium probeweise warm
+    zugelassen wie kalt): tests/test_kontaktzustand LF3 nach LF2 kehrte in
+    Runde 4 zum Startzustand zurueck, wurde angenommen und brauchte danach
+    11 statt 6 Runden; tests/test_fehler_p8 K1 82 statt 90 Kontaktrunden - in
+    Laeufen, die ohne das Kriterium nach 6 bzw. 12 Runden streng endeten.
+    Darum gilt warm erst ein **bestaetigter** Zyklus als Pendeln: die Runde
+    wiederholt den Zustand von p Runden vorher, und die Runde davor wiederholt
+    ebenso den Zustand von p Runden vor ihr (A B A B: in der vierten Runde
+    bestaetigt). Kalt bleibt es bei der ersten Wiederholung (Drehlager, B4)."""
+    frueher = [r for r, k in kennung_je_runde.items() if k == kennung and r < it]
+    if not frueher:
+        return None
+    r0 = max(frueher)
+    p = it - r0
+    vor = kennung_je_runde.get(it - 1)
+    if p >= 2 and vor is not None and vor != kennung and kennung_je_runde.get(it - 1 - p) == vor:
+        return r0
+    return None
 
 
 def _pendel_zeilen(model: Model, cs, ids, u, u_vor) -> tuple:
@@ -6465,9 +6496,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     # wurden schon geloest (Kennung -> Runde), und welche Bedingungen wechselten
     # in welcher Runde
     kennungen: dict = {}
+    kennung_je_runde: dict = {}     # Runde -> Kennung (warm: bestaetigter Zyklus)
     wechsel_je_runde: dict = {}
     abschluss_merker: dict = {}
     ingenieur = None
+    pendel_ids: set = set()         # die im angenommenen Zustand pendelnden Bedingungen
     letzte_kennung = None
     for it in range(1, max_iter + 1):
         Kc, Fc, C, b = matrizen()
@@ -6551,16 +6584,22 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # zu rund 230 N/mm2) -, und nur wenn die Aktivmenge pendelt
         # (sie hat sich geaendert und ist zu einem schon geloesten Zustand
         # zurueckgekehrt - Setz- und Richtungsrunden ohne Wechsel zaehlen nicht)
-        # oder Gleitrichtungen pendeln - nur im kalten Lauf: ein warm gestarteter
-        # prueft nach dem Ende seine Gleitrichtungen gegen den Startzustand
-        # (warmstart_verstoesse) und setzte nach einem frueheren Abschluss nur
-        # fort (tests/test_kontaktzustand, LF3 nach LF2: 11 statt hoechstens 8
-        # Schritte); nicht in abgekuerzten Laeufen und Probelaeufen
+        # oder Gleitrichtungen pendeln; nicht in abgekuerzten Laeufen und
+        # Probelaeufen. Seit dem 08.10.2026 abends auch in warm gestarteten
+        # Laeufen (jeder Newton-Schritt der Plastizitaet, Folgelastfaelle): dort
+        # zaehlt nur ein bestaetigter Zyklus (_zyklus_bestaetigt) und eine
+        # Richtungsumkehr nur, wenn sie viermal in diesem Lauf geschah - die
+        # Zaehler kommen sonst aus dem Startzustand. Bis dahin lief ein warmer
+        # Lauf, der pendelte, bis zum Deckel: am kleinen Block mit Fliessen
+        # (tests/test_ingenieur_warm) jeder Newton-Schritt 69 Runden
         wie_runde = (kennungen.get(kennung) if kennung is not None and kennung != letzte_kennung
                      else None)
-        richtungen = cs.richtungen_pendeln() if (ABSCHLUSS_INGENIEUR and cs.phase == 2) else 0
+        if warm and wie_runde is not None:
+            wie_runde = _zyklus_bestaetigt(kennung_je_runde, it, kennung)
+        richtungen = (cs.richtungen_pendeln() if (ABSCHLUSS_INGENIEUR and cs.phase == 2
+                                                   and (not warm or it > 4)) else 0)
         if (ABSCHLUSS_INGENIEUR and u_vor is not None and not kurz and not probelauf
-                and not warm and cs.phase == 2 and (wie_runde is not None or richtungen)):
+                and cs.phase == 2 and (wie_runde is not None or richtungen)):
             ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
                                              abschluss_merker)
             if ingenieur is not None:
@@ -6574,13 +6613,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 ids |= {i for i, c in enumerate(cs.cons)
                         if c.active and c.slip and getattr(c, "umkehr", 0) >= UMKEHR_RUNDEN_PENDEL}
                 zeilen, f_pend, w_pend = _pendel_zeilen(model, cs, ids, u, u_vor)
+                pendel_ids = set(ids)
                 ingenieur.update({"runde": it, "wie_runde": wie_runde, "pendelnd": len(ids),
                                   "reibkraft_max": f_pend, "weg_max": w_pend,
-                                  "richtungen_pendeln": int(richtungen)})
+                                  "richtungen_pendeln": int(richtungen), "warm": bool(warm)})
                 grund_text = (f"die Aktivmenge pendelt (Zustand wie in Runde {wie_runde})"
                               if wie_runde is not None else
                               f"{richtungen} Gleitrichtungen pendeln")
-                text = (f"Kontakt: Abschluss nach dem Ingenieurkriterium in Runde {it} - {grund_text}; "
+                text = (f"Kontakt: Abschluss nach dem Ingenieurkriterium in Runde {it}"
+                        + (" (warm gestartet)" if warm else "") + f" - {grund_text}; "
                         f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
                         f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm), "
                         f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}")
@@ -6602,6 +6643,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 break
         if kennung is not None:
             kennungen.setdefault(kennung, it)
+            kennung_je_runde[it] = kennung
             letzte_kennung = kennung
         aktiv_vor = [(c.active, c.slip) for c in cs.cons] if ABSCHLUSS_INGENIEUR else None
         neu_bestimmen = cs.phase == 1 or cs.gruppe_frei is None
@@ -6714,11 +6756,16 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             raise _kontakt_abbruch(it, RuntimeError(text), cs, model, u, zug=zug, log=log) from None
     # Abgekuerzt: an der Schrittgrenze ohne Deckel beendet - mit Absicht
     abgekuerzt = bool(kurz) and not converged and not deckel and not probelauf
+    # Nach einem Abschluss nach dem Ingenieurkriterium sind die pendelnden
+    # Bedingungen angenommen, wie sie sind (Protokoll); die Warmstartpruefung
+    # sieht nur die uebrigen - sonst setzte sie gerade die Pendler zurueck, und
+    # der naechste Anlauf pendelte von vorn
+    ohne = pendel_ids if ingenieur is not None else None
     if kurz and warm and converged and u is not None:
         if cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung):
             converged, abgekuerzt = False, True
     elif warm and converged and u is not None:
-        n_v = cs.warmstart_verstoesse(u, fremd=not fortsetzung)
+        n_v = cs.warmstart_verstoesse(u, fremd=not fortsetzung, ohne=ohne)
         from .contact import RESIDUUM_ANTEIL as _RES
         kraft_gegen = float(getattr(cs, "warmstart_gegen_kraft", 0.0))
         kontaktkraft = float(getattr(cs, "kontaktkraft", 0.0))
@@ -6772,7 +6819,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             fortschritt = kraft_gegen < gegen_vorher
             fortsetzbar = fortsetzung and fortschritt
             if (fortsetzbar and versuch < FORTSETZUNGEN_MAX) or wenige:
-                cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung)
+                cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung, ohne=ohne)
                 log.append(f"Warmstart: {n_v} gleitende Knoten bewegten sich gegen ihre "
                            f"Richtung - auf Haften zurückgesetzt, Iteration fortgesetzt "
                            f"(Anlauf {versuch + 1}, Maß {kraft_gegen / 1e3:.4g} kN)")
