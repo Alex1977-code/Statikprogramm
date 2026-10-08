@@ -1785,6 +1785,30 @@ auf 0,00 N/mm² genau; ohne die Bindung +290 bis +1 044 N/mm² daneben) und an d
 Würfeln oben: das starre Flächenlager hält an tet10 wie festgehaltene
 Bodenknoten, ein Kontaktpaar an tet10 gibt die Setzung des Stabes exakt.
 
+**Elemente an gebundenen Seitenmitten bleiben gültig** (Befund B1 der
+Drehlager-Abnahme, 08.10.2026). Bis zum 08.10.2026 konnte das Setzen der gebundenen
+Seitenmitten auf die Kantenmitte ein Element umstülpen. Am Drehlager mit Mittel
+waren es fünf dünne tet10 im Volumen V29 (eine Kante 3,3 mm neben Kanten von
+49 mm): ihre gebundene Mitte kam auf die Kantenmitte, während eine Nachbarkante
+desselben Elements um 2 % ihrer Länge gekrümmt blieb, und das Aufstellen der
+Steifigkeit brach mit „Tet10 mit negativer Jacobi-Determinante“ ab. Seither prüft
+das Programm nach dem Setzen jedes Element mit gebundener Seitenmitte und
+gekrümmter Kante auf seine kleinste bezogene Jacobi-Determinante, also dasselbe
+Maß, das der Vernetzer nach dem Krümmen der Seitenmitten meldet. Liegt sie unter
+0,1, wird das Element ganz gerade gezogen: alle seine Seitenmitten kommen auf die
+Kantenmitte, und ein gerades tet10 hat überall die bezogene Determinante 1. Weil
+eine Seitenmitte auch den Nachbarn an derselben Kante gehört, prüft das Programm
+danach diese Nachbarn und zieht sie ebenso gerade, wenn sie dabei unter 0,1
+gefallen sind, so lange, bis nichts mehr zu tun ist. Elemente ohne Befund behalten
+ihre Lage genau. Das Protokoll des Vernetzens nennt die Zahl der gerade gezogenen
+Elemente und den größten Weg („Seitenmitten: … Elemente ganz gerade gezogen
+(… Mittelknoten auf ihre Sehne, größter Weg … mm) …“). Am gespeicherten Mittel-Netz
+des Drehlagers waren es 23 Elemente in V29 mit 41 Seitenmitten, der größte Weg
+betrug 1,018 mm; danach war kein Element mehr umgestülpt, und jedes Element mit
+gebundener Seitenmitte hatte mindestens die bezogene Determinante 0,128. Ein Netz,
+das vor dieser Änderung gespeichert wurde, wird vor der Rechnung auf dieselbe
+Weise gerade gezogen, dann aber ohne Zeile im Protokoll.
+
 Laut abgebrochen wird weiterhin, wenn eine Seite nicht gebunden werden kann:
 an **quadratischen Schalen** (shell6, shell8) an Kontakt oder Flächenlager, wenn
 eine Seitenmitte selbst ein Lager, eine Feder, eine Kopplung oder einen

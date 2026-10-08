@@ -830,6 +830,29 @@ INT32_MAX = 2 ** 31 - 1
 PARDISO_EINGABEFELDER = (1, 2, 8, 10, 11, 13, 21, 24, 25)
 
 
+def _nnz_faktor_aus_iparm(roh, speicher_kb17) -> tuple:
+    """(Nichtnullen des Faktors, sicher) aus iparm(18) und iparm(17).
+
+    iparm(18) ist ein 32-Bit-Feld mit Vorzeichen und laeuft ueber (Befund B2
+    der Drehlager-Abnahme, 08.10.2026): mit Mittel meldete PARDISO
+    -267 191 214, die Statistik der Analyse (msglvl 1) L+U = 4 027 776 082
+    = -267 191 214 + 2^32. Gelesen wird darum modulo 2^32. Ob die Zahl noch
+    einmal um 2^32 umgelaufen sein kann, sagt iparm(17), der Speicher der
+    Zahlenphase in KB (laut MKL): der Faktor braucht mindestens 8 Byte je
+    Eintrag (am Drehlager 33 321 212 KB fuer 4,03 Mrd. Eintraege, 8,47
+    Byte). Passt der Wert hinein, ein weiterer Umlauf aber nicht, ist die
+    Zahl sicher; sonst ist sie ein Mindestwert (``sicher`` False). Ohne
+    iparm(17) gilt ein nicht negativer Wert wie bisher als sicher.
+    """
+    if roh is None:
+        return None, False
+    wert = int(roh) % (1 << 32)
+    kb = int(speicher_kb17 or 0)
+    if kb > 0:
+        return wert, 8 * wert <= 1024 * kb < 8 * (wert + (1 << 32))
+    return wert, int(roh) >= 0
+
+
 def _pardiso_kennzahlen(ps) -> dict:
     """Was MKL PARDISO bei der Faktorisierung getan hat, aus iparm - direkt
     nach ``ps.factorize`` zu lesen, vor jedem solve (der schreibt iparm neu).
@@ -840,7 +863,9 @@ def _pardiso_kennzahlen(ps) -> dict:
       drei solchen Bloecken 3 (tests/test_loeser.py).
     * ``nnz`` = iparm(18): Nichtnullen des Faktors. Gemessen 20.09.2026 an
       einer Tridiagonalmatrix: n = 200 gibt 964, n = 400 gibt 1960 - linear,
-      wie es fuer ein Band sein muss.
+      wie es fuer ein Band sein muss. iparm(18) ist ein 32-Bit-Feld und
+      laeuft ueber; gelesen wird es darum mit :func:`_nnz_faktor_aus_iparm`
+      (``nnz_sicher``: False heisst Mindestwert; ``nnz_iparm18`` der Rohwert).
     * ``speicher_kb`` = iparm(15), (16), (17): Spitze der Analyse, dauerhaft
       aus der Analyse, Zahlenphase - in KB **laut MKL-Dokumentation**, nicht
       nachgemessen. iparm(17) steht direkt neben iparm(18) und ist leicht mit
@@ -860,7 +885,8 @@ def _pardiso_kennzahlen(ps) -> dict:
         except Exception:                                  # noqa: BLE001
             return None
 
-    return {"gestoert": feld(14), "nnz": feld(18),
+    nnz, sicher = _nnz_faktor_aus_iparm(feld(18), feld(17))
+    return {"gestoert": feld(14), "nnz": nnz, "nnz_sicher": sicher, "nnz_iparm18": feld(18),
             "speicher_kb": {str(i): feld(i) for i in (15, 16, 17)},
             "speicher_einheit": "KB laut MKL-Dokumentation, nicht nachgemessen",
             "eingabe": {str(i): feld(i) for i in PARDISO_EINGABEFELDER}}
@@ -883,6 +909,9 @@ class LinearSolver:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = int(getattr(K, "nnz", 0) or 0)
         self.nnz_faktor = 0
+        #: True, wenn nnz_faktor nur ein Mindestwert ist (PARDISO, iparm(18)
+        #: uebergelaufen und nicht sicher zurueckzurechnen, _nnz_faktor_aus_iparm)
+        self.nnz_faktor_mindestens = False
         # perf_counter, nicht time(): eine Faktorisierung dauert am kleinen
         # System Millisekunden, und die Uhr von time.time() steht unter Windows
         # in Stufen von 15,6 ms - gemessen 20.09.2026: ein Probelauf meldete
@@ -982,6 +1011,7 @@ class LinearSolver:
                 kz = _pardiso_kennzahlen(ps)
                 self.pardiso_kennzahlen = kz
                 self.nnz_faktor = int(kz.get("nnz") or 0)
+                self.nnz_faktor_mindestens = bool(self.nnz_faktor) and not kz.get("nnz_sicher", True)
                 self.gestoerte_pivots = kz.get("gestoert")
                 # pypardiso 0.4.7 fuehrt den Typ als ps.mtype. Fehlte das Feld,
                 # liefe ein AttributeError in das except unten, und nur das
@@ -1006,6 +1036,7 @@ class LinearSolver:
                 self.gestoerte_pivots = None
                 self.pardiso_kennzahlen = {}
                 self.nnz_faktor = 0
+                self.nnz_faktor_mindestens = False
                 # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
                 # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
                 # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
@@ -1951,6 +1982,7 @@ class StaticSystem:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = 0
         self.nnz_faktor = 0
+        self.nnz_faktor_mindestens = False
         #: Loesungen mit ausgewichenem Loeser, (Grund, Ausweichloeser) -> Zahl
         #: (_geloest zaehlt, ausweich_info liest je Ergebnis)
         self._ausweich_genutzt: dict = {}
@@ -1990,7 +2022,9 @@ class StaticSystem:
         """
         self.zeit_faktorisierung += getattr(ls, "zeit_faktorisierung", 0.0)
         self.nnz_matrix = getattr(ls, "nnz_matrix", 0) or self.nnz_matrix
-        self.nnz_faktor = getattr(ls, "nnz_faktor", 0) or self.nnz_faktor
+        if getattr(ls, "nnz_faktor", 0):
+            self.nnz_faktor = ls.nnz_faktor
+            self.nnz_faktor_mindestens = bool(getattr(ls, "nnz_faktor_mindestens", False))
         # Ist ein Loeser ausgewichen, gehoert das in den Fortschritt - und zwar
         # auch bei den Faktorisierungen der Kontaktschritte, nicht nur bei der
         # Grundfaktorisierung, deren Zeile "Faktorisiert (...)" ihn schon
@@ -4101,6 +4135,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "solver": system.backend, "factors": dict(factors),
                      "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
                      "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
+                     # nur wenn PARDISO die Zahl nicht sicher nennen konnte (B2)
+                     **({"nnz_faktor_mindestens": True}
+                        if getattr(system, "nnz_faktor_mindestens", False) else {}),
                      "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0)),
                      **ausweich_info(system, ausweich_vorher)})
     nachweis = system.nachweis_abschliessen() if hasattr(system, "nachweis_abschliessen") else None

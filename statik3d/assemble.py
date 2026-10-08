@@ -1094,8 +1094,13 @@ def mittelknoten_auf_sehne(model: Model, log: list = None) -> tuple:
     Dehnung) exakt darstellbar. Die Kontaktseite ist danach so facettiert wie
     bei Entwurf; den Spalt gleichen die Flaechenquadriken aus.
 
+    Danach darf kein Element umgestuelpt oder unter SEHNE_MINDESTGUETE sein,
+    das eine gebundene Mitte hat: solche Elemente zieht
+    :func:`mitten_gerade_ziehen` ganz gerade (B1, 08.10.2026).
+
     Rueckgabe (gebunden, versetzt, groesster Abstand [m]); mit ``log`` eine
-    Zeile. Ein zweiter Aufruf aendert nichts."""
+    Zeile, und eine zweite, wenn Elemente gerade gezogen wurden. Ein zweiter
+    Aufruf aendert nichts."""
     bind = mittelknoten_bindungen(model)
     if not bind:
         return 0, 0, 0.0
@@ -1108,12 +1113,174 @@ def mittelknoten_auf_sehne(model: Model, log: list = None) -> tuple:
     gross = float(d[weg].max()) if weg.any() else 0.0
     if weg.any():
         model.nodes[t[weg, 0]] = soll[weg]
+    gerade = mitten_gerade_ziehen(model, t[:, 0])
+    try:
+        model._mitten_gerade_gezogen = gerade
+    except AttributeError:
+        pass
     if log is not None:
         from .importers import _common as C
         C.say(log, f"Seitenmitten: {len(t)} gebunden (Kontaktseiten, Flächenlager, Übergang "
                    f"linear/quadratisch), {int(weg.sum())} davon auf die Kantenmitte gesetzt"
                    + (f", höchstens {gross * 1e3:.3f} mm daneben" if weg.any() else ""))
+        if gerade["elemente"]:
+            C.say(log, f"Seitenmitten: {gerade['elemente']} Elemente ganz gerade gezogen "
+                       f"({gerade['knoten']} Mittelknoten auf ihre Sehne, größter Weg "
+                       f"{gerade['weg'] * 1e3:.3f} mm), weil die gebundenen Mitten auf der Sehne sie "
+                       f"umgestülpt oder unter die bezogene Jacobi-Determinante "
+                       f"{SEHNE_MINDESTGUETE:g} gebracht hätten; kleinste bezogene Determinante "
+                       f"der geprüften Elemente danach {gerade['guete']:.3f}")
     return len(t), int(weg.sum()), gross
+
+
+#: Mindestguete an gebundenen Seitenmitten (B1, 08.10.2026): kleinste
+#: bezogene Jacobi-Determinante det_min/det_max ueber Gausspunkte, Ecken und
+#: (tet10) Kantenmitten - dasselbe Mass, das der Vernetzer nach dem Kruemmen
+#: der Seitenmitten meldet (elements.solid.jacobi_volumen_stapel). Unter 0,1
+#: soll ein Element oertlich neu vernetzt werden (gemessen 25.09.2026 am
+#: Hohlzylinder tet10 bis 48x16); das Geradeziehen ist die oertliche Kur.
+SEHNE_MINDESTGUETE = 0.1
+
+
+def _bezogene_jacobi(typ: str, X: np.ndarray) -> np.ndarray:
+    """det_min/det_max je Element eines Stapels (n, k, 3); ganz umgestuelpt
+    (det_max <= 0) gibt -1."""
+    from .elements.solid import jacobi_volumen_stapel
+    if not len(X):
+        return np.zeros(0)
+    d = jacobi_volumen_stapel(typ, X)
+    aus = np.full(len(X), -1.0)
+    gut = d["det_max"] > 0.0
+    aus[gut] = d["det_min"][gut] / d["det_max"][gut]
+    return aus
+
+
+def mitten_gerade_ziehen(model: Model, gebunden, schwelle: float = None) -> dict:
+    """Quadratische Volumenelemente (tet10, hex20, pent15), die mit ihren
+    gebundenen Mitten auf der Sehne umgestuelpt oder unter ``schwelle``
+    (SEHNE_MINDESTGUETE) liegen, ganz gerade ziehen: alle ihre Mitten auf die
+    Sehne (B1, Drehlager-Abnahme 08.10.2026).
+
+    Befund: der Vernetzer kruemmt die Seitenmitten an gekruemmten Flaechen
+    und prueft die Elemente (V29 am Drehlager: kleinste bezogene Determinante
+    0,191); mittelknoten_auf_sehne setzt danach die gebundenen Mitten zurueck
+    auf die Sehne. Ein duennes tet10 (Kanten 3,3 neben 49 mm) mit einer
+    gebundenen Mitte auf der Sehne und einer um 2,06 % ihrer Laenge
+    gekruemmten Nachbarkante stuelpt sich dabei um (fuenf tet10 in V29, det J
+    bis -0,88 an einer Ecke), und das Aufstellen der Steifigkeit brach ab.
+    Gerade gezogen ist ein tet10 affin (bezogene Determinante 1), solange
+    seine Ecken ein positives Volumen haben.
+
+    Geprueft werden zuerst die Elemente mit einer gebundenen Mitte und
+    mindestens einer Mitte neben der Sehne; was unter der Schwelle liegt,
+    wird gerade gezogen. Eine gerade gezogene Mitte gehoert auch den
+    Nachbarn an derselben Kante: die werden danach geprueft und ebenfalls
+    gerade gezogen, wenn sie unter der Schwelle liegen und dabei schlechter
+    geworden sind (oder selbst eine gebundene Mitte haben) - bis nichts mehr
+    zu tun ist. Jede Runde bringt mindestens eine Mitte auf ihre Sehne, die
+    Schleife endet also. Die Ziele haengen nur an den Ecken, die nie bewegt
+    werden; Reihenfolge und Arbeiterzahl aendern das Ergebnis nicht.
+    Elemente ohne Befund behalten ihre Koordinaten bitgleich.
+
+    Rueckgabe {"elemente": Zahl der gerade gezogenen, "knoten": versetzte
+    Mitten, "weg": groesster Weg [m], "guete": kleinste bezogene
+    Determinante der gepruefen Elemente danach, "runden": Zahl,
+    "liste": Elementindizes (sortiert)}."""
+    from .elements.solid import _KANTEN_QUADRATISCH
+    schwelle = SEHNE_MINDESTGUETE if schwelle is None else float(schwelle)
+    aus = {"elemente": 0, "knoten": 0, "weg": 0.0, "guete": 1.0, "runden": 0, "liste": []}
+    nn = int(model.nn)
+    gebunden = np.asarray(gebunden, np.int64).ravel()
+    if not gebunden.size or not nn:
+        return aus
+    an = _knotenfeld(nn, gebunden)
+    bl = []                                  # (Typ, Elementindizes, Knoten, Mitten, Ecke a, Ecke b)
+    for typ, (idx, E) in _volumen_bloecke(model).items():
+        kanten = _KANTEN_QUADRATISCH.get(typ)
+        if kanten is None or not len(idx):
+            continue
+        nc = E.shape[1] - len(kanten)
+        bl.append((typ, idx, E, E[:, nc:], E[:, [a for a, _b in kanten]], E[:, [b for _a, b in kanten]]))
+    if not bl:
+        return aus
+
+    def krumm(Mi, A, B, rows):
+        """Liegt eine Mitte der Elemente ``rows`` neben ihrer Sehne?"""
+        X = model.nodes
+        s = 0.5 * (X[A[rows]] + X[B[rows]])
+        L = np.linalg.norm(X[A[rows]] - X[B[rows]], axis=2)
+        return (np.linalg.norm(X[Mi[rows]] - s, axis=2) > 1e-12 * np.maximum(L, 1e-300)).any(axis=1)
+
+    def guete(typ, E, rows):
+        return _bezogene_jacobi(typ, np.asarray(model.nodes, float)[E[rows]])
+
+    # Erste Runde: Elemente mit gebundener Mitte und gekruemmter Mitte
+    schlecht, gebunden_el, geprueft = [], [], []
+    for typ, idx, E, Mi, A, B in bl:
+        mit = an[Mi].any(axis=1)
+        gebunden_el.append(mit)
+        rows = np.flatnonzero(mit)
+        rows = rows[krumm(Mi, A, B, rows)] if rows.size else rows
+        q = guete(typ, E, rows)
+        schlecht.append(rows[q < schwelle])
+        geprueft.append(set(rows.tolist()))
+    alt_lage: dict = {}
+    gerade = [set() for _ in bl]
+    while any(len(s) for s in schlecht):
+        aus["runden"] += 1
+        # Ziele: jede Mitte der schlechten Elemente auf ihre Sehne
+        kn, ziel = [], []
+        X = model.nodes
+        for k, ((typ, idx, E, Mi, A, B), rows) in enumerate(zip(bl, schlecht)):
+            if not len(rows):
+                continue
+            gerade[k].update(int(r) for r in rows)
+            kn.append(Mi[rows].ravel())
+            ziel.append((0.5 * (X[A[rows]] + X[B[rows]])).reshape(-1, 3))
+        # Dieselbe Mitte kommt je Element an ihrer Kante vor, mit demselben
+        # Ziel (die Ecken bewegen sich nie); genommen wird das erste
+        kn, erst = np.unique(np.concatenate(kn), return_index=True)
+        ziel = np.concatenate(ziel)[erst]
+        bewegt = np.any(model.nodes[kn] != ziel, axis=1)
+        kn, ziel = kn[bewegt], ziel[bewegt]
+        if not kn.size:
+            break
+        maske = _knotenfeld(nn, kn)
+        # Nachbarn an den versetzten Mitten, vorher und nachher
+        nachbarn, vorher = [], []
+        for k, (typ, idx, E, Mi, A, B) in enumerate(bl):
+            rows = np.flatnonzero(maske[Mi].any(axis=1))
+            rows = rows[~np.isin(rows, np.asarray(sorted(gerade[k]), np.int64))]
+            nachbarn.append(rows)
+            vorher.append(guete(typ, E, rows))
+        for i in kn.tolist():
+            alt_lage.setdefault(i, model.nodes[i].copy())
+        model.nodes[kn] = ziel
+        schlecht = []
+        for k, (typ, idx, E, Mi, A, B) in enumerate(bl):
+            rows = nachbarn[k]
+            geprueft[k].update(rows.tolist())
+            if not rows.size:
+                schlecht.append(rows)
+                continue
+            q = guete(typ, E, rows)
+            neu = (q < schwelle) & (gebunden_el[k][rows] | (q < vorher[k]))
+            neu &= krumm(Mi, A, B, rows)
+            schlecht.append(rows[neu])
+    if alt_lage:
+        k_ = np.asarray(sorted(alt_lage), np.int64)
+        alt = np.asarray([alt_lage[int(i)] for i in k_])
+        aus["weg"] = float(np.linalg.norm(model.nodes[k_] - alt, axis=1).max())
+        aus["knoten"] = int(len(k_))
+    liste = sorted(int(idx[r]) for (typ, idx, *_r), g in zip(bl, gerade) for r in g)
+    aus["elemente"] = len(liste)
+    aus["liste"] = liste
+    q_min = 1.0
+    for (typ, idx, E, *_r), g in zip(bl, geprueft):
+        if g:
+            q_min = min(q_min, float(guete(typ, E, np.asarray(sorted(g), np.int64)).min()))
+    aus["guete"] = q_min
+    return aus
 
 
 def mittelknoten_umlenken(model: Model, F: np.ndarray, bind=None) -> np.ndarray:
