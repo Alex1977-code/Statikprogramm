@@ -2134,6 +2134,9 @@ class StaticSystem:
             # abgeschaltete Staebe (Member.aus) wirken in keiner Situation
             self.aktiv = basis if self.aktiv is None else (self.aktiv & basis)
         self.situation = situation
+        #: Arbeiterzahl der Rechnung - fuer die Spannungen, die der Abschluss nach
+        #: dem Ingenieurkriterium vergleicht (_ingenieur_abschluss)
+        self.workers = workers
         self.K = asm.stiffness(model, workers, self.aktiv)
         self.fixed, self.vals = asm.constrained_dofs(model, self.K)
         self.fi = np.where(~self.fixed)[0]
@@ -6154,6 +6157,122 @@ def _neustart_vermerken(cinfo2: dict, runden_vorher: list) -> None:
     lauf["runden"] = list(runden_vorher) + list(lauf.get("runden") or [])
 
 
+#: Abschluss nach dem Ingenieurkriterium (Befund B4, 08.10.2026, Vorgabe des
+#: Anwenders): pendelt die Aktivmenge (die Iteration loest einen Zustand aus
+#: Aktivmenge, Haften/Gleiten und Fliessen ein zweites Mal) oder pendeln
+#: Gleitrichtungen (contact.ContactSystem.richtungen_pendeln), ist der Lauf fertig,
+#: wenn zwischen den letzten beiden Loesungen
+#:   * die Vergleichsspannung der Volumenelemente (geglaettete Eckwerte, wie im
+#:     Ergebnis) sich nirgends um mehr als ABSCHLUSS_SPANNUNG aendert,
+#:   * sich kein Knoten um mehr als ABSCHLUSS_WEG_ANTEIL * u_max bewegt,
+#:   * keine geschlossene Bedingung Zug und keine offene Durchdringung ueber f_tol
+#:     (als Kraft) traegt - die Normalbedingung bleibt so streng wie sonst - und
+#:   * die Auflagerkraefte **dieser Loesung** (ContactSystem.kraefte_der_loesung)
+#:     mit der Last auf ABSCHLUSS_GLEICHGEWICHT im Gleichgewicht sind.
+#: Das strenge Kriterium (kein Zustandswechsel mehr bzw. Residuum) bleibt das erste
+#: Ziel; dieses greift nur beim Pendeln. Die Kontaktbedingung bleibt dieselbe: der
+#: angenommene Zustand ist eine der Loesungen des Zyklus, mit ihren Kraeften; was
+#: darin noch pendelt, steht mit Namen, Ort, Kraft und Weg im Protokoll.
+#: Gemessen am Drehlager (Mittel, LF1, elastischer Vorlauf, d2bdd44): im Zyklus
+#: ab Runde 37 aendert sich je Runde u um 0,32 um (2,5e-4 u_max) und sigma_v
+#: (Elementmaximum) um hoechstens 0,62 N/mm2, die Loesung selbst ist auf 1,3e-7 im
+#: Gleichgewicht; der Lauf waere in Runde 39 nach 84 min fertig gewesen statt am
+#: Deckel in Runde 64 nach 129 min.
+ABSCHLUSS_INGENIEUR = True
+ABSCHLUSS_SPANNUNG = 1.0e6          # [Pa] = 1 N/mm2
+ABSCHLUSS_WEG_ANTEIL = 1.0e-3       # der groessten Verschiebung
+ABSCHLUSS_GLEICHGEWICHT = 1.0e-4    # |sum R + sum F| / |sum F|
+#: ab so vielen Umkehrungen in Folge gilt ein gleitender Knoten im Protokoll als pendelnd
+UMKEHR_RUNDEN_PENDEL = 2
+
+
+def _vergleichsspannungen(model: Model, system, u: np.ndarray) -> np.ndarray:
+    """Geglaettete Vergleichsspannung [Pa] der Volumenelemente an den Ecken (dieselbe
+    Tabelle wie res.solid_knoten im Ergebnis), in fester Reihenfolge."""
+    res = Results(name="Abschluss", kind="case", model=model)
+    uu = asm.mittelknoten_nachfuehren(model, np.asarray(u, float))
+    postprocess(model, uu, res, workers=getattr(system, "workers", None),
+                aktiv=getattr(system, "aktiv", None))
+    sk = res.solid_knoten or {}
+    S = np.asarray(sk.get("spannung", []), float).reshape(-1, 6)
+    from . import spannungen as spn
+    return spn.volumen_werte(S, "sv") if len(S) else np.zeros(0)
+
+
+def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, merker: dict):
+    """Prueft das Ingenieurkriterium (ABSCHLUSS_*) fuer die Loesung ``u`` gegen die
+    vorige ``u_vor``. Rueckgabe None (nicht erfuellt; Kraefte unveraendert) oder ein
+    Woerterbuch mit den Messwerten - dann stehen in ``cs`` die Kraefte dieser Loesung.
+    ``merker`` haelt die Spannungen der vorigen Pruefung (je Pruefung hoechstens zwei
+    Spannungsauswertungen)."""
+    n6 = model.nn * NDOF
+    v = np.asarray(u, float)[:n6].reshape(-1, NDOF)[:, :3]
+    w = np.asarray(u_vor, float)[:n6].reshape(-1, NDOF)[:, :3]
+    u_max = float(np.linalg.norm(v, axis=1).max()) if len(v) else 0.0
+    du = np.linalg.norm(v - w, axis=1)
+    j = int(np.argmax(du)) if len(du) else 0
+    du_max = float(du[j]) if len(du) else 0.0
+    aus = {"du_max": du_max, "du_knoten": j, "u_max": u_max}
+    if du_max > ABSCHLUSS_WEG_ANTEIL * u_max:
+        return None
+    sv = _vergleichsspannungen(model, system, u)
+    alt = merker.get("sv") if merker.get("u_id") is u_vor else None
+    if alt is None or len(alt) != len(sv):
+        alt = _vergleichsspannungen(model, system, u_vor)
+    merker["sv"], merker["u_id"] = sv, u
+    dsv = float(np.abs(sv - alt).max()) if len(sv) else 0.0
+    aus["dsv_max"] = dsv
+    if dsv > ABSCHLUSS_SPANNUNG:
+        return None
+    # Die Normalbedingung bleibt streng: keine geschlossene Bedingung mit Zug
+    # und keine offene mit Durchdringung ueber f_tol (als Kraft) im angenommenen
+    # Zustand - dieselben Grenzen wie beim Oeffnen und Schliessen. Gemessen am
+    # Drehlager (8b2de7b, ohne diese Pruefung): angenommen in Runde 34 mit einer
+    # offenen Bedingung, 0,088 nm durchdrungen, als Kraft 1,30 N bei f_tol 0,95 N.
+    verst = cs.zustand_verstoesse(u, lam)
+    aus["zug"], aus["durchdringung"] = int(verst["zug"]), int(verst["durchdringung"])
+    if verst["zug"] or verst["durchdringung"]:
+        return None
+    # Gleichgewicht im angenommenen Zustand: Kraefte dieser Loesung
+    D = getattr(cs, "D_kopplung", None)
+    vorher = [(c.Fn, np.array(c.Ft, float), c.g, getattr(c, "zug_roh", c.Fn)) for c in cs.cons]
+    cs.kraefte_der_loesung(u, lam)
+    R = system.reactions(u, F + (Fc if Fc is not None else 0.0) + _kontaktlast(C, lam, model.ndof, D), Kc)
+    Rk = R[:n6].reshape(-1, NDOF)[:, :3].sum(0) + cs.support_reactions(model.nn).sum(0)
+    Fk = np.asarray(F[:n6], float).reshape(-1, NDOF)[:, :3].sum(0)
+    bez = max(float(np.linalg.norm(Fk)), 1e-30)
+    gg = float(np.linalg.norm(Rk + Fk)) / bez
+    aus["gleichgewicht"] = gg
+    if gg > ABSCHLUSS_GLEICHGEWICHT:
+        for c, (fn, ft, g, zr) in zip(cs.cons, vorher):     # nicht angenommen: wie vorher
+            c.Fn, c.Ft, c.g, c.zug_roh = fn, ft, g, zr
+        return None
+    return aus
+
+
+def _pendel_zeilen(model: Model, cs, ids, u, u_vor) -> tuple:
+    """Protokollzeilen der Bedingungen, die im Zyklus ihren Zustand oder ihre
+    Gleitrichtung wechseln: Name, Knoten, Ort, Normal- und Reibkraft, Weg in der
+    Fugenebene und die Verschiebungsaenderung des Knotens. Rueckgabe (Zeilen,
+    groesste Reibkraft [N], groesster Weg [m])."""
+    X = np.asarray(model.nodes, float)
+    zeilen, f_max, w_max = [], 0.0, 0.0
+    for i in sorted(ids, key=lambda k: -float(np.linalg.norm(cs.cons[k].Ft)))[:12]:
+        c = cs.cons[i]
+        ue = u[c.dofs]
+        dt = 0.0 if c.ct is None else float(np.linalg.norm([c.ct[0] @ ue, c.ct[1] @ ue]))
+        d = float(np.linalg.norm((np.asarray(u) - np.asarray(u_vor))[NDOF * c.node:NDOF * c.node + 3]))
+        ft = float(np.linalg.norm(c.Ft))
+        f_max, w_max = max(f_max, ft), max(w_max, dt)
+        zustand = "offen" if not c.active else ("gleitet" if c.slip else "haftet")
+        zeilen.append(f"{c.label} (Knoten {c.node} bei {np.round(X[c.node], 3).tolist()} m): "
+                      f"{zustand}, Normalkraft {c.Fn / 1e3:.3g} kN, Reibkraft {ft / 1e3:.3g} kN, "
+                      f"Weg in der Fuge {dt * 1e6:.3g} µm, Änderung zur vorigen Runde {d * 1e6:.3g} µm")
+    if len(ids) > 12:
+        zeilen.append(f"… und {len(ids) - 12} weitere")
+    return zeilen, f_max, w_max
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
@@ -6318,10 +6437,19 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                                                        cs, u, model, "")}
     u = None
     forced = False
+    # Abschluss nach dem Ingenieurkriterium (ABSCHLUSS_INGENIEUR): welche Zustaende
+    # wurden schon geloest (Kennung -> Runde), und welche Bedingungen wechselten
+    # in welcher Runde
+    kennungen: dict = {}
+    wechsel_je_runde: dict = {}
+    abschluss_merker: dict = {}
+    ingenieur = None
+    letzte_kennung = None
     for it in range(1, max_iter + 1):
         Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
+        kennung = cs.zustandskennung() if ABSCHLUSS_INGENIEUR else None
         try:
             u, lam = loesen()
         except RuntimeError as ex:
@@ -6393,6 +6521,65 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # sprang um den Faktor 1e5, und die naechste Loesung riss 277
         # Bedingungen um (H 58 -> 370, 349 Kegelverstoesse, Guetemass 2e4);
         # 9 von 18 Laeufen endeten am Deckel, 9,4 h Rechenzeit.
+        # Abschluss nach dem Ingenieurkriterium: nur in Phase 2 - Phase 1 rechnet
+        # gleitende Knoten mit der groben Reststeifigkeit, ihr Ergebnis ist nicht
+        # das Ergebnis (am Drehlager aenderte Phase 2 danach sigma_v noch um bis
+        # zu rund 230 N/mm2) -, und nur wenn die Aktivmenge pendelt
+        # (sie hat sich geaendert und ist zu einem schon geloesten Zustand
+        # zurueckgekehrt - Setz- und Richtungsrunden ohne Wechsel zaehlen nicht)
+        # oder Gleitrichtungen pendeln - nur im kalten Lauf: ein warm gestarteter
+        # prueft nach dem Ende seine Gleitrichtungen gegen den Startzustand
+        # (warmstart_verstoesse) und setzte nach einem frueheren Abschluss nur
+        # fort (tests/test_kontaktzustand, LF3 nach LF2: 11 statt hoechstens 8
+        # Schritte); nicht in abgekuerzten Laeufen und Probelaeufen
+        wie_runde = (kennungen.get(kennung) if kennung is not None and kennung != letzte_kennung
+                     else None)
+        richtungen = cs.richtungen_pendeln() if (ABSCHLUSS_INGENIEUR and cs.phase == 2) else 0
+        if (ABSCHLUSS_INGENIEUR and u_vor is not None and not kurz and not probelauf
+                and not warm and cs.phase == 2 and (wie_runde is not None or richtungen)):
+            ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
+                                             abschluss_merker)
+            if ingenieur is not None:
+                von = wie_runde if wie_runde is not None else max(1, it - 2)
+                ids = set()
+                for r in range(von, it):
+                    ids |= wechsel_je_runde.get(r, set())
+                # dazu Gleitende, deren Richtung mindestens zweimal in Folge umkehrte
+                # (eine einzelne Drehung ist kein Pendeln: am Drehlager nannte die
+                # Liste sonst 86 Knoten mit 0,003 um Aenderung)
+                ids |= {i for i, c in enumerate(cs.cons)
+                        if c.active and c.slip and getattr(c, "umkehr", 0) >= UMKEHR_RUNDEN_PENDEL}
+                zeilen, f_pend, w_pend = _pendel_zeilen(model, cs, ids, u, u_vor)
+                ingenieur.update({"runde": it, "wie_runde": wie_runde, "pendelnd": len(ids),
+                                  "reibkraft_max": f_pend, "weg_max": w_pend,
+                                  "richtungen_pendeln": int(richtungen)})
+                grund_text = (f"die Aktivmenge pendelt (Zustand wie in Runde {wie_runde})"
+                              if wie_runde is not None else
+                              f"{richtungen} Gleitrichtungen pendeln")
+                text = (f"Kontakt: Abschluss nach dem Ingenieurkriterium in Runde {it} - {grund_text}; "
+                        f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
+                        f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm), "
+                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}")
+                log.append(text)
+                _melde(progress, text)
+                # Vernachlaessigbar ist, was das Gleichgewicht nicht merklich stoert:
+                # die groesste pendelnde Reibkraft unter ABSCHLUSS_GLEICHGEWICHT der Last
+                Fsum = float(np.linalg.norm(np.asarray(F[:model.nn * NDOF], float)
+                                            .reshape(-1, NDOF)[:, :3].sum(0)))
+                if f_pend > ABSCHLUSS_GLEICHGEWICHT * Fsum and zeilen:
+                    log.append(f"WARNUNG: im angenommenen Zustand pendeln noch {len(ids)} Kontaktbedingungen "
+                               f"(Reibkraft bis {f_pend / 1e3:.3g} kN, Weg bis {w_pend * 1e6:.3g} µm): "
+                               + "; ".join(zeilen))
+                elif zeilen:
+                    log.append(f"Kontakt: im angenommenen Zustand pendeln noch {len(ids)} Bedingungen, "
+                               "vernachlässigbar: " + "; ".join(zeilen))
+                cs.runde_ohne_update()      # je Kontaktschritt eine Runde im Laufbuch
+                converged = True
+                break
+        if kennung is not None:
+            kennungen.setdefault(kennung, it)
+            letzte_kennung = kennung
+        aktiv_vor = [(c.active, c.slip) for c in cs.cons] if ABSCHLUSS_INGENIEUR else None
         neu_bestimmen = cs.phase == 1 or cs.gruppe_frei is None
         frei_vorher = cs.gruppe_frei
         if neu_bestimmen:
@@ -6412,6 +6599,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             elif frei_nachher != frei_vorher:
                 changed = True
             cs.gruppe_frei = frei_nachher
+        if aktiv_vor is not None:
+            wechsel_je_runde[it] = {i for i, (c, (a0, s0)) in enumerate(zip(cs.cons, aktiv_vor))
+                                    if c.active != a0 or c.slip != s0}
         if cs.schub_halt_loesen():
             # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
@@ -6637,6 +6827,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
         "contact_state": _zustand_markiert(cs, converged or abgekuerzt),
         "contact_frozen_verworfen": eingefroren_verworfen,
+        "contact_ingenieur": ingenieur,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
 
 

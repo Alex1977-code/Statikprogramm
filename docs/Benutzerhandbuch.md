@@ -6207,6 +6207,52 @@ bisher. Ist unter *Berechnung → Einstellungen → Experten* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
+**Pendeln an der Haftgrenze (seit 08.10.2026).** Liegt ein Reibknoten genau
+auf der Grenze zwischen Haften und Gleiten, konnte die Nachprüfung der Reibung
+ihn bis zum 08.10.2026 endlos hin und her schalten. Ein Knoten mit Reibung in
+nur einer Richtung – etwa ein Knoten eines Flächenlagers an der Kante zu einer
+Knagge – glitt in jeder Runde mit umgekehrter Reibkraft ein Stück vor und
+zurück, und zwei Knoten, die die Rechnung gemeinsam ins Gleiten stellte, liefen
+beide rückwärts und hafteten in der nächsten Runde wieder. Am Drehlager mit der
+Stufe Mittel endete so schon der elastische Vorlauf von LF1 nach 64 Runden am
+Deckel der Nachprüfung; weil die gemeldeten Lagerkräfte aus dem letzten, halb
+umgestellten Zustand stammten, stimmte dort auch das Gleichgewicht nur auf
+2·10⁻⁴. Jetzt erkennt die Rechnung solche Knoten. Kehrt die Versuchskraft eines
+gleitenden Knotens mit Reibung in nur einer Richtung zwei Runden hintereinander
+genau um, haftet er: eine Kraft zwischen den beiden Reibrichtungen hält ihn, und
+die nächste Runde prüft wie bei jedem haftenden Knoten, ob sie im Reibkegel liegt.
+Von Knoten, die gleich nach dem Umstellen wieder ins Haften gefallen sind, stellt
+die Rechnung je Runde nur einen ins Gleiten. Die Kontaktbedingung
+selbst bleibt dieselbe: haftende Knoten liegen im Reibkegel, gleitende tragen μ·N
+in Richtung ihres Weges, es gibt keine zusätzliche Feder und keine größere
+Toleranz. Wo nichts pendelt, rechnet das Programm bitgleich wie vorher.
+
+**Abschluss, wenn die Aktivmenge pendelt (seit 08.10.2026).** Bis zum 08.10.2026
+lief ein Kontaktlauf, dessen Aktivmenge zwischen zwei Zuständen hin und her
+sprang, bis zum Deckel der Nachprüfung weiter, auch wenn sich am Ergebnis nichts
+mehr änderte – am Drehlager mit der Stufe Mittel 25 Runden und 45 Minuten lang,
+in denen sich die Vergleichsspannung je Runde um höchstens 0,62 N/mm² und die
+Verschiebungen um 0,32 µm änderten. Jetzt gilt der Lauf auch dann als fertig,
+wenn die Aktivmenge pendelt (sie kehrt nach einem Wechsel zu einem schon
+gerechneten Zustand zurück) oder Gleitrichtungen viermal hintereinander umkehren
+und zugleich zwischen den letzten beiden Runden die Vergleichsspannung der
+Volumenelemente sich nirgends um mehr als 1 N/mm² ändert, sich kein Knoten um
+mehr als ein Tausendstel der größten Verschiebung bewegt, keine geschlossene
+Kontaktbedingung Zug und keine offene eine Durchdringung über der Toleranz
+trägt und die Summe der
+Auflagerkräfte der angenommenen Lösung mit der Summe der Lasten auf 10⁻⁴
+übereinstimmt. Angenommen wird die zuletzt gerechnete Lösung mit ihren eigenen
+Kräften; das Gleichgewicht stimmt dann auf die Genauigkeit des Gleichungslösers.
+Das Protokoll sagt „Kontakt: Abschluss nach dem Ingenieurkriterium in Runde …“
+mit den Änderungen von Spannung und Verschiebung und nennt die Bedingungen, die
+noch pendeln, mit Name, Knoten, Ort, Normal- und Reibkraft und Weg; ist ihre
+Reibkraft größer als ein Zehntausendstel der Last, steht die Zeile als WARNUNG
+da. Das strenge Kriterium bleibt das erste Ziel: wo nichts pendelt, endet der
+Lauf wie bisher. Das Ingenieurkriterium gilt für den ersten Kontaktlauf eines
+Lastfalls, der von der Geometrie aus rechnet (am Drehlager der elastische
+Vorlauf); ein Lauf, der aus einem vorigen Zustand weiterrechnet (Plastizität,
+Folgelastfälle), endet wie bisher.
+
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
 Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines

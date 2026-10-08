@@ -84,6 +84,40 @@ QUER_MATRIX_TOL = 1.0e-2
 QUER_RUNDEN_MAX = 60          # Phase 2: hoechstens so viele Runden nur fuer Richtungen (Schutz)
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
 MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Runden
+#: Pendelschutz der Reibung primal-dual (Befund B4, 08.10.2026). Zwei Regeln, die nur
+#: greifen, wenn ein Knoten tatsaechlich pendelt - wer nicht pendelt, rechnet bitgleich
+#: wie vorher; die Kontaktbedingung selbst bleibt dieselbe (Haften exakt im Kegel,
+#: Gleiten mit mu lam_n laengs w/|w|, keine weitere Toleranz):
+#:
+#: UMKEHR_HAFTET - ein gleitender Knoten mit Reibung in nur einer Richtung (etwa ein
+#: Lagerknoten mit einer Tangentialzeile, die andere Ebenenrichtung ist die Normale einer
+#: Knagge), dessen Versuchskraft UMKEHR_RUNDEN Runden hintereinander genau gegen seine
+#: Gleitrichtung zeigt (w/|w| = -d), haftet: er lief unter +mu lam_n d rueckwaerts und in
+#: der Runde davor unter -mu lam_n d ebenso, zwischen beiden Reibkraeften liegt also eine,
+#: die ihn haelt, und eine Gleitrichtung bleibt ihm nicht. Die naechste Runde prueft die
+#: Reaktion gegen den Kegel wie bei jedem Haften. Am Drehlager (Mittel, LF1) kehrten so
+#: drei Knoten des Flaechenlagers "Starr" (Reibung nur in y) jede Runde um (Weg +-1e-8 bis
+#: +-2e-7 m um die Ausgangslage, |w| das 3- bis 10-fache der Grenze), zwei weitere mit
+#: Reibung in zwei Richtungen um 150 bis 175 Grad - der Zyklus, der die Aktivmenge 28 Runden
+#: lang bis zum Deckel hin und her schob. Verworfen (08.10.2026, gemessen): (1) jeden
+#: zweimal umkehrenden Knoten haften lassen, auch mit Reibung in zwei Richtungen - am
+#: gequetschten Block (tests/test_plastizitaet) pendelt Knoten 12 auf der Symmetrieebene
+#: +-0,69 mm quer (162 Grad) und gleitet laengs 0,094 mm; haftend lag die Rechnung auf dem
+#: Ast der schon am 28.09.2026 verworfenen Regel "wer sich gegen seine Gleitrichtung
+#: bewegt, haftet" (u_max 42,130 / 42,580 mm fuer 1 / 4 Laststufen statt 42,667 mm);
+#: (2) bei nicht genauer Umkehr die Winkelhalbierende von alter und umgekehrter Richtung
+#: als neue Richtung - der Block mit Anschlag (tet10, Kante 0,2 m, Schub 1,6 / 0,3 mu p)
+#: lief damit in einen Zyklus der Periode 3 und an den Deckel, vorher 20 Runden.
+#:
+#: PENDEL_EINZELN - ein Knoten, der gleich in der Runde nach seinem Umstellen ins Gleiten
+#: wieder haftet (oder nach UMKEHR_HAFTET haftet), gilt als pendelnd; von den pendelnden
+#: geht je Runde nur der mit dem staerksten Kegelverstoss ins Gleiten. Am Drehlager stellte
+#: die Liniensuche zwei weit auseinander liegende Knoten (1,6 m) jede Runde gemeinsam um
+#: (GLEIT_ANTEIL_MIN 0,02 von 123 Haftenden sind zwei), beide liefen unter ihrer Reibkraft
+#: rueckwaerts und hafteten in der naechsten Runde wieder.
+UMKEHR_HAFTET = True
+PENDEL_EINZELN = True
+UMKEHR_RUNDEN = 2
 #: Phase 2: so viel von den haftenden Knoten geht je Runde ins Gleiten,
 #: staerkster Verstoss zuerst. Vorher war es genau einer - am Drehlager
 #: also bis zu 40 Runden je Lastfall, jede mit einer Faktorisierung von
@@ -263,6 +297,9 @@ class Constraint:
     quer_dir: Optional[np.ndarray] = None   # Gleitrichtung, mit der k_quer aufgestellt ist
     richtung_start: Optional[np.ndarray] = None   # Gleitrichtung beim Warmstart (zustand_setzen)
     war_gleitend_start: bool = False        # glitt der Knoten im uebernommenen Zustand?
+    umkehr: int = 0                # Phase 2 primal-dual: Runden in Folge mit w . d < 0 (UMKEHR_HAFTET)
+    pendel: int = 0                # wie oft der Knoten zwischen Haften und Gleiten pendelte (PENDEL_EINZELN)
+    gleit_runde: int = -1          # Runde (len(runden)), in der die Liniensuche ihn ins Gleiten stellte
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -1448,6 +1485,9 @@ class ContactSystem:
             c.quer_dir = None
             c.richtung_start = None
             c.war_gleitend_start = False
+            c.umkehr = 0
+            c.pendel = 0
+            c.gleit_runde = -1
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1497,6 +1537,10 @@ class ContactSystem:
                 # gemeinsam und verschachtelt waren nicht mehr bitgleich
                 # (gequetschter Block, max |Δu| 1,2e-9, 27.09.2026)
                 "wieder_zu": np.array([bool(getattr(c, "wieder_zu", False)) for c in self.cons], bool),
+                # Pendelschutz (B4): wer schon gependelt hat, bleibt markiert - ein
+                # fortgesetzter Lauf stellt ihn wie der ununterbrochene einzeln um
+                "umkehr": np.array([int(getattr(c, "umkehr", 0)) for c in self.cons], int),
+                "pendel": np.array([int(getattr(c, "pendel", 0)) for c in self.cons], int),
                 # ebenso die Liniensuche des Oeffnens und Schliessens: ein
                 # fortgesetzter Lauf soll dieselben Umstellungen treffen wie
                 # der ununterbrochene
@@ -1557,6 +1601,9 @@ class ContactSystem:
             # Stand heisst, der Zustand war fremd (warmstart_verstoesse)
             c.richtung_start = None if c.slip_dir is None else np.array(c.slip_dir, float)
             c.war_gleitend_start = bool(c.slip)
+            c.umkehr = int(z["umkehr"][i]) if "umkehr" in z else 0
+            c.pendel = int(z["pendel"][i]) if "pendel" in z else 0
+            c.gleit_runde = -1
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
@@ -1766,6 +1813,94 @@ class ContactSystem:
                 hash(np.array([(-2.0, -2.0) if getattr(c, "quer_dir", None) is None
                                else (float(c.quer_dir[0]), float(c.quer_dir[1]))
                                for c in self.cons], float).tobytes()))
+
+    def zustandskennung(self) -> int:
+        """Phase, Aktivmenge, Haften/Gleiten und Fliessen als ein Hash - ohne
+        Gleitrichtungen und Kraefte. Nimmt die Iteration eine Kennung wieder an,
+        die sie schon einmal geloest hat, pendelt die Aktivmenge
+        (solver.ABSCHLUSS_INGENIEUR, Befund B4)."""
+        a = np.array([(c.active, c.slip, c.yielding) for c in self.cons], bool)
+        return hash((int(self.phase), a.tobytes()))
+
+    def richtungen_pendeln(self, mindestens: int = 4) -> int:
+        """Gleitende Knoten mit einer Reibkraft ueber f_tol, deren Versuchskraft
+        ``mindestens`` Runden hintereinander gegen ihre Gleitrichtung zeigte - die
+        Gleitrichtungen pendeln (Reibung in zwei Richtungen, UMKEHR_HAFTET greift
+        dort nicht). Zwei Umkehrungen kommen auch in Laeufen vor, die danach streng
+        konvergieren; erst vier in Folge zaehlen."""
+        return sum(1 for c in self.cons if c.active and c.slip and c.mu > 0
+                   and getattr(c, "umkehr", 0) >= mindestens
+                   and c.mu * max(c.Fn, 0.0) > getattr(self, "f_tol", 0.0))
+
+    def runde_ohne_update(self) -> None:
+        """Eintrag in self.runden fuer eine Runde, die ohne update() endet
+        (Abschluss nach dem Ingenieurkriterium): keine Ereignisse, sonst die
+        Groessen des Zustands - im Laufbuch steht je Kontaktschritt eine Runde."""
+        runden = getattr(self, "runden", None)
+        if runden is None:
+            runden = self.runden = []
+        haftend = sum(1 for c in self.cons if c.active and c.ct is not None and c.mu > 0 and not c.slip)
+        kraft = float(getattr(self, "kontaktkraft", 0.0))
+        runden.append((int(self.phase),) + (0,) * len(RUNDEN_EREIGNISSE)
+                      + (0, 0, haftend, float(getattr(self, "gleit_anteil", GLEIT_ANTEIL)), 0.0, 0.0,
+                         sum(1 for v in self._full_slip_groups().values() if v), 0,
+                         float(getattr(self, "wechsel_anteil", 1.0)), 0.0,
+                         float(getattr(self, "residuum", 0.0)) / max(kraft, 1e-300), 0))
+
+    def kraefte_der_loesung(self, u: np.ndarray, lam=None) -> None:
+        """Fn und Ft jeder Bedingung so, wie sie in der Loesung ``u`` (mit den
+        Multiplikatoren ``lam``) wirken - ohne einen Zustand umzustellen. Danach
+        sind results(), nodal_forces() und support_reactions() die Kraefte genau
+        dieser Loesung, und die Summe der Auflagerkraefte ist im Gleichgewicht mit
+        der Last (bis auf die Genauigkeit des Gleichungsloesers). Aufzurufen
+        **vor** update(): die Reibkraft gleitender Knoten wurde mit der
+        Normalkraft des Zustands aufgestellt (Fc) und mit der neuen gekoppelt
+        (D_kopplung) - beides steht hier wie in matrices().
+
+        Warum (Befund B4, 08.10.2026): update() setzt nach der letzten Loesung
+        die Kraefte des naechsten Zustands. Endet der Lauf, ohne dass dieser noch
+        geloest wird, gehoeren gemeldete Kraefte und Verschiebungen zu
+        verschiedenen Zustaenden - am Drehlager (Mittel, LF1, Deckel) fehlten so
+        2,1e-4 im Gleichgewicht (+-2 kN in y), obwohl jede Loesung auf 1,2e-7
+        stimmte."""
+        full_slip = self._full_slip_groups()
+        for c in self.cons:
+            ue = u[c.dofs]
+            g = float(c.g0 + c.cn @ ue)
+            c.g = g
+            dt = None if c.ct is None else np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+            if not c.active:
+                c.Fn = 0.0
+                c.Ft = (c.kt * dt if (dt is not None and (c.bindung or getattr(c, "schub_halt", False)))
+                        else np.zeros(2))
+                continue
+            roh = self._normalkraft(c, g, lam)
+            c.zug_roh = roh
+            fn_alt = c.Fn                       # mit ihr steht die Reibkraft in Fc
+            c.Fn = roh if c.zug else max(roh, 0.0)
+            if dt is None or not (c.mu > 0 or c.haften):
+                c.Ft = np.zeros(2)
+            elif not c.slip:
+                c.Ft = (np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
+                        else c.kt * dt)
+            else:
+                fr = c.mu * max(fn_alt, 0.0)
+                Ft = np.zeros(2)
+                if self._gekoppelt(c):
+                    Ft = Ft + c.mu * roh * np.asarray(c.quer_dir, float)                         + fr * (np.asarray(c.slip_dir, float) - np.asarray(c.quer_dir, float))
+                else:
+                    Ft = Ft + fr * np.asarray(c.slip_dir, float)
+                k_res = self._k_res(c, full_slip)
+                fein = k_res < SLIP_STIFFNESS * c.kt
+                ausgl = (AUSGLEICH_RESTSTEIFIGKEIT and c.dt_last is not None
+                         and (fein or (AUSGLEICH_WIEDER_ZU and c.wieder_zu
+                                       and not self._ohne_halt(c, full_slip))))
+                Ft = Ft + k_res * (dt - c.dt_last if ausgl else dt)
+                if c.k_quer > 0.0 and c.quer_dir is not None and self._primal_dual(c):
+                    q = np.array([-c.quer_dir[1], c.quer_dir[0]])
+                    weg = dt - c.dt_last if c.dt_last is not None else dt
+                    Ft = Ft + c.k_quer * float(q @ weg) * q
+                c.Ft = Ft
 
     def endzustand_kennung(self) -> str:
         """Kennung des Kontaktzustands, **prozessfest**: 16 Hexziffern aus
@@ -2353,6 +2488,10 @@ class ContactSystem:
 
     def _update_states(self, u: np.ndarray, lam=None) -> bool:
         changed = False
+        # Nummer dieser Runde (Eintrag in self.runden, der am Ende angehaengt wird):
+        # daran erkennt der Pendelschutz, dass ein Knoten gleich nach dem Umstellen
+        # zurueckfaellt (PENDEL_EINZELN)
+        runde_nr = len(getattr(self, "runden", None) or [])
         verstoesse = []         # Phase 2: (Verhaeltnis, Bedingung, dt) je Verstoss
         guete = 0.0             # Summe der Kegelverstoesse haftender Knoten
         self.dF_slip = 0.0
@@ -2565,6 +2704,10 @@ class ContactSystem:
                     cq = self._c_pd(c)
                     w = c.lam_t + cq * dt
                     nw = float(np.linalg.norm(w))
+                    # Versuchskraft gegen die Gleitrichtung (Drehung ueber 90 Grad);
+                    # eine Reibkraft unter f_tol hat keine Richtung, die zaehlt
+                    gegen = (c.slip_dir is not None and limit > self.f_tol
+                             and float(w @ c.slip_dir) < 0.0)
                     if ruhe:
                         c.Ft = limit * c.slip_dir       # Zustand steht (Residuum)
                     elif limit > 0 and nw < limit * (1 - 1e-6):
@@ -2580,10 +2723,31 @@ class ContactSystem:
                         c.quer_dir, c.k_quer = None, 0.0
                         c.lam_t = w.copy()
                         c.Ft = c.lam_t.copy()
+                        if c.gleit_runde == runde_nr - 1:
+                            c.pendel += 1       # gleich nach dem Umstellen zurueck (PENDEL_EINZELN)
+                        c.umkehr = 0
+                        changed = True
+                        z["haften_zurueck"] += 1
+                        betroffen.add(id(c))
+                    elif (UMKEHR_HAFTET and gegen and c.umkehr + 1 >= UMKEHR_RUNDEN
+                          and float(np.linalg.norm(c.slip_dir + w / nw)) <= 1e-6):
+                        # Pendelschutz (UMKEHR_HAFTET): die Versuchskraft kehrt zum
+                        # wiederholten Mal genau um (Reibung in einer Richtung) - der
+                        # Knoten lief unter beiden Reibrichtungen rueckwaerts, also
+                        # haelt ihn eine Kraft dazwischen: haften. Die naechste Runde
+                        # prueft die Reaktion gegen den Kegel wie bei jedem haftenden.
+                        c.slip = False
+                        c.slip_dir = None
+                        c.quer_dir, c.k_quer = None, 0.0
+                        c.lam_t = limit * w / nw
+                        c.Ft = c.lam_t.copy()
+                        c.umkehr = 0
+                        c.pendel += 1
                         changed = True
                         z["haften_zurueck"] += 1
                         betroffen.add(id(c))
                     else:
+                        c.umkehr = c.umkehr + 1 if gegen else 0
                         # Richtung aus der Versuchskraft (Fixpunkt) mit der Tangente
                         # c mu lam_n/|w| in Kc. Verworfen (28.09.2026): der kondensierte
                         # Newton-Schritt (Querkomponente der alten Reibkraft um
@@ -2712,7 +2876,14 @@ class ContactSystem:
                           if k.active and k.ct is not None and k.mu > 0 and not k.slip)
             wieviele = max(1, int(self.gleit_anteil * haftend))
             verstoesse.sort(key=lambda e: -e[0])
-            for _ratio, c, dt in verstoesse[:wieviele]:
+            auswahl = verstoesse[:wieviele]
+            if PENDEL_EINZELN and sum(1 for v in auswahl if v[1].pendel > 0) > 1:
+                # Pendelschutz: von den Knoten, die schon gependelt haben, nur der
+                # staerkste Verstoss - gemeinsam umgestellt liefen sie am Drehlager
+                # jede Runde rueckwaerts und hafteten wieder
+                erster = next(v for v in auswahl if v[1].pendel > 0)
+                auswahl = [v for v in auswahl if v[1].pendel == 0 or v is erster]
+            for _ratio, c, dt in auswahl:
                 # dt: der Weg - primal-dual die Versuchskraft w (dieselbe Richtung)
                 nrm = np.linalg.norm(dt)
                 c.slip = True
@@ -2724,6 +2895,7 @@ class ContactSystem:
                     c.quer_dir = c.slip_dir.copy()
                     c.k_quer = self._c_pd(c) * limit / nrm if nrm > 0 else 0.0
                     c.lam_t = limit * c.slip_dir
+                c.gleit_runde = runde_nr
                 changed = True
                 z[_gleitart(c.mu * max(c.Fn, 0.0), id(c) in zu_in_runde)] += 1
                 betroffen.add(id(c))
