@@ -1622,6 +1622,12 @@ gleitenden Knotens zwei Runden hintereinander gegen seine Gleitrichtung
 bei Reibung in einer Richtung), haftet er. (2) Ein Knoten, der in der Runde nach seinem
 Umstellen ins Gleiten wieder haftet (oder nach (1) haftet), ist pendelnd; von
 den pendelnden stellt die Liniensuche je Runde nur den stärksten Verstoß um.
+Gemeint ist ein Umstellen im selben Lauf: Ein warm gestarteter Lauf (etwa der
+nächste Kontaktlauf der Plastizität), der einen Knoten gleitend übernimmt und in
+der ersten Runde haften lässt, markiert ihn nicht. Bis zur Nachbesserung am
+08.10.2026 tat er das; am fließenden Reibblock (tests/test_fehler_p8) wurden so
+13 Knoten markiert und einzeln umgestellt, und LF1 brauchte 88 statt 84
+Kontaktrunden, K1 97 statt 90, bei gleichem strengem Abschluss.
 Beides ändert nur den Weg, nicht die Lösungsmenge: die Bedingungen, an denen
 die Iteration endet (Haften im Kegel bis 1 + 10⁻⁶, Gleiten mit μλ_n längs w/|w|,
 Richtungen auf QUER_TOL), sind dieselben.

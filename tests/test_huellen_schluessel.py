@@ -29,6 +29,9 @@ Die Abnahme (vorher festgelegt, R1a bis R1f):
   massgebende Stelle bitgleich mit 6791f9f;
 * R1f - Beispiele frame, truss, hall, gate, contact: Lastfaelle,
   Kombinationen, Umhuellende, EC3 und Ermuedung bitgleich mit 6791f9f.
+  Seit B4 (1854da3, 08.10.2026) traegt der Kontaktzustand eines Ergebnisses
+  zwei Felder mehr, die Pendelmarken (NEU_IM_KONTAKTZUSTAND); sie werden
+  geprueft und fuer den Vergleich abgenommen.
 
 Nachbesserung nach der Gegenpruefung von dc80e1f (04.10.2026, R1g bis R1j):
 
@@ -74,6 +77,16 @@ _FENSTER = {}
 HIER = os.path.dirname(os.path.abspath(__file__))
 REFERENZ = os.path.join(HIER, "daten", "huellen_schluessel_6791f9f")
 _REF = {}
+
+#: Felder, die der Kontaktzustand eines Ergebnisses (Results.kontaktzustand,
+#: contact.ContactSystem.zustand) seit 6791f9f dazubekommen hat: die Pendelmarken
+#: des Pendelschutzes aus B4 (1854da3, 08.10.2026) - Runden in Folge mit
+#: umgekehrter Versuchskraft und wie oft ein Knoten zwischen Haften und Gleiten
+#: pendelte -, damit ein fortgesetzter Lauf pendelnde Knoten wie der
+#: ununterbrochene behandelt. Sie aendern keine Zahl des Ergebnisses; R1f prueft,
+#: dass sie da und im Beispiel ueberall null sind (nichts pendelt), und nimmt sie
+#: fuer den Vergleich mit 6791f9f ab.
+NEU_IM_KONTAKTZUSTAND = ("umkehr", "pendel")
 
 #: Typen, die solve_all in der Umhuellenden GZT (Schluessel ULS) sammelt
 GZT_GRUPPE = ("ULS", "EQU", "ACC", "USER")
@@ -490,6 +503,23 @@ def test_r1e_ermuedung():
 # --------------------------------------------------------------------------
 # R1f - Beispiele bitgleich mit 6791f9f
 # --------------------------------------------------------------------------
+def _pendelmarken_abnehmen(an) -> dict:
+    """{Ergebnis: (Felder da, Zahl der Bedingungen mit Marke)} fuer jedes Ergebnis
+    mit Kontaktzustand; danach stehen im Kontaktzustand nur die Felder von 6791f9f."""
+    aus = {}
+    for teil in ("cases", "combinations", "alternativen"):
+        for n, r in (getattr(an, teil, None) or {}).items():
+            kz = getattr(r, "kontaktzustand", None)
+            if not isinstance(kz, dict):
+                continue
+            da = all(k in kz for k in NEU_IM_KONTAKTZUSTAND)
+            marken = sum(int(np.count_nonzero(np.asarray(kz.get(k, []), int)))
+                         for k in NEU_IM_KONTAKTZUSTAND)
+            aus[f"{teil}/{n}"] = (da, marken)
+            r.kontaktzustand = {k: v for k, v in kz.items() if k not in NEU_IM_KONTAKTZUSTAND}
+    return aus
+
+
 def test_r1f_beispiele():
     from statik3d import solver
     from statik3d.examples_lib import build_example
@@ -497,6 +527,10 @@ def test_r1f_beispiele():
     soll = _json("beispiele.json")
     for b in R["BEISPIELE"]:
         an = solver.solve_all(build_example(b), design=True, fatigue=True)
+        marken = _pendelmarken_abnehmen(an)
+        if b == "contact":
+            check(f"R1f {b}: Kontaktzustand mit den Pendelmarken aus B4, keine Bedingung pendelte",
+                  bool(marken) and all(da and z == 0 for da, z in marken.values()), str(marken))
         ist = R["verdichtet"](R["analyse"](an))
         anders = [f"{teil}/{k}" for teil in soll[b] if isinstance(soll[b][teil], dict)
                   for k in set(soll[b][teil]) | set(ist.get(teil) or {})

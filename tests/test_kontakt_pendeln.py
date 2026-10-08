@@ -27,7 +27,13 @@ Was hier belegt wird - jede Behauptung mit einer Zahl:
    gemeldete Reibkraft kann also um bis zu QUER_TOL mal mu N (hier 500 N bei
    5 MN) neben der Kraft der letzten Loesung liegen.
 3. Wo nichts pendelt, rechnet der Schutz bitgleich wie ohne ihn (Block mit
-   Reibung aus den Beispielen, Block mit Anschlag).
+   Reibung aus den Beispielen, Block mit Anschlag) - auch in warm gestarteten
+   Laeufen: am fliessenden Reibblock (Plastizitaet mit Kontakt, wie
+   tests.test_fehler_p8) starten die Kontaktlaeufe aus dem vorigen Zustand.
+   Bis zur Nachbesserung vom 08.10.2026 galt dort jeder gleitend uebernommene
+   Knoten, der in der ersten Runde haftete, als pendelnd (gleit_runde -1 traf
+   runde_nr - 1); 13 Knoten wurden markiert und einzeln umgestellt, LF1 brauchte
+   88 statt 84 Kontaktrunden, K1 97 statt 90.
 4. Abschluss nach dem Ingenieurkriterium (solver.ABSCHLUSS_INGENIEUR): pendelt
    etwas, ist der Lauf fertig, wenn sich Vergleichsspannung und Verschiebungen
    zwischen zwei Runden kaum noch aendern und die Loesung im Gleichgewicht ist.
@@ -218,6 +224,42 @@ def test_ohne_pendeln_bitgleich():
               f"max |du| {du:.1e} m, max |dR| {dR:.1e} N, Runden {r1.info.get('contact_iterations')}")
 
 
+def fliessender_reibblock():
+    """Block mit Reibung, Streckgrenze auf 60 % der elastischen Vergleichsspannung,
+    dazu K1 = 1,35 LF1 - wie tests.test_fehler_p8._modell mit der Vorgabe
+    „verschachtelt“: die Kontaktlaeufe der Plastizitaet starten warm."""
+    from statik3d import plastizitaet as pl
+    m0 = block_friction_example()
+    r0 = solver.solve_static(m0)
+    q0 = max(pl.vergleichsspannung(np.asarray(v, float)) for i, v in r0.solid_res.items()
+             if m0.elements[i].mat == "S235")
+    m = block_friction_example()
+    m.materials["S235"].fy = 0.6 * q0
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2, iterationen=40,
+                                     toleranz=1e-4, kontakt="verschachtelt")
+    m.add_combination("K1", {next(iter(m.load_cases)): 1.35}, "ULS")
+    return m
+
+
+def test_warmstart_ohne_pendeln():
+    print("\n--- Warm gestartete Laeufe: gleitend uebernommen und gleich haftend ist kein Pendeln ---")
+    erg = {}
+    for an in (False, True):
+        with schutz(an):
+            erg[an] = solver.solve_all(fliessender_reibblock()).all_results()
+    for n in ("LF1", "K1"):
+        r0, r1 = erg[False][n], erg[True][n]
+        du = float(np.max(np.abs(np.asarray(r1.u) - np.asarray(r0.u))))
+        dR = float(np.max(np.abs(np.asarray(r1.reactions) - np.asarray(r0.reactions))))
+        it0, it1 = r0.info.get("contact_iterations"), r1.info.get("contact_iterations")
+        pz = r1.info.get("plastizitaet") or {}
+        marken = int(np.count_nonzero(np.asarray((r1.kontaktzustand or {}).get("pendel", []), int)))
+        check(f"Fliessender Reibblock {n} (Plastizitaet, warm gestartet): wie ohne Schutz",
+              du == 0.0 and dR == 0.0 and it1 == it0 and pz.get("konvergiert") is True,
+              f"max |du| {du:.1e} m, max |dR| {dR:.1e} N, Kontaktrunden {it1} (ohne Schutz {it0}), "
+              f"Pendelmarken {marken}")
+
+
 def test_ingenieurkriterium():
     print("\n--- Abschluss nach dem Ingenieurkriterium, wenn etwas pendelt ---")
     alt = (solver.ABSCHLUSS_SPANNUNG, solver.ABSCHLUSS_WEG_ANTEIL, solver.ABSCHLUSS_GLEICHGEWICHT)
@@ -249,7 +291,8 @@ def test_ingenieurkriterium():
 
 
 def main() -> int:
-    for t in (test_pendeln_an_der_haftgrenze, test_ohne_pendeln_bitgleich, test_ingenieurkriterium):
+    for t in (test_pendeln_an_der_haftgrenze, test_ohne_pendeln_bitgleich, test_warmstart_ohne_pendeln,
+              test_ingenieurkriterium):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

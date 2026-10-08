@@ -2723,7 +2723,12 @@ class ContactSystem:
                         c.quer_dir, c.k_quer = None, 0.0
                         c.lam_t = w.copy()
                         c.Ft = c.lam_t.copy()
-                        if c.gleit_runde == runde_nr - 1:
+                        # gleit_runde -1 heisst: in diesem Lauf nicht umgestellt. Ohne den
+                        # Waechter traf -1 == runde_nr - 1 in der ersten Runde jedes warm
+                        # gestarteten Laufs - jeder dort gleitend uebernommene Knoten, der
+                        # gleich haftete, galt als pendelnd (fliessender Reibblock,
+                        # tests/test_fehler_p8: 13 Knoten, 84 -> 88 Kontaktrunden, 08.10.2026)
+                        if 0 <= c.gleit_runde == runde_nr - 1:
                             c.pendel += 1       # gleich nach dem Umstellen zurueck (PENDEL_EINZELN)
                         c.umkehr = 0
                         changed = True
