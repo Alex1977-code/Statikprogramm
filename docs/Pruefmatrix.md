@@ -1,5 +1,11 @@
 # Prüfmatrix: rechnet das Programm in jeder Elementstufe richtig?
 
+**Stand 08.10.2026 (Paket Q3):** Kontakt, Fugen und Flächenlager rechnen auch an tet10, hex20 und
+pent15; in der Matrix gibt es „gesperrt“ nur noch für quadratische Schalen, und die Fälle F1, F2, K8
+und S1 sind neu. Der Nachtrag 08.10.2026 am Ende dieses Dokuments hat die aktuellen Zahlen. Die
+Abschnitte davor beschreiben den Stand vom 25.09.2026 und sind nur dort überholt, wo der Nachtrag es
+sagt.
+
 Stand 25.09.2026, gerechnet auf `main` 562dc3a (Zweig `pruefmatrix-2509`), einkernig
 (`MKL_NUM_THREADS=1`, Löser mit `workers=1`). Jede Zahl in diesem Dokument ist am 25.09.2026
 gemessen. Die Tabellen am Ende schreibt das Skript selbst. Es lief mit dem endgültigen Stand
@@ -84,7 +90,9 @@ deren Kräfte allein aus Gleichgewicht und Reibgesetz folgen (K4, K5). Dort ist 
   die beiden Klötze auf der Unterlage, und es geht dabei keine Last ins Nichts. Die Bemerkung
   nennt solche Einträge.
 * **gesperrt**: Kontakt an quadratischen Seiten. Diese Rechnung sperrt `fugen.QuadratischeSeiten`,
-  denn den Kontakt für tet10 und hex20 baut die Löser-Sitzung.
+  denn den Kontakt für tet10 und hex20 baut die Löser-Sitzung. (Stand 25.09.2026. Seit dem
+  08.10.2026 gilt das nur noch für quadratische **Schalen** und ist dort das erwartete Ergebnis, Fall
+  S1; für Volumenelemente ist eine solche Sperre rot. Siehe Nachtrag 08.10.2026.)
 
 ## Ergebnis in Kürze
 
@@ -314,7 +322,8 @@ genau 625 / 1250 / 2500 cm², K6 tet4 und hex8 grün; Rücknahmeprobe in
 
 ## Gesperrte Zellen
 
-Alle Kontaktzellen der Stufen Mittel und Fein sind gesperrt: K1 bis K7, KP1 und KP2, je tet10
+(Stand 25.09.2026; seit dem 08.10.2026 rechnen alle diese Zellen, siehe Nachtrag am Ende.)
+Alle Kontaktzellen der Stufen Mittel und Fein waren gesperrt: K1 bis K7, KP1 und KP2, je tet10
 und hex20, zusammen 36 Rechnungen. Die Sperre greift für die Kontaktbedingung (Spaltelemente)
 genauso wie für das Kontaktpaar, auch für hex20. Sobald die Löser-Sitzung den tet10-Kontakt
 liefert, rechnet `python -m tests.pruefmatrix --fall K1 K2 K3 K4 K5 K6 K7 KP1 KP2` diese Zellen
@@ -364,7 +373,7 @@ Drehlager-Kontrolllauf der Löser-Sitzung.
 | hex20 sperrt bei ν → 0,5 (gelb) | P2 Mittel/Fein hex20 | Element-Sitzung |
 | tet4 plastisch auf der weichen Seite (gelb) | P2 tet4 | Element-Sitzung |
 | Körperzeilen an gemeinsamer Fläche (gelb) | L3 hex8 | zur Kenntnis |
-| Kontakt an quadratischen Seiten (gesperrt) | alle Kontaktzellen Mittel/Fein | Löser-Sitzung (Auftrag) |
+| Kontakt an quadratischen Seiten (gesperrt) | alle Kontaktzellen Mittel/Fein | Löser-Sitzung (Auftrag) — **behoben 08.10.2026** (Q1 bis Q3, Nachtrag am Ende; gesperrt bleiben quadratische Schalen) |
 | abgebildeter Pfad ohne Kantenlänge | Stufe Fein bei Sechsflächnern | Vernetzer (Fable) |
 
 Einen Fehler der Matrix selbst (K2) haben wir gefunden und korrigiert. Nach der Korrektur hängt
@@ -643,3 +652,349 @@ Bleibt rot, gemessen, offen:
   auf die Master-Knoten; für ungleiche Netze ist das nicht die konsistente Knotenlast eines
   gleichmäßigen Drucks — Mortar-Übertragung fehlt. Nicht nachgestellt; betrifft jede Fuge des
   Drehlagers mit ungleichen Netzen.
+
+## Nachtrag 08.10.2026, Stand `kontakt/q3` (Paket Q3 des Bauplans Kontakt quadratisch)
+
+Der Bauplan vom 07.10.2026 (`PLAN-KONTAKT-QUADRATISCH-2026-10-07.md`) lässt Kontakt, Fugen und
+Flächenlager an tet10, hex20 und pent15 rechnen. Paket Q1 bindet dazu die Seitenmitten jeder
+Kontaktseite exakt an ihre Ecken (u_m = (u_a + u_b)/2), Paket Q2 trennt an einer getrennten Fuge
+auch die Mitten. Paket Q3 bringt diese Prüfmatrix auf den neuen Stand. Gerechnet ist sie auf
+`kontakt/q3` über `kontakt/q1` (8bb32a7, enthält Q2 cc4dc5c), einkernig, in 3,6 min; kein einziger
+Fall ist rot. Die Abschnitte oben beschreiben den Stand vom 25.09.2026 und sind nur dort überholt,
+wo dieser Nachtrag es sagt, vor allem bei „gesperrt“.
+
+```
+python -m tests.pruefmatrix --md tabellen.md --json ergebnis.json   # alles, wie bisher
+python -m tests.pruefmatrix --fall K8 F1 F2 S1                      # die neuen Fälle
+python -m tests.pruefmatrix --gegenprobe                            # dazu die Kontrolläufe von Q3
+python -m tests.test_pruefmatrix_q3                                 # die Suite in tests.run_all
+```
+
+### Was sich in der Matrix geändert hat
+
+* **„gesperrt“ gibt es für Volumenelemente nicht mehr.** Die Matrix fängt `fugen.QuadratischeSeiten`
+  weiter ab. Für quadratische **Schalen** (shell6, shell8) ist die Sperre aber das erwartete Ergebnis
+  (Entscheidung E3 des Bauplans); ein Volumenfall, den die Sperre trifft, ist jetzt rot.
+* **Die Deckel von K2 und K7 sind Flächenlager mit der Bettung k/A.** Bis zum 07.10.2026 waren es
+  Knotenfedern nach konsistenten Anteilen. Diese Anteile sind an tri6-Ecken null und an quad8-Ecken
+  negativ (−1/12 der Seitenfläche), und `supports._entry` verwirft Federn mit k ≤ 0. K7 hex20 bekam
+  deshalb die 1,333-fache Federsteifigkeit, K2 ließ einen Würfel bei +1221 (tet10) bzw. +90 N/mm²
+  (hex20) stehen. Das waren Fehler der Matrix, nicht des Kontakts. Das Flächenlager gibt jeder Ecke A/ne
+  (wie `supports.tributary_areas`), die Mitten sind gebunden; damit prüft die Matrix zugleich das
+  Flächenlager an quadratischen Seiten. Die Knotenfedern bleiben in `FugeDruck.lagerung` für den
+  Q2-Test in `tests/test_fugen.py` erreichbar (`als_flaechenlager=False`).
+* **Neu F1: Flächenlager „starr mit Ausfall bei Zug“, außermittiger Druck.** Ein Block 1 × 1 × 2 m
+  steht auf dem Lager des Drehlagers (Bettung 2,5e11 N/m³, gilt als starr mit Ausfall). Auf dem Deckel
+  liegt eine lineare Randspannung mit der Resultierenden N = 200.000 kN und der Ausmitte e = L/12.
+  Die Handrechnung N/A ± M/W gibt 300 und 100 N/mm² an den Rändern der Sohle; geprüft werden σ_v an
+  jedem Eckknoten (1 N/mm²), die Auflagerkraft (1 %), das Moment der Auflagerkräfte (1 %) und dass
+  kein Knoten der Sohle ausfällt. Die Sohle ist seitlich frei, nur die Starrkörperbewegung in der Ebene
+  ist an zwei Eckknoten gehalten. **Die Querdehnzahl ist in diesem Fall null.** Mit ν = 0,3 wandert die
+  Sohle in x quadratisch (u_x ∝ ν x²), und die gebundene Seitenmitte der Kontaktseite ist linear: der
+  Zustand liegt dann nicht im Verschiebungsraum der gebundenen Seite. Gemessen: tet10 Mittel −19,53,
+  hex20 Mittel +9,99, tet10 Fein −9,16, hex20 Fein +4,48 N/mm², also erste Ordnung in h. Das ist die
+  Grenze des Wegs (Entscheidung E1: linear an der Fläche, quadratisch im Inneren), kein Kontaktfehler.
+  Mit ν = 0 ist der Zustand für tet10 und hex20 exakt (0,00 N/mm²), für tet4 und hex8 nicht (tet4
+  Entwurf −77,35 N/mm², gelb; hex8 grün).
+* **Neu F2: dasselbe Lager hebt ab.** Dieselbe Sohle, auf dem Deckel eine gleichmäßige Zugspannung von
+  100 N/mm², gehalten von einem Flächenlager auf dem Deckel. Die Sohle darf keinen Zug tragen: ihre Kraft
+  ist null, jeder Knoten ist offen, der Block ist spannungsfrei, die Federn tragen F. Ohne diesen Fall
+  käme der Ausfall bei Zug in der Matrix nicht vor, denn F1 bleibt überall im Druck.
+* **Neu K8: Rohrbolzen in Bohrung mit Übermaß (Lamé).** Der gekrümmte Kontakt der Matrix. Halbmodell
+  (Symmetrie in y), ebene Dehnung, Bolzen a = 100 mm außen und a/2 innen in einer Nabe bis 2 a, Dicke
+  20 mm, deckungsgleiche Knoten an der Fuge, das Übermaß am Durchmesser (die Fuge wird als zylindrisch
+  erkannt und halbiert es, geprüft). Die Pressung ist so gewählt, dass σ_v der Nabe an der Bohrung
+  355 N/mm² erreicht. Geprüft werden σ_v an vier Rändern, u_r von Bolzen und Nabe und die Kontaktkraft
+  in y (2 p a t). Ein **Vollbolzen** war gebaut und ist verworfen: Die Abbildung Quadrat auf Kreis macht
+  an den Ecken des Gitters Zellen mit einem Winkel nahe 180° und Tetraeder mit vier Ecken auf dem
+  Kreis; die Elementspannung des tet10 blieb dort bei +24,80 (Mittel) und +20,82 N/mm² (Fein) stehen
+  und konvergierte nicht, während u_r und die Kontaktkraft stimmten. Der Rohrbolzen ist ein Ring wie
+  die Nabe; damit konvergieren alle Größen.
+* **Neu S1: Schale auf Flächenlager.** Mit shell4 (Entwurf) rechnet das Lager (Auflagerkraft q A,
+  −0,00 %), mit shell8 (Mittel, Fein) bricht die Rechnung laut ab. Die Zelle heißt dann „gesperrt“ und
+  gilt als bestanden; läuft sie durch, ist sie rot („Sperre fehlt“).
+* **Orientierung der Master-Facetten.** `facetten_von` richtet jetzt jede Eckseite nach außen. Die
+  Eckseiten der Tetraeder in `solid.FLAECHEN_ECKEN` laufen nicht einheitlich nach außen (die Seiten
+  (0,1,2) und (0,2,3) zeigen nach innen), eine explizite Master-Facette wird aber nach dem Umlauf ihrer
+  Knoten gerichtet (`contact._build_pair`). An der ebenen Fuge von K4 bis K7 blieb das ohne Folgen, an
+  der Bohrung von K8 kehrte sich mit tet4 die Kontaktkraft um (u_r Bolzen −203 %). K4, K5 und K7 sind
+  nach der Änderung unverändert grün. Im Programm gibt es das Problem nicht, denn `fugen.py` richtet
+  die Facetten über `_nach_normale`.
+
+### K8: Eichung der Grenzen am Entwurf
+
+Wege und Kräfte gelten wie in der ganzen Matrix 1 %. Für die Spannungen erreicht der Entwurf 1 N/mm²
+an der gekrümmten Fuge nicht (Glättung an Fuge und freiem Rand). Die Grenze ist deshalb der größte
+Fehler von tet4 und hex8 am Entwurf, auf 5 N/mm² aufgerundet; Mittel und Fein dürfen nicht schlechter
+sein als Entwurf (Abnahme Abschnitt 4 des Bauplans). Tetraeder und Sechsflächner am Entwurf, gemessen
+am 08.10.2026:
+
+| Größe | tet4 Entwurf | hex8 Entwurf | Grenze |
+|---|---|---|---|
+| σ_v Bolzen außen (an der Fuge) | +24,28 N/mm² | +1,82 N/mm² | 25 N/mm² |
+| σ_v Bolzen innen (freier Rand) | −133,14 N/mm² | −41,13 N/mm² | 135 N/mm² |
+| σ_v Nabe an der Bohrung | −79,55 N/mm² | −26,92 N/mm² | 80 N/mm² |
+| σ_v Nabe außen | +13,91 N/mm² | +3,54 N/mm² | 15 N/mm² |
+| u_r Bolzen | −0,29 % | −0,21 % | 1 % |
+| u_r Nabe | +0,33 % | +0,22 % | 1 % |
+| Kontaktkraft | +3,93 % | +0,99 % | 1 % |
+
+tet4 liegt damit bei der Kontaktkraft über 1 % (gelb, wie überall zu steif), hex8 knapp darunter. Mittel
+und Fein halten alle Grenzen. Die Spannungen und die Kontaktkraft werden von Entwurf über Mittel zu Fein
+kleiner; die Spannung der Nabe an der Bohrung geht beim hex20 von −26,92 (hex8) über +3,99 auf
++2,69 N/mm² zurück, beim tet10 von −79,55 (tet4) über −9,53 auf +3,92 N/mm². Nur die Wege u_r wechseln
+das Vorzeichen (Bolzen: tet −0,29 / +0,58 / +0,14 %, hex −0,21 / +0,54 / +0,13 %), bleiben aber unter
+0,6 %.
+
+### Ergebnis
+
+| Rechenart | Entwurf | Mittel | Fein |
+|---|---|---|---|
+| linear | 1 grün, 5 gelb | 3 grün, 3 gelb | 4 grün, 2 gelb |
+| Kontakt | 19 grün, 2 gelb | 20 grün, 1 gesperrt | 20 grün, 1 gesperrt |
+| Plastizität | 2 grün, 2 gelb | 2 grün, 2 gelb | 2 grün, 2 gelb |
+| Kontakt + Plastizität | 4 grün | 4 grün | 4 grün |
+
+Rot ist keine Zelle. Gesperrt ist je Stufe eine Zelle: S1 mit shell8, wie gewollt. Gelb im Kontakt sind
+am Entwurf F1 tet4 (Biegung, ν = 0, Diskretisierung) und K8 tet4 (Kontaktkraft +3,93 %). Alle Zellen der
+Fälle K1 bis K8, F1, F2, KP1 und KP2 in den Stufen Mittel und Fein sind grün, mit tet10 wie mit hex20.
+Die Fälle L1 bis L3 und P1, P2 sind nicht angefasst; ihre Zellen stehen in den Tabellen des Laufs
+(`tabellen.md`, hier nur die Kontaktfälle wiedergegeben).
+
+### Kontrolläufe (`--gegenprobe`)
+
+Jede neue Prüfung läuft einmal ohne das Geprüfte und muss dann scheitern. „Ohne Bindung“ setzt
+`assemble.KONTAKTSEITEN_BINDEN = False` (der Schalter von Q1), Stufe Mittel; tet10 / hex20:
+
+| Kontrolllauf | Befund | erwartet | erfüllt |
+|---|---|---|---|
+| K3 ohne Bindung | rot: σ_v +903,74 / +671,33 N/mm², Auflager −23,92 / −25,08 % | rot | ja |
+| K6 ohne Bindung | rot: σ_v +349,62 / +313,91 N/mm², u_oben +31,40 / +33,87 % | rot | ja |
+| K2 ohne Bindung | rot: σ_v Element +762,89 / +387,76 N/mm² | rot | ja |
+| K7 ohne Bindung | rot: σ_v +294,19 / +228,10 N/mm², Federn +9,33 / +10,00 % | rot | ja |
+| F1 ohne Bindung | rot: σ_v +867,57 / +750,04 N/mm² | rot | ja |
+| F2 ohne Bindung | rot: σ_v Element +488,47 / +424,70 N/mm² | rot | ja |
+| K8 ohne Bindung | gelb: σ_v Nabe an der Bohrung +526,63 / +213,07 N/mm² (Grenze 80), u_r Nabe +8,40 / +3,23 % | nicht grün | ja |
+| K2 mit Knotenfedern (Aufbau bis 07.10.2026) | rot: σ_v Element +1221,36 (tet10) / +90,18 N/mm² (hex20) | rot | ja |
+| K7 mit Knotenfedern, hex20 | rot: Federn +29,29 %, σ_v −16,47 N/mm², Fuge −6,35 % | rot | ja |
+| F2 ohne Ausfall bei Zug, hex20 | rot: Sohle −42,51 %, σ_v Element +42,51 N/mm² | rot | ja |
+| S1 ohne Sperre für Schalen, hex20 | rot: „Sperre fehlt“, die Rechnung lief durch | rot | ja |
+
+K7 tet10 mit Knotenfedern war schon am 07.10.2026 grün (die Eckanteile einer tri6-Seite sind null, nicht
+negativ, und die Mitten tragen die ganze Last) und steht darum nicht in der Tabelle. K8 ohne Bindung ist
+gelb statt rot, weil K8 kein exakter Fall ist; der Fehler liegt aber bei dem Vielfachen der Grenze. Auf
+dem Stand von Q1 ohne diese Änderung der Matrix scheitert die neue Suite mit 21 von 24 Prüfungen, und
+K2 tet10 steht dort bei +1221,36, K2 hex20 bei +90,18 und K7 hex20 bei Federn +29,29 %.
+
+### Nicht gemacht, offen
+
+* Der Hertz-Fall aus der Sicherung vom 01.10.2026 ist nicht dabei: Er liegt in diesem Zweig nicht vor
+  und läuft darum nicht „unverändert“.
+* F1 prüft keine Pressung mit Abheben: Eine Ausmitte jenseits des Kerns hat keine geschlossene Lösung
+  für den elastischen Block. Das Abheben prüft F2 mit exaktem Soll.
+* K8 prüft keine ungleichen Netze an der gekrümmten Fuge (das tut K6 an der ebenen) und keine Reibung.
+
+### Tabellen des Laufs vom 08.10.2026
+
+| Rechenart | Entwurf | Mittel | Fein |
+|---|---|---|---|
+| linear | 1 grün, 5 gelb | 3 grün, 3 gelb | 4 grün, 2 gelb |
+| Kontakt | 19 grün, 2 gelb | 20 grün, 1 gesperrt | 20 grün, 1 gesperrt |
+| Plastizität | 2 grün, 2 gelb | 2 grün, 2 gelb | 2 grün, 2 gelb |
+| Kontakt + Plastizität | 4 grün | 4 grün | 4 grün |
+
+Je Fall und Stufe (Tetraeder · Sechsflächner):
+
+| Fall | Rechenart | Entwurf | Mittel | Fein |
+|---|---|---|---|---|
+| L1 Kragarm aus einem Körper, σ_v an der Oberkante bei L/2 (Saint-Venant) | linear | tet4 gelb · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| L2 Lamé-Rohr unter Innendruck, ebene Dehnung (ν = 0,3) | linear | tet4 gelb · hex8 gelb | tet10 gelb · hex20 gelb | tet10 gelb · hex20 gelb |
+| L3 Kragarm aus zwei Körpern (gemeinsame Fläche bei L/2), σ_v wie L1 | linear | tet4 gelb · hex8 gelb | tet10 gelb · hex20 grün | tet10 grün · hex20 grün |
+| K1 Fuge ohne Zug, Druck geht durch (zwei Würfel, passende Netze) | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K2 Fuge ohne Zug, Zug öffnet (zwei Würfel, Deckel als Flächenlager mit Bettung) | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K3 Presspassung, ebene Fuge (Kontaktpaar mit Übermaß) | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K4 Fuge mit Reibung μ 0,3: Klotz A haftet, Klotz B gleitet gegen Federn (ein Kontaktpaar) | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K5 Fuge mit Reibung μ 0,3: ein Klotz gleitet ganz, der Rest geht in Federn | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K6 Kontaktpaar mit ungleichen Netzen (oben 1,5-mal feiner als unten), Druck geht durch | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K7 Anfangsspalt g = 1 mm schließt sich unter Last (Kontaktpaar, Deckel als Flächenlager) | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| F1 Flächenlager „starr mit Ausfall bei Zug“, außermittiger Druck (Trapez nach N/A ± M/W) | Kontakt | tet4 gelb · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| F2 Flächenlager „starr mit Ausfall bei Zug“ hebt ab (Zug am Deckel, Deckel in Flächenlager gehalten) | Kontakt | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| K8 Rohrbolzen in Bohrung mit Übermaß (Lamé, ebene Dehnung, Halbmodell mit gekrümmter Fuge) | Kontakt | tet4 gelb · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| S1 Schale auf Flächenlager (starr mit Ausfall bei Zug): quadratische Schalen bleiben gesperrt | Kontakt | hex8 grün | hex20 gesperrt | hex20 gesperrt |
+| P1 Druckstab einachsig, bilinear verfestigend (fy 235, E_t/E 5 %) | Plastizität | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| P2 Rohr unter Innendruck nach Hill, ideal plastisch (ν = 0,4999) | Plastizität | tet4 gelb · hex8 gelb | tet10 gelb · hex20 gelb | tet10 gelb · hex20 gelb |
+| KP1 Fuge ohne Zug unter Druck, beide Würfel fließen (fy 235, E_t/E 5 %) | Kontakt + Plastizität | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+| KP2 Presspassung, ebene Fuge, Übermaß bis ins Fließen (fy 235, E_t/E 5 %) | Kontakt + Plastizität | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
+
+#### K1 Fuge ohne Zug, Druck geht durch (zwei Würfel, passende Netze)
+
+Soll: σ_zz = −p = −100 N/mm² überall, u_oben = −p L/E (L = 2 m); Auflager = p A. Grenze: 1 N/mm² an jedem Knoten, u 1 %, Auflager 1 %. Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager +0,00 % | ja | – | 0 | 1.257 | 0,8 | 24 Spaltelemente |
+| Entwurf | hex8 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben 0,00 %; Auflager 0,00 % | ja | – | 0 | 162 | 0,0 | 9 Spaltelemente |
+| Mittel | tet10 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager -0,00 % | ja | – | 0 | 8.742 | 0,9 | 24 Spaltelemente |
+| Mittel | hex20 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager -0,00 % | ja | – | 0 | 486 | 0,1 | 9 Spaltelemente |
+| Fein | tet10 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager -0,00 % | ja | – | 0 | 8.742 | 1,0 | 24 Spaltelemente |
+| Fein | hex20 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager +0,00 % | ja | – | 0 | 2.550 | 0,2 | 25 Spaltelemente |
+
+#### K2 Fuge ohne Zug, Zug öffnet (zwei Würfel, Deckel als Flächenlager mit Bettung)
+
+Soll: Fundament trägt 0 (Zug −100 N/mm² auf dem Deckel), die Last hängt ganz im Flächenlager des Deckels (Bettung k/A, k = 1e11 N/m je Richtung; seit 08.10.2026 statt Knotenfedern). Grenze: Fundamentkraft ≤ 1 % der Last (entspricht 1 N/mm² mittlerer Fugenspannung). Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | Fundament 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm² | ja | – | 0 | 1.257 | 0,6 | 24 Spaltelemente |
+| Entwurf | hex8 | 0,5000 | grün | Fundament 0,00 %; Federn -0,00 %; σ_v Element +0,00 N/mm² | ja | – | 0 | 162 | 0,0 | 9 Spaltelemente |
+| Mittel | tet10 | 0,5000 | grün | Fundament 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm² | ja | – | 0 | 8.742 | 1,2 | 24 Spaltelemente |
+| Mittel | hex20 | 0,5000 | grün | Fundament 0,00 %; Federn -0,00 %; σ_v Element +0,00 N/mm² | ja | – | 0 | 486 | 0,0 | 9 Spaltelemente |
+| Fein | tet10 | 0,2500 | grün | Fundament 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm² | ja | – | 0 | 8.742 | 1,5 | 24 Spaltelemente |
+| Fein | hex20 | 0,2500 | grün | Fundament 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm² | ja | – | 0 | 2.550 | 0,4 | 25 Spaltelemente |
+
+#### K3 Presspassung, ebene Fuge (Kontaktpaar mit Übermaß)
+
+Soll: σ = δ E/(2 L) = 355 N/mm² überall (δ = 3,38 mm), Auflager σ A. Grenze: 1 N/mm² an jedem Knoten, Auflager 1 %. Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element -0,00 N/mm²; Auflager -0,00 % | ja | – | 0 | 162 | 0,1 | 2³ Zellen je Würfel |
+| Entwurf | hex8 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager -0,00 % | ja | – | 0 | 162 | 0,0 | 2³ Zellen je Würfel |
+| Mittel | tet10 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager +0,00 % | ja | – | 0 | 750 | 0,1 | 2³ Zellen je Würfel |
+| Mittel | hex20 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager +0,00 % | ja | – | 0 | 486 | 0,1 | 2³ Zellen je Würfel |
+| Fein | tet10 | 0,2500 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager -0,00 % | ja | – | 0 | 4.374 | 0,3 | 4³ Zellen je Würfel |
+| Fein | hex20 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager +0,00 % | ja | – | 0 | 2.550 | 0,2 | 4³ Zellen je Würfel |
+
+#### K4 Fuge mit Reibung μ 0,3: Klotz A haftet, Klotz B gleitet gegen Federn (ein Kontaktpaar)
+
+Soll: Unterlage 2 × 1 × 1 m, unten eingespannt; darauf die Klötze A und B, je 1 × 1 × 0,25 m, eigene Knoten, beide in **einem** Kontaktpaar, je p = 100 N/mm² Auflast (N = 100.000 kN). A: Schub H_A = 0,5 μN = 15.000 kN, sonst nichts - Reibkraft = H_A, Fugenschlupf nur elastisch (Penalty). B: Schub H_B = 1,5 μN = 45.000 kN, auf dem Deckel Federn k = 1.000 kN/mm in x und y - Reibkraft = μN = 30.000 kN, Federkraft = H_B − μN = 15.000 kN. Weil A haftet und B gleitet, läuft die Reibung in Phase 2 (contact.py). Grenze: Kräfte 1 %; Fugenschlupf von A 1 % seiner Deckelverschiebung; Phase 2 muss im Laufbuch (res.info['laeufe']) stehen, sonst rot. Exakt (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | Reibung A +0,00 %; Schlupf A +0,00 %; Reibung B -0,00 %; Reibung B quer +0,18 %; Feder B -0,00 % | ja | – | 0 | 243 | 0,3 | A: 9 Haften; B: 9 Gleiten; Phase-2-Schritte 9; res.singular: 2 × „hebt ab“ mit Kraft 0 |
+| Entwurf | hex8 | 0,5000 | grün | Reibung A -0,00 %; Schlupf A 0,00 %; Reibung B -0,00 %; Reibung B quer -0,00 %; Feder B +0,00 % | ja | – | 0 | 243 | 0,2 | A: 9 Haften; B: 9 Gleiten; Phase-2-Schritte 9; res.singular: 2 × „hebt ab“ mit Kraft 0 |
+| Mittel | tet10 | 0,5000 | grün | Reibung A +0,00 %; Schlupf A +0,00 %; Reibung B -0,00 %; Reibung B quer +0,02 %; Feder B -0,00 % | ja | – | 0 | 1.125 | 0,3 | A: 9 Haften; B: 9 Gleiten; Phase-2-Schritte 10; res.singular: 2 × „hebt ab“ mit Kraft 0 |
+| Mittel | hex20 | 0,5000 | grün | Reibung A +0,00 %; Schlupf A 0,00 %; Reibung B -0,00 %; Reibung B quer +0,00 %; Feder B -0,00 % | ja | – | 0 | 729 | 0,2 | A: 9 Haften; B: 9 Gleiten; Phase-2-Schritte 8; res.singular: 2 × „hebt ab“ mit Kraft 0 |
+| Fein | tet10 | 0,2500 | grün | Reibung A +0,00 %; Schlupf A +0,00 %; Reibung B -0,00 %; Reibung B quer +0,01 %; Feder B +0,00 % | ja | – | 0 | 5.589 | 2,0 | A: 25 Haften; B: 25 Gleiten; Phase-2-Schritte 17; res.singular: 2 × „hebt ab“ mit Kraft 0 |
+| Fein | hex20 | 0,2500 | grün | Reibung A -0,00 %; Schlupf A +0,00 %; Reibung B -0,00 %; Reibung B quer -0,00 %; Feder B -0,00 % | ja | – | 0 | 3.285 | 1,6 | A: 25 Haften; B: 25 Gleiten; Phase-2-Schritte 12; res.singular: 2 × „hebt ab“ mit Kraft 0 |
+
+#### K5 Fuge mit Reibung μ 0,3: ein Klotz gleitet ganz, der Rest geht in Federn
+
+Soll: Unterlage 1 × 1 × 1 m, darauf nur Klotz B wie in K4 (p = 100 N/mm², H = 1,5 μN, Federn k = 1.000 kN/mm): Reibkraft = μN = 30.000 kN, Federkraft = H − μN = 15.000 kN. Alle Knoten der Gruppe gleiten; für eine ganz gleitende Gruppe nimmt contact.py die grobe Reststeifigkeit 1e-3 k_t (_k_res), gleich ob Phase 1 oder 2. Grenze: Kräfte 1 %. Exakt (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | Reibung B -0,00 %; Reibung B quer +0,30 %; Feder B +0,00 % | ja | – | 0 | 135 | 0,1 | B: 9 Gleiten; Phase-2-Schritte 6 |
+| Entwurf | hex8 | 0,5000 | grün | Reibung B -0,00 %; Reibung B quer -0,00 %; Feder B -0,00 % | ja | – | 0 | 135 | 0,1 | B: 9 Gleiten; Phase-2-Schritte 5 |
+| Mittel | tet10 | 0,5000 | grün | Reibung B -0,00 %; Reibung B quer +0,02 %; Feder B -0,00 % | ja | – | 0 | 600 | 0,2 | B: 9 Gleiten; Phase-2-Schritte 10 |
+| Mittel | hex20 | 0,5000 | grün | Reibung B -0,00 %; Reibung B quer -0,00 %; Feder B -0,00 % | ja | – | 0 | 396 | 0,1 | B: 9 Gleiten; Phase-2-Schritte 8 |
+| Fein | tet10 | 0,2500 | grün | Reibung B -0,00 %; Reibung B quer +0,00 %; Feder B -0,00 % | ja | – | 0 | 2.916 | 0,9 | B: 25 Gleiten; Phase-2-Schritte 11 |
+| Fein | hex20 | 0,2500 | grün | Reibung B -0,00 %; Reibung B quer -0,00 %; Feder B -0,00 % | ja | – | 0 | 1.740 | 0,6 | B: 25 Gleiten; Phase-2-Schritte 10 |
+
+#### K6 Kontaktpaar mit ungleichen Netzen (oben 1,5-mal feiner als unten), Druck geht durch
+
+Soll: zwei Würfel 1 m mit eigenen Knoten, unten Zellweite h, oben 2/3 h (Entwurf 2 × 2 × 2 gegen 3 × 3 × 3), Kontaktpaar ohne Reibung, oben Slave; σ_zz = −p = −100 N/mm², u_oben = −p L/E (L = 2 m), Auflager p A. Grenze: 1 N/mm² an jedem Knoten und Element, u 1 %, Auflager 1 %. Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element -0,00 N/mm²; u_oben -0,00 %; Auflager -0,00 % | ja | – | 0 | 273 | 0,1 |  |
+| Entwurf | hex8 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager -0,00 % | ja | – | 0 | 273 | 0,1 |  |
+| Mittel | tet10 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager +0,00 % | ja | – | 0 | 1.404 | 0,1 |  |
+| Mittel | hex20 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager 0,00 % | ja | – | 0 | 867 | 0,1 |  |
+| Fein | tet10 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager -0,00 % | ja | – | 0 | 8.778 | 0,9 |  |
+| Fein | hex20 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager +0,00 % | ja | – | 0 | 4.950 | 0,7 |  |
+
+#### K7 Anfangsspalt g = 1 mm schließt sich unter Last (Kontaktpaar, Deckel als Flächenlager)
+
+Soll: zwei Würfel 1 m, der obere 1 mm angehoben, auf dem Deckel ein Flächenlager mit Bettung k/A in z (k = 10.000 kN/mm; bis 07.10.2026 Knotenfedern nach Flächenanteil), Last p A = 100.000 kN: F_c = (F − k g)/(1 + 2 k L/(E A)) = 82.174 kN durch die Fuge, u_oben = g + 2 F_c L/(E A) = 1,7826 mm, σ = F_c/A in beiden Würfeln. Zweiter Weg: derselbe Würfel anliegend mit ContactPair.spiel = g. Grenze: 1 N/mm² an jedem Knoten und Element, u 1 %, Kräfte 1 %; beide Wege gleich auf 0,01 %. Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Fuge (Auflager) +0,00 %; Federn -0,00 %; Weg Spiel +0,00 % | ja | – | 0 | 162 | 0,1 | u_oben 1,7826 mm, über spiel 1,7826 mm; Kontakt 2. Weg konv. True |
+| Entwurf | hex8 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Fuge (Auflager) +0,00 %; Federn -0,00 %; Weg Spiel +0,00 % | ja | – | 0 | 162 | 0,1 | u_oben 1,7826 mm, über spiel 1,7826 mm; Kontakt 2. Weg konv. True |
+| Mittel | tet10 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Fuge (Auflager) +0,00 %; Federn -0,00 %; Weg Spiel +0,00 % | ja | – | 0 | 750 | 0,1 | u_oben 1,7826 mm, über spiel 1,7826 mm; Kontakt 2. Weg konv. True |
+| Mittel | hex20 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Fuge (Auflager) +0,00 %; Federn -0,00 %; Weg Spiel +0,00 % | ja | – | 0 | 486 | 0,1 | u_oben 1,7826 mm, über spiel 1,7826 mm; Kontakt 2. Weg konv. True |
+| Fein | tet10 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Fuge (Auflager) +0,00 %; Federn -0,00 %; Weg Spiel +0,00 % | ja | – | 0 | 4.374 | 0,6 | u_oben 1,7826 mm, über spiel 1,7826 mm; Kontakt 2. Weg konv. True |
+| Fein | hex20 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Fuge (Auflager) +0,00 %; Federn -0,00 %; Weg Spiel +0,00 % | ja | – | 0 | 2.550 | 0,3 | u_oben 1,7826 mm, über spiel 1,7826 mm; Kontakt 2. Weg konv. True |
+
+#### F1 Flächenlager „starr mit Ausfall bei Zug“, außermittiger Druck (Trapez nach N/A ± M/W)
+
+Soll: Block 1 × 1 × 2 m auf dem Flächenlager der Sohle (Bettung 2,5e11 N/m³ mit Ausfall bei Zug, gilt als starr mit Ausfall; seitlich frei, nur die Starrkörperbewegung in der Ebene durch zwei Eckknoten gehalten). Auf dem Deckel eine lineare Randspannung (Resultierende N = 200.000 kN, Ausmitte e = L/12, M = N e): σ = N/A ± M/W = 300 bzw. 100 N/mm² an den Rändern der Sohle, überall Druck, also fällt kein Knoten aus. Querdehnzahl ν = 0 (nur in diesem Fall), damit die Sohle seitlich nur starr wandert. Das ist ein Spannungszustand σ_zz(x) ohne Schub in der Sohle: σ_v = |σ_zz|, Auflagerkraft N, Moment der Auflagerkräfte N e. Grenze: 1 N/mm² an jedem Eckknoten, Auflagerkraft 1 %, Moment der Auflagerkräfte 1 %, kein offener Knoten in der Sohle. Exakt für tet10 und hex20 (der lineare Zustand σ_zz(x) liegt im Verschiebungsraum von tet10 und hex20 (Verschiebungen höchstens quadratisch); tet4 und hex8 stellen die Biegung des Blocks nicht exakt dar, dort ist eine Überschreitung Diskretisierung (gelb)): dort ist jede Überschreitung rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | gelb | σ_v -77,35 N/mm²; Auflager +0,00 %; Moment +0,00 %; offene Knoten 0,00  | ja | – | 0 | 135 | 0,0 | Sohle: 9 Kontakt |
+| Entwurf | hex8 | 0,5000 | grün | σ_v +0,00 N/mm²; Auflager 0,00 %; Moment -0,00 %; offene Knoten 0,00  | ja | – | 0 | 135 | 0,0 | Sohle: 9 Kontakt |
+| Mittel | tet10 | 0,5000 | grün | σ_v +0,00 N/mm²; Auflager +0,00 %; Moment -0,00 %; offene Knoten 0,00  | ja | – | 0 | 675 | 0,0 | Sohle: 9 Kontakt |
+| Mittel | hex20 | 0,5000 | grün | σ_v -0,00 N/mm²; Auflager +0,00 %; Moment -0,00 %; offene Knoten 0,00  | ja | – | 0 | 423 | 0,0 | Sohle: 9 Kontakt |
+| Fein | tet10 | 0,2500 | grün | σ_v +0,00 N/mm²; Auflager +0,00 %; Moment -0,00 %; offene Knoten 0,00  | ja | – | 0 | 4.131 | 0,3 | Sohle: 25 Kontakt |
+| Fein | hex20 | 0,2500 | grün | σ_v +0,00 N/mm²; Auflager +0,00 %; Moment +0,00 %; offene Knoten 0,00  | ja | – | 0 | 2.355 | 0,2 | Sohle: 25 Kontakt |
+| Zusatz | tet4 | 0,2500 | gelb | σ_v -42,07 N/mm²; Auflager +0,00 %; Moment +0,00 %; offene Knoten 0,00  | ja | – | 0 | 675 | 0,2 | Sohle: 25 Kontakt |
+| Zusatz | tet4 | 0,1250 | gelb | σ_v -20,92 N/mm²; Auflager +0,00 %; Moment +0,00 %; offene Knoten 0,00  | ja | – | 0 | 4.131 | 1,0 | Sohle: 81 Kontakt |
+| Zusatz | tet4 | 0,0625 | gelb | σ_v -10,44 N/mm²; Auflager +0,00 %; Moment +0,00 %; offene Knoten 0,00  | ja | – | 0 | 28.611 | 10,3 | Sohle: 289 Kontakt |
+
+#### F2 Flächenlager „starr mit Ausfall bei Zug“ hebt ab (Zug am Deckel, Deckel in Flächenlager gehalten)
+
+Soll: Block wie F1 auf der Sohle (Bettung 2,5e11 N/m³ mit Ausfall bei Zug), auf dem Deckel eine gleichmäßige Zugspannung 100 N/mm² (F = 100.000 kN), gehalten von einem Flächenlager auf dem Deckel (Bettung k/A, k = 1e11 N/m). Die Sohle darf keinen Zug tragen: Kraft der Sohle 0, jeder Knoten der Sohle offen, der Block spannungsfrei, die Last hängt ganz im Deckel (Federn = F). Grenze: Sohle ≤ 1 % von F, Federn 1 %, 1 N/mm² an jedem Element, kein geschlossener Knoten in der Sohle. Exakt (spannungsfreier Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | Sohle 0,00 %; Federn -0,00 %; σ_v Element +0,00 N/mm²; geschlossene Knoten 0,00  | ja | – | 0 | 135 | 0,0 | Sohle: 9 offen (9 Eckknoten) |
+| Entwurf | hex8 | 0,5000 | grün | Sohle 0,00 %; Federn -0,00 %; σ_v Element +0,00 N/mm²; geschlossene Knoten 0,00  | ja | – | 0 | 135 | 0,0 | Sohle: 9 offen (9 Eckknoten) |
+| Mittel | tet10 | 0,5000 | grün | Sohle 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm²; geschlossene Knoten 0,00  | ja | – | 0 | 675 | 0,1 | Sohle: 9 offen (9 Eckknoten) |
+| Mittel | hex20 | 0,5000 | grün | Sohle 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm²; geschlossene Knoten 0,00  | ja | – | 0 | 423 | 0,1 | Sohle: 9 offen (9 Eckknoten) |
+| Fein | tet10 | 0,2500 | grün | Sohle 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm²; geschlossene Knoten 0,00  | ja | – | 0 | 4.131 | 0,4 | Sohle: 25 offen (25 Eckknoten) |
+| Fein | hex20 | 0,2500 | grün | Sohle 0,00 %; Federn +0,00 %; σ_v Element +0,00 N/mm²; geschlossene Knoten 0,00  | ja | – | 0 | 2.355 | 0,3 | Sohle: 25 offen (25 Eckknoten) |
+
+#### K8 Rohrbolzen in Bohrung mit Übermaß (Lamé, ebene Dehnung, Halbmodell mit gekrümmter Fuge)
+
+Soll: Rohrbolzen (Außenradius a = 100 mm, Innenradius a/2) in der Bohrung einer Nabe (Außenradius 2 a), Dicke 20 mm, ebene Dehnung (u_z = 0 an beiden Stirnen), Halbmodell mit Symmetrie in y, deckungsgleiche Knoten an der Fuge. Übermaß am Durchmesser (radial die Hälfte), so gewählt, dass σ_v der Nabe an der Bohrung 355 N/mm² erreicht. Lamé für zwei Rohre mit der Pressung p: u_r(a) = (1+ν)/E ((1−2ν) A a + B/a) mit A = p a²/(b²−a²), B = A b² für die Nabe und A = −p a²/(a²−r_i²), B = A r_i² für den Bolzen; σ_rr = A − B/r², σ_θθ = A + B/r², σ_zz = 2νA; Kontaktkraft in y = 2 p a t. Grenze: u_r und Kontaktkraft 1 %; Spannungen am Entwurf geeicht (größter Fehler von tet4 und hex8, aufgerundet: Bolzen außen 25, Bolzen innen 135, Nabe an der Bohrung 80, Nabe außen 15 N/mm²), Mittel und Fein müssen dieselben Grenzen halten; die Fuge ist gekrümmt, ihre Seitenmitten liegen (Q1) auf der Sehne, sie ist also so facettiert wie bei Entwurf.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,0250 | gelb | σ_v Bolzen(a) +24,28 N/mm²; σ_v Bolzen(i) -133,14 N/mm²; σ_v Nabe(a) -79,55 N/mm²; σ_v Nabe(b) +13,91 N/mm²; u_r Bolzen -0,29 %; u_r Nabe +0,33 %; Kontaktkraft +3,93 % | ja | – | 0 | 816 | 0,1 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 16 × 4 Zellen (Halbring), Bolzen 16 × 2; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Entwurf | hex8 | 0,0250 | grün | σ_v Bolzen(a) +1,82 N/mm²; σ_v Bolzen(i) -41,13 N/mm²; σ_v Nabe(a) -26,92 N/mm²; σ_v Nabe(b) +3,54 N/mm²; u_r Bolzen -0,21 %; u_r Nabe +0,22 %; Kontaktkraft +0,99 % | ja | – | 0 | 816 | 0,1 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 16 × 4 Zellen (Halbring), Bolzen 16 × 2; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Mittel | tet10 | 0,0250 | grün | σ_v Bolzen(a) -5,37 N/mm²; σ_v Bolzen(i) -25,92 N/mm²; σ_v Nabe(a) -9,53 N/mm²; σ_v Nabe(b) -1,30 N/mm²; u_r Bolzen +0,58 %; u_r Nabe -0,18 %; Kontaktkraft +0,13 % | ja | – | 0 | 4.158 | 0,3 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 16 × 4 Zellen (Halbring), Bolzen 16 × 2; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Mittel | hex20 | 0,0250 | grün | σ_v Bolzen(a) -0,67 N/mm²; σ_v Bolzen(i) -9,97 N/mm²; σ_v Nabe(a) +3,99 N/mm²; σ_v Nabe(b) -1,20 N/mm²; u_r Bolzen +0,54 %; u_r Nabe -0,23 %; Kontaktkraft +0,06 % | ja | – | 0 | 2.604 | 0,3 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 16 × 4 Zellen (Halbring), Bolzen 16 × 2; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Fein | tet10 | 0,0125 | grün | σ_v Bolzen(a) -2,03 N/mm²; σ_v Bolzen(i) -9,72 N/mm²; σ_v Nabe(a) +3,92 N/mm²; σ_v Nabe(b) -0,39 N/mm²; u_r Bolzen +0,14 %; u_r Nabe -0,05 %; Kontaktkraft +0,02 % | ja | – | 0 | 15.210 | 1,4 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 32 × 8 Zellen (Halbring), Bolzen 32 × 4; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Fein | hex20 | 0,0125 | grün | σ_v Bolzen(a) -0,31 N/mm²; σ_v Bolzen(i) -3,26 N/mm²; σ_v Nabe(a) +2,69 N/mm²; σ_v Nabe(b) -0,28 N/mm²; u_r Bolzen +0,13 %; u_r Nabe -0,06 %; Kontaktkraft +0,01 % | ja | – | 0 | 9.222 | 0,7 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 32 × 8 Zellen (Halbring), Bolzen 32 × 4; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Zusatz | tet4 | 0,0125 | gelb | σ_v Bolzen(a) +9,71 N/mm²; σ_v Bolzen(i) -80,00 N/mm²; σ_v Nabe(a) -44,08 N/mm²; σ_v Nabe(b) +6,13 N/mm²; u_r Bolzen -0,14 %; u_r Nabe +0,11 %; Kontaktkraft +1,04 % | ja | – | 0 | 2.772 | 0,7 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 32 × 8 Zellen (Halbring), Bolzen 32 × 4; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+| Zusatz | tet4 | 0,0063 | grün | σ_v Bolzen(a) +4,38 N/mm²; σ_v Bolzen(i) -43,63 N/mm²; σ_v Nabe(a) -22,97 N/mm²; σ_v Nabe(b) +3,02 N/mm²; u_r Bolzen -0,04 %; u_r Nabe +0,03 %; Kontaktkraft +0,27 % | ja | – | 0 | 10.140 | 2,3 | Pressung 153,5 N/mm², Übermaß am Durchmesser 443,3 µm, Nabe 64 × 16 Zellen (Halbring), Bolzen 64 × 8; Mitten der Fuge höchstens 0,000 mm neben der Sehne |
+
+#### S1 Schale auf Flächenlager (starr mit Ausfall bei Zug): quadratische Schalen bleiben gesperrt
+
+Soll: Platte 1 × 1 m, t = 0,1 m, gleichmäßiger Druck q auf dem Flächenlager (Bettung 2,5e11 N/m³ mit Ausfall bei Zug): Auflagerkraft q A. Mit shell4 (Entwurf) rechnet es; mit shell8 (Mittel, Fein) bricht die Rechnung laut ab (fugen.QuadratischeSeiten): Kontakt und Flächenlager nehmen an einer quadratischen Schale nur die Ecken, die Sperre bleibt für Schalen (Bauplan E3). Grenze: Entwurf: Auflagerkraft 1 %; Mittel und Fein: die Sperre muss greifen (gesperrt ist hier das erwartete Ergebnis, eine durchlaufende Rechnung ist rot). Exakt (die Auflagerkraft folgt aus dem Gleichgewicht): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | hex8 | 0,5000 | grün | Auflager -0,00 % | ja | – | 0 | 27 | 0,0 | Schale shell4 am Flächenlager |
+| Mittel | hex20 | 0,5000 | gesperrt | – | – | – | – | 63 | 0,0 | fugen.QuadratischeSeiten: Flächenlager Sohle |
+| Fein | hex20 | 0,2500 | gesperrt | – | – | – | – | 195 | 0,0 | fugen.QuadratischeSeiten: Flächenlager Sohle |
+
+#### KP1 Fuge ohne Zug unter Druck, beide Würfel fließen (fy 235, E_t/E 5 %)
+
+Soll: p = 300 N/mm²: σ_v = p überall, u_oben = L (p/E + (p − fy)/H), L = 2 m. Grenze: 1 N/mm² an jedem Knoten, u 1 %, Auflager 1 %. Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element -0,00 N/mm²; u_oben +0,00 %; Auflager +0,00 % | ja | ja | 0 | 1.257 | 0,9 | 24 Spaltelemente |
+| Entwurf | hex8 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager -0,00 % | ja | ja | 0 | 162 | 0,1 | 9 Spaltelemente |
+| Mittel | tet10 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager 0,00 % | ja | ja | 0 | 8.742 | 4,7 | 24 Spaltelemente |
+| Mittel | hex20 | 0,5000 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager -0,00 % | ja | ja | 0 | 486 | 0,4 | 9 Spaltelemente |
+| Fein | tet10 | 0,2500 | grün | σ_v +0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben -0,00 %; Auflager 0,00 % | ja | ja | 0 | 8.742 | 3,3 | 24 Spaltelemente |
+| Fein | hex20 | 0,2500 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; u_oben +0,00 %; Auflager +0,00 % | ja | ja | 0 | 2.550 | 2,7 | 25 Spaltelemente |
+
+#### KP2 Presspassung, ebene Fuge, Übermaß bis ins Fließen (fy 235, E_t/E 5 %)
+
+Soll: δ = 2 L ε(300 N/mm²) = 14,62 mm (ε_p 0,588 %): σ_v = 300 N/mm² überall, Auflager σ A. Grenze: 1 N/mm² an jedem Knoten, Auflager 1 %. Exakt (homogener Zustand, jedes Element stellt ihn exakt dar): jede Überschreitung ist rot.
+
+| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Entwurf | tet4 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element -0,00 N/mm²; Auflager -0,00 % | ja | ja | 0 | 162 | 0,1 | 2³ Zellen je Würfel |
+| Entwurf | hex8 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager -0,00 % | ja | ja | 0 | 162 | 0,2 | 2³ Zellen je Würfel |
+| Mittel | tet10 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element -0,00 N/mm²; Auflager -0,00 % | ja | ja | 0 | 750 | 0,2 | 2³ Zellen je Würfel |
+| Mittel | hex20 | 0,5000 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager 0,00 % | ja | ja | 0 | 486 | 0,5 | 2³ Zellen je Würfel |
+| Fein | tet10 | 0,2500 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager +0,00 % | ja | ja | 0 | 4.374 | 1,6 | 4³ Zellen je Würfel |
+| Fein | hex20 | 0,2500 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager 0,00 % | ja | ja | 0 | 2.550 | 3,4 | 4³ Zellen je Würfel |
+
+Laufzeit gesamt 3,6 min (einkernig, 08.10.2026).
