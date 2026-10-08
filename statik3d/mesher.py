@@ -1124,7 +1124,9 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     Anhalten fertig vernetzt; liegt sie ueber der Grenze, bleibt ihr Netz und
     das Protokoll warnt (``aus["grenze_warnung"]``). Ein Netz unter der Grenze
     ist Knoten fuer Knoten dasselbe wie ohne Grenze. Traegt eine Stufe einen
-    Text in ``quelle``, nennt das Protokoll ihn neben der Stufennummer.
+    Text in ``quelle``, nennt das Protokoll ihn neben der Stufennummer. Eine
+    Stufe mit denselben Einstellungen wie die vorige (bis auf ``quelle``)
+    wird uebersprungen und das Protokoll sagt es (seit 08.10.2026).
 
     ``hs_fuer(netz) -> {Name: h}`` gibt die Kantenlaenge je Koerper fuer eine
     groebere Stufe (Vorgabe: aus der Netzdichte, netzdichte.anwenden); fuer
@@ -1150,9 +1152,31 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     def stufentext(k_, n_):
         q = str(getattr(n_, "quelle", "") or "")
         return f"Stufe {k_}" + (f" ({q})" if k_ and q and q != str(getattr(netz0, "quelle", "") or "") else "")
+
+    def naechste_nach(k_, netz_):
+        """(j, Einstellungen) der naechsten Stufe nach k_, die anders vernetzt
+        als ``netz_`` - None ohne groebere. Eine Stufe mit denselben
+        Einstellungen (bis auf den Text ``quelle``) baute dasselbe Netz noch
+        einmal und wird uebersprungen (Anschluss von Fein, 08.10.2026: die
+        Stufen 1 und 2 von Fein vergroebern nur die Boegen an Kontakt- und
+        Lagerflaechen - ein Modell ohne solche Boegen haette sie umsonst bis
+        zur Grenze vernetzt)."""
+        j = k_ + 1
+        n_ = stufen(j) if stufen is not None else None
+        while n_ is not None and _gleich_vernetzt(n_, netz_):
+            j += 1
+            n_ = stufen(j)
+        return j, n_
+
+    def uebersprungen(k_, j_):
+        if j_ <= k_ + 2:
+            return "" if j_ <= k_ + 1 else (f"; Stufe {k_ + 1} ergäbe dasselbe Netz wie Stufe {k_} und wird "
+                                            "übersprungen")
+        bis = f"{k_ + 1} und {j_ - 1}" if j_ == k_ + 3 else f"{k_ + 1} bis {j_ - 1}"
+        return f"; Stufen {bis} ergäben dasselbe Netz wie Stufe {k_} und werden übersprungen"
     try:
         while True:
-            naechste = stufen(k + 1) if stufen is not None else None
+            j, naechste = naechste_nach(k, netz_k)
             ruf = fortschritt
             if k and fortschritt is not None:
                 def ruf(anteil, text, _k=k):
@@ -1170,9 +1194,10 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                           "eingebauten Volumen" if aus.get("unbekannte_vorab") else "")
                        + (("; größte: " + ", ".join(f"{n} ({zahl_text(z)} Knoten)" for n, z in groesste))
                           if groesste else "")
-                       + f". Das halbe Netz wird verworfen, vernetzt wird gröber mit {stufentext(k + 1, naechste)}.")
+                       + f". Das halbe Netz wird verworfen, vernetzt wird gröber mit {stufentext(j, naechste)}"
+                       + uebersprungen(k, j) + ".")
             _netz_zuruecksetzen(model, koerper, n_el0, n_kn0, cache, log)
-            k, netz_k = k + 1, naechste
+            k, netz_k = j, naechste
             hs_k = (hs_fuer or (lambda n_: _hs_aus_netz(model, n_, koerper)))(netz_k)
     finally:
         model.netz = netz0
@@ -1192,6 +1217,20 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         C.say(log, f"Netzgrenze: vernetzt mit {stufentext(k, netz_k)} – {zahl_text(u)} Unbekannte, "
                    f"unter der Grenze von {zahl_text(grenze)}.")
     return aus
+
+
+def _gleich_vernetzt(a, b) -> bool:
+    """Vernetzen zwei Stufen der Grenze gleich - dieselben Netzeinstellungen
+    bis auf den Text ``quelle``?"""
+    from dataclasses import is_dataclass, replace
+    if a is b:
+        return True
+    if not (is_dataclass(a) and is_dataclass(b)) or type(a) is not type(b):
+        return False
+    try:
+        return replace(a, quelle="") == replace(b, quelle="")
+    except (TypeError, ValueError):
+        return False
 
 
 def _hs_aus_netz(model: Model, netz, koerper: list) -> dict:

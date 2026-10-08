@@ -155,9 +155,10 @@ def main(argv=None) -> int:
         zeilen = []
         # wie Netz -> Vernetzen (25.09.2026): Sperre der Elementstufe am
         # Kontaktmodell (Entwurf, gesagt) und bei Fein die Quellen an Kontakt-,
-        # Lager- und Lastflaechen und ihren Boegen (seit 07.10.2026)
-        with _es.beim_vernetzen(m, zeilen):
-            _mesher.modell_vernetzen(m, zeilen, workers=a.kerne)
+        # Lager- und Lastflaechen und ihren Boegen (seit 07.10.2026); ueber der
+        # Grenze in Unbekannten wird Fein selbsttaetig groeber (08.10.2026)
+        with _es.beim_vernetzen(m, zeilen) as netz:
+            _mesher.modell_vernetzen(m, zeilen, workers=a.kerne, stufen=_es.fein_stufen(m, netz))
         for s in zeilen:
             log("  " + s)
     if a.speichern:

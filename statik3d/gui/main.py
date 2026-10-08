@@ -13093,7 +13093,15 @@ class MainWindow(QtWidgets.QMainWindow):
         Fein vernetzt :meth:`_vernetzen_netz` wie Mittel, feiner an Kontakt-,
         Lager- und Lastflaechen und an den Boegen der Kontakt- und
         Lagerflaechen (seit 07.10.2026, elementstufe.wirksam); die
-        gespeicherten Netzeinstellungen stehen danach wieder da."""
+        gespeicherten Netzeinstellungen stehen danach wieder da.
+
+        Ueberschreitet das Netz die Grenze in Unbekannten, vernetzt Fein
+        selbsttaetig groeber ueber seine Stufen (elementstufe.fein_stufen,
+        seit 08.10.2026); Entwurf und Mittel haben keine Stufen - dort bleibt
+        das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
+        Vernetzen, vor der Rechnung, „Vernetzen“ beim Uebernehmen und Anlegen
+        von Flaechen und Koerpern, nach Spalt und Spiel) kommen hier durch;
+        nur die adaptive Vernetzung nicht (ohne Quellen von Fein)."""
         from .. import elementstufe as es
         from ..sweep import betriebsart as sweep_betriebsart
         vorab: list = []
@@ -13107,8 +13115,8 @@ class MainWindow(QtWidgets.QMainWindow):
             vorab.append("Sechsflächner-Sweep ausgeschaltet: die Option gibt es nicht mehr, "
                          "weil sie an Bohrungen und schrägen Kanten verzerrte Elemente erzeugt. "
                          "Vernetzt wird mit Tetraedern.")
-        with es.beim_vernetzen(self.model, vorab):
-            return self._vernetzen_netz(flaechen, koerper, vorab)
+        with es.beim_vernetzen(self.model, vorab) as netz:
+            return self._vernetzen_netz(flaechen, koerper, vorab, stufen=es.fein_stufen(self.model, netz))
 
     def _vernetzen_netz(self, flaechen: list, koerper: list, vorab: list = None, stufen=None) -> int:
         """Flaechen und Koerper vernetzen und das Protokoll fuehren.

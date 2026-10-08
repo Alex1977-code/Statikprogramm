@@ -275,14 +275,17 @@ def fein_stufe(k: int = 0) -> FeinStufe:
       von Mittel (tests/test_fein_smart.py). Ein groesseres k gibt die
       letzte Stufe, ein negatives Stufe 0.
 
-    So vernetzt F2 eine Stufe - und wenn das Netz die Grenze ueberschreitet,
-    dieselbe mit k + 1, bis ``fein_stufe(k).letzte``::
+    Eine Stufe allein vernetzt::
 
         with elementstufe.beim_vernetzen(model, log, k=k):
             mesher.modell_vernetzen(model, log)
 
     Die Netzeinstellungen einer Stufe allein gibt ``wirksam(netz, model,
     k=k)``, den Text fuer Maske und Protokoll ``fein_text(netz, model, k)``.
+    Ueberschreitet das Netz die Grenze in Unbekannten, geht F2 die Stufen
+    ueber :func:`fein_stufen` durch (seit 08.10.2026) - dort beginnt es mit
+    k = 0, und die verdoppelte Teilung abgebildeter Koerper bleibt auch in
+    der letzten Stufe (siehe dort).
     """
     k = min(max(int(k or 0), 0), FEIN_STUFEN_ANZAHL - 1)
     w, f = FEIN_STUFEN[k]
@@ -323,6 +326,68 @@ def wirksam(netz, model=None, k: int = 0):
     if stufe(netz) != "fein":
         return netz
     return _fein(netz, model, k)[0]
+
+
+def stufe_text(k: int) -> str:
+    """Der Text einer Vergroeberungsstufe von Fein fuer das Protokoll, etwa
+    „Fein Stufe 2: Bögen 18°, Flächen h/2“ - er steht in ``quelle`` der
+    Netzeinstellungen, die :func:`fein_stufen` fuer diese Stufe liefert."""
+    st = fein_stufe(k)
+    teiler = round(1.0 / st.flaechenfaktor, 3)
+    flaechen = "h" if abs(teiler - 1.0) < 1e-9 else "h/" + f"{teiler:g}".replace(".", ",")
+    return (f"Fein Stufe {st.k}: Bögen {st.bogenwinkel:g}°, Flächen {flaechen}"
+            + (" (wie Mittel)" if st.ist_mittel else ""))
+
+
+def fein_stufen(model, netz=None):
+    """**Anschluss von Fein an die Grenze in Unbekannten** (Pakete F1 und F2,
+    08.10.2026): die Vergroeberungsstufen als Funktion ``einstellung(k) ->
+    Netzeinstellungen | None``, wie sie mesher.koerper_vernetzen,
+    mesher.modell_vernetzen(stufen=...) und gui.main._vernetzen_netz(stufen=...)
+    erwarten - oder None, wenn nicht mit Fein vernetzt wird (Entwurf, Mittel,
+    Fein an einem gesperrten Modell, das :func:`beim_vernetzen` auf Entwurf
+    gestellt hat). Ohne Stufen bleibt ueber der Grenze das Netz, mit Warnung.
+
+    ``netz``: die Netzeinstellungen, mit denen vernetzt wird - innerhalb von
+    :func:`beim_vernetzen` das, was es liefert::
+
+        with elementstufe.beim_vernetzen(model, log) as w:
+            mesher.modell_vernetzen(model, log, stufen=elementstufe.fein_stufen(model, w))
+
+    sonst die gespeicherten (Vorgabe ``model.netz``). Die Quellen von Fein
+    darin (Arten ``fein_*``) zaehlen nicht: einstellung(k) baut jede Stufe
+    aus den Einstellungen ohne sie neu (:func:`wirksam` mit k, also
+    :func:`fein_stufe`) und schreibt :func:`stufe_text` in ``quelle``; das
+    Protokoll der Grenze nennt ihn. Fuer k jenseits der letzten Stufe (Mittel)
+    gibt es None. Ohne Nebenwirkung: Modell und ``netz`` bleiben, wie sie
+    sind, und jeder Aufruf rechnet nur die Ziele seiner Stufe
+    (netzfeld.fein_ziele).
+
+    **Teilung abgebildeter Koerper:** :func:`beim_vernetzen` verdoppelt sie
+    bei Fein fuer die ganze Dauer des Vernetzens - am Objekt, nicht in den
+    Netzeinstellungen. einstellung(k) darf das nicht aendern (ohne
+    Nebenwirkung), und die Stufenschleife tauscht nur ``model.netz``; die
+    Teilung bleibt darum auch in der letzten Stufe verdoppelt. Sie betrifft
+    nur abgebildete Sechsflaechner (Quader mit sechs Vierecken und acht
+    Ecken, hex20; mesher.mesh_koerper und sweep.lagenvorgabe lesen die
+    Teilung nur dort) und Flaechen mit eigener Teilung, die vor den Volumen
+    und ausserhalb der Schleife vernetzt werden - beide folgen dem
+    Groessenfeld ohnehin nicht. Ein Modell mit solchen Koerpern ist in der
+    letzten Stufe darum nicht bitgleich Mittel, sondern hat dort feinere
+    Quader (Stand 08.10.2026)."""
+    netz = model.netz if netz is None else netz
+    if stufe(netz) != "fein" or not frei(model, "fein"):
+        return None
+    basis = replace(netz, verfeinerungen=[
+        v for v in (getattr(netz, "verfeinerungen", None) or [])
+        if not (isinstance(v, dict) and str(v.get("art", "")).startswith("fein_"))])
+
+    def einstellung(k):
+        k = int(k)
+        if k < 0 or k >= FEIN_STUFEN_ANZAHL:
+            return None
+        return replace(wirksam(basis, model, k), quelle=stufe_text(k))
+    return einstellung
 
 
 def _mm(x: float) -> str:
@@ -425,7 +490,9 @@ def beim_vernetzen(model, log: list, k: int = 0):
     fuer die Dauer des Vernetzens, mit einer Zeile im Protokoll, die Zahl und
     Art der verfeinerten Flaechen und die Zahl der Boegen nennt. Danach
     stehen die gespeicherten Netzeinstellungen wieder da - ausser der Stufe,
-    die die Sperre gesetzt hat."""
+    die die Sperre gesetzt hat. Geliefert werden die Netzeinstellungen, mit
+    denen vernetzt wird; ``fein_stufen(model, w)`` macht daraus die Stufen
+    fuer die Grenze in Unbekannten (seit 08.10.2026)."""
     zeile = sperre_anwenden(model)
     if zeile:
         log.append(zeile)

@@ -480,12 +480,295 @@ def test_vergroeberung_f2():
           next((str(z) for z in log if str(z).startswith("Elemente Fein")), ""))
 
 
+# --------------------------------------------------------------------------
+# 6) Anschluss an F2 (08.10.2026): Fein vergroebert selbsttaetig ueber die
+#    Stufen, wenn das Netz die Grenze in Unbekannten ueberschreitet
+# --------------------------------------------------------------------------
+#: Zahlen der Referenzen ohne Grenze, je Lauf einmal gemessen
+_GRENZE = {}
+
+
+class _Laeufe:
+    """Haelt fest, wie jeder Lauf einer Stufe (mesher._koerper_lauf) begann -
+    Elemente, Knoten, Elemente der Koerper und der Text ``quelle`` der
+    Netzeinstellungen, mit denen er lief - und was er zurueckgab."""
+
+    def __init__(self):
+        from statik3d import mesher
+        self.mesher = mesher
+        self.echt = getattr(mesher, "_koerper_lauf", None)
+        self.zu_beginn = []
+        self.ergebnisse = []
+
+    def __enter__(self):
+        if self.echt is not None:
+            def lauf(model, koerper, *a, **k):
+                self.zu_beginn.append((len(model.elements), int(model.nn),
+                                       sum(len(x.elemente or []) for x in koerper),
+                                       str(getattr(model.netz, "quelle", "") or "")))
+                aus = self.echt(model, koerper, *a, **k)
+                self.ergebnisse.append(dict(aus))
+                return aus
+            self.mesher._koerper_lauf = lauf
+        return self
+
+    def __exit__(self, *a):
+        if self.echt is not None:
+            self.mesher._koerper_lauf = self.echt
+
+
+def _zahl(n) -> str:
+    from statik3d.zahlen import zahl_text
+    return zahl_text(int(n))
+
+
+def _referenz(bauen, stufe: str, k: int = None, sperre_aus: bool = False) -> tuple:
+    """(Netz-Hash, Unbekannte) ohne Grenze - Fein in der Stufe k ueber den
+    Weg von F1 (elementstufe.beim_vernetzen mit k)."""
+    schluessel = (bauen.__name__, stufe, k)
+    if schluessel not in _GRENZE:
+        m = bauen()
+        m.netz.hoechstens_unbekannte = 0
+        vernetzen(m, stufe, sperre_aus=sperre_aus, k=k)
+        _GRENZE[schluessel] = (netz_hash(m), 3 * m.nn)
+    return _GRENZE[schluessel]
+
+
+def vernetzen_mit_grenze(m, grenze: int, sperre_aus: bool = False) -> tuple:
+    """Fein mit der Grenze ``grenze`` wie ``statik3d --vernetzen`` (cli.py):
+    beim_vernetzen und die Stufen von Fein (elementstufe.fein_stufen) an
+    mesher.modell_vernetzen. Rueckgabe (Ergebnis, Protokoll, Laeufe)."""
+    from statik3d import mesher
+    es = _es()
+    m.netz = es.setzen(m.netz, "fein")
+    m.netz.sweep = "aus"                  # wie die Referenzen: Tetraederweg
+    m.netz.hoechstens_unbekannte = int(grenze)
+    log: list = []
+    with (ohne_sperre() if sperre_aus else nullcontext()):
+        with _Laeufe() as lf:
+            with es.beim_vernetzen(m, log) as w:
+                # Ohne den Anschluss (Stand vor dem 08.10.2026) gibt es keine
+                # Stufen: dann wird ueber der Grenze nur gewarnt
+                stufen = es.fein_stufen(m, w) if hasattr(es, "fein_stufen") else None
+                erg = mesher.modell_vernetzen(m, log, workers=1, stufen=stufen)
+    return erg, [str(z) for z in log], lf
+
+
+def _ohne_fein_quellen(netz) -> bool:
+    return not [v for v in (getattr(netz, "verfeinerungen", None) or [])
+                if str((v or {}).get("art", "")).startswith("fein_")]
+
+
+def test_grenze_stufen():
+    """Platte ohne Kontakt (Lastflaeche M2, freie Bohrung; gelagert wuerde
+    ueber Knotenlager, also nichts gesperrt) mit Fein und Grenze:
+
+    a) knapp unter dem Fein-Netz: gröber ueber die Stufen, jede Stufe mit
+       ihrem Text im Protokoll, Ergebnis unter der Grenze und bitgleich mit
+       Fein in dieser Stufe; die Stufen 1 und 2 vergroebern nur Boegen an
+       Kontakt- und Lagerflaechen - an diesem Modell gibt es keine, sie
+       ergaeben dasselbe Netz wie Stufe 0 und werden uebersprungen;
+    b) ueber dem Netz: bitgleich Fein ohne Grenze;
+    c) unter Mittel: endet in der letzten Stufe, bitgleich Mittel, WARNUNG.
+    """
+    es = _es()
+    h_f, u_f = _referenz(platte_ohne_kontakt, "fein")
+    h_m, u_m = _referenz(platte_ohne_kontakt, "mittel")
+    check("Voraussetzung: Fein ist feiner als Mittel (Lastfläche h/2)", u_f > u_m,
+          f"Fein {_zahl(u_f)}, Mittel {_zahl(u_m)} Unbekannte")
+
+    # a) Grenze knapp unter dem Fein-Netz
+    m = platte_ohne_kontakt()
+    erg, log, lf = vernetzen_mit_grenze(m, u_f - 3)
+    k, u = int(erg.get("stufe", 0) or 0), 3 * m.nn
+    check(f"a) Grenze {_zahl(u_f - 3)} (3 unter Fein): gröber vernetzt, Ergebnis unter der Grenze",
+          k >= 1 and u <= u_f - 3, f"Stufe {k}, {_zahl(u)} Unbekannte")
+    h_k = _referenz(platte_ohne_kontakt, "fein", k=k)[0] if k else ""
+    check("… bitgleich mit Fein in dieser Stufe ohne Grenze (Weg von F1)", k and netz_hash(m) == h_k,
+          f"{netz_hash(m)} / {h_k}")
+    check("… Stufen 1 und 2 (nur Bögen) übersprungen: zwei Läufe, Stufe 0 und Stufe 3",
+          k == 3 and len(lf.ergebnisse) == 2, f"Stufe {k}, {len(lf.ergebnisse)} Läufe: "
+                                               f"{[z[3] or '(Stufe 0)' for z in lf.zu_beginn]}")
+    zeilen = [z for z in log if "Netzgrenze" in z]
+    check("… Protokoll: Stufe 0 angehalten, mit Grund und Zahl",
+          any("Stufe 0" in z and "angehalten" in z and "über der Grenze" in z and _zahl(u_f - 3) in z
+              for z in zeilen), zeilen[0] if zeilen else "keine Zeile „Netzgrenze“")
+    check("… Protokoll nennt die nächste Stufe mit ihrem Text: „Fein Stufe 3: Bögen 18°, Flächen h/1,5“",
+          any("Stufe 3 (Fein Stufe 3: Bögen 18°, Flächen h/1,5)" in z for z in zeilen),
+          zeilen[0][-170:] if zeilen else "")
+    check("… und dass die Stufen 1 und 2 dasselbe Netz ergäben und übersprungen werden",
+          any("Stufen 1 und 2" in z and "übersprungen" in z for z in zeilen), zeilen[0][-170:] if zeilen else "")
+    check("… Schlusszeile: vernetzt mit Stufe 3, Zahl unter der Grenze",
+          any("vernetzt mit Stufe 3 (Fein Stufe 3" in z and _zahl(u) in z and "unter der Grenze" in z
+              for z in zeilen), zeilen[-1] if zeilen else "")
+    check("… keine WARNUNG", not [z for z in log if z.startswith("WARNUNG") and "Unbekannte" in z])
+    if len(lf.zu_beginn) >= 2:
+        check("… kein halbes Netz zu Beginn der Stufe 3 (Elemente, Knoten wie vor Stufe 0)",
+              lf.zu_beginn[1][:3] == lf.zu_beginn[0][:3] and lf.zu_beginn[1][2] == 0,
+              f"vor 0: {lf.zu_beginn[0][:3]}, vor 3: {lf.zu_beginn[1][:3]}")
+        check("… Stufe 3 lief mit ihren Einstellungen (quelle der Netzeinstellungen)",
+              lf.zu_beginn[1][3].startswith("Fein Stufe 3"), lf.zu_beginn[1][3])
+    check("… danach stehen die gespeicherten Netzeinstellungen da (Fein, ohne Quellen, quelle leer)",
+          es.stufe(m.netz) == "fein" and _ohne_fein_quellen(m.netz) and not m.netz.quelle,
+          f"{es.stufe(m.netz)}, quelle {m.netz.quelle!r}")
+
+    # b) Grenze auf dem Netz (nicht ueberschritten)
+    m = platte_ohne_kontakt()
+    erg, log, lf = vernetzen_mit_grenze(m, u_f)
+    check("b) Grenze = Fein-Netz: bitgleich Fein ohne Grenze, Stufe 0, ein Lauf",
+          netz_hash(m) == h_f and erg.get("stufe", 0) == 0 and len(lf.ergebnisse) == 1,
+          f"{netz_hash(m)} / {h_f}, Stufe {erg.get('stufe')}, {len(lf.ergebnisse)} Läufe")
+    check("… keine Zeile „Netzgrenze“, keine Warnung",
+          not [z for z in log if "Netzgrenze" in z or (z.startswith("WARNUNG") and "Unbekannte" in z)])
+
+    # c) Grenze unter Mittel: endet in der letzten Stufe (Mittel)
+    m = platte_ohne_kontakt()
+    erg, log, lf = vernetzen_mit_grenze(m, u_m - 3)
+    check(f"c) Grenze {_zahl(u_m - 3)} unter Mittel: endet in der letzten Stufe 4, bitgleich Mittel",
+          erg.get("stufe") == es.FEIN_STUFEN_ANZAHL - 1 and netz_hash(m) == h_m,
+          f"Stufe {erg.get('stufe')}, {netz_hash(m)} / {h_m}, {_zahl(3 * m.nn)} Unbekannte")
+    warn = [z for z in log if z.startswith("WARNUNG") and "Unbekannte" in z]
+    check("… mit WARNUNG: Zahl, Grenze und die gröbste Stufe (Fein Stufe 4, wie Mittel)",
+          any(_zahl(3 * m.nn) in z and _zahl(u_m - 3) in z and "Fein Stufe 4" in z for z in warn),
+          warn[0] if warn else "keine WARNUNG")
+    check("… drei Läufe: Stufe 0, 3 und 4", [z[3][:12] for z in lf.zu_beginn]
+          == ["", "Fein Stufe 3", "Fein Stufe 4"], [z[3] or "(Stufe 0)" for z in lf.zu_beginn])
+
+
+def test_grenze_boegen():
+    """Platte mit Kontakt an der Bohrung B1 und Flaechenlager (Sperre nur im
+    Test aufgehoben, nur vernetzt): die Boegen sind an Fein 9 Grad, Stufe 1
+    vergroebert sie auf 12 Grad - mit der Grenze knapp unter Fein endet es
+    dort."""
+    h1, u1 = _referenz(platte_kontakt, "fein", k=1, sperre_aus=True)
+    _h0, u0 = _referenz(platte_kontakt, "fein", sperre_aus=True)
+    check("Voraussetzung: Stufe 1 (Bögen 12°) ist gröber als Stufe 0 (9°)", u1 < u0 - 3,
+          f"Stufe 0 {_zahl(u0)}, Stufe 1 {_zahl(u1)} Unbekannte")
+    m = platte_kontakt()
+    erg, log, lf = vernetzen_mit_grenze(m, u0 - 3, sperre_aus=True)
+    check("Grenze knapp unter Fein: Stufe 1, bitgleich mit Fein in Stufe 1 ohne Grenze",
+          erg.get("stufe") == 1 and netz_hash(m) == h1 and 3 * m.nn <= u0 - 3,
+          f"Stufe {erg.get('stufe')}, {netz_hash(m)} / {h1}, {_zahl(3 * m.nn)} Unbekannte")
+    zeilen = [z for z in log if "Netzgrenze" in z]
+    check("… Protokoll: „Stufe 1 (Fein Stufe 1: Bögen 12°, Flächen h/2)“, nichts übersprungen",
+          any("Stufe 1 (Fein Stufe 1: Bögen 12°, Flächen h/2)" in z for z in zeilen)
+          and not any("übersprungen" in z for z in zeilen), zeilen[0][-150:] if zeilen else "keine Zeile")
+
+
+_FENSTER = {}
+FEHLER = []
+
+
+def _fenster():
+    if "w" in _FENSTER:
+        return _FENSTER["w"], _FENSTER["app"]
+    from PySide6 import QtWidgets
+    from statik3d.gui.main import MainWindow
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    w = MainWindow()
+    w.show()
+    app.processEvents()
+    w._fragen_knoepfe = lambda *a, **k: True
+    w._netzaenderung_bestaetigen = lambda *a, **k: True
+    from tests.meldungen import abfangen
+    w.meldungen = abfangen(w, FEHLER)
+    _FENSTER.update(w=w, app=app)
+    return w, app
+
+
+def test_grenze_fenster():
+    """Netz -> Vernetzen im Hauptfenster (gui.main._vernetzen): Fein ueber der
+    Grenze wird gröber vernetzt, ohne Warnung als Meldung."""
+    es = _es()
+    w, app = _fenster()
+    m = platte_ohne_kontakt()
+    m.netz = es.setzen(m.netz, "fein")
+    m.netz.sweep = "aus"
+    m.netz.hoechstens_unbekannte = 0
+    w.model = m
+    w._MainWindow__init_defaults()
+    w.analysis = None
+    w.results = None
+    w.refresh_all()
+    app.processEvents()
+    gewarnt = []
+    alt = w.warnung
+    w.warnung = lambda msg: gewarnt.append(str(msg))
+    try:
+        w.geometrie_vernetzen()
+        app.processEvents()
+        u_g = 3 * w.model.nn
+        w.model.netz.hoechstens_unbekannte = u_g - 3
+        w.log.clear()
+        w.geometrie_vernetzen()
+        app.processEvents()
+    finally:
+        w.warnung = alt
+    text = w.log.toPlainText()
+    u = 3 * w.model.nn
+    check("Fenster: Fein mit Grenze 3 unter dem eigenen Netz wird gröber vernetzt (Stufe 3), unter der Grenze",
+          u <= u_g - 3 and "vernetzt mit Stufe 3 (Fein Stufe 3" in text,
+          [z for z in text.splitlines() if "Netzgrenze" in z][-1:] or f"{_zahl(u)} von {_zahl(u_g)}")
+    check("… keine Warnung als Meldung", not gewarnt, gewarnt[:1])
+    check("… die Netzeinstellungen des Modells bleiben Fein mit der Grenze",
+          es.stufe(w.model.netz) == "fein" and w.model.netz.hoechstens_unbekannte == u_g - 3
+          and _ohne_fein_quellen(w.model.netz))
+
+
+def test_grenze_cli():
+    """``statik3d modell.json --vernetzen`` (cli.py): dieselbe Vergroeberung
+    ohne Oberflaeche. Gerechnet wird danach nicht (der Loeser ist hier
+    ersetzt) - gespeichert wird das Netz vorher mit --speichern."""
+    import contextlib
+    import io
+    from statik3d import cli, solver
+    from statik3d.model import Model
+    es = _es()
+    _h_f, u_f = _referenz(platte_ohne_kontakt, "fein")
+    m = platte_ohne_kontakt()
+    m.netz = es.setzen(m.netz, "fein")
+    m.netz.sweep = "aus"
+    m.netz.hoechstens_unbekannte = u_f - 3
+    ordner = tempfile.mkdtemp(prefix="statik3d_fein_cli_")
+    ein, aus = os.path.join(ordner, "platte.json"), os.path.join(ordner, "vernetzt.json")
+    m.save(ein)
+
+    class _Halt(Exception):
+        pass
+
+    def halt(*a, **k):
+        raise _Halt()
+    alt = solver.solve_all
+    solver.solve_all = halt
+    puffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(puffer):
+            try:
+                cli.main([ein, "--vernetzen", "--speichern", aus, "--kerne", "1"])
+            except _Halt:
+                pass
+    finally:
+        solver.solve_all = alt
+    text = puffer.getvalue()
+    m2 = Model.load(aus) if os.path.exists(aus) else None
+    u = 3 * m2.nn if m2 is not None else 0
+    check("cli --vernetzen: Fein über der Grenze gröber vernetzt (Stufe 3), gespeichertes Netz unter der Grenze",
+          m2 is not None and 0 < u <= u_f - 3 and "vernetzt mit Stufe 3 (Fein Stufe 3" in text,
+          [z.strip() for z in text.splitlines() if "Netzgrenze" in z][-1:] or f"{_zahl(u)} Unbekannte")
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(1800, exit=True)
-    for t in (test_quellen_auf_zylinder, test_feld_an_der_wand, test_texte, test_bloecke_flaechen,
-              test_bohrungen, test_mittel_entwurf_bitgleich, test_rechnen_ohne_kontakt,
-              test_vergroeberung_f2):
+    gruppen = (test_quellen_auf_zylinder, test_feld_an_der_wand, test_texte, test_bloecke_flaechen,
+               test_bohrungen, test_mittel_entwurf_bitgleich, test_rechnen_ohne_kontakt,
+               test_vergroeberung_f2, test_grenze_stufen, test_grenze_boegen, test_grenze_fenster,
+               test_grenze_cli)
+    # Aufruf mit Namensteilen (python -m tests.test_fein_smart grenze) laesst nur diese laufen
+    auswahl = [a for a in sys.argv[1:] if not a.startswith("-")]
+    for t in gruppen:
+        if auswahl and not any(a in t.__name__ for a in auswahl):
+            continue
         print(f"\n--- {t.__name__} ---")
         try:
             t()
@@ -502,4 +785,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Das Hauptfenster (test_grenze_fenster) ohne Rueckfrage beenden
+    rc = main()
+    sys.stdout.flush()
+    os._exit(rc)

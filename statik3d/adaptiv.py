@@ -194,6 +194,10 @@ def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = net
                 C.say(log, "Adaptive Vernetzung abgebrochen.")
                 break
             t0 = time.time()
+            # Ohne Stufen der Grenze (08.10.2026): die Schleife nimmt die
+            # Quellen von Fein nicht (elementstufe.beim_vernetzen fehlt hier mit
+            # Absicht) und haelt ihre Groesse selbst (wachstum_max) - ueber der
+            # Grenze in Unbekannten wird nur gewarnt
             erg = mesher.modell_vernetzen(model, log, workers=workers)
             if erg.get("abgebrochen"):
                 break

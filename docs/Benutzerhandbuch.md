@@ -1547,8 +1547,8 @@ freie 18° wie Mittel (tests/test_fein_smart.py). Mittel und Entwurf vernetzen
 bitgleich wie vorher. Am Drehlager (nur vernetzt, gmsh mit MMG3D, 07.10.2026) verfeinert Fein 274
 Flächen (222 Kontakt, 50 Lager, 2 Last) und 780 Bögen; das gab 2 730 539 tet10 mit
 13,2 Millionen Unbekannten in 68 Minuten, mehr als ein Rechner mit direktem
-Löser heute trägt. Dass Fein ein zu großes Netz selbsttätig vergröbert, erst an
-den Bögen und dann an den Flächen, folgt in einem eigenen Paket. Die adaptive Vernetzung bestimmt ihre Kantenlänge selbst;
+Löser heute trägt. Ein so großes Netz vergröbert Fein selbsttätig, erst an den
+Bögen und dann an den Flächen (nächster Absatz). Die adaptive Vernetzung bestimmt ihre Kantenlänge selbst;
 dort wirkt Fein nicht.
 
 Bis zum 07.10.2026 halbierte Fein beim Vernetzen jede Kantenlänge des ganzen
@@ -1561,14 +1561,45 @@ das Protokoll „Elemente Fein: vernetzt mit halber Kantenlänge – …“.
 
 **Fein und die Höchstzahl Unbekannte (seit 07.10.2026).** Überschreitet ein
 Fein-Netz beim Vernetzen die Höchstzahl Unbekannte der Netzeinstellungen,
-vernetzt das Programm selbsttätig gröber, in festen Stufen: zuerst mit
-gröberem Bogenwinkel (9° → 12° → 18°), dann mit längeren Kanten an den
-Quellen (h/2 → h/1,5 → h), zuletzt wie Mittel. Es hält dabei früh an, sobald
-die Grenze überschritten ist, und nicht erst nach dem letzten Volumen; ein
-halbes Netz bleibt nicht im Modell. Jede Stufe steht mit Grund und erreichter
-Zahl im Protokoll; reicht auch die gröbste Stufe nicht, bleibt deren Netz,
-und das Programm warnt. Entwurf und Mittel werden nie selbsttätig gröber. Bis
-zum 07.10.2026 vernetzte Fein ohne Grenze.
+vernetzt das Programm selbsttätig gröber, in festen Stufen. Stufe 0 ist Fein
+mit 9° je Abschnitt an den Bögen der Kontakt- und Lagerflächen und der halben
+Kantenlänge von Mittel an Kontakt-, Lager- und Lastflächen. Die Stufen 1 und 2
+machen zuerst die Bögen gröber (12°, dann 18° wie Mittel), die Stufen 3 und 4
+danach die Flächen (die Kantenlänge von Mittel geteilt durch 1,5, dann die von
+Mittel selbst); Stufe 4 ist Mittel. Das Programm hält dabei früh an, sobald die
+Grenze überschritten ist, und nicht erst nach dem letzten Volumen, verwirft das
+halbe Netz und beginnt die nächste Stufe mit dem Modell, wie es vor dem
+Vernetzen war. Eine Stufe, die an diesem Modell dasselbe Netz ergäbe wie die
+vorige, überspringt es: An einem Modell ohne Kontakt- und Lagerflächen gibt es
+keine feineren Bögen, die Stufen 1 und 2 ändern dort nichts, und nach Stufe 0
+kommt gleich Stufe 3. Das Protokoll nennt jede Stufe mit ihrem Inhalt, Grund
+und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 1 von 1 Volumen angehalten
+– 93 108 Unbekannte über der Grenze von 93 105 (Höchstzahl Unbekannte); größte:
+V1 (31 024 Knoten). Das halbe Netz wird verworfen, vernetzt wird gröber mit
+Stufe 3 (Fein Stufe 3: Bögen 18°, Flächen h/1,5); Stufen 1 und 2 ergäben
+dasselbe Netz wie Stufe 0 und werden übersprungen.“ und am Ende „Netzgrenze:
+vernetzt mit Stufe 3 (Fein Stufe 3: Bögen 18°, Flächen h/1,5) – 74 883
+Unbekannte, unter der Grenze von 93 105.“ Reicht auch Stufe 4 nicht, bleibt
+deren Netz, das bis auf die Teilung abgebildeter Sechsflächner dem von Mittel
+gleicht, und das Programm warnt („… auch in der gröbsten: Stufe 4 (Fein Stufe
+4: Bögen 18°, Flächen h (wie Mittel))“). Die doppelte Teilung abgebildeter
+Sechsflächner gilt in allen Stufen, auch in Stufe 4, weil sie am Körper hängt
+und nicht in den Netzeinstellungen; sie folgen dem Größenfeld ohnehin nicht.
+Das gilt für jedes Vernetzen mit Fein im Fenster (Netz → Vernetzen, Vernetzen
+vor der Rechnung, „Vernetzen“ beim Übernehmen einer Fläche oder eines Körpers
+und beim Anlegen aus der Auswahl, Neuvernetzen nach Spalt und Spiel) und für
+`statik3d modell.json --vernetzen`; die adaptive Vernetzung
+nimmt die Quellen von Fein nicht und vergröbert darum auch nicht in Stufen.
+Entwurf und Mittel werden nie selbsttätig gröber. Ein Netz, das die Grenze
+einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Am Drehlager (nur
+vernetzt, Grenze 4 000 000, Sperre für die Messung aufgehoben, 08.10.2026)
+hielt das Programm Stufe 0 nach 51 von 108 Volumen bei 4,41 Millionen
+Unbekannten an, Stufe 1 nach 51 Volumen bei 4,08 Millionen und Stufe 2 nach
+55 Volumen bei 4,44 Millionen. Stufe 3 lag erst nach dem letzten Volumen mit
+4,65 Millionen über der Grenze, und Stufe 4 ergab 618 720 tet10 mit 3,05
+Millionen Unbekannten. Das dauerte zusammen 71 Minuten, davon 28 Minuten für
+die verworfene Stufe 3; mit dieser Grenze endet Fein am Drehlager also beim
+Netz von Mittel. Bis zum 07.10.2026 vernetzte Fein ohne Grenze.
 
 **Kontakt: was Mittel und Fein noch sperrt.** Seit dem 08.10.2026 rechnen
 Kontaktbedingungen, Kontaktpaare und Flächenlager an Volumen auch mit tet10,
