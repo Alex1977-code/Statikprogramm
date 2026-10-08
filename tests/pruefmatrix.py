@@ -42,8 +42,15 @@ res.solid_knoten, wie der Nachweis sie liest), Unbekannte, Zeit. Ergebnis:
   rot       nicht konvergiert, Abbruch, freie Bewegung (res.singular, ausser
             "hebt ab" mit Kraft 0), gestoerte Pivots > 0 oder falsches Ergebnis
             (bei exakten Faellen ist jede Ueberschreitung falsch)
-  gesperrt  Kontakt an quadratischen Seiten (fugen.QuadratischeSeiten) - den
-            tet10/hex20-Kontakt baut die Loeser-Sitzung
+  gesperrt  Kontakt oder Flaechenlager an quadratischen **Schalen** (shell6, shell8;
+            fugen.QuadratischeSeiten) - das ist dort das erwartete Ergebnis (Fall S1),
+            nicht ein Mangel. Fuer Volumenelemente (tet10, hex20, pent15) gibt es
+            "gesperrt" seit Q1 nicht mehr: eine solche Sperre ist dort rot.
+
+Kontakt an quadratischen Volumenelementen (Bauplan Kontakt quadratisch, 07.10.2026): die
+Seitenmitten jeder Kontaktseite sind an ihre Ecken gebunden (Q1), Kontakt, Fugen und
+Flaechenlager rechnen an den Ecken. Der Schalter fuer die Ruecknahmeprobe ist
+assemble.KONTAKTSEITEN_BINDEN (--gegenprobe: "ohne Bindung" muss rot sein).
 
 Spannungen: jede Koerperzeile eines Knotens in res.solid_knoten einzeln, der
 groesste Fehler zaehlt (wie Results.solid_rand); in exakten Faellen dazu die
@@ -238,6 +245,37 @@ def konformitaet(m: Model, je_koerper: bool = False) -> dict:
     return {"doppelknoten": int(doppelt), "offene_innenseiten": int(offen)}
 
 
+def konformitaet_ringe(m: Model, radien, dicke: float) -> dict:
+    """Wie :func:`konformitaet`, je Koerper, fuer Halbringe: eine Seite, die nur einem Element gehoert,
+    muss auf einem der Kreise ``radien``, einer Stirn (z = 0, z = dicke) oder der Symmetrieebene y = 0
+    liegen (die Huelle ist hier krumm, die Begrenzungsebenen von :func:`konformitaet` passen nicht)."""
+    from collections import Counter
+    X = np.asarray(m.nodes, float)
+    r = np.hypot(X[:, 0], X[:, 1])
+    tol = 1e-9 * max(radien)
+    doppelt = offen = 0
+    for g in sorted({str(e.group) for e in m.elements}):
+        els = [e for e in m.elements if str(e.group) == g]
+        kn = sorted({int(n) for e in els for n in e.nodes})
+        orte = Counter(tuple(np.round(X[n], 9)) for n in kn)
+        doppelt += sum(1 for v in orte.values() if v > 1)
+        c = Counter()
+        for e in els:
+            for f in sl.FLAECHEN_ECKEN[e.typ]:
+                c[tuple(sorted(int(e.nodes[a]) for a in f))] += 1
+        for k, v in c.items():
+            if v != 1:
+                continue
+            P = X[list(k)]
+            rr = r[list(k)]
+            auf_rand = (any(np.all(np.abs(rr - w) < tol) for w in radien)
+                        or np.all(np.abs(P[:, 2]) < tol) or np.all(np.abs(P[:, 2] - dicke) < tol)
+                        or np.all(np.abs(P[:, 1]) < tol))
+            if not auf_rand:
+                offen += 1
+    return {"doppelknoten": int(doppelt), "offene_innenseiten": int(offen)}
+
+
 def am_netz(m: Model):
     im = np.zeros(m.nn, bool)
     for e in m.elements:
@@ -371,9 +409,27 @@ class Fall:
     kontakt = False
     plastisch = False
     h = 0.5
+    #: Familien ("tet", "hex"), die der Fall rechnet (Vorgabe beide)
+    familien = ("tet", "hex")
 
     def bauen(self, familie, typ, ordnung, h, log):
         raise NotImplementedError
+
+    def ist_exakt(self, typ) -> bool:
+        """Ist jede Ueberschreitung in dieser Zelle ein falsches Ergebnis (rot)? Vorgabe: ``exakt``."""
+        return self.exakt
+
+    def exakt_text(self) -> str:
+        """Der Satz fuer docs/Pruefmatrix.md ueber die Exaktheit."""
+        return f" Exakt ({self.exakt_grund}): jede Überschreitung ist rot." if self.exakt else ""
+
+    def gesperrt_erwartet(self, typ) -> bool:
+        """Soll die Rechnung in dieser Zelle an der Sperre scheitern (quadratische Schalen)?"""
+        return False
+
+    def netztyp(self, typ) -> str:
+        """Der Elementtyp, den der Fall in dieser Zelle baut (Vorgabe: der Typ der Zelle)."""
+        return typ
 
     def auswerten(self, m, res, meta):
         raise NotImplementedError
@@ -516,18 +572,25 @@ class FugeDruck(Fall):
             raise RuntimeError(f"Fuge nicht ausgeführt: {b['grund']}")
         return m, b
 
-    def lagerung(self, m, p, federn=0.0):
+    def lagerung(self, m, p, federn=0.0, als_flaechenlager=False):
         tol = 1e-9
         unten = lagern(m, lambda x: abs(x[2]) < tol, [2])
         lagern(m, lambda x: abs(x[0]) < tol, [0])
         lagern(m, lambda x: abs(x[1]) < tol, [1])
         oben = [n for n in np.flatnonzero(am_netz(m)) if abs(m.nodes[n, 2] - 2.0) < tol]
         seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 2] - 2.0) < tol)))
-        if federn:
+        if federn and als_flaechenlager:
+            # Der Deckel ist ein Flaechenlager mit der Bettung k/A (seit 08.10.2026, Q3): jede
+            # Ecke bekommt A/ne, die Mitten sind an die Ecken gebunden (Q1). Die Federn nach
+            # konsistenten Anteilen (unten) hatten an tri6-Ecken null und an quad8-Ecken
+            # negative Anteile, die supports._entry verwirft (Bestandsaufnahme 07.10.2026).
+            deckel_lager(m, seiten, federn, [0, 1, 2])
+        elif federn:
             # nach Flaechenanteil verteilt (wie die Last): der Deckel bewegt
             # sich gleichmaessig, die Wuerfel bleiben spannungsfrei. Bis
             # 25.09.2026 gleich je Knoten - dann verzog sich der Deckel und
-            # der obere Wuerfel trug bis 102 N/mm² (gemessen, Element-Pruefung)
+            # der obere Wuerfel trug bis 102 N/mm² (gemessen, Element-Pruefung).
+            # Nur noch fuer lineare Elemente richtig (Q2-Test in test_fugen)
             for n, w in flaechenanteile(m, seiten).items():
                 k = federn * w
                 m.fix(int(n), [0, 1, 2], stiffness=[k, k, k])
@@ -558,13 +621,14 @@ class FugeDruck(Fall):
 
 class FugeZug(FugeDruck):
     kurz = "K2"
-    name = "Fuge ohne Zug, Zug öffnet (zwei Würfel, oben in Federn)"
-    soll = "Fundament trägt 0 (Zug −100 N/mm² auf dem Deckel), die Last hängt ganz in den Federn"
+    name = "Fuge ohne Zug, Zug öffnet (zwei Würfel, Deckel als Flächenlager mit Bettung)"
+    soll = ("Fundament trägt 0 (Zug −100 N/mm² auf dem Deckel), die Last hängt ganz im Flächenlager "
+            "des Deckels (Bettung k/A, k = 1e11 N/m je Richtung; seit 08.10.2026 statt Knotenfedern)")
     grenze_text = "Fundamentkraft ≤ 1 % der Last (entspricht 1 N/mm² mittlerer Fugenspannung)"
 
     def bauen(self, familie, typ, ordnung, h, log):
         m, b = self.modell(familie, ordnung, h, log)
-        unten, oben = self.lagerung(m, -self.p, federn=1e11)
+        unten, oben = self.lagerung(m, -self.p, federn=1e11, als_flaechenlager=True)
         return m, {"unten": unten, "oben": oben, "spalt": b.get("spalt"), "p": -self.p}
 
     def auswerten(self, m, res, meta):
@@ -805,9 +869,16 @@ def facetten_von(m, gruppe, bedingung):
     aus = []
     for i in elemente_von(m, gruppe):
         e = m.elements[i]
+        cen = X[[int(k) for k in e.nodes[:len(sl.ECKEN_NATUERLICH[e.typ])]]].mean(axis=0)
         for f in sl.FLAECHEN_ECKEN[e.typ]:
             kn = [int(e.nodes[a]) for a in f]
             if all(bedingung(X[k]) for k in kn):
+                # Umlauf nach aussen (aus dem Element heraus): eine explizite Master-Facette
+                # wird nach dem Umlauf ihrer Knoten gerichtet (contact._build_pair), und
+                # FLAECHEN_ECKEN fuehrt die Tetraederseiten nicht einheitlich nach aussen
+                P = X[kn]
+                if np.cross(P[1] - P[0], P[2] - P[0]) @ (P.mean(axis=0) - cen) < 0:
+                    kn = kn[::-1]
                 aus.append(kn)
     return aus
 
@@ -837,6 +908,53 @@ def federn(m, seiten, k, dofs):
     for n, w in anteile.items():
         m.fix(int(n), list(dofs), stiffness=[k * w] * len(dofs))
     return sorted(anteile)
+
+
+def einflussflaechen(m, seiten) -> dict:
+    """{Eckknoten: Einflussflaeche} einer Menge von Seiten: jede Seite gibt ihren Inhalt
+    gleichmaessig an ihre **Ecken** (A/3 bzw. A/4), wie ``supports.tributary_areas`` es fuer
+    ein Flaechenlager tut. Die Mitten einer quadratischen Seite tragen nichts - sie sind
+    an Kontaktseiten an die Ecken gebunden (Q1)."""
+    X = np.asarray(m.nodes, float)
+    trib: dict = {}
+    for _i, kn in seiten:
+        ne = 4 if len(kn) in (4, 8) else 3
+        ecken = [int(n) for n in kn[:ne]]
+        P = X[ecken]
+        A = 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
+        if ne == 4:
+            A += 0.5 * float(np.linalg.norm(np.cross(P[2] - P[0], P[3] - P[0])))
+        for n in ecken:
+            trib[n] = trib.get(n, 0.0) + A / ne
+    return trib
+
+
+def flaechenlager(m, seiten, name, **verhalten):
+    """Ein **Flaechenlager** (SurfaceSupport) auf diesen Seiten: Knoten und Einflussflaechen
+    wie oben, ``verhalten`` {"ux"|"uy"|"uz": dict(typ, stiffness [N/m^3], failure)}.
+    Rueckgabe (alle Knoten der Seiten samt Mitten, Gesamtflaeche)."""
+    trib = einflussflaechen(m, seiten)
+    knoten = sorted(trib)
+    m.add_surface_support(name=name, nodes=knoten, areas=[trib[n] for n in knoten], **verhalten)
+    return sorted({int(n) for _i, kn in seiten for n in kn}), float(sum(trib.values()))
+
+
+def deckel_lager(m, seiten, k, dofs, name="Deckel"):
+    """Der Deckel als **Flaechenlager** mit der Bettung k/A [N/m^3] (Gesamtsteifigkeit ``k``
+    [N/m] je Richtung in ``dofs``) statt Knotenfedern nach konsistenten Anteilen.
+
+    Die konsistenten Anteile einer gleichmaessigen Spannung sind an tri6-Ecken null und an
+    quad8-Ecken negativ (-1/12 der Seitenflaeche); ``supports._entry`` verwirft Federn mit
+    k <= 0, am hex20 kamen darum 1,333 k statt 1,0 k im Loeser an (K7), am Deckel von K2
+    blieb ein Wuerfel bei +90 bis +1221 N/mm2 (Bestandsaufnahme 07.10.2026) - Fehler der
+    Pruefmatrix, nicht des Kontakts. Das Flaechenlager gibt jeder Ecke A/ne und bindet die
+    Mitten an die Ecken (Q1); das ist die Wirkung eines Flaechenlagers mit Bettung im
+    Programm. Rueckgabe: alle Knoten des Deckels (Ecken und Mitten)."""
+    A = sum(einflussflaechen(m, seiten).values())
+    achsen = {0: "ux", 1: "uy", 2: "uz"}
+    knoten, _A = flaechenlager(m, seiten, name,
+                               **{achsen[d]: dict(typ="spring", stiffness=k / A) for d in dofs})
+    return knoten
 
 
 def kontaktpaar(m, oben, unten, z, h, **kw):
@@ -1006,9 +1124,10 @@ class UngleicheNetze(Fall):
 
 class Anfangsspalt(Fall):
     kurz, rechenart = "K7", "Kontakt"
-    name = "Anfangsspalt g = 1 mm schließt sich unter Last (Kontaktpaar, oben Federn)"
-    soll = ("zwei Würfel 1 m, der obere 1 mm angehoben, auf dem Deckel Federn k = 10.000 kN/mm in z "
-            "(nach Flächenanteil verteilt), Last p A = 100.000 kN: F_c = (F − k g)/(1 + 2 k L/(E A)) "
+    name = "Anfangsspalt g = 1 mm schließt sich unter Last (Kontaktpaar, Deckel als Flächenlager)"
+    soll = ("zwei Würfel 1 m, der obere 1 mm angehoben, auf dem Deckel ein Flächenlager mit Bettung k/A in z "
+            "(k = 10.000 kN/mm; bis 07.10.2026 Knotenfedern nach Flächenanteil), Last p A = 100.000 kN: "
+            "F_c = (F − k g)/(1 + 2 k L/(E A)) "
             "= 82.174 kN durch die Fuge, u_oben = g + 2 F_c L/(E A) = 1,7826 mm, σ = F_c/A in beiden "
             "Würfeln. Zweiter Weg: derselbe Würfel anliegend mit ContactPair.spiel = g")
     grenze_text = ("1 N/mm² an jedem Knoten und Element, u 1 %, Kräfte 1 %; beide Wege gleich auf "
@@ -1041,7 +1160,7 @@ class Anfangsspalt(Fall):
         lagern(m, lambda x: abs(x[1]) < tol, [1])
         z1 = 2.0 + dz
         seiten = seiten_von(m, "Oben", lambda x: abs(x[2] - z1) < tol)
-        oben = federn(m, seiten, self.k, [2])
+        oben = deckel_lager(m, seiten, self.k, [2])
         pk.spannung_auf_seiten(m, seiten, lambda x: np.array([0.0, 0.0, -self.p]))
         slave_z = 1.0 + dz
         tol_ = 1e-9
@@ -1076,8 +1195,378 @@ class Anfangsspalt(Fall):
             f"{(r2.info or {}).get('contact_converged')}"
 
 
+# ---- Flächenlager mit Ausfall bei Zug (F1), Bolzen in Bohrung (K8), Schale (S1) --------
+#: Bettung des Lagers „Starr“ am Drehlager [N/m^3] mit Ausfall bei Zug: gilt als starres Lager
+#: mit Ausfall (supports.BETTUNG_STARR, Anwenderentscheidung 27.09.2026) und läuft als exakte
+#: Normalbedingung im Kontaktsystem
+BETTUNG_DREHLAGER = 2.5e11
+
+
+class FlaechenlagerExzentrisch(Fall):
+    kurz, rechenart = "F1", "Kontakt"
+    name = "Flächenlager „starr mit Ausfall bei Zug“, außermittiger Druck (Trapez nach N/A ± M/W)"
+    soll = ("Block 1 × 1 × 2 m auf dem Flächenlager der Sohle (Bettung 2,5e11 N/m³ mit Ausfall bei Zug, "
+            "gilt als starr mit Ausfall; seitlich frei, nur die Starrkörperbewegung in der Ebene "
+            "durch zwei Eckknoten gehalten). Auf dem Deckel eine lineare Randspannung (Resultierende "
+            "N = 200.000 kN, Ausmitte e = L/12, M = N e): σ = N/A ± M/W = 300 bzw. 100 N/mm² an den "
+            "Rändern der Sohle, überall Druck, also fällt kein Knoten aus. Querdehnzahl ν = 0 (nur in diesem "
+            "Fall), damit die Sohle seitlich nur starr wandert. Das ist ein Spannungszustand σ_zz(x) ohne "
+            "Schub in der Sohle: σ_v = |σ_zz|, Auflagerkraft N, Moment der Auflagerkräfte N e")
+    grenze_text = ("1 N/mm² an jedem Eckknoten, Auflagerkraft 1 %, Moment der Auflagerkräfte 1 %, "
+                   "kein offener Knoten in der Sohle")
+    exakt_grund = ("der lineare Zustand σ_zz(x) liegt im Verschiebungsraum von tet10 und hex20 "
+                   "(Verschiebungen höchstens quadratisch); tet4 und hex8 stellen die Biegung des "
+                   "Blocks nicht exakt dar, dort ist eine Überschreitung Diskretisierung (gelb)")
+    kontakt = True
+    h = 0.5
+    L = 1.0
+    H = 2.0
+    sigma_m = 200e6
+    ausmitte = 1.0 / 12.0            # e / L
+    ausfall = "zug"                  # Ausfallart der Sohle (die Gegenprobe setzt "")
+
+    def ist_exakt(self, typ):
+        return typ in ("tet10", "hex20")
+
+    def exakt_text(self):
+        return f" Exakt für tet10 und hex20 ({self.exakt_grund}): dort ist jede Überschreitung rot."
+
+    def druck(self, x):
+        """Randspannung [Pa] bei x: N/A + M/W im Abstand x - L/2 vom Schwerpunkt."""
+        return self.sigma_m * (1.0 + 6.0 * self.ausmitte * (2.0 * x / self.L - 1.0))
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        m = leeres_modell()
+        # Querdehnzahl 0: die frei gleitende Sohle wandert dann nur starr in x und y. Mit nu = 0,3
+        # wandert sie quadratisch in x (u_x ~ nu b x^2/2E), und die Seitenmitten der Kontaktseite
+        # sind an die Ecken gebunden (linear) - der Fehler ist dann Diskretisierung erster
+        # Ordnung (gemessen 08.10.2026: tet10 Mittel -19,53, hex20 +9,99 N/mm2), kein Kontaktfehler.
+        m.materials["S"].nu = 0.0
+        tol = 1e-9
+        block(m, typ, (0, 0, 0), (self.L, self.L, self.H), h, "B")
+        if typ == "hex20":
+            quadratisch_machen(m)
+        m._pm_netz = konformitaet(m)
+        sohle = seiten_von(m, "B", lambda x: abs(x[2]) < tol)
+        knoten, _A = flaechenlager(m, sohle, "Sohle",
+                                   uz=dict(typ="spring", stiffness=BETTUNG_DREHLAGER, failure=self.ausfall))
+        # Starrkörperbewegung in der Ebene: Eckknoten (0,0,0) in x und y, (L,0,0) in y. Der
+        # exakte Zustand hat dort keine Reaktion (kein Schub in der Sohle).
+        X = np.asarray(m.nodes, float)
+        im = np.flatnonzero(am_netz(m))
+        a = int(im[np.argmin(np.linalg.norm(X[im] - np.array([0.0, 0.0, 0.0]), axis=1))])
+        b = int(im[np.argmin(np.linalg.norm(X[im] - np.array([self.L, 0.0, 0.0]), axis=1))])
+        m.fix(a, [0, 1])
+        m.fix(b, [1])
+        deckel = seiten_von(m, "B", lambda x: abs(x[2] - self.H) < tol)
+        pk.spannung_auf_seiten(m, deckel, lambda x: np.array([0.0, 0.0, -self.druck(float(x[0]))]))
+        return m, {"sohle": knoten}
+
+    def auswerten(self, m, res, meta):
+        X = np.asarray(m.nodes, float)
+        N = self.sigma_m * self.L ** 2
+        dsv = groesster_fehler(knotenspannung(res, ecken_am_netz(m)), lambda n: self.druck(float(X[n, 0])))
+        R = np.asarray(res.reactions, float)[:, 2]
+        moment = float((R * (X[:, 0] - 0.5 * self.L)).sum())
+        stat = status_zaehlen(res, meta["sohle"])
+        return [metrik("σ_v", dsv, 1.0, "N/mm²"),
+                metrik("Auflager", (float(R.sum()) / N - 1) * 100, 1.0, "%"),
+                metrik("Moment", (moment / (N * self.ausmitte * self.L) - 1) * 100, 1.0, "%"),
+                metrik("offene Knoten", stat.get("offen", 0), 0.0, "")], \
+            "Sohle: " + (", ".join(f"{v} {k}" for k, v in sorted(stat.items())) or "keine Kontaktzeilen")
+
+
+class FlaechenlagerAbheben(FlaechenlagerExzentrisch):
+    kurz = "F2"
+    name = "Flächenlager „starr mit Ausfall bei Zug“ hebt ab (Zug am Deckel, Deckel in Flächenlager gehalten)"
+    soll = ("Block wie F1 auf der Sohle (Bettung 2,5e11 N/m³ mit Ausfall bei Zug), auf dem Deckel eine "
+            "gleichmäßige Zugspannung 100 N/mm² (F = 100.000 kN), gehalten von einem Flächenlager auf dem Deckel "
+            "(Bettung k/A, k = 1e11 N/m). Die Sohle darf keinen Zug tragen: Kraft der Sohle 0, jeder Knoten "
+            "der Sohle offen, der Block spannungsfrei, die Last hängt ganz im Deckel (Federn = F)")
+    grenze_text = ("Sohle ≤ 1 % von F, Federn 1 %, 1 N/mm² an jedem Element, kein geschlossener Knoten in "
+                   "der Sohle")
+    exakt = True
+    exakt_grund = "spannungsfreier Zustand, jedes Element stellt ihn exakt dar"
+    p = 100e6
+    k = 1e11
+
+    def ist_exakt(self, typ):
+        return True
+
+    def exakt_text(self):
+        return f" Exakt ({self.exakt_grund}): jede Überschreitung ist rot."
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        m = leeres_modell()
+        tol = 1e-9
+        block(m, typ, (0, 0, 0), (self.L, self.L, self.H), h, "B")
+        if typ == "hex20":
+            quadratisch_machen(m)
+        m._pm_netz = konformitaet(m)
+        sohle = seiten_von(m, "B", lambda x: abs(x[2]) < tol)
+        knoten, _A = flaechenlager(m, sohle, "Sohle",
+                                   uz=dict(typ="spring", stiffness=BETTUNG_DREHLAGER, failure=self.ausfall))
+        X = np.asarray(m.nodes, float)
+        im = np.flatnonzero(am_netz(m))
+        a = int(im[np.argmin(np.linalg.norm(X[im] - np.array([0.0, 0.0, 0.0]), axis=1))])
+        b = int(im[np.argmin(np.linalg.norm(X[im] - np.array([self.L, 0.0, 0.0]), axis=1))])
+        m.fix(a, [0, 1])
+        m.fix(b, [1])
+        deckel = seiten_von(m, "B", lambda x: abs(x[2] - self.H) < tol)
+        oben = deckel_lager(m, deckel, self.k, [2])
+        pk.spannung_auf_seiten(m, deckel, lambda x: np.array([0.0, 0.0, self.p]))
+        return m, {"sohle": knoten, "oben": oben}
+
+    def auswerten(self, m, res, meta):
+        F = self.p * self.L ** 2
+        R = np.asarray(res.reactions, float)[:, 2]
+        stat = status_zaehlen(res, meta["sohle"])
+        ecken = {n for n in meta["sohle"] if n in ecken_am_netz(m)}
+        zu = sum(v for k_, v in stat.items() if k_ != "offen")
+        return [metrik("Sohle", float(R[meta["sohle"]].sum()) / F * 100, 1.0, "%"),
+                metrik("Federn", (-float(R[meta["oben"]].sum()) / F - 1) * 100, 1.0, "%"),
+                metrik("σ_v Element", elementfehler(res, 0.0), 1.0, "N/mm²"),
+                metrik("geschlossene Knoten", zu, 0.0, "")],             "Sohle: " + (", ".join(f"{v} {k_}" for k_, v in sorted(stat.items())) or "keine Kontaktzeilen")             + f" ({len(ecken)} Eckknoten)"
+
+
+class BolzenInBohrung(Fall):
+    kurz, rechenart = "K8", "Kontakt"
+    name = "Rohrbolzen in Bohrung mit Übermaß (Lamé, ebene Dehnung, Halbmodell mit gekrümmter Fuge)"
+    soll = ("Rohrbolzen (Außenradius a = 100 mm, Innenradius a/2) in der Bohrung einer Nabe (Außenradius 2 a), "
+            "Dicke 20 mm, ebene Dehnung (u_z = 0 an beiden Stirnen), Halbmodell mit Symmetrie in y, deckungsgleiche "
+            "Knoten an der Fuge. Übermaß am Durchmesser (radial die Hälfte), so gewählt, dass σ_v der Nabe an der "
+            "Bohrung 355 N/mm² erreicht. Lamé für zwei Rohre mit der Pressung p: "
+            "u_r(a) = (1+ν)/E ((1−2ν) A a + B/a) mit A = p a²/(b²−a²), B = A b² für die Nabe und "
+            "A = −p a²/(a²−r_i²), B = A r_i² für den Bolzen; σ_rr = A − B/r², σ_θθ = A + B/r², σ_zz = 2νA; "
+            "Kontaktkraft in y = 2 p a t")
+    grenze_text = ("u_r und Kontaktkraft 1 %; Spannungen am Entwurf geeicht (größter Fehler von tet4 und hex8, "
+                   "aufgerundet: Bolzen außen 25, Bolzen innen 135, Nabe an der Bohrung 80, Nabe außen "
+                   "15 N/mm²), Mittel und Fein müssen dieselben Grenzen halten; die Fuge ist gekrümmt, ihre "
+                   "Seitenmitten liegen (Q1) auf der Sehne, sie ist also so facettiert wie bei Entwurf")
+    kontakt = True
+    h = 0.025
+    a = 0.1
+    ri = 0.05
+    b = 0.2
+    dicke = 0.02
+    #: Grenzen je Größe, am Entwurf geeicht (08.10.2026): Wege und Kräfte wie in der ganzen Matrix 1 %
+    #: (hex8 hält sie, tet4 ist wie sonst zu steif: gelb). Spannungen: 1 N/mm² erreicht der Entwurf an
+    #: der gekrümmten Fuge nicht (Diskretisierung der Glättung an Fuge und freiem Rand); Grenze ist der
+    #: größte Fehler von tet4 und hex8 am Entwurf, auf 5 N/mm² aufgerundet - Mittel und Fein dürfen
+    #: nicht schlechter sein als Entwurf (Abnahme Abschnitt 4 des Bauplans).
+    #: Entwurf tet4 / hex8: Bolzen(a) 24,28 / 1,82; Bolzen(i) 133,14 / 41,13; Nabe(a) 79,55 / 26,92;
+    #: Nabe(b) 13,91 / 3,54 N/mm²
+    GRENZEN = {"σ_v Bolzen(a)": 25.0, "σ_v Bolzen(i)": 135.0, "σ_v Nabe(a)": 80.0, "σ_v Nabe(b)": 15.0,
+               "u_r Bolzen": 1.0, "u_r Nabe": 1.0, "Kontaktkraft": 1.0}
+
+    @staticmethod
+    def _sv(s_rr, s_tt, s_zz):
+        return float(np.sqrt(0.5 * ((s_rr - s_tt) ** 2 + (s_tt - s_zz) ** 2 + (s_zz - s_rr) ** 2)))
+
+    def lame(self) -> dict:
+        """Lamé für die Pressung 1 (ebene Dehnung), mit p aus σ_v der Nabe = 355 N/mm²: alle Größen je p,
+        dazu ``p`` und das Übermaß am Durchmesser ``dD``."""
+        E, nu, a, b, ri = E_ST, NU_ST, self.a, self.b, self.ri
+        sv = self._sv
+        An = a * a / (b * b - a * a)
+        Bn = An * b * b
+        Ap = -a * a / (a * a - ri * ri)
+        Bp = Ap * ri * ri
+
+        def u(A, B, r):
+            return (1 + nu) / E * ((1 - 2 * nu) * A * r + B / r)
+        k = {"sv_nabe_a": sv(An - Bn / a ** 2, An + Bn / a ** 2, 2 * nu * An),
+             "sv_nabe_b": sv(An - Bn / b ** 2, An + Bn / b ** 2, 2 * nu * An),
+             "sv_bolzen_a": sv(Ap - Bp / a ** 2, Ap + Bp / a ** 2, 2 * nu * Ap),
+             "sv_bolzen_i": sv(Ap - Bp / ri ** 2, Ap + Bp / ri ** 2, 2 * nu * Ap),
+             "u_nabe": u(An, Bn, a), "u_bolzen": u(Ap, Bp, a)}
+        k["p"] = pk.SIGMA_BEZUG / k["sv_nabe_a"]
+        k["dD"] = 2.0 * k["p"] * (k["u_nabe"] - k["u_bolzen"])
+        return k
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        a, b, ri, d = self.a, self.b, self.ri, self.dicke
+        n = max(1, int(round(a / h)))
+        nb = max(1, n // 2)                                # radiale Zellen des Bolzens (gleiche Zellweite)
+        basis = "hex8" if typ == "hex20" else typ
+
+        def ring(r0, r1, nr):
+            def form(i, j, k, p):
+                r = r0 + (r1 - r0) * i / nr
+                w = np.pi * j / (4 * n)
+                return np.array([r * np.cos(w), r * np.sin(w), d * k])
+            return pk.quader(basis, nr, 4 * n, 1, 1.0, 1.0, d, form=form)[0]
+        m = leeres_modell()
+        for q, gruppe in ((ring(ri, a, nb), "Bolzen"), (ring(a, b, n), "Nabe")):
+            neu = {i: m.add_node(*q.nodes[i]) for i in range(q.nn)}
+            for e in q.elements:
+                m.add_element(e.typ, [neu[int(k)] for k in e.nodes], "S", group=gruppe)
+
+        def mitte(P, Q):
+            """Seitenmitte auf dem Kreisbogen, wenn beide Enden auf demselben Kreis liegen, sonst die
+            Sehnenmitte (die Ringe der Zellen liegen auf Kreisen, die Mitten der Fuge also auf dem Bogen:
+            Q1 setzt sie danach auf die Sehne)."""
+            M = 0.5 * (P + Q)
+            rp, rq = np.hypot(P[0], P[1]), np.hypot(Q[0], Q[1])
+            if abs(rp - rq) < 1e-9 * b:
+                f = rp / np.hypot(M[0], M[1])
+                return np.array([M[0] * f, M[1] * f, M[2]])
+            return M
+        if typ == "hex20":
+            quadratisch_machen(m, mitte)
+        elif typ == "tet10":
+            for e in m.elements:
+                for (p_, q_), mm in zip(pk.TET10_KANTEN, e.nodes[4:]):
+                    m.nodes[int(mm)] = mitte(m.nodes[int(e.nodes[p_])], m.nodes[int(e.nodes[q_])])
+        X = np.asarray(m.nodes, float)
+        tol = 1e-9 * b
+        m._pm_netz = konformitaet_ringe(m, (ri, a, b), d)
+        for nd in np.flatnonzero(am_netz(m)):
+            dofs = []
+            if abs(X[nd, 1]) < tol:
+                dofs.append(1)                            # Symmetrieebene y = 0
+            if abs(X[nd, 2]) < tol or abs(X[nd, 2] - d) < tol:
+                dofs.append(2)                            # ebene Dehnung
+            if abs(X[nd, 0]) < tol and abs(X[nd, 1] - b) < tol:
+                dofs.append(0)                            # Starrkörper in x (Reaktion null)
+            if dofs:
+                m.fix(int(nd), dofs)
+        auf_a = lambda x: abs(np.hypot(x[0], x[1]) - a) < tol            # noqa: E731
+        slave = knoten_von(m, "Bolzen", auf_a)
+        master = facetten_von(m, "Nabe", auf_a)
+        m.contact_pairs.append(ContactPair("Passung", slave_nodes=slave, master_faces=master,
+                                           mu=0.0, search_radius=0.5 * h))
+        lc = m.add_load_case("LF1")
+        lc.gravity = [0, 0, 0]
+        k = self.lame()
+        lc.uebermasse.append(Uebermass("Passung", k["dD"], passmass="Ø200, Übermaß am Durchmesser"))
+        r = np.hypot(X[:, 0], X[:, 1])
+        bolzen, nabe = knoten_von(m, "Bolzen"), knoten_von(m, "Nabe")
+        return m, {"slave": slave, "p": k["p"], "n": n, "nb": nb,
+                   "bolzen_a": slave, "nabe_a": knoten_von(m, "Nabe", auf_a),
+                   "bolzen_i": [i for i in bolzen if abs(r[i] - ri) < tol],
+                   "nabe_b": [i for i in nabe if abs(r[i] - b) < tol]}
+
+    def auswerten(self, m, res, meta):
+        a, d = self.a, self.dicke
+        k = self.lame()
+        p = k["p"]
+        X = np.asarray(m.nodes, float)
+        u = u3(res, m)
+        ecken = ecken_am_netz(m)
+
+        def radial(knoten):
+            kn = [n for n in knoten if n in ecken]
+            r = np.hypot(X[kn, 0], X[kn, 1])
+            return float(np.mean((u[kn, 0] * X[kn, 0] + u[kn, 1] * X[kn, 1]) / r))
+
+        def spannung(knoten, soll):
+            return groesster_fehler(knotenspannung(res, [n for n in knoten if n in ecken]), soll * p)
+        cf = np.asarray(res.contact_forces, float)
+        F_y = -float(cf[meta["slave"], 1].sum())
+        g = self.GRENZEN
+        mets = [metrik("σ_v Bolzen(a)", spannung(meta["bolzen_a"], k["sv_bolzen_a"]), g["σ_v Bolzen(a)"], "N/mm²"),
+                metrik("σ_v Bolzen(i)", spannung(meta["bolzen_i"], k["sv_bolzen_i"]), g["σ_v Bolzen(i)"], "N/mm²"),
+                metrik("σ_v Nabe(a)", spannung(meta["nabe_a"], k["sv_nabe_a"]), g["σ_v Nabe(a)"], "N/mm²"),
+                metrik("σ_v Nabe(b)", spannung(meta["nabe_b"], k["sv_nabe_b"]), g["σ_v Nabe(b)"], "N/mm²"),
+                metrik("u_r Bolzen", (radial(meta["bolzen_a"]) / (k["u_bolzen"] * p) - 1) * 100, g["u_r Bolzen"], "%"),
+                metrik("u_r Nabe", (radial(meta["nabe_a"]) / (k["u_nabe"] * p) - 1) * 100, g["u_r Nabe"], "%"),
+                metrik("Kontaktkraft", (F_y / (2.0 * p * a * d) - 1) * 100, g["Kontaktkraft"], "%")]
+        return mets, (f"Pressung {zahl(p / MPA, 1)} N/mm², Übermaß am Durchmesser {zahl(k['dD'] * 1e6, 1)} µm, "
+                      f"Nabe {4 * meta['n']} × {meta['n']} Zellen (Halbring), Bolzen {4 * meta['n']} × {meta['nb']}; "
+                      f"Mitten der Fuge höchstens {zahl(pruefe_sehne(m, meta['slave']) * 1e3, 3)} mm neben der Sehne")
+
+    def pruefen(self, m, res, meta):
+        log = " ".join(str(z) for z in (res.info or {}).get("contact_log", []))
+        if "zylindrisch" not in log:
+            return ["Fuge nicht als zylindrisch erkannt (contact_log): das Übermaß am Durchmesser "
+                    "würde nicht halbiert"]
+        return []
+
+
+def pruefe_sehne(m, knoten) -> float:
+    """Größter Abstand [m] einer Seitenmitte der Kontaktseiten von der Sehnenmitte ihrer beiden Ecken
+    (zur Anzeige: Q1 setzt die gebundenen Mitten auf die Sehne, also null)."""
+    X = np.asarray(m.nodes, float)
+    S = {int(n) for n in knoten}
+    weit = 0.0
+    for e in m.elements:
+        if e.typ not in ("tet10", "hex20"):
+            continue
+        for f, fe in zip(sl.FLAECHEN[e.typ], sl.FLAECHEN_ECKEN[e.typ]):
+            if not all(int(e.nodes[c]) in S for c in fe):
+                continue
+            ne = len(fe)
+            for kk in range(ne, len(f)):
+                p_, q_ = fe[kk - ne], fe[(kk - ne + 1) % ne]
+                mitte = 0.5 * (X[int(e.nodes[p_])] + X[int(e.nodes[q_])])
+                weit = max(weit, float(np.linalg.norm(X[int(e.nodes[f[kk]])] - mitte)))
+    return weit
+
+
+class SchaleAnFlaechenlager(Fall):
+    kurz, rechenart = "S1", "Kontakt"
+    name = "Schale auf Flächenlager (starr mit Ausfall bei Zug): quadratische Schalen bleiben gesperrt"
+    soll = ("Platte 1 × 1 m, t = 0,1 m, gleichmäßiger Druck q auf dem Flächenlager (Bettung 2,5e11 N/m³ mit "
+            "Ausfall bei Zug): Auflagerkraft q A. Mit shell4 (Entwurf) rechnet es; mit shell8 (Mittel, Fein) "
+            "bricht die Rechnung laut ab (fugen.QuadratischeSeiten): Kontakt und Flächenlager nehmen an einer "
+            "quadratischen Schale nur die Ecken, die Sperre bleibt für Schalen (Bauplan E3)")
+    grenze_text = ("Entwurf: Auflagerkraft 1 %; Mittel und Fein: die Sperre muss greifen (gesperrt ist hier das "
+                   "erwartete Ergebnis, eine durchlaufende Rechnung ist rot)")
+    exakt = True
+    exakt_grund = "die Auflagerkraft folgt aus dem Gleichgewicht"
+    kontakt = True
+    familien = ("hex",)
+    h = 0.5
+    q = 100e3
+
+    def netztyp(self, typ):
+        return "shell8" if typ == "hex20" else "shell4"
+
+    def gesperrt_erwartet(self, typ):
+        return typ == "hex20"
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        from statik3d.model import FaceLoad, ShellProp
+        m = leeres_modell()
+        m.add_shell_prop(ShellProp("t", 0.1))
+        n = max(1, int(round(1.0 / h)))
+        quad = typ == "hex20"
+        nn = 2 * n if quad else n
+        ids = {(i, j): int(m.add_node(i / nn, j / nn, 0.0)) for i in range(nn + 1) for j in range(nn + 1)}
+        for i in range(n):
+            for j in range(n):
+                if quad:
+                    ecken = [ids[(2 * i, 2 * j)], ids[(2 * i + 2, 2 * j)],
+                             ids[(2 * i + 2, 2 * j + 2)], ids[(2 * i, 2 * j + 2)]]
+                    mitten = [ids[(2 * i + 1, 2 * j)], ids[(2 * i + 2, 2 * j + 1)],
+                              ids[(2 * i + 1, 2 * j + 2)], ids[(2 * i, 2 * j + 1)]]
+                    m.add_element("shell8", ecken + mitten, "S", "t")
+                else:
+                    m.add_element("shell4", [ids[(i, j)], ids[(i + 1, j)], ids[(i + 1, j + 1)], ids[(i, j + 1)]],
+                                  "S", "t")
+        trib: dict = {}
+        for e in m.elements:
+            for c in e.nodes[:4]:
+                trib[int(c)] = trib.get(int(c), 0.0) + 1.0 / (len(m.elements) * 4)
+        knoten = sorted(trib)
+        m.add_surface_support(name="Sohle", nodes=knoten, areas=[trib[k] for k in knoten],
+                              uz=dict(typ="spring", stiffness=BETTUNG_DREHLAGER, failure="zug"))
+        m.fix(ids[(0, 0)], [0, 1])
+        m.fix(ids[(nn, 0)], [1])
+        lc = m.case()
+        for i in range(len(m.elements)):
+            lc.face_loads.append(FaceLoad(i, -self.q, 0))
+        return m, {"knoten": knoten}
+
+    def auswerten(self, m, res, meta):
+        R = float(np.asarray(res.reactions, float)[:, 2].sum())
+        return [metrik("Auflager", (R / self.q - 1) * 100, 1.0, "%")], "Schale shell4 am Flächenlager"
+
+
 FAELLE = [Kragarm(), LameZylinder(), KragarmZweiKoerper(), FugeDruck(), FugeZug(), UebermassFuge(),
           ReibungHaftenGleiten(), ReibungGanzGleiten(), UngleicheNetze(), Anfangsspalt(),
+          FlaechenlagerExzentrisch(), FlaechenlagerAbheben(), BolzenInBohrung(), SchaleAnFlaechenlager(),
           Druckwuerfel(), HillRohr(), FugeDruckPlastisch(), UebermassPlastisch()]
 
 
@@ -1102,14 +1591,23 @@ def zelle(fall, stufe, familie, typ, ordnung, faktor, h=None):
         typen = sorted({e.typ for e in m.elements})
         z["typen"] = typen
         z["unbekannte"] = unbekannte(m)
-        fremd = [t for t in typen if t != typ]
+        fremd = [t for t in typen if t != fall.netztyp(typ)]
         if fremd:
-            z["befund"] = f"Netz enthält {', '.join(fremd)} statt nur {typ}"
+            z["befund"] = f"Netz enthält {', '.join(fremd)} statt nur {fall.netztyp(typ)}"
         res = solver.solve_static(m, workers=1)
+        if fall.gesperrt_erwartet(typ):
+            z["zeit"] = time.perf_counter() - t0
+            z["ergebnis"] = "rot"
+            z["befund"] = "Sperre fehlt: die Rechnung an quadratischen Schalen lief durch"
+            return z
     except fugen.QuadratischeSeiten as ex:
         z["zeit"] = time.perf_counter() - t0
-        z["ergebnis"] = "gesperrt"
-        z["befund"] = str(ex)[:160]
+        if fall.gesperrt_erwartet(typ):
+            z["ergebnis"] = "gesperrt"          # erwartet: quadratische Schalen bleiben gesperrt
+            z["befund"] = str(ex)[:160]
+        else:
+            z["ergebnis"] = "rot"
+            z["befund"] = "unerwartet gesperrt: " + str(ex)[:200]
         return z
     except Exception as ex:                      # noqa: BLE001 - die Matrix hält alles fest
         z["zeit"] = time.perf_counter() - t0
@@ -1182,7 +1680,7 @@ def zelle(fall, stufe, familie, typ, ordnung, faktor, h=None):
         z["besitzer"] = "Vernetzer"
         z["befund"] = (konform_text + "; " + ", ".join(f"{x['name']} {zahl(x['wert'])} {x['einheit']}"
                                                          for x in raus))
-    elif fall.exakt:
+    elif fall.ist_exakt(typ):
         z["ergebnis"] = "rot"
         z["befund"] = (f"falsches Ergebnis ({fall.exakt_grund}): "
                        + ", ".join(f"{x['name']} {zahl(x['wert'])} {x['einheit']}" for x in raus))
@@ -1250,8 +1748,7 @@ def markdown(alle, faelle, laufzeit):
     for f in faelle:
         out.append(f"### {f.kurz} {f.name}")
         out.append("")
-        out.append(f"Soll: {f.soll}. Grenze: {f.grenze_text}."
-                   + (f" Exakt ({f.exakt_grund}): jede Überschreitung ist rot." if f.exakt else ""))
+        out.append(f"Soll: {f.soll}. Grenze: {f.grenze_text}." + f.exakt_text())
         out.append("")
         out.append("| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | "
                    "gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |")
@@ -1354,6 +1851,37 @@ def gegenproben():
                                       (FugeDruck(), "Entwurf", "hex8", 1)):
         lauf("Mittel der Körperzeilen (Stand 0b17b12)", fall, stufe, typ, ordnung, 1.0, zeilen_mitteln,
              "σ_v kleiner oder gleich")
+
+    # ---- Q3 (08.10.2026): quadratischer Kontakt, jede Prüfung muss ohne das Geprüfte scheitern ----
+    from statik3d import assemble as asm
+
+    def ohne_bindung(alt):
+        _setze(alt, asm, "KONTAKTSEITEN_BINDEN", False)
+
+    def alte_deckelfedern(alt):
+        _setze(alt, sys.modules[__name__], "deckel_lager",
+               lambda m, seiten, k, dofs, name="Deckel": federn(m, seiten, k, dofs))
+
+    def ohne_ausfall(alt):
+        _setze(alt, FlaechenlagerAbheben, "ausfall", "")
+
+    def ohne_schalensperre(alt):
+        _setze(alt, fugen, "quadratische_knoten", lambda model: {})
+
+    for typ in ("tet10", "hex20"):
+        for fall in (UebermassFuge(), UngleicheNetze(), FugeZug(), Anfangsspalt(), FlaechenlagerExzentrisch(),
+                     FlaechenlagerAbheben(), BolzenInBohrung()):
+            lauf(f"{fall.kurz} Mittel ohne Bindung der Seitenmitten (assemble.KONTAKTSEITEN_BINDEN = False)",
+                 fall, "Mittel", typ, 2, 1.0, ohne_bindung, "rot oder gelb")
+        # K7 tet10 war mit den alten Federn grün (die Eckanteile einer tri6-Seite sind null, nicht negativ,
+        # und die Federn der Mitten tragen die ganze Last); K7 hex20 und K2 beide Familien waren rot
+        for fall in ((FugeZug(), Anfangsspalt()) if typ == "hex20" else (FugeZug(),)):
+            lauf(f"{fall.kurz} Mittel mit Knotenfedern nach konsistenten Anteilen (Aufbau bis 07.10.2026)",
+                 fall, "Mittel", typ, 2, 1.0, alte_deckelfedern, "rot")
+    lauf("F2 Mittel hex20 ohne Ausfall bei Zug (Sohle hält auch Zug)", FlaechenlagerAbheben(), "Mittel",
+         "hex20", 2, 1.0, ohne_ausfall, "rot")
+    lauf("S1 Mittel hex20 ohne Sperre für Schalen", SchaleAnFlaechenlager(), "Mittel", "hex20", 2, 1.0,
+         ohne_schalensperre, "rot (Sperre fehlt)")
     return aus
 
 
@@ -1382,6 +1910,8 @@ def main(argv=None):
     for fall in faelle:
         for stufe, familien in STUFEN:
             for familie, typ, ordnung, faktor in familien:
+                if familie not in fall.familien:
+                    continue
                 z = zelle(fall, stufe, familie, typ, ordnung, faktor)
                 print(zeile(z), flush=True)
                 if z["ergebnis"] == "rot" and z.get("trace"):

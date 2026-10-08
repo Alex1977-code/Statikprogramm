@@ -1960,6 +1960,84 @@ def test_mkl_cbwr_in_kettenprozessen():
           ", ".join(f"{k}: {(v or {}).get('code')}" for k, v in cb.items()))
 
 
+class _FalschesPardiso:
+    """Ein Stellvertreter fuer pypardiso, der nur iparm liefert."""
+
+    def __init__(self, ip: dict):
+        self.ip = ip
+
+    def get_iparms(self):
+        return self.ip
+
+
+#: iparm der ersten Faktorisierung am Drehlager mit Mittel (Q4, 08.10.2026,
+#: q4_dl_werk/zerlegung_mittel.json); die Statistik der Analyse (msglvl 1)
+#: nannte L+U = 4 027 776 082 Nichtnullen
+_IPARM_DREHLAGER = {1: 1, 2: 3, 8: 2, 10: 13, 11: 1, 13: 1, 14: 52, 15: 11206736, 16: 7687618,
+                    17: 33321212, 18: -267191214, 21: 1, 24: 0, 25: 0}
+
+
+def test_nnz_faktor_laeuft_nicht_ueber():
+    """iparm(18), die Nichtnullen des Faktors, ist ein 32-Bit-Feld mit
+    Vorzeichen (Befund B2 der Drehlager-Abnahme, 08.10.2026): am Drehlager
+    mit Mittel meldete PARDISO -267 191 214 statt 4 027 776 082, und
+    LinearSolver.nnz_faktor und res.info["nnz_faktor"] zeigten die negative
+    Zahl. Gelesen wird modulo 2^32; ob die Zahl noch einmal umgelaufen sein
+    kann, sagt iparm(17) (Speicher der Zahlenphase, mindestens 8 Byte je
+    Eintrag des Faktors). Kann sie, ist sie als Mindestwert gekennzeichnet."""
+    from statik3d import solver as S
+    kz = S._pardiso_kennzahlen(_FalschesPardiso(dict(_IPARM_DREHLAGER)))
+    check("Drehlager: iparm(18) = -267 191 214 ergibt 4 027 776 082",
+          kz.get("nnz") == 4027776082, repr(kz.get("nnz")))
+    check("… sicher, ein weiterer Umlauf passt nicht in iparm(17) = 33 321 212 KB",
+          kz.get("nnz_sicher") is True, repr(kz.get("nnz_sicher")))
+    check("… der Rohwert steht daneben", kz.get("nnz_iparm18") == -267191214, repr(kz.get("nnz_iparm18")))
+    ohne = {**_IPARM_DREHLAGER, 17: 0}
+    kz = S._pardiso_kennzahlen(_FalschesPardiso(ohne))
+    check("ohne iparm(17): 4 027 776 082 als Mindestwert",
+          kz.get("nnz") == 4027776082 and kz.get("nnz_sicher") is False, f"{kz.get('nnz')}, {kz.get('nnz_sicher')}")
+    gross = {**_IPARM_DREHLAGER, 17: 80_000_000, 18: 1_000_000_000}
+    kz = S._pardiso_kennzahlen(_FalschesPardiso(gross))
+    check("positiver Wert, aber Speicher für einen weiteren Umlauf: Mindestwert",
+          kz.get("nnz") == 1_000_000_000 and kz.get("nnz_sicher") is False, f"{kz.get('nnz')}, {kz.get('nnz_sicher')}")
+    klein = {**_IPARM_DREHLAGER, 17: 28, 18: 1960}
+    kz = S._pardiso_kennzahlen(_FalschesPardiso(klein))
+    check("Tridiagonal n = 400 (1 960 Einträge, 28 KB): sicher",
+          kz.get("nnz") == 1960 and kz.get("nnz_sicher") is True, f"{kz.get('nnz')}, {kz.get('nnz_sicher')}")
+    try:
+        import pypardiso                                        # noqa: F401
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - Löser und Ergebnis übersprungen", True)
+        return
+    echt = S._pardiso_kennzahlen
+    ls = LinearSolver(_laplace_2d(6), backend="pardiso")
+    check("echte Faktorisierung: nnz_faktor sicher, kein Mindestwert",
+          ls.pardiso_kennzahlen.get("nnz_sicher") is True and ls.nnz_faktor > 0
+          and getattr(ls, "nnz_faktor_mindestens", None) is False,
+          f"{ls.nnz_faktor}, iparm(17) {ls.pardiso_kennzahlen.get('speicher_kb', {}).get('17')} KB")
+    for ip, mindestens in ((_IPARM_DREHLAGER, False), (ohne, True)):
+        S._pardiso_kennzahlen = lambda ps, ip=ip: echt(_FalschesPardiso(dict(ip)))
+        try:
+            ls = LinearSolver(_laplace_2d(6), backend="pardiso")
+            m, _L, _A = _zugstab()
+            alt = parallel.settings().solver_backend
+            parallel.configure(solver_backend="pardiso")
+            try:
+                r = solve_static(m)
+            finally:
+                parallel.configure(solver_backend=alt)
+        finally:
+            S._pardiso_kennzahlen = echt
+        check(f"LinearSolver mit iparm des Drehlagers{' ohne iparm(17)' if mindestens else ''}: "
+              f"nnz_faktor 4 027 776 082", ls.nnz_faktor == 4027776082
+              and getattr(ls, "nnz_faktor_mindestens", None) is mindestens,
+              f"{ls.nnz_faktor}, Mindestwert {getattr(ls, 'nnz_faktor_mindestens', None)}")
+        check(f"… res.info[\"nnz_faktor\"] ebenso{', als Mindestwert gekennzeichnet' if mindestens else ''}",
+              r.info.get("nnz_faktor") == 4027776082
+              and bool(r.info.get("nnz_faktor_mindestens", False)) is mindestens,
+              f"{r.info.get('nnz_faktor')}, Mindestwert {r.info.get('nnz_faktor_mindestens')}")
+
+
 def main():
     for f in (test_pardiso_faellt_nicht_still_aus, test_ketten_teilen_sich_die_threads,
               test_pardiso_zaehlt_gestoerte_pivots, test_residuum_gehoert_zur_loesung,
@@ -1990,7 +2068,8 @@ def main():
               test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird,
               test_die_matrix_wird_einmal_umgewandelt,
               test_die_tangente_wird_nur_gebaut_wenn_sie_gelesen_wird,
-              test_die_symmetriesonde_hat_keine_luecke):
+              test_die_symmetriesonde_hat_keine_luecke,
+              test_nnz_faktor_laeuft_nicht_ueber):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

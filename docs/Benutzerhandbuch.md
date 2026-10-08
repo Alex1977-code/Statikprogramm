@@ -1367,7 +1367,8 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
 | Ziellänge, kleinste und größte Elementgröße | in **mm** (seit 13.09.2026; vorher in m) - so, wie man beim Vernetzen denkt; gespeichert und gerechnet wird in m. Auch die Netzqualität *Kantenlänge* färbt in mm |
 | Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge im Feld: eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern. Fein wird es **örtlich**, an drei zusammengehörenden Stellen: die Bohrungsränder nach ihrer Krümmung, eine Linie neben einer viel feineren (die **Mantellinie** einer Bohrung stand sonst mit *einem* Abschnitt über der ganzen Bohrtiefe), Kränze um jede Öffnung in der Fläche, und von dort wachsend ins Innere. Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer 900-mm-Platte: der Anteil der Tetraeder unter der Güte 0,3 an der Bohrungswand fällt von 6,8 % auf 1,0 % — für doppelt so viele Elemente. Ohne den Haken bleibt es bei ⌈L/h⌉ je Linie |
-| Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
+| Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)). **Sie schützt nicht vor einem zu großen Netz:** Die Schätzung kennt die Verfeinerung an Bohrungen und Rändern nicht und lag am Drehlager je Körper im Median um den Faktor 758 unter dem echten Netz. Für die Größe des ganzen Netzes gilt die Höchstzahl Unbekannte in der nächsten Zeile |
+| Höchstzahl Unbekannte (seit 07.10.2026) | Die Grenze für das ganze Netz in Unbekannten, gezählt als drei je Knoten des Modells (Kantenmitten und Knoten der Geometrie eingeschlossen; auch Knoten von Schalen und Stäben zählen hier mit drei). Die Vorgabe ist **4 000 000**. Bis zum 08.10.2026 galt sie als vorläufig, bis eine Zerlegung am Drehlager gemessen ist; seither ist sie festgelegt, weil sie eine Grenze des Speichers ist und der Pool vor großen Zerlegungen Platz macht (Abschnitt „Der Pool macht Platz für große Zerlegungen“). Gemessen ist Mittel am Drehlager mit 3,05 Millionen Unbekannten: 52,3 GiB Arbeitssatz und 60,6 GiB Commit im Hauptprozess an der Spitze der Zerlegung, 169 Sekunden. Für 4,0 Millionen ergibt die Hochrechnung (Schätzung, nicht gemessen) rund 74 GiB Arbeitssatz, 85 GiB Commit und 5 Minuten je Zerlegung; das passt in einen Rechner mit 128 GB neben der übrigen Belegung. Fein Stufe 3 am Drehlager (4,65 Millionen Unbekannte, rund 89 GiB) passt nicht und fällt auf Stufe 4. Auf einem Rechner mit weniger Arbeitsspeicher ist die Grenze zu senken; sonst bricht die Rechnung vor der Zerlegung mit einer Meldung ab. 0 heißt keine Grenze, und eine ältere Datei ohne das Feld bekommt die Vorgabe. Gezählt wird beim Vernetzen nach jedem fertigen Volumen; beim parallelen Vernetzen zählen fertige, noch nicht eingebaute Volumen mit ihren inneren Knoten mit, damit der Halt nicht auf das große Volumen vorn in der Reihe wartet. Wird die Grenze überschritten, hält das Vernetzen früh an, verwirft das halbe Netz und vernetzt **selbsttätig gröber** mit der nächsten Stufe, bis das Netz passt. Das Protokoll nennt jede Stufe mit Grund und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 3 von 20 Volumen angehalten – 16 242 Unbekannte über der Grenze von 15 297 …; größte: P01 (1 238 Knoten) …“ und danach „Netzgrenze: vernetzt mit Stufe 1 – 15 297 Unbekannte, unter der Grenze von 15 297.“ Gröbere Stufen gibt es nur bei Fein (Abschnitt „Elementstufe“ unten). Entwurf und Mittel haben keine, damit sich ihr Netz nicht unbemerkt ändert: Dort bleibt das Netz, wie es ist, und das Protokoll und eine Meldung warnen („WARNUNG: Das Netz hat … Unbekannte und liegt über der Grenze von …“). Ebenso warnt das Programm, wenn auch die gröbste Stufe von Fein über der Grenze liegt; dann gilt deren Netz. Ein Netz, das die Grenze einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Bis zum 07.10.2026 gab es keine Grenze für das ganze Netz, sondern nur die geschätzte Höchstzahl Elemente je Objekt |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 | Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; der Knopf **Vernetzer installieren…** unter der Maske (auch *Extras → Vernetzer installieren…*) lädt es nach (Abschnitt „Vernetzer und Nachbesserer nachladen“, Kap. 9). Ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
@@ -1377,7 +1378,7 @@ Windows einem Konsolenprogramm, das ein Fensterprogramm startet, eine eigene
 Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgeladen im Werkzeugordner, sonst der Suchpfad) — ein Pfadfeld gibt es seit 13.09.2026 nicht mehr; ein in einer älteren Datei gespeicherter Pfad gilt weiter. Gemessen an der Platte mit Bohrung (13.09.2026, MMG 5.8.0): h = 50 mm Güte min 0,103 → 0,453 (19 614 → 18 815 Tetraeder, 6,1 s), h = 30 mm 0,120 → 0,474 (60 610 → 57 817, 1,7 s); Hülle und Volumen unverändert (Randtreue 100 %). Das Protokoll nennt Güte min vorher/nachher |
 | Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Seit 21.09.2026 trägt der Quader Randseiten (eine Flächenlast darauf kam vorher **nicht** an: 0 kN), teilt seine Knoten mit Nachbarn und folgt an gemeinsamen Kanten deren Teilung. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred”) und wird nur mitgeführt |
 | Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
-| Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei |
+| Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei. Seit 07.10.2026 liegen die Quellen einer **gekrümmten** Fläche (Bohrungswand, Kegel, windschiefes Viereck) auf der Fläche selbst; bis dahin lagen sie in ihrer Ausgleichsebene, an einer halben Bohrungswand mit 60 mm Radius bis 23 mm daneben. Ein Feld, das nur die halbe Kantenlänge verlangt, erreicht das Flächennetz bei Mittel heute nicht ganz: beim Verdichten verdrängt jeder Gitterpunkt seine eigenen feineren Nachbarn, und eine Fläche mit Feld 50 mm bei 100 mm Kantenlänge bleibt im Median bei 96 mm. Mit **Fein** verdichtet das Flächennetz seit 07.10.2026 im Dreiecksgitter und hält dort 50 mm; bei Mittel bleibt es beim alten Weg, damit Mittel-Netze bitgleich bleiben |
 | Eigene Kantenlänge je Körper (`koerper_h`) | `{Körpername: Kantenlänge in m}` — geht vor Dichte und Ziellänge; die Deckel (kleinste Kante, Dickenmaß, Höchstzahl) gelten weiter. So lässt sich ein Körper gröber lassen als der Rest. Die adaptive Vernetzung schreibt hier ihre Werte hinein |
 | Sweep (`sweep`) | **keine Option der Oberfläche mehr** (seit 25.09.2026). Der Haken „Sechsflächner sweepen“ ist entfallen: an Bohrungen und schrägen Kanten entstanden verzerrte Sechsflächner und flache Keile (am Drehlager 926 hex8 mit fast entarteter Ecke und 242 flache Keile), und die Rechnung konvergierte nicht mehr – ob ein Körper dafür taugt, war für den Anwender nicht zu erkennen. Vernetzt wird mit Tetraedern; eine ältere Datei mit „an“ lädt mit „aus“, und das Vernetzen sagt es im Protokoll. Im Modell ist das Feld seit 25.09.2026 ein Wort mit drei Werten: **`"aus"`** (Vorgabe), **`"sauber"`** und **`"immer"`**. Beim Laden werden `True`/`False` älterer Dateien, „immer“ und ein unbekanntes Wort zu „aus“; „sauber“ bleibt. Seit den Elementstufen (25.09.2026) setzt **jede Stufe „sauber“**: „Übernehmen“ in den Netzeinstellungen macht aus jedem Wort „sauber“ (auch aus „immer“), ein neues Modell der Oberfläche und der Import beginnen mit „sauber“; Sechsflächner entstehen damit automatisch dort, wo sie sauber werden – einen Schalter dafür braucht es nicht. Das Vernetzen schaltet ein noch gesetztes „immer“ aus („Sechsflächner-Sweep ausgeschaltet …“ im Protokoll). „Sauber“ vernetzt einen Körper nur dann als Hexaeder, wenn jedes hex8 und pent6 höchstens 5° Trapezfehler (Winkel zwischen gegenüberliegenden Kanten einer Seite; gemessen am Kragarm: Trapezverzerrung kostet ab 2,5° Eckwinkel mehr als 1 N/mm², Parallelogramme bis 30° nichts) und eine positive Jacobi-Determinante hat — sonst Tetraeder, mit Grund im Protokoll („nicht gesweept (Betriebsart „sauber“) – Trapezfehler 27,0° > 5,0° …“), und der Übergang zu Hexaeder-Nachbarn immer über Pyramiden. Am Drehlager besteht heute **kein** Körper die Probe (68 sweepbare, Trapezfehler 7,5° bis 72°), weil der Sweep jede Grundfläche aus gepaarten Dreiecken pflastert; „sauber“ ist damit die Betriebsart für die Zukunft mit abgebildetem Grundnetz. „Immer“ ist der Sweep wie bisher: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 22.09.2026 auch **verjüngte Züge** (Kegelstumpf, konische Rippe, Nabe mit Anzug): der Deckel darf die skalierte Kopie des Grundes sein, die Lagen führen den Maßstab mit. Und **Drehkörper** (Rohrbogen, Ringsegment): Grund und Deckel stehen um den Drehwinkel gegeneinander, die Lagen liegen auf dem Bogen, der Rauminhalt wird nach Guldin geprüft (Ringsegment 90°: 99,5 %). Ein Körper mit sechs Vierecken und acht Ecken, aber **krummen** Kanten geht nicht mehr in den abgebildeten Quaderpfad — der schnitt die Rundung ab und verlor am 90°-Bogen 36 % des Rauminhalts, ohne eine Meldung. Woran ein Körper sonst scheitert, steht als eine Zeile je Körper im Protokoll („nicht gesweept — Kappen F1 → F2 decken sich weder verschoben (12,3 mm daneben) noch skaliert (0,4 mm, Maßstab 0,830) …"). Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Seit 22.09.2026 auch an einer **Ebene**, wenn kein Fußabdruck greift — eine Rippe, die bis an den Rand der Platte läuft, hängt nicht über einer Öffnung; geschnitten wird an der Ebene der Deckfläche („an einer Ebene in 2 Blöcke zerlegt (2 davon sweepbar)“). Und Grund und Deckel dürfen ihren Rand **verschieden in Linien teilen**: die fehlenden Ecken werden übertragen und die Wand dazwischen mitgeteilt, sodass auch ein von Hand gebauter Körper sweepbar wird, dessen Deckel eine Kante in zwei Linien führt. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Seit 23.09.2026 auch an einer **vorhandenen Schleife** (ein Zylinder, dessen Mantel an einer Zwischenkreislinie geteilt ist: 23 von 40 nicht sweepbaren Drehlagerkörpern) und mit einem Zeitbudget von 20 s je Körper, dessen Abbruch das Protokoll nennt. Die **Lücke im Netzrand** des freien Vernetzers (ein fehlender Tetraeder an der Oberfläche, 0,003 bis 0,113 % des Körpers) ist seit 23.09.2026 geschlossen; an rechtwinkligen einspringenden Kanten holt seit dem Abend das **Kantenkippen** das fehlende Hülldreieck zurück („1 Kante(n) an der Hülle gekippt"), was bleibt, steht als WARNUNG im Protokoll (Stichprobe: 2 von 69 Netzen, Theoriehandbuch § 6a). Bei **tet10** werden gekrümmte Kanten, die das Element ungültig machten, nicht mehr gerade gelassen: die betroffene Fläche wird örtlich feiner vernetzt („örtlich feiner vernetzt (MantelI1 13,3 statt 20,0 mm …)"); was danach noch umklappen würde, löst seit 24.09.2026 ein **innerer Punkt** auf („2 innere Punkte gegen tet10 eingefügt, die mit gekrümmter Kante umklappen würden") oder das **Verschieben innerer Ecken** am fertigen Netz („3 tet10 durch Verschieben innerer Ecken gültig gemacht") — auch an einer mit dem Nachbarn gemeinsamen Fläche, denn die Fläche selbst bleibt unverändert; erst was auch dann bleibt, behält die gerade Kante, mit Warnung. Kanten der ebenen Stirnfläche einer kleinen Bohrung werden nicht mehr auf den Zylinder gebogen (das gab am Drehlager 626 Rückfälle und Jacobi-Determinanten bis −11; jetzt bei 18° 0 Rückfälle an eigenen und 0 an gemeinsamen Flächen). Der **Bogenwinkel** je Abschnitt (Vorgabe 18°) lässt sich am Modell (`bogenwinkel` in den Netzeinstellungen) und je Körper (`Volumenkoerper.bogenwinkel`) setzen; an einer Linie zweier Körper gilt der kleinere. Knoten- und Elementnummern hängen nicht mehr davon ab, welcher Arbeitsprozess zuerst fertig wird. Ein Körper mit `Volumenkoerper.ordnung` = 2 bekommt tet10, der Rest tet4. Platte mit Randrippe: **124 Elemente und 239 Knoten** statt 685 tet4 — und die Verschiebung 2,0161 mm gegen 0,5811 mm; ein Tetraedernetz braucht dafür 39 891 Elemente und 7 459 Knoten (1,9674 mm). **Warum die Vorgabe trotzdem aus ist:** am Drehlager erzeugte der Sweep am 21.09.2026 **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Ursache war ein Band feiner Randstrecken gegen ein grobes Flächeninneres; seither folgt das Innennetz dem Rand (`mesher3d.RANDFELD`), und am Prüfkörper fielen die schlechten Keile von 34 auf **null**. **Am Drehlager selbst ist das noch nicht nachgemessen**; darum bleibt „immer“ ohne Schalter in der Oberfläche. |
 | Pyramiden am Übergang (`pyramiden`, seit 21.09.2026) | **Aus** (Vorgabe); in der Sweep-Betriebsart „sauber“ immer an. Ein Tetraeder-Körper, der an die Vierecke eines gesweepten oder abgebildeten Nachbarn stößt, teilt heute jedes Viereck in zwei Dreiecke — knotengleich, aber mit anderer Interpolation auf der Diagonale. Eingeschaltet bekommt jedes Viereck eine **Pyramide** (pyr5) mit Spitze im Inneren, die Tetraeder folgen dahinter. Gemessen an der Platte mit Pyramidenkörper: 12 Pyramiden statt 33 Tetraeder, Rauminhalt gleich, Verschiebung 0,3588 → 0,3589 mm, Formgüte min 0,185 → 0,154. Aus, weil die Rechnung nichts gewinnt und die Formgüte sinkt; ein für den Kontakt sauberer Übergang ist der Grund, ihn einzuschalten. Heute nur in der Datei |
@@ -1501,7 +1502,7 @@ wählen“, die es seit dem 25.09.2026 nicht mehr gibt.
 |---|---|---|---|
 | **Entwurf** | tet4, Sechsflächner hex8 (VQ83; entartete rechnen als Keil, Pyramide oder Tetraeder), Schalen linear (shell3/shell4) | schnell; für Vorbemessung und Verformungen – Spannungen fallen zu niedrig aus | tet4 verfehlt 1 N/mm² an einer Bohrung auch nach sechs Verfeinerungen: Lamé-Hohlzylinder, 888 → 132 185 Freiheitsgrade, Fehler 121,0 → 31,3 N/mm² (§ 10, „Wie genau ist tet4 an einer Bohrung?“). Am Kragarm −266 / −166 / −70 N/mm² bei 90 / 405 / 2 295 Freiheitsgraden (§ 6b-2) |
 | **Mittel** (Vorgabe) | tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), Schalen quadratisch (shell6/shell8) | für die Nachweise | Kragarm: tet10 +14 / +4 / +1 N/mm² bei 405 / 2 295 / 15 147 Freiheitsgraden (§ 6b-2); hex20 −0,02 N/mm² bei 1 359 Freiheitsgraden (§ 7a) |
-| **Fein** | wie Mittel, mit **halber Kantenlänge** (ohne tetp) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
+| **Fein** | wie Mittel, **feiner an Kontakt-, Lager- und Lastflächen** (halbe Kantenlänge) und an den **Bögen der Kontakt- und Lagerflächen** (9° statt 18° je Abschnitt); ohne tetp (seit 07.10.2026, bis dahin halbe Kantenlänge überall) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (gleichmäßig feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
 
 *Gemessen gegen den Sollwert 355 N/mm² an der Nachweisstelle des
 Kragarm-Prüfkörpers bzw. gegen die Lamé-Lösung am Innenrand; Freiheitsgrade =
@@ -1514,26 +1515,104 @@ Fein quadratisch) und den Sweep „sauber“: Sechsflächner entstehen
 *Netz → Elementübersicht…* – am Drehlager etwa 0 Hexaeder, weil heute kein
 Körper die Probe besteht.
 
-**Fein** halbiert beim Vernetzen die Kantenlänge: die Netzdichte eine Stufe
-feiner (grob → mittel → fein, also 8 → 16 → 32 Elemente über die
-Objektgröße; steht sie schon auf fein, bekommt jeder Körper die Hälfte seiner
-Dichte-Länge als eigene Kantenlänge), die Ziellänge, die kleinste und größte
-Elementgröße, die Kantenlänge je Körper, Netzverfeinerungen und Feldpunkte
-halb, die Teilung abgebildeter Sechsflächner und von Flächen mit eigener
-Teilung doppelt. Gespeichert bleiben die Werte, die man eingetragen hat – das
-Protokoll nennt beim Vernetzen „Elemente Fein: vernetzt mit halber
-Kantenlänge – …“. Gemessen am Würfel 1 m mit Teilung 2 × 2 × 2: Mittel 8 hex20,
-Fein 64 hex20. Die Höchstzahl Elemente je Objekt bleibt; sie kann Fein an
-einem großen Körper begrenzen (das Protokoll nennt es je Körper). Die adaptive
-Vernetzung bestimmt ihre Kantenlänge selbst; dort halbiert Fein nichts.
+**Fein** ist seit dem 07.10.2026 Mittel mit Verfeinerung dort, wo es zählt.
+Im Feld hat Fein dieselbe Kantenlänge wie Mittel. Feiner wird es an den
+Flächen, die vor jeder Rechnung bekannt sind und an denen sich die Spannung
+auf kurzer Strecke ändert: an den Flächen aktiver Kontaktbedingungen
+(freigegebene Flächen und Gegenflächen) und unter Kontaktpaaren, an den
+Flächen der Flächenlager und an Flächen mit einer Flächenlast. Auf ihnen gilt
+die halbe Kantenlänge von Mittel, und zwar auf der ganzen Fläche und eine
+Elementlage tief; von dort wächst die Kantenlänge mit 0,35 je Meter bis zur
+Kantenlänge von Mittel. Dazu werden alle Bögen der Kontakt- und Lagerflächen
+feiner, also die Bohrungsränder, Bohrungswände und Radien, die zu solchen
+Flächen gehören oder an sie grenzen: Sie bekommen 9° statt 18° je Abschnitt,
+40 statt 20 Abschnitte je Vollkreis (Entscheidung des Anwenders vom
+07.10.2026: „Alle an Kontakt- und Lagerflächen vorab“). Bögen ohne Kontakt
+oder Lager, auch die an Lastflächen, bleiben wie bei Mittel. Die Maske nennt
+bei Fein in der Zeile *Kantenlänge (wirksam)*, was feiner wird, zum Beispiel
+„Fein: wie Mittel, feiner an 3 Flächen (Kontakt 1, Lager 1, Last 1) mit 50 mm
+statt 100 mm (die Hälfte von Mittel, eine Elementlage, von dort wachsend);
+keine Bögen an Kontakt- und Lagerflächen“, und das Protokoll beginnt beim
+Vernetzen mit derselben Angabe („Elemente Fein: …“, an einem Modell mit
+Bohrungen etwa „… an 4 Bögen der Kontakt- und Lagerflächen 9° statt 18° je
+Abschnitt“). Gespeichert wird davon nichts; die Netzeinstellungen bleiben die,
+die man eingetragen hat. Abgebildete Sechsflächner folgen dem Größenfeld nicht,
+für sie bleibt Fein die doppelte Teilung (Würfel 1 m mit Teilung 2 × 2 × 2:
+Mittel 8 hex20, Fein 64 hex20). Schalen (Flächen mit Dicke) vernetzt Fein wie
+Mittel. Gemessen am Prüfkörper Block auf Block (zwei Fünfeckprismen von 1 m
+Höhe, Mittel 100 mm): Fein hat an Kontakt-, Lager- und Lastfläche im Median
+50 mm Randkante und an den Seitenwänden 0,4 m davon 100 mm wie Mittel; an einer
+Platte mit zwei Bohrungen hat die Bohrung mit Kontakt 9° je Abschnitt und die
+freie 18° wie Mittel (tests/test_fein_smart.py). Mittel und Entwurf vernetzen
+bitgleich wie vorher. Am Drehlager (nur vernetzt, gmsh mit MMG3D, 07.10.2026) verfeinert Fein 274
+Flächen (222 Kontakt, 50 Lager, 2 Last) und 780 Bögen; das gab 2 730 539 tet10 mit
+13,2 Millionen Unbekannten in 68 Minuten, mehr als ein Rechner mit direktem
+Löser heute trägt. Ein so großes Netz vergröbert Fein selbsttätig, erst an den
+Bögen und dann an den Flächen (nächster Absatz). Die adaptive Vernetzung bestimmt ihre Kantenlänge selbst;
+dort wirkt Fein nicht.
 
-**Kontakt: Mittel und Fein noch gesperrt.** Kontakt, Fugen und Flächenlager
-nehmen von einer Elementseite heute nur die Eckknoten; an quadratischen
-Elementen bräche die Rechnung ab (Abschnitt „Quadratische Elemente an Fugen …“
-unten). Damit Kontakt und Plastizität in jeder wählbaren Stufe rechnen, sind
-**Mittel und Fein an einem Modell mit Kontaktbedingung, Kontaktpaar oder
-Flächenlager sichtbar, aber gesperrt**, mit dem Hinweis „mit Kontakt noch nicht
-verfügbar – Kontakt für quadratische Elemente folgt“ am Eintrag. Die Maske
+Bis zum 07.10.2026 halbierte Fein beim Vernetzen jede Kantenlänge des ganzen
+Modells (die Netzdichte eine Stufe feiner, Ziellänge, kleinste und größte
+Elementgröße, Kantenlänge je Körper, Netzverfeinerungen und Feldpunkte halb),
+aber nicht den Bogenwinkel. Am Drehlager, wo 38,5 % der Tetraeder in den
+Schraubenlöchern sitzen, wurde damit das Innere der großen Teile feiner, die
+Bohrungen blieben, wie sie waren; die Maske nannte die halbe Kantenlänge und
+das Protokoll „Elemente Fein: vernetzt mit halber Kantenlänge – …“.
+
+**Fein und die Höchstzahl Unbekannte (seit 07.10.2026).** Überschreitet ein
+Fein-Netz beim Vernetzen die Höchstzahl Unbekannte der Netzeinstellungen,
+vernetzt das Programm selbsttätig gröber, in festen Stufen. Stufe 0 ist Fein
+mit 9° je Abschnitt an den Bögen der Kontakt- und Lagerflächen und der halben
+Kantenlänge von Mittel an Kontakt-, Lager- und Lastflächen. Die Stufen 1 und 2
+machen zuerst die Bögen gröber (12°, dann 18° wie Mittel), die Stufen 3 und 4
+danach die Flächen (die Kantenlänge von Mittel geteilt durch 1,5, dann die von
+Mittel selbst); Stufe 4 ist Mittel. Das Programm hält dabei früh an, sobald die
+Grenze überschritten ist, und nicht erst nach dem letzten Volumen, verwirft das
+halbe Netz und beginnt die nächste Stufe mit dem Modell, wie es vor dem
+Vernetzen war. Eine Stufe, die an diesem Modell dasselbe Netz ergäbe wie die
+vorige, überspringt es: An einem Modell ohne Kontakt- und Lagerflächen gibt es
+keine feineren Bögen, die Stufen 1 und 2 ändern dort nichts, und nach Stufe 0
+kommt gleich Stufe 3. Das Protokoll nennt jede Stufe mit ihrem Inhalt, Grund
+und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 1 von 1 Volumen angehalten
+– 93 108 Unbekannte über der Grenze von 93 105 (Höchstzahl Unbekannte); größte:
+V1 (31 024 Knoten). Das halbe Netz wird verworfen, vernetzt wird gröber mit
+Stufe 3 (Fein Stufe 3: Bögen 18°, Flächen h/1,5); Stufen 1 und 2 ergäben
+dasselbe Netz wie Stufe 0 und werden übersprungen.“ und am Ende „Netzgrenze:
+vernetzt mit Stufe 3 (Fein Stufe 3: Bögen 18°, Flächen h/1,5) – 74 883
+Unbekannte, unter der Grenze von 93 105.“ Reicht auch Stufe 4 nicht, bleibt
+deren Netz, das bis auf die Teilung abgebildeter Sechsflächner dem von Mittel
+gleicht, und das Programm warnt („… auch in der gröbsten: Stufe 4 (Fein Stufe
+4: Bögen 18°, Flächen h (wie Mittel))“). Die doppelte Teilung abgebildeter
+Sechsflächner gilt in allen Stufen, auch in Stufe 4, weil sie am Körper hängt
+und nicht in den Netzeinstellungen; sie folgen dem Größenfeld ohnehin nicht.
+Das gilt für jedes Vernetzen mit Fein im Fenster (Netz → Vernetzen, Vernetzen
+vor der Rechnung, „Vernetzen“ beim Übernehmen einer Fläche oder eines Körpers
+und beim Anlegen aus der Auswahl, Neuvernetzen nach Spalt und Spiel) und für
+`statik3d modell.json --vernetzen`; die adaptive Vernetzung
+nimmt die Quellen von Fein nicht und vergröbert darum auch nicht in Stufen.
+Entwurf und Mittel werden nie selbsttätig gröber. Ein Netz, das die Grenze
+einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Am Drehlager (nur
+vernetzt, Grenze 4 000 000, Sperre für die Messung aufgehoben, 08.10.2026)
+hielt das Programm Stufe 0 nach 51 von 108 Volumen bei 4,41 Millionen
+Unbekannten an, Stufe 1 nach 51 Volumen bei 4,08 Millionen und Stufe 2 nach
+55 Volumen bei 4,44 Millionen. Stufe 3 lag erst nach dem letzten Volumen mit
+4,65 Millionen über der Grenze, und Stufe 4 ergab 618 720 tet10 mit 3,05
+Millionen Unbekannten. Das dauerte zusammen 71 Minuten, davon 28 Minuten für
+die verworfene Stufe 3; mit dieser Grenze endet Fein am Drehlager also beim
+Netz von Mittel. Bis zum 07.10.2026 vernetzte Fein ohne Grenze.
+
+**Kontakt: was Mittel und Fein noch sperrt.** Seit dem 08.10.2026 rechnen
+Kontaktbedingungen, Kontaktpaare und Flächenlager an Volumen auch mit tet10,
+hex20 und pent15: eine Fuge trennt Ecken und Seitenmitten, und die Seitenmitten
+jeder Kontakt- und Lagerseite sind an ihre Ecken gebunden (Abschnitte „Quadratische
+Elemente an Fugen …“ und „Fugen trennen auch die Seitenmitten“ unten); solche
+Modelle lassen sich mit Mittel und Fein vernetzen. Gesperrt bleiben
+Kontaktbedingungen, Kontaktpaare und Flächenlager an **Schalen** (eine Fläche mit
+Dicke; der Grund steht dann mit „(an Schalen)“ in der Maske). Bis zum 08.10.2026
+sperrte jede Kontaktbedingung, jedes Kontaktpaar und jedes Flächenlager. An einem
+gesperrten Modell sind **Mittel und Fein sichtbar, aber gesperrt**, mit dem
+Hinweis „mit Kontakt noch nicht verfügbar – Kontakt für quadratische Elemente
+folgt“ am Eintrag. Die Maske
 steht dann auf Entwurf und sagt in der Zeile *Kontakt*, woran es liegt
 („Kontaktbedingung Fuge …“). Eine verschweißte Bedingung an gemeinsamer
 Fläche (starr in allen Richtungen) und eine abgeschaltete sperren nicht. Steht
@@ -1543,11 +1622,12 @@ schreibt es ins Protokoll („Elemente: Entwurf statt Mittel – Mittel ist mit
 Kontakt noch nicht verfügbar – … (Kontaktbedingung Fuge). Vernetzt wird mit
 tet4/hex8; die Stufe steht jetzt auf Entwurf.“); still herabgestuft wird
 nicht, abgebrochen auch nicht. Dasselbe gilt für *Adaptiv vernetzen* und die
-Befehlszeile. Kommt der Kontakt für quadratische Seiten, fällt die Sperre an
-einer Stelle weg (`elementstufe.quadratisch_gesperrt`). Geprüft
+Befehlszeile. Die Sperre hängt an einer Stelle
+(`elementstufe.quadratisch_gesperrt`). Geprüft
 (`tests/test_elementstufe.py`): zwei Würfel mit Kontaktfuge rechnen in jeder
-wählbaren Stufe, die Kontaktfuge trägt den Druck (Auflager = Last); ohne die
-Sperre bräche das Vernetzen mit Mittel ab.
+wählbaren Stufe, seit dem 08.10.2026 Mittel und Fein mit tet10 bzw. hex20, die
+Kontaktfuge trägt den Druck (Auflager = Last); bis dahin wurde dieses Modell mit
+Entwurf vernetzt. Gesperrt wird eine Schale auf einem Flächenlager.
 
 **Plastizität** rechnet mit tet4, tet10, hex8, hex20, pent6, pent15 und pyr5
 – also in jeder Stufe; ihr Haken bleibt, wie er ist. Geprüft am Würfel
@@ -1672,23 +1752,101 @@ fehlte die Zeile noch bei *Nur aktiver Lastfall* und bei der Kommandozeile mit
 Lastfälle. Seither steht sie auch in der Zusammenfassung jedes einzelnen
 Ergebnisses.
 
-**Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
-Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
-Eckknoten. Die Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8
-werden dabei übergangen. Beim Trennen einer Fuge blieben sie beiden Körpern
-gemeinsam, bei einem Flächenlager ungelagert, und das Ergebnis wäre still falsch.
+**Quadratische Elemente an Fugen, Kontakten und Flächenlagern.** Kontakt, Fugen
+und Flächenlager nehmen von einer Elementseite nur die Eckknoten. Die
+Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8 wurden dabei
+übergangen: beim Trennen einer Fuge blieben sie beiden Körpern gemeinsam, bei
+einem Flächenlager ungelagert, und das Ergebnis wäre still falsch gewesen.
 Gemessen an zwei Würfeln mit 0,5 m Netz: Eine Fuge ohne Zugfestigkeit trug 53 %
 des Zuges (bei eigenen Fugenflächen 37 %), ein starres Flächenlager ließ 41 % mehr
-Setzung zu als festgehaltene Bodenknoten. Mit linearen Elementen stimmt beides
-exakt. Deshalb bricht das Programm ab, sobald eine Kontaktbedingung, ein
-Kontaktpaar oder ein Flächenlager an einem quadratischen Element liegt. Die
-Meldung nennt Bedingung, Elementtyp und Elementnummern. Seit den
-Elementstufen (25.09.2026) kommt es dazu über die Oberfläche nicht mehr: an
-einem Modell mit Kontakt sind Mittel und Fein gesperrt, und es wird mit
-Entwurf vernetzt, mit Hinweis in Maske und Protokoll (Abschnitt
-„Elementstufe: Entwurf, Mittel, Fein“). Erlaubt bleibt eine verschweißte Fuge
-(starr in allen Richtungen, passende Netze), denn sie trennt nichts. Der
-Kontakt über quadratische Seiten ist in Arbeit.
+Setzung zu als festgehaltene Bodenknoten. Bis zum 08.10.2026 brach das Programm
+darum ab, sobald eine Kontaktbedingung, ein Kontaktpaar oder ein Flächenlager an
+einem quadratischen Element lag.
+
+Seit dem 08.10.2026 sind die Seitenmitten jeder **Kontakt- und Lagerseite** eines
+tet10, hex20 oder pent15 exakt an die beiden Ecken ihrer Kante gebunden: die
+Mitte bewegt sich genau mit dem Mittel ihrer Ecken. Eine Kontakt- oder
+Lagerseite ist jede Randseite eines Volumenelements, deren Ecken alle
+Kontaktknoten sind, also Knoten eines Kontaktpaars (Slave-Knoten und die
+Master-Seiten in Reichweite), eines Spaltelements, einer Fugenkopplung oder
+eines Flächenlagers. Die Seite ist damit so eben wie bei Entwurf, und Kontakt,
+Reibung, Fugen und Flächenlager rechnen auf den Ecken wie mit tet4 und hex8; das
+Innere der Körper bleibt quadratisch. Seitenmitten neben der Kantenmitte (an
+gekrümmten Flächen setzt der Vernetzer sie auf die Geometrie) werden auf die
+Kantenmitte gesetzt; das Protokoll des Vernetzens sagt, wie viele Mitten
+gebunden und wie viele versetzt wurden und wie weit höchstens („Seitenmitten:
+… gebunden …, … davon auf die Kantenmitte gesetzt, höchstens … mm daneben“).
+Die Kontaktfläche ist dort also so facettiert wie bei Entwurf; eine
+Pressungsspitze löst Mittel an der Kontaktfläche nicht feiner auf als Entwurf
+bei gleicher Kantenlänge, Spannungen im Bauteil darunter haben die Genauigkeit
+von tet10 bzw. hex20. Geprüft mit der Prüfmatrix (Fuge unter Druck, Presspassung,
+Reibung, ungleiche Netze, Fuge und Presspassung mit Fließen in Mittel und Fein
+auf 0,00 N/mm² genau; ohne die Bindung +290 bis +1 044 N/mm² daneben) und an den
+Würfeln oben: das starre Flächenlager hält an tet10 wie festgehaltene
+Bodenknoten, ein Kontaktpaar an tet10 gibt die Setzung des Stabes exakt.
+
+**Elemente an gebundenen Seitenmitten bleiben gültig** (Befund B1 der
+Drehlager-Abnahme, 08.10.2026). Bis zum 08.10.2026 konnte das Setzen der gebundenen
+Seitenmitten auf die Kantenmitte ein Element umstülpen. Am Drehlager mit Mittel
+waren es fünf dünne tet10 im Volumen V29 (eine Kante 3,3 mm neben Kanten von
+49 mm): ihre gebundene Mitte kam auf die Kantenmitte, während eine Nachbarkante
+desselben Elements um 2 % ihrer Länge gekrümmt blieb, und das Aufstellen der
+Steifigkeit brach mit „Tet10 mit negativer Jacobi-Determinante“ ab. Seither prüft
+das Programm nach dem Setzen jedes Element mit gebundener Seitenmitte und
+gekrümmter Kante auf seine kleinste bezogene Jacobi-Determinante, also dasselbe
+Maß, das der Vernetzer nach dem Krümmen der Seitenmitten meldet. Liegt sie unter
+0,1, wird das Element ganz gerade gezogen: alle seine Seitenmitten kommen auf die
+Kantenmitte, und ein gerades tet10 hat überall die bezogene Determinante 1. Weil
+eine Seitenmitte auch den Nachbarn an derselben Kante gehört, prüft das Programm
+danach diese Nachbarn und zieht sie ebenso gerade, wenn sie dabei unter 0,1
+gefallen sind, so lange, bis nichts mehr zu tun ist. Elemente ohne Befund behalten
+ihre Lage genau. Das Protokoll des Vernetzens nennt die Zahl der gerade gezogenen
+Elemente und den größten Weg („Seitenmitten: … Elemente ganz gerade gezogen
+(… Mittelknoten auf ihre Sehne, größter Weg … mm) …“). Am gespeicherten Mittel-Netz
+des Drehlagers waren es 23 Elemente in V29 mit 41 Seitenmitten, der größte Weg
+betrug 1,018 mm; danach war kein Element mehr umgestülpt, und jedes Element mit
+gebundener Seitenmitte hatte mindestens die bezogene Determinante 0,128. Ein Netz,
+das vor dieser Änderung gespeichert wurde, wird vor der Rechnung auf dieselbe
+Weise gerade gezogen, dann aber ohne Zeile im Protokoll.
+
+Laut abgebrochen wird weiterhin, wenn eine Seite nicht gebunden werden kann:
+an **quadratischen Schalen** (shell6, shell8) an Kontakt oder Flächenlager, wenn
+eine Seitenmitte selbst ein Lager, eine Feder, eine Kopplung oder einen
+Starrkörper trägt (ein starres Lager an Mitte und beiden Ecken ist erlaubt),
+und wenn Seitenmitten über eine getrennte Fuge beiden Körpern gemeinsam
+geblieben sind (seit dem Trennen der Seitenmitten, nächster Absatz, geschieht
+das nicht mehr). Über die Oberfläche wird ein Modell mit Schalen an Kontakt oder
+Flächenlager mit Entwurf vernetzt, mit Hinweis in Maske und Protokoll (Abschnitt
+„Elementstufe: Entwurf, Mittel, Fein“). Die Meldung nennt Bedingung, Elementtyp
+und Elementnummern. Eine verschweißte Fuge (starr in allen Richtungen, passende
+Netze) trennt nichts und bindet nichts.
+
+**Fugen trennen auch die Seitenmitten** (Paket Q2, 08.10.2026). Bis zum 07.10.2026
+verdoppelte das Ausführen einer Kontaktfuge nur die Eckknoten der Fugenseite. An
+einem tet10, hex20 oder pent15 blieben die Mitten der Kanten, die beide Bauteile
+teilten, gemeinsam, und die Fuge war dort durchverbunden: An zwei Würfeln mit 0,5 m
+Netz trug eine Fuge ohne Zugfestigkeit 525,8 kN von 1000 kN Zug (bei eigenen
+Fugenflächen 371,2 kN). Seither bekommt jede Seite der Fuge eigene Seitenmitten:
+Das Programm verdoppelt zusammen mit den Eckknoten auch die Mitten der Fugenkanten,
+die ein anderes Bauteil mitbenutzt, hängt die Elemente des gelösten Bauteils auf die
+neuen Knoten um und führt die Paare aus alter und neuer Nummer unter den getrennten
+Knoten mit, sodass die Abnahme „Fuge überbrückt“ auch die Mitten prüft. Im
+Protokoll steht die Zahl der Seitenmitten neben der der Eckknoten („… 24 Knoten und
+53 Seitenmitten verdoppelt …“), im Bericht der Fuge als Eintrag `mitten`. Gemessen
+an denselben Würfeln trägt die Fuge unter Zug jetzt 0 kN (tet10 mit passenden Netzen
+und mit eigenen Flächen, hex20), und danach gehört kein Knoten mehr zwei Bauteilen;
+am pent15 sind es die drei Ecken und die drei Seitenmitten des gemeinsamen Dreiecks.
+Spaltelemente, Kopplungen und das Kontaktpaar bleiben an den Eckknoten. Jede Seite
+hat nun ihre eigenen Mitten an ihren eigenen Ecken, und die Bindung der
+Kontaktseiten (Abschnitt davor) hängt sie dort an. Erst beides zusammen rechnet
+richtig: die Trennung allein trägt keinen Druck, denn die freien Mitten der Seite
+liefen sonst durch die Gegenseite (gemessen an der Prüfmatrix: Fuge unter Druck
+ohne Bindung +290 N/mm² und 44 % zu viel Setzung, mit Bindung 0,00 N/mm²). Seit dem
+08.10.2026 ist die Sperre für Fugen an tet10, hex20 und pent15 darum gefallen.
+Die Fuge an tet4 und hex8 ist unverändert (Netz,
+Fugenobjekte und Ergebnisse stimmen Bit für Bit mit dem Stand davor überein).
+Geprüft in `tests/test_fugen.py` (tet10 mit passenden Netzen, eigenen Flächen und
+angeschweißter Rippe, hex20, pent15).
 
 **Ordnung je Körper** (23.09.2026, im Aufbau): Jeder Volumenkörper trägt im Modell
 und in der Datei eine eigene Ordnung (`Volumenkoerper.ordnung`): leer heißt „wie das
@@ -1699,10 +1857,10 @@ der Netzeinstellungen, die Eingabe in der Oberfläche folgt. Fertig sind die Tei
 dahinter: `elementwahl.vorschlag` schlägt je Körper tet10 vor, wo ein Nachweis geführt
 wird und ein Vorlauf Biegung oder einen großen Fehler zeigt (eine gesetzte Ordnung
 gewinnt; Theoriehandbuch § 6b-2), und ein gemischtes Netz aus tet4- und tet10-Körpern
-rechnet, die Seitenmitten an der Grenze bindet das Programm selbst. **Vorsicht an
-Kontaktfugen:** Ein Körper mit Ordnung 2 an einer Kontaktfuge oder einem nichtlinearen
-Flächenlager wird von der tet10-Sperre angehalten (`fugen.quadratische_seiten_sperren`),
-bis der Kontakt für tet10 fertig ist; das Protokoll sagt es laut.
+rechnet, die Seitenmitten an der Grenze bindet das Programm selbst. An Kontaktpaaren
+und Flächenlagern bindet es seit dem 08.10.2026 auch die Seitenmitten der Kontakt- und
+Lagerseiten, und eine Fuge trennt auch die Seitenmitten; bis dahin hielt die
+tet10-Sperre einen solchen Körper an einer Kontaktfuge oder einem Flächenlager an.
 
 **Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
 Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,
@@ -6049,6 +6207,52 @@ bisher. Ist unter *Berechnung → Einstellungen → Experten* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
+**Pendeln an der Haftgrenze (seit 08.10.2026).** Liegt ein Reibknoten genau
+auf der Grenze zwischen Haften und Gleiten, konnte die Nachprüfung der Reibung
+ihn bis zum 08.10.2026 endlos hin und her schalten. Ein Knoten mit Reibung in
+nur einer Richtung – etwa ein Knoten eines Flächenlagers an der Kante zu einer
+Knagge – glitt in jeder Runde mit umgekehrter Reibkraft ein Stück vor und
+zurück, und zwei Knoten, die die Rechnung gemeinsam ins Gleiten stellte, liefen
+beide rückwärts und hafteten in der nächsten Runde wieder. Am Drehlager mit der
+Stufe Mittel endete so schon der elastische Vorlauf von LF1 nach 64 Runden am
+Deckel der Nachprüfung; weil die gemeldeten Lagerkräfte aus dem letzten, halb
+umgestellten Zustand stammten, stimmte dort auch das Gleichgewicht nur auf
+2·10⁻⁴. Jetzt erkennt die Rechnung solche Knoten. Kehrt die Versuchskraft eines
+gleitenden Knotens mit Reibung in nur einer Richtung zwei Runden hintereinander
+genau um, haftet er: eine Kraft zwischen den beiden Reibrichtungen hält ihn, und
+die nächste Runde prüft wie bei jedem haftenden Knoten, ob sie im Reibkegel liegt.
+Von Knoten, die gleich nach dem Umstellen wieder ins Haften gefallen sind, stellt
+die Rechnung je Runde nur einen ins Gleiten. Die Kontaktbedingung
+selbst bleibt dieselbe: haftende Knoten liegen im Reibkegel, gleitende tragen μ·N
+in Richtung ihres Weges, es gibt keine zusätzliche Feder und keine größere
+Toleranz. Wo nichts pendelt, rechnet das Programm bitgleich wie vorher.
+
+**Abschluss, wenn die Aktivmenge pendelt (seit 08.10.2026).** Bis zum 08.10.2026
+lief ein Kontaktlauf, dessen Aktivmenge zwischen zwei Zuständen hin und her
+sprang, bis zum Deckel der Nachprüfung weiter, auch wenn sich am Ergebnis nichts
+mehr änderte – am Drehlager mit der Stufe Mittel 25 Runden und 45 Minuten lang,
+in denen sich die Vergleichsspannung je Runde um höchstens 0,62 N/mm² und die
+Verschiebungen um 0,32 µm änderten. Jetzt gilt der Lauf auch dann als fertig,
+wenn die Aktivmenge pendelt (sie kehrt nach einem Wechsel zu einem schon
+gerechneten Zustand zurück) oder Gleitrichtungen viermal hintereinander umkehren
+und zugleich zwischen den letzten beiden Runden die Vergleichsspannung der
+Volumenelemente sich nirgends um mehr als 1 N/mm² ändert, sich kein Knoten um
+mehr als ein Tausendstel der größten Verschiebung bewegt, keine geschlossene
+Kontaktbedingung Zug und keine offene eine Durchdringung über der Toleranz
+trägt und die Summe der
+Auflagerkräfte der angenommenen Lösung mit der Summe der Lasten auf 10⁻⁴
+übereinstimmt. Angenommen wird die zuletzt gerechnete Lösung mit ihren eigenen
+Kräften; das Gleichgewicht stimmt dann auf die Genauigkeit des Gleichungslösers.
+Das Protokoll sagt „Kontakt: Abschluss nach dem Ingenieurkriterium in Runde …“
+mit den Änderungen von Spannung und Verschiebung und nennt die Bedingungen, die
+noch pendeln, mit Name, Knoten, Ort, Normal- und Reibkraft und Weg; ist ihre
+Reibkraft größer als ein Zehntausendstel der Last, steht die Zeile als WARNUNG
+da. Das strenge Kriterium bleibt das erste Ziel: wo nichts pendelt, endet der
+Lauf wie bisher. Das Ingenieurkriterium gilt für den ersten Kontaktlauf eines
+Lastfalls, der von der Geometrie aus rechnet (am Drehlager der elastische
+Vorlauf); ein Lauf, der aus einem vorigen Zustand weiterrechnet (Plastizität,
+Folgelastfälle), endet wie bisher.
+
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
 Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines
@@ -8407,6 +8611,35 @@ Vorgabe. Wird begrenzt, steht es in der Konsole: „[parallel] Pool: 12 statt
 Hauptprozess 5 GB“. Wer weniger Arbeiter will, setzt sie in den
 Einstellungen; mehr als der Speicher trägt, gibt es nicht.
 
+**Der Pool macht Platz für große Zerlegungen (seit 08.10.2026).** Bis zum
+08.10.2026 wurde der Pool nur beim Start nach dem Speicher bemessen und hielt
+danach die ganze Rechnung über seinen Speicher, auch während der Gleichungslöser
+faktorisierte. Am Drehlager (Netz Mittel, 3,05 Millionen Unbekannte) hielten 22
+untätige Arbeiter 37 GiB Arbeitssatz und 69 GiB Commit; vor der ersten
+Zerlegung blieben 44 GiB Commit frei, und sie braucht rund 45 GiB. Mit den
+Vorgaben scheiterte Mittel dort sehr wahrscheinlich am Speicher (nicht
+ausprobiert; gemessen wurde mit 8 Arbeitern). Seither teilt das Programm bei
+großen Systemen (ab 5 Millionen Matrixeinträgen) die Zerlegung von MKL PARDISO
+in Analyse und Zahlenphase; das Ergebnis ist bitgleich mit dem Stand davor.
+Dazwischen fragt es, ob der freie Speicher für die Zahlenphase reicht: PARDISO
+sagt ihn nach der Analyse voraus, verlangt wird das 1,15-fache plus 1 GiB.
+Reicht der freie Speicher nicht, schließt das Programm den Pool, damit die
+Arbeiter ihren Speicher hergeben, und schreibt es ins Protokoll („Pool: 22
+Arbeiter vor der Zerlegung geschlossen …“, mit den Zahlen vorher und nachher).
+Für die Nachläufe, also die Spannungen je Lastfall, öffnet es den Pool wieder,
+soweit der Speicher auch dann noch für die nächste Zerlegung reicht; sonst
+rechnen die Elementschleifen seriell, und die Konsole sagt es („[parallel] Pool
+bleibt geschlossen …“). Reicht der Speicher auch ohne Pool nicht, bricht die
+Rechnung ab, bevor etwas faktorisiert wurde, und die Meldung lautet „Der
+Speicher reicht für die Zerlegung nicht: …“ mit der Voraussage, dem freien
+Speicher und dem Rat, das Netz gröber zu wählen; ein anderer Gleichungslöser
+wird dabei nicht versucht, weil er nicht weniger Speicher braucht. Bis zum
+08.10.2026 hieß es an dieser Stelle „kein Speicher“ von PARDISO oder die
+Rechnung stürzte ab. Reicht nur der Arbeitsspeicher nicht, der Commit-Speicher
+aber schon, rechnet das Programm weiter und warnt, dass Windows auslagert und
+die Zerlegung deutlich langsamer wird. Geprüft wird nur MKL PARDISO; für MUMPS,
+ama und SuperLU gibt es die Prüfung nicht.
+
 **Kontakt und Fließen: Warmstart als Regel (seit 27.09.2026).** Innerhalb
 eines Lastfalls startet jeder Kontaktlauf eines Fließschritts vom Zustand
 des vorigen - auch der erste plastische Lauf vom elastischen Vorlauf. Gleiten
@@ -10045,6 +10278,58 @@ sieht an der Liste, für welche nicht.
 
 Bei vielen losen Teilen werden höchstens 40 Bewegungen angezeigt, die
 schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
+
+**Frei bewegliche Teile aus den gestörten Pivots (seit 08.10.2026).** Bis zum
+08.10.2026 nannte die Zusammenfassung nur die *Zahl* der gestörten Pivots
+(„Gestörte Pivots: 4133 in 299 von 299 Faktorisierungen …“); welche Bauteile
+dahinterstanden, stand nirgends. Die Suche vor der Rechnung sieht manche Teile
+nicht: sie zählt Reibung und ein Flächenlager mit Reibung als Halt, und ein
+Teil, das auf Reibung gleitet, hat in der Gleitrichtung trotzdem keine
+Steifigkeit. Seit dem 08.10.2026 fragt das Programm darum die Matrix selbst.
+Hat die zuletzt benutzte Faktorisierung gestörte Pivots – MKL PARDISO und ama
+zählen sie –, löst es mit höchstens sechs zufälligen rechten Seiten über
+genau diesen vorhandenen Faktor. Nichts wird neu faktorisiert, gelagert oder
+verändert. Eine Richtung, die die Matrix nicht hält, antwortet dabei um viele
+Zehnerpotenzen stärker als jeder gehaltene Knoten (in den Prüfmodellen 13 bis
+14 Zehnerpotenzen, bei den gesunden Beispielen höchstens 3,3 – die Schwelle liegt
+bei 5). Aus den stark antwortenden Knoten liest das Programm ab, welches
+Bauteil sich als Starrkörper bewegt und in welche Richtungen, und welche
+Stabknoten ohne Querhalt dastehen.
+
+Das Ergebnis ist eine WARNUNG je Gruppe gleich beweglicher Teile, mit Namen,
+Richtung und dem, was sie heute hält, zum Beispiel: „V1, V2, V3, V4, V5, V6 …
+V28 (28 Bauteile): in der Ebene (x, y) frei verschieblich, um z frei drehbar –
+gehalten nur durch: Fuge „Lagerbock-Unterlegbleche“ (reibungsfrei: trägt nur
+senkrecht zur Fläche); bitte lagern …“ (der Name stammt aus dem Befund am
+Drehlager; die Meldung dort selbst ist am vollen Modell noch nicht gemessen,
+siehe unten). Sie steht in der Zusammenfassung und damit im Protokoll, im
+Ergebnis (`Results.info["freie_teile"]`, auch in einer Überlagerung) und im
+Bericht: als Kapitel „Frei bewegliche Teile“ (einmal für alle Ergebnisse, nicht
+je Lastfall) und bei den Warnungen. Geneigte Ebenen werden über ihre Normale
+genannt, Stabknoten mit Stab und Knotennummer („S7: Knoten K5: quer zur
+Stabachse …“).
+
+**Das Programm lagert nichts.** Die Teile in den genannten Richtungen zu lagern
+(Lager, Feder oder Reibung) ist Sache des Anwenders; bis dahin ist ihre
+Verschiebung unbestimmt, und ihre Spannungen gelten nur, solange die Last auf
+dem Teil im Gleichgewicht steht. Ohne gestörte Pivots – der Regelfall, auch bei
+allen Beispielen – kostet die Suche nichts und meldet nichts. Mit ihnen kostet
+sie höchstens sechs Lösungen auf dem vorhandenen Faktor; die Rechnung selbst
+bleibt bitgleich (`tests/test_freie_teile.py`). Der Bericht nennt außerdem seit
+demselben Tag bei den „Freien Bewegungen“ nur noch dann eine Hilfsfesselung, wenn
+wirklich eine festgehalten wurde; bis dahin stand der Satz auch dort, wo die
+Rechnung ohne sie gelang.
+
+*Gemessen und nicht gemessen:* Die Prüfung `tests/test_freie_teile.py` belegt
+Platte auf Block (reibungsfrei: gemeldet; mit Reibung, mit Federn, seitlich
+gehalten: still), zwölf Platten in einer Zeile, eine geneigte Platte, einen
+Stabknoten am schiefen Anschlag und die acht Beispiele ohne Meldung. Am vollen
+Drehlager wurde die Suche **nicht** über PARDISO gelaufen (die Faktorisierung
+braucht rund 52 GB); dort ist nur gemessen, dass die Zuordnung der Knoten zu
+Bauteilen am Netz mit 602 394 Elementen 3,5 s dauert und mit einer gebauten
+Antwort alle 13 gesetzten Platten findet, und von der Löser-Sitzung, dass sechs
+Lösungen über den Faktor des Entwurfs 12 s kosten und die Antwort auf den
+Lastverteilplatten zu 99,999999 % eine Starrkörperbewegung ist.
 
 ## 10 Ergebnisse und Bericht
 

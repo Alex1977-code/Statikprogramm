@@ -9,10 +9,12 @@ Entscheidungen des Anwenders vom 25.09.2026:
 * „sweepen muss das programm doch automatisch wenn das entsprechende element
   das verlangt“: jede Stufe setzt den Sweep auf „sauber“.
 * „Fein ohne tetp“.
-* „kontakt und plastizität muss in allen stufen funktionieren“: Kontakt
-  sperrt heute quadratische Seiten (fugen.QuadratischeSeiten). Darum sind
-  Mittel und Fein an Modellen mit Kontakt sichtbar, aber gesperrt, und das
-  Modell steht mit Hinweis auf Entwurf – statt dass das Vernetzen abbricht.
+* „kontakt und plastizität muss in allen stufen funktionieren“: bis zum
+  08.10.2026 sperrte Kontakt quadratische Seiten (fugen.QuadratischeSeiten),
+  und Mittel und Fein waren an Modellen mit Kontakt sichtbar, aber gesperrt.
+  Seither (Q1 mit Q2) rechnen Kontakt, Fugen und Flaechenlager an Volumen in
+  jeder Stufe; gesperrt - mit Hinweis, Modell auf Entwurf, statt dass das
+  Vernetzen abbricht - bleiben Schalen an Kontakt oder Flaechenlager.
 * „der haken zur plastizität kann in jedem fall bleiben“.
 * Import mit abweichender Vorgabe: „Beim Import fragen“.
 
@@ -206,8 +208,12 @@ def test_stufen_und_texte():
           all(x in es.ELEMENTE["entwurf"] for x in ("tet4", "hex8", "VQ83", "linear")), es.ELEMENTE["entwurf"])
     check("Mittel: tet10, hex20 (VQ203), Schalen quadratisch",
           all(x in es.ELEMENTE["mittel"] for x in ("tet10", "hex20", "VQ203", "quadratisch")))
-    check("Fein: wie Mittel mit halber Kantenlänge, ohne tetp",
-          "halbe" in es.ELEMENTE["fein"] and "tetp" not in es.ELEMENTE["fein"])
+    # Seit 07.10.2026 (Paket F1, tests/test_fein_smart.py): Fein ist Mittel,
+    # feiner an Kontakt-, Lager- und Lastflaechen und deren Boegen - bis dahin
+    # „wie Mittel mit halber Kantenlänge“
+    check("Fein: wie Mittel, feiner an Kontakt, Lagern und Lasten, ohne tetp",
+          all(x in es.ELEMENTE["fein"] for x in ("wie Mittel", "Kontakt", "Lager", "Last"))
+          and "tetp" not in es.ELEMENTE["fein"], es.ELEMENTE["fein"])
     check("Auswahltexte: Mittel trägt „(Vorgabe)“",
           [es.AUSWAHL[s] for s in es.STUFEN] == ["Entwurf", "Mittel (Vorgabe)", "Fein"])
     check("aus_text liest die Auswahl zurück", [es.aus_text(es.AUSWAHL[s]) for s in es.STUFEN]
@@ -267,9 +273,12 @@ def test_beschreibung():
     check("… Entwurf: lineare Elemente", "Elemente Entwurf" in t and "lineare Elemente" in t, t)
 
 
-def test_fein_halbe_kantenlaenge():
-    """Fein = Mittel mit halber Kantenlaenge - gemessen an dem, was der
-    Vernetzer je Objekt nimmt (netzdichte.elementlaenge)."""
+def test_fein_wie_mittel_im_feld():
+    """Fein hat im Feld die Kantenlaenge von Mittel - gemessen an dem, was
+    der Vernetzer je Objekt nimmt (netzdichte.elementlaenge). Feiner wird es
+    nur an Kontakt-, Lager- und Lastflaechen und an den Boegen der Kontakt-
+    und Lagerflaechen (seit 07.10.2026, Paket F1; geprueft in
+    tests/test_fein_smart.py). Bis dahin halbierte Fein alle Laengen."""
     from statik3d import netzdichte as nd
     es = _es()
     m = wuerfel()
@@ -283,41 +292,70 @@ def test_fein_halbe_kantenlaenge():
         f = es.setzen(n, "fein")
         h_m = nd.elementlaenge(m, n, k)["h_dichte"]
         h_f = nd.elementlaenge(m, es.wirksam(f, m), k)["h_dichte"]
-        check(f"Netzdichte {dichte}: Fein hat die halbe Kantenlänge von Mittel",
-              abs(h_f - 0.5 * h_m) < 1e-12, f"{h_m * 1e3:.2f} → {h_f * 1e3:.2f} mm")
+        check(f"Netzdichte {dichte}: Fein hat im Feld die Kantenlänge von Mittel",
+              abs(h_f - h_m) < 1e-12, f"{h_m * 1e3:.2f} → {h_f * 1e3:.2f} mm")
     f = es.setzen(Netzeinstellungen(dichte="eigene", ziellaenge=0.4, h_min=0.02, h_max=0.3,
                                     koerper_h={"V1": 0.1},
                                     verfeinerungen=[{"art": "kugel", "mitte": [0, 0, 0], "radius": 0.1,
                                                      "h": 0.01}],
                                     feldpunkte=[[0, 0, 0, 0.02], [1, 1, 1, 0.04, 0.2]]), "fein")
     w = es.wirksam(f, m)
-    check("… kleinste/größte Elementgröße, Kantenlänge je Körper, Verfeinerungen, Feldpunkte halb",
-          abs(w.h_min - 0.01) < 1e-15 and abs(w.h_max - 0.15) < 1e-15 and abs(w.koerper_h["V1"] - 0.05) < 1e-15
-          and abs(w.verfeinerungen[0]["h"] - 0.005) < 1e-15 and abs(w.feldpunkte[0][3] - 0.01) < 1e-15
-          and abs(w.feldpunkte[1][3] - 0.02) < 1e-15 and w.feldpunkte[1][4] == 0.2,
+    check("… kleinste/größte Elementgröße, Kantenlänge je Körper, Verfeinerungen, Feldpunkte wie Mittel",
+          w.h_min == 0.02 and w.h_max == 0.3 and w.koerper_h == {"V1": 0.1}
+          and w.verfeinerungen == f.verfeinerungen and w.feldpunkte == f.feldpunkte,
           f"{w.h_min} {w.h_max} {w.koerper_h} {w.verfeinerungen} {w.feldpunkte}")
     check("… die gespeicherte Einstellung bleibt", f.h_min == 0.02 and f.koerper_h == {"V1": 0.1}
           and f.feldpunkte[0][3] == 0.02)
     check("… die Höchstzahl je Objekt bleibt (Schutz, keine Kantenlänge)",
           w.max_elemente == f.max_elemente)
     t = es.kantenlaenge_text(es.setzen(Netzeinstellungen(dichte="eigene", ziellaenge=0.05), "fein"))
-    check("Text der wirksamen Kantenlänge (eigene 50 mm, Fein): 25 mm", "25 mm" in t and "50" in t, t)
+    check("Text der wirksamen Kantenlänge (eigene 50 mm, Fein): 50 mm, feiner an Kontakt, Lagern, Lasten",
+          "50 mm" in t and "Fein:" in t and "Kontakt" in t and "Last" in t, t)
     t = es.kantenlaenge_text(es.setzen(Netzeinstellungen(dichte="eigene", ziellaenge=0.5), "fein"), m)
-    check("… mit Modell: je Körper die Kantenlänge im Feld", "250 mm" in t, t)
+    check("… mit Modell: je Körper die Kantenlänge im Feld (500 mm), ohne Kontakt, Lager, Last wie Mittel",
+          "500 mm" in t and "keine Kontakt-, Lager- oder Lastflächen" in t, t)
     check("… ohne wissenschaftliche Zahl", not _wissenschaftlich(t))
 
 
+def platte_mit_lager() -> Model:
+    """Eine Flaeche mit Dicke (Schale) auf einem Flaechenlager, ohne Netz."""
+    from statik3d.model import ShellProp
+    m = Model("Platte")
+    m.add_material(Material.steel("S235"))
+    m.add_shell_prop(ShellProp("t", 0.01))
+    m.add_nodes(np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.]]))
+    b = _Bauer(m)
+    R = [b.linie(i, (i + 1) % 4) for i in range(4)]
+    m.add_flaeche("Platte", R, material="S235", dicke="t")
+    ss = m.add_surface_support(name="Bettung", uz=dict(typ="spring", stiffness=1e8))
+    ss.flaechen = ["Platte"]
+    return m
+
+
 def test_sperre():
-    """Die eine Stelle, an der die Sperre haengt (elementstufe.quadratisch_gesperrt)."""
+    """Die eine Stelle, an der die Sperre haengt (elementstufe.quadratisch_gesperrt).
+
+    Seit dem 08.10.2026 (Paket Q1) sind die Seitenmitten von Kontakt- und
+    Lagerseiten an tet10, hex20 und pent15 gebunden: Flaechenlager und
+    Kontaktpaare an Volumen sperren nicht mehr. Quadratische Schalen an
+    Kontakt oder Flaechenlager sperren weiter, trennende Kontaktbedingungen,
+    bis die Fuge auch die Seitenmitten trennt (fugen.SEITENMITTEN_GETRENNT,
+    Paket Q2). Bis zum 08.10.2026 sperrte jedes dieser Objekte."""
+    from statik3d import fugen
     es = _es()
     m = zwei_bloecke()
     check("ohne Kontakt: nichts gesperrt", es.quadratisch_gesperrt(m) == []
           and all(es.frei(m, s) for s in es.STUFEN))
     fuge(m)
     g = es.quadratisch_gesperrt(m)
-    check("Kontaktbedingung (Druck, Abheben): gesperrt mit Namen", g == ["Kontaktbedingung Fuge"], str(g))
-    check("… Entwurf frei, Mittel und Fein gesperrt",
-          es.frei(m, "entwurf") and not es.frei(m, "mittel") and not es.frei(m, "fein"))
+    if fugen.SEITENMITTEN_GETRENNT:
+        check("Kontaktbedingung (Druck, Abheben) an Volumen: frei, die Fuge trennt die Seitenmitten mit",
+              g == [] and es.frei(m, "mittel") and es.frei(m, "fein"), str(g))
+    else:
+        check("Kontaktbedingung (Druck, Abheben): gesperrt mit Namen, bis die Fuge die Seitenmitten trennt",
+              g == ["Kontaktbedingung Fuge"], str(g))
+        check("… Entwurf frei, Mittel und Fein gesperrt",
+              es.frei(m, "entwurf") and not es.frei(m, "mittel") and not es.frei(m, "fein"))
     m.kontaktbedingungen["Fuge"].aus = True
     check("abgeschaltete Bedingung sperrt nicht", es.quadratisch_gesperrt(m) == [])
     m2 = zwei_bloecke()
@@ -328,23 +366,49 @@ def test_sperre():
     ss = m3.add_surface_support(name="Boden fest", ux=dict(typ="rigid"), uy=dict(typ="rigid"),
                                 uz=dict(typ="rigid"))
     ss.flaechen = ["Boden"]
-    check("Flächenlager (nimmt ebenfalls nur Eckknoten) sperrt", es.quadratisch_gesperrt(m3)
-          == ["Flächenlager Boden fest"], str(es.quadratisch_gesperrt(m3)))
+    check("Flächenlager an einem Volumen: frei in jeder Stufe (Seitenmitten gebunden)",
+          es.quadratisch_gesperrt(m3) == [] and all(es.frei(m3, s) for s in es.STUFEN),
+          str(es.quadratisch_gesperrt(m3)))
     m4 = wuerfel()
     m4.add_contact_pair("Paar", [0, 1], master_elements=[])
-    check("Kontaktpaar sperrt", es.quadratisch_gesperrt(m4) == ["Kontaktpaar Paar"],
-          str(es.quadratisch_gesperrt(m4)))
-    # Sperre anwenden: Mittel -> Entwurf mit Protokollzeile, nie still
-    m5 = zwei_bloecke()
-    fuge(m5)
+    check("Kontaktpaar an einem Volumen: frei in jeder Stufe", es.quadratisch_gesperrt(m4) == []
+          and all(es.frei(m4, s) for s in es.STUFEN), str(es.quadratisch_gesperrt(m4)))
+    m7 = platte_mit_lager()
+    g7 = es.quadratisch_gesperrt(m7)
+    check("Flächenlager an einer Schale (Fläche mit Dicke): gesperrt mit Namen",
+          g7 == ["Flächenlager Bettung (an Schalen)"], str(g7))
+    check("… Entwurf frei, Mittel und Fein gesperrt",
+          es.frei(m7, "entwurf") and not es.frei(m7, "mittel") and not es.frei(m7, "fein"))
+    m8 = platte_mit_lager()
+    m8.surface_supports.clear()
+    t = DofBehaviour("free")
+    m8.add_kontaktbedingung("Auflage", flaechennamen=["Platte"], gegenflaechen=[], koerpernamen=[],
+                            behaviour={0: t, 1: t, 2: DofBehaviour("free", failure="zug")})
+    g8 = es.quadratisch_gesperrt(m8)
+    check("Kontaktbedingung an einer Schale: gesperrt mit Namen", g8 == ["Kontaktbedingung Auflage (an Schalen)"],
+          str(g8))
+    # Sperre anwenden: Mittel -> Entwurf mit Protokollzeile, nie still (an der Schale)
+    m9 = platte_mit_lager()
+    m9.netz = es.setzen(m9.netz, "mittel")
+    check("wirksame Stufe an der gelagerten Schale: Entwurf", es.wirksame_stufe(m9) == "entwurf")
+    z9 = es.sperre_anwenden(m9)
+    check("sperre_anwenden an der Schale: Entwurf, die Zeile nennt das Flächenlager",
+          es.stufe(m9.netz) == "entwurf" and "Flächenlager Bettung" in z9 and es.SPERRHINWEIS in z9, z9)
+    # Sperre anwenden: Mittel -> Entwurf mit Protokollzeile, nie still (an der
+    # gelagerten Schale; bis zum 08.10.2026 am Kontaktmodell mit Fuge)
+    m5 = platte_mit_lager()
     m5.netz = es.setzen(m5.netz, "mittel")
-    check("wirksame Stufe am Kontaktmodell: Entwurf", es.wirksame_stufe(m5) == "entwurf")
     z = es.sperre_anwenden(m5)
     check("sperre_anwenden: Modell steht auf Entwurf", es.stufe(m5.netz) == "entwurf"
           and m5.netz.ordnung == 1, m5.netz.stufe)
     check("… die Zeile nennt Hinweis, Stufe und Grund", es.SPERRHINWEIS in z and "Mittel" in z
-          and "Entwurf" in z and "Kontaktbedingung Fuge" in z, z)
+          and "Entwurf" in z and "Flächenlager Bettung (an Schalen)" in z, z)
     check("… zweites Mal: nichts mehr zu tun", es.sperre_anwenden(m5) == "")
+    m10 = zwei_bloecke()
+    fuge(m10)
+    m10.netz = es.setzen(m10.netz, "mittel")
+    check("Kontaktmodell mit Fuge (Volumen): bleibt auf Mittel", es.sperre_anwenden(m10) == ""
+          and es.stufe(m10.netz) == "mittel" and es.wirksame_stufe(m10) == "mittel")
     m6 = zwei_bloecke()
     m6.netz = es.setzen(m6.netz, "fein")
     check("ohne Kontakt bleibt Fein", es.sperre_anwenden(m6) == "" and es.stufe(m6.netz) == "fein")
@@ -354,9 +418,12 @@ def test_sperre():
 # 2) Kontakt und Plastizitaet in jeder Stufe (Anwender 25.09.2026)
 # --------------------------------------------------------------------------
 def test_kontakt_in_jeder_stufe():
-    """Jede Stufe, die der Anwender waehlen kann, vernetzt und rechnet ein
-    Modell mit Kontaktfuge - Mittel und Fein ueber die Sperre als Entwurf."""
-    from statik3d import fugen, mesher
+    """Jede Stufe vernetzt und rechnet ein Modell mit Kontaktfuge - seit dem
+    08.10.2026 (Q1 mit Q2) Mittel und Fein mit quadratischen Elementen: die
+    Fuge trennt Ecken und Seitenmitten, die Mitten der Fugenseiten sind an
+    ihre Ecken gebunden. Bis dahin wurde ein solches Modell ueber die Sperre
+    mit Entwurf vernetzt."""
+    from statik3d import mesher
     es = _es()
     p = 1.0e7
     for s in es.STUFEN:
@@ -369,33 +436,39 @@ def test_kontakt_in_jeder_stufe():
         except Exception as ex:      # noqa: BLE001
             log, ok, text = [], False, f"{type(ex).__name__}: {ex}"
         typen = sorted({e.typ for e in m.elements})
-        check(f"{s}: vernetzt ohne Abbruch, lineare Elemente", ok and typen
-              and set(typen) <= {"tet4", "hex8", "pent6", "pyr5"}, text[:120] or str(typen))
+        if s == "entwurf":
+            check(f"{s}: vernetzt ohne Abbruch, lineare Elemente", ok and typen
+                  and set(typen) <= {"tet4", "hex8", "pent6", "pyr5"}, text[:120] or str(typen))
+        else:
+            check(f"{s}: vernetzt ohne Abbruch, quadratische Elemente", ok and typen
+                  and set(typen) <= {"tet10", "hex20", "pent15"}, text[:120] or str(typen))
+            check(f"{s}: das Protokoll nennt die gebundenen Seitenmitten",
+                  any("Seitenmitten:" in z and "gebunden" in z for z in log),
+                  next((z for z in log if "Seitenmitten:" in z), "")[:120])
         check(f"{s}: Kontaktfuge getrennt", m.kontaktbedingungen["Fuge"].ausgefuehrt)
-        if s != "entwurf":
-            check(f"{s}: das Protokoll nennt die Sperre und Entwurf",
-                  any(es.SPERRHINWEIS in z and "Entwurf" in z for z in log))
         if not ok:
             continue
         r = druck(m, "Dach", 2.0, p)
         R = float(r.reactions[_knoten_z(m, 0.0), 2].sum())
         check(f"{s}: gerechnet, das Fundament trägt die Last (Druck über die Fuge)",
               abs(R - p) < 1e-6 * p, f"R = {R / 1e3:.3f} kN")
-    # Beleg, was die Sperre verhindert: am Stand vor ihr brach das Vernetzen ab
+    # Ohne Stufe, Ordnung 2 direkt: bis zum 08.10.2026 brach das Vernetzen hier
+    # laut ab (QuadratischeSeiten); jetzt vernetzt und rechnet es
     m = zwei_bloecke()
     fuge(m)
     m.netz.ordnung = 2
-    try:
-        mesher.modell_vernetzen(m, [], workers=1)
-        abbruch = False
-    except fugen.QuadratischeSeiten:
-        abbruch = True
-    check("ohne Stufe (ordnung 2 direkt) bricht das Vernetzen laut ab", abbruch)
+    mesher.modell_vernetzen(m, [], workers=1)
+    r = druck(m, "Dach", 2.0, p)
+    R = float(r.reactions[_knoten_z(m, 0.0), 2].sum())
+    check("ohne Stufe (ordnung 2 direkt): vernetzt quadratisch und rechnet, Fundament = Last",
+          {e.typ for e in m.elements} <= {"tet10", "hex20", "pent15"} and abs(R - p) < 1e-6 * p,
+          f"R = {R / 1e3:.3f} kN")
 
 
 def test_plastizitaet_in_jeder_stufe():
     """Das Fliessen rechnet in jeder Stufe - am Wuerfel (abgebildet: hex8
-    bzw. hex20) und am Kontaktmodell (Entwurf ueber die Sperre)."""
+    bzw. hex20) und am Kontaktmodell (seit 08.10.2026 mit Mittel, bis dahin
+    ueber die Sperre mit Entwurf)."""
     from statik3d import plastizitaet as pl
     es = _es()
     fy = 235e6
@@ -411,7 +484,7 @@ def test_plastizitaet_in_jeder_stufe():
         check(f"{s}: {len(m.elements)} {'/'.join(typen)} - plastisch gerechnet, konvergiert, es fließt",
               info.get("konvergiert") and int(info.get("fliessend") or 0) > 0
               and set(typen) <= set(pl_typen()), str({k: info.get(k) for k in ("konvergiert", "fliessend")}))
-    check("Fein hat die halbe Kantenlänge: 8-mal so viele Elemente wie Mittel",
+    check("Fein am abgebildeten Würfel (doppelte Teilung): 8-mal so viele Elemente wie Mittel",
           zahl.get("fein") == 8 * zahl.get("mittel", 0), str(zahl))
     # frei vernetzt: tet4 bzw. tet10
     soll = {"entwurf": {"tet4"}, "mittel": {"tet10"}, "fein": {"tet10"}}
@@ -428,7 +501,11 @@ def test_plastizitaet_in_jeder_stufe():
               "konvergiert, es fließt",
               typen == soll[s] and info.get("konvergiert") and int(info.get("fliessend") or 0) > 0,
               str({k: info.get(k) for k in ("konvergiert", "fliessend")}))
-    check("Pyramide: Fein feiner als Mittel", zahl["fein"] > 4 * zahl["mittel"], str(zahl))
+    # Seit 07.10.2026 (Paket F1) ist Fein im Feld Mittel und nur an Kontakt-,
+    # Lager- und Lastflaechen feiner; die Last kommt hier erst nach dem
+    # Vernetzen (druck) - bis dahin war Fein ueberall feiner (> 4-mal)
+    check("Pyramide ohne Kontakt, Lager und Last beim Vernetzen: Fein wie Mittel",
+          zahl["fein"] == zahl["mittel"], str(zahl))
     # Kontakt und Fliessen zusammen: 2 fy auf das mittlere Viertel des Dachs
     # (gleichmaessig 1,3 fy ueber alles liess beide Bloecke ganz fliessen, und
     # die Kontakt-Iteration fand kein Gleichgewicht mehr - eine Frage der Last,
@@ -440,9 +517,11 @@ def test_plastizitaet_in_jeder_stufe():
     r = druck(m, "Dach", 2.0, 2.0 * fy, plastisch=True, mitte=True)
     info = r.info.get("plastizitaet") or {}
     R = float(r.reactions[_knoten_z(m, 0.0), 2].sum())
-    check("Kontakt und Plastizität zusammen (Mittel gewählt → Entwurf): konvergiert, es fließt",
-          info.get("konvergiert") and int(info.get("fliessend") or 0) > 0 and es.stufe(m.netz) == "entwurf",
-          str({k: info.get(k) for k in ("konvergiert", "fliessend")}))
+    # Seit 08.10.2026 (Q1 mit Q2) mit Mittel gerechnet, bis dahin ueber die Sperre mit Entwurf
+    check("Kontakt und Plastizität zusammen (Mittel, quadratisch): konvergiert, es fließt",
+          info.get("konvergiert") and int(info.get("fliessend") or 0) > 0 and es.stufe(m.netz) == "mittel"
+          and {e.typ for e in m.elements} <= {"tet10", "hex20", "pent15"},
+          str({k: info.get(k) for k in ("konvergiert", "fliessend")}) + " " + str(sorted({e.typ for e in m.elements})))
     check("… das Fundament trägt die Last über die Fuge", abs(R - 0.5 * fy) < 1e-6 * fy,
           f"R = {R / 1e3:.1f} kN")
     _ = pl
@@ -554,24 +633,25 @@ def test_maske():
     kl = mk._felder["kantenlaenge"].text()
     check("Fein gewählt: Text folgt (Bohrungen, Kerben, Ermüdung)", "für Bohrungen, Kerben und Ermüdung" in info,
           info)
-    check("… die wirksame Kantenlänge ist halb (500 → 250 mm)", "250 mm" in kl, kl)
+    check("… die Kantenlänge im Feld bleibt die von Mittel (500 mm), Fein sagt, was feiner wird",
+          "500 mm" in kl and "Fein: wie Mittel" in kl, kl)
     mk.anwenden()
     app.processEvents()
     n = w.model.netz
     check("Übernehmen Fein: stufe fein, ordnung 2, sweep sauber",
           es.stufe(n) == "fein" and n.ordnung == 2 and n.sweep == "sauber", f"{n.stufe} {n.ordnung} {n.sweep}")
-    check("… die gespeicherte Ziellänge bleibt (Fein halbiert beim Vernetzen)", abs(n.ziellaenge - 0.5) < 1e-12)
-    # Vernetzen im Fenster: Fein halbiert, die Einstellung bleibt
+    check("… die gespeicherte Ziellänge bleibt", abs(n.ziellaenge - 0.5) < 1e-12)
+    # Vernetzen im Fenster: Fein (abgebildet: doppelte Teilung), die Einstellung bleibt
     w._vernetzen([], [m.koerper["V1"]])
     app.processEvents()
     n_fein = len(m.elements)
-    check("Vernetzen Fein: 64 hex20 (Kantenlänge 250 mm)", n_fein == 64
+    check("Vernetzen Fein: 64 hex20 (abgebildet, doppelte Teilung)", n_fein == 64
           and {e.typ for e in m.elements} == {"hex20"}, f"{n_fein} {sorted({e.typ for e in m.elements})}")
     check("… danach stehen die Netzeinstellungen wie vorher (Fein, 500 mm)",
           es.stufe(m.netz) == "fein" and abs(m.netz.ziellaenge - 0.5) < 1e-12 and m.netz.dichte == "eigene")
     check("… und die Teilung des Körpers (2 × 2 × 2; beim Vernetzen verdoppelt)",
           list(m.koerper["V1"].teilung) == [2, 2, 2], str(m.koerper["V1"].teilung))
-    check("… das Protokoll nennt die halbe Kantenlänge", "halbe Kantenlänge" in w.log.toPlainText())
+    check("… das Protokoll nennt Fein und was feiner wird", "Elemente Fein: wie Mittel" in w.log.toPlainText())
     m.netz = es.setzen(m.netz, "mittel")
     w._vernetzen([], [m.koerper["V1"]])
     check("Vernetzen Mittel: 8 hex20", len(m.elements) == 8 and {e.typ for e in m.elements} == {"hex20"},
@@ -591,11 +671,13 @@ def test_maske():
 
 
 def test_maske_mit_kontakt():
+    """Die Maske an einem gesperrten Modell - seit dem 08.10.2026 eine
+    Schale auf einem Flaechenlager (bis dahin das Kontaktmodell mit Fuge, das
+    jetzt in jeder Stufe rechnet: zuletzt in dieser Pruefung)."""
     from PySide6 import QtCore
     es = _es()
     w, app = _fenster()
-    m = zwei_bloecke()
-    fuge(m)
+    m = platte_mit_lager()
     m.netz = es.setzen(m.netz, "mittel")     # etwa aus einer Datei
     _modell_ins_fenster(w, app, m)
     w.maske_netzeinstellungen()
@@ -603,14 +685,16 @@ def test_maske_mit_kontakt():
     mk = w.maskenrand.maske
     cb = mk._felder["elemente"]
     frei = [cb.model().item(i).isEnabled() for i in range(cb.count())]
-    check("Kontakt: Mittel und Fein sichtbar, aber gesperrt", cb.count() == 3 and frei == [True, False, False],
+    check("Schale am Flächenlager: Mittel und Fein sichtbar, aber gesperrt",
+          cb.count() == 3 and frei == [True, False, False],
           str(frei))
     tip = str(cb.itemData(1, QtCore.Qt.ToolTipRole) or "")
     check("… mit dem Hinweis am Eintrag", es.SPERRHINWEIS in tip, tip)
     check("… die Maske steht auf Entwurf", cb.currentText() == "Entwurf", cb.currentText())
     sperre = mk._felder.get("sperre")
     check("… und sagt es sichtbar in der Maske (mit Grund)",
-          sperre is not None and es.SPERRHINWEIS in sperre.text() and "Kontaktbedingung Fuge" in sperre.text(),
+          sperre is not None and es.SPERRHINWEIS in sperre.text()
+          and "Flächenlager Bettung (an Schalen)" in sperre.text(),
           sperre.text() if sperre is not None else "-")
     mk.anwenden()
     app.processEvents()
@@ -622,12 +706,25 @@ def test_maske_mit_kontakt():
     w._vernetzen(list(m.flaechen.values()), list(m.koerper.values()))
     app.processEvents()
     neu = w.log.toPlainText()[vorher:]
-    check("Vernetzen am Kontaktmodell mit Mittel: das Protokoll nennt die Sperre",
+    check("Vernetzen an der gelagerten Schale mit Mittel: das Protokoll nennt die Sperre",
           es.SPERRHINWEIS in neu and "Entwurf" in neu, neu[:200].replace("\n", " | "))
-    check("… Netz linear, Fuge getrennt, kein Fehler",
-          {e.typ for e in m.elements} <= {"tet4", "hex8", "pent6", "pyr5"} and m.elements
-          and m.kontaktbedingungen["Fuge"].ausgefuehrt and not FEHLER, str(FEHLER[:1]))
+    check("… Netz linear (shell3/shell4), kein Fehler",
+          {e.typ for e in m.elements} <= {"shell3", "shell4"} and m.elements and not FEHLER,
+          str(sorted({e.typ for e in m.elements})) + str(FEHLER[:1]))
     check("… das Modell steht danach auf Entwurf", es.stufe(m.netz) == "entwurf")
+    w.maskenrand.schliessen()
+    # Das Kontaktmodell mit Fuge (Volumen): Mittel und Fein frei, die Maske bleibt
+    m2 = zwei_bloecke()
+    fuge(m2)
+    m2.netz = es.setzen(m2.netz, "mittel")
+    _modell_ins_fenster(w, app, m2)
+    w.maske_netzeinstellungen()
+    app.processEvents()
+    cb2 = w.maskenrand.maske._felder["elemente"]
+    frei2 = [cb2.model().item(i).isEnabled() for i in range(cb2.count())]
+    check("Kontaktmodell mit Fuge: Entwurf, Mittel und Fein wählbar, die Maske steht auf Mittel",
+          frei2 == [True, True, True] and cb2.currentText().startswith("Mittel"),
+          f"{frei2} {cb2.currentText()}")
     w.maskenrand.schliessen()
 
 
@@ -664,20 +761,26 @@ def test_import_im_fenster():
         QtWidgets.QFileDialog.getOpenFileName = alt_open
         dg.ImportDialog.exec = alt_exec
     from statik3d.gui import elementmasken as elm
-    m = zwei_bloecke()
-    fuge(m)
+    m = platte_mit_lager()
     p = os.path.join(tmp, "kontakt.rf6")
     open(p, "wb").close()
     zeile = elm.elementwahl_nach_import(w, m, p)
-    check("Import eines Kontaktmodells: Entwurf mit Hinweis in der Protokollzeile",
+    check("Import eines gesperrten Modells (Schale auf Flächenlager): Entwurf mit Hinweis in der Protokollzeile",
           es.stufe(m.netz) == "entwurf" and es.SPERRHINWEIS in zeile, zeile)
+    m2 = zwei_bloecke()
+    fuge(m2)
+    p2 = os.path.join(tmp, "fuge.rf6")
+    open(p2, "wb").close()
+    zeile2 = elm.elementwahl_nach_import(w, m2, p2)
+    check("Import eines Kontaktmodells mit Fuge (Volumen): Statik3D-Vorgabe Mittel",
+          es.stufe(m2.netz) == "mittel", f"{es.stufe(m2.netz)}: {zeile2}")
 
 
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(1200, exit=True)
     for t in (test_stufen_und_texte, test_stufe_und_setzen, test_laden_und_speichern, test_beschreibung,
-              test_fein_halbe_kantenlaenge, test_sperre, test_kontakt_in_jeder_stufe,
+              test_fein_wie_mittel_im_feld, test_sperre, test_kontakt_in_jeder_stufe,
               test_plastizitaet_in_jeder_stufe, test_import_frage, test_ribbon_und_neues_modell,
               test_maske, test_maske_mit_kontakt, test_import_im_fenster):
         print(f"\n--- {t.__name__} ---")

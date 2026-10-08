@@ -114,6 +114,13 @@ class Groessenfeld:
         self._baum = None
         self.grobe_linien: frozenset = frozenset()
         self.bogenwinkel_grob: float = BOGENWINKEL_GROB
+        #: Linien mit feinerem Bogenwinkel {Name: Grad} - die Boegen der
+        #: Kontakt- und Lagerflaechen bei Fein (siehe :func:`fein_ziele`)
+        self.feine_linien: dict = {}
+        #: Traegt das Feld Quellen von Fein? Dann verdichtet das Flaechennetz
+        #: im Dreiecksgitter (mesher3d._verdichten_2d_dreieck), sonst wie
+        #: bisher - Mittel und Entwurf bleiben bitgleich
+        self.dreiecksgitter: bool = False
         #: Woher die Quellen stammen, fuer das Protokoll: {Art: Anzahl}
         self.herkunft: dict = {}
 
@@ -279,7 +286,12 @@ class Groessenfeld:
         return bool((self(X) < float(h) * (1.0 - 1e-9)).any())
 
     def bogenwinkel(self, linie: str, vorgabe: float) -> float:
-        """Der Bogenwinkel je Abschnitt fuer diese Linie."""
+        """Der Bogenwinkel je Abschnitt fuer diese Linie: an einer Linie mit
+        feinerem Winkel (Fein, :data:`feine_linien`) der kleinere von beiden,
+        an einer Nebenflaeche der grobe, sonst die Vorgabe."""
+        fein = (getattr(self, "feine_linien", None) or {}).get(linie)
+        if fein:
+            return min(float(fein), float(vorgabe))
         return self.bogenwinkel_grob if linie in self.grobe_linien else float(vorgabe)
 
     # ---- Ausgabe -----------------------------------------------------------
@@ -442,15 +454,94 @@ def bedeutung(model) -> dict:
 # --------------------------------------------------------------------------
 # Das Feld aus dem Modell
 # --------------------------------------------------------------------------
+def _gitter_im_polygon(ringe: list, abstand: float) -> np.ndarray:
+    """Gitterpunkte (Zellmitten, Weite hoechstens ``abstand``) innerhalb der
+    ebenen Ringe (aussen, Loecher) - leer, wenn es zu viele wuerden."""
+    from .mesher3d import _in_polygon_2d
+    lo, hi = ringe[0].min(axis=0), ringe[0].max(axis=0)
+    nx = int(np.ceil((hi[0] - lo[0]) / abstand))
+    ny = int(np.ceil((hi[1] - lo[1]) / abstand))
+    if not 0 < nx * ny <= 250_000:
+        return np.zeros((0, 2))
+    u = lo[0] + (np.arange(nx) + 0.5) * (hi[0] - lo[0]) / nx
+    v = lo[1] + (np.arange(ny) + 0.5) * (hi[1] - lo[1]) / ny
+    K = np.stack(np.meshgrid(u, v, indexing="ij"), -1).reshape(-1, 2)
+    return K[_in_polygon_2d(K, ringe)]
+
+
+def _flaechenpunkte_krumm(model, f, punkte: list, abstand: float) -> np.ndarray:
+    """Punkte auf einer **gekruemmten** Flaeche (Paket F1, 07.10.2026).
+
+    Bis zum 07.10.2026 lag das Gitter in der Ausgleichsebene des Randes: an
+    einer halben Bohrungswand r = 60 mm bis 23 mm neben der Flaeche, und die
+    Quellen deckten die Wand nicht (gemessen mit tests/test_fein_smart.py).
+    Jetzt liegt jeder Punkt auf der wahren Flaeche:
+
+    * **Zylinder** (:func:`mesher3d.zylinderpassung`): das Gitter in der
+      Abwicklung (Bogenlaenge quer, Achse laengs), wie
+      :func:`mesher3d._zylindernetz` sie vernetzt, und zurueck auf den
+      Zylinder gehoben - gleichmaessig in der Bogenlaenge;
+    * **Kegel, Kugel, windschiefes Viereck**: das Gitter in der
+      Ausgleichsebene, mit dem Projektor der Flaeche
+      (:func:`mesher3d.flaechenprojektoren`) auf die Flaeche gesetzt;
+    * jede andere gekruemmte Flaeche: nur der Rand - ein Punkt daneben waere
+      schlechter als keiner.
+    """
+    from types import SimpleNamespace
+
+    from . import mesher3d as M3
+    alle = np.vstack(punkte)
+    if abstand <= 0:
+        return alle
+    achse = M3.zylinderpassung(model, f, alle)
+    if achse is not None:
+        c, d, r = np.asarray(achse[0], float), np.asarray(achse[1], float), float(achse[2])
+        d = d / max(float(np.linalg.norm(d)), 1e-300)
+        hilf = np.array([1.0, 0.0, 0.0]) if abs(d[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        e1 = np.cross(hilf, d)
+        e1 /= np.linalg.norm(e1)
+        e2 = np.cross(d, e1)
+        rel = alle - c
+        w = np.sort(np.arctan2(rel @ e2, rel @ e1))
+        luecken = np.diff(np.concatenate([w, w[:1] + 2 * np.pi]))
+        schnitt = w[int(np.argmax(luecken))] + float(luecken.max()) / 2.0
+
+        def eben(P3):
+            rel3 = P3 - c
+            wi = np.mod(np.arctan2(rel3 @ e2, rel3 @ e1) - schnitt, 2 * np.pi)
+            return np.stack([r * wi, rel3 @ d], axis=1)
+        K = _gitter_im_polygon([eben(R) for R in punkte], abstand)
+        if not len(K):
+            return alle
+        wi = K[:, 0] / r + schnitt
+        innen = c + np.outer(K[:, 1], d) + r * (np.outer(np.cos(wi), e1) + np.outer(np.sin(wi), e2))
+        return np.vstack([alle, innen])
+    try:
+        proj = M3.flaechenprojektoren(model, SimpleNamespace(flaechen=[f.name])).get(f.name)
+    except Exception:                       # noqa: BLE001 - dann nur der Rand
+        proj = None
+    if proj is None:
+        return alle
+    c, e1, e2, _n, _abw = M3.ausgleichsebene(alle)
+    K = _gitter_im_polygon([np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in punkte], abstand)
+    if not len(K):
+        return alle
+    return np.vstack([alle, proj(c + K[:, :1] * e1 + K[:, 1:] * e2)])
+
+
 def _flaechenpunkte(model, f, abstand: float) -> np.ndarray:
     """Punkte auf einer Flaeche im Abstand ``abstand``: der Rand abgetastet
-    und ein Gitter in der Ausgleichsebene innerhalb des Randpolygons."""
-    from .mesher3d import _in_polygon_2d, ausgleichsebene
+    und ein Gitter in der Ausgleichsebene innerhalb des Randpolygons - an
+    einer gekruemmten Flaeche auf der wahren Flaeche
+    (:func:`_flaechenpunkte_krumm`, seit 07.10.2026)."""
+    from .mesher3d import _in_polygon_2d, ausgleichsebene, ist_eben
     rand = np.asarray(f.randpunkte(model, 24), float)
     if len(rand) < 3:
         return np.zeros((0, 3))
     loecher = [np.asarray(P, float) for P in f.oeffnungspunkte(model, 24)]
     punkte = [rand] + loecher
+    if not ist_eben(np.vstack(punkte)):
+        return _flaechenpunkte_krumm(model, f, punkte, abstand)
     c, e1, e2, n, abw = ausgleichsebene(rand)
     ringe = [np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in punkte]
     lo, hi = ringe[0].min(axis=0), ringe[0].max(axis=0)
@@ -475,6 +566,197 @@ def _linienpunkte(model, name: str, abstand: float) -> np.ndarray:
     return np.asarray(_lp(model, name, min(n, 2000)), float)
 
 
+# --------------------------------------------------------------------------
+# Fein: Quellen an Kontakt-, Lager- und Lastflaechen und an ihren Boegen
+# --------------------------------------------------------------------------
+#: Abtastweite der Flaechenquellen von Fein, bezogen auf ihre Kantenlaenge
+#: h_F: mit sqrt(2) h_F liegt jeder Punkt der Flaeche hoechstens h_F - die
+#: Reichweite der Quelle - von einer Quelle entfernt, die Flaeche ist also
+#: lueckenlos h_F (mit 2 h_F wie bei einer Netzverfeinerung des Anwenders
+#: stiege das Feld in der Mitte einer Gitterzelle auf 1,15 h_F).
+FEIN_ABTASTUNG = 2.0 ** 0.5
+
+
+def _linien_von(f) -> list:
+    return list(f.linien or []) + [x for loch in (f.oeffnungen or []) for x in loch]
+
+
+def _gekruemmt(model, f) -> bool:
+    """Liegt die Flaeche nicht in einer Ebene (Bohrungswand, Radius, Kegel)?"""
+    from .mesher3d import ist_eben
+    try:
+        P = [np.asarray(f.randpunkte(model, 8), float)]
+        P += [np.asarray(Q, float) for Q in f.oeffnungspunkte(model, 8)]
+        P = np.vstack([Q for Q in P if len(Q)])
+    except Exception:                       # noqa: BLE001
+        return False
+    return len(P) >= 4 and not ist_eben(P)
+
+
+def _kontaktpaar_flaechen(model, kb_namen: set) -> set:
+    """Flaechen, auf denen ein **Kontaktpaar** liegt, das nicht aus einer
+    Kontaktbedingung stammt (die nennen ihre Flaechen selbst; ihre Paare
+    tragen ihren Namen, fugen.kontaktfugen_zuruecksetzen). Ein Kontaktpaar
+    kennt nur Knoten: eine Flaeche gehoert dazu, wenn eine ihrer Randseiten
+    im vorhandenen Netz ganz auf Slave-Knoten oder Master-Facetten liegt."""
+    paare = [cp for cp in (getattr(model, "contact_pairs", None) or []) if cp.name not in kb_namen]
+    if not paare:
+        return set()
+    from .elements import solid as sl
+    S: set = set()
+    for cp in paare:
+        S.update(int(n) for n in (cp.slave_nodes or []))
+        for fc in (cp.master_faces or []):
+            S.update(int(n) for n in fc)
+    aus: set = set()
+    if not S:
+        return aus
+    for fn, f in (getattr(model, "flaechen", None) or {}).items():
+        for ei, s in (f.randseiten or []):
+            try:
+                e = model.elements[int(ei)]
+                ecken = sl.FLAECHEN_ECKEN[e.typ][int(s)]
+            except (IndexError, KeyError):
+                continue
+            if all(int(e.nodes[c]) in S for c in ecken):
+                aus.add(fn)
+                break
+    return aus
+
+
+def fein_ziele(model, netz=None, bogenwinkel: float = 9.0, flaechenfaktor: float = 0.5) -> dict:
+    """Was Fein an diesem Modell feiner macht (Paket F1, 07.10.2026).
+
+    **Flaechen** - nur Randflaechen von Koerpern:
+
+    * *Kontakt*: Flaechen aktiver, nicht verschweisster Kontaktbedingungen
+      (freigegebene Flaechen und Gegenflaechen; die geloeste Seite liegt
+      raeumlich darauf) und Flaechen unter einem Kontaktpaar
+      (:func:`_kontaktpaar_flaechen`),
+    * *Lager*: Flaechen der Flaechenlager,
+    * *Last*: Flaechen mit einer Flaechenlast (Geometrielast auf der Flaeche;
+      eine Last auf einen ganzen Koerper und eine Temperatur machen keine
+      Flaeche zur Lastflaeche).
+
+    Auf ihnen gilt h_F = ``flaechenfaktor`` * h_Mittel, wobei h_Mittel die
+    Kantenlaenge ist, mit der Mittel den feinsten Koerper an dieser Flaeche
+    vernetzt (Netzdichte bzw. Ziellaenge, eigene Kantenlaenge je Koerper,
+    Mindestteilung - netzdichte.elementlaenge und mesher3d._kantenlaenge).
+
+    **Boegen** (Anwender 07.10.2026: „Alle an Kontakt- und Lagerflaechen
+    vorab“): jede krumme Linie im Rand oder in einer Oeffnung einer Kontakt-
+    oder Lagerflaeche, dazu die krummen Linien jeder **gekruemmten** Flaeche
+    (Bohrungswand, Radius), die eine Linie mit einer Kontakt- oder
+    Lagerflaeche teilt - also an sie grenzt. Sie bekommen ``bogenwinkel``
+    Grad je Abschnitt, wenn das mehr Abschnitte gibt als die Vorgabe
+    (mesher3d.BOGENWINKEL, 18 Grad), und als Linienquelle die Laenge eines
+    Abschnitts h_B, hoechstens h_F. Boegen an Lastflaechen und Boegen ohne
+    Kontakt oder Lager bleiben wie bei Mittel.
+
+    Rueckgabe {"flaechen": {Name: "Kontakt" | "Lager" | "Last"}, "h_mittel":
+    {Flaeche: m}, "h": {Flaeche: h_F}, "boegen": {Linie: h_B},
+    "bogenwinkel", "flaechenfaktor"}. Gespeichert wird davon nichts.
+    """
+    from . import mesher3d as M3
+    from . import netzdichte as nd
+    from .kontakte import ist_verschweisst
+    netz = netz if netz is not None else model.netz
+    koerper = list((getattr(model, "koerper", None) or {}).values())
+    koerperflaechen = {fn for k in koerper for fn in (k.flaechen or []) if fn in model.flaechen}
+    flaechen: dict = {}
+
+    def merke(fn, art):
+        if fn in koerperflaechen and fn not in flaechen:
+            flaechen[fn] = art
+    kb_namen: set = set()
+    for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
+        kb_namen.add(kb.name)
+        if getattr(kb, "aus", False) or ist_verschweisst(model, kb):
+            continue
+        for fn in list(getattr(kb, "flaechennamen", None) or []) + list(getattr(kb, "gegenflaechen", None) or []):
+            merke(fn, "Kontakt")
+    for fn in sorted(_kontaktpaar_flaechen(model, kb_namen)):
+        merke(fn, "Kontakt")
+    for ss in (getattr(model, "surface_supports", None) or []):
+        for fn in (getattr(ss, "flaechen", None) or []):
+            merke(fn, "Lager")
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in (getattr(lc, "geometrielasten", None) or []):
+            if getattr(gl, "art", "flaeche") == "koerper" or getattr(gl, "lastart", "druck") == "temperatur":
+                continue
+            merke(str(getattr(gl, "ziel", "")), "Last")
+    # Kantenlaenge von Mittel je Koerper - nur fuer Koerper an einer Zielflaeche
+    h_mittel: dict = {}
+    for k in koerper:
+        an = [fn for fn in (k.flaechen or []) if fn in flaechen]
+        if not an:
+            continue
+        try:
+            hk = float(nd.elementlaenge(model, netz, k)["h"])
+            hk = float(M3._kantenlaenge(model, k, hk, []))
+        except Exception:                   # noqa: BLE001 - eine Schaetzung darf nie sperren
+            continue
+        if hk <= 0:
+            continue
+        for fn in an:
+            h_mittel[fn] = min(h_mittel.get(fn, hk), hk)
+    faktor = float(flaechenfaktor)
+    h = {fn: faktor * hm for fn, hm in h_mittel.items()}
+    # Boegen an Kontakt- und Lagerflaechen
+    boegen: dict = {}
+    vorgabe = M3.bogenwinkel_vorgabe(model)
+    if bogenwinkel and float(bogenwinkel) < vorgabe:
+        kl = {fn for fn, art in flaechen.items() if art in ("Kontakt", "Lager") and fn in h}
+        kandidaten: dict = {}
+        for fn in kl:
+            for ln in _linien_von(model.flaechen[fn]):
+                kandidaten[ln] = min(kandidaten.get(ln, h[fn]), h[fn])
+        an_linie: dict = {}
+        for fn in koerperflaechen:
+            for ln in _linien_von(model.flaechen[fn]):
+                an_linie.setdefault(ln, set()).add(fn)
+        for fn in sorted(koerperflaechen - kl):
+            f = model.flaechen[fn]
+            nachbarn = {g for ln in _linien_von(f) for g in an_linie.get(ln, ()) if g in kl}
+            if not nachbarn or not _gekruemmt(model, f):
+                continue
+            hf = min(h[g] for g in nachbarn)
+            for ln in _linien_von(f):
+                kandidaten[ln] = min(kandidaten.get(ln, hf), hf)
+        for ln in sorted(kandidaten):
+            line = model.lines.get(ln)
+            if line is None or (line.typ or "polyline") == "polyline":
+                continue
+            try:
+                n_fein = M3._bogenabschnitte(model, ln, float(bogenwinkel))
+                if n_fein <= M3._bogenabschnitte(model, ln, vorgabe):
+                    continue                # gerade oder kaum gekruemmt: nichts zu tun
+                L = float(M3._linienlaenge(model, ln))
+            except Exception:               # noqa: BLE001
+                continue
+            if L > 0:
+                boegen[ln] = min(kandidaten[ln], L / n_fein)
+    return {"flaechen": flaechen, "h_mittel": h_mittel, "h": h, "boegen": boegen,
+            "bogenwinkel": float(bogenwinkel), "flaechenfaktor": faktor}
+
+
+def fein_verfeinerungen(ziele: dict) -> list:
+    """Die Quellen von Fein als Eintraege fuer ``netz.verfeinerungen`` - nur
+    fuer die Dauer des Vernetzens (elementstufe.wirksam), nie gespeichert:
+    ``{"art": "fein_flaeche", "name", "h", "h_mittel", "grund"}`` und
+    ``{"art": "fein_bogen", "name", "h", "winkel"}``. :func:`aufbauen` tastet
+    sie ab. Eine Flaechenquelle mit h_F >= h_Mittel (Faktor 1) wirkt nicht
+    und entfaellt, damit die letzte Vergroeberungsstufe bitgleich Mittel ist."""
+    aus = []
+    for fn, art in ziele["flaechen"].items():
+        hf, hm = ziele["h"].get(fn), ziele["h_mittel"].get(fn)
+        if hf and hm and hf < hm * (1.0 - 1e-12):
+            aus.append({"art": "fein_flaeche", "name": fn, "h": float(hf), "h_mittel": float(hm), "grund": art})
+    for ln, hb in ziele["boegen"].items():
+        aus.append({"art": "fein_bogen", "name": ln, "h": float(hb), "winkel": float(ziele["bogenwinkel"])})
+    return aus
+
+
 def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | None":
     """Das Groessenfeld des Modells aus den Netzeinstellungen - oder None,
     wenn nichts darin steht und das Feld ohne Wirkung waere.
@@ -483,7 +765,10 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
     Netzeinstellungen). Netzverfeinerungen sind Woerterbuecher
     ``{"art": "kugel", "mitte": [x, y, z], "radius": r, "h": h}``,
     ``{"art": "flaeche" | "linie" | "koerper", "name": ..., "h": h}``;
-    Feldpunkte sind ``[x, y, z, h]`` oder ``[x, y, z, h, r]``.
+    Feldpunkte sind ``[x, y, z, h]`` oder ``[x, y, z, h, r]``. Dazu kommen
+    bei Fein, nur fuer die Dauer des Vernetzens, ``{"art": "fein_flaeche",
+    "name", "h", "h_mittel"}`` und ``{"art": "fein_bogen", "name", "h",
+    "winkel"}`` (:func:`fein_verfeinerungen`, seit 07.10.2026).
     """
     netz = getattr(model, "netz", None)
     if netz is None:
@@ -494,8 +779,18 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
         from .mesher3d import STANDARDLAENGE
         h_max = STANDARDLAENGE
     h_min = float(getattr(netz, "h_min", 0.0) or 0.0)
+    verfeinerungen = list(getattr(netz, "verfeinerungen", None) or [])
+    # Die Quellen von Fein nennen die Kantenlaenge von Mittel ihrer Flaeche
+    # (nach Netzdichte je Koerper). Das Feld darf darunter nicht deckeln: eine
+    # Ziellaenge, die kleiner ist als die Laenge eines Koerpers aus der
+    # Netzdichte, machte sonst den ganzen Koerper feiner.
+    h_fein = [float(v.get("h_mittel", 0.0) or 0.0) for v in verfeinerungen
+              if str(v.get("art", "")).startswith("fein_")]
+    if h_fein:
+        h_max = max(h_max, max(h_fein))
     feld = Groessenfeld(h_max)
-    for v in (getattr(netz, "verfeinerungen", None) or []):
+    feine: dict = {}
+    for v in verfeinerungen:
         try:
             art = str(v.get("art", ""))
             h = float(v.get("h", 0.0) or 0.0)
@@ -503,7 +798,24 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
                 h = max(h, h_min)
             if h <= 0:
                 continue
-            if art == "kugel":
+            if art == "fein_flaeche":
+                # Fein (Paket F1): die Flaeche lueckenlos h, eine Elementlage
+                # (Reichweite h), davon wachsend
+                f = model.flaechen.get(str(v.get("name", "")))
+                if f is not None:
+                    feld.punkte(_flaechenpunkte(model, f, FEIN_ABTASTUNG * h), h, h, "Fein-Fläche")
+            elif art == "fein_bogen":
+                # Fein: der Bogen einer Kontakt- oder Lagerflaeche mit dem
+                # feineren Bogenwinkel - in der Linienteilung (feine_linien)
+                # und als Linienquelle mit h_B fuer Flaechen, Inneres, gmsh
+                # und MMG3D
+                name = str(v.get("name", ""))
+                if name in model.lines:
+                    feld.punkte(_linienpunkte(model, name, 0.5 * h), h, 0.0, "Fein-Bogen")
+                    w = float(v.get("winkel", 0.0) or 0.0)
+                    if w > 0:
+                        feine[name] = min(w, feine.get(name, w))
+            elif art == "kugel":
                 feld.kugel(v.get("mitte", [0, 0, 0]), float(v.get("radius", 0.0) or 0.0), h, "Kugel")
             elif art == "flaeche":
                 f = model.flaechen.get(str(v.get("name", "")))
@@ -536,7 +848,9 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
     if bool(getattr(netz, "nebenflaechen_grob", False)):
         b = bedeutung(model)
         feld.grobe_linien = frozenset(b["neben_linien"])
-    if feld.leer and not feld.grobe_linien:
+    feld.feine_linien = feine
+    feld.dreiecksgitter = any(str(v.get("art", "")).startswith("fein_") for v in verfeinerungen)
+    if feld.leer and not feld.grobe_linien and not feld.feine_linien:
         return None
     n = feld.abschliessen()
     if log is not None:
@@ -544,7 +858,8 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
         teile = ", ".join(f"{k} {v}" for k, v in feld.herkunft.items())
         C.say(log, f"Größenfeld: {n} Quellen" + (f" ({teile})" if teile else "")
                    + (f", {len(feld.grobe_linien)} Linien an Nebenflächen mit "
-                      f"{feld.bogenwinkel_grob:.0f}° je Bogenabschnitt" if feld.grobe_linien else ""))
+                      f"{feld.bogenwinkel_grob:.0f}° je Bogenabschnitt" if feld.grobe_linien else "")
+                   + (f", {len(feine)} Bögen mit {min(feine.values()):g}° je Abschnitt" if feine else ""))
     return feld
 
 

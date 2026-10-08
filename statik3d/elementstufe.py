@@ -13,8 +13,13 @@ Elementansatz linear/quadratisch und die Haken:
   Keil, Pyramide oder Tetraeder), Schalen linear.
 * **Mittel** (Vorgabe) - tet10, Sechsflaechner hex20 (VQ203), Schalen
   quadratisch.
-* **Fein** - wie Mittel mit halber Kantenlaenge. Ohne tetp (Anwender
-  25.09.2026: „Fein ohne tetp“).
+* **Fein** - wie Mittel, feiner nur dort, wo es zaehlt (seit 07.10.2026,
+  Paket F1): an Kontakt-, Lager- und Lastflaechen die halbe Kantenlaenge,
+  an den Boegen der Kontakt- und Lagerflaechen 9 statt 18 Grad je
+  Abschnitt, von dort mit 0,35 je m wachsend ins Feld von Mittel
+  (:func:`wirksam`, netzfeld.fein_ziele). Bis zum 07.10.2026 halbierte
+  Fein jede Kantenlaenge im ganzen Modell und liess die Bohrungen, wie sie
+  waren. Ohne tetp (Anwender 25.09.2026: „Fein ohne tetp“).
 
 Jede Stufe setzt ``netz.sweep = "sauber"``: „sweepen muss das programm doch
 automatisch wenn das entsprechende element das verlangt … dass kann der user
@@ -22,16 +27,20 @@ doch nicht wissen“. „Sauber“ (Vernetzer-Sitzung, sweep.betriebsart) sweept
 nur Koerper, deren jedes Element sauber wird, sonst Tetraeder. Welche
 Elemente wirklich entstanden sind, zeigt danach die Elementuebersicht.
 
-**Kontakt sperrt Mittel und Fein - an einer Stelle.** Kontakt, Fugen und
-Flaechenlager nehmen von einer Elementseite heute nur die Eckknoten;
-an quadratischen Elementen bricht die Rechnung darum laut ab
-(fugen.QuadratischeSeiten). Der Anwender: „kontakt und plastizität muss in
-allen stufen funktionieren“ - und nicht still herabstufen. Solange die
-Loeser-Sitzung den Kontakt fuer quadratische Seiten nicht geliefert hat,
-sind Mittel und Fein an solchen Modellen sichtbar, aber gesperrt, und das
+**Was Mittel und Fein noch sperrt - an einer Stelle.** Kontakt, Fugen und
+Flaechenlager nehmen von einer Elementseite nur die Eckknoten. Seit dem
+08.10.2026 (Paket Q1) sind an tet10, hex20 und pent15 die Seitenmitten jeder
+Kontakt- und Lagerseite an ihre Ecken gebunden (assemble.mittelknoten_bindungen);
+Kontaktpaare, Kontaktbedingungen (die Fuge trennt seit Paket Q2 auch die
+Seitenmitten, fugen.SEITENMITTEN_GETRENNT) und Flaechenlager rechnen an Volumen
+in jeder Stufe. Gesperrt bleiben quadratische **Schalen** an Kontakt oder
+Flaechenlager (die Bindung wirkt nur in Volumen, Entscheidung E3 des
+Bauplans). Der Anwender: „kontakt und plastizität
+muss in allen stufen funktionieren“ - und nicht still herabstufen. An einem
+gesperrten Modell sind Mittel und Fein sichtbar, aber gesperrt, und das
 Modell steht mit Hinweis in Maske und Protokoll auf Entwurf. Die Sperre
-haengt allein an :func:`quadratisch_gesperrt`; mit der Lieferung gibt sie
-eine leere Liste zurueck, und alles andere bleibt.
+haengt allein an :func:`quadratisch_gesperrt`. Bis zum 08.10.2026 sperrte
+jede Kontaktbedingung, jedes Kontaktpaar und jedes Flaechenlager.
 
 Die Plastizitaet rechnet mit tet4, tet10, hex8, hex20, pent6, pent15 und
 pyr5 (plastizitaet.py) - also in jeder Stufe; ihr Haken bleibt, wie er ist.
@@ -44,7 +53,7 @@ setzt), gilt die Ordnung.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 #: Die Stufen in der Reihenfolge der Auswahl
 STUFEN = ("entwurf", "mittel", "fein")
@@ -62,7 +71,8 @@ ELEMENTE = {
                "Tetraeder), Schalen linear (shell3/shell4)",
     "mittel": "tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), "
               "Schalen quadratisch (shell6/shell8)",
-    "fein": "wie Mittel (tet10, hex20 (VQ203), Schalen quadratisch) mit halber Kantenlänge",
+    "fein": "wie Mittel (tet10, hex20 (VQ203), Schalen quadratisch), feiner an Kontakt-, Lager- und "
+            "Lastflächen und an den Bögen der Kontakt- und Lagerflächen",
 }
 #: Wofuer die Stufe taugt (Anwender-Auftrag 25.09.2026, woertlich)
 ZWECK = {
@@ -74,8 +84,14 @@ ZWECK = {
 SWEEP = "sauber"
 #: Hinweis an gesperrten Stufen (woertlich aus dem Auftrag)
 SPERRHINWEIS = "mit Kontakt noch nicht verfügbar – Kontakt für quadratische Elemente folgt"
-#: Fein halbiert die Kantenlaenge
-FEIN_FAKTOR = 0.5
+#: Die Stufen von Fein (Paket F1, 07.10.2026): (Bogenwinkel je Abschnitt an
+#: den Boegen der Kontakt- und Lagerflaechen [Grad], Kantenlaenge an Kontakt-,
+#: Lager- und Lastflaechen als Anteil von Mittel). k = 0 ist Fein; wird das
+#: Netz zu gross, vergroebert das Paket F2 Stufe um Stufe - erst die Boegen
+#: (9 -> 12 -> 18 Grad, 18 ist Mittel), dann die Flaechen (h/2 -> h/1,5 -> h).
+#: Die letzte Stufe ist Mittel. Siehe :func:`fein_stufe`.
+FEIN_STUFEN = ((9.0, 0.5), (12.0, 0.5), (18.0, 0.5), (18.0, 1.0 / 1.5), (18.0, 1.0))
+FEIN_STUFEN_ANZAHL = len(FEIN_STUFEN)
 #: Bis zu so vielen Objekten nennt die Maske die Kantenlaenge je Objekt
 #: (gemessen 25.09.2026: 300 Wuerfel 0,48 s; am Drehlager nicht gemessen)
 KANTEN_OBJEKTE = 300
@@ -118,28 +134,64 @@ def setzen(netz, s: str):
 def quadratisch_gesperrt(model) -> list:
     """Was quadratische Elemente heute sperrt - leer, wenn nichts.
 
-    Kontaktbedingungen (ausser abgeschalteten und verschweissten an
-    gemeinsamen Flaechen, die nichts trennen), Kontaktpaare und
-    Flaechenlager: sie nehmen von einer Elementseite nur die Eckknoten, und
-    an tet10/hex20/shell8 bricht die Rechnung darum laut ab
-    (fugen.QuadratischeSeiten). Zurueckgegeben werden die Objekte mit
+    Seit dem 08.10.2026 (Paket Q1) nur noch zweierlei: Kontaktbedingungen,
+    Kontaktpaare und Flaechenlager an **Schalen** (Flaechen mit Dicke bzw.
+    Schalenelemente) - die Bindung der Seitenmitten wirkt nur in Volumen,
+    an shell6/shell8 bricht die Rechnung laut ab (fugen.QuadratischeSeiten).
+    Trennende Kontaktbedingungen an Volumen sperren nur, solange das Trennen
+    einer Fuge die Seitenmitten nicht mittrennt (fugen.SEITENMITTEN_GETRENNT;
+    seit Paket Q2 tut es das). Kontaktbedingungen, Kontaktpaare und
+    Flaechenlager an tet10, hex20 und pent15 sperren nicht mehr. Zurueckgegeben werden die Objekte mit
     Namen, damit Maske und Protokoll sagen koennen, woran es liegt.
 
-    **Die eine Stelle** (25.09.2026): liefert die Loeser-Sitzung den Kontakt
-    fuer quadratische Seiten, gibt diese Funktion eine leere Liste zurueck
-    (bzw. nur noch das, was dann noch sperrt) - Maske, Vernetzen und Import
-    fragen nur hier."""
+    **Die eine Stelle** (25.09.2026) - Maske, Vernetzen und Import fragen nur
+    hier. Bis zum 08.10.2026 sperrte jede Kontaktbedingung, jedes
+    Kontaktpaar und jedes Flaechenlager."""
     from .kontakte import ist_verschweisst
+    from .fugen import SEITENMITTEN_GETRENNT
+    schalen = _schalen_an(model)
     gruende = []
     for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
         if getattr(kb, "aus", False) or ist_verschweisst(model, kb):
             continue
-        gruende.append(f"Kontaktbedingung {kb.name}")
+        if schalen(flaechen=list(kb.flaechennamen or []) + list(kb.gegenflaechen or [])):
+            gruende.append(f"Kontaktbedingung {kb.name} (an Schalen)")
+        elif not SEITENMITTEN_GETRENNT:
+            gruende.append(f"Kontaktbedingung {kb.name}")
     for cp in (getattr(model, "contact_pairs", None) or []):
-        gruende.append(f"Kontaktpaar {cp.name}")
+        if schalen(elemente=cp.master_elements,
+                   knoten=list(cp.slave_nodes or []) + [n for f in (cp.master_faces or []) for n in f]):
+            gruende.append(f"Kontaktpaar {cp.name} (an Schalen)")
     for ss in (getattr(model, "surface_supports", None) or []):
-        gruende.append(f"Flächenlager {ss.name}")
+        if schalen(flaechen=getattr(ss, "flaechen", None) or [], elemente=ss.elements,
+                   knoten=ss.nodes):
+            gruende.append(f"Flächenlager {ss.name} (an Schalen)")
     return gruende
+
+
+def _schalen_an(model):
+    """f(flaechen=, elemente=, knoten=) -> bool: liegt das Objekt an einer
+    Schale - eine genannte Flaeche traegt als Schale (Model.flaeche_traegt),
+    ein genanntes Element ist eine Schale, oder ein genannter Knoten haengt an
+    einer? Die Schalenknoten werden nur gesammelt, wenn es Schalen gibt."""
+    from . import elemente as EL
+    schalentypen = set(EL.SCHALEN_TYPEN)
+    traegt = getattr(model, "flaeche_traegt", None)
+    els = getattr(model, "elements", None) or []
+    knoten_s = None
+
+    def an(flaechen=(), elemente=(), knoten=()):
+        nonlocal knoten_s
+        if traegt is not None and any(traegt(str(f)) for f in (flaechen or [])):
+            return True
+        if any(0 <= int(i) < len(els) and els[int(i)].typ in schalentypen for i in (elemente or [])):
+            return True
+        if not knoten:
+            return False
+        if knoten_s is None:
+            knoten_s = {int(n) for e in els if e.typ in schalentypen for n in e.nodes}
+        return bool(knoten_s) and any(int(n) in knoten_s for n in knoten)
+    return an
 
 
 def frei(model, s: str, gruende: list = None) -> bool:
@@ -183,57 +235,159 @@ def sperre_anwenden(model) -> str:
 
 
 # --------------------------------------------------------------------------
-# Fein: halbe Kantenlaenge
+# Fein: Mittel plus Quellen an Kontakt, Lagern, Lasten und Boegen (F1)
 # --------------------------------------------------------------------------
-def _halb(x):
-    return float(x) * FEIN_FAKTOR if x else x
+@dataclass(frozen=True)
+class FeinStufe:
+    """Eine Vergroeberungsstufe von Fein (:data:`FEIN_STUFEN`)."""
+    #: Nummer der Stufe, 0 = Fein
+    k: int
+    #: Bogenwinkel je Abschnitt an den Boegen der Kontakt- und Lagerflaechen [Grad]
+    bogenwinkel: float
+    #: Kantenlaenge an Kontakt-, Lager- und Lastflaechen als Anteil von Mittel
+    flaechenfaktor: float
+
+    @property
+    def letzte(self) -> bool:
+        """Die letzte Stufe - groeber geht es nicht."""
+        return self.k >= FEIN_STUFEN_ANZAHL - 1
+
+    @property
+    def ist_mittel(self) -> bool:
+        """Verfeinert diese Stufe nichts mehr (Boegen 18 Grad, Flaechen h)?"""
+        from .mesher3d import BOGENWINKEL
+        return self.bogenwinkel >= BOGENWINKEL and self.flaechenfaktor >= 1.0
 
 
-def wirksam(netz, model=None):
+def fein_stufe(k: int = 0) -> FeinStufe:
+    """**Schnittstelle fuer das Paket F2** (selbsttaetig groeber vernetzen,
+    Anwender 07.10.2026): die Fein-Einstellungen in der Vergroeberungsstufe k.
+
+    * k = 0 ist Fein: an den Boegen der Kontakt- und Lagerflaechen 9 Grad je
+      Abschnitt, an Kontakt-, Lager- und Lastflaechen die halbe Kantenlaenge
+      von Mittel (eine Elementlage, von dort mit 0,35 je m wachsend).
+    * Hoehere Stufen werden zuerst an den Boegen groeber - k = 1: 12 Grad,
+      k = 2: 18 Grad, also wie Mittel -, dann an den Flaechen - k = 3:
+      h/1,5, k = 4: h.
+    * Die letzte Stufe (k = FEIN_STUFEN_ANZAHL - 1 = 4) ist Mittel
+      (``letzte`` und ``ist_mittel`` sind wahr): keine Quellen, keine
+      verdoppelte Teilung abgebildeter Koerper, das Netz ist bitgleich das
+      von Mittel (tests/test_fein_smart.py). Ein groesseres k gibt die
+      letzte Stufe, ein negatives Stufe 0.
+
+    Eine Stufe allein vernetzt::
+
+        with elementstufe.beim_vernetzen(model, log, k=k):
+            mesher.modell_vernetzen(model, log)
+
+    Die Netzeinstellungen einer Stufe allein gibt ``wirksam(netz, model,
+    k=k)``, den Text fuer Maske und Protokoll ``fein_text(netz, model, k)``.
+    Ueberschreitet das Netz die Grenze in Unbekannten, geht F2 die Stufen
+    ueber :func:`fein_stufen` durch (seit 08.10.2026) - dort beginnt es mit
+    k = 0, und die verdoppelte Teilung abgebildeter Koerper bleibt auch in
+    der letzten Stufe (siehe dort).
+    """
+    k = min(max(int(k or 0), 0), FEIN_STUFEN_ANZAHL - 1)
+    w, f = FEIN_STUFEN[k]
+    return FeinStufe(k, float(w), float(f))
+
+
+def _fein(netz, model, k: int) -> tuple:
+    """(Netzeinstellungen fuer die Dauer des Vernetzens, Ziele) von Fein in
+    der Stufe k - die Ziele (netzfeld.fein_ziele) None ohne Modell oder in
+    der Stufe Mittel."""
+    st = fein_stufe(k)
+    ziele, zusatz = None, []
+    if model is not None and not st.ist_mittel:
+        from . import netzfeld
+        ziele = netzfeld.fein_ziele(model, netz, st.bogenwinkel, st.flaechenfaktor)
+        zusatz = netzfeld.fein_verfeinerungen(ziele)
+    return replace(netz, verfeinerungen=list(getattr(netz, "verfeinerungen", None) or []) + zusatz), ziele
+
+
+def wirksam(netz, model=None, k: int = 0):
     """Die Netzeinstellungen, mit denen vernetzt wird.
 
-    Entwurf und Mittel: ``netz`` selbst. Fein: eine Kopie mit halber
-    Kantenlaenge - die Netzdichte eine Stufe feiner (grob 8 → mittel 16 →
-    fein 32 Elemente ueber die Objektgroesse, netzdichte.DICHTEN), die
-    Ziellaenge, die kleinste und groesste Elementgroesse, die Kantenlaenge je
-    Koerper, die Netzverfeinerungen und die Feldpunkte halb. Steht die
-    Netzdichte schon auf fein, gibt es keine feinere Stufe: dann bekommt
-    jeder Koerper die Haelfte seiner Dichte-Laenge als eigene Kantenlaenge
-    (dafuer braucht es ``model``); Flaechen mit Dicke bleiben dort bei der
-    Dichte fein. Die Hoechstzahl Elemente je Objekt bleibt - sie ist ein
-    Schutz, keine Kantenlaenge. Gespeichert wird davon nichts: die Maske
-    zeigt die Einstellung fuer Mittel und daneben die wirksame Laenge."""
+    Entwurf und Mittel: ``netz`` selbst. Fein (seit 07.10.2026, Paket F1):
+    eine Kopie mit **denselben Laengen wie Mittel** - Netzdichte,
+    Ziellaenge, kleinste und groesste Elementgroesse, Kantenlaenge je
+    Koerper, Netzverfeinerungen und Feldpunkte des Anwenders bleiben und
+    wirken wie bei Mittel -, dazu in ``verfeinerungen`` die Quellen von Fein
+    in der Vergroeberungsstufe ``k`` (:func:`fein_stufe`): halbe
+    Kantenlaenge an Kontakt-, Lager- und Lastflaechen, 9 Grad je Abschnitt
+    an den Boegen der Kontakt- und Lagerflaechen (netzfeld.fein_ziele). Ohne
+    ``model`` gibt es keine Quellen. Gespeichert wird davon nichts.
+
+    Bis zum 07.10.2026 halbierte Fein hier jede Laenge des ganzen Modells
+    (Netzdichte, Ziellaenge, h_min/h_max, Kantenlaenge je Koerper,
+    Verfeinerungen, Feldpunkte), aber nicht den Bogenwinkel: am Drehlager
+    wurde damit das Innere der grossen Teile feiner, die Bohrungen blieben,
+    wie sie waren (Bauplan PLAN-FEIN-SMART-2026-10-07)."""
     if stufe(netz) != "fein":
         return netz
-    from . import netzdichte as nd
-    dichte = getattr(netz, "dichte", "mittel") or "mittel"
-    koerper_h = {k: _halb(v) for k, v in (getattr(netz, "koerper_h", None) or {}).items()}
-    if dichte in nd.DICHTEN:
-        feiner = next((d for d, n in nd.DICHTEN.items() if n * FEIN_FAKTOR == nd.DICHTEN[dichte]), None)
-        if feiner is not None:
-            dichte = feiner
-        elif model is not None:
-            for k in (getattr(model, "koerper", None) or {}).values():
-                if k.name in koerper_h:
-                    continue
-                D = nd.objektgroesse(model, k)
-                if D > 0:
-                    koerper_h[k.name] = D / nd.DICHTEN[dichte] * FEIN_FAKTOR
-    verfeinerungen = []
-    for v in (getattr(netz, "verfeinerungen", None) or []):
-        v = dict(v)
-        if v.get("h"):
-            v["h"] = _halb(v["h"])
-        verfeinerungen.append(v)
-    feldpunkte = []
-    for p in (getattr(netz, "feldpunkte", None) or []):
-        p = list(p)
-        if len(p) >= 4:
-            p[3] = _halb(p[3])
-        feldpunkte.append(p)
-    return replace(netz, dichte=dichte, ziellaenge=_halb(netz.ziellaenge),
-                   h_min=_halb(getattr(netz, "h_min", 0.0)), h_max=_halb(getattr(netz, "h_max", 0.0)),
-                   koerper_h=koerper_h, verfeinerungen=verfeinerungen, feldpunkte=feldpunkte)
+    return _fein(netz, model, k)[0]
+
+
+def stufe_text(k: int) -> str:
+    """Der Text einer Vergroeberungsstufe von Fein fuer das Protokoll, etwa
+    „Fein Stufe 2: Bögen 18°, Flächen h/2“ - er steht in ``quelle`` der
+    Netzeinstellungen, die :func:`fein_stufen` fuer diese Stufe liefert."""
+    st = fein_stufe(k)
+    teiler = round(1.0 / st.flaechenfaktor, 3)
+    flaechen = "h" if abs(teiler - 1.0) < 1e-9 else "h/" + f"{teiler:g}".replace(".", ",")
+    return (f"Fein Stufe {st.k}: Bögen {st.bogenwinkel:g}°, Flächen {flaechen}"
+            + (" (wie Mittel)" if st.ist_mittel else ""))
+
+
+def fein_stufen(model, netz=None):
+    """**Anschluss von Fein an die Grenze in Unbekannten** (Pakete F1 und F2,
+    08.10.2026): die Vergroeberungsstufen als Funktion ``einstellung(k) ->
+    Netzeinstellungen | None``, wie sie mesher.koerper_vernetzen,
+    mesher.modell_vernetzen(stufen=...) und gui.main._vernetzen_netz(stufen=...)
+    erwarten - oder None, wenn nicht mit Fein vernetzt wird (Entwurf, Mittel,
+    Fein an einem gesperrten Modell, das :func:`beim_vernetzen` auf Entwurf
+    gestellt hat). Ohne Stufen bleibt ueber der Grenze das Netz, mit Warnung.
+
+    ``netz``: die Netzeinstellungen, mit denen vernetzt wird - innerhalb von
+    :func:`beim_vernetzen` das, was es liefert::
+
+        with elementstufe.beim_vernetzen(model, log) as w:
+            mesher.modell_vernetzen(model, log, stufen=elementstufe.fein_stufen(model, w))
+
+    sonst die gespeicherten (Vorgabe ``model.netz``). Die Quellen von Fein
+    darin (Arten ``fein_*``) zaehlen nicht: einstellung(k) baut jede Stufe
+    aus den Einstellungen ohne sie neu (:func:`wirksam` mit k, also
+    :func:`fein_stufe`) und schreibt :func:`stufe_text` in ``quelle``; das
+    Protokoll der Grenze nennt ihn. Fuer k jenseits der letzten Stufe (Mittel)
+    gibt es None. Ohne Nebenwirkung: Modell und ``netz`` bleiben, wie sie
+    sind, und jeder Aufruf rechnet nur die Ziele seiner Stufe
+    (netzfeld.fein_ziele).
+
+    **Teilung abgebildeter Koerper:** :func:`beim_vernetzen` verdoppelt sie
+    bei Fein fuer die ganze Dauer des Vernetzens - am Objekt, nicht in den
+    Netzeinstellungen. einstellung(k) darf das nicht aendern (ohne
+    Nebenwirkung), und die Stufenschleife tauscht nur ``model.netz``; die
+    Teilung bleibt darum auch in der letzten Stufe verdoppelt. Sie betrifft
+    nur abgebildete Sechsflaechner (Quader mit sechs Vierecken und acht
+    Ecken, hex20; mesher.mesh_koerper und sweep.lagenvorgabe lesen die
+    Teilung nur dort) und Flaechen mit eigener Teilung, die vor den Volumen
+    und ausserhalb der Schleife vernetzt werden - beide folgen dem
+    Groessenfeld ohnehin nicht. Ein Modell mit solchen Koerpern ist in der
+    letzten Stufe darum nicht bitgleich Mittel, sondern hat dort feinere
+    Quader (Stand 08.10.2026)."""
+    netz = model.netz if netz is None else netz
+    if stufe(netz) != "fein" or not frei(model, "fein"):
+        return None
+    basis = replace(netz, verfeinerungen=[
+        v for v in (getattr(netz, "verfeinerungen", None) or [])
+        if not (isinstance(v, dict) and str(v.get("art", "")).startswith("fein_"))])
+
+    def einstellung(k):
+        k = int(k)
+        if k < 0 or k >= FEIN_STUFEN_ANZAHL:
+            return None
+        return replace(wirksam(basis, model, k), quelle=stufe_text(k))
+    return einstellung
 
 
 def _mm(x: float) -> str:
@@ -242,71 +396,128 @@ def _mm(x: float) -> str:
     return zahl_text(round(v, 1 if v < 100 else 0)) + " mm"
 
 
-def kantenlaenge_text(netz, model=None) -> str:
+def _spanne(werte) -> str:
+    werte = [float(x) for x in werte]
+    lo, hi = min(werte), max(werte)
+    return _mm(lo) if abs(hi - lo) <= 1e-9 * max(hi, 1e-12) else f"{_mm(lo)} … {_mm(hi)}"
+
+
+def _anzahl(n: int, eins: str, mehr: str) -> str:
+    return f"{n} {eins if n == 1 else mehr}"
+
+
+def fein_text(netz, model=None, k: int = 0, ziele: dict = None) -> str:
+    """Was Fein in der Stufe k verfeinert - fuer die Maske (wirksame
+    Kantenlaenge) und das Protokoll beim Vernetzen. Mit Modell mit Zahl und
+    Art der Flaechen, ihrer Kantenlaenge gegen Mittel und der Zahl der
+    Boegen; ohne Modell die Regel."""
+    from .mesher3d import BOGENWINKEL
+    st = fein_stufe(k)
+    if st.ist_mittel:
+        return "wie Mittel (letzte Vergröberungsstufe: keine Verfeinerung)"
+    if abs(st.flaechenfaktor - 0.5) < 1e-9:
+        anteil = "die Hälfte"
+    else:
+        anteil = f"das {st.flaechenfaktor:.2f}-Fache".replace(".", ",")
+    boegen_regel = (f"{st.bogenwinkel:g}° statt {BOGENWINKEL:g}° je Abschnitt" if st.bogenwinkel < BOGENWINKEL
+                    else f"Bögen wie Mittel ({BOGENWINKEL:g}° je Abschnitt)")
+    if model is None:
+        return (f"wie Mittel, feiner an Kontakt-, Lager- und Lastflächen ({anteil} der Kantenlänge) und an den "
+                f"Bögen der Kontakt- und Lagerflächen ({boegen_regel})")
+    if ziele is None:
+        from . import netzfeld
+        ziele = netzfeld.fein_ziele(model, netz, st.bogenwinkel, st.flaechenfaktor)
+    fl = [fn for fn in ziele["flaechen"] if fn in ziele["h"]]
+    if not fl:
+        return "wie Mittel – an diesem Modell keine Kontakt-, Lager- oder Lastflächen"
+    arten = []
+    for art in ("Kontakt", "Lager", "Last"):
+        n = sum(1 for fn in fl if ziele["flaechen"][fn] == art)
+        if n:
+            arten.append(f"{art} {n}")
+    flaechen = (f"{_anzahl(len(fl), 'Fläche', 'Flächen')} ({', '.join(arten)}) mit "
+                f"{_spanne(ziele['h'][fn] for fn in fl)} statt {_spanne(ziele['h_mittel'][fn] for fn in fl)}"
+                f" ({anteil} von Mittel, eine Elementlage, von dort wachsend)")
+    nb = len(ziele["boegen"])
+    if st.bogenwinkel >= BOGENWINKEL:
+        boegen = boegen_regel
+    elif nb:
+        boegen = f"an {_anzahl(nb, 'Bogen', 'Bögen')} der Kontakt- und Lagerflächen {boegen_regel}"
+    else:
+        boegen = "keine Bögen an Kontakt- und Lagerflächen"
+    return f"wie Mittel, feiner an {flaechen}; {boegen}"
+
+
+def kantenlaenge_text(netz, model=None, k: int = 0) -> str:
     """Die wirksame Kantenlaenge fuer die Maske.
 
     Mit Modell (bis KANTEN_OBJEKTE Objekte): die Kantenlaenge im Feld, wie
     sie der Vernetzer je Koerper bzw. Flaeche mit Dicke nimmt
     (netzdichte.elementlaenge) - kleinste bis groesste. Sonst die Regel
-    (Netzdichte oder Ziellaenge). Bei Fein steht dabei, wovon es die Haelfte
-    ist."""
+    (Netzdichte oder Ziellaenge). Bei Fein ist die Kantenlaenge im Feld die
+    von Mittel, und dahinter steht, was feiner wird (:func:`fein_text`) -
+    bis zum 07.10.2026 stand hier die halbe Kantenlaenge."""
     from . import netzdichte as nd
-    w = wirksam(netz, model)
-    fein = w is not netz
-    dichte = getattr(w, "dichte", "mittel") or "mittel"
+    zusatz = f"; Fein: {fein_text(netz, model, k)}" if stufe(netz) == "fein" else ""
+    dichte = getattr(netz, "dichte", "mittel") or "mittel"
     if dichte in nd.DICHTEN:
         regel = f"Netzdichte {dichte}: {nd.DICHTEN[dichte]} Elemente über die Objektgröße"
     else:
-        regel = f"Ziellänge {_mm(w.ziellaenge)}"
-    if fein:
-        d0 = getattr(netz, "dichte", "mittel") or "mittel"
-        regel += (" (halbe Kantenlänge von "
-                  + (f"Netzdichte {d0}" if d0 in nd.DICHTEN else f"{_mm(netz.ziellaenge)}") + ")")
+        regel = f"Ziellänge {_mm(netz.ziellaenge)}"
     if model is None:
-        return regel
+        return regel + zusatz
     objekte = list((getattr(model, "koerper", None) or {}).values())
     objekte += [f for f in (getattr(model, "flaechen", None) or {}).values() if getattr(f, "dicke", None)]
     if not objekte or len(objekte) > KANTEN_OBJEKTE:
-        return regel
+        return regel + zusatz
     try:
-        hs = [float(nd.elementlaenge(model, w, o)["h"]) for o in objekte]
+        hs = [float(nd.elementlaenge(model, netz, o)["h"]) for o in objekte]
     except Exception:                      # noqa: BLE001 - dann nur die Regel
-        return regel
+        return regel + zusatz
     hs = [h for h in hs if h > 0]
     if not hs:
-        return regel
+        return regel + zusatz
     was = f"{len(objekte)} Objekt{'e' if len(objekte) != 1 else ''}"
     feld = (_mm(min(hs)) if abs(max(hs) - min(hs)) < 1e-12 else f"{_mm(min(hs))} … {_mm(max(hs))}")
-    return f"{feld} im Feld ({was}); {regel}"
+    return f"{feld} im Feld ({was}); {regel}{zusatz}"
 
 
 @contextmanager
-def beim_vernetzen(model, log: list):
+def beim_vernetzen(model, log: list, k: int = 0):
     """Vernetzen mit der Stufe: erst die Sperre (Mittel/Fein an einem
     gesperrten Modell -> Entwurf, mit Zeile im Protokoll), dann bei Fein die
-    halbe Kantenlaenge fuer die Dauer des Vernetzens. Danach stehen die
-    gespeicherten Netzeinstellungen wieder da - ausser der Stufe, die die
-    Sperre gesetzt hat."""
+    Quellen der Vergroeberungsstufe ``k`` (:func:`fein_stufe`, Vorgabe 0)
+    fuer die Dauer des Vernetzens, mit einer Zeile im Protokoll, die Zahl und
+    Art der verfeinerten Flaechen und die Zahl der Boegen nennt. Danach
+    stehen die gespeicherten Netzeinstellungen wieder da - ausser der Stufe,
+    die die Sperre gesetzt hat. Geliefert werden die Netzeinstellungen, mit
+    denen vernetzt wird; ``fein_stufen(model, w)`` macht daraus die Stufen
+    fuer die Grenze in Unbekannten (seit 08.10.2026)."""
     zeile = sperre_anwenden(model)
     if zeile:
         log.append(zeile)
     gespeichert = model.netz
-    w = wirksam(gespeichert, model)
     teilungen: dict = {}
-    if w is not gespeichert:
-        log.append("Elemente Fein: vernetzt mit halber Kantenlänge – " + kantenlaenge_text(gespeichert))
-        # Abgebildete Sechsflaechner nehmen ihre Teilung aus dem Koerper
-        # (Volumenkoerper.teilung, Vorgabe 4 x 4 x 4), nicht aus der
-        # Netzdichte; eine Flaeche mit eigener Teilung ebenso, wenn die
-        # Netzdichte sie nicht uebersteuert. Halbe Kantenlaenge heisst dort
-        # doppelte Teilung - fuer die Dauer des Vernetzens (gemessen am
-        # Wuerfel 1 m, Teilung 2: Mittel 8 hex20, Fein 64; 25.09.2026).
-        for obj in list((getattr(model, "koerper", None) or {}).values()) \
-                + list((getattr(model, "flaechen", None) or {}).values()):
-            t = list(getattr(obj, "teilung", None) or [])
-            if t:
-                teilungen[id(obj)] = (obj, t)
-                obj.teilung = [max(1, int(x)) * 2 for x in t]
+    if stufe(gespeichert) == "fein":
+        st = fein_stufe(k)
+        w, ziele = _fein(gespeichert, model, k)
+        kopf = "Elemente Fein" + (f" (Stufe {st.k} von {FEIN_STUFEN_ANZAHL - 1}, vergröbert)" if st.k else "")
+        log.append(f"{kopf}: {fein_text(gespeichert, model, k, ziele)}")
+        if not st.ist_mittel:
+            # Abgebildete Sechsflaechner nehmen ihre Teilung aus dem Koerper
+            # (Volumenkoerper.teilung, Vorgabe 4 x 4 x 4) und folgen dem
+            # Groessenfeld nicht; eine Flaeche mit eigener Teilung ebenso,
+            # wenn die Netzdichte sie nicht uebersteuert. Fuer sie bleibt Fein
+            # die doppelte Teilung - fuer die Dauer des Vernetzens (gemessen
+            # am Wuerfel 1 m, Teilung 2: Mittel 8 hex20, Fein 64; 25.09.2026).
+            for obj in list((getattr(model, "koerper", None) or {}).values()) \
+                    + list((getattr(model, "flaechen", None) or {}).values()):
+                t = list(getattr(obj, "teilung", None) or [])
+                if t:
+                    teilungen[id(obj)] = (obj, t)
+                    obj.teilung = [max(1, int(x)) * 2 for x in t]
+    else:
+        w = gespeichert
     model.netz = w
     try:
         yield w

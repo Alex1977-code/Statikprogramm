@@ -2094,6 +2094,36 @@ class Netzeinstellungen:
     h_min: float = 0.0
     h_max: float = 0.0
     max_elemente: int = 100000
+    #: **Grenze in Unbekannten** (07.10.2026, Paket F2): drei je Knoten des
+    #: Modells (mesher.unbekannte), gezaehlt beim Vernetzen nach jedem
+    #: eingebauten Koerper. Ueberschreitet das Netz sie, haelt der Vernetzer
+    #: frueh an, nimmt das halbe Netz zurueck und vernetzt mit der naechsten
+    #: groeberen Stufe neu (mesher.koerper_vernetzen, Entscheidung des
+    #: Anwenders vom 07.10.2026: „selbsttaetig groeber“, nicht anhalten). Gibt
+    #: es keine groebere Stufe (Entwurf, Mittel, groebste Stufe von Fein),
+    #: bleibt das Netz und das Protokoll warnt. 0 = keine Grenze. Aeltere
+    #: Dateien ohne das Feld bekommen die Vorgabe.
+    #:
+    #: **Die Vorgabe 4 Mio. ist seit 08.10.2026 festgelegt** (Abnahme am
+    #: Drehlager, Befund B3; bis dahin „vorlaeufig, bis eine Zerlegung gemessen
+    #: ist“). Es ist eine Grenze des **Speichers**. Gemessen ist Mittel mit
+    #: 3,05 Mio. Unbekannten: 52,3 GiB Arbeitssatz und 60,6 GiB Commit im
+    #: Hauptprozess an der Spitze der Zerlegung, 169 s. Fuer 4,0 Mio. ergibt der
+    #: Ansatz Faktor ~ n^(4/3), Rechenaufwand ~ n^2 (Schaetzung, nicht
+    #: gemessen) rund 74 GiB Arbeitssatz, 85 GiB Commit und 5 min je Zerlegung;
+    #: das passt in einen Rechner mit 128 GiB (166 GiB Commit) neben 28 GiB
+    #: fremder Belegung mit 18 GiB Luft - **aber nur**, wenn der Pool vor der
+    #: Zerlegung Platz macht (parallel.platz_fuer_zerlegung). Mit dem Pool wie
+    #: bis dahin (37 GiB Arbeitssatz, 69 GiB Commit) lag schon Mittel am
+    #: Drehlager an der Grenze (3,0 Mio. waeren die Vorgabe gewesen). Fein Stufe
+    #: 3 am Drehlager hat 4,65 Mio. und braeuchte rund 89 GiB: sie passt nicht,
+    #: das Netz faellt auf Stufe 4. Mit weniger Arbeitsspeicher bricht die
+    #: Pruefung vor der Zerlegung mit Meldung ab (SpeicherReichtNicht) - dann
+    #: die Grenze senken. Fuer zwei gleichzeitige Zerlegungen (Ketten) reicht
+    #: sie nicht.
+    #: Anders als max_elemente, das ueber die Schaetzung V/(0,12 h³) wirkt und
+    #: am Drehlager um den Faktor 758 danebenlag, zaehlt sie das echte Netz.
+    hoechstens_unbekannte: int = 4_000_000
     #: Netz selbsttaetig verfeinern, wo es die vier Guetekriterien reisst
     #: (mesher3d.netzguete). Aus schaltet man es, wenn man ein Netz zu einer
     #: bestimmten Kantenlaenge braucht - etwa um die Wirkung der Glaettung

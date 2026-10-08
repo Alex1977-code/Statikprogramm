@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import weakref
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -585,6 +586,20 @@ class LoeserAusfall(Exception):
     """
 
 
+class SpeicherReichtNicht(LoeserAusfall):
+    """Der freie Speicher reicht fuer die Zerlegung nicht - auch nicht, nachdem
+    der Rechenpool seinen Speicher hergegeben hat (Befund B3, 08.10.2026).
+
+    PARDISO sagt den Speicher der Zahlenphase nach der Analyse voraus (iparm
+    15, 16, 17); der Loeser vergleicht ihn mit dem freien Speicher, **bevor** er
+    faktorisiert (:func:`parallel.platz_fuer_zerlegung`). Ohne die Pruefung
+    scheiterte die Zerlegung am Drehlager (Mittel) an „kein Speicher" (PARDISO
+    -2) oder stuerzte ab. Wie ``LoeserAusfall`` bewusst keine RuntimeError und
+    kein ValueError: die hiessen „Gleichungssystem singulaer - Lagerung
+    pruefen". Es wird auch **nicht** auf einen anderen Loeser ausgewichen: der
+    brauchte nicht weniger Speicher."""
+
+
 #: Einstellungen, die das Ergebnis oder den Rechenweg einer Kette bestimmen
 #: und darum aus dem Hauptprozess mitgehen (siehe _cases_in_ketten).
 KETTEN_EINSTELLUNGEN = ("solver_backend", "solver_residuum", "solver_nachiterationen",
@@ -829,6 +844,120 @@ INT32_MAX = 2 ** 31 - 1
 #: Ausgabefelder (7, 14-20, 22, 23, 30) gehoeren nicht dazu.
 PARDISO_EINGABEFELDER = (1, 2, 8, 10, 11, 13, 21, 24, 25)
 
+#: Ab dieser Zahl von Eintraegen teilt der Loeser die Faktorisierung in
+#: Analyse und Zahlenphase und prueft dazwischen den Speicher
+#: (:func:`_zahlenphase_vorpruefen`, Befund B3). Darunter bleibt es bei Phase
+#: 12 in einem Aufruf: eine Zerlegung unter 5 Mio. Eintraegen (rund 80 000
+#: Gleichungen, wenige hundert MiB Faktor) bringt den Speicher nicht an die
+#: Grenze, und das Aufteilen kostet eine zweite Umwandlung der Indizes. Der
+#: Entwurf des Drehlagers hat 72,8 Mio. Eintraege.
+ZERLEGUNG_PRUEFEN_AB = 5_000_000
+
+
+def _pardiso_voraussage(ps) -> dict:
+    """Der Speicherbedarf, den PARDISO nach der Analysephase (Phase 11)
+    voraussagt, in KB laut MKL-Dokumentation: iparm(15) Spitze der Analyse,
+    iparm(16) dauerhafter Speicher aus der Analyse, iparm(17) Speicher der
+    Zahlenphase samt Faktor. ``spitze_kb`` = max(iparm 15; 16 + 17) ist die
+    Spitze der ganzen Zerlegung. Leer, wenn iparm nicht lesbar ist."""
+    try:
+        ip = ps.get_iparms()
+        k15, k16, k17 = (int(ip[i]) for i in (15, 16, 17))
+    except Exception:                                      # noqa: BLE001
+        return {}
+    if k17 <= 0:
+        return {}
+    return {"iparm15_kb": k15, "iparm16_kb": k16, "iparm17_kb": k17,
+            "spitze_kb": max(k15, k16 + k17)}
+
+
+def _zahlenphase_vorpruefen(ps, pruefung) -> bool:
+    """Die Faktorisierung von ``ps`` in Analyse und Zahlenphase teilen und
+    dazwischen ``pruefung(ps)`` rufen.
+
+    pypardiso faktorisiert mit **einem** Aufruf, Phase 12 (Analyse und
+    Zahlenphase). MKL kann dasselbe mit Phase 11 und danach Phase 22 tun und
+    liefert nach der Analyse den Speicher der Zahlenphase in iparm(15 bis 17):
+    das Ergebnis ist bitgleich (getestet: Loesung und iparm(14) gleich), die
+    Kosten dieselben bis auf eine zweite Umwandlung der Matrix in int32. Der
+    Aufruf wird am Loeser **dieser Instanz** ersetzt (``ps._call_pardiso``);
+    ``ps.factorize`` bleibt unveraendert, und jede andere Phase (Loesen,
+    Freigeben) geht unveraendert durch. Wirft ``pruefung`` SpeicherReichtNicht,
+    gibt der Loeser die Analyse frei und reicht die Ausnahme weiter. Rueckgabe:
+    False, wenn pypardiso den Aufruf nicht hat (andere Fassung) - dann bleibt
+    alles wie bisher.
+
+    Der Ersatz haelt weder ``ps`` noch den Besitzer von ``pruefung`` fest
+    (Leck, Drehlager-Abnahme 08.10.2026): Er liegt in ``ps.__dict__``; schloss
+    er ``ps`` ein (oder die an ``ps`` gebundene Methode), entstand ein
+    Verweiszyklus, und ueber ``pruefung`` (LinearSolver._vor_der_zahlenphase)
+    hing der ganze LinearSolver samt Matrixkopie daran. Nach freigeben() lebte
+    das bis zur zyklischen Muellsammlung weiter, die im langen Kontaktlauf
+    praktisch nie kam: am Drehlager (Mittel) +2,1 GB je Kontaktrunde, 52 GB
+    nach der ersten Zerlegung, 104 GB nach Runde 28. Darum ein schwacher
+    Verweis auf ``ps``, die ungebundene Methode der Klasse (ps wird beim Aufruf
+    mitgegeben) und eine WeakMethod fuer eine gebundene ``pruefung``; ``aufruf``
+    selbst nennt ``ps``, ``echt`` und ``pruefung`` nicht."""
+    echt = getattr(ps, "_call_pardiso", None)
+    if echt is None:
+        return False
+    if getattr(echt, "__self__", None) is ps:
+        weiter = echt.__func__                             # (p, A, b): ps kommt beim Aufruf
+    else:                                                  # schon an der Instanz ersetzt
+        weiter = lambda p, A, b, f=echt: f(A, b)          # noqa: E731
+    ps_weg = weakref.ref(ps)
+    try:
+        pruefung_weg = weakref.WeakMethod(pruefung)
+    except TypeError:                                      # keine gebundene Methode: wie bisher
+        pruefung_weg = lambda f=pruefung: f                # noqa: E731
+
+    def aufruf(A, b):
+        p = ps_weg()                                       # lebt: der Aufruf kam ueber p
+        if p.phase != 12:
+            return weiter(p, A, b)
+        p.set_phase(11)
+        try:
+            weiter(p, A, b)
+            pr = pruefung_weg()
+            if pr is not None:
+                pr(p)
+            p.set_phase(22)
+            return weiter(p, A, b)
+        except SpeicherReichtNicht:
+            try:
+                p.free_memory(everything=True)            # die Analyse nicht liegen lassen
+            except Exception:                              # noqa: BLE001
+                pass
+            raise
+        finally:
+            p.set_phase(12)
+
+    ps._call_pardiso = aufruf
+    return True
+
+
+def _nnz_faktor_aus_iparm(roh, speicher_kb17) -> tuple:
+    """(Nichtnullen des Faktors, sicher) aus iparm(18) und iparm(17).
+
+    iparm(18) ist ein 32-Bit-Feld mit Vorzeichen und laeuft ueber (Befund B2
+    der Drehlager-Abnahme, 08.10.2026): mit Mittel meldete PARDISO
+    -267 191 214, die Statistik der Analyse (msglvl 1) L+U = 4 027 776 082
+    = -267 191 214 + 2^32. Gelesen wird darum modulo 2^32. Ob die Zahl noch
+    einmal um 2^32 umgelaufen sein kann, sagt iparm(17), der Speicher der
+    Zahlenphase in KB (laut MKL): der Faktor braucht mindestens 8 Byte je
+    Eintrag (am Drehlager 33 321 212 KB fuer 4,03 Mrd. Eintraege, 8,47
+    Byte). Passt der Wert hinein, ein weiterer Umlauf aber nicht, ist die
+    Zahl sicher; sonst ist sie ein Mindestwert (``sicher`` False). Ohne
+    iparm(17) gilt ein nicht negativer Wert wie bisher als sicher.
+    """
+    if roh is None:
+        return None, False
+    wert = int(roh) % (1 << 32)
+    kb = int(speicher_kb17 or 0)
+    if kb > 0:
+        return wert, 8 * wert <= 1024 * kb < 8 * (wert + (1 << 32))
+    return wert, int(roh) >= 0
+
 
 def _pardiso_kennzahlen(ps) -> dict:
     """Was MKL PARDISO bei der Faktorisierung getan hat, aus iparm - direkt
@@ -840,7 +969,9 @@ def _pardiso_kennzahlen(ps) -> dict:
       drei solchen Bloecken 3 (tests/test_loeser.py).
     * ``nnz`` = iparm(18): Nichtnullen des Faktors. Gemessen 20.09.2026 an
       einer Tridiagonalmatrix: n = 200 gibt 964, n = 400 gibt 1960 - linear,
-      wie es fuer ein Band sein muss.
+      wie es fuer ein Band sein muss. iparm(18) ist ein 32-Bit-Feld und
+      laeuft ueber; gelesen wird es darum mit :func:`_nnz_faktor_aus_iparm`
+      (``nnz_sicher``: False heisst Mindestwert; ``nnz_iparm18`` der Rohwert).
     * ``speicher_kb`` = iparm(15), (16), (17): Spitze der Analyse, dauerhaft
       aus der Analyse, Zahlenphase - in KB **laut MKL-Dokumentation**, nicht
       nachgemessen. iparm(17) steht direkt neben iparm(18) und ist leicht mit
@@ -860,7 +991,8 @@ def _pardiso_kennzahlen(ps) -> dict:
         except Exception:                                  # noqa: BLE001
             return None
 
-    return {"gestoert": feld(14), "nnz": feld(18),
+    nnz, sicher = _nnz_faktor_aus_iparm(feld(18), feld(17))
+    return {"gestoert": feld(14), "nnz": nnz, "nnz_sicher": sicher, "nnz_iparm18": feld(18),
             "speicher_kb": {str(i): feld(i) for i in (15, 16, 17)},
             "speicher_einheit": "KB laut MKL-Dokumentation, nicht nachgemessen",
             "eingabe": {str(i): feld(i) for i in PARDISO_EINGABEFELDER}}
@@ -875,7 +1007,11 @@ class LinearSolver:
     Einstellungssache, sondern eine Eigenschaft des Loesers.
     """
 
-    def __init__(self, K: sparse.spmatrix, backend: str = None):
+    def __init__(self, K: sparse.spmatrix, backend: str = None, progress=None):
+        #: Fortschrittsempfaenger: bekommt die Zeile zum Rechenpool (B3) schon
+        #: **vor** der Zerlegung, die Minuten dauern kann - sonst stuende sie erst danach da
+        self._progress = progress
+        self._hinweis_gemeldet = False
         # Kennzahlen der Faktorisierung. Die adaptive Vernetzung fragt danach,
         # um zu sagen, was eine Netzrunde an Loeserzeit gespart hat
         # (Anforderung der Vernetzersitzung 2.2, 20.09.2026): die Elementzahl
@@ -883,6 +1019,9 @@ class LinearSolver:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = int(getattr(K, "nnz", 0) or 0)
         self.nnz_faktor = 0
+        #: True, wenn nnz_faktor nur ein Mindestwert ist (PARDISO, iparm(18)
+        #: uebergelaufen und nicht sicher zurueckzurechnen, _nnz_faktor_aus_iparm)
+        self.nnz_faktor_mindestens = False
         # perf_counter, nicht time(): eine Faktorisierung dauert am kleinen
         # System Millisekunden, und die Uhr von time.time() steht unter Windows
         # in Stufen von 15,6 ms - gemessen 20.09.2026: ein Probelauf meldete
@@ -906,6 +1045,50 @@ class LinearSolver:
                   "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen → Experten) "
                   "kann sparsamer sein.") from ex
         self.zeit_faktorisierung = time.perf_counter() - t_fak
+
+    def _vor_der_zahlenphase(self, ps) -> None:
+        """Zwischen Analyse und Zahlenphase von PARDISO (_zahlenphase_vorpruefen):
+        Voraussage lesen, mit dem freien Speicher vergleichen, bei Bedarf den
+        Rechenpool schliessen - und bei zu wenig Speicher abbrechen.
+
+        Ein Fehler der Pruefung selbst (iparm nicht lesbar, keine Auskunft des
+        Systems) haelt die Zerlegung nicht auf; nur SpeicherReichtNicht tut das."""
+        v = _pardiso_voraussage(ps)
+        if not v:
+            return
+        self.pardiso_voraussage = v
+        try:
+            platz = parallel.platz_fuer_zerlegung(v["iparm17_kb"] * 1024, v["spitze_kb"] * 1024)
+        except Exception as ex:                            # noqa: BLE001
+            _log_einmal(f"Speicherprüfung vor der Zerlegung nicht möglich ({type(ex).__name__}: "
+                        f"{str(ex)[:120]}) - die Zerlegung läuft ohne sie.")
+            return
+        self.speicher_hinweis = platz.hinweis
+        if platz.hinweis and self._progress is not None:
+            try:
+                _melde(self._progress, platz.hinweis)
+                self._hinweis_gemeldet = True
+            except Exception:                              # noqa: BLE001
+                # Ein Abbruch der Oberflaeche (gui.worker.Abgebrochen) bleibt gesetzt und
+                # kommt beim naechsten Fortschrittsaufruf wieder - hier, mitten in der
+                # Zerlegung von PARDISO, darf er sie nicht in den Ausweichweg reissen
+                pass
+        if platz.bekannt and not platz.reicht:
+            raise SpeicherReichtNicht(self._speicher_text(platz, v))
+
+    def _speicher_text(self, platz, v: dict) -> str:
+        """Die Meldung, wenn der Speicher auch ohne Pool nicht reicht."""
+        g = parallel.groesse_text
+        pool = (f", auch nachdem die {platz.arbeiter_geschlossen} Arbeiter des Rechenpools geschlossen "
+                "wurden" if platz.arbeiter_geschlossen else "")
+        return (f"Der Speicher reicht für die Zerlegung nicht: MKL PARDISO braucht für dieses System "
+                f"({self.n} Gleichungen, {self.nnz_matrix / 1e6:.1f} Mio. Einträge) für die Zahlenphase "
+                f"voraussichtlich noch {g(v['iparm17_kb'] * 1024)} (Spitze insgesamt "
+                f"{g(v['spitze_kb'] * 1024)}); verlangt wird mit Zuschlag {g(platz.noetig)}. Frei sind "
+                f"{g(platz.frei_commit)} Commit-Speicher und {g(platz.frei_arbeitsspeicher)} Arbeitsspeicher"
+                f"{pool}. Abhilfe: andere Programme schließen, die Auslagerungsdatei vergrößern, ein "
+                "gröberes Netz wählen (Netzeinstellungen, Höchstzahl Unbekannte) oder einen Rechner mit "
+                "mehr Arbeitsspeicher benutzen. Es wurde nichts faktorisiert.")
 
     def _passt_in_int32(self, K: sparse.spmatrix, verlangt: bool) -> bool:
         """Passt die Matrix in die 32-Bit-Schnittstelle von PARDISO?
@@ -947,6 +1130,12 @@ class LinearSolver:
         self.mtype = None
         self.gestoerte_pivots = None
         self.pardiso_kennzahlen = {}
+        #: Nur PARDISO und nur grosse Systeme (ZERLEGUNG_PRUEFEN_AB): die Voraussage
+        #: nach der Analyse (_pardiso_voraussage) und, was vor der Zahlenphase mit
+        #: dem Speicher geschah (parallel.platz_fuer_zerlegung) - leer, wenn nichts.
+        #: StaticSystem._loeser_merken schreibt den Hinweis ins Protokoll.
+        self.pardiso_voraussage = {}
+        self.speicher_hinweis = ""
         #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
         #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
         #: damit im Fortschrittsstrom und im Protokoll.
@@ -969,6 +1158,9 @@ class LinearSolver:
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
                 _mkl_cbwr_festhalten(ps)         # nur beim ersten Mal
+                if self.nnz_matrix >= ZERLEGUNG_PRUEFEN_AB:
+                    # Analyse und Zahlenphase getrennt, dazwischen der Speicher (B3)
+                    _zahlenphase_vorpruefen(ps, self._vor_der_zahlenphase)
                 # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
                 # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
                 # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
@@ -982,6 +1174,7 @@ class LinearSolver:
                 kz = _pardiso_kennzahlen(ps)
                 self.pardiso_kennzahlen = kz
                 self.nnz_faktor = int(kz.get("nnz") or 0)
+                self.nnz_faktor_mindestens = bool(self.nnz_faktor) and not kz.get("nnz_sicher", True)
                 self.gestoerte_pivots = kz.get("gestoert")
                 # pypardiso 0.4.7 fuehrt den Typ als ps.mtype. Fehlte das Feld,
                 # liefe ein AttributeError in das except unten, und nur das
@@ -991,6 +1184,10 @@ class LinearSolver:
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
+            except SpeicherReichtNicht:
+                # Kein Ausweichen: SuperLU braucht nicht weniger Speicher, und die
+                # Meldung ist genau die, die der Anwender braucht
+                raise
             except Exception as ex:
                 if be == "pardiso":
                     raise
@@ -1006,6 +1203,7 @@ class LinearSolver:
                 self.gestoerte_pivots = None
                 self.pardiso_kennzahlen = {}
                 self.nnz_faktor = 0
+                self.nnz_faktor_mindestens = False
                 # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
                 # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
                 # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
@@ -1594,6 +1792,14 @@ class Results:
         # einer Kombination es nicht, obwohl jeder ihrer Lastfaelle es traegt).
         out.info.update(_ausweich_eintraege(
             [p for r, f in parts if f for p in ausweich_paare(r.info or {})]))
+        # Frei bewegliche Teile eines Anteils sind es in der Ueberlagerung auch.
+        freie: list = []
+        for r, f in parts:
+            for e in ((r.info or {}).get("freie_teile") or []) if f else []:
+                if e not in freie:
+                    freie.append(e)
+        if freie:
+            out.info["freie_teile"] = freie
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1629,6 +1835,7 @@ class Results:
                      + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
         if self.info.get("loeser_nachweis"):
             s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
+        s.extend(freie_teile_zeilen(self.info.get("freie_teile")))
         # Greift die Knotendilatation fuer einen Werkstoff nicht (nu ausserhalb
         # [0; 0,5)), steht das auch hier - nicht nur in der Zusammenfassung
         # aller Lastfaelle (Analysis.summary). Bis zum 06.10.2026 fehlte die
@@ -1877,6 +2084,32 @@ class _LoeserBuch:
                 "mkl_cbwr": mkl_cbwr()}
 
 
+def freie_teile_zeilen(teile) -> list:
+    """Die Zeilen der Zusammenfassung zu den frei beweglichen Teilen: je Gruppe
+    gleich bewegter Teile eine WARNUNG mit Namen, Richtung und dem, was sie
+    heute haelt (singular.pivotbefund)."""
+    return ["WARNUNG: " + str(e.get("text", "")) for e in (teile or [])]
+
+
+def freie_teile_gebuendelt(ergebnisse) -> list:
+    """Die frei beweglichen Teile ueber alle Ergebnisse: je Text **eine** WARNUNG,
+    mit den ersten drei Ergebnisnamen - fuer die Zusammenfassung der Rechnung.
+    Am Drehlager haben 422 Lastfaelle dieselben Platten, und eine Zeile je
+    Lastfall waere keine Auskunft. ``ergebnisse``: (Name, Results)-Paare."""
+    gruppen: dict = {}
+    for name, r in ergebnisse:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        for e in inf.get("freie_teile") or []:
+            gruppen.setdefault(str(e.get("text", "")), []).append(str(name))
+    zeilen = []
+    for text, namen in gruppen.items():
+        n = len(namen)
+        wo = (f"bei {n} Ergebnissen: {', '.join(namen[:3])}{' …' if n > 3 else ''}"
+              if n > 1 else f"bei {namen[0]}")
+        zeilen.append(f"WARNUNG: {text} ({wo})")
+    return zeilen
+
+
 def loeser_nachweis_zeilen(nw: dict) -> list:
     """Die Zeilen der Zusammenfassung zum Loeser-Nachweis eines Lastfalls:
     wer wie oft geloest hat, Ausweichen mit Grund, gestoerte Pivots - die
@@ -1925,6 +2158,9 @@ class StaticSystem:
             # abgeschaltete Staebe (Member.aus) wirken in keiner Situation
             self.aktiv = basis if self.aktiv is None else (self.aktiv & basis)
         self.situation = situation
+        #: Arbeiterzahl der Rechnung - fuer die Spannungen, die der Abschluss nach
+        #: dem Ingenieurkriterium vergleicht (_ingenieur_abschluss)
+        self.workers = workers
         self.K = asm.stiffness(model, workers, self.aktiv)
         self.fixed, self.vals = asm.constrained_dofs(model, self.K)
         self.fi = np.where(~self.fixed)[0]
@@ -1951,6 +2187,7 @@ class StaticSystem:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = 0
         self.nnz_faktor = 0
+        self.nnz_faktor_mindestens = False
         #: Loesungen mit ausgewichenem Loeser, (Grund, Ausweichloeser) -> Zahl
         #: (_geloest zaehlt, ausweich_info liest je Ergebnis)
         self._ausweich_genutzt: dict = {}
@@ -1967,7 +2204,7 @@ class StaticSystem:
         if self._solver is None:
             t0 = time.time()
             try:
-                self._solver = LinearSolver(self.gerandet(self.Kff))
+                self._solver = LinearSolver(self.gerandet(self.Kff), progress=self._progress)
                 self._loeser_merken(self._solver)
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
@@ -1990,7 +2227,9 @@ class StaticSystem:
         """
         self.zeit_faktorisierung += getattr(ls, "zeit_faktorisierung", 0.0)
         self.nnz_matrix = getattr(ls, "nnz_matrix", 0) or self.nnz_matrix
-        self.nnz_faktor = getattr(ls, "nnz_faktor", 0) or self.nnz_faktor
+        if getattr(ls, "nnz_faktor", 0):
+            self.nnz_faktor = ls.nnz_faktor
+            self.nnz_faktor_mindestens = bool(getattr(ls, "nnz_faktor_mindestens", False))
         # Ist ein Loeser ausgewichen, gehoert das in den Fortschritt - und zwar
         # auch bei den Faktorisierungen der Kontaktschritte, nicht nur bei der
         # Grundfaktorisierung, deren Zeile "Faktorisiert (...)" ihn schon
@@ -2001,6 +2240,14 @@ class StaticSystem:
             fortschritt = getattr(self, "_progress", None)
             if fortschritt:
                 _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
+        # Was vor der Zerlegung mit dem Rechenpool geschah (B3): eine Zeile ins
+        # Protokoll, jedes Mal, wenn es geschah - der Pool geht fuer die
+        # Nachlaeufe wieder auf und kann bei der naechsten Zerlegung erneut zu sein
+        hinweis = getattr(ls, "speicher_hinweis", "")
+        if hinweis and not getattr(ls, "_hinweis_gemeldet", False):
+            fortschritt = getattr(self, "_progress", None)
+            if fortschritt:
+                _melde(fortschritt, hinweis)
         buch = getattr(self, "_nachweis_buch", None)
         if buch is not None:
             buch.faktorisierung(ls)
@@ -2146,6 +2393,44 @@ class StaticSystem:
         from . import singular as sg
         return sg.bereinigen(self._V, u)
 
+    def freie_teile(self) -> tuple:
+        """Frei bewegliche Teile des zuletzt benutzten Faktors - ``(Liste, Suche)``.
+
+        PARDISO (und ama) zaehlen die Pivots, die sie anheben mussten, weil die
+        Matrix dort null haette: jedes Bauteil, das in einer Richtung durch
+        nichts gehalten ist, gibt einen. Nur wenn der Faktor solche Pivots hat,
+        wird gesucht (:func:`singular.pivotbefund`): eine Handvoll zufaelliger
+        rechter Seiten ueber den **vorhandenen** Faktor, hoechstens sechs
+        Loesungen, nichts wird neu faktorisiert, gelagert oder veraendert. Ohne
+        gestoerte Pivots - das ist der Regelfall - kostet es nichts.
+
+        Die Antwort gehoert zum Faktor und wird mit ihm gemerkt: ein Lastfall,
+        der eine behaltene Kontaktfaktorisierung weiterbenutzt, sucht nicht
+        noch einmal. Eine Diagnose sperrt nie - eine Ausnahme ergibt „nichts
+        gefunden“.
+        """
+        from . import singular as sg
+        if not sg.PIVOTBEFUND:
+            return [], None
+        ref = getattr(self, "_letzter_loeser", None)
+        ls = ref() if ref is not None else None
+        if ls is None or getattr(ls, "_solve", None) is None:
+            return [], None
+        g = getattr(ls, "gestoerte_pivots", None)
+        if g is None:
+            g = getattr(ls, "gestoert", None)          # ama
+        if not g:
+            return [], None
+        gemerkt = getattr(self, "_freie_teile_gemerkt", None)
+        if gemerkt is not None and gemerkt[0]() is ls:
+            return gemerkt[1], gemerkt[2]
+        try:
+            liste, suche = sg.pivotbefund(self.model, self.fi, ls, int(g))
+        except Exception:                   # noqa: BLE001 - eine Diagnose darf nie sperren
+            liste, suche = [], None
+        self._freie_teile_gemerkt = (weakref.ref(ls), liste, suche)
+        return liste, suche
+
     def kontakt_loeser_freigeben(self) -> None:
         """Die behaltene Faktorisierung mit Kontaktsteifigkeit zurueckgeben."""
         ls = getattr(self, "_kontakt_loeser", None)
@@ -2259,7 +2544,7 @@ class StaticSystem:
                     self.kontakt_loeser_freigeben()
                     ls = LinearSolver(self.gerandet(
                         Ktff, None if C_extra is None else C_extra[:, self.fi],
-                        None if C_extra is None else D_f))
+                        None if C_extra is None else D_f), progress=self._progress)
                     self._loeser_merken(ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                 self.backend = ls.backend
@@ -2321,6 +2606,10 @@ class StaticSystem:
             raise
         if buch is not None:
             buch.loesung(ls)
+        # Fuer die Suche nach frei beweglichen Teilen (freie_teile): der Faktor,
+        # der zuletzt geloest hat. Nur ein schwacher Verweis - den Speicher des
+        # Faktors gibt weiter frei, wem er gehoert.
+        self._letzter_loeser = weakref.ref(ls)
         return x
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
@@ -4086,6 +4375,15 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         _startherkunft_eintragen(res, start, start_von, model.hat_ausfallstaebe())
     if hilfs:
         u = system.ohne_starrkoerper(u)
+    # Frei bewegliche Teile (B5, 08.10.2026): gestoerte Pivots sagen, dass etwas
+    # frei ist; die Suche am Faktor sagt, was - mit Namen und Richtung. Nichts
+    # wird gelagert, die Rechnung ist davon unberuehrt.
+    if hasattr(system, "freie_teile"):
+        freie, suche = system.freie_teile()
+        if suche:
+            res.info["freie_teile_suche"] = suche
+        if freie:
+            res.info["freie_teile"] = freie
     if system.singular:
         from . import singular as _sg
         # Nach Schwere geordnet: oben steht, was die Rechnung zunichte macht,
@@ -4101,6 +4399,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "solver": system.backend, "factors": dict(factors),
                      "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
                      "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
+                     # nur wenn PARDISO die Zahl nicht sicher nennen konnte (B2)
+                     **({"nnz_faktor_mindestens": True}
+                        if getattr(system, "nnz_faktor_mindestens", False) else {}),
                      "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0)),
                      **ausweich_info(system, ausweich_vorher)})
     nachweis = system.nachweis_abschliessen() if hasattr(system, "nachweis_abschliessen") else None
@@ -5880,6 +6181,122 @@ def _neustart_vermerken(cinfo2: dict, runden_vorher: list) -> None:
     lauf["runden"] = list(runden_vorher) + list(lauf.get("runden") or [])
 
 
+#: Abschluss nach dem Ingenieurkriterium (Befund B4, 08.10.2026, Vorgabe des
+#: Anwenders): pendelt die Aktivmenge (die Iteration loest einen Zustand aus
+#: Aktivmenge, Haften/Gleiten und Fliessen ein zweites Mal) oder pendeln
+#: Gleitrichtungen (contact.ContactSystem.richtungen_pendeln), ist der Lauf fertig,
+#: wenn zwischen den letzten beiden Loesungen
+#:   * die Vergleichsspannung der Volumenelemente (geglaettete Eckwerte, wie im
+#:     Ergebnis) sich nirgends um mehr als ABSCHLUSS_SPANNUNG aendert,
+#:   * sich kein Knoten um mehr als ABSCHLUSS_WEG_ANTEIL * u_max bewegt,
+#:   * keine geschlossene Bedingung Zug und keine offene Durchdringung ueber f_tol
+#:     (als Kraft) traegt - die Normalbedingung bleibt so streng wie sonst - und
+#:   * die Auflagerkraefte **dieser Loesung** (ContactSystem.kraefte_der_loesung)
+#:     mit der Last auf ABSCHLUSS_GLEICHGEWICHT im Gleichgewicht sind.
+#: Das strenge Kriterium (kein Zustandswechsel mehr bzw. Residuum) bleibt das erste
+#: Ziel; dieses greift nur beim Pendeln. Die Kontaktbedingung bleibt dieselbe: der
+#: angenommene Zustand ist eine der Loesungen des Zyklus, mit ihren Kraeften; was
+#: darin noch pendelt, steht mit Namen, Ort, Kraft und Weg im Protokoll.
+#: Gemessen am Drehlager (Mittel, LF1, elastischer Vorlauf, d2bdd44): im Zyklus
+#: ab Runde 37 aendert sich je Runde u um 0,32 um (2,5e-4 u_max) und sigma_v
+#: (Elementmaximum) um hoechstens 0,62 N/mm2, die Loesung selbst ist auf 1,3e-7 im
+#: Gleichgewicht; der Lauf waere in Runde 39 nach 84 min fertig gewesen statt am
+#: Deckel in Runde 64 nach 129 min.
+ABSCHLUSS_INGENIEUR = True
+ABSCHLUSS_SPANNUNG = 1.0e6          # [Pa] = 1 N/mm2
+ABSCHLUSS_WEG_ANTEIL = 1.0e-3       # der groessten Verschiebung
+ABSCHLUSS_GLEICHGEWICHT = 1.0e-4    # |sum R + sum F| / |sum F|
+#: ab so vielen Umkehrungen in Folge gilt ein gleitender Knoten im Protokoll als pendelnd
+UMKEHR_RUNDEN_PENDEL = 2
+
+
+def _vergleichsspannungen(model: Model, system, u: np.ndarray) -> np.ndarray:
+    """Geglaettete Vergleichsspannung [Pa] der Volumenelemente an den Ecken (dieselbe
+    Tabelle wie res.solid_knoten im Ergebnis), in fester Reihenfolge."""
+    res = Results(name="Abschluss", kind="case", model=model)
+    uu = asm.mittelknoten_nachfuehren(model, np.asarray(u, float))
+    postprocess(model, uu, res, workers=getattr(system, "workers", None),
+                aktiv=getattr(system, "aktiv", None))
+    sk = res.solid_knoten or {}
+    S = np.asarray(sk.get("spannung", []), float).reshape(-1, 6)
+    from . import spannungen as spn
+    return spn.volumen_werte(S, "sv") if len(S) else np.zeros(0)
+
+
+def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, merker: dict):
+    """Prueft das Ingenieurkriterium (ABSCHLUSS_*) fuer die Loesung ``u`` gegen die
+    vorige ``u_vor``. Rueckgabe None (nicht erfuellt; Kraefte unveraendert) oder ein
+    Woerterbuch mit den Messwerten - dann stehen in ``cs`` die Kraefte dieser Loesung.
+    ``merker`` haelt die Spannungen der vorigen Pruefung (je Pruefung hoechstens zwei
+    Spannungsauswertungen)."""
+    n6 = model.nn * NDOF
+    v = np.asarray(u, float)[:n6].reshape(-1, NDOF)[:, :3]
+    w = np.asarray(u_vor, float)[:n6].reshape(-1, NDOF)[:, :3]
+    u_max = float(np.linalg.norm(v, axis=1).max()) if len(v) else 0.0
+    du = np.linalg.norm(v - w, axis=1)
+    j = int(np.argmax(du)) if len(du) else 0
+    du_max = float(du[j]) if len(du) else 0.0
+    aus = {"du_max": du_max, "du_knoten": j, "u_max": u_max}
+    if du_max > ABSCHLUSS_WEG_ANTEIL * u_max:
+        return None
+    sv = _vergleichsspannungen(model, system, u)
+    alt = merker.get("sv") if merker.get("u_id") is u_vor else None
+    if alt is None or len(alt) != len(sv):
+        alt = _vergleichsspannungen(model, system, u_vor)
+    merker["sv"], merker["u_id"] = sv, u
+    dsv = float(np.abs(sv - alt).max()) if len(sv) else 0.0
+    aus["dsv_max"] = dsv
+    if dsv > ABSCHLUSS_SPANNUNG:
+        return None
+    # Die Normalbedingung bleibt streng: keine geschlossene Bedingung mit Zug
+    # und keine offene mit Durchdringung ueber f_tol (als Kraft) im angenommenen
+    # Zustand - dieselben Grenzen wie beim Oeffnen und Schliessen. Gemessen am
+    # Drehlager (8b2de7b, ohne diese Pruefung): angenommen in Runde 34 mit einer
+    # offenen Bedingung, 0,088 nm durchdrungen, als Kraft 1,30 N bei f_tol 0,95 N.
+    verst = cs.zustand_verstoesse(u, lam)
+    aus["zug"], aus["durchdringung"] = int(verst["zug"]), int(verst["durchdringung"])
+    if verst["zug"] or verst["durchdringung"]:
+        return None
+    # Gleichgewicht im angenommenen Zustand: Kraefte dieser Loesung
+    D = getattr(cs, "D_kopplung", None)
+    vorher = [(c.Fn, np.array(c.Ft, float), c.g, getattr(c, "zug_roh", c.Fn)) for c in cs.cons]
+    cs.kraefte_der_loesung(u, lam)
+    R = system.reactions(u, F + (Fc if Fc is not None else 0.0) + _kontaktlast(C, lam, model.ndof, D), Kc)
+    Rk = R[:n6].reshape(-1, NDOF)[:, :3].sum(0) + cs.support_reactions(model.nn).sum(0)
+    Fk = np.asarray(F[:n6], float).reshape(-1, NDOF)[:, :3].sum(0)
+    bez = max(float(np.linalg.norm(Fk)), 1e-30)
+    gg = float(np.linalg.norm(Rk + Fk)) / bez
+    aus["gleichgewicht"] = gg
+    if gg > ABSCHLUSS_GLEICHGEWICHT:
+        for c, (fn, ft, g, zr) in zip(cs.cons, vorher):     # nicht angenommen: wie vorher
+            c.Fn, c.Ft, c.g, c.zug_roh = fn, ft, g, zr
+        return None
+    return aus
+
+
+def _pendel_zeilen(model: Model, cs, ids, u, u_vor) -> tuple:
+    """Protokollzeilen der Bedingungen, die im Zyklus ihren Zustand oder ihre
+    Gleitrichtung wechseln: Name, Knoten, Ort, Normal- und Reibkraft, Weg in der
+    Fugenebene und die Verschiebungsaenderung des Knotens. Rueckgabe (Zeilen,
+    groesste Reibkraft [N], groesster Weg [m])."""
+    X = np.asarray(model.nodes, float)
+    zeilen, f_max, w_max = [], 0.0, 0.0
+    for i in sorted(ids, key=lambda k: -float(np.linalg.norm(cs.cons[k].Ft)))[:12]:
+        c = cs.cons[i]
+        ue = u[c.dofs]
+        dt = 0.0 if c.ct is None else float(np.linalg.norm([c.ct[0] @ ue, c.ct[1] @ ue]))
+        d = float(np.linalg.norm((np.asarray(u) - np.asarray(u_vor))[NDOF * c.node:NDOF * c.node + 3]))
+        ft = float(np.linalg.norm(c.Ft))
+        f_max, w_max = max(f_max, ft), max(w_max, dt)
+        zustand = "offen" if not c.active else ("gleitet" if c.slip else "haftet")
+        zeilen.append(f"{c.label} (Knoten {c.node} bei {np.round(X[c.node], 3).tolist()} m): "
+                      f"{zustand}, Normalkraft {c.Fn / 1e3:.3g} kN, Reibkraft {ft / 1e3:.3g} kN, "
+                      f"Weg in der Fuge {dt * 1e6:.3g} µm, Änderung zur vorigen Runde {d * 1e6:.3g} µm")
+    if len(ids) > 12:
+        zeilen.append(f"… und {len(ids) - 12} weitere")
+    return zeilen, f_max, w_max
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
@@ -6044,10 +6461,19 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                                                        cs, u, model, "")}
     u = None
     forced = False
+    # Abschluss nach dem Ingenieurkriterium (ABSCHLUSS_INGENIEUR): welche Zustaende
+    # wurden schon geloest (Kennung -> Runde), und welche Bedingungen wechselten
+    # in welcher Runde
+    kennungen: dict = {}
+    wechsel_je_runde: dict = {}
+    abschluss_merker: dict = {}
+    ingenieur = None
+    letzte_kennung = None
     for it in range(1, max_iter + 1):
         Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
+        kennung = cs.zustandskennung() if ABSCHLUSS_INGENIEUR else None
         try:
             u, lam = loesen()
         except RuntimeError as ex:
@@ -6119,6 +6545,65 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # sprang um den Faktor 1e5, und die naechste Loesung riss 277
         # Bedingungen um (H 58 -> 370, 349 Kegelverstoesse, Guetemass 2e4);
         # 9 von 18 Laeufen endeten am Deckel, 9,4 h Rechenzeit.
+        # Abschluss nach dem Ingenieurkriterium: nur in Phase 2 - Phase 1 rechnet
+        # gleitende Knoten mit der groben Reststeifigkeit, ihr Ergebnis ist nicht
+        # das Ergebnis (am Drehlager aenderte Phase 2 danach sigma_v noch um bis
+        # zu rund 230 N/mm2) -, und nur wenn die Aktivmenge pendelt
+        # (sie hat sich geaendert und ist zu einem schon geloesten Zustand
+        # zurueckgekehrt - Setz- und Richtungsrunden ohne Wechsel zaehlen nicht)
+        # oder Gleitrichtungen pendeln - nur im kalten Lauf: ein warm gestarteter
+        # prueft nach dem Ende seine Gleitrichtungen gegen den Startzustand
+        # (warmstart_verstoesse) und setzte nach einem frueheren Abschluss nur
+        # fort (tests/test_kontaktzustand, LF3 nach LF2: 11 statt hoechstens 8
+        # Schritte); nicht in abgekuerzten Laeufen und Probelaeufen
+        wie_runde = (kennungen.get(kennung) if kennung is not None and kennung != letzte_kennung
+                     else None)
+        richtungen = cs.richtungen_pendeln() if (ABSCHLUSS_INGENIEUR and cs.phase == 2) else 0
+        if (ABSCHLUSS_INGENIEUR and u_vor is not None and not kurz and not probelauf
+                and not warm and cs.phase == 2 and (wie_runde is not None or richtungen)):
+            ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
+                                             abschluss_merker)
+            if ingenieur is not None:
+                von = wie_runde if wie_runde is not None else max(1, it - 2)
+                ids = set()
+                for r in range(von, it):
+                    ids |= wechsel_je_runde.get(r, set())
+                # dazu Gleitende, deren Richtung mindestens zweimal in Folge umkehrte
+                # (eine einzelne Drehung ist kein Pendeln: am Drehlager nannte die
+                # Liste sonst 86 Knoten mit 0,003 um Aenderung)
+                ids |= {i for i, c in enumerate(cs.cons)
+                        if c.active and c.slip and getattr(c, "umkehr", 0) >= UMKEHR_RUNDEN_PENDEL}
+                zeilen, f_pend, w_pend = _pendel_zeilen(model, cs, ids, u, u_vor)
+                ingenieur.update({"runde": it, "wie_runde": wie_runde, "pendelnd": len(ids),
+                                  "reibkraft_max": f_pend, "weg_max": w_pend,
+                                  "richtungen_pendeln": int(richtungen)})
+                grund_text = (f"die Aktivmenge pendelt (Zustand wie in Runde {wie_runde})"
+                              if wie_runde is not None else
+                              f"{richtungen} Gleitrichtungen pendeln")
+                text = (f"Kontakt: Abschluss nach dem Ingenieurkriterium in Runde {it} - {grund_text}; "
+                        f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
+                        f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm), "
+                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}")
+                log.append(text)
+                _melde(progress, text)
+                # Vernachlaessigbar ist, was das Gleichgewicht nicht merklich stoert:
+                # die groesste pendelnde Reibkraft unter ABSCHLUSS_GLEICHGEWICHT der Last
+                Fsum = float(np.linalg.norm(np.asarray(F[:model.nn * NDOF], float)
+                                            .reshape(-1, NDOF)[:, :3].sum(0)))
+                if f_pend > ABSCHLUSS_GLEICHGEWICHT * Fsum and zeilen:
+                    log.append(f"WARNUNG: im angenommenen Zustand pendeln noch {len(ids)} Kontaktbedingungen "
+                               f"(Reibkraft bis {f_pend / 1e3:.3g} kN, Weg bis {w_pend * 1e6:.3g} µm): "
+                               + "; ".join(zeilen))
+                elif zeilen:
+                    log.append(f"Kontakt: im angenommenen Zustand pendeln noch {len(ids)} Bedingungen, "
+                               "vernachlässigbar: " + "; ".join(zeilen))
+                cs.runde_ohne_update()      # je Kontaktschritt eine Runde im Laufbuch
+                converged = True
+                break
+        if kennung is not None:
+            kennungen.setdefault(kennung, it)
+            letzte_kennung = kennung
+        aktiv_vor = [(c.active, c.slip) for c in cs.cons] if ABSCHLUSS_INGENIEUR else None
         neu_bestimmen = cs.phase == 1 or cs.gruppe_frei is None
         frei_vorher = cs.gruppe_frei
         if neu_bestimmen:
@@ -6138,6 +6623,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             elif frei_nachher != frei_vorher:
                 changed = True
             cs.gruppe_frei = frei_nachher
+        if aktiv_vor is not None:
+            wechsel_je_runde[it] = {i for i, (c, (a0, s0)) in enumerate(zip(cs.cons, aktiv_vor))
+                                    if c.active != a0 or c.slip != s0}
         if cs.schub_halt_loesen():
             # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
@@ -6363,6 +6851,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
         "contact_state": _zustand_markiert(cs, converged or abgekuerzt),
         "contact_frozen_verworfen": eingefroren_verworfen,
+        "contact_ingenieur": ingenieur,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
 
 
@@ -6690,6 +7179,8 @@ class Analysis:
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
         s += dilatation_gebuendelt(self.all_results().items())
+        # frei bewegliche Teile (B5, 08.10.2026): je Text eine Zeile, nicht je Lastfall
+        s += freie_teile_gebuendelt(self.all_results().items())
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen

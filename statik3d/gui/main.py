@@ -13090,8 +13090,18 @@ class MainWindow(QtWidgets.QMainWindow):
         Vorweg: ein „immer“ aus einer alten Sitzung wird „aus“ (siehe unten),
         dann die Sperre - Mittel oder Fein an einem Modell mit Kontakt wird
         Entwurf, mit Zeile im Protokoll statt Abbruch in fugen.py -, und bei
-        Fein vernetzt :meth:`_vernetzen_netz` mit halber Kantenlaenge; die
-        gespeicherten Netzeinstellungen stehen danach wieder da."""
+        Fein vernetzt :meth:`_vernetzen_netz` wie Mittel, feiner an Kontakt-,
+        Lager- und Lastflaechen und an den Boegen der Kontakt- und
+        Lagerflaechen (seit 07.10.2026, elementstufe.wirksam); die
+        gespeicherten Netzeinstellungen stehen danach wieder da.
+
+        Ueberschreitet das Netz die Grenze in Unbekannten, vernetzt Fein
+        selbsttaetig groeber ueber seine Stufen (elementstufe.fein_stufen,
+        seit 08.10.2026); Entwurf und Mittel haben keine Stufen - dort bleibt
+        das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
+        Vernetzen, vor der Rechnung, „Vernetzen“ beim Uebernehmen und Anlegen
+        von Flaechen und Koerpern, nach Spalt und Spiel) kommen hier durch;
+        nur die adaptive Vernetzung nicht (ohne Quellen von Fein)."""
         from .. import elementstufe as es
         from ..sweep import betriebsart as sweep_betriebsart
         vorab: list = []
@@ -13105,10 +13115,10 @@ class MainWindow(QtWidgets.QMainWindow):
             vorab.append("Sechsflächner-Sweep ausgeschaltet: die Option gibt es nicht mehr, "
                          "weil sie an Bohrungen und schrägen Kanten verzerrte Elemente erzeugt. "
                          "Vernetzt wird mit Tetraedern.")
-        with es.beim_vernetzen(self.model, vorab):
-            return self._vernetzen_netz(flaechen, koerper, vorab)
+        with es.beim_vernetzen(self.model, vorab) as netz:
+            return self._vernetzen_netz(flaechen, koerper, vorab, stufen=es.fein_stufen(self.model, netz))
 
-    def _vernetzen_netz(self, flaechen: list, koerper: list, vorab: list = None) -> int:
+    def _vernetzen_netz(self, flaechen: list, koerper: list, vorab: list = None, stufen=None) -> int:
         """Flaechen und Koerper vernetzen und das Protokoll fuehren.
 
         Der Balken ist nach der **geschaetzten Elementzahl** gewichtet, nicht
@@ -13117,8 +13127,15 @@ class MainWindow(QtWidgets.QMainWindow):
         Arbeitsprozessen (alle Kerne bis auf einen); Zeit und Text laufen im
         Sekundentakt mit, Abbrechen wirkt auch mitten in einem Volumen und
         behaelt das bisher Erzeugte.
+
+        Die Grenze in Unbekannten (Paket F2, 07.10.2026) haelt
+        :func:`mesher.koerper_vernetzen`; ``stufen`` ist ihre Folge der
+        Vergroeberung (Fein, Paket F1), ohne sie wird nur gewarnt. Die Warnung
+        steht danach in ``self._grenze_warnung`` - :meth:`geometrie_vernetzen`
+        zeigt sie.
         """
         from .. import fugen
+        self._grenze_warnung = ""
         # Zeilen von _vernetzen (Sweep „immer“, Sperre der Stufe, Fein) vorn
         log = list(vorab or [])
         n = 0
@@ -13236,8 +13253,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self._fortschritt(int(1000 * (w_f + float(anteil or 0.0) * w_k) / summe),
                                              f"Vernetze Volumen ({len(koerper)}): {text}")
                 erg = mesher.koerper_vernetzen(self.model, koerper, hs=hs, log=log, cache=cache,
-                                               fortschritt=ruf, gewicht=gewicht)
+                                               fortschritt=ruf, gewicht=gewicht, stufen=stufen)
                 n += erg["elemente"]
+                self._grenze_warnung = str(erg.get("grenze_warnung", "") or "")
                 prozesse = erg.get("prozesse", 1)
                 abgebrochen = abgebrochen or bool(erg.get("abgebrochen"))
             # Nach dem Balken kommt noch einiges - jeder Schritt sagt, was er tut,
@@ -13289,7 +13307,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
         text = (f"Vernetzt: {bg.anzahl(n, 'Element', 'Elemente')} in {time.time() - self._fortschritt_t0:.1f} s"
                 + (f" auf {prozesse} Prozessen" if prozesse > 1 else "")
-                + (" - abgebrochen" if abgebrochen else ""))
+                + (" - abgebrochen" if abgebrochen else "")
+                + (" - über der Höchstzahl Unbekannte" if self._grenze_warnung else ""))
         self.log.appendPlainText(text)
         # Die Aufteilung: bei einem grossen Modell liegt die Zeit oft nicht im
         # Netz, sondern im Nachlauf (Kontaktfugen, Stabenden)
@@ -13361,6 +13380,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if n and getattr(self, "_vernetzt_text", ""):
             self.statusBar().showMessage(self._vernetzt_text, 15000)
         self._info_zeigen()
+        # Ueber der Grenze in Unbekannten, ohne groebere Stufe: deutlich warnen,
+        # nicht abbrechen (Entscheidung des Anwenders vom 07.10.2026)
+        if getattr(self, "_grenze_warnung", ""):
+            self.warnung(self._grenze_warnung)
 
     def geometrie_adaptiv_vernetzen(self):
         """Adaptiv vernetzen: vernetzen -> rechnen -> Fehler schaetzen -> dort
@@ -13392,8 +13415,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lastfall = m.active_case if m.active_case in m.load_cases else next(iter(m.load_cases))
         log: list = []
         # Die Sperre der Elementstufe gilt auch hier (25.09.2026): Mittel/Fein an
-        # einem Modell mit Kontakt wird Entwurf, gesagt. Die halbe Kantenlaenge
-        # von Fein nicht - die Schleife bestimmt die Kantenlaenge selbst.
+        # einem Modell mit Kontakt wird Entwurf, gesagt. Die Quellen von Fein
+        # nicht - die Schleife bestimmt die Kantenlaenge selbst.
         from .. import elementstufe as _es
         _sperre = _es.sperre_anwenden(m)
         if _sperre:
@@ -19011,15 +19034,18 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("elemente", "Elemente", "wahl", es.AUSWAHL[stufe_jetzt], [es.AUSWAHL[s] for s in es.STUFEN],
                     hinweis="Entwurf: tet4, hex8 (VQ83), Schalen linear – schnell, Spannungen zu niedrig. "
                             "Mittel (Vorgabe): tet10, hex20 (VQ203), Schalen quadratisch – für die "
-                            "Nachweise. Fein: wie Mittel mit halber Kantenlänge – Bohrungen, Kerben, "
-                            "Ermüdung. Sechsflächner entstehen automatisch nur dort, wo sie sauber "
+                            "Nachweise. Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
+                            "Kantenlänge) und an den Bögen der Kontakt- und Lagerflächen (9° statt 18° je "
+                            "Abschnitt) – Bohrungen, Kerben, Ermüdung. Sechsflächner entstehen "
+                            "automatisch nur dort, wo sie sauber "
                             "werden (Sweep „sauber“); welche Elemente wirklich entstanden sind, zeigt "
                             "Netz → Elementübersicht"),
                   F("elemente_info", "", "info", stufentext(stufe_jetzt), anzeige=True),
                   F("kantenlaenge", "Kantenlänge (wirksam)", "info",
                     es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model),
-                    hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein die Hälfte der "
-                            "eingestellten; die Einstellungen darunter bleiben die für Mittel", anzeige=True)]
+                    hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein dieselbe wie bei Mittel, "
+                            "dazu, welche Flächen und Bögen feiner werden; die Einstellungen darunter "
+                            "bleiben die für Mittel", anzeige=True)]
         if gruende:
             felder.append(F("sperre", "Kontakt", "info", es.sperrtext(gruende)))
         felder += [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
@@ -19032,6 +19058,16 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("h_max", "größte Elementgröße [mm]", "zahl", mm(n.h_max), breite=78, leer=True,
                     hinweis="leer = das Vierfache der Dichte-Länge"),
                   F("max_elemente", "Höchstzahl Elemente je Objekt", "ganz", int(n.max_elemente)),
+                  # Paket F2 (07.10.2026): die Grenze fuer das ganze Netz, gezaehlt
+                  # beim Vernetzen (mesher.koerper_vernetzen) statt geschaetzt
+                  F("hoechstens_unbekannte", "Höchstzahl Unbekannte", "ganz",
+                    int(getattr(n, "hoechstens_unbekannte", 0) or 0),
+                    hinweis="Grenze für das ganze Netz, drei Unbekannte je Knoten, gezählt beim "
+                            "Vernetzen. Wird sie überschritten, vernetzt das Programm selbsttätig gröber "
+                            "(Fein in Stufen) und nennt jede Stufe im Protokoll; Entwurf und Mittel "
+                            "haben keine gröbere Stufe – dort bleibt das Netz, und es kommt eine Warnung. "
+                            "0 = keine Grenze; Vorgabe 4 000 000 (für 128 GB Arbeitsspeicher; "
+                            "mit weniger Speicher die Grenze senken)"),
                   F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
                   # „Elementansatz linear/quadratisch“ stand hier bis 25.09.2026;
                   # die Ordnung setzt jetzt die Stufe (Feld „Elemente“ oben)
@@ -19232,6 +19268,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       vernetzer=vernetzer, nachbessern=nachbessern,
                       mmg_pfad=n.mmg_pfad,
                       max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
+                      hoechstens_unbekannte=max(0, int(float(
+                          w.get("hoechstens_unbekannte", getattr(n, "hoechstens_unbekannte", 0)) or 0))),
                       form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                       abgebildet=bool(w.get("abgebildet", n.abgebildet)),
                       teilung_uebersteuern=bool(w.get("uebersteuern", True)))

@@ -321,7 +321,7 @@ Arbeiter erschöpften 90 GB Pool plus Hauptprozess das Commit-Limit von
 davor ein Absturz in der Faktorisierung. Mit 12 Arbeitern blieben 69 GB
 frei. Ein kleines Modell (Hauptprozess 0,3 GB) bleibt bei der Vorgabe; die
 Begrenzung steht als Hinweis „[parallel] Pool: 12 statt 31 Arbeiter …“ im
-Fehlerstrom (`tests/test_pool_speicher`). Vorher stand dort nur die Zahl des Prozesspools,
+Fehlerstrom (`tests/test_pool_speicher`). **Seit dem 08.10.2026 macht der Pool zusätzlich vor großen Zerlegungen Platz** (Befund B3 der Drehlager-Abnahme; `parallel.platz_fuer_zerlegung`, `solver._zahlenphase_vorpruefen`, `tests/test_zerlegung_speicher`): Die Bemessung oben gilt nur beim Start, die Arbeiter hielten danach untätig 37 GiB Arbeitssatz und 69 GiB Commit, während PARDISO am Drehlager (Mittel) rund 45 GiB Commit brauchte und 44 GiB frei waren. pypardiso faktorisiert mit Phase 12; der Löser führt stattdessen Phase 11 (Analyse), eine Speicherprüfung und Phase 22 aus (bitgleich, geprüft an Lösung, iparm(14) und Faktorgröße; ab 5 Mio. Matrixeinträgen, darunter bleibt es bei Phase 12). Nach Phase 11 liefert PARDISO den Speicher der Zahlenphase in iparm(17) (KB); an hex8-Würfeln mit 45 000 bis 148 000 Gleichungen belegte Phase 22 das 1,00- bis 1,01-fache davon (0,539 GiB gegen 0,533 bei 45 000, 2,565 gegen 2,548 bei 148 000), die Spitze des Prozesses das 1,09- bis 1,12-fache von max(iparm 15; 16 + 17); am Drehlager lag der Commit-Zuwachs bei 1,16 mal der Voraussage von 39,2 GiB. Verlangt wird darum 1,15 · iparm(17) + 1 GiB, frei gemessen als Commit (Windows) und als Arbeitsspeicher. Reicht es nicht, schließt der Löser alle offenen Pools (`Arbeiter.pausieren`), misst neu und bricht bei weiterhin zu wenig Commit mit `SpeicherReichtNicht` ab (keine RuntimeError: die hieße „Lagerung prüfen“; kein Ausweichen auf SuperLU, das nicht weniger Speicher braucht). Der Pool geht bei der nächsten Elementschleife wieder auf (`Arbeiter.fortsetzen`), mit so vielen Arbeitern, wie in den halben Rest nach Abzug des Bedarfs der nächsten Zerlegung passen. Nicht abgedeckt: die Analyse selbst (iparm 15, vor der Prüfung), MUMPS, ama und SuperLU, und zwei gleichzeitige Zerlegungen (Ketten) sehen den Speicher des anderen erst, wenn er belegt ist. Vorher stand dort nur die Zahl des Prozesspools,
 und die las sich, als rechne auch der Löser so. Nach dem Lösen wird das Residuum
 |K u − F| / |F| geprüft; numerisch singuläre Systeme (fehlende Lagerung,
 freie Bauteile) werden als Fehler gemeldet statt unbemerkt falsche Ergebnisse
@@ -1594,6 +1594,97 @@ das Residuum nicht mehr fällt, oder den Lauf dann abbrechen - beides nicht
 nötig bzw. schädlich (Abbruch nach acht Runden schnitt langsam konvergierende
 Nachführungen ab: sieben Halbierungen, 42,72 mm, mit einer Stufe „nicht
 konvergiert“).
+
+**Pendelschutz (08.10.2026, Befund B4).** Am Drehlager (Stufe Mittel, LF1,
+elastischer Vorlauf) kam Phase 2 nicht zur Ruhe: ab Runde 37 schaltete die
+Iteration im Takt von zwei Runden dieselben sieben Reibknoten des Flächenlagers
+„Starr“ um, bis der Deckel nach 40 Wechselrunden griff (Runde 64). Gemessen je
+Runde (Messläufe `diag2_kalt`, Arbeitsordner `b4_werk`): fünf gleitende Knoten
+an den Rändern der Lagerfläche kehrten ihre Gleitrichtung jede Runde um 150 bis
+180° um, mit einem Weg von ±1·10⁻⁸ bis ±2·10⁻⁷ m um die Ausgangslage und einer
+Versuchskraft vom 3- bis 10-Fachen der Grenze auf der Gegenseite; drei davon
+haben Reibung in nur einer Richtung (die andere Ebenenrichtung ist die Normale
+einer Knagge), dort ist die Umkehr genau 180°. Zwei Knoten wechselten zwischen
+Haften (Reaktion 266 statt 141 N bzw. 304 statt 298 N) und Gleiten (beide liefen
+unter ihrer Reibkraft 1,1·10⁻⁸ bzw. 1,5·10⁻⁸ m rückwärts und fielen zurück in den
+Kegel); die Liniensuche stellte sie stets gemeinsam um, weil GLEIT_ANTEIL_MIN
+0,02 von 123 haftenden Knoten zwei ergibt. Keiner der beiden Zustände erfüllt
+das Reibgesetz auf f_tol (0,95 N) – es war also keine Toleranzfrage, sondern die
+Aktualisierung. Die Lösung jeder Runde war im Gleichgewicht (1,2·10⁻⁷); die
+2·10⁻⁴ im Ergebnis kamen daher, dass die Auflagerkräfte aus dem Zustand nach der
+letzten Umstellung gebildet werden, in dem die fünf Umkehrknoten ihre Reibkraft
+schon gewendet hatten (±2,0 bis 2,4 kN in y).
+
+Der Schutz greift nur an pendelnden Knoten (`contact.UMKEHR_HAFTET`,
+`PENDEL_EINZELN`, `UMKEHR_RUNDEN` = 2): (1) Zeigt die Versuchskraft w eines
+gleitenden Knotens zwei Runden hintereinander gegen seine Gleitrichtung
+(w·d < 0) und kehrt sie dabei genau um (|d + w/|w|| ≤ 10⁻⁶ - das geschieht nur
+bei Reibung in einer Richtung), haftet er. (2) Ein Knoten, der in der Runde nach seinem
+Umstellen ins Gleiten wieder haftet (oder nach (1) haftet), ist pendelnd; von
+den pendelnden stellt die Liniensuche je Runde nur den stärksten Verstoß um.
+Gemeint ist ein Umstellen im selben Lauf: Ein warm gestarteter Lauf (etwa der
+nächste Kontaktlauf der Plastizität), der einen Knoten gleitend übernimmt und in
+der ersten Runde haften lässt, markiert ihn nicht. Bis zur Nachbesserung am
+08.10.2026 tat er das; am fließenden Reibblock (tests/test_fehler_p8) wurden so
+13 Knoten markiert und einzeln umgestellt, und LF1 brauchte 88 statt 84
+Kontaktrunden, K1 97 statt 90, bei gleichem strengem Abschluss.
+Beides ändert nur den Weg, nicht die Lösungsmenge: die Bedingungen, an denen
+die Iteration endet (Haften im Kegel bis 1 + 10⁻⁶, Gleiten mit μλ_n längs w/|w|,
+Richtungen auf QUER_TOL), sind dieselben.
+
+**Abschluss nach dem Ingenieurkriterium (08.10.2026, Vorgabe des Anwenders).**
+Pendelt die Aktivmenge – nach einem Wechsel wird ein Zustand (Phase, Aktivmenge,
+Haften/Gleiten, Fließen) ein zweites Mal gelöst – oder kehren Gleitrichtungen
+mit einer Reibkraft über f_tol viermal hintereinander um, endet der Lauf, wenn
+zwischen den letzten beiden Lösungen (i) die geglättete Vergleichsspannung der
+Volumenelemente an den Ecken sich nirgends um mehr als 1 N/mm² ändert
+(`solver.ABSCHLUSS_SPANNUNG`; zwei Spannungsauswertungen je Prüfung, nur beim
+Pendeln), (ii) kein Knoten sich um mehr als 10⁻³·u_max bewegt
+(`ABSCHLUSS_WEG_ANTEIL`), keine geschlossene Bedingung Zug und keine offene
+Durchdringung über f_tol als Kraft trägt (`zustand_verstoesse`, dieselben Grenzen
+wie beim Öffnen und Schließen – ohne diese Prüfung nahm der Lauf am Drehlager in
+Runde 34 einen Zustand mit einer offenen Bedingung an, 0,088 nm durchdrungen, als
+Kraft 1,30 N bei f_tol 0,95 N) und (iii) die Auflagerkräfte der angenommenen Lösung mit
+der Last auf 10⁻⁴ im Gleichgewicht sind (`ABSCHLUSS_GLEICHGEWICHT`). Für (iii)
+setzt `ContactSystem.kraefte_der_loesung` Normal- und Reibkraft jeder Bedingung
+auf die Kräfte, mit denen sie in dieser Lösung wirkt (Multiplikatoren, die
+Reibkraft aus Fc und der Kopplungsspalte, Rest- und Querfedern), statt der
+Kräfte des nächsten Zustands, die das Update setzt; gemessen sind dann 10⁻¹⁵
+am Prüfblock und 1,2·10⁻⁷ je Runde am Drehlager. Warum 1 N/mm² und 10⁻³·u_max:
+am Drehlager änderte der Zyklus σ_v um höchstens 0,62 N/mm² (Elementmaximum;
+die Schranke σ_v(Δσ) aus der Verschiebungsänderung lag bei 2,71 N/mm²) und u um
+0,32 µm = 2,5·10⁻⁴·u_max; eine Runde vor dem Zyklus (Runde 36) waren es noch
+1,8 N/mm² und 0,46 µm, davor über 4 N/mm². Am Prüfblock mit Pendelknoten (172 kN,
+±10 µm je Runde bei u_max 0,4 mm) greift das Kriterium nicht – dort pendelt
+etwas, das nicht vernachlässigbar ist, und der Lauf endet weiter am Deckel.
+Die noch pendelnden Bedingungen stehen im Protokoll (WARNUNG, wenn ihre Reibkraft
+über 10⁻⁴ der Last liegt). Es greift nur in Phase 2 (Phase 1 rechnet gleitende
+Knoten mit der groben Reststeifigkeit; am Drehlager änderte Phase 2 danach σ_v
+noch um bis zu rund 230 N/mm²), nur im kalten Lauf und nicht in abgekürzten
+Läufen: ein warm gestarteter Lauf prüft nach dem Ende seine
+Gleitrichtungen gegen den Startzustand (`warmstart_verstoesse`) und hätte nach
+einem früheren Abschluss nur fortgesetzt (`tests/test_kontaktzustand`, LF3 nach
+LF2: 11 statt höchstens 8 Schritte). Pendeln heißt dabei: der Zustand hat sich
+geändert und ist zu einem schon gelösten zurückgekehrt – Setz- und
+Richtungsrunden ohne Wechsel zählen nicht –, und Richtungsumkehr zählt erst ab
+vier Runden in Folge. Mit dem lockeren ersten Auslöser (jede Runde ohne Wechsel,
+zwei Umkehrungen) endete das Beispiel „Block mit Reibung“ nach 12 statt 29
+Runden und war nicht mehr bitgleich; so ist es bitgleich.
+
+Verworfen, gemessen am 08.10.2026: (a) jeden Knoten haften lassen, der zweimal
+hintereinander umkehrt, auch mit Reibung in zwei Richtungen. Am gequetschten
+Block (`tests/test_plastizitaet`) pendelt Knoten 12 auf der Symmetrieebene
+±0,69 mm quer (Umkehr um 162°), während er längs 0,094 mm gleitet (69
+Umkehrungen in Folge, Grenze 689 kN); haftend lag die Rechnung auf dem Ast der
+schon am 28.09.2026 verworfenen Regel (4) – u_max 42,130 / 42,580 mm für 1 / 4
+Laststufen statt 42,667 mm. (b) Bei nicht genauer Umkehr die Winkelhalbierende
+von d und w/|w| als neue Richtung: der gequetschte Block blieb bei 42,667 mm,
+aber ein Block mit Anschlag (tet10, Kante 0,2 m, Schub 1,6 / 0,3 μp) lief in
+einen Zyklus der Periode 3 und an den Deckel (vorher 20 Runden). Mit der Regel
+nur für die genaue Umkehr bleibt der gequetschte Block bei 42,667 mm für 1 und
+4 Laststufen, und die Beispiele ohne Pendeln rechnen bitgleich. Prüfung: `tests/test_kontakt_pendeln` (Lager in Flächenachsen mit
+Knagge, ein Kantenknoten mit Reibung in einer Richtung: ohne Schutz Deckel nach
+75 Runden, mit ihm konvergiert in 20; wo nichts pendelt, bitgleich).
 
 **Offen:** Bettungen und Federn des Anwenders (keine exakte Normalbedingung)
 rechnen die Reibung weiter mit Haftfeder und festgehaltener Richtung in

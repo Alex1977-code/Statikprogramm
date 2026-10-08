@@ -526,8 +526,11 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
                            ls.name or "Linienlager", "line")
                 if e is not None:
                     out.append(e)
-    # Flaechenlager sehen von einer Volumenseite nur die Ecken; an quadratischen
-    # Elementen blieben die Seitenmitten ungelagert (fugen.QuadratischeSeiten).
+    # Flaechenlager sehen von einer Volumenseite nur die Ecken. An tet10, hex20
+    # und pent15 sind die Seitenmitten der gelagerten Seiten an die Ecken
+    # gebunden (assemble.mittelknoten_bindungen, Q1 08.10.2026); die Sperre
+    # faengt, was dann noch falsch waere - quadratische Schalen, ungebundene
+    # Seitenmitten (fugen.QuadratischeSeiten).
     from .fugen import quadratische_knoten, quadratische_seiten_sperren
     q = quadratische_knoten(model) if model.surface_supports else {}
     for ss in model.surface_supports:

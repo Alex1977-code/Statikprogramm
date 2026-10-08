@@ -112,17 +112,34 @@ FORMSCHLUSS_MIN = 0.02
 #: Kontakt, Fugen und Flaechenlager nehmen von einer Volumenseite nur die
 #: **Eckknoten** (assemble.SOLID_FACES = solid.FLAECHEN_ECKEN). Quadratische
 #: Elemente (tet10, hex20, pent15, shell6, shell8) haben auf der Seite weitere
-#: Knoten, und die werden dabei still uebergangen. Gemessen am 22.09.2026 an
-#: tests/test_fugen.zwei_bloecke bzw. _wuerfel (Kantenlaenge 0,5, Einkern):
-#:   - Trennen einer Fuge verdoppelt nur die Ecken, die Seitenmitten bleiben
-#:     beiden Koerpern gemeinsam: eine Fuge ohne Zugfestigkeit trug mit tet10
-#:     525,8 kN von 1000 kN Zug (passende Netze, 50 gemeinsame Mitten) bzw.
-#:     371,2 kN (eigene Flaechen, 18 gemeinsame Randmitten); mit tet4 0 kN.
+#: Knoten, und die wurden bis zum 08.10.2026 still uebergangen. Gemessen am
+#: 22.09.2026 an tests/test_fugen.zwei_bloecke bzw. _wuerfel (Kantenlaenge 0,5,
+#: Einkern):
+#:   - Das Trennen einer Fuge verdoppelte damals nur die Ecken, die
+#:     Seitenmitten blieben beiden Koerpern gemeinsam: eine Fuge ohne
+#:     Zugfestigkeit trug mit tet10 525,8 kN von 1000 kN Zug (passende Netze,
+#:     50 gemeinsame Mitten) bzw. 371,2 kN (eigene Flaechen, 18 gemeinsame
+#:     Randmitten); mit tet4 0 kN. Seit Paket Q2 (08.10.2026) verdoppelt
+#:     kontaktfuge_ausfuehren die Seitenmitten mit, jede Seite hat eigene.
 #:   - Ein starres Flaechenlager hielt 24 von 77 Bodenknoten; die Oberseite
 #:     sank um 41 % mehr als mit festgehaltenen Bodenknoten; mit tet4 gleich.
-#: Bis der Kontakt die Seitenmitten traegt (Auftrag B4), bricht die Rechnung
-#: hier laut ab, statt still falsch zu rechnen. Eine verschweisste Fuge
-#: (starr in allen Richtungen, passende Netze) trennt nichts und bleibt erlaubt.
+#: Seit Paket Q1 (08.10.2026) sind die Seitenmitten jeder Kontakt- und
+#: Lagerseite an tet10, hex20 und pent15 exakt an ihre Ecken gebunden
+#: (assemble.mittelknoten_bindungen), an einer getrennten Fuge jede Seite an
+#: ihre eigenen; Kontakt, Fugen und Flaechenlager rechnen dort richtig. Die
+#: Sperre bleibt als Sicherheitsnetz (quadratische_seiten_sperren): fuer
+#: quadratische Schalen und fuer Seitenmitten, die nicht gebunden werden. Bis
+#: zum 08.10.2026 sperrte jeder Kontakt- oder Lagerknoten an einem
+#: quadratischen Element.
+#:
+#: Trennt kontaktfuge_ausfuehren auch die Seitenmitten? Ja, seit Paket Q2
+#: (08.10.2026). Steht der Wert auf False - nur fuer einen Stand ohne Q2 -,
+#: blieben die Mitten einer getrennten Fuge beiden Koerpern gemeinsam, und
+#: trennende Kontaktbedingungen an quadratischen Volumen waeren gesperrt (in
+#: quadratische_seiten_sperren und in elementstufe.quadratisch_gesperrt).
+SEITENMITTEN_GETRENNT = True
+
+
 class QuadratischeSeiten(ValueError):
     """Kontakt, Fuge oder Flaechenlager an einer Elementseite mit Seitenmitten."""
 
@@ -147,39 +164,225 @@ def quadratische_knoten(model: Model) -> dict:
 
     Erst ein Blick auf die Typen (ein Durchgang, am Drehlager mit 646.000
     tet4 der einzige): nur wenn es quadratische Elemente gibt, werden ihre
-    Knoten gesammelt."""
-    from .assemble import SHELL_TYPES
+    Knoten gesammelt - blockweise je Typ und am Modell zwischengespeichert
+    (assemble.netz_schluessel). Seit Q1 (08.10.2026) laeuft sie an jedem
+    Modell mit Mittel bei jedem Aufloesen der Lager; elementweise kostete sie
+    an 623 000 tet10 10,3 s, blockweise rund 1 s und aus dem Speicher 0,3 s."""
+    return _quadratische_rollen(model)[0]
+
+
+def _quadratische_rollen(model: Model) -> tuple:
+    """(quadratische_knoten, {Knoten: erste quadratische Schale}), zwischengespeichert."""
+    from .assemble import SHELL_TYPES, netz_schluessel
     quad = _quadratische_volumentypen()
-    if not any(el.typ in quad or (el.typ in SHELL_TYPES and len(el.nodes) > 4)
-               for el in model.elements):
-        return {}
-    out: dict = {}
+    typen = {el.typ for el in model.elements}
+    schalen8 = bool(typen & set(SHELL_TYPES)) and any(
+        el.typ in SHELL_TYPES and len(el.nodes) > 4 for el in model.elements)
+    if not (typen & quad) and not schalen8:
+        return {}, {}
+    schluessel = netz_schluessel(model)
+    alt = getattr(model, "_quadratische_rollen", None)
+    if alt is not None and alt[0] == schluessel:
+        return alt[1]
+    knoten, elemente, schale_k, schale_e = [], [], [], []
+    je: dict = {}
     for i, el in enumerate(model.elements):
-        if ist_quadratisch(el):
-            for n in el.nodes:
-                out.setdefault(int(n), i)
-    return out
+        if el.typ in quad:
+            je.setdefault(el.typ, []).append(i)
+        elif el.typ in SHELL_TYPES and len(el.nodes) > 4:
+            schale_k.extend(int(n) for n in el.nodes)
+            schale_e.extend([i] * len(el.nodes))
+    for typ, idx in je.items():
+        E = np.asarray([model.elements[i].nodes for i in idx], np.int64)
+        knoten.append(E.ravel())
+        elemente.append(np.repeat(np.asarray(idx, np.int64), E.shape[1]))
+    if schale_k:
+        knoten.append(np.asarray(schale_k, np.int64))
+        elemente.append(np.asarray(schale_e, np.int64))
+
+    def erstes(K, E):
+        if not len(K):
+            return {}
+        folge = np.lexsort((E, K))
+        u, erst = np.unique(K[folge], return_index=True)
+        return dict(zip(u.tolist(), E[folge][erst].tolist()))
+    q = erstes(np.concatenate(knoten), np.concatenate(elemente))
+    sch = erstes(np.asarray(schale_k, np.int64), np.asarray(schale_e, np.int64))
+    try:
+        model._quadratische_rollen = (schluessel, (q, sch))
+    except AttributeError:
+        pass
+    return q, sch
+
+
+def _schalenknoten(model: Model) -> dict:
+    """{Knoten: erste quadratische Schale (shell6, shell8) daran}."""
+    return _quadratische_rollen(model)[1]
+
+
+def _seitenmitten_maske(model: Model, bloecke: dict) -> np.ndarray:
+    """bool je Knoten: Kantenmitte eines quadratischen Volumenelements."""
+    from .assemble import QUADRATISCHE_VOLUMEN
+    maske = np.zeros(model.nn, bool)
+    for typ, (_idx, E) in bloecke.items():
+        if typ in QUADRATISCHE_VOLUMEN:
+            maske[E[:, _ecken_zahl(typ):].ravel()] = True
+    return maske
+
+
+def _ecken_zahl(typ: str) -> int:
+    """Zahl der Eckknoten eines Volumentyps (die Kantenmitten folgen danach)."""
+    return {"tet10": 4, "hex20": 8, "pent15": 6}.get(typ, 0)
 
 
 def quadratische_seiten_sperren(model: Model, knoten, was: str, q: dict = None) -> None:
-    """Wirft :class:`QuadratischeSeiten`, wenn einer dieser Knoten an einem
-    quadratischen Element haengt. ``was`` nennt die Stelle (Fuge, Kontaktpaar,
-    Flaechenlager mit Namen)."""
+    """Wirft :class:`QuadratischeSeiten`, wenn Kontakt, Fuge oder
+    Flaechenlager (``was`` nennt die Stelle mit Namen) mit diesen Knoten an
+    einer Elementseite angreifen, deren Seitenmitten danach falsch rechnen.
+
+    Seit dem 08.10.2026 (Paket Q1) sind das nur noch drei Faelle:
+
+    * ein Knoten haengt an einer quadratischen **Schale** (shell6, shell8) -
+      die Bindung der Seitenmitten wirkt nur in Volumenelementen (Bauplan,
+      Entscheidung E3);
+    * ein Knoten ist selbst eine Seitenmitte eines Volumenelements, die weder
+      gebunden ist (assemble.mittelknoten_bindungen) noch auf einer Seite
+      liegt, deren Ecken alle unter ``knoten`` sind (die dann gebunden wird);
+    * solange das Trennen die Mitten nicht mittrennt (SEITENMITTEN_GETRENNT):
+      eine Seite, deren Ecken alle unter ``knoten`` sind, hat eine
+      ungebundene Mitte, die Elemente zweier Bauteile benutzen - nach dem
+      Trennen der Ecken bliebe sie beiden gemeinsam, und eine Fuge ohne
+      Zugfestigkeit truege Zug (22.09.2026: 53 %).
+
+    Bis zum 08.10.2026 warf sie fuer jeden Knoten an einem quadratischen
+    Element. ``q`` (quadratische_knoten) ist der Vorfilter; leer heisst: es
+    gibt keine quadratischen Elemente, oder die Sperre ist abgeschaltet."""
     q = quadratische_knoten(model) if q is None else q
     if not q:
         return
-    treffer = sorted({q[int(n)] for n in knoten if int(n) in q})
-    if not treffer:
+    kn = sorted({int(n) for n in knoten if int(n) in q})
+    if not kn:
         return
-    typen = sorted({model.elements[i].typ for i in treffer})
+    # 1) quadratische Schalen
+    schalen = _schalenknoten(model)
+    treffer = sorted({schalen[n] for n in kn if n in schalen})
+    if treffer:
+        raise QuadratischeSeiten(
+            f"{was}: liegt an {len(treffer)} quadratischen Schalenelementen "
+            f"({', '.join(sorted({model.elements[i].typ for i in treffer}))}), z. B. Element "
+            f"{', '.join(str(i) for i in treffer[:8])}. Kontakt, Fugen und Flächenlager nehmen "
+            "von einer Schalenseite nur die Ecken; die Seitenmitten blieben verbunden bzw. "
+            "ungelagert, und das Ergebnis wäre still falsch. An Volumen (tet10, hex20, pent15) "
+            "sind die Seitenmitten gebunden, an quadratischen Schalen noch nicht. Abhilfe: "
+            "diese Schalen linear vernetzen (Elemente: Entwurf).")
+    from . import assemble as asm
+    if not asm.KONTAKTSEITEN_BINDEN:
+        return                       # Ruecknahmeprobe: ohne Bindung rechnen, wie vorher ohne Sperre
+    bloecke = asm._volumen_bloecke(model, asm.netz_schluessel(model))
+    if not any(t in asm.QUADRATISCHE_VOLUMEN for t in bloecke):
+        return
+    alle = np.asarray([int(n) for n in knoten], np.int64)
+    maske_alle = asm._knotenfeld(model.nn, alle)
+    gebunden = None
+    # 2) Seitenmitten unter den Knoten, die nicht gebunden werden
+    mitten = _seitenmitten_maske(model, bloecke)
+    eigene = [n for n in kn if mitten[n]]
+    if eigene:
+        M, _A, _B, _E = asm.seitenmitten_an(model, maske_alle, nur_rand=False, bloecke=bloecke)
+        bedeckt = set(M.tolist())
+        offen = [n for n in eigene if n not in bedeckt]
+        if offen:
+            gebunden = {m for m, _a, _b in asm.mittelknoten_bindungen(model)}
+            offen = [n for n in offen if n not in gebunden]
+        if offen:
+            raise QuadratischeSeiten(
+                f"{was}: {len(offen)} Seitenmitten quadratischer Volumenelemente greifen ohne ihre "
+                f"Ecken an (z. B. Knoten {', '.join(str(n) for n in offen[:8])}). Gebunden werden nur "
+                "die Mitten einer Seite, deren Ecken alle zum Kontakt bzw. Lager gehören; diese Mitten "
+                "rechneten still falsch. Abhilfe: die ganze Elementseite angeben oder linear vernetzen "
+                "(Elemente: Entwurf).")
+    # 3) Seitenmitten, die ein Trennen der Ecken beiden Bauteilen liesse
+    if SEITENMITTEN_GETRENNT:
+        return
+    M, _A, _B, E_ = asm.seitenmitten_an(model, maske_alle, nur_rand=False, bloecke=bloecke)
+    frei = ~maske_alle[M] if M.size else np.zeros(0, bool)
+    if not frei.any():
+        return
+    kand = np.unique(M[frei])
+    if gebunden is None:
+        gebunden = {m for m, _a, _b in asm.mittelknoten_bindungen(model)}
+    kand = np.asarray([n for n in kand.tolist() if n not in gebunden], np.int64)
+    offen = sorted(_mehrere_bauteile(model, kand, bloecke))
+    if offen:
+        offen_m = set(offen)
+        el = sorted({int(e) for m, e in zip(M.tolist(), E_.tolist()) if m in offen_m})
+        typen = sorted({model.elements[i].typ for i in el})
+        raise QuadratischeSeiten(
+            f"{was}: liegt an {len(el)} quadratischen Elementen ({', '.join(typen)}), z. B. Element "
+            f"{', '.join(str(i) for i in el[:8])}. Getrennt werden heute nur die Ecken; "
+            f"{len(offen)} Seitenmitten blieben beiden Bauteilen gemeinsam, und eine Fuge ohne "
+            "Zugfestigkeit trüge Zug (gemessen 22.09.2026: 53 %). Abhilfe bis dahin: diese Körper "
+            "linear vernetzen (Elemente: Entwurf).")
+
+
+def _mehrere_bauteile(model: Model, knoten, bloecke: dict) -> set:
+    """Die Knoten aus ``knoten``, die Volumenelemente mehrerer Bauteile
+    (Gruppen) benutzen - blockweise ueber die Volumenbloecke."""
+    knoten = np.asarray(knoten, np.int64)
+    if not knoten.size:
+        return set()
+    ziel = np.zeros(model.nn, bool)
+    ziel[knoten] = True
+    paare = []
+    for _typ, (idx, E) in bloecke.items():
+        z, _s = np.nonzero(ziel[E])
+        if z.size:
+            paare.append((E[z, _s], idx[z]))
+    if not paare:
+        return set()
+    K = np.concatenate([p[0] for p in paare])
+    El = np.concatenate([p[1] for p in paare])
+    grp: dict = {}
+    for n, e in zip(K.tolist(), El.tolist()):
+        grp.setdefault(n, set()).add(str(getattr(model.elements[e], "group", "") or ""))
+    return {n for n, g in grp.items() if len(g) > 1}
+
+
+def mittenbindung_sperren(model: Model, konflikt: dict, belegt: dict) -> None:
+    """Wirft :class:`QuadratischeSeiten` fuer Kontaktseiten, deren Mitten
+    nicht gebunden werden koennen (assemble._kontaktseiten_binden):
+    ``konflikt`` {Mitte: [(a, b), (c, d)]} - die Mitte gehoerte zwei Seiten
+    mit verschiedenen Ecken, sie ist ueber eine getrennte Fuge beiden
+    Bauteilen gemeinsam geblieben; ``belegt`` {Mitte: Text} - die Mitte
+    traegt selbst ein Lager, eine Feder, eine Kopplung oder einen
+    Starrkoerper, das an einer gebundenen Mitte verloren ginge. Mit
+    abgeschalteter Sperre (quadratische_knoten leer) bleiben solche Mitten
+    still ungebunden - wie vor dem 08.10.2026."""
+    if not (konflikt or belegt) or not quadratische_knoten(model):
+        return
+    teile = []
+    if konflikt:
+        namen = set()
+        ecken = {n for paare in konflikt.values() for ab in paare for n in ab}
+        for name, paare in (getattr(model, "getrennte_knoten", None) or {}).items():
+            if any(int(a) in ecken or int(b) in ecken for a, b in paare):
+                namen.add(str(name))
+        m0, (ab, cd) = next(iter(sorted(konflikt.items())))
+        teile.append(
+            f"{len(konflikt)} Seitenmitten gehören zwei Seiten mit verschiedenen Ecken (z. B. Knoten "
+            f"{m0}: Kante {ab[0]}–{ab[1]} und {cd[0]}–{cd[1]}) – sie sind über eine getrennte Fuge "
+            + (f"({', '.join(sorted(namen))}) " if namen else "")
+            + "beiden Bauteilen gemeinsam geblieben, und die Fuge trüge dort Zug")
+    if belegt:
+        m0, text = next(iter(sorted(belegt.items())))
+        teile.append(
+            f"{len(belegt)} Seitenmitten von Kontakt- oder Lagerseiten tragen selbst ein Lager, eine "
+            f"Feder, eine Kopplung oder einen Starrkörper (z. B. Knoten {m0}: {text}) – gebunden ginge "
+            "es verloren, ungebunden rechnete die Seite falsch")
     raise QuadratischeSeiten(
-        f"{was}: liegt an {len(treffer)} quadratischen Elementen ({', '.join(typen)}), "
-        f"z. B. Element {', '.join(str(i) for i in treffer[:8])}. Kontakt, Fugen und "
-        "Flächenlager nehmen heute nur die Eckknoten einer Elementseite; die Seitenmitten "
-        "blieben verbunden bzw. ungelagert, und das Ergebnis wäre still falsch (gemessen: "
-        "eine getrennte Fuge trug 53 % Zug, ein starres Flächenlager ließ 41 % mehr "
-        "Setzung zu). Abhilfe bis dahin: diese Körper linear vernetzen "
-        "(Netzeinstellungen → Elementansatz linear).")
+        "Seitenmitten quadratischer Elemente (tet10, hex20, pent15) an Kontakt- und Lagerseiten: "
+        + "; ".join(teile) + ". Abhilfe: das Lager an die Ecken legen bzw. die Fuge neu trennen, oder "
+        "diese Körper linear vernetzen (Elemente: Entwurf).")
 
 
 def formschluss(model: Model, facetten: list) -> tuple:
@@ -676,6 +879,31 @@ def kontaktfuge_zuruecknehmen(model: Model, kb) -> int:
     return vorher - (len(model.gap_elements) + len(model.kopplungen) + len(model.contact_pairs))
 
 
+def seitenmitten(model: Model, seiten: list) -> set:
+    """Die Seitenmitten (Kantenmitten) der Fugenseiten.
+
+    ``seiten`` sind Eintraege von :func:`_dreiecke_der_fuge` - Element,
+    **Eckknoten** der Seite, Normale. An tet10, hex20 und pent15 hat dieselbe
+    Seite weitere Knoten auf ihren Kanten; sie stehen im Element hinter den
+    Ecken (``solid.FLAECHEN`` gegen ``solid.FLAECHEN_ECKEN``). Die Seite wird
+    ueber ihre Ecken (gleiche Reihenfolge wie in ``FLAECHEN_ECKEN``)
+    wiedergefunden. Lineare Elemente und Schalen haben keine: leere Menge.
+    """
+    from .elements import solid as sl
+    quad = _quadratische_volumentypen()
+    out: set = set()
+    for e, nd, _n in seiten:
+        el = model.elements[e]
+        if el.typ not in quad:                  # tet4, hex8, pent6, pyr5, Schalen
+            continue
+        nd = tuple(int(x) for x in nd)
+        for f, fe in zip(sl.FLAECHEN[el.typ], sl.FLAECHEN_ECKEN[el.typ]):
+            if tuple(int(el.nodes[c]) for c in fe) == nd:
+                out.update(int(el.nodes[c]) for c in f[len(fe):])
+                break
+    return out
+
+
 def gruppen_je_knoten(model: Model) -> dict:
     """{Knoten: Menge der Bauteile, deren Elemente ihn benutzen}.
 
@@ -695,8 +923,9 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
                            knotengruppen: dict = None, cache: dict = None) -> dict:
     """Eine einzelne Kontaktbedingung im Netz umsetzen.
 
-    Rueckgabe ein Bericht: verdoppelte Knoten, gesetzte Spaltelemente und
-    Kopplungen, sowie der Grund, wenn nichts geschehen ist.
+    Rueckgabe ein Bericht: verdoppelte Knoten (``knoten``: die Ecken; an
+    quadratischen Elementen dazu ``mitten``: die Seitenmitten), gesetzte
+    Spaltelemente und Kopplungen, sowie der Grund, wenn nichts geschehen ist.
     """
     from .importers import _common as C
     bericht = {"knoten": 0, "spalt": 0, "kopplung": 0,
@@ -782,6 +1011,14 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     fugenknoten = {n for _e, nd, _n in seite_b for n in nd}
     gemeinsam = sorted(k for k in fugenknoten
                        if knotengruppen.get(k, set()) - geloest)
+    # Die Seitenmitten quadratischer Elemente (tet10, hex20, pent15) gehoeren
+    # zur Fuge wie die Ecken: eine Mitte, die auch ein Element ausserhalb des
+    # geloesten Bauteils benutzt, haelt beide Seiten zusammen. Bis zum
+    # 07.10.2026 blieben sie gemeinsam - eine Fuge ohne Zugfestigkeit trug mit
+    # tet10 525,8 kN von 1000 kN Zug. ``passend`` bleibt eine Frage der Ecken.
+    mitten = seitenmitten(model, seite_b)
+    gemeinsame_mitten = sorted(k for k in mitten
+                               if knotengruppen.get(k, set()) - geloest)
     #: Passen die Netze Knoten fuer Knoten zusammen? Dann - und nur dann - ist
     #: **jeder** Fugenknoten gemeinsam, und die Fuge laesst sich Knoten gegen
     #: Knoten anschreiben. Sonst traegt ein Kontaktpaar die Flaeche.
@@ -853,38 +1090,49 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     neu: dict = {}
     for k in gemeinsam:
         neu[k] = int(model.add_node(*model.nodes[k]))
+    # Die Mitten danach: die Nummern der Ecken bleiben, wie sie ohne Mitten waren.
+    # Jede Seite bekommt eigene Mitten an ihren eigenen Ecken (Kante a-b des
+    # bleibenden Bauteils, Kante a'-b' des geloesten) - nur so lassen sich die
+    # Mitten spaeter an ihre Ecken binden. Die Lage bleibt die der alten Mitte.
+    neu_mitten: dict = {}
+    for k in gemeinsame_mitten:
+        neu_mitten[k] = int(model.add_node(*model.nodes[k]))
+    alle_neu = {**neu, **neu_mitten}
     # Alle Elemente der geloesten Seite umhaengen - nicht nur die an der Fuge:
     # ein Element, das mit einer Kante an der Fuge liegt, gehoert genauso dazu.
     an_neu: dict = {}               # neuer Knoten -> Elemente, die ihn jetzt benutzen
-    if neu:
-        neue = set(neu.values())
+    if alle_neu:
+        neue = set(alle_neu.values())
         for i, el in enumerate(model.elements):
             if str(getattr(el, "group", "") or "") not in geloest:
                 continue
-            el.nodes = [neu.get(int(n), int(n)) for n in el.nodes]
+            el.nodes = [alle_neu.get(int(n), int(n)) for n in el.nodes]
             for n in el.nodes:
                 if n in neue:
                     an_neu.setdefault(n, set()).add(i)
     # Die Knotenkarte nachfuehren, damit die naechste Fuge richtig sieht,
     # was noch zusammenhaengt.
-    for k, n in neu.items():
+    for k, n in alle_neu.items():
         knotengruppen[n] = set(geloest)
         knotengruppen[k] = knotengruppen.get(k, set()) - geloest
-    if neu:
+    if alle_neu:
         _randseiten_vergessen(cache, geloest)
-    _lager_mitnehmen(model, neu, log)
+    _lager_mitnehmen(model, alle_neu, log)
     _gegenfacetten_mitnehmen(model, neu, an_neu, log)
     bericht["knoten"] = len(neu)
+    if neu_mitten:
+        bericht["mitten"] = len(neu_mitten)
     bericht["mitgeloest"] = sorted(mit)
     if mit and log is not None:
         C.say(log, f"  {kb.name}: angeschweißte Nachbarn lösen sich mit: "
                    + ", ".join(sorted(mit)) + " (gemeinsame Flächen ohne Kontaktbedingung)")
-    if neu:
+    if alle_neu:
         # Fuer die Abnahme merken, welche Knoten getrennt wurden: danach darf
         # kein Element beide Seiten benutzen, sonst ueberbrueckt es genau die
         # Trennung, die hier entstanden ist, und die Fuge wirkt dort nicht.
+        # Die Seitenmitten stehen mit darin (seit 08.10.2026, Q2).
         alt = model.getrennte_knoten.setdefault(str(kb.name), [])
-        alt.extend([int(k), int(n)] for k, n in neu.items())
+        alt.extend([int(k), int(n)] for k, n in alle_neu.items())
 
     if not passend:
         # Nur der gemeinsame Rand war verschweisst; die Flaeche dazwischen
@@ -939,7 +1187,8 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     kb.ausgefuehrt = True
     if log is not None:
         C.say(log, f"Kontaktbedingung {kb.name}: {bericht['knoten']} Knoten "
-                   f"verdoppelt, {bericht['spalt']} Spaltelemente, "
+                   + (f"und {len(neu_mitten)} Seitenmitten " if neu_mitten else "")
+                   + f"verdoppelt, {bericht['spalt']} Spaltelemente, "
                    f"{bericht['kopplung']} Kopplungen "
                    f"(gelöst: {', '.join(sorted(kern))}"
                    + (f", samt angeschweißter {', '.join(sorted(mit))}" if mit else "") + ")")
@@ -1318,7 +1567,9 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
         art = ("Verbund" if zug and haften else "ohne Trennung" if zug
                else "haftend" if haften else "")
         C.say(log, f"Kontaktbedingung {kb.name}: "
-                   + (f"{bericht['knoten']} Randknoten getrennt, " if bericht["knoten"] else "")
+                   + (f"{bericht['knoten']} Randknoten"
+                      + (f" und {bericht['mitten']} Seitenmitten" if bericht.get("mitten") else "")
+                      + " getrennt, " if bericht["knoten"] else "")
                    + f"Kontaktpaar mit {len(slave)} Knoten gegen {len(master)} Gegenfacetten "
                    f"({A_zu * 1e4:.0f} von {A_alle * 1e4:.0f} cm² der Kontaktseite, "
                    f"Suchradius {weite * 1e3:.0f} mm, Spalt "
@@ -1350,7 +1601,7 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
     man nicht ausfuehren konnte.
     """
     from .importers import _common as C
-    gesamt = {"fugen": 0, "knoten": 0, "spalt": 0, "kopplung": 0,
+    gesamt = {"fugen": 0, "knoten": 0, "mitten": 0, "spalt": 0, "kopplung": 0,
               "kontaktpaar": 0, "offen": 0}
     gruende: dict = {}
     offene = [kb for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values()
@@ -1371,7 +1622,7 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
             zeiten.append((dt, kb.name, int(b.get("knoten", 0) or 0)))
         if kb.ausgefuehrt and not b["grund"]:
             gesamt["fugen"] += 1
-            for x in ("knoten", "spalt", "kopplung", "kontaktpaar"):
+            for x in ("knoten", "mitten", "spalt", "kopplung", "kontaktpaar"):
                 gesamt[x] += b.get(x, 0)
         else:
             gesamt["offen"] += 1
@@ -1386,7 +1637,8 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
         if gesamt["fugen"]:
             C.say(log, f"{gesamt['fugen']} Kontaktfugen ausgeführt: "
                        f"{gesamt['knoten']} Fugenknoten, "
-                       f"{gesamt['spalt']} Spaltelemente, "
+                       + (f"{gesamt['mitten']} Seitenmitten, " if gesamt["mitten"] else "")
+                       + f"{gesamt['spalt']} Spaltelemente, "
                        f"{gesamt['kopplung']} Kopplungen, "
                        f"{gesamt['kontaktpaar']} Kontaktpaare")
         for grund, n in sorted(gruende.items()):

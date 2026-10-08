@@ -365,10 +365,10 @@ def test_knicken_mit_iterativem_loeser():
 
         # Scheitert die direkte Zerlegung (zu wenig Speicher, ...), rechnet
         # es iterativ weiter statt abzubrechen - und sagt es
-        def ohne_direkt(self, K, backend=None):
+        def ohne_direkt(self, K, backend=None, **kw):       # **kw: progress (B3, 08.10.2026)
             if backend is not None:
                 raise RuntimeError("Probe: der Speicher reichte für die Faktorisierung nicht")
-            orig_init(self, K, backend)
+            orig_init(self, K, backend, **kw)
 
         solver.LinearSolver.__init__ = ohne_direkt
         zaehler.clear()

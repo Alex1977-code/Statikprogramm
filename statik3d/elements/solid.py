@@ -1652,25 +1652,42 @@ def _elementknoten(model, typ, idx):
 
 
 def _binde_mittelknoten(model, typ, kn, g):
-    """Gebundene Mittelknoten (Uebergang an ein lineares Element, B5): ihr
-    Gradient geht je zur Haelfte auf die beiden Ecken ihrer Kante, und sie
-    selbst tragen nichts mehr - das ist u_m = (u_a + u_b)/2, exakt, in jeder
-    Rechnung, die den Operator liest (Steifigkeit, Spannung, Plastizitaet).
-    g (P,n,k,3) wird geaendert."""
+    """Gebundene Mittelknoten (Uebergang an ein lineares Element, B5, und
+    Kontaktseiten, Q1 08.10.2026): ihr Gradient geht je zur Haelfte auf die
+    beiden Ecken ihrer Kante, und sie selbst tragen nichts mehr - das ist
+    u_m = (u_a + u_b)/2, exakt, in jeder Rechnung, die den Operator liest
+    (Steifigkeit, Spannung, Plastizitaet). g (P,n,k,3) wird geaendert.
+
+    Blockweise ueber alle Elemente (am Drehlager mit Mittel 617 794 tet10 und
+    rund 158 000 gebundenen Kontaktmitten); je Element in derselben Reihenfolge
+    wie die fruehere Schleife ueber die Knoten, also mit denselben Summen."""
     from .. import assemble as asm
-    bind = {m: (a, b) for m, a, b in asm.mittelknoten_bindungen(model)}
-    if not bind:
+    bind = asm.mittelknoten_bindungen(model)
+    if not bind or not kn.size:
         return g
-    for e_pos in range(kn.shape[0]):
-        zeile = [int(x) for x in kn[e_pos]]
-        for l, knoten in enumerate(zeile):
-            ab = bind.get(knoten)
-            if ab is None or ab[0] not in zeile or ab[1] not in zeile:
-                continue
-            la, lb = zeile.index(ab[0]), zeile.index(ab[1])
-            g[:, e_pos, la, :] += 0.5 * g[:, e_pos, l, :]
-            g[:, e_pos, lb, :] += 0.5 * g[:, e_pos, l, :]
-            g[:, e_pos, l, :] = 0.0
+    t = np.asarray(bind, np.int64)
+    n_max = int(max(int(t.max()), int(kn.max()))) + 1
+    zeile_von = np.full(n_max, -1, np.int64)
+    zeile_von[t[:, 0]] = np.arange(len(t))
+    pos = zeile_von[kn]                                 # (n, k): Bindung je Elementknoten
+    e_pos, l = np.nonzero(pos >= 0)
+    if not e_pos.size:
+        return g
+    a = t[pos[e_pos, l], 1]
+    b = t[pos[e_pos, l], 2]
+    treffer_a = kn[e_pos] == a[:, None]
+    treffer_b = kn[e_pos] == b[:, None]
+    gut = treffer_a.any(axis=1) & treffer_b.any(axis=1)   # beide Ecken im Element
+    e_pos, l = e_pos[gut], l[gut]
+    la = treffer_a[gut].argmax(axis=1)
+    lb = treffer_b[gut].argmax(axis=1)
+    halb = 0.5 * g[:, e_pos, l, :]
+    # np.add.at addiert der Reihe nach - je Element und Mitte erst a, dann b,
+    # wie die fruehere Schleife; Mitten sind nie Ecken, halb bleibt also gueltig
+    ziel_e = np.repeat(e_pos, 2)
+    ziel_k = np.column_stack([la, lb]).ravel()
+    np.add.at(g, (slice(None), ziel_e, ziel_k, slice(None)), np.repeat(halb, 2, axis=1))
+    g[:, e_pos, l, :] = 0.0
     return g
 
 
