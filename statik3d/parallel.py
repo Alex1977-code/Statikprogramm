@@ -295,6 +295,47 @@ def arbeiter_nach_speicher(w: int, frei: int = None, eigen: int = None) -> int:
     return min(int(w), hoechstens)
 
 
+#: **Speicher vor einer grossen Zerlegung** (Befund B3 der Drehlager-Abnahme,
+#: 08.10.2026). Die Bemessung oben gilt beim *Start* des Pools; die Arbeiter
+#: halten danach die ganze Rechnung ueber ihren Speicher, auch waehrend PARDISO
+#: faktorisiert (Drehlager Mittel: 22 Arbeiter, 37 GiB Arbeitssatz, 69 GiB
+#: Commit; frei blieben vor der ersten Zerlegung 44 GiB Commit, sie brauchte
+#: rund 45). Darum fragt der Loeser vor der Zahlenphase platz_fuer_zerlegung.
+#:
+#: Verlangt wird ``ZERLEGUNG_ZUSCHLAG * iparm(17) + ZERLEGUNG_RESERVE``.
+#: iparm(17) ist der Speicher der Zahlenphase; die Analyse (iparm(15), die
+#: Spitze davor) ist zu dem Zeitpunkt schon vorbei, iparm(16) schon belegt.
+#: Gemessen an hex8-Wuerfeln mit 45 000 bis 148 000 Gleichungen (b3_werk/
+#: kalibrierung.py): die Zahlenphase belegt 1,01 bis 1,00 mal iparm(17), die
+#: Spitze des Prozesses 1,09 bis 1,12 mal max(iparm 15; 16 + 17); am Drehlager
+#: (Mittel, Hauptprozess 15 -> 60,6 GiB Commit) 1,16 mal die Voraussage von
+#: 39,2 GiB. Der Zuschlag deckt die Python-Felder (int32-Indizes der Matrix)
+#: und eine Voraussage, die nach der Zahlenphase kleiner ausfaellt als vorher.
+ZERLEGUNG_ZUSCHLAG = 1.15
+#: Feste Reserve fuer alles Uebrige im Hauptprozess waehrend der Zahlenphase
+ZERLEGUNG_RESERVE = 1 << 30
+#: Ein Arbeiter belegt mehr als der Hauptprozess beim Start des Pools: am
+#: Drehlager (Mittel) 3,2 GB Commit gegen 2,7 GB im Hauptprozess
+#: (statik3d/STAND Q4, Abschnitt 1) - fuer das Wiederoeffnen des Pools
+ARBEITER_ZUSCHLAG = 1.2
+
+
+def groesse_text(byte: float) -> str:
+    """Eine Speichergroesse lesbar: unter 1 GiB in MiB, sonst in GiB (deutsches Komma)."""
+    byte = float(byte)
+    if abs(byte) < 2 ** 30:
+        return f"{byte / 2 ** 20:.0f} MiB"
+    return f"{byte / 2 ** 30:.1f}".replace(".", ",") + " GiB"
+
+
+def _hart(frei_arbeitsspeicher: int, frei_commit: int) -> int:
+    """Die Grenze, an der eine Zuweisung scheitert: unter Windows der freie
+    Commit-Speicher, sonst der freie Arbeitsspeicher. Unter Linux ist
+    ``CommitLimit - Committed_AS`` (speicher_frei) bei Ueberbuchung keine harte
+    Grenze; gemessen ist das nicht (nur die Windows-exe ist testbar)."""
+    return frei_commit if platform.system() == "Windows" else frei_arbeitsspeicher
+
+
 def _context():
     if platform.system() == "Linux":
         return mp.get_context("fork")
@@ -427,6 +468,16 @@ class Arbeiter:
         self.aufrufe = 0
         self.geteilt = None      # der Block, den ein verschachtelter Aufruf mitbenutzt
         self.begrenzung = None   # (Vorgabe, wirksam), wenn der Speicher den Pool bemessen hat
+        #: Ein Pool, der fuer eine Zerlegung geschlossen wurde (pausieren) und fuer
+        #: die naechste Elementschleife wieder aufgeht (fortsetzen). ``w_soll`` ist
+        #: die Groesse nach der Bemessung beim Start, ``je_arbeiter`` der
+        #: Hauptprozess damals (Byte), ``zerlegung_noetig`` der Bedarf der letzten
+        #: Zerlegung: so viel muss beim Wiederoeffnen frei bleiben.
+        self.pausiert = False
+        self.w_soll = 0
+        self.je_arbeiter = 0
+        self.zerlegung_noetig = 0
+        self._zu_gemeldet = False
 
     def __enter__(self):
         global _AKTIV
@@ -442,10 +493,12 @@ class Arbeiter:
         if self.w > 1 and n >= _settings.min_elements:
             # Der Pool bemisst sich nach dem freien Speicher (arbeiter_nach_speicher)
             vorgabe = self.w
-            self.w = arbeiter_nach_speicher(self.w)
+            eigen = speicher_eigen()
+            self.w = arbeiter_nach_speicher(self.w, eigen=eigen)
             self.begrenzung = (vorgabe, self.w)
+            self.w_soll, self.je_arbeiter = self.w, eigen
             if self.w < vorgabe:
-                frei, eigen = speicher_frei()[1], speicher_eigen()
+                frei = speicher_frei()[1]
                 _melden(f"[parallel] Pool: {self.w} statt {vorgabe} Arbeiter - freier Commit-Speicher "
                         f"{frei / 2 ** 30:.1f} GB, je Arbeiter wie der Hauptprozess "
                         f"{eigen / 2 ** 30:.2f} GB\n")
@@ -480,6 +533,64 @@ class Arbeiter:
                 os.remove(pfad)
             except OSError:
                 pass
+
+    def pausieren(self, noetig: int = 0) -> int:
+        """Den Pool schliessen, damit seine Arbeiter ihren Speicher hergeben
+        (Befund B3): vor einer grossen Zerlegung, die sonst am Speicher der
+        untaetigen Arbeiter scheitert. Die Modelldatei bleibt, ``fortsetzen``
+        oeffnet den Pool fuer die naechste Elementschleife wieder. ``noetig`` ist
+        der Bedarf der Zerlegung in Byte (so viel soll beim Wiederoeffnen frei
+        bleiben). Rueckgabe: wie viele Arbeiter es waren (0, wenn keiner offen war)."""
+        pool, self.pool = self.pool, None
+        if pool is None:
+            return 0
+        try:
+            pool.shutdown(wait=True, cancel_futures=True)
+        except Exception:               # noqa: BLE001
+            pass
+        self.pausiert = True
+        self._zu_gemeldet = False
+        self.zerlegung_noetig = int(noetig) or self.zerlegung_noetig
+        return int(self.w)
+
+    def _moegliche_arbeiter(self) -> int:
+        """Wie viele Arbeiter jetzt wieder hineinpassen, ohne der naechsten
+        Zerlegung den Platz zu nehmen: der halbe freie Speicher abzueglich ihres
+        Bedarfs, je Arbeiter so viel wie beim Start gemessen mal ARBEITER_ZUSCHLAG."""
+        phys, commit = speicher_frei()
+        if (phys <= 0 and commit <= 0) or self.je_arbeiter <= 0:
+            return int(self.w_soll)                     # keine Auskunft: wie beim Start
+        rest = min(_hart(phys, commit), phys) - self.zerlegung_noetig
+        je = max(1, int(self.je_arbeiter * ARBEITER_ZUSCHLAG))
+        return min(int(self.w_soll), int(POOL_SPEICHER_ANTEIL * max(0, rest) / je))
+
+    def fortsetzen(self) -> bool:
+        """Einen fuer eine Zerlegung geschlossenen Pool wieder oeffnen, soweit der
+        Speicher es erlaubt (weniger als zwei Arbeiter lohnen nicht: die
+        Elementschleife laeuft dann seriell). Rueckgabe: ist ein Pool offen."""
+        if self.pool is not None:
+            return True
+        if not self.pausiert or not self.pfad:
+            return False
+        k = self._moegliche_arbeiter()
+        if k < 2:
+            if not self._zu_gemeldet:
+                self._zu_gemeldet = True
+                _melden("[parallel] Pool bleibt geschlossen - fuer die Arbeiter und die naechste "
+                        "Zerlegung reicht der freie Speicher nicht; die Elementschleifen rechnen "
+                        "seriell\n")
+            return False
+        try:
+            self.w = k
+            self.pool = ProcessPoolExecutor(max_workers=k, mp_context=_context(),
+                                            initializer=_init_worker_datei, initargs=(self.pfad,))
+        except Exception as fehler:      # noqa: BLE001
+            _melden(f"[parallel] Pool laesst sich nicht wieder oeffnen ({fehler}), rechne seriell\n")
+            self.pool = None
+        self.pausiert = False
+        if self.pool is not None:
+            _melden(f"[parallel] Pool wieder offen: {k} statt {self.w_soll} Arbeiter\n")
+        return self.pool is not None
 
     def map(self, func: Callable, chunks: list, extra) -> list:
         """Die Bloecke ueber den stehenden Pool; extra einmal je Arbeiter."""
@@ -545,6 +656,86 @@ def arbeiter(model, workers: int = None) -> "Arbeiter":
     return Arbeiter(model, workers)
 
 
+def _offene_pools() -> list:
+    """Alle stehenden Pools dieses Prozesses, die gerade offen sind (der
+    innerste Block zuerst)."""
+    aus, a = [], _AKTIV
+    while a is not None:
+        if a.pool is not None:
+            aus.append(a)
+        a = a.vorher
+    return aus
+
+
+@dataclass
+class Platz:
+    """Was platz_fuer_zerlegung gefunden und getan hat."""
+    noetig: int = 0                  # Byte, mit Zuschlag und Reserve
+    spitze: int = 0                  # Spitze der PARDISO-Voraussage insgesamt (nur zur Anzeige)
+    bekannt: bool = True             # False: das System gab keine Auskunft, nichts geprueft
+    frei_commit: int = 0             # zuletzt gemessen (nach dem Schliessen)
+    frei_arbeitsspeicher: int = 0
+    vorher_commit: int = 0
+    vorher_arbeitsspeicher: int = 0
+    arbeiter_geschlossen: int = 0
+    reicht: bool = True              # die harte Grenze (Windows: Commit) deckt den Bedarf
+    arbeitsspeicher_reicht: bool = True
+    hinweis: str = ""                # Protokollzeile; leer, wenn nichts geschah und nichts fehlt
+
+
+def platz_fuer_zerlegung(zahlenphase: int, spitze: int = 0) -> Platz:
+    """Vor der Zahlenphase von PARDISO: reicht der freie Speicher? Wenn nicht,
+    werden die offenen Pools geschlossen (ihre Arbeiter halten den Speicher
+    untaetig), und es wird erneut gemessen. ``zahlenphase`` ist iparm(17) in
+    Byte, ``spitze`` max(iparm 15; 16 + 17) - nur fuer den Text.
+
+    Reicht es danach nicht, ist ``reicht`` False und der Aufrufer bricht mit
+    klarer Meldung ab. Reicht nur der Arbeitsspeicher nicht, der Commit aber
+    schon, laeuft die Zerlegung (Windows lagert aus - langsam, aber ohne
+    Absturz); ``hinweis`` sagt es. Ohne Auskunft des Systems (beide Werte 0)
+    wird nichts getan."""
+    noetig = int(ZERLEGUNG_ZUSCHLAG * zahlenphase) + int(ZERLEGUNG_RESERVE)
+    p = Platz(noetig=noetig, spitze=int(spitze))
+    phys, commit = speicher_frei()
+    if phys <= 0 and commit <= 0:
+        p.bekannt = False
+        return p
+    p.vorher_arbeitsspeicher, p.vorher_commit = phys, commit
+
+    def knapp(ph, co):
+        return _hart(ph, co) < noetig, ph < noetig
+
+    hart, weich = knapp(phys, commit)
+    if hart or weich:
+        for a in _offene_pools():
+            p.arbeiter_geschlossen += a.pausieren(noetig)
+        if p.arbeiter_geschlossen:
+            phys, commit = speicher_frei()
+            if phys <= 0 and commit <= 0:       # die Auskunft ist ausgefallen: wie vorher
+                phys, commit = p.vorher_arbeitsspeicher, p.vorher_commit
+            hart, weich = knapp(phys, commit)
+    p.frei_arbeitsspeicher, p.frei_commit = phys, commit
+    p.reicht, p.arbeitsspeicher_reicht = not hart, not weich
+    teile = []
+    if p.arbeiter_geschlossen:
+        teile.append(
+            f"Pool: {p.arbeiter_geschlossen} Arbeiter vor der Zerlegung geschlossen - sie hielten "
+            f"untätig Speicher; PARDISO braucht für die Zahlenphase voraussichtlich noch "
+            f"{groesse_text(zahlenphase)} (Spitze insgesamt {groesse_text(spitze)}, verlangt mit Zuschlag "
+            f"{groesse_text(noetig)}). Frei waren {groesse_text(p.vorher_commit)} Commit und "
+            f"{groesse_text(p.vorher_arbeitsspeicher)} Arbeitsspeicher, jetzt {groesse_text(commit)} und "
+            f"{groesse_text(phys)}. Für die Nachläufe öffnet das Programm den Pool wieder, soweit der "
+            "Speicher reicht.")
+    if p.reicht and not p.arbeitsspeicher_reicht:
+        teile.append(f"Achtung: der freie Arbeitsspeicher ({groesse_text(phys)}) ist kleiner als der Bedarf der "
+                     f"Zerlegung ({groesse_text(noetig)}); Windows lagert aus, die Zerlegung wird deutlich "
+                     "langsamer.")
+    p.hinweis = " ".join(teile)
+    if p.arbeiter_geschlossen and p.hinweis:
+        _melden("[parallel] " + p.hinweis + "\n")
+    return p
+
+
 def map_elements(func: Callable, model, indices: list[int], workers: int = None,
                  min_elements: int = None, extra=None) -> list:
     """func(model, [elementindizes]) bzw. func(model, idx, extra) -> Liste;
@@ -562,6 +753,8 @@ def map_elements(func: Callable, model, indices: list[int], workers: int = None,
     chunk = max(_settings.chunk_elements, n // (4 * w) + 1)
     chunks = [list(indices[i:i + chunk]) for i in range(0, n, chunk)]
     akt = _AKTIV
+    if akt is not None and akt.model is model:
+        akt.fortsetzen()         # ein fuer eine Zerlegung geschlossener Pool, soweit der Speicher reicht
     if akt is not None and akt.model is model and akt.pool is not None:
         try:
             return akt.map(func, chunks, extra)

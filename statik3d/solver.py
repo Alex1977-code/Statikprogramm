@@ -586,6 +586,20 @@ class LoeserAusfall(Exception):
     """
 
 
+class SpeicherReichtNicht(LoeserAusfall):
+    """Der freie Speicher reicht fuer die Zerlegung nicht - auch nicht, nachdem
+    der Rechenpool seinen Speicher hergegeben hat (Befund B3, 08.10.2026).
+
+    PARDISO sagt den Speicher der Zahlenphase nach der Analyse voraus (iparm
+    15, 16, 17); der Loeser vergleicht ihn mit dem freien Speicher, **bevor** er
+    faktorisiert (:func:`parallel.platz_fuer_zerlegung`). Ohne die Pruefung
+    scheiterte die Zerlegung am Drehlager (Mittel) an „kein Speicher" (PARDISO
+    -2) oder stuerzte ab. Wie ``LoeserAusfall`` bewusst keine RuntimeError und
+    kein ValueError: die hiessen „Gleichungssystem singulaer - Lagerung
+    pruefen". Es wird auch **nicht** auf einen anderen Loeser ausgewichen: der
+    brauchte nicht weniger Speicher."""
+
+
 #: Einstellungen, die das Ergebnis oder den Rechenweg einer Kette bestimmen
 #: und darum aus dem Hauptprozess mitgehen (siehe _cases_in_ketten).
 KETTEN_EINSTELLUNGEN = ("solver_backend", "solver_residuum", "solver_nachiterationen",
@@ -830,6 +844,73 @@ INT32_MAX = 2 ** 31 - 1
 #: Ausgabefelder (7, 14-20, 22, 23, 30) gehoeren nicht dazu.
 PARDISO_EINGABEFELDER = (1, 2, 8, 10, 11, 13, 21, 24, 25)
 
+#: Ab dieser Zahl von Eintraegen teilt der Loeser die Faktorisierung in
+#: Analyse und Zahlenphase und prueft dazwischen den Speicher
+#: (:func:`_zahlenphase_vorpruefen`, Befund B3). Darunter bleibt es bei Phase
+#: 12 in einem Aufruf: eine Zerlegung unter 5 Mio. Eintraegen (rund 80 000
+#: Gleichungen, wenige hundert MiB Faktor) bringt den Speicher nicht an die
+#: Grenze, und das Aufteilen kostet eine zweite Umwandlung der Indizes. Der
+#: Entwurf des Drehlagers hat 72,8 Mio. Eintraege.
+ZERLEGUNG_PRUEFEN_AB = 5_000_000
+
+
+def _pardiso_voraussage(ps) -> dict:
+    """Der Speicherbedarf, den PARDISO nach der Analysephase (Phase 11)
+    voraussagt, in KB laut MKL-Dokumentation: iparm(15) Spitze der Analyse,
+    iparm(16) dauerhafter Speicher aus der Analyse, iparm(17) Speicher der
+    Zahlenphase samt Faktor. ``spitze_kb`` = max(iparm 15; 16 + 17) ist die
+    Spitze der ganzen Zerlegung. Leer, wenn iparm nicht lesbar ist."""
+    try:
+        ip = ps.get_iparms()
+        k15, k16, k17 = (int(ip[i]) for i in (15, 16, 17))
+    except Exception:                                      # noqa: BLE001
+        return {}
+    if k17 <= 0:
+        return {}
+    return {"iparm15_kb": k15, "iparm16_kb": k16, "iparm17_kb": k17,
+            "spitze_kb": max(k15, k16 + k17)}
+
+
+def _zahlenphase_vorpruefen(ps, pruefung) -> bool:
+    """Die Faktorisierung von ``ps`` in Analyse und Zahlenphase teilen und
+    dazwischen ``pruefung(ps)`` rufen.
+
+    pypardiso faktorisiert mit **einem** Aufruf, Phase 12 (Analyse und
+    Zahlenphase). MKL kann dasselbe mit Phase 11 und danach Phase 22 tun und
+    liefert nach der Analyse den Speicher der Zahlenphase in iparm(15 bis 17):
+    das Ergebnis ist bitgleich (getestet: Loesung und iparm(14) gleich), die
+    Kosten dieselben bis auf eine zweite Umwandlung der Matrix in int32. Der
+    Aufruf wird am Loeser **dieser Instanz** ersetzt (``ps._call_pardiso``);
+    ``ps.factorize`` bleibt unveraendert, und jede andere Phase (Loesen,
+    Freigeben) geht unveraendert durch. Wirft ``pruefung`` SpeicherReichtNicht,
+    gibt der Loeser die Analyse frei und reicht die Ausnahme weiter. Rueckgabe:
+    False, wenn pypardiso den Aufruf nicht hat (andere Fassung) - dann bleibt
+    alles wie bisher."""
+    echt = getattr(ps, "_call_pardiso", None)
+    if echt is None:
+        return False
+
+    def aufruf(A, b):
+        if ps.phase != 12:
+            return echt(A, b)
+        ps.set_phase(11)
+        try:
+            echt(A, b)
+            pruefung(ps)
+            ps.set_phase(22)
+            return echt(A, b)
+        except SpeicherReichtNicht:
+            try:
+                ps.free_memory(everything=True)           # die Analyse nicht liegen lassen
+            except Exception:                              # noqa: BLE001
+                pass
+            raise
+        finally:
+            ps.set_phase(12)
+
+    ps._call_pardiso = aufruf
+    return True
+
 
 def _nnz_faktor_aus_iparm(roh, speicher_kb17) -> tuple:
     """(Nichtnullen des Faktors, sicher) aus iparm(18) und iparm(17).
@@ -902,7 +983,11 @@ class LinearSolver:
     Einstellungssache, sondern eine Eigenschaft des Loesers.
     """
 
-    def __init__(self, K: sparse.spmatrix, backend: str = None):
+    def __init__(self, K: sparse.spmatrix, backend: str = None, progress=None):
+        #: Fortschrittsempfaenger: bekommt die Zeile zum Rechenpool (B3) schon
+        #: **vor** der Zerlegung, die Minuten dauern kann - sonst stuende sie erst danach da
+        self._progress = progress
+        self._hinweis_gemeldet = False
         # Kennzahlen der Faktorisierung. Die adaptive Vernetzung fragt danach,
         # um zu sagen, was eine Netzrunde an Loeserzeit gespart hat
         # (Anforderung der Vernetzersitzung 2.2, 20.09.2026): die Elementzahl
@@ -936,6 +1021,50 @@ class LinearSolver:
                   "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen → Experten) "
                   "kann sparsamer sein.") from ex
         self.zeit_faktorisierung = time.perf_counter() - t_fak
+
+    def _vor_der_zahlenphase(self, ps) -> None:
+        """Zwischen Analyse und Zahlenphase von PARDISO (_zahlenphase_vorpruefen):
+        Voraussage lesen, mit dem freien Speicher vergleichen, bei Bedarf den
+        Rechenpool schliessen - und bei zu wenig Speicher abbrechen.
+
+        Ein Fehler der Pruefung selbst (iparm nicht lesbar, keine Auskunft des
+        Systems) haelt die Zerlegung nicht auf; nur SpeicherReichtNicht tut das."""
+        v = _pardiso_voraussage(ps)
+        if not v:
+            return
+        self.pardiso_voraussage = v
+        try:
+            platz = parallel.platz_fuer_zerlegung(v["iparm17_kb"] * 1024, v["spitze_kb"] * 1024)
+        except Exception as ex:                            # noqa: BLE001
+            _log_einmal(f"Speicherprüfung vor der Zerlegung nicht möglich ({type(ex).__name__}: "
+                        f"{str(ex)[:120]}) - die Zerlegung läuft ohne sie.")
+            return
+        self.speicher_hinweis = platz.hinweis
+        if platz.hinweis and self._progress is not None:
+            try:
+                _melde(self._progress, platz.hinweis)
+                self._hinweis_gemeldet = True
+            except Exception:                              # noqa: BLE001
+                # Ein Abbruch der Oberflaeche (gui.worker.Abgebrochen) bleibt gesetzt und
+                # kommt beim naechsten Fortschrittsaufruf wieder - hier, mitten in der
+                # Zerlegung von PARDISO, darf er sie nicht in den Ausweichweg reissen
+                pass
+        if platz.bekannt and not platz.reicht:
+            raise SpeicherReichtNicht(self._speicher_text(platz, v))
+
+    def _speicher_text(self, platz, v: dict) -> str:
+        """Die Meldung, wenn der Speicher auch ohne Pool nicht reicht."""
+        g = parallel.groesse_text
+        pool = (f", auch nachdem die {platz.arbeiter_geschlossen} Arbeiter des Rechenpools geschlossen "
+                "wurden" if platz.arbeiter_geschlossen else "")
+        return (f"Der Speicher reicht für die Zerlegung nicht: MKL PARDISO braucht für dieses System "
+                f"({self.n} Gleichungen, {self.nnz_matrix / 1e6:.1f} Mio. Einträge) für die Zahlenphase "
+                f"voraussichtlich noch {g(v['iparm17_kb'] * 1024)} (Spitze insgesamt "
+                f"{g(v['spitze_kb'] * 1024)}); verlangt wird mit Zuschlag {g(platz.noetig)}. Frei sind "
+                f"{g(platz.frei_commit)} Commit-Speicher und {g(platz.frei_arbeitsspeicher)} Arbeitsspeicher"
+                f"{pool}. Abhilfe: andere Programme schließen, die Auslagerungsdatei vergrößern, ein "
+                "gröberes Netz wählen (Netzeinstellungen, Höchstzahl Unbekannte) oder einen Rechner mit "
+                "mehr Arbeitsspeicher benutzen. Es wurde nichts faktorisiert.")
 
     def _passt_in_int32(self, K: sparse.spmatrix, verlangt: bool) -> bool:
         """Passt die Matrix in die 32-Bit-Schnittstelle von PARDISO?
@@ -977,6 +1106,12 @@ class LinearSolver:
         self.mtype = None
         self.gestoerte_pivots = None
         self.pardiso_kennzahlen = {}
+        #: Nur PARDISO und nur grosse Systeme (ZERLEGUNG_PRUEFEN_AB): die Voraussage
+        #: nach der Analyse (_pardiso_voraussage) und, was vor der Zahlenphase mit
+        #: dem Speicher geschah (parallel.platz_fuer_zerlegung) - leer, wenn nichts.
+        #: StaticSystem._loeser_merken schreibt den Hinweis ins Protokoll.
+        self.pardiso_voraussage = {}
+        self.speicher_hinweis = ""
         #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
         #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
         #: damit im Fortschrittsstrom und im Protokoll.
@@ -999,6 +1134,9 @@ class LinearSolver:
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
                 _mkl_cbwr_festhalten(ps)         # nur beim ersten Mal
+                if self.nnz_matrix >= ZERLEGUNG_PRUEFEN_AB:
+                    # Analyse und Zahlenphase getrennt, dazwischen der Speicher (B3)
+                    _zahlenphase_vorpruefen(ps, self._vor_der_zahlenphase)
                 # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
                 # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
                 # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
@@ -1022,6 +1160,10 @@ class LinearSolver:
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
+            except SpeicherReichtNicht:
+                # Kein Ausweichen: SuperLU braucht nicht weniger Speicher, und die
+                # Meldung ist genau die, die der Anwender braucht
+                raise
             except Exception as ex:
                 if be == "pardiso":
                     raise
@@ -2035,7 +2177,7 @@ class StaticSystem:
         if self._solver is None:
             t0 = time.time()
             try:
-                self._solver = LinearSolver(self.gerandet(self.Kff))
+                self._solver = LinearSolver(self.gerandet(self.Kff), progress=self._progress)
                 self._loeser_merken(self._solver)
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
@@ -2071,6 +2213,14 @@ class StaticSystem:
             fortschritt = getattr(self, "_progress", None)
             if fortschritt:
                 _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
+        # Was vor der Zerlegung mit dem Rechenpool geschah (B3): eine Zeile ins
+        # Protokoll, jedes Mal, wenn es geschah - der Pool geht fuer die
+        # Nachlaeufe wieder auf und kann bei der naechsten Zerlegung erneut zu sein
+        hinweis = getattr(ls, "speicher_hinweis", "")
+        if hinweis and not getattr(ls, "_hinweis_gemeldet", False):
+            fortschritt = getattr(self, "_progress", None)
+            if fortschritt:
+                _melde(fortschritt, hinweis)
         buch = getattr(self, "_nachweis_buch", None)
         if buch is not None:
             buch.faktorisierung(ls)
@@ -2367,7 +2517,7 @@ class StaticSystem:
                     self.kontakt_loeser_freigeben()
                     ls = LinearSolver(self.gerandet(
                         Ktff, None if C_extra is None else C_extra[:, self.fi],
-                        None if C_extra is None else D_f))
+                        None if C_extra is None else D_f), progress=self._progress)
                     self._loeser_merken(ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                 self.backend = ls.backend

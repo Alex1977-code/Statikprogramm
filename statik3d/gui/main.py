@@ -19066,7 +19066,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             "Vernetzen. Wird sie überschritten, vernetzt das Programm selbsttätig gröber "
                             "(Fein in Stufen) und nennt jede Stufe im Protokoll; Entwurf und Mittel "
                             "haben keine gröbere Stufe – dort bleibt das Netz, und es kommt eine Warnung. "
-                            "0 = keine Grenze; Vorgabe 4 000 000 (vorläufig)"),
+                            "0 = keine Grenze; Vorgabe 4 000 000 (für 128 GB Arbeitsspeicher; "
+                            "mit weniger Speicher die Grenze senken)"),
                   F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
                   # „Elementansatz linear/quadratisch“ stand hier bis 25.09.2026;
                   # die Ordnung setzt jetzt die Stufe (Feld „Elemente“ oben)
