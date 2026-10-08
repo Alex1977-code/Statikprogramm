@@ -6248,10 +6248,24 @@ mit den Änderungen von Spannung und Verschiebung und nennt die Bedingungen, die
 noch pendeln, mit Name, Knoten, Ort, Normal- und Reibkraft und Weg; ist ihre
 Reibkraft größer als ein Zehntausendstel der Last, steht die Zeile als WARNUNG
 da. Das strenge Kriterium bleibt das erste Ziel: wo nichts pendelt, endet der
-Lauf wie bisher. Das Ingenieurkriterium gilt für den ersten Kontaktlauf eines
-Lastfalls, der von der Geometrie aus rechnet (am Drehlager der elastische
-Vorlauf); ein Lauf, der aus einem vorigen Zustand weiterrechnet (Plastizität,
-Folgelastfälle), endet wie bisher.
+Lauf wie bisher.
+
+**Auch in Läufen, die aus einem vorigen Zustand weiterrechnen (seit 08.10.2026
+abends).** Jeder Newton-Schritt der Plastizität und jeder Folgelastfall rechnet
+den Kontakt vom Zustand des vorigen Laufs aus weiter. Bis zum 08.10.2026 galt
+das Ingenieurkriterium nur für den ersten Kontaktlauf eines Lastfalls, der von
+der Geometrie aus rechnet (am Drehlager der elastische Vorlauf); ein
+weiterrechnender Lauf, dessen Aktivmenge pendelte, lief bis zum Deckel. An einem
+kleinen Prüfblock mit Fließen endete so jeder Newton-Schritt erst nach 69
+Runden, und die Plastizität konvergierte nicht. Jetzt gilt das Kriterium mit
+denselben Grenzen auch dort, und das Protokoll sagt „Kontakt: Abschluss nach dem
+Ingenieurkriterium in Runde … (warm gestartet) …“. Als Pendeln zählt in einem
+solchen Lauf erst ein bestätigter Zyklus: zwei Runden hintereinander wiederholen
+den Zustand von einer Periode vorher, oder eine Gleitrichtung kehrt in diesem
+Lauf viermal hintereinander um. Eine einzelne Rückkehr zum Startzustand ist kein
+Pendeln, denn ein weiterrechnender Lauf verlässt seinen Startzustand oft für ein
+paar Runden und kommt zu ihm zurück, bevor er ganz normal konvergiert. Wo nichts
+pendelt, rechnet das Programm bitgleich wie vorher.
 
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen

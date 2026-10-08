@@ -1660,11 +1660,29 @@ etwas, das nicht vernachlässigbar ist, und der Lauf endet weiter am Deckel.
 Die noch pendelnden Bedingungen stehen im Protokoll (WARNUNG, wenn ihre Reibkraft
 über 10⁻⁴ der Last liegt). Es greift nur in Phase 2 (Phase 1 rechnet gleitende
 Knoten mit der groben Reststeifigkeit; am Drehlager änderte Phase 2 danach σ_v
-noch um bis zu rund 230 N/mm²), nur im kalten Lauf und nicht in abgekürzten
-Läufen: ein warm gestarteter Lauf prüft nach dem Ende seine
-Gleitrichtungen gegen den Startzustand (`warmstart_verstoesse`) und hätte nach
-einem früheren Abschluss nur fortgesetzt (`tests/test_kontaktzustand`, LF3 nach
-LF2: 11 statt höchstens 8 Schritte). Pendeln heißt dabei: der Zustand hat sich
+noch um bis zu rund 230 N/mm²) und nicht in abgekürzten Läufen und
+Probeläufen. Bis zum 08.10.2026 abends galt es nur im kalten Lauf; seither auch in
+warm gestarteten Läufen (Newton-Schritte der Plastizität, Folgelastfälle) mit
+denselben Schranken, dort aber erst bei einem **bestätigten** Zyklus
+(`solver._zyklus_bestaetigt`): die Runde wiederholt den Zustand von p Runden
+vorher, und die Runde davor ebenso den Zustand von p Runden vor ihr; eine
+Richtungsumkehr zählt warm erst, wenn sie viermal in diesem Lauf geschah (die
+Zähler `umkehr` kommen sonst aus dem Startzustand). Mit der ersten Wiederholung
+wie im kalten Lauf nahm die Iteration warme Läufe an, die nur zu ihrem
+Startzustand zurückkehrten und danach streng endeten – gemessen mit dem
+Kriterium probeweise warm wie kalt: `tests/test_kontaktzustand` LF3 nach LF2 in
+Runde 4 angenommen, danach setzte `warmstart_verstoesse` fort, 11 statt 6
+Runden; `tests/test_fehler_p8` K1 82 statt 90 Runden; Block mit Reibung LF2
+4 statt 14 Runden und 0,17 N in den Reaktionen anders. Nach der Annahme prüft
+`warmstart_verstoesse` die pendelnden Bedingungen nicht (Argument `ohne`): eine
+Runde später angenommen, stand der Pendelknoten am Prüfblock gegen seine
+Startrichtung, die Prüfung setzte ihn zurück, und der Lauf pendelte von vorn
+(15 statt 6 Runden). Am fließenden Prüfblock (`tests/test_ingenieur_warm`,
+Pendelschutz aus, Schranken für Δσ und Δu weit, weil dort ein Knoten 3 % der
+Last trägt) endete vorher jeder warme Lauf nach 69 Runden am Deckel, die
+Plastizität halbierte elfmal und konvergierte nicht (146 Kontaktläufe, 9 090
+Runden); mit der Änderung 9 Läufe, 47 Runden, Newton in 7 Schritten, und u liegt
+auf 1·10⁻⁶·u_max beim streng konvergierten Lauf mit Pendelschutz. Pendeln heißt dabei: der Zustand hat sich
 geändert und ist zu einem schon gelösten zurückgekehrt – Setz- und
 Richtungsrunden ohne Wechsel zählen nicht –, und Richtungsumkehr zählt erst ab
 vier Runden in Folge. Mit dem lockeren ersten Auslöser (jede Runde ohne Wechsel,
