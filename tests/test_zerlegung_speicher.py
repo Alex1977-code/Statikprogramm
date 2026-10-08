@@ -436,13 +436,119 @@ def test_rechnung_ganz_durch_protokoll_und_abbruch():
                   f"{type(ex).__name__}: {str(ex)[:100]}")
 
 
+# --------------------------------------------------------------------------
+# 3  Kein Verweiszyklus: freigeben() gibt sofort frei (Leck, 08.10.2026)
+# --------------------------------------------------------------------------
+# Die Bestaetigungsrechnung am Drehlager (Mittel, 2,6 Mio. Gleichungen) wuchs
+# seit B3 um rund 2,1 GB je Kontaktrunde (Zerlegung 1: 52 GB, Runde 28:
+# 104 GB; vorher flach bei 49 bis 52 GB). Der Aufruf-Ersatz in
+# ps.__dict__ schloss ps selbst ein (Verweiszyklus ps <-> Ersatz) und ueber
+# die Pruefung den ganzen LinearSolver samt Matrixkopie; nach freigeben()
+# lebte beides bis zur zyklischen Muellsammlung weiter, die im langen
+# Kontaktlauf praktisch nie dran kommt. Geprueft wird darum mit
+# ausgeschalteter Muellsammlung.
+def bandmatrix(n: int, halb: int = 5, verschiebung: float = 0.0):
+    """Diagonaldominante Bandmatrix (CSC) mit 2 * halb + 1 Diagonalen: rund
+    n * (2 * halb + 1) Eintraege und kaum Fuellung - eine Zerlegung ueber der
+    Schwelle, die in einer Sekunde durch ist."""
+    from scipy import sparse
+    versatz = list(range(-halb, halb + 1))
+    diagonalen = [np.full(n - abs(k), -1.0 / (abs(k) + 1)) for k in versatz]
+    diagonalen[halb] = np.full(n, 4.0 + verschiebung)
+    return sparse.diags(diagonalen, versatz, shape=(n, n), format="csc")
+
+
+def test_freigeben_ohne_muellsammlung():
+    """Nach freigeben() ist das PARDISO-Objekt sofort weg, ohne gc.collect();
+    ebenso der Loeser selbst, wenn sein letzter Verweis faellt."""
+    import gc
+    import weakref
+    m = wuerfelmodell()
+    K = steifigkeit(m)
+    gc.collect()
+    war_an = gc.isenabled()
+    gc.disable()
+    try:
+        with gestellt(10 ** 12, 100 * MiB):
+            ls = solver.LinearSolver(K, backend="pardiso")
+        geteilt = bool(getattr(ls, "pardiso_voraussage", None))
+        ps_weg, ls_weg = weakref.ref(ls._ps), weakref.ref(ls)
+        rechnet = residuum(K, ls) < 1e-8
+        ls.freigeben()
+        ps_tot = ps_weg() is None
+        del ls
+        ls_tot = ls_weg() is None
+        # ohne freigeben(): der letzte Verweis faellt, __del__ gibt frei
+        with gestellt(10 ** 12, 100 * MiB):
+            ls2 = solver.LinearSolver(K, backend="pardiso")
+        ps2_weg, ls2_weg = weakref.ref(ls2._ps), weakref.ref(ls2)
+        del ls2
+        tot2 = ps2_weg() is None and ls2_weg() is None
+    finally:
+        if war_an:
+            gc.enable()
+    check("Vorbedingung: Analyse und Zahlenphase getrennt (B3-Weg), PARDISO rechnet richtig",
+          geteilt and rechnet)
+    check("nach freigeben() ist das PARDISO-Objekt ohne Muellsammlung sofort freigegeben", ps_tot,
+          f"PARDISO-Objekt lebt noch: {not ps_tot}")
+    check("… und der Loeser samt Matrixkopie, sobald sein letzter Verweis faellt", ls_tot,
+          f"Loeser lebt noch: {not ls_tot}")
+    check("ohne freigeben(): der letzte Verweis faellt, Loeser und PARDISO-Objekt sind sofort weg "
+          "(__del__ gibt frei)", tot2, f"leben noch: {not tot2}")
+
+
+def test_sechs_zerlegungen_ohne_zuwachs():
+    """Sechs Zerlegungen eines Systems ueber der Schwelle (ueber 5 Mio.
+    Eintraege) hintereinander, jede mit freigeben(), Muellsammlung aus: der
+    Commit-Speicher waechst nicht je Zerlegung."""
+    import gc
+    from scipy import sparse
+    n = 500_000
+    K0 = bandmatrix(n)
+    groesse = K0.data.nbytes + K0.indices.nbytes + K0.indptr.nbytes
+    eigen = parallel.speicher_eigen             # vor dem Stellen: gemessen wird echt
+    if not check("Vorbedingung: das System liegt ueber der Schwelle der Aufteilung",
+                 K0.nnz >= getattr(solver, "ZERLEGUNG_PRUEFEN_AB", 5_000_000) and eigen() > 0,
+                 f"{K0.nnz / 1e6:.2f} Mio. Eintraege, Matrix {groesse / MiB:.0f} MiB"):
+        return
+    gc.collect()
+    war_an = gc.isenabled()
+    gc.disable()
+    werte, geteilt = [], []
+    try:
+        c0 = eigen()
+        # gestellter Speicher: die Pruefung vor der Zahlenphase laeuft, haengt aber
+        # nicht davon ab, was neben dem Test auf der Maschine rechnet
+        with gestellt(10 ** 12, 100 * MiB):
+            for i in range(6):
+                Ki = (K0 + sparse.identity(n, format="csc") * (1e-3 * (i + 1))).tocsc()   # jedes Mal neu
+                ls = solver.LinearSolver(Ki, backend="pardiso")
+                geteilt.append(bool(getattr(ls, "pardiso_voraussage", None)))
+                ls.solve(np.ones(n))
+                ls.freigeben()
+                del ls, Ki
+                werte.append(eigen() - c0)
+    finally:
+        if war_an:
+            gc.enable()
+    zuwachs = werte[-1] - werte[0]
+    check("Vorbedingung: alle sechs Zerlegungen auf dem B3-Weg (Analyse, Pruefung, Zahlenphase)",
+          all(geteilt), str(geteilt))
+    check("sechs Zerlegungen hintereinander: der Speicher waechst nicht je Zerlegung "
+          "(Zuwachs von der ersten bis zur sechsten unter einer halben Matrixgroesse)",
+          zuwachs < groesse / 2,
+          f"Commit-Zuwachs nach 1..6 [MiB]: {[round(w / MiB) for w in werte]}, "
+          f"Matrix {groesse / MiB:.0f} MiB")
+
+
 def main():
     for t in (test_voraussage_wird_gelesen, test_bitgleich_wie_heute, test_kleine_matrix_wird_nicht_angefasst,
               test_pool_wird_vor_der_zerlegung_geschlossen_und_kommt_zurueck,
               test_genug_speicher_bleibt_alles_wie_heute,
               test_zu_wenig_speicher_auch_ohne_pool_meldet_klar,
               test_nur_der_arbeitsspeicher_knapp_warnt_und_rechnet,
-              test_rechnung_ganz_durch_protokoll_und_abbruch):
+              test_rechnung_ganz_durch_protokoll_und_abbruch,
+              test_freigeben_ohne_muellsammlung, test_sechs_zerlegungen_ohne_zuwachs):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

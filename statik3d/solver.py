@@ -885,28 +885,52 @@ def _zahlenphase_vorpruefen(ps, pruefung) -> bool:
     Freigeben) geht unveraendert durch. Wirft ``pruefung`` SpeicherReichtNicht,
     gibt der Loeser die Analyse frei und reicht die Ausnahme weiter. Rueckgabe:
     False, wenn pypardiso den Aufruf nicht hat (andere Fassung) - dann bleibt
-    alles wie bisher."""
+    alles wie bisher.
+
+    Der Ersatz haelt weder ``ps`` noch den Besitzer von ``pruefung`` fest
+    (Leck, Drehlager-Abnahme 08.10.2026): Er liegt in ``ps.__dict__``; schloss
+    er ``ps`` ein (oder die an ``ps`` gebundene Methode), entstand ein
+    Verweiszyklus, und ueber ``pruefung`` (LinearSolver._vor_der_zahlenphase)
+    hing der ganze LinearSolver samt Matrixkopie daran. Nach freigeben() lebte
+    das bis zur zyklischen Muellsammlung weiter, die im langen Kontaktlauf
+    praktisch nie kam: am Drehlager (Mittel) +2,1 GB je Kontaktrunde, 52 GB
+    nach der ersten Zerlegung, 104 GB nach Runde 28. Darum ein schwacher
+    Verweis auf ``ps``, die ungebundene Methode der Klasse (ps wird beim Aufruf
+    mitgegeben) und eine WeakMethod fuer eine gebundene ``pruefung``; ``aufruf``
+    selbst nennt ``ps``, ``echt`` und ``pruefung`` nicht."""
     echt = getattr(ps, "_call_pardiso", None)
     if echt is None:
         return False
+    if getattr(echt, "__self__", None) is ps:
+        weiter = echt.__func__                             # (p, A, b): ps kommt beim Aufruf
+    else:                                                  # schon an der Instanz ersetzt
+        weiter = lambda p, A, b, f=echt: f(A, b)          # noqa: E731
+    ps_weg = weakref.ref(ps)
+    try:
+        pruefung_weg = weakref.WeakMethod(pruefung)
+    except TypeError:                                      # keine gebundene Methode: wie bisher
+        pruefung_weg = lambda f=pruefung: f                # noqa: E731
 
     def aufruf(A, b):
-        if ps.phase != 12:
-            return echt(A, b)
-        ps.set_phase(11)
+        p = ps_weg()                                       # lebt: der Aufruf kam ueber p
+        if p.phase != 12:
+            return weiter(p, A, b)
+        p.set_phase(11)
         try:
-            echt(A, b)
-            pruefung(ps)
-            ps.set_phase(22)
-            return echt(A, b)
+            weiter(p, A, b)
+            pr = pruefung_weg()
+            if pr is not None:
+                pr(p)
+            p.set_phase(22)
+            return weiter(p, A, b)
         except SpeicherReichtNicht:
             try:
-                ps.free_memory(everything=True)           # die Analyse nicht liegen lassen
+                p.free_memory(everything=True)            # die Analyse nicht liegen lassen
             except Exception:                              # noqa: BLE001
                 pass
             raise
         finally:
-            ps.set_phase(12)
+            p.set_phase(12)
 
     ps._call_pardiso = aufruf
     return True
