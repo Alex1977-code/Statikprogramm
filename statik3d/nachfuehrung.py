@@ -128,6 +128,26 @@ def randteile(Vf, Cf, Df, nf: int) -> tuple:
     return B, G
 
 
+def faktor_loesen(ls, R: np.ndarray) -> np.ndarray:
+    """A0^-1 R mit dem vorhandenen Faktor von ``ls`` (eine oder mehrere rechte Seiten).
+
+    Bei PARDISO direkt die Loesungsphase 33: pypardiso.solve bildet bei jedem
+    Aufruf eine SHA-1 ueber die ganze Matrix, um zu pruefen, ob sie schon zerlegt
+    ist (am Drehlager 2,4 GB je Loesung) - hier ist das gewiss, der Faktor gehoert
+    genau dieser Matrix. Es sind dieselben Aufrufe wie in pypardiso.solve, nur ohne
+    die Pruefsumme; das Ergebnis ist bitgleich (tests/test_faktor_weiter)."""
+    ps, A = getattr(ls, "_ps", None), getattr(ls, "_K", None)
+    if getattr(ls, "backend", "") == "pardiso" and ps is not None and A is not None:
+        try:
+            ps._check_A(A)
+            b = ps._check_b(A, np.asarray(R, float))
+            ps.set_phase(33)
+            return ps._call_pardiso(A, b)
+        except AttributeError:          # andere pypardiso-Fassung: der gewoehnliche Weg
+            pass
+    return ls._solve(R)
+
+
 def _zeilen_kennungen(B: sparse.csr_matrix) -> list:
     """Je Zeile ein Hash ueber Spalten und Werte - zum Zuordnen alter und neuer
     Randzeilen. Gleicher Hash heisst nur „vermutlich gleich“: die Differenz wird
@@ -181,7 +201,7 @@ class Basis:
         self._bloecke, self._spalte, self._k, self._letzte = [], {}, 0, None
 
     def _loesen(self, R: np.ndarray) -> np.ndarray:
-        X = np.asarray(self.ls._solve(R), float)
+        X = np.asarray(faktor_loesen(self.ls, R), float)
         if not np.all(np.isfinite(X)):
             raise Abgelehnt("der alte Faktor liefert keine endliche Lösung")
         return X.reshape(R.shape)

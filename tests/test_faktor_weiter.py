@@ -161,6 +161,12 @@ def test_formel():
         E1 = dE.tocsr()
         A1 = _sattel(K, E1, B1, G1)
         b = rng.standard_normal(A1.shape[0])
+        # Loesen mit dem Faktor ohne Pruefsumme: bitgleich wie pypardiso.solve
+        R = rng.standard_normal((ls0.n, 3))
+        check("Loesungsphase ohne Pruefsumme bitgleich wie der gewoehnliche Weg",
+              np.array_equal(nfg.faktor_loesen(ls0, R), ls0._solve(R))
+              and np.array_equal(nfg.faktor_loesen(ls0, R[:, 0]), ls0._solve(R[:, 0])),
+              f"Loeser {ls0.backend}")
         x_direkt = solver.LinearSolver(A1).solve(b)
         B1s, G1s = B1.tocsr(), G1.tocsr()
         B1s.sort_indices(), G1s.sort_indices()
