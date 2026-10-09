@@ -6253,6 +6253,7 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     du_max = float(du[j]) if len(du) else 0.0
     aus = {"du_max": du_max, "du_knoten": j, "u_max": u_max}
     if du_max > ABSCHLUSS_WEG_ANTEIL * u_max:
+        merker["abgelehnt"] = (f"Δu {du_max * 1e6:.3g} µm > {ABSCHLUSS_WEG_ANTEIL * u_max * 1e6:.3g} µm")
         return None
     sv = _vergleichsspannungen(model, system, u)
     alt = merker.get("sv") if merker.get("u_id") is u_vor else None
@@ -6262,6 +6263,7 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     dsv = float(np.abs(sv - alt).max()) if len(sv) else 0.0
     aus["dsv_max"] = dsv
     if dsv > ABSCHLUSS_SPANNUNG:
+        merker["abgelehnt"] = f"Δσ_v {dsv / 1e6:.3g} N/mm² > {ABSCHLUSS_SPANNUNG / 1e6:.3g} N/mm²"
         return None
     # Normalbedingung im angenommenen Zustand: kein Zug an einer geschlossenen
     # und keine Durchdringung (als Kraft) an einer offenen Bedingung ueber
@@ -6276,6 +6278,8 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
                 "durchdringung_max": nv["durchdringung_max"], "durchdringung_bei": nv["durchdringung_bei"],
                 "zug": int(nv["zug_max"] > grenze), "durchdringung": int(nv["durchdringung_max"] > grenze)})
     if nv["zug_max"] > grenze or nv["durchdringung_max"] > grenze:
+        merker["abgelehnt"] = (f"Zug {nv['zug_max']:.3g} N, Durchdringung {nv['durchdringung_max']:.3g} N, "
+                               f"Schranke {grenze:.3g} N")
         return None
     # Gleichgewicht im angenommenen Zustand: Kraefte dieser Loesung
     D = getattr(cs, "D_kopplung", None)
@@ -6288,8 +6292,57 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     if gg > ABSCHLUSS_GLEICHGEWICHT:
         for c, (fn, ft, g, zr) in zip(cs.cons, vorher):     # nicht angenommen: wie vorher
             c.Fn, c.Ft, c.g, c.zug_roh = fn, ft, g, zr
+        merker["abgelehnt"] = f"Gleichgewicht {gg:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}"
         return None
     return aus
+
+
+def _du_ort(model: Model, u, u_vor, merker: dict) -> str:
+    """Wo bewegt sich eine Kontaktrunde am meisten? Knoten und Bauteil der
+    groessten Verschiebungsaenderung und der Verformungsanteil der Aenderung
+    dieses Bauteils (was nach Abzug der besten Starrkoerperbewegung - drei
+    Verschiebungen, drei Drehungen - bleibt, bezogen auf die ganze Aenderung).
+    Nur fuers Protokoll, die Rechnung bleibt unberuehrt.
+
+    Warum (09.10.2026): am Drehlager (Mittel, Laststufe 4/4, Newton-Schritt 2)
+    sprang u bei fester Aktivmenge 13 Runden lang um 0,2 bis 3,7 % von max |u|,
+    und aus dem Protokoll liess sich nicht sagen, ob ein frei beweglicher oder
+    ganz gleitender Teil starr wandert (keine Spannung, nur das Weg-Kriterium
+    verfehlt) oder ob sich das Tragwerk verformt. ``merker`` haelt je
+    Kontaktlauf die Karte Knoten -> Bauteile und die Knoten je Bauteil."""
+    try:
+        n6 = model.nn * NDOF
+        d = asm.mittelknoten_nachfuehren(model, np.asarray(u, float) - np.asarray(u_vor, float))
+        v = np.asarray(d[:n6], float).reshape(-1, NDOF)[:, :3]
+        nrm = np.linalg.norm(v, axis=1)
+        j = int(np.argmax(nrm)) if len(nrm) else 0
+        if not len(nrm) or nrm[j] <= 0.0:
+            return ""
+        if "karte" not in merker:
+            from .diagnose import _knotenkoerper_karte
+            merker["karte"], merker["knoten"] = _knotenkoerper_karte(model), {}
+        koerper = sorted(merker["karte"].get(j, ()))
+        if not koerper:
+            return f", größtes Δu an Knoten {j}"
+        name = koerper[0]
+        kn = merker["knoten"].get(name)
+        if kn is None:
+            kn = np.array(sorted(n for n, g in merker["karte"].items() if name in g), np.int64)
+            merker["knoten"][name] = kn
+        X = np.asarray(model.nodes, float)[kn]
+        r = X - X.mean(0)
+        D = v[kn].ravel()
+        A = np.zeros((3 * len(kn), 6))
+        A[0::3, 0] = A[1::3, 1] = A[2::3, 2] = 1.0
+        A[0::3, 4], A[0::3, 5] = r[:, 2], -r[:, 1]          # (w x r)_x = w_y r_z - w_z r_y
+        A[1::3, 3], A[1::3, 5] = -r[:, 2], r[:, 0]
+        A[2::3, 3], A[2::3, 4] = r[:, 1], -r[:, 0]
+        p = np.linalg.lstsq(A, D, rcond=None)[0]
+        rest = float(np.linalg.norm(D - A @ p)) / max(float(np.linalg.norm(D)), 1e-300)
+        return (f", größtes Δu {nrm[j] * 1e6:.3g} µm an Knoten {j} ({name}), "
+                f"Verformungsanteil dort {100.0 * rest:.2g} %")
+    except Exception:                       # noqa: BLE001 - nur Protokoll
+        return ""
 
 
 def _zyklus_bestaetigt(kennung_je_runde: dict, it: int, kennung):
@@ -6516,6 +6569,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     abschluss_merker: dict = {}
     ingenieur = None
     pendel_ids: set = set()         # die im angenommenen Zustand pendelnden Bedingungen
+    ort_merker: dict = {}           # Protokoll: Knoten -> Bauteile (_du_ort)
     letzte_kennung = None
     for it in range(1, max_iter + 1):
         Kc, Fc, C, b = matrizen()
@@ -6617,10 +6671,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             wie_runde = _zyklus_bestaetigt(kennung_je_runde, it, kennung)
         richtungen = (cs.richtungen_pendeln() if (ABSCHLUSS_INGENIEUR and cs.phase == 2
                                                    and (not warm or fortsetzung or it > 4)) else 0)
+        abgelehnt = None
         if (ABSCHLUSS_INGENIEUR and u_vor is not None and not kurz and not probelauf
                 and cs.phase == 2 and (wie_runde is not None or richtungen)):
+            abschluss_merker.pop("abgelehnt", None)
             ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
                                              abschluss_merker)
+            abgelehnt = abschluss_merker.pop("abgelehnt", None)
             if ingenieur is not None:
                 von = wie_runde if wie_runde is not None else max(1, it - 2)
                 ids = set()
@@ -6730,6 +6787,12 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 zusatz = (f", Δu {d / bez:.1e}" if bez > 0 else f", Δu {d:.1e} m")
             zusatz += (", Matrix neu" if getattr(system, "faktorisierungen", 0) > f_vor
                        else ", Matrix bleibt")
+            if u_vor is not None and u is not None:
+                # Wo bewegt sich die Runde, und warum nahm das Ingenieurkriterium
+                # sie nicht an (09.10.2026) - nur Protokoll
+                zusatz += _du_ort(model, u, u_vor, ort_merker)
+                if abgelehnt:
+                    zusatz += f", Ingenieurkriterium nicht erfüllt: {abgelehnt}"
             _melde(progress, f"Kontakt-Iteration {it}: {cs.n_active} aktiv{zusatz}", anteil)
         if not changed:
             # ContactSystem.update() gibt False zurueck, wenn es fertig ist -

@@ -6285,6 +6285,18 @@ eine Gleitrichtung um, die schon im Lauf davor pendelte, zählt das seit dem
 angenommen, und am Drehlager kostete das je Newton-Schritt ein bis zwei
 Zerlegungen. Aus einem anderen Lastfall gestartet bleibt es bei der fünften Runde.
 
+**Was eine Kontaktrunde bewegt (seit 09.10.2026).** Die Fortschrittszeile jeder
+Kontaktrunde nennt ab der zweiten Runde zusätzlich, an welchem Knoten und in
+welchem Bauteil sich die Verschiebung gegenüber der vorigen Runde am meisten
+geändert hat, und den Verformungsanteil dieser Änderung im Bauteil: was nach
+Abzug der bestpassenden Starrkörperbewegung des Bauteils übrig bleibt, bezogen
+auf die ganze Änderung. Ein kleiner Verformungsanteil heißt, das Bauteil wandert
+als Ganzes (etwa ein frei bewegliches oder ganz gleitendes Teil), ein großer, es
+verformt sich. Hat das Ingenieurkriterium in der Runde geprüft und nicht
+angenommen, steht dahinter, an welcher Schranke es lag, zum Beispiel
+„Ingenieurkriterium nicht erfüllt: Δu 19.5 µm > 0.498 µm“. An der Rechnung ändert
+das nichts.
+
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
 Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines

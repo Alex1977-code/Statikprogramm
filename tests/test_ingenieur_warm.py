@@ -41,6 +41,10 @@ Was hier belegt wird - jede Behauptung mit einer Zahl:
    Am Pruefblock ist die Loesung genauer; geprueft wird mit einem eingespielten Zug
    in der Sicht des Kriteriums: 100 N (ueber f_tol, unter 1e-5 |sum F| = 504 N)
    wird angenommen, 2 000 N nicht - der Lauf endet dann weiter am Deckel.
+8. Protokoll je Kontaktrunde (09.10.2026): wo sich die Runde am meisten bewegt
+   (Knoten, Bauteil, Verformungsanteil nach Abzug der Starrkoerperbewegung des
+   Bauteils) und, wenn das Kriterium geprueft und nicht angenommen hat, an welcher
+   Schranke. Am Pruefblock mit Programmschranken: "Δu ... µm > ... µm".
 
 Aufruf:  python -m tests.test_ingenieur_warm
 """
@@ -257,6 +261,21 @@ def test_normalschranke():
           f"konvergiert {r2.info.get('contact_converged')}, Runden {r2.info.get('contact_iterations')}")
 
 
+def test_protokoll_je_runde():
+    print("\n--- Protokoll je Runde: Ort der groessten Bewegung, Grund der Ablehnung ---")
+    m = tp.lager_in_flaechenachsen()
+    zeilen = []
+    with tp.schutz(False):
+        solver.solve_static(m, progress=lambda t, a=None: zeilen.append(str(t)))
+    kz = [z for z in zeilen if z.startswith("Kontakt-Iteration ")]
+    ort = [z for z in kz[1:] if "größtes Δu" in z and "Verformungsanteil" in z]
+    check("ab der zweiten Runde: Knoten, Bauteil und Verformungsanteil der groessten Bewegung",
+          kz and len(ort) == len(kz) - 1, (ort[-1][-110:] if ort else str(kz[-1:])[:110]))
+    ab = [z for z in kz if "Ingenieurkriterium nicht erfüllt: Δu" in z]
+    check("geprueft und nicht angenommen: die Runde nennt die Schranke (hier Δu)",
+          len(ab) >= 1, (ab[-1][-90:] if ab else "keine Zeile"))
+
+
 def _bit(r0, r1):
     du = float(np.max(np.abs(np.asarray(r1.u) - np.asarray(r0.u))))
     dR = float(np.max(np.abs(np.asarray(r1.reactions) - np.asarray(r0.reactions))))
@@ -293,7 +312,7 @@ def test_ohne_pendeln_bitgleich():
 
 def main() -> int:
     for t in (test_fliessen_warm, test_folgelastfall, test_pendler_bleiben_stehen, test_normalschranke,
-              test_ohne_pendeln_bitgleich):
+              test_protokoll_je_runde, test_ohne_pendeln_bitgleich):
         try:
             t()
         except Exception as ex:             # noqa: BLE001
