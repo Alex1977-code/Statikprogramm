@@ -6209,6 +6209,18 @@ ABSCHLUSS_INGENIEUR = True
 ABSCHLUSS_SPANNUNG = 1.0e6          # [Pa] = 1 N/mm2
 ABSCHLUSS_WEG_ANTEIL = 1.0e-3       # der groessten Verschiebung
 ABSCHLUSS_GLEICHGEWICHT = 1.0e-4    # |sum R + sum F| / |sum F|
+#: Zug an geschlossenen und Durchdringung (als Kraft) an offenen Bedingungen im
+#: angenommenen Zustand: hoechstens max(f_tol, ABSCHLUSS_NORMAL_ANTEIL * |sum F|).
+#: Bis zum 09.10.2026 galt f_tol allein (1e-6 f_ref, am Drehlager 0,95 N). Das liegt
+#: unter der Genauigkeit, mit der die Loesung die Kraefte trifft (Drehlager, Mittel:
+#: |sum R + sum F| = 1,3 N bei |sum F| = 9,95 MN): eine streifende Bedingung pendelte
+#: zwischen 1,30 / 3,07 / 1,82 / 2,92 N Durchdringung und Zug, und angenommen wurde
+#: nur, wenn ein Zustand zufaellig darunter lag (Vorlauf Runde 38, 0,941 N); im
+#: Newton-Schritt 2 der Laststufe 1 nahm es neun Runden lang nichts an (dasselbe
+#: Muster, welche Schranke scheiterte, ist dort nicht gemessen). Entscheidung
+#: des Anwenders (09.10.2026): bei 10 000 kN Last sind auch 100 N mehr als ausreichend.
+#: Die Iteration oeffnet und schliesst weiter an f_tol - nur die Annahme misst so.
+ABSCHLUSS_NORMAL_ANTEIL = 1.0e-5
 #: ab so vielen Umkehrungen in Folge gilt ein gleitender Knoten im Protokoll als pendelnd
 UMKEHR_RUNDEN_PENDEL = 2
 
@@ -6251,14 +6263,19 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     aus["dsv_max"] = dsv
     if dsv > ABSCHLUSS_SPANNUNG:
         return None
-    # Die Normalbedingung bleibt streng: keine geschlossene Bedingung mit Zug
-    # und keine offene mit Durchdringung ueber f_tol (als Kraft) im angenommenen
-    # Zustand - dieselben Grenzen wie beim Oeffnen und Schliessen. Gemessen am
-    # Drehlager (8b2de7b, ohne diese Pruefung): angenommen in Runde 34 mit einer
-    # offenen Bedingung, 0,088 nm durchdrungen, als Kraft 1,30 N bei f_tol 0,95 N.
-    verst = cs.zustand_verstoesse(u, lam)
-    aus["zug"], aus["durchdringung"] = int(verst["zug"]), int(verst["durchdringung"])
-    if verst["zug"] or verst["durchdringung"]:
+    # Normalbedingung im angenommenen Zustand: kein Zug an einer geschlossenen
+    # und keine Durchdringung (als Kraft) an einer offenen Bedingung ueber
+    # max(f_tol, ABSCHLUSS_NORMAL_ANTEIL * |sum F|). Ganz ohne diese Pruefung nahm
+    # der Lauf am Drehlager (8b2de7b) Runde 34 mit 1,30 N Durchdringung an - das
+    # bleibt so moeglich, ein Verstoss in der Groesse der Last aber nicht.
+    Fk = np.asarray(F[:n6], float).reshape(-1, NDOF)[:, :3].sum(0)
+    bez = max(float(np.linalg.norm(Fk)), 1e-30)
+    grenze = max(float(getattr(cs, "f_tol", 0.0)), ABSCHLUSS_NORMAL_ANTEIL * float(np.linalg.norm(Fk)))
+    nv = cs.normal_verstoesse(u, lam)
+    aus.update({"normal_grenze": grenze, "zug_max": nv["zug_max"], "zug_bei": nv["zug_bei"],
+                "durchdringung_max": nv["durchdringung_max"], "durchdringung_bei": nv["durchdringung_bei"],
+                "zug": int(nv["zug_max"] > grenze), "durchdringung": int(nv["durchdringung_max"] > grenze)})
+    if nv["zug_max"] > grenze or nv["durchdringung_max"] > grenze:
         return None
     # Gleichgewicht im angenommenen Zustand: Kraefte dieser Loesung
     D = getattr(cs, "D_kopplung", None)
@@ -6266,8 +6283,6 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     cs.kraefte_der_loesung(u, lam)
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0) + _kontaktlast(C, lam, model.ndof, D), Kc)
     Rk = R[:n6].reshape(-1, NDOF)[:, :3].sum(0) + cs.support_reactions(model.nn).sum(0)
-    Fk = np.asarray(F[:n6], float).reshape(-1, NDOF)[:, :3].sum(0)
-    bez = max(float(np.linalg.norm(Fk)), 1e-30)
     gg = float(np.linalg.norm(Rk + Fk)) / bez
     aus["gleichgewicht"] = gg
     if gg > ABSCHLUSS_GLEICHGEWICHT:
@@ -6588,8 +6603,12 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # Probelaeufen. Seit dem 08.10.2026 abends auch in warm gestarteten
         # Laeufen (jeder Newton-Schritt der Plastizitaet, Folgelastfaelle): dort
         # zaehlt nur ein bestaetigter Zyklus (_zyklus_bestaetigt) und eine
-        # Richtungsumkehr nur, wenn sie viermal in diesem Lauf geschah - die
-        # Zaehler kommen sonst aus dem Startzustand. Bis dahin lief ein warmer
+        # Richtungsumkehr aus einem fremden Start (anderer Lastfall) nur, wenn sie
+        # viermal in diesem Lauf geschah - die Zaehler kommen sonst aus dem
+        # Startzustand. In einer Fortsetzung desselben Lastfalls (Newton-Schritt)
+        # ist es dasselbe Pendeln wie im Lauf davor und zaehlt ab Runde 2: am
+        # Drehlager (Mittel, Laststufe 1, 08.10.2026) waren die Runden 3 und 4 schon
+        # reines Pendeln, angenommen wurde erst in Runde 5. Bis dahin lief ein warmer
         # Lauf, der pendelte, bis zum Deckel: am kleinen Block mit Fliessen
         # (tests/test_ingenieur_warm) jeder Newton-Schritt 69 Runden
         wie_runde = (kennungen.get(kennung) if kennung is not None and kennung != letzte_kennung
@@ -6597,7 +6616,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if warm and wie_runde is not None:
             wie_runde = _zyklus_bestaetigt(kennung_je_runde, it, kennung)
         richtungen = (cs.richtungen_pendeln() if (ABSCHLUSS_INGENIEUR and cs.phase == 2
-                                                   and (not warm or it > 4)) else 0)
+                                                   and (not warm or fortsetzung or it > 4)) else 0)
         if (ABSCHLUSS_INGENIEUR and u_vor is not None and not kurz and not probelauf
                 and cs.phase == 2 and (wie_runde is not None or richtungen)):
             ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
@@ -6624,7 +6643,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         + (" (warm gestartet)" if warm else "") + f" - {grund_text}; "
                         f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
                         f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm), "
-                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}")
+                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}; Normalbedingung: "
+                        f"Zug höchstens {ingenieur['zug_max']:.3g} N, Durchdringung höchstens "
+                        f"{ingenieur['durchdringung_max']:.3g} N (Schranke {ingenieur['normal_grenze']:.3g} N)")
                 log.append(text)
                 _melde(progress, text)
                 # Vernachlaessigbar ist, was das Gleichgewicht nicht merklich stoert:

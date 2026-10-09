@@ -1641,10 +1641,10 @@ Volumenelemente an den Ecken sich nirgends um mehr als 1 N/mm² ändert
 (`solver.ABSCHLUSS_SPANNUNG`; zwei Spannungsauswertungen je Prüfung, nur beim
 Pendeln), (ii) kein Knoten sich um mehr als 10⁻³·u_max bewegt
 (`ABSCHLUSS_WEG_ANTEIL`), keine geschlossene Bedingung Zug und keine offene
-Durchdringung über f_tol als Kraft trägt (`zustand_verstoesse`, dieselben Grenzen
-wie beim Öffnen und Schließen – ohne diese Prüfung nahm der Lauf am Drehlager in
-Runde 34 einen Zustand mit einer offenen Bedingung an, 0,088 nm durchdrungen, als
-Kraft 1,30 N bei f_tol 0,95 N) und (iii) die Auflagerkräfte der angenommenen Lösung mit
+Durchdringung als Kraft über max(f_tol, 10⁻⁵·|ΣF|) trägt
+(`ContactSystem.normal_verstoesse`, `ABSCHLUSS_NORMAL_ANTEIL`; seit dem 09.10.2026,
+Entscheidung des Anwenders – bis dahin f_tol allein wie beim Öffnen und Schließen,
+`zustand_verstoesse`) und (iii) die Auflagerkräfte der angenommenen Lösung mit
 der Last auf 10⁻⁴ im Gleichgewicht sind (`ABSCHLUSS_GLEICHGEWICHT`). Für (iii)
 setzt `ContactSystem.kraefte_der_loesung` Normal- und Reibkraft jeder Bedingung
 auf die Kräfte, mit denen sie in dieser Lösung wirkt (Multiplikatoren, die
@@ -1688,6 +1688,25 @@ Richtungsrunden ohne Wechsel zählen nicht –, und Richtungsumkehr zählt erst 
 vier Runden in Folge. Mit dem lockeren ersten Auslöser (jede Runde ohne Wechsel,
 zwei Umkehrungen) endete das Beispiel „Block mit Reibung“ nach 12 statt 29
 Runden und war nicht mehr bitgleich; so ist es bitgleich.
+
+Warum die Normalbedingung bei der Annahme relativ zur Last gemessen wird
+(09.10.2026): f_tol = 10⁻⁶·f_ref ist am Drehlager 0,95 N, das Kraftungleichgewicht
+der Lösung selbst 1,33 N (1,33·10⁻⁷·|ΣF| mit |ΣF| = 9,95 MN; 52 gestörte Pivots aus
+den frei beweglichen Platten, Befund B5). Eine Bedingung am Rand des Aufliegens
+pendelte im Vorlauf zwischen Durchdringung und Zug von 1,30 / 3,07 / 1,82 / 2,92 N
+und wurde nur angenommen, weil ein Zustand zufällig bei 0,941 N lag (Runde 38;
+ohne die Prüfung wäre es Runde 34 gewesen); im Newton-Schritt 2 der Laststufe 1
+nahm das Kriterium neun Runden lang nichts an, bei je Runde gleicher
+Verschiebungsänderung (Δu 7,3·10⁻⁵ bezogen auf max |u|) – welche Schranke dort
+scheiterte, ist nicht gemessen, das Muster ist dasselbe. Die Iteration öffnet und schließt weiter an f_tol, die
+Lösungsmenge des strengen Abschlusses ist unverändert. Am Prüfblock
+(`tests/test_ingenieur_warm`, Schranke 504 N bei |ΣF| = 50,4 MN) wird ein
+eingespielter Zug von 100 N angenommen und einer von 2 000 N nicht.
+Gleichzeitig zählt eine Richtungsumkehr in einer Fortsetzung desselben Lastfalls
+(`fortsetzung`, Newton-Schritte) ab Runde 2 – es ist dasselbe Pendeln wie im Lauf
+davor; am Drehlager waren die Runden 3 und 4 des ersten Newton-Schritts schon
+reines Pendeln (Δu 7,2·10⁻⁵), angenommen wurde erst in Runde 5. Aus einem fremden
+Start bleibt es bei vier Umkehrungen in diesem Lauf.
 
 Verworfen, gemessen am 08.10.2026: (a) jeden Knoten haften lassen, der zweimal
 hintereinander umkehrt, auch mit Reibung in zwei Richtungen. Am gequetschten

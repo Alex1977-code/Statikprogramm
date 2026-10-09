@@ -6238,8 +6238,8 @@ gerechneten Zustand zurück) oder Gleitrichtungen viermal hintereinander umkehre
 und zugleich zwischen den letzten beiden Runden die Vergleichsspannung der
 Volumenelemente sich nirgends um mehr als 1 N/mm² ändert, sich kein Knoten um
 mehr als ein Tausendstel der größten Verschiebung bewegt, keine geschlossene
-Kontaktbedingung Zug und keine offene eine Durchdringung über der Toleranz
-trägt und die Summe der
+Kontaktbedingung Zug und keine offene eine Durchdringung über einem
+Hunderttausendstel der Last trägt (mindestens der Toleranz der Iteration) und die Summe der
 Auflagerkräfte der angenommenen Lösung mit der Summe der Lasten auf 10⁻⁴
 übereinstimmt. Angenommen wird die zuletzt gerechnete Lösung mit ihren eigenen
 Kräften; das Gleichgewicht stimmt dann auf die Genauigkeit des Gleichungslösers.
@@ -6266,6 +6266,24 @@ Lauf viermal hintereinander um. Eine einzelne Rückkehr zum Startzustand ist kei
 Pendeln, denn ein weiterrechnender Lauf verlässt seinen Startzustand oft für ein
 paar Runden und kommt zu ihm zurück, bevor er ganz normal konvergiert. Wo nichts
 pendelt, rechnet das Programm bitgleich wie vorher.
+
+**Normalbedingung bei der Annahme relativ zur Last (seit 09.10.2026).** Zug an
+einer geschlossenen und Durchdringung (als Kraft) an einer offenen
+Kontaktbedingung dürfen im angenommenen Zustand höchstens ein Hunderttausendstel
+der Last betragen, mindestens aber die Toleranz, mit der die Iteration öffnet
+und schließt; am Drehlager mit rund 10 MN Last sind das rund 100 N. Bis zum
+09.10.2026 galt dafür allein die Toleranz der Iteration, am Drehlager 0,95 N. Das
+lag unter der Genauigkeit, mit der die Rechnung die Kräfte dort überhaupt trifft
+(1,3 N Ungleichgewicht der Lösung selbst): eine Bedingung, die gerade eben
+aufliegt, sprang mit 1 bis 3 N zwischen offen und geschlossen, und das Kriterium
+nahm keinen der beiden Zustände an. Die Iteration selbst öffnet und schließt
+weiter an ihrer Toleranz; nur die Annahme misst so. Das Protokoll nennt dazu den
+größten Zug, die größte Durchdringung und die verwendete Schranke. Läuft ein
+Lauf desselben Lastfalls weiter (Newton-Schritt der Plastizität) und kehrt dort
+eine Gleitrichtung um, die schon im Lauf davor pendelte, zählt das seit dem
+09.10.2026 ab der zweiten Runde; vorher wurde frühestens in der fünften Runde
+angenommen, und am Drehlager kostete das je Newton-Schritt ein bis zwei
+Zerlegungen. Aus einem anderen Lastfall gestartet bleibt es bei der fünften Runde.
 
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen

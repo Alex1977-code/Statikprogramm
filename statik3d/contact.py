@@ -1778,6 +1778,30 @@ class ContactSystem:
                 v["kegel_max"] = max(v["kegel_max"], ft / limit if limit > 0 else np.inf)
         return v
 
+    def normal_verstoesse(self, u: np.ndarray, lam=None) -> dict:
+        """Die groessten Verstoesse der Normalbedingung in der Loesung ``u`` als
+        Kraft [N], ohne Schwelle: Zug an einer geschlossenen Bedingung (nicht
+        im Verbund, nicht fliessend; -Fn) und Durchdringung einer offenen
+        (_durchdringungskraft). Nur lesen, nichts setzen. Fuer das
+        Ingenieurkriterium (solver._ingenieur_abschluss), das sie gegen eine
+        Schranke relativ zur Last misst; die Iteration selbst oeffnet und
+        schliesst weiter an f_tol (zustand_verstoesse, _update_states)."""
+        v = {"zug_max": 0.0, "zug_bei": None, "durchdringung_max": 0.0, "durchdringung_bei": None}
+        for c in self.cons:
+            g = float(c.g0 + c.cn @ u[c.dofs])
+            if not c.active:
+                if g < 0.0:
+                    f = self._durchdringungskraft(c, g)
+                    if f > v["durchdringung_max"]:
+                        v["durchdringung_max"], v["durchdringung_bei"] = f, (c.label, int(c.node))
+                continue
+            if c.zug or c.yielding:
+                continue
+            fn = self._normalkraft(c, g, lam)
+            if -fn > v["zug_max"]:
+                v["zug_max"], v["zug_bei"] = -fn, (c.label, int(c.node))
+        return v
+
     @property
     def n_slip(self) -> int:
         return sum(1 for c in self.cons if c.active and c.slip)

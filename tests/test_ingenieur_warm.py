@@ -31,10 +31,21 @@ Was hier belegt wird - jede Behauptung mit einer Zahl:
    das ist kein Pendeln (_zyklus_bestaetigt).
 5. Der Pendelschutz wirkt auch warm: mit ihm konvergiert derselbe fliessende Block
    streng, ohne das Kriterium zu brauchen.
+6. Umkehr in Fortsetzungen desselben Lastfalls zaehlt ab Runde 2 (09.10.2026): der
+   Pendler des Vorlaufs pendelt im naechsten Newton-Schritt weiter; vorher wurde
+   fruehestens in Runde 5 angenommen. Aus einem fremden Start (Folgelastfall) bleibt
+   es bei Runde 5.
+7. Normalbedingung im Kriterium gegen max(f_tol, 1e-5 |sum F|) (09.10.2026,
+   Entscheidung des Anwenders): am Drehlager liegt f_tol (0,95 N) unter der
+   Genauigkeit der Loesung (1,3 N), eine streifende Bedingung pendelte mit 1 bis 3 N.
+   Am Pruefblock ist die Loesung genauer; geprueft wird mit einem eingespielten Zug
+   in der Sicht des Kriteriums: 100 N (ueber f_tol, unter 1e-5 |sum F| = 504 N)
+   wird angenommen, 2 000 N nicht - der Lauf endet dann weiter am Deckel.
 
 Aufruf:  python -m tests.test_ingenieur_warm
 """
 import os
+import re as _re
 import sys
 
 import numpy as np
@@ -119,6 +130,9 @@ def test_fliessen_warm():
           len(warm) >= 2 and len(zeilen) >= 1,
           f"{len(warm)} warme Laeufe, {len(zeilen)} davon nach dem Kriterium: "
           + (zeilen[0][:110] + " …" if zeilen else "keiner"))
+    runden = [int(_re.search(r"in Runde (\d+)", z).group(1)) for z in zeilen]
+    check("Fortsetzung: Umkehr zaehlt ab Runde 2, angenommen vor Runde 5",
+          runden and min(runden) < 5, f"angenommen in den Runden {runden}")
     check("Plastizitaet konvergiert, nicht halbiert",
           pz.get("konvergiert") is True and not pz.get("halbiert"),
           f"Newton {pz.get('iterationen')}, halbiert {pz.get('halbiert')}, fliessend {pz.get('fliessend')}, "
@@ -151,6 +165,9 @@ def test_folgelastfall():
     r = erg["LF2"]
     info = r.info or {}
     lb = laufbuch(r)
+    zr = [int(_re.search(r"in Runde (\d+)", z).group(1)) for z in warm_angenommen(r)]
+    check("fremder Start: Umkehr zaehlt erst nach vier Runden in diesem Lauf (Runde 5)",
+          zr == [5], f"angenommen in Runde {zr}")
     check("LF2 = 1,05 LF1 warm: nach dem Kriterium angenommen, kein Neustart",
           info.get("contact_converged") and info.get("contact_warm") and warm_angenommen(r)
           and not any(e.get("neustart") for e in lb) and int(info.get("contact_iterations") or 99) <= 10,
@@ -191,6 +208,55 @@ def test_pendler_bleiben_stehen():
           f"Runden {info.get('contact_iterations')}, Zuruecksetzen: {zur[0][:90] if zur else 'keins'}")
 
 
+def test_normalschranke():
+    print("\n--- Normalbedingung im Kriterium: Schranke relativ zur Last ---")
+    from statik3d import contact
+    alt_zv = contact.ContactSystem.zustand_verstoesse
+    alt_nv = getattr(contact.ContactSystem, "normal_verstoesse", None)
+    erg = {}
+    for z in (100.0, 2000.0):
+        # eingespielt: eine geschlossene Bedingung traegt in jeder Loesung z N Zug - nur
+        # in der Sicht des Kriteriums (vor dem 09.10.2026 zustand_verstoesse, seither
+        # normal_verstoesse); die Iteration selbst bleibt unberuehrt
+        def zv(self, u, lam=None, _z=z):
+            v = alt_zv(self, u, lam)
+            if _z > self.f_tol:
+                v["zug"] += 1
+                v["zug_max"] = max(v["zug_max"], _z)
+            return v
+
+        def nv(self, u, lam=None, _z=z):
+            v = alt_nv(self, u, lam)
+            if _z > v["zug_max"]:
+                v["zug_max"], v["zug_bei"] = _z, ("eingespielt", -1)
+            return v
+        contact.ContactSystem.zustand_verstoesse = zv
+        if alt_nv is not None:
+            contact.ContactSystem.normal_verstoesse = nv
+        try:
+            m = tp.lager_in_flaechenachsen()
+            with weite_schranken(), tp.schutz(False):
+                erg[z] = (m, solver.solve_static(m))
+        finally:
+            contact.ContactSystem.zustand_verstoesse = alt_zv
+            if alt_nv is not None:
+                contact.ContactSystem.normal_verstoesse = alt_nv
+    m, r = erg[100.0]
+    F = solver.case_loads(m, {list(m.load_cases)[0]: 1.0})[0]
+    sF = float(np.linalg.norm(np.asarray(F[:m.nn * 6], float).reshape(-1, 6)[:, :3].sum(0)))
+    ing = r.info.get("contact_ingenieur") or {}
+    zeile = next((z for z in r.info.get("contact_log") or [] if "Ingenieurkriterium" in z), "")
+    check("100 N Zug (ueber f_tol, unter 1e-5 |sum F|): angenommen",
+          r.info.get("contact_converged") and ing.get("runde"),
+          f"Runde {ing.get('runde')}, Schranke {ing.get('normal_grenze')} N, 1e-5 |sum F| = {1e-5 * sF:.0f} N")
+    check("  Protokoll nennt Schranke und groessten Verstoss",
+          "Schranke" in zeile and "Zug höchstens 100 N" in zeile, zeile[-120:])
+    r2 = erg[2000.0][1]
+    check("2 000 N Zug (ueber 1e-5 |sum F|): nicht angenommen, Deckel wie bisher",
+          not r2.info.get("contact_converged") and not r2.info.get("contact_ingenieur"),
+          f"konvergiert {r2.info.get('contact_converged')}, Runden {r2.info.get('contact_iterations')}")
+
+
 def _bit(r0, r1):
     du = float(np.max(np.abs(np.asarray(r1.u) - np.asarray(r0.u))))
     dR = float(np.max(np.abs(np.asarray(r1.reactions) - np.asarray(r0.reactions))))
@@ -226,7 +292,8 @@ def test_ohne_pendeln_bitgleich():
 
 
 def main() -> int:
-    for t in (test_fliessen_warm, test_folgelastfall, test_pendler_bleiben_stehen, test_ohne_pendeln_bitgleich):
+    for t in (test_fliessen_warm, test_folgelastfall, test_pendler_bleiben_stehen, test_normalschranke,
+              test_ohne_pendeln_bitgleich):
         try:
             t()
         except Exception as ex:             # noqa: BLE001
