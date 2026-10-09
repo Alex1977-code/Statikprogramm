@@ -2459,7 +2459,7 @@ class StaticSystem:
         if ls is not None:
             ls.freigeben()
 
-    def _nachfuehrung_versuchen(self, schluessel, K_extra, A_aug, C_f, D_f):
+    def _nachfuehrung_versuchen(self, schluessel, K_extra, A_aug, C_f, D_f, zustand=None):
         """Die Runde mit dem behaltenen Faktor und der Kapazitaetsmatrix loesen
         (statik3d.nachfuehrung) statt neu zu zerlegen. Rueckgabe der Loeser-Ersatz
         oder None - dann wird neu zerlegt wie bisher. Nur mit Signatur und
@@ -2471,7 +2471,15 @@ class StaticSystem:
         try:
             E1 = nfg.steifigkeitsteil(K_extra, A_aug, self.fi)
             B1, G1 = nfg.randteile(self._Vf, C_f, D_f, len(self.fi))
-            return basis.nachfuehren(E1, B1, G1, grenze=LinearSolver.genauigkeit()[0])
+            # Pendelt die Aktivmenge, kommt dieser Zustand wieder: dann keine Grenze je
+            # Runde. Verglichen wird der Kontaktzustand (Aktivmenge, Haften/Gleiten,
+            # Fliessen), nicht die Signatur: die Quertangenten darin aendern sich auch im
+            # Pendeln ein wenig (Pendelblock h 0,0625: keine Signatur kehrte wieder), die
+            # beruehrten Zeilen und Spalten - und damit die behaltenen Spalten - aber nicht.
+            wiederkehr = (zustand if zustand is not None else schluessel) in \
+                getattr(self, "_zustaende_zuletzt", ())
+            return basis.nachfuehren(E1, B1, G1, grenze=LinearSolver.genauigkeit()[0],
+                                     wiederkehr=wiederkehr)
         except nfg.Abgelehnt as ex:
             self.nachfuehrung_abgelehnt = str(ex)
             return None
@@ -2492,7 +2500,7 @@ class StaticSystem:
               F_extra: np.ndarray = None, us: np.ndarray = None,
               signatur=None, C_extra: sparse.spmatrix = None,
               b_extra: np.ndarray = None, c_skala=None,
-              D_extra: sparse.spmatrix = None) -> np.ndarray:
+              D_extra: sparse.spmatrix = None, zustand=None) -> np.ndarray:
         """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
         und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
         wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s.
@@ -2505,6 +2513,9 @@ class StaticSystem:
         ohne C ist das ein leeres Feld. ``c_skala`` (je Zeile, Vorgabe die
         groesste Hauptdiagonale von K fuer alle) skaliert die Zeilen auf
         Steifigkeitsniveau.
+
+        ``zustand`` (ContactSystem.zustandskennung) sagt der Nachfuehrung, ob die
+        Iteration zu einem Zustand der letzten Runden zurueckkehrt.
 
         ``signatur`` kennzeichnet K_extra (ContactSystem.signatur): mit
         derselben Signatur wie beim vorigen Aufruf bleibt die Faktorisierung
@@ -2589,7 +2600,7 @@ class StaticSystem:
                 # bleiben die Basis. Lehnt sie ab, wird neu zerlegt wie bisher.
                 weiter = None
                 if neu and schluessel is not None and ls is not None:
-                    weiter = self._nachfuehrung_versuchen(schluessel, K_extra, A_aug, C_f, D_ff)
+                    weiter = self._nachfuehrung_versuchen(schluessel, K_extra, A_aug, C_f, D_ff, zustand)
                 zerlegt = False
                 Kt = None
                 if (neu and weiter is None) or vorgabe:
@@ -2646,6 +2657,11 @@ class StaticSystem:
                     elif zerlegt:
                         self._kontakt_loeser, self._kontakt_signatur = ls, schluessel
                         self._basis_anlegen(ls, schluessel, K_extra, A_aug, C_f, D_ff)
+                    if schluessel is not None:
+                        # die zuletzt geloesten Zustaende (Wiederkehr: die Aktivmenge pendelt)
+                        zuletzt = self.__dict__.setdefault("_zustaende_zuletzt", [])
+                        zuletzt.append(zustand if zustand is not None else schluessel)
+                        del zuletzt[:max(0, len(zuletzt) - nfg.WIEDERKEHR_RUNDEN)]
         except (RuntimeError, ValueError) as ex:
             # Singulaer (Faktorisierung oder Residuum): sagen, was dem Modell fehlt
             if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
@@ -6637,9 +6653,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     def loesen():
         # Loesung und die Multiplikatoren der exakten Bedingungen (lambda,
         # Druck positiv) - beide gehoeren zu diesem Schritt
+        # zustand: Aktivmenge, Haften/Gleiten und Fliessen - kehrt er wieder, darf die
+        # Nachfuehrung mehr Spalten loesen (statik3d.nachfuehrung.WIEDERKEHR_RUNDEN)
         u_ = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b,
                           c_skala=getattr(cs, "c_skala", None),
-                          D_extra=getattr(cs, "D_kopplung", None))
+                          D_extra=getattr(cs, "D_kopplung", None), zustand=cs.zustandskennung())
         return u_, system.kontakt_multiplikatoren
 
     if not cs.cons:

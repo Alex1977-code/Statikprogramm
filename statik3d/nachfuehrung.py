@@ -62,15 +62,32 @@ if MODUS not in ("auto", "immer", "nie"):
 #: 6,2 s Zerlegung, 0,29 s je Loesung; 5,3e8 Nichtnullen 26,6 s und 0,75 s.
 NNZ_FAKTOR_MIN = 5.0e7
 #: Hoechstens so viele Spalten Z je Runde neu loesen. Eine weitere Spalte im Block
-#: kostet 0,2 bis 0,4 % einer Zerlegung (Messung wie oben: 200 Spalten 45 bis 77 %).
-SPALTEN_NEU_MAX = 100
+#: kostet 0,2 bis 0,4 % einer Zerlegung (Messung wie oben: 200 Spalten 45 bis 77 %),
+#: unter Fremdlast bis 0,7 %. 200 Spalten kosten also bis etwa eine Zerlegung - sie
+#: werden aber behalten: pendelt die Aktivmenge, braucht jede weitere Runde keine
+#: neue Spalte (Pendelblock h 0,0625: 260 Spalten je Runde gegen die vorige Runde,
+#: gegen eine feste Basis 195 einmal und 33 danach, dann keine mehr).
+SPALTEN_NEU_MAX = 200
+#: Kehrt die Iteration zu einem Kontaktzustand (Aktivmenge, Haften/Gleiten, Fliessen)
+#: zurueck, den sie in den letzten WIEDERKEHR_RUNDEN Runden schon geloest hat (sie
+#: pendelt), gilt SPALTEN_NEU_MAX nicht: die Spalten werden in den folgenden Runden
+#: wieder gebraucht. Es bleiben T_MAX und der Speicher. Am Pendelblock h 0,0625 brauchte
+#: jede Runde 260 Spalten gegen die vorige - mit der festen Grenze wurde jede abgelehnt,
+#: neu zerlegt und damit die Basis gewechselt.
+WIEDERKEHR_RUNDEN = 8
 #: Hoechstens so viele beruehrte Zeilen/Spalten (Groesse der Kapazitaetsmatrix)
-T_MAX = 1500
+T_MAX = 2000
 #: Speicher fuer die behaltenen Spalten: hoechstens dieser Anteil am Faktor
-#: (8 Byte je Nichtnull), mindestens SPEICHER_MIN
-SPEICHER_ANTEIL = 0.15
-SPEICHER_MIN = 256 * 2 ** 20
-#: Hoechste Konditionszahl (1-Norm, geschaetzt) der Kapazitaetsmatrix
+#: (8 Byte je Nichtnull), mindestens SPEICHER_MIN. Am Drehlager (Mittel, 4e9
+#: Nichtnullen) sind das 8 GB, rund 380 Spalten zu 2,6 Mio. Zeilen.
+SPEICHER_ANTEIL = 0.25
+SPEICHER_MIN = 512 * 2 ** 20
+#: Hoechste Konditionszahl (1-Norm, geschaetzt) der Kapazitaetsmatrix. Darueber ist
+#: die neue Matrix (fast) singulaer, und die Loesung haengt an der Rundung: dann wird
+#: neu zerlegt, und PARDISO behandelt die Matrix wie bisher (gestoerte Pivots). Die
+#: Platzhalter weggefallener und neuer Zeilen stehen dafuer in der Groesse ihrer Zeile
+#: (Basis.nachfuehren); mit 1 lag die Kondition am Pendelblock bei 1e10 bis 1e20,
+#: obwohl die neue Matrix regulaer war. Eine doppelte Zeile ergibt 7,7e17.
 KONDITION_MAX = 1.0e12
 #: Residuum, das die nachgefuehrte Loesung erreichen muss - oder das der
 #: Basiszerlegung, wenn das groesser ist (dann ist mehr nicht erreichbar)
@@ -157,6 +174,15 @@ def _zeilen_kennungen(B: sparse.csr_matrix) -> list:
             for i in range(B.shape[0])]
 
 
+def _zeilen_groesse(B: sparse.csr_matrix, zeilen: np.ndarray) -> np.ndarray:
+    """Groesster Betrag je Zeile (1, wenn die Zeile leer ist) - die Diagonale der
+    Platzhalter weggefallener und neuer Randzeilen."""
+    if not len(zeilen):
+        return np.zeros(0)
+    g = np.asarray(abs(B[zeilen]).max(axis=1).todense(), float).ravel()
+    return np.where(g > 0.0, g, 1.0)
+
+
 def _eintraege(M) -> tuple:
     """(Zeilen, Spalten, Werte) der Nichtnullen einer duennen Matrix, ohne Nullen."""
     C = M.tocoo()
@@ -221,9 +247,10 @@ class Basis:
         self._k += len(fehlend)
         self.spalten_geloest += len(fehlend)
 
-    def nachfuehren(self, E1, B1, G1, grenze: float = 1e-6) -> "Nachfuehrung":
+    def nachfuehren(self, E1, B1, G1, grenze: float = 1e-6, wiederkehr: bool = False) -> "Nachfuehrung":
         """Die Nachfuehrung fuer die Matrix [[Kff + E1, G1^T], [B1, 0]] bauen - oder
-        Abgelehnt, wenn sie sich nicht lohnt oder nicht sicher ist."""
+        Abgelehnt, wenn sie sich nicht lohnt oder nicht sicher ist. ``wiederkehr``:
+        der Zustand wurde vor kurzem schon geloest (WIEDERKEHR_RUNDEN)."""
         nf, n0 = self.nf, self.n0
         if E1.shape != (nf, nf) or B1.shape[1] != nf:
             raise Abgelehnt("andere Zahl freier Freiheitsgrade")
@@ -257,30 +284,40 @@ class Basis:
             # Spalten (B^T + D): die Kopplung der Reibung dreht sich mit der Richtung
             r, c, v = _eintraege(G1[aj] - self.G[ai])
             zr.append(c), zc.append(pos[r]), zv.append(v)
+        # Die Platzhalter (Multiplikator 0) stehen nicht mit 1 auf der Diagonale, sondern
+        # mit der Groesse ihrer Zeile (Diagonalsteifigkeit der Knoten, ~1e10): mit 1
+        # reichten die Eintraege der Kapazitaetsmatrix von 1e-10 bis 1e4, und ihre
+        # geschaetzte Kondition lag am Pendelblock bei 1e10 bis 1e20, obwohl die neue
+        # Matrix regulaer war. Eine Zeilen- und Spaltenskalierung der Kapazitaetsmatrix
+        # haette das ebenfalls gedrueckt, aber auch eine wirklich singulaere Matrix
+        # (doppelte Zeile) auf Kondition 8 gebracht - das Rundungsrauschen der grossen
+        # Eintraege verdeckt dann den Rangabfall.
+        sig_weg = _zeilen_groesse(self.B, weg)
         if len(weg):
-            # weggefallene Zeile: in A1 Identitaet statt der alten Zeile und Spalte
+            # weggefallene Zeile: in A1 ein Platzhalter statt der alten Zeile und Spalte
             pos = nf + weg
             r, c, v = _eintraege(self.B[weg])
             zr.append(pos[r]), zc.append(c), zv.append(-v)
             r, c, v = _eintraege(self.G[weg])
             zr.append(c), zc.append(pos[r]), zv.append(-v)
-            zr.append(pos), zc.append(pos), zv.append(np.ones(len(pos)))
+            zr.append(pos), zc.append(pos), zv.append(sig_weg)
+        nj = np.array(neu_j, np.int64)
+        sig_neu = _zeilen_groesse(B1, nj)
         if n_neu:
-            # neue Zeile: in A0 stand die Identitaet, in A1 die Zeile und Spalte
-            nj = np.array(neu_j)
+            # neue Zeile: in A0 stand der Platzhalter, in A1 die Zeile und Spalte
             pos = n0 + np.arange(n_neu)
             r, c, v = _eintraege(B1[nj])
             zr.append(pos[r]), zc.append(c), zv.append(v)
             r, c, v = _eintraege(G1[nj])
             zr.append(c), zc.append(pos[r]), zv.append(v)
-            zr.append(pos), zc.append(pos), zv.append(-np.ones(n_neu))
+            zr.append(pos), zc.append(pos), zv.append(-sig_neu)
         zr, zc, zv = np.concatenate(zr), np.concatenate(zc), np.concatenate(zv)
         T = np.unique(np.concatenate([zr, zc]))
         if len(T) > T_MAX:
             raise Abgelehnt(f"{len(T)} berührte Zeilen und Spalten (höchstens {T_MAX})")
         T_alt = T[T < n0]
         fehlend = np.array([t for t in T_alt.tolist() if t not in self._spalte], np.int64)
-        if len(fehlend) > SPALTEN_NEU_MAX:
+        if not wiederkehr and len(fehlend) > SPALTEN_NEU_MAX:
             raise Abgelehnt(f"{len(fehlend)} neue Spalten (höchstens {SPALTEN_NEU_MAX} je Runde)")
         if (self._k + len(fehlend)) * 8.0 * n0 > self.speicher_max:
             raise Abgelehnt(f"Speicher der Spalten ({self._k + len(fehlend)} Spalten) über "
@@ -291,11 +328,11 @@ class Basis:
         # Dieselbe Matrix wie in der vorigen Runde (Setzrunden, Nachfuehren der
         # Reibkraft im Lastvektor): A1 = A0 + P_T M P_T^T ist dieselbe, die
         # Kapazitaetsmatrix auch. Verglichen wird der Inhalt, nicht ein Hash.
-        teile = (T, M, stelle, weg)
+        teile = (T, M, stelle, weg, sig_weg, sig_neu)
         if self._letzte is not None and self._letzte[2] == n_neu and \
                 all(a.shape == b.shape and np.array_equal(a, b) for a, b in zip(self._letzte[0], teile)):
             return self._letzte[1]
-        nf_ = Nachfuehrung(self, E1, B1, G1, T, M, stelle, weg, n_neu, grenze)
+        nf_ = Nachfuehrung(self, E1, B1, G1, T, M, stelle, weg, n_neu, grenze, sig_weg, sig_neu)
         self._letzte = (teile, nf_, n_neu)
         return nf_
 
@@ -323,7 +360,8 @@ class Nachfuehrung:
     Basis weiter, die der Loeser-Nachweis liest (Loeser, Threads, gestoerte
     Pivots); ``solve`` wirft Abgelehnt, wenn das Residuum nicht erreicht wird."""
 
-    def __init__(self, basis: Basis, E1, B1, G1, T, M, stelle, weg, n_neu, grenze):
+    def __init__(self, basis: Basis, E1, B1, G1, T, M, stelle, weg, n_neu, grenze, sig_weg=None,
+                 sig_neu=None):
         self.basis = basis
         ls = basis.ls
         self.backend = ls.backend
@@ -340,6 +378,9 @@ class Nachfuehrung:
         self.G1t = G1.T.tocsr()
         self.T, self.M = T, M
         self.stelle, self.weg, self.n_neu = stelle, weg, int(n_neu)
+        #: Diagonale der Platzhalter: weggefallene Zeilen in A1, neue Zeilen in A0
+        self.sig_weg = np.ones(len(weg)) if sig_weg is None else np.asarray(sig_weg, float)
+        self.sig_neu = np.ones(self.n_neu) if sig_neu is None else np.asarray(sig_neu, float)
         n0 = basis.n0
         self.n_ext = n0 + self.n_neu
         self._T_alt = T[T < n0]
@@ -350,7 +391,9 @@ class Nachfuehrung:
         Z_TT = np.zeros((k, k))
         for a in self._a_alt.tolist():
             Z_TT[self._a_alt, a] = basis.zeilen_Z(self._T_alt, int(T[a]))
-        Z_TT[self._a_neu, self._a_neu] = 1.0
+        # neue Zeilen: in A0ext steht der Platzhalter sigma, A0ext^-1 e_t = e_t / sigma
+        self._sig_T_neu = self.sig_neu[T[self._a_neu] - n0] if len(self._a_neu) else np.zeros(0)
+        Z_TT[self._a_neu, self._a_neu] = 1.0 / self._sig_T_neu
         self.kapazitaet = np.eye(k) + M @ Z_TT
         if k:
             if not np.all(np.isfinite(self.kapazitaet)):
@@ -390,14 +433,14 @@ class Nachfuehrung:
         n0 = b.n0
         x = np.empty(self.n_ext)
         x[:n0] = b._loesen(y_ext[:n0])
-        x[n0:] = y_ext[n0:]
+        x[n0:] = y_ext[n0:] / self.sig_neu
         if self._lu is None:
             return x
         w = sla.lu_solve(self._lu, self.M @ x[self.T], check_finite=False)
         if len(self._a_alt):
             x[:n0] -= b.anwenden_Z({int(self.T[a]): float(w[a]) for a in self._a_alt.tolist()}, n0)
         if len(self._a_neu):
-            x[self.T[self._a_neu]] -= w[self._a_neu]
+            x[self.T[self._a_neu]] -= w[self._a_neu] / self._sig_T_neu
         return x
 
     def matvec(self, x: np.ndarray) -> np.ndarray:
@@ -429,7 +472,8 @@ class Nachfuehrung:
             if not np.all(np.isfinite(x)):
                 raise Abgelehnt("Lösung nicht endlich")
             r = b - self.matvec(x)
-            r_weg = x_ext[self.basis.nf + self.weg] if len(self.weg) else np.zeros(0)
+            # Platzhalter weggefallener Zeilen: sigma * Multiplikator = 0
+            r_weg = (-self.sig_weg * x_ext[self.basis.nf + self.weg]) if len(self.weg) else np.zeros(0)
             rel = float(np.sqrt(r @ r + r_weg @ r_weg)) / nb
             if rel <= self.ziel:
                 break
@@ -439,7 +483,7 @@ class Nachfuehrung:
                                 f"{self.ziel:.0e}")
             r_ext = self._in_ext(r)
             if len(self.weg):
-                r_ext[self.basis.nf + self.weg] = -r_weg
+                r_ext[self.basis.nf + self.weg] = r_weg
             x_ext = x_ext + self._W(r_ext)
             r_vor = rel
             schritte += 1

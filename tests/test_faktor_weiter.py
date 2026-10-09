@@ -17,7 +17,9 @@ Was hier belegt wird - jede Behauptung mit einer Zahl:
    geloest.
 2. Kontaktlaeufe mit Nachfuehrung ("immer") gegen ohne ("nie"): dieselbe Aktivmenge
    in jeder Runde, dieselbe Rundenzahl, derselbe Ausgang, Verschiebungen und
-   Reaktionen auf 1e-9 relativ gleich - und weniger echte Zerlegungen.
+   Reaktionen auf 1e-9 relativ gleich - und weniger echte Zerlegungen. Bei
+   spiegelsymmetrischen Modellen darf ein Gleichstand anders fallen; dann muss das
+   Ergebnis dem neu zerlegten oder dessen Spiegelbild auf 1e-9 gleichen.
    Pendelblock (tests.test_kontakt_pendeln) mit und ohne Pendelschutz, Block mit
    Anschlag (tet10), Block mit Reibung (Beispiel), fliessender Reibblock mit kleiner
    Querlast (Plastizitaet mit Kontakt, warm gestartete Laeufe, LF1 und K1).
@@ -26,7 +28,9 @@ Was hier belegt wird - jede Behauptung mit einer Zahl:
    trennen sich auch PARDISO und SuperLU ohne Nachfuehrung. Geprueft wird, dass die
    Nachfuehrung nicht weiter abweicht als der andere Loeser und alles konvergiert.
 3. Rueckfall: lehnt die Nachfuehrung jede Runde ab (T_MAX = 0), rechnet der Lauf
-   bitgleich wie ohne sie und zerlegt genauso oft.
+   bitgleich wie ohne sie und zerlegt genauso oft. Pendeln: auch ohne jede neue
+   Spalte je Runde (SPALTEN_NEU_MAX = 0) werden wiederkehrende Kontaktzustaende
+   nachgefuehrt (WIEDERKEHR_RUNDEN).
 4. Vorgabe "auto": kleine Modelle (Faktor unter NNZ_FAKTOR_MIN) rechnen bitgleich
    wie ohne Nachfuehrung.
 
@@ -95,8 +99,13 @@ def runden_mitschreiben(buch: list):
 
 def rechnen(bau, wert, alle=False, **grenzen):
     buch = []
-    with modus(wert, **grenzen), runden_mitschreiben(buch):
+    # Das Modell entsteht ohne Nachfuehrung und ausserhalb der Mitschrift: der
+    # fliessende Reibblock rechnet beim Bauen vorab (Streckgrenze aus der elastischen
+    # Loesung); diese Rechnung gehoert nicht zum Vergleich, und fy soll in beiden
+    # Laeufen dasselbe sein
+    with modus("nie"):
         m = bau()
+    with modus(wert, **grenzen), runden_mitschreiben(buch):
         if alle:
             erg = solver.solve_all(m).all_results()
         else:
@@ -211,19 +220,27 @@ def fliessender_reibblock_schief():
     return m
 
 
+# (Name, Modell, Pendelschutz, alle Lastfaelle und Kombinationen, Symmetrieebene y = y0)
 FAELLE = [
-    ("Pendelblock mit Schutz (h 0,25)", lambda: tp.lager_in_flaechenachsen(), True, False),
-    ("Pendelblock ohne Schutz, Deckel (h 0,25)", lambda: tp.lager_in_flaechenachsen(), False, False),
-    ("Block mit Anschlag, tet10", lambda: tp.block_auf_reiblager("tet10", 0.25, 1.2, 0.0, True)[0], True, False),
-    ("Block mit Reibung (Beispiel)", block_friction_example, True, False),
-    ("Fliessender Reibblock, schief (Plastizitaet, warm)", fliessender_reibblock_schief, True, True),
+    ("Pendelblock mit Schutz (h 0,25)", lambda: tp.lager_in_flaechenachsen(), True, False, None),
+    ("Pendelblock ohne Schutz, Deckel (h 0,25)", lambda: tp.lager_in_flaechenachsen(), False, False, None),
+    ("Block mit Anschlag, tet10", lambda: tp.block_auf_reiblager("tet10", 0.25, 1.2, 0.0, True)[0], True, False,
+     0.5),
+    ("Block mit Reibung (Beispiel)", block_friction_example, True, False, 0.0),
+    ("Fliessender Reibblock, schief (Plastizitaet, warm)", fliessender_reibblock_schief, True, True, None),
 ]
 
 
-def _vergleich(name, bau, schutz, alle):
+def _vergleich(name, bau, schutz, alle, y0=None):
+    """``y0``: das Modell ist spiegelsymmetrisch zur Ebene y = y0. Dann kann ein
+    Gleichstand zweier gespiegelter Knoten an der letzten Stelle haengen (siehe
+    test_gleichstand): die Aktivmengen duerfen sich unterwegs unterscheiden, das
+    Ergebnis muss dem neu zerlegten oder seinem Spiegelbild auf 1e-9 gleichen. Ohne
+    Symmetrie muss jede Runde dieselbe Aktivmenge haben."""
     with tp.schutz(schutz):
         e0, buch0 = rechnen(bau, "nie", alle)
         e1, buch1 = rechnen(bau, "immer", alle)
+    m = bau() if y0 is not None else None
     ok_alle = True
     for n in e0:
         r0, r1 = e0[n], e1[n]
@@ -232,11 +249,19 @@ def _vergleich(name, bau, schutz, alle):
         it0, it1 = r0.info.get("contact_iterations"), r1.info.get("contact_iterations")
         k0, k1 = r0.info.get("contact_converged"), r1.info.get("contact_converged")
         g0, g1 = tp.grund(r0), tp.grund(r1)
-        ok = (buch1 == buch0 and it1 == it0 and k1 == k0 and g1 == g0 and du <= 1e-9 and dR <= 1e-9)
+        gleich = buch1 == buch0 and it1 == it0 and du <= 1e-9 and dR <= 1e-9
+        spiegel = ""
+        if y0 is not None and not gleich:
+            u0s, R0s = gespiegelt(m, r0.u, y0), gespiegelt(m, r0.reactions, y0)
+            ds = max(rel(np.asarray(r1.u)[:, :3], u0s), rel(np.asarray(r1.reactions)[:, :3], R0s)) \
+                if u0s is not None else float("inf")
+            spiegel = f", gegen das Spiegelbild {ds:.1e}"
+            gleich = (du <= 1e-9 and dR <= 1e-9) or ds <= 1e-9
+        ok = gleich and k1 == k0 and g1 == g0
         ok_alle &= ok
         check(f"{name} {n}: wie neu zerlegt", ok,
               f"Runden {it1} ({it0}), Aktivmengen gleich {buch1 == buch0} ({len(buch1)}), Ausgang {g1}, "
-              f"|du| {du:.1e}, |dR| {dR:.1e}")
+              f"|du| {du:.1e}, |dR| {dR:.1e}{spiegel}")
         check(f"  {n}: weniger echte Zerlegungen", f1 < f0 or f0 <= 1,
               f"{f1} statt {f0} Zerlegungen")
     return ok_alle
@@ -244,8 +269,8 @@ def _vergleich(name, bau, schutz, alle):
 
 def test_kontaktlaeufe():
     print("\n--- Kontaktlaeufe: Nachfuehrung (immer) gegen Neuzerlegung (nie) ---")
-    for name, bau, schutz, alle in FAELLE:
-        _vergleich(name, bau, schutz, alle)
+    for name, bau, schutz, alle, y0 in FAELLE:
+        _vergleich(name, bau, schutz, alle, y0)
 
 
 @contextlib.contextmanager
@@ -260,8 +285,8 @@ def loeser(backend):
         st.solver_backend = alt
 
 
-def gespiegelt(m, a):
-    """Knotenwerte (nn, >=3) an der Ebene y = 0 gespiegelt: Wert des Spiegelknotens,
+def gespiegelt(m, a, y0=0.0):
+    """Knotenwerte (nn, >=3) an der Ebene y = y0 gespiegelt: Wert des Spiegelknotens,
     y-Anteil mit umgekehrtem Vorzeichen (nur die Verschiebungen/Kraefte)."""
     X = np.asarray(m.nodes, float)
     a = np.asarray(a, float)[:, :3]
@@ -274,7 +299,7 @@ def gespiegelt(m, a):
         je_ort[k].append(len(rang) - 1)
     spiegel = []
     for i, x in enumerate(X):
-        lst = je_ort.get((round(x[0], 9), round(-x[1], 9) + 0.0, round(x[2], 9)), [])
+        lst = je_ort.get((round(x[0], 9), round(2.0 * y0 - x[1], 9) + 0.0, round(x[2], 9)), [])
         spiegel.append(lst[rang[i]] if rang[i] < len(lst) else -1)
     spiegel = np.array(spiegel)
     if np.any(spiegel < 0):
@@ -315,6 +340,26 @@ def test_gleichstand():
               f"SuperLU ohne Nachfuehrung {d_superlu:.1e}; Plastizitaet {pz}, Kontakt {kk}")
 
 
+def test_wiederkehr():
+    print("\n--- Pendeln: ein wiederkehrender Kontaktzustand darf mehr Spalten loesen ---")
+    # Am Pendelblock ohne Schutz (Deckel nach 75 Runden) ohne jede neue Spalte je Runde
+    # (SPALTEN_NEU_MAX = 0): nachgefuehrt werden darf nur, was ein Zustand der letzten
+    # Runden schon war. Gemessen 09.10.2026 am Pendelblock h 0,0625 (105 000 Unbekannte):
+    # ohne diese Regel 41 Zerlegungen in 42 Runden, mit ihr 14.
+    bau = lambda: tp.lager_in_flaechenachsen()  # noqa: E731
+    with tp.schutz(False):
+        e0, b0 = rechnen(bau, "nie")
+        e1, b1 = rechnen(bau, "immer", SPALTEN_NEU_MAX=0)
+    r0, r1 = next(iter(e0.values())), next(iter(e1.values()))
+    n_nach = int(r1.info.get("contact_nachfuehrungen", 0) or 0)
+    du, dR = rel(r1.u, r0.u), rel(r1.reactions, r0.reactions)
+    check("ohne neue Spalten je Runde: die wiederkehrenden Zustaende werden nachgefuehrt",
+          n_nach > 0 and b1 == b0 and du <= 1e-9 and dR <= 1e-9,
+          f"{n_nach} Nachfuehrungen, {zaehlen(r1, 'contact_factorisations')} statt "
+          f"{zaehlen(r0, 'contact_factorisations')} Zerlegungen, Runden {r1.info.get('contact_iterations')}, "
+          f"|du| {du:.1e}, |dR| {dR:.1e}")
+
+
 def test_rueckfall_und_auto():
     print("\n--- Rueckfall (jede Nachfuehrung abgelehnt) und Vorgabe auto: bitgleich ---")
     bau = lambda: tp.block_auf_reiblager("tet10", 0.25, 1.2, 0.0, True)[0]  # noqa: E731
@@ -335,7 +380,7 @@ def test_rueckfall_und_auto():
 
 
 def main() -> int:
-    for t in (test_formel, test_kontaktlaeufe, test_gleichstand, test_rueckfall_und_auto):
+    for t in (test_formel, test_kontaktlaeufe, test_gleichstand, test_wiederkehr, test_rueckfall_und_auto):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

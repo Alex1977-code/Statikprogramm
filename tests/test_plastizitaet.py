@@ -812,13 +812,16 @@ def test_protokoll_sagt_was_die_runde_bewegt_und_kostet():
     solver.solve_static(m, progress=lambda t, a=None: zeilen.append(str(t)))
     kz = [z for z in zeilen if z.startswith("Kontakt-Iteration ")]
     check(f"die Kontakt-Iteration meldet jede Runde ({len(kz)})", len(kz) >= 5, str(kz[:1]))
+    # Seit dem 09.10.2026 gibt es drei Sorten: neu zerlegt, mit dem behaltenen Faktor
+    # nachgefuehrt (statik3d.nachfuehrung, grosse Modelle oder STATIK3D_NACHFUEHRUNG=immer)
+    # und unveraendert. Nachgefuehrt und unveraendert sind beide ohne neue Zerlegung.
     check("jede Runde sagt, ob die Matrix neu faktorisiert wurde",
-          all(("Matrix neu" in z) or ("Matrix bleibt" in z) for z in kz),
+          all(("Matrix neu" in z) or ("Matrix bleibt" in z) or ("Matrix nachgeführt" in z) for z in kz),
           str([z for z in kz if "Matrix" not in z][:1]))
     check("ab der zweiten Runde steht die Verschiebungsänderung dabei",
           all("Δu" in z for z in kz[1:]), str([z for z in kz[1:] if "Δu" not in z][:1]))
     teuer = [z for z in kz if "Matrix neu" in z]
-    billig = [z for z in kz if "Matrix bleibt" in z]
+    billig = [z for z in kz if "Matrix bleibt" in z or "Matrix nachgeführt" in z]
     check(f"beide Sorten kommen vor: {len(teuer)} mit neuer Matrix, {len(billig)} ohne",
           teuer and billig, f"{len(teuer)} / {len(billig)}")
     # Der Kern der Sache: gleiche Zahl „aktiv“, trotzdem unterschiedlich teuer
