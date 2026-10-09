@@ -290,12 +290,13 @@ class Basis:
         self._spalten_sichern(fehlend)
         # Dieselbe Matrix wie in der vorigen Runde (Setzrunden, Nachfuehren der
         # Reibkraft im Lastvektor): A1 = A0 + P_T M P_T^T ist dieselbe, die
-        # Kapazitaetsmatrix auch
-        kennung = hash((T.tobytes(), M.tobytes(), stelle.tobytes(), weg.tobytes(), n_neu))
-        if self._letzte is not None and self._letzte[0] == kennung:
+        # Kapazitaetsmatrix auch. Verglichen wird der Inhalt, nicht ein Hash.
+        teile = (T, M, stelle, weg)
+        if self._letzte is not None and self._letzte[2] == n_neu and \
+                all(a.shape == b.shape and np.array_equal(a, b) for a, b in zip(self._letzte[0], teile)):
             return self._letzte[1]
         nf_ = Nachfuehrung(self, E1, B1, G1, T, M, stelle, weg, n_neu, grenze)
-        self._letzte = (kennung, nf_)
+        self._letzte = (teile, nf_, n_neu)
         return nf_
 
     def anwenden_Z(self, w_je_t: dict, n: int) -> np.ndarray:
