@@ -6297,6 +6297,60 @@ angenommen, steht dahinter, an welcher Schranke es lag, zum Beispiel
 „Ingenieurkriterium nicht erfüllt: Δu 19.5 µm > 0.498 µm“. An der Rechnung ändert
 das nichts.
 
+**Kontaktrunden ohne neue Zerlegung (seit 09.10.2026).** Bis zum 09.10.2026
+zerlegte jede Kontaktrunde das Gleichungssystem neu, sobald sich die Aktivmenge,
+Haften oder Gleiten, das Fließen einer Bedingung oder die Richtung eines
+gleitenden Knotens geändert hatte – auch wenn das nur eine von 30 000
+Bedingungen betraf. Am Drehlager mit der Stufe Mittel kostet eine Zerlegung
+rund 100 Sekunden, das Lösen mit einer vorhandenen Zerlegung 6 bis 8 Sekunden,
+und 77 bis 82 Prozent der Rechenzeit eines Lastfalls waren Zerlegungen. Jetzt
+löst das Programm eine solche Runde zuerst mit der Zerlegung der zuletzt
+zerlegten Matrix und rechnet die Änderung über eine kleine Zusatzmatrix nach,
+die nur die Zeilen und Spalten der geänderten Bedingungen enthält
+(Kapazitätsmatrix nach Sherman, Morrison und Woodbury). Für jede berührte Zeile
+braucht es einmal eine Lösung mit der alten Zerlegung; diese Lösungen werden
+behalten, und pendelt die Aktivmenge zwischen wenigen Zuständen, braucht eine
+Runde danach gar keine neue mehr. Anschließend wird gegen die neue Matrix
+nachiteriert, bis das Residuum so klein ist wie bei einer neuen Zerlegung.
+Gelöst wird dasselbe Gleichungssystem wie vorher, nur auf anderem Weg; die
+Kontaktbedingung ist unverändert.
+
+Neu zerlegt wird wie bisher, wenn eine Runde mehr als 200 neue Lösungen bräuchte
+(außer der Kontaktzustand war in den letzten acht Runden schon einmal da, dann
+werden sie ohnehin wieder gebraucht), wenn insgesamt mehr als 2 000 Zeilen und
+Spalten berührt sind, wenn der Speicher für die behaltenen Lösungen ein Viertel
+des Faktors übersteigt, wenn die neue Matrix (fast) singulär ist – etwa weil
+eine öffnende Bedingung ein Teil frei lässt; dann rechnet die neue Zerlegung wie
+bisher mit gestörten Pivots – oder wenn die Nachiteration das Residuum nicht
+erreicht. Jede neue Zerlegung ist danach der Bezug für die folgenden Runden. Das
+alles gilt ab einer Zerlegung mit 50 Millionen Nichtnullen, das ist ungefähr ab
+einer Sekunde Zerlegungszeit; kleinere Modelle rechnen bitgleich wie vorher. In
+der Zeile der Kontakt-Iteration steht dann „Matrix nachgeführt“ statt „Matrix
+neu“, die Zusammenfassung zählt etwa „Kontakt-Iterationen : 42, davon 14 mit
+neuer Faktorisierung, 28 nachgeführt“, und der Löser-Nachweis nennt die Zahl
+der nachgeführten Runden.
+
+Gemessen am 09.10.2026 an einem Prüfblock auf einem Flächenlager mit Reibung
+(tet10, PARDISO mit 8 Threads, Vergleich mit dem Stand davor unter derselben
+Fremdlast): bei 108 000 Unbekannten und 42 Runden, in denen die Aktivmenge am
+Ende zwischen zwei Zuständen pendelt, 14 statt 42 Zerlegungen und 217 statt
+491 Sekunden; bei 207 000 Unbekannten und 28 Runden bis zur Konvergenz 11
+statt 18 Zerlegungen und 494 statt 810 Sekunden. Die Aktivmenge war in jeder
+Runde dieselbe wie mit neuer Zerlegung, Verschiebungen und Auflagerkräfte
+stimmten auf 10⁻¹⁴ überein. Am Drehlager ist die Wirkung noch nicht gemessen.
+
+Bei spiegelsymmetrischen Modellen mit Reibung kann das Ergebnis sichtbar anders
+ausfallen, ohne falsch zu sein: Überschreiten zwei gespiegelte Knoten den
+Reibkegel genau gleich weit, stellt die Rechnung nur einen davon ins Gleiten,
+und welcher das ist, entscheidet die letzte Stelle der Lösung. Weil die
+Nachführung in der letzten Stelle anders rechnet als eine neue Zerlegung, kann
+sie dann das Spiegelbild des bisherigen Ergebnisses liefern, mit denselben
+Kräften an den gespiegelten Knoten. Dasselbe geschieht ohne Nachführung, wenn
+statt PARDISO der Gleichungslöser SuperLU rechnet. Für Vergleichsrechnungen
+lässt sich die Nachführung mit der Umgebungsvariablen
+`STATIK3D_NACHFUEHRUNG=nie` abschalten; mit `immer` gilt sie auch für kleine
+Modelle.
+
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
 Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines
@@ -9233,6 +9287,11 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
     Gleitrichtungen und Reibkräfte stehen allein im Lastvektor. Daran liegt
     es, dass die späten Runden rasen: eine Faktorisierung kostet am Drehlager
     4,23 s bei 476 214 Zeilen, das Rückwärtseinsetzen einen Bruchteil davon.
+    Seit dem 09.10.2026 gibt es eine dritte Angabe, **Matrix nachgeführt**:
+    die Matrix hat sich geändert, gelöst wurde aber mit der behaltenen
+    Zerlegung und einer kleinen Zusatzmatrix (Abschnitt „Kontaktrunden ohne
+    neue Zerlegung“). Bis zum 09.10.2026 hieß jede geänderte Signatur „Matrix
+    neu“.
 
   Am Block mit Reibung: 21 Runden, davon 7 mit neuer Faktorisierung — und
   „20 aktiv“ steht über allen 21, teuren wie billigen. Die Zahl allein sagt
