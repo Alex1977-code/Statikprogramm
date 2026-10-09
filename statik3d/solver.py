@@ -32,6 +32,7 @@ from . import assemble as asm
 from .elements import beam3d as bm
 from .elements import shell as sh
 from .elements import solid as sl
+from . import nachfuehrung as nfg
 from . import parallel
 
 
@@ -1872,6 +1873,8 @@ class Results:
                          + (f" ({n_ab} davon abgekürzt)" if n_ab else "")
                          + (f", davon {int(n_f)} mit neuer Faktorisierung"
                             if n_f is not None else "")
+                         + (f", {int(self.info['contact_nachfuehrungen'])} nachgeführt"
+                            if self.info.get("contact_nachfuehrungen") else "")
                          + ("  (NICHT konvergiert)" if not kontakt_konvergiert(self.info)
                             else f"  (konvergiert; {hinweis})" if hinweis else ""))
         if self.freqs is not None:
@@ -2026,6 +2029,9 @@ class _LoeserBuch:
         self.ausweichgruende: dict = {}      # Grund -> Zahl der Loesungen
         self.gescheitert = 0
         self.faktorisierungen = 0
+        #: Runden, die mit dem behaltenen Faktor nachgefuehrt statt neu zerlegt
+        #: wurden (statik3d.nachfuehrung)
+        self.nachfuehrungen = 0
         self.faktorisierungen_gestoert = 0
         self.gestoert_summe = None           # None: keine Faktorisierung meldete eine Zahl
         self.gestoert_max = None
@@ -2050,6 +2056,9 @@ class _LoeserBuch:
             self.gestoert_summe = (self.gestoert_summe or 0) + int(g)
             self.faktorisierungen_gestoert += 1 if int(g) > 0 else 0
 
+    def nachfuehrung(self) -> None:
+        self.nachfuehrungen += 1
+
     def loesung(self, ls) -> None:
         self._zaehlen(self.loesungen, str(getattr(ls, "backend", "?")))
         self._zaehlen(self.threads, str(int(getattr(ls, "threads", 1) or 1)))
@@ -2073,6 +2082,7 @@ class _LoeserBuch:
                 "ausweichgruende": dict(self.ausweichgruende),
                 "threads": dict(self.threads), "mtype": dict(self.mtype),
                 "faktorisierungen": self.faktorisierungen,
+                "nachfuehrungen": self.nachfuehrungen,
                 "faktorisierungen_mit_gestoerten_pivots": self.faktorisierungen_gestoert,
                 "gestoerte_pivots_summe": self.gestoert_summe,
                 "gestoerte_pivots_max": self.gestoert_max,
@@ -2127,6 +2137,10 @@ def loeser_nachweis_zeilen(nw: dict) -> list:
         n_fak = int(nw.get('faktorisierungen', 0) or 0)
         text += (f"; {n_fak} {'Faktorisierung' if n_fak == 1 else 'Faktorisierungen'} in "
                  f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
+        n_nach = int(nw.get("nachfuehrungen", 0) or 0)
+        if n_nach:
+            text += (f"; {n_nach} {'Runde' if n_nach == 1 else 'Runden'} mit dem behaltenen Faktor "
+                     "nachgeführt statt neu zerlegt")
         r = nw.get("residuum_linear_max")
         if r is not None:
             text += f"; Residuum höchstens {float(r):.1e}"
@@ -2432,12 +2446,47 @@ class StaticSystem:
         return liste, suche
 
     def kontakt_loeser_freigeben(self) -> None:
-        """Die behaltene Faktorisierung mit Kontaktsteifigkeit zurueckgeben."""
+        """Die behaltene Faktorisierung mit Kontaktsteifigkeit zurueckgeben -
+        mit ihr die Basis der Nachfuehrung und deren behaltene Spalten."""
         ls = getattr(self, "_kontakt_loeser", None)
         self._kontakt_loeser = None
         self._kontakt_signatur = None
+        basis = getattr(self, "_kontakt_basis", None)
+        self._kontakt_basis = None
+        self._kontakt_weiter = None
+        if basis is not None:
+            basis.freigeben()
         if ls is not None:
             ls.freigeben()
+
+    def _nachfuehrung_versuchen(self, schluessel, K_extra, A_aug, C_f, D_f):
+        """Die Runde mit dem behaltenen Faktor und der Kapazitaetsmatrix loesen
+        (statik3d.nachfuehrung) statt neu zu zerlegen. Rueckgabe der Loeser-Ersatz
+        oder None - dann wird neu zerlegt wie bisher. Nur mit Signatur und
+        derselben Hilfsfesselung wie bei der Zerlegung der Basis."""
+        basis = getattr(self, "_kontakt_basis", None)
+        if basis is None or basis.ls is not getattr(self, "_kontakt_loeser", None) \
+                or basis.rest != schluessel[1:] or not nfg.moeglich(basis.ls):
+            return None
+        try:
+            E1 = nfg.steifigkeitsteil(K_extra, A_aug, self.fi)
+            B1, G1 = nfg.randteile(self._Vf, C_f, D_f, len(self.fi))
+            return basis.nachfuehren(E1, B1, G1, grenze=LinearSolver.genauigkeit()[0])
+        except nfg.Abgelehnt as ex:
+            self.nachfuehrung_abgelehnt = str(ex)
+            return None
+
+    def _basis_anlegen(self, ls, schluessel, K_extra, A_aug, C_f, D_f) -> None:
+        """Nach einer Zerlegung mit Signatur: sie ist die neue Basis der Nachfuehrung."""
+        self._kontakt_basis = None
+        if not nfg.moeglich(ls):
+            return
+        try:
+            E0 = nfg.steifigkeitsteil(K_extra, A_aug, self.fi)
+            B0, G0 = nfg.randteile(self._Vf, C_f, D_f, len(self.fi))
+            self._kontakt_basis = nfg.Basis(ls, self.Kff, E0, B0, G0, rest=schluessel[1:])
+        except Exception:                       # noqa: BLE001 - ohne Basis wird zerlegt wie bisher
+            self._kontakt_basis = None
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
               F_extra: np.ndarray = None, us: np.ndarray = None,
@@ -2531,25 +2580,61 @@ class StaticSystem:
                     A_aug = (C_extra.T @ C_roh).tocsr()
                     rhs = rhs + np.asarray(C_extra.T @ b_roh).ravel()[self.fi]
                     rand_rhs = s * b_roh - C_extra[:, self.si] @ u[self.si]
+                C_f = None if C_extra is None else C_extra[:, self.fi]
+                D_ff = None if C_extra is None else D_f
+                # Neue Signatur, aber ein behaltener Faktor: zuerst die Nachfuehrung
+                # (statik3d.nachfuehrung, 09.10.2026) - sie loest diese Runde mit dem
+                # Faktor der zuletzt zerlegten Matrix und einer Kapazitaetsmatrix auf
+                # den beruehrten Zeilen und Spalten; der Faktor und seine Signatur
+                # bleiben die Basis. Lehnt sie ab, wird neu zerlegt wie bisher.
+                weiter = None
+                if neu and schluessel is not None and ls is not None:
+                    weiter = self._nachfuehrung_versuchen(schluessel, K_extra, A_aug, C_f, D_ff)
+                zerlegt = False
                 Kt = None
-                if neu or vorgabe:
+                if (neu and weiter is None) or vorgabe:
                     Kt = self.K + K_extra
                     if A_aug is not None:
                         Kt = Kt + A_aug
                 if vorgabe:
                     Ktfs = Kt[self.fi][:, self.si]
                     rhs = rhs - Ktfs @ u[self.si]
-                if neu:
+
+                def zerlegen():
+                    nonlocal Kt
+                    if Kt is None:
+                        Kt = self.K + K_extra
+                        if A_aug is not None:
+                            Kt = Kt + A_aug
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
-                    ls = LinearSolver(self.gerandet(
-                        Ktff, None if C_extra is None else C_extra[:, self.fi],
-                        None if C_extra is None else D_f), progress=self._progress)
-                    self._loeser_merken(ls)
+                    neu_ls = LinearSolver(self.gerandet(Ktff, C_f, D_ff), progress=self._progress)
+                    self._loeser_merken(neu_ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
-                self.backend = ls.backend
+                    return neu_ls
+
+                if neu and weiter is None:
+                    ls = zerlegen()
+                    zerlegt = True
                 try:
-                    u[self.fi] = self._geloest(ls, rhs, rand_rhs)
+                    if weiter is not None:
+                        try:
+                            self.backend = weiter.backend
+                            u[self.fi] = self._geloest(weiter, rhs, rand_rhs)
+                            self.nachfuehrungen = getattr(self, "nachfuehrungen", 0) + 1
+                            self._kontakt_weiter = weiter      # fuer freie_teile (schwacher Verweis)
+                            buch = getattr(self, "_nachweis_buch", None)
+                            if buch is not None:
+                                buch.nachfuehrung()
+                        except nfg.Abgelehnt as ex:
+                            # Residuum nicht erreicht: neu zerlegen wie bisher
+                            self.nachfuehrung_abgelehnt = str(ex)
+                            weiter = None
+                            ls = zerlegen()
+                            zerlegt = True
+                    if weiter is None:
+                        self.backend = ls.backend
+                        u[self.fi] = self._geloest(ls, rhs, rand_rhs)
                     if C_extra is not None:
                         # Randloesung: erst die Hilfsfesselung, dann C; lambda = -s*mu
                         self.kontakt_multiplikatoren = -s * self._randloesung[self._rand:]
@@ -2558,8 +2643,9 @@ class StaticSystem:
                         # ohne Signatur gilt die Faktorisierung nur fuer diesen
                         # Schritt - sofort zurueckgeben (LinearSolver.freigeben)
                         ls.freigeben()
-                    elif neu:
+                    elif zerlegt:
                         self._kontakt_loeser, self._kontakt_signatur = ls, schluessel
+                        self._basis_anlegen(ls, schluessel, K_extra, A_aug, C_f, D_ff)
         except (RuntimeError, ValueError) as ex:
             # Singulaer (Faktorisierung oder Residuum): sagen, was dem Modell fehlt
             if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
@@ -2600,8 +2686,10 @@ class StaticSystem:
                 x = np.asarray(ls.solve(np.concatenate([rhs, zusatz])), float).ravel()
                 self._randloesung = x[len(rhs):]
                 x = x[:len(rhs)]
-        except BaseException:
-            if buch is not None:
+        except BaseException as ex:
+            # Eine abgelehnte Nachfuehrung ist keine gescheiterte Loesung: die
+            # Runde wird gleich darauf mit neuer Zerlegung geloest
+            if buch is not None and not isinstance(ex, nfg.Abgelehnt):
                 buch.gescheitert += 1
             raise
         if buch is not None:
@@ -3496,6 +3584,9 @@ def _laufbuch_eintrag(nr: int, cinfo: dict, art: str = "", start_von_lauf=None) 
     return {"nr": int(nr), "art": str(art or ""),
             "schritte": int(cinfo.get("contact_iterations", 0) or 0),
             "faktorisierungen": int(cinfo.get("contact_factorisations", 0) or 0),
+            # Runden mit geaenderter Matrix, die der behaltene Faktor ueber die
+            # Kapazitaetsmatrix geloest hat (statik3d.nachfuehrung, 09.10.2026)
+            "nachfuehrungen": int(cinfo.get("contact_nachfuehrungen", 0) or 0),
             "konvergiert": konvergiert, "grund": str(grund),
             # Mit Absicht nach einem Schritt beendet (gemeinsame Iteration von
             # Fliessen und Kontakt, _plastizitaet_rechnen): nicht konvergiert,
@@ -3543,7 +3634,7 @@ def _kontakt_info_sammeln(res, cinfo: dict, art: str = "", start_von_lauf=None) 
     alte = list(res.info.get("laeufe") or [])
     eintrag = _laufbuch_eintrag(len(alte) + 1, cinfo, art, start_von_lauf)
     cinfo.pop("contact_lauf", None)     # steht jetzt im Eintrag, nicht als Einzelwert
-    for k in ("contact_iterations", "contact_factorisations"):
+    for k in ("contact_iterations", "contact_factorisations", "contact_nachfuehrungen"):
         if k in cinfo:
             cinfo[k] = int(res.info.get(k, 0) or 0) + int(cinfo[k] or 0)
     laeufe = alte + [eintrag]
@@ -6462,6 +6553,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         return s if kz_kenn is None else s + (kz_kenn,)
 
     f0 = getattr(system, "faktorisierungen", 0)
+    n0 = getattr(system, "nachfuehrungen", 0)
     eingefroren_verworfen = None     # Verstoesse, wenn der eingefrorene Zustand nicht passte
     if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
         Kc, Fc, C, b, _z = cs.system_matrizen(model.ndof)
@@ -6496,6 +6588,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 "contact_iterations": 1, "contact_converged": True, "contact_log": log,
                 "contact_warm": False, "contact_frozen": True,
                 "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+                "contact_nachfuehrungen": getattr(system, "nachfuehrungen", 0) - n0,
                 "contact_state": None,
                 # konvergiert: der Zustand erfuellt alle Bedingungen unter dieser
                 # Last; der Grund sagt, dass dieser Lauf nicht iteriert hat
@@ -6575,6 +6668,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
+        n_vor = getattr(system, "nachfuehrungen", 0)
         kennung = cs.zustandskennung() if ABSCHLUSS_INGENIEUR else None
         try:
             u, lam = loesen()
@@ -6595,6 +6689,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+                cinfo2["contact_nachfuehrungen"] = getattr(system, "nachfuehrungen", 0) - n0
                 _neustart_vermerken(cinfo2, runden_vorher)
                 if eingefroren_verworfen is not None:     # der Neustart kennt ihn nicht
                     cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
@@ -6785,7 +6880,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 bez = float(np.abs(u).max())
                 d = float(np.abs(u - u_vor).max())
                 zusatz = (f", Δu {d / bez:.1e}" if bez > 0 else f", Δu {d:.1e} m")
+            # "nachgeführt": die Matrix ist eine andere, geloest wurde aber mit
+            # dem behaltenen Faktor und der Kapazitaetsmatrix (statik3d.nachfuehrung)
             zusatz += (", Matrix neu" if getattr(system, "faktorisierungen", 0) > f_vor
+                       else ", Matrix nachgeführt" if getattr(system, "nachfuehrungen", 0) > n_vor
                        else ", Matrix bleibt")
             if u_vor is not None and u is not None:
                 # Wo bewegt sich die Runde, und warum nahm das Ingenieurkriterium
@@ -6944,6 +7042,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
             cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+            cinfo2["contact_nachfuehrungen"] = getattr(system, "nachfuehrungen", 0) - n0
             _neustart_vermerken(cinfo2, runden_vorher)
             if eingefroren_verworfen is not None:         # der Neustart kennt ihn nicht
                 cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
@@ -6980,6 +7079,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+        "contact_nachfuehrungen": getattr(system, "nachfuehrungen", 0) - n0,
         "contact_state": _zustand_markiert(cs, converged or abgekuerzt),
         "contact_frozen_verworfen": eingefroren_verworfen,
         "contact_ingenieur": ingenieur,
