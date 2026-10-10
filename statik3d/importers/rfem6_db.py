@@ -3389,8 +3389,14 @@ def _integrierte_objekte(db: Db, m: Model, log: list, line_name: dict,
     eines Zugstabs auf der Stirnflaeche eines Schraubenvolumens ist so mit
     dem Volumen verbunden. Am Drehlager (16.09.2026) sind 112 der 128
     Stabenden integrierte Knoten (168 Knoten an 142 Flaechen, 78 davon
-    Randflaechen von Volumen); die 394 integrierten Linien an 14 Flaechen
-    sind die Kreise der starren Scheiben auf Deckeln und Ringen. Bis dahin
+    Randflaechen von Volumen). Die 394 integrierten Linien an 14 Flaechen
+    liegen alle in Flaechen ohne Dicke (Null-Element): 330 Kreisboegen mit
+    R 8, 10 und 12,5 mm und 64 Polylinien. Die Kreise der starren Scheiben
+    sind sie nicht, wie hier bis zum 10.10.2026 stand: keine Scheibe fuehrt
+    eine integrierte Linie, die Randlinien jeder Scheibe sind zugleich die
+    Oeffnung der Bohrung darunter, und die 192 Boegen auf der Achse einer
+    Scheibe liegen mindestens 35 mm von ihr entfernt (Pruefung an der rf6,
+    scratchpad scheiben_werk). Bis zum 16.09.2026
     las der Import nur die integrierten Oeffnungen - die Knoten hingen an
     nichts, die Schrauben trugen keinen Zug. Die Knoten stehen jetzt in
     ``Flaeche.integrierte_knoten`` (Modellnummern) und werden nach dem

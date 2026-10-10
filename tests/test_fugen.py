@@ -953,6 +953,116 @@ def test_starre_flaeche():
           not dreh, f"{len(belegt)} belegte Freiheitsgrade, davon {len(dreh)} Verdrehungen")
 
 
+#: Ringplatte fuer die starren Scheiben ueber der Bohrung: Lochradius, Dicke,
+#: radiale Lagen und Hoehenlagen. Die zweite Lage liegt je 2 mm neben dem
+#: Lochrand bzw. unter der Oberflaeche - so weit wie am Drehlager die
+#: Knoten, die bis zum 10.10.2026 zu viel gekoppelt wurden (bis 2,4 mm
+#: ausserhalb, bis 2,46 mm darunter).
+_RING_A = 0.030
+_RING_T = 0.020
+_RING_RHO = (0.0, 0.002, 0.006, 0.012, 0.020, 0.035, 0.060)
+_RING_Z = (0.0, 0.006, 0.012, 0.018, 0.020)
+_RING_PHI = 48
+
+
+def _ringplatte_mit_scheibe(r_scheibe: float):
+    """Ringplatte _RING_A <= rho <= _RING_A + 60 mm aus hex8 (strukturiert,
+    also jeder Knoten an bekannter Stelle) und eine starre Kreisscheibe vom
+    Radius ``r_scheibe`` auf der Oberseite, aus zwei Halbboegen wie in RFEM.
+    In ihrer Mitte endet ein Zugstab. Rueckgabe (Modell, Knotennummern
+    [phi, rho, z], Stabende)."""
+    from statik3d.elements import solid as _sl
+    from statik3d.model import Section
+    m = Model()
+    m.add_material(Material.steel("S355"))
+    ids = np.zeros((_RING_PHI, len(_RING_RHO), len(_RING_Z)), int)
+    for i in range(_RING_PHI):
+        ph = 2.0 * np.pi * i / _RING_PHI
+        for j, dr in enumerate(_RING_RHO):
+            rho = _RING_A + dr
+            for k, z in enumerate(_RING_Z):
+                ids[i, j, k] = m.add_node(rho * np.cos(ph), rho * np.sin(ph), z)
+    for i in range(_RING_PHI):
+        i2 = (i + 1) % _RING_PHI
+        for j in range(len(_RING_RHO) - 1):
+            for k in range(len(_RING_Z) - 1):
+                kn = [ids[i, j, k], ids[i, j + 1, k], ids[i2, j + 1, k], ids[i2, j, k],
+                      ids[i, j, k + 1], ids[i, j + 1, k + 1], ids[i2, j + 1, k + 1], ids[i2, j, k + 1]]
+                kn = [int(x) for x in kn]
+                if _sl.jacobi_volumen("hex8", m.nodes[kn])["V"] < 0:
+                    kn = kn[4:] + kn[:4]
+                m.add_element("hex8", kn, "S355")
+    j = int(np.argmin([abs(_RING_A + dr - r_scheibe) for dr in _RING_RHO]))
+    assert abs(_RING_A + _RING_RHO[j] - r_scheibe) < 1e-12, "Scheibenrand nicht auf einer Knotenlage"
+    k = len(_RING_Z) - 1
+    p, q = int(ids[0, j, k]), int(ids[_RING_PHI // 2, j, k])
+    t = _RING_T
+    m.add_line("S1", [p, q], "arc", punkte=[(r_scheibe, 0, t), (0, r_scheibe, t), (-r_scheibe, 0, t)])
+    m.add_line("S2", [q, p], "arc", punkte=[(-r_scheibe, 0, t), (0, -r_scheibe, t), (r_scheibe, 0, t)])
+    m.add_flaeche("Scheibe", ["S1", "S2"], material="S355")
+    m.flaechen["Scheibe"].steifigkeit = "starr"
+    mitte = m.add_node(0.0, 0.0, t)
+    oben = m.add_node(0.0, 0.0, t + 0.5)
+    m.add_section(Section("Rund", 1e-4, 1e-9, 1e-9, 1e-9))
+    e = m.add_element("truss", [mitte, oben], "S355", "Rund", group="Anker")
+    m.add_member("Anker", [e])
+    return m, ids, mitte
+
+
+def test_starre_scheibe_ueber_bohrung():
+    """Eine starre Scheibe genau ueber einer Bohrung koppelt genau die Knoten
+    des Lochrands - so wie RFEM sie anschliesst (Pruefung gegen die rf6 des
+    Drehlagers, 10.10.2026). Knoten 2 mm unter der Oberflaeche oder 2 mm
+    neben dem Lochrand gehoeren nicht dazu.
+
+    Bis zum 10.10.2026 galt fuer Ebene und Umriss die Toleranz
+    max(0,5 mm; 0,1 r): bei r = 30 mm also 3 mm, und hier hingen zusaetzlich
+    die 48 Knoten 2 mm daneben und die 48 Knoten 2 mm darunter an der
+    Scheibe. Am Drehlager waren es 16 Knoten an 6 Scheiben."""
+    m, ids, mitte = _ringplatte_mit_scheibe(_RING_A)
+    b_ = fugen.starre_flaechen_koppeln(m, [])
+    slaves = {int(k.node_b) for k in m.kopplungen}
+    rand = {int(x) for x in ids[:, 0, -1]}
+    check("die Scheibe über der Bohrung ist gekoppelt, Master ist das Stabende",
+          b_["flaechen"] == 1 and not b_["offen"] and all(int(k.node_a) == mitte for k in m.kopplungen),
+          f"{b_}")
+    check("sie koppelt genau die 48 Knoten des Lochrands",
+          slaves == rand, f"{len(slaves)} Knoten, davon {len(slaves & rand)} auf dem Lochrand")
+    neben = {int(x) for x in ids[:, 1, -1]}
+    unter = {int(x) for x in ids[:, 0, -2]}
+    check("keinen Knoten 2 mm neben dem Lochrand",
+          not (slaves & neben), f"{len(slaves & neben)} von {len(neben)}")
+    check("keinen Knoten 2 mm unter der Oberfläche",
+          not (slaves & unter), f"{len(slaves & unter)} von {len(unter)}")
+    # Dieselbe Toleranz gilt fuer die volle Scheibe: was im Umriss auf der
+    # Oberflaeche liegt, haengt an ihr, was 2 mm darunter oder 8 mm daneben
+    # liegt, nicht
+    r2 = _RING_A + _RING_RHO[3]
+    m2, ids2, _mitte2 = _ringplatte_mit_scheibe(r2)
+    fugen.starre_flaechen_koppeln(m2, [])
+    s2 = {int(k.node_b) for k in m2.kopplungen}
+    oben = {int(x) for x in ids2[:, :4, -1].ravel()}
+    check("die volle Scheibe koppelt nur Knoten der Oberfläche in ihrem Umriss",
+          s2 == oben, f"{len(s2)} Knoten, im Umriss {len(oben)}, davon {len(s2 & oben)} gekoppelt")
+
+
+def test_starre_scheibe_auf_voller_flaeche():
+    """Gegenprobe: eine starre Scheibe, die auf voller Flaeche aufliegt,
+    koppelt **alle** Knoten in ihrem Umriss - auch die genau auf dem
+    Randkreis (Abstand zum Kreis 0, zur abgetasteten Sehne bis 0,03 mm)."""
+    r2 = _RING_A + _RING_RHO[3]
+    m, ids, mitte = _ringplatte_mit_scheibe(r2)
+    b_ = fugen.starre_flaechen_koppeln(m, [])
+    slaves = {int(k.node_b) for k in m.kopplungen}
+    oben = {int(x) for x in ids[:, :4, -1].ravel()}
+    rand = {int(x) for x in ids[:, 3, -1]}
+    check("die Scheibe auf voller Fläche koppelt alle Knoten in ihrem Umriss",
+          oben <= slaves and b_["flaechen"] == 1,
+          f"{len(oben & slaves)} von {len(oben)}")
+    check("… auch die 48 Knoten genau auf ihrem Randkreis",
+          rand <= slaves, f"{len(rand & slaves)} von {len(rand)}")
+
+
 def test_naechste_punkte():
     """Der vektorisierte naechste Punkt auf Dreiecken liefert dasselbe wie der
     einzelne (Ericson) - Eckpunkte, Kanten und Inneres."""
@@ -2762,7 +2872,9 @@ def main():
               test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,
               test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
               test_naht_bleibt_verschweisst, test_naht_loest_nachbarn_mit, test_naht_im_ring,
-              test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
+              test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche,
+              test_starre_scheibe_ueber_bohrung, test_starre_scheibe_auf_voller_flaeche,
+              test_naechste_punkte,
               test_spalt_laengs_der_normalen, test_formschluss,
               test_formschluss_meldung,
               test_ein_suchradius, test_verteilung_statt_mittelwert,

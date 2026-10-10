@@ -6804,8 +6804,10 @@ einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
 der Mitte der Stirnfläche eines Schraubenvolumens endet, hängt dort am
 Volumen. Der Import liest diese Angaben seit dem 16.09.2026 mit (am
 Drehlager: 168 integrierte Knoten an 142 Flächen, 394 integrierte Linien an
-14 Flächen — die Kreise der starren Scheiben auf Deckeln und Ringen; 112 der
-128 Stabenden sind integrierte Knoten). Vorher endeten alle 64 Zugstäbe der
+14 Flächen ohne Dicke; 112 der 128 Stabenden sind integrierte Knoten). Die
+Kreise der starren Scheiben gehören nicht zu den integrierten Linien, wie
+hier bis zum 10.10.2026 stand: Sie sind die eigenen Randlinien der Scheiben
+und bilden zugleich die Öffnung der Bohrung darunter. Vorher endeten alle 64 Zugstäbe der
 Deckel- und Augenschrauben an keinem Element: das eine Ende hing an seiner
 starren Kreisscheibe, das andere lag genau in der Mitte der Stirnfläche des
 Schraubenvolumens (Knoten 1093 auf V49) und an nichts. Die Schrauben trugen
@@ -6832,9 +6834,19 @@ Keile in drei und Pyramiden in zwei Tetraeder. Ein Volumentyp, den die Suche
 nicht kennt, steht im Protokoll („die Punktsuche kennt diese Volumentypen
 nicht …“), statt still übergangen zu werden. Beim Öffnen einer älteren Datei mit Netz wird der Anschluss
 nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
-(Modelldatei); das Netz folgt ihnen noch nicht — für die starren Scheiben
-ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
-Kreises.
+(Modelldatei); das Netz folgt ihnen noch nicht.
+
+**Starre Flächen** (RFEM: Steifigkeitsart „starr“, ohne Dicke) setzt das
+Programm nach dem Vernetzen als starre Kopplung um: Der Knoten in ihrer Mitte,
+bevorzugt ein Stabende, hält alle Netzknoten, die in der Scheibe liegen. Seit
+dem 10.10.2026 heißt „in der Scheibe“ genau das, was RFEM anschließt: auf
+ihrer Ebene (bis 0,01 mm Abstand) und in ihrem Umriss oder höchstens 0,1 mm
+daneben. Liegt die Scheibe wie am Drehlager genau über einer Bohrung, hängen
+also nur die Knoten des Lochrands an ihr, am Drehlager je Scheibe 40. Bis zum
+10.10.2026 galt für Ebene und Umriss dieselbe Toleranz von 0,5 mm bzw. einem
+Zehntel des Scheibenradius, bei den Ankerscheiben also rund 2,6 mm. Dadurch
+hingen an 6 der 64 Scheiben zusätzlich 16 Knoten aus dem Inneren der Platte,
+bis 2,46 mm unter der Oberfläche und bis 2,4 mm neben dem Lochrand.
 
 **Ein Statik3D-Modell (`.json`) an ein vorhandenes anhängen** (Haken „an
 vorhandenes Modell anhängen“ im Importdialog). Übertragen wird das ganze

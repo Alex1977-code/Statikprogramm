@@ -1684,6 +1684,56 @@ def _punkte_im_polygon(P2: np.ndarray, Q: np.ndarray, rand: float = 0.0) -> np.n
     return innen
 
 
+def _abstand_zum_vieleck(P2: np.ndarray, Q: np.ndarray, block: int = 2_000_000) -> np.ndarray:
+    """Abstand der Punkte Q (m,2) zum Rand des geschlossenen Vielecks P2 (n,2)
+    - ueber alle Randstrecken, in Bloecken von hoechstens ``block`` Paaren."""
+    P2 = np.asarray(P2, float)
+    Q = np.asarray(Q, float).reshape(-1, 2)
+    A = P2
+    B = np.roll(P2, -1, axis=0)
+    AB = B - A
+    L2 = np.maximum(np.einsum("ij,ij->i", AB, AB), 1e-300)
+    aus = np.full(len(Q), np.inf)
+    schritt = max(1, block // max(1, len(A)))
+    for a0 in range(0, len(Q), schritt):
+        q = Q[a0:a0 + schritt, None, :]                       # (k, 1, 2)
+        t = np.clip(np.einsum("kij,ij->ki", q - A[None], AB) / L2, 0.0, 1.0)
+        fuss = A[None] + t[:, :, None] * AB[None]
+        aus[a0:a0 + schritt] = np.linalg.norm(q - fuss, axis=2).min(axis=1)
+    return aus
+
+
+#: Toleranzen der starren Scheibe (seit 10.10.2026): Abstand zur Ebene und
+#: zum Umriss, in dem ein Netzknoten noch zur Scheibe gehoert. Bis dahin galt
+#: fuer beides max(0,5 mm; 0,1 r) - am Drehlager (r = 25,5 bis 28,3 mm) also
+#: bis 2,8 mm, und an 6 der 64 Scheiben hingen 16 Knoten im Inneren der
+#: Platte mit an der Scheibe (bis 2,46 mm unter der Oberflaeche, bis 2,4 mm
+#: neben dem Lochrand), die RFEM nicht koppelt. Die Knoten des Lochrands
+#: weichen dort hoechstens 0,03 mm vom Kreis ab (Pruefung gegen die rf6,
+#: scratchpad scheiben_werk).
+STARR_TOL_EBENE = 1e-5
+STARR_TOL_RAND = 1e-4
+#: Bogenlaenge je Abschnitt beim Abtasten krummer Raender: die Sehne
+#: liegt dann hoechstens s^2/(8 R) innen, bei R = 8 mm 0,004 mm - weit unter
+#: STARR_TOL_RAND. Mit fester Teilung 32 je Bogen waeren es bei einem
+#: Vollkreis von 25,5 mm 0,12 mm, mehr als die Toleranz.
+STARR_ABTASTUNG = 5e-4
+
+
+def _starre_teilung(model: Model, f) -> int:
+    """Teilung je krummer Randlinie fuer STARR_ABTASTUNG (32 bis 4096)."""
+    laenge = 0.0
+    for name in (f.linien or []):
+        ln = model.lines.get(name)
+        if ln is None or (ln.typ or "polyline") == "polyline":
+            continue
+        try:
+            laenge = max(laenge, float(ln.laenge(model)))
+        except Exception:                 # noqa: BLE001 - dann die Grundteilung
+            continue
+    return int(min(4096, max(32, np.ceil(laenge / STARR_ABTASTUNG))))
+
+
 def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     """Starre Flaechen (RFEM: SurfaceStiffnessRigid) als starre Kopplung umsetzen.
 
@@ -1696,6 +1746,12 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     Stabknoten) ist Master, alle Netzknoten in der Scheibe haengen ueber
     starre Kopplungen an ihm. So geht die Stabkraft in den Koerper, und die
     Scheibe verformt sich nicht.
+
+    „In der Scheibe“ heisst: auf ihrer Ebene (STARR_TOL_EBENE) und in ihrem
+    Umriss oder hoechstens STARR_TOL_RAND daneben. Liegt die Scheibe genau
+    ueber einer Bohrung - am Drehlager alle 64, Deckel mit dem Durchmesser
+    des Lochs, ohne Mutter oder Unterlegscheibe -, sind das nur die Knoten
+    des Lochrands, und so schliesst auch RFEM sie an.
 
     Rueckgabe {"flaechen": n, "kopplungen": n, "offen": [(Name, Grund)]}.
     Vorhandene Kopplungen dieser Art werden vorher entfernt (neues Netz).
@@ -1717,7 +1773,7 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     unendlich = float("inf")
     for f in starre:
         try:
-            P = np.asarray(f.randpunkte(model, 32), float).reshape(-1, 3)
+            P = np.asarray(f.randpunkte(model, _starre_teilung(model, f)), float).reshape(-1, 3)
         except Exception:                 # noqa: BLE001
             P = np.zeros((0, 3))
         if len(P) < 3:
@@ -1727,26 +1783,39 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
         _u, _s, vt = np.linalg.svd(P - c)
         e1, e2, nrm = vt[0], vt[1], vt[2]
         r = float(np.linalg.norm(P - c, axis=1).max())
-        tol = max(0.5e-3, 0.1 * r)
-        # Master: der Stabknoten in der Mitte - sonst der naechste Knoten dort
-        mitte = [int(i) for i in baum.query_ball_point(c, tol)]
+        # Master: der Stabknoten in der Mitte - sonst der naechste Knoten dort.
+        # Hier bleibt der weite Fangkreis: er sucht den einen Knoten, an dem
+        # der Stab endet, und der muss nicht genau in der Mitte des Umrisses
+        # liegen.
+        tol_mitte = max(0.5e-3, 0.1 * r)
+        mitte = [int(i) for i in baum.query_ball_point(c, tol_mitte)]
         master = next((i for i in mitte if i in stab), None)
         if master is None and mitte:
             master = min(mitte, key=lambda i: float(np.linalg.norm(N[i] - c)))
         if master is None:
             bericht["offen"].append((f.name, "kein Knoten in der Mitte der Scheibe"))
             continue
-        # Slaves: die Netzknoten in der Scheibe (in der Ebene und im Umriss)
-        kand = np.asarray(baum.query_ball_point(c, r + tol), dtype=int)
+        # Slaves: die Netzknoten in der Scheibe - auf ihrer Ebene und im
+        # Umriss. Ist der Rand selbst nicht ganz eben, gilt seine eigene
+        # Abweichung als Toleranz zur Ebene.
+        tol_ebene = max(STARR_TOL_EBENE, float(np.abs((P - c) @ nrm).max()))
+        kand = np.asarray(baum.query_ball_point(c, r + STARR_TOL_RAND), dtype=int)
         if not kand.size:
             bericht["offen"].append((f.name, "keine Knoten in der Scheibe"))
             continue
         D = N[kand] - c
-        ebene = np.abs(D @ nrm) <= tol
+        ebene = np.abs(D @ nrm) <= tol_ebene
+        kand, D = kand[ebene], D[ebene]
         Q = np.column_stack([D @ e1, D @ e2])
         P2 = np.column_stack([(P - c) @ e1, (P - c) @ e2])
-        innen = _punkte_im_polygon(P2, Q, rand=tol)
-        slaves = [int(i) for i in kand[ebene & innen] if int(i) != master and int(i) in andere]
+        innen = _punkte_im_polygon(P2, Q)
+        if not innen.all():
+            # knapp ausserhalb: Abstand zum Rand des Umrisses, nicht eine
+            # Streckung vom Schwerpunkt aus (die bei einem langen Umriss die
+            # Laengsseiten kaum weitet)
+            aussen = np.flatnonzero(~innen)
+            innen[aussen] = _abstand_zum_vieleck(P2, Q[aussen]) <= STARR_TOL_RAND
+        slaves = [int(i) for i in kand[innen] if int(i) != master and int(i) in andere]
         if not slaves:
             bericht["offen"].append((f.name, "keine Netzknoten in der Scheibe - liegt darunter "
                                              "kein vernetzter Koerper?"))

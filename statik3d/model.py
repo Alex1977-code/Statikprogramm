@@ -2446,8 +2446,12 @@ class Flaeche:
     gelenkwirkung: str = ""
     #: Knoten (Modellnummern) und Linien, die in RFEM **in die Flaeche
     #: integriert** sind: sie liegen auf der Flaeche und gehoeren zu ihrem
-    #: Netz - das Ende eines Zugstabs auf der Stirnflaeche eines
-    #: Schraubenvolumens, der Kreis einer starren Scheibe auf dem Deckel.
+    #: Netz - etwa das Ende eines Zugstabs auf der Stirnflaeche eines
+    #: Schraubenvolumens. Die Kreise der starren Scheiben sind **keine**
+    #: integrierten Linien: am Drehlager sind sie die eigenen Randlinien der
+    #: Scheibe und bilden zugleich die Oeffnung der Bohrung (Pruefung an der
+    #: rf6, 10.10.2026; die integrierten Linien liegen dort alle in Flaechen
+    #: ohne Dicke, keine in der Ebene einer Scheibe).
     #: Die Knoten haengt fugen.stabenden_koppeln nach dem Vernetzen an das
     #: Netz des Koerpers; die Linien stehen hier fest, das Netz folgt ihnen
     #: (noch) nicht.
