@@ -378,16 +378,31 @@ class Zustand:
     fliessendes Element - unter einem Moment, das den Querschnitt
     plastifiziert. Die Durchbiegung stimmte dabei: das Element **trug**
     richtig, es berichtete nur nicht.
+
+    ``sigma0`` {i: (6,)} ist die Anfangsspannung, die nicht aus dem Fliessen
+    kommt: die einer Vorspannung als Koerper (assemble.solid_prestress, im
+    Loeser temp["sigma0"]), je Element konstant. Die wahre Spannung ist
+    σ = D(ε − ε_p) − σ₀, und so prueft die Rueckfuehrung seit dem 10.10.2026
+    (_schritt_teil, _schritt_schleife). Bis dahin rechnete sie mit
+    D(ε − ε_p) und sah σ₀ nicht: eine Temperatur im Volumen ist isotrop und
+    aendert den Deviator nicht, eine einachsige Bolzenvorspannung aber sehr
+    wohl. Am Bolzen mit F_v = 0,98 f_y A und Klemmpaket
+    (tests/test_vorspannung_fliessen.py) floss bei 1,3 P_y nichts, angezeigt
+    wurden 362,3 statt 355,2 N/mm2. Der Wert wird nicht kopiert, sondern
+    weitergereicht - er aendert sich in einer Rechnung nicht (die Vorspannung
+    wirkt ab der ersten Laststufe voll, stufenlast).
     """
 
-    def __init__(self):
+    def __init__(self, sigma0: dict = None):
         self.eps_p: dict = {}
         self.eps_p_eq: dict = {}
+        self.sigma0: dict = dict(sigma0 or {})
 
     def kopie(self) -> "Zustand":
         z = Zustand()
         z.eps_p = {i: np.array(v, float, copy=True) for i, v in self.eps_p.items()}
         z.eps_p_eq = {i: np.array(v, float, copy=True) for i, v in self.eps_p_eq.items()}
+        z.sigma0 = self.sigma0
         return z
 
     def fliessend(self) -> list:
@@ -669,6 +684,20 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
     H = EF * r / (1.0 - r)
     G = EF / (2.0 * (1.0 + nuF))
     eps_B = np.stack([_dehnung_punkt(d, p, ue_flach) for p in range(P)])      # (P,n,6)
+    # Anfangsspannung der Vorspannung als Koerper (Zustand.sigma0), je Element
+    # konstant: sie gehoert in die Versuchsspannung. Die inneren Moden des
+    # hex8 und pent6 sieht sie nicht, denn Σ w|J| Ba = 0 (Taylor-Korrektur;
+    # gemessen an verzerrten Elementen 1e-16) - wie im linearen Lastvektor
+    # (assemble.solid_initial_stress_loads), der sie dort auch nicht ansetzt.
+    s0n = None
+    if getattr(zustand, "sigma0", None):
+        s0n = np.zeros((n, 6))
+        for a, i in enumerate(idx):
+            v = zustand.sigma0.get(int(i))
+            if v is not None:
+                s0n[a] = np.asarray(v, float)
+        if not s0n.any():
+            s0n = None
 
     def rueckfuehren(alpha):
         """Versuchsspannung, Rueckfuehrung und neuer Zustand zu einem alpha."""
@@ -677,6 +706,8 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
             e_ges = eps_B[q_] if alpha is None else \
                 eps_B[q_] + np.einsum("nij,nj->ni", eas["Ba"][q_], alpha)
             sig[q_] = _spannung(lam, mu2, e_ges - eps_p[q_])
+            if s0n is not None:
+                sig[q_] -= s0n
         sigF = sig.reshape(m, 6)
         p_hyd = (sigF[:, 0] + sigF[:, 1] + sigF[:, 2]) / 3.0
         dev = sigF.copy()
@@ -788,8 +819,9 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
 def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log: list = None,
             tangente: bool = False) -> tuple:
     """Ein Schritt der Anfangsdehnungs-Iteration: aus u die Versuchsspannung
-    D(ε − eps_p) je Element, Rueckfuehrung, neue eps_p, plastische
-    Knotenlasten F_p = Σ ∫ Bᵀ D eps_p dV. Rueckgabe (F_p, Zustand, info).
+    D(ε − eps_p) − σ₀ je Element (σ₀ = ``zustand.sigma0``, die Vorspannung als
+    Koerper), Rueckfuehrung, neue eps_p, plastische Knotenlasten
+    F_p = Σ ∫ Bᵀ D eps_p dV. Rueckgabe (F_p, Zustand, info).
 
     ``tangente=True`` legt ΔK der konsistenten Tangente in info["dK"] dazu."""
     from . import assemble as asm
@@ -892,6 +924,8 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
             eq_neu = np.array(eq_alt, float, copy=True)
         Bs = [op1.b(p_)[0] for p_ in range(P)]
         gew_p = [float(op1.w[p_][0]) for p_ in range(P)]
+        # Anfangsspannung der Vorspannung als Koerper - wie im Stapel
+        s0 = np.asarray((getattr(zustand, "sigma0", None) or {}).get(i, np.zeros(6)), float)
         # Mit inneren Moden (hex8) werden alpha und eps_p im Element gemeinsam
         # geloest (siehe _eas_daten); Kua, Kaa und Ba aus dem Einzeloperator.
         Ba_p, Kua, Kaa, alpha = None, None, None, None
@@ -909,8 +943,8 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
                 eps_ges = Bs[gp] @ ue
                 if Ba_p is not None:
                     eps_ges = eps_ges + Ba_p[gp] @ alpha_
-                erg.append((D @ (eps_ges - eps_p_alt[gp]),)
-                           + rueckfuehrung(D @ (eps_ges - eps_p_alt[gp]),
+                erg.append((D @ (eps_ges - eps_p_alt[gp]) - s0,)
+                           + rueckfuehrung(D @ (eps_ges - eps_p_alt[gp]) - s0,
                                            float(fy), H, G, float(eq_alt[gp])))
             return erg
 
@@ -1133,7 +1167,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
 
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
             norm_F: float, info: dict, log: list = None, progress=None,
-            kontakt=None, F_sofort=None) -> tuple:
+            kontakt=None, F_sofort=None, sigma0=None) -> tuple:
     """Newton mit der konsistenten Tangente - siehe :func:`iteration`.
 
     Die Rueckfuehrung geht in jedem Schritt vom Zustand am **Anfang der
@@ -1194,7 +1228,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             return loesen(Fg, voll=voll) if dK is None else loesen_tangente(Fg, dK, voll=voll)
         return loesen(Fg) if dK is None else loesen_tangente(Fg, dK)
 
-    basis = Zustand()
+    basis = Zustand(sigma0)
     F_p = np.zeros(model.ndof)
     u = None
     diff = 0.0
@@ -1378,7 +1412,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
 
 
 def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
-              progress=None, loesen_tangente=None, kontakt=None, F_sofort=None) -> tuple:
+              progress=None, loesen_tangente=None, kontakt=None, F_sofort=None,
+              sigma0=None) -> tuple:
     """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
     Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
     Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
@@ -1415,9 +1450,16 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     Vorspannkraefte an F. Er wirkt seit dem 10.10.2026 ab der ersten
     Laststufe voll, gesteigert wird nur der Rest (:func:`stufenlast`); das
     Protokoll sagt es in einer Zeile. None rechnet wie bisher.
+
+    ``sigma0`` {Element: (6,)}: die Anfangsspannung einer Vorspannung als
+    Koerper (temp["sigma0"] aus solver.case_loads, mit den Faktoren der
+    Kombination). Die Rueckfuehrung prueft seit dem 10.10.2026 die wahre
+    Spannung D(ε − ε_p) − σ₀ (siehe :class:`Zustand`). Voll und unveraendert
+    ueber alle Stufen, denn die Vorspannung wirkt ab der ersten voll
+    (``F_sofort``).
     """
     elemente = _solid_elemente(model, aktiv)
-    zustand = Zustand()
+    zustand = Zustand(sigma0)
     F = np.asarray(F, float)
     norm_F = float(np.linalg.norm(F))      # 0 ohne aeussere Last - dann greift _bezug
     F_p = np.zeros(model.ndof)
@@ -1446,7 +1488,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
-                       log, progress, kontakt, F_sofort)
+                       log, progress, kontakt, F_sofort, zustand.sigma0)
     stufen = int(max(1, einst.laststufen))
     for k in range(1, stufen + 1):
         lam = k / stufen

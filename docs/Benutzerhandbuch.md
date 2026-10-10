@@ -9046,6 +9046,20 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Plastizität, …)“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
   1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
   Verfahren in `docs/Theoriehandbuch.md`, Abschnitt 5e).
+  Ein Volumenkörper mit **Vorspannung als Körper** (*Lasten → Vorspannung*,
+  etwa ein Schraubenschaft) wird seit dem 10.10.2026 mit seiner wahren
+  Spannung auf Fließen geprüft, also mit der Vorspannung darin. Bis dahin sah
+  die Fließprüfung nur den Teil der Spannung, der aus der Verformung kommt,
+  und nicht die Vorspannung selbst; angezeigt wurde trotzdem die volle
+  Spannung. Ein vorgespannter Bolzen konnte darum über f_y stehen, ohne zu
+  fließen: am Prüfbolzen mit F_v = 0,98·f_y·A und einem 19-mal steiferen
+  Klemmpaket floss bei 1,3-facher Last des Fließbeginns nichts, angezeigt
+  wurden 362,3 N/mm² statt der richtigen 355,2 N/mm². Jetzt fließt er bei
+  1,01-facher Last des Fließbeginns der geschlossenen Lösung und bei
+  0,99-facher nicht, und Verschiebung, Spannung, ε_p und Auflagerkräfte
+  treffen sie (`tests/test_vorspannung_fliessen.py`).
+  Eine Temperaturlast im Volumen betrifft das nicht, weil sie die Form der
+  Spannung nicht ändert, nur ihren allseitigen Anteil.
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
   Tangente** — ein Newton-Verfahren, das die Steifigkeit je Schritt neu
   aufstellt und faktorisiert. Es konvergiert quadratisch und **unabhängig

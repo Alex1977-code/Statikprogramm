@@ -4257,11 +4257,16 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     kn = _KontaktImNewton(rechnen, res, start, aktiv, log, gemeinsam,
                           float(model.plastizitaet.toleranz))
     iteriert = model.has_contact or model.hat_ausfallstaebe()
+    # Die Anfangsspannung einer Vorspannung als Koerper (case_loads): die
+    # Fliesspruefung braucht die wahre Spannung D(eps - eps_p) - sigma0
+    # (plastizitaet.Zustand, 10.10.2026). Hier steht in temp["sigma0"] nur
+    # sie - D eps_p kommt erst unten dazu.
+    sigma0 = dict(temp.get("sigma0") or {}) if isinstance(temp, dict) else None
     u, zustand, F_p, info = pl.iteration(model, F, kn.loesen, model.plastizitaet, aktiv, log=log,
                                          progress=lambda t: _melde(progress, t),
                                          loesen_tangente=kn.loesen,
                                          kontakt=kn if iteriert else None,
-                                         F_sofort=F_sofort)
+                                         F_sofort=F_sofort, sigma0=sigma0)
     halter, aufrufe = kn.halter, kn.aufrufe
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:

@@ -5046,6 +5046,31 @@ aufgelöstes Fließen braucht ein feineres Netz, nicht mehr
 Auswertepunkte. Große Verformungen (Theorie II. Ordnung der Volumen)
 bleiben außen vor.
 
+**Anfangsspannung in der Fließprüfung (10.10.2026).** Eine Vorspannung als
+Körper ist eine Anfangsspannung σ₀ = −F_v/A·a⊗a, die wahre Spannung ist
+σ = D(ε − ε_p) − σ₀. Die Rückführung prüft seitdem genau diese:
+σ_trial = D(ε − ε_p) − σ₀ (`plastizitaet.Zustand.sigma0`, im Stapel und in
+der Schleife). Bis dahin prüfte sie D(ε − ε_p) und sah σ₀ nicht, während der
+Spannungsnachlauf σ₀ abzog. Für eine Temperatur im Volumen ist das
+gleichgültig, die Dehnung α·ΔT·δ ist isotrop und D α ΔT δ rein hydrostatisch
+— von Mises und die Fließrichtung sehen nur den Deviator. Eine einachsige
+Bolzenvorspannung ist dagegen deviatorisch: am Bolzen mit F_v = 0,98·f_y·A
+und einem Klemmpaket k_K = 19·k_B (`tests/test_vorspannung_fliessen.py`,
+Fließbeginn der geschlossenen Lösung bei P_y = F_v + (k_B + k_K)·(L/E)·
+(f_y − F_v/A) = 1,38·f_y·A) floss bei 1,01·P_y und 1,3·P_y nichts, und die
+angezeigte Spannung lag mit 362,3 N/mm² über f_y; jetzt fließt er bei
+1,01·P_y und bei 0,99·P_y nicht, und Kopfverschiebung, σ_zz,
+σ_v = f_y + H·ε_p, ε_p und das Gleichgewicht am Kopf treffen die bilineare
+Lösung auf 2·10⁻¹⁶ relativ (ε_p auf 5·10⁻¹²). Die
+inkompatiblen Moden des hex8 und pent6 bleiben davon frei, weil
+Σ w|J|·B_a = 0 ist (Taylor-Korrektur, an verzerrten Elementen 10⁻¹⁶
+gemessen): eine je Element konstante σ₀ belastet sie nicht, wie im linearen
+Lastvektor. σ₀ bleibt über alle Laststufen voll, denn die Vorspannkraft wirkt
+seit demselben Tag ab der ersten Stufe voll (`stufenlast`); vorher wäre σ₀
+nur mit dem Lastfaktor der Stufe richtig gewesen. Die konsistente Tangente
+bleibt die Ableitung (zentrale Differenzen mit σ₀: 2,6·10⁻¹⁰ am hex8,
+2,7·10⁻¹⁰ am tet4).
+
 ### 5e.1 Plastizität am Gaußpunkt, und die Moden des Sechsflächners (20.09.2026)
 
 Bis zum 20.09.2026 wertete die Plastizität **in der Elementmitte** aus — ein
