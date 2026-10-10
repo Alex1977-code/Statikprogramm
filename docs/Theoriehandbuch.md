@@ -4742,6 +4742,33 @@ Singularitäten gibt keine der drei eine brauchbare Zahl. Was fehlt, ist nicht
 eine andere Regel, sondern eine Erkennung, **ob** ein Spitzenwert an einer
 Kerbe sitzt — das ist eine offene Baustelle und wird hier nicht geraten.
 
+**Erkennung der Krafteinleitung ohne Fläche (seit 10.10.2026).** Für eine
+Sorte Singularität gibt es sie jetzt (`statik3d/spitzenstellen.py`): Kraft,
+die ohne Fläche in ein Volumen geht. Für jede Kopplung, jedes Stabende, jede
+Knotenlast, jedes Knoten- und Linienlager und jede Linienlast auf
+Volumenknoten S zählen die getragene Fläche A_trag (Randseiten mit allen Ecken
+in S), die Hülle A_Hülle von S in ihrer Ausgleichsebene und die örtliche
+Kantenlänge h. Eine Fläche ist es bei A_trag ≥ 0,1 A_Hülle und A_trag ≥ 2 h²,
+oder wenn die getragenen Seiten eine ganze ebene Fläche des Körpers decken
+(keine nicht getragene Randseite schließt mit weniger als 30° Knick an; so
+bleibt ein ganz gelagerter Boden eine Fläche, wo das Netz nur ein Element
+breit ist). Sonst ist es ein Punkt, wenn die Ausdehnung r ≤ 2 h ist, und
+sonst eine Linie. Nach der
+Rechnung gilt als Zone, was im Umkreis max(4 h; r) der Knoten liegt und mit
+den Elementen an S zusammenhängt. Auffällig ist eine Stelle, wenn in der Zone
+σ_v ≥ 2 f_y gilt oder F / (A_Hülle · f_y) ≥ 1 (Entscheidung des Anwenders vom
+10.10.2026); das zweite Maß zählt nur, wo A_Hülle ≥ 2 h² ist, denn am Punkt
+ist die Hülle eine Elementseite, und F/A wächst mit dem Netz. σ_v wird an den
+Gaußpunkten gemessen, aus dem eben genannten Grund: Am Drehlager (LF1, Netz
+Mittel) erreichten drei Zonen von Stabenden als Eckwert nicht fließender
+Elemente 712 bis 740 N/mm² ≥ 2 f_y, an den Gaußpunkten aber nur 358 bis
+426 N/mm². An der gespeicherten Rechnung findet die Regel 112 Stellen in
+1,1 s, keine davon eine Fläche, und genau die 16 Ankerscheiben sind auffällig
+(σ_v 884 bis 1 187 N/mm², F / (A_Hülle · f_y) 1,08 bis 1,13); an allen
+übrigen Stellen bleibt σ_v / f_y ≤ 1,58 und F / (A_Hülle · f_y) ≤ 0,37.
+Kontaktränder und einspringende Kanten findet die Regel nicht, und die Werte in
+den Zonen werden durch die Kennzeichnung nicht richtiger.
+
 **Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
 Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)
 liegen außerhalb, und die abgezogene Vorspannung D·ε_p ist das Mittel über die

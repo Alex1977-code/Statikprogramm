@@ -545,6 +545,12 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        es keine Volumenbilanz (24.09.2026). Der Befund sagt je Gruppe,
        welcher Fall vorliegt.
 
+    8. **Kraft ohne Flaeche** (nur mit ``warnungen=True``, seit 10.10.2026) -
+       Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft
+       ohne Auflageflaeche in ein Volumen leiten (spitzenstellen.kandidaten):
+       eine WARNUNG je Art, gebuendelt („64 starre Scheiben koppeln nur einen
+       Lochrand (40 Knoten)“). Sie haelt die Rechnung nicht an.
+
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
     WARNUNG mit dem Zusatz „nicht geprueft" im Namen - eine leere Liste hiesse
@@ -573,6 +579,19 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
             text="Ob das Tetraedernetz gefaltet ist (umgestülpte Tetraeder zwischen "
                  f"ihren Nachbarn), ließ sich nicht prüfen ({type(ex).__name__}: "
                  f"{str(ex)[:100]})."))
+    if warnungen:
+        # 8. Kraft ohne Flaeche (seit 10.10.2026, Plan Singularitaeten): eine
+        # Zeile je Art, nur als WARNUNG - mit diesen Stellen wird gerechnet,
+        # sie werden nach der Rechnung gekennzeichnet (spitzenstellen)
+        try:
+            from . import spitzenstellen as _sp
+            aus += _sp.abnahme_befunde(model)
+        except Exception as ex:           # noqa: BLE001 - eine Abnahme darf nie sperren
+            aus.append(Befund(
+                pruefung="Kraft ohne Fläche nicht geprüft", wert=0.0, grenze=0.0, stufe="WARNUNG",
+                text="Ob Kräfte ohne Auflagefläche in ein Volumen gehen (mögliche netzabhängige "
+                     f"Spannungsspitzen), ließ sich nicht prüfen ({type(ex).__name__}: "
+                     f"{str(ex)[:100]})."))
     if not warnungen:
         aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
     return aus

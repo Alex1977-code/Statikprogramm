@@ -4796,10 +4796,46 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
             system = StaticSystem(model, workers, progress)
     res = _solve_loads(model, system, factors, name, "case", workers, progress,
                        probelauf=probelauf)
+    if not probelauf:                   # ein Probelauf ist ein Netzmass, kein Ergebnis
+        _spitzenstellen_nachlauf([res], progress)
     sit = getattr(system, "situation", "") or GRUNDSTELLUNG
     _melde(progress, "System gelöst" + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
            1.0)
     return res
+
+
+def _spitzenstellen_nachlauf(ergebnisse, progress=None) -> None:
+    """Netzabhaengige Spannungsspitzen je Ergebnis kennzeichnen (seit
+    10.10.2026, spitzenstellen.auswerten): Kraft, Zone, Spitze, Rang und das
+    Merkmal ``auffaellig`` in ``res.info["spitzenstellen"]``.
+
+    Die Stellen kommen einmal je Modell (eine Stellung rechnet mit ihrer
+    Kopie), die Auswertung liest nur die Zonen. Ein Ergebnis, das den Eintrag
+    schon traegt (aus einem Auftrag der Rechnerfarm), bleibt, wie es ist. Ein
+    Fehler hier haelt kein Ergebnis auf: er steht in
+    ``res.info["spitzenstellen_fehler"]``."""
+    from . import spitzenstellen as sp
+    offen = [r for r in ergebnisse if r is not None and getattr(r, "solid_res", None)
+             and "spitzenstellen" not in (r.info or {})]
+    if not offen:
+        return
+    t0 = time.time()
+    je_modell: dict = {}
+    for r in offen:
+        m = r.model if getattr(r, "model", None) is not None else None
+        if m is None:
+            continue
+        try:
+            if id(m) not in je_modell:
+                stellen = sp.kandidaten(m)
+                je_modell[id(m)] = (stellen, sp.punktspannungen_der_zonen(m, stellen))
+            sp.auswerten(m, r, *je_modell[id(m)])
+        except Exception as ex:          # noqa: BLE001 - die Kennzeichnung ist Beiwerk
+            r.info["spitzenstellen_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"
+    n = sum(len((r.info.get("spitzenstellen") or {}).get("auffaellig") or []) for r in offen)
+    if any((r.info.get("spitzenstellen") or {}).get("kandidaten") for r in offen):
+        _melde(progress, f"Netzabhängige Spannungsspitzen gekennzeichnet: {n} auffällige Stellen in "
+                         f"{len(offen)} Ergebnissen ({time.time() - t0:.1f} s)")
 
 
 def _lastfall_faktoren(model: Model, case: str = None) -> tuple:
@@ -7890,6 +7926,11 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         # in der Reihenfolge des Modells, wie vorher
         umhuellende_ek = {n: umhuellende_ek[n] for n in model.combinations
                           if n in umhuellende_ek}
+    # Netzabhaengige Spannungsspitzen je Ergebnis (seit 10.10.2026) - nach
+    # Theorie II./III. Ordnung, die Ergebnisse ersetzt, und vor Umhuellenden
+    # und Nachweisen, die sie spaeter (Paket 2) ausnehmen
+    _spitzenstellen_nachlauf(list(an.cases.values()) + list(an.combinations.values())
+                             + list(an.alternativen.values()), progress)
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():

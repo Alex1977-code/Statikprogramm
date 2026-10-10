@@ -6846,7 +6846,10 @@ also nur die Knoten des Lochrands an ihr, am Drehlager je Scheibe 40. Bis zum
 10.10.2026 galt für Ebene und Umriss dieselbe Toleranz von 0,5 mm bzw. einem
 Zehntel des Scheibenradius, bei den Ankerscheiben also rund 2,6 mm. Dadurch
 hingen an 6 der 64 Scheiben zusätzlich 16 Knoten aus dem Inneren der Platte,
-bis 2,46 mm unter der Oberfläche und bis 2,4 mm neben dem Lochrand.
+bis 2,46 mm unter der Oberfläche und bis 2,4 mm neben dem Lochrand. Eine
+Scheibe genau über einer Bohrung leitet ihre Kraft ohne Auflagefläche in die
+Platte; was das Programm daraus macht, steht unter *Netzabhängige
+Spannungsspitzen*.
 
 **Ein Statik3D-Modell (`.json`) an ein vorhandenes anhängen** (Haken „an
 vorhandenes Modell anhängen“ im Importdialog). Übertragen wird das ganze
@@ -9644,6 +9647,7 @@ nichts stillschweigend Übergangenes:
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
 | Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
+| Kraft ohne Fläche (Warnung, seit 10.10.2026): Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft ohne Auflagefläche in ein Volumen leiten – eine Zeile je Art, siehe *Netzabhängige Spannungsspitzen* | – |
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
@@ -10520,6 +10524,40 @@ Bauteilen am Netz mit 602 394 Elementen 3,5 s dauert und mit einer gebauten
 Antwort alle 13 gesetzten Platten findet, und von der Löser-Sitzung, dass sechs
 Lösungen über den Faktor des Entwurfs 12 s kosten und die Antwort auf den
 Lastverteilplatten zu 99,999999 % eine Starrkörperbewegung ist.
+
+### Netzabhängige Spannungsspitzen (seit 10.10.2026)
+
+Geht eine Kraft ohne Auflagefläche in ein Volumen, wächst die Spannung dort
+mit jeder Netzverfeinerung, und ihr Spitzenwert ist eine Eigenschaft des
+Netzes, keine Nachweisgröße. Solche Stellen sind eine starre Scheibe, die nur
+einen Lochrand koppelt, ein Stabende an ein bis drei Netzknoten, eine
+Knotenlast, ein Knoten- oder Linienlager oder eine Linienlast auf einer
+Volumenkante. Seit dem 10.10.2026 sucht das Programm sie selbst. Vor der
+Rechnung nennt die Abnahme des Netzes sie gebündelt als Warnung, eine Zeile je
+Art, am Drehlager etwa „64 starre Scheiben koppeln nur einen Lochrand
+(40–45 Knoten)“ und „48 Stabenden hängen an 1–3 Knoten“. Die Warnung hält die
+Rechnung nicht an. Lasten und Lager, die eine Fläche tragen, meldet sie nicht;
+in den eingebauten Beispielen meldet sie nur die Endlast der Konsole, die auf
+den sieben Knoten der Oberkante steht.
+
+Nach der Rechnung bestimmt das Programm je Stelle die Kraft, die durch sie
+geht, eine Zone aus den Elementen im Umkreis von vier Elementkanten oder dem
+Radius der Stelle, den größeren Wert, und darin den Spitzenwert von σ_v und
+ε_p. Stellen ohne Kraft fallen weg. **Auffällig** ist eine Stelle, wenn in
+ihrer Zone σ_v mindestens 2·f_y erreicht oder wenn die Kraft, verteilt auf
+die Fläche der Stelle, die Streckgrenze erreicht. σ_v ist dabei der Wert an
+den Integrationspunkten, an denen auch das Fließen gerechnet wird, nicht der
+Eckwert eines Elements, das nicht fließt. f_y ist der Wert des Werkstoffs,
+wie Sie ihn eingetragen haben; ohne f_y entfällt die Prüfung. Am Drehlager
+(LF1, Netz Mittel) sind genau die 16 Ankerscheiben der Platten V1 bis V28
+auffällig: 782 bis 833 kN, σ_v 884 bis 1 187 N/mm², ε_p 24,9 bis 39,2 % und
+das 1,08- bis 1,13-Fache der Streckgrenze über der Scheibenfläche. Die
+übrigen 92 Stellen mit Kraft bleiben zur Diagnose beim Ergebnis stehen, gelten
+aber nicht als gekennzeichnet; ihr größtes σ_v liegt bei 561 N/mm². Das
+Ergebnis wird mit der Ergebnisdatei gespeichert und wieder geladen. In der
+Ansicht, im Bericht und in den Nachweisen ist es noch nicht zu sehen; das
+folgt im nächsten Schritt. Ein Ergebnis aus einer Datei von vor dem
+10.10.2026 trägt die Kennzeichnung erst nach einer neuen Rechnung.
 
 ## 10 Ergebnisse und Bericht
 
