@@ -1000,6 +1000,31 @@ ABSCHLUSS_NACHSCHRITTE = 5
 #: (solver._KontaktImNewton.naechster).
 HALBIEREN_MAX = 4
 
+#: Die Zeile im Protokoll, wenn Temperaturlasten mitwirken (siehe stufenlast)
+TEMPERATUR_SOFORT = ("Temperaturlasten wirken ab der ersten Laststufe voll, gesteigert werden "
+                     "nur die übrigen Lasten")
+
+
+def stufenlast(F, F_temperatur, lam: float):
+    """Die Last einer Stufe mit dem Lastfaktor ``lam``: F_T + lam (F - F_T).
+
+    Temperaturlasten wirken seit dem 10.10.2026 ab der ersten Stufe voll,
+    gesteigert wird nur der Rest - in den Laststufen hier, in den halbierten
+    Stufen und in der Theorie III. Ordnung (theorie3.solve_theorie3).
+    Entscheidung des Anwenders: „temperaturlast immer sofort vorhanden
+    berücksichtigen denn ohne vorspannung mehr verformung und dann längere
+    rechenzeit“. Am Drehlager steht die Ankervorspannung als Temperaturlast
+    im LF1 (dT -445,6 K, rund 952 kN je Stab bei voller Behinderung) und
+    wuchs bis dahin mit den Stufen mit: in der ersten von drei wirkte ein
+    Drittel. ``F_temperatur`` ist der Anteil der Temperatur an F mit dem
+    Faktor der Kombination (solver.case_temperatur).
+
+    Ohne Temperaturlast (``F_temperatur`` None) ist es bitgleich lam * F wie
+    bisher, und in der letzten Stufe (lam = 1) immer die volle Last F."""
+    if F_temperatur is None or lam == 1.0:
+        return lam * F
+    return F_temperatur + lam * (F - F_temperatur)
+
 
 def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
     """Bezugsgroesse der Aenderung ||F_p,neu - F_p||: die aeussere Last ||F||.
@@ -1022,7 +1047,7 @@ def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
 
 def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, einst: "Plastizitaet",
                      elemente: list, norm_F: float, info: dict, log, progress, _loesen,
-                     kontakt, faktor: float = None, letzte: bool = None):
+                     kontakt, faktor: float = None, letzte: bool = None, F_temperatur=None):
     """Eine Laststufe des Newton mit abgekuerztem Kontakt - die gemeinsame
     Iteration von Fliessen und Kontakt (siehe :func:`_newton`). ``u`` ist der
     Startwert der Stufe, mit voll auskonvergiertem Kontakt geloest.
@@ -1044,8 +1069,9 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
     n_max = int(max(1, einst.iterationen))
     tol = float(einst.toleranz)
     # Lastfaktor und "letzte Stufe" kommen seit dem Halbieren (HALBIEREN_MAX)
-    # vom Aufrufer; ohne Angabe wie bisher k/stufen
-    F_k = ((k / stufen) if faktor is None else float(faktor)) * F
+    # vom Aufrufer; ohne Angabe wie bisher k/stufen. Die Temperatur wirkt
+    # voll (stufenlast, 10.10.2026)
+    F_k = stufenlast(F, F_temperatur, (k / stufen) if faktor is None else float(faktor))
     letzte = (k == stufen) if letzte is None else bool(letzte)
     F_p_stufe, zustand_stufe = F_p, basis
     abschluss = None            # (F_p, Zustand), mit denen der Abschluss gerechnet ist
@@ -1103,7 +1129,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
 
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
             norm_F: float, info: dict, log: list = None, progress=None,
-            kontakt=None) -> tuple:
+            kontakt=None, F_temperatur=None) -> tuple:
     """Newton mit der konsistenten Tangente - siehe :func:`iteration`.
 
     Die Rueckfuehrung geht in jedem Schritt vom Zustand am **Anfang der
@@ -1180,7 +1206,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         lam_k, tiefe = faktoren[k]
         k += 1
         letzte = k == len(faktoren)
-        F_k = lam_k * F
+        # Die Temperatur wirkt ab der ersten Stufe voll, auch in einer
+        # halbierten (stufenlast, 10.10.2026)
+        F_k = stufenlast(F, F_temperatur, lam_k)
         basis_anfang = basis
         # Was ein Ruecksprung an den Stufenanfang braucht: Loesung, Zustand,
         # F_p und - mit Kontakt - der Kontaktzustand vor dem Startwert
@@ -1196,7 +1224,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             kontakt.stufe_beginnt()
             vorab = _stufe_gemeinsam(model, F, k, stufen, u, basis, F_p, einst, elemente,
                                      norm_F, info, log, progress, _loesen, kontakt,
-                                     faktor=lam_k, letzte=letzte)
+                                     faktor=lam_k, letzte=letzte, F_temperatur=F_temperatur)
             if vorab is None:
                 # Verschachtelt wiederholen, vom Startwert der Stufe: der
                 # Loeser setzt den Kontaktzustand auf den nach dem Startwert
@@ -1346,7 +1374,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
 
 
 def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
-              progress=None, loesen_tangente=None, kontakt=None) -> tuple:
+              progress=None, loesen_tangente=None, kontakt=None, F_temperatur=None) -> tuple:
     """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
     Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
     Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
@@ -1378,6 +1406,11 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     gewaehlt, die gemeinsame Iteration von Fliessen und Kontakt - siehe
     :func:`_newton`. Ohne ihn, und im Weg "anfangsdehnung" immer, bleibt
     jeder Aufruf ein voller Kontaktlauf.
+
+    ``F_temperatur`` (solver.case_temperatur): der Anteil der
+    Temperaturlasten an F. Er wirkt seit dem 10.10.2026 ab der ersten
+    Laststufe voll, gesteigert wird nur der Rest (:func:`stufenlast`); das
+    Protokoll sagt es in einer Zeile. None rechnet wie bisher.
     """
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand()
@@ -1391,6 +1424,11 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     if not elemente:
         u = loesen(F)
         return u, zustand, F_p, info
+    if F_temperatur is not None:
+        F_temperatur = np.asarray(F_temperatur, float)
+        info["temperatur_sofort"] = True
+        if log is not None:
+            log.append("Plastizität: " + TEMPERATUR_SOFORT)
     from .elements import solid as sl
     # Ohne Verfestigung ist D_ep in Fliessrichtung singulaer (Eigenwert
     # 2G(θ − θ̄) = 2G (H/3G)/(1 + H/3G) = 0) - dann rechnet die
@@ -1404,11 +1442,11 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
-                       log, progress, kontakt)
+                       log, progress, kontakt, F_temperatur)
     stufen = int(max(1, einst.laststufen))
     for k in range(1, stufen + 1):
         lam = k / stufen
-        F_k = lam * F
+        F_k = stufenlast(F, F_temperatur, lam)
         # Aitken-Relaxation der Fixpunktfolge F_p: das Anfangssteifigkeits-
         # verfahren zieht sich mit dem Faktor E_t/E zusammen - bei 2 %
         # Verfestigung 0,98 je Schritt, 60 Schritte brachten 65 % des Wegs.

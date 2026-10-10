@@ -6385,6 +6385,29 @@ Rechnung konvergierte, hing vorher daran, wie die Last geteilt war - der
 gequetschte Block im Test lief mit vier Laststufen weg, mit einer und mit
 acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis.
 
+**Temperaturlasten wirken in den Laststufen sofort voll (seit 10.10.2026).**
+Rechnet das Programm schrittweise, also in den Laststufen der Plastizität
+(auch in einer halbierten Stufe) und in den Laststufen der Theorie III.
+Ordnung, wirkt jede Temperaturlast ab der ersten Stufe mit ihrem vollen
+Wert, und nur die übrigen Lasten werden gesteigert. In einer Kombination
+wirkt die Temperatur dabei sofort mit ihrem Faktor aus der Kombination. Bis
+zum 10.10.2026 wuchs die Temperaturlast mit den Stufen mit, in der ersten
+von drei Laststufen wirkte also nur ein Drittel von ihr. Das traf vor allem
+eine Vorspannung, die als Temperaturlast eingegeben ist, wie die
+Ankervorspannung am Drehlager: ohne die volle Vorspannung verformt sich das
+Modell in den ersten Stufen stärker, und die Rechnung dauert länger. Im
+Protokoll der Plastizität steht dann die Zeile „Plastizität:
+Temperaturlasten wirken ab der ersten Laststufe voll, gesteigert werden nur
+die übrigen Lasten“; bei der Theorie III. Ordnung steht derselbe Satz in der
+Spalte „Hinweis“. Am vorgespannten Würfel der Prüfung (ein fließender
+Hexaeder, vier Ankerstäbe mit ΔT = −387,5 K und Druck auf den Kopf, drei
+Laststufen) tragen die Anker in Stufe 1 jetzt 169,97 MN statt 51,61 MN, und
+das Endergebnis trifft wie vorher die geschlossene Lösung
+(`tests/test_temperatur_sofort.py`). Zwangsverformungen und Übermaße wirkten
+in den Laststufen der Plastizität schon vorher ab der ersten Stufe voll. Eine
+Vorspannung, die als Vorspannkraft eingegeben ist, wird dagegen weiter mit
+den Stufen gesteigert. Rechnungen ohne Laststufen ändern sich nicht.
+
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
 Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann
@@ -8545,6 +8568,16 @@ Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
 Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
 Drehung auf.
 
+Temperaturlasten wirken in den Laststufen der III. Ordnung seit dem
+10.10.2026 ab der ersten Stufe voll, gesteigert werden nur die übrigen
+Lasten; bis dahin wuchsen sie mit den Stufen mit. Die Spalte „Hinweis“ sagt
+es mit dem Satz „Temperaturlasten wirken ab der ersten Laststufe voll,
+gesteigert werden nur die übrigen Lasten“. Das Gleichgewicht am Ende bleibt
+dasselbe, die Zahl der Iterationen kann sich ändern: an einer Kragstütze mit
+Zugband (ΔT = −40 K im Band, 15 K und 8 K über die Höhe in der Stütze, fünf
+Laststufen) waren es 24 statt 20 Iterationen, und die Verschiebungen wichen
+um 1·10⁻⁵ der größten voneinander ab.
+
 Die Spalte **Theorie** der Lastfalltabelle im Bericht nennt die
 **gerechnete** Theorie. Ist ein Lastfall nach II. oder III. Ordnung gelungen,
 steht dort schlicht „II" bzw. „III". Scheitert die Rechnung — bei beiden,
@@ -8968,7 +9001,9 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
   ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
-  Last stufenweise auf, **Schritte je Stufe** (Vorgabe 25) und die
+  Last stufenweise auf (Temperaturlasten wirken seit dem 10.10.2026 ab der
+  ersten Stufe voll, siehe „Temperaturlasten wirken in den Laststufen sofort
+  voll“), **Schritte je Stufe** (Vorgabe 25) und die
   **Toleranz** (geschätzter Fehler der plastischen Knotenlasten gegen die
   Last, Vorgabe 1e-3; bis zum 23.09.2026 die Änderung je Schritt, die nahe
   der Grenzlast zu früh „konvergiert“ meldete) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine

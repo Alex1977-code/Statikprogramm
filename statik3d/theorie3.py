@@ -14,8 +14,9 @@ Steifigkeit (Timoshenko/Bernoulli, Gelenke kondensiert) angewandt:
 
 Knotendrehungen sind endliche Drehungen: je Knoten eine Drehmatrix R, die
 mit jedem Iterationsschritt multiplikativ fortgeschrieben wird
-(R ← exp(Δθ)·R). Gleichgewicht: f_int(u, R) = λ·F + F_imp; geloest mit
-Newton-Raphson in Laststufen λ = 1/n … 1, Tangente T ᵀ (k_l + k_g(N)) T
+(R ← exp(Δθ)·R). Gleichgewicht: f_int(u, R) = F_T + λ·(F − F_T) + F_imp;
+geloest mit Newton-Raphson in Laststufen λ = 1/n … 1, Tangente
+T ᵀ (k_l + k_g(N)) T
 (korotational mit geometrischer Steifigkeit; der Rest der konsistenten
 Tangente fehlt, dafuer ist das Residuum exakt - die Iteration konvergiert
 gegen das richtige Gleichgewicht, nur nicht quadratisch).
@@ -24,6 +25,10 @@ Lasten sind richtungstreu (konservativ) und werden als Knotenlasten der
 Ausgangslage angesetzt; Ersatzimperfektionen nach EC3 5.3.2 (Schiefstellung,
 Vorkruemmung) kommen wie bei Theorie II. Ordnung als gleichwertige Lasten
 dazu und werden je Laststufe aus den Normalkraeften neu gebildet.
+
+Temperaturlasten (F_T) wirken seit dem 10.10.2026 ab der ersten Laststufe
+voll, gesteigert wird nur der Rest (plastizitaet.stufenlast; bis dahin
+wuchsen sie mit λ mit). Ohne Temperaturlast rechnet jede Stufe wie bisher.
 
 Grenzen: nur Stab- und Fachwerkelemente (keine Schalen, Volumen), kein
 Kontakt, keine Zwangsverformungen; kleine Dehnungen (linear-elastisch).
@@ -259,6 +264,13 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         q.pop(sl_.i, None)
     staebe = [_Stab(model, i, feq) for i in wirksam
               if model.elements[i].typ != "seil"]
+    # Temperaturlasten wirken ab der ersten Laststufe voll (10.10.2026); die
+    # der Seile zaehlen nicht - ihre Lasten sind oben aus F_ref genommen
+    from .solver import case_temperatur
+    from .plastizitaet import TEMPERATUR_SOFORT, stufenlast
+    F_T = case_temperatur(model, factors, aktiv, ohne={sl_.i for sl_ in seile})
+    if F_T is not None:
+        info.hinweise.append(TEMPERATUR_SOFORT)
 
     # Lager: starr (u = 0) und Federn
     lin, _ = sup.split(sup.expand(model))
@@ -383,9 +395,13 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                 Fv, v_info = ersatzlasten_vorkruemmung(model, res_t, elastisch, alle=alle_vorkruemmungen)
                 F_imp = Fs + Fv
                 info.schiefstellung, info.vorkruemmung = s_info, v_info
-            F_ges = lam * F_ref + F_imp
+            F_stufe = stufenlast(F_ref, F_T, lam)
+            F_ges = F_stufe + F_imp
             r = F_ges - f_int
-            konv = float(np.linalg.norm(r[fi])) / (lam * lastnorm)
+            # bezogen auf die Last der Stufe - mit voller Temperatur ist das
+            # nicht mehr lam * |F|
+            bezug = (lam * lastnorm) if F_T is None else (float(np.linalg.norm(F_stufe[fi])) or 1.0)
+            konv = float(np.linalg.norm(r[fi])) / bezug
             gesamt_it += 1
             if konv < tol:
                 break

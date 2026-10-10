@@ -3800,11 +3800,14 @@ Verschiebungen und endliche Drehungen bei kleinen Dehnungen — in
   d_l = (0, θ₁ˡ, ΔL, θ₂ˡ) mit θᵢˡ = log(Eᵀ·Rᵢ·E₀ᵀ) und ΔL = L − L₀. Darauf
   wirkt die lineare lokale Steifigkeit (Timoshenko/Bernoulli, Federgelenke
   und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l.
-* Gleichgewicht f_int(u, R) = λ·F + F_imp, gelöst mit Newton-Raphson in
-  Laststufen λ = 1/n … 1 mit der Tangente Tᵀ(k_l + k_g(N))T. Der Rest der
-  konsistenten Tangente fehlt; das Residuum ist exakt, die Iteration
-  konvergiert deshalb gegen das richtige Gleichgewicht (linear statt
-  quadratisch). Konvergenz: ‖Residuum‖ < 10⁻⁶·‖λF‖.
+* Gleichgewicht f_int(u, R) = F_T + λ·(F − F_T) + F_imp, gelöst mit
+  Newton-Raphson in Laststufen λ = 1/n … 1 mit der Tangente
+  Tᵀ(k_l + k_g(N))T. F_T ist der Anteil der Temperaturlasten; er wirkt seit
+  dem 10.10.2026 ab der ersten Stufe voll (`plastizitaet.stufenlast`), bis
+  dahin stand hier λ·F. Der Rest der konsistenten Tangente fehlt; das
+  Residuum ist exakt, die Iteration konvergiert deshalb gegen das richtige
+  Gleichgewicht (linear statt quadratisch). Konvergenz: ‖Residuum‖ <
+  10⁻⁶·‖F_T + λ(F − F_T)‖, ohne Temperaturlast wie bisher 10⁻⁶·λ‖F‖.
 * Lasten sind richtungstreu (konservativ) und werden als äquivalente
   Knotenlasten der Ausgangslage angesetzt; Ersatzimperfektionen nach 5.3.2
   wie bei Theorie II. Ordnung, je Laststufe aus den Normalkräften.
@@ -4799,6 +4802,22 @@ auf dem Belastungspfad bleibt. Konvergenzmaß ist seit dem 23.09.2026 der
 |F_p,k − F_p,k−1| / |F| · max(1, ρ/(1 − ρ)) ≤ Toleranz (Vorgabe 1e-3), mit
 der Rate ρ aus dem Verlauf der Änderungen (§ 5e.2); vorher die Änderung
 allein.
+
+**Temperaturlasten sofort voll (10.10.2026, `plastizitaet.stufenlast`).**
+Die Last der Stufe mit dem Faktor λ ist F_T + λ·(F − F_T), wobei F_T der
+Anteil der Temperaturlasten an F ist, mit dem Faktor der Kombination
+(`solver.case_temperatur`: derselbe Lastvektor aus einem Lastfall, der nur
+die Temperaturlasten trägt). Das gilt in beiden Wegen, in der gemeinsamen
+Iteration und in halbierten Stufen; die letzte Stufe rechnet mit F selbst.
+Bis dahin war es λ·F, und eine als Temperatur eingegebene Vorspannung wirkte
+in der ersten von drei Stufen zu einem Drittel (Entscheidung des Anwenders:
+„ohne vorspannung mehr verformung und dann längere rechenzeit“). Ohne
+Temperaturlast ist die Rechnung bitgleich wie vorher. Am vorgespannten
+Würfel (ein Hexaeder, vier Ankerstäbe, `tests/test_temperatur_sofort.py`)
+ist Stufe 1 die lineare Lösung „Temperatur voll + 1/3 der Last“ auf 5·10⁻¹⁶,
+das Ende trifft die geschlossene bilineare Lösung auf weniger als 10⁻¹⁴ und
+ist im Newton-Weg bitgleich zum Stand davor, weil Würfel und Anker monoton
+belastet werden.
 
 **Beschleunigung (Aitken).** Das Anfangssteifigkeitsverfahren zieht sich
 mit dem Faktor E_t/E zusammen: bei 2 % Verfestigung 0,98 je Schritt —
