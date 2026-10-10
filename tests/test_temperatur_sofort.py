@@ -55,8 +55,9 @@ AB, LB = 0.05, 2.0          # Ankerquerschnitt je Stab [m2], Ankerlaenge [m]
 DT, P = -387.5, 2.5e8       # Abkuehlung der Anker [K], Drucklast auf den Kopf [N]
 ET = 0.02                   # Verfestigung E_t/E
 
-#: Satz fuer das Protokoll - auch in der Theorie III. Ordnung
-SATZ = "Temperaturlasten wirken ab der ersten Laststufe voll"
+#: Satz fuer das Protokoll - auch in der Theorie III. Ordnung (seit dem
+#: 10.10.2026 mit den Vorspannkraeften, tests/test_vorspannung_sofort.py)
+SATZ = "Temperaturlasten und Vorspannungen wirken ab der ersten Laststufe voll"
 
 
 def _wuerfel(lastfaelle=("LF1",), stufen=3, verfahren="tangente"):
@@ -238,7 +239,7 @@ def test_halbieren_temperatur_bleibt_voll():
         return system.solve(Fg, K_extra=dK)
     log = []
     _u, _z, _F_p, info = pl.iteration(m, F, loesen, m.plastizitaet, log=log, loesen_tangente=loesen,
-                                      kontakt=_DeckelEinmal(), F_temperatur=F_t)
+                                      kontakt=_DeckelEinmal(), F_sofort=F_t)
     check("halbiert: einmal, das Protokoll sagt es", int(info.get("halbiert") or 0) == 1
           and any("in zwei halben Stufen wiederholt" in z for z in log), f"halbiert {info.get('halbiert')}")
     # Stufenanfaenge ohne plastische Last: F_ges = F_T + lam F_M

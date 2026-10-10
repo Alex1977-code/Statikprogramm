@@ -664,6 +664,10 @@ f = ∫Bᵀσ₀ dV über alle Elemente des Körpers, die Querschnittsfläche A 
 Volumen des Körpers geteilt durch seine Länge längs a. Die Spannungen im
 Ergebnis sind σ = D·ε − σ₀. Geprüft an geschlossenen Werten (tests/test_lasten.py):
 Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaft.
+In schrittweisen Rechnungen (Laststufen der Plastizität, Theorie III.
+Ordnung) wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe voll
+wie eine Temperaturlast (§ 5e, „Temperaturlasten und Vorspannkräfte sofort
+voll“).
 
 ## 2 Lasten
 
@@ -3800,14 +3804,17 @@ Verschiebungen und endliche Drehungen bei kleinen Dehnungen — in
   d_l = (0, θ₁ˡ, ΔL, θ₂ˡ) mit θᵢˡ = log(Eᵀ·Rᵢ·E₀ᵀ) und ΔL = L − L₀. Darauf
   wirkt die lineare lokale Steifigkeit (Timoshenko/Bernoulli, Federgelenke
   und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l.
-* Gleichgewicht f_int(u, R) = F_T + λ·(F − F_T) + F_imp, gelöst mit
+* Gleichgewicht f_int(u, R) = F_S + λ·(F − F_S) + F_imp, gelöst mit
   Newton-Raphson in Laststufen λ = 1/n … 1 mit der Tangente
-  Tᵀ(k_l + k_g(N))T. F_T ist der Anteil der Temperaturlasten; er wirkt seit
-  dem 10.10.2026 ab der ersten Stufe voll (`plastizitaet.stufenlast`), bis
-  dahin stand hier λ·F. Der Rest der konsistenten Tangente fehlt; das
-  Residuum ist exakt, die Iteration konvergiert deshalb gegen das richtige
-  Gleichgewicht (linear statt quadratisch). Konvergenz: ‖Residuum‖ <
-  10⁻⁶·‖F_T + λ(F − F_T)‖, ohne Temperaturlast wie bisher 10⁻⁶·λ‖F‖.
+  Tᵀ(k_l + k_g(N))T. F_S ist der Anteil der Temperaturlasten und
+  Vorspannkräfte (ohne die der Seile, deren Lasten hier herausgenommen
+  sind); er wirkt seit dem 10.10.2026 ab der ersten Stufe voll
+  (`plastizitaet.stufenlast`), bis dahin stand hier λ·F. Zuerst galt das nur
+  für die Temperaturlasten (F_T), am selben Tag kamen die Vorspannkräfte
+  dazu. Der Rest der konsistenten Tangente fehlt; das Residuum ist exakt, die
+  Iteration konvergiert deshalb gegen das richtige Gleichgewicht (linear
+  statt quadratisch). Konvergenz: ‖Residuum‖ < 10⁻⁶·‖F_S + λ(F − F_S)‖, ohne
+  Temperaturlast und Vorspannkraft wie bisher 10⁻⁶·λ‖F‖.
 * Lasten sind richtungstreu (konservativ) und werden als äquivalente
   Knotenlasten der Ausgangslage angesetzt; Ersatzimperfektionen nach 5.3.2
   wie bei Theorie II. Ordnung, je Laststufe aus den Normalkräften.
@@ -4803,21 +4810,29 @@ auf dem Belastungspfad bleibt. Konvergenzmaß ist seit dem 23.09.2026 der
 der Rate ρ aus dem Verlauf der Änderungen (§ 5e.2); vorher die Änderung
 allein.
 
-**Temperaturlasten sofort voll (10.10.2026, `plastizitaet.stufenlast`).**
-Die Last der Stufe mit dem Faktor λ ist F_T + λ·(F − F_T), wobei F_T der
-Anteil der Temperaturlasten an F ist, mit dem Faktor der Kombination
-(`solver.case_temperatur`: derselbe Lastvektor aus einem Lastfall, der nur
-die Temperaturlasten trägt). Das gilt in beiden Wegen, in der gemeinsamen
-Iteration und in halbierten Stufen; die letzte Stufe rechnet mit F selbst.
-Bis dahin war es λ·F, und eine als Temperatur eingegebene Vorspannung wirkte
-in der ersten von drei Stufen zu einem Drittel (Entscheidung des Anwenders:
-„ohne vorspannung mehr verformung und dann längere rechenzeit“). Ohne
-Temperaturlast ist die Rechnung bitgleich wie vorher. Am vorgespannten
-Würfel (ein Hexaeder, vier Ankerstäbe, `tests/test_temperatur_sofort.py`)
-ist Stufe 1 die lineare Lösung „Temperatur voll + 1/3 der Last“ auf 5·10⁻¹⁶,
-das Ende trifft die geschlossene bilineare Lösung auf weniger als 10⁻¹⁴ und
-ist im Newton-Weg bitgleich zum Stand davor, weil Würfel und Anker monoton
-belastet werden.
+**Temperaturlasten und Vorspannkräfte sofort voll (10.10.2026,
+`plastizitaet.stufenlast`).** Die Last der Stufe mit dem Faktor λ ist
+F_S + λ·(F − F_S), wobei F_S der Anteil der Temperaturlasten und der
+Vorspannkräfte (Stab und Körper, § „Vorspannung als Anfangsdehnung“) an F
+ist, mit dem Faktor der Kombination (`solver.case_sofort`: derselbe
+Lastvektor aus einem Lastfall, der nur die Temperaturlasten und
+Vorspannungen trägt). Das gilt in beiden Wegen, in der gemeinsamen Iteration
+und in halbierten Stufen; die letzte Stufe rechnet mit F selbst. Bis dahin
+war es λ·F, und eine Vorspannung wirkte in der ersten von drei Stufen zu
+einem Drittel (Entscheidung des Anwenders: „ohne vorspannung mehr verformung
+und dann längere rechenzeit“). Zuerst galt die Regel nur für die
+Temperaturlasten (F_T, `solver.case_temperatur`); weil die Begründung die
+Vorspannung ist, kamen am selben Tag die Vorspannkräfte dazu. Ohne
+Temperaturlast und Vorspannkraft ist die Rechnung bitgleich wie vorher. Am
+vorgespannten Würfel (ein Hexaeder, vier Ankerstäbe,
+`tests/test_temperatur_sofort.py`) ist Stufe 1 die lineare Lösung
+„Temperatur voll + 1/3 der Last“ auf 5·10⁻¹⁶, das Ende trifft die
+geschlossene bilineare Lösung auf weniger als 10⁻¹⁴ und ist im Newton-Weg
+bitgleich zum Stand davor, weil Würfel und Anker monoton belastet werden.
+Mit einer Vorspannkraft von 48,825 MN je Anker statt der Abkühlung (dieselbe
+Kraft) gilt dasselbe auf 4,9·10⁻¹⁶ (`tests/test_vorspannung_sofort.py`, dort
+auch die Kombination, das Halbieren, Temperatur und Vorspannung zusammen, ein
+als Körper vorgespannter Bolzen und die Theorie III. Ordnung).
 
 **Beschleunigung (Aitken).** Das Anfangssteifigkeitsverfahren zieht sich
 mit dem Faktor E_t/E zusammen: bei 2 % Verfestigung 0,98 je Schritt —

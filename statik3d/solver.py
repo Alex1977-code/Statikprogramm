@@ -2787,38 +2787,49 @@ def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
     return F, feq, q, temp
 
 
-def case_temperatur(model: Model, factors: dict, aktiv=None, ohne=None):
-    """Der Anteil der Temperaturlasten am Lastvektor einer Linearkombination
-    von Lastfaellen - oder None, wenn keine wirkt.
+def case_sofort(model: Model, factors: dict, aktiv=None, ohne=None):
+    """Der Anteil der Temperaturlasten und Vorspannkraefte am Lastvektor
+    einer Linearkombination von Lastfaellen - oder None, wenn keine wirkt.
 
     Schrittweise Rechnungen (Laststufen der Plastizitaet samt halbierter
     Stufen, Theorie III. Ordnung) steigern seit dem 10.10.2026 nur den Rest
-    der Last; die Temperatur wirkt ab der ersten Stufe voll, mit ihrem Faktor
-    der Kombination (plastizitaet.stufenlast). Entscheidung des Anwenders:
-    „temperaturlast immer sofort vorhanden berücksichtigen denn ohne
-    vorspannung mehr verformung und dann längere rechenzeit“ - am Drehlager
-    steht die Ankervorspannung als Temperaturlast im LF1 (dT -445,6 K) und
-    wuchs bis dahin mit den Stufen mit.
+    der Last; Temperatur und Vorspannung wirken ab der ersten Stufe voll, mit
+    ihrem Faktor der Kombination (plastizitaet.stufenlast). Entscheidung des
+    Anwenders: „temperaturlast immer sofort vorhanden berücksichtigen denn
+    ohne vorspannung mehr verformung und dann längere rechenzeit“ - am
+    Drehlager steht die Ankervorspannung als Temperaturlast im LF1
+    (dT -445,6 K) und wuchs bis dahin mit den Stufen mit. Begruendet ist die
+    Entscheidung mit der Vorspannung, darum zaehlt eine als Vorspannkraft
+    eingegebene Vorspannung (model.Vorspannung, im Stab und als Koerper)
+    ebenso dazu; bis zum 10.10.2026 wuchs auch sie mit den Stufen mit.
 
     Derselbe Lastvektor wie in :func:`case_loads` (asm.load_vector), nur aus
-    einem Lastfall, der allein die Temperaturlasten traegt - mit Stabenden,
-    Gelenken, Exzentrizitaeten, Situationen (``aktiv``) und gebundenen
-    Mittelknoten wie dort. ``ohne``: Elemente, deren Temperatur nicht zaehlt
-    (die Seile der Theorie III. Ordnung, deren Lasten dort herausgenommen
-    sind)."""
-    F_T = None
+    einem Lastfall, der allein die Temperaturlasten und Vorspannungen traegt -
+    mit Stabenden, Gelenken, Exzentrizitaeten, Situationen (``aktiv``) und
+    gebundenen Mittelknoten wie dort. ``ohne``: Elemente, deren Temperatur
+    und Vorspannung nicht zaehlen (die Seile der Theorie III. Ordnung, deren
+    Lasten dort herausgenommen sind). Eine Vorspannung haengt am Stab, nicht
+    am Element; darum nimmt ``ohne`` die Elemente ueber die Maske ``aktiv``
+    heraus - der Lastfall hier traegt weder Knotenlasten noch Eigengewicht,
+    auf die die Maske sonst wirkt."""
+    if ohne:
+        aktiv = (np.ones(len(model.elements), bool) if aktiv is None
+                 else np.array(aktiv, bool, copy=True))
+        aktiv[[int(i) for i in ohne]] = False
+    F_S = None
     for name, f in factors.items():
         if not f:
             continue
         lc = model.case(name)
-        tl = [t for t in lc.temp_loads if ohne is None or int(t.elem) not in ohne]
-        if not tl:
+        tl = list(lc.temp_loads)
+        vs = list(getattr(lc, "vorspannungen", None) or [])
+        if not tl and not vs:
             continue
-        Fv = f * asm.load_vector(model, LoadCase(name=lc.name, temp_loads=tl), aktiv)
-        F_T = Fv if F_T is None else F_T + Fv
-    if F_T is None or not np.any(F_T):
+        Fv = f * asm.load_vector(model, LoadCase(name=lc.name, temp_loads=tl, vorspannungen=vs), aktiv)
+        F_S = Fv if F_S is None else F_S + Fv
+    if F_S is None or not np.any(F_S):
         return None
-    return F_T
+    return F_S
 
 
 def case_uebermass(model: Model, factors: dict) -> dict:
@@ -4223,7 +4234,7 @@ class _KontaktImNewton:
 
 
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
-                          gemeinsam: bool = False, F_temperatur=None):
+                          gemeinsam: bool = False, F_sofort=None):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
     Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
     Zusatzlast F_p, mit Kontakt warm gestartet vom letzten Zustand.
@@ -4237,8 +4248,8 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     dazu die gemeinsame Iteration. Sonst rechnet er Aufruf fuer Aufruf wie
     bis zum 23.09.2026.
 
-    ``F_temperatur`` (:func:`case_temperatur`): der Anteil der
-    Temperaturlasten an F - er wirkt ab der ersten Laststufe voll
+    ``F_sofort`` (:func:`case_sofort`): der Anteil der Temperaturlasten und
+    Vorspannkraefte an F - er wirkt ab der ersten Laststufe voll
     (10.10.2026)."""
     from . import plastizitaet as pl
     log: list = []
@@ -4250,7 +4261,7 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                                          progress=lambda t: _melde(progress, t),
                                          loesen_tangente=kn.loesen,
                                          kontakt=kn if iteriert else None,
-                                         F_temperatur=F_temperatur)
+                                         F_sofort=F_sofort)
     halter, aufrufe = kn.halter, kn.aufrufe
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
@@ -4345,10 +4356,10 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             factors[n] = 1.0
         _melde(progress, f"{name}: Grundlast wirkt mit - " + ", ".join(grund))
     F, feq, q, temp = case_loads(model, factors, aktiv)
-    # In den Laststufen der Plastizitaet wirken Temperaturlasten sofort voll
-    # (10.10.2026) - Zwangsverformungen und Uebermasse gibt _rechnen ohnehin
-    # in jedem Aufruf voll mit
-    F_T = case_temperatur(model, factors, aktiv) if _plastisch(model) else None
+    # In den Laststufen der Plastizitaet wirken Temperaturlasten und
+    # Vorspannkraefte sofort voll (10.10.2026) - Zwangsverformungen und
+    # Uebermasse gibt _rechnen ohnehin in jedem Aufruf voll mit
+    F_S = case_sofort(model, factors, aktiv) if _plastisch(model) else None
     us = case_prescribed(model, factors, warn=progress)
     ueber = case_uebermass(model, factors)
     res = Results(name=name, kind=kind, model=model)
@@ -4502,7 +4513,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             try:
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
                                                               progress, start_pl, gemeinsam,
-                                                              F_temperatur=F_T)
+                                                              F_sofort=F_S)
             except RuntimeError:
                 # Ohne Vorlauf scheitert an einer freien Bewegung erst der erste
                 # plastische Lauf - dann wie oben: festhalten und neu rechnen.
@@ -4517,7 +4528,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 hilfs = True
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
                                                               progress, start_pl, gemeinsam,
-                                                              F_temperatur=F_T)
+                                                              F_sofort=F_S)
         except RuntimeError as ex3:
             _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv,
                                     art=lauf_art["art"])

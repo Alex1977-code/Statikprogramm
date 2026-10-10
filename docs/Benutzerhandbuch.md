@@ -822,7 +822,11 @@ in allen Elementen des Körpers (A = Volumen / Länge, der Schaftquerschnitt);
 die Spannungen im Ergebnis enthalten die Vorspannung. In der Ansicht stehen
 an beiden Enden violette Pfeile nach außen mit der Kraft, im Modellbaum steht
 sie als Unterpunkt „Vorspannung“ des Lastfalls, in Tabelle und Bericht mit
-Bauteil, Kraft und Achse.
+Bauteil, Kraft und Achse. In den Laststufen der Plastizität und der Theorie
+III. Ordnung wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe
+voll, gesteigert werden nur die übrigen Lasten (siehe „Temperaturlasten und
+Vorspannungen wirken in den Laststufen sofort voll“); bis dahin wuchs sie mit
+den Stufen mit.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall.
@@ -6385,7 +6389,8 @@ Rechnung konvergierte, hing vorher daran, wie die Last geteilt war - der
 gequetschte Block im Test lief mit vier Laststufen weg, mit einer und mit
 acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis.
 
-**Temperaturlasten wirken in den Laststufen sofort voll (seit 10.10.2026).**
+**Temperaturlasten und Vorspannungen wirken in den Laststufen sofort voll
+(seit 10.10.2026).**
 Rechnet das Programm schrittweise, also in den Laststufen der Plastizität
 (auch in einer halbierten Stufe) und in den Laststufen der Theorie III.
 Ordnung, wirkt jede Temperaturlast ab der ersten Stufe mit ihrem vollen
@@ -6397,16 +6402,32 @@ eine Vorspannung, die als Temperaturlast eingegeben ist, wie die
 Ankervorspannung am Drehlager: ohne die volle Vorspannung verformt sich das
 Modell in den ersten Stufen stärker, und die Rechnung dauert länger. Im
 Protokoll der Plastizität steht dann die Zeile „Plastizität:
-Temperaturlasten wirken ab der ersten Laststufe voll, gesteigert werden nur
-die übrigen Lasten“; bei der Theorie III. Ordnung steht derselbe Satz in der
-Spalte „Hinweis“. Am vorgespannten Würfel der Prüfung (ein fließender
-Hexaeder, vier Ankerstäbe mit ΔT = −387,5 K und Druck auf den Kopf, drei
-Laststufen) tragen die Anker in Stufe 1 jetzt 169,97 MN statt 51,61 MN, und
-das Endergebnis trifft wie vorher die geschlossene Lösung
-(`tests/test_temperatur_sofort.py`). Zwangsverformungen und Übermaße wirkten
-in den Laststufen der Plastizität schon vorher ab der ersten Stufe voll. Eine
-Vorspannung, die als Vorspannkraft eingegeben ist, wird dagegen weiter mit
-den Stufen gesteigert. Rechnungen ohne Laststufen ändern sich nicht.
+Temperaturlasten und Vorspannungen wirken ab der ersten Laststufe voll,
+gesteigert werden nur die übrigen Lasten“; bei der Theorie III. Ordnung
+steht derselbe Satz in der Spalte „Hinweis“. Am vorgespannten Würfel der
+Prüfung (ein fließender Hexaeder, vier Ankerstäbe mit ΔT = −387,5 K und
+Druck auf den Kopf, drei Laststufen) tragen die Anker in Stufe 1 jetzt
+169,97 MN statt 51,61 MN, und das Endergebnis trifft wie vorher die
+geschlossene Lösung (`tests/test_temperatur_sofort.py`).
+
+Weil der Anwender die Entscheidung mit der Vorspannung begründet, gilt sie
+seit dem 10.10.2026 auch für eine Vorspannung, die als **Vorspannkraft**
+eingegeben ist (*Lasten → Vorspannung*), im Stab ebenso wie als Körper. Sie
+wirkt ab der ersten Stufe voll, in einer Kombination mit ihrem Faktor aus der
+Kombination, zusammen mit den Temperaturlasten. Zuerst galt die Regel nur
+für Temperaturlasten, und die Zeile im Protokoll hieß „Temperaturlasten
+wirken ab der ersten Laststufe voll …“; eine Vorspannkraft wuchs bis dahin
+weiter mit den Stufen mit. Derselbe Würfel mit einer Vorspannkraft von
+48,825 MN je Anker statt der Abkühlung (das ist genau die Kraft von
+ΔT = −387,5 K bei voller Behinderung) rechnet in Stufe 1 ebenso mit 169,97 MN
+statt 51,61 MN; an einem Bolzen aus einem Hexaeder, der als Körper mit
+1,5·f_y·A vorgespannt ist und auf einem fließenden Würfel sitzt, hebt sich die
+Fuge in Stufe 1 um 1,4236 mm statt 0,6327 mm (`tests/test_vorspannung_sofort.py`).
+Keines der eingebauten Beispiele trägt eine Vorspannkraft oder eine
+Temperaturlast; sie rechnen unverändert. Zwangsverformungen und Übermaße
+wirkten in den Laststufen der Plastizität schon vorher ab der ersten Stufe
+voll. Rechnungen ohne Laststufen ändern sich nicht, und ohne Temperaturlast
+und Vorspannkraft rechnet jede Stufe bitgleich wie vorher.
 
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
@@ -8568,15 +8589,19 @@ Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
 Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
 Drehung auf.
 
-Temperaturlasten wirken in den Laststufen der III. Ordnung seit dem
-10.10.2026 ab der ersten Stufe voll, gesteigert werden nur die übrigen
-Lasten; bis dahin wuchsen sie mit den Stufen mit. Die Spalte „Hinweis“ sagt
-es mit dem Satz „Temperaturlasten wirken ab der ersten Laststufe voll,
-gesteigert werden nur die übrigen Lasten“. Das Gleichgewicht am Ende bleibt
-dasselbe, die Zahl der Iterationen kann sich ändern: an einer Kragstütze mit
-Zugband (ΔT = −40 K im Band, 15 K und 8 K über die Höhe in der Stütze, fünf
-Laststufen) waren es 24 statt 20 Iterationen, und die Verschiebungen wichen
-um 1·10⁻⁵ der größten voneinander ab.
+Temperaturlasten und Vorspannkräfte wirken in den Laststufen der III.
+Ordnung seit dem 10.10.2026 ab der ersten Stufe voll, gesteigert werden nur
+die übrigen Lasten; bis dahin wuchsen sie mit den Stufen mit (zuerst wurde
+das nur für die Temperaturlasten geändert). Die Spalte „Hinweis“ sagt es mit
+dem Satz „Temperaturlasten und Vorspannungen wirken ab der ersten Laststufe
+voll, gesteigert werden nur die übrigen Lasten“. Das Gleichgewicht am Ende
+bleibt dasselbe, die Zahl der Iterationen kann sich ändern: an einer
+Kragstütze mit Zugband (ΔT = −40 K im Band, 15 K und 8 K über die Höhe in der
+Stütze, fünf Laststufen) waren es 24 statt 20 Iterationen, und die
+Verschiebungen wichen um 1·10⁻⁵ der größten voneinander ab. Mit einer
+Vorspannkraft von 70 kN im Zugband statt der Temperatur blieben es 20
+Iterationen, und die Verschiebungen wichen um 2,8·10⁻⁵ der größten
+voneinander ab.
 
 Die Spalte **Theorie** der Lastfalltabelle im Bericht nennt die
 **gerechnete** Theorie. Ist ein Lastfall nach II. oder III. Ordnung gelungen,
@@ -9001,9 +9026,10 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
   ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
-  Last stufenweise auf (Temperaturlasten wirken seit dem 10.10.2026 ab der
-  ersten Stufe voll, siehe „Temperaturlasten wirken in den Laststufen sofort
-  voll“), **Schritte je Stufe** (Vorgabe 25) und die
+  Last stufenweise auf (Temperaturlasten und Vorspannkräfte wirken seit dem
+  10.10.2026 ab der ersten Stufe voll, siehe „Temperaturlasten und
+  Vorspannungen wirken in den Laststufen sofort voll“), **Schritte je Stufe**
+  (Vorgabe 25) und die
   **Toleranz** (geschätzter Fehler der plastischen Knotenlasten gegen die
   Last, Vorgabe 1e-3; bis zum 23.09.2026 die Änderung je Schritt, die nahe
   der Grenzlast zu früh „konvergiert“ meldete) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
