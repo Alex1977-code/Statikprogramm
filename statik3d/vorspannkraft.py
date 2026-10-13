@@ -579,12 +579,13 @@ def import_hinweise(model, log: list = None, system=None) -> list:
         staebe = sorted({t.stab for t in liste})
         faelle = sorted({t.fall for t in liste})
         t0_ = liste[0]
-        umfang = (f" ({len(staebe)} {'Stab' if len(staebe) == 1 else 'Stäbe'} in {len(faelle)} "
+        umfang = (f"{len(staebe)} {'Stab' if len(staebe) == 1 else 'Stäbe'} in {len(faelle)} "
                   f"{'Lastfall' if len(faelle) == 1 else 'Lastfällen'}; als ΔT gerechnet "
-                  f"{t0_.lasten[0].vorspanntext(model)}"
-                  + (f"; X nach der ersten Rechnung: {grund}" if not xs and grund else "")
-                  + (f"; X linear in {zeit:.2f} s" if xs else "") + ")")
-        h = {"art": "vorspannung", "text": text + umfang, "objekte": staebe,
+                  f"{t0_.lasten[0].vorspanntext(model)}")
+        zusatz = (f"X nach der ersten Rechnung: {grund}" if not xs and grund else
+                  f"X linear in {zeit:.2f} s" if xs else "")
+        h = {"art": "vorspannung", "text": f"{text} ({umfang}" + (f"; {zusatz}" if zusatz else "") + ")",
+             "objekte": staebe, "umfang": umfang,
              "vorschlag": "in Sollkraft umwandeln: Lasten › Vorspannung, Lastart "
                           "„ΔT-Vorspannung in Sollkraft umwandeln“",
              "erledigt": False, "N0": float(N0), "faelle": faelle,
@@ -595,6 +596,55 @@ def import_hinweise(model, log: list = None, system=None) -> list:
     alt = [x for x in (getattr(model, "importhinweise", None) or []) if x.get("art") != "vorspannung"]
     model.importhinweise = alt + out
     return out
+
+
+def _nur_vorspannung(model, lc) -> bool:
+    """Traegt der Lastfall nichts als Temperatur-Vorspannungen auf Zugstaeben?"""
+    if any(float(x) for x in (lc.gravity or [])) or getattr(lc, "grundlast", False):
+        return False
+    for liste in ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
+                  "zwangsverformungen", "vorspannungen", "uebermasse"):
+        if getattr(lc, liste, None):
+            return False
+    tl = list(lc.temp_loads or [])
+    return bool(tl) and all(abs(t.vorspannkraft(model)) > 1.0 and not t.dT_z for t in tl)
+
+
+def hinweise_nachreichen(model, ergebnisse: dict) -> list:
+    """Nach einer Rechnung (solver.solve_all): die Kraft X nach elastischer
+    Verkuerzung fuer die Importhinweise, die sie beim Import nicht rechnen
+    konnten (Kontakt, Groesse) - aus den Ergebnissen der Lastfaelle, die nur
+    diese Vorspannung tragen (am Drehlager LF398). Rueckgabe die neuen
+    Hinweistexte (leer, wenn nichts nachzureichen war)."""
+    offen = [h for h in (getattr(model, "importhinweise", None) or [])
+             if h.get("art") == "vorspannung" and h.get("X") is None and not h.get("erledigt")]
+    if not offen or not ergebnisse:
+        return []
+    je_N0: dict = {}
+    for t in temperatur_vorspannungen(model):
+        lc = model.load_cases.get(t.fall)
+        res = ergebnisse.get(t.fall)
+        if lc is None or res is None or not _nur_vorspannung(model, lc):
+            continue
+        els = _elemente(model, t.stab)
+        if not els or any(i not in res.beam_end for i in els):
+            continue
+        je_N0.setdefault(round(t.N0, 3), []).append((t.fall, _n_ergebnis(res, els)))
+    texte = []
+    for h in offen:
+        werte = je_N0.get(round(float(h.get("N0", 0.0)), 3))
+        if not werte:
+            continue
+        xs = [x for _f, x in werte]
+        faelle = sorted({f for f, _x in werte})
+        h["X"] = [float(min(xs)), float(max(xs))]
+        h["X_aus"] = faelle
+        quelle = "X aus " + ", ".join(faelle[:3]) + (" …" if len(faelle) > 3 else "")
+        umfang = str(h.get("umfang", "") or "")
+        h["text"] = (hinweis_text(float(h["N0"]), (min(xs), max(xs)))
+                     + f" ({umfang + '; ' if umfang else ''}{quelle})")
+        texte.append(h["text"])
+    return texte
 
 
 def ist_spannstahl(model, mat_name: str) -> bool:

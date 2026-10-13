@@ -8307,11 +8307,27 @@ def _solve_all_innen(model: Model, workers: int = None, progress=None, combinati
     an = Analysis(model)
     systeme: dict = {}
     try:
-        return _solve_all_rumpf(model, an, systeme, workers, progress, combinations,
-                                envelopes, design, fatigue, t0)
+        an = _solve_all_rumpf(model, an, systeme, workers, progress, combinations,
+                              envelopes, design, fatigue, t0)
     except BaseException as ex:
         _teilanalyse(ex, an, model, systeme, t0)
         raise
+    _vorspannung_nachreichen(model, an, progress)
+    return an
+
+
+def _vorspannung_nachreichen(model: Model, an, progress=None) -> None:
+    """Der Importhinweis zur Vorspannung bekommt nach der Rechnung die Kraft X
+    nach elastischer Verkuerzung, wenn der Import sie nicht rechnen konnte
+    (vorspannkraft.hinweise_nachreichen, 13.10.2026). Haelt nie etwas auf."""
+    if not any(h.get("art") == "vorspannung" for h in (getattr(model, "importhinweise", None) or [])):
+        return
+    try:
+        from .vorspannkraft import hinweise_nachreichen
+        for text in hinweise_nachreichen(model, getattr(an, "cases", None) or {}):
+            _melde(progress, "Hinweis: " + text)
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        pass
 
 
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,

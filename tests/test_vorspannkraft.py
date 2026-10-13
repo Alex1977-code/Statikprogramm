@@ -428,6 +428,27 @@ def test_import_hinweis_und_umwandlung():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_hinweis_nach_rechnung():
+    print("\n--- Hinweis mit Kontakt: X folgt nach der ersten Rechnung ---")
+    vk = _vk()
+    m, H, el, eK = _federn(kontakt=True, lasten=(("V", 0.0), ("VP", P)))
+    for lf in ("V", "VP"):                     # die RFEM-Form: dT statt Sollkraft
+        m.case(lf).vorspannungen = []
+        m.load_temp(el["A1"], -F1 / (E * A_A * 1e-5), case=lf)
+    h = vk.import_hinweise(m)
+    check("mit Kontakt: X beim Import nicht gerechnet, der Hinweis sagt warum",
+          len(h) == 1 and h[0]["X"] is None and "folgt nach der ersten Rechnung" in h[0]["text"]
+          and "Kontakt" in h[0]["text"], h[0]["text"] if h else "kein Hinweis")
+    an = solver.solve_all(m, combinations=False)
+    h = [x for x in m.importhinweise if x.get("art") == "vorspannung"]
+    soll = vk.hinweis_text(F1, F1 * K_K / (K_K + K_A))
+    check("nach der Rechnung: X aus dem Lastfall nur mit Vorspannung (V), nicht aus VP",
+          h and h[0]["X"] is not None and h[0]["text"].startswith(soll) and h[0].get("X_aus") == ["V"],
+          h[0]["text"] if h else "")
+    nahe("… X = F·k_K/(k_K + k_A) (Fuge geschlossen)", (h[0]["X"] or [0])[0] if h else 0.0,
+         F1 * K_K / (K_K + K_A), 1e-9, "N")
+
+
 def _rahmen_th():
     """Kragstuetze (HEB 200, 3 m) mit vorgespanntem Zugband zum Boden (wie
     tests/test_vorspannung_sofort._rahmen), hier mit Sollkraft 70 kN; V nur
@@ -486,7 +507,7 @@ def test_ohne_sollkraft_unveraendert():
 def main():
     for t in (test_feder_linear, test_feder_spannweg, test_reihenweise, test_einfluss_gleich_spannweg,
               test_plastisch, test_kontakt, test_speichern_laden, test_import_hinweis_und_umwandlung,
-              test_theorie, test_ohne_sollkraft_unveraendert):
+              test_hinweis_nach_rechnung, test_theorie, test_ohne_sollkraft_unveraendert):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
