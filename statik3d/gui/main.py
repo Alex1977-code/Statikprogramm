@@ -10038,6 +10038,11 @@ class MainWindow(QtWidgets.QMainWindow):
             t = (str(ziel) if ziel else f"E{l.elem}") + f": ΔT = {z(float(l.dT))} K"
             if getattr(l, "dT_z", 0.0):
                 t += f", ΔT oben−unten = {z(float(l.dT_z))} K"
+            # eine Vorspannung, die als Temperatur steht (RFEM-Import): mit Kraft,
+            # E und α der Umrechnung (13.10.2026)
+            vs = l.vorspanntext(self.model) if hasattr(l, "vorspanntext") else ""
+            if vs:
+                t += f" – {vs}"
             return t
         if art == "zwang":
             namen = ["ux", "uy", "uz", "φx", "φy", "φz"]
@@ -10046,6 +10051,10 @@ class MainWindow(QtWidgets.QMainWindow):
                      for d in (l.dofs or []) if 0 <= int(d) < 6]
             return f"K{l.node}: " + (", ".join(teile) or "–")
         if art == "vorspannung":
+            if getattr(l, "sollkraft", False):
+                g = int(getattr(l, "gruppe", 1) or 1)
+                return (f"{getattr(l, 'ziel', '?')}: F_soll = {kn(getattr(l, 'kraft', 0.0))} kN "
+                        f"(nach Verankerung" + (f", Gruppe {g}" if g != 1 else "") + ")")
             return f"{getattr(l, 'ziel', '?')}: F_v = {kn(getattr(l, 'kraft', 0.0))} kN"
         if art == "uebermass":
             t = (f"Fuge {getattr(l, 'ziel', '?')}: Ü = "
@@ -10307,6 +10316,11 @@ class MainWindow(QtWidgets.QMainWindow):
             titel = f"Temperaturlast E{obj.elem}"
             felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
                        F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
+            vs = obj.vorspanntext(m) if hasattr(obj, "vorspanntext") else ""
+            if vs:
+                felder.append(F("vorspannung", "Vorspannung", "info",
+                                vs[0].upper() + vs[1:] + " – umwandeln in die Sollkraft: Lasten › "
+                                "Vorspannung, Lastart „ΔT-Vorspannung in Sollkraft umwandeln“"))
         elif liste == "zwangsverformungen":
             titel = f"Zwangsverformung K{obj.node}"
             u = (list(obj.u or []) + [0.0] * 6)[:6]
@@ -10316,6 +10330,14 @@ class MainWindow(QtWidgets.QMainWindow):
             felder.append(F("dofs", "vorgegebene Richtungen", "text",
                             ", ".join(namen[int(d)] for d in (obj.dofs or []) if 0 <= int(d) < 6), breite=150,
                             hinweis="welche Richtungen vorgegeben sind (auch mit dem Wert 0), durch Komma"))
+        elif liste == "vorspannungen" and getattr(obj, "sollkraft", False):
+            titel = f"Vorspannkraft (Soll nach Verankerung) Stab {obj.ziel}"
+            felder += [F("F", "Sollkraft F_soll [kN]", "zahl", float(obj.kraft) / 1e3,
+                         hinweis="die Kraft, die der Stab nach dem Verankern trägt"),
+                       F("gruppe", "Gruppe beim Spannen", "ganz", int(getattr(obj, "gruppe", 1) or 1),
+                         hinweis="gleiche Gruppe = gleichzeitig gespannt; mehrere Gruppen nacheinander "
+                                 "(1, 2, …) - früher gespannte verlieren dann Kraft"),
+                       F("kommentar", "Bemerkung", "text", obj.kommentar or "", breite=150)]
         elif liste == "vorspannungen":
             titel = f"Vorspannung {'Stab' if obj.art == 'stab' else 'Volumen'} {obj.ziel}"
             felder += [F("F", "Vorspannkraft F_v [kN]", "zahl", float(obj.kraft) / 1e3),
@@ -10407,6 +10429,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif liste == "vorspannungen":
             obj.kraft = z("F") * 1e3
             obj.kommentar = str(w.get("kommentar", "") or "")
+            if getattr(obj, "sollkraft", False):
+                obj.gruppe = max(1, int(round(z("gruppe", float(obj.gruppe or 1)))))
         elif liste == "gravity":
             lc.gravity = [0.0, 0.0, z("gz")]
         neu = str(w.get("fall", fall) or fall)
@@ -14558,10 +14582,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
             for l in lc.eigene("temp_loads"):
+                # eine Vorspannung als Temperatur: Kraft, E und α der Umrechnung (13.10.2026)
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {tab.festkomma(l.dT, 2)} K",
                                f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
-                               ""])
+                               l.vorspanntext(self.model)])
                 i += 1
             for l in lc.geometrielasten:
                 ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)
@@ -14606,9 +14631,12 @@ class MainWindow(QtWidgets.QMainWindow):
                                l.bezug().split(": ", 1)[-1], "global", ""])
                 i += 1
             for l in getattr(lc, "vorspannungen", None) or []:
-                zeilen.append([i, lcname, "Vorspannung",
+                soll = getattr(l, "sollkraft", False)
+                zeilen.append([i, lcname, "Vorspannkraft (Soll)" if soll else "Vorspannung",
                                ("Stab " if l.art == "stab" else "Volumen ") + str(l.ziel),
-                               f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
+                               (f"F_soll = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN"
+                                + (f", Gruppe {int(l.gruppe)}" if soll and int(l.gruppe or 1) != 1 else ""))
+                               if soll else f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
                                "Stabachse" if l.art == "stab" else
                                ("längste Abmessung" if l.achse is None else
                                 "(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.achse) + ")"),
@@ -20500,46 +20528,118 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Achse der Vorspannung eines Volumenkoerpers in der Maske
     VORSPANN_ACHSEN = ["automatisch (längste Abmessung)", "global x", "global y", "global z"]
 
+    #: Lastarten der Vorspannungsmaske (13.10.2026): die Anfangsdehnung wie
+    #: bisher, die Sollkraft nach Verankerung und die Umwandlung einer
+    #: Temperatur-Vorspannung (RFEM-Import) in die Sollkraft
+    VORSPANN_ARTEN = ["Anfangsdehnung (F_v)", "Vorspannkraft (Soll nach Verankerung)",
+                      "ΔT-Vorspannung in Sollkraft umwandeln"]
+
     @_maskenweg()
     def maske_vorspannung(self):
-        """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung."""
-        felder = [msk.Feld("F", "Vorspannkraft F_v [kN]", wert=100.0,
-                           hinweis="positiv = Zug im vorgespannten Bauteil (es klemmt die Umgebung)"),
+        """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung
+        oder (seit 13.10.2026) als Sollkraft nach Verankerung."""
+        from .. import vorspannkraft as vk
+        felder = [msk.Feld("art", "Lastart", "wahl", self.VORSPANN_ARTEN[0], list(self.VORSPANN_ARTEN),
+                           hinweis="Anfangsdehnung: das Bauteil will sich um F_v/(EA) verkürzen und trägt "
+                                   "danach F_v minus die Verkürzung der Umgebung. Sollkraft (nur Stäbe): "
+                                   "der Stab trägt nach dem Verankern genau F_soll - gespannt in einem "
+                                   "eigenen Schritt vor den übrigen Lasten. Umwandeln: die aus RFEM "
+                                   "übernommene Vorspannung als Temperatur (ΔT) wird zur Sollkraft"),
+                  msk.Feld("F", "Vorspannkraft F_v / F_soll [kN]", wert=100.0,
+                           hinweis="positiv = Zug im vorgespannten Bauteil (es klemmt die Umgebung); "
+                                   "beim Umwandeln 0 = Vorschlag (0,9·f_p0,1k·A bei Spannstahl, sonst "
+                                   "der Wert aus RFEM)"),
+                  msk.Feld("gruppe", "Gruppe beim Spannen", "ganz", 1,
+                           hinweis="nur Sollkraft: Stäbe derselben Gruppe werden gleichzeitig gespannt, "
+                                   "mehrere Gruppen nacheinander (1, 2, …) - die früher gespannten "
+                                   "verlieren dann Kraft"),
                   msk.Feld("achse", "Achse (Volumen)", "wahl", self.VORSPANN_ACHSEN[0],
                            list(self.VORSPANN_ACHSEN),
                            hinweis="Richtung der Schraube; bei Stäben ist es die Stabachse"),
                   msk.Feld("kommentar", "Bemerkung", "text", "", breite=150),
-                  self._lastfallfeld()]
+                  self._lastfallfeld(),
+                  msk.Feld("alle", "Umwandeln in allen Lastfällen mit derselben Anfangsvorspannung",
+                           "haken", True,
+                           hinweis="sonst nur im gewählten Lastfall; ein Lastfall mit anderer Kraft "
+                                   "(am Drehlager 805 statt 952 kN) bleibt, wie er ist")]
+        offen = [h for h in (getattr(self.model, "importhinweise", None) or [])
+                 if h.get("art") == "vorspannung" and not h.get("erledigt")]
+        if offen:
+            felder.append(msk.Feld("hinweise", "Aus dem Import", "info",
+                                   " · ".join(str(h.get("text", "")) for h in offen[:3])))
+        elif vk.temperatur_vorspannungen(self.model):
+            felder.append(msk.Feld("hinweise", "Im Modell", "info",
+                                   "Vorspannungen als Temperatur (ΔT) auf Zugstäben - umwandeln mit "
+                                   f"der Lastart „{self.VORSPANN_ARTEN[2]}“"))
         m = msk.Maske("Vorspannung", felder, knopf="Last aufbringen",
                       hinweis="Stäbe oder Volumen in der Ansicht wählen (Auswahlart „Stab“ oder "
-                              "„Volumen“), Kraft eintragen, „Last aufbringen“. Das Bauteil will "
-                              "sich um F_v/(EA) verkürzen; hält die Umgebung es fest, trägt es "
-                              "F_v als Zug - wie eine angezogene Schraube.")
+                              "„Volumen“), Lastart und Kraft eintragen, „Last aufbringen“. "
+                              "Anfangsdehnung: das Bauteil will sich um F_v/(EA) verkürzen; hält die "
+                              "Umgebung es fest, trägt es F_v als Zug - wie eine angezogene Schraube. "
+                              "Sollkraft: der Stab trägt nach dem Verankern F_soll. Umwandeln: ohne "
+                              "Auswahl alle Stäbe mit einer Temperatur-Vorspannung.")
         m.angewendet.connect(self._vorspannung_aufbringen)
         self.maske_erzeugen(m)
 
     def _vorspannung_aufbringen(self, w: dict):
         m = self.model
+        lastart = str(w.get("art", "") or self.VORSPANN_ARTEN[0])
+        if lastart == self.VORSPANN_ARTEN[2]:
+            return self._vorspannung_umwandeln(w)
+        soll = lastart == self.VORSPANN_ARTEN[1]
         ziele = [(n, "stab") for n in self.sel_staebe if n in m.members] \
             + [(n, "koerper") for n in self.sel_koerper if n in m.koerper]
         if not ziele:
             return self.hinweis("Zuerst Stäbe oder Volumen in der Ansicht wählen "
                               "(Auswahlart „Stab“ oder „Volumen“)")
+        if soll and any(a == "koerper" for _n, a in ziele):
+            return self.hinweis("Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab - "
+                                "die Volumen abwählen oder die Anfangsdehnung wählen")
         F = float(w.get("F", 0.0) or 0.0) * 1e3
         if not F:
             return self.hinweis("Die Vorspannkraft ist null")
         achse = {"global x": [1.0, 0.0, 0.0], "global y": [0.0, 1.0, 0.0],
                  "global z": [0.0, 0.0, 1.0]}.get(str(w.get("achse", "")))
         fall = w.get("fall") or None
+        gruppe = max(1, int(float(w.get("gruppe", 1) or 1)))
         self.merken("Vorspannung")
         for name, art in ziele:
             m.add_vorspannung(name, F, art=art, achse=achse if art == "koerper" else None,
-                              case=fall, kommentar=str(w.get("kommentar", "") or ""))
+                              case=fall, kommentar=str(w.get("kommentar", "") or ""),
+                              sollkraft=soll, gruppe=gruppe)
         self.analysis = None
         self.results = None
-        self.info(f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN auf "
+        self.info((f"Vorspannkraft F_soll = {zl.zahl_text(F / 1e3, punkt=True)} kN (Soll nach "
+                   f"Verankerung, Gruppe {gruppe})" if soll else
+                   f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN") + " auf "
                   f"{bg.anzahl(len(ziele), 'Bauteil', 'Bauteile')} im Lastfall "
                   f"{fall or m.active_case}")
+        self.refresh_all()
+
+    def _vorspannung_umwandeln(self, w: dict):
+        """Die Temperatur-Vorspannung (RFEM-Import, dT auf Zugstaeben) der
+        gewaehlten Staebe - ohne Auswahl aller - in die Sollkraft umstellen.
+        Auf Anweisung des Anwenders, nie von selbst (13.10.2026)."""
+        from .. import vorspannkraft as vk
+        m = self.model
+        staebe = [n for n in self.sel_staebe if n in m.members] or None
+        fall = str(w.get("fall") or m.active_case)
+        eintraege = vk.temperatur_vorspannungen(m, faelle=[fall], staebe=staebe)
+        if not eintraege:
+            return self.hinweis(f"Im Lastfall {fall} steht keine Vorspannung als Temperatur auf einem "
+                                "Zugstab" + (" der gewählten Stäbe" if staebe else ""))
+        faelle = None if w.get("alle") else [fall]
+        N0 = sorted({t.N0 for t in eintraege})
+        F = float(w.get("F", 0.0) or 0.0) * 1e3 or None
+        gruppe = max(1, int(float(w.get("gruppe", 1) or 1)))
+        self.merken("Vorspannung umgewandelt")
+        n = vk.in_sollkraft_umwandeln(m, staebe=staebe, faelle=faelle, kraft=F, gruppe=gruppe, N0=N0)
+        self.analysis = None
+        self.results = None
+        self.info(f"{n} Temperatur-Vorspannungen in die Sollkraft umgewandelt ("
+                  + ("F_soll = " + zl.zahl_text(F / 1e3, punkt=True) + " kN" if F else "Vorschlag je Stab")
+                  + (", alle Lastfälle mit " if faelle is None else f", Lastfall {fall}, ")
+                  + "Anfangsvorspannung " + ", ".join(zl.zahl_text(x / 1e3, punkt=True) for x in N0) + " kN)")
         self.refresh_all()
 
     #: Ansatz, mit dem aus den Abmassen einer Passung das Uebermass wird

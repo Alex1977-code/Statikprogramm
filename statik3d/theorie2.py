@@ -523,6 +523,12 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     """
     from .solver import (StaticSystem, case_loads, case_prescribed, postprocess, Results,
                          ausweich_info, ausweichgruende_zaehlen)
+    from .vorspannkraft import theorie_sperre
+    sperre = theorie_sperre(model, factors, "II")
+    if sperre:
+        # Vorspannkraft (Soll nach Verankerung, 13.10.2026): das Ergebnis nach
+        # Theorie I. Ordnung bleibt stehen und wird gekennzeichnet
+        return Results(name=name, kind="combination", model=model), Th2Info(kombination=name, fehler=sperre)
     t0 = time.time()
     system = system or StaticSystem(model)
     # Das Ergebnis ersetzt die lineare Kombination - ein Ausweichen des

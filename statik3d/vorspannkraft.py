@@ -303,6 +303,30 @@ def _n_ergebnis(res, elemente: list) -> float:
     return float(np.mean(werte)) if werte else 0.0
 
 
+def theorie_sperre(model, factors: dict, th: str) -> str:
+    """Leer - oder der Grund, warum eine Rechnung nach Theorie ``th``
+    ("II"/"III") mit Sollkraeften nicht gefuehrt wird (theorie2, theorie3).
+
+    Den Spannschritt gibt es dort (noch) nicht, und die eingepraegte Dehnung
+    der Einflussmatrix nach Theorie I. Ordnung trifft F_soll nach Theorie II./
+    III. Ordnung nicht: am Rahmen aus tests/test_vorspannkraft.py (Zugband
+    70 kN an einer Kragstuetze HEB 200) gab sie nach Theorie III. Ordnung
+    62,56 statt 70 kN (-10,6 %; die eingepraegte Kraft ist dort 11-mal so gross
+    wie die Stabkraft, und jede Aenderung der Laenge geht mit diesem Faktor in
+    N ein), und nach Theorie II. Ordnung brach die Rechnung an alpha_cr = 0,16 ab -
+    die geometrische Steifigkeit liest nur die elastische Normalkraft
+    E A Δl/L, nicht die Vorspannung (assemble.geometric_stiffness), und sah
+    das Zugband unter 684 kN Druck (gemessen 13.10.2026). Der Lastfall bleibt
+    darum nach Theorie I. Ordnung gerechnet und gekennzeichnet."""
+    soll = sollkraefte(model, factors)
+    if not soll:
+        return ""
+    staebe = ", ".join(s.stab for s in soll[:6]) + (" …" if len(soll) > 6 else "")
+    return (f"Vorspannkraft (Soll nach Verankerung) in {staebe}: nach Theorie {th}. Ordnung noch nicht "
+            "gerechnet - es gilt das Ergebnis nach Theorie I. Ordnung, in dem jeder Stab nach dem "
+            "Verankern F_soll trägt")
+
+
 def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=None,
                   einfrieren=None, fenster=None, probelauf: bool = False) -> dict:
     """Spannen und Verriegeln, Gruppe fuer Gruppe - am System gemerkt (alle
@@ -561,7 +585,8 @@ def import_hinweise(model, log: list = None, system=None) -> list:
                   + (f"; X nach der ersten Rechnung: {grund}" if not xs and grund else "")
                   + (f"; X linear in {zeit:.2f} s" if xs else "") + ")")
         h = {"art": "vorspannung", "text": text + umfang, "objekte": staebe,
-             "vorschlag": "in Sollkraft umwandeln (Lasten › Vorspannung umwandeln)",
+             "vorschlag": "in Sollkraft umwandeln: Lasten › Vorspannung, Lastart "
+                          "„ΔT-Vorspannung in Sollkraft umwandeln“",
              "erledigt": False, "N0": float(N0), "faelle": faelle,
              "X": [float(min(xs)), float(max(xs))] if xs else None}
         out.append(h)
@@ -593,15 +618,22 @@ def vorschlag_sollkraft(model, stab: str, N0: float) -> float:
     return float(N0)
 
 
-def in_sollkraft_umwandeln(model, staebe=None, faelle=None, kraft: float = None, gruppe: int = 1) -> int:
+def in_sollkraft_umwandeln(model, staebe=None, faelle=None, kraft: float = None, gruppe: int = 1,
+                           N0=None) -> int:
     """Die Temperatur-Vorspannung der Staebe (alle, wenn None) in den
     Lastfaellen (alle, wenn None) auf die Lastart „Vorspannkraft (Soll nach
     Verankerung)“ umstellen: die ΔT-Lasten des Stabs fallen weg, an ihre Stelle
     tritt die Sollkraft - ``kraft`` [N] oder der Vorschlag
-    (:func:`vorschlag_sollkraft`). Rueckgabe: Zahl der umgestellten
-    (Lastfall, Stab)-Paare. Nur auf Anweisung des Anwenders."""
+    (:func:`vorschlag_sollkraft`). ``N0``: nur Vorspannungen mit diesen
+    Kraeften [N] (am Drehlager 952 kN, nicht die 805 kN des Zeitpunkts 1).
+    Rueckgabe: Zahl der umgestellten (Lastfall, Stab)-Paare. Nur auf
+    Anweisung des Anwenders."""
+    def passt(x):
+        return N0 is None or any(abs(x - float(y)) <= 1e-6 * max(abs(float(y)), 1.0) for y in N0)
     n = 0
     for t in temperatur_vorspannungen(model, faelle, staebe):
+        if not passt(t.N0):
+            continue
         lc = model.load_cases[t.fall]
         weg_ = {id(x) for x in t.lasten}
         lc.temp_loads = [x for x in lc.temp_loads if id(x) not in weg_]
@@ -612,9 +644,8 @@ def in_sollkraft_umwandeln(model, staebe=None, faelle=None, kraft: float = None,
             True, int(gruppe or 1)))
         n += 1
     if n:
-        rest = {(t.fall, t.stab) for t in temperatur_vorspannungen(model)}
+        rest = {round(t.N0, 3) for t in temperatur_vorspannungen(model)}
         for h in (getattr(model, "importhinweise", None) or []):
-            if h.get("art") == "vorspannung" and not any(s in {st for _f, st in rest}
-                                                         for s in h.get("objekte") or []):
+            if h.get("art") == "vorspannung" and round(float(h.get("N0", 0.0)), 3) not in rest:
                 h["erledigt"] = True
     return n

@@ -1497,8 +1497,13 @@ class Report:
                 b.append(("note", note))
         if getattr(lc, "vorspannungen", None):
             rows = [["Bauteil", "Art", "F_v [kN]", "Achse", "Bemerkung"]]
+            soll = False
             for v in lc.vorspannungen:
-                rows.append([str(v.ziel), "Stab" if v.art == "stab" else "Volumen",
+                ist_soll = bool(getattr(v, "sollkraft", False))
+                soll = soll or ist_soll
+                rows.append([str(v.ziel),
+                             (f"Stab, Sollkraft nach Verankerung (Gruppe {int(v.gruppe or 1)})" if ist_soll
+                              else "Stab" if v.art == "stab" else "Volumen"),
                              fmt(v.kraft / 1e3, 2),
                              "Stabachse" if v.art == "stab" else
                              ("längste Abmessung" if v.achse is None else
@@ -1506,7 +1511,9 @@ class Report:
                              v.kommentar or "–"])
             b.append(("table", rows, f"Vorspannung Lastfall {lc.name}: Vorspannkraft als "
                                      "Anfangsdehnung - das Bauteil will sich um F_v/(EA) verkürzen; "
-                                     "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie",
+                                     "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie"
+                                     + ("; eine Sollkraft trägt der Stab nach dem Verankern (eigener "
+                                        "Spannschritt vor den übrigen Lasten)" if soll else ""),
                       None, ""))
         if getattr(lc, "uebermasse", None):
             rows = [["Fuge", "Gesamtüberdeckung [µm]", "Passung", "Bemerkung"]]

@@ -244,6 +244,10 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                          f"{len(fremd)} Flächen-/Volumenelemente im Modell")
     if model.has_contact:
         raise ValueError("Theorie III. Ordnung nicht zusammen mit Kontakt")
+    from .vorspannkraft import theorie_sperre
+    sperre = theorie_sperre(model, factors, "III")
+    if sperre:
+        raise ValueError(sperre)         # Vorspannkraft (Soll nach Verankerung), 13.10.2026
     us = case_prescribed(model, factors)
     if us is not None and np.any(np.asarray(us) != 0):
         raise ValueError("Theorie III. Ordnung nicht mit Zwangsverformungen")

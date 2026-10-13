@@ -428,6 +428,52 @@ def test_import_hinweis_und_umwandlung():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _rahmen_th():
+    """Kragstuetze (HEB 200, 3 m) mit vorgespanntem Zugband zum Boden (wie
+    tests/test_vorspannung_sofort._rahmen), hier mit Sollkraft 70 kN; V nur
+    Vorspannung, LF1 mit Kopflast."""
+    m = Model("Th2/Th3")
+    m.add_material(Material("S355", E=E, nu=NU, rho=7850, fy=FY, alpha=1.2e-5))
+    m.add_section(Section.from_profile("HEB 200"))
+    m.add_section(Section.circle("D", 0.03))
+    a = m.add_node(0.0, 0.0, 0.0)
+    b = m.add_node(0.0, 0.0, 3.0)
+    c = m.add_node(2.0, 0.0, 0.0)
+    m.fix(a, "all")
+    m.fix(c, "all")
+    m.add_element("beam", [a, b], "S355", "HEB 200")
+    band = m.add_element("truss", [c, b], "S355", "D")
+    m.add_member("Band", [band])
+    for lf in ("V", "LF1"):
+        m.add_load_case(lf).gravity = [0, 0, 0]
+        m.add_vorspannung("Band", 70e3, case=lf, sollkraft=True)
+    m.case("LF1").nodal_loads.append(NodalLoad(b, [20e3, 5e3, -400e3, 0, 0, 0]))
+    return m, band
+
+
+def test_theorie():
+    print("\n--- Theorie II. und III. Ordnung: bleibt nach Theorie I. Ordnung, gekennzeichnet ---")
+    for th in ("II", "III"):
+        m, band = _rahmen_th()
+        m.case("V").theorie = th
+        an = solver.solve_all(m, combinations=False)
+        r = an.cases["V"]
+        check(f"Theorie {th} verlangt: das Ergebnis bleibt nach Theorie I. Ordnung und sagt es",
+              r.info.get("theorie") == "I" and r.info.get("theorie_gewuenscht") == th
+              and "Vorspannkraft (Soll nach Verankerung)" in str(r.info.get("theorie_fehler", "")),
+              f"{r.info.get('theorie')}, {r.info.get('theorie_gewuenscht')}: {str(r.info.get('theorie_fehler'))[:90]}")
+        nahe(f"Theorie {th} verlangt: N = F_soll nach Theorie I. Ordnung", _N(r, band), 70e3, 1e-9, "N")
+        mo, bo = _rahmen_th()
+        for lc in mo.load_cases.values():
+            for v in lc.vorspannungen:
+                v.sollkraft = False
+        mo.case("V").theorie = th
+        ro = solver.solve_all(mo, combinations=False).cases["V"]
+        check(f"Theorie {th} mit Anfangsdehnung: wird wie bisher gerechnet",
+              ro.info.get("theorie_gewuenscht") is None and "theorie_fehler" not in ro.info,
+              f"{ro.info.get('theorie')}")
+
+
 def test_ohne_sollkraft_unveraendert():
     print("\n--- Ohne Sollkraft rechnet alles wie bisher ---")
     ma, _H, ela, _eK = _federn(alt=True)
@@ -440,7 +486,7 @@ def test_ohne_sollkraft_unveraendert():
 def main():
     for t in (test_feder_linear, test_feder_spannweg, test_reihenweise, test_einfluss_gleich_spannweg,
               test_plastisch, test_kontakt, test_speichern_laden, test_import_hinweis_und_umwandlung,
-              test_ohne_sollkraft_unveraendert):
+              test_theorie, test_ohne_sollkraft_unveraendert):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
