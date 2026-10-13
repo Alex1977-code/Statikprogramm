@@ -6752,6 +6752,19 @@ prüfen, Ansicht aufbauen); das Drehlager ist in rund einer Sekunde gelesen,
 das Vernetzen danach ist die eigentliche Arbeit und hat seinen eigenen
 Balken.
 
+**Gewichtslose Werkstoffe (seit 13.10.2026).** Hat ein Werkstoff in RFEM die
+Dichte oder Wichte 0 – etwa ein „Nullmaterial“ für Hilfs- oder
+Krafteinleitungskörper –, übernimmt der Import ρ = 0, wie angegeben, und das
+Protokoll sagt: „Hinweis: Werkstoff ‚…‘ ist gewichtslos – Hilfsmaterial?
+Körper daraus können vom Volumennachweis ausgenommen werden.“ Den Schalter
+„vom Volumennachweis ausnehmen“ setzt der Import nicht; das bleibt dem
+Anwender. 7850 kg/m³ gilt nur, wenn die Datei weder Dichte noch Wichte nennt.
+Solche Körper bringen kein Eigengewicht und schwingen in der Modalanalyse
+als masselose Teile mit. Bis zum 13.10.2026 wurde aus der 0 still 7850 kg/m³
+– am Drehlager trug das „Nullmaterial“ das Gewicht von Stahl –, und die
+Werkstoffmaske tat beim Übernehmen dasselbe; dort bedeutet jetzt 0
+gewichtslos und ein leeres Feld 7850.
+
 **Elemente beim Import (seit 25.09.2026).** `mesh.xml` gibt **keine
 Elementordnung** vor – es gibt dort keinen Schlüssel für lineare oder
 quadratische Elemente (nachgesehen an beiden Drehlager-Dateien V15_4). Die

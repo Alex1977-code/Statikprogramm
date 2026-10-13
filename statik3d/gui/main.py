@@ -8666,7 +8666,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 felder = [F("name", "Name", "text", name, breite=120),
                           F("E", "E [GPa]", "zahl", (mt.E / 1e9 if mt else 210.0)),
                           F("nu", "Querdehnzahl ν", "zahl", (mt.nu if mt else 0.3)),
-                          F("rho", "Dichte [kg/m³]", "zahl", (mt.rho if mt else 7850.0)),
+                          F("rho", "Dichte [kg/m³]", "zahl", (mt.rho if mt else 7850.0), leer=True,
+                            hinweis="0 = gewichtslos (Hilfsmaterial), leer = 7850"),
                           F("alpha", "α_T [1e-6/K]", "zahl", (mt.alpha * 1e6 if mt else 12.0)),
                           F("fy", f"{mt.fliess_name() if mt else 'f_y'} [N/mm²]", "zahl",
                             (mt.fy / 1e6 if mt and mt.fy else None), breite=78,
@@ -11194,7 +11195,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # _stahlsorte_lesen)
             sorte, sorte_art, sorte_text = _stahlsorte_lesen(w.get("grade"), bool(fy))
             werte_ = dict(E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
-                          rho=float(w.get("rho", 7850.0) or 7850.0),
+                          # 0 ist eine Angabe (gewichtsloses Hilfsmaterial), leer die
+                          # Vorgabe; bis zum 13.10.2026 wurde auch die 0 still 7850
+                          rho=float(zahl("rho", 7850.0)),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
                           grade=sorte, verfestigung=r_verf)

@@ -6397,6 +6397,16 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 * Eigenschwingungen: verallgemeinertes Eigenwertproblem (K − ω² M) φ = 0
   mit konsistenter Balkenmassenmatrix bzw. konzentrierten Massen (Schalen,
   Volumen), Shift-Invert-Lanczos (ARPACK).
+  Gesperrt sind die Lager und die Freiheitsgrade ohne Steifigkeit, nicht die
+  ohne Masse: Teile aus einem gewichtslosen Werkstoff (ρ = 0, Hilfsmaterial)
+  schwingen als masselose Teile mit – M ist dann nur positiv semidefinit, was
+  Shift-Invert zulässt; es gibt höchstens so viele Formen wie Freiheitsgrade
+  mit Masse, und ein Modell ganz ohne Masse wird mit einer Meldung
+  abgewiesen. Bis zum 13.10.2026 sperrte die Modalanalyse jeden
+  Freiheitsgrad ohne Masse wie ein Lager: am Kragarm 1,2 m aus hex8 mit
+  gewichtsloser Spitze (0,2 m) kam f₁ = 427,3 statt 82,9 Hz heraus, aus
+  Stäben 151,4 statt 28,9 Hz (`tests/test_gewichtslos.py`, Vergleich mit der
+  Spitze bei 10⁻⁶ der Dichte).
 * Lineares Knicken: (K + λ K_g) φ = 0 mit der geometrischen Steifigkeit der
   Stäbe (Przemieniecki) aus dem Grundzustand eines Lastfalls oder einer
   Kombination, im System seiner Situation (Abschnitt 3.1). Der

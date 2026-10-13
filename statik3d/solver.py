@@ -8930,16 +8930,28 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
             K = (K + Kc).tocsr()
         if progress:
             _melde(progress, f"Kontakt: {kontakt_text}", 0.3)
+    # Gesperrt sind Lager und Freiheitsgrade ohne Steifigkeit, nicht die ohne
+    # Masse: ein gewichtsloser Koerper (Hilfsmaterial, rho = 0) schwingt als
+    # masseloser Teil mit, statt als Lager zu halten. Bis zum 13.10.2026 sperrte
+    # hier ``fixed | (md <= 0)`` jeden Freiheitsgrad ohne Masse - am Kragarm
+    # 1,2 m aus hex8 mit gewichtsloser Spitze (0,2 m) kam f1 = 427,3 statt
+    # 82,9 Hz heraus, aus Staeben 151,4 statt 28,9 Hz (tests/test_gewichtslos.py).
+    # Shift-Invert verlangt von M nur positiv semidefinit.
     fixed, vals = asm.constrained_dofs(model, K)
     md = np.asarray(M.diagonal()).ravel()
-    fixed = fixed | (md <= 0)
     fi = np.where(~fixed)[0]
     Kff = K[fi][:, fi].tocsc()
     Mff = M[fi][:, fi].tocsc()
+    n_masse = int(np.count_nonzero(md[fi] > 0))
+    if n_masse == 0:
+        raise ValueError("Die Modalanalyse braucht Masse: alle Werkstoffe sind gewichtslos (ρ = 0) "
+                         "und es gibt keine Punktmassen.")
     if progress:
         _melde(progress, "Eigenwertproblem wird gelöst", 0.45)
 
-    k = min(nmodes, Kff.shape[0] - 2)
+    # nicht mehr Formen als Freiheitsgrade mit Masse - die uebrigen Eigenwerte
+    # eines teilweise masselosen Systems sind unendlich
+    k = min(nmodes, Kff.shape[0] - 2, max(1, n_masse - 1))
     kd = np.abs(np.asarray(Kff.diagonal()).ravel())
     mdf = np.asarray(Mff.diagonal()).ravel()
     sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))

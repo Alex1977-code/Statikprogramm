@@ -497,10 +497,22 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
             if impl.get("materialType") == MATERIALTYP_SPANNSTAHL or (
                     not props.get("f_y") and props.get("f_p01k")):
                 art = "Spannstahl"
-            rho = props.get("rho") or 0.0
-            if not rho and props.get("gamma"):
-                rho = props["gamma"] / 9.81      # Wichte [N/m^3] -> Dichte
-            rho = rho or 7850.0
+            # Dichte, sonst Wichte; eine angegebene 0 bleibt 0 - ein
+            # gewichtsloses Hilfsmaterial (Klarstellung des Anwenders vom
+            # 13.10.2026: „Nullmaterial ist tatsächlich vom user mit 0 wichte
+            # angegeben, das ist kein fehler“). 7850 nur, wenn RFEM keines von
+            # beiden fuehrt. Bis zum 13.10.2026 wurde aus der 0 still 7850
+            # (``rho or 7850.0``): am Drehlager trug das „Nullmaterial“ das
+            # Gewicht von Stahl.
+            rho_p, gamma_p = props.get("rho"), props.get("gamma")
+            if rho_p:
+                rho = rho_p
+            elif gamma_p:
+                rho = gamma_p / 9.81             # Wichte [N/m^3] -> Dichte
+            elif rho_p == 0.0 or gamma_p == 0.0:
+                rho = 0.0
+            else:
+                rho = 7850.0
     fy_dicke = props.get("f_y_dicke") if h is not None and impl is not None else None
     fu_dicke = props.get("f_u_dicke") if h is not None and impl is not None else None
     if chars:
@@ -529,6 +541,11 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
                + (f" (nach Dicke: {model.materials[name].dickentext('fy')})" if fy_dicke else "")
                + (f", rho = {rho:g} kg/m^3" if rho else "")
                + (f" (Dlubal-Datenbanknummer {dbnr})" if dbnr else ""))
+    if rho == 0.0:
+        # nur ein Vorschlag: den Schalter „vom Volumennachweis ausnehmen“
+        # setzt der Anwender (13.10.2026), nie der Import
+        C.say(log, f"Hinweis: Werkstoff ‚{name}‘ ist gewichtslos – Hilfsmaterial? Körper daraus "
+                   "können vom Volumennachweis ausgenommen werden.")
     cache[mat_id] = name
     return name
 
@@ -583,6 +600,10 @@ def _material_props(db: Db, impl: dict) -> dict:
             val = row["valueSI"]
             if val not in (None, 0.0) and k not in out:
                 out[str(k)] = float(val)
+            elif val == 0.0 and str(k) in ("rho", "gamma") and str(k) not in out:
+                # Dichte oder Wichte 0 ist eine Angabe (gewichtsloses
+                # Hilfsmaterial), kein fehlender Wert - seit 13.10.2026
+                out[str(k)] = 0.0
     return out
 
 

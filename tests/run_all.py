@@ -38,6 +38,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_anzeige_plastisch",
            "tests.test_plastisch_nachweise",
            "tests.test_volumen_dehnung",
+           "tests.test_gewichtslos",
            "volumen3d.tests.test_kern"]
 
 
