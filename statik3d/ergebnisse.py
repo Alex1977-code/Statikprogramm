@@ -148,6 +148,16 @@ TEXTFELDER = frozenset(("kommentar", "comment", "beschreibung", "description", "
 #: die Nummer eines Lastfalls und einer Kombination (ihr Name ist der
 #: Schluessel), die Groesse des Lagersymbols
 ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",)}
+#: Einstellungen, die erst spaeter dazukamen, je Schluessel der Modelldatei mit
+#: ihrem Vorgabewert: mit diesem Wert zaehlen sie nicht. Sonst passte keine
+#: Ergebnisdatei von vorher mehr zu ihrem Modell, denn das Modell bekommt beim
+#: Laden die Vorgabe. ``plastizitaet.abbruch`` (13.10.2026, Plan
+#: Singularitaeten, Paket 3) steht in jedem Modell; mit ihm wies das Programm
+#: am 13.10.2026 das gespeicherte LF1 Mittel des Drehlagers vom 09.10. ab
+#: („Die Ergebnisdatei passt nicht zum Modell: seit der Rechnung geändert:
+#: Rechenart und Einstellungen“). Wer „streng“ waehlt, aendert die Kennung
+#: wie jede andere Einstellung.
+NEUE_VORGABEN = {"plastizitaet": {"abbruch": "ingenieurmaessig"}}
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
               "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
@@ -274,10 +284,12 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool):
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
 
+    neu = NEUE_VORGABEN.get(schluessel, {})
+
     def objekt(x):
         if not isinstance(x, dict):
             return x
-        y = {k: v for k, v in x.items() if k not in weg}
+        y = {k: v for k, v in x.items() if k not in weg and not (k in neu and v == neu[k])}
         if schluessel == "load_cases":
             for f in LASTFELDER:
                 if isinstance(y.get(f), list):

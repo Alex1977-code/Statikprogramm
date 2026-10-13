@@ -165,6 +165,47 @@ def test_einstellung():
           f"{getattr(alt.plastizitaet, 'abbruch', None)!r}")
 
 
+def test_alte_ergebnisdatei_passt():
+    """Eine Ergebnisdatei von vor dem 13.10.2026 passt weiter zu ihrem Modell.
+    Die neue Einstellung steht in jedem Modell; ohne Ausnahme in der Kennung
+    wies das Programm das gespeicherte LF1 Mittel des Drehlagers ab („seit
+    der Rechnung geändert: Rechenart und Einstellungen“)."""
+    m, _ids, _mitte, _e = ankerplatte(F_v=0.45e6, P=0.15e6)
+    m.plastizitaet.an = False                    # schnell; die Kennung zaehlt
+    r = solver.solve_static(m)
+    an = solver.Analysis(m)
+    an.cases["LF1"] = r
+    echt = Model.to_dict
+
+    def wie_vorher(self, *a, **k):
+        d = echt(self, *a, **k)
+        d.get("plastizitaet", {}).pop("abbruch", None)
+        return d
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "alt.ergebnisse")
+        Model.to_dict = wie_vorher
+        try:
+            ergebnisse.schreiben(pfad, m, an)    # wie das Programm vor dem 13.10.2026
+        finally:
+            Model.to_dict = echt
+        try:
+            an2 = ergebnisse.lesen(pfad, m)
+            fehler = None
+        except ValueError as ex:
+            an2, fehler = None, str(ex)
+        check("eine Ergebnisdatei von vor dem 13.10.2026 passt weiter zum Modell (Vorgabe ingenieurmäßig)",
+              an2 is not None and "LF1" in an2.cases, f"{fehler}")
+        m.plastizitaet.abbruch = "streng"
+        try:
+            ergebnisse.lesen(pfad, m)
+            fehler = None
+        except ValueError as ex:
+            fehler = str(ex)
+        check("… mit „streng“ gilt das Modell als geändert (Rechenart und Einstellungen)",
+              fehler is not None and "Rechenart und Einstellungen" in fehler, f"{fehler}")
+        m.plastizitaet.abbruch = "ingenieurmaessig"
+
+
 # --------------------------------------------------------------------------
 # 2) Streng gegen ingenieurmaessig an der Ankerplatte
 # --------------------------------------------------------------------------
@@ -460,7 +501,8 @@ def test_maske():
 
 def main():
     paar = None
-    for t in (test_einstellung, test_maske, test_protokollzeile_einmal, test_einmal_auffaellig_bleibt_auffaellig,
+    for t in (test_einstellung, test_alte_ergebnisdatei_passt, test_maske, test_protokollzeile_einmal,
+              test_einmal_auffaellig_bleibt_auffaellig,
               test_streng_genuegt_immer,
               "paar", test_streng_gegen_ingenieurmaessig, test_kennzeichnung_im_ergebnis,
               test_bitgleich_ohne_auffaellige_stelle, test_unbekannter_wert):
