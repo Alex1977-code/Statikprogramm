@@ -4872,6 +4872,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         F, feq, F_S = _zusatz_einrechnen(model, zusatz, F, feq, F_S)
     us = case_prescribed(model, factors, warn=progress)
     ueber = case_uebermass(model, factors)
+    # Zug-/Druckstaebe und Seile: die Kraft ihrer Anfangsdehnung (Temperatur,
+    # Vorspannung, Verriegelung) zaehlt in der Ausfall-Iteration mit (13.10.2026)
+    n0_ausfall = _anfang_ausfall(model, factors, aktiv, zusatz) if model.hat_ausfallstaebe() else None
     res = Results(name=name, kind=kind, model=model)
     if getattr(system, "situation", ""):
         res.info["situation"] = system.situation
@@ -4906,8 +4909,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         if model.hat_ausfallstaebe():
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
                 model, system, Fg, us=us, progress=progress, uebermass=ueber,
-                K_zusatz=K_zusatz, probelauf=probelauf,
-                n0=None if zusatz is None else zusatz.get("n0"))
+                K_zusatz=K_zusatz, probelauf=probelauf, n0=n0_ausfall)
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
@@ -5120,21 +5122,52 @@ def verschiebungen_eintragen(model: Model, res: Results, u: np.ndarray, R: np.nd
         res.woelb = {int(n): float(u[k]) for n, k in model.woelb_index().items()}
 
 
-def _normalkraft(model: Model, e, u: np.ndarray) -> float:
+def _normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0) -> float:
     """Normalkraft (Zug positiv) eines Zug-/Druckstabs, Seils oder der
-    Laengskraft einer Feder aus dem Verschiebungsvektor."""
-    d = asm.element_dofs(e, model)[:12]
-    X = model.nodes[e.nodes]
+    Laengskraft einer Feder aus dem Verschiebungsvektor - beim Stab mit der
+    Kraft seiner Anfangsdehnung ``n_anfang`` wie im Ergebnis
+    (asm.stab_normalkraft, 13.10.2026)."""
     if e.typ == "feder":
         from .elements import verbindung as vb
+        d = asm.element_dofs(e, model)[:12]
+        X = model.nodes[e.nodes]
         fp = model.federn[e.sec]
         T3 = vb.feder_achsen(X[0], X[1], fp.achse, e.roll)
         return float(vb.feder_kraefte(fp.k, T3, u[d])[0])
-    kl, T3, T, L = asm.beam_local(model, e)
-    ul = T @ u[d]
-    mat = model.materials[e.mat]
-    sec = model.sections[e.sec]
-    return float(mat.E * sec.A / L * (ul[6] - ul[0]))
+    return float(asm.stab_normalkraft(model, e, u, n_anfang))
+
+
+def _anfang_ausfall(model: Model, factors: dict, aktiv=None, zusatz: dict = None) -> dict:
+    """{Element: (N0, FHG, Werte)} der Staebe, die ausfallen koennen (nur Zug/
+    Druck, Seil), fuer :func:`solve_with_ausfall`: N0 die Kraft ihrer
+    Anfangsdehnung (Temperatur, Vorspannung - asm.anfangsnormalkraft), FHG und
+    Werte ihre Last im Lastvektor. Faellt ein Stab aus, geht seine
+    Anfangsdehnung mit ihm. Dazu die verriegelten Staebe einer Sollkraft
+    (``zusatz["n0"]``, statik3d.vorspannkraft._n0_ausfall).
+
+    Bis zum 13.10.2026 kannte die Ausfall-Iteration nur die Sollkraft: ein
+    Zugstab mit 500 kN Vorspannung als dT gegen ein Klemmteil fiel aus
+    (E A Δl/L = -100 kN) und trug 0 statt 400 kN, seine Temperaturlast blieb
+    im Lastvektor und drueckte das Klemmteil mit 500 kN zusaetzlich. Am
+    Drehlager traegen die 16 Anker 782 bis 833 kN bei E A Δl/L = -119 bis
+    -169 kN - als Zugstaebe gerechnet waeren alle ausgefallen."""
+    out = dict((zusatz or {}).get("n0") or {})
+    for i, f in case_feq_sofort(model, factors, aktiv).items():
+        e = model.elements[int(i)]
+        if not (getattr(e, "nur", "") or e.typ == "seil"):
+            continue
+        F_i = np.zeros(model.ndof)
+        asm.stablasten_einbauen(model, {int(i): f}, F_i)
+        asm.mittelknoten_umlenken(model, F_i)
+        idx = np.nonzero(F_i)[0]
+        N0 = asm.anfangsnormalkraft(f)
+        if int(i) in out:
+            n_, j_, w_ = out[int(i)]
+            out[int(i)] = (float(n_) + N0, np.concatenate([np.asarray(j_), idx]),
+                           np.concatenate([np.asarray(w_, float), F_i[idx]]))
+        else:
+            out[int(i)] = (N0, idx, F_i[idx])
+    return out
 
 
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
@@ -5157,12 +5190,16 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     Rueckgabe (u, R, aktiv, ausgefallen, log, kontakt) - kontakt = None oder
     (contact, contact_forces, info) aus der Kontaktiteration.
 
-    ``n0`` {Element: (N0, FHG, Werte)} (seit dem 13.10.2026): verriegelte
-    Staebe einer Vorspannkraft (Soll nach Verankerung, statik3d.vorspannkraft).
-    Ihre Kraft ist N0 plus der elastische Anteil; danach entscheidet sich, ob
-    sie ausfallen, und ein ausgefallener nimmt seine Verriegelungslast (FHG,
-    Werte in F) mit. Ohne ``n0`` rechnet die Iteration wie bisher - auch eine
-    Anfangsdehnung oder Temperatur im Stab zaehlt dort nicht mit.
+    ``n0`` {Element: (N0, FHG, Werte)} (seit dem 13.10.2026): die Kraft N0
+    der Anfangsdehnung je Stab - Temperatur, Vorspannung als eingepraegte
+    Dehnung und die Verriegelung einer Vorspannkraft (Soll nach Verankerung,
+    statik3d.vorspannkraft), siehe :func:`_anfang_ausfall`. Die Kraft eines
+    Stabs ist N0 plus der elastische Anteil wie im Ergebnis
+    (asm.stab_normalkraft); danach entscheidet sich, ob er ausfaellt, und ein
+    ausgefallener nimmt seine Last der Anfangsdehnung (FHG, Werte in F) mit.
+    Bis zum 13.10.2026 kannte ``n0`` nur die Verriegelung - Temperatur und
+    Vorspannung im Stab zaehlten nicht mit (Befund 2). Ohne Anfangsdehnung
+    rechnet die Iteration wie bisher.
     """
     if probelauf:
         max_iter = 1            # siehe solve_with_contact: ein Schritt genuegt
@@ -5213,10 +5250,9 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
         else:
             u = system.solve(F, K_extra=K_aus, us=us)
             R = system.reactions(u, F, K_aus)
-        kraefte = {i: _normalkraft(model, model.elements[i], u) for i in kand}
-        for i in kraefte:
-            if i in n0:
-                kraefte[i] += float(n0[i][0])
+        # die Kraft wie im Ergebnis: elastisch plus Anfangsdehnung (13.10.2026)
+        kraefte = {i: _normalkraft(model, model.elements[i], u, float(n0[i][0]) if i in n0 else 0.0)
+                   for i in kand}
         gross = max([abs(v) for v in kraefte.values()] + [1.0])
         tol = 1e-9 * gross
         neu = set()
