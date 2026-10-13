@@ -134,9 +134,18 @@ class Th3Results:
 # Element
 # ==========================================================================
 class _Stab:
-    """Ein Stabelement mit Ausgangslage, lokaler Steifigkeit und Lasten."""
+    """Ein Stabelement mit Ausgangslage, lokaler Steifigkeit und Lasten.
 
-    def __init__(self, model: Model, i: int, feq: dict):
+    ``f_anf``: die lokalen Stabendlasten seiner Anfangsdehnung (Temperatur,
+    Vorspannung; solver.case_feq_sofort). Seit dem 13.10.2026 steckt die
+    Anfangsdehnung in der inneren Kraft im mitgehenden System,
+    f_int = T^T (k_l d_l - f_anf), und N = (k_l d_l - f_anf)[6] in k_g - wie
+    im Ergebnis (asm.stab_normalkraft). Bis dahin stand sie als Knotenlast der
+    Ausgangslage in F, drehte nicht mit, und k_g las nur den elastischen
+    Anteil: eine vorgespannte Saite hatte quer keine Steifigkeit aus ihrer
+    Vorspannung."""
+
+    def __init__(self, model: Model, i: int, feq: dict, f_anf=None):
         e = model.elements[i]
         self.i = i
         self.nodes = [int(n) for n in e.nodes]
@@ -144,18 +153,26 @@ class _Stab:
         sec = model.sections[e.sec]
         self.A, self.Ip = sec.A, sec.Iy + sec.Iz
         kl, T3, T, L = asm.beam_local(model, e)
+        fa = None if f_anf is None or not np.any(f_anf) else np.asarray(f_anf, float)
+        # die Anfangsdehnung wie in asm.stablasten_einbauen: Federgelenke, dann
+        # Gelenke kondensiert
         if getattr(e, "hinge_springs", None):
-            kl, _f, _rec = asm.hinge_springs(kl, np.zeros(12), e.hinge_springs)
+            kl, fa_, _rec = asm.hinge_springs(kl, np.zeros(12) if fa is None else fa, e.hinge_springs)
+            fa = None if fa is None else fa_
         if e.hinges:
-            kl, _f, _c = asm.condense(kl, np.zeros(12), e.hinges)
+            kl, fa_, _c = asm.condense(kl, np.zeros(12) if fa is None else fa, e.hinges)
+            fa = None if fa is None else fa_
         self.kl = kl
+        self.f_anf = fa
         self.E0T = T3.T                   # Spalten: Ausgangsachsen ex, ey, ez
         self.L0 = L
         self.f0 = np.asarray(feq.get(i, np.zeros(12)), float)
         self.dofs = asm.element_dofs(e)
 
     def zustand(self, X: np.ndarray, R: np.ndarray):
-        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage."""
+        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage; f_l
+        ist der elastische Anteil k_l d_l, N die Normalkraft mit der
+        Anfangsdehnung."""
         n1, n2 = self.nodes
         d = X[n2] - X[n1]
         L = float(np.linalg.norm(d))
@@ -178,7 +195,7 @@ class _Stab:
         th2 = rot_log(E.T @ Q2)
         dl = np.concatenate([[0.0, 0.0, 0.0], th1, [L - self.L0, 0.0, 0.0], th2])
         fl = self.kl @ dl
-        N = float(fl[6])
+        N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
         if self.typ == "truss":
             kg = np.zeros((12, 12))
             for a, b in ((1, 7), (2, 8)):
@@ -197,9 +214,17 @@ class _Seil:
     ungedehnte Laenge steht am Element (``laenge0``); ist sie 0, wird die
     Sehnenlaenge der Ausgangslage genommen - das Seil ist dann gerade
     gespannt und haengt nur unter seinem Gewicht durch.
+
+    ``n_anfang``: die Kraft seiner Anfangsdehnung bei festgehaltenen Enden
+    (Vorspannung, Temperatur; asm.anfangsnormalkraft). Sie verkuerzt die
+    spannungsfreie Laenge auf L0/(1 + n_anfang/(E A)): gerade gespannt traegt
+    das Seil dann genau n_anfang, wie nach Theorie I. Ordnung. Das Gewicht
+    bleibt dasselbe (w L0 gleich). Bis zum 13.10.2026 fiel die Vorspannung
+    eines Seils hier still weg (Befund 3: u_x und Seilkraft am Seil mit 70 kN
+    Vorspannung bitgleich denen ohne).
     """
 
-    def __init__(self, model: Model, i: int, g):
+    def __init__(self, model: Model, i: int, g, n_anfang: float = 0.0):
         e = model.elements[i]
         mat = model.materials[e.mat]
         sec = model.sections[e.sec]
@@ -211,6 +236,11 @@ class _Seil:
         self.EA = float(mat.E * sec.A)
         # Streckenlast je ungedehnter Laenge: das Eigengewicht des Lastfalls
         self.w = np.asarray(g, float) * mat.rho * sec.A
+        self.n_anfang = float(n_anfang or 0.0)
+        if self.n_anfang:
+            L0 = self.L0
+            self.L0 = L0 / (1.0 + self.n_anfang / self.EA)
+            self.w = self.w * (L0 / self.L0)
         self.dofs = np.array([NDOF * self.nodes[0] + k for k in range(3)]
                              + [NDOF * self.nodes[1] + k for k in range(3)], int)
 
@@ -260,22 +290,37 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         lc = model.load_cases.get(lf)
         if lc is not None:
             g_ges = g_ges + float(f) * np.asarray(lc.gravity, float)
-    seile = [_Seil(model, i, g_ges) for i in wirksam if model.elements[i].typ == "seil"]
+    # Anfangsdehnung (Temperatur, Vorspannung) je Stab und Seil: sie wirkt
+    # seit dem 13.10.2026 in der inneren Kraft (_Stab) bzw. in der
+    # spannungsfreien Laenge (_Seil) - nicht mehr als Knotenlast
+    from .solver import case_sofort, case_feq_sofort
+    feq_anf = case_feq_sofort(model, factors, aktiv)
+    seile = [_Seil(model, i, g_ges, asm.anfangsnormalkraft(feq_anf[i]) if i in feq_anf else 0.0)
+             for i in wirksam if model.elements[i].typ == "seil"]
     for sl_ in seile:
         e = model.elements[sl_.i]
         kl, T3, T, L = asm.beam_local(model, e)
         F_ref[asm.element_dofs(e, model)[:12]] -= T.T @ np.asarray(feq.get(sl_.i, np.zeros(12)), float)
         feq.pop(sl_.i, None)
         q.pop(sl_.i, None)
-    staebe = [_Stab(model, i, feq) for i in wirksam
+    staebe = [_Stab(model, i, feq, feq_anf.get(i)) for i in wirksam
               if model.elements[i].typ != "seil"]
+    # Die Anfangsdehnung der Staebe aus F_ref: dieselbe Last, die
+    # asm.load_vector eingebaut hat (asm.stablasten_einbauen)
+    F_anf = None
+    F_ref_voll = F_ref              # die Last mit Anfangsdehnung (Bezug I. Ordnung)
+    mit_anf = {st.i: feq_anf[st.i] for st in staebe if st.f_anf is not None}
+    if mit_anf:
+        F_anf = np.zeros(ndof)
+        asm.stablasten_einbauen(model, mit_anf, F_anf)
+        asm.mittelknoten_umlenken(model, F_anf)
+        F_ref = F_ref - F_anf
     # Temperaturlasten und Vorspannkraefte wirken ab der ersten Laststufe
-    # voll (10.10.2026); die der Seile zaehlen nicht - ihre Lasten sind oben
-    # aus F_ref genommen
-    from .solver import case_sofort
+    # voll (10.10.2026) - in Staeben und Seilen als Anfangsdehnung ohnehin;
+    # was sonst sofort wirkt, steigert die Stufe nicht
     from .plastizitaet import SOFORT_VOLL, stufenlast
-    F_S = case_sofort(model, factors, aktiv, ohne={sl_.i for sl_ in seile})
-    if F_S is not None:
+    F_S = case_sofort(model, factors, aktiv, ohne={sl_.i for sl_ in seile} | set(mit_anf))
+    if F_S is not None or mit_anf or any(sl_.n_anfang for sl_ in seile):
         info.hinweise.append(SOFORT_VOLL)
 
     # Lager: starr (u = 0) und Federn
@@ -329,7 +374,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             zust[st.i] = (fl, N)
             Ke = T.T @ (st.kl + kg) @ T
             d = st.dofs
-            f_int[d] += T.T @ fl
+            f_int[d] += T.T @ (fl if st.f_anf is None else fl - st.f_anf)
             r, c = np.meshgrid(d, d, indexing="ij")
             rows.append(r.ravel())
             cols.append(c.ravel())
@@ -378,7 +423,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     try:
         lu0 = splu(K0[fi][:, fi].tocsc())
         u1 = np.zeros(ndof)
-        u1[fi] = lu0.solve(F_ref[fi])
+        u1[fi] = lu0.solve(F_ref_voll[fi])
         info.u_max_I = float(np.abs(u1[:, ].reshape(-1, NDOF)[:, :3]).max())
     except Exception as ex:                    # noqa: BLE001
         raise ValueError(f"Gleichungssystem singulär: {ex}") from ex
@@ -405,8 +450,12 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             F_ges = F_stufe + F_imp
             r = F_ges - f_int
             # bezogen auf die Last der Stufe - mit voller Temperatur oder
-            # Vorspannung ist das nicht mehr lam * |F|
-            bezug = (lam * lastnorm) if F_S is None else (float(np.linalg.norm(F_stufe[fi])) or 1.0)
+            # Vorspannung ist das nicht mehr lam * |F|; die Anfangsdehnung der
+            # Staebe zaehlt dabei mit wie bis zum 13.10.2026 (als Knotenlast)
+            if F_anf is not None:
+                bezug = float(np.linalg.norm((F_anf + F_stufe)[fi])) or 1.0
+            else:
+                bezug = (lam * lastnorm) if F_S is None else (float(np.linalg.norm(F_stufe[fi])) or 1.0)
             konv = float(np.linalg.norm(r[fi])) / bezug
             gesamt_it += 1
             if konv < tol:
