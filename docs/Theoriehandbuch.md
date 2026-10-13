@@ -1457,11 +1457,17 @@ Kontaktkräfte bleibt 20,00 kN.
 **Werteskala** (`Werteskala`, `grenzen`). Drei Modi: automatisch (Grenzen aus
 den endlichen Werten), fest (unten/oben) und Grenzwert. Der Grenzwert G (355
 für S355) spannt die Skala 0 … G auf, bei negativen Werten −G … G; Werte
-darüber bekommen `above_color` Magenta, darunter `below_color` Cyan — beides
-Farben, die in keiner Farbtafel vorkommen —, und die Skala trägt an dieser
+darüber bekommen `above_color` ein mittleres Grau (#646464), darunter
+`below_color` Cyan — beides Farben, die in keiner Farbtafel vorkommen —, und
+die Skala trägt an dieser
 Stufe den tatsächlichen Größt- bzw. Kleinstwert als Beschriftung. So ist
 der oberste Eintrag das Maximum und der zweite die Grenze, wie es die
-Vorgabe verlangt. Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
+Vorgabe verlangt. Bis zum 13.10.2026 war `above_color` Magenta; seitdem
+kennzeichnet Magenta die netzabhängigen Spannungsspitzen. Das Grau hat unter
+allen Grautönen den größten kleinsten Farbabstand ΔE (CIE-Lab): 43,2 zur
+Tafel turbo, auch zu ihrem fast schwarzen unteren Ende, 116,9 zu Magenta und
+mindestens 29,5 zu den Grautönen der Ansicht (Umriss des unverformten
+Systems, Kanten, Geist, Elemente ohne Wert). Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
 Beschriftungen an jeder Stufengrenze (`n_labels` = Stufen + 1). „Nur
 Überschreitungen“ setzt alle Beträge ≤ G auf NaN (grau) und spannt die
 Skala von G bis zum größten Betrag — die Überschreitungen behalten so ihre

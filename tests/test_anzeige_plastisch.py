@@ -371,6 +371,51 @@ def test_farbe():
           f"{vp.FARBE_SPITZE}: kleinster Abstand {d.min():.3f}, zum unteren Ende {d[0]:.3f}")
 
 
+def _lab(rgb):
+    """CIE-Lab (D65) aus sRGB in [0, 1] - fuer den Farbabstand dE wie das Auge."""
+    c = np.asarray(rgb, float)
+    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    M = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
+    xyz = c @ M.T / np.array([0.95047, 1.0, 1.08883])
+    f = np.where(xyz > 0.008856, np.cbrt(xyz), 7.787 * xyz + 16 / 116)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], -1)
+
+
+def test_farbe_ueber_grenze():
+    """„Über dem Grenzwert“ der Werteskala ist seit dem 13.10.2026 ein Grau
+    (Entscheidung des Anwenders), die Zonen bleiben Magenta. Das Grau hebt
+    sich von jeder Farbe der Tafel turbo ab, auch vom fast schwarzen unteren
+    Ende, von Magenta und von den Grautoenen der Ansicht."""
+    from matplotlib import colormaps
+    from matplotlib.colors import to_rgb
+    from statik3d.gui import viewport as vp
+    from statik3d.gui.main import MainWindow
+    g = np.array(to_rgb(spn.FARBE_UEBER))
+    T = colormaps["turbo"](np.linspace(0.0, 1.0, 256))[:, :3]
+    andere = {"Magenta (Zonen)": vp.FARBE_SPITZE, "ohne Wert": vp.FARBE_OHNE_WERT,
+              "Geist": MainWindow.GEIST_FARBE, "Geist-Kante": MainWindow.GEIST_KANTE,
+              "unverformt Netz": "#c8c8c8", "unverformt Umriss": "#b0b0b0",
+              "Kanten": vp.darstellung("Voll", True, True).get("edge_color", "#202020"),
+              "Hintergrund": "#ffffff", "unter der Grenze": spn.FARBE_UNTER}
+    dE_T = np.linalg.norm(_lab(T) - _lab(g), axis=1)
+    dE = {k: float(np.linalg.norm(_lab(g) - _lab(np.array(to_rgb(v))))) for k, v in andere.items()}
+    print(f"   {spn.FARBE_UEBER}: dE zur Tafel min {dE_T.min():.1f}, zum unteren Ende {dE_T[0]:.1f}; "
+          + ", ".join(f"{k} {v:.1f}" for k, v in dE.items()))
+    check("über dem Grenzwert: ein neutrales Grau, nicht Magenta",
+          g[0] == g[1] == g[2] and spn.FARBE_UEBER.lower() != vp.FARBE_SPITZE.lower(), spn.FARBE_UEBER)
+    check("… mit dE ≥ 25 zu jeder Farbe der Tafel, zu Magenta und zu den Grautönen der Ansicht",
+          dE_T.min() >= 25.0 and min(dE.values()) >= 25.0,
+          f"Tafel {dE_T.min():.1f}, übrige {min(dE.values()):.1f}")
+    sk = spn.grenzen(spn.Werteskala(modus="grenze", grenze=355.0), np.array([100.0, 400.0]))
+    check("… die Werteskala nimmt es für Werte über der Grenze", sk["above_color"] == spn.FARBE_UEBER)
+    w, app = _fenster()
+    w.model.werteskala = spn.Werteskala(modus="grenze", grenze=355.0)
+    text = w._werteskala_text()
+    check("… Kopfzeile und Hinweis sagen „grau“",
+          "darüber grau" in text and "magenta" not in text and "grau" in w.cb_skala.toolTip()
+          and "magenta" not in w.cb_skala.toolTip(), f"{text!r} | {w.cb_skala.toolTip()[:60]!r}")
+
+
 def main():
     platten = {}
     for k, plast in (("pl", True), ("el", False)):
@@ -381,7 +426,8 @@ def main():
             traceback.print_exc()
             RESULTS.append((f"Platte rechnen {k} (Ausnahme: {ex})", False))
     for t, k in ((test_einzelelement, None), (test_plastisch, "pl"), (test_alte_datei, "pl"),
-                 (test_elastisch, "el"), (test_nachweise_unveraendert, "pl"), (test_farbe, None)):
+                 (test_elastisch, "el"), (test_nachweise_unveraendert, "pl"), (test_farbe, None),
+                 (test_farbe_ueber_grenze, None)):
         print(f"\n--- {t.__name__} ---")
         try:
             if k is None:

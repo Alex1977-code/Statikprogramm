@@ -722,7 +722,15 @@ def kontakt_je_knoten(model, res, groesse: str) -> np.ndarray:
 # --------------------------------------------------------------------------
 # Werteskala
 # --------------------------------------------------------------------------
-FARBE_UEBER = "#ff00ff"       # ueber der Grenze: Magenta, in keiner Farbtafel enthalten
+#: ueber der Grenze: ein mittleres Grau (Entscheidung des Anwenders vom
+#: 13.10.2026; bis dahin Magenta, das seitdem die netzabhaengigen Stellen
+#: kennzeichnet, gui/viewport.FARBE_SPITZE). Gewaehlt als das Grau mit dem
+#: groessten kleinsten Farbabstand dE (CIE-Lab): zur Tafel turbo mindestens
+#: 43,2 (auch zu ihrem fast schwarzen unteren Ende), zu Magenta 116,9, zu den
+#: Grautoenen der Ansicht mindestens 29,5 (Umriss des unverformten Systems
+#: #b0b0b0), 30,1 (Kanten #202020), 30,3 (Geist), 42,4 (ohne Wert)
+#: - tests/test_anzeige_plastisch.py, test_farbe_ueber_grenze.
+FARBE_UEBER = "#646464"
 FARBE_UNTER = "#00e5ff"       # unter der negativen Grenze
 
 
@@ -732,7 +740,7 @@ class Werteskala:
 
     modus ``auto``: Grenzen aus den Werten; ``fest``: unten/oben; ``grenze``:
     0 (bzw. −Grenze bei negativen Werten) bis Grenze, z. B. 355 fuer S355 -
-    Werte darueber bekommen die Farbe FARBE_UEBER, und die Skala nennt ueber
+    Werte darueber bekommen die Farbe FARBE_UEBER (grau), und die Skala nennt ueber
     der Grenze den tatsaechlichen Groesstwert. ``stufen`` Farbstufen (ANSYS:
     9). ``nur_ueber``: nur die Ueberschreitungen faerben (Betrag ueber der
     Grenze, von der Grenze bis zum Groesstwert), alles andere grau.

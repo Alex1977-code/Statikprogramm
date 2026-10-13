@@ -2261,8 +2261,9 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
 #: Spannungsspitzen: Magenta (Entscheidung des Anwenders vom 13.10.2026). Bis
 #: dahin violett #6a1b9a - es lag mit 0,21 (RGB-Abstand) nahe am dunklen
 #: unteren Ende der Farbtafel turbo; Magenta hat zu jeder ihrer Farben
-#: mindestens 0,83 (tests/test_anzeige_plastisch.py). Dieselbe Farbe nimmt
-#: die Werteskala fuer Werte ueber der Grenze (spannungen.FARBE_UEBER).
+#: mindestens 0,83 (tests/test_anzeige_plastisch.py). Werte ueber dem
+#: Grenzwert der Werteskala sind seit dem 13.10.2026 grau (spannungen.FARBE_UEBER),
+#: bis dahin hatten sie dieselbe Farbe.
 FARBE_SPITZE = "#ff00ff"
 
 

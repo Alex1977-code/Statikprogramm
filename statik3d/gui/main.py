@@ -5997,7 +5997,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_werteskala = g.gross(
             "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
             hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
-                    "Grenzwert wie 355 für S355 - darüber magenta, der Größtwert an der Skala; "
+                    "Grenzwert wie 355 für S355 - darüber grau, der Größtwert an der Skala; "
                     "wahlweise nur die Überschreitungen färben", symbol="skala")
         g = r.gruppe("Tabelle ausgeben")
         g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
@@ -17472,7 +17472,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            ("fest (unten … oben)", "fest"),
                            ("Grenzwert (0 … Grenze, darüber eigene Farbe)", "grenze")):
             self.cb_skala.addItem(text, wert)
-        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird magenta, "
+        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird grau, "
                                  "die Skala nennt darüber den tatsächlichen Größtwert; bei "
                                  "negativen Werten reicht sie von −Grenze bis Grenze")
         f.addRow("Grenzen", self.cb_skala)
@@ -17589,7 +17589,7 @@ class MainWindow(QtWidgets.QMainWindow):
             text = (f" · Skala {zl.zahl_text(s.unten, punkt=True)} … "
                     f"{zl.zahl_text(s.oben, punkt=True)}{e}")
         else:
-            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, darüber magenta"
+            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, darüber grau"
             if s.nur_ueber:
                 text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}{e}"
         return text
