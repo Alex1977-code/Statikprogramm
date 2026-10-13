@@ -10878,7 +10878,7 @@ aber nicht als gekennzeichnet; ihr größtes σ_v liegt bei 561 N/mm². Das
 Ergebnis wird mit der Ergebnisdatei gespeichert und wieder geladen.
 
 Seit dem 10.10.2026 zeigt das Programm die auffälligen Stellen auch, ohne
-etwas zu verschweigen. In der Ansicht sind ihre Zonen violett umrandet, und
+etwas zu verschweigen. In der Ansicht sind ihre Zonen magenta umrandet, und
 an jeder Stelle steht ein Zeichen „netzabhängig“ mit σ_v; der Schalter
 „Netzabhängige Stellen kennzeichnen“ in der Maske Ergebnisse blendet beides
 aus und wieder ein. Färben Sie eine Volumenspannung oder die
@@ -10902,18 +10902,48 @@ Hinweis, welcher Wert außerhalb gilt. Am gespeicherten Drehlager sind das in
 den 16 Ankerplatten 11 703 Elemente; ein für die Abnahme angelegter
 Volumenbereich über diese Platten fällt dadurch von η = 3,020 auf 0,794. Beim Öffnen einer Ergebnisdatei von
 vor dem 10.10.2026 holt das Programm die Kennzeichnung aus dem gespeicherten
-Ergebnis nach, am Drehlager in rund 6 s, ohne neu zu rechnen.
+Ergebnis nach, am Drehlager in rund 6 s, ohne neu zu rechnen. Die Farbe der
+Kennzeichnung ist seit dem 13.10.2026 Magenta, dieselbe wie für Werte über
+dem Grenzwert der Werteskala; sie kommt in der Farbtafel der Ergebnisse nicht
+vor. Bis zum 13.10.2026 war sie violett und lag damit nahe am dunklen unteren
+Ende der Farbtafel. Bis zum 10.10.2026 nahmen Legende, Zusammenfassung,
+Bericht und Nachweise ihr Maximum über alle Elemente, auch über die
+netzabhängigen Stellen.
 
-Was die Legende außerhalb der Zonen zeigt, ist dieselbe Größe wie bisher: das
-Mittel der Elementwerte am Knoten. Bei Elementen, die nicht fließen, ist der
-Elementwert der größte Auswertepunkt einschließlich der Ecken, und eine Ecke
-kann weit über den Integrationspunkten liegen. Am Drehlager steht deshalb
-außerhalb der Zonen 6 676 N/mm² am Knoten 359328 in der Seitenwand V15; der
-größte Elementwert außerhalb der Zonen ist die Ecke eines tet10 in V34, der
-nicht fließt, mit 14 599 N/mm² bei 343 N/mm² an seinen Integrationspunkten.
-Solche Stellen findet die Kennzeichnung nicht. Bis zum 10.10.2026 nahmen
-Legende, Zusammenfassung, Bericht und Nachweise ihr Maximum über alle
-Elemente, auch über die netzabhängigen Stellen.
+**Volumenspannungen nach einer plastischen Rechnung (seit 13.10.2026).** Ist
+die Plastizität eingeschaltet, übernimmt Statik3D für Volumen die Werte der
+Integrationspunkte auf die Knoten, wie ANSYS es bei Plastizität macht
+(ERESX,NO). Jeder Knoten eines Elements bekommt den Spannungstensor des ihm
+nächstgelegenen Integrationspunkts dieses Elements, bei gleich nahen ihren
+Mittelwert; danach wird je Knoten über die angrenzenden Elemente gemittelt
+wie bisher. Beim tet10 mit vier Punkten nimmt jede Ecke den Punkt in ihrer
+Nähe und jede Kantenmitte das Mittel der Punkte ihrer beiden Ecken. Beim hex8
+nimmt jede Ecke den Punkt in ihrem Achtel, beim hex20 (27 Punkte) jede Ecke
+den Eckpunkt und jede Kantenmitte den Punkt auf der Mitte ihrer Kante. Beim
+pent6 und pent15 gilt dasselbe in Flächenkoordinaten des Dreiecks, bei der
+Pyramide nehmen die Grundecken je einen Punkt und die Spitze das Mittel der
+vier oberen. Das gilt für die Färbung der Volumenspannungen und der
+Vergleichsspannung, für Farbskala, Max-/Min-Marken und Kennwerte, für die
+Zusammenfassung und für Übersicht und Einzelergebnisse im Bericht. Bis zum
+13.10.2026 stand an allen Knoten eines Elements, das nicht fließt, sein
+größter Auswertepunkt, also eine Ecke. Eine Ecke ist eine Extrapolation über
+die Integrationspunkte hinaus und lag am Drehlager bis 14 599 N/mm², wo die
+Punkte desselben Elements 343 N/mm² haben; die Zusammenfassung nannte
+außerhalb der netzabhängigen Stellen 6 676 N/mm² in der Seitenwand V15. Die
+Punkte fließender Elemente legt der Löser seit dem 13.10.2026 beim Ergebnis
+ab. Einer älteren Ergebnisdatei fehlen sie; dort zeigen die fließenden
+Elemente ihren größten Punkt an allen Knoten, und die Zusammenfassung nennt
+ihre Zahl. Am gespeicherten Drehlager (12 226 fließende Elemente, ohne neue
+Rechnung) nennt die Zusammenfassung jetzt 662,65 N/mm² am Ankerstab S2
+(Rund 40), denn ihre Vergleichsspannung enthält wie bisher die Randspannung
+der Stäbe. Die Färbung „Volumen σ_v“ geht außerhalb der 16 Ankerringe bis
+545,3 N/mm² in der Schraube V90, an einem Stabende, das nicht als auffällig
+gilt; nimmt man alle 112 Stellen aus, sind es 460,0 N/mm² in V16. Elastische
+Rechnungen zeigen weiter den größten Auswertepunkt. Die Nachweise sind davon
+nicht berührt: Volumennachweis und Ermüdung lesen wie bisher die geglättete
+Eckspannung bzw. den Elementwert. Beim ersten Bild nach einer plastischen
+Rechnung rechnet das Programm die Punkte der nicht fließenden Elemente
+einmal nach, am Drehlager in rund 30 s.
 
 ## 10 Ergebnisse und Bericht
 

@@ -1706,7 +1706,15 @@ class Results:
                 nodes = m.elements[i].nodes
                 kn.extend(int(n) for n in nodes)
                 w.extend([float(d["vM"])] * len(nodes))
-            if self.solid_res:
+            # plastisch: je Knoten der naechste Integrationspunkt seines
+            # Elements (spannungen.anzeige_knotenwerte, seit 13.10.2026);
+            # elastisch der Elementwert an allen Knoten wie bisher
+            kw = spn.anzeige_knotenwerte(m, self, "sv", alle=True) if self.solid_res else None
+            if kw is not None:
+                kn_s, w_s = kw
+                knoten = np.concatenate([np.asarray(kn, int), kn_s]) if kn else kn_s
+                werte = np.concatenate([np.asarray(w, float), w_s]) if w else w_s
+            elif self.solid_res:
                 ids = list(self.solid_res)
                 S = np.array([self.solid_res[i] for i in ids], float).reshape(-1, 6)
                 vm = spn.volumen_werte(S, "sv")
@@ -1921,6 +1929,14 @@ class Results:
             if n_aus:
                 s.append(f"Abbruch                 : ingenieurmäßig - {n_aus} netzabhängige "
                          f"{'Stelle' if n_aus == 1 else 'Stellen'} ausgenommen, dort nicht auskonvergiert")
+            # Anzeige der Volumen an den Integrationspunkten (seit 13.10.2026):
+            # einer Ergebnisdatei von davor fehlen die Punkte fliessender Elemente
+            from . import spannungen as _spn
+            n_rf = _spn.anzeige_rueckfall(self.model, self) if self.solid_res else 0
+            if n_rf:
+                s.append(f"Anzeige der Volumen     : Werte der Integrationspunkte; {n_rf} fließende "
+                         "Elemente ohne abgelegte Punkte (Ergebnis von vor dem 13.10.2026) zeigen "
+                         "ihren größten Punkt an allen Knoten")
             # Fehlerliste F12 (06.10.2026): die gemeinsame Iteration ist ein
             # Versuch - bis dahin sah ihr Ergebnis aus wie ein verschachtelt
             # gerechnetes, nur der Tooltip der Auswahl warnte
@@ -3224,6 +3240,31 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     return out
 
 
+def _ip_spannungen_ablegen(model: Model, temp: dict) -> dict:
+    """{(Typ, P): (Elemente (n,), sigma (n, P, 6))} an den Integrationspunkten
+    der fliessenden Elemente (temp["plast_punkte"], plastizitaet.
+    punktspannungen) - ohne Temperatur und Vorspannung, genau wie
+    _post_chunk sie fuer den Elementwert abzieht. Fuer die Anzeige nach
+    ANSYS ERESX,NO (Entscheidung des Anwenders vom 13.10.2026): nur hier
+    liegen sie vor, denn eps_p je Punkt steht nicht im Ergebnis. Am Drehlager
+    (12 226 fliessende tet10) rund 2,3 MB."""
+    vor = temp.get("sigma0_ohne_plastisch") or {}
+    je: dict = {}
+    for i, (_xi, sig) in (temp.get("plast_punkte") or {}).items():
+        i = int(i)
+        e = model.elements[i]
+        S = np.array(sig, float, copy=True)
+        if i in temp:
+            mat = model.materials[e.mat]
+            S -= sl.D_matrix(mat.E, mat.nu) @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
+        if vor.get(i) is not None:
+            S -= np.asarray(vor[i], float)
+        ids, werte = je.setdefault((e.typ, S.shape[0]), ([], []))
+        ids.append(i)
+        werte.append(S)
+    return {k: (np.asarray(ids, np.int64), np.stack(werte)) for k, (ids, werte) in je.items()}
+
+
 def randspannung_knoten(model: Model, ecken: dict) -> dict:
     """Die geglaettete Spannung an den Eckknoten der Volumenelemente: je
     Knoten, Koerper (Element.group) und Werkstoff das Mittel der Elementwerte
@@ -3639,6 +3680,11 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
         else:
             res.solid_res[i] = val
     res.solid_knoten = randspannung_knoten(model, ecken)
+    if isinstance(temp, dict) and temp.get("plast_punkte"):
+        # Spannungen an den Integrationspunkten der fliessenden Elemente fuer
+        # die Anzeige (spannungen.anzeige_knotenwerte, seit 13.10.2026); die
+        # Nachweise lesen sie nicht
+        res.info["ip_spannungen"] = _ip_spannungen_ablegen(model, temp)
     if getattr(model, "knotendilatation", False):
         # je Rechnung einmal (am StaticSystem gemerkt), nicht je Lastfall
         schl = None if aktiv is None else hash(np.asarray(aktiv, bool).tobytes())

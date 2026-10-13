@@ -216,6 +216,246 @@ def knotenmittel(nn: int, knoten, werte) -> np.ndarray:
         return np.where(cnt > 0, acc / np.maximum(cnt, 1.0), np.nan)
 
 
+#: Elemente je Stapel beim Nachrechnen der Integrationspunkte (Speicher: der
+#: Operator eines tet10 mit vier Punkten traegt einige kB je Element)
+IP_STAPEL = 20000
+
+
+def _bezug(typ: str, P) -> np.ndarray:
+    """Koordinaten im Bezugselement, in denen „naechster Punkt“ gemessen wird:
+    Tetraeder in Volumenkoordinaten (L0..L3), Keile in Flaechenkoordinaten
+    des Dreiecks und zeta, Hexaeder und Pyramide in (r, s, t). So ist jedes
+    Bezugselement symmetrisch - eine Kantenmitte liegt von den Punkten an
+    ihren beiden Ecken gleich weit."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    r, s, t_ = P[:, 0], P[:, 1], P[:, 2]
+    if typ.startswith("tet"):
+        return np.column_stack([1.0 - r - s - t_, r, s, t_])
+    if typ.startswith("pent"):
+        return np.column_stack([1.0 - r - s, r, s, t_])
+    return P
+
+
+def knoten_natuerlich(typ: str):
+    """Natuerliche Koordinaten aller Knoten des Typs in Knotenreihenfolge -
+    Ecken, dann Kantenmitten - oder None, wo sie nicht bekannt sind."""
+    from .elements import solid as sl
+    ecken = sl.ECKEN_NATUERLICH.get(typ)
+    if ecken is None:
+        return None
+    X = [np.asarray(e, float) for e in ecken]
+    for a, b in sl._KANTEN_QUADRATISCH.get(typ, ()):
+        X.append(0.5 * (X[a] + X[b]))
+    try:
+        if len(X) != sl.knotenzahl(typ):
+            return None
+    except ValueError:
+        return None
+    return np.asarray(X, float)
+
+
+def ip_zuordnung(typ: str, xi) -> np.ndarray | None:
+    """Gewichte W (k, P): Knoten k bekommt den Tensor sum_p W[k, p] sigma_p -
+    den des naechstgelegenen Integrationspunkts, bei gleich nahen ihren
+    Mittelwert (wie ANSYS bei Plastizitaet, ERESX,NO; Entscheidung des
+    Anwenders vom 13.10.2026). Gemessen in :func:`_bezug`. None, wenn die
+    Knoten des Typs oder die Punkte nicht bekannt sind."""
+    X = knoten_natuerlich(typ)
+    if X is None or xi is None:
+        return None
+    A, B = _bezug(typ, X), _bezug(typ, xi)
+    d = np.linalg.norm(A[:, None, :] - B[None, :, :], axis=2)
+    W = (d <= d.min(axis=1, keepdims=True) + 1e-9 * max(float(d.max()), 1.0)).astype(float)
+    return W / W.sum(axis=1, keepdims=True)
+
+
+def _ip_spannungen(model, u, elemente, abzug: dict = None) -> list:
+    """[(Elemente (n,), xi (P,3), sigma (n, P, 6))] an den Integrationspunkten,
+    elastisch aus u (eps_p = 0), ``abzug`` {Element: (6,)} abgezogen
+    (Temperatur, Vorspannung) - dieselbe Rechnung wie
+    plastizitaet.punktspannungen mit eps_p = 0. Stapelweise (IP_STAPEL)."""
+    from . import plastizitaet as pl
+    from .elements import solid as sl
+    u = np.asarray(u, float).reshape(-1)
+    je_typ: dict = {}
+    for e in sorted(set(int(i) for i in elemente)):
+        je_typ.setdefault(model.elements[e].typ, []).append(e)
+    aus = []
+    for typ, liste in je_typ.items():
+        for a0 in range(0, len(liste), IP_STAPEL):
+            for op in sl.dehnungsoperator(model, typ, liste[a0:a0 + IP_STAPEL]):
+                d = pl._stapel_teil(model, op)
+                n, P = op.n, op.P
+                ue = u[d["dofs"]]
+                alpha = None
+                if d.get("eas") is not None:
+                    alpha = pl._eas_alpha(d["eas"], d["lam"], d["mu"], np.zeros((P, n, 6)), d["lasten"], ue)
+                ab = np.zeros((n, 6))
+                if abzug:
+                    for a, i in enumerate(op.idx):
+                        v = abzug.get(int(i))
+                        if v is not None:
+                            ab[a] = v
+                S = np.empty((n, P, 6))
+                for p in range(P):
+                    S[:, p, :] = pl._spannung(d["lam"], d["mu"], sl.dehnung_mit_moden(op, p, ue, alpha)) - ab
+                aus.append((np.asarray(op.idx, np.int64), None if op.xi is None else np.asarray(op.xi, float), S))
+    return aus
+
+
+def _ip_daten(model, res):
+    """Die Spannungen an den Integrationspunkten der Volumen fuer die Anzeige
+    einer plastischen Rechnung - oder None bei elastischer Rechnung.
+
+    Rueckgabe {"teile": [(Typ, Elemente (n,), sigma (n, P, 6), W (k, P))],
+    "rueckfall": Zahl der fliessenden Elemente ohne gespeicherte Punkte}.
+    Nicht fliessende Elemente: aus u nachgerechnet (:func:`_ip_spannungen`,
+    abgezogen wie spitzenstellen._abzug). Fliessende: die Punkte, die der
+    Loeser seit dem 13.10.2026 ablegt (``res.info["ip_spannungen"]``,
+    solver._ip_spannungen_ablegen); eine Ergebnisdatei von davor hat sie
+    nicht - dann bleibt es beim Elementwert (dem groessten Punkt) an allen
+    Knoten, und ``rueckfall`` zaehlt sie. tet4 (konstante Spannung; mit
+    Knotendilatation ist der Elementwert der richtige), Typen ohne
+    Dehnungsoperator und abgeschaltete Elemente bleiben beim Elementwert.
+    Einmal je Ergebnis (res._cache)."""
+    so = getattr(res, "solid_res", None) or {}
+    info = getattr(res, "info", None) or {}
+    if not so or not info.get("plastizitaet") or getattr(res, "u", None) is None:
+        return None
+    cache = getattr(res, "_cache", None)
+    if isinstance(cache, dict) and "ip_daten" in cache:
+        return cache["ip_daten"]
+    from .elements import solid as sl
+    vol, _schalen, _ebene = _typen()
+    fliessend = set(int(i) for i in (info.get("plastisch") or {}))
+    inaktiv = set(int(i) for i in (info.get("inaktiv") or []))
+    gespeichert = info.get("ip_spannungen") or {}
+    rechnen, flies = [], []
+    for i in so:
+        i = int(i)
+        typ = model.elements[i].typ
+        if i in inaktiv or typ not in vol or typ == "tet4" or typ not in sl.OPERATOREN:
+            continue
+        (flies if i in fliessend else rechnen).append(i)
+    teile = []
+    zuordnung: dict = {}
+
+    def W_von(typ, xi):
+        schl = (typ, None if xi is None else tuple(np.round(np.asarray(xi, float).ravel(), 12)))
+        if schl not in zuordnung:
+            zuordnung[schl] = ip_zuordnung(typ, xi)
+        return zuordnung[schl]
+    if rechnen:
+        from .spitzenstellen import _abzug
+        faktoren = info.get("factors") if isinstance(info.get("factors"), dict) else {str(res.name): 1.0}
+        for ids, xi, S in _ip_spannungen(model, res.u, rechnen, _abzug(model, faktoren, set(rechnen))):
+            typ = model.elements[int(ids[0])].typ
+            W = W_von(typ, xi)
+            if W is not None and W.shape[1] == S.shape[1]:
+                teile.append((typ, ids, S, W))
+    rueckfall = 0
+    if flies:
+        flies_set = set(flies)
+        da: set = set()
+        for (typ, _P), (ids, S) in gespeichert.items():
+            ids = np.asarray(ids, np.int64)
+            sel = np.fromiter((int(i) in flies_set for i in ids.tolist()), bool, count=len(ids))
+            if not sel.any():
+                continue
+            xi = None
+            try:
+                xi = sl.dehnungsoperator(model, typ, [int(ids[sel][0])])[0].xi
+            except Exception:                 # noqa: BLE001 - dann der Elementwert
+                xi = None
+            W = W_von(typ, xi)
+            if W is not None and W.shape[1] == np.asarray(S).shape[1]:
+                teile.append((typ, ids[sel], np.asarray(S, float)[sel], W))
+                da.update(int(i) for i in ids[sel].tolist())
+        rueckfall = len(flies_set - da)
+    aus = {"teile": teile, "rueckfall": rueckfall}
+    if isinstance(cache, dict):
+        cache["ip_daten"] = aus
+    return aus
+
+
+def anzeige_knotenwerte(model, res, groesse: str, alle: bool = False):
+    """(Knoten, Werte) der Volumen fuer die Anzeige - je Element und Knoten
+    eine Zeile, in der Einheit der Spannungen [Pa] - oder None bei
+    elastischer Rechnung (dann gilt der Elementwert an allen Knoten, wie
+    bisher).
+
+    **Plastische Rechnung** (Entscheidung des Anwenders vom 13.10.2026, wie
+    ANSYS bei Plastizitaet, ERESX,NO): jeder Knoten eines Elements bekommt
+    den Spannungstensor des ihm naechstgelegenen Integrationspunkts dieses
+    Elements, bei gleich nahen ihren Mittelwert (:func:`ip_zuordnung`); die
+    Groesse folgt aus diesem Tensor. Gemittelt wird danach wie bisher je
+    Knoten ueber die Elemente daran (:func:`knotenmittel`). Bis zum
+    13.10.2026 stand an allen Knoten eines Elements, das nicht fliesst, sein
+    groesster Auswertepunkt - eine Ecke, also eine Extrapolation ueber die
+    Integrationspunkte hinaus: am Drehlager (LF1 Mittel) bis 14 599 N/mm2,
+    wo die Punkte desselben Elements 343 N/mm2 haben. ``alle``: auch die
+    uebrigen Elemente aus ``solid_res`` (Scheiben), mit ihrem Elementwert -
+    fuer Results.node_vm."""
+    daten = _ip_daten(model, res)
+    if daten is None:
+        return None
+    vol, _schalen, _ebene = _typen()
+    kn_l, w_l = [], []
+    erfasst: set = set()
+    for typ, ids, S, W in daten["teile"]:
+        K = np.array([model.elements[int(i)].nodes for i in ids.tolist()], np.int64)
+        for a0 in range(0, len(ids), IP_STAPEL):
+            T = np.einsum("kp,npc->nkc", W, S[a0:a0 + IP_STAPEL])
+            kn_l.append(K[a0:a0 + IP_STAPEL].ravel())
+            w_l.append(volumen_werte(T.reshape(-1, 6), groesse))
+        erfasst.update(int(i) for i in ids.tolist())
+    so = res.solid_res
+    rest = [i for i in so if int(i) not in erfasst and (alle or model.elements[int(i)].typ in vol)]
+    if rest:
+        v = volumen_werte(np.array([so[i] for i in rest], float).reshape(-1, 6), groesse)
+        laengen = np.fromiter((len(model.elements[int(i)].nodes) for i in rest), int, count=len(rest))
+        kn_l.append(np.fromiter((int(n) for i in rest for n in model.elements[int(i)].nodes), np.int64,
+                                count=int(laengen.sum())))
+        w_l.append(np.repeat(v, laengen))
+    if not kn_l:
+        return np.zeros(0, np.int64), np.zeros(0)
+    return np.concatenate(kn_l), np.concatenate(w_l)
+
+
+def anzeige_tensoren(model, res) -> dict:
+    """{Element: Tensor (6,)} der Volumen fuer Tabellen der Anzeige (Bericht,
+    Spannungen der Volumenelemente). Elastisch ``res.solid_res`` selbst
+    (bitgleich); plastisch je Element der Knotentensor (:func:`anzeige_knotenwerte`)
+    mit dem groessten sigma_v - also ein Integrationspunkt, nicht eine Ecke."""
+    so = getattr(res, "solid_res", None) or {}
+    daten = _ip_daten(model, res)
+    if daten is None:
+        return so
+    cache = getattr(res, "_cache", None)
+    if isinstance(cache, dict) and "anzeige_tensoren" in cache:
+        return cache["anzeige_tensoren"]
+    aus = dict(so)
+    for _typ, ids, S, W in daten["teile"]:
+        for a0 in range(0, len(ids), IP_STAPEL):
+            T = np.einsum("kp,npc->nkc", W, S[a0:a0 + IP_STAPEL])
+            n, k = T.shape[0], T.shape[1]
+            q = volumen_werte(T.reshape(-1, 6), "sv").reshape(n, k)
+            j = np.argmax(q, axis=1)
+            for a, i in enumerate(ids[a0:a0 + IP_STAPEL].tolist()):
+                aus[int(i)] = T[a, j[a]].copy()
+    if isinstance(cache, dict):
+        cache["anzeige_tensoren"] = aus
+    return aus
+
+
+def anzeige_rueckfall(model, res) -> int:
+    """Zahl der fliessenden Elemente, deren Punkte das Ergebnis nicht traegt
+    (Ergebnisdatei von vor dem 13.10.2026): sie zeigen ihren groessten Punkt
+    an allen Knoten. 0 bei elastischer Rechnung."""
+    daten = _ip_daten(model, res)
+    return int(daten["rueckfall"]) if daten else 0
+
+
 def _typen():
     from . import elemente as EL
     return set(EL.VOLUMEN_TYPEN), set(EL.SCHALEN_TYPEN), set(EL.EBENE_TYPEN)
@@ -230,6 +470,11 @@ def je_knoten(model, res, art: str, groesse: str, seite: str = "max") -> np.ndar
     vol, schalen, ebene = _typen()
     kn, w = [], []
     if art == "volumen":
+        # bei plastischer Rechnung je Knoten der naechste Integrationspunkt
+        # (anzeige_knotenwerte, seit 13.10.2026); elastisch wie bisher
+        kw = anzeige_knotenwerte(model, res, groesse)
+        if kw is not None:
+            return knotenmittel(nn, kw[0], kw[1] * MPA)
         ids = [i for i in res.solid_res if model.elements[i].typ in vol]
         if ids:
             S = np.array([res.solid_res[i] for i in ids], float).reshape(-1, 6)

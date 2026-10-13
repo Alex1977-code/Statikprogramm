@@ -15,16 +15,18 @@ unmittelbar ueber ``spitzenstellen.zonen_elemente``.
 **Welche Groesse ausserhalb der Zonen?** Dieselbe, die die Ansicht faerbt
 und die Zusammenfassung schon immer nennt: das Knotenmittel der
 Elementwerte (``Results.node_vm`` bzw. ``spannungen.je_knoten``), ohne die
-Knoten der Zonenelemente. Eine Legende muss zu den Farben passen, und die
-Groesse selbst zu aendern ist nicht Teil dieses Pakets. Die **Spitze in den
-Zonen** ist dagegen ``sv_max`` aus Paket 1, der Wert an den
+Knoten der Zonenelemente. Eine Legende muss zu den Farben passen. Die
+**Spitze in den Zonen** ist ``sv_max`` aus Paket 1, der Wert an den
 Integrationspunkten: als Eckwert eines Elements, das nicht fliesst, waechst
 sie ueber jede Fliessflaeche hinaus (Paket 1: bis 740 N/mm2, wo die
-Integrationspunkte hoechstens 426 haben). Am Drehlager zeigt sich dieselbe
-Schwaeche auch ausserhalb der Zonen: Eckwerte nicht fliessender tet10
-erreichen 14 599 N/mm2 (V34) bei 343 N/mm2 an den Integrationspunkten
-desselben Elements, das Knotenmittel 6 676 N/mm2 (V15) - deshalb steht das
-Maximum ausserhalb mit Knoten und Bauteil da (Messung 13.10.2026).
+Integrationspunkte hoechstens 426 haben). Bis zum 13.10.2026 zeigte sich
+dieselbe Schwaeche auch ausserhalb der Zonen: Eckwerte nicht fliessender
+tet10 erreichten am Drehlager 14 599 N/mm2 (V34) bei 343 N/mm2 an den
+Integrationspunkten desselben Elements, das Knotenmittel 6 676 N/mm2 (V15).
+Seitdem uebernimmt die Anzeige bei plastischer Rechnung die Werte der
+Integrationspunkte auf die Knoten (spannungen.anzeige_knotenwerte, wie
+ANSYS ERESX,NO); am Drehlager sind es ausserhalb der 16 Zonen 545,3 N/mm2
+(V90) im Feld Volumen sigma_v.
 """
 from __future__ import annotations
 
@@ -180,17 +182,22 @@ def bauteil_des_elements(model, e: int) -> str:
 
 
 def bauteil_des_knotens(model, k: int) -> str:
-    """Der Koerper eines Knotens (das erste Volumenelement daran), „Stab“
-    an einem Knoten ohne Volumen, „“ ohne."""
+    """Der Koerper eines Knotens (das erste Volumenelement daran), an einem
+    Knoten ohne Volumen „Stab <Name> (<Querschnitt>)“ des ersten Elements
+    daran, „“ ohne."""
     from . import elemente as EL
     vol = set(EL.VOLUMEN_TYPEN)
-    stab = False
+    stab = None
     for i, e in enumerate(model.elements):
         if int(k) in e.nodes:
             if e.typ in vol:
                 return bauteil_des_elements(model, i)
-            stab = True
-    return "Stab" if stab else ""
+            if stab is None:
+                name = next((str(n) for n, mm in (getattr(model, "members", None) or {}).items()
+                             if i in (getattr(mm, "elements", None) or [])), "")
+                sec = str(getattr(e, "sec", "") or "")
+                stab = "Stab" + (f" {name}" if name else f" (Element {i})") + (f" ({sec})" if sec else "")
+    return stab or ""
 
 
 def uebersicht(model, res) -> dict | None:

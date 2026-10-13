@@ -2398,6 +2398,9 @@ class Report:
             # vektorisiert (spannungen.volumen_werte): res.solid_stress rechnete je
             # Element eigvalsh in Python - 38 s je Ergebnis am Drehlager (12.09.2026)
             from .. import spannungen as spn
+            # plastisch: die Integrationspunkte (spannungen.anzeige_tensoren,
+            # seit 13.10.2026), elastisch solid_res wie bisher
+            so = spn.anzeige_tensoren(self.model, res)
             ids = list(so)
             # ohne die Elemente der Zonen auffaelliger Stellen (seit 10.10.2026);
             # ihre Spitze steht in einer eigenen Zeile

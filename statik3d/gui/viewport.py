@@ -2257,9 +2257,13 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
-#: Umrandung und Zeichen netzabhaengiger Spannungsspitzen (violett - in
-#: keiner Farbtafel der Ergebnisse, anders als Magenta fuer „ueber der Grenze“)
-FARBE_SPITZE = "#6a1b9a"
+#: Umrandung, Zeichen, Texte und Skalenfarbe „netzabh.“ netzabhaengiger
+#: Spannungsspitzen: Magenta (Entscheidung des Anwenders vom 13.10.2026). Bis
+#: dahin violett #6a1b9a - es lag mit 0,21 (RGB-Abstand) nahe am dunklen
+#: unteren Ende der Farbtafel turbo; Magenta hat zu jeder ihrer Farben
+#: mindestens 0,83 (tests/test_anzeige_plastisch.py). Dieselbe Farbe nimmt
+#: die Werteskala fuer Werte ueber der Grenze (spannungen.FARBE_UEBER).
+FARBE_SPITZE = "#ff00ff"
 
 
 def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: float = 1.0,

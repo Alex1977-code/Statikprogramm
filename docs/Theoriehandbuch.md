@@ -4947,11 +4947,42 @@ bildet, etwa die überlagerte Alternative einer Ergebniskombination, wird
 dafür zuerst ausgewertet; an der Platte mit Loch und EK1 = 1,35 LF1 hätte der
 Nachweis sonst η = 19,803 statt 3,767 gelesen. Der Spitzenwert einer Zone ist
 σ_v an den Gaußpunkten (sv_max), die Größe außerhalb ist die bisherige
-Anzeigegröße, das Knotenmittel der Elementwerte. An Elementen, die nicht
-fließen, enthält sie die Ecken, und am Drehlager liegt sie außerhalb der Zonen
-mit 6 676 N/mm² in V15 weit über der Spitze der Zonen (1 187 N/mm²); die
-Ecken nicht fließender tet10 erreichen dort bis 14 599 N/mm² bei höchstens
-343 N/mm² an den Gaußpunkten. Die Kennzeichnung ändert daran nichts.
+Anzeigegröße, das Knotenmittel der Elementwerte.
+
+**Anzeige nach einer plastischen Rechnung (seit 13.10.2026).** Bis zum
+13.10.2026 war der Elementwert eines Elements, das nicht fließt, auch in
+einer plastischen Rechnung der größte Auswertepunkt (Mitte oder Ecke), und er
+stand an allen Knoten des Elements. Die Ecken nicht fließender tet10
+erreichten am Drehlager bis 14 599 N/mm² bei 343 N/mm² an den Gaußpunkten
+desselben Elements; das Knotenmittel lag außerhalb der Zonen mit 6 676 N/mm²
+in V15 weit über der Spitze der Zonen (1 187 N/mm²). Seitdem übernimmt die
+Anzeige in einer plastischen Rechnung die Werte der Gaußpunkte auf die
+Knoten, wie ANSYS mit ERESX,NO (`spannungen.anzeige_knotenwerte`): Knoten k
+eines Elements bekommt σ_k = Σ_p W_kp σ_p mit W_kp = 1/m für die m
+nächstgelegenen Gaußpunkte und 0 sonst. „Nächstgelegen“ misst sich im
+Bezugselement, beim Tetraeder in Volumenkoordinaten (L0 … L3), beim Keil in
+Flächenkoordinaten des Dreiecks und ζ, sonst in (r, s, t); so liegt eine
+Kantenmitte von den Punkten ihrer beiden Ecken gleich weit. Für den tet10
+(vier Punkte) ergibt das je Ecke den Punkt mit L = 0,585 an ihr und je
+Kantenmitte das Mittel zweier Punkte, für den hex8 je Ecke den Punkt ihres
+Achtels, für den hex20 (27 Punkte) je Ecke den Eckpunkt und je Kantenmitte
+den Punkt auf ihrer Kantenmitte, für den pent15 (18 Punkte) je Knoten genau
+einen Punkt und für die Pyramide an der Spitze das Mittel der vier oberen
+Punkte. Danach wird je Knoten über die Elemente gemittelt wie bisher. Die
+Punkte nicht fließender Elemente rechnet die Anzeige aus u nach (σ = D B u
+minus Temperatur und Vorspannung, ε_p = 0), die fließender Elemente legt der
+Löser seit dem 13.10.2026 beim Ergebnis ab (`ip_spannungen`), denn ε_p je
+Punkt steht nicht im Ergebnis. Einer Ergebnisdatei von davor fehlen sie, und
+fließende Elemente zeigen dort ihren größten Punkt an allen Knoten. tet4
+bleibt beim Elementwert (konstante Spannung; mit Knotendilatation ist der
+Elementwert der richtige). Am Drehlager sind das 604 951 nachgerechnete
+Elemente in rund 30 s. Außerhalb aller 112 Stellen liegt die Anzeige dann
+bei 460,0 N/mm² am Knoten in V16, außerhalb der 16 auffälligen Stellen bei
+545,3 N/mm² in V90; beide Werte liegen an fließenden Elementen, für die die
+gespeicherte Datei noch keine Punkte trägt. Die Nachweise lesen das nicht:
+Volumennachweis und Ermüdung (Regel „knoten“) nehmen weiter die geglättete
+Eckspannung, die Regel „element“ den Elementwert. Elastische Rechnungen
+bleiben bitgleich.
 
 **Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
 Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)

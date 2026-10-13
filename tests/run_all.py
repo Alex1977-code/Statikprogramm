@@ -35,6 +35,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_nachtrag_m26",
            "tests.test_starr_erneuern",
            "tests.test_spitzen_zeigen",
+           "tests.test_anzeige_plastisch",
            "volumen3d.tests.test_kern"]
 
 
