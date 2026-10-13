@@ -2876,6 +2876,32 @@ def case_feq_sofort(model: Model, factors: dict, aktiv=None) -> dict:
     return aus
 
 
+def anfangs_feq(model: Model, factors: dict, aktiv=None, zusatz: dict = None) -> dict:
+    """Die lokalen Stabendlasten der **Anfangsdehnung** je Stabelement:
+    Temperatur und Vorspannung der Lastfaelle (:func:`case_feq_sofort`) und
+    die Verriegelung einer Sollkraft (``zusatz["feq"]``, statik3d.vorspannkraft).
+    Ohne Streckenlasten und Eigengewicht - daraus liest
+    :func:`anfangsnormalkraefte` die Kraft bei festgehaltenen Enden."""
+    aus = case_feq_sofort(model, factors, aktiv)
+    for i, v in ((zusatz or {}).get("feq") or {}).items():
+        aus[int(i)] = aus.get(int(i), 0.0) + np.asarray(v, float)
+    return aus
+
+
+def anfangsnormalkraefte(model: Model, factors: dict, aktiv=None, zusatz: dict = None) -> dict:
+    """{Element: Normalkraft der Anfangsdehnung} (asm.anfangsnormalkraft) der
+    Lastfaelle ``factors`` - fuer die geometrische Steifigkeit
+    (asm.geometric_stiffness, theorie2.alpha_cr) und die Ausfall-Iteration
+    (seit dem 13.10.2026). Leer ohne Temperatur, Vorspannung und Sollkraft;
+    dann rechnet alles wie bis dahin mit E A Δl/L."""
+    out = {}
+    for i, f in anfangs_feq(model, factors, aktiv, zusatz).items():
+        n = asm.anfangsnormalkraft(f)
+        if n:
+            out[int(i)] = n
+    return out
+
+
 def case_uebermass(model: Model, factors: dict) -> dict:
     """{Name der Fuge: Gesamtueberdeckung [m]} einer Linearkombination.
 
@@ -8724,6 +8750,29 @@ def _verzweigung(system: StaticSystem, Kgff, k: int, progress=None) -> tuple:
     return lam[order], vecs[:, order]
 
 
+def _anfang_im_ergebnis(model: Model, res, factors: dict, aktiv=None) -> dict:
+    """{Element: Normalkraft der Anfangsdehnung} zu einem Ergebnis der
+    Lastfaelle ``factors`` - fuer die geometrische Steifigkeit des Knickens
+    (13.10.2026). Temperatur und Vorspannung kommen aus den Lastfaellen
+    (:func:`anfangsnormalkraefte`); die Verriegelung einer Sollkraft
+    (statik3d.vorspannkraft) steht nur im Ergebnis: fuer ihre Elemente die
+    mittlere Normalkraft des Ergebnisses abzueglich E A Δl/L."""
+    n = anfangsnormalkraefte(model, factors, aktiv)
+    from . import vorspannkraft as vk
+    soll = vk.sollkraefte(model, factors)
+    if soll and getattr(res, "beam_end", None):
+        u = np.zeros(model.ndof)
+        n6 = model.nn * NDOF
+        u[:n6] = np.asarray(res.u, float).ravel()[:n6]
+        for s in soll:
+            for i in vk._elemente(model, s.stab, aktiv):
+                fl = res.beam_end.get(i)
+                if fl is not None:
+                    fl = np.asarray(fl, float)
+                    n[i] = float(0.5 * (fl[6] - fl[0])) - asm.stab_normalkraft(model, model.elements[i], u)
+    return n
+
+
 def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = None,
                    combination: str = None, workers: int = None) -> Results:
     """Lineares Verzweigungsproblem: (K + lambda*Kg) v = 0 (Stabtragwerke).
@@ -8752,7 +8801,13 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     else:
         static = solve_static(model, progress, case, workers, system)
     u = static.u.ravel()
-    Kg = asm.geometric_stiffness(model, u, system.aktiv)
+    if combination:
+        c_ = model.combinations[combination]
+        faktoren = {} if c_.ist_umhuellende else dict(c_.factors)
+    else:
+        faktoren = _lastfall_faktoren(model, case)[0]
+    Kg = asm.geometric_stiffness(model, u, system.aktiv,
+                                 n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv))
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()

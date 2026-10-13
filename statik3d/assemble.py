@@ -1474,22 +1474,86 @@ def daempfung(model: Model) -> sparse.csr_matrix:
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n)).tocsr()
 
 
-def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None) -> sparse.csr_matrix:
+# --------------------------------------------------------------------------
+# Normalkraft eines Stabs mit Anfangsdehnung (13.10.2026)
+# --------------------------------------------------------------------------
+#
+# Die Normalkraft eines Stabs ist E A Δl/L plus die Kraft seiner
+# Anfangsdehnung - Temperatur dT, Vorspannung als eingepraegte Dehnung
+# (Vorspannung, RFEM-Import als Abkuehlung) und die Verriegelung einer
+# Sollkraft (statik3d.vorspannkraft). Das Ergebnis rechnet so (Stabendkraefte
+# k u - f0, solver._post_chunk). Bis zum 13.10.2026 lasen die geometrische
+# Steifigkeit (Theorie II. Ordnung, alpha_cr, Knicken) und die
+# Ausfall-Iteration der Zugstaebe nur E A Δl/L: ein Zugband mit 70 kN
+# Anfangsdehnung trug im Ergebnis +6,50 kN, K_G rechnete mit -63,50 kN
+# (alpha_cr 1,688), und ein Zugstab „nur Zug“ mit 500 kN Vorspannung als dT
+# fiel aus und trug 0 statt 400 kN. Seither lesen alle diese Stellen
+# :func:`stab_normalkraft`, die Kraft der Anfangsdehnung kommt aus den
+# Stabendlasten (:func:`anfangsnormalkraft`).
+def anfangsnormalkraft(f0) -> float:
+    """Normalkraft (Zug positiv) der Anfangsdehnung eines Stabelements aus
+    seinen lokalen Stabendlasten ``f0`` (12,) - die Kraft bei festgehaltenen
+    Enden: -(f0[6] - f0[0])/2. Temperatur dT: -E A alpha dT; Vorspannung F
+    (eingepraegte Dehnung -F/(E A)): +F. Eine Streckenlast in Stabrichtung
+    gibt an beiden Enden dieselbe Last und zaehlt nicht mit; darum die
+    Stabendlasten **nur** der Anfangsdehnung uebergeben (solver.anfangs_feq)."""
+    f0 = np.asarray(f0, float)
+    return float(-0.5 * (f0[6] - f0[0]))
+
+
+def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _achsen=None) -> float:
+    """Normalkraft (Zug positiv) eines Stabelements aus dem Verschiebungsvektor
+    ``u`` (ndof,) wie im Ergebnis: E A Δl/L des Stabs hinter seinen Versaetzen
+    (Exzentrizitaet) plus ``n_anfang``, die Kraft seiner Anfangsdehnung bei
+    festgehaltenen Enden (:func:`anfangsnormalkraft`). Mit Federgelenken in
+    Stabrichtung (lokaler FHG 0, 6) wirkt der Stab in Reihe mit den Federn:
+    N = k_R (Δl + n_anfang L/(E A)), 1/k_R = L/(E A) + 1/k_1 + 1/k_2.
+    Ohne Versatz, Laengsfeder und Anfangsdehnung ist es dieselbe Zahl wie bis
+    zum 13.10.2026 (E A Δl/L). Gemittelt ueber das Element - eine
+    Streckenlast in Stabrichtung aendert N entlang des Stabs.
+    ``_achsen`` (T, L): schon gerechnete Transformation (geometric_stiffness)."""
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    if _achsen is None:
+        X = model.nodes[e.nodes]
+        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T = bm.transform_matrix(T3)
+    else:
+        T, L = _achsen
+    ul = T @ np.asarray(u, float)[element_dofs(e, model)[:12]]
+    A = beam_versatz(e)
+    if A is not None:
+        ul = A @ ul                     # das Stabende hinter dem Versatz
+    federn = [(int(d), float(k)) for d, k in (getattr(e, "hinge_springs", None) or [])
+              if int(d) in (0, 6) and k and float(k) > 0]
+    EA_L = mat.E * sec.A / L
+    if federn:
+        nachgiebig = 1.0 / EA_L + sum(1.0 / k for _d, k in federn)
+        return float((ul[6] - ul[0] + float(n_anfang) / EA_L) / nachgiebig)
+    N = EA_L * (ul[6] - ul[0])          # Zug positiv
+    return N + float(n_anfang) if n_anfang else N
+
+
+def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> sparse.csr_matrix:
     """Geometrische Steifigkeit aus vorhandenem Verformungszustand (nur Staebe);
-    abgeschaltete Elemente (``aktiv`` False) bleiben weg."""
+    abgeschaltete Elemente (``aktiv`` False) bleiben weg.
+
+    ``n_anfang`` {Element: Normalkraft der Anfangsdehnung} (seit dem
+    13.10.2026, solver.anfangsnormalkraefte): Temperatur, Vorspannung und
+    Verriegelung zaehlen in N mit wie im Ergebnis (:func:`stab_normalkraft`).
+    Ohne sie rechnet K_G wie bisher mit E A Δl/L."""
     n = model.ndof
+    n_anfang = n_anfang or {}
     rows, cols, vals = [], [], []
     for i, e in enumerate(model.elements):
         if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
             continue
-        mat = model.materials[e.mat]
         sec = model.sections[e.sec]
         X = model.nodes[e.nodes]
         T3, L = bm.local_axes(X[0], X[1], e.roll)
         T = bm.transform_matrix(T3)
         d = element_dofs(e, model)[:12]
-        ul = T @ u[d]
-        N = mat.E * sec.A / L * (ul[6] - ul[0])      # Zug positiv
+        N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L))
         kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
         kg = T.T @ kg @ T
         r, c = np.meshgrid(d, d, indexing="ij")

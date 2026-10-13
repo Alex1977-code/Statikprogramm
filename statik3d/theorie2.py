@@ -343,16 +343,23 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
 # ==========================================================================
 # alpha_cr (5.2.1)
 # ==========================================================================
-def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1) -> dict:
+def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dict = None) -> dict:
     """
     Kleinster positiver Verzweigungslastfaktor zum Verformungszustand ``u``.
 
     Geloest wird (K + alpha K_g) v = 0 in der Form -K_g v = mu K v mit
     alpha = 1/mu; gesucht ist das groesste positive mu.
 
+    ``n_anfang`` {Element: Normalkraft der Anfangsdehnung}
+    (solver.anfangsnormalkraefte, seit dem 13.10.2026): Temperatur,
+    Vorspannung und Verriegelung zaehlen in K_g mit wie im Ergebnis. Bis
+    dahin las K_g nur E A Δl/L - ein Zugband mit 70 kN Anfangsdehnung, das im
+    Ergebnis +6,50 kN traegt, stand mit -63,50 kN darin (alpha_cr 1,688), und
+    ein Stab unter reinem Temperatur-Zwang hatte "keine Normalkräfte".
+
     Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": ""}.
     """
-    Kg = asm.geometric_stiffness(model, u)
+    Kg = asm.geometric_stiffness(model, u, n_anfang=n_anfang)
     fi = system.fi
     Kgff = Kg[fi][:, fi].tocsc()
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:
@@ -522,7 +529,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     Rueckgabe (Results, Th2Info).
     """
     from .solver import (StaticSystem, case_loads, case_prescribed, postprocess, Results,
-                         ausweich_info, ausweichgruende_zaehlen)
+                         ausweich_info, ausweichgruende_zaehlen, anfangsnormalkraefte)
     from .vorspannkraft import theorie_sperre
     sperre = theorie_sperre(model, factors, "II")
     if sperre:
@@ -537,6 +544,9 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     aktiv = getattr(system, "aktiv", None)          # Situation: abgeschaltete Elemente
     F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors)
+    # Normalkraefte der Anfangsdehnung (Temperatur, Vorspannung) fuer K_g -
+    # wie im Ergebnis (13.10.2026)
+    n_anf = anfangsnormalkraefte(model, factors, aktiv)
 
     # --- Theorie I. Ordnung als Ausgangspunkt
     u1 = system.solve(F, us=us)
@@ -546,7 +556,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
-    ac = alpha_cr(model, system, u1)
+    ac = alpha_cr(model, system, u1, n_anfang=n_anf)
     info.alpha_cr = ac["alpha_cr"]
     if ac.get("fehler"):
         info.hinweise.append(ac["fehler"])
@@ -578,7 +588,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
             Fimp = Fs + Fv
             info.schiefstellung, info.vorkruemmung = s_info, v_info
         Fges = F + Fimp
-        Kg = asm.geometric_stiffness(model, u, aktiv)
+        Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf)
         try:
             u_neu = system.solve(Fges, K_extra=Kg, us=us)
         except Exception as exc:
@@ -747,10 +757,11 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             continue
         if modus == "auto" and n not in (erzwungen or ()):
             # Grundzustand und alpha_cr zuerst
-            from .solver import case_loads, case_prescribed
+            from .solver import case_loads, case_prescribed, anfangsnormalkraefte
             F, _feq, _q, _temp = case_loads(model, faktoren, getattr(system, "aktiv", None))
             u1 = system.solve(F, us=case_prescribed(model, faktoren))
-            ac = alpha_cr(model, system, u1)
+            ac = alpha_cr(model, system, u1,
+                          n_anfang=anfangsnormalkraefte(model, faktoren, getattr(system, "aktiv", None)))
             info = Th2Info(kombination=zeile, alpha_cr=ac["alpha_cr"], grenze=grenze,
                            u_max_I=float(np.abs(u1).max()))
             if ac.get("fehler"):

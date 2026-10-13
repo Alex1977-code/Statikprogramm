@@ -122,14 +122,11 @@ def _elemente(model, stab: str, aktiv=None) -> list:
 
 def _n_elastisch(model, i: int, u: np.ndarray) -> float:
     """Elastische Normalkraft E A Δl / L des Stabelements i aus u - ohne
-    Anfangsdehnung, Temperatur oder Verriegelung (die zaehlt der Aufrufer)."""
-    e = model.elements[i]
-    kl, _T3, T, _L = asm.beam_local(model, e)
-    ul = T @ np.asarray(u, float)[asm.element_dofs(e, model)[:12]]
-    A = asm.beam_versatz(e)
-    if A is not None:
-        ul = A @ ul
-    return float((kl @ ul)[6])
+    Anfangsdehnung, Temperatur oder Verriegelung (die zaehlt der Aufrufer).
+    Dieselbe Funktion wie geometrische Steifigkeit und Ausfall-Iteration
+    (asm.stab_normalkraft, 13.10.2026); bis dahin (k u)[6] - dieselbe Zahl bis
+    auf die letzte Stelle."""
+    return float(asm.stab_normalkraft(model, model.elements[i], u))
 
 
 def _u_voll(model, res) -> np.ndarray:
