@@ -354,6 +354,15 @@ class FatigueVolumen:
     D_je_element: object = None
     #: Siehe FatigueMember.fehlende_lasten
     fehlende_lasten: list = field(default_factory=list)
+    #: Netzabhaengige Spannungsspitzen (seit 10.10.2026, Plan Singularitaeten
+    #: Paket 2): Orte an Elementen der Zonen auffaelliger Stellen gehen nicht
+    #: in D, dsig_max und die Stellen der Lasten ein - sie sind nur berichtet,
+    #: mit ihrer Spitze hier (Zahl der Orte, groesstes D und Delta_sigma, Ort).
+    zone_n: int = 0
+    zone_D: float = 0.0
+    zone_dsig: float = 0.0
+    zone_element: int = -1
+    zone_knoten: int = -1
 
     def status(self) -> str:
         return _status(self)
@@ -468,6 +477,10 @@ class FatigueResults:
         teil = [n for n, x in gefuehrt if getattr(x, "fehlende_lasten", None)]
         if teil:
             text += f"; unvollständig (Ergebnis einer Last fehlt): {_aufzaehlen(teil)}"
+        zonen = [v for v in self.volumen.values() if getattr(v, "zone_n", 0)]
+        if zonen:
+            text += ("; netzabhängige Stellen nur berichtet: "
+                     + _aufzaehlen([f"Volumen {v.name} (D bis {v.zone_D:.3f})" for v in zonen]))
         if ohne:
             text += f"; ohne wirksame Ermüdungslast: {_aufzaehlen(ohne)}"
         return text
@@ -506,6 +519,11 @@ class FatigueResults:
                          ort(v, (f"Knoten {v.knoten + 1}" if getattr(v, "regel", "element") == "knoten"
                                  and getattr(v, "knoten", -1) >= 0 else f"Element {v.element}")
                              + (" (Naht)" if v.naht else ""))])
+            if getattr(v, "zone_n", 0):
+                # die Zone steht getrennt da, nicht verschwiegen
+                rows.append([f"Volumen {v.name} (netzabhängige Stellen)", kf, f"{v.gamma_Mf:.2f}",
+                             f"{v.zone_dsig/1e6:.1f}", "–", f"{v.zone_D:.3f}", "–", "–",
+                             f"{v.zone_n} Orte – {VERMERK_ZONE}: nur berichtet"])
         return rows
 
     def util_by_element(self, model: Model) -> dict:
@@ -881,6 +899,21 @@ def _benutzte_zustaende(model: Model, all_res: dict, ds) -> list:
     return list(dict.fromkeys(namen))
 
 
+#: Vermerk an den Orten in den Zonen auffaelliger netzabhaengiger Stellen
+VERMERK_ZONE = "netzabhängig, nicht für den Nachweis"
+
+
+def _aussen_argmax(werte, zone) -> int:
+    """argmax ueber die Orte ausserhalb der Zonen (``zone`` bool je Ort oder
+    None); -1, wenn alle Orte in Zonen liegen."""
+    werte = np.asarray(werte, float)
+    if zone is None or not zone.any():
+        return int(np.argmax(werte))
+    if zone.all():
+        return -1
+    return int(np.argmax(np.where(zone, -np.inf, werte)))
+
+
 def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                         bezug: float, progress=None) -> None:
     """Ermuedungsnachweis der Volumenkoerper mit Kerbfall.
@@ -913,6 +946,16 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
     regel = str(getattr(ds, "ermuedung_volumen", "knoten") or "knoten")
     n_el = len(model.elements)
     benutzt = _benutzte_zustaende(model, all_res, ds)
+    # Zonen auffaelliger netzabhaengiger Stellen (seit 10.10.2026, Plan
+    # Singularitaeten Paket 2) ueber alle benutzten Zustaende: ihre Elemente
+    # und deren Knoten sind nur berichtet
+    from .. import spitzenanzeige as _sa
+    zone_el: set = set()
+    for z in _sa.nachweis_zonen(model, {n: all_res[n] for n in benutzt}).values():
+        zone_el.update(z)
+    zone_kn = (np.unique(np.concatenate([np.asarray(model.elements[e].nodes, np.int64)
+                                         for e in zone_el if 0 <= e < n_el]))
+               if zone_el else np.zeros(0, np.int64))
     # Knoten an verschweissten Beruehrungsstellen - nur gebraucht, wenn ein
     # Koerper dort einen eigenen Kerbfall traegt
     knoten = nahtknoten(model) if any(float(getattr(k, "kerbfall_naht", 0.0) or 0.0) > 0
@@ -1023,11 +1066,16 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
 
             def ort(j):
                 return (int(element_je_ort[j]), int(orte["knoten"][j]))
+            zone_ort = np.isin(orte["knoten"], zone_kn) if len(zone_kn) else None
         else:
             n_ort = len(idx)
 
             def ort(j):
                 return (idx[j],)
+            zone_ort = (np.isin(np.asarray(idx, np.int64), np.fromiter(zone_el, np.int64))
+                        if zone_el else None)
+        if zone_ort is not None and not zone_ort.any():
+            zone_ort = None
 
         def signal(name):
             s = signale.get(name)
@@ -1073,17 +1121,20 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                     D += wdh / _n_vektor(d, cat, gMf)
                     dsig = np.maximum(dsig, d)
                     stufen.append((d, wdh))
-                    j = int(np.argmax(d))
-                    fv.ranges.append((float(d[j]), wdh, fl.name) + ort(j))
+                    j = _aussen_argmax(d, zone_ort)
+                    if j >= 0:
+                        fv.ranges.append((float(d[j]), wdh, fl.name) + ort(j))
                 else:
                     gross, jg = 0.0, 0
+                    if zone_ort is not None and not zone_ort.all():
+                        jg = int(np.argmin(zone_ort))         # der erste Ort ausserhalb
                     for r in range(n_ort):
                         for h, z in _zaehlen(V[r], verfahren):
                             D[r] += z * wdh / sn_life(h, float(cat[r]), gMf)
                             extra.setdefault(r, []).append((h, z * wdh))
                             if h > dsig[r]:
                                 dsig[r] = h
-                            if h > gross:
+                            if h > gross and (zone_ort is None or not zone_ort[r]):
                                 gross, jg = h, r
                     n_g = sum(z for h, z in extra.get(jg, []) if h == gross)
                     fv.ranges.append((float(gross), float(n_g), fl.name) + ort(jg))
@@ -1109,8 +1160,9 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             D += spiele / _n_vektor(d, cat, gMf)
             dsig = np.maximum(dsig, d)
             stufen.append((d, spiele))
-            j = int(np.argmax(d))
-            fv.ranges.append((float(d[j]), spiele, fl.name) + ort(j))
+            j = _aussen_argmax(d, zone_ort)
+            if j >= 0:
+                fv.ranges.append((float(d[j]), spiele, fl.name) + ort(j))
             beitrag = True
         fv.regel = "knoten" if orte is not None else "element"
         if not beitrag:
@@ -1126,11 +1178,38 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 # Zusammenfassung muss den Koerper nennen koennen.
                 out.ohne_wirksame_last.append(f"Volumen {k.name}")
             continue
-        j = int(np.argmax(D))
+        j = _aussen_argmax(D, zone_ort)
+        zonentext = ""
+        if zone_ort is not None:
+            # Die Zone steht getrennt da, nicht verschwiegen: ihre Spitze und
+            # wo sie liegt
+            jz = int(np.argmax(np.where(zone_ort, D, -np.inf)))
+            fv.zone_n = int(zone_ort.sum())
+            fv.zone_D = float(D[jz])
+            fv.zone_dsig = float(dsig[zone_ort].max())
+            oz = ort(jz)
+            fv.zone_element = int(oz[0])
+            fv.zone_knoten = int(oz[1]) if len(oz) > 1 else -1
+            wo = f"Knoten {fv.zone_knoten + 1}" if fv.zone_knoten >= 0 else f"Element {fv.zone_element}"
+            zonentext = (f"{fv.zone_n} {'Ort liegt' if fv.zone_n == 1 else 'Orte liegen'} in "
+                         "netzabhängigen Stellen (Zonen auffälliger Stellen, an denen Kraft ohne "
+                         "Auflagefläche in das Volumen geht) und "
+                         f"{'ist' if fv.zone_n == 1 else 'sind'} nur berichtet: dort D bis "
+                         f"{fv.zone_D:.3f} und Δσ bis {fv.zone_dsig / 1e6:.1f} N/mm² ({wo}) – "
+                         f"{VERMERK_ZONE}.")
+        if j < 0:
+            fv.fehler = ("alle Orte des Körpers liegen in netzabhängigen Stellen - nur berichtet. "
+                         + zonentext)
+            fv.elemente = idx
+            fv.warnings.extend(hinweise)
+            out.volumen[k.name] = fv
+            continue
         fv.D = float(D[j])
         fv.category = float(cat[j])
         fv.naht = bool(an_naht[j])
-        fv.dsig_max = float(dsig.max())
+        fv.dsig_max = float(dsig.max() if zone_ort is None else dsig[~zone_ort].max())
+        if zonentext:
+            hinweise.append(zonentext + f" Maßgebend außerhalb: D = {fv.D:.3f}.")
         fv.kollektiv = kollektiv([(float(d[j]), n) for d, n in stufen] + list(extra.get(j, [])))
         fv.dsig_E2 = equivalent_range(fv.kollektiv)
         fv.util = fv.D

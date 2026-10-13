@@ -145,6 +145,16 @@ class VolumenCheck:
     #: 1 Volumenbereiche“ statt „Alle Nachweise erfüllt.“, mit dem
     #: ausgeschalteten allein ebenso, obwohl kein Nachweis lief (Befund B058).
     ausgeschaltet: bool = False
+    #: Netzabhaengige Spannungsspitzen (seit 10.10.2026, Plan Singularitaeten
+    #: Paket 2): Elemente des Bereichs in den Zonen auffaelliger Stellen
+    #: (spitzenstellen.zonen_elemente des Ergebnisses) gehen nicht in ``util``
+    #: ein, sie sind nur berichtet - mit ihrer Spitze hier. Ergebnisdateien
+    #: von davor kennen die Felder nicht; es gelten die Klassenvorgaben.
+    zone_n: int = 0
+    zone_sigma_v: float = 0.0
+    zone_eta: float = 0.0
+    zone_element: int = -1
+    zone_kombination: str = ""
 
     def __setstate__(self, state):
         # Ergebnisdatei (ergebnisse.py, Pickle) von vor dem 23.09.2026: dort
@@ -210,6 +220,10 @@ class VolumenResults:
             s += f" - {len(fehler)} nicht geführt: " + ", ".join(fehler)
         if aus:
             s += f" - {len(aus)} ausgeschaltet: " + ", ".join(aus)
+        zonen = [c for c in self.bereiche.values() if getattr(c, "zone_n", 0)]
+        if zonen:
+            s += (" - netzabhängige Stellen nur berichtet: "
+                  + ", ".join(f"{c.name} (σ_v bis {c.zone_sigma_v / 1e6:.1f} N/mm²)" for c in zonen))
         return s
 
     def table(self) -> list[list]:
@@ -223,6 +237,11 @@ class VolumenResults:
                          f"{w.get('s1', 0) / 1e6:.1f}",
                          f"{w.get('s3', 0) / 1e6:.1f}",
                          f"{c.util:.3f}", c.kombination, c.status()])
+            if getattr(c, "zone_n", 0):
+                # die Zone steht getrennt da, nicht verschwiegen
+                rows.append([f"{c.name} (netzabhängige Stellen)", str(c.zone_n), c.material,
+                             f"{c.fy / 1e6:.0f}", f"{c.zone_sigma_v / 1e6:.1f}", "–", "–",
+                             f"{c.zone_eta:.3f}", c.zone_kombination, "nur berichtet"])
         return rows
 
 
@@ -426,6 +445,9 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
         "Norm": "DIN EN 1993-1-1, 6.2.1(5) (Vergleichsspannung nach von Mises)"},
         warnungen=warnungen)
     koerper = _koerper(model)
+    # Zonen auffaelliger netzabhaengiger Stellen je Ergebnis (seit 10.10.2026)
+    from .. import spitzenanzeige as _sa
+    zonen = _sa.nachweis_zonen(model, ergebnisse) if zu_pruefen else {}
     for i, (name, vb) in enumerate(model.volumenbereiche.items()):
         c = VolumenCheck(name, beschreibung=vb.beschreibung,
                          n_elemente=len(vb.elemente), singular=bool(vb.singular))
@@ -450,8 +472,26 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                         "der Nachweis braucht f_y")
             out.bereiche[name] = c
             continue
+        in_zone: set = set()
         for kname, res in ergebnisse.items():
-            werte = _elementspannungen(model, res, vb.elemente)
+            # Elemente in den Zonen auffaelliger Stellen (Kraft ohne
+            # Auflageflaeche, Plan Singularitaeten Paket 2): nur berichtet, mit
+            # ihrer Spitze getrennt - ihr Wert ist eine Eigenschaft des Netzes
+            zone = zonen.get(kname) or set()
+            elemente = vb.elemente
+            if zone:
+                innen = [e for e in vb.elemente if int(e) in zone]
+                elemente = [e for e in vb.elemente if int(e) not in zone]
+                in_zone.update(int(e) for e in innen)
+                zw = _elementspannungen(model, res, innen) if innen else []
+                if zw:
+                    zsv = [vergleichsspannung(x) for _e, x, _pt in zw]
+                    jz = int(np.argmax(zsv))
+                    eta_z = zsv[jz] / (c.fy / ds.gamma_M0)
+                    if eta_z >= c.zone_eta:
+                        c.zone_eta, c.zone_sigma_v = float(eta_z), float(zsv[jz])
+                        c.zone_element, c.zone_kombination = int(zw[jz][0]), kname
+            werte = _elementspannungen(model, res, elemente) if elemente else []
             if not werte:
                 continue
             svs = np.array([vergleichsspannung(sp) for _e, sp, _pt in werte])
@@ -467,6 +507,21 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
             if d["eta"] >= c.util:
                 c.util, c.kombination, c.element, c.werte = (
                     d["eta"], kname, el, d)
+        c.zone_n = len(in_zone)
+        zonentext = ""
+        if c.zone_n:
+            zonentext = (
+                f"{anzahl(c.zone_n, 'Element', 'Elemente')} des Bereichs "
+                f"{'liegt' if c.zone_n == 1 else 'liegen'} in netzabhängigen Stellen (Zonen "
+                "auffälliger Stellen, an denen Kraft ohne Auflagefläche in das Volumen geht) und "
+                f"{'ist' if c.zone_n == 1 else 'sind'} nur berichtet: dort σ_v bis "
+                f"{c.zone_sigma_v / 1e6:.1f} N/mm², η = {c.zone_eta:.3f} ({c.zone_kombination}, "
+                f"Element {c.zone_element + 1}) – netzabhängig, nicht für den Nachweis.")
+        if not c.je_kombination and c.zone_n:
+            c.fehler = ("alle Elemente des Bereichs liegen in netzabhängigen Stellen - "
+                        "nur berichtet. " + zonentext)
+            out.bereiche[name] = c
+            continue
         if not c.je_kombination:
             c.fehler = ("keine Volumenspannungen in den Ergebnissen - "
                         "wurde mit Volumenelementen gerechnet?" if ergebnisse else
@@ -515,6 +570,8 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                     "mindestens drei Elemente über den Radius liegen "
                     f"(h ≤ {vb.ausrundung / 3 * 1e3:.1f} mm). Das Netz ist dort "
                     "zu grob, die Spitzenspannung wird unterschätzt.")
+        if zonentext:
+            c.hinweise.append(zonentext + f" Der Nachweis gilt außerhalb: η = {c.util:.3f}.")
         if c.singular:
             c.hinweise.append(
                 "Der Bereich ist als singulär gekennzeichnet: die Spannungen "

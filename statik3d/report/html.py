@@ -35,6 +35,7 @@ from .. import __version__
 from ..model import ACTION_CATEGORIES, DOF_NAMES, Combination
 from .. import elemente as _EL
 from .. import begriffe as _BG
+from .. import spitzenanzeige as _SA
 from ..combinations import combination_table
 from . import svg as sv
 
@@ -1733,6 +1734,11 @@ class Report:
                          fmt(w.get("h", 0.0), 2),
                          ("–" if c.singular or c.ausgeschaltet else Util(c.util)),
                          c.kombination, c.status()])
+            if getattr(c, "zone_n", 0):
+                # netzabhaengige Stellen: getrennt, nur berichtet (10.10.2026)
+                rows.append([f"{c.name} (netzabhängige Stellen)", str(c.zone_n), c.material, "–",
+                             fmt(c.fy / 1e6, 0), fmt(c.zone_sigma_v / 1e6, 1), "–", "–", "–",
+                             fmt(c.zone_eta, 3), c.zone_kombination, "nur berichtet"])
         b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
                   None, "t ist die Erzeugnisdicke für die Abminderung von f_y "
                   "nach EN 1993-1-1 Tab. 3.1; ohne * die kleinste Abmessung "
@@ -1794,6 +1800,11 @@ class Report:
                     else Util(c.util)),
                    ("Vergleich nach Tresca (σ_1−σ_3)/f_yd",
                     fmt(w.get("eta_tresca", 0.0), 3))]
+            if getattr(c, "zone_n", 0):
+                kv.append(("netzabhängige Stellen (nur berichtet)",
+                           f"{c.zone_n} Elemente, σ_v bis {fmt(c.zone_sigma_v / 1e6, 1)} N/mm², "
+                           f"η = {fmt(c.zone_eta, 3)} ({c.zone_kombination}, Element "
+                           f"{c.zone_element + 1}) – {_SA.VERMERK}"))
             if "ausrundung" in w:
                 kv.append(("Kerbradius / mittlere Elementgröße",
                            f"{w['ausrundung'] * 1e3:.1f} / "
@@ -2271,6 +2282,11 @@ class Report:
             nv = res.node_vm
             if nv is not None and np.any(np.isfinite(nv)):
                 vm = fmt(np.nanmax(nv) / 1e6, 1)
+                # mit auffaelligen netzabhaengigen Stellen das Maximum
+                # ausserhalb ihrer Zonen (Stern, Fussnote unter der Tabelle)
+                u = _SA.uebersicht(self.model, res)
+                if u is not None and u["sv"] is not None:
+                    vm = fmt(u["sv"][0] / 1e6, 1) + "*"
         except Exception:
             pass
         ct = "–"
@@ -2301,7 +2317,17 @@ class Report:
                 kv.append(("max. Verdrehung", f"{fmt(rm[j] * 1e3, 3)} mrad am Knoten {j}"))
         try:
             nv = res.node_vm
-            if nv is not None and np.any(np.isfinite(nv)):
+            u = _SA.uebersicht(self.model, res)
+            if u is not None and u["sv"] is not None:
+                v, k, bt = u["sv"]
+                kv.append(("max. Vergleichsspannung (Knotenmittel) außerhalb der netzabhängigen "
+                           "Stellen", f"{fmt(v / 1e6, 1)} N/mm² am Knoten {k}" + (f" ({bt})" if bt else "")))
+                sp_ = u["spitze"]
+                kv.append((f"in netzabhängigen Stellen ({sp_['n']})",
+                           f"σ_v bis {fmt(sp_['sv'] / 1e6, 1)} N/mm² an den Integrationspunkten"
+                           + (f", ε_p bis {fmt(sp_['eps_p'] * 100, 2)} %" if sp_["eps_p"] > 0 else "")
+                           + f" – {_SA.VERMERK}"))
+            elif nv is not None and np.any(np.isfinite(nv)):
                 k = int(np.nanargmax(nv))
                 kv.append(("max. Vergleichsspannung (Knotenmittel)",
                            f"{fmt(nv[k] / 1e6, 1)} N/mm² am Knoten {k}"))
@@ -2373,16 +2399,83 @@ class Report:
             # Element eigvalsh in Python - 38 s je Ergebnis am Drehlager (12.09.2026)
             from .. import spannungen as spn
             ids = list(so)
+            # ohne die Elemente der Zonen auffaelliger Stellen (seit 10.10.2026);
+            # ihre Spitze steht in einer eigenen Zeile
+            zone = set(int(i) for i in _SA.zonen_elemente(res).tolist())
+            if zone and len(zone) < len(ids):
+                ids = [i for i in ids if int(i) not in zone]
+            else:
+                zone = set()
             S = np.array([so[i] for i in ids], float).reshape(-1, 6)
             sv = spn.volumen_werte(S, "sv")
             s1 = spn.volumen_werte(S, "s1")
             s3 = spn.volumen_werte(S, "s3")
             k_v, k_1, k_3 = int(np.argmax(sv)), int(np.argmax(s1)), int(np.argmin(s3))
+            zus = " außerhalb der netzabhängigen Stellen" if zone else ""
             rows = [["Größe", "Wert [N/mm²]", "Element"],
-                    ["max. Vergleichsspannung σ_v", fmt(float(sv[k_v]) / 1e6, 1), str(ids[k_v])],
-                    ["max. Hauptspannung σ_1", fmt(float(s1[k_1]) / 1e6, 1), str(ids[k_1])],
-                    ["min. Hauptspannung σ_3", fmt(float(s3[k_3]) / 1e6, 1), str(ids[k_3])]]
+                    ["max. Vergleichsspannung σ_v" + zus, fmt(float(sv[k_v]) / 1e6, 1), str(ids[k_v])],
+                    ["max. Hauptspannung σ_1" + zus, fmt(float(s1[k_1]) / 1e6, 1), str(ids[k_1])],
+                    ["min. Hauptspannung σ_3" + zus, fmt(float(s3[k_3]) / 1e6, 1), str(ids[k_3])]]
+            sp_ = _SA.spitze(res) if zone else None
+            if sp_ is not None:
+                rows.append(["σ_v in netzabhängigen Stellen (Integrationspunkte)",
+                             fmt(sp_["sv"] / 1e6, 1),
+                             f"{sp_['stelle_sv'].get('sv_element', '–')} – {_SA.VERMERK}"])
             b.append(("table", rows, f"Spannungen der Volumenelemente {name}", None, ""))
+        return b
+
+    def _spitzen_bloecke(self) -> list:
+        """Abschnitt „Netzabhängige Spannungsspitzen“ (seit 10.10.2026, Plan
+        Singularitaeten Paket 2): je auffaelliger Stelle eine Zeile mit dem
+        Ergebnis, in dem ihr sigma_v am groessten ist. Leer ohne auffaellige
+        Stelle - dann bleibt der Bericht, wie er war."""
+        je: dict = {}
+        for name, res in self.all_results():
+            for s in _SA.auffaellige(res):
+                key = (s.get("nr"), s.get("name"))
+                alt = je.get(key)
+                if alt is None:
+                    je[key] = [s, name, [name]]
+                    continue
+                alt[2].append(name)
+                if float(s.get("sv_max", 0.0) or 0.0) > float(alt[0].get("sv_max", 0.0) or 0.0):
+                    alt[0], alt[1] = s, name
+        if not je:
+            return []
+        b = [self._h(2, _SA.TITEL)]
+        b.append(("p", "An diesen Stellen geht Kraft ohne Auflagefläche in ein Volumen – etwa über eine "
+                       "starre Scheibe, die nur den Lochrand koppelt, oder ein Stabende an wenigen "
+                       "Netzknoten. Dort wächst die Spannung mit jeder Netzverfeinerung; ihr "
+                       "Spitzenwert ist eine Eigenschaft des Netzes und keine Nachweisgröße. "
+                       "Gekennzeichnet sind nur die auffälligen Stellen: σ_v ≥ 2·f_y in der Zone "
+                       "oder die Kraft über die Fläche der Stelle F/(A·f_y) ≥ 1. Die Zone sind die "
+                       "Elemente im Umkreis von vier Elementkanten oder dem Radius der Stelle um "
+                       "ihre Knoten; σ_v ist der größte Wert an den Integrationspunkten der Zone, "
+                       "ε_p die größte plastische Vergleichsdehnung. Die Werte bleiben stehen, "
+                       "gelten aber nicht für den Nachweis: Übersicht, Volumennachweis und Ermüdung "
+                       "nehmen die Zonen aus ihrem Maximum und nennen sie als „nur berichtet“."))
+        rows = [["Rang", "Ort", "Bauteil", "Ursache", "Kraft [kN]", "σ_v [N/mm²]", "ε_p [%]",
+                 "Elemente der Zone", "Volumen der Zone [cm³]", "Ergebnis", "Vermerk"]]
+        reihe = sorted(je.values(), key=lambda v: (-(v[0].get("sv_fy") or 0.0),
+                                                   -float(v[0].get("sv_max", 0.0) or 0.0)))
+        for i, (s, name, namen) in enumerate(reihe, 1):
+            x, y, z = (float(c) for c in (s.get("mitte") or (0.0, 0.0, 0.0)))
+            F = s.get("kraft")
+            rows.append([str(i), f"{s.get('name', '')} (x {fmt(x, 3)}, y {fmt(y, 3)}, z {fmt(z, 3)} m)",
+                         _SA.bauteil(s), _SA.ursache(s),
+                         fmt(F / 1e3, 1) if F is not None else "–",
+                         fmt(float(s.get("sv_max", 0.0)) / 1e6, 1),
+                         fmt(float(s.get("eps_p_max", 0.0)) * 100, 2),
+                         str(len(s.get("zone", []))), fmt(float(s.get("zone_volumen", 0.0)) * 1e6, 1),
+                         name + (f" (gekennzeichnet in {len(namen)} Ergebnissen)" if len(namen) > 1 else ""),
+                         _SA.VERMERK])
+        rows, note = self._truncate(rows)
+        b.append(("table", rows, f"{_SA.TITEL}: auffällige Stellen, je Stelle das Ergebnis mit dem "
+                                 "größten σ_v", None, "compact"))
+        if note:
+            b.append(("note", note))
+        self._warnings.append(f"{len(je)} netzabhängige Spannungsspitzen gekennzeichnet (Kraft ohne "
+                              f"Auflagefläche) – {_SA.VERMERK}; siehe Abschnitt „{_SA.TITEL}“")
         return b
 
     def _member_envelope(self, env, member):
@@ -2429,6 +2522,14 @@ class Report:
                                  "Reaktionen vom Lager auf das Tragwerk)", None, "compact"))
         if note:
             b.append(("note", note))
+        spitzen = [_SA.spitze(r) for _n, r in allres]
+        spitzen = [x for x in spitzen if x is not None]
+        if spitzen:
+            gross = max(spitzen, key=lambda x: x["sv"])
+            b.append(("note", "* max σ_v außerhalb der netzabhängigen Spannungsspitzen; dort bis "
+                              f"{fmt(gross['sv'] / 1e6, 1)} N/mm² an den Integrationspunkten "
+                              f"({_SA.bauteil(gross['stelle_sv'])}) – {_SA.VERMERK}, siehe "
+                              f"Abschnitt „{_SA.TITEL}“."))
         gname, gres = self._governing_result()
         if self.opt("figures") and gres is not None and m.nn:
             views = self._views()
@@ -2440,6 +2541,8 @@ class Report:
             b.append(self._figure(svg_text, f"Verformte Lage für {gname} (Ausgangslage "
                                             "gestrichelt, Farbe: Verschiebungsbetrag)"
                                   + sv.figur_hinweis(m)))
+        # ---- Netzabhaengige Spannungsspitzen (seit 10.10.2026)
+        b.extend(self._spitzen_bloecke())
         # ---- Lastfaelle
         if self.opt("results_cases") and self.cases and int(self.opt("max_detail_cases") or 0) > 0:
             b.append(self._h(2, "Ergebnisse je Lastfall"))
@@ -3856,6 +3959,12 @@ class Report:
             von = f" ({fv.n_elemente} Elemente)" if knotenregel(fv) else f" von {fv.n_elemente}"
             rows.append(zeile + [stelle(fv) + (" an der Naht" if fv.naht else "")
                                  + von + _ermuedung_unvollstaendig(fv)])
+            if getattr(fv, "zone_n", 0):
+                # netzabhaengige Stellen: getrennt, nur berichtet (10.10.2026)
+                rows.append([f"{fv.name} (netzabhängige Stellen)", kf, fv.konzept or "–",
+                             fmt(fv.gamma_Mf, 2), fmt(fv.zone_dsig / 1e6, 1), "–", fmt(fv.zone_D, 3),
+                             "nur berichtet"] + (["–"] if jahre else [])
+                            + [f"{fv.zone_n} Orte – {_SA.VERMERK}"])
         b.append(("table", rows, "Ermüdungsnachweis je Volumenkörper", None, ""))
         for fv in f.volumen.values():
             b.append(self._h(3, f"Volumen {fv.name}"))
@@ -3890,6 +3999,12 @@ class Report:
                    f"{0.549 * 0.737 * fv.category / fv.gamma_Mf / 1e6:.1f} MPa"),
                   ("Schädigung D an der maßgebenden Stelle", f"{fmt(fv.D, 4)} ({stelle(fv)})"),
                   ("Ausnutzung D", Util(fv.util))]
+            if getattr(fv, "zone_n", 0):
+                wo = (f"Knoten {fv.zone_knoten + 1}" if getattr(fv, "zone_knoten", -1) >= 0
+                      else f"Element {fv.zone_element}")
+                kv.append(("netzabhängige Stellen (nur berichtet)",
+                           f"{fv.zone_n} Orte, D bis {fmt(fv.zone_D, 4)}, Δσ bis "
+                           f"{fmt(fv.zone_dsig / 1e6, 1)} N/mm² ({wo}) – {_SA.VERMERK}"))
             if np.isfinite(getattr(fv, "jahre", np.inf)) and getattr(fv, "bezugsjahre", 0) > 0:
                 kv.append(("Rechnerische Lebensdauer",
                            f"{fmt(fv.bezugsjahre, 0)} a / D = {fmt(fv.jahre, 0)} a"))

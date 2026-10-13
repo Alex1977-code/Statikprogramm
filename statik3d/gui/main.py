@@ -67,6 +67,7 @@ from . import layer as lyr
 from . import skizze as skg
 from .. import skizze as sk
 from .. import spannungen as spn
+from .. import spitzenanzeige as sa
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
 #: Daten-Rolle der langen Form eines Eintrags der Ergebnisauswahl (Teilpaket
@@ -12538,6 +12539,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.cb_diagram.setCurrentIndex(i)     # zeichnet neu
                 self.info(f"Schnittgrößenverlauf {wert}")
             return
+        if art == "spitze":
+            return self._spitze_zeigen(int(wert or 0))
         if art == "nachweis":
             tabelle = self.NACHWEIS_TABELLE.get(wert)
             if tabelle and self.tabelle_zeigen(tabelle):
@@ -13948,6 +13951,13 @@ class MainWindow(QtWidgets.QMainWindow):
         for art in spn.arten_im_ergebnis(self.model, self._spannungsergebnis()):
             out[spn.GRUPPE[art]] = [(text, einheit, spn.schluessel(art, g))
                                     for g, (text, einheit) in spn.GROESSEN[art].items()]
+        # Netzabhaengige Spannungsspitzen des gezeigten Ergebnisses (seit
+        # 10.10.2026): je auffaelliger Stelle Bauteil, Ursache, Kraft, sigma_v
+        # und eps_p; ein Klick fuehrt zur Stelle
+        if r is not None and passt != "anders":
+            eintr = sa.baum_eintraege_fuer(sa.stellen_zum_zeigen(r, an))
+            if eintr:
+                out[sa.TITEL] = eintr
         sing = self.singularitaeten()
         if sing:
             out["Freie Bewegungen"] = [
@@ -16883,6 +16893,17 @@ class MainWindow(QtWidgets.QMainWindow):
             "„u gesamt“ nur das Maximum")
         self.cb_extremmarken.toggled.connect(self.redraw)
         lay.addWidget(row(self.cb_verlaufswerte, self.cb_extremmarken))
+        # Netzabhaengige Spannungsspitzen (seit 10.10.2026, Plan Singularitaeten
+        # Paket 2): die Zonen der auffaelligen Stellen umranden, mit Zeichen
+        self.cb_spitzenzonen = QtWidgets.QCheckBox("Netzabhängige Stellen kennzeichnen")
+        self.cb_spitzenzonen.setChecked(True)
+        self.cb_spitzenzonen.setToolTip(
+            "Die Zonen der auffälligen Stellen, an denen Kraft ohne Auflagefläche in ein Volumen "
+            "geht, umranden und an der Stelle ein Zeichen mit σ_v setzen. Legende, Marken und "
+            "Kennwerte nehmen ihr Maximum immer außerhalb dieser Zonen; die Spitze steht getrennt "
+            "daneben (netzabhängig, nicht für den Nachweis)")
+        self.cb_spitzenzonen.toggled.connect(self.redraw)
+        lay.addWidget(self.cb_spitzenzonen)
         self.cb_mode = QtWidgets.QComboBox()
         self.cb_mode.currentIndexChanged.connect(self.redraw)
         # die Glasleiste fuehrt die Formen mit (24.09.2026)
@@ -18538,7 +18559,9 @@ class MainWindow(QtWidgets.QMainWindow):
                            (w.get("h", 0.0) if w else ""),
                            (c.util if c is not None and not c.singular else ""),
                            (c.kombination if c is not None else ""),
-                           (c.status() if c is not None else "nicht gerechnet")])
+                           ((c.status() + ("; netzabhängige Stellen nur berichtet"
+                                           if getattr(c, "zone_n", 0) else ""))
+                            if c is not None else "nicht gerechnet")])
         self._fill(self.tbl_vol, zeilen)
 
     def _tabelle_beulfeld(self, wert):
@@ -26065,6 +26088,8 @@ class MainWindow(QtWidgets.QMainWindow):
         point_scalars = cell_scalars = ps_wahr = None
         name = titel = ""
         clim = None
+        # netzabhaengige Spannungsspitzen zur Faerbung (seit 10.10.2026)
+        self._spitzen_feld = None
         farben, balken = {}, {}
         sicht_knoten = self._sichtbare_knoten()          # None = alle
         sicht_maske = None
@@ -26098,6 +26123,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if point_scalars is not None and faktor_e != 1.0:
                 point_scalars = np.asarray(point_scalars, float) * faktor_e
             ps_wahr = point_scalars
+            # Auffaellige netzabhaengige Stellen (seit 10.10.2026, Plan
+            # Singularitaeten Paket 2): Skala, Marken und Kennwerte aus den
+            # Knoten ausserhalb ihrer Zonen, die Spitze getrennt daneben
+            einheit_l = titel[titel.rfind("[") + 1:-1] if titel.endswith("]") and "[" in titel else ""
+            self._spitzen_feld = self._spitzen_fuer_feld(m, r, field, faktor_e, einheit_l, ps_wahr)
+            if self._spitzen_feld is not None:
+                ohne = ~self._spitzen_feld["zk"]
+                sicht_maske = ohne if sicht_maske is None else (sicht_maske & ohne)
             klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
             if point_scalars is not None and klassen:
                 # Groesse in Klassen (Kontaktzustand): feste Farben, Beschriftung
@@ -26131,6 +26164,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     balken = {"n_labels": skala["n_labels"], "fmt": spn.skalenformat(*clim)}
                     if skala["above_label"]:
                         balken["above_label"] = skala["above_label"]
+                    zk_ = (self._spitzen_feld or {}).get("zk")
+                    if zk_ is not None and not farben.get("above_color") and not skala.get("nur_ueber"):
+                        # Knoten der Zonen ueber der Skala: eigene Farbe, nicht
+                        # die oberste der Skala (die gilt ausserhalb)
+                        zw = np.asarray(skala["werte"], float)[zk_]
+                        if np.isfinite(zw).any() and float(np.nanmax(zw)) > clim[1]:
+                            farben["above_color"] = vp.FARBE_SPITZE
+                            balken["above_label"] = "netzabh."
                     if skala["below_label"]:
                         balken["below_label"] = skala["below_label"]
                     # mit dem Titel der Legende: Zahl und Einheit passen
@@ -26267,6 +26308,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(r, "contact", None) and getattr(self, "act_kontaktmarken", None) is not None \
                     and self.act_kontaktmarken.isChecked():
                 vp.add_contact_markers(self.plotter, m, r.contact, size)
+            self._spitzen_zeichnen(m, r, lage, ausser)
 
         sichtbare_knoten = self._sichtbare_knoten()      # None = alle
         try:
@@ -26340,6 +26382,122 @@ class MainWindow(QtWidgets.QMainWindow):
         return r
 
     # ---- Ergebnisdarstellung: Marken und Verlauf (Paket 6b, 25.09.2026) --
+    def _spitzen_fuer_feld(self, m, r, field: str, faktor: float, einheit: str, werte=None):
+        """Zur Faerbung einer Volumenspannung oder der Vergleichsspannung eines
+        Ergebnisses mit auffaelligen netzabhaengigen Stellen (seit 10.10.2026,
+        Plan Singularitaeten Paket 2): {"zk": Maske der Knoten der Zonen,
+        "zeile": der Text der Spitze}. Legende, Skala, Marken und Kennwerte
+        nehmen ihr Maximum ausserhalb der Zonen, die Spitze steht getrennt
+        daneben - fuer sigma_v der Wert an den Integrationspunkten (Paket 1,
+        sv_max), nicht der Elementwert. Sonst None."""
+        ak = spn.feld(field)
+        if not (field.startswith("Vergleich") or (ak is not None and ak[0] == "volumen")):
+            return None
+        if r is None or getattr(self, "_ergebnis_veraltet", False):
+            return None
+        zk = sa.zonenknoten(m, r, self.analysis)
+        sp_ = sa.spitze(r, self.analysis)
+        if zk is None or sp_ is None or len(zk) != m.nn:
+            return None
+        if field.startswith("Vergleich") or ak[1] == "sv":
+            zeile = sa.legende_text(sp_, faktor, einheit)
+        else:
+            w = np.asarray(werte, float)[zk] if werte is not None and len(werte) == m.nn else np.zeros(0)
+            w = w[np.isfinite(w)]
+            if not len(w):
+                return None
+            zeile = (f"in netzabhängigen Stellen {spn.dezimal(float(w.min()))} … "
+                     f"{spn.dezimal(float(w.max()))} {einheit} (netzabhängig)")
+        return {"zk": zk, "zeile": zeile}
+
+    def _spitzen_zeichnen(self, m, r, lage, ausser=None) -> None:
+        """Netzabhaengige Spannungsspitzen ins Bild (seit 10.10.2026): die
+        Zonen der auffaelligen Stellen umrandet und mit Zeichen (Schalter
+        „Netzabhängige Stellen kennzeichnen“ der Ergebnisanzeige), dazu unter
+        der Farbskala getrennt die Spitze."""
+        self._spitzen_legende = ""
+        try:
+            spz = getattr(self, "_spitzen_feld", None)
+            if spz is not None:
+                self._spitzen_legende = spz["zeile"]
+                sk = self._farbskala()
+                text = vp.bildtext(spz["zeile"]).replace(" Stellen ", " Stellen\n", 1)
+                if sk.get("vertical", True):
+                    pos = (0.99, max(0.02, float(sk["position_y"]) - 0.01))
+                else:
+                    pos = (0.99, float(sk["position_y"]) + float(sk["height"]) + 0.01)
+                akt = self.plotter.add_text(text, position=pos, viewport=True,
+                                            font_size=self.SCHRIFT_KENNWERTE, color=vp.FARBE_SPITZE,
+                                            name="spitzen_legende")
+                tp = akt.GetTextProperty()
+                tp.SetJustificationToRight()
+                if sk.get("vertical", True):
+                    tp.SetVerticalJustificationToTop()
+            schalter = getattr(self, "cb_spitzenzonen", None)
+            if schalter is not None and not schalter.isChecked():
+                return
+            stellen = sa.stellen_zum_zeigen(r, self.analysis)
+            if stellen:
+                E = self._einheiten_modell()
+                f_, einheit = vp._einheit_umrechnen("N/mm²", E)
+                vp.add_spitzenzonen(self.plotter, m, stellen, lage=lage, faktor=f_, einheit=einheit,
+                                    textgroesse=int(m.bemassung_einstellungen().textgroesse),
+                                    ausser=ausser)
+        except Exception as ex:             # noqa: BLE001 - ein Zeichen darf die Ansicht nicht sperren
+            self.log.appendPlainText(f"Netzabhängige Stellen nicht gezeichnet: {ex}")
+
+    def _spitze_zeigen(self, nr: int):
+        """Eine netzabhaengige Spannungsspitze aus dem Ergebnisbaum: der Blick
+        geht auf die Stelle (die Blickrichtung bleibt), die Meldung nennt
+        Bauteil, Ursache, Kraft, sigma_v und eps_p mit dem Vermerk."""
+        r = self.current_result()
+        s = None
+        for x in sa.stellen_zum_zeigen(r, self.analysis):
+            if int(x.get("nr", -1)) == int(nr):
+                s = x
+        if s is None:
+            return self.info("Diese netzabhängige Stelle gibt es im gezeigten Ergebnis nicht (mehr)")
+        X = self._bildlage if getattr(self, "_bildlage", None) is not None else np.asarray(self.model.nodes, float)
+        kn = np.asarray(s.get("knoten", []), int)
+        kn = kn[(kn >= 0) & (kn < len(X))]
+        ziel = X[kn].mean(axis=0) if len(kn) else np.asarray(s.get("mitte"), float)
+        # Abstand: die gezeichnete Zone ganz im Blick - mit Ueberhoehung ist
+        # sie verzerrt (Drehlager: Ring 2,56 mm tief, x170 gezeichnet 0,43 m)
+        zk = sorted({int(n) for e in s.get("zone", []) if 0 <= int(e) < len(self.model.elements)
+                     for n in self.model.elements[int(e)].nodes if 0 <= int(n) < len(X)})
+        ausdehnung = float(np.linalg.norm(X[zk] - ziel, axis=1).max()) if zk else 0.0
+        try:
+            pos, blick, oben = self.plotter.camera_position
+            richtung = np.asarray(blick, float) - np.asarray(pos, float)
+            richtung = richtung / max(float(np.linalg.norm(richtung)), 1e-12)
+            weite = max(8.0 * float(s.get("zone_radius", 0.0) or 0.0), 3.0 * ausdehnung, 1e-3)
+            self.plotter.camera_position = [(ziel - richtung * weite).tolist(), ziel.tolist(), list(oben)]
+            self._kamera_steht = True
+            self.plotter.render()
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Netzabhängige Stelle: {ex}")
+        text, zusatz, _s = sa.baum_eintraege_fuer([s])[0]
+        return self.info(f"{sa.TITEL}: {text} – {zusatz}; {sa.VERMERK}")
+
+    def _spitzen_nachholen(self, an) -> None:
+        """Ergebnisdatei von vor dem 10.10.2026: die Kennzeichnung
+        netzabhaengiger Spannungsspitzen aus dem gespeicherten Ergebnis
+        nachholen (spitzenstellen.nachholen, ohne Rechnung) - sonst
+        erschiene sie erst nach einer neuen Rechnung."""
+        try:
+            from .. import spitzenstellen as sp
+            t0 = time.time()
+            n = sp.nachholen(self.model, an)
+        except Exception as ex:             # noqa: BLE001 - die Kennzeichnung ist Beiwerk
+            self.log.appendPlainText(f"Netzabhängige Spannungsspitzen nicht nachgeholt: {ex}")
+            return
+        if n:
+            k = max((len(sa.auffaellige(r)) for r in an.all_results().values()), default=0)
+            self.log.appendPlainText(
+                f"Netzabhängige Spannungsspitzen nachgeholt für {bg.anzahl(n, 'Ergebnis', 'Ergebnisse')} "
+                f"(Ergebnisdatei von vor dem 10.10.2026, {time.time() - t0:.1f} s): bis "
+                f"{bg.anzahl(k, 'auffällige Stelle', 'auffällige Stellen')} je Ergebnis")
+
     def _marke(self, punkt, text: str, farbe: str, name: str) -> None:
         """Eine Marke mit Punkt und Schild - fuer Max/Min an der Extremstelle."""
         try:
@@ -26884,7 +27042,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # dieselbe Ausnutzung wie die Faerbung
             zeilen = vp.kennwerte(self.model, r, self._util_map(feld),
                                   self.cb_diagram.currentText(), knoten=sicht, elemente=elemente,
-                                  feld=feld, seite=seite)
+                                  feld=feld, seite=seite,
+                                  spitzen=getattr(self, "_spitzen_feld", None))
             if sicht is not None and zeilen:
                 zeilen.insert(0, "nur sichtbare Teile")
         except Exception as ex:             # noqa: BLE001
@@ -28318,6 +28477,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.hinweis(f"Ergebnisdatei nicht geladen ({os.path.basename(epfad)}): {passt_nicht} – "
                              "bitte neu rechnen")
             if an is not None:
+                self._spitzen_nachholen(an)
                 self._solve_done("all", an)
                 self.info(f"Ergebnisse geladen: {bg.anzahl(len(an.cases), 'Lastfall', 'Lastfälle')}, "
                           f"{bg.anzahl(len(an.combinations), 'Kombination', 'Kombinationen')} "

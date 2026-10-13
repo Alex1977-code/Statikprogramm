@@ -4935,6 +4935,24 @@ Elemente 712 bis 740 N/mm² ≥ 2 f_y, an den Gaußpunkten aber nur 358 bis
 Kontaktränder und einspringende Kanten findet die Regel nicht, und die Werte in
 den Zonen werden durch die Kennzeichnung nicht richtiger.
 
+**Zonen in Anzeige und Nachweis (seit 10.10.2026).** Bis zum 10.10.2026
+nahmen Farbskala, Zusammenfassung, Bericht, Volumennachweis und Ermüdung ihr
+Maximum über alle Elemente. Seitdem bleiben die Elemente der Zonen
+auffälliger Stellen aus jedem Maximum heraus und stehen getrennt als „nur
+berichtet“ da (`statik3d/spitzenanzeige.py`). Der Volumennachweis
+(6.2.1(5)) läuft über die übrigen Elemente des Bereichs; die Ermüdung der
+Volumen über die Orte, die an keinem Zonenelement liegen (Regel „knoten“:
+Knoten, Regel „element“: Elemente). Ein Ergebnis, das der Nachweis erst
+bildet, etwa die überlagerte Alternative einer Ergebniskombination, wird
+dafür zuerst ausgewertet; an der Platte mit Loch und EK1 = 1,35 LF1 hätte der
+Nachweis sonst η = 19,803 statt 3,767 gelesen. Der Spitzenwert einer Zone ist
+σ_v an den Gaußpunkten (sv_max), die Größe außerhalb ist die bisherige
+Anzeigegröße, das Knotenmittel der Elementwerte. An Elementen, die nicht
+fließen, enthält sie die Ecken, und am Drehlager liegt sie außerhalb der Zonen
+mit 6 676 N/mm² in V15 weit über der Spitze der Zonen (1 187 N/mm²); die
+Ecken nicht fließender tet10 erreichen dort bis 14 599 N/mm² bei höchstens
+343 N/mm² an den Gaußpunkten. Die Kennzeichnung ändert daran nichts.
+
 **Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
 Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)
 liegen außerhalb, und die abgezogene Vorspannung D·ε_p ist das Mittel über die

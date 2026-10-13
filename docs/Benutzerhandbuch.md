@@ -10875,10 +10875,45 @@ auffällig: 782 bis 833 kN, σ_v 884 bis 1 187 N/mm², ε_p 24,9 bis 39,2 % und
 das 1,08- bis 1,13-Fache der Streckgrenze über der Scheibenfläche. Die
 übrigen 92 Stellen mit Kraft bleiben zur Diagnose beim Ergebnis stehen, gelten
 aber nicht als gekennzeichnet; ihr größtes σ_v liegt bei 561 N/mm². Das
-Ergebnis wird mit der Ergebnisdatei gespeichert und wieder geladen. In der
-Ansicht, im Bericht und in den Nachweisen ist es noch nicht zu sehen; das
-folgt im nächsten Schritt. Ein Ergebnis aus einer Datei von vor dem
-10.10.2026 trägt die Kennzeichnung erst nach einer neuen Rechnung.
+Ergebnis wird mit der Ergebnisdatei gespeichert und wieder geladen.
+
+Seit dem 10.10.2026 zeigt das Programm die auffälligen Stellen auch, ohne
+etwas zu verschweigen. In der Ansicht sind ihre Zonen violett umrandet, und
+an jeder Stelle steht ein Zeichen „netzabhängig“ mit σ_v; der Schalter
+„Netzabhängige Stellen kennzeichnen“ in der Maske Ergebnisse blendet beides
+aus und wieder ein. Färben Sie eine Volumenspannung oder die
+Vergleichsspannung, nehmen Farbskala, Max-/Min-Marken und die Kennwerte unten
+links ihr Maximum außerhalb der Zonen. Unter der Farbskala steht getrennt „in
+netzabhängigen Stellen bis … N/mm² (netzabhängig)“, und zwar mit dem Wert an
+den Integrationspunkten; Knoten der Zonen über der Skala bekommen die eigene
+Farbe „netzabh.“. Die Zusammenfassung des Ergebnisses nennt die größte
+Vergleichsspannung und die größte plastische Dehnung außerhalb der Zonen mit
+Knoten bzw. Bauteil und darunter die Spitze mit dem Vermerk „netzabhängig,
+nicht für den Nachweis“. Im Modellbaum steht unter Ergebnisse der Eintrag
+„Netzabhängige Spannungsspitzen“ mit je einer Zeile für Bauteil, Ursache,
+Kraft, σ_v und ε_p; ein Klick führt den Blick auf die Stelle. Der Bericht hat
+im Kapitel Ergebnisse einen gleichnamigen Abschnitt mit einer Tabelle (Ort,
+Bauteil, Ursache, Kraft, σ_v, ε_p, Zahl und Volumen der Zonenelemente,
+Vermerk), und die Übersicht aller Ergebnisse kennzeichnet ihr σ_v außerhalb
+der Zonen mit einem Stern. Volumennachweis und Ermüdung der Volumen nehmen
+die Elemente der Zonen aus ihrem Maximum. Sie nennen die Zone in einer
+eigenen Zeile „nur berichtet“, mit ihrer Spitze daneben, und sagen im
+Hinweis, welcher Wert außerhalb gilt. Am gespeicherten Drehlager sind das in
+den 16 Ankerplatten 11 703 Elemente; ein für die Abnahme angelegter
+Volumenbereich über diese Platten fällt dadurch von η = 3,020 auf 0,794. Beim Öffnen einer Ergebnisdatei von
+vor dem 10.10.2026 holt das Programm die Kennzeichnung aus dem gespeicherten
+Ergebnis nach, am Drehlager in rund 6 s, ohne neu zu rechnen.
+
+Was die Legende außerhalb der Zonen zeigt, ist dieselbe Größe wie bisher: das
+Mittel der Elementwerte am Knoten. Bei Elementen, die nicht fließen, ist der
+Elementwert der größte Auswertepunkt einschließlich der Ecken, und eine Ecke
+kann weit über den Integrationspunkten liegen. Am Drehlager steht deshalb
+außerhalb der Zonen 6 676 N/mm² am Knoten 359328 in der Seitenwand V15; der
+größte Elementwert außerhalb der Zonen ist die Ecke eines tet10 in V34, der
+nicht fließt, mit 14 599 N/mm² bei 343 N/mm² an seinen Integrationspunkten.
+Solche Stellen findet die Kennzeichnung nicht. Bis zum 10.10.2026 nahmen
+Legende, Zusammenfassung, Bericht und Nachweise ihr Maximum über alle
+Elemente, auch über die netzabhängigen Stellen.
 
 ## 10 Ergebnisse und Bericht
 

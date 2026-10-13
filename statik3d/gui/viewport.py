@@ -2257,6 +2257,67 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
+#: Umrandung und Zeichen netzabhaengiger Spannungsspitzen (violett - in
+#: keiner Farbtafel der Ergebnisse, anders als Magenta fuer „ueber der Grenze“)
+FARBE_SPITZE = "#6a1b9a"
+
+
+def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: float = 1.0,
+                     einheit: str = "N/mm²", textgroesse: int = 10, ausser=None) -> int:
+    """Die Zonen auffaelliger netzabhaengiger Stellen umranden und an jeder
+    Stelle ein Zeichen setzen (Plan Singularitaeten vom 10.10.2026, Paket 2).
+
+    Umrandet wird die Oberflaeche der Zonenelemente an ihren Kanten (Knick ab
+    30 Grad) - so steht die Zone auch ueber einer Faerbung sichtbar da, ohne
+    sie zu verdecken. Das Zeichen sitzt in der Mitte der Stelle und nennt
+    sigma_v an den Integrationspunkten mit „netzabhängig“. ``lage`` ist die
+    gezeichnete Lage der Knoten (verformt) oder None; ``ausser`` die
+    ausgeblendeten Elemente - eine Zone, die ganz darin liegt, entfaellt.
+    Rueckgabe: Zahl der gezeichneten Stellen."""
+    from ..spannungen import dezimal
+    # add_point_labels legt „<Name>-points“ und „<Name>-labels“ an
+    for n in ("spitzen_zonen", "spitzen_zeichen", "spitzen_zeichen-points", "spitzen_zeichen-labels"):
+        try:
+            plotter.remove_actor(n)
+        except Exception:                 # noqa: BLE001 - war noch nicht da
+            pass
+    if ausser:
+        weg = np.fromiter((int(i) for i in ausser), np.int64)
+        stellen = [s for s in stellen
+                   if not np.isin(np.asarray(s.get("zone", []), np.int64), weg).all()]
+    if not stellen:
+        return 0
+    el = np.unique(np.concatenate([np.asarray(s.get("zone", []), np.int64) for s in stellen]))
+    if ausser:
+        el = el[~np.isin(el, weg)]
+    g = teilnetz(model, el)
+    X = np.asarray(lage if lage is not None else model.nodes, float)
+    if g.n_cells:
+        if lage is not None and len(lage) == g.n_points:
+            g.points = X
+        try:
+            huelle = g.extract_surface(algorithm="dataset_surface")
+        except TypeError:                 # aeltere pyvista ohne die Wahl
+            huelle = g.extract_surface()
+        kanten = huelle.extract_feature_edges(
+            feature_angle=30.0, boundary_edges=True, non_manifold_edges=False, manifold_edges=False)
+        if kanten.n_cells:
+            plotter.add_mesh(kanten, color=FARBE_SPITZE, line_width=2, name="spitzen_zonen")
+    punkte, texte = [], []
+    for s in stellen:
+        kn = np.asarray(s.get("knoten", []), np.int64)
+        kn = kn[(kn >= 0) & (kn < len(X))]
+        punkte.append(X[kn].mean(axis=0) if len(kn) else np.asarray(s.get("mitte"), float))
+        texte.append(bildtext(f"netzabhängig {dezimal(float(s.get('sv_max', 0.0)) / 1e6 * faktor)} "
+                              f"{einheit}"))
+    plotter.add_point_labels(np.asarray(punkte, float), texte, font_size=int(textgroesse),
+                             text_color=FARBE_SPITZE, point_color=FARBE_SPITZE, point_size=10,
+                             render_points_as_spheres=True, shape="rounded_rect",
+                             shape_color="#ffffff", shape_opacity=0.8, always_visible=True,
+                             name="spitzen_zeichen")
+    return len(stellen)
+
+
 def flaechenecken(model: Model, f):
     """Die vier benannten Eckpunkte einer Flaeche - oder None."""
     e = [int(x) for x in (getattr(f, "ecken", None) or [])]
@@ -3844,7 +3905,7 @@ def _stabname(model: Model, elem: int, breite: int = 12) -> str:
 
 def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
               ueberschrift: str = "", einheiten=None, knoten=None, elemente=None,
-              feld: str = None, seite: str = "max") -> list:
+              feld: str = None, seite: str = "max", spitzen: dict = None) -> list:
     """Die Kennzahlen des gezeigten Ergebnisses als Textzeilen.
 
     Das sind die Zahlen, nach denen zuerst gefragt wird: groesste Ausnutzung,
@@ -3864,6 +3925,11 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     die Zahlen im Bild untereinander stehen und die Zeile nicht ueber das
     Modell laeuft. Einheiten und Nachkommastellen kommen aus *einheiten*
     (einheiten.Einheiten, sonst ``model.einheiten``).
+
+    ``spitzen`` (seit 10.10.2026, Plan Singularitaeten Paket 2): zu einer
+    Volumenspannung oder der Vergleichsspannung ``{"zk": Maske der Knoten in
+    den Zonen auffaelliger Stellen, "zeile": Text}`` - der Groesstwert steht
+    dann ausserhalb der Zonen, die Spitze in der Zeile darunter.
     """
     from ..einheiten import Einheiten
     from .. import spannungen as spn
@@ -3998,15 +4064,28 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             a, b = int(np.argmin(R[:, j])), int(np.argmax(R[:, j]))
             zeilen.append(zeile(nm, z(R[a, j], art), f"Knoten {a}",
                                 z(R[b, j], art), f"Knoten {b}", E.einheit(art)))
+    zk = (spitzen or {}).get("zk")
+
+    def ohne_zone(a):
+        # ohne die Knoten der Zonen auffaelliger netzabhaengiger Stellen
+        if zk is None or a is None or len(a) != len(zk):
+            return a
+        b = np.array(a, float, copy=True)
+        b[np.asarray(zk, bool)] = np.nan
+        return b
     vm = getattr(res, "node_vm_max", None) if gewaehlt("sig_v") else None
     if vm is None and gewaehlt("sig_v"):
         vm = getattr(res, "node_vm", None)
     if vm is not None and sicht is not None:
         vm = nur_sicht(vm)
+    if vm is not None:
+        vm = ohne_zone(vm)
     if vm is not None and len(vm) and np.isfinite(vm).any():
         k = int(np.nanargmax(vm))
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
                             f"Knoten {k}", E.einheit("spannung")))
+        if spitzen:
+            zeilen.append(bildtext(spitzen["zeile"]))
     werte = dict(util or {}) if gewaehlt("ausnutzung") else {}
     # wie result_field: die elastische Ausnutzung nur ohne Nachweis (util
     # None). Bis zum 24.09.2026 "if not werte": bei leerer Ermuedungskarte
@@ -4022,6 +4101,8 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         # der Einheit ihrer Farbskala
         try:
             werte_k = nur_sicht(np.asarray(spn.je_knoten(model, res, ak[0], ak[1], seite), float))
+            if ak[0] == "volumen":
+                werte_k = ohne_zone(werte_k)
         except Exception:                   # noqa: BLE001
             werte_k = None
         if werte_k is not None and len(werte_k) and np.isfinite(werte_k).any():
@@ -4033,6 +4114,8 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             zeilen.append(bildtext(f"{titel}: min {spn.dezimal(werte_k[a] * f_)} "
                                    f"(Knoten {a}), max {spn.dezimal(werte_k[b] * f_)} "
                                    f"(Knoten {b}) [{neu}]"))
+            if spitzen and ak[0] == "volumen":
+                zeilen.append(bildtext(spitzen["zeile"]))
     if werte:
         i = max(werte, key=lambda k: werte[k])
         zeilen.append(f"max. Ausnutzung {werte[i]:.{E.nk_ausnutzung}f} an {_stabname(model, i)}"

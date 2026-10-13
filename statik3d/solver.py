@@ -1848,7 +1848,13 @@ class Results:
         try:
             nv = self.node_vm
             if nv is not None and nv.size and np.any(np.isfinite(nv)):
-                s.append(f"max. Vergleichsspannung : {np.nanmax(nv)/1e6:.2f} MPa")
+                # Mit auffaelligen netzabhaengigen Stellen (seit 10.10.2026) das
+                # Maximum ausserhalb ihrer Zonen, die Spitze getrennt mit Vermerk
+                from . import spitzenanzeige as sa
+                zeilen = sa.zusammenfassung_zeilen(self.model, self)
+                if not any(z.startswith("max. Vergleichsspannung") for z in zeilen):
+                    zeilen.insert(0, f"max. Vergleichsspannung : {np.nanmax(nv)/1e6:.2f} MPa")
+                s.extend(zeilen)
         except Exception:
             pass
         if self.reactions is not None and self.reactions.size:
@@ -1893,10 +1899,15 @@ class Results:
         pz = self.info.get("plastizitaet")
         if pz:
             n_fl, n_it, n_ls = pz.get('fliessend', 0), pz.get('iterationen', 0), pz.get('laststufen', 1)
+            # ausserhalb der Zonen auffaelliger Stellen (seit 10.10.2026)
+            from . import spitzenanzeige as sa
+            ea = sa.eps_p_ausserhalb(self.model, self)
             s.append(f"Plastizität             : "
                      + ("1 Element fließt, " if n_fl == 1 else f"{n_fl} Elemente fließen, ")
-                     + f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, "
-                     f"{n_it} {'Schritt' if n_it == 1 else 'Schritte'} in "
+                     + (f"ε_p,eq max {ea[0] * 100:.3f} % außerhalb der netzabhängigen Stellen"
+                        + (f" ({ea[2]})" if ea[2] else "") + ", " if ea is not None else
+                        f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, ")
+                     + f"{n_it} {'Schritt' if n_it == 1 else 'Schritte'} in "
                      f"{n_ls} {'Laststufe' if n_ls == 1 else 'Laststufen'}"
                      # Was die Zeit traegt, ist nicht die Zahl der Schritte, sondern
                      # die der Faktorisierungen: am Drehlager 3,2 s gegen 0,31 s je
