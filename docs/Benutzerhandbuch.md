@@ -828,6 +828,22 @@ voll, gesteigert werden nur die übrigen Lasten (siehe „Temperaturlasten und
 Vorspannungen wirken in den Laststufen sofort voll“); bis dahin wuchs sie mit
 den Stufen mit.
 
+**Temperatur und Vorspannung zählen in jeder Stabkraft.** Die Normalkraft
+eines Stabs ist E·A·Δl/L plus die Kraft seiner Anfangsdehnung, also seiner
+Temperatur, seiner Vorspannung als Anfangsdehnung und der Verriegelung einer
+Sollkraft. Das Ergebnis rechnete immer so. Bis zum 13.10.2026 lasen aber drei
+Stellen nur E·A·Δl/L: die geometrische Steifigkeit (α_cr, Theorie II.
+Ordnung, Knicken), die Ausfall-Iteration der Zug- und Druckstäbe und die
+Theorie III. Ordnung. Ein Zugband mit 70 kN Vorspannung, das im Ergebnis
++6,50 kN trägt, stand in der geometrischen Steifigkeit mit −63,50 kN, und
+α_cr kam mit 1,688 heraus. Ein Stab unter reinem Temperatur-Zwang hatte dort
+„keine Normalkräfte“ und kein α_cr. Ein Zugstab „nur Zug“ mit 500 kN
+Vorspannung als Abkühlung fiel aus und trug 0 statt 400 kN, und seine
+Temperaturlast blieb als Last stehen. Nach Theorie III. Ordnung fiel die
+Vorspannung eines Seils still weg. Seither lesen alle diese Stellen dieselbe
+Normalkraft wie das Ergebnis. Ohne Temperatur und Vorspannung im Stab rechnet
+alles wie vorher.
+
 **Vorspannkraft (Soll nach Verankerung)** (seit 13.10.2026). Bis zum
 13.10.2026 gab es die Vorspannung nur als Anfangsdehnung, und ein Anker trug
 danach nicht F_v, sondern F_v minus die elastische Verkürzung seiner
@@ -852,7 +868,14 @@ Programm schneller über eine eingeprägte Dehnung je Stab, so bemessen, dass
 unter der Vorspannung allein jeder Stab genau F_soll trägt; das Ergebnis ist
 dasselbe. Nach Theorie II. und III. Ordnung wird eine Sollkraft noch nicht
 gerechnet: Der Lastfall bleibt nach Theorie I. Ordnung gerechnet, und das
-Ergebnis sagt es. In der Ansicht steht die Kraft als „F_soll“, in der
+Ergebnis sagt es. Bis zum 13.10.2026 lag das auch daran, dass die
+geometrische Steifigkeit die Vorspannung nicht las (siehe „Temperatur und
+Vorspannung zählen in jeder Stabkraft“). Seither rechnen Theorie II. und
+III. Ordnung die eingeprägte Dehnung zwar durch, treffen F_soll nach dem
+Verankern aber nicht genau: Am Zugband einer Kragstütze trägt der Stab nach
+Theorie II. Ordnung 69,77 kN und nach Theorie III. Ordnung 69,57 kN statt
+70 kN. Darum bleibt es bei Theorie I. Ordnung, bis es den Spannschritt auch
+nach Theorie II. und III. Ordnung gibt. In der Ansicht steht die Kraft als „F_soll“, in der
 Lasttabelle als „Vorspannkraft (Soll)“ mit Gruppe. Kraft und Gruppe ändern
 Sie in der Maske der einzelnen Last.
 
@@ -2245,7 +2268,9 @@ Für die Kennzeichnung eines **fertigen** Lastfalls aus seinen Zahlen statt aus
 dem Meldungstext gibt es `rechenliste.zustand_aus_info(res.info)`. Sie gibt
 „konvergiert“, „Probelauf“ oder „NICHT konvergiert: …“ mit den Gründen
 zurück, etwa „NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“
-oder „…, darunter der letzte“. Jeder gedeckelte Kontaktlauf zählt, auch wenn
+oder „…, darunter der letzte“, seit dem 13.10.2026 auch „NICHT konvergiert:
+Zugstab D1 trägt Druck: N = -43,832 kN“ (siehe „Zugstäbe in der
+Konvergenz“). Jeder gedeckelte Kontaktlauf zählt, auch wenn
 der letzte konvergiert ist - mit einer Ausnahme: dem elastischen Vorlauf einer
 Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
 (Theoriehandbuch § 4.0, „Welcher gedeckelte Lauf zählt“). Eine Zwischenstufe
@@ -6038,12 +6063,46 @@ versteifen).
 **Zugband und Druckstab.** In der Stabmaske stellt „trägt nur“ auf *Zug* oder
 *Druck*. Das Programm rechnet dann mit einer Iteration: Stäbe mit der falschen
 Kraft fallen aus, die übrigen tragen weiter, bis sich nichts mehr ändert. Das
-Protokoll nennt, wie viele Stäbe ausgefallen sind.
+Protokoll nennt, wie viele Stäbe ausgefallen sind, und die Zusammenfassung
+des Ergebnisses nennt sie mit Namen („Ausgefallene Stäbe : 1 (D1)“). Seit
+dem 13.10.2026 entscheidet die Iteration mit der Kraft, die auch im Ergebnis
+steht, also mit Temperatur und Vorspannung (siehe „Temperatur und
+Vorspannung zählen in jeder Stabkraft“), und ein ausgefallener Stab nimmt
+seine Temperatur und Vorspannung mit. Ein Zugstab aus RFEM („Stabtyp
+Zugstab“) kommt als Fachwerkstab an, der auch Druck trägt, und das
+Importprotokoll warnt davor. Soll er als Zugstab rechnen, stellen Sie „trägt
+nur“ auf Zug.
+
+**Zugstäbe in der Konvergenz** (seit 13.10.2026). Eine Rechnung mit Zug- oder
+Druckstäben oder Seilen gilt nur als konvergiert, wenn sich der Status dieser
+Stäbe (aktiv oder ausgefallen) im letzten Schritt nicht mehr geändert hat und
+kein aktiver Zugstab Druck trägt. Das gilt beim strengen und beim
+ingenieurmäßigen Abbruch. Mit Fließen braucht eine Laststufe, in der Stäbe
+ausfallen oder wieder tragen, darum einen Newton-Schritt mehr, und das
+Protokoll sagt es: „Zugstäbe: Status im letzten Schritt geändert (D1
+ausgefallen) - noch nicht konvergiert“. Als Druck zählt, was 1e-5 der Summe
+der äußeren Kräfte überschreitet; das ist dieselbe Schranke wie für Zug in
+einer geschlossenen Kontaktfuge, am Drehlager rund 0,1 kN. Trägt nach dem
+Abschluss ein aktiver Zugstab mehr Druck oder ein Druckstab mehr Zug, steht
+er mit Namen und Kraft im Protokoll, in der Zusammenfassung („WARNUNG :
+Zugstab D1 trägt Druck: N = -43,832 kN – NICHT konvergiert“) und im
+Konvergenzstand. Das kann vor allem nach Theorie II. und III. Ordnung
+vorkommen, die den Ausfall nicht iterieren. Bis zum 13.10.2026 blieb ein
+solcher Stab ungenannt.
 
 **Seile** rechnen nach Theorie I. Ordnung wie ein Zugband. Wählt man für den
 Lastfall **Theorie III. Ordnung**, wird daraus die echte Kettenlinie: das Seil
 hängt unter seinem Eigengewicht durch, der Horizontalzug folgt aus der
-ungedehnten Länge (Feld „Länge₀“ in der Stabmaske; 0 = die Sehne).
+ungedehnten Länge (Feld „Länge₀“ in der Stabmaske; 0 = die Sehne). Eine
+Vorspannung oder Temperatur im Seil verkürzt seit dem 13.10.2026 die
+spannungsfreie Länge auf L₀/(1 + N₀/(E·A)), sodass das gerade gespannte Seil
+genau die Kraft N₀ trägt wie nach Theorie I. Ordnung. Bis zum 13.10.2026 fiel
+sie nach Theorie III. Ordnung still weg: Am Kopf einer Kragstütze mit einem
+Seil unter 70 kN Vorspannung waren Verschiebung (−1,625 mm) und Seilkraft
+(32,29 kN) dieselben wie ohne Vorspannung. Jetzt sind es +1,144 mm und
+38,70 kN, nach Theorie I. Ordnung +1,143 mm. Ebenso wirkt die Anfangsdehnung
+eines Stabs nach Theorie III. Ordnung im Stab selbst und dreht mit ihm mit,
+statt als feste Knotenlast zu stehen.
 
 **Wölbkrafttorsion.** Der Haken „Wölbkrafttorsion“ am Stab gibt jedem seiner
 Knoten einen siebten Freiheitsgrad, die Verwölbung. Voraussetzung ist ein
@@ -8515,6 +8574,15 @@ Dazu die **Ersatzimperfektionen nach 5.3.2**: Schiefstellung φ und
 Vorkrümmung e_0 werden als gleichwertige Lasten angesetzt, die Geometrie
 bleibt unberührt. Wer die Vorkrümmung auch für gedrungene Stäbe ansetzen
 will, schaltet „5.3.2(6) übergehen“ ein.
+
+**Temperatur und Vorspannung in α_cr.** Seit dem 13.10.2026 steht in der
+geometrischen Steifigkeit dieselbe Normalkraft wie im Ergebnis, mit
+Temperatur und Vorspannung (siehe „Temperatur und Vorspannung zählen in jeder
+Stabkraft“). Bis zum 13.10.2026 hatte ein Stab unter reinem Temperatur-Zwang
+dort keine Normalkraft und kein α_cr. Ein beidseits gelenkiger Stab von 4 m
+(Vollquadrat 100 mm), um 20 K erwärmt und an beiden Enden gehalten, hat
+jetzt α_cr = 2,142, wie
+π²·E·I/L² / (E·A·α·ΔT) es verlangt.
 
 Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
 Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der

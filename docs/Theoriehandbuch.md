@@ -173,13 +173,63 @@ stehen -, und es wird neu gelöst, bis sich die Menge nicht mehr ändert. Wer
 herausgenommen wurde, darf im nächsten Schritt wieder hinein. Kontakt läuft
 innen weiter mit.
 
+**Die Kraft, über die entschieden wird** (seit 13.10.2026), ist die des
+Ergebnisses: N = E·A·Δl/L + N₀ mit der Kraft N₀ der Anfangsdehnung bei
+festgehaltenen Enden (`asm.stab_normalkraft`, `asm.anfangsnormalkraft`,
+N₀ = −(f₀[6] − f₀[0])/2 aus den Stabendlasten nur der Anfangsdehnung:
+−E·A·α·ΔT bei Temperatur, +F bei einer Vorspannung F, P bei der Verriegelung
+einer Sollkraft). Fällt ein Stab aus, nimmt er die Last seiner Anfangsdehnung
+aus dem Lastvektor mit (`solver._anfang_ausfall`). Bis zum 13.10.2026 kannte
+die Iteration nur die Verriegelung. Ein Zugstab (A = 10 cm², 1 m) mit 500 kN
+Vorspannung als Abkühlung gegen ein Klemmteil (A = 40 cm²) hat
+E·A·Δl/L = −100 kN und N = 400 kN: Er fiel aus, trug 0 statt
+F·k_K/(k_A + k_K) = 400 kN, und seine Temperaturlast blieb stehen. Unter einer
+Drucklast von 2,5 MN trug das Klemmteil dann 3,0 statt 2,5 MN
+(tests/test_stabkraft_anfangsdehnung.py). Am Drehlager haben die 16 Anker
+E·A·Δl/L = −119 bis −169 kN bei N = 782 bis 833 kN (LF1 Mittel, 09.10.2026);
+als Zugstäbe gerechnet wären alle ausgefallen. Ohne Anfangsdehnung ist die
+Iteration bitgleich die alte.
+
+**Zugstäbe in der Konvergenzbedingung** (Entscheidung des Anwenders vom
+13.10.2026). Die Aktivmengen-Iteration endet nur, wenn sich die Menge im
+letzten Schritt nicht mehr geändert hat; bricht sie nach 50 Schritten ab,
+nennt das Protokoll die Stäbe, die zuletzt wechselten. Eine Laststufe der
+Plastizität ist nur konvergiert, wenn die Lösung ihres letzten Newton-Schritts
+den Status nicht mehr geändert hat (`_KontaktImNewton.stabstatus_offen`,
+`plastizitaet._stabstatus_offen`), im Newton wie in der Anfangsdehnung,
+streng wie ingenieurmäßig, und ebenso die Schlussabnahme. Nach Abschluss
+prüft `solver.zugstaebe_pruefen` jeden aktiven Zugstab auf Druck (Druckstab
+auf Zug) jenseits
+
+      tol = max(10⁻⁵·|ΣF|, 10⁻⁹·max|N|),
+
+der Schranke für Zug an einer geschlossenen Kontaktbedingung im
+Ingenieurkriterium (`ABSCHLUSS_NORMAL_ANTEIL`) mit der Toleranz der Iteration
+als Boden (ohne äußere Last ist ΣF = 0). N ist die mittlere Normalkraft des
+Ergebnisses. Das Ergebnis trägt `res.info["stabstatus"]` (ausgefallen, druck,
+konvergiert, toleranz); ein Zugstab mit Druck steht mit Namen und Kraft im
+Ausfall-Protokoll, in beiden Zusammenfassungen und im Konvergenzstand. Nach
+Theorie II. und III. Ordnung, die den Ausfall nicht iterieren, ist das die
+einzige Stelle, an der ein gedrückter Zugstab auffällt. Geprüft am X-Verband
+mit zwei Zugdiagonalen auf einseitigen Lagern und auf einem Würfel mit
+Plastizität: D1 fällt aus, N_D2 = √2·H, die Stufen mit geändertem Status
+brauchen einen Newton-Schritt mehr (5 statt 3); ohne Zugstäbe bitgleich.
+
 **Seile.** Nach Theorie III. Ordnung ist ein Seil die **elastische
 Kettenlinie** (Peyrot/Goulois, Jayaraman/Knudson): aus der ungedehnten Länge
 L₀, der Dehnsteifigkeit EA und der Streckenlast w folgen der Horizontalzug H,
 der Durchhang und die Tangente ∂f/∂u für das Newton-Verfahren. Das Eigengewicht
 steckt in der Kettenlinie selbst und wird nicht noch einmal als Knotenlast
 angesetzt. Ist die Sehne länger als L₀, wird das Seil zum Zugstab EA/L₀; ist
-sie kürzer, wird es kraftlos.
+sie kürzer, wird es kraftlos. Eine Vorspannung oder Temperatur des Seils
+(Kraft N₀ bei festgehaltenen Enden) verkürzt seit dem 13.10.2026 die
+spannungsfreie Länge auf L₀' = L₀/(1 + N₀/(E·A)) bei gleichem Gewicht
+(w·L₀ fest): Gerade gespannt gilt dann T = E·A·(L₀ − L₀')/L₀' = N₀ genau,
+wie nach Theorie I. Ordnung. Bis zum 13.10.2026 nahm `solve_theorie3` die
+Stablasten eines Seils aus dem Lastvektor und warf sie weg; die Vorspannung
+fiel still weg. Geprüft an einer Saite aus zwei Seilen (je 2 m, Ø 20 mm,
+N₀ = 50 kN, Querlast 10 kN) gegen 2·T·w/c = F mit c = √(L² + w²):
+w = 87,951 mm, T = 113,81 kN, auf 3·10⁻¹⁴ genau.
 
 **Wölbkrafttorsion.** Ein Balken mit dem Haken `woelb` und einem Querschnitt
 mit Wölbwiderstand I_w > 0 bekommt an jedem seiner Knoten einen **siebten
@@ -658,7 +708,9 @@ die äquivalenten Knotenlasten f = [+F_v, 0, …, −F_v, 0, …] in lokalen
 Koordinaten (sie ziehen die Enden zusammen); die Stabendkräfte folgen aus
 f_l = k·u − f₀ und enthalten damit die Vorspannung: beidseitig gehalten steht
 der Stab unter N = F_v ohne Verschiebung, frei verkürzt er sich um F_v·L/(E·A)
-ohne Kraft. Für Volumenkörper (Schraubenschaft) ist die Anfangsspannung
+ohne Kraft. Dieselbe Normalkraft lesen seit dem 13.10.2026 auch die
+geometrische Steifigkeit, die Ausfall-Iteration und die Theorie III. Ordnung
+(§ 1.2a, § 5.1a, § 5.1b); bis dahin lasen sie nur E·A·Δl/L. Für Volumenkörper (Schraubenschaft) ist die Anfangsspannung
 einachsig σ₀ = −F_v/A · a⊗a längs der Achse a; die Knotenlasten sind
 f = ∫Bᵀσ₀ dV über alle Elemente des Körpers, die Querschnittsfläche A das
 Volumen des Körpers geteilt durch seine Länge längs a. Die Spannungen im
@@ -741,7 +793,13 @@ der Länge geht mit P/N ≈ 11 in N ein), und nach Theorie II. Ordnung brach die
 Rechnung an α_cr = 0,16 ab, weil `assemble.geometric_stiffness` nur
 E·A·Δl/L liest und das Zugband unter 684 kN Druck sah. Ein Lastfall mit
 Sollkraft bleibt darum nach Theorie I. Ordnung gerechnet und gekennzeichnet
-(`theorie_gewuenscht`, `theorie_fehler`).
+(`theorie_gewuenscht`, `theorie_fehler`). Bis zum 13.10.2026 lag das zum
+größeren Teil an den Befunden der Stabkraft (§ 1.2a, § 5.1a, § 5.1b). Mit
+ihrer Behebung rechnen dieselbe eingeprägte Kraft nach Theorie II. Ordnung
+α_cr = 136,5 und N = 69,77 kN, nach Theorie III. Ordnung N = 69,57 kN
+(−0,33 % und −0,61 %; sad_werk/sperre_messen.py der Sitzung vom 14.10.2026).
+F_soll nach dem Verankern trifft erst ein Spannschritt nach Theorie II./III.
+Ordnung; die Sperre bleibt.
 
 **Import.** Die RFEM-Anfangsvorspannung bleibt eine Abkühlung. Der Hinweis
 „Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
@@ -3736,6 +3794,21 @@ Grundzustand. Die Einstellung `theorie2` kennt drei Werte: `aus`, `auto`
 (α_cr je Kombination bestimmen und nur bei Unterschreitung am verformten
 System rechnen) und `ein` (immer).
 
+**Die Normalkraft in K_g** ist seit dem 13.10.2026 die des Ergebnisses,
+N = E·A·Δl/L + N₀ mit der Kraft N₀ der Anfangsdehnung (Temperatur,
+Vorspannung, Verriegelung; `asm.stab_normalkraft`,
+`solver.anfangsnormalkraefte`), in `alpha_cr`, `solve_theorie2`,
+`check_theorie2` und `solve_buckling`. Bis zum 13.10.2026 las
+`assemble.geometric_stiffness` nur E·A·Δl/L. Ein Zugband mit 70 kN
+Anfangsdehnung, das im Ergebnis +6,50 kN trägt, stand dort mit −63,50 kN
+(α_cr 1,688), und ein Stab unter reinem Temperatur-Zwang (Δl = 0) hatte
+„keine Normalkräfte“. Geprüft: K_g des Zugbands ist die Formel mit N aus dem
+Ergebnis (10⁻¹⁷), α_cr gleich dem der gleichwertigen Rechnung, in der der
+Anker um F·L/(E·A) verschoben wird (4·10⁻¹³), und der beidseits gelenkige
+Stab (4 m, Vollquadrat 100 mm, ΔT = 20 K, 16 Elemente) hat
+α_cr = 2,141846 gegen π²·E·I/L²/(E·A·α·ΔT) = 2,141841. Ohne Anfangsdehnung
+ist K_g bitgleich die alte.
+
 **Wie α_cr gelöst wird.** Gerechnet wird −K_g v = μ K v mit α = 1/μ;
 α_cr ist der Kehrwert des größten positiven μ. K ist nach dem Einbau der
 Lager positiv definit und dient dem Eigenwertlöser (ARPACK über `eigsh`)
@@ -3887,12 +3960,21 @@ Verschiebungen und endliche Drehungen bei kleinen Dehnungen — in
 * Die im mitgehenden System verbleibende Verformung ist klein:
   d_l = (0, θ₁ˡ, ΔL, θ₂ˡ) mit θᵢˡ = log(Eᵀ·Rᵢ·E₀ᵀ) und ΔL = L − L₀. Darauf
   wirkt die lineare lokale Steifigkeit (Timoshenko/Bernoulli, Federgelenke
-  und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l.
+  und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l. Mit
+  Anfangsdehnung (Temperatur, Vorspannung) seit dem 13.10.2026
+  f_int = Tᵀ(f_l − f_anf) und N = (f_l − f_anf)[6] in k_g: die Anfangsdehnung
+  steckt im Stab und dreht mit ihm. Bis zum 13.10.2026 stand sie als
+  Knotenlast der Ausgangslage im Lastvektor und k_g las nur f_l[6]; eine
+  vorgespannte Saite hatte so quer keine Steifigkeit aus ihrer Vorspannung.
+  Geprüft an einer Saite aus zwei Fachwerkstäben (N₀ = 50 kN, Querlast
+  10 kN) gegen 2·N·w/c = F mit N = E·A·(c − L)/L + N₀: auf 4·10⁻¹⁵ genau.
 * Gleichgewicht f_int(u, R) = F_S + λ·(F − F_S) + F_imp, gelöst mit
   Newton-Raphson in Laststufen λ = 1/n … 1 mit der Tangente
   Tᵀ(k_l + k_g(N))T. F_S ist der Anteil der Temperaturlasten und
   Vorspannkräfte (ohne die der Seile, deren Lasten hier herausgenommen
-  sind); er wirkt seit dem 10.10.2026 ab der ersten Stufe voll
+  sind, und seit dem 13.10.2026 ohne die Anfangsdehnung der Stäbe, die in
+  f_int steckt; das Konvergenzmaß rechnet sie weiter wie eine Last mit);
+  er wirkt seit dem 10.10.2026 ab der ersten Stufe voll
   (`plastizitaet.stufenlast`), bis dahin stand hier λ·F. Zuerst galt das nur
   für die Temperaturlasten (F_T), am selben Tag kamen die Vorspannkräfte
   dazu. Der Rest der konsistenten Tangente fehlt; das Residuum ist exakt, die
