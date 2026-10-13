@@ -314,7 +314,16 @@ def theorie_sperre(model, factors: dict, th: str) -> str:
     die geometrische Steifigkeit liest nur die elastische Normalkraft
     E A Δl/L, nicht die Vorspannung (assemble.geometric_stiffness), und sah
     das Zugband unter 684 kN Druck (gemessen 13.10.2026). Der Lastfall bleibt
-    darum nach Theorie I. Ordnung gerechnet und gekennzeichnet."""
+    darum nach Theorie I. Ordnung gerechnet und gekennzeichnet.
+
+    Nachgemessen am 14.10.2026, nachdem geometrische Steifigkeit und Theorie
+    III. Ordnung die Anfangsdehnung lesen (asm.stab_normalkraft, theorie3):
+    mit derselben eingepraegten Kraft (754,08 kN) traegt das Zugband im
+    Lastfall nur mit Vorspannung nach Theorie II. Ordnung 69,77 kN (alpha_cr
+    136,5) und nach Theorie III. Ordnung 69,57 kN statt 70 kN (-0,33 % und
+    -0,61 %; scratchpad sad_werk/sperre_messen.py). Die Rechnung laeuft also,
+    trifft F_soll nach dem Verankern aber nicht - dafuer braeuchte es den
+    Spannschritt nach Theorie II./III. Ordnung. Die Sperre bleibt."""
     soll = sollkraefte(model, factors)
     if not soll:
         return ""
