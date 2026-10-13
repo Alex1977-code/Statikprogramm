@@ -402,6 +402,20 @@ def texte_ordnen(plotter, info: dict) -> dict:
             continue
         if sb.GetOrientation() != 1:
             px, py = sb.GetPositionCoordinate().GetValue()[:2]
+            # das Feld „> Skalenmax“ beschriftet VTK unter der Skala: so weit
+            # heben, dass es ueber den Kennwerten steht (Bild V21 1280 x 800,
+            # 13.10.2026: es lag hinter der Kennwertzeile)
+            notiz = sb.GetAboveRangeAnnotation() if sb.GetDrawAboveRangeSwatch() else ""
+            kr = lage.get("kennwerte")
+            if notiz and kr is not None:
+                nh = textmass(sb.GetAnnotationTextProperty(), notiz, dpi)[1]
+                fehlt = kr[3] + luft + nh + luft - py * hoch
+                if fehlt > 0.5:
+                    py += fehlt / hoch
+                    sb.SetPosition(px, py)
+                lage[tname + "_notiz"] = ((px + sb.GetWidth()) * breit - textmass(
+                    sb.GetAnnotationTextProperty(), notiz, dpi)[0], (px + sb.GetWidth()) * breit,
+                    py * hoch - nh - luft, py * hoch)
             setzen(tname, roh.get(tname, titel), breit - 2 * rand, einzug="")
             tp = a.GetTextProperty()
             tp.SetJustificationToCentered()

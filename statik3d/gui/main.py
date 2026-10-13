@@ -26521,6 +26521,10 @@ class MainWindow(QtWidgets.QMainWindow):
             akt = self.plotter.add_text(text, position=(rechts, y), font_size=self.SCHRIFT_KENNWERTE,
                                         color=vp.FARBE_SPITZE, name=name)
             tp = akt.GetTextProperty()
+            # grau auf den Farben des Modells war kaum zu lesen (Bild V21,
+            # 13.10.2026): ein heller Grund unter dem Text
+            tp.SetBackgroundColor(1.0, 1.0, 1.0)
+            tp.SetBackgroundOpacity(0.8)
             tp.SetJustificationToRight()
             if senkrecht:
                 tp.SetVerticalJustificationToTop()
@@ -26567,6 +26571,11 @@ class MainWindow(QtWidgets.QMainWindow):
             tp.SetJustificationToRight()
             tp.SetVerticalJustificationToBottom()
             quelle.SetOpacity(0.0)
+            # heller Grund unter Titel, Zahlen und „> Skalenmax“: die Skala
+            # liegt oft auf dem Modell (Kompaktstufe, Bild V21 13.10.2026)
+            for p_ in (tp, sb.GetLabelTextProperty(), sb.GetAnnotationTextProperty()):
+                p_.SetBackgroundColor(1.0, 1.0, 1.0)
+                p_.SetBackgroundOpacity(0.8)
             self._skalentitel[name] = titel
             self._bildtexte[name] = sb.GetTitle() or str(titel)
         return self._skalentitel
@@ -27154,6 +27163,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                   font_size=self.SCHRIFT_KOPF, font="courier",
                                   color="#203040", name="kopfzeile")
             akt = self.plotter.renderer.actors.get("kopfzeile")
+            if akt is not None:
+                # heller Grund wie bei den Kennwerten (13.10.2026)
+                akt.GetTextProperty().SetBackgroundColor(1.0, 1.0, 1.0)
+                akt.GetTextProperty().SetBackgroundOpacity(0.8)
             wue = getattr(self, "ansichtswuerfel", None)
             if akt is not None and wue is not None and wue.isVisible():
                 ia = self.plotter.interactor
@@ -27204,9 +27217,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not zeilen:
             return []
         try:
-            self.plotter.add_text("\n".join(zeilen), position=(12, 10),
-                                  font_size=self.SCHRIFT_KENNWERTE, font="courier",
-                                  color="#203040", name="kennwerte")
+            akt = self.plotter.add_text("\n".join(zeilen), position=(12, 10),
+                                        font_size=self.SCHRIFT_KENNWERTE, font="courier",
+                                        color="#203040", name="kennwerte")
+            # ein heller Grund: die Zeilen liegen oft auf dem Modell (Bild V21,
+            # 13.10.2026 - „max 207 (Knoten …)“ war auf den Farben nicht zu lesen)
+            akt.GetTextProperty().SetBackgroundColor(1.0, 1.0, 1.0)
+            akt.GetTextProperty().SetBackgroundOpacity(0.8)
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kennwerte: {ex}")
         return zeilen

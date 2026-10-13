@@ -42,7 +42,7 @@ RESULTS = []
 GROESSEN = [(1280, 800, True), (1600, 900, True), (1920, 1080, True), (1100, 700, True), (900, 640, False)]
 TEXTE = ("kopfzeile", "kennwerte", "farbskala_titel", "spitzen_schraffur_legende", "spitzen_legende")
 #: Rechtecke, die als Text zaehlen, ohne ein eigener Darsteller zu sein
-TEXTE_SONST = ("spitzen_schraffur_muster", "farbskala_titel_waagerecht")
+TEXTE_SONST = ("spitzen_schraffur_muster", "farbskala_titel_waagerecht", "skalenfeld_notiz")
 
 
 def check(name, ok, detail=""):
@@ -88,6 +88,15 @@ def _rechtecke(w) -> dict:
             bw, bh = float(bb[1] - bb[0] + 1), float(bb[3] - bb[2] + 1)
             mx = 0.5 * (float(p[0]) + float(p2[0]))
             aus["farbskala_titel_waagerecht"] = (mx - bw / 2, mx + bw / 2, float(p2[1]) - bh, float(p2[1]))
+        if sb.GetOrientation() == 0 and sb.GetDrawAboveRangeSwatch() and sb.GetAboveRangeAnnotation():
+            # VTK beschriftet das Feld ueber der Skala unter ihr, am rechten Ende
+            import vtk
+            bb = [0, 0, 0, 0]
+            vtk.vtkTextRenderer.GetInstance().GetBoundingBox(sb.GetAnnotationTextProperty(),
+                                                            sb.GetAboveRangeAnnotation(), bb,
+                                                            int(ren.GetRenderWindow().GetDPI()))
+            nw, nh = float(bb[1] - bb[0] + 1), float(bb[3] - bb[2] + 1)
+            aus["skalenfeld_notiz"] = (float(p2[0]) - nw, float(p2[0]), float(p[1]) - nh - 2, float(p[1]))
     # Achsenkreuz unten rechts (eigener Darsteller im Ausschnitt)
     aus["achsenkreuz"] = (0.86 * breit, breit, 0.0, 0.16 * hoch)
     # Ansichtswuerfel und Glasleiste liegen als Qt-Fenster ueber der Ansicht
@@ -161,8 +170,9 @@ def test_lage(fall):
                     continue
                 if {a, b} == {"spitzen_schraffur_legende", "spitzen_schraffur_muster"}:
                     continue
-                if {a, b} & {"farbskala_titel_waagerecht"} and any(x.startswith("farbskala") and x != "farbskala_titel_waagerecht" for x in (a, b)):
-                    continue                    # der Titel gehoert zu seiner Skala
+                if {a, b} & {"farbskala_titel_waagerecht", "skalenfeld_notiz"} and any(
+                        x.startswith("farbskala") and x != "farbskala_titel_waagerecht" for x in (a, b)):
+                    continue                    # Titel und Feld gehoeren zu ihrer Skala
                 if _ueberlappung(r[a], r[b]):
                     paare.append((a, b))
         if not deckung:
