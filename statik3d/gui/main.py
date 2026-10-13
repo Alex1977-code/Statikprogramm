@@ -8690,6 +8690,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("ausnehmen", "vom Volumennachweis ausnehmen (Hilfs- oder Krafteinleitungskörper)", "haken",
                             bool(getattr(mt, "nachweis_ausnehmen", False)) if mt else False,
                             hinweis="Körper aus diesem Werkstoff gehen in keinen Volumennachweis ein und stehen dort als „ausgenommen“ - für Hilfs- und Krafteinleitungskörper. Das Programm setzt den Schalter nie selbst."),
+                          *self._spannstahl_felder(F, mt),
                           F("benutzt", "benutzt von", "info",
                             f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
                 if mt is not None and (mt.fy_dicke or mt.fu_dicke):
@@ -8731,6 +8732,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       F("r", "r [mm]", "zahl", (sec.r if sec else 0.0) * 1e3),
                       F("fabrication", "Herstellung", "wahl", (sec.fabrication if sec else "rolled"),
                         ["rolled", "welded", "cold_formed"]),
+                      *self._gewinde_felder(F, sec),
                       F("benutzt", "benutzt von", "info", bg.anzahl(benutzt, "Element", "Elementen"))]
             titel = f"Querschnitt {name}"
             hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
@@ -11014,6 +11016,104 @@ class MainWindow(QtWidgets.QMainWindow):
         # rechts bleibt die Maske des Objekts, jetzt im Bearbeiten-Zustand
         self._objektmaske(art if art != "stabelement" else "stabelement", name)
 
+    # ---- Spannstahl und Gewinde (13.10.2026) ---------------------------------
+    @staticmethod
+    def _nmm(v) -> str:
+        return zl.zahl_text(v / 1e6)
+
+    #: Werkstoffart in der Maske -> Material.art (plast/verfestigung)
+    WERKSTOFFART_WAHL = {"Stahl": "", "Schraube": "Schraube", "Spannstahl": "Spannstahl"}
+
+    def _spannstahl_felder(self, F, mt) -> list:
+        """Werkstoffart (waehlbar, 13.10.2026) und die Grenzen des Spannstahls
+        fuer die Werkstoffmaske: die Spannungsgrenzen beim Spannen und nach dem
+        Verankern (leer = Vorgabe nach EN 1992-1-1; der Hinweis nennt sie).
+        f_p0,1k und f_pk sind beim Spannstahl die Felder f_y und f_u."""
+        import dataclasses
+        from ..ec3 import spannstahl as sp
+        vorgabe = dataclasses.replace(mt, sigma_pmax=None, sigma_pm0=None) if mt is not None else None
+        pmax = sp.sigma_p_max(vorgabe)[0] if vorgabe is not None else 0.0
+        pm0 = sp.sigma_pm0(vorgabe)[0] if vorgabe is not None else 0.0
+
+        def mpa(v):
+            return v / 1e6 if v else None
+        art = (mt.werkstoffart() if mt is not None and callable(getattr(mt, "werkstoffart", None)) else "")
+        wahl = next((k for k, v in self.WERKSTOFFART_WAHL.items() if v == art), "Stahl")
+        felder = [F("art", "Werkstoffart", "wahl", wahl, list(self.WERKSTOFFART_WAHL),
+                    hinweis="Stahl: f_y/f_u. Schraube: f_yb/f_ub. Spannstahl: f_p0,1k/f_pk in den Feldern "
+                            "darüber und Stabnachweis nach EN 1992-1-1 bzw. Zulassung im Spannungsquerschnitt "
+                            "A_s – σ ≤ f_p0,1k/1,15 in jedem Lastzustand, beim Spannen σ_p,max, nach dem "
+                            "Verankern σ_pm0"),
+                  F("sigma_pmax", "σ_p,max [N/mm²]", "zahl", mpa(getattr(mt, "sigma_pmax", None)), breite=78,
+                    leer=True, hinweis="nur Spannstahl, Grenze beim Spannen; leer = min(0,8·f_pk; 0,9·f_p0,1k)"
+                                       + (f" = {self._nmm(pmax)} N/mm²" if pmax else "")
+                                       + " (EN 1992-1-1, 5.10.2.1) – eintragen, wenn die Zulassung abweicht"),
+                  F("sigma_pm0", "σ_pm0 [N/mm²]", "zahl", mpa(getattr(mt, "sigma_pm0", None)), breite=78,
+                    leer=True, hinweis="nur Spannstahl, Grenze nach dem Verankern; leer = min(0,75·f_pk; 0,85·f_p0,1k)"
+                                       + (f" = {self._nmm(pm0)} N/mm²" if pm0 else "")
+                                       + " (EN 1992-1-1, 5.10.3) – eintragen, wenn die Zulassung abweicht")]
+        if mt is not None and getattr(mt, "Ep", None):
+            felder.append(F("spannkennwerte", "E_p aus der Quelldatei", "info",
+                            f"{self._nmm(mt.Ep)} N/mm² – gerechnet wird mit E"))
+        return felder
+
+    @staticmethod
+    def _spannstahl_lesen(w: dict, alt, zahl):
+        """{art, Ep, sigma_pmax, sigma_pm0} fuer den neuen Werkstoff - oder der
+        Grund, warum eine Eingabe nicht geht. Ein Feld, das die Maske nicht
+        traegt, behaelt den Wert des alten Werkstoffs (E_p aus dem Import)."""
+        if "art" in w:
+            art = MainWindow.WERKSTOFFART_WAHL.get(str(w.get("art") or ""), "")
+        else:
+            art = getattr(alt, "art", "") if alt is not None else ""
+        out = {"art": art, "Ep": getattr(alt, "Ep", None)}
+        for key, text in (("sigma_pmax", "σ_p,max"), ("sigma_pm0", "σ_pm0")):
+            if key in w:
+                v = zahl(key)
+                if v is not None and v <= 0:
+                    return f"{text} muss größer als null sein – leer lassen heißt Vorgabe. Nicht übernommen."
+                out[key] = None if v is None else v * 1e6
+            else:
+                out[key] = getattr(alt, key, None) if alt is not None else None
+        return out
+
+    def _gewinde_felder(self, F, sec) -> list:
+        """A_s und Gewinde fuer die Querschnittsmaske."""
+        from ..ec3 import spannstahl as sp
+        gew = str(getattr(sec, "gewinde", "") or "") if sec is not None else ""
+        wahl = (sp.GEWINDE_AUFGEWALZT_TEXT if gew == sp.GEWINDE_AUFGEWALZT
+                else gew if gew in sp.schraubengroessen() else "–")
+        As = getattr(sec, "A_s", None) if sec is not None else None
+        return [F("A_s", "A_s Gewinde [mm²]", "zahl", As * 1e6 if As else None, breite=78, leer=True,
+                  hinweis="Spannungsquerschnitt aus der Zulassung (Spannstahl); leer = Nennquerschnitt A mit "
+                          "Meldung. Die Steifigkeit bleibt bei A (Schaft)"),
+                F("gewinde", "Gewinde", "wahl", wahl, ["–", sp.GEWINDE_AUFGEWALZT_TEXT] + list(sp.schraubengroessen()),
+                  hinweis="aufgewalzter Gewindestab: A_s = Nennquerschnitt ohne Meldung; M12 … M36: A_s nach "
+                          "EN ISO 898-1 (M16 157, M20 245 mm²), der Stab wird als Schraube auf Zug nach "
+                          "EN 1993-1-8 nachgewiesen")]
+
+    @staticmethod
+    def _gewinde_lesen(w: dict, sec, zahl):
+        """{A_s, gewinde} fuer den Querschnitt - oder der Grund, warum nicht.
+        Eine Schraubengroesse setzt A_s nach der Tabelle, „aufgewalzt“ leert es."""
+        from ..ec3 import spannstahl as sp
+        gew = str(getattr(sec, "gewinde", "") or "")
+        if "gewinde" in w:
+            t = str(w.get("gewinde") or "").strip()
+            gew = (sp.GEWINDE_AUFGEWALZT if "aufgewalzt" in t
+                   else t.upper() if t.upper() in sp.schraubengroessen() else "")
+        As = getattr(sec, "A_s", None)
+        if "A_s" in w:
+            v = zahl("A_s")
+            if v is not None and v <= 0:
+                return "A_s muss größer als null sein – leer lassen heißt Nennquerschnitt. Nicht übernommen."
+            As = None if v is None else v * 1e-6
+        if gew in sp.schraubengroessen():
+            As = sp.schraubengroessen()[gew]
+        elif gew == sp.GEWINDE_AUFGEWALZT:
+            As = None
+        return {"A_s": As, "gewinde": gew}
+
     def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False, geaendert=None):
         """Lastfall, Kombination, Werkstoff oder Dicke aus der Objektmaske
         schreiben - auch umbenennen; Verweise (Elemente, Flächen, Kombinationen)
@@ -11189,6 +11289,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 ok_v, r_verf, grund = pl_.verfestigung_lesen(w.get("verfestigung"))
                 if not ok_v:
                     return self.hinweis(grund)
+            # Werkstoffart, E_p und die Spannungsgrenzen des Spannstahls (13.10.2026):
+            # aus der Maske; was sie nicht traegt, bleibt wie am alten Werkstoff
+            spann = self._spannstahl_lesen(w, None if neu else alt_mt, zahl)
+            if isinstance(spann, str):
+                return self.hinweis(spann)
             self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
@@ -11200,7 +11305,9 @@ class MainWindow(QtWidgets.QMainWindow):
                           rho=float(zahl("rho", 7850.0)),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte, verfestigung=r_verf)
+                          grade=sorte, verfestigung=r_verf, **spann)
+            # art, sigma_pmax, sigma_pm0 schreibt die Schleife unten wie jedes Feld der
+            # Maske; E_p (kein Eingabefeld) bleibt am vorhandenen Werkstoff, wie es war
             dicken_zeilen = []
             if alt_mt is None:
                 mt = Material(neuname, **werte_,
@@ -11257,9 +11364,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 werte[key] = float(zahl(key, getattr(sec, key) / faktor)) * faktor
             if werte["A"] <= 0 or werte["Iy"] <= 0 or werte["Iz"] <= 0:
                 return self.hinweis("A, Iy und Iz müssen größer als null sein")
+            gewinde = self._gewinde_lesen(w, sec, zahl)
+            if isinstance(gewinde, str):
+                return self.hinweis(gewinde)
             self.merken(f"Querschnitt {neuname}")
             neu_sec = dataclasses.replace(sec, name=neuname, fabrication=str(w.get("fabrication", sec.fabrication)),
-                                          **werte)
+                                          **werte, **gewinde)
             del m.sections[name]
             m.add_section(neu_sec)
             if neuname != name:
@@ -19752,6 +19862,11 @@ class MainWindow(QtWidgets.QMainWindow):
                       f"{bg.anzahl(len(m.load_cases), 'Lastfall', 'Lastfälle')}, "
                       f"{bg.anzahl(len(m.members), 'Stab', 'Stäbe')}")
             self._fortschritt_ende()
+            # Schraubenguete (13.10.2026): der Hinweis steht orange im Protokoll und
+            # gelb in der Statuszeile - am Drehlager sonst unter tausend Importzeilen
+            sg = next((s for s in msgs if "Schraubengüte prüfen" in s), "")
+            if sg:
+                self._hinweis_statuszeile(sg.replace("WARNUNG: ", "", 1).split(" Betroffen:")[0])
             QtWidgets.QApplication.restoreOverrideCursor()
             if target is None:
                 # Elementwahl nach dem Import (Paket E, 25.09.2026): die

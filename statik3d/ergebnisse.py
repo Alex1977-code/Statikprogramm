@@ -158,6 +158,18 @@ ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "suppor
 #: Rechenart und Einstellungen“). Wer „streng“ waehlt, aendert die Kennung
 #: wie jede andere Einstellung.
 NEUE_VORGABEN = {"plastizitaet": {"abbruch": "ingenieurmaessig"}}
+#: Felder, die nach der Kennung (07.10.2026) an Werkstoff und Querschnitt
+#: dazukamen, mit ihrer Vorgabe: auf der Vorgabe zaehlen sie nicht mit, gesetzt
+#: wie jedes Feld. Ohne das passte nach dem Einbau keine Ergebnisdatei von
+#: vorher mehr - am Drehlager-Lauf vom 09.10.2026 „seit der Rechnung geändert:
+#: Werkstoffe, Querschnitte und Dicken“ (13.10.2026, Spannstahl und Gewinde;
+#: tests.test_spannstahl, Kennung wie an c379601). Verfestigung und Art kamen
+#: am selben Tag mit plast/verfestigung dazu. Wer ein Feld anfuegt, traegt es
+#: hier ein.
+NEU_AUF_VORGABE = {
+    "materials": {"verfestigung": None, "art": "", "Ep": None, "sigma_pmax": None, "sigma_pm0": None},
+    "sections": {"A_s": None, "gewinde": ""},
+}
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
               "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
@@ -293,17 +305,15 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool):
     weg = set(TEXTFELDER) | set(ANZEIGEFELDER.get(schluessel, ()))
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
-    spaeter = SPAETERE_FELDER.get(schluessel, {})
-
-    neu = NEUE_VORGABEN.get(schluessel, {})
+    # Felder mit ihrem Vorgabewert zaehlen nicht (drei Tabellen aus drei
+    # Zweigen vom 13.10.2026, gleiche Regel, keine Ueberschneidung)
+    vorgabe = {**NEUE_VORGABEN.get(schluessel, {}), **SPAETERE_FELDER.get(schluessel, {}),
+               **NEU_AUF_VORGABE.get(schluessel, {})}
 
     def objekt(x):
         if not isinstance(x, dict):
             return x
-        # NEUE_VORGABEN (Einstellungen) und SPAETERE_FELDER (Objektfelder):
-        # beide mit ihrem Vorgabewert nicht in der Kennung
-        y = {k: v for k, v in x.items() if k not in weg
-             and not (k in neu and v == neu[k]) and not (k in spaeter and v == spaeter[k])}
+        y = {k: v for k, v in x.items() if k not in weg and not (k in vorgabe and v == vorgabe[k])}
         if schluessel == "load_cases":
             for f in LASTFELDER:
                 if isinstance(y.get(f), list):

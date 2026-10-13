@@ -68,7 +68,8 @@ COMBO_TYPES = dict(_BG.TYP_KURZ)
 ENVELOPE_NAMES = {k: b.lang for k, b in _BG.UMHUELLENDE.items()}
 
 KIND_NAMES = {"Querschnitt": "Querschnittsnachweis", "Stabilitaet": "Stabilitätsnachweis",
-              "section": "Querschnittsnachweis"}
+              "section": "Querschnittsnachweis", "Spannstahl": "Spannstahlnachweis",
+              "Schraube": "Schraubennachweis auf Zug"}
 
 FORCE_UNITS = {"N": "kN", "Vy": "kN", "Vz": "kN", "Mt": "kNm", "My": "kNm", "Mz": "kNm"}
 
@@ -3155,6 +3156,19 @@ class Report:
             kv.append(("Gleiche Ergebnisse, einmal nachgewiesen",
                        "; ".join(" = ".join(v) for v in gl[:40])
                        + (" …" if len(gl) > 40 else "")))
+        # Staebe aus Spannstahl und Staebe mit Schraubengroesse (13.10.2026)
+        arten = {getattr(mc, "art", "") for mc in d.members.values()}
+        if "Spannstahl" in arten:
+            kv.append(("Stäbe aus Spannstahl",
+                       "nach EN 1992-1-1 bzw. Zulassung, nicht nach EN 1993-1-1: σ = |N| / A_s im "
+                       "Spannungsquerschnitt des Gewindes; in jedem Lastzustand σ ≤ f_pd = f_p0,1k / γ_s "
+                       "mit γ_s = 1.15 (3.3.6 bzw. Zulassung), beim Spannen σ ≤ σ_p,max (5.10.2.1), nach dem "
+                       "Verankern σ ≤ σ_pm0 (5.10.3); maßgebend ist der ungünstigste Zustand"))
+        if "Schraube" in arten:
+            kv.append(("Stäbe mit Schraubengröße",
+                       "Zug nach EN 1993-1-8, Tab. 3.4: F_t,Rd = 0.9 · f_ub · A_s / γ_M2 mit A_s nach "
+                       "EN ISO 898-1; die Steifigkeit bleibt beim Schaft. Abscheren, Lochleibung und "
+                       "Durchstanzen gehören zum Anschluss"))
         b.append(("kv", kv, "Einstellungen der Nachweise"))
         # Uebersicht
         b.append(self._h(2, "Übersicht"))
@@ -3162,7 +3176,8 @@ class Report:
                  "maßgebender Nachweis", "Kombination", "x [m]", "Status"]]
         for mc in d.members.values():
             g = mc.governing
-            rows.append([mc.member, mc.section, mc.material, fmt(mc.L, 2), str(mc.cls),
+            rows.append([mc.member, mc.section, mc.material, fmt(mc.L, 2),
+                         "–" if getattr(mc, "art", "") else str(mc.cls),
                          Util(mc.util), g.get("name", "–"), g.get("combo", "–"),
                          fmt(g.get("x", 0.0), 2),
                          mc.status()])
@@ -3334,7 +3349,62 @@ class Report:
         ]))
         return out
 
+    def _zustaende_blocks(self, mc) -> list:
+        """Stab aus Spannstahl oder mit Schraubengroesse (13.10.2026): Kennwerte
+        und je Zustand Kraft, Spannung, Grenze und Ausnutzung."""
+        from ..ec3 import spannstahl as sp
+        m = self.model
+        b = [self._h(3, f"Stab {mc.member}")]
+        sec = m.sections.get(mc.section)
+        mat = m.materials.get(mc.material)
+        kv = [("Querschnitt", f"{mc.section}" + (f" – {sec.describe()}" if sec else "")),
+              ("Stablänge", f"{fmt(mc.L, 3)} m, Elemente {_ids_text(mc.elements)}")]
+        if sec is not None:
+            A_s, vermerk, meldung = sp.spannungsquerschnitt(sec)
+            kv.append(("Spannungsquerschnitt A_s", f"{fmt(A_s * 1e6, 1)} mm² – {vermerk}"
+                       + (" (A_s aus Zulassung eintragen)" if meldung else "")
+                       + f"; Steifigkeit mit A = {fmt(sec.A * 1e6, 1)} mm²"))
+        if mat is not None and mc.art == "Spannstahl":
+            pmax, h1 = sp.sigma_p_max(mat)
+            pm0, h2 = sp.sigma_pm0(mat)
+            kv.append(("Werkstoff", f"{mc.material}: Spannstahl, f_p0,1k = {fmt(sp.f_p01k(mat) / 1e6, 0)} N/mm², "
+                                    f"f_pk = {fmt(sp.f_pk(mat) / 1e6, 0)} N/mm²"
+                                    + (f", E_p = {fmt(mat.Ep / 1e6, 0)} N/mm²" if getattr(mat, "Ep", None) else "")
+                                    + f"; gerechnet mit E = {fmt(mat.E / 1e6, 0)} N/mm²"))
+            kv.append(("Grenzen", f"f_pd = f_p0,1k / γ_s = {fmt(sp.f_pd(mat) / 1e6, 2)} N/mm² ({sp.NORM_FPD}); "
+                                  f"σ_p,max = {fmt(pmax / 1e6, 2)} N/mm² ({h1}); "
+                                  f"σ_pm0 = {fmt(pm0 / 1e6, 2)} N/mm² ({h2})"))
+        elif mat is not None:
+            kv.append(("Werkstoff", f"{mc.material}: f_ub = f_u = {fmt(mat.fu / 1e6 if mat.fu else 0, 0)} N/mm²"))
+        g = mc.governing
+        if g:
+            kv.append(("Maßgebender Nachweis", f"{g.get('name', '')}, {g.get('combo', '')}"))
+        kv.append(("Ausnutzung", Util(mc.util)))
+        kv.append(("Status", "Nachweis " + mc.status()))
+        b.append(("kv", kv, f"Stab {mc.member}"))
+        z = list(getattr(mc, "zustaende", None) or [])
+        if z:
+            rows = [["Zustand", "Ergebnis bzw. Eingabe", "N [kN]", "σ [N/mm²]", "Grenze", "Grenzwert",
+                     "Normstelle", "Ausnutzung"]]
+            for e in z:
+                kraft = e.get("grenzname") == "F_t,Rd"
+                rows.append([e.get("zustand", ""), e.get("quelle", ""), fmt(e.get("N", 0.0) / 1e3, 1),
+                             fmt(e.get("sigma", 0.0) / 1e6, 1), e.get("grenzname", ""),
+                             (fmt(e.get("grenze", 0.0) / 1e3, 1) + " kN") if kraft
+                             else (fmt(e.get("grenze", 0.0) / 1e6, 2) + " N/mm²"),
+                             e.get("norm", ""), Util(e.get("util", 0.0))])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Nachweis je Zustand – maßgebend ist der ungünstigste", None, "compact"))
+            if note:
+                b.append(("note", note))
+        if mc.warnings:
+            b.append(("list", [f"Hinweis: {w}" for w in mc.warnings]))
+            self._warnings.extend(f"Stab {mc.member}: {w}" for w in mc.warnings)
+        return b
+
     def _member_design_blocks(self, mc) -> list:
+        if getattr(mc, "art", "") and not mc.fehler:
+            return self._zustaende_blocks(mc)
         m = self.model
         b = [self._h(3, f"Stab {mc.member}")]
         mem = m.members.get(mc.member)

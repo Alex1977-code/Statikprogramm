@@ -4153,6 +4153,55 @@ Wölbsteifigkeit die Torsionsmomente anders auf die Stäbe, als die Rechnung mit
 sechs Freiheitsgraden es tut. Der Anteil je Stab ist dann eine Näherung; das
 steht im Bericht.
 
+### 5.3b Stäbe aus Spannstahl und Stäbe mit Schraubengröße (seit 13.10.2026)
+
+Ein Stab aus einem Werkstoff der Art „Spannstahl“ (RFEM-Werkstofftyp 15) wird
+im Spannungsquerschnitt A_s nachgewiesen (Entscheidung des Anwenders vom
+13.10.2026, `ec3/spannstahl.py`). Die Spannung ist σ = |N| / A_s an der Stelle
+des größten |N| des Stabes. Geprüft wird jeder Zustand gegen seine Grenze, und
+die Ausnutzung des Stabes ist das Größte der Verhältnisse σ / Grenze. Im
+Lastzustand (GZT-Kombination, abgelegte Laststufe einer plastischen Rechnung,
+sonst deren Endzustand mit Vermerk) ist die Grenze f_pd = f_p0,1k / γ_s mit γ_s
+= 1,15 nach EN 1992-1-1, 3.3.6 und Tabelle 2.1N bzw. nach der Zulassung. Beim
+Spannen ist sie σ_p,max = min(k_1 · f_pk; k_2 · f_p0,1k) mit k_1 = 0,8 und k_2
+= 0,9 nach 5.10.2.1(1), nach dem Verankern σ_pm0 = min(k_7 · f_pk; k_8 ·
+f_p0,1k) mit k_7 = 0,75 und k_8 = 0,85 nach 5.10.3(2). Eine Eingabe am
+Werkstoff ersetzt die Formel, wenn die Zulassung abweicht. f_p0,1k und f_pk
+sind die Felder f_y und f_u des Werkstoffs, dessen Art (`Material.art`,
+eingeführt mit der Verfestigung bis f_u) Spannstahl ist. Liefert die
+kraftgesteuerte Vorspannung je Stab N_spannen und N_verankert
+(`res.info["vorspannung"]["staebe"]`), sind das die Kräfte der beiden
+Vorspannzustände. Sonst ist der Zustand beim Spannen die eingegebene
+Vorspannkraft N_0, entweder als Vorspannung am Stab oder als gleichwertige
+Temperaturlast N_0 = E · A · α · (−ΔT) in einem Lastfall der Kategorie P, und
+jedes Ergebnis mit dem Zustand „spannen“. Der Zustand nach dem Verankern ist
+das Ergebnis eines Lastfalls, der nur Vorspannung trägt, oder ein Ergebnis mit
+dem Zustand „verankert“; fehlt beides, gilt N_0 ohne Verluste. Mit F = 944,7 kN
+und A = 1 256,6 mm² ergibt sich σ = 751,8 N/mm², das Verhältnis zu σ_p,max =
+751,5 N/mm² ist 1,0004 und zu σ_pm0 = 709,75 N/mm² 1,059 (Prüfung
+`tests.test_spannstahl` am beidseitig festen Stab).
+
+A_s kommt in dieser Reihenfolge aus der Schraubengröße des Querschnitts (M12
+bis M36, A_s nach EN ISO 898-1 wie in der Schraubentabelle der Anschlüsse), aus
+der Angabe „aufgewalzter Gewindestab“ (A_s = A), aus der Eingabe der Zulassung
+oder, wenn nichts davon gesetzt ist, aus dem Nennquerschnitt A mit der Meldung
+„A_s aus Zulassung eintragen“. Die Steifigkeit des Stabes rechnet immer mit A.
+Momente im Gewinde werden genannt und nicht nachgewiesen.
+
+Ein Stab mit Schraubengröße aus einem anderen Werkstoff ist eine Schraube auf
+Zug nach EN 1993-1-8, Tabelle 3.4: F_t,Rd = k_2 · f_ub · A_s / γ_M2 mit k_2 =
+0,9 und f_ub = f_u des Werkstoffs (`ec3/schraubenstab.py`). Alle anderen Stäbe
+werden wie bisher nach 5.3 und 5.4 nachgewiesen; ihre Ausnutzung ist bitgleich
+mit dem Stand vor dem 13.10.2026 (Bezugswerte in `tests.test_spannstahl`).
+
+Die neuen Felder (E_p, σ_p,max und σ_pm0 am Werkstoff, A_s und Gewinde am
+Querschnitt, dazu Werkstoffart und Verfestigung aus der Verfestigung bis f_u)
+zählen in der Kennung der Ergebnisdatei nur, wenn sie gesetzt sind
+(`ergebnisse.NEU_AUF_VORGABE`). Ohne diese Regel hätte schon das Anfügen der
+Felder jede gespeicherte Ergebnisdatei ungültig gemacht; am Drehlager-Lauf vom
+09.10.2026 hieß es beim Lesen „seit der Rechnung geändert: Werkstoffe,
+Querschnitte und Dicken“.
+
 ### 5.4 Stabilitätsnachweise (6.3)
 
 * Biegeknicken 6.3.1: N_cr = π² E I / L_cr² um y und z mit Knicklänge

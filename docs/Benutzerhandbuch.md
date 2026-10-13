@@ -6961,6 +6961,34 @@ Passstift braucht Spiel — am Modell sind die beiden nicht zu unterscheiden.
 Wer eine Fuge anders haben will, stellt sie an ihrer **Kontaktbedingung** ein
 (siehe *Geometrischer Spalt an der Fuge*).
 
+**Spannstahl aus RFEM (seit 13.10.2026).** Einen Werkstoff vom
+RFEM-Werkstofftyp 15 übernimmt der Import als Spannstahl, mit f_p0,1k, f_pk und
+E_p aus der Datei; f_y und f_u sind wie bisher f_p0,1k und f_pk. Gerechnet wird
+mit dem E-Modul E. Am Drehlager steht für Material 3 (DB 2309) E = 170 000
+N/mm² aus der Datenbank und E_p = 205 000 N/mm² als Eingabe. Welchen der beiden
+RFEM rechnet, lässt sich aus der Datei nicht belegen, weil sie keine Ergebnisse
+enthält; der Schubmodul G = 65 385 N/mm², den sie führt, ist aus E = 170 000
+N/mm² abgeleitet. Das Protokoll nennt beide Werte.
+
+**Hinweis zur Schraubengüte (seit 13.10.2026).** Hängen runde Stäbe bis Ø 36 mm
+an Volumen und hat ihr Werkstoff oder der Werkstoff ihrer Schraubenkörper eine
+Streckgrenze unter 640 N/mm², meldet der Import das gebündelt in einer Zeile,
+orange im Protokoll und gelb in der Statuszeile. Umgestellt wird nichts. Am
+Drehlager lautet sie: „Schraubengüte prüfen: 48 Zugstäbe (Rund 16/20) und 48
+Schraubenkörper aus „Nullmaterial“ (f_y 355 N/mm²). Falls Schrauben z. B. 8.8
+(f_yb 640 N/mm²) oder 10.9 (f_yb 900 N/mm²) gemeint sind, bitte den Werkstoff
+im Modell anpassen; umgestellt wurde nichts. Betroffen: Stäbe S17–S64; Volumen
+V37–V60, V65–V70, V80–V91, V96–V101.“ Ein Stab hängt an einem Volumen, wenn
+einer seiner Knoten in eine Randfläche des Volumens integriert ist oder auf
+ihren Randlinien liegt. Ein Schraubenkörper ist ein Volumen, an dem ein solcher
+Stab hängt und das quer zur Stabachse in einen Kreis von 36 mm passt, mit 1 mm
+Toleranz für ein Stabende, das nicht genau in der Mitte sitzt. Die Grenze 36 mm
+ist die größte Schraube M36 der Tabellen von EN 1993-1-8 und EN ISO 898-1, die
+Grenze 640 N/mm² ist f_yb der Klasse 8.8. Die 16 Ankerstäbe Rund 40 und die 20
+Passstifte, an denen kein Stab hängt, nennt der Hinweis darum nicht. An den
+Beispielen des Programms, an den Modellen CBG und Kopfplatte HEA 200 und am
+Drehlager-Import ohne Volumen erscheint kein Hinweis.
+
 **Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
 einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
 der Mitte der Stirnfläche eines Schraubenvolumens endet, hängt dort am
@@ -8023,6 +8051,80 @@ einer Rechnung mit EC3 und einer zweiten ohne Nachweise die alte Zeile
 („Nachweise EC3: … max. Ausnutzung 0.633 … - alle erfuellt“ am Einfeldträger
 IPE 300 in `tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett
 leer.
+
+**Stäbe aus Spannstahl (seit 13.10.2026).** Ein Stab, dessen Werkstoff die
+Werkstoffart „Spannstahl“ trägt, wird nicht nach EN 1993-1-1 nachgewiesen,
+sondern nach EN 1992-1-1 bzw. nach der Zulassung des Spannglieds, und zwar im
+Spannungsquerschnitt A_s des Gewindes. Bis zum 13.10.2026 lief über einen
+solchen Stab der Querschnittsnachweis für Baustahl mit f_y = f_p0,1k (am
+Drehlager 835 N/mm²).
+
+Geprüft wird jeder Zustand, den das Programm kennt, und maßgebend ist der
+ungünstigste. In jedem Lastzustand, also in jeder GZT-Kombination und bei einer
+plastischen Rechnung in jeder abgelegten Laststufe, gilt σ = |N| / A_s ≤ f_pd =
+f_p0,1k / γ_s mit γ_s = 1,15 (EN 1992-1-1, 3.3.6 bzw. Zulassung). Beim Spannen
+gilt σ ≤ σ_p,max = min(0,8 · f_pk; 0,9 · f_p0,1k) nach 5.10.2.1, nach dem
+Verankern σ ≤ σ_pm0 = min(0,75 · f_pk; 0,85 · f_p0,1k) nach 5.10.3; mit f_p0,1k
+= 835 und f_pk = 1 030 N/mm² sind das 751,5 und 709,75 N/mm². Für das Spannen
+nimmt der Nachweis die eingegebene Vorspannkraft, also eine Vorspannung am Stab
+in jedem Lastfall oder die gleichwertige Temperaturlast, die der RFEM-Import
+aus einer Stabvorspannung macht, in einem Lastfall der Kategorie P. Für den
+Zustand nach dem Verankern nimmt er das Ergebnis jedes Lastfalls, der nur
+Vorspannung trägt (am Drehlager LF398 „Vorspannung der Zuganker zum Zeitpunkt
+0“). Ist kein solcher Lastfall gerechnet, setzt er die eingegebene Kraft ohne
+Verluste an, und die Zeile des Zustands sagt das. Ein Ergebnis, das in seinen
+Angaben den Zustand „spannen“ oder „verankert“ trägt, zählt ebenso. Rechnet die
+kraftgesteuerte Vorspannung, legt sie je Stab die Kraft beim Spannen N_spannen
+und nach dem Verankern N_verankert im Ergebnis ab; diese beiden Kräfte gehen
+dann vor die eingegebene Kraft und vor das Ergebnis des Lastfalls. Laststufen
+einer plastischen Rechnung legt das Programm heute nicht ab. Dann gilt der
+Endzustand, und der Stab vermerkt „Laststufen der Plastizität von LF1 nicht
+abgelegt – nachgewiesen ist der Endzustand“.
+
+Weicht die Zulassung ab, trägt man σ_p,max und σ_pm0 in der Maske des
+Werkstoffs ein. Bleiben die Felder leer, gelten die Formeln, und der Hinweis am
+Feld nennt ihren Wert. In derselben Maske ist die Werkstoffart wählbar (Stahl,
+Schraube, Spannstahl); es ist dieselbe Art, nach der die Verfestigung der
+Plastizität bis f_u, f_ub oder f_pk reicht. Beim Spannstahl heißen die Felder
+f_y und f_u dort f_p0,1k und f_pk, und E_p aus der Quelldatei steht als Anzeige
+darunter. Gerechnet wird weiter mit dem E-Modul E. Eine Datei, die vor dem
+13.10.2026 importiert wurde, trägt keine Art, am Drehlager etwa „Material 3 (DB
+2309)“. Beim Öffnen sagt das Protokoll dann, dass f_y und f_u mit 835 und 1 030
+N/mm² wie die eines Spannstahls aussehen; gesetzt wird nichts, und der
+Spannstahlnachweis gilt erst, wenn die Art in der Maske auf Spannstahl steht.
+
+Biegung im Gewinde gibt es in diesem Nachweis nicht. Hat der Stab Momente,
+nennt der Nachweis sie („Biegung im Gewinde wird nicht nachgewiesen: max |M_y|
+= … kNm“), weist sie aber nicht nach; Druck nennt er ebenso. In der Tabelle
+steht in der Spalte Klasse „–“, und der maßgebende Nachweis nennt Zustand,
+Grenze, Normstelle und die Herkunft von A_s, etwa „Spannstahl, nach dem
+Verankern: σ ≤ σ_pm0 (EN 1992-1-1, 5.10.3; A_s = Nennquerschnitt)“. Die Ampel
+färbt die Zeile nach dieser Ausnutzung. Der Bericht zeigt je Stab eine Tabelle
+aller Zustände mit Kraft, Spannung, Grenze, Normstelle und Ausnutzung, und
+unter den Einstellungen der Nachweise steht, dass Stäbe aus Spannstahl nicht
+nach EN 1993-1-1 nachgewiesen werden.
+
+**Spannungsquerschnitt A_s und Gewinde (seit 13.10.2026).** Die Maske des
+Querschnitts hat das Feld „A_s Gewinde [mm²]“ und die Auswahl „Gewinde“. A_s
+trägt man aus der Zulassung ein. Bleibt es leer, rechnet der Spannstahlnachweis
+mit dem Nennquerschnitt A und meldet am Stab, im Bericht und in der
+Zusammenfassung „A_s aus Zulassung eintragen“. Bei einem aufgewalzten
+Gewindestab ist A_s der Nennquerschnitt; die Auswahl „aufgewalzter Gewindestab
+(A_s = Nennquerschnitt)“ setzt das ohne Meldung. Eine Schraubengröße M12 bis
+M36 setzt A_s nach EN ISO 898-1, bei M16 157 mm² und bei M20 245 mm². Die
+Steifigkeit bleibt in jedem Fall beim Querschnitt A des Schafts. Ältere Dateien
+kennen weder A_s noch das Gewinde; die Felder bleiben dort leer, und
+Ergebnisdateien von vorher passen weiter, weil leere Felder die Kennung der
+Ergebnisdatei nicht ändern.
+
+**Stab mit Schraubengröße (seit 13.10.2026).** Trägt der Querschnitt eines
+Stabes eine Schraubengröße und ist sein Werkstoff kein Spannstahl, wird der
+Stab als Schraube auf Zug nach EN 1993-1-8, Tabelle 3.4 nachgewiesen: F_t,Ed ≤
+F_t,Rd = 0,9 · f_ub · A_s / γ_M2 mit f_ub = f_u des Werkstoffs und γ_M2 aus den
+Nachweiseinstellungen. Eine M20 der Klasse 8.8 trägt so 0,9 · 800 · 245 / 1,25
+= 141,1 kN. Abscheren, Lochleibung und Durchstanzen hängen am Anschluss, den
+der Stab nicht kennt, und werden hier nicht nachgewiesen. Ein Stab ohne
+Spannstahl und ohne Schraubengröße wird genau wie bisher nachgewiesen.
 
 **Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht

@@ -480,12 +480,18 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     E, nu, rho, alpha, fy, fu = 210e9, 0.3, 7850.0, 1.2e-5, None, None
     dbnr = None
     art = ""
+    Ep = None
     if h is not None:
         impl = db.by_id(h["impl_table"] or "MaterialImpl").get(h["impl_id"])
         if impl is not None:
             name = (impl.get("name") or "").strip()
             dbnr = impl.get("databaseMaterialId")
             props = _material_props(db, impl)
+            # E_p des Spannstahls (13.10.2026): am Drehlager Material 3 (DB 2309)
+            # E_p 205 000 eingegeben, E 170 000 aus der Datenbank. Gerechnet wird
+            # weiter mit E - welchen Modul RFEM rechnet, belegt die Datei nicht
+            # (G = 65 385 = 170 000 / 2,6 ist aus E abgeleitet, Ergebnisse fehlen)
+            Ep = props.get("E_p")
             E = props.get("E", E)
             nu = props.get("nu", nu)
             alpha = props.get("alpha", alpha)
@@ -529,7 +535,7 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     model.add_material(Material(name, E=E, nu=nu, rho=rho, alpha=alpha,
                                 fy=fy, fu=fu, grade=grade,
                                 fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or []),
-                                art=art))
+                                art=art, Ep=Ep if art == "Spannstahl" else None))
     if h is not None and impl is not None and props.get("f_p01k") and not props.get("f_y"):
         # Spannstahl (f_p0,1k statt f_y): die Umwandlung einer Vorspannung in
         # die Sollkraft schlaegt 0,9 f_p0,1k A vor (statik3d.vorspannkraft)
@@ -546,6 +552,15 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
         # setzt der Anwender (13.10.2026), nie der Import
         C.say(log, f"Hinweis: Werkstoff ‚{name}‘ ist gewichtslos – Hilfsmaterial? Körper daraus "
                    "können vom Volumennachweis ausgenommen werden.")
+    if art == "Spannstahl":
+        from ..zahlen import zahl_text
+
+        def nmm(v):
+            return zahl_text(v / 1e6) if v else "–"
+        C.say(log, f"    Spannstahl (RFEM-Werkstofftyp {MATERIALTYP_SPANNSTAHL}): f_p0,1k = {nmm(fy)}, "
+                   f"f_pk = {nmm(fu)}, E_p = {nmm(Ep)} N/mm² - Stabnachweis nach "
+                   "EN 1992-1-1 bzw. Zulassung im Spannungsquerschnitt A_s; gerechnet wird mit "
+                   f"E = {nmm(E)} N/mm²")
     cache[mat_id] = name
     return name
 
@@ -1120,6 +1135,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
     hinweise: dict[str, str] = {}
     weggelassen: dict[str, int] = {}
     nur_je_art: dict[str, list] = {}      # "zug"/"druck"/"beides" -> Namen der Zug-/Druckstaebe
+    stabart: dict[str, str] = {}          # Stabname -> Stabtyp im Klartext (Schraubenhinweis)
     for h, impl in db.impls("Member"):
         nodes = [node_of[n] for n in line_nodes.get(impl.get("line_id"), []) if n in node_of]
         if len(nodes) < 2:
@@ -1155,6 +1171,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         if h.get("impl_table") in ("MemberImplTension", "MemberImplCompression"):
             nur_je_art.setdefault(nur or "beides", []).append(mem.name)
         member_name[h["id"]] = mem.name
+        stabart[mem.name] = ttext
         if h.get("userID") is not None:
             member_user[int(h["userID"])] = mem.name
         if impl.get("isDeactivatedForCalculation"):
@@ -1304,6 +1321,13 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
                 line_name, solid_name, strukturmod, fortschritt=fortschritt)
     _object_selections(db, m, log, node_user, line_name, member_user, surf_name, solid_name)
     _melde(fortschritt, 0.96, "Modell prüfen")
+    # Schraubenguete (13.10.2026, „hinweis beim import“): runde Staebe bis
+    # Ø 36 mm an Volumen und ihre Schraubenkoerper aus einem Werkstoff unter
+    # f_yb 640 werden gemeldet, gebuendelt; umgestellt wird nichts
+    from .schraubenhinweis import schraubenhinweis
+    hinweis = schraubenhinweis(m, stabarten=stabart)
+    if hinweis:
+        C.warn(log, hinweis)
     _diagnose(m, log)
 
 

@@ -24,7 +24,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_register_start",
            "tests.test_fehler_p14",
            "tests.test_unten_kopfzeile", "tests.test_befehl_stab",
-           "tests.test_stab_nachweis", "tests.test_stab_teilen", "tests.test_ergebniszeile",
+           "tests.test_stab_nachweis", "tests.test_spannstahl", "tests.test_stab_teilen", "tests.test_ergebniszeile",
            "tests.test_elementuebersicht", "tests.test_elementstufe", "tests.test_netz_grenze", "tests.test_fein_smart",
            "tests.test_beenden_ohne_absturz",
            "tests.test_fehler_p12", "tests.test_fehler_p6", "tests.test_nachtrag_q7",

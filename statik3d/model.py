@@ -334,6 +334,18 @@ class Material:
     #: als ausgenommen ausweisen“). Setzt nur der Anwender, nie das Programm
     #: nach dem Namen; ec3/volumen.py weist die Elemente als ausgenommen aus.
     nachweis_ausnehmen: bool = False
+    #: Spannstahl (13.10.2026, Stabnachweis ec3.spannstahl): f_p0,1k und f_pk
+    #: stehen in ``fy`` und ``fu`` (siehe ``art``); E_p ist der E-Modul des
+    #: Spannstahls, wie die Quelldatei ihn fuehrt [Pa]. Gerechnet wird weiter
+    #: mit ``E`` - am Drehlager E 170 000 aus der Datenbank, E_p 205 000
+    #: eingegeben; welchen RFEM rechnet, ist aus der Datei nicht zu belegen.
+    Ep: Optional[float] = None
+    #: Spannungsgrenzen beim Spannen (sigma_p,max, EN 1992-1-1, 5.10.2.1) und
+    #: nach dem Verankern (sigma_pm0, 5.10.3) [Pa]; None = Vorgabe nach den
+    #: Formeln min(0,8 f_pk; 0,9 f_p0,1k) bzw. min(0,75 f_pk; 0,85 f_p0,1k).
+    #: Eine Eingabe gilt, wenn die Zulassung abweicht.
+    sigma_pmax: Optional[float] = None
+    sigma_pm0: Optional[float] = None
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
@@ -513,6 +525,17 @@ class Section:
     Iz_geo: float = 0.0
     Iyz_geo: float = 0.0
     parts: list = field(default_factory=list)   # zusammengesetzt: Teilquerschnitte
+    #: Spannungsquerschnitt des Gewindes [m^2], Eingabe aus der Zulassung
+    #: (13.10.2026). None = nicht eingetragen: der Nachweis eines Spannstahl-
+    #: stabs rechnet dann mit dem Nennquerschnitt A und meldet „A_s aus
+    #: Zulassung eintragen“. Die Steifigkeit bleibt immer bei A (Schaft).
+    A_s: Optional[float] = None
+    #: Gewinde des Stabs: "" (nicht angegeben), "aufgewalzt" (aufgewalzter
+    #: Gewindestab, A_s = Nennquerschnitt ohne Meldung) oder eine
+    #: Schraubengroesse "M12" … "M36" (A_s nach EN ISO 898-1, Tabelle
+    #: joints.bolts.SIZES; der Stab wird dann als Schraube auf Zug nach
+    #: EN 1993-1-8 nachgewiesen) - ec3.spannstahl.spannungsquerschnitt
+    gewinde: str = ""
 
     def __post_init__(self):
         if self.Wel_y <= 0 and self.zmax > 0:
@@ -9112,6 +9135,10 @@ class Model:
         nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
         m._ladehinweise.extend(zugstab_hinweis(m))
+        # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
+        # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
+        from .ec3.spannstahl import ladehinweise
+        m._ladehinweise.extend(ladehinweise(m))
         return m
 
     def copy(self) -> "Model":
