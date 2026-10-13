@@ -319,6 +319,34 @@ def test_oberflaeche(platte):
     check("Ansicht: die Zone ist umrandet, an der Stelle steht ein Zeichen",
           "spitzen_zonen" in w.plotter.actors and zeichen(),
           str([a for a in w.plotter.actors if "spitzen" in a]))
+    # seit 13.10.2026: grau schraffiert ueber der Ergebnisfarbe, eigener
+    # Legendeneintrag, Umrandung und Zeichen in demselben Grau
+    from statik3d.gui import viewport as vp
+    schr = w.plotter.actors.get("spitzen_schraffur")
+    rand = w.plotter.actors.get("spitzen_zonen")
+    check("… grau schraffiert: Linien über der Ergebnisfarbe, keine Fläche (die Farbe bleibt sichtbar)",
+          schr is not None and schr.mapper.dataset.n_lines > 10 and schr.mapper.dataset.n_faces_strict == 0
+          and schr.prop.color.hex_rgb.lower() == vp.FARBE_SPITZE.lower()
+          and rand is not None and rand.prop.color.hex_rgb.lower() == vp.FARBE_SPITZE.lower(),
+          f"{getattr(getattr(schr, 'mapper', None), 'dataset', None) and schr.mapper.dataset.n_lines} Linien")
+    leg = w.plotter.actors.get("spitzen_schraffur_legende")
+    muster = w.plotter.actors.get("spitzen_schraffur_muster")
+    check("… eigener Legendeneintrag „netzabhängig (schraffiert)“ mit Muster, in Grau",
+          leg is not None and leg.GetInput() == "netzabhängig (schraffiert)" and muster is not None
+          and "#%02x%02x%02x" % tuple(int(round(c * 255)) for c in leg.GetTextProperty().GetColor())
+          == vp.FARBE_SPITZE.lower(), repr(leg.GetInput() if leg is not None else None))
+    hinweis = w.plotter.actors.get("spitzen_legende")
+    check("… der Hinweis „in netzabhängigen Stellen bis …“ in dunklem Grau, nicht Magenta",
+          hinweis is not None and "#%02x%02x%02x" % tuple(int(round(c * 255))
+                                                          for c in hinweis.GetTextProperty().GetColor())
+          == vp.FARBE_SPITZE.lower())
+    bars = list(w.plotter.scalar_bars.values())
+    lut = bars[0].GetLookupTable() if bars else None
+    ueber = bool(bars) and bars[0].GetDrawAboveRangeSwatch()
+    check("… Knoten der Zone über der Skala: Magenta mit „> Skalenmax“ (nicht mehr eigene Farbe „netzabh.“)",
+          ueber and bars[0].GetAboveRangeAnnotation() == "> Skalenmax"
+          and "#%02x%02x%02x" % tuple(int(round(c * 255)) for c in lut.GetAboveRangeColor()[:3]) == "#ff00ff",
+          f"{bars[0].GetAboveRangeAnnotation() if bars else None}")
     w.cb_spitzenzonen.setChecked(False)
     app.processEvents()
     aus = "spitzen_zonen" not in w.plotter.actors and not zeichen()

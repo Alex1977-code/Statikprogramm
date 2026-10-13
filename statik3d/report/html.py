@@ -2574,12 +2574,18 @@ class Report:
                        "Netzknoten. Dort wächst die Spannung mit jeder Netzverfeinerung; ihr "
                        "Spitzenwert ist eine Eigenschaft des Netzes und keine Nachweisgröße. "
                        "Gekennzeichnet sind nur die auffälligen Stellen: σ_v ≥ 2·f_y in der Zone "
-                       "oder die Kraft über die Fläche der Stelle F/(A·f_y) ≥ 1. Die Zone sind die "
-                       "Elemente im Umkreis von vier Elementkanten oder dem Radius der Stelle um "
-                       "ihre Knoten; σ_v ist der größte Wert an den Integrationspunkten der Zone, "
-                       "ε_p die größte plastische Vergleichsdehnung. Die Werte bleiben stehen, "
-                       "gelten aber nicht für den Nachweis: Übersicht, Volumennachweis und Ermüdung "
-                       "nehmen die Zonen aus ihrem Maximum und nennen sie als „nur berichtet“."))
+                       "oder die Kraft über die Fläche der Stelle F/(A·f_y) ≥ 1. Die Zone sind "
+                       "höchstens zwei Elementringe um die Knoten der Stelle, der zweite bis zum "
+                       "Radius der Stelle plus zwei Elementkanten (bis zum 13.10.2026 alle Elemente "
+                       "im Umkreis von vier Elementkanten oder dem Radius der Stelle); σ_v ist der "
+                       "größte Wert an den Integrationspunkten der Zone, ε_p die größte plastische "
+                       "Vergleichsdehnung. Die Werte bleiben stehen, gelten aber nicht für den "
+                       "Nachweis: Übersicht, Volumennachweis und Ermüdung nehmen die Zonen aus ihrem "
+                       "Maximum und nennen sie als „nur berichtet“. In den Bildern der Ansicht sind "
+                       "die Zonen grau schraffiert (Legendeneintrag „netzabhängig (schraffiert)“), "
+                       "die Farbe darunter bleibt sichtbar; Werte über der Farbskala sind magenta "
+                       "(„> Skalenmax“). Bis zum 13.10.2026 waren die Zonen magenta umrandet und "
+                       "Werte über dem Grenzwert grau."))
         rows = [["Rang", "Ort", "Bauteil", "Ursache", "Kraft [kN]", "σ_v [N/mm²]", "ε_p [%]",
                  "Elemente der Zone", "Volumen der Zone [cm³]", "Ergebnis", "Vermerk"]]
         reihe = sorted(je.values(), key=lambda v: (-(v[0].get("sv_fy") or 0.0),

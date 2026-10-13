@@ -1457,17 +1457,17 @@ Kontaktkräfte bleibt 20,00 kN.
 **Werteskala** (`Werteskala`, `grenzen`). Drei Modi: automatisch (Grenzen aus
 den endlichen Werten), fest (unten/oben) und Grenzwert. Der Grenzwert G (355
 für S355) spannt die Skala 0 … G auf, bei negativen Werten −G … G; Werte
-darüber bekommen `above_color` ein mittleres Grau (#646464), darunter
-`below_color` Cyan — beides Farben, die in keiner Farbtafel vorkommen —, und
-die Skala trägt an dieser
-Stufe den tatsächlichen Größt- bzw. Kleinstwert als Beschriftung. So ist
-der oberste Eintrag das Maximum und der zweite die Grenze, wie es die
-Vorgabe verlangt. Bis zum 13.10.2026 war `above_color` Magenta; seitdem
-kennzeichnet Magenta die netzabhängigen Spannungsspitzen. Das Grau hat unter
-allen Grautönen den größten kleinsten Farbabstand ΔE (CIE-Lab): 43,2 zur
-Tafel turbo, auch zu ihrem fast schwarzen unteren Ende, 116,9 zu Magenta und
-mindestens 29,5 zu den Grautönen der Ansicht (Umriss des unverformten
-Systems, Kanten, Geist, Elemente ohne Wert). Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
+darüber bekommen `above_color` Magenta (`FARBE_UEBER`) mit der Beschriftung
+„> Skalenmax“ (`UEBER_TEXT`), darunter `below_color` Cyan mit dem
+Kleinstwert — beides Farben, die in keiner Farbtafel vorkommen (Magenta: ΔE
+mindestens 71,4 zur Tafel turbo). Bis zum 13.10.2026 trug das obere Feld den
+tatsächlichen Größtwert; seitdem steht er in den Kennwerten. Die Farbe war
+bis dahin für einen Teil des Tages ein Grau (#646464), davor Magenta; das Grau
+kennzeichnet jetzt allein die netzabhängigen Spannungsspitzen (Schraffur,
+Umrandung, Zeichen, Legendeneintrag: `viewport.FARBE_SPITZE`, ΔE 43,2 zur
+Tafel, mindestens 26,2 zu jeder anderen Farbe der Ansicht). Die Schraffur
+sind die Schnitte der Zonenoberfläche mit parallelen Ebenen
+d·x = k·h/2 (`viewport.schraffur`), Linien und keine Fläche. Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
 Beschriftungen an jeder Stufengrenze (`n_labels` = Stufen + 1). „Nur
 Überschreitungen“ setzt alle Beträge ≤ G auf NaN (grau) und spannt die
 Skala von G bis zum größten Betrag — die Überschreitungen behalten so ihre

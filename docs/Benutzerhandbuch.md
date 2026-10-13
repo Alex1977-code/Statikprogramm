@@ -10949,15 +10949,22 @@ aber nicht als gekennzeichnet; ihr größtes σ_v liegt bei 561 N/mm². Das
 Ergebnis wird mit der Ergebnisdatei gespeichert und wieder geladen.
 
 Seit dem 10.10.2026 zeigt das Programm die auffälligen Stellen auch, ohne
-etwas zu verschweigen. In der Ansicht sind ihre Zonen magenta umrandet, und
-an jeder Stelle steht ein Zeichen „netzabhängig“ mit σ_v; der Schalter
+etwas zu verschweigen. In der Ansicht sind ihre Zonen grau umrandet und grau
+schraffiert – Linien über der Ergebnisfarbe, die zwischen ihnen sichtbar
+bleibt –, rechts unter der Farbskala steht der Legendeneintrag
+„netzabhängig (schraffiert)“ mit einem schraffierten Feld, und an jeder
+Stelle steht ein Zeichen „netzabhängig“ mit σ_v; der Schalter
 „Netzabhängige Stellen kennzeichnen“ in der Maske Ergebnisse blendet beides
 aus und wieder ein. Färben Sie eine Volumenspannung oder die
 Vergleichsspannung, nehmen Farbskala, Max-/Min-Marken und die Kennwerte unten
 links ihr Maximum außerhalb der Zonen. Unter der Farbskala steht getrennt „in
 netzabhängigen Stellen bis … N/mm² (netzabhängig)“, und zwar mit dem Wert an
-den Integrationspunkten; Knoten der Zonen über der Skala bekommen die eigene
-Farbe „netzabh.“. Die Zusammenfassung des Ergebnisses nennt die größte
+den Integrationspunkten; Knoten der Zonen über der Skala bekommen die Farbe
+„> Skalenmax“ (Magenta) wie jeder Wert über der Skala. Bis zum 13.10.2026
+waren die Zonen magenta umrandet, Zeichen und Hinweis magenta, und die Knoten
+der Zonen über der Skala hatten eine eigene Farbe „netzabh.“; zugleich war
+„über dem Grenzwert“ grau, und Grau stand damit für zweierlei. Die
+Zusammenfassung des Ergebnisses nennt die größte
 Vergleichsspannung und die größte plastische Dehnung außerhalb der Zonen mit
 Knoten bzw. Bauteil und darunter die Spitze mit dem Vermerk „netzabhängig,
 nicht für den Nachweis“. Im Modellbaum steht unter Ergebnisse der Eintrag
@@ -10975,9 +10982,11 @@ den 16 Ankerplatten 5 833 Elemente (bis zum 13.10.2026 mit der größeren Zone
 mit der Zone von davor von η = 3,020 auf 0,794. Beim Öffnen einer Ergebnisdatei von
 vor dem 10.10.2026 holt das Programm die Kennzeichnung aus dem gespeicherten
 Ergebnis nach, am Drehlager in rund 6 s, ohne neu zu rechnen. Die Farbe der
-Kennzeichnung ist seit dem 13.10.2026 Magenta; sie kommt in der Farbtafel der
-Ergebnisse nicht vor. Bis zum 13.10.2026 war sie violett und lag damit nahe am
-dunklen unteren Ende der Farbtafel. Bis zum 10.10.2026 nahmen Legende, Zusammenfassung,
+Kennzeichnung ist seit dem 13.10.2026 ein dunkles Grau (#646464), das in der
+Farbtafel der Ergebnisse nicht vorkommt (Farbabstand ΔE mindestens 43 zu jeder
+ihrer Farben) und als Schrift auf Weiß gut lesbar ist. Bis zum 13.10.2026 war
+sie erst violett – nahe am dunklen unteren Ende der Farbtafel –, dann
+Magenta. Bis zum 10.10.2026 nahmen Legende, Zusammenfassung,
 Bericht und Nachweise ihr Maximum über alle Elemente, auch über die
 netzabhängigen Stellen.
 
@@ -11131,14 +11140,15 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
 * **Werteskala** (Maske Ergebnisse, Ribbon *Ergebnisse → Werteskala*): die
   Grenzen der Farbskala sind **automatisch** (kleinster … größter Wert),
   **fest** (unten … oben) oder ein **Grenzwert**: 0 … Grenze, z. B. 355 für
-  S355 (bei negativen Werten −Grenze … Grenze). Was über der Grenze liegt,
-  bekommt ein **mittleres Grau** (unter der negativen Grenze Cyan), und die
-  Skala nennt darüber den tatsächlichen Größtwert: der oberste Eintrag ist das
-  Maximum, der zweite die Grenze. Bis zum 13.10.2026 war es Magenta; seitdem
-  kennzeichnet Magenta die netzabhängigen Spannungsspitzen, und das Grau
-  (#646464) ist so gewählt, dass es sich von jeder Farbe der Skala, auch von
-  ihrem fast schwarzen unteren Ende, von Magenta und von den hellen Grautönen
-  der Ansicht klar abhebt. **Farbstufen** wie in ANSYS 9 (bis 256 = stufenlos).
+  S355 (bei negativen Werten −Grenze … Grenze). Was über der Skala liegt,
+  bekommt **Magenta** mit der Beschriftung **„> Skalenmax“** im Skalenfeld und
+  in der Kopfzeile (unter der negativen Grenze Cyan); den Größtwert nennen die
+  Kennwerte unten links. Bis zum 13.10.2026 stand im Skalenfeld der
+  tatsächliche Größtwert, und die Farbe war für einen Teil dieses Tages ein
+  Grau – dasselbe Grau, mit dem die netzabhängigen Stellen gekennzeichnet
+  waren; seitdem gehört das Grau nur noch ihnen (schraffiert), und jede
+  Farbe der Legende hat zu jeder anderen Farbe der Ansicht einen Farbabstand
+  ΔE von mindestens 15, Magenta und das Grau zur Farbtafel mindestens 43. **Farbstufen** wie in ANSYS 9 (bis 256 = stufenlos).
   **Nur Überschreitungen färben**: nur Beträge über der Grenze bekommen Farbe,
   von der Grenze bis zum Größtwert, alles andere bleibt hellgrau — so springen
   die Stellen ins Auge. Der Haken ist in jedem Modus anklickbar und schaltet

@@ -722,15 +722,19 @@ def kontakt_je_knoten(model, res, groesse: str) -> np.ndarray:
 # --------------------------------------------------------------------------
 # Werteskala
 # --------------------------------------------------------------------------
-#: ueber der Grenze: ein mittleres Grau (Entscheidung des Anwenders vom
-#: 13.10.2026; bis dahin Magenta, das seitdem die netzabhaengigen Stellen
-#: kennzeichnet, gui/viewport.FARBE_SPITZE). Gewaehlt als das Grau mit dem
-#: groessten kleinsten Farbabstand dE (CIE-Lab): zur Tafel turbo mindestens
-#: 43,2 (auch zu ihrem fast schwarzen unteren Ende), zu Magenta 116,9, zu den
-#: Grautoenen der Ansicht mindestens 29,5 (Umriss des unverformten Systems
-#: #b0b0b0), 30,1 (Kanten #202020), 30,3 (Geist), 42,4 (ohne Wert)
-#: - tests/test_anzeige_plastisch.py, test_farbe_ueber_grenze.
-FARBE_UEBER = "#646464"
+#: ueber der Skala: Magenta, im Skalenfeld und in der Kopfzeile „> Skalenmax“
+#: (UEBER_TEXT). Bild des Anwenders vom 13.10.2026: „Grau ist doppelt belegt
+#: (über Skala und netzabhängig). Bitte trennen: über Skala als eigene Farbe mit
+#: „> Skalenmax“, netzabhängig als graue Schraffur“. Bis dahin (seit dem
+#: zweiten Nachtrag desselben Tages) ein Grau #646464 - das tragen jetzt die
+#: netzabhaengigen Stellen (gui/viewport.FARBE_SPITZE) -, davor schon einmal
+#: Magenta. Farbabstand dE (CIE-Lab) zur Tafel turbo mindestens 27,6, zu den
+#: uebrigen Farben der Ansicht mindestens 25 (tests/test_anzeige_plastisch.py,
+#: test_farbe_ueber_grenze).
+FARBE_UEBER = "#ff00ff"
+#: Beschriftung des Skalenfelds ueber der Skala (seit 13.10.2026); bis dahin
+#: stand dort der Groesstwert, der jetzt in den Kennwerten steht
+UEBER_TEXT = "> Skalenmax"
 FARBE_UNTER = "#00e5ff"       # unter der negativen Grenze
 
 
@@ -740,8 +744,9 @@ class Werteskala:
 
     modus ``auto``: Grenzen aus den Werten; ``fest``: unten/oben; ``grenze``:
     0 (bzw. −Grenze bei negativen Werten) bis Grenze, z. B. 355 fuer S355 -
-    Werte darueber bekommen die Farbe FARBE_UEBER (grau), und die Skala nennt ueber
-    der Grenze den tatsaechlichen Groesstwert. ``stufen`` Farbstufen (ANSYS:
+    Werte darueber bekommen die Farbe FARBE_UEBER (Magenta) mit der
+    Beschriftung UEBER_TEXT („> Skalenmax“; bis zum 13.10.2026 der
+    tatsaechliche Groesstwert). ``stufen`` Farbstufen (ANSYS:
     9). ``nur_ueber``: nur die Ueberschreitungen faerben (Betrag ueber der
     Grenze, von der Grenze bis zum Groesstwert), alles andere grau.
     """
@@ -825,7 +830,7 @@ def grenzen(skala: Werteskala, werte, maske=None) -> dict:
     out["anzahl_unter"] = int(np.sum(g < lo))
     if out["anzahl_ueber"]:
         out["above_color"] = FARBE_UEBER
-        out["above_label"] = _text(wmax)
+        out["above_label"] = UEBER_TEXT
     if out["anzahl_unter"]:
         out["below_color"] = FARBE_UNTER
         out["below_label"] = _text(wmin)

@@ -2257,14 +2257,79 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
-#: Umrandung, Zeichen, Texte und Skalenfarbe „netzabh.“ netzabhaengiger
-#: Spannungsspitzen: Magenta (Entscheidung des Anwenders vom 13.10.2026). Bis
-#: dahin violett #6a1b9a - es lag mit 0,21 (RGB-Abstand) nahe am dunklen
-#: unteren Ende der Farbtafel turbo; Magenta hat zu jeder ihrer Farben
-#: mindestens 0,83 (tests/test_anzeige_plastisch.py). Werte ueber dem
-#: Grenzwert der Werteskala sind seit dem 13.10.2026 grau (spannungen.FARBE_UEBER),
-#: bis dahin hatten sie dieselbe Farbe.
-FARBE_SPITZE = "#ff00ff"
+#: Netzabhaengige Spannungsspitzen: Schraffur, Umrandung, Zeichen, Hinweis und
+#: Legendeneintrag in einem dunklen Grau (Bild des Anwenders vom 13.10.2026:
+#: „netzabhängig als graue Schraffur mit eigenem Legendeneintrag“). Es ist
+#: das Grau, das bis dahin „über der Grenze“ hiess (spannungen.FARBE_UEBER, das
+#: seitdem wieder Magenta ist): dE (CIE-Lab) 43,2 zur Tafel turbo, auch zu
+#: ihrem fast schwarzen unteren Ende, mindestens 29,5 zu den Grautoenen der
+#: Ansicht, als Schrift auf Weiss 5,9:1. Bis zum 13.10.2026 Magenta, davor
+#: violett #6a1b9a.
+FARBE_SPITZE = "#646464"
+#: Text des Legendeneintrags der Schraffur
+SCHRAFFUR_TEXT = "netzabhängig (schraffiert)"
+#: Richtung, quer zu der die Schraffurlinien laufen (Ebenen d·x = k·Abstand),
+#: schief zu allen Achsen, damit jede Seite eines Quaders Linien bekommt
+_SCHRAFFUR_RICHTUNG = np.array([0.80, 0.53, 0.28])
+
+
+def schraffur(flaeche, abstand: float):
+    """Schraffurlinien auf einer Oberflaeche: die Schnitte mit den parallelen
+    Ebenen d·x = k·abstand. Linien, keine Flaeche - die Farbe darunter bleibt
+    zwischen ihnen sichtbar. None, wenn keine Linie entsteht."""
+    if flaeche is None or not getattr(flaeche, "n_points", 0) or not abstand > 0:
+        return None
+    f = flaeche.triangulate() if hasattr(flaeche, "triangulate") else flaeche
+    d = _SCHRAFFUR_RICHTUNG / np.linalg.norm(_SCHRAFFUR_RICHTUNG)
+    s = np.asarray(f.points, float) @ d / float(abstand)
+    f = f.copy()
+    f.point_data["_schraffur"] = s
+    werte = np.arange(np.floor(s.min()) + 0.5, np.ceil(s.max()), 1.0)
+    if not len(werte):
+        return None
+    try:
+        linien = f.contour(isosurfaces=[float(x) for x in werte], scalars="_schraffur")
+    except Exception:                     # noqa: BLE001 - dann ohne Schraffur
+        return None
+    return linien if linien.n_cells else None
+
+
+def schraffur_muster(x0: float, y0: float, seite: float, farbe: str = None):
+    """Ein schraffiertes Quadrat (Rahmen und Diagonalen) in Bildpunkten der
+    Ansicht - das Muster des Legendeneintrags, als 2D-Darsteller."""
+    import vtk
+    from matplotlib.colors import to_rgb
+    pts = vtk.vtkPoints()
+    lines = vtk.vtkCellArray()
+
+    def strich(a, b):
+        i = pts.InsertNextPoint(a[0], a[1], 0.0)
+        j = pts.InsertNextPoint(b[0], b[1], 0.0)
+        lines.InsertNextCell(2)
+        lines.InsertCellPoint(i)
+        lines.InsertCellPoint(j)
+    s = float(seite)
+    ecken = [(x0, y0), (x0 + s, y0), (x0 + s, y0 + s), (x0, y0 + s)]
+    for k in range(4):
+        strich(ecken[k], ecken[(k + 1) % 4])
+    for t in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75):
+        # Linie x + y = t s (von links oben nach rechts unten geschnitten)
+        a = (x0 + min(t, 1.0) * s, y0 + max(t - 1.0, 0.0) * s)
+        b = (x0 + max(t - 1.0, 0.0) * s, y0 + min(t, 1.0) * s)
+        strich(a, b)
+    poly = vtk.vtkPolyData()
+    poly.SetPoints(pts)
+    poly.SetLines(lines)
+    koord = vtk.vtkCoordinate()
+    koord.SetCoordinateSystemToDisplay()
+    mapper = vtk.vtkPolyDataMapper2D()
+    mapper.SetInputData(poly)
+    mapper.SetTransformCoordinate(koord)
+    akt = vtk.vtkActor2D()
+    akt.SetMapper(mapper)
+    akt.GetProperty().SetColor(*to_rgb(farbe or FARBE_SPITZE))
+    akt.GetProperty().SetLineWidth(1.5)
+    return akt
 
 
 def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: float = 1.0,
@@ -2281,7 +2346,8 @@ def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: fl
     Rueckgabe: Zahl der gezeichneten Stellen."""
     from ..spannungen import dezimal
     # add_point_labels legt „<Name>-points“ und „<Name>-labels“ an
-    for n in ("spitzen_zonen", "spitzen_zeichen", "spitzen_zeichen-points", "spitzen_zeichen-labels"):
+    for n in ("spitzen_zonen", "spitzen_schraffur", "spitzen_zeichen", "spitzen_zeichen-points",
+              "spitzen_zeichen-labels"):
         try:
             plotter.remove_actor(n)
         except Exception:                 # noqa: BLE001 - war noch nicht da
@@ -2308,6 +2374,14 @@ def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: fl
             feature_angle=30.0, boundary_edges=True, non_manifold_edges=False, manifold_edges=False)
         if kanten.n_cells:
             plotter.add_mesh(kanten, color=FARBE_SPITZE, line_width=2, name="spitzen_zonen")
+        # grau schraffiert ueber der Ergebnisfarbe (seit 13.10.2026): Abstand
+        # die halbe oertliche Kantenlaenge der Stellen
+        hs = [float(s.get("h", 0.0) or 0.0) for s in stellen if float(s.get("h", 0.0) or 0.0) > 0]
+        abstand = 0.5 * float(np.median(hs)) if hs else 0.02 * float(np.linalg.norm(
+            np.ptp(np.asarray(huelle.points, float), axis=0)))
+        linien = schraffur(huelle, abstand)
+        if linien is not None:
+            plotter.add_mesh(linien, color=FARBE_SPITZE, line_width=1.5, name="spitzen_schraffur")
     punkte, texte = [], []
     for s in stellen:
         kn = np.asarray(s.get("knoten", []), np.int64)
@@ -3304,8 +3378,7 @@ def skala_umrechnen(skala: dict, faktor: float) -> dict:
     for k in ("wmin", "wmax", "grenze"):
         if out.get(k) is not None:
             out[k] = float(out[k]) * f
-    if out.get("above_label") and out.get("wmax") is not None:
-        out["above_label"] = _text(out["wmax"])
+    # ueber der Skala steht seit dem 13.10.2026 „> Skalenmax“, keine Zahl
     if out.get("below_label") and out.get("wmin") is not None:
         out["below_label"] = _text(out["wmin"])
     return out

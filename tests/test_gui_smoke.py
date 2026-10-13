@@ -2387,7 +2387,7 @@ def main():
         w.ed_skala_grenze.setValue(0.5); app.processEvents()
         akt = w.plotter.renderer.actors.get("result_netz")
         lut = akt.mapper.lookup_table
-        check("Grenzwert 0,5: Skala 0 … 0,5, darüber grau, Modell merkt sich die Einstellung",
+        check("Grenzwert 0,5: Skala 0 … 0,5, darüber magenta (> Skalenmax), Modell merkt sich die Einstellung",
               np.allclose(akt.mapper.scalar_range, (0.0, 0.5)) and lut.above_range_color is not None
               and str(lut.above_range_color.hex_rgb).lower() == spn.FARBE_UEBER
               and w.model.werteskala.modus == "grenze" and w.model.werteskala.grenze == 0.5,

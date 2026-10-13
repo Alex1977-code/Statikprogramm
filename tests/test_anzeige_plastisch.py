@@ -360,15 +360,46 @@ def test_nachweise_unveraendert(platte_pl):
           gleich and len(werte) == len(hexa))
 
 
+def _farben_der_ansicht():
+    """Die Farben, die in der Ergebnisansicht etwas bedeuten, ausser der Tafel."""
+    from statik3d.gui import viewport as vp
+    from statik3d.gui.main import MainWindow
+    return {"über der Skala": spn.FARBE_UEBER, "unter der Grenze": spn.FARBE_UNTER,
+            "netzabhängig": vp.FARBE_SPITZE, "ohne Wert": vp.FARBE_OHNE_WERT,
+            "Geist": MainWindow.GEIST_FARBE, "Geist-Kante": MainWindow.GEIST_KANTE,
+            "unverformt Netz": "#c8c8c8", "unverformt Umriss": "#b0b0b0",
+            "Kanten": vp.darstellung("Voll", True, True).get("edge_color", "#202020"),
+            "Hintergrund": "#ffffff", "Kennwerte": "#203040",
+            "Marke max": vp.FARBE_MARKE_MAX, "Marke min": vp.FARBE_MARKE_MIN}
+
+
 def test_farbe():
+    """Netzabhaengige Stellen seit dem 13.10.2026 (Bild des Anwenders: „Grau
+    ist doppelt belegt (über Skala und netzabhängig). Bitte trennen“): grau
+    schraffiert, Umrandung, Zeichen und Hinweis in demselben dunklen Grau -
+    dem Grau, das bis dahin „über der Grenze“ hiess (#646464). Bis zum
+    13.10.2026 waren sie Magenta."""
     from matplotlib import colormaps
     from matplotlib.colors import to_rgb
     from statik3d.gui import viewport as vp
+    g = np.array(to_rgb(vp.FARBE_SPITZE))
     T = colormaps["turbo"](np.linspace(0.0, 1.0, 256))[:, :3]
-    d = np.linalg.norm(T - np.array(to_rgb(vp.FARBE_SPITZE)), axis=1)
-    check("Farbe der netzabhängigen Stellen: Magenta, klar abgesetzt von der Farbtafel",
-          vp.FARBE_SPITZE.lower() == "#ff00ff" and d.min() >= 0.5 and d[0] >= 0.5,
-          f"{vp.FARBE_SPITZE}: kleinster Abstand {d.min():.3f}, zum unteren Ende {d[0]:.3f}")
+    dE_T = np.linalg.norm(_lab(T) - _lab(g), axis=1)
+    andere = {k: v for k, v in _farben_der_ansicht().items() if k != "netzabhängig"}
+    dE = {k: float(np.linalg.norm(_lab(g) - _lab(np.array(to_rgb(v))))) for k, v in andere.items()}
+    print(f"   netzabhängig {vp.FARBE_SPITZE}: dE zur Tafel min {dE_T.min():.1f}; "
+          + ", ".join(f"{k} {v:.1f}" for k, v in dE.items()))
+
+    def lum(c):
+        c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+        return float(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+    kontrast = (1.0 + 0.05) / (lum(g) + 0.05)
+    check("netzabhängig: ein neutrales dunkles Grau (#646464), nicht Magenta",
+          g[0] == g[1] == g[2] and vp.FARBE_SPITZE.lower() == "#646464", vp.FARBE_SPITZE)
+    check("… dE ≥ 25 zu jeder Farbe der Tafel und zu den übrigen Farben der Ansicht (außer Kanten ≥ 25)",
+          dE_T.min() >= 25.0 and min(dE.values()) >= 25.0,
+          f"Tafel {dE_T.min():.1f}, übrige {min(dE.values()):.1f} ({min(dE, key=dE.get)})")
+    check("… als Schrift auf Weiß lesbar (Kontrast ≥ 4,5:1)", kontrast >= 4.5, f"{kontrast:.2f}:1")
 
 
 def _lab(rgb):
@@ -382,38 +413,48 @@ def _lab(rgb):
 
 
 def test_farbe_ueber_grenze():
-    """„Über dem Grenzwert“ der Werteskala ist seit dem 13.10.2026 ein Grau
-    (Entscheidung des Anwenders), die Zonen bleiben Magenta. Das Grau hebt
-    sich von jeder Farbe der Tafel turbo ab, auch vom fast schwarzen unteren
-    Ende, von Magenta und von den Grautoenen der Ansicht."""
+    """„Über der Skala“ ist seit dem 13.10.2026 (Bild des Anwenders) wieder
+    Magenta, beschriftet „> Skalenmax“ im Skalenfeld und in der Kopfzeile.
+    Vom zweiten Nachtrag bis dahin war es ein Grau (#646464), das jetzt die
+    netzabhaengigen Stellen tragen; davor Magenta. Keine Farbe ist doppelt
+    belegt: die Farben der Legende dE ≥ 15 zu jeder Farbe der Ansicht, die
+    beiden mit neuer Bedeutung ≥ 25 zu allen und zur Tafel turbo."""
     from matplotlib import colormaps
     from matplotlib.colors import to_rgb
     from statik3d.gui import viewport as vp
-    from statik3d.gui.main import MainWindow
     g = np.array(to_rgb(spn.FARBE_UEBER))
     T = colormaps["turbo"](np.linspace(0.0, 1.0, 256))[:, :3]
-    andere = {"Magenta (Zonen)": vp.FARBE_SPITZE, "ohne Wert": vp.FARBE_OHNE_WERT,
-              "Geist": MainWindow.GEIST_FARBE, "Geist-Kante": MainWindow.GEIST_KANTE,
-              "unverformt Netz": "#c8c8c8", "unverformt Umriss": "#b0b0b0",
-              "Kanten": vp.darstellung("Voll", True, True).get("edge_color", "#202020"),
-              "Hintergrund": "#ffffff", "unter der Grenze": spn.FARBE_UNTER}
+    farben = _farben_der_ansicht()
+    andere = {k: v for k, v in farben.items() if k != "über der Skala"}
     dE_T = np.linalg.norm(_lab(T) - _lab(g), axis=1)
     dE = {k: float(np.linalg.norm(_lab(g) - _lab(np.array(to_rgb(v))))) for k, v in andere.items()}
-    print(f"   {spn.FARBE_UEBER}: dE zur Tafel min {dE_T.min():.1f}, zum unteren Ende {dE_T[0]:.1f}; "
-          + ", ".join(f"{k} {v:.1f}" for k, v in dE.items()))
-    check("über dem Grenzwert: ein neutrales Grau, nicht Magenta",
-          g[0] == g[1] == g[2] and spn.FARBE_UEBER.lower() != vp.FARBE_SPITZE.lower(), spn.FARBE_UEBER)
-    check("… mit dE ≥ 25 zu jeder Farbe der Tafel, zu Magenta und zu den Grautönen der Ansicht",
+    print(f"   über der Skala {spn.FARBE_UEBER}: dE zur Tafel min {dE_T.min():.1f}, zum unteren Ende "
+          f"{dE_T[0]:.1f}; " + ", ".join(f"{k} {v:.1f}" for k, v in dE.items()))
+    check("über der Skala: Magenta (#ff00ff)", spn.FARBE_UEBER.lower() == "#ff00ff", spn.FARBE_UEBER)
+    check("… mit dE ≥ 25 zu jeder Farbe der Tafel und zu den übrigen Farben der Ansicht",
           dE_T.min() >= 25.0 and min(dE.values()) >= 25.0,
-          f"Tafel {dE_T.min():.1f}, übrige {min(dE.values()):.1f}")
+          f"Tafel {dE_T.min():.1f}, übrige {min(dE.values()):.1f} ({min(dE, key=dE.get)})")
+    # die Farben der Legende (Skalenfelder, Schraffur, ohne Wert) gegen alle;
+    # die uebrigen Paare untereinander sind nicht Gegenstand (Befund 13.10.2026:
+    # „ohne Wert“ #d0d4d8 und Geist-Kante #c9cfd5 liegen bei dE 2,3)
+    legende = ("über der Skala", "unter der Grenze", "netzabhängig")
+    paare = [(a, b, float(np.linalg.norm(_lab(np.array(to_rgb(farben[a]))) - _lab(np.array(to_rgb(farben[b]))))))
+             for a in legende for b in farben if b != a]
+    knapp = min(paare, key=lambda x: x[2])
+    check("keine Farbe der Legende doppelt belegt: dE ≥ 15 zu jeder Farbe der Ansicht",
+          knapp[2] >= 15.0, f"knappstes Paar {knapp[0]} / {knapp[1]}: {knapp[2]:.1f}")
     sk = spn.grenzen(spn.Werteskala(modus="grenze", grenze=355.0), np.array([100.0, 400.0]))
-    check("… die Werteskala nimmt es für Werte über der Grenze", sk["above_color"] == spn.FARBE_UEBER)
+    check("… die Werteskala nimmt Magenta mit der Beschriftung „> Skalenmax“",
+          sk["above_color"] == spn.FARBE_UEBER and sk["above_label"] == "> Skalenmax", str(sk["above_label"]))
+    sk2 = vp.skala_umrechnen(sk, 0.1)
+    check("… auch nach dem Umrechnen der Einheit", sk2["above_label"] == "> Skalenmax", str(sk2["above_label"]))
     w, app = _fenster()
     w.model.werteskala = spn.Werteskala(modus="grenze", grenze=355.0)
     text = w._werteskala_text()
-    check("… Kopfzeile und Hinweis sagen „grau“",
-          "darüber grau" in text and "magenta" not in text and "grau" in w.cb_skala.toolTip()
-          and "magenta" not in w.cb_skala.toolTip(), f"{text!r} | {w.cb_skala.toolTip()[:60]!r}")
+    check("… Kopfzeile und Hinweis sagen „> Skalenmax“ magenta, nicht grau",
+          "> Skalenmax" in text and "magenta" in text and "grau" not in text
+          and "> Skalenmax" in w.cb_skala.toolTip() and "grau" not in w.cb_skala.toolTip(),
+          f"{text!r} | {w.cb_skala.toolTip()[:80]!r}")
 
 
 def main():

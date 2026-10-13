@@ -6000,7 +6000,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_werteskala = g.gross(
             "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
             hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
-                    "Grenzwert wie 355 für S355 - darüber grau, der Größtwert an der Skala; "
+                    "Grenzwert wie 355 für S355 - darüber magenta mit „> Skalenmax“; "
                     "wahlweise nur die Überschreitungen färben", symbol="skala")
         g = r.gruppe("Tabelle ausgeben")
         g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
@@ -17500,8 +17500,10 @@ class MainWindow(QtWidgets.QMainWindow):
                            ("fest (unten … oben)", "fest"),
                            ("Grenzwert (0 … Grenze, darüber eigene Farbe)", "grenze")):
             self.cb_skala.addItem(text, wert)
-        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird grau, "
-                                 "die Skala nennt darüber den tatsächlichen Größtwert; bei "
+        # seit 13.10.2026 Magenta mit „> Skalenmax“; der Groesstwert steht in
+        # den Kennwerten (bis dahin grau und der Groesstwert an der Skala)
+        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird magenta "
+                                 "(„> Skalenmax“), der Größtwert steht in den Kennwerten; bei "
                                  "negativen Werten reicht sie von −Grenze bis Grenze")
         f.addRow("Grenzen", self.cb_skala)
         self.ed_skala_unten = QtWidgets.QDoubleSpinBox()
@@ -17617,7 +17619,8 @@ class MainWindow(QtWidgets.QMainWindow):
             text = (f" · Skala {zl.zahl_text(s.unten, punkt=True)} … "
                     f"{zl.zahl_text(s.oben, punkt=True)}{e}")
         else:
-            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, darüber grau"
+            # seit 13.10.2026 Magenta mit „> Skalenmax“ (bis dahin grau)
+            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, {spn.UEBER_TEXT} magenta"
             if s.nur_ueber:
                 text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}{e}"
         return text
@@ -26214,12 +26217,14 @@ class MainWindow(QtWidgets.QMainWindow):
                         balken["above_label"] = skala["above_label"]
                     zk_ = (self._spitzen_feld or {}).get("zk")
                     if zk_ is not None and not farben.get("above_color") and not skala.get("nur_ueber"):
-                        # Knoten der Zonen ueber der Skala: eigene Farbe, nicht
-                        # die oberste der Skala (die gilt ausserhalb)
+                        # Knoten der Zonen ueber der Skala (die gilt ausserhalb):
+                        # die Farbe „> Skalenmax“, nicht die oberste der Skala;
+                        # die Zone selbst ist grau schraffiert. Bis zum
+                        # 13.10.2026 eine eigene Farbe „netzabh.“ (Magenta)
                         zw = np.asarray(skala["werte"], float)[zk_]
                         if np.isfinite(zw).any() and float(np.nanmax(zw)) > clim[1]:
-                            farben["above_color"] = vp.FARBE_SPITZE
-                            balken["above_label"] = "netzabh."
+                            farben["above_color"] = spn.FARBE_UEBER
+                            balken["above_label"] = spn.UEBER_TEXT
                     if skala["below_label"]:
                         balken["below_label"] = skala["below_label"]
                     # mit dem Titel der Legende: Zahl und Einheit passen
@@ -26466,23 +26471,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._spitzen_legende = ""
         try:
             spz = getattr(self, "_spitzen_feld", None)
+            schalter = getattr(self, "cb_spitzenzonen", None)
+            zeigen = schalter is None or schalter.isChecked()
             if spz is not None:
                 self._spitzen_legende = spz["zeile"]
-                sk = self._farbskala()
                 text = vp.bildtext(spz["zeile"]).replace(" Stellen ", " Stellen\n", 1)
-                if sk.get("vertical", True):
-                    pos = (0.99, max(0.02, float(sk["position_y"]) - 0.01))
-                else:
-                    pos = (0.99, float(sk["position_y"]) + float(sk["height"]) + 0.01)
-                akt = self.plotter.add_text(text, position=pos, viewport=True,
-                                            font_size=self.SCHRIFT_KENNWERTE, color=vp.FARBE_SPITZE,
-                                            name="spitzen_legende")
-                tp = akt.GetTextProperty()
-                tp.SetJustificationToRight()
-                if sk.get("vertical", True):
-                    tp.SetVerticalJustificationToTop()
-            schalter = getattr(self, "cb_spitzenzonen", None)
-            if schalter is not None and not schalter.isChecked():
+                # rechts unter der Farbskala: der Legendeneintrag der Schraffur
+                # (seit 13.10.2026, nur wenn die Zonen gezeigt werden) und der
+                # Hinweis, beide in Grau
+                eintraege = ([("spitzen_schraffur_legende", vp.bildtext(vp.SCHRAFFUR_TEXT), True)]
+                             if zeigen else []) + [("spitzen_legende", text, False)]
+                self._legende_rechts(eintraege)
+            if not zeigen:
                 return
             stellen = sa.stellen_zum_zeigen(r, self.analysis)
             if stellen:
@@ -26493,6 +26493,47 @@ class MainWindow(QtWidgets.QMainWindow):
                                     ausser=ausser)
         except Exception as ex:             # noqa: BLE001 - ein Zeichen darf die Ansicht nicht sperren
             self.log.appendPlainText(f"Netzabhängige Stellen nicht gezeichnet: {ex}")
+
+    def _legende_rechts(self, eintraege: list) -> list:
+        """Texte rechtsbuendig an der Farbskala stapeln - senkrechte Skala:
+        darunter, von oben nach unten; waagerechte: darueber, von unten nach
+        oben. ``eintraege`` [(Name, Text, Muster)]; mit Muster steht rechts
+        neben dem Text das schraffierte Quadrat (Name + „_muster“ statt
+        „_legende“). Gemessen wird jeder Text an seinem Rechteck, nicht
+        geschaetzt. Rueckgabe die Rechtecke (x0, x1, y0, y1) in Bildpunkten."""
+        sk = self._farbskala()
+        try:
+            breit, hoch = (float(v) for v in self.plotter.render_window.GetSize())
+        except Exception:                   # noqa: BLE001
+            return []
+        s = self._pixelmass()
+        senkrecht = sk.get("vertical", True)
+        rechts = 0.99 * breit
+        y = ((max(0.02, float(sk["position_y"]) - 0.01)) if senkrecht
+             else float(sk["position_y"]) + float(sk["height"]) + 0.01) * hoch
+        rahmen = []
+        for name, text, muster in (eintraege if senkrecht else list(reversed(eintraege))):
+            akt = self.plotter.add_text(text, position=(rechts, y), font_size=self.SCHRIFT_KENNWERTE,
+                                        color=vp.FARBE_SPITZE, name=name)
+            tp = akt.GetTextProperty()
+            tp.SetJustificationToRight()
+            if senkrecht:
+                tp.SetVerticalJustificationToTop()
+            r = vp.kennwerte_rahmen(self.plotter.renderer, akt)
+            if r is None:
+                continue
+            hoehe = r[3] - r[2]
+            if muster:
+                seite = max(6.0 * s, min(hoehe, 14.0 * s))
+                akt.SetPosition(rechts - seite - 4.0 * s, y)
+                y0 = (y - hoehe + (hoehe - seite) / 2) if senkrecht else (y + (hoehe - seite) / 2)
+                quad = vp.schraffur_muster(rechts - seite, y0, seite)
+                self.plotter.add_actor(quad, name=name.replace("_legende", "_muster"), reset_camera=False)
+                r = vp.kennwerte_rahmen(self.plotter.renderer, akt)
+                r = (r[0], rechts, r[2], r[3])
+            rahmen.append(r)
+            y = (y - hoehe - 3.0 * s) if senkrecht else (y + hoehe + 3.0 * s)
+        return rahmen
 
     def _spitze_zeigen(self, nr: int):
         """Eine netzabhaengige Spannungsspitze aus dem Ergebnisbaum: der Blick
