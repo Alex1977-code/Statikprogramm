@@ -485,7 +485,8 @@ def test_druck_nach_abschluss_gemeldet():
 
 def main():
     for t in (test_zugband_kg, test_knickstab_temperatur, test_ausfall_anfangsdehnung,
-              test_ausfall_unter_last, test_seil_theorie3):
+              test_ausfall_unter_last, test_seil_theorie3, test_stabstatus_kontakt,
+              test_stabstatus_plastizitaet, test_druck_nach_abschluss_gemeldet):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

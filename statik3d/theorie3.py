@@ -498,6 +498,11 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                      "ndof": ndof, "nfree": len(fi), "solver": "SuperLU"})
     if info.fehler:
         res.info["fehler"] = info.fehler
+    # Zug-/Druckstaebe: Theorie III. Ordnung iteriert den Ausfall nicht (das
+    # Seil wird als Kettenlinie schlaff) - ein Zugstab mit Druck steht mit
+    # Namen und Kraft im Ergebnis (13.10.2026)
+    from .solver import zugstaebe_pruefen
+    zugstaebe_pruefen(model, res, F_ref_voll, aktiv, progress=progress)
     return res, info
 
 

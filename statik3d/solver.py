@@ -1915,6 +1915,15 @@ class Results:
             # gerechnetes, nur der Tooltip der Auswahl warnte
             if gemeinsam_gerechnet(self.info):
                 s.append(f"WARNUNG                 : {gemeinsam_warnung()}")
+        # Zug-/Druckstaebe (13.10.2026): ausgefallene mit Namen, und jeder
+        # aktive Zugstab mit Druck nach Abschluss - nie still
+        zs = self.info.get("stabstatus")
+        if isinstance(zs, dict):
+            weg = zs.get("ausgefallen") or []
+            if weg:
+                s.append(f"Ausgefallene Stäbe      : {len(weg)} ({', '.join(weg[:8])}{' …' if len(weg) > 8 else ''})")
+            for d in zs.get("druck") or []:
+                s.append(f"WARNUNG                 : {_stabstatus_text(d)} – NICHT konvergiert")
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
@@ -3939,6 +3948,11 @@ def konvergenz_zustand(info) -> str:
         gruende.append("Plastizität nicht konvergiert")
     if any("nicht konvergiert" in str(z_) for z_ in (info.get("ausfall_log") or [])):
         gruende.append("Ausfall-Iteration nicht konvergiert")
+    # Zugstaebe in der Konvergenzbedingung (13.10.2026): ein aktiver Zugstab
+    # mit Druck nach Abschluss, mit Namen und Kraft
+    druck = (info.get("stabstatus") or {}).get("druck") or [] if isinstance(info.get("stabstatus"), dict) else []
+    if druck:
+        gruende.append("; ".join(_stabstatus_text(d) for d in druck[:4]) + (" …" if len(druck) > 4 else ""))
     if gruende:
         return "NICHT konvergiert: " + "; ".join(gruende)
     return KONVERGIERT
@@ -4174,7 +4188,8 @@ class _KontaktImNewton:
     #: verfehlt, beendet die gemeinsame Iteration der Stufe
     ABNAHME_WEITER = 10.0
 
-    def __init__(self, rechnen, res, start, aktiv, log: list, gemeinsam: bool, tol: float = 1e-3):
+    def __init__(self, rechnen, res, start, aktiv, log: list, gemeinsam: bool, tol: float = 1e-3,
+                 stabstatus: bool = False):
         self.rechnen, self.res, self.log = rechnen, res, log
         self.gemeinsam = bool(gemeinsam)
         self.tol = float(tol)
@@ -4182,11 +4197,51 @@ class _KontaktImNewton:
         self.aufrufe: list = []     # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
         self._stufe = None
         self._stufen = 0
+        # Zugstaebe in der Konvergenzbedingung (13.10.2026): der Status
+        # (ausgefallene Staebe, Iteration stand) je Loesung, der erste aus dem
+        # elastischen Vorlauf
+        self._stab = bool(stabstatus)
+        self._stab_verlauf: list = []
+        if self._stab and res.info.get("ausfall") is not None:
+            self._stab_verlauf.append(self._stab_lesen())
+
+    def _stab_lesen(self) -> tuple:
+        inf = self.res.info
+        return (frozenset(int(i) for i in (inf.get("ausfall") or [])),
+                not any("nicht konvergiert" in str(z) for z in (inf.get("ausfall_log") or [])))
+
+    def stabstatus_offen(self) -> str:
+        """Leer, wenn der Status der Zug-/Druckstaebe und Seile steht - sonst
+        der Grund (plastizitaet._newton, Entscheidung des Anwenders vom
+        13.10.2026): die Ausfall-Iteration der letzten Loesung stand nicht,
+        oder die letzte Loesung hat den Status geaendert (Staebe ausgefallen
+        oder wieder aktiv). Ohne solche Staebe immer leer."""
+        if not self._stab or not self._stab_verlauf:
+            return ""
+        aus, steht = self._stab_verlauf[-1]
+        if not steht:
+            return "Zugstäbe: die Ausfall-Iteration der letzten Lösung stand nicht"
+        if len(self._stab_verlauf) < 2 or self._stab_verlauf[-2][0] == aus:
+            return ""
+        vorher = self._stab_verlauf[-2][0]
+        model = self.res.model
+        namen = _stab_namen(model)
+        teile = []
+        neu, zurueck = sorted(aus - vorher), sorted(vorher - aus)
+        if neu:
+            teile.append(", ".join(stab_name(model, i, namen) for i in neu[:6]) + (" …" if len(neu) > 6 else "")
+                         + (" ausgefallen" if len(neu) == 1 else " ausgefallen"))
+        if zurueck:
+            teile.append(", ".join(stab_name(model, i, namen) for i in zurueck[:6])
+                         + (" …" if len(zurueck) > 6 else "") + " wieder aktiv")
+        return "Zugstäbe: Status im letzten Schritt geändert (" + "; ".join(teile) + ")"
 
     def loesen(self, Fg, dK=None, voll=True):
         res, halter = self.res, self.halter
         vor = len(res.info.get("laeufe") or [])
         u_, R_, a_ = self.rechnen(Fg, halter["start"], dK, None if voll else 1)
+        if self._stab:
+            self._stab_verlauf.append(self._stab_lesen())
         laeufe = res.info.get("laeufe") or []
         nach = len(laeufe)
         self.aufrufe.append((vor if nach == vor + 1 else None, dK is not None))
@@ -4723,7 +4778,7 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     log: list = []
     _kontakt_weg_melden(model, log)
     kn = _KontaktImNewton(rechnen, res, start, aktiv, log, gemeinsam,
-                          float(model.plastizitaet.toleranz))
+                          float(model.plastizitaet.toleranz), stabstatus=model.hat_ausfallstaebe())
     iteriert = model.has_contact or model.hat_ausfallstaebe()
     zonen = _spitzen_im_newton(model, system, factors, feq, temp, log, aktiv,
                                reaktionen=lambda: kn.halter["R"])
@@ -5092,6 +5147,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     if probelauf:
         res.info["probelauf"] = True
     postprocess(model, u, res, feq, q, temp, workers, aktiv_eff, system=system)
+    if n0_ausfall is not None:
+        # Stabstatus nach Abschluss: kein aktiver Zugstab mit Druck (13.10.2026)
+        zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
 
@@ -5135,6 +5193,122 @@ def _normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0) -> float
         T3 = vb.feder_achsen(X[0], X[1], fp.achse, e.roll)
         return float(vb.feder_kraefte(fp.k, T3, u[d])[0])
     return float(asm.stab_normalkraft(model, e, u, n_anfang))
+
+
+# --------------------------------------------------------------------------
+# Zugstaebe in der Konvergenzbedingung (13.10.2026)
+# --------------------------------------------------------------------------
+#
+# Entscheidung des Anwenders vom 13.10.2026: „Druck in den Zugstäben S57/S40
+# hat Priorität: prüfen, ob er auch nach dem strengen Kriterium auftritt, und
+# den Stabstatus in die Konvergenzbedingung aufnehmen.“ Eine Laststufe
+# (plastizitaet._newton) gilt seither nur als konvergiert, wenn sich der
+# Status der Zug-/Druckstaebe und Seile im letzten Schritt nicht mehr
+# geaendert hat (_KontaktImNewton.stabstatus_offen); die Ausfall-Iteration
+# selbst endet nur, wenn ihr Status steht (solve_with_ausfall). Ein aktiver
+# Zugstab mit Druck (oder ein Druckstab mit Zug) nach Abschluss steht mit Namen
+# und Kraft in Protokoll, Zusammenfassung und Konvergenzstand
+# (:func:`zugstaebe_pruefen`) - auch nach Theorie II./III. Ordnung, die den
+# Ausfall nicht iterieren.
+def _stab_namen(model: Model) -> dict:
+    """{Element: Name des Stabs} - fuer Meldungen."""
+    namen = {}
+    for name, mem in (getattr(model, "members", None) or {}).items():
+        for e in mem.elements:
+            namen.setdefault(int(e), str(name))
+    return namen
+
+
+def stab_name(model: Model, i: int, namen: dict = None) -> str:
+    """Der Name des Stabs zu Element ``i`` (sonst „Element <i+1>“)."""
+    namen = _stab_namen(model) if namen is None else namen
+    return namen.get(int(i), f"Element {int(i) + 1}")
+
+
+def zugstab_toleranz(model: Model, F, kraefte=()) -> float:
+    """Wie viel Druck ein aktiver Zugstab nach Abschluss tragen darf: wie der
+    Zug an einer geschlossenen Kontaktbedingung im Ingenieurkriterium
+    (ABSCHLUSS_NORMAL_ANTEIL = 1e-5 der Summe der aeusseren Kraefte |Σ F|),
+    mindestens die Toleranz der Ausfall-Iteration (1e-9 der groessten
+    Stabkraft) - ohne aeussere Last (nur Temperatur oder Vorspannung) ist
+    |Σ F| = 0. Am Drehlager LF1 (|Σ F| = 9,95 MN) sind das 99,5 N."""
+    n6 = model.nn * NDOF
+    Fk = np.asarray(F, float)[:n6].reshape(-1, NDOF)[:, :3].sum(0) if F is not None else np.zeros(3)
+    gross = max([abs(float(x)) for x in kraefte] + [1.0])
+    return max(ABSCHLUSS_NORMAL_ANTEIL * float(np.linalg.norm(Fk)), 1e-9 * gross)
+
+
+def _stabstatus_text(d: dict) -> str:
+    """„Zugstab D1 trägt Druck: N = −43,83 kN“ (bzw. Druckstab mit Zug)."""
+    from .zahlen import zahl_text
+    was = "Zugstab {} trägt Druck" if d.get("art", "zug") == "zug" else "Druckstab {} trägt Zug"
+    return was.format(d.get("stab", "?")) + f": N = {zahl_text(round(float(d.get('N', 0.0)) / 1e3, 3))} kN"
+
+
+def zugstaebe_pruefen(model: Model, res, F, aktiv=None, progress=None):
+    """Der Stabstatus der Zug-/Druckstaebe und Seile eines fertigen
+    Ergebnisses (Regel oben, 13.10.2026) in ``res.info["stabstatus"]``:
+
+    * ``ausgefallen`` - die Namen der ausgefallenen Staebe;
+    * ``druck`` - aktive Zugstaebe mit Druck (Druckstaebe mit Zug) jenseits
+      :func:`zugstab_toleranz`, je {stab, element, N, art} - N die mittlere
+      Normalkraft des Ergebnisses (Stabendkraefte), die auch die
+      Ausfall-Iteration liest;
+    * ``konvergiert`` - die Ausfall-Iteration stand und kein Stab traegt die
+      falsche Kraft; ``toleranz``.
+
+    Jeder Stab mit falscher Kraft steht als Zeile in ``ausfall_log`` und im
+    Fortschritt - nie still. None ohne solche Staebe (``res.info`` bleibt dann
+    unberuehrt)."""
+    kand = [i for i, e in enumerate(model.elements)
+            if (getattr(e, "nur", "") or e.typ == "seil") and (aktiv is None or bool(aktiv[i]))]
+    if not kand:
+        return None
+    aus = {int(i) for i in (res.info.get("ausfall") or [])}
+    N = {}
+    for i in kand:
+        fl = (getattr(res, "beam_end", None) or {}).get(i)
+        if i in aus or fl is None:
+            continue
+        fl = np.asarray(fl, float)
+        N[i] = float(0.5 * (fl[6] - fl[0]))
+    tol = zugstab_toleranz(model, F, N.values())
+    namen = _stab_namen(model)
+    druck = []
+    for i, n in N.items():
+        art = getattr(model.elements[i], "nur", "") or "zug"
+        if (art == "zug" and n < -tol) or (art == "druck" and n > tol):
+            druck.append({"stab": stab_name(model, i, namen), "element": int(i), "N": n, "art": art})
+    iteration_steht = not any("nicht konvergiert" in str(z) for z in (res.info.get("ausfall_log") or []))
+    zs = {"konvergiert": bool(iteration_steht and not druck),
+          "ausgefallen": [stab_name(model, i, namen) for i in sorted(aus)],
+          "druck": druck, "toleranz": float(tol)}
+    res.info["stabstatus"] = zs
+    if druck:
+        alog = res.info.setdefault("ausfall_log", [])
+        for d in druck:
+            zeile = f"{_stabstatus_text(d)} (Toleranz {tol / 1e3:.3g} kN)"
+            alog.append(zeile)
+            _melde(progress, zeile)
+    return zs
+
+
+def zugstab_druck_gebuendelt(ergebnisse) -> list:
+    """Aktive Zugstaebe mit Druck ueber alle Ergebnisse - je Stab eine Zeile
+    mit den ersten drei Ergebnissen, fuer die Zusammenfassung der Rechnung."""
+    gruppen: dict = {}
+    for name, r in ergebnisse:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        for d in ((inf.get("stabstatus") or {}).get("druck") or []):
+            gruppen.setdefault(_stabstatus_text({**d, "N": 0.0}).split(":")[0], []).append(
+                (str(name), float(d.get("N", 0.0))))
+    zeilen = []
+    for text, liste in gruppen.items():
+        from .zahlen import zahl_text
+        teile = [f"{n} {zahl_text(round(x / 1e3, 3))} kN" for n, x in liste[:3]]
+        zeilen.append(f"WARNUNG: {text} – nicht konvergiert: " + ", ".join(teile)
+                      + (" …" if len(liste) > 3 else ""))
+    return zeilen
 
 
 def _anfang_ausfall(model: Model, factors: dict, aktiv=None, zusatz: dict = None) -> dict:
@@ -5264,9 +5438,14 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
             progress(f"Ausfall-Iteration {it}: {len(neu)} von {len(kand)} Stäben ausgefallen")
         if neu == aus:
             break
-        aus = neu
+        vorher_aus, aus = aus, neu
     else:
-        log.append(f"Ausfall-Iteration nach {max_iter} Schritten nicht konvergiert")
+        # welche Staebe im letzten Schritt noch wechselten - mit Namen (13.10.2026)
+        wechsel = sorted(vorher_aus ^ aus)
+        namen = _stab_namen(model)
+        log.append(f"Ausfall-Iteration nach {max_iter} Schritten nicht konvergiert"
+                   + (" - im letzten Schritt wechselten " + ", ".join(stab_name(model, i, namen) for i in wechsel[:8])
+                      + (" …" if len(wechsel) > 8 else "") if wechsel and not probelauf else ""))
     if aus:
         log.append(("1 Stab trägt nicht (nur Zug/Druck): " if len(aus) == 1 else
                     f"{len(aus)} Stäbe tragen nicht (nur Zug/Druck): ")
@@ -8098,6 +8277,8 @@ class Analysis:
         s += dilatation_gebuendelt(self.all_results().items())
         # frei bewegliche Teile (B5, 08.10.2026): je Text eine Zeile, nicht je Lastfall
         s += freie_teile_gebuendelt(self.all_results().items())
+        # aktive Zugstaebe mit Druck nach Abschluss (13.10.2026): je Stab eine Zeile
+        s += zugstab_druck_gebuendelt(self.all_results().items())
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen

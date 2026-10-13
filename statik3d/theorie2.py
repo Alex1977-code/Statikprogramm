@@ -620,6 +620,10 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
                      "factors": dict(factors), "solver": system.backend,
                      "ndof": model.ndof, "nfree": len(system.fi),
                      **ausweich_info(system, ausweich_vorher)})
+    # Zug-/Druckstaebe: Theorie II. Ordnung iteriert den Ausfall nicht - ein
+    # Zugstab mit Druck steht mit Namen und Kraft im Ergebnis (13.10.2026)
+    from .solver import zugstaebe_pruefen
+    zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
     if progress:
         progress(f"{name}: Theorie II. Ordnung, {info.iterationen} Iterationen")
     return res, info

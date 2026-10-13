@@ -1067,6 +1067,18 @@ def _einmal(log: list, zeile: str) -> None:
         log.append(zeile)
 
 
+def _stabstatus_offen(kontakt) -> str:
+    """Zugstaebe in der Konvergenzbedingung (Entscheidung des Anwenders vom
+    13.10.2026): leer, wenn der Status der Zug-/Druckstaebe und Seile steht -
+    sonst der Grund vom Loeser (solver._KontaktImNewton.stabstatus_offen). Ein
+    Schritt, dessen Loesung Staebe ausfallen oder wieder tragen liess, ist
+    nicht konvergiert, auch wenn F_p sich nicht mehr aendert - streng wie
+    ingenieurmaessig. Ohne Loeser (kein Kontakt, keine Ausfallstaebe) und
+    ohne solche Staebe immer leer: dort rechnet alles wie bisher."""
+    f = getattr(kontakt, "stabstatus_offen", None) if kontakt is not None else None
+    return f() if f is not None else ""
+
+
 def _schlussabnahme(rest: float, toleranz: float) -> bool:
     """Die Abnahme am Schluss: passt F_p zur Loesung des Abschlusses?
     ``rest`` ist die Aenderung von F_p, die die Rueckfuehrung (von der Basis
@@ -1443,6 +1455,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         weglauf = False
         erreicht = False
         mass, mess = 0.0, None
+        stab_offen = ""
         for it in range(1, int(max(1, einst.iterationen)) + 1):
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                    tangente=True)
@@ -1457,6 +1470,15 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 progress(f"Plastizität: Laststufe {k}/{len(faktoren)}, Newton-Schritt {it}: "
                          f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
             _zonen_melden(mess, log, progress)
+            # Zugstaebe in der Konvergenzbedingung (13.10.2026): streng wie
+            # ingenieurmaessig ist die Stufe erst mit stehendem Stabstatus
+            # konvergiert
+            stab_offen = _stabstatus_offen(kontakt) if ok else ""
+            if stab_offen:
+                ok = False
+                if log is not None:
+                    log.append(f"Plastizität: Laststufe {k}/{len(faktoren)}, Newton-Schritt {it}: "
+                               f"{stab_offen} - noch nicht konvergiert")
             if ok:
                 erreicht = True
                 break
@@ -1510,10 +1532,12 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
-                           f"nicht konvergiert ({_mass_text(zonen, mess, diff, mass)} > {einst.toleranz:g})")
+                           f"nicht konvergiert ({stab_offen or _mass_text(zonen, mess, diff, mass)}"
+                           f"{'' if stab_offen else f' > {einst.toleranz:g}'})")
         basis, F_p = zustand_stufe, F_p_stufe
         lam_alt = lam_k
     stufen_gerechnet = len(faktoren)
+    stab_offen = ""
     tol = float(einst.toleranz)
     abgenommen = None           # Urteil der Schlussabnahme (nur mit Kontakt)
     rest_mass, mess = rest, None
@@ -1534,6 +1558,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             abgenommen = _schlussabnahme(rest, tol) or (_zonen_greifen(zonen, mess)
                                                         and _schlussabnahme(rest_mass, tol)
                                                         and bool(mess["erfuellt"]))
+            # Zugstaebe (13.10.2026): auch der Abschluss darf den Stabstatus
+            # nicht mehr aendern - sonst rechnen die Nachschritte weiter
+            stab_offen = _stabstatus_offen(kontakt)
+            abgenommen = abgenommen and not stab_offen
             # Nachiteration vom Abschluss aus (27.09.2026): der volle
             # Kontaktlauf des Abschlusses kann u so verschieben, dass F_p nicht
             # mehr passt. Bis dahin hiess das "nicht konvergiert", Schluss. Ein
@@ -1575,10 +1603,13 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 abgenommen = _schlussabnahme(rest, tol) or (_zonen_greifen(zonen, mess)
                                                             and _schlussabnahme(rest_mass, tol)
                                                             and bool(mess["erfuellt"]))
+                stab_offen = _stabstatus_offen(kontakt)
+                abgenommen = abgenommen and not stab_offen
             if nach and log is not None:
                 log.append(f"Plastizität: Abschluss nach {nach} Nachschritt{'' if nach == 1 else 'en'} "
                            f"{'bestanden' if abgenommen else 'weiter verfehlt'} "
-                           f"({_mass_text(zonen, mess, rest, rest_mass)}, Toleranz {einst.toleranz:g})")
+                           f"({_mass_text(zonen, mess, rest, rest_mass)}, Toleranz {einst.toleranz:g}"
+                           f"{'; ' + stab_offen if stab_offen else ''})")
     if rest is not None:
         info["rest_abschluss"] = rest
         if abgenommen is None:
@@ -1588,8 +1619,12 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         if info["konvergiert"] and not abgenommen:
             info["konvergiert"] = False
             if log is not None:
-                log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
-                           f"({_mass_text(zonen, mess, rest, rest_mass)} > {einst.toleranz:g}) - nicht konvergiert")
+                if stab_offen:
+                    log.append(f"Plastizität: an der Lösung des Abschlusses steht der Stabstatus nicht "
+                               f"({stab_offen}) - nicht konvergiert")
+                else:
+                    log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
+                               f"({_mass_text(zonen, mess, rest, rest_mass)} > {einst.toleranz:g}) - nicht konvergiert")
     info["fliessend"] = len(basis.fliessend())
     info["eps_p_max"] = basis.eq_max()
     if zonen is not None and log is not None:
@@ -1769,7 +1804,12 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                 if a8[0] > 0.0:
                     rho = max(rho, (a8[-1] / a8[0]) ** (1.0 / (len(a8) - 1)))
                 fehler = diff * max(1.0, rho / (1.0 - rho)) if rho < 1.0 else np.inf
-            if fehler <= float(einst.toleranz):
+            # Zugstaebe in der Konvergenzbedingung (13.10.2026) wie im Newton
+            stab_offen = _stabstatus_offen(kontakt) if fehler <= float(einst.toleranz) else ""
+            if stab_offen and log is not None:
+                log.append(f"Plastizität: Laststufe {k}/{stufen}, Schritt {it}: {stab_offen} - "
+                           "noch nicht konvergiert")
+            if fehler <= float(einst.toleranz) and not stab_offen:
                 F_p, zustand = F_p_neu, zustand_neu
                 break
             if r_alt is not None:
@@ -1801,6 +1841,12 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
         F_p_ende, _z, _i = schritt(model, u, basis, einst, elemente, None)
         rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
         info["rest_abschluss"] = rest
+        stab_offen = _stabstatus_offen(kontakt)
+        if info["konvergiert"] and stab_offen:
+            info["konvergiert"] = False
+            if log is not None:
+                log.append(f"Plastizität: an der Lösung des Abschlusses steht der Stabstatus nicht "
+                           f"({stab_offen}) - nicht konvergiert")
         if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):
             info["konvergiert"] = False
             if log is not None:
