@@ -3405,18 +3405,28 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                                      lines=np.asarray(rahmen_lines)),
                          color=FARBE_LAST, line_width=2, name="lastfenster")
     # ---- Temperatur auf Elementen -------------------------------------------
+    vorgespannt: list = []      # Temperaturlasten, die eine umgerechnete Vorspannung sind
     for k_l, tl in enumerate(case.temp_loads):
         if getattr(tl, "_geo", False) or not 0 <= int(tl.elem) < len(model.elements) \
                 or int(tl.elem) in weg_e:
             continue
         e = model.elements[tl.elem]
         c = model.nodes[[int(n) for n in e.nodes]].mean(axis=0)
+        if getattr(tl, "aus_vorspannung", 0.0):
+            # eine umgerechnete Vorspannung (RFEM-Import): die Kraft steht da,
+            # nicht die Temperatur, mit der sie gerechnet wird (13.10.2026);
+            # E und alpha der Umrechnung nennt der Text der gewaehlten Last
+            vorgespannt.append(c)
+            merken("vorspannung", c, f"Vorspannung {lz(tl.aus_vorspannung, 'vorspannung')} {eh.einheit('kraft')}")
+            merke("temp_loads", k_l, c)
+            continue
         (warm if tl.dT >= 0 else kalt).append(c)
         merken("temperatur", c, f"ΔT {_lastzahl(tl.dT, 1)}")
         merke("temp_loads", k_l, c)
     d = max(4.0, 0.012 * size)
     for punkte, farbe, name in ((warm, FARBE_LAST_WARM, "temp_warm"),
-                                (kalt, FARBE_LAST_KALT, "temp_kalt")):
+                                (kalt, FARBE_LAST_KALT, "temp_kalt"),
+                                (vorgespannt, FARBE_VORSPANNUNG, "temp_vorspannung")):
         if punkte:
             P = np.asarray(punkte, float).reshape(-1, 3)
             if len(P) > PFEILE_MAX:

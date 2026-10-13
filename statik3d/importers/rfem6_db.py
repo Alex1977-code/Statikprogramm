@@ -1550,19 +1550,326 @@ def _diagnose(m: Model, log: list) -> None:
 
 #: Einwirkungskategorien RFEM (actionCategoryId) -> Kategorie in Statik3D.
 #:
-#: **Eine Annahme, an keiner Datei belegt** (eingefuehrt ohne Quelle; die
-#: Tabellen Action und ActionImpl sind in beiden vorliegenden Dateien leer).
-#: Gemessen am 22.09.2026: am CBG-Trolley tragen 8 Lastfaelle die Kennzahl
-#: 11, 7 davon heissen "G - ..." (Steel Structure, Bucket Wheel ...) und
-#: werden nur ueber den Namen zu G; am Drehlager tragen alle 422 Lastfaelle
-#: die Kennzahl 11, nachgezaehlt am 23.09.2026: 128 "Bemessungslast im GZT
-#: ...", 164 "Ermuedungslast - Drehlager ...", 104 "char.Last - Drehlager
-#: ...", 24 "char.Last - Verkehrslage ..." und 2 "Vorspannung der Zuganker
-#: ...". Dieselbe Kennzahl steht also je Datei und sogar innerhalb einer
-#: Datei fuer anderes. Darum nennt das Protokoll je Kennzahl die
-#: angenommene Kategorie und warnt, psi und gamma nachzusehen - wie
-#: LOAD_DIRECTION seine abgeleiteten Richtungen 11 bis 13 nennt.
-ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
+#: **Quelle** (13.10.2026): die Aufzaehlung ``LoadCase.ActionCategory`` der
+#: Dlubal-API (RFEM 6.15, dlubal/api/rfem/loading/load_case_pb2, 296 Werte).
+#: Ihre Zahlen sind die der Datenbank: belegt an den Beispielmodellen von
+#: RFEM 6.15 fuer 11 („Self-weight“, „Permanent“), 19, 21 („FF Prestress“),
+#: 32 („Imposed load“), 33 („Verkehrslast“), 44 („Dach“), 54 („Snow“) und
+#: 61 („Wind in +X“) - die Lastfallnamen dort passen zur Aufzaehlung. Die
+#: uebrigen Kennzahlen sind nur aus den Namen der Aufzaehlung gelesen, an
+#: keiner Datei gemessen. Bis zum 13.10.2026 stand hier eine Annahme ohne
+#: Quelle (1, 2 -> G; 3, 11, 12, 13 -> Q); die Kennzahlen 1 bis 3 gibt es in
+#: der Aufzaehlung nicht, 13 ist „Eislast“, und 11 ist „Permanent G“, nicht Q.
+#:
+#: Aufgenommen ist nur, was einer Einwirkungsart von Statik3D **eindeutig**
+#: entspricht (G, P, Q_A bis Q_H, S, S_H, W, T, SET, A, Q_K, FAT). Mischformen
+#: („staendig und veraenderlich“), Erdbeben, Verkehrslasten nach Brueckenvorschrift
+#: und alles, was Statik3D nicht kennt, bleiben „nicht zugeordnet“.
+_KENNZAHLEN = (
+    ("G", (11, 12, 14, 15, 16, 82, 83, 84, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270,
+           271, 272, 273, 6287, 6288, 6314, 6315, 6316, 6317, 6318, 6319, 6320, 6352, 6353,
+           6354, 6355, 6384, 6385)),
+    ("P", (21, 23, 6310)),
+    ("Q", (26, 28, 38, 40, 6286, 6356, 6374)),
+    ("Q_A", (32, 6260)), ("Q_B", (33, 6261)), ("Q_C", (34, 6262)), ("Q_D", (35, 6263)),
+    ("Q_E", (36, 6264, 6265, 6266)), ("Q_F", (42, 6268)), ("Q_G", (43, 6269)),
+    ("Q_H", (44, 47, 6270)),
+    ("S", (54, 60)), ("S_H", (53,)),
+    ("W", (61, 62, 65, 66, 67, 129, 6338)),
+    ("T", (71, 6277, 6340)),
+    ("SET", (81, 120, 140)),
+    ("A", (101, 102, 104, 105, 6373)),
+    ("Q_K", (6278,)),
+    ("FAT", (6377, 6382)),
+)
+KATEGORIE_AUS_KENNZAHL = {k: kat for kat, ks in _KENNZAHLEN for k in ks}
+
+#: Die Kennzahl, die RFEM jedem **neuen** Lastfall gibt: „Permanent | G“. Sie
+#: sagt nichts ueber die Einwirkung - am Drehlager tragen alle 422 Lastfaelle
+#: diese Kennzahl, auch „Verkehrslage“ und „Ermuedungslast“, und am CBG-Trolley
+#: 8 Lastfaelle, von denen 7 „G - ...“ heissen und einer nicht. Fuer sich
+#: genommen laesst sie darum **keine** Zuordnung zu (Entscheidung des Anwenders
+#: vom 13.10.2026: „nicht zugeordnet“ statt Q). Dasselbe gilt fuer eine
+#: **Aktion** des Kombinationsassistenten (ActionImpl) mit dieser Kennzahl:
+#: auch eine neue Aktion beginnt als „Permanent G“ (gemessen an den
+#: Beispielmodellen „Dynamic Analysis“ von RFEM 6.15, wo „wind +x“ und „live
+#: load roof“ in Aktionen mit der Kennzahl 11 stehen). Eine Aktion mit einer
+#: anderen Kennzahl ist dagegen eine Wahl des Aufstellers.
+KENNZAHL_VORGABE = 11
+
+#: Tabellen der Datenbank, an denen Lasten haengen (Griff-Tabelle mit
+#: parentModelObject_table = 'LoadCase')
+def _lasttabelle(name: str) -> bool:
+    return name.endswith("Load") or name.endswith("Loads") or "Deformation" in name
+
+
+def _aktionen(db: "Db") -> dict:
+    """{LoadCase-Griff-id: [(Kennzahl, Name der Aktion), ...]} aus den
+    Aktionen des Kombinationsassistenten (``Action``/``ActionImpl``, Lastfaelle
+    in ``ActionImpl_items``). Leer, wenn die Datei keine fuehrt (Drehlager,
+    CBG-Trolley: beide Tabellen leer)."""
+    out: dict = {}
+    if not db.has("Action") or not db.has("ActionImpl"):
+        return out
+    for h, impl in db.impls("Action"):
+        akid = int(impl.get("actionCategoryId") or 0)
+        tbl = (h.get("impl_table") or "ActionImpl") + "_items"
+        for z in db.container_rows(tbl).get(impl["id"], []):
+            lid = z.get("loadCase_id")
+            if lid is not None:
+                out.setdefault(lid, []).append((akid, (impl.get("name") or "").strip()))
+    return out
+
+
+def _lastinhalt(db: "Db") -> dict:
+    """{LoadCase-Griff-id: (Zahl Vorspannlasten, Zahl anderer Lasten)} - was
+    in der Quelldatei am Lastfall haengt, unabhaengig davon, was der Import
+    davon uebernehmen konnte. Ein Lastfall mit nur Vorspannlasten (und ohne
+    Eigengewicht) ist ein reiner Vorspannungslastfall."""
+    out: dict = {}
+    for t in sorted(db.tables):
+        if not _lasttabelle(t):
+            continue
+        cols = db.columns(t)
+        if "parentModelObject_table" not in cols or "impl_table" not in cols:
+            continue
+        cur = db.con.execute(
+            f'SELECT parentModelObject_id, impl_table FROM "{t}" WHERE parentModelObject_table = ?',
+            ("LoadCase",))
+        for pid, it in cur.fetchall():
+            v, a = out.get(pid, (0, 0))
+            if "Prestress" in (it or ""):
+                v += 1
+            else:
+                a += 1
+            out[pid] = (v, a)
+    return out
+
+
+def _kombinationsrollen(db: "Db", lc_name: dict, bem: dict) -> dict:
+    """{Lastfall: [(Art, belegt, Faktor, allein), ...]} - jedes Vorkommen eines
+    Lastfalls in einer Last- oder Ergebniskombination der Quelldatei.
+
+    ``Art`` ist die Kombinationsart der Bemessungssituation (``ULS``,
+    ``SLS_CH``, ``FAT`` ...), ``belegt`` ob sie aus einer **bekannten**
+    Kennzahl stammt (SITUATION_ART) und nicht die Rueckfallannahme „GZT“ ist,
+    ``Faktor`` Eintragsfaktor mal Gruppenfaktor, ``allein`` ob der Lastfall
+    eine Alternative fuer sich bildet („LF1/p oder LF2/p“ - eine Zeile ohne
+    Nachbarn und ohne Klammer) und nicht in einer Summe steht. Gleiche
+    Zerlegung wie _combinations."""
+    out: dict = {}
+    for handle, impl_feld in (("LoadCombination", "LoadCombinationImpl_items"),
+                              ("ResultCombination", "ResultCombinationImpl_items")):
+        if not db.count(handle):
+            continue
+        for h, impl in db.impls(handle):
+            tbl = (h.get("impl_table") or "") + "_items"
+            zeilen = db.container_rows(tbl).get(impl["id"], [])
+            if not zeilen:
+                zeilen = db.container_rows(impl_feld).get(impl["id"], [])
+            zeilen = sorted(zeilen, key=lambda z: int(z.get("container_order") or 0))
+            _n, art, tid = bem.get(impl.get("designSituation_id"), ("", "", 0))
+            belegt = bool(art)
+            if not art:
+                st = impl.get("designSituationType")
+                belegt = st is not None and int(st) in SITUATION_TYP
+                art = SITUATION_TYP.get(int(st or 0), "ULS")
+            gruppen: list = [[]]
+            for z in zeilen:
+                gruppen[-1].append(z)
+                if handle == "ResultCombination" and z.get("operator") is not None \
+                        and int(z["operator"]) == OPERATOR_ODER:
+                    gruppen.append([])
+            for g in gruppen:
+                for z in g:
+                    nm = lc_name.get(z.get("modelObject_id")) \
+                        if (z.get("modelObject_table") or "") == "LoadCase" else None
+                    if not nm:
+                        continue
+                    f = float(z.get("modelObjectFactor") or 0.0) * float(z.get("groupFactor") or 1.0)
+                    allein = (len(g) == 1 and not z.get("leftParenthesis")
+                              and not z.get("rightParenthesis") and not int(z.get("subResult") or 0))
+                    out.setdefault(nm, []).append((art, belegt, f, allein))
+    return out
+
+
+#: Namen, die gegen ein Kennzeichen „Bemessungslastfall“ sprechen bzw. es
+#: nahelegen (nach C.norm_key: klein, ohne Umlaute und Satzzeichen)
+_NAME_CHARAKTERISTISCH = re.compile(r"\bchar\b|charakterist|characteristic|gebrauchs")
+_NAME_BEMESSUNGSLAST = re.compile(r"\bbemessungslast|\bbemessungswert|\bdesign load")
+
+
+def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: list) -> None:
+    """Einwirkung und Kennzeichen „Bemessungslastfall“ der importierten
+    Lastfaelle bestimmen (Entscheidung des Anwenders vom 13.10.2026).
+
+    **Einwirkung** - in dieser Reihenfolge, der erste eindeutige Fund gilt:
+
+    1. der Lastfall steht in einer Aktion des Kombinationsassistenten, deren
+       Kennzahl nicht die Vorgabe 11 ist und die die Tabelle fuehrt;
+    2. seine eigene Kennzahl, wenn sie nicht die Vorgabe 11 ist und die
+       Tabelle sie fuehrt;
+    3. er steht in der Quelldatei **nur** in Ermuedungskombinationen
+       (Bemessungssituation „GZT (FAT)“, bekannte Kennzahl): FAT;
+    4. an ihm haengen **nur** Vorspannlasten, kein Eigengewicht: P;
+    5. an ihm haengt **nur** Eigengewicht (kein anderer Lasttyp): G - das
+       Eigengewicht der Bauteile ist nach DIN EN 1990 eine staendige Einwirkung;
+    6. sonst „nicht zugeordnet“ - Kombinationen mit ihm werden nicht gerechnet.
+
+    Der **Name** setzt nichts: er steht hoechstens als Vorschlag im Protokoll.
+    Ein Name ist Freitext, und derselbe Text („Verkehrslage“, „Eigengewicht“)
+    steht je Datei fuer anderes (gemessen am Drehlager).
+
+    **Kennzeichen „Bemessungslastfall, bereits faktorisiert“** wird gesetzt,
+    wenn die Quelldatei den Lastfall selbst so behandelt: er steht in einer
+    Kombination der Bemessungssituation **GZT** (bekannte Kennzahl) und in
+    **keiner** anderen, jedes Mal als eigene Alternative mit dem Faktor 1,0.
+    RFEM bemisst dann mit genau diesem Ergebnis - die Lasten sind Bemessungs-
+    werte, ein zweites gamma haelte sie doppelt an. Spricht der Name
+    dagegen („char.“, „charakteristisch“), wird nichts gesetzt und gemeldet.
+    Passt nur der Name („Bemessungslast“) und die Struktur nicht, gibt es
+    einen Vorschlag im Protokoll, kein Kennzeichen: setzt jemand den Haken zu
+    Unrecht, werden Lasten ohne gamma angesetzt - die unsichere Richtung."""
+    from ..model import KATEGORIE_OFFEN
+    from ..begriffe import lastfaelle_kurz
+    aktionen = _aktionen(db)
+    inhalt = _lastinhalt(db)
+    rollen = _kombinationsrollen(db, lc_name, _bemessungssituationen(db))
+    quelle: dict = {}                   # Kategorie -> Wie -> [Lastfaelle]
+    je_kennzahl: dict = {}              # Kennzahl -> Zahl
+    je_kennzahl_kat: dict = {}          # Kennzahl -> {Kategorie: [Lastfaelle]}
+    unbekannt: dict = {}
+    widerspruch: list = []
+    vorschlag: dict = {}                # Kategorie nach dem Namen -> [Lastfaelle]
+    aus_aktion = 0
+    for nm, i in info.items():
+        lc = m.load_cases[nm]
+        akid, lcid = i["akid"], i["id"]
+        je_kennzahl[akid] = je_kennzahl.get(akid, 0) + 1
+        if akid and akid != KENNZAHL_VORGABE and akid not in KATEGORIE_AUS_KENNZAHL:
+            unbekannt[akid] = unbekannt.get(akid, 0) + 1
+        kat, wie = None, ""
+        aus_akt = {KATEGORIE_AUS_KENNZAHL.get(a) for a, _n in aktionen.get(lcid, [])
+                   if a != KENNZAHL_VORGABE} - {None}
+        eigen = KATEGORIE_AUS_KENNZAHL.get(akid) if akid != KENNZAHL_VORGABE else None
+        if len(aus_akt) > 1 or (aus_akt and eigen and eigen not in aus_akt):
+            widerspruch.append(nm)          # die Quelle sagt zwei Dinge: nicht raten
+        elif aus_akt:
+            kat, wie = next(iter(aus_akt)), "Aktion"
+            aus_aktion += 1
+        elif eigen:
+            kat, wie = eigen, "Kennzahl"
+        else:
+            r = rollen.get(nm, [])
+            if r and all(a == "FAT" and b for a, b, _f, _al in r):
+                kat, wie = "FAT", "Struktur"
+            else:
+                v, a = inhalt.get(lcid, (0, 0))
+                if v and not a and not i["eigengewicht"]:
+                    kat, wie = "P", "Inhalt"
+                elif i["eigengewicht"] and not v and not a:
+                    kat, wie = "G", "Inhalt"
+        if kat is None:
+            kat = KATEGORIE_OFFEN
+            n_ = C.category_from_text(i["name"], "")
+            if n_:
+                vorschlag.setdefault(n_, []).append(nm)
+        lc.category = kat
+        quelle.setdefault(kat, {}).setdefault(wie or "offen", []).append(nm)
+        if wie == "Kennzahl":
+            je_kennzahl_kat.setdefault(akid, {}).setdefault(kat, []).append(nm)
+
+    # ---- Bemessungslastfaelle ------------------------------------------
+    gesetzt: list = []
+    gegen_name: list = []
+    name_stimmt = 0
+    for nm, i in info.items():
+        r = rollen.get(nm, [])
+        norm = C.norm_key(i["name"])
+        aus_struktur = bool(r) and all(a == "ULS" and b and al and abs(f - 1.0) < 1e-12
+                                       for a, b, f, al in r)
+        if aus_struktur and _NAME_CHARAKTERISTISCH.search(norm):
+            gegen_name.append(nm)
+        elif aus_struktur:
+            m.load_cases[nm].faktorisiert = True
+            gesetzt.append(nm)
+            name_stimmt += bool(_NAME_BEMESSUNGSLAST.search(norm))
+    nur_name = [nm for nm, i in info.items()
+                if nm not in gesetzt and nm not in gegen_name
+                and _NAME_BEMESSUNGSLAST.search(C.norm_key(i["name"]))]
+
+    # ---- Protokoll -------------------------------------------------------
+    wie_text = {"Aktion": "aus einer Aktion des Kombinationsassistenten",
+                "Kennzahl": "aus der RFEM-Kennzahl",
+                "Struktur": "nur in Ermüdungskombinationen der Quelldatei",
+                "Inhalt": "nur Vorspannlasten bzw. nur Eigengewicht",
+                "offen": "nicht zuordenbar"}
+    n = len(info)
+    if n:
+        C.say(log, f"  Einwirkung: " + ", ".join(
+            f"{sum(len(v) for v in w.values())}x {('nicht zugeordnet' if k == KATEGORIE_OFFEN else k)}"
+            for k, w in sorted(quelle.items(), key=lambda kv: kv[0] == KATEGORIE_OFFEN)))
+        for k, w in sorted(quelle.items(), key=lambda kv: kv[0] == KATEGORIE_OFFEN):
+            for wie in ("Aktion", "Kennzahl", "Struktur", "Inhalt"):
+                if wie in w:
+                    C.say(log, f"    {k}: {len(w[wie])}x {wie_text[wie]}")
+    for akid, k in sorted(je_kennzahl.items()):
+        if akid == KENNZAHL_VORGABE:
+            C.say(log, f"    Kennzahl {akid}: {k}x - die RFEM-Vorgabe jedes neuen Lastfalls "
+                       "(„Permanent G“); sie sagt nichts über die Einwirkung")
+        elif akid in KATEGORIE_AUS_KENNZAHL:
+            C.say(log, f"    Kennzahl {akid} -> {KATEGORIE_AUS_KENNZAHL[akid]}: {k}x "
+                       "(Aufzählung der Dlubal-API 6.15)")
+    if unbekannt:
+        C.warn(log, "  Einwirkungskennzahlen, die die Tabelle nicht führt (nicht zugeordnet): "
+                    + ", ".join(f"{a} ({k}x)" for a, k in sorted(unbekannt.items())))
+    if widerspruch:
+        C.warn(log, f"  {len(widerspruch)} Lastfälle nennen in Aktion und Kennzahl verschiedene "
+                    "Einwirkungen - nicht zugeordnet: " + lastfaelle_kurz(widerspruch))
+    offen = [nm for nm, lc in m.load_cases.items()
+             if nm in info and lc.category == KATEGORIE_OFFEN and not lc.faktorisiert]
+    for k, lfs in sorted(vorschlag.items()):
+        lfs = [x for x in lfs if not m.load_cases[x].faktorisiert]
+        if lfs:
+            C.say(log, f"    Vorschlag nach dem Namen (nicht gesetzt): {k} für {lastfaelle_kurz(lfs)}")
+    if offen:
+        C.warn(log, f"  {len(offen)} Lastfälle ohne zugeordnete Einwirkung ({lastfaelle_kurz(offen)}): "
+                    "Kombinationen mit ihnen werden nicht gerechnet, einzelne Lastfälle schon. "
+                    "Zuordnung: Lastfall im Modellbaum anklicken, rechts unter „Einwirkung“ wählen "
+                    "(oder „Bemessungslastfall“ ankreuzen).")
+    if gesetzt:
+        C.say(log, f"  {len(gesetzt)} Lastfälle als Bemessungslastfall, bereits faktorisiert, "
+                   f"gekennzeichnet ({lastfaelle_kurz(gesetzt)}): in der Quelldatei stehen sie nur in "
+                   "Kombinationen der Bemessungssituation GZT, jeweils als eigene Alternative mit dem "
+                   f"Faktor 1,0 (der Name nennt „Bemessungslast“ bei {name_stimmt} von {len(gesetzt)}). "
+                   "In einer Kombination gehen sie mit γ = 1,0 und ohne ψ ein, ein zweites γ gibt es "
+                   "nicht.")
+    if gegen_name:
+        C.warn(log, f"  {len(gegen_name)} Lastfälle stehen in der Quelldatei mit dem Faktor 1,0 in "
+                    f"GZT-Kombinationen, heißen aber „charakteristisch“ ({lastfaelle_kurz(gegen_name)}) - "
+                    "nicht als Bemessungslastfall gekennzeichnet; bitte prüfen.")
+    if nur_name:
+        C.say(log, f"    Vorschlag nach dem Namen (nicht gesetzt): Bemessungslastfall für "
+                   f"{lastfaelle_kurz(nur_name)} - die Quelldatei führt sie nicht als GZT-Alternative "
+                   "mit dem Faktor 1,0; wenn ihre Lasten schon Bemessungswerte sind, in der Lastfallmaske "
+                   "ankreuzen.")
+    # Vorspannung im gemischten Lastfall: ein Lastfall hat eine Einwirkung und ein gamma
+    gemischt = []
+    for nm in info:
+        lc = m.load_cases[nm]
+        n_vor = sum(1 for t in lc.temp_loads if t.aus_vorspannung)
+        if n_vor and lc.n_loads > n_vor and not lc.faktorisiert and lc.category not in ("FAT", "P"):
+            gemischt.append(nm)
+    if gemischt:
+        C.warn(log, f"  {len(gemischt)} Lastfälle mischen Vorspannung mit anderen Lasten und sind keine "
+                    f"Bemessungslastfälle ({lastfaelle_kurz(gemischt)}): eine Kombination gibt dem "
+                    "ganzen Lastfall das γ seiner Einwirkung, die Vorspannung darin also nicht "
+                    "γ_P = 1,0. Die Vorspannung in einen eigenen Lastfall (Einwirkung P) legen "
+                    "oder den Lastfall als Bemessungslastfall kennzeichnen.")
+    pure_p = quelle.get("P", {})
+    if pure_p:
+        C.say(log, f"  {sum(len(v) for v in pure_p.values())} reine Vorspannungslastfälle mit "
+                   "Einwirkung P und γ_P = 1,0.")
 
 
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
@@ -1570,22 +1877,24 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 surf_name: dict = None, line_name: dict = None,
                 solid_name: dict = None, strukturmod: dict = None,
                 fortschritt=None) -> None:
-    """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
+    """Lastfaelle mit Namen, Einwirkung und Eigengewichtsfaktor uebernehmen.
+
+    Die Einwirkung steht erst nach den Lasten und Kombinationen fest
+    (:func:`_einwirkungen_zuordnen`): sie haengt am Inhalt des Lastfalls und an
+    seinem Platz in den Kombinationen der Quelldatei. Bis dahin ist jeder
+    Lastfall „nicht zugeordnet“.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
     RFEM an Objekten, die ohne Netz nicht aufloesbar sind; ihre Anzahl steht
     im Protokoll.
     """
+    from ..model import KATEGORIE_OFFEN
     _melde(fortschritt, 0.78, "Lastfälle lesen")
     n = 0
     lc_name: dict[int, str] = {}
     mit_mod: dict[str, int] = {}
-    je_kat: dict[str, int] = {}
-    unbek_kat: dict[int, int] = {}
-    je_kennzahl: dict[int, int] = {}
-    # {Kennzahl: {Kategorie aus dem Namen: [Lastfall, ...]}} - was der Name
-    # gegenueber der Kennzahl umgestellt hat, je Lastfall (Befund FM9)
-    umgestellt: dict[int, dict[str, list]] = {}
+    #: je Lastfall, was die Zuordnung der Einwirkung aus der Quelle braucht
+    info: dict[str, dict] = {}
     ohne_mod = 0
     cases = db.impls("LoadCase")
     if cases:
@@ -1598,28 +1907,14 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     for h, impl in cases:
         name = (impl.get("name") or "").strip() or f"LF{h.get('userID') or h['id']}"
         akid = int(impl.get("actionCategoryId") or 0)
-        cat = ACTION_CATEGORY.get(akid, "Q")
-        je_kennzahl[akid] = je_kennzahl.get(akid, 0) + 1
-        if akid not in ACTION_CATEGORY:
-            unbek_kat[akid] = unbek_kat.get(akid, 0) + 1
-        aus_kennzahl = cat
-        if cat == "Q":
-            # Nur **innerhalb** der veraenderlichen Einwirkungen verfeinern.
-            # Ein "G" aus der Kennzahl darf der Freitext nicht umstossen: ein
-            # Lastfall "Windverband Eigenlast" mit Kennzahl 1 wuerde sonst zu
-            # W und damit veraenderlich (gemessen). Umgekehrt ist jedes "Q"
-            # ohnehin nur die Rueckfallkategorie und durch den Namen hoechstens
-            # zu verbessern.
-            cat = C.category_from_text(name, "Q")
-        je_kat[cat] = je_kat.get(cat, 0) + 1
         nm = C.unique_name(m.load_cases, f"LF{h.get('userID') or h['id']}")
-        if cat != aus_kennzahl:
-            umgestellt.setdefault(akid, {}).setdefault(cat, []).append(nm)
-        lc = m.add_load_case(nm, cat, description=name, activate=False)
+        lc = m.add_load_case(nm, KATEGORIE_OFFEN, description=name, activate=False)
         lc_name[h["id"]] = nm
         gz = impl.get("selfWeightFactors_z")
-        if impl.get("selfWeightActive") and gz:
+        eigengewicht = bool(impl.get("selfWeightActive") and gz)
+        if eigengewicht:
             lc.gravity = [0.0, 0.0, -9.81 * float(gz)]
+        info[nm] = {"akid": akid, "id": h["id"], "name": name, "eigengewicht": eigengewicht}
         # Rechnet der Lastfall mit einer Strukturmodifikation, gilt er in deren
         # Situation - mit dem verkleinerten System, nicht mit dem vollen.
         if impl.get("isStructureModificationEnabled"):
@@ -1636,34 +1931,8 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 ohne_mod += 1
         n += 1
     if n:
-        # Nicht mehr "Einwirkungskategorie uebernommen": uebernommen ist nur
-        # die Kennzahl, die Kategorie ist daraus angenommen (Befund FM9).
-        C.say(log, f"{n} Lastfaelle uebernommen (Namen, Eigengewichtsfaktor; "
-                   "Einwirkungskategorie aus der Kennzahl angenommen)")
-    if je_kat:
-        C.say(log, "  Einwirkungskategorie: " + ", ".join(
-            f"{k}x {c}" for c, k in sorted(je_kat.items())))
-    for akid, k in sorted(je_kennzahl.items()):
-        herkunft = ("Annahme, an keiner Datei belegt" if akid in ACTION_CATEGORY
-                    else "unbekannte Kennzahl, Rueckfall")
-        zeile = (f"    Kennzahl {akid} -> {ACTION_CATEGORY.get(akid, 'Q')} "
-                 f"({herkunft}): {k}x")
-        if akid in umgestellt:
-            zeile += "; davon ueber den Namen umgestellt: " + "; ".join(
-                f"zu {c}: {', '.join(lfs)}" for c, lfs in sorted(umgestellt[akid].items()))
-        C.say(log, zeile)
-    bekannt = sorted(a for a in je_kennzahl if a in ACTION_CATEGORY)
-    if bekannt:
-        C.warn(log, "  Einwirkungskategorie aus der Kennzahl angenommen ("
-                    + ", ".join(f"{a} -> {ACTION_CATEGORY[a]}" for a in bekannt)
-                    + "): die Zuordnung ist an keiner RFEM-Datei belegt, und "
-                      "dieselbe Kennzahl steht je Datei fuer anderes. psi und "
-                      "gamma bitte in der Lastfallmaske nachsehen.")
-    if unbek_kat:
-        C.warn(log, "  Einwirkungskategorien mit unbekannter Kennzahl: "
-                    + ", ".join(f"{c} ({k}x)" for c, k in sorted(unbek_kat.items()))
-                    + " - als „Q“ gefuehrt (veraenderlich, allgemein); "
-                      "psi und gamma bitte in der Lastfallmaske nachsehen.")
+        C.say(log, f"{n} Lastfaelle uebernommen (Namen, Eigengewichtsfaktor; Einwirkung und "
+                   "Kennzeichen Bemessungslastfall nach den Lasten und Kombinationen, siehe unten)")
     for sit, k in sorted(mit_mod.items()):
         C.say(log, f"  {k} davon in der Situation „{sit}“ (Strukturmodifikation)")
     if ohne_mod:
@@ -1674,6 +1943,10 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
            line_name, solid_name)
     _melde(fortschritt, 0.90, "Kombinationen lesen")
     _combinations(db, m, lc_name, log)
+    # Einwirkung und Kennzeichen Bemessungslastfall: erst jetzt, mit Inhalt und
+    # Kombinationen der Quelldatei (13.10.2026)
+    _melde(fortschritt, 0.93, "Einwirkungen zuordnen")
+    _einwirkungen_zuordnen(db, m, lc_name, info, log)
     _melde(fortschritt, 0.94, f"{len(m.combinations)} Kombinationen - Kerbfälle vorschlagen")
     # Die Datei fuehrt keine Kerbfaelle (Drehlager: 64 Zugstaebe Rund 40/20/16,
     # 108 Volumen - keiner). Vorschlaege aus dem Modell, als solche markiert.
@@ -2878,6 +3151,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     vs_staebe: set = set()          # verschiedene Staebe mit einer Vorspannung
     vs_n0: list = []                # |N_0| je uebernommener Lastzeile
     vs_je_lf: dict = {}             # Lastfall -> Summe |N_0| ueber seine Staebe
+    vs_ea: set = set()              # (E, alpha) der Umrechnung, je Stabwerkstoff
     n_vs_el_ohne = 0                # Stabelemente ohne A oder alpha
     if db.has("MemberLoad"):
         case_of = _load_case_of(db, "MemberLoad")
@@ -2908,7 +3182,12 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                         n_vs_el_ohne += 1
                         continue
                     dT = -N0 / (mat.E * sec.A * mat.alpha)
-                    m.load_temp(e, dT, case=lc)
+                    # Merkmal „aus Vorspannung“ (13.10.2026): Anzeige, Tabelle und
+                    # Bericht nennen die Kraft N0 mit dem E und alpha dieser
+                    # Umrechnung, nicht die Temperatur
+                    m.load_temp(e, dT, case=lc, aus_vorspannung=N0,
+                                vorspann_E=float(mat.E), vorspann_alpha=float(mat.alpha))
+                    vs_ea.add((float(mat.E), float(mat.alpha)))
                     am_stab = True
                 if am_stab:
                     vs_staebe.add(nm)
@@ -2938,12 +3217,25 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             return f"{lo} kN" if lo == hi else f"{lo} bis {hi} kN"
 
         vs_n_lf, vs_n_st = len(vs_je_lf), len(vs_staebe)
+        # E und alpha, mit denen die Kraft in die eingepraegte Dehnung umgesetzt
+        # ist (13.10.2026): bis die kraftgesteuerte Vorspannung da ist, haengt
+        # die Kraft im Stab an ihnen
+        from ..zahlen import zahl_text
+
+        def ea_text(E, alpha):
+            mant, _, ex = f"{alpha:.1e}".partition("e")
+            return f"E = {zahl_text(E / 1e6)} N/mm², α = {mant.replace('.', ',')}e{int(ex)} 1/K"
+
         C.say(log, f"  {n_vs} Stabvorspannungen als gleichwertige "
                    f"Temperaturlast uebernommen (dT = -N_0/(E*A*alpha)) - "
                    f"in {vs_n_lf} {'Lastfall' if vs_n_lf == 1 else 'Lastfaellen'} auf "
                    + ("1 Stab" if vs_n_st == 1 else f"{vs_n_st} verschiedene Staebe")
                    + f", N_0 {spanne(vs_n0)} je Stab, "
                    f"je Lastfall zusammen {spanne(vs_je_lf.values())}")
+        C.say(log, "    Angezeigt wird die Vorspannung als Kraft (eingeprägte Dehnung), gerechnet mit "
+                   + "; ".join(ea_text(E, a_) for E, a_ in sorted(vs_ea))
+                   + (" (je Stabwerkstoff)" if len(vs_ea) > 1 else "")
+                   + " - gilt bis zur kraftgesteuerten Vorspannung.")
     if n_vs_ohne:
         C.say(log, f"  {n_vs_ohne} Vorspannlasten ohne Ziel, ohne Betrag oder "
                    "ohne Waermedehnzahl - nicht uebernommen")

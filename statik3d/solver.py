@@ -26,7 +26,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import splu, eigsh
 
-from .model import Model, NDOF, Combination, LoadCase, Member, GRUNDSTELLUNG
+from .model import Model, NDOF, Combination, LoadCase, Member, GRUNDSTELLUNG, KombinationGesperrt
 from .begriffe import umhuellende_kurz, umhuellende_schluessel
 from . import assemble as asm
 from .elements import beam3d as bm
@@ -6110,7 +6110,18 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
 
 
 def _kombination_pruefen(model: Model, combo: Combination) -> str:
-    """Die Situation der Kombination; ihre Lastfaelle muessen dazu gehoeren."""
+    """Die Situation der Kombination; ihre Lastfaelle muessen dazu gehoeren.
+
+    Eine Kombination mit einem Lastfall ohne zugeordnete Einwirkung (Kategorie
+    „nicht zugeordnet“, nicht als Bemessungslastfall gekennzeichnet) wird nicht
+    gerechnet (13.10.2026): fuer ihn stehen gamma und psi nicht fest. Das ist
+    ein Bedienhinweis (KombinationGesperrt), kein Absturz; der einzelne
+    Lastfall bleibt rechenbar. Diese Stelle erreichen alle Wege zu einer
+    Kombination - auch die Alternativen einer Ergebniskombination."""
+    offen = [k for k in combo.lastfaelle()
+             if k in model.load_cases and model.load_cases[k].kombination_gesperrt]
+    if offen:
+        raise KombinationGesperrt(model.sperrhinweis({combo.name: offen}), {combo.name: offen}, offen)
     sit = combo.situation or GRUNDSTELLUNG
     fremd = [k for k in combo.lastfaelle() if k in model.load_cases
              and (model.load_cases[k].situation or GRUNDSTELLUNG) != sit]
@@ -8635,6 +8646,15 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     kollision = getattr(model, "namenskollisionen", list)()
     if kollision:
         raise ValueError("Die Rechnung startet nicht:\n" + "\n".join(kollision))
+    # Kombinationen mit Lastfaellen ohne Einwirkung werden nicht gerechnet
+    # (13.10.2026) - und das **vor** dem ersten Lastfall: ein Lauf, der Stunden
+    # fuer die Lastfaelle braucht und erst danach an der ersten Kombination
+    # scheitert, waere der schlechtere Hinweis. Die Lastfaelle einzeln
+    # (solve_static, solve_cases) und ``combinations=False`` rechnen weiter.
+    if combinations and model.combinations:
+        gesperrt = model.gesperrte_kombinationen()
+        if gesperrt:
+            raise KombinationGesperrt(model.sperrhinweis(gesperrt), gesperrt)
     with parallel.arbeiter(model, workers):
         return _solve_all_innen(model, workers, progress, combinations, envelopes, design, fatigue)
 

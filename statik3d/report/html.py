@@ -740,7 +740,12 @@ class Report:
         elif name == "Lastfälle":
             rows = [["Lastfall", "Art", "Lasten", "Beschreibung"]]
             for lc in m.load_cases.values():
-                rows.append([lc.name, ACTION_CATEGORIES.get(lc.category, lc.category),
+                # der Text der Einwirkung, nicht das Tupel der Tabelle (Text und psi);
+                # bei einem Bemessungslastfall mit dem Kennzeichen (13.10.2026)
+                rows.append([lc.name,
+                             ACTION_CATEGORIES.get(lc.category, (lc.category,))[0]
+                             + (", Bemessungslastfall, bereits faktorisiert"
+                                if getattr(lc, "faktorisiert", False) else ""),
                              str(lc.n_loads), lc.description or ""])
         elif name == "Kombinationen":
             rows = ([list(map(str, r)) for r in combination_table(m, self._theorie_spalte)]
@@ -1393,6 +1398,10 @@ class Report:
         beam = lc.eigene("beam_loads") if hasattr(lc, "eigene") else lc.beam_loads
         face = lc.eigene("face_loads") if hasattr(lc, "eigene") else lc.face_loads
         temp = lc.eigene("temp_loads") if hasattr(lc, "eigene") else lc.temp_loads
+        # umgerechnete Vorspannungen (RFEM-Import) stehen als Kraft, nicht als
+        # Temperatur (13.10.2026) - eigene Tabelle unten
+        vorsp = [l for l in temp if getattr(l, "aus_vorspannung", 0.0)]
+        temp = [l for l in temp if not getattr(l, "aus_vorspannung", 0.0)]
         # Knotenlasten (gleiche Lastvektoren zusammenfassen)
         if nodal:
             groups = {}
@@ -1546,6 +1555,27 @@ class Report:
                                      "Aus der Pressung und dem Reibbeiwert der Fuge folgt "
                                      "ihre Schubtragfähigkeit",
                       None, ""))
+        if vorsp:
+            groups = {}
+            for l in vorsp:
+                key = (round(float(l.aus_vorspannung), 3), round(float(l.vorspann_E), 3),
+                       float(l.vorspann_alpha))
+                groups.setdefault(key, []).append(l)
+            rows = [["Elemente", "Anzahl", "Vorspannkraft F_v [kN]", "E [N/mm²]", "α [1/K]"]]
+            saetze = []
+            for ls in groups.values():
+                l0 = ls[0]
+                rows.append([_ids_text([l.elem for l in ls]), str(len(ls)),
+                             fmt(l0.aus_vorspannung / 1e3, 2), fmt(l0.vorspann_E / 1e6, 0),
+                             l0.vorspann_alpha_text() if l0.vorspann_alpha else "–"])
+                saetze.append(l0.vorspann_text())
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Vorspannung Lastfall {lc.name} (aus der Quelldatei als "
+                                     "Stabkraft übernommen, gerechnet als eingeprägte Dehnung "
+                                     "ε₀ = −F_v/(E·A))", None, ""))
+            b.append(("p", "; ".join(dict.fromkeys(saetze)) + "."))
+            if note:
+                b.append(("note", note))
         if temp:
             groups = {}
             for l in temp:
@@ -1576,16 +1606,31 @@ class Report:
         for lc in m.load_cases.values():
             psi = lc.psi_factors
             cat = ACTION_CATEGORIES.get(lc.category, ("–", psi))[0]
-            if lc.is_permanent:
+            gamma_text = None
+            if getattr(lc, "faktorisiert", False):
+                # schon Bemessungswert: in jeder Kombination gamma = 1,0 ohne psi
+                cat += " – Bemessungslastfall, bereits faktorisiert (γ = 1,0, ohne ψ)"
+                gs = gi = 1.0
+                psi = None
+            elif lc.category == "P":
+                gs = lc.gamma_sup if lc.gamma_sup is not None else getattr(ds, "gamma_P", 1.0)
+                gi = lc.gamma_inf if lc.gamma_inf is not None else getattr(ds, "gamma_P", 1.0)
+            elif lc.is_permanent:
                 gs = lc.gamma_sup if lc.gamma_sup is not None else ds.gamma_G_sup
                 gi = lc.gamma_inf if lc.gamma_inf is not None else ds.gamma_G_inf
             elif lc.is_variable:
                 gs = lc.gamma_sup if lc.gamma_sup is not None else ds.gamma_Q
                 gi = ds.gamma_Q_fav
+            elif lc.kategorie_offen:
+                gamma_text = ("–", "–")
+                psi = None
             else:
                 gs, gi = 1.0, 1.0
-            rows.append([lc.name, lc.category, cat, lc.description or "–", fmt(psi[0], 2),
-                         fmt(psi[1], 2), fmt(psi[2], 2), fmt(gs, 2), fmt(gi, 2),
+            if gamma_text is None:
+                gamma_text = (fmt(gs, 2), fmt(gi, 2))
+            psi_text = ("–", "–", "–") if psi is None else (fmt(psi[0], 2), fmt(psi[1], 2), fmt(psi[2], 2))
+            rows.append([lc.name, lc.category, cat, lc.description or "–", psi_text[0],
+                         psi_text[1], psi_text[2], gamma_text[0], gamma_text[1],
                          lc.exclusive_group or "–", getattr(lc, "situation", "") or "Grundstellung",
                          self._theorie_spalte(lc),
                          str(lc.n_loads)])

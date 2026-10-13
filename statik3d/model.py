@@ -90,6 +90,13 @@ ACTION_CATEGORIES = {
     "SET":  ("Baugrundsetzungen", (1.0, 1.0, 1.0)),
     "A":    ("Aussergewoehnliche Einwirkung", (1.0, 1.0, 1.0)),
     "FAT":  ("Ermuedungslast (nur fuer Ermuedungsnachweis)", (0.0, 0.0, 0.0)),
+    # Nicht zugeordnet (13.10.2026): die Quelle sagt nicht eindeutig, welche
+    # Einwirkung der Lastfall ist (RFEM-Import mit der Vorgabe-Kennzahl 11).
+    # Die ψ-Werte hier sind nur ein Platzhalter der Tabelle - sie gelten nie:
+    # eine Kombination mit so einem Lastfall wird nicht gerechnet
+    # (Model.gesperrte_kombinationen), solange er weder zugeordnet noch als
+    # Bemessungslastfall gekennzeichnet ist.
+    "NZ":   ("nicht zugeordnet (Kombinationen gesperrt)", (1.0, 1.0, 1.0)),
     # --- Stahlwasserbau und bewegliche Bruecken (DIN 19704, ZTV-ING) ---
     # Die psi-Werte sind Voreinstellungen und gegen die geltende Fassung zu
     # bestaetigen; siehe statik3d.bridges.din19704.Regelwerk.
@@ -107,6 +114,9 @@ ACTION_CATEGORIES = {
     "MONT":   ("Montage- und Revisionszustand", (1.0, 1.0, 1.0)),
     "ERD":    ("Erdbeben (DIN EN 1998)", (1.0, 1.0, 1.0)),
 }
+
+#: Schluessel der Kategorie „nicht zugeordnet“ in ACTION_CATEGORIES
+KATEGORIE_OFFEN = "NZ"
 
 
 # --------------------------------------------------------------------------
@@ -1516,6 +1526,59 @@ class TempLoad:
     elem: int
     dT: float = 0.0
     dT_z: float = 0.0
+    #: Merkmal „aus Vorspannung“ (RFEM-Import, 13.10.2026): die Kraft F [N], aus
+    #: der dT beim Import umgerechnet wurde (dT = -F/(E A alpha)), mit dem E
+    #: [Pa] und dem alpha [1/K] dieser Umrechnung. 0 = gewoehnliche
+    #: Temperaturlast. Nur die Darstellung liest es: Anzeige, Tabelle und
+    #: Bericht nennen die Kraft statt der Temperatur und sagen, mit welchem E
+    #: und alpha sie in eine eingepraegte Dehnung umgesetzt ist. Gerechnet
+    #: wird weiter mit dT.
+    aus_vorspannung: float = 0.0
+    vorspann_E: float = 0.0
+    vorspann_alpha: float = 0.0
+
+    @property
+    def ist_vorspannung(self) -> bool:
+        return bool(self.aus_vorspannung)
+
+    def vorspann_text(self, model=None, punkt: bool = False) -> str:
+        """„Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+        α = 1,0e-5 1/K)“ - leer, wenn die Last keine Vorspannung ist.
+
+        Der Anwender sieht die Kraft, nicht die Temperatur, mit der das
+        Programm sie rechnet (Entscheidung vom 13.10.2026: „Vorspannung als
+        Kraft anzeigen, nicht als Temperatur ΔT“). Das E und das alpha der
+        Umrechnung stehen dabei: ihr Produkt mit der Stabflaeche macht aus der
+        Dehnung wieder die Kraft, und bis die kraftgesteuerte Vorspannung da
+        ist, haengt die Kraft im Stab an ihnen. ``punkt``: Dezimalpunkt statt
+        Komma (Ansicht, Baum). Das alpha steht mit Exponenten - eine
+        Werkstoffkonstante der Groesse 1e-5 als „0,00001“ liest niemand."""
+        if not self.aus_vorspannung:
+            return ""
+        return (f"Vorspannung {self.vorspann_kraft_text(punkt)} ("
+                f"{self.vorspann_umrechnung_text(punkt)})")
+
+    def vorspann_kraft_text(self, punkt: bool = False) -> str:
+        """„952 kN“ - die Vorspannkraft allein (Tabellenspalte, Ansicht)."""
+        from .zahlen import zahl_text
+        return f"{zahl_text(self.aus_vorspannung / 1e3, punkt=punkt)} kN"
+
+    def vorspann_umrechnung_text(self, punkt: bool = False) -> str:
+        """„eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K“ - womit die
+        Kraft in die Rechnung eingeht."""
+        from .zahlen import zahl_text
+        teile = ["eingeprägte Dehnung"]
+        if self.vorspann_E:
+            teile.append(f"E = {zahl_text(self.vorspann_E / 1e6, punkt=punkt)} N/mm²")
+        if self.vorspann_alpha:
+            teile.append(f"α = {self.vorspann_alpha_text(punkt)} 1/K")
+        return ", ".join(teile)
+
+    def vorspann_alpha_text(self, punkt: bool = False) -> str:
+        """„1,0e-5“ - das alpha der Umrechnung mit Exponent (eine Werkstoff-
+        konstante dieser Groesse als „0,00001“ liest niemand)."""
+        mant, _, ex = f"{float(self.vorspann_alpha):.1e}".partition("e")
+        return f"{mant if punkt else mant.replace('.', ',')}e{int(ex)}"
 
     def vorspannkraft(self, model) -> float:
         """Die Kraft [N], die diese Temperaturlast in einem Zugstab erzeugt:
@@ -1564,6 +1627,8 @@ class TempLoad:
         """Eine Zeile fuer Tabelle und Protokoll - bei einem vorgespannten
         Zugstab mit der Kraft, nicht nur mit der Temperatur, und mit E und α
         der Umrechnung (13.10.2026; bis dahin „→ Vorspannung 952 kN (Zugstab)“)."""
+        if self.aus_vorspannung:
+            return f"Element {self.elem}: {self.vorspann_text(model)}"
         text = f"Element {self.elem}: ΔT = {self.dT:+.1f} K"
         if self.dT_z:
             text += f", ΔT über die Höhe {self.dT_z:+.1f} K"
@@ -1620,6 +1685,15 @@ class LoadCase:
     #: jeder der 164 Ermuedungszustaende einen anderen Kontaktzustand. In
     #: einem linearen Modell ist sie ein gewoehnlicher Lastfall (Ueberlagerung).
     grundlast: bool = False
+    #: „Bemessungslastfall, bereits faktorisiert“ (13.10.2026): die Lasten sind
+    #: schon Bemessungswerte - die Teilsicherheits- und Kombinationsbeiwerte
+    #: stecken in ihnen. In jeder Kombination geht der Lastfall mit
+    #: gamma = 1,0 und ohne psi ein (combinations._gamma); sonst bekaeme er sein
+    #: gamma ein zweites Mal. Beispiel: RFEM-Lastfaelle „Bemessungslast im GZT
+    #: ...“, die eine Ergebniskombination der Bemessungssituation GZT mit dem
+    #: Faktor 1,0 fuehrt. Ein solcher Lastfall braucht keine Einwirkung: er
+    #: haelt keine Kombination wegen „nicht zugeordnet“ auf.
+    faktorisiert: bool = False
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1638,6 +1712,25 @@ class LoadCase:
         if self.psi is not None:
             return tuple(self.psi)
         return ACTION_CATEGORIES.get(self.category, ACTION_CATEGORIES["Q"])[1]
+
+    def einwirkung_text(self) -> str:
+        """Die Einwirkung zum Lesen in Tabellen: der Schluessel („G“, „Q_A“),
+        bei „nicht zugeordnet“ der Klartext, und das Kennzeichen
+        „Bemessungslastfall“ dahinter."""
+        t = "nicht zugeordnet" if self.kategorie_offen else str(self.category)
+        return t + (", Bemessungslastfall" if getattr(self, "faktorisiert", False) else "")
+
+    @property
+    def kategorie_offen(self) -> bool:
+        """Die Einwirkung ist nicht zugeordnet (Kategorie ``NZ``)."""
+        return self.category == KATEGORIE_OFFEN
+
+    @property
+    def kombination_gesperrt(self) -> bool:
+        """Ob eine Kombination mit diesem Lastfall nicht gerechnet wird: seine
+        Einwirkung ist nicht zugeordnet, und er ist auch kein
+        Bemessungslastfall (``faktorisiert``), dessen Beiwerte feststehen."""
+        return self.kategorie_offen and not self.faktorisiert
 
     @property
     def is_permanent(self) -> bool:
@@ -1692,7 +1785,7 @@ class LoadCase:
         return [l for l in getattr(self, liste) if not getattr(l, "_geo", False)]
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name, "category": self.category,
             "description": self.description, "psi": self.psi,
             "exclusive_group": self.exclusive_group,
@@ -1716,10 +1809,19 @@ class LoadCase:
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [l.als_dict() for l in (getattr(self, "vorspannungen", None) or [])],
             "uebermasse": [asdict(l) for l in (getattr(self, "uebermasse", None) or [])],
-            "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
+            # das Merkmal „aus Vorspannung“ nur, wo es gesetzt ist: so liest auch
+            # ein aelterer Stand die Datei, und eine alte Datei bleibt, wie sie war
+            "temp_loads": [{k: v for k, v in asdict(l).items()
+                            if v or k not in ("aus_vorspannung", "vorspann_E", "vorspann_alpha")}
+                           for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
         }
+        # das Kennzeichen nur, wo es gesetzt ist: eine alte Datei bleibt beim
+        # Speichern, wie sie war, und ein aelterer Stand liest die neue
+        if getattr(self, "faktorisiert", False):
+            d["faktorisiert"] = True
+        return d
 
     @staticmethod
     def from_dict(d: dict) -> "LoadCase":
@@ -1731,6 +1833,8 @@ class LoadCase:
         # Dateien vor R2-A1 (04.10.2026) kennen das Feld nicht: leer
         lc.bezeichnung = str(d.get("bezeichnung", "") or "")
         lc.grundlast = bool(d.get("grundlast", False))
+        # Dateien vor dem 13.10.2026 kennen das Kennzeichen nicht: kein Bemessungslastfall
+        lc.faktorisiert = bool(d.get("faktorisiert", False))
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -3318,6 +3422,10 @@ class DesignSettings:
     gamma_G_inf: float = 1.0
     gamma_Q: float = 1.5
     gamma_Q_fav: float = 0.0
+    #: Teilsicherheitsbeiwert der Vorspannung (Kategorie P), guenstig wie
+    #: unguenstig (Entscheidung des Anwenders vom 13.10.2026: γ_P = 1,0). Bis
+    #: dahin lief P als staendige Einwirkung mit gamma_G,sup = 1,35.
+    gamma_P: float = 1.0
     stations: int = 9                  # Nachweisstellen je Element
     #: Bezugszeitraum der Ermuedungs-Lastspielzahlen [Jahre]. 0 = die
     #: Lastspielzahlen gelten fuer die ganze Nutzungsdauer, dann gibt es keine
@@ -3692,6 +3800,21 @@ class NameVergeben(ValueError):
     """Der neue Name eines Lastfalls oder einer Kombination ist schon vergeben
     (Model.lastfall_umbenennen, kombination_umbenennen); der Text sagt, an wen.
     Die Oberflaeche zeigt ihn als Hinweis, der Webserver als Fehlermeldung."""
+
+
+class KombinationGesperrt(ValueError):
+    """Eine Kombination enthaelt einen Lastfall, dessen Einwirkung nicht
+    zugeordnet ist (Kategorie „nicht zugeordnet“, 13.10.2026), und wird darum
+    nicht gerechnet. Ein Bedienhinweis, kein Fehler: der Text sagt, welche
+    Lastfaelle es sind und wie die Zuordnung geht. ``kombinationen`` ist
+    {Kombination: [Lastfaelle]}, ``lastfaelle`` die Lastfaelle ohne Einwirkung.
+    Als Unterklasse von ValueError fangen sie alle bisherigen
+    ``except ValueError`` weiter; die Oberflaeche zeigt sie als Hinweis."""
+
+    def __init__(self, text: str, kombinationen: dict = None, lastfaelle: list = None):
+        super().__init__(text)
+        self.kombinationen = dict(kombinationen or {})
+        self.lastfaelle = list(lastfaelle or [])
 
 
 def _namensnummer(name) -> tuple:
@@ -4180,6 +4303,57 @@ class Model:
         return list(self.load_cases) + [n for n, c in self.combinations.items()
                                         if n not in self.load_cases
                                         and not c.ist_umhuellende]
+
+    # ---------------- Lastfaelle ohne Einwirkung (13.10.2026) ----------------
+    def lastfaelle_ohne_einwirkung(self, namen=None) -> list[str]:
+        """Die Lastfaelle, deren Einwirkung nicht zugeordnet ist und die auch
+        kein Bemessungslastfall sind - fuer sie stehen gamma und psi nicht
+        fest. ``namen`` schraenkt auf diese Lastfaelle ein."""
+        return [n for n, lc in self.load_cases.items()
+                if lc.kombination_gesperrt and (namen is None or n in namen)]
+
+    def gesperrte_kombinationen(self, namen=None) -> dict:
+        """{Kombination: [Lastfaelle ohne Einwirkung]} - die Kombinationen, die
+        nicht gerechnet werden, weil sie einen Lastfall mit der Einwirkung
+        „nicht zugeordnet“ enthalten (Faktor ungleich null, auch in einer
+        Alternative einer Ergebniskombination). ``namen`` schraenkt auf diese
+        Kombinationen ein. Einzelne Lastfaelle bleiben rechenbar."""
+        offen = {n for n, lc in self.load_cases.items() if lc.kombination_gesperrt}
+        if not offen:
+            return {}
+        aus = {}
+        for n, c in self.combinations.items():
+            if namen is not None and n not in namen:
+                continue
+            treffer = [k for k in c.lastfaelle() if k in offen]
+            if treffer:
+                aus[n] = treffer
+        return aus
+
+    def sperrhinweis(self, gesperrt: dict = None, lastfaelle: list = None) -> str:
+        """Der Bedienhinweis zu gesperrten Kombinationen: welche Lastfaelle
+        keine Einwirkung haben, welche Kombinationen deshalb nicht gerechnet
+        werden und wie die Zuordnung geht. Leer, wenn nichts gesperrt ist.
+
+        ``gesperrt`` ist das Ergebnis von :meth:`gesperrte_kombinationen`
+        (sonst wird es gebildet); ``lastfaelle`` nennt die Lastfaelle, von
+        denen die Rede ist (sonst die der gesperrten Kombinationen)."""
+        gesperrt = self.gesperrte_kombinationen() if gesperrt is None else gesperrt
+        if not gesperrt:
+            return ""
+        lfs = list(lastfaelle) if lastfaelle is not None else \
+            list(dict.fromkeys(k for ks in gesperrt.values() for k in ks))
+        from .begriffe import lastfaelle_kurz
+        return (f"Kombinationen gesperrt: {anzahl(len(gesperrt), 'Kombination enthält', 'Kombinationen enthalten')} "
+                f"{anzahl(len(lfs), 'Lastfall', 'Lastfälle')} ohne zugeordnete Einwirkung "
+                f"({lastfaelle_kurz(lfs)}).\n"
+                "Ohne Einwirkung stehen weder der Teilsicherheitsbeiwert γ noch der "
+                "Kombinationsbeiwert ψ fest, darum werden diese Kombinationen nicht gerechnet: "
+                + aufzaehlung(list(gesperrt), 6) + ".\n"
+                "So geht es weiter: Lastfall im Modellbaum anklicken und rechts unter „Einwirkung“ "
+                "die Einwirkung wählen – oder, wenn seine Lasten schon Bemessungswerte sind, den Haken "
+                "„Bemessungslastfall, bereits faktorisiert“ setzen. Einzelne Lastfälle lassen sich "
+                "weiter rechnen („Nur aktiver Lastfall“).")
 
     def namenskollisionen(self) -> list[str]:
         """FEHLER-Zeilen fuer Namen, unter denen die Ergebnisse einander
@@ -7262,8 +7436,15 @@ class Model:
         self.case(case).face_loads.append(
             FaceLoad(int(elem), p, face, list(direction) if direction is not None else None))
 
-    def load_temp(self, elem: int, dT: float, dT_z: float = 0.0, case: str = None):
-        self.case(case).temp_loads.append(TempLoad(int(elem), dT, dT_z))
+    def load_temp(self, elem: int, dT: float, dT_z: float = 0.0, case: str = None,
+                  aus_vorspannung: float = 0.0, vorspann_E: float = 0.0,
+                  vorspann_alpha: float = 0.0):
+        """Temperaturlast. ``aus_vorspannung`` (Kraft [N]) mit ``vorspann_E`` und
+        ``vorspann_alpha`` kennzeichnet sie als umgerechnete Vorspannung
+        (:class:`TempLoad`): die Anzeige nennt dann die Kraft."""
+        self.case(case).temp_loads.append(
+            TempLoad(int(elem), dT, dT_z, float(aus_vorspannung), float(vorspann_E),
+                     float(vorspann_alpha)))
 
     def set_gravity(self, gz: float = -9.81, case: str = None):
         self.case(case).gravity = np.array([0.0, 0.0, gz])
@@ -8668,6 +8849,11 @@ class Model:
             for k in c.lastfaelle():
                 if k not in self.load_cases:
                     msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
+        # Lastfaelle ohne Einwirkung halten ihre Kombinationen auf (13.10.2026):
+        # nur eine Warnung - einzelne Lastfaelle rechnen weiter
+        gesperrt = self.gesperrte_kombinationen()
+        if gesperrt:
+            msgs.append("WARNUNG: " + self.sperrhinweis(gesperrt).replace("\n", " "))
         # Namen, unter denen Ergebnisse einander verdecken (04.10.2026)
         msgs += self.namenskollisionen()
         # doppelte Nummern: nur eine Warnung (aeltere Dateien, R2-A1 G4)

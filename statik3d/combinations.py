@@ -20,13 +20,21 @@ Regeln:
 * Veraenderliche Lasten wirken nur unguenstig (gamma_Q,fav = 0 -> weggelassen).
 * Lastfaelle derselben 'exclusive_group' wirken nie gleichzeitig.
 * Jede veraenderliche Einwirkung wird einmal als Leiteinwirkung angesetzt.
+* Vorspannung (Kategorie P) geht mit gamma_P = 1,0 ein, nicht mit gamma_G,sup
+  (Entscheidung des Anwenders vom 13.10.2026).
+* Ein Lastfall ohne zugeordnete Einwirkung (Kategorie „nicht zugeordnet“) wird
+  nicht kombiniert: der Generator weigert sich mit einem Bedienhinweis
+  (KombinationGesperrt), statt ihn still wegzulassen.
+* Ein Bemessungslastfall (LoadCase.faktorisiert) ist schon faktorisiert: er
+  geht mit gamma = 1,0 und ohne psi ein und bildet eine eigene GZT-Kombination,
+  er wird nicht mit anderen Lastfaellen ueberlagert.
 """
 from __future__ import annotations
 
 import itertools
 
-from .model import Model, Combination, LoadCase, DesignSettings
-from .begriffe import typ_kurz
+from .model import Model, Combination, LoadCase, DesignSettings, KombinationGesperrt
+from .begriffe import typ_kurz, lastfaelle_kurz
 
 
 def _variable_sets(cases: list[LoadCase]) -> list[list[LoadCase]]:
@@ -59,6 +67,13 @@ def _variable_sets(cases: list[LoadCase]) -> list[list[LoadCase]]:
 
 
 def _gamma(lc: LoadCase, ds: DesignSettings, favourable: bool) -> float:
+    if getattr(lc, "faktorisiert", False):
+        return 1.0                    # schon Bemessungswert: kein zweites gamma
+    if lc.category == "P":
+        # Vorspannung: gamma_P, guenstig wie unguenstig (bis 13.10.2026 lief P
+        # als staendige Einwirkung mit gamma_G,sup = 1,35)
+        eigen = lc.gamma_inf if favourable else lc.gamma_sup
+        return eigen if eigen is not None else float(getattr(ds, "gamma_P", 1.0))
     if lc.is_permanent:
         if favourable:
             return lc.gamma_inf if lc.gamma_inf is not None else ds.gamma_G_inf
@@ -66,6 +81,16 @@ def _gamma(lc: LoadCase, ds: DesignSettings, favourable: bool) -> float:
     if favourable:
         return ds.gamma_Q_fav
     return lc.gamma_sup if lc.gamma_sup is not None else ds.gamma_Q
+
+
+def sperrhinweis_erzeugen(offen: list) -> str:
+    """Der Bedienhinweis, wenn der Generator wegen Lastfaellen ohne Einwirkung
+    nichts erzeugt (auch die Oberflaeche fragt vor dem Dialog danach)."""
+    return (f"Kombinationen lassen sich nicht erzeugen: {lastfaelle_kurz(offen)} ohne zugeordnete "
+            "Einwirkung – γ und ψ stehen nicht fest.\n"
+            "So geht es weiter: Lastfall im Modellbaum anklicken und rechts unter „Einwirkung“ die "
+            "Einwirkung wählen – oder, wenn seine Lasten schon Bemessungswerte sind, den Haken "
+            "„Bemessungslastfall, bereits faktorisiert“ setzen.")
 
 
 def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
@@ -96,6 +121,12 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
     ds = model.design
     rule = rule or ds.combination_rule
     combos: list[Combination] = []
+    # Lastfaelle ohne Einwirkung: gamma und psi stehen nicht fest. Der Generator
+    # liesse sie sonst still weg (weder staendig noch veraenderlich) - er weigert
+    # sich, bevor er vorhandene Kombinationen ersetzt.
+    offen = model.lastfaelle_ohne_einwirkung()
+    if offen:
+        raise KombinationGesperrt(sperrhinweis_erzeugen(offen), lastfaelle=offen)
     if replace:
         model.combinations = {k: c for k, c in model.combinations.items()
                               if not gehoert_dem_generator(c)}
@@ -141,6 +172,11 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
     6.11b, 6.14b, 6.15b, 6.16b)."""
     from .model import GRUNDSTELLUNG
     ds = model.design
+    # Bemessungslastfaelle (schon faktorisiert) stehen fuer sich: sie werden
+    # nicht mit anderen Lastfaellen ueberlagert, sondern gehen als eigene
+    # GZT-Kombination mit 1,0 ein (unten)
+    fakt = [lc for lc in faelle if getattr(lc, "faktorisiert", False)]
+    faelle = [lc for lc in faelle if not getattr(lc, "faktorisiert", False)]
     perm = [lc for lc in faelle if lc.is_permanent]
     var = [lc for lc in faelle if lc.is_variable]
     acc = [lc for lc in faelle if lc.is_accidental]
@@ -176,6 +212,12 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
     if len(var_sets) * max(1, len(var)) > max_combinations:
         raise RuntimeError(f"Zu viele Kombinationen ({len(var_sets)}); bitte "
                            f"Ausschlussgruppen verwenden oder Lastfaelle zusammenfassen")
+
+    # ---------------- Bemessungslastfaelle ----------------
+    if uls:
+        for lc in fakt:
+            add("GZT", {lc.name: 1.0}, "ULS",
+                f"Bemessungslastfall {lc.name}, bereits faktorisiert (gamma 1,0, ohne psi)")
 
     # ---------------- GZT (STR/GEO) ----------------
     if uls:

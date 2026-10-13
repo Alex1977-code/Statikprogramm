@@ -8567,7 +8567,15 @@ class MainWindow(QtWidgets.QMainWindow):
                             m.naechste_lastfallnummer(), hinweis="Lastfallnummer (0 = keine)"),
                           F("name", "Name", "text", name, breite=140),
                           F("beschreibung", "Beschreibung", "text", (lc.description if lc else ""), breite=180),
-                          F("kategorie", "Einwirkung", "wahl", kat, kats)]
+                          F("kategorie", "Einwirkung", "wahl", kat, kats,
+                            hinweis="„nicht zugeordnet“: Kombinationen mit diesem Lastfall werden nicht "
+                                    "gerechnet, bis hier eine Einwirkung gewählt oder der Haken "
+                                    "„Bemessungslastfall“ gesetzt ist. Einzeln lässt er sich weiter rechnen."),
+                          F("faktorisiert", "Bemessungslastfall, bereits faktorisiert", "haken",
+                            bool(getattr(lc, "faktorisiert", False)) if lc else False,
+                            hinweis="Die Lasten sind schon Bemessungswerte (γ und ψ stecken darin): in jeder "
+                                    "Kombination geht der Lastfall mit γ = 1,0 und ohne ψ ein. Ohne den Haken "
+                                    "bekäme er sein γ ein zweites Mal.")]
                 je_art = lc.lasten_je_art() if lc is not None else {}
                 for art_, titel_ in LASTARTEN_NAMEN:
                     if je_art.get(art_):
@@ -10084,6 +10092,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"E{l.elem}" + (f" Seite {seite}" if seite is not None else "") + f": p = {kn(l.p)} kN/m²"
         if art == "temperatur":
             ziel = getattr(l, "ziel", None)
+            if getattr(l, "aus_vorspannung", 0.0):
+                # eine umgerechnete Vorspannung: die Kraft, nicht die Temperatur
+                # (13.10.2026), mit E und alpha der Umrechnung
+                return f"E{l.elem}: " + l.vorspann_text(self.model)
             t = (str(ziel) if ziel else f"E{l.elem}") + f": ΔT = {z(float(l.dT))} K"
             if getattr(l, "dT_z", 0.0):
                 t += f", ΔT oben−unten = {z(float(l.dT_z))} K"
@@ -10361,6 +10373,14 @@ class MainWindow(QtWidgets.QMainWindow):
                        F("q2z", "q2_z [kN/m]", "zahl", q2[2] / 1e3),
                        F("von", "Abschnitt von [m]", "zahl", float(obj.von or 0.0)),
                        F("bis", "bis [m] (0 = Ende)", "zahl", float(obj.bis or 0.0))]
+        elif liste == "temp_loads" and getattr(obj, "aus_vorspannung", 0.0):
+            # umgerechnete Vorspannung (RFEM-Import): die Kraft ist die Eingabe,
+            # die Temperatur der Rechenwert daraus (13.10.2026)
+            titel = f"Vorspannung E{obj.elem}"
+            felder += [F("F", "Vorspannkraft F_v [kN]", "zahl", float(obj.aus_vorspannung) / 1e3,
+                         hinweis="gerechnet als eingeprägte Dehnung: dT = −F/(E·A·α)"),
+                       F("umrechnung", "Umrechnung", "info", obj.vorspann_umrechnung_text()),
+                       F("dT_rechenwert", "Rechenwert ΔT [K]", "info", zl.zahl_text(float(obj.dT)))]
         elif liste == "temp_loads":
             titel = f"Temperaturlast E{obj.elem}"
             felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
@@ -10468,6 +10488,14 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 obj.p = z("p") * 1e3
                 obj.projiziert = bool(w.get("projiziert"))
+        elif liste == "temp_loads" and getattr(obj, "aus_vorspannung", 0.0):
+            # dT = −F/(E·A·α) ist linear in F: die neue Kraft skaliert den Rechenwert
+            neu_F = z("F") * 1e3
+            if neu_F:
+                obj.dT = obj.dT * neu_F / obj.aus_vorspannung
+                obj.aus_vorspannung = neu_F
+            else:
+                obj.dT, obj.aus_vorspannung = 0.0, 0.0
         elif liste == "temp_loads":
             obj.dT = z("dT")
             obj.dT_z = z("dTz")
@@ -11196,6 +11224,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.situation = "" if sit in ("", GRUNDSTELLUNG) else sit
             lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
             lc.grundlast = bool(w.get("grundlast", False))
+            lc.faktorisiert = bool(w.get("faktorisiert", False))
             lc.nummer = nummer          # oben gelesen und geprueft
             g = zahl("g_z", 0.0)
             grav = list(lc.gravity) + [0.0] * (3 - len(lc.gravity))
@@ -14683,7 +14712,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_gelenk, zeilen)
         # Lastfaelle
         self._fill(self.tbl_lastfall,
-                   [[name, int(getattr(lc, "nummer", 0) or 0) or "", f"{lc.category}", lc.description, lc.n_loads,
+                   [[name, int(getattr(lc, "nummer", 0) or 0) or "", lc.einwirkung_text(), lc.description, lc.n_loads,
                      float(lc.gravity[2]) if len(lc.gravity) > 2 else 0.0,
                      getattr(lc, "exclusive_group", "") or "",
                      getattr(lc, "situation", "") or GRUNDSTELLUNG,
@@ -14797,6 +14826,15 @@ class MainWindow(QtWidgets.QMainWindow):
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
             for l in lc.eigene("temp_loads"):
+                if l.aus_vorspannung:
+                    # eine umgerechnete Vorspannung: die Kraft, mit E und alpha
+                    # der Umrechnung (13.10.2026); der Rechenwert dT steht in
+                    # der Maske der Last
+                    zeilen.append([i, lcname, "Vorspannung", f"E{l.elem}",
+                                   f"F_v = {l.vorspann_kraft_text()}",
+                                   l.vorspann_umrechnung_text(), ""])
+                    i += 1
+                    continue
                 # eine Vorspannung als Temperatur: Kraft, E und α der Umrechnung (13.10.2026)
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {tab.festkomma(l.dT, 2)} K",
@@ -19019,7 +19057,9 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for lc in m.load_cases.values():
             p = lc.psi_factors
-            rows.append([lc.name, lc.category, "/".join(zl.zahl_text(x, tausender=False, punkt=True) for x in p[:3]), lc.n_loads,
+            rows.append([lc.name, lc.einwirkung_text(),
+                         "–" if lc.kategorie_offen or lc.faktorisiert else
+                         "/".join(zl.zahl_text(x, tausender=False, punkt=True) for x in p[:3]), lc.n_loads,
                          lc.description + (f"  [Gruppe {lc.exclusive_group}]" if lc.exclusive_group else "")
                          + (f"  [Situation {lc.situation}]" if getattr(lc, "situation", "") else "")])
         self.tbl_lc.blockSignals(True)
@@ -19028,7 +19068,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if m.active_case in names:
             self.tbl_lc.selectRow(names.index(m.active_case))
         self.tbl_lc.blockSignals(False)
-        self.lbl_active.setText(f"aktiver Lastfall: {m.active_case} ({m.case().category})")
+        self.lbl_active.setText(f"aktiver Lastfall: {m.active_case} ({m.case().einwirkung_text()})")
         self.cb_g.blockSignals(True)
         self.cb_g.setChecked(bool(np.any(m.gravity)))
         self.cb_g.blockSignals(False)
@@ -23301,6 +23341,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                      nummer=self.model.nummer_fuer(name, "LF"))
             self.model.load_cases[name].situation = d.situation_name()
             self.model.load_cases[name].theorie = d.theorie_name()
+            if hasattr(d, "ist_faktorisiert"):      # ein ersetzter Dialog kennt den Haken nicht
+                self.model.load_cases[name].faktorisiert = d.ist_faktorisiert()
             self._namen_geaendert()
             self.refresh_all()
 
@@ -23320,6 +23362,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self.hinweis(grund)
             self.merken(f"Lastfall {old}")
             lc.category, lc.description, lc.exclusive_group = cat, desc, grp
+            if hasattr(d, "ist_faktorisiert"):
+                lc.faktorisiert = d.ist_faktorisiert()
             lc.situation = d.situation_name()
             lc.theorie = d.theorie_name()
             if name != old:
@@ -23353,6 +23397,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
 
     def auto_combinations(self):
+        # Lastfaelle ohne Einwirkung: der Generator kennt gamma und psi nicht
+        # (13.10.2026) - der Hinweis kommt vor dem Dialog, nicht erst danach
+        offen = self.model.lastfaelle_ohne_einwirkung()
+        if offen:
+            from ..combinations import sperrhinweis_erzeugen
+            return self.hinweis(sperrhinweis_erzeugen(offen))
         d = AutoCombinationDialog(self, self.model.design)
         if d.exec():
             from ..combinations import generate_combinations
@@ -24814,6 +24864,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bottom_tabs.setCurrentIndex(0)
 
     def do_solve(self, kind: str = None):
+        # Kombinationen mit Lastfaellen ohne Einwirkung werden nicht gerechnet
+        # (13.10.2026): ein Bedienhinweis gleich beim Start - vor dem Vernetzen
+        # und der Netzabnahme, nicht ein Fehlerfenster nach den Lastfaellen.
+        # Einzelne Lastfaelle („Nur aktiver Lastfall“) gehen weiter.
+        art_ = kind or ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
+        if art_ == "all":
+            gesperrt = self.model.gesperrte_kombinationen()
+            if gesperrt:
+                return self.hinweis(self.model.sperrhinweis(gesperrt))
         if not self._vor_rechnung_vernetzen():
             return
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]

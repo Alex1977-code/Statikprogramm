@@ -317,6 +317,19 @@ CREATE TABLE SpringConstants_partialActivities (id INTEGER, container_order INTE
 INF = float("inf")
 
 
+def _zuordnen(m, kat="G"):
+    """Die Einwirkung der importierten Lastfaelle zuordnen. Seit dem 13.10.2026
+    bleibt ein Lastfall, dessen Einwirkung die Quelle nicht eindeutig nennt,
+    „nicht zugeordnet“, und Kombinationen mit ihm werden nicht gerechnet
+    (tests/test_lastfall_kategorie.py). Wer in einer Pruefung die Kombinationen
+    rechnen will, ordnet sie hier zu - so wie der Anwender es in der
+    Lastfallmaske tut."""
+    for lc in m.load_cases.values():
+        if lc.kategorie_offen:
+            lc.category = kat
+    return m
+
+
 def _spring(con, sid, owner, table, k, nl=(0,) * 6, friction=None):
     con.execute(
         "INSERT INTO SpringConstants (id,version,owner_id,owner_table,"
@@ -1449,6 +1462,7 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
               "Kombinationen gelten in der Situation" in txt,
               next((x for x in log if "gelten in der Situation" in x), "-"))
         # Die Umhuellende trennt Ermuedung von GZT
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True)
         check("der Loeser bildet eine eigene Umhuellende „FAT“",
               "FAT" in an.envelopes and "ULS" in an.envelopes,
@@ -1526,6 +1540,7 @@ def test_gemischte_kombination_wird_aufgeteilt():
               next((x for x in log if "gelten in der Situation" in x), "-"))
         fremd = [x for x in m.check() if "anderen Situation" in x]
         check("das Modell hat nichts mehr zu beanstanden", not fremd, str(fremd))
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True)
         check("der Loeser rechnet beide Teile",
               "Bemessung (Grundstellung)" in an.combinations
@@ -1603,6 +1618,7 @@ def test_ergebniskombination_oder():
         check("die Modellpruefung hat nichts zu beanstanden",
               not [x for x in m.check() if "anderen Situation" in x or "unbekannt" in x],
               str([x for x in m.check() if "FEHLER" in x][:3]))
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True)
         check("der Loeser bildet je Teil eine Umhuellende und die Umhuellende GZT darueber",
               "EK oder (Grundstellung)" in an.envelopes and "EK oder (Ankerausfall)" in an.envelopes
@@ -1700,6 +1716,7 @@ def test_ermuedungslasten_aus_fat():
         # (40 -> 25 -> 5 kN) und EK eins (40 kN gegen Null) je eine Stufe mit
         # der globalen Lastspielzahl; die Sammlung (0) traegt nichts bei.
         m.design.ermuedung_lastspiele = 1.0
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True, fatigue=True)
         fm = an.fatigue.members.get("S1") if an.fatigue is not None else None
         A = m.sections[m.elements[zug.elements[0]].sec].A if zug else 1.0
@@ -1931,29 +1948,18 @@ def test_flaechenlast_ohne_lastfall():
 
 
 def test_einwirkungskategorie_wird_genannt():
-    """Was als „Q“ endet, steht im Protokoll - und der Name verbessert nur,
-    was die Kennzahl nicht hergibt.
+    """Was die Quelle nicht eindeutig sagt, bleibt „nicht zugeordnet“ und steht
+    im Protokoll - der Name setzt nichts, er schlaegt nur vor.
 
-    `ACTION_CATEGORY` fuehrt nur wenige Kennzahlen; alles Uebrige wurde still
-    zu „Q“ (veraenderlich, allgemein, psi0 = 0,80) und das Protokoll meldete
-    „Einwirkungskategorie uebernommen“. Schnee, Wind und Vorspannung rechnen
-    aber mit anderen Beiwerten.
-
-    Die Namensdeutung greift **nur innerhalb von Q**: ein „G“ aus der
-    Kennzahl darf der Freitext nicht umstossen, sonst wuerde ein Lastfall
-    „Windverband Eigenlast“ mit der Kennzahl 1 zu W und damit veraenderlich.
-    Genau das ist die Gegenprobe unten.
-
-    **Auch die gefuehrten Kennzahlen sind eine Annahme** (Befund FM9): keine
-    ist an einer echten Datei belegt. Gemessen am CBG-Trolley tragen 8
-    Lastfaelle die Kennzahl 11, 7 davon heissen „G - ...“ und werden nur ueber
-    den Namen zu G; am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11,
-    darunter 128 „Bemessungslast im GZT ...“, 164 „Ermuedungslast ...“,
-    128 „char.Last ...“ und 2 „Vorspannung der Zuganker ...“ (nachgezaehlt
-    am 23.09.2026). Bis zum 22.09.2026 stand fuer
-    eine gefuehrte Kennzahl nur die Verteilung im Protokoll, ohne Warnung.
-    LF5 (neutraler Name, Kennzahl 11) und LF6 („G - Stahlbau“, Kennzahl 11)
-    pruefen das.
+    Bis zum 13.10.2026 stand hier eine Annahme ohne Quelle (1, 2 -> G; 3, 11,
+    12, 13 -> Q), und der Name verfeinerte das Rueckfall-Q (Befund FM9). Die
+    Kennzahlen kommen jetzt aus der Aufzaehlung der Dlubal-API (11 = „Permanent
+    G“, die Vorgabe jedes neuen Lastfalls; 54 = Schnee bis 1000 m; 61 = Wind) und
+    sind an den Beispielmodellen von RFEM 6.15 belegt. Am Drehlager tragen alle
+    422 Lastfaelle die Kennzahl 11, darunter 128 „Bemessungslast im GZT ...“, 164
+    „Ermuedungslast ...“, 128 „char.Last ...“ und 2 „Vorspannung der Zuganker
+    ...“ (nachgezaehlt am 23.09.2026): sie sagt dort nichts, und eine Annahme Q
+    setzte gamma_Q = 1,5 auf Lasten, die schon Bemessungswerte sind.
     """
     tmp = tempfile.mkdtemp()
     try:
@@ -1966,43 +1972,50 @@ def test_einwirkungskategorie_wird_genannt():
                         ("Wind quer", 92, 0.0),
                         ("Windverband Eigenlast", 1, 0.0),
                         ("Lastfall A", 11, 0.0),
-                        ("G - Stahlbau", 11, 0.0)],
+                        ("G - Stahlbau", 11, 0.0),
+                        ("Schnee", 54, 0.0),
+                        ("Wind in +X", 61, 0.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
         txt = "\n".join(log)
-        check("die Kennzahl ohne Eintrag wird genannt",
-              "unbekannter Kennzahl" in txt and "91" in txt and "92" in txt,
-              next((x for x in log if "unbekannter Kennzahl" in x), "keine Zeile"))
-        check("die Verteilung der Kategorien steht im Protokoll",
-              "Einwirkungskategorie:" in txt,
-              next((x for x in log if "Einwirkungskategorie:" in x), "keine Zeile"))
-        check("der Name verbessert das Rueckfall-Q: Schnee wird S",
-              m.load_cases["LF2"].category == "S", m.load_cases["LF2"].category)
-        check("und Wind wird W", m.load_cases["LF3"].category == "W",
-              m.load_cases["LF3"].category)
-        # Gegenprobe: die Namensdeutung darf ein G aus der Datei nicht kippen
-        check("„Windverband Eigenlast“ mit Kennzahl 1 bleibt staendig",
-              m.load_cases["LF4"].category == "G", m.load_cases["LF4"].category)
-        check("die Probe ist scharf: ohne die Kennzahlschranke waere es W",
-              _C.category_from_text("Windverband Eigenlast", "Q") == "W",
-              _C.category_from_text("Windverband Eigenlast", "Q"))
-        # FM9: die gefuehrte Kennzahl 11 ist eine Annahme und steht als solche da
-        check("Kennzahl 11 steht mit angenommener Kategorie im Protokoll",
-              any("Kennzahl 11 -> Q" in z and "Annahme" in z for z in log),
+        kat = {n: lc.category for n, lc in m.load_cases.items()}
+        check("eine Kennzahl, die die Tabelle nicht fuehrt, wird genannt (1, 91, 92)",
+              any(z.startswith("WARNUNG") and "nicht führt" in z and "91" in z and "92" in z
+                  and "1 (" in z for z in log),
+              next((x for x in log if "nicht führt" in x), "keine Zeile"))
+        check("die Verteilung der Einwirkungen steht im Protokoll",
+              any(z.strip().startswith("Einwirkung:") for z in log),
+              next((x for x in log if "Einwirkung:" in x), "keine Zeile"))
+        check("die Kennzahl 54 (Schnee bis 1000 m) gibt S, 61 (Wind) gibt W",
+              kat["LF7"] == "S" and kat["LF8"] == "W", f"{kat['LF7']} {kat['LF8']}")
+        check("eine unbekannte Kennzahl gibt „nicht zugeordnet“, auch wenn der Name Schnee nennt",
+              kat["LF2"] == "NZ" and kat["LF3"] == "NZ", f"{kat['LF2']} {kat['LF3']}")
+        check("die Kennzahl 1 gibt es in der Aufzaehlung nicht: LF4 bleibt offen; LF1 (nur Eigengewicht) "
+              "wird G, aber aus dem Inhalt, nicht aus der Kennzahl",
+              kat["LF4"] == "NZ" and kat["LF1"] == "G", f"{kat['LF1']} {kat['LF4']}")
+        check("die Vorgabe 11 sagt nichts: LF5 und „G - Stahlbau“ bleiben offen (nicht Q, nicht G)",
+              kat["LF5"] == "NZ" and kat["LF6"] == "NZ", f"{kat['LF5']} {kat['LF6']}")
+        check("das Protokoll nennt die Kennzahl 11 als Vorgabe jedes neuen Lastfalls",
+              any("Kennzahl 11" in z and "Vorgabe" in z and "Permanent G" in z for z in log),
               next((x.strip() for x in log if "Kennzahl 11" in x), "keine Zeile"))
-        check("die Annahme steht als Warnung da, mit psi und gamma",
-              any(z.startswith("WARNUNG") and "angenommen" in z and "11" in z
-                  and "psi" in z for z in log),
-              next((x.strip()[:120] for x in log if x.startswith("WARNUNG") and "angenommen" in x),
-                   "keine Zeile"))
-        check("der Lastfall, den der Name umgestellt hat, wird genannt",
-              any("LF6" in z and "Namen" in z for z in log),
-              next((x.strip() for x in log if "LF6" in x), "keine Zeile"))
-        check("der neutrale Name bleibt beim angenommenen Q",
-              m.load_cases["LF5"].category == "Q", m.load_cases["LF5"].category)
-        check("„G - Stahlbau“ mit Kennzahl 11 wird ueber den Namen G",
-              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
+        check("… und nimmt sie nicht mehr als Q an",
+              "11 -> Q" not in txt and "angenommen" not in txt)
+        # Der Name schlaegt vor, setzt aber nichts
+        vorschlag = [z for z in log if "Vorschlag nach dem Namen" in z]
+        check("der Name steht als Vorschlag im Protokoll: Schnee fuer LF2, Wind fuer LF3 und LF4",
+              any("S für LF2" in z for z in vorschlag) and any("W für LF3 und LF4" in z for z in vorschlag),
+              " | ".join(z.strip() for z in vorschlag))
+        check("… „G - Stahlbau“ als G-Vorschlag (LF1 ist schon G: nur Eigengewicht)",
+              any(z.strip().endswith("G für LF6") for z in vorschlag),
+              " | ".join(z.strip() for z in vorschlag))
+        check("… die Warnung nennt den Weg zur Zuordnung",
+              any(z.startswith("WARNUNG") and "ohne zugeordnete Einwirkung" in z and "Modellbaum" in z
+                  for z in log), next((z[:100] for z in log if "ohne zugeordnete" in z), "keine Zeile"))
+        check("die Lastfaelle ohne Einwirkung sperren ihre Kombinationen, nicht sich selbst",
+              all(m.load_cases[n].kombination_gesperrt for n in ("LF2", "LF3", "LF4", "LF5", "LF6"))
+              and not m.load_cases["LF1"].kombination_gesperrt
+              and not m.load_cases["LF7"].kombination_gesperrt)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2166,7 +2179,8 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
         check(f"Handbuch nennt: {name} -> {soll}", ist == soll and genannt,
               f"{ist}" + ("" if genannt else f", {stelle} fehlt im Absatz"))
 
-    # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
+    # ueber den ganzen Import: Kennzahl 11 sagt nichts, der Name setzt nichts -
+    # er schlaegt vor, und die Situation im Namen schlaegt weder G noch A vor
     tmp = tempfile.mkdtemp()
     try:
         f = make_rf6(
@@ -2183,54 +2197,33 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
         )
         log = []
         m = R6.read_rf6(f, log=log)
-        for i, (name, soll) in enumerate(DREHLAGER_NAMEN, start=1):
-            lc = m.load_cases[f"LF{i}"]
-            check(f"Import LF{i} -> {soll}", lc.category == soll, lc.category)
-        check("kein Lastfall wird ueber die Situation staendig",
-              not any(m.load_cases[f"LF{i}"].is_permanent for i in (1, 2)),
-              str([m.load_cases[f"LF{i}"].category for i in (1, 2)]))
-        check("kein Lastfall wird ueber die Situation aussergewoehnlich",
-              not m.load_cases["LF3"].is_accidental, m.load_cases["LF3"].category)
-        check("Gegenprobe: „Eigengewicht“ mit Kennzahl 11 wird G",
-              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
-        # am Stand d5e565d wurde dieser Lastfall Q und stand mit 1,5 bzw. 1,2
-        # in 16 von 26 erzeugten ULS-Kombinationen statt mit 1,0 in 2 ACC,
-        # ohne dass das Protokoll ihn als umgestellt nannte (gemessen am
-        # 24.09.2026 an einem Modell aus 5 Lastfaellen: Eigengewicht, zwei
-        # Erdbeben-Namen, Nutzlast, Ermuedungslast mit Kennzahl 1)
-        check("Gegenprobe: „Erdbeben - Erdbeben-Bemessungssituation“ bleibt "
-              "aussergewoehnlich", m.load_cases["LF7"].is_accidental,
-              m.load_cases["LF7"].category)
-        # der Name verfeinert nur, wenn die Kennzahl Q ergibt: mit Kennzahl 1
-        # bleibt eine Ermuedungslast G (so steht es im Handbuch)
-        check("Kennzahl 1: „Ermüdungslast - Eigengewicht“ bleibt G",
-              m.load_cases["LF8"].category == "G", m.load_cases["LF8"].category)
-        zeile = next((z for z in log if "Kennzahl 11" in z), "")
-        check("das Protokoll nennt die Ermuedungslasten als umgestellt",
-              "zu FAT: LF4, LF5" in zeile, zeile.strip())
-        check("das Protokoll nennt den Erdbeben-Lastfall als umgestellt",
-              "zu A: LF7" in zeile, zeile.strip())
-        # ohne Adjektivendung keine Situationsangabe: „Staendig“ bleibt G, und
-        # das Protokoll nennt den Lastfall (am Stand 28c9326 still Q)
-        check("„Ständig - Bemessungssituation 1“ mit Kennzahl 11 wird G",
-              m.load_cases["LF9"].category == "G", m.load_cases["LF9"].category)
-        check("das Protokoll nennt ihn als umgestellt", "zu G: LF6, LF9" in zeile,
-              zeile.strip())
-        # „Erdbeben“ nach „Bemessungssituation“ faellt mit der Angabe heraus:
-        # Q wie aus der Kennzahl, darum nennt das Protokoll ihn nicht (so steht
-        # es in docs/Schnittstellen.md; am Stand ec6448c A und genannt)
-        check("„Bemessungssituation - Erdbeben“ mit Kennzahl 11 bleibt Q",
-              m.load_cases["LF10"].category == "Q", m.load_cases["LF10"].category)
-        check("das Protokoll nennt ihn nicht als umgestellt", "LF10" not in zeile,
-              zeile.strip())
-        # die englische Angabe mit „or“ faellt ganz heraus, „seismic“ mit ihr:
-        # Q und nicht genannt, so steht es jetzt im Benutzerhandbuch (am Stand
-        # ec6448c A und genannt, gemessen am 24.09.2026)
-        check("„Nutzlast - seismic or accidental design situation“ mit Kennzahl "
-              "11 bleibt Q", m.load_cases["LF11"].category == "Q",
-              m.load_cases["LF11"].category)
-        check("das Protokoll nennt ihn nicht als umgestellt", "LF11" not in zeile,
-              zeile.strip())
+        vorschlag = [z.strip() for z in log if "Vorschlag nach dem Namen" in z]
+        check("kein Lastfall bekommt seine Einwirkung aus dem Namen: bis auf die beiden, an denen nur "
+              "Eigengewicht haengt (LF6, LF8), bleiben alle nicht zugeordnet",
+              all(lc.category == ("G" if n in ("LF6", "LF8") else "NZ") for n, lc in m.load_cases.items()),
+              str({n: lc.category for n, lc in m.load_cases.items() if lc.category != "NZ"}))
+        # Was der Name vorschlaegt, ist das, was category_from_text liefert (die
+        # Namensdeutung selbst pruefen die Zeilen oben)
+        alle = " | ".join(vorschlag)
+        check("der Name schlaegt Ermuedung fuer die beiden Ermuedungslasten vor (LF4, LF5); LF8 ist schon G",
+              any(z.endswith("FAT für LF4 und LF5") for z in vorschlag), alle)
+        check("… „Ständig - Bemessungssituation 1“ als G (LF9); „Eigengewicht“ (LF6) ist schon G",
+              any(z.endswith("G für LF9") for z in vorschlag), alle)
+        check("… „Erdbeben - Erdbeben-Bemessungssituation“ als A (LF7) - vorgeschlagen, nicht gesetzt",
+              any(z.endswith("A für LF7") for z in vorschlag) and m.load_cases["LF7"].category == "NZ", alle)
+        kat_vorschlaege = [z for z in vorschlag if "Bemessungslastfall" not in z]
+        check("die Situation im Namen („staendige Bemessungssituation“, LF1 bis LF3) schlaegt keine "
+              "Einwirkung vor",
+              not any(re.search(r"LF[123]", z) for z in kat_vorschlaege), alle)
+        check("„Bemessungssituation - Erdbeben“ (LF10) schlaegt nichts vor",
+              not any("LF10" in z for z in kat_vorschlaege), alle)
+        check("„Nutzlast - seismic or accidental design situation“ (LF11): Q vom Wort Nutzlast, nicht A "
+              "von der Situation", any(z.endswith("Q für LF11") for z in kat_vorschlaege)
+              and not any("A für" in z and "LF11" in z for z in kat_vorschlaege), alle)
+        check("die Lastfaelle „Bemessungslast ...“ (LF1, LF3) bekommen den Vorschlag Bemessungslastfall - "
+              "die Datei fuehrt sie nicht als GZT-Alternative, darum nur ein Vorschlag",
+              any("Bemessungslastfall für LF1 und LF3" in z for z in vorschlag)
+              and not m.load_cases["LF1"].faktorisiert and not m.load_cases["LF3"].faktorisiert, alle)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2244,7 +2237,7 @@ def test_lastfaelle_und_lasten():
                    (4, 0, 0), (4, 2, 0)],
             lines=[], members=[], supports=[],
             surfaces=[([1, 2, 3, 4], 0.010), [2, 5, 6, 3]],
-            load_cases=[("Eigengewicht", 1, 1.0), ("Schnee", 12, 0.0)],
+            load_cases=[("Eigengewicht", 11, 1.0), ("Schnee", 54, 0.0)],
             # 2 kN/m^2 auf die vernetzte Flaeche, 3 kN/m^2 auf die Flaeche ohne Dicke
             surface_loads=[(2, [1], -2000.0, 0), (2, [2], -3000.0, 1)],
             free_loads=5,
@@ -2255,8 +2248,10 @@ def test_lastfaelle_und_lasten():
         check("beide Lastfaelle uebernommen", len(m.load_cases) == 2, str(list(m.load_cases)))
         lf2 = m.load_cases["LF2"]
         check("Lastfallname als Beschreibung", lf2.description == "Schnee", lf2.description)
-        check("Einwirkungskategorie aus RFEM", m.load_cases["LF1"].category == "G",
-              m.load_cases["LF1"].category)
+        check("Einwirkungskategorie aus der RFEM-Kennzahl (54 = Schnee bis 1000 m)",
+              m.load_cases["LF2"].category == "S", m.load_cases["LF2"].category)
+        check("… ein Lastfall mit der Vorgabe 11, an dem nur Eigengewicht haengt, wird G (aus dem Inhalt)",
+              m.load_cases["LF1"].category == "G", m.load_cases["LF1"].category)
         close("Eigengewicht nur im ersten Lastfall",
               m.load_cases["LF1"].gravity[2], -9.81, 1e-9, " m/s^2")
         close("zweiter Lastfall ohne Eigengewicht", lf2.gravity[2], 0.0, 1e-12, " m/s^2")

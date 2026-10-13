@@ -387,9 +387,15 @@ class LoadCaseDialog(QtWidgets.QDialog):
         self.desc = QtWidgets.QLineEdit(lc.description if lc else "")
         self.group = QtWidgets.QLineEdit(lc.exclusive_group if lc else "")
         self.group.setPlaceholderText("z.B. 'Wind' - Lastfälle einer Gruppe wirken nie gemeinsam")
+        # Bemessungslastfall (13.10.2026): die Lasten sind schon Bemessungswerte
+        self.faktorisiert = QtWidgets.QCheckBox("Bemessungslastfall, bereits faktorisiert")
+        self.faktorisiert.setChecked(bool(getattr(lc, "faktorisiert", False)))
+        self.faktorisiert.setToolTip("In jeder Kombination geht der Lastfall mit γ = 1,0 und ohne ψ ein; "
+                                     "ohne den Haken bekäme er sein γ ein zweites Mal.")
         f = QtWidgets.QFormLayout(self)
         f.addRow("Name", self.name)
         f.addRow("Einwirkung", self.cat)
+        f.addRow("", self.faktorisiert)
         f.addRow("Beschreibung", self.desc)
         f.addRow("Ausschlussgruppe", self.group)
         f.addRow("Situation", self.situation)
@@ -399,6 +405,10 @@ class LoadCaseDialog(QtWidgets.QDialog):
     def values(self):
         return (self.name.text().strip() or "LF", self.cat.currentData(),
                 self.desc.text(), self.group.text().strip())
+
+    def ist_faktorisiert(self) -> bool:
+        """Der Haken „Bemessungslastfall, bereits faktorisiert“."""
+        return self.faktorisiert.isChecked()
 
     def situation_name(self) -> str:
         """"" fuer die Grundstellung, sonst der Name der Situation."""
