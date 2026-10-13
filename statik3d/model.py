@@ -2054,6 +2054,30 @@ class Member:
     fatigue_points: str = "flanges"    # Spannungspunkte fuer Ermuedung
     consequence: str = "low"           # low | high (Schadensfolge, gamma_Mf)
     assessment: str = "damage_tolerant"  # damage_tolerant | safe_life
+    #: Einleitung der Stabenden in ein Volumen, je Ende ("A" Anfang, "E" Ende)
+    #: {"art": "punkt" | "stirn" | "ring", "d_innen": m, "d_aussen": m}.
+    #: Leer = wie die Modelleinstellung (Model.stabeinleitung). Seit
+    #: 13.10.2026; die Datei fuehrt den Schluessel nur, wenn er belegt ist.
+    einleitung: dict = field(default_factory=dict)
+
+
+#: Einleitung eines Stabendes in ein Volumen (Entscheidung des Anwenders vom
+#: 13.10.2026): "punkt" haengt es wie RFEM an die 1-3 Knoten des Elements, in
+#: dem es liegt (fugen.stabenden_koppeln); "stirn" verteilt es ueber die
+#: Stirnflaeche des Koerpers, "ring" ueber einen Kreisring - beides als
+#: Verteilkopplung RBE3 ohne Versteifung, flaechenanteilig gewichtet.
+EINLEITUNG_PUNKT, EINLEITUNG_STIRN, EINLEITUNG_RING = "punkt", "stirn", "ring"
+EINLEITUNGEN = (EINLEITUNG_PUNKT, EINLEITUNG_STIRN, EINLEITUNG_RING)
+
+
+@dataclass
+class Stabeinleitung:
+    """Modelleinstellung: wie Stabenden in Volumen eingeleitet werden - die
+    Vorgabe fuer jedes Stabende, das Member.einleitung nicht selbst regelt.
+    d_innen/d_aussen [m]: Kreisring der Auflageflaeche (Art "ring")."""
+    art: str = EINLEITUNG_PUNKT
+    d_innen: float = 0.0
+    d_aussen: float = 0.0
 
 
 @dataclass
@@ -3789,6 +3813,9 @@ class Model:
         #: bis zum 23.09.2026. Welche gerechnet wurde, steht in res.info und
         #: an der Nachweisstelle.
         self.randspannung = "frei"
+        #: Stabenden in Volumen: an 1-3 Knoten (wie RFEM) oder verteilt ueber
+        #: Stirnflaeche bzw. Kreisring (seit 13.10.2026, fugen.stabenden_koppeln)
+        self.stabeinleitung = Stabeinleitung()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
@@ -8841,7 +8868,7 @@ class Model:
             "active_case": self.active_case,
             "combinations": [asdict(c) for c in self.combinations.values()],
             "fatigue_loads": [asdict(f) for f in self.fatigue_loads.values()],
-            "members": [asdict(m) for m in self.members.values()],
+            "members": [_member_dict(m) for m in self.members.values()],
             "joints": [asdict(j) for j in self.joints.values()],
             "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
@@ -8888,6 +8915,12 @@ class Model:
             "bericht_rahmen": (asdict(self.bericht_rahmen)
                                if getattr(self, "bericht_rahmen", None) is not None else None),
             "einheiten": asdict(self.einheiten),
+            # Einleitung der Stabenden in Volumen (13.10.2026): nur, wenn sie
+            # von der Vorgabe abweicht - eine Datei ohne die Einstellung bleibt
+            # beim Speichern Zeichen fuer Zeichen, wie sie war
+            **({"stabeinleitung": asdict(self.stabeinleitung)}
+               if asdict(getattr(self, "stabeinleitung", None) or Stabeinleitung())
+               != asdict(Stabeinleitung()) else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -9049,6 +9082,8 @@ class Model:
                 m.bemassung_einstellung = _dc(BemassungEinstellung, d["bemassung_einstellung"])
         if d.get("einheiten"):
             m.einheiten = _dc(Einheiten, d["einheiten"])
+        if d.get("stabeinleitung"):
+            m.stabeinleitung = _dc(Stabeinleitung, d["stabeinleitung"])
         if d.get("werteskala"):
             from .spannungen import Werteskala
             m.werteskala = Werteskala.from_dict(d["werteskala"])
@@ -9291,3 +9326,13 @@ def _dc(cls, d: dict):
     """Dataclass aus dict, unbekannte Schluessel ignorieren (Vorwaertskompatibilitaet)."""
     names = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in names})
+
+
+def _member_dict(m: Member) -> dict:
+    """Ein Stab fuer die Datei - ohne den Schluessel ``einleitung``, solange
+    beide Enden der Modelleinstellung folgen (13.10.2026): so bleibt eine Datei
+    ohne die Einstellung beim Speichern, wie sie war."""
+    d = asdict(m)
+    if not d.get("einleitung"):
+        d.pop("einleitung", None)
+    return d

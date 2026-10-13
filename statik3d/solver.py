@@ -1868,6 +1868,10 @@ class Results:
         if self.reactions is not None and self.reactions.size:
             R = self.reactions[:, :3].sum(axis=0)
             s.append(f"Summe Auflagerkräfte    : [{R[0]:.1f}, {R[1]:.1f}, {R[2]:.1f}] N")
+        # verteilend eingeleitete Stabenden (seit 13.10.2026)
+        if self.info.get("stabenden_kraftsumme"):
+            from . import stabeinleitung as _se
+            s.extend(_se.pruefzeilen(self.info["stabenden_kraftsumme"]))
         if self.contact:
             from . import contact as ct
             s.append(ct.summary(self.contact))
@@ -5261,8 +5265,25 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     if n0_ausfall is not None:
         # Stabstatus nach Abschluss: kein aktiver Zugstab mit Druck (13.10.2026)
         zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
+    _stabenden_pruefen(model, res, F)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
+
+
+def _stabenden_pruefen(model: Model, res: Results, F) -> None:
+    """Kraftsumme und Moment je verteilend gekoppeltem Stabende gegen die
+    Stabendkraefte (seit 13.10.2026, stabeinleitung.pruefen) nach
+    ``res.info["stabenden_kraftsumme"]``. Ohne solche Kopplungen geschieht
+    nichts; ein Fehler hier haelt kein Ergebnis auf."""
+    from . import stabeinleitung as _se
+    if not any(_se.ist_verteilkopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
+        return
+    try:
+        info = _se.pruefen(model, res, float(np.linalg.norm(np.asarray(F, float))))
+        if info:
+            res.info["stabenden_kraftsumme"] = info
+    except Exception as ex:                  # noqa: BLE001 - die Pruefung ist Beiwerk
+        res.info["stabenden_kraftsumme_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"
 
 
 def singularitaet_info(s) -> dict:
@@ -8392,6 +8413,9 @@ class Analysis:
         s += zugstab_druck_gebuendelt(self.all_results().items())
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
+        # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
+        from . import stabeinleitung as _se
+        s += _se.pruefung_gebuendelt(self.all_results().items())
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen
         # (umhuellende_kurz). Bis zur Nachbesserung vom 04.10.2026 (Befund S3)
         # stand hier env.name, bei einer Ergebniskombination ihr blosser Name:

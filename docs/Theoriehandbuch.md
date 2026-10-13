@@ -5038,6 +5038,64 @@ Elemente 712 bis 740 N/mm² ≥ 2 f_y, an den Gaußpunkten aber nur 358 bis
 Kontaktränder und einspringende Kanten findet die Regel nicht, und die Werte in
 den Zonen werden durch die Kennzeichnung nicht richtiger.
 
+**Verteilende Einleitung der Stabenden (seit 13.10.2026,
+`statik3d/stabeinleitung.py`).** Ein Stabende in einem Volumen kann statt an
+den 1–3 Knoten seines Elements über die vorhandene Verteilkopplung RBE3
+(`verbindung.starrkoerper_matrix`, Master = Stabknoten) an allen Knoten seiner
+Einleitungsfläche hängen; die Fläche wird dabei nicht starr. Die gespeicherten
+Gewichte sind w_i = ∫ N_i dA über die Randseiten der Fläche, also die
+konsistente Lastverteilung (ebenes tri6: Ecken 0, Kantenmitten je A/3; tri3:
+A/3 je Ecke). Die Stirnfläche ist die zusammenhängende Menge der Randseiten
+des Körpers, die mit der Seite am Stabknoten über Ecken verbunden sind, bis
+0,1 mm in ihrer Ebene liegen und deren Normale höchstens 5° abweicht; die
+Stabachse darf um bis zu 30° von der Normale abweichen. Beim Kreisring
+r_i ≤ r ≤ r_a um den Durchstoßpunkt P wird mit der Indikatorfunktion
+integriert, für Seiten, die der Ring schneidet, mit einer Mittelpunktregel
+auf s² Teilzellen (s = 16 je Ringbreite, 4 ≤ s ≤ 64); am Quader 20 × 20 mm
+mit Ring 6/16 mm ergibt das 173,17 gegen 172,79 mm² (+0,22 %).
+
+Gerechnet wird mit wirksamen Gewichten: Gebundene Seitenmitten (Kontakt- und
+Lagerseiten, Paket Q1, `assemble.mittelknoten_bindungen`) und Gewichte unter 10⁻¹² des größten fallen weg, die
+übrigen werden auf Σ w = 1 gebracht und mit
+min Σ (Δw_i)² / |w_i| unter Σ w_i = 1 und Σ w_i (x_i − P)·e₁,₂ = 0
+(e₁, e₂ in der Ebene) so ausgeglichen, dass der Schwerpunkt in P liegt; ein
+Gewicht null bleibt null (Entscheidung des Anwenders vom 13.10.2026). Mit dem
+Schwerpunkt in P wird eine Längskraft zu f_i = w_i F, genau der konsistenten
+Last der gleichmäßigen Spannung F/A: am Quader 20 × 20 × 40 mm (tet10) mit
+einem Zugstab von 10 kN mittig auf der Stirnfläche ist σ_zz in allen 30
+Elementen an der Stirnfläche 25,000 N/mm² = F/A, an 1–3 Knoten wie bisher
+dagegen bis 398,6 N/mm² (σ_v an den Knoten bis 648,1 N/mm²). Ein Moment geht
+über die sechs Gleichungen des RBE3 als f_i = w_i (λ_f + λ_m × r_i) in die
+Fläche. Das ist statisch gleichwertig, aber nicht die konsistente Last der
+linearen Spannung, bei der am tet10 auch die Ecken tragen: Am selben Quader
+mit einem Kragarm Rund 16 von 50 mm und 1 kN quer liegt das größte |σ_zz| der
+Elemente an der Stirnfläche 7 % über dem unter der konsistenten linearen
+Flächenlast (47,25 gegen 44,14 N/mm²), 8 bis 12 mm darunter ist es gleich
+(48,74 N/mm²). Am Drehlager hängen nur Zugstäbe, dort gibt es keine Momente.
+
+Strafverfahren: k = 10⁴ · max diag(K) ohne die Straffedern der Kopplungen,
+also derselbe Wert wie bei den starren Kopplungen der Stabenden. Die drei
+Momentenzeilen von G werden durch ρ = (Σ |w_i| |r_i|²)^½ geteilt, damit die
+Strafe für die Drehung des Masters k ρ² ist und nicht k ρ⁴; bei ρ = 8 mm wäre
+sie sonst um den Faktor 1,6·10⁴ weicher und läge in der Größe der
+Biegesteifigkeit eines Rund 16 (4 E I / L = 5,4·10⁴ Nm/rad bei L = 50 mm).
+Am Kragarm folgt der Master der Drehung der Fläche (9,85·10⁻⁴ rad, aus den
+Verschiebungen der Flächenknoten ausgeglichen ebenso) und G u ist 10⁻¹⁰.
+
+Prüfung im Ergebnis: Die Kopplungskräfte f = k Gᵀ G u sind für jedes u im
+Gleichgewicht (Σ f = 0 und Σ r × f = 0 folgen aus dem Aufbau von G). Geprüft
+wird darum das Gleichgewicht am Stabknoten: Kraft und Moment um P, die die
+Kopplung in die Fläche gibt, gegen die Gegenkraft der Stabendkraft (hinter
+einem Versatz) samt Knotenlast am Stabknoten. Toleranz ist die
+Residuumschranke des Gleichungslösers mal ‖F‖, denn nach dem Lösen gilt
+‖K u − F‖ ≤ Schranke · ‖F‖ und damit für jeden Knoten. Gemessen am Quader:
+dF = 1,8·10⁻⁷ N bei 10 kN (Toleranz 0,01 N), am Kragarm dM = 1,3·10⁻⁹ Nm bei
+50 Nm. Ein Momentengelenk am Stabende gibt kein Biegemoment in die Fläche
+(gemessen 0,0 Nm; biegesteif am selben gestützten Balken 0,067 Nm, klein,
+weil der Quader unter der Querkraft selbst um V L² / (2 E I) kippt). Eine
+verteilt eingeleitete Stelle trägt ihre ganze Fläche (A_trag = Fläche) und ist
+nach der Regel oben eine Fläche, keine Stelle: am Drehlager 48 Punkte → 0.
+
 **Zonen in Anzeige und Nachweis (seit 10.10.2026).** Bis zum 10.10.2026
 nahmen Farbskala, Zusammenfassung, Bericht, Volumennachweis und Ermüdung ihr
 Maximum über alle Elemente. Seitdem bleiben die Elemente der Zonen

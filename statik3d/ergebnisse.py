@@ -124,6 +124,8 @@ MODELLTEILE = {
     "lines": "geometrie", "flaechen": "geometrie", "koerper": "geometrie",
     "supports": "lager", "line_supports": "lager", "surface_supports": "lager",
     "hinges": "gelenke", "kopplungen": "gelenke", "starrkoerper": "gelenke", "federn": "gelenke",
+    # Einleitung der Stabenden in Volumen (13.10.2026) - steht nur in der Datei, wenn gesetzt
+    "stabeinleitung": "gelenke",
     "grenzschichten": "gelenke",
     # je Lastfall geteilt: die Lasten nach „lasten“, der Rest nach „lastfaelle“;
     # die Lastgenerierer stehen bei den Lasten, die sie erzeugen

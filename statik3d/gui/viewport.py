@@ -2766,6 +2766,68 @@ def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: fl
     return len(stellen)
 
 
+#: Kennzeichen verteilend eingeleiteter Stabenden (seit 13.10.2026): Umriss der
+#: Einleitungsflaeche und ein Punkt am Stabknoten, petrol - neben den gruenen
+#: Lagern und den Magenta-Spitzen gut zu unterscheiden
+FARBE_STABEINLEITUNG = "#00838f"
+
+
+def stabeinleitung_umrisse(model: Model, lage=None) -> tuple:
+    """(Umrisse, Punkte) der verteilend eingeleiteten Stabenden: je
+    Kopplung die konvexe Huelle ihrer Flaechenknoten in deren Ebene als
+    geschlossener Linienzug, dazu der Stabknoten. ``lage`` sind verformte
+    Knotenlagen oder None."""
+    from ..stabeinleitung import ist_verteilkopplung
+    X = np.asarray(lage if lage is not None and len(lage) == model.nn else model.nodes, float)
+    linien, punkte = [], []
+    for sk in getattr(model, "starrkoerper", None) or []:
+        if not ist_verteilkopplung(sk):
+            continue
+        S = np.asarray([int(x) for x in sk.slaves if 0 <= int(x) < len(X)], np.int64)
+        if len(S) < 3 or not 0 <= int(sk.master) < len(X):
+            continue
+        P = X[S]
+        c = P.mean(axis=0)
+        _u, _s, vt = np.linalg.svd(P - c, full_matrices=False)
+        Q = np.column_stack([(P - c) @ vt[0], (P - c) @ vt[1]])
+        try:
+            from scipy.spatial import ConvexHull
+            reihe = ConvexHull(Q).vertices
+        except Exception:                 # noqa: BLE001 - entartet: keine Huelle
+            continue
+        linien.append(P[list(reihe) + [reihe[0]]])
+        punkte.append(X[int(sk.master)])
+    return linien, punkte
+
+
+def add_stabeinleitungen(plotter, model: Model, lage=None) -> int:
+    """Verteilend eingeleitete Stabenden in der Ansicht kennzeichnen: der
+    Umriss ihrer Einleitungsflaeche und ein Punkt am Stabknoten. Rueckgabe:
+    Zahl der gezeichneten."""
+    for n in ("stabeinleitungen", "stabeinleitungen_punkte"):
+        try:
+            plotter.remove_actor(n)
+        except Exception:                 # noqa: BLE001 - war noch nicht da
+            pass
+    try:
+        linien, punkte = stabeinleitung_umrisse(model, lage)
+    except Exception:                     # noqa: BLE001 - ein Kennzeichen darf nichts sperren
+        return 0
+    if not linien:
+        return 0
+    # ein Linienzug je Umriss in einem PolyData
+    pkt = np.vstack(linien)
+    zellen, start = [], 0
+    for z in linien:
+        zellen += [len(z)] + list(range(start, start + len(z)))
+        start += len(z)
+    netz = pv.PolyData(pkt, lines=np.asarray(zellen, np.int64))
+    plotter.add_mesh(netz, color=FARBE_STABEINLEITUNG, line_width=3, name="stabeinleitungen")
+    plotter.add_mesh(pv.PolyData(np.asarray(punkte, float)), color=FARBE_STABEINLEITUNG, point_size=9,
+                     render_points_as_spheres=True, name="stabeinleitungen_punkte")
+    return len(linien)
+
+
 def flaechenecken(model: Model, f):
     """Die vier benannten Eckpunkte einer Flaeche - oder None."""
     e = [int(x) for x in (getattr(f, "ecken", None) or [])]

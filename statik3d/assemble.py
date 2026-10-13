@@ -696,10 +696,11 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
         idx = np.array([i for i, _ in springs])
         val = np.array([k for _, k in springs])
         K = (K + sparse.coo_matrix((val, (idx, idx)), shape=K.shape)).tocsr()
+    K_bezug = K                 # Elemente und Federn, ohne Straffedern (Stabenden-RBE3)
     Kk = kopplungen(model, K, aktiv=aktiv)
     if Kk is not None:
         K = (K + Kk).tocsr()
-    Ks = starrkoerper(model, K)
+    Ks = starrkoerper(model, K, K_bezug=K_bezug)
     return (K + Ks).tocsr() if Ks is not None else K
 
 
@@ -1031,8 +1032,12 @@ def _belegte_knoten(model) -> tuple:
     for k in (getattr(model, "kopplungen", None) or []):
         for n in (k.node_a, k.node_b):
             hart.setdefault(int(n), f"Kopplung {getattr(k, 'gruppe', '') or ''}".strip())
+    from .stabeinleitung import ist_verteilkopplung
     for sk in (getattr(model, "starrkoerper", None) or []):
-        for n in [sk.master] + list(sk.slaves):
+        # Die verteilende Kopplung eines Stabendes laesst gebundene Mitten
+        # selbst aus (stabeinleitung.wirksame_gewichte) - nur ihr Master zaehlt
+        knoten = [sk.master] if ist_verteilkopplung(sk) else [sk.master] + list(sk.slaves)
+        for n in knoten:
             hart.setdefault(int(n), f"Starrkörper {getattr(sk, 'name', '') or ''}".strip())
     for ss in (model.surface_supports or []):
         for n in _flaechenlager_knoten(model, ss):
@@ -1313,15 +1318,24 @@ def mittelknoten_nachfuehren(model: Model, u: np.ndarray) -> np.ndarray:
     return u
 
 
-def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
+def starrkoerper(model: Model, K: sparse.spmatrix = None, K_bezug: sparse.spmatrix = None) -> sparse.spmatrix:
     """Steifigkeit der starren Koerper (RBE2) und Verteilkopplungen (RBE3)
     im Strafverfahren: K += k Gᵀ G mit den Zwangsbedingungszeilen G aus
     verbindung.starrkoerper_matrix und k = 1e4-mal die groesste
-    Hauptdiagonale (wie bei den Kopplungen)."""
+    Hauptdiagonale (wie bei den Kopplungen).
+
+    Verteilende Kopplungen der Stabenden (seit 13.10.2026,
+    statik3d.stabeinleitung): G aus stabeinleitung.zwangsmatrix (gebundene
+    Seitenmitten heraus, Gewichte normiert, Schwerpunkt auf der Stabachse,
+    Momentenzeilen durch rho), k = 1e4-mal die groesste Hauptdiagonale von
+    ``K_bezug`` - der Matrix ohne die Straffedern der Kopplungen, also derselbe
+    Wert wie bei den starren Kopplungen der Stabenden. Er steht danach in
+    ``model._stabende_strafe`` (fuer die Pruefung der Kraftsumme)."""
     sk_liste = getattr(model, "starrkoerper", None) or []
     if not sk_liste:
         return None
     from .elements import verbindung as vb
+    from . import stabeinleitung as _se
     n = model.ndof
     if K is None:
         K = _assemble_triplets(model, _matrix_chunk, None)
@@ -1329,7 +1343,22 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
     gross = float(diag[diag > 0].max()) if np.any(diag > 0) else 1.0
     k = 1e4 * gross
     rows, cols, vals = [], [], []
+    k_stab, bindung = None, None
     for sk in sk_liste:
+        if _se.ist_verteilkopplung(sk):
+            if k_stab is None:
+                d_b = np.abs(np.asarray((K if K_bezug is None else K_bezug).diagonal()).ravel())
+                k_stab = _se.STRAFE * (float(d_b[d_b > 0].max()) if np.any(d_b > 0) else 1.0)
+                bindung = {int(t[0]) for t in mittelknoten_bindungen(model)}
+            G, d, _wk = _se.zwangsmatrix(model, sk, bindung)
+            if G is None:
+                continue
+            Ke = vb.starrkoerper_steifigkeit(G, k_stab)
+            r, c = np.meshgrid(d, d, indexing="ij")
+            rows.append(r.ravel())
+            cols.append(c.ravel())
+            vals.append(Ke.ravel())
+            continue
         slaves = [int(x) for x in sk.slaves if 0 <= int(x) < model.nn and int(x) != int(sk.master)]
         if not slaves or not 0 <= int(sk.master) < model.nn:
             continue
@@ -1343,6 +1372,11 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
         rows.append(r.ravel())
         cols.append(c.ravel())
         vals.append(Ke.ravel())
+    if k_stab is not None:
+        try:
+            model._stabende_strafe = float(k_stab)
+        except AttributeError:
+            pass
     if not rows:
         return None
     return sparse.coo_matrix(

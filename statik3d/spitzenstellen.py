@@ -359,13 +359,18 @@ def _quellen(model, netz: _Netz) -> list:
         else:
             quelle = KOPPLUNG
         aus.append(dict(quelle=quelle, name=g, knoten=S, master=master))
+    from .stabeinleitung import ist_verteilkopplung
     for sk in getattr(model, "starrkoerper", None) or []:
         alle = np.asarray([int(x) for x in sk.slaves if int(x) != int(sk.master)], np.int64)
         alle = alle[(alle >= 0) & (alle < netz.nn)]
         S = np.unique(alle[vk[alle]])
         if not len(S):
             continue
-        aus.append(dict(quelle=STARRKOERPER, name=str(getattr(sk, "name", "")) or "Starrkörper",
+        # Ein verteilend eingeleitetes Stabende (seit 13.10.2026) ist ein
+        # Stabende; seine Knoten decken die Einleitungsflaeche, die Regel
+        # ordnet es darum als Flaeche ein
+        aus.append(dict(quelle=STABENDE if ist_verteilkopplung(sk) else STARRKOERPER,
+                        name=str(getattr(sk, "name", "")) or "Starrkörper",
                         knoten=S, master=int(sk.master)))
     # Knotenlasten auf Volumenknoten (ohne die aus Linienlasten verteilten),
     # ueber alle Lastfaelle gebuendelt: die Stelle ist ein Ort

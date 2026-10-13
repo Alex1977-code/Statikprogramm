@@ -550,6 +550,9 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        ohne Auflageflaeche in ein Volumen leiten (spitzenstellen.kandidaten):
        eine WARNUNG je Art, gebuendelt („64 starre Scheiben koppeln nur einen
        Lochrand (40 Knoten)“). Sie haelt die Rechnung nicht an.
+    9. **Stabenden an wenigen Knoten** (nur mit ``warnungen=True``, seit
+       13.10.2026) - der Hinweis auf die verteilende Einleitung
+       (stabeinleitung.hinweis), als WARNUNG; umgestellt wird nichts.
 
     9. **Werkstoff ohne f_u** (nur mit ``warnungen=True`` und eingeschalteter
        Plastizitaet, seit 13.10.2026) - je Werkstoff der Volumen mit f_y, aber
@@ -602,6 +605,13 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
         # Spannstahl f_pk) - fehlt f_u, wird ohne Grenze gerechnet, und kein
         # Vorgabewert wird gesetzt (Entscheidung des Anwenders). Nur WARNUNG.
         aus += _abnahme_werkstoff_grenze(model)
+        # 10. Stabenden an 1-3 Volumenknoten (seit 13.10.2026): ein Hinweis auf
+        # die verteilende Einleitung - umgestellt wird nichts
+        try:
+            from . import stabeinleitung as _se
+            aus += _se.abnahme_befund(model)
+        except Exception:                 # noqa: BLE001 - ein Hinweis darf nie sperren
+            pass
     if not warnungen:
         aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
     return aus

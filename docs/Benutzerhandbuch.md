@@ -1454,6 +1454,7 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 Konsolenfenster**: vorher öffnete sich je Volumen eine Eingabeaufforderung, weil
 Windows einem Konsolenprogramm, das ein Fensterprogramm startet, eine eigene
 Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgeladen im Werkzeugordner, sonst der Suchpfad) — ein Pfadfeld gibt es seit 13.09.2026 nicht mehr; ein in einer älteren Datei gespeicherter Pfad gilt weiter. Gemessen an der Platte mit Bohrung (13.09.2026, MMG 5.8.0): h = 50 mm Güte min 0,103 → 0,453 (19 614 → 18 815 Tetraeder, 6,1 s), h = 30 mm 0,120 → 0,474 (60 610 → 57 817, 1,7 s); Hülle und Volumen unverändert (Randtreue 100 %). Das Protokoll nennt Güte min vorher/nachher |
+| Stabenden in Volumen (seit 13.10.2026) | **an 1–3 Knoten wie RFEM** (Vorgabe), **verteilt über die Stirnfläche** oder **verteilt über einen Kreisring**; das Feld „Kreisring d innen / außen [mm]“ darunter nimmt die beiden Durchmesser, etwa „17 / 30“. Es regelt, wie ein Stabende, das auf oder in einem Volumen liegt, an dessen Netz hängt, und gilt für jedes Stabende, das in der Stabmaske nichts Eigenes eingestellt hat. „Übernehmen“ schließt die Stabenden am vorhandenen Netz gleich neu an. Siehe *Stabenden verteilt einleiten* |
 | Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Seit 21.09.2026 trägt der Quader Randseiten (eine Flächenlast darauf kam vorher **nicht** an: 0 kN), teilt seine Knoten mit Nachbarn und folgt an gemeinsamen Kanten deren Teilung. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred”) und wird nur mitgeführt |
 | Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
 | Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei. Seit 07.10.2026 liegen die Quellen einer **gekrümmten** Fläche (Bohrungswand, Kegel, windschiefes Viereck) auf der Fläche selbst; bis dahin lagen sie in ihrer Ausgleichsebene, an einer halben Bohrungswand mit 60 mm Radius bis 23 mm daneben. Ein Feld, das nur die halbe Kantenlänge verlangt, erreicht das Flächennetz bei Mittel heute nicht ganz: beim Verdichten verdrängt jeder Gitterpunkt seine eigenen feineren Nachbarn, und eine Fläche mit Feld 50 mm bei 100 mm Kantenlänge bleibt im Median bei 96 mm. Mit **Fein** verdichtet das Flächennetz seit 07.10.2026 im Dreiecksgitter und hält dort 50 mm; bei Mittel bleibt es beim alten Weg, damit Mittel-Netze bitgleich bleiben |
@@ -7026,6 +7027,65 @@ nicht …“), statt still übergangen zu werden. Beim Öffnen einer älteren Da
 nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
 (Modelldatei); das Netz folgt ihnen noch nicht.
 
+**Stabenden verteilt einleiten (seit 13.10.2026).** Ein Stabende, das wie
+oben an einem bis drei Knoten eines Volumens hängt, leitet seine ganze Kraft
+über diese Knoten ein. Dort entsteht eine Spannungsspitze, die mit jeder
+Netzverfeinerung wächst; am Drehlager (Netz Mittel) gehen an V90 19,7 kN über
+zwei Knoten der Stirnfläche. Seit dem 13.10.2026 lässt sich ein solches
+Stabende stattdessen verteilt über eine Fläche einleiten. Die Vorgabe des
+Modells steht in den Netzeinstellungen („Stabenden in Volumen“: an 1–3 Knoten
+wie RFEM, verteilt über die Stirnfläche oder verteilt über einen Kreisring mit
+Innen- und Außendurchmesser). Je Stabende lässt sie sich in der Stabmaske
+überschreiben („Volumen am Anfang“ bzw. „Volumen am Ende“, Vorgabe „wie
+Modell“); diese Felder erscheinen nur an einem Ende, das in einem Volumen hängt
+oder schon eine eigene Einstellung hat. Ohne die Einstellung bleibt alles, wie
+es war, und eine Datei ohne sie bleibt beim Speichern Zeichen für Zeichen
+gleich.
+
+Verteilt eingeleitet hängt der Stabknoten über eine Verteilkopplung (RBE3,
+als Starrkörper „Stabende K…“) an allen Knoten seiner Fläche. Die Kopplung
+versteift die Fläche nicht: Der Stabknoten folgt dem gewichteten Mittel der
+Flächenknoten. Gewichtet wird flächenanteilig mit der konsistenten
+Lastverteilung; bei tet10 trägt jede Seitenmitte ein Drittel ihrer Seite, die
+Ecken tragen nichts. Die Stirnfläche ist die zusammenhängende ebene
+Randfläche des Volumens um den Stabknoten, quer zur Stabachse (der Stab darf
+bis 30° schräg stehen); der Kreisring ist der Teil davon zwischen den beiden
+Durchmessern um den Durchstoßpunkt der Stabachse. Seitenmitten, die an einer
+Kontakt- oder Lagerseite gebunden sind, fallen aus der Kopplung heraus. Die
+übrigen Gewichte bringt das Programm auf die Summe eins und gleicht sie mit
+der kleinsten Änderung so aus, dass ihr Schwerpunkt auf der Stabachse liegt.
+Eine reine Längskraft geht dann gleichmäßig in die Fläche, ein Moment linear
+über die Gewichte verteilt, und ein Gelenk am Stabende bleibt ein Gelenk.
+Findet das Programm keine Fläche, etwa weil das Stabende im Innern liegt oder
+der Stab schräger steht, bleibt es bei den 1–3 Knoten, und das Protokoll
+sagt warum. Knotenlasten und Lager in Volumen hängen immer an den 1–3 Knoten.
+
+Beim Import und beim Rechenstart (Abnahme des Netzes) nennt das Programm die
+Stabenden an 1–3 Volumenknoten gebündelt, am Drehlager „48 Stabenden hängen
+an 1–3 Volumenknoten – verteilende Einleitung über die Stirnfläche möglich
+(Modelleinstellung oder je Stabende)“. Umgestellt wird dabei nichts. Nach der
+Rechnung prüft das Programm je verteilt eingeleitetem Stabende, ob die
+Kopplung genau die Kraft und das Moment um den Durchstoßpunkt in die Fläche
+gibt, die der Stab in seinen Knoten gibt. Die Toleranz ist die Genauigkeit
+des Gleichungslösers (Berechnung → Einstellungen → Experten, Vorgabe 10⁻⁶) mal
+der Größe des Lastvektors, denn um mehr kann das Gleichgewicht eines Knotens
+nach dem Lösen nicht verfehlt sein. Die Zusammenfassung nennt die größte
+Abweichung, eine Abweichung über der Toleranz steht als Warnung im
+Protokoll. In der Ansicht ist jedes verteilt eingeleitete Stabende in Petrol
+gekennzeichnet, mit dem Umriss seiner Fläche und einem Punkt am Stabknoten.
+Die Erkennung der netzabhängigen Spannungsspitzen ordnet eine verteilt
+eingeleitete Stelle als Fläche ein und meldet sie nicht mehr.
+
+Am Drehlager (Netz Mittel, ohne Rechnung) bekommen mit der Einstellung
+„Stirnfläche“ alle 48 Stabenden ihre Stirnfläche: die 24 Enden der Rund 16 je
+197,8 mm² mit 81 Knoten, die 24 Enden der Rund 20 je 309,0 mm² mit 69 oder 81
+Knoten. Je 20 gebundene Seitenmitten liegen am Rand der Bohrung und fallen
+heraus, die Ecken tragen nichts; die Kopplung rechnet mit 35 Knoten (Rund 16)
+bzw. 26 bis 35 Knoten (Rund 20). Der Schwerpunkt der Gewichte lag 0,006 bis
+0,135 mm neben der Stabachse, und der Ausgleich ändert dafür kein Gewicht um
+mehr als 4 %. Der Aufbau dauert 7,9 s statt 6,0 s für die Kopplungen an 1–3
+Knoten. Bis zum 13.10.2026 hingen Stabenden in Volumen immer an 1–3 Knoten.
+
 **Starre Flächen** (RFEM: Steifigkeitsart „starr“, ohne Dicke) setzt das
 Programm nach dem Vernetzen als starre Kopplung um: Der Knoten in ihrer Mitte,
 bevorzugt ein Stabende, hält alle Netzknoten, die in der Scheibe liegen. Seit
@@ -10165,6 +10225,7 @@ nichts stillschweigend Übergangenes:
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
 | Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
 | Kraft ohne Fläche (Warnung, seit 10.10.2026): Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft ohne Auflagefläche in ein Volumen leiten – eine Zeile je Art, siehe *Netzabhängige Spannungsspitzen* | – |
+| Stabenden an wenigen Knoten (Warnung, seit 13.10.2026): Stabenden, die an 1–3 Volumenknoten hängen, mit dem Hinweis auf die verteilende Einleitung – umgestellt wird nichts, siehe *Stabenden verteilt einleiten* | – |
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
@@ -11055,7 +11116,11 @@ Art, am Drehlager etwa „64 starre Scheiben koppeln nur einen Lochrand
 (40–45 Knoten)“ und „48 Stabenden hängen an 1–3 Knoten“. Die Warnung hält die
 Rechnung nicht an. Lasten und Lager, die eine Fläche tragen, meldet sie nicht;
 in den eingebauten Beispielen meldet sie nur die Endlast der Konsole, die auf
-den sieben Knoten der Oberkante steht.
+den sieben Knoten der Oberkante steht. Seit dem 13.10.2026 lässt sich ein
+Stabende auch verteilt über seine Stirnfläche oder einen Kreisring einleiten
+(siehe *Stabenden verteilt einleiten*); eine so eingeleitete Stelle trägt eine
+Fläche und erscheint nicht mehr unter den Stellen, am Drehlager fallen damit
+die 48 Stabenden heraus.
 
 Nach der Rechnung bestimmt das Programm je Stelle die Kraft, die durch sie
 geht, eine Zone aus höchstens zwei Elementringen – den Elementen an den

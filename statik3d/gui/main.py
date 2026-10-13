@@ -64,6 +64,7 @@ from .fenster import starten as fenster_starten
 from . import sprache
 from .sprache import kuerzel_text
 from . import layer as lyr
+from . import stabeinleitung_felder as sef
 from . import skizze as skg
 from .. import skizze as sk
 from .. import spannungen as spn
@@ -8384,6 +8385,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             hinweis="RFEM „für Berechnung deaktiviert“: der Stab bleibt als Objekt, trägt aber "
                                     "in keiner Situation Steifigkeit oder Last")]
                 titel = f"Stab {name}"
+                # Einleitung der Enden, die in einem Volumen haengen (13.10.2026)
+                felder += sef.felder_stab(m, name)
                 if mem is not None:
                     zusatz = [("Nachweisparameter …", lambda: self.stab_nachweisparameter(name))]
         elif art in self.VERBINDUNGEN or art in ("punktmassen", "federn", "grenzschichten"):
@@ -10888,6 +10891,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # nahm nur der Rahmen des „Uebernehmen“ einer Maske wieder weg.
                 if neuname in m.members and (neu or neuname != name):
                     return self.hinweis(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
+                sef.stab_pruefen(w)
                 self.merken(f"Stab {neuname}")
                 if neu:
                     m.add_member(neuname, els, design=bool(w.get("design", True)))
@@ -10910,6 +10914,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         setattr(mem, k, float(w.get(k)) or 1.0)
                 if "lt" in w:
                     mem.lt_check = bool(w.get("lt"))
+                if sef.stab_uebernehmen(m, name, w):
+                    sef.erneuern(self)
                 if "aus" in w and bool(w.get("aus")) != bool(getattr(mem, "aus", False)):
                     mem.aus = bool(w.get("aus"))
                     self.analysis = None
@@ -19394,6 +19400,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     hinweis="MMG3D (LGPL, getrenntes Programm mmg3d_O3) optimiert das fertige Netz bei "
                             "fester Hülle - der Weg zu einer Mindestgüte aller Elemente; "
                             "„Vernetzer installieren…“ lädt es nach, wo es liegt, weiß das Programm")]
+        # Stabenden in Volumen: an 1-3 Knoten oder verteilt (13.10.2026)
+        felder += sef.felder_netz(self.model)
         # Das Pfadfeld fuer mmg3d_O3 ist heraus (13.09.2026): "der Pfad steht
         # doch bei Installation fest und kann programmintern verarbeitet
         # werden" - vernetzer_extern.mmg3d_programm nimmt das nachgeladene
@@ -19614,12 +19622,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _netzeinstellungen_setzen(self, w: dict):
         try:
             netz = self._netz_aus_maske(w)
+            sef.netz_uebernehmen(self.model, w, nur_pruefen=True)
         except zl.Eingabefehler as ex:          # nur die Eingabe ist ein Hinweis (9b, S3)
             return self.hinweis(f"Eingabe: {ex}")
         except (ValueError, TypeError) as ex:
             return self.error(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
         self.model.netz = netz
+        if sef.netz_uebernehmen(self.model, w):
+            sef.erneuern(self)
         # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
         from .. import elementstufe as es
         sperre = es.sperre_anwenden(self.model)
@@ -24737,14 +24748,13 @@ class MainWindow(QtWidgets.QMainWindow):
         for z in log:
             self.log.appendPlainText(z)
         # Stabenden, integrierte, belastete und gelagerte Knoten aus einer
-        # aelteren Datei: ihr Anschluss an die Koerper fehlt noch
-        if self.model.elements and getattr(self.model, "koerper", None) \
-                and not any(str(getattr(k, "gruppe", "")).startswith(fugen.STABENDE_GRUPPE)
-                            for k in self.model.kopplungen):
-            log = []
-            fugen.stabenden_koppeln(self.model, log)
-            for z in log:
-                self.log.appendPlainText(z)
+        # aelteren Datei: ihr Anschluss an die Koerper fehlt noch. Seit
+        # 13.10.2026 auch: haengen die Stabenden so, wie es die Einstellung
+        # will (an 1-3 Knoten oder verteilt)? fugen.stabenden_erneuern
+        log = []
+        fugen.stabenden_erneuern(self.model, log)
+        for z in log:
+            self.log.appendPlainText(z)
         d = diagnose(self.model)
         nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
         if not nf and not nk:
@@ -26498,6 +26508,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
                               ausser=self.verborgen["linien"], netz=self._linien_netz())
+            vp.add_stabeinleitungen(self.plotter, m, lage=lage)
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             self._kontakte_zeichnen(m)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():

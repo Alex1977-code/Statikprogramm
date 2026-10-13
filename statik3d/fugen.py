@@ -1981,15 +1981,30 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
     Knoten, den RFEM als integriert fuehrt (Flaeche.integrierte_knoten), ohne
     dass etwas an ihm haengt, bleibt frei - er traegt nichts.
 
+    **Verteilend (seit 13.10.2026).** Verlangt die Einstellung des Stabendes
+    (Member.einleitung, sonst Model.stabeinleitung) die Stirnflaeche oder
+    einen Kreisring, haengt das Stabende statt an den 1-3 Knoten ueber eine
+    Verteilkopplung (RBE3, Starrkoerper "Stabende K<n>") an allen Knoten
+    dieser Flaeche, flaechenanteilig gewichtet (statik3d.stabeinleitung).
+    Findet sich die Flaeche nicht (Stabende im Innern, Stab schraeg zur
+    Flaeche), bleibt es bei den 1-3 Knoten, und das Protokoll sagt warum.
+    Lastknoten und Lagerknoten haengen immer an den 1-3 Knoten.
+
     Rueckgabe {"stabenden": n, "kopplungen": n, "anschluesse": [(Knoten,
-    Stab oder Grund, Koerper, Zahl der Knoten)]}. Vorhandene Kopplungen
-    dieser Art werden vorher entfernt (neues Netz).
+    Stab oder Grund, Koerper, Zahl der Knoten)], "verteilt": [(Knoten, Stab,
+    Koerper, Kennung, Zahl der Knoten, Flaeche [m2])], "rueckfall": [(Knoten,
+    Stab, Grund)]}. Vorhandene Kopplungen und Verteilkopplungen dieser Art
+    werden vorher entfernt (neues Netz).
     """
     from scipy.spatial import cKDTree
     from .importers import _common as C
-    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": []}
+    from . import stabeinleitung as SE
+    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": [], "verteilt": [], "rueckfall": []}
     model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
                         if not str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE)]
+    if any(SE.ist_verteilkopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
+        model.starrkoerper = [sk for sk in model.starrkoerper if not SE.ist_verteilkopplung(sk)]
+    model._stabende_rueckfall = {}
     if not model.nn or not model.elements:
         return bericht
     stab: dict = {}
@@ -2041,6 +2056,8 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         for i in (getattr(mem, "elements", None) or []):
             stabname[int(i)] = str(mname)
     unendlich = float("inf")
+    enden = SE.staebe_an_enden(model)
+    randseiten: dict = {}
     for n in sorted(kandidaten):
         p = N[n]
         kand = np.asarray(baum.query_ball_point(p, float(radius.max()) + toleranz), dtype=int)
@@ -2077,24 +2094,85 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         partner = [int(T[kand[j], i]) for i in range(4) if abstand[j, i] > toleranz]
         if not partner:                                    # numerisch entartet: alle vier
             partner = [int(x) for x in T[kand[j]]]
+        sname = (", ".join(sorted({stabname.get(i, f"E{i}") for i in stab[n]}))
+                 if n in stab else grund[n])
+        if n in stab:
+            e = SE.einstellung(model, n, enden)
+            if e["art"] != "punkt":
+                fl = SE.flaeche_finden(model, n, kname[kand[j]], e, randseiten, toleranz)
+                if "grund" not in fl:
+                    text = (f"{SE.kennung(e)}: {'Kreisring' if e['art'] == 'ring' else 'Stirnfläche'} "
+                            f"{SE.mm2(fl['flaeche'])} mm², {len(fl['knoten'])} Knoten ({e['quelle']})")
+                    model.add_starrkoerper(int(n), fl["knoten"], "RBE3", fl["gewichte"],
+                                           name=STABENDE_GRUPPE + f"K{n}", kommentar=text)
+                    bericht["stabenden"] += 1
+                    bericht["verteilt"].append((int(n), sname, kname[kand[j]], SE.kennung(e),
+                                                len(fl["knoten"]), float(fl["flaeche"]),
+                                                float(fl.get("flaeche_nenn", 0.0))))
+                    continue
+                bericht["rueckfall"].append((int(n), sname, fl["grund"]))
+                model._stabende_rueckfall[int(n)] = SE.kennung(e)
         for q in partner:
             model.kopplungen.append(Kopplung(int(n), int(q),
                                              [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                                              [unendlich, unendlich, unendlich],
                                              STABENDE_GRUPPE + f"K{n}"))
-        sname = (", ".join(sorted({stabname.get(i, f"E{i}") for i in stab[n]}))
-                 if n in stab else grund[n])
         bericht["stabenden"] += 1
         bericht["kopplungen"] += len(partner)
         bericht["anschluesse"].append((int(n), sname, kname[kand[j]], len(partner)))
-    if log is not None and bericht["stabenden"]:
+    if log is not None and bericht["verteilt"]:
+        C.say(log, SE.verteilt_zeile(bericht["verteilt"]))
+    if log is not None and bericht["rueckfall"]:
+        C.warn(log, f"{len(bericht['rueckfall'])} Stabenden ohne Einleitungsfläche, sie hängen weiter an "
+                    "1–3 Knoten: " + "; ".join(f"{s} (K{n}): {g}" for n, s, g in bericht["rueckfall"][:6])
+               + (" …" if len(bericht["rueckfall"]) > 6 else ""))
+    if log is not None and bericht["anschluesse"]:
         liste = ", ".join(f"{s} (K{n}) → {k}" for n, s, k, _z in bericht["anschluesse"][:6])
         arten = sorted({grund[n] for n, _s, _k, _z in bericht["anschluesse"]})
-        C.say(log, f"{bericht['stabenden']} Knoten an Volumen angeschlossen ({', '.join(arten)}) - "
+        C.say(log, f"{len(bericht['anschluesse'])} Knoten an Volumen angeschlossen ({', '.join(arten)}) - "
                    f"der Knoten liegt auf oder in dem Körper, wie in RFEM integriert; "
                    f"{bericht['kopplungen']} starre Kopplungen an die Knoten des Elements dort: {liste}"
                    + (" …" if len(bericht["anschluesse"]) > 6 else ""))
     return bericht
+
+
+def stabenden_erneuern(model: Model, log: list = None) -> bool:
+    """Die Anschluesse der Stabenden an die Einstellung angleichen - vor jeder
+    Rechnung und nach dem Umstellen (seit 13.10.2026).
+
+    Gibt es noch keinen Anschluss (aeltere Datei), wird angeschlossen wie
+    bisher. Sonst wird je angeschlossenem Stabende verglichen, wie es haengt
+    (an 1-3 Knoten oder verteilt, mit welcher Flaeche) und wie es nach
+    Member.einleitung bzw. Model.stabeinleitung haengen soll; nur bei einem
+    Unterschied wird neu angeschlossen. Ohne die Einstellung und mit den
+    Anschluessen von davor aendert sich nichts. True, wenn neu angeschlossen
+    wurde."""
+    from . import stabeinleitung as SE
+    if not model.elements or not getattr(model, "koerper", None):
+        return False
+    ist: dict = {}
+    for k in (getattr(model, "kopplungen", None) or []):
+        if str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE):
+            ist.setdefault(int(k.node_a), "punkt")
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        if SE.ist_verteilkopplung(sk):
+            ist[int(sk.master)] = SE.kennung_der_kopplung(sk)
+    if not ist:
+        stabenden_koppeln(model, log)
+        return True
+    stab = SE.stabelemente_an(model)
+    enden = SE.staebe_an_enden(model)
+    rueck = getattr(model, "_stabende_rueckfall", None) or {}
+    for n, k_ist in ist.items():
+        if n not in stab:
+            continue                                   # Last- und Lagerknoten: immer 1-3 Knoten
+        k_soll = SE.kennung(SE.einstellung(model, n, enden))
+        if k_ist == "punkt" and rueck.get(n) == k_soll:
+            continue                                   # die Flaeche fehlte schon beim letzten Mal
+        if k_ist != k_soll:
+            stabenden_koppeln(model, log)
+            return True
+    return False
 
 
 def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
