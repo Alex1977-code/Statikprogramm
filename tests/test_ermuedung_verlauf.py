@@ -1148,24 +1148,21 @@ def test_volumen_regel_rueckfall_und_fliessen():
     anp = solver.solve_all(mp, design=False, fatigue=True)
     fliessend = len(anp.cases[lfp].info.get("plastisch") or {})
     fv = anp.fatigue.volumen["B"]
-    check("fließende Elemente: Meldung nennt Zustand und Zahl, Nachweis gerechnet",
-          fliessend > 0 and getattr(fv, "regel", "") == "knoten" and not fv.fehler
-          and any("fließen" in w and lfp in w and f"{fliessend} " in w for w in fv.warnings),
-          f"{fliessend} fließend, {fv.warnings}")
-    check("fließend: die Meldung sagt, dass der Knoten das Mittel trägt (Beitrag des nächsten "
-          "Integrationspunkts)",
-          any("Knotenmittel" in w and "nächsten Integrationspunkts bei" in w
-              and "tragen die Spannung des nächsten" not in w for w in fv.warnings),
-          str(fv.warnings))
-    sk = anp.cases[lfp].solid_knoten
-    kn = np.asarray(sk["knoten"])
-    orte = getattr(fv, "orte", None)
-    d_je = getattr(fv, "dsig_je_ort", None)
-    soll = np.abs(F.signalspannung(np.asarray(sk["spannung"]))) * mp.design.gamma_Ff
-    gleich = (orte is not None and d_je is not None and np.array_equal(np.asarray(orte), kn)
-              and np.allclose(np.asarray(d_je), soll, rtol=1e-12, atol=1e-3))
-    check("fließend: die Schwingbreite ist die Knotenspannung des Lösers (dort ohne σ·n = 0)", gleich,
-          f"{0 if orte is None else len(orte)} Orte / {len(kn)} Knoten")
+    # Bis zum 13.10.2026 wurde hier gerechnet: Schwingbreite aus der
+    # Knotenspannung des Loesers, mit einem Hinweis auf die fliessenden
+    # Elemente. Seit der Entscheidung des Anwenders vom 13.10.2026 ist die
+    # Ermuedung bei plastischer Rechnung „nicht anwendbar – erfordert
+    # elastische Ermüdungslastfälle“ (tests/test_plastisch_nachweise.py).
+    check("fließende Elemente: Ermüdung „nicht anwendbar“, nichts gerechnet, Grund nennt den Zustand",
+          fliessend > 0 and fv.status() == "nicht anwendbar" and fv.D == 0.0 and fv.util == 0.0
+          and "nicht anwendbar – erfordert elastische Ermüdungslastfälle" in fv.fehler and lfp in fv.fehler,
+          f"{fliessend} fließend, {fv.status()}, {fv.fehler!r}")
+    check("fließend: keine Schwingbreite je Ort",
+          not len(getattr(fv, "orte", None) or []) and fv.dsig_max == 0.0,
+          f"{len(getattr(fv, 'orte', None) or [])} Orte")
+    check("fließend: Zusammenfassung sagt „nicht anwendbar“ statt einer Schädigung",
+          "nicht anwendbar" in anp.fatigue.summary() and "D = " not in anp.fatigue.summary(),
+          anp.fatigue.summary()[:140])
 
 
 def test_volumen_abgeschaltete_elemente():
