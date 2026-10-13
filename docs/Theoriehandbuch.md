@@ -4305,6 +4305,14 @@ die Lastspielzahlen gelten für so viele Jahre), folgt daraus die rechnerische
 Bezugszeitraum gelten die Lastspielzahlen für die ganze Nutzungsdauer, und es
 gibt keine Lebensdauer zu nennen.
 
+**Plastische Rechnung (seit 13.10.2026).** Verweist eine Ermüdungslast auf
+ein Ergebnis aus einer plastischen Rechnung, auch über eine Überlagerung, ist
+der Nachweis „nicht anwendbar – erfordert elastische Ermüdungslastfälle“
+(`ec3.fatigue.NICHT_ANWENDBAR`), für alle Stäbe und Volumen mit Kerbfall. Die
+Wöhlerlinien gelten für Spannungsschwingbreiten im elastischen Bereich; eine
+Schwingbreite aus plastischen Zuständen ist keine solche Größe. Bis zum
+13.10.2026 wurde sie trotzdem gezählt.
+
 #### 5.5-3 Volumen: Hauptspannung je Knoten
 
 Ein Volumen hat keine Nennspannung. Als Spannungsgröße je Ort und Zustand
@@ -4643,6 +4651,14 @@ Für den allgemeinen räumlichen Spannungszustand ist das die Vergleichsspannung
 nach von Mises:
 
       σ_v = √(½[(σ_1−σ_2)² + (σ_2−σ_3)² + (σ_3−σ_1)²]) ≤ f_y/γ_M0
+
+**Nicht nach einer plastischen Rechnung (seit 13.10.2026).** Dieser
+Spannungsnachweis setzt einen elastischen Zustand voraus. Stammt ein
+Ergebnis aus einer plastischen Rechnung (`info["plastizitaet"]`, auch in einer
+Überlagerung, `ec3.volumen.ist_plastisch`), steht der Bereich als „nicht
+bewertet – plastische Rechnung“ da, ohne Zahl. Bis zum 13.10.2026 las er auch
+dort die geglättete Eckspannung; am Drehlager kam sie außerhalb der Zonen auf
+1 596 N/mm², an Ecken nicht fließender Elemente.
 
 mit den Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3 als Eigenwerten des Spannungstensors.
 **Wo wird ausgewertet? — die Auswerteregel (22.09.2026).** Nachgewiesen wird an

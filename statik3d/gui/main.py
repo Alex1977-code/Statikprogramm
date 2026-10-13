@@ -18557,7 +18557,8 @@ class MainWindow(QtWidgets.QMainWindow):
                            (w.get("s3", 0.0) / 1e6 if w else ""),
                            (w.get("sigma_v", 0.0) / 1e6 if w else ""),
                            (w.get("h", 0.0) if w else ""),
-                           (c.util if c is not None and not c.singular else ""),
+                           (c.util if c is not None and not c.singular
+                            and not getattr(c, "nicht_bewertet", "") else ""),
                            (c.kombination if c is not None else ""),
                            ((c.status() + ("; netzabhängige Stellen nur berichtet"
                                            if getattr(c, "zone_n", 0) else ""))
@@ -23554,6 +23555,8 @@ class MainWindow(QtWidgets.QMainWindow):
         Regel wie der Status im Bericht (ec3.fatigue._status, Stand
         24.09.2026) - tests/test_nachweisampel.py haelt beide gleich.
         getattr: Ergebnisse aus aelteren Dateien kennen die Felder nicht."""
+        if getattr(x, "nicht_anwendbar", False):
+            return "nicht anwendbar"           # plastische Rechnung (13.10.2026)
         if getattr(x, "fehler", ""):
             return "nicht geführt"
         if float(getattr(x, "util", 0.0) or 0.0) > 1.0:
@@ -23579,6 +23582,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return " - erfüllt"
         if all(u == "nicht geführt" for u in urteile):
             return " - nicht geführt"
+        if all(u == "nicht anwendbar" for u in urteile):
+            return " - nicht anwendbar"
         return " - unvollständig"
 
     def _ermuedung_zeilen(self, fat) -> list:

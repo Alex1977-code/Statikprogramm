@@ -7838,6 +7838,17 @@ Ermüdung" je Element (das größte D an seinen Ecken) und im Bericht (Block
 Kerbspannung, keine Nennspannung — der Kerbfall muss dazu passen
 (Theoriehandbuch 5.5-3).
 
+**Ermüdung und plastische Rechnung** (seit 13.10.2026). Verweist eine
+Ermüdungslast auf ein Ergebnis aus einer plastischen Rechnung, auch über eine
+Kombination oder Überlagerung, in der ein solches steckt, rechnet der
+Ermüdungsnachweis nichts. Alle Stäbe und Volumen mit Kerbfall stehen dann mit
+dem Status „nicht anwendbar – erfordert elastische Ermüdungslastfälle“ in
+Tabelle, Protokoll, Ergebnisbaum und Bericht, und die Zusammenfassung nennt die
+plastischen Ergebnisse. Eine Schwingbreite aus plastischen Zuständen ist keine
+Ermüdungsgröße. Für den Nachweis braucht es elastisch gerechnete
+Ermüdungslastfälle. Bis zum 13.10.2026 stand dort eine Schädigung aus
+plastischen Zuständen.
+
 **Berührungsstellen zwischen Volumen.** Wo zwei Volumen Knoten teilen — der
 Vernetzer teilt sie nur über eine gemeinsame Fläche, in RFEM ist das ein
 durchverbundener Stoß — und keine Kontaktbedingung zwischen beiden
@@ -8542,6 +8553,18 @@ Volumenkörper bekommen keine Querschnittsnachweise — es gibt keinen
 Querschnitt. Nachgewiesen wird der **Spannungszustand** nach
 DIN EN 1993-1-1, 6.2.1(5): die Vergleichsspannung nach von Mises gegen
 f_y/γ_M0.
+
+**Nach einer plastischen Rechnung** (seit 13.10.2026) gibt der
+Volumennachweis keinen Zahlenwert aus, sondern den Status „nicht bewertet –
+plastische Rechnung“. Das gilt in der Tabelle „Volumen“, in der
+Zusammenfassung, im Ergebnisbaum und im Bericht; die Ampel bleibt ohne Farbe,
+weil nichts überschritten, sondern nichts bewertet ist. In einer plastischen
+Rechnung ist die Spannung keine Nachweisgröße mehr. Als plastisch gilt ein
+Ergebnis, das selbst plastisch gerechnet wurde, und ebenso eine Kombination
+oder Überlagerung, in der ein solches Ergebnis steckt. Bis zum 13.10.2026 stand
+dort ein Zahlenwert aus der geglätteten Eckspannung; am Drehlager lag sie
+außerhalb der netzabhängigen Stellen bis 1 596 N/mm², an Ecken nicht
+fließender Elemente, deren Integrationspunkte weit darunter liegen.
 
 Anlegen: die Knoten des Bereichs in der Ansicht auswählen, dann Register
 *Nachweise* → „Volumen“ (oder in der Tabelle „Volumen“ auf

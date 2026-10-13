@@ -1728,6 +1728,11 @@ class Report:
             # Eine selbst angegebene wird mit * gekennzeichnet.
             t_mm = (fmt(w.get("dicke", 0.0) * 1e3, 0)
                     + ("*" if w.get("dicke_gesetzt") else "")) if w.get("dicke") else "–"
+            if getattr(c, "nicht_bewertet", ""):
+                # plastische Rechnung: kein Zahlenwert (13.10.2026)
+                rows.append([c.name, str(c.n_elemente), c.material, "–", fmt(c.fy / 1e6, 0),
+                             "–", "–", "–", "–", "–", "", c.status()])
+                continue
             rows.append([c.name, str(c.n_elemente), c.material, t_mm,
                          fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
                          fmt(w.get("s1", 0) / 1e6, 1), fmt(w.get("s3", 0) / 1e6, 1),
@@ -1761,6 +1766,11 @@ class Report:
                 # mit design=False, Befund B058)
                 b.append(("p", "Der Nachweis ist für diesen Bereich ausgeschaltet "
                                "(„Nachweis führen“ nicht gesetzt)."))
+                continue
+            if getattr(c, "nicht_bewertet", ""):
+                b.append(("p", f"{_pretty(c.fehler)}. Ein Nachweis über die Spannung wird "
+                               "deshalb nicht ausgegeben."))
+                self._warnings.append(f"Volumenbereich {c.name}: {c.status()}")
                 continue
             if c.fehler:
                 b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
@@ -3726,7 +3736,18 @@ class Report:
                 b.append(("p", "Es wurden keine Ermüdungsnachweise geführt (keine Stäbe mit "
                                "Kerbfall oder keine Ergebnisse)."))
             return b
-        from ..ec3.fatigue import DETAIL_EXAMPLES, sn_life, GAMMA_MF
+        from ..ec3.fatigue import DETAIL_EXAMPLES, sn_life, GAMMA_MF, NICHT_ANWENDBAR
+        if getattr(f, "nicht_anwendbar", ""):
+            # plastische Rechnung (13.10.2026): kein D, keine Schwingbreite
+            namen = ([f"Stab {x}" for x in (f.members or {})]
+                     + [f"Volumen {x}" for x in (f.volumen or {})])
+            b.append(("p", f"Der Ermüdungsnachweis ist {NICHT_ANWENDBAR}: "
+                           f"{_pretty(f.nicht_anwendbar)}. Eine Schwingbreite aus plastischen "
+                           "Zuständen ist keine Ermüdungsgröße; nötig sind elastisch gerechnete "
+                           "Ermüdungslastfälle. Betroffen: " + ", ".join(namen[:20])
+                           + (f" und {len(namen) - 20} weitere" if len(namen) > 20 else "") + "."))
+            self._warnings.append(f"Ermüdung: {NICHT_ANWENDBAR}")
+            return b
         ds = m.design
         b.append(self._h(2, "Grundlagen"))
         # Ohne Markdown-Sternchen: Listenpunkte gehen in HTML und PDF durch
@@ -4437,6 +4458,13 @@ class Report:
         # 22.09.2026 stand dann "Alle Nachweise erfüllt." hier, und der
         # Hinweis nur darunter (Befund FE5, gemessen).
         unvollstaendig: list = []
+        na_f = f is not None and bool(getattr(f, "nicht_anwendbar", ""))
+        if na_f:
+            # plastische Rechnung (13.10.2026): weder erfuellt noch nicht erfuellt
+            from ..ec3.fatigue import NICHT_ANWENDBAR
+            kv.append(("Ermüdung", NICHT_ANWENDBAR))
+            nicht_gefuehrt.append(f"Ermüdung ({NICHT_ANWENDBAR})")
+            f = None
         if f is not None and getattr(f, "members", None):
             gefuehrte_e = [fm for fm in f.members.values() if not getattr(fm, "fehler", "")]
             if gefuehrte_e:
@@ -4540,7 +4568,13 @@ class Report:
                 if nf_v:
                     status_ok = False
                     nicht_erfuellt.append(("Volumennachweis", nf_v, "volumen"))
-            offen = [c.name for c in vo_aktiv if c.fehler]
+            nb = [c.name for c in vo_aktiv if getattr(c, "nicht_bewertet", "")]
+            if nb:
+                from ..ec3.volumen import NICHT_BEWERTET
+                kv.append(("Volumennachweis", f"{', '.join(nb[:5])}: {NICHT_BEWERTET}"))
+                nicht_gefuehrt.append(_anzahl(len(nb), "Volumenbereich", "Volumenbereiche")
+                                      + " (nicht bewertet – plastische Rechnung)")
+            offen = [c.name for c in vo_aktiv if c.fehler and c.name not in nb]
             if offen:
                 nicht_gefuehrt.append(_anzahl(len(offen), "Volumenbereich", "Volumenbereiche"))
         if f is not None and getattr(f, "volumen", None):

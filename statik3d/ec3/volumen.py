@@ -57,6 +57,31 @@ SPITZE_GRENZE = 5.0
 #: Anteil von sigma_v, ab dem sigma_3 als echter Zug gilt (Rechenrauschen)
 ZUG_SCHWELLE = 0.02
 
+#: Status eines Bereichs, dessen Ergebnisse aus einer plastischen Rechnung
+#: stammen (Entscheidung des Anwenders vom 13.10.2026): die Spannung ist dort
+#: keine Nachweisgroesse - am Drehlager las der Nachweis die geglaettete
+#: Eckspannung nicht fliessender Elemente, ausserhalb der Zonen bis
+#: 1 596 N/mm2. Bis zum 13.10.2026 stand hier ein Zahlenwert.
+NICHT_BEWERTET = "nicht bewertet – plastische Rechnung"
+
+
+def ist_plastisch(res, alle: dict = None) -> bool:
+    """Stammt das Ergebnis aus einer plastischen Rechnung? Ja, wenn es selbst
+    den Eintrag ``info["plastizitaet"]`` traegt oder wenn eine Ueberlagerung
+    (``info["factors"]``) ein solches Ergebnis aus ``alle`` enthaelt - etwa
+    eine Kombination oder die Alternative einer Ergebniskombination."""
+    info = getattr(res, "info", None) or {}
+    if info.get("plastizitaet"):
+        return True
+    faktoren = info.get("factors")
+    if isinstance(faktoren, dict) and alle:
+        for name, f in faktoren.items():
+            r = alle.get(name)
+            if f and r is not None and r is not res and (getattr(r, "info", None) or {}).get("plastizitaet"):
+                return True
+    return False
+
+
 #: So stand ein ausgeschalteter Bereich bis zum 23.09.2026 in
 #: ``VolumenCheck.fehler`` - nur noch zum Lesen alter Ergebnisdateien
 _AUSGESCHALTET_ALT = "Nachweis für diesen Bereich ausgeschaltet"
@@ -155,6 +180,9 @@ class VolumenCheck:
     zone_eta: float = 0.0
     zone_element: int = -1
     zone_kombination: str = ""
+    #: Die Ergebnisse stammen aus einer plastischen Rechnung (seit 13.10.2026):
+    #: die Namen; dann steht kein Zahlenwert da, ``fehler`` traegt den Grund
+    nicht_bewertet: str = ""
 
     def __setstate__(self, state):
         # Ergebnisdatei (ergebnisse.py, Pickle) von vor dem 23.09.2026: dort
@@ -168,6 +196,8 @@ class VolumenCheck:
     def status(self) -> str:
         if self.ausgeschaltet:
             return "ausgeschaltet"
+        if getattr(self, "nicht_bewertet", ""):
+            return NICHT_BEWERTET
         if self.fehler:
             return "nicht geführt"
         if self.singular:
@@ -199,10 +229,20 @@ class VolumenResults:
         gefuehrt = [c for c in self.bereiche.values()
                     if not c.singular and not c.fehler and not c.ausgeschaltet]
         schlecht = [c.name for c in gefuehrt if c.util > 1.0]
-        fehler = [c.name for c in self.bereiche.values() if c.fehler]
+        nb = [c.name for c in self.bereiche.values() if getattr(c, "nicht_bewertet", "")]
+        fehler = [c.name for c in self.bereiche.values() if c.fehler and c.name not in nb]
         nur = [c.name for c in self.bereiche.values()
                if c.singular and not c.ausgeschaltet]
         aus = [c.name for c in self.bereiche.values() if c.ausgeschaltet]
+        nb_alle = [c.name for c in self.bereiche.values() if getattr(c, "nicht_bewertet", "")]
+        if nb_alle and not gefuehrt:
+            # plastische Rechnung (13.10.2026): das Urteil vorn - der
+            # Ergebnisbaum zeigt nur die ersten 60 Zeichen
+            s = (f"Volumen: {NICHT_BEWERTET} ({anzahl(len(nb_alle), 'Bereich', 'Bereiche')}: "
+                 + ", ".join(nb_alle[:8]) + (" …" if len(nb_alle) > 8 else "") + ")")
+            if aus:
+                s += f" - {len(aus)} ausgeschaltet: " + ", ".join(aus)
+            return s
         s = f"Volumen (EN 1993-1-1, 6.2.1(5)): {anzahl(len(self.bereiche), 'Bereich', 'Bereiche')}"
         if gefuehrt:
             worst = max(gefuehrt, key=lambda c: c.util)
@@ -218,6 +258,8 @@ class VolumenResults:
             s += f" - {len(nur)} nur berichtet (Singularität): " + ", ".join(nur)
         if fehler:
             s += f" - {len(fehler)} nicht geführt: " + ", ".join(fehler)
+        if nb:
+            s += f" - {len(nb)} nicht bewertet (plastische Rechnung): " + ", ".join(nb)
         if aus:
             s += f" - {len(aus)} ausgeschaltet: " + ", ".join(aus)
         zonen = [c for c in self.bereiche.values() if getattr(c, "zone_n", 0)]
@@ -231,6 +273,11 @@ class VolumenResults:
                  "σ_1 [MPa]", "σ_3 [MPa]", "Ausnutzung", "Kombination", "Status"]]
         for c in self.bereiche.values():
             w = c.werte or {}
+            if getattr(c, "nicht_bewertet", ""):
+                # plastische Rechnung: kein Zahlenwert (13.10.2026)
+                rows.append([c.name, str(c.n_elemente), c.material, f"{c.fy / 1e6:.0f}",
+                             "–", "–", "–", "–", "", c.status()])
+                continue
             rows.append([c.name, str(c.n_elemente), c.material,
                          f"{c.fy / 1e6:.0f}",
                          f"{w.get('sigma_v', 0) / 1e6:.1f}",
@@ -448,6 +495,9 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
     # Zonen auffaelliger netzabhaengiger Stellen je Ergebnis (seit 10.10.2026)
     from .. import spitzenanzeige as _sa
     zonen = _sa.nachweis_zonen(model, ergebnisse) if zu_pruefen else {}
+    # Ergebnisse aus plastischer Rechnung: nicht bewertet (13.10.2026)
+    alle = analysis.all_results() if hasattr(analysis, "all_results") else {}
+    plastisch = [k for k, r in ergebnisse.items() if ist_plastisch(r, alle)]
     for i, (name, vb) in enumerate(model.volumenbereiche.items()):
         c = VolumenCheck(name, beschreibung=vb.beschreibung,
                          n_elemente=len(vb.elemente), singular=bool(vb.singular))
@@ -470,6 +520,13 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
         if c.fy <= 0:
             c.fehler = ("kein Material mit Streckgrenze im Bereich - "
                         "der Nachweis braucht f_y")
+            out.bereiche[name] = c
+            continue
+        if plastisch:
+            c.nicht_bewertet = ", ".join(plastisch[:5]) + (" …" if len(plastisch) > 5 else "")
+            c.fehler = (f"{NICHT_BEWERTET}: die Ergebnisse {c.nicht_bewertet} stammen aus einer "
+                        "plastischen Rechnung, dort ist die Spannung keine Nachweisgröße "
+                        "(Entscheidung vom 13.10.2026)")
             out.bereiche[name] = c
             continue
         in_zone: set = set()

@@ -19,6 +19,11 @@ from ..model import Model, Member
 from .. import elemente as EL
 from ..begriffe import anzahl
 
+#: Ermuedung aus Ergebnissen einer plastischen Rechnung (Entscheidung des
+#: Anwenders vom 13.10.2026): eine Schwingbreite aus plastischen Zustaenden ist
+#: keine Ermuedungsgroesse. Bis zum 13.10.2026 stand hier eine Schaedigung.
+NICHT_ANWENDBAR = "nicht anwendbar – erfordert elastische Ermüdungslastfälle"
+
 # Kerbfallklassen [MPa] (Tabellen 8.1 - 8.10, Auswahl)
 DETAIL_CATEGORIES = [160, 140, 125, 112, 100, 90, 80, 71, 63, 56, 50, 45, 40, 36]
 DETAIL_CATEGORIES_SHEAR = [100, 80]
@@ -287,6 +292,8 @@ class FatigueMember:
     #: und im Gesamturteil "Alle Nachweise erfuellt." - der Hinweis stand nur
     #: darunter (Befund FE5, gemessen: D = 0,38334 allein aus der guten Last).
     fehlende_lasten: list = field(default_factory=list)
+    #: plastische Rechnung (seit 13.10.2026): kein D, ``fehler`` traegt den Grund
+    nicht_anwendbar: bool = False
 
     def status(self) -> str:
         return _status(self)
@@ -354,6 +361,8 @@ class FatigueVolumen:
     D_je_element: object = None
     #: Siehe FatigueMember.fehlende_lasten
     fehlende_lasten: list = field(default_factory=list)
+    #: Siehe FatigueMember.nicht_anwendbar
+    nicht_anwendbar: bool = False
     #: Netzabhaengige Spannungsspitzen (seit 10.10.2026, Plan Singularitaeten
     #: Paket 2): Orte an Elementen der Zonen auffaelliger Stellen gehen nicht
     #: in D, dsig_max und die Stellen der Lasten ein - sie sind nur berichtet,
@@ -397,6 +406,8 @@ def _status(n) -> str:
     Ergebnis darf darum nicht "erfüllt" heissen. Ergebnisse aus Dateien vor
     dem 22.09.2026 kennen die Felder nicht - daher getattr.
     """
+    if getattr(n, "nicht_anwendbar", False):
+        return "nicht anwendbar"
     if getattr(n, "fehler", ""):
         return "nicht geführt"
     if n.util > 1.0:
@@ -448,8 +459,13 @@ class FatigueResults:
     #: Zusammenfassung dann aber "keine Staebe oder Volumen mit Kerbfall",
     #: obwohl es sie gab (Befund SV5, Faelle D/E der Probe).
     ohne_wirksame_last: list = field(default_factory=list)
+    #: Ermuedungslasten auf Ergebnissen einer plastischen Rechnung (seit
+    #: 13.10.2026): der Grund; dann ist kein Nachweis gefuehrt
+    nicht_anwendbar: str = ""
 
     def summary(self) -> str:
+        if getattr(self, "nicht_anwendbar", ""):
+            return f"Ermüdung: {NICHT_ANWENDBAR} ({self.nicht_anwendbar})"
         # Stab- und Volumeneintraege mit Anzeigenamen; ein nicht gefuehrter
         # Eintrag (fehler) hat D = 0 und darf weder "max. Schaedigung" sein
         # noch die Zeile allein bestreiten - bis zum 22.09.2026 stand dann
@@ -499,6 +515,10 @@ class FatigueResults:
             return text
 
         for m in self.members.values():
+            if getattr(m, "nicht_anwendbar", False):
+                rows.append([m.member, f"{m.category/1e6:.0f}", f"{m.gamma_Mf:.2f}",
+                             "–", "–", "–", "–", "–", NICHT_ANWENDBAR])
+                continue
             if getattr(m, "fehler", ""):
                 rows.append([m.member, f"{m.category/1e6:.0f}", f"{m.gamma_Mf:.2f}",
                              "–", "–", "–", "–", "–", f"nicht geführt: {m.fehler}"])
@@ -509,6 +529,10 @@ class FatigueResults:
         for v in self.volumen.values():
             kf = f"{v.category_grund/1e6:.0f}" + (f" / Naht {v.category_naht/1e6:.0f}"
                                                   if v.n_naht and v.category_naht else "")
+            if getattr(v, "nicht_anwendbar", False):
+                rows.append([f"Volumen {v.name}", kf, f"{v.gamma_Mf:.2f}",
+                             "–", "–", "–", "–", "–", NICHT_ANWENDBAR])
+                continue
             if getattr(v, "fehler", ""):
                 rows.append([f"Volumen {v.name}", kf, f"{v.gamma_Mf:.2f}",
                              "–", "–", "–", "–", "–", f"nicht geführt: {v.fehler}"])
@@ -1232,6 +1256,48 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             progress(f"Ermüdung Volumen {k.name}: D = {fv.util:.3f}")
 
 
+def _plastische_zustaende(model: Model, all_res: dict) -> list:
+    """Die Ergebnisse, auf die eine Ermuedungslast verweist und die aus einer
+    plastischen Rechnung stammen - auch eine Kombination oder Ueberlagerung,
+    in der ein solches steckt (volumen.ist_plastisch)."""
+    from .volumen import ist_plastisch
+    namen: list = []
+    for fl in model.fatigue_loads.values():
+        teil = list(getattr(fl, "folge", None) or []) or [fl.case_max] + ([fl.case_min] if fl.case_min else [])
+        namen.extend(n for n in teil if n)
+    return [n for n in dict.fromkeys(namen) if n in all_res and ist_plastisch(all_res[n], all_res)]
+
+
+def _nicht_anwendbar(model: Model, out: FatigueResults, plastisch: list, bezug: float) -> FatigueResults:
+    """Alle Staebe und Volumen mit Kerbfall als „nicht anwendbar“ (seit
+    13.10.2026): die Ermuedungslasten stehen auf Ergebnissen einer
+    plastischen Rechnung. Gerechnet wird nichts."""
+    grund = ("Ermüdungslasten auf Ergebnissen einer plastischen Rechnung: "
+             + ", ".join(plastisch[:5]) + (" …" if len(plastisch) > 5 else ""))
+    out.nicht_anwendbar = grund
+    text = f"{NICHT_ANWENDBAR} ({grund})"
+    for mname, member in model.members.items():
+        if not member.design or member.detail_category is None:
+            continue
+        gMf = GAMMA_MF.get((member.assessment, member.consequence), 1.15)
+        fm = FatigueMember(mname, member.detail_category, member.detail_category_shear or 100e6, gMf)
+        fm.bezugsjahre = bezug
+        fm.nicht_anwendbar, fm.fehler = True, text
+        out.members[mname] = fm
+    for k in (getattr(model, "koerper", {}) or {}).values():
+        if float(getattr(k, "kerbfall", 0.0) or 0.0) <= 0 or not k.elemente:
+            continue
+        gMf = GAMMA_MF.get((getattr(k, "assessment", "damage_tolerant"),
+                            getattr(k, "consequence", "low")), 1.15)
+        fv = FatigueVolumen(k.name, float(k.kerbfall), gMf, category_grund=float(k.kerbfall),
+                            category_naht=float(getattr(k, "kerbfall_naht", 0.0) or 0.0))
+        fv.bezugsjahre = bezug
+        fv.n_elemente = len(k.elemente)
+        fv.nicht_anwendbar, fv.fehler = True, text
+        out.volumen[k.name] = fv
+    return out
+
+
 def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                   anteil=None) -> FatigueResults:
     """Ermuedungsnachweis aller Staebe mit Kerbfall fuer alle Ermuedungslasten.
@@ -1264,6 +1330,9 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
         from ..schweissnaehte import kerbfaelle_uebernehmen
         kerbfaelle_uebernehmen(model, out.warnings if hasattr(out, "warnings") else None)
     all_res = analysis.all_results() if hasattr(analysis, "all_results") else analysis
+    plastisch = _plastische_zustaende(model, all_res)
+    if plastisch:
+        return _nicht_anwendbar(model, out, plastisch, bezug)
     from .design import _anteil, _melde
     zu_pruefen = sum(1 for mem in model.members.values()
                      if mem.design and mem.detail_category is not None)
