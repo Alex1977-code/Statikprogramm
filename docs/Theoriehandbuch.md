@@ -4652,12 +4652,31 @@ nach von Mises:
 
       σ_v = √(½[(σ_1−σ_2)² + (σ_2−σ_3)² + (σ_3−σ_1)²]) ≤ f_y/γ_M0
 
-**Nicht nach einer plastischen Rechnung (seit 13.10.2026).** Dieser
-Spannungsnachweis setzt einen elastischen Zustand voraus. Stammt ein
-Ergebnis aus einer plastischen Rechnung (`info["plastizitaet"]`, auch in einer
-Überlagerung, `ec3.volumen.ist_plastisch`), steht der Bereich als „nicht
-bewertet – plastische Rechnung“ da, ohne Zahl. Bis zum 13.10.2026 las er auch
-dort die geglättete Eckspannung; am Drehlager kam sie außerhalb der Zonen auf
+**Nach einer plastischen Rechnung: die plastische Hauptdehnung (seit
+13.10.2026).** Dieser Spannungsnachweis setzt einen elastischen Zustand
+voraus. Stammt ein Ergebnis aus einer plastischen Rechnung
+(`info["plastizitaet"]`), wird statt der Spannung die größte plastische
+Hauptdehnung am Integrationspunkt nachgewiesen:
+
+      ε_p,1 = max über die Punkte λ_max(ε_p),   η = ε_p,1 / ε_lim
+
+mit dem Tensor der plastischen Dehnung ε_p (Gleitungen der Voigt-Form halbiert)
+an jedem Integrationspunkt der Elemente des Bereichs außerhalb netzabhängiger
+Stellen und dem Grenzwert ε_lim (`Volumenbereich.eps_grenze`, Vorgabe 5 % nach
+EN 1993-1-5 Anh. C / EN 1993-1-14). Der Löser legt ε_p und die Lage der Punkte
+dafür im Ergebnis ab (`info["ip_dehnungen"]`, `solver.ip_dehnungen_ablegen`).
+Geprüft am Zugstab mit freier Querdehnung unter σ = 1,2 f_y bei linearer
+Verfestigung H = E r/(1 − r): ε_p,x = (σ − f_y)/H, ε_p,y = ε_p,z = −ε_p,x/2,
+also ε_p,1 = ε_p,x, an allen Punkten auf 1e-6 genau
+(`tests/test_volumen_dehnung.py`). Eine Überlagerung plastischer Ergebnisse
+hat keine plastische Dehnung (sie ist nicht überlagerbar), eine Ergebnisdatei
+von vor dem 13.10.2026 keine abgelegte: dann „nicht bewertet – plastische
+Rechnung“ mit dem Grund. Schrauben, Ankerstäbe und Gewindeteile bleiben beim
+Nachweis über Kraft bzw. Spannung nach EN 1993-1-8. Körper und Werkstoffe mit
+`nachweis_ausnehmen` (Hilfs- und Krafteinleitungskörper, vom Anwender gesetzt)
+gehen in keinen Volumennachweis ein und werden als ausgenommen ausgewiesen.
+Bis zum 13.10.2026 stand der Bereich plastisch als „nicht bewertet“, davor las
+er die geglättete Eckspannung; am Drehlager kam sie außerhalb der Zonen auf
 1 596 N/mm², an Ecken nicht fließender Elemente.
 
 mit den Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3 als Eigenwerten des Spannungstensors.

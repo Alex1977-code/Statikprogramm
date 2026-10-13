@@ -161,6 +161,16 @@ NEUE_VORGABEN = {"plastizitaet": {"abbruch": "ingenieurmaessig"}}
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
               "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
+#: Felder, die nach dem 07.10.2026 an Objekten der Modelldatei dazukamen, mit
+#: ihrem Vorgabewert, je Schluessel der Modelldatei. Traegt ein Objekt die
+#: Vorgabe, zaehlt das Feld nicht mit - sonst passte keine Ergebnisdatei von
+#: davor mehr: mit den Feldern vom 13.10.2026 (Volumennachweis plastisch, N2)
+#: wies das Oeffnen die gespeicherte Rechnung des Drehlagers ab („seit der
+#: Rechnung geändert: Werkstoffe, Linien, Flächen und Volumen“), obwohl nichts
+#: geaendert war. Mit einem anderen Wert zaehlt es mit.
+SPAETERE_FELDER = {"materials": {"nachweis_ausnehmen": False},
+                   "koerper": {"nachweis_ausnehmen": False},
+                   "volumenbereiche": {"eps_grenze": 0.05}}
 #: einzelne Objekte (Einstellungen) statt Sammlungen
 _EINZELOBJEKTE = ("design", "plastizitaet")
 #: Sammlungen {Name: Objekt}. Sie zaehlen nur mit den Eintraegen, deren Name
@@ -283,13 +293,17 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool):
     weg = set(TEXTFELDER) | set(ANZEIGEFELDER.get(schluessel, ()))
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
+    spaeter = SPAETERE_FELDER.get(schluessel, {})
 
     neu = NEUE_VORGABEN.get(schluessel, {})
 
     def objekt(x):
         if not isinstance(x, dict):
             return x
-        y = {k: v for k, v in x.items() if k not in weg and not (k in neu and v == neu[k])}
+        # NEUE_VORGABEN (Einstellungen) und SPAETERE_FELDER (Objektfelder):
+        # beide mit ihrem Vorgabewert nicht in der Kennung
+        y = {k: v for k, v in x.items() if k not in weg
+             and not (k in neu and v == neu[k]) and not (k in spaeter and v == spaeter[k])}
         if schluessel == "load_cases":
             for f in LASTFELDER:
                 if isinstance(y.get(f), list):

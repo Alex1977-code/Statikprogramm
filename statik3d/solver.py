@@ -3265,6 +3265,53 @@ def _ip_spannungen_ablegen(model: Model, temp: dict) -> dict:
     return {k: (np.asarray(ids, np.int64), np.stack(werte)) for k, (ids, werte) in je.items()}
 
 
+def ip_dehnungen_ablegen(model: Model, dehnungen: dict) -> dict:
+    """{(Typ, P): (Elemente (n,), eps_p (n, P, 6), Ort (n, P, 3))} - die
+    plastischen Dehnungen der fliessenden Elemente an ihren
+    Integrationspunkten (Voigt mit Ingenieurgleitungen, wie
+    plastizitaet.Zustand) und die Lage der Punkte im Raum [m].
+
+    Fuer den Volumennachweis einer plastischen Rechnung ueber die groesste
+    plastische Hauptdehnung (Entscheidung des Anwenders vom 13.10.2026,
+    ec3/volumen.py): der Zustand der Plastizitaet steht sonst nicht im
+    Ergebnis. ``dehnungen`` ist {Element: eps_p (P, 6)}. Der Ort folgt aus
+    den natuerlichen Koordinaten der Punkte des Dehnungsoperators (derselbe,
+    mit dem gerechnet wurde) und den Formfunktionen; ohne sie die
+    Elementmitte. Am Drehlager (12 226 fliessende tet10) rund 3,5 MB."""
+    from .elements import solid as sl
+    je_typ: dict = {}
+    for i in sorted(int(k) for k in dehnungen):
+        je_typ.setdefault(model.elements[i].typ, []).append(i)
+    je: dict = {}
+    X_alle = np.asarray(model.nodes, float)
+    for typ, liste in je_typ.items():
+        try:
+            ops = sl.dehnungsoperator(model, typ, liste)
+            gruppen = [([int(i) for i in op.idx], None if op.xi is None else np.asarray(op.xi, float))
+                       for op in ops]
+        except ValueError:
+            gruppen = [(liste, None)]
+        for ids, xi in gruppen:
+            N = None
+            if xi is not None:
+                try:
+                    N = np.array([np.asarray(sl.N_dN(typ, *p)[0], float) for p in xi])
+                except (ValueError, KeyError):
+                    N = None
+            for i in ids:
+                E = np.atleast_2d(np.asarray(dehnungen[i], float))
+                Xe = X_alle[np.asarray(model.elements[i].nodes, int)]
+                if N is not None and N.shape == (E.shape[0], len(Xe)):
+                    O = N @ Xe
+                else:
+                    O = np.repeat(Xe.mean(axis=0)[None, :], E.shape[0], axis=0)
+                ids_l, eps_l, ort_l = je.setdefault((typ, E.shape[0]), ([], [], []))
+                ids_l.append(i)
+                eps_l.append(E)
+                ort_l.append(O)
+    return {k: (np.asarray(a, np.int64), np.stack(b), np.stack(c)) for k, (a, b, c) in je.items()}
+
+
 def randspannung_knoten(model: Model, ecken: dict) -> dict:
     """Die geglaettete Spannung an den Eckknoten der Volumenelemente: je
     Knoten, Koerper (Element.group) und Werkstoff das Mittel der Elementwerte
@@ -3685,6 +3732,11 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
         # die Anzeige (spannungen.anzeige_knotenwerte, seit 13.10.2026); die
         # Nachweise lesen sie nicht
         res.info["ip_spannungen"] = _ip_spannungen_ablegen(model, temp)
+    if isinstance(temp, dict) and "plast_dehnungen" in temp:
+        # plastische Dehnungen je Integrationspunkt fuer den Volumennachweis
+        # (ec3/volumen.py, seit 13.10.2026) - auch leer, wenn nichts fliesst:
+        # dann ist eps_p = 0 bekannt, nicht unbekannt
+        res.info["ip_dehnungen"] = ip_dehnungen_ablegen(model, temp["plast_dehnungen"])
     if getattr(model, "knotendilatation", False):
         # je Rechnung einmal (am StaticSystem gemerkt), nicht je Lastfall
         schl = None if aktiv is None else hash(np.asarray(aktiv, bool).tobytes())
@@ -4875,6 +4927,8 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     for i, s0 in pl.sigma0_je_element(model, zustand).items():
         sig0[i] = np.asarray(sig0.get(i, 0.0), float) + s0
     temp["plast_punkte"] = pl.punktspannungen(model, u, zustand)
+    temp["plast_dehnungen"] = {int(i): zustand.eps_p[i] for i, v in zustand.eps_p_eq.items()
+                               if float(np.max(v)) > 0 and i in zustand.eps_p}
     for z in log:
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}

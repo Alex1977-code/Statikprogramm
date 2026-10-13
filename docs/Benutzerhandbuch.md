@@ -8554,17 +8554,42 @@ Querschnitt. Nachgewiesen wird der **Spannungszustand** nach
 DIN EN 1993-1-1, 6.2.1(5): die Vergleichsspannung nach von Mises gegen
 f_y/γ_M0.
 
-**Nach einer plastischen Rechnung** (seit 13.10.2026) gibt der
-Volumennachweis keinen Zahlenwert aus, sondern den Status „nicht bewertet –
-plastische Rechnung“. Das gilt in der Tabelle „Volumen“, in der
-Zusammenfassung, im Ergebnisbaum und im Bericht; die Ampel bleibt ohne Farbe,
-weil nichts überschritten, sondern nichts bewertet ist. In einer plastischen
-Rechnung ist die Spannung keine Nachweisgröße mehr. Als plastisch gilt ein
-Ergebnis, das selbst plastisch gerechnet wurde, und ebenso eine Kombination
-oder Überlagerung, in der ein solches Ergebnis steckt. Bis zum 13.10.2026 stand
-dort ein Zahlenwert aus der geglätteten Eckspannung; am Drehlager lag sie
-außerhalb der netzabhängigen Stellen bis 1 596 N/mm², an Ecken nicht
-fließender Elemente, deren Integrationspunkte weit darunter liegen.
+**Nach einer plastischen Rechnung** (seit 13.10.2026) ist die Spannung keine
+Nachweisgröße mehr. Der Volumennachweis prüft dann die größte plastische
+Hauptdehnung ε_p,1 an den Integrationspunkten gegen einen Grenzwert:
+η = ε_p,1 / Grenzwert. Der Grenzwert steht in der Maske des Volumenbereichs
+(„Grenzwert ε_p,1 plastisch [%]“), Vorgabe 5 % nach EN 1993-1-5 Anh. C /
+EN 1993-1-14; er wird mit dem Modell gespeichert. Die Tabelle „Volumen“ zeigt
+dann statt der Spannungen die Ausnutzung, ε_p,1 in Prozent, das Bauteil
+(Körper) und den Ort (Element, Integrationspunkt, Koordinaten); dasselbe
+steht in Zusammenfassung und Bericht. Netzabhängige Stellen sind wie im
+elastischen Fall nur berichtet. Schrauben, Ankerstäbe und Gewindeteile werden
+nicht über die Dehnung nachgewiesen, sondern über Kraft bzw. Spannung nach
+EN 1993-1-8 (Stab- bzw. Anschlussnachweis); sind sie als Volumen modelliert,
+gehören sie nicht in einen Volumenbereich oder werden ausgenommen (unten).
+
+„Nicht bewertet – plastische Rechnung“ steht nur noch dort, wo es keine
+plastische Dehnung zum Auswerten gibt: bei einer Überlagerung plastisch
+gerechneter Ergebnisse (etwa einer Alternative einer Ergebniskombination – die
+plastische Dehnung ist nicht überlagerbar, die Kombination ist selbst
+plastisch zu rechnen) und bei einer Ergebnisdatei, die vor dem 13.10.2026
+geschrieben wurde (neu rechnen). Bis zum 13.10.2026 stand plastisch überall
+„nicht bewertet“, davor ein Zahlenwert aus der geglätteten Eckspannung; am
+Drehlager lag sie außerhalb der netzabhängigen Stellen bis 1 596 N/mm², an
+Ecken nicht fließender Elemente, deren Integrationspunkte weit darunter
+liegen.
+
+**Vom Volumennachweis ausnehmen** (seit 13.10.2026). Hilfs- und
+Krafteinleitungskörper – etwa aus einem gewichtslosen Hilfswerkstoff – sollen
+nicht nachgewiesen werden. Dafür gibt es den Schalter „vom Volumennachweis
+ausnehmen (Hilfs- oder Krafteinleitungskörper)“ in der Maske des Werkstoffs
+(gilt für alle Körper aus ihm) und in der Maske des Volumens (gilt für diesen
+Körper, auch für mehrere gewählte Volumen auf einmal). Ihre Elemente gehen in
+keinen Volumennachweis ein, weder elastisch noch plastisch, und stehen mit
+Namen als „ausgenommen“ in Tabelle, Zusammenfassung und Bericht; sind alle
+Elemente eines Bereichs ausgenommen, lautet sein Status „ausgenommen“. Den
+Schalter setzt nur der Anwender; das Programm setzt ihn nie selbst, auch nicht
+nach dem Namen.
 
 Anlegen: die Knoten des Bereichs in der Ansicht auswählen, dann Register
 *Nachweise* → „Volumen“ (oder in der Tabelle „Volumen“ auf

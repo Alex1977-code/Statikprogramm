@@ -17,6 +17,14 @@ und elastisch: Status, Tabelle, Ampel, Zusammenfassung, Ergebnisbaum und
 Bericht; die Ermuedung auch ueber eine Kombination und eine Ueberlagerung, in
 der ein plastisches Ergebnis steckt. Elastisch bleibt alles, wie es war.
 
+Seit dem zweiten Schritt derselben Entscheidung (N2, 13.10.2026) steht der
+Volumennachweis plastisch nicht mehr als „nicht bewertet“, sondern ueber die
+groesste plastische Hauptdehnung am Integrationspunkt gegen den Grenzwert
+(tests/test_volumen_dehnung.py); hier wird geprueft, dass er an der Platte
+den Wert liefert, den eine eigene Auswertung der abgelegten Dehnungen
+ausserhalb der Zonen ergibt. „Nicht bewertet“ bleibt fuer Ergebnisse ohne
+auswertbare Dehnung.
+
 Aufruf:  python -m tests.test_plastisch_nachweise
 """
 import os
@@ -103,14 +111,33 @@ def test_plastisch(platte):
           bool(r.info.get("plastizitaet")) and bool(r.info.get("plastisch")),
           f"{len(r.info.get('plastisch') or {})} Elemente fließen")
     c = an.volumen.bereiche["B1"]
-    check("Volumennachweis: Status „nicht bewertet – plastische Rechnung“, kein Zahlenwert",
-          c.status() == NB and c.util == 0.0 and not c.werte and not c.je_kombination, f"{c.status()!r}")
+    # eigene Auswertung (N2): groesster Eigenwert des Tensors eps_p (Gleitung/2)
+    # an den Punkten der B1-Elemente ausserhalb der Zonen von GZT1
+    from statik3d import spitzenanzeige as sa
+    rg = an.combinations["GZT1"]
+    zone = sa.nachweis_zonen(m, {"GZT1": rg}).get("GZT1") or set()
+    b1 = set(int(e) for e in m.volumenbereiche["B1"].elemente) - set(zone)
+    soll = 0.0
+    for ids, eps, _orte in (rg.info.get("ip_dehnungen") or {}).values():
+        for a, i in enumerate(np.asarray(ids).tolist()):
+            if int(i) not in b1:
+                continue
+            for e in np.asarray(eps)[a]:
+                T = np.array([[e[0], e[3] / 2, e[5] / 2], [e[3] / 2, e[1], e[4] / 2],
+                              [e[5] / 2, e[4] / 2, e[2]]])
+                soll = max(soll, float(np.linalg.eigvalsh(T)[-1]))
+    check("Volumennachweis (N2): über die plastische Hauptdehnung, η = ε_p,1/5 % wie die eigene Auswertung",
+          getattr(c, "kriterium", "") == "dehnung" and c.status() in ("erfüllt", "NICHT erfüllt")
+          and abs(c.eps_p1 - soll) <= 1e-12 + 1e-9 * soll and abs(c.util - soll / 0.05) <= 1e-9,
+          f"ε_p,1 {c.eps_p1 * 100:.6f} % / eigen {soll * 100:.6f} %, η {c.util:.6f}, {c.status()}")
     zeile = [z for z in an.volumen.table() if z[0] == "B1"][0]
-    check("… Tabelle: keine Spannung, keine Ausnutzung, der Status",
-          zeile[4] == "–" and zeile[7] == "–" and zeile[-1] == NB, str(zeile))
-    check("… Ampel: ohne Farbe (offen, nicht überschritten)", tab.ampelstufe(c.status()) == "")
+    check("… Tabelle: keine Spannung, η und Status",
+          zeile[4] == "–" and zeile[7] == f"{c.util:.3f}" and zeile[-1] == c.status(), str(zeile))
+    check("… Ampel wie der Status", tab.ampelstufe(c.status()) == tab.ampelstufe("erfüllt"
+                                                                                 if c.util <= 1.0 else "NICHT erfüllt"))
     s = an.volumen.summary()
-    check("… Zusammenfassung", s.startswith(f"Volumen: {NB}") and "B1" in s and "Ausnutzung" not in s, s)
+    check("… Zusammenfassung mit ε_p,1, ohne „nicht bewertet“",
+          s.startswith("Volumen (plastische Hauptdehnung ε_p,1)") and "B1" in s and "nicht bewertet" not in s, s)
     # Ermuedung
     f = an.fatigue
     fv = f.volumen.get("Platte")
@@ -129,25 +156,26 @@ def test_plastisch(platte):
     app.processEvents()
     w.refresh_volumen()
     vz = [list(z) for z in w.tbl_vol.modell.zeilen]
-    check("Oberfläche: Volumentabelle ohne Ausnutzung, Status „nicht bewertet“",
-          vz and vz[0][-1] == NB and vz[0][8] in ("", None), str(vz[:1]))
+    check("Oberfläche: Volumentabelle mit η, ε_p,1 und Status (N2)",
+          vz and vz[0][-1].startswith(c.status()) and isinstance(vz[0][8], float)
+          and abs(vz[0][8] - c.util) < 1e-12 and abs(vz[0][9] - c.eps_p1 * 100) < 1e-12, str(vz[:1]))
     check("… Ermüdung: Urteil und Protokollzusatz „nicht anwendbar“",
           w._ermuedung_zusatz(f) == " - nicht anwendbar" and w._ermuedung_urteil(fv) == "nicht anwendbar"
           and not [n for _t, n in w._nachweise_nicht_erfuellt() if n.startswith(("Ermüdung", "Volumen"))],
           f"{w._ermuedung_zusatz(f)!r} {w._nachweise_nicht_erfuellt()}")
     nachweise = dict((e[2], e[1]) for e in w._ergebnisliste().get("Nachweise", []))
-    check("… Ergebnisbaum: Volumen und Ermüdung ohne Zahlenwert",
-          "nicht bewertet" in nachweise.get("nachweis:volumen", "")
+    check("… Ergebnisbaum: Volumen mit der Dehnung, Ermüdung ohne Zahlenwert",
+          "plastische Hauptdehnung" in nachweise.get("nachweis:volumen", "")
           and "nicht anwendbar" in nachweise.get("nachweis:fatigue", ""), str(nachweise))
     html = Report(m, an).html()
     teil_v = html[html.find("Spannungsnachweise der Volumenbereiche"):]
     teil_f = html[html.find("Ermüdungsnachweis nach DIN EN 1993-1-9"):]
-    check("Bericht: Volumen „nicht bewertet – plastische Rechnung“, Ermüdung „nicht anwendbar“",
-          NB in teil_v and NA in teil_f and "Schädigung D an der maßgebenden Stelle" not in teil_f)
+    check("Bericht: Volumen über die plastische Hauptdehnung, Ermüdung „nicht anwendbar“",
+          "plastische Hauptdehnung" in teil_v and NA in teil_f
+          and "Schädigung D an der maßgebenden Stelle" not in teil_f)
     i0 = html.find("Wesentliche Ergebnisse")
-    check("… die Zusammenfassung nennt beide, ohne „Alle Nachweise erfüllt“",
-          "nicht bewertet" in html[i0:] and "nicht anwendbar" in html[i0:]
-          and "Alle Nachweise erfüllt" not in html[i0:])
+    check("… die Zusammenfassung nennt die Ermüdung „nicht anwendbar“, ohne „Alle Nachweise erfüllt“",
+          "nicht anwendbar" in html[i0:] and "Alle Nachweise erfüllt" not in html[i0:])
     # Stabnachweis bleibt
     d = an.design.members.get("Anker") if an.design is not None else None
     check("Stabnachweis (EN 1993-1-1/-1-8) des Ankers liefert weiter einen Wert",

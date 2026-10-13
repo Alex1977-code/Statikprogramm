@@ -1917,13 +1917,21 @@ class VolumenbereichDialog(QtWidgets.QDialog):
             "Bei einem aus Blechen geschweißten Bauteil ist das zu viel -\n"
             "dort die Blechdicke eintragen.")
         form.addRow("Erzeugnisdicke [mm] (0 = aus dem Körper)", self.ed_t)
+        # plastische Rechnung (Entscheidung des Anwenders vom 13.10.2026)
+        self.ed_eps = NumEdit(float(getattr(v, "eps_grenze", 0.05)) * 100.0 if v else 5.0, 90)
+        self.ed_eps.setToolTip(
+            "Grenzwert der größten plastischen Hauptdehnung ε_p,1 am Integrationspunkt\n"
+            "für den Nachweis einer plastischen Rechnung: η = ε_p,1 / Grenzwert.\n"
+            "Vorgabe 5 % nach EN 1993-1-5 Anh. C / EN 1993-1-14.")
+        form.addRow("Grenzwert ε_p,1 plastisch [%]", self.ed_eps)
         self.ed_text = QtWidgets.QLineEdit(v.beschreibung if v else "")
         form.addRow("Beschreibung", self.ed_text)
         lay.addLayout(form)
         hint = QtWidgets.QLabel(
             "Nachgewiesen wird die Vergleichsspannung nach von Mises gegen\n"
             "f_y/γ_M0 (DIN EN 1993-1-1, 6.2.1(5)), dazu Hauptspannungen,\n"
-            "τ_max und die Mehrachsigkeit.")
+            "τ_max und die Mehrachsigkeit. Bei plastischer Rechnung die größte\n"
+            "plastische Hauptdehnung ε_p,1 gegen den Grenzwert.")
         hint.setStyleSheet("color: #555;")
         lay.addWidget(hint)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
@@ -1938,6 +1946,7 @@ class VolumenbereichDialog(QtWidgets.QDialog):
             "singular": self.cb_sing.isChecked(),
             "ausrundung": self.ed_r.value() * 1e-3,
             "dicke": self.ed_t.value() * 1e-3,
+            "eps_grenze": self.ed_eps.value() / 100.0,
             "beschreibung": self.ed_text.text().strip()}
 
 

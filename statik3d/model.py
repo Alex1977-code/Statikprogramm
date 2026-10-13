@@ -328,6 +328,12 @@ class Material:
     #: f_p0,1k und f_pk dort ab, der Anschlussbau f_yb und f_ub. Leer bei
     #: Dateien vor dem 13.10.2026; dann liest :meth:`werkstoffart` Name und Sorte.
     art: str = ""
+    #: Koerper aus diesem Werkstoff vom Volumennachweis ausnehmen - Hilfs- oder
+    #: Krafteinleitungskoerper (Entscheidung des Anwenders vom 13.10.2026:
+    #: „Nullmaterial- und Krafteinleitungskörper vom Nachweis ausnehmen und
+    #: als ausgenommen ausweisen“). Setzt nur der Anwender, nie das Programm
+    #: nach dem Namen; ec3/volumen.py weist die Elemente als ausgenommen aus.
+    nachweis_ausnehmen: bool = False
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
@@ -2064,6 +2070,13 @@ class Volumenbereich:
     singular: bool = False
     beschreibung: str = ""
     dicke: float = 0.0
+    #: Grenzwert der groessten plastischen Hauptdehnung eps_p,1 am
+    #: Integrationspunkt fuer den Nachweis einer plastischen Rechnung
+    #: (Entscheidung des Anwenders vom 13.10.2026; Vorgabe 5 % nach
+    #: EN 1993-1-5 Anh. C / EN 1993-1-14), als Zahl (0,05 = 5 %). Bis zum
+    #: 13.10.2026 gab es ihn nicht: plastisch stand der Bereich als „nicht
+    #: bewertet“, davor mit der Spannung als Zahlenwert.
+    eps_grenze: float = 0.05
 
     def bezug(self) -> str:
         n = len(self.elemente)
@@ -2759,6 +2772,10 @@ class Volumenkoerper:
     #: automatische Wahl, und eine aeltere Datei ohne das Feld soll rechnen wie
     #: bisher. Model.check lehnt andere Werte ab.
     ordnung: Optional[int] = None
+    #: Diesen Koerper vom Volumennachweis ausnehmen - Hilfs- oder
+    #: Krafteinleitungskoerper (13.10.2026, wie Material.nachweis_ausnehmen).
+    #: Setzt nur der Anwender; ein Importhinweis darf es vorschlagen.
+    nachweis_ausnehmen: bool = False
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"

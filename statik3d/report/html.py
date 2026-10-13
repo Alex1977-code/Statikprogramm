@@ -1717,6 +1717,31 @@ class Report:
             "Steifigkeit ist nur für Stabelemente gebildet), Plastizieren und "
             "die Ermüdung aus dem räumlichen Spannungszustand.",
         ]))
+        from ..ec3 import volumen as _vol
+        dehnung = [c for c in v.bereiche.values() if getattr(c, "kriterium", "") == "dehnung"]
+        if dehnung or any(getattr(c, "nicht_bewertet", "") for c in v.bereiche.values()):
+            # plastische Rechnung (Entscheidung des Anwenders vom 13.10.2026)
+            b.append(("list", [
+                "Bei plastischer Rechnung ist die Spannung keine Nachweisgröße: sie liegt in "
+                "den fließenden Bereichen auf der verfestigten Fließfläche, und die geglättete "
+                "Spannung nicht fließender Elemente daneben ist eine Extrapolation. Nachgewiesen "
+                "wird dort die größte plastische Hauptdehnung ε_p,1 an den Integrationspunkten "
+                f"gegen einen Grenzwert (Vorgabe 5 % nach {_vol.NORM_DEHNUNG}, je Bereich "
+                "einstellbar): η = ε_p,1 / Grenzwert.",
+                "ε_p,1 ist der größte Eigenwert des Tensors der plastischen Dehnung an einem "
+                "Integrationspunkt; maßgebend ist der größte Punkt des Bereichs außerhalb "
+                "netzabhängiger Stellen. Eine Überlagerung von Ergebnissen einer plastischen "
+                "Rechnung hat keine plastische Dehnung - sie wird nicht bewertet.",
+                "Schrauben, Ankerstäbe und Gewindeteile werden nicht über die Dehnung "
+                "nachgewiesen, sondern über Kraft bzw. Spannung nach DIN EN 1993-1-8 (Stab- "
+                "bzw. Anschlussnachweis). Sind sie als Volumen modelliert, gehören sie nicht "
+                "in einen Volumenbereich oder werden ausgenommen.",
+            ]))
+        if any(getattr(c, "ausgenommen", None) for c in v.bereiche.values()):
+            b.append(("list", [
+                "Körper und Werkstoffe mit dem Schalter „vom Volumennachweis ausnehmen“ "
+                "(Hilfs- oder Krafteinleitungskörper; gesetzt vom Anwender) gehen in keinen "
+                "Nachweis ein und stehen als „ausgenommen“ mit Namen in der Übersicht."]))
 
         b.append(self._h(2, "Übersicht"))
         rows = [["Bereich", "Elemente", "Material", "t [mm]", "f_y [MPa]", "σ_v [MPa]",
@@ -1728,10 +1753,26 @@ class Report:
             # Eine selbst angegebene wird mit * gekennzeichnet.
             t_mm = (fmt(w.get("dicke", 0.0) * 1e3, 0)
                     + ("*" if w.get("dicke_gesetzt") else "")) if w.get("dicke") else "–"
-            if getattr(c, "nicht_bewertet", ""):
-                # plastische Rechnung: kein Zahlenwert (13.10.2026)
+            if getattr(c, "nicht_bewertet", "") or getattr(c, "alle_ausgenommen", False):
+                # plastisch ohne auswertbare Dehnung bzw. alles ausgenommen
+                # (13.10.2026): kein Zahlenwert
                 rows.append([c.name, str(c.n_elemente), c.material, "–", fmt(c.fy / 1e6, 0),
-                             "–", "–", "–", "–", "–", "", c.status()])
+                             "–", "–", "–", "–", "–", "", c.status()
+                             + (": " + ", ".join(c.ausgenommen) if c.alle_ausgenommen else "")])
+                continue
+            if getattr(c, "kriterium", "") == "dehnung":
+                # plastische Rechnung: η aus der Dehnung, keine Spannungsspalten
+                rows.append([c.name, str(c.n_elemente), c.material, t_mm, fmt(c.fy / 1e6, 0),
+                             "–", "–", "–", "–",
+                             ("–" if c.singular or c.ausgeschaltet else Util(c.util)),
+                             c.kombination, c.status()])
+                if getattr(c, "zone_n", 0):
+                    rows.append([f"{c.name} (netzabhängige Stellen)", str(c.zone_n), c.material, "–",
+                                 fmt(c.fy / 1e6, 0), "–", "–", "–", "–", fmt(c.zone_eta, 3),
+                                 c.zone_kombination, "nur berichtet"])
+                if c.ausgenommen:
+                    rows.append([f"{c.name} (ausgenommen)", str(c.n_ausgenommen), "", "–", "–", "–",
+                                 "–", "–", "–", "–", "", "ausgenommen: " + ", ".join(c.ausgenommen)])
                 continue
             rows.append([c.name, str(c.n_elemente), c.material, t_mm,
                          fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
@@ -1744,10 +1785,25 @@ class Report:
                 rows.append([f"{c.name} (netzabhängige Stellen)", str(c.zone_n), c.material, "–",
                              fmt(c.fy / 1e6, 0), fmt(c.zone_sigma_v / 1e6, 1), "–", "–", "–",
                              fmt(c.zone_eta, 3), c.zone_kombination, "nur berichtet"])
+            if getattr(c, "ausgenommen", None):
+                rows.append([f"{c.name} (ausgenommen)", str(c.n_ausgenommen), "", "–", "–", "–",
+                             "–", "–", "–", "–", "", "ausgenommen: " + ", ".join(c.ausgenommen)])
         b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
                   None, "t ist die Erzeugnisdicke für die Abminderung von f_y "
                   "nach EN 1993-1-1 Tab. 3.1; ohne * die kleinste Abmessung "
                   "des Körpers, mit * am Bereich angegeben."))
+        if dehnung:
+            # plastische Rechnung (13.10.2026): Wert, Grenzwert, Ort und Bauteil
+            rows = [["Bereich", "Grenzwert [%]", "ε_p,1 [%]", "η", "Ort", "Bauteil", "Werkstoff",
+                     "Komb.", "Status"]]
+            for c in dehnung:
+                rows.append([c.name, _vol.prozent(c.eps_grenze), fmt(c.eps_p1 * 100.0, 3),
+                             ("–" if c.singular else Util(c.util)), c.ort_text(), c.bauteil or "–",
+                             c.werkstoff_ort or "–", c.kombination, c.status()])
+            b.append(("table", rows, "Plastische Rechnung: größte plastische Hauptdehnung ε_p,1 "
+                                     "am Integrationspunkt", None,
+                      f"Grenzwert nach {_vol.NORM_DEHNUNG}; Ort des maßgebenden Integrationspunkts "
+                      "(IP) mit seinen Koordinaten."))
         if self.opt("figures"):
             liste = [c for c in v.bereiche.values()
                      if not c.fehler and not c.singular and not c.ausgeschaltet][:60]
@@ -1767,14 +1823,22 @@ class Report:
                 b.append(("p", "Der Nachweis ist für diesen Bereich ausgeschaltet "
                                "(„Nachweis führen“ nicht gesetzt)."))
                 continue
+            if getattr(c, "alle_ausgenommen", False):
+                b.append(("p", "Alle Elemente des Bereichs sind vom Nachweis ausgenommen: "
+                               + ", ".join(c.ausgenommen) + "."))
+                continue
             if getattr(c, "nicht_bewertet", ""):
-                b.append(("p", f"{_pretty(c.fehler)}. Ein Nachweis über die Spannung wird "
-                               "deshalb nicht ausgegeben."))
+                b.append(("p", f"{_pretty(c.fehler)}. Ein Nachweis über die Dehnung ist für "
+                               "diese Ergebnisse nicht möglich, einer über die Spannung wird "
+                               "nicht ausgegeben."))
                 self._warnings.append(f"Volumenbereich {c.name}: {c.status()}")
                 continue
             if c.fehler:
                 b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
                 self._warnings.append(f"Volumenbereich {c.name}: {c.fehler}")
+                continue
+            if getattr(c, "kriterium", "") == "dehnung":
+                b += self._volumen_dehnung(c)
                 continue
             w = c.werte or {}
             kv = []
@@ -1815,6 +1879,8 @@ class Report:
                            f"{c.zone_n} Elemente, σ_v bis {fmt(c.zone_sigma_v / 1e6, 1)} N/mm², "
                            f"η = {fmt(c.zone_eta, 3)} ({c.zone_kombination}, Element "
                            f"{c.zone_element + 1}) – {_SA.VERMERK}"))
+            if getattr(c, "ausgenommen", None):
+                kv.append(("ausgenommen", f"{', '.join(c.ausgenommen)} ({c.n_ausgenommen} Elemente)"))
             if "ausrundung" in w:
                 kv.append(("Kerbradius / mittlere Elementgröße",
                            f"{w['ausrundung'] * 1e3:.1f} / "
@@ -1843,6 +1909,53 @@ class Report:
                     b.append(("note", note))
         # "Volumennachweis NICHT erfüllt für: …" legt chapter_summary an - hier
         # fehlte er bis zum 23.09.2026, sobald die Berichtsoption aus ist.
+        return b
+
+    def _volumen_dehnung(self, c) -> list:
+        """Einzelnachweis eines Volumenbereichs ueber die plastische
+        Hauptdehnung (plastische Rechnung, 13.10.2026)."""
+        from ..ec3 import volumen as _vol
+        b = []
+        kv = []
+        if c.beschreibung:
+            kv.append(("Beschreibung", c.beschreibung))
+        kv += [("Bereich", f"{c.n_elemente} Volumenelemente"),
+               ("Material", f"{c.material}, f_y = {c.fy / 1e6:.0f} N/mm²"),
+               ("Kriterium", "größte plastische Hauptdehnung ε_p,1 am Integrationspunkt ≤ Grenzwert"),
+               ("Grenzwert", f"{_vol.prozent(c.eps_grenze)} % ({_vol.NORM_DEHNUNG})"),
+               ("maßgebende Kombination", c.kombination),
+               ("Ort", c.ort_text()),
+               ("Bauteil (Körper)", c.bauteil or "–"),
+               ("Werkstoff am Ort", c.werkstoff_ort or "–"),
+               ("plastische Hauptdehnung ε_p,1", f"{fmt(c.eps_p1 * 100.0, 3)} %"),
+               ("Ausnutzung ε_p,1/Grenzwert",
+                "– (nur berichtet, Singularität)" if c.singular else Util(c.util))]
+        if getattr(c, "zone_n", 0):
+            kv.append(("netzabhängige Stellen (nur berichtet)",
+                       f"{c.zone_n} Elemente, ε_p,1 bis {fmt(c.zone_eps * 100.0, 3)} %, "
+                       f"η = {fmt(c.zone_eta, 3)} ({c.zone_kombination}"
+                       + (f", Element {c.zone_element + 1}" if c.zone_element >= 0 else "")
+                       + f") – {_SA.VERMERK}"))
+        if getattr(c, "ausgenommen", None):
+            kv.append(("ausgenommen", f"{', '.join(c.ausgenommen)} ({c.n_ausgenommen} Elemente)"))
+        kv.append(("Status", {"erfüllt": "Nachweis erfüllt",
+                              "NICHT erfüllt": "Nachweis NICHT erfüllt",
+                              "nur berichtet": "kein Nachweis geführt (Singularität)"}.get(
+                                  c.status(), c.status())))
+        b.append(("kv", kv, f"Volumenbereich {c.name}"))
+        if c.hinweise:
+            b.append(("list", [f"Hinweis: {_pretty(h)}" for h in c.hinweise]))
+        if len(c.je_kombination) > 1:
+            zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
+            rows = [["Kombination", "Element", "ε_p,1 [%]", "Ausnutzung"]]
+            for d in zeilen:
+                rows.append([d["kombination"], str(d["element"] + 1) if d["element"] >= 0 else "–",
+                             fmt(d.get("eps_p1", 0.0) * 100.0, 3) if d.get("kriterium") == "dehnung" else "–",
+                             Util(d["eta"])])
+            rows, note = self._truncate(rows, self.opt("max_detail_combinations") or 12)
+            b.append(("table", rows, "Nachweis je Kombination (absteigend geordnet)", None, ""))
+            if note:
+                b.append(("note", note))
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)
@@ -4554,16 +4667,26 @@ class Report:
         # wie ein Stab mit design=False, den check_members nicht aufnimmt. Bis
         # zum 23.09.2026 stand er in ``fehler`` und kippte das Urteil auf
         # "nicht geführt wurden: 1 Volumenbereiche" (Befund B058).
-        vo_aktiv = ([c for c in vo.bereiche.values() if not c.ausgeschaltet]
+        vo_aktiv = ([c for c in vo.bereiche.values() if not c.ausgeschaltet
+                     and not getattr(c, "alle_ausgenommen", False)]
                     if vo is not None and getattr(vo, "bereiche", None) else [])
         if vo_aktiv:
             gefuehrte = [c for c in vo_aktiv if not c.singular and not c.fehler]
             if gefuehrte:
                 schlimmster = max(gefuehrte, key=lambda c: c.util)
                 kv.append(("max. Ausnutzung Volumen", Util(schlimmster.util)))
-                kv.append(("maßgebend (Volumen)",
-                           f"{schlimmster.name}: Element {schlimmster.element}, "
-                           f"{schlimmster.kombination}"))
+                if getattr(schlimmster, "kriterium", "") == "dehnung":
+                    # plastische Rechnung (13.10.2026): Dehnung, Ort und Bauteil
+                    from ..ec3.volumen import prozent
+                    kv.append(("maßgebend (Volumen)",
+                               f"{schlimmster.name}: ε_p,1 = {fmt(schlimmster.eps_p1 * 100.0, 3)} % "
+                               f"von {prozent(schlimmster.eps_grenze)} %, {schlimmster.ort_text()}"
+                               + (f", {schlimmster.bauteil}" if schlimmster.bauteil else "")
+                               + f", {schlimmster.kombination}"))
+                else:
+                    kv.append(("maßgebend (Volumen)",
+                               f"{schlimmster.name}: Element {schlimmster.element}, "
+                               f"{schlimmster.kombination}"))
                 nf_v = [c.name for c in gefuehrte if c.util > 1.0]
                 if nf_v:
                     status_ok = False

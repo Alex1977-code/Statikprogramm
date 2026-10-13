@@ -2329,7 +2329,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     ("tx", "Teilung x", "ganz", *teil(0), None), ("ty", "Teilung y", "ganz", *teil(1), None),
                     ("tz", "Teilung z", "ganz", *teil(2), None),
                     ("kommentar", "Kommentar", "text", lambda n: m.koerper[n].kommentar or "",
-                     lambda n, v: setattr(m.koerper[n], "kommentar", v), None)]
+                     lambda n, v: setattr(m.koerper[n], "kommentar", v), None),
+                    ("ausnehmen", "vom Volumennachweis ausnehmen", "jn",
+                     lambda n: bool(getattr(m.koerper[n], "nachweis_ausnehmen", False)),
+                     lambda n, v: setattr(m.koerper[n], "nachweis_ausnehmen", bool(v)), None)]
         if art == "lager":
             def gesperrt(d):
                 return lambda i: d in (m.supports[i].dofs or [])
@@ -8526,6 +8529,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             breite=80,
                             hinweis="Kerbfall an verschweißten Berührungsstellen mit anderen Volumen "
                                     "(gemeinsame Knoten ohne Kontaktbedingung); leer = wie Kerbfall"),
+                          F("ausnehmen", "vom Volumennachweis ausnehmen (Hilfs- oder Krafteinleitungskörper)", "haken",
+                            bool(getattr(k, "nachweis_ausnehmen", False)) if k is not None else False,
+                            hinweis="Der Körper geht in keinen Volumennachweis ein und steht dort als "
+                                    "„ausgenommen“. Das Programm setzt den Schalter nie selbst."),
                           F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
                 titel = f"Volumen {name}"
         elif art in ("lastfaelle", "lastfall"):
@@ -8677,6 +8684,11 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("grenze", "Grenze", "info", (pl_.grenze_text(mt, pz_) if mt else "–")),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
+                          # Hilfs- oder Krafteinleitungskoerper (13.10.2026): nur
+                          # der Anwender setzt ihn, nie das Programm nach dem Namen
+                          F("ausnehmen", "vom Volumennachweis ausnehmen (Hilfs- oder Krafteinleitungskörper)", "haken",
+                            bool(getattr(mt, "nachweis_ausnehmen", False)) if mt else False,
+                            hinweis="Körper aus diesem Werkstoff gehen in keinen Volumennachweis ein und stehen dort als „ausgenommen“ - für Hilfs- und Krafteinleitungskörper. Das Programm setzt den Schalter nie selbst."),
                           F("benutzt", "benutzt von", "info",
                             f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
                 if mt is not None and (mt.fy_dicke or mt.fu_dicke):
@@ -10972,6 +10984,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     k.flaechen, k.material = flaechen, w.get("material", "")
                     k.teilung, k.kommentar = teilung, str(w.get("kommentar", "") or "")
                 kp_ = m.koerper[name]
+                # vom Volumennachweis ausnehmen (13.10.2026)
+                kp_.nachweis_ausnehmen = bool(w.get("ausnehmen", False))
                 if abs(float(kp_.kerbfall or 0.0) - kerbfall) > 1e-6:
                     kp_.kerbfall = kerbfall
                     kp_.kerbfall_vorschlag = False        # eingegeben heisst bestaetigt
@@ -11186,7 +11200,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           grade=sorte, verfestigung=r_verf)
             dicken_zeilen = []
             if alt_mt is None:
-                mt = Material(neuname, **werte_)
+                mt = Material(neuname, **werte_,
+                              nachweis_ausnehmen=bool(w.get("ausnehmen", False)))
             else:
                 # Der Werkstoff bleibt, wie er war, und nur die Felder, die die Maske
                 # geaendert hat, werden geschrieben (13.10.2026). Bis dahin wurde er
@@ -11203,6 +11218,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 # f_y oder f_u von Hand geaendert: die Tabelle bleibt, ihre duennste
                 # Stufe folgt (Material.dickentabellen_nachfuehren), das Protokoll sagt es
                 dicken_zeilen = mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
+                # vom Volumennachweis ausnehmen (13.10.2026, Maskenfeld „ausnehmen“):
+                # wie die anderen Felder nur geschrieben, wenn die Maske es geaendert hat
+                if "ausnehmen" in w and (geaendert is None or "ausnehmen" in geaendert):
+                    mt.nachweis_ausnehmen = bool(w.get("ausnehmen", False))
             if not neu and neuname != name and name in m.materials:
                 del m.materials[name]
                 for e in m.elements:
@@ -15666,8 +15685,14 @@ class MainWindow(QtWidgets.QMainWindow):
                    hinweis="Vergleichsspannung nach von Mises"),
             Spalte("h", "", "zahl", 2,
                    hinweis="Mehrachsigkeit σ_m/σ_v; bei dreiachsigem Zug kritisch"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="σ_v/(f_y/γ_M0); Filter z. B. > 1",
+            Spalte("Ausnutzung", "", "zahl", 3,
+                   hinweis="σ_v/(f_y/γ_M0), bei plastischer Rechnung ε_p,1/Grenzwert; Filter z. B. > 1",
                    ampel=True),
+            # plastische Rechnung (13.10.2026): Dehnung, Bauteil und Ort
+            Spalte("ε_p,1", "%", "zahl", 3,
+                   hinweis="größte plastische Hauptdehnung am Integrationspunkt (plastische Rechnung)"),
+            Spalte("Bauteil", hinweis="Körper des maßgebenden Punkts (plastische Rechnung)"),
+            Spalte("Ort", hinweis="Element und Integrationspunkt mit Koordinaten (plastische Rechnung)"),
             Spalte("Kombination"), Spalte("Status", ampel=True)],
             "Volumen", self, mit_kennwerten=True)
         self.tbl_vol.zeile_gewaehlt.connect(self._tabelle_volumen)
@@ -18547,22 +18572,37 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         erg = getattr(self.analysis, "volumen", None) if self.analysis is not None else None
         zeilen = []
+
+        def _status(c):
+            # Zone und ausgenommene Koerper/Werkstoffe (13.10.2026) im Status
+            s = c.status()
+            if getattr(c, "zone_n", 0):
+                s += "; netzabhängige Stellen nur berichtet"
+            if getattr(c, "ausgenommen", None):
+                s += ((": " if getattr(c, "alle_ausgenommen", False) else "; ausgenommen: ")
+                      + ", ".join(c.ausgenommen))
+            return s
         for name, vb in self.model.volumenbereiche.items():
             c = erg.bereiche.get(name) if erg is not None else None
             w = (c.werte or {}) if c is not None else {}
+            # plastische Rechnung (13.10.2026): Dehnung statt Spannung
+            dehnung = c is not None and getattr(c, "kriterium", "") == "dehnung"
+            sp = w if not dehnung else {}
             zeilen.append([name, len(vb.elemente),
                            (c.material if c is not None else ""),
                            (c.fy / 1e6 if c is not None and c.fy else ""),
-                           (w.get("s1", 0.0) / 1e6 if w else ""),
-                           (w.get("s3", 0.0) / 1e6 if w else ""),
-                           (w.get("sigma_v", 0.0) / 1e6 if w else ""),
-                           (w.get("h", 0.0) if w else ""),
+                           (sp.get("s1", 0.0) / 1e6 if sp else ""),
+                           (sp.get("s3", 0.0) / 1e6 if sp else ""),
+                           (sp.get("sigma_v", 0.0) / 1e6 if sp else ""),
+                           (sp.get("h", 0.0) if sp else ""),
                            (c.util if c is not None and not c.singular
-                            and not getattr(c, "nicht_bewertet", "") else ""),
+                            and not getattr(c, "nicht_bewertet", "")
+                            and not getattr(c, "alle_ausgenommen", False) else ""),
+                           (c.eps_p1 * 100.0 if dehnung else ""),
+                           (c.bauteil if dehnung else ""),
+                           (c.ort_text() if dehnung else ""),
                            (c.kombination if c is not None else ""),
-                           ((c.status() + ("; netzabhängige Stellen nur berichtet"
-                                           if getattr(c, "zone_n", 0) else ""))
-                            if c is not None else "nicht gerechnet")])
+                           (_status(c) if c is not None else "nicht gerechnet")])
         self._fill(self.tbl_vol, zeilen)
 
     def _tabelle_beulfeld(self, wert):
