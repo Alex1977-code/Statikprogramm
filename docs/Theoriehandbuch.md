@@ -4972,6 +4972,10 @@ Vergleichsspannung q = √(3/2 s:s) des Spannungsdeviators s bleibt unter
 fy + H·ε_p,eq; der Verfestigungsmodul H folgt aus der eingestellten
 Tangente E_t = r·E nach dem Fließen: H = E·r/(1 − r) (uniaxial gilt
 σ = fy + H·ε_p und ε = σ/E + ε_p, also dσ/dε = E·H/(E + H) = E_t).
+Seit dem 13.10.2026 endet die Verfestigung bei f_u des Werkstoffs (bei
+Schrauben f_ub, bei Spannstahl f_pk), danach fließt er ideal plastisch, und
+r steht je Werkstoff (§ 5e.5). Bis zum 13.10.2026 verfestigte jeder Werkstoff
+ohne Grenze mit dem r der Einstellung.
 Rückführung (radial return) je Element, an der Elementmitte:
 
     σ_trial = D (ε − ε_p,alt),  s = dev σ_trial,  q = √(3/2 s:s),  f = q − (fy + H ε_p,eq)
@@ -5947,6 +5951,180 @@ Grenze von vier Halbierungen teilen; beim Abbruch rechnete der Lauf Stufe 21
 von 22. Die Messung der Zonen kostet am Netz Mittel
 0,14 bis 0,26 s je Newton-Schritt; einmal je Rechnung kommen 2,4 s für
 Kandidaten und Zonen dazu.
+
+### 5e.5 Verfestigung bis f_u, danach ideal plastisch (13.10.2026)
+
+**Anlass.** Bis zum 13.10.2026 verfestigte jeder Werkstoff ohne Grenze:
+σ_y = f_y + H·ε_p,eq wuchs mit der plastischen Dehnung beliebig weiter. Am
+Drehlager stand der Schraubenkörper V90 so bei 560,6 N/mm² und ε_p 9,69 %,
+also über der Zugfestigkeit seines Werkstoffs (f_u = 490 N/mm²). Die
+Entscheidung des Anwenders vom 13.10.2026 lautet: „Option 1: bilinear mit
+E/100 bis f_u, danach ideal plastisch (entspricht EN 1993-1-5 C.6).
+Verfestigungsmodul je Werkstoff einstellbar, Vorgabe E/100, wählbar auch ohne
+Verfestigung (E/10 000). f_u immer aus dem Werkstoff nehmen. Fehlt er, eine
+Meldung ausgeben und keinen Vorgabewert setzen. Schrauben bis f_ub, Spannstahl
+f_p0,1k bis f_pk. Konvergenzverhalten in den Prüfreihen mit beobachten.
+Multilinear später.“
+
+**Werkstoffgesetz.** Die Fließbedingung ist
+
+    σ_y(ε_p,eq) = min(f_y + H·ε_p,eq, f_u),   der Knick liegt bei ε_p,u = (f_u − f_y)/H.
+
+Bis zum Knick verfestigt der Werkstoff linear, danach fließt er ideal
+plastisch. Ist f_u kleiner als f_y (eine widersprüchliche Eingabe), gilt f_y
+als Grenze, also ideal plastisch ab f_y, und das Protokoll sagt es.
+
+**Was „E/100“ ist.** EN 1993-1-5 zeichnet die Steigungen in Bild C.2 in das
+σ-ε-Bild, also als Tangente E_t der Gesamtkurve und nicht als
+Verfestigungsmodul H der Fließbedingung. Mit E_t = E·H/(E + H) folgt für
+E_t = r·E der Modul H = E·r/(1 − r). Das ist genau die Lesart der bisherigen
+Einstellung „Verfestigung E_t/E“ (§ 5e, Werkstoffgesetz): E/100 ist r = 1 %,
+H = E/99 = 2121,2 N/mm² bei E = 210 000 N/mm², „ohne Verfestigung“ ist
+r = 10⁻⁴, H = E/9 999 = 21,0 N/mm². Rechnungen, in denen kein Punkt f_u
+erreicht, bleiben deshalb bitgleich: am Zugstab bei ε = 3 % (hex8 und tet10)
+und am Kragträger unter 1,20 M_el sind u, F_p und die Zahl der
+Newton-Schritte mit und ohne f_u identisch
+(`tests/test_verfestigung_grenze.py`, test_unter_fu_bitgleich). Hätte „E/100“
+den Modul H gemeint, wäre H = 2100 statt 2121,2 N/mm² (1,0 % weicher), σ_y
+bei ε_p = 5 % 460,00 statt 461,06 N/mm², und f_u = 490 bei f_y = 355 N/mm²
+wäre bei ε_p = 6,429 % statt 6,364 % erreicht. Der Normtext lag bei dieser
+Änderung nicht vor; die Lesart folgt aus der Darstellung als σ-ε-Linie, auf
+die sich die Entscheidung beruft.
+
+**Je Werkstoff.** `Material.verfestigung` trägt r = E_t/E des Werkstoffs.
+None heißt „Vorgabe“: dann gilt `Plastizitaet.verfestigung` der Rechnung, ab
+Werk 1 % = E/100. Bis zum 13.10.2026 gab es nur diese eine Einstellung für
+alle Werkstoffe. Eine Datei ohne den Schlüssel (vor dem 13.10.2026) liest
+None, also die Vorgabe. Die Grenze ist `Material.fu` (`plastizitaet.werkstoff_grenze`),
+**immer aus dem Werkstoff**: nicht 1,3·f_y wie `Material.ultimate_strength`,
+nicht die Sortentabelle und nicht die Dickentabelle. Das ist dieselbe Regel,
+nach der die Plastizität f_y liest (nur `Material.fy`, § 5e).
+
+**Ohne f_u.** Fehlt f_u, wird kein Vorgabewert gesetzt. Der Werkstoff
+verfestigt dann ohne Grenze wie bis zum 13.10.2026; das Protokoll der
+Plastizität sagt es einmal je Lastfall und Werkstoff („Werkstoff „S355“ ohne
+f_u – Verfestigung ohne Grenze, bitte f_u eingeben“), die Netzabnahme
+(`diagnose.abnahme` mit Warnungen, Prüfung 9) meldet es als WARNUNG vor der
+Rechnung, und die Werkstoffmaske zeigt „f_u fehlt“. Abgebrochen wird nicht,
+aus zwei Gründen. Ein Abbruch machte jede Rechnung mit Plastizität
+unmöglich, deren Werkstoff nur f_y trägt — von Hand angelegte Werkstoffe,
+Importe ohne Zugfestigkeit und alle bisherigen Prüfungen und Prüfmatrixfälle
+mit Plastizität. Und „keinen Vorgabewert setzen“ ist mit dem Weiterrechnen
+erfüllt: es wird kein f_u erfunden, sondern ohne Grenze gerechnet, und das
+steht an drei Stellen da.
+
+**Schrauben und Spannstahl.** Die Werte stehen wie bisher in `fy` und `fu`;
+`Material.art` („Schraube“, „Spannstahl“ oder leer) gibt ihnen nur die
+Namen. Der Anschlussbau (`joints.build.add_bolt`) legt „Schraube 10.9“ mit
+f_yb = 900 und f_ub = 1000 N/mm² als Art Schraube an; eine ältere Datei
+erkennt `Material.werkstoffart` am Namen oder an der Sorte (Festigkeitsklasse
+nach EN 1993-1-8 Tab. 3.1). Der RFEM-6-Import liest f_p0,1k nach `fy` und
+f_pk nach `fu` (wie bisher) und setzt die Art Spannstahl, wenn
+`MaterialImpl.materialType` 15 ist (am Drehlager Material 3, die Ankerstäbe)
+oder nur f_p0,1k da ist. Die Grenze wirkt nur, wo die Plastizität rechnet,
+in den **Volumen**. Stäbe fließen in diesem Programm nicht; die Zug- und
+Ankerstäbe aus diesen Werkstoffen bleiben elastisch wie bisher.
+
+**Rückführung am Knick** (`plastizitaet.rueckfuehrung`, im Stapel
+`_schritt_teil`). Mit dem Δγ_H = f/(3G + H) des verfestigenden Asts gilt:
+liegt f_y + H·(ε_p,n + Δγ_H) ≤ f_u, endet der Punkt auf dem verfestigenden
+Ast. Sonst — der Punkt liegt schon auf dem Plateau oder der Schritt läuft
+über den Knick — endet er auf q = f_u mit
+
+    Δγ = (q_trial − f_u) / (3G).
+
+Das ist die einzige Lösung von q_trial − 3G·Δγ = σ_y(ε_p,n + Δγ), denn die
+linke Seite fällt in Δγ und die rechte steigt nicht. Ein Schritt aus dem
+ungedehnten Zustand mit q_trial = 20 000 N/mm² endet auf 490 N/mm² (1,8·10⁻¹⁵
+relativ) bei ε_p = 8,05 % hinter dem Knick (6,36 %); ohne f_u ist jeder
+Punkt unter dem Knick bitgleich wie vorher.
+
+**Konsistente Tangente.** Auf dem verfestigenden Ast bleibt sie, wie sie war
+(§ 5e). Auf dem Plateau, auch nach einem Schritt über den Knick, ist
+dΔγ/dq_trial = 1/(3G), die Tangente rechnet also mit H = 0
+(`plastizitaet.verfestigung_wirksam`): θ̄ = θ, und D_ep ist in Richtung N
+singulär. Geprüft gegen die zentrale Differenz: am Punkt über 6 Zustände auf
+dem verfestigenden Ast (größte Abweichung 2,1·10⁻¹⁰), 19 auf dem Plateau
+(6,9·10⁻¹⁰) und 20 mit Wechsel im Schritt (2,7·10⁻⁹); am Netz ΔK = −∂F_p/∂u
+für hex8 (15 Punkte verfestigend, 1 auf dem Plateau) auf 5,8·10⁻⁹ und tet10
+(4 verfestigend, 44 auf dem Plateau) auf 1,1·10⁻⁸, beide ohne den Boden
+`H_TANGENTE`.
+
+**Der Boden H_TANGENTE.** Damit K + ΔK regulär bleibt, rechnet ΔK mit
+mindestens H = 10⁻⁴·3G = 24,2 N/mm² (§ 5e.2). Auf dem Plateau greift er
+immer, und bei „ohne Verfestigung“ ebenfalls, weil 21,0 N/mm² darunter
+liegt. Dort ist ΔK um den Boden steifer als die konsistente Tangente: am
+Netz mit Boden 1,8·10⁻⁵ (hex8) bzw. 3,8·10⁻⁵ (tet10) neben der zentralen
+Differenz. Die Rückführung rechnet mit dem wahren H; das Ergebnis im
+Gleichgewicht hängt am Boden nicht. Er kostet Konvergenz, und zwar beim
+hex8 deutlich mehr als beim tet10 (siehe unten).
+
+**Zugstab über den Knick.** Quader 0,3 × 0,1 × 0,1 m an drei Symmetrieebenen
+gehalten, das Ende um ε·L gezogen (Weg vorgegeben, weil es hinter f_u unter
+Kraft kein Gleichgewicht gibt), S355 mit f_u = 490 N/mm², E/100. Die
+geschlossene Lösung ist σ = f_y + E_t·(ε − f_y/E) bis f_u, danach f_u, und
+ε_p,eq = ε − σ/E. Bei ε = 3 % treffen hex8 und tet10 414,45 N/mm² an allen
+Integrationspunkten auf 2·10⁻¹³, bei ε = 10 % in einer und in drei
+Laststufen 490,00 N/mm² auf 6·10⁻¹⁰ (hex8) und 8·10⁻¹³ (tet10), quer
+spannungsfrei, und ε_p,eq = 9,767 %. Ebenso die Schraube 10.9 (954,00 N/mm²
+bei 3 %, 1000 N/mm² bei 8 %), der Spannstahl (1030 N/mm² bei 15 %, E = 170 000
+N/mm²) und „ohne Verfestigung“ (355,38 N/mm² bei 2 %). Durch den ganzen
+Löser (`solve_static`, hex8, 10 %) steht σ_v an allen Knoten auf 490,0000
+N/mm².
+
+**Konvergenz.** In den fünf Prüfreihen der Plastizität (`test_plastizitaet`,
+`test_spitzen_abbruch`, `test_vorspannung_fliessen`,
+`test_temperatur_sofort`, `test_vorspannung_sofort`) ändern sich weder die
+Newton-Schritte noch die Halbierungen. Gezählt wurde je Aufruf von
+`plastizitaet.iteration`, vorher auf 192317a, nachher auf 6e11a7c, jeweils
+aus einem festen Arbeitsbaum:
+
+| Prüfreihe | Aufrufe | Newton-Schritte vorher / nachher | Halbierungen vorher / nachher | nicht konvergiert vorher / nachher |
+|---|---|---|---|---|
+| test_plastizitaet | 84 | 1455 / 1455 | 37 / 37 | 8 / 8 |
+| test_spitzen_abbruch | 10 | 224 / 224 | 9 / 9 | 0 / 0 |
+| test_vorspannung_fliessen | 4 | 16 / 16 | 0 / 0 | 0 / 0 |
+| test_temperatur_sofort | 5 | 27 / 27 | 1 / 1 | 0 / 0 |
+| test_vorspannung_sofort | 7 | 43 / 43 | 1 / 1 | 0 / 0 |
+
+Die acht „nicht konvergiert“ in `test_plastizitaet` sind Vergleichs- und
+Rücknahmeläufe, die die Prüfreihe so erwartet (etwa die Anfangsdehnung bei
+kleiner Verfestigung, das Halbieren abgeschaltet, das Übermaß ohne den
+neuen Bezug), vorher wie nachher dieselben. f_u
+erreicht in diesen Reihen nur die Ankerplatte von `test_spitzen_abbruch`
+(S355 mit f_u = 510 N/mm²): in der Zone am Ring steht σ_v jetzt bei 510 statt
+531,7 N/mm², ε_p max wächst von 8,44 auf 8,77 % (streng) und von 8,33 auf
+8,60 % (ingenieurmäßig), bei denselben 29 und 14 Newton-Schritten. Die
+übrigen Prüfkörper dieser Reihen haben kein f_u und rechnen ohne Grenze wie
+vorher; sie sagen über das Plateau also nichts. Die Tabelle in § 5e.4 ist
+vor der Grenze gemessen. An der groben Ankerplatte mit 5·10⁻³ weicht σ_v
+außerhalb der Zone jetzt um 0,29 statt 0,20 N/mm² ab und die Ankerkraft um
++0,18 statt +0,14 %; die übrigen Spalten und die feine Ankerplatte sind
+nicht nachgemessen.
+
+Das Plateau selbst zeigt der Zugstab (Newton-Schritte in einer bzw. drei
+Laststufen; „vorher“ bei 10 % heißt ohne Grenze, 561,45 statt 490 N/mm²):
+
+| Zugstab | Toleranz | hex8 vorher | hex8 nachher | tet10 vorher | tet10 nachher |
+|---|---|---|---|---|---|
+| ε = 3 % (unter f_u) | 10⁻³, 10⁻⁴, 10⁻⁸ | 3 / 5 | 3 / 5 | 3 / 5 | 3 / 5 |
+| ε = 10 % (über den Knick) | 10⁻³ | 3 / 5 | 3 / 5 | 3 / 5 | 3 / 5 |
+| ε = 10 % | 10⁻⁴ | 3 / 5 | 3 / 5 | 3 / 5 | 3 / 5 |
+| ε = 10 % | 10⁻⁸ | 3 / 5 | **8 / 10** | 3 / 5 | 4 / 6 |
+
+Bei den Toleranzen, die die Oberfläche anbietet (10⁻², 10⁻³, 10⁻⁴), ändert
+sich also nichts. Darunter konvergiert der hex8 auf dem Plateau **nur noch
+linear**: nach 2,05·10⁻⁶ im dritten Schritt fiel die Änderung mit dem Faktor
+0,6 je Schritt (8,6·10⁻⁸, 3,4·10⁻⁸, 2,1·10⁻⁸, 1,2·10⁻⁸ …), und mit Toleranz
+10⁻¹⁰ kam er in 40 Schritten nicht an; der Verlauf sprang alle elf Schritte
+wieder auf 8·10⁻⁸. Ohne den Boden H_TANGENTE stand die Änderung schon nach
+dem dritten Schritt bei 2,1·10⁻⁹, und der tet10 braucht mit Boden vier
+Schritte bis 3·10⁻¹¹. Vermutlich wirkt der Boden beim hex8 über die
+kondensierten inneren Moden stärker: sie werden mit (K_aa + ΔK_aa)⁻¹
+herauskondensiert, und auf dem Plateau ist ΔK_aa in Fließrichtung bis auf
+den Boden null. Das ist nicht weiter zerlegt. Ideal plastisch konvergiert der
+Newton damit schlechter, aber erst unter den Toleranzen, die die Oberfläche
+anbietet.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

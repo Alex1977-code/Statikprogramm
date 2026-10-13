@@ -16717,7 +16717,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_plast_verf.setDecimals(2)
         self.sp_plast_verf.setSuffix(" %")
         self.sp_plast_verf.setValue(1.0)
-        self.sp_plast_verf.setToolTip("Tangente E_t/E nach dem Fließen: 0 % ideal-plastisch, Vorgabe 1 %")
+        self.sp_plast_verf.setToolTip("Tangente E_t/E nach dem Fließen: 0 % ideal-plastisch, Vorgabe 1 % = E/100.\n"
+                                      "Sie gilt für jeden Werkstoff, der in seiner Maske „Vorgabe“ trägt; "
+                                      "dort lässt sie sich je Werkstoff einstellen (seit 13.10.2026).\n"
+                                      "Bis f_u verfestigt der Werkstoff, danach fließt er ideal plastisch.")
         self.sp_plast_stufen = QtWidgets.QSpinBox()
         self.sp_plast_stufen.setRange(1, 20)
         self.sp_plast_stufen.setValue(3)

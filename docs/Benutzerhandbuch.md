@@ -8019,7 +8019,9 @@ f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
 23.09.2026 galt die Sorte nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
 Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
 Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
-EC3-Prüfung).
+EC3-Prüfung). Für die Plastizität der Volumen gilt das nicht: sie liest f_y und
+f_u nur aus den Feldern des Werkstoffs (siehe „Verfestigung je Werkstoff,
+bis f_u und danach ideal plastisch“ unter *Berechnung → Einstellungen*).
 
 **Schreibweise der Stahlsorte.** Die Sorte wird ohne Rücksicht auf Groß- und
 Kleinschreibung und auf Leerzeichen erkannt: „s235“, „S 235“ und „ S235 “ sind
@@ -9174,12 +9176,16 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   eine Einstellung **am Modell**, sie reist mit der Datei): mit dem Haken
   fließen Volumenelemente, deren Vergleichsspannung (von Mises) die
   Streckgrenze fy ihres Werkstoffs übersteigt — die Spannung bleibt bei
-  fy + H·ε_p, die Kraft verteilt sich um, die Verformung wächst. Werkstoffe
+  fy + H·ε_p, seit dem 13.10.2026 höchstens bei f_u, die Kraft verteilt sich
+  um, die Verformung wächst. Werkstoffe
   ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie einmal je
   Lastfall. Bis zum 13.10.2026 stand diese Zeile bei jedem Newton-Schritt
   neu im Protokoll, am Bolzen der Tests in 11 von 13 Zeilen.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
-  ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
+  ideal-plastisch, Vorgabe 1 % = E/100). Seit dem 13.10.2026 gilt sie für
+  jeden Werkstoff, der in seiner Maske „Vorgabe“ trägt, und lässt sich dort je
+  Werkstoff einstellen; bis dahin galt sie für alle Werkstoffe (siehe den
+  nächsten Punkt). **Laststufen** (Vorgabe 3) bringen die
   Last stufenweise auf (Temperaturlasten und Vorspannkräfte wirken seit dem
   10.10.2026 ab der ersten Stufe voll, siehe „Temperaturlasten und
   Vorspannungen wirken in den Laststufen sofort voll“), **Schritte je Stufe**
@@ -9195,7 +9201,9 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   in Laststufen“. Der Bericht sagt unter „Gültigkeitsbereich und Hinweise“,
   dass elastisch-plastisch gerechnet ist, in wie vielen Ergebnissen, in wie
   vielen davon Elemente fließen und nach welchem Werkstoffgesetz (von Mises
-  mit isotroper linearer Verfestigung, E_t/E aus der Einstellung). Bis zum
+  mit isotroper linearer Verfestigung, E_t/E aus der Einstellung, seit dem
+  13.10.2026 mit dem Zusatz „bis f_u, danach ideal plastisch“ und den
+  Werkstoffen mit eigener Verfestigung oder ohne f_u). Bis zum
   07.10.2026 stand dort auch dann „Die Berechnung ist elastisch (keine
   Plastizität, …)“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
   1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
@@ -9214,6 +9222,68 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   treffen sie (`tests/test_vorspannung_fliessen.py`).
   Eine Temperaturlast im Volumen betrifft das nicht, weil sie die Form der
   Spannung nicht ändert, nur ihren allseitigen Anteil.
+* **Verfestigung je Werkstoff, bis f_u und danach ideal plastisch**
+  (13.10.2026, Entscheidung des Anwenders): Ein Werkstoff verfestigt nach
+  dem Fließen mit der Steigung E/100 bis zu seiner Zugfestigkeit f_u und
+  fließt danach ideal plastisch; die Spannung bleibt dann bei f_u. Das
+  entspricht dem Werkstoffmodell mit linearer Verfestigung nach EN 1993-1-5,
+  Anhang C.6. E/100 ist die Steigung der Spannungs-Dehnungs-Linie, so wie die
+  Norm sie in Bild C.2 zeichnet, und damit dieselbe Steigung, die die
+  Einstellung „Verfestigung E_t/E = 1 %“ schon bisher meinte. Rechnungen, in
+  denen kein Werkstoff f_u erreicht, ergeben darum genau dieselben Zahlen wie
+  vorher. **Bis zum 13.10.2026** verfestigte jeder Werkstoff ohne Grenze
+  weiter; am Drehlager stand ein Schraubenkörper (V90) dadurch bei
+  560,6 N/mm² und 9,69 % plastischer Dehnung, über seinem f_u von 490 N/mm².
+  Auch Dateien, die vor dem 13.10.2026 gespeichert wurden, rechnen jetzt mit
+  dieser Grenze; ihre Ergebnisse ändern sich überall dort, wo die Spannung
+  f_u bisher überschritten hatte.
+
+  In der **Werkstoffmaske** (Doppelklick auf einen Werkstoff) steht dafür das
+  Feld **Verfestigung**. Zur Wahl stehen „Vorgabe E/100“ und „ohne
+  Verfestigung (E/10 000)“; jede andere Steigung lässt sich als „E/250“
+  eintippen. „Vorgabe“ heißt, dass der Werkstoff die Einstellung
+  *Verfestigung E_t/E* unter *Berechnung → Einstellungen → Plastizität*
+  nimmt, und die steht ab Werk auf 1 % = E/100. Eine Eingabe, die das
+  Programm nicht versteht, wird nicht übernommen, und die Meldungszeile sagt,
+  was gemeint sein kann. Darunter zeigt die Zeile **Grenze**, bis wohin der
+  Werkstoff verfestigt und bei welcher plastischen Dehnung das erreicht ist,
+  etwa „f_u = 490 N/mm², erreicht bei ε_p = 6,36 %, danach ideal plastisch“.
+  Gespeichert wird die Verfestigung mit dem Werkstoff; eine Datei, die sie
+  noch nicht kennt, bekommt die Vorgabe.
+
+  **f_u kommt immer aus dem Werkstoff**, also aus dem Feld f_u der Maske,
+  nicht aus der Stahlsorte und nicht aus 1,3·f_y. Fehlt es, setzt das
+  Programm keinen Ersatzwert ein. Der Werkstoff verfestigt dann ohne Grenze
+  wie bis zum 13.10.2026, das Protokoll der Rechnung sagt einmal je Lastfall
+  „Werkstoff „S355“ ohne f_u – Verfestigung ohne Grenze, bitte f_u
+  eingeben“, die Netzabnahme vor der Rechnung warnt mit demselben Text, und
+  die Zeile Grenze der Maske zeigt „f_u fehlt“. Die Rechnung läuft trotzdem.
+
+  **Schrauben und Spannstahl.** Ein Werkstoff der Art Schraube verfestigt
+  von f_yb bis f_ub, ein Spannstahl von f_p0,1k bis f_pk. Die Werte stehen in
+  den Feldern f_y und f_u, und die Maske beschriftet sie dann mit f_yb und
+  f_ub bzw. f_p0,1k und f_pk. Der Anschlussbau legt seine Schraubenwerkstoffe
+  („Schraube 10.9“) als Schraube an; in älteren Dateien erkennt das Programm
+  sie am Namen. Beim Import aus RFEM 6 wird ein Werkstoff vom Typ Spannstahl
+  (am Drehlager die Ankerstäbe) zum Spannstahl, und das Importprotokoll nennt
+  f_p0,1k und f_pk.
+
+  Die Grenze wirkt nur in der Plastizität der **Volumen**. Stäbe fließen in
+  dieser Rechnung nicht, auch nicht Zugstäbe oder Ankerstäbe aus Spannstahl;
+  ihre Spannung wird nicht begrenzt. Der Bericht nennt unter
+  „Gültigkeitsbereich und Hinweise“ die Grenze, die Werkstoffe mit eigener
+  Verfestigung und die Werkstoffe ohne f_u.
+
+  **Konvergenz auf dem Plateau.** Über f_u und bei „ohne Verfestigung“
+  rechnet der Newton mit einer Tangente, die um eine kleine
+  Mindeststeifigkeit steifer ist als die exakte, damit das Gleichungssystem
+  regulär bleibt. Bei den Toleranzen, die die Maske anbietet (1e-2, 1e-3, 1e-4), braucht der
+  Newton dafür nicht mehr Schritte: am Zugstab mit 10 % Dehnung waren es vor
+  und nach der Änderung 3 Schritte in einer Laststufe. Erst bei viel engeren
+  Toleranzen merkt man es, vor allem bei Sechsflächnern (hex8): bei 1e-8
+  waren es 8 statt 3 Schritte, bei Tetraedern (tet10) 4 statt 3. In den
+  Prüfreihen der Plastizität ändert sich die Zahl der Newton-Schritte und
+  Halbierungen nicht (Theoriehandbuch § 5e.5).
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
   Tangente** — ein Newton-Verfahren, das die Steifigkeit je Schritt neu
   aufstellt und faktorisiert. Es konvergiert quadratisch und **unabhängig
@@ -9380,9 +9450,12 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   An der Ankerplatte der Tests (Platte mit Bohrung, starre Scheibe über dem
   Loch, Anker mit 0,9 MN Vorspannung und 0,3 MN Zuglast, Netz wie der Entwurf
   des Drehlagers) braucht „ingenieurmäßig“ 14 statt 29 Newton-Schritte.
-  Außerhalb der Zone weicht σ_v dabei um höchstens 0,20 N/mm² ab, die
-  Ankerkraft um 0,14 % und die Verschiebung um 0,17 %
-  (`tests/test_spitzen_abbruch.py`). Mit einem doppelt so feinen Netz und
+  Außerhalb der Zone weicht σ_v dabei um höchstens 0,29 N/mm² ab, die
+  Ankerkraft um 0,18 % und die Verschiebung um 0,22 %
+  (`tests/test_spitzen_abbruch.py`). Bis zum 13.10.2026 waren es 0,20 N/mm²,
+  0,14 % und 0,17 %: seitdem verfestigt die Platte (S355, f_u = 510 N/mm²)
+  nur bis f_u, und am Ring steht σ_v bei 510 statt 531,7 N/mm² (siehe
+  „Verfestigung je Werkstoff, bis f_u und danach ideal plastisch“). Mit einem doppelt so feinen Netz und
   einer Zone, die von Schritt zu Schritt pendelt, wich σ_v in den Elementen
   unmittelbar neben der Zone dagegen um bis zu 74 N/mm² ab, ab dem
   2,4-fachen Zonenradius um höchstens 1,2 N/mm²; die strenge Rechnung hatte
