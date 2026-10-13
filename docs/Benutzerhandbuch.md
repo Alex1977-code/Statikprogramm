@@ -828,6 +828,57 @@ voll, gesteigert werden nur die übrigen Lasten (siehe „Temperaturlasten und
 Vorspannungen wirken in den Laststufen sofort voll“); bis dahin wuchs sie mit
 den Stufen mit.
 
+**Vorspannkraft (Soll nach Verankerung)** (seit 13.10.2026). Bis zum
+13.10.2026 gab es die Vorspannung nur als Anfangsdehnung, und ein Anker trug
+danach nicht F_v, sondern F_v minus die elastische Verkürzung seiner
+Umgebung - am Drehlager bei voller Last 782 bis 833 statt 952 kN. Seither
+hat die Maske *Lasten → Vorspannung* eine **Lastart**. Mit „Vorspannkraft
+(Soll nach Verankerung)“ geben Sie die Kraft an, die der Stab nach dem
+Verankern trägt. Sie gilt nur für Stäbe. Das Programm spannt in einem
+eigenen Schritt vor den übrigen Lasten: Der Stab ist dabei inaktiv und
+drückt mit F_soll auf seine Enden, die Umgebung verformt sich bis zum
+Gleichgewicht, mit Kontakt und Plastizität. Danach wird der Stab in der
+verformten Lage verriegelt und trägt genau F_soll. Erst dann folgen die
+äußeren Lasten, mit Laststufen und Temperatur wie sonst, und der Stab
+nimmt seinen Anteil an ihnen auf. Das Feld **Gruppe beim Spannen** legt die
+Reihenfolge fest. Stäbe derselben Gruppe werden gleichzeitig gespannt, und
+das ist die Vorgabe. Mit mehreren Gruppen (1, 2, …) spannt das Programm
+nacheinander, und die früher gespannten Stäbe verlieren dabei Kraft. Im
+Ergebnis stehen je Stab die Sollkraft, die Kraft beim Spannen, die Kraft
+nach dem Verankern, der Verlust und die Kraft unter allen Lasten
+(`res.info["vorspannung"]`), dazu die Zustände „spannen“ und „verankert“.
+In einer linear-elastischen Rechnung mit gleichzeitigem Spannen rechnet das
+Programm schneller über eine eingeprägte Dehnung je Stab, so bemessen, dass
+unter der Vorspannung allein jeder Stab genau F_soll trägt; das Ergebnis ist
+dasselbe. Nach Theorie II. und III. Ordnung wird eine Sollkraft noch nicht
+gerechnet: Der Lastfall bleibt nach Theorie I. Ordnung gerechnet, und das
+Ergebnis sagt es. In der Ansicht steht die Kraft als „F_soll“, in der
+Lasttabelle als „Vorspannkraft (Soll)“ mit Gruppe. Kraft und Gruppe ändern
+Sie in der Maske der einzelnen Last.
+
+**Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
+RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
+(ΔT = −N₀/(E·A·α)). Die Lasttabelle und die Maske der Temperaturlast nennen
+dazu die Kraft und die Werte der Umrechnung, etwa „aus Vorspannung 952 kN,
+E = 170 000 N/mm², α = 1,0e-5 1/K“. Der Import gibt den Hinweis
+„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
+Sollkraft umwandeln?“. X ist die Stabkraft unter der Vorspannung allein. Das
+Programm rechnet sie beim Import, wenn das Modell keinen Kontakt hat,
+vernetzt ist und höchstens 300 000 Freiheitsgrade hat. Sonst, wie am
+Drehlager, folgt X nach der ersten Rechnung aus einem Lastfall, der nur die
+Vorspannung trägt (dort LF398). Umgewandelt wird nur auf Ihre Anweisung: in
+der Maske *Lasten → Vorspannung* die Lastart „ΔT-Vorspannung in Sollkraft
+umwandeln“ wählen, Stäbe wählen (ohne Auswahl gelten alle Zugstäbe mit einer
+Temperatur-Vorspannung) und „Last aufbringen“. Mit dem Haken „in allen
+Lastfällen mit derselben Anfangsvorspannung“ gilt die Umwandlung für jeden
+Lastfall mit derselben Kraft; am Drehlager sind das die 129 Lastfälle mit
+952 kN, die 293 Lastfälle mit 805 kN bleiben. Die Kraft 0 heißt Vorschlag:
+0,9·f_p0,1k·A bei Spannstahl, sonst der Wert aus RFEM. Spannstahl erkennt
+das Programm am Werkstoffnamen oder an der Kennzeichnung des Imports, wenn
+die RFEM-Datei f_p0,1k statt f_y führt. Ein vor dem 13.10.2026 übernommener
+Werkstoff wie „Material 3 (DB 2309)“ am Drehlager trägt sie nicht; dort
+tragen Sie die Kraft selbst ein, etwa 944,7 kN.
+
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall.
 
@@ -5204,7 +5255,7 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
-| Vorspannung | gewählte **Stäbe** oder **Volumen** | F_v [kN], Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung |
+| Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v bzw. F_soll [kN], Gruppe beim Spannen, Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Sollkraft nach Verankerung** (nur Stäbe, seit 13.10.2026): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; **Umwandeln** einer RFEM-Vorspannung (ΔT) in die Sollkraft |
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
@@ -6678,7 +6729,10 @@ einem Stab liegt, den das Modell nicht führt (etwa einem Ergebnisstab), mit
 den Stabnummern; eine Flächenlast ohne auflösbaren Lastfall wird mit diesem
 Grund gemeldet statt als „Umsetzungstabelle fehlt“; die Zeile zur
 Stabvorspannung nennt die verschiedenen Stäbe und die Kraft je Lastfall statt
-einer Summe über alle Lastfälle. Beim
+einer Summe über alle Lastfälle. Seit dem 13.10.2026 steht am Ende des
+Protokolls je Anfangsvorspannung der Hinweis „Anfangsvorspannung 952 kN
+ergibt nach elastischer Verkürzung X kN – in Sollkraft umwandeln?“ (siehe
+„Vorspannung aus RFEM in die Sollkraft umwandeln“). Beim
 Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und

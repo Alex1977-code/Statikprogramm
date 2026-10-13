@@ -669,6 +669,90 @@ Ordnung) wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe voll
 wie eine Temperaturlast (§ 5e, „Temperaturlasten und Vorspannkräfte sofort
 voll“).
 
+### Vorspannkraft (Soll nach Verankerung): Spannen, Verriegeln, Lasten (seit 13.10.2026)
+
+Mit der Anfangsdehnung trägt ein Stab nicht F_v, sondern F_v minus die
+elastische Verkürzung seiner Umgebung: zwischen Anker (Steifigkeit k_A) und
+Klemmteil (k_K) bleiben N = F_v·k_K/(k_K + k_A); am Drehlager trugen die
+Anker bei voller Last 782 bis 833 statt 952 kN. Entscheidung des Anwenders
+vom 13.10.2026: „Vorspannung kraftgesteuert eingeben. Neue Lastart
+„Vorspannkraft (Soll nach Verankerung)“ je Stab. Umsetzung als eigener
+Spannschritt vor den übrigen Lasten …“. Die Lastart ist `Vorspannung` mit
+`sollkraft = True` und der Gruppe beim Spannen; gerechnet wird sie in
+`statik3d/vorspannkraft.py`.
+
+**Spannen.** Die Stäbe der Gruppe (und der späteren Gruppen) sind inaktiv:
+ein System ohne ihre Steifigkeit. An ihren Enden wirkt das Kräftepaar
+paar(F) = [+F·e am Anfang, −F·e am Ende], derselbe Lastvektor wie eine
+Vorspannung als Anfangsdehnung mit F_soll (Gelenke, Versätze und gebundene
+Mittelknoten wie dort). Gerechnet wird bis zum Gleichgewicht mit Kontakt
+und Plastizität, ganz gewöhnlich über `solver._solve_loads`; Ergebnis sind
+u_S, der plastische Zustand (ε_p je Gaußpunkt, F_p) und der Kontaktzustand.
+Im Gleichgewicht gilt K_Rest·u_S = paar(F_soll) + F_p(ε_p,S).
+
+**Verriegeln.** Je Element die Kraft P = F_soll − N_el(u_S) mit der
+elastischen Normalkraft N_el = E·A·Δl/L aus u_S. Das ist eine eingeprägte
+Dehnung ε₀ = −P/(E·A) **je Element** - nicht über ΔT, und nicht über die
+Vorspannung des Stabs, weil die Elemente eines Stabs verschiedene Δl haben
+können. Die Stabendkraft ist N = N_el + P, bei u_S also genau F_soll. Die
+Gleichgewichtslage bleibt: mit dem aktiven Stab kommt K_Stab·u_S =
+paar(−N_el) dazu, und die Last der Verriegelung ist F_lock = paar(P) =
+paar(F_soll) + paar(−N_el). Damit ist
+
+    K_ges·u_S = K_Rest·u_S + K_Stab·u_S = paar(F_soll) + F_p + paar(−N_el) = F_lock + F_p(ε_p,S),
+
+u_S ist also die Lösung des Systems mit Stab ohne weitere Last. Gemessen
+(`tests/test_vorspannkraft.py`): N = F_soll nach dem Verriegeln auf 0 bis
+3·10⁻¹⁶, die Verschiebung des „verankerten“ Zustands gleich der des
+Spannschritts (max |Δu| = 0), und die Rechnung danach ohne Last bleibt in
+ihr (1,1·10⁻¹⁹ m). Ein ausfallender Zugstab zählt P mit; fällt er aus, nimmt
+er seine Verriegelungslast mit (`solve_with_ausfall`, `n0`).
+
+**Lasten.** Der Lastfall rechnet mit F + F_lock und feq + feq_lock, die
+Verriegelung wirkt wie jede Vorspannung ab der ersten Laststufe voll, die
+Plastizität beginnt beim Zustand des Spannschritts
+(`plastizitaet.iteration`, `start`) und der Kontakt warm bei dessen Zustand.
+Gegenprobe am Würfel, der im Spannschritt fließt (σ = 4F/A = 400 N/mm² >
+f_y): eine Zuglast entlastet ihn elastisch, N = F + k_1·Δw = 102,27 MN wie
+geschlossen; vom jungfräulichen Zustand aus wären es 108,46 MN und σ_zz
+−333,8 statt −309,1 N/mm².
+
+**Reihenweise.** Gruppe für Gruppe: Spannen der Gruppe g mit den früher
+verriegelten Stäben aktiv, verriegeln, weiter. Die früheren verlieren Kraft,
+ausgewiesen je Stab: mit zwei Ankern am Klemmteil verliert der erste
+k_1·F_2/(k_K + k_1), 60 kN von 500 kN, geschlossen und gerechnet gleich.
+
+**Linear: Einflussmatrix.** Gleichzeitig gespannt und ohne Kontakt,
+Plastizität oder Ausfall: A_ij = N_i unter der Anfangsdehnung 1 N im Stab j
+(eine Zerlegung, n Lösungen), P = A⁻¹·F_soll. Unter der Vorspannung allein
+trägt jeder Stab F_soll. Das ist dasselbe wie Spannen und Verriegeln: im
+linearen Fall ist der Spannzustand K_Rest·u = paar(F), und die Verriegelung
+macht daraus genau die Anfangsdehnung, mit der der Stab bei u die Kraft F
+trägt - die Einflussmatrix sucht diese Dehnung direkt. Gemessen am Würfel
+mit vier ungleichen Ankern und Last: Verschiebungen auf 1,7·10⁻¹⁸ m,
+Ankerkräfte auf 1,5·10⁻⁸ N gleich. Ein Stab, den nichts hält (A_jj = 0),
+meldet sich.
+
+**Theorie II. und III. Ordnung: nicht gerechnet.** Die Einflussmatrix nach
+Theorie I. Ordnung trifft F_soll dort nicht: am Zugband einer Kragstütze
+(HEB 200, 70 kN; die eingeprägte Kraft ist 754 kN, weil die Stütze weich ist)
+gab sie nach Theorie III. Ordnung 62,56 statt 70 kN (−10,6 %: jede Änderung
+der Länge geht mit P/N ≈ 11 in N ein), und nach Theorie II. Ordnung brach die
+Rechnung an α_cr = 0,16 ab, weil `assemble.geometric_stiffness` nur
+E·A·Δl/L liest und das Zugband unter 684 kN Druck sah. Ein Lastfall mit
+Sollkraft bleibt darum nach Theorie I. Ordnung gerechnet und gekennzeichnet
+(`theorie_gewuenscht`, `theorie_fehler`).
+
+**Import.** Die RFEM-Anfangsvorspannung bleibt eine Abkühlung. Der Hinweis
+„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
+Sollkraft umwandeln?“ rechnet X linear über die Einflussmatrix (X = A·N₀),
+wenn das Modell keinen Kontakt hat, vernetzt und höchstens 300 000 FHG groß
+ist. Am Drehlager nicht: eine Zerlegung kostete im Lauf vom 09.10.2026 135
+bis 165 s und 31,8 GB (2 604 134 Zeilen, 4,0·10⁹ Nichtnullen im Faktor), und
+mit Kontakt hätte ein linear gerechnetes X keine Bedeutung. Dort reicht
+`solve_all` X nach, aus dem Ergebnis eines Lastfalls, der nur diese
+Vorspannung trägt (LF398).
+
 ## 2 Lasten
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.
