@@ -777,7 +777,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
 | Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
-| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
+| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung (auch **„nicht zugeordnet“**; seit 13.10.2026 dazu der Haken **„Bemessungslastfall, bereits faktorisiert“**, siehe Kapitel 4), darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (im Klartext wie „GZT (STR/GEO)“ oder „GZG häufig“, auch **Ermüdung**; siehe Kapitel 4, *Kombinationstypen und Umhüllende im Klartext*), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt, per **Klick ins Feld** und dann in der Ansicht (seit 15.09.2026) oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
@@ -901,6 +901,27 @@ das Programm am Werkstoffnamen oder an der Kennzeichnung des Imports, wenn
 die RFEM-Datei f_p0,1k statt f_y führt. Ein vor dem 13.10.2026 übernommener
 Werkstoff wie „Material 3 (DB 2309)“ am Drehlager trägt sie nicht; dort
 tragen Sie die Kraft selbst ein, etwa 944,7 kN.
+
+**Eine aus RFEM übernommene Vorspannung steht als Kraft da** (seit
+13.10.2026). RFEM kennt die Stablast „Vorspannung“ (InitialPrestress); der
+Import setzt sie in eine eingeprägte Dehnung um, ΔT = −N₀/(E·A·α), und legte sie
+bisher als Temperaturlast ab, in der Ansicht, der Lasttabelle und im Bericht
+als „ΔT = −445,6 K“. Seit dem 13.10.2026 trägt eine solche Last das Merkmal „aus
+Vorspannung“ mit der Kraft und dem E und α der Umrechnung, und alle drei Stellen
+nennen die Kraft: „Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+α = 1,0e-5 1/K)“. In der Ansicht erscheint sie als violette Punkte mit
+„Vorspannung 952 kN“, in der Lasttabelle als Art „Vorspannung“ mit „F_v = 952 kN“
+und der Umrechnung daneben, im Bericht in einer eigenen Tabelle je Lastfall mit
+F_v, E und α, im Lastbild als „16 Vorspannungen (952 kN, eingeprägte Dehnung)“.
+Die Maske der einzelnen Last nimmt die Kraft als Eingabe und zeigt die Temperatur
+nur als Rechenwert. **Gerechnet wird weiter mit der Temperatur**; das E und das α
+stehen dabei, weil die Kraft im Stab von ihnen abhängt: ändert sich E oder die
+Querschnittsfläche des Stabes nach dem Import, ändert sich die Kraft im Stab mit,
+nicht die Zahl in der Tabelle. Das gilt, bis die
+kraftgesteuerte Vorspannung („Vorspannkraft nach Verankerung“) die Umrechnung
+ersetzt. Das Importprotokoll nennt E und α der Umrechnung einmal. Eine Datei
+von vor dem 13.10.2026 behält ihre Temperaturlasten, wie sie sind: nichts wird
+beim Öffnen umgestellt, und gespeichert steht das Merkmal nur, wo es gesetzt ist.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall.
@@ -5246,7 +5267,9 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 5. **Nachweise**: Stäbe prüfen (Doppelklick: Knicklängenbeiwerte βy/βz,
    Abstand seitlicher Halterungen L_LT, Lastangriff, Kerbfall für Ermüdung).
 6. **Berechnung**: „Alle Lastfälle + Kombinationen“, Häkchen für Nachweise
-   und Ermüdung, BERECHNEN.
+   und Ermüdung, BERECHNEN. Enthält eine Kombination einen Lastfall ohne
+   zugeordnete Einwirkung (nach einem RFEM-Import die Regel), gibt es statt der
+   Rechnung einen Hinweis; siehe Kapitel 4, *Einwirkung nicht zugeordnet*.
 7. **Ergebnisse**: Umhüllende GZT zeigt Extremwerte mit maßgebender
    Kombination; Färbung „Ausnutzung EC3“ zeigt die Stabausnutzung; Verlauf
    „My“ zeichnet den Momentenverlauf.
@@ -5398,9 +5421,10 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 
 * Einwirkungskategorien: G (ständig), Q_A … Q_H (Nutzlasten), Q_K (Kran),
   S / S_H (Schnee), W (Wind), T (Temperatur), H (Wasserdruck), A
-  (außergewöhnlich), P (Vorspannung), SET (Setzung), FAT (nur Ermüdung).
-  Die ψ-Beiwerte nach DIN EN 1990/NA sind hinterlegt und je Lastfall
-  überschreibbar.
+  (außergewöhnlich), P (Vorspannung, γ_P = 1,0), SET (Setzung), FAT (nur
+  Ermüdung) und seit 13.10.2026 **NZ „nicht zugeordnet“** (siehe nächster
+  Abschnitt). Die ψ-Beiwerte nach DIN EN 1990/NA sind hinterlegt und je
+  Lastfall überschreibbar.
 * Ausschlussgruppe: Lastfälle derselben Gruppe wirken nie gleichzeitig
   (Wind aus verschiedenen Richtungen, Laststellungen).
 * Automatische Kombinationen: GZT nach 6.10 (oder 6.10a/b), ständige Lasten
@@ -5430,6 +5454,105 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   erzeugte einen freien Namen („DIN LF1.1 2“), und das Protokoll sagt es.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Einwirkung nicht zugeordnet, Bemessungslastfall und Vorspannung (seit 13.10.2026)
+
+Am 13.10.2026 hat der Anwender für den Import von Lastfällen entschieden:
+„Kategorie ‚nicht zugeordnet‘ statt Q, Kombinationen bis zur Zuordnung sperren.
+Kennzeichen ‚Bemessungslastfall, bereits faktorisiert‘ einführen, damit LF1 kein
+zweites γ erhält. Vorspannung als Kategorie P mit γ_P = 1,0 führen und als Kraft
+anzeigen, nicht als Temperatur ΔT.“ Bis zum 12.10.2026 bekam jeder Lastfall des
+RFEM-Imports, dessen Kennzahl nicht zu G führte, die Einwirkung Q (ψ 0,8/0,7/0,5,
+γ_Q = 1,5); am Drehlager waren das 256 von 422 Lastfällen, darunter 128
+„Bemessungslast im GZT …“, deren Lasten in RFEM schon mit ihren Teilsicherheits-
+beiwerten versehen sind – in einer Statik3D-Kombination hätten sie ein zweites γ
+bekommen.
+
+**Nicht zugeordnet.** Ein Lastfall, dessen Einwirkung die Quelle nicht eindeutig
+nennt, heißt „nicht zugeordnet“ (Schlüssel NZ). Er ist weder ständig noch
+veränderlich noch außergewöhnlich; sein γ und sein ψ stehen nicht fest. Darum
+gilt:
+
+* **Kombinationen mit ihm werden nicht gerechnet.** „Alle Lastfälle +
+  Kombinationen“ startet nicht; stattdessen steht als Hinweis (gelb, ohne
+  Fenster) im Protokoll und in der Statuszeile, welche Lastfälle es sind
+  („LF201–LF328“), welche Kombinationen deshalb ruhen und wie die Zuordnung geht.
+  Das geschieht vor dem ersten Lastfall, nicht erst nach Stunden. Dasselbe gilt
+  für eine einzelne Kombination, für die Alternativen einer Ergebniskombination
+  und für **Lasten → Kombinationen → EN 1990…**: der Generator weigert sich, statt
+  den Lastfall still wegzulassen. Die Modellprüfung meldet es als Warnung.
+* **Einzelne Lastfälle bleiben rechenbar** („Nur aktiver Lastfall“, die Lastfälle
+  der Stellungen, die Skripte).
+* **Zuordnen**: den Lastfall im Modellbaum anklicken und rechts unter
+  „Einwirkung“ die Einwirkung wählen (Dialog *Lastfall* hat dieselbe Auswahl).
+  Mit jeder Einwirkung außer „nicht zugeordnet“ ist die Sperre für diesen
+  Lastfall aufgehoben.
+* **Alte Dateien** behalten ihre Einwirkung: ein Lastfall, der bisher Q war, ist
+  weiter Q. Nur der RFEM-Import vergibt „nicht zugeordnet“.
+
+**Was der RFEM-Import zuordnet.** Die Kennzahl der Einwirkungskategorie
+(`actionCategoryId`) liest der Import jetzt aus der Aufzählung der Dlubal-API
+(RFEM 6.15, 296 Werte; an den Beispielmodellen von RFEM 6.15 belegt für 11, 19,
+21, 32, 33, 44, 54 und 61). Die Kennzahl **11** ist „Permanent G“, aber auch die
+**Vorgabe jedes neuen Lastfalls** und jeder neuen Aktion: am Drehlager tragen alle
+422 Lastfälle sie, auch „Verkehrslage“ und „Ermüdungslast“, in den
+Beispielmodellen „Dynamic Analysis“ stehen „wind +x“ und „live load roof“ in
+Aktionen mit ihr. Sie sagt darum nichts. Zugeordnet wird, in dieser Reihenfolge,
+der erste eindeutige Fund:
+
+1. eine **Aktion** des Kombinationsassistenten mit einer anderen Kennzahl als 11;
+2. die eigene **Kennzahl** des Lastfalls, wenn sie nicht 11 ist (32 → Q_A,
+   54 → S, 61 → W, 21 → P, 6377 → FAT …; die Tabelle führt nur, was einer
+   Einwirkung von Statik3D genau entspricht, Mischformen und Erdbeben nicht);
+3. der Lastfall steht in der Quelldatei **nur in Ermüdungskombinationen**
+   (Bemessungssituation „GZT (FAT)“): FAT – das ist eine Eigenschaft der Datei,
+   nicht des Namens;
+4. an ihm hängen **nur Vorspannlasten** (und kein Eigengewicht): P, γ_P = 1,0 –
+   am Drehlager LF398 und LF399;
+5. an ihm hängt **nur Eigengewicht**: G.
+
+Alles andere bleibt „nicht zugeordnet“. **Der Name setzt nichts**: ein Name ist
+Freitext, und derselbe Text steht je Datei für anderes. Er erscheint nur als
+„Vorschlag nach dem Namen (nicht gesetzt)“ im Protokoll. Am Drehlager ergibt das:
+164× FAT, 2× P, 256× nicht zugeordnet (statt bisher 256× Q), davon 128 als
+Bemessungslastfall gekennzeichnet.
+
+**Bemessungslastfall, bereits faktorisiert.** Ein Lastfall mit diesem Kennzeichen
+(Maske: Haken unter „Einwirkung“; im Bericht und in der Tabelle der Lastfälle
+steht „Bemessungslastfall“) enthält schon Bemessungswerte: γ und ψ stecken in
+seinen Lasten. In jeder Kombination geht er mit **γ = 1,0 und ohne ψ** ein. Der
+Generator bildet für ihn eine eigene GZT-Kombination „1,0·LFn“ (ein
+Bemessungslastfall ist schon die fertige Kombination; er wird nicht mit anderen
+Lastfällen überlagert und kommt in keine GZG-Kombination). Er braucht keine
+Einwirkung und hält keine Kombination auf. Der Import setzt das Kennzeichen **nur
+bei eindeutiger Datenlage**: der Lastfall steht in der Quelldatei in
+Kombinationen der Bemessungssituation **GZT** und in **keiner anderen**, jedes Mal
+als eigene Alternative mit dem Faktor 1,0 („LF1/p oder LF3/p …“ in einer
+Bemessungskombination im GZT). RFEM bemisst dann mit genau diesem Ergebnis. Am
+Drehlager sind das die 128 Lastfälle „Bemessungslast im GZT …“, die in
+„Bemessungskombination im GZT“ stehen; die Namen stimmen bei allen 128 überein. Der
+Name allein setzt das Kennzeichen nie. Heißt ein Lastfall „Bemessungslast …“ und
+steht die Datei nicht so, bekommt er nur einen Vorschlag im Protokoll; steht er
+mit dem Faktor 1,0 in GZT-Kombinationen, heißt aber „char.“ oder
+„charakteristisch“, bleibt er ungekennzeichnet und wird gemeldet. Der Grund: Wer das
+Kennzeichen zu Unrecht setzt, rechnet Lasten ohne γ – das ist die unsichere
+Richtung; wer es zu Unrecht nicht setzt, rechnet mit einem γ zu viel.
+
+**Vorspannung: P mit γ_P = 1,0.** Die Einwirkung P (Vorspannung) ist ständig, ihr
+Teilsicherheitsbeiwert aber nicht γ_G,sup = 1,35, sondern γ_P = 1,0, günstig wie
+ungünstig. Er steht in den Einstellungen des Modells (`gamma_P`, vorbelegt mit
+1,0), die Oberfläche bietet dafür noch kein Feld; ein eigenes γ am Lastfall
+(`gamma_sup`, `gamma_inf`) geht vor. Bis zum 12.10.2026 lief P mit 1,35. Ein **reiner
+Vorspannungslastfall** (nur Vorspannlasten, wie LF398 und LF399 am Drehlager)
+bekommt beim Import P. Ein **gemischter Lastfall** – Vorspannung und andere
+Lasten in einem Lastfall, wie LF1 am Drehlager – hat nur **eine** Einwirkung und
+damit ein γ: eine Kombination gibt dem ganzen Lastfall das γ seiner Einwirkung,
+auch der Vorspannung darin (belegt in `tests/test_lastfall_kategorie.py`: ein Lastfall
+Q mit Vorspannung geht mit 1,5 ein, nicht mit γ_P = 1,0). Ist er als
+Bemessungslastfall gekennzeichnet, gilt ohnehin 1,0 für alles. Ist er es nicht,
+meldet der Import ihn mit Namen („128 Lastfälle mischen Vorspannung mit anderen
+Lasten …“); am besten legt man die Vorspannung in einen eigenen Lastfall mit
+Einwirkung P.
 
 ### Name, Nummer, Bezeichnung und Beschreibung (seit 04.10.2026)
 
@@ -6858,15 +6981,23 @@ Sie sie von Hand anlegen, steht im nächsten Absatz. Wo eine Meldung eine
 Zeile nennt („Zeile 5 in „2.5 Lastkombinationen““, bei einer Zeile ohne
 Nummer oder mit mehrfach geführter Nummer), ist es die Zeile des Blatts
 bzw. der CSV-Datei, Kopf- und Leerzeilen mitgezählt. Die
-**Einwirkungskategorie** eines
-RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
-belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
-die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
-in der Lastfallmaske. Den Namen fragt der Import nur, wenn die Kennzahl Q
-ergibt; ergibt sie G (Kennzahl 1 oder 2), bleibt der Lastfall G, auch wenn
-er „Ermüdungslast …“ heißt. Ergibt sie Q, wertet der Import den Namen aus,
-aber **ohne den Text in runden oder eckigen Klammern** (bei geschachtelten
-Klammern ohne den der innersten); was dort steht, zählt für die Kategorie
+**Einwirkung und Kennzeichen** eines
+RFEM-6-Lastfalls (seit 13.10.2026): Der Import ordnet die Einwirkung nur zu, wo
+die Quelle sie eindeutig nennt (Kennzahl der Dlubal-Aufzählung außer der Vorgabe 11,
+Aktion mit anderer Kennzahl, nur in Ermüdungskombinationen, nur Vorspannlasten,
+nur Eigengewicht); sonst steht der Lastfall auf „nicht zugeordnet“, und
+Kombinationen mit ihm werden nicht gerechnet. Die Regeln und ihre Gründe stehen
+in Kapitel 4, *Einwirkung nicht zugeordnet, Bemessungslastfall und Vorspannung*;
+das Protokoll nennt je Kennzahl die Zahl der Lastfälle, die Herkunft der
+Zuordnung, die Lastfälle ohne Einwirkung mit dem Weg zur Zuordnung und die als
+Bemessungslastfall gekennzeichneten. Bis zum 12.10.2026 war die Einwirkung aus
+einer Kennzahl **angenommen**, die an keiner Datei belegt war (11 → Q, 1 und 2
+→ G), und der Name verfeinerte das Rückfall-Q; das Protokoll sprach von
+„umgestellt“. **Der Name setzt seither keine Einwirkung mehr, er schlägt sie nur
+vor** („Vorschlag nach dem Namen (nicht gesetzt)“). Die Auswertung des Namens
+läuft dabei weiter nach den folgenden Regeln, aber **ohne den Text in runden oder
+eckigen Klammern** (bei geschachtelten
+Klammern ohne den der innersten); was dort steht, zählt für den Vorschlag
 nicht. Außerhalb von Klammern gilt: eine Angabe zur Bemessungssituation
 zählt nicht als Einwirkung, wenn sie so geschrieben ist: „ständig“,
 „vorübergehend“ oder „außergewöhnlich“ mit Endung (-e, -en, -er, -es, -em,
@@ -6881,30 +7012,33 @@ zählt dabei nicht, „ae“, „oe“, „ue“ und „ss“ gelten wie „ä�
 „ß“, und Satz- und Sonderzeichen gelten wie ein Leerzeichen: Bindestrich
 und Gedankenstrich ebenso wie „/“, „:“ oder „,“. „Erdbeben -
 Bemessungssituation 2“ und „Erdbeben / Bemessungssituation“ sind darum wie
-„Erdbeben-Bemessungssituation 2“ eine Situation und bleiben Q, ebenso
-„Außergewöhnliche - Bemessungssituation“ und „Nutzlast - seismic or
-accidental design situation“; das Protokoll nennt sie nicht unter
-„umgestellt“. Die genaue Regel steht im Schnittstellenhandbuch unter
+„Erdbeben-Bemessungssituation 2“ eine Situation und schlagen nichts vor, ebenso
+„Außergewöhnliche - Bemessungssituation“; bei „Nutzlast - seismic or
+accidental design situation“ bleibt von der Angabe nichts, und das Wort
+„Nutzlast“ schlägt Q vor. Die genaue Regel steht im Schnittstellenhandbuch unter
 „Bemessungssituation und Ermüdung im Namen“. Nicht heraus nimmt der Import
 etwa „ständige/vorübergehende Bemessungssituation“ (ohne „und“ oder „oder“
 bleibt „ständige“ stehen), „Bemessungssituation ständig“, „Ständig -
 Bemessungssituation“ (ohne Endung) oder „Ständig und vorübergehend“ ohne
-das Wort „Bemessungssituation“; sie machen einen Lastfall weiter zu G,
+das Wort „Bemessungssituation“; sie schlagen weiter G vor,
 „Bemessungssituation außergewöhnlich“ oder „Außergewöhnlich -
-Bemessungssituation“ zu A, und das Protokoll nennt ihn unter „umgestellt“.
-Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern enthält, wird
-FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination), auch
-wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. In Klammern
-zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ bleibt Q_K und geht in die
-erzeugten GZT-Kombinationen ein, „Eigengewicht (Ermüdung)“ wird G und
-„Temperatur [Ermüdung]“ T; ebenso bleibt „Nutzlast (Bemessungssituation
-außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall in der
-Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
+Bemessungssituation“ A. Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern
+enthält, bekommt den Vorschlag FAT (nur für den Ermüdungsnachweis, in keiner
+erzeugten Kombination), auch wenn der Name daneben „Eigengewicht“ oder „Temperatur“
+nennt; **gesetzt** wird FAT nur, wenn die Quelldatei den Lastfall nur in
+Ermüdungskombinationen führt (am Drehlager alle 164). In Klammern
+zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ schlägt Q_K vor, „Eigengewicht
+(Ermüdung)“ G und „Temperatur [Ermüdung]“ T; ebenso „Nutzlast
+(Bemessungssituation außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall
+in der Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
 außerhalb der Klammern („Kran - Ermüdung“). Am
 Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
 23.09.2026 96 Lastfälle über „ständige Bemessungssituation“ zu G, 16 über
 „außergewöhnliche Bemessungssituation“ zu A und die 164 Ermüdungslastfälle
-zu G (160) bzw. T (4); jetzt sind es 256× Q, 164× FAT und 2× P.
+zu G (160) bzw. T (4); danach waren es 256× Q, 164× FAT und 2× P (der Name
+setzte FAT und P); seit dem 13.10.2026 sind es 164× FAT (aus der Struktur der
+Datei), 2× P (aus dem Inhalt) und 256× nicht zugeordnet, davon 128 als
+Bemessungslastfall gekennzeichnet.
 Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im

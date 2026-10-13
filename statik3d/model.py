@@ -1713,6 +1713,18 @@ class LoadCase:
             return tuple(self.psi)
         return ACTION_CATEGORIES.get(self.category, ACTION_CATEGORIES["Q"])[1]
 
+    def lastart_titel(self, art: str) -> str:
+        """Der Titel einer Lastart des Lastfalls (Modellbaum, Maske): die
+        Temperaturlasten heissen „Vorspannung (eingeprägte Dehnung)“, wenn alle
+        aus einer umgerechneten Vorspannung stammen (13.10.2026) - der Anwender
+        sucht dort keine Temperatur."""
+        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        if art == "temperatur":
+            alle = self.lasten_je_art().get("temperatur", [])
+            if alle and all(getattr(l, "aus_vorspannung", 0.0) for l in alle):
+                return "Vorspannung (eingeprägte Dehnung)"
+        return titel
+
     def einwirkung_text(self) -> str:
         """Die Einwirkung zum Lesen in Tabellen: der Schluessel („G“, „Q_A“),
         bei „nicht zugeordnet“ der Klartext, und das Kennzeichen

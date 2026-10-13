@@ -177,7 +177,14 @@ def main(argv=None) -> int:
     an = None
     r = None
     if a.analyse == "statik":
-        an = solver.solve_all(m, progress=log, design=a.nachweise, fatigue=a.ermuedung)
+        from .model import KombinationGesperrt
+        try:
+            an = solver.solve_all(m, progress=log, design=a.nachweise, fatigue=a.ermuedung)
+        except KombinationGesperrt as ex:
+            # Lastfaelle ohne zugeordnete Einwirkung (13.10.2026): ein Hinweis,
+            # kein Absturz - die Lastfaelle einzeln gehen mit --analyse lastfall
+            print(str(ex), file=sys.stderr)
+            return 2
         print()
         print(an.summary())
         if an.design is not None:

@@ -1731,7 +1731,7 @@ def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: l
     einen Vorschlag im Protokoll, kein Kennzeichen: setzt jemand den Haken zu
     Unrecht, werden Lasten ohne gamma angesetzt - die unsichere Richtung."""
     from ..model import KATEGORIE_OFFEN
-    from ..begriffe import lastfaelle_kurz
+    from ..begriffe import lastfaelle_kurz, anzahl
     aktionen = _aktionen(db)
     inhalt = _lastinhalt(db)
     rollen = _kombinationsrollen(db, lc_name, _bemessungssituationen(db))
@@ -1824,8 +1824,8 @@ def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: l
         C.warn(log, "  Einwirkungskennzahlen, die die Tabelle nicht führt (nicht zugeordnet): "
                     + ", ".join(f"{a} ({k}x)" for a, k in sorted(unbekannt.items())))
     if widerspruch:
-        C.warn(log, f"  {len(widerspruch)} Lastfälle nennen in Aktion und Kennzahl verschiedene "
-                    "Einwirkungen - nicht zugeordnet: " + lastfaelle_kurz(widerspruch))
+        C.warn(log, f"  {anzahl(len(widerspruch), 'Lastfall nennt', 'Lastfälle nennen')} in Aktion und "
+                    "Kennzahl verschiedene Einwirkungen - nicht zugeordnet: " + lastfaelle_kurz(widerspruch))
     offen = [nm for nm, lc in m.load_cases.items()
              if nm in info and lc.category == KATEGORIE_OFFEN and not lc.faktorisiert]
     for k, lfs in sorted(vorschlag.items()):
@@ -1833,21 +1833,25 @@ def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: l
         if lfs:
             C.say(log, f"    Vorschlag nach dem Namen (nicht gesetzt): {k} für {lastfaelle_kurz(lfs)}")
     if offen:
-        C.warn(log, f"  {len(offen)} Lastfälle ohne zugeordnete Einwirkung ({lastfaelle_kurz(offen)}): "
+        C.warn(log, f"  {anzahl(len(offen), 'Lastfall', 'Lastfälle')} ohne zugeordnete Einwirkung "
+                    f"({lastfaelle_kurz(offen)}): "
                     "Kombinationen mit ihnen werden nicht gerechnet, einzelne Lastfälle schon. "
                     "Zuordnung: Lastfall im Modellbaum anklicken, rechts unter „Einwirkung“ wählen "
                     "(oder „Bemessungslastfall“ ankreuzen).")
     if gesetzt:
-        C.say(log, f"  {len(gesetzt)} Lastfälle als Bemessungslastfall, bereits faktorisiert, "
-                   f"gekennzeichnet ({lastfaelle_kurz(gesetzt)}): in der Quelldatei stehen sie nur in "
+        C.say(log, f"  {anzahl(len(gesetzt), 'Lastfall', 'Lastfälle')} als Bemessungslastfall, bereits "
+                   f"faktorisiert, gekennzeichnet ({lastfaelle_kurz(gesetzt)}): in der Quelldatei "
+                   f"{'steht er' if len(gesetzt) == 1 else 'stehen sie'} nur in "
                    "Kombinationen der Bemessungssituation GZT, jeweils als eigene Alternative mit dem "
                    f"Faktor 1,0 (der Name nennt „Bemessungslast“ bei {name_stimmt} von {len(gesetzt)}). "
                    "In einer Kombination gehen sie mit γ = 1,0 und ohne ψ ein, ein zweites γ gibt es "
                    "nicht.")
     if gegen_name:
-        C.warn(log, f"  {len(gegen_name)} Lastfälle stehen in der Quelldatei mit dem Faktor 1,0 in "
-                    f"GZT-Kombinationen, heißen aber „charakteristisch“ ({lastfaelle_kurz(gegen_name)}) - "
-                    "nicht als Bemessungslastfall gekennzeichnet; bitte prüfen.")
+        C.warn(log, f"  {anzahl(len(gegen_name), 'Lastfall steht', 'Lastfälle stehen')} in der Quelldatei "
+                    "mit dem Faktor 1,0 in GZT-Kombinationen, "
+                    f"{'heißt' if len(gegen_name) == 1 else 'heißen'} aber „charakteristisch“ "
+                    f"({lastfaelle_kurz(gegen_name)}) - nicht als Bemessungslastfall gekennzeichnet; "
+                    "bitte prüfen.")
     if nur_name:
         C.say(log, f"    Vorschlag nach dem Namen (nicht gesetzt): Bemessungslastfall für "
                    f"{lastfaelle_kurz(nur_name)} - die Quelldatei führt sie nicht als GZT-Alternative "
@@ -1861,15 +1865,17 @@ def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: l
         if n_vor and lc.n_loads > n_vor and not lc.faktorisiert and lc.category not in ("FAT", "P"):
             gemischt.append(nm)
     if gemischt:
-        C.warn(log, f"  {len(gemischt)} Lastfälle mischen Vorspannung mit anderen Lasten und sind keine "
-                    f"Bemessungslastfälle ({lastfaelle_kurz(gemischt)}): eine Kombination gibt dem "
+        C.warn(log, f"  {anzahl(len(gemischt), 'Lastfall mischt', 'Lastfälle mischen')} Vorspannung mit "
+                    f"anderen Lasten und {'ist kein Bemessungslastfall' if len(gemischt) == 1 else 'sind keine Bemessungslastfälle'} "
+                    f"({lastfaelle_kurz(gemischt)}): eine Kombination gibt dem "
                     "ganzen Lastfall das γ seiner Einwirkung, die Vorspannung darin also nicht "
                     "γ_P = 1,0. Die Vorspannung in einen eigenen Lastfall (Einwirkung P) legen "
                     "oder den Lastfall als Bemessungslastfall kennzeichnen.")
     pure_p = quelle.get("P", {})
     if pure_p:
-        C.say(log, f"  {sum(len(v) for v in pure_p.values())} reine Vorspannungslastfälle mit "
-                   "Einwirkung P und γ_P = 1,0.")
+        n_p = sum(len(v) for v in pure_p.values())
+        C.say(log, f"  {anzahl(n_p, 'reiner Vorspannungslastfall', 'reine Vorspannungslastfälle')} "
+                   "mit Einwirkung P und γ_P = 1,0.")
 
 
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,

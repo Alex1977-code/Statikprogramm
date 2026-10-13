@@ -876,6 +876,22 @@ Lastzeilen zählt. Gemessen an zwei Gleichlasten auf den Stäben [1, 2] und
 Stabzuordnungen … (Stab 2, 77)“. Fehlen einer Lastzeile alle Stäbe, zählt sie
 wie bisher unter „ohne Ziel oder ohne Betrag“.
 
+**Stand seit 13.10.2026.** Der Abschnitt „Einwirkungskategorie“ unten und die
+folgenden zu Bemessungssituation und Ermüdung im Namen beschreiben den Import bis
+zum 12.10.2026 (`ACTION_CATEGORY`, 11 → Q, der Name verfeinert das Rückfall-Q).
+Seitdem gilt: Die Kennzahl 11 ist die Vorgabe jedes neuen Lastfalls und sagt nichts;
+die Einwirkung kommt aus der Aufzählung `LoadCase.ActionCategory` der Dlubal-API
+(`KATEGORIE_AUS_KENNZAHL`), aus einer Aktion mit anderer Kennzahl, aus der Struktur
+(nur in Ermüdungskombinationen: FAT) und aus dem Inhalt (nur Vorspannlasten: P, nur
+Eigengewicht: G); sonst ist der Lastfall „nicht zugeordnet“ (`NZ`), und Kombinationen
+mit ihm werden nicht gerechnet. Der Name setzt nichts: `category_from_text` (die
+Regeln unten) liefert nur den „Vorschlag nach dem Namen“ im Protokoll. Das Kennzeichen
+„Bemessungslastfall, bereits faktorisiert“ setzt der Import, wenn der Lastfall in der
+Quelldatei nur in GZT-Kombinationen steht, jedes Mal als eigene Alternative mit dem
+Faktor 1,0. Eine Stabvorspannung kommt als `TempLoad` mit dem Merkmal „aus
+Vorspannung“ (Kraft, E, α). Einzelheiten: Benutzerhandbuch, Kapitel 4, „Einwirkung
+nicht zugeordnet, Bemessungslastfall und Vorspannung“.
+
 **Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
 alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
 Protokoll meldete nur „Einwirkungskategorie übernommen". Jetzt steht die

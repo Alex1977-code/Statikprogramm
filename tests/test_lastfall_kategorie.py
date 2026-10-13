@@ -169,6 +169,23 @@ def test_sperre():
     check("… die Rechnung läuft", _ausnahme(solver.solve_all, m) is None)
 
 
+def test_kommandozeile_hinweis_statt_absturz():
+    import contextlib
+    import io
+    from statik3d import cli
+    from statik3d.model import Combination
+    m = _balken()
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.35, "LF2": 1.5}, "ULS")
+    pfad = os.path.join(tempfile.mkdtemp(prefix="statik3d_lfkat_cli_"), "m.json")
+    m.save(pfad)
+    err, out = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+        rc = cli.main([pfad])
+    check("Kommandozeile: gesperrte Kombination -> Hinweis auf stderr und Rueckgabe 2, kein Absturz",
+          rc == 2 and "Kombinationen gesperrt" in err.getvalue() and "LF2" in err.getvalue(),
+          f"rc {rc}, {err.getvalue()[:80]!r}")
+
+
 def test_generator_weigert_sich():
     from statik3d.combinations import generate_combinations
     from statik3d.model import Combination, KombinationGesperrt
@@ -253,6 +270,41 @@ def test_gemischter_lastfall_mit_vorspannung():
     cs = generate_combinations(m, sls=False, accidental=False)
     own = [c for c in cs if c.factors == {"LF3": 1.0}]
     check("als Bemessungslastfall gekennzeichnet gilt für alles darin 1,0", len(own) == 1)
+
+
+def test_din19704_generator_sperre():
+    """Der Generator nach DIN 19704 liesse einen Lastfall ohne Einwirkung genauso
+    still weg (er steht in keiner Einwirkungsart des Regelwerks)."""
+    from statik3d.bridges.din19704 import Regelwerk
+    from statik3d.model import KombinationGesperrt
+    m = _balken()
+    rw = Regelwerk()
+    ex = _ausnahme(rw.kombinationen, m)
+    check("DIN 19704: der Generator weigert sich bei einem Lastfall ohne Einwirkung",
+          isinstance(ex, KombinationGesperrt) and "LF2" in str(ex), repr(ex)[:90])
+    check("… und legt nichts an", not m.combinations)
+    m.load_cases["LF2"].faktorisiert = True
+    log = []
+    namen = rw.kombinationen(m, log=log)
+    check("als Bemessungslastfall ist er kein Hindernis, wird aber nicht mit gamma ein zweites Mal kombiniert",
+          not any("LF2" in m.combinations[n].factors for n in namen)
+          and any("Bemessungslastfälle" in z and "LF2" in z for z in log), str(log))
+
+
+def test_lastart_titel():
+    from statik3d.model import TempLoad
+    m = _balken()
+    lc = m.load_cases["LF1"]
+    lc.temp_loads.append(TempLoad(0, 20.0))
+    check("Lastart Temperatur: ohne Vorspannung heisst sie Temperaturlasten",
+          lc.lastart_titel("temperatur") == "Temperaturlasten", lc.lastart_titel("temperatur"))
+    lc.temp_loads.clear()
+    lc.temp_loads.append(TempLoad(0, -445.6, 0.0, 952e3, 170e9, 1e-5))
+    check("… sind alle aus einer Vorspannung, heisst sie Vorspannung (eingeprägte Dehnung) – im Baum und in der Maske",
+          lc.lastart_titel("temperatur") == "Vorspannung (eingeprägte Dehnung)", lc.lastart_titel("temperatur"))
+    lc.temp_loads.append(TempLoad(1, 20.0))
+    check("… gemischt bleibt es bei Temperaturlasten", lc.lastart_titel("temperatur") == "Temperaturlasten")
+    check("andere Lastarten behalten ihren Titel", lc.lastart_titel("knoten") == "Knotenlasten")
 
 
 # --------------------------------------------------------------------------
@@ -523,8 +575,9 @@ def test_import_gemischter_lastfall_wird_gemeldet():
         m = R6.read_rf6(f, log=log)
         check("Vorspannung und Last in einem Lastfall (Q_A): der Import meldet, dass die Vorspannung dort "
               "das gamma der Einwirkung bekäme",
-              any(z.startswith("WARNUNG") and "mischen Vorspannung" in z and "γ_P = 1,0" in z and "LF1" in z
-                  for z in log), next((z[:90] for z in log if "mischen" in z), "keine Zeile"))
+              any(z.startswith("WARNUNG") and "Vorspannung mit anderen Lasten" in z and "γ_P = 1,0" in z
+                  and "LF1" in z and "1 Lastfall mischt" in z for z in log),
+              next((z[:90] for z in log if "mischen" in z or "mischt" in z), "keine Zeile"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -648,9 +701,11 @@ def test_oberflaeche():
 
 
 def main():
-    tests = (test_kategorie_und_alte_dateien, test_sperre, test_generator_weigert_sich,
+    tests = (test_kategorie_und_alte_dateien, test_sperre, test_kommandozeile_hinweis_statt_absturz,
+             test_generator_weigert_sich,
              test_bemessungslastfall_im_generator, test_vorspannung_gamma_p,
-             test_gemischter_lastfall_mit_vorspannung, test_vorspannung_als_kraft_text, test_bericht,
+             test_gemischter_lastfall_mit_vorspannung, test_din19704_generator_sperre, test_lastart_titel,
+             test_vorspannung_als_kraft_text, test_bericht,
              test_import_kategorien, test_import_aktion_gilt, test_import_widerspruch,
              test_import_vorspannung_als_kraft, test_import_gemischter_lastfall_wird_gemeldet,
              test_alte_datei_bleibt, test_oberflaeche)

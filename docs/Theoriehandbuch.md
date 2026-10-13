@@ -811,6 +811,21 @@ mit Kontakt hätte ein linear gerechnetes X keine Bedeutung. Dort reicht
 `solve_all` X nach, aus dem Ergebnis eines Lastfalls, der nur diese
 Vorspannung trägt (LF398).
 
+**Eine aus RFEM umgerechnete Vorspannung (seit 13.10.2026).** Der RFEM-Import
+setzt die Stablast „Vorspannung“ (InitialPrestress, Kraft N₀) mit genau dieser
+Umrechnung in eine Temperaturlast um, ΔT = −N₀/(E·A·α), mit dem E und dem α des
+Stabwerkstoffs und der Fläche A des Querschnitts. Die Last behält N₀, E und α als
+Merkmal („aus Vorspannung“, `TempLoad.aus_vorspannung`, `vorspann_E`,
+`vorspann_alpha`); Ansicht, Lasttabelle und Bericht nennen die Kraft, nicht ΔT:
+„Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K)“.
+Gerechnet wird mit ΔT, unverändert; das Merkmal ändert kein Ergebnis. Dass E und
+α angegeben werden, ist Teil des Sachverhalts: im voll gehaltenen Stab ist
+N = E·A·α·(−ΔT), die angezeigte Kraft N₀ gilt also nur für das E, das α und die
+Fläche der Umrechnung. Am Drehlager (E = 170 000 N/mm², α = 1,0e-5 1/K, 16 Anker
+mit 952 kN bzw. 805 kN) ist das ΔT = −445,634 K bzw. −376,823 K. Die
+kraftgesteuerte Vorspannung („Vorspannkraft nach Verankerung“) ersetzt die
+Umrechnung später; bis dahin nennt das Importprotokoll E und α einmal.
+
 ## 2 Lasten
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.
@@ -1121,6 +1136,39 @@ bildet
   ständige Lasten ungünstig (γG,sup = 1,35) und günstig (γG,inf = 1,0),
 * außergewöhnliche Situationen nach Gl. 6.11b,
 * GZG charakteristisch (6.14b), häufig (6.15b), quasi-ständig (6.16b).
+
+**Vorspannung, nicht zugeordnete Einwirkung und Bemessungslastfall (seit
+13.10.2026).** Drei Regeln des Generators und der Rechnung, auf Entscheidung des
+Anwenders vom 13.10.2026:
+
+* *Vorspannung (Kategorie P)* ist eine ständige Einwirkung mit
+  **γ_P = 1,0**, günstig wie ungünstig (`DesignSettings.gamma_P`, Vorgabe 1,0;
+  ein eigenes `gamma_sup`/`gamma_inf` am Lastfall geht vor). Bis zum 12.10.2026
+  lief P wie G mit γ_G,sup = 1,35. Ein Lastfall hat **eine** Einwirkung und damit
+  ein γ: ein gemischter Lastfall (Vorspannung und andere Lasten in einem Lastfall)
+  geht als Ganzes mit dem γ seiner Einwirkung ein, die Vorspannung darin also etwa
+  mit γ_Q = 1,5 statt 1,0 (`tests/test_lastfall_kategorie.py`, „gemischter
+  Lastfall“). Das Programm teilt den Lastfall nicht; der Import meldet solche
+  Lastfälle, und die Abhilfe ist ein eigener Vorspannungslastfall oder das
+  Kennzeichen „Bemessungslastfall“.
+* *Nicht zugeordnet (Kategorie NZ).* Ein Lastfall, dessen Einwirkung die Quelle nicht
+  eindeutig nennt, ist weder ständig noch veränderlich noch außergewöhnlich: γ und ψ
+  stehen nicht fest. Eine Kombination, die ihn mit einem Faktor ungleich null enthält
+  – auch in einer Alternative einer Ergebniskombination –, wird nicht gerechnet
+  (`KombinationGesperrt`, ein Bedienhinweis); `solve_all` prüft das vor dem ersten
+  Lastfall, `solve_combination` und die Umhüllende der Ergebniskombination in
+  `_kombination_pruefen`, der Generator vor dem Ersetzen vorhandener Kombinationen.
+  Der Generator ließ einen solchen Lastfall sonst still weg, denn er ist in keiner der
+  drei Mengen `perm`, `var`, `acc`. Einzelne Lastfälle, Ermüdungszustände und
+  `solve_all(combinations=False)` bleiben rechenbar.
+* *Bemessungslastfall, bereits faktorisiert (`LoadCase.faktorisiert`).* Die Lasten
+  sind schon Bemessungswerte; in jeder Kombination geht der Lastfall mit γ = 1,0 und
+  ohne ψ ein, sonst bekäme er sein γ ein zweites Mal: am Drehlager ist LF1
+  („Bemessungslast im GZT …“) in RFEM die Last von LF201 („char.Last …“) mal 1,37
+  bis 1,47. Er braucht keine Einwirkung (γ und ψ stehen fest) und sperrt nichts. Der
+  Generator überlagert ihn nicht mit anderen Lastfällen, sondern bildet die
+  Kombination „1,0·LFn“ (GZT); GZG und außergewöhnliche Kombinationen nehmen ihn
+  nicht auf, denn ein Bemessungswert ist kein charakteristischer.
 
 Lastfälle derselben Ausschlussgruppe (z. B. Wind aus verschiedenen
 Richtungen) wirken nie gemeinsam. Bei linearen Systemen werden Kombinationen

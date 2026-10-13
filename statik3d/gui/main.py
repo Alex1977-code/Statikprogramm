@@ -10150,7 +10150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = m.load_cases.get(fall)
         if lc is None:
             return
-        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        titel = lc.lastart_titel(art)
         lasten = lc.lasten_je_art().get(art, [])
         if m.active_case != fall:
             m.active_case = fall                # seine Lasten sind in der Ansicht zu sehen
@@ -10209,7 +10209,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = m.load_cases.get(fall)
         if lc is None:
             return
-        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        titel = lc.lastart_titel(art)
         n_ = len(lc.lasten_je_art().get(art, []))
         if not n_:
             return self.info(f"Im Lastfall {fall} gibt es keine {titel}")
@@ -16567,6 +16567,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return pfad
 
     def din19704_bilden(self):
+        # Lastfaelle ohne Einwirkung: der Hinweis vor dem Merken und Bilden (13.10.2026)
+        offen = self.model.lastfaelle_ohne_einwirkung()
+        if offen:
+            from ..combinations import sperrhinweis_erzeugen
+            return self.hinweis(sperrhinweis_erzeugen(offen))
         from ..bridges.din19704 import Regelwerk, pruefliste
         rw = getattr(self, "regelwerk", None) or Regelwerk()
         self.regelwerk = rw
