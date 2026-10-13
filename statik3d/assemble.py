@@ -1698,9 +1698,11 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             f[10] += Mt_
         out[tl.elem] = out.get(tl.elem, np.zeros(12)) + f
     # Vorspannung in Staeben: der Stab will sich um F/(EA) verkuerzen - wie
-    # eine Abkuehlung ziehen die aequivalenten Knotenlasten die Enden zusammen
+    # eine Abkuehlung ziehen die aequivalenten Knotenlasten die Enden zusammen.
+    # Eine Sollkraft (Vorspannung.sollkraft, 13.10.2026) ist keine
+    # Anfangsdehnung: sie rechnet statik3d.vorspannkraft im Spannschritt.
     for v in getattr(case, "vorspannungen", None) or []:
-        if getattr(v, "art", "stab") != "stab" or not v.kraft:
+        if getattr(v, "art", "stab") != "stab" or not v.kraft or getattr(v, "sollkraft", False):
             continue
         mem = model.members.get(v.ziel)
         for i in (mem.elements if mem else []):
@@ -1853,6 +1855,27 @@ def solid_prestress(model: Model, v) -> dict:
     return {i: s0 for i in elems if model.elements[i].typ in SOLID_TYPES}
 
 
+def stablasten_einbauen(model: Model, feq: dict, F: np.ndarray) -> None:
+    """Lokale aequivalente Knotenlasten je Stabelement (``feq``, wie aus
+    :func:`element_equivalent_loads`) in den globalen Lastvektor F:
+    Stablasten (Strecken-, Eigengewicht, Temperatur) mit Gelenkkondensation;
+    bei Exzentrizitaet auf die Knoten umgerechnet (f_knoten = Aᵀ f_stab).
+    Bis zum 13.10.2026 Teil von :func:`load_vector`; die Verriegelungskraefte
+    der Vorspannkraft (statik3d.vorspannkraft, je Element verschieden) gehen
+    seither denselben Weg."""
+    for i, fl in feq.items():
+        e = model.elements[i]
+        kl, T3, T, L = beam_local(model, e)
+        if getattr(e, "hinge_springs", None):
+            kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
+        if e.hinges:
+            _, fl, _ = condense(kl, fl, e.hinges)
+        A = beam_versatz(e)
+        if A is not None:
+            fl = A.T @ fl
+        F[element_dofs(e, model)[:12]] += T.T @ fl
+
+
 def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
     """Globaler Lastvektor eines Lastfalls (default: aktiver Lastfall).
     ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last;
@@ -1872,19 +1895,7 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             continue
         F[NDOF * l.node: NDOF * l.node + 6] += np.asarray(l.F, float)
 
-    # Stablasten (Strecken-, Eigengewicht, Temperatur) mit Gelenkkondensation;
-    # bei Exzentrizitaet auf die Knoten umgerechnet (f_knoten = Aᵀ f_stab)
-    for i, fl in element_equivalent_loads(model, case, aktiv).items():
-        e = model.elements[i]
-        kl, T3, T, L = beam_local(model, e)
-        if getattr(e, "hinge_springs", None):
-            kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
-        if e.hinges:
-            _, fl, _ = condense(kl, fl, e.hinges)
-        A = beam_versatz(e)
-        if A is not None:
-            fl = A.T @ fl
-        F[element_dofs(e, model)[:12]] += T.T @ fl
+    stablasten_einbauen(model, element_equivalent_loads(model, case, aktiv), F)
 
     for l in case.face_loads:
         if not _wirkt(aktiv, l.elem):

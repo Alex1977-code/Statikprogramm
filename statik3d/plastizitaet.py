@@ -1309,7 +1309,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
 
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
             norm_F: float, info: dict, log: list = None, progress=None,
-            kontakt=None, F_sofort=None, sigma0=None, zonen=None) -> tuple:
+            kontakt=None, F_sofort=None, sigma0=None, zonen=None, start=None) -> tuple:
     """Newton mit der konsistenten Tangente - siehe :func:`iteration`.
 
     **Netzabhaengige Spitzen** (seit dem 13.10.2026): ``zonen`` vom Loeser
@@ -1380,6 +1380,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
 
     basis = Zustand(sigma0)
     F_p = np.zeros(model.ndof)
+    if start is not None:
+        # vom Spannschritt einer Vorspannkraft aus (iteration, ``start``)
+        basis, F_p = start[0], np.array(start[1], float, copy=True)
     u = None
     diff = 0.0
     basis_anfang = basis
@@ -1606,7 +1609,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
 
 def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
               progress=None, loesen_tangente=None, kontakt=None, F_sofort=None,
-              sigma0=None, zonen=None) -> tuple:
+              sigma0=None, zonen=None, start=None) -> tuple:
     """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
     Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
     Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
@@ -1656,12 +1659,22 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     ``Plastizitaet.abbruch`` (:data:`ABBRUCH_WEGE`, :func:`_zonen_mass`) und
     je Schritt eine Zeile im Protokoll. Die Anfangsdehnung misst wie bisher
     (ihr Abbruch am geschaetzten Fehler ist ein anderer).
+
+    ``start`` (Zustand, F_p) (seit dem 13.10.2026, statik3d.vorspannkraft):
+    der plastische Zustand, von dem die erste Laststufe ausgeht - der des
+    Spannschritts einer Vorspannkraft (Soll nach Verankerung). Ohne ihn
+    beginnt jede Rechnung jungfraeulich wie bisher. Die Anfangsspannung
+    ``sigma0`` ist die dieser Rechnung, nicht die des Starts.
     """
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand(sigma0)
     F = np.asarray(F, float)
     norm_F = float(np.linalg.norm(F))      # 0 ohne aeussere Last - dann greift _bezug
     F_p = np.zeros(model.ndof)
+    if start is not None:
+        zustand = start[0].kopie()
+        zustand.sigma0 = dict(sigma0 or {})
+        F_p = np.array(start[1], float, copy=True)
     u = None
     info = {"laststufen": int(max(1, einst.laststufen)), "iterationen": 0, "konvergiert": True,
             "fliessend": 0, "eps_p_max": 0.0, "verlauf": [], "faktorisierungen": 0,
@@ -1687,7 +1700,8 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
-                       log, progress, kontakt, F_sofort, zustand.sigma0, zonen)
+                       log, progress, kontakt, F_sofort, zustand.sigma0, zonen,
+                       start=None if start is None else (zustand, F_p))
     stufen = int(max(1, einst.laststufen))
     for k in range(1, stufen + 1):
         lam = k / stufen

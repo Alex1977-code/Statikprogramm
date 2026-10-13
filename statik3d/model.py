@@ -1261,16 +1261,45 @@ class Vorspannung:
     art:    "stab" | "koerper"
     kraft:  Vorspannkraft [N], positiv = Zug im vorgespannten Bauteil
     achse:  Achsrichtung beim Koerper; None = seine laengste Abmessung
+
+    **Vorspannkraft (Soll nach Verankerung)** (``sollkraft``, seit dem
+    13.10.2026, nur im Stab): ``kraft`` ist dann die Kraft, die der Stab nach
+    dem Verankern **traegt**, nicht die Anfangsdehnung. Gerechnet wird sie in
+    einem eigenen Spannschritt vor den uebrigen Lasten (statik3d.vorspannkraft):
+    der Stab ist inaktiv und wirkt als Kraeftepaar F_soll an seinen Enden,
+    danach wird er in der verformten Lage mit N = F_soll verriegelt. Mit der
+    Anfangsdehnung traegt er dagegen F_v minus die elastische Verkuerzung der
+    Umgebung. Entscheidung des Anwenders: „Vorspannung kraftgesteuert eingeben.
+    Neue Lastart „Vorspannkraft (Soll nach Verankerung)“ je Stab.“
+    ``gruppe`` ist die Reihenfolge beim Spannen: Staebe derselben Gruppe
+    werden gleichzeitig gespannt, mehrere Gruppen nacheinander in
+    aufsteigender Nummer - dann verlieren die frueher gespannten Kraft.
+    Beide Felder werden nur fuer eine Sollkraft gespeichert, damit Dateien mit
+    der Anfangsdehnung bleiben, wie sie sind.
     """
     ziel: str = ""
     art: str = "stab"
     kraft: float = 0.0
     achse: Optional[list[float]] = None
     kommentar: str = ""
+    sollkraft: bool = False
+    gruppe: int = 1
 
     def bezug(self) -> str:
+        if self.sollkraft:
+            return (f"Stab {self.ziel}: F_soll = {self.kraft / 1e3:g} kN (nach Verankerung"
+                    + (f", Gruppe {int(self.gruppe)}" if int(self.gruppe or 1) != 1 else "") + ")")
         return (("Stab " if self.art == "stab" else "Volumen ") + str(self.ziel)
                 + f": F_v = {self.kraft / 1e3:g} kN")
+
+    def als_dict(self) -> dict:
+        """Zum Speichern: ``sollkraft`` und ``gruppe`` nur bei einer Sollkraft -
+        eine Datei mit der Anfangsdehnung bleibt Byte fuer Byte, wie sie war."""
+        d = asdict(self)
+        if not self.sollkraft:
+            d.pop("sollkraft", None)
+            d.pop("gruppe", None)
+        return d
 
 
 @dataclass
@@ -1344,16 +1373,37 @@ class TempLoad:
         alpha = float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
         return float(mat.E) * A * alpha * (-float(self.dT))
 
+    def vorspanntext(self, model) -> str:
+        """„aus Vorspannung 952 kN, E = 170 000 N/mm², α = 1,0e-5 1/K“ - die
+        Kraft, aus der der Import diese Temperatur gerechnet hat, mit E und α
+        der Umrechnung; leer, wenn die Last keine Vorspannung ist.
+
+        Entscheidung des Anwenders vom 13.10.2026: „Vorspannung … als Kraft
+        anzeigen, nicht als Temperatur ΔT. Bis zur Umstellung nach Punkt 1 das
+        verwendete E und α der Umrechnung angeben.“ Umgestellt wird mit
+        statik3d.vorspannkraft.in_sollkraft_umwandeln."""
+        N = self.vorspannkraft(model)
+        if abs(N) <= 1.0:
+            return ""
+        from .zahlen import zahl_text
+        mat = model.materials.get(getattr(model.elements[int(self.elem)], "mat", ""))
+        alpha = float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
+        mant, hoch = f"{alpha:.1e}".split("e")
+        return (f"aus Vorspannung {zahl_text(round(N / 1e3, 1))} kN, "
+                f"E = {zahl_text(round(float(mat.E) / 1e6, 1))} N/mm², "
+                f"α = {mant.replace('.', ',')}e{int(hoch)} 1/K")
+
     def bezug(self, model=None) -> str:
         """Eine Zeile fuer Tabelle und Protokoll - bei einem vorgespannten
-        Zugstab mit der Kraft, nicht nur mit der Temperatur."""
+        Zugstab mit der Kraft, nicht nur mit der Temperatur, und mit E und α
+        der Umrechnung (13.10.2026; bis dahin „→ Vorspannung 952 kN (Zugstab)“)."""
         text = f"Element {self.elem}: ΔT = {self.dT:+.1f} K"
         if self.dT_z:
             text += f", ΔT über die Höhe {self.dT_z:+.1f} K"
         if model is not None:
-            N = self.vorspannkraft(model)
-            if abs(N) > 1.0:
-                text += f" → Vorspannung {N / 1e3:.0f} kN (Zugstab)"
+            vs = self.vorspanntext(model)
+            if vs:
+                text += f" → {vs} (Zugstab)"
         return text
 
 
@@ -1497,7 +1547,7 @@ class LoadCase:
                               if k != "verteilt" and (k != "erzeuger" or v)}
                              for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
-            "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
+            "vorspannungen": [l.als_dict() for l in (getattr(self, "vorspannungen", None) or [])],
             "uebermasse": [asdict(l) for l in (getattr(self, "uebermasse", None) or [])],
             "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
@@ -6645,9 +6695,12 @@ class Model:
         return zv
 
     def add_vorspannung(self, ziel: str, kraft: float, art: str = None, achse=None,
-                        case: str = None, kommentar: str = "") -> Vorspannung:
+                        case: str = None, kommentar: str = "", sollkraft: bool = False,
+                        gruppe: int = 1) -> Vorspannung:
         """Vorspannkraft [N] in einem Stab oder Volumenkoerper (siehe
-        :class:`Vorspannung`); ``art`` wird am Namen erkannt."""
+        :class:`Vorspannung`); ``art`` wird am Namen erkannt. ``sollkraft``:
+        die Lastart „Vorspannkraft (Soll nach Verankerung)“ (nur im Stab),
+        ``gruppe`` ihre Reihenfolge beim Spannen."""
         ziel = str(ziel)
         if art is None:
             art = ("stab" if ziel in self.members else
@@ -6658,8 +6711,12 @@ class Model:
             raise KeyError(f"Volumen {ziel} gibt es nicht")
         if art not in ("stab", "koerper"):
             raise KeyError(f"{ziel} ist weder Stab noch Volumenkörper")
+        if sollkraft and art != "stab":
+            raise ValueError(f"Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab, "
+                             f"nicht im Volumen {ziel}")
         v = Vorspannung(ziel, art, float(kraft),
-                        None if achse is None else [float(x) for x in achse], str(kommentar or ""))
+                        None if achse is None else [float(x) for x in achse], str(kommentar or ""),
+                        bool(sollkraft), int(gruppe or 1))
         self.case(case).vorspannungen.append(v)
         return v
 
@@ -7455,7 +7512,10 @@ class Model:
         for fall, lc in self.load_cases.items():
             for v in (getattr(lc, "vorspannungen", None) or []):
                 if getattr(v, "art", "stab") == "stab" and v.ziel == name:
-                    out.append((fall, float(v.kraft)))
+                    # die Sollkraft ist eine andere Lastart als die Anfangsdehnung
+                    wo = (fall if not getattr(v, "sollkraft", False)
+                          else f"{fall} (Sollkraft, Gruppe {int(v.gruppe or 1)})")
+                    out.append((wo, float(v.kraft)))
         return tuple(sorted(out, key=repr))
 
     @staticmethod

@@ -504,6 +504,10 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     model.add_material(Material(name, E=E, nu=nu, rho=rho, alpha=alpha,
                                 fy=fy, fu=fu, grade=grade,
                                 fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or [])))
+    if h is not None and impl is not None and props.get("f_p01k") and not props.get("f_y"):
+        # Spannstahl (f_p0,1k statt f_y): die Umwandlung einer Vorspannung in
+        # die Sollkraft schlaegt 0,9 f_p0,1k A vor (statik3d.vorspannkraft)
+        model.meta.setdefault("spannstahl", []).append(name)
     C.say(log, f"  Material '{name}': E = {E / 1e9:g} GPa"
                + (f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
                + (f" (nach Dicke: {model.materials[name].dickentext('fy')})" if fy_dicke else "")
@@ -1003,8 +1007,22 @@ def read_rf6(path: str, model: Model = None, log: list = None,
         con.close()
         if tmp_dir and not keep_db:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+    _vorspannung_hinweisen(m, log)
     _melde(fortschritt, 1.0, f"Datei gelesen: {m.nn} Knoten, {len(m.elements)} Elemente")
     return m
+
+
+def _vorspannung_hinweisen(m: Model, log: list) -> None:
+    """Die Anfangsvorspannung bleibt eine eingepraegte Dehnung (dT), der Import
+    sagt aber, welche Kraft danach bleibt: „Anfangsvorspannung 952 kN ergibt
+    nach elastischer Verkürzung X kN – in Sollkraft umwandeln?“ (Entscheidung
+    des Anwenders vom 13.10.2026; statik3d.vorspannkraft.import_hinweise).
+    Ein Fehler hier haelt den Import nicht auf."""
+    try:
+        from .. import vorspannkraft as vk
+        vk.import_hinweise(m, log)
+    except Exception as ex:                 # noqa: BLE001
+        C.warn(log, f"Hinweis zur Vorspannung nicht gebildet ({type(ex).__name__}: {str(ex)[:160]})")
 
 
 def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:

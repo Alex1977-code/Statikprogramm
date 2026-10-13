@@ -2838,6 +2838,23 @@ def case_sofort(model: Model, factors: dict, aktiv=None, ohne=None):
     return F_S
 
 
+def _zusatz_einrechnen(model: Model, zusatz: dict, F, feq: dict, F_S):
+    """Die Kraefte einer Vorspannkraft (Soll nach Verankerung) zu denen des
+    Lastfalls (``_solve_loads``, ``zusatz``): Lastvektor ``F``, Stabendlasten
+    ``feq`` und - in den Laststufen sofort voll - ``F_S``. Rueckgabe
+    (F, feq, F_S); die Eingaben bleiben unveraendert."""
+    F_z = zusatz.get("F")
+    if F_z is not None:
+        F = np.asarray(F, float) + np.asarray(F_z, float)
+    feq = dict(feq)
+    for i, v in (zusatz.get("feq") or {}).items():
+        feq[i] = feq.get(i, 0.0) + np.asarray(v, float)
+    S_z = zusatz.get("F_S")
+    if S_z is not None and _plastisch(model):
+        F_S = np.asarray(S_z, float) if F_S is None else np.asarray(F_S, float) + np.asarray(S_z, float)
+    return F, feq, F_S
+
+
 def case_feq_sofort(model: Model, factors: dict, aktiv=None) -> dict:
     """Der Anteil der Temperaturlasten und Vorspannungen an den aequivalenten
     Elementlasten ``feq`` (:func:`case_loads`) - das Gegenstueck zu
@@ -4646,7 +4663,8 @@ def _spitzen_konvergenz_eintragen(res) -> None:
 
 
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
-                          gemeinsam: bool = False, F_sofort=None, system=None, factors=None, feq=None):
+                          gemeinsam: bool = False, F_sofort=None, system=None, factors=None, feq=None,
+                          plast_start=None, plast_merken: bool = False, feq_sofort_dazu=None):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
     Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
     Zusatzlast F_p, mit Kontakt warm gestartet vom letzten Zustand.
@@ -4667,7 +4685,14 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     ``system``, ``factors``, ``feq`` (seit dem 13.10.2026): fuer die
     netzabhaengigen Spitzen im Newton (:func:`_spitzen_im_newton`) - die
     Stellen einmal je Rechnung am System, die Kraefte mit den Faktoren und
-    Stablasten des Lastfalls. Ohne ``factors`` misst der Newton wie bisher."""
+    Stablasten des Lastfalls. Ohne ``factors`` misst der Newton wie bisher.
+
+    Vorspannkraft (Soll nach Verankerung, statik3d.vorspannkraft, 13.10.2026):
+    ``plast_start`` (Zustand, F_p) ist der plastische Zustand des
+    Spannschritts, von dem die Laststufen ausgehen; ``plast_merken`` legt den
+    Endzustand als ``res._plast_ende`` ab (fuer den naechsten Schritt);
+    ``feq_sofort_dazu`` sind die Verriegelungskraefte der Staebe - sie wirken
+    wie jede Vorspannung ab der ersten Stufe voll."""
     from . import plastizitaet as pl
     log: list = []
     _kontakt_weg_melden(model, log)
@@ -4676,6 +4701,9 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     iteriert = model.has_contact or model.hat_ausfallstaebe()
     zonen = _spitzen_im_newton(model, system, factors, feq, temp, log, aktiv,
                                reaktionen=lambda: kn.halter["R"])
+    if zonen is not None and feq_sofort_dazu:
+        for i, v in feq_sofort_dazu.items():
+            zonen.feq_sofort[i] = zonen.feq_sofort.get(i, 0.0) + v
     # Die Anfangsspannung einer Vorspannung als Koerper (case_loads): die
     # Fliesspruefung braucht die wahre Spannung D(eps - eps_p) - sigma0
     # (plastizitaet.Zustand, 10.10.2026). Hier steht in temp["sigma0"] nur
@@ -4685,7 +4713,10 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                                          progress=lambda t: _melde(progress, t),
                                          loesen_tangente=kn.loesen,
                                          kontakt=kn if iteriert else None,
-                                         F_sofort=F_sofort, sigma0=sigma0, zonen=zonen)
+                                         F_sofort=F_sofort, sigma0=sigma0, zonen=zonen,
+                                         start=plast_start)
+    if plast_merken:
+        res._plast_ende = (zustand, F_p)
     halter, aufrufe = kn.halter, kn.aufrufe
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
@@ -4757,13 +4788,27 @@ def _startherkunft_eintragen(res, start, start_von, ausfallweg: bool) -> None:
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None, start=None,
                  einfrieren=None, fenster=None, probelauf: bool = False,
-                 start_von: str = None) -> Results:
+                 start_von: str = None, zusatz: dict = None) -> Results:
     """Einen Lastfall (oder eine direkt geloeste Kombination) rechnen.
 
     ``start_von`` nennt nur, woher ``start`` stammt ("Lastfall LF1",
     "Kombination K1", "System <Situation>") - es steht als
     ``res.info['start_angeboten_von']`` im Ergebnis und aendert nichts an
-    der Rechnung."""
+    der Rechnung.
+
+    Traegt ein Lastfall eine Vorspannkraft (Soll nach Verankerung, seit dem
+    13.10.2026), rechnet ihn statik3d.vorspannkraft.rechnen: Spannschritt,
+    Verriegeln, dann dieser Lastfall mit ``zusatz`` - den Kraeften der
+    verriegelten Staebe und dem Zustand des Spannschritts:
+
+    * ``F``, ``feq``: Lastvektor und Stabendlasten der Verriegelung (bzw. der
+      eingepraegten Dehnung der Einflussmatrix), zu denen des Lastfalls;
+    * ``F_S``: ihr Anteil, der in den Laststufen sofort voll wirkt;
+    * ``n0``: {Element: Vorspannkraft} fuer die Ausfall-Iteration;
+    * ``plast_start``, ``plast_merken``: plastischer Start- und Endzustand;
+    * ``ohne_grund``: keine Grundlasten (der Spannschritt kommt vor allen Lasten).
+
+    Ohne ``zusatz`` und ohne Sollkraft rechnet alles wie bisher."""
     t0 = time.time()
     # Loeser-Nachweis je Lastfall: das System wird ueber Lastfaelle und
     # Kombinationen geteilt, seine Summen (zeit_faktorisierung) wachsen mit.
@@ -4779,16 +4824,26 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     # Rechnung mit - dort gibt es keine Ueberlagerung, in die man sie spaeter
     # legen koennte. Linear bleibt der Lastfall, was er ist.
     grund = grundlasten(model, factors) if (_nichtlinear(model) or model.hat_ausfallstaebe()) else []
+    if zusatz is not None and zusatz.get("ohne_grund"):
+        grund = []
     if grund:
         factors = dict(factors)
         for n in grund:
             factors[n] = 1.0
         _melde(progress, f"{name}: Grundlast wirkt mit - " + ", ".join(grund))
+    if zusatz is None:
+        from . import vorspannkraft as _vk
+        if _vk.sollkraefte(model, factors):
+            return _vk.rechnen(model, system, factors, name, kind, workers=workers,
+                               progress=progress, start=start, einfrieren=einfrieren,
+                               fenster=fenster, probelauf=probelauf, start_von=start_von)
     F, feq, q, temp = case_loads(model, factors, aktiv)
     # In den Laststufen der Plastizitaet wirken Temperaturlasten und
     # Vorspannkraefte sofort voll (10.10.2026) - Zwangsverformungen und
     # Uebermasse gibt _rechnen ohnehin in jedem Aufruf voll mit
     F_S = case_sofort(model, factors, aktiv) if _plastisch(model) else None
+    if zusatz is not None:
+        F, feq, F_S = _zusatz_einrechnen(model, zusatz, F, feq, F_S)
     us = case_prescribed(model, factors, warn=progress)
     ueber = case_uebermass(model, factors)
     res = Results(name=name, kind=kind, model=model)
@@ -4825,7 +4880,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         if model.hat_ausfallstaebe():
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
                 model, system, Fg, us=us, progress=progress, uebermass=ueber,
-                K_zusatz=K_zusatz, probelauf=probelauf)
+                K_zusatz=K_zusatz, probelauf=probelauf,
+                n0=None if zusatz is None else zusatz.get("n0"))
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
@@ -4938,12 +4994,16 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         if isinstance(zs, dict) and not zs.get("konvergiert", True):
             zs = None           # ein gedeckelter Vorlauf gibt keinen Zustand weiter: kalt wie bisher
         start_pl = start if gemeinsam else (zs or start)
+        # Vorspannkraft (Soll nach Verankerung): vom Zustand des Spannschritts aus
+        pl_extra = {} if zusatz is None else {
+            "plast_start": zusatz.get("plast_start"), "plast_merken": bool(zusatz.get("plast_merken")),
+            "feq_sofort_dazu": zusatz.get("feq")}
         try:
             try:
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
                                                               progress, start_pl, gemeinsam,
                                                               F_sofort=F_S, system=system,
-                                                              factors=factors, feq=feq)
+                                                              factors=factors, feq=feq, **pl_extra)
             except RuntimeError:
                 # Ohne Vorlauf scheitert an einer freien Bewegung erst der erste
                 # plastische Lauf - dann wie oben: festhalten und neu rechnen.
@@ -4959,7 +5019,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
                                                               progress, start_pl, gemeinsam,
                                                               F_sofort=F_S, system=system,
-                                                              factors=factors, feq=feq)
+                                                              factors=factors, feq=feq, **pl_extra)
         except RuntimeError as ex3:
             _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv,
                                     art=lauf_art["art"])
@@ -5053,7 +5113,8 @@ def _normalkraft(model: Model, e, u: np.ndarray) -> float:
 
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
                        progress=None, max_iter: int = 50, uebermass: dict = None,
-                       K_zusatz: sparse.spmatrix = None, probelauf: bool = False):
+                       K_zusatz: sparse.spmatrix = None, probelauf: bool = False,
+                       n0: dict = None):
     """Aktivmengen-Iteration fuer Staebe, die nur Zug oder nur Druck aufnehmen
     (Fachwerkstab/Feder mit ``nur``, Seile).
 
@@ -5069,9 +5130,18 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
 
     Rueckgabe (u, R, aktiv, ausgefallen, log, kontakt) - kontakt = None oder
     (contact, contact_forces, info) aus der Kontaktiteration.
+
+    ``n0`` {Element: (N0, FHG, Werte)} (seit dem 13.10.2026): verriegelte
+    Staebe einer Vorspannkraft (Soll nach Verankerung, statik3d.vorspannkraft).
+    Ihre Kraft ist N0 plus der elastische Anteil; danach entscheidet sich, ob
+    sie ausfallen, und ein ausgefallener nimmt seine Verriegelungslast (FHG,
+    Werte in F) mit. Ohne ``n0`` rechnet die Iteration wie bisher - auch eine
+    Anfangsdehnung oder Temperatur im Stab zaehlt dort nicht mit.
     """
     if probelauf:
         max_iter = 1            # siehe solve_with_contact: ein Schritt genuegt
+    n0 = n0 or {}
+    F_voll = F
     ne = len(model.elements)
     kand = [i for i, e in enumerate(model.elements)
             if (getattr(e, "nur", "") or e.typ == "seil")
@@ -5100,6 +5170,14 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
                 shape=(n, n)).tocsr()
             if K_zusatz is not None:
                 K_aus = (K_aus + K_zusatz).tocsr()
+        if n0:
+            # ein ausgefallener verriegelter Stab traegt auch seine Vorspannung nicht
+            F = F_voll
+            weg = [i for i in aus if i in n0]
+            if weg:
+                F = np.array(F_voll, float, copy=True)
+                for i in weg:
+                    np.subtract.at(F, n0[i][1], n0[i][2])
         if model.has_contact:
             u, R, cons, cf, cinfo = solve_with_contact(model, system, F, progress=progress,
                                                        uebermass=uebermass,
@@ -5110,6 +5188,9 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
             u = system.solve(F, K_extra=K_aus, us=us)
             R = system.reactions(u, F, K_aus)
         kraefte = {i: _normalkraft(model, model.elements[i], u) for i in kand}
+        for i in kraefte:
+            if i in n0:
+                kraefte[i] += float(n0[i][0])
         gross = max([abs(v) for v in kraefte.values()] + [1.0])
         tol = 1e-9 * gross
         neu = set()
