@@ -212,6 +212,13 @@ def test_streng_gegen_ingenieurmaessig(paar):
           f"max |Δu| {dua * 1e6:.2f} µm bei u max {ua * 1e3:.4f} mm außerhalb ({dua / ua * 100:.3f} %); "
           f"u_max gesamt (am Ring) streng {np.linalg.norm(u_s, axis=1).max() * 1e3:.4f} mm, ingenieurmäßig "
           f"{np.linalg.norm(u_i, axis=1).max() * 1e3:.4f} mm")
+    # der Satz im Benutzerhandbuch nennt diese Messung (tests/handbuch.py)
+    from tests.handbuch import absatz
+    satz = absatz("An der Ankerplatte der Tests")
+    check("das Benutzerhandbuch nennt die gemessenen Schritte und Abweichungen",
+          f"{n_i} statt {n_s} Newton-Schritte" in satz and f"{abw / 1e6:.2f} N/mm²".replace(".", ",") in satz
+          and f"{abs(N_i - N_s) / N_s * 100:.2f} %".replace(".", ",") in satz
+          and f"{dua / ua * 100:.2f} %".replace(".", ",") in satz, satz[:160])
     ep_s = max((r_s.info.get("plastisch") or {0: 0.0}).values())
     ep_i = max((r_i.info.get("plastisch") or {0: 0.0}).values())
     print(f"       ε_p max streng {ep_s * 100:.3f} %, ingenieurmäßig {ep_i * 100:.3f} % (in der Zone, nicht auskonvergiert)")
@@ -353,6 +360,33 @@ def ankerkraft_aus_u(m, e, u, feq, temp):
 
 
 # --------------------------------------------------------------------------
+# 4b) Nie strenger als streng
+# --------------------------------------------------------------------------
+def test_streng_genuegt_immer():
+    """Was streng konvergiert, ist auch ingenieurmaessig konvergiert: die
+    Bedingungen fuer Kraft und Verschiebung duerfen keine Stufe verlaengern.
+    Am Drehlager (Entwurf) aenderte der Kontakt die Verschiebung ausserhalb
+    der Zonen um 6,6 % in einem Schritt, in dem F_p ueberall unter der
+    Toleranz lag (13.10.2026)."""
+    class Zonen:
+        ingenieur = True
+
+        def __init__(self, erfuellt):
+            self.erfuellt = erfuellt
+
+        def messen(self, *a, **k):
+            return {"zonen": 16, "aussen": 5e-4, "erfuellt": self.erfuellt, "zeile": None}
+    mass, ok, _m = pl._zonen_mass(Zonen(False), 8e-4, 1e-3, None, None, None, None, None, 1.0, 1.0, "1/1", 1)
+    check("streng erfüllt (8e-4 ≤ 1e-3), Kraft oder Verschiebung nicht: konvergiert", ok and mass == 5e-4,
+          f"{ok}, Maß {mass}")
+    mass, ok, _m = pl._zonen_mass(Zonen(False), 2e-3, 1e-3, None, None, None, None, None, 1.0, 1.0, "1/1", 1)
+    check("streng nicht erfüllt, außerhalb unter der Toleranz, Kraft oder Verschiebung nicht: weiter", not ok,
+          f"{ok}")
+    mass, ok, _m = pl._zonen_mass(Zonen(True), 2e-3, 1e-3, None, None, None, None, None, 1.0, 1.0, "1/1", 1)
+    check("streng nicht erfüllt, alle drei Bedingungen erfüllt: konvergiert", ok, f"{ok}")
+
+
+# --------------------------------------------------------------------------
 # 5) Protokoll: Werkstoffe ohne Streckgrenze einmal je Lastfall
 # --------------------------------------------------------------------------
 def test_protokollzeile_einmal():
@@ -427,6 +461,7 @@ def test_maske():
 def main():
     paar = None
     for t in (test_einstellung, test_maske, test_protokollzeile_einmal, test_einmal_auffaellig_bleibt_auffaellig,
+              test_streng_genuegt_immer,
               "paar", test_streng_gegen_ingenieurmaessig, test_kennzeichnung_im_ergebnis,
               test_bitgleich_ohne_auffaellige_stelle, test_unbekannter_wert):
         if t == "paar":

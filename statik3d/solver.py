@@ -4339,6 +4339,7 @@ class _SpitzenImNewton:
         self._nach_nr = {int(s["nr"]): s for s in self.stellen}
         self._knoten = {int(s["nr"]): _zonen_knoten(model, s) for s in self.stellen}
         self._dofs: dict = {}
+        self._knoten_koerper = None
         self._masken_fuer = None
         self._innen_dof = np.zeros(0, np.int64)
         self._aussen_knoten = np.ones(self.nn, bool)
@@ -4347,6 +4348,24 @@ class _SpitzenImNewton:
         """Bauteil der Stelle (am Drehlager „V21“), sonst ihr Name."""
         s = self._nach_nr.get(n) or {}
         return str(s.get("koerper") or s.get("name") or f"Stelle {n}")
+
+    def _koerper_am_knoten(self, knoten: int) -> str:
+        """Bauteil eines Knotens (fuer die Protokollzeile: wo sich u ausserhalb
+        am meisten aendert) - die Zuordnung einmal je Lastfall, erst wenn sie
+        gebraucht wird."""
+        if self._knoten_koerper is None:
+            nr = np.full(self.nn, -1, np.int64)
+            namen = []
+            for k, (name, kp) in enumerate((getattr(self.model, "koerper", None) or {}).items()):
+                namen.append(str(name))
+                el = [int(e) for e in (getattr(kp, "elemente", None) or []) if 0 <= int(e) < len(self.model.elements)]
+                if el:
+                    kn = np.concatenate([np.asarray(self.model.elements[e].nodes, np.int64) for e in el])
+                    nr[kn[(kn >= 0) & (kn < self.nn)]] = k
+            self._knoten_koerper = (nr, namen)
+        nr, namen = self._knoten_koerper
+        k = int(nr[int(knoten)]) if 0 <= int(knoten) < self.nn else -1
+        return namen[k] if k >= 0 else ""
 
     # ---- Bezug ---------------------------------------------------------------
     def merken(self):
@@ -4458,11 +4477,18 @@ class _SpitzenImNewton:
         else:
             kraft_wo = max(kraft_rel, key=kraft_rel.get) if kraft_rel else None
             kraft_max = kraft_rel[kraft_wo] if kraft_wo is not None else 0.0
-        du = None
+        du, du_wo = None, ""
         if v is not None:
             a = self._aussen_knoten
             ref = float(np.linalg.norm(ut[a], axis=1).max()) if a.any() else 0.0
-            du = (float(np.linalg.norm(ut[a] - v["ut"][a], axis=1).max()) / ref) if ref > 0.0 else 0.0
+            if ref > 0.0:
+                d = np.linalg.norm(ut[a] - v["ut"][a], axis=1)
+                j = int(np.argmax(d))
+                du = float(d[j]) / ref
+                if du > 0.0:
+                    du_wo = self._koerper_am_knoten(int(np.flatnonzero(a)[j]))
+            else:
+                du = 0.0
         erfuellt = bool(kraft_max is not None and kraft_max <= pl.SPITZEN_KRAFT
                         and du is not None and du <= pl.SPITZEN_VERSCHIEBUNG)
         for n in sorted(self.auffaellig):
@@ -4497,7 +4523,7 @@ class _SpitzenImNewton:
         else:
             wo = self._name(kraft_wo) if kraft_wo is not None else ""
             ktext += f" ±{kraft_max * 100:.2f} %" + (f" ({wo})" if wo else "")
-        utext = "–" if du is None else f"±{du * 100:.3f} %"
+        utext = "–" if du is None else f"±{du * 100:.3f} %" + (f" ({du_wo})" if du_wo else "")
         kopf = "Abschluss" if stufe == "Abschluss" else f"Laststufe {stufe}, Newton-Schritt {schritt}"
         zeile = (f"Plastizität: {kopf} - Zonen ({anzahl(len(self.auffaellig), 'auffällige Stelle', 'auffällige Stellen')}): "
                  f"Änderung außerhalb {aussen:.2e}, in den Zonen {innen:.2e}; Kraft {ktext}; u außerhalb {utext}")

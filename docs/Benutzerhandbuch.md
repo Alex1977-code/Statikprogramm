@@ -9038,7 +9038,9 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   fließen Volumenelemente, deren Vergleichsspannung (von Mises) die
   Streckgrenze fy ihres Werkstoffs übersteigt — die Spannung bleibt bei
   fy + H·ε_p, die Kraft verteilt sich um, die Verformung wächst. Werkstoffe
-  ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie.
+  ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie einmal je
+  Lastfall. Bis zum 13.10.2026 stand diese Zeile bei jedem Newton-Schritt
+  neu im Protokoll, am Bolzen der Tests in 11 von 13 Zeilen.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
   ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
   Last stufenweise auf (Temperaturlasten und Vorspannkräfte wirken seit dem
@@ -9191,6 +9193,66 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Prüfung nicht gerechnet — dort ist sie überflüssig und kostete je Lastfall
   eine Rückführung. Seit dem 25.09.2026 gilt sie auch für die Rechnung ohne
   Verfestigung (Anfangsdehnung) mit Kontakt.
+* **Abbruch der Laststufe: ingenieurmäßig oder streng** (seit dem
+  13.10.2026; *Berechnung → Einstellungen*, Zeile „Abbruch“ unter „Verfahren
+  mit Kontakt“; eine Einstellung am Modell, `plastizitaet.abbruch`). Die
+  **Vorgabe ist „ingenieurmäßig“**, das heißt: netzabhängige Spitzen sind
+  ausgenommen. Gemeint sind die Stellen, an denen Kraft ohne Auflagefläche in
+  ein Volumen geht und die das Programm als auffällig kennzeichnet (siehe
+  „Netzabhängige Spannungsspitzen“), etwa ein Anker an einer starren Scheibe,
+  die nur den Lochrand einer Bohrung koppelt. Ihre Spitze wächst mit jeder
+  Netzverfeinerung, und gerade sie hielt den Newton bisher auf: am Drehlager
+  trugen die Zonen der 16 Ankerringe 97 bis 99 % der Änderung, an der die
+  Konvergenz gemessen wurde. Mit „ingenieurmäßig“ gilt eine Laststufe als
+  konvergiert, wenn drei Bedingungen zugleich erfüllt sind. Die plastischen
+  Knotenlasten außerhalb dieser Zonen ändern sich um weniger als die
+  Toleranz, die Kraft durch jede solche Stelle ändert sich um höchstens
+  0,5 %, und die Verschiebung außerhalb der Zonen ändert sich um höchstens
+  0,5 % ihres Größtwerts. Was mit „streng“ konvergiert wäre, gilt auch hier
+  als konvergiert; die Bedingungen für Kraft und Verschiebung können eine
+  Stufe also nie länger machen. Am selben Maß entscheidet sich, ob eine
+  weglaufende Stufe halbiert wird und ob der Abschluss mit Kontakt bestanden
+  ist. Die Zonen rechnen weiter plastisch mit; nur ihr Beitrag zum Maß fällt
+  weg.
+  Welche Stellen auffällig sind, stellt das Programm nach jedem Newton-Schritt
+  aus dem aktuellen Zustand fest, und eine Stelle, die einmal auffällig war,
+  bleibt es für den Rest des Lastfalls. Ausgenommen wird nur, was
+  gekennzeichnet ist; gibt es keine auffällige Stelle, rechnet „ingenieurmäßig“
+  Schritt für Schritt genau wie „streng“.
+
+  Im Ergebnis stehen die Werte der ausgenommenen Zonen als „nicht
+  auskonvergiert“, mit ihrer letzten Änderung (Kraft, σ_v, ε_p und die
+  plastischen Knotenlasten der Zone). Das Protokoll nennt je Newton-Schritt in
+  einer Zeile die Änderung außerhalb und in den Zonen, die Kräfte durch die
+  auffälligen Stellen und die Änderung der Verschiebung außerhalb, am
+  Drehlager (Entwurf) etwa „Plastizität: Laststufe 1/7, Newton-Schritt 2 -
+  Zonen (16 auffällige Stellen): Änderung außerhalb 0.00e+00, in den Zonen
+  9.35e-02; Kraft 943–944 kN ±0.17 % (V9); u außerhalb ±9.221 %“. In Klammern
+  stehen die Bauteile, an denen sich die Kraft und die Verschiebung am
+  meisten geändert haben. Diese Zeile steht auch mit „streng“ da, dort nur
+  zur Auskunft. Am Ende nennt eine Zeile, welche
+  Stellen ausgenommen waren und wie weit ihre Werte zuletzt noch liefen, und
+  die Zusammenfassung des Ergebnisses sagt „Abbruch: ingenieurmäßig - n
+  netzabhängige Stellen ausgenommen, dort nicht auskonvergiert“.
+
+  **Streng** misst wie bis zum 13.10.2026 über das ganze Modell. Das kostet an
+  solchen Spitzen Newton-Schritte, ohne die Werte dort richtiger zu machen.
+  Eine Datei ohne diese Einstellung rechnet „ingenieurmäßig“; ein unbekannter
+  Wert ebenso, und das Protokoll nennt ihn.
+
+  An der Ankerplatte der Tests (Platte mit Bohrung, starre Scheibe über dem
+  Loch, Anker mit 0,9 MN Vorspannung und 0,3 MN Zuglast, Netz wie der Entwurf
+  des Drehlagers) braucht „ingenieurmäßig“ 14 statt 29 Newton-Schritte.
+  Außerhalb der Zone weicht σ_v dabei um höchstens 0,20 N/mm² ab, die
+  Ankerkraft um 0,14 % und die Verschiebung um 0,17 %
+  (`tests/test_spitzen_abbruch.py`). Mit einem doppelt so feinen Netz und
+  einer Zone, die von Schritt zu Schritt pendelt, wich σ_v in den Elementen
+  unmittelbar neben der Zone dagegen um bis zu 74 N/mm² ab, ab dem
+  2,4-fachen Zonenradius um höchstens 1,2 N/mm²; die strenge Rechnung hatte
+  dort ihre erste Stufe zweimal halbiert und einen anderen Lastweg genommen.
+  Wer Werte direkt am Rand einer gekennzeichneten Zone braucht, rechnet
+  „streng“ gegen. Die Abnahme am Drehlager steht im Theoriehandbuch,
+  § 5e.4.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die

@@ -4814,7 +4814,7 @@ Rückführung (radial return) je Element, an der Elementmitte:
 (Voigt-Reihenfolge wie im Element, plastische Gleitungen als
 Ingenieurgleitungen, also doppelte Schubanteile). Werkstoffe ohne
 Streckgrenze („Starr“, Beton ohne fy) bleiben elastisch; das Protokoll
-nennt sie.
+nennt sie einmal je Lastfall (bis zum 13.10.2026 bei jedem Schritt).
 
 **Verfahren: Anfangsdehnungs-Iteration.** Der Löser dieses Programms ist
 linear-elastisch plus Kontakt (Aktivmengen-Iteration mit fester
@@ -5660,6 +5660,108 @@ solchen Knoten, in beiden Einstellungen gleich: am Ende des abhebenden
 Blocks sechs, des kippenden Stempels fünf, des gleitenden Stempels vier, des
 Modells „zwei Körper“ zwei (`zustand_verstoesse` am End-u, 24.09.2026). Ob
 das in die Abnahme gehört, entscheiden Anwender und Löser-Sitzung.
+
+### 5e.4 Abbruch ohne die netzabhängigen Spitzen (13.10.2026)
+
+**Anlass.** Der Newton misst seine Konvergenz an der Änderung der
+plastischen Knotenlast über das ganze Modell, ‖F_p,k − F_p,k−1‖ / ‖F‖ ≤
+Toleranz; am selben Maß hängt das Halbieren einer weglaufenden Stufe. Am
+vollen LF1 des Drehlagers (Netz Mittel) trugen die Zonen der 16 Ankerringe
+96,7 bzw. 99,3 % des Quadrats dieser Änderung (zwei unabhängige Näherungen,
+Plan Singularitäten vom 10.10.2026, Abschnitt 2). Die Ankerringe sind
+starre Scheiben, die nur den Lochrand koppeln, eine Stelle „Kraft ohne
+Fläche“ (§ 5d); ihre Spitze wächst mit dem Netz (ε_p 2,7 bis 5,9 % im
+Entwurf, 24,9 bis 39,2 % mit Mittel). Das Maß war damit praktisch eines der
+Werte, die keine Iteration richtiger macht. Entscheidung des Anwenders vom
+10.10.2026: Spannungsspitzen und Singularitäten „sollten nicht dafür sorgen
+dass sich die rechenzeit verlängert“, das neue Kriterium ist gleich die
+Vorgabe, das strenge bleibt wählbar (`Plastizitaet.abbruch`,
+`plastizitaet.ABBRUCH_WEGE` = „ingenieurmaessig“, „streng“). Bis zum
+13.10.2026 maß der Newton immer streng.
+
+**Kriterium.** Nach jedem Newton-Schritt stellt der Löser
+(`solver._SpitzenImNewton.messen`) aus dem aktuellen Zustand fest, welche
+Stellen auffällig sind, mit denselben Regeln wie der Nachlauf in § 5d
+(`spitzenstellen.kraefte`, `.bewerten`): σ_v ≥ 2·f_y an den
+Integrationspunkten der Zone oder F / (A_Hülle·f_y) ≥ 1. σ_v nimmt er aus dem
+Schritt der Plastizität selbst, als größten Integrationspunkt nach der
+Rückführung, ε_p aus dessen Zustand. Die Kraft durch die Stelle rechnet er
+aus u wie der Nachlauf, mit Temperatur und Vorspannung voll und den übrigen
+Lasten mit dem Lastfaktor der Stufe (`stufenlast`, `solver.case_feq_sofort`).
+Die Kandidaten mit ihren Zonen bestimmt er einmal je Rechnung (am System
+gemerkt, am Drehlager 1,5 s). Eine Stelle, die einmal auffällig war, bleibt
+im Lastfall ausgenommen, damit das Maß nicht zwischen zwei Zonenmengen
+pendelt. Mit „ingenieurmäßig“ und mindestens einer ausgenommenen Stelle ist
+eine Laststufe konvergiert, wenn gleichzeitig gilt (`plastizitaet._zonen_mass`):
+
+1. ‖ΔF_p‖ außerhalb der Zonen / ‖F‖ ≤ Toleranz, wobei alle Freiheitsgrade der
+   Knoten der Zonenelemente, der Stelle und ihres Masters herausfallen;
+2. die Kraft durch jede ausgenommene Stelle ändert sich gegen den vorigen
+   Schritt um höchstens 0,5 % (`SPITZEN_KRAFT`);
+3. die Verschiebung außerhalb der Zonen ändert sich um höchstens 0,5 % ihres
+   Größtwerts (`SPITZEN_VERSCHIEBUNG`).
+
+Was streng konvergiert, ist auch ingenieurmäßig konvergiert: ‖ΔF_p‖ / ‖F‖ ≤
+Toleranz über das ganze Modell genügt immer, auch wenn Kraft oder
+Verschiebung die Bedingungen 2 und 3 verfehlen. Die beiden kommen nur dazu,
+wo die Zonen ausgenommen werden, und dürfen keine Stufe länger machen als
+das strenge Kriterium. Am Drehlager (Entwurf, LF1) änderte der Kontakt,
+dessen Läufe dort am Deckel enden, die Verschiebung außerhalb der Zonen in
+einem Schritt um 6,6 %, in dem F_p überall unter der Toleranz blieb; zu Beginn
+einer Stufe enthält die Änderung von u außerdem den Lastschritt selbst
+(47,8 % beim Übergang auf Stufe 2/7, bei unverändertem F_p). Ohne diese
+Regel hätte „ingenieurmäßig“ dort mehr Schritte gebraucht als „streng“; sie
+kam am 13.10.2026 nach dem strengen Abnahmelauf dazu (Commit nach a1194ef).
+
+Dasselbe Maß entscheidet über das Halbieren einer weglaufenden Stufe, in der
+gemeinsamen Iteration (§ 5e.3) über abgekürzt, voll und zurück und über die
+Schlussabnahme mit Kontakt; dort wird gegen den Stand gemessen, an dem F_p
+gerechnet ist. Die Zonen rechnen weiter plastisch mit, die Physik ist
+unverändert. Ohne auffällige Stelle ist das Maß die Änderung über das ganze
+Modell, und die Rechnung ist bitgleich zum Stand davor: geprüft am
+gequetschten Block, an der Ankerplatte mit kleiner Ankerkraft (sie fließt,
+ist aber nicht auffällig) und an der Prüfmatrix. „Streng“ misst ebenso wie
+vorher, protokolliert aber je Schritt dieselbe Zeile wie „ingenieurmäßig“.
+
+**Warum die Kraft.** Was in der Zone nicht auskonvergiert ist, wirkt nach
+außen als Kräftegruppe im Gleichgewicht und klingt ab. Die Kraft durch die
+Stelle klingt nicht ab: am Drehlager hängt die Ankerkraft an der Einsenkung
+des Rings, rund 66 kN je mm.
+
+**Warum 0,5 % für die Verschiebung und nicht 1 % wie im Plan.** Ein Newton,
+der an der Zone nur noch linear konvergiert (am Ring der Ankerplatte etwa
+mit 0,5 je Schritt), steht nach dem Abbruch ungefähr um die letzte Änderung
+neben seiner Lösung. Mit 1 % läge die Verschiebung also bis zu 1 % daneben,
+genau an der Grenze der Abnahme. Enger als 0,5 % geht aber auch nicht gut:
+an der Ankerplatte mit feinem Netz pendelt die Zone mit einer Periode von
+drei Schritten und bewegt die Knoten außerhalb im Takt um 0,28 bis 0,46 %,
+während F_p außerhalb gleich bleibt und die Ankerkraft sich um 0,1 %
+ändert. Mit 10⁻³ kam diese Stufe nie an und hieß nach 25 Schritten „nicht
+konvergiert“. Gemessen (Ankerplatte, `sp3_werk/p5_serie.out`):
+
+| Netz, Last | streng | 10⁻³ | 5·10⁻³ | 10⁻² |
+|---|---|---|---|---|
+| grob (h ≈ 10 mm), 0,9 + 0,3 MN: Newton-Schritte | 29 | 17 | 14 | 14 |
+| … Δσ_v außerhalb max [N/mm²] | – | 0,33 | 0,20 | 0,20 |
+| … Ankerkraft gegen streng | – | −0,15 % | +0,14 % | +0,14 % |
+| fein (h ≈ 5 mm), 0,8 + 0,2 MN: Newton-Schritte | 53 (2-mal halbiert) | 33, nicht konvergiert | 15 | 14 |
+| … Δσ_v neben der Zone (30–40 mm vom Ring) | – | 71,6 | 74,3 | 69,2 |
+| … Δσ_v ab 60 mm vom Ring | – | 1,13 | 1,18 | 1,07 |
+
+**Was das Kriterium nicht kann.** Es macht die Werte in den Zonen nicht
+richtiger; sie bleiben Eigenschaften des Netzes und stehen im Ergebnis als
+„nicht auskonvergiert“ (`res.info["spitzenstellen"]`, Feld
+`nicht_auskonvergiert` je Stelle mit `kraft_aenderung`, `sv_aenderung`,
+`eps_p_aenderung`, `fp_aenderung_zone`, Stufe und Schritt; dazu
+`res.info["plastizitaet"]["spitzen"]` mit dem Verlauf je Schritt). Der Weg
+hängt vom Lastpfad ab: eine Zone, die je Stufe früher abgebrochen wird,
+sammelt anderes ε_p, und die Eigenspannungen daraus klingen erst über
+etwa einen Zonenradius ab. An der feinen Ankerplatte lagen die Elemente
+unmittelbar neben der Zone (Zonenradius 25 mm, 30 bis 40 mm vom Ring) bis
+74 N/mm² neben der strengen Rechnung, die ihre erste Stufe zweimal halbiert
+hatte; 40 bis 60 mm vom Ring bis 6 N/mm², ab 60 mm unter 1,2 N/mm². Am
+groben Netz (Zonenradius 46 mm, vier Kantenlängen) blieb jede Abweichung
+außerhalb unter 0,33 N/mm².
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

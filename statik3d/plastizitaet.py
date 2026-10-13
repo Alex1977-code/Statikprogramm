@@ -1173,14 +1173,25 @@ def _zonen_mass(zonen, diff: float, tol: float, u, F_p_neu, F_p_alt, zustand, s_
     Kraft durch jede auffaellige Stelle aendert sich um hoechstens
     :data:`SPITZEN_KRAFT`, die Verschiebung ausserhalb der Zonen um hoechstens
     :data:`SPITZEN_VERSCHIEBUNG`. Sonst (streng, oder keine auffaellige Zone)
-    bleibt es bei ``diff`` - die Messung steht dann nur im Protokoll."""
+    bleibt es bei ``diff`` - die Messung steht dann nur im Protokoll.
+
+    **Was streng konvergiert, ist auch ingenieurmaessig konvergiert**
+    (``diff <= tol`` genuegt immer): die Bedingungen fuer Kraft und
+    Verschiebung kommen nur dazu, wo die Zonen ausgenommen werden, und duerfen
+    keine Stufe laenger machen als das strenge Kriterium. Am Drehlager
+    (Entwurf, LF1, 13.10.2026) aenderte der Kontakt, dessen Laeufe dort am
+    Deckel enden, die Verschiebung ausserhalb der Zonen um 6,6 % in einem
+    Schritt, in dem F_p ueberall unter der Toleranz blieb - und zu Beginn
+    jeder Stufe enthaelt die Aenderung von u den Lastschritt selbst (47,8 %
+    beim Uebergang auf Stufe 2/7, F_p unveraendert). Ohne diese Regel haette
+    „ingenieurmaessig“ dort mehr Schritte gebraucht als „streng“."""
     if zonen is None:
         return diff, diff <= tol, None
     mess = zonen.messen(u, F_p_neu, F_p_alt, zustand, s_info, bezug, lam, stufe=stufe, schritt=schritt_nr)
     if not _zonen_greifen(zonen, mess):
         return diff, diff <= tol, mess
     mass = float(mess["aussen"])
-    return mass, bool(mass <= tol and mess["erfuellt"]), mess
+    return mass, bool(diff <= tol or (mass <= tol and mess["erfuellt"])), mess
 
 
 def _zonen_greifen(zonen, mess) -> bool:
@@ -1516,8 +1527,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             rest_mass, _ok, mess = _zonen_mass(zonen, rest, tol, u, F_p_ende, F_p, _z, _i, bezug, 1.0,
                                                "Abschluss", None)
             _zonen_melden(mess, log, progress)
-            abgenommen = _schlussabnahme(rest_mass, tol) and (not _zonen_greifen(zonen, mess)
-                                                              or bool(mess["erfuellt"]))
+            # was streng abgenommen ist, ist es auch ingenieurmaessig (_zonen_mass)
+            abgenommen = _schlussabnahme(rest, tol) or (_zonen_greifen(zonen, mess)
+                                                        and _schlussabnahme(rest_mass, tol)
+                                                        and bool(mess["erfuellt"]))
             # Nachiteration vom Abschluss aus (27.09.2026): der volle
             # Kontaktlauf des Abschlusses kann u so verschieben, dass F_p nicht
             # mehr passt. Bis dahin hiess das "nicht konvergiert", Schluss. Ein
@@ -1556,8 +1569,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 rest_mass, _ok, mess = _zonen_mass(zonen, rest, tol, u, F_p_ende, F_p, _z, _i, bezug, 1.0,
                                                    "Abschluss", None)
                 _zonen_melden(mess, log, progress)
-                abgenommen = _schlussabnahme(rest_mass, tol) and (not _zonen_greifen(zonen, mess)
-                                                                  or bool(mess["erfuellt"]))
+                abgenommen = _schlussabnahme(rest, tol) or (_zonen_greifen(zonen, mess)
+                                                            and _schlussabnahme(rest_mass, tol)
+                                                            and bool(mess["erfuellt"]))
             if nach and log is not None:
                 log.append(f"Plastizität: Abschluss nach {nach} Nachschritt{'' if nach == 1 else 'en'} "
                            f"{'bestanden' if abgenommen else 'weiter verfehlt'} "
