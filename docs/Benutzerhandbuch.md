@@ -2895,6 +2895,27 @@ Achsenkreuz unten
 rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
 Texte weg. Beides kommt so auch in den Bericht.
 
+**Lage der Texte (seit 13.10.2026).** Vor jedem Bild ordnet das Programm die
+Texte nach ihren gemessenen Rechtecken: die Kennwerte unten links bleiben
+links vom Achsenkreuz und werden dafür umgebrochen; der Titel der Farbskala
+steht rechtsbündig über ihr (in der Kompaktstufe mittig über der waagerechten
+Skala, nie über den Rand hinaus) und wird umgebrochen, die Skala wird kürzer,
+wenn er sonst in den Ansichtswürfel liefe; Legendeneintrag und Hinweis der
+netzabhängigen Stellen stehen rechts unter der Skala, links vom Achsenkreuz,
+und die Skala rückt hoch, wenn sie sonst auf den Kennwerten lägen; die
+Kopfzeile oben links wird so schmal umgebrochen, dass sie neben Würfel,
+Skala und Titel bleibt. Das gilt auch nach dem Vergrößern oder Verkleinern
+der Ansicht und im Bild für den Bericht (Strg+B), das dieselbe Zeichnung in
+der Größe der Ansicht ist. Geprüft auf dem Bildschirm bei Fenstern von
+1280 x 800, 1600 x 900, 1920 x 1080 und 1100 x 700 (`tests/test_textlage.py`):
+kein Text abgeschnitten, keiner auf einem anderen, auf der Skala, dem
+Achsenkreuz, dem Würfel oder der Glasleiste. In einem Fenster von 900 x 640
+(Ansicht rund 170 px breit) ist nichts abgeschnitten, aber nicht alles
+nebeneinander unterzubringen. Bis zum 13.10.2026 wurden die Lagen beim
+Zeichnen gesetzt: die Kopfzeile lief bei 1280 x 800 bis 803 px in eine
+552 px breite Ansicht, der Titel der Farbskala stand mittig über ihr und lief
+rechts hinaus, und Legendeneintrag und Hinweis lagen auf dem Achsenkreuz.
+
 **Drehen großer Modelle.** Ab etwa 20 000 Knoten und Elementen bleiben
 während des Drehens, Schiebens und Zoomens die Nebendarsteller
 (Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen

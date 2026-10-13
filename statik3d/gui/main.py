@@ -26011,6 +26011,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _aufbauen(self, m):
         """Alle Darsteller der Ansicht aufbauen (ohne Zwischenbilder)."""
+        # Texte des Bildes, die viewport.texte_ordnen vor jedem Bild nach
+        # ihren Rechtecken ordnet (seit 13.10.2026)
+        self._bildtexte, self._skalentitel, self._legende_namen = {}, {}, []
+        vp.texte_ordnen_einrichten(self.plotter, self._textlage_info)
         show_edges = self.act_edges.isChecked()
         modus = getattr(self, "darstellung", "Voll")
         size = m.characteristic_size()
@@ -26414,6 +26418,7 @@ class MainWindow(QtWidgets.QMainWindow):
             sel_ = sel_[(sel_ >= 0) & (sel_ < len(X_))]
             self.plotter.add_points(X_[sel_], color="#ff8800", point_size=11,
                                     render_points_as_spheres=True, name="selection")
+        self._skalentitel_setzen()
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
         if u is not None and not modal:
@@ -26519,6 +26524,8 @@ class MainWindow(QtWidgets.QMainWindow):
             tp.SetJustificationToRight()
             if senkrecht:
                 tp.SetVerticalJustificationToTop()
+            self._bildtexte[name] = text
+            self._legende_namen.append((name, name.replace("_legende", "_muster") if muster else None))
             r = vp.kennwerte_rahmen(self.plotter.renderer, akt)
             if r is None:
                 continue
@@ -26534,6 +26541,57 @@ class MainWindow(QtWidgets.QMainWindow):
             rahmen.append(r)
             y = (y - hoehe - 3.0 * s) if senkrecht else (y + hoehe + 3.0 * s)
         return rahmen
+
+    def _skalentitel_setzen(self) -> dict:
+        """Den Titel jeder senkrechten Farbskala als eigenen Text (seit
+        13.10.2026): VTK setzt ihn mittig ueber die Skala am rechten Rand, und
+        ein langer Titel („Volumen sigma_v (von Mises) [N/mm²]“) lief rechts aus
+        dem Bild. Der Titel der Skala wird durchsichtig, der eigene Text steht
+        rechtsbuendig darueber und wird umgebrochen (viewport.texte_ordnen).
+        Ebenso bei waagerechten Skalen (Kompaktstufe): dort stand der Titel
+        mittig und lief in einer schmalen Ansicht links und rechts hinaus."""
+        self._skalentitel = {}
+        try:
+            bars = list(self.plotter.scalar_bars.items())
+        except Exception:                   # noqa: BLE001
+            return {}
+        k = 0
+        for titel, sb in bars:
+            name = "farbskala_titel" if k == 0 else f"farbskala_titel{k}"
+            k += 1
+            quelle = sb.GetTitleTextProperty()
+            akt = self.plotter.add_text(sb.GetTitle() or str(titel), position=(10, 10), name=name)
+            tp = akt.GetTextProperty()
+            tp.ShallowCopy(quelle)
+            tp.SetOpacity(1.0)
+            tp.SetJustificationToRight()
+            tp.SetVerticalJustificationToBottom()
+            quelle.SetOpacity(0.0)
+            self._skalentitel[name] = titel
+            self._bildtexte[name] = sb.GetTitle() or str(titel)
+        return self._skalentitel
+
+    def _textlage_info(self):
+        """Die Angaben fuer viewport.texte_ordnen: Texte, Titel der Skalen,
+        Legendeneintraege, Glasleiste und Wuerfel (Qt-Fenster ueber der Ansicht)
+        in Bildpunkten der Ansicht - oder None ohne Texte."""
+        texte = getattr(self, "_bildtexte", None) or {}
+        if not texte:
+            return None
+        s = self._pixelmass()
+        glas = self.glasleiste.height() if getattr(self, "glasleiste", None) else 30
+        wue = None
+        wid = getattr(self, "ansichtswuerfel", None)
+        try:
+            if wid is not None and wid.isVisible():
+                hoch = self.plotter.render_window.GetSize()[1]
+                lo = self.plotter.interactor.mapFromGlobal(wid.mapToGlobal(QtCore.QPoint(0, 0)))
+                wue = (lo.x() * s, (lo.x() + wid.width()) * s, hoch - (lo.y() + wid.height()) * s,
+                       hoch - lo.y() * s)
+        except Exception:                   # noqa: BLE001
+            wue = None
+        return {"massstab": s, "texte": texte, "skalentitel": dict(getattr(self, "_skalentitel", {}) or {}),
+                "legende": list(getattr(self, "_legende_namen", []) or []), "glas": glas, "wuerfel": wue}
 
     def _spitze_zeigen(self, nr: int):
         """Eine netzabhaengige Spannungsspitze aus dem Ergebnisbaum: der Blick
@@ -27084,6 +27142,7 @@ class MainWindow(QtWidgets.QMainWindow):
             zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste",
                                      "      oder Register Ergebnisse → „Ergebnisse zeigen“)"]
         self._kopfzeile_zeilen = zeilen
+        self._bildtexte["kopfzeile"] = "\n".join(vp.bildzeichen(z) for z in zeilen)
         try:
             # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen
             # Fenster reicht die Leiste bis in die linke Ecke. VTK zaehlt die
@@ -27140,6 +27199,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._kennwerte_zeilen = []
             return []
         self._kennwerte_zeilen = zeilen
+        if zeilen:
+            self._bildtexte["kennwerte"] = "\n".join(zeilen)
         if not zeilen:
             return []
         try:

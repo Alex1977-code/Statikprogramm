@@ -49,6 +49,8 @@ def main(argv=None) -> int:
     suites = list(SUITES)
     if "--gui" in argv:
         suites.append("tests.test_gui_smoke")
+        # Lage der Bildtexte, auf dem Bildschirm (offscreen ohne Ansicht)
+        suites.append("tests.test_textlage")
     for s in suites:
         cmd = [sys.executable, "-m", s]
         if s.endswith("gui_smoke") and sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):

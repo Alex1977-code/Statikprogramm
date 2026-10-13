@@ -185,6 +185,380 @@ def farbskalen_heben_aktiv(renderer) -> bool:
 _SKALA_HEBEN: dict = {}
 
 
+# --------------------------------------------------------------------------
+# Lage der Texte im Bild (seit 13.10.2026)
+# --------------------------------------------------------------------------
+# Anwender zum Bild vom 13.10.2026: „Textzeilen unten links und Fußzeile
+# überlagern sich. Legendentitel und Magenta-Hinweis rechts abgeschnitten.“
+# Gemessen in der echten Ansicht (tests/test_textlage.py): die Kopfzeile war
+# bis 803 px breit und lief bei 1280 x 800 (Ansicht 552 px) rechts aus dem
+# Bild, die Kennwerte 571 px; der Titel der Farbskala stand mittig ueber ihr
+# und lief rechts hinaus; Legendeneintrag und Hinweis unter der Skala lagen
+# auf dem Achsenkreuz, in der Kompaktstufe auf der gehobenen Skala. Die
+# Lagen wurden beim Zeichnen gesetzt und blieben beim Vergroessern oder
+# Verkleinern der Ansicht stehen. Jetzt ordnet texte_ordnen sie vor jedem
+# Bild nach den gemessenen Rechtecken.
+
+#: Abstand der Texte zum Rand und zueinander [px bei Massstab 1]
+TEXT_RAND = 12
+TEXT_LUFT = 4
+#: Ausschnitt des Achsenkreuzes (main: add_axes(viewport=...))
+ACHSEN_AUSSCHNITT = (0.86, 0.0, 1.0, 0.16)
+_MASS_ZWISCHEN: dict = {}
+
+
+def textmass(tprop, text: str, dpi: int = 72) -> tuple:
+    """(Breite, Hoehe) eines Textes in Bildpunkten, mit seiner Schrift."""
+    import vtk
+    schl = (str(text), tprop.GetFontSize(), tprop.GetFontFamily(), tprop.GetBold(), int(dpi))
+    if schl in _MASS_ZWISCHEN:
+        return _MASS_ZWISCHEN[schl]
+    bb = [0, 0, 0, 0]
+    try:
+        vtk.vtkTextRenderer.GetInstance().GetBoundingBox(tprop, str(text) or " ", bb, int(dpi))
+    except Exception:                       # noqa: BLE001 - Schaetzung
+        n = max((len(z) for z in str(text).split("\n")), default=1)
+        bb = [0, int(0.6 * tprop.GetFontSize() * n), 0, int(1.2 * tprop.GetFontSize() * (str(text).count("\n") + 1))]
+    erg = (float(bb[1] - bb[0] + 1), float(bb[3] - bb[2] + 1))
+    if len(_MASS_ZWISCHEN) > 4000:
+        _MASS_ZWISCHEN.clear()
+    _MASS_ZWISCHEN[schl] = erg
+    return erg
+
+
+def umbrechen(text: str, tprop, max_breite: float, dpi: int = 72, einzug: str = "  ") -> str:
+    """Jede Zeile, die breiter als ``max_breite`` ist, an Trennstellen („ · “,
+    „, “, Leerzeichen) umbrechen; Folgezeilen eingerueckt. Was sich nicht
+    trennen laesst, bleibt (lieber zu breit als zerrissen)."""
+    if max_breite <= 0:
+        return str(text)
+    aus = []
+    for zeile in str(text).split("\n"):
+        if textmass(tprop, zeile, dpi)[0] <= max_breite:
+            aus.append(zeile)
+            continue
+        vorn = zeile[:len(zeile) - len(zeile.lstrip(" "))]
+        teile, rest = [], zeile.strip(" ")
+        import re
+        for stueck in re.split(r"(?<= · )|(?<=, )|(?<= )", rest):
+            if stueck:
+                teile.append(stueck)
+        akt = vorn
+        for st in teile:
+            probe = akt + st
+            if akt.strip() and textmass(tprop, probe.rstrip(), dpi)[0] > max_breite:
+                aus.append(akt.rstrip())
+                akt = vorn + einzug + st
+            else:
+                akt = probe
+        if akt.strip():
+            aus.append(akt.rstrip())
+    return "\n".join(aus)
+
+
+def _rechteck(renderer, akt) -> tuple | None:
+    try:
+        return kennwerte_rahmen(renderer, akt)
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def _ueber(a, b, luft: float = 0.0) -> bool:
+    return not (a[1] + luft <= b[0] or b[1] + luft <= a[0] or a[3] + luft <= b[2] or b[3] + luft <= a[2])
+
+
+def _muster_punkte(x0: float, y0: float, seite: float):
+    import vtk
+    pts = vtk.vtkPoints()
+    lines = vtk.vtkCellArray()
+
+    def strich(a, b):
+        i = pts.InsertNextPoint(a[0], a[1], 0.0)
+        j = pts.InsertNextPoint(b[0], b[1], 0.0)
+        lines.InsertNextCell(2)
+        lines.InsertCellPoint(i)
+        lines.InsertCellPoint(j)
+    s = float(seite)
+    ecken = [(x0, y0), (x0 + s, y0), (x0 + s, y0 + s), (x0, y0 + s)]
+    for k in range(4):
+        strich(ecken[k], ecken[(k + 1) % 4])
+    for t in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75):
+        a = (x0 + min(t, 1.0) * s, y0 + max(t - 1.0, 0.0) * s)
+        b = (x0 + max(t - 1.0, 0.0) * s, y0 + min(t, 1.0) * s)
+        strich(a, b)
+    poly = vtk.vtkPolyData()
+    poly.SetPoints(pts)
+    poly.SetLines(lines)
+    return poly
+
+
+def _skala_zu(plotter, titel):
+    """Die Farbskala zu einem Titel (pyvista ScalarBars hat kein get) oder None."""
+    try:
+        return plotter.scalar_bars[titel]
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def _alle_skalen(plotter) -> list:
+    try:
+        return list(plotter.scalar_bars.values())
+    except Exception:                       # noqa: BLE001
+        return []
+
+
+def _legende_stapeln(plotter, ren, akte, roh, leg, x_r, y0, nach_unten, s, dpi, rand, luft) -> list:
+    """Legendeneintraege rechtsbuendig an x_r stapeln, ab y0 nach unten (oben
+    buendig) oder nach oben (unten buendig); mit Muster rechts das
+    schraffierte Quadrat. Rueckgabe [(Name, Rechteck)]."""
+    aus = []
+    y = y0
+    for name, muster in (leg if nach_unten else list(reversed(leg))):
+        a = akte[name]
+        tp = a.GetTextProperty()
+        tp.SetJustificationToRight()
+        if nach_unten:
+            tp.SetVerticalJustificationToTop()
+        else:
+            tp.SetVerticalJustificationToBottom()
+        seite = min(14.0 * s, max(6.0 * s, textmass(tp, "Xg", dpi)[1])) if muster else 0.0
+        t = umbrechen(roh[name], tp, max(40.0 * s, x_r - seite - 2 * rand), dpi, "")
+        if a.GetInput() != t:
+            a.SetInput(t)
+        a.SetPosition(x_r - (seite + luft if muster else 0.0), y)
+        r = _rechteck(ren, a)
+        if r is None:
+            continue
+        if muster and akte.get(muster) is not None:
+            hoehe = r[3] - r[2]
+            poly = _muster_punkte(x_r - seite, r[2] + (hoehe - seite) / 2.0, seite)
+            akte[muster].GetMapper().SetInputData(poly)
+            r = (r[0], x_r, r[2], r[3])
+        aus.append((name, r))
+        y = (r[2] - luft) if nach_unten else (r[3] + luft)
+    return aus
+
+
+def texte_ordnen(plotter, info: dict) -> dict:
+    """Die Texte des Bildes vor dem Zeichnen ordnen. ``info`` aus der
+    Oberflaeche (MainWindow._textlage_info): ``massstab``, ``texte`` {Name:
+    roher Text}, ``skalentitel`` {Textname: Titel der Farbskala},
+    ``legende`` [(Name, Mustername oder None)], ``glas`` (Hoehe der
+    Glasleiste in Qt-Punkten), ``wuerfel`` (x0, x1, y0, y1) oder None.
+
+    Reihenfolge: Kennwerte unten links (auf die Breite umgebrochen), senkrechte
+    Farbskalen mit eigenem Titel rechtsbuendig darueber (umgebrochen, die
+    Skala wird kuerzer, wenn der Titel sonst in den Wuerfel liefe),
+    Legendeneintraege und Hinweis rechts unter der Skala - links vom
+    Achsenkreuz, wenn sie dorthin reichten, und die Skala ruckt hoch, wenn
+    sie sonst auf den Kennwerten laegen -, zuletzt die Kopfzeile oben links,
+    so schmal, dass sie neben Skala und Titel bleibt. Rueckgabe {Name:
+    Rechteck} (x0, x1, y0, y1) in Bildpunkten, y von unten."""
+    ren = plotter.renderer
+    try:
+        breit, hoch = (float(v) for v in ren.GetSize())
+    except Exception:                       # noqa: BLE001
+        return {}
+    if breit <= 0 or hoch <= 0:
+        return {}
+    try:
+        dpi = int(ren.GetRenderWindow().GetDPI())
+    except Exception:                       # noqa: BLE001
+        dpi = 72
+    s = max(1.0, float(info.get("massstab", 1.0) or 1.0))
+    rand, luft = TEXT_RAND * s, TEXT_LUFT * s
+    roh = info.get("texte") or {}
+    akte = plotter.actors
+    lage: dict = {}
+
+    def setzen(name, text, max_b, einzug="  "):
+        a = akte.get(name)
+        if a is None:
+            return None
+        t = umbrechen(text, a.GetTextProperty(), max_b, dpi, einzug)
+        if a.GetInput() != t:
+            a.SetInput(t)
+        return a
+    achsen = (ACHSEN_AUSSCHNITT[0] * breit, ACHSEN_AUSSCHNITT[2] * breit,
+              ACHSEN_AUSSCHNITT[1] * hoch, ACHSEN_AUSSCHNITT[3] * hoch)
+    # 1) Kennwerte unten links, links vom Achsenkreuz unten rechts
+    k = None
+    if "kennwerte" in roh:
+        k = setzen("kennwerte", roh["kennwerte"], max(80.0 * s, achsen[0] - rand - luft))
+        if k is not None:
+            k.SetPosition(rand, 10 * s)
+            r = _rechteck(ren, k)
+            if r is not None:
+                lage["kennwerte"] = r
+    # 2) Farbskalen mit eigenem Titel. Waagerecht (Kompaktstufe): der Titel
+    # mittig ueber der Skala, nicht ueber den Rand hinaus, umgebrochen; die
+    # Skala hat farbskalen_heben schon ueber die Kennwerte gehoben
+    skalen = []
+    waag_oben = 0.0
+    for tname, titel in (info.get("skalentitel") or {}).items():
+        sb = _skala_zu(plotter, titel)
+        a = akte.get(tname)
+        if sb is None or a is None:
+            continue
+        if sb.GetOrientation() != 1:
+            px, py = sb.GetPositionCoordinate().GetValue()[:2]
+            setzen(tname, roh.get(tname, titel), breit - 2 * rand, einzug="")
+            tp = a.GetTextProperty()
+            tp.SetJustificationToCentered()
+            tp.SetVerticalJustificationToBottom()
+            bw = textmass(tp, a.GetInput(), dpi)[0]
+            mitte = (px + sb.GetWidth() / 2.0) * breit
+            mitte = min(max(mitte, rand + bw / 2.0), breit - rand - bw / 2.0)
+            a.SetPosition(mitte, (py + sb.GetHeight()) * hoch + luft)
+            r = _rechteck(ren, a)
+            if r is not None:
+                lage[tname] = r
+                waag_oben = max(waag_oben, r[3])
+            continue
+        skalen.append((tname, titel, sb, a))
+    oben_grenze = hoch - luft
+    wue = info.get("wuerfel")
+    if wue is not None:
+        oben_grenze = min(oben_grenze, float(wue[2]) - luft)
+    lage["achsenkreuz"] = achsen
+    for _runde in range(3):
+        titel_r = []
+        for tname, titel, sb, a in sorted(skalen, key=lambda x: -x[2].GetPositionCoordinate().GetValue()[0]):
+            px, py = sb.GetPositionCoordinate().GetValue()[:2]
+            x1 = min((px + sb.GetWidth()) * breit, breit - luft)
+            max_b = max(40.0 * s, min(0.42 * breit, x1 - rand))
+            setzen(tname, roh.get(tname, titel), max_b, einzug="")
+            tp = a.GetTextProperty()
+            tp.SetJustificationToRight()
+            tp.SetVerticalJustificationToBottom()
+            y = (py + sb.GetHeight()) * hoch + luft
+            a.SetPosition(x1, y)
+            r = _rechteck(ren, a)
+            for andere in titel_r:
+                if r is not None and _ueber(r, andere, luft):
+                    y = andere[3] + luft
+                    a.SetPosition(x1, y)
+                    r = _rechteck(ren, a)
+            if r is not None:
+                titel_r.append(r)
+                lage[tname] = r
+        # Titel zu hoch: alle senkrechten Skalen kuerzen
+        zu_hoch = max((r[3] for r in titel_r), default=0.0) - oben_grenze
+        if zu_hoch > 0.5:
+            for _t, _ti, sb, _a in skalen:
+                sb.SetHeight(max(0.05, sb.GetHeight() - zu_hoch / hoch))
+            continue
+        # 3) Legendeneintraege und Hinweis: unter der untersten senkrechten
+        # Skala (von oben nach unten), sonst ueber den waagerechten
+        leg = [(n, m) for n, m in (info.get("legende") or []) if n in akte and n in roh]
+        if not leg:
+            break
+        waag = [sb for sb in _alle_skalen(plotter) if sb.GetOrientation() == 0 and sb.GetVisibility()]
+        if skalen:
+            nach_unten, y0 = True, min(sb.GetPositionCoordinate().GetValue()[1]
+                                       for _t, _ti, sb, _a in skalen) * hoch - luft
+        elif waag:
+            nach_unten, y0 = False, max(max((sb.GetPositionCoordinate().GetValue()[1] + sb.GetHeight())
+                                            for sb in waag) * hoch, waag_oben) + luft
+        else:
+            nach_unten, y0 = True, 0.17 * hoch
+        x_r = breit * 0.99
+        rechtecke, block = [], None
+        for versuch in range(2):
+            rechtecke = _legende_stapeln(plotter, ren, akte, roh, leg, x_r, y0, nach_unten, s, dpi, rand, luft)
+            block = (min(r[0] for _n, r in rechtecke), max(r[1] for _n, r in rechtecke),
+                     min(r[2] for _n, r in rechtecke), max(r[3] for _n, r in rechtecke)) if rechtecke else None
+            if block is not None and versuch == 0 and _ueber(block, achsen, luft):
+                x_r = achsen[0] - luft
+                continue
+            break
+        hoch_noetig = 0.0
+        if block is not None and skalen:
+            kr = lage.get("kennwerte")
+            boden = (kr[3] + luft) if (kr is not None and _ueber((block[0], block[1], -1e9, 1e9), kr)) else luft
+            if block[2] < boden:
+                hoch_noetig = boden - block[2]
+        if hoch_noetig > 0.5:
+            # die Skalen ruecken hoch und werden kuerzer, oben bleibt
+            for _t, _ti, sb, _a in skalen:
+                px, py = sb.GetPositionCoordinate().GetValue()[:2]
+                d = hoch_noetig / hoch
+                sb.SetPosition(px, py + d)
+                sb.SetHeight(max(0.05, sb.GetHeight() - d))
+            continue
+        for name, r in rechtecke:
+            lage[name] = r
+        break
+    for _t, titel, sb, _a in skalen:
+        px, py = sb.GetPositionCoordinate().GetValue()[:2]
+        lage["farbskala:" + titel] = (px * breit, (px + sb.GetWidth()) * breit, py * hoch,
+                                      (py + sb.GetHeight()) * hoch)
+    # 4) Kopfzeile oben links, neben Skalen und Titeln
+    if "kopfzeile" in roh and akte.get("kopfzeile") is not None:
+        a = akte["kopfzeile"]
+        oben = hoch - (float(info.get("glas", 30)) + 16.0) * s
+        # rechts von ihr: Skalen, ihre Titel, Legendeneintraege - soweit sie
+        # in ihrer Hoehe liegen; zweimal, denn das Umbrechen macht sie hoeher
+        andere = [r for nm, r in lage.items() if nm not in ("kennwerte", "kopfzeile", "achsenkreuz")]
+        if wue is not None:
+            # lieber schmaler neben dem Wuerfel als unter ihm (dort laege sie
+            # auf Skala und Titel)
+            andere.append(tuple(float(v) for v in wue))
+        tp = a.GetTextProperty()
+        max_b = breit - 2 * rand
+        for _i in range(3):
+            setzen("kopfzeile", roh["kopfzeile"], max(80.0 * s, max_b), einzug="    ")
+            hoehe = textmass(tp, a.GetInput(), dpi)[1]
+            y0, y1 = oben - hoehe, oben
+            neben = [r[0] for r in andere if not (r[3] <= y0 or r[2] >= y1) and r[0] > rand]
+            neu_b = min(neben, default=breit - rand) - rand - luft
+            if abs(neu_b - max_b) < 1.0:
+                break
+            max_b = neu_b
+        hoehe = textmass(tp, a.GetInput(), dpi)[1]
+        y = max(oben - hoehe, 6.0 * s)
+        a.SetPosition(rand, y)
+        r = _rechteck(ren, a)
+        if r is not None and wue is not None:
+            neu = kopfzeile_ausweichen(r, wue, 6 * s)
+            if neu is not None:
+                a.SetPosition(rand, max(neu, 6.0 * s))
+                r = _rechteck(ren, a)
+        if r is not None:
+            lage["kopfzeile"] = r
+    return lage
+
+
+def texte_ordnen_einrichten(plotter, info_fn) -> bool:
+    """texte_ordnen vor jedem Bild aufrufen (Renderer, StartEvent); ``info_fn()``
+    liefert die Angaben oder None (dann nichts). Einmal je Renderer."""
+    ren = getattr(plotter, "renderer", None)
+    if ren is None:
+        return False
+    ref = _TEXTE_ORDNEN.get(id(ren))
+    if ref is not None and ref() is ren:
+        return True
+    import weakref
+    rref = weakref.ref(ren)
+    pref = weakref.ref(plotter)
+
+    def vor_bild(_obj, _ereignis):
+        p = pref()
+        try:
+            if p is not None and rref() is not None:
+                i = info_fn()
+                if i:
+                    texte_ordnen(p, i)
+        except Exception:                   # noqa: BLE001 - das Bild darf nie scheitern
+            pass
+    ren.AddObserver("StartEvent", vor_bild)
+    _TEXTE_ORDNEN[id(ren)] = rref
+    return True
+
+
+_TEXTE_ORDNEN: dict = {}
+
+
 def kanten_vor_flaechen() -> bool:
     """Linien gewinnen gegen die Flaeche, auf der sie liegen.
 
@@ -2296,30 +2670,11 @@ def schraffur(flaeche, abstand: float):
 
 def schraffur_muster(x0: float, y0: float, seite: float, farbe: str = None):
     """Ein schraffiertes Quadrat (Rahmen und Diagonalen) in Bildpunkten der
-    Ansicht - das Muster des Legendeneintrags, als 2D-Darsteller."""
+    Ansicht - das Muster des Legendeneintrags, als 2D-Darsteller. Die Lage
+    setzt texte_ordnen vor jedem Bild neu (_muster_punkte)."""
     import vtk
     from matplotlib.colors import to_rgb
-    pts = vtk.vtkPoints()
-    lines = vtk.vtkCellArray()
-
-    def strich(a, b):
-        i = pts.InsertNextPoint(a[0], a[1], 0.0)
-        j = pts.InsertNextPoint(b[0], b[1], 0.0)
-        lines.InsertNextCell(2)
-        lines.InsertCellPoint(i)
-        lines.InsertCellPoint(j)
-    s = float(seite)
-    ecken = [(x0, y0), (x0 + s, y0), (x0 + s, y0 + s), (x0, y0 + s)]
-    for k in range(4):
-        strich(ecken[k], ecken[(k + 1) % 4])
-    for t in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75):
-        # Linie x + y = t s (von links oben nach rechts unten geschnitten)
-        a = (x0 + min(t, 1.0) * s, y0 + max(t - 1.0, 0.0) * s)
-        b = (x0 + max(t - 1.0, 0.0) * s, y0 + min(t, 1.0) * s)
-        strich(a, b)
-    poly = vtk.vtkPolyData()
-    poly.SetPoints(pts)
-    poly.SetLines(lines)
+    poly = _muster_punkte(x0, y0, seite)
     koord = vtk.vtkCoordinate()
     koord.SetCoordinateSystemToDisplay()
     mapper = vtk.vtkPolyDataMapper2D()
