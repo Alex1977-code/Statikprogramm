@@ -1,13 +1,14 @@
 """Dialoge der Statik3D-Oberflaeche."""
 from __future__ import annotations
 
+import copy
 import os
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..model import (Model, Material, Section, LoadCase, Combination, Member,
-                     ACTION_CATEGORIES, STEEL_GRADES, DesignSettings, stahlsorte_schluessel)
+                     ACTION_CATEGORIES, STEEL_GRADES, DesignSettings, stahlsorte_schluessel, werte_gleich)
 from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
@@ -89,10 +90,16 @@ class MaterialDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Material")
         m = mat or Material.steel("S355")
-        # Verfestigung und Werkstoffart (13.10.2026) zeigt der Dialog nicht -
-        # er reicht sie unveraendert weiter (Maske rechts: Feld „Verfestigung“)
+        # Der Werkstoff, der bearbeitet wird (13.10.2026): result_material() baut ihn
+        # nicht aus den Feldern neu, sondern aendert eine Kopie davon - so bleiben
+        # Dickentabellen, Verfestigung, Werkstoffart und jedes Feld, das der Dialog
+        # nicht zeigt. Bis dahin gingen sie verloren.
+        self._vorlage = copy.deepcopy(mat) if mat is not None else None
         self._verfestigung = getattr(m, "verfestigung", None)
         self._art = getattr(m, "art", "")
+        #: Zeilen fuers Protokoll zur Dickentabelle (result_material); der Aufrufer meldet sie
+        self.dicken_meldungen = []
+        self.lbl_dicke = None
         self.grade = QtWidgets.QComboBox()
         self.grade.addItems(list(STEEL_GRADES) + ["benutzerdefiniert"])
         # eine Sorte „s 235“ steht als S235 da, nicht als „benutzerdefiniert“ (F08)
@@ -116,14 +123,18 @@ class MaterialDialog(QtWidgets.QDialog):
         f.addRow("Wärmedehnzahl [1e-6/K]", self.alpha)
         f.addRow("Streckgrenze fy [MPa]", self.fy)
         f.addRow("Zugfestigkeit fu [MPa]", self.fu)
+        self._grade_anfang = self.grade.currentText()
         if getattr(m, "fy_dicke", None):
             # aus der Quelldatei (RFEM): die Nachweise nehmen den Wert der Bauteildicke
             lbl = QtWidgets.QLabel("fy " + m.dickentext("fy") + ("\nfu " + m.dickentext("fu") if m.fu_dicke else ""))
             lbl.setWordWrap(True)
             lbl.setToolTip("Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; "
                            "die Nachweise nehmen den Wert der Dicke des Bauteils. fy/fu oben sind "
-                           "die Werte der dünnsten Stufe.")
+                           "die Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, "
+                           "die übrigen bleiben.")
             f.addRow("nach Dicke", lbl)
+            self.lbl_dicke = lbl
+            self._dicke_text = lbl.text()
         f.addRow(buttons(self))
 
     def _grade_changed(self, g):
@@ -132,6 +143,17 @@ class MaterialDialog(QtWidgets.QDialog):
             self.name.setText(g)
             self.E.set(m.E / 1e9); self.nu.set(m.nu); self.rho.set(m.rho)
             self.fy.set(m.fy / 1e6); self.fu.set(m.fu / 1e6)
+        if self.lbl_dicke is not None:
+            self.lbl_dicke.setText(self._dicke_text if self._tabelle_gilt() else
+                                   f"entfällt – die Werte der Stahlsorte {g} ersetzen die Tabelle aus der Quelldatei")
+
+    def _tabelle_gilt(self) -> bool:
+        """Gelten die Dickentabellen der Vorlage noch? Ja, solange die Stahlsorte die der
+        Vorlage ist oder „benutzerdefiniert“ (dann setzt der Dialog keine Werte ein). Wer eine
+        andere Sorte der Tabelle waehlt, bekommt deren Werte: die Tabelle der Quelldatei
+        gehoert zur alten Sorte und entfaellt - angezeigt vor dem OK und im Protokoll."""
+        g = self.grade.currentText()
+        return g not in STEEL_GRADES or g == self._grade_anfang
 
     def accept(self):
         """OK nimmt f_y = 0 nicht an (N07, 07.10.2026): die Meldungszeile ueber den
@@ -152,11 +174,38 @@ class MaterialDialog(QtWidgets.QDialog):
         fy = self.fy.value() * 1e6
         fu = self.fu.value() * 1e6
         g = self.grade.currentText()
-        return Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
-                        self.rho.value(), self.alpha.value() * 1e-6,
-                        fy if fy > 0 else None, fu if fu > 0 else None,
-                        g if g in STEEL_GRADES else "",
-                        verfestigung=self._verfestigung, art=self._art)
+        vor = self._vorlage
+        self.dicken_meldungen = []
+        if vor is None:
+            return Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
+                            self.rho.value(), self.alpha.value() * 1e-6,
+                            fy if fy > 0 else None, fu if fu > 0 else None,
+                            g if g in STEEL_GRADES else "",
+                            verfestigung=self._verfestigung, art=self._art)
+        # Eine Kopie des Werkstoffs mit den Werten aus den Feldern, soweit sie sich von
+        # der Vorlage unterscheiden (13.10.2026): alles Uebrige bleibt, wie es war
+        if g in STEEL_GRADES:
+            sorte = g
+        elif vor.grade and not stahlsorte_schluessel(vor.grade):
+            sorte = vor.grade          # eine eigene Sorte (S690 …): „benutzerdefiniert“ behaelt sie
+        else:
+            sorte = ""
+        mt = copy.deepcopy(vor)
+        for k, v in (("name", self.name.text() or "Mat"), ("E", self.E.value() * 1e9),
+                     ("nu", self.nu.value()), ("rho", self.rho.value()),
+                     ("alpha", self.alpha.value() * 1e-6), ("fy", fy if fy > 0 else None),
+                     ("fu", fu if fu > 0 else None), ("grade", sorte)):
+            alt = getattr(mt, k)
+            if not werte_gleich(alt, v) and not (k in ("fy", "fu") and not alt and v is None):
+                setattr(mt, k, v)
+        if self._tabelle_gilt():
+            self.dicken_meldungen = mt.dickentabellen_nachfuehren(vor.fy, vor.fu)
+        elif mt.fy_dicke or mt.fu_dicke:
+            mt.fy_dicke, mt.fu_dicke = [], []
+            self.dicken_meldungen = [
+                f"Werkstoff {mt.name}: Die Dickentabelle der Quelldatei entfällt, weil die Stahlsorte "
+                f"auf {g} gewechselt wurde; es gelten die Werte der Sorte."]
+        return mt
 
 
 class SectionDialog(QtWidgets.QDialog):

@@ -277,6 +277,25 @@ WERKSTOFFARTEN = ("Schraube", "Spannstahl")
 SCHRAUBENKLASSEN = ("4.6", "4.8", "5.6", "5.8", "6.8", "8.8", "10.9")
 
 
+def werte_gleich(a, b, rel: float = 1e-9) -> bool:
+    """Sind zwei Werkstoffwerte dieselben? Zahlen auf ``rel`` genau (ein Wert, der durch
+    ein Textfeld und zurueck gelaufen ist, aendert sich in der letzten Stelle), ``None``
+    nur gegen ``None``, alles andere (eine Sorte) mit ``==``. Maske und Dialog lassen
+    damit einen Wert, den der Anwender nicht angefasst hat, bitgleich stehen."""
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        fa, fb = float(a), float(b)
+    except (TypeError, ValueError):
+        return a == b
+    return abs(fa - fb) <= rel * max(abs(fa), abs(fb))
+
+
+def _mpa_text(wert) -> str:
+    """Ein Wert [Pa] als „355“ [N/mm²], leer als „leer“ (fuer die Zeilen des Protokolls)."""
+    return f"{float(wert) / 1e6:g}" if wert else "leer"
+
+
 @dataclass
 class Material:
     name: str
@@ -371,6 +390,40 @@ class Material:
             return ""
         return ", ".join(f"≤{t * 1e3:g}: {w / 1e6:g}" for t, w in sorted((float(a), float(b)) for a, b in tabelle)) \
             + " N/mm²"
+
+    def dickentabellen_nachfuehren(self, fy_alt, fu_alt) -> list:
+        """Fuehrt die Dickentabellen nach, wenn jemand f_y oder f_u **von Hand**
+        geaendert hat (Werkstoffmaske, Werkstoffdialog; 13.10.2026), und gibt die
+        Zeilen fuers Protokoll zurueck. ``fy_alt``, ``fu_alt``: die Werte vorher [Pa].
+
+        f_y und f_u am Werkstoff sind der Wert der duennsten Stufe (so legt sie der
+        Import ab), die Nachweise lesen aber zuerst die Tabelle. Bliebe sie
+        unveraendert, waere die Eingabe fuer Staebe und Schalen wirkungslos; wuerde
+        sie verworfen, gingen die Stufen der dickeren Erzeugnisse ohne Absicht
+        verloren. Darum bleibt die Tabelle, ihre duennste Stufe folgt dem neuen Wert,
+        die uebrigen Stufen bleiben. Ein geleertes Feld laesst die Tabelle
+        unveraendert (es gibt keinen Wert, dem sie folgen koennte), und das Protokoll
+        sagt es. Ein gleichgebliebener Wert aendert nichts und meldet nichts."""
+        zeilen = []
+        for was, alt, neu, tabelle, kennwert in (
+                ("fy", fy_alt, self.fy, self.fy_dicke, self.fliess_name()),
+                ("fu", fu_alt, self.fu, self.fu_dicke, self.grenze_name())):
+            if not tabelle or (not alt and not neu) or werte_gleich(alt, neu):
+                continue
+            kopf = (f"Werkstoff {self.name}: {kennwert} {_mpa_text(alt)} N/mm² → leer." if not neu else
+                    f"Werkstoff {self.name}: {kennwert} {_mpa_text(alt)} → {_mpa_text(neu)} N/mm².")
+            if not neu:
+                zeilen.append(kopf + " Die Dickentabelle der Quelldatei bleibt unverändert und gilt weiter "
+                              f"für die Nachweise ({kennwert} {self.dickentext(was)}).")
+                continue
+            i = min(range(len(tabelle)), key=lambda k: float(tabelle[k][0]))
+            if werte_gleich(tabelle[i][1], neu):
+                continue
+            tabelle[i] = [tabelle[i][0], float(neu)]
+            zeilen.append(kopf + " Die Dickentabelle der Quelldatei bleibt erhalten, nur ihre dünnste Stufe "
+                          f"(≤{float(tabelle[i][0]) * 1e3:g} mm) folgt dem neuen Wert; die übrigen Stufen "
+                          f"sind unverändert. Jetzt: {kennwert} {self.dickentext(was)}.")
+        return zeilen
 
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":

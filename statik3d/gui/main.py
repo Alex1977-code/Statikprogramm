@@ -8678,6 +8678,19 @@ class MainWindow(QtWidgets.QMainWindow):
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
                           F("benutzt", "benutzt von", "info",
                             f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
+                if mt is not None and (mt.fy_dicke or mt.fu_dicke):
+                    # die Dickentabelle aus der Quelldatei (RFEM): die Nachweise nehmen
+                    # den Wert der Dicke des Bauteils, f_y und f_u oben sind die duennste
+                    # Stufe. Sie wird angezeigt, damit sichtbar ist, was „Übernehmen“
+                    # behaelt (13.10.2026)
+                    felder.insert(len(felder) - 1, F(
+                        "nach_dicke", "nach Dicke", "info",
+                        "\n".join(f"{mt.fliess_name() if was == 'fy' else mt.grenze_name()} {mt.dickentext(was)}"
+                                  for was, tab in (("fy", mt.fy_dicke), ("fu", mt.fu_dicke)) if tab),
+                        hinweis="Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; die "
+                                "Nachweise nehmen den Wert der Dicke des Bauteils. f_y und f_u oben sind die "
+                                "Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, die "
+                                "übrigen bleiben."))
                 titel = f"Werkstoff {name}"
         elif art == "querschnitt":
             sec = m.sections.get(name)
@@ -10734,7 +10747,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if art in ("lastfall", "kombination", "werkstoff", "dicke", "querschnitt", "gelenk",
                        "berichtseintrag", "kontaktbedingung", "stellung") or art in self.LAGER_ARTEN:
-                return self._eigenschaften_uebernehmen(art, name, w, neu)
+                return self._eigenschaften_uebernehmen(art, name, w, neu, geaendert)
             if art == "knoten":
                 i = int(name)
                 if not 0 <= i < m.nn:
@@ -10985,11 +10998,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # rechts bleibt die Maske des Objekts, jetzt im Bearbeiten-Zustand
         self._objektmaske(art if art != "stabelement" else "stabelement", name)
 
-    def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
+    def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False, geaendert=None):
         """Lastfall, Kombination, Werkstoff oder Dicke aus der Objektmaske
         schreiben - auch umbenennen; Verweise (Elemente, Flächen, Kombinationen)
-        werden mitgezogen."""
-        from ..model import ACTION_CATEGORIES, Material, ShellProp, Combination, GRUNDSTELLUNG
+        werden mitgezogen.
+
+        ``geaendert``: die Felder, die sich in der Maske geaendert haben (None =
+        unbekannt). Der Werkstoff nutzt es (13.10.2026): er bleibt das Objekt, das
+        er war, und nur diese Felder werden geschrieben."""
+        from ..model import ACTION_CATEGORIES, Material, ShellProp, Combination, GRUNDSTELLUNG, werte_gleich
         from .dialogs import THEORIEN
         m = self.model
         neuname = str(w.get("name", "") or "").strip() or name
@@ -11161,12 +11178,30 @@ class MainWindow(QtWidgets.QMainWindow):
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
             # _stahlsorte_lesen)
             sorte, sorte_art, sorte_text = _stahlsorte_lesen(w.get("grade"), bool(fy))
-            mt = Material(neuname, E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
+            werte_ = dict(E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
                           rho=float(w.get("rho", 7850.0) or 7850.0),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte, verfestigung=r_verf,
-                          art=(getattr(alt_mt, "art", "") if alt_mt is not None else ""))
+                          grade=sorte, verfestigung=r_verf)
+            dicken_zeilen = []
+            if alt_mt is None:
+                mt = Material(neuname, **werte_)
+            else:
+                # Der Werkstoff bleibt, wie er war, und nur die Felder, die die Maske
+                # geaendert hat, werden geschrieben (13.10.2026). Bis dahin wurde er
+                # aus den Feldern der Maske neu gebaut: die Dickentabellen (fy_dicke,
+                # fu_dicke aus dem RFEM-Import) gingen schon bei einer geaenderten
+                # Dichte verloren, ebenso jedes Feld, das die Maske nicht zeigt.
+                import copy
+                mt = copy.deepcopy(alt_mt)
+                mt.name = neuname
+                for k, v in werte_.items():
+                    if k in w and (geaendert is None or k in geaendert) \
+                            and not werte_gleich(getattr(mt, k, None), v):
+                        setattr(mt, k, v)
+                # f_y oder f_u von Hand geaendert: die Tabelle bleibt, ihre duennste
+                # Stufe folgt (Material.dickentabellen_nachfuehren), das Protokoll sagt es
+                dicken_zeilen = mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
             if not neu and neuname != name and name in m.materials:
                 del m.materials[name]
                 for e in m.elements:
@@ -11180,6 +11215,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         k.material = neuname
             m.materials[neuname] = mt
             name = neuname
+            for zeile in dicken_zeilen:
+                self.info(zeile)
             if sorte_art == "info":
                 self.info(sorte_text)
         elif art == "querschnitt":
@@ -13594,6 +13631,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.merken(f"Werkstoff {name}")
         del self.model.materials[name]
         self.model.add_material(neu)
+        for zeile in getattr(d, "dicken_meldungen", []):
+            self.info(zeile)
         if neu.name != name:
             for e in self.model.elements:
                 if e.mat == name:
@@ -15284,9 +15323,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.hinweis(grund)
                 return False
             self.merken(f"Werkstoff {name}")
+            fy_alt = v.fy
             v.fy = None if fy is None else fy * 1e6
             self._zelle_uebernommen(f"Werkstoff {name}: {self.tbl_mat.modell.spalten[k].kopf()} = "
                                     f"{'leer' if fy is None else wert}")
+            # wie die Maske (13.10.2026): eine Dickentabelle aus der Quelldatei bleibt, ihre
+            # duennste Stufe folgt dem neuen f_y - sonst bliebe die Eingabe fuer Staebe wirkungslos
+            for zeile in v.dickentabellen_nachfuehren(fy_alt, v.fu):
+                self.info(zeile)
             return True
         w = float(wert)
         if k == 1 and not self._pruefen(w, unten=0.0, was="E-Modul"):

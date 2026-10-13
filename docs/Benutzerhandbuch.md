@@ -3214,7 +3214,7 @@ etwas enthält.
 |---|---|
 | Protokoll | das Protokoll der Berechnung und der Modellprüfung |
 | Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente, Schweißnähte. Die Tabelle *Elemente* führt alle finiten Elemente; bis zum 03.10.2026 hieß sie „Stäbe“, obwohl auch Schalen und Volumen darin stehen. Ein Klick auf *FE-Netz → Stabelemente*, *Flächenelemente* oder *Volumenelemente* im Modellbaum holt sie nach vorn |
-| Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog zeigt die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
+| Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog und seit 13.10.2026 auch die Werkstoffmaske rechts zeigen die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
 | Lager | Lager, Gelenke, Kontaktbedingungen |
 | Lasten | Lastfälle, Lasten, Kombinationen |
 | Ergebnisse | Stabkräfte, Auflagerkräfte, Umhüllende, Kontakt |
@@ -8133,6 +8133,43 @@ speicherten f_y = 0, das wie „leer“ wirkte (die Stahlsorte gab die Streckgre
 her, ohne Sorte war der Stab „nicht geführt“), der Dialog machte daraus ohne
 Meldung „leer“, und die Tabelle zeigte f_y ohne Wert als „0“, sodass sich f_y
 nur über die 0 leeren ließ.
+
+**Dickentabelle beim Übernehmen.** Ein Werkstoff aus RFEM 6 trägt Streckgrenze
+und Zugfestigkeit nach Erzeugnisdicke (siehe oben, Zeile *Eigenschaften*).
+Diese Tabelle bleibt erhalten, wenn man den Werkstoff in der Maske rechts mit
+*Übernehmen* bestätigt, im Werkstoffdialog mit OK oder eine Zelle der
+Werkstofftabelle ändert, und zwar auch dann, wenn man nur ein ganz anderes Feld
+ändert, etwa die Dichte oder den Namen. Das Programm ändert am Werkstoff nur,
+was man bearbeitet hat; alles Übrige bleibt, wie es war, auch das, was die
+Maske gar nicht zeigt (Werkstoffart Schraube oder Spannstahl, Verfestigung).
+Die Werkstoffmaske zeigt die Tabelle unter „nach Dicke“, sobald der Werkstoff
+eine hat. Bis zum 13.10.2026 wurde der Werkstoff beim Übernehmen aus den
+Feldern der Maske neu gebaut: Schon eine geänderte Dichte leerte beide Tabellen
+(gemessen an einem Werkstoff mit den Stufen bis 16 mm 355 und bis 40 mm
+345 N/mm²), ohne dass das Programm es sagte, und die Nachweise rechneten danach
+für jede Dicke mit dem einen f_y der dünnsten Stufe, bei einer Sorte der
+Tabelle über 40 mm mit deren unterer Stufe. Dasselbe traf den Werkstoffdialog,
+und im Dialog ging außerdem eine eigene Sorte (S690 …, nicht in der Tabelle)
+verloren.
+
+Ändert man f_y oder f_u **selbst**, bleibt die Tabelle ebenfalls. Ihre dünnste
+Stufe folgt dem neuen Wert, weil f_y und f_u am Werkstoff der Wert der dünnsten
+Stufe sind; die übrigen Stufen bleiben, wie sie waren. Das Protokoll sagt es mit
+der entstandenen Tabelle, zum Beispiel „Werkstoff S355: f_y 355 → 360 N/mm².
+Die Dickentabelle der Quelldatei bleibt erhalten, nur ihre dünnste Stufe
+(≤16 mm) folgt dem neuen Wert; die übrigen Stufen sind unverändert. Jetzt: f_y
+≤16: 360, ≤40: 345, ≤63: 335, ≤80: 325 N/mm².“ (bei Schrauben und Spannstahl
+heißen die Werte f_yb und f_ub bzw. f_p0,1k und f_pk). Das ist so gewählt, weil
+die Nachweise zuerst die Tabelle lesen: bliebe sie unverändert, wäre die
+Eingabe für Stäbe und Schalen wirkungslos, und würde sie verworfen, gingen die
+Stufen der dickeren Erzeugnisse ohne Absicht verloren. Leert man das Feld f_y
+oder f_u, gibt es keinen Wert, dem die Tabelle folgen könnte: Sie gilt
+unverändert weiter, und das Protokoll sagt auch das. Die Plastizität der Volumen
+liest weiterhin nur die Felder f_y und f_u des Werkstoffs, nicht die Tabelle.
+Wählt man im Werkstoffdialog eine andere Stahlsorte der Tabelle, setzt der
+Dialog deren Werte ein, und die Tabelle aus der Quelldatei entfällt, weil sie zur
+alten Sorte gehört; der Dialog zeigt das schon vor dem OK unter „nach Dicke“
+(„entfällt – …“), und das Protokoll nennt es nach dem Bestätigen.
 
 ### Schwingungsnachweis des Verschlusses
 
