@@ -6974,7 +6974,18 @@ also nur die Knoten des Lochrands an ihr, am Drehlager je Scheibe 40. Bis zum
 10.10.2026 galt für Ebene und Umriss dieselbe Toleranz von 0,5 mm bzw. einem
 Zehntel des Scheibenradius, bei den Ankerscheiben also rund 2,6 mm. Dadurch
 hingen an 6 der 64 Scheiben zusätzlich 16 Knoten aus dem Inneren der Platte,
-bis 2,46 mm unter der Oberfläche und bis 2,4 mm neben dem Lochrand. Eine
+bis 2,46 mm unter der Oberfläche und bis 2,4 mm neben dem Lochrand. Vor jeder
+Rechnung koppelt das Programm die starren Flächen neu und vergleicht mit den
+gespeicherten Kopplungen. Weichen sie ab, gilt die neue Kopplung, und das
+Protokoll sagt es in einer Zeile, am gespeicherten Drehlager „64 starre
+Flächen neu gekoppelt, die alten Kopplungen sind erneuert (Regel seit
+10.10.2026): jetzt je 40 Knoten, zusammen 2560; vorher 40–45, zusammen 2576;
+geändert an 6 Flächen …“. Stimmen sie überein, bleibt alles, wie es ist.
+Kopplungen anderer Art, etwa an Stabenden oder von Hand angelegt, bleiben
+unberührt. Bis zum 13.10.2026 koppelte die Oberfläche vor der Rechnung nur
+dann neu, wenn eine Datei noch gar keine Kopplung einer starren Fläche hatte;
+ein vor dem 10.10.2026 gespeichertes Modell rechnete deshalb weiter mit den
+16 Knoten zu viel. Eine
 Scheibe genau über einer Bohrung leitet ihre Kraft ohne Auflagefläche in die
 Platte; was das Programm daraus macht, steht unter *Netzabhängige
 Spannungsspitzen*.

@@ -1840,6 +1840,75 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     return bericht
 
 
+def _starre_kopplungen(model: Model) -> dict:
+    """{Gruppe: (Master, Slaves)} der Kopplungen starrer Flaechen, als frozensets."""
+    aus: dict = {}
+    for k in getattr(model, "kopplungen", None) or []:
+        g = str(getattr(k, "gruppe", ""))
+        if g.startswith(STARR_GRUPPE):
+            aus.setdefault(g, (set(), set()))
+            aus[g][0].add(int(k.node_a))
+            aus[g][1].add(int(k.node_b))
+    return {g: (frozenset(a), frozenset(b)) for g, (a, b) in aus.items()}
+
+
+def starre_kopplungen_erneuern(model: Model, log: list = None) -> dict:
+    """Vor jeder Rechnung: die Kopplungen der starren Flaechen (Gruppe
+    STARR_GRUPPE) so, wie :func:`starre_flaechen_koppeln` sie heute baut.
+
+    Ein gespeichertes Modell traegt seine Kopplungen mit sich. Bis zum
+    10.10.2026 koppelte die Toleranz max(0,5 mm; 0,1 r) auch Knoten im
+    Plattenkoerper an eine Scheibe ueber einer Bohrung (Drehlager: 16 Knoten
+    an 6 Scheiben); die Oberflaeche koppelte vor der Rechnung aber nur neu,
+    wenn es noch gar keine solche Kopplung gab - das Modell rechnete weiter
+    mit der alten. Jetzt wird neu gekoppelt und verglichen: stimmt das
+    Ergebnis mit dem Bestand ueberein, bleibt der Bestand unveraendert stehen
+    (dieselben Objekte in derselben Reihenfolge, derselbe Kommentar an der
+    Flaeche); sonst gilt die neue Kopplung, und ``log`` bekommt eine Zeile.
+    Kopplungen anderer Gruppen (Stabenden, Fugen, von Hand) fasst das nicht an.
+
+    Rueckgabe {"geaendert": bool, "vorher": {Gruppe: Knotenzahl},
+    "nachher": {Gruppe: Knotenzahl}}."""
+    from .begriffe import anzahl
+    starre = starre_flaechen(model)
+    if not starre or not getattr(model, "elements", None):
+        return {"geaendert": False, "vorher": {}, "nachher": {}}
+    bestand = list(getattr(model, "kopplungen", None) or [])
+    alt = _starre_kopplungen(model)
+    merk = {f.name: (f.kommentar, getattr(f, "steifigkeit", "")) for f in starre}
+    teil_log: list = []
+    starre_flaechen_koppeln(model, teil_log)
+    neu = _starre_kopplungen(model)
+    vorher = {g: len(s) for g, (_m, s) in alt.items()}
+    nachher = {g: len(s) for g, (_m, s) in neu.items()}
+    if neu == alt:
+        model.kopplungen = bestand
+        for f in starre:
+            f.kommentar, f.steifigkeit = merk[f.name]
+        return {"geaendert": False, "vorher": vorher, "nachher": nachher}
+    if log is not None and not alt:
+        # aeltere Datei ganz ohne Kopplung: gemeldet wie bisher
+        log.extend(teil_log)
+    elif log is not None:
+        def spanne(werte) -> str:
+            werte = sorted(werte)
+            if not werte:
+                return "0"
+            return f"{werte[0]}" if werte[0] == werte[-1] else f"{werte[0]}–{werte[-1]}"
+        n = len(neu)
+        anders = sorted((g[len(STARR_GRUPPE):] for g in set(alt) | set(neu) if alt.get(g) != neu.get(g)),
+                        key=lambda s: (len(s), s))
+        liste = ", ".join(anders[:8]) + (f" und {len(anders) - 8} weitere" if len(anders) > 8 else "")
+        je = "je " if n > 1 and len(set(nachher.values())) == 1 else ""
+        log.append(f"{anzahl(n, 'starre Fläche', 'starre Flächen')} neu gekoppelt, die alten "
+                   f"Kopplungen sind erneuert (Regel seit 10.10.2026): jetzt {je}"
+                   f"{spanne(nachher.values())} Knoten, zusammen {sum(nachher.values())}; vorher "
+                   f"{spanne(vorher.values())}, zusammen {sum(vorher.values())}; geändert an "
+                   f"{anzahl(len(anders), 'Fläche', 'Flächen')}: {liste}")
+        log.extend(z for z in teil_log if z.startswith("WARNUNG"))
+    return {"geaendert": True, "vorher": vorher, "nachher": nachher}
+
+
 STABENDE_GRUPPE = "Stabende "
 
 

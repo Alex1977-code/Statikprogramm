@@ -24537,14 +24537,16 @@ class MainWindow(QtWidgets.QMainWindow):
         vernetzen (nach Rueckfrage). False, wenn der Anwender abbricht."""
         from ..diagnose import diagnose
         from .. import fugen
-        # Starre Flaechen aus einer aelteren Datei: ihre Kopplungen fehlen noch
-        if fugen.starre_flaechen(self.model) and self.model.elements and not any(
-                str(getattr(k, "gruppe", "")).startswith(fugen.STARR_GRUPPE)
-                for k in self.model.kopplungen):
-            log = []
-            fugen.starre_flaechen_koppeln(self.model, log)
-            for z in log:
-                self.log.appendPlainText(z)
+        # Starre Flaechen: vor jeder Rechnung so gekoppelt, wie die Regel es
+        # heute tut. Bis zum 10.10.2026 nur, wenn die Kopplungen ganz fehlten
+        # (aeltere Datei) - ein Modell mit den Kopplungen von vor dem
+        # 10.10.2026 rechnete weiter mit den Knoten im Plattenkoerper, die die
+        # alte Toleranz mit an die Scheibe haengte (Drehlager: 16 an 6
+        # Scheiben). Stimmt der Bestand, bleibt er unveraendert.
+        log = []
+        fugen.starre_kopplungen_erneuern(self.model, log)
+        for z in log:
+            self.log.appendPlainText(z)
         # Stabenden, integrierte, belastete und gelagerte Knoten aus einer
         # aelteren Datei: ihr Anschluss an die Koerper fehlt noch
         if self.model.elements and getattr(self.model, "koerper", None) \
