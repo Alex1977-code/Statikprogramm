@@ -22,6 +22,12 @@ Dehnung. Geprueft wird:
 * **Speichern und Laden** mit der Ergebnisdatei.
 * **Die Schnittstelle fuer Paket 3** (``auffaellige_zonen``) kommt aus dem
   Zustand zum selben Urteil wie der Nachlauf.
+* **Die Zone** (Entscheidung des Anwenders vom 13.10.2026: „Netzabhängige
+  Zonen sind zu groß … über Radius bzw. max. 1–2 Elementringe begrenzen“):
+  die Elemente an den Knoten der Stelle (erster Ring) und deren Nachbarn
+  ueber gemeinsame Knoten (zweiter Ring), diese nur bis zum Abstand
+  r + 2 h des Schwerpunkts von der Mitte der Stelle. Bis zum 13.10.2026
+  waren es alle Elemente im Umkreis max(4 h; r) um die Knoten.
 """
 import os
 import sys
@@ -101,9 +107,32 @@ def test_lochplatte_linie():
               and s["master"] == mitte,
               f"A_trag {s['A_trag'] * 1e6:.1f} mm², A_Hülle {s['A_huelle'] * 1e6:.1f} mm² "
               f"(π r² = {np.pi * _RING_A ** 2 * 1e6:.1f}), h {s['h'] * 1e3:.2f} mm, r {s['r'] * 1e3:.2f} mm")
-        check("… mit einer Zone um den Ring (Elemente im Umkreis max(4 h; r))",
-              len(s["zone"]) > 0 and abs(s["zone_radius"] - max(4 * s["h"], s["r"])) < 1e-12,
+        check("… mit einer Zone um den Ring (zwei Elementringe, Radius r + 2 h)",
+              len(s["zone"]) > 0 and abs(s["zone_radius"] - (s["r"] + 2 * s["h"])) < 1e-12,
               f"{len(s['zone'])} Elemente, Radius {s['zone_radius'] * 1e3:.1f} mm")
+        soll = _zwei_ringe(m, s)
+        check("… die Zone sind genau die zwei Ringe (der zweite bis r + 2 h), eigene Auswertung",
+              set(int(e) for e in s["zone"]) == soll,
+              f"{len(s['zone'])} Elemente, eigene {len(soll)}; nur Programm "
+              f"{sorted(set(int(e) for e in s['zone']) - soll)[:5]}, nur eigene {sorted(soll - set(int(e) for e in s['zone']))[:5]}")
+
+
+def _zwei_ringe(m, s) -> set:
+    """Die Zone nach der Regel vom 13.10.2026, unabhaengig vom Programm: Ring 1
+    die Volumenelemente mit einem Knoten der Stelle, Ring 2 die mit einem
+    Eckknoten aus Ring 1, dieser nur mit Schwerpunkt (Mittel der Ecken)
+    hoechstens r + 2 h von der Mitte der Stelle."""
+    from statik3d.elements import solid as sl
+    S = set(int(k) for k in s["knoten"])
+    vol = [(i, e) for i, e in enumerate(m.elements) if e.typ in sl.ECKEN_NATUERLICH]
+    ecken = {i: [int(k) for k in e.nodes[:len(sl.ECKEN_NATUERLICH[e.typ])]] for i, e in vol}
+    ring1 = {i for i, e in vol if S & set(int(k) for k in e.nodes)}
+    n1 = set(k for i in ring1 for k in ecken[i])
+    c = np.asarray(s["mitte"], float)
+    grenze = float(s["r"]) + 2.0 * float(s["h"])
+    ring2 = {i for i, _e in vol if i not in ring1 and n1 & set(ecken[i])
+             and float(np.linalg.norm(np.asarray(m.nodes, float)[ecken[i]].mean(axis=0) - c)) <= grenze + 1e-12}
+    return ring1 | ring2
 
 
 def test_scheibe_auf_flaeche():
@@ -246,10 +275,9 @@ def test_nach_der_rechnung(gerechnet):
           and set(sp.zonen_elemente(r).tolist()) == set(zone)
           and int(sp.zonen_maske(m, r).sum()) == len(zone),
           f"Gründe {s['gruende']}")
-    check("die Zone liegt ganz in der Platte, im Umkreis der Ringknoten",
-          all(m.elements[i].typ == "hex8" for i in zone)
-          and max(float(np.min(np.linalg.norm(m.nodes[s["knoten"]] - m.nodes[m.elements[i].nodes].mean(axis=0), axis=1)))
-                  for i in zone) <= s["zone_radius"] + 1e-12)
+    check("die Zone liegt ganz in der Platte und sind die zwei Ringe um die Ringknoten",
+          all(m.elements[i].typ == "hex8" for i in zone) and set(int(i) for i in zone) == _zwei_ringe(m, s),
+          f"{len(zone)} Elemente")
     r2 = an.cases["LF2"]
     st2 = (r2.info.get("spitzenstellen") or {}).get("stellen") or []
     art2 = {x["quelle"]: x for x in st2}
@@ -333,6 +361,19 @@ def test_speichern_und_laden(gerechnet):
     check("nachholen ergänzt ein geladenes Ergebnis ohne Eintrag - mit demselben Urteil",
           n == 2 and c.get("auffaellig") == a["auffaellig"]
           and [x["kraft"] for x in c["stellen"]] == [x["kraft"] for x in a["stellen"]], f"{n} Ergebnisse")
+    # Ein Eintrag der Fassung 1 (vor dem 13.10.2026) traegt die groessere
+    # Zone von davor: nachholen wertet ihn neu aus, einer der Fassung 2 bleibt
+    for r in an2.cases.values():
+        e = r.info["spitzenstellen"]
+        e["fassung"] = 1
+        for x in e["stellen"]:
+            x["zone"] = np.arange(len(m.elements), dtype=np.int32)
+    n = sp.nachholen(m, an2)
+    c = an2.cases["LF1"].info.get("spitzenstellen") or {}
+    check("nachholen wertet einen Eintrag der Fassung 1 (größere Zone) neu aus, Fassung 2 bleibt",
+          n == 2 and c.get("fassung") == sp.FASSUNG == 2
+          and all(np.array_equal(x["zone"], y["zone"]) for x, y in zip(c["stellen"], a["stellen"]))
+          and sp.nachholen(m, an2) == 0, f"{n} Ergebnisse, Fassung {c.get('fassung')}")
 
 
 def test_schnittstelle_paket3(gerechnet):

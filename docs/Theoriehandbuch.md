@@ -4961,8 +4961,16 @@ oder wenn die getragenen Seiten eine ganze ebene Fläche des Körpers decken
 bleibt ein ganz gelagerter Boden eine Fläche, wo das Netz nur ein Element
 breit ist). Sonst ist es ein Punkt, wenn die Ausdehnung r ≤ 2 h ist, und
 sonst eine Linie. Nach der
-Rechnung gilt als Zone, was im Umkreis max(4 h; r) der Knoten liegt und mit
-den Elementen an S zusammenhängt. Auffällig ist eine Stelle, wenn in der Zone
+Rechnung gilt als Zone (seit 13.10.2026) der erste Elementring – die
+Elemente mit einem Knoten aus S – und der zweite – die Elemente mit einem
+Eckknoten des ersten –, dieser nur, soweit sein Schwerpunkt höchstens r + 2 h
+von der Mitte von S entfernt ist (`ZONE_RINGE`, `ZONE_RADIUS_H`;
+Entscheidung des Anwenders: „über Radius bzw. max. 1–2 Elementringe
+begrenzen“). Bis zum 13.10.2026 war es alles im Umkreis max(4 h; r) der
+Knoten, was mit den Elementen an S zusammenhängt – am Drehlager 11 703
+Elemente (7 719 cm³) in den 16 auffälligen Zonen, jetzt 5 833 (1 520 cm³).
+Ein Eintrag der älteren Fassung (`FASSUNG` 1) wird beim Öffnen neu
+ausgewertet (`nachholen`, `veraltet`). Auffällig ist eine Stelle, wenn in der Zone
 σ_v ≥ 2 f_y gilt oder F / (A_Hülle · f_y) ≥ 1 (Entscheidung des Anwenders vom
 10.10.2026); das zweite Maß zählt nur, wo A_Hülle ≥ 2 h² ist, denn am Punkt
 ist die Hülle eine Elementseite, und F/A wächst mit dem Netz. σ_v wird an den

@@ -26,8 +26,9 @@ nur die Endlast der Konsole (Probe sing_werk/p2, p5).
 Netzabnahme die Stellen gebuendelt als Warnung (:func:`abnahme_befunde` in
 diagnose.abnahme); sie haelt die Rechnung nicht an. **Nach der Rechnung** (:func:`auswerten`,
 aus solver._spitzenstellen_nachlauf) bestimmt das Programm je Stelle die
-Kraft, die durch sie geht, die Zone (Elemente im Umkreis max(4 h; r) um die
-Knoten, im selben zusammenhaengenden Netz), deren Spitzenwerte sigma_v (an
+Kraft, die durch sie geht, die Zone (die Elemente an den Knoten der Stelle
+und deren Nachbarn, diese bis r + 2 h um die Mitte; bis zum 13.10.2026 alle
+Elemente im Umkreis max(4 h; r)), deren Spitzenwerte sigma_v (an
 den Integrationspunkten, :class:`Punktspannungen`) und eps_p, das Verhaeltnis
 F / (A_Huelle f_y) und den Rang nach sigma_v / f_y.
 Stellen ohne Kraft fallen weg. **Auffaellig** ist eine Stelle nach der
@@ -54,8 +55,11 @@ import numpy as np
 
 #: Name der Pruefung in der Netzabnahme (diagnose.Befund.pruefung)
 PRUEFUNG = "Kraft ohne Fläche"
-#: Fassung des Eintrags in res.info - wer die Form aendert, zaehlt hoch
-FASSUNG = 1
+#: Fassung des Eintrags in res.info - wer die Form oder die Regel aendert,
+#: zaehlt hoch. 2 seit 13.10.2026: die Zone sind hoechstens zwei
+#: Elementringe (zonen_bestimmen); ein Eintrag der Fassung 1 traegt die
+#: groessere Zone von davor und wird beim Laden neu ausgewertet (nachholen).
+FASSUNG = 2
 #: Einordnung (Plan, Abschnitt 2): Flaeche ab FLAECHE_H2 h^2 getragener
 #: Flaeche, die mindestens FLAECHE_ANTEIL der Huelle deckt; Punkt bis zur
 #: Ausdehnung PUNKT_H h
@@ -66,8 +70,16 @@ PUNKT_H = 2.0
 #: Flaeche zaehlt (_ganze_flaeche): eine Wuerfelkante hat 90 Grad, ein
 #: Zylinder aus 48 Seiten 7,5 Grad
 GANZE_FLAECHE_KNICK = 30.0
-#: Zone: Elemente, deren Schwerpunkt hoechstens max(ZONE_H h; r) von einem
-#: Knoten der Stelle entfernt ist
+#: Zone (Entscheidung des Anwenders vom 13.10.2026: „Netzabhängige Zonen sind
+#: zu groß, weil elementweise auf grobem Netz bestimmt. Bitte über Radius bzw.
+#: max. 1–2 Elementringe begrenzen“): ZONE_RINGE Elementringe um die Knoten
+#: der Stelle, der zweite nur bis zum Abstand r + ZONE_RADIUS_H h des
+#: Schwerpunkts von der Mitte der Stelle. Bis zum 13.10.2026 waren es alle
+#: Elemente, deren Schwerpunkt hoechstens max(ZONE_H h; r) von einem Knoten
+#: der Stelle entfernt war - am groben Netz des Drehlagers (h bis 20 mm) ein
+#: Umkreis bis 80 mm; ZONE_H bleibt nur zum Nachlesen.
+ZONE_RINGE = 2
+ZONE_RADIUS_H = 2.0
 ZONE_H = 4.0
 #: auffaellig (Entscheidung des Anwenders vom 10.10.2026)
 GRENZE_SV_FY = 2.0
@@ -606,47 +618,51 @@ def _knotenlast_je_fall(model, knoten: int) -> dict:
 
 
 def zonen_bestimmen(model, stellen: list, netz: _Netz = None) -> list:
-    """Je Stelle die Zone: die Volumenelemente, deren Schwerpunkt hoechstens
-    max(ZONE_H h; r) von einem Knoten der Stelle entfernt ist und die mit den
-    Elementen an der Stelle zusammenhaengen (ueber gemeinsame Knoten, innerhalb
-    des Umkreises). Ein anderer Koerper, der nur anliegt (Kontakt, Fuge),
-    gehoert nicht dazu: in ihn geht die Kraft der Stelle nicht unmittelbar.
-    Schreibt ``zone``, ``zone_radius``, ``zone_volumen`` in die Stellen."""
-    from scipy import sparse
-    from scipy.sparse.csgraph import connected_components
-    from scipy.spatial import cKDTree
+    """Je Stelle die Zone (seit 13.10.2026): der erste Ring - die
+    Volumenelemente mit einem Knoten der Stelle - und der zweite - die
+    Elemente mit einem Eckknoten des ersten Rings -, dieser nur, soweit sein
+    Schwerpunkt hoechstens r + ZONE_RADIUS_H h von der Mitte der Stelle
+    entfernt ist. Ein anderer Koerper, der nur anliegt (Kontakt, Fuge), teilt
+    keinen Knoten und gehoert nicht dazu: in ihn geht die Kraft der Stelle
+    nicht unmittelbar. Schreibt ``zone``, ``zone_radius`` (r + 2 h) und
+    ``zone_volumen`` in die Stellen - dieselben Schluessel wie zuvor
+    (Schnittstelle fuer Paket 3 und die Anzeige).
+
+    Bis zum 13.10.2026 waren es alle zusammenhaengenden Elemente, deren
+    Schwerpunkt hoechstens max(4 h; r) von einem Knoten der Stelle entfernt
+    war: am Drehlager 65 102 Elemente in den 112 Zonen."""
     netz = netz or _Netz(model)
     if not stellen:
         return stellen
+    # Knoten -> Elementzeilen ueber die Eckknoten, einmal fuer alle Stellen
+    gut = netz.kc >= 0
+    z_paare = np.repeat(np.arange(netz.n_vol, dtype=np.int64), netz.kc.shape[1])[gut.ravel()]
+    ez, ew = _csr(netz.kc[gut].astype(np.int64), z_paare, netz.nn)
+
+    def an(knoten) -> np.ndarray:
+        knoten = np.asarray(knoten, np.int64)
+        if not len(knoten):
+            return np.zeros(0, np.int64)
+        return np.unique(np.concatenate([ew[ez[n]:ez[n + 1]] for n in knoten.tolist()]))
     alle = []
     for s in stellen:
         S = np.asarray(s["knoten"], np.int64)
-        d = max(ZONE_H * float(s["h"]), float(s["r"]))
+        d = float(s["r"]) + ZONE_RADIUS_H * float(s["h"])
         c = np.asarray(s["mitte"], float)
-        kand = np.asarray(netz.baum.query_ball_point(c, d + float(s["r"])), np.int64)
-        if len(kand):
-            dist, _j = cKDTree(netz.X[S]).query(netz.mitte[kand], k=1)
-            kand = kand[dist <= d]
-        saat = s.get("_zeilen")
-        if saat is None:
+        ring = s.get("_zeilen")
+        if ring is None:
             maske = np.zeros(netz.nn, bool)
             maske[S] = True
-            saat = netz.an_knoten(maske)[0]
-        saat_set = np.isin(kand, saat)
-        if len(kand) and saat_set.any():
-            Kc = netz.kc[kand]
-            gut = Kc >= 0
-            r_ = np.repeat(np.arange(len(kand)), Kc.shape[1])[gut.ravel()]
-            kn, col = np.unique(Kc[gut], return_inverse=True)
-            B = sparse.coo_matrix((np.ones(len(r_)), (r_, np.asarray(col).ravel())),
-                                  shape=(len(kand), len(kn))).tocsr()
-            G = sparse.bmat([[None, B], [B.T, None]]).tocsr()
-            _n, lab = connected_components(G, directed=False)
-            lab = lab[:len(kand)]
-            kand = kand[np.isin(lab, np.unique(lab[saat_set]))]
-        else:
-            kand = np.zeros(0, np.int64)
-        zone = np.sort(netz.el[kand]).astype(np.int32)
+            ring = netz.an_knoten(maske)[0]
+        ring = np.unique(np.asarray(ring, np.int64))
+        zone_z = ring
+        for _k in range(ZONE_RINGE - 1):
+            kn = netz.kc[zone_z]
+            neu = an(np.unique(kn[kn >= 0]))
+            neu = neu[~np.isin(neu, zone_z)]
+            neu = neu[np.linalg.norm(netz.mitte[neu] - c, axis=1) <= d]
+            zone_z = np.union1d(zone_z, neu)
+        zone = np.sort(netz.el[zone_z]).astype(np.int32)
         s["zone"] = zone
         s["zone_radius"] = float(d)
         alle.append(zone)
@@ -1076,15 +1092,26 @@ def auswerten(model, res, stellen: list = None, punkte: Punktspannungen = None) 
     return erg
 
 
+def veraltet(eintrag) -> bool:
+    """Traegt der Eintrag eine aeltere Fassung (vor dem 13.10.2026: die
+    groessere Zone)? Ein Eintrag ohne Fassung gilt nicht als veraltet."""
+    return isinstance(eintrag, dict) and "fassung" in eintrag and int(eintrag.get("fassung") or 0) < FASSUNG
+
+
 def nachholen(model, analysis, stellen: list = None) -> int:
     """Jedes Ergebnis der Analyse ohne Eintrag auswerten - etwa nach dem
-    Laden einer Ergebnisdatei von vor dem 10.10.2026. Rueckgabe: Zahl der
-    ausgewerteten Ergebnisse."""
+    Laden einer Ergebnisdatei von vor dem 10.10.2026 -, ebenso eines mit
+    einem Eintrag aelterer Fassung (:func:`veraltet`, seit 13.10.2026: die
+    Zone von davor war groesser). Rueckgabe: Zahl der ausgewerteten
+    Ergebnisse."""
     n = 0
     punkte = None
     for gruppe in ("cases", "combinations", "alternativen"):
         for r in (getattr(analysis, gruppe, None) or {}).values():
-            if r is None or "spitzenstellen" in (r.info or {}) or not getattr(r, "solid_res", None):
+            if r is None or not getattr(r, "solid_res", None):
+                continue
+            e = (r.info or {}).get("spitzenstellen")
+            if e is not None and not veraltet(e):
                 continue
             if stellen is None:
                 stellen = kandidaten(model)

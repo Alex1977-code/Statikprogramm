@@ -10923,9 +10923,19 @@ in den eingebauten Beispielen meldet sie nur die Endlast der Konsole, die auf
 den sieben Knoten der Oberkante steht.
 
 Nach der Rechnung bestimmt das Programm je Stelle die Kraft, die durch sie
-geht, eine Zone aus den Elementen im Umkreis von vier Elementkanten oder dem
-Radius der Stelle, den größeren Wert, und darin den Spitzenwert von σ_v und
-ε_p. Stellen ohne Kraft fallen weg. **Auffällig** ist eine Stelle, wenn in
+geht, eine Zone aus höchstens zwei Elementringen – den Elementen an den
+Knoten der Stelle und deren Nachbarn, diese nur bis zum Radius der Stelle
+plus zwei Elementkanten – und darin den Spitzenwert von σ_v und ε_p. Bis zum
+13.10.2026 waren es alle Elemente im Umkreis von vier Elementkanten oder dem
+Radius der Stelle; auf dem groben Netz waren die Zonen damit zu groß (am
+Drehlager in den 16 Ankerplatten 11 703 Elemente und 7 719 cm³, jetzt 5 833
+Elemente und 1 520 cm³; über alle 108 Stellen 63 019 statt jetzt 30 430
+Elemente). Die Werte außerhalb der Zonen ändern sich dort nicht: σ_v außerhalb
+der 16 Zonen bleibt 545,3 N/mm² (V90), der Volumennachweis über die
+plastische Dehnung mit ausgenommenem Nullmaterial bleibt η = 0,873, und alle
+Punkte über 5 % plastischer Hauptdehnung außerhalb des Nullmaterials liegen
+weiter in den Zonen. Ergebnisdateien mit der Zone von davor wertet das
+Programm beim Öffnen neu aus. Stellen ohne Kraft fallen weg. **Auffällig** ist eine Stelle, wenn in
 ihrer Zone σ_v mindestens 2·f_y erreicht oder wenn die Kraft, verteilt auf
 die Fläche der Stelle, die Streckgrenze erreicht. σ_v ist dabei der Wert an
 den Integrationspunkten, an denen auch das Fließen gerechnet wird, nicht der
@@ -10960,8 +10970,9 @@ der Zonen mit einem Stern. Volumennachweis und Ermüdung der Volumen nehmen
 die Elemente der Zonen aus ihrem Maximum. Sie nennen die Zone in einer
 eigenen Zeile „nur berichtet“, mit ihrer Spitze daneben, und sagen im
 Hinweis, welcher Wert außerhalb gilt. Am gespeicherten Drehlager sind das in
-den 16 Ankerplatten 11 703 Elemente; ein für die Abnahme angelegter
-Volumenbereich über diese Platten fällt dadurch von η = 3,020 auf 0,794. Beim Öffnen einer Ergebnisdatei von
+den 16 Ankerplatten 5 833 Elemente (bis zum 13.10.2026 mit der größeren Zone
+11 703); ein für die Abnahme angelegter Volumenbereich über diese Platten fiel
+mit der Zone von davor von η = 3,020 auf 0,794. Beim Öffnen einer Ergebnisdatei von
 vor dem 10.10.2026 holt das Programm die Kennzeichnung aus dem gespeicherten
 Ergebnis nach, am Drehlager in rund 6 s, ohne neu zu rechnen. Die Farbe der
 Kennzeichnung ist seit dem 13.10.2026 Magenta; sie kommt in der Farbtafel der

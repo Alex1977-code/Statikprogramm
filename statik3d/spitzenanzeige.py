@@ -90,7 +90,10 @@ def nachweis_zonen(model, ergebnisse: dict) -> dict:
     for name, r in (ergebnisse or {}).items():
         if r is None:
             continue
-        if eintrag(r) is None and getattr(r, "solid_res", None) and getattr(r, "u", None) is not None:
+        # ohne Eintrag oder mit einem aelterer Fassung (seit 13.10.2026: die
+        # groessere Zone von davor) wird hier ausgewertet
+        if (eintrag(r) is None or sp.veraltet(eintrag(r))) and getattr(r, "solid_res", None) \
+                and getattr(r, "u", None) is not None:
             try:
                 if stellen is None:
                     stellen = sp.kandidaten(model)
