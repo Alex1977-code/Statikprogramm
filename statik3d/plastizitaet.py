@@ -113,6 +113,57 @@ KONTAKT_WEGE = ("verschachtelt", "gemeinsam")
 GEMEINSAM_WARNUNG = ("kann nahe der Grenzlast einen anderen Weg durch die Reibung nehmen als "
                      "„verschachtelt“; mit „verschachtelt“ gegenprüfen")
 
+#: Abbruch einer Laststufe (Einstellung ``Plastizitaet.abbruch``, seit dem
+#: 13.10.2026; Plan Singularitaeten vom 10.10.2026, Paket 3); der erste ist die
+#: Vorgabe. Entscheidung des Anwenders vom 10.10.2026: Spannungsspitzen und
+#: Singularitaeten „sollten nicht dafür sorgen dass sich die rechenzeit
+#: verlängert“, und das neue Kriterium ist gleich die Vorgabe.
+#:
+#: * "ingenieurmaessig": eine Laststufe ist konvergiert, wenn die Aenderung von
+#:   F_p **ausserhalb** der auffaelligen Zonen (spitzenstellen, Paket 1) unter
+#:   der Toleranz liegt, die Kraft durch jede auffaellige Stelle sich um
+#:   hoechstens :data:`SPITZEN_KRAFT` und die Verschiebung ausserhalb der Zonen
+#:   um hoechstens :data:`SPITZEN_VERSCHIEBUNG` aendert (:func:`_zonen_mass`).
+#:   Am selben Mass entscheidet sich das Halbieren einer weglaufenden Stufe und
+#:   die Schlussabnahme. Die Zonen rechnen weiter plastisch mit - nur ihr
+#:   Beitrag zum Mass faellt weg; ihre Werte stehen mit der letzten Aenderung
+#:   als „nicht auskonvergiert“ im Ergebnis. Ausgenommen wird nur, was Paket 1
+#:   als auffaellig kennzeichnet (am Drehlager die 16 Ankerringe); ohne
+#:   auffaellige Stelle ist es Schritt fuer Schritt das strenge Kriterium.
+#: * "streng": die Aenderung von F_p ueber das ganze Modell, wie bis zum
+#:   13.10.2026. Am Drehlager trugen die Zonen der 16 Ankerringe 97 bis 99 %
+#:   des Quadrats dieser Aenderung (Plan, Abschnitt 2) - das Mass war praktisch
+#:   eines der netzabhaengigen Spitzen.
+#:
+#: Die Zonen bestimmt der Loeser (solver._SpitzenImNewton) nach jedem
+#: Newton-Schritt aus dem aktuellen Zustand; einmal auffaellig, bleibt eine
+#: Stelle innerhalb des Lastfalls ausgenommen. Das Protokoll nennt je Schritt
+#: die Aenderung in und ausserhalb der Zonen in beiden Wegen.
+ABBRUCH_WEGE = ("ingenieurmaessig", "streng")
+#: Kraft durch jede auffaellige Stelle (Stabkraft bzw. Resultierende der
+#: Kopplung am Master): hoechstens so viel relative Aenderung im letzten
+#: Schritt. Was eine nicht auskonvergierte Zone nach aussen gibt, ist eine
+#: Kraeftegruppe im Gleichgewicht, die abklingt - nur die Kraft, die durch die
+#: Stelle geht, klingt nicht ab: am Drehlager haengt die Ankerkraft an der
+#: Einsenkung des Rings, rund 66 kN je mm (Plan, Abschnitt 3 „Risiken“).
+SPITZEN_KRAFT = 5e-3
+#: Verschiebung ausserhalb der Zonen (und ohne die Knoten und Master der
+#: auffaelligen Stellen): hoechstens so viel Aenderung im letzten Schritt,
+#: bezogen auf die groesste Verschiebung dort. Der Plan nannte 1 %. Das ist
+#: genau die Grenze seiner eigenen Abnahme (u ausserhalb hoechstens 1 % neben
+#: dem strengen Ergebnis): ein Newton, der an der Zone nur noch linear
+#: konvergiert (am Ring der Ankerplatte rund 0,5 je Schritt), steht nach dem
+#: Abbruch etwa um die letzte Aenderung neben seiner Loesung. Viel enger geht
+#: aber auch nicht: pendelt eine Zone (Ankerplatte mit feinem Netz, Periode
+#: drei Schritte, 13.10.2026), bewegt sie die Knoten ausserhalb im Takt um
+#: 0,28 bis 0,46 % - mit 1e-3 kam die Stufe nie an, „nicht konvergiert“ nach
+#: 25 Schritten, wo F_p ausserhalb sich gar nicht und die Ankerkraft um
+#: 0,1 % aenderte. 0,5 % liegt dazwischen, mit dem Faktor 2 unter der Abnahme
+#: und gleich der Grenze fuer die Kraft; am groben Netz der Ankerplatte
+#: brauchte es dieselben 14 Newton-Schritte wie 1 % (1e-3: 17, streng: 29),
+#: bei 0,2 N/mm2 und 0,17 % Abweichung ausserhalb (sp3_werk/p5_serie.out).
+SPITZEN_VERSCHIEBUNG = 5e-3
+
 #: Kleinster Verfestigungsmodul **der Tangente**, bezogen auf 3G. Bei sehr
 #: kleiner Verfestigung ist D_ep in Fliessrichtung fast singulaer (Eigenwert
 #: 2G (H/3G)/(1 + H/3G)), und oberhalb der Grenzlast wird es K + ΔK auch: am
@@ -170,6 +221,12 @@ class Plastizitaet:
     #: elastische Steifigkeit mit jeder Regel >= 2 Punkten dieselbe.
     dicke_punkte: int = 5
     kontakt: str = KONTAKT_WEGE[0]
+    #: Abbruch einer Laststufe (:data:`ABBRUCH_WEGE`, seit dem 13.10.2026):
+    #: "ingenieurmaessig" (Vorgabe) nimmt die auffaelligen netzabhaengigen
+    #: Spitzen aus dem Mass der Konvergenz aus, "streng" misst ueber das ganze
+    #: Modell wie bis dahin. Eine Datei ohne den Schluessel rechnet die
+    #: Vorgabe; ein unbekannter Wert ebenso, und der Loeser meldet ihn.
+    abbruch: str = ABBRUCH_WEGE[0]
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
@@ -634,6 +691,7 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
     F_p = np.zeros(model.ndof)
     neu = zustand.kopie()
     n_fl, q_max, dK = 0, 0.0, None
+    sv_teile: list = []
     for d in teile:
         Fb, zb, ib = _schritt_teil(model, u, zustand, einst, d, log, tangente)
         F_p += Fb
@@ -644,9 +702,10 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
                 neu.eps_p_eq[i] = zb.eps_p_eq[i]
         n_fl += ib["fliessend"]
         q_max = max(q_max, ib["q_max"])
+        sv_teile.extend(ib.get("sv_teile") or [])
         if tangente:
             dK = ib["dK"] if dK is None else (dK + ib["dK"])
-    info = {"fliessend": n_fl, "q_max": q_max}
+    info = {"fliessend": n_fl, "q_max": q_max, "sv_teile": sv_teile}
     if tangente:
         info["dK"] = dK
     return F_p, neu, info
@@ -803,12 +862,16 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
                 np.linalg.solve(eas["Kaa"][stellen], h_neu[..., None])[..., 0])
         np.add.at(F_p, dofs[stellen].ravel(), fe.reshape(-1))
     if d["ohne_fy"] and log is not None:
-        log.append("Plastizität: Werkstoffe ohne Streckgrenze bleiben elastisch - "
-                   + ", ".join(sorted(d["ohne_fy"])))
+        _einmal(log, "Plastizität: Werkstoffe ohne Streckgrenze bleiben elastisch - "
+                + ", ".join(sorted(d["ohne_fy"])))
     # q_max zaehlt nur Werkstoffe mit Streckgrenze: die Schleife ueberspringt
     # die uebrigen ganz (19.09.2026, vom Vergleichstest gefunden)
     q_max = float(q_neu[hatF].max()) if (m and hatF.any()) else 0.0
-    info = {"fliessend": int(fliesst_e.sum()), "q_max": q_max}
+    # sigma_v je Element: der groesste Integrationspunkt nach der Rueckfuehrung,
+    # also dort, wo die Fliessbedingung gilt - fuer die Zonen der
+    # netzabhaengigen Spitzen (solver._SpitzenImNewton, 13.10.2026)
+    info = {"fliessend": int(fliesst_e.sum()), "q_max": q_max,
+            "sv_teile": [(idx, q_neu.reshape(P, n).max(axis=0))]}
     if tangente:
         info["dK"] = _dk_block(d, fliesst.reshape(P, n), dev.reshape(P, n, 6),
                                q.reshape(P, n), dgamma.reshape(P, n),
@@ -832,7 +895,7 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
     # bleibt fuer unbekannte Typen und als Referenz des Vergleichstests.
     if not elemente:
         from scipy import sparse
-        leer = {"fliessend": 0, "q_max": 0.0}
+        leer = {"fliessend": 0, "q_max": 0.0, "sv_teile": []}
         if tangente:
             leer["dK"] = sparse.csr_matrix((model.ndof, model.ndof))
         return np.zeros(model.ndof), zustand.kopie(), leer
@@ -853,6 +916,7 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
     neu = zustand.kopie()
     n_fliesst, q_max = 0, 0.0
     dK = None
+    sv_teile: list = []
     for typ, liste in je_typ.items():
         Fb, zb, ib = _schritt_block(model, u, zustand, einst, liste, typ, log, tangente)
         F_p += Fb
@@ -862,9 +926,10 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
                 neu.eps_p_eq[i] = zb.eps_p_eq[i]
         n_fliesst += ib["fliessend"]
         q_max = max(q_max, ib["q_max"])
+        sv_teile.extend(ib.get("sv_teile") or [])
         if tangente:
             dK = ib["dK"] if dK is None else (dK + ib["dK"])
-    info = {"fliessend": n_fliesst, "q_max": q_max}
+    info = {"fliessend": n_fliesst, "q_max": q_max, "sv_teile": sv_teile}
     if tangente:
         info["dK"] = dK
     return F_p, neu, info
@@ -988,8 +1053,18 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
                 n_fliesst += 1
             np.add.at(F_p, dofs, fe)
     if ohne_fy and log is not None:
-        log.append("Plastizität: Werkstoffe ohne Streckgrenze bleiben elastisch - " + ", ".join(sorted(ohne_fy)))
+        _einmal(log, "Plastizität: Werkstoffe ohne Streckgrenze bleiben elastisch - " + ", ".join(sorted(ohne_fy)))
     return F_p, neu, {"fliessend": n_fliesst, "q_max": q_max}
+
+
+def _einmal(log: list, zeile: str) -> None:
+    """Eine Zeile nur einmal ins Protokoll eines Lastfalls (``log`` beginnt in
+    solver._plastizitaet_rechnen je Lastfall leer). „Werkstoffe ohne
+    Streckgrenze bleiben elastisch“ stand bis zum 13.10.2026 einmal je
+    Schritt da: am Koerper-Bolzen (tests.test_vorspannung_sofort) in 11 von
+    13 Zeilen."""
+    if zeile not in log:
+        log.append(zeile)
 
 
 def _schlussabnahme(rest: float, toleranz: float) -> bool:
@@ -1083,9 +1158,57 @@ def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
     return float(np.linalg.norm(F_p_neu)) or 1.0
 
 
+def _zonen_mass(zonen, diff: float, tol: float, u, F_p_neu, F_p_alt, zustand, s_info, bezug: float,
+                lam: float, stufe: str, schritt_nr) -> tuple:
+    """(Mass, erreicht, Messung) eines Newton-Schritts.
+
+    Ohne ``zonen`` (der Loeser gibt keine, wenn das Modell keine Stelle „Kraft
+    ohne Fläche“ hat) ist das Mass die Aenderung ``diff`` von F_p ueber das
+    ganze Modell und erreicht heisst ``diff <= tol`` - wie bis zum 13.10.2026.
+    Mit ``zonen`` misst der Loeser (solver._SpitzenImNewton.messen) aus dem
+    aktuellen Zustand, welche Stellen auffaellig sind, und die Aenderungen in
+    und ausserhalb ihrer Zonen. Gibt es auffaellige Zonen und gilt
+    ``Plastizitaet.abbruch = "ingenieurmaessig"``, ist das Mass die Aenderung
+    von F_p **ausserhalb** der Zonen, und erreicht heisst zusaetzlich: die
+    Kraft durch jede auffaellige Stelle aendert sich um hoechstens
+    :data:`SPITZEN_KRAFT`, die Verschiebung ausserhalb der Zonen um hoechstens
+    :data:`SPITZEN_VERSCHIEBUNG`. Sonst (streng, oder keine auffaellige Zone)
+    bleibt es bei ``diff`` - die Messung steht dann nur im Protokoll."""
+    if zonen is None:
+        return diff, diff <= tol, None
+    mess = zonen.messen(u, F_p_neu, F_p_alt, zustand, s_info, bezug, lam, stufe=stufe, schritt=schritt_nr)
+    if not _zonen_greifen(zonen, mess):
+        return diff, diff <= tol, mess
+    mass = float(mess["aussen"])
+    return mass, bool(mass <= tol and mess["erfuellt"]), mess
+
+
+def _zonen_greifen(zonen, mess) -> bool:
+    """Gilt fuer diese Messung das ingenieurmaessige Kriterium?"""
+    return bool(zonen is not None and mess is not None and mess.get("zonen") and zonen.ingenieur)
+
+
+def _zonen_melden(mess, log, progress) -> None:
+    """Die Zeile einer Messung (Aenderung in und ausserhalb der Zonen, Kraefte
+    der auffaelligen Stellen) ins Protokoll und in den Fortschritt."""
+    if not mess or not mess.get("zeile"):
+        return
+    if log is not None:
+        log.append(mess["zeile"])
+    if progress is not None:
+        progress(mess["zeile"])
+
+
+def _mass_text(zonen, mess, diff: float, mass: float) -> str:
+    """„Änderung 1.2e-02“ - oder mit Zonen das Mass ausserhalb und die Kraft."""
+    if not _zonen_greifen(zonen, mess):
+        return f"Änderung {diff:.2e}"
+    return f"Änderung außerhalb der Zonen {mass:.2e}, {mess.get('kurz', '')}".rstrip(", ")
+
+
 def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, einst: "Plastizitaet",
                      elemente: list, norm_F: float, info: dict, log, progress, _loesen,
-                     kontakt, faktor: float = None, letzte: bool = None, F_sofort=None):
+                     kontakt, faktor: float = None, letzte: bool = None, F_sofort=None, zonen=None):
     """Eine Laststufe des Newton mit abgekuerztem Kontakt - die gemeinsame
     Iteration von Fliessen und Kontakt (siehe :func:`_newton`). ``u`` ist der
     Startwert der Stufe, mit voll auskonvergiertem Kontakt geloest.
@@ -1095,7 +1218,10 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
     (konvergiert, u, F_p, Zustand, rest): konvergiert heisst, die Aenderung
     liegt unter der Toleranz **und** die Loesung dazu war nicht abgekuerzt.
     ``rest`` ist nur gesetzt, wenn u schon der Abschluss ist (letzte Stufe)
-    und die Schlussabnahme an ihm bestanden hat.
+    und die Schlussabnahme an ihm bestanden hat. Mit auffaelligen Zonen und
+    ``abbruch = "ingenieurmaessig"`` gilt das Mass von :func:`_zonen_mass`
+    (seit dem 13.10.2026) - fuer das Urteil, fuer ``rest`` und fuer
+    ``kontakt.naechster``.
 
     Wie der verschachtelte Newton hoechstens ``iterationen`` Schritte; der
     Schritt, der eine abgekuerzte Loesung mit vollem Kontakt abnimmt
@@ -1109,7 +1235,8 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
     # Lastfaktor und "letzte Stufe" kommen seit dem Halbieren (HALBIEREN_MAX)
     # vom Aufrufer; ohne Angabe wie bisher k/stufen. Temperatur und
     # Vorspannung wirken voll (stufenlast, 10.10.2026)
-    F_k = stufenlast(F, F_sofort, (k / stufen) if faktor is None else float(faktor))
+    lam_k = (k / stufen) if faktor is None else float(faktor)
+    F_k = stufenlast(F, F_sofort, lam_k)
     letzte = (k == stufen) if letzte is None else bool(letzte)
     F_p_stufe, zustand_stufe = F_p, basis
     abschluss = None            # (F_p, Zustand), mit denen der Abschluss gerechnet ist
@@ -1119,13 +1246,17 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
         it += 1
         F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                tangente=True)
-        diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / _bezug(norm_F, F_p_neu)
+        bezug = _bezug(norm_F, F_p_neu)
+        diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / bezug
+        mass, ok, mess = _zonen_mass(zonen, diff, tol, u, F_p_neu, F_p_stufe, zustand_neu, s_info, bezug,
+                                     lam_k, f"{k}/{stufen}", it)
         info["iterationen"] += 1
         info["verlauf"].append((k, it, diff, s_info["fliessend"]))
         if progress is not None:
             progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
                      f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
-        if diff <= tol and not kontakt.abgekuerzt():
+        _zonen_melden(mess, log, progress)
+        if ok and not kontakt.abgekuerzt():
             if getattr(kontakt, "deckel_in_stufe", lambda: False)():
                 # ein voller Kontaktlauf dieser Stufe endete am Deckel: nicht
                 # abnehmen, verschachtelt wiederholen (solver._KontaktImNewton)
@@ -1133,12 +1264,12 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
             if abschluss is not None:
                 # Schlussabnahme bestanden: F_p und Zustand sind die, mit denen
                 # der Abschluss gerechnet ist - wie verschachtelt
-                return True, u, abschluss[0], abschluss[1], diff
+                return True, u, abschluss[0], abschluss[1], mass
             return True, u, F_p_neu, zustand_neu, None
         F_p_stufe, zustand_stufe = F_p_neu, zustand_neu
         abschluss = None
-        je_schritt.append(diff)
-        if diff <= tol:
+        je_schritt.append(mass)
+        if ok:
             # Unter der Toleranz, aber die Loesung dazu war abgekuerzt: ein
             # Schritt mit vollem Kontakt nimmt sie ab, ausserhalb des Budgets
             grenze += 1
@@ -1167,8 +1298,16 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
 
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
             norm_F: float, info: dict, log: list = None, progress=None,
-            kontakt=None, F_sofort=None, sigma0=None) -> tuple:
+            kontakt=None, F_sofort=None, sigma0=None, zonen=None) -> tuple:
     """Newton mit der konsistenten Tangente - siehe :func:`iteration`.
+
+    **Netzabhaengige Spitzen** (seit dem 13.10.2026): ``zonen`` vom Loeser
+    (solver._SpitzenImNewton) misst nach jedem Newton-Schritt, welche Stellen
+    „Kraft ohne Fläche“ auffaellig sind, und die Aenderungen in und ausserhalb
+    ihrer Zonen; mit ``Plastizitaet.abbruch = "ingenieurmaessig"`` entscheidet
+    das Mass ausserhalb ueber Konvergenz, Halbieren und Schlussabnahme
+    (:func:`_zonen_mass`). Ohne auffaellige Zone und ohne ``zonen`` rechnet
+    jeder Schritt wie vorher.
 
     Die Rueckfuehrung geht in jedem Schritt vom Zustand am **Anfang der
     Laststufe** aus (``basis``), nicht vom letzten Schritt: nur dann ist
@@ -1252,6 +1391,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         # F_p und - mit Kontakt - der Kontaktzustand vor dem Startwert
         vorher = (u, basis, F_p)
         marke = kontakt.merken() if kontakt is not None and hasattr(kontakt, "merken") else None
+        # die Bezugsmessung der Zonen am Stufenanfang (der Stand der vorigen Stufe)
+        z_marke = zonen.merken() if zonen is not None else None
         # Startwert der Laststufe: elastische Loesung mit dem bisherigen F_p -
         # ein Rueckwaertseinsetzen auf der schon vorhandenen Faktorisierung
         u = _loesen(F_k + F_p, None, "Laststufe", k, 0)
@@ -1262,13 +1403,15 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             kontakt.stufe_beginnt()
             vorab = _stufe_gemeinsam(model, F, k, stufen, u, basis, F_p, einst, elemente,
                                      norm_F, info, log, progress, _loesen, kontakt,
-                                     faktor=lam_k, letzte=letzte, F_sofort=F_sofort)
+                                     faktor=lam_k, letzte=letzte, F_sofort=F_sofort, zonen=zonen)
             if vorab is None:
                 # Verschachtelt wiederholen, vom Startwert der Stufe: der
                 # Loeser setzt den Kontaktzustand auf den nach dem Startwert
                 # zurueck, und die Schleife unten beginnt wieder bei ihm
                 kontakt.zurueck()
                 u = u_start
+                if zonen is not None:
+                    zonen.zurueck(z_marke)
         if vorab is not None:
             konvergiert, u, F_p_stufe, zustand_stufe, rest = vorab
             if not konvergiert:
@@ -1285,20 +1428,25 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         gefallen = False
         weglauf = False
         erreicht = False
+        mass, mess = 0.0, None
         for it in range(1, int(max(1, einst.iterationen)) + 1):
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                    tangente=True)
-            diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / _bezug(norm_F, F_p_neu)
+            bezug = _bezug(norm_F, F_p_neu)
+            diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / bezug
+            mass, ok, mess = _zonen_mass(zonen, diff, float(einst.toleranz), u, F_p_neu, F_p_stufe,
+                                         zustand_neu, s_info, bezug, lam_k, f"{k}/{len(faktoren)}", it)
             F_p_stufe, zustand_stufe = F_p_neu, zustand_neu
             info["iterationen"] += 1
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
             if progress is not None:
                 progress(f"Plastizität: Laststufe {k}/{len(faktoren)}, Newton-Schritt {it}: "
                          f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
-            if diff <= float(einst.toleranz):
+            _zonen_melden(mess, log, progress)
+            if ok:
                 erreicht = True
                 break
-            je_schritt.append(diff)
+            je_schritt.append(mass)
             if len(je_schritt) >= 2 and je_schritt[-1] < je_schritt[-2]:
                 gefallen = True
             if (gefallen and len(je_schritt) >= 3 and tiefe < HALBIEREN_MAX
@@ -1331,9 +1479,12 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             k -= 1
             info["halbiert"] += 1
             verworfen = kontakt.zurueck_an(marke) if marke is not None else None
+            if zonen is not None:
+                zonen.zurueck(z_marke)
             if log is not None:
                 if len(je_schritt) >= 3 and je_schritt[-1] > je_schritt[-2] > je_schritt[-3]:
-                    warum = (f"läuft weg (Änderung {je_schritt[-3]:.2e} - {je_schritt[-2]:.2e} - "
+                    wo = " außerhalb der Zonen" if _zonen_greifen(zonen, mess) else ""
+                    warum = (f"läuft weg (Änderung{wo} {je_schritt[-3]:.2e} - {je_schritt[-2]:.2e} - "
                              f"{je_schritt[-1]:.2e})")
                 else:
                     warum = "- ein Kontaktlauf endete nicht konvergiert"
@@ -1345,17 +1496,28 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
-                           f"nicht konvergiert (Änderung {diff:.2e} > {einst.toleranz:g})")
+                           f"nicht konvergiert ({_mass_text(zonen, mess, diff, mass)} > {einst.toleranz:g})")
         basis, F_p = zustand_stufe, F_p_stufe
         lam_alt = lam_k
     stufen_gerechnet = len(faktoren)
+    tol = float(einst.toleranz)
+    abgenommen = None           # Urteil der Schlussabnahme (nur mit Kontakt)
+    rest_mass, mess = rest, None
     if rest is None:
         # Die letzte Loesung gehoert zum letzten Zustand: im Gleichgewicht ist
         # K u = F + F_p, also genau diese elastische Loesung
         u = _loesen(F + F_p, None, "Abschluss", None, None)
         if kontakt is not None:
             F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
-            rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
+            bezug = _bezug(norm_F, F_p_ende)
+            rest = float(np.linalg.norm(F_p_ende - F_p)) / bezug
+            # mit auffaelligen Zonen (ingenieurmaessig): F_p ausserhalb, Kraft
+            # und Verschiebung gegen den Stand, an dem F_p gerechnet ist
+            rest_mass, _ok, mess = _zonen_mass(zonen, rest, tol, u, F_p_ende, F_p, _z, _i, bezug, 1.0,
+                                               "Abschluss", None)
+            _zonen_melden(mess, log, progress)
+            abgenommen = _schlussabnahme(rest_mass, tol) and (not _zonen_greifen(zonen, mess)
+                                                              or bool(mess["erfuellt"]))
             # Nachiteration vom Abschluss aus (27.09.2026): der volle
             # Kontaktlauf des Abschlusses kann u so verschieben, dass F_p nicht
             # mehr passt. Bis dahin hiess das "nicht konvergiert", Schluss. Ein
@@ -1368,7 +1530,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             # verborgener Kraft festgehalten.
             nach = 0
             while (nach < ABSCHLUSS_NACHSCHRITTE and info["konvergiert"]
-                   and not _schlussabnahme(rest, float(einst.toleranz))):
+                   and not abgenommen):
                 nach += 1
                 F_p_neu, zustand_neu, s_info = schritt(model, u, basis_anfang, einst, elemente, log,
                                                        tangente=True)
@@ -1384,22 +1546,39 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                     u = _loesen(F + F_p_neu + dK @ u, dK, "Newton", stufen_gerechnet, -nach)
                     info["faktorisierungen"] += 1
                 F_p, basis, _s = schritt(model, u, basis_anfang, einst, elemente, None)
+                if zonen is not None:
+                    # Bezug der naechsten Messung: der Stand, an dem F_p gerechnet ist
+                    zonen.messen(u, F_p, F_p, basis, _s, _bezug(norm_F, F_p), 1.0, nur_bezug=True)
                 u = _loesen(F + F_p, None, "Abschluss", None, None)
                 F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
-                rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
+                bezug = _bezug(norm_F, F_p_ende)
+                rest = float(np.linalg.norm(F_p_ende - F_p)) / bezug
+                rest_mass, _ok, mess = _zonen_mass(zonen, rest, tol, u, F_p_ende, F_p, _z, _i, bezug, 1.0,
+                                                   "Abschluss", None)
+                _zonen_melden(mess, log, progress)
+                abgenommen = _schlussabnahme(rest_mass, tol) and (not _zonen_greifen(zonen, mess)
+                                                                  or bool(mess["erfuellt"]))
             if nach and log is not None:
                 log.append(f"Plastizität: Abschluss nach {nach} Nachschritt{'' if nach == 1 else 'en'} "
-                           f"{'bestanden' if _schlussabnahme(rest, float(einst.toleranz)) else 'weiter verfehlt'} "
-                           f"(Änderung {rest:.2e}, Toleranz {einst.toleranz:g})")
+                           f"{'bestanden' if abgenommen else 'weiter verfehlt'} "
+                           f"({_mass_text(zonen, mess, rest, rest_mass)}, Toleranz {einst.toleranz:g})")
     if rest is not None:
         info["rest_abschluss"] = rest
-        if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):
+        if abgenommen is None:
+            # gemeinsam: die letzte Stufe hat den Abschluss schon abgenommen,
+            # ``rest`` ist dort das Mass von _zonen_mass
+            abgenommen = _schlussabnahme(rest, tol)
+        if info["konvergiert"] and not abgenommen:
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
-                           f"(Änderung {rest:.2e} > {einst.toleranz:g}) - nicht konvergiert")
+                           f"({_mass_text(zonen, mess, rest, rest_mass)} > {einst.toleranz:g}) - nicht konvergiert")
     info["fliessend"] = len(basis.fliessend())
     info["eps_p_max"] = basis.eq_max()
+    if zonen is not None and log is not None:
+        zeile = zonen.schlusszeile()
+        if zeile:
+            log.append(zeile)
     if log is not None:
         log.append(f"Plastizität: {info['fliessend']} {'Element fließt' if info['fliessend'] == 1 else 'Elemente fließen'}, ε_p,eq max "
                    f"{info['eps_p_max'] * 100:.3f} %, {info['iterationen']} "
@@ -1413,7 +1592,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
 
 def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
               progress=None, loesen_tangente=None, kontakt=None, F_sofort=None,
-              sigma0=None) -> tuple:
+              sigma0=None, zonen=None) -> tuple:
     """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
     Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
     Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
@@ -1457,6 +1636,12 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     Spannung D(ε − ε_p) − σ₀ (siehe :class:`Zustand`). Voll und unveraendert
     ueber alle Stufen, denn die Vorspannung wirkt ab der ersten voll
     (``F_sofort``).
+
+    ``zonen`` (solver._SpitzenImNewton, seit dem 13.10.2026): die Stellen
+    „Kraft ohne Fläche“ des Modells - im Newton das Kriterium
+    ``Plastizitaet.abbruch`` (:data:`ABBRUCH_WEGE`, :func:`_zonen_mass`) und
+    je Schritt eine Zeile im Protokoll. Die Anfangsdehnung misst wie bisher
+    (ihr Abbruch am geschaetzten Fehler ist ein anderer).
     """
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand(sigma0)
@@ -1488,7 +1673,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
-                       log, progress, kontakt, F_sofort, zustand.sigma0)
+                       log, progress, kontakt, F_sofort, zustand.sigma0, zonen)
     stufen = int(max(1, einst.laststufen))
     for k in range(1, stufen + 1):
         lam = k / stufen

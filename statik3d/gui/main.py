@@ -16638,6 +16638,24 @@ class MainWindow(QtWidgets.QMainWindow):
             "Darum ist „gemeinsam“ ein Versuch: jedes so gerechnete Ergebnis trägt eine Warnung "
             "in seiner Zusammenfassung und in den Hinweisen des Berichts, ein Lastfall auch im "
             "Protokoll und in der Rechenliste - es ist mit „verschachtelt“ gegenzuprüfen.")
+        self.cb_plast_abbruch = QtWidgets.QComboBox()
+        # Erster Eintrag = Vorgabe (plastizitaet.ABBRUCH_WEGE[0], 13.10.2026);
+        # ein unbekannter Wert aus einer Datei zeigt die Vorgabe, der Loeser
+        # rechnet sie auch und meldet den Wert
+        for t_, v_ in (("ingenieurmäßig (Vorgabe)", "ingenieurmaessig"), ("streng", "streng")):
+            self.cb_plast_abbruch.addItem(t_, v_)
+        self.cb_plast_abbruch.setToolTip(
+            "Wann eine Laststufe als konvergiert gilt.\n\n"
+            "Ingenieurmäßig (Vorgabe) - netzabhängige Spitzen ausgenommen: Stellen, an denen Kraft "
+            "ohne Auflagefläche in ein Volumen geht und die das Programm als auffällig erkennt "
+            "(σ_v ≥ 2·f_y oder Pressung über die Hülle ≥ f_y, etwa ein Anker an einer starren Scheibe, "
+            "die nur den Lochrand koppelt), zählen nicht mit. Die Laststufe ist fertig, wenn sich die "
+            "plastischen Knotenlasten außerhalb dieser Zonen um weniger als die Toleranz ändern, die "
+            "Kraft durch jede solche Stelle um höchstens 0,5 % und die Verschiebung außerhalb um "
+            "höchstens 0,1 %. Die Zonen rechnen weiter plastisch mit; ihre Werte stehen im Ergebnis "
+            "als „nicht auskonvergiert“.\n\n"
+            "Streng: die Änderung über das ganze Modell, wie bis zum 13.10.2026. An Spitzen, die mit "
+            "dem Netz wachsen, kostet das Newton-Schritte, ohne die Werte dort richtiger zu machen.")
         self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
         self.sp_plast_verf.setRange(0.0, 50.0)
         self.sp_plast_verf.setDecimals(2)
@@ -16662,6 +16680,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Felder in einer Zeile waren 815 px (Paket 13r)
         gpl.addWidget(row("Verfahren", self.cb_plast_weg))
         gpl.addWidget(row("Verfahren mit Kontakt", self.cb_plast_kontakt))
+        gpl.addWidget(row("Abbruch", self.cb_plast_abbruch))
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen))
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
@@ -23672,6 +23691,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
         w = self.cb_plast_kontakt.findData(str(getattr(pz, "kontakt", "verschachtelt")))
         self.cb_plast_kontakt.setCurrentIndex(w if w >= 0 else 0)
+        w = self.cb_plast_abbruch.findData(str(getattr(pz, "abbruch", "ingenieurmaessig")))
+        self.cb_plast_abbruch.setCurrentIndex(w if w >= 0 else 0)
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -23697,6 +23718,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.toleranz = float(self.cb_plast_tol.currentData() or 1e-3)
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
         pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
+        pz.abbruch = str(self.cb_plast_abbruch.currentData() or "ingenieurmaessig")
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()

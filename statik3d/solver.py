@@ -1904,6 +1904,12 @@ class Results:
                      + (f", davon {pz['faktorisierungen']} mit neuer Faktorisierung "
                         "(konsistente Tangente)" if pz.get("faktorisierungen") else "")
                      + ("" if pz.get("konvergiert", True) else " - NICHT KONVERGIERT"))
+            # Abbruch ingenieurmaessig (13.10.2026): die ausgenommenen
+            # netzabhaengigen Stellen sind dort nicht auskonvergiert
+            n_aus = len((pz.get("spitzen") or {}).get("ausgenommen") or [])
+            if n_aus:
+                s.append(f"Abbruch                 : ingenieurmäßig - {n_aus} netzabhängige "
+                         f"{'Stelle' if n_aus == 1 else 'Stellen'} ausgenommen, dort nicht auskonvergiert")
             # Fehlerliste F12 (06.10.2026): die gemeinsame Iteration ist ein
             # Versuch - bis dahin sah ihr Ergebnis aus wie ein verschachtelt
             # gerechnetes, nur der Tooltip der Auswahl warnte
@@ -2830,6 +2836,27 @@ def case_sofort(model: Model, factors: dict, aktiv=None, ohne=None):
     if F_S is None or not np.any(F_S):
         return None
     return F_S
+
+
+def case_feq_sofort(model: Model, factors: dict, aktiv=None) -> dict:
+    """Der Anteil der Temperaturlasten und Vorspannungen an den aequivalenten
+    Elementlasten ``feq`` (:func:`case_loads`) - das Gegenstueck zu
+    :func:`case_sofort` fuer die Stabendkraefte. Eine Vorspannkraft im Stab
+    steht in ``feq`` und wirkt in den Laststufen sofort voll; die Stablasten
+    wachsen mit dem Lastfaktor (solver._SpitzenImNewton, 13.10.2026)."""
+    aus: dict = {}
+    for name, f in (factors or {}).items():
+        if not f:
+            continue
+        lc = model.case(name)
+        tl = list(lc.temp_loads)
+        vs = list(getattr(lc, "vorspannungen", None) or [])
+        if not tl and not vs:
+            continue
+        teil = LoadCase(name=lc.name, temp_loads=tl, vorspannungen=vs)
+        for i, v in asm.element_equivalent_loads(model, teil, aktiv).items():
+            aus[i] = aus.get(i, 0.0) + f * v
+    return aus
 
 
 def case_uebermass(model: Model, factors: dict) -> dict:
@@ -4233,8 +4260,367 @@ class _KontaktImNewton:
         self._stufe = None
 
 
+def _zonen_knoten(model, s: dict) -> np.ndarray:
+    """Die Knoten einer Zone: die Knoten ihrer Elemente, die der Stelle und ihr
+    Master - einmal je Stelle (an ihr gemerkt, ``_zonenknoten``)."""
+    kn = s.get("_zonenknoten")
+    if kn is None:
+        teile = [np.asarray(model.elements[int(i)].nodes, np.int64)
+                 for i in np.asarray(s.get("zone", []), np.int64).tolist()]
+        teile.append(np.asarray(s.get("knoten", []), np.int64).reshape(-1))
+        if int(s.get("master", -1)) >= 0:
+            teile.append(np.asarray([int(s["master"])], np.int64))
+        kn = np.unique(np.concatenate(teile))
+        kn = kn[(kn >= 0) & (kn < int(model.nn))]
+        s["_zonenknoten"] = kn
+    return kn
+
+
+def _knoten_dofs(kn) -> np.ndarray:
+    kn = np.asarray(kn, np.int64)
+    return (NDOF * kn[:, None] + np.arange(NDOF)[None, :]).ravel()
+
+
+class _SpitzenImNewton:
+    """Die netzabhaengigen Spitzen im plastischen Newton (Plan Singularitaeten
+    vom 10.10.2026, Paket 3; seit dem 13.10.2026): was plastizitaet._newton fuer
+    das Kriterium ``Plastizitaet.abbruch`` braucht - dort steht nur die
+    Schnittstelle (plastizitaet._zonen_mass), wie bei :class:`_KontaktImNewton`.
+
+    Die Stellen „Kraft ohne Fläche“ mit ihren Zonen kommen einmal je Rechnung
+    (:func:`_spitzen_kandidaten`). Nach jedem Newton-Schritt stellt
+    :meth:`messen` aus dem aktuellen Zustand fest, welche auffaellig sind - mit
+    denselben Funktionen wie der Nachlauf, spitzenstellen.kraefte und
+    spitzenstellen.bewerten (das ist spitzenstellen.auffaellige_zonen, hier fuer
+    alle Stellen, denn auch eine, die gerade nicht auffaellig ist, bleibt
+    ausgenommen): sigma_v an den Integrationspunkten aus dem Schritt der
+    Plastizitaet (``s_info["sv_teile"]``, nach der Rueckfuehrung - der Operator
+    der Punkte ist der der Plastizitaet, einmal je Modell gebaut), eps_p aus
+    ihrem Zustand und die Kraefte aus u wie im Nachlauf: Stabenden mit
+    Temperatur und Vorspannung voll, Stablasten und Knotenlasten mit dem
+    Lastfaktor der Stufe (plastizitaet.stufenlast). **Einmal auffaellig, bleibt
+    eine Stelle** fuer den Rest des Lastfalls ausgenommen; sonst koennte das
+    Mass zwischen zwei Zonenmengen pendeln.
+
+    Gemessen wird gegen die vorige Messung (:attr:`vorher`): die Aenderung von
+    F_p in und ausserhalb der Zonen (bezogen wie das Kriterium der
+    Plastizitaet), die Kraft durch jede auffaellige Stelle und die
+    Verschiebung ausserhalb der Zonen, ohne die Knoten und Master der Stellen.
+    :meth:`merken` und :meth:`zurueck` setzen den Bezug an den Anfang einer
+    Stufe zurueck, wenn sie wiederholt wird (Halbieren, gemeinsam ->
+    verschachtelt). Je Messung steht eine Zeile im Protokoll; am Ende traegt
+    :meth:`bericht` die letzten Aenderungen je Stelle nach
+    ``res.info["plastizitaet"]["spitzen"]``, und der Nachlauf setzt sie als
+    „nicht auskonvergiert“ an die Stelle (:func:`_spitzen_konvergenz_eintragen`).
+
+    ``streng``: nur messen und protokollieren, das Kriterium bleibt das
+    strenge. Ein Fehler hier haelt die Rechnung nicht auf: ab dann gilt das
+    strenge Kriterium, und das Protokoll sagt es."""
+
+    def __init__(self, model, stellen, streng: bool = False, faktoren=None, feq=None, feq_sofort=None,
+                 temp=None, reaktionen=None, log: list = None):
+        self.model = model
+        self.stellen = list(stellen or [])
+        self.ingenieur = not streng
+        self.faktoren = {str(k): float(v or 0.0) for k, v in (faktoren or {}).items()}
+        self.feq = dict(feq or {})
+        self.feq_sofort = dict(feq_sofort or {})
+        self.temp = temp if isinstance(temp, dict) else {}
+        self._reaktionen = reaktionen
+        self.log = log
+        self.auffaellig: set = set()
+        self.vorher = None
+        self.letzte: dict = {}
+        self.verlauf: list = []
+        self.zeit = 0.0
+        self.messungen = 0
+        self.fehler = None
+        self.nn = int(model.nn)
+        self._nach_nr = {int(s["nr"]): s for s in self.stellen}
+        self._knoten = {int(s["nr"]): _zonen_knoten(model, s) for s in self.stellen}
+        self._dofs: dict = {}
+        self._masken_fuer = None
+        self._innen_dof = np.zeros(0, np.int64)
+        self._aussen_knoten = np.ones(self.nn, bool)
+
+    def _name(self, n) -> str:
+        """Bauteil der Stelle (am Drehlager „V21“), sonst ihr Name."""
+        s = self._nach_nr.get(n) or {}
+        return str(s.get("koerper") or s.get("name") or f"Stelle {n}")
+
+    # ---- Bezug ---------------------------------------------------------------
+    def merken(self):
+        return self.vorher
+
+    def zurueck(self, marke) -> None:
+        self.vorher = marke
+
+    # ---- Messen --------------------------------------------------------------
+    def _feq(self, lam: float) -> dict:
+        """feq der Stufe: Temperatur und Vorspannung voll, der Rest mit lam."""
+        if lam == 1.0 or not self.feq:
+            return self.feq
+        aus = {}
+        for i in set(self.feq) | set(self.feq_sofort):
+            s = self.feq_sofort.get(i, 0.0)
+            aus[i] = s + lam * (self.feq.get(i, 0.0) - s)
+        return aus
+
+    def _masken(self) -> None:
+        schl = frozenset(self.auffaellig)
+        if schl == self._masken_fuer:
+            return
+        kn = (np.unique(np.concatenate([self._knoten[n] for n in schl])) if schl
+              else np.zeros(0, np.int64))
+        self._innen_dof = _knoten_dofs(kn)
+        aussen = np.ones(self.nn, bool)
+        aussen[kn] = False
+        self._aussen_knoten = aussen
+        self._masken_fuer = schl
+
+    def messen(self, u, F_p_neu, F_p_alt, zustand, s_info, bezug: float, lam: float, stufe=None,
+               schritt=None, nur_bezug: bool = False):
+        """Eine Messung nach einem Newton-Schritt - Rueckgabe fuer
+        plastizitaet._zonen_mass: ``zonen`` (Zahl der ausgenommenen Stellen),
+        ``aussen``/``innen`` (Aenderung von F_p ausserhalb/in den Zonen durch
+        ``bezug``), ``kraft`` (groesste relative Aenderung der Kraefte, None
+        ohne Bezug), ``du`` (Aenderung der Verschiebung ausserhalb, bezogen auf
+        ihr Maximum), ``erfuellt``, ``zeile``, ``kurz``. ``nur_bezug``: nur den
+        Bezug fuer die naechste Messung setzen (Nachschritte des Abschlusses).
+        None nach einem Fehler."""
+        if self.fehler is not None:
+            return None
+        t0 = time.perf_counter()
+        try:
+            return self._messen(u, F_p_neu, F_p_alt, zustand, s_info, bezug, lam, stufe, schritt, nur_bezug)
+        except Exception as ex:          # noqa: BLE001 - die Kennzeichnung haelt keine Rechnung auf
+            self.fehler = f"{type(ex).__name__}: {str(ex)[:200]}"
+            if self.log is not None:
+                self.log.append(f"Plastizität: netzabhängige Stellen in der Iteration nicht bestimmt "
+                                f"({self.fehler}) - ab hier gilt das strenge Kriterium")
+            return None
+        finally:
+            self.zeit += time.perf_counter() - t0
+
+    def _messen(self, u, F_p_neu, F_p_alt, zustand, s_info, bezug, lam, stufe, schritt, nur_bezug):
+        from . import plastizitaet as pl
+        from . import spitzenstellen as sp
+        from .begriffe import anzahl
+        model, nn = self.model, self.nn
+        u = np.asarray(u, float).reshape(-1)
+        # sigma_v je Element an den Integrationspunkten - aus dem Schritt
+        sv = np.zeros(len(model.elements))
+        for idx, q in (s_info or {}).get("sv_teile") or []:
+            sv[np.asarray(idx, np.int64)] = np.asarray(q, float)
+        eq = getattr(zustand, "eps_p_eq", None) or {}
+
+        def eps_p(elemente):
+            return np.array([float(np.max(eq[int(e)])) if int(e) in eq else 0.0
+                             for e in np.asarray(elemente).tolist()])
+        lam = float(lam)
+        R = self._reaktionen() if self._reaktionen is not None else None
+        kr = sp.kraefte(model, self.stellen, None, u=u, reaktionen=R,
+                        faktoren={k: f * lam for k, f in self.faktoren.items()},
+                        feq=self._feq(lam), temp=self.temp)
+        erg = sp.bewerten(model, self.stellen, kr, sv, eps_p, bezug=sp._bezugskraft(R))
+        werte = {int(x["nr"]): x for x in erg["stellen"]}
+        self.auffaellig |= {n for n, x in werte.items() if x["auffaellig"]}
+        kraefte = {int(s["nr"]): (None if F is None else np.asarray(F, float)) for s, F in zip(self.stellen, kr)}
+        ut = u[:nn * NDOF].reshape(nn, NDOF)[:, :3].copy()
+        v = self.vorher
+        self.vorher = {"ut": ut, "kraefte": kraefte,
+                       "werte": {n: (float(x["sv_max"]), float(x["eps_p_max"])) for n, x in werte.items()}}
+        self.messungen += 1
+        if nur_bezug:
+            return None
+        if not self.auffaellig:
+            return {"zonen": 0, "zeile": None}
+        self._masken()
+        dF = np.asarray(F_p_neu, float) - np.asarray(F_p_alt, float)
+        b = float(bezug) if bezug else 1.0
+        innen = float(np.linalg.norm(dF[self._innen_dof])) / b
+        rest = dF.copy()
+        rest[self._innen_dof] = 0.0
+        aussen = float(np.linalg.norm(rest)) / b
+        kraft_rel: dict = {}
+        for n in sorted(self.auffaellig):
+            F = kraefte.get(n)
+            if F is None:
+                continue
+            F0 = v["kraefte"].get(n) if v is not None else None
+            if F0 is None:
+                kraft_rel[n] = None             # noch kein Bezug
+                continue
+            nenner = max(float(np.linalg.norm(F)), float(np.linalg.norm(F0)))
+            kraft_rel[n] = float(np.linalg.norm(F - F0)) / nenner if nenner > 0.0 else 0.0
+        if any(x is None for x in kraft_rel.values()):
+            kraft_max, kraft_wo = None, None
+        else:
+            kraft_wo = max(kraft_rel, key=kraft_rel.get) if kraft_rel else None
+            kraft_max = kraft_rel[kraft_wo] if kraft_wo is not None else 0.0
+        du = None
+        if v is not None:
+            a = self._aussen_knoten
+            ref = float(np.linalg.norm(ut[a], axis=1).max()) if a.any() else 0.0
+            du = (float(np.linalg.norm(ut[a] - v["ut"][a], axis=1).max()) / ref) if ref > 0.0 else 0.0
+        erfuellt = bool(kraft_max is not None and kraft_max <= pl.SPITZEN_KRAFT
+                        and du is not None and du <= pl.SPITZEN_VERSCHIEBUNG)
+        for n in sorted(self.auffaellig):
+            x = werte.get(n)
+            alt = v["werte"].get(n) if v is not None else None
+            if n not in self._dofs:
+                self._dofs[n] = _knoten_dofs(self._knoten[n])
+            F = kraefte.get(n)
+            self.letzte[n] = {
+                "kraft": float(np.linalg.norm(F)) if F is not None else None,
+                "kraft_aenderung": kraft_rel.get(n),
+                "sv_max": float(x["sv_max"]) if x is not None else None,
+                "sv_aenderung": float(x["sv_max"] - alt[0]) if (x is not None and alt is not None) else None,
+                "eps_p_max": float(x["eps_p_max"]) if x is not None else None,
+                "eps_p_aenderung": (float(x["eps_p_max"] - alt[1]) if (x is not None and alt is not None)
+                                    else None),
+                "fp_aenderung_zone": float(np.linalg.norm(dF[self._dofs[n]])) / b,
+                "stufe": None if stufe is None else str(stufe),
+                "schritt": None if schritt is None else int(schritt)}
+        self.verlauf.append((None if stufe is None else str(stufe), None if schritt is None else int(schritt),
+                             aussen, innen, kraft_max, du, len(self.auffaellig)))
+        betraege = [float(np.linalg.norm(kraefte[n])) for n in sorted(self.auffaellig)
+                    if kraefte.get(n) is not None]
+        if not betraege:
+            ktext = "ohne Kraft"
+        elif len(betraege) == 1:
+            ktext = f"{betraege[0] / 1e3:.1f} kN"
+        else:
+            ktext = f"{min(betraege) / 1e3:.0f}–{max(betraege) / 1e3:.0f} kN"
+        if kraft_max is None:
+            ktext += " (erste Messung)"
+        else:
+            wo = self._name(kraft_wo) if kraft_wo is not None else ""
+            ktext += f" ±{kraft_max * 100:.2f} %" + (f" ({wo})" if wo else "")
+        utext = "–" if du is None else f"±{du * 100:.3f} %"
+        kopf = "Abschluss" if stufe == "Abschluss" else f"Laststufe {stufe}, Newton-Schritt {schritt}"
+        zeile = (f"Plastizität: {kopf} - Zonen ({anzahl(len(self.auffaellig), 'auffällige Stelle', 'auffällige Stellen')}): "
+                 f"Änderung außerhalb {aussen:.2e}, in den Zonen {innen:.2e}; Kraft {ktext}; u außerhalb {utext}")
+        kurz = ("Kraft " + ("–" if kraft_max is None else f"±{kraft_max * 100:.2f} %") + f", u {utext}")
+        return {"zonen": len(self.auffaellig), "aussen": aussen, "innen": innen, "kraft": kraft_max, "du": du,
+                "erfuellt": erfuellt, "zeile": zeile, "kurz": kurz}
+
+    # ---- Ergebnis ------------------------------------------------------------
+    def schlusszeile(self):
+        """Die Zeile am Ende des Protokolls: welche Stellen ausgenommen sind und
+        wie weit ihre Werte zuletzt noch liefen - nur ingenieurmaessig."""
+        from .begriffe import anzahl
+        if not self.ingenieur or not self.auffaellig:
+            return None
+        namen = [self._name(n) for n in sorted(self.auffaellig)]
+        werte = [self.letzte.get(n, {}) for n in sorted(self.auffaellig)]
+
+        def groesste(schl, faktor):
+            z = [abs(float(w[schl])) for w in werte if w.get(schl) is not None]
+            return f"{max(z) * faktor:.3g}" if z else "–"
+        return (f"Plastizität: Abbruch ingenieurmäßig - "
+                f"{anzahl(len(namen), 'netzabhängige Stelle', 'netzabhängige Stellen')} ("
+                + ", ".join(namen[:8]) + (", …" if len(namen) > 8 else "")
+                + ") von der Konvergenz ausgenommen; ihre Werte sind nicht auskonvergiert (letzte Änderung: "
+                f"Kraft bis {groesste('kraft_aenderung', 100.0)} %, ε_p bis {groesste('eps_p_aenderung', 100.0)} %, "
+                f"σ_v bis {groesste('sv_aenderung', 1e-6)} N/mm²)")
+
+    def bericht(self):
+        """Der Eintrag ``res.info["plastizitaet"]["spitzen"]`` (nur Zahlen und
+        Texte, damit er mit der Ergebnisdatei gespeichert wird) - None, wenn
+        nie gemessen wurde (Anfangsdehnung)."""
+        from . import plastizitaet as pl
+        if not self.messungen:
+            return None
+        return {"abbruch": "ingenieurmaessig" if self.ingenieur else "streng",
+                "kandidaten": len(self.stellen),
+                "auffaellig": sorted(int(n) for n in self.auffaellig),
+                "ausgenommen": sorted(int(n) for n in self.auffaellig) if self.ingenieur else [],
+                "stellen": [dict(nr=int(n), koerper=self._name(n), **self.letzte[n]) for n in sorted(self.letzte)],
+                "verlauf": [list(x) for x in self.verlauf],
+                "grenzen": {"kraft": float(pl.SPITZEN_KRAFT), "verschiebung": float(pl.SPITZEN_VERSCHIEBUNG)},
+                "messungen": int(self.messungen), "zeit_s": float(self.zeit), "fehler": self.fehler}
+
+
+def _spitzen_kandidaten(model, system) -> list:
+    """Die Stellen „Kraft ohne Fläche“ mit Zonen (spitzenstellen.kandidaten) -
+    einmal je Rechnung: am System gemerkt, das alle Lastfaelle einer Rechnung
+    in einer Situation teilen."""
+    from . import spitzenstellen as sp
+    gemerkt = getattr(system, "_spitzen_kandidaten", None) if system is not None else None
+    if gemerkt is not None and gemerkt[0] is model:
+        return gemerkt[1]
+    stellen = sp.kandidaten(model, zonen=True)
+    if system is not None:
+        try:
+            system._spitzen_kandidaten = (model, stellen)
+        except AttributeError:
+            pass
+    return stellen
+
+
+def _spitzen_im_newton(model, system, factors, feq, temp, log: list, aktiv=None, reaktionen=None):
+    """Der Beobachter der netzabhaengigen Spitzen fuer den plastischen Newton
+    eines Lastfalls (:class:`_SpitzenImNewton`) - oder None, wenn das Modell
+    keine Stelle „Kraft ohne Fläche“ hat. Dann rechnet der Newton Schritt fuer
+    Schritt wie bis zum 13.10.2026. Ein unbekannter Wert in
+    ``Plastizitaet.abbruch`` rechnet die Vorgabe und steht im Protokoll."""
+    from . import plastizitaet as pl
+    wert = str(getattr(getattr(model, "plastizitaet", None), "abbruch", pl.ABBRUCH_WEGE[0]))
+    if wert not in pl.ABBRUCH_WEGE:
+        log.append(f"Plastizität: unbekannte Einstellung „Abbruch“ = {wert!r} - gerechnet wird "
+                   f"„{pl.ABBRUCH_WEGE[0]}“ (Vorgabe; möglich: "
+                   + ", ".join(f"„{w}“" for w in pl.ABBRUCH_WEGE) + ")")
+        wert = pl.ABBRUCH_WEGE[0]
+    if factors is None:
+        return None
+    t0 = time.perf_counter()
+    try:
+        stellen = _spitzen_kandidaten(model, system)
+        if not stellen:
+            return None
+        feq_s = case_feq_sofort(model, factors, aktiv)
+        w = _SpitzenImNewton(model, stellen, streng=(wert == "streng"), faktoren=factors, feq=feq,
+                             feq_sofort=feq_s, temp=temp, reaktionen=reaktionen, log=log)
+    except Exception as ex:              # noqa: BLE001 - dann wie bisher
+        log.append(f"Plastizität: netzabhängige Stellen nicht bestimmt ({type(ex).__name__}: "
+                   f"{str(ex)[:200]}) - es gilt das strenge Kriterium")
+        return None
+    w.zeit += time.perf_counter() - t0
+    return w
+
+
+def _spitzen_konvergenz_eintragen(res) -> None:
+    """Die ausgenommenen Stellen des plastischen Newton (``res.info
+    ["plastizitaet"]["spitzen"]``) in den Eintrag des Nachlaufs
+    (``res.info["spitzenstellen"]``): je Stelle das Feld
+    ``nicht_auskonvergiert`` mit der letzten Aenderung ihrer Kraft, Spitze,
+    plastischen Dehnung und ihres F_p (Paket 2 zeigt es an). Eine Stelle, die
+    im Newton ausgenommen war, ist auch im Ergebnis gekennzeichnet - auch wenn
+    sie am Ende fuer sich nicht mehr auffaellig waere."""
+    pz = (res.info or {}).get("plastizitaet") or {}
+    spz = pz.get("spitzen") if isinstance(pz, dict) else None
+    eintrag = (res.info or {}).get("spitzenstellen")
+    if not spz or not isinstance(eintrag, dict):
+        return
+    eintrag["abbruch"] = spz.get("abbruch")
+    aus = {int(n) for n in spz.get("ausgenommen") or []}
+    if not aus:
+        return
+    werte = {int(x["nr"]): {k: v for k, v in x.items() if k not in ("nr", "koerper")}
+             for x in spz.get("stellen") or []}
+    for s in eintrag.get("stellen") or []:
+        if int(s["nr"]) not in aus:
+            continue
+        s["nicht_auskonvergiert"] = dict(werte.get(int(s["nr"]), {}))
+        if not s.get("auffaellig"):
+            s["auffaellig"] = True
+            s["gruende"] = list(s.get("gruende") or []) + ["in der Iteration auffällig"]
+    eintrag["auffaellig"] = [x["nr"] for x in eintrag.get("stellen") or [] if x.get("auffaellig")]
+
+
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
-                          gemeinsam: bool = False, F_sofort=None):
+                          gemeinsam: bool = False, F_sofort=None, system=None, factors=None, feq=None):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
     Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
     Zusatzlast F_p, mit Kontakt warm gestartet vom letzten Zustand.
@@ -4250,13 +4636,20 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
 
     ``F_sofort`` (:func:`case_sofort`): der Anteil der Temperaturlasten und
     Vorspannkraefte an F - er wirkt ab der ersten Laststufe voll
-    (10.10.2026)."""
+    (10.10.2026).
+
+    ``system``, ``factors``, ``feq`` (seit dem 13.10.2026): fuer die
+    netzabhaengigen Spitzen im Newton (:func:`_spitzen_im_newton`) - die
+    Stellen einmal je Rechnung am System, die Kraefte mit den Faktoren und
+    Stablasten des Lastfalls. Ohne ``factors`` misst der Newton wie bisher."""
     from . import plastizitaet as pl
     log: list = []
     _kontakt_weg_melden(model, log)
     kn = _KontaktImNewton(rechnen, res, start, aktiv, log, gemeinsam,
                           float(model.plastizitaet.toleranz))
     iteriert = model.has_contact or model.hat_ausfallstaebe()
+    zonen = _spitzen_im_newton(model, system, factors, feq, temp, log, aktiv,
+                               reaktionen=lambda: kn.halter["R"])
     # Die Anfangsspannung einer Vorspannung als Koerper (case_loads): die
     # Fliesspruefung braucht die wahre Spannung D(eps - eps_p) - sigma0
     # (plastizitaet.Zustand, 10.10.2026). Hier steht in temp["sigma0"] nur
@@ -4266,7 +4659,7 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                                          progress=lambda t: _melde(progress, t),
                                          loesen_tangente=kn.loesen,
                                          kontakt=kn if iteriert else None,
-                                         F_sofort=F_sofort, sigma0=sigma0)
+                                         F_sofort=F_sofort, sigma0=sigma0, zonen=zonen)
     halter, aufrufe = kn.halter, kn.aufrufe
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
@@ -4291,6 +4684,11 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
     res.info["plastizitaet"]["log"] = list(log)
+    bericht = zonen.bericht() if zonen is not None else None
+    if bericht:
+        # die ausgenommenen Stellen mit ihrer letzten Aenderung; der Nachlauf
+        # setzt sie als „nicht auskonvergiert“ an die Stelle
+        res.info["plastizitaet"]["spitzen"] = bericht
     if gemeinsam:
         # woraus Zusammenfassung und Bericht die Warnung lesen
         # (gemeinsam_gerechnet); verschachtelt bleibt der Eintrag weg, das
@@ -4518,7 +4916,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             try:
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
                                                               progress, start_pl, gemeinsam,
-                                                              F_sofort=F_S)
+                                                              F_sofort=F_S, system=system,
+                                                              factors=factors, feq=feq)
             except RuntimeError:
                 # Ohne Vorlauf scheitert an einer freien Bewegung erst der erste
                 # plastische Lauf - dann wie oben: festhalten und neu rechnen.
@@ -4533,7 +4932,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 hilfs = True
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
                                                               progress, start_pl, gemeinsam,
-                                                              F_sofort=F_S)
+                                                              F_sofort=F_S, system=system,
+                                                              factors=factors, feq=feq)
         except RuntimeError as ex3:
             _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv,
                                     art=lauf_art["art"])
@@ -4830,6 +5230,8 @@ def _spitzenstellen_nachlauf(ergebnisse, progress=None) -> None:
                 stellen = sp.kandidaten(m)
                 je_modell[id(m)] = (stellen, sp.punktspannungen_der_zonen(m, stellen))
             sp.auswerten(m, r, *je_modell[id(m)])
+            # was der plastische Newton ausgenommen hat (Paket 3, 13.10.2026)
+            _spitzen_konvergenz_eintragen(r)
         except Exception as ex:          # noqa: BLE001 - die Kennzeichnung ist Beiwerk
             r.info["spitzenstellen_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"
     n = sum(len((r.info.get("spitzenstellen") or {}).get("auffaellig") or []) for r in offen)

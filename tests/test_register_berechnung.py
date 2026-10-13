@@ -59,8 +59,8 @@ EXPERTEN_WIDGETS = ("sp_workers", "cb_loeser", "cb_threads", "cb_genau", "cb_nac
                     "ed_farm_key", "btn_farm_start", "lbl_farm_hilfe")
 #: Widgets, die oben bleiben (Rechnen) bzw. darunter (Plastizitaet)
 RECHNEN_WIDGETS = ("cb_analysis", "sp_modes", "cb_do_design", "cb_do_fat", "btn_solve", "txt_summary")
-PLASTIZITAET_WIDGETS = ("cb_dilat", "cb_plast", "cb_plast_weg", "cb_plast_kontakt", "sp_plast_verf",
-                        "sp_plast_stufen", "sp_plast_it", "cb_plast_tol")
+PLASTIZITAET_WIDGETS = ("cb_dilat", "cb_plast", "cb_plast_weg", "cb_plast_kontakt", "cb_plast_abbruch",
+                        "sp_plast_verf", "sp_plast_stufen", "sp_plast_it", "cb_plast_tol")
 
 
 def check(name, ok, detail=""):
