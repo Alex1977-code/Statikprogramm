@@ -89,6 +89,10 @@ class MaterialDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Material")
         m = mat or Material.steel("S355")
+        # Verfestigung und Werkstoffart (13.10.2026) zeigt der Dialog nicht -
+        # er reicht sie unveraendert weiter (Maske rechts: Feld „Verfestigung“)
+        self._verfestigung = getattr(m, "verfestigung", None)
+        self._art = getattr(m, "art", "")
         self.grade = QtWidgets.QComboBox()
         self.grade.addItems(list(STEEL_GRADES) + ["benutzerdefiniert"])
         # eine Sorte „s 235“ steht als S235 da, nicht als „benutzerdefiniert“ (F08)
@@ -151,7 +155,8 @@ class MaterialDialog(QtWidgets.QDialog):
         return Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
                         self.rho.value(), self.alpha.value() * 1e-6,
                         fy if fy > 0 else None, fu if fu > 0 else None,
-                        g if g in STEEL_GRADES else "")
+                        g if g in STEEL_GRADES else "",
+                        verfestigung=self._verfestigung, art=self._art)
 
 
 class SectionDialog(QtWidgets.QDialog):

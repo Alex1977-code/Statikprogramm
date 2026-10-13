@@ -551,6 +551,11 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        eine WARNUNG je Art, gebuendelt („64 starre Scheiben koppeln nur einen
        Lochrand (40 Knoten)“). Sie haelt die Rechnung nicht an.
 
+    9. **Werkstoff ohne f_u** (nur mit ``warnungen=True`` und eingeschalteter
+       Plastizitaet, seit 13.10.2026) - je Werkstoff der Volumen mit f_y, aber
+       ohne Grenze der Verfestigung eine WARNUNG („Werkstoff „S355“ ohne f_u –
+       Verfestigung ohne Grenze, bitte f_u eingeben“).
+
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
     WARNUNG mit dem Zusatz „nicht geprueft" im Namen - eine leere Liste hiesse
@@ -592,9 +597,30 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
                 text="Ob Kräfte ohne Auflagefläche in ein Volumen gehen (mögliche netzabhängige "
                      f"Spannungsspitzen), ließ sich nicht prüfen ({type(ex).__name__}: "
                      f"{str(ex)[:100]})."))
+        # 9. Werkstoff ohne Grenze der Verfestigung (seit 13.10.2026): mit
+        # Plastizitaet verfestigt ein Werkstoff mit f_y bis f_u (Schraube f_ub,
+        # Spannstahl f_pk) - fehlt f_u, wird ohne Grenze gerechnet, und kein
+        # Vorgabewert wird gesetzt (Entscheidung des Anwenders). Nur WARNUNG.
+        aus += _abnahme_werkstoff_grenze(model)
     if not warnungen:
         aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
     return aus
+
+
+def _abnahme_werkstoff_grenze(model) -> list:
+    """Befunde „Werkstoff ohne f_u“ (WARNUNG) - nur mit Plastizitaet."""
+    pz = getattr(model, "plastizitaet", None)
+    if pz is None or not getattr(pz, "an", False):
+        return []
+    try:
+        from . import plastizitaet as _pl
+        mats = _pl.werkstoffe_ohne_grenze(model)
+    except Exception:                     # noqa: BLE001 - eine Abnahme darf nie sperren
+        return []
+    return [Befund(pruefung="Werkstoff ohne Grenze der Verfestigung", objekt=mat.name, stufe="WARNUNG",
+                   text=_pl.meldung_ohne_grenze(mat) + " (mit Plastizität verfestigt der Werkstoff "
+                        f"bis {mat.grenze_name()}, danach fließt er ideal plastisch).")
+            for mat in mats]
 
 
 def _abnahme_gemeinsame_flaechen(model) -> list:

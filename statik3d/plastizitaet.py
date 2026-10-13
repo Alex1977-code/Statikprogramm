@@ -30,6 +30,17 @@ Rueckfuehrung (radial return, von Mises, isotrope Verfestigung H):
 Uniaxial: σ = fy + H ε_p und ε = σ/E + ε_p - die lineare Verfestigung mit der
 Tangente E_t = E H / (E + H). Die Verfestigung wird als E_t/E angegeben.
 
+**Grenze f_u (seit dem 13.10.2026):** bilinear bis f_u, danach ideal
+plastisch - σ_y = min(fy + H ε_p, fu), Entscheidung des Anwenders („entspricht
+EN 1993-1-5 C.6“). E_t/E steht je Werkstoff (Material.verfestigung, Vorgabe
+E/100, „ohne Verfestigung“ E/10 000), f_u kommt immer aus dem Werkstoff (bei
+Schrauben f_ub, bei Spannstahl f_pk). Ein Schritt ueber den Knick endet exakt
+auf q = fu, die Tangente rechnet dort mit H = 0 (:func:`rueckfuehrung`,
+:func:`verfestigung_wirksam`). Fehlt f_u, verfestigt der Werkstoff ohne
+Grenze wie bis dahin, und das Protokoll sagt es. Bis zum 13.10.2026 gab es
+keine Grenze: am Drehlager erreichte der Schraubenkoerper V90 560,6 N/mm2 bei
+ε_p 9,69 % - ueber f_u = 490 N/mm2.
+
 Voigt-Reihenfolge wie in elements.solid: xx, yy, zz, xy, yz, xz; Dehnungen
 mit Ingenieurgleitungen.
 
@@ -175,7 +186,26 @@ SPITZEN_VERSCHIEBUNG = 5e-3
 #: Grenzlast wieder singulaer), 1e-3 kostete 13 statt 9 Schritte bei 0,97 p_L.
 #: Ab E_t/E = 1,2e-4 (nu = 0,3) greift der Boden nicht - dort, also bei jeder
 #: ueblichen Verfestigung, rechnet der Newton bitgleich wie vorher.
+#: Seit dem 13.10.2026 greift er auch auf dem Plateau ueber f_u (H = 0) und
+#: bei „ohne Verfestigung“ (E_t/E = 1e-4 liegt unter 1,2e-4): dort ist die
+#: Tangente um diesen Boden steifer als die konsistente.
 H_TANGENTE = 1e-4
+
+#: Verfestigung je Werkstoff (Material.verfestigung, seit dem 13.10.2026) als
+#: Steigung des plastischen Asts der Spannungs-Dehnungs-Linie E_t/E.
+#: Entscheidung des Anwenders: „bilinear mit E/100 bis f_u, danach ideal
+#: plastisch (entspricht EN 1993-1-5 C.6) … Vorgabe E/100, wählbar auch ohne
+#: Verfestigung (E/10 000)“. EN 1993-1-5 Bild C.2 zeichnet die Steigungen in
+#: das σ-ε-Bild, also als Tangente der **Gesamtkurve** E_t, nicht als
+#: Verfestigungsmodul H der Fliessbedingung σ_y = f_y + H ε_p. Mit
+#: E_t = E H/(E + H) ist dann H = E r/(1 − r): fuer E/100 H = E/99
+#: (2121,2 N/mm2 bei E = 210 000), fuer E/10 000 H = E/9 999 (21,0 N/mm2).
+#: Das ist genau die Lesart der bisherigen Einstellung E_t/E = 1 %; Rechnungen,
+#: die f_u nicht erreichen, bleiben darum bitgleich. Haette „E/100“ H gemeint,
+#: waere H 2100 statt 2121,2 N/mm2 (1 % weicher), f_u = 490 bei f_y = 355
+#: erst bei ε_p = 6,43 % statt 6,36 % erreicht.
+VERFESTIGUNG_VORGABE = 0.01
+VERFESTIGUNG_OHNE = 1e-4
 
 
 @dataclass
@@ -201,7 +231,9 @@ class Plastizitaet:
     und der Loeser meldet ihn.
     """
     an: bool = False
-    verfestigung: float = 0.01
+    #: E_t/E fuer jeden Werkstoff ohne eigene Angabe (Material.verfestigung
+    #: None, seit dem 13.10.2026 die Vorgabe der Werkstoffe); 0,01 = E/100
+    verfestigung: float = VERFESTIGUNG_VORGABE
     laststufen: int = 3
     iterationen: int = 25
     toleranz: float = 1e-3
@@ -244,20 +276,167 @@ def vergleichsspannung(sig) -> float:
     return float(np.sqrt(1.5 * (s[0] ** 2 + s[1] ** 2 + s[2] ** 2) + 3.0 * (s[3] ** 2 + s[4] ** 2 + s[5] ** 2)))
 
 
-def rueckfuehrung(sig_trial, fy: float, H: float, G: float, eps_p_eq: float = 0.0) -> tuple:
-    """Radial return. Rueckgabe (σ, Δε_p (Voigt, Ingenieurgleitungen), Δγ)."""
+def rueckfuehrung(sig_trial, fy: float, H: float, G: float, eps_p_eq: float = 0.0,
+                  fu: float = None) -> tuple:
+    """Radial return. Rueckgabe (σ, Δε_p (Voigt, Ingenieurgleitungen), Δγ).
+
+    ``fu`` (seit dem 13.10.2026): die Grenze der Verfestigung - bilinear bis
+    f_u, danach ideal plastisch (Entscheidung des Anwenders, EN 1993-1-5 C.6):
+
+        σ_y(ε_p) = min(fy + H ε_p, fu)
+
+    Der Knick wird exakt behandelt. Liegt der Punkt schon auf dem Plateau oder
+    laeuft der Schritt ueber den Knick (fy + H (ε_p,n + Δγ_H) > fu mit dem Δγ_H
+    des verfestigenden Asts), endet er auf der Fliessflaeche q = fu:
+    Δγ = (q_trial − fu)/(3G). Das ist die einzige Loesung von
+    q_trial − 3G Δγ = σ_y(ε_p,n + Δγ), denn die linke Seite faellt und die
+    rechte steigt nicht. Ohne ``fu`` (None, 0) wie bis dahin ohne Grenze; ist
+    fu < fy, gilt fy als Grenze (ideal plastisch ab fy)."""
     sig = np.asarray(sig_trial, float)
     p = (sig[0] + sig[1] + sig[2]) / 3.0
     s = sig - p * _EINS
     q = vergleichsspannung(sig)
-    f = q - (float(fy) + float(H) * float(eps_p_eq))
+    grenze = max(float(fu), float(fy)) if fu else np.inf
+    f = q - min(float(fy) + float(H) * float(eps_p_eq), grenze)
     if f <= 0.0 or q <= 0.0:
         return sig.copy(), np.zeros(6), 0.0
     dgamma = f / (3.0 * float(G) + float(H))
+    if float(fy) + float(H) * (float(eps_p_eq) + dgamma) > grenze:
+        dgamma = (q - grenze) / (3.0 * float(G))      # auf dem Plateau bzw. ueber den Knick
     n = 1.5 * s / q                                   # Tensorkomponenten
     sig_neu = sig - 2.0 * float(G) * dgamma * n
     d_eps_p = dgamma * n * _SCHUB                     # Ingenieurgleitungen
     return sig_neu, d_eps_p, float(dgamma)
+
+
+def verfestigung_wirksam(fy: float, H: float, eps_p_eq_neu: float, fu: float = None) -> float:
+    """Das H, mit dem die konsistente Tangente eines Punkts rechnet: H auf dem
+    verfestigenden Ast, 0 auf dem Plateau ueber fu (auch nach einem Schritt
+    ueber den Knick - dort ist dΔγ/dq_trial = 1/(3G)). ``eps_p_eq_neu`` ist
+    die plastische Vergleichsdehnung **nach** der Rueckfuehrung."""
+    if not fu:
+        return float(H)
+    grenze = max(float(fu), float(fy))
+    return 0.0 if float(fy) + float(H) * float(eps_p_eq_neu) > grenze else float(H)
+
+
+# --------------------------------------------------------------------------
+# Verfestigung und Grenze je Werkstoff (13.10.2026)
+# --------------------------------------------------------------------------
+def werkstoff_verfestigung(mat, einst: "Plastizitaet" = None) -> float:
+    """E_t/E eines Werkstoffs: seine eigene Angabe (Material.verfestigung),
+    sonst die Vorgabe der Rechnung (``einst.verfestigung``, Vorgabe E/100);
+    auf 0 bis 0,999 begrenzt wie :meth:`Plastizitaet.H`."""
+    r = getattr(mat, "verfestigung", None)
+    if r is None:
+        r = getattr(einst, "verfestigung", VERFESTIGUNG_VORGABE) if einst is not None \
+            else VERFESTIGUNG_VORGABE
+    return max(0.0, min(float(r), 0.999))
+
+
+def werkstoff_grenze(mat):
+    """Die Grenze der Verfestigung [Pa]: f_u des Werkstoffs (bei Schrauben
+    f_ub, bei Spannstahl f_pk - sie stehen alle in ``Material.fu``) oder None.
+
+    **Immer aus dem Werkstoff** (Entscheidung des Anwenders vom 13.10.2026):
+    kein 1,3 f_y wie Material.ultimate_strength, keine Sortentabelle und keine
+    Dickentabelle - so wie die Fliessgrenze auch nur ``Material.fy`` liest.
+    Fehlt f_u, verfestigt der Werkstoff ohne Grenze wie bis zum 13.10.2026,
+    und die Rechnung meldet es (:func:`meldung_ohne_grenze`)."""
+    fu = getattr(mat, "fu", None)
+    return float(fu) if fu and float(fu) > 0.0 else None
+
+
+def meldung_ohne_grenze(mat) -> str:
+    """Die Zeile fuer einen Werkstoff mit Streckgrenze, aber ohne f_u."""
+    gn = mat.grenze_name() if hasattr(mat, "grenze_name") else "f_u"
+    return (f"Werkstoff „{mat.name}“ ohne {gn} – Verfestigung ohne Grenze, "
+            f"bitte {gn} eingeben")
+
+
+def werkstoffe_ohne_grenze(model, aktiv=None) -> list:
+    """Die Werkstoffe der Volumenelemente, die fliessen koennen (f_y), aber
+    keine Grenze der Verfestigung haben (f_u fehlt) - fuer die Netzabnahme."""
+    namen = {model.elements[i].mat for i in _solid_elemente(model, aktiv)}
+    aus = []
+    for nm in sorted(str(n) for n in namen):
+        mat = model.materials.get(nm)
+        if mat is not None and getattr(mat, "fy", None) and werkstoff_grenze(mat) is None:
+            aus.append(mat)
+    return aus
+
+
+def _zahl(x: float) -> str:
+    """Eine Zahl fuer den Anwender: kurz, mit Komma."""
+    return f"{x:g}".replace(".", ",")
+
+
+def _e_durch(r: float) -> str:
+    """„E/100“, „E/10 000“ - der Nenner mit Leerzeichen als Tausendertrenner."""
+    n = 1.0 / r
+    if abs(n - round(n)) < 1e-6 * n:
+        t = f"{int(round(n)):,}".replace(",", " ")
+    else:
+        t = f"{n:.4g}".replace(".", ",")
+    return f"E/{t}"
+
+
+#: Die Wahl der Werkstoffmaske (gui.main, Feld „Verfestigung“)
+VERFESTIGUNG_TEXT_OHNE = "ohne Verfestigung (E/10 000)"
+
+
+def verfestigung_text(r, vorgabe: float = VERFESTIGUNG_VORGABE) -> str:
+    """Der Text der Werkstoffmaske zu Material.verfestigung: None ->
+    „Vorgabe E/100“ (bzw. der Wert der Rechnung), 1e-4 -> „ohne Verfestigung
+    (E/10 000)“, sonst „E/250“."""
+    if r is None:
+        return f"Vorgabe {_e_durch(vorgabe)}" if vorgabe > 0 else "Vorgabe ideal plastisch"
+    if abs(float(r) - VERFESTIGUNG_OHNE) <= 1e-12:
+        return VERFESTIGUNG_TEXT_OHNE
+    if float(r) <= 0.0:
+        return "ideal plastisch (E_t = 0)"
+    return _e_durch(float(r))
+
+
+def verfestigung_lesen(text) -> tuple:
+    """(ok, Wert oder None fuer die Vorgabe, Grund) aus dem Text der
+    Werkstoffmaske: „Vorgabe …“, „ohne Verfestigung …“ oder „E/n“ mit n > 1
+    (Leerzeichen als Tausendertrenner, Komma oder Punkt als Dezimalzeichen)."""
+    import re
+    t = str(text or "").strip()
+    if not t or t.lower().startswith("vorgabe"):
+        return True, None, ""
+    if t.lower().startswith("ohne"):
+        return True, VERFESTIGUNG_OHNE, ""
+    m = re.fullmatch(r"(?i)e\s*/\s*([0-9][0-9 ]*(?:[.,][0-9]+)?)\s*", t)
+    if m:
+        n = float(m.group(1).replace(" ", "").replace(",", "."))
+        if n > 1.0:
+            return True, 1.0 / n, ""
+    return False, None, (f"Verfestigung „{t}“ nicht verstanden – „Vorgabe E/100“, "
+                         f"„{VERFESTIGUNG_TEXT_OHNE}“ oder die Steigung als E/n "
+                         "(n größer als 1, etwa E/250) eintragen. Nicht übernommen.")
+
+
+def grenze_text(mat, einst: "Plastizitaet" = None) -> str:
+    """Die Anzeige der Werkstoffmaske: welche Grenze, ihr Wert und die
+    plastische Dehnung, bei der sie erreicht ist - oder dass sie fehlt."""
+    gn, fn = mat.grenze_name(), mat.fliess_name()
+    fu = werkstoff_grenze(mat)
+    if fu is None:
+        return f"{gn} fehlt – Verfestigung ohne Grenze, bitte {gn} eingeben"
+    text = f"{gn} = {fu / 1e6:g} N/mm²".replace(".", ",")
+    fy = getattr(mat, "fy", None)
+    if not fy:
+        return text + f", ohne {fn} bleibt der Werkstoff elastisch"
+    if fu <= float(fy):
+        return text + f" ≤ {fn}: ideal plastisch ab {fn}"
+    r = werkstoff_verfestigung(mat, einst)
+    if r <= 0.0:
+        return text + ", danach ideal plastisch"
+    H = float(mat.E) * r / (1.0 - r)
+    ep = (fu - float(fy)) / H
+    return text + f", erreicht bei ε_p = {ep * 100:.2f} %, danach ideal plastisch".replace(".", ",")
 
 
 def tangenten_differenz(dev, q, dgamma, G, H):
@@ -522,9 +701,12 @@ def _stapel(model, elemente: list, typ: str) -> list:
     idx = np.asarray(elemente, dtype=np.int64)
     ops = sl.dehnungsoperator(model, typ, idx, merken=True)
     namen = tuple(model.elements[int(i)].mat for i in idx)
+    # f_u und die eigene Verfestigung gehoeren seit dem 13.10.2026 dazu: ein
+    # geaenderter Werkstoff darf nicht mit den alten Werten weiterrechnen
     wkey = (hash(namen), tuple(sorted(
         (nm, float(model.materials[nm].E), float(model.materials[nm].nu),
-         getattr(model.materials[nm], "fy", None)) for nm in set(namen))))
+         getattr(model.materials[nm], "fy", None), getattr(model.materials[nm], "fu", None),
+         getattr(model.materials[nm], "verfestigung", None)) for nm in set(namen))))
     cache = getattr(model, "_plast_stapel", None)
     if cache is None:
         cache = model._plast_stapel = {}
@@ -545,21 +727,40 @@ def _stapel_teil(model, op) -> dict:
     n = op.n
     E = np.empty(n); nu = np.empty(n)
     fy = np.zeros(n); hat_fy = np.zeros(n, bool)
+    # Grenze der Verfestigung (inf ohne f_u) und eigene Verfestigung E_t/E
+    # (nan = Vorgabe der Rechnung) je Element - seit dem 13.10.2026
+    fu = np.full(n, np.inf); r_eigen = np.full(n, np.nan)
     ohne: set = set()
+    meldungen: dict = {}            # Werkstoff -> Zeile (ohne f_u, f_u < f_y)
     for a, i in enumerate(idx):
         mat = model.materials[model.elements[int(i)].mat]
         E[a], nu[a] = float(mat.E), float(mat.nu)
         f = getattr(mat, "fy", None)
         if f:
             fy[a], hat_fy[a] = float(f), True
+            g = werkstoff_grenze(mat)
+            if g is None:
+                if mat.name not in meldungen:
+                    meldungen[mat.name] = meldung_ohne_grenze(mat)
+            else:
+                fu[a] = max(g, float(f))
+                if g < float(f) and mat.name not in meldungen:
+                    meldungen[mat.name] = (
+                        f"Werkstoff „{mat.name}“: {mat.grenze_name()} = {_zahl(g / 1e6)} N/mm² kleiner "
+                        f"als {mat.fliess_name()} = {_zahl(float(f) / 1e6)} N/mm² – ideal plastisch ab "
+                        f"{mat.fliess_name()}")
         else:
             ohne.add(model.elements[int(i)].mat)
+        rv = getattr(mat, "verfestigung", None)
+        if rv is not None:
+            r_eigen[a] = float(rv)
     lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
     mu = E / (2.0 * (1.0 + nu))
     lasten = [(op.g[p] if op.nur_gradienten else None, op.w[p]) for p in range(op.P)]
     daten = {"typ": op.typ, "idx": idx, "k": op.k, "op": op,
              "lasten": lasten, "dofs": op.dofs(), "E": E, "nu": nu, "fy": fy,
-             "hat_fy": hat_fy, "ohne_fy": ohne, "lam": lam, "mu": mu}
+             "hat_fy": hat_fy, "ohne_fy": ohne, "lam": lam, "mu": mu,
+             "fu": fu, "r_eigen": r_eigen, "grenze_meldungen": meldungen}
     if op.Ba is not None:
         daten["eas"] = _eas_daten(op, E, nu)
     return daten
@@ -739,8 +940,16 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
     hatF = np.tile(d["hat_fy"], P)
     EF = np.tile(d["E"], P)
     nuF = np.tile(d["nu"], P)
-    r = max(0.0, min(float(einst.verfestigung), 0.999))
-    H = EF * r / (1.0 - r)
+    # Verfestigung je Werkstoff (eigene Angabe, sonst die der Rechnung) und
+    # ihre Grenze f_u (inf ohne f_u) - seit dem 13.10.2026; ohne eigene
+    # Angabe und ohne f_u dieselben Zahlen wie vorher
+    r_glob = max(0.0, min(float(einst.verfestigung), 0.999))
+    r_el = d.get("r_eigen")
+    r_el = np.full(n, r_glob) if r_el is None else \
+        np.clip(np.where(np.isnan(r_el), r_glob, r_el), 0.0, 0.999)
+    rF = np.tile(r_el, P)
+    H = EF * rF / (1.0 - rF)
+    grF = np.tile(d["fu"], P) if d.get("fu") is not None else np.full(m, np.inf)
     G = EF / (2.0 * (1.0 + nuF))
     eps_B = np.stack([_dehnung_punkt(d, p, ue_flach) for p in range(P)])      # (P,n,6)
     # Anfangsspannung der Vorspannung als Koerper (Zustand.sigma0), je Element
@@ -775,15 +984,23 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
         dev[:, 2] -= p_hyd
         q = np.sqrt(1.5 * (dev[:, 0] ** 2 + dev[:, 1] ** 2 + dev[:, 2] ** 2)
                     + 3.0 * (dev[:, 3] ** 2 + dev[:, 4] ** 2 + dev[:, 5] ** 2))
-        f = q - (fyF + H * eqF)
+        # Fliessgrenze bilinear bis f_u, danach ideal plastisch (rueckfuehrung)
+        f = q - np.minimum(fyF + H * eqF, grF)
         fliesst = hatF & (f > 0.0) & (q > 0.0)
         dgamma = np.zeros(m)
         np.divide(f, 3.0 * G + H, out=dgamma, where=fliesst)
+        # Auf dem Plateau oder ueber den Knick: der Punkt endet auf q = f_u,
+        # und die Tangente rechnet dort mit H = 0
+        plateau = fliesst & (fyF + H * (eqF + dgamma) > grF)
+        Hw = H
+        if plateau.any():
+            dgamma[plateau] = (q[plateau] - grF[plateau]) / (3.0 * G[plateau])
+            Hw = np.where(plateau, 0.0, H)
         richtung = 1.5 * dev / np.where(q > 0.0, q, 1.0)[:, None]
         eps_p_neu = (eps_p.reshape(m, 6) + dgamma[:, None] * richtung * _SCHUB[None, :]
                      ).reshape(P, n, 6)
         sig_neu = sigF - 2.0 * G[:, None] * dgamma[:, None] * richtung
-        return sigF, dev, q, fliesst, dgamma, eps_p_neu, sig_neu
+        return sigF, dev, q, fliesst, dgamma, eps_p_neu, sig_neu, Hw
 
     # Beim hex8 gehoeren die inkompatiblen Moden in die Plastizitaet
     # (siehe _eas_daten). alpha und eps_p haengen voneinander ab und werden
@@ -796,7 +1013,7 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
         alpha = _eas_alpha(eas, lam, mu2, eps_p, lasten, ue_flach)
         gew_alle = np.stack([gew for _dNg, gew in lasten])           # (P,n)
         for _runde in range(EAS_RUNDEN):
-            _sF, dv, qq, fl, dg, _ep, s_neu = rueckfuehren(alpha)
+            _sF, dv, qq, fl, dg, _ep, s_neu, Hw = rueckfuehren(alpha)
             s_neu_p = s_neu.reshape(P, n, 6)
             R = np.zeros((n, eas["Ba"].shape[3]))
             for q_ in range(P):
@@ -804,7 +1021,7 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
                                                        s_neu_p[q_])
             if float(np.abs(R).max()) <= EAS_TOLERANZ * max(1.0, float(np.abs(s_neu).max())):
                 break
-            dD = tangenten_differenz(dv, np.where(qq > 0.0, qq, 1.0), dg, G, H)
+            dD = tangenten_differenz(dv, np.where(qq > 0.0, qq, 1.0), dg, G, Hw)
             dD[~fl] = 0.0
             dD = dD.reshape(P, n, 6, 6)
             J = np.zeros((n, eas["Ba"].shape[3], eas["Ba"].shape[3]))
@@ -814,7 +1031,7 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
                     "nji,njk->nik", eas["Ba"][q_],
                     np.einsum("nij,njk->nik", Dep, eas["Ba"][q_]))
             alpha = alpha - np.linalg.solve(J, R[..., None])[..., 0]
-    sigF, dev, q, fliesst, dgamma, eps_p_neu, sig_neu = rueckfuehren(alpha)
+    sigF, dev, q, fliesst, dgamma, eps_p_neu, sig_neu, Hw = rueckfuehren(alpha)
     eq_neu = (eqF + dgamma).reshape(P, n)
     p_neu = (sig_neu[:, 0] + sig_neu[:, 1] + sig_neu[:, 2]) / 3.0
     q_neu = np.sqrt(1.5 * ((sig_neu[:, 0] - p_neu) ** 2 + (sig_neu[:, 1] - p_neu) ** 2
@@ -864,6 +1081,10 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
     if d["ohne_fy"] and log is not None:
         _einmal(log, "Plastizität: Werkstoffe ohne Streckgrenze bleiben elastisch - "
                 + ", ".join(sorted(d["ohne_fy"])))
+    if log is not None:
+        # ohne f_u (oder f_u < f_y) einmal je Werkstoff und Lastfall (13.10.2026)
+        for nm in sorted(d.get("grenze_meldungen") or {}):
+            _einmal(log, "Plastizität: " + d["grenze_meldungen"][nm])
     # q_max zaehlt nur Werkstoffe mit Streckgrenze: die Schleife ueberspringt
     # die uebrigen ganz (19.09.2026, vom Vergleichstest gefunden)
     q_max = float(q_neu[hatF].max()) if (m and hatF.any()) else 0.0
@@ -873,9 +1094,10 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
     info = {"fliessend": int(fliesst_e.sum()), "q_max": q_max,
             "sv_teile": [(idx, q_neu.reshape(P, n).max(axis=0))]}
     if tangente:
+        # H der Tangente: 0 auf dem Plateau ueber f_u (seit dem 13.10.2026)
         info["dK"] = _dk_block(d, fliesst.reshape(P, n), dev.reshape(P, n, 6),
                                q.reshape(P, n), dgamma.reshape(P, n),
-                               G.reshape(P, n), H.reshape(P, n), model.ndof)
+                               G.reshape(P, n), Hw.reshape(P, n), model.ndof)
     return F_p, neu, info
 
 
@@ -952,6 +1174,7 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
     n_fliesst = 0
     q_max = 0.0
     ohne_fy: set = set()
+    ohne_fu: dict = {}
     for i in elemente:
         e = model.elements[i]
         mat = model.materials[e.mat]
@@ -961,7 +1184,12 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
             continue
         E, nu = float(mat.E), float(mat.nu)
         G = E / (2.0 * (1.0 + nu))
-        H = einst.H(E)
+        # Verfestigung je Werkstoff und ihre Grenze f_u (13.10.2026)
+        r = werkstoff_verfestigung(mat, einst)
+        H = E * r / (1.0 - r)
+        fu = werkstoff_grenze(mat)
+        if fu is None:
+            ohne_fu.setdefault(mat.name, meldung_ohne_grenze(mat))
         D = sl.D_matrix(E, nu)
         k = sl._KNOTENZAHL[e.typ]
         X = np.asarray(model.nodes, float)[list(e.nodes)[:k]]
@@ -1010,7 +1238,7 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
                     eps_ges = eps_ges + Ba_p[gp] @ alpha_
                 erg.append((D @ (eps_ges - eps_p_alt[gp]) - s0,)
                            + rueckfuehrung(D @ (eps_ges - eps_p_alt[gp]) - s0,
-                                           float(fy), H, G, float(eq_alt[gp])))
+                                           float(fy), H, G, float(eq_alt[gp]), fu))
             return erg
 
         if Ba_p is not None:
@@ -1028,10 +1256,11 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
                         pm = (sig_tr[0] + sig_tr[1] + sig_tr[2]) / 3.0
                         dv = np.array(sig_tr, float, copy=True)
                         dv[:3] -= pm
+                        Hw = verfestigung_wirksam(float(fy), H, float(eq_alt[gp]) + dgam, fu)
                         dD = tangenten_differenz(dv[None, :],
                                                  np.array([vergleichsspannung(sig_tr)]),
                                                  np.array([dgam]), np.array([G]),
-                                                 np.array([H]))[0]
+                                                 np.array([Hw]))[0]
                     Jm += gew_p[gp] * (Ba_p[gp].T @ ((D + dD) @ Ba_p[gp]))
                 alpha = alpha - np.linalg.solve(Jm, R)
         fe = np.zeros(3 * k)
@@ -1054,6 +1283,9 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
             np.add.at(F_p, dofs, fe)
     if ohne_fy and log is not None:
         _einmal(log, "Plastizität: Werkstoffe ohne Streckgrenze bleiben elastisch - " + ", ".join(sorted(ohne_fy)))
+    if log is not None:
+        for nm in sorted(ohne_fu):
+            _einmal(log, "Plastizität: " + ohne_fu[nm])
     return F_p, neu, {"fliessend": n_fliesst, "q_max": q_max}
 
 
@@ -1731,7 +1963,15 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     # 22 bis 132; gemessen 23.09.2026); ob er schneller ist,
     # entscheidet am Drehlager die Zeit (Zerlegung 3,41 s gegen 0,32 s je
     # Rueckwaertseinsetzen), nicht die Schrittzahl - noch nicht gemessen.
-    kann_tangente = (loesen_tangente is not None and einst.H(1.0) > 0.0
+    # Seit dem 13.10.2026 traegt jeder Werkstoff seine Verfestigung: der Newton
+    # rechnet, wenn jeder Werkstoff mit Streckgrenze verfestigt (ohne eigene
+    # Angabe die der Rechnung - dann wie bisher einst.H(1.0) > 0). Das Plateau
+    # ueber f_u haelt der Boden H_TANGENTE regulaer.
+    mats = {model.elements[i].mat for i in elemente}
+    r_alle = [werkstoff_verfestigung(model.materials[nm], einst) for nm in mats
+              if nm in model.materials and getattr(model.materials[nm], "fy", None)]
+    verfestigt = min(r_alle) > 0.0 if r_alle else einst.H(1.0) > 0.0
+    kann_tangente = (loesen_tangente is not None and verfestigt
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,

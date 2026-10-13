@@ -1032,9 +1032,24 @@ class Report:
         else:
             fliessen = f"in {k} davon fließen Elemente, höchstens {max(fl)} je Ergebnis"
         r = float(getattr(getattr(self.model, "plastizitaet", None), "verfestigung", 0.0) or 0.0)
+        # Seit dem 13.10.2026 bis f_u (Schraube f_ub, Spannstahl f_pk), danach
+        # ideal plastisch; Werkstoffe mit eigener Verfestigung und solche ohne
+        # f_u werden genannt
+        from .. import plastizitaet as _pl
+        eigene, ohne_fu = [], []
+        try:
+            for mat in self.model.materials.values():
+                if getattr(mat, "verfestigung", None) is not None and getattr(mat, "fy", None):
+                    eigene.append(f"{mat.name} {_pl.verfestigung_text(mat.verfestigung)}")
+            ohne_fu = [mat.name for mat in _pl.werkstoffe_ohne_grenze(self.model)]
+        except Exception:                 # noqa: BLE001 - der Satz darf den Bericht nicht anhalten
+            pass
         return ("Die Berechnung ist elastisch-plastisch: Plastizität der Volumenelemente "
                 f"(von Mises mit isotroper linearer Verfestigung, E_t/E = {r * 100:g} %"
                 + (", ideal-plastisch" if r <= 0 else "")
+                + (f" (eigene: {', '.join(eigene)})" if eigene else "")
+                + " bis f_u, danach ideal plastisch"
+                + (f"; ohne f_u und darum ohne Grenze: {', '.join(ohne_fu)}" if ohne_fu else "")
                 + "; Werkstoffe ohne Streckgrenze f_y bleiben elastisch) ist in "
                 f"{len(pz)} von {n_ges} Ergebnis{'' if n_ges == 1 else 'sen'} gerechnet, "
                 f"{fliessen}; keine Theorie III. Ordnung/große Verformungen. ")

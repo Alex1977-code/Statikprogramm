@@ -270,6 +270,13 @@ def werkstoffe_alter_datei_nachziehen(model) -> list:
     return zeilen
 
 
+#: Werkstoffarten mit eigenen Namen der Kennwerte (Material.art, 13.10.2026)
+WERKSTOFFARTEN = ("Schraube", "Spannstahl")
+#: Festigkeitsklassen der Schrauben nach EN 1993-1-8 Tab. 3.1 (wie
+#: joints.bolts.GRADES) - daran erkennt Material.werkstoffart eine Schraube
+SCHRAUBENKLASSEN = ("4.6", "4.8", "5.6", "5.8", "6.8", "8.8", "10.9")
+
+
 @dataclass
 class Material:
     name: str
@@ -286,12 +293,54 @@ class Material:
     #: leer = nur fy/fu, dann gilt die Zweistufen-Regel der Stahlsorte
     fy_dicke: list = field(default_factory=list)
     fu_dicke: list = field(default_factory=list)
+    #: Verfestigung der Plastizitaet (Volumen) als Steigung des plastischen
+    #: Asts der Spannungs-Dehnungs-Linie, bezogen auf E: E_t/E (seit dem
+    #: 13.10.2026, Entscheidung des Anwenders: „Verfestigungsmodul je Werkstoff
+    #: einstellbar, Vorgabe E/100, wählbar auch ohne Verfestigung (E/10 000)“).
+    #: None = die Vorgabe der Rechnung (``Plastizitaet.verfestigung``, Vorgabe
+    #: 0,01 = E/100); 1e-4 = „ohne Verfestigung“ (E/10 000). Bis f_u (bei
+    #: Schrauben f_ub, bei Spannstahl f_pk) verfestigt der Werkstoff, danach
+    #: fliesst er ideal plastisch (plastizitaet.rueckfuehrung). Dateien vor dem
+    #: 13.10.2026 kennen den Schluessel nicht und rechnen mit der Vorgabe.
+    verfestigung: Optional[float] = None
+    #: Werkstoffart fuer die Namen der Kennwerte: "" (Stahl und alles andere:
+    #: f_y, f_u), "Schraube" (f_yb, f_ub) oder "Spannstahl" (f_p0,1k, f_pk).
+    #: Die Werte selbst stehen immer in ``fy`` und ``fu`` - der RFEM-Import legt
+    #: f_p0,1k und f_pk dort ab, der Anschlussbau f_yb und f_ub. Leer bei
+    #: Dateien vor dem 13.10.2026; dann liest :meth:`werkstoffart` Name und Sorte.
+    art: str = ""
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
         # nach dem Laden einer Datei, in der sie „s235“ oder „S 235“ heisst
         # (F08, 06.10.2026); eine leere Sorte (null in alten Dateien) wird ""
         self.grade = stahlsorte_normiert(self.grade)
+
+    def werkstoffart(self) -> str:
+        """"Schraube", "Spannstahl" oder "" (Stahl und alles andere).
+
+        Ausdruecklich gesetzt (``art``) gilt der Eintrag. Sonst ist ein
+        Werkstoff eine Schraube, wenn Name oder Sorte eine Festigkeitsklasse
+        nach EN 1993-1-8 Tab. 3.1 nennt („Schraube 10.9“, „8.8“) - so heissen
+        die Werkstoffe, die der Anschlussbau vor dem 13.10.2026 anlegte."""
+        art = str(self.art or "").strip()
+        if art in WERKSTOFFARTEN:
+            return art
+        import re
+        for text in (self.name, self.grade):
+            t = str(text or "").strip()
+            if re.fullmatch(r"(?i)(schraube\s*)?(" + "|".join(re.escape(k) for k in SCHRAUBENKLASSEN)
+                            + r")", t):
+                return "Schraube"
+        return ""
+
+    def grenze_name(self) -> str:
+        """Der Name der Grenze der Verfestigung: f_u, f_ub oder f_pk."""
+        return {"Schraube": "f_ub", "Spannstahl": "f_pk"}.get(self.werkstoffart(), "f_u")
+
+    def fliess_name(self) -> str:
+        """Der Name der Fliessgrenze: f_y, f_yb oder f_p0,1k."""
+        return {"Schraube": "f_yb", "Spannstahl": "f_p0,1k"}.get(self.werkstoffart(), "f_y")
 
     def _sorte(self) -> Optional[str]:
         """Der Tabellenschluessel der Sorte oder None. Ueber ihn laufen alle

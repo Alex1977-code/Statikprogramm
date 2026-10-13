@@ -8648,15 +8648,32 @@ class MainWindow(QtWidgets.QMainWindow):
                 titel, knopf = "Werkstoffe", self._neu_text("werkstoffe")
             else:
                 mt = m.materials.get(name)
+                # Verfestigung und ihre Grenze (13.10.2026): bilinear bis f_u
+                # (Schraube f_ub, Spannstahl f_p0,1k bis f_pk), danach ideal plastisch
+                from .. import plastizitaet as pl_
+                pz_ = getattr(m, "plastizitaet", None)
+                r_vor = pl_.werkstoff_verfestigung(None, pz_)
+                verf = pl_.verfestigung_text(getattr(mt, "verfestigung", None) if mt else None, r_vor)
+                verf_wahl = [pl_.verfestigung_text(None, r_vor), pl_.VERFESTIGUNG_TEXT_OHNE]
                 felder = [F("name", "Name", "text", name, breite=120),
                           F("E", "E [GPa]", "zahl", (mt.E / 1e9 if mt else 210.0)),
                           F("nu", "Querdehnzahl ν", "zahl", (mt.nu if mt else 0.3)),
                           F("rho", "Dichte [kg/m³]", "zahl", (mt.rho if mt else 7850.0)),
                           F("alpha", "α_T [1e-6/K]", "zahl", (mt.alpha * 1e6 if mt else 12.0)),
-                          F("fy", "f_y [N/mm²]", "zahl", (mt.fy / 1e6 if mt and mt.fy else None), breite=78,
+                          F("fy", f"{mt.fliess_name() if mt else 'f_y'} [N/mm²]", "zahl",
+                            (mt.fy / 1e6 if mt and mt.fy else None), breite=78,
                             hinweis="leer = aus der Stahlsorte", leer=True),
-                          F("fu", "f_u [N/mm²]", "zahl", (mt.fu / 1e6 if mt and mt.fu else None), breite=78,
-                            leer=True),
+                          F("fu", f"{mt.grenze_name() if mt else 'f_u'} [N/mm²]", "zahl",
+                            (mt.fu / 1e6 if mt and mt.fu else None), breite=78, leer=True),
+                          F("verfestigung", "Verfestigung", "wahl", verf,
+                            verf_wahl + ([verf] if verf not in verf_wahl else []), breite=190,
+                            frei=True,
+                            hinweis="Steigung der Spannungs-Dehnungs-Linie nach dem Fließen "
+                                    "(Plastizität der Volumen, EN 1993-1-5 C.6): Vorgabe E/100, "
+                                    "„ohne Verfestigung“ E/10 000, sonst E/n eintippen. Bis "
+                                    f"{mt.grenze_name() if mt else 'f_u'} verfestigt der Werkstoff, "
+                                    "danach fließt er ideal plastisch."),
+                          F("grenze", "Grenze", "info", (pl_.grenze_text(mt, pz_) if mt else "–")),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
                           F("benutzt", "benutzt von", "info",
@@ -11129,6 +11146,16 @@ class MainWindow(QtWidgets.QMainWindow):
             grund = dg.streckgrenze_fehler(fy)
             if grund:
                 return self.hinweis(grund)
+            # Verfestigung (13.10.2026): „Vorgabe …“, „ohne Verfestigung …“ oder
+            # E/n; ohne das Feld (Attrappe, aeltere Maske) bleibt sie, wie sie
+            # war - ebenso die Werkstoffart
+            from .. import plastizitaet as pl_
+            alt_mt = m.materials.get(name)
+            r_verf = getattr(alt_mt, "verfestigung", None) if alt_mt is not None else None
+            if "verfestigung" in w:
+                ok_v, r_verf, grund = pl_.verfestigung_lesen(w.get("verfestigung"))
+                if not ok_v:
+                    return self.hinweis(grund)
             self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
@@ -11138,7 +11165,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           rho=float(w.get("rho", 7850.0) or 7850.0),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte)
+                          grade=sorte, verfestigung=r_verf,
+                          art=(getattr(alt_mt, "art", "") if alt_mt is not None else ""))
             if not neu and neuname != name and name in m.materials:
                 del m.materials[name]
                 for e in m.elements:

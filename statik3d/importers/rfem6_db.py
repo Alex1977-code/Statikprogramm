@@ -457,6 +457,12 @@ def _friction_acts(beh: DofBehaviour, label: str, log: list) -> None:
 # --------------------------------------------------------------------------
 # Modellaufbau
 # --------------------------------------------------------------------------
+#: RFEM 6 MaterialImpl.materialType des Spannstahls (am Drehlager Material 3,
+#: Datenbanknummer 2309; Stahl ist 10) - gelesen aus der Datei des Anwenders
+#: am 13.10.2026 (scratchpad ff_werk/f5_rfem_werte.out)
+MATERIALTYP_SPANNSTAHL = 15
+
+
 def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
               chars: dict = None) -> str:
     """Material aus der Datenbank uebernehmen. Rueckgabe: Name im Modell.
@@ -473,6 +479,7 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     name = ""
     E, nu, rho, alpha, fy, fu = 210e9, 0.3, 7850.0, 1.2e-5, None, None
     dbnr = None
+    art = ""
     if h is not None:
         impl = db.by_id(h["impl_table"] or "MaterialImpl").get(h["impl_id"])
         if impl is not None:
@@ -484,6 +491,12 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
             alpha = props.get("alpha", alpha)
             fy = props.get("f_y") or props.get("f_p01k")
             fu = props.get("f_u") or props.get("f_pk")
+            # Spannstahl (MaterialImpl.materialType 15, am Drehlager die
+            # Ankerstaebe): f_p0,1k ist die Fliessgrenze, f_pk die Grenze der
+            # Verfestigung - die Art traegt nur die Namen (13.10.2026)
+            if impl.get("materialType") == MATERIALTYP_SPANNSTAHL or (
+                    not props.get("f_y") and props.get("f_p01k")):
+                art = "Spannstahl"
             rho = props.get("rho") or 0.0
             if not rho and props.get("gamma"):
                 rho = props["gamma"] / 9.81      # Wichte [N/m^3] -> Dichte
@@ -503,13 +516,16 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     name = C.unique_name(model.materials, name)
     model.add_material(Material(name, E=E, nu=nu, rho=rho, alpha=alpha,
                                 fy=fy, fu=fu, grade=grade,
-                                fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or [])))
+                                fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or []),
+                                art=art))
     if h is not None and impl is not None and props.get("f_p01k") and not props.get("f_y"):
         # Spannstahl (f_p0,1k statt f_y): die Umwandlung einer Vorspannung in
         # die Sollkraft schlaegt 0,9 f_p0,1k A vor (statik3d.vorspannkraft)
         model.meta.setdefault("spannstahl", []).append(name)
     C.say(log, f"  Material '{name}': E = {E / 1e9:g} GPa"
-               + (f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
+               + (f", Spannstahl f_p0,1k = {fy / 1e6:g} N/mm^2, f_pk = {fu / 1e6:g} N/mm^2"
+                  if art == "Spannstahl" and fy and fu else
+                  f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
                + (f" (nach Dicke: {model.materials[name].dickentext('fy')})" if fy_dicke else "")
                + (f", rho = {rho:g} kg/m^3" if rho else "")
                + (f" (Dlubal-Datenbanknummer {dbnr})" if dbnr else ""))
