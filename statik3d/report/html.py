@@ -4931,6 +4931,10 @@ class Report:
         # Ergebnisse aus der Iteration „gemeinsam“, einem Versuch (Fehlerliste
         # F12, 06.10.2026; bis dahin stand davon nichts im Bericht)
         self._warnings.extend(gemeinsam_gebuendelt(ergebnisse))
+        # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)
+        from ..solver import seil_querlast_gebuendelt
+        self._warnings.extend(z[len("WARNUNG: "):] if z.startswith("WARNUNG: ") else z
+                              for z in seil_querlast_gebuendelt(ergebnisse))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]

@@ -1850,6 +1850,7 @@ class Results:
         # aller Lastfaelle (Analysis.summary). Bis zum 06.10.2026 fehlte die
         # Zeile bei „Nur aktiver Lastfall“ und bei --analyse lastfall (F36).
         s += dilatation_gebuendelt([(self.name, self)])
+        s += seil_querlast_gebuendelt([(self.name, self)])
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -3711,11 +3712,28 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
             else:
                 res.solid_res[i] = np.zeros(6)
                 res.solid_mittel[i] = np.zeros(6)
+    seile_quer = []
     for i, kind, val in items:
         if kind == "beam":
+            if model.elements[i].typ == "seil":
+                # Seil nach Theorie I./II. Ordnung (14.10.2026): gerade, ohne
+                # Biegesteifigkeit - seine Querlast geht nur als Kraft q L/2
+                # an die Seilenden (asm.gelenkige_ersatzlasten), der Durchhang
+                # fehlt. Es traegt nur N; Querkraft und Moment eines Balkens
+                # waeren hier erfunden. Die Seilwirkung rechnet Theorie III.
+                # Ordnung (Kettenlinie bzw. Parabel), darum die Meldung.
+                val = np.asarray(val, float).copy()
+                val[[1, 2, 3, 4, 5, 7, 8, 9, 10, 11]] = 0.0
+                f0 = np.asarray(feq.get(i, np.zeros(12)), float)
+                if np.any(f0[[1, 2, 7, 8]] != 0.0):
+                    seile_quer.append(int(i))
             res.beam_end[i] = val
             if i in q:
-                res.beam_q[i] = np.asarray(q[i], float)
+                qi = np.asarray(q[i], float)
+                if model.elements[i].typ == "seil":
+                    qi = qi.reshape(-1, 8).copy()
+                    qi[:, [3, 4, 6, 7]] = 0.0
+                res.beam_q[i] = qi
         elif kind == "bimoment":
             res.bimomente[i] = val
         elif kind == "shell":
@@ -3741,6 +3759,9 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
         # (ec3/volumen.py, seit 13.10.2026) - auch leer, wenn nichts fliesst:
         # dann ist eps_p = 0 bekannt, nicht unbekannt
         res.info["ip_dehnungen"] = ip_dehnungen_ablegen(model, temp["plast_dehnungen"])
+    if seile_quer:
+        namen = _stab_namen(model)
+        res.info["seil_querlast"] = sorted({stab_name(model, i, namen) for i in seile_quer})
     if getattr(model, "knotendilatation", False):
         # je Rechnung einmal (am StaticSystem gemerkt), nicht je Lastfall
         schl = None if aktiv is None else hash(np.asarray(aktiv, bool).tobytes())
@@ -5450,6 +5471,32 @@ def zugstaebe_pruefen(model: Model, res, F, aktiv=None, progress=None):
             alog.append(zeile)
             _melde(progress, zeile)
     return zs
+
+
+def seil_querlast_gebuendelt(ergebnisse) -> list:
+    """Seile mit Querlast in Ergebnissen nach Theorie I./II. Ordnung
+    (``res.info["seil_querlast"]``, :func:`postprocess`): eine Zeile ueber alle
+    Ergebnisse mit den Seilen und den ersten drei Ergebnissen - leer ohne."""
+    seile: list = []
+    wo: list = []
+    for name, r in ergebnisse:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        liste = inf.get("seil_querlast") or []
+        if not liste:
+            continue
+        wo.append(str(name))
+        for s in liste:
+            if s not in seile:
+                seile.append(str(s))
+    if not seile:
+        return []
+    from .begriffe import anzahl
+    return [f"WARNUNG: Querlast auf {'Seil' if len(seile) == 1 else 'Seilen'} "
+            f"{', '.join(seile[:6])}{' …' if len(seile) > 6 else ''}: nach Theorie I./II. Ordnung "
+            "ist das Seil gerade, die Querlast geht nur als Kraft q L/2 an die Seilenden, "
+            "ohne Durchhang und ohne Seilkraft aus ihr – die Seilwirkung rechnet Theorie III. Ordnung "
+            f"(bei {anzahl(len(wo), 'Ergebnis', 'Ergebnissen')}: {', '.join(wo[:3])}"
+            f"{' …' if len(wo) > 3 else ''})"]
 
 
 def zugstab_druck_gebuendelt(ergebnisse) -> list:
@@ -8449,6 +8496,8 @@ class Analysis:
         s += freie_teile_gebuendelt(self.all_results().items())
         # aktive Zugstaebe mit Druck nach Abschluss (13.10.2026): je Stab eine Zeile
         s += zugstab_druck_gebuendelt(self.all_results().items())
+        # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)
+        s += seil_querlast_gebuendelt(self.all_results().items())
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)

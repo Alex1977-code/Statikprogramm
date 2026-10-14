@@ -885,6 +885,27 @@ E = …, α = …“).
   durch Gleichgewicht am Teilstab: Resultierende Q(x) und ihr Moment um x je
   Abschnitt, stückweise integriert; der Querkraftverlauf knickt an den
   Abschnittsenden.
+* **Querlast auf Fachwerkstab und Seil** (seit 14.10.2026). Der Fachwerkstab
+  (auch „nur Zug“ und „nur Druck“) und das Seil haben keine Biegesteifigkeit
+  und gelenkige Enden. Ihre Querlast geht darum nur als **Kraft** an die
+  Knoten, und zwar mit den Auflagerkräften des Einfeldträgers: q L/2 je Ende
+  bei Gleichlast, L(2q₁+q₂)/6 und L(q₁+2q₂)/6 bei der Trapezlast, nach dem
+  Hebelgesetz bei einer Teillast (`asm.gelenkige_ersatzlasten`). Sie folgen
+  aus den Volleinspannwerten oben: die Summe der Querkräfte bleibt, und das
+  Lastmoment um Knoten 1, f₄ + f₁₀ − f₈·L in der Ebene x-z, verteilt sie auf
+  die Enden; Knoten- und Torsionsmomente entfallen. Das Biegemoment bleibt im
+  Stab, als Einfeldträger: M = q L²/8 bei Gleichlast, und der Stabnachweis
+  führt N + M. Bis zum 14.10.2026 bekam der Fachwerkstab die Ersatzlasten des
+  eingespannten Balkens mit den Momenten ∓q L²/12. Weil der Fachwerkstab
+  keine Drehsteifigkeit hat, landeten sie in den automatisch gehaltenen
+  Drehfreiheitsgraden: an Gelenklagern standen Lagermomente M_y = ±1,333 kNm
+  (4 m, 1 kN/m), und im Stab stand der Verlauf des eingespannten Balkens mit
+  q L²/24 im Feld statt q L²/8, um den Faktor 3 auf der unsicheren Seite; eine
+  Trapezlast 0 → 2 kN/m teilte sich 1,2/2,8 statt 1,333/2,667 kN auf die
+  Lager. Das Seil ist nach Theorie I./II. Ordnung gerade: seine Querlast geht
+  ebenso mit q L/2 an die Seilenden, es trägt aber nur N (kein Moment, keine
+  Querkraft), und das Ergebnis warnt „Querlast auf Seil …“; die Seilwirkung
+  rechnet Theorie III. Ordnung (Abschnitt 1.2a).
 * **Linienlasten** hängen am Stab (Kette von Elementen) oder an einer Linie.
   Auf dem Stab werden sie in Abschnittslasten der Elemente zerlegt (q am
   Elementanfang und -ende linear interpoliert). Auf einer Linie — dem Rand

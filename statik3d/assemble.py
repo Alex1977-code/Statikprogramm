@@ -1664,6 +1664,41 @@ def stab_schubparameter(model: Model, e, L: float) -> tuple:
     return bm.schubparameter(mat.E, mat.G, sec.Iy, sec.Iz, L, sec.Asy, sec.Asz)
 
 
+def gelenkige_ersatzlasten(f: np.ndarray, L: float) -> np.ndarray:
+    """Die Ersatzknotenlasten eines Fachwerkstabs oder Seils aus denen des
+    beidseitig eingespannten Stabes (``f`` lokal, 12 Werte): die Querkraefte
+    als Auflagerkraefte des **Einfeldtraegers** (Hebelgesetz), keine Knoten-
+    und Torsionsmomente; die Laengskraefte bleiben.
+
+    Der Fachwerkstab hat keine Biegesteifigkeit und gelenkige Enden. Seine
+    Querlast geht als Kraft an die Knoten, das Biegemoment bleibt im Stab: bei
+    Gleichlast q L/2 an jedem Ende und M = q L^2/8 in Feldmitte. Aus den
+    Volleinspanngroessen folgt das ohne eigene Integration: das Lastmoment um
+    Knoten 1 steckt in f[4] + f[10] - f[8] L (Ebene x-z) bzw. f[5] + f[11] +
+    f[7] L (x-y), die Summe der Querkraefte in f[2] + f[8] bzw. f[1] + f[7].
+    Das gilt fuer Gleich-, Trapez- und Teillasten und das Eigengewicht.
+
+    Bis zum 14.10.2026 bekam der Fachwerkstab die Ersatzlasten des
+    eingespannten Balkens, mit den Momenten -+q L^2/12 auf den Knoten. Weil
+    der Fachwerkstab dort keine Drehsteifigkeit hat, landeten sie in den
+    automatisch gehaltenen Drehfreiheitsgraden: an gelenkigen Lagern standen
+    Lagermomente My = +-1,333 kNm (4 m, 1 kN/m), und im Stab ergab sich der
+    Verlauf des eingespannten Balkens mit q L^2/24 im Feld statt q L^2/8 -
+    um den Faktor 3 auf der unsicheren Seite; eine Trapezlast 0 -> 2 kN/m
+    verteilte sich 1,2/2,8 statt 1,333/2,667 kN auf die Lager
+    (tests/test_stab_querlast.py)."""
+    g = np.asarray(f, float).copy()
+    if L <= 0:
+        return g
+    Rz2 = g[8] - (g[4] + g[10]) / L
+    Ry2 = g[7] + (g[5] + g[11]) / L
+    Rz1 = g[2] + g[8] - Rz2
+    Ry1 = g[1] + g[7] - Ry2
+    g[1], g[2], g[7], g[8] = Ry1, Rz1, Ry2, Rz2
+    g[[3, 4, 5, 9, 10, 11]] = 0.0
+    return g
+
+
 def trapezoid_fixed_end_forces(q1, q2, L, phy: float = 0.0, phz: float = 0.0) -> np.ndarray:
     """Aequivalente Knotenlasten fuer linear veraenderliche Streckenlast
     q1 (Anfang) -> q2 (Ende) im lokalen System. ``phy``, ``phz``: Schubparameter
@@ -1825,6 +1860,11 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             f[0] += float(v.kraft)
             f[6] -= float(v.kraft)
             out[i] = out.get(i, np.zeros(12)) + f
+    # Fachwerkstab und Seil: Querlasten als Kraefte des Einfeldtraegers an die
+    # Knoten, keine Knotenmomente (14.10.2026, gelenkige_ersatzlasten)
+    for i in out:
+        if model.elements[i].typ in ("truss", "seil"):
+            out[i] = gelenkige_ersatzlasten(out[i], model.element_length(i))
     return out
 
 

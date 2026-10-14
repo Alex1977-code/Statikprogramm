@@ -400,7 +400,13 @@ def test_bitgleich():
     ist, soll = lasten_von("beam", ohne)
     check("Stab ohne Schubflächen: Ersatzknotenlasten bitgleich zu den Formeln bis 07.10.2026",
           np.array_equal(ist, soll), f"{len(ist)} Lasten, max |Δ| {np.abs(ist - soll).max():.1e}")
+    # Der Fachwerkstab kennt keinen Schubanteil. Seit dem 14.10.2026 gehen
+    # seine Querlasten als Kraefte des Einfeldtraegers an die Knoten
+    # (asm.gelenkige_ersatzlasten, tests/test_stab_querlast.py): verglichen
+    # wird darum mit den Formeln bis 07.10.2026, auf den Einfeldtraeger
+    # umgerechnet - bis zum 14.10.2026 stand hier der eingespannte Balken.
     ist, soll = lasten_von("truss", mit)
+    soll = np.array([asm.gelenkige_ersatzlasten(f, float(np.linalg.norm([3.1, 1.7, 1.2]))) for f in soll])
     check("Fachwerkstab mit Schubflächen-Querschnitt: bitgleich",
           np.array_equal(ist, soll), f"{len(ist)} Lasten, max |Δ| {np.abs(ist - soll).max():.1e}")
     ist, soll = lasten_von("beam", mit, gleich=True)

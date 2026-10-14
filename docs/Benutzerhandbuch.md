@@ -6291,7 +6291,22 @@ Konvergenzstand. Das kann vor allem nach Theorie II. und III. Ordnung
 vorkommen, die den Ausfall nicht iterieren. Bis zum 13.10.2026 blieb ein
 solcher Stab ungenannt.
 
-**Seile** rechnen nach Theorie I. Ordnung wie ein Zugband. Wählt man für den
+**Querlast auf Fachwerkstäben** (seit 14.10.2026). Ein Fachwerkstab, auch
+als Zug- oder Druckstab, trägt eine Querlast (Streckenlast quer, Eigengewicht
+eines schrägen Stabs) wie ein Einfeldträger: an die Knoten gehen nur Kräfte,
+bei Gleichlast q L/2 je Ende, und das Moment bleibt im Stab, M = q L²/8 in
+Feldmitte. Es steht im Verlauf von M und V des Stabs, und der Stabnachweis
+führt N + M. An gelenkigen Lagern entstehen keine Lagermomente. Bis zum
+14.10.2026 bekam der Fachwerkstab die Ersatzlasten eines eingespannten
+Balkens: an Gelenklagern standen Lagermomente von ±q L²/12 (±1,333 kNm bei
+4 m und 1 kN/m), und im Stab ergab sich q L²/24 im Feld statt q L²/8, also um
+den Faktor 3 zu wenig; Ergebnisse von Modellen mit solchen Lasten ändern sich
+darum.
+
+**Seile** rechnen nach Theorie I. Ordnung wie ein Zugband. Eine Querlast auf
+dem Seil geht dann nur als Kraft q L/2 an die Seilenden, ohne Durchhang und
+ohne Seilkraft aus ihr; das Seil zeigt nur N, und die Zusammenfassung warnt
+„Querlast auf Seil …“. Wählt man für den
 Lastfall **Theorie III. Ordnung**, wird daraus die echte Kettenlinie: das Seil
 hängt unter seinem Eigengewicht durch, der Horizontalzug folgt aus der
 ungedehnten Länge (Feld „Länge₀“ in der Stabmaske; 0 = die Sehne). Eine
