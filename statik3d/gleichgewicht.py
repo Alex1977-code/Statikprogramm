@@ -42,6 +42,17 @@ import numpy as np
 
 #: bezogene Abweichung, ab der gewarnt wird (siehe Modultext)
 SCHRANKE = 1.0e-4
+#: bezogene Abweichung, ab der das Ergebnis nicht gueltig ist (Entscheidung vom
+#: 14.10.2026; solver.gueltigkeit). Warum 1e-2: Was richtig gerechnet ist, liegt
+#: bei 1e-6 (Gleichungsloeser) bis 1e-4 (Abschluss des Kontaktlaufs, nicht ganz
+#: auskonvergierte Newton-Iteration; Platte mit Reibkontakt und ausfallender
+#: Strebe 8,5e-7). Eine nicht objektive Kopplung fehlt um ihre Momentensumme,
+#: am Drehlager rund 1e-3 des Momentenumsatzes (Befund b3) - ein Modellmangel,
+#: der gewarnt, aber nicht verworfen wird. 1e-2 liegt einen Faktor 10 darueber
+#: und 100 ueber der Warnung: so viel fehlt nur, wenn Last ueberhaupt keinen
+#: Weg in die Lager hat (am Zugstab „nur Zug“ unter Druck mit Last am freien
+#: Kopf 1,0). Darunter bleibt es bei der Warnung.
+UNGUELTIG = 1.0e-2
 
 
 def _knotenteil(v, nn: int) -> np.ndarray:
@@ -91,8 +102,24 @@ def bewerten(aus: dict) -> dict:
     rel_F = dF / uF if uF > 0 else 0.0
     rel_M = dM / uM if uM > 0 else 0.0
     aus.update({"dF": dF, "dM": dM, "rel_F": rel_F, "rel_M": rel_M, "schranke": SCHRANKE,
-                "ok": bool(rel_F <= SCHRANKE and rel_M <= SCHRANKE)})
+                "ok": bool(rel_F <= SCHRANKE and rel_M <= SCHRANKE),
+                "verletzt": bool(rel_F >= UNGUELTIG or rel_M >= UNGUELTIG)})
     return aus
+
+
+def verletzt_text(g: dict) -> str:
+    """„Gleichgewicht verletzt: ΣF 10,000 kN (bezogen 1), ΣM … – …“ oder "",
+    wenn die Abweichung unter :data:`UNGUELTIG` liegt (auch fuer Eintraege von
+    vor dem 14.10.2026 ohne das Feld ``verletzt``)."""
+    if not g:
+        return ""
+    if not (g.get("verletzt") or float(g.get("rel_F", 0.0)) >= UNGUELTIG
+            or float(g.get("rel_M", 0.0)) >= UNGUELTIG):
+        return ""
+    return (f"Gleichgewicht verletzt: ΣF {_z(g['dF'] / 1e3)} kN (bezogen {_rel(g['rel_F'])}), "
+            f"ΣM {_z(g['dM'] / 1e3)} kNm (bezogen {_rel(g['rel_M'])}) – Lasten und Lagerkräfte "
+            f"weichen um mindestens {_rel(UNGUELTIG)} des Umsatzes voneinander ab, ein Teil der "
+            "Last hat keinen Weg in die Lager")
 
 
 def ueberlagern(teile) -> dict:
@@ -142,6 +169,9 @@ def zeile(g: dict) -> str:
             + (", am verformten System" if g.get("verformt") else ""))
     if g.get("ok"):
         return kopf + "erfüllt – " + text
+    if verletzt_text(g):
+        return (kopf + "NICHT GÜLTIG – " + text + f"; ab {_rel(UNGUELTIG)} des Umsatzes ist das "
+                "Ergebnis nicht gültig: ein Teil der Last hat keinen Weg in die Lager")
     return (kopf + "WARNUNG – " + text + f"; Schranke {_rel(g['schranke'])} des Umsatzes überschritten: "
             "Lasten und Lagerkräfte sind nicht im Gleichgewicht (eine Kopplung oder Feder ohne "
             "Starrkörperbewegung, ein nicht auskonvergierter Lauf?)")
@@ -162,12 +192,22 @@ def gebuendelt(ergebnisse) -> list:
             schlecht.append((name, g))
     if not geprueft:
         return []
+    ungueltig = [(n, g) for n, g in schlecht if verletzt_text(g)]
+    vorne = []
+    if ungueltig:
+        vorne = [f"NICHT GÜLTIG: Gleichgewicht verletzt in {len(ungueltig)} von {geprueft} Ergebnissen: "
+                 + "; ".join(f"{n} (ΣF {_z(g['dF'] / 1e3)} kN, ΣM {_z(g['dM'] / 1e3)} kNm)"
+                             for n, g in ungueltig[:6]) + (" …" if len(ungueltig) > 6 else "")
+                 + f" – ab {_rel(UNGUELTIG)} des Umsatzes"]
+        schlecht = [(n, g) for n, g in schlecht if not verletzt_text(g)]
+        if not schlecht:
+            return vorne
     if not schlecht:
         return [f"Gleichgewicht global: {geprueft} Ergebnisse geprüft, Lasten und Lagerkräfte im "
                 f"Gleichgewicht (ΣF und ΣM, größte bezogene Abweichung {_rel(groesst)}, Schranke "
                 f"{_rel(SCHRANKE)})"]
     teile = [f"{n} (ΣF {_z(g['dF'] / 1e3)} kN, ΣM {_z(g['dM'] / 1e3)} kNm)" for n, g in schlecht[:6]]
-    return [f"WARNUNG: Gleichgewicht global verletzt in {len(schlecht)} von {geprueft} Ergebnissen: "
+    return vorne + [f"WARNUNG: Gleichgewicht global verletzt in {len(schlecht)} von {geprueft} Ergebnissen: "
             + "; ".join(teile) + (" …" if len(schlecht) > 6 else "")
             + f" – über der Schranke {_rel(SCHRANKE)} des Umsatzes"]
 

@@ -213,8 +213,12 @@ def zustand_und_meldung(info, bisher: str) -> tuple:
     if z == PROBELAUF:
         return PROBELAUF, ""
     if z.startswith("NICHT"):
-        # vorlaeufig: die Stufen mit nicht konvergiertem Kontaktlauf (14.10.2026)
-        return NICHT_KONVERGIERT, meldung_aus_info(info)
+        # vorlaeufig: die Stufen mit nicht konvergiertem Kontaktlauf (14.10.2026);
+        # eine verletzte Gleichgewichtskontrolle steht dazu, der Zustand bleibt
+        from .. import gleichgewicht as _gg
+        gg = _gg.verletzt_text((info or {}).get("gleichgewicht_global") or {})
+        m = meldung_aus_info(info)
+        return NICHT_KONVERGIERT, "; ".join(x for x in (m, gg) if x)
     if not bisher:
         return None, ""
     if bisher == NICHT_KONVERGIERT:

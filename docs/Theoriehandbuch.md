@@ -5684,7 +5684,12 @@ eine Zeile je Ergebnis, eine gebündelte in der Zusammenfassung der Analyse,
 ein Satz im Bericht. Am Würfel mit der alten, versetzten Kopplung (von Hand
 angelegt) meldet sie ΣM 24,657 kNm, bezogen 0,96; mit Drehanteil sind es
 bezogen 10⁻¹¹. Theorie II. Ordnung rechnet ihr Ergebnis außerhalb von
-`_solve_loads` und trägt die Kontrolle nicht.
+`_solve_loads` und trägt die Kontrolle nicht. Ab `gleichgewicht.UNGUELTIG` =
+10⁻² des Umsatzes ist das Ergebnis nicht gültig (`solver.gueltigkeit`, seit
+dem 14.10.2026; ein vorläufiges bleibt vorläufig). Richtig Gerechnetes liegt
+bei 10⁻⁶ bis 10⁻⁴, eine nicht objektive Kopplung am Drehlager bei rund 10⁻³;
+10⁻² liegt einen Faktor 10 darüber und erreicht nur, wer einen Teil der Last
+gar nicht in die Lager bringt.
 
 **Zonen in Anzeige und Nachweis (seit 10.10.2026).** Bis zum 10.10.2026
 nahmen Farbskala, Zusammenfassung, Bericht, Volumennachweis und Ermüdung ihr
@@ -11595,8 +11600,9 @@ Statt dessen wird gesagt, **welches** Bauteil sich **wie** bewegen kann,
 
 ### 7b.1 Stufe 1a: Restfreiheiten je Teiltragwerk
 
-Ein Teil, das nur über Elemente und Kopplungen zusammenhängt (§ 7a,
-`diagnose.teiltragwerke`), ist in sich starr. Eine Starrkörperbewegung ist
+Ein Teil, das nur über Elemente, Kopplungen und (seit dem 14.10.2026)
+Starrkörper RBE2/RBE3 zusammenhängt (§ 7a, `diagnose.teiltragwerke`), ist in
+sich starr. Eine Starrkörperbewegung ist
 
     u(p) = t + ω × r ,      r = p − c   (c = Schwerpunkt der Knoten des Teils)
 

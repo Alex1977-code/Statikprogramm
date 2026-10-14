@@ -2378,7 +2378,14 @@ def gueltigkeit(info) -> str:
     info = info if isinstance(info, dict) else {}
     e = info.get("auto_gehalten") or []
     if not e:
-        return ""
+        # Seit dem 14.10.2026 auch: die globale Gleichgewichtskontrolle ueber
+        # gleichgewicht.UNGUELTIG. Ein vorlaeufiges (nicht konvergiertes)
+        # Ergebnis bleibt vorlaeufig - die Zeile der Kontrolle steht dort trotzdem.
+        from . import gleichgewicht as _gg
+        text = _gg.verletzt_text(info.get("gleichgewicht_global") or {})
+        if not text or kontakt_vorlaeufig(info) or konvergenz_zustand(info).startswith("NICHT"):
+            return ""
+        return "NICHT gültig: " + text
     n = int(info.get("auto_gehalten_anzahl", len(e)) or len(e))
     kurz = [f"Knoten K{x['knoten']} {_AUTO_GROESSE[int(x['fhg'])]} = "
             f"{_auto_zahl(float(x['last']), int(x['fhg']))}" for x in e[:3]]

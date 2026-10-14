@@ -7842,7 +7842,20 @@ Ergebnissen. 10⁻⁴ ist dieselbe Schranke, mit der der Kontaktlauf sein
 Kraftgleichgewicht annimmt; der Gleichungslöser hält 10⁻⁶. Eine Kopplung, die
 keine Starrkörperbewegung zulässt, verfehlt das Gleichgewicht dagegen um ihr
 ganzes Moment. Bis zum 14.10.2026 stand in der Zusammenfassung nur die Summe
-der Lagerkräfte, und das Moment prüfte niemand. Eine
+der Lagerkräfte, und das Moment prüfte niemand. Ab einer bezogenen
+Abweichung von 10⁻² ist das Ergebnis **nicht gültig** („NICHT GÜLTIG –
+Gleichgewicht verletzt: ΣF … kN, ΣM … kNm“), im selben Zustand wie eine Last
+an automatisch gehaltenen Freiheitsgraden: so viel fehlt nur, wenn ein Teil
+der Last keinen Weg in die Lager hat. Zwischen 10⁻⁴ und 10⁻² bleibt es bei der
+WARNUNG; eine nicht objektive Kopplung am Drehlager lag bei rund 10⁻³. Ein
+vorläufiges Ergebnis (Kontakt nicht konvergiert) bleibt vorläufig und nennt
+die Verletzung in derselben Zeile. Seit dem 14.10.2026 verbindet auch eine
+verteilende Einleitung (RBE3) und jeder Starrkörper sein Stabende bzw. seinen
+Master mit den Slaves, wenn das Programm nach losen Teilen sucht. Bis dahin
+kam ein Zugstab „nur Zug“, der unter Druck ausfiel und am freien Kopf eine
+Last trug, mit RBE3-Einleitung als „gültig“ heraus, obwohl die Last fehlte
+und der Körper die Kraft gegen ihre Richtung bekam; jetzt meldet die Rechnung
+den Mechanismus wie bei der Einleitung an 1–3 Knoten. Eine
 Scheibe genau über einer Bohrung leitet ihre Kraft ohne Auflagefläche in die
 Platte; was das Programm daraus macht, steht unter *Netzabhängige
 Spannungsspitzen*.

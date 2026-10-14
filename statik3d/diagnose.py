@@ -74,6 +74,22 @@ def teiltragwerke(model) -> list:
             kopp_a.append(i)
             kopp_b.append(j)
             belegt[i] = belegt[j] = True
+    # Starrkoerper RBE2/RBE3 verbinden ihren Master mit den Slaves (seit dem
+    # 14.10.2026). Bis dahin zaehlten nur Elemente und Kopplungen: ein
+    # verteilend eingeleitetes Stabende (stabeinleitung, RBE3) stand als loses
+    # Teil da, und die Hilfsfesselung hielt Kopf und Fuss eines ausgefallenen
+    # Zugstabs als ein Teil fest - die Last am freien Kopf ging dann gegen ihre
+    # Richtung in den Koerper (tests/test_gleichgewicht_gueltig.py).
+    for sk in getattr(model, "starrkoerper", []) or []:
+        i = int(getattr(sk, "master", -1))
+        if not 0 <= i < nn:
+            continue
+        for j in getattr(sk, "slaves", None) or []:
+            j = int(j)
+            if 0 <= j < nn and j != i:
+                kopp_a.append(i)
+                kopp_b.append(j)
+                belegt[i] = belegt[j] = True
     if kopp_a:
         zeilen = np.concatenate([zeilen, np.asarray(kopp_a, int)])
         spalten = np.concatenate([spalten, np.asarray(kopp_b, int)])
