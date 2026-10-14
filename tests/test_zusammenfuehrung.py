@@ -172,9 +172,52 @@ def test_alte_ergebnisdatei_gamma_p():
           not ok and "Rechenart und Einstellungen" in grund, grund)
 
 
+def test_alte_datei_bitgleich():
+    print("\n--- Eine Datei von vor den neuen Feldern bleibt beim Speichern bitgleich ---")
+    # vorspannung/kraft prueft das an einer Datei vom Stand 192317a; nach dem
+    # Zusammenfuehren schrieb das Speichern dort die Felder vom 13.10.2026 mit
+    # ihrer Vorgabe dazu (Werkstoff verfestigung, art, nachweis_ausnehmen, Ep,
+    # sigma_pmax, sigma_pm0; Querschnitt A_s, gewinde; design.gamma_P).
+    import json
+    pa = os.path.join(os.path.dirname(os.path.abspath(__file__)), "daten",
+                      "vorspannung_alt_192317a", "anker_dT_und_Fv.json")
+    tmp = tempfile.mkdtemp()
+    try:
+        pb = os.path.join(tmp, "neu.json")
+        Model.load(pa).save(pb)
+        with open(pa, "rb") as f1, open(pb, "rb") as f2:
+            a, b = f1.read(), f2.read()
+        check("alte Datei: Laden und Speichern bitgleich", a == b, f"{len(a)} / {len(b)} Byte")
+        m, _e = _anker(art="Spannstahl")
+        mat = next(iter(m.materials.values()))
+        mat.verfestigung, mat.nachweis_ausnehmen, mat.Ep, mat.sigma_pmax = 1e-4, True, 205e9, 780e6
+        sec = m.sections["Rund 40"]
+        sec.A_s, sec.gewinde = 1150e-6, "aufgewalzt"
+        m.design.gamma_P = 1.35
+        pc = os.path.join(tmp, "gesetzt.json")
+        m.save(pc)
+        with open(pc, encoding="utf-8") as f:
+            d = json.load(f)
+        w = next(iter(d["materials"].values()))
+        check("gesetzte Werte stehen in der Datei",
+              w.get("art") == "Spannstahl" and w.get("verfestigung") == 1e-4 and w.get("nachweis_ausnehmen") is True
+              and w.get("Ep") == 205e9 and w.get("sigma_pmax") == 780e6 and "sigma_pm0" not in w
+              and d["sections"]["Rund 40"].get("A_s") == 1150e-6 and d["design"].get("gamma_P") == 1.35,
+              str({k: w.get(k) for k in ("art", "verfestigung", "nachweis_ausnehmen", "Ep", "sigma_pmax")}))
+        m2 = Model.load(pc)
+        mat2 = next(iter(m2.materials.values()))
+        check("… und kommen beim Laden zurück, die übrigen mit Vorgabe",
+              (mat2.art, mat2.verfestigung, mat2.nachweis_ausnehmen, mat2.Ep, mat2.sigma_pmax, mat2.sigma_pm0)
+              == ("Spannstahl", 1e-4, True, 205e9, 780e6, None)
+              and (m2.sections["Rund 40"].A_s, m2.sections["Rund 40"].gewinde) == (1150e-6, "aufgewalzt")
+              and m2.design.gamma_P == 1.35)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for t in (test_spannstahl_art, test_vorspannung_ein_merkmal, test_stabenden_eine_warnung,
-              test_alte_ergebnisdatei_gamma_p):
+              test_alte_ergebnisdatei_gamma_p, test_alte_datei_bitgleich):
         try:
             t()
         except Exception as ex:          # noqa: BLE001 - jede Pruefung meldet sich

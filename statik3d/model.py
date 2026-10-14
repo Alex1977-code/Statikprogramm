@@ -9071,8 +9071,8 @@ class Model:
             # tetp_kantenmitten_gelesen
             "tetp_kantenmitten": _kantenmitten_liste(tetp_kantenmitten_gelesen(
                 getattr(self, "tetp_kantenmitten", None), self.elements)),
-            "materials": {k: asdict(v) for k, v in self.materials.items()},
-            "sections": {k: asdict(v) for k, v in self.sections.items()},
+            "materials": {k: _ohne_vorgabe("materials", asdict(v)) for k, v in self.materials.items()},
+            "sections": {k: _ohne_vorgabe("sections", asdict(v)) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
             "supports": [_support_dict(s) for s in self.supports],
             "line_supports": [_beh_dict(asdict(x)) for x in self.line_supports],
@@ -9087,15 +9087,16 @@ class Model:
             "joints": [asdict(j) for j in self.joints.values()],
             "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
-            "volumenbereiche": [asdict(x) for x in self.volumenbereiche.values()],
+            "volumenbereiche": [_ohne_vorgabe("volumenbereiche", asdict(x))
+                                 for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
             "kontaktbedingungen": [_beh_dict(asdict(x))
                                    for x in self.kontaktbedingungen.values()],
             "flaechen": [asdict(x) for x in self.flaechen.values()],
-            "koerper": [asdict(x) for x in self.koerper.values()],
+            "koerper": [_ohne_vorgabe("koerper", asdict(x)) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
             "netz": asdict(self.netz),
-            "design": asdict(self.design),
+            "design": _ohne_vorgabe("design", asdict(self.design)),
             "plastizitaet": asdict(self.plastizitaet),
             "knotendilatation": bool(self.knotendilatation),
             "randspannung": str(getattr(self, "randspannung", "frei") or "frei"),
@@ -9541,6 +9542,33 @@ def _dc(cls, d: dict):
     """Dataclass aus dict, unbekannte Schluessel ignorieren (Vorwaertskompatibilitaet)."""
     names = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in names})
+
+
+#: Felder, die am 13.10.2026 an Objekten der Modelldatei dazukamen (plast/
+#: verfestigung, spitzen/zeigen N2, nachweis/spannstahl, import/lastfaelle), mit
+#: ihrer Vorgabe: sie stehen nur in der Datei, wenn sie davon abweichen
+#: (Zusammenfuehrung 14.10.2026, wie Vorspannung.sollkraft, TempLoad.aus_vorspannung
+#: und Model.stabeinleitung). Eine Datei von davor bleibt so beim Speichern Zeichen
+#: fuer Zeichen, wie sie war; bis dahin kamen die Felder mit der Vorgabe dazu
+#: (tests.test_vorspannkraft, Datei vom Stand 192317a: 6431 -> 6614 Byte). Beim
+#: Laden setzt der Datenklassen-Bau (_dc) die Vorgabe fuer jedes fehlende Feld.
+NUR_WENN_GESETZT = {
+    "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
+                  "sigma_pmax": None, "sigma_pm0": None},
+    "sections": {"A_s": None, "gewinde": ""},
+    "koerper": {"nachweis_ausnehmen": False},
+    "volumenbereiche": {"eps_grenze": 0.05},
+    "design": {"gamma_P": 1.0},
+}
+
+
+def _ohne_vorgabe(schluessel: str, d: dict) -> dict:
+    """``d`` ohne die Felder aus :data:`NUR_WENN_GESETZT`, die ihre Vorgabe tragen."""
+    vg = NUR_WENN_GESETZT.get(schluessel)
+    if not vg:
+        return d
+    return {k: v for k, v in d.items()
+            if not (k in vg and v == vg[k] and type(v) is type(vg[k]))}
 
 
 def _member_dict(m: Member) -> dict:
