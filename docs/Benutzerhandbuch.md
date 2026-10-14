@@ -2929,6 +2929,18 @@ Achsenkreuz unten
 rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
 Texte weg. Beides kommt so auch in den Bericht.
 
+**Farbe und Verformung quadratischer Volumen (seit 14.10.2026 richtig
+zugeordnet).** Die Ansicht zeichnet Volumen als ihre Oberfläche und holt
+Verschiebung und Farbe je Punkt über die Nummer des Modellknotens. Bis zum
+14.10.2026 kam diese Nummer bei quadratischen Elementen (tet10, Netz
+*Mittel* und *Fein*) falsch aus VTK: die Punkte bekamen Werte und
+Verschiebungen fremder Knoten – am tet10-Kragarm 0,185 mm falscher Wert und
+19,4 mm falsche Lage bei Überhöhung 100, am Drehlager lag ein Punkt bis
+3,52 m neben dem Knoten, dessen Farbe er trug. Farbbilder von tet10-Netzen
+aus dieser Zeit zeigen die Werte am falschen Ort; Kennwerte, Max-/Min-Marken,
+Tabellen, Bericht und Nachweise lesen die Knoten selbst und waren nicht
+betroffen. Bei tet4, hex8 und Keilen stimmte die Zuordnung.
+
 **Lage der Texte (seit 13.10.2026).** Vor jedem Bild ordnet das Programm die
 Texte nach ihren gemessenen Rechtecken: die Kennwerte unten links bleiben
 links vom Achsenkreuz und werden dafür umgebrochen; der Titel der Farbskala

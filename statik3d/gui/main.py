@@ -26094,9 +26094,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     # kennt die inneren Tetraeder nicht.
                     grid = vp.schneiden(grid, *self.schnitt)
                 if np.isin(grid.celltypes, list(volumen_typen)).any():
-                    flaeche = grid.extract_surface(pass_pointid=True, pass_cellid=True,
-                                                   algorithm="dataset_surface")
-                    kidx = np.asarray(flaeche.point_data["vtkOriginalPointIds"], int)
+                    # Knoten je Punkt ueber ein Punktfeld (vp.oberflaeche):
+                    # vtkOriginalPointIds stimmte bei tet10 nicht (14.10.2026)
+                    flaeche, kidx = vp.oberflaeche(grid)
                     grid = flaeche
             except Exception as ex:             # noqa: BLE001
                 self.log.appendPlainText(f"Oberfläche: {ex}")

@@ -1655,6 +1655,25 @@ def to_grid(model: Model, typen=None, ausser=None, nur=None) -> pv.UnstructuredG
     return g
 
 
+def oberflaeche(grid):
+    """(Oberflaeche, Knoten je Punkt) eines Gitters aus :func:`to_grid`.
+
+    Die Knotennummer reist als Punktfeld durch extract_surface. Bis zum
+    14.10.2026 kam sie aus ``vtkOriginalPointIds`` - mit VTK 9.7 sind das bei
+    quadratischen Elementen (tet10) die Nummern der Oberflaeche selbst,
+    nicht die Modellknoten: am Drehlager lag ein Punkt bis 3,52 m neben dem
+    Knoten, dessen Verschiebung und Farbe er bekam; am tet10-Kragarm
+    (tests/test_oberflaeche_knoten.py) 0,185 mm falscher Wert je Punkt und
+    19,4 mm falsche Lage bei Ueberhoehung 100. Bei hex8 und tet4 stimmte es."""
+    g = grid.copy(deep=False)
+    g.point_data["_knoten"] = np.arange(g.n_points, dtype=float)
+    flaeche = g.extract_surface(pass_pointid=False, pass_cellid=True, algorithm="dataset_surface")
+    kidx = np.rint(np.asarray(flaeche.point_data["_knoten"], float)).astype(np.int64)
+    flaeche.point_data["vtkOriginalPointIds"] = kidx
+    del flaeche.point_data["_knoten"]
+    return flaeche, kidx
+
+
 def teilnetz(model: Model, elemente) -> pv.UnstructuredGrid:
     """Ein Gitter aus **nur** den genannten Elementen.
 
