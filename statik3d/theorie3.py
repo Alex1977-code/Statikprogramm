@@ -197,10 +197,8 @@ class _Stab:
         fl = self.kl @ dl
         N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
         if self.typ == "truss":
-            kg = np.zeros((12, 12))
-            for a, b in ((1, 7), (2, 8)):
-                kg[a, a] = kg[b, b] = N / L
-                kg[a, b] = kg[b, a] = -N / L
+            # Saite N/L - dieselbe Form wie asm.geometric_stiffness (14.10.2026)
+            kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, self.A, self.Ip)
         T = bm.transform_matrix(E.T)

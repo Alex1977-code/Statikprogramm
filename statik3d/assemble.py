@@ -1575,7 +1575,17 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
     ``n_anfang`` {Element: Normalkraft der Anfangsdehnung} (seit dem
     13.10.2026, solver.anfangsnormalkraefte): Temperatur, Vorspannung und
     Verriegelung zaehlen in N mit wie im Ergebnis (:func:`stab_normalkraft`).
-    Ohne sie rechnet K_G wie bisher mit E A Δl/L."""
+    Ohne sie rechnet K_G wie bisher mit E A Δl/L.
+
+    Fachwerkstab, Zug-/Druckstab und Seil (Elementtyp truss, seil) haben
+    keine Biegesteifigkeit; ihre geometrische Steifigkeit ist die Saite N/L
+    auf den Querverschiebungen (bm.kg_local_saite), wie in Theorie III.
+    Ordnung (theorie3._Stab). Ein Balken behaelt die Balkenform, auch mit
+    „trägt nur“ - er biegt sich. Bis zum 14.10.2026 bekam jeder Stab die
+    Balkenform (6/5 N/L mit Drehanteilen): ein Pendelstab mit Querfeder k
+    hatte alpha_cr 166,67 statt k L/P = 200, das gezogene Zugband einer
+    Kragstuetze alpha_cr 4 126 statt 2 679 - 54 % auf der unsicheren Seite
+    (tests/test_stab_nachzug.py)."""
     n = model.ndof
     n_anfang = n_anfang or {}
     rows, cols, vals = [], [], []
@@ -1588,7 +1598,10 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         T = bm.transform_matrix(T3)
         d = element_dofs(e, model)[:12]
         N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L))
-        kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
+        if e.typ in ("truss", "seil"):
+            kg = bm.kg_local_saite(N, L)
+        else:
+            kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
         kg = T.T @ kg @ T
         r, c = np.meshgrid(d, d, indexing="ij")
         rows.append(r.ravel())

@@ -9084,6 +9084,20 @@ dort keine Normalkraft und kein α_cr. Ein beidseits gelenkiger Stab von 4 m
 jetzt α_cr = 2,142, wie
 π²·E·I/L² / (E·A·α·ΔT) es verlangt.
 
+**Fachwerkstäbe, Zug- und Druckstäbe und Seile in α_cr** (seit 14.10.2026).
+Ein Stab ohne Biegesteifigkeit hält sein Ende quer nur mit seiner
+Normalkraft: gezogen mit N/L, gedrückt treibt er es mit |N|/L weg wie eine
+Saite. So stehen Fachwerkstäbe, Zug- und Druckstäbe und Seile jetzt in der
+geometrischen Steifigkeit, für α_cr, für Theorie II. Ordnung und für das
+Knicken; nach Theorie III. Ordnung rechneten sie schon immer so. Ein Balken
+behält seine Form, auch mit „trägt nur“, denn er biegt sich. Bis zum
+14.10.2026 bekamen auch Fachwerkstäbe die Form des Balkens mit 6/5·N/L und
+Drehanteilen. Ein Pendelstab mit einer Querfeder k am Kopf hatte damit
+α_cr = 166,67 statt k·L/P = 200 (sicher), das gezogene Zugband einer
+Kragstütze dagegen α_cr = 4 126 statt 2 679, also 54 % zu hoch und damit auf
+der unsicheren Seite. Jetzt sind es 200 und 2 679,15 gegen geschlossen
+2 679,15.
+
 Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
 Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der
 Verformungszuwachs gegenüber Theorie I. Ordnung, dann φ mit α_h, α_m und der

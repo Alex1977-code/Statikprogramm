@@ -3869,6 +3869,24 @@ Stab (4 m, Vollquadrat 100 mm, ΔT = 20 K, 16 Elemente) hat
 α_cr = 2,141846 gegen π²·E·I/L²/(E·A·α·ΔT) = 2,141841. Ohne Anfangsdehnung
 ist K_g bitgleich die alte.
 
+**Die Form von K_g** hängt seit dem 14.10.2026 vom Elementtyp ab. Der Balken
+hat die konsistente Form nach Przemieniecki (6/5·N/L auf den
+Querverschiebungen, dazu Drehanteile aus der kubischen Biegelinie und der
+Torsionsanteil N·I_p/(A·L)). Fachwerkstab, Zug-/Druckstab und Seil haben
+keine Biegesteifigkeit, ihre Querverschiebung ist linear über den Stab, und
+die geometrische Steifigkeit ist die der Saite: N/L auf den
+Querverschiebungen beider Enden, keine Drehanteile
+(`beam3d.kg_local_saite`, in `asm.geometric_stiffness` und in Theorie III.
+Ordnung). Ein Balken mit „trägt nur“ behält die Balkenform. Bis zum
+14.10.2026 bekam jeder Stab die Balkenform. Am Fachwerkknoten ohne
+Drehsteifigkeit fallen die Drehanteile weg, es blieb 6/5·N/L: ein Pendelstab
+(2 m) mit Querfeder k am Kopf hatte α_cr = 166,67 statt k·L/P = 200, und
+Theorie II. Ordnung gab u = H/(k − 1,2·P/L) statt H/(k − P/L). Das gezogene
+Zugband einer Kragstütze (Rundstahl 30 mm, 13,77 kN) hielt den Kopf zu steif,
+α_cr = 4 126,25 statt π²·E·I/L²/N_Stütze = 2 679,15, 54 % auf der
+unsicheren Seite. Seither: 200 (Knicken ebenso), u wie geschlossen, und
+2 679,151 gegen 2 679,145 (`tests/test_stab_nachzug.py`).
+
 **Wie α_cr gelöst wird.** Gerechnet wird −K_g v = μ K v mit α = 1/μ;
 α_cr ist der Kehrwert des größten positiven μ. K ist nach dem Einbau der
 Lager positiv definit und dient dem Eigenwertlöser (ARPACK über `eigsh`)
@@ -6583,7 +6601,8 @@ gesagt — es wird nichts ersatzweise eingesetzt.
   Stäben 151,4 statt 28,9 Hz (`tests/test_gewichtslos.py`, Vergleich mit der
   Spitze bei 10⁻⁶ der Dichte).
 * Lineares Knicken: (K + λ K_g) φ = 0 mit der geometrischen Steifigkeit der
-  Stäbe (Przemieniecki) aus dem Grundzustand eines Lastfalls oder einer
+  Stäbe (Balken nach Przemieniecki, Fachwerkstab, Zug-/Druckstab und Seil
+  als Saite N/L, seit 14.10.2026) aus dem Grundzustand eines Lastfalls oder einer
   Kombination, im System seiner Situation (Abschnitt 3.1). Der
   Knicklastfaktor λ multipliziert die Lasten des Grundzustands.
   Gelöst wird mit K als Metrik: (−K_g) φ = μ K φ, λ = 1/μ, die

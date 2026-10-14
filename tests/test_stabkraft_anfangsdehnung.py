@@ -137,15 +137,16 @@ def test_zugband_kg():
     Kg = _kg(m, u, aktiv, n)
     e = m.elements[band]
     kl, T3, T, L = asm.beam_local(m, e)
-    sec = m.sections[e.sec]
     d = asm.element_dofs(e, m)[:12]
     blk = Kg[d][:, d].toarray()
-    einheit = T.T @ bm.kg_local_beam(1.0, L, sec.A, sec.Iy + sec.Iz) @ T
+    # der Fachwerkstab hat die Saitenform N/L (seit dem 14.10.2026; bis dahin
+    # die Balkenform 6/5 N/L mit Drehanteilen, tests/test_stab_nachzug.py)
+    einheit = T.T @ bm.kg_local_saite(1.0, L) @ T
     N_kg = float(np.sum(blk * einheit) / np.sum(einheit * einheit))
     print(f"   N im Ergebnis {N_erg / 1e3:.4f} kN, N in K_G {N_kg / 1e3:.4f} kN")
     nahe("Zugband: N in der geometrischen Steifigkeit = N im Ergebnis", N_kg, N_erg, 1e-9, "N")
     rest = float(np.abs(blk - N_erg * einheit).max()) / float(np.abs(N_erg * einheit).max())
-    check("Zugband: K_G des Zugbands ist die Formel mit N aus dem Ergebnis", rest <= 1e-9, f"{rest:.2e}")
+    check("Zugband: K_G des Zugbands ist die Saitenform mit N aus dem Ergebnis", rest <= 1e-9, f"{rest:.2e}")
     _r2, i2 = theorie2.solve_theorie2(m, {"V": 1.0}, "V", imperfektionen=False)
     mz, bz, _k = _zugband(vorspannung=False, zwang=True)
     rz = solver.solve_static(mz, case="V")
@@ -157,30 +158,13 @@ def test_zugband_kg():
     # Stuetzenfusses, quer zur Ebene wirkt das Zugband als Feder N/L am Kopf;
     # mit P/k = L wird die Kragstuetze zur beidseits gelenkigen:
     # alpha_cr = pi^2 E I/L^2 / N_Stuetze, N_Stuetze = N 3/sqrt(13). Das gilt
-    # fuer die Seilsteifigkeit N/L des Fachwerkstabs; asm.geometric_stiffness
-    # setzt fuer ihn die Balkenform (6/5 N/L mit Drehanteilen) an - darum hier
-    # die K_G des Programms fuer die Stuetze und N/L fuer das Zugband, mit dem
-    # N aus asm.stab_normalkraft
-    from scipy import sparse
-    system = solver.StaticSystem(m)
-    ohne = np.ones(len(m.elements), bool)
-    ohne[band] = False
-    Kg = _kg(m, u, ohne, n)
-    try:
-        N_z = asm.stab_normalkraft(m, e, u, n.get(band, 0.0))
-    except AttributeError:
-        N_z = m.materials[e.mat].E * sec.A / L * float((T @ u[d])[6] - (T @ u[d])[0])
-    ks = np.zeros((12, 12))
-    for a_, b_ in ((1, 7), (2, 8)):
-        ks[a_, a_] = ks[b_, b_] = N_z / L
-        ks[a_, b_] = ks[b_, a_] = -N_z / L
-    r_, c_ = np.meshgrid(d, d, indexing="ij")
-    Kg = Kg + sparse.coo_matrix(((T.T @ ks @ T).ravel(), (r_.ravel(), c_.ravel())), shape=Kg.shape).tocsr()
-    mu, _v = theorie2.groesstes_mu(system.Kff, Kg[system.fi][:, system.fi].tocsc())
+    # mit der Saitenform N/L des Fachwerkstabs, die asm.geometric_stiffness
+    # seit dem 14.10.2026 ansetzt - bis dahin stand hier die Saite von Hand
+    # neben der Balkenform des Programms (alpha_cr des Programms 4 126)
     I = m.sections["Q"].Iy
     N_c = abs(N_erg) * 3.0 / math.sqrt(13.0)
-    nahe("alpha_cr gegen Hand (Zugband als Seil N/L): pi^2 E I/L^2 / N_Stuetze",
-         1.0 / mu[0] if mu is not None else 1e99, math.pi ** 2 * E * I / 9.0 / N_c, 1e-5)
+    nahe("alpha_cr des Programms gegen Hand (Zugband als Saite N/L): pi^2 E I/L^2 / N_Stuetze",
+         i2.alpha_cr, math.pi ** 2 * E * I / 9.0 / N_c, 1e-5)
 
 
 def _knickstab(dT=20.0, teile=16):
