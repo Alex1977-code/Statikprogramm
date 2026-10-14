@@ -9620,15 +9620,12 @@ def _dc(cls, d: dict):
 #: geändert: Rechenart und Einstellungen“). Wer ein Feld an ein Objekt der
 #: Modelldatei anfuegt, traegt es hier ein.
 NEUE_FELDER = {
-    # spitzen/kriterium (Abbruch ohne die netzabhaengigen Spitzen) und
-    # kontakt/pendeln (Pendeln mit Periode 2, Spannstufen; Plastizitaet.NEU_14_10,
-    # die Plastizitaet.als_dict beim Speichern weglaesst)
-    "plastizitaet": {"abbruch": "ingenieurmaessig", "pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6,
-                     "spannstufen": 0,
-                     # kontakt/warmstart (Vorschlaege 1-5 vom 14.10.2026, je Massnahme ein Schalter)
-                     "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
-                     "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
-                     "spannung_zuerst": True, "ausfall_warm": True},
+    # spitzen/kriterium (Abbruch ohne die netzabhaengigen Spitzen; steht immer in
+    # der Datei) und die Einstellungen vom 14.10.2026 aus kontakt/pendeln und
+    # kontakt/warmstart. Diese fuehrt Plastizitaet.NEU_14_10 - dieselbe Tabelle,
+    # nach der Plastizitaet.als_dict sie beim Speichern weglaesst; hier wird sie
+    # nur gelesen, damit es die Vorgaben einmal gibt (Zusammenfuehrung 14.10.2026).
+    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
