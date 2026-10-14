@@ -7845,6 +7845,13 @@ def _pendel_mass(r_a: tuple, r_b: tuple) -> tuple:
     return kraft, abs(g_a - g_b), "fließt/entlastet"
 
 
+def _zt(x: float, stellen: int = 3) -> str:
+    """Eine Zahl fuer die Pendel-Zeilen des Protokolls: Dezimalkomma, nie mit
+    Exponent (zahlen.zahl_text) - am Drehlager sind Kontaktkraefte fuenfstellig in kN."""
+    from .zahlen import zahl_text
+    return zahl_text(x, stellen=stellen)
+
+
 def _pendel_bauteile(model: Model, cs, ids, merker: dict) -> str:
     """„Bauteil B (Lager Starr): 2, …“ - je Bauteil und Bedingung die Zahl der Knoten."""
     if "karte" not in merker:
@@ -7871,10 +7878,10 @@ def _pendel_zeilen_mass(model: Model, cs, mass: dict, verl: dict) -> list:
         c, m_ = cs.cons[i], mass[i]
         vk, vw = verl.get(i, (0.0, 0.0))
         zeilen.append(f"{c.label} (Knoten {c.node} bei {np.round(X[c.node], 3).tolist()} m): {m_['art']}, "
-                      f"eingefroren {m_['zustand']}, Kraftwechsel {m_['kraft'] / 1e3:.3g} kN, "
+                      f"eingefroren {m_['zustand']}, Kraftwechsel {_zt(m_['kraft'] / 1e3)} kN, "
                       f"{'Klaffung/Durchdringung' if m_['art'] == 'öffnet/schließt' else 'Weg'} "
-                      f"{m_['weg'] * 1e6:.3g} µm; an der letzten Lösung Verstoß {vk / 1e3:.3g} kN, "
-                      f"Durchdringung {vw * 1e6:.3g} µm")
+                      f"{_zt(m_['weg'] * 1e6)} µm; an der letzten Lösung Verstoß {_zt(vk / 1e3)} kN, "
+                      f"Durchdringung {_zt(vw * 1e6)} µm")
     if len(mass) > 12:
         zeilen.append(f"… und {len(mass) - 12} weitere")
     return zeilen
@@ -7914,9 +7921,9 @@ def _pendel_runde(model: Model, cs, it: int, bits, u, lam, sp: dict, log: list, 
     arten = sorted({sp["mass"][i]["art"] for i in neu})
     text = (f"Kontakt: Pendeln mit Periode 2 erkannt in Runde {it} - {len(neu)} "
             f"{'Knoten' if len(neu) != 1 else 'Knoten'} eingefroren ({_pendel_bauteile(model, cs, neu, sp)}; "
-            f"{', '.join(arten)}), Kraftwechsel zusammen {k_sum / 1e3:.3g} kN = "
-            f"{100.0 * k_sum / max(K, 1e-300):.3g} % der Kontaktkraft {K / 1e3:.4g} kN, Weg bis "
-            f"{w_max * 1e6:.3g} µm - geprüft wird an der letzten Lösung")
+            f"{', '.join(arten)}), Kraftwechsel zusammen {_zt(k_sum / 1e3)} kN = "
+            f"{_zt(100.0 * k_sum / max(K, 1e-300))} % der Kontaktkraft {_zt(K / 1e3, 4)} kN, Weg bis "
+            f"{_zt(w_max * 1e6)} µm - geprüft wird an der letzten Lösung")
     log.append(text)
     _melde(progress, text)
     return len(neu)
@@ -7935,14 +7942,13 @@ def _pendel_abschluss(model: Model, cs, u, lam, sp: dict, schwellen: tuple, log:
     zeilen = _pendel_zeilen_mass(model, cs, mass, verl)
     anteil = kraft / max(K, 1e-300)
     kopf = (f"{len(mass)} eingefrorene Knoten ({_pendel_bauteile(model, cs, list(mass), sp)}), "
-            f"Restwechsel zusammen {kraft / 1e3:.3g} kN = {100.0 * anteil:.3g} % der Kontaktkraft "
-            f"{K / 1e3:.4g} kN (Schranke {100.0 * k_anteil:g} %), Klaffung/Durchdringung bzw. Weg bis "
-            f"{weg * 1e6:.3g} µm (Schranke {w_grenze * 1e6:g} µm)")
-    text = ((f"Kontakt: Kontaktlauf nach Ingenieurgrößen konvergiert - {kopf}" if ok else
-             f"Kontakt: Pendeln eingefroren, aber die Restwechsel überschreiten die Schranken - {kopf}")
-            + ": " + "; ".join(zeilen))
-    log.append(text)
-    _melde(progress, text.split(": ", 1)[0] + ": " + kopf)
+            f"Restwechsel zusammen {_zt(kraft / 1e3)} kN = {_zt(100.0 * anteil)} % der Kontaktkraft "
+            f"{_zt(K / 1e3, 4)} kN (Schranke {_zt(100.0 * k_anteil)} %), Klaffung/Durchdringung bzw. Weg bis "
+            f"{_zt(weg * 1e6)} µm (Schranke {_zt(w_grenze * 1e6)} µm)")
+    kopfzeile = (f"Kontakt: Kontaktlauf nach Ingenieurgrößen konvergiert - {kopf}" if ok else
+                 f"Kontakt: Pendeln eingefroren, aber die Restwechsel überschreiten die Schranken - {kopf}")
+    log.append(kopfzeile + ": " + "; ".join(zeilen))
+    _melde(progress, kopfzeile)
     return {"ok": bool(ok), "knoten": len(mass), "kraft": float(kraft), "kontaktkraft": float(K),
             "anteil": float(anteil), "weg": float(weg), "kraft_anteil_grenze": float(k_anteil),
             "weg_grenze": float(w_grenze), "zeilen": zeilen,
