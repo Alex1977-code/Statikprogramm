@@ -1154,9 +1154,13 @@ def test_stabtypen():
               next((x for x in log if "Tragglieder" in x), "-"))
         check("member_type: unbekannte Tabelle -> Balken",
               R6.member_type("MemberImplNeu")[0] == "beam")
-        check("member_type: Seil ist Fachwerkstab mit Hinweis",
-              R6.member_type("MemberImplCable")[0] == "truss"
-              and "Seiltheorie" in R6.member_type("MemberImplCable")[2])
+        # seit dem 14.10.2026 ein Seil, das nur Zug traegt (bis dahin ein
+        # Fachwerkstab mit dem Hinweis „Seiltheorie ... fehlt“;
+        # tests/test_stab_nachzug.py)
+        check("member_type: Seil ist Seil, ohne Hinweis, und trägt nur Zug",
+              R6.member_type("MemberImplCable")[0] == "seil"
+              and R6.member_type("MemberImplCable")[2] == ""
+              and R6.stab_nur("MemberImplCable", {}) == "zug")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

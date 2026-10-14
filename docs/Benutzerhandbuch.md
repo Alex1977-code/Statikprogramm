@@ -6246,7 +6246,14 @@ seine Temperatur und Vorspannung mit.
 (Stabtyp „Zugstab“, der dort bei Druck ausfällt) kommt als Fachwerkstab mit
 „trägt nur: Zug“ an, ein Druckstab mit „trägt nur: Druck“. Ein Zugstab, den
 RFEM auch Druck tragen lässt (isActiveInCompression), bleibt ein gewöhnlicher
-Fachwerkstab. Das Importprotokoll nennt die Stäbe („64 Zugstäbe tragen nur Zug
+Fachwerkstab. Ein **Seil** aus RFEM kommt als Seil an, das nur Zug trägt:
+nach Theorie I. und II. Ordnung fällt es bei Druck aus, nach Theorie III.
+Ordnung hängt es als Kettenlinie durch. Bis zum 14.10.2026 kam es als
+Fachwerkstab an, der auch Druck trug, und das Protokoll warnte
+„Seiltheorie (Durchhang, Ausfall bei Druck) fehlt“; ein Seil parallel zu
+einem Balken trug unter 10 kN Druck so die Hälfte, jetzt fällt es aus, und
+der Balken trägt die 10 kN. Liegt ein Seilende auf einem Volumenkörper,
+hängt es wie das Ende eines Zugstabs an dessen Netz. Das Importprotokoll nennt die Stäbe („64 Zugstäbe tragen nur Zug
 (fallen wie in RFEM bei Druck aus): S1, S2, …“). Bis zum 14.10.2026 trug ein
 solcher Stab hier auch Druck, und das Protokoll warnte nur („Stabtyp Zugstab:
 fällt in RFEM bei Druck aus – hier trägt er auch Druck“); am Drehlager trug S57
@@ -6256,8 +6263,8 @@ aus RFEM 6 übernommen wurde, nennt das Protokoll die Fachwerkstäbe ohne
 Das Programm stellt nichts von selbst um. Die Umstellung liest die Stabtypen
 aus der RFEM-Datei nach, die beim Import gelesen wurde
 (`statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell)`), und setzt „trägt
-nur“ wie der Import heute; was Sie an einem Stab selbst eingestellt haben,
-bleibt. Ohne die RFEM-Datei wählen Sie die Stäbe und stellen in der
+nur“ wie der Import heute; aus einem RFEM-Seil wird wieder ein Seil. Was Sie
+an einem Stab selbst eingestellt haben, bleibt. Ohne die RFEM-Datei wählen Sie die Stäbe und stellen in der
 Stabmaske „trägt nur“ auf Zug.
 
 **Zugstäbe in der Konvergenz** (seit 13.10.2026). Eine Rechnung mit Zug- oder

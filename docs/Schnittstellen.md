@@ -532,7 +532,7 @@ RFEM 6 legt je Stabtyp eine eigene Umsetzungstabelle an — der Tabellenname
 | `MemberImplTruss`, `MemberImplTrussOnlyN` | Fachwerkstab | `truss` | — |
 | `MemberImplTension` | Zugstab | `truss`, „trägt nur: Zug“ (mit `isActiveInCompression` = 1 Zug und Druck) | — (bis zum 14.10.2026: fällt in RFEM bei Druck aus – hier trägt er auch Druck) |
 | `MemberImplCompression` | Druckstab | `truss`, „trägt nur: Druck“ | — (bis zum 14.10.2026: fällt in RFEM bei Zug aus – hier trägt er auch Zug) |
-| `MemberImplCable` | Seil | `truss` | Seiltheorie (Durchhang, Ausfall bei Druck) fehlt |
+| `MemberImplCable` | Seil | `seil`, „trägt nur: Zug“ (Kettenlinie nach Theorie III. Ordnung) | — (bis zum 14.10.2026: `truss`, Seiltheorie (Durchhang, Ausfall bei Druck) fehlt) |
 | `MemberImplBuckling` | Knickstab | `beam` | — |
 | `MemberImplSpring`, `MemberImplDamper` | Feder-/Dämpferstab | `truss` | nur die Achssteifigkeit |
 | `MemberImplCoupling…` | Kopplungen | `beam` bzw. `truss` | — |
@@ -548,7 +548,13 @@ Importprotokoll:
 
 `rfem6_db.stab_nur` setzt „trägt nur“ (seit 14.10.2026); ein vorher
 gespeichertes Modell bekommt beim Öffnen einen Importhinweis „zugstab“, und
-`rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um.
+`rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um. Ein Seil
+kommt seit dem 14.10.2026 als Seil an („1 Seil trägt nur Zug (fällt wie in
+RFEM bei Druck aus; Durchhang als Kettenlinie nach Theorie III. Ordnung): S1“),
+das Modell trägt dazu das Merkmal `meta["rfem_seile"]`; fehlt es, kommt
+derselbe Hinweis, und die Umstellung macht aus dem Fachwerkstab wieder ein
+Seil. Seilenden auf einem Körper hängen wie die Enden der Zugstäbe an dessen
+Netz (`fugen.stabenden_koppeln`).
 
 Ein unbekannter Tabellenname wird als Balken übernommen und mit seinem Namen
 genannt — eine neue RFEM-Version bleibt so lesbar.

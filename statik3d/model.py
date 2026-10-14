@@ -217,15 +217,16 @@ def zugstab_hinweis(model) -> list:
     """Ein Modell, das vor dem 14.10.2026 aus RFEM 6 uebernommen wurde, kennt
     seine Zugstaebe nicht: der Import legte einen RFEM-Zugstab als
     Fachwerkstab an, der auch Druck trug (am Drehlager alle 64 Staebe, S57 mit
-    -0,59 kN im LF1). Beim **Oeffnen** einer solchen Datei - Quelle eine
-    .rf6-Datei, ohne das Merkmal des Imports (rfem6_db.ZUGSTAEBE_MERKMAL),
-    mit Fachwerkstaeben ohne „trägt nur“ - steht ein Importhinweis „zugstab“
-    mit der Umstellung als Vorschlag (rfem6_db.zugstaebe_aus_rfem liest die
-    Stabtypen aus der RFEM-Datei nach) und eine Zeile fuers Protokoll.
-    Umgestellt wird nichts: das loest der Anwender aus. Rueckgabe die Zeilen."""
+    -0,59 kN im LF1), ebenso ein RFEM-Seil. Beim **Oeffnen** einer solchen
+    Datei - Quelle eine .rf6-Datei, ohne die Merkmale des Imports
+    (rfem6_db.ZUGSTAEBE_MERKMAL und SEILE_MERKMAL), mit Fachwerkstaeben ohne
+    „trägt nur“ - steht ein Importhinweis „zugstab“ mit der Umstellung als
+    Vorschlag (rfem6_db.zugstaebe_aus_rfem liest die Stabtypen aus der
+    RFEM-Datei nach) und eine Zeile fuers Protokoll. Umgestellt wird nichts:
+    das loest der Anwender aus. Rueckgabe die Zeilen."""
     meta = getattr(model, "meta", None) or {}
     quelle = str(meta.get("quelle", "") or "")
-    if not quelle.lower().endswith(".rf6") or meta.get("rfem_zugstaebe"):
+    if not quelle.lower().endswith(".rf6") or (meta.get("rfem_zugstaebe") and meta.get("rfem_seile")):
         return []
     frei = []
     for name, mem in (getattr(model, "members", None) or {}).items():
@@ -235,9 +236,10 @@ def zugstab_hinweis(model) -> list:
     if not frei:
         return []
     datei = os.path.basename(quelle)
-    text = (f"Aus RFEM 6 übernommen vor dem 14.10.2026: {len(frei)} Fachwerkstäbe tragen Zug und Druck. "
-            "Ein RFEM-Zugstab fällt dort bei Druck aus, hier trug er bis zum 14.10.2026 auch Druck – "
-            f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen?")
+    anzahl = "1 Fachwerkstab trägt" if len(frei) == 1 else f"{len(frei)} Fachwerkstäbe tragen"
+    text = (f"Aus RFEM 6 übernommen vor dem 14.10.2026: {anzahl} Zug und Druck. "
+            "Ein RFEM-Zugstab oder -Seil fällt dort bei Druck aus, hier trug er bis zum 14.10.2026 auch Druck – "
+            f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen bzw. Seile als Seil anlegen?")
     vorschlag = ("Stabtypen aus der RFEM-Datei nachlesen: statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell) "
                  "– oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
     hinweise = getattr(model, "importhinweise", None)
@@ -1627,7 +1629,9 @@ class TempLoad:
         if not (0 <= int(self.elem) < len(model.elements)) or not self.dT:
             return 0.0
         e = model.elements[int(self.elem)]
-        if getattr(e, "typ", "") not in ("truss", "cable"):
+        # Fachwerkstab und Seil (bis zum 14.10.2026 stand hier "cable" - einen
+        # Elementtyp dieses Namens gibt es nicht, ein Seil hatte die Kraft 0)
+        if getattr(e, "typ", "") not in ("truss", "seil"):
             return 0.0
         mat = model.materials.get(getattr(e, "mat", ""))
         sec = model.sections.get(getattr(e, "sec", ""))

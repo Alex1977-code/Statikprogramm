@@ -1768,7 +1768,8 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     stab: set = set()
     andere: set = set()
     for e in model.elements:
-        (stab if e.typ in ("beam", "truss") else andere).update(int(x) for x in e.nodes)
+        # Seile wie Fachwerkstaebe (14.10.2026: RFEM-Seile kommen als Seil an)
+        (stab if e.typ in ("beam", "truss", "seil") else andere).update(int(x) for x in e.nodes)
     baum = cKDTree(N)
     unendlich = float("inf")
     for f in starre:
@@ -2010,7 +2011,9 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
     stab: dict = {}
     andere: set = set()
     for i, e in enumerate(model.elements):
-        if e.typ in ("beam", "truss"):
+        # Seilenden wie die der Zugstaebe (14.10.2026: RFEM-Seile kommen als
+        # Seil an, bis dahin als Fachwerkstab - sonst hingen sie im Leeren)
+        if e.typ in ("beam", "truss", "seil"):
             for x in e.nodes:
                 stab.setdefault(int(x), []).append(i)
         else:

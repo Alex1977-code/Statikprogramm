@@ -38,6 +38,21 @@ Geprueft mit geschlossenen Loesungen:
   Lastfälle“ steht der Fehler im Theoriekapitel, und das Ergebnis sagt
   „I. Ordnung“ statt „III. Ordnung“.
 
+3. **RFEM-Seile** (MemberImplCable) kamen beim Import als Fachwerkstab ohne
+   Ausfall an und trugen Druck. Seither legt der Import sie als Seil an
+   (Elementtyp seil, „trägt nur“ Zug): nach Theorie I./II. Ordnung ein
+   Zugstab, der bei Druck ausfällt, nach Theorie III. Ordnung die
+   Kettenlinie. Ein früher gespeichertes Modell bekommt beim Öffnen den
+   Hinweis wie für Zugstäbe; die Umstellung (rfem6_db.zugstaebe_aus_rfem)
+   macht aus den Seilen wieder Seile. Seilenden auf einem Körper hängen an
+   dessen Netz wie die Enden der Zugstäbe (fugen.stabenden_koppeln), und eine
+   Temperatur-Vorspannung auf einem Seil zählt als Vorspannkraft.
+
+* synthetische rf6: Seil und Balken zwischen denselben Knoten, Druck 10 kN:
+  das Seil fällt aus, der Balken trägt 10 kN; Protokoll und Merkmal.
+* gespeichertes Modell (Seil als Fachwerkstab, ohne Merkmal): Hinweis,
+  Umstellung zum Seil, danach kein Hinweis mehr.
+
 Aufruf:  python -m tests.test_stab_nachzug
 """
 import math
@@ -282,9 +297,148 @@ def test_seil_streckenlast_gesperrt():
           res is not None and res.info.get("theorie") != "III. Ordnung", str(res.info.get("theorie") if res else "-"))
 
 
+# --------------------------------------------------------------------------
+# 3. RFEM-Seile
+# --------------------------------------------------------------------------
+def _rf6_seil(tmp, mit_zugstab=False):
+    """Synthetische rf6: Stab 1 Seil (MemberImplCable) und Stab 2 Balken
+    zwischen denselben zwei Knoten (Knoten 1 fest, Knoten 2 in x frei);
+    ``mit_zugstab``: dazu Stab 3, ein Zugstab daneben."""
+    import sqlite3
+    import zipfile
+    from tests.test_rfem6 import INF, build_db
+    db = os.path.join(tmp, "model.db")
+    knoten = [(0, 0, 0), (1, 0, 0)] + ([(0, 1, 0), (1, 1, 0)] if mit_zugstab else [])
+    linien = [[1, 2], [1, 2]] + ([[3, 4]] if mit_zugstab else [])
+    staebe = [(1, None, None, "MemberImplTension"), (2, None, None, "MemberImplBeam")]
+    if mit_zugstab:
+        staebe.append((3, None, None, "MemberImplTension"))
+    lager = [("Fest", (INF,) * 6, (0,) * 6, None, [1] + ([3, 4] if mit_zugstab else [])),
+             ("Gleit", (0.0, INF, INF, INF, INF, INF), (0,) * 6, None, [2])]
+    build_db(db, nodes=knoten, lines=linien, members=staebe, supports=lager)
+    con = sqlite3.connect(db)
+    try:
+        spalten = [r[1] for r in con.execute("PRAGMA table_info(MemberImplTension)")]
+        con.execute("CREATE TABLE MemberImplCable AS SELECT * FROM MemberImplTension WHERE 0")
+        con.execute(f"INSERT INTO MemberImplCable SELECT {', '.join(spalten)} FROM MemberImplTension WHERE id=1")
+        con.execute("DELETE FROM MemberImplTension WHERE id=1")
+        con.execute("UPDATE Member SET impl_table='MemberImplCable' WHERE id=1")
+        con.commit()
+    finally:
+        con.close()
+    rf6 = os.path.join(tmp, "seil.rf6")
+    with zipfile.ZipFile(rf6, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(db, "model.db")
+        z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1773229130\n")
+    os.remove(db)
+    return rf6
+
+
+def _arten(m, stab):
+    return [(m.elements[i].typ, m.elements[i].nur) for i in m.members[stab].elements]
+
+
+def test_rfem_seil_import():
+    print("\n--- 3: RFEM-Seil beim Import – Seil, trägt nur Zug ---")
+    import shutil
+    import tempfile
+    from statik3d.importers import rfem6_db as R6
+    tmp = tempfile.mkdtemp()
+    try:
+        log = []
+        m = R6.read_rf6(_rf6_seil(tmp), log=log)
+        check("RFEM-Seil kommt als Seil mit „trägt nur Zug“ an", _arten(m, "S1") == [("seil", "zug")],
+              str(_arten(m, "S1")))
+        check("das Protokoll nennt das Seil", any("Seil" in z and "S1" in z and "nur Zug" in z for z in log),
+              next((z.strip() for z in log if "Seil" in z), "-"))
+        check("keine Warnung „Seiltheorie fehlt“ mehr", not any("Seiltheorie" in z for z in log))
+        check("das Modell trägt das Merkmal der Seile", bool(m.meta.get("rfem_seile")), str(m.meta.get("rfem_seile")))
+        lc = m.add_load_case("D")
+        lc.gravity = [0, 0, 0]
+        m.load_node(1, Fx=-10e3, case="D")
+        r = solver.solve_static(m, case="D")
+        z = m.members["S1"].elements[0]
+        b = m.members["S2"].elements[0]
+        N_s, N_b = float(r.beam_forces[z]["N"][1]), float(r.beam_forces[b]["N"][1])
+        check("unter Druck fällt das Seil aus, der Balken trägt 10 kN",
+              list(r.info.get("ausfall") or []) == [z] and abs(N_s) < 1e-9 and abs(N_b + 10e3) < 1e-6,
+              f"ausgefallen {r.info.get('ausfall')}, N Seil {N_s:.3g} N, N Balken {N_b:.6g} N")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_rfem_seil_gespeichert():
+    print("\n--- 3: gespeichertes Modell von vor dem 14.10.2026 – Hinweis und Umstellung zum Seil ---")
+    import shutil
+    import tempfile
+    from statik3d.importers import rfem6_db as R6
+    tmp = tempfile.mkdtemp()
+    try:
+        rf6 = _rf6_seil(tmp, mit_zugstab=True)
+        m = R6.read_rf6(rf6, log=[])
+        for e in m.elements:              # so legte der Import es bis zum 14.10.2026 an
+            if e.typ == "seil":
+                e.typ = "truss"
+            e.nur = ""
+        m.meta.pop("rfem_zugstaebe", None)
+        m.meta.pop("rfem_seile", None)
+        m.meta["quelle"] = rf6
+        pfad = os.path.join(tmp, "alt.json")
+        m.save(pfad)
+        alt = Model.load(pfad)
+        h = [x for x in alt.importhinweise if x.get("art") == "zugstab" and not x.get("erledigt")]
+        check("beim Öffnen: ein Hinweis, der die Seile nennt", len(h) == 1 and "Seil" in h[0].get("text", ""),
+              h[0].get("text", "")[:160] if h else "kein Hinweis")
+        check("von selbst wird nichts umgestellt", _arten(alt, "S1") == [("truss", "")])
+        aus = R6.zugstaebe_aus_rfem(alt, log=[])
+        check("Umstellung: das Seil wird Seil, der Zugstab nur Zug, der Balken bleibt",
+              _arten(alt, "S1") == [("seil", "zug")] and _arten(alt, "S3") == [("truss", "zug")]
+              and _arten(alt, "S2") == [("beam", "")], f"{_arten(alt, 'S1')} {_arten(alt, 'S3')} {aus}")
+        check("Umstellung: sie nennt das Seil", aus.get("seil") == ["S1"] and aus.get("zug") == ["S3"], str(aus))
+        alt.save(pfad)
+        wieder = Model.load(pfad)
+        check("nach dem Speichern: kein neuer Hinweis, das Seil bleibt Seil",
+              not any(x.get("art") == "zugstab" and not x.get("erledigt") for x in wieder.importhinweise)
+              and _arten(wieder, "S1") == [("seil", "zug")])
+        # am 14.10.2026 mit Zugstaeben, aber noch ohne Seile uebernommen
+        m2 = R6.read_rf6(rf6, log=[])
+        for e in m2.elements:
+            if e.typ == "seil":
+                e.typ, e.nur = "truss", ""
+        m2.meta.pop("rfem_seile", None)
+        m2.meta["quelle"] = rf6
+        m2.save(pfad)
+        h2 = [x for x in Model.load(pfad).importhinweise if x.get("art") == "zugstab" and not x.get("erledigt")]
+        check("Merkmal der Zugstäbe, aber nicht der Seile: auch dann der Hinweis", len(h2) == 1,
+              h2[0].get("text", "")[:120] if h2 else "kein Hinweis")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_seilende_am_koerper():
+    print("\n--- 3: Seilende auf einem Körper hängt an dessen Netz; Temperatur-Vorspannung als Kraft ---")
+    from statik3d import fugen
+    import tests.test_stabende as TS
+    m, fuss, _kopf, innen, _oben2, _a3, _b3 = TS._modell()
+    for i in m.members["Zug"].elements:
+        m.elements[i].typ = "seil"
+        m.elements[i].nur = "zug"
+    b = fugen.stabenden_koppeln(m, [])
+    partner = {int(k.node_a) for k in m.kopplungen}
+    check("das Seilende in der Deckelfläche hängt am Netz wie ein Zugstabende",
+          b["stabenden"] == 2 and fuss in partner and innen in partner, str(b["anschluesse"]))
+    from statik3d.model import TempLoad
+    i = m.members["Zug"].elements[0]
+    mat, sec = m.materials[m.elements[i].mat], m.sections[m.elements[i].sec]
+    soll = mat.E * sec.A * mat.alpha * 100.0
+    nahe("Temperatur-Vorspannung auf einem Seil: die Kraft E A alpha (-dT)",
+         TempLoad(i, -100.0).vorspannkraft(m), soll, 1e-12, "N")
+
+
 def main():
     for t in (test_pendel_saitenform, test_kg_saitenform_je_art, test_zugband_gegen_hand,
-              test_seil_streckenlast, test_seil_streckenlast_gesperrt):
+              test_seil_streckenlast, test_seil_streckenlast_gesperrt,
+              test_rfem_seil_import, test_rfem_seil_gespeichert, test_seilende_am_koerper):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
