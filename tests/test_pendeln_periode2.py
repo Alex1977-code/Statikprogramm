@@ -8,7 +8,7 @@ Ingenieurgrößen definieren: Restwechsel nur an Knoten mit zusammen < 0,1 % der
 Kontaktkraft und Klaffung/Durchdringung < 1 µm, beides einstellbar.“
 
 Das Pruefmodell pendelt sicher mit Periode 2 (gefunden in einer Suche ueber
-rund 300 kleine Modelle, scratchpad kpd_werk/e2, e9): Block B 1 x 1 x 1 m,
+rund 380 kleine Modelle, scratchpad kpd_werk/e1, e2, e9): Block B 1 x 1 x 1 m,
 tet10, Zellweite 0,2 m, auf einem Flaechenlager „Starr“ an der Sohle (starr,
 Ausfall bei Zug, Reibung mu = 0,6 in der Ebene), oben Druck p1 mit Ausmitte
 (p1 (1 + 1,8 (2 y - 1)), die Kante y = 0 hebt ab) und Schub 0,7 mu p1 unter
@@ -23,10 +23,10 @@ waehrend der Iteration geschlossen (Protokoll „Halt für Teile ohne
 geschlossene Bedingung“). Darum stimmt die Summe der Auflagerkraefte von
 Block B mit und ohne die neue Regel nicht mit der Last ueberein (25 bzw.
 29 kN in z bei 500 kN, gemessen 14.10.2026) - das gehoert nicht zu dieser
-Regel und wird hier nicht geprueft. In einer Suche ueber rund 300 kleine
+Regel und wird hier nicht geprueft. In einer Suche ueber rund 680 kleine
 Modelle pendelte keines, das ohne Halt oder Hilfsfesselung im Gleichgewicht
-steht, mit Periode 2 und kleinem Kraftwechsel (kpd_werk/e9, e13 bis e16). Das Problem ist homogen in der Last: mit p1 = 0,5
-N/mm2 pendelt er mit 28,8 kN (0,048 % der Kontaktkraft) und 0,6 µm, mit
+steht, mit Periode 2 und kleinem Kraftwechsel (kpd_werk/e9, e13 bis e16).
+Das Problem ist homogen in der Last: mit p1 = 0,5 N/mm2 pendelt er mit 28,8 kN (0,048 % der Kontaktkraft) und 0,6 µm, mit
 p1 = 5 N/mm2 mit 288 kN (0,44 %) und 6 µm.
 
 Was hier belegt wird:

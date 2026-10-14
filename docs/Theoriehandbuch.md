@@ -843,6 +843,25 @@ verriegelten Stäben aktiv, verriegeln, weiter. Die früheren verlieren Kraft,
 ausgewiesen je Stab: mit zwei Ankern am Klemmteil verliert der erste
 k_1·F_2/(k_K + k_1), 60 kN von 500 kN, geschlossen und gerechnet gleich.
 
+**Spannschritt in Stufen (14.10.2026).** Entscheidung des Anwenders: „Vorspannung
+als eigenen, ggf. gestuften Spannschritt vor den äußeren Lasten aufbringen.“
+Bis dahin wirkte das Kräftepaar in einem Zug: der Spannschritt rechnete mit
+F_S = F = F_lock + paar(F_soll) als sofort voll wirkendem Anteil, und
+`plastizitaet.stufenlast` gab damit in jeder Laststufe der Plastizität die
+volle Last; mit Kontakt ging ein Lauf von der Geometrie bis zur vollen Kraft.
+Jetzt rechnet Stufe k von n mit F_k = F_lock + (k/n)·paar(F_soll) und F_S = F_k,
+vom plastischen und vom Kontaktzustand der Stufe k−1 aus; verriegelt wird nach
+Stufe n in deren Lage, die Herleitung oben gilt unverändert, N = F_soll. Mit
+n = 1 ist es die Rechnung bis zum 14.10.2026 (1,0·paar(F_soll) ist dieselbe
+Zahl). n = `Plastizitaet.spannstufen`, 0 heißt automatisch:
+`vorspannkraft.SPANNSTUFEN_AUTOMATISCH` = 3 mit Kontakt oder Fließen, sonst 1 -
+Reibung und Fließen hängen am Weg, linear ist das Ergebnis wegunabhängig; drei
+wie die Vorgabe der Laststufen, gewählt und nicht gemessen. Gemessen
+(`tests/test_spannschritt_stufen.py`): an den wegunabhängigen Prüfmodellen
+(reibungsfreies Spaltelement; Würfel einachsig und monoton fließend)
+N_verankert = F_soll mit Abweichung 0 und dasselbe u wie in einem Schritt
+(max |Δu| = 0).
+
 **Linear: Einflussmatrix.** Gleichzeitig gespannt und ohne Kontakt,
 Plastizität oder Ausfall: A_ij = N_i unter der Anfangsdehnung 1 N im Stab j
 (eine Zerlegung, n Lösungen), P = A⁻¹·F_soll. Unter der Vorspannung allein
@@ -3455,6 +3474,127 @@ dem Laufbuch ableitbar, die Zusammenfassung gehört aber zur Kennzeichnung
 (Vorschlag 2) und wird dort entschieden. Ebenso die Einträge der inneren
 Kontaktläufe des Ausfallwegs (siehe „Grenzen").
 
+### 4.0c Pendeln mit Periode 2: Einfrieren und Prüfung; vorläufige Ergebnisse (14.10.2026)
+
+Entscheidung des Anwenders vom 14.10.2026: „Bei Pendeln mit Periode 2 nicht
+halbieren, sondern erkennen und stabilisieren: Statuswechsel mit Toleranzen
+(Durchdringung g_tol, Zug p_tol) oder Status pendelnder Knoten einfrieren mit
+anschließender Prüfung. Konvergenz des Kontaktlaufs über Ingenieurgrößen
+definieren: Restwechsel nur an Knoten mit zusammen < 0,1 % der Kontaktkraft und
+Klaffung/Durchdringung < 1 µm, beides einstellbar.“
+
+**Erkennen.** Ab Phase 2 merkt `solve_with_contact` je Runde den Status jeder
+Bedingung, s_i = (aktiv, gleitet, fließt), und die Gleitrichtung d_i gleitender
+Knoten (`ContactSystem.zustand_bits`, `gleitrichtungen`). Gilt in Runde n
+s(n) = s(n−2) ≠ s(n−1) für den ganzen Zustand und kehrt jede Gleitrichtung
+zurück, |d_i(n) − d_i(n−2)| ≤ max(QUER_TOL, 0,1·|d_i(n) − d_i(n−1)|), werden die
+Kräfte dieser Lösung für die Menge P der Bedingungen gemerkt, die sich zwischen
+s(n) und s(n−1) unterscheiden oder deren Richtung um mehr als QUER_TOL springt
+(`_pendel_kandidaten`, `ContactSystem.kraefte_von`, dieselbe Rechnung wie
+`kraefte_der_loesung`, ohne etwas zu setzen). Galt dasselbe schon in Runde n−1
+mit derselben Menge, ist das Pendeln bestätigt (A B A B). Erkannt wird am ganzen
+Zustand und nicht je Knoten: je Knoten erkannt, fror die Regel am Prüfmodell in
+Runde 8 einen Knoten ein, der nur zweimal hin und her sprang, während sich der
+Rest noch einspielte; danach lief der Lauf 76 statt 57 Runden bis zum Deckel,
+und der eingefrorene Knoten trug am Ende 0,29 % der Kontaktkraft. Die
+Gleitrichtungen gehören zum Zustand, weil am Block auf dem Lager in
+Flächenachsen (μ = 0,6, Schub 1,5 μp) neben dem einen Knoten, der öffnete und
+schloss, 14 gleitende Knoten jede Runde ihre Richtung hin und her drehten; mit
+dem Knoten allein eingefroren, drehten sie weiter, bis die Grenze der
+Richtungsrunden (QUER_RUNDEN_MAX) den Lauf beendete.
+
+**Messen.** Je Knoten i ∈ P aus den Kräften beider Zustände A und B:
+der Kraftwechsel f_i = √((F_n,A − F_n,B)² + |F_t,A − F_t,B|²) mit der ungekappten
+Normalkraft (an einer geschlossenen exakten Bedingung der Multiplikator, Zug
+negativ; offen 0), und der Weg w_i: wechselt die Aktivität, |g| im offenen
+Zustand (Klaffung oder Durchdringung); wechselt Haften/Gleiten oder die
+Richtung, |d_t,A − d_t,B| (Weg in der Fuge zwischen den Zuständen).
+
+**Einfrieren.** Die Bedingungen in P bekommen `Constraint.pendel_fest`: in
+`_update_states` wünschen sie kein Öffnen oder Schließen mehr, wechseln nicht
+zwischen Haften und Gleiten, und ein gleitender Knoten behält seine Richtung
+mit der Reibkraft μF_n dieser Lösung; in das Residuum und die Liniensuche des
+Gleitens gehen sie nicht mehr ein. Die Bedingung selbst bleibt: geschlossen
+g = 0 exakt mit Multiplikator, offen keine Kraft. Eingefroren wird im Zustand
+der Lösung, an der das Pendeln bestätigt ist. Die übrigen Bedingungen
+iterieren weiter; ein weiteres Pendeln wird ebenso erkannt und kommt dazu. Ein
+eingefrorener geschlossener Knoten meldet seinen Zug ungekappt.
+
+**Prüfen.** Endet der Lauf, misst `ContactSystem.pendel_pruefen` an der letzten
+Lösung je eingefrorenem Knoten den Verstoß v_i (Zug, Kegelüberschreitung,
+Abweichung der Reibkraft von μF_n längs der Versuchskraft) und die
+Durchdringung p_i eines offenen. Konvergiert heißt
+
+    Σ_i max(f_i, v_i) ≤ η_F · F_Kontakt   und   max_i max(w_i, p_i) ≤ η_w
+
+mit F_Kontakt der Summe der Druckkräfte dieser Lösung, η_F =
+`Plastizitaet.pendel_kraft_anteil` (10⁻³) und η_w = `pendel_weg` (10⁻⁶ m), und
+der Rest muss streng oder nach dem Ingenieurkriterium konvergiert sein. Sonst
+ist der Lauf nicht konvergiert, Grund „pendeln“ (`solver._pendel_abschluss`,
+Laufbuch-Eintrag `pendeln`). Eine Schranke 0 schaltet ab
+(`PENDEL_STABILISIEREN`, `pendel_schwellen`): dann ist alles wie vor dem
+14.10.2026, am Prüfmodell max |Δu| = 0 und gleich viele Runden.
+
+**Warum Einfrieren und keine Hysterese.** Die Prüfung ist genau die
+Konvergenzbedingung des Anwenders: die eingefrorenen Knoten sind die
+Restwechsel, ihre Kraft und ihr Weg werden gemessen. Eine Hysterese
+(Statuswechsel erst ab g_tol bzw. p_tol) entschiede jeden Wechsel aller Knoten
+an einem Band; wo die Rechnung darin stehen bleibt, hinge am Weg, und die
+Abweichung wäre nur durch das Band beschränkt, nicht gemessen. Ein Band auf die
+Durchdringung beschränkt die Kraft auch nicht: an der exakten Bedingung des
+Drehlagers (örtliche Steifigkeit um 2·10¹⁰ N/m) sind 1 µm rund 20 kN. Und wer
+nicht pendelt, rechnet mit dem Einfrieren bitgleich, mit einer Hysterese nicht.
+
+**Zusammenspiel.** Das Ingenieurkriterium (§ 4, Abschluss nach dem
+Ingenieurkriterium) prüft je Runde zuerst und misst die Wirkung des Pendelns
+auf das ganze Ergebnis; nimmt es an, ist der Lauf fertig wie bisher. Die neue
+Regel greift danach und misst die Ursache an den pendelnden Knoten. Der
+Pendelschutz B4 (UMKEHR_HAFTET, PENDEL_EINZELN) ändert die Aktualisierung
+pendelnder Reibknoten in jeder Runde und löst so viele Zyklen auf, bevor sie
+bestätigt sind; am Block aus `tests/test_kontakt_pendeln` ohne Pendelschutz
+endet der Lauf mit der neuen Regel nach 20 Runden mit dem Grund „pendeln“ -
+der Kantenknoten läuft ±10 µm, die Restwechsel liegen über den Schranken -,
+vorher nach 75 Runden am Deckel; nicht konvergiert ist er beide Male. Eine Plastizität, deren Kontaktlauf nach Einfrieren und Prüfung
+konvergiert ist, halbiert nicht (`_KontaktImNewton.deckel_seit` sieht keinen
+nicht konvergierten Lauf); sie halbiert nur bei echtem Nichtkonvergieren.
+
+**Gemessen** (`tests/test_pendeln_periode2.py`). Ein Pendeln mit Periode 2 in
+einem kleinen Modell zu finden, das ohne Halt im Gleichgewicht steht, gelang
+nicht: in einer Suche über rund 680 Blöcke auf Lagern mit und ohne Reibung,
+mit Abheben, Schub und Seitenlager endeten die gedeckelten Läufe entweder
+ohne Zyklus, mit großen Kraftwechseln (10 bis 140 % der Kontaktkraft, ganze
+Bauteile im Gleiten) oder an Blöcken, die nur der Halt für Teile oder eine
+Hilfsfesselung hält. Das Prüfmodell ist ein Block nahe der Kippgrenze
+(Resultierende bei y = 1,0, der Halt für Teile hält einen Knoten der Sohle;
+die Auflagersumme von Block B liegt darum mit und ohne die Regel um 25 bzw.
+29 kN neben der Last von 500 kN), daneben ein zweiter Block, der die
+Kontaktkraft groß macht. Ohne die Regel 62 Runden bis zum Deckel; mit ihr
+erkannt in Runde 27, konvergiert in Runde 28 mit 28,8 kN = 0,048 % der
+Kontaktkraft und 0,60 µm; mit Fließen (zwei Laststufen) vorher dreimal
+halbiert, nachher nicht, 8 statt 14 Kontaktläufe. Mit der zehnfachen Last auf
+Block B: 0,44 % und an der letzten Lösung 6,05 µm Durchdringung der
+eingefrorenen offenen Bedingung, nicht konvergiert.
+
+**Vorläufige Ergebnisse.** Entscheidung des Anwenders vom 14.10.2026: jede
+Laststufe mit nicht konvergiertem Kontaktlauf wird im Ergebnis gekennzeichnet.
+`solver.vorlaeufige_stellen` liest aus dem Laufbuch die Stellen, an denen ein
+zählender Lauf (§ 4.0b) nicht konvergiert ist, mit Art, Stufe und Lastanteil
+(`plastizitaet._newton` führt den Lastanteil je Aufruf in `aufrufe_last`);
+`kontakt_vorlaeufig` macht daraus „vorläufig – Kontakt nicht konvergiert in
+Stufe 2 (bis 100 % der Last), Abschluss“, `vorlaeufig_eintragen` legt es am
+Ende von `_solve_loads` in `res.info["vorlaeufig"]` ab. Zusammenfassung,
+Konvergenzstand, Rechenliste und Bericht lesen es.
+
+**Vorbereitet, aus: Kontaktlauf konvergiert im Abbruch der Plastizität.**
+`plastizitaet._kontakt_offen` fragt `_KontaktImNewton.kontakt_offen`: leer, wenn
+der letzte volle Kontaktlauf konvergiert ist, sonst der Grund mit Laufnummer;
+aufgerufen wird es mit dem Stabstatus an denselben Stellen (`_offen`). Der
+Schalter `plastizitaet.KONTAKT_IN_KONVERGENZ` steht aus, dann ist es immer leer.
+Eingeschaltet (nur in der Prüfung) nahm die Plastizität am Prüfmodell die
+erste Stufe nicht mehr im ersten Newton-Schritt an, dessen Kontaktlauf am
+Deckel endete, sondern erst mit einem konvergierten Lauf (8 statt 6
+Newton-Schritte). Eingeschaltet wird nach der V36-Klärung und auf Freigabe.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
@@ -5889,6 +6029,10 @@ waren es 752, davon 650 verworfen (jeder solche Lauf 69 Runden bis zur Grenze
 der Richtungsrunden). In der gemeinsamen Iteration (5e.3) wird eine Stufe,
 in der nach abgekürzten Läufen ein voller Kontaktlauf am Deckel endet,
 verschachtelt wiederholt.
+Seit dem 14.10.2026 zählt ein Kontaktlauf, dessen Pendeln mit Periode 2
+eingefroren und geprüft ist, nicht als gescheitert, wenn die Restwechsel
+unter den Schranken liegen (§ 4.0c): dann wird nicht halbiert. Bis dahin
+halbierte jeder solche Lauf am Deckel die Stufe.
 
 ### 5e.3 Fließen und Kontakt gemeinsam iteriert (23./24.09.2026)
 

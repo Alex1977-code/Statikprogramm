@@ -879,6 +879,27 @@ nach Theorie II. und III. Ordnung gibt. In der Ansicht steht die Kraft als „F_
 Lasttabelle als „Vorspannkraft (Soll)“ mit Gruppe. Kraft und Gruppe ändern
 Sie in der Maske der einzelnen Last.
 
+**Spannschritt in Stufen** (seit 14.10.2026). Bis zum 14.10.2026 brachte das
+Programm den Spannschritt in einem Zug auf: mit Kontakt rechnete ein
+Kontaktlauf von der unbelasteten Lage bis zur vollen Kraft, mit Fließen wirkte
+die volle Kraft in jeder Laststufe der Plastizität. Jetzt wächst das Kräftepaar
+in n gleichen Stufen auf F_soll, und jede Stufe rechnet Kontakt und Fließen vom
+Zustand der vorigen aus, wie beim Spannen mit der Presse. Unter *Berechnung →
+Einstellungen*, Gruppe „Kontaktlauf und Spannschritt“, steht „Spannschritt in
+… Stufen“. „Automatisch“ ist die Vorgabe und heißt drei Stufen, wenn das
+Modell Kontakt hat oder Fließen gerechnet wird, sonst einen Schritt. Gestuft
+wird dort, weil Reibung und Fließen vom Weg abhängen: eine Fuge, die sich beim
+Anziehen schließt und haftet, oder ein Lochrand, der unter der Mutter fließt,
+folgt der Geschichte des Spannens und nicht einem Sprung von null auf F_soll;
+dazu beginnt jede Stufe beim Zustand der vorigen, und ihre Kontaktläufe haben
+weniger Zustandswechsel vor sich. Ohne Kontakt und Fließen ist die Rechnung
+linear und vom Weg unabhängig, ein Schritt ist dort genau, und weitere
+kosteten nur Zeit. Drei Stufen sind gewählt wie die Vorgabe der Laststufen der
+Plastizität, nicht gemessen. Verriegelt wird in der Lage der letzten Stufe, und
+jeder Stab trägt danach genau F_soll, gleich mit wie vielen Stufen. Im
+Fortschritt steht „Spannschritt Gruppe 1, Stufe 2/3: 66,67 % von F_soll“, im
+Ergebnis `res.info["vorspannung"]["spannstufen"]`.
+
 **Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
 RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
 (ΔT = −N₀/(E·A·α)). Die Lasttabelle und die Maske der Temperaturlast nennen
@@ -2422,6 +2443,28 @@ noch in „N von M“;
 der letzte Lauf muss trotzdem konvergiert sein. Seit dem 24.09.2026 ebenso die
 **verworfenen**: Läufe einer Laststufe, die die gemeinsame Iteration
 aufgegeben und vom Startwert an verschachtelt wiederholt hat.
+
+**Vorläufig – Kontakt nicht konvergiert in Stufe … (seit 14.10.2026).** Bis zum
+14.10.2026 stand an einem Ergebnis mit nicht konvergiertem Kontaktlauf
+„NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“, ohne zu sagen,
+in welcher Laststufe. Seither ist ein solches Ergebnis ausdrücklich vorläufig
+(Entscheidung des Anwenders vom 14.10.2026), und die Kennzeichnung nennt, wo es
+hängt: „vorläufig – Kontakt nicht konvergiert in Stufe 2 (bis 100 % der Last),
+Abschluss“, bei einer reinen Kontaktrechnung „… in Kontaktlauf 1“. Der
+Lastanteil steht dabei, weil die Nummer einer Stufe nach dem Halbieren allein
+nicht mehr sagt, welche Last gemeint ist. Die Kennzeichnung steht in der
+Zusammenfassung des Ergebnisses als eigene Zeile „Ergebnis : vorläufig – …“,
+in der Zusammenfassung der Rechnung als WARNUNG mit den betroffenen
+Lastfällen und Kombinationen, im Konvergenzstand („NICHT konvergiert:
+vorläufig – … (3 von 11 Kontaktläufen nicht konvergiert)“), in der Spalte
+„Meldung“ der Rechenliste und im Bericht unter den Kennwerten des Ergebnisses
+und in den Hinweisen. Sie wird mit dem Ergebnis gespeichert
+(`res.info["vorlaeufig"]`, Text und Stellen) und mit der Ergebnisdatei
+geladen; ältere Ergebnisse bekommen sie aus ihrem Laufbuch. Es zählen dieselben
+Läufe wie oben: der elastische Vorlauf, abgekürzte und verworfene nicht. Endet
+im Spannschritt einer Vorspannkraft ein Kontaktlauf nicht konvergiert, ist der
+Spannzustand vorläufig („… in Spannstufe 1/3“) und mit ihm der Lastfall, der
+von ihm aus rechnet („… in Spannschritt“).
 
 Seit dem 06.10.2026 lesen **Zusammenfassung, Bericht und Rechenliste dieselbe
 Regel**. Sie steht im Rechenkern (`solver.konvergenz_zustand`, für den Kontakt
@@ -6762,6 +6805,72 @@ angenommen, steht dahinter, an welcher Schranke es lag, zum Beispiel
 „Ingenieurkriterium nicht erfüllt: Δu 19.5 µm > 0.498 µm“. An der Rechnung ändert
 das nichts.
 
+**Pendeln mit Periode 2: erkennen, einfrieren, prüfen (seit 14.10.2026).** Bis
+zum 14.10.2026 lief ein Kontaktlauf, dessen Zustand mit Periode 2 hin und her
+sprang und den das Ingenieurkriterium nicht annahm, bis zum Deckel der
+Nachprüfung (40 Wechselrunden), und mit Fließen halbierte die Plastizität dann
+die Laststufe, bis zur Tiefe vier. Am Drehlager-Entwurf endeten so am
+13.10.2026 48 von 50 Kontaktläufen am Deckel, und jeder löste eine Halbierung
+aus. Jetzt erkennt das Programm, wenn der ganze Kontaktzustand zwei Runden
+hintereinander zu dem von zwei Runden vorher zurückkehrt (A B A B). Zum Zustand
+gehören offen oder geschlossen, Haften oder Gleiten, Fließen und die Richtung
+gleitender Knoten. Dann friert es den Status genau der Knoten ein, die zwischen
+den beiden Zuständen wechseln, und rechnet den Rest weiter. Die
+Kontaktbedingung bleibt dabei dieselbe: eine eingefrorene geschlossene
+Bedingung hält ihren Knoten genau an der Fläche, eine offene trägt nichts, ein
+gleitender Knoten behält seine Richtung. Eingefroren ist nur die Entscheidung
+über den Status.
+
+Am Ende prüft das Programm die eingefrorenen Knoten an der letzten Lösung. Der
+Kontaktlauf gilt als konvergiert, wenn diese Restwechsel zusammen höchstens
+0,1 % der Kontaktkraft tragen und ihre Klaffung bzw. Durchdringung höchstens
+1 µm beträgt. Als Kraft zählt je Knoten das Größere aus der Kraft, die zwischen
+den beiden Zuständen wechselt, und dem Verstoß an der letzten Lösung (Zug an
+einem eingefrorenen geschlossenen Knoten, Überschreiten des Reibkegels). Als Weg
+zählt die Klaffung oder Durchdringung im offenen Zustand, bei Haften und
+Gleiten der Weg in der Fuge zwischen den beiden Zuständen. Beide Schranken
+stellen Sie unter *Berechnung → Einstellungen*, Gruppe „Kontaktlauf und
+Spannschritt“, ein; sie werden mit dem Modell gespeichert und gelten für jeden
+Kontaktlauf, auch ohne Fließen. Liegt der Rest darüber, ist der Lauf nicht
+konvergiert (im Laufbuch Grund „pendeln“), das Ergebnis ist vorläufig, und mit
+Fließen wird die Stufe halbiert wie bei jedem echten Nichtkonvergieren. Liegt
+er darunter, ist der Lauf konvergiert, und die Plastizität halbiert nicht. Eine
+Schranke 0 schaltet die Regel ab; dann rechnet das Programm wie vor dem
+14.10.2026. Wo nichts pendelt, rechnet es bitgleich wie vorher.
+
+Das Protokoll nennt die pendelnden Knoten mit Bauteil, Anzahl, Kraftanteil und
+Klaffung, beim Erkennen etwa „Kontakt: Pendeln mit Periode 2 erkannt in Runde
+27 - 1 Knoten eingefroren (B (Starr uz (Ausfall bei Zug)): 1; öffnet/schließt),
+Kraftwechsel zusammen 28,8 kN = 0,0477 % der Kontaktkraft 60 530 kN, Weg bis
+0,541 µm - geprüft wird an der letzten Lösung“ und am Ende „Kontakt:
+Kontaktlauf nach Ingenieurgrößen konvergiert - …“ mit Ort, Art, Kraftwechsel
+und Klaffung je Knoten, oder „… die Restwechsel überschreiten die Schranken“.
+
+Die Regel ergänzt das Ingenieurkriterium, sie ersetzt es nicht. Das Kriterium
+prüft zuerst und misst die Wirkung des Pendelns auf das ganze Ergebnis
+(Verschiebungen, Vergleichsspannung, Gleichgewicht); nimmt es einen Zustand an,
+ist der Lauf fertig wie bisher. Die neue Regel greift, wenn es ablehnt, und
+misst die Ursache an den pendelnden Knoten selbst. Der Pendelschutz der Reibung
+(seit 08.10.2026) wirkt weiter in jeder Runde und löst viele Zyklen der Reibung
+auf, bevor sie bestätigt sind. Am Prüfmodell der Tests
+(`tests/test_pendeln_periode2.py`, ein Block nahe der Kippgrenze auf einem
+Lager mit Reibung, daneben ein zweiter, gut tragender Block) endete der Lauf
+vorher nach 62 Runden am Deckel, und mit Fließen halbierte die Plastizität
+dreimal. Jetzt ist er nach 28 Runden konvergiert, mit einem Restwechsel von
+0,048 % der Kontaktkraft und 0,6 µm, und die Plastizität halbiert nicht. Mit
+der zehnfachen Last ist der eingefrorene Knoten an der letzten Lösung 6 µm
+durchdrungen; das wird nicht als konvergiert angenommen. Pendeln neben einem
+Knoten auch Gleitrichtungen hin und her, werden sie mit eingefroren und
+mitgeprüft.
+
+**Kontaktlauf konvergiert als Bedingung der Plastizität: vorbereitet, aus
+(14.10.2026).** Nach der Entscheidung des Anwenders kommt die Bedingung
+„Kontaktlauf konvergiert“ erst nach der Klärung des Pendelns am Drehlager
+(Bauteil V36) und auf seine Freigabe ins Abbruchkriterium der Plastizität. Sie
+ist im Programm vorbereitet, aber ausgeschaltet; eingeschaltet nähme eine
+Laststufe erst eine Lösung an, deren letzter Kontaktlauf konvergiert ist, und
+der Newton rechnete sonst weiter. Ausgeschaltet rechnet alles wie vorher.
+
 **Kontaktrunden ohne neue Zerlegung (seit 09.10.2026).** Bis zum 09.10.2026
 zerlegte jede Kontaktrunde das Gleichungssystem neu, sobald sich die Aktivmenge,
 Haften oder Gleiten, das Fließen einer Bedingung oder die Richtung eines
@@ -6848,7 +6957,11 @@ verworfen)“ und in der Schlusszeile „… in 6 Laststufen (2-mal halbiert)“
 Das geschieht höchstens viermal je eingestellter Laststufe. Wozu: ob eine
 Rechnung konvergierte, hing vorher daran, wie die Last geteilt war - der
 gequetschte Block im Test lief mit vier Laststufen weg, mit einer und mit
-acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis.
+acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis. Seit dem 14.10.2026 halbiert sie nicht mehr, wenn
+der Kontaktlauf nur mit Periode 2 pendelte und die eingefrorenen Restwechsel
+unter den Schranken liegen (siehe „Pendeln mit Periode 2“ im Kapitel Kontakt):
+dieser Lauf ist konvergiert. Bis dahin löste jeder solche Lauf am Deckel eine
+Halbierung aus.
 
 **Temperaturlasten und Vorspannungen wirken in den Laststufen sofort voll
 (seit 10.10.2026).**
@@ -10169,6 +10282,16 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   „streng“ gegen. Die Abnahme am Drehlager (Entwurf, LF1, streng gegen
   ingenieurmäßig) steht noch aus; was der erste strenge Lauf zeigte, steht im
   Theoriehandbuch, § 5e.4.
+* **Kontaktlauf und Spannschritt** (seit dem 14.10.2026; *Berechnung →
+  Einstellungen*, eigene Gruppe unter der Plastizität; Einstellungen am Modell,
+  `plastizitaet.pendel_kraft_anteil`, `pendel_weg`, `spannstufen`). „Restwechsel
+  bis“ (Vorgabe 0,1 %) und „Klaffung bis“ (Vorgabe 1 µm) sind die Schranken,
+  unter denen ein Kontaktlauf mit eingefrorenen pendelnden Knoten als
+  konvergiert gilt (siehe „Pendeln mit Periode 2“ im Kapitel Kontakt); 0 schaltet
+  die Regel ab. „Spannschritt in … Stufen“ (Vorgabe „automatisch“: drei mit
+  Kontakt oder Fließen, sonst eine) teilt den Spannschritt einer Vorspannkraft
+  (siehe „Spannschritt in Stufen“ bei den Lastarten). Eine Datei ohne diese
+  Einstellungen bekommt die Vorgaben.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die
