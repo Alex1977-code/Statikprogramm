@@ -228,6 +228,7 @@ def _reiches_modell():
     lc = m.case(m.active_case)
     lc.vorspannungen.append(Vorspannung(ziel="S1", art="stab", kraft=10e3))
     m.load_temp(e, -5.0, case=m.active_case)
+    m.load_beam(e, qz=-1e3, case=m.active_case)
     return m
 
 
@@ -251,6 +252,8 @@ def test_neue_felder_ein_mechanismus():
         "load_cases": {"faktorisiert": False},
         "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
         "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
+        "load_cases.beam_loads": {"bezugslaenge": ""},
+        "load_cases.linienlasten": {"bezugslaenge": ""},
         "": {"stabeinleitung": {"art": "punkt", "d_innen": 0.0, "d_aussen": 0.0}},
     }
     tabelle = getattr(M, "NEUE_FELDER", None) or {}
@@ -317,6 +320,7 @@ def test_neue_felder_ein_mechanismus():
         ("LoadCase.faktorisiert", lambda: setze(lc, "faktorisiert", True)),
         ("Kategorie NZ", lambda: setze(lc, "category", "NZ")),
         ("TempLoad.aus_vorspannung (Merkmal)", lambda: setze(tl, "aus_vorspannung", 952e3)),
+        ("BeamLoad.bezugslaenge", lambda: setze(lc.beam_loads[0], "bezugslaenge", "projektion")),
     ]
     falsch = []
     for name, tun in faelle:

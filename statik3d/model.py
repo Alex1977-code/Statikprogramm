@@ -9618,6 +9618,10 @@ NEUE_FELDER = {
     "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
     # import/lastfaelle (Merkmal „aus Vorspannung“)
     "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
+    # stab/querlast (Bezug einer globalen Stab- bzw. Linienlast: "" = je
+    # Stablaenge, "projektion" = je Laenge der Projektion; seit 14.10.2026)
+    "load_cases.beam_loads": {"bezugslaenge": ""},
+    "load_cases.linienlasten": {"bezugslaenge": ""},
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen)
     "": {"stabeinleitung": asdict(Stabeinleitung())},
 }
