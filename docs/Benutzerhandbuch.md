@@ -900,6 +900,24 @@ jeder Stab trägt danach genau F_soll, gleich mit wie vielen Stufen. Im
 Fortschritt steht „Spannschritt Gruppe 1, Stufe 2/3: 66,67 % von F_soll“, im
 Ergebnis `res.info["vorspannung"]["spannstufen"]`.
 
+**Ankerenden an starren Scheiben und in Volumen im Spannschritt** (seit
+14.10.2026). Bis zum 14.10.2026 verlor ein Ankerende im Spannschritt seine
+Kopplung, wenn es Master einer starren Scheibe war oder als Stabende in einem
+Volumen hing. Der Anker ist im Spannschritt inaktiv, an seinem Ende hing dann
+kein wirksames Element mehr, und das Programm ließ jede Kopplung an einem
+solchen Knoten weg. Der Knoten wurde automatisch gehalten, die Kraft des
+Kräftepaars ging in diese Haltung statt in die Platte, und je Spannstufe stand
+„Knoten K157: F_z = −314,900 kN an einem Knoten ohne Bauteil – Mechanismus“
+im Fortschritt, am Drehlager für alle 16 Anker. Der Spannzustand verformte
+die Platten nicht, und nach dem Verankern trug der Anker weniger als F_soll:
+An einem Prüfkörper (Quader mit Anker, k_A/k_B = 1/4) waren es 80 % der
+Sollkraft. Seither bleibt eine Kopplung wirksam, solange an einem ihrer
+beiden Knoten ein wirksames Element hängt (siehe „Situationen“). Das
+Ankerende folgt der Scheibe oder dem Volumen, das Kräftepaar drückt die
+Platte zusammen, und der Anker trägt nach dem Verankern F_soll. Am Drehlager
+hat der Spannschritt damit so viele Unbekannte wie das ganze System
+(426 867, bis dahin 426 771).
+
 **Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
 RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
 (ΔT = −N₀/(E·A·α)). Die Lasttabelle und die Maske der Temperaturlast nennen
@@ -5171,7 +5189,7 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Ausgangsstellung | „unbewegtes Modell“ oder eine andere Stellung, auf deren Lage die eigene Verschiebung und Verdrehung **aufsetzen** — so entsteht eine Kette von Stellungen (geschlossen → 30° → 60°) |
 | Verschiebung x, y, z [m] | Verschiebung der bewegten Knoten gegen die Ausgangsstellung |
 | Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind die Knoten der Elementgruppen der Stellung; ohne Gruppen alle Knoten ohne Knotenlager — Knoten auf Linien- und Flächenlagern bewegen sich mit) |
-| Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten |
+| Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten, außer eine Kopplung hängt sie an einen wirksamen Knoten |
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
 | Deaktivierte Knoten-, Linien-, Flächenlager | drei Listen zum Anhaken, je Lagerart eine; die Lager heißen darin wie im Modellbaum (ihr Name, sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“): sie greifen in dieser Stellung nicht |
 
@@ -5330,6 +5348,24 @@ Schnittgrößen sind null, Knoten ohne wirksames Element werden
 festgehalten. Im Ergebnisbild einer solchen Situation fehlen die
 abgeschalteten Elemente, und das Modell steht in der Lage, mit der
 gerechnet wurde.
+
+Eine Kopplung entfällt seit dem 14.10.2026 nur noch, wenn an keinem ihrer
+beiden Knoten ein wirksames Element hängt. Ein Knoten ohne eigenes Element,
+den eine Kopplung an einen wirksamen Knoten hängt, rechnet mit, und seine
+Knotenlast wirkt. Ein Stabende, das als Verteilkopplung in einem Volumen
+hängt, braucht dazu einen wirksamen Knoten des Volumens; ist das Volumen
+abgeschaltet, entfällt die Kopplung wie bisher. Bis zum 14.10.2026 entfiel
+eine Kopplung schon, wenn einer ihrer Knoten kein wirksames Element hatte.
+Das traf die Last- und Lagerknoten, die das Programm an einen Körper hängt
+(siehe „Integrierte Knoten und Linien, Stabenden auf Volumen“), in jeder Situation mit einem abgeschalteten
+Element und, weil ein Stab „aus“ in jeder Situation wirkt, in jeder Rechnung
+mit einem solchen Stab. Die Knotenlast fiel dann still weg, ohne Meldung, und
+die Kontrolle ΣF/ΣM sah sie nicht, weil sie schon im Lastvektor fehlte. Ein
+Lager hielt nur noch den losen Knoten, und ein Quader, der nur auf solchen
+Lagern stand, ergab „Gleichungssystem singulär“. Im Spannschritt einer
+Vorspannkraft traf es die Ankerenden (siehe „Ankerenden an starren Scheiben
+und in Volumen im Spannschritt“). Ausgefallene Zugstäbe („nur Zug“ unter
+Druck) betraf es nicht, denn dort baut das Programm kein neues System auf.
 
 ### Register „Auswahl"
 
@@ -7769,6 +7805,9 @@ Elemente an der Stirnfläche 7 % über der konsistenten (47,25 gegen
 Findet das Programm keine Fläche, etwa weil das Stabende im Innern liegt oder
 der Stab schräger steht, bleibt es bei den 1–3 Knoten, und das Protokoll
 sagt warum. Knotenlasten und Lager in Volumen hängen immer an den 1–3 Knoten.
+Diese Kopplungen wirken seit dem 14.10.2026 auch in Situationen mit
+abgeschalteten Elementen und neben einem Stab „aus“; bis dahin fielen sie
+dort weg, und mit ihnen die Knotenlast (siehe „Situationen“).
 
 Beim Import und beim Rechenstart (Abnahme des Netzes) nennt das Programm die
 Stabenden an 1–3 Volumenknoten gebündelt, am Drehlager „48 Stabenden hängen
