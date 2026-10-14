@@ -7209,7 +7209,12 @@ sagt warum. Knotenlasten und Lager in Volumen hängen immer an den 1–3 Knoten.
 Beim Import und beim Rechenstart (Abnahme des Netzes) nennt das Programm die
 Stabenden an 1–3 Volumenknoten gebündelt, am Drehlager „48 Stabenden hängen
 an 1–3 Volumenknoten – verteilende Einleitung über die Stirnfläche möglich
-(Modelleinstellung oder je Stabende)“. Umgestellt wird dabei nichts. Nach der
+(Modelleinstellung oder je Stabende)“. Umgestellt wird dabei nichts. Am
+Rechenstart steht dieser Hinweis in der Warnung zu den netzabhängigen
+Spannungsspitzen derselben Stabenden („48 Stabenden hängen an 1–3 Knoten –
+mögliche netzabhängige Spannungsspitzen … Verteilende Einleitung über die
+Stirnfläche möglich …“), eine Warnung je Stabende statt zwei. Bis zum
+14.10.2026 standen dort zwei Warnungen für dieselben Stabenden. Nach der
 Rechnung prüft das Programm je verteilt eingeleitetem Stabende, ob die
 Kopplung genau die Kraft und das Moment um den Durchstoßpunkt in die Fläche
 gibt, die der Stab in seinen Knoten gibt. Die Toleranz ist die Genauigkeit
@@ -11259,7 +11264,9 @@ Knotenlast, ein Knoten- oder Linienlager oder eine Linienlast auf einer
 Volumenkante. Seit dem 10.10.2026 sucht das Programm sie selbst. Vor der
 Rechnung nennt die Abnahme des Netzes sie gebündelt als Warnung, eine Zeile je
 Art, am Drehlager etwa „64 starre Scheiben koppeln nur einen Lochrand
-(40–45 Knoten)“ und „48 Stabenden hängen an 1–3 Knoten“. Die Warnung hält die
+(40–45 Knoten)“ und „48 Stabenden hängen an 1–3 Knoten“. Bei den Stabenden
+nennt dieselbe Zeile seit dem 14.10.2026 auch den Ausweg, die verteilende
+Einleitung über die Stirnfläche. Die Warnung hält die
 Rechnung nicht an. Lasten und Lager, die eine Fläche tragen, meldet sie nicht;
 in den eingebauten Beispielen meldet sie nur die Endlast der Konsole, die auf
 den sieben Knoten der Oberkante steht. Seit dem 13.10.2026 lässt sich ein

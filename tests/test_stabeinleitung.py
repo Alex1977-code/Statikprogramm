@@ -494,10 +494,15 @@ def test_hinweise_und_spitzen():
           h.startswith("1 Stabende hängt an") and "verteilende Einleitung über die Stirnfläche möglich "
           "(Modelleinstellung oder je Stabende)" in h, h)
     bef = diagnose.abnahme(m, warnungen=True)
-    zeilen = [b.text for b in bef if b.pruefung == SE.PRUEFUNG]
-    check("Netzabnahme (Rechenstart): der Hinweis als WARNUNG, nichts umgestellt",
-          len(zeilen) == 1 and zeilen[0] == h and m.stabeinleitung.art == "punkt"
-          and not any(SE.ist_verteilkopplung(x) for x in m.starrkoerper), zeilen[0] if zeilen else "")
+    # seit der Zusammenfuehrung (14.10.2026) eine Warnung je Stabende: der
+    # Hinweis steht in der Zeile der netzabhaengigen Spitze (spitzenstellen)
+    zeilen = [b.text for b in bef if b.pruefung == SE.PRUEFUNG
+              or (b.pruefung == spitzenstellen.PRUEFUNG and b.objekt == spitzenstellen.STABENDE)]
+    check("Netzabnahme (Rechenstart): eine WARNUNG mit dem Hinweis, nichts umgestellt",
+          len(zeilen) == 1 and "erteilende Einleitung über die Stirnfläche möglich "
+          "(Modelleinstellung oder je Stabende)" in zeilen[0]
+          and m.stabeinleitung.art == "punkt"
+          and not any(SE.ist_verteilkopplung(x) for x in m.starrkoerper), " | ".join(zeilen))
     st = [s for s in spitzenstellen.kandidaten(m, zonen=False) if s["quelle"] == spitzenstellen.STABENDE]
     check("an 1-3 Knoten erkennt spitzenstellen das Stabende als Punkt", len(st) == 1 and st[0]["art"] == "Punkt",
           str([(s["art"], s["n_knoten"]) for s in st]))

@@ -550,14 +550,16 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        ohne Auflageflaeche in ein Volumen leiten (spitzenstellen.kandidaten):
        eine WARNUNG je Art, gebuendelt („64 starre Scheiben koppeln nur einen
        Lochrand (40 Knoten)“). Sie haelt die Rechnung nicht an.
-    9. **Stabenden an wenigen Knoten** (nur mit ``warnungen=True``, seit
-       13.10.2026) - der Hinweis auf die verteilende Einleitung
-       (stabeinleitung.hinweis), als WARNUNG; umgestellt wird nichts.
-
     9. **Werkstoff ohne f_u** (nur mit ``warnungen=True`` und eingeschalteter
        Plastizitaet, seit 13.10.2026) - je Werkstoff der Volumen mit f_y, aber
        ohne Grenze der Verfestigung eine WARNUNG („Werkstoff „S355“ ohne f_u –
        Verfestigung ohne Grenze, bitte f_u eingeben“).
+    10. **Stabenden an wenigen Knoten** (nur mit ``warnungen=True``, seit
+        13.10.2026) - der Hinweis auf die verteilende Einleitung
+        (stabeinleitung.hinweis), als WARNUNG; umgestellt wird nichts. Nennt
+        Punkt 8 dieselben Stabenden schon als moegliche Spannungsspitze, steht
+        der Hinweis in dieser Zeile und nicht noch einmal fuer sich (seit
+        14.10.2026; bis dahin zwei Warnungen fuer dieselben Stabenden).
 
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
@@ -606,10 +608,19 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
         # Vorgabewert wird gesetzt (Entscheidung des Anwenders). Nur WARNUNG.
         aus += _abnahme_werkstoff_grenze(model)
         # 10. Stabenden an 1-3 Volumenknoten (seit 13.10.2026): ein Hinweis auf
-        # die verteilende Einleitung - umgestellt wird nichts
+        # die verteilende Einleitung - umgestellt wird nichts. Dieselben
+        # Stabenden nennt Punkt 8 schon als moegliche Spannungsspitze („48
+        # Stabenden hängen an 1–3 Knoten – mögliche netzabhängige ...“): dann
+        # kommt der Hinweis in diese Zeile, statt als zweite Warnung (14.10.2026)
         try:
+            from . import spitzenstellen as _sp2
             from . import stabeinleitung as _se
-            aus += _se.abnahme_befund(model)
+            se_bef = _se.abnahme_befund(model)
+            sp_stab = [b for b in aus if b.pruefung == _sp2.PRUEFUNG and b.objekt == _sp2.STABENDE]
+            if se_bef and sp_stab:
+                sp_stab[0].text = sp_stab[0].text.rstrip() + " " + _se.HINWEIS[:1].upper() + _se.HINWEIS[1:] + "."
+            else:
+                aus += se_bef
         except Exception:                 # noqa: BLE001 - ein Hinweis darf nie sperren
             pass
     if not warnungen:

@@ -121,8 +121,31 @@ def test_vorspannung_ein_merkmal():
           zeilen and "als ΔT gerechnet: Vorspannung 952 kN (eingeprägte Dehnung" in zeilen[0], str(zeilen[:1]))
 
 
+def test_stabenden_eine_warnung():
+    print("\n--- Stabenden an 1-3 Knoten: eine Warnung am Rechenstart ---")
+    from statik3d import diagnose, fugen, spitzenstellen
+    from statik3d import stabeinleitung as SE
+    from tests.test_stabeinleitung import lagern_frei, quader, zugstab
+    m = quader(h=0.01)
+    lagern_frei(m)
+    zugstab(m)
+    fugen.stabenden_koppeln(m, [])
+    bef = diagnose.abnahme(m, warnungen=True)
+    stab = [b for b in bef if (b.pruefung == spitzenstellen.PRUEFUNG and b.objekt == spitzenstellen.STABENDE)
+            or b.pruefung == SE.PRUEFUNG]
+    for b in stab:
+        print(f"       {b.pruefung}: {b.text}")
+    check("eine Warnung für das Stabende, nicht zwei", len(stab) == 1, f"{len(stab)} Warnungen")
+    t = stab[0].text if stab else ""
+    check("… sie nennt die mögliche netzabhängige Spannungsspitze",
+          "Stabende hängt an" in t and "mögliche netzabhängige Spannungsspitzen" in t, t[:120])
+    check("… und den Ausweg, die verteilende Einleitung",
+          "Verteilende Einleitung über die Stirnfläche möglich (Modelleinstellung oder je Stabende)" in t, t[-120:])
+    check("… als WARNUNG, die nichts anhält", stab and stab[0].stufe == "WARNUNG")
+
+
 def main():
-    for t in (test_spannstahl_art, test_vorspannung_ein_merkmal):
+    for t in (test_spannstahl_art, test_vorspannung_ein_merkmal, test_stabenden_eine_warnung):
         try:
             t()
         except Exception as ex:          # noqa: BLE001 - jede Pruefung meldet sich
