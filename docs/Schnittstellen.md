@@ -1516,6 +1516,11 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 `tests/test_exporters.py` exportiert, wieder eingelesen und verglichen —
 Knotenzahl, Stäbe, Profilkennwerte, Lager, Lastfälle.
 
+**Seile** stehen im DXF-Export als LINE und im Nastran-Export als CBAR wie
+die Fachwerkstäbe. Bis zum 14.10.2026 ließen beide Exporte Seilelemente weg;
+seit dem 14.10.2026 kommen auch die Seile aus RFEM 6 als Seil an, die bis
+dahin als Fachwerkstab im Export standen.
+
 ### Zum SAF-Export: Stablasten und Ergebniskombinationen
 
 Was SAF darstellen kann, geht vollständig hinaus; was nicht, steht im Protokoll

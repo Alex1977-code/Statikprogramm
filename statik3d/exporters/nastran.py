@@ -46,7 +46,9 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
         eid += 1
         n = [int(x) + 1 for x in e.nodes]
         mid = mat_id.get(e.mat, 1)
-        if e.typ in ("beam", "truss"):
+        # das Seil wie der Fachwerkstab (14.10.2026: RFEM-Seile kommen als Seil
+        # an; bis dahin fehlte es hier)
+        if e.typ in ("beam", "truss", "seil"):
             s = model.sections.get(e.sec)
             p = pid(("bar", e.sec, e.mat))
             karten.append("CBAR    " + _i(eid) + _i(p) + _i(n[0]) + _i(n[1])

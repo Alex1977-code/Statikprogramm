@@ -63,6 +63,10 @@ Geprueft mit geschlossenen Loesungen:
   (gezogen), in der Situation abgeschaltet oder deaktiviert: alpha_cr wie im
   Modell ohne den Stab.
 
+Nachtrag zu 3: Der DXF- und der Nastran-Export liessen Seilelemente weg (sie
+kannten nur beam und truss). Seit RFEM-Seile als Seil ankommen, fehlten sie
+dort, wo sie als Fachwerkstab bis zum 14.10.2026 dabei waren.
+
 Aufruf:  python -m tests.test_stab_nachzug
 """
 import math
@@ -507,11 +511,37 @@ def test_alpha_cr_situation():
             nahe(f"… ebenso in solve_theorie2", a2, ref, 1e-9)
 
 
+def test_seil_im_export():
+    print("\n--- 3 (Nachtrag): Seile im DXF- und Nastran-Export ---")
+    import tempfile
+    from statik3d.exporters import dxf, nastran
+    m = Model("Export")
+    m.add_material(Material("S", E=E, nu=0.3, rho=0.0))
+    m.add_section(Section.circle("D", 0.02))
+    n = [m.add_node(float(i), 0, 0) for i in range(4)]
+    m.add_element("beam", [n[0], n[1]], "S", "D")
+    m.add_element("truss", [n[1], n[2]], "S", "D")
+    m.add_element("seil", [n[2], n[3]], "S", "D")
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "x.dxf")
+    dxf.write_dxf(m, p)
+    with open(p, encoding="utf-8", errors="replace") as f:
+        t = f.read().replace("\r\n", "\n")
+    zahl = t.count("\nLINE\n")
+    check("DXF: Balken, Fachwerkstab und Seil als Linien", zahl == 3, f"{zahl} Linien")
+    p = os.path.join(d, "x.bdf")
+    nastran.write_bdf(m, p)
+    with open(p, encoding="utf-8", errors="replace") as f:
+        t = f.read()
+    zahl = t.count("CBAR    ")
+    check("Nastran: Balken, Fachwerkstab und Seil als Stabelemente", zahl == 3, f"{zahl} CBAR")
+
+
 def main():
     for t in (test_pendel_saitenform, test_kg_saitenform_je_art, test_zugband_gegen_hand,
               test_seil_streckenlast, test_seil_streckenlast_gesperrt,
               test_rfem_seil_import, test_rfem_seil_gespeichert, test_seilende_am_koerper,
-              test_alpha_cr_situation):
+              test_seil_im_export, test_alpha_cr_situation):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

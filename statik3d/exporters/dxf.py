@@ -60,7 +60,9 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
     n_line = n_face = 0
     for i, e in enumerate(model.elements):
         n = [int(x) for x in e.nodes]
-        if e.typ in ("beam", "truss"):
+        # das Seil wie der Fachwerkstab (14.10.2026: RFEM-Seile kommen als Seil
+        # an; bis dahin fehlte es hier)
+        if e.typ in ("beam", "truss", "seil"):
             line(model.nodes[n[0]], model.nodes[n[1]], "STAEBE")
             n_line += 1
         elif e.typ.startswith("shell"):
