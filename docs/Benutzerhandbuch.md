@@ -9251,8 +9251,9 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   2,4-fachen Zonenradius um höchstens 1,2 N/mm²; die strenge Rechnung hatte
   dort ihre erste Stufe zweimal halbiert und einen anderen Lastweg genommen.
   Wer Werte direkt am Rand einer gekennzeichneten Zone braucht, rechnet
-  „streng“ gegen. Die Abnahme am Drehlager steht im Theoriehandbuch,
-  § 5e.4.
+  „streng“ gegen. Die Abnahme am Drehlager (Entwurf, LF1, streng gegen
+  ingenieurmäßig) steht noch aus; was der erste strenge Lauf zeigte, steht im
+  Theoriehandbuch, § 5e.4.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die

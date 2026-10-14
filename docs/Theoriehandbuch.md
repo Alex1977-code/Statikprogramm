@@ -5763,6 +5763,25 @@ hatte; 40 bis 60 mm vom Ring bis 6 N/mm², ab 60 mm unter 1,2 N/mm². Am
 groben Netz (Zonenradius 46 mm, vier Kantenlängen) blieb jede Abweichung
 außerhalb unter 0,33 N/mm².
 
+**Drehlager, Stand 14.10.2026 — Abnahme offen.** Der Vergleich streng gegen
+ingenieurmäßig am Entwurf (LF1) ist noch nicht gerechnet. Ein erster
+strenger Lauf (Stand a1194ef, 13.10.2026) brach nach 4,7 h unvollständig ab;
+der Rechner lief mit acht weiteren Rechnungen am Speicherlimit. Was er bis
+dahin zeigte: Im ersten Newton-Schritt trugen die 16 Ankerringe die
+Änderung fast allein (2,80·10⁻² in den Zonen gegen 2,55·10⁻⁴ außerhalb,
+Ankerkräfte 944 bis 945 kN, alle 16 ab dem ersten Schritt auffällig). Danach
+lag die Änderung außerhalb meist über der in den Zonen (etwa 10⁻³ gegen
+2·10⁻⁴), weil auch außerhalb Elemente fließen. Von 50 Kontaktläufen endeten
+48 am Deckel von 40 Runden (`contact.MAX_CYCLES`), mit einer Aktivmenge, die
+von Runde zu Runde zwischen zwei Zuständen wechselte. Die Verschiebung
+außerhalb der Zonen änderte sich dabei innerhalb einer Stufe um bis zu 9 %
+je Newton-Schritt (Stufe 1/7: 9,2 %, 5,9 %, 6,6 %) und beim Übergang auf
+eine neue Stufe um 4 bis 50 %. Die Läufe am Deckel ließen die Stufen bis zur
+Grenze von vier Halbierungen teilen; beim Abbruch rechnete der Lauf Stufe 21
+von 22. Die Messung der Zonen kostet am Netz Mittel
+0,14 bis 0,26 s je Newton-Schritt; einmal je Rechnung kommen 2,4 s für
+Kandidaten und Zonen dazu.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
