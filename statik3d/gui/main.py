@@ -13036,6 +13036,32 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"buckling:{self.cb_mode.currentIndex()}"
         return "modell:"
 
+    #: Achsenkreuz im Berichtsbild (14.10.2026): Farben wie das Achsen-Gizmo
+    BERICHT_ACHSEN = {f"{a}_color": "#%02x%02x%02x" % msk.Achsengizmo.FARBEN[a] for a in "xyz"}
+
+    def _berichtsachsen_an(self) -> bool:
+        """Ein kleines Achsenkreuz X/Y/Z unten rechts - nur fuer das Bild in
+        den Bericht (Entscheidung des Anwenders vom 14.10.2026): in der Ansicht
+        steht das Gizmo oben rechts, das als Qt-Fenster nicht mit ins Bild
+        kommt. Platz: viewport.ACHSEN_AUSSCHNITT, den texte_ordnen freihaelt."""
+        try:
+            self.plotter.add_axes(interactive=False, line_width=2, color="#333333",
+                                  viewport=vp.ACHSEN_AUSSCHNITT, **self.BERICHT_ACHSEN)
+            return True
+        except Exception as ex:             # noqa: BLE001 - das Bild geht vor
+            self.log.appendPlainText(f"Achsenkreuz im Berichtsbild: {ex}")
+            return False
+
+    def _berichtsachsen_weg(self) -> None:
+        try:
+            weg = getattr(self.plotter.renderer, "_remove_axes_widget", None)
+            if callable(weg):
+                weg()
+            else:
+                self.plotter.hide_axes()
+        except Exception:                   # noqa: BLE001
+            pass
+
     def ansicht_in_bericht(self, *, name: str = None, beschriftung: str = None, bemerkung: str = "",
                            nach: str = "", ansicht: str = ""):
         """Die Ansicht so, wie sie gerade steht, in den Bericht uebernehmen.
@@ -13050,7 +13076,8 @@ class MainWindow(QtWidgets.QMainWindow):
         im Register reicht beim Klick sonst seinen Zustand als Namen herein.
 
         ``ansicht``: vorher diese gespeicherte Ansicht einstellen (seit
-        14.10.2026).
+        14.10.2026). Das Bild traegt unten rechts ein kleines Achsenkreuz
+        (:meth:`_berichtsachsen_an`), die Ansicht selbst nicht.
         """
         import base64
         import tempfile
@@ -13062,7 +13089,12 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             fd, tmp = tempfile.mkstemp(suffix=".png")
             _os.close(fd)
-            self.plotter.screenshot(tmp)
+            achsen = self._berichtsachsen_an()
+            try:
+                self.plotter.screenshot(tmp)
+            finally:
+                if achsen:
+                    self._berichtsachsen_weg()
             with open(tmp, "rb") as fh:
                 bild = base64.b64encode(fh.read()).decode("ascii")
             _os.unlink(tmp)
@@ -27106,7 +27138,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Rahmen und Griffe der Schnittbox (Ansichtspaket C, 14.10.2026)
         self.schnittbox.zeichnen()
         # Das Achsenkreuz unten rechts (add_axes) entfiel am 14.10.2026: das
-        # Achsen-Gizmo oben rechts zeigt die Achsen (Entscheidung des Anwenders)
+        # Achsen-Gizmo oben rechts zeigt die Achsen (Entscheidung des Anwenders);
+        # nur das Berichtsbild traegt eines (_berichtsachsen)
         return r
 
     # ---- Ergebnisdarstellung: Marken und Verlauf (Paket 6b, 25.09.2026) --

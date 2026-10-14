@@ -11,7 +11,9 @@ gespeicherte Ansichten im Modell und eine Schnittbox mit Griffen.
   genannt;
 * Modellbaum „Ansichten“ (Hilfsobjekte): anlegen, aufrufen, umbenennen,
   loeschen; Ribbon „Ansicht speichern“;
-* Berichtsbild aus einer gespeicherten Ansicht;
+* Berichtsbild aus einer gespeicherten Ansicht, mit kleinem Achsenkreuz unten
+  rechts nur im Bild (nicht in der Ansicht), im Platz, den die Textordnung
+  freihaelt;
 * Schnittbox: sichtbare Zellen nur innerhalb, auf dem Schnitt die
   Ergebnisfarben (lineares Pruef-Feld exakt, Verschiebung wie VTK-Probe),
   ebenso bei der Schnittebene; Griffe ziehen, Mindestrest, Mausrad ueber einem
@@ -387,6 +389,80 @@ def test_berichtsbild():
 
 
 # --------------------------------------------------------------------------
+# 4a. Achsenkreuz nur im Berichtsbild (Zusatz des Anwenders vom 14.10.2026)
+# --------------------------------------------------------------------------
+def test_achsenkreuz_berichtsbild():
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+    m = w.model
+    aufnahmen = []
+
+    def foto(pfad, *a, **k):
+        aw = getattr(w.plotter.renderer, "axes_widget", None)
+        aufnahmen.append({"achsen": aw is not None and bool(aw.GetEnabled()),
+                          "ausschnitt": tuple(aw.GetViewport()) if aw is not None else None,
+                          "farben": _achsenfarben(aw)})
+        open(pfad, "wb").write(b"PNG-Probe")
+    w.redraw()
+    check("in der Ansicht kein Achsenkreuz (dort steht das Gizmo)",
+          getattr(w.plotter.renderer, "axes_widget", None) is None)
+    w.plotter.screenshot = foto
+    try:
+        w.ansicht_in_bericht()
+        a0 = aufnahmen[-1] if aufnahmen else {}
+        check("Strg+B: im Bild ein Achsenkreuz unten rechts (viewport.ACHSEN_AUSSCHNITT)",
+              a0.get("achsen") and np.allclose(a0.get("ausschnitt") or (), vp.ACHSEN_AUSSCHNITT),
+              str(a0.get("ausschnitt")))
+        check("… in den Farben des Gizmos: X rot, Y grün, Z blau",
+              a0.get("farben") == [tuple(c) for c in _gizmofarben()], f"{a0.get('farben')}")
+        check("… danach in der Ansicht keines", getattr(w.plotter.renderer, "axes_widget", None) is None)
+        w.redraw()
+        check("… auch nicht nach dem Neuzeichnen", getattr(w.plotter.renderer, "axes_widget", None) is None)
+        if "Detail oben" in m.ansichten:
+            w.ansicht_in_bericht(ansicht="Detail oben")
+            check("Bild aus einer gespeicherten Ansicht: ebenfalls mit Achsenkreuz, danach weg",
+                  aufnahmen[-1]["achsen"] and getattr(w.plotter.renderer, "axes_widget", None) is None)
+    finally:
+        del w.plotter.screenshot
+    # Textordnung: kein Text im Platz des Achsenkreuzes (Kaestchenwerte offscreen)
+    rw = w.plotter.render_window
+    rw.SetSize(1000, 700)
+    try:
+        lage = vp.texte_ordnen(w.plotter, w._textlage_info())
+    except Exception as ex:                     # noqa: BLE001
+        lage = {"Ausnahme": str(ex)}
+    breit, hoch = 1000.0, 700.0
+    A = vp.ACHSEN_AUSSCHNITT
+    achsen = (A[0] * breit, A[2] * breit, A[1] * hoch, A[3] * hoch)
+
+    def ueber(a, b):
+        return not (a[1] <= b[0] + 1 or b[1] <= a[0] + 1 or a[3] <= b[2] + 1 or b[3] <= a[2] + 1)
+    # „achsenkreuz“ ist der Platz selbst, den texte_ordnen freihaelt
+    treffer = [k for k, r in lage.items() if k != "achsenkreuz" and isinstance(r, tuple) and len(r) == 4
+               and ueber(r, achsen)]
+    check("Textordnung: kein Text liegt im Platz des Achsenkreuzes (Kästchenwerte, offscreen)",
+          isinstance(lage, dict) and "Ausnahme" not in lage and "kennwerte" in lage and not treffer,
+          f"{sorted(lage)} / im Achsenplatz: {treffer}")
+
+
+def _gizmofarben():
+    from statik3d.gui import masken as msk
+    return [msk.Achsengizmo.FARBEN[a] for a in "xyz"]
+
+
+def _achsenfarben(aw):
+    """Die Farben der drei Schaefte des Achsenkreuzes (0-255) - oder None."""
+    if aw is None:
+        return None
+    try:
+        akt = aw.GetOrientationMarker()
+        props = (akt.GetXAxisShaftProperty(), akt.GetYAxisShaftProperty(), akt.GetZAxisShaftProperty())
+        return [tuple(int(round(255 * c)) for c in p.GetColor()) for p in props]
+    except Exception as ex:                     # noqa: BLE001
+        return str(ex)
+
+
+# --------------------------------------------------------------------------
 # 5. Schnittbox und Werte auf dem Schnitt
 # --------------------------------------------------------------------------
 def _pruef_feld(X):
@@ -594,7 +670,7 @@ def _griffe_ziehen(w, app):
 
 def main():
     tests = [test_datei, test_speichern_aufrufen, test_geloeschte_objekte, test_baum_und_ribbon,
-             test_berichtsbild, test_schnittbox]
+             test_berichtsbild, test_achsenkreuz_berichtsbild, test_schnittbox]
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:

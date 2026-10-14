@@ -3144,9 +3144,18 @@ wenn Lasten im Ergebnisbild stehen, deren Lastfall. Unten links stehen die **Ken
 stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts; der
 Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die Texte weg.
 Beides kommt so auch in den Bericht. Bis zum 14.10.2026 stand unten rechts
-außerdem ein Achsenkreuz, das auch im Berichtsbild stand. Es ist entfallen,
-weil das Achsen-Gizmo oben rechts die Achsen zeigt; das Gizmo liegt über der
-Ansicht und kommt nicht ins Berichtsbild.
+außerdem ein Achsenkreuz, das auch im Berichtsbild stand. In der Ansicht ist
+es entfallen, weil das Achsen-Gizmo oben rechts die Achsen zeigt.
+
+**Achsenkreuz im Berichtsbild (seit 14.10.2026).** Das Gizmo liegt als
+eigenes Fenster über der Ansicht und kommt darum nicht mit ins Bild für den
+Bericht. Auf Entscheidung des Anwenders trägt deshalb **nur das
+Berichtsbild** unten rechts ein kleines Achsenkreuz X/Y/Z, in den Farben des
+Gizmos: X rot, Y grün, Z blau. Es steht in dem Platz unten rechts, den die
+Textordnung ohnehin freihält, und verschwindet gleich nach der Aufnahme
+wieder; in der Ansicht selbst erscheint es nicht. Das gilt für Strg+B, für
+„+ Ansicht übernehmen“, für *Neu: Berichtsbild* und für Bilder aus einer
+gespeicherten Ansicht. Geprüft in `tests/test_ansichten.py`.
 
 **Farbe und Verformung quadratischer Volumen (seit 14.10.2026 richtig
 zugeordnet).** Die Ansicht zeichnet Volumen als ihre Oberfläche und holt
@@ -5163,7 +5172,8 @@ Bis zum 14.10.2026 stand oben rechts der **Ansichtswürfel**: ein Klick auf eine
 Seite setzte die Kamera auf den dreifachen Modellabstand und passte alles ein,
 darunter standen sieben Knöpfe +x +y +z −x −y −z und iso, und unten rechts im
 Bild stand zusätzlich ein Achsenkreuz. Der Anwender hat am 13.10.2026
-entschieden, dass das Gizmo beides ersetzt.
+entschieden, dass das Gizmo beides ersetzt; seit dem 14.10.2026 trägt nur das
+Bild für den Bericht wieder ein kleines Achsenkreuz unten rechts.
 
 Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen weiter XY
 (Draufsicht), XZ und YZ, dazu „Rückseite (180°)", das die laufende Ansicht am
