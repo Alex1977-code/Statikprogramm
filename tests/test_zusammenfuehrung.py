@@ -250,6 +250,7 @@ def test_neue_felder_ein_mechanismus():
         "koerper": {"nachweis_ausnehmen": False},
         "volumenbereiche": {"eps_grenze": 0.05},
         "members": {"einleitung": {}},
+        "starrkoerper": {"momente": []},
         "load_cases": {"faktorisiert": False},
         "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
         "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
