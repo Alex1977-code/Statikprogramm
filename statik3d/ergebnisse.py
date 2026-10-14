@@ -116,6 +116,8 @@ MODELLTEILE = {
     "name": None, "meta": None, "active_case": None, "bericht": None, "bericht_rahmen": None,
     "layer": None, "unterlagen": None, "bemassungen": None, "bemassung_einstellung": None,
     "werteskala": None, "einheiten": None, "importhinweise": None,
+    # gespeicherte Ansichten (14.10.2026): wie man schaut, nicht was gerechnet wird
+    "ansichten": None,
     # Vorgaben des Vernetzers - das Netz selbst steht in Knoten und Elementen
     "netz": None,
     "tetp_kantenmitten": "elemente",

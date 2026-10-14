@@ -783,14 +783,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager",
                  # seit 03.10.2026 (8b): die Anlegemaske nimmt die Ansicht erst mit OK auf
-                 "bericht": "Berichtsbild"}
+                 "bericht": "Berichtsbild",
+                 # seit 14.10.2026 (Ansichtspaket C): gespeichert wird erst mit OK
+                 "ansichten": "Ansicht"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "ermuedungslast",
                     "werkstoff", "dicke",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
-                    "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
+                    "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln", "ansicht"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
@@ -805,7 +807,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
                  "kontaktbedingung": "kontaktbedingungen",
                  "lager_einzeln": "lager", "linienlager_einzeln": "linienlager",
-                 "flaechenlager_einzeln": "flaechenlager"}
+                 "flaechenlager_einzeln": "flaechenlager", "ansicht": "ansichten"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2087,8 +2089,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          "stehen als „Stäbe“ unter „Geometrie“.",
             "bericht_unterlagen": "Die übernommenen Ergebnisbilder und die Dateien, Ansichten und "
                                   "Skizzen zum Modell",
-            "hilfsobjekte": "Bemaßungen und Layer (in RFEM: Hilfsobjekte, dort heißen die Layer "
-                            "Objektselektionen)",
+            "hilfsobjekte": "Bemaßungen, Layer und gespeicherte Ansichten (in RFEM: Hilfsobjekte, "
+                            "dort heißen die Layer Objektselektionen)",
         }
         gr = {}
         for kennung, text in self.GRUPPEN:
@@ -2594,6 +2596,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
                            FARBEN["matt"] if not L.sichtbar else None)
                           for name, L in lay.items()], "layer", "layerliste")
         self._zweig(lyz, "+ Layer aus Auswahl", "", "layer_neu", farbe=FARBEN["akzent"])
+
+        # ---- Hilfsobjekte: gespeicherte Ansichten (Ansichtspaket C, 14.10.2026) --
+        ansichten = getattr(model, "ansichten", {}) or {}
+        anz = self._zweig(gr["hilfsobjekte"], "Ansichten", len(ansichten), "ansichten",
+                          hinweis="Gespeicherte Ansichten: Kamera, Ausgeblendetes, Schnitt, Darstellung "
+                                  "und Ergebnis. Ein Klick ruft eine Ansicht auf, doppelt angeklickt "
+                                  "öffnet sie (umbenennen, überschreiben, in den Bericht); Rechtsklick: "
+                                  "Neu, Löschen.")
+        self._liste(anz, [(name, a.bezug(), name, f"{name}: {a.bezug()}"
+                           + (f"\n{a.kommentar}" if a.kommentar else ""))
+                          for name, a in ansichten.items()], "ansicht", "ansichten")
+        self._zweig(anz, "+ Ansicht speichern", "", "ansicht_neu", farbe=FARBEN["akzent"])
 
         # ---- Nachweise, gebuendelt (Antwort 4 vom 24.09.2026) ---------------
         # Die Schweissnaehte zuerst; bis zum 03.10.2026 hingen sie am Zweig der

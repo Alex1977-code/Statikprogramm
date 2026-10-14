@@ -96,6 +96,11 @@ _OHNE_VERGLEICH = ("format", "name", "meta", "active_case")
 
 #: Nicht uebertragbar: (Bezeichnung, Grund und was zu tun ist)
 NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
+    # gespeicherte Ansichten (14.10.2026): Kamera, Ausgeblendetes und Schnitt
+    # nennen Nummern und Namen des Quellmodells
+    "ansichten": ("Gespeicherte Ansichten",
+                  "sie nennen Elemente, Knoten und Objekte des Quellmodells - im Ziel "
+                  "neu speichern"),
     "bericht": ("Berichtseinträge",
                 "sie zeigen Ergebnisse und Ansichten des Quellmodells - im Ziel nach "
                 "der Rechnung neu aus der Ansicht übernehmen"),

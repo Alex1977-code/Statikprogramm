@@ -162,7 +162,7 @@ ZWEIGE_SOLL = {
     "Nachweise": ["Schweißnähte", "Anschlüsse", "Verformungsnachweise", "Beulfelder",
                   "Volumenbereiche", "Lasteinleitung"],
     "Bericht und Unterlagen": ["Bericht", "Unterlagen"],
-    "Hilfsobjekte": ["Bemaßungen", "Layer"],
+    "Hilfsobjekte": ["Bemaßungen", "Layer", "Ansichten"],
 }
 
 
@@ -237,8 +237,9 @@ def test_nichts_geht_verloren():
     fehlt = sorted(ARTEN_VORHER - set(zweige))
     check("jede frühere Zweigart steht noch im Baum", not fehlt, str(fehlt))
     neu = sorted(set(zweige) - ARTEN_VORHER)
-    check("neu ist nur die Zählzeile „Netzknoten“ (die Gruppen tragen die Art „modell“)",
-          neu == ["netzknoten"], str(neu))
+    # dazu seit dem 14.10.2026 der Zweig „Ansichten“ mit „+ Ansicht speichern“ (Ansichtspaket C)
+    check("neu sind nur die Zählzeile „Netzknoten“ und die Ansichten (die Gruppen tragen die Art „modell“)",
+          neu == ["ansicht_neu", "ansichten", "netzknoten"], str(neu))
     anders = {a: (n, len(eintraege.get(a, []))) for a, n in EINTRAEGE_VORHER.items()
               if len(eintraege.get(a, [])) != n}
     check("jede Eintragsart hat so viele Einträge wie vorher", not anders, str(anders))

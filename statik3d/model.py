@@ -3953,6 +3953,58 @@ class Subsystem:
 
 
 @dataclass
+class Ansicht:
+    """Eine gespeicherte Ansicht (Ansichtspaket C, 14.10.2026; Vorbild der
+    Ansichtspunkt von ediBIM): wie man auf das Modell schaut, nicht was es ist.
+
+    kamera:     position, ziel, oben (je drei Zahlen), ortho (bool), massstab
+                (halbe Bildhoehe der Parallelprojektion), blickwinkel [Grad]
+    versteckt:  von Hand Ausgeblendetes wie MainWindow.versteckt - elemente,
+                knoten (Nummern), linien, flaechen, koerper (Namen) - dazu
+                geist (Verborgenes im Hintergrund) und layer_nur
+    auswahl:    leer oder auswahlart und die Listen der Auswahl (optional)
+    schnitt:    leer oder ebene [Achse, Lage, andere Seite(, Normale, Ursprung)]
+                und/oder box [xmin, xmax, ymin, ymax, zmin, zmax]
+    darstellung: art (Voll, Transparent, Hidden-Line, Draht) und typen
+                (Staebe, Flaechen, Volumen an/aus)
+    ergebnis:   quelle (wie Berichtseintrag.quelle), feld, verlauf, eigenform,
+                an - nur soweit ohne Rechnung wiederherstellbar
+    netz:       [Elemente, Knoten] beim Speichern: Nummern gelten nur fuer
+                dieses Netz
+
+    Steht im Modell (Model.ansichten) und in der Datei nur, wenn es welche
+    gibt; fuer die Rechnung zaehlt sie nicht (ergebnisse.MODELLTEILE).
+    """
+    name: str
+    kamera: dict = field(default_factory=dict)
+    versteckt: dict = field(default_factory=dict)
+    auswahl: dict = field(default_factory=dict)
+    schnitt: dict = field(default_factory=dict)
+    darstellung: dict = field(default_factory=dict)
+    ergebnis: dict = field(default_factory=dict)
+    netz: list = field(default_factory=list)
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        """Kurz, was die Ansicht festhaelt - fuer Baum und Uebersicht."""
+        teile = ["parallel" if self.kamera.get("ortho") else "perspektivisch"]
+        n = sum(len(self.versteckt.get(k) or ()) for k in ("elemente", "linien", "flaechen",
+                                                             "koerper", "knoten"))
+        if n:
+            teile.append(f"{n} ausgeblendet")
+        if self.schnitt.get("box"):
+            teile.append("Schnittbox")
+        if self.schnitt.get("ebene"):
+            teile.append("Schnittebene")
+        if any(self.auswahl.get(k) for k in self.auswahl if k != "art"):
+            teile.append("mit Auswahl")
+        q = str(self.ergebnis.get("quelle") or "")
+        if self.ergebnis.get("an", True) and q and q != "modell:":
+            teile.append(q.partition(":")[2] or q)
+        return " · ".join(teile)
+
+
+@dataclass
 class Layer:
     """Eine benannte Objektgruppe fuer Sicht und Sperre - in RFEM die
     Objektselektion (16.09.2026: "Ribbon Ansicht soll eine Dropdownliste mit
@@ -4203,6 +4255,8 @@ class Model:
         self.layer: dict[str, Layer] = {}
         #: Unterlagen: Dateien, uebernommene Ansichten und Skizzen zum Modell
         self.unterlagen: dict[str, Unterlage] = {}
+        #: Gespeicherte Ansichten (Ansichtspaket C, 14.10.2026), nach Name
+        self.ansichten: dict[str, Ansicht] = {}
         self.stellungen: list = []
         #: Hinweise aus dem Laden einer Datei (Model.from_dict), nicht gespeichert
         self._ladehinweise: list = []
@@ -9385,6 +9439,10 @@ class Model:
             **({"stabeinleitung": asdict(self.stabeinleitung)}
                if asdict(getattr(self, "stabeinleitung", None) or Stabeinleitung())
                != asdict(Stabeinleitung()) else {}),
+            # gespeicherte Ansichten (14.10.2026): nur, wenn es welche gibt -
+            # eine Datei ohne sie bleibt beim Speichern, wie sie war
+            **({"ansichten": [asdict(a) for a in self.ansichten.values()]}
+               if getattr(self, "ansichten", None) else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -9526,6 +9584,8 @@ class Model:
         m.subsysteme = {x["name"]: _dc(Subsystem, x) for x in d.get("subsysteme", [])}
         m.layer = {x["name"]: _dc(Layer, x) for x in d.get("layer", [])}
         m.unterlagen = {x["name"]: _dc(Unterlage, x) for x in d.get("unterlagen", [])}
+        m.ansichten = {x["name"]: _dc(Ansicht, x) for x in d.get("ansichten") or []
+                       if isinstance(x, dict) and x.get("name")}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck
@@ -9856,8 +9916,10 @@ NEUE_FELDER = {
     # zylindrische Flaechenachsen; seit 14.10.2026)
     "load_cases.geometrielasten": {"lokal": {}},
     "flaechen": {"lokale_achsen": "", "achse_plus_x": []},
-    # stab/rbe3 (Modelleinstellung der Stabenden in Volumen)
-    "": {"stabeinleitung": asdict(Stabeinleitung())},
+    # stab/rbe3 (Modelleinstellung der Stabenden in Volumen); ansicht/ansichten
+    # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
+    # Rechnung: ergebnisse.MODELLTEILE)
+    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": []},
 }
 
 

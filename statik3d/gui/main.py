@@ -58,6 +58,8 @@ def _lebt(obj) -> bool:
 from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
+from . import schnitt as sn
+from . import ansichten as ans
 from . import design as dsg
 from . import fenster as fen
 from .fenster import starten as fenster_starten
@@ -292,7 +294,7 @@ class _Uebernahmesperre(QtCore.QObject):
 
 #: Baumklicks, die rechts nichts ersetzen (die Ansicht wird Berichtsbild): sie
 #: halten nicht an der Leiste „Übernehmen | Verwerfen“
-_BAUM_OHNE_MASKE = frozenset({"bericht_neu"})
+_BAUM_OHNE_MASKE = frozenset({"bericht_neu", "ansicht"})
 
 
 def _maskenweg(bezug=None, ohne=None, danach: str = "öffnet sich die neue Maske"):
@@ -596,6 +598,8 @@ class MainWindow(QtWidgets.QMainWindow):
         #: Sie schneidet das Volumennetz auf, bevor seine Aussenhaut gebildet
         #: wird - nur so sind die inneren Tetraeder ueberhaupt zu sehen.
         self.schnitt = None
+        #: Schnittbox aus sechs Ebenen mit Griffen (Ansichtspaket C, 14.10.2026)
+        self.schnittbox = sn.Schnittbox(self)
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
@@ -764,7 +768,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if obj is self.plotter.interactor:
                 t = ereignis.type()
                 if t == QtCore.QEvent.Wheel:
-                    self._rad(ereignis)
+                    # ueber einem Griff der Schnittbox schiebt das Rad die
+                    # Seite fein, sonst zoomt es (Ansichtspaket C, 14.10.2026)
+                    if not self.schnittbox.rad(ereignis):
+                        self._rad(ereignis)
                     return True
                 if t in (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseButtonDblClick):
                     # Den zweiten Druck eines Doppelklicks meldet Qt als DblClick
@@ -776,6 +783,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Abstand 0,70 -> 0,31), Drehen und Schieben gingen nicht mehr.
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     doppel = t == QtCore.QEvent.MouseButtonDblClick
+                    if (ereignis.button() == QtCore.Qt.LeftButton and not doppel
+                            and self.schnittbox.druck(pos)):
+                        return True                 # ein Griff der Schnittbox: ziehen
                     if ereignis.button() == QtCore.Qt.LeftButton:
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
@@ -810,6 +820,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif t == QtCore.QEvent.MouseButtonRelease:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     if ereignis.button() == QtCore.Qt.LeftButton:
+                        if self.schnittbox.los(pos):
+                            return True             # Zug an der Schnittbox: jetzt schneiden
                         self._links_los(pos, ereignis.modifiers() | self._links_tasten_beim_druck())
                         return True
                     if ereignis.button() == QtCore.Qt.MiddleButton:
@@ -821,6 +833,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         return True
                 elif t == QtCore.QEvent.MouseMove:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    if self.schnittbox.ziehen(pos):
+                        return True                 # die gegriffene Seite folgt der Maus
                     if ereignis.buttons() == QtCore.Qt.NoButton:
                         self._vtk_zustand_beenden()     # ohne Taste wird nie gedreht oder gezoomt
                     if getattr(self, "_dreh", None) is not None:
@@ -6467,6 +6481,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                           hinweis="Alle ausgeblendeten Objekte wieder zeigen",
                                           symbol="sicht_alles")
         menu.addSeparator()
+        # Gespeicherte Ansichten (Ansichtspaket C, 14.10.2026)
+        self.act_ansicht_speichern = g.eintrag(
+            menu, "Ansicht speichern", lambda: self.ansicht_speichern(),
+            hinweis="Kamera, Ausgeblendetes, Schnitt, Darstellung und Ergebnis als benannte Ansicht "
+                    "im Modell speichern - aufrufen im Modellbaum unter Hilfsobjekte → Ansichten",
+            symbol="ansicht_speichern")
+        menu.addSeparator()
         self.act_geist = g.eintrag(menu, "Verborgenes im Hintergrund", self._geist_umschalten,
                                    hinweis="Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
                                            "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
@@ -6478,6 +6499,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
                                            "Die andere Hälfte stehen lassen",
                                            symbol="sicht_schnittseite")
+        # Schnittbox (Ansichtspaket C, 14.10.2026): sechs Ebenen mit Griffen,
+        # zusaetzlich zur Ebene
+        self.act_schnittbox = g.schalter("Schnittbox", self._schnittbox_umschalten, False,
+                                         "Schnittbox: sechs Ebenen um alles Sichtbare, je Seite ein "
+                                         "Griff zum Ziehen, das Mausrad über einem Griff schiebt fein; "
+                                         "auf den Schnittflächen stehen die Ergebnisse",
+                                         symbol="sicht_schnittbox")
         self.cb_schnittachse = QtWidgets.QComboBox()
         self.cb_schnittachse.addItems(["x", "y", "z", "frei"])
         self.cb_schnittachse.setCurrentText("y")
@@ -6495,6 +6523,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sl_schnitt.valueChanged.connect(lambda _v: self._schnitt_nachziehen())
         g.in_spalte(self.cb_schnittachse, neue_spalte=True)
         g.in_spalte(self.sl_schnitt)
+        self.act_schnitt_aus = g.klein("Schnitt aus", self.schnitt_aus, symbol="sicht_schnitt_aus",
+                                       hinweis="Schnittebene und Schnittbox aus - das ganze Modell "
+                                               "wieder im Bild")
+        self.act_schnitt_aus.setEnabled(False)
         g = r.gruppe("Layer")
         # Layer sind benannte Objektgruppen - in RFEM die Objektselektionen
         # (16.09.2026): die Liste zeigt einen allein, das Fenster haelt je
@@ -7728,7 +7760,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     "unterlage", "unterlage_neu", "bemassung", "bemassung_neu",
                     "situation", "situation_neu",
                     "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
-                    "schweissnaht", "schweissnaht_neu", "ermuedungslast", "ermuedungslast_neu"}
+                    "schweissnaht", "schweissnaht_neu", "ermuedungslast", "ermuedungslast_neu",
+                    # gespeicherte Ansichten (14.10.2026): Klick ruft auf, „+“ speichert
+                    "ansicht", "ansicht_neu"}
 
     #: Arten, die nur an Zweigen stehen (Teilpaket 8b): ihr Klick zeigt die
     #: Uebersicht und waehlt nichts. Knoten, Daempfer und starre Koerper teilen
@@ -7744,7 +7778,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "ergebnisse", "ergebnisgruppe", "bericht", "unterlagen",
         "subsysteme", "stellungen", "situationen",
         "schweissnaehte", "anschluesse", "verformungen", "beulfelder", "volumenbereiche",
-        "lasteinleitung", "bemassungen", "layerliste"})
+        "lasteinleitung", "bemassungen", "layerliste", "ansichten"})
     #: So viele Zeilen zeigt die Liste einer Uebersicht hoechstens; der Rest
     #: steht in der Tabelle (wie bei den Lasten eines Lastfalls, 40 Zeilen in
     #: :meth:`_lastart_geklickt`)
@@ -11889,6 +11923,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.subsystem_neu()
         if zweigart == "layerliste":
             return self.layer_aus_auswahl()
+        if zweigart == "ansichten":
+            return self.ansicht_neu()
         if zweigart == "unterlagen":
             return self.unterlage_skizze_neu()
         if zweigart == "situationen":
@@ -11953,6 +11989,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # eine eigene Uebersicht ohne Liste.
         if art == "ermuedungslast":
             return self.maske_ermuedungslasten(name=name, fokus=False)
+        if art == "ansicht":
+            # die gespeicherte Ansicht einstellen (Ansichtspaket C, 14.10.2026)
+            return self.ansicht_aufrufen(name)
+        if art == "ansicht_neu":
+            return self.ansicht_speichern()
         if art == "ermuedungslast_neu":
             return self.maske_ermuedungslasten(neu=True)
         if art == "bemassung_neu":
@@ -12341,6 +12382,7 @@ class MainWindow(QtWidgets.QMainWindow):
                "berichtseintrag": f"Berichtsbild {int(name) + 1 if name.isdigit() else name}",
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
                "layer": f"Layer {name} (die Objekte bleiben)",
+               "ansicht": f"Ansicht {name}",
                "unterlage": f"Unterlage {name} (samt ihren Einträgen im Bericht)",
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
                "wind": f"Wind {name} samt seinen Lasten",
@@ -12357,6 +12399,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not sammel and not self._bestaetigen(f"{was} wirklich löschen?" + (f"\n\n{folge}" if folge else "")
                                                 + _loeschhinweis(self)):
             return
+        if art == "ansicht":
+            # eine gespeicherte Ansicht rechnet nicht mit: Ergebnisse, Auswahl
+            # und Maske bleiben (Ansichtspaket C, 14.10.2026)
+            return self.ansicht_loeschen(name, sammel=sammel)
         grund = ""
         zeilen = []                 # ueber Stellungen (Model.stellungen_nachziehen)
         # Der Stand **vor** dem Loeschen gehoert auf den Rueckgaengig-Stapel;
@@ -12822,6 +12868,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._subsystem_zeigen(name)
             if art == "layer":
                 return self.layerliste_zeigen()
+            if art == "ansicht":
+                return self.maske_ansicht(name)
             if art == "unterlage":
                 return self.unterlage_bearbeiten(name)
             if art == "situation":
@@ -12989,7 +13037,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return "modell:"
 
     def ansicht_in_bericht(self, *, name: str = None, beschriftung: str = None, bemerkung: str = "",
-                           nach: str = ""):
+                           nach: str = "", ansicht: str = ""):
         """Die Ansicht so, wie sie gerade steht, in den Bericht uebernehmen.
 
         Aufgenommen wird das Bild **und** die Einstellung, aus der es
@@ -13000,10 +13048,17 @@ class MainWindow(QtWidgets.QMainWindow):
         sie (Strg+B, „+ Ansicht übernehmen“) heisst das Bild „Bild N“, und die
         Unterschrift sagt, was es zeigt. Nur mit Schluesselwoertern: der Knopf
         im Register reicht beim Klick sonst seinen Zustand als Namen herein.
+
+        ``ansicht``: vorher diese gespeicherte Ansicht einstellen (seit
+        14.10.2026).
         """
         import base64
         import tempfile
         import os as _os
+        if ansicht:
+            if ansicht not in (getattr(self.model, "ansichten", None) or {}):
+                return self.hinweis(f"Ansicht „{ansicht}“ gibt es nicht")
+            self.ansicht_aufrufen(ansicht, als_hinweis=False)
         try:
             fd, tmp = tempfile.mkstemp(suffix=".png")
             _os.close(fd)
@@ -13025,7 +13080,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # Faktor 0,03 wurde sonst 0, und die Zeile fehlte (25.09.2026)
             ueberhoehung=vp.faktor_runden(getattr(self, "_ueberhoehung_faktor", 0.0)),
             bild=bild)
-        e.beschriftung = str(beschriftung or "").strip() or e.bezug()
+        e.beschriftung = str(beschriftung or "").strip() or (
+            e.bezug() + (f" – Ansicht {ansicht}" if ansicht else ""))
         e.bemerkung = str(bemerkung or "")
         e.nach = str(nach or "")
         self.merken("Ansicht in den Bericht übernommen")
@@ -13034,6 +13090,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabelle_zeigen("Bericht")
         self.info(f"„{e.name}“ in den Bericht übernommen ({e.bezug()})")
         return e
+
+    #: Auswahl „Ansicht“ in „Neu: Berichtsbild“: keine gespeicherte
+    BERICHT_JETZT = "wie sie jetzt steht"
 
     @_maskenweg(danach="öffnet sich „Neu: Berichtsbild“")
     def berichtsbild_neu(self):
@@ -13055,6 +13114,11 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("bemerkung", "Bemerkung", "text", "", breite=170),
                   F("nach", "Platz im Bericht", "wahl", kapitel[0], kapitel),
                   F("zeigt", "zeigt jetzt", "info", zeigt, anzeige=True)]
+        # eine gespeicherte Ansicht statt der jetzigen (Ansichtspaket C, 14.10.2026)
+        if getattr(m, "ansichten", None):
+            felder.insert(4, F("ansicht", "Ansicht", "wahl", self.BERICHT_JETZT,
+                               [self.BERICHT_JETZT] + list(m.ansichten),
+                               hinweis="eine gespeicherte Ansicht vorher einstellen"))
         maske = msk.Maske("Neu: Berichtsbild", felder, knopf="OK", abbrechen="Abbrechen",
                           hinweis="Die Ansicht so einstellen, wie das Bild sie zeigen soll; OK nimmt "
                                   "sie auf. Abbrechen legt nichts an.")
@@ -13092,8 +13156,10 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..report.html import Report
         m = self.model
         nach = next((s for s, tx in Report.KAPITEL_WAHL if tx == w.get("nach")), "")
+        ansicht = str(w.get("ansicht") or "")
         e = self.ansicht_in_bericht(name=w.get("name"), beschriftung=w.get("beschriftung"),
-                                    bemerkung=str(w.get("bemerkung") or "").strip(), nach=nach)
+                                    bemerkung=str(w.get("bemerkung") or "").strip(), nach=nach,
+                                    ansicht="" if ansicht == self.BERICHT_JETZT else ansicht)
         if e is not None and m.bericht and m.bericht[-1] is e:
             self._objektmaske("berichtseintrag", str(len(m.bericht) - 1))
 
@@ -26442,31 +26508,53 @@ class MainWindow(QtWidgets.QMainWindow):
         und der Fang auf der Oberflaeche bleibt damit bezahlbar.
         """
         m = self.model
+        box = self.schnittbox_grenzen()
         stand = (id(m), len(m.elements), m.nn,
                  hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
-                 tuple(typen), frozenset(ausser), self.schnitt)
+                 tuple(typen), frozenset(ausser), self.schnitt, box)
         if getattr(self, "_gitter_stand", None) == stand:
-            return self._gitter_zwischen
+            grid, kidx, self._schnittgewichte = self._gitter_zwischen
+            return grid, kidx
         grid = vp.to_grid(m, typen=typen, ausser=ausser)
         kidx = np.arange(m.nn)
+        #: Gewichte der Punkte, die ein Schnitt neu anlegt (gui/schnitt.py):
+        #: ihre Nummer in kidx ist nn + j, ihr Wert W[j] @ Knotenwerte
+        W = None
         if grid.n_cells:
             try:
                 volumen_typen = {vp.CELL_MAP[t][0] for t in vp.TYPEN_VOLUMEN
                                  if t in vp.CELL_MAP}
-                if self.schnitt is not None:
+                if self.schnitt is not None or box is not None:
                     # Erst schneiden, dann die Haut bilden: andersherum bliebe
                     # die Schnittflaeche leer, denn die Haut der ganzen Huelle
-                    # kennt die inneren Tetraeder nicht.
-                    grid = vp.schneiden(grid, *self.schnitt)
-                if np.isin(grid.celltypes, list(volumen_typen)).any():
+                    # kennt die inneren Tetraeder nicht. Die Knotennummer reist
+                    # als Punktfeld mit; die neuen Punkte des Schnitts bekommen
+                    # ihre Werte aus ihrem Element (sn.gewichte, 14.10.2026 -
+                    # bis dahin galt die Punktnummer des geschnittenen Gitters
+                    # als Knotennummer, und der Schnitt zeigte fremde Werte)
+                    grid0 = grid
+                    sn.knotenfeld_setzen(grid0)
+                    if self.schnitt is not None:
+                        grid = vp.schneiden(grid, *self.schnitt)
+                    if box is not None:
+                        grid = sn.box_schneiden(grid, box)
+                    if grid is not grid0:
+                        kidx, W = sn.gewichte(grid0, grid)
+                    for g_ in (grid0, grid):
+                        if "_kn" in g_.point_data:
+                            del g_.point_data["_kn"]
+                if grid.n_cells and np.isin(grid.celltypes, list(volumen_typen)).any():
                     # Knoten je Punkt ueber ein Punktfeld (vp.oberflaeche):
                     # vtkOriginalPointIds stimmte bei tet10 nicht (14.10.2026)
-                    flaeche, kidx = vp.oberflaeche(grid)
+                    flaeche, ks = vp.oberflaeche(grid)
+                    kidx = np.asarray(kidx, np.int64)[ks]
+                    flaeche.point_data["vtkOriginalPointIds"] = kidx
                     grid = flaeche
             except Exception as ex:             # noqa: BLE001
                 self.log.appendPlainText(f"Oberfläche: {ex}")
         self._gitter_stand = stand
-        self._gitter_zwischen = (grid, kidx)
+        self._gitter_zwischen = (grid, kidx, W)
+        self._schnittgewichte = W
         return grid, kidx
 
     #: Lage der Farbskalen: senkrecht am rechten Rand, Ergebnis aussen, der
@@ -26845,6 +26933,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 for e in mem.elements:
                     if 0 <= e < len(col):
                         col[e] = k % 12
+        W_ = getattr(self, "_schnittgewichte", None)
         for netz, kn, nm in netze:
             eidx = np.asarray(netz.cell_data["elem"], int)
             # Staebe als Linien 3 px breit, die Kanten von Schalen und Volumen 1 px
@@ -26855,7 +26944,9 @@ class MainWindow(QtWidgets.QMainWindow):
             show_edges = self.act_edges.isChecked() and nm in ("netz", "netz_linien")
             if u is not None:
                 warped = netz.copy()
-                warped.points = netz.points + s * u[kn, :3]
+                # Werte an den Punkten eines Schnitts aus ihrem Element
+                # (sn.erweitert, 14.10.2026); ohne Schnitt die Knotenwerte
+                warped.points = netz.points + s * sn.erweitert(u, W_)[kn, :3]
                 # ohne Verformung (aus, Verlauf) laege der Umriss genau auf
                 # der Figur
                 if self.cb_undeformed.isChecked() and s:
@@ -26879,10 +26970,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 if point_scalars is not None:
                     zf_ = getattr(self, "_zonen_farbe", None) if nm == "netz" else None
                     if zf_ is not None:
-                        warped = vp.zonen_getrennt(warped, kn, name, np.asarray(point_scalars, float),
-                                                   zf_["elemente"], zf_["werte"])
+                        warped = vp.zonen_getrennt(warped, kn, name,
+                                                   sn.erweitert(np.asarray(point_scalars, float), W_),
+                                                   zf_["elemente"], sn.erweitert(zf_["werte"], W_))
                     else:
-                        warped.point_data[name] = np.asarray(point_scalars)[kn]
+                        warped.point_data[name] = sn.erweitert(np.asarray(point_scalars), W_)[kn]
                     farbtafel = farben.pop("cmap", "turbo") if "cmap" in farben else "turbo"
                     self.plotter.add_mesh(warped, scalars=name, cmap=farbtafel, clim=clim,
                                           scalar_bar_args=dict(self._farbskala(), title=titel, **balken),
@@ -27011,6 +27103,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Werte im Bild: nur die {vp.WERTE_MAX} betragsgrößten Werte beschriftet - "
                     "Filter oder Schwelle in der Maske Ergebnisse", 8000)
         self._bewegung_zeichnen(m)
+        # Rahmen und Griffe der Schnittbox (Ansichtspaket C, 14.10.2026)
+        self.schnittbox.zeichnen()
         # Das Achsenkreuz unten rechts (add_axes) entfiel am 14.10.2026: das
         # Achsen-Gizmo oben rechts zeigt die Achsen (Entscheidung des Anwenders)
         return r
@@ -28171,6 +28265,241 @@ class MainWindow(QtWidgets.QMainWindow):
     def _schnitt_seite(self, an: bool):
         """Die andere Haelfte stehen lassen."""
         self._schnitt_nachziehen()
+
+    # ---- Schnittbox (Ansichtspaket C, 14.10.2026; gui/schnitt.py) -----------
+    def schnittbox_grenzen(self):
+        """Die Grenzen der Schnittbox (xmin, xmax, ymin, ymax, zmin, zmax) - oder None."""
+        sb = getattr(self, "schnittbox", None)
+        return sb.grenzen() if sb is not None else None
+
+    def schnitt_aktiv(self) -> bool:
+        """Ist die Ansicht aufgeschnitten (Ebene oder Box)? Fuer „Schnitt aus“."""
+        return self.schnitt is not None or self.schnittbox_grenzen() is not None
+
+    def schnitt_aus(self):
+        """Schnittebene und Schnittbox aus: das ganze Modell wieder im Bild
+        (Knopf „Schnitt aus“; die Ruecksetzer-Knoepfe von Paket B rufen dasselbe)."""
+        if not self.schnitt_aktiv():
+            return self.info("Es ist kein Schnitt an")
+        self.schnitt = None
+        self._schnittwidget_entfernen()
+        self.schnittbox.box = None
+        for a in (getattr(self, "act_schnitt", None), getattr(self, "act_schnittbox", None)):
+            if a is not None and a.isChecked():
+                alt = a.blockSignals(True)
+                a.setChecked(False)
+                a.blockSignals(alt)
+        self.redraw()
+        self._schnittbox_anzeige()
+        self.info("Schnitt aus - das ganze Modell ist wieder im Bild")
+
+    def _schnittbox_umschalten(self, an: bool):
+        """Schalter „Schnittbox“ (Ribbon Ansicht): eine Box aus sechs Ebenen um
+        alles Sichtbare; die Griffe je Seite ziehen, das Mausrad ueber einem
+        Griff schiebt fein."""
+        if an:
+            if self.schnittbox.box is None:
+                self.schnittbox.box = self.schnittbox.anfangsbox()
+            self.info("Schnittbox: die Punkte an den Seiten ziehen, das Mausrad über einem Punkt "
+                      "schiebt fein - " + self.schnittbox.text())
+        else:
+            self.schnittbox.box = None
+        self.redraw()
+        self._schnittbox_anzeige()
+        if an:
+            self.maske_schnittbox()
+
+    def schnittbox_setzen(self, box, zeichnen: bool = True):
+        """Die Box auf ``box`` setzen (None: aus) - aus der Maske, einer
+        gespeicherten Ansicht oder einer Pruefung."""
+        self.schnittbox.box = [float(v) for v in box] if box is not None and sn.box_gueltig(box) else None
+        a = getattr(self, "act_schnittbox", None)
+        if a is not None and a.isChecked() != (self.schnittbox.box is not None):
+            alt = a.blockSignals(True)
+            a.setChecked(self.schnittbox.box is not None)
+            a.blockSignals(alt)
+        if zeichnen:
+            self.redraw()
+        self._schnittbox_anzeige()
+
+    def _schnittbox_anzeige(self):
+        """Bereich der Box in der Maske „Schnittbox“ und am Schalter, „Schnitt
+        aus“ nur, solange geschnitten ist."""
+        text = self.schnittbox.text()
+        a = getattr(self, "act_schnittbox", None)
+        if a is not None:
+            a.setToolTip(f"Schnittbox: sechs Ebenen um alles Sichtbare, Griffe je Seite - {text}")
+        b = getattr(self, "act_schnitt_aus", None)
+        if b is not None:
+            b.setEnabled(self.schnitt_aktiv())
+        maske = getattr(getattr(self, "maskenrand", None), "maske", None)
+        if maske is None or not _lebt(maske) or getattr(maske, "titel", "") != "Schnittbox":
+            return
+        maske.setzen("bereich", text)
+        box = self.schnittbox.box
+        if box is not None:
+            for k, v in zip(sn.SEITEN, box):
+                maske.setzen(k, float(f"{v:.6g}"))
+        stand = getattr(maske, "stand_merken", None)
+        if callable(stand):
+            stand(list(sn.SEITEN) + ["bereich"])
+
+    @_maskenweg()
+    def maske_schnittbox(self):
+        """Die Schnittbox als Maske: die sechs Grenzen eintragen, der Bereich
+        als Anzeige, „Um alles Sichtbare“ und „Schnitt aus“."""
+        box = self.schnittbox.box or self.schnittbox.anfangsbox()
+        F = msk.Feld
+        felder = [F(k, f"{'min' if k.endswith('-') else 'max'} {k[0]} [m]", "zahl", float(f"{v:.6g}"))
+                  for k, v in zip(sn.SEITEN, box)]
+        felder.append(F("bereich", "Bereich", "info", self.schnittbox.text(), anzeige=True))
+        m = msk.Maske("Schnittbox", felder, knopf="Schneiden",
+                      zusatz=[("Um alles Sichtbare", self._schnittbox_um_alles,
+                               "Die Box wieder um alles legen, was im Bild ist"),
+                              ("Schnitt aus", self.schnitt_aus, "Schnittebene und Schnittbox aus")],
+                      hinweis="Gezeigt wird nur, was in der Box liegt; auf den Schnittflächen stehen "
+                              "die Ergebnisse. In der Ansicht die Punkte an den Seiten ziehen - das "
+                              "Mausrad über einem Punkt schiebt die Seite fein (vorwärts nach außen).")
+        m.angewendet.connect(self._maske_schnittbox_anwenden)
+        m.nur_ansicht = True
+        self.maske_erzeugen(m)
+
+    def _maske_schnittbox_anwenden(self, w: dict):
+        try:
+            box = [float(w.get(k)) for k in sn.SEITEN]
+        except (TypeError, ValueError):
+            return self.hinweis("Schnittbox: jede Grenze braucht eine Zahl")
+        if not sn.box_gueltig(box):
+            return self.hinweis("Schnittbox: das Minimum muss je Achse unter dem Maximum liegen")
+        self.schnittbox_setzen(box)
+
+    def _schnittbox_um_alles(self):
+        self.schnittbox_setzen(self.schnittbox.anfangsbox())
+
+    # ---- Gespeicherte Ansichten (Ansichtspaket C, 14.10.2026; gui/ansichten.py) ----
+    def ansicht_speichern(self, name: str = None, mit_auswahl: bool = False, kommentar: str = ""):
+        """Die Ansicht, wie sie gerade steht, unter ``name`` im Modell speichern
+        (Ribbon „Ansicht speichern“, Baum „+ Ansicht speichern“, „Neu: Ansicht“).
+        Ohne Namen heisst sie „Ansicht N“. Rueckgabe die Ansicht."""
+        m = self.model
+        name = str(name or "").strip() or m.naechster_name("Ansicht ", m.ansichten)
+        neu = name not in m.ansichten
+        a = ans.erfassen(self, name, mit_auswahl=mit_auswahl, kommentar=kommentar)
+        self.merken(f"Ansicht {name} gespeichert", beschriftung=True)
+        m.ansichten[name] = a
+        self._refresh_baum()
+        self.info(f"Ansicht „{name}“ {'gespeichert' if neu else 'überschrieben'}: {a.bezug()} - "
+                  "im Modellbaum unter Hilfsobjekte → Ansichten aufrufen")
+        return a
+
+    def ansicht_aufrufen(self, name: str, als_hinweis: bool = True):
+        """Eine gespeicherte Ansicht einstellen (Klick im Modellbaum).
+        Gelöschte Objekte werden übersprungen und genannt - als Hinweis, oder
+        mit ``als_hinweis=False`` nur in Statuszeile und Protokoll (im
+        Berichtsbild: ein Hinweis liesse dessen „Übernehmen“ scheitern)."""
+        a = (getattr(self.model, "ansichten", None) or {}).get(name)
+        if a is None:
+            return self.hinweis(f"Ansicht „{name}“ gibt es nicht")
+        fehlt = ans.anwenden(self, a)
+        self._schnittbox_anzeige()
+        if fehlt:
+            (self.hinweis if als_hinweis else self.info)(
+                f"Ansicht „{name}“: übersprungen, weil nicht mehr vorhanden - " + ", ".join(fehlt))
+        else:
+            self.info(f"Ansicht „{name}“")
+        return fehlt
+
+    def ansicht_umbenennen(self, alt: str, neu: str) -> bool:
+        m = self.model
+        neu = str(neu or "").strip()
+        if alt not in m.ansichten:
+            self.hinweis(f"Ansicht „{alt}“ gibt es nicht")
+            return False
+        if not neu or neu == alt:
+            return False
+        if neu in m.ansichten:
+            self.hinweis(f"Ansicht „{neu}“ gibt es schon")
+            return False
+        self.merken(f"Ansicht {alt} umbenannt", beschriftung=True)
+        eintraege = [((neu if k == alt else k), v) for k, v in m.ansichten.items()]
+        m.ansichten.clear()
+        m.ansichten.update(eintraege)
+        m.ansichten[neu].name = neu
+        self._refresh_baum()
+        self.info(f"Ansicht „{alt}“ heißt jetzt „{neu}“")
+        return True
+
+    def ansicht_loeschen(self, name: str, sammel: bool = False):
+        """Eine gespeicherte Ansicht loeschen (Modellbaum, ohne Rueckfrage hier -
+        die stellt _baum_loeschen). Die Ergebnisse bleiben: die Ansicht zaehlt
+        nicht fuer die Rechnung. Rueckgabe bei ``sammel`` der Grund (leer = weg)."""
+        m = self.model
+        if name not in (getattr(m, "ansichten", None) or {}):
+            grund = f"Ansicht {name} gibt es nicht"
+            return grund if sammel else self.hinweis(grund)
+        self.merken(f"Ansicht {name} gelöscht", beschriftung=True)
+        del m.ansichten[name]
+        if sammel:
+            return ""
+        self._refresh_baum()
+        self.info(f"Ansicht {name} gelöscht")
+        return ""
+
+    @_maskenweg(danach="öffnet sich „Neu: Ansicht“")
+    def ansicht_neu(self):
+        """Rechts die Anlegemaske „Neu: Ansicht“: gespeichert wird erst mit OK,
+        so wie die Ansicht dann steht."""
+        F = msk.Feld
+        m = self.model
+        maske = msk.Maske("Neu: Ansicht", [
+            F("name", "Name", "text", m.naechster_name("Ansicht ", m.ansichten), breite=170),
+            F("auswahl", "Auswahl mitspeichern", "haken", False),
+            F("kommentar", "Bemerkung", "text", "", breite=170)],
+            knopf="OK", abbrechen="Abbrechen",
+            hinweis="Die Ansicht so einstellen, wie sie gespeichert werden soll: Kamera, "
+                    "Ausgeblendetes, Schnitt, Darstellung und Ergebnis. OK speichert sie im Modell.")
+        maske.ansicht_einstellen = True
+        maske.angewendet.connect(lambda w: self.ansicht_speichern(
+            w.get("name"), mit_auswahl=bool(w.get("auswahl")), kommentar=str(w.get("kommentar") or "")))
+        return self.maske_erzeugen(maske)
+
+    @_maskenweg()
+    def maske_ansicht(self, name: str):
+        """Doppelklick auf eine gespeicherte Ansicht: Name (umbenennen),
+        Bemerkung, was sie festhaelt - und Aufrufen, mit der jetzigen Ansicht
+        überschreiben, als Bild in den Bericht."""
+        a = (getattr(self.model, "ansichten", None) or {}).get(name)
+        if a is None:
+            return self.hinweis(f"Ansicht „{name}“ gibt es nicht")
+        F = msk.Feld
+        maske = msk.Maske(f"Ansicht {name}", [
+            F("name", "Name", "text", name, breite=170),
+            F("kommentar", "Bemerkung", "text", a.kommentar or "", breite=170),
+            F("inhalt", "hält fest", "info", a.bezug(), anzeige=True)],
+            knopf="Übernehmen",
+            zusatz=[("Aufrufen", lambda n=name: self.ansicht_aufrufen(n)),
+                    ("Überschreiben", lambda n=name: self.ansicht_speichern(
+                        n, mit_auswahl=bool(a.auswahl), kommentar=a.kommentar),
+                     "Die Ansicht, wie sie jetzt steht, unter diesem Namen speichern"),
+                    ("In den Bericht", lambda n=name: self.ansicht_in_bericht(ansicht=n),
+                     "Diese Ansicht einstellen und als Bild in den Bericht aufnehmen")],
+            hinweis="Ein Klick im Modellbaum ruft die Ansicht auf. Gelöschte Objekte werden dabei "
+                    "übersprungen und genannt.")
+        maske.angewendet.connect(lambda w, n=name: self._maske_ansicht_anwenden(n, w))
+        return self.maske_erzeugen(maske)
+
+    def _maske_ansicht_anwenden(self, name: str, w: dict):
+        a = self.model.ansichten.get(name)
+        if a is None:
+            return self.hinweis(f"Ansicht „{name}“ gibt es nicht")
+        kommentar = str(w.get("kommentar") or "")
+        if kommentar != (a.kommentar or ""):
+            self.merken(f"Ansicht {name} geändert", beschriftung=True)
+            a.kommentar = kommentar
+        neu = str(w.get("name") or "").strip()
+        if neu and neu != name and self.ansicht_umbenennen(name, neu):
+            # die Maske traegt den Namen im Titel: unter dem neuen wieder oeffnen
+            QtCore.QTimer.singleShot(0, lambda n=neu: self.maske_ansicht(n))
 
     def _geist_umschalten(self, an: bool):
         """Schalter „Verborgenes im Hintergrund“ (Ribbon Ansicht, Glasleiste)."""

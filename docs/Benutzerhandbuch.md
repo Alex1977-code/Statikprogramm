@@ -119,7 +119,7 @@ Fünfzehn Register nach Arbeitsschritt:
 | **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
 | **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
 | **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
-| **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
+| **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* (mit **Ansicht speichern**), Schnittebene, Schnittbox und **Schnitt aus**; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher (F1), **Tastenkürzel** (die Liste aller Kürzel), Info, Update |
 
@@ -457,7 +457,7 @@ Die Arbeitsfläche in drei Spalten:
   | **Nachweise** → Schweißnähte, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte, gebündelt; die Stäbe mit Nachweis stehen als *Stäbe* unter *Geometrie* |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
-  | **Hilfsobjekte** → Bemaßungen, Layer | Maße und benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) |
+  | **Hilfsobjekte** → Bemaßungen, Layer, Ansichten | Maße, benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) und gespeicherte Ansichten (seit 14.10.2026) |
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -2737,7 +2737,11 @@ Geprüft in `tests/test_ergebnisdarstellung.py`.
 Modellbaum. Wer Name und Bildunterschrift vorher festlegen will, nimmt am
 Zweig „Bericht“ den Doppelklick oder Rechtsklick → *Neu: Berichtsbild …*:
 rechts öffnet sich eine Anlegemaske, und die Ansicht wird erst mit OK
-aufgenommen (seit 03.10.2026; bis dahin hatte der Zweig kein *Neu*). Ein
+aufgenommen (seit 03.10.2026; bis dahin hatte der Zweig kein *Neu*). Seit dem
+14.10.2026 kann das Bild eine **gespeicherte Ansicht** verwenden: in der
+Anlegemaske steht dann das Feld *Ansicht* („wie sie jetzt steht“ oder eine
+gespeicherte), und die Maske einer gespeicherten Ansicht hat den Knopf
+**In den Bericht**; die Bildunterschrift nennt die Ansicht. Ein
 Doppelklick auf einen Ergebniseintrag nimmt seit dem
 25.09.2026 nichts mehr auf, er zeigt nur. Aufgenommen wird das
 Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
@@ -3045,6 +3049,49 @@ ausgeblendete Teile bleiben ausgeblendet. So lassen sich Ergebnisse im
 Volumen an jeder Stelle ansehen, etwa der Spannungsverlauf durch die Wand
 einer Bohrung. Geprüft in `tests/test_gui_smoke.py` (Abschnitt Schnittebene:
 schräge Ebene durch die Mitte, aus der Ansicht, Werkzeug im Bild).
+
+**Schnittbox (seit 14.10.2026).** Zusätzlich zur Ebene gibt es den Schalter
+**Schnittbox** (*Ansicht → Sicht*, unter *Andere Seite*). Er legt eine Box
+aus sechs Ebenen um alles, was gerade im Bild ist, mit 1 % Luft je Seite, und
+gezeigt wird nur noch, was in der Box liegt. Auf jeder Seite der Box sitzt
+ein orangefarbener Punkt, der Griff. Wer ihn mit der linken Maustaste zieht,
+schiebt diese Seite längs ihrer Achse; dabei folgen nur Rahmen und Griffe der
+Maus, geschnitten wird beim Loslassen, denn an einem großen Modell ist ein
+Schnitt kein Mausschritt. Das **Mausrad über einem Griff** schiebt die Seite
+fein, je Rasterschritt um 0,5 % der Modellausdehnung längs dieser Achse:
+vorwärts nach außen, die Box wird größer, zurück nach innen. Neben den
+Griffen zoomt das Rad wie immer. Eine Seite lässt sich nicht über die
+gegenüberliegende ziehen, es bleibt mindestens 1 % der Modellausdehnung
+übrig, und sie geht höchstens 5 % über das Modell hinaus. Gedreht wird die
+Box nicht, ihre Seiten liegen parallel zu den globalen Achsen.
+
+Beim Einschalten öffnet sich rechts die Maske *Schnittbox*. Sie zeigt den
+Bereich als „x … · y … · z …“ in der Längeneinheit der Einstellungen und
+die sechs Grenzen in Metern zum Eintippen; **Schneiden** übernimmt sie,
+**Um alles Sichtbare** legt die Box wieder um alles im Bild, und **Schnitt
+aus** schaltet Box und Ebene aus. Beim Ziehen und mit dem Rad steht der
+Bereich auch in der Statuszeile. Geschnitten wird wie bei der Ebene das
+Volumennetz, bevor seine Außenhaut gebildet wird: auf den Schnittflächen
+stehen die Elemente des Inneren mit ihren Ergebnisfarben. Ebene und Box
+lassen sich zusammen benutzen; dann gilt beides.
+
+**Schnitt aus** (*Ansicht → Sicht*, unter dem Schieber) schaltet Schnittebene
+und Schnittbox auf einmal aus, und das ganze Modell steht wieder im Bild.
+Der Knopf ist nur bedienbar, solange geschnitten wird.
+
+**Werte auf den Schnittflächen (seit 14.10.2026 richtig).** Ein Schnitt legt
+neue Punkte auf die Kanten und in das Innere der Elemente; sie sind keine
+Modellknoten. Seit dem 14.10.2026 bekommen sie Farbe und Verformung aus den
+Knoten des Elements, in dem sie liegen, mit dessen Formfunktionen (bei tet10
+quadratisch). Bis dahin nahm die Ansicht nach einem Schnitt die laufende
+Nummer des Punktes im geschnittenen Netz als Knotennummer: am Würfel aus
+tet10 (Schnitt bei x = 0,37) gehörte jeder Punkt der Oberfläche zu einem
+falschen Knoten, bis 1,59 m daneben. Farbbilder mit Schnittebene aus der Zeit
+davor zeigen also fremde Werte am falschen Ort. Kennwerte, Max-/Min-Marken,
+Tabellen, Bericht und Nachweise lesen die Knoten selbst und waren nicht
+betroffen. Geprüft in `tests/test_ansichten.py`: ein lineares Prüffeld ist auf
+jedem Schnittpunkt exakt, die Verformung stimmt mit der Interpolation von VTK
+im ungeschnittenen Netz überein, bei der Box wie bei der Ebene.
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen ▾* und *Sicht ▾*, der Fang unter *Geometrie → Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
@@ -5123,6 +5170,50 @@ Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen weiter XY
 Blickpunkt umkehrt, sowie *Isometrisch* und „Zoom alles". Die Richtungen aus
 dem Ribbon passen wie bisher alles ein. Geprüft in
 `tests/test_ansicht_gizmo.py`.
+
+### Gespeicherte Ansichten (seit 14.10.2026)
+
+Eine **gespeicherte Ansicht** hält fest, wie man auf das Modell schaut, und
+stellt es auf einen Klick wieder ein: die Kamera mit Lage, Blickziel, Oben,
+Projektion (perspektivisch oder parallel) und Maßstab; die von Hand
+ausgeblendeten Teile, das Verborgene im Hintergrund und den Layer aus der
+Aufklappliste; Schnittebene und Schnittbox; die Darstellungsart und die
+Schalter Stäbe, Flächen und Volumen; das gezeigte Ergebnis mit Färbung,
+Schnittgrößenverlauf und Eigenform, soweit es ohne Rechnung da ist. Wahlweise
+nimmt sie auch die Auswahl mit. So bleiben wiederkehrende Details und die
+Ansichten für den Bericht im Modell.
+
+**Anlegen.** *Ansicht → Sicht ▾ → Ansicht speichern* oder im Modellbaum unter
+*Hilfsobjekte → Ansichten* die Zeile „+ Ansicht speichern“ speichert die
+Ansicht sofort unter „Ansicht 1“, „Ansicht 2“ und so weiter. Wer den Namen
+vorher wählen oder die Auswahl mitnehmen will, nimmt den Doppelklick auf den
+Zweig *Ansichten* oder Rechtsklick → *Neu: Ansicht …*: rechts öffnet sich eine
+Anlegemaske, und gespeichert wird erst mit OK, so wie die Ansicht dann steht.
+
+**Aufrufen, umbenennen, löschen.** Ein Klick auf eine Ansicht im Modellbaum
+stellt sie ein. Der Doppelklick öffnet ihre Maske: dort lassen sich Name und
+Bemerkung ändern (**Übernehmen**), und die Knöpfe **Aufrufen**,
+**Überschreiben** (die Ansicht, wie sie jetzt steht, unter diesem Namen) und
+**In den Bericht** stehen bereit. Rechtsklick → *Löschen* oder Entf löscht
+eine Ansicht. Speichern, Umbenennen und Löschen lassen sich rückgängig
+machen; die Ergebnisse bleiben dabei, denn eine Ansicht rechnet nicht mit.
+
+**Was es nicht mehr gibt, wird übersprungen.** Ist eine Fläche, ein Volumen,
+eine Linie oder ein Layer seit dem Speichern gelöscht, stellt der Aufruf
+alles Übrige ein und nennt das Fehlende in einem Hinweis, etwa
+„übersprungen, weil nicht mehr vorhanden – Fläche F12, 3 Elemente“.
+Element- und Knotennummern gelten nur für das Netz, mit dem gespeichert
+wurde: nach dem Neuvernetzen werden sie übersprungen, und der Hinweis sagt
+„Netz seither geändert“. Ein Ergebnis, das erst gerechnet werden muss, wird
+ebenso genannt.
+
+**In der Datei** stehen die Ansichten nur, wenn es welche gibt (Schlüssel
+„ansichten“ am Ende der Modelldatei). Eine Datei ohne Ansichten bleibt beim
+Speichern Zeichen für Zeichen, wie sie war, und für die Kennung der
+Ergebnisdatei zählen Ansichten nicht: eine gespeicherte Ansicht macht keine
+Ergebnisdatei ungültig. Beim Anhängen eines Modells werden seine Ansichten
+nicht übertragen, weil sie Nummern und Namen des anderen Modells nennen; das
+Protokoll sagt es. Geprüft in `tests/test_ansichten.py`.
 
 ### Querschnitte anlegen: Normprofile, eigene Profile, freier Editor
 

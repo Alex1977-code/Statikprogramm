@@ -1080,6 +1080,38 @@ def z_sicht_schnittseite(s: Stift):
     s.pfeil(6, 19, 18, 19, kopf=3.0)
 
 
+# ---- Ansichtspaket C (14.10.2026) ------------------------------------------
+def z_sicht_schnittbox(s: Stift):
+    """Schnittbox: ein Quader mit je einem Griff auf drei Seiten."""
+    s.stift(s.akzent, 1.5)
+    _wuerfel_umriss(s)
+    s.fuellung(s.akzent)
+    for x, y in ((9, 14.5), (11.5, 6.5), (16.5, 12)):
+        s.kreis(x, y, 2.2)
+
+
+def z_sicht_schnitt_aus(s: Stift):
+    """Schnitt aus: der ganze Quader, der Schnitt durchgestrichen."""
+    s.stift(breite=1.4)
+    _wuerfel_umriss(s, fuellen=True, durchsichtig=True)
+    s.stift(s.akzent, 2.0)
+    s.linie(3, 21, 21, 3)
+
+
+def z_ansicht_speichern(s: Stift):
+    """Ansicht speichern: ein Auge mit einem Lesezeichen."""
+    s.stift(breite=1.5)
+    p = QtGui.QPainterPath()
+    p.moveTo(2, 13)
+    p.cubicTo(6, 6, 14, 6, 18, 13)
+    p.cubicTo(14, 20, 6, 20, 2, 13)
+    s.p.drawPath(p)
+    s.kreis(10, 13, 2.6)
+    s.fuellung(s.akzent)
+    s.stift(s.akzent, 1.2)
+    s.zug([(16, 2), (22, 2), (22, 11), (19, 8.5), (16, 11)], schliessen=True)
+
+
 # ---- 12b (03.10.2026): Anfang ------------------------------------------
 # Eigene Zeichnungen fuer die grossen Knoepfe, die bis dahin nur einen
 # Buchstaben im Kreis trugen, fuer die fuenf Lastknoepfe, die alle das
