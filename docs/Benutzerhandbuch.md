@@ -3144,20 +3144,24 @@ zurückzunehmen gibt: *Schnitt aus*, solange die Schnittebene an ist, und
 *N Teile einblenden*, solange von Hand etwas ausgeblendet ist (gezählt werden
 Körper, Stäbe und Flächen, sonst Elemente, Linien oder Knoten; der Hinweis
 nennt sie). Bis zum 14.10.2026 baute jede Auswahl und jedes Ausblenden die
-ganze Szene neu auf; am Drehlager (617 241 Elemente, 108 Körper) kostete ein
-Auswahlklick 0,93 s ohne und 2,08 s mit Ergebnis, das Ausblenden eines
-Körpers 3,9 s. Jetzt bildet das Programm die Oberfläche **je Körper** einmal
+ganze Szene neu auf. Jetzt bildet das Programm die Oberfläche **je Körper** einmal
 je Netzstand, und was zu sehen ist, ist nur noch eine Auswahl ihrer Zellen —
 dieselben Zellen, die eine neu gebildete Oberfläche hätte, auch an Fugen mit
 gemeinsamen Knoten. Die Hervorhebung der Auswahl ist ein eigener kleiner
 Darsteller; ein Auswahlklick zeichnet nur ihn neu, ein Ausblenden nur das
 Netz und was an den sichtbaren Knoten hängt (Lager, Linien, Knoten, Nummern,
-Lasten, Geist). Ganz neu aufgebaut
+Lasten, Geist). Gemessen am Drehlager (617 241 Elemente, 108 Körper, Körper
+V30 mit 115 984 Elementen; offscreen, Median aus drei, alter und neuer Stand
+gleichzeitig): ein Auswahlklick 1,04 s → 0,19 s ohne und 1,99 s → 0,24 s mit
+Ergebnis, ein Klick ins Leere 0,49 s → 0,01 s, einen Körper ausblenden 3,9 s →
+0,53 s, *Vorherige Sicht* 2,9 s → 0,50 s, Isolieren 2,5 s → 1,1 s, *Alles
+zeigen* 3,2 s → 0,84 s. Ganz neu aufgebaut
 wird weiter, wenn ein Ergebnis gezeigt wird — Skala „nur sichtbare Teile“,
 Kennwerte, Max-/Min-Marken, Werte im Bild, Sonden, netzabhängige Zonen und
 Verlauf hängen dort an den sichtbaren Knoten —, wenn die Schnittebene an ist
 (ihre Lage bezieht sich auf den Quader des Gezeichneten) und wenn ein Körper
-nur zum Teil ausgeblendet ist. Auch dieser Neuaufbau nimmt die Oberfläche aus
+nur zum Teil ausgeblendet ist (mit Ergebnis: einen Körper ausblenden 4,7 s →
+2,1 s). Auch dieser Neuaufbau nimmt die Oberfläche aus
 dem Zwischenspeicher. Hat sich seit dem letzten Bild etwas anderes geändert
 (Modell, Ergebnis, Darstellung, ein Schalter, die Größe der Ansicht), baut der
 nächste Klick ebenfalls alles neu auf. Geprüft in
