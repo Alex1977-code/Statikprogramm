@@ -531,6 +531,9 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     _f0, K0, _z = aufbau()
     diag = np.abs(K0.diagonal())
     ref = diag.max() if diag.size and diag.max() > 0 else 1.0
+    # automatisch gehalten: ohne Steifigkeit und kein Lager - was dort
+    # ankommt, traegt kein Bauteil (solver.auto_gehalten_abtrennen, 14.10.2026)
+    auto = (diag < ref * 1e-12) & ~fixed
     fixed |= diag < ref * 1e-12
     fi = np.where(~fixed)[0]
     if not len(fi):
@@ -625,6 +628,8 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     info.gerechnet = not info.fehler
     f_int, K, zust = aufbau()
     res = ergebnis(zust, F_ges, f_int)
+    from .solver import auto_gehalten_abtrennen
+    auto_gehalten_abtrennen(model, auto, res, F_ges, aktiv, progress)
     info.u_max_III = float(np.abs(res.u[:, :3]).max())
     info.drehung_max = float(np.linalg.norm(res.u[:, 3:], axis=1).max())
     if info.u_max_I > 0:

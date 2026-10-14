@@ -48,6 +48,10 @@ ABGEBROCHEN = "abgebrochen"
 KONVERGIERT = "konvergiert"
 NICHT_KONVERGIERT = "nicht konvergiert"
 PROBELAUF = "Probelauf"
+#: Das Modell stimmt nicht: eine Last kommt an einem automatisch gehaltenen
+#: Freiheitsgrad an, kein Bauteil traegt sie (solver.gueltigkeit, 14.10.2026).
+#: Das sticht jeden Konvergenzstand.
+NICHT_GUELTIG = "nicht gültig"
 
 #: Eine Meldung, die Nichtkonvergenz sagt. Drei Formen stehen im Strom des
 #: Rechenkerns: "nicht konvergiert" (Schrittgrenze der Kontakt- und der
@@ -190,6 +194,33 @@ def meldung_aus_info(info) -> str:
     Laufs, etwa die Deckelzeile des Kontaktsystems - ohne Stufe."""
     from ..solver import kontakt_vorlaeufig
     return kontakt_vorlaeufig(info)
+
+
+def zustand_und_meldung(info, bisher: str) -> tuple:
+    """(Zustand, Meldung) eines fertigen Postens aus ``Results.info`` -
+    ``bisher`` ist der Stand aus den Meldungen. Zustand None: die Zeile
+    bleibt, wie sie ist („fertig“). Meldung "": die Spalte bleibt.
+
+    Zuerst die Gueltigkeit (14.10.2026): eine Last an einem automatisch
+    gehaltenen Freiheitsgrad macht den Posten „nicht gültig“, mit dem Grund
+    als Meldung - auch ohne Kontakt und Fliessen, wo die Zeile sonst „fertig“
+    bliebe. Danach der Konvergenzstand wie bisher (zustand_aus_info)."""
+    from ..solver import gueltigkeit
+    g = gueltigkeit(info)
+    if g:
+        return NICHT_GUELTIG, g
+    z = zustand_aus_info(info)
+    if z == PROBELAUF:
+        return PROBELAUF, ""
+    if z.startswith("NICHT"):
+        # vorlaeufig: die Stufen mit nicht konvergiertem Kontaktlauf (14.10.2026)
+        return NICHT_KONVERGIERT, meldung_aus_info(info)
+    if not bisher:
+        return None, ""
+    if bisher == NICHT_KONVERGIERT:
+        from ..solver import kontakt_hinweis
+        return KONVERGIERT, kontakt_hinweis(info) or "gedeckelt war nur ein Lauf, der nicht zählt"
+    return KONVERGIERT, ""
 
 
 def farm_text(status: dict) -> str:
@@ -402,21 +433,8 @@ if QtWidgets is not None:
                 info = getattr(r, "info", None)
                 if not isinstance(info, dict) or not (0 <= i < len(self._zustand)):
                     continue
-                z = zustand_aus_info(info)
-                bisher = self._zustand[i]
-                meldung = ""
-                if z == PROBELAUF:
-                    neu = PROBELAUF
-                elif z.startswith("NICHT"):
-                    neu = NICHT_KONVERGIERT
-                    # vorlaeufig: die Stufen mit nicht konvergiertem Kontaktlauf (14.10.2026)
-                    meldung = meldung_aus_info(info)
-                elif bisher:
-                    neu = KONVERGIERT
-                    if bisher == NICHT_KONVERGIERT:
-                        from ..solver import kontakt_hinweis
-                        meldung = kontakt_hinweis(info) or "gedeckelt war nur ein Lauf, der nicht zählt"
-                else:
+                neu, meldung = zustand_und_meldung(info, self._zustand[i])
+                if neu is None:
                     continue
                 self._zustand[i] = neu
                 self._setze(i, self.S_ZUSTAND, neu)

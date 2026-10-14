@@ -2252,6 +2252,18 @@ def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) ->
 def constrained_dofs(model: Model, K: sparse.csr_matrix):
     """Gesperrte FHG: Lager + FHG ohne Steifigkeit (z.B. Rotation an Volumenknoten).
     Rueckgabe (fixed_idx, prescribed_values)."""
+    fixed, vals, _auto = gesperrte_und_automatische(model, K)
+    return fixed, vals
+
+
+def gesperrte_und_automatische(model: Model, K: sparse.csr_matrix):
+    """Wie :func:`constrained_dofs`, dazu die Maske der **automatisch**
+    gehaltenen FHG: ohne Steifigkeit (Diagonale unter 1e-12 der groessten)
+    und von keinem Lager gesperrt - die Drehungen an Knoten nur mit
+    Fachwerkstaeben, Seilen oder Volumen, die Querrichtungen einer
+    Fachwerkstab-Kette, ein Knoten ohne Bauteil. Eine Kraft, die dort
+    ankommt, traegt kein Bauteil (solver.auto_gehalten_abtrennen, 14.10.2026).
+    Rueckgabe (fixed, vals, auto)."""
     n = model.ndof
     fixed = np.zeros(n, dtype=bool)
     vals = np.zeros(n)
@@ -2267,6 +2279,7 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if held:
             weak[np.fromiter(held, dtype=int, count=len(held))] = False
     fixed |= weak
+    gelagert = np.zeros(n, dtype=bool)
 
     from . import supports as sup
     lin, _ = sup.split(sup.expand(model))
@@ -2274,6 +2287,7 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if e.typ == "rigid":
             fixed[e.index] = True
             vals[e.index] = e.value
+            gelagert[e.index] = True
     # Tetraeder mit Ordnung p: an einer starr gelagerten Randseite sind die
     # Zusatz-FHG in der gelagerten Richtung null (tetp.gesperrte_fhg)
     if model.hat_tetp():
@@ -2282,10 +2296,12 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if len(gs):
             fixed[gs] = True
             vals[gs] = 0.0
+            gelagert[gs] = True
     # Woelbeinspannung: die Verwoelbung ist am Knoten behindert
     wi = model.woelb_index() if model.ndof > model.nn * NDOF else {}
     if wi:
         for s_ in model.supports:
             if getattr(s_, "woelb", False) and int(s_.node) in wi:
                 fixed[wi[int(s_.node)]] = True
-    return fixed, vals
+                gelagert[wi[int(s_.node)]] = True
+    return fixed, vals, weak & ~gelagert

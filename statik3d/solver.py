@@ -1809,6 +1809,8 @@ class Results:
                     freie.append(e)
         if freie:
             out.info["freie_teile"] = freie
+        # Last an automatisch gehaltenen FHG: die Anteile mit ihrem Faktor
+        auto_gehalten_kombinieren(out, parts)
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1845,6 +1847,8 @@ class Results:
         if self.info.get("loeser_nachweis"):
             s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
         s.extend(freie_teile_zeilen(self.info.get("freie_teile")))
+        # Last an automatisch gehaltenen FHG: Mechanismus, nicht gueltig (14.10.2026)
+        s.extend(auto_gehalten_zeilen(self.info))
         # Greift die Knotendilatation fuer einen Werkstoff nicht (nu ausserhalb
         # [0; 0,5)), steht das auch hier - nicht nur in der Zusammenfassung
         # aller Lastfaelle (Analysis.summary). Bis zum 06.10.2026 fehlte die
@@ -1873,6 +1877,8 @@ class Results:
         if self.info.get("stabenden_kraftsumme"):
             from . import stabeinleitung as _se
             s.extend(_se.pruefzeilen(self.info["stabenden_kraftsumme"]))
+        # ohne die Kraft an automatisch gehaltenen FHG - sie steht getrennt
+        s.extend(auto_gehalten_summenzeile(self.info))
         if self.contact:
             from . import contact as ct
             s.append(ct.summary(self.contact))
@@ -2172,6 +2178,263 @@ def freie_teile_gebuendelt(ergebnisse) -> list:
     return zeilen
 
 
+# --------------------------------------------------------------------------
+# Last an automatisch gehaltenen Freiheitsgraden (14.10.2026)
+# --------------------------------------------------------------------------
+# Das Programm sperrt jeden FHG ohne Steifigkeit (asm.gesperrte_und_automatische):
+# Drehungen an Knoten nur mit Fachwerkstaeben, Seilen oder Volumen, die
+# Querrichtungen einer Fachwerkstab-Kette, einen Knoten ohne Bauteil. Kommt
+# dort eine Last an, haelt sie der gesperrte FHG wie ein Lager fest - und
+# kein Bauteil traegt sie. Bis zum 14.10.2026 geschah das still: eine Kette
+# aus zwei Fachwerkstaeben mit 1 kN quer am Mittelknoten (ein Mechanismus)
+# zeigte u_z = 0, die echten Lager trugen 0 kN, und die Zusammenfassung nannte
+# nur „Summe Auflagerkräfte [0, 0, 1000] N“. Jetzt ist das ein Fehler des
+# Modells: die Kraft verlaesst die Auflagerkraefte, steht mit Knoten, Richtung
+# und Betrag im Ergebnis, und das Ergebnis heisst „nicht gültig“ - es bleibt
+# sichtbar, damit man sieht, wo die Last verschwindet, ist aber kein
+# Gleichgewicht des Tragwerks (tests/test_auto_gehalten.py).
+
+#: Die Pruefung abschalten - nur fuer den Vergleich „bitgleich mit und ohne“
+AUTO_GEHALTEN_PRUEFEN = True
+#: Schranke relativ zur Bezugskraft (auto_gehalten_abtrennen). Ein FHG gilt als
+#: automatisch gehalten, wenn seine Diagonale unter 1e-12 der groessten liegt;
+#: was er aus eigener Steifigkeit aufnimmt, ist also hoechstens ~1e-12 der
+#: Kraefte im Tragwerk, und Rundung in K u liegt ebenso weit darunter. 1e-6
+#: der Bezugskraft (1 N je MN) liegt viele Dekaden darueber und weit unter
+#: jeder Last, die ein Ingenieur bemerken muss.
+AUTO_GEHALTEN_SCHRANKE = 1e-6
+#: so viele Eintraege traegt ein Ergebnis hoechstens mit Text (Summe und
+#: Anzahl zaehlen alle)
+AUTO_GEHALTEN_MAX = 50
+_AUTO_RICHTUNG = ("x", "y", "z", "Mx", "My", "Mz")
+_AUTO_GROESSE = ("F_x", "F_y", "F_z", "M_x", "M_y", "M_z")
+
+
+def _auto_zahl(wert: float, d: int) -> str:
+    """Betrag als „1,000 kN“ bzw. „2,000 kNm“ (Komma wie in Tabellen und Bericht)."""
+    return f"{wert / 1e3:.3f}".replace(".", ",") + (" kN" if d < 3 else " kNm")
+
+
+def _auto_ursache(typen: set, d: int) -> str:
+    """Warum an diesem Knoten in dieser Richtung nichts traegt - aus den
+    Elementarten am Knoten."""
+    from .elemente import EBENE_TYPEN, VOLUMEN_TYPEN
+    if not typen:
+        return "an einem Knoten ohne Bauteil"
+    stab = typen <= {"truss", "seil"}
+    wer = ("Fachwerkstäben" if typen == {"truss"} else "Seilen" if typen == {"seil"}
+           else "Fachwerkstäben und Seilen")
+    if d < 3:
+        if stab:
+            return f"quer an einem Knoten nur mit {wer}"
+        return "in einer Richtung, in der kein Bauteil am Knoten Steifigkeit hat"
+    if stab:
+        return f"an einem Knoten nur mit {wer}, ohne Drehsteifigkeit"
+    if typen <= ({"truss", "seil"} | set(VOLUMEN_TYPEN) | set(EBENE_TYPEN)):
+        return ("an einem Knoten ohne Drehsteifigkeit (nur Volumen-, Scheiben- oder "
+                "Fachwerkelemente)")
+    return ("um eine Achse, um die kein Bauteil am Knoten Drehsteifigkeit hat "
+            "(etwa Momentengelenke an allen Stabenden)")
+
+
+def auto_gehalten_text(k: int, d: int, last: float, ursache: str) -> str:
+    return (f"Knoten K{k}: {_AUTO_GROESSE[d]} = {_auto_zahl(last, d)} {ursache} – "
+            "Mechanismus, die Last wird von keinem Bauteil getragen")
+
+
+def auto_gehalten_abtrennen(model: Model, auto, res: "Results", F: np.ndarray,
+                            aktiv=None, progress=None) -> list:
+    """Kraefte an automatisch gehaltenen FHG aus ``res.reactions`` nehmen und
+    als Modellfehler ins Ergebnis schreiben (``info['auto_gehalten']``).
+
+    ``auto``: Maske der automatisch gehaltenen FHG (StaticSystem.auto), ``F``
+    der Lastvektor des Lastfalls. Gemeldet wird, was ueber der Schranke liegt:
+    AUTO_GEHALTEN_SCHRANKE mal der Bezugskraft - Summe der Betraege aller
+    Knotenlasten und der Auflagerkraefte an echten Lagern, Momente durch die
+    Modellgroesse L geteilt (Momente vergleicht die Schranke mal L). Die
+    Summe der Betraege statt der Resultierenden, weil eine Last im
+    Gleichgewicht (Temperatur, zwei Gegenkraefte) die Resultierende null
+    haette. Darunter bleibt alles, wie es war - ein Fachwerk, dessen
+    automatisch gehaltene Drehungen nichts tragen, rechnet bitgleich.
+
+    Die Kraft wird aus den Auflagerkraeften genommen: sie ist keine. Rueckgabe
+    die Eintraege (leer: nichts gemeldet)."""
+    if not AUTO_GEHALTEN_PRUEFEN or auto is None or res is None:
+        return []
+    R = getattr(res, "reactions", None)
+    if R is None or not np.size(R):
+        return []
+    n6 = model.nn * NDOF
+    A = np.asarray(auto, bool)[:n6]
+    if not A.any():
+        return []
+    R = np.asarray(R)
+    idx = np.flatnonzero(A)
+    werte = R.reshape(-1)[idx]
+    if not np.any(werte):
+        return []
+    L = float(model.characteristic_size())
+    Fv = np.abs(np.asarray(F, float)[:n6]).reshape(-1, NDOF)
+    Am = A.reshape(-1, NDOF)
+    Rl = np.where(Am, 0.0, np.abs(R))
+    bezug = (float(Fv[:, :3].sum()) + float(Fv[:, 3:].sum()) / L
+             + float(Rl[:, :3].sum()) + float(Rl[:, 3:].sum()) / L)
+    s_F = AUTO_GEHALTEN_SCHRANKE * bezug
+    d = idx % NDOF
+    schranke = np.where(d < 3, s_F, s_F * L)
+    sel = np.abs(werte) > schranke
+    if not sel.any():
+        return []
+    idx, werte = idx[sel], werte[sel]
+    summe = np.zeros(NDOF)
+    np.add.at(summe, idx % NDOF, werte)
+    # Elementarten je betroffenem Knoten (nur wirksame Elemente)
+    kn = set(int(i) // NDOF for i in idx)
+    typen: dict = {k: set() for k in kn}
+    for i, e in enumerate(model.elements):
+        if aktiv is not None and i < len(aktiv) and not aktiv[i]:
+            continue
+        for k in e.nodes:
+            if int(k) in typen:
+                typen[int(k)].add(e.typ)
+    folge = np.argsort(-np.abs(werte), kind="stable")
+    eintraege = []
+    for j in folge[:AUTO_GEHALTEN_MAX]:
+        i = int(idx[j])
+        k, dd = i // NDOF, i % NDOF
+        last = -float(werte[j])                 # die Last ist die Gegenkraft der Reaktion
+        ursache = _auto_ursache(typen.get(k, set()), dd)
+        eintraege.append({"knoten": k, "fhg": dd, "richtung": _AUTO_RICHTUNG[dd], "last": last,
+                          "ursache": ursache, "text": auto_gehalten_text(k, dd, last, ursache)})
+    neu = np.array(R, float)                    # Kopie: R kann eine Sicht sein
+    neu.reshape(-1)[idx] = 0.0
+    res.reactions = neu
+    res.info["auto_gehalten"] = eintraege
+    res.info["auto_gehalten_anzahl"] = int(len(idx))
+    res.info["auto_gehalten_summe"] = [float(v) for v in summe]
+    res.info["auto_gehalten_schranke"] = [float(s_F), float(s_F * L)]
+    for e in eintraege[:10]:
+        _melde(progress, "WARNUNG: " + e["text"])
+    if len(idx) > 10:
+        _melde(progress, f"WARNUNG: … und {len(idx) - 10} weitere Lasten an automatisch "
+                         "gehaltenen Freiheitsgraden")
+    return eintraege
+
+
+def auto_gehalten_kombinieren(out: "Results", parts: list) -> None:
+    """Die Eintraege einer linearen Ueberlagerung: je Knoten und Richtung die
+    Summe f·Last, gemeldet ueber der Summe |f|·Schranke der Anteile."""
+    lasten: dict = {}
+    ursache: dict = {}
+    summe = np.zeros(NDOF)
+    s = np.zeros(2)
+    n_teile = 0
+    for r, f in parts:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        if not f or not inf.get("auto_gehalten"):
+            continue
+        n_teile += 1
+        for e in inf["auto_gehalten"]:
+            key = (int(e["knoten"]), int(e["fhg"]))
+            lasten[key] = lasten.get(key, 0.0) + f * float(e["last"])
+            ursache.setdefault(key, str(e.get("ursache", "")))
+        summe += f * np.asarray(inf.get("auto_gehalten_summe") or np.zeros(NDOF), float)
+        s += abs(f) * np.asarray(inf.get("auto_gehalten_schranke") or [0.0, 0.0], float)
+    if not n_teile:
+        return
+    eintraege = []
+    for (k, d), last in sorted(lasten.items(), key=lambda kv: -abs(kv[1])):
+        if abs(last) <= s[0 if d < 3 else 1]:
+            continue
+        eintraege.append({"knoten": k, "fhg": d, "richtung": _AUTO_RICHTUNG[d], "last": last,
+                          "ursache": ursache[(k, d)],
+                          "text": auto_gehalten_text(k, d, last, ursache[(k, d)])})
+    if not eintraege:
+        return
+    out.info["auto_gehalten"] = eintraege[:AUTO_GEHALTEN_MAX]
+    out.info["auto_gehalten_anzahl"] = len(eintraege)
+    out.info["auto_gehalten_summe"] = [float(v) for v in summe]
+    out.info["auto_gehalten_schranke"] = [float(v) for v in s]
+
+
+def gueltigkeit(info) -> str:
+    """"" fuer ein gueltiges Ergebnis, sonst „NICHT gültig: <Grund>“.
+
+    Nicht gueltig ist ein Ergebnis, an dessen automatisch gehaltenen FHG eine
+    Last ankommt (auto_gehalten_abtrennen): das ist ein Mechanismus, die Last
+    traegt kein Bauteil, und Verschiebungen und Schnittgroessen sind kein
+    Gleichgewicht des Tragwerks. Das ist etwas anderes als „nicht
+    konvergiert“ (:func:`konvergenz_zustand`): da fehlt Genauigkeit, hier
+    stimmt das Modell nicht."""
+    info = info if isinstance(info, dict) else {}
+    e = info.get("auto_gehalten") or []
+    if not e:
+        return ""
+    n = int(info.get("auto_gehalten_anzahl", len(e)) or len(e))
+    kurz = [f"Knoten K{x['knoten']} {_AUTO_GROESSE[int(x['fhg'])]} = "
+            f"{_auto_zahl(float(x['last']), int(x['fhg']))}" for x in e[:3]]
+    return ("NICHT gültig: Mechanismus – " + "; ".join(kurz) + (" …" if n > 3 else "")
+            + (" wird" if n == 1 else f" ({n} Lasten) werden")
+            + " von keinem Bauteil getragen (automatisch gehaltene Freiheitsgrade)")
+
+
+def auto_gehalten_zeilen(info) -> list:
+    """Die Zeilen der Zusammenfassung eines Ergebnisses: „NICHT GÜLTIG“ und je
+    Last eine WARNUNG (hoechstens zehn)."""
+    info = info if isinstance(info, dict) else {}
+    e = info.get("auto_gehalten") or []
+    if not e:
+        return []
+    n = int(info.get("auto_gehalten_anzahl", len(e)) or len(e))
+    z = [f"NICHT GÜLTIG            : Mechanismus – {n} {'Last' if n == 1 else 'Lasten'} an "
+         "automatisch gehaltenen Freiheitsgraden, von keinem Bauteil getragen"]
+    z += ["WARNUNG: " + str(x.get("text", "")) for x in e[:10]]
+    if n > 10:
+        z.append(f"WARNUNG: … und {n - 10} weitere Lasten an automatisch gehaltenen Freiheitsgraden")
+    return z
+
+
+def auto_gehalten_summenzeile(info) -> list:
+    """„Automatisch gehalten : [..] N“ - die Kraft, die nicht in der Summe der
+    Auflagerkraefte steht (Vorzeichen wie dort: Reaktion)."""
+    info = info if isinstance(info, dict) else {}
+    S = info.get("auto_gehalten_summe")
+    if not info.get("auto_gehalten") or not S:
+        return []
+    S = [float(v) for v in S]
+    t = f"[{S[0]:.1f}, {S[1]:.1f}, {S[2]:.1f}] N"
+    if any(S[3:]):
+        t += f", [{S[3]:.1f}, {S[4]:.1f}, {S[5]:.1f}] Nm"
+    return [f"Automatisch gehalten    : {t} – an automatisch gehaltenen Freiheitsgraden, "
+            "nicht in der Summe der Auflagerkräfte"]
+
+
+def auto_gehalten_gebuendelt(ergebnisse) -> list:
+    """Ueber alle Ergebnisse: je Text eine WARNUNG mit den Ergebnisnamen, davor
+    eine Zeile „NICHT GÜLTIG“ mit den betroffenen Ergebnissen."""
+    gruppen: dict = {}
+    betroffen = []
+    for name, r in ergebnisse:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        e = inf.get("auto_gehalten") or []
+        if e:
+            betroffen.append(str(name))
+        for x in e[:10]:
+            gruppen.setdefault(str(x.get("text", "")), []).append(str(name))
+    if not betroffen:
+        return []
+    n = len(betroffen)
+    zeilen = [f"NICHT GÜLTIG: {n} {'Ergebnis' if n == 1 else 'Ergebnisse'} "
+              f"({', '.join(betroffen[:5])}{' …' if n > 5 else ''}) – Mechanismus, Last an "
+              "automatisch gehaltenen Freiheitsgraden, von keinem Bauteil getragen"]
+    for text, namen in gruppen.items():
+        k = len(namen)
+        wo = (f"bei {k} Ergebnissen: {', '.join(namen[:3])}{' …' if k > 3 else ''}"
+              if k > 1 else f"bei {namen[0]}")
+        zeilen.append(f"WARNUNG: {text} ({wo})")
+    return zeilen
+
+
 def loeser_nachweis_zeilen(nw: dict) -> list:
     """Die Zeilen der Zusammenfassung zum Loeser-Nachweis eines Lastfalls:
     wer wie oft geloest hat, Ausweichen mit Grund, gestoerte Pivots - die
@@ -2228,7 +2491,9 @@ class StaticSystem:
         #: dem Ingenieurkriterium vergleicht (_ingenieur_abschluss)
         self.workers = workers
         self.K = asm.stiffness(model, workers, self.aktiv)
-        self.fixed, self.vals = asm.constrained_dofs(model, self.K)
+        #: auto: automatisch gehaltene FHG (ohne Steifigkeit, kein Lager) - was
+        #: dort ankommt, traegt kein Bauteil (auto_gehalten_abtrennen)
+        self.fixed, self.vals, self.auto = asm.gesperrte_und_automatische(model, self.K)
         self.fi = np.where(~self.fixed)[0]
         self.si = np.where(self.fixed)[0]
         self.Kff = self.K[self.fi][:, self.fi].tocsc()
@@ -5438,6 +5703,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         res.info["singularitaeten"] = [singularitaet_info(x)
                                        for x in _sg.wichtigste(res.singular)]
     verschiebungen_eintragen(model, res, u, R)
+    # Last an automatisch gehaltenen FHG: nie still (14.10.2026)
+    auto_gehalten_abtrennen(model, getattr(system, "auto", None), res, F, aktiv_eff, progress)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
                      "solver": system.backend, "factors": dict(factors),
                      "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
@@ -8920,6 +9187,8 @@ class Analysis:
         s += dilatation_gebuendelt(self.all_results().items())
         # frei bewegliche Teile (B5, 08.10.2026): je Text eine Zeile, nicht je Lastfall
         s += freie_teile_gebuendelt(self.all_results().items())
+        # Last an automatisch gehaltenen FHG (14.10.2026): nicht gueltig, je Text eine Zeile
+        s += auto_gehalten_gebuendelt(self.all_results().items())
         # aktive Zugstaebe mit Druck nach Abschluss (13.10.2026): je Stab eine Zeile
         s += zugstab_druck_gebuendelt(self.all_results().items())
         # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)

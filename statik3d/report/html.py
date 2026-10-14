@@ -3012,6 +3012,40 @@ class Report:
                 self._warnings.append(
                     f"Frei bewegliche Teile ({namen[0]}" + (f" und {len(namen) - 1} weitere" if len(namen) > 1 else "")
                     + f"): {text}")
+        # ---- Last an automatisch gehaltenen Freiheitsgraden (14.10.2026)
+        # Ein Mechanismus, kein Rundungsrest: die Last traegt kein Bauteil,
+        # das Ergebnis ist nicht gueltig (solver.gueltigkeit). Gebuendelt wie
+        # oben; die Kraft steht nicht in den Auflagerreaktionen.
+        auto: dict = {}
+        for name, res in allres:
+            for e in ((getattr(res, "info", None) or {}).get("auto_gehalten") or [])[:20]:
+                auto.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+        if auto:
+            b.append(self._h(2, "Last an automatisch gehaltenen Freiheitsgraden"))
+            b.append(("p", "Das Programm hält jeden Freiheitsgrad fest, in dem kein Bauteil "
+                           "Steifigkeit hat – etwa die Drehungen an Knoten nur mit "
+                           "Fachwerkstäben oder Volumen und die Querrichtungen einer "
+                           "Fachwerkstab-Kette. An den genannten Stellen kommt dort eine Last an: "
+                           "Das ist ein Mechanismus, die Last wird von keinem Bauteil getragen. "
+                           "Diese Ergebnisse sind nicht gültig. Sie bleiben sichtbar, damit man "
+                           "sieht, wo die Last verschwindet; die Kraft steht nicht in den "
+                           "Auflagerreaktionen. Abhilfe ist ein Bauteil oder Lager, das die "
+                           "Richtung hält, oder die Last an einen tragenden Knoten zu legen."))
+            rows = [["Knoten", "Größe", "Last", "Ursache", "Ergebnisse"]]
+            for text, (e, namen) in auto.items():
+                d = int(e.get("fhg", 0))
+                wo = ", ".join(namen[:4]) + (f" … ({len(namen)} Ergebnisse)" if len(namen) > 4 else "")
+                rows.append([f"K{e.get('knoten')}", ("F_", "M_")[d >= 3] + "xyz"[d % 3],
+                             fmt(float(e.get("last", 0.0)) / 1e3, 3) + (" kN" if d < 3 else " kNm"),
+                             str(e.get("ursache", "")), wo])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Last an automatisch gehaltenen Freiheitsgraden", None, "compact"))
+            if note:
+                b.append(("note", note))
+            for text, (e, namen) in auto.items():
+                self._warnings.append(
+                    f"Nicht gültig ({namen[0]}" + (f" und {len(namen) - 1} weitere" if len(namen) > 1 else "")
+                    + f"): {text}")
         # ---- Modal
         if self.opt("modal"):
             modal = [(n, r) for n, r in allres if getattr(r, "freqs", None) is not None]
@@ -4910,6 +4944,17 @@ class Report:
                     or (bl is not None and getattr(bl, "felder", None))
                     or (li is not None and getattr(li, "stellen", None))
                     or any(not c.singular and not c.fehler for c in vo_aktiv))
+        # Last an automatisch gehaltenen FHG (14.10.2026): ein Mechanismus macht
+        # das Ergebnis ungueltig - das steht vor jedem Urteil ueber Nachweise
+        ungueltig = [str(n) for n, r in self.all_results()
+                     if (getattr(r, "info", None) or {}).get("auto_gehalten")]
+        if ungueltig:
+            b.append(("status", f"NICHT gültig: {len(ungueltig)} "
+                                f"{'Ergebnis' if len(ungueltig) == 1 else 'Ergebnisse'} ("
+                                + ", ".join(ungueltig[:5]) + (" …" if len(ungueltig) > 5 else "")
+                                + ") – Mechanismus, eine Last an automatisch gehaltenen "
+                                  "Freiheitsgraden wird von keinem Bauteil getragen (siehe die "
+                                  "Hinweise unten).", False))
         # "or not status_ok": ein nicht erfuellter Eintrag darf nie hinter
         # "Kein Nachweis geführt" verschwinden
         if gefuehrt or not status_ok:

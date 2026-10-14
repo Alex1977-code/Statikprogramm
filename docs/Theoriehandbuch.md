@@ -1551,6 +1551,17 @@ in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
   und bekommen Schnittgrößen null. Knotenlasten an Knoten, an denen kein
   wirksames Element mehr hängt, entfallen; solche Knoten werden über die
   Regel „Freiheitsgrad ohne Steifigkeit wird festgehalten“ gesperrt.
+  Diese Regel (`asm.gesperrte_und_automatische`: Diagonale unter 10⁻¹² der
+  größten, kein Lager) trägt seit dem 14.10.2026 eine Pflicht: Was an einem
+  so gesperrten Freiheitsgrad als Reaktion ankommt, ist Last, die kein Bauteil
+  trägt (`solver.auto_gehalten_abtrennen`). Über 10⁻⁶ der Bezugskraft (Summe
+  der Beträge aller Knotenlasten und der Auflagerkräfte an echten Lagern,
+  Momente durch die Modellgröße L, deren Schranke mal L) wird sie aus den
+  Auflagerkräften genommen, mit Knoten, Richtung und Betrag gemeldet, und das
+  Ergebnis heißt „nicht gültig“ (`solver.gueltigkeit`). Darunter bleibt alles,
+  wie es war. Bis zum 14.10.2026 nahm der gesperrte Freiheitsgrad die Last
+  still auf wie ein Lager: eine Fachwerkstab-Kette mit 1 kN quer am
+  Mittelknoten zeigte u_z = 0 und „Summe Auflagerkräfte [0, 0, 1000] N“.
   Kopplungen einer Kontaktfuge an solchen Knoten entfallen ebenfalls.
 * **Kombinationen** überlagern nur Lastfälle derselben Situation (gleiche
   Steifigkeitsmatrix — sonst wäre die Superposition falsch); eine Mischung

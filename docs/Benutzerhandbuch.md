@@ -11629,6 +11629,57 @@ Antwort alle 13 gesetzten Platten findet, und von der Löser-Sitzung, dass sechs
 Lösungen über den Faktor des Entwurfs 12 s kosten und die Antwort auf den
 Lastverteilplatten zu 99,999999 % eine Starrkörperbewegung ist.
 
+### Last an automatisch gehaltenen Freiheitsgraden (seit 14.10.2026)
+
+Ein Freiheitsgrad, in dem kein Bauteil Steifigkeit hat, wird vor der Rechnung
+festgehalten. Das betrifft die Drehungen an Knoten, an denen nur
+Fachwerkstäbe, Seile oder Volumenelemente hängen, die Querrichtungen einer
+geraden Kette aus Fachwerkstäben und einen Knoten ohne Bauteil. Solange dort
+keine Last ankommt, ist das richtig und ändert nichts. Bis zum 14.10.2026
+geschah es aber auch dann still, wenn dort eine Last ankam: Der festgehaltene
+Freiheitsgrad nahm sie auf wie ein Lager. Eine Kette aus zwei Fachwerkstäben
+mit 1 kN quer am Mittelknoten ist ein Mechanismus, trotzdem zeigte die
+Rechnung u_z = 0, die echten Lager trugen 0 kN, und die Zusammenfassung
+nannte nur „Summe Auflagerkräfte [0.0, 0.0, 1000.0] N“, ohne Warnung.
+
+Seit dem 14.10.2026 gilt jede Kraft und jedes Moment an einem automatisch
+gehaltenen Freiheitsgrad als Fehler des Modells. Die Rechnung wird als
+**nicht gültig** gekennzeichnet. Das Ergebnis bleibt sichtbar, damit man sieht,
+wo die Last verschwindet, ist aber kein Gleichgewicht des Tragwerks:
+Verschiebungen und Schnittgrößen gehören zu einem Tragwerk mit einem Lager,
+das es nicht gibt. Gemeldet wird je Knoten und Richtung, zum Beispiel
+„Knoten K1: F_z = -1,000 kN quer an einem Knoten nur mit Fachwerkstäben –
+Mechanismus, die Last wird von keinem Bauteil getragen“ oder „Knoten K4: M_y =
+2,000 kNm an einem Knoten nur mit Fachwerkstäben, ohne Drehsteifigkeit – …“.
+Die Meldung steht im Protokoll (als WARNUNG während der Rechnung und in der
+Zusammenfassung), in der Zusammenfassung mit der Zeile „NICHT GÜLTIG“, in der
+Rechenliste mit dem Zustand „nicht gültig“ und dem Grund als Meldung, und im
+Bericht als Kapitel „Last an automatisch gehaltenen Freiheitsgraden“, bei den
+Warnungen und als rote Zeile „NICHT gültig: …“ in der Zusammenfassung des
+Berichts. Eine Kombination trägt die Meldung ihrer Lastfälle mit dem Faktor
+weiter, die Zusammenfassung der ganzen Rechnung bündelt gleiche Meldungen.
+
+Die Kraft gehört nicht zu den Auflagerkräften. „Summe Auflagerkräfte“, die
+Tabelle der Auflagerreaktionen und die Übersicht der Ergebnisse zählen sie
+nicht mehr mit; die Zusammenfassung nennt sie getrennt in der Zeile
+„Automatisch gehalten“, mit demselben Vorzeichen wie die Auflagerkräfte. Bis
+zum 14.10.2026 stand sie in der Summe der Auflagerkräfte und am betroffenen
+Knoten als Auflagerkraft.
+
+Die Schranke ist 1·10⁻⁶ der Bezugskraft, also 1 N je MN. Die Bezugskraft ist
+die Summe der Beträge aller Knotenlasten und der Auflagerkräfte an echten
+Lagern, Momente geteilt durch die Modellgröße; Momente vergleicht die Schranke
+mal die Modellgröße. Ein festgehaltener Freiheitsgrad hat weniger als 10⁻¹² der
+größten Steifigkeit, was er aus eigener Steifigkeit aufnimmt, liegt also viele
+Zehnerpotenzen unter der Schranke, und eine Last, die ein Ingenieur bemerken
+muss, liegt weit darüber. Ein Fachwerk, dessen festgehaltene Drehungen nichts
+tragen, rechnet bitgleich wie zuvor und bekommt keine Meldung; das gilt auch
+für alle acht eingebauten Beispiele, deren Zahlen und Zusammenfassungen
+bitgleich geblieben sind. Abhilfe ist ein Bauteil oder Lager, das die
+Richtung hält, oder die Last an einen tragenden Knoten zu legen; ein Moment an
+einem Fachwerkknoten trägt ein Balken, der dort biegesteif anschließt
+(`tests/test_auto_gehalten.py`).
+
 ### Netzabhängige Spannungsspitzen (seit 10.10.2026)
 
 Geht eine Kraft ohne Auflagefläche in ein Volumen, wächst die Spannung dort

@@ -637,8 +637,10 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     # --- Theorie I. Ordnung als Ausgangspunkt
     u1 = system.solve(F, us=us)
     res1 = Results(name=name, kind="combination", model=model)
-    from .solver import verschiebungen_eintragen
+    from .solver import auto_gehalten_abtrennen, verschiebungen_eintragen
     verschiebungen_eintragen(model, res1, u1, system.reactions(u1, F))
+    # Last an automatisch gehaltenen FHG: nie still (14.10.2026)
+    auto_gehalten_abtrennen(model, getattr(system, "auto", None), res1, F, aktiv)
     postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
@@ -686,6 +688,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         u = u_neu
         res = Results(name=name, kind="combination", model=model)
         verschiebungen_eintragen(model, res, u, system.reactions(u, Fges, K_extra=Kg))
+        auto_gehalten_abtrennen(model, getattr(system, "auto", None), res, Fges, aktiv)
         postprocess(model, u, res, feq, q, temp, aktiv=aktiv)
         info.iterationen = it
         info.konvergenz = d / bezug
