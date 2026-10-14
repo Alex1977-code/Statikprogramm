@@ -4157,7 +4157,9 @@ def _laufbuch_eintrag(nr: int, cinfo: dict, art: str = "", start_von_lauf=None) 
             "n_aktiv": lauf.get("n_aktiv"), "n_gleitet": lauf.get("n_gleitet"),
             "runden": list(lauf.get("runden") or []),
             "endzustand_kennung": lauf.get("endzustand_kennung"),
-            "u_max": lauf.get("u_max")}
+            "u_max": lauf.get("u_max"),
+            # Vorschlag 3 (14.10.2026): erkannter Zyklus und Ausschlag der letzten Runde
+            "zyklus": bool(lauf.get("zyklus", False)), "ausschlag": lauf.get("ausschlag")}
 
 
 def _kontakt_info_sammeln(res, cinfo: dict, art: str = "", start_von_lauf=None) -> dict:
@@ -4736,6 +4738,10 @@ class _KontaktImNewton:
         # elastischen Vorlauf
         self._stab = bool(stabstatus)
         self._stab_verlauf: list = []
+        # Vorschlag 3: Ausschlag und Lastanteil der letzten Halbierung am Deckel,
+        # und welche Entscheidung zuletzt gemeldet wurde (je Lauf einmal)
+        self._halbier_vorher = None
+        self._halbier_gemeldet = None
         if self._stab and res.info.get("ausfall") is not None:
             self._stab_verlauf.append(self._stab_lesen())
 
@@ -4881,6 +4887,77 @@ class _KontaktImNewton:
         laeufe = self.res.info.get("laeufe") or []
         return any(not e.get("konvergiert", True) and not e.get("abgekuerzt") and not e.get("verworfen")
                    for e in laeufe[marke["lauf"]:])
+
+    def halbieren_am_deckel(self, marke, anteil: float) -> tuple:
+        """Vorschlag 3 (Entscheidung des Anwenders vom 14.10.2026): am Deckel nur
+        halbieren, wenn das Pendeln vom Lastanteil abhaengt; erkanntes Pendeln
+        loest keine Halbierung aus. Rueckgabe (halbieren, Zeile fuers Protokoll
+        oder ""). ``anteil`` ist der Lastanteil der Stufe (lam_k - lam_vorher).
+
+        **Kriterium "lastabhaengig"** (ohne zusaetzlichen Lauf): endet ein
+        Kontaktlauf einer Stufe nicht konvergiert, wird sie halbiert wie bisher,
+        und der Ausschlag A (groesste Bewegung eines Knotens in der letzten Runde
+        des Laufs) wird mit dem Lastanteil gemerkt. Endet auch ein Lauf der
+        halben Stufe nicht konvergiert, haengt das Pendeln vom Lastanteil ab,
+        wenn der Ausschlag mindestens im Verhaeltnis der Lastanteile faellt:
+        A_neu / A_alt <= Anteil_neu / Anteil_alt (nach einer Halbierung also auf
+        die Haelfte). Dann wird weiter halbiert. Faellt er weniger, ist das
+        Pendeln als nicht lastabhaengig erkannt: keine weitere Halbierung, die
+        Stufe rechnet weiter, und das Ergebnis bleibt vorlaeufig (Laststufen mit
+        nicht konvergiertem Kontakt stehen im Ergebnis). Die erste Halbierung
+        fand schon vor dem 14.10.2026 statt; gespart werden die weiteren.
+
+        Warum so und nicht am ersten Lauf allein: ob ein Pendeln an der Last
+        haengt, zeigt erst ein zweiter Lastanteil. Am Drehlager (V36, 13.10.2026)
+        blieb der Ausschlag bei 1/3 bis 1/48 des Lastanteils bei 14,7 / 12,6 /
+        12,6 / 11,6 / 11,8 µm - nach der ersten Halbierung 86 % statt 50 %, nicht
+        lastabhaengig, drei Halbierungen je Stufe gespart. Am gequetschten Block
+        (tests/test_plastizitaet) dagegen loesen die Halbierungen das Pendeln
+        auf (1 Laststufe: viermal halbiert, dann konvergiert); haette dort schon
+        ein erkannter Zyklus die Halbierung verboten, endete die Rechnung
+        vorlaeufig und 0,64 mm neben dem konvergierten Ergebnis (gemessen
+        14.10.2026). Ob im Lauf ein Zyklus erkannt war, steht im Laufbuch
+        (``zyklus``) und in der Zeile, entscheidet aber nicht.
+
+        Ausgeschaltet (Plastizitaet.halbieren_lastabhaengig) halbiert jeder
+        nicht konvergierte Lauf wie vor dem 14.10.2026."""
+        laeufe = self.res.info.get("laeufe") or []
+        offen = [e for e in laeufe[marke["lauf"]:]
+                 if not e.get("konvergiert", True) and not e.get("abgekuerzt") and not e.get("verworfen")]
+        if not offen:
+            return False, ""
+        pz = getattr(self.res.model, "plastizitaet", None)
+        if not bool(getattr(pz, "halbieren_lastabhaengig", False)):
+            return True, ""
+        from .zahlen import zahl_text as _z
+        e = offen[-1]
+        nr = int(e.get("nr", 0) or 0)
+        a = float(e.get("ausschlag") or 0.0)
+        wo = (f"Kontaktlauf {nr} nicht konvergiert (Grund „{e.get('grund') or 'unbekannt'}“, "
+              f"{'Pendeln erkannt' if e.get('zyklus') else 'kein Zyklus erkannt'}, Ausschlag der letzten Runde "
+              f"{_z(a * 1e6, stellen=3)} µm)")
+        vor = self._halbier_vorher
+        if vor is not None and 0.0 < anteil < vor["anteil"]:
+            soll = anteil / vor["anteil"]
+            ist = a / vor["ausschlag"] if vor["ausschlag"] > 0.0 else float("inf")
+            if ist > soll:
+                if self._halbier_gemeldet == nr:
+                    return False, ""
+                self._halbier_gemeldet = nr
+                return False, (f"Plastizität: {wo} - mit {_z(100.0 * soll, stellen=3)} % des Lastanteils fällt "
+                               f"der Ausschlag nur auf {_z(100.0 * ist, stellen=3)} % "
+                               f"({_z(vor['ausschlag'] * 1e6, stellen=3)} µm vorher): das Pendeln hängt nicht vom "
+                               f"Lastanteil ab, keine weitere Halbierung; die Stufe rechnet weiter, das Ergebnis "
+                               f"bleibt vorläufig")
+            text = (f"Plastizität: {wo} - mit {_z(100.0 * soll, stellen=3)} % des Lastanteils fällt der Ausschlag "
+                    f"auf {_z(100.0 * ist, stellen=3)} % ({_z(vor['ausschlag'] * 1e6, stellen=3)} µm vorher): das "
+                    f"Pendeln hängt vom Lastanteil ab, die Stufe wird halbiert")
+        else:
+            text = (f"Plastizität: {wo} - die Stufe wird halbiert; ob das Pendeln vom Lastanteil abhängt, "
+                    f"misst die halbe Stufe (lastabhängig, wenn der Ausschlag mindestens im Verhältnis der "
+                    f"Lastanteile fällt)")
+        self._halbier_vorher = {"ausschlag": a, "anteil": float(anteil)}
+        return True, text
 
     def zurueck_an(self, marke) -> int:
         """Den Kontaktzustand der Marke wieder einsetzen; die Laeufe seit ihr
@@ -8532,6 +8609,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                  and schwellen[0] > 0.0 and schwellen[1] > 0.0)
     pendel_sp: dict = {"bits": {}, "rec": {}, "mass": {}}
     pendeln = None                  # Ergebnis der Pruefung am Ende (contact_pendeln)
+    zyklus_runden = 0               # Runden mit erkanntem Zyklus (Vorschlag 3, Laufbuch "zyklus")
     for it in range(1, max_iter + 1):
         Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
@@ -8641,6 +8719,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if (ABSCHLUSS_INGENIEUR and u_vor is not None and not kurz and not probelauf
                 and cs.phase == 2 and (wie_runde is not None or richtungen)):
             abschluss_merker.pop("abgelehnt", None)
+            zyklus_runden += 1          # Aktivmenge oder Gleitrichtungen pendeln (erkannt)
             ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
                                              abschluss_merker)
             abgelehnt = abschluss_merker.pop("abgelehnt", None)
@@ -8986,6 +9065,25 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_frozen_verworfen": eingefroren_verworfen,
         "contact_ingenieur": ingenieur,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
+    # Vorschlag 3 (14.10.2026): ob im Lauf ein Pendeln erkannt war (Zyklus der
+    # Aktivmenge oder der Gleitrichtungen, Periode 2, Pendelschutz der
+    # Gleitrichtung) und wie weit sich u in der letzten Runde noch bewegte - daran
+    # entscheidet die Plastizitaet, ob sie am Deckel halbiert
+    cinfo["contact_lauf"]["zyklus"] = bool(zyklus_runden or pendel_sp["mass"] or gleit_verletzt
+                                           or pendel_verletzt)
+    # Ausschlag: am Deckel die Bewegung der letzten Runde; scheitert die Pruefung
+    # der Periode 2 oder des Festhaltens, deren Weg (die Bewegung der letzten Runde
+    # ist dort klein, der Lauf hatte sich eingespielt)
+    ausschlag = 0.0
+    if u is not None and u_vor is not None:
+        n6_ = model.nn * NDOF
+        d_ = (np.asarray(u, float)[:n6_] - np.asarray(u_vor, float)[:n6_]).reshape(-1, NDOF)[:, :3]
+        ausschlag = float(np.linalg.norm(d_, axis=1).max()) if len(d_) else 0.0
+    if pendel_verletzt and pendeln is not None:
+        ausschlag = max(ausschlag, float(pendeln.get("weg", 0.0)))
+    if gleit_verletzt and gleitpruefung is not None:
+        ausschlag = max(ausschlag, float(gleitpruefung.get("weg_max", 0.0)))
+    cinfo["contact_lauf"]["ausschlag"] = ausschlag
     if pendeln is not None:
         # Pendeln mit Periode 2: eingefrorene Knoten und die Pruefung (14.10.2026);
         # ohne Pendeln bleibt der Eintrag weg

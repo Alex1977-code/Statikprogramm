@@ -128,7 +128,8 @@ def kurz(r) -> str:
 # --------------------------------------------------------------------------
 # Einstellungen: Vorgabe, nur abweichend gespeichert, NEUE_FELDER
 # --------------------------------------------------------------------------
-SCHALTER = {"kaltstart_nicht_proportional": True, "pendelschutz_winkel": True, "gleit_toleranz": 1.0e-6}
+SCHALTER = {"kaltstart_nicht_proportional": True, "pendelschutz_winkel": True, "gleit_toleranz": 1.0e-6,
+            "halbieren_lastabhaengig": False}
 
 
 def test_einstellungen():
@@ -271,8 +272,69 @@ def test_vorschlag2():
               f"max |du| {max_du(r0, r1):.1e} m; {kurz(r1)}")
 
 
+# --------------------------------------------------------------------------
+# Vorschlag 3: am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhaengt
+# --------------------------------------------------------------------------
+def _kn(laeufe_, an=True):
+    """Ein _KontaktImNewton mit erfundenem Laufbuch (nur die Entscheidung am Deckel)."""
+    from types import SimpleNamespace
+    pz = pl.Plastizitaet(halbieren_lastabhaengig=an)
+    res = SimpleNamespace(info={"laeufe": list(laeufe_)}, model=SimpleNamespace(plastizitaet=pz))
+    return solver._KontaktImNewton(None, res, None, None, [], False)
+
+
+def test_vorschlag3():
+    print("\n--- Vorschlag 3: am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhängt ---")
+    lauf = lambda nr, a, k=False: {"nr": nr, "konvergiert": k, "grund": "" if k else "deckel",
+                                   "ausschlag": a, "zyklus": True}
+    kn = _kn([lauf(1, 14.7e-6)])
+    j1, z1 = kn.halbieren_am_deckel({"lauf": 0}, 1 / 3)
+    kn.res.info["laeufe"].append(lauf(2, 12.6e-6))
+    j2, z2 = kn.halbieren_am_deckel({"lauf": 1}, 1 / 6)
+    j2b, z2b = kn.halbieren_am_deckel({"lauf": 1}, 1 / 6)
+    check("Kriterium: erste Halbierung misst, Ausschlag 14,7 -> 12,6 µm bei halbem Anteil: nicht lastabhängig",
+          j1 and "misst die halbe Stufe" in z1 and not j2 and "nicht vom Lastanteil ab" in z2
+          and "85,7" in z2 and not j2b and z2b == "",
+          z2[:160])
+    kn = _kn([lauf(1, 669e-6)])
+    kn.halbieren_am_deckel({"lauf": 0}, 1.0)
+    kn.res.info["laeufe"].append(lauf(2, 314e-6))
+    j3, z3 = kn.halbieren_am_deckel({"lauf": 1}, 0.5)
+    check("  Ausschlag 669 -> 314 µm bei halbem Anteil (47 %): lastabhängig, halbieren",
+          j3 and "hängt vom Lastanteil ab, die Stufe wird halbiert" in z3, z3[:160])
+    j4, z4 = _kn([lauf(1, 14.7e-6)], an=False).halbieren_am_deckel({"lauf": 0}, 1 / 3)
+    j5, _z5 = _kn([lauf(1, 0.0, k=True)]).halbieren_am_deckel({"lauf": 0}, 1 / 3)
+    check("  ausgeschaltet halbiert jeder nicht konvergierte Lauf ohne Zeile; konvergiert: nichts",
+          j4 and z4 == "" and not j5, f"{j4!r} {z4!r} {j5!r}")
+    # Am Modell: gequetschter Block mit einer Laststufe (tests.test_plastizitaet)
+    from tests import test_plastizitaet as tpl
+    m0 = tpl._gequetschter_block()
+    m0.plastizitaet.laststufen = 1
+    r0, t0 = rechnen(m0)
+    m1 = tpl._gequetschter_block()
+    m1.plastizitaet.laststufen = 1
+    m1.plastizitaet.halbieren_lastabhaengig = True
+    r1, t1 = rechnen(m1)
+    p0, p1 = r0.info.get("plastizitaet") or {}, r1.info.get("plastizitaet") or {}
+    log1 = p1.get("log") or []
+    print(f"      aus: halbiert {p0.get('halbiert')}, {r0.info.get('contact_iterations')} Runden, {t0:.1f} s, "
+          f"{solver.konvergenz_zustand(r0.info)[:40]}")
+    print(f"      an:  halbiert {p1.get('halbiert')}, {r1.info.get('contact_iterations')} Runden, {t1:.1f} s, "
+          f"{solver.konvergenz_zustand(r1.info)[:60]}")
+    check("gequetschter Block, Vorgabe aus: viermal halbiert, konvergiert (wie vor dem 14.10.2026)",
+          p0.get("halbiert") == 4 and solver.konvergenz_zustand(r0.info) == "konvergiert"
+          and not [z for z in (p0.get("log") or []) if "Lastanteil ab" in z],
+          f"halbiert {p0.get('halbiert')}")
+    nicht = [z for z in log1 if "hängt nicht vom Lastanteil ab" in z]
+    ja = [z for z in log1 if "hängt vom Lastanteil ab, die Stufe wird halbiert" in z]
+    check("  an: Kriterium im Protokoll, nach drei Halbierungen nicht lastabhängig, Ergebnis vorläufig",
+          p1.get("halbiert") == 3 and nicht and ja and r1.info.get("vorlaeufig")
+          and all(e.get("ausschlag") is not None for e in laeufe(r1)),
+          (nicht[0][:170] if nicht else "keine Zeile"))
+
+
 def main() -> int:
-    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2):
+    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2, test_vorschlag3):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

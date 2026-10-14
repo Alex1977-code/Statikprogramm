@@ -305,12 +305,27 @@ class Plastizitaet:
     #: +-0,01 bis 0,2 µm um ihre Ausgangslage, der Knoten des gequetschten Blocks,
     #: dessen Festhalten am 08.10.2026 einen falschen Ast gab, 94 µm laengs.
     gleit_toleranz: float = 1.0e-6
+    #: Am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhaengt
+    #: (Vorschlag 3, 14.10.2026; solver._KontaktImNewton.halbieren_am_deckel):
+    #: nach einer Halbierung wird nur weiter halbiert, wenn der Ausschlag der
+    #: letzten Runde mindestens im Verhaeltnis der Lastanteile faellt; sonst ist
+    #: das Pendeln als nicht lastabhaengig erkannt und halbiert nicht mehr.
+    #: Vorgabe AUS (gemessen 14.10.2026, tests/test_kontakt_warmstart): am
+    #: gequetschten Block (1 Laststufe) loesen erst vier Halbierungen das Pendeln,
+    #: obwohl der Ausschlag nach der dritten nicht mehr im Verhaeltnis faellt (373
+    #: statt 314 µm bei halbem Anteil) - mit dem Schalter endet er vorlaeufig und
+    #: 0,12 mm neben dem konvergierten Ergebnis; am Pendelmodell mit Fliessen
+    #: (tests/test_pendeln_periode2, Periode-2-Regel aus) kostete er 687 statt 386
+    #: Kontaktrunden. Am Drehlager (13.10.2026) blieb der Ausschlag nach vier
+    #: Halbierungen bei 11,6 bis 14,7 µm - dort spart er drei Halbierungen je
+    #: Stufe; ob er eingeschaltet wird, entscheidet die Abnahme am Drehlager.
+    halbieren_lastabhaengig: bool = False
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
     NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0,
                  "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
-                 "gleit_toleranz": 1.0e-6}
+                 "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
@@ -1888,9 +1903,18 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 # weiterzurechnen hiesse raten - halbieren wie beim Weglaufen. Am
                 # gequetschten Block (4 Stufen) standen so 650 von 752 Zerlegungen
                 # in verworfenen Versuchen, je Lauf 69 bis zur Grenze der
-                # Richtungsrunden (28.09.2026)
-                weglauf = True
-                break
+                # Richtungsrunden (28.09.2026). Seit dem 14.10.2026 (Vorschlag 3)
+                # nur, wenn das Pendeln vom Lastanteil abhaengt: erkanntes Pendeln
+                # halbiert nicht (_KontaktImNewton.halbieren_am_deckel)
+                entscheid = getattr(kontakt, "halbieren_am_deckel", None)
+                ja, zeile = entscheid(marke, lam_k - lam_alt) if entscheid is not None else (True, "")
+                if zeile and log is not None:
+                    log.append(zeile)
+                if zeile and progress is not None:
+                    progress(zeile)
+                if ja:
+                    weglauf = True
+                    break
             dK = s_info["dK"]
             if dK.nnz == 0:
                 # Nichts fliesst gerade (etwa beim Entlasten): die Tangente ist

@@ -7000,6 +7000,33 @@ unter den Schranken liegen (siehe „Pendeln mit Periode 2“ im Kapitel Kontakt
 dieser Lauf ist konvergiert. Bis dahin löste jeder solche Lauf am Deckel eine
 Halbierung aus.
 
+**Am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhängt (Schalter
+seit 14.10.2026, Vorgabe aus).** Bis zum 14.10.2026 halbierte die Plastizität
+jede Laststufe, in der ein Kontaktlauf nicht konvergierte, bis zu viermal. Am
+Drehlager pendelte es danach jedes Mal gleich weiter: bei einem Drittel bis
+einem Achtundvierzigstel des Lastanteils bewegte sich V36 je Runde um 14,7,
+12,6, 12,6, 11,6 und 11,8 µm. Mit `plastizitaet.halbieren_lastabhaengig = True`
+misst das Programm, ob das Pendeln vom Lastanteil abhängt, ohne dafür einen
+Lauf mehr zu rechnen: die erste Halbierung geschieht wie bisher, und der
+Ausschlag des nicht konvergierten Laufs wird gemerkt. Ausschlag heißt die
+größte Bewegung eines Knotens in der letzten Runde; scheitert der Lauf an der
+Prüfung der Periode 2 oder des Festhaltens, deren Weg. Endet auch ein Lauf der
+halben Stufe nicht konvergiert, gilt das Pendeln als lastabhängig, wenn sein
+Ausschlag mindestens im Verhältnis der Lastanteile fällt, nach einer Halbierung
+also mindestens auf die Hälfte. Dann wird weiter halbiert. Fällt er weniger, ist
+das Pendeln als nicht lastabhängig erkannt: das Programm halbiert nicht weiter,
+die Stufe rechnet weiter, und das Ergebnis bleibt vorläufig mit der Stufe
+gekennzeichnet. Das Protokoll der Plastizität nennt Lauf, Grund, Ausschlag und
+das Verhältnis, etwa „Plastizität: Kontaktlauf 36 nicht konvergiert (Grund
+„gleitrichtung“, Pendeln erkannt, Ausschlag der letzten Runde 373 µm) - mit
+50 % des Lastanteils fällt der Ausschlag nur auf 119 % (314 µm vorher): das
+Pendeln hängt nicht vom Lastanteil ab, keine weitere Halbierung …“. Die Vorgabe
+ist aus, weil die Prüfungen dagegen sprechen: am gequetschten Block mit einer
+Laststufe löst erst die vierte Halbierung das Pendeln, obwohl der Ausschlag
+nach der dritten nicht mehr im Verhältnis fiel; mit dem Schalter endet die
+Rechnung vorläufig und 0,12 mm neben dem konvergierten Ergebnis. Ob er am
+Drehlager hilft, zeigt erst die Rechnung dort.
+
 **Temperaturlasten und Vorspannungen wirken in den Laststufen sofort voll
 (seit 10.10.2026).**
 Rechnet das Programm schrittweise, also in den Laststufen der Plastizität

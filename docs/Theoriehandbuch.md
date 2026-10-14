@@ -3667,6 +3667,27 @@ auch dort lag der gequetschte Block (4 Stufen) gemeinsam 1,17·10⁻⁴ m neben
 verschachtelt (Prüfung in `tests/test_plastizitaet.py`: 2·10⁻⁵ relativ);
 ohne sie 2,3·10⁻⁷ m.
 
+**3. Am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhängt**
+(`halbieren_lastabhaengig`, Vorgabe aus). `plastizitaet._newton` fragt am
+Deckel `_KontaktImNewton.halbieren_am_deckel(marke, Δλ)`. Kriterium
+„lastabhängig“, ohne zusätzlichen Lauf: der erste nicht konvergierte Lauf einer
+Stufe halbiert wie bisher und merkt (A, Δλ); A ist die größte Knotenbewegung
+der letzten Runde (Laufbuch `ausschlag`), bei Grund „pendeln“ oder
+„gleitrichtung“ das Größere aus ihr und dem Weg der Prüfung. Endet ein Lauf
+der kleineren Stufe Δλ' < Δλ ebenfalls nicht konvergiert, ist das Pendeln
+lastabhängig, wenn A'/A ≤ Δλ'/Δλ; dann wird halbiert und (A', Δλ') gemerkt,
+sonst nicht mehr (Pendeln erkannt, Zeile im Protokoll, Ergebnis vorläufig).
+Ein Zyklus (Laufbuch `zyklus`: Ingenieurkriterium geprüft, Periode 2,
+Festhalten verfehlt) wird gemeldet, entscheidet aber nicht – erwogen und
+gemessen: „erkannter Zyklus halbiert nie“ ließ den gequetschten Block (eine
+Stufe) vorläufig und 0,64 mm neben dem Ergebnis enden, dort löst erst die
+Halbierung das Pendeln. Warum die Vorgabe aus ist: auch mit dem Kriterium
+stoppt es dort nach drei Halbierungen (Ausschlag 669 → 314 → 373 µm, die
+vierte hätte konvergiert), vorläufig, 0,12 mm daneben; am Pendelmodell mit
+Fließen (Periode-2-Regel aus) 687 statt 386 Runden. Am Drehlager (A 14,7 →
+12,6 µm, 86 % statt 50 %) spart es drei von vier Halbierungen je Stufe; das
+misst die Abnahme dort.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
