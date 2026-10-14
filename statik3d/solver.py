@@ -4554,6 +4554,7 @@ class _SpitzenImNewton:
         self._masken_fuer = None
         self._innen_dof = np.zeros(0, np.int64)
         self._aussen_knoten = np.ones(self.nn, bool)
+        self._zonen_el = np.zeros(0, np.int64)
 
     def _name(self, n) -> str:
         """Bauteil der Stelle (am Drehlager „V21“), sonst ihr Name."""
@@ -4606,6 +4607,10 @@ class _SpitzenImNewton:
         aussen = np.ones(self.nn, bool)
         aussen[kn] = False
         self._aussen_knoten = aussen
+        # die Elemente der Zonen: sigma_v ausserhalb wird ohne sie gemessen
+        el = [np.asarray(self._nach_nr[n]["zone"] if self._nach_nr[n].get("zone") is not None else [], np.int64)
+              for n in schl if n in self._nach_nr]
+        self._zonen_el = np.unique(np.concatenate(el)) if el else np.zeros(0, np.int64)
         self._masken_fuer = schl
 
     def messen(self, u, F_p_neu, F_p_alt, zustand, s_info, bezug: float, lam: float, stufe=None,
@@ -4658,7 +4663,9 @@ class _SpitzenImNewton:
         kraefte = {int(s["nr"]): (None if F is None else np.asarray(F, float)) for s, F in zip(self.stellen, kr)}
         ut = u[:nn * NDOF].reshape(nn, NDOF)[:, :3].copy()
         v = self.vorher
-        self.vorher = {"ut": ut, "kraefte": kraefte,
+        punkte = [(np.asarray(i, np.int64), np.asarray(q, float))
+                  for i, q in ((s_info or {}).get("sv_punkte") or [])]
+        self.vorher = {"ut": ut, "kraefte": kraefte, "sv_punkte": punkte,
                        "werte": {n: (float(x["sv_max"]), float(x["eps_p_max"])) for n, x in werte.items()}}
         self.messungen += 1
         if nur_bezug:
@@ -4700,8 +4707,24 @@ class _SpitzenImNewton:
                     du_wo = self._koerper_am_knoten(int(np.flatnonzero(a)[j]))
             else:
                 du = 0.0
+        # sigma_v an den Integrationspunkten ausserhalb der Zonen (seit dem
+        # 14.10.2026): groesste Aenderung gegen die vorige Messung [Pa]
+        dsv = None
+        if v is not None:
+            alt_p = v.get("sv_punkte") or []
+            if not punkte:
+                dsv = 0.0
+            elif len(alt_p) == len(punkte) and all(
+                    a[0].shape == b[0].shape and a[1].shape == b[1].shape and np.array_equal(a[0], b[0])
+                    for a, b in zip(punkte, alt_p)):
+                dsv = 0.0
+                for (idx, q), (_i0, q0) in zip(punkte, alt_p):
+                    aussen_el = ~np.isin(idx, self._zonen_el)
+                    if aussen_el.any():
+                        dsv = max(dsv, float(np.abs(q[:, aussen_el] - q0[:, aussen_el]).max()))
         erfuellt = bool(kraft_max is not None and kraft_max <= pl.SPITZEN_KRAFT
-                        and du is not None and du <= pl.SPITZEN_VERSCHIEBUNG)
+                        and du is not None and du <= pl.SPITZEN_VERSCHIEBUNG
+                        and dsv is not None and dsv <= pl.SPITZEN_SPANNUNG)
         for n in sorted(self.auffaellig):
             x = werte.get(n)
             alt = v["werte"].get(n) if v is not None else None
@@ -4720,7 +4743,7 @@ class _SpitzenImNewton:
                 "stufe": None if stufe is None else str(stufe),
                 "schritt": None if schritt is None else int(schritt)}
         self.verlauf.append((None if stufe is None else str(stufe), None if schritt is None else int(schritt),
-                             aussen, innen, kraft_max, du, len(self.auffaellig)))
+                             aussen, innen, kraft_max, du, len(self.auffaellig), dsv))
         betraege = [float(np.linalg.norm(kraefte[n])) for n in sorted(self.auffaellig)
                     if kraefte.get(n) is not None]
         if not betraege:
@@ -4735,12 +4758,15 @@ class _SpitzenImNewton:
             wo = self._name(kraft_wo) if kraft_wo is not None else ""
             ktext += f" ±{kraft_max * 100:.2f} %" + (f" ({wo})" if wo else "")
         utext = "–" if du is None else f"±{du * 100:.3f} %" + (f" ({du_wo})" if du_wo else "")
+        svtext = "–" if dsv is None else f"±{dsv / 1e6:.2f} N/mm²"
         kopf = "Abschluss" if stufe == "Abschluss" else f"Laststufe {stufe}, Newton-Schritt {schritt}"
         zeile = (f"Plastizität: {kopf} - Zonen ({anzahl(len(self.auffaellig), 'auffällige Stelle', 'auffällige Stellen')}): "
-                 f"Änderung außerhalb {aussen:.2e}, in den Zonen {innen:.2e}; Kraft {ktext}; u außerhalb {utext}")
-        kurz = ("Kraft " + ("–" if kraft_max is None else f"±{kraft_max * 100:.2f} %") + f", u {utext}")
+                 f"Änderung außerhalb {aussen:.2e}, in den Zonen {innen:.2e}; Kraft {ktext}; u außerhalb {utext}; "
+                 f"σ_v außerhalb {svtext}")
+        kurz = ("Kraft " + ("–" if kraft_max is None else f"±{kraft_max * 100:.2f} %") + f", u {utext}"
+                + f", σ_v {svtext}")
         return {"zonen": len(self.auffaellig), "aussen": aussen, "innen": innen, "kraft": kraft_max, "du": du,
-                "erfuellt": erfuellt, "zeile": zeile, "kurz": kurz}
+                "dsv": dsv, "erfuellt": erfuellt, "zeile": zeile, "kurz": kurz}
 
     # ---- Ergebnis ------------------------------------------------------------
     def schlusszeile(self):
@@ -4775,7 +4801,8 @@ class _SpitzenImNewton:
                 "ausgenommen": sorted(int(n) for n in self.auffaellig) if self.ingenieur else [],
                 "stellen": [dict(nr=int(n), koerper=self._name(n), **self.letzte[n]) for n in sorted(self.letzte)],
                 "verlauf": [list(x) for x in self.verlauf],
-                "grenzen": {"kraft": float(pl.SPITZEN_KRAFT), "verschiebung": float(pl.SPITZEN_VERSCHIEBUNG)},
+                "grenzen": {"kraft": float(pl.SPITZEN_KRAFT), "verschiebung": float(pl.SPITZEN_VERSCHIEBUNG),
+                            "spannung": float(pl.SPITZEN_SPANNUNG)},
                 "messungen": int(self.messungen), "zeit_s": float(self.zeit), "fehler": self.fehler}
 
 

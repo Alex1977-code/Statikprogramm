@@ -288,6 +288,13 @@ def test_kennzeichnung_im_ergebnis(paar):
           len(zl_i) == r_i.info["plastizitaet"]["iterationen"] and len(zl_s) == r_s.info["plastizitaet"]["iterationen"]
           and all("außerhalb" in z and "in den Zonen" in z and "kN" in z for z in zl_i + zl_s),
           f"{len(zl_i)} / {len(zl_s)} Zeilen; {zl_i[-1] if zl_i else ''}")
+    # seit dem 14.10.2026 (Zonen r + 2 h): die Aenderung von sigma_v an den
+    # Integrationspunkten ausserhalb der Zonen ist eine Bedingung des Kriteriums
+    import re
+    sv_z = [re.search(r"σ_v außerhalb ±([\d.]+) N/mm²", z) for z in zl_i]
+    check("Protokoll: jede Zeile nennt die Änderung von σ_v außerhalb der Zonen, die letzte ≤ 1 N/mm²",
+          len(zl_i) > 1 and all(x is not None for x in sv_z[1:])
+          and float(sv_z[-1].group(1)) <= 1.0, zl_i[-1] if zl_i else "")
     check("… und eine Zeile, die die ausgenommenen Stellen als nicht auskonvergiert nennt",
           any("nicht auskonvergiert" in z and "ausgenommen" in z for z in log_i)
           and not any("ausgenommen" in z for z in log_s), "")

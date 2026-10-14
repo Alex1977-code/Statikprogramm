@@ -9944,13 +9944,16 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Netzverfeinerung, und gerade sie hielt den Newton bisher auf: am Drehlager
   trugen die Zonen der 16 Ankerringe 97 bis 99 % der Änderung, an der die
   Konvergenz gemessen wurde. Mit „ingenieurmäßig“ gilt eine Laststufe als
-  konvergiert, wenn drei Bedingungen zugleich erfüllt sind. Die plastischen
+  konvergiert, wenn vier Bedingungen zugleich erfüllt sind. Die plastischen
   Knotenlasten außerhalb dieser Zonen ändern sich um weniger als die
   Toleranz, die Kraft durch jede solche Stelle ändert sich um höchstens
-  0,5 %, und die Verschiebung außerhalb der Zonen ändert sich um höchstens
-  0,5 % ihres Größtwerts. Was mit „streng“ konvergiert wäre, gilt auch hier
-  als konvergiert; die Bedingungen für Kraft und Verschiebung können eine
-  Stufe also nie länger machen. Am selben Maß entscheidet sich, ob eine
+  0,5 %, die Verschiebung außerhalb der Zonen ändert sich um höchstens
+  0,5 % ihres Größtwerts, und σ_v ändert sich an jedem Integrationspunkt
+  außerhalb der Zonen um höchstens 1 N/mm² gegen den vorigen Newton-Schritt
+  (seit dem 14.10.2026; das Ingenieurkriterium „Spannungen auf 1 N/mm²
+  stabil“). Was mit „streng“ konvergiert wäre, gilt auch hier
+  als konvergiert; die Bedingungen für Kraft, Verschiebung und Spannung
+  können eine Stufe also nie länger machen. Am selben Maß entscheidet sich, ob eine
   weglaufende Stufe halbiert wird und ob der Abschluss mit Kontakt bestanden
   ist. Die Zonen rechnen weiter plastisch mit; nur ihr Beitrag zum Maß fällt
   weg.
@@ -9982,13 +9985,19 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
 
   An der Ankerplatte der Tests (Platte mit Bohrung, starre Scheibe über dem
   Loch, Anker mit 0,9 MN Vorspannung und 0,3 MN Zuglast, Netz wie der Entwurf
-  des Drehlagers) braucht „ingenieurmäßig“ 14 statt 29 Newton-Schritte.
-  Außerhalb der Zone weicht σ_v dabei um höchstens 0,29 N/mm² ab, die
-  Ankerkraft um 0,18 % und die Verschiebung um 0,22 %
-  (`tests/test_spitzen_abbruch.py`). Bis zum 13.10.2026 waren es 0,20 N/mm²,
-  0,14 % und 0,17 %: seitdem verfestigt die Platte (S355, f_u = 510 N/mm²)
-  nur bis f_u, und am Ring steht σ_v bei 510 statt 531,7 N/mm² (siehe
-  „Verfestigung je Werkstoff, bis f_u und danach ideal plastisch“). Mit einem doppelt so feinen Netz und
+  des Drehlagers) braucht „ingenieurmäßig“ 20 statt 29 Newton-Schritte.
+  Außerhalb der Zone weicht σ_v dabei um höchstens 0,10 N/mm² ab, die
+  Ankerkraft um 0,01 % und die Verschiebung um 0,01 %
+  (`tests/test_spitzen_abbruch.py`). Seit dem 14.10.2026 ist die Zone dort
+  kleiner (zwei Elementringe bis r + 2 h, 48 statt 128 Elemente). Ohne die
+  Bedingung für σ_v brach „ingenieurmäßig“ damit nach 15 Schritten ab, und
+  die Elemente direkt neben der kleineren Zone wichen um bis zu 3,26 N/mm²
+  ab; mit ihr sind es 20 Schritte. Mit der größeren Zone waren es 14
+  Schritte und 0,29 N/mm², 0,18 % und 0,22 %; bis zum 13.10.2026, vor der
+  Verfestigung bis f_u, 0,20 N/mm², 0,14 % und 0,17 %: seitdem verfestigt
+  die Platte (S355, f_u = 510 N/mm²) nur bis f_u, und am Ring steht σ_v bei
+  510 statt 531,7 N/mm² (siehe „Verfestigung je Werkstoff, bis f_u und
+  danach ideal plastisch“). Mit einem doppelt so feinen Netz und
   einer Zone, die von Schritt zu Schritt pendelt, wich σ_v in den Elementen
   unmittelbar neben der Zone dagegen um bis zu 74 N/mm² ab, ab dem
   2,4-fachen Zonenradius um höchstens 1,2 N/mm²; die strenge Rechnung hatte

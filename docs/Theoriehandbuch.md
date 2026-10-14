@@ -6180,11 +6180,20 @@ eine Laststufe konvergiert, wenn gleichzeitig gilt (`plastizitaet._zonen_mass`):
 2. die Kraft durch jede ausgenommene Stelle ändert sich gegen den vorigen
    Schritt um höchstens 0,5 % (`SPITZEN_KRAFT`);
 3. die Verschiebung außerhalb der Zonen ändert sich um höchstens 0,5 % ihres
-   Größtwerts (`SPITZEN_VERSCHIEBUNG`).
+   Größtwerts (`SPITZEN_VERSCHIEBUNG`);
+4. σ_v ändert sich an jedem Integrationspunkt der Elemente außerhalb der
+   Zonen um höchstens 1 N/mm² gegen den vorigen Schritt (`SPITZEN_SPANNUNG`,
+   seit dem 14.10.2026; die Werte nach der Rückführung, die der
+   Plastizitätsschritt ohnehin hat, `info["sv_punkte"]`). Anlass waren die
+   kleineren Zonen aus zwei Elementringen (r + 2 h): an der Ankerplatte der
+   Prüfung brach „ingenieurmäßig“ ohne diese Bedingung nach 15 Schritten ab,
+   und direkt neben der Zone stand σ_v bis 3,26 N/mm² neben der strengen
+   Rechnung (29 Schritte). Mit ihr sind es 20 Schritte und 0,10 N/mm²; die
+   Messung kostet dort rund 2 ms je Schritt bei rund 0,32 s je Newton-Schritt.
 
 Was streng konvergiert, ist auch ingenieurmäßig konvergiert: ‖ΔF_p‖ / ‖F‖ ≤
 Toleranz über das ganze Modell genügt immer, auch wenn Kraft oder
-Verschiebung die Bedingungen 2 und 3 verfehlen. Die beiden kommen nur dazu,
+Verschiebung die Bedingungen 2 bis 4 verfehlen. Sie kommen nur dazu,
 wo die Zonen ausgenommen werden, und dürfen keine Stufe länger machen als
 das strenge Kriterium. Am Drehlager (Entwurf, LF1) änderte der Kontakt,
 dessen Läufe dort am Deckel enden, die Verschiebung außerhalb der Zonen in

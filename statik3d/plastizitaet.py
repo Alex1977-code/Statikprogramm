@@ -133,8 +133,10 @@ GEMEINSAM_WARNUNG = ("kann nahe der Grenzlast einen anderen Weg durch die Reibun
 #: * "ingenieurmaessig": eine Laststufe ist konvergiert, wenn die Aenderung von
 #:   F_p **ausserhalb** der auffaelligen Zonen (spitzenstellen, Paket 1) unter
 #:   der Toleranz liegt, die Kraft durch jede auffaellige Stelle sich um
-#:   hoechstens :data:`SPITZEN_KRAFT` und die Verschiebung ausserhalb der Zonen
-#:   um hoechstens :data:`SPITZEN_VERSCHIEBUNG` aendert (:func:`_zonen_mass`).
+#:   hoechstens :data:`SPITZEN_KRAFT`, die Verschiebung ausserhalb der Zonen
+#:   um hoechstens :data:`SPITZEN_VERSCHIEBUNG` und sigma_v an den
+#:   Integrationspunkten ausserhalb der Zonen um hoechstens
+#:   :data:`SPITZEN_SPANNUNG` aendert (:func:`_zonen_mass`).
 #:   Am selben Mass entscheidet sich das Halbieren einer weglaufenden Stufe und
 #:   die Schlussabnahme. Die Zonen rechnen weiter plastisch mit - nur ihr
 #:   Beitrag zum Mass faellt weg; ihre Werte stehen mit der letzten Aenderung
@@ -174,6 +176,15 @@ SPITZEN_KRAFT = 5e-3
 #: brauchte es dieselben 14 Newton-Schritte wie 1 % (1e-3: 17, streng: 29),
 #: bei 0,2 N/mm2 und 0,17 % Abweichung ausserhalb (sp3_werk/p5_serie.out).
 SPITZEN_VERSCHIEBUNG = 5e-3
+#: sigma_v an jedem Integrationspunkt ausserhalb der Zonen: hoechstens so viel
+#: Aenderung [Pa] zwischen den letzten beiden Newton-Schritten. Seit dem
+#: 14.10.2026 - Ingenieurkriterium des Anwenders („Spannungen auf 1 N/mm²
+#: stabil“). Mit den Zonen aus zwei Elementringen (r + 2 h, spitzen/zeigen
+#: 373c6a1) liegen Elemente ausserhalb der Zone, die die alte Zone max(4 h; r)
+#: noch enthielt; an der Ankerplatte der Pruefung standen sie nach dem Abbruch
+#: ohne diese Bedingung bis 3,26 N/mm² neben der strengen Rechnung (15
+#: Newton-Schritte, Kraft und Verschiebung in ihren Grenzen).
+SPITZEN_SPANNUNG = 1e6
 
 #: Kleinster Verfestigungsmodul **der Tangente**, bezogen auf 3G. Bei sehr
 #: kleiner Verfestigung ist D_ep in Fliessrichtung fast singulaer (Eigenwert
@@ -893,6 +904,7 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
     neu = zustand.kopie()
     n_fl, q_max, dK = 0, 0.0, None
     sv_teile: list = []
+    sv_punkte: list = []
     for d in teile:
         Fb, zb, ib = _schritt_teil(model, u, zustand, einst, d, log, tangente)
         F_p += Fb
@@ -904,9 +916,10 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
         n_fl += ib["fliessend"]
         q_max = max(q_max, ib["q_max"])
         sv_teile.extend(ib.get("sv_teile") or [])
+        sv_punkte.extend(ib.get("sv_punkte") or [])
         if tangente:
             dK = ib["dK"] if dK is None else (dK + ib["dK"])
-    info = {"fliessend": n_fl, "q_max": q_max, "sv_teile": sv_teile}
+    info = {"fliessend": n_fl, "q_max": q_max, "sv_teile": sv_teile, "sv_punkte": sv_punkte}
     if tangente:
         info["dK"] = dK
     return F_p, neu, info
@@ -1092,7 +1105,9 @@ def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
     # also dort, wo die Fliessbedingung gilt - fuer die Zonen der
     # netzabhaengigen Spitzen (solver._SpitzenImNewton, 13.10.2026)
     info = {"fliessend": int(fliesst_e.sum()), "q_max": q_max,
-            "sv_teile": [(idx, q_neu.reshape(P, n).max(axis=0))]}
+            "sv_teile": [(idx, q_neu.reshape(P, n).max(axis=0))],
+            # und je Punkt, fuer die Aenderung ausserhalb der Zonen (14.10.2026)
+            "sv_punkte": [(idx, q_neu.reshape(P, n))]}
     if tangente:
         # H der Tangente: 0 auf dem Plateau ueber f_u (seit dem 13.10.2026)
         info["dK"] = _dk_block(d, fliesst.reshape(P, n), dev.reshape(P, n, 6),
@@ -1139,6 +1154,7 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
     n_fliesst, q_max = 0, 0.0
     dK = None
     sv_teile: list = []
+    sv_punkte: list = []
     for typ, liste in je_typ.items():
         Fb, zb, ib = _schritt_block(model, u, zustand, einst, liste, typ, log, tangente)
         F_p += Fb
@@ -1149,9 +1165,10 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
         n_fliesst += ib["fliessend"]
         q_max = max(q_max, ib["q_max"])
         sv_teile.extend(ib.get("sv_teile") or [])
+        sv_punkte.extend(ib.get("sv_punkte") or [])
         if tangente:
             dK = ib["dK"] if dK is None else (dK + ib["dK"])
-    info = {"fliessend": n_fliesst, "q_max": q_max, "sv_teile": sv_teile}
+    info = {"fliessend": n_fliesst, "q_max": q_max, "sv_teile": sv_teile, "sv_punkte": sv_punkte}
     if tangente:
         info["dK"] = dK
     return F_p, neu, info
@@ -1416,7 +1433,9 @@ def _zonen_mass(zonen, diff: float, tol: float, u, F_p_neu, F_p_alt, zustand, s_
     von F_p **ausserhalb** der Zonen, und erreicht heisst zusaetzlich: die
     Kraft durch jede auffaellige Stelle aendert sich um hoechstens
     :data:`SPITZEN_KRAFT`, die Verschiebung ausserhalb der Zonen um hoechstens
-    :data:`SPITZEN_VERSCHIEBUNG`. Sonst (streng, oder keine auffaellige Zone)
+    :data:`SPITZEN_VERSCHIEBUNG` und sigma_v an jedem Integrationspunkt
+    ausserhalb der Zonen um hoechstens :data:`SPITZEN_SPANNUNG` (seit dem
+    14.10.2026). Sonst (streng, oder keine auffaellige Zone)
     bleibt es bei ``diff`` - die Messung steht dann nur im Protokoll.
 
     **Was streng konvergiert, ist auch ingenieurmaessig konvergiert**
