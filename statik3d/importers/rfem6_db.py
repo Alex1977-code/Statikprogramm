@@ -2659,11 +2659,23 @@ ZUGSTAEBE_MERKMAL = "rfem_zugstaebe"
 SEILE_MERKMAL = "rfem_seile"
 
 
+def rfem_datei(model: Model, pfad: str = None) -> str:
+    """Die RFEM-Datei, aus der :func:`zugstaebe_aus_rfem` nachliest: ``pfad``,
+    sonst die aus dem Importhinweis „zugstab“, sonst ``model.meta["quelle"]``
+    - leer, wenn es keine gibt. Die Oberflaeche zeigt sie in der Maske
+    „Stabtypen aus RFEM“ und prueft vor dem Umstellen, ob es sie gibt."""
+    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "zugstab"]
+    return str(pfad or (hinweise[-1].get("datei") if hinweise else None)
+               or (getattr(model, "meta", None) or {}).get("quelle") or "")
+
+
 def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict:
     """Die Umstellung eines Modells, das vor dem 14.10.2026 aus RFEM 6
     uebernommen wurde: die Stabtypen aus der RFEM-Datei nachlesen und
     „trägt nur“ setzen wie der Import heute (:func:`stab_nur`) - nur auf
-    Anweisung des Anwenders (Importhinweis „zugstab“, model.zugstab_hinweis).
+    Anweisung des Anwenders (Importhinweis „zugstab“, model.zugstab_hinweis;
+    in der Oberflaeche Datei › Austausch › „Stabtypen aus RFEM nachlesen…“,
+    seit dem 14.10.2026).
 
     ``pfad``: die RFEM-Datei; ohne Angabe die aus dem Hinweis bzw.
     ``model.meta["quelle"]``. Zugeordnet wird ueber den Stabnamen des Imports
@@ -2676,7 +2688,7 @@ def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict
     tragen, und der RFEM-Zug-/Druckstaebe und Seile ohne passenden Stab.
     FileNotFoundError, wenn die Datei fehlt - dann bleibt alles, wie es ist."""
     hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "zugstab"]
-    pfad = pfad or (hinweise[-1].get("datei") if hinweise else None) or model.meta.get("quelle")
+    pfad = rfem_datei(model, pfad)
     if not pfad or not os.path.isfile(str(pfad)):
         raise FileNotFoundError(f"RFEM-Datei „{pfad}“ nicht gefunden - die Stabtypen lassen sich nicht "
                                 "nachlesen; Zugstäbe in der Stabmaske („trägt nur“ Zug) umstellen")
@@ -2719,10 +2731,14 @@ def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict
     model.meta[SEILE_MERKMAL] = "nachgelesen (14.10.2026)"
     for h in hinweise:
         h["erledigt"] = True
-    zeile = (f"Stabtypen aus {os.path.basename(str(pfad))} nachgelesen: {len(aus['zug'])} Zugstäbe nur Zug, "
-             f"{len(aus['druck'])} Druckstäbe nur Druck"
-             + (f", {len(aus['seil'])} Seile als Seil (nur Zug)" if aus["seil"] else "")
-             + (f", {len(aus['auch_druck'])} Zugstäbe tragen wie in RFEM auch Druck" if aus["auch_druck"] else "")
+    from ..begriffe import anzahl
+    n_auch = len(aus["auch_druck"])
+    zeile = (f"Stabtypen aus {os.path.basename(str(pfad))} nachgelesen: "
+             f"{anzahl(len(aus['zug']), 'Zugstab', 'Zugstäbe')} nur Zug, "
+             f"{anzahl(len(aus['druck']), 'Druckstab', 'Druckstäbe')} nur Druck"
+             + (f", {anzahl(len(aus['seil']), 'Seil', 'Seile')} als Seil (nur Zug)" if aus["seil"] else "")
+             + (f", {n_auch} {'Zugstab trägt' if n_auch == 1 else 'Zugstäbe tragen'} wie in RFEM auch Druck"
+                if n_auch else "")
              + (f", {len(aus['ohne_stab'])} ohne passenden Stab ({', '.join(aus['ohne_stab'][:6])})"
                 if aus["ohne_stab"] else ""))
     C.say(log, zeile)

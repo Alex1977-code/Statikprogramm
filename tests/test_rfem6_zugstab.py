@@ -159,8 +159,10 @@ def test_gespeichertes_modell():
         h = [x for x in alt.importhinweise if x.get("art") == "zugstab"]
         check("beim Öffnen: ein Hinweis zu den Zugstäben", len(h) == 1 and not h[0].get("erledigt"),
               h[0].get("text", "") if h else "kein Hinweis")
+        # der Vorschlag nennt seit dem 14.10.2026 den Weg in der Oberflaeche
+        # (bis dahin die Funktion zugstaebe_aus_rfem; tests/test_stabtypen_rfem.py)
         check("… mit der Umstellung als Vorschlag und der RFEM-Datei",
-              h and "zugstaebe_aus_rfem" in str(h[0].get("vorschlag", "")) and h[0].get("datei") == rf6,
+              h and "Stabtypen aus RFEM nachlesen" in str(h[0].get("vorschlag", "")) and h[0].get("datei") == rf6,
               str(h[0].get("vorschlag", ""))[:120] if h else "")
         check("… und im Protokoll des Öffnens", any("Zugst" in z for z in alt._ladehinweise),
               next((z for z in alt._ladehinweise if "Zugst" in z), "-"))

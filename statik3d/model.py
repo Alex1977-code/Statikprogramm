@@ -240,8 +240,10 @@ def zugstab_hinweis(model) -> list:
     text = (f"Aus RFEM 6 übernommen vor dem 14.10.2026: {anzahl} Zug und Druck. "
             "Ein RFEM-Zugstab oder -Seil fällt dort bei Druck aus, hier trug er bis zum 14.10.2026 auch Druck – "
             f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen bzw. Seile als Seil anlegen?")
-    vorschlag = ("Stabtypen aus der RFEM-Datei nachlesen: statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell) "
-                 "– oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
+    # der Weg in der Oberflaeche (14.10.2026; bis dahin nannte der Vorschlag
+    # die Funktion statik3d.importers.rfem6_db.zugstaebe_aus_rfem fuer die Konsole)
+    vorschlag = ("Datei › Austausch › „Stabtypen aus RFEM nachlesen…“ liest die Stabtypen aus der "
+                 "RFEM-Datei nach – oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
     hinweise = getattr(model, "importhinweise", None)
     if hinweise is None:
         hinweise = model.importhinweise = []

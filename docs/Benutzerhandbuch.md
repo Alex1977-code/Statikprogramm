@@ -6260,11 +6260,18 @@ fällt in RFEM bei Druck aus – hier trägt er auch Druck“); am Drehlager tru
 im Lastfall LF1 so −0,59 kN Druck. Öffnen Sie ein Modell, das vor diesem Tag
 aus RFEM 6 übernommen wurde, nennt das Protokoll die Fachwerkstäbe ohne
 „trägt nur“, und unter den Importhinweisen steht die Umstellung als Vorschlag.
-Das Programm stellt nichts von selbst um. Die Umstellung liest die Stabtypen
-aus der RFEM-Datei nach, die beim Import gelesen wurde
-(`statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell)`), und setzt „trägt
-nur“ wie der Import heute; aus einem RFEM-Seil wird wieder ein Seil. Was Sie
-an einem Stab selbst eingestellt haben, bleibt. Ohne die RFEM-Datei wählen Sie die Stäbe und stellen in der
+Das Programm stellt nichts von selbst um. Die Statuszeile nennt beim Öffnen
+den Weg: Register **Datei › Austausch › „Stabtypen aus RFEM nachlesen…“**
+öffnet rechts die Maske „Stabtypen aus RFEM“ mit dem Hinweis aus dem Import
+und der RFEM-Datei, die beim Import gelesen wurde. Liegt die Datei heute
+woanders, tragen Sie ihren Pfad dort ein. **Stabtypen nachlesen** liest die
+Stabtypen aus der RFEM-Datei nach und setzt „trägt nur“ wie der Import heute;
+aus einem RFEM-Seil wird wieder ein Seil. Was Sie an einem Stab selbst
+eingestellt haben, bleibt, und Rückgängig nimmt die Umstellung als einen
+Schritt zurück. Das Protokoll nennt das Ergebnis („Stabtypen aus … nachgelesen:
+64 Zugstäbe nur Zug, …“). Fehlt die Datei, sagt ein Hinweis es, und nichts
+wird umgestellt. Bis zum 14.10.2026 gab es die Umstellung nur als Funktion
+für die Konsole (`statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell)`). Ohne die RFEM-Datei wählen Sie die Stäbe und stellen in der
 Stabmaske „trägt nur“ auf Zug.
 
 **Zugstäbe in der Konvergenz** (seit 13.10.2026). Eine Rechnung mit Zug- oder

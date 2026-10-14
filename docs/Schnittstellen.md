@@ -548,7 +548,10 @@ Importprotokoll:
 
 `rfem6_db.stab_nur` setzt „trägt nur“ (seit 14.10.2026); ein vorher
 gespeichertes Modell bekommt beim Öffnen einen Importhinweis „zugstab“, und
-`rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um. Ein Seil
+`rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um, in der
+Oberfläche seit dem 14.10.2026 über Datei › Austausch › „Stabtypen aus RFEM
+nachlesen…“ (Maske „Stabtypen aus RFEM“, `rfem6_db.rfem_datei` nennt die
+Datei). Ein Seil
 kommt seit dem 14.10.2026 als Seil an („1 Seil trägt nur Zug (fällt wie in
 RFEM bei Druck aus; Durchhang als Kettenlinie nach Theorie III. Ordnung): S1“),
 das Modell trägt dazu das Merkmal `meta["rfem_seile"]`; fehlt es, kommt

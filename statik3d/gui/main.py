@@ -5444,6 +5444,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 symbol="csv")
         g.klein("Netz + Ergebnisse als VTK…", self.export_vtk,
                 hinweis="Netz und Ergebnisfelder als VTK-Datei, etwa für ParaView")
+        # die Umstellung eines vor dem 14.10.2026 aus RFEM 6 uebernommenen
+        # Modells (Importhinweis „zugstab“) - bis dahin nur eine Funktion
+        g.klein("Stabtypen aus RFEM nachlesen…", self.maske_stabtypen_rfem,
+                hinweis="Zugstäbe, Druckstäbe und Seile eines vor dem 14.10.2026 aus RFEM 6 übernommenen "
+                        "Modells aus der RFEM-Datei nachlesen: „trägt nur“ setzen, Seile als Seil anlegen",
+                symbol="staebe")
         g = r.gruppe("Beispiele")
         # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
         # (24.09.2026) - die Suche findet die Beispiele weiter
@@ -21186,6 +21192,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         self.info(f"Spiel {zl.zahl_text(spiel * 1e3, punkt=True)} mm gegeben: {', '.join(dict.fromkeys(betroffen))}")
 
+    # ---- Stabtypen aus RFEM nachlesen (14.10.2026) ----------------------------
+    @_maskenweg()
+    def maske_stabtypen_rfem(self):
+        """Zugstaebe, Druckstaebe und Seile eines Modells, das vor dem
+        14.10.2026 aus RFEM 6 uebernommen wurde, aus der RFEM-Datei nachlesen
+        (Importhinweis „zugstab“, model.zugstab_hinweis). Der Import legte sie
+        bis dahin als Fachwerkstaebe an, die Zug und Druck trugen. Die Maske
+        zeigt den Hinweis und die Datei; umgestellt wird erst mit „Stabtypen
+        nachlesen“ (rfem6_db.zugstaebe_aus_rfem) - bis zum 14.10.2026 gab es
+        die Umstellung nur als Funktion fuer die Konsole."""
+        from ..importers import rfem6_db as R6
+        m = self.model
+        offen = [h for h in (getattr(m, "importhinweise", None) or [])
+                 if h.get("art") == "zugstab" and not h.get("erledigt")]
+        felder = [msk.Feld("hinweise", "Aus dem Import", "info",
+                           " · ".join(str(h.get("text", "")) for h in offen[:2]) if offen else
+                           "kein offener Hinweis – das Modell kennt seine Stabtypen (übernommen ab dem "
+                           "14.10.2026) oder ist schon umgestellt"),
+                  msk.Feld("pfad", "RFEM-Datei (.rf6)", "text", R6.rfem_datei(m) or "", breite=260,
+                           hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
+                                   "woanders, hier ihren Pfad eintragen")]
+        maske = msk.Maske("Stabtypen aus RFEM", felder, knopf="Stabtypen nachlesen",
+                          hinweis="Liest die Stabtypen aus der RFEM-Datei nach und stellt um, was der Import "
+                                  "vor dem 14.10.2026 als Fachwerkstab mit Zug und Druck angelegt hat: "
+                                  "Zugstäbe „trägt nur: Zug“, Druckstäbe „trägt nur: Druck“, Seile als Seil. "
+                                  "Was Sie an einem Stab selbst eingestellt haben, bleibt. Ein Schritt, "
+                                  "Rückgängig nimmt ihn zurück.")
+        maske.angewendet.connect(self._stabtypen_rfem_anwenden)
+        return self.maske_erzeugen(maske)
+
+    def _stabtypen_rfem_anwenden(self, w: dict):
+        from ..importers import rfem6_db as R6
+        m = self.model
+        datei = R6.rfem_datei(m, str(w.get("pfad", "") or "").strip().strip('"') or None)
+        if not datei or not os.path.isfile(datei):
+            return self.hinweis(f"RFEM-Datei „{datei or '–'}“ nicht gefunden – den Pfad der .rf6-Datei "
+                                "eintragen, aus der das Modell übernommen wurde; umgestellt ist nichts")
+        self.merken("Stabtypen aus RFEM nachgelesen")
+        log: list = []
+        try:
+            R6.zugstaebe_aus_rfem(m, datei, log)
+        except Exception as ex:          # noqa: BLE001 - fremde oder beschaedigte Datei
+            return self.error(f"Stabtypen aus {os.path.basename(datei)} nicht gelesen: {ex}")
+        for z in log:
+            self.log.appendPlainText(z.strip())
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
+        self.statusBar().showMessage(log[-1].strip() if log else "Stabtypen nachgelesen", 8000)
+
     # ---- Importhinweise (17.09.2026) -----------------------------------------
     def _maskenzahl(self, feld: str):
         """Eine Zahl aus der offenen Maske - None, wenn es sie nicht gibt."""
@@ -28897,6 +28953,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Datei von vor dem 06.10.2026: geladen, aber nicht still als
                     # passend (F06) - Statuszeile und Protokoll sagen es
                     self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
+        # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
+        # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
+        # Protokollzeile steht schon oben (_ladehinweise)
+        if any(h.get("art") == "zugstab" and not h.get("erledigt")
+               for h in (getattr(self.model, "importhinweise", None) or [])):
+            self._hinweis_statuszeile("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
+                                      "– Datei › Austausch › „Stabtypen aus RFEM nachlesen…“")
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True
