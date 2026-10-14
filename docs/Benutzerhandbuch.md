@@ -704,6 +704,13 @@ Die Arbeitsfläche in drei Spalten:
   *Kontaktbedingung umbenennen und löschen*, *Einen Lastfall löschen*, *Eine
   Kombination löschen* und *Eine Ermüdungslast löschen*.
 
+  **Ein Doppelklick auf ein Teil** — Knoten, Linie, Stab, Stabelement, Fläche
+  oder Volumen — stellt seit dem 14.10.2026 die Ansicht darauf (Blickrichtung
+  bleibt, das Teil wird eingepasst); der Rechtsklick bietet dazu *Nur dieses
+  zeigen* und *Alle einblenden* (Kapitel 11, „Ausblenden ohne Neuaufbau“).
+  Bearbeitet werden diese Teile über Rechtsklick *Bearbeiten …* oder die
+  Eingabetaste; bis zum 14.10.2026 öffnete der Doppelklick sie.
+
   **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske rechts
   (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
   mit Wirkung je Freiheitsgrad, Lastfall, Kombination, Stellung,
@@ -3118,6 +3125,47 @@ dabei nicht mit. Er zählt beim Loslassen und nur ohne Ziehbewegung; hat das
 Mausrad in den letzten 0,4 s gerollt, gilt er nicht — wer beim Zoomen das Rad
 drückt, will nicht alles einpassen (16.09.2026).
 
+**Ausblenden ohne Neuaufbau.** Seit dem 14.10.2026 (Ansichtspaket B, nach dem
+Vorbild von ediBIM) gibt es für die Sicht drei Tasten in der Ansicht: **H**
+blendet die Auswahl aus, **Umschalt+H** lässt nur die Auswahl stehen (wie
+*Selektion anzeigen*), **Alt+H** blendet alles wieder ein. Die Tasten wirken,
+solange die Ansicht die Tastatur hat (nach einem Linksklick in sie), und
+stehen im Hinweis der drei Befehle. Im Modellbaum bietet der Rechtsklick auf
+ein Teil — Knoten, Linie, Stab, Stabelement, Fläche oder Volumen — *Nur
+dieses zeigen*, *Alle einblenden* und *Ansicht darauf stellen*; sind mehrere
+Einträge derselben Art gewählt, heißt der erste *Nur diese zeigen (N)*. Ein
+**Doppelklick** auf ein solches Teil stellt die Ansicht darauf: die
+Blickrichtung bleibt, das Ziel ist die Mitte des Teils, und der Ausschnitt
+passt es ein. Bearbeitet wird es über Rechtsklick *Bearbeiten …* oder die
+Eingabetaste; bis zum 14.10.2026 öffnete der Doppelklick auf einen Knoten oder
+eine Linie den Dialog und auf eine Fläche oder ein Volumen die Maske. Unten
+rechts in der Ansicht stehen **Rücksetzer-Knöpfe**, nur solange es etwas
+zurückzunehmen gibt: *Schnitt aus*, solange die Schnittebene an ist, und
+*N Teile einblenden*, solange von Hand etwas ausgeblendet ist (gezählt werden
+Körper, Stäbe und Flächen, sonst Elemente, Linien oder Knoten; der Hinweis
+nennt sie). Bis zum 14.10.2026 baute jede Auswahl und jedes Ausblenden die
+ganze Szene neu auf; am Drehlager (617 241 Elemente, 108 Körper) kostete ein
+Auswahlklick 0,93 s ohne und 2,08 s mit Ergebnis, das Ausblenden eines
+Körpers 3,9 s. Jetzt bildet das Programm die Oberfläche **je Körper** einmal
+je Netzstand, und was zu sehen ist, ist nur noch eine Auswahl ihrer Zellen —
+dieselben Zellen, die eine neu gebildete Oberfläche hätte, auch an Fugen mit
+gemeinsamen Knoten. Die Hervorhebung der Auswahl ist ein eigener kleiner
+Darsteller; ein Auswahlklick zeichnet nur ihn neu, ein Ausblenden nur das
+Netz und was an den sichtbaren Knoten hängt (Lager, Linien, Knoten, Nummern,
+Lasten, Geist). Ganz neu aufgebaut
+wird weiter, wenn ein Ergebnis gezeigt wird — Skala „nur sichtbare Teile“,
+Kennwerte, Max-/Min-Marken, Werte im Bild, Sonden, netzabhängige Zonen und
+Verlauf hängen dort an den sichtbaren Knoten —, wenn die Schnittebene an ist
+(ihre Lage bezieht sich auf den Quader des Gezeichneten) und wenn ein Körper
+nur zum Teil ausgeblendet ist. Auch dieser Neuaufbau nimmt die Oberfläche aus
+dem Zwischenspeicher. Hat sich seit dem letzten Bild etwas anderes geändert
+(Modell, Ergebnis, Darstellung, ein Schalter, die Größe der Ansicht), baut der
+nächste Klick ebenfalls alles neu auf. Geprüft in
+`tests/test_ausblenden_ohne_neuaufbau.py`: dieselben Zellen wie neu gebildet,
+dasselbe Bild wie nach einem Neuaufbau, kein Neuaufbau bei Klick, H,
+Umschalt+H, Alt+H und *Vorherige Sicht*, Neuaufbau mit Ergebnis und Schnitt,
+Baummenü, Doppelklick und Rücksetzer.
+
 **Während einer Rechnung öffnet das Programm kein Fenster.** Fehler,
 Warnungen und Rückfragen gehen dann ins Protokoll und in die Statuszeile; eine
 Rückfrage, die niemand sehen kann, gilt als verneint. Grund ist ein Absturz
@@ -3194,8 +3242,14 @@ rechts hinaus, und Legendeneintrag und Hinweis lagen auf dem Achsenkreuz.
 **Drehen großer Modelle.** Ab etwa 20 000 Knoten und Elementen bleiben
 während des Drehens, Schiebens und Zoomens die Nebendarsteller
 (Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen
-beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig.
-Volumennetze werden nur mit ihrer Oberfläche gezeichnet.
+beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig. Seit dem
+14.10.2026 gilt das auch für das **Mausrad**: die Nebendarsteller kommen
+0,35 s nach dem letzten Radschritt wieder. Bis dahin zeichnete jeder
+Radschritt das volle Bild. Volumennetze werden nur mit ihrer Oberfläche
+gezeichnet. Lager stehen je Art in **einem** Darsteller (Knoten-, Linien- und
+Flächenlager, die Farbe der Lagerart je Zelle), die Fugen der Kontakte
+ebenso und ihre Schilder je Farbe in einem; bis zum 14.10.2026 hatte jedes
+Linien- und Flächenlager und jede Kontaktbedingung eigene Darsteller.
 
 **Unterlagen — Dateien, Ansichten und Skizzen zum Modell** (16.09.2026, analog
 InfoCAD). Das Ribbon *Unterlagen* zwischen *Start* und *Geometrie* sammelt, was
@@ -12793,7 +12847,9 @@ offene Maske samt ihren Eingaben.) In einem Textfeld, in einer Tabelle, im
 Modellbaum und im Feld einer Maske wirkt keine dieser Tasten für die Ansicht: dort
 wird der Buchstabe getippt, und Entf gilt dem Feld, der Tabelle oder dem Baum.
 Mit Strg, Umschalt oder Alt gedrückt sind es keine Einzeltasten, sondern Kürzel
-wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
+wie bisher - ausgenommen seit dem 14.10.2026 **Umschalt+H** und **Alt+H** (Sicht,
+Kapitel 11, „Ausblenden ohne Neuaufbau“). Hält man eine Taste gedrückt, wirkt
+nur der erste Druck.
 
 | Taste | Wirkung in der Ansicht |
 |---|---|
@@ -12803,6 +12859,9 @@ wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
 | **L** | öffnet die Maske *Lager* (*Lager / Kontakt → Knotenlager*) |
 | **B** | öffnet die Maske der Last, die zur Auswahl passt: *Linienlast* bei gewählten Stäben oder Linien, *Flächenlast* bei gewählten Flächen oder Volumen, sonst *Knotenlast* |
 | **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
+| **H** | blendet die Auswahl aus (*Auswahl ausblenden*, seit 14.10.2026) |
+| **Umschalt+H** | lässt nur die Auswahl stehen (*Selektion anzeigen*, seit 14.10.2026) |
+| **Alt+H** | blendet alles wieder ein (*Alles zeigen*, seit 14.10.2026) |
 
 Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Eine **offene Maske mit
 nicht übernommenen Änderungen** ersetzen K, S, L und B nicht still: Oben rechts

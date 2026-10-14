@@ -42,7 +42,9 @@ WEITERE_TASTEN = (
     ("Eintrag löschen", "Entf, Rücktaste", "Modellbaum",
      "Der gewählte Eintrag; sind mehrere derselben Art gewählt, alle. Der Fokus muss im Baum stehen."),
     ("Eintrag bearbeiten", "Eingabetaste", "Modellbaum",
-     "Öffnet die Maske des gewählten Eintrags, wie ein Doppelklick."),
+     "Öffnet die Maske des gewählten Eintrags. Bei Teilen im Bild (Knoten, Linie, Stab, Fläche, Volumen) "
+     "stellt der Doppelklick seit dem 14.10.2026 die Ansicht darauf; bearbeitet wird mit der Eingabetaste "
+     "oder Rechtsklick „Bearbeiten …“."),
     ("Erster / letzter Eintrag", "Pos1, Ende", "Modellbaum",
      "Springt zum ersten beziehungsweise zum letzten Eintrag des Baums."),
     # seit 03.10.2026 (Teilpaket 8d): Strg+F gehoert dem Baum, solange er oder
@@ -60,6 +62,11 @@ WEITERE_TASTEN = (
      "Vernetzen, Berechnung, Nachweise, Wind und Wasserdruck (Vorgänge mit Balken und Abbrechen-Knopf) "
      "und ein aufgezogenes Auswahlfenster. Steht das Klickfeld einer Maske scharf (orange), beendet Esc "
      "zuerst das Klicken. Läuft nichts, wirkt Esc wie „Alles deselektieren“."),
+    # seit 14.10.2026 (Ansichtspaket B): die Sichttasten - als ein Eintrag, die
+    # Einzeltasten K S L B F zaehlt tests/test_tasten_fokus.py einzeln
+    ("Auswahl ausblenden / nur Auswahl zeigen / alles einblenden", "H, Umschalt+H, Alt+H", "Ansicht",
+     "H blendet die Auswahl aus, Umschalt+H lässt nur die Auswahl stehen, Alt+H blendet alles wieder ein - "
+     "ohne Neuaufbau der Szene. Wie die Einzeltasten nur, wenn die Ansicht den Fokus hat (Linksklick)."),
     ("Auswahl löschen", "Entf", "Ansicht",
      "Alles Gewählte (Knoten, Linien, Stäbe, Flächen, Volumen, Elemente, Lager, Lasten) nach einer einzigen "
      "Rückfrage, die nennt, was gelöscht wird und was mitgeht; ein Rückgängig-Schritt. Der Fokus muss in der "

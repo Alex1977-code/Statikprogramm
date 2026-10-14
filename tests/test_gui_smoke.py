@@ -5673,8 +5673,11 @@ def main():
               str(namen[:3]))
         # Lagerart als Farbe, Beschriftung schaltbar (12.09.2026)
         from statik3d.gui import viewport as vpl
-        farben = {tuple(round(c, 2) for c in list(w.plotter.renderer.actors[n].prop.color)[:3])
-                  for n in namen if n.startswith("supports") and n != "supports_nichtlinear"}
+        # seit 14.10.2026 ein Darsteller „supports“, die Farbe der Lagerart je Zelle
+        farben = {tuple(round(float(c) / 255.0, 2) for c in rgb)
+                  for n in namen if n.startswith("supports") and n != "supports_nichtlinear"
+                  for rgb in np.unique(np.asarray(w.plotter.renderer.actors[n].mapper.dataset.cell_data["farbe"]),
+                                       axis=0)}
         soll = {tuple(round(c, 2) for c in __import__("pyvista").Color(vpl.lager_farbe(s)).float_rgb)
                 for s in w.model.supports}
         check("Knotenlager sind nach Lagerart gefärbt", farben == soll, f"{farben} / {soll}")
@@ -6940,7 +6943,9 @@ def main():
               and "Kontakte: 1 Bedingung farbig mit Schild" in w._sicht_text(), str(akt_))
         from PySide6 import QtGui as _QtGk
         soll_ = _QtGk.QColor(kt_.wirkungsfarbe(kb)).getRgbF()[:3]
-        ist_ = dict(w.plotter.renderer.actors)["kontaktflaeche0"].GetProperty().GetColor()
+        # seit 14.10.2026 alle Fugen in einem Darsteller, die Farbe je Zelle
+        ist_ = tuple(float(c_) / 255.0 for c_ in
+                     dict(w.plotter.renderer.actors)["kontaktflaechen"].mapper.dataset.cell_data["farbe"][0])
         check("… in der Farbe ihrer Wirkung (Druck mit Reibung = orange), seit 15.09.2026",
               kt_.wirkungstext(kb) == "Druck, Reibung" and max(abs(a_ - b_) for a_, b_ in zip(ist_, soll_)) < 0.02,
               f"{kt_.wirkungstext(kb)} {ist_} / {soll_}")

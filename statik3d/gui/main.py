@@ -610,6 +610,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.kopf = dsg.Kopfzeile(self)
         self._build_ribbon()
         self._build_glasleiste()
+        self._ruecksetzer_bauen()
         self._tabellen_mehrfach_verbinden()
         self._build_update_button()
         self._refresh_kopf()
@@ -3073,7 +3074,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._info_zeigen()
             self._tabellen_markieren()
             self._baum_nachfuehren()
-        self.redraw()
+        # nur die Hervorhebung neu, nicht die ganze Szene (14.10.2026)
+        self.redraw(art="auswahl")
 
     def _baum_nachfuehren(self) -> None:
         """Ansicht -> Baum (Teilpaket 8d, 03.10.2026; Plan vom 24.09.2026,
@@ -7659,6 +7661,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.baum.mehrfach.connect(self._baum_mehrfach)
         self.baum.viele_bearbeiten.connect(self._baum_viele_bearbeiten)
         self.baum.viele_loeschen.connect(self._baum_viele_loeschen)
+        # Rechtsklick „Nur dieses zeigen / Alle einblenden / Ansicht darauf
+        # stellen“ und der Doppelklick auf ein Teil (Paket B, 14.10.2026)
+        self.baum.sicht.connect(self._baum_sicht)
+        self.baum.etwas_ausgeblendet = lambda: any(self.versteckt.values())
         dock.setWidget(halter)
         # Der Baum traegt jetzt Namen und Zusatzangabe nebeneinander (Knoten mit
         # Koordinaten, Lager mit Wirkung); unter 290 px bleibt vom Namen nichts.
@@ -17866,6 +17872,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:                # noqa: BLE001
                 pass
         self._kontakt_darsteller = []
+        self._kontakt_zahl = 0
         if getattr(self, "act_kontakte", None) is None or not self.act_kontakte.isChecked():
             return
         try:
@@ -17875,13 +17882,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"Kontakte nicht gezeichnet: {ex}")
             return
         gross = int(m.bemassung_einstellungen().textgroesse)
-        for i, (name, farbe, punkt, _n) in enumerate(gezeichnet):
+        # Die Schilder je Farbe in einem Darsteller (seit 14.10.2026): bis
+        # dahin einer je Bedingung, dazu ihre Flaeche - am Drehlager zwei
+        # Dutzend Darsteller fuer die Fugen
+        je_farbe: dict = {}
+        for name, farbe, punkt, _n in gezeichnet:
             kb = m.kontaktbedingungen.get(name)
             text = f"{name}: {self.kontakt_kurztext(kb)}" if kb is not None else name
+            je_farbe.setdefault(farbe, ([], []))
+            je_farbe[farbe][0].append(punkt)
+            je_farbe[farbe][1].append(text)
+        self._kontakt_zahl = len(gezeichnet)
+        if gezeichnet:
+            self._kontakt_darsteller.append("kontaktflaechen")
+        for i, (farbe, (punkte, texte)) in enumerate(je_farbe.items()):
             self.plotter.add_point_labels(
-                np.asarray([punkt], float), [text], font_size=gross, text_color=farbe,
+                np.asarray(punkte, float), texte, font_size=gross, text_color=farbe,
                 point_size=1, shape=None, always_visible=True, name=f"kontakttext{i}")
-            self._kontakt_darsteller += [f"kontaktflaeche{i}", f"kontakttext{i}"]
+            self._kontakt_darsteller.append(f"kontakttext{i}")
 
     def ergebnisse_sichtbar(self) -> bool:
         """Zeigt die Ansicht die Ergebnisse? (Schalter „Ergebnisse zeigen")"""
@@ -17897,7 +17915,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "act_kontaktmarken", None) is not None and self.act_kontaktmarken.isChecked():
             text += " · Kontaktmarken: grün haftet, orange gleitet, grau offen, blau Kontakt"
         if getattr(self, "act_kontakte", None) is not None and self.act_kontakte.isChecked():
-            n = len(getattr(self, "_kontakt_darsteller", []) or []) // 2
+            n = int(getattr(self, "_kontakt_zahl", 0) or 0)
             text += f" · Kontakte: {bg.anzahl(n, 'Bedingung', 'Bedingungen')} farbig mit Schild"
         return text
 
@@ -26329,12 +26347,19 @@ class MainWindow(QtWidgets.QMainWindow):
             if not elems:
                 continue
             try:
-                teil = vp.teilnetz(m, elems)
-                if lage is not None and teil.n_points == len(lage):
-                    teil.points = lage
-                if teil.n_cells > 2000:
-                    # grosse Koerper: nur ihre Oberflaeche leuchtet
-                    teil = teil.extract_surface()
+                teil = None
+                if len(elems) > 2000:
+                    # ganze Koerper: ihre Haut liegt schon bereit (14.10.2026;
+                    # am Drehlager V30 mit 115 984 Elementen 0,58 s je Klick)
+                    haut = self._teilhaut_aktuell()
+                    teil = haut.gruppenhaut(elems, lage) if haut is not None else None
+                if teil is None:
+                    teil = vp.teilnetz(m, elems)
+                    if lage is not None and teil.n_points == len(lage):
+                        teil.points = lage
+                    if teil.n_cells > 2000:
+                        # grosse Koerper: nur ihre Oberflaeche leuchtet
+                        teil = teil.extract_surface()
                 # Die Elementkanten folgen dem Schalter FE-Netz: ist das Netz
                 # aus, leuchtet die Flaeche oder das Volumen ohne Netz auf
                 # (15.09.2026, „wenn Netz ausgeschaltet, dann auch nicht
@@ -26541,12 +26566,28 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         m = self.model
         box = self.schnittbox_grenzen()
-        stand = (id(m), len(m.elements), m.nn,
-                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
-                 tuple(typen), frozenset(ausser), self.schnitt, box)
+        netzstand = (id(m), len(m.elements), m.nn,
+                     hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0, tuple(typen))
+        stand = netzstand + (frozenset(ausser), self.schnitt, box)
         if getattr(self, "_gitter_stand", None) == stand:
             grid, kidx, self._schnittgewichte = self._gitter_zwischen
             return grid, kidx
+        if getattr(self, "_gitter_stand", None) is None:
+            # ausdruecklich vergessen (Elementknoten geaendert): die Haeute auch
+            self._teilhaut = None
+        if not self.schnitt_aktiv():
+            # Ohne Schnitt: die Haut je Koerper einmal je Netzstand, das
+            # Ausblenden ist dann eine Zellauswahl (gui/sichtbarkeit.py,
+            # 14.10.2026). Ein Schnitt (Ebene oder Box, Paket C) legt neue
+            # Punkte mit Gewichten an (sn.gewichte) - mit ihm bleibt es beim
+            # Gitter neu, wie bisher.
+            haut = self._teiloberflaeche(netzstand, typen)
+            teil = haut.teil(ausser) if haut is not None else None
+            if teil is not None:
+                self._gitter_stand = stand
+                self._gitter_zwischen = (teil[0], teil[1], None)
+                self._schnittgewichte = None
+                return teil
         grid = vp.to_grid(m, typen=typen, ausser=ausser)
         kidx = np.arange(m.nn)
         #: Gewichte der Punkte, die ein Schnitt neu anlegt (gui/schnitt.py):
@@ -26589,6 +26630,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self._schnittgewichte = W
         return grid, kidx
 
+    def _teiloberflaeche(self, netzstand: tuple, typen):
+        """Die Haeute aller Koerper (sichtbarkeit.Teiloberflaeche) - einmal je
+        Netzstand und Elementtypen; None, wenn das Gitter keine Volumen hat
+        (dann ist to_grid allein billig und bleibt der Weg)."""
+        alt = getattr(self, "_teilhaut", None)
+        if alt is not None and alt[0] == netzstand:
+            return alt[1]
+        from . import sichtbarkeit as sb
+        m = self.model
+        haut = None
+        try:
+            grid = vp.to_grid(m, typen=typen)
+            volumen = {vp.CELL_MAP[t][0] for t in vp.TYPEN_VOLUMEN if t in vp.CELL_MAP}
+            if grid.n_cells and np.isin(grid.celltypes, list(volumen)).any():
+                koerper = list((getattr(m, "koerper", {}) or {}).values())
+                gruppe = np.full(len(m.elements), len(koerper), np.int64)
+                for i, k in enumerate(koerper):
+                    el = np.asarray([int(e) for e in (k.elemente or []) if 0 <= int(e) < len(m.elements)],
+                                    np.int64)
+                    gruppe[el] = i
+                haut = sb.Teiloberflaeche(grid, m.nodes, gruppe, volumen,
+                                         alle_typen=set(typen) >= set(vp.CELL_MAP))
+        except Exception as ex:             # noqa: BLE001 - dann wie bisher je Ausblenden neu
+            self.log.appendPlainText(f"Oberfläche je Körper: {ex}")
+            haut = None
+        self._teilhaut = (netzstand, haut)
+        return haut
+
+    def _teilhaut_aktuell(self):
+        """Die zuletzt gebildeten Haeute, wenn sie zum Modell passen - sonst None."""
+        alt = getattr(self, "_teilhaut", None)
+        m = self.model
+        if alt is None or alt[1] is None or alt[0][0] != id(m) or alt[0][1] != len(m.elements)                 or alt[0][2] != m.nn:
+            return None
+        return alt[1]
+
     #: Lage der Farbskalen: senkrecht am rechten Rand, Ergebnis aussen, der
     #: Schnittgroessenverlauf daneben. Unten links stehen die Kennwerte; unten
     #: rechts stand bis zum 14.10.2026 das Achsenkreuz (der Platz bleibt frei,
@@ -26622,7 +26699,18 @@ class MainWindow(QtWidgets.QMainWindow):
     SCHRIFT_KOPF = 7
     SCHRIFT_KENNWERTE = 6
 
-    def redraw(self):
+    def redraw(self, art: str = None):
+        """Die Ansicht neu zeichnen.
+
+        ``art`` (seit 14.10.2026, Ansichtspaket B) sagt, was sich geaendert hat:
+        "auswahl" (nur die Auswahl) oder "sicht" (nur das Ausgeblendete). Dann
+        werden nur die Darsteller neu gezeichnet, die davon abhaengen
+        (:meth:`_teil_neuzeichnen`) - ohne ``plotter.clear()``. Bis dahin baute
+        jeder Auswahlklick die ganze Szene neu: am Drehlager 0,93 s in der
+        Modellansicht, 2,08 s mit Ergebnis; ein Koerper ausblenden 3,9 s
+        (Messung vom 14.10.2026, Paket B). Geht das nicht sicher, wird wie
+        bisher alles neu aufgebaut.
+        """
         if getattr(self, "_auswahl_sammeln", False):
             return                          # Mehrfachauswahl: erst am Ende zeichnen
         # Jeder Weg, der die Auswahl aendert, zeichnet danach neu - das Register
@@ -26630,6 +26718,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # (Baumzweige, Tabellen, Klickmodi der Masken, Lasten, Neu, Laden,
         # Rueckgaengig, Loeschen); es kostet nur einen Vergleich der Arten
         self._kontext_abgleichen()
+        if art and self._teil_neuzeichnen(art):
+            self._ruecksetzer_nachziehen()
+            return
+        self._szene_stand = None
         # Die Kamera muss das Neuzeichnen ueberleben. plotter.clear() nimmt
         # alle Darsteller weg; das naechste add_mesh setzt die Kamera dann von
         # sich aus zurueck - man haette nach jedem Klick wieder die
@@ -26655,7 +26747,188 @@ class MainWindow(QtWidgets.QMainWindow):
         with self._Stille(self.plotter):
             r = self._aufbauen(m)
         self._kamera_setzen(kamera)
+        # Was das Bild jetzt zeigt - nur solange das gilt, darf eine Aenderung
+        # der Auswahl oder des Ausgeblendeten ohne Neuaufbau gezeichnet werden
+        self._szene_ergebnis = r is not None
+        self._szene_sicht = self._sicht_kennung()
+        self._szene_stand = self._szenen_schluessel()
+        self._ruecksetzer_nachziehen()
         self.plotter.render()
+
+    # ---- Zeichnen ohne Neuaufbau (Ansichtspaket B, 14.10.2026) ------------
+    #: Schalter, die nichts am Bild aendern - was ein Klick waehlt, Fang,
+    #: Sonde, intelligente Auswahl (ein Klick stellt die Auswahlart um)
+    SCHLUESSEL_OHNE = frozenset({"act_auswahlart", "act_fang", "act_fangart", "act_klug", "act_sonde"})
+
+    def _szenen_schluessel(self) -> tuple:
+        """Alles, wovon das Bild ausser Auswahl und Ausgeblendetem abhaengt.
+
+        Weicht er vom Stand des letzten Aufbaus ab, hat sich etwas geaendert,
+        ohne dass neu gezeichnet wurde - dann baut der naechste Klick alles neu
+        auf, wie bis zum 14.10.2026 jeder. Lieber einmal zu viel aufgebaut als
+        ein Bild, das nicht zum Modell passt: Modell, Aenderungsstand,
+        Ergebnis, Darstellung, Schnitt, Groesse der Ansicht, alle Schalter
+        (act_*) und die Auswahlfelder, die das Zeichnen liest."""
+        aktionen = []
+        for name, a in sorted(vars(self).items()):
+            if not name.startswith("act_") or name in self.SCHLUESSEL_OHNE:
+                continue
+            for b in (a.values() if isinstance(a, dict) else (a,)):
+                try:
+                    if isinstance(b, QtGui.QAction) and b.isCheckable():
+                        aktionen.append((name, b.isChecked()))
+                except RuntimeError:
+                    pass
+        felder = []
+        for name in ("cb_field", "cb_mode", "cb_diagram", "cb_seite", "cb_result", "cb_undeformed",
+                     "cb_extremmarken", "cb_verlaufswerte", "cb_spitzenzonen", "cb_werte_filter",
+                     "ed_werte_schwelle", "sp_werte_n", "cb_lastwahl"):
+            w_ = getattr(self, name, None)
+            try:
+                if w_ is None:
+                    felder.append(None)
+                elif hasattr(w_, "currentIndex"):
+                    felder.append((w_.currentIndex(), w_.currentText()))
+                elif hasattr(w_, "isChecked"):
+                    felder.append(w_.isChecked())
+                else:
+                    felder.append(w_.value())
+            except RuntimeError:
+                felder.append("weg")
+        m = self.model
+        try:
+            groesse = tuple(self.plotter.render_window.GetSize())
+        except Exception:                   # noqa: BLE001
+            groesse = None
+        r = self.current_result()
+        return (id(m), id(self._anzeigemodell()), getattr(self, "_stand", None), m.nn, len(m.elements),
+                id(r), self.ergebnisse_sichtbar(), getattr(self, "darstellung", ""), self.schnitt,
+                bool(getattr(self, "geist", False)), getattr(m, "active_case", None),
+                getattr(self, "lagergroesse", None), getattr(self, "lagerdichte", None),
+                len(getattr(self, "sonden", None) or []), len(getattr(self, "messungen", None) or []),
+                id(getattr(self, "netzguete_feld", None)), getattr(self, "_ueberhoehung_art", None),
+                getattr(self, "_ueberhoehung_wert", None), getattr(self, "leuchtet_kontakt", ""),
+                groesse, tuple(aktionen), tuple(felder))
+
+    def _sicht_kennung(self) -> tuple:
+        """Woran sich erkennen laesst, ob sich das Ausgeblendete geaendert hat."""
+        v = self.verborgen
+        return tuple((k, len(v[k]), hash(frozenset(v[k])) if len(v[k]) < 5000 else id(v[k]))
+                     for k in sorted(v))
+
+    #: Darsteller, die ein Neuaufbau mit plotter.clear() wegnaehme und die nicht
+    #: zu einem Abschnitt gehoeren: die Hervorhebung unter dem Zeiger
+    HOVER_DARSTELLER = ("hover", "hover_punkt")
+
+    def _teil_neuzeichnen(self, art: str) -> bool:
+        """Nur die Abschnitte neu zeichnen, die von der Auswahl ("auswahl") oder
+        vom Ausgeblendeten ("sicht") abhaengen. False, wenn das nicht sicher
+        geht - dann baut redraw alles neu auf.
+
+        Ausblenden mit gezeigtem Ergebnis baut weiter alles neu auf: Skala
+        („nur sichtbare Teile“), Kennwerte, Max-/Min-Marken, Werte im Bild,
+        Sonden, netzabhaengige Zonen und Verlauf haengen dort an den sichtbaren
+        Knoten - sie neu zu bestimmen ist der Aufbau selbst. Ebenso mit Schnitt
+        (seine Ebene liegt im Huellquader des Gezeichneten, vp.schneiden) und
+        mit einer Farbskala im Bild (Netzguete)."""
+        if getattr(self, "_szene_stand", None) is None or getattr(self, "_abschnitte", None) is None:
+            return False
+        try:
+            if self._szenen_schluessel() != self._szene_stand:
+                return False
+        except Exception:                   # noqa: BLE001
+            return False
+        m = self._anzeigemodell()
+        if m.nn == 0:
+            return False
+        if art == "auswahl":
+            if self._sicht_kennung() != getattr(self, "_szene_sicht", None):
+                return False
+            fall = getattr(self, "_lastfall_im_bild", None)
+            if {(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == fall} != getattr(self, "_lasten_hervor", set()):
+                return False                # die gewaehlte Last zeichnen die Lasten selbst hervor
+            if getattr(self, "_szene_ergebnis", False) and self._werte_arten():
+                return False                # Werte im Bild filtern nach der Auswahl
+            with self._Stille(self.plotter):
+                self._auswahl_auffrischen(m)
+        elif art == "sicht":
+            if getattr(self, "_szene_ergebnis", False) or self.schnitt is not None:
+                return False
+            try:
+                if len(self.plotter.scalar_bars):
+                    return False
+            except Exception:               # noqa: BLE001
+                return False
+            with self._Stille(self.plotter):
+                self._sicht_auffrischen(m)
+            self._szene_sicht = self._sicht_kennung()
+        else:
+            return False
+        self.plotter.render()
+        return True
+
+    def _auswahl_auffrischen(self, m) -> None:
+        """Nur die Hervorhebung der Auswahl neu: ein eigener kleiner Abschnitt."""
+        for name in self.HOVER_DARSTELLER:
+            try:
+                self.plotter.remove_actor(name, render=False)
+            except Exception:               # noqa: BLE001
+                pass
+        self._abschnitt_weg("auswahl")
+        try:
+            self._abschnitt("auswahl", self._auswahl_zeichnen)
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Darstellung: {ex}")
+        self._abschnitt("auswahl", self._auswahlpunkte_zeichnen, m)
+        if tuple(self.sel_linien) != getattr(self, "_linien_gezeichnet", ()):
+            # gewaehlte Linien stehen im Liniennetz selbst hervorgehoben
+            self._abschnitt_weg("linien")
+            self._abschnitt("linien", self._linien_zeichnen, m)
+
+    def _sicht_auffrischen(self, m) -> None:
+        """Ausgeblendetes ohne Neuaufbau: das Netz aus den zwischengespeicherten
+        Haeuten (Zellauswahl, gui/sichtbarkeit.py) und die Abschnitte, die an
+        den sichtbaren Knoten haengen. Kontakte, Stabeinleitungen, Bemassungen,
+        Kopfzeile und Achsenkreuz bleiben stehen - sie fragen nicht, was
+        ausgeblendet ist."""
+        for name in self.HOVER_DARSTELLER:
+            try:
+                self.plotter.remove_actor(name, render=False)
+            except Exception:               # noqa: BLE001
+                pass
+        modus = getattr(self, "darstellung", "Voll")
+        size = m.characteristic_size()
+        lage = None
+        sichtbare_knoten = self._sichtbare_knoten()
+        for name in ("netz", "lager", "linien", "geometrie", "knoten", "auswahl", "geist", "lasten",
+                     "nummern"):
+            self._abschnitt_weg(name)
+        vorher = self._darsteller_namen()
+        netze, _ausser = self._netze_bauen(m, None, modus)
+        farben = self._modellfarben(m, None)
+        for netz, _kn, nm in netze:
+            eidx = np.asarray(netz.cell_data["elem"], int)
+            dick = nm == "netz_linien" or (nm == "netz" and self._nur_linien(netz))
+            show_edges = self.act_edges.isChecked() and nm in ("netz", "netz_linien")
+            self._modellnetz_zeichnen(netz, eidx, nm, dick, 3 if dick else 1, show_edges, modus, farben)
+        self._abschnitt_merken("netz", vorher)
+        einheiten = list(getattr(self, "_lasteinheiten", None) or [])
+        a_ = self._abschnitt
+        try:
+            a_("lager", self._lager_zeichnen, m, size, sichtbare_knoten, lage)
+            a_("linien", self._linien_zeichnen, m)
+            a_("geometrie", self._geometrie_zeichnen, m, modus)
+            a_("knoten", self._knoten_zeichnen, m, sichtbare_knoten, lage)
+            a_("auswahl", self._auswahl_zeichnen)
+            a_("geist", self._geist_zeichnen, m)
+            a_("lasten", self._lasten_zeichnen, m, None, size, sichtbare_knoten)
+        except Exception as ex:
+            self.log.appendPlainText(f"Darstellung: {ex}")
+        a_("nummern", self._nummern_zeichnen, m, sichtbare_knoten)
+        a_("auswahl", self._auswahlpunkte_zeichnen, m)
+        if list(getattr(self, "_lasteinheiten", None) or []) != einheiten:
+            # die Kopfzeile nennt die Einheiten der gezeichneten Lasten
+            self._kopfzeile_zeichnen(None, 0.0)
 
     def _stabnummern_zum_zeichnen(self, m) -> list:
         """Die Nummern der Stabelemente fuers Zeichnen - einmal je Modellstand.
@@ -26685,8 +26958,201 @@ class MainWindow(QtWidgets.QMainWindow):
             return rm
         return self.model
 
+    def _netze_bauen(self, m, r, modus: str):
+        """Die Netze der Ansicht: [(Netz, Knoten je Punkt, Name)] und die
+        Elemente, die nicht im Bild stehen (ausgeblendet, in der Situation des
+        Ergebnisses unwirksam). Aus _aufbauen herausgeloest (14.10.2026), damit
+        das Ausblenden ohne Neuaufbau dieselben Netze bildet."""
+        # Was ins Bild kommt: die Sichtbarkeitsschalter Staebe, Flaechen,
+        # Volumen und die ausgeblendeten Elemente. Bei Voll und Transparent
+        # bekommen die Staebe ihre Querschnittskontur - dann kommen sie nicht
+        # als Linie ins Gitter, sondern als eigener Koerper.
+        typen = [t for t in vp.CELL_MAP
+                 if t not in vp.TYPEN_STAEBE + vp.TYPEN_FLAECHEN + vp.TYPEN_VOLUMEN]
+        staebe_an = self.act_staebe.isChecked()
+        if staebe_an:
+            typen += list(vp.TYPEN_STAEBE)
+        if self.act_flaechen.isChecked():
+            typen += list(vp.TYPEN_FLAECHEN)
+        if self.act_volumen.isChecked():
+            typen += list(vp.TYPEN_VOLUMEN)
+        ausser = set(self.verborgen["elemente"])
+        if r is not None:
+            # Elemente, die in der Situation des Ergebnisses nicht wirken
+            ausser |= {int(i) for i in (getattr(r, "info", None) or {}).get("inaktiv", [])}
+        koerper_elems: list = []
+        if staebe_an and modus in vp.KOERPERLICH:
+            koerper_elems = [i for i in self._stabnummern_zum_zeichnen(m)
+                             if i not in ausser and m.elements[i].sec
+                             and m.elements[i].sec in m.sections]
+        grid, kidx = self._gitter(typen, ausser | set(koerper_elems))
+        netze = []
+        if grid.n_cells:
+            netze.extend(self._netz_teilen(grid, kidx))
+        if koerper_elems:
+            try:
+                pd = vp.stab_koerper(m, koerper_elems)
+                if pd is not None:
+                    netze.append((pd, np.asarray(pd.point_data["knoten"], int), "stabkoerper"))
+            except Exception as ex:         # noqa: BLE001
+                self.log.appendPlainText(f"Stabkörper: {ex}")
+        return netze, ausser
+
+    def _modellfarben(self, m, u) -> dict:
+        """Die Faerbung des Modells ohne Ergebnis: Netzguete, Elementtyp oder
+        Stabfarben (aus _aufbauen, 14.10.2026)."""
+        # Netzguete faerbt nur, solange kein Ergebnis gezeigt wird - ein
+        # Spannungsbild und eine Guetekarte im selben Fenster waeren nur
+        # verwirrend.
+        guete, guete_name, guete_clim = None, "", [0.0, 1.0]
+        gf = self.netzguete_feld if u is None else None
+        if gf is not None and len(np.asarray(gf["werte"])) == len(m.elements):
+            guete = np.asarray(gf["werte"], float)
+            if gf["mass"] == "kantenlaenge":
+                guete = guete * 1e3          # Anzeige in mm wie die Netzeinstellungen
+            guete_name = {"formguete": "Formgüte",
+                          "seitenverhaeltnis": "Seitenverhältnis",
+                          "kantenlaenge": "Kantenlänge [mm]"}.get(gf["mass"], "Netzgüte")
+            endlich = guete[np.isfinite(guete)]
+            if gf["mass"] == "kantenlaenge" and len(endlich):
+                guete_clim = [float(endlich.min()), float(max(endlich.max(), endlich.min() + 1e-12))]
+            elif len(endlich):
+                guete_clim = [float(min(0.0, endlich.min())), 1.0]
+        # Faerbung nach Elementtyp (Elementuebersicht, 25.09.2026) - wie die
+        # Netzguete nur ohne gezeigtes Ergebnis
+        typfarbe = elm.faerbung_fuer_ansicht(self, m) if u is None and guete is None else None
+        col = None
+        if u is None and self.act_members.isChecked() and m.members:
+            col = np.full(len(m.elements), np.nan)
+            for k, mem in enumerate(m.members.values()):
+                for e in mem.elements:
+                    if 0 <= e < len(col):
+                        col[e] = k % 12
+        return {"guete": guete, "guete_name": guete_name, "guete_clim": guete_clim,
+                "typfarbe": typfarbe, "col": col}
+
+    def _modellnetz_zeichnen(self, netz, eidx, nm: str, dick: bool, breit: int, show_edges: bool,
+                             modus: str, farben: dict) -> None:
+        """Ein Netz des Modells ohne Ergebnis zeichnen - in der Faerbung aus
+        :meth:`_modellfarben` (aus _aufbauen, 14.10.2026)."""
+        guete, guete_name, guete_clim = farben["guete"], farben["guete_name"], farben["guete_clim"]
+        typfarbe, col = farben["typfarbe"], farben["col"]
+        if guete is not None:
+            # Netzguete: gruen gut, rot schlecht. Elemente ohne Form
+            # (Staebe, Federn, Grenzschichten) bleiben grau.
+            farbig = netz.copy()
+            farbig.cell_data[guete_name] = np.asarray(guete, float)[eidx]
+            self.plotter.add_mesh(farbig, scalars=guete_name, cmap="RdYlGn",
+                                  clim=guete_clim, nan_color=vp.FARBE_OHNE_WERT,
+                                  scalar_bar_args=dict(self._farbskala(), title=guete_name,
+                                                       fmt=spn.skalenformat(*guete_clim)),
+                                  name=f"model_{nm}",
+                                  **dict({"line_width": 4 if dick else 1},
+                                         **vp.darstellung(modus, show_edges, True)))
+        elif typfarbe is not None:
+            elm.faerbung_zeichnen(self, netz, eidx, typfarbe, nm, 4 if dick else 1,
+                                  vp.darstellung(modus, show_edges, True))
+        elif col is not None:
+            farbig = netz.copy()
+            farbig.cell_data["Stab"] = col[eidx]
+            self.plotter.add_mesh(farbig, scalars="Stab", cmap="tab20",
+                                  nan_color="#8fb8d8", show_scalar_bar=False,
+                                  name=f"model_{nm}",
+                                  **dict({"line_width": 4 if dick else 1},
+                                         **vp.darstellung(modus, show_edges, True)))
+        else:
+            self.plotter.add_mesh(netz, name=f"model_{nm}",
+                                  **dict({"color": "#8fb8d8", "line_width": breit},
+                                         **vp.darstellung(modus, show_edges)))
+
+    # ---- Abschnitte des Bildes (Ansichtspaket B, 14.10.2026) -------------
+    def _darsteller_namen(self) -> set:
+        try:
+            return set(self.plotter.renderer.actors)
+        except Exception:                   # noqa: BLE001
+            return set()
+
+    def _abschnitt_merken(self, name: str, vorher: set) -> None:
+        """Die Darsteller, die seit ``vorher`` dazukamen, gehoeren zum Abschnitt."""
+        neu = self._darsteller_namen() - set(vorher)
+        ab = getattr(self, "_abschnitte", None)
+        if ab is None:
+            ab = self._abschnitte = {}
+        ab.setdefault(name, set()).update(neu)
+
+    def _abschnitt(self, name: str, fn, *args, **kw):
+        """``fn`` zeichnen und seine Darsteller dem Abschnitt ``name`` zuschreiben."""
+        vorher = self._darsteller_namen()
+        try:
+            return fn(*args, **kw)
+        finally:
+            self._abschnitt_merken(name, vorher)
+
+    def _abschnitt_weg(self, name: str) -> None:
+        """Die Darsteller eines Abschnitts aus dem Bild nehmen."""
+        for akt in sorted((getattr(self, "_abschnitte", None) or {}).pop(name, set())):
+            try:
+                self.plotter.remove_actor(akt, render=False)
+            except Exception:               # noqa: BLE001
+                pass
+
+    def _lager_zeichnen(self, m, size: float, sichtbare_knoten, lage) -> None:
+        if getattr(self, "act_lager", None) is None or self.act_lager.isChecked():
+            vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten,
+                            dichte=self.lagerdichte, lage=lage)
+            if getattr(self, "act_lagertext", None) is not None and self.act_lagertext.isChecked():
+                punkte, texte = vp.lager_texte(m, nur=sichtbare_knoten)
+                if texte:
+                    self.plotter.add_point_labels(
+                        np.asarray(punkte, float), texte,
+                        font_size=int(m.bemassung_einstellungen().textgroesse),
+                        text_color="#1f3b73", point_size=1, shape=None, always_visible=True,
+                        name="lagertext")
+
+    def _linien_zeichnen(self, m) -> None:
+        self._linien_gezeichnet = tuple(self.sel_linien)
+        if self.act_linien.isChecked():
+            vp.add_linien(self.plotter, m, self.sel_linien,
+                          ausser=self.verborgen["linien"], netz=self._linien_netz())
+
+    def _geometrie_zeichnen(self, m, modus: str) -> None:
+        vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
+
+    def _knoten_zeichnen(self, m, sichtbare_knoten, lage) -> None:
+        if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
+            vp.add_nodes(self.plotter, m, nur=sichtbare_knoten, lage=lage)
+        if self._netzknoten_sichtbar():
+            vp.add_netzknoten(self.plotter, m, nur=sichtbare_knoten, lage=lage)
+
+    def _lasten_zeichnen(self, m, r, size: float, sichtbare_knoten) -> None:
+        self._lastpunkte = []
+        fall = self._lastfall_fuers_bild(r, getattr(self, "_modal_im_bild", False))
+        self._lastfall_im_bild = fall
+        self._lasten_hervor = {(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == fall}
+        if fall is not None:
+            self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(fall), size, raender=self._raender(),
+                         seiten=self._randseiten(),
+                         beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
+                         textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1,
+                         ausser=self.verborgen["elemente"], knoten=sichtbare_knoten,
+                         ausser_flaechen=self.verborgen["flaechen"],
+                         ausser_linien=self.verborgen["linien"],
+                         merker=self._lastpunkte,
+                         hervor=self._lasten_hervor)
+
+    def _auswahlpunkte_zeichnen(self, m) -> None:
+        """Die gewaehlten Knoten als orange Kugeln an der Lage des Bildes."""
+        if len(self.selection):
+            lage = getattr(self, "_bildlage", None)
+            X_ = lage if lage is not None and len(lage) == m.nn else m.nodes
+            sel_ = np.asarray(self.selection, int)
+            sel_ = sel_[(sel_ >= 0) & (sel_ < len(X_))]
+            self.plotter.add_points(X_[sel_], color="#ff8800", point_size=11,
+                                    render_points_as_spheres=True, name="selection")
+
     def _aufbauen(self, m):
         """Alle Darsteller der Ansicht aufbauen (ohne Zwischenbilder)."""
+        self._abschnitte = {}
         # Texte des Bildes, die viewport.texte_ordnen vor jedem Bild nach
         # ihren Rechtecken ordnet (seit 13.10.2026)
         self._bildtexte, self._skalentitel, self._legende_namen = {}, {}, []
@@ -26782,39 +27248,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 lage = np.asarray(m.nodes, float) + s * uu[:, :3]
         self._bildlage = lage
 
-        # Was ins Bild kommt: die Sichtbarkeitsschalter Staebe, Flaechen,
-        # Volumen und die ausgeblendeten Elemente. Bei Voll und Transparent
-        # bekommen die Staebe ihre Querschnittskontur - dann kommen sie nicht
-        # als Linie ins Gitter, sondern als eigener Koerper.
-        typen = [t for t in vp.CELL_MAP
-                 if t not in vp.TYPEN_STAEBE + vp.TYPEN_FLAECHEN + vp.TYPEN_VOLUMEN]
-        staebe_an = self.act_staebe.isChecked()
-        if staebe_an:
-            typen += list(vp.TYPEN_STAEBE)
-        if self.act_flaechen.isChecked():
-            typen += list(vp.TYPEN_FLAECHEN)
-        if self.act_volumen.isChecked():
-            typen += list(vp.TYPEN_VOLUMEN)
-        ausser = set(self.verborgen["elemente"])
-        if r is not None:
-            # Elemente, die in der Situation des Ergebnisses nicht wirken
-            ausser |= {int(i) for i in (getattr(r, "info", None) or {}).get("inaktiv", [])}
-        koerper_elems: list = []
-        if staebe_an and modus in vp.KOERPERLICH:
-            koerper_elems = [i for i in self._stabnummern_zum_zeichnen(m)
-                             if i not in ausser and m.elements[i].sec
-                             and m.elements[i].sec in m.sections]
-        grid, kidx = self._gitter(typen, ausser | set(koerper_elems))
-        netze = []
-        if grid.n_cells:
-            netze.extend(self._netz_teilen(grid, kidx))
-        if koerper_elems:
-            try:
-                pd = vp.stab_koerper(m, koerper_elems)
-                if pd is not None:
-                    netze.append((pd, np.asarray(pd.point_data["knoten"], int), "stabkoerper"))
-            except Exception as ex:         # noqa: BLE001
-                self.log.appendPlainText(f"Stabkörper: {ex}")
+        netze, ausser = self._netze_bauen(m, r, modus)
 
         field = self.cb_field.currentText()
         point_scalars = cell_scalars = ps_wahr = None
@@ -26938,33 +27372,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.statusBar().showMessage(vp.ohne_verdrehung(m), 8000)
             elif cell_scalars is None and spn.feld(field) is not None:
                 self.statusBar().showMessage(f"{field}: gibt es zu Lastfall und Kombination, nicht zur Umhüllenden", 8000)
-        # Netzguete faerbt nur, solange kein Ergebnis gezeigt wird - ein
-        # Spannungsbild und eine Guetekarte im selben Fenster waeren nur
-        # verwirrend.
-        guete, guete_name, guete_clim = None, "", [0.0, 1.0]
-        gf = self.netzguete_feld if u is None else None
-        if gf is not None and len(np.asarray(gf["werte"])) == len(m.elements):
-            guete = np.asarray(gf["werte"], float)
-            if gf["mass"] == "kantenlaenge":
-                guete = guete * 1e3          # Anzeige in mm wie die Netzeinstellungen
-            guete_name = {"formguete": "Formgüte",
-                          "seitenverhaeltnis": "Seitenverhältnis",
-                          "kantenlaenge": "Kantenlänge [mm]"}.get(gf["mass"], "Netzgüte")
-            endlich = guete[np.isfinite(guete)]
-            if gf["mass"] == "kantenlaenge" and len(endlich):
-                guete_clim = [float(endlich.min()), float(max(endlich.max(), endlich.min() + 1e-12))]
-            elif len(endlich):
-                guete_clim = [float(min(0.0, endlich.min())), 1.0]
-        # Faerbung nach Elementtyp (Elementuebersicht, 25.09.2026) - wie die
-        # Netzguete nur ohne gezeigtes Ergebnis
-        typfarbe = elm.faerbung_fuer_ansicht(self, m) if u is None and guete is None else None
-        col = None
-        if u is None and self.act_members.isChecked() and m.members:
-            col = np.full(len(m.elements), np.nan)
-            for k, mem in enumerate(m.members.values()):
-                for e in mem.elements:
-                    if 0 <= e < len(col):
-                        col[e] = k % 12
+        farben_modell = self._modellfarben(m, u)
+        vorher = self._darsteller_namen()
         W_ = getattr(self, "_schnittgewichte", None)
         for netz, kn, nm in netze:
             eidx = np.asarray(netz.cell_data["elem"], int)
@@ -27030,33 +27439,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.plotter.add_mesh(warped, name=f"result_{nm}",
                                           **dict({"color": farbe, "line_width": breit},
                                                  **vp.darstellung(modus, show_edges)))
-            elif guete is not None:
-                # Netzguete: gruen gut, rot schlecht. Elemente ohne Form
-                # (Staebe, Federn, Grenzschichten) bleiben grau.
-                farbig = netz.copy()
-                farbig.cell_data[guete_name] = np.asarray(guete, float)[eidx]
-                self.plotter.add_mesh(farbig, scalars=guete_name, cmap="RdYlGn",
-                                      clim=guete_clim, nan_color=vp.FARBE_OHNE_WERT,
-                                      scalar_bar_args=dict(self._farbskala(), title=guete_name,
-                                                           fmt=spn.skalenformat(*guete_clim)),
-                                      name=f"model_{nm}",
-                                      **dict({"line_width": 4 if dick else 1},
-                                             **vp.darstellung(modus, show_edges, True)))
-            elif typfarbe is not None:
-                elm.faerbung_zeichnen(self, netz, eidx, typfarbe, nm, 4 if dick else 1,
-                                      vp.darstellung(modus, show_edges, True))
-            elif col is not None:
-                farbig = netz.copy()
-                farbig.cell_data["Stab"] = col[eidx]
-                self.plotter.add_mesh(farbig, scalars="Stab", cmap="tab20",
-                                      nan_color="#8fb8d8", show_scalar_bar=False,
-                                      name=f"model_{nm}",
-                                      **dict({"line_width": 4 if dick else 1},
-                                             **vp.darstellung(modus, show_edges, True)))
             else:
-                self.plotter.add_mesh(netz, name=f"model_{nm}",
-                                      **dict({"color": "#8fb8d8", "line_width": breit},
-                                             **vp.darstellung(modus, show_edges)))
+                self._modellnetz_zeichnen(netz, eidx, nm, dick, breit, show_edges, modus, farben_modell)
+        self._abschnitt_merken("netz", vorher)
         if u is not None and not modal:
             if getattr(self, "cb_extremmarken", None) is not None and self.cb_extremmarken.isChecked():
                 self._extremmarken_zeichnen(m, field, ps_wahr, cell_scalars, sicht_maske,
@@ -27073,57 +27458,30 @@ class MainWindow(QtWidgets.QMainWindow):
             self._spitzen_zeichnen(m, r, lage, ausser)
 
         sichtbare_knoten = self._sichtbare_knoten()      # None = alle
+        # Je Abschnitt merkt sich die Ansicht ihre Darsteller (14.10.2026):
+        # Auswahl und Ausblenden zeichnen nur die Abschnitte neu, die von
+        # ihnen abhaengen (_auswahl_auffrischen, _sicht_auffrischen)
+        self._modal_im_bild = bool(u is not None and modal)
+        a_ = self._abschnitt
         try:
-            if getattr(self, "act_lager", None) is None or self.act_lager.isChecked():
-                vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten,
-                                dichte=self.lagerdichte, lage=lage)
-                if getattr(self, "act_lagertext", None) is not None and self.act_lagertext.isChecked():
-                    punkte, texte = vp.lager_texte(m, nur=sichtbare_knoten)
-                    if texte:
-                        self.plotter.add_point_labels(
-                            np.asarray(punkte, float), texte,
-                            font_size=int(m.bemassung_einstellungen().textgroesse),
-                            text_color="#1f3b73", point_size=1, shape=None, always_visible=True,
-                            name="lagertext")
-            if self.act_linien.isChecked():
-                vp.add_linien(self.plotter, m, self.sel_linien,
-                              ausser=self.verborgen["linien"], netz=self._linien_netz())
-            vp.add_stabeinleitungen(self.plotter, m, lage=lage)
-            vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
+            a_("lager", self._lager_zeichnen, m, size, sichtbare_knoten, lage)
+            a_("linien", self._linien_zeichnen, m)
+            a_("stabeinleitungen", vp.add_stabeinleitungen, self.plotter, m, lage=lage)
+            a_("geometrie", self._geometrie_zeichnen, m, modus)
             self._kontakte_zeichnen(m)
-            if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
-                vp.add_nodes(self.plotter, m, nur=sichtbare_knoten, lage=lage)
-            if self._netzknoten_sichtbar():
-                vp.add_netzknoten(self.plotter, m, nur=sichtbare_knoten, lage=lage)
-            self._auswahl_zeichnen()
-            self._geist_zeichnen(m)
+            a_("knoten", self._knoten_zeichnen, m, sichtbare_knoten, lage)
+            a_("auswahl", self._auswahl_zeichnen)
+            a_("geist", self._geist_zeichnen, m)
             if (getattr(m, "bemassungen", None) or getattr(self, "messungen", None)):
                 try:
                     vp.add_bemassungen(self.plotter, m, size, self._blick(), self.messungen)
                 except Exception as ex:          # noqa: BLE001 - ein Mass darf die Ansicht nicht sperren
                     self.log.appendPlainText(f"Bemaßung nicht gezeichnet: {ex}")
-            self._lastpunkte = []
-            fall = self._lastfall_fuers_bild(r, u is not None and modal)
-            self._lastfall_im_bild = fall
-            if fall is not None:
-                self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(fall), size, raender=self._raender(),
-                             seiten=self._randseiten(),
-                             beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
-                             textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1,
-                             ausser=self.verborgen["elemente"], knoten=sichtbare_knoten,
-                             ausser_flaechen=self.verborgen["flaechen"],
-                             ausser_linien=self.verborgen["linien"],
-                             merker=self._lastpunkte,
-                             hervor={(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == fall})
+            a_("lasten", self._lasten_zeichnen, m, r, size, sichtbare_knoten)
         except Exception as ex:
             self.log.appendPlainText(f"Darstellung: {ex}")
-        self._nummern_zeichnen(m, sichtbare_knoten)
-        if len(self.selection):
-            X_ = lage if lage is not None else m.nodes
-            sel_ = np.asarray(self.selection, int)
-            sel_ = sel_[(sel_ >= 0) & (sel_ < len(X_))]
-            self.plotter.add_points(X_[sel_], color="#ff8800", point_size=11,
-                                    render_points_as_spheres=True, name="selection")
+        a_("nummern", self._nummern_zeichnen, m, sichtbare_knoten)
+        a_("auswahl", self._auswahlpunkte_zeichnen, m)
         self._skalentitel_setzen()
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
@@ -28580,6 +28938,18 @@ class MainWindow(QtWidgets.QMainWindow):
                  hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0, frozenset(weg))
         if getattr(self, "_geist_stand", None) == stand:
             return self._geist_zwischen
+        # Ganze Koerper: die Haut aus dem Zwischenspeicher (14.10.2026) - beim
+        # Isolieren eines Koerpers am Drehlager sind 500 000 Elemente Geist
+        haut = self._teilhaut_aktuell()
+        if haut is not None and haut.alle_typen:
+            drin = np.zeros(len(m.elements), bool)
+            idx = np.fromiter((int(i) for i in weg), np.int64, len(weg))
+            drin[idx[(idx >= 0) & (idx < len(m.elements))]] = True
+            teil = haut.teil_maske(drin)
+            if teil is not None:
+                self._geist_stand = stand
+                self._geist_zwischen = teil[0]
+                return teil[0]
         grid = vp.to_grid(m, nur=weg)
         if grid.n_cells:
             try:
@@ -28709,13 +29079,19 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         stand = (id(m), len(m.elements), m.nn, len(m.lines or {}))
         if getattr(self, "_belegung_stand", None) != stand:
-            # Zugehoerigkeit einmal je Modellstand: (Element, Knoten) und (Linie, Knoten)
-            ek = [(i, int(n)) for i, e in enumerate(m.elements) for n in e.nodes
-                  if 0 <= int(n) < m.nn]
+            # Zugehoerigkeit einmal je Modellstand: (Element, Knoten) und (Linie, Knoten).
+            # Als Felder statt Paarlisten (14.10.2026): am Drehlager kostete
+            # der Aufbau 4,7 s und jeder Aufruf mit Ausgeblendetem 0,7 s (isin
+            # ueber 6 Mio. Paare, drei Aufrufe je Bild)
+            ne = len(m.elements)
+            laengen = np.fromiter((len(e.nodes) for e in m.elements), np.int64, ne)
+            e_kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in m.elements), np.int64,
+                               int(laengen.sum()))
+            e_id = np.repeat(np.arange(ne, dtype=np.int64), laengen)
+            gut = (e_kn >= 0) & (e_kn < m.nn)
             lk = [(name, int(n)) for name, ln in (m.lines or {}).items() for n in ln.nodes
                   if 0 <= int(n) < m.nn]
-            self._belegung = (np.asarray([a for a, _ in ek], int), np.asarray([b for _, b in ek], int),
-                              [a for a, _ in lk], np.asarray([b for _, b in lk], int))
+            self._belegung = (e_id[gut], e_kn[gut], [a for a, _ in lk], np.asarray([b for _, b in lk], int))
             self._belegung_stand = stand
         e_id, e_kn, l_name, l_kn = self._belegung
         belegt = np.zeros(m.nn, bool)
@@ -28724,8 +29100,11 @@ class MainWindow(QtWidgets.QMainWindow):
             belegt[e_kn] = True
             weg = v_["elemente"]
             if weg:
-                halten = ~np.isin(e_id, np.fromiter(weg, int, len(weg)))
-                sichtbar[e_kn[halten]] = True
+                ne = len(m.elements)
+                drin = np.ones(ne, bool)
+                idx = np.fromiter((int(i) for i in weg), np.int64, len(weg))
+                drin[idx[(idx >= 0) & (idx < ne)]] = False
+                sichtbar[e_kn[drin[e_id]]] = True
             else:
                 sichtbar[e_kn] = True
         if len(l_kn):
@@ -28807,7 +29186,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auswahl_leeren()
         self.info("Nur die Selektion im Bild (" + ", ".join(teile) + ") - "
                   "„Alles zeigen“ holt den Rest zurück")
-        self.redraw()
+        self.redraw(art="sicht")
 
     def auswahl_ausblenden(self):
         """Die ausgewaehlten Objekte aus dem Bild nehmen."""
@@ -28833,7 +29212,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auswahl_leeren()
         self._sicht_knoepfe()
         self.info("Ausgeblendet: " + ", ".join(teile) + " - „Vorherige Sicht“ holt sie zurück")
-        self.redraw()
+        self.redraw(art="sicht")
 
     def sicht_zurueck(self):
         """Den letzten Ausblendeschritt zuruecknehmen."""
@@ -28842,7 +29221,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.versteckt = self._sicht_verlauf.pop()
         self._sicht_knoepfe()
         self.info("Vorherige Sicht")
-        self.redraw()
+        self.redraw(art="sicht")
 
     def alles_zeigen(self):
         """Alle ausgeblendeten Objekte wieder ins Bild holen."""
@@ -28852,7 +29231,220 @@ class MainWindow(QtWidgets.QMainWindow):
         self.versteckt = {k: set() for k in self.versteckt}
         self._sicht_knoepfe()
         self.info("Alles wieder im Bild")
-        self.redraw()
+        self.redraw(art="sicht")
+
+    # ---- Ruecksetzer, Tasten H, Ansicht auf ein Bauteil (Paket B, 14.10.2026) ----
+    def _ruecksetzer_bauen(self) -> None:
+        """Rücksetzer-Knöpfe unten rechts und die Tasten H, Umschalt+H, Alt+H
+        in der Ansicht (gui/ruecksetzer.py)."""
+        from . import ruecksetzer as rs
+        central = self.centralWidget()
+        self.ruecksetzer = rs.Ruecksetzer(central)
+        self.ruecksetzer.teile_einblenden.connect(self.alles_zeigen)
+        self.ruecksetzer.schnitt_aus.connect(lambda: self.act_schnitt.setChecked(False))
+        self._sichttasten = rs.SichtTasten(self.plotter.interactor, self._sicht_taste)
+        self._radbeobachter = rs.RadBeobachter(self.plotter.interactor, self._rad_vereinfachen)
+        self._rad_takt = QtCore.QTimer(self)
+        self._rad_takt.setSingleShot(True)
+        self._rad_takt.setInterval(self.RAD_RUHE_MS)
+        self._rad_takt.timeout.connect(self._rad_ruhe)
+        for a, befehl in ((getattr(self, "act_auswahl_weg_sicht", None), "ausblenden"),
+                          (getattr(self, "act_nur_auswahl", None), "isolieren"),
+                          (getattr(self, "act_alles_zeigen", None), "einblenden")):
+            if a is not None:
+                a.setToolTip(f"{a.toolTip()}   (Taste {rs.SICHT_TASTEN_TEXT[befehl]} in der Ansicht)")
+
+    #: So lange nach dem letzten Radschritt bleibt das Bild vereinfacht [ms]
+    RAD_RUHE_MS = 350
+
+    def _rad_vereinfachen(self) -> None:
+        """Ein Radschritt: wie beim Drehen die Nebendarsteller und Netzkanten
+        weglassen (ab SCHNELLDREHEN_AB), bis das Rad RAD_RUHE_MS ruht. Bis zum
+        14.10.2026 zeichnete jeder Radschritt am Drehlager das volle Bild."""
+        m = self.model
+        if len(m.elements) + m.nn < self.SCHNELLDREHEN_AB:
+            return
+        if not getattr(self, "_vereinfacht", None):
+            self._interaktion_beginnt()
+            self._rad_vereinfacht = bool(getattr(self, "_vereinfacht", None))
+        if getattr(self, "_rad_vereinfacht", False):
+            self._rad_takt.start()
+
+    def _rad_ruhe(self) -> None:
+        """Das Rad ruht: wieder voll zeichnen - ausser die Maus dreht gerade
+        (dann tut es das Ende der Drehung)."""
+        if not getattr(self, "_rad_vereinfacht", False):
+            return
+        try:
+            if self.plotter.iren.style.GetState() != 0:
+                return
+        except Exception:                   # noqa: BLE001
+            pass
+        self._rad_vereinfacht = False
+        self._interaktion_endet()
+
+    def _sicht_taste(self, befehl: str) -> None:
+        """H blendet die Auswahl aus, Umschalt+H laesst nur sie stehen, Alt+H
+        holt alles zurueck - wie in ediBIM (desktop/tasten.ts)."""
+        if _gesperrt(self):
+            self._sperre_melden()
+            return
+        try:
+            if befehl == "ausblenden":
+                self.auswahl_ausblenden()
+            elif befehl == "isolieren":
+                self.nur_auswahl_zeigen()
+            elif befehl == "einblenden":
+                self.alles_zeigen()
+        except Exception as ex:             # noqa: BLE001 - eine Taste darf die Ansicht nicht lahmlegen
+            self.error(f"Taste {befehl}: {ex}")
+
+    def _ausgeblendete_teile(self) -> tuple:
+        """(Anzahl, Klartext) des von Hand Ausgeblendeten fuer den Ruecksetzer.
+
+        Gezaehlt werden Teile, wie man sie sieht: Koerper, Staebe und Flaechen
+        (die eines ausgeblendeten Koerpers zaehlen mit ihm); ist nur Netz
+        ausgeblendet, die Elemente, sonst Linien und Knoten."""
+        v = self.versteckt
+        m = self.model
+        ko = set(v.get("koerper", ()))
+        fl_ko = {fn for kn in ko for fn in getattr((m.koerper or {}).get(kn), "flaechen", [])}
+        fl = set(v.get("flaechen", ())) - fl_ko
+        weg = v.get("elemente", set())
+        st = [n for n, mem in (m.members or {}).items()
+              if mem.elements and all(int(e) in weg for e in mem.elements)] if weg else []
+        teile = [(len(ko), "Körper", "Körper"), (len(st), "Stab", "Stäbe"), (len(fl), "Fläche", "Flächen")]
+        n = sum(t[0] for t in teile)
+        if not n:
+            for zahl, ein, mehr in ((len(weg), "Element", "Elemente"),
+                                    (len(v.get("linien", ())), "Linie", "Linien"),
+                                    (len(v.get("knoten", ())), "Knoten", "Knoten")):
+                if zahl:
+                    teile, n = [(zahl, ein, mehr)], zahl
+                    break
+        text = ", ".join(bg.anzahl(z, e, mz) for z, e, mz in teile if z)
+        return n, text
+
+    def _ruecksetzer_nachziehen(self) -> None:
+        r_ = getattr(self, "ruecksetzer", None)
+        if r_ is None:
+            return
+        try:
+            n, text = self._ausgeblendete_teile() if any(self.versteckt.values()) else (0, "")
+            r_.aktualisieren(n, self.schnitt is not None, text)
+        except Exception as ex:             # noqa: BLE001 - die Knoepfe sind Beiwerk
+            self.log.appendPlainText(f"Rücksetzer: {ex}")
+
+    def _objektpunkte(self, art: str, name) -> np.ndarray:
+        """Die Punkte eines Objekts aus dem Modellbaum an der Lage des Bildes."""
+        m = self.model
+        X = getattr(self, "_bildlage", None)
+        X = X if X is not None and len(X) == m.nn else np.asarray(m.nodes, float)
+        kn: list = []
+        el: list = []
+        pkt: list = []
+        if art == "knoten":
+            kn = [int(name)]
+        elif art == "stabelement":
+            el = [int(name)]
+        elif art == "stab" and name in (m.members or {}):
+            el = list(m.members[name].elements or [])
+        elif art == "geokoerper_einzeln" and name in (m.koerper or {}):
+            k = m.koerper[name]
+            el = list(k.elemente or [])
+            if not el:
+                for fn in k.flaechen:
+                    f = (m.flaechen or {}).get(fn)
+                    if f is not None:
+                        pkt.extend(np.asarray(f.randpunkte(m), float).reshape(-1, 3))
+        elif art == "geoflaeche" and name in (m.flaechen or {}):
+            f = m.flaechen[name]
+            el = list(f.elemente or [])
+            if not el:
+                pkt.extend(np.asarray(f.randpunkte(m), float).reshape(-1, 3))
+        elif art == "linie" and name in (m.lines or {}):
+            ln = m.lines[name]
+            kn = [int(n) for n in ln.nodes]
+            try:
+                pkt.extend(np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float).reshape(-1, 3))
+            except Exception:               # noqa: BLE001
+                pass
+        for e in el:
+            if 0 <= int(e) < len(m.elements):
+                kn.extend(int(n) for n in m.elements[int(e)].nodes)
+        kn = [n for n in kn if 0 <= n < m.nn]
+        teile = [X[np.unique(np.asarray(kn, int))]] if kn else []
+        if pkt:
+            teile.append(np.asarray(pkt, float))
+        return np.vstack(teile) if teile else np.zeros((0, 3))
+
+    def ansicht_auf(self, punkte, zusatz: str = "") -> bool:
+        """Den Blick auf diese Punkte stellen: die Blickrichtung bleibt, das
+        Ziel ist die Mitte ihres Quaders, der Abstand passt sie ein (ediBIM:
+        „Ansicht darauf stellen“, Doppelklick im Baum)."""
+        P = np.asarray(punkte, float).reshape(-1, 3)
+        P = P[np.isfinite(P).all(axis=1)]
+        if not len(P):
+            return False
+        lo, hi = P.min(axis=0), P.max(axis=0)
+        mitte = 0.5 * (lo + hi)
+        radius = 0.5 * float(np.linalg.norm(hi - lo))
+        if radius <= 0:
+            radius = 0.02 * max(self.model.characteristic_size(), 1e-6)
+        try:
+            kam = self.plotter.renderer.GetActiveCamera()
+            pos, ziel = np.asarray(kam.GetPosition(), float), np.asarray(kam.GetFocalPoint(), float)
+            richtung = ziel - pos
+            richtung = richtung / max(float(np.linalg.norm(richtung)), 1e-12)
+            if kam.GetParallelProjection():
+                kam.SetParallelScale(1.1 * radius)
+                abstand = max(float(np.linalg.norm(ziel - pos)), 3.0 * radius)
+            else:
+                halb = np.radians(max(float(kam.GetViewAngle()), 1.0) / 2.0)
+                abstand = 1.1 * radius / np.sin(halb)
+            kam.SetFocalPoint(*mitte)
+            kam.SetPosition(*(mitte - richtung * abstand))
+            self.plotter.renderer.ResetCameraClippingRange()
+            self._kamera_steht = True
+            self.plotter.render()
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Ansicht darauf stellen: {ex}")
+            return False
+        if zusatz:
+            self.statusBar().showMessage(f"Ansicht auf {zusatz}", 4000)
+        return True
+
+    #: Eintraege des Modellbaums, die ein Teil im Bild meinen (Rechtsklick
+    #: „Nur dieses zeigen / Alle einblenden / Ansicht darauf stellen“,
+    #: Doppelklick = Ansicht darauf)
+    BAUM_SICHT_ARTEN = ("knoten", "linie", "stab", "stabelement", "geoflaeche", "geokoerper_einzeln")
+
+    def _baum_sicht(self, befehl: str, art: str, namen: list) -> None:
+        """Befehl aus dem Modellbaum: "nur" (nur diese zeigen), "alle" (alle
+        einblenden) oder "ansicht" (Ansicht darauf stellen)."""
+        if befehl == "alle":
+            return self.alles_zeigen()
+        namen = [str(n) for n in (namen or [])]
+        if art not in self.BAUM_SICHT_ARTEN or not namen:
+            return None
+        if befehl == "ansicht":
+            P = [self._objektpunkte(art, n) for n in namen]
+            P = [p for p in P if len(p)]
+            if not P or not self.ansicht_auf(np.vstack(P), ", ".join(namen[:3]) + (" …" if len(namen) > 3 else "")):
+                self.info(f"{', '.join(namen[:3])}: nichts im Bild, worauf sich die Ansicht stellen ließe")
+            return None
+        if befehl == "nur":
+            self._auswahl_vergessen()
+            if art == "knoten":
+                self.selection = np.asarray([int(n) for n in namen if n.lstrip("-").isdigit()], int)
+            elif art == "stabelement":
+                self.sel_elemente = [int(n) for n in namen if n.lstrip("-").isdigit()]
+            else:
+                liste = {"linie": "sel_linien", "stab": "sel_staebe", "geoflaeche": "sel_flaechen",
+                         "geokoerper_einzeln": "sel_koerper"}[art]
+                setattr(self, liste, list(namen))
+            return self.nur_auswahl_zeigen()
+        return None
 
     # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026, analog InfoCAD) ----
     #: Endungen, die als Bild gelten - im Bericht eine Abbildung

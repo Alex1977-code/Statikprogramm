@@ -766,6 +766,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
     mehrfach = QtCore.Signal(str, list)
     viele_bearbeiten = QtCore.Signal(str, list)   # (Art, [Namen]) - Sammelmaske
     viele_loeschen = QtCore.Signal(str, list)     # (Art, [Namen]) - auf einmal loeschen
+    #: Sicht aus dem Baum (Ansichtspaket B, 14.10.2026): (Befehl, Art, [Namen]),
+    #: Befehl "nur" (nur diese zeigen), "alle" (alle einblenden), "ansicht"
+    #: (Ansicht darauf stellen - auch der Doppelklick)
+    sicht = QtCore.Signal(str, str, list)
+    #: Eintraege, die ein Teil im Bild meinen: Rechtsklick „Nur dieses zeigen /
+    #: Alle einblenden / Ansicht darauf stellen“, Doppelklick = Ansicht darauf
+    #: (wie ediBIM). Bis zum 14.10.2026 oeffnete ihr Doppelklick die Maske bzw.
+    #: den Dialog zum Bearbeiten - das tun weiter Rechtsklick „Bearbeiten …“
+    #: und die Eingabetaste.
+    SICHT_ARTEN = frozenset({"knoten", "linie", "stab", "stabelement", "geoflaeche", "geokoerper_einzeln"})
 
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst.
     #: „Stab“ ist seit 03.10.2026 der Stab im Sinn von RFEM (mit Nachweis), das
@@ -871,6 +881,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.ausgeblendet: list = []
         #: Die Filterzeile ueber dem Baum (:class:`Baumfilter` setzt sie)
         self.filterzeile = None
+        #: Ist in der Ansicht etwas ausgeblendet? (das Fenster setzt es; ohne:
+        #: „Alle einblenden“ steht immer bereit)
+        self.etwas_ausgeblendet = None
 
     #: Die Gruppen der obersten Ebene in dieser Folge, je (Kennung, Text)
     #: (Teilpaket 8c, 03.10.2026; Antworten 2 bis 4 des Anwenders vom
@@ -1341,6 +1354,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
             menu.addSeparator()
             d = menu.addAction("Löschen (Entf)")
             d.triggered.connect(lambda _c=False: self._melden(self.loeschen, art, name))
+        if eintrag and art in self.SICHT_ARTEN:
+            self._sichtmenue(menu, art, name, v_namen if v_art == art and len(v_namen) > 1 else [name])
         if menu.actions():
             menu.exec(self.viewport().mapToGlobal(pos))
 
@@ -1402,8 +1417,28 @@ class Modellbaum(QtWidgets.QTreeWidget):
         gew = [it for it in self.selectedItems() if self._ist_eintrag(it) and self._nicht_ausgeblendet(it)]
         return gew[0] if len(gew) == 1 else None
 
+    def _sichtmenue(self, menu, art: str, name: str, namen: list) -> None:
+        """„Nur dieses zeigen“, „Alle einblenden“, „Ansicht darauf stellen“."""
+        menu.addSeparator()
+        mehr = len(namen) > 1
+        a = menu.addAction(f"Nur diese zeigen ({len(namen)})" if mehr else "Nur dieses zeigen")
+        a.setToolTip("Alles andere ausblenden (Umschalt+H in der Ansicht)")
+        a.triggered.connect(lambda _c=False, n=list(namen): self._melden(self.sicht, "nur", art, n))
+        b = menu.addAction("Alle einblenden")
+        b.setToolTip("Alles Ausgeblendete wieder zeigen (Alt+H in der Ansicht)")
+        frage = self.etwas_ausgeblendet
+        b.setEnabled(True if frage is None else bool(frage()))
+        b.triggered.connect(lambda _c=False: self._melden(self.sicht, "alle", art, []))
+        c = menu.addAction("Ansicht darauf stellen")
+        c.setToolTip("Die Blickrichtung bleibt, der Ausschnitt passt sich ein (auch Doppelklick)")
+        c.triggered.connect(lambda _c=False, n=list(namen): self._melden(self.sicht, "ansicht", art, n))
+
     def _doppelklick(self, item, _spalte):
         art, name = self._schluessel(item)
+        if art in self.SICHT_ARTEN and self._ist_eintrag(item):
+            # ein Teil im Bild: die Ansicht darauf stellen (14.10.2026)
+            self._melden(self.sicht, "ansicht", art, [name])
+            return
         if art:
             self._melden(self.bearbeiten, art, name)
 

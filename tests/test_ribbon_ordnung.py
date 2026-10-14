@@ -446,6 +446,8 @@ WEITERE = {
     ("Laufenden Vorgang abbrechen", "Esc", "Programmfenster"),
     # Paket 14a (03.10.2026): Entf und die Einzeltasten in der Ansicht, die Tasten des Skizzenfensters
     ("Auswahl löschen", "Entf", "Ansicht"),
+    # Ansichtspaket B (14.10.2026): die Sichttasten H, Umschalt+H, Alt+H
+    ("Auswahl ausblenden / nur Auswahl zeigen / alles einblenden", "H, Umschalt+H, Alt+H", "Ansicht"),
     ("Knoten anlegen", "K", "Ansicht"),
     ("Stab anlegen", "S", "Ansicht"),
     ("Lager setzen", "L", "Ansicht"),

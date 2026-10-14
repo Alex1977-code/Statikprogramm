@@ -744,11 +744,21 @@ def add_netzknoten(plotter, model: Model, groesse: float = 1.0, nur=None, lage=N
     X = _lage(model, lage)
     idx = np.flatnonzero(netzknoten_maske(model))
     if nur is not None:
-        idx = np.intersect1d(idx, np.asarray([int(i) for i in nur], int))
+        idx = np.intersect1d(idx, _knotenfeld(nur, model.nn))
     if not len(idx):
         return
     plotter.add_points(X[idx], color=FARBE_NETZKNOTEN, point_size=max(2.0, 4.0 * float(groesse)),
                        render_points_as_spheres=False, name="netzknoten")
+
+
+def _knotenfeld(nur, nn: int) -> np.ndarray:
+    """Knotennummern ``nur`` (Feld, Liste oder Menge) als geordnetes,
+    eindeutiges int-Feld im Bereich 0 … nn-1."""
+    if isinstance(nur, (set, frozenset)):
+        a = np.fromiter((int(i) for i in nur), np.int64, len(nur))
+    else:
+        a = np.asarray(nur, np.int64).ravel()
+    return np.unique(a[(a >= 0) & (a < int(nn))])
 
 
 def _lage(model: Model, lage=None) -> np.ndarray:
@@ -786,7 +796,9 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None, lage=None):
     frei = unbelegte_knoten(model)
     alle = konstruktionsknoten(model)
     if nur is not None:
-        alle = np.intersect1d(alle, np.asarray(sorted(int(i) for i in nur if 0 <= int(i) < model.nn), int))
+        # als Feld statt ueber eine Python-Schleife: am Drehlager mit einem
+        # ausgeblendeten Koerper 836 463 Knoten, 0,71 s je Bild (14.10.2026)
+        alle = np.intersect1d(alle, _knotenfeld(nur, model.nn))
     frei = np.intersect1d(frei, alle)
     if not len(alle):
         return
@@ -1355,6 +1367,7 @@ def add_kontakte(plotter, model: Model, raender: dict = None, seiten: dict = Non
     in der Reihenfolge der Bedingungen - fuer Schilder und Legende.
     """
     aus = []
+    netze = []
     kbs = list((getattr(model, "kontaktbedingungen", {}) or {}).values())
     for i, kb in enumerate(kbs):
         name = str(getattr(kb, "name", "") or f"KB{i + 1}")
@@ -1373,9 +1386,13 @@ def add_kontakte(plotter, model: Model, raender: dict = None, seiten: dict = Non
         P = np.asarray(punkte, float)
         from ..kontakte import wirkungsfarbe
         farbe = wirkungsfarbe(kb)
-        plotter.add_mesh(pv.PolyData(P, faces=np.asarray(zellen, int)),
-                         color=farbe, opacity=0.55, name=f"kontaktflaeche{i}")
+        netze.append(_eingefaerbt(pv.PolyData(P, faces=np.asarray(zellen, int)), farbe))
         aus.append((name, farbe, P.mean(axis=0), len(kontaktflaechen(model, kb))))
+    if netze:
+        # alle Fugen in einem Darsteller, die Farbe der Wirkung je Zelle
+        # (seit 14.10.2026; bis dahin einer je Bedingung, „kontaktflaeche{i}“)
+        plotter.add_mesh(zusammenfassen(netze), scalars="farbe", rgb=True, opacity=0.55,
+                         name="kontaktflaechen")
     return aus
 
 
@@ -2439,10 +2456,15 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
     d0 = LAGER_GRUNDMASS * size * max(float(faktor), 0.05)
     X = _lage(model, lage)
     D = (X - np.asarray(model.nodes, float)) if lage is not None and len(lage) == model.nn else None
-    sicht = None if nur is None else {int(i) for i in nur}
+    # Maske statt Menge: eine Menge aus 836 463 Knoten kostete am Drehlager
+    # 0,1 s je Bild (14.10.2026)
+    sicht = None
+    if nur is not None:
+        sicht = np.zeros(int(model.nn), bool)
+        sicht[_knotenfeld(nur, model.nn)] = True
 
     def da(n) -> bool:
-        return 0 <= int(n) < model.nn and (sicht is None or int(n) in sicht)
+        return 0 <= int(n) < model.nn and (sicht is None or bool(sicht[int(n)]))
 
     # Knotenlager: nach Symbol, Groesse und Farbe (Lagerart) buendeln - ein
     # Glyphensatz je Art; nichtlineare Lager bekommen eine rote Kugel am Knoten
@@ -2455,16 +2477,22 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
         gruppen.setdefault((lager_symbol(s), g, lager_farbe(s)), []).append(s.node)
         if getattr(s, "nonlinear", False):
             nichtlinear.append(int(s.node))
-    for i, ((key, g, farbe), nodes) in enumerate(sorted(gruppen.items(), key=str)):
-        pts = X[nodes]
-        plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, d0 * g),
-                                                scale=False, orient=False),
-                         color=farbe, name=f"supports{i}")
+    # Je Lagerart **ein** Darsteller (seit 14.10.2026, Ansichtspaket B): die
+    # Farbe der Lagerart steht als Zellfarbe im Netz. Bis dahin je Gruppe,
+    # je Linien- und je Flaechenlager einer - am Drehlager waren das mit den
+    # Kontakten ueber 50 Darsteller, die jedes Bild einzeln zeichnete.
+    teile = []
+    for (key, g, farbe), nodes in sorted(gruppen.items(), key=str):
+        teile.append(_eingefaerbt(pv.PolyData(X[nodes]).glyph(geom=lagerglyph(key, d0 * g),
+                                                              scale=False, orient=False), farbe))
+    if teile:
+        plotter.add_mesh(zusammenfassen(teile), scalars="farbe", rgb=True, name="supports")
     if nichtlinear:
         plotter.add_mesh(pv.PolyData(X[nichtlinear]).glyph(
             geom=pv.Sphere(radius=0.45 * d0), scale=False, orient=False),
             color=FARBE_LAGER_NICHTLINEAR, name="supports_nichtlinear")
     # Linienlager: Symbole entlang der ganzen Linie und die Linie selbst
+    symbole, linien = [], []
     for j, ls in enumerate(getattr(model, "line_supports", []) or []):
         nodes = [int(n) for n in ls.nodes if da(n)]
         if not nodes:
@@ -2474,15 +2502,19 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
             continue
         pts = punkte_mitnehmen(pts, nodes, model, D)
         key = lager_symbol(ls)
-        plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, 0.55 * d0),
-                                                scale=False, orient=False),
-                         color=FARBE_LINIENLAGER, name=f"lsupports{j}")
+        symbole.append(pv.PolyData(pts).glyph(geom=lagerglyph(key, 0.55 * d0),
+                                              scale=False, orient=False))
         P = X[nodes]
         if len(P) > 1:
-            plotter.add_mesh(pv.lines_from_points(P), color=FARBE_LINIENLAGER, line_width=4,
-                             name=f"lsupports_linie{j}")
+            linien.append(pv.lines_from_points(P))
+    if symbole:
+        plotter.add_mesh(zusammenfassen(symbole), color=FARBE_LINIENLAGER, name="lsupports")
+    if linien:
+        plotter.add_mesh(zusammenfassen(linien), color=FARBE_LINIENLAGER, line_width=4,
+                         name="lsupports_linie")
     # Flaechenlager: Symbole im Raster ueber die gebettete Flaeche, in
     # Richtung ihrer Normale
+    symbole = []
     for j, ss in enumerate(getattr(model, "surface_supports", []) or []):
         pts, ri = lager_punkte(model, ss, size, dichte)
         if not len(pts):
@@ -2492,7 +2524,7 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
             for ei in (ss.elements or []):
                 if 0 <= int(ei) < len(model.elements):
                     nodes.update(int(n) for n in model.elements[int(ei)].nodes)
-            if nodes and not (nodes & sicht):
+            if nodes and not any(0 <= n < model.nn and sicht[n] for n in nodes):
                 continue
         if D is not None:
             kn_ss = {int(n) for n in (ss.nodes or [])}
@@ -2501,17 +2533,42 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
                     kn_ss.update(int(n) for n in model.elements[int(ei)].nodes)
             pts = punkte_mitnehmen(pts, sorted(kn_ss), model, D)
         key = lager_symbol(ss)
-        for k, (q, punkte) in enumerate(sorted(_richtungsgruppen(pts, ri).items())):
-            plotter.add_mesh(pv.PolyData(np.asarray(punkte, float)).glyph(
+        for q, punkte in sorted(_richtungsgruppen(pts, ri).items()):
+            symbole.append(pv.PolyData(np.asarray(punkte, float)).glyph(
                 geom=lagerglyph(key, 0.45 * d0, richtung=np.asarray(q, float)),
-                scale=False, orient=False),
-                color=FARBE_FLAECHENLAGER, name=f"fsupports{j}_{k}")
+                scale=False, orient=False))
+    if symbole:
+        plotter.add_mesh(zusammenfassen(symbole), color=FARBE_FLAECHENLAGER, name="fsupports")
     kontakt = [c.node for c in model.contact_supports if da(c.node)]
     if kontakt:
         pts = X[kontakt]
         plotter.add_mesh(pv.PolyData(pts).glyph(geom=_glyph("gelenk", d0),
                                                 scale=False, orient=False),
                          color=FARBE_KONTAKT, name="csupports")
+
+
+def _eingefaerbt(pd, farbe: str):
+    """Die Zellen der PolyData in einer Farbe (Feld „farbe“, RGB 0 … 255) - fuer
+    Darsteller, die mehrere Farben in einem Netz tragen."""
+    rgb = np.asarray(pv.Color(farbe).int_rgb, np.uint8)
+    pd.cell_data["farbe"] = np.tile(rgb, (int(pd.n_cells), 1))
+    return pd
+
+
+def zusammenfassen(teile):
+    """Mehrere PolyData zu einer (ein Darsteller statt vieler); die Felder,
+    die alle Teile tragen, bleiben."""
+    teile = [t for t in teile if t is not None and t.n_points]
+    if not teile:
+        return None
+    if len(teile) == 1:
+        return teile[0]
+    from vtkmodules.vtkFiltersCore import vtkAppendPolyData
+    f = vtkAppendPolyData()
+    for t in teile:
+        f.AddInputData(t)
+    f.Update()
+    return pv.wrap(f.GetOutput())
 
 
 def support_at(model: Model, punkt, size: float, faktor: float = 1.0):
