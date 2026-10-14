@@ -536,10 +536,6 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
                                 fy=fy, fu=fu, grade=grade,
                                 fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or []),
                                 art=art, Ep=Ep if art == "Spannstahl" else None))
-    if h is not None and impl is not None and props.get("f_p01k") and not props.get("f_y"):
-        # Spannstahl (f_p0,1k statt f_y): die Umwandlung einer Vorspannung in
-        # die Sollkraft schlaegt 0,9 f_p0,1k A vor (statik3d.vorspannkraft)
-        model.meta.setdefault("spannstahl", []).append(name)
     C.say(log, f"  Material '{name}': E = {E / 1e9:g} GPa"
                + (f", Spannstahl f_p0,1k = {fy / 1e6:g} N/mm^2, f_pk = {fu / 1e6:g} N/mm^2"
                   if art == "Spannstahl" and fy and fu else

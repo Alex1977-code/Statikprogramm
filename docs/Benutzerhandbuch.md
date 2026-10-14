@@ -896,11 +896,15 @@ Temperatur-Vorspannung) und „Last aufbringen“. Mit dem Haken „in allen
 Lastfällen mit derselben Anfangsvorspannung“ gilt die Umwandlung für jeden
 Lastfall mit derselben Kraft; am Drehlager sind das die 129 Lastfälle mit
 952 kN, die 293 Lastfälle mit 805 kN bleiben. Die Kraft 0 heißt Vorschlag:
-0,9·f_p0,1k·A bei Spannstahl, sonst der Wert aus RFEM. Spannstahl erkennt
-das Programm am Werkstoffnamen oder an der Kennzeichnung des Imports, wenn
-die RFEM-Datei f_p0,1k statt f_y führt. Ein vor dem 13.10.2026 übernommener
-Werkstoff wie „Material 3 (DB 2309)“ am Drehlager trägt sie nicht; dort
-tragen Sie die Kraft selbst ein, etwa 944,7 kN.
+0,9·f_p0,1k·A bei Spannstahl, sonst der Wert aus RFEM. Spannstahl ist ein
+Werkstoff mit der Werkstoffart „Spannstahl“ (Maske des Werkstoffs); der
+RFEM-Import setzt sie beim Werkstofftyp 15 und wenn die Datei f_p0,1k statt
+f_y führt, und der Stabnachweis liest dieselbe Art. Bis zum 14.10.2026
+erkannte die Umwandlung Spannstahl außerdem am Werkstoffnamen (etwa
+„St 835/1030“) und an einer eigenen Kennzeichnung des Imports. Ein vor dem
+13.10.2026 übernommener Werkstoff wie „Material 3 (DB 2309)“ am Drehlager
+trägt die Art nicht, und das Protokoll weist beim Öffnen darauf hin. Dort
+setzen Sie die Werkstoffart oder tragen die Kraft selbst ein, etwa 944,7 kN.
 
 **Eine aus RFEM übernommene Vorspannung steht als Kraft da** (seit
 13.10.2026). RFEM kennt die Stablast „Vorspannung“ (InitialPrestress); der

@@ -53,8 +53,10 @@ def _modell(w):
     from statik3d.model import Material, Section
     w.new_model()
     m = w.model
+    # Spannstahl ist die Werkstoffart (Material.art); der Name allein macht es
+    # seit der Zusammenfuehrung (14.10.2026) nicht mehr
     m.add_material(Material("Spannstahl St 835/1030", E=205e9, nu=0.3, rho=7850, alpha=1e-5,
-                            fy=835e6, fu=1030e6))
+                            fy=835e6, fu=1030e6, art="Spannstahl"))
     m.add_section(Section.circle("Rund 40", 0.04))
     g1, g2, g3 = (m.add_node(0.0, 0.0, 0.0), m.add_node(0.1, 0.0, 0.0), m.add_node(0.2, 0.0, 0.0))
     h = m.add_node(0.1, 0.0, 1.0)

@@ -75,10 +75,6 @@ LINEAR_WEG = WEG_EINFLUSS
 #: ist das zu viel, und der Kontakt macht es ohnehin nichtlinear.
 X_FHG_GRENZE = 300_000
 
-#: Spannstahl am Namen des Werkstoffs (der RFEM-Import kennzeichnet ihn
-#: zusaetzlich in model.meta["spannstahl"], wenn die Datei f_p0,1k fuehrt)
-SPANNSTAHL_NAMEN = ("spannstahl", "y1030", "y1050", "y1100", "y1230", "y1770", "y1860",
-                    "st 835/1030", "st 950/1050", "st 1080/1230", "st 1470/1670", "st 1570/1770")
 
 
 @dataclass
@@ -654,12 +650,17 @@ def hinweise_nachreichen(model, ergebnisse: dict) -> list:
 
 
 def ist_spannstahl(model, mat_name: str) -> bool:
-    """Spannstahl: vom RFEM-Import gekennzeichnet (model.meta["spannstahl"],
-    Werkstoff mit f_p0,1k) oder am Namen erkannt (:data:`SPANNSTAHL_NAMEN`)."""
-    if str(mat_name) in ((getattr(model, "meta", None) or {}).get("spannstahl") or []):
-        return True
-    n = str(mat_name).lower()
-    return any(k in n for k in SPANNSTAHL_NAMEN)
+    """Spannstahl ist ein Werkstoff der Art „Spannstahl“ (``Material.art``,
+    plast/verfestigung) - dieselbe Frage wie im Stabnachweis
+    (:func:`statik3d.ec3.spannstahl.ist_spannstahl`). Der RFEM-Import setzt die
+    Art (Werkstofftyp 15 oder f_p0,1k statt f_y), sonst der Anwender in der
+    Werkstoffmaske. Bis zur Zusammenfuehrung am 14.10.2026 las die Umwandlung
+    eine eigene Kennzeichnung des Imports (``model.meta["spannstahl"]``) und
+    den Werkstoffnamen (St 835/1030, Y1860 ...); ein Werkstoff ohne Art, der
+    nur so heisst, bekommt jetzt den RFEM-Wert als Vorschlag, und das
+    Protokoll nennt ihn beim Oeffnen (ec3.spannstahl.ladehinweise)."""
+    from .ec3.spannstahl import ist_spannstahl as _art_spannstahl
+    return _art_spannstahl((getattr(model, "materials", None) or {}).get(str(mat_name)))
 
 
 def vorschlag_sollkraft(model, stab: str, N0: float) -> float:
