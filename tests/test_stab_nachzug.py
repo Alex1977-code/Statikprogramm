@@ -53,6 +53,16 @@ Geprueft mit geschlossenen Loesungen:
 * gespeichertes Modell (Seil als Fachwerkstab, ohne Merkmal): Hinweis,
   Umstellung zum Seil, danach kein Hinweis mehr.
 
+4. **alpha_cr in Situationen.** theorie2.alpha_cr baute K_g aus allen
+   Elementen, ohne die Maske der Situation (system.aktiv): ein abgeschalteter
+   Stab, dessen Enden sich mit dem System bewegen, stand mit seiner
+   rechnerischen Normalkraft darin. K, solve_theorie2 und solve_buckling
+   nahmen nur die wirksamen Elemente.
+
+* Kragstuetze mit einem Fachwerkstab daneben (gedrueckt) bzw. darueber
+  (gezogen), in der Situation abgeschaltet oder deaktiviert: alpha_cr wie im
+  Modell ohne den Stab.
+
 Aufruf:  python -m tests.test_stab_nachzug
 """
 import math
@@ -435,10 +445,73 @@ def test_seilende_am_koerper():
          TempLoad(i, -100.0).vorspannkraft(m), soll, 1e-12, "N")
 
 
+# --------------------------------------------------------------------------
+# 4. alpha_cr in Situationen
+# --------------------------------------------------------------------------
+def _stuetze(stab="", art="situation"):
+    """Kragstuetze 3 m (16 Balkenelemente, Vollquadrat 0,1 m, schubstarr),
+    Kopf mit P = 100 kN gedrueckt. ``stab``: "unten" ein Fachwerkstab
+    (Rundstahl 40 mm) vom Fuss zum Kopf - wirkte er, waere er gedrueckt;
+    "oben" einer vom Kopf zu einem Festpunkt 3 m darueber - gezogen. ``art``:
+    "situation" in der Situation „ohne“ abgeschaltet (der Lastfall rechnet
+    in ihr), "aus" der Stab deaktiviert (Member.aus, wirkt nirgends)."""
+    from statik3d.model import Situation
+    m = Model("Stuetze")
+    m.add_material(Material("S", E=E, nu=0.3, rho=0.0))
+    q = Section.rectangle("Q", 0.1, 0.1)
+    q.Asy = q.Asz = 0.0
+    m.add_section(q)
+    m.add_section(Section.circle("D", 0.04))
+    kn = [m.add_node(0.0, 0.0, 3.0 * k / 16) for k in range(17)]
+    m.fix(kn[0], "all")
+    for k in range(16):
+        m.add_element("beam", [kn[k], kn[k + 1]], "S", "Q")
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    lc.nodal_loads.append(NodalLoad(kn[-1], [0, 0, -100e3, 0, 0, 0]))
+    if stab:
+        if stab == "unten":
+            t = m.add_element("truss", [kn[0], kn[-1]], "S", "D")
+        else:
+            fest = m.add_node(0.0, 0.0, 6.0)
+            m.fix(fest, "all")
+            t = m.add_element("truss", [kn[-1], fest], "S", "D")
+        m.add_member("Band", [t])
+        if art == "situation":
+            m.situationen["ohne"] = Situation("ohne", "", [t], "Fachwerkstab aus")
+            lc.situation = "ohne"
+        else:
+            m.members["Band"].aus = True
+    m.design.imperfektionen = False
+    return m
+
+
+def _alpha_cr(m, sit=""):
+    if sit:
+        m_s, system = solver.situationssystem(m, sit)
+    else:
+        m_s, system = m, solver.StaticSystem(m)
+    u = system.solve(solver.case_loads(m_s, {"LF1": 1.0}, system.aktiv)[0])
+    a = theorie2.alpha_cr(m_s, system, u)["alpha_cr"]
+    _r, info = theorie2.solve_theorie2(m_s, {"LF1": 1.0}, "LF1", system, imperfektionen=False)
+    return a, info.alpha_cr
+
+
+def test_alpha_cr_situation():
+    print("\n--- 4: alpha_cr mit einem abgeschalteten Stab – wie ohne ihn ---")
+    ref, _r2 = _alpha_cr(_stuetze())
+    for stab, kraft in (("unten", "gedrückt"), ("oben", "gezogen")):
+        for art, text in (("situation", "in der Situation abgeschaltet"), ("aus", "deaktiviert")):
+            a, a2 = _alpha_cr(_stuetze(stab, art), "ohne" if art == "situation" else "")
+            nahe(f"Fachwerkstab {kraft}, {text}: alpha_cr wie ohne den Stab", a, ref, 1e-9)
+            nahe(f"… ebenso in solve_theorie2", a2, ref, 1e-9)
+
+
 def main():
     for t in (test_pendel_saitenform, test_kg_saitenform_je_art, test_zugband_gegen_hand,
               test_seil_streckenlast, test_seil_streckenlast_gesperrt,
-              test_rfem_seil_import, test_rfem_seil_gespeichert, test_seilende_am_koerper):
+              test_rfem_seil_import, test_rfem_seil_gespeichert, test_seilende_am_koerper,
+              test_alpha_cr_situation):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

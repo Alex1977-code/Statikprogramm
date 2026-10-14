@@ -357,9 +357,18 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
     Ergebnis +6,50 kN traegt, stand mit -63,50 kN darin (alpha_cr 1,688), und
     ein Stab unter reinem Temperatur-Zwang hatte "keine Normalkräfte".
 
+    K_g nimmt nur die Elemente, die im ``system`` wirken (``system.aktiv``:
+    Situation, abgeschaltete Staebe), wie K und wie solve_theorie2 und
+    solve_buckling. Bis zum 14.10.2026 baute alpha_cr K_g aus allen
+    Elementen: ein in der Situation abgeschalteter Fachwerkstab neben einer
+    Kragstuetze, dessen Enden sich mit ihr bewegen, stand mit seiner
+    rechnerischen Normalkraft darin: gedrueckt alpha_cr 4,354 statt 4,798
+    (-9 %), gezogen 5,341 statt 4,798 (+11 %, auf der unsicheren Seite;
+    tests/test_stab_nachzug.py).
+
     Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": ""}.
     """
-    Kg = asm.geometric_stiffness(model, u, n_anfang=n_anfang)
+    Kg = asm.geometric_stiffness(model, u, getattr(system, "aktiv", None), n_anfang=n_anfang)
     fi = system.fi
     Kgff = Kg[fi][:, fi].tocsc()
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:

@@ -9118,6 +9118,15 @@ Kragstütze dagegen α_cr = 4 126 statt 2 679, also 54 % zu hoch und damit auf
 der unsicheren Seite. Jetzt sind es 200 und 2 679,15 gegen geschlossen
 2 679,15.
 
+**α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
+eines Lastfalls oder einer Kombination abgeschaltet ist oder als
+„deaktiviert“ nirgends wirkt, zählt für α_cr nicht mehr mit, genau wie in
+der Rechnung nach Theorie II. Ordnung und beim Knicken. Bis zum 14.10.2026
+stand er mit der Normalkraft, die seine mitbewegten Enden ihm rechnerisch
+gaben, in α_cr: neben einer Kragstütze ergab ein abgeschalteter Fachwerkstab,
+der gezogen worden wäre, α_cr = 5,34 statt 4,80, also zu hoch, und ein
+gedrückter 4,35.
+
 Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
 Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der
 Verformungszuwachs gegenüber Theorie I. Ordnung, dann φ mit α_h, α_m und der

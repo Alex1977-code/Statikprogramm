@@ -1468,6 +1468,14 @@ in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
   meldet die Modellprüfung als Fehler, der Rechenkern weist sie ab. Die
   Theorie II. Ordnung rechnet jede Kombination mit dem System ihrer
   Situation (geometrische Steifigkeit ebenfalls nur aus wirksamen Elementen).
+  Seit dem 14.10.2026 gilt das auch für α_cr (`theorie2.alpha_cr` liest
+  `system.aktiv`). Bis dahin baute α_cr K_g aus allen Elementen: Ein
+  abgeschalteter oder deaktivierter Stab, dessen Enden sich mit dem System
+  bewegen, stand mit seiner rechnerischen Normalkraft darin. Neben einer
+  Kragstütze (3 m, Vollquadrat 100 mm, 100 kN) ergab ein gedrückter
+  Fachwerkstab α_cr = 4,354 statt 4,798, ein gezogener 5,341, also 11 % auf
+  der unsicheren Seite. Seither ist es in beiden Fällen 4,797725 wie im
+  Modell ohne den Stab (`tests/test_stab_nachzug.py`).
 * **Umhüllende** und Nachweise laufen wie bisher über alle Kombinationen –
   die Stablängen bleiben bei einer Drehung erhalten.
 * **Ein einzelner Lastfall** (`solve_static`: „Nur aktiver Lastfall“,
