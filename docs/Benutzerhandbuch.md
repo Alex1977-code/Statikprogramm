@@ -6863,6 +6863,43 @@ durchdrungen; das wird nicht als konvergiert angenommen. Pendeln neben einem
 Knoten auch Gleitrichtungen hin und her, werden sie mit eingefroren und
 mitgeprüft.
 
+**Pendelschutz der Gleitrichtung mit Winkeltoleranz (seit 14.10.2026).** Bis zum
+14.10.2026 ließ der Pendelschutz der Reibung einen gleitenden Knoten nur dann
+haften, wenn seine Versuchskraft zweimal hintereinander *genau* gegen seine
+Gleitrichtung zeigte; das kommt nur an Knoten mit Reibung in einer einzigen
+Richtung vor. Knoten mit Reibung in der ganzen Ebene, deren Richtung um 150 oder
+170 Grad hin und her sprang, pendelten weiter bis zum Deckel oder bis die Regel
+„Pendeln mit Periode 2“ sie einfror. Jetzt haftet ein gleitender Knoten, sobald
+seine Versuchskraft zweimal hintereinander um mehr als 90 Grad umkehrt; die
+nächste Runde prüft ihn gegen den Reibkegel wie jeden haftenden Knoten. Weil
+genau diese Regel am 08.10.2026 am gequetschten Block der Prüfungen auf einen
+falschen Lösungsast geführt hatte, prüft das Programm am Ende des Kontaktlaufs
+jeden so festgehaltenen Knoten: Haftet er, darf er sich seit dem Festhalten
+höchstens um die Gleittoleranz bewegt haben, oder die Reibkraft muss dieser
+Bewegung entgegenwirken; gleitet er wieder, muss die Reibkraft seinem Gleitweg
+entgegenwirken. Ist das an einem Knoten nicht so, gilt der Lauf als nicht
+konvergiert (im Laufbuch Grund „gleitrichtung“), und das Ergebnis ist
+vorläufig wie bei jedem nicht konvergierten Kontaktlauf. Das Protokoll sagt
+„Kontakt: Pendelschutz der Gleitrichtung - 4 Knoten festgehalten, Bewegung
+seit dem Festhalten bis 0,646 µm (Gleittoleranz 1 µm); die Reibkraft wirkt
+überall der Bewegung entgegen“ oder nennt je verletztem Knoten Ort, Zustand,
+Bewegung, den Winkel zwischen Reibkraft und Bewegung und die Reibkraft als
+Anteil von μ·Fn. Die Gleittoleranz ist 1 µm, dieselbe Schranke wie der Weg der
+Restwechsel; die Pendler am Drehlager, für die der Schutz gebaut wurde, liefen
+um 0,01 bis 0,2 µm um ihre Ausgangslage, der Knoten des gequetschten Blocks
+dagegen um 94 µm. Beides stellen Sie am Modell ein:
+`plastizitaet.pendelschutz_winkel` (Vorgabe an) und
+`plastizitaet.gleit_toleranz` in Metern (Vorgabe 1e-6); gespeichert werden sie
+nur, wenn sie abweichen, und sie gelten für jeden Kontaktlauf, auch ohne
+Fließen. Wo kein Knoten festgehalten wird, rechnet das Programm bitgleich wie
+vorher. An der Prüfplatte ohne Vorspannung mit Schub 0,6 μV in einer Richtung
+(`tests/test_kontakt_warmstart.py`) liefen vorher alle fünf Kontaktläufe an den
+Deckel, zusammen 373 Runden in 4,5 s, und die Platte wanderte im Pendeln um
+5,1 mm; jetzt sind es 73 Runden in 0,6 s, das Ergebnis ist konvergiert, und die
+Platte steht mit 0,007 mm. Startet dieselbe Platte mit Vorspannung warm aus dem
+Vorlauf (Vorschlag 1 ausgeschaltet), zieht das Festhalten haftende Knoten bis
+13 µm zurück, und die Prüfung meldet den Lauf als nicht konvergiert.
+
 **Kontaktlauf konvergiert als Bedingung der Plastizität: vorbereitet, aus
 (14.10.2026).** Nach der Entscheidung des Anwenders kommt die Bedingung
 „Kontaktlauf konvergiert“ erst nach der Klärung des Pendelns am Drehlager

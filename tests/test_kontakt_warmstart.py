@@ -128,7 +128,7 @@ def kurz(r) -> str:
 # --------------------------------------------------------------------------
 # Einstellungen: Vorgabe, nur abweichend gespeichert, NEUE_FELDER
 # --------------------------------------------------------------------------
-SCHALTER = {"kaltstart_nicht_proportional": True}
+SCHALTER = {"kaltstart_nicht_proportional": True, "pendelschutz_winkel": True, "gleit_toleranz": 1.0e-6}
 
 
 def test_einstellungen():
@@ -220,8 +220,59 @@ def test_vorschlag1():
               f"max |du| {max_du(a, b):.1e} m; {kurz(b)}")
 
 
+# --------------------------------------------------------------------------
+# Vorschlag 2: Pendelschutz der Gleitrichtung mit Winkeltoleranz und Pruefung
+# --------------------------------------------------------------------------
+def zeilen(r, *woerter):
+    return [z for z in (r.info or {}).get("contact_log") or [] if all(w in z for w in woerter)]
+
+
+def test_vorschlag2():
+    print("\n--- Vorschlag 2: Pendelschutz der Gleitrichtung (> 90 Grad), Pruefung nach dem Festhalten ---")
+    # (a) Platte ohne Vorspannung, Schub 0,6 mu V nur in x: die Gleitrichtungen pendeln
+    #     bis zum Deckel; mit der Regel haften die Pendler, und der Lauf ist schnell fertig
+    kw = dict(Fv=0.0, rx=0.6, ry=0.0)
+    a, ta = rechnen(platte(schalter={"pendelschutz_winkel": False}, **kw))
+    b, tb = rechnen(platte(**kw))
+    print(f"      aus: {kurz(a)} ({ta:.1f} s, {a.info.get('contact_iterations')} Runden)")
+    print(f"      an:  {kurz(b)} ({tb:.1f} s, {b.info.get('contact_iterations')} Runden)")
+    fest = zeilen(b, "Pendelschutz der Gleitrichtung -", "Knoten festgehalten")
+    check("aus: Vorlauf und Stufen am Deckel, vorläufig (Stand vor dem 14.10.2026)",
+          laeufe(a)[0].get("grund") == "deckel" and a.info.get("vorlaeufig"),
+          f"Gründe {[e.get('grund') for e in laeufe(a)]}")
+    check("an: Knoten festgehalten und geprüft, Ergebnis konvergiert, weniger als ein Drittel der Runden",
+          fest and solver.konvergenz_zustand(b.info) == "konvergiert"
+          and b.info.get("contact_iterations", 999) * 3 < a.info.get("contact_iterations", 0),
+          (fest[-1][:150] if fest else "keine Zeile"))
+    # (b) Pruefung greift: warm aus dem Vorlauf (Vorschlag 1 aus) zieht das Festhalten
+    #     haftende Knoten bis 13 µm zurueck, und die Haftkraft schiebt sie dorthin
+    c, _tc = rechnen(platte(schalter={"kaltstart_nicht_proportional": False}))
+    l1 = laeufe(c)[1] if len(laeufe(c)) > 1 else {}
+    verl = zeilen(c, "wirkt die Reibkraft der Bewegung nicht entgegen", "Winkel zwischen Reibkraft und Bewegung")
+    check("Pruefung: Reibkraft wirkt der Bewegung nicht entgegen -> Grund „gleitrichtung“, vorläufig mit Stufe 1",
+          l1.get("grund") == "gleitrichtung" and not l1.get("konvergiert") and verl
+          and "Stufe 1" in ((c.info.get("vorlaeufig") or {}).get("text") or ""),
+          (verl[0][:170] if verl else f"Grund {l1.get('grund')!r}"))
+    # (c) wo nichts festgehalten wird, bitgleich
+    for name, bau in (("Prüfplatte mit Vorgaben", lambda s: platte(schalter=s)),
+                      ("Pendelmodell (tests.test_pendeln_periode2)", None)):
+        if bau is None:
+            from tests import test_pendeln_periode2 as tp2
+
+            def bau(s):
+                m_ = tp2.pendelmodell(0.5e6)
+                for k_, v_ in s.items():
+                    setattr(m_.plastizitaet, k_, v_)
+                return m_
+        r0, _t0 = rechnen(bau({"pendelschutz_winkel": False}))
+        r1, _t1 = rechnen(bau({}))
+        check(f"nichts festgehalten, {name}: an und aus bitgleich",
+              bitgleich(r0, r1) and not zeilen(r1, "Pendelschutz der Gleitrichtung -"),
+              f"max |du| {max_du(r0, r1):.1e} m; {kurz(r1)}")
+
+
 def main() -> int:
-    for t in (test_einstellungen, test_vorschlag1):
+    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

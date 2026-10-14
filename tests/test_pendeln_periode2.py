@@ -224,7 +224,12 @@ def test_einfrieren_verletzt():
 
 def test_gleitrichtungen():
     print("\n--- Gleitrichtungen gehören zum Status: mit eingefroren, geprüft ---")
-    r = solver.solve_static(richtungsmodell())
+    # Seit dem 14.10.2026 haelt der Pendelschutz der Gleitrichtung (Vorschlag 2,
+    # tests.test_kontakt_warmstart) diese Pendler schon vorher fest; die Regel hier
+    # wird ohne ihn geprueft, mit ihm unten
+    m = richtungsmodell()
+    m.plastizitaet.pendelschutz_winkel = False
+    r = solver.solve_static(m)
     pd = r.info.get("contact_pendeln") or {}
     arten = {v.get("art") for v in (pd.get("je_knoten") or {}).values()}
     check("Knoten und Gleitrichtungen eingefroren",
@@ -235,6 +240,11 @@ def test_gleitrichtungen():
           and not zeilen(r, "nicht eingespielt"),
           f"{100 * pd.get('anteil', 0):.3g} %, Weg {pd.get('weg', 0) * 1e6:.3g} µm, Gründe {gruende(r)}, "
           f"Runden {r.info.get('contact_iterations')}")
+    r2 = solver.solve_static(richtungsmodell())
+    check("  mit dem Pendelschutz der Gleitrichtung (Vorgabe): festgehalten, Prüfung verfehlt, früher",
+          gruende(r2) == ["gleitrichtung"] and "contact_pendeln" not in r2.info
+          and r2.info.get("contact_iterations", 99) < r.info.get("contact_iterations", 0),
+          f"Gründe {gruende(r2)}, Runden {r2.info.get('contact_iterations')} statt {r.info.get('contact_iterations')}")
 
 
 def test_plastizitaet():

@@ -3635,6 +3635,38 @@ Prüfplatte (4 Anker zu 1 MN als Temperatur, μ = 0,2, Schub 0,6 μV / 0,2 μV,
 drei Stufen, elastisch): warm Stufe 1 „pendeln“ nach 18 Runden, Stufen 2, 3
 und Abschluss am Deckel, 254 Runden, vorläufig; kalt 66 Runden, konvergiert.
 
+**2. Pendelschutz der Gleitrichtung mit Winkeltoleranz** (`pendelschutz_winkel`,
+Vorgabe an; `gleit_toleranz`, Vorgabe 1 µm). `contact.UMKEHR_HAFTET` griff nur bei
+genauer Umkehr |d + w/|w|| ≤ 10⁻⁶ (Reibung in einer Richtung). Eingeschaltet
+(`ContactSystem.umkehr_winkel`, je Lauf aus dem Modell gesetzt) haftet ein
+gleitender Knoten schon, wenn w·d < 0 in `UMKEHR_RUNDEN` = 2 Runden
+hintereinander gilt, also bei einer Drehung über 90 Grad; er wird gemerkt
+(`umkehr_fest`, `dt_fest` = d_t beim Festhalten). Am 08.10.2026 war genau diese
+Regel verworfen worden (gequetschter Block: u_max 42,130 / 42,580 statt
+42,667 mm). Darum prüft `ContactSystem.festgehalten_pruefen` nach einem
+konvergierten Lauf jeden gemerkten Knoten an der letzten Lösung: s = d_t − d_t,fest
+(haftend; die Haftzeilen c_t u = 0 halten an der Ausgangslage, das Festhalten
+kann ihn also zurückziehen) bzw. s = d_t (wieder gleitend, Gleitweg gegen die
+Haftlage). Erfüllt ist |s| ≤ Gleittoleranz oder F_t·s > 0 (die Kraft auf das
+Tragwerk −F_t wirkt der Bewegung entgegen, F_t aus `_kraft_einer`). Sonst ist
+der Lauf nicht konvergiert, Grund „gleitrichtung“ (`solver._gleit_pruefung`,
+`cinfo["contact_gleitrichtung"]`). Die Toleranz 1 µm ist die Wegschranke der
+Restwechsel (`pendel_weg`); die B4-Pendler am Drehlager liefen ±0,01 bis
+0,2 µm, der Block-Knoten 94 µm. Gemessen: gequetschter Block mit 1 und 4
+Laststufen bitgleich im Ergebnis (Δu = 0, zwei Newton-Schritte mehr);
+Prüfplatte ohne Vorspannung, Schub 0,6 μV in x: 373 → 73 Runden, Deckel →
+konvergiert, u_max 5,10 → 0,007 mm (vorher wanderte die Platte im Pendeln);
+Richtungsmodell aus `tests/test_pendeln_periode2.py`: 32 Runden „pendeln“ →
+17 Runden „gleitrichtung“, beide nicht konvergiert; Prüfplatte warm aus dem
+Vorlauf (Vorschlag 1 aus): Haftknoten bis 13,2 µm zurückgezogen, Winkel
+0,3 bis 66 Grad zwischen Haftkraft auf das Tragwerk und Bewegung – nicht
+konvergiert. Nicht in abgekürzten Läufen der gemeinsamen Iteration und im
+Probelauf: abgekürzte Läufe enden nie konvergiert, die Prüfung käme nie, und
+der festgehaltene Zustand ginge ungeprüft in den nächsten Lauf. Mit der Regel
+auch dort lag der gequetschte Block (4 Stufen) gemeinsam 1,17·10⁻⁴ m neben
+verschachtelt (Prüfung in `tests/test_plastizitaet.py`: 2·10⁻⁵ relativ);
+ohne sie 2,3·10⁻⁷ m.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf

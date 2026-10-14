@@ -292,11 +292,25 @@ class Plastizitaet:
     #: pendelte der warme Start der Stufe 1 aus dem Vorlauf mit voller Last am
     #: Deckel, kalt gestartet nicht (v36_werk, 14.10.2026).
     kaltstart_nicht_proportional: bool = True
+    #: Pendelschutz der Gleitrichtung mit Winkeltoleranz (Vorschlag 2, 14.10.2026;
+    #: contact.ContactSystem.umkehr_winkel): kehrt die Versuchskraft eines gleitenden
+    #: Knotens zweimal hintereinander um mehr als 90 Grad um, haftet er; am Ende des
+    #: Laufs muss an jedem so festgehaltenen Knoten die Reibkraft der Bewegung seit
+    #: dem Festhalten entgegenwirken, oder er hat sich hoechstens um ``gleit_toleranz``
+    #: [m] bewegt - sonst ist der Lauf nicht konvergiert. Gilt fuer jeden
+    #: Kontaktlauf, auch ohne Fliessen.
+    pendelschutz_winkel: bool = True
+    #: Vorgabe 1 µm: dieselbe Schranke wie der Weg der Restwechsel (pendel_weg,
+    #: Entscheidung des Anwenders); die am Drehlager festgehaltenen Pendler liefen
+    #: +-0,01 bis 0,2 µm um ihre Ausgangslage, der Knoten des gequetschten Blocks,
+    #: dessen Festhalten am 08.10.2026 einen falschen Ast gab, 94 µm laengs.
+    gleit_toleranz: float = 1.0e-6
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
     NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0,
-                 "kaltstart_nicht_proportional": True}
+                 "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
+                 "gleit_toleranz": 1.0e-6}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,

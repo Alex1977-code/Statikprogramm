@@ -8111,6 +8111,51 @@ PENDEL_KRAFT_ANTEIL = 1.0e-3
 PENDEL_WEG = 1.0e-6
 
 
+def pendelschutz_winkel(model) -> tuple:
+    """(an, Gleittoleranz [m]) des Pendelschutzes der Gleitrichtung (Vorschlag 2,
+    14.10.2026; Plastizitaet.pendelschutz_winkel, gleit_toleranz). Fehlen die
+    Einstellungen (aeltere Modelle, Stuempfe), die Vorgaben."""
+    from . import plastizitaet as pl
+    pz = getattr(model, "plastizitaet", None)
+    vg = pl.Plastizitaet.NEU_14_10
+    an = bool(getattr(pz, "pendelschutz_winkel", vg["pendelschutz_winkel"]))
+    try:
+        tol = float(getattr(pz, "gleit_toleranz", vg["gleit_toleranz"]))
+    except (TypeError, ValueError):
+        tol = vg["gleit_toleranz"]
+    return an, (tol if np.isfinite(tol) and tol >= 0.0 else vg["gleit_toleranz"])
+
+
+def _gleit_pruefung(model: Model, cs, u, lam, log: list, progress) -> dict:
+    """Die Pruefung nach dem Festhalten (Vorschlag 2): contact.ContactSystem.
+    festgehalten_pruefen an der letzten Loesung, mit Zeile im Protokoll.
+    Rueckgabe die Angaben fuer das Laufbuch mit ``ok``."""
+    gp = cs.festgehalten_pruefen(u, lam)
+    tol = float(cs.gleit_toleranz)
+    X = np.asarray(model.nodes, float)
+    zeilen = []
+    for i, ns, cos, anteil in sorted(gp["verletzt"], key=lambda v: -v[1])[:8]:
+        c = cs.cons[i]
+        winkel = float(np.degrees(np.arccos(max(-1.0, min(1.0, cos)))))
+        zeilen.append(f"{c.label} (Knoten {c.node} bei {np.round(X[c.node], 3).tolist()} m): "
+                      f"{'gleitet' if c.slip else 'haftet'}, Bewegung seit dem Festhalten {_zt(ns * 1e6)} µm, "
+                      f"Winkel zwischen Reibkraft und Bewegung {_zt(winkel)}°, Reibkraft "
+                      f"{_zt(100.0 * anteil) if np.isfinite(anteil) else '–'} % von μ·Fn")
+    ok = not gp["verletzt"]
+    kopf = (f"Kontakt: Pendelschutz der Gleitrichtung - {gp['geprueft']} Knoten festgehalten, "
+            f"Bewegung seit dem Festhalten bis {_zt(gp['weg_max'] * 1e6)} µm (Gleittoleranz "
+            f"{_zt(tol * 1e6)} µm)")
+    if ok:
+        text = kopf + "; die Reibkraft wirkt überall der Bewegung entgegen"
+    else:
+        text = (kopf + f"; an {len(gp['verletzt'])} Knoten wirkt die Reibkraft der Bewegung nicht "
+                "entgegen - der Lauf ist nicht konvergiert: " + "; ".join(zeilen))
+    log.append(text)
+    _melde(progress, kopf + ("" if ok else " - nicht konvergiert"))
+    return {"ok": bool(ok), "knoten": int(gp["geprueft"]), "verletzt": len(gp["verletzt"]),
+            "weg_max": float(gp["weg_max"]), "toleranz": tol, "zeilen": zeilen}
+
+
 def pendel_schwellen(model) -> tuple:
     """(Kraftanteil, Weg [m]) der Restwechsel aus den Einstellungen am Modell;
     fehlen sie (aeltere Einstellungen), die Vorgaben."""
@@ -8345,6 +8390,14 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         cs.nur_symmetrisch = False
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
+    # Pendelschutz der Gleitrichtung (Vorschlag 2, 14.10.2026): je Lauf aus dem Modell.
+    # Nicht in abgekuerzten Laeufen (gemeinsame Iteration): sie enden nie konvergiert,
+    # die Pruefung nach dem Festhalten kaeme nie, und der festgehaltene Zustand ginge
+    # ungeprueft in den naechsten Lauf - am gequetschten Block (4 Stufen) lag gemeinsam
+    # dann 1,17e-4 m neben verschachtelt statt unter 2e-5 relativ (14.10.2026)
+    cs.umkehr_winkel, cs.gleit_toleranz = pendelschutz_winkel(model)
+    if kurz or probelauf:
+        cs.umkehr_winkel = False
     # ContactSystem.signatur() kennt nur den Kontakt. Mit einem K_zusatz, das
     # sich zwischen zwei Aufrufen aendert - die konsistente Tangente der
     # Plastizitaet tut das in jedem Newton-Schritt, die abgezogene Steifigkeit
@@ -8742,6 +8795,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         pendeln = _pendel_abschluss(model, cs, u, lam, pendel_sp, schwellen, log, progress)
         if converged and not pendeln["ok"]:
             converged, pendel_verletzt = False, True
+    gleit_verletzt = False
+    gleitpruefung = None
+    if (getattr(cs, "umkehr_winkel", False) and u is not None and converged
+            and any(getattr(c, "umkehr_fest", False) for c in cs.cons)):
+        # Pruefung nach dem Festhalten (Vorschlag 2): wirkt die Reibkraft der
+        # Bewegung entgegen? Sonst nicht konvergiert (Grund "gleitrichtung")
+        gleitpruefung = _gleit_pruefung(model, cs, u, lam, log, progress)
+        if not gleitpruefung["ok"]:
+            converged, gleit_verletzt = False, True
     if converged and u is not None:
         schub = cs.schub_unter_last(u)
         if schub:
@@ -8900,6 +8962,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 ("Kontakt: Pendeln mit Periode 2 eingefroren, die Restwechsel überschreiten die "
                  "Schranken - das Ergebnis ist nicht auskonvergiert"
                  if pendel_verletzt else
+                 "Kontakt: Pendelschutz der Gleitrichtung - an festgehaltenen Knoten wirkt die Reibkraft "
+                 "der Bewegung nicht entgegen, das Ergebnis ist nicht auskonvergiert"
+                 if gleit_verletzt else
                  f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Zustandswechseln "
                  "abgebrochen - das Ergebnis ist nicht auskonvergiert"
                  if deckel else
@@ -8909,6 +8974,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     log.extend(cs.warnings())
     # Derselbe Entscheid wie der Meldetext oben, als Wort fuers Laufbuch
     grund = ("" if converged else "probelauf" if probelauf else "pendeln" if pendel_verletzt
+             else "gleitrichtung" if gleit_verletzt
              else "deckel" if deckel else "abgekuerzt" if abgekuerzt else "max_iter")
     cinfo = {
         "contact_abbruch": text,
@@ -8925,6 +8991,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # ohne Pendeln bleibt der Eintrag weg
         cinfo["contact_pendeln"] = pendeln
         cinfo["contact_lauf"]["pendeln"] = {k: pendeln[k] for k in ("ok", "knoten", "kraft", "anteil", "weg")}
+    if gleitpruefung is not None:
+        # Pendelschutz der Gleitrichtung (Vorschlag 2): nur wenn festgehalten wurde
+        cinfo["contact_gleitrichtung"] = gleitpruefung
     return u, R, cs.results(), cs.nodal_forces(model.nn), cinfo
 
 

@@ -118,6 +118,19 @@ MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Run
 UMKEHR_HAFTET = True
 PENDEL_EINZELN = True
 UMKEHR_RUNDEN = 2
+#: Pendelschutz der Gleitrichtung mit Winkeltoleranz (Vorschlag 2, Entscheidung des
+#: Anwenders vom 14.10.2026): eingeschaltet (ContactSystem.umkehr_winkel, vom Loeser aus
+#: Plastizitaet.pendelschutz_winkel gesetzt) haftet ein gleitender Knoten, dessen
+#: Versuchskraft UMKEHR_RUNDEN Runden hintereinander um mehr als 90 Grad gegen seine
+#: Gleitrichtung zeigt - nicht nur bei genauer Umkehr (Reibung in einer Richtung) wie
+#: UMKEHR_HAFTET, sondern auch mit Reibung in zwei Richtungen. Die naechste Runde prueft
+#: ihn gegen den Reibkegel wie jeden haftenden. Weil genau diese Regel am 08.10.2026 am
+#: gequetschten Block auf einen falschen Ast fuehrte (siehe oben, Verworfen (1)), gilt
+#: der Lauf nur dann als konvergiert, wenn danach an jedem so festgehaltenen Knoten die
+#: Reibkraft der Relativbewegung seit dem Festhalten entgegenwirkt - oder er sich
+#: hoechstens um die Gleittoleranz (Plastizitaet.gleit_toleranz) bewegt hat
+#: (:meth:`ContactSystem.festgehalten_pruefen`). Sonst ist der Lauf nicht konvergiert
+#: (solver: Grund "gleitrichtung"), und das Ergebnis ist vorlaeufig.
 #: Phase 2: so viel von den haftenden Knoten geht je Runde ins Gleiten,
 #: staerkster Verstoss zuerst. Vorher war es genau einer - am Drehlager
 #: also bis zu 40 Runden je Lastfall, jede mit einer Faktorisierung von
@@ -303,6 +316,9 @@ class Constraint:
     pendel_fest: bool = False      # Pendeln mit Periode 2 erkannt: Status (offen/geschlossen, Haften/
                                    # Gleiten, Fliessen) fuer den Rest des Laufs eingefroren, die
                                    # Bedingung selbst wirkt weiter (solver.solve_with_contact, 14.10.2026)
+    umkehr_fest: bool = False      # in diesem Lauf vom Pendelschutz der Gleitrichtung festgehalten
+                                   # (ContactSystem.umkehr_winkel, Vorschlag 2, 14.10.2026)
+    dt_fest: Optional[np.ndarray] = None    # Weg in der Fuge (2,) beim letzten Festhalten
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -797,6 +813,11 @@ ZYLINDRISCH = 0.7
 
 
 class ContactSystem:
+    #: Pendelschutz der Gleitrichtung mit Winkeltoleranz (Vorschlag 2): der Loeser
+    #: setzt beides je Lauf aus den Einstellungen; aus rechnet alles wie bisher
+    umkehr_winkel = False
+    gleit_toleranz = 1.0e-6
+
     def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None,
                  uebermass: dict = None):
         self.model = model
@@ -1492,6 +1513,8 @@ class ContactSystem:
             c.pendel = 0
             c.gleit_runde = -1
             c.pendel_fest = False
+            c.umkehr_fest = False
+            c.dt_fest = None
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1611,6 +1634,8 @@ class ContactSystem:
             # das Einfrieren gilt je Lauf: ein fortgesetzter Lauf erkennt das
             # Pendeln neu, statt einen fremden Status mitzunehmen
             c.pendel_fest = False
+            c.umkehr_fest = False           # ebenso das Festhalten (Vorschlag 2)
+            c.dt_fest = None
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
@@ -1933,6 +1958,47 @@ class ContactSystem:
                     kraft += limit
             aus[i] = (float(kraft), 0.0)
         return aus, float(kontaktkraft)
+
+    def festgehalten_pruefen(self, u: np.ndarray, lam=None, toleranz: float = None) -> dict:
+        """Die Pruefung nach dem Festhalten (Vorschlag 2, 14.10.2026): je Knoten,
+        den der Pendelschutz der Gleitrichtung in diesem Lauf festgehalten hat
+        (``umkehr_fest``), die Bewegung in der Fuge seit dem Festhalten s = d_t - d_t,fest
+        in der Loesung ``u``. Hat er sich hoechstens um ``toleranz`` [m] bewegt, haftet
+        er. Sonst muss die Reibkraft der Bewegung entgegenwirken: die Kraft auf das
+        Tragwerk ist -F_t (F_t in der Konvention von :meth:`_kraft_einer`), also
+        F_t . s > 0. Wirkt sie nicht entgegen - etwa wenn das Festhalten den Knoten
+        an seine Ausgangslage zurueckzog und die Haftkraft ihn dorthin schiebt -, ist
+        der Zustand keiner, den Coulomb zulaesst. Rueckgabe {"geprueft", "verletzt":
+        [(Index, Weg [m], cos des Winkels zwischen Reibkraft auf das Tragwerk und
+        Bewegung, |F_t| / mu F_n)], "weg_max"}. Nur lesen, nichts setzen."""
+        tol = float(self.gleit_toleranz if toleranz is None else toleranz)
+        full_slip = self._full_slip_groups()
+        geprueft, verletzt, weg_max = 0, [], 0.0
+        for i, c in enumerate(self.cons):
+            if not c.umkehr_fest or c.dt_fest is None:
+                continue
+            geprueft += 1
+            if not c.active:
+                continue                    # offen: keine Reibkraft, nichts festgehalten
+            _g, roh, _fn, Ft, dt = self._kraft_einer(c, u, lam, full_slip)
+            if dt is None:
+                continue
+            # haftend: die Bewegung seit dem Festhalten (die Haftzeilen halten den Knoten an
+            # seiner Ausgangslage, das Festhalten kann ihn also zurueckziehen); gleitend
+            # (die Liniensuche hat ihn danach wieder ins Gleiten gestellt): sein Gleitweg
+            # gegen die Haftlage, an der die Haftzeilen ihn hielten
+            s = (np.asarray(dt, float) if c.slip
+                 else np.asarray(dt, float) - np.asarray(c.dt_fest, float))
+            ns = float(np.linalg.norm(s))
+            weg_max = max(weg_max, ns)
+            if ns <= tol:
+                continue
+            nf = float(np.linalg.norm(Ft))
+            cos = float(-(Ft @ s) / (nf * ns)) if nf > 0 else 0.0
+            limit = c.mu * max(roh, 0.0)
+            if not cos < 0.0:
+                verletzt.append((i, ns, cos, nf / limit if limit > 0 else float("inf")))
+        return {"geprueft": geprueft, "verletzt": verletzt, "weg_max": weg_max}
 
     def richtungen_pendeln(self, mindestens: int = 4) -> int:
         """Gleitende Knoten mit einer Reibkraft ueber f_tol, deren Versuchskraft
@@ -2866,12 +2932,19 @@ class ContactSystem:
                         z["haften_zurueck"] += 1
                         betroffen.add(id(c))
                     elif (UMKEHR_HAFTET and gegen and c.umkehr + 1 >= UMKEHR_RUNDEN
-                          and float(np.linalg.norm(c.slip_dir + w / nw)) <= 1e-6):
+                          and (float(np.linalg.norm(c.slip_dir + w / nw)) <= 1e-6
+                               or getattr(self, "umkehr_winkel", False))):
                         # Pendelschutz (UMKEHR_HAFTET): die Versuchskraft kehrt zum
                         # wiederholten Mal genau um (Reibung in einer Richtung) - der
                         # Knoten lief unter beiden Reibrichtungen rueckwaerts, also
                         # haelt ihn eine Kraft dazwischen: haften. Die naechste Runde
                         # prueft die Reaktion gegen den Kegel wie bei jedem haftenden.
+                        # Mit umkehr_winkel (Vorschlag 2) schon bei einer Umkehr um
+                        # mehr als 90 Grad; dann wird der Knoten gemerkt und am Ende
+                        # des Laufs geprueft (festgehalten_pruefen)
+                        if getattr(self, "umkehr_winkel", False):
+                            c.umkehr_fest = True
+                            c.dt_fest = dt.copy()
                         c.slip = False
                         c.slip_dir = None
                         c.quer_dir, c.k_quer = None, 0.0
