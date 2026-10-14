@@ -1524,13 +1524,20 @@ class Report:
             if note:
                 b.append(("note", note))
         if getattr(lc, "vorspannungen", None):
+            from .. import vorspannkraft as _vk
             rows = [["Bauteil", "Art", "F_v [kN]", "Achse", "Bemerkung"]]
             soll = False
+            presse = False
             for v in lc.vorspannungen:
                 ist_soll = bool(getattr(v, "sollkraft", False))
+                ist_presse = callable(getattr(v, "ist_presse", None)) and v.ist_presse()
                 soll = soll or ist_soll
+                presse = presse or ist_presse
+                # Benennung vom 14.10.2026; bis dahin „Stab, Sollkraft nach Verankerung“
                 rows.append([str(v.ziel),
-                             (f"Stab, Sollkraft nach Verankerung (Gruppe {int(v.gruppe or 1)})" if ist_soll
+                             (f"Stab, {_vk.LASTART_PRESSE}, Δs = {fmt(float(v.schlupf or 0.0) * 1e3, 2)} mm "
+                              f"(Gruppe {int(v.gruppe or 1)})" if ist_presse else
+                              f"Stab, {_vk.LASTART_ENDE} (Gruppe {int(v.gruppe or 1)})" if ist_soll
                               else "Stab" if v.art == "stab" else "Volumen"),
                              fmt(v.kraft / 1e3, 2),
                              "Stabachse" if v.art == "stab" else
@@ -1540,8 +1547,10 @@ class Report:
             b.append(("table", rows, f"Vorspannung Lastfall {lc.name}: Vorspannkraft als "
                                      "Anfangsdehnung - das Bauteil will sich um F_v/(EA) verkürzen; "
                                      "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie"
-                                     + ("; eine Sollkraft trägt der Stab nach dem Verankern (eigener "
-                                        "Spannschritt vor den übrigen Lasten)" if soll else ""),
+                                     + (f"; {_vk.LASTART_ENDE}: {_vk.ERKLAERUNG_ENDE[:-1]} (eigener "
+                                        "Spannschritt vor den übrigen Lasten)" if soll and not presse else "")
+                                     + (f"; {_vk.LASTART_PRESSE}: {_vk.ERKLAERUNG_PRESSE[:-1]}"
+                                        if presse else ""),
                       None, ""))
         if getattr(lc, "uebermasse", None):
             rows = [["Fuge", "Gesamtüberdeckung [µm]", "Passung", "Bemerkung"]]
@@ -3313,6 +3322,33 @@ class Report:
                                  "GZT-Kombinationen)", None, ""))
         if note:
             b.append(("note", note))
+        # Spannstahl je Anker (14.10.2026): die drei Zustaende nebeneinander,
+        # mit Anfangsvorspannung P0, Endvorspannung nach dem Verankern und der
+        # Kraft im Lastzustand
+        anker = [mc for mc in d.members.values() if getattr(mc, "art", "") == "Spannstahl" and not mc.fehler]
+        if anker:
+            from ..ec3 import spannstahl as _sp
+            rows = [["Stab", "Eingabe"]]
+            for _z, titel in _sp.ANKER_SPALTEN:
+                rows[0] += [f"{titel}: N [kN]", "σ [N/mm²]", "η"]
+            rows[0].append("maßgebend")
+            for mc in anker:
+                je = _sp.je_anker(mc)
+                mem = m.members.get(mc.member)
+                zeile = [mc.member, (_sp.eingabe_text(m, mem) if mem is not None else "") or "–"]
+                for z, _titel in _sp.ANKER_SPALTEN:
+                    e = je.get(z)
+                    zeile += ([fmt(abs(e["N"]) / 1e3, 2), fmt(e["sigma"] / 1e6, 2), fmt(e["util"], 4)]
+                              if e else ["–", "–", "–"])
+                g = max(je.values(), key=lambda e: e["util"]) if je else None
+                zeile.append(g["zustand"] if g else "–")
+                rows.append(zeile)
+            rows, note = self._truncate(rows, 400)
+            b.append(("table", rows, "Spannstahl je Anker: Anfangsvorspannung P₀ beim Spannen gegen σ_p,max, "
+                                     "Endvorspannung nach dem Verankern gegen σ_pm0, Kraft im Lastzustand gegen "
+                                     "f_pd = f_p0,1k / γ_s (je Zustand der ungünstigste Eintrag)", None, "compact"))
+            if note:
+                b.append(("note", note))
         # Ein nicht gefuehrter Stab (mc.fehler) hat keine Ausnutzung: kein
         # Balken und keine Farbe. Bis zum 23.09.2026 stand er hier mit 0,000
         # als gruener Balken und gruen im Bild - wie unbeansprucht (B054).

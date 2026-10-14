@@ -1060,10 +1060,12 @@ def read_rf6(path: str, model: Model = None, log: list = None,
 
 
 def _vorspannung_hinweisen(m: Model, log: list) -> None:
-    """Die Anfangsvorspannung bleibt eine eingepraegte Dehnung (dT), der Import
-    sagt aber, welche Kraft danach bleibt: „Anfangsvorspannung 952 kN ergibt
-    nach elastischer Verkürzung X kN – in Sollkraft umwandeln?“ (Entscheidung
-    des Anwenders vom 13.10.2026; statik3d.vorspannkraft.import_hinweise).
+    """Die RFEM-Vorspannung bleibt eine eingepraegte Dehnung (dT), der Import
+    sagt aber, welche Kraft danach bleibt: „Vorspannung als eingeprägte Dehnung
+    (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in Endvorspannung
+    umwandeln?“ (Entscheidung des Anwenders vom 13.10.2026, Benennung vom
+    14.10.2026; bis dahin „Anfangsvorspannung 952 kN ergibt … – in Sollkraft
+    umwandeln?“; statik3d.vorspannkraft.import_hinweise).
     Ein Fehler hier haelt den Import nicht auf."""
     try:
         from .. import vorspannkraft as vk

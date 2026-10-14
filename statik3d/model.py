@@ -1442,6 +1442,11 @@ class Zwangsverformung:
         return f"Knoten {self.node}: " + (", ".join(teile) or "nichts vorgegeben")
 
 
+#: Kraftart der Anfangsvorspannung (Pressenkraft P0 mit Verankerungsschlupf,
+#: Vorspannung.kraftart, 14.10.2026); leer ist die Endvorspannung
+VORSPANN_PRESSE = "presse"
+
+
 @dataclass
 class Vorspannung:
     """Vorspannung als Last: eine Vorspannkraft F_v in einem Stab (Zugstange,
@@ -1473,6 +1478,17 @@ class Vorspannung:
     aufsteigender Nummer - dann verlieren die frueher gespannten Kraft.
     Beide Felder werden nur fuer eine Sollkraft gespeichert, damit Dateien mit
     der Anfangsdehnung bleiben, wie sie sind.
+
+    Seit dem 14.10.2026 heisst die Sollkraft in der Oberflaeche
+    „Endvorspannung (bleibend nach dem Verankern)“, und daneben gibt es die
+    **Anfangsvorspannung (Pressenkraft P0)** (``kraftart`` = "presse",
+    Vorgabe des Anwenders vom 14.10.2026: „Bitte im Spannschritt wahlweise
+    „Pressenkraft + Verankerungsschlupf (mm)“ ermöglichen“): ``kraft`` ist
+    dann die Kraft der Presse im Spannschritt, ``schlupf`` [m] der
+    Verankerungsschlupf Δs. Beim Verriegeln verliert der Stab den Schlupf
+    (k_A·Δs gegen starre Umgebung, k_A = E A / L des Stabs), die Umgebung
+    federt zurueck (statik3d.vorspannkraft). Beide Felder stehen nur in der
+    Datei, wenn sie von ihrer Vorgabe abweichen (model.NEUE_FELDER).
     """
     ziel: str = ""
     art: str = "stab"
@@ -1481,10 +1497,20 @@ class Vorspannung:
     kommentar: str = ""
     sollkraft: bool = False
     gruppe: int = 1
+    kraftart: str = ""
+    schlupf: float = 0.0
+
+    def ist_presse(self) -> bool:
+        """Anfangsvorspannung (Pressenkraft P0, mit Verankerungsschlupf)?"""
+        return bool(self.sollkraft) and str(self.kraftart or "") == VORSPANN_PRESSE
 
     def bezug(self) -> str:
+        if self.ist_presse():
+            return (f"Stab {self.ziel}: P₀ = {self.kraft / 1e3:g} kN (Anfangsvorspannung, "
+                    f"Δs = {float(self.schlupf or 0.0) * 1e3:g} mm"
+                    + (f", Gruppe {int(self.gruppe)}" if int(self.gruppe or 1) != 1 else "") + ")")
         if self.sollkraft:
-            return (f"Stab {self.ziel}: F_soll = {self.kraft / 1e3:g} kN (nach Verankerung"
+            return (f"Stab {self.ziel}: F_soll = {self.kraft / 1e3:g} kN (Endvorspannung"
                     + (f", Gruppe {int(self.gruppe)}" if int(self.gruppe or 1) != 1 else "") + ")")
         return (("Stab " if self.art == "stab" else "Volumen ") + str(self.ziel)
                 + f": F_v = {self.kraft / 1e3:g} kN")
@@ -1496,6 +1522,11 @@ class Vorspannung:
         if not self.sollkraft:
             d.pop("sollkraft", None)
             d.pop("gruppe", None)
+        # Anfangsvorspannung (14.10.2026): Kraftart und Schlupf nur, wenn sie
+        # von der Vorgabe abweichen - die Endvorspannung bleibt in der Datei, wie sie war
+        for k in ("kraftart", "schlupf"):
+            if not self.sollkraft or ist_vorgabe("load_cases.vorspannungen", k, d.get(k)):
+                d.pop(k, None)
         return d
 
 
@@ -7402,11 +7433,13 @@ class Model:
 
     def add_vorspannung(self, ziel: str, kraft: float, art: str = None, achse=None,
                         case: str = None, kommentar: str = "", sollkraft: bool = False,
-                        gruppe: int = 1) -> Vorspannung:
+                        gruppe: int = 1, kraftart: str = "", schlupf: float = 0.0) -> Vorspannung:
         """Vorspannkraft [N] in einem Stab oder Volumenkoerper (siehe
         :class:`Vorspannung`); ``art`` wird am Namen erkannt. ``sollkraft``:
-        die Lastart „Vorspannkraft (Soll nach Verankerung)“ (nur im Stab),
-        ``gruppe`` ihre Reihenfolge beim Spannen."""
+        die Lastart „Endvorspannung (bleibend nach dem Verankern)“ (nur im
+        Stab), ``gruppe`` ihre Reihenfolge beim Spannen; mit ``kraftart`` =
+        "presse" die „Anfangsvorspannung (Pressenkraft P₀)“ mit dem
+        Verankerungsschlupf ``schlupf`` [m] (seit 14.10.2026)."""
         ziel = str(ziel)
         if art is None:
             art = ("stab" if ziel in self.members else
@@ -7418,11 +7451,22 @@ class Model:
         if art not in ("stab", "koerper"):
             raise KeyError(f"{ziel} ist weder Stab noch Volumenkörper")
         if sollkraft and art != "stab":
-            raise ValueError(f"Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab, "
+            raise ValueError(f"Die End- und die Anfangsvorspannung gibt es nur im Stab, "
                              f"nicht im Volumen {ziel}")
+        kraftart = str(kraftart or "")
+        if kraftart not in ("", VORSPANN_PRESSE):
+            raise ValueError(f"Kraftart {kraftart!r} unbekannt (leer oder {VORSPANN_PRESSE!r})")
+        if kraftart and not sollkraft:
+            raise ValueError("Die Anfangsvorspannung (Pressenkraft P₀) gehört zum Spannschritt - "
+                             "nur mit sollkraft=True")
+        if float(schlupf or 0.0) < 0.0:
+            raise ValueError(f"Verankerungsschlupf {float(schlupf) * 1e3:g} mm: negativ gibt es nicht")
+        if schlupf and kraftart != VORSPANN_PRESSE:
+            raise ValueError("Einen Verankerungsschlupf gibt es nur bei der Anfangsvorspannung "
+                             "(Pressenkraft P₀)")
         v = Vorspannung(ziel, art, float(kraft),
                         None if achse is None else [float(x) for x in achse], str(kommentar or ""),
-                        bool(sollkraft), int(gruppe or 1))
+                        bool(sollkraft), int(gruppe or 1), kraftart, float(schlupf or 0.0))
         self.case(case).vorspannungen.append(v)
         return v
 
@@ -8230,6 +8274,9 @@ class Model:
                     # die Sollkraft ist eine andere Lastart als die Anfangsdehnung
                     wo = (fall if not getattr(v, "sollkraft", False)
                           else f"{fall} (Sollkraft, Gruppe {int(v.gruppe or 1)})")
+                    if getattr(v, "kraftart", ""):
+                        # Anfangsvorspannung: Kraftart und Schlupf gehoeren dazu (14.10.2026)
+                        wo += f" ({v.kraftart}, Δs {float(getattr(v, 'schlupf', 0.0) or 0.0)!r})"
                     out.append((wo, float(v.kraft)))
         return tuple(sorted(out, key=repr))
 
@@ -9904,8 +9951,9 @@ NEUE_FELDER = {
     # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
     # alten Felds category und zaehlt wie jede andere Kategorie)
     "load_cases": {"faktorisiert": False},
-    # vorspannung/kraft (Sollkraft nach Verankerung)
-    "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
+    # vorspannung/kraft (Sollkraft nach Verankerung); vorspannung/presse
+    # (Anfangsvorspannung mit Pressenkraft P0 und Verankerungsschlupf, 14.10.2026)
+    "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1, "kraftart": "", "schlupf": 0.0},
     # import/lastfaelle (Merkmal „aus Vorspannung“)
     "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
     # stab/querlast (Bezug einer globalen Stab- bzw. Linienlast: "" = je

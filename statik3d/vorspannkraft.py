@@ -43,9 +43,40 @@ die eingepraegte Kraft je Stab, unter der Vorspannung allein traegt jeder
 Stab genau F_soll. Linear ist das dasselbe wie Spannen und Verriegeln
 (tests/test_vorspannkraft.py).
 
-**Import**: :func:`import_hinweise` nennt je Anfangsvorspannung die Kraft X
-nach elastischer Verkuerzung (linear, Einflussmatrix), :func:`in_sollkraft_umwandeln`
-stellt die ΔT-Last auf die Sollkraft um - nur auf Anweisung des Anwenders.
+**Import**: :func:`import_hinweise` nennt je Vorspannung als eingepraegte
+Dehnung (RFEM) die Kraft X nach elastischer Verkuerzung (linear,
+Einflussmatrix), :func:`in_sollkraft_umwandeln` stellt die ΔT-Last auf die
+Endvorspannung um - nur auf Anweisung des Anwenders. Bis zum 14.10.2026 hiess
+die RFEM-Vorspannung im Hinweis „Anfangsvorspannung“; seitdem meint das Wort
+nur die Pressenkraft P0 (Benennung des Anwenders: „vllt sollte man das
+Anfangsvorspannung und Endvorspannung nennen mit erklärung“).
+
+**Anfangsvorspannung (Pressenkraft P0) mit Verankerungsschlupf** (seit
+14.10.2026, ``Vorspannung.kraftart`` = "presse", Vorgabe des Anwenders: „Bitte
+im Spannschritt wahlweise „Pressenkraft + Verankerungsschlupf (mm)“
+ermöglichen“). Die bisherige Sollkraft heisst in der Oberflaeche seitdem
+„Endvorspannung (bleibend nach dem Verankern)“.
+
+* Im Spannschritt wirkt P0 als Kraeftepaar (N_spannen = P0).
+* Beim Verriegeln verliert der Stab den Schlupf: die spannungsfreie Laenge
+  waechst um Δs, gegen starre Umgebung sinkt N um k_A Δs mit
+  k_A = 1 / Σ L_i/(E_i A_i) ueber die Elemente des Stabs (bei einem
+  Querschnitt E A / L). L ist die Stablaenge, also die Laenge zwischen den
+  Ankerpunkten, ueber die sich die Dehnung des Spannglieds verteilt - dieselbe
+  Laenge, mit der die Stabsteifigkeit rechnet. Nur so ist der Schlupf genau
+  eine Verlaengerung um Δs; mit einer anderen „freien Laenge“ gehoerte zu
+  derselben Kraft ein anderer Weg, und die Rechnung waere nicht mehr der
+  Stab im Modell. Ziel beim Verriegeln ist N(u_S) = P0 − k_A Δs.
+* Danach federt die Umgebung zurueck, der Stab gewinnt einen Teil wieder
+  (Federverteilung, zwischen Federn N = P0 − k_A Δs k_K/(k_A + k_K)).
+  N_verankert ist dieses Gleichgewicht: linear ueber die Einflussmatrix
+  (der Schlupf ist eine eingepraegte Kraft −k_A Δs, P = A⁻¹ P0 − k Δs),
+  nichtlinear in einem eigenen Verankerungsschritt am System des Lastfalls
+  mit Kontakt und Plastizitaet - nur wenn die zuletzt gespannte Gruppe einen
+  Schlupf hat; frueher gespannte Gruppen gleicht der naechste Spannschritt
+  ohnehin aus. Elastische Verluste durch reihenweises Spannen kommen wie
+  bisher dazu.
+* Ohne Schlupf ist es Zahl fuer Zahl die Endvorspannung mit F_soll = P0.
 """
 from __future__ import annotations
 
@@ -60,6 +91,18 @@ from .model import LoadCase, Vorspannung
 
 WEG_EINFLUSS = "einflussmatrix"
 WEG_SPANNEN = "spannen und verriegeln"
+
+#: Namen der Lastarten fuer den Anwender (Benennung vom 14.10.2026, Maske,
+#: Lasttabelle, Bericht, Handbuch). Bis dahin hiess die Endvorspannung
+#: „Vorspannkraft (Soll nach Verankerung)“, und „Anfangsvorspannung“ stand fuer
+#: die RFEM-Vorspannung als eingepraegte Dehnung.
+LASTART_DEHNUNG = "Vorspannung als eingeprägte Dehnung (F_v)"
+LASTART_ENDE = "Endvorspannung (bleibend nach dem Verankern)"
+LASTART_PRESSE = "Anfangsvorspannung (Pressenkraft P₀)"
+LASTART_UMWANDELN = "Eingeprägte Dehnung (RFEM, ΔT) in Endvorspannung umwandeln"
+ERKLAERUNG_ENDE = "Kraft, die nach dem Verankern im Stab verbleibt, vor den äußeren Lasten."
+ERKLAERUNG_PRESSE = ("Kraft der Presse beim Spannen, vor dem Verankern; nach dem Verankern verringert um "
+                     "den Verankerungsschlupf Δs und die elastischen Verluste.")
 
 #: Linear-elastisch und gleichzeitig gespannt: die eingepraegte Dehnung ueber
 #: die Einflussmatrix (eine Zerlegung, n Loesungen). WEG_SPANNEN rechnet auch
@@ -79,10 +122,15 @@ X_FHG_GRENZE = 300_000
 
 @dataclass
 class Soll:
-    """Eine Sollkraft eines Lastfalls oder einer Kombination (mit Faktor)."""
+    """Eine Sollkraft eines Lastfalls oder einer Kombination (mit Faktor):
+    ``kraft`` ist die Kraft im Spannschritt (Endvorspannung F_soll bzw.
+    Pressenkraft P0), ``schlupf`` [m] der Verankerungsschlupf der
+    Anfangsvorspannung (``presse``), mit demselben Faktor wie die Kraft."""
     stab: str
     kraft: float
     gruppe: int = 1
+    schlupf: float = 0.0
+    presse: bool = False
 
 
 def sollkraefte(model, factors) -> list:
@@ -98,10 +146,50 @@ def sollkraefte(model, factors) -> list:
         for v in getattr(lc, "vorspannungen", None) or []:
             if not getattr(v, "sollkraft", False) or getattr(v, "art", "stab") != "stab" or not v.kraft:
                 continue
-            k, g = je.get(v.ziel, (0.0, None))
+            k, g, ds, pr = je.get(v.ziel, (0.0, None, 0.0, False))
             gv = int(getattr(v, "gruppe", 1) or 1)
-            je[v.ziel] = (k + float(f) * float(v.kraft), gv if g is None else min(g, gv))
-    return [Soll(s, k, g) for s, (k, g) in je.items() if k]
+            presse = callable(getattr(v, "ist_presse", None)) and v.ist_presse()
+            ds_v = float(getattr(v, "schlupf", 0.0) or 0.0) if presse else 0.0
+            je[v.ziel] = (k + float(f) * float(v.kraft), gv if g is None else min(g, gv),
+                          ds + float(f) * ds_v, pr or presse)
+    return [Soll(s, k, g, ds, pr) for s, (k, g, ds, pr) in je.items() if k]
+
+
+def k_stab(model, elemente: list) -> float:
+    """Laengssteifigkeit k_A [N/m] eines Stabs aus seinen Elementen in Reihe:
+    1 / Σ (L_i/(E_i A_i) + 1/k_Feder) - bei einem Querschnitt E A / L, mit L
+    der Stablaenge zwischen den Ankerpunkten (Anfangsvorspannung, 14.10.2026)."""
+    from .elements import beam3d as bm
+    nachgiebig = 0.0
+    for i in elemente:
+        e = model.elements[int(i)]
+        mat, sec = model.materials[e.mat], model.sections[e.sec]
+        X = model.nodes[e.nodes]
+        _T3, L = bm.local_axes(X[0], X[1], e.roll)
+        nachgiebig += float(L) / (float(mat.E) * float(sec.A))
+        nachgiebig += sum(1.0 / float(k) for d, k in (getattr(e, "hinge_springs", None) or [])
+                          if int(d) in (0, 6) and k and float(k) > 0)
+    return 1.0 / nachgiebig if nachgiebig > 0 else 0.0
+
+
+def _ziel(model, s: Soll, els: dict) -> tuple:
+    """(Ziel N nach dem Verriegeln gegen starre Umgebung, k_A): F_soll bei der
+    Endvorspannung, P0 − k_A Δs bei der Anfangsvorspannung."""
+    if not s.schlupf:
+        return float(s.kraft), 0.0
+    k = k_stab(model, els[s.stab])
+    return float(s.kraft) - k * float(s.schlupf), k
+
+
+def _presse_info(model, s: Soll, els: dict) -> dict:
+    """Eintraege der Anfangsvorspannung in res.info["vorspannung"]["staebe"]
+    (nur dort - die Endvorspannung behaelt ihre Eintraege, wie sie waren)."""
+    if not s.presse:
+        return {}
+    T, k = _ziel(model, s, els)
+    k = k or k_stab(model, els[s.stab])
+    return {"kraftart": "presse", "schlupf": float(s.schlupf), "k_A": float(k),
+            "schlupfverlust": float(k * s.schlupf), "N_verriegelt": float(T)}
 
 
 def _elemente(model, stab: str, aktiv=None) -> list:
@@ -289,19 +377,26 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
         A = einflussmatrix(model, system, staebe)
         Fs = np.array([s.kraft for s in soll], float)
         P = _einfluss_loesen(A, Fs, staebe)
+        # Anfangsvorspannung: der Schlupf ist eine eingepraegte Kraft −k_A Δs
+        # im Stab; A verteilt ihn auf Stab und Umgebung (14.10.2026)
+        P = P - np.array([_ziel(model, s, els)[1] * s.schlupf for s in soll], float)
         F_v, feq_v = _stablast(model, list(zip(staebe, P)), aktiv)
-        sv._melde(progress, f"{name}: Vorspannkraft (Soll nach Verankerung) über die Einflussmatrix "
+        sv._melde(progress, f"{name}: End- bzw. Anfangsvorspannung über die Einflussmatrix "
                             f"({len(staebe)} {'Stab' if len(staebe) == 1 else 'Stäbe'})")
         res = sv._solve_loads(model, system, factors, name, kind, start=start, start_von=start_von,
                               zusatz={"F": F_v, "feq": feq_v, "F_S": F_v}, **kw)
         N_v = A @ P
         info = {"weg": WEG_EINFLUSS, "reihenfolge": [staebe], "staebe": {}}
         for k, s in enumerate(soll):
+            # N_spannen: das Kraeftepaar des gleichwertigen Spannschritts (seit
+            # 14.10.2026 auch hier; bis dahin nahm der Spannstahlnachweis die Eingabe)
             info["staebe"][s.stab] = {"F_soll": float(s.kraft), "gruppe": int(s.gruppe),
+                                      "N_spannen": float(s.kraft),
                                       "N_verankert": float(N_v[k]),
                                       "verlust": float(s.kraft - N_v[k]),
                                       "P_eingepraegt": float(P[k]),
-                                      "N_ende": _n_ergebnis(res, els[s.stab])}
+                                      "N_ende": _n_ergebnis(res, els[s.stab]),
+                                      **_presse_info(model, s, els)}
         res.info["vorspannung"] = info
         return res
     z = _spannzustand(model, system, soll, els, **kw)
@@ -313,6 +408,8 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
     info = {"weg": WEG_SPANNEN, "reihenfolge": [list(g) for g in z["reihenfolge"]], "staebe": {},
             "zustaende": ["spannen", "verankert"], "zeit_spannen": float(z["zeit"]),
             "spannstufen": int(z.get("spannstufen", 1))}
+    if z.get("verankern"):
+        info["verankerungsschritt"] = True
     for s in soll:
         d = dict(z["staebe"][s.stab])
         d["N_ende"] = _n_ergebnis(res, els[s.stab])
@@ -320,7 +417,7 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
     res.info["vorspannung"] = info
     # Ein vorlaeufiger Spannzustand macht den Lastfall vorlaeufig: er startet von
     # ihm (Entscheidung des Anwenders vom 14.10.2026)
-    sp_vorl = [str(x.info["vorlaeufig"].get("text", "")) for x in z["spannen"]
+    sp_vorl = [str(x.info["vorlaeufig"].get("text", "")) for x in z["spannen"] + z.get("verankern", [])
                if isinstance(getattr(x, "info", {}).get("vorlaeufig"), dict)]
     if sp_vorl:
         v = dict(res.info.get("vorlaeufig") or {"grund": "kontakt", "stellen": []})
@@ -365,9 +462,10 @@ def theorie_sperre(model, factors: dict, th: str) -> str:
     if not soll:
         return ""
     staebe = ", ".join(s.stab for s in soll[:6]) + (" …" if len(soll) > 6 else "")
-    return (f"Vorspannkraft (Soll nach Verankerung) in {staebe}: nach Theorie {th}. Ordnung noch nicht "
-            "gerechnet - es gilt das Ergebnis nach Theorie I. Ordnung, in dem jeder Stab nach dem "
-            "Verankern F_soll trägt")
+    # bis zum 14.10.2026: „Vorspannkraft (Soll nach Verankerung) in …“
+    return (f"Endvorspannung bzw. Anfangsvorspannung (Spannschritt) in {staebe}: nach Theorie {th}. "
+            "Ordnung noch nicht gerechnet - es gilt das Ergebnis nach Theorie I. Ordnung mit dem Spannschritt "
+            "(Kraft jedes Stabs nach dem Verankern im Ergebnis)")
 
 
 def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=None,
@@ -377,7 +475,8 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
     from . import solver as sv
     c = _cache(system)
     n_st = spannstufen(model)
-    key = ("spannen", tuple(sorted((s.stab, round(float(s.kraft), 6), int(s.gruppe)) for s in soll)),
+    key = ("spannen", tuple(sorted((s.stab, round(float(s.kraft), 6), int(s.gruppe))
+                                   + ((round(float(s.schlupf), 12),) if s.schlupf else ()) for s in soll)),
            bool(probelauf), n_st)
     if key in c:
         return c[key]
@@ -392,7 +491,9 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
     plast = None
     kontakt = None
     spannen = []
-    staebe = {s.stab: {"F_soll": float(s.kraft), "gruppe": int(s.gruppe)} for s in soll}
+    staebe = {s.stab: {"F_soll": float(s.kraft), "gruppe": int(s.gruppe), **_presse_info(model, s, els)}
+              for s in soll}
+    verankern = []          # der Verankerungsschritt (nur mit Schlupf in der letzten Gruppe)
     reihenfolge = []
     r = None
     u = None
@@ -452,12 +553,31 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
         r.info["gruppe"] = int(g)
         r._cache.clear()
         spannen.append(r)
-        # Verriegeln in der verformten Lage: N = N_el(u_S) + P = F_soll
+        # Verriegeln in der verformten Lage: N = N_el(u_S) + P = F_soll, bei
+        # der Anfangsvorspannung P0 − k_A Δs (der Schlupf, 14.10.2026)
         for s in jetzt:
+            T = _ziel(model, s, els)[0]
             for i in els[s.stab]:
-                P[i] = float(s.kraft) - _n_elastisch(model, i, u)
+                P[i] = T - _n_elastisch(model, i, u)
         F_lock, feq_lock = _verriegelung(model, P)
         n0 = _n0_ausfall(model, P)
+    if any(s.schlupf for s in jetzt):
+        # Verankerungsschritt: mit Schlupf ist u_S kein Gleichgewicht mehr - die
+        # Umgebung federt zurueck. Gerechnet am System des Lastfalls (alle Staebe
+        # wirksam) mit Kontakt und Plastizitaet vom Spannzustand aus; frueher
+        # gespannte Gruppen gleicht der naechste Spannschritt ohnehin aus
+        zus = {"F": F_lock, "feq": dict(feq_lock), "F_S": F_lock, "n0": n0,
+               "plast_start": plast, "plast_merken": True, "ohne_grund": True}
+        sv._melde(progress, "Verankern: Verankerungsschlupf, die Umgebung federt zurück")
+        r = sv._solve_loads(model, system, {}, "Verankern", "case", workers, progress, start=kontakt,
+                            probelauf=probelauf, start_von=None if kontakt is None else "Spannschritt",
+                            zusatz=zus)
+        plast = getattr(r, "_plast_ende", None) or plast
+        if hasattr(r, "_plast_ende"):
+            del r._plast_ende
+        kontakt = getattr(r, "kontaktzustand", None) or kontakt
+        u = _u_voll(model, r)
+        verankern.append(r)
     # verankert: die Lage des letzten Spannschritts, alle Staebe verriegelt
     v = copy.copy(r)
     v.beam_end = dict(r.beam_end)
@@ -480,7 +600,7 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                                "P_verriegelt": float(np.mean([P[i] for i in els[s.stab]]))})
     z = {"F": F_lock, "feq": feq_lock, "n0": n0, "plast": plast, "kontakt": kontakt,
          "spannen": spannen, "verankert": v, "staebe": staebe, "reihenfolge": reihenfolge,
-         "zeit": time.time() - t0, "spannstufen": n_st}
+         "zeit": time.time() - t0, "spannstufen": n_st, "verankern": verankern}
     c[key] = z
     return z
 
@@ -510,7 +630,7 @@ def _freigeben(system) -> None:
 
 
 # --------------------------------------------------------------------------
-# Import: Anfangsvorspannung als Temperatur -> Hinweis und Umwandlung
+# Import: RFEM-Vorspannung als eingepraegte Dehnung (Temperatur) -> Hinweis und Umwandlung
 # --------------------------------------------------------------------------
 @dataclass
 class TempVorspannung:
@@ -527,7 +647,7 @@ class TempVorspannung:
 
 def temperatur_vorspannungen(model, faelle=None, staebe=None) -> list:
     """Die Vorspannungen, die als Temperatur auf einem Zugstab stehen - so
-    legt der RFEM-Import die Anfangsvorspannung an (TempLoad.vorspannkraft).
+    legt der RFEM-Import die Vorspannung als eingepraegte Dehnung an (TempLoad.vorspannkraft).
     Ein Stab zaehlt nur, wenn alle seine Elemente dieselbe Kraft tragen."""
     el_stab = {}
     for name, mem in (getattr(model, "members", None) or {}).items():
@@ -603,9 +723,11 @@ def _kn(x: float) -> str:
 
 
 def hinweis_text(N0: float, X=None) -> str:
-    """„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
-    Sollkraft umwandeln?“ - X ein Wert, eine Spanne (min, max) oder None
-    (dann folgt er nach der ersten Rechnung)."""
+    """„Vorspannung als eingeprägte Dehnung (RFEM) 952 kN ergibt nach
+    elastischer Verkürzung X kN – in Endvorspannung umwandeln?“ - X ein Wert,
+    eine Spanne (min, max) oder None (dann folgt er nach der ersten Rechnung).
+    Bis zum 14.10.2026: „Anfangsvorspannung 952 kN ergibt … – in Sollkraft
+    umwandeln?“; seitdem meint „Anfangsvorspannung“ nur die Pressenkraft P0."""
     if X is None:
         x = "X kN (folgt nach der ersten Rechnung eines Lastfalls nur mit der Vorspannung)"
     elif isinstance(X, (tuple, list)):
@@ -613,11 +735,12 @@ def hinweis_text(N0: float, X=None) -> str:
         x = f"{lo} kN" if lo == hi else f"{lo} bis {hi} kN"
     else:
         x = f"{_kn(X)} kN"
-    return f"Anfangsvorspannung {_kn(N0)} kN ergibt nach elastischer Verkürzung {x} – in Sollkraft umwandeln?"
+    return (f"Vorspannung als eingeprägte Dehnung (RFEM) {_kn(N0)} kN ergibt nach elastischer Verkürzung {x} "
+            "– in Endvorspannung umwandeln?")
 
 
 def import_hinweise(model, log: list = None, system=None) -> list:
-    """Nach dem Import: je Anfangsvorspannung (gleiche Kraft N0) ein Hinweis
+    """Nach dem Import: je Vorspannung als eingepraegte Dehnung (gleiche Kraft N0) ein Hinweis
     mit der Kraft X nach elastischer Verkuerzung, ins Protokoll und als
     Importhinweis ans Modell. Umgewandelt wird nichts - das loest der Anwender
     aus (:func:`in_sollkraft_umwandeln`). Rueckgabe die Hinweise."""
@@ -650,8 +773,8 @@ def import_hinweise(model, log: list = None, system=None) -> list:
                   f"X linear in {zeit:.2f} s" if xs else "")
         h = {"art": "vorspannung", "text": f"{text} ({umfang}" + (f"; {zusatz}" if zusatz else "") + ")",
              "objekte": staebe, "umfang": umfang,
-             "vorschlag": "in Sollkraft umwandeln: Lasten › Vorspannung, Lastart "
-                          "„ΔT-Vorspannung in Sollkraft umwandeln“",
+             "vorschlag": "in Endvorspannung umwandeln: Lasten › Vorspannung, Lastart "
+                          f"„{LASTART_UMWANDELN}“",
              "erledigt": False, "N0": float(N0), "faelle": faelle,
              "X": [float(min(xs)), float(max(xs))] if xs else None}
         out.append(h)
@@ -759,7 +882,8 @@ def in_sollkraft_umwandeln(model, staebe=None, faelle=None, kraft: float = None,
         F = float(kraft) if kraft is not None else vorschlag_sollkraft(model, t.stab, t.N0)
         lc.vorspannungen.append(Vorspannung(
             t.stab, "stab", F, None,
-            f"umgewandelt aus Anfangsvorspannung {_kn(t.N0)} kN (ΔT {t.lasten[0].dT:.3f} K)",
+            f"umgewandelt aus Vorspannung als eingeprägte Dehnung (RFEM) {_kn(t.N0)} kN "
+            f"(ΔT {t.lasten[0].dT:.3f} K)",
             True, int(gruppe or 1)))
         n += 1
     if n:

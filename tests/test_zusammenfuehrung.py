@@ -252,7 +252,7 @@ def test_neue_felder_ein_mechanismus():
         "members": {"einleitung": {}},
         "starrkoerper": {"momente": []},
         "load_cases": {"faktorisiert": False},
-        "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
+        "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1, "kraftart": "", "schlupf": 0.0},
         "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
         "load_cases.beam_loads": {"bezugslaenge": ""},
         "load_cases.linienlasten": {"bezugslaenge": ""},

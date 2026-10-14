@@ -398,10 +398,13 @@ def test_import_hinweis_und_umwandlung():
         log = []
         m = R6.read_rf6(f, log=log)
         lf = next(iter(m.load_cases))
-        zeilen = [z.strip() for z in log if "Anfangsvorspannung" in z]
+        zeilen = [z.strip() for z in log if "ergibt nach elastischer Verkürzung" in z]
         # Zugstaebe wie die Anker am Drehlager (RFEM MemberImplTension). Stab 1
-        # zieht gegen die Staebe 2 und 3 in Reihe (gleiches E A): N = N_0/3
-        soll = "Anfangsvorspannung 120 kN ergibt nach elastischer Verkürzung 40 kN – in Sollkraft umwandeln?"
+        # zieht gegen die Staebe 2 und 3 in Reihe (gleiches E A): N = N_0/3.
+        # Bis zum 14.10.2026 hiess der Hinweis „Anfangsvorspannung 120 kN ergibt …
+        # – in Sollkraft umwandeln?“; seitdem meint Anfangsvorspannung die Pressenkraft
+        soll = ("Vorspannung als eingeprägte Dehnung (RFEM) 120 kN ergibt nach elastischer Verkürzung 40 kN "
+                "– in Endvorspannung umwandeln?")
         check("Importprotokoll: der Hinweis mit X (linear, Einflussmatrix)",
               any(soll in z for z in zeilen), str(zeilen[:2]))
         h = [x for x in (m.importhinweise or []) if x.get("art") == "vorspannung"]
@@ -483,7 +486,7 @@ def test_theorie():
         r = an.cases["V"]
         check(f"Theorie {th} verlangt: das Ergebnis bleibt nach Theorie I. Ordnung und sagt es",
               r.info.get("theorie") == "I" and r.info.get("theorie_gewuenscht") == th
-              and "Vorspannkraft (Soll nach Verankerung)" in str(r.info.get("theorie_fehler", "")),
+              and "Endvorspannung bzw. Anfangsvorspannung (Spannschritt)" in str(r.info.get("theorie_fehler", "")),
               f"{r.info.get('theorie')}, {r.info.get('theorie_gewuenscht')}: {str(r.info.get('theorie_fehler'))[:90]}")
         nahe(f"Theorie {th} verlangt: N = F_soll nach Theorie I. Ordnung", _N(r, band), 70e3, 1e-9, "N")
         mo, bo = _rahmen_th()
