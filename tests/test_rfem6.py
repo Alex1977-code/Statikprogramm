@@ -1765,7 +1765,7 @@ def test_flaechenlast_richtung():
             lines=[], members=[], supports=[],
             surfaces=[([1, 2, 3, 4], 0.010)],
             load_cases=[("Last", 12, 0.0)],
-            surface_loads=[(1, [1], -3000.0, 1)],       # 1 = global Z
+            surface_loads=[(1, [1], -3000.0, 13)],      # 13 = global Z
         )
         m = R6.read_rf6(f, log=[])
         for nd in range(m.nn):
@@ -1789,7 +1789,7 @@ def test_flaechenlast_richtung():
                 lines=[], members=[], supports=[],
                 surfaces=[(umlauf, 0.010)],
                 load_cases=[("Last", 12, 0.0)],
-                surface_loads=[(1, [1], -2000.0, 1)],
+                surface_loads=[(1, [1], -2000.0, 13)],
                 boundary_lines=None,
             )
             m2 = R6.read_rf6(g, log=[])
@@ -1809,7 +1809,7 @@ def test_flaechenlast_richtung():
             lines=[], members=[], supports=[],
             surfaces=[[1, 2, 3, 4]],
             load_cases=[("Last", 12, 0.0)],
-            surface_loads=[(1, [1], -3000.0, 1)],
+            surface_loads=[(1, [1], -3000.0, 13)],
         )
         m3 = R6.read_rf6(h, log=[])
         geo = [g for lc in m3.load_cases.values() for g in lc.geometrielasten]
@@ -1842,10 +1842,10 @@ def test_flaechenlasten_werden_abgezaehlt():
                  lines=[], members=[], supports=[],
                  surfaces=[([1, 2, 3, 4], 0.010)],
                  load_cases=[("Last", 12, 0.0)],
-                 surface_loads=[(1, [1], -2000.0, 0),      # normal
-                                (1, [1], -1000.0, 0),      # -> andere Art
-                                (1, [1], 0.0, 0),          # ohne Betrag
-                                (1, [1], -500.0, 0)])      # -> Tabelle fehlt
+                 surface_loads=[(1, [1], -2000.0, 2),      # normal (2 = lokal z)
+                                (1, [1], -1000.0, 2),      # -> andere Art
+                                (1, [1], 0.0, 2),          # ohne Betrag
+                                (1, [1], -500.0, 2)])      # -> Tabelle fehlt
         con = sqlite3.connect(db)
         con.execute("UPDATE SurfaceLoad SET impl_table = "
                     "'SurfaceTypeLoadImplTemperature' WHERE id = 2")
@@ -1914,8 +1914,8 @@ def test_flaechenlast_ohne_lastfall():
                  lines=[], members=[], supports=[],
                  surfaces=[([1, 2, 3, 4], 0.010)],
                  load_cases=[("Last", 12, 0.0)],
-                 surface_loads=[(1, [1], -2000.0, 0),
-                                (1, [1], -1000.0, 0)])     # -> Lastfall 99
+                 surface_loads=[(1, [1], -2000.0, 2),
+                                (1, [1], -1000.0, 2)])     # -> Lastfall 99
         con = sqlite3.connect(db)
         con.execute("UPDATE SurfaceLoad SET parentModelObject_id = 99 WHERE id = 2")
         con.commit()
@@ -2243,7 +2243,7 @@ def test_lastfaelle_und_lasten():
             surfaces=[([1, 2, 3, 4], 0.010), [2, 5, 6, 3]],
             load_cases=[("Eigengewicht", 11, 1.0), ("Schnee", 54, 0.0)],
             # 2 kN/m^2 auf die vernetzte Flaeche, 3 kN/m^2 auf die Flaeche ohne Dicke
-            surface_loads=[(2, [1], -2000.0, 0), (2, [2], -3000.0, 1)],
+            surface_loads=[(2, [1], -2000.0, 2), (2, [2], -3000.0, 13)],
             free_loads=5,
         )
         log = []
@@ -2799,9 +2799,9 @@ def test_stab_und_knotenlasten():
               any(abs(v - 1001.0) < 1e-6 for v in qx), f"q_x = {qx}")
     check("die Einzellast wird genannt statt still weggelassen",
           "Verteilung 2" in txt, "Protokoll nennt die Verteilung")
-    check("die abgeleitete Deutung der Lastrichtung steht im Protokoll",
-          "abgeleitet" in txt and "nachpruefen" in txt,
-          "Protokoll nennt sie als abgeleitet")
+    check("die Deutung der Lastrichtung steht mit ihrer Quelle im Protokoll",
+          "global X" in txt and "Schnittstelle RFEM 6.15" in txt,
+          "Protokoll nennt die Schnittstelle")
 
     kl = [x for lc in m.load_cases.values() for x in lc.nodal_loads]
     check("die Knotenlast der neueren Fassung kommt an", len(kl) == 1,
@@ -3095,8 +3095,134 @@ def test_hex_order_nie_falsch():
     check("kein Sechsflächner -> None (freier Vernetzer)", o is None, str(o))
 
 
+def _rf6_aus_db(db: str, pfad: str) -> str:
+    with zipfile.ZipFile(pfad, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(db, "model.db")
+        z.writestr("mesh.xml", MESH_XML)
+        z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1\n")
+        z.writestr("general_data.xml", "<?xml version='1.0'?><property key='generalData'/>")
+    return pfad
+
+
+def test_lastrichtung_nach_schnittstelle():
+    """Die Kennzahl ``loadDirection`` nach der Schnittstelle von RFEM 6.15
+    (member_load.proto, line_load.proto, surface_load.proto): 0/1/2 lokal
+    x/y/z, 3/4 Hauptachse u/v (Stab), 11-13 global je wahrer, 14-16 je
+    projizierter Laenge bzw. Flaeche.
+
+    Bis zum 14.10.2026 galt 0 = lokal z, 1 = global Z, 2 = global X,
+    3 = global Y: eine Stablast lokal y kam als global Z an, eine
+    Flaechenlast lokal x (in der Ebene) als Druck senkrecht zur Flaeche. Am
+    Drehlager-Modell waren das 315 + 396 Flaechenlasten mit 0 und 1, die RFEMs
+    eigener Bericht als „Lokales Koordinatensystem, Richtung x/y“ fuehrt."""
+    tmp = tempfile.mkdtemp()
+    try:
+        # (1) Stablasten am waagerechten Traeger in x, beidseits eingespannt
+        ein = ("Fest", (INF,) * 6, (0,) * 6, None, [1, 2])
+        for rd, soll_q, soll_R, achse in ((1, (0.0, 1000.0, 0.0), (0.0, -4000.0, 0.0), "y"),
+                                          (2, (0.0, 0.0, 1000.0), (0.0, 0.0, -4000.0), "z"),
+                                          (0, (1000.0, 0.0, 0.0), (-4000.0, 0.0, 0.0), "x")):
+            log = []
+            f = make_rf6(os.path.join(tmp, f"stab_{rd}.rf6"), nodes=[(0, 0, 0), (4, 0, 0)],
+                         lines=[[1, 2]], members=[(1, None, None)], supports=[ein],
+                         load_cases=[("LF1", 1, 0.0)],
+                         member_loads=[(1, [1], 0, rd, 1000.0, None)])
+            m = R6.read_rf6(f, log=log)
+            m.lasten_verteilen()
+            ll = [x for lc in m.load_cases.values() for x in lc.linienlasten]
+            check(f"Stablast Kennzahl {rd}: lokal angesetzt mit q = {soll_q}",
+                  len(ll) == 1 and ll[0].system == "local"
+                  and np.allclose(ll[0].q, soll_q), str([(x.system, x.q) for x in ll]))
+            r = solver.solve_static(m, case="LF1")
+            R = np.asarray(r.reactions, float)[:, :3].sum(axis=0)
+            check(f"  und wirkt am Traeger in x global in {achse}",
+                  np.allclose(R, soll_R, atol=1e-6), str(R.round(3)))
+        # Hauptachse u und lokal z am senkrechten Stab: genannt, nicht angesetzt
+        log = []
+        f = make_rf6(os.path.join(tmp, "stab_u.rf6"), nodes=[(0, 0, 0), (4, 0, 0), (0, 0, 3)],
+                     lines=[[1, 2], [1, 3]], members=[(1, None, None), (2, None, None)],
+                     supports=[ein], load_cases=[("LF1", 1, 0.0)],
+                     member_loads=[(1, [1], 0, 3, 1000.0, None), (1, [2], 0, 2, 500.0, None)])
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        ll = [x for lc in m.load_cases.values() for x in lc.linienlasten]
+        check("Hauptachse u und lokal z am senkrechten Stab: nichts angesetzt", not ll,
+              str([(x.ziel, x.q) for x in ll]))
+        check("  beide genannt (Hauptachse u, senkrechter Stab)",
+              "Kennzahl 3 (Hauptachse u)" in txt and "senkrechten Staeben" in txt
+              and "Kennzahl 2 (lokal z)" in txt, txt[-400:])
+
+        # (2) Flaechenlasten: 0 lokal x (in der Ebene) genannt, 2 senkrecht,
+        #     16 je projizierter Flaeche auf der geneigten Flaeche
+        log = []
+        f = make_rf6(os.path.join(tmp, "flaeche.rf6"),
+                     nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 2), (0, 2, 2)],
+                     lines=[], members=[], supports=[], surfaces=[([1, 2, 3, 4], 0.010)],
+                     load_cases=[("LF1", 12, 0.0), ("LF2", 12, 0.0), ("LF3", 12, 0.0),
+                                 ("LF4", 12, 0.0)],
+                     surface_loads=[(1, [1], -1000.0, 0), (2, [1], -1000.0, 2),
+                                    (3, [1], -1000.0, 16), (4, [1], -1000.0, 13)])
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        check("Flaechenlast lokal x: nicht angesetzt", m.load_cases["LF1"].n_loads == 0,
+              str(m.load_cases["LF1"].n_loads))
+        check("  und als WARNUNG genannt",
+              any("WARNUNG" in z and "Lastrichtung 0 = lokal x" in z and "nicht uebernommen" in z
+                  for z in log), txt[-300:])
+        for nd in range(m.nn):
+            m.support(nd, [0, 1, 2, 3, 4, 5])
+        A_wahr, A_proj = 2.0 * 2.0 * np.sqrt(2.0), 4.0
+        R2 = np.asarray(solver.solve_static(m, case="LF2").reactions, float)[:, :3].sum(axis=0)
+        n = np.array([0.0, -1.0, 1.0]) / np.sqrt(2.0)
+        check("Flaechenlast lokal z: senkrecht zur Flaeche, Betrag p A",
+              abs(float(np.linalg.norm(R2)) - 1000.0 * A_wahr) < 1e-6 * 1000.0 * A_wahr
+              and abs(abs(float(R2 @ n)) - 1000.0 * A_wahr) < 1e-6 * 1000.0 * A_wahr,
+              str(R2.round(3)))
+        R3 = np.asarray(solver.solve_static(m, case="LF3").reactions, float)[:, :3].sum(axis=0)
+        close("Flaechenlast global Z je projizierter Flaeche: Summe p A_proj", float(R3[2]),
+              1000.0 * A_proj, 1e-9, " N")
+        R4 = np.asarray(solver.solve_static(m, case="LF4").reactions, float)[:, :3].sum(axis=0)
+        close("Flaechenlast global Z je wahrer Flaeche: Summe p A", float(R4[2]),
+              1000.0 * A_wahr, 1e-9, " N")
+
+        # (3) Linienlasten: lokal y genannt, global Z angesetzt
+        db = os.path.join(tmp, "model.db")
+        build_db(db, nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)], lines=[[1, 2]],
+                 members=[], supports=[], surfaces=[([1, 2, 3, 4], 0.010)],
+                 load_cases=[("LF1", 12, 0.0)])
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE LineLoad (id INTEGER PRIMARY KEY, version INTEGER, "
+                    "parentModelObject_id bigint, parentModelObject_table TEXT, userID INTEGER, "
+                    "impl_id bigint, impl_table TEXT)")
+        con.execute("CREATE TABLE LineLoadImplForceT (id INTEGER PRIMARY KEY, version INTEGER, "
+                    "parent_id bigint, parent_table TEXT, magnitude double precision, "
+                    "loadDirection INTEGER)")
+        con.execute("CREATE TABLE LineLoadImplForceT_assignedTo (id INTEGER, container_order "
+                    "INTEGER, value_id bigint)")
+        linie = con.execute("SELECT MIN(id) FROM Line").fetchone()[0]
+        for i, rd in ((1, 1), (2, 13)):
+            con.execute("INSERT INTO LineLoad VALUES (?,1,1,'LoadCase',?,?,'LineLoadImplForceT')",
+                        (i, i, i))
+            con.execute("INSERT INTO LineLoadImplForceT VALUES (?,1,?,'LineLoad',-700.0,?)",
+                        (i, i, rd))
+            con.execute("INSERT INTO LineLoadImplForceT_assignedTo VALUES (?,0,?)", (i, linie))
+        con.commit()
+        con.close()
+        log = []
+        m = R6.read_rf6(_rf6_aus_db(db, os.path.join(tmp, "linie.rf6")), log=log)
+        txt = "\n".join(log)
+        ll = [x for lc in m.load_cases.values() for x in lc.linienlasten if x.art == "linie"]
+        check("Linienlast: nur global Z angesetzt (q_z = -700)",
+              len(ll) == 1 and np.allclose(ll[0].q, (0.0, 0.0, -700.0)), str([x.q for x in ll]))
+        check("  lokal y genannt statt als global Z angesetzt",
+              any("WARNUNG" in z and "Lastrichtung 1 = lokal y" in z for z in log), txt[-300:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for t in (test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
+    for t in (test_lastrichtung_nach_schnittstelle,
+              test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
               test_flaechenlast_ohne_lastfall,
               test_stablasten_werden_abgezaehlt, test_vorspannung_zeile_je_lastfall,
               test_stablast_auf_fehlendem_stab, test_hex_order_nie_falsch,

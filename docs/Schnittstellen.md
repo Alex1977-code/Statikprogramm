@@ -832,11 +832,16 @@ auf geneigte Flächen beschränkt: schon bei einer waagerechten hing das
 Vorzeichen am **Umlaufsinn des Randpolygons** (gemessen: Umlauf 1‑2‑3‑4 gab
 R_z = +8000 N, Umlauf 4‑3‑2‑1 gab −8000 N; mit Richtung in beiden Fällen
 +8000 N). Umgerechnet wird mit derselben Tabelle wie bei Stab- und
-Linienlasten (`_richtung_aus_kennzahl`); Kennzahl 0 bleibt der Normaldruck,
-eine nicht geführte Kennzahl wird als Normaldruck angesetzt **und das steht
-im Protokoll**. Ob RFEM eine Flächenlast auf die wahre oder auf die
-projizierte Fläche bezieht, ist aus der Datei nicht lesbar — angesetzt wird
-die wahre Fläche, und auch das sagt das Protokoll.
+Linienlasten (`LOAD_DIRECTION`, siehe „Lastrichtung nach der Schnittstelle“
+unten): 2 (lokal z) ist der Druck senkrecht zur Fläche, 11 bis 13 wirken
+global je wahrer Fläche, 14 bis 16 global je projizierter Fläche (je Element
+mit |n · e| auf die Elementfläche umgerechnet). 0 und 1 (lokal x und y, also
+in der Ebene der Fläche) und jede unbekannte Kennzahl werden nicht angesetzt,
+sondern als WARNUNG mit Zahl und Bedeutung genannt, ebenso 14 bis 16 auf
+einer Fläche ohne Netz. Bis zum 14.10.2026 galt 0 als Normaldruck, 1 als
+global Z, 2 als global X und 3 als global Y; eine nicht geführte Kennzahl
+wurde als Normaldruck angesetzt, und ob die wahre oder die projizierte Fläche
+gemeint war, galt als nicht lesbar.
 
 **Die Flächenlasten zählen sich ab.** Jede Zeile der Tabelle `SurfaceLoad`
 taucht im Protokoll auf — auch die, die nicht übernommen wird: Lasten anderer
@@ -1243,9 +1248,42 @@ Enthält eine Ergebniskombination Klammern oder Zwischenergebnisse, wird das
 gemeldet: die Überlagerung innerhalb einer Alternative trifft die Absicht
 dann nur bei linearer Rechnung.
 
-Die Lastrichtung (`loadDirection`) steht mit Rohwert und Deutung im Protokoll
-(`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y`) — die Deutung
-folgt der Reihenfolge des RFEM-Dialogs und ist damit Annahme.
+**Lastrichtung nach der Schnittstelle** (seit 14.10.2026). Die Lastrichtung
+(`loadDirection`) steht mit Rohwert und Deutung im Protokoll. Die Deutung
+folgt der Schnittstelle von RFEM 6.15 (`member_load.proto`, `line_load.proto`,
+`surface_load.proto`, Enum `LoadDirection`): 0, 1 und 2 sind lokal x, y und
+z, 3 und 4 die Hauptachsen u und v (nur bei Stäben), 11 bis 13 global X, Y
+und Z je wahrer Länge bzw. Fläche, 14 bis 16 dieselben je projizierter. Dass
+die Datenbank der rf6-Datei genau diese Zahlen führt, zeigt das
+Drehlager-Modell: Seine Flächenlasten mit `loadDirection` 0 und 1 stehen in
+RFEMs eigenem, in der Datei gespeichertem Bericht als „Lokales
+Koordinatensystem, Richtung x“ bzw. „y“. Bis zum 14.10.2026 galt
+`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y` – eine Annahme
+nach der Reihenfolge des RFEM-Dialogs, die nicht stimmte.
+
+Übernommen wird, was sich ohne Annahme abbilden lässt. Stablasten in lokal x
+gehen als lokale Stablast an den Stab, ebenso lokal y und z an jedem Stab,
+der nicht senkrecht steht. Dort bilden RFEM und Statik3D die Stabachsen auf
+dieselbe Weise: x vom Anfang zum Ende, z in der Ebene aus x und global Z zu +Z
+hin, y = z × x, gedreht um den Stabdrehwinkel. Am senkrechten Stab bildet
+Statik3D die y-Achse aus global X, und ob RFEM dieselbe Achse nimmt, ist nicht
+belegt; eine Last in lokal y oder z an einem senkrechten Stab wird darum
+genannt und nicht angesetzt. Ebenso werden die Hauptachsen u und v genannt,
+Linienlasten in lokalen Linienachsen (0 bis 2) und Flächenlasten in der Ebene
+der Fläche (0 und 1), weil das Programm die lokalen Linien- und
+Flächenachsen von RFEM nicht übernimmt. Linienlasten je projizierter Länge
+(14 bis 16) tragen den Bezug „je Projektion“. Bis zum 14.10.2026 kam eine
+Stablast in lokal y als global Z an, eine in lokal z als global X, und eine
+in lokal x fiel als „unbekannt“ weg; Linienlasten in jeder anderen Kennzahl
+als 2 und 3 wurden global Z.
+
+**Am Drehlager-Modell** (`Drehlager_V15_4_export.rf6`) betrifft das alle 711
+Flächenlasten: 315 stehen in lokal x, 396 in lokal y. Bis zum 14.10.2026 kamen
+sie als Druck senkrecht zur Fläche bzw. als global Z an, also senkrecht statt
+in der Ebene der Flächen. Seit dem 14.10.2026 werden sie nicht übernommen und
+stehen als zwei WARNUNG-Zeilen im Importprotokoll. Sie richtig anzusetzen
+braucht die lokalen Flächenachsen aus RFEM (Tabelle `SurfaceAxes` mit
+Drehung und umgekehrter z-Achse); das ist offen.
 
 **Stablasten: Bezug in der Lastrichtung** (seit 14.10.2026). Eine eigene
 Spalte für „je wahrer“ oder „je projizierter Länge“ hat `LineTypeLoadImplForce`
@@ -1260,9 +1298,9 @@ Import übernimmt 14 bis 16 als globale Last mit dem Bezug „je Projektion“
 (`rfem6_db.LOAD_DIRECTION_PROJEKTION`, `Linienlast.bezugslaenge`); beim Seil
 rechnet Theorie III. Ordnung daraus die Parabel, aus 11 bis 13 die
 Kettenlinie. Bis zum 14.10.2026 standen 14 bis 16 als „Lastrichtung
-unbekannt“ im Protokoll und fehlten. Die Werte 1 bis 3 für Stablasten
-(laut Schnittstelle lokal y, lokal z, Hauptachse u) deutet `_stablasten`
-weiter mit der Tabelle oben als global; an einer Datei belegt ist das nicht.
+unbekannt“ im Protokoll und fehlten. Die Werte 0 bis 4 deutet `_stablasten`
+seit dem 14.10.2026 nach der Schnittstelle (siehe „Lastrichtung nach der
+Schnittstelle“ oben); bis dahin galten 1 bis 3 als global Z, X und Y.
 
 Querschnitte kommen aus `SectionData_parameterValues` mit ihren SI-Kennwerten
 (A, A_y, A_z, I_y, I_z, I_t); der Name entsteht aus den Bemaßungssymbolen der

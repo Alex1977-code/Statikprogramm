@@ -2973,26 +2973,35 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
 # --------------------------------------------------------------------------
 # Lasten der Lastfaelle
 # --------------------------------------------------------------------------
-#: Deutung von loadDirection - Annahme, wird mit Rohwert protokolliert
+#: Deutung von loadDirection (Stab-, Linien- und Flaechenlasten) - nach der
+#: Schnittstelle von RFEM 6.15 (tools/WebServiceGrpc/proto/dlubal/api/rfem/
+#: loads/member_load.proto, line_load.proto, surface_load.proto, Enum
+#: LoadDirection): 0 LOCAL_X, 1 LOCAL_Y, 2 LOCAL_Z, 3 PRINCIPAL_U und
+#: 4 PRINCIPAL_V (nur Stab), 11/12/13 GLOBAL_X/Y/Z_..._TRUE_LENGTH, 14/15/16
+#: dieselben je projizierter Laenge. Die Datenbank der rf6-Datei fuehrt genau
+#: diese Zahlen: im Drehlager-Modell (Drehlager_V15_4_export.rf6) stehen die
+#: Flaechenlasten mit loadDirection 0 und 1 in RFEMs eigenem Bericht als
+#: „Lokales Koordinatensystem, Richtung x“ bzw. „y“ (14.10.2026).
+#:
+#: **Bis zum 14.10.2026 stand hier 0 = lokal z, 1 = global Z, 2 = global X,
+#: 3 = global Y** - eine Annahme ohne Beleg. Eine Stablast lokal y kam damit
+#: als global Z an, lokal z als global X; eine Flaechenlast lokal x (in der
+#: Ebene) als Druck senkrecht zur Flaeche, lokal y als global Z. Am
+#: Drehlager waren das 315 + 396 = 711 Flaechenlasten.
+#:
+#: 11 bis 13 waren schon am 22.09.2026 aus den Daten abgeleitet (CBG_Trolley:
+#: „electrical equipment 200kg“ unter 11/12 mit +2000 N, unter 13 mit
+#: -2000 N; „rake … 4.908 kg on 25,3 m“ = 1903 N/m gegen 1940 N/m unter 13)
+#: und stimmen mit der Schnittstelle ueberein.
 LOAD_DIRECTION = {
-    0: ("z", "lokal z (senkrecht zur Flaeche)"),
-    1: ("Z", "global Z"),
-    2: ("X", "global X"),
-    3: ("Y", "global Y"),
-    # 11 bis 13 stehen in wirklichen RFEM-6-Dateien und fehlten hier. Sie sind
-    # **aus den Daten abgeleitet**, nicht aus einer Festlegung von RFEM
-    # belegt - darum nennt das Protokoll die Deutung, damit sie an einem
-    # bekannten Lastfall nachgeprueft werden kann (22.09.2026):
-    #
-    #   * Dieselbe Last "electrical equipment 200kg" steht im Modell
-    #     CBG_Trolley unter Richtung 11 und 12 mit **+2000 N**, unter 13 mit
-    #     **-2000 N**. Eine Masse, die unter 13 nach unten wirkt und unter
-    #     11/12 waagerecht, ist global Z bzw. global X/Y.
-    #   * "rake ... 4.908 kg on 25,3 m" ergibt 4908 kg / 25,3 m = 1903 N/m
-    #     gegen den Eintrag 1940 N/m - eine Gewichtslast, Richtung 13.
-    11: ("X", "global X (aus den Daten abgeleitet)"),
-    12: ("Y", "global Y (aus den Daten abgeleitet)"),
-    13: ("Z", "global Z (aus den Daten abgeleitet)"),
+    0: ("x", "lokal x"),
+    1: ("y", "lokal y"),
+    2: ("z", "lokal z"),
+    3: ("u", "Hauptachse u"),
+    4: ("v", "Hauptachse v"),
+    11: ("X", "global X"),
+    12: ("Y", "global Y"),
+    13: ("Z", "global Z"),
 }
 
 
@@ -3087,6 +3096,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     # ---- Flaechenlasten
     n_ok = n_ohne = n_geo = n_art = n_betrag = 0
     n_lf = 0                        # ohne aufloesbaren Lastfall
+    n_richtung: dict = {}           # Kennzahl -> Zahl, nicht angesetzt (14.10.2026)
     n_roh = len(db.rows("SurfaceLoad"))
     summe = 0.0
     if db.has("SurfaceLoad"):
@@ -3129,15 +3139,41 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             # Umlaufsinn des Randpolygons (gemessen 22.09.2026: Umlauf
             # 1-2-3-4 gab Rz = +8000 N, Umlauf 4-3-2-1 gab -8000 N; mit
             # Richtung in beiden Faellen +8000 N).
-            richtung = _richtung_aus_kennzahl(rd)
+            #
+            # Seit dem 14.10.2026 nach der Schnittstelle (LOAD_DIRECTION): 2 =
+            # lokal z ist der Druck senkrecht zur Flaeche (ohne ``direction``),
+            # 11 bis 13 global je wahrer Flaeche, 14 bis 16 global je
+            # projizierter Flaeche. 0 und 1 (lokal x, y: in der Ebene der
+            # Flaeche) kennt das Programm nicht - die lokalen Flaechenachsen
+            # von RFEM werden nicht uebernommen. Sie werden genannt und nicht
+            # angesetzt; bis zum 14.10.2026 kamen sie als Normaldruck bzw.
+            # global Z an.
+            projiziert = rd in LOAD_DIRECTION_PROJEKTION
+            if projiziert:
+                richtung = _richtung_aus_kennzahl(rd - 3)
+            elif rd == 2:
+                richtung = None
+            else:
+                richtung = _richtung_aus_kennzahl(rd)
+                if richtung is None:
+                    n_richtung[rd] = n_richtung.get(rd, 0) + 1
+                    continue
             gelegt = False
             for sid in ziele:
                 for e in surf_els.get(sid, []):
-                    m.load_face(e, p, case=lc, direction=richtung)
+                    # je projizierter Flaeche: auf die wahre Flaeche des
+                    # Elements umgerechnet, p |n . e| (n Elementnormale)
+                    f = _projektionsanteil(m, e, richtung) if projiziert else 1.0
+                    m.load_face(e, p * f, case=lc, direction=richtung)
                     gelegt = True
             if gelegt:
                 n_ok += 1
                 summe += abs(p)
+                continue
+            if projiziert:
+                # ohne Netz kein Element, an dem sich die Projektion
+                # umrechnen liesse - genannt statt je wahrer Flaeche angesetzt
+                n_richtung[rd] = n_richtung.get(rd, 0) + 1
                 continue
             # Kein Netz auf der Zielflaeche - die Last bleibt trotzdem im
             # Modell: sie haengt an der Flaeche und wird beim Vernetzen auf
@@ -3164,7 +3200,8 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         # ist auf dem Weg verlorengegangen - db.impls() laesst eine Last ohne
         # ihre Umsetzungstabelle wortlos aus, und genau das soll nicht mehr
         # unbemerkt bleiben.
-        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag + n_lf)
+        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag + n_lf
+                         + sum(n_richtung.values()))
         if n_lf:
             C.warn(log, f"  {n_lf} Flaechenlasten ohne aufloesbaren Lastfall - nicht "
                         "uebernommen: der Lastfall, an dem sie haengen, fehlt in der "
@@ -3181,16 +3218,21 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             C.say(log, f"  {n_betrag} Flaechenlasten ohne lesbaren Betrag - "
                        "nicht uebernommen")
         for rd, n in sorted(richtungen.items()):
-            _k, text = LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))
-            # Eine Kennzahl, die die Tabelle nicht fuehrt, wird zum Normaldruck
-            # - das ist eine Annahme und gehoert darum ins Protokoll.
-            wie = ("" if rd == 0 or _richtung_aus_kennzahl(rd) is not None
-                   else " - senkrecht zur Flaeche angesetzt")
-            C.say(log, f"    Lastrichtung {rd} = {text}: {n}x{wie}")
-        if any(rd and _richtung_aus_kennzahl(rd) for rd in richtungen):
-            C.say(log, "    Hinweis: ob RFEM eine Flaechenlast auf die wahre "
-                       "oder auf die projizierte Flaeche bezieht, steht in der "
-                       "Datei nicht lesbar - angesetzt wird die wahre Flaeche.")
+            wie = (" - senkrecht zur Flaeche angesetzt (Vorzeichen nach der "
+                   "Flaechennormalen des Netzes)" if rd == 2 else
+                   " - je projizierter Flaeche, auf die Elementflaeche umgerechnet"
+                   if rd in LOAD_DIRECTION_PROJEKTION else
+                   " - je wahrer Flaeche" if _richtung_aus_kennzahl(rd) is not None else "")
+            C.say(log, f"    Lastrichtung {rd} = {_richtungstext(rd)}: {n}x{wie}")
+        for rd, n in sorted(n_richtung.items()):
+            grund = ("in der Ebene der Flaeche; die lokalen Flaechenachsen von RFEM "
+                     "uebernimmt das Programm nicht" if rd in (0, 1) else
+                     "je projizierter Flaeche auf einer Flaeche ohne Netz"
+                     if rd in LOAD_DIRECTION_PROJEKTION else "Kennzahl unbekannt")
+            C.warn(log, f"  {n} Flaechenlasten mit Lastrichtung {rd} = {_richtungstext(rd)} "
+                        f"nicht uebernommen ({grund}) - bitte in RFEM nachsehen und "
+                        "von Hand ansetzen. Bis zum 14.10.2026 kamen Lastrichtung 0 "
+                        "als Druck senkrecht zur Flaeche und 1 als global Z an.")
 
     # ---- Vorspannung im Stab
     #
@@ -3324,9 +3366,44 @@ def _zuordnung(db: Db, tbl: str, oid) -> list:
 
 
 def _richtung_aus_kennzahl(rd: int):
-    """Globaler Richtungsvektor zu RFEMs loadDirection - oder None (lokal)."""
+    """Globaler Richtungsvektor zu RFEMs loadDirection 11 bis 13 - oder None
+    (lokal, Hauptachse, je Projektion oder unbekannt)."""
     k, _t = LOAD_DIRECTION.get(int(rd or 0), ("?", ""))
     return {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}.get(k)
+
+
+def _richtungstext(rd) -> str:
+    """Klartext einer Kennzahl loadDirection fuer das Protokoll."""
+    rd = int(rd or 0)
+    if rd in LOAD_DIRECTION_PROJEKTION:
+        return LOAD_DIRECTION_PROJEKTION[rd][1]
+    return LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))[1]
+
+
+def _stab_senkrecht(m: Model, name: str) -> bool:
+    """Hat der Stab ein (fast) senkrechtes Element - dort bildet
+    beam3d.local_axes die y-Achse aus global X statt aus global Z."""
+    mem = (getattr(m, "members", None) or {}).get(name)
+    for i in (getattr(mem, "elements", None) or []):
+        nd = m.elements[int(i)].nodes
+        d = np.asarray(m.nodes[nd[1]], float) - np.asarray(m.nodes[nd[0]], float)
+        L = float(np.linalg.norm(d))
+        if L > 0 and abs(d[2]) / L > 0.9999:
+            return True
+    return False
+
+
+def _projektionsanteil(m: Model, e: int, richtung) -> float:
+    """|n . e| eines Flaechenelements: eine Last je projizierter Flaeche
+    (RFEM-Lastrichtung 14 bis 16) je wahrer Elementflaeche."""
+    el = m.elements[e]
+    X = np.asarray(m.nodes[list(el.nodes)], float)
+    if el.typ in ("shell4", "shell8", "ebene4", "ebene8"):        # Ecken zuerst
+        n = np.cross(X[2] - X[0], X[3] - X[1])
+    else:
+        n = np.cross(X[1] - X[0], X[2] - X[0])
+    L = float(np.linalg.norm(n))
+    return abs(float(n @ np.asarray(richtung, float))) / L if L > 0 else 0.0
 
 
 def _zahl(impl: dict, *namen, default: float = 0.0) -> float:
@@ -3351,6 +3428,7 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         return
     case_of = _load_case_of(db, "LineLoad")
     n_ok = n_ohne = n_art = 0
+    n_richtung: dict = {}           # Kennzahl -> Zahl, nicht angesetzt (14.10.2026)
     for h, impl in db.impls("LineLoad"):
         lc = lc_name.get(case_of.get(h["id"]))
         tbl = h.get("impl_table") or ""
@@ -3369,11 +3447,20 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         if not ziele or (not p1 and not p2):
             n_ohne += 1
             continue
-        richtung = _richtung_aus_kennzahl(impl.get("loadDirection"))
+        # Lastrichtung nach der Schnittstelle (LOAD_DIRECTION, 14.10.2026):
+        # 11 bis 13 global je wahrer Laenge, 14 bis 16 je projizierter Laenge.
+        # 0 bis 2 (lokal x, y, z der Linie) kennt das Programm nicht - genannt
+        # und nicht angesetzt. Bis zum 14.10.2026 galt 1 als global Z, 2 als
+        # global X, und jede andere Kennzahl (auch 0) wurde global Z.
+        rd = int(impl.get("loadDirection") or 0)
+        bezug = ""
+        if rd in LOAD_DIRECTION_PROJEKTION:
+            richtung, bezug = _richtung_aus_kennzahl(rd - 3), "projektion"
+        else:
+            richtung = _richtung_aus_kennzahl(rd)
         if richtung is None:
-            richtung = (0.0, 0.0, 1.0)
-        # RFEM: Kennzahl 1 = global Z, dort zeigt Z nach unten - eine positive
-        # Last wirkt in +Z; die Achsendrehung beim Import stellt sie richtig.
+            n_richtung[rd] = n_richtung.get(rd, 0) + 1
+            continue
         q1 = [p1 * c for c in richtung]
         q2 = [p2 * c for c in richtung] if ("trapez" in verteilung.lower()
                                              or "2" in verteilung or p2 != p1) else None
@@ -3381,7 +3468,7 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         bis = _zahl(impl, "distanceB", "distance_b_absolute", "distanceBAbsolute")
         for name in ziele:
             m.add_linienlast(name, q1, art="linie", q2=q2, von=von,
-                             bis=bis if bis > von else None, case=lc)
+                             bis=bis if bis > von else None, case=lc, bezugslaenge=bezug)
             n_ok += 1
     if n_ok:
         C.say(log, f"  {n_ok} Linienlasten an ihre Linie gehaengt - sie wirken auf den "
@@ -3390,6 +3477,11 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         C.say(log, f"  {n_ohne} Linienlasten ohne Ziel oder ohne Betrag - nicht uebernommen")
     if n_art:
         C.say(log, f"  {n_art} Linienlasten anderer Art (Moment, Masse) - nicht uebernommen")
+    for rd, n in sorted(n_richtung.items()):
+        C.warn(log, f"  {n} Linienlasten mit Lastrichtung {rd} = {_richtungstext(rd)} nicht "
+                    "uebernommen (die lokalen Linienachsen von RFEM uebernimmt das Programm "
+                    "nicht) - bitte in RFEM nachsehen und von Hand ansetzen. Bis zum "
+                    "14.10.2026 kamen sie als global Z bzw. X an.")
 
 
 def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
@@ -3435,6 +3527,8 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
     fehlende_zuordnungen: list = []     # Member-ids ohne Stab im Modell
     andere_verteilung: dict = {}
     andere_richtung: dict = {}
+    lokal_senkrecht: dict = {}          # lokal y/z an einem senkrechten Stab (14.10.2026)
+    n_lokal = 0
     gedeutet: set = set()
     n_projektion = 0
     for h, impl in db.impls("MemberLoad"):
@@ -3456,10 +3550,23 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
             continue
         rd = int(impl.get("loadDirection") or 0)
         bezugslaenge = ""
+        system = "global"
         if rd in LOAD_DIRECTION_PROJEKTION:
             richtung = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0),
                         "Z": (0.0, 0.0, 1.0)}[LOAD_DIRECTION_PROJEKTION[rd][0]]
             bezugslaenge = "projektion"
+        elif rd in (0, 1, 2):
+            # lokal x, y, z des Stabes (Schnittstelle, LOAD_DIRECTION). Bis zum
+            # 14.10.2026 kam 1 als global Z und 2 als global X an, 0 fiel als
+            # „unbekannt“ weg. Die Stabachsen stimmen mit RFEM ueberein, wo
+            # beide sie aus global Z bilden: x vom Anfang zum Ende, z in der
+            # Ebene aus x und global Z zu +Z hin, y = z x x, gedreht um den
+            # Stabdrehwinkel (beam3d.local_axes, ``angle`` beim Import). Am
+            # senkrechten Stab bildet Statik3D y aus global X - ob RFEM dort
+            # dieselbe Achse nimmt, ist nicht belegt; lokal y und z werden
+            # dort darum nicht angesetzt, sondern genannt.
+            richtung = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))[rd]
+            system = "local"
         else:
             richtung = _richtung_aus_kennzahl(rd)
         if richtung is None:
@@ -3474,12 +3581,18 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
         if not ziele or (not p1 and not p2):
             n_ohne += 1
             continue
+        if system == "local" and rd in (1, 2) and any(_stab_senkrecht(m, s) for s in ziele):
+            lokal_senkrecht[rd] = lokal_senkrecht.get(rd, 0) + 1
+            continue
         q1 = [p1 * c for c in richtung]
         q2 = [p2 * c for c in richtung] if (p2 and p2 != p1) else None
         for name in ziele:
-            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc, bezugslaenge=bezugslaenge)
+            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc, system=system,
+                             bezugslaenge=bezugslaenge)
         if bezugslaenge:
             n_projektion += 1
+        if system == "local":
+            n_lokal += 1
         # Je Lastzeile zaehlen, nicht je Stab - sonst geht die Summe unten
         # nicht gegen die Rohzeilen auf.
         n_ok += 1
@@ -3515,19 +3628,31 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
                     f"{', …' if len(nummern) > 12 else ''}) - dieser Anteil der Last fehlt. "
                     "Nicht uebernommen werden Staebe ohne Knoten an ihrer Linie und "
                     "Stabtypen ohne Tragwirkung (siehe Stabtypen oben).")
+    if n_lokal:
+        C.say(log, f"    davon {n_lokal} in lokalen Stabachsen (Lastrichtung 0 bis 2 = lokal x, y, z)")
     if gedeutet:
         C.say(log, "    Lastrichtung " + ", ".join(
             f"{r} = {LOAD_DIRECTION[r][1]}" for r in sorted(gedeutet))
-            + " - bitte an einem bekannten Lastfall nachpruefen")
+            + " (Schnittstelle RFEM 6.15, member_load.proto)")
     n_vert = sum(andere_verteilung.values())
-    n_richt = sum(andere_richtung.values())
+    n_richt = sum(andere_richtung.values()) + sum(lokal_senkrecht.values())
+    if lokal_senkrecht:
+        C.warn(log, f"  {sum(lokal_senkrecht.values())} Stablasten an senkrechten Staeben in lokal "
+                    "y oder z nicht uebernommen: dort bildet Statik3D die y-Achse aus global X, "
+                    "ob RFEM dieselbe nimmt, ist nicht belegt - "
+                    + ", ".join(f"{n}x Kennzahl {k} ({_richtungstext(k)})"
+                                for k, n in sorted(lokal_senkrecht.items()))
+                    + "; bitte in RFEM nachsehen und von Hand ansetzen")
     if andere_verteilung:
         C.say(log, f"  {n_vert} Stablasten nicht uebernommen, weil das Programm fuer "
                    "den Stab nur die Gleichlast kennt: " + ", ".join(
                        f"{n}x Verteilung {k}" for k, n in sorted(andere_verteilung.items())))
     if andere_richtung:
-        C.say(log, f"  {n_richt} Stablasten nicht uebernommen, Lastrichtung unbekannt: "
-              + ", ".join(f"{n}x Kennzahl {k}" for k, n in sorted(andere_richtung.items())))
+        C.warn(log, f"  {sum(andere_richtung.values())} Stablasten nicht uebernommen, "
+                    "Lastrichtung unbekannt oder nicht abbildbar: "
+                    + ", ".join(f"{n}x Kennzahl {k} ({_richtungstext(k)})"
+                                for k, n in sorted(andere_richtung.items()))
+                    + " - die Hauptachsen u, v uebernimmt das Programm nicht")
     if n_ohne:
         C.say(log, f"  {n_ohne} Stablasten ohne Ziel oder ohne Betrag - nicht uebernommen")
     if n_art:

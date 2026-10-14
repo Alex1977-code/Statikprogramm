@@ -7273,6 +7273,23 @@ Kettenlinie, je Projektion die Parabel. Bis zum 14.10.2026 ließ der Import
 eine Stablast je projizierter Länge weg und nannte sie unter „Lastrichtung
 unbekannt: Kennzahl 16“.
 
+**Lokale Lastrichtungen aus RFEM** (seit 14.10.2026). Die Kennzahlen 0, 1 und
+2 sind in RFEM lokal x, y und z, bei Stäben 3 und 4 die Hauptachsen u und v
+(Schnittstelle von RFEM 6.15). Bis zum 14.10.2026 las Statik3D 0 als lokal z,
+1 als global Z, 2 als global X und 3 als global Y. Eine Stablast in lokal y
+kam damit als global Z an, eine Flächenlast in der Ebene der Fläche als Druck
+senkrecht zu ihr. Heute gehen Stablasten in lokal x, y und z als lokale
+Stablast an den Stab; nur an einem senkrechten Stab werden lokal y und z
+nicht angesetzt, weil dort nicht belegt ist, dass RFEM und Statik3D dieselbe
+y-Achse bilden. Flächenlasten in lokal z wirken senkrecht zur Fläche,
+Flächenlasten je projizierter Fläche werden auf die Elementfläche
+umgerechnet. Was das Programm nicht abbilden kann – die Hauptachsen u und v,
+Linienlasten in lokalen Linienachsen und Flächenlasten in der Ebene der
+Fläche (lokal x und y) –, steht als WARNUNG mit Zahl und Bedeutung im
+Importprotokoll und muss von Hand angesetzt werden. Am Drehlager-Modell sind
+das alle 711 Flächenlasten (315 in lokal x, 396 in lokal y); sie kamen bis zum
+14.10.2026 senkrecht zur Fläche bzw. in global Z an.
+
 **Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
 Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
 Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
