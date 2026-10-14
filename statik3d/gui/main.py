@@ -19323,7 +19323,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """Nummern der Elemente, deren Knoten alle in ``sel`` liegen - vektorisiert
         ueber das Netzverzeichnis (Zaehlen der gewaehlten Knoten je Element)."""
         m = self.model
-        sel = np.fromiter((int(n) for n in sel), int)
+        # ein Feld (sichtbare Knoten, 836 463 am Drehlager) ohne Python-Schleife
+        sel = (np.asarray(sel, int).ravel() if isinstance(sel, np.ndarray)
+               else np.fromiter((int(n) for n in sel), int))
         if sel.size == 0 or not len(m.elements):
             return np.zeros(0, int)
         flach, elem, lens, _stab = self._netzverzeichnis()
@@ -29115,8 +29117,8 @@ class MainWindow(QtWidgets.QMainWindow):
             sichtbar[l_kn[halten]] = True
         sichtbar |= ~belegt
         if v_["knoten"]:
-            idx = [int(i) for i in v_["knoten"] if 0 <= int(i) < m.nn]
-            sichtbar[idx] = False
+            idx = np.fromiter((int(i) for i in v_["knoten"]), np.int64, len(v_["knoten"]))
+            sichtbar[idx[(idx >= 0) & (idx < m.nn)]] = False
         return np.flatnonzero(sichtbar)
 
     def _auswahl_vergessen(self):

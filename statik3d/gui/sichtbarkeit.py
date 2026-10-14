@@ -68,8 +68,15 @@ def polydata_teil(felder, n_zellen_je_art, punkte_knoten, X, behalten, zellwerte
         je_eintrag = np.repeat(b, laengen)
         teile.append((np.concatenate([[0], np.cumsum(laengen[b])]).astype(np.int64),
                       punkte_knoten[conn[je_eintrag]]))
-    benutzt = [t[1] for t in teile if t is not None]
-    knoten = np.unique(np.concatenate(benutzt)) if benutzt else np.zeros(0, np.int64)
+    # Punkte je benutztem Modellknoten, aufsteigend - ueber eine Maske statt
+    # unique/searchsorted (am Drehlager 0,5 s fuer 2,2 Mio. Eintraege)
+    n_x = len(X)
+    da = np.zeros(n_x, bool)
+    for t in teile:
+        if t is not None:
+            da[t[1]] = True
+    knoten = np.flatnonzero(da)
+    rang = np.cumsum(da, dtype=np.int64) - 1
     pd = pv.PolyData()
     pd.points = np.asarray(X, float)[knoten] if len(knoten) else np.zeros((0, 3))
     for t, setzen in zip(teile, _SETZEN):
@@ -77,7 +84,7 @@ def polydata_teil(felder, n_zellen_je_art, punkte_knoten, X, behalten, zellwerte
             continue
         ca = vtkCellArray()
         ca.SetData(numpy_to_vtkIdTypeArray(t[0], deep=True),
-                   numpy_to_vtkIdTypeArray(np.searchsorted(knoten, t[1]).astype(np.int64), deep=True))
+                   numpy_to_vtkIdTypeArray(rang[t[1]], deep=True))
         getattr(pd, setzen)(ca)
     for name, werte in zellwerte.items():
         pd.cell_data[name] = np.asarray(werte)[behalten]

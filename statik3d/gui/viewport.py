@@ -744,7 +744,9 @@ def add_netzknoten(plotter, model: Model, groesse: float = 1.0, nur=None, lage=N
     X = _lage(model, lage)
     idx = np.flatnonzero(netzknoten_maske(model))
     if nur is not None:
-        idx = np.intersect1d(idx, _knotenfeld(nur, model.nn))
+        da = np.zeros(int(model.nn), bool)
+        da[_knotenfeld(nur, model.nn)] = True
+        idx = idx[da[idx]]
     if not len(idx):
         return
     plotter.add_points(X[idx], color=FARBE_NETZKNOTEN, point_size=max(2.0, 4.0 * float(groesse)),
@@ -758,7 +760,12 @@ def _knotenfeld(nur, nn: int) -> np.ndarray:
         a = np.fromiter((int(i) for i in nur), np.int64, len(nur))
     else:
         a = np.asarray(nur, np.int64).ravel()
-    return np.unique(a[(a >= 0) & (a < int(nn))])
+    a = a[(a >= 0) & (a < int(nn))]
+    # schon geordnet und eindeutig (MainWindow._sichtbare_knoten: flatnonzero)?
+    # Dann ohne unique - das kostete am Drehlager 0,37 s je Aufruf
+    if len(a) > 1 and not bool(np.all(a[1:] > a[:-1])):
+        a = np.unique(a)
+    return a
 
 
 def _lage(model: Model, lage=None) -> np.ndarray:
@@ -798,7 +805,9 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None, lage=None):
     if nur is not None:
         # als Feld statt ueber eine Python-Schleife: am Drehlager mit einem
         # ausgeblendeten Koerper 836 463 Knoten, 0,71 s je Bild (14.10.2026)
-        alle = np.intersect1d(alle, _knotenfeld(nur, model.nn))
+        da = np.zeros(int(model.nn), bool)
+        da[_knotenfeld(nur, model.nn)] = True
+        alle = alle[da[alle]]               # beide aufsteigend: wie intersect1d
     frei = np.intersect1d(frei, alle)
     if not len(alle):
         return
@@ -3252,10 +3261,14 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
     weg_e = {int(i) for i in (ausser or ())}
     weg_f = set(ausser_flaechen or ())
     weg_l = set(ausser_linien or ())
-    sicht_k = None if knoten is None else {int(i) for i in knoten}
+    # Maske statt Menge (14.10.2026): am Drehlager 0,15 s je Bild fuer die Menge
+    sicht_k = None
+    if knoten is not None:
+        sicht_k = np.zeros(int(model.nn), bool)
+        sicht_k[_knotenfeld(knoten, model.nn)] = True
 
     def knoten_da(n) -> bool:
-        return 0 <= int(n) < model.nn and (sicht_k is None or int(n) in sicht_k)
+        return 0 <= int(n) < model.nn and (sicht_k is None or bool(sicht_k[int(n)]))
     arten: list = []
     texte: dict = {}            # Lastart -> [(Punkt, Text)]
     hervor = {(str(a), int(b)) for a, b in (hervor or ())}
