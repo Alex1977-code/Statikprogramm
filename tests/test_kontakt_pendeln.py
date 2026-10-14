@@ -181,8 +181,11 @@ def test_pendeln_an_der_haftgrenze():
     m = lager_in_flaechenachsen()
     with schutz(False):
         res0, _cs0 = rechnen(m)
-    check("ohne Pendelschutz: Deckel (das Pendeln ist nachgestellt)",
-          not res0.info.get("contact_converged") and "deckel" in grund(res0),
+    # Seit dem 14.10.2026 erkennt der Loeser das Pendeln mit Periode 2, friert es ein
+    # und prueft (solver.PENDEL_STABILISIEREN): +-10 um liegen ueber 1 um, der Lauf
+    # endet mit dem Grund "pendeln" statt am Deckel - nicht konvergiert bleibt er
+    check("ohne Pendelschutz: nicht konvergiert, Deckel oder Pendeln (das Pendeln ist nachgestellt)",
+          not res0.info.get("contact_converged") and ("deckel" in grund(res0) or "pendeln" in grund(res0)),
           f"konvergiert {res0.info.get('contact_converged')}, Grund {grund(res0)}, "
           f"Runden {res0.info.get('contact_iterations')}")
     m = lager_in_flaechenachsen()
@@ -267,8 +270,9 @@ def test_ingenieurkriterium():
     with schutz(False):
         res0, _ = rechnen(m)
     ing0 = res0.info.get("contact_ingenieur")
-    check("Schranken wie im Programm: +-10 um je Runde sind nicht vernachlaessigbar, Deckel",
-          not res0.info.get("contact_converged") and "deckel" in grund(res0) and not ing0,
+    check("Schranken wie im Programm: +-10 um je Runde sind nicht vernachlaessigbar, nicht konvergiert",
+          not res0.info.get("contact_converged") and ("deckel" in grund(res0) or "pendeln" in grund(res0))
+          and not ing0,
           f"konvergiert {res0.info.get('contact_converged')}, Grund {grund(res0)}")
     try:
         solver.ABSCHLUSS_SPANNUNG, solver.ABSCHLUSS_WEG_ANTEIL = 1e12, 1.0

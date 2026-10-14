@@ -17025,7 +17025,10 @@ class MainWindow(QtWidgets.QMainWindow):
                "endet ein pendelnder Lauf wie bisher am Deckel der Reibungsnachprüfung.")
         self.sp_pendel_kraft.setToolTip(tip)
         self.sp_pendel_weg.setToolTip(tip)
-        gkl.addWidget(row("Restwechsel bis", self.sp_pendel_kraft, "   Klaffung bis", self.sp_pendel_weg))
+        # je Feld eine Zeile: beide in einer waren mit Segoe UI 493 px breit, der rechte
+        # Bereich hat 450 (tests/test_register_berechnung)
+        gkl.addWidget(row("Restwechsel bis", self.sp_pendel_kraft))
+        gkl.addWidget(row("Klaffung bis", self.sp_pendel_weg))
         lay.addWidget(gk)
 
         self.experten = msk.Einklappabschnitt(
