@@ -493,6 +493,20 @@ def test_bericht():
         check(f"Bericht nennt „{text}“", text in html)
     check("Zusammenfassung nennt die Volumen",
           "Volumen (EN 1993-1-1, 6.2.1(5))" in an.summary())
+    # die Elementnummer zaehlt in der Zusammenfassung des Berichts wie im
+    # Einzelkapitel ab 1 (bis zum 14.10.2026 dort ab 0, eins daneben)
+    import html as _h
+    import re
+    c = an.volumen.bereiche["Schaft"]
+    text = _h.unescape(re.sub(r"<[^>]+>", " ", html))
+    text = re.sub(r"\s+", " ", text)
+    kapitel = re.search(r"maßgebendes Element (\d+)", text)
+    zusammen = re.search(r"maßgebend \(Volumen\) Schaft: Element (\d+)", text)
+    check("Bericht: Elementnummer in Zusammenfassung und Einzelkapitel gleich, ab 1",
+          kapitel is not None and zusammen is not None
+          and kapitel.group(1) == zusammen.group(1) == str(c.element + 1),
+          f"Zusammenfassung {zusammen and zusammen.group(1)}, Einzelkapitel "
+          f"{kapitel and kapitel.group(1)}, Element (ab 0) {c.element}")
 
     # ohne Bereiche kein Kapitel
     m2, _e2, _s2 = zugkoerper()

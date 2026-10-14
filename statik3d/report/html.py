@@ -4810,8 +4810,10 @@ class Report:
                                + (f", {schlimmster.bauteil}" if schlimmster.bauteil else "")
                                + f", {schlimmster.kombination}"))
                 else:
+                    # Elementnummer ab 1 wie im Einzelkapitel (bis zum
+                    # 14.10.2026 hier ab 0, eins daneben)
                     kv.append(("maßgebend (Volumen)",
-                               f"{schlimmster.name}: Element {schlimmster.element}, "
+                               f"{schlimmster.name}: Element {schlimmster.element + 1}, "
                                f"{schlimmster.kombination}"))
                 nf_v = [c.name for c in gefuehrte if c.util > 1.0]
                 if nf_v:
