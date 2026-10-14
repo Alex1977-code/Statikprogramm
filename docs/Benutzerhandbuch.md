@@ -6694,9 +6694,14 @@ geschlossene Lösung (`tests/test_temperatur_sofort.py`).
 
 Weil der Anwender die Entscheidung mit der Vorspannung begründet, gilt sie
 seit dem 10.10.2026 auch für eine Vorspannung, die als **Vorspannkraft**
-eingegeben ist (*Lasten → Vorspannung*), im Stab ebenso wie als Körper. Sie
+eingegeben ist (*Lasten → Vorspannung*, seit dem 13.10.2026 die Lastart
+„Anfangsdehnung (F_v)“), im Stab ebenso wie als Körper. Sie
 wirkt ab der ersten Stufe voll, in einer Kombination mit ihrem Faktor aus der
-Kombination, zusammen mit den Temperaturlasten. Zuerst galt die Regel nur
+Kombination, zusammen mit den Temperaturlasten. Die Lastart „Vorspannkraft
+(Soll nach Verankerung)“ vom 13.10.2026 folgt nicht dieser Regel, sondern wird
+vor allen Stufen in einem eigenen Schritt gespannt und verriegelt (siehe
+„Vorspannkraft (Soll nach Verankerung)“); auch sie steht damit ab der ersten
+Stufe voll da. Zuerst galt die Regel nur
 für Temperaturlasten, und die Zeile im Protokoll hieß „Temperaturlasten
 wirken ab der ersten Laststufe voll …“; eine Vorspannkraft wuchs bis dahin
 weiter mit den Stufen mit. Derselbe Würfel mit einer Vorspannkraft von
