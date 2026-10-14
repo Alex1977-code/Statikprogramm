@@ -1342,6 +1342,45 @@ def _stabstatus_offen(kontakt) -> str:
     return f() if f is not None else ""
 
 
+#: Kontaktlauf konvergiert als Bedingung der Konvergenz einer Laststufe -
+#: VORBEREITET, NICHT EINGESCHALTET (14.10.2026). Entscheidung des Anwenders:
+#: „Konvergenz des Kontaktlaufs über Ingenieurgrößen definieren … Erst dann die
+#: Bedingung „Kontaktlauf konvergiert“ ins Abbruchkriterium aufnehmen“ und
+#: „Kontaktbedingung erst nach der V36-Klärung einbauen“. Eingeschaltet gilt ein
+#: Newton-Schritt (und der Abschluss) nur als konvergiert, wenn der letzte volle
+#: Kontaktlauf konvergiert ist - streng oder nach Ingenieurgroessen
+#: (solver.PENDEL_STABILISIEREN, ABSCHLUSS_INGENIEUR); sonst rechnet die Stufe
+#: weiter wie bei offenem Stabstatus. Vorschlag aus dem Paket 3 der
+#: Singularitaeten (sp3, 13.10.2026): laeufe[-1]["konvergiert"]. Aus heisst:
+#: :func:`_kontakt_offen` gibt immer "" zurueck, alles rechnet wie vorher. Wird
+#: nach der V36-Klaerung und auf Freigabe des Anwenders auf True gesetzt.
+KONTAKT_IN_KONVERGENZ = False
+
+
+def _kontakt_offen(kontakt) -> str:
+    """Leer, solange :data:`KONTAKT_IN_KONVERGENZ` aus ist, und eingeschaltet,
+    wenn der letzte volle Kontaktlauf konvergiert ist - sonst der Grund vom
+    Loeser (solver._KontaktImNewton.kontakt_offen). Ohne Loeser immer leer."""
+    if not KONTAKT_IN_KONVERGENZ:
+        return ""
+    f = getattr(kontakt, "kontakt_offen", None) if kontakt is not None else None
+    return f() if f is not None else ""
+
+
+def _offen(kontakt) -> str:
+    """Was einer sonst konvergierten Stufe noch fehlt: der Stabstatus
+    (:func:`_stabstatus_offen`) oder - eingeschaltet - der Kontaktlauf
+    (:func:`_kontakt_offen`); "" heisst nichts."""
+    return _stabstatus_offen(kontakt) or _kontakt_offen(kontakt)
+
+
+def _offen_was(grund: str) -> str:
+    """„steht der Stabstatus nicht“ - oder beim Kontaktlauf „ist der Kontaktlauf
+    nicht konvergiert“ (der Grund von :func:`_kontakt_offen` beginnt mit „Kontakt:“)."""
+    return ("ist der Kontaktlauf nicht konvergiert" if str(grund).startswith("Kontakt:")
+            else "steht der Stabstatus nicht")
+
+
 def _schlussabnahme(rest: float, toleranz: float) -> bool:
     """Die Abnahme am Schluss: passt F_p zur Loesung des Abschlusses?
     ``rest`` ist die Aenderung von F_p, die die Rueckfuehrung (von der Basis
@@ -1746,7 +1785,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             # Zugstaebe in der Konvergenzbedingung (13.10.2026): streng wie
             # ingenieurmaessig ist die Stufe erst mit stehendem Stabstatus
             # konvergiert
-            stab_offen = _stabstatus_offen(kontakt) if ok else ""
+            stab_offen = _offen(kontakt) if ok else ""
             if stab_offen:
                 ok = False
                 if log is not None:
@@ -1833,7 +1872,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                                                         and bool(mess["erfuellt"]))
             # Zugstaebe (13.10.2026): auch der Abschluss darf den Stabstatus
             # nicht mehr aendern - sonst rechnen die Nachschritte weiter
-            stab_offen = _stabstatus_offen(kontakt)
+            stab_offen = _offen(kontakt)
             abgenommen = abgenommen and not stab_offen
             # Nachiteration vom Abschluss aus (27.09.2026): der volle
             # Kontaktlauf des Abschlusses kann u so verschieben, dass F_p nicht
@@ -1876,7 +1915,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 abgenommen = _schlussabnahme(rest, tol) or (_zonen_greifen(zonen, mess)
                                                             and _schlussabnahme(rest_mass, tol)
                                                             and bool(mess["erfuellt"]))
-                stab_offen = _stabstatus_offen(kontakt)
+                stab_offen = _offen(kontakt)
                 abgenommen = abgenommen and not stab_offen
             if nach and log is not None:
                 log.append(f"Plastizität: Abschluss nach {nach} Nachschritt{'' if nach == 1 else 'en'} "
@@ -1893,7 +1932,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             info["konvergiert"] = False
             if log is not None:
                 if stab_offen:
-                    log.append(f"Plastizität: an der Lösung des Abschlusses steht der Stabstatus nicht "
+                    log.append(f"Plastizität: an der Lösung des Abschlusses {_offen_was(stab_offen)} "
                                f"({stab_offen}) - nicht konvergiert")
                 else:
                     log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
@@ -2086,7 +2125,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                     rho = max(rho, (a8[-1] / a8[0]) ** (1.0 / (len(a8) - 1)))
                 fehler = diff * max(1.0, rho / (1.0 - rho)) if rho < 1.0 else np.inf
             # Zugstaebe in der Konvergenzbedingung (13.10.2026) wie im Newton
-            stab_offen = _stabstatus_offen(kontakt) if fehler <= float(einst.toleranz) else ""
+            stab_offen = _offen(kontakt) if fehler <= float(einst.toleranz) else ""
             if stab_offen and log is not None:
                 log.append(f"Plastizität: Laststufe {k}/{stufen}, Schritt {it}: {stab_offen} - "
                            "noch nicht konvergiert")
@@ -2122,11 +2161,11 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
         F_p_ende, _z, _i = schritt(model, u, basis, einst, elemente, None)
         rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
         info["rest_abschluss"] = rest
-        stab_offen = _stabstatus_offen(kontakt)
+        stab_offen = _offen(kontakt)
         if info["konvergiert"] and stab_offen:
             info["konvergiert"] = False
             if log is not None:
-                log.append(f"Plastizität: an der Lösung des Abschlusses steht der Stabstatus nicht "
+                log.append(f"Plastizität: an der Lösung des Abschlusses {_offen_was(stab_offen)} "
                            f"({stab_offen}) - nicht konvergiert")
         if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):
             info["konvergiert"] = False

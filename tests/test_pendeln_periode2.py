@@ -46,6 +46,11 @@ Was hier belegt wird:
    die Grenze der Richtungsrunden abzuwarten.
 5. Ohne Pendeln bitgleich mit und ohne die Regel; Einstellungen am Modell
    gespeichert und in der Maske.
+6. Die Bedingung „Kontaktlauf konvergiert“ im Abbruch der Plastizitaet ist
+   vorbereitet (plastizitaet._kontakt_offen) und steht aus
+   (KONTAKT_IN_KONVERGENZ): aus nimmt die Plastizitaet Stufen mit gedeckelten
+   Kontaktlaeufen an wie bisher, eingeschaltet - nur in dieser Pruefung - erst
+   mit einem konvergierten Kontaktlauf (8 statt 6 Newton-Schritte).
 
 Aufruf:  python -m tests.test_pendeln_periode2
 """
@@ -293,6 +298,36 @@ def test_einstellungen():
           f"{w.model.plastizitaet.pendel_kraft_anteil}, {w.model.plastizitaet.pendel_weg}")
 
 
+def test_kontakt_offen_vorbereitet():
+    print("\n--- Bedingung „Kontaktlauf konvergiert“ im Abbruch der Plastizität: vorbereitet, Schalter aus ---")
+    from statik3d import plastizitaet as pl
+    check("Schalter KONTAKT_IN_KONVERGENZ steht aus (Vorgabe)",
+          getattr(pl, "KONTAKT_IN_KONVERGENZ", None) is False, str(getattr(pl, "KONTAKT_IN_KONVERGENZ", None)))
+    check("_kontakt_offen ist aufrufbar und ausgeschaltet immer leer",
+          hasattr(pl, "_kontakt_offen") and pl._kontakt_offen(object()) == "")
+    # Pruefmodell mit Fliessen, Regel aus (Schranken 0), Halbieren aus: die Kontaktlaeufe
+    # enden am Deckel, die Plastizitaet urteilt allein an F_p
+    alt_h = pl.HALBIEREN_MAX
+    pl.HALBIEREN_MAX = 0
+    try:
+        r0 = solver.solve_static(pendelmodell(0.5e6, fy=FY, schwellen=(0.0, 0.0)))
+        pl.KONTAKT_IN_KONVERGENZ = True
+        try:
+            r1 = solver.solve_static(pendelmodell(0.5e6, fy=FY, schwellen=(0.0, 0.0)))
+        finally:
+            pl.KONTAKT_IN_KONVERGENZ = False
+    finally:
+        pl.HALBIEREN_MAX = alt_h
+    pz0, pz1 = r0.info.get("plastizitaet") or {}, r1.info.get("plastizitaet") or {}
+    deckel0 = sum(1 for e in r0.info.get("laeufe") or [] if e.get("grund") == "deckel")
+    check("aus: die Plastizität nimmt die Stufen an, obwohl Kontaktläufe am Deckel enden",
+          pz0.get("konvergiert") is True and deckel0 >= 1, f"konvergiert {pz0.get('konvergiert')}, {deckel0} Läufe am Deckel")
+    zeilen1 = [z for z in pz1.get("log") or [] if "Kontaktlauf" in z and "nicht konvergiert" in z]
+    check("eingeschaltet (nur hier in der Prüfung): Stufe erst mit konvergiertem Kontaktlauf angenommen",
+          zeilen1 and int(pz1.get("iterationen", 0)) > int(pz0.get("iterationen", 0)),
+          f"Newton {pz0.get('iterationen')} -> {pz1.get('iterationen')}; " + (zeilen1[0][:150] if zeilen1 else "keine Zeile"))
+
+
 def _bit(r0, r1):
     du = float(np.max(np.abs(np.asarray(r1.u) - np.asarray(r0.u))))
     dR = float(np.max(np.abs(np.asarray(r1.reactions) - np.asarray(r0.reactions))))
@@ -332,7 +367,7 @@ def test_ohne_pendeln_bitgleich():
 
 def main() -> int:
     for t in (test_vorher_streng, test_erkannt_stabilisiert, test_einfrieren_verletzt, test_gleitrichtungen,
-              test_plastizitaet, test_ohne_pendeln_bitgleich, test_einstellungen):
+              test_plastizitaet, test_ohne_pendeln_bitgleich, test_einstellungen, test_kontakt_offen_vorbereitet):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

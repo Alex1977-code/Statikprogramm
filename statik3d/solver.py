@@ -4496,6 +4496,23 @@ class _KontaktImNewton:
                          + (" …" if len(zurueck) > 6 else "") + " wieder aktiv")
         return "Zugstäbe: Status im letzten Schritt geändert (" + "; ".join(teile) + ")"
 
+    def kontakt_offen(self) -> str:
+        """Leer, wenn der letzte volle Kontaktlauf konvergiert ist - streng oder
+        nach Ingenieurgroessen (PENDEL_STABILISIEREN, ABSCHLUSS_INGENIEUR) -,
+        sonst der Grund. Gefragt nur, wenn plastizitaet.KONTAKT_IN_KONVERGENZ
+        eingeschaltet ist (vorbereitet am 14.10.2026, aus bis zur V36-Klaerung
+        und zur Freigabe des Anwenders). Ein abgekuerzter Lauf (gemeinsame
+        Iteration) entscheidet nichts: die Stufe endet dort ohnehin erst mit
+        einem vollen Lauf."""
+        laeufe = self.res.info.get("laeufe") or []
+        if not laeufe:
+            return ""
+        e = laeufe[-1]
+        if e.get("abgekuerzt") or e.get("konvergiert", True):
+            return ""
+        return (f"Kontakt: der letzte Kontaktlauf (Nr. {int(e.get('nr', 0) or 0)}) ist nicht konvergiert "
+                f"(Grund „{e.get('grund') or 'unbekannt'}“)")
+
     def loesen(self, Fg, dK=None, voll=True):
         res, halter = self.res, self.halter
         vor = len(res.info.get("laeufe") or [])
