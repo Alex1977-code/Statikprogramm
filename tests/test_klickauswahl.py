@@ -840,7 +840,9 @@ def test_ein_neuzeichnen_je_klick():
         with _Zaehler(w) as z:
             f()
             app.processEvents()
-        ok = (z["redraw"] == 1 and z["_aufbauen"] == 1 and z["render"] == 1 and z["refresh_all"] == 0
+        # seit 14.10.2026 (Ansichtspaket B) ohne Neuaufbau: redraw zeichnet nur
+        # die Hervorhebung der Auswahl neu, _aufbauen laeuft nicht
+        ok = (z["redraw"] == 1 and z["_aufbauen"] == 0 and z["render"] == 1 and z["refresh_all"] == 0
               and z["_kontext_abgleichen"] == 1 and z["_info_zeigen"] == 1
               and z["_tabellen_markieren"] == 1 and z["_refresh_baum"] == 0
               and z["refresh_modelltabellen"] == 0)

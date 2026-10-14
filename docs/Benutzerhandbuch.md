@@ -119,7 +119,7 @@ Fünfzehn Register nach Arbeitsschritt:
 | **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
 | **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
 | **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
-| **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
+| **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* (mit **Ansicht speichern**), Schnittebene, Schnittbox und **Schnitt aus**; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher (F1), **Tastenkürzel** (die Liste aller Kürzel), Info, Update |
 
@@ -376,8 +376,8 @@ Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
 Fenster), ist das Ribbon eingeklappt, unten steht nur die Kopfzeile mit
 Gruppe, Reitern und Tabellenknöpfen (ein Klick auf einen Reiter, die Wahl
 einer Gruppe oder der Knopf *Filter* klappt den Bereich auf; bis zum
-03.10.2026 war es die Registerzeile der Gruppen), der Würfel ist kleiner
-und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
+03.10.2026 war es die Registerzeile der Gruppen), das Achsen-Gizmo ist
+kleiner (bis zum 14.10.2026 der Ansichtswürfel) und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
 unten links (bis zum 25.09.2026 lag sie auf ihnen, „73.52 Knoten 14“ war
 nicht zu lesen — auch im Berichtsbild aus der Ansicht). Wird das Fenster
 wieder groß genug, ist alles wie vorher. Die Ansicht hat so bei 1366 × 768
@@ -457,7 +457,7 @@ Die Arbeitsfläche in drei Spalten:
   | **Nachweise** → Schweißnähte, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte, gebündelt; die Stäbe mit Nachweis stehen als *Stäbe* unter *Geometrie* |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
-  | **Hilfsobjekte** → Bemaßungen, Layer | Maße und benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) |
+  | **Hilfsobjekte** → Bemaßungen, Layer, Ansichten | Maße, benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) und gespeicherte Ansichten (seit 14.10.2026) |
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -704,6 +704,13 @@ Die Arbeitsfläche in drei Spalten:
   *Kontaktbedingung umbenennen und löschen*, *Einen Lastfall löschen*, *Eine
   Kombination löschen* und *Eine Ermüdungslast löschen*.
 
+  **Ein Doppelklick auf ein Teil** — Knoten, Linie, Stab, Stabelement, Fläche
+  oder Volumen — stellt seit dem 14.10.2026 die Ansicht darauf (Blickrichtung
+  bleibt, das Teil wird eingepasst); der Rechtsklick bietet dazu *Nur dieses
+  zeigen* und *Alle einblenden* (Kapitel 11, „Ausblenden ohne Neuaufbau“).
+  Bearbeitet werden diese Teile über Rechtsklick *Bearbeiten …* oder die
+  Eingabetaste; bis zum 14.10.2026 öffnete der Doppelklick sie.
+
   **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske rechts
   (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
   mit Wirkung je Freiheitsgrad, Lastfall, Kombination, Stellung,
@@ -899,6 +906,24 @@ Plastizität, nicht gemessen. Verriegelt wird in der Lage der letzten Stufe, und
 jeder Stab trägt danach genau F_soll, gleich mit wie vielen Stufen. Im
 Fortschritt steht „Spannschritt Gruppe 1, Stufe 2/3: 66,67 % von F_soll“, im
 Ergebnis `res.info["vorspannung"]["spannstufen"]`.
+
+**Ankerenden an starren Scheiben und in Volumen im Spannschritt** (seit
+14.10.2026). Bis zum 14.10.2026 verlor ein Ankerende im Spannschritt seine
+Kopplung, wenn es Master einer starren Scheibe war oder als Stabende in einem
+Volumen hing. Der Anker ist im Spannschritt inaktiv, an seinem Ende hing dann
+kein wirksames Element mehr, und das Programm ließ jede Kopplung an einem
+solchen Knoten weg. Der Knoten wurde automatisch gehalten, die Kraft des
+Kräftepaars ging in diese Haltung statt in die Platte, und je Spannstufe stand
+„Knoten K157: F_z = −314,900 kN an einem Knoten ohne Bauteil – Mechanismus“
+im Fortschritt, am Drehlager für alle 16 Anker. Der Spannzustand verformte
+die Platten nicht, und nach dem Verankern trug der Anker weniger als F_soll:
+An einem Prüfkörper (Quader mit Anker, k_A/k_B = 1/4) waren es 80 % der
+Sollkraft. Seither bleibt eine Kopplung wirksam, solange an einem ihrer
+beiden Knoten ein wirksames Element hängt (siehe „Situationen“). Das
+Ankerende folgt der Scheibe oder dem Volumen, das Kräftepaar drückt die
+Platte zusammen, und der Anker trägt nach dem Verankern F_soll. Am Drehlager
+hat der Spannschritt damit so viele Unbekannte wie das ganze System
+(426 867, bis dahin 426 771).
 
 **Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
 RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
@@ -2719,7 +2744,11 @@ Geprüft in `tests/test_ergebnisdarstellung.py`.
 Modellbaum. Wer Name und Bildunterschrift vorher festlegen will, nimmt am
 Zweig „Bericht“ den Doppelklick oder Rechtsklick → *Neu: Berichtsbild …*:
 rechts öffnet sich eine Anlegemaske, und die Ansicht wird erst mit OK
-aufgenommen (seit 03.10.2026; bis dahin hatte der Zweig kein *Neu*). Ein
+aufgenommen (seit 03.10.2026; bis dahin hatte der Zweig kein *Neu*). Seit dem
+14.10.2026 kann das Bild eine **gespeicherte Ansicht** verwenden: in der
+Anlegemaske steht dann das Feld *Ansicht* („wie sie jetzt steht“ oder eine
+gespeicherte), und die Maske einer gespeicherten Ansicht hat den Knopf
+**In den Bericht**; die Bildunterschrift nennt die Ansicht. Ein
 Doppelklick auf einen Ergebniseintrag nimmt seit dem
 25.09.2026 nichts mehr auf, er zeigt nur. Aufgenommen wird das
 Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
@@ -3028,9 +3057,53 @@ Volumen an jeder Stelle ansehen, etwa der Spannungsverlauf durch die Wand
 einer Bohrung. Geprüft in `tests/test_gui_smoke.py` (Abschnitt Schnittebene:
 schräge Ebene durch die Mitte, aus der Ansicht, Werkzeug im Bild).
 
+**Schnittbox (seit 14.10.2026).** Zusätzlich zur Ebene gibt es den Schalter
+**Schnittbox** (*Ansicht → Sicht*, unter *Andere Seite*). Er legt eine Box
+aus sechs Ebenen um alles, was gerade im Bild ist, mit 1 % Luft je Seite, und
+gezeigt wird nur noch, was in der Box liegt. Auf jeder Seite der Box sitzt
+ein orangefarbener Punkt, der Griff. Wer ihn mit der linken Maustaste zieht,
+schiebt diese Seite längs ihrer Achse; dabei folgen nur Rahmen und Griffe der
+Maus, geschnitten wird beim Loslassen, denn an einem großen Modell ist ein
+Schnitt kein Mausschritt. Das **Mausrad über einem Griff** schiebt die Seite
+fein, je Rasterschritt um 0,5 % der Modellausdehnung längs dieser Achse:
+vorwärts nach außen, die Box wird größer, zurück nach innen. Neben den
+Griffen zoomt das Rad wie immer. Eine Seite lässt sich nicht über die
+gegenüberliegende ziehen, es bleibt mindestens 1 % der Modellausdehnung
+übrig, und sie geht höchstens 5 % über das Modell hinaus. Gedreht wird die
+Box nicht, ihre Seiten liegen parallel zu den globalen Achsen.
+
+Beim Einschalten öffnet sich rechts die Maske *Schnittbox*. Sie zeigt den
+Bereich als „x … · y … · z …“ in der Längeneinheit der Einstellungen und
+die sechs Grenzen in Metern zum Eintippen; **Schneiden** übernimmt sie,
+**Um alles Sichtbare** legt die Box wieder um alles im Bild, und **Schnitt
+aus** schaltet Box und Ebene aus. Beim Ziehen und mit dem Rad steht der
+Bereich auch in der Statuszeile. Geschnitten wird wie bei der Ebene das
+Volumennetz, bevor seine Außenhaut gebildet wird: auf den Schnittflächen
+stehen die Elemente des Inneren mit ihren Ergebnisfarben. Ebene und Box
+lassen sich zusammen benutzen; dann gilt beides.
+
+**Schnitt aus** (*Ansicht → Sicht*, unter dem Schieber) schaltet Schnittebene
+und Schnittbox auf einmal aus, und das ganze Modell steht wieder im Bild.
+Der Knopf ist nur bedienbar, solange geschnitten wird.
+
+**Werte auf den Schnittflächen (seit 14.10.2026 richtig).** Ein Schnitt legt
+neue Punkte auf die Kanten und in das Innere der Elemente; sie sind keine
+Modellknoten. Seit dem 14.10.2026 bekommen sie Farbe und Verformung aus den
+Knoten des Elements, in dem sie liegen, mit dessen Formfunktionen (bei tet10
+quadratisch). Bis dahin nahm die Ansicht nach einem Schnitt die laufende
+Nummer des Punktes im geschnittenen Netz als Knotennummer: am Würfel aus
+tet10 (Schnitt bei x = 0,37) gehörte jeder Punkt der Oberfläche zu einem
+falschen Knoten, bis 1,59 m daneben. Farbbilder mit Schnittebene aus der Zeit
+davor zeigen also fremde Werte am falschen Ort. Kennwerte, Max-/Min-Marken,
+Tabellen, Bericht und Nachweise lesen die Knoten selbst und waren nicht
+betroffen. Geprüft in `tests/test_ansichten.py`: ein lineares Prüffeld ist auf
+jedem Schnittpunkt exakt, die Verformung stimmt mit der Interpolation von VTK
+im ungeschnittenen Netz überein, bei der Box wie bei der Ebene.
+
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen ▾* und *Sicht ▾*, der Fang unter *Geometrie → Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
-und als **iso** unter dem Ansichtswürfel.
+und als Knopf **alles** unter dem Achsen-Gizmo, die isometrische Ansicht
+daneben als **iso**.
 
 **Sicht — ausblenden und wieder zeigen.** Was man nicht sieht, stört nicht:
 *Auswahl ausblenden* nimmt die gewählten Stäbe, Flächen, Volumen, Linien,
@@ -3052,6 +3125,54 @@ dabei nicht mit. Er zählt beim Loslassen und nur ohne Ziehbewegung; hat das
 Mausrad in den letzten 0,4 s gerollt, gilt er nicht — wer beim Zoomen das Rad
 drückt, will nicht alles einpassen (16.09.2026).
 
+**Ausblenden ohne Neuaufbau.** Seit dem 14.10.2026 (Ansichtspaket B, nach dem
+Vorbild von ediBIM) gibt es für die Sicht drei Tasten in der Ansicht: **H**
+blendet die Auswahl aus, **Umschalt+H** lässt nur die Auswahl stehen (wie
+*Selektion anzeigen*), **Alt+H** blendet alles wieder ein. Die Tasten wirken,
+solange die Ansicht die Tastatur hat (nach einem Linksklick in sie), und
+stehen im Hinweis der drei Befehle. Im Modellbaum bietet der Rechtsklick auf
+ein Teil — Knoten, Linie, Stab, Stabelement, Fläche oder Volumen — *Nur
+dieses zeigen*, *Alle einblenden* und *Ansicht darauf stellen*; sind mehrere
+Einträge derselben Art gewählt, heißt der erste *Nur diese zeigen (N)*. Ein
+**Doppelklick** auf ein solches Teil stellt die Ansicht darauf: die
+Blickrichtung bleibt, das Ziel ist die Mitte des Teils, und der Ausschnitt
+passt es ein. Bearbeitet wird es über Rechtsklick *Bearbeiten …* oder die
+Eingabetaste; bis zum 14.10.2026 öffnete der Doppelklick auf einen Knoten oder
+eine Linie den Dialog und auf eine Fläche oder ein Volumen die Maske. Unten
+rechts in der Ansicht stehen **Rücksetzer-Knöpfe**, nur solange es etwas
+zurückzunehmen gibt: *Schnitt aus*, solange die Schnittebene oder die
+Schnittbox an ist (der Knopf nimmt beide zurück wie *Schnitt aus* im Ribbon;
+mit Schnittebene oder Schnittbox baut das Ausblenden die Szene weiter neu auf,
+damit die Werte auf den Schnittflächen stehen), und
+*N Teile einblenden*, solange von Hand etwas ausgeblendet ist (gezählt werden
+Körper, Stäbe und Flächen, sonst Elemente, Linien oder Knoten; der Hinweis
+nennt sie). Bis zum 14.10.2026 baute jede Auswahl und jedes Ausblenden die
+ganze Szene neu auf. Jetzt bildet das Programm die Oberfläche **je Körper** einmal
+je Netzstand, und was zu sehen ist, ist nur noch eine Auswahl ihrer Zellen —
+dieselben Zellen, die eine neu gebildete Oberfläche hätte, auch an Fugen mit
+gemeinsamen Knoten. Die Hervorhebung der Auswahl ist ein eigener kleiner
+Darsteller; ein Auswahlklick zeichnet nur ihn neu, ein Ausblenden nur das
+Netz und was an den sichtbaren Knoten hängt (Lager, Linien, Knoten, Nummern,
+Lasten, Geist). Gemessen am Drehlager (617 241 Elemente, 108 Körper, Körper
+V30 mit 115 984 Elementen; offscreen, Median aus drei, alter und neuer Stand
+gleichzeitig): ein Auswahlklick 1,04 s → 0,19 s ohne und 1,99 s → 0,24 s mit
+Ergebnis, ein Klick ins Leere 0,49 s → 0,01 s, einen Körper ausblenden 3,9 s →
+0,53 s, *Vorherige Sicht* 2,9 s → 0,50 s, Isolieren 2,5 s → 1,1 s, *Alles
+zeigen* 3,2 s → 0,84 s. Ganz neu aufgebaut
+wird weiter, wenn ein Ergebnis gezeigt wird — Skala „nur sichtbare Teile“,
+Kennwerte, Max-/Min-Marken, Werte im Bild, Sonden, netzabhängige Zonen und
+Verlauf hängen dort an den sichtbaren Knoten —, wenn die Schnittebene an ist
+(ihre Lage bezieht sich auf den Quader des Gezeichneten) und wenn ein Körper
+nur zum Teil ausgeblendet ist (mit Ergebnis: einen Körper ausblenden 4,7 s →
+2,1 s). Auch dieser Neuaufbau nimmt die Oberfläche aus
+dem Zwischenspeicher. Hat sich seit dem letzten Bild etwas anderes geändert
+(Modell, Ergebnis, Darstellung, ein Schalter, die Größe der Ansicht), baut der
+nächste Klick ebenfalls alles neu auf. Geprüft in
+`tests/test_ausblenden_ohne_neuaufbau.py`: dieselben Zellen wie neu gebildet,
+dasselbe Bild wie nach einem Neuaufbau, kein Neuaufbau bei Klick, H,
+Umschalt+H, Alt+H und *Vorherige Sicht*, Neuaufbau mit Ergebnis und Schnitt,
+Baummenü, Doppelklick und Rücksetzer.
+
 **Während einer Rechnung öffnet das Programm kein Fenster.** Fehler,
 Warnungen und Rückfragen gehen dann ins Protokoll und in die Statuszeile; eine
 Rückfrage, die niemand sehen kann, gilt als verneint. Grund ist ein Absturz
@@ -3061,12 +3182,12 @@ offen ist, kommt aus dem Rechenpfad kein Dialog. Verloren geht dabei nichts:
 das Protokoll lässt sich unter *Extras → Protokoll speichern…* als Datei
 sichern.
 
-**Der Ansichtswürfel** oben rechts dreht sich mit der Ansicht und lässt sich
-**mit der Maus drehen**: auf den Würfel klicken und ziehen dreht die Kamera um
-den Blickpunkt. Ein Klick auf eine Würfelseite stellt die Ansicht senkrecht
-auf diese Seite. Die Knöpfe darunter heißen wie die Achsen: **+x +y +z −x
-−y −z** (die Richtung, aus der man schaut) und **iso** (isometrisch, alles
-im Bild).
+**Das Achsen-Gizmo** oben rechts zeigt die drei Achsen so, wie die Kamera
+gerade auf das Modell schaut, und dreht sich mit der Ansicht. Ein Klick auf ein
+Achsenende stellt die Blickrichtung aus dieser Richtung ein; Ziehen dreht die
+Kamera um das Blickziel. Darunter stehen die Knöpfe **alles**, **iso** und
+**ortho**. Näheres steht weiter unten im Abschnitt *Achsen-Gizmo*. Bis zum
+14.10.2026 stand dort der Ansichtswürfel mit den Knöpfen +x … −z.
 
 **Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
 aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
@@ -3075,10 +3196,21 @@ Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
 das verformte System gezeigt wird, also bei einer Überhöhung über 0) und,
 wenn Lasten im Ergebnisbild stehen, deren Lastfall. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
 (Färbung und Schnittgrößenverlauf, siehe *Kennwerte im Bild*); Auflagerkräfte
-stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
-Achsenkreuz unten
-rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
-Texte weg. Beides kommt so auch in den Bericht.
+stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts; der
+Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die Texte weg.
+Beides kommt so auch in den Bericht. Bis zum 14.10.2026 stand unten rechts
+außerdem ein Achsenkreuz, das auch im Berichtsbild stand. In der Ansicht ist
+es entfallen, weil das Achsen-Gizmo oben rechts die Achsen zeigt.
+
+**Achsenkreuz im Berichtsbild (seit 14.10.2026).** Das Gizmo liegt als
+eigenes Fenster über der Ansicht und kommt darum nicht mit ins Bild für den
+Bericht. Auf Entscheidung des Anwenders trägt deshalb **nur das
+Berichtsbild** unten rechts ein kleines Achsenkreuz X/Y/Z, in den Farben des
+Gizmos: X rot, Y grün, Z blau. Es steht in dem Platz unten rechts, den die
+Textordnung ohnehin freihält, und verschwindet gleich nach der Aufnahme
+wieder; in der Ansicht selbst erscheint es nicht. Das gilt für Strg+B, für
+„+ Ansicht übernehmen“, für *Neu: Berichtsbild* und für Bilder aus einer
+gespeicherten Ansicht. Geprüft in `tests/test_ansichten.py`.
 
 **Farbe und Verformung quadratischer Volumen (seit 14.10.2026 richtig
 zugeordnet).** Die Ansicht zeichnet Volumen als ihre Oberfläche und holt
@@ -3094,19 +3226,20 @@ betroffen. Bei tet4, hex8 und Keilen stimmte die Zuordnung.
 
 **Lage der Texte (seit 13.10.2026).** Vor jedem Bild ordnet das Programm die
 Texte nach ihren gemessenen Rechtecken: die Kennwerte unten links bleiben
-links vom Achsenkreuz und werden dafür umgebrochen; der Titel der Farbskala
+links vom Platz des früheren Achsenkreuzes unten rechts (er bleibt frei) und
+werden dafür umgebrochen; der Titel der Farbskala
 steht rechtsbündig über ihr (in der Kompaktstufe mittig über der waagerechten
 Skala, nie über den Rand hinaus) und wird umgebrochen, die Skala wird kürzer,
-wenn er sonst in den Ansichtswürfel liefe; Legendeneintrag und Hinweis der
-netzabhängigen Stellen stehen rechts unter der Skala, links vom Achsenkreuz,
+wenn er sonst in das Achsen-Gizmo liefe; Legendeneintrag und Hinweis der
+netzabhängigen Stellen stehen rechts unter der Skala, links von diesem Platz,
 und die Skala rückt hoch, wenn sie sonst auf den Kennwerten lägen; die
-Kopfzeile oben links wird so schmal umgebrochen, dass sie neben Würfel,
+Kopfzeile oben links wird so schmal umgebrochen, dass sie neben Gizmo,
 Skala und Titel bleibt. Das gilt auch nach dem Vergrößern oder Verkleinern
 der Ansicht und im Bild für den Bericht (Strg+B), das dieselbe Zeichnung in
 der Größe der Ansicht ist. Geprüft auf dem Bildschirm bei Fenstern von
 1280 x 800, 1600 x 900, 1920 x 1080 und 1100 x 700 (`tests/test_textlage.py`):
 kein Text abgeschnitten, keiner auf einem anderen, auf der Skala, dem
-Achsenkreuz, dem Würfel oder der Glasleiste. In einem Fenster von 900 x 640
+Platz unten rechts, dem Gizmo (bis zum 14.10.2026 dem Würfel) oder der Glasleiste. In einem Fenster von 900 x 640
 (Ansicht rund 170 px breit) ist nichts abgeschnitten, aber nicht alles
 nebeneinander unterzubringen. Bis zum 13.10.2026 wurden die Lagen beim
 Zeichnen gesetzt: die Kopfzeile lief bei 1280 x 800 bis 803 px in eine
@@ -3116,8 +3249,14 @@ rechts hinaus, und Legendeneintrag und Hinweis lagen auf dem Achsenkreuz.
 **Drehen großer Modelle.** Ab etwa 20 000 Knoten und Elementen bleiben
 während des Drehens, Schiebens und Zoomens die Nebendarsteller
 (Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen
-beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig.
-Volumennetze werden nur mit ihrer Oberfläche gezeichnet.
+beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig. Seit dem
+14.10.2026 gilt das auch für das **Mausrad**: die Nebendarsteller kommen
+0,35 s nach dem letzten Radschritt wieder. Bis dahin zeichnete jeder
+Radschritt das volle Bild. Volumennetze werden nur mit ihrer Oberfläche
+gezeichnet. Lager stehen je Art in **einem** Darsteller (Knoten-, Linien- und
+Flächenlager, die Farbe der Lagerart je Zelle), die Fugen der Kontakte
+ebenso und ihre Schilder je Farbe in einem; bis zum 14.10.2026 hatte jedes
+Linien- und Flächenlager und jede Kontaktbedingung eigene Darsteller.
 
 **Unterlagen — Dateien, Ansichten und Skizzen zum Modell** (16.09.2026, analog
 InfoCAD). Das Ribbon *Unterlagen* zwischen *Start* und *Geometrie* sammelt, was
@@ -3808,12 +3947,28 @@ Modellbaum).
 | Taste | tut |
 |---|---|
 | **links** | kurzer Klick wählt, was unter dem Zeiger liegt, und ersetzt die Auswahl; mit **Strg** kommt es dazu (seit 03.10.2026) — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026; mit Strg bleibt sie); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
-| **Mitte** gedrückt halten | **drehen**; Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
+| **Mitte** gedrückt halten | **drehen um den Punkt unter dem Zeiger** (seit 14.10.2026); Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
 | **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü: auf einem Objekt seine Befehle, im Leeren Sicht und Zoom (seit 03.10.2026) |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
 
 Seit 15.09.2026 dreht die mittlere und schiebt die rechte Taste; vorher war
 es umgekehrt.
+
+**Drehen um den angeklickten Punkt (seit 14.10.2026).** Beim Drücken der
+mittleren Taste nimmt das Programm den Punkt der gezeichneten Oberfläche unter
+dem Zeiger als Drehpunkt; er kommt aus dem Tiefenpuffer des letzten Bildes,
+wie beim Zoom zum Zeiger, und kostet keine merkliche Zeit. Liegt dort nichts,
+gilt die Mitte dessen, was gerade gezeichnet ist (Ausgeblendetes zählt nicht).
+Kamera und Blickziel drehen dann starr um diesen Punkt: er bleibt im Bild an
+derselben Stelle stehen, und das Blickziel springt nicht auf ihn. Ziehen nach
+links und rechts dreht um die senkrechte Achse Z, Ziehen nach oben und unten
+neigt die Kamera; ein Zug über die ganze Breite der Ansicht sind 200°, so viel
+wie vorher. Kurz vor der Draufsicht und der Untersicht (4,6° vor dem Pol) bleibt
+die Kamera weich stehen, statt über den Pol zu kippen oder zu flackern; aus der
+Draufsicht des Gizmos heraus geht jeder Zug vom Pol weg voll durch. Bis zum
+14.10.2026 drehte der Trackball von VTK um das Blickziel, frei auch um die
+Blickachse, und das Blickziel lag erst nach einem Mausradschritt auf der
+Oberfläche unter dem Zeiger. Geprüft in `tests/test_ansicht_gizmo.py`.
 
 Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
 gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
@@ -5036,25 +5191,100 @@ gewölbten Flächen und Spline-Rändern, auf die Genauigkeit der Abtastung (16
 Abschnitte je Bogen: ein Viertelkreis kommt auf 1 % Bogenlänge). Aufeinander
 liegende Flächen geben keine Linie. Geprüft in `tests/test_verschneiden.py`.
 
-### Ansichtswürfel
+### Achsen-Gizmo
 
-Oben rechts in der Ansicht steht der **Ansichtswürfel**. Er zeigt die Lage
-der Kamera: die drei Seiten, auf die man gerade schaut, sind sichtbar und mit
-ihrer Achse beschriftet (+X, −Y, +Z …), und er dreht sich mit, wenn man die
-Ansicht dreht. Drei Wege, ihn zu benutzen:
+Oben rechts in der Ansicht steht das **Achsen-Gizmo** (seit 14.10.2026). Es
+zeigt die drei Achsen des Modells so, wie die Kamera gerade auf sie schaut, und
+dreht sich mit, wenn man die Ansicht dreht: X rot, Y grün, Z blau. Jede Achse
+hat zwei Kugeln. Die Kugel am positiven Ende ist gefüllt und mit dem
+Buchstaben der Achse beschriftet, die am negativen Ende ist hohl. Jede Kugel
+hat eine dunkle Kontur, damit sie auch auf dem weißen Grund und auf dem Modell
+zu sehen ist. Was näher am Betrachter liegt, verdeckt, was dahinter liegt.
+Das Programm rechnet mit z nach oben; in der Draufsicht schaut man darum von
++Z nach unten, X zeigt nach rechts und Y nach oben.
 
-* **Ziehen** mit gedrückter linker Maustaste auf dem Würfel dreht die
-  Ansicht um den Blickpunkt — wie das Drehen in der Ansicht selbst, nur mit
-  dem Würfel als Griff.
-* **Klick auf eine Seite** stellt die Ansicht senkrecht auf diese Seite.
-* **Die Knöpfe darunter** heißen wie die Achsen: **+x +y +z −x −y −z** — die
-  Richtung, aus der man schaut (−y ist die Vorderansicht, +z die Draufsicht)
-  — und **iso** für die isometrische Ansicht mit allem im Bild. Die Rückseite
-  ist damit ein Klick und nicht eine halbe Umdrehung.
+* **Klick auf ein Achsenende** stellt die Blickrichtung aus dieser Richtung
+  ein: ein Klick auf +Z gibt die Draufsicht, auf −Y die Vorderansicht. Das
+  Blickziel und der Abstand der Kamera bleiben, wie sie sind; es wird nicht
+  eingepasst, ein herangezoomtes Detail bleibt also im Bild.
+* **Ziehen** mit gedrückter linker Maustaste auf dem Gizmo dreht die Ansicht
+  um das Blickziel; ein Zug über den Durchmesser des Gizmos ist eine halbe
+  Umdrehung. Ob es ein Klick oder ein Zug war, entscheidet sich beim
+  Loslassen: ab 4 Bildpunkten Weg ist es ein Zug.
+* **Der Grundkreis** hinter den Achsen erscheint nur, solange die Maus über
+  dem Gizmo steht. Der Hinweis am Zeiger nennt die Ansicht des Endes darunter.
+* **Die Knöpfe darunter**: **alles** holt das ganze Modell ins Bild (*Zoom
+  alles*), **iso** stellt die isometrische Ansicht mit allem im Bild ein, und
+  **ortho** schaltet zwischen perspektivischer Ansicht und
+  Parallelprojektion um. Der Knopf ist hervorgehoben, solange die
+  Parallelprojektion an ist.
 
-Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen dieselben Richtungen, dazu
-„Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
-„Zoom alles".
+**Parallelprojektion (ortho).** In der Parallelprojektion bleiben parallele
+Kanten parallel, wie in einer Zeichnung; für Draufsichten und Ansichten in
+der XZ- oder YZ-Ebene ist das oft die bessere Wahl. Beim Umschalten bleibt das
+Bild in der Ebene des Blickziels gleich groß: die halbe Bildhöhe der
+Parallelprojektion ist der Abstand der Kamera mal tan(Blickwinkel/2), und
+zurück rückt die Kamera in den Abstand, in dem das perspektivische Bild so
+groß ist. Das Mausrad zoomt in beiden Projektionen zum Zeiger. Die Wahl merkt
+sich das Programm auf diesem Gerät (in `einstellungen.json`, Schlüssel
+„ansicht“) und stellt sie beim nächsten Start wieder ein.
+
+Bis zum 14.10.2026 stand oben rechts der **Ansichtswürfel**: ein Klick auf eine
+Seite setzte die Kamera auf den dreifachen Modellabstand und passte alles ein,
+darunter standen sieben Knöpfe +x +y +z −x −y −z und iso, und unten rechts im
+Bild stand zusätzlich ein Achsenkreuz. Der Anwender hat am 13.10.2026
+entschieden, dass das Gizmo beides ersetzt; seit dem 14.10.2026 trägt nur das
+Bild für den Bericht wieder ein kleines Achsenkreuz unten rechts.
+
+Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen weiter XY
+(Draufsicht), XZ und YZ, dazu „Rückseite (180°)", das die laufende Ansicht am
+Blickpunkt umkehrt, sowie *Isometrisch* und „Zoom alles". Die Richtungen aus
+dem Ribbon passen wie bisher alles ein. Geprüft in
+`tests/test_ansicht_gizmo.py`.
+
+### Gespeicherte Ansichten (seit 14.10.2026)
+
+Eine **gespeicherte Ansicht** hält fest, wie man auf das Modell schaut, und
+stellt es auf einen Klick wieder ein: die Kamera mit Lage, Blickziel, Oben,
+Projektion (perspektivisch oder parallel) und Maßstab; die von Hand
+ausgeblendeten Teile, das Verborgene im Hintergrund und den Layer aus der
+Aufklappliste; Schnittebene und Schnittbox; die Darstellungsart und die
+Schalter Stäbe, Flächen und Volumen; das gezeigte Ergebnis mit Färbung,
+Schnittgrößenverlauf und Eigenform, soweit es ohne Rechnung da ist. Wahlweise
+nimmt sie auch die Auswahl mit. So bleiben wiederkehrende Details und die
+Ansichten für den Bericht im Modell.
+
+**Anlegen.** *Ansicht → Sicht ▾ → Ansicht speichern* oder im Modellbaum unter
+*Hilfsobjekte → Ansichten* die Zeile „+ Ansicht speichern“ speichert die
+Ansicht sofort unter „Ansicht 1“, „Ansicht 2“ und so weiter. Wer den Namen
+vorher wählen oder die Auswahl mitnehmen will, nimmt den Doppelklick auf den
+Zweig *Ansichten* oder Rechtsklick → *Neu: Ansicht …*: rechts öffnet sich eine
+Anlegemaske, und gespeichert wird erst mit OK, so wie die Ansicht dann steht.
+
+**Aufrufen, umbenennen, löschen.** Ein Klick auf eine Ansicht im Modellbaum
+stellt sie ein. Der Doppelklick öffnet ihre Maske: dort lassen sich Name und
+Bemerkung ändern (**Übernehmen**), und die Knöpfe **Aufrufen**,
+**Überschreiben** (die Ansicht, wie sie jetzt steht, unter diesem Namen) und
+**In den Bericht** stehen bereit. Rechtsklick → *Löschen* oder Entf löscht
+eine Ansicht. Speichern, Umbenennen und Löschen lassen sich rückgängig
+machen; die Ergebnisse bleiben dabei, denn eine Ansicht rechnet nicht mit.
+
+**Was es nicht mehr gibt, wird übersprungen.** Ist eine Fläche, ein Volumen,
+eine Linie oder ein Layer seit dem Speichern gelöscht, stellt der Aufruf
+alles Übrige ein und nennt das Fehlende in einem Hinweis, etwa
+„übersprungen, weil nicht mehr vorhanden – Fläche F12, 3 Elemente“.
+Element- und Knotennummern gelten nur für das Netz, mit dem gespeichert
+wurde: nach dem Neuvernetzen werden sie übersprungen, und der Hinweis sagt
+„Netz seither geändert“. Ein Ergebnis, das erst gerechnet werden muss, wird
+ebenso genannt.
+
+**In der Datei** stehen die Ansichten nur, wenn es welche gibt (Schlüssel
+„ansichten“ am Ende der Modelldatei). Eine Datei ohne Ansichten bleibt beim
+Speichern Zeichen für Zeichen, wie sie war, und für die Kennung der
+Ergebnisdatei zählen Ansichten nicht: eine gespeicherte Ansicht macht keine
+Ergebnisdatei ungültig. Beim Anhängen eines Modells werden seine Ansichten
+nicht übertragen, weil sie Nummern und Namen des anderen Modells nennen; das
+Protokoll sagt es. Geprüft in `tests/test_ansichten.py`.
 
 ### Querschnitte anlegen: Normprofile, eigene Profile, freier Editor
 
@@ -5171,7 +5401,7 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Ausgangsstellung | „unbewegtes Modell“ oder eine andere Stellung, auf deren Lage die eigene Verschiebung und Verdrehung **aufsetzen** — so entsteht eine Kette von Stellungen (geschlossen → 30° → 60°) |
 | Verschiebung x, y, z [m] | Verschiebung der bewegten Knoten gegen die Ausgangsstellung |
 | Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind die Knoten der Elementgruppen der Stellung; ohne Gruppen alle Knoten ohne Knotenlager — Knoten auf Linien- und Flächenlagern bewegen sich mit) |
-| Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten |
+| Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten, außer eine Kopplung hängt sie an einen wirksamen Knoten |
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
 | Deaktivierte Knoten-, Linien-, Flächenlager | drei Listen zum Anhaken, je Lagerart eine; die Lager heißen darin wie im Modellbaum (ihr Name, sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“): sie greifen in dieser Stellung nicht |
 
@@ -5330,6 +5560,24 @@ Schnittgrößen sind null, Knoten ohne wirksames Element werden
 festgehalten. Im Ergebnisbild einer solchen Situation fehlen die
 abgeschalteten Elemente, und das Modell steht in der Lage, mit der
 gerechnet wurde.
+
+Eine Kopplung entfällt seit dem 14.10.2026 nur noch, wenn an keinem ihrer
+beiden Knoten ein wirksames Element hängt. Ein Knoten ohne eigenes Element,
+den eine Kopplung an einen wirksamen Knoten hängt, rechnet mit, und seine
+Knotenlast wirkt. Ein Stabende, das als Verteilkopplung in einem Volumen
+hängt, braucht dazu einen wirksamen Knoten des Volumens; ist das Volumen
+abgeschaltet, entfällt die Kopplung wie bisher. Bis zum 14.10.2026 entfiel
+eine Kopplung schon, wenn einer ihrer Knoten kein wirksames Element hatte.
+Das traf die Last- und Lagerknoten, die das Programm an einen Körper hängt
+(siehe „Integrierte Knoten und Linien, Stabenden auf Volumen“), in jeder Situation mit einem abgeschalteten
+Element und, weil ein Stab „aus“ in jeder Situation wirkt, in jeder Rechnung
+mit einem solchen Stab. Die Knotenlast fiel dann still weg, ohne Meldung, und
+die Kontrolle ΣF/ΣM sah sie nicht, weil sie schon im Lastvektor fehlte. Ein
+Lager hielt nur noch den losen Knoten, und ein Quader, der nur auf solchen
+Lagern stand, ergab „Gleichungssystem singulär“. Im Spannschritt einer
+Vorspannkraft traf es die Ankerenden (siehe „Ankerenden an starren Scheiben
+und in Volumen im Spannschritt“). Ausgefallene Zugstäbe („nur Zug“ unter
+Druck) betraf es nicht, denn dort baut das Programm kein neues System auf.
 
 ### Register „Auswahl"
 
@@ -7769,6 +8017,9 @@ Elemente an der Stirnfläche 7 % über der konsistenten (47,25 gegen
 Findet das Programm keine Fläche, etwa weil das Stabende im Innern liegt oder
 der Stab schräger steht, bleibt es bei den 1–3 Knoten, und das Protokoll
 sagt warum. Knotenlasten und Lager in Volumen hängen immer an den 1–3 Knoten.
+Diese Kopplungen wirken seit dem 14.10.2026 auch in Situationen mit
+abgeschalteten Elementen und neben einem Stab „aus“; bis dahin fielen sie
+dort weg, und mit ihnen die Knotenlast (siehe „Situationen“).
 
 Beim Import und beim Rechenstart (Abnahme des Netzes) nennt das Programm die
 Stabenden an 1–3 Volumenknoten gebündelt, am Drehlager „48 Stabenden hängen
@@ -12603,7 +12854,9 @@ offene Maske samt ihren Eingaben.) In einem Textfeld, in einer Tabelle, im
 Modellbaum und im Feld einer Maske wirkt keine dieser Tasten für die Ansicht: dort
 wird der Buchstabe getippt, und Entf gilt dem Feld, der Tabelle oder dem Baum.
 Mit Strg, Umschalt oder Alt gedrückt sind es keine Einzeltasten, sondern Kürzel
-wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
+wie bisher - ausgenommen seit dem 14.10.2026 **Umschalt+H** und **Alt+H** (Sicht,
+Kapitel 11, „Ausblenden ohne Neuaufbau“). Hält man eine Taste gedrückt, wirkt
+nur der erste Druck.
 
 | Taste | Wirkung in der Ansicht |
 |---|---|
@@ -12613,6 +12866,9 @@ wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
 | **L** | öffnet die Maske *Lager* (*Lager / Kontakt → Knotenlager*) |
 | **B** | öffnet die Maske der Last, die zur Auswahl passt: *Linienlast* bei gewählten Stäben oder Linien, *Flächenlast* bei gewählten Flächen oder Volumen, sonst *Knotenlast* |
 | **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
+| **H** | blendet die Auswahl aus (*Auswahl ausblenden*, seit 14.10.2026) |
+| **Umschalt+H** | lässt nur die Auswahl stehen (*Selektion anzeigen*, seit 14.10.2026) |
+| **Alt+H** | blendet alles wieder ein (*Alles zeigen*, seit 14.10.2026) |
 
 Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Eine **offene Maske mit
 nicht übernommenen Änderungen** ersetzen K, S, L und B nicht still: Oben rechts
@@ -12706,7 +12962,7 @@ beide Zeilen unter „Weitere Tasten“. Geprüft in `tests/test_fehler_p14.py`.
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
 Maus im Bild: Rad zoomt zum Zeiger, linke Taste wählt, gedrückte mittlere
-dreht, gedrückte rechte schiebt (ohne Zug: Kontextmenü), Doppelklick mit der
+dreht um den Punkt unter dem Zeiger, gedrückte rechte schiebt (ohne Zug: Kontextmenü), Doppelklick mit der
 mittleren Taste passt alles Sichtbare ein.
 Strg+B übernimmt die Ansicht in den Bericht.
 Esc bricht ab, was gerade mit Fortschrittsbalken und Abbrechen-Knopf läuft

@@ -1512,14 +1512,14 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     rows, cols, vals = [], [], []
     kn_aktiv = None
     if aktiv is not None:
-        from .situationen import aktive_knoten
+        from .situationen import aktive_knoten, kopplung_bleibt
         kn_aktiv = aktive_knoten(model, aktiv)
     from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
     scheiben: dict = {}                   # Gruppe -> [Kopplung]
     enden: dict = {}                      # Stabknoten -> [Kopplung]
     for kp in kopp:
-        if kn_aktiv is not None and not (kn_aktiv[int(kp.node_a)] and kn_aktiv[int(kp.node_b)]):
-            continue                      # Fuge an einem Knoten ohne wirksames Element
+        if kn_aktiv is not None and not kopplung_bleibt(model, kp, kn_aktiv):
+            continue                      # an beiden Seiten kein wirksames Element (14.10.2026)
         if DREHANTEIL:
             g = str(getattr(kp, "gruppe", "") or "")
             if g.startswith(STARR_GRUPPE):
@@ -2212,7 +2212,9 @@ def stablasten_einbauen(model: Model, feq: dict, F: np.ndarray) -> None:
 def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
     """Globaler Lastvektor eines Lastfalls (default: aktiver Lastfall).
     ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last;
-    Knotenlasten an Knoten ohne wirksames Element entfallen."""
+    Knotenlasten an Knoten ohne wirksames Element und ohne wirksame Kopplung
+    entfallen (situationen.wirksame_knoten; bis zum 14.10.2026 auch die an
+    einem gekoppelten Last- oder Lagerknoten ohne eigenes Element)."""
     if case is None:
         case = model.case()
     elif isinstance(case, str):
@@ -2220,8 +2222,8 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
     F = np.zeros(model.ndof)
     kn_aktiv = None
     if aktiv is not None:
-        from .situationen import aktive_knoten
-        kn_aktiv = aktive_knoten(model, aktiv)
+        from .situationen import wirksame_knoten
+        kn_aktiv = wirksame_knoten(model, aktiv)
 
     for l in case.nodal_loads:
         if kn_aktiv is not None and not kn_aktiv[int(l.node)]:

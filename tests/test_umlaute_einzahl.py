@@ -404,13 +404,14 @@ def test_oberflaeche():
     titel = mr.maske.titel if mr.offen() and mr.maske is not None else None
     check("Sammelmaske eines Elements: „1 Element bearbeiten“", titel == "1 Element bearbeiten", repr(titel))
     _abbruch_mit_teilergebnis(w, app)
-    # Kopfzeile mit „Kontakte zeigen“: eine Bedingung (zwei Darsteller je Bedingung)
+    # Kopfzeile mit „Kontakte zeigen“: eine Bedingung (seit 14.10.2026 gezaehlt
+    # in _kontakt_zahl - die Darsteller der Fugen sind zusammengefasst)
     w.act_kontakte.blockSignals(True)
     w.act_kontakte.setChecked(True)
-    alt_d = list(getattr(w, "_kontakt_darsteller", []) or [])
-    w._kontakt_darsteller = ["kontaktflaeche0", "kontakttext0"]
+    alt_d = getattr(w, "_kontakt_zahl", 0)
+    w._kontakt_zahl = 1
     sicht = w._sicht_text()
-    w._kontakt_darsteller = alt_d
+    w._kontakt_zahl = alt_d
     w.act_kontakte.setChecked(False)
     w.act_kontakte.blockSignals(False)
     check("Kopfzeile: „Kontakte: 1 Bedingung farbig mit Schild“", "Kontakte: 1 Bedingung farbig mit Schild" in sicht,

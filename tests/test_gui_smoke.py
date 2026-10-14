@@ -2857,19 +2857,21 @@ def main():
         w.fangart_umschalten("mitte", True)
         check("und wieder an", "mitte" in w.fang_arten)
 
-        # Glasleiste und Ansichtswürfel
+        # Glasleiste und Achsen-Gizmo (bis 14.10.2026 der Ansichtswuerfel)
         check("Glasleiste über der Ansicht", w.glasleiste.isVisible()
               and w.glasleiste.width() > 200, f"{w.glasleiste.width()} px")
-        check("Ansichtswürfel vorhanden", w.ansichtswuerfel.isVisible())
-        for richtung in ("xy", "xz", "yz", "iso"):
-            w.ansichtswuerfel.gewaehlt.emit(richtung)
+        check("Achsen-Gizmo vorhanden, kein Ansichtswürfel mehr", w.achsengizmo.isVisible()
+              and not hasattr(w, "ansichtswuerfel"))
+        for richtung in ("+x", "-y", "+z", "iso"):
+            w.achsengizmo.gewaehlt.emit(richtung)
             app.processEvents()
-        check("Blickrichtung über den Würfel", True)
-        # Alle sechs Seiten und das Umkehren - die Rueckseite ist ein Klick
-        richtungen = [r for _t, r, _h in w.ansichtswuerfel.RICHTUNGEN]
-        check("der Würfel bietet +x +y +z -x -y -z und iso",
-              set(richtungen) == {"+x", "+y", "+z", "-x", "-y", "-z", "iso"},
-              str(richtungen))
+        check("Blickrichtung über das Gizmo", True)
+        # Sechs Achsenenden, darunter die Knoepfe alles, iso, ortho
+        enden_g = sorted(p_["name"] for p_ in w.achsengizmo.punkte())
+        knoepfe_g = [k_ for k_, _t, _h in w.achsengizmo.KNOEPFE]
+        check("das Gizmo bietet die Enden +x +y +z -x -y -z und die Knöpfe alles, iso, ortho",
+              set(enden_g) == {"+x", "+y", "+z", "-x", "-y", "-z"} and knoepfe_g == ["zoom", "iso", "ortho"],
+              f"{enden_g} {knoepfe_g}")
         w.blickrichtung("vorne")
         app.processEvents()
         vorn = np.asarray(w.plotter.camera_position[0], float)
@@ -5540,7 +5542,7 @@ def main():
         traceback.print_exc()
         check("Spalt / Toleranz", False, str(ex)[:70])
 
-    # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
+    # ---- Neue Oberflaeche: Fang je Art, Gizmo, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx
         from statik3d import ks as ksm
@@ -5580,31 +5582,31 @@ def main():
         check("Fang Volumen greift auf einer Schale nicht", art_v == "", f"{art_v} {p_v}")
         w.fang_arten = list(ksm.FANGARTEN)
 
-        # Ansichtswuerfel: Kamera bekannt, Ziehen dreht
-        R = w.ansichtswuerfel.kamera()
-        check("der Würfel kennt die Kamera", R is not None and len(R) == 3 and len(R[0]) == 3)
+        # Achsen-Gizmo: Kamera bekannt, Ziehen dreht um das Blickziel
+        R = w.achsengizmo.kamera()
+        check("das Gizmo kennt die Kamera", R is not None and len(R) == 3 and len(R[0]) == 3)
         w.blickrichtung("iso")
         app.processEvents()
         pos0 = np.asarray(w.plotter.camera_position[0], float)
         ziel0 = np.asarray(w.plotter.camera_position[1], float)
-        w.ansichtswuerfel.gedreht.emit(40.0, 0.0)
+        w.achsengizmo.gedreht.emit(-24.0, 0.0)      # Azimut, Neigung in Grad
         app.processEvents()
         pos1 = np.asarray(w.plotter.camera_position[0], float)
         ziel1 = np.asarray(w.plotter.camera_position[1], float)
-        check("Ziehen auf dem Würfel dreht die Kamera um den Blickpunkt",
+        check("Ziehen am Gizmo dreht die Kamera um das Blickziel",
               np.linalg.norm(pos1 - pos0) > 1e-6
               and abs(np.linalg.norm(pos1 - ziel1) - np.linalg.norm(pos0 - ziel0)) < 1e-6
               and np.linalg.norm(ziel1 - ziel0) < 1e-9,
               f"{np.round(pos0, 2)} -> {np.round(pos1, 2)}")
-        wf = w.ansichtswuerfel
+        wf = w.achsengizmo
         empfangen = []
-        wf.gedreht.connect(lambda dx, dy: empfangen.append((dx, dy)))
+        wf.gedreht.connect(lambda az, ne: empfangen.append((az, ne)))
 
         def maus(typ, pos, knopf, knoepfe):
             ev = QtGui.QMouseEvent(typ, QtCore.QPointF(pos), QtCore.QPointF(wf.mapToGlobal(pos)),
                                    knopf, knoepfe, QtCore.Qt.NoModifier)
             app.sendEvent(wf, ev)
-        mitte = QtCore.QPoint(wf.WUERFEL // 2, wf.WUERFEL // 2)
+        mitte = QtCore.QPoint(wf.width() // 2, wf.GROESSE // 2)
         maus(QtCore.QEvent.MouseButtonPress, mitte, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
         maus(QtCore.QEvent.MouseMove, mitte + QtCore.QPoint(12, 0), QtCore.Qt.NoButton,
              QtCore.Qt.LeftButton)
@@ -5613,7 +5615,9 @@ def main():
         maus(QtCore.QEvent.MouseButtonRelease, mitte + QtCore.QPoint(26, 3),
              QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
         app.processEvents()
-        check("die Maus dreht den Würfel", len(empfangen) >= 1 and empfangen[-1][0] > 0,
+        # Maus nach rechts dreht das Modell nach rechts, die Kamera also nach
+        # links: der Azimut ist negativ
+        check("die Maus dreht das Gizmo", len(empfangen) >= 1 and empfangen[-1][0] < 0,
               str(empfangen[:3]))
         for r_ in ("+x", "-x", "+y", "-y", "+z", "-z", "iso"):
             w.blickrichtung(r_)
@@ -5669,8 +5673,11 @@ def main():
               str(namen[:3]))
         # Lagerart als Farbe, Beschriftung schaltbar (12.09.2026)
         from statik3d.gui import viewport as vpl
-        farben = {tuple(round(c, 2) for c in list(w.plotter.renderer.actors[n].prop.color)[:3])
-                  for n in namen if n.startswith("supports") and n != "supports_nichtlinear"}
+        # seit 14.10.2026 ein Darsteller „supports“, die Farbe der Lagerart je Zelle
+        farben = {tuple(round(float(c) / 255.0, 2) for c in rgb)
+                  for n in namen if n.startswith("supports") and n != "supports_nichtlinear"
+                  for rgb in np.unique(np.asarray(w.plotter.renderer.actors[n].mapper.dataset.cell_data["farbe"]),
+                                       axis=0)}
         soll = {tuple(round(c, 2) for c in __import__("pyvista").Color(vpl.lager_farbe(s)).float_rgb)
                 for s in w.model.supports}
         check("Knotenlager sind nach Lagerart gefärbt", farben == soll, f"{farben} / {soll}")
@@ -5683,33 +5690,33 @@ def main():
               not any("zoom" in k.lower() or "holen" in k.lower() for k in kn))
         ansicht = w.centralWidget()
         mitte_leiste = w.glasleiste.x() + w.glasleiste.width() / 2
-        # mittig - oder, wenn der Wuerfel im Weg ist, knapp links von ihm; reicht
+        # mittig - oder, wenn das Gizmo im Weg ist, knapp links von ihm; reicht
         # die Breite (seit die Tabellen dem Fenster keine Mindestbreite mehr
         # aufzwingen, ist es unter xvfb 1280 px breit) fuer beide nebeneinander
-        # nicht, rueckt der Wuerfel unter die Leiste - ueberschneiden nie.
-        gl0_, wf0_ = w.glasleiste.geometry(), w.ansichtswuerfel.geometry()
+        # nicht, rueckt das Gizmo unter die Leiste - ueberschneiden nie.
+        gl0_, wf0_ = w.glasleiste.geometry(), w.achsengizmo.geometry()
         frei_vom_wuerfel = gl0_.right() < wf0_.x()
         wuerfel_darunter = (not gl0_.intersects(wf0_)) and wf0_.y() >= gl0_.bottom()
-        check("die Glasleiste steht mittig oben und nie unter dem Würfel",
+        check("die Glasleiste steht mittig oben und nie unter dem Gizmo",
               (abs(mitte_leiste - ansicht.width() / 2) <= 3 or
                (frei_vom_wuerfel and abs(mitte_leiste - ansicht.width() / 2) < 60)
                or wuerfel_darunter)
               and (frei_vom_wuerfel or wuerfel_darunter) and w.glasleiste.y() <= 16,
               f"Mitte {mitte_leiste:.0f} von {ansicht.width()} px, y = {w.glasleiste.y()}, "
-              f"rechts {gl0_.right()} / Würfel x {wf0_.x()} y {wf0_.y()}")
+              f"rechts {gl0_.right()} / Gizmo x {wf0_.x()} y {wf0_.y()}")
 
-        # Schmales Fenster: Leiste und Wuerfel duerfen sich nie ueberschneiden
+        # Schmales Fenster: Leiste und Gizmo duerfen sich nie ueberschneiden
         breite_alt = w.width()
         w.resize(1100, 900)
         app.processEvents()
         w.ansichtsrand.platzieren()
         app.processEvents()
-        gl_, wf_ = w.glasleiste.geometry(), w.ansichtswuerfel.geometry()
-        check("im schmalen Fenster rückt der Würfel unter die Leiste, nichts überschneidet sich",
+        gl_, wf_ = w.glasleiste.geometry(), w.achsengizmo.geometry()
+        check("im schmalen Fenster rückt das Gizmo unter die Leiste, nichts überschneidet sich",
               not gl_.intersects(wf_) and wf_.width() > 100 and wf_.height() > 80
               and wf_.right() <= w.centralWidget().width(),
               f"Leiste {gl_.x()}..{gl_.right()} x {gl_.y()}..{gl_.bottom()}, "
-              f"Würfel {wf_.x()}..{wf_.right()} x {wf_.y()}..{wf_.bottom()}")
+              f"Gizmo {wf_.x()}..{wf_.right()} x {wf_.y()}..{wf_.bottom()}")
         w.resize(breite_alt, 980)
         app.processEvents()
         w.ansichtsrand.platzieren()
@@ -6338,14 +6345,14 @@ def main():
         check("um_x_drehen: (x, y, z) -> (x, -y, -z), Kraefte und Momente mit",
               np.allclose(mz.nodes[0], [1, -2, -3])
               and mz.case().nodal_loads[0].F == [1, -2, -3, 4, -5, -6])
-        # Ansichtswuerfel zeichnet sich mit Schatten und Knopfzeile
-        pm = QtGui.QPixmap(w.ansichtswuerfel.size())
+        # Das Achsen-Gizmo zeichnet sich mit Kugeln, Linien und Knopfzeile
+        pm = QtGui.QPixmap(w.achsengizmo.size())
         pm.fill(QtGui.QColor("#ffffff"))
-        w.ansichtswuerfel.render(pm)
+        w.achsengizmo.render(pm)
         bild = pm.toImage()
-        farben = {bild.pixelColor(x, y).name() for x in range(0, bild.width(), 4)
-                  for y in range(0, bild.height(), 4)}
-        check("der Ansichtswuerfel ist gezeichnet (viele Farbstufen)", len(farben) > 25, str(len(farben)))
+        farben = {bild.pixelColor(x, y).name() for x in range(0, bild.width(), 2)
+                  for y in range(0, bild.height(), 2)}
+        check("das Achsen-Gizmo ist gezeichnet (viele Farbstufen)", len(farben) > 25, str(len(farben)))
         w.new_model()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -6936,7 +6943,9 @@ def main():
               and "Kontakte: 1 Bedingung farbig mit Schild" in w._sicht_text(), str(akt_))
         from PySide6 import QtGui as _QtGk
         soll_ = _QtGk.QColor(kt_.wirkungsfarbe(kb)).getRgbF()[:3]
-        ist_ = dict(w.plotter.renderer.actors)["kontaktflaeche0"].GetProperty().GetColor()
+        # seit 14.10.2026 alle Fugen in einem Darsteller, die Farbe je Zelle
+        ist_ = tuple(float(c_) / 255.0 for c_ in
+                     dict(w.plotter.renderer.actors)["kontaktflaechen"].mapper.dataset.cell_data["farbe"][0])
         check("… in der Farbe ihrer Wirkung (Druck mit Reibung = orange), seit 15.09.2026",
               kt_.wirkungstext(kb) == "Druck, Reibung" and max(abs(a_ - b_) for a_, b_ in zip(ist_, soll_)) < 0.02,
               f"{kt_.wirkungstext(kb)} {ist_} / {soll_}")
@@ -7480,14 +7489,35 @@ def main():
         w._viewport_menu = lambda p: menues_.append(QtCore.QPoint(p))
         # 15.09.2026: „bei gedrückter mittlerer Maustaste soll gedreht werden",
         # „gedrückte rechte Maustaste und halten soll schieben sein"
-        # (VTKIS_ROTATE = 1, VTKIS_PAN = 2)
+        # (VTKIS_PAN = 2). Seit dem 14.10.2026 dreht das Programm selbst um den
+        # Punkt unter dem Zeiger (MainWindow._drehen_beginnen), VTK bleibt in Ruhe.
         maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.MiddleButton, QtCore.Qt.MiddleButton)
-        check("die mittlere Taste versetzt VTK ins Drehen", stil_.GetState() == 1,
-              f"Zustand {stil_.GetState()} (Drehen 1, Schieben 2)")
+        dreh_ = getattr(w, "_dreh", None)
+        check("die mittlere Taste dreht um den Punkt unter dem Zeiger (eigene Drehung, VTK in Ruhe)",
+              dreh_ is not None and dreh_.get("punkt") is not None and stil_.GetState() == ruhe_,
+              f"Zustand {stil_.GetState()}, Drehpunkt {None if dreh_ is None else dreh_.get('punkt')}")
+        if dreh_ is not None and dreh_.get("punkt") is not None:
+            # Der Drehpunkt kam aus dem Tiefenpuffer (oder ist die Modellmitte):
+            # nach dem Zug steht er im Bild an derselben Stelle
+            ren_d = w.plotter.renderer
+
+            def bild_d(p):
+                ren_d.SetWorldPoint(float(p[0]), float(p[1]), float(p[2]), 1.0)
+                ren_d.WorldToDisplay()
+                return np.asarray(ren_d.GetDisplayPoint()[:2], float)
+            vor_d = bild_d(dreh_["punkt"])
+            maus_(QtCore.QEvent.MouseMove, mitte_ + QtCore.QPoint(30, 12), QtCore.Qt.NoButton,
+                  QtCore.Qt.MiddleButton)
+            app.processEvents()
+            nach_d = bild_d(dreh_["punkt"])
+            check("… der Drehpunkt bleibt beim Drehen im Bild stehen",
+                  float(np.linalg.norm(nach_d - vor_d)) < 0.5,
+                  f"Drehpunkt {np.round(dreh_['punkt'], 4)}, Wanderung {float(np.linalg.norm(nach_d - vor_d)):.3f} px")
         maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(30, 0),
               QtCore.Qt.MiddleButton, QtCore.Qt.NoButton)
         check("beim Loslassen der mittleren Taste endet das Drehen, ohne Menü",
-              stil_.GetState() == ruhe_ and not menues_, f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
+              getattr(w, "_dreh", None) is None and stil_.GetState() == ruhe_ and not menues_,
+              f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
         maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
         check("die rechte Taste versetzt VTK ins Schieben", stil_.GetState() == 2,
               f"Zustand {stil_.GetState()} (Drehen 1, Schieben 2)")

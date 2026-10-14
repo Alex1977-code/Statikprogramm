@@ -405,7 +405,7 @@ def test_kompaktstufe():
     _groesse(w, 1920, 1080)
     an.zuruecksetzen()
     _ruhe(6)
-    breite_wuerfel = w.ansichtswuerfel.width()
+    breite_gizmo = w.achsengizmo.width()
     check("1920 x 1080: keine Kompaktstufe", not an.kompakt and w._farbskala().get("vertical") is True)
     _groesse(w, 1366, 768)
     kopf = w.menuWidget().height()
@@ -414,9 +414,9 @@ def test_kompaktstufe():
     check("… unten nur die Kopfzeile mit Gruppe, Reitern und Knöpfen (höchstens 40 px)",
           w.unten_dock.height() <= 40 and an.unten_eingeklappt() and w.tab_unten.kopf.isVisible(),
           f"{w.unten_dock.height()} px")
-    check("… der Ansichtswürfel ist kleiner, die Farbskala waagerecht",
-          w.ansichtswuerfel.width() < breite_wuerfel and w._farbskala().get("vertical") is False,
-          f"Würfel {breite_wuerfel} -> {w.ansichtswuerfel.width()} px")
+    check("… das Achsen-Gizmo ist kleiner, die Farbskala waagerecht",
+          w.achsengizmo.width() < breite_gizmo and w._farbskala().get("vertical") is False,
+          f"Gizmo {breite_gizmo} -> {w.achsengizmo.width()} px")
     bb, hh = _ansicht(w)
     check("… die Ansicht hat mindestens 30 % der Fensterfläche",
           bb * hh >= 0.30 * w.width() * w.height(), f"{bb} x {hh} = {100 * bb * hh / (w.width() * w.height()):.1f} %")
@@ -494,9 +494,9 @@ def test_kompaktstufe():
     check("… und „Nur Ansicht“ aus in der Kompaktstufe: das Ribbon bleibt eingeklappt, solange sie gilt",
           an.kompakt and w.ribbon.eingeklappt(), f"kompakt {an.kompakt}")
     _groesse(w, 1920, 1080)
-    check("zurück auf 1920 x 1080: Ribbon offen, unten wieder da, Würfel und Farbskala wie vorher",
+    check("zurück auf 1920 x 1080: Ribbon offen, unten wieder da, Gizmo und Farbskala wie vorher",
           not an.kompakt and not w.ribbon.eingeklappt() and not an.unten_eingeklappt()
-          and abs(w.unten_dock.height() - 270) <= 6 and w.ansichtswuerfel.width() == breite_wuerfel
+          and abs(w.unten_dock.height() - 270) <= 6 and w.achsengizmo.width() == breite_gizmo
           and w._farbskala().get("vertical") is True, f"unten {w.unten_dock.height()} px")
     _groesse(w, 1200, 1000)
     check("schmales Fenster (1200 x 1000): die Ansicht bliebe unter 700 px breit - Kompaktstufe",
@@ -992,8 +992,8 @@ def test_handbuch():
           "Nur Ansicht" in b and "Strg+F1" in b and "Anordnung zurücksetzen" in b
           and "einstellungen.json" in b and "Doppelklick" in b, b[:80])
     c = absatz("**Kompaktstufe**")
-    check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Kopfzeile unten, Würfel, Farbskala",
-          "900 px" in c and "700 × 400" in c and "nur die Kopfzeile" in c and "Würfel" in c
+    check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Kopfzeile unten, Gizmo, Farbskala",
+          "900 px" in c and "700 × 400" in c and "nur die Kopfzeile" in c and "Achsen-Gizmo" in c
           and "waagerecht" in c, c[:80])
     # Nachbesserung nach der Gegenpruefung (25.09.2026)
     check("Handbuch: Baum mindestens 260 px, Zusatzspalte höchstens ein Viertel",

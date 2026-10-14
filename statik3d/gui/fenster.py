@@ -25,7 +25,7 @@ Hier steht, was das aendert (Antwort 9 des Anwenders: „maximiert, rechts etwa
   (Strg+F1) und „Anordnung zurücksetzen“.
 * Eine Kompaktstufe: Fensterhoehe unter 900 px oder eine Ansicht, die mit den
   Sollmassen kleiner als 700 x 400 px bliebe - Ribbon eingeklappt, unten nur
-  die Registerzeile, Ansichtswuerfel kleiner, Farbskala waagerecht.
+  die Registerzeile, Achsen-Gizmo kleiner, Farbskala waagerecht.
 * STATIK3D_FENSTER=fest haelt die Aufteilung beim Stand bis 24.09.2026
   (1600 x 980, nicht maximiert, feste Dockmasse, keine Kompaktstufe, nichts
   gemerkt) - fuer den Rauchtest und den Bildvergleich bilder.py, die mit
@@ -170,6 +170,44 @@ def abschnitt_merken(name: str, offen: bool) -> str | None:
     a = dict(a) if isinstance(a, dict) else {}
     a[name] = bool(offen)
     d["abschnitte"] = a
+    try:
+        return _datei_schreiben(d)
+    except OSError:
+        return None
+
+
+#: Was in dieser Sitzung zuletzt fuer die Ansicht gemerkt wurde (wie oben)
+_ANSICHT_IM_SPEICHER: dict = {}
+
+
+def ansicht_wert(name: str, vorgabe=None):
+    """Ein gemerkter Wert der Ansicht (Schluessel „ansicht“, 14.10.2026), etwa
+    „projektion“: „ortho“ oder „perspektive“. Er gilt je Geraet - die Datei
+    liegt in den Benutzerdaten. ``vorgabe``, solange nichts gemerkt ist; mit
+    STATIK3D_FENSTER=fest wird nichts gemerkt."""
+    if fest():
+        return vorgabe
+    d, lesbar = _lesen_streng()
+    if not lesbar:
+        return _ANSICHT_IM_SPEICHER.get(name, vorgabe)
+    a = d.get("ansicht")
+    wert = a.get(name) if isinstance(a, dict) else None
+    return vorgabe if wert is None else wert
+
+
+def ansicht_merken(name: str, wert) -> str | None:
+    """Einen Wert der Ansicht schreiben; die uebrigen Schluessel der Datei
+    bleiben stehen. Rueckgabe wie :func:`abschnitt_merken`."""
+    if fest():
+        return None
+    _ANSICHT_IM_SPEICHER[name] = wert
+    d, lesbar = _lesen_streng()
+    if not lesbar:
+        return None
+    a = d.get("ansicht")
+    a = dict(a) if isinstance(a, dict) else {}
+    a[name] = wert
+    d["ansicht"] = a
     try:
         return _datei_schreiben(d)
     except OSError:

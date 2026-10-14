@@ -122,9 +122,10 @@ def test_lager_an_der_verformten_lage():
     pl = pv.Plotter(off_screen=True)
     try:
         vp.add_supports(pl, m, 4.0)
-        vorher = np.asarray(pl.renderer.actors["supports0"].GetCenter())
+        # seit 14.10.2026 alle Knotenlager in einem Darsteller „supports“
+        vorher = np.asarray(pl.renderer.actors["supports"].GetCenter())
         vp.add_supports(pl, m, 4.0, lage=lage)
-        a = pl.renderer.actors.get("supports0")
+        a = pl.renderer.actors.get("supports")
         mitte = np.asarray(a.GetCenter()) if a is not None else None
         check("Lagersymbol an der verformten Lage des Knotens (um 0,5 m in x mitgenommen)",
               mitte is not None and np.allclose(mitte - vorher, [0.5, 0.0, 0.0], atol=1e-9),

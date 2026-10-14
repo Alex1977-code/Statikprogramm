@@ -1233,7 +1233,9 @@ def test_d11_rechtsklick():
             _ruhe(app)
         check("D11: Rechtsklick auf S1 im gefilterten Baum (S1 bis S3 gewählt) - das Menü wurde abgefangen, "
               "Einträge wie in 8b, nichts für die ausgeblendeten S2 und S3",
-              gesehen == [["Neu: Stab …", "Bearbeiten …", "", "Löschen (Entf)"]], str(gesehen))
+              # seit 14.10.2026 dazu die Sicht eines Teils (Ansichtspaket B)
+              gesehen == [["Neu: Stab …", "Bearbeiten …", "", "Löschen (Entf)", "", "Nur dieses zeigen",
+                           "Alle einblenden", "Ansicht darauf stellen"]], str(gesehen))
     finally:
         _ohne_filter(app, f)
 
