@@ -144,8 +144,37 @@ def test_stabenden_eine_warnung():
     check("… als WARNUNG, die nichts anhält", stab and stab[0].stufe == "WARNUNG")
 
 
+def test_alte_ergebnisdatei_gamma_p():
+    print("\n--- Eine Ergebnisdatei von vor gamma_P passt weiter ---")
+    # import/lastfaelle legte DesignSettings.gamma_P (Vorgabe 1,0) an; „design“
+    # zaehlt in der Rechenkennung (Rechenart und Einstellungen). Gemessen am
+    # 14.10.2026: jede Ergebnisdatei, die 46755cc geschrieben hatte (Ankerplatte,
+    # Wuerfel mit Vorspannung, kragarm_alt, ohne_kollision), wies integ/gesamt
+    # ab - wie am 13.10.2026 plastizitaet.abbruch (65760f6).
+    from statik3d import ergebnisse
+    m, _e = _anker(art="Spannstahl")
+    echt = Model.to_dict
+
+    def wie_vorher(self, *a, **k):
+        d = echt(self, *a, **k)
+        d.get("design", {}).pop("gamma_P", None)
+        return d
+    Model.to_dict = wie_vorher
+    try:
+        k_alt = ergebnisse.kennung(m)           # wie das Programm vor dem 13.10.2026
+    finally:
+        Model.to_dict = echt
+    ok, grund = ergebnisse.passt(k_alt, m)
+    check("eine Ergebnisdatei ohne gamma_P passt weiter zum Modell (Vorgabe 1,0)", ok and not grund, grund)
+    m.design.gamma_P = 1.35
+    ok, grund = ergebnisse.passt(k_alt, m)
+    check("… mit gamma_P = 1,35 gilt das Modell als geändert (Rechenart und Einstellungen)",
+          not ok and "Rechenart und Einstellungen" in grund, grund)
+
+
 def main():
-    for t in (test_spannstahl_art, test_vorspannung_ein_merkmal, test_stabenden_eine_warnung):
+    for t in (test_spannstahl_art, test_vorspannung_ein_merkmal, test_stabenden_eine_warnung,
+              test_alte_ergebnisdatei_gamma_p):
         try:
             t()
         except Exception as ex:          # noqa: BLE001 - jede Pruefung meldet sich

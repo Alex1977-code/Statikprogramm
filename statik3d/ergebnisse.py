@@ -158,8 +158,12 @@ ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "suppor
 #: am 13.10.2026 das gespeicherte LF1 Mittel des Drehlagers vom 09.10. ab
 #: („Die Ergebnisdatei passt nicht zum Modell: seit der Rechnung geändert:
 #: Rechenart und Einstellungen“). Wer „streng“ waehlt, aendert die Kennung
-#: wie jede andere Einstellung.
-NEUE_VORGABEN = {"plastizitaet": {"abbruch": "ingenieurmaessig"}}
+#: wie jede andere Einstellung. Ebenso ``design.gamma_P`` (13.10.2026,
+#: import/lastfaelle): ohne den Eintrag wies integ/gesamt am 14.10.2026 jede
+#: Ergebnisdatei ab, die der Stand davor geschrieben hatte. gamma_P wirkt nur
+#: im Generator der Kombinationen; gespeicherte Kombinationen tragen ihre
+#: Faktoren selbst.
+NEUE_VORGABEN = {"plastizitaet": {"abbruch": "ingenieurmaessig"}, "design": {"gamma_P": 1.0}}
 #: Felder, die nach der Kennung (07.10.2026) an Werkstoff und Querschnitt
 #: dazukamen, mit ihrer Vorgabe: auf der Vorgabe zaehlen sie nicht mit, gesetzt
 #: wie jedes Feld. Ohne das passte nach dem Einbau keine Ergebnisdatei von
