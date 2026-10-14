@@ -8125,8 +8125,9 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
         merker["abgelehnt"] = f"Δσ_v {dsv / 1e6:.3g} N/mm² > {ABSCHLUSS_SPANNUNG / 1e6:.3g} N/mm²"
         return None
     if w_sp and du_max > grenze_u:
-        merker["abgelehnt"] = (f"Δσ_v {dsv / 1e6:.3g} N/mm² erfüllt, aber Δu {du_max * 1e6:.3g} µm > "
-                               f"{grenze_u * 1e6:.3g} µm")
+        # Zahlen ohne Exponent (zahlen.zahl_text): am Pruefmodell stand sonst „1.45e+03 µm“
+        merker["abgelehnt"] = (f"Δσ_v {_zt(dsv / 1e6)} N/mm² erfüllt, aber Δu {_zt(du_max * 1e6)} µm > "
+                               f"{_zt(grenze_u * 1e6)} µm")
         return None
     # Normalbedingung im angenommenen Zustand: kein Zug an einer geschlossenen
     # und keine Durchdringung (als Kraft) an einer offenen Bedingung ueber

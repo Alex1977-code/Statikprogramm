@@ -6819,7 +6819,7 @@ Volumenknoten) ein Weg von rund 4,8 µm je Meter bei Stahl. Es gilt der größer
 Wert aus dieser Schranke und dem Tausendstel der größten Verschiebung. Das
 Gleichgewicht der angenommenen Lösung und die Normalbedingung bleiben Pflicht.
 Die Fortschrittszeile nennt die Schranke, etwa „Ingenieurkriterium nicht
-erfüllt: Δσ_v 0,187 N/mm² erfüllt, aber Δu 1,45e+03 µm > 6,8 µm“, und die Zeile
+erfüllt: Δσ_v 0,187 N/mm² erfüllt, aber Δu 1 450 µm > 6,8 µm“, und die Zeile
 der Annahme „… u um 0,926 µm (u_max 0,3937 mm, Schranke 4,69 µm)“. Dazu prüft
 die Plastizität am Ende jeder Laststufe das Kraftresiduum und schreibt es ins
 Protokoll: „Plastizität: Laststufe 1/3: Residuum am Ende - Gleichgewicht
