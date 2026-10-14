@@ -1082,6 +1082,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
     typen: dict[str, int] = {}
     hinweise: dict[str, str] = {}
     weggelassen: dict[str, int] = {}
+    nur_je_art: dict[str, list] = {}      # "zug"/"druck"/"beides" -> Namen der Zug-/Druckstaebe
     for h, impl in db.impls("Member"):
         nodes = [node_of[n] for n in line_nodes.get(impl.get("line_id"), []) if n in node_of]
         if len(nodes) < 2:
@@ -1109,7 +1110,13 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
             n_beams += 1
         if not elems:
             continue
+        # Zug- und Druckstab: „trägt nur“ wie in RFEM (14.10.2026)
+        nur = stab_nur(h.get("impl_table"), impl) if etyp == "truss" else ""
+        for i in elems:
+            m.elements[i].nur = nur
         mem = m.add_member(C.unique_name(m.members, f"S{h.get('userID') or h['id']}"), elems)
+        if h.get("impl_table") in ("MemberImplTension", "MemberImplCompression"):
+            nur_je_art.setdefault(nur or "beides", []).append(mem.name)
         member_name[h["id"]] = mem.name
         if h.get("userID") is not None:
             member_user[int(h["userID"])] = mem.name
@@ -1132,6 +1139,18 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         C.say(log, "  Stabtypen: " + ", ".join(f"{n}x {k}" for k, n in sorted(typen.items())))
     for k, t in sorted(hinweise.items()):
         C.warn(log, f"  Stabtyp {k}: {t}.")
+    for art, eins, mehr in (
+            ("zug", "Zugstab trägt nur Zug (fällt wie in RFEM bei Druck aus)",
+             "Zugstäbe tragen nur Zug (fallen wie in RFEM bei Druck aus)"),
+            ("druck", "Druckstab trägt nur Druck (fällt wie in RFEM bei Zug aus)",
+             "Druckstäbe tragen nur Druck (fallen wie in RFEM bei Zug aus)"),
+            ("beides", "Zug-/Druckstab trägt wie in RFEM auch Druck bzw. Zug (isActiveInCompression = 1)",
+             "Zug-/Druckstäbe tragen wie in RFEM auch Druck bzw. Zug (isActiveInCompression = 1)")):
+        namen = nur_je_art.get(art) or []
+        if namen:
+            C.say(log, f"  {len(namen)} {eins if len(namen) == 1 else mehr}: " + ", ".join(namen[:12])
+                       + (" …" if len(namen) > 12 else ""))
+    m.meta[ZUGSTAEBE_MERKMAL] = "beim Import gesetzt (14.10.2026)"
     if weggelassen:
         C.say(log, "  nicht uebernommen (keine Tragglieder): "
                    + ", ".join(f"{n}x {k}" for k, n in sorted(weggelassen.items())))
@@ -2234,10 +2253,10 @@ MEMBER_TYPES = {
     "MemberImplRib": ("beam", "Rippe", "die mitwirkende Plattenbreite fehlt"),
     "MemberImplTruss": ("truss", "Fachwerkstab", ""),
     "MemberImplTrussOnlyN": ("truss", "Fachwerkstab (nur N)", ""),
-    "MemberImplTension": ("truss", "Zugstab",
-                          "faellt in RFEM bei Druck aus - hier traegt er auch Druck"),
-    "MemberImplCompression": ("truss", "Druckstab",
-                              "faellt in RFEM bei Zug aus - hier traegt er auch Zug"),
+    # Zug- und Druckstab: „trägt nur“ Zug bzw. Druck (stab_nur, seit 14.10.2026;
+    # bis dahin trugen sie hier auch die andere Kraft, und das Protokoll warnte)
+    "MemberImplTension": ("truss", "Zugstab", ""),
+    "MemberImplCompression": ("truss", "Druckstab", ""),
     "MemberImplCable": ("truss", "Seil",
                         "Seiltheorie (Durchhang, Ausfall bei Druck) fehlt"),
     "MemberImplBuckling": ("beam", "Knickstab", ""),
@@ -2258,6 +2277,96 @@ MEMBER_TYPES = {
 def member_type(impl_table: str) -> tuple:
     """(Elementtyp oder None, Klartext, Hinweis) zum Stabtyp."""
     return MEMBER_TYPES.get(impl_table or "", ("beam", impl_table or "unbekannt", ""))
+
+
+def stab_nur(impl_table: str, impl: dict) -> str:
+    """„trägt nur“ (Element.nur) zu einem RFEM-Stabtyp: "zug" fuer einen
+    Zugstab, der in RFEM bei Druck ausfaellt (MemberImplTension mit
+    isActiveInCompression = 0 - so am Drehlager alle 64 Staebe; fehlt die
+    Spalte, gilt der Ausfall wie in RFEM vorgegeben), "druck" fuer einen
+    Druckstab (MemberImplCompression, ausser isActiveInTension = 1), sonst "".
+    Ein Zugstab mit isActiveInCompression = 1 traegt in RFEM auch Druck und
+    bleibt ein gewoehnlicher Fachwerkstab.
+
+    Bis zum 14.10.2026 legte der Import beide als Fachwerkstab an, der auch
+    die andere Kraft trug, und warnte nur im Protokoll („faellt in RFEM bei
+    Druck aus - hier traegt er auch Druck“): am Drehlager trug S57 im LF1
+    (Netz Mittel, 09.10.2026) -0,59 kN Druck."""
+    impl = impl or {}
+    if impl_table == "MemberImplTension":
+        return "" if impl.get("isActiveInCompression") else "zug"
+    if impl_table == "MemberImplCompression":
+        return "" if impl.get("isActiveInTension") else "druck"
+    return ""
+
+
+#: Merkmal am Modell (meta): der Import hat „trägt nur“ aus den RFEM-Stabtypen
+#: gesetzt - ein Modell ohne es, aus einer RFEM-6-Datei, ist von vor dem
+#: 14.10.2026 und bekommt beim Oeffnen einen Hinweis (model.zugstab_hinweis)
+ZUGSTAEBE_MERKMAL = "rfem_zugstaebe"
+
+
+def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict:
+    """Die Umstellung eines Modells, das vor dem 14.10.2026 aus RFEM 6
+    uebernommen wurde: die Stabtypen aus der RFEM-Datei nachlesen und
+    „trägt nur“ setzen wie der Import heute (:func:`stab_nur`) - nur auf
+    Anweisung des Anwenders (Importhinweis „zugstab“, model.zugstab_hinweis).
+
+    ``pfad``: die RFEM-Datei; ohne Angabe die aus dem Hinweis bzw.
+    ``model.meta["quelle"]``. Zugeordnet wird ueber den Stabnamen des Imports
+    (S<Nummer in RFEM>); umgestellt wird nur ein Fachwerkstab, der noch
+    nichts traegt-nur-maessiges eingestellt hat - was der Anwender selbst
+    gesetzt hat, bleibt. Rueckgabe {zug, druck, auch_druck, ohne_stab, datei}:
+    die Namen der umgestellten Zug- und Druckstaebe, der Zugstaebe, die in
+    RFEM auch Druck tragen, und der RFEM-Zug-/Druckstaebe ohne passenden Stab.
+    FileNotFoundError, wenn die Datei fehlt - dann bleibt alles, wie es ist."""
+    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "zugstab"]
+    pfad = pfad or (hinweise[-1].get("datei") if hinweise else None) or model.meta.get("quelle")
+    if not pfad or not os.path.isfile(str(pfad)):
+        raise FileNotFoundError(f"RFEM-Datei „{pfad}“ nicht gefunden - die Stabtypen lassen sich nicht "
+                                "nachlesen; Zugstäbe in der Stabmaske („trägt nur“ Zug) umstellen")
+    db_path = extract_db(str(pfad))
+    tmp_dir = os.path.dirname(db_path) if db_path != str(pfad) else None
+    je_name: dict = {}
+    con = connect(db_path)
+    try:
+        db = Db(con)
+        for h, impl in db.impls("Member"):
+            tbl = h.get("impl_table") or ""
+            if tbl in ("MemberImplTension", "MemberImplCompression"):
+                je_name[f"S{h.get('userID') or h['id']}"] = (tbl, stab_nur(tbl, impl))
+    finally:
+        con.close()
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    aus = {"zug": [], "druck": [], "auch_druck": [], "ohne_stab": [], "datei": str(pfad)}
+    for name, (tbl, nur) in je_name.items():
+        mem = model.members.get(name)
+        if mem is None:
+            aus["ohne_stab"].append(name)
+            continue
+        els = [int(i) for i in mem.elements if 0 <= int(i) < len(model.elements)]
+        if not nur:
+            aus["auch_druck"].append(name)
+            continue
+        frei = [i for i in els if model.elements[i].typ == "truss" and not getattr(model.elements[i], "nur", "")]
+        if not frei:
+            continue
+        for i in frei:
+            model.elements[i].nur = nur
+        aus[nur].append(name)
+    for k in ("zug", "druck", "auch_druck", "ohne_stab"):
+        aus[k].sort(key=lambda s: (len(s), s))
+    model.meta[ZUGSTAEBE_MERKMAL] = "nachgelesen (14.10.2026)"
+    for h in hinweise:
+        h["erledigt"] = True
+    zeile = (f"Stabtypen aus {os.path.basename(str(pfad))} nachgelesen: {len(aus['zug'])} Zugstäbe nur Zug, "
+             f"{len(aus['druck'])} Druckstäbe nur Druck"
+             + (f", {len(aus['auch_druck'])} Zugstäbe tragen wie in RFEM auch Druck" if aus["auch_druck"] else "")
+             + (f", {len(aus['ohne_stab'])} ohne passenden Stab ({', '.join(aus['ohne_stab'][:6])})"
+                if aus["ohne_stab"] else ""))
+    C.say(log, zeile)
+    return aus
 
 
 # --------------------------------------------------------------------------

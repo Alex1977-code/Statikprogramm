@@ -1129,9 +1129,13 @@ def test_stabtypen():
         check("Protokoll listet die Stabtypen",
               any("Stabtypen:" in x and "Balken" in x and "Zugstab" in x for x in log),
               next((x for x in log if "Stabtypen" in x), "-"))
-        check("Zugstab-Hinweis (traegt hier auch Druck) steht im Protokoll",
-              any("Zugstab" in x and "faellt in RFEM bei Druck aus" in x for x in log),
-              next((x for x in log if "Zugstab" in x and "faellt" in x), "-"))
+        # seit dem 14.10.2026 traegt der Zugstab nur Zug wie in RFEM (bis dahin
+        # auch Druck, mit der Warnung „faellt in RFEM bei Druck aus - hier traegt
+        # er auch Druck“; tests/test_rfem6_zugstab.py)
+        check("Zugstab traegt nur Zug, und das Protokoll sagt es",
+              m.elements[1].nur == "zug"
+              and any("Zugstab trägt nur Zug" in x for x in log),
+              next((x for x in log if "nur Zug" in x), "-"))
         check("Ergebnisstab als Nicht-Tragglied genannt",
               any("keine Tragglieder" in x and "Ergebnisstab" in x for x in log),
               next((x for x in log if "Tragglieder" in x), "-"))

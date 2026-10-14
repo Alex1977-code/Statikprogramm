@@ -203,6 +203,42 @@ def stahlsorte_normiert(text) -> str:
     return stahlsorte_schluessel(text) or str(text or "").strip()
 
 
+def zugstab_hinweis(model) -> list:
+    """Ein Modell, das vor dem 14.10.2026 aus RFEM 6 uebernommen wurde, kennt
+    seine Zugstaebe nicht: der Import legte einen RFEM-Zugstab als
+    Fachwerkstab an, der auch Druck trug (am Drehlager alle 64 Staebe, S57 mit
+    -0,59 kN im LF1). Beim **Oeffnen** einer solchen Datei - Quelle eine
+    .rf6-Datei, ohne das Merkmal des Imports (rfem6_db.ZUGSTAEBE_MERKMAL),
+    mit Fachwerkstaeben ohne „trägt nur“ - steht ein Importhinweis „zugstab“
+    mit der Umstellung als Vorschlag (rfem6_db.zugstaebe_aus_rfem liest die
+    Stabtypen aus der RFEM-Datei nach) und eine Zeile fuers Protokoll.
+    Umgestellt wird nichts: das loest der Anwender aus. Rueckgabe die Zeilen."""
+    meta = getattr(model, "meta", None) or {}
+    quelle = str(meta.get("quelle", "") or "")
+    if not quelle.lower().endswith(".rf6") or meta.get("rfem_zugstaebe"):
+        return []
+    frei = []
+    for name, mem in (getattr(model, "members", None) or {}).items():
+        els = [model.elements[int(i)] for i in mem.elements if 0 <= int(i) < len(model.elements)]
+        if els and all(e.typ == "truss" and not getattr(e, "nur", "") for e in els):
+            frei.append(str(name))
+    if not frei:
+        return []
+    datei = os.path.basename(quelle)
+    text = (f"Aus RFEM 6 übernommen vor dem 14.10.2026: {len(frei)} Fachwerkstäbe tragen Zug und Druck. "
+            "Ein RFEM-Zugstab fällt dort bei Druck aus, hier trug er bis zum 14.10.2026 auch Druck – "
+            f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen?")
+    vorschlag = ("Stabtypen aus der RFEM-Datei nachlesen: statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell) "
+                 "– oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    if not any(h.get("art") == "zugstab" and not h.get("erledigt") for h in hinweise):
+        hinweise.append({"art": "zugstab", "text": text, "objekte": frei, "vorschlag": vorschlag,
+                         "erledigt": False, "datei": quelle})
+    return [text + " (" + vorschlag + ")"]
+
+
 def werkstoffe_alter_datei_nachziehen(model) -> list:
     """Stellt f_u der Werkstoffe einer **geoeffneten Datei** auf die Sortentabelle um (M26,
     07.10.2026) und gibt die Zeilen fuers Protokoll zurueck.
@@ -8952,8 +8988,11 @@ class Model:
     def _geoeffnet(m: "Model") -> "Model":
         """Was nur das Oeffnen einer Datei umstellt (nicht jedes ``from_dict``): f_u der Werkstoffe
         nach der Sortentabelle von heute (M26). Die Zeilen stehen in ``_ladehinweise`` und kommen
-        beim Oeffnen und Importieren ins Protokoll."""
+        beim Oeffnen und Importieren ins Protokoll. Seit dem 14.10.2026 dazu der Hinweis zu den
+        Zugstaeben eines vor diesem Tag aus RFEM 6 uebernommenen Modells (:func:`zugstab_hinweis`,
+        nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
+        m._ladehinweise.extend(zugstab_hinweis(m))
         return m
 
     def copy(self) -> "Model":

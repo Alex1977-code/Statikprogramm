@@ -3492,7 +3492,7 @@ nur einen Kontrast von 3,6 zu 1, die Web-Richtlinien (WCAG, Stufe AA) verlangen
 für kleinen Text 4,5 zu 1. Gerechnet über die relative Leuchtdichte hat das
 Rot 5,6 zu 1 und das dunkle Orange 4,8 zu 1; die Prüfung steht in
 `tests/test_protokoll_lesbar.py`. Das erste Wort entscheidet, auch wenn die Zeile eingerückt
-ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Zugstab: …“), und auch
+ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Seil: …“), und auch
 ohne Doppelpunkt („FEHLER Versatz Anfang y, z [mm]: …“). Auch hinter einem
 Namen darf das Stichwort stehen: endet das erste Wort der Zeile mit einem
 Doppelpunkt und folgt darauf FEHLER oder WARNUNG, färbt die Zeile ebenso, wie
@@ -6068,10 +6068,25 @@ des Ergebnisses nennt sie mit Namen („Ausgefallene Stäbe : 1 (D1)“). Seit
 dem 13.10.2026 entscheidet die Iteration mit der Kraft, die auch im Ergebnis
 steht, also mit Temperatur und Vorspannung (siehe „Temperatur und
 Vorspannung zählen in jeder Stabkraft“), und ein ausgefallener Stab nimmt
-seine Temperatur und Vorspannung mit. Ein Zugstab aus RFEM („Stabtyp
-Zugstab“) kommt als Fachwerkstab an, der auch Druck trägt, und das
-Importprotokoll warnt davor. Soll er als Zugstab rechnen, stellen Sie „trägt
-nur“ auf Zug.
+seine Temperatur und Vorspannung mit.
+
+**Zug- und Druckstäbe aus RFEM 6** (seit 14.10.2026). Ein Zugstab aus RFEM
+(Stabtyp „Zugstab“, der dort bei Druck ausfällt) kommt als Fachwerkstab mit
+„trägt nur: Zug“ an, ein Druckstab mit „trägt nur: Druck“. Ein Zugstab, den
+RFEM auch Druck tragen lässt (isActiveInCompression), bleibt ein gewöhnlicher
+Fachwerkstab. Das Importprotokoll nennt die Stäbe („64 Zugstäbe tragen nur Zug
+(fallen wie in RFEM bei Druck aus): S1, S2, …“). Bis zum 14.10.2026 trug ein
+solcher Stab hier auch Druck, und das Protokoll warnte nur („Stabtyp Zugstab:
+fällt in RFEM bei Druck aus – hier trägt er auch Druck“); am Drehlager trug S57
+im Lastfall LF1 so −0,59 kN Druck. Öffnen Sie ein Modell, das vor diesem Tag
+aus RFEM 6 übernommen wurde, nennt das Protokoll die Fachwerkstäbe ohne
+„trägt nur“, und unter den Importhinweisen steht die Umstellung als Vorschlag.
+Das Programm stellt nichts von selbst um. Die Umstellung liest die Stabtypen
+aus der RFEM-Datei nach, die beim Import gelesen wurde
+(`statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell)`), und setzt „trägt
+nur“ wie der Import heute; was Sie an einem Stab selbst eingestellt haben,
+bleibt. Ohne die RFEM-Datei wählen Sie die Stäbe und stellen in der
+Stabmaske „trägt nur“ auf Zug.
 
 **Zugstäbe in der Konvergenz** (seit 13.10.2026). Eine Rechnung mit Zug- oder
 Druckstäben oder Seilen gilt nur als konvergiert, wenn sich der Status dieser

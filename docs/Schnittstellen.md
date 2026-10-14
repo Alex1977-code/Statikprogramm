@@ -530,8 +530,8 @@ RFEM 6 legt je Stabtyp eine eigene Umsetzungstabelle an — der Tabellenname
 | `MemberImplRigid` | starrer Stab | `beam` | — |
 | `MemberImplRib` | Rippe | `beam` | die mitwirkende Plattenbreite fehlt |
 | `MemberImplTruss`, `MemberImplTrussOnlyN` | Fachwerkstab | `truss` | — |
-| `MemberImplTension` | Zugstab | `truss` | fällt in RFEM bei Druck aus – hier trägt er auch Druck |
-| `MemberImplCompression` | Druckstab | `truss` | fällt in RFEM bei Zug aus – hier trägt er auch Zug |
+| `MemberImplTension` | Zugstab | `truss`, „trägt nur: Zug“ (mit `isActiveInCompression` = 1 Zug und Druck) | — (bis zum 14.10.2026: fällt in RFEM bei Druck aus – hier trägt er auch Druck) |
+| `MemberImplCompression` | Druckstab | `truss`, „trägt nur: Druck“ | — (bis zum 14.10.2026: fällt in RFEM bei Zug aus – hier trägt er auch Zug) |
 | `MemberImplCable` | Seil | `truss` | Seiltheorie (Durchhang, Ausfall bei Druck) fehlt |
 | `MemberImplBuckling` | Knickstab | `beam` | — |
 | `MemberImplSpring`, `MemberImplDamper` | Feder-/Dämpferstab | `truss` | nur die Achssteifigkeit |
@@ -544,7 +544,11 @@ Importprotokoll:
 
     64 Staebe mit 64 Stabelementen gelesen
       Stabtypen: 64x Zugstab
-    WARNUNG:   Stabtyp Zugstab: faellt in RFEM bei Druck aus - hier traegt er auch Druck.
+      64 Zugstäbe tragen nur Zug (fallen wie in RFEM bei Druck aus): S1, S2, …
+
+`rfem6_db.stab_nur` setzt „trägt nur“ (seit 14.10.2026); ein vorher
+gespeichertes Modell bekommt beim Öffnen einen Importhinweis „zugstab“, und
+`rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um.
 
 Ein unbekannter Tabellenname wird als Balken übernommen und mit seinem Namen
 genannt — eine neue RFEM-Version bleibt so lesbar.
