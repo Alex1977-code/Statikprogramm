@@ -215,9 +215,135 @@ def test_alte_datei_bitgleich():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _reiches_modell():
+    """Quader (Volumenkoerper V1, tet10) mit Zugstab S1, Volumenbereich, einem
+    Lastfall mit Vorspannung und Temperatur - je ein Objekt fuer jedes neue Feld."""
+    from statik3d.model import Vorspannung
+    from tests.test_stabeinleitung import lagern_frei, quader, zugstab
+    m = quader(h=0.02, ordnung=1)
+    lagern_frei(m)
+    _f, _k, e = zugstab(m)
+    vol = [i for i, el in enumerate(m.elements) if el.typ in ("tet4", "tet10")]
+    m.add_volumenbereich("B1", vol[:10])
+    lc = m.case(m.active_case)
+    lc.vorspannungen.append(Vorspannung(ziel="S1", art="stab", kraft=10e3))
+    m.load_temp(e, -5.0, case=m.active_case)
+    return m
+
+
+def test_neue_felder_ein_mechanismus():
+    print("\n--- Neue Felder: ein Mechanismus für alle Pakete (model.NEUE_FELDER) ---")
+    import copy
+    from statik3d import ergebnisse
+    from statik3d import model as M
+    # die neuen Felder aller Pakete mit ihrer Vorgabe (Liste des Koordinators
+    # vom 14.10.2026); "" = Schluessel der Modelldatei selbst
+    soll = {
+        "plastizitaet": {"abbruch": "ingenieurmaessig"},
+        "design": {"gamma_P": 1.0},
+        "netz": {"krafteinleitung_fein": True},
+        "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
+                      "sigma_pmax": None, "sigma_pm0": None},
+        "sections": {"A_s": None, "gewinde": ""},
+        "koerper": {"nachweis_ausnehmen": False},
+        "volumenbereiche": {"eps_grenze": 0.05},
+        "members": {"einleitung": {}},
+        "load_cases": {"faktorisiert": False},
+        "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
+        "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
+        "": {"stabeinleitung": {"art": "punkt", "d_innen": 0.0, "d_aussen": 0.0}},
+    }
+    tabelle = getattr(M, "NEUE_FELDER", None) or {}
+    fehlt = [f"{s}.{f}" for s, ff in soll.items() for f in ff
+             if s not in tabelle or f not in tabelle[s] or tabelle[s][f] != ff[f]]
+    check("model.NEUE_FELDER führt jedes neue Feld mit seiner Vorgabe", not fehlt, f"fehlt: {fehlt}")
+    m = _reiches_modell()
+    k_jetzt = ergebnisse.kennung(m)
+    echt = Model.to_dict
+
+    def mit_vorgaben(self, *a, **k):
+        """Die Modelldatei, wie sie ein Stand vom 13.10.2026 schrieb: jedes
+        neue Feld mit seiner Vorgabe darin."""
+        d = echt(self, *a, **k)
+        for schl, felder in soll.items():
+            if schl == "":
+                objekte = [d]
+            elif "." in schl:
+                oben, liste = schl.split(".")
+                objekte = [x for lc in d.get(oben, []) for x in lc.get(liste, [])]
+            else:
+                ziel = d.get(schl)
+                objekte = (list(ziel.values()) if schl in ("materials", "sections")
+                           else ziel if isinstance(ziel, list) else [ziel])
+            for x in objekte:
+                if isinstance(x, dict):
+                    for f, v in felder.items():
+                        x.setdefault(f, copy.deepcopy(v))
+        return d
+    Model.to_dict = mit_vorgaben
+    try:
+        k_mit = ergebnisse.kennung(m)
+    finally:
+        Model.to_dict = echt
+    ok, grund = ergebnisse.passt(k_mit, m)
+    check("Datei mit allen neuen Feldern auf ihrer Vorgabe: die Ergebnisdatei passt", ok and not grund, grund)
+    ok, grund = ergebnisse.passt(k_jetzt, m)
+    check("… ebenso ohne die Felder (Datei von davor)", ok and not grund, grund)
+    mat, sec = m.materials["S235"], m.sections["Rund 16"]
+    lc = m.case(m.active_case)
+    vs, tl = lc.vorspannungen[0], lc.temp_loads[0]
+    from statik3d.model import Stabeinleitung
+
+    def setze(obj, feld, wert):
+        alt = copy.deepcopy(getattr(obj, feld))
+        setattr(obj, feld, wert)
+        return lambda: setattr(obj, feld, alt)
+    faelle = [
+        ("Plastizitaet.abbruch", lambda: setze(m.plastizitaet, "abbruch", "streng")),
+        ("DesignSettings.gamma_P", lambda: setze(m.design, "gamma_P", 1.35)),
+        ("Material.verfestigung", lambda: setze(mat, "verfestigung", 1e-4)),
+        ("Material.art", lambda: setze(mat, "art", "Spannstahl")),
+        ("Material.Ep", lambda: setze(mat, "Ep", 205e9)),
+        ("Material.sigma_pmax", lambda: setze(mat, "sigma_pmax", 780e6)),
+        ("Material.sigma_pm0", lambda: setze(mat, "sigma_pm0", 700e6)),
+        ("Material.nachweis_ausnehmen", lambda: setze(mat, "nachweis_ausnehmen", True)),
+        ("Section.A_s", lambda: setze(sec, "A_s", 157e-6)),
+        ("Section.gewinde", lambda: setze(sec, "gewinde", "M16")),
+        ("Volumenbereich.eps_grenze", lambda: setze(m.volumenbereiche["B1"], "eps_grenze", 0.03)),
+        ("Volumenkörper.nachweis_ausnehmen", lambda: setze(m.koerper["V1"], "nachweis_ausnehmen", True)),
+        ("Member.einleitung", lambda: setze(m.members["S1"], "einleitung", {"A": {"art": "stirn"}})),
+        ("Model.stabeinleitung", lambda: setze(m, "stabeinleitung", Stabeinleitung("stirn"))),
+        ("Vorspannung.sollkraft", lambda: setze(vs, "sollkraft", True)),
+        ("LoadCase.faktorisiert", lambda: setze(lc, "faktorisiert", True)),
+        ("Kategorie NZ", lambda: setze(lc, "category", "NZ")),
+        ("TempLoad.aus_vorspannung (Merkmal)", lambda: setze(tl, "aus_vorspannung", 952e3)),
+    ]
+    falsch = []
+    for name, tun in faelle:
+        zurueck = tun()
+        ok, grund = ergebnisse.passt(k_jetzt, m)
+        zurueck()
+        if ok:
+            falsch.append(name)
+        print(f"       {name:36s} -> {grund}")
+    check(f"jedes gesetzte neue Feld macht die Ergebnisdatei ungültig ({len(faelle)} Felder)", not falsch,
+          f"passt trotzdem: {falsch}")
+    # die Gruppe einer Sollkraft: zaehlt, wenn es eine Sollkraft ist
+    vs.sollkraft = True
+    k_soll = ergebnisse.kennung(m)
+    vs.gruppe = 2
+    ok, grund = ergebnisse.passt(k_soll, m)
+    vs.gruppe, vs.sollkraft = 1, False
+    check("Vorspannung.gruppe einer Sollkraft zählt", not ok, grund)
+    ok, grund = ergebnisse.passt(k_jetzt, m)
+    check("… und alles zurückgesetzt passt wieder", ok and not grund, grund)
+    check("die drei Tabellen von vorher gibt es nicht mehr",
+          not any(hasattr(ergebnisse, n) for n in ("NEUE_VORGABEN", "SPAETERE_FELDER", "NEU_AUF_VORGABE")))
+
+
 def main():
     for t in (test_spannstahl_art, test_vorspannung_ein_merkmal, test_stabenden_eine_warnung,
-              test_alte_ergebnisdatei_gamma_p, test_alte_datei_bitgleich):
+              test_alte_ergebnisdatei_gamma_p, test_alte_datei_bitgleich, test_neue_felder_ein_mechanismus):
         try:
             t()
         except Exception as ex:          # noqa: BLE001 - jede Pruefung meldet sich

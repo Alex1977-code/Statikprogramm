@@ -9095,7 +9095,7 @@ class Model:
             "flaechen": [asdict(x) for x in self.flaechen.values()],
             "koerper": [_ohne_vorgabe("koerper", asdict(x)) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
-            "netz": asdict(self.netz),
+            "netz": _ohne_vorgabe("netz", asdict(self.netz)),
             "design": _ohne_vorgabe("design", asdict(self.design)),
             "plastizitaet": asdict(self.plastizitaet),
             "knotendilatation": bool(self.knotendilatation),
@@ -9544,31 +9544,77 @@ def _dc(cls, d: dict):
     return cls(**{k: v for k, v in d.items() if k in names})
 
 
-#: Felder, die am 13.10.2026 an Objekten der Modelldatei dazukamen (plast/
-#: verfestigung, spitzen/zeigen N2, nachweis/spannstahl, import/lastfaelle), mit
-#: ihrer Vorgabe: sie stehen nur in der Datei, wenn sie davon abweichen
-#: (Zusammenfuehrung 14.10.2026, wie Vorspannung.sollkraft, TempLoad.aus_vorspannung
-#: und Model.stabeinleitung). Eine Datei von davor bleibt so beim Speichern Zeichen
-#: fuer Zeichen, wie sie war; bis dahin kamen die Felder mit der Vorgabe dazu
-#: (tests.test_vorspannkraft, Datei vom Stand 192317a: 6431 -> 6614 Byte). Beim
-#: Laden setzt der Datenklassen-Bau (_dc) die Vorgabe fuer jedes fehlende Feld.
-NUR_WENN_GESETZT = {
+#: **Neue Felder mit ihrer Vorgabe** - ein Mechanismus fuer alle Pakete vom
+#: 13./14.10.2026 (Zusammenfuehrung integ/gesamt). Je Schluessel der Modelldatei
+#: (Model.to_dict) die Felder, die spaeter dazukamen, mit ihrem Vorgabewert;
+#: "load_cases.<liste>" meint die Lasten eines Lastfalls, "" die Schluessel der
+#: Modelldatei selbst. Ein Feld mit seiner Vorgabe
+#:
+#: * zaehlt nicht in der Kennung der Ergebnisdatei (ergebnisse.rechenkennung):
+#:   eine Ergebnisdatei von davor passt weiter, ein gesetzter Wert macht sie
+#:   ungueltig wie jede andere Aenderung;
+#: * steht nicht in der Datei (to_dict mit _ohne_vorgabe; Vorspannung.als_dict,
+#:   LoadCase.to_dict und _member_dict tun es fuer ihre Felder selbst): eine
+#:   Datei von davor bleibt beim Speichern Zeichen fuer Zeichen, wie sie war.
+#:   Beim Laden setzt der Datenklassen-Bau (_dc) die Vorgabe. Ausnahme:
+#:   plastizitaet.abbruch steht seit dem 13.10.2026 (spitzen/kriterium) immer
+#:   in der Datei - die Dateien dieses Tages tragen ihn, und sie bleiben so
+#:   bitgleich (tests.test_vorspannkraft, Datei vom Stand 192317a).
+#:
+#: Bis dahin gab es dafuer drei Tabellen in ergebnisse (NEUE_VORGABEN aus
+#: spitzen/kriterium 65760f6, SPAETERE_FELDER aus spitzen/zeigen 43f3dca,
+#: NEU_AUF_VORGABE aus nachweis/spannstahl 71d6386) und keine fuer die
+#: uebrigen Pakete; ohne Eintrag wies das Programm jede alte Ergebnisdatei ab
+#: (am 13.10.2026 das LF1 Mittel des Drehlagers vom 09.10.: „seit der Rechnung
+#: geändert: Rechenart und Einstellungen“). Wer ein Feld an ein Objekt der
+#: Modelldatei anfuegt, traegt es hier ein.
+NEUE_FELDER = {
+    # spitzen/kriterium (Abbruch ohne die netzabhaengigen Spitzen)
+    "plastizitaet": {"abbruch": "ingenieurmaessig"},
+    # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
+    "design": {"gamma_P": 1.0},
+    # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
+    # zaehlen nicht in der Kennung - das Netz selbst steht in Knoten und Elementen)
+    "netz": {"krafteinleitung_fein": True},
+    # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
+    # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
     "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
                   "sigma_pmax": None, "sigma_pm0": None},
+    # nachweis/spannstahl
     "sections": {"A_s": None, "gewinde": ""},
+    # spitzen/zeigen N2
     "koerper": {"nachweis_ausnehmen": False},
     "volumenbereiche": {"eps_grenze": 0.05},
-    "design": {"gamma_P": 1.0},
+    # stab/rbe3 (Einleitung je Stabende)
+    "members": {"einleitung": {}},
+    # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
+    # alten Felds category und zaehlt wie jede andere Kategorie)
+    "load_cases": {"faktorisiert": False},
+    # vorspannung/kraft (Sollkraft nach Verankerung)
+    "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
+    # import/lastfaelle (Merkmal „aus Vorspannung“)
+    "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
+    # stab/rbe3 (Modelleinstellung der Stabenden in Volumen)
+    "": {"stabeinleitung": asdict(Stabeinleitung())},
 }
 
 
+def ist_vorgabe(schluessel: str, feld: str, wert) -> bool:
+    """Traegt das neue Feld ``feld`` unter ``schluessel`` (:data:`NEUE_FELDER`)
+    seine Vorgabe? Wahr und Zahl werden nicht verwechselt (False ist nicht 0.0)."""
+    vg = NEUE_FELDER.get(schluessel)
+    if not vg or feld not in vg:
+        return False
+    v0 = vg[feld]
+    return (wert == v0 and isinstance(wert, bool) == isinstance(v0, bool)
+            and (wert is None) == (v0 is None))
+
+
 def _ohne_vorgabe(schluessel: str, d: dict) -> dict:
-    """``d`` ohne die Felder aus :data:`NUR_WENN_GESETZT`, die ihre Vorgabe tragen."""
-    vg = NUR_WENN_GESETZT.get(schluessel)
-    if not vg:
+    """``d`` ohne die neuen Felder (:data:`NEUE_FELDER`), die ihre Vorgabe tragen."""
+    if schluessel not in NEUE_FELDER or not isinstance(d, dict):
         return d
-    return {k: v for k, v in d.items()
-            if not (k in vg and v == vg[k] and type(v) is type(vg[k]))}
+    return {k: v for k, v in d.items() if not ist_vorgabe(schluessel, k, v)}
 
 
 def _member_dict(m: Member) -> dict:

@@ -150,45 +150,12 @@ TEXTFELDER = frozenset(("kommentar", "comment", "beschreibung", "description", "
 #: die Nummer eines Lastfalls und einer Kombination (ihr Name ist der
 #: Schluessel), die Groesse des Lagersymbols
 ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",)}
-#: Einstellungen, die erst spaeter dazukamen, je Schluessel der Modelldatei mit
-#: ihrem Vorgabewert: mit diesem Wert zaehlen sie nicht. Sonst passte keine
-#: Ergebnisdatei von vorher mehr zu ihrem Modell, denn das Modell bekommt beim
-#: Laden die Vorgabe. ``plastizitaet.abbruch`` (13.10.2026, Plan
-#: Singularitaeten, Paket 3) steht in jedem Modell; mit ihm wies das Programm
-#: am 13.10.2026 das gespeicherte LF1 Mittel des Drehlagers vom 09.10. ab
-#: („Die Ergebnisdatei passt nicht zum Modell: seit der Rechnung geändert:
-#: Rechenart und Einstellungen“). Wer „streng“ waehlt, aendert die Kennung
-#: wie jede andere Einstellung. Ebenso ``design.gamma_P`` (13.10.2026,
-#: import/lastfaelle): ohne den Eintrag wies integ/gesamt am 14.10.2026 jede
-#: Ergebnisdatei ab, die der Stand davor geschrieben hatte. gamma_P wirkt nur
-#: im Generator der Kombinationen; gespeicherte Kombinationen tragen ihre
-#: Faktoren selbst.
-NEUE_VORGABEN = {"plastizitaet": {"abbruch": "ingenieurmaessig"}, "design": {"gamma_P": 1.0}}
-#: Felder, die nach der Kennung (07.10.2026) an Werkstoff und Querschnitt
-#: dazukamen, mit ihrer Vorgabe: auf der Vorgabe zaehlen sie nicht mit, gesetzt
-#: wie jedes Feld. Ohne das passte nach dem Einbau keine Ergebnisdatei von
-#: vorher mehr - am Drehlager-Lauf vom 09.10.2026 „seit der Rechnung geändert:
-#: Werkstoffe, Querschnitte und Dicken“ (13.10.2026, Spannstahl und Gewinde;
-#: tests.test_spannstahl, Kennung wie an c379601). Verfestigung und Art kamen
-#: am selben Tag mit plast/verfestigung dazu. Wer ein Feld anfuegt, traegt es
-#: hier ein.
-NEU_AUF_VORGABE = {
-    "materials": {"verfestigung": None, "art": "", "Ep": None, "sigma_pmax": None, "sigma_pm0": None},
-    "sections": {"A_s": None, "gewinde": ""},
-}
+#: Neue Felder mit ihrer Vorgabe zaehlen nicht: model.NEUE_FELDER (ein Mechanismus
+#: fuer alle Pakete seit der Zusammenfuehrung am 14.10.2026; bis dahin standen hier
+#: NEUE_VORGABEN, NEU_AUF_VORGABE und SPAETERE_FELDER).
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
               "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
-#: Felder, die nach dem 07.10.2026 an Objekten der Modelldatei dazukamen, mit
-#: ihrem Vorgabewert, je Schluessel der Modelldatei. Traegt ein Objekt die
-#: Vorgabe, zaehlt das Feld nicht mit - sonst passte keine Ergebnisdatei von
-#: davor mehr: mit den Feldern vom 13.10.2026 (Volumennachweis plastisch, N2)
-#: wies das Oeffnen die gespeicherte Rechnung des Drehlagers ab („seit der
-#: Rechnung geändert: Werkstoffe, Linien, Flächen und Volumen“), obwohl nichts
-#: geaendert war. Mit einem anderen Wert zaehlt es mit.
-SPAETERE_FELDER = {"materials": {"nachweis_ausnehmen": False},
-                   "koerper": {"nachweis_ausnehmen": False},
-                   "volumenbereiche": {"eps_grenze": 0.05}}
 #: einzelne Objekte (Einstellungen) statt Sammlungen
 _EINZELOBJEKTE = ("design", "plastizitaet")
 #: Sammlungen {Name: Objekt}. Sie zaehlen nur mit den Eintraegen, deren Name
@@ -311,20 +278,19 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool):
     weg = set(TEXTFELDER) | set(ANZEIGEFELDER.get(schluessel, ()))
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
-    # Felder mit ihrem Vorgabewert zaehlen nicht (drei Tabellen aus drei
-    # Zweigen vom 13.10.2026, gleiche Regel, keine Ueberschneidung)
-    vorgabe = {**NEUE_VORGABEN.get(schluessel, {}), **SPAETERE_FELDER.get(schluessel, {}),
-               **NEU_AUF_VORGABE.get(schluessel, {})}
+    from .model import ist_vorgabe
 
     def objekt(x):
         if not isinstance(x, dict):
             return x
-        y = {k: v for k, v in x.items() if k not in weg and not (k in vorgabe and v == vorgabe[k])}
+        # neue Felder mit ihrer Vorgabe zaehlen nicht (model.NEUE_FELDER)
+        y = {k: v for k, v in x.items() if k not in weg and not ist_vorgabe(schluessel, k, v)}
         if schluessel == "load_cases":
             for f in LASTFELDER:
                 if isinstance(y.get(f), list):
-                    y[f] = [{k: v for k, v in l.items() if k not in TEXTFELDER} if isinstance(l, dict) else l
-                            for l in y[f]]
+                    y[f] = [{k: v for k, v in l.items()
+                             if k not in TEXTFELDER and not ist_vorgabe(f"load_cases.{f}", k, v)}
+                            if isinstance(l, dict) else l for l in y[f]]
         return y
     if isinstance(wert, list):
         return [objekt(x) for x in wert]
@@ -349,9 +315,10 @@ def rechenkennung(model) -> tuple:
     verwendet = _verwendete_namen(model, d)
     teile: dict = {g: [] for g in GRUPPEN}
     einzeln: dict = {}
+    from .model import ist_vorgabe
     for schluessel, wert in d.items():
         gruppe = MODELLTEILE.get(schluessel, "sonstiges")
-        if gruppe is None:
+        if gruppe is None or ist_vorgabe("", schluessel, wert):
             continue
         if schluessel in _NAMENSSAMMLUNGEN and isinstance(wert, dict):
             wert = {k: v for k, v in wert.items() if k in verwendet}

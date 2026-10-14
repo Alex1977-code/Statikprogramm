@@ -4256,7 +4256,8 @@ mit dem Stand vor dem 13.10.2026 (Bezugswerte in `tests.test_spannstahl`).
 Die neuen Felder (E_p, σ_p,max und σ_pm0 am Werkstoff, A_s und Gewinde am
 Querschnitt, dazu Werkstoffart und Verfestigung aus der Verfestigung bis f_u)
 zählen in der Kennung der Ergebnisdatei nur, wenn sie gesetzt sind
-(`ergebnisse.NEU_AUF_VORGABE`). Ohne diese Regel hätte schon das Anfügen der
+(seit der Zusammenführung vom 14.10.2026 `model.NEUE_FELDER`, ein Verzeichnis
+der neuen Felder aller Pakete; bis dahin `ergebnisse.NEU_AUF_VORGABE`). Ohne diese Regel hätte schon das Anfügen der
 Felder jede gespeicherte Ergebnisdatei ungültig gemacht; am Drehlager-Lauf vom
 09.10.2026 hieß es beim Lesen „seit der Rechnung geändert: Werkstoffe,
 Querschnitte und Dicken“.
