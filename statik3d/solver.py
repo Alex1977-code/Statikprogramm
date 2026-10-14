@@ -8129,9 +8129,11 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
         merker["abgelehnt"] = (f"Δσ_v {_zt(dsv / 1e6)} N/mm² erfüllt, aber Δu {_zt(du_max * 1e6)} µm > "
                                f"{_zt(grenze_u * 1e6)} µm")
         return None
-    if w_sp:
+    if w_sp and du_max > ABSCHLUSS_WEG_ANTEIL * u_max:
         # Δσ ergaenzt das Kraftresiduum, ersetzt es aber nicht (Entscheidung des Anwenders
-        # vom 14.10.2026): mit der weiteren Wegschranke muessen die Verstoesse dieser Loesung
+        # vom 14.10.2026): nur wenn die weitere Wegschranke die Annahme traegt (Δu ueber
+        # 0,1 % u_max) - innerhalb der alten Schranke bleibt alles wie vor dem Schalter
+        # (tests/test_ingenieur_warm, test_kontakt_pendeln) -, muessen die Verstoesse dieser Loesung
         # zusammen unter der Schranke der Restwechsel liegen (Plastizitaet.pendel_kraft_anteil,
         # 0,1 % der Kontaktkraft). Ohne diese Bedingung nahm das Kriterium am Stempel auf dem
         # Sockel einen Zustand an, in dem ein haftender Knoten 6,3 % ueber dem Reibkegel lag
