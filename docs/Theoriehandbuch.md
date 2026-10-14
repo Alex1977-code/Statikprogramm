@@ -7623,6 +7623,83 @@ entsteht — denn die Hülle ist der Hebel (3,4 Tetraeder je Randdreieck am Dreh
 | Tetraeder | dritte Schranke der Sollgröße neben h und der Randkantenregel; die Verfeinerung selbst bleibt (Platte, Kugel 15 mm bei h = 100 mm: 11,9 mm in der Kugel, 79 mm im Feld, Güte min 0,114) |
 | gmsh / MMG3D | gmsh bekommt einen Größen-Rückruf mit derselben Sollgröße; MMG3D die Kantenlänge je Knoten als Metrik (`.sol`) und passt das Innere bei fester Hülle an (Quader, Hülle 50 mm, Kugel 5 mm: 12,8 mm im Ziel, Güte min 0,507, 0,4 s). **Der gmsh-Rückruf ist keine Zusage:** an der Platte mit 100-mm-Hülle traf HXT die 10-mm-Kugel je Prozesszustand mit 14,5 oder 38,5 mm — bei identischen Fragen und Antworten bis zur 579. Anfrage; die Abweichung entsteht in gmsh, die Ursache ist nicht gefunden. Verlässlich ist die Metrik von MMG3D; ohne sie warnt das Protokoll |
 
+**Krafteinleitungen ohne Fläche: Quellen vor dem Vernetzen (13./14.10.2026).** Eine
+starre Scheibe über einer Bohrung koppelt nur den Lochrand, ein Stabende hängt an
+drei oder vier Knoten eines Elements; die Kraft tritt an einer Linie bzw. in
+einem Punkt ins Volumen, die Spannung dort wächst mit jeder Verfeinerung (§ 7b),
+und die Zone, die man deshalb nicht auswertet (`spitzenstellen`), ist so groß
+wie die Elemente. Am Netz erkennt `spitzenstellen.kandidaten` die Stellen über
+die Kopplungen, die aber erst beim Vernetzen entstehen
+(`fugen.starre_flaechen_koppeln`, `fugen.stabenden_koppeln`). Das Größenfeld
+braucht sie davor; `netzfeld.krafteinleitungen` bestimmt sie darum aus der
+Geometrie allein:
+
+* **starre Scheibe** (`fugen.starre_flaechen`): Ein Gitter im um 10 % verkleinerten
+  Umriss der Scheibe wird auf die ebenen Körperflächen in ihrer Ebene projiziert.
+  Deckt eine Körperfläche mindestens `FLAECHE_ANTEIL` = 10 % davon, trägt die
+  Scheibe eine Fläche und ist keine Stelle. Sonst ist ihre Quelle der Teil ihres
+  Umrisses, der auf einer Körperfläche liegt (Toleranz max(`STARR_TOL_RAND`; 2 % r),
+  weil die Körperflächen mit 16 Punkten je Linie abgetastet sind und die Sehne eines
+  Halbkreises bis 0,5 % von r innen liegt), und die krummen Linien dieser Flächen, die
+  ganz auf dem Umriss liegen: der Lochrand.
+* **Stabende**: ein Knoten an genau einem truss- oder beam-Element, der auf einer
+  ebenen Randfläche eines Körpers liegt (0,1 mm wie `fugen.stabenden_koppeln`) oder von
+  RFEM in sie integriert ist. Das Ende in der Mitte einer starren Scheibe ist deren
+  Master und zählt nicht.
+
+Am Drehlager findet das 64 Scheiben (16 Ankerringe r 25,5 mm, 48 Schraubenringe r 8
+und 10 mm) und 48 Stabenden, keine flächige Scheibe, in 2,9 s: dieselben Zahlen wie
+die Abnahme nach dem Vernetzen.
+
+*Ziellänge.* Wo die Linie schon einen Bogen hat, gilt derselbe Wert wie an den Bögen
+der Kontaktflächen von Fein, 9° je Abschnitt (kein neuer Wert); die Kantenlänge am
+Ring ist h_R = min(½ h_Mittel; r · 9°), so dass das Netz am Rand nie gröber als die
+halbe Kantenlänge von Mittel wird (r · 9° ist größer als ½ h_Mittel erst bei einem Loch
+mit r > 3,2 h_Mittel). Das Stabende bekommt h_P = ½ h_Mittel seines Körpers, wie die
+Flächen von Fein. Die Reichweite ist 2 h (zwei Elementringe), der Umkreis also etwa
+r + 2 h; dahinter wächst das Feld wie jede Quelle mit 0,35 je Meter. Der Lochrand
+läuft über den Weg der Bögen von Fein (`Groessenfeld.feine_linien`, Linienteilung),
+das Innere über eine Quelle je h/2 am Ring. Quadratisch sind Mittel und Fein ohnehin
+(tet10); Entwurf bleibt linear und ohne diese Quellen, weil tet4 neben tet10 in einem
+Netz keine verträglichen Elemente gäbe.
+
+*Untergrenze: die Mindestweite.* Ein Ring mit h_R < h_Mittel / 30
+(`mesher3d.mindestweite`, `MINDESTWEITE_TEILER`) bekommt keine Quelle. Das ist die
+Länge, unter der der Vernetzer von sich aus keine Hüllkante erzeugen soll, weil
+daraus Splitter werden, die kein Volumenschritt mehr los wird (21.09.2026: 189
+Splitter am Drehlager, bei allen die kürzeste Kante eine Hüllkante von 0,13 bis
+1,36 mm bei h = 50 mm). Am Drehlager liegen die 48 Schraubenringe darunter (h_R 1,26
+und 1,57 mm gegen 1,67 mm), 18, 18 und 12 in den Körpern V33, V35 und V31, die
+16 Ankerringe darüber (4,01 mm gegen 1,33 mm). Ohne diese Grenze verfeinerte die erste
+Fassung auch die Schraubenringe; die Grenze folgt der Regel des Vernetzers und ist nicht
+an Messwerten dieser Körper eingestellt.
+
+*Aufwand.* Die Zahl der Tetraeder im Kegel um eine Linienquelle der Länge L mit
+Kantenlänge h₀ und Steigung g (Tetraeder mit Kante h hat das Volumen v₀ h³,
+v₀ = 1/(6√2) = 0,1179) ist im Vollraum
+
+    N = L ∫ 2π d dd / (v₀ (h₀ + g d)³) = π L / (v₀ g² h₀) = 217 · L / h₀   (g = 0,35),
+
+an einer Oberfläche halb so viel. Für einen Ring mit Winkel Δφ je Abschnitt ist
+L / h₀ = 2π / Δφ, also 40 bei 9°: rund 8 700 Tetraeder im Vollraum, **unabhängig vom
+Radius**. Die Tiefe der Zone dagegen, zwei Elementringe 2 · r · Δφ, wächst mit dem
+Radius; darum fallen bei der Grenze in Unbekannten zuerst die Stabenden und dann die
+kleineren Ringe weg (`elementstufe.KRAFT_STUFEN`). Geschätzt am gespeicherten
+Mittel-Netz des Drehlagers (jedes Tetraeder auf min(alt; Feld) am Schwerpunkt gesetzt,
+V / (v₀ h³); keine Vernetzung): alle 64 Ringe 9° und 48 Stabenden h/2 981 291 statt
+617 177 tet10 (4,85 statt 3,05 Mio. Unbekannte), nur die 16 Ankerringe und die Stabenden
+737 298 (3,64 Mio.), nur die Stabenden 658 298 (3,25 Mio.): 4,9 · 10³ Tetraeder je
+Ankerring und 5,1 · 10³ je Schraubenring. **Gemessen** (Messlauf 14.10.2026, Stufe 1:
+Ankerringe und Stabenden) kam das Netz auf 4 234 851 Unbekannte, die Schätzung lag also
+14 % darunter, weil sie die Nachbarkörper nur über den Schwerpunkt der alten Elemente
+sieht: Die Platten V15, V33, V35 und V31 wuchsen um 63, 44, 43 und 27 % der Knoten. Jede
+Ankerplatte wuchs von rund 1 300 auf rund 9 200 Tetraeder (nach der Nachbesserung),
+also, im Verhältnis der Tetraeder hochgerechnet, um etwa 42 000 Unbekannte; 16 davon sind 0,67 Mio., und die 16 Ankerringe allein
+ergäben rund 3,7 Mio. Unbekannte (Schätzung ohne die Wirkung auf die Nachbarkörper).
+Die Stufe mit den Stabenden allein kam in 106 Minuten nicht zu Ende. Ein Kegel mit
+Steigung 0,35 reicht von 3 mm auf 50 mm über 134 mm in die Nachbarkörper; das
+Größenfeld ist ein Feld des ganzen Modells und kennt keine Grenze am eigenen Körper.
+
 **Bedeutung der Flächen — Nebenflächen grob.** Am Drehlager stammen 85 % der Elemente
 aus acht Körpern, alle mit derselben Ziellänge 50 mm; ihre Elementzahl kommt aus der
 Hülle, und die Hülle aus Bohrungen und Ausrundungen mit 18° je Bogenabschnitt — ob die

@@ -22,20 +22,23 @@ Elementansatz linear/quadratisch und die Haken:
   waren. Ohne tetp (Anwender 25.09.2026: „Fein ohne tetp“).
 
 **Krafteinleitungen ohne Flaeche** (seit 13.10.2026, Mittel und Fein): an
-einer starren Scheibe ueber einer Bohrung (Kopplung nur am Lochrand) und an
-einem Stabende auf einem Volumen legt :func:`wirksam` Quellen ins
-Groessenfeld - am Lochrand 9 statt 18 Grad je Abschnitt, hoechstens die halbe
-Kantenlaenge von Mittel, am Stabende die halbe, je zwei Elementringe weit
-(netzfeld.krafteinleitungen, netzfeld.kraft_ziele). Anlass ist der Wunsch des
+einer starren Scheibe ueber einer Bohrung (Kopplung nur am Lochrand) und - auf
+eigenen Haken - an einem Stabende auf einem Volumen legt :func:`wirksam`
+Quellen ins Groessenfeld - am Lochrand 9 statt 18 Grad je Abschnitt,
+hoechstens die halbe Kantenlaenge von Mittel, am Stabende die halbe, je zwei
+Elementringe weit (netzfeld.krafteinleitungen, netzfeld.kraft_ziele). Anlass ist der Wunsch des
 Anwenders vom 13.10.2026: „Netzabhängige Zonen sind zu groß, weil elementweise
 auf grobem Netz bestimmt. Bitte über Radius bzw. max. 1–2 Elementringe
 begrenzen und im Lochbereich feiner bzw. quadratisch vernetzen.“ Quadratisch
 sind Mittel und Fein ohnehin (tet10); Entwurf bleibt linear und ohne diese
 Quellen - es ist die schnelle Stufe fuer Verformungen, und tet4 neben tet10
-in einem Netz gaebe keine vertraeglichen Elemente. Der Schalter ist
-``Netzeinstellungen.krafteinleitung_fein`` (Vorgabe ein; aeltere Dateien
-bekommen beim Laden die Vorgabe). Bis zum 13.10.2026 war Mittel dort so grob
-wie ueberall.
+in einem Netz gaebe keine vertraeglichen Elemente. Die Schalter sind
+``Netzeinstellungen.krafteinleitung_fein`` (die Ringe) und
+``krafteinleitung_stabenden`` (dazu die Stabenden), beide in der Vorgabe
+**aus**: am Drehlager (14.10.2026) kostete die Verfeinerung mit Ringen und
+Stabenden ueber zwei Stunden und endete an der Grenze in Unbekannten noch
+ohne fertiges Netz (Benutzerhandbuch, „Elementstufe“); die Ringe allein sind
+dort nicht gemessen. Bis zum 13.10.2026 war Mittel dort so grob wie ueberall.
 
 Jede Stufe setzt ``netz.sweep = "sauber"``: „sweepen muss das programm doch
 automatisch wenn das entsprechende element das verlangt … dass kann der user
@@ -86,11 +89,11 @@ ELEMENTE = {
     "entwurf": "tet4, Sechsflächner hex8 (VQ83; entartete rechnen als Keil, Pyramide oder "
                "Tetraeder), Schalen linear (shell3/shell4)",
     "mittel": "tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), "
-              "Schalen quadratisch (shell6/shell8), feiner an Krafteinleitungen ohne Fläche "
-              "(starre Scheiben über Bohrungen, Stabenden)",
+              "Schalen quadratisch (shell6/shell8), auf Wunsch feiner an Krafteinleitungen "
+              "ohne Fläche (starre Scheiben über Bohrungen, Stabenden)",
     "fein": "wie Mittel (tet10, hex20 (VQ203), Schalen quadratisch), feiner an Kontakt-, Lager- und "
-            "Lastflächen und an den Bögen der Kontakt- und Lagerflächen, dazu wie Mittel an "
-            "Krafteinleitungen ohne Fläche",
+            "Lastflächen und an den Bögen der Kontakt- und Lagerflächen, dazu wie bei Mittel auf "
+            "Wunsch an Krafteinleitungen ohne Fläche",
 }
 #: Wofuer die Stufe taugt (Anwender-Auftrag 25.09.2026, woertlich)
 ZWECK = {
@@ -315,14 +318,17 @@ def fein_stufe(k: int = 0) -> FeinStufe:
 #: Anteil der Ringe, die ihn bekommen - die mit dem groessten Radius zuerst,
 #: Kantenlaenge an Stabenden als Anteil von Mittel). j = 0 ist die volle
 #: Verfeinerung. Wird das Netz zu gross (Grenze in Unbekannten), vergroebert
-#: das Programm Stufe um Stufe: erst bekommen nur noch die groessten Ringe das
-#: feinere Netz (ein Viertel), dann keiner, dann sind die Stabenden groeber
-#: (h/1,5), zuletzt Mittel ohne Verfeinerung. Grund der Reihenfolge: der
+#: das Programm Stufe um Stufe: zuerst fallen die Stabenden weg (ihre Kegel
+#: reichen in die Nachbarkoerper; allein haben sie am Drehlager kein Netz in
+#: vertretbarer Zeit geliefert, die Ringe liegen in kleinen Koerpern), dann
+#: behalten nur die groessten Ringe das feinere Netz (ein Viertel), zuletzt
+#: ist es Mittel ohne Verfeinerung. Grund der Reihenfolge bei den Ringen: der
 #: Aufwand je Ring ist ungefaehr gleich (die Elemente im Kegel einer
 #: Ringquelle zaehlen nach Abschnitten, nicht nach Radius), der Gewinn an
-#: Zonentiefe (zwei Elementringe, 2 * r * Winkel) waechst aber mit dem Radius;
-#: ein Stabende kostet dagegen nur wenige hundert Elemente.
-KRAFT_STUFEN = ((9.0, 1.0, 0.5), (9.0, 0.25, 0.5), (9.0, 0.0, 0.5), (9.0, 0.0, 1.0 / 1.5), (9.0, 0.0, 1.0))
+#: Zonentiefe (zwei Elementringe, 2 * r * Winkel) waechst aber mit dem Radius.
+#: Ohne den Haken fuer Stabenden (stabenden_an) ist der Stabfaktor immer 1,
+#: Stufe 1 gleicht dann Stufe 0 und wird uebersprungen.
+KRAFT_STUFEN = ((9.0, 1.0, 0.5), (9.0, 1.0, 1.0), (9.0, 0.25, 1.0), (9.0, 0.0, 1.0))
 KRAFT_STUFEN_ANZAHL = len(KRAFT_STUFEN)
 
 
@@ -356,9 +362,16 @@ def kraft_stufe(j: int = 0) -> KraftStufe:
 def kraft_an(netz) -> bool:
     """Werden Krafteinleitungen ohne Flaeche feiner vernetzt (seit
     13.10.2026)? Bei Mittel und Fein, solange der Schalter
-    ``Netzeinstellungen.krafteinleitung_fein`` an ist (Vorgabe; eine aeltere
-    Datei ohne das Feld hat ihn an). Entwurf nie."""
-    return bool(getattr(netz, "krafteinleitung_fein", True)) and stufe(netz) in ("mittel", "fein")
+    ``Netzeinstellungen.krafteinleitung_fein`` an ist (Vorgabe aus, auch fuer
+    eine aeltere Datei ohne das Feld). Entwurf nie."""
+    return bool(getattr(netz, "krafteinleitung_fein", False)) and stufe(netz) in ("mittel", "fein")
+
+
+def stabenden_an(netz) -> bool:
+    """Werden auch Stabenden auf Volumen feiner vernetzt (seit 13.10.2026)?
+    Nur mit ``krafteinleitung_fein`` und dem eigenen Haken
+    ``krafteinleitung_stabenden`` (Vorgabe aus)."""
+    return kraft_an(netz) and bool(getattr(netz, "krafteinleitung_stabenden", False))
 
 
 def kraft_nr(netz, k: int) -> int:
@@ -374,16 +387,13 @@ def kraft_nr(netz, k: int) -> int:
     return k
 
 
-def _hat_stellen(kziele) -> bool:
-    return bool(kziele) and bool(kziele.get("ringe") or kziele.get("punkte"))
-
-
 def stufen_anzahl(netz, stellen: dict = None) -> int:
     """Wie viele Stufen die Grenze in Unbekannten fuer diese Netzeinstellungen
     hat (:func:`fein_stufen`): Entwurf 1, Mittel 1 und mit Krafteinleitungen
     ohne Flaeche :data:`KRAFT_STUFEN_ANZAHL`, Fein :data:`FEIN_STUFEN_ANZAHL`
     und mit Krafteinleitungen die Stufen von Mittel dahinter."""
-    hat = kraft_an(netz) and bool(stellen) and bool(stellen.get("ringe") or stellen.get("punkte"))
+    hat = kraft_an(netz) and bool(stellen) and bool(stellen.get("ringe") or
+                                                      (stellen.get("punkte") and stabenden_an(netz)))
     if stufe(netz) == "fein":
         return FEIN_STUFEN_ANZAHL + (KRAFT_STUFEN_ANZAHL - 1 if hat else 0)
     return KRAFT_STUFEN_ANZAHL if (stufe(netz) == "mittel" and hat) else 1
@@ -400,12 +410,14 @@ def _kraft(netz, model, k: int, stellen: dict = None) -> tuple:
     if model is None or not kraft_an(netz):
         return [], None
     st = kraft_stufe(kraft_nr(netz, k))
-    if st.ist_mittel:
+    # ohne den Haken fuer Stabenden gibt es keine - in jeder Stufe
+    stab = st.stabfaktor if stabenden_an(netz) else 1.0
+    if st.ringanteil <= 0.0 and stab >= 1.0:
         return [], None
     from . import netzfeld
     if callable(stellen):
         stellen = stellen()
-    ziele = netzfeld.kraft_ziele(model, netz, st.bogenwinkel, st.stabfaktor, stellen, st.ringanteil)
+    ziele = netzfeld.kraft_ziele(model, netz, st.bogenwinkel, 0.5, stellen, st.ringanteil, stab)
     return netzfeld.kraft_verfeinerungen(ziele), ziele
 
 
@@ -477,24 +489,26 @@ def _ringanteil_text(a: float) -> str:
     return {0.5: " (die größere Hälfte)", 0.25: " (das größte Viertel)"}.get(a, f" (die größten {a * 100:g} %)")
 
 
-def stufe_text(k: int, s: str = "fein", kraft: bool = False) -> str:
+def stufe_text(k: int, s: str = "fein", kraft: bool = False, stabenden: bool = True) -> str:
     """Der Text einer Vergroeberungsstufe fuer das Protokoll, etwa „Fein
     Stufe 2: Bögen 18°, Flächen h/2“ oder (an Krafteinleitungen ohne Flaeche,
     seit 13.10.2026) „Mittel Stufe 1: Ringe 9° (das größte Viertel),
     Stabenden h/2“ - er steht in ``quelle`` der Netzeinstellungen, die
     :func:`fein_stufen` fuer diese Stufe liefert. ``kraft``: das Modell hat
     Krafteinleitungen ohne Flaeche; dann heissen die Stufen von Fein ab seiner
-    letzten „Mittel Stufe j“ - sie setzen Fein an den Krafteinleitungen fort."""
+    letzten „Mittel Stufe j“ - sie setzen Fein an den Krafteinleitungen fort.
+    ``stabenden``: der Haken fuer Stabenden ist an (sonst nennt der Text sie nicht)."""
     st = fein_stufe(k)
     if s == "fein" and not (kraft and st.letzte):
         return (f"Fein Stufe {st.k}: Bögen {st.bogenwinkel:g}°, Flächen {_stabenden_text(st.flaechenfaktor)}"
                 + (" (wie Mittel)" if st.ist_mittel else ""))
     j = max(0, int(k) - (FEIN_STUFEN_ANZAHL - 1)) if s == "fein" else int(k)
     ks = kraft_stufe(j)
-    if ks.ist_mittel:
+    stab = ks.stabfaktor if stabenden else 1.0
+    if ks.ringanteil <= 0.0 and stab >= 1.0:
         return f"Mittel Stufe {ks.j}: ohne Verfeinerung an Krafteinleitungen"
     ringe = (f"Ringe {ks.bogenwinkel:g}°{_ringanteil_text(ks.ringanteil)}" if ks.ringanteil > 0 else "ohne Ringe")
-    return f"Mittel Stufe {ks.j}: {ringe}, Stabenden {_stabenden_text(ks.stabfaktor)}"
+    return f"Mittel Stufe {ks.j}: {ringe}" + (f", Stabenden {_stabenden_text(stab)}" if stab < 1.0 else "")
 
 
 def fein_stufen(model, netz=None):
@@ -564,7 +578,7 @@ def fein_stufen(model, netz=None):
         k = int(k)
         if k < 0 or k >= anzahl:
             return None
-        return replace(wirksam(basis, model, k, stellen), quelle=stufe_text(k, s, hat))
+        return replace(wirksam(basis, model, k, stellen), quelle=stufe_text(k, s, hat, stabenden_an(netz)))
     return einstellung
 
 
@@ -588,16 +602,24 @@ def kraft_text(kziele: dict) -> str:
     """Was an den Krafteinleitungen ohne Flaeche feiner wird - fuer Maske und
     Protokoll („feiner an Krafteinleitungen ohne Fläche: 16 Ringe starrer
     Scheiben über Bohrungen (r 25,5 mm) mit 4 mm (9° je Abschnitt, höchstens
-    die Hälfte von Mittel), …“); leer ohne Stellen."""
-    if not _hat_stellen(kziele):
+    die Hälfte von Mittel), … – je zwei Elementringe, von dort wachsend;
+    48 Ringe (r 8 mm … 10 mm) bleiben wie Mittel …“); leer ohne Stellen. Ringe,
+    die unter der Mindestweite blieben (netzfeld.kraft_ziele), nennt der Text
+    ausdruecklich - sie werden nicht stillschweigend ausgelassen."""
+    if not kziele:
         return ""
     ringe, punkte = kziele.get("ringe") or [], kziele.get("punkte") or []
+    eng = kziele.get("unter_mindestweite") or []
+    if not (ringe or punkte or eng):
+        return ""
     f = float(kziele.get("faktor", 0.5))
     anteil = "die Hälfte" if abs(f - 0.5) < 1e-9 else f"das {f:.2f}-Fache".replace(".", ",")
+    fs = float(kziele.get("stabfaktor", f))
+    anteil_stab = "die Hälfte" if abs(fs - 0.5) < 1e-9 else f"das {fs:.2f}-Fache".replace(".", ",")
     teile = []
     if ringe:
         gesamt = int(kziele.get("ringe_gesamt", len(ringe)) or len(ringe))
-        if gesamt > len(ringe):
+        if gesamt > len(ringe) + len(eng):
             # nur die groessten Ringe (Stufe der Grenze, KRAFT_STUFEN)
             wer = (f"{'größter Ring' if len(ringe) == 1 else 'größte Ringe'} von {gesamt} Ringen "
                    "starrer Scheiben über Bohrungen")
@@ -609,9 +631,16 @@ def kraft_text(kziele: dict) -> str:
                      f"höchstens {anteil} von Mittel)")
     if punkte:
         teile.append(f"{_anzahl(len(punkte), 'Stabende', 'Stabenden')} auf Volumen mit "
-                     f"{_spanne(s['h'] for s in punkte)} ({anteil} von Mittel)")
-    return ("feiner an Krafteinleitungen ohne Fläche: " + ", ".join(teile)
-            + " – je zwei Elementringe, von dort wachsend")
+                     f"{_spanne(s['h'] for s in punkte)} ({anteil_stab} von Mittel)")
+    text = ("feiner an Krafteinleitungen ohne Fläche: " + ", ".join(teile)
+            + " – je zwei Elementringe, von dort wachsend") if teile else ""
+    if eng:
+        grund = (f"{_anzahl(len(eng), 'Ring', 'Ringe')} (r {_spanne(s['r'] for s in eng)}) "
+                 f"{'bleibt' if len(eng) == 1 else 'bleiben'} wie Mittel: ihre Kantenlänge läge mit "
+                 f"{_spanne(s['h'] for s in eng)} unter der Mindestweite {_spanne(s['mindestweite'] for s in eng)} "
+                 "(h/30, darunter erzeugt der Vernetzer Splitter)")
+        text = f"{text}; {grund}" if text else f"Krafteinleitungen ohne Fläche: {grund}"
+    return text
 
 
 def fein_text(netz, model=None, k: int = 0, ziele: dict = None, kziele: dict = None, stellen=None) -> str:

@@ -1003,7 +1003,7 @@ def _h_mittel_je_koerper(model, netz, namen, merker: dict) -> float:
 
 
 def kraft_ziele(model, netz=None, bogenwinkel: float = 9.0, faktor: float = 0.5, stellen: dict = None,
-                ringanteil: float = 1.0) -> dict:
+                ringanteil: float = 1.0, stabfaktor: float = None) -> dict:
     """Was an den Krafteinleitungen ohne Flaeche feiner wird (13.10.2026) -
     nach derselben Regel wie die Boegen und Flaechen von Fein
     (:func:`fein_ziele`, Stufe ``bogenwinkel``/``faktor`` aus
@@ -1016,16 +1016,25 @@ def kraft_ziele(model, netz=None, bogenwinkel: float = 9.0, faktor: float = 0.5,
       ``bogenwinkel`` Grad je Abschnitt. Ist der Winkel nicht kleiner als die
       Vorgabe (mesher3d.BOGENWINKEL, 18 Grad), entfaellt der Ring - wie die
       Boegen von Fein.
-    * **Stabende**: h_P = ``faktor`` * h_Mittel des Koerpers; ab Faktor 1
-      entfaellt es.
+    * **Stabende**: h_P = ``stabfaktor`` (Vorgabe ``faktor``) * h_Mittel des
+      Koerpers; ab Faktor 1 entfaellt es.
+    * **Mindestweite:** ein Ring, dessen Kantenlaenge h_R unter
+      ``mesher3d.mindestweite(h_Mittel)`` (h_Mittel / 30) laege, wird nicht
+      verfeinert und steht unter ``unter_mindestweite``. Das ist die Laenge,
+      unter der der Vernetzer von sich aus keine Huellkante erzeugen soll
+      (mesher3d.MINDESTWEITE_TEILER: darunter werden Splitter, die kein
+      Volumenschritt mehr los wird). Am Drehlager sind es die 48
+      Schraubenringe (r 8 und 10 mm, h_R 1,26 und 1,57 mm gegen 1,67 mm),
+      18 und 12 davon in einem Koerper; die 16 Ankerringe (4,0 mm) bleiben.
     * ``ringanteil``: nur dieser Anteil der Ringe wird verfeinert, die mit dem
       **groessten Radius** zuerst (Gleichstand bleibt zusammen); 0 heisst
       keiner. Der Aufwand je Ring ist ungefaehr gleich - die Zahl der Elemente
       im Kegel der Quelle haengt von der Zahl der Abschnitte ab, nicht vom
-      Radius (am Drehlager gemessen: siehe elementstufe.KRAFT_STUFEN) -, der
+      Radius (Abschaetzung am Drehlager: elementstufe.KRAFT_STUFEN) -, der
       Gewinn an Zonentiefe (zwei Elementringe, 2 * r * Winkel) waechst aber mit
       dem Radius. Reicht das Netz nicht (Grenze in Unbekannten), fallen darum
-      die kleinen Ringe zuerst weg.
+      die kleinen Ringe zuerst weg. Der Anteil gilt unter den Ringen ueber der
+      Mindestweite.
 
     Jede Quelle reicht KRAFT_REICHWEITE * h weit (zwei Elementringe) und
     waechst dahinter mit WACHSTUM. ``stellen``: das Ergebnis von
@@ -1034,8 +1043,8 @@ def kraft_ziele(model, netz=None, bogenwinkel: float = 9.0, faktor: float = 0.5,
     Rueckgabe {"ringe": [{"name", "punkte", "linien", "h", "h_mittel",
     "winkel", "r"}], "punkte": [{"knoten", "punkt", "h", "h_mittel"}],
     "flaechig", "bogenwinkel", "faktor", "ringanteil", "ringe_gesamt" (alle
-    Ringe des Modells, auch die nicht verfeinerten)}. Gespeichert wird davon
-    nichts.
+    Ringe des Modells, auch die nicht verfeinerten), "unter_mindestweite"
+    [{"name", "r", "h", "mindestweite"}]}. Gespeichert wird davon nichts.
     """
     from . import mesher3d as M3
     netz = netz if netz is not None else model.netz
@@ -1043,15 +1052,11 @@ def kraft_ziele(model, netz=None, bogenwinkel: float = 9.0, faktor: float = 0.5,
     merker: dict = {}
     vorgabe = M3.bogenwinkel_vorgabe(model)
     ringe = []
+    zu_eng = []
     alle_ringe = list(stellen.get("ringe", []))
-    waehlen = alle_ringe
-    if float(ringanteil) < 1.0:
-        radien = sorted((float(s["r"]) for s in alle_ringe), reverse=True)
-        n_ = int(np.ceil(max(float(ringanteil), 0.0) * len(radien) - 1e-9))
-        r_min = radien[n_ - 1] if n_ >= 1 else float("inf")
-        waehlen = [s for s in alle_ringe if float(s["r"]) >= r_min * (1.0 - 1e-9)]
+    geeignet = []
     if bogenwinkel and float(bogenwinkel) < vorgabe:
-        for s in waehlen:
+        for s in alle_ringe:
             hm = _h_mittel_je_koerper(model, netz, s["koerper"], merker)
             if hm <= 0:
                 continue
@@ -1068,24 +1073,38 @@ def kraft_ziele(model, netz=None, bogenwinkel: float = 9.0, faktor: float = 0.5,
             h = min(float(faktor) * hm, hb)
             if h <= 0:
                 continue
-            P = np.asarray(s["punkte"], float).reshape(-1, 3)
-            if len(P) > 1:
-                # Abstand der Quellen hoechstens h/2: jede Stelle des Rings hat
-                # eine Quelle naeher als ihre Reichweite
-                schritt = float(np.median(np.linalg.norm(np.diff(P, axis=0), axis=1))) or h
-                P = P[::max(1, int(0.5 * h / schritt))]
-            ringe.append(dict(name=s["name"], punkte=P, linien=list(s["linien"]), h=h, h_mittel=hm,
-                              winkel=float(bogenwinkel), r=float(s["r"])))
+            mw = float(M3.mindestweite(hm, model))
+            if h < mw * (1.0 - 1e-9):
+                zu_eng.append(dict(name=s["name"], r=float(s["r"]), h=h, mindestweite=mw))
+                continue
+            geeignet.append((s, h, hm))
+    # Der Anteil der Ringe: unter den geeigneten die mit dem groessten Radius
+    if float(ringanteil) < 1.0:
+        radien = sorted((float(s["r"]) for s, _h, _hm in geeignet), reverse=True)
+        n_ = int(np.ceil(max(float(ringanteil), 0.0) * len(radien) - 1e-9))
+        r_min = radien[n_ - 1] if n_ >= 1 else float("inf")
+        geeignet = [g for g in geeignet if float(g[0]["r"]) >= r_min * (1.0 - 1e-9)]
+    for s, h, hm in geeignet:
+        P = np.asarray(s["punkte"], float).reshape(-1, 3)
+        if len(P) > 1:
+            # Abstand der Quellen hoechstens h/2: jede Stelle des Rings hat
+            # eine Quelle naeher als ihre Reichweite
+            schritt = float(np.median(np.linalg.norm(np.diff(P, axis=0), axis=1))) or h
+            P = P[::max(1, int(0.5 * h / schritt))]
+        ringe.append(dict(name=s["name"], punkte=P, linien=list(s["linien"]), h=h, h_mittel=hm,
+                          winkel=float(bogenwinkel), r=float(s["r"])))
     punkte = []
-    if float(faktor) < 1.0:
+    fs = float(faktor if stabfaktor is None else stabfaktor)
+    if fs < 1.0:
         for s in stellen.get("punkte", []):
             hm = _h_mittel_je_koerper(model, netz, s["koerper"], merker)
             if hm > 0:
-                punkte.append(dict(knoten=s["knoten"], punkt=np.asarray(s["punkt"], float), h=float(faktor) * hm,
+                punkte.append(dict(knoten=s["knoten"], punkt=np.asarray(s["punkt"], float), h=fs * hm,
                                    h_mittel=hm))
     return {"ringe": ringe, "punkte": punkte, "flaechig": list(stellen.get("flaechig", [])),
-            "bogenwinkel": float(bogenwinkel), "faktor": float(faktor), "ringanteil": float(ringanteil),
-            "ringe_gesamt": len(alle_ringe)}
+            "bogenwinkel": float(bogenwinkel), "faktor": float(faktor), "stabfaktor": fs,
+            "ringanteil": float(ringanteil),
+            "ringe_gesamt": len(alle_ringe), "unter_mindestweite": zu_eng}
 
 
 def kraft_verfeinerungen(ziele: dict) -> list:

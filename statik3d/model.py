@@ -2622,13 +2622,22 @@ class Netzeinstellungen:
     #: **Krafteinleitungen ohne Flaeche feiner vernetzen** (13.10.2026,
     #: elementstufe.kraft_an): bei Mittel und Fein am Lochrand starrer
     #: Scheiben ueber Bohrungen 9 statt 18 Grad je Abschnitt (hoechstens die
-    #: halbe Kantenlaenge) und an Stabenden auf Volumen die halbe
-    #: Kantenlaenge, je zwei Elementringe weit (netzfeld.krafteinleitungen).
-    #: Vorgabe ein - der Anwender hat es am 13.10.2026 gewuenscht; aeltere
-    #: Dateien ohne das Feld bekommen beim Laden die Vorgabe und damit beim
-    #: naechsten Vernetzen die neue Regel. Aus gibt das Netz von Mittel, wie
-    #: es bis zum 13.10.2026 war (etwa fuer eine Vergleichsrechnung).
-    krafteinleitung_fein: bool = True
+    #: halbe Kantenlaenge), je zwei Elementringe weit, von dort wachsend
+    #: (netzfeld.krafteinleitungen). Vorgabe **aus**: der Anwender hat es am
+    #: 13.10.2026 gewuenscht, am Drehlager aber ist die Verfeinerung mit den
+    #: Stabenden zusammen nicht in vertretbarer Zeit vernetzt worden
+    #: (Benutzerhandbuch, „Elementstufe“); aeltere Dateien ohne das Feld
+    #: bekommen die Vorgabe, ihr Netz aendert sich nicht. Aus gibt das Netz
+    #: von Mittel, wie es bis zum 13.10.2026 war.
+    krafteinleitung_fein: bool = False
+    #: **auch Stabenden** (13.10.2026, elementstufe.stabenden_an): zusaetzlich
+    #: zu den Ringen bekommen Stabenden auf Volumen die halbe Kantenlaenge. Nur
+    #: wirksam mit ``krafteinleitung_fein``. Vorgabe aus: die Kegel der
+    #: Stabenden reichen in die Nachbarkoerper (Wachstum 0,35 je m); am
+    #: Drehlager hat die Stufe mit Stabenden allein in ueber 70 Minuten kein
+    #: Netz geliefert, und mit Ringen zusammen wuchsen die Nachbarplatten V15
+    #: um 63 %, V33 und V35 um 44 % der Knoten (Messung 14.10.2026).
+    krafteinleitung_stabenden: bool = False
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""

@@ -29,13 +29,16 @@ Kriterien (vor dem Bau festgelegt):
     fernen Seitenflaechen M2 und M3 dieselben; der Lochrand unten hat die
     Teilung des Lochrands oben (die Lochwand ist eine abgebildete Flaeche,
     gegenueberliegende Seiten werden gleich geteilt - Linienteilung);
-  * ohne Schalter (Netzeinstellungen.krafteinleitung_fein aus), an Entwurf
+  * ohne Schalter (Netzeinstellungen.krafteinleitung_fein aus; Vorgabe aus), an Entwurf
     und an einem Modell ohne solche Stellen: Netz bitgleich zum Stand c379601;
   * Grenze in Unbekannten: Mittel vergroebert ueber Stufen, die letzte ist
     Mittel ohne Verfeinerung (bitgleich), darunter WARNUNG;
   * Speichern und Laden des Schalters, aeltere Dateien bekommen ihn ein;
   * Maske Netzeinstellungen: Haken „Krafteinleitungen ohne Fläche feiner
-    vernetzen“.
+    vernetzen“ und „… auch Stabenden auf Volumen“, beide in der Vorgabe aus;
+  * Grenze: Stabenden fallen vor den Ringen weg, dann bleibt das groesste
+    Viertel der Ringe, zuletzt Mittel (elementstufe.KRAFT_STUFEN); Ringe unter
+    der Mindestweite (h/30) werden nicht verfeinert und genannt.
 
 Aufruf:  python -m tests.test_krafteinleitung
 """
@@ -62,6 +65,7 @@ RESULTS = []
 A, B, T = 0.4, 0.3, 0.04
 B1 = (0.12, 0.15, 0.0255)          # unter der starren Scheibe (Ankerring des Drehlagers)
 B2 = (0.31, 0.15, 0.012)           # frei
+B3 = (0.20, 0.05, 0.002)           # klein (nur mit klein=True): 9 Grad waeren 0,3 mm, unter der Mindestweite h/30
 STAB = (0.30, 0.06)                # Stabende auf der Unterseite (z = 0)
 H = 0.02                           # Ziellaenge (eigene)
 
@@ -90,13 +94,14 @@ def _es():
 # --------------------------------------------------------------------------
 # Pruefkoerper
 # --------------------------------------------------------------------------
-def platte(scheibe: bool = True, stabende: bool = True, scheibe2: bool = False):
+def platte(scheibe: bool = True, stabende: bool = True, scheibe2: bool = False, klein: bool = False):
     """Die Platte mit B1, B2; dazu auf Wunsch die starre Scheibe ueber B1
     (aus den Halbboegen des Lochrands, wie RFEM sie anlegt) mit Zugstab in
     der Mitte, ein Zugstab, der auf der Unterseite endet, und (``scheibe2``)
-    eine zweite, kleinere Scheibe ueber B2."""
+    eine zweite, kleinere Scheibe ueber B2 und (``klein``) eine dritte, winzige
+    ueber der dritten Bohrung B3."""
     from statik3d.model import Section
-    m, _k = platte_mit_bohrungen(a=A, b=B, t=T, bohrungen=(B1, B2))
+    m, _k = platte_mit_bohrungen(a=A, b=B, t=T, bohrungen=(B1, B2, B3) if klein else (B1, B2))
     m.add_section(Section("Rund", 1e-4, 1e-9, 1e-9, 1e-9))
     if scheibe:
         m.add_flaeche("Scheibe", ["B1O1", "B1O2"], material="S235")
@@ -112,6 +117,13 @@ def platte(scheibe: bool = True, stabende: bool = True, scheibe2: bool = False):
         oben = m.add_node(B2[0], B2[1], T + 0.5)
         e = m.add_element("truss", [mitte, oben], "S235", "Rund", group="Anker2")
         m.add_member("Anker2", [e])
+    if klein:
+        m.add_flaeche("Scheibe3", ["B3O1", "B3O2"], material="S235")
+        m.flaechen["Scheibe3"].steifigkeit = "starr"
+        mitte = m.add_node(B3[0], B3[1], T)
+        oben = m.add_node(B3[0], B3[1], T + 0.5)
+        e = m.add_element("truss", [mitte, oben], "S235", "Rund", group="Anker3")
+        m.add_member("Anker3", [e])
     if stabende:
         p = m.add_node(STAB[0], STAB[1], 0.0)
         q = m.add_node(STAB[0], STAB[1], -0.5)
@@ -131,6 +143,7 @@ def vernetzen(m, stufe: str, kraft: bool = True, grenze: int = 0) -> tuple:
     m.netz = es.setzen(m.netz, stufe)
     m.netz.sweep = "aus"                 # Gegenstand ist der Tetraederweg
     m.netz.krafteinleitung_fein = bool(kraft)
+    m.netz.krafteinleitung_stabenden = bool(kraft)
     m.netz.hoechstens_unbekannte = int(grenze)
     log: list = []
     with es.beim_vernetzen(m, log) as w:
@@ -237,6 +250,7 @@ def test_lochrand():
     m = platte()
     m.netz = es.setzen(m.netz, "mittel")
     m.netz.krafteinleitung_fein = True
+    m.netz.krafteinleitung_stabenden = True
     m.netz = es.wirksam(m.netz, m)
     feld = netzfeld.aufbauen(m)
     w_ = np.linspace(0.0, 2 * np.pi, 37)[:-1]
@@ -305,6 +319,8 @@ def test_stabende():
     es = _es()
     m = platte()
     m.netz = es.setzen(m.netz, "mittel")
+    m.netz.krafteinleitung_fein = True
+    m.netz.krafteinleitung_stabenden = True
     m.netz = es.wirksam(m.netz, m)
     feld = netzfeld.aufbauen(m)
     v = float(feld(np.array([p]))[0]) if feld is not None else np.inf
@@ -414,8 +430,26 @@ def test_stufen():
           and namen[0.0] == [], str(namen))
     z = netzfeld.kraft_ziele(m, m.netz, 9.0, 0.5, st, 0.5)
     check("… das Ergebnis nennt alle Ringe des Modells (für den Text)", z["ringe_gesamt"] == 2, z["ringe_gesamt"])
-    # Mittel: fuenf Stufen, die letzte ohne Quellen und bitgleich zu den gespeicherten Einstellungen
+    # Mindestweite: ein winziger Ring (r 2 mm, 9 Grad = 0,3 mm gegen h/30 = 0,67 mm) wird nicht verfeinert, gesagt
+    m3 = platte(scheibe2=True, klein=True)
+    st3 = netzfeld.krafteinleitungen(m3)
+    z3 = netzfeld.kraft_ziele(m3, m3.netz, 9.0, 0.5, st3)
+    eng = [e["name"] for e in z3["unter_mindestweite"]]
+    check("Mindestweite: der Ring r 2 mm bleibt wie Mittel (unter h/30), die beiden größeren werden verfeinert",
+          sorted(s["name"] for s in z3["ringe"]) == ["Scheibe", "Scheibe2"] and eng == ["Scheibe3"],
+          f"verfeinert {[s['name'] for s in z3['ringe']]}, zu eng {eng}")
+    e3 = z3["unter_mindestweite"][0]
+    check("… h_R 0,31 mm gegen Mindestweite 0,67 mm", abs(e3["h"] - 0.002 * np.radians(9.0)) < 2e-5
+          and abs(e3["mindestweite"] - H / 30.0) < 1e-9, f"{e3['h'] * 1e3:.3f} mm / {e3['mindestweite'] * 1e3:.3f} mm")
+    check("… der Anteil der Ringe zählt unter den geeigneten (0,5 von 2 = der größte)",
+          [s["name"] for s in netzfeld.kraft_ziele(m3, m3.netz, 9.0, 0.5, st3, 0.5)["ringe"]] == ["Scheibe"])
+    kt3 = es.kraft_text(z3)
+    check("… der Text nennt es ausdrücklich („bleibt wie Mittel … Mindestweite“)",
+          "bleibt wie Mittel" in kt3 and "Mindestweite" in kt3 and "2 Ringe" in kt3, kt3)
+    # Mittel: vier Stufen, die letzte ohne Quellen und bitgleich zu den gespeicherten Einstellungen
     m.netz = es.setzen(m.netz, "mittel")
+    m.netz.krafteinleitung_fein = True
+    m.netz.krafteinleitung_stabenden = True
     basis = m.netz
     ein = es.fein_stufen(m, basis)
     check("Mittel mit Krafteinleitungen hat Stufen (eine Funktion), nicht None", ein is not None)
@@ -425,31 +459,37 @@ def test_stufen():
     for k in range(es.KRAFT_STUFEN_ANZAHL):
         n = ein(k)
         arten.append(sorted({v["art"] for v in n.verfeinerungen}) if n is not None else None)
-    check("… Stufe 5 gibt es nicht (None)", ein(es.KRAFT_STUFEN_ANZAHL) is None and ein(-1) is None)
-    check("… Stufe 0: Ringe und Stabende; Stufe 1: ebenso; Stufe 2 und 3: nur das Stabende; Stufe 4: nichts",
-          arten[0] == ["fein_kraft_punkt", "fein_kraft_ring"] and arten[1] == arten[0]
-          and arten[2] == ["fein_kraft_punkt"] and arten[3] == ["fein_kraft_punkt"] and arten[4] == [], str(arten))
-    n0, n1 = ein(0), ein(1)
-    r0 = sorted(v["name"] for v in n0.verfeinerungen if v["art"] == "fein_kraft_ring")
-    r1 = sorted(v["name"] for v in n1.verfeinerungen if v["art"] == "fein_kraft_ring")
-    check("… Stufe 0: beide Ringe, Stufe 1: nur der größte", r0 == ["Scheibe", "Scheibe2"] and r1 == ["Scheibe"],
-          f"{r0} / {r1}")
-    h3 = [v["h"] for v in ein(3).verfeinerungen]
-    h2 = [v["h"] for v in ein(2).verfeinerungen]
-    check("… Stufe 3: das Stabende h/1,5 statt h/2", len(h2) == 1 and abs(h3[0] / h2[0] - (1 / 1.5) / 0.5) < 1e-9,
-          f"{h2} / {h3}")
+    check("… die Stufe hinter der letzten gibt es nicht (None)",
+          ein(es.KRAFT_STUFEN_ANZAHL) is None and ein(-1) is None)
+    check("… Stufe 0: Ringe und Stabende; Stufe 1 und 2: nur Ringe (Stabenden zuerst weg); Stufe 3: nichts",
+          arten[0] == ["fein_kraft_punkt", "fein_kraft_ring"] and arten[1] == ["fein_kraft_ring"]
+          and arten[2] == ["fein_kraft_ring"] and arten[3] == [], str(arten))
+    r = [sorted(v["name"] for v in ein(j).verfeinerungen if v["art"] == "fein_kraft_ring") for j in (0, 1, 2)]
+    check("… Stufe 0 und 1: beide Ringe, Stufe 2: nur der größte (das größte Viertel)",
+          r == [["Scheibe", "Scheibe2"], ["Scheibe", "Scheibe2"], ["Scheibe"]], str(r))
+    h0 = [v["h"] for v in ein(0).verfeinerungen if v["art"] == "fein_kraft_punkt"]
+    check("… das Stabende hat in Stufe 0 h/2", len(h0) == 1 and abs(h0[0] - 0.5 * H) < 1e-9, str(h0))
     letzte = ein(es.KRAFT_STUFEN_ANZAHL - 1)
-    check("… Stufe 4 ist Mittel bitgleich (bis auf den Text quelle)", replace(letzte, quelle="") == replace(basis, quelle=""),
-          letzte.quelle)
+    check("… die letzte Stufe ist Mittel bitgleich (bis auf den Text quelle)",
+          replace(letzte, quelle="") == replace(basis, quelle=""), letzte.quelle)
+    # ohne den Haken fuer Stabenden: nie ein Stabende, Stufe 1 gleicht Stufe 0 (wird uebersprungen)
+    ohne = replace(basis, krafteinleitung_stabenden=False)
+    eo = es.fein_stufen(m, ohne)
+    ao = [sorted({v["art"] for v in eo(j).verfeinerungen}) for j in range(es.KRAFT_STUFEN_ANZAHL)]
+    check("… ohne Haken für Stabenden gibt es in keiner Stufe ein Stabende; Stufe 1 gleicht Stufe 0",
+          ao == [["fein_kraft_ring"], ["fein_kraft_ring"], ["fein_kraft_ring"], []]
+          and replace(eo(0), quelle="") == replace(eo(1), quelle=""), str(ao))
     texte = [ein(k).quelle for k in range(es.KRAFT_STUFEN_ANZAHL)]
     print("  Texte der Stufen von Mittel:")
     for t in texte:
         print("   ", t)
-    check("… Texte: „Mittel Stufe 1: Ringe 9° (das größte Viertel), Stabenden h/2“ und „ohne Ringe“",
-          texte[1] == "Mittel Stufe 1: Ringe 9° (das größte Viertel), Stabenden h/2"
-          and texte[2] == "Mittel Stufe 2: ohne Ringe, Stabenden h/2", str(texte))
+    check("… Texte: „Mittel Stufe 0: Ringe 9°, Stabenden h/2“, Stufe 1 ohne Stabenden, Stufe 2 das größte Viertel",
+          texte[0] == "Mittel Stufe 0: Ringe 9°, Stabenden h/2" and texte[1] == "Mittel Stufe 1: Ringe 9°"
+          and texte[2] == "Mittel Stufe 2: Ringe 9° (das größte Viertel)", str(texte))
     # Fein: die Krafteinleitungen bleiben auf Stufe 0, bis Fein selbst Mittel ist, dann Stufen von Mittel
     m.netz = es.setzen(m.netz, "fein")
+    m.netz.krafteinleitung_fein = True
+    m.netz.krafteinleitung_stabenden = True
     fe = es.fein_stufen(m, m.netz)
     soll = es.FEIN_STUFEN_ANZAHL + es.KRAFT_STUFEN_ANZAHL - 1
     check(f"Fein mit Krafteinleitungen hat {soll} Stufen ({es.FEIN_STUFEN_ANZAHL} von Fein, dahinter die von Mittel)",
@@ -457,26 +497,27 @@ def test_stufen():
     ringe_in = [sorted({v["art"] for v in fe(k).verfeinerungen if "kraft" in v["art"]}) for k in range(soll)]
     check("… Fein Stufe 0 bis 4 (Mittel von Fein) tragen die vollen Krafteinleitungen (Ringe und Stabende)",
           all(r == ["fein_kraft_punkt", "fein_kraft_ring"] for r in ringe_in[:es.FEIN_STUFEN_ANZAHL]), str(ringe_in))
-    check("… danach vergröbern sie wie bei Mittel (größter Ring und Stabende, nur Stabende, Stabende, nichts)",
-          ringe_in[es.FEIN_STUFEN_ANZAHL:] == [["fein_kraft_punkt", "fein_kraft_ring"], ["fein_kraft_punkt"],
-                                                ["fein_kraft_punkt"], []], str(ringe_in[es.FEIN_STUFEN_ANZAHL:]))
+    check("… danach vergröbern sie wie bei Mittel (nur Ringe, nur Ringe, nichts)",
+          ringe_in[es.FEIN_STUFEN_ANZAHL:] == [["fein_kraft_ring"], ["fein_kraft_ring"], []],
+          str(ringe_in[es.FEIN_STUFEN_ANZAHL:]))
     check("… die letzte Stufe von Fein ist Mittel bitgleich (bis auf Stufe und Text)",
           replace(fe(soll - 1), quelle="", stufe="mittel") == replace(basis, quelle=""), fe(soll - 1).quelle)
     print("  Texte der Stufen von Fein:", [fe(k).quelle for k in range(soll)])
-    # Vernetzt: Stufe 0 verfeinert beide Ringe, Stufe 1 nur den groesseren (B1, r 25,5 mm); B2 (r 12 mm) bleibt bei Mittel
+    # Vernetzt: Stufe 0 verfeinert beide Ringe, Stufe 2 nur den groesseren (B1, r 25,5 mm); B2 (r 12 mm) bleibt bei Mittel
     from statik3d import mesher
     erg = {}
-    for j in (0, 1):
+    for j in (0, 2):
         mm_ = platte(scheibe=True, stabende=False, scheibe2=True)
         mm_.netz = es.setzen(mm_.netz, "mittel")
+        mm_.netz.krafteinleitung_fein = True
         mm_.netz.sweep = "aus"
         log: list = []
         with es.beim_vernetzen(mm_, log, k=j):
             mesher.modell_vernetzen(mm_, log, workers=1)
         erg[j] = (ringknoten(mm_, B1, T)[0], ringknoten(mm_, B2, T)[0])
-    print(f"  Knoten am Lochrand oben (B1, B2): Stufe 0 {erg[0]}, Stufe 1 {erg[1]}")
-    check("Vernetzt: Stufe 0 teilt beide Lochränder 9° (80 und 80 Knoten), Stufe 1 nur den größeren (80 und 40)",
-          erg[0] == (80, 80) and erg[1] == (80, 40), f"{erg}")
+    print(f"  Knoten am Lochrand oben (B1, B2): Stufe 0 {erg[0]}, Stufe 2 {erg[2]}")
+    check("Vernetzt: Stufe 0 teilt beide Lochränder 9° (80 und 80 Knoten), Stufe 2 nur den größeren (80 und 40)",
+          erg[0] == (80, 80) and erg[2] == (80, 40), f"{erg}")
 
 
 # --------------------------------------------------------------------------
@@ -484,25 +525,30 @@ def test_stufen():
 # --------------------------------------------------------------------------
 def test_speichern_laden():
     from statik3d.model import Model, Netzeinstellungen
-    check("Netzeinstellungen: krafteinleitung_fein, Vorgabe ein",
-          getattr(Netzeinstellungen(), "krafteinleitung_fein", None) is True)
+    check("Netzeinstellungen: krafteinleitung_fein und krafteinleitung_stabenden, Vorgabe aus",
+          getattr(Netzeinstellungen(), "krafteinleitung_fein", None) is False
+          and getattr(Netzeinstellungen(), "krafteinleitung_stabenden", None) is False)
     m = platte()
-    m.netz.krafteinleitung_fein = False
+    m.netz.krafteinleitung_fein = True
+    m.netz.krafteinleitung_stabenden = True
     ordner = tempfile.mkdtemp(prefix="statik3d_kraft_")
     pfad = os.path.join(ordner, "p.json")
     m.save(pfad)
     m2 = Model.load(pfad)
-    check("… gespeichert und geladen (aus bleibt aus)", getattr(m2.netz, "krafteinleitung_fein", None) is False)
+    check("… gespeichert und geladen (an bleibt an)", getattr(m2.netz, "krafteinleitung_fein", None) is True
+          and getattr(m2.netz, "krafteinleitung_stabenden", None) is True)
     import json
     with open(pfad, encoding="utf-8") as f:
         d = json.load(f)
     d.get("netz", {}).pop("krafteinleitung_fein", None)
+    d.get("netz", {}).pop("krafteinleitung_stabenden", None)
     alt = os.path.join(ordner, "alt.json")
     with open(alt, "w", encoding="utf-8") as f:
         json.dump(d, f)
     m3 = Model.load(alt)
-    check("… ältere Datei ohne das Feld: ein (die neue Regel gilt beim Neuvernetzen)",
-          getattr(m3.netz, "krafteinleitung_fein", None) is True)
+    check("… ältere Datei ohne die Felder: aus (das Netz ändert sich beim Neuvernetzen nicht)",
+          getattr(m3.netz, "krafteinleitung_fein", None) is False
+          and getattr(m3.netz, "krafteinleitung_stabenden", None) is False)
 
 
 _FENSTER = {}
@@ -532,24 +578,34 @@ def test_maske():
     app.processEvents()
     mk = w.maskenrand.maske
     f = mk._felder.get("krafteinleitung_fein")
-    check("Maske Netzeinstellungen: Haken „Krafteinleitungen ohne Fläche feiner vernetzen“",
-          f is not None and getattr(mk, "_feldtexte", {}).get("krafteinleitung_fein")
-          == "Krafteinleitungen ohne Fläche feiner vernetzen", ", ".join(mk._felder))
-    if f is not None:
-        check("… angehakt (Vorgabe)", f.isChecked())
+    g = mk._felder.get("krafteinleitung_stabenden")
+    check("Maske Netzeinstellungen: Haken „Krafteinleitungen ohne Fläche feiner vernetzen“ und „… auch Stabenden“",
+          f is not None and g is not None
+          and getattr(mk, "_feldtexte", {}).get("krafteinleitung_fein") == "Krafteinleitungen ohne Fläche feiner vernetzen",
+          ", ".join(mk._felder))
+    if f is not None and g is not None:
+        check("… beide nicht angehakt (Vorgabe aus)", not f.isChecked() and not g.isChecked())
         hinweis = getattr(mk, "_hinweise", {}).get("krafteinleitung_fein", "")
-        check("… mit Hinweis (starre Scheiben, Stabenden, Mittel und Fein)",
-              "starre Scheibe" in hinweis and "Stabend" in hinweis and "Mittel" in hinweis, hinweis)
-        kt = str(mk.werte().get("kantenlaenge", ""))
-        check("… die wirksame Kantenlänge nennt die Krafteinleitungen", "Krafteinleitungen" in kt, kt)
-        f.setChecked(False)
+        h2 = getattr(mk, "_hinweise", {}).get("krafteinleitung_stabenden", "")
+        check("… mit Hinweisen (starre Scheiben, Mindestweite; Stabenden, Nachbarkörper)",
+              "starre Scheibe" in hinweis and "Mindestweite" in hinweis and "Stabend" in h2 and "Nachbarkörper" in h2,
+              hinweis[:80] + " | " + h2[:60])
+        kt0 = str(mk.werte().get("kantenlaenge", ""))
+        check("… aus: die wirksame Kantenlänge nennt keine Krafteinleitungen", "Krafteinleitungen" not in kt0 and bool(kt0), kt0)
+        f.setChecked(True)
+        app.processEvents()
+        kt1 = str(mk.werte().get("kantenlaenge", ""))
+        check("… Ringe an: die wirksame Kantenlänge nennt den Ring, noch kein Stabende",
+              "Krafteinleitungen" in kt1 and "1 Ring" in kt1 and "Stabende" not in kt1, kt1)
+        g.setChecked(True)
         app.processEvents()
         kt2 = str(mk.werte().get("kantenlaenge", ""))
-        check("… ohne Haken nennt die wirksame Kantenlänge sie nicht mehr (folgt dem Haken)",
-              "Krafteinleitungen" not in kt2 and bool(kt2), kt2)
+        check("… beide an: Ring und Stabende", "1 Ring" in kt2 and "1 Stabende" in kt2, kt2)
         mk.anwenden()
         app.processEvents()
-        check("Übernehmen: krafteinleitung_fein = aus", getattr(w.model.netz, "krafteinleitung_fein", None) is False)
+        check("Übernehmen: krafteinleitung_fein und krafteinleitung_stabenden = an",
+              getattr(w.model.netz, "krafteinleitung_fein", None) is True
+              and getattr(w.model.netz, "krafteinleitung_stabenden", None) is True)
     w.maskenrand.schliessen()
 
 

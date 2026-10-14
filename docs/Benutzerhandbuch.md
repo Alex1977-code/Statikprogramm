@@ -1475,12 +1475,13 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Angabe | Bedeutung |
 |---|---|
 | Elemente | **Entwurf**, **Mittel** (Vorgabe) oder **Fein** – welche Elemente das Netz bekommt, in drei Stufen, die in Genauigkeit und Rechenzeit zusammenpassen (seit 25.09.2026; ersetzt den Elementansatz linear/quadratisch und die Haken „Elemente wählen“). Das erste Feld der Maske; darunter stehen Elemente und Zweck der gewählten Stufe und die **wirksame Kantenlänge**. Einzelheiten im Abschnitt „Elementstufe: Entwurf, Mittel, Fein“ unten |
-| Krafteinleitungen ohne Fläche feiner vernetzen (seit 13.10.2026) | Haken, Vorgabe **ein**. Bei Mittel und Fein werden starre Scheiben über Bohrungen (ihre Kopplung hängt nur am Lochrand) und Stabenden auf Volumen feiner vernetzt: am Lochrand 9° statt 18° je Abschnitt (höchstens die halbe Kantenlänge von Mittel), am Stabende die halbe Kantenlänge, jeweils zwei Elementringe weit und von dort wachsend. Das kostet Elemente; die Höchstzahl Unbekannte vergröbert selbsttätig (Abschnitt „Elementstufe“). Aus: das Netz von Mittel wie bis zum 13.10.2026, etwa für eine Vergleichsrechnung. Entwurf bleibt linear und ohne diese Verfeinerung. Eine ältere Datei ohne das Feld bekommt die Vorgabe und damit beim nächsten Vernetzen die neue Regel |
+| Krafteinleitungen ohne Fläche feiner vernetzen (seit 13.10.2026) | Haken, Vorgabe **aus**. Bei Mittel und Fein werden starre Scheiben über Bohrungen (ihre Kopplung hängt nur am Lochrand) feiner vernetzt: am Lochrand 9° statt 18° je Abschnitt (höchstens die halbe Kantenlänge von Mittel), zwei Elementringe weit und von dort wachsend. Ringe, deren Kantenlänge unter der Mindestweite des Vernetzers (Kantenlänge von Mittel geteilt durch 30) läge, bleiben wie Mittel; das Protokoll nennt sie. Das kostet Elemente und Zeit; die Höchstzahl Unbekannte vergröbert selbsttätig (Abschnitt „Elementstufe“). Aus: das Netz von Mittel wie bis zum 13.10.2026. Entwurf bleibt linear und ohne diese Verfeinerung. Eine ältere Datei ohne das Feld hat ihn aus, ihr Netz ändert sich nicht |
+| … auch Stabenden auf Volumen (seit 13.10.2026) | Haken, Vorgabe **aus**, nur mit dem Haken darüber. Stabenden, die auf einer ebenen Fläche eines Volumens enden, bekommen die halbe Kantenlänge, zwei Elementringe weit. Der Kegel dahinter reicht in die Nachbarkörper; am Drehlager wuchsen mit Ringen und Stabenden zusammen Nachbarplatten um bis zu 63 % der Knoten, und die Stufe mit den Stabenden allein lieferte in über 70 Minuten kein Netz (Abschnitt „Elementstufe“) |
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
 | Ziellänge, kleinste und größte Elementgröße | in **mm** (seit 13.09.2026; vorher in m) - so, wie man beim Vernetzen denkt; gespeichert und gerechnet wird in m. Auch die Netzqualität *Kantenlänge* färbt in mm |
 | Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge im Feld: eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern. Fein wird es **örtlich**, an drei zusammengehörenden Stellen: die Bohrungsränder nach ihrer Krümmung, eine Linie neben einer viel feineren (die **Mantellinie** einer Bohrung stand sonst mit *einem* Abschnitt über der ganzen Bohrtiefe), Kränze um jede Öffnung in der Fläche, und von dort wachsend ins Innere. Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer 900-mm-Platte: der Anteil der Tetraeder unter der Güte 0,3 an der Bohrungswand fällt von 6,8 % auf 1,0 % — für doppelt so viele Elemente. Ohne den Haken bleibt es bei ⌈L/h⌉ je Linie |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)). **Sie schützt nicht vor einem zu großen Netz:** Die Schätzung kennt die Verfeinerung an Bohrungen und Rändern nicht und lag am Drehlager je Körper im Median um den Faktor 758 unter dem echten Netz. Für die Größe des ganzen Netzes gilt die Höchstzahl Unbekannte in der nächsten Zeile |
-| Höchstzahl Unbekannte (seit 07.10.2026) | Die Grenze für das ganze Netz in Unbekannten, gezählt als drei je Knoten des Modells (Kantenmitten und Knoten der Geometrie eingeschlossen; auch Knoten von Schalen und Stäben zählen hier mit drei). Die Vorgabe ist **4 000 000**. Bis zum 08.10.2026 galt sie als vorläufig, bis eine Zerlegung am Drehlager gemessen ist; seither ist sie festgelegt, weil sie eine Grenze des Speichers ist und der Pool vor großen Zerlegungen Platz macht (Abschnitt „Der Pool macht Platz für große Zerlegungen“). Gemessen ist Mittel am Drehlager mit 3,05 Millionen Unbekannten: 52,3 GiB Arbeitssatz und 60,6 GiB Commit im Hauptprozess an der Spitze der Zerlegung, 169 Sekunden. Für 4,0 Millionen ergibt die Hochrechnung (Schätzung, nicht gemessen) rund 74 GiB Arbeitssatz, 85 GiB Commit und 5 Minuten je Zerlegung; das passt in einen Rechner mit 128 GB neben der übrigen Belegung. Fein Stufe 3 am Drehlager (4,65 Millionen Unbekannte, rund 89 GiB) passt nicht und fällt auf Stufe 4. Auf einem Rechner mit weniger Arbeitsspeicher ist die Grenze zu senken; sonst bricht die Rechnung vor der Zerlegung mit einer Meldung ab. 0 heißt keine Grenze, und eine ältere Datei ohne das Feld bekommt die Vorgabe. Gezählt wird beim Vernetzen nach jedem fertigen Volumen; beim parallelen Vernetzen zählen fertige, noch nicht eingebaute Volumen mit ihren inneren Knoten mit, damit der Halt nicht auf das große Volumen vorn in der Reihe wartet. Wird die Grenze überschritten, hält das Vernetzen früh an, verwirft das halbe Netz und vernetzt **selbsttätig gröber** mit der nächsten Stufe, bis das Netz passt. Das Protokoll nennt jede Stufe mit Grund und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 3 von 20 Volumen angehalten – 16 242 Unbekannte über der Grenze von 15 297 …; größte: P01 (1 238 Knoten) …“ und danach „Netzgrenze: vernetzt mit Stufe 1 – 15 297 Unbekannte, unter der Grenze von 15 297.“ Gröbere Stufen gibt es bei Fein und, seit dem 13.10.2026, bei Mittel an Krafteinleitungen ohne Fläche (Abschnitt „Elementstufe“ unten); dort fallen zuerst die kleinen Ringe der starren Scheiben weg. Entwurf und Mittel sonst haben keine, damit sich ihr Netz nicht unbemerkt ändert: Dort bleibt das Netz, wie es ist, und das Protokoll und eine Meldung warnen („WARNUNG: Das Netz hat … Unbekannte und liegt über der Grenze von …“). Ebenso warnt das Programm, wenn auch die gröbste Stufe von Fein oder von Mittel über der Grenze liegt; dann gilt deren Netz. Ein Netz, das die Grenze einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Bis zum 07.10.2026 gab es keine Grenze für das ganze Netz, sondern nur die geschätzte Höchstzahl Elemente je Objekt |
+| Höchstzahl Unbekannte (seit 07.10.2026) | Die Grenze für das ganze Netz in Unbekannten, gezählt als drei je Knoten des Modells (Kantenmitten und Knoten der Geometrie eingeschlossen; auch Knoten von Schalen und Stäben zählen hier mit drei). Die Vorgabe ist **4 000 000**. Bis zum 08.10.2026 galt sie als vorläufig, bis eine Zerlegung am Drehlager gemessen ist; seither ist sie festgelegt, weil sie eine Grenze des Speichers ist und der Pool vor großen Zerlegungen Platz macht (Abschnitt „Der Pool macht Platz für große Zerlegungen“). Gemessen ist Mittel am Drehlager mit 3,05 Millionen Unbekannten: 52,3 GiB Arbeitssatz und 60,6 GiB Commit im Hauptprozess an der Spitze der Zerlegung, 169 Sekunden. Für 4,0 Millionen ergibt die Hochrechnung (Schätzung, nicht gemessen) rund 74 GiB Arbeitssatz, 85 GiB Commit und 5 Minuten je Zerlegung; das passt in einen Rechner mit 128 GB neben der übrigen Belegung. Fein Stufe 3 am Drehlager (4,65 Millionen Unbekannte, rund 89 GiB) passt nicht und fällt auf Stufe 4. Auf einem Rechner mit weniger Arbeitsspeicher ist die Grenze zu senken; sonst bricht die Rechnung vor der Zerlegung mit einer Meldung ab. 0 heißt keine Grenze, und eine ältere Datei ohne das Feld bekommt die Vorgabe. Gezählt wird beim Vernetzen nach jedem fertigen Volumen; beim parallelen Vernetzen zählen fertige, noch nicht eingebaute Volumen mit ihren inneren Knoten mit, damit der Halt nicht auf das große Volumen vorn in der Reihe wartet. Wird die Grenze überschritten, hält das Vernetzen früh an, verwirft das halbe Netz und vernetzt **selbsttätig gröber** mit der nächsten Stufe, bis das Netz passt. Das Protokoll nennt jede Stufe mit Grund und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 3 von 20 Volumen angehalten – 16 242 Unbekannte über der Grenze von 15 297 …; größte: P01 (1 238 Knoten) …“ und danach „Netzgrenze: vernetzt mit Stufe 1 – 15 297 Unbekannte, unter der Grenze von 15 297.“ Gröbere Stufen gibt es bei Fein und, seit dem 13.10.2026, bei Mittel an Krafteinleitungen ohne Fläche (Abschnitt „Elementstufe“ unten); dort fallen zuerst die Stabenden, dann die kleineren Ringe der starren Scheiben weg. Entwurf und Mittel sonst haben keine, damit sich ihr Netz nicht unbemerkt ändert: Dort bleibt das Netz, wie es ist, und das Protokoll und eine Meldung warnen („WARNUNG: Das Netz hat … Unbekannte und liegt über der Grenze von …“). Ebenso warnt das Programm, wenn auch die gröbste Stufe von Fein oder von Mittel über der Grenze liegt; dann gilt deren Netz. Ein Netz, das die Grenze einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Bis zum 07.10.2026 gab es keine Grenze für das ganze Netz, sondern nur die geschätzte Höchstzahl Elemente je Objekt |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 | Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; der Knopf **Vernetzer installieren…** unter der Maske (auch *Extras → Vernetzer installieren…*) lädt es nach (Abschnitt „Vernetzer und Nachbesserer nachladen“, Kap. 9). Ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
@@ -1614,8 +1615,8 @@ wählen“, die es seit dem 25.09.2026 nicht mehr gibt.
 | Stufe | Elemente | wofür | gemessen (Quelle im Theoriehandbuch) |
 |---|---|---|---|
 | **Entwurf** | tet4, Sechsflächner hex8 (VQ83; entartete rechnen als Keil, Pyramide oder Tetraeder), Schalen linear (shell3/shell4) | schnell; für Vorbemessung und Verformungen – Spannungen fallen zu niedrig aus | tet4 verfehlt 1 N/mm² an einer Bohrung auch nach sechs Verfeinerungen: Lamé-Hohlzylinder, 888 → 132 185 Freiheitsgrade, Fehler 121,0 → 31,3 N/mm² (§ 10, „Wie genau ist tet4 an einer Bohrung?“). Am Kragarm −266 / −166 / −70 N/mm² bei 90 / 405 / 2 295 Freiheitsgraden (§ 6b-2) |
-| **Mittel** (Vorgabe) | tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), Schalen quadratisch (shell6/shell8); **feiner an Krafteinleitungen ohne Fläche** (starre Scheiben über Bohrungen, Stabenden auf Volumen; seit 13.10.2026, abschaltbar) | für die Nachweise | Kragarm: tet10 +14 / +4 / +1 N/mm² bei 405 / 2 295 / 15 147 Freiheitsgraden (§ 6b-2); hex20 −0,02 N/mm² bei 1 359 Freiheitsgraden (§ 7a) |
-| **Fein** | wie Mittel, **feiner an Kontakt-, Lager- und Lastflächen** (halbe Kantenlänge) und an den **Bögen der Kontakt- und Lagerflächen** (9° statt 18° je Abschnitt), dazu wie Mittel an den Krafteinleitungen ohne Fläche; ohne tetp (seit 07.10.2026, bis dahin halbe Kantenlänge überall) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (gleichmäßig feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
+| **Mittel** (Vorgabe) | tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), Schalen quadratisch (shell6/shell8); auf Wunsch **feiner an Krafteinleitungen ohne Fläche** (starre Scheiben über Bohrungen, Stabenden auf Volumen; Haken in den Netzeinstellungen, Vorgabe aus, seit 13.10.2026) | für die Nachweise | Kragarm: tet10 +14 / +4 / +1 N/mm² bei 405 / 2 295 / 15 147 Freiheitsgraden (§ 6b-2); hex20 −0,02 N/mm² bei 1 359 Freiheitsgraden (§ 7a) |
+| **Fein** | wie Mittel, **feiner an Kontakt-, Lager- und Lastflächen** (halbe Kantenlänge) und an den **Bögen der Kontakt- und Lagerflächen** (9° statt 18° je Abschnitt), dazu auf Wunsch wie Mittel an den Krafteinleitungen ohne Fläche; ohne tetp (seit 07.10.2026, bis dahin halbe Kantenlänge überall) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (gleichmäßig feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
 
 *Gemessen gegen den Sollwert 355 N/mm² an der Nachweisstelle des
 Kragarm-Prüfkörpers bzw. gegen die Lamé-Lösung am Innenrand; Freiheitsgrade =
@@ -1704,7 +1705,7 @@ und beim Anlegen aus der Auswahl, Neuvernetzen nach Spalt und Spiel) und für
 `statik3d modell.json --vernetzen`; die adaptive Vernetzung
 nimmt die Quellen von Fein nicht und vergröbert darum auch nicht in Stufen.
 Entwurf wird nie selbsttätig gröber, Mittel nur an den Krafteinleitungen ohne
-Fläche (übernächster Absatz). Ein Netz, das die Grenze
+Fläche, wenn der Haken dafür an ist (übernächster Absatz). Ein Netz, das die Grenze
 einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Am Drehlager (nur
 vernetzt, Grenze 4 000 000, Sperre für die Messung aufgehoben, 08.10.2026)
 hielt das Programm Stufe 0 nach 51 von 108 Volumen bei 4,41 Millionen
@@ -1714,6 +1715,108 @@ Unbekannten an, Stufe 1 nach 51 Volumen bei 4,08 Millionen und Stufe 2 nach
 Millionen Unbekannten. Das dauerte zusammen 71 Minuten, davon 28 Minuten für
 die verworfene Stufe 3; mit dieser Grenze endet Fein am Drehlager also beim
 Netz von Mittel. Bis zum 07.10.2026 vernetzte Fein ohne Grenze.
+
+**Krafteinleitungen ohne Fläche feiner (seit 13.10.2026).** Eine starre Scheibe
+über einer Bohrung koppelt nur die Knoten am Lochrand an ihren Mittelpunkt, und
+ein Stab endet an den drei oder vier Knoten eines Elements: Die Kraft geht dort
+an einer Linie oder in einem Punkt ins Volumen und nicht über eine Fläche. Die
+Spannung an solchen Stellen hängt von der Elementgröße ab (Abschnitt „Freie
+Bewegungen (Singularitäten)“), und das Gebiet, das man deshalb nicht
+auswerten kann, ist so groß wie die Elemente dort. Der Anwender wünschte am
+13.10.2026: „Netzabhängige Zonen sind zu groß, weil elementweise auf grobem
+Netz bestimmt. Bitte über Radius bzw. max. 1–2 Elementringe begrenzen und im
+Lochbereich feiner bzw. quadratisch vernetzen.“ Die Begrenzung der Zonen ist
+ein eigener Schritt; dieser Absatz beschreibt das feinere Vernetzen.
+
+Bei Mittel und Fein legt das Programm vor dem Vernetzen Quellen ins Größenfeld,
+und zwar dort, wo es die Stellen aus der Geometrie schon kennt. Die Stellen
+erkennt es sonst erst am fertigen Netz, weil die Kopplungen erst beim
+Vernetzen entstehen (Abschnitt „Netzabhängige Spannungsspitzen“). Erkannt werden **starre
+Scheiben**, die weniger als ein Zehntel ihrer Fläche auf einer Körperfläche
+aufliegen (also nur mit ihrem Rand, am Drehlager die Deckel der 16 Ankerringe
+und der 48 Schraubenringe), und **Stabenden**, die auf einer ebenen Randfläche
+eines Volumens enden. An der Scheibe bekommen die Linien des Lochrands 9° statt
+18° je Abschnitt, und die Kantenlänge am Rand ist die kleinere von der
+Bogenlänge eines 9°-Abschnitts und der halben Kantenlänge von Mittel. Am
+Stabende gilt die halbe Kantenlänge des Körpers. Ein Ring, dessen Kantenlänge
+unter die **Mindestweite** des Vernetzers fiele (die Kantenlänge von Mittel
+geteilt durch 30; darunter erzeugt der Vernetzer Hüllkanten, aus denen Splitter
+werden, die kein Volumenschritt mehr los wird), bleibt, wie Mittel ihn vernetzt;
+das Protokoll nennt ihn ausdrücklich. Am Drehlager sind das die 48 Schraubenringe
+(Radius 8 und 10 mm: 1,3 und 1,6 mm gegen 1,7 mm Mindestweite), die zu 18, 18 und
+12 in drei Körpern sitzen; die 16 Ankerringe (Radius 25,5 mm, 4,0 mm) werden
+verfeinert. Beide Quellen reichen zwei
+Elementringe weit (ein Umkreis von etwa r + 2 h); dahinter wächst die
+Kantenlänge wie überall mit 0,35 je Meter bis zur Kantenlänge von Mittel. Das
+ist derselbe Weg, auf dem die Bögen der Kontakt- und Lagerflächen bei Fein vorab
+9° bekommen. Weil gegenüberliegende Seiten einer abgebildeten Bohrungswand
+gleich viele Abschnitte haben, teilt sich auch der Lochrand auf der anderen
+Seite der Platte mit 9°. Nicht erkannt werden Scheiben und Stabenden auf einer
+gekrümmten Fläche und Stabenden im Innern eines Körpers; sie bleiben, wie
+Mittel sie vernetzt. **Entwurf bleibt linear (tet4) und ohne diese
+Verfeinerung**: Er ist die schnelle Stufe für Verformungen, die Spannungen an
+einer Linienlast fallen in tet4 ohnehin zu niedrig aus, und tet4 neben tet10
+in einem Netz gäbe keine verträglichen Elemente.
+
+**Zwei Haken in den Netzeinstellungen, in der Vorgabe beide aus.** „Krafteinleitungen
+ohne Fläche feiner vernetzen“ schaltet die Ringe ein, „… auch Stabenden auf
+Volumen“ dazu die Stabenden (nur mit dem ersten wirksam). Der Anwender hat das
+Feinere gewünscht, trotzdem stehen beide auf **aus**, und zwar wegen der Messung am
+Drehlager (Absatz unten): Mit Ringen und Stabenden zusammen lieferte das
+Vernetzen dort in über zwei Stunden kein Netz unter der Grenze. Ob die Ringe
+allein tragbar sind, ist nicht gemessen; die 16 Ankerringe liegen in kleinen
+Körpern (je rund 9 200 Tetraeder gegen 1 300 bei Mittel), die in wenigen Sekunden vernetzt sind. Wer die Ringe will, schaltet sie ein, nach
+Möglichkeit zuerst an einem Modell, das schneller vernetzt. Mit beiden Haken aus
+ist das Netz von Mittel dasselbe wie bis zum 13.10.2026 (Knoten für Knoten,
+geprüft in tests/test_krafteinleitung.py). Die Haken werden mit der Datei
+gespeichert; **bis zum 13.10.2026 vernetzte Mittel an diesen Stellen so grob wie
+überall** (am Drehlager 40 Knoten am Lochrand jedes Ankerrings, 18° je
+Abschnitt), und eine ältere Datei hat die Haken nicht und bekommt beim Laden die
+Vorgabe aus, ihr Netz ändert sich also beim Neuvernetzen nicht. Ist ein Haken
+an, beginnt das Protokoll beim Vernetzen mit einer Zeile „Elemente Mittel:
+feiner an Krafteinleitungen ohne Fläche: …“ (bei Fein „Elemente Fein: …;
+feiner an Krafteinleitungen ohne Fläche: …“), und die Maske nennt dasselbe in
+der Zeile *Kantenlänge (wirksam)*.
+
+**Die Höchstzahl Unbekannte begrenzt es in vier Stufen.** Der Aufwand je Ring ist
+ungefähr gleich, ob er den Radius 8 mm oder 25,5 mm hat (die Zahl der
+Elemente im Kegel einer Ringquelle hängt von der Zahl der Abschnitte ab, nicht
+vom Radius; Theoriehandbuch), die Tiefe der Zone dagegen (zwei Elementringe, 2 · r ·
+Winkel) wächst mit dem Radius. Darum fallen bei zu großem Netz zuerst die
+Stabenden weg und dann die kleineren Ringe: Stufe 0 sind alle Ringe mit 9° und
+die Stabenden mit der halben Kantenlänge; Stufe 1 hat nur noch die Ringe; Stufe 2
+behält nur das größte Viertel der Ringe (die mit dem größten Radius, Gleichstand
+bleibt zusammen); Stufe 3 ist Mittel ohne diese Verfeinerung. Ohne den Haken für
+Stabenden gleicht Stufe 1 der Stufe 0 und wird übersprungen. Das Protokoll nennt
+jede Stufe wie bei Fein, etwa „Netzgrenze: vernetzt mit Stufe 2 (Mittel Stufe 2:
+Ringe 9° (das größte Viertel)) – … Unbekannte, unter der Grenze von …“. Fein
+vergröbert zuerst seine eigenen Stufen mit den Krafteinleitungen in Stufe 0 und
+setzt danach mit den Stufen von Mittel fort, damit Fein an derselben Stelle nie
+gröber ist als Mittel; mit Krafteinleitungen hat Fein deshalb acht statt fünf
+Stufen. Ohne solche Stellen im Modell, mit den Haken aus und bei Entwurf
+ändert sich nichts.
+
+**Gemessen am Drehlager (nur vernetzt, 14.10.2026).** Das gespeicherte Netz von Mittel (08.10.2026, 31 Arbeitsprozesse) hat 617 177 tet10, 1 015 610 Knoten
+und 3 046 830 Unbekannte, brauchte 809 Sekunden zum Vernetzen und hat an jedem Ankerring 40 Knoten
+am Lochrand (18° je Abschnitt). Mit beiden Haken an, der Grenze 4 000 000 und denselben 31 Arbeitern
+(der Rechner war bis auf die eigenen Arbeiter leer, die CPU-Last lag im Mittel bei 68 %, der freie
+Speicher nie unter 88 GiB) ging es so: **Stufe 0** (alle 64 Ringe mit 9°, 48 Stabenden) hielt nach 26
+Minuten bei 55 von 108 Volumen an, 4 314 924 Unbekannte über der Grenze. **Stufe 1** (nur die 16
+Ankerringe und die Stabenden) vernetzte alle 108 Volumen in 25 Minuten und kam auf 4 234 851
+Unbekannte, 5,9 % über der Grenze; das Netz wurde verworfen. Dabei hatten die Platten V15, V33, V35
+und V31 122 591, 161 986, 160 441 und 160 697 Knoten gegen 75 219, 112 371, 112 274 und 126 930 bei
+Mittel (+63, +44, +43 und +27 %); an V33 stand der schlechteste Tetraeder bei 0,019 (Abnahmegrenze
+0,05) mit 552 Hüllkanten unter der Mindestweite (kürzeste 0,13 mm), und MMG3D mit Größenfeld scheiterte
+einmal. Jede der 16 Ankerplatten wuchs von rund 1 300 auf rund 9 200 Tetraeder. **Stufe 2** (nur die
+48 Stabenden) lieferte nach 106 Minuten noch kein Netz: 55 von 108 Volumen waren seit der sechsten Minute fertig, danach kam keines mehr hinzu, und nur noch ein bis drei Arbeiter rechneten, einer davon 102 Minuten (6 147 CPU-Sekunden) lang an einem Körper; der Lauf wurde dann von Hand beendet. Zum Vergleich: Mittel ohne
+die Verfeinerung braucht am Drehlager 13,5 Minuten. Die Zerlegung wurde nicht gemessen, weil
+kein Netz unter der Grenze entstand. Hochgerechnet mit dem Exponenten 1,29 des Handbuchs (3,05 auf 4,0 Millionen
+Unbekannte; Schätzung, nicht gemessen) bräuchte ein Netz mit den 4,23 Millionen von Stufe 1 rund 80 GiB
+Arbeitssatz statt 52,3 GiB und rund 5,6 Minuten statt 169 Sekunden je Zerlegung. Aus dem gemessenen
+Zuwachs der Ankerplatten (+42 000 Unbekannte je Platte) ergibt sich für die 16 Ankerringe allein
+ein Netz von rund 3,7 Millionen Unbekannten (Schätzung, ohne die Wirkung auf die Nachbarkörper), also rund
+68 GiB Arbeitssatz; das passt unter die Grenze, ist aber nicht gemessen. Darum stehen die Haken
+auf aus.
 
 **Kontakt: was Mittel und Fein noch sperrt.** Seit dem 08.10.2026 rechnen
 Kontaktbedingungen, Kontaktpaare und Flächenlager an Volumen auch mit tet10,
@@ -11414,10 +11517,11 @@ Art, am Drehlager etwa „64 starre Scheiben koppeln nur einen Lochrand
 (40–45 Knoten)“ und „48 Stabenden hängen an 1–3 Knoten“. Bei den Stabenden
 nennt dieselbe Zeile seit dem 14.10.2026 auch den Ausweg, die verteilende
 Einleitung über die Stirnfläche. Die Warnung hält die
-Rechnung nicht an. Seit dem 13.10.2026 vernetzt Mittel (und Fein) die starren
-Scheiben über Bohrungen und die Stabenden feiner, damit ihre Zonen klein werden
-(Abschnitt „Elementstufe“, Absatz „Krafteinleitungen ohne Fläche feiner“); die
-Warnung nennt dann entsprechend mehr Knoten am Lochrand. Lasten und Lager, die
+Rechnung nicht an. Seit dem 13.10.2026 kann Mittel (und Fein) die starren
+Scheiben über Bohrungen und, mit eigenem Haken, die Stabenden feiner vernetzen,
+damit ihre Zonen klein werden (Abschnitt „Elementstufe“, Absatz
+„Krafteinleitungen ohne Fläche feiner“); beide Haken stehen auf aus, und die
+Warnung nennt bei eingeschalteten Ringen entsprechend mehr Knoten am Lochrand. Lasten und Lager, die
 eine Fläche tragen, meldet sie nicht;
 in den eingebauten Beispielen meldet sie nur die Endlast der Konsole, die auf
 den sieben Knoten der Oberkante steht. Seit dem 13.10.2026 lässt sich ein

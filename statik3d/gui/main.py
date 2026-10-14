@@ -13365,7 +13365,9 @@ class MainWindow(QtWidgets.QMainWindow):
         selbsttaetig groeber ueber seine Stufen (elementstufe.fein_stufen,
         seit 08.10.2026); Mittel hat sie seit 13.10.2026 an einem Modell mit
         Krafteinleitungen ohne Flaeche (feiner an starren Scheiben ueber
-        Bohrungen und Stabenden, Schalter ``krafteinleitung_fein``), Entwurf
+        Bohrungen, mit eigenem Haken Stabenden, Schalter
+        ``krafteinleitung_fein`` und ``krafteinleitung_stabenden``, beide
+        in der Vorgabe aus), Entwurf
         und Mittel sonst keine - dort bleibt das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
         Vernetzen, vor der Rechnung, „Vernetzen“ beim Uebernehmen und Anlegen
         von Flaechen und Koerpern, nach Spalt und Spiel) kommen hier durch;
@@ -19408,8 +19410,8 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("elemente", "Elemente", "wahl", es.AUSWAHL[stufe_jetzt], [es.AUSWAHL[s] for s in es.STUFEN],
                     hinweis="Entwurf: tet4, hex8 (VQ83), Schalen linear – schnell, Spannungen zu niedrig. "
                             "Mittel (Vorgabe): tet10, hex20 (VQ203), Schalen quadratisch – für die "
-                            "Nachweise, feiner an Krafteinleitungen ohne Fläche (starre Scheiben über "
-                            "Bohrungen, Stabenden). Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
+                            "Nachweise, auf Wunsch feiner an Krafteinleitungen ohne Fläche (starre "
+                            "Scheiben über Bohrungen, Stabenden). Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
                             "Kantenlänge) und an den Bögen der Kontakt- und Lagerflächen (9° statt 18° je "
                             "Abschnitt) – Bohrungen, Kerben, Ermüdung. Sechsflächner entstehen "
                             "automatisch nur dort, wo sie sauber "
@@ -19423,16 +19425,24 @@ class MainWindow(QtWidgets.QMainWindow):
                             "Krafteinleitungen ohne Fläche feiner wird; die Einstellungen darunter "
                             "bleiben die für Mittel", anzeige=True),
                   # Krafteinleitungen ohne Flaeche (13.10.2026, Anwender: „im Lochbereich
-                  # feiner bzw. quadratisch vernetzen“): Vorgabe ein
+                  # feiner bzw. quadratisch vernetzen“): Vorgabe aus, am Drehlager gemessen
                   F("krafteinleitung_fein", "Krafteinleitungen ohne Fläche feiner vernetzen", "haken",
-                    bool(getattr(n, "krafteinleitung_fein", True)),
+                    bool(getattr(n, "krafteinleitung_fein", False)),
                     hinweis="Bei Mittel und Fein: starre Scheiben über Bohrungen (die Kopplung hängt nur am "
                             "Lochrand) bekommen am Lochrand 9° statt 18° je Abschnitt, höchstens die halbe "
-                            "Kantenlänge, und Stabenden auf einem Volumen die halbe Kantenlänge - je zwei "
-                            "Elementringe weit, von dort wachsend. Das macht die Zone der netzabhängigen "
-                            "Spannungsspitzen dort klein. Es kostet Elemente; die Höchstzahl Unbekannte "
-                            "vergröbert selbsttätig. Entwurf bleibt wie er ist. Aus: das Netz von Mittel wie "
-                            "bis zum 13.10.2026, etwa für eine Vergleichsrechnung")]
+                            "Kantenlänge - zwei Elementringe weit, von dort wachsend. Das macht die Zone der "
+                            "netzabhängigen Spannungsspitzen dort klein. Es kostet Elemente und Zeit; die "
+                            "Höchstzahl Unbekannte vergröbert selbsttätig (zuerst fallen die kleinen Ringe "
+                            "weg). Ringe, deren Kantenlänge unter der Mindestweite des Vernetzers (Kantenlänge "
+                            "von Mittel geteilt durch 30) läge, bleiben wie Mittel. Entwurf bleibt, wie er "
+                            "ist. Aus: das Netz von Mittel wie bis zum 13.10.2026"),
+                  F("krafteinleitung_stabenden", "… auch Stabenden auf Volumen", "haken",
+                    bool(getattr(n, "krafteinleitung_stabenden", False)),
+                    hinweis="Zusätzlich bekommen Stabenden, die auf einer ebenen Fläche eines Volumens enden, "
+                            "die halbe Kantenlänge, zwei Elementringe weit. Der Kegel dahinter reicht in die "
+                            "Nachbarkörper und kann ein großes Modell erheblich verteuern (am Drehlager "
+                            "wuchsen mit Ringen und Stabenden zusammen Nachbarplatten um bis zu 63 % der "
+                            "Knoten); nur mit dem Haken darüber wirksam")]
         if gruende:
             felder.append(F("sperre", "Kontakt", "info", es.sperrtext(gruende)))
         felder += [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
@@ -19524,6 +19534,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cb.currentTextChanged.connect(nachfuehren)
         maske._felder["dichte"].currentTextChanged.connect(nachfuehren)
         maske._felder["krafteinleitung_fein"].toggled.connect(nachfuehren)
+        maske._felder["krafteinleitung_stabenden"].toggled.connect(nachfuehren)
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
 
@@ -19663,7 +19674,9 @@ class MainWindow(QtWidgets.QMainWindow):
                           w.get("hoechstens_unbekannte", getattr(n, "hoechstens_unbekannte", 0)) or 0))),
                       form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                       krafteinleitung_fein=bool(w.get("krafteinleitung_fein",
-                                                      getattr(n, "krafteinleitung_fein", True))),
+                                                      getattr(n, "krafteinleitung_fein", False))),
+                      krafteinleitung_stabenden=bool(w.get("krafteinleitung_stabenden",
+                                                           getattr(n, "krafteinleitung_stabenden", False))),
                       abgebildet=bool(w.get("abgebildet", n.abgebildet)),
                       teilung_uebersteuern=bool(w.get("uebersteuern", True)))
         # Die Stufe setzt Ordnung und Sweep (25.09.2026): Sweep immer „sauber“ -
