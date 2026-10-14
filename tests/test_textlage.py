@@ -10,8 +10,8 @@ Fenstergroessen 1280 x 800, 1600 x 900, 1920 x 1080 und zwei schmalen
 Fenstern, mit den Begrenzungsrechtecken der Texte in Bildpunkten der Ansicht:
 
 * jeder Text liegt ganz in der Ansicht (nichts abgeschnitten),
-* kein Text ueberdeckt einen anderen, die Farbskala, das Achsenkreuz, den
-  Ansichtswuerfel oder die Glasleiste,
+* kein Text ueberdeckt einen anderen, die Farbskala, den Platz unten rechts
+  (bis 14.10.2026 das Achsenkreuz), das Achsen-Gizmo oder die Glasleiste,
 * das Bild fuer den Bericht (Strg+B, ansicht_in_bericht) hat die Groesse der
   Ansicht - es ist dieselbe Zeichnung.
 
@@ -97,12 +97,14 @@ def _rechtecke(w) -> dict:
                                                             int(ren.GetRenderWindow().GetDPI()))
             nw, nh = float(bb[1] - bb[0] + 1), float(bb[3] - bb[2] + 1)
             aus["skalenfeld_notiz"] = (float(p2[0]) - nw, float(p2[0]), float(p[1]) - nh - 2, float(p[1]))
-    # Achsenkreuz unten rechts (eigener Darsteller im Ausschnitt)
+    # Platz unten rechts: bis zum 14.10.2026 stand dort das Achsenkreuz;
+    # viewport.texte_ordnen haelt ihn weiter frei
     aus["achsenkreuz"] = (0.86 * breit, breit, 0.0, 0.16 * hoch)
-    # Ansichtswuerfel und Glasleiste liegen als Qt-Fenster ueber der Ansicht
+    # Achsen-Gizmo (bis 14.10.2026 der Ansichtswuerfel) und Glasleiste liegen
+    # als Qt-Fenster ueber der Ansicht
     s = w._pixelmass()
     ia = w.plotter.interactor
-    for name, wid in (("wuerfel", getattr(w, "ansichtswuerfel", None)),
+    for name, wid in (("wuerfel", getattr(w, "achsengizmo", None)),
                       ("glasleiste", getattr(w, "glasleiste", None))):
         if wid is not None and wid.isVisible():
             lo = ia.mapFromGlobal(wid.mapToGlobal(QtCore.QPoint(0, 0)))
@@ -178,7 +180,7 @@ def test_lage(fall):
         if not deckung:
             print(f"   nur gemeldet (schmalstes Fenster): Überdeckungen {paare}")
             continue
-        check(f"… keine Überdeckung von Texten untereinander, mit Farbskala, Achsenkreuz, Würfel, Glasleiste",
+        check(f"… keine Überdeckung von Texten untereinander, mit Farbskala, Platz unten rechts, Gizmo, Glasleiste",
               not paare, f"{paare}; " + "; ".join(f"{k} {tuple(round(x) for x in v)}" for k, v in r.items()))
     # Berichtsbild: dieselbe Zeichnung in der Groesse der Ansicht
     n0 = len(w.model.bericht)

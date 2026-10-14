@@ -376,8 +376,8 @@ Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
 Fenster), ist das Ribbon eingeklappt, unten steht nur die Kopfzeile mit
 Gruppe, Reitern und Tabellenknöpfen (ein Klick auf einen Reiter, die Wahl
 einer Gruppe oder der Knopf *Filter* klappt den Bereich auf; bis zum
-03.10.2026 war es die Registerzeile der Gruppen), der Würfel ist kleiner
-und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
+03.10.2026 war es die Registerzeile der Gruppen), das Achsen-Gizmo ist
+kleiner (bis zum 14.10.2026 der Ansichtswürfel) und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
 unten links (bis zum 25.09.2026 lag sie auf ihnen, „73.52 Knoten 14“ war
 nicht zu lesen — auch im Berichtsbild aus der Ansicht). Wird das Fenster
 wieder groß genug, ist alles wie vorher. Die Ansicht hat so bei 1366 × 768
@@ -3048,7 +3048,8 @@ schräge Ebene durch die Mitte, aus der Ansicht, Werkzeug im Bild).
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen ▾* und *Sicht ▾*, der Fang unter *Geometrie → Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
-und als **iso** unter dem Ansichtswürfel.
+und als Knopf **alles** unter dem Achsen-Gizmo, die isometrische Ansicht
+daneben als **iso**.
 
 **Sicht — ausblenden und wieder zeigen.** Was man nicht sieht, stört nicht:
 *Auswahl ausblenden* nimmt die gewählten Stäbe, Flächen, Volumen, Linien,
@@ -3079,12 +3080,12 @@ offen ist, kommt aus dem Rechenpfad kein Dialog. Verloren geht dabei nichts:
 das Protokoll lässt sich unter *Extras → Protokoll speichern…* als Datei
 sichern.
 
-**Der Ansichtswürfel** oben rechts dreht sich mit der Ansicht und lässt sich
-**mit der Maus drehen**: auf den Würfel klicken und ziehen dreht die Kamera um
-den Blickpunkt. Ein Klick auf eine Würfelseite stellt die Ansicht senkrecht
-auf diese Seite. Die Knöpfe darunter heißen wie die Achsen: **+x +y +z −x
-−y −z** (die Richtung, aus der man schaut) und **iso** (isometrisch, alles
-im Bild).
+**Das Achsen-Gizmo** oben rechts zeigt die drei Achsen so, wie die Kamera
+gerade auf das Modell schaut, und dreht sich mit der Ansicht. Ein Klick auf ein
+Achsenende stellt die Blickrichtung aus dieser Richtung ein; Ziehen dreht die
+Kamera um das Blickziel. Darunter stehen die Knöpfe **alles**, **iso** und
+**ortho**. Näheres steht weiter unten im Abschnitt *Achsen-Gizmo*. Bis zum
+14.10.2026 stand dort der Ansichtswürfel mit den Knöpfen +x … −z.
 
 **Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
 aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
@@ -3093,10 +3094,12 @@ Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
 das verformte System gezeigt wird, also bei einer Überhöhung über 0) und,
 wenn Lasten im Ergebnisbild stehen, deren Lastfall. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
 (Färbung und Schnittgrößenverlauf, siehe *Kennwerte im Bild*); Auflagerkräfte
-stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
-Achsenkreuz unten
-rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
-Texte weg. Beides kommt so auch in den Bericht.
+stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts; der
+Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die Texte weg.
+Beides kommt so auch in den Bericht. Bis zum 14.10.2026 stand unten rechts
+außerdem ein Achsenkreuz, das auch im Berichtsbild stand. Es ist entfallen,
+weil das Achsen-Gizmo oben rechts die Achsen zeigt; das Gizmo liegt über der
+Ansicht und kommt nicht ins Berichtsbild.
 
 **Farbe und Verformung quadratischer Volumen (seit 14.10.2026 richtig
 zugeordnet).** Die Ansicht zeichnet Volumen als ihre Oberfläche und holt
@@ -3112,19 +3115,20 @@ betroffen. Bei tet4, hex8 und Keilen stimmte die Zuordnung.
 
 **Lage der Texte (seit 13.10.2026).** Vor jedem Bild ordnet das Programm die
 Texte nach ihren gemessenen Rechtecken: die Kennwerte unten links bleiben
-links vom Achsenkreuz und werden dafür umgebrochen; der Titel der Farbskala
+links vom Platz des früheren Achsenkreuzes unten rechts (er bleibt frei) und
+werden dafür umgebrochen; der Titel der Farbskala
 steht rechtsbündig über ihr (in der Kompaktstufe mittig über der waagerechten
 Skala, nie über den Rand hinaus) und wird umgebrochen, die Skala wird kürzer,
-wenn er sonst in den Ansichtswürfel liefe; Legendeneintrag und Hinweis der
-netzabhängigen Stellen stehen rechts unter der Skala, links vom Achsenkreuz,
+wenn er sonst in das Achsen-Gizmo liefe; Legendeneintrag und Hinweis der
+netzabhängigen Stellen stehen rechts unter der Skala, links von diesem Platz,
 und die Skala rückt hoch, wenn sie sonst auf den Kennwerten lägen; die
-Kopfzeile oben links wird so schmal umgebrochen, dass sie neben Würfel,
+Kopfzeile oben links wird so schmal umgebrochen, dass sie neben Gizmo,
 Skala und Titel bleibt. Das gilt auch nach dem Vergrößern oder Verkleinern
 der Ansicht und im Bild für den Bericht (Strg+B), das dieselbe Zeichnung in
 der Größe der Ansicht ist. Geprüft auf dem Bildschirm bei Fenstern von
 1280 x 800, 1600 x 900, 1920 x 1080 und 1100 x 700 (`tests/test_textlage.py`):
 kein Text abgeschnitten, keiner auf einem anderen, auf der Skala, dem
-Achsenkreuz, dem Würfel oder der Glasleiste. In einem Fenster von 900 x 640
+Platz unten rechts, dem Gizmo (bis zum 14.10.2026 dem Würfel) oder der Glasleiste. In einem Fenster von 900 x 640
 (Ansicht rund 170 px breit) ist nichts abgeschnitten, aber nicht alles
 nebeneinander unterzubringen. Bis zum 13.10.2026 wurden die Lagen beim
 Zeichnen gesetzt: die Kopfzeile lief bei 1280 x 800 bis 803 px in eine
@@ -3826,12 +3830,28 @@ Modellbaum).
 | Taste | tut |
 |---|---|
 | **links** | kurzer Klick wählt, was unter dem Zeiger liegt, und ersetzt die Auswahl; mit **Strg** kommt es dazu (seit 03.10.2026) — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026; mit Strg bleibt sie); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
-| **Mitte** gedrückt halten | **drehen**; Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
+| **Mitte** gedrückt halten | **drehen um den Punkt unter dem Zeiger** (seit 14.10.2026); Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
 | **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü: auf einem Objekt seine Befehle, im Leeren Sicht und Zoom (seit 03.10.2026) |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
 
 Seit 15.09.2026 dreht die mittlere und schiebt die rechte Taste; vorher war
 es umgekehrt.
+
+**Drehen um den angeklickten Punkt (seit 14.10.2026).** Beim Drücken der
+mittleren Taste nimmt das Programm den Punkt der gezeichneten Oberfläche unter
+dem Zeiger als Drehpunkt; er kommt aus dem Tiefenpuffer des letzten Bildes,
+wie beim Zoom zum Zeiger, und kostet keine merkliche Zeit. Liegt dort nichts,
+gilt die Mitte dessen, was gerade gezeichnet ist (Ausgeblendetes zählt nicht).
+Kamera und Blickziel drehen dann starr um diesen Punkt: er bleibt im Bild an
+derselben Stelle stehen, und das Blickziel springt nicht auf ihn. Ziehen nach
+links und rechts dreht um die senkrechte Achse Z, Ziehen nach oben und unten
+neigt die Kamera; ein Zug über die ganze Breite der Ansicht sind 200°, so viel
+wie vorher. Kurz vor der Draufsicht und der Untersicht (4,6° vor dem Pol) bleibt
+die Kamera weich stehen, statt über den Pol zu kippen oder zu flackern; aus der
+Draufsicht des Gizmos heraus geht jeder Zug vom Pol weg voll durch. Bis zum
+14.10.2026 drehte der Trackball von VTK um das Blickziel, frei auch um die
+Blickachse, und das Blickziel lag erst nach einem Mausradschritt auf der
+Oberfläche unter dem Zeiger. Geprüft in `tests/test_ansicht_gizmo.py`.
 
 Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
 gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
@@ -5054,25 +5074,55 @@ gewölbten Flächen und Spline-Rändern, auf die Genauigkeit der Abtastung (16
 Abschnitte je Bogen: ein Viertelkreis kommt auf 1 % Bogenlänge). Aufeinander
 liegende Flächen geben keine Linie. Geprüft in `tests/test_verschneiden.py`.
 
-### Ansichtswürfel
+### Achsen-Gizmo
 
-Oben rechts in der Ansicht steht der **Ansichtswürfel**. Er zeigt die Lage
-der Kamera: die drei Seiten, auf die man gerade schaut, sind sichtbar und mit
-ihrer Achse beschriftet (+X, −Y, +Z …), und er dreht sich mit, wenn man die
-Ansicht dreht. Drei Wege, ihn zu benutzen:
+Oben rechts in der Ansicht steht das **Achsen-Gizmo** (seit 14.10.2026). Es
+zeigt die drei Achsen des Modells so, wie die Kamera gerade auf sie schaut, und
+dreht sich mit, wenn man die Ansicht dreht: X rot, Y grün, Z blau. Jede Achse
+hat zwei Kugeln. Die Kugel am positiven Ende ist gefüllt und mit dem
+Buchstaben der Achse beschriftet, die am negativen Ende ist hohl. Jede Kugel
+hat eine dunkle Kontur, damit sie auch auf dem weißen Grund und auf dem Modell
+zu sehen ist. Was näher am Betrachter liegt, verdeckt, was dahinter liegt.
+Das Programm rechnet mit z nach oben; in der Draufsicht schaut man darum von
++Z nach unten, X zeigt nach rechts und Y nach oben.
 
-* **Ziehen** mit gedrückter linker Maustaste auf dem Würfel dreht die
-  Ansicht um den Blickpunkt — wie das Drehen in der Ansicht selbst, nur mit
-  dem Würfel als Griff.
-* **Klick auf eine Seite** stellt die Ansicht senkrecht auf diese Seite.
-* **Die Knöpfe darunter** heißen wie die Achsen: **+x +y +z −x −y −z** — die
-  Richtung, aus der man schaut (−y ist die Vorderansicht, +z die Draufsicht)
-  — und **iso** für die isometrische Ansicht mit allem im Bild. Die Rückseite
-  ist damit ein Klick und nicht eine halbe Umdrehung.
+* **Klick auf ein Achsenende** stellt die Blickrichtung aus dieser Richtung
+  ein: ein Klick auf +Z gibt die Draufsicht, auf −Y die Vorderansicht. Das
+  Blickziel und der Abstand der Kamera bleiben, wie sie sind; es wird nicht
+  eingepasst, ein herangezoomtes Detail bleibt also im Bild.
+* **Ziehen** mit gedrückter linker Maustaste auf dem Gizmo dreht die Ansicht
+  um das Blickziel; ein Zug über den Durchmesser des Gizmos ist eine halbe
+  Umdrehung. Ob es ein Klick oder ein Zug war, entscheidet sich beim
+  Loslassen: ab 4 Bildpunkten Weg ist es ein Zug.
+* **Der Grundkreis** hinter den Achsen erscheint nur, solange die Maus über
+  dem Gizmo steht. Der Hinweis am Zeiger nennt die Ansicht des Endes darunter.
+* **Die Knöpfe darunter**: **alles** holt das ganze Modell ins Bild (*Zoom
+  alles*), **iso** stellt die isometrische Ansicht mit allem im Bild ein, und
+  **ortho** schaltet zwischen perspektivischer Ansicht und
+  Parallelprojektion um. Der Knopf ist hervorgehoben, solange die
+  Parallelprojektion an ist.
 
-Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen dieselben Richtungen, dazu
-„Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
-„Zoom alles".
+**Parallelprojektion (ortho).** In der Parallelprojektion bleiben parallele
+Kanten parallel, wie in einer Zeichnung; für Draufsichten und Ansichten in
+der XZ- oder YZ-Ebene ist das oft die bessere Wahl. Beim Umschalten bleibt das
+Bild in der Ebene des Blickziels gleich groß: die halbe Bildhöhe der
+Parallelprojektion ist der Abstand der Kamera mal tan(Blickwinkel/2), und
+zurück rückt die Kamera in den Abstand, in dem das perspektivische Bild so
+groß ist. Das Mausrad zoomt in beiden Projektionen zum Zeiger. Die Wahl merkt
+sich das Programm auf diesem Gerät (in `einstellungen.json`, Schlüssel
+„ansicht“) und stellt sie beim nächsten Start wieder ein.
+
+Bis zum 14.10.2026 stand oben rechts der **Ansichtswürfel**: ein Klick auf eine
+Seite setzte die Kamera auf den dreifachen Modellabstand und passte alles ein,
+darunter standen sieben Knöpfe +x +y +z −x −y −z und iso, und unten rechts im
+Bild stand zusätzlich ein Achsenkreuz. Der Anwender hat am 13.10.2026
+entschieden, dass das Gizmo beides ersetzt.
+
+Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen weiter XY
+(Draufsicht), XZ und YZ, dazu „Rückseite (180°)", das die laufende Ansicht am
+Blickpunkt umkehrt, sowie *Isometrisch* und „Zoom alles". Die Richtungen aus
+dem Ribbon passen wie bisher alles ein. Geprüft in
+`tests/test_ansicht_gizmo.py`.
 
 ### Querschnitte anlegen: Normprofile, eigene Profile, freier Editor
 
@@ -12745,7 +12795,7 @@ beide Zeilen unter „Weitere Tasten“. Geprüft in `tests/test_fehler_p14.py`.
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
 Maus im Bild: Rad zoomt zum Zeiger, linke Taste wählt, gedrückte mittlere
-dreht, gedrückte rechte schiebt (ohne Zug: Kontextmenü), Doppelklick mit der
+dreht um den Punkt unter dem Zeiger, gedrückte rechte schiebt (ohne Zug: Kontextmenü), Doppelklick mit der
 mittleren Taste passt alles Sichtbare ein.
 Strg+B übernimmt die Ansicht in den Bericht.
 Esc bricht ab, was gerade mit Fortschrittsbalken und Abbrechen-Knopf läuft

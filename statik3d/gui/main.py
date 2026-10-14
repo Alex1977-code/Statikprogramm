@@ -787,13 +787,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.plotter.interactor.setFocus(QtCore.Qt.MouseFocusReason)
                         return True         # links dreht nicht mehr
                     if ereignis.button() == QtCore.Qt.MiddleButton:
-                        # gedrueckte mittlere Taste dreht (15.09.2026); VTK
-                        # sieht den Druck nicht, sonst schoebe es wie von Haus
-                        # aus. Ein Doppelklick zaehlt beim Loslassen
-                        # (:meth:`_mitte_los`): ohne Zug passt er alles ein.
+                        # gedrueckte mittlere Taste dreht (15.09.2026), seit dem
+                        # 14.10.2026 um den Punkt unter dem Zeiger
+                        # (:meth:`_drehen_beginnen`); VTK sieht den Druck nicht,
+                        # sonst schoebe es wie von Haus aus. Ein Doppelklick
+                        # zaehlt beim Loslassen (:meth:`_mitte_los`): ohne Zug
+                        # passt er alles ein.
                         self._mitte_unten = True
                         self._mitte_doppel = QtCore.QPoint(int(pos.x()), int(pos.y())) if doppel else None
-                        self._drehen_beginnen()
+                        self._drehen_beginnen(pos)
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         if self._fenster_ecke is not None:
@@ -821,6 +823,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     if ereignis.buttons() == QtCore.Qt.NoButton:
                         self._vtk_zustand_beenden()     # ohne Taste wird nie gedreht oder gezoomt
+                    if getattr(self, "_dreh", None) is not None:
+                        if ereignis.buttons() & QtCore.Qt.MiddleButton:
+                            self._drehen_ziehen(pos)
+                        else:
+                            self._drehen_enden()        # das Loslassen kam hier nie an
+                        return True
                     if getattr(self, "_links_unten", False):
                         self._links_ziehen(pos)
                         return True
@@ -921,27 +929,68 @@ class MainWindow(QtWidgets.QMainWindow):
         das Objekt hinzu oder weg, und das Fenster nahm immer dazu."""
         return not getattr(self, "_klick_strg", False)
 
-    def _drehen_beginnen(self) -> None:
-        """Die gedrueckte mittlere Taste dreht - VTK macht es selbst.
+    def _drehen_beginnen(self, pos=None) -> None:
+        """Die gedrueckte mittlere Taste dreht - um den Punkt unter dem Zeiger.
 
-        Statt die Tasten im Qt-Filter umzubiegen, wird der Trackball-Stil in
-        den Drehzustand versetzt; die folgenden Mausbewegungen gehen
-        unveraendert an VTK, und ``OnMouseMove`` dreht. So bleibt das Gefuehl
-        genau das von VTK, und der Filter muss die Bewegung nicht anfassen.
-        Bis zum 15.09.2026 drehte die rechte Taste und die mittlere schob
-        („bei gedrückter mittlerer Maustaste soll gedreht werden").
+        Beim Druecken wird der Punkt der gezeichneten Oberflaeche unter dem
+        Zeiger bestimmt (Tiefenpuffer, :meth:`_oberflaeche_unter_zeiger` - wie
+        beim Zoom zum Zeiger); ohne Treffer gilt die Mitte des Gezeichneten
+        (:meth:`_drehpunkt_suchen`). Die Bewegungen danach drehen Kamera und
+        Blickziel starr um diesen Punkt (:meth:`_drehen_ziehen`): er bleibt im
+        Bild stehen, und das Blickziel springt nicht auf ihn. Gedreht wird um
+        die Hochachse Z und um die waagerechte Querachse, an den Polen weich
+        gebremst (navigation.drehen_um_punkt).
+
+        Bis zum 14.10.2026 drehte der Trackball von VTK (``StartRotate``) um das
+        Blickziel; erst das Mausrad setzte es auf die Oberflaeche. Bis zum
+        15.09.2026 drehte die rechte Taste und die mittlere schob („bei
+        gedrückter mittlerer Maustaste soll gedreht werden").
         """
+        self._vtk_zustand_beenden()
         try:
-            self._vtk_zustand_beenden()
-            self.plotter.iren.style.StartRotate()
-        except Exception:                   # noqa: BLE001 - dann dreht es eben nicht
-            pass
+            punkt = self._drehpunkt_suchen(pos)
+        except Exception:                   # noqa: BLE001 - dann um das Blickziel
+            punkt = None
+        x, y = (float(pos.x()), float(pos.y())) if pos is not None else (0.0, 0.0)
+        self._dreh = {"punkt": punkt, "zuletzt": (x, y)}
+        # beim grossen Modell bleiben die Nebendarsteller weg, wie bisher beim
+        # Drehen mit VTK (StartInteractionEvent)
+        self._interaktion_beginnt()
+
+    def _drehpunkt_suchen(self, pos=None):
+        """Der Drehpunkt der mittleren Taste: der Punkt der gezeichneten
+        Oberflaeche unter ``pos`` (Qt-Bildpunkt), sonst die Mitte dessen, was
+        gezeichnet ist (Ausgeblendetes zaehlt nicht), sonst das Blickziel."""
+        if pos is not None:
+            xv, yv = self._qt_nach_vtk(pos)
+            p = self._oberflaeche_unter_zeiger(xv, yv)
+            if p is not None:
+                return np.asarray(p, float)
+        b = self.plotter.renderer.ComputeVisiblePropBounds()
+        if b[0] <= b[1] and b[2] <= b[3] and b[4] <= b[5]:
+            return np.array([(b[0] + b[1]) / 2.0, (b[2] + b[3]) / 2.0, (b[4] + b[5]) / 2.0])
+        return np.asarray(self.plotter.renderer.GetActiveCamera().GetFocalPoint(), float)
+
+    def _drehen_ziehen(self, pos) -> None:
+        """Mausbewegung mit gedrueckter mittlerer Taste: um den Drehpunkt drehen
+        - so viel wie bisher der Trackball von VTK (200 Grad je Ansichtsbreite)."""
+        d = getattr(self, "_dreh", None)
+        if d is None:
+            return
+        from . import navigation as nav
+        x, y = float(pos.x()), float(pos.y())
+        x0, y0 = d["zuletzt"]
+        d["zuletzt"] = (x, y)
+        ia = self.plotter.interactor
+        az, ne = nav.ansicht_drehung(x - x0, y - y0, ia.width(), ia.height())
+        if az or ne:
+            self._kamera_drehen(az, ne, d["punkt"])
 
     def _drehen_enden(self) -> None:
-        try:
-            self.plotter.iren.style.EndRotate()
-        except Exception:                   # noqa: BLE001
-            pass
+        if getattr(self, "_dreh", None) is None:
+            return
+        self._dreh = None
+        self._interaktion_endet()
 
     #: So lange nach einem Radschritt gilt ein Doppelklick Mitte nicht [s]:
     #: wer beim Rollen das Rad drueckt, will nicht alles einpassen
@@ -5064,7 +5113,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return namen[treffer[0]] if treffer is not None else None
 
     def _build_glasleiste(self):
-        """Die durchscheinende Schnellleiste und der Ansichtswuerfel.
+        """Die durchscheinende Schnellleiste und das Achsen-Gizmo.
 
         Beides liegt **ueber** der Ansicht und nimmt keinen Platz weg. Die
         Knoepfe fuehren dieselben Aktionsobjekte wie das Ribbon - es sind
@@ -5153,22 +5202,29 @@ class MainWindow(QtWidgets.QMainWindow):
         leiste.knopf(self.act_auswahl_weg, "auswahl_weg", "auswahl_weg")
         self.cb_auswahlart_glas = None
         leiste.adjustSize()
-        wuerfel = msk.Ansichtswuerfel(central)
-        wuerfel.kamera = self._kamera_matrix
-        wuerfel.gewaehlt.connect(self.blickrichtung)
-        wuerfel.gedreht.connect(self._wuerfel_gedreht)
+        # Oben rechts das Achsen-Gizmo (seit 14.10.2026, Ansichtspaket A; bis
+        # dahin der Ansichtswuerfel mit der Knopfzeile +x … −z und ein
+        # Achsenkreuz unten rechts im Bild)
+        gizmo = msk.Achsengizmo(central)
+        gizmo.kamera = self._kamera_matrix
+        gizmo.gewaehlt.connect(self.blick_aus)
+        gizmo.gedreht.connect(self._gizmo_gedreht)
+        gizmo.zoom_alles.connect(lambda: self.zoom_alles())
+        gizmo.projektion.connect(self.projektion_setzen)
         self.glasleiste = leiste
-        self.ansichtswuerfel = wuerfel
-        self.ansichtsrand = msk.Ansichtsrand(central, leiste, wuerfel)
+        self.achsengizmo = gizmo
+        self.ansichtsrand = msk.Ansichtsrand(central, leiste, gizmo)
         # nie breiter als die Ansicht: vor jedem Platzieren einpassen
         leiste.an_ansicht_binden(self.ansichtsrand.platzieren)
-        # Der Wuerfel dreht sich mit der Ansicht: ein leichter Takt schaut
-        # nach, ob sich die Kamera bewegt hat, und zeichnet ihn dann neu.
+        # Das Gizmo dreht sich mit der Ansicht: ein leichter Takt schaut
+        # nach, ob sich die Kamera bewegt hat, und zeichnet es dann neu.
         self._kamera_stand = None
-        self._wuerfel_takt = QtCore.QTimer(self)
-        self._wuerfel_takt.setInterval(120)
-        self._wuerfel_takt.timeout.connect(self._wuerfel_nachfuehren)
-        self._wuerfel_takt.start()
+        self._gizmo_takt = QtCore.QTimer(self)
+        self._gizmo_takt.setInterval(120)
+        self._gizmo_takt.timeout.connect(self._gizmo_nachfuehren)
+        self._gizmo_takt.start()
+        # Perspektive oder Parallelprojektion: wie zuletzt auf diesem Geraet
+        self._projektion_laden()
 
     def _glas_klickart_nachziehen(self):
         """„Klick wählt: … ▾“ in der Glasleiste nennt die Auswahlart - auch
@@ -5263,33 +5319,149 @@ class MainWindow(QtWidgets.QMainWindow):
                     pass
 
     def _kamera_matrix(self):
-        """Die 3x3-Drehmatrix Welt -> Bild der Kamera - fuer den Wuerfel."""
+        """Die 3x3-Drehmatrix Welt -> Bild der Kamera - fuer das Gizmo."""
         try:
             M = self.plotter.renderer.GetActiveCamera().GetViewTransformMatrix()
             return [[float(M.GetElement(i, j)) for j in range(3)] for i in range(3)]
         except Exception:                   # noqa: BLE001
             return None
 
-    def _wuerfel_nachfuehren(self):
+    def _gizmo_nachfuehren(self):
         R = self._kamera_matrix()
-        stand = tuple(round(x, 4) for zeile in (R or []) for x in zeile)
+        try:
+            ortho = bool(self.plotter.renderer.GetActiveCamera().GetParallelProjection())
+        except Exception:                   # noqa: BLE001
+            ortho = False
+        stand = tuple(round(x, 4) for zeile in (R or []) for x in zeile) + (ortho,)
         if stand != self._kamera_stand:
             self._kamera_stand = stand
-            if getattr(self, "ansichtswuerfel", None) is not None:
-                self.ansichtswuerfel.update()
+            gizmo = getattr(self, "achsengizmo", None)
+            if gizmo is not None:
+                gizmo.ortho = ortho
+                gizmo.update()
 
-    def _wuerfel_gedreht(self, dx: float, dy: float):
-        """Ziehen auf dem Wuerfel dreht die Kamera um den Blickpunkt."""
+    def _kamera_drehen(self, azimut: float, neigung: float, punkt=None) -> None:
+        """Kamera und Blickziel starr um ``punkt`` drehen (ohne: um das
+        Blickziel) - Azimut um die Hochachse Z, Neigung um die waagerechte
+        Querachse, beides in Grad (navigation.drehen_um_punkt)."""
+        from . import navigation as nav
         try:
-            kam = self.plotter.renderer.GetActiveCamera()
-            kam.Azimuth(-0.6 * dx)
-            kam.Elevation(0.6 * dy)
+            ren = self.plotter.renderer
+            kam = ren.GetActiveCamera()
+            if punkt is None:
+                punkt = kam.GetFocalPoint()
+            P, F, U = nav.drehen_um_punkt(kam.GetPosition(), kam.GetFocalPoint(), kam.GetViewUp(),
+                                          punkt, azimut, neigung)
+            kam.SetPosition(*P)
+            kam.SetFocalPoint(*F)
+            kam.SetViewUp(*U)
             kam.OrthogonalizeViewUp()
-            self.plotter.renderer.ResetCameraClippingRange()
+            self._ortho_abstand()
+            ren.ResetCameraClippingRange()
             self._kamera_steht = True
             self.plotter.render()
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Ansicht drehen: {ex}")
+
+    def _gizmo_gedreht(self, azimut: float, neigung: float):
+        """Ziehen am Gizmo dreht die Kamera um das Blickziel."""
+        self._kamera_drehen(azimut, neigung)
+
+    def blick_aus(self, richtung: str):
+        """Klick auf ein Ende des Gizmos: aus dieser Richtung schauen. Blickziel
+        und Abstand bleiben, es wird **nicht** eingepasst - bis zum 14.10.2026
+        setzte der Wuerfel die Kamera auf 3 x Modellgroesse und passte alles
+        ein. „iso“ (der Knopf unter dem Gizmo) ist die isometrische Ansicht mit
+        Zoom alles wie im Ribbon."""
+        from . import navigation as nav
+        if richtung not in nav.NAMEN:
+            return self.blickrichtung(richtung)
+        try:
+            kam = self.plotter.renderer.GetActiveCamera()
+            P, F, U = nav.blick_aus(richtung, kam.GetPosition(), kam.GetFocalPoint())
+            self.plotter.camera_position = [P.tolist(), F.tolist(), U.tolist()]
+            self._ortho_abstand()
+            self.plotter.renderer.ResetCameraClippingRange()
+            self._kamera_steht = True
+            self.plotter.render()
+            self.statusBar().showMessage(nav.NAMEN[richtung], 3000)
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Blickrichtung: {ex}")
+
+    def projektion_setzen(self, ortho: bool, merken: bool = True):
+        """Perspektive oder Parallelprojektion (Knopf „ortho“ unter dem Gizmo).
+
+        Beim Umschalten bleibt die Bildgroesse in der Zielebene (durch das
+        Blickziel) gleich: der Parallelmassstab (halbe Bildhoehe) ist Abstand x
+        tan(Blickwinkel/2), und zurueck rueckt die Kamera in den Abstand, in dem
+        das perspektivische Bild so gross ist. Gemerkt wird die Wahl in den
+        Einstellungen dieses Geraets (Schluessel „ansicht“)."""
+        from . import navigation as nav
+        ortho = bool(ortho)
+        try:
+            ren = self.plotter.renderer
+            kam = ren.GetActiveCamera()
+            if bool(kam.GetParallelProjection()) != ortho:
+                winkel = float(kam.GetViewAngle())
+                F = np.asarray(kam.GetFocalPoint(), float)
+                if ortho:
+                    kam.SetParallelScale(max(nav.parallelmassstab(kam.GetDistance(), winkel), 1e-12))
+                    kam.ParallelProjectionOn()
+                    self._ortho_abstand()
+                else:
+                    d = nav.abstand_aus_massstab(kam.GetParallelScale(), winkel)
+                    blick = np.asarray(kam.GetDirectionOfProjection(), float)
+                    kam.ParallelProjectionOff()
+                    kam.SetPosition(*(F - blick * max(d, 1e-9)))
+                    kam.SetFocalPoint(*F)
+                ren.ResetCameraClippingRange()
+                self._kamera_steht = True
+                self.plotter.render()
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Projektion: {ex}")
+        gizmo = getattr(self, "achsengizmo", None)
+        if gizmo is not None:
+            gizmo.ortho_setzen(ortho)
+        if merken:
+            fen.ansicht_merken("projektion", "ortho" if ortho else "perspektive")
+            self.statusBar().showMessage("Parallelprojektion (orthogonal)" if ortho
+                                         else "Perspektivische Ansicht", 3000)
+
+    def _projektion_laden(self) -> None:
+        """Die zuletzt gewaehlte Projektion einstellen (Vorgabe perspektivisch)."""
+        try:
+            ortho = fen.ansicht_wert("projektion", "perspektive") == "ortho"
+        except Exception:                   # noqa: BLE001
+            ortho = False
+        kam = self.plotter.renderer.GetActiveCamera()
+        if bool(kam.GetParallelProjection()) != ortho:
+            self.projektion_setzen(ortho, merken=False)
+        elif getattr(self, "achsengizmo", None) is not None:
+            self.achsengizmo.ortho_setzen(ortho)
+
+    def _ortho_abstand(self) -> None:
+        """In der Parallelprojektion haengt das Bild nicht vom Abstand der
+        Kamera ab, wohl aber die Schnittebene vorn: was hinter der Kamera liegt,
+        schneidet VTK weg. Die Kamera rueckt darum laengs der Blickrichtung vor
+        alles Gezeichnete; Blickziel, Richtung und Massstab bleiben."""
+        try:
+            ren = self.plotter.renderer
+            kam = ren.GetActiveCamera()
+            if not kam.GetParallelProjection():
+                return
+            b = ren.ComputeVisiblePropBounds()
+            if not (b[0] <= b[1] and b[2] <= b[3] and b[4] <= b[5]):
+                return
+            mitte = np.array([(b[0] + b[1]) / 2.0, (b[2] + b[3]) / 2.0, (b[4] + b[5]) / 2.0])
+            r = 0.5 * float(np.linalg.norm([b[1] - b[0], b[3] - b[2], b[5] - b[4]]))
+            F = np.asarray(kam.GetFocalPoint(), float)
+            noetig = float(np.linalg.norm(F - mitte)) + 1.1 * r + 1e-9
+            if kam.GetDistance() < noetig:
+                blick = np.asarray(kam.GetDirectionOfProjection(), float)
+                kam.SetPosition(*(F - blick * noetig))
+                kam.SetFocalPoint(*F)
+        except Exception:                   # noqa: BLE001
+            pass
 
     #: Ab so vielen Knoten und Elementen wird beim Drehen vereinfacht gezeichnet
     SCHNELLDREHEN_AB = 20000
@@ -5347,8 +5519,8 @@ class MainWindow(QtWidgets.QMainWindow):
         "hinten": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0), "Rückansicht (von +Y)"),
         "rechts": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von rechts (von +X)"),
         "links": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von links (von −X)"),
-        # Die Achsennamen des Wuerfels: "von +X" heisst, die Kamera steht auf
-        # der Seite +X und schaut in Richtung -X.
+        # Die Achsennamen (bis 14.10.2026 die des Wuerfels): "von +X" heisst,
+        # die Kamera steht auf der Seite +X und schaut in Richtung -X.
         "+x": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von +X"),
         "-x": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von -X"),
         "+y": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von +Y"),
@@ -5362,7 +5534,9 @@ class MainWindow(QtWidgets.QMainWindow):
     }
 
     def blickrichtung(self, richtung: str):
-        """Blickrichtung setzen - vom Ansichtswuerfel oder aus dem Ribbon.
+        """Blickrichtung setzen - aus dem Ribbon oder dem Knopf „iso“ unter dem
+        Achsen-Gizmo (ein Klick auf ein Ende des Gizmos geht ueber
+        :meth:`blick_aus` und passt nicht ein).
 
         „kehren" dreht die laufende Ansicht um 180 Grad um den Blickpunkt: aus
         jeder beliebigen Schraegansicht wird ihre Rueckansicht. Das ist der
@@ -26296,19 +26470,20 @@ class MainWindow(QtWidgets.QMainWindow):
         return grid, kidx
 
     #: Lage der Farbskalen: senkrecht am rechten Rand, Ergebnis aussen, der
-    #: Schnittgroessenverlauf daneben. Unten links stehen die Kennwerte, unten
-    #: rechts das Achsenkreuz.
+    #: Schnittgroessenverlauf daneben. Unten links stehen die Kennwerte; unten
+    #: rechts stand bis zum 14.10.2026 das Achsenkreuz (der Platz bleibt frei,
+    #: viewport.texte_ordnen haelt ihn weiter).
     FARBSKALA = {"vertical": True, "position_x": 0.905, "position_y": 0.18,
                  "height": 0.5, "width": 0.055, "title_font_size": 13,
                  "label_font_size": 11, "fmt": "%.3g"}
     FARBSKALA_VERLAUF = dict(FARBSKALA, position_x=0.83)
-    #: Platz, den der Ansichtswuerfel mit seiner Knopfzeile oben rechts braucht [px]
-    WUERFEL_PLATZ = 165
+    #: Platz, den das Achsen-Gizmo mit seiner Knopfzeile oben rechts braucht [px]
+    GIZMO_PLATZ = 165
 
     def _farbskala(self, verlauf: bool = False) -> dict:
-        """Lage der Farbskala - so hoch, dass sie unter dem Wuerfel bleibt.
+        """Lage der Farbskala - so hoch, dass sie unter dem Gizmo bleibt.
 
-        In einem niedrigen Fenster reicht der Ansichtswuerfel weit herunter;
+        In einem niedrigen Fenster reicht das Achsen-Gizmo weit herunter;
         die Skala wird dann kuerzer, statt unter seine Knopfzeile zu laufen.
         """
         skala = dict(self.FARBSKALA_VERLAUF if verlauf else self.FARBSKALA)
@@ -26320,7 +26495,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             hoch = 0.0
         if hoch > 0:
-            frei = 1.0 - self.WUERFEL_PLATZ / hoch - skala["position_y"] - 0.08
+            frei = 1.0 - self.GIZMO_PLATZ / hoch - skala["position_y"] - 0.08
             skala["height"] = float(min(skala["height"], max(0.22, frei)))
         return skala
     #: Schriftgroessen der Texte im Bild (pyvista verdoppelt sie in Pixel)
@@ -26836,14 +27011,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Werte im Bild: nur die {vp.WERTE_MAX} betragsgrößten Werte beschriftet - "
                     "Filter oder Schwelle in der Maske Ergebnisse", 8000)
         self._bewegung_zeichnen(m)
-        try:
-            # Achsenkreuz unten rechts - unten links stehen die Kennwerte
-            self.plotter.add_axes(viewport=(0.86, 0.0, 1.0, 0.16))
-        except Exception:
-            try:
-                self.plotter.show_axes()
-            except Exception:
-                pass
+        # Das Achsenkreuz unten rechts (add_axes) entfiel am 14.10.2026: das
+        # Achsen-Gizmo oben rechts zeigt die Achsen (Entscheidung des Anwenders)
         return r
 
     # ---- Ergebnisdarstellung: Marken und Verlauf (Paket 6b, 25.09.2026) --
@@ -27012,7 +27181,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _textlage_info(self):
         """Die Angaben fuer viewport.texte_ordnen: Texte, Titel der Skalen,
-        Legendeneintraege, Glasleiste und Wuerfel (Qt-Fenster ueber der Ansicht)
+        Legendeneintraege, Glasleiste und Gizmo (Qt-Fenster ueber der Ansicht)
         in Bildpunkten der Ansicht - oder None ohne Texte."""
         texte = getattr(self, "_bildtexte", None) or {}
         if not texte:
@@ -27020,7 +27189,7 @@ class MainWindow(QtWidgets.QMainWindow):
         s = self._pixelmass()
         glas = self.glasleiste.height() if getattr(self, "glasleiste", None) else 30
         wue = None
-        wid = getattr(self, "ansichtswuerfel", None)
+        wid = getattr(self, "achsengizmo", None)
         try:
             if wid is not None and wid.isVisible():
                 hoch = self.plotter.render_window.GetSize()[1]
@@ -27597,7 +27766,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # heller Grund wie bei den Kennwerten (13.10.2026)
                 akt.GetTextProperty().SetBackgroundColor(1.0, 1.0, 1.0)
                 akt.GetTextProperty().SetBackgroundOpacity(0.8)
-            wue = getattr(self, "ansichtswuerfel", None)
+            wue = getattr(self, "achsengizmo", None)
             if akt is not None and wue is not None and wue.isVisible():
                 ia = self.plotter.interactor
                 s = self._pixelmass()

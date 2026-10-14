@@ -1692,7 +1692,7 @@ QComboBox#glasliste {{ background: rgba(255, 255, 255, 230); color: {text};
     padding: 2px 6px; font-size: 12px; }}
 QComboBox#glasliste:hover {{ border-color: {akzent}; }}
 QComboBox#glasliste::drop-down {{ border: 0; width: 16px; }}
-Ansichtswuerfel {{ background: transparent; }}
+Achsengizmo {{ background: transparent; }}
 """
 
 
@@ -1701,7 +1701,7 @@ def stil() -> str:
 
 
 # ==========================================================================
-# Glasleiste und Ansichtswuerfel ueber der Ansicht
+# Glasleiste und Achsen-Gizmo ueber der Ansicht
 # ==========================================================================
 def _listenfeld(cb) -> int:
     """Breite des Textfelds einer Aufklappliste (ohne Pfeil und Rand)."""
@@ -2085,73 +2085,84 @@ class Glasleiste(QtWidgets.QFrame):
         return [w for w in self._weicht if w.isHidden()]
 
 
-class Ansichtswuerfel(QtWidgets.QWidget):
-    """Ansichtswuerfel oben rechts - er **dreht sich mit** der Ansicht.
+class Achsengizmo(QtWidgets.QWidget):
+    """Achsen-Gizmo oben rechts - es **dreht sich mit** der Ansicht.
 
-    Gezeichnet wird der Wuerfel so, wie die Kamera gerade auf das Modell
-    schaut: dieselbe Drehung, dieselben sichtbaren Seiten. Man sieht also
-    immer, wo +X, +Y und +Z liegen. Drei Griffe:
+    Seit dem 14.10.2026 (Ansichtspaket A, Entscheidung des Anwenders vom
+    13.10.2026) ersetzt es den Ansichtswuerfel und das Achsenkreuz unten
+    rechts. Vorbild ist das Gizmo von ediBIM (nach Blender): drei Achsen mit je
+    zwei Kugeln, X rot, Y gruen, Z blau. Das positive Ende ist gefuellt und
+    beschriftet, das negative hohl; jede Kugel hat eine dunkle Kontur, damit
+    sie auch auf weissem Grund steht (Gruen vor Weiss hat sonst kaum
+    Kontrast). Gezeichnet wird nach Tiefe, die vorderen Kugeln verdecken die
+    hinteren. Die Rechnung steht in :mod:`navigation`.
 
-    * **Klick auf eine Seite** stellt die Ansicht senkrecht auf diese Seite.
-    * **Ziehen mit der Maus** dreht die Ansicht - wie am Modell selbst, nur
-      dass man dabei nicht das Modell verdeckt.
-    * Die Zeile darunter: +x, +y, +z, -x, -y, -z und iso.
+    * **Klick auf ein Ende** stellt die Blickrichtung aus dieser Richtung ein;
+      Blickziel und Abstand bleiben, es wird nicht eingepasst (``gewaehlt``).
+    * **Ziehen** dreht die Ansicht um das Blickziel (``gedreht`` mit Azimut
+      und Neigung in Grad). Ob Klick oder Zug, entscheidet sich beim
+      Loslassen: ab :attr:`ZIEHEN` Bildpunkten Weg ist es ein Zug.
+    * Darunter drei Knoepfe: **alles** (Zoom alles), **iso** (isometrisch mit
+      Zoom alles) und **ortho** (Parallelprojektion an und aus).
 
-    Die Drehmatrix der Kamera holt sich der Wuerfel ueber ``kamera`` - eine
+    Der Grundkreis erscheint nur, solange die Maus ueber dem Gizmo steht.
+    Die Drehmatrix der Kamera holt sich das Gizmo ueber ``kamera`` - eine
     Funktion, die die 3x3-Matrix Welt -> Bild liefert (oder None).
     """
 
-    gewaehlt = QtCore.Signal(str)          # Blickrichtung ("+x", "iso", ...)
-    gedreht = QtCore.Signal(float, float)  # Ziehen: (dx, dy) in Bildpunkten
+    gewaehlt = QtCore.Signal(str)          # Achsenende "+x" … "-z" oder "iso"
+    gedreht = QtCore.Signal(float, float)  # Ziehen: (Azimut, Neigung) in Grad
+    zoom_alles = QtCore.Signal()
+    projektion = QtCore.Signal(bool)       # True: Parallelprojektion
 
-    #: Ecken des Einheitswuerfels
-    ECKEN = [(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
-             (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]
-    #: Seiten: (Beschriftung, Blickrichtung, Normale, Eckenfolge)
-    SEITEN = [
-        ("+X", "+x", (1, 0, 0), [1, 2, 6, 5]),
-        ("-X", "-x", (-1, 0, 0), [0, 4, 7, 3]),
-        ("+Y", "+y", (0, 1, 0), [2, 3, 7, 6]),
-        ("-Y", "-y", (0, -1, 0), [0, 1, 5, 4]),
-        ("+Z", "+z", (0, 0, 1), [4, 5, 6, 7]),
-        ("-Z", "-z", (0, 0, -1), [0, 3, 2, 1]),
+    #: Kantenlaenge des Gizmofeldes [px] (ediBIM: 112)
+    GROESSE = 112
+    #: in der Kompaktstufe des Fensters
+    GROESSE_KOMPAKT = 84
+    #: Achsenlaenge und Kugelradius bei GROESSE 112: 38 + 10 < 56, so schneidet
+    #: der Rand keine Kugel an, auch wenn ihre Achse quer im Bild liegt
+    RADIUS_ANTEIL = 38.0 / 112.0
+    KUGEL_ANTEIL = 10.0 / 112.0
+    ZEILE = 20            # Hoehe der Knopfzeile
+    ZIEHEN = 4            # ab so vielen Bildpunkten Bewegung ist es ein Zug
+
+    #: Farben der Achsen (wie in jedem CAD: X rot, Y gruen, Z blau)
+    FARBEN = {"x": (214, 58, 52), "y": (52, 156, 64), "z": (40, 104, 214)}
+    #: dunkle Kontur jeder Kugel
+    KONTUR = (24, 30, 40, 210)
+    #: (Schluessel, Beschriftung, Hinweis) der Knopfzeile
+    KNOEPFE = [
+        ("zoom", "alles", "Zoom alles: das ganze Modell ins Bild"),
+        ("iso", "iso", "Isometrische Ansicht, das ganze Modell im Bild"),
+        ("ortho", "ortho", "Parallelprojektion (orthogonal) an oder aus – "
+                           "die Bildgröße in der Zielebene bleibt"),
     ]
-    #: (Beschriftung, Blickrichtung, Hinweis) der Zeile unter dem Wuerfel
-    RICHTUNGEN = [
-        ("+x", "+x", "Ansicht von +X (auf die Seite +X)"),
-        ("+y", "+y", "Ansicht von +Y"),
-        ("+z", "+z", "Ansicht von +Z (Draufsicht)"),
-        ("-x", "-x", "Ansicht von -X"),
-        ("-y", "-y", "Ansicht von -Y"),
-        ("-z", "-z", "Ansicht von -Z (Untersicht)"),
-        ("iso", "iso", "Isometrische Ansicht"),
-    ]
-
-    WUERFEL = 88          # Kantenlaenge des Wuerfelfeldes
-    ZEILE = 20            # Hoehe der Richtungszeile
-    ZIEHEN = 4            # ab so vielen Bildpunkten Bewegung gilt ein Klick als Ziehen
-
-    #: Kantenlaenge in der Kompaktstufe (Paket 5, 25.09.2026)
-    WUERFEL_KOMPAKT = 60
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(self.WUERFEL + 74, self.WUERFEL + self.ZEILE + 6)
+        self.setFixedSize(self.GROESSE, self.GROESSE + self.ZEILE + 6)
         self.setCursor(QtCore.Qt.OpenHandCursor)
         self.setMouseTracking(True)
-        self.setToolTip("Ansichtswürfel: eine Seite anklicken oder mit der Maus "
-                        "ziehen, um die Ansicht zu drehen.")
+        self.setToolTip("Achsen: ein Ende anklicken, um aus dieser Richtung zu schauen, "
+                        "oder ziehen, um die Ansicht zu drehen.")
         self._unter = ""
+        self._ueber = False
         self._start = None
         self._zuletzt = None
         self._gezogen = False
+        self.ortho = False
         self.kamera = None               # -> 3x3 Drehmatrix Welt -> Bild oder None
 
     def kante_setzen(self, kante: int) -> None:
-        """Kantenlaenge des Wuerfelfeldes (Kompaktstufe: kleiner). Die
-        Richtungszeile behaelt ihre Hoehe, sie wird nur schmaler."""
-        self.WUERFEL = int(kante)
-        self.setFixedSize(self.WUERFEL + 74, self.WUERFEL + self.ZEILE + 6)
+        """Groesse des Gizmofeldes (Kompaktstufe: kleiner). Die Knopfzeile
+        behaelt ihre Hoehe, sie wird nur schmaler."""
+        self.GROESSE = int(kante)
+        self.setFixedSize(self.GROESSE, self.GROESSE + self.ZEILE + 6)
+        self.update()
+
+    def ortho_setzen(self, an: bool) -> None:
+        """Den Knopf „ortho“ nach der Kamera stellen."""
+        self.ortho = bool(an)
         self.update()
 
     # -- Geometrie -------------------------------------------------------
@@ -2171,46 +2182,44 @@ class Ansichtswuerfel(QtWidgets.QWidget):
                  for i in range(3)]
         return R
 
-    def _wuerfelfeld(self) -> QtCore.QRectF:
-        x = (self.width() - self.WUERFEL) / 2.0
-        return QtCore.QRectF(x, 0.0, self.WUERFEL, self.WUERFEL)
+    def radius(self) -> float:
+        return self.RADIUS_ANTEIL * self.GROESSE
 
-    def _projektion(self):
-        """Ecken im Bild und Seiten mit Sichtbarkeit und Tiefe."""
-        R = self._matrix()
-        r = self._wuerfelfeld()
-        mx, my = r.center().x(), r.center().y()
-        mass = 0.29 * self.WUERFEL
-        bild = []
-        for e in self.ECKEN:
-            v = [sum(R[i][k] * e[k] for k in range(3)) for i in range(3)]
-            bild.append((mx + mass * v[0], my - mass * v[1], v[2]))
-        seiten = []
-        for text, richtung, n, ecken in self.SEITEN:
-            nz = sum(R[2][k] * n[k] for k in range(3))
-            tiefe = sum(bild[i][2] for i in ecken) / 4.0
-            poly = QtGui.QPolygonF([QtCore.QPointF(bild[i][0], bild[i][1]) for i in ecken])
-            seiten.append((tiefe, nz, text, richtung, poly))
-        seiten.sort(key=lambda t: t[0])       # hinten zuerst zeichnen
-        return seiten
+    def kugel_r(self) -> float:
+        return self.KUGEL_ANTEIL * self.GROESSE
+
+    def mitte(self) -> QtCore.QPointF:
+        return QtCore.QPointF(self.width() / 2.0, self.GROESSE / 2.0)
+
+    def punkte(self) -> list:
+        """Die sechs Achsenenden im Bild, hinterstes zuerst (navigation.gizmo_punkte)."""
+        from . import navigation as nav
+        m = self.mitte()
+        return nav.gizmo_punkte(self._matrix(), m.x(), m.y(), self.radius())
 
     def _felder(self):
-        """Die Schaltflaechen der Richtungszeile als (Rechteck, Text, Richtung)."""
-        n = len(self.RICHTUNGEN)
+        """Die Knoepfe der Zeile als (Rechteck, Schluessel, Text)."""
+        n = len(self.KNOEPFE)
         b = self.width() / n
-        y = self.WUERFEL + 4
-        for i, (text, richtung, _hinweis) in enumerate(self.RICHTUNGEN):
-            yield QtCore.QRectF(i * b, y, b - 1, self.ZEILE), text, richtung
+        y = self.GROESSE + 4
+        for i, (schluessel, text, _hinweis) in enumerate(self.KNOEPFE):
+            yield QtCore.QRectF(i * b, y, b - 1, self.ZEILE), schluessel, text
 
     def _treffer(self, pos) -> str:
+        """Was unter dem Zeiger liegt: ein Achsenende ("+x" …), ein Knopf
+        ("zoom", "iso", "ortho") oder ""."""
+        from . import navigation as nav
         p = QtCore.QPointF(pos)
-        for _t, nz, _text, richtung, poly in reversed(self._projektion()):
-            if nz > 0 and poly.containsPoint(p, QtCore.Qt.OddEvenFill):
-                return richtung
-        for rect, _t, richtung in self._felder():
+        ende = nav.ende_unter(self.punkte(), p.x(), p.y(), self.kugel_r() + 1.0)
+        if ende:
+            return ende
+        for rect, schluessel, _t in self._felder():
             if rect.contains(p):
-                return richtung
+                return schluessel
         return ""
+
+    def _im_feld(self, pos) -> bool:
+        return QtCore.QPointF(pos).y() < self.GROESSE
 
     # -- Bedienung -------------------------------------------------------
     def mouseMoveEvent(self, ev):
@@ -2222,21 +2231,41 @@ class Ansichtswuerfel(QtWidgets.QWidget):
                 if abs(weg.x()) + abs(weg.y()) >= self.ZIEHEN:
                     self._gezogen = True
                     self.setCursor(QtCore.Qt.ClosedHandCursor)
+                    d = pos - self._start       # der Weg bis hierher zaehlt mit
             if self._gezogen:
+                from . import navigation as nav
                 self._zuletzt = pos
-                self.gedreht.emit(float(d.x()), float(d.y()))
+                az, ne = nav.zug_drehung(d.x(), d.y(), 2.0 * (self.radius() + self.kugel_r()))
+                self.gedreht.emit(float(az), float(ne))
             return
         neu = self._treffer(pos)
         if neu != self._unter:
             self._unter = neu
-            for text, richtung, hinweis in self.RICHTUNGEN:
-                if richtung == neu:
-                    self.setToolTip(hinweis)
-                    break
+            self.setToolTip(self._hinweis(neu))
             self.update()
+
+    def _hinweis(self, was: str) -> str:
+        from . import navigation as nav
+        if was in nav.NAMEN:
+            return f"{nav.NAMEN[was]} – Blickziel und Abstand bleiben"
+        for schluessel, _t, hinweis in self.KNOEPFE:
+            if schluessel == was:
+                if schluessel == "ortho":
+                    return ("Parallelprojektion ist an – klicken für perspektivisch"
+                            if self.ortho else
+                            "Perspektivisch – klicken für Parallelprojektion (orthogonal); "
+                            "die Bildgröße in der Zielebene bleibt")
+                return hinweis
+        return ("Achsen: ein Ende anklicken, um aus dieser Richtung zu schauen, "
+                "oder ziehen, um die Ansicht um das Blickziel zu drehen.")
+
+    def enterEvent(self, _ev):
+        self._ueber = True
+        self.update()
 
     def leaveEvent(self, _ev):
         self._unter = ""
+        self._ueber = False
         self.update()
 
     def mousePressEvent(self, ev):
@@ -2250,147 +2279,143 @@ class Ansichtswuerfel(QtWidgets.QWidget):
     def mouseReleaseEvent(self, ev):
         if ev.button() != QtCore.Qt.LeftButton or self._start is None:
             return
-        pos = ev.position() if hasattr(ev, "position") else QtCore.QPointF(ev.pos())
+        start = self._start
         gezogen = self._gezogen
         self._start = None
         self._gezogen = False
         self.setCursor(QtCore.Qt.OpenHandCursor)
-        if not gezogen:
-            r = self._treffer(pos)
-            if r:
-                self.gewaehlt.emit(r)
+        if gezogen:
+            return
+        # Ein Klick gilt dem, was beim Druecken unter dem Zeiger lag
+        r = self._treffer(start)
+        if r == "zoom":
+            self.zoom_alles.emit()
+        elif r == "ortho":
+            self.projektion.emit(not self.ortho)
+        elif r:
+            self.gewaehlt.emit(r)
 
     # -- Zeichnen --------------------------------------------------------
-    #: Lichtrichtung im Bild (x nach rechts, y nach oben, z zum Betrachter)
-    LICHT = (-0.35, 0.55, 0.76)
-    #: Grundfarben der Seiten je Achse: x rot-, y gruen-, z blaustichig, wie
-    #: das Achsenkreuz - so erkennt man die Seite auch ohne Text
-    SEITENFARBEN = {"x": (222, 214, 206), "y": (208, 222, 208), "z": (206, 214, 228)}
-
-    def _seitenfarbe(self, richtung: str, n_bild, hell: bool) -> QtGui.QColor:
-        if hell:
-            return QtGui.QColor(dsg.FARBEN["akzent"])
-        grund = self.SEITENFARBEN.get(richtung.strip("+-").lower(), (214, 216, 220))
-        L = self.LICHT
-        lnorm = math.sqrt(sum(x * x for x in L))
-        cos = sum(n_bild[i] * L[i] for i in range(3)) / lnorm
-        schatt = 0.58 + 0.42 * max(0.0, cos)
-        return QtGui.QColor(*[int(min(255, c * schatt + 18)) for c in grund])
+    def _farbe(self, achse: str, alpha: int = 255) -> QtGui.QColor:
+        return QtGui.QColor(*self.FARBEN.get(achse, (120, 120, 120)), alpha)
 
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         p.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
         f = p.font()
-        f.setPointSize(8)
         f.setBold(True)
-        p.setFont(f)
-        linie = QtGui.QColor(dsg.FARBEN["linie"])
-        R = self._matrix()
-        feld = self._wuerfelfeld()
-        # Weicher Schatten unter dem Wuerfel
-        schatten = QtGui.QRadialGradient(feld.center().x(), feld.bottom() - 6,
-                                         self.WUERFEL * 0.48)
-        schatten.setColorAt(0.0, QtGui.QColor(0, 0, 0, 55))
-        schatten.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
-        p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QBrush(schatten))
-        p.drawEllipse(QtCore.QPointF(feld.center().x(), feld.bottom() - 6),
-                      self.WUERFEL * 0.46, self.WUERFEL * 0.13)
-        seiten = self._projektion()
-        normalen = {richtung: n for _t, richtung, n, _e in self.SEITEN}
-        for _tiefe, nz, text, richtung, poly in seiten:
-            if nz <= 0:
+        m = self.mitte()
+        rk = self.kugel_r()
+        if self._ueber or self._start is not None:
+            # Grundkreis nur beim Ueberfahren: er zeigt, wo man greifen kann
+            p.setPen(QtGui.QPen(QtGui.QColor(30, 40, 55, 60), 1.0))
+            p.setBrush(QtGui.QColor(30, 40, 55, 26))
+            p.drawEllipse(m, self.radius() + rk + 2.0, self.radius() + rk + 2.0)
+        from . import navigation as nav
+        reihen = self.punkte()              # hinterstes zuerst
+        punkte = {q["name"]: q for q in reihen}
+        kontur = QtGui.QColor(*self.KONTUR)
+        for art, was in nav.zeichenfolge(reihen):
+            if art == "linie":
+                q = punkte["+" + was]
+                # dunkle Unterlage, dann die Farbe: die Linie steht auf Weiss
+                # und auf dem Modell
+                p.setPen(QtGui.QPen(kontur, 3.6, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+                p.drawLine(m, QtCore.QPointF(q["x"], q["y"]))
+                p.setPen(QtGui.QPen(self._farbe(was), 2.0, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+                p.drawLine(m, QtCore.QPointF(q["x"], q["y"]))
                 continue
-            hell = richtung == self._unter
-            n = normalen.get(richtung, (0, 0, 1))
-            n_bild = [sum(R[i][k] * n[k] for k in range(3)) for i in range(3)]
-            farbe = self._seitenfarbe(richtung, n_bild, hell)
-            # leichter Verlauf ueber die Seite: oben heller, unten dunkler
-            br = poly.boundingRect()
-            verlauf = QtGui.QLinearGradient(br.topLeft(), br.bottomLeft())
-            verlauf.setColorAt(0.0, farbe.lighter(108))
-            verlauf.setColorAt(1.0, farbe.darker(108))
-            p.setBrush(QtGui.QBrush(verlauf))
-            p.setPen(QtGui.QPen(QtGui.QColor(30, 40, 55, 150) if not hell else linie, 1.0))
-            p.drawPolygon(poly)
-            if nz > 0.3:
-                # Beschriftung mit feinem Schatten, dann klar lesbar auf hell und dunkel
-                rect = poly.boundingRect()
-                f.setPointSize(9 if nz > 0.7 else 8)
+            q = punkte[was]
+            mp = QtCore.QPointF(q["x"], q["y"])
+            hell = was == self._unter
+            farbe = self._farbe(q["achse"])
+            if q["vorzeichen"] > 0:
+                r = rk + (1.0 if hell else 0.0)
+                p.setPen(QtGui.QPen(kontur, 1.3))
+                p.setBrush(farbe.lighter(125) if hell else farbe)
+                p.drawEllipse(mp, r, r)
+                f.setPointSizeF(max(6.0, 0.8 * rk))
                 p.setFont(f)
-                p.setPen(QtGui.QColor(255, 255, 255, 110))
-                p.drawText(rect.translated(0.5, 0.5), QtCore.Qt.AlignCenter, text)
-                p.setPen(QtGui.QColor("#ffffff" if hell else "#1c2a3a"))
-                p.drawText(rect, QtCore.Qt.AlignCenter, text)
-        # Glanzkante: die sichtbaren Aussenkanten etwas heller nachziehen
-        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1.0))
-        p.setBrush(QtCore.Qt.NoBrush)
-        for _tiefe, nz, _text, _richtung, poly in seiten:
-            if nz > 0:
-                p.drawPolyline(poly)
-        # Die Richtungszeile: runde Knoepfe
-        for rect, text, richtung in self._felder():
-            hell = richtung == self._unter
+                p.setPen(QtGui.QColor("#ffffff"))
+                p.drawText(QtCore.QRectF(mp.x() - r, mp.y() - r, 2 * r, 2 * r),
+                           QtCore.Qt.AlignCenter, q["achse"].upper())
+            else:
+                r = rk - 1.5
+                # hohl: heller Grund in der Achsfarbe, farbiger Ring, aussen
+                # die dunkle Kontur
+                p.setBrush(self._farbe(q["achse"], 150 if hell else 70))
+                p.setPen(QtGui.QPen(kontur, 1.0))
+                p.drawEllipse(mp, r + 1.2, r + 1.2)
+                p.setBrush(QtCore.Qt.NoBrush)
+                p.setPen(QtGui.QPen(farbe, 2.0))
+                p.drawEllipse(mp, r, r)
+        # Die Knopfzeile: runde Knoepfe; „ortho“ ist hervorgehoben, solange
+        # die Parallelprojektion an ist
+        linie = QtGui.QColor(dsg.FARBEN["linie"])
+        for rect, schluessel, text in self._felder():
+            an = schluessel == "ortho" and self.ortho
+            hell = schluessel == self._unter
             r2 = rect.adjusted(0.5, 1.0, -0.5, -1.0)
-            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell else "#f7f9fb"))
-            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["akzent"]) if hell else linie, 1.0))
+            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if (hell or an) else "#f7f9fb"))
+            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["akzent"]) if (hell or an) else linie, 1.0))
             p.drawRoundedRect(r2, 5, 5)
-            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["text"]))
-            f.setPointSize(7 if len(text) > 2 else 8)
+            p.setPen(QtGui.QColor("#ffffff" if (hell or an) else dsg.FARBEN["text"]))
+            f.setPointSize(7)
             p.setFont(f)
             p.drawText(r2, QtCore.Qt.AlignCenter, text)
         p.end()
 
 
 class Ansichtsrand(QtCore.QObject):
-    """Haelt Glasleiste und Ansichtswuerfel an ihrem Platz ueber der Ansicht.
+    """Haelt Glasleiste und Achsen-Gizmo an ihrem Platz ueber der Ansicht.
 
-    Die Glasleiste steht **mittig oben**, der Wuerfel oben rechts.
+    Die Glasleiste steht **mittig oben**, das Gizmo oben rechts (bis zum
+    14.10.2026 stand dort der Ansichtswuerfel).
     """
 
     def __init__(self, ansicht: QtWidgets.QWidget, leiste: Glasleiste,
-                 wuerfel: Ansichtswuerfel):
+                 gizmo: Achsengizmo):
         super().__init__(ansicht)
         self.ansicht = ansicht
         self.leiste = leiste
-        self.wuerfel = wuerfel
+        self.gizmo = gizmo
         self.kompakt = False
         ansicht.installEventFilter(self)
         self.platzieren()
 
     def kompakt_setzen(self, an: bool) -> None:
-        """Kompaktstufe des Fensters (Paket 5, 25.09.2026): der Wuerfel wird
-        kleiner, damit er in einer kleinen Ansicht nicht ein Viertel verdeckt."""
+        """Kompaktstufe des Fensters (Paket 5, 25.09.2026): das Gizmo wird
+        kleiner, damit es in einer kleinen Ansicht nicht ein Viertel verdeckt."""
         self.kompakt = bool(an)
-        self.wuerfel.kante_setzen(Ansichtswuerfel.WUERFEL_KOMPAKT if an else Ansichtswuerfel.WUERFEL)
+        self.gizmo.kante_setzen(Achsengizmo.GROESSE_KOMPAKT if an else Achsengizmo.GROESSE)
         self.platzieren()
 
     def platzieren(self):
-        """Leiste mittig oben, Wuerfel oben rechts - und nie uebereinander.
+        """Leiste mittig oben, Gizmo oben rechts - und nie uebereinander.
 
-        In einem schmalen Fenster reicht die mittige Leiste bis unter den
-        Wuerfel; dann rueckt sie so weit nach links, wie es geht.
+        In einem schmalen Fenster reicht die mittige Leiste bis unter das
+        Gizmo; dann rueckt sie so weit nach links, wie es geht.
         """
         b = self.ansicht.width()
         g = self.leiste.sizeHint()
-        # feste Groesse des Wuerfels (setFixedSize) - sizeHint waere -1
-        w = max(1, self.wuerfel.width())
-        h = max(1, self.wuerfel.height())
+        # feste Groesse des Gizmos (setFixedSize) - sizeHint waere -1
+        w = max(1, self.gizmo.width())
+        h = max(1, self.gizmo.height())
         wx = max(12, b - w - 14)
         wy = 12
         x = (b - g.width()) // 2
         if x + g.width() > wx - 8:
             x = wx - 8 - g.width()
         if x < 12:
-            # Leiste und Wuerfel passen nicht nebeneinander: der Wuerfel
+            # Leiste und Gizmo passen nicht nebeneinander: das Gizmo
             # rueckt unter die Leiste, ueberschneiden darf sich nichts.
             x = 12
             wy = 10 + g.height() + 8
         self.leiste.setGeometry(x, 10, g.width(), g.height())
         self.leiste.raise_()
-        self.wuerfel.setGeometry(wx, wy, w, h)
-        self.wuerfel.raise_()
+        self.gizmo.setGeometry(wx, wy, w, h)
+        self.gizmo.raise_()
 
     def eventFilter(self, obj, ev):
         if obj is self.ansicht and ev.type() == QtCore.QEvent.Resize:
