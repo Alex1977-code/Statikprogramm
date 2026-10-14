@@ -7045,7 +7045,6 @@ werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
-**Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
 **Stablasten je projizierter Länge** (seit 14.10.2026). RFEM legt den Bezug
 einer Stablast in die Lastrichtung: 11, 12 und 13 sind global X, Y und Z je
 wahrer Länge, 14, 15 und 16 dieselben Richtungen je projizierter Länge (so
@@ -7056,6 +7055,7 @@ Kettenlinie, je Projektion die Parabel. Bis zum 14.10.2026 ließ der Import
 eine Stablast je projizierter Länge weg und nannte sie unter „Lastrichtung
 unbekannt: Kennzahl 16“.
 
+**Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
 Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
 Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
 Lastzeile und nicht je Stab („62 Stablasten (Gleichlast) an ihre Staebe
