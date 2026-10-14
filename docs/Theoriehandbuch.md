@@ -3704,9 +3704,14 @@ Kontaktlauf ist die Stufe nicht konvergiert, bei nicht konvergiertem nur
 gemeldet (sonst wäre es `KONTAKT_IN_KONVERGENZ` durch die Hintertür, die bis zur
 Freigabe aus steht). Bezug Σ|F|: an der Prüfplatte waren 29 N bei 160 kN Schub
 1,8·10⁻⁴ von |ΣF|, aber 3,7·10⁻⁶ von Σ|F| (4 MN Vorspannung, in sich im
-Gleichgewicht). Gemessen: Stempel auf Sockel (nur Kontakt) 14 → 6 Runden, 8 → 6
-Zerlegungen, u_max 0,39381 → 0,39369 mm (Δσ 0,57 N/mm², Δu 0,93 µm, Schranke
-4,69 statt 0,39 µm); Prüfplatte, gequetschter Block, Richtungs- und Pendelmodell
+Gleichgewicht). Dazu, nur mit der weiteren Wegschranke, das Kraftresiduum der
+Lösung (`ContactSystem.kraftresiduum`, dieselbe Summe wie das Residuum in
+`_update_states`) höchstens `pendel_kraft_anteil` (0,1 %) der Kontaktkraft – Δσ
+ergänzt das Kraftresiduum, ersetzt es nicht. Ohne diese Bedingung nahm das
+Kriterium den Stempel auf dem Sockel in Runde 6 statt 14 an (u_max −0,03 %),
+mit einem haftenden Knoten 6,3 % über dem Kegel (`tests/test_kontakt_exakt.py`
+rot); mit ihr wird abgelehnt (Kraftresiduum 0,171 %), der Lauf ist bitgleich wie
+ohne den Schalter. Gemessen: Stempel, Prüfplatte, gequetschter Block, Richtungs- und Pendelmodell
 unverändert (dort lag Δσ über 1 N/mm² oder Δu im Millimeterbereich);
 Pendelmodell mit Fließen: Residuum 21,9 / 51,7 kN = 7,2·10⁻⁴ / 8,5·10⁻⁴ (Halt für
 Teile), nicht konvergiert.

@@ -1810,6 +1810,53 @@ class ContactSystem:
                 v["kegel_max"] = max(v["kegel_max"], ft / limit if limit > 0 else np.inf)
         return v
 
+    def kraftresiduum(self, u: np.ndarray, lam=None) -> tuple:
+        """(Summe aller Verstoesse der Loesung ``u`` als Kraft [N], Kontaktkraft [N]) -
+        dasselbe Mass wie das Residuum in ``_update_states`` (RESIDUUM_ANTEIL): Zug an
+        geschlossenen, Durchdringung an offenen Bedingungen (als Kraft), Kegelueber-
+        schreitung haftender und Reibkraft gleitender Knoten gegen ihre Versuchskraft.
+        Nur lesen, nichts setzen. Fuer das Ingenieurkriterium mit der Wegschranke aus
+        der Spannung (Vorschlag 4, 14.10.2026): Δσ ergaenzt das Kraftresiduum, ersetzt
+        es aber nicht."""
+        self._pd_vorbereiten()
+        kontaktkraft = summe = 0.0
+        for c in self.cons:
+            ue = u[c.dofs]
+            g = c.g0 + c.cn @ ue
+            Fn = 0.0
+            if c.active:
+                Fn = self._normalkraft(c, g, lam)
+                kontaktkraft += max(Fn, 0.0)
+                if c.ct is not None and c.mu > 0 and not c.haften and not c.pendel_fest:
+                    dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+                    limit = c.mu * max(Fn, 0.0)
+                    if self._primal_dual(c):
+                        w = self._lam_t(c, lam, dt) + self._c_pd(c) * dt
+                        nw = float(np.linalg.norm(w))
+                        if not c.slip and nw > limit * (1 + 1e-6):
+                            summe += nw - limit
+                        elif c.slip and nw < limit * (1 - 1e-6):
+                            summe += limit - nw
+                        elif c.slip and nw > 0 and c.slip_dir is not None:
+                            summe += limit * float(np.linalg.norm(c.slip_dir - w / nw))
+                    elif not c.slip:
+                        ft = float(np.linalg.norm(c.kt * dt))
+                        if ft > limit * (1 + 1e-6):
+                            summe += ft - limit
+                    elif c.slip_dir is not None:
+                        if float(np.linalg.norm(dt)) > 0 and float(dt @ c.slip_dir) < 0:
+                            summe += limit
+            if c.zug or (c.frozen and not c.starr) or (c.gehalten and c.starr) or c.pendel_fest:
+                continue
+            if c.active:
+                if not Fn > -self.f_tol:
+                    summe += -Fn
+            elif g < 0.0:
+                v = self._durchdringungskraft(c, g)
+                if (v > self.f_tol) if SCHLIESSEN_AM_KRAFTMASS else (g < -self.tol):
+                    summe += v
+        return float(summe), float(kontaktkraft)
+
     def normal_verstoesse(self, u: np.ndarray, lam=None) -> dict:
         """Die groessten Verstoesse der Normalbedingung in der Loesung ``u`` als
         Kraft [N], ohne Schwelle: Zug an einer geschlossenen Bedingung (nicht

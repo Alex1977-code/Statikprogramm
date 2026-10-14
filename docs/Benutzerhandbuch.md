@@ -6817,7 +6817,11 @@ Spannungsänderung von 1 N/mm² ist eine Dehnungsänderung von 1 N/mm² geteilt 
 den Elastizitätsmodul, über die Größe des Modells (die Diagonale um alle
 Volumenknoten) ein Weg von rund 4,8 µm je Meter bei Stahl. Es gilt der größere
 Wert aus dieser Schranke und dem Tausendstel der größten Verschiebung. Das
-Gleichgewicht der angenommenen Lösung und die Normalbedingung bleiben Pflicht.
+Gleichgewicht der angenommenen Lösung und die Normalbedingung bleiben Pflicht, und
+weil die Spannung das Kraftresiduum nicht ersetzt, müssen mit der weiteren
+Wegschranke die Verstöße der Lösung zusammen (Zug, Durchdringung, Überschreiten
+des Reibkegels, Reibkraft gegen die Versuchskraft) unter 0,1 % der Kontaktkraft
+liegen, derselben Schranke wie die Restwechsel beim Pendeln.
 Die Fortschrittszeile nennt die Schranke, etwa „Ingenieurkriterium nicht
 erfüllt: Δσ_v 0,187 N/mm² erfüllt, aber Δu 1 450 µm > 6,8 µm“, und die Zeile
 der Annahme „… u um 0,926 µm (u_max 0,3937 mm, Schranke 4,69 µm)“. Dazu prüft
@@ -6832,8 +6836,12 @@ konvergiert, ist die Stufe ohnehin vorläufig gekennzeichnet, und die Zeile sagt
 das. Ausschalten lässt sich beides am Modell mit
 `plastizitaet.spannung_zuerst = False` (Vorgabe an; gespeichert nur, wenn er
 abweicht). Am Stempel auf dem Sockel der Prüfungen (ganz gleitend, in der Ebene
-unbestimmt) nimmt das Kriterium jetzt in Runde 6 statt nach 14 Runden an; die
-größte Verschiebung ändert sich um 0,03 %. Am Pendelmodell mit Fließen
+unbestimmt) erfüllt Runde 6 Spannung und Weg (0,57 N/mm², 0,93 µm bei einer
+Schranke von 4,69 µm statt 0,39 µm), aber die Verstöße tragen 0,171 % der
+Kontaktkraft, ein haftender Knoten liegt 6,3 % über dem Reibkegel; das Kriterium
+lehnt ab, und der Lauf endet wie vorher streng nach 14 Runden. An den kleinen
+Prüfmodellen nimmt das Kriterium damit nirgends früher an; ob es am Drehlager
+die Runden von V36 annimmt, zeigt erst die Abnahme dort. Am Pendelmodell mit Fließen
 (`tests/test_pendeln_periode2.py`) findet die Prüfung des Residuums den Halt für
 Teile, der dort 22 bis 52 kN trägt: die Plastizität heißt dann nicht
 konvergiert.

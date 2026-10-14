@@ -8129,6 +8129,21 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
         merker["abgelehnt"] = (f"Δσ_v {_zt(dsv / 1e6)} N/mm² erfüllt, aber Δu {_zt(du_max * 1e6)} µm > "
                                f"{_zt(grenze_u * 1e6)} µm")
         return None
+    if w_sp:
+        # Δσ ergaenzt das Kraftresiduum, ersetzt es aber nicht (Entscheidung des Anwenders
+        # vom 14.10.2026): mit der weiteren Wegschranke muessen die Verstoesse dieser Loesung
+        # zusammen unter der Schranke der Restwechsel liegen (Plastizitaet.pendel_kraft_anteil,
+        # 0,1 % der Kontaktkraft). Ohne diese Bedingung nahm das Kriterium am Stempel auf dem
+        # Sockel einen Zustand an, in dem ein haftender Knoten 6,3 % ueber dem Reibkegel lag
+        # (tests/test_kontakt_exakt, 14.10.2026)
+        kr, kk = cs.kraftresiduum(u, lam)
+        k_grenze = pendel_schwellen(model)[0] or PENDEL_KRAFT_ANTEIL
+        aus["kraftresiduum"] = kr / kk if kk > 0.0 else 0.0
+        if kk > 0.0 and kr > k_grenze * kk:
+            merker["abgelehnt"] = (f"Δσ_v {_zt(dsv / 1e6)} N/mm² und Δu {_zt(du_max * 1e6)} µm erfüllt, aber "
+                                   f"Kraftresiduum {_zt(100.0 * kr / kk)} % der Kontaktkraft > "
+                                   f"{_zt(100.0 * k_grenze)} %")
+            return None
     # Normalbedingung im angenommenen Zustand: kein Zug an einer geschlossenen
     # und keine Durchdringung (als Kraft) an einer offenen Bedingung ueber
     # max(f_tol, ABSCHLUSS_NORMAL_ANTEIL * |sum F|). Ganz ohne diese Pruefung nahm

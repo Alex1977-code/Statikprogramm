@@ -355,7 +355,10 @@ def test_vorschlag4():
           abs(w - 1e6 * np.sqrt(1.0 + 1.0 + 0.04) / 210e9) < 1e-12 and solver._weg_aus_spannung(m_aus) == 0.0,
           f"{w * 1e6:.3f} µm")
     # (a) Stempel auf Sockel (tests.test_plastizitaet, nur Kontakt): der ganz gleitende
-    #     Stempel pendelt um 0,93 µm bei 0,57 N/mm² - vorher lag die Schranke bei 0,39 µm
+    #     Stempel pendelt um 0,93 µm bei 0,57 N/mm² - vorher lag die Schranke bei 0,39 µm,
+    #     jetzt bei 4,69 µm. Angenommen wird trotzdem nicht: das Kraftresiduum dieser
+    #     Loesung liegt bei 0,171 % der Kontaktkraft (ein haftender Knoten 6,3 % ueber dem
+    #     Kegel), Schranke 0,1 % - Δσ ersetzt das Kraftresiduum nicht
     from tests import test_plastizitaet as tpl
 
     def stempel(an):
@@ -364,15 +367,20 @@ def test_vorschlag4():
         m_.plastizitaet.spannung_zuerst = an
         return m_
     a, ta = rechnen(stempel(False))
-    b, tb = rechnen(stempel(True))
-    ing = zeilen(b, "Abschluss nach dem Ingenieurkriterium", "Schranke")
-    ua = float(np.linalg.norm(u3(a), axis=1).max())
-    ub = float(np.linalg.norm(u3(b), axis=1).max())
-    print(f"      aus: {kurz(a)} ({ta:.1f} s), an: {kurz(b)} ({tb:.1f} s); u_max {ua * 1e3:.5f} / {ub * 1e3:.5f} mm")
-    check("Stempel: an früher angenommen (Δσ zuerst, Schranke 4,69 µm), u_max auf 0,1 % gleich",
-          ing and "4,69 µm" in ing[0].replace(".", ",") and laeufe(b)[0]["schritte"] < laeufe(a)[0]["schritte"]
-          and abs(ub - ua) <= 1e-3 * ua and b.info.get("contact_converged"),
-          (ing[0][60:230] if ing else "keine Zeile"))
+    abgelehnt = []
+
+    def mit(t, *a_):
+        if "Ingenieurkriterium nicht erfüllt" in str(t):
+            abgelehnt.append(str(t).split("Ingenieurkriterium nicht erfüllt: ")[1])
+    t0_ = time.perf_counter()
+    b = solver.solve_static(stempel(True), progress=mit)
+    tb = time.perf_counter() - t0_
+    print(f"      aus: {kurz(a)} ({ta:.1f} s), an: {kurz(b)} ({tb:.1f} s)")
+    kraft = [z for z in abgelehnt if "Kraftresiduum" in z]
+    check("Stempel: Δσ und Δu (Schranke 4,69 µm) erfüllt, abgelehnt am Kraftresiduum, bitgleich wie aus",
+          kraft and "0,926 µm erfüllt" in kraft[0] and "0,171 % der Kontaktkraft > 0,1 %" in kraft[0]
+          and bitgleich(a, b) and b.info.get("contact_converged"),
+          (kraft[0][:150] if kraft else str(abgelehnt[:2])))
     # (b) Residuum am Ende jeder Stufe, geprueft und protokolliert
     r1, _t1 = rechnen(platte())
     r0, _t0 = rechnen(platte(schalter={"spannung_zuerst": False}))
