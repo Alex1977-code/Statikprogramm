@@ -3099,6 +3099,19 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     n_richtung: dict = {}           # Kennzahl -> Zahl, nicht angesetzt (14.10.2026)
     n_roh = len(db.rows("SurfaceLoad"))
     summe = 0.0
+    # lokale Flaechenachsen je Surface.id, einmal je Flaeche bestimmt (14.10.2026)
+    n_lokal_achsen = n_lokal_z_normale = 0     # Zuordnungen Last -> Flaeche
+    ohne_achsen: dict = {}          # (Kennzahl, Grund) -> [Surface.id, ...]
+    _achsen_cache: dict = {}
+    _eingabe = _flaechenachsen_eingabe(db) if db.has("SurfaceLoad") else {}
+
+    def achsen_von(sid):
+        if sid not in _achsen_cache:
+            name = (surf_name or {}).get(sid)
+            _achsen_cache[sid] = (_flaechenachsen(m, name, _eingabe.get(sid))
+                                  if name else (None, "Flaeche nicht im Modell"))
+        return _achsen_cache[sid]
+
     if db.has("SurfaceLoad"):
         case_of = _load_case_of(db, "SurfaceLoad")
         richtungen: dict[int, int] = {}
@@ -3140,31 +3153,57 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             # 1-2-3-4 gab Rz = +8000 N, Umlauf 4-3-2-1 gab -8000 N; mit
             # Richtung in beiden Faellen +8000 N).
             #
-            # Seit dem 14.10.2026 nach der Schnittstelle (LOAD_DIRECTION): 2 =
-            # lokal z ist der Druck senkrecht zur Flaeche (ohne ``direction``),
-            # 11 bis 13 global je wahrer Flaeche, 14 bis 16 global je
-            # projizierter Flaeche. 0 und 1 (lokal x, y: in der Ebene der
-            # Flaeche) kennt das Programm nicht - die lokalen Flaechenachsen
-            # von RFEM werden nicht uebernommen. Sie werden genannt und nicht
-            # angesetzt; bis zum 14.10.2026 kamen sie als Normaldruck bzw.
-            # global Z an.
+            # Seit dem 14.10.2026 nach der Schnittstelle (LOAD_DIRECTION): 0,
+            # 1, 2 = lokal x, y, z der Flaeche, 11 bis 13 global je wahrer
+            # Flaeche, 14 bis 16 global je projizierter Flaeche.
+            #
+            # Lokal x, y, z gehen seit dem 14.10.2026 (nachmittags) ueber die
+            # lokalen Flaechenachsen als **globale Richtung** an die Elemente
+            # bzw. an die Flaeche - je Zielflaeche eigene Achsen
+            # (_flaechenachsen: ebene Flaeche, Achsenkategorie „Drehung um
+            # Winkel“, nach einer **angenommenen** RFEM-Regel). Wo die Achsen
+            # sich nicht bestimmen lassen (gewoelbte Flaeche, andere
+            # Achsenkategorie), bleibt lokal x/y genannt und nicht angesetzt;
+            # lokal z wirkt dort wie bisher senkrecht nach der Netznormalen.
+            # Davor (bis 14.10.2026 vormittags) fielen lokal x/y ganz weg, und
+            # lokal z wirkte immer nach der Netznormalen - auch dort, wo RFEM
+            # die z-Achse der Flaeche umgedreht hatte.
             projiziert = rd in LOAD_DIRECTION_PROJEKTION
+            lokal = rd in (0, 1, 2)
             if projiziert:
                 richtung = _richtung_aus_kennzahl(rd - 3)
-            elif rd == 2:
-                richtung = None
+            elif lokal:
+                richtung = None             # je Zielflaeche, unten
             else:
                 richtung = _richtung_aus_kennzahl(rd)
                 if richtung is None:
                     n_richtung[rd] = n_richtung.get(rd, 0) + 1
                     continue
-            gelegt = False
+            richtung_je: dict = {}          # Surface.id -> Richtung (None = Normale)
             for sid in ziele:
+                if not lokal:
+                    richtung_je[sid] = richtung
+                    continue
+                achsen, grund = achsen_von(sid)
+                if achsen is not None:
+                    richtung_je[sid] = tuple(float(c) for c in achsen[rd])
+                    n_lokal_achsen += 1
+                elif rd == 2:
+                    richtung_je[sid] = None     # wie bisher: nach der Netznormalen
+                    n_lokal_z_normale += 1
+                else:
+                    ohne_achsen.setdefault((rd, grund), []).append(sid)
+            if lokal and not richtung_je:
+                n_richtung[rd] = n_richtung.get(rd, 0) + 1
+                continue
+            gelegt = False
+            for sid in richtung_je:
+                r_sid = richtung_je[sid]
                 for e in surf_els.get(sid, []):
                     # je projizierter Flaeche: auf die wahre Flaeche des
                     # Elements umgerechnet, p |n . e| (n Elementnormale)
-                    f = _projektionsanteil(m, e, richtung) if projiziert else 1.0
-                    m.load_face(e, p * f, case=lc, direction=richtung)
+                    f = _projektionsanteil(m, e, r_sid) if projiziert else 1.0
+                    m.load_face(e, p * f, case=lc, direction=r_sid)
                     gelegt = True
             if gelegt:
                 n_ok += 1
@@ -3178,12 +3217,12 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             # Kein Netz auf der Zielflaeche - die Last bleibt trotzdem im
             # Modell: sie haengt an der Flaeche und wird beim Vernetzen auf
             # die Elemente verteilt. Frueher fiel sie hier still weg.
-            fuer_flaeche = [surf_name[sid] for sid in ziele
+            fuer_flaeche = [(surf_name[sid], richtung_je[sid]) for sid in richtung_je
                             if sid in (surf_name or {})]
             if fuer_flaeche:
-                for name in fuer_flaeche:
+                for name, r_sid in fuer_flaeche:
                     m.add_geometrielast(name, p, "flaeche", case=lc,
-                                        richtung=richtung)
+                                        richtung=r_sid)
                 n_geo += 1
             else:
                 n_ohne += 1
@@ -3218,15 +3257,35 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             C.say(log, f"  {n_betrag} Flaechenlasten ohne lesbaren Betrag - "
                        "nicht uebernommen")
         for rd, n in sorted(richtungen.items()):
-            wie = (" - senkrecht zur Flaeche angesetzt (Vorzeichen nach der "
-                   "Flaechennormalen des Netzes)" if rd == 2 else
+            wie = (" - in den lokalen Flaechenachsen als globale Richtung angesetzt"
+                   if rd in (0, 1, 2) else
                    " - je projizierter Flaeche, auf die Elementflaeche umgerechnet"
                    if rd in LOAD_DIRECTION_PROJEKTION else
                    " - je wahrer Flaeche" if _richtung_aus_kennzahl(rd) is not None else "")
             C.say(log, f"    Lastrichtung {rd} = {_richtungstext(rd)}: {n}x{wie}")
+        if n_lokal_achsen:
+            # Die Regel ist aus RFEMs Unterlagen nur zum Teil belegt - darum
+            # als WARNUNG, damit der Anwender sie an einer Flaeche nachsieht.
+            C.warn(log, f"  {n_lokal_achsen} Zuordnungen Flaechenlast -> Flaeche in den lokalen "
+                        "Flaechenachsen angesetzt. Die Achsen sind aus der Geometrie nach einer "
+                        "angenommenen RFEM-Regel bestimmt (z = Normale des Randumlaufs, erste "
+                        "Randlinie in ihrer Richtung, umgedreht wie in RFEM; x = globale X-Achse "
+                        "in die Ebene projiziert, an Flaechen quer zu X die Y-Achse; gedreht um "
+                        "den Winkel der Flaeche; y = z x x) - bitte an einer Flaeche in RFEM "
+                        "nachsehen (Anzeige „Flaechenachsensysteme x, y, z“).")
+        if n_lokal_z_normale:
+            C.say(log, f"    {n_lokal_z_normale} Zuordnungen in lokal z ohne bestimmbare "
+                       "Flaechenachsen - senkrecht nach der Normalen des Netzes angesetzt "
+                       "(eine in RFEM umgedrehte z-Achse wirkt dort nicht)")
+        for (rd, grund), sids in sorted(ohne_achsen.items()):
+            namen = sorted({(surf_name or {}).get(s, str(s)) for s in sids})
+            C.warn(log, f"  {len(sids)} Zuordnungen Flaechenlast -> Flaeche in "
+                        f"{_richtungstext(rd)} nicht angesetzt: {grund} - Flaechen "
+                        + ", ".join(namen[:12]) + (", …" if len(namen) > 12 else "")
+                        + "; bitte in RFEM nachsehen und von Hand ansetzen.")
         for rd, n in sorted(n_richtung.items()):
-            grund = ("in der Ebene der Flaeche; die lokalen Flaechenachsen von RFEM "
-                     "uebernimmt das Programm nicht" if rd in (0, 1) else
+            grund = ("keine Zielflaeche mit bestimmbaren lokalen Achsen, siehe oben"
+                     if rd in (0, 1, 2) else
                      "je projizierter Flaeche auf einer Flaeche ohne Netz"
                      if rd in LOAD_DIRECTION_PROJEKTION else "Kennzahl unbekannt")
             C.warn(log, f"  {n} Flaechenlasten mit Lastrichtung {rd} = {_richtungstext(rd)} "
@@ -3404,6 +3463,97 @@ def _projektionsanteil(m: Model, e: int, richtung) -> float:
         n = np.cross(X[1] - X[0], X[2] - X[0])
     L = float(np.linalg.norm(n))
     return abs(float(n @ np.asarray(richtung, float))) / L if L > 0 else 0.0
+
+
+def _flaechenachsen_eingabe(db: Db) -> dict:
+    """{Surface.id: (Kategorie, Winkel [rad], z umgedreht)} aus ``SurfaceAxes``.
+
+    RFEM 6.15 (surface.proto): ``input_axes_rotation_specification_type`` 0
+    Drehung um Winkel (die Vorgabe), 1 parallel zu Linien, 2 zum Punkt
+    gerichtet, 3 parallel zu einem Koordinatensystem; dazu
+    ``input_axes_angular_rotation`` und ``reversedLocalAxisZ``. Gefunden wird
+    die Zeile ueber ``axes_id`` der Flaechenumsetzung oder rueckwaerts ueber
+    ``owner_table``/``owner_id``. Ohne Zeile gilt die Vorgabe (0, 0, nein).
+    Der Winkel steht wie alle Winkel der Datenbank im Bogenmass (Annahme -
+    am Drehlager sind alle 1375 Winkel 0).
+    """
+    if not db.has("SurfaceAxes"):
+        return {}
+    zeilen = db.by_id("SurfaceAxes")
+    rueck = {(r.get("owner_table"), r.get("owner_id")): r for r in zeilen.values()}
+    out = {}
+    for h, impl in db.impls("Surface"):
+        a = zeilen.get(impl.get("axes_id")) or rueck.get((h.get("impl_table"), impl.get("id")))
+        if a is not None:
+            out[h["id"]] = (int(a.get("inputAxesRotationSpecificationType") or 0),
+                            float(a.get("inputAxesAngularRotation") or 0.0),
+                            bool(a.get("reversedLocalAxisZ")))
+    return out
+
+
+#: Klartext der Achsenkategorien (surface.proto, InputAxesRotationSpecificationType)
+ACHSENKATEGORIE = {0: "Drehung um Winkel", 1: "parallel zu Linien",
+                   2: "zum Punkt gerichtet", 3: "parallel zu Koordinatensystem"}
+
+
+def _flaechenachsen(m: Model, name: str, eingabe=None) -> tuple:
+    """Die lokalen Achsen (x, y, z) einer **ebenen** RFEM-Flaeche, global -
+    oder (None, Grund).
+
+    Die Regel ist **angenommen**, nur zum Teil belegt (14.10.2026; Quellen
+    in docs/Schnittstellen.md):
+
+    * belegt (Dlubal-FAQ 005361/000292): eine Flaeche in der XY-Ebene hat x in
+      Richtung der globalen X-Achse, eine geneigte dreht ihre Achsen mit; die
+      Richtung von z haengt an der Definitionsrichtung und Reihenfolge der
+      Randlinien. Handbuch RFEM 6 „Flächen“: „z-Achse umkehren“ dreht z und
+      y um (x bleibt), „Drehung um Winkel“ dreht x und y um z.
+    * angenommen: z ist die Normale des Randumlaufs (Newell) - erste Randlinie
+      in ihrer Definitionsrichtung, die weiteren angehaengt - nach der
+      Rechte-Hand-Regel; x ist die globale X-Achse in die Ebene projiziert,
+      an einer Flaeche quer zu X die globale Y-Achse; der Winkel dreht
+      rechtsdrehend um das (gegebenenfalls umgedrehte) z; y = z x x.
+
+    Gewoelbte Flaechen (Rand nicht in einer Ebene) bekommen keine Achsen: dort
+    folgen sie in RFEM je finitem Element der Kruemmung, und eine einzige
+    globale Richtung je Flaeche waere falsch. Andere Achsenkategorien als
+    „Drehung um Winkel“ ebenso nicht.
+    """
+    from ..model import polygon_eben
+    kat, alpha, umgedreht = eingabe or (0, 0.0, False)
+    if kat != 0:
+        return None, (f"Achsenkategorie {kat} ({ACHSENKATEGORIE.get(kat, 'unbekannt')}) "
+                      "wird nicht uebernommen")
+    f = m.flaechen.get(name)
+    if f is None:
+        return None, "Flaeche nicht im Modell"
+    P = np.zeros((0, 3))
+    if f.linien:
+        P = np.asarray(f.randpunkte(m, 16), float)
+    if len(P) < 3 and len(f.ecken or []) >= 3:
+        P = np.asarray(m.nodes[list(f.ecken)], float)
+    if len(P) < 3:
+        return None, "Rand der Flaeche nicht aufloesbar"
+    if not polygon_eben(P):
+        return None, ("gewoelbte Flaeche - die lokalen Achsen folgen in RFEM je Element "
+                      "der Kruemmung")
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    ln = float(np.linalg.norm(n))
+    if ln <= 0.0:
+        return None, "Rand der Flaeche ohne Inhalt"
+    z = n / ln
+    if umgedreht:
+        z = -z
+    x = None
+    for g in (np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])):
+        v = g - (g @ z) * z
+        if float(np.linalg.norm(v)) > 1e-3:      # quer zu X: weiter mit Y
+            x = v / float(np.linalg.norm(v))
+            break
+    if alpha:
+        x = np.cos(alpha) * x + np.sin(alpha) * np.cross(z, x)
+    y = np.cross(z, x)
+    return (x, y, z), ""
 
 
 def _zahl(impl: dict, *namen, default: float = 0.0) -> float:

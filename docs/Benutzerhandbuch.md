@@ -7281,14 +7281,36 @@ kam damit als global Z an, eine Flächenlast in der Ebene der Fläche als Druck
 senkrecht zu ihr. Heute gehen Stablasten in lokal x, y und z als lokale
 Stablast an den Stab; nur an einem senkrechten Stab werden lokal y und z
 nicht angesetzt, weil dort nicht belegt ist, dass RFEM und Statik3D dieselbe
-y-Achse bilden. Flächenlasten in lokal z wirken senkrecht zur Fläche,
-Flächenlasten je projizierter Fläche werden auf die Elementfläche
-umgerechnet. Was das Programm nicht abbilden kann – die Hauptachsen u und v,
-Linienlasten in lokalen Linienachsen und Flächenlasten in der Ebene der
-Fläche (lokal x und y) –, steht als WARNUNG mit Zahl und Bedeutung im
-Importprotokoll und muss von Hand angesetzt werden. Am Drehlager-Modell sind
-das alle 711 Flächenlasten (315 in lokal x, 396 in lokal y); sie kamen bis zum
-14.10.2026 senkrecht zur Fläche bzw. in global Z an.
+y-Achse bilden. Flächenlasten in lokal x, y und z gehen über die lokalen
+Flächenachsen an die Fläche (nächster Absatz), Flächenlasten je projizierter
+Fläche werden auf die Elementfläche umgerechnet. Was das Programm nicht
+abbilden kann – die Hauptachsen u und v, Linienlasten in lokalen Linienachsen
+und Flächenlasten auf Flächen ohne bestimmbare Achsen –, steht als WARNUNG mit
+Zahl und Bedeutung im Importprotokoll und muss von Hand angesetzt werden.
+
+**Flächenlasten in den lokalen Flächenachsen** (seit 14.10.2026). Für jede
+ebene Fläche bestimmt der Import die lokalen Achsen aus ihrer Geometrie und
+aus den Achsenangaben der Datei (Drehwinkel, umgekehrte z-Achse) und setzt eine
+Last in lokal x, y oder z als Last in der zugehörigen globalen Richtung an. Die
+Regel dafür ist nur zum Teil aus den Unterlagen von Dlubal belegt und im
+Übrigen angenommen: z steht senkrecht auf der Fläche und folgt dem Umlauf der
+Randlinien (erste Randlinie in ihrer Richtung, Rechte-Hand-Regel), die
+umgekehrte z-Achse dreht z und y um, x ist die globale X-Achse in die Ebene
+der Fläche projiziert (an einer Fläche quer zu X die Y-Achse) und um den
+Drehwinkel der Fläche um z gedreht, y = z × x. Das Importprotokoll nennt die
+Annahme als WARNUNG; bitte prüfen Sie an einer Fläche in RFEM, ob die
+angezeigten Flächenachsen dazu passen. Gewölbte Flächen (zum Beispiel ein
+Viereck aus zwei Bögen, der Mantel einer Bohrung) und Flächen mit einer anderen
+Achsenkategorie als „Drehung um Winkel“ bekommen keine Achsen: eine Last in
+lokal x oder y wird dort genannt und nicht angesetzt, eine Last in lokal z
+wirkt wie bisher senkrecht nach der Normalen des Netzes. Bis zum 14.10.2026
+(vormittags) fielen Flächenlasten in lokal x und y immer weg, und lokal z
+wirkte immer nach der Normalen des Netzes, auch wenn RFEM die z-Achse der
+Fläche umgedreht hatte; noch davor kamen lokal x und y senkrecht zur Fläche
+bzw. in global Z an. Am Drehlager-Modell stehen alle 711 Flächenlasten (315 in
+lokal x, 396 in lokal y) auf den Flächen 142 und 159. Beide sind Halbmäntel
+der Bolzenbohrung in V30 (Radius 300 mm, Länge 230 mm, Achse in global Y), also
+gewölbt; ihre Lasten werden darum weiter nur genannt.
 
 **Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
 Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im

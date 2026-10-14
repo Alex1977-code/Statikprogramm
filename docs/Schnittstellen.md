@@ -833,15 +833,17 @@ Vorzeichen am **Umlaufsinn des Randpolygons** (gemessen: Umlauf 1‑2‑3‑4 ga
 R_z = +8000 N, Umlauf 4‑3‑2‑1 gab −8000 N; mit Richtung in beiden Fällen
 +8000 N). Umgerechnet wird mit derselben Tabelle wie bei Stab- und
 Linienlasten (`LOAD_DIRECTION`, siehe „Lastrichtung nach der Schnittstelle“
-unten): 2 (lokal z) ist der Druck senkrecht zur Fläche, 11 bis 13 wirken
-global je wahrer Fläche, 14 bis 16 global je projizierter Fläche (je Element
-mit |n · e| auf die Elementfläche umgerechnet). 0 und 1 (lokal x und y, also
-in der Ebene der Fläche) und jede unbekannte Kennzahl werden nicht angesetzt,
-sondern als WARNUNG mit Zahl und Bedeutung genannt, ebenso 14 bis 16 auf
-einer Fläche ohne Netz. Bis zum 14.10.2026 galt 0 als Normaldruck, 1 als
-global Z, 2 als global X und 3 als global Y; eine nicht geführte Kennzahl
-wurde als Normaldruck angesetzt, und ob die wahre oder die projizierte Fläche
-gemeint war, galt als nicht lesbar.
+unten): 0, 1 und 2 (lokal x, y und z) wirken in den lokalen Flächenachsen
+(„Flächenlasten in den lokalen Flächenachsen“ unten), 11 bis 13 global je
+wahrer Fläche, 14 bis 16 global je projizierter Fläche (je Element mit
+|n · e| auf die Elementfläche umgerechnet). Jede unbekannte Kennzahl wird
+nicht angesetzt, sondern als WARNUNG mit Zahl und Bedeutung genannt, ebenso
+14 bis 16 auf einer Fläche ohne Netz. Bis zum 14.10.2026 galt 0 als
+Normaldruck, 1 als global Z, 2 als global X und 3 als global Y; eine nicht
+geführte Kennzahl wurde als Normaldruck angesetzt, und ob die wahre oder die
+projizierte Fläche gemeint war, galt als nicht lesbar. Am Vormittag des
+14.10.2026 galt kurz 2 als Druck nach der Netznormalen, und 0 und 1 wurden
+nur genannt.
 
 **Die Flächenlasten zählen sich ab.** Jede Zeile der Tabelle `SurfaceLoad`
 taucht im Protokoll auf — auch die, die nicht übernommen wird: Lasten anderer
@@ -1268,22 +1270,70 @@ dieselbe Weise: x vom Anfang zum Ende, z in der Ebene aus x und global Z zu +Z
 hin, y = z × x, gedreht um den Stabdrehwinkel. Am senkrechten Stab bildet
 Statik3D die y-Achse aus global X, und ob RFEM dieselbe Achse nimmt, ist nicht
 belegt; eine Last in lokal y oder z an einem senkrechten Stab wird darum
-genannt und nicht angesetzt. Ebenso werden die Hauptachsen u und v genannt,
-Linienlasten in lokalen Linienachsen (0 bis 2) und Flächenlasten in der Ebene
-der Fläche (0 und 1), weil das Programm die lokalen Linien- und
-Flächenachsen von RFEM nicht übernimmt. Linienlasten je projizierter Länge
-(14 bis 16) tragen den Bezug „je Projektion“. Bis zum 14.10.2026 kam eine
-Stablast in lokal y als global Z an, eine in lokal z als global X, und eine
-in lokal x fiel als „unbekannt“ weg; Linienlasten in jeder anderen Kennzahl
-als 2 und 3 wurden global Z.
+genannt und nicht angesetzt. Ebenso werden die Hauptachsen u und v genannt
+und Linienlasten in lokalen Linienachsen (0 bis 2), weil das Programm die
+lokalen Linienachsen von RFEM nicht übernimmt (sie hängen an eigenen
+Drehangaben der Linie: `rotationType`, `angle`, `helpNode`, `inPlaneXY`,
+`surface` – das ist kein kleiner Schritt und offen). Linienlasten je
+projizierter Länge (14 bis 16) tragen den Bezug „je Projektion“. Bis zum
+14.10.2026 kam eine Stablast in lokal y als global Z an, eine in lokal z als
+global X, und eine in lokal x fiel als „unbekannt“ weg; Linienlasten in jeder
+anderen Kennzahl als 2 und 3 wurden global Z.
 
-**Am Drehlager-Modell** (`Drehlager_V15_4_export.rf6`) betrifft das alle 711
-Flächenlasten: 315 stehen in lokal x, 396 in lokal y. Bis zum 14.10.2026 kamen
-sie als Druck senkrecht zur Fläche bzw. als global Z an, also senkrecht statt
-in der Ebene der Flächen. Seit dem 14.10.2026 werden sie nicht übernommen und
-stehen als zwei WARNUNG-Zeilen im Importprotokoll. Sie richtig anzusetzen
-braucht die lokalen Flächenachsen aus RFEM (Tabelle `SurfaceAxes` mit
-Drehung und umgekehrter z-Achse); das ist offen.
+**Flächenlasten in den lokalen Flächenachsen** (seit 14.10.2026,
+`rfem6_db._flaechenachsen`). Eine Flächenlast in lokal x, y oder z geht als
+Last in der globalen Richtung dieser Achse an die Elemente der Fläche bzw. als
+Geometrielast an die Fläche; jede Zielfläche bekommt ihre eigenen Achsen. Die
+Achsenangaben stehen in der Tabelle `SurfaceAxes` (über `axes_id` der
+Flächenumsetzung): `inputAxesRotationSpecificationType` (0 Drehung um Winkel,
+die Vorgabe; 1 parallel zu Linien; 2 zum Punkt gerichtet; 3 parallel zu einem
+Koordinatensystem – `surface.proto`, `InputAxesRotationSpecificationType`),
+`inputAxesAngularRotation` und `reversedLocalAxisZ`. Übernommen wird nur die
+Kategorie 0, und nur an ebenen Flächen.
+
+Die Regel für die Achsen ist **zum Teil belegt und im Übrigen angenommen**.
+Belegt ist: Eine Fläche in der XY-Ebene hat ihre x-Achse in Richtung der
+globalen X-Achse, an einer geneigten Fläche dreht sich das System mit, und die
+Richtung von z hängt an der Definitionsrichtung und der Reihenfolge der
+Randlinien (Dlubal-FAQ 000292 „Anzeige und Umkehrung der lokalen Achsen“ und
+005361). „Lokale z-Achse umkehren“ dreht z und y um (Online-Handbuch RFEM 6,
+Kapitel „Flächen“, Abschnitt „Spezifische Achsen“; im RFEM-5-Handbuch: z
+umgekehrt, die übrigen Achsen nach der Rechte-Hand-Regel), die Kategorie
+„Drehung um Winkel“ dreht x und y um z. Angenommen ist: z ist die Normale des
+Randumlaufs nach der Rechte-Hand-Regel, beginnend mit der ersten Randlinie in
+ihrer Definitionsrichtung; x ist die globale X-Achse in die Ebene projiziert,
+an einer Fläche quer zu X (Projektion kürzer als 0,001) die Y-Achse; der
+Winkel dreht rechtsdrehend um die gegebenenfalls umgekehrte z-Achse und steht
+im Bogenmaß; y = z × x. Weder das Handbuch noch die Schnittstelle (die nur die
+Eingabefelder führt), noch RFEMs in der Datei gespeicherter Bericht (die
+Tabelle „Flächen – Achsen“ hat dort keine Daten) noch die 21 mitgelieferten
+Beispielmodelle (keine einzige Flächenlast in lokal x oder y, keine
+Ergebnisse) legen die Projektion, den Umlaufsinn oder den Drehsinn genauer
+fest. Das Importprotokoll nennt die Annahme darum als WARNUNG.
+
+Gewölbte Flächen bekommen keine Achsen: dort beziehen sich die Flächenachsen in
+RFEM auf die Achsen der einzelnen finiten Elemente (Handbuch RFEM 6,
+„Verformungen“), und eine Richtung je Fläche wäre falsch.
+Lokal x und y werden dort mit Grund und Flächennamen als WARNUNG genannt und
+nicht angesetzt, lokal z wirkt wie bisher senkrecht nach der Netznormalen
+(eine in RFEM umgedrehte z-Achse wirkt dort nicht). Bis zum 14.10.2026
+(vormittags) fielen lokal x und y an jeder Fläche weg, und lokal z folgte
+immer der Netznormalen.
+
+**Am Drehlager-Modell** (`Drehlager_V15_4_export.rf6`) stehen alle 711
+Flächenlasten (315 in lokal x, 396 in lokal y) auf den Flächen 142 und 159.
+Beide sind keine waagerechten Ebenen, sondern Viereckflächen aus zwei Geraden
+und zwei Bögen: die beiden Halbmäntel der Bolzenbohrung in V30 (Radius 300 mm,
+Länge 230 mm, Achse in global Y bei X = 0, Z = −1,28 m; 142 auf der −Z-Seite
+mit umgekehrter z-Achse, 159 auf der +Z-Seite). Sie bleiben darum genannt und
+nicht angesetzt. Welche Kraft sie in RFEM ergeben, hängt an der Achsenregel
+für gewölbte Flächen: In LF1 (lokal x −1394,75 kN/m², lokal y −339 kN/m² je
+Fläche, je 216 628 mm²) gibt lokal x 604,3 kN längs der Bolzenachse, wenn x
+auf beiden Halbmänteln parallel zur Achse läuft, 604,3 kN in −X, wenn x die
+globale X-Achse einer gedachten waagerechten Ebene ist, und 385,0 kN in −X,
+wenn x je Element die in die Tangentialebene projizierte X-Achse ist. Bis zum
+Vormittag des 14.10.2026 kamen diese Lasten senkrecht zur Fläche bzw. in
+global Z an, danach wurden sie nur genannt.
 
 **Stablasten: Bezug in der Lastrichtung** (seit 14.10.2026). Eine eigene
 Spalte für „je wahrer“ oder „je projizierter Länge“ hat `LineTypeLoadImplForce`

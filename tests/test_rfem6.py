@@ -3164,14 +3164,23 @@ def test_lastrichtung_nach_schnittstelle():
                                     (3, [1], -1000.0, 16), (4, [1], -1000.0, 13)])
         m = R6.read_rf6(f, log=log)
         txt = "\n".join(log)
-        check("Flaechenlast lokal x: nicht angesetzt", m.load_cases["LF1"].n_loads == 0,
-              str(m.load_cases["LF1"].n_loads))
-        check("  und als WARNUNG genannt",
-              any("WARNUNG" in z and "Lastrichtung 0 = lokal x" in z and "nicht uebernommen" in z
+        # Bis zum 14.10.2026 (vormittags) fiel lokal x hier mit WARNUNG weg;
+        # seither geht sie ueber die lokalen Flaechenachsen an die Elemente:
+        # die globale X-Achse liegt in dieser Ebene, also x = X.
+        fl1 = m.load_cases["LF1"].face_loads
+        check("Flaechenlast lokal x: in Richtung der lokalen x-Achse = global X angesetzt",
+              len(fl1) > 0 and all(f.direction is not None and np.allclose(f.direction, (1, 0, 0))
+                                   for f in fl1), str([f.direction for f in fl1][:3]))
+        check("  mit der angenommenen Achsenregel im Protokoll",
+              any("WARNUNG" in z and "angenommen" in z and "lokalen Flaechenachsen" in z
                   for z in log), txt[-300:])
         for nd in range(m.nn):
             m.support(nd, [0, 1, 2, 3, 4, 5])
         A_wahr, A_proj = 2.0 * 2.0 * np.sqrt(2.0), 4.0
+        R1 = np.asarray(solver.solve_static(m, case="LF1").reactions, float)[:, :3].sum(axis=0)
+        check("  Summe der Lagerkraefte = -p A in X", np.allclose(R1, (1000.0 * A_wahr, 0, 0),
+                                                              atol=1e-6 * 1000.0 * A_wahr),
+              str(R1.round(3)))
         R2 = np.asarray(solver.solve_static(m, case="LF2").reactions, float)[:, :3].sum(axis=0)
         n = np.array([0.0, -1.0, 1.0]) / np.sqrt(2.0)
         check("Flaechenlast lokal z: senkrecht zur Flaeche, Betrag p A",
@@ -3220,8 +3229,95 @@ def test_lastrichtung_nach_schnittstelle():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_flaechenlast_in_lokalen_flaechenachsen():
+    """Flaechenlasten in lokal x, y, z (loadDirection 0, 1, 2) gehen ueber die
+    lokalen Flaechenachsen als globale Richtung an die Elemente bzw. an die
+    Flaeche (14.10.2026). Bis dahin fielen lokal x und y mit WARNUNG weg, und
+    lokal z wirkte nach der Netznormalen - ohne Ruecksicht auf die in RFEM
+    umgedrehte z-Achse.
+
+    Die Achsen folgen der angenommenen RFEM-Regel (rfem6_db._flaechenachsen):
+    z = Normale des Randumlaufs (erste Randlinie in ihrer Richtung), umgedreht
+    bei reversedLocalAxisZ; x = globale X-Achse in die Ebene projiziert, um
+    den Winkel alpha um z gedreht; y = z x x. Hier von Hand gerechnet:
+
+    Flaeche 1, Rand 1-2-3-4 = (0,0,0) (2,0,0) (2,2,2) (0,2,2), Dicke 10 mm,
+    alpha = 30 Grad, z umgedreht. Umlaufnormale (0,-1,1)/sqrt2, umgedreht
+    z = (0, 0.7071, -0.7071); x0 = (1,0,0) liegt in der Ebene; z x x0 =
+    (0,-1,-1)/sqrt2; x = cos30 x0 + sin30 (z x x0) = (0.8660, -0.3536,
+    -0.3536); y = z x x = (-0.5, -0.6124, -0.6124). A = 2 * 2 sqrt2.
+    Flaeche 2 waagerecht, Rand gegen den Uhrzeiger von oben, ohne Dicke und
+    ohne Achsenzeile (Vorgabe): z = +Z, x = +X, y = +Y.
+    Flaeche 3 gewoelbt (Halbzylinder aus zwei Boegen): genannt, nicht angesetzt.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        db = os.path.join(tmp, "model.db")
+        build_db(db,
+                 nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 2), (0, 2, 2),
+                        (5, 0, 0), (7, 0, 0), (7, 2, 0), (5, 2, 0),
+                        (10.3, 0, 0), (10.3, 1, 0), (9.7, 1, 0), (9.7, 0, 0)],
+                 lines=[[1, 2], [2, 3], [3, 4], [4, 1],
+                        [5, 6], [6, 7], [7, 8], [8, 5],
+                        [9, 10], ([10, 11], (10.0, 1.0, 0.3)), [11, 12],
+                        ([12, 9], (10.0, 0.0, 0.3))],
+                 members=[], supports=[],
+                 surfaces=[([1, 2, 3, 4], 0.010), ([5, 6, 7, 8], 0.0), [9, 10, 11, 12]],
+                 boundary_lines={1: [1, 2, 3, 4], 2: [5, 6, 7, 8], 3: [9, 10, 11, 12]},
+                 load_cases=[("LF1", 12, 0.0), ("LF2", 12, 0.0), ("LF3", 12, 0.0)],
+                 # je Lastfall eine Last auf die vernetzte Flaeche 1 und eine
+                 # auf die Flaechen ohne Netz (eine Last auf beides zugleich
+                 # legt der Import nur auf die vernetzte - nicht Gegenstand hier)
+                 surface_loads=[(1, [1], -1000.0, 0), (1, [2, 3], -1000.0, 0),
+                                (2, [1], -1000.0, 1), (2, [2], -1000.0, 1),
+                                (3, [1], -1000.0, 2), (3, [2], -1000.0, 2)])
+        con = sqlite3.connect(db)
+        # Achsen wie in RFEM 6.15: SurfaceAxes ueber axes_id der Flaechenumsetzung
+        con.execute("ALTER TABLE SurfaceImplPlane ADD COLUMN axes_id bigint")
+        con.execute("CREATE TABLE SurfaceAxes (id INTEGER PRIMARY KEY, version INTEGER, "
+                    "owner_id bigint, owner_table TEXT, inputAxesRotationSpecificationType "
+                    "INTEGER, inputAxesAngularRotation double precision, "
+                    "reversedLocalAxisZ boolean)")
+        con.execute("INSERT INTO SurfaceAxes VALUES (1,1,1,'SurfaceImplPlane',0,?,1)",
+                    (math.radians(30.0),))
+        con.execute("UPDATE SurfaceImplPlane SET axes_id = 1 WHERE id = 1")
+        con.commit()
+        con.close()
+        log = []
+        m = R6.read_rf6(_rf6_aus_db(db, os.path.join(tmp, "achsen.rf6")), log=log)
+        txt = "\n".join(log)
+        for nd in range(m.nn):
+            m.support(nd, [0, 1, 2, 3, 4, 5])
+        A = 2.0 * 2.0 * math.sqrt(2.0)
+        r2 = math.sqrt(0.5)
+        soll = {"LF1": (np.array([math.cos(math.radians(30)), -0.5 * r2, -0.5 * r2]), (1, 0, 0)),
+                "LF2": (np.array([-0.5, -math.sqrt(0.375), -math.sqrt(0.375)]), (0, 1, 0)),
+                "LF3": (np.array([0.0, r2, -r2]), (0, 0, 1))}
+        for lf, (d1, d2) in soll.items():
+            # Lagerkraefte = -(Last); die Last ist p A d mit p = -1000 N/m^2
+            R = np.asarray(solver.solve_static(m, case=lf).reactions, float)[:, :3].sum(axis=0)
+            check(f"{lf} Flaeche 1 (geneigt, 30 Grad, z umgedreht): Summe = 1000 A d",
+                  np.allclose(R, 1000.0 * A * d1, atol=1e-6 * 1000.0 * A),
+                  f"{R.round(3)} / {(1000.0 * A * d1).round(3)}")
+            gl = [g for g in m.load_cases[lf].geometrielasten if g.ziel == "F2"]
+            check(f"{lf} Flaeche 2 (waagerecht, Vorgabe): Geometrielast p = -1000 in {d2}",
+                  len(gl) == 1 and abs(gl[0].p + 1000.0) < 1e-9
+                  and gl[0].richtung is not None and np.allclose(gl[0].richtung, d2)
+                  and not gl[0].projiziert,
+                  str([(g.p, g.richtung) for g in gl]))
+        gl3 = [g for lc in m.load_cases.values() for g in lc.geometrielasten if g.ziel == "F3"]
+        check("Flaeche 3 (gewoelbt): lokal x nicht angesetzt", not gl3,
+              str([(g.p, g.richtung) for g in gl3]))
+        check("  und als WARNUNG mit Grund und Flaeche genannt",
+              any("WARNUNG" in z and "gewoelbt" in z and "F3" in z for z in log), txt[-600:])
+        check("Protokoll nennt die Achsenregel als Annahme",
+              any("angenommen" in z and "lokalen Flaechenachsen" in z for z in log), txt[-600:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for t in (test_lastrichtung_nach_schnittstelle,
+    for t in (test_flaechenlast_in_lokalen_flaechenachsen, test_lastrichtung_nach_schnittstelle,
               test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
               test_flaechenlast_ohne_lastfall,
               test_stablasten_werden_abgezaehlt, test_vorspannung_zeile_je_lastfall,
