@@ -4140,7 +4140,8 @@ class Report:
             return getattr(fv, "regel", "element") == "knoten" and getattr(fv, "knoten", -1) >= 0
 
         def stelle(fv) -> str:
-            return f"Knoten {fv.knoten + 1}" if knotenregel(fv) else f"Element {fv.element}"
+            # Elemente wie Knoten ab 1 (bis zum 14.10.2026 ab 0)
+            return f"Knoten {fv.knoten + 1}" if knotenregel(fv) else f"Element {fv.element + 1}"
 
         def art(fv) -> str:
             # "alt": aus der Ergebnisdatei einer Fassung ohne ermuedung_volumen.
@@ -4264,7 +4265,7 @@ class Report:
                   ("Ausnutzung D", Util(fv.util))]
             if getattr(fv, "zone_n", 0):
                 wo = (f"Knoten {fv.zone_knoten + 1}" if getattr(fv, "zone_knoten", -1) >= 0
-                      else f"Element {fv.zone_element}")
+                      else f"Element {fv.zone_element + 1}")
                 kv.append(("netzabhängige Stellen (nur berichtet)",
                            f"{fv.zone_n} Orte, D bis {fmt(fv.zone_D, 4)}, Δσ bis "
                            f"{fmt(fv.zone_dsig / 1e6, 1)} N/mm² ({wo}) – {_SA.VERMERK}"))
@@ -4287,7 +4288,7 @@ class Report:
                 rows.append([r[2], fmt(r[0] / 1e6, 1), f"{r[1]:.3g}",
                              f"{NR:.3g}" if np.isfinite(NR) else "∞",
                              fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
-                             f"Knoten {r[4] + 1}" if len(r) > 4 else f"Element {r[3]}"])
+                             f"Knoten {r[4] + 1}" if len(r) > 4 else f"Element {r[3] + 1}"])
             b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht; sie "
                                      "liegen im Allgemeinen an verschiedenen Stellen.", None, ""))
             hinweise = list(fv.warnings) + ([alt_hinweis] if art(fv) == "alt" else [])

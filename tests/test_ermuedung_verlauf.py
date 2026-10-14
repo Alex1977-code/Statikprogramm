@@ -1291,7 +1291,7 @@ def test_volumen_ergebnis_aelterer_fassung():
     check("ältere Fassung: der Bericht sagt, woher das Ergebnis kommt und was neu gerechnet gilt",
           "älteren Programmfassung" in block and "nicht neu gerechnet" in block
           and "ermuedung_volumen = „knoten“" in block
-          and f"Element {fv2.element}" in block and "314.3" in block, block[:400])
+          and f"Element {fv2.element + 1}" in block and "314.3" in block, block[:400])
     zus = t[t.rfind("Zusammenfassung"):]
     check("ältere Fassung: Hinweis auch in der Zusammenfassung",
           "Ermüdung Volumen R" in zus and "älteren Programmfassung" in zus, zus[:300])
@@ -1833,8 +1833,58 @@ def test_lastfall_loeschen_nimmt_umhuellende_und_ermuedung_mit():
     check("solve_all laeuft durch, Umhuellende und Ermuedung gerechnet", gut, detail)
 
 
+def test_volumen_elementnummer_ab_1():
+    """Die Ermuedung der Volumen nennt Elemente ab 1 wie Knoten und wie der
+    Volumennachweis (c76c972). Bis zum 14.10.2026 standen in der Tabelle der
+    Ermuedung, im Bericht (maßgebende Stelle, Schwingbreite je Last, Zone) und
+    im Zonenhinweis die Elemente ab 0, die Knoten ab 1."""
+    import re
+    import tempfile
+    from statik3d import spitzenanzeige as SA
+    from statik3d.report.html import Report
+    m, kr, lf, rechts, n = _kragarm_volumen((8, 2, 4))
+    m.design.ermuedung_volumen = "element"
+    an = solver.solve_all(m, design=False, fatigue=True)
+    fv = an.fatigue.volumen["R"]
+    soll = f"Element {fv.element + 1}"
+    zeile = [r for r in an.fatigue.table() if str(r[0]) == "Volumen R"]
+    check("Tabelle der Ermüdung: maßgebendes Element ab 1",
+          zeile and zeile[0][-1].startswith(soll), f"{zeile[0][-1] if zeile else None} (ab 0: {fv.element})")
+    p = os.path.join(tempfile.mkdtemp(), "b.html")
+    Report(m, an).to_html(p)
+    with open(p, encoding="utf-8") as fh:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fh.read()))
+    stelle = re.search(r"Schädigung D an der maßgebenden Stelle [\d.,]+ \(Element (\d+)\)", t)
+    check("Bericht: maßgebende Stelle ab 1", stelle is not None and stelle.group(1) == str(fv.element + 1),
+          f"{stelle and stelle.group(0)}")
+    je_last = [r for r in fv.ranges]
+    check("Bericht: Schwingbreite je Ermüdungslast, Stelle ab 1",
+          je_last and all(f"Element {int(r[3]) + 1}" in t for r in je_last),
+          str([int(r[3]) + 1 for r in je_last]))
+    # eine Zone an einem Element des Koerpers (nachgebildet): Hinweis und Bericht
+    zone = int(rechts[0]) if int(rechts[0]) != fv.element else int(rechts[1])
+    echt = SA.nachweis_zonen
+    SA.nachweis_zonen = lambda model, ergebnisse: {k: {zone} for k in ergebnisse}
+    try:
+        fz = F.check_fatigue(m, an)
+    finally:
+        SA.nachweis_zonen = echt
+    fvz = fz.volumen["R"]
+    hinweis = " ".join(fvz.warnings)
+    check("Zonenhinweis der Ermüdung: Element ab 1",
+          fvz.zone_element == zone and f"(Element {zone + 1})" in hinweis, hinweis[:200])
+    an.fatigue = fz
+    Report(m, an).to_html(p)
+    with open(p, encoding="utf-8") as fh:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fh.read()))
+    zz = re.search(r"netzabhängige Stellen \(nur berichtet\) .*? \(Element (\d+)\)", t)
+    check("Bericht: Zone der Ermüdung ab 1", zz is not None and zz.group(1) == str(zone + 1),
+          f"{zz and zz.group(0)[-80:]}")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
+              test_volumen_elementnummer_ab_1,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
               test_lastfall_umbenennen_zieht_ermuedungslasten_nach,

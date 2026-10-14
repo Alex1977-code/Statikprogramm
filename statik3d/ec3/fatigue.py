@@ -541,7 +541,7 @@ class FatigueResults:
                          f"{v.dsig_max/1e6:.1f}", f"{v.dsig_E2/1e6:.1f}", f"{v.D:.3f}",
                          "0.000", f"{v.util:.3f}",
                          ort(v, (f"Knoten {v.knoten + 1}" if getattr(v, "regel", "element") == "knoten"
-                                 and getattr(v, "knoten", -1) >= 0 else f"Element {v.element}")
+                                 and getattr(v, "knoten", -1) >= 0 else f"Element {v.element + 1}")
                              + (" (Naht)" if v.naht else ""))])
             if getattr(v, "zone_n", 0):
                 # die Zone steht getrennt da, nicht verschwiegen
@@ -1214,7 +1214,8 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             oz = ort(jz)
             fv.zone_element = int(oz[0])
             fv.zone_knoten = int(oz[1]) if len(oz) > 1 else -1
-            wo = f"Knoten {fv.zone_knoten + 1}" if fv.zone_knoten >= 0 else f"Element {fv.zone_element}"
+            # Elemente wie Knoten ab 1 (bis zum 14.10.2026 hier ab 0)
+            wo = f"Knoten {fv.zone_knoten + 1}" if fv.zone_knoten >= 0 else f"Element {fv.zone_element + 1}"
             zonentext = (f"{fv.zone_n} {'Ort liegt' if fv.zone_n == 1 else 'Orte liegen'} in "
                          "netzabhängigen Stellen (Zonen auffälliger Stellen, an denen Kraft ohne "
                          "Auflagefläche in das Volumen geht) und "
