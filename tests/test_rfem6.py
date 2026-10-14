@@ -3306,8 +3306,13 @@ def test_flaechenlast_in_lokalen_flaechenachsen():
                   and not gl[0].projiziert,
                   str([(g.p, g.richtung) for g in gl]))
         gl3 = [g for lc in m.load_cases.values() for g in lc.geometrielasten if g.ziel == "F3"]
-        check("Flaeche 3 (gewoelbt): lokal x nicht angesetzt", not gl3,
-              str([(g.p, g.richtung) for g in gl3]))
+        # seit 14.10.2026 (abends) haengt sie an der Flaeche und wirkt erst mit
+        # zylindrischen Achsen (test_gewoelbte_flaeche_zylinderachsen)
+        m.lasten_verteilen()
+        check("Flaeche 3 (gewoelbt): lokal x nicht angesetzt (wartet auf Achsen)",
+              len(gl3) == 1 and gl3[0].richtung is None and gl3[0].lokal == {"achse": 0}
+              and "nicht gewählt" in (gl3[0].kommentar or ""),
+              str([(g.p, g.richtung, g.lokal, g.kommentar) for g in gl3]))
         check("  und als WARNUNG mit Grund und Flaeche genannt",
               any("WARNUNG" in z and "gewoelbt" in z and "F3" in z for z in log), txt[-600:])
         check("Protokoll nennt die Achsenregel als Annahme",
@@ -3316,8 +3321,130 @@ def test_flaechenlast_in_lokalen_flaechenachsen():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_gewoelbte_flaeche_zylinderachsen():
+    """Lasten in lokal x/y auf gewoelbten Flaechen (14.10.2026): beim Import
+    nicht angesetzt, sondern als Geometrielast mit ``lokal`` an die Flaeche
+    gehaengt und mit Flaechen, Lastfaellen und Betraegen gemeldet. Sie wirken
+    erst mit zylindrischen Flaechenachsen (Flaeche.lokale_achsen): x laengs der
+    Achse in Richtung achse_plus_x, y rechtsdrehend um +x um den Umfang, z
+    nach aussen.
+
+    Halbzylinderpaar R = 0,3 m, L = 1 m, Achse global Y durch (0, ., 0):
+    A oben (+Z), erste Randlinie in +Y; B unten (-Z), erste Randlinie in -Y.
+    Handrechnung mit A_ges = 2 * pi R L (hier die Facettenflaeche der
+    Pruefvernetzung): lokal x p = -1000 N/m^2 mit +x = +Y auf beiden ->
+    Summe p A_ges in Y = -1000 A_ges, keine Kraft quer, kein Moment um Y;
+    lokal y tau = -500 N/m^2 -> keine Restkraft, Moment um +Y (+x)
+    tau A_ges R (an den Elementmitten R cos(pi/2N))."""
+    tmp = tempfile.mkdtemp()
+    try:
+        R0, L0 = 0.3, 1.0
+        db = os.path.join(tmp, "model.db")
+        build_db(db,
+                 nodes=[(R0, 0, 0), (R0, L0, 0), (-R0, L0, 0), (-R0, 0, 0),
+                        (R0, L0, 0), (R0, 0, 0), (-R0, 0, 0), (-R0, L0, 0)],
+                 lines=[[1, 2], ([2, 3], (0.0, L0, R0)), [3, 4], ([4, 1], (0.0, 0.0, R0)),
+                        [5, 6], ([6, 7], (0.0, 0.0, -R0)), [7, 8], ([8, 5], (0.0, L0, -R0))],
+                 members=[], supports=[],
+                 surfaces=[[1, 2, 3, 4], [5, 6, 7, 8]],
+                 boundary_lines={1: [1, 2, 3, 4], 2: [5, 6, 7, 8]},
+                 load_cases=[("LF1", 12, 0.0), ("LF2", 12, 0.0)],
+                 surface_loads=[(1, [1, 2], -1000.0, 0), (1, [1, 2], -500.0, 1),
+                                (2, [1, 2], 1000.0, 0)])
+        log = []
+        m = R6.read_rf6(_rf6_aus_db(db, os.path.join(tmp, "zyl.rf6")), log=log)
+        txt = "\n".join(log)
+        gl = [g for g in m.load_cases["LF1"].geometrielasten]
+        check("Import: lokal x/y auf gewoelbten Flaechen nicht als Elementlast angesetzt",
+              not m.load_cases["LF1"].face_loads, str(len(m.load_cases["LF1"].face_loads)))
+        check("  sondern als Geometrielast mit lokal an F1 und F2 (je Last und Flaeche)",
+              len(gl) == 4 and all(g.lokal and g.richtung is None for g in gl)
+              and sorted(g.ziel for g in gl) == ["F1", "F1", "F2", "F2"],
+              str([(g.ziel, g.lokal, g.richtung) for g in gl]))
+        check("  WARNUNG nennt Flaechen, Lastfaelle, Betraege und die zylindrischen Achsen",
+              any("WARNUNG" in z and "NICHT angesetzt" in z and "F1, F2" in z
+                  and "LF1: x -1,00 kN/m², y -0,50 kN/m²" in z and "LF2: x +1,00 kN/m²" in z
+                  and "zylindrisch" in z for z in log), txt[-700:])
+
+        # Pruefvernetzung: je Halbschale N Streifen ueber den Umfang
+        N = 24
+        for fname, seite in (("F1", 1.0), ("F2", -1.0)):
+            f = m.flaechen[fname]
+            ids = {}
+            for i in range(N + 1):
+                phi = math.pi * i / N
+                for j, y in enumerate((0.0, L0)):
+                    ids[(i, j)] = m.add_node(R0 * math.cos(phi), y, seite * R0 * math.sin(phi))
+            for i in range(N):
+                # Knotenfolge bei jeder zweiten Schale umgekehrt: die
+                # Richtung darf nicht an der Elementnormalen haengen
+                kn = [ids[(i, 0)], ids[(i + 1, 0)], ids[(i + 1, 1)], ids[(i, 1)]]
+                f.elemente.append(m.add_element("shell4", kn if i % 2 else kn[::-1], "S355", None))
+
+        def summe(lf):
+            F, M, A, gesehen = np.zeros(3), np.zeros(3), 0.0, set()
+            for fl in m.load_cases[lf].face_loads:
+                X = np.asarray(m.nodes[list(m.elements[fl.elem].nodes)], float)
+                a = 0.5 * float(np.linalg.norm(np.cross(X[2] - X[0], X[3] - X[1])))
+                c = X.mean(axis=0)
+                kraft = fl.p * a * np.asarray(fl.direction, float)
+                F += kraft
+                M += np.cross(c - np.array([0.0, c[1], 0.0]), kraft)
+                if fl.elem not in gesehen:           # Flaeche je Element einmal
+                    gesehen.add(fl.elem)
+                    A += a
+            return F, M, A
+
+        m.lasten_verteilen()
+        check("ohne gewaehlte Achsen: keine Elementlast, Grund an der Last",
+              not m.load_cases["LF1"].face_loads
+              and all("nicht gewählt" in (g.kommentar or "") for g in gl),
+              str([g.kommentar for g in gl][:1]))
+        for fname in ("F1", "F2"):
+            m.flaechen[fname].lokale_achsen = "zylinder"
+            m.flaechen[fname].achse_plus_x = [0.0, 1.0, 0.0]
+        m.lasten_verteilen()
+        F, M, A_ges = summe("LF1")
+        check("mit zylindrischen Achsen: je Schale eine Elementlast (2 Lasten x 2 x 24)",
+              len(m.load_cases["LF1"].face_loads) == 96, str(len(m.load_cases["LF1"].face_loads)))
+        # nur die x-Last: LF2 hat dieselbe mit umgekehrtem Vorzeichen
+        F2, M2, _A = summe("LF2")
+        close("LF1 axial + Umfang: Summe in Y = p A_ges (p = -1000, +x = +Y)",
+              float(F[1]), -1000.0 * A_ges, 1e-9, " N")
+        check("  keine Restkraft quer zur Achse (X, Z)", abs(F[0]) < 1e-6 and abs(F[2]) < 1e-6,
+              str(F.round(6)))
+        R_c = R0 * math.cos(math.pi / (2 * N))
+        close("  Moment um +Y = tau A_ges R (tau = -500, rechtsdrehend um +x)",
+              float(M[1]), -500.0 * A_ges * R_c, 1e-9, " Nm")
+        close("  A_ges = Facettenflaeche, nahe 2 pi R L", A_ges, 2 * math.pi * R0 * L0, 2e-3, " m²")
+        close("LF2: axiale Last umgekehrt (+1000 A_ges in Y)", float(F2[1]), 1000.0 * A_ges,
+              1e-9, " N")
+        # Vorgabe ohne achse_plus_x: Richtung der ersten geraden Randlinie -
+        # A (+Y) und B (-Y) heben sich dann gegenseitig auf
+        for fname in ("F1", "F2"):
+            m.flaechen[fname].achse_plus_x = []
+        m.lasten_verteilen()
+        F0, _M0, _A0 = summe("LF2")
+        check("Vorgabe +x = erste gerade Randlinie: A in +Y, B in -Y -> Summe 0",
+              abs(F0[1]) < 1e-6, str(F0.round(6)))
+        # Speichern und Laden behaelt die Einstellung und die Lasten
+        d = m.to_dict()
+        m2 = Model.from_dict(d)
+        check("Speichern/Laden: lokale_achsen und lokal bleiben erhalten",
+              m2.flaechen["F1"].lokale_achsen == "zylinder"
+              and all(g.lokal for g in m2.load_cases["LF1"].geometrielasten),
+              str([m2.flaechen["F1"].lokale_achsen]))
+        m3 = R6.read_rf6(os.path.join(tmp, "zyl.rf6"), log=[])
+        check("Vorgabewerte stehen nicht in der Datei (NEUE_FELDER)",
+              all("lokale_achsen" not in x and "achse_plus_x" not in x
+                  for x in m3.to_dict()["flaechen"])
+              and any(x.get("lokale_achsen") == "zylinder" for x in d["flaechen"]), "")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for t in (test_flaechenlast_in_lokalen_flaechenachsen, test_lastrichtung_nach_schnittstelle,
+    for t in (test_gewoelbte_flaeche_zylinderachsen, test_flaechenlast_in_lokalen_flaechenachsen, test_lastrichtung_nach_schnittstelle,
               test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
               test_flaechenlast_ohne_lastfall,
               test_stablasten_werden_abgezaehlt, test_vorspannung_zeile_je_lastfall,

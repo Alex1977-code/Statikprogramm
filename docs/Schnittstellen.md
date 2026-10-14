@@ -1311,29 +1311,57 @@ Beispielmodelle (keine einzige Flächenlast in lokal x oder y, keine
 Ergebnisse) legen die Projektion, den Umlaufsinn oder den Drehsinn genauer
 fest. Das Importprotokoll nennt die Annahme darum als WARNUNG.
 
-Gewölbte Flächen bekommen keine Achsen: dort beziehen sich die Flächenachsen in
-RFEM auf die Achsen der einzelnen finiten Elemente (Handbuch RFEM 6,
-„Verformungen“), und eine Richtung je Fläche wäre falsch.
-Lokal x und y werden dort mit Grund und Flächennamen als WARNUNG genannt und
-nicht angesetzt, lokal z wirkt wie bisher senkrecht nach der Netznormalen
-(eine in RFEM umgedrehte z-Achse wirkt dort nicht). Bis zum 14.10.2026
-(vormittags) fielen lokal x und y an jeder Fläche weg, und lokal z folgte
-immer der Netznormalen.
+Gewölbte Flächen bekommen keine Achsen aus RFEM: dort beziehen sich die
+Flächenachsen in RFEM auf die Achsen der einzelnen finiten Elemente (Handbuch
+RFEM 6, „Verformungen“). Lokal z wirkt dort wie bisher senkrecht nach der
+Netznormalen (eine in RFEM umgedrehte z-Achse wirkt dort nicht). Lokal x und y
+setzt der Import seit dem 14.10.2026 (abends) **nicht** an. Er hängt sie als
+Geometrielast mit `lokal = {"achse": 0|1}` an die Fläche und nennt sie als
+WARNUNG mit Flächen, Lastfällen und Beträgen, dazu den Weg über zylindrische
+Achsen (`rfem6_db._gewoelbt_melden`). Bis zum 14.10.2026 (vormittags) fielen
+lokal x und y an jeder Fläche weg, und lokal z folgte immer der Netznormalen.
+
+Der Grund ist die **Sichtprüfung des Anwenders in RFEM vom 14.10.2026** an den
+Flächen 142 und 159 des Drehlagers. Sie belegt RFEMs Achsenregel für diese
+gewölbten Viereckflächen: x läuft um den Umfang, auf beiden Flächen im
+Umlaufsinn entgegengesetzt, das ist global X in die Tangentialebene
+projiziert. z zeigt bei beiden von der Bolzenachse weg, bei 142 nach der
+Umkehrung. RFEMs Lastdarstellung derselben Lasten zeigt dagegen 1 394,75 kN/m²
+axial und gleichgerichtet und 339 kN/m² gleichsinnig um den Umfang. Achsen und
+Lastbild passen nicht zusammen; der Anwender hält das für einen Fehler in RFEM.
+Was RFEM rechnet, ist nicht bekannt, darum rät der Import nicht.
+
+**Zylindrische Flächenachsen** (`Flaeche.lokale_achsen = "zylinder"`,
+`Flaeche.achse_plus_x`, beide in `NEUE_FELDER`; Maske der Fläche „Lokale
+Achsen“ und „+x (axial)“, nur bei gewölbten Flächen). Die Achse bestimmt
+`model.zylinderachse` aus der Geometrie: Die Richtung kommt aus den geraden
+Randlinien (sonst aus zwei Bogenmittelpunkten), der Punkt aus einem
+Bogenmittelpunkt; alle Randpunkte müssen denselben Abstand zur Achse haben.
++x ist `achse_plus_x`, auf die Achse projiziert, sonst die Richtung der ersten
+geraden Randlinie. Je Elementseite gilt: x axial, z radial nach außen,
+y = x × z, also rechtsdrehend um +x um den Umfang. Das System ist linkshändig,
+weil y um +x rechtsdrehend und z nach außen beides verlangt war; gebraucht
+werden nur die Richtungen. Die Lasten verteilt `Model._geometrielast_legen` je
+Elementseite (`zylinderachsen_je_seite`). Ohne die Einstellung entsteht keine
+Elementlast, und die Last trägt den Grund „lokale Achsen der gewölbten Fläche
+nicht gewählt“. Die Maske setzt die Wahl für alle Flächen derselben Bohrung,
+die Lasten in lokalen Achsen tragen (`flaechen_gleicher_achse`). Automatisch
+gesetzt wird sie nie.
 
 **Am Drehlager-Modell** (`Drehlager_V15_4_export.rf6`) stehen alle 711
 Flächenlasten (315 in lokal x, 396 in lokal y) auf den Flächen 142 und 159.
 Beide sind keine waagerechten Ebenen, sondern Viereckflächen aus zwei Geraden
 und zwei Bögen: die beiden Halbmäntel der Bolzenbohrung in V30 (Radius 300 mm,
 Länge 230 mm, Achse in global Y bei X = 0, Z = −1,28 m; 142 auf der −Z-Seite
-mit umgekehrter z-Achse, 159 auf der +Z-Seite). Sie bleiben darum genannt und
-nicht angesetzt. Welche Kraft sie in RFEM ergeben, hängt an der Achsenregel
-für gewölbte Flächen: In LF1 (lokal x −1394,75 kN/m², lokal y −339 kN/m² je
-Fläche, je 216 628 mm²) gibt lokal x 604,3 kN längs der Bolzenachse, wenn x
-auf beiden Halbmänteln parallel zur Achse läuft, 604,3 kN in −X, wenn x die
-globale X-Achse einer gedachten waagerechten Ebene ist, und 385,0 kN in −X,
-wenn x je Element die in die Tangentialebene projizierte X-Achse ist. Bis zum
-Vormittag des 14.10.2026 kamen diese Lasten senkrecht zur Fläche bzw. in
-global Z an, danach wurden sie nur genannt.
+mit umgekehrter z-Achse, 159 auf der +Z-Seite). Der Import hängt sie an die
+Flächen und setzt sie nicht an. Am Mittel-Modell gemessen (550 Elementseiten
+je Fläche, Lastsumme aus den Seitenlasten wie in der Rechnung, Kopie
+`drehlager_zylinderachsen.json` mit zylindrischen Achsen und +x = +Y in RFEM)
+ergibt sich in LF1 aus lokal x 604,7 kN axial in −Y (RFEM) und aus lokal y ein
+Moment von 44,07 kNm um die Bolzenachse ohne Restkraft. Mit RFEMs angezeigten
+Achsen wären es 385,2 kN in −X und keine axiale Kraft. Bis zum Vormittag des
+14.10.2026 kamen diese Lasten senkrecht zur Fläche bzw. in global Z an,
+danach wurden sie nur genannt.
 
 **Stablasten: Bezug in der Lastrichtung** (seit 14.10.2026). Eine eigene
 Spalte für „je wahrer“ oder „je projizierter Länge“ hat `LineTypeLoadImplForce`

@@ -3102,6 +3102,10 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     # lokale Flaechenachsen je Surface.id, einmal je Flaeche bestimmt (14.10.2026)
     n_lokal_achsen = n_lokal_z_normale = 0     # Zuordnungen Last -> Flaeche
     ohne_achsen: dict = {}          # (Kennzahl, Grund) -> [Surface.id, ...]
+    # lokal x/y auf gewoelbten Flaechen: haengen an der Flaeche, wirken erst mit
+    # zylindrischen Achsen (14.10.2026) - {Flaechenname: [(Lastfall, Kennzahl, p)]}
+    gewoelbt_info: dict = {}
+    n_gewoelbt = 0
     _achsen_cache: dict = {}
     _eingabe = _flaechenachsen_eingabe(db) if db.has("SurfaceLoad") else {}
 
@@ -3168,6 +3172,16 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             # Davor (bis 14.10.2026 vormittags) fielen lokal x/y ganz weg, und
             # lokal z wirkte immer nach der Netznormalen - auch dort, wo RFEM
             # die z-Achse der Flaeche umgedreht hatte.
+            #
+            # Lokal x/y auf einer **gewoelbten** Flaeche (seit 14.10.2026
+            # abends): nicht angesetzt, aber als Geometrielast mit ``lokal``
+            # an die Flaeche gehaengt. Sie wirkt erst, wenn der Anwender dort
+            # zylindrische Flaechenachsen waehlt. RFEMs eigene Achsen (x =
+            # global X in die Tangentialebene projiziert, je Element) und RFEMs
+            # Lastbild passen am Drehlager nicht zusammen (Sichtpruefung des
+            # Anwenders: Achsen x um den Umfang, Lastpfeile axial bzw. um den
+            # Umfang gleichsinnig) - was RFEM rechnet, ist offen, also wird
+            # nichts geraten.
             projiziert = rd in LOAD_DIRECTION_PROJEKTION
             lokal = rd in (0, 1, 2)
             if projiziert:
@@ -3191,10 +3205,20 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                 elif rd == 2:
                     richtung_je[sid] = None     # wie bisher: nach der Netznormalen
                     n_lokal_z_normale += 1
+                elif grund.startswith("gewoelbte") and sid in (surf_name or {}):
+                    richtung_je[sid] = {"achse": rd}    # wartet auf zylindrische Achsen
+                    gewoelbt_info.setdefault(surf_name[sid], []).append((lc, rd, p))
                 else:
                     ohne_achsen.setdefault((rd, grund), []).append(sid)
             if lokal and not richtung_je:
                 n_richtung[rd] = n_richtung.get(rd, 0) + 1
+                continue
+            wartend = [sid for sid, r in richtung_je.items() if isinstance(r, dict)]
+            for sid in wartend:
+                m.add_geometrielast(surf_name[sid], p, "flaeche", case=lc,
+                                    lokal=richtung_je.pop(sid))
+            if wartend and not richtung_je:
+                n_gewoelbt += 1
                 continue
             gelegt = False
             for sid in richtung_je:
@@ -3240,7 +3264,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         # ihre Umsetzungstabelle wortlos aus, und genau das soll nicht mehr
         # unbemerkt bleiben.
         fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag + n_lf
-                         + sum(n_richtung.values()))
+                         + sum(n_richtung.values()) + n_gewoelbt)
         if n_lf:
             C.warn(log, f"  {n_lf} Flaechenlasten ohne aufloesbaren Lastfall - nicht "
                         "uebernommen: der Lastfall, an dem sie haengen, fehlt in der "
@@ -3277,6 +3301,8 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             C.say(log, f"    {n_lokal_z_normale} Zuordnungen in lokal z ohne bestimmbare "
                        "Flaechenachsen - senkrecht nach der Normalen des Netzes angesetzt "
                        "(eine in RFEM umgedrehte z-Achse wirkt dort nicht)")
+        if gewoelbt_info:
+            _gewoelbt_melden(log, gewoelbt_info, n_gewoelbt)
         for (rd, grund), sids in sorted(ohne_achsen.items()):
             namen = sorted({(surf_name or {}).get(s, str(s)) for s in sids})
             C.warn(log, f"  {len(sids)} Zuordnungen Flaechenlast -> Flaeche in "
@@ -3463,6 +3489,33 @@ def _projektionsanteil(m: Model, e: int, richtung) -> float:
         n = np.cross(X[1] - X[0], X[2] - X[0])
     L = float(np.linalg.norm(n))
     return abs(float(n @ np.asarray(richtung, float))) / L if L > 0 else 0.0
+
+
+def _gewoelbt_melden(log: list, info: dict, n_lasten: int) -> None:
+    """WARNUNG fuer Lasten in lokal x/y auf gewoelbten Flaechen: Flaechen,
+    Lastfaelle und Betraege, dazu der Weg ueber zylindrische Achsen."""
+    def zahl(v):
+        return f"{v / 1e3:+.2f}".replace(".", ",") + " kN/m²"
+    namen = sorted(info)
+    je_lf: dict = {}
+    for name in namen:
+        for lc, rd, p in info[name]:
+            je_lf.setdefault(lc, {})[rd] = p
+    teile = []
+    for lc in list(je_lf)[:6]:
+        w = je_lf[lc]
+        teile.append(f"{lc}: " + ", ".join(f"{'xy'[rd]} {zahl(w[rd])}" for rd in sorted(w)))
+    rest = len(je_lf) - len(teile)
+    C.warn(log, f"  {n_lasten} Flaechenlasten in lokal x/y auf gewoelbten Flaechen ("
+                + ", ".join(namen[:12]) + (", …" if len(namen) > 12 else "")
+                + ") NICHT angesetzt - " + "; ".join(teile)
+                + (f"; und {rest} weitere Lastfaelle" if rest > 0 else "")
+                + ". Die lokalen Achsen einer gewoelbten Flaeche bildet RFEM je Element "
+                  "(x = global X in die Tangentialebene projiziert); RFEMs Lastbild zeigt "
+                  "am Drehlager etwas anderes, was RFEM rechnet, ist offen. Die Lasten "
+                  "haengen an der Flaeche und wirken erst, wenn dort zylindrische "
+                  "Flaechenachsen gewaehlt sind (Flaeche bearbeiten, „Lokale Achsen: "
+                  "zylindrisch“ mit Richtung von +x).")
 
 
 def _flaechenachsen_eingabe(db: Db) -> dict:

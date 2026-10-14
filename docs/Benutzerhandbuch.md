@@ -7465,16 +7465,39 @@ Drehwinkel der Fläche um z gedreht, y = z × x. Das Importprotokoll nennt die
 Annahme als WARNUNG; bitte prüfen Sie an einer Fläche in RFEM, ob die
 angezeigten Flächenachsen dazu passen. Gewölbte Flächen (zum Beispiel ein
 Viereck aus zwei Bögen, der Mantel einer Bohrung) und Flächen mit einer anderen
-Achsenkategorie als „Drehung um Winkel“ bekommen keine Achsen: eine Last in
-lokal x oder y wird dort genannt und nicht angesetzt, eine Last in lokal z
-wirkt wie bisher senkrecht nach der Normalen des Netzes. Bis zum 14.10.2026
-(vormittags) fielen Flächenlasten in lokal x und y immer weg, und lokal z
-wirkte immer nach der Normalen des Netzes, auch wenn RFEM die z-Achse der
-Fläche umgedreht hatte; noch davor kamen lokal x und y senkrecht zur Fläche
-bzw. in global Z an. Am Drehlager-Modell stehen alle 711 Flächenlasten (315 in
-lokal x, 396 in lokal y) auf den Flächen 142 und 159. Beide sind Halbmäntel
-der Bolzenbohrung in V30 (Radius 300 mm, Länge 230 mm, Achse in global Y), also
-gewölbt; ihre Lasten werden darum weiter nur genannt.
+Achsenkategorie als „Drehung um Winkel“ bekommen keine Achsen aus RFEM: eine
+Last in lokal z wirkt dort wie bisher senkrecht nach der Normalen des Netzes,
+eine Last in lokal x oder y wird nicht angesetzt (nächster Absatz). Bis zum
+14.10.2026 (vormittags) fielen Flächenlasten in lokal x und y immer weg, und
+lokal z wirkte immer nach der Normalen des Netzes, auch wenn RFEM die z-Achse
+der Fläche umgedreht hatte; noch davor kamen lokal x und y senkrecht zur
+Fläche bzw. in global Z an.
+
+**Lasten in lokal x und y auf gewölbten Flächen, zylindrische Flächenachsen**
+(seit 14.10.2026). Auf einer gewölbten Fläche bildet RFEM die lokalen Achsen
+je finitem Element, und am Drehlager passen RFEMs Achsen und RFEMs Lastbild
+nicht zusammen. Die Sichtprüfung vom 14.10.2026 an den Halbmänteln 142 und 159
+der Bolzenbohrung ergab Folgendes: Die angezeigte x-Achse läuft um den Umfang,
+auf beiden Flächen im Umlaufsinn entgegengesetzt (die globale X-Achse in die
+Tangentialebene projiziert), und z zeigt nach außen. Die Lastpfeile derselben
+Lasten zeigen dagegen 1 394,75 kN/m² axial, auf beiden Flächen in dieselbe
+Richtung, und 339 kN/m² gleichsinnig um den Umfang wie ein Reibmoment. Was RFEM
+damit rechnet, ist offen. Darum setzt der Import solche Lasten **nicht** an. Er
+hängt sie an die Fläche und nennt sie als WARNUNG mit Flächen, Lastfällen und
+Beträgen. Wirksam werden sie erst, wenn Sie an der Fläche zylindrische Achsen
+wählen: Fläche bearbeiten, „Lokale Achsen: zylindrisch“, dazu „+x (axial)“.
+Dann läuft x längs der Zylinderachse in der gewählten Richtung (Vorgabe:
+Richtung der ersten geraden Randlinie), y gleichsinnig um den Umfang
+(rechtsdrehend um +x) und z nach außen. Diese Achsen bilden ein
+linkshändiges System, weil y um +x rechtsdrehend und z zugleich nach außen
+verlangt war; gerechnet wird nur mit den Richtungen. Die Achse ergibt sich aus
+der Geometrie, also aus den Bogenmittelpunkten und den geraden Randlinien. Die
+Wahl gilt für alle Flächen derselben Bohrung, die solche Lasten tragen. Eine
+Last in lokal x wirkt dann auf allen diesen Flächen axial in dieselbe globale
+Richtung, eine Last in lokal y als Moment um die Achse ohne Restkraft.
+Gesetzt wird die Einstellung nie automatisch. Am Drehlager-Modell betrifft das
+alle 711 Flächenlasten (315 in lokal x, 396 in lokal y) auf den Flächen 142
+und 159 (Radius 300 mm, Länge 230 mm, Achse in global Y).
 
 **Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
 Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im

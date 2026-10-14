@@ -1275,6 +1275,12 @@ class Geometrielast:
     #: geben einen linearen Verlauf entlang ihrer Verbindung (Wasserdruck,
     #: Erddruck), drei Punkte eine Ebene der Lastwerte. Leer = gleichmaessig p.
     verlauf: dict = field(default_factory=dict)
+    #: Last in den **lokalen Achsen einer gewoelbten Flaeche** (RFEM-Import,
+    #: 14.10.2026): {"achse": 0 (x) oder 1 (y)}; ``richtung`` bleibt leer.
+    #: Sie wirkt erst, wenn an der Flaeche zylindrische Achsen gewaehlt sind
+    #: (Flaeche.lokale_achsen = "zylinder") - dann je Elementseite in der
+    #: Richtung dieser Achse. Leer = keine solche Last.
+    lokal: dict = field(default_factory=dict)
 
     def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
@@ -1848,7 +1854,8 @@ class LoadCase:
             "beam_loads": [{k: v for k, v in asdict(l).items() if k != "bezugslaenge" or v}
                            for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
-            "geometrielasten": [asdict(l) for l in self.geometrielasten],
+            "geometrielasten": [_ohne_vorgabe("load_cases.geometrielasten", asdict(l))
+                                for l in self.geometrielasten],
             # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei;
             # den Stand des Verteilens (verteilt) schreibt niemand, er entsteht neu
             "linienlasten": [{k: v for k, v in asdict(l).items()
@@ -2876,6 +2883,19 @@ class Flaeche:
     #: (noch) nicht.
     integrierte_knoten: list[int] = field(default_factory=list)
     integrierte_linien: list[str] = field(default_factory=list)
+    #: Lokale Flaechenachsen fuer Lasten in lokal x/y einer **gewoelbten**
+    #: Flaeche (Geometrielast.lokal, 14.10.2026): "" = keine (die Lasten
+    #: wirken nicht), "zylinder" = zylindrische Achsen: x laengs der
+    #: Zylinderachse in Richtung ``achse_plus_x``, y gleichsinnig um den
+    #: Umfang (rechtsdrehend um +x), z nach aussen. Gesetzt wird das nie
+    #: automatisch, nur vom Anwender (Flaeche bearbeiten). RFEMs eigene Achsen
+    #: einer gewoelbten Flaeche (x = global X in die Tangentialebene
+    #: projiziert) passen am Drehlager nicht zu RFEMs Lastbild - siehe
+    #: docs/Schnittstellen.md.
+    lokale_achsen: str = ""
+    #: Globale Richtung von +x bei zylindrischen Achsen (wird auf die Achse
+    #: projiziert); leer = Richtung der ersten geraden Randlinie.
+    achse_plus_x: list[float] = field(default_factory=list)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -3088,6 +3108,155 @@ def polygon_eben(P, tol: float = 1e-3) -> bool:
         return True
     n = np.linalg.svd(Q, full_matrices=False)[2][2]
     return float(np.abs(Q @ n).max()) <= tol * groesse
+
+
+# --------------------------------------------------------------------------
+# Zylindrische Flaechenachsen (14.10.2026)
+# --------------------------------------------------------------------------
+def polygon_gerade(Q, tol: float = 1e-6) -> bool:
+    """Liegen die Punkte auf einer Geraden?"""
+    Q = np.asarray(Q, float)
+    d = Q[-1] - Q[0]
+    L = float(np.linalg.norm(d))
+    if L <= 0:
+        return True
+    abst = np.linalg.norm(np.cross(Q - Q[0], d / L), axis=1)
+    return float(abst.max()) <= tol * max(L, 1.0)
+
+
+def _kreismitte(a, b, c):
+    """Mittelpunkt des Kreises durch drei Punkte - oder None."""
+    a, b, c = (np.asarray(x, float) for x in (a, b, c))
+    u, v = b - a, c - a
+    w = np.cross(u, v)
+    w2 = float(w @ w)
+    if w2 <= 1e-24:
+        return None
+    return a + (np.cross(w, u) * float(v @ v) + np.cross(v, w) * float(u @ u)) / (2.0 * w2)
+
+
+def _linie_punkte(model, name: str, teilung: int = 16):
+    """Punkte einer Linie in ihrer Definitionsrichtung (krumme abgetastet) - oder None."""
+    ln = model.lines.get(name)
+    if ln is None or len(ln.nodes) < 2:
+        return None
+    p0 = np.asarray(model.nodes[int(ln.nodes[0])], float)
+    if (ln.typ or "polyline") != "polyline":
+        try:
+            Q = np.asarray(ln.kurve(model).punkte(max(teilung, 4)), float)
+        except Exception:                # noqa: BLE001 - krumm, aber unbrauchbar
+            Q = None
+        if Q is not None and len(Q) > 1:
+            return Q[::-1] if np.linalg.norm(Q[0] - p0) > np.linalg.norm(Q[-1] - p0) else Q
+    return np.asarray(model.nodes[[int(k) for k in ln.nodes]], float)
+
+
+def zylinderachse(model, f, tol: float = 1e-3):
+    """(Punkt, Einheitsrichtung, Radius) der Zylinderachse einer gewoelbten
+    Flaeche aus ihrer Geometrie - oder None.
+
+    Die Richtung geben die geraden Randlinien (Mantellinien), den Punkt der
+    Mittelpunkt eines Bogens; ohne gerade Randlinie verbindet die Achse zwei
+    Bogenmittelpunkte. Geprueft wird, dass alle abgetasteten Randpunkte
+    denselben Abstand zur Achse haben (relativ ``tol``)."""
+    gerade, mitten = [], []
+    for ln_name in (f.linien or []):
+        Q = _linie_punkte(model, ln_name, 16)
+        if Q is None:
+            continue
+        d = Q[-1] - Q[0]
+        L = float(np.linalg.norm(d))
+        if len(Q) < 3 or polygon_gerade(Q):
+            if L > 0:
+                gerade.append(d / L)
+            continue
+        mi = _kreismitte(Q[0], Q[len(Q) // 2], Q[-1])
+        if mi is not None:
+            mitten.append(mi)
+    if not mitten:
+        return None
+    if gerade:
+        e = gerade[0]
+        if any(abs(abs(float(g @ e)) - 1.0) > tol for g in gerade):
+            return None
+    elif len(mitten) >= 2 and float(np.linalg.norm(mitten[1] - mitten[0])) > 0:
+        e = (mitten[1] - mitten[0]) / float(np.linalg.norm(mitten[1] - mitten[0]))
+    else:
+        return None
+    a0 = mitten[0]
+    P = np.asarray(f.randpunkte(model, 16), float)
+    r = P - a0
+    r = r - np.outer(r @ e, e)
+    rr = np.linalg.norm(r, axis=1)
+    R = float(rr.mean())
+    if R <= 0 or float(np.abs(rr - R).max()) > 10.0 * tol * R:
+        return None
+    return a0, e, R
+
+
+def zylinder_plus_x(model, f, e):
+    """+x der zylindrischen Achsen: ``achse_plus_x`` der Flaeche, sonst die
+    Richtung der ersten geraden Randlinie - als Vorzeichen auf der Achse e."""
+    v = np.asarray(f.achse_plus_x, float) if len(f.achse_plus_x or []) == 3 else None
+    if v is None:
+        for ln_name in (f.linien or []):
+            Q = _linie_punkte(model, ln_name, 4)
+            if Q is not None and polygon_gerade(Q):
+                v = Q[-1] - Q[0]
+                break
+    if v is None or abs(float(v @ e)) <= 1e-9:
+        return np.asarray(e, float)
+    return np.asarray(e, float) if float(v @ e) > 0 else -np.asarray(e, float)
+
+
+#: Wahl der lokalen Achsen einer gewoelbten Flaeche in der Maske -> Feldwert
+LOKALE_ACHSEN = {"keine (Lasten in lokal x/y wirken nicht)": "",
+                 "zylindrisch (x axial, y um den Umfang, z nach außen)": "zylinder"}
+#: Wahl der Richtung von +x bei zylindrischen Achsen -> achse_plus_x
+ACHSE_PLUS_X = {"Richtung der ersten geraden Randlinie": [],
+                "+X": [1.0, 0.0, 0.0], "−X": [-1.0, 0.0, 0.0],
+                "+Y": [0.0, 1.0, 0.0], "−Y": [0.0, -1.0, 0.0],
+                "+Z": [0.0, 0.0, 1.0], "−Z": [0.0, 0.0, -1.0]}
+
+
+def flaechen_gleicher_achse(model, name: str, tol: float = 1e-3) -> list:
+    """Die Flaeche ``name`` und alle Flaechen mit Lasten in lokalen Achsen
+    (Geometrielast.lokal), die auf derselben Zylinderachse liegen - die
+    Halbmaentel einer Bohrung. Fuer sie gilt dieselbe Achsenwahl."""
+    f = model.flaechen.get(name)
+    a = zylinderachse(model, f) if f is not None else None
+    if a is None:
+        return [name] if f is not None else []
+    a0, e, R = a
+    kandidaten = {gl.ziel for lc in model.load_cases.values() for gl in lc.geometrielasten
+                  if gl.lokal and gl.art == "flaeche"}
+    out = [name]
+    for n in sorted(kandidaten - {name}):
+        g = model.flaechen.get(n)
+        b = zylinderachse(model, g) if g is not None else None
+        if b is None:
+            continue
+        d = b[0] - a0
+        abstand = float(np.linalg.norm(d - float(d @ e) * e))
+        if abs(abs(float(b[1] @ e)) - 1.0) <= tol and abstand <= tol * max(R, 1e-9) * 10:
+            out.append(n)
+    return out
+
+
+def zylinderachsen_je_seite(mitte, a0, x):
+    """(x, y, z) zylindrischer Flaechenachsen an einem Punkt: x laengs der
+    Achse (schon mit Vorzeichen), z radial nach aussen, y = x x z - also
+    rechtsdrehend um +x um den Umfang. (x, y, z) ist damit **linkshaendig**:
+    die Vorgabe des Anwenders (y rechtsdrehend um +x, z nach aussen) laesst
+    sich nicht anders erfuellen; gerechnet wird nur mit den Richtungen."""
+    x = np.asarray(x, float)
+    r = np.asarray(mitte, float) - np.asarray(a0, float)
+    r = r - float(r @ x) * x
+    L = float(np.linalg.norm(r))
+    if L <= 0:
+        return None
+    z = r / L
+    return x, np.cross(x, z), z
 
 
 def _randstuecke(model, linien: list[str]) -> list:
@@ -5393,6 +5562,9 @@ class Model:
             for key in ("mitte", "zentrum", "normale", "achse", "richtung"):
                 if key in g and g[key] is not None and hasattr(g[key], "__len__"):
                     g[key] = dreh_punkt(g[key])
+        for f in (self.flaechen or {}).values():
+            if len(getattr(f, "achse_plus_x", None) or []) == 3:
+                f.achse_plus_x = dreh_punkt(f.achse_plus_x)
         for lc in self.load_cases.values():
             for l in lc.nodal_loads:
                 l.F = dreh_vektor6(l.F)
@@ -6941,6 +7113,12 @@ class Model:
                 else self.koerper.get(gl.ziel))
         if ziel is None:
             return "Ziel gibt es im Modell nicht"
+        if gl.lokal and gl.art == "flaeche":
+            if getattr(ziel, "lokale_achsen", "") != "zylinder":
+                return ("lokale Achsen der gewölbten Fläche nicht gewählt – wirkt erst mit "
+                        "zylindrischen Flächenachsen (Fläche bearbeiten)")
+            if zylinderachse(self, ziel) is None:
+                return "die Fläche ist kein Zylindermantel – zylindrische Achsen nicht bestimmbar"
         if gl.art == "flaeche" and not (ziel.elemente or ziel.randseiten):
             return "Ziel noch nicht vernetzt"
         if gl.art != "flaeche" and not ziel.elemente:
@@ -7077,7 +7255,14 @@ class Model:
                 p = gl.p
             if c is not None:
                 p = p * (-c)        # Last je Quadratmeter der Projektion
-            out.append(FaceLoad(int(e), p, int(seite), richtung))
+            r_seite = richtung
+            if zyl is not None:
+                # zylindrische Flaechenachsen je Seite (Geometrielast.lokal)
+                ax = zylinderachsen_je_seite(self._seitenmitte(e, seite), zyl[0], zyl[1])
+                if ax is None:
+                    return
+                r_seite = [float(v) for v in ax[int(gl.lokal.get("achse", 0))]]
+            out.append(FaceLoad(int(e), p, int(seite), r_seite))
 
         flaechen = []
         if gl.art == "flaeche":
@@ -7089,6 +7274,17 @@ class Model:
             if k is not None:
                 flaechen = [self.flaechen[n] for n in (k.flaechen or [])
                             if n in self.flaechen]
+        zyl = None
+        if gl.lokal:
+            # Last in lokalen Achsen einer gewoelbten Flaeche: sie wirkt nur
+            # mit gewaehlten zylindrischen Achsen (Flaeche.lokale_achsen)
+            f0 = flaechen[0] if (gl.art == "flaeche" and flaechen) else None
+            if f0 is None or f0.lokale_achsen != "zylinder":
+                return out
+            achse = zylinderachse(self, f0)
+            if achse is None:
+                return out
+            zyl = (achse[0], zylinder_plus_x(self, f0, achse[1]))
         for f in flaechen:
             for e in (f.elemente or []):
                 nimm(e, 0)
@@ -7101,17 +7297,18 @@ class Model:
                           bereich: dict = None,
                           projiziert: bool = False, lastart: str = "druck",
                           dT: float = 0.0, dT_z: float = 0.0,
-                          verlauf: dict = None) -> "Geometrielast":
+                          verlauf: dict = None, lokal: dict = None) -> "Geometrielast":
         """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen).
 
         ``lastart`` "druck" (Flaechenlast p, gleichmaessig oder mit
         ``verlauf``) oder "temperatur" (dT, dT_z auf alle Elemente).
+        ``lokal`` siehe :attr:`Geometrielast.lokal`.
         """
         gl = Geometrielast(str(ziel), art, float(p),
                            list(richtung) if richtung else None,
                            dict(bereich or {}), bool(projiziert),
                            lastart=str(lastart), dT=float(dT), dT_z=float(dT_z),
-                           verlauf=dict(verlauf or {}))
+                           verlauf=dict(verlauf or {}), lokal=dict(lokal or {}))
         self.case(case).geometrielasten.append(gl)
         return gl
 
@@ -9141,7 +9338,7 @@ class Model:
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
             "kontaktbedingungen": [_beh_dict(asdict(x))
                                    for x in self.kontaktbedingungen.values()],
-            "flaechen": [asdict(x) for x in self.flaechen.values()],
+            "flaechen": [_ohne_vorgabe("flaechen", asdict(x)) for x in self.flaechen.values()],
             "koerper": [_ohne_vorgabe("koerper", asdict(x)) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
             "netz": _ohne_vorgabe("netz", asdict(self.netz)),
@@ -9655,6 +9852,10 @@ NEUE_FELDER = {
     # Stablaenge, "projektion" = je Laenge der Projektion; seit 14.10.2026)
     "load_cases.beam_loads": {"bezugslaenge": ""},
     "load_cases.linienlasten": {"bezugslaenge": ""},
+    # import/gewoelbt (Lasten in lokalen Achsen gewoelbter Flaechen und
+    # zylindrische Flaechenachsen; seit 14.10.2026)
+    "load_cases.geometrielasten": {"lokal": {}},
+    "flaechen": {"lokale_achsen": "", "achse_plus_x": []},
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen)
     "": {"stabeinleitung": asdict(Stabeinleitung())},
 }

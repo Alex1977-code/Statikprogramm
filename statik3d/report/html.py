@@ -1492,8 +1492,10 @@ class Report:
                         for pt in P)
                 rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
                              fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
-                             "senkrecht" if not g.richtung else
-                             "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")",
+                             (f"lokal {'xyz'[int(g.lokal.get('achse', 0))]} (Flächenachsen)"
+                              if getattr(g, "lokal", None) else
+                              "senkrecht" if not g.richtung else
+                              "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")"),
                              "ja" if g.projiziert else "nein",
                              g.bereich.get("art", "ja") if g.bereich else "–",
                              g.kommentar or "–"])

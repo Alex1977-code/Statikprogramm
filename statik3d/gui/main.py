@@ -24,7 +24,7 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 
 from ..model import (Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM,
-                     FLAECHENARTEN, NameVergeben)
+                     FLAECHENARTEN, NameVergeben, LOKALE_ACHSEN, ACHSE_PLUS_X, flaechen_gleicher_achse)
 from .. import solver, mesher, parallel, supports, __version__
 from .. import passungen as pss
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
@@ -8505,6 +8505,25 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("elemente", "Elemente", "info", str(len(f.elemente)) if f else "0"),
                           F("vernetzen", "gleich vernetzen", "haken", not (f is not None and f.elemente)),
                           F("kommentar", "Kommentar", "text", (f.kommentar if f else ""), breite=160)]
+                if f is not None and str(getattr(f, "typ", "") or "eben") != "eben":
+                    # Lasten in lokal x/y einer gewoelbten Flaeche wirken nur mit
+                    # gewaehlten Achsen (14.10.2026); nie automatisch gesetzt
+                    plus = list(getattr(f, "achse_plus_x", None) or [])
+                    felder[-1:-1] = [
+                        F("lokale_achsen", "Lokale Achsen", "wahl",
+                          next((k for k, v in LOKALE_ACHSEN.items()
+                                if v == (getattr(f, "lokale_achsen", "") or "")),
+                               next(iter(LOKALE_ACHSEN))), list(LOKALE_ACHSEN),
+                          hinweis="Für Lasten in lokal x/y aus RFEM. RFEMs eigene Achsen einer "
+                                  "gewölbten Fläche (x = global X in die Tangentialebene projiziert) "
+                                  "passen am Drehlager nicht zu RFEMs Lastbild – darum wirken solche "
+                                  "Lasten erst mit zylindrischen Achsen. Gilt für alle Flächen derselben "
+                                  "Bohrung."),
+                        F("achse_plus_x", "+x (axial)", "wahl",
+                          next((k for k, v in ACHSE_PLUS_X.items() if v == plus),
+                               next(iter(ACHSE_PLUS_X))), list(ACHSE_PLUS_X),
+                          hinweis="Richtung von +x längs der Zylinderachse; eine Last in lokal x "
+                                  "wirkt auf allen Flächen der Bohrung in dieselbe globale Richtung")]
                 titel = f"Fläche {name}"
         elif art in ("geokoerper", "geokoerper_einzeln"):
             if not eintrag:
@@ -10997,6 +11016,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             m.elemente_loeschen(f.elemente)
                             f.elemente, f.randseiten = [], []
                         f.typ = typ
+                    if "lokale_achsen" in w:
+                        # zylindrische Achsen (14.10.2026): fuer alle Flaechen
+                        # derselben Bohrung gleich, damit lokal x ueberall in
+                        # dieselbe globale Richtung wirkt
+                        modus = LOKALE_ACHSEN.get(str(w.get("lokale_achsen") or ""), "")
+                        plus = list(ACHSE_PLUS_X.get(str(w.get("achse_plus_x") or ""), []))
+                        for n in flaechen_gleicher_achse(m, name):
+                            m.flaechen[n].lokale_achsen = modus
+                            m.flaechen[n].achse_plus_x = list(plus)
+                        m.lasten_verteilen()
             elif art == "geokoerper_einzeln":
                 flaechen = self._namensliste(w.get("flaechen"))
                 fehlt = [x for x in flaechen if x not in m.flaechen]
