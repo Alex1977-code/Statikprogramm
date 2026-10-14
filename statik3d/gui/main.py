@@ -16997,6 +16997,37 @@ class MainWindow(QtWidgets.QMainWindow):
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
         lay.addWidget(gp)
 
+        # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
+        # Ingenieurgroessen - wie viel die Restwechsel pendelnder Knoten tragen und
+        # wie weit sie klaffen duerfen. Am Modell gespeichert (Plastizitaet.
+        # pendel_kraft_anteil, pendel_weg), gilt fuer jeden Kontaktlauf, auch ohne Fliessen
+        gk = QtWidgets.QGroupBox("Kontaktlauf (Einstellung am Modell)")
+        gkl = QtWidgets.QVBoxLayout(gk)
+        self.sp_pendel_kraft = QtWidgets.QDoubleSpinBox()
+        self.sp_pendel_kraft.setRange(0.0, 10.0)
+        self.sp_pendel_kraft.setDecimals(3)
+        self.sp_pendel_kraft.setSingleStep(0.05)
+        self.sp_pendel_kraft.setSuffix(" %")
+        self.sp_pendel_kraft.setValue(0.1)
+        self.sp_pendel_weg = QtWidgets.QDoubleSpinBox()
+        self.sp_pendel_weg.setRange(0.0, 1000.0)
+        self.sp_pendel_weg.setDecimals(2)
+        self.sp_pendel_weg.setSingleStep(0.5)
+        self.sp_pendel_weg.setSuffix(" µm")
+        self.sp_pendel_weg.setValue(1.0)
+        tip = ("Pendelt der Status einzelner Kontaktknoten mit Periode 2 (offen/geschlossen oder "
+               "Haften/Gleiten wechseln jede Runde hin und her), wird ihr Status eingefroren, der Rest "
+               "rechnet weiter, und am Ende wird geprüft. Der Kontaktlauf gilt als konvergiert, wenn die "
+               "Restwechsel zusammen höchstens diesen Anteil der Kontaktkraft tragen und ihre Klaffung "
+               "bzw. Durchdringung höchstens diesen Weg erreicht. Sonst ist er nicht konvergiert, und mit "
+               "Fließen wird die Laststufe halbiert.\n\n"
+               "Vorgabe 0,1 % und 1 µm (Entscheidung vom 14.10.2026). 0 schaltet die Regel ab: dann "
+               "endet ein pendelnder Lauf wie bisher am Deckel der Reibungsnachprüfung.")
+        self.sp_pendel_kraft.setToolTip(tip)
+        self.sp_pendel_weg.setToolTip(tip)
+        gkl.addWidget(row("Restwechsel bis", self.sp_pendel_kraft, "   Klaffung bis", self.sp_pendel_weg))
+        lay.addWidget(gk)
+
         self.experten = msk.Einklappabschnitt(
             "Experten", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
             offen=fen.abschnitt_offen("berechnung_experten"))
@@ -24224,6 +24255,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_kontakt.setCurrentIndex(w if w >= 0 else 0)
         w = self.cb_plast_abbruch.findData(str(getattr(pz, "abbruch", "ingenieurmaessig")))
         self.cb_plast_abbruch.setCurrentIndex(w if w >= 0 else 0)
+        if hasattr(self, "sp_pendel_kraft"):
+            self.sp_pendel_kraft.setValue(float(getattr(pz, "pendel_kraft_anteil", 1e-3)) * 100.0)
+            self.sp_pendel_weg.setValue(float(getattr(pz, "pendel_weg", 1e-6)) * 1e6)
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -24250,6 +24284,14 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
         pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
         pz.abbruch = str(self.cb_plast_abbruch.currentData() or "ingenieurmaessig")
+        if hasattr(self, "sp_pendel_kraft"):
+            # gerundet wie angezeigt: sonst aenderte schon das Oeffnen der Maske
+            # die Einstellung um Rundungsreste und meldete eine Aenderung
+            alt_k, alt_w = float(getattr(pz, "pendel_kraft_anteil", 1e-3)), float(getattr(pz, "pendel_weg", 1e-6))
+            k = float(self.sp_pendel_kraft.value()) / 100.0
+            w_ = float(self.sp_pendel_weg.value()) / 1e6
+            pz.pendel_kraft_anteil = alt_k if round(alt_k * 100.0, 3) == round(k * 100.0, 3) else k
+            pz.pendel_weg = alt_w if round(alt_w * 1e6, 2) == round(w_ * 1e6, 2) else w_
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()

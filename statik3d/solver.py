@@ -3860,6 +3860,11 @@ def _laufbuch_eintrag(nr: int, cinfo: dict, art: str = "", start_von_lauf=None) 
         # Ein cinfo ohne Laufangaben (Einheitstest, aelterer Stand): der
         # Grund ist unbekannt, aber leer darf er nur bei Konvergenz sein
         grund = "" if konvergiert else "unbekannt"
+    if lauf.get("pendeln"):
+        # Pendeln mit Periode 2 eingefroren und geprueft (14.10.2026) - nur dann
+        return dict(_laufbuch_eintrag(nr, {**cinfo, "contact_lauf": {k: v for k, v in lauf.items()
+                                                                     if k != "pendeln"}},
+                                      art, start_von_lauf), pendeln=dict(lauf["pendeln"]))
     return {"nr": int(nr), "art": str(art or ""),
             "schritte": int(cinfo.get("contact_iterations", 0) or 0),
             "faktorisierungen": int(cinfo.get("contact_factorisations", 0) or 0),
@@ -7685,6 +7690,245 @@ def _pendel_zeilen(model: Model, cs, ids, u, u_vor) -> tuple:
     return zeilen, f_max, w_max
 
 
+# --------------------------------------------------------------------------
+# Pendeln mit Periode 2: erkennen, einfrieren, pruefen (14.10.2026)
+# --------------------------------------------------------------------------
+#
+# Entscheidung des Anwenders vom 14.10.2026 (woertlich): „Bei Pendeln mit
+# Periode 2 nicht halbieren, sondern erkennen und stabilisieren:
+# Statuswechsel mit Toleranzen (Durchdringung g_tol, Zug p_tol) oder Status
+# pendelnder Knoten einfrieren mit anschließender Prüfung. Konvergenz des
+# Kontaktlaufs über Ingenieurgrößen definieren: Restwechsel nur an Knoten mit
+# zusammen < 0,1 % der Kontaktkraft und Klaffung/Durchdringung < 1 µm, beides
+# einstellbar.“
+#
+# Gewaehlt ist das Einfrieren mit Pruefung, nicht die Hysterese. Warum:
+#   * Die Pruefung ist genau die Konvergenzbedingung des Anwenders - die
+#     eingefrorenen Knoten sind die Restwechsel, und ihre Kraft und ihr Weg
+#     werden an beiden Zustaenden des Zyklus und an der letzten Loesung
+#     gemessen und gegen die Schranken gestellt. Eine Hysterese entscheidet
+#     dagegen jeden Statuswechsel aller Knoten an einem Band; wo die Rechnung
+#     darin stehen bleibt, haengt vom Weg ab, und die Abweichung waere nur
+#     durch das Band beschraenkt, nicht gemessen.
+#   * Ein Band auf die Durchdringung beschraenkt die Kraft nicht: an der
+#     exakten Bedingung des Drehlagers (oertliche Steifigkeit um 2e10 N/m) sind
+#     1 µm rund 20 kN. Die Pruefung misst beides.
+#   * Wer nicht pendelt, rechnet bitgleich wie vorher: eingefroren wird erst
+#     ein bestaetigter Zyklus des ganzen Zustands (A B A B), die
+#     Entscheidungsregel der uebrigen Knoten bleibt unberuehrt.
+#   * Die Kontaktbedingung bleibt dieselbe: eine eingefrorene geschlossene
+#     Bedingung haelt g = 0 exakt, eine offene traegt nichts; eingefroren ist
+#     nur die Entscheidung ueber den Status.
+#
+# Ablauf (solve_with_contact): ab Phase 2 je Runde der Status je Bedingung
+# (aktiv, gleitet, fliesst). Kehrt der ganze Zustand in Runde n zu dem von
+# Runde n-2 zurueck, nachdem er in n-1 ein anderer war, werden die Kraefte
+# dieser Loesung fuer die Bedingungen gemerkt, die sich zwischen beiden
+# Zustaenden unterscheiden; war es in n-1 ebenso, pendelt die Aktivmenge mit
+# Periode 2 (A B A B), und genau diese Bedingungen pendeln. Gemessen wird je Knoten
+# die Kraft, die zwischen den beiden Zustaenden wechselt (|ΔF|, Normal- und
+# Reibkraft), und der Weg: bei Oeffnen/Schliessen die Klaffung bzw.
+# Durchdringung im offenen Zustand, bei Haften/Gleiten die Aenderung des
+# Wegs in der Fuge. Dann wird ihr Status eingefroren (contact.Constraint.
+# pendel_fest) - im Zustand dieser Loesung -, und die uebrigen Bedingungen
+# iterieren weiter. Endet der Lauf, prueft :meth:`ContactSystem.pendel_pruefen`
+# die eingefrorenen an der letzten Loesung. Konvergiert heisst dann: der Rest
+# ist (streng oder nach dem Ingenieurkriterium) konvergiert, und die
+# Restwechsel tragen zusammen hoechstens ``Plastizitaet.pendel_kraft_anteil``
+# der Kontaktkraft, ihr Weg ist hoechstens ``Plastizitaet.pendel_weg`` - je
+# Knoten das Groessere aus Zyklus und letzter Loesung. Sonst ist der Lauf nicht
+# konvergiert (Grund "pendeln"), und die Plastizitaet halbiert wie bei jedem
+# echten Nichtkonvergieren.
+#
+# Zusammenspiel: das Ingenieurkriterium (ABSCHLUSS_INGENIEUR) prueft vorher
+# und bleibt, wie es ist - nimmt es einen Zustand an, ist der Lauf fertig wie
+# bisher. Der Pendelschutz B4 (contact.UMKEHR_HAFTET, PENDEL_EINZELN) wirkt
+# in der Aktualisierung jeder Runde und loest viele Zyklen der Reibung auf,
+# bevor sie bestaetigt sind; was danach noch mit Periode 2 pendelt, friert
+# diese Regel ein. Eine Schranke 0 schaltet die Regel ab: dann rechnet der
+# Lauf streng wie vor dem 14.10.2026.
+PENDEL_STABILISIEREN = True
+#: Vorgaben der Schranken (einstellbar am Modell: Plastizitaet.pendel_kraft_anteil,
+#: Plastizitaet.pendel_weg) - Entscheidung des Anwenders vom 14.10.2026
+PENDEL_KRAFT_ANTEIL = 1.0e-3
+PENDEL_WEG = 1.0e-6
+
+
+def pendel_schwellen(model) -> tuple:
+    """(Kraftanteil, Weg [m]) der Restwechsel aus den Einstellungen am Modell;
+    fehlen sie (aeltere Einstellungen), die Vorgaben."""
+    pz = getattr(model, "plastizitaet", None)
+    try:
+        k = float(getattr(pz, "pendel_kraft_anteil", PENDEL_KRAFT_ANTEIL))
+        w = float(getattr(pz, "pendel_weg", PENDEL_WEG))
+    except (TypeError, ValueError):
+        k, w = PENDEL_KRAFT_ANTEIL, PENDEL_WEG
+    return (k if np.isfinite(k) else PENDEL_KRAFT_ANTEIL), (w if np.isfinite(w) else PENDEL_WEG)
+
+
+def _pendel_kandidaten(bits_je_runde: dict, it: int, richtungen_je_runde: dict = None) -> np.ndarray:
+    """Ist der Status aller Bedingungen in Runde ``it`` derselbe wie in ``it - 2``
+    und in ``it - 1`` ein anderer (A B A), die Indizes der Bedingungen, die sich
+    zwischen den beiden Zustaenden unterscheiden - sonst keine. Zum Status eines
+    gleitenden Knotens gehoert seine Gleitrichtung (``richtungen_je_runde``):
+    sie gilt als zurueckgekehrt, wenn sie hoechstens um contact.QUER_TOL oder ein
+    Zehntel ihres Sprungs neben der von ``it - 2`` liegt, und als gesprungen, wenn
+    sie sich zur vorigen Runde um mehr als contact.QUER_TOL dreht. Warum: am
+    Pendelmodell drehten neben dem einen Knoten, der oeffnete und schloss, 14
+    gleitende Knoten jede Runde ihre Richtung hin und her; mit dem Knoten allein
+    eingefroren, pendelten die Richtungen weiter, bis die Grenze der
+    Richtungsrunden (QUER_RUNDEN_MAX) den Lauf beendete (gemessen 14.10.2026,
+    kpd_werk/e6_nach.out).
+
+    Erkannt wird am **ganzen** Zustand, nicht je Knoten. Gemessen am Pendelmodell
+    (tests/test_pendeln_periode2, 14.10.2026): je Knoten erkannt, fror die Regel in
+    Runde 8 einen Knoten der Seitenflaeche ein, der dort zweimal hin und her
+    gesprungen war, waehrend sich der Rest noch einspielte - danach lief der Lauf
+    76 statt 57 Runden bis zum Deckel, und der eingefrorene Knoten trug am Ende
+    0,29 % der Kontaktkraft. Pendelt dagegen der ganze Zustand, steht alles andere,
+    und eingefroren wird genau, was den Zyklus macht."""
+    leer = np.zeros(0, np.int64)
+    a, b, c = bits_je_runde.get(it), bits_je_runde.get(it - 1), bits_je_runde.get(it - 2)
+    if a is None or b is None or c is None or not (a.shape == b.shape == c.shape) or not len(a):
+        return leer
+    if not np.array_equal(a, c):
+        return leer
+    wechsel = np.any(a != b, axis=1)
+    if richtungen_je_runde is not None:
+        from .contact import QUER_TOL
+        da, db, dc = (richtungen_je_runde.get(k) for k in (it, it - 1, it - 2))
+        if da is None or db is None or dc is None or not (da.shape == db.shape == dc.shape == (len(a), 2)):
+            return leer
+        sprung = np.linalg.norm(da - db, axis=1)
+        rueck = np.linalg.norm(da - dc, axis=1)
+        if np.any(rueck > np.maximum(QUER_TOL, 0.1 * sprung)):
+            return leer                 # eine Richtung wandert weiter: kein Zyklus
+        wechsel = wechsel | (sprung > QUER_TOL)
+    return np.nonzero(wechsel)[0]
+
+
+def _pendel_mass(r_a: tuple, r_b: tuple) -> tuple:
+    """(|ΔF| [N], Weg [m], Art) eines pendelnden Knotens aus den Kraeften seiner
+    beiden Zustaende (ContactSystem.kraefte_von)."""
+    a_a, s_a, g_a, fn_a, ft_a, dt_a = r_a
+    a_b, s_b, g_b, fn_b, ft_b, dt_b = r_b
+    kraft = float(np.hypot(fn_a - fn_b, np.linalg.norm(np.asarray(ft_a) - np.asarray(ft_b))))
+    if a_a != a_b:
+        return kraft, abs(g_b if a_a else g_a), "öffnet/schließt"
+    if s_a != s_b:
+        return kraft, float(np.linalg.norm(np.asarray(dt_a) - np.asarray(dt_b))), "haftet/gleitet"
+    if s_a:
+        return kraft, float(np.linalg.norm(np.asarray(dt_a) - np.asarray(dt_b))), "Gleitrichtung"
+    return kraft, abs(g_a - g_b), "fließt/entlastet"
+
+
+def _pendel_bauteile(model: Model, cs, ids, merker: dict) -> str:
+    """„Bauteil B (Lager Starr): 2, …“ - je Bauteil und Bedingung die Zahl der Knoten."""
+    if "karte" not in merker:
+        try:
+            from .diagnose import _knotenkoerper_karte
+            merker["karte"] = _knotenkoerper_karte(model)
+        except Exception:                   # noqa: BLE001 - nur Protokoll
+            merker["karte"] = {}
+    zahl: dict = {}
+    for i in ids:
+        c = cs.cons[int(i)]
+        koerper = sorted(merker["karte"].get(int(c.node), ())) or ["?"]
+        name = f"{koerper[0]} ({c.label.split(':')[0]})"
+        zahl[name] = zahl.get(name, 0) + 1
+    return ", ".join(f"{k}: {n}" for k, n in sorted(zahl.items(), key=lambda x: -x[1]))
+
+
+def _pendel_zeilen_mass(model: Model, cs, mass: dict, verl: dict) -> list:
+    """Je eingefrorenem Knoten eine Zeile mit Bauteil, Ort, Art, Kraft und Weg
+    (hoechstens zwoelf, die mit der groessten Kraft zuerst)."""
+    X = np.asarray(model.nodes, float)
+    zeilen = []
+    for i in sorted(mass, key=lambda k: -max(mass[k]["kraft"], verl.get(k, (0.0, 0.0))[0]))[:12]:
+        c, m_ = cs.cons[i], mass[i]
+        vk, vw = verl.get(i, (0.0, 0.0))
+        zeilen.append(f"{c.label} (Knoten {c.node} bei {np.round(X[c.node], 3).tolist()} m): {m_['art']}, "
+                      f"eingefroren {m_['zustand']}, Kraftwechsel {m_['kraft'] / 1e3:.3g} kN, "
+                      f"{'Klaffung/Durchdringung' if m_['art'] == 'öffnet/schließt' else 'Weg'} "
+                      f"{m_['weg'] * 1e6:.3g} µm; an der letzten Lösung Verstoß {vk / 1e3:.3g} kN, "
+                      f"Durchdringung {vw * 1e6:.3g} µm")
+    if len(mass) > 12:
+        zeilen.append(f"… und {len(mass) - 12} weitere")
+    return zeilen
+
+
+def _pendel_runde(model: Model, cs, it: int, bits, u, lam, sp: dict, log: list, progress,
+                  richtungen=None) -> int:
+    """Eine Runde der Erkennung (siehe PENDEL_STABILISIEREN): Status merken;
+    kehrt der ganze Zustand zu dem von zwei Runden vorher zurueck (A B A), die
+    Kraefte dieser Loesung fuer die wechselnden Bedingungen merken; ist es in der
+    Runde davor ebenso gewesen (A B A B), sie einfrieren. Rueckgabe: Zahl der
+    neu eingefrorenen."""
+    bj, dj = sp["bits"], sp.setdefault("richtungen", {})
+    bj[it] = bits
+    dj[it] = richtungen
+    for r in [r for r in bj if r < it - 3]:
+        del bj[r]
+        dj.pop(r, None)
+    kand = [int(i) for i in _pendel_kandidaten(bj, it, dj if richtungen is not None else None)
+            if not cs.cons[int(i)].pendel_fest]
+    rec = cs.kraefte_von(u, lam, kand) if kand else {}
+    vorher = sp["rec"].get(it - 1, {})
+    neu = [i for i in kand if i in vorher]
+    sp["rec"] = {it: rec}
+    if not neu or len(neu) != len(kand):
+        return 0
+    for i in neu:
+        kraft, weg, art = _pendel_mass(rec[i], vorher[i])
+        c = cs.cons[i]
+        zustand = ("offen" if not c.active else "geschlossen, " + ("gleitet" if c.slip else "haftet")
+                   if (c.mu > 0 and c.ct is not None) else "geschlossen")
+        sp["mass"][i] = {"kraft": kraft, "weg": weg, "art": art, "runde": it, "zustand": zustand}
+        c.pendel_fest = True
+    verl, K = cs.pendel_pruefen(u, lam)
+    k_sum = sum(sp["mass"][i]["kraft"] for i in neu)
+    w_max = max(sp["mass"][i]["weg"] for i in neu)
+    arten = sorted({sp["mass"][i]["art"] for i in neu})
+    text = (f"Kontakt: Pendeln mit Periode 2 erkannt in Runde {it} - {len(neu)} "
+            f"{'Knoten' if len(neu) != 1 else 'Knoten'} eingefroren ({_pendel_bauteile(model, cs, neu, sp)}; "
+            f"{', '.join(arten)}), Kraftwechsel zusammen {k_sum / 1e3:.3g} kN = "
+            f"{100.0 * k_sum / max(K, 1e-300):.3g} % der Kontaktkraft {K / 1e3:.4g} kN, Weg bis "
+            f"{w_max * 1e6:.3g} µm - geprüft wird an der letzten Lösung")
+    log.append(text)
+    _melde(progress, text)
+    return len(neu)
+
+
+def _pendel_abschluss(model: Model, cs, u, lam, sp: dict, schwellen: tuple, log: list, progress) -> dict:
+    """Die Pruefung am Ende des Laufs: die eingefrorenen Knoten an der letzten
+    Loesung. Rueckgabe die Angaben fuer das Laufbuch (``contact_pendeln``) mit
+    ``ok``: Restwechsel unter beiden Schranken."""
+    k_anteil, w_grenze = schwellen
+    verl, K = cs.pendel_pruefen(u, lam)
+    mass = sp["mass"]
+    kraft = sum(max(m_["kraft"], verl.get(i, (0.0, 0.0))[0]) for i, m_ in mass.items())
+    weg = max(max(m_["weg"], verl.get(i, (0.0, 0.0))[1]) for i, m_ in mass.items())
+    ok = kraft <= k_anteil * K and weg <= w_grenze
+    zeilen = _pendel_zeilen_mass(model, cs, mass, verl)
+    anteil = kraft / max(K, 1e-300)
+    kopf = (f"{len(mass)} eingefrorene Knoten ({_pendel_bauteile(model, cs, list(mass), sp)}), "
+            f"Restwechsel zusammen {kraft / 1e3:.3g} kN = {100.0 * anteil:.3g} % der Kontaktkraft "
+            f"{K / 1e3:.4g} kN (Schranke {100.0 * k_anteil:g} %), Klaffung/Durchdringung bzw. Weg bis "
+            f"{weg * 1e6:.3g} µm (Schranke {w_grenze * 1e6:g} µm)")
+    text = ((f"Kontakt: Kontaktlauf nach Ingenieurgrößen konvergiert - {kopf}" if ok else
+             f"Kontakt: Pendeln eingefroren, aber die Restwechsel überschreiten die Schranken - {kopf}")
+            + ": " + "; ".join(zeilen))
+    log.append(text)
+    _melde(progress, text.split(": ", 1)[0] + ": " + kopf)
+    return {"ok": bool(ok), "knoten": len(mass), "kraft": float(kraft), "kontaktkraft": float(K),
+            "anteil": float(anteil), "weg": float(weg), "kraft_anteil_grenze": float(k_anteil),
+            "weg_grenze": float(w_grenze), "zeilen": zeilen,
+            "je_knoten": {int(i): {**m_, "knoten": int(cs.cons[i].node), "label": cs.cons[i].label,
+                                   "verstoss_kraft": float(verl.get(i, (0.0, 0.0))[0]),
+                                   "verstoss_weg": float(verl.get(i, (0.0, 0.0))[1])}
+                          for i, m_ in mass.items()}}
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
@@ -7864,12 +8108,23 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     pendel_ids: set = set()         # die im angenommenen Zustand pendelnden Bedingungen
     ort_merker: dict = {}           # Protokoll: Knoten -> Bauteile (_du_ort)
     letzte_kennung = None
+    # Pendeln mit Periode 2 (PENDEL_STABILISIEREN, 14.10.2026): Status je Runde,
+    # Kraefte der Kandidaten, Masse der eingefrorenen Knoten. Eine Schranke 0
+    # schaltet ab - dann streng wie vorher
+    schwellen = pendel_schwellen(model)
+    pendel_an = (PENDEL_STABILISIEREN and not kurz and not probelauf
+                 and schwellen[0] > 0.0 and schwellen[1] > 0.0)
+    pendel_sp: dict = {"bits": {}, "rec": {}, "mass": {}}
+    pendeln = None                  # Ergebnis der Pruefung am Ende (contact_pendeln)
     for it in range(1, max_iter + 1):
         Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
         n_vor = getattr(system, "nachfuehrungen", 0)
         kennung = cs.zustandskennung() if ABSCHLUSS_INGENIEUR else None
+        # Status dieser Runde (der Zustand, mit dem gleich geloest wird) - nur in Phase 2
+        pendel_bits = cs.zustand_bits() if (pendel_an and cs.phase == 2) else None
+        pendel_richtungen = cs.gleitrichtungen() if pendel_bits is not None else None
         try:
             u, lam = loesen()
         except RuntimeError as ex:
@@ -8014,6 +8269,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 cs.runde_ohne_update()      # je Kontaktschritt eine Runde im Laufbuch
                 converged = True
                 break
+        if pendel_bits is not None and u is not None:
+            # Pendeln mit Periode 2 erkennen und einfrieren (PENDEL_STABILISIEREN):
+            # nach dem Ingenieurkriterium, vor der Aktualisierung dieser Runde
+            _pendel_runde(model, cs, it, pendel_bits, u, lam, pendel_sp, log, progress,
+                          richtungen=pendel_richtungen)
         if kennung is not None:
             kennungen.setdefault(kennung, it)
             kennung_je_runde[it] = kennung
@@ -8112,6 +8372,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                                   cs.phase == 2 and cs.cycles >= _MAX_CYCLES))
             converged = not deckel
             break
+    pendel_verletzt = False
+    if pendel_sp["mass"] and u is not None:
+        # Pruefung nach dem Einfrieren: die Restwechsel gegen die Schranken
+        # (PENDEL_STABILISIEREN); verfehlt, ist der Lauf nicht konvergiert
+        pendeln = _pendel_abschluss(model, cs, u, lam, pendel_sp, schwellen, log, progress)
+        if converged and not pendeln["ok"]:
+            converged, pendel_verletzt = False, True
     if converged and u is not None:
         schub = cs.schub_unter_last(u)
         if schub:
@@ -8143,6 +8410,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     # sieht nur die uebrigen - sonst setzte sie gerade die Pendler zurueck, und
     # der naechste Anlauf pendelte von vorn
     ohne = pendel_ids if ingenieur is not None else None
+    if pendel_sp["mass"]:
+        # die eingefrorenen Knoten sind angenommen, wie sie sind (geprueft oben)
+        ohne = set(ohne or ()) | set(pendel_sp["mass"])
     if kurz and warm and converged and u is not None:
         if cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung):
             converged, abgekuerzt = False, True
@@ -8264,7 +8534,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         text = ("Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert - "
                 "das Ergebnis ist ein Netzmaß, kein Nachweis"
                 if probelauf else
-                (f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Zustandswechseln "
+                ("Kontakt: Pendeln mit Periode 2 eingefroren, die Restwechsel überschreiten die "
+                 "Schranken - das Ergebnis ist nicht auskonvergiert"
+                 if pendel_verletzt else
+                 f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Zustandswechseln "
                  "abgebrochen - das Ergebnis ist nicht auskonvergiert"
                  if deckel else
                  f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert"))
@@ -8272,9 +8545,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         _melde(progress, text)
     log.extend(cs.warnings())
     # Derselbe Entscheid wie der Meldetext oben, als Wort fuers Laufbuch
-    grund = ("" if converged else "probelauf" if probelauf
+    grund = ("" if converged else "probelauf" if probelauf else "pendeln" if pendel_verletzt
              else "deckel" if deckel else "abgekuerzt" if abgekuerzt else "max_iter")
-    return u, R, cs.results(), cs.nodal_forces(model.nn), {
+    cinfo = {
         "contact_abbruch": text,
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
@@ -8284,6 +8557,12 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_frozen_verworfen": eingefroren_verworfen,
         "contact_ingenieur": ingenieur,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
+    if pendeln is not None:
+        # Pendeln mit Periode 2: eingefrorene Knoten und die Pruefung (14.10.2026);
+        # ohne Pendeln bleibt der Eintrag weg
+        cinfo["contact_pendeln"] = pendeln
+        cinfo["contact_lauf"]["pendeln"] = {k: pendeln[k] for k in ("ok", "knoten", "kraft", "anteil", "weg")}
+    return u, R, cs.results(), cs.nodal_forces(model.nn), cinfo
 
 
 # ==========================================================================

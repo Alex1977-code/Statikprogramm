@@ -300,6 +300,9 @@ class Constraint:
     umkehr: int = 0                # Phase 2 primal-dual: Runden in Folge mit w . d < 0 (UMKEHR_HAFTET)
     pendel: int = 0                # wie oft der Knoten zwischen Haften und Gleiten pendelte (PENDEL_EINZELN)
     gleit_runde: int = -1          # Runde (len(runden)), in der die Liniensuche ihn ins Gleiten stellte
+    pendel_fest: bool = False      # Pendeln mit Periode 2 erkannt: Status (offen/geschlossen, Haften/
+                                   # Gleiten, Fliessen) fuer den Rest des Laufs eingefroren, die
+                                   # Bedingung selbst wirkt weiter (solver.solve_with_contact, 14.10.2026)
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -1488,6 +1491,7 @@ class ContactSystem:
             c.umkehr = 0
             c.pendel = 0
             c.gleit_runde = -1
+            c.pendel_fest = False
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1604,6 +1608,9 @@ class ContactSystem:
             c.umkehr = int(z["umkehr"][i]) if "umkehr" in z else 0
             c.pendel = int(z["pendel"][i]) if "pendel" in z else 0
             c.gleit_runde = -1
+            # das Einfrieren gilt je Lauf: ein fortgesetzter Lauf erkennt das
+            # Pendeln neu, statt einen fremden Status mitzunehmen
+            c.pendel_fest = False
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
@@ -1847,8 +1854,85 @@ class ContactSystem:
         Gleitrichtungen und Kraefte. Nimmt die Iteration eine Kennung wieder an,
         die sie schon einmal geloest hat, pendelt die Aktivmenge
         (solver.ABSCHLUSS_INGENIEUR, Befund B4)."""
-        a = np.array([(c.active, c.slip, c.yielding) for c in self.cons], bool)
+        a = self.zustand_bits()
         return hash((int(self.phase), a.tobytes()))
+
+    def zustand_bits(self) -> np.ndarray:
+        """(n, 3) bool: je Bedingung aktiv, gleitet, fliesst - der Status, an
+        dem das Pendeln erkannt wird (solver.PENDEL_STABILISIEREN)."""
+        return np.array([(c.active, c.slip, c.yielding) for c in self.cons], bool).reshape(-1, 3)
+
+    def gleitrichtungen(self) -> np.ndarray:
+        """(n, 2): je Bedingung die Gleitrichtung im Tangentialsystem, Null fuer
+        nicht gleitende - die Richtung gehoert beim Gleiten zum Status
+        (solver.PENDEL_STABILISIEREN)."""
+        return np.array([(0.0, 0.0) if not (c.active and c.slip and c.slip_dir is not None)
+                         else (float(c.slip_dir[0]), float(c.slip_dir[1])) for c in self.cons],
+                        float).reshape(-1, 2)
+
+    def kraefte_von(self, u: np.ndarray, lam, ids) -> dict:
+        """{Index: (aktiv, gleitet, g, Fn ungekappt, Ft (2,), d_t (2,))} der
+        Bedingungen ``ids`` in der Loesung ``u`` - dieselben Kraefte wie
+        :meth:`kraefte_der_loesung`, aber ohne etwas zu setzen. Damit misst der
+        Loeser die beiden Zustaende eines Pendelns (14.10.2026)."""
+        full_slip = self._full_slip_groups()
+        aus = {}
+        for i in ids:
+            c = self.cons[int(i)]
+            g, roh, _fn, Ft, dt = self._kraft_einer(c, u, lam, full_slip)
+            aus[int(i)] = (bool(c.active), bool(c.slip), float(g),
+                           float(roh) if c.active else 0.0, np.array(Ft, float),
+                           np.zeros(2) if dt is None else np.array(dt, float))
+        return aus
+
+    def pendel_pruefen(self, u: np.ndarray, lam=None) -> tuple:
+        """Die Pruefung nach dem Einfrieren (solver.PENDEL_STABILISIEREN,
+        14.10.2026): verletzen die eingefrorenen Bedingungen in der Loesung
+        ``u`` ihre Bedingung? Rueckgabe ({Index: (Kraft [N], Weg [m])},
+        Kontaktkraft [N]). Kraft ist der Verstoss als Kraft - Zug an einer
+        geschlossenen, Kegelueberschreitung einer haftenden und die Abweichung
+        der Reibkraft einer gleitenden von mu Fn laengs ihrer Versuchskraft
+        (dieselben Masse wie das Residuum in ``_update_states``); Weg ist die
+        Durchdringung einer offenen. Die Kontaktkraft ist die Summe der
+        Druckkraefte dieser Loesung. Nur lesen, nichts setzen."""
+        self._pd_vorbereiten()
+        full_slip = self._full_slip_groups()
+        kontaktkraft = 0.0
+        aus = {}
+        for i, c in enumerate(self.cons):
+            if not c.active and not c.pendel_fest:
+                continue
+            g, roh, _fn, _Ft, dt = self._kraft_einer(c, u, lam, full_slip)
+            if c.active:
+                kontaktkraft += max(roh, 0.0)
+            if not c.pendel_fest:
+                continue
+            if not c.active:
+                # offen: der Verstoss ist die Durchdringung als Weg. Ihre Kraft ist die,
+                # die der Knoten geschlossen traegt - die misst der Zyklus (solver).
+                # Durchdringung mal Diagonale ueberschaetzt sie: am Pendelmodell 32,5 kN
+                # fuer 0,66 µm gegen 6,5 kN Kraftwechsel im Zyklus (14.10.2026)
+                aus[i] = (0.0, max(-g, 0.0))
+                continue
+            kraft = 0.0 if (c.zug or c.yielding) else max(-roh, 0.0)
+            if dt is not None and c.mu > 0 and not c.haften:
+                limit = c.mu * max(roh, 0.0)
+                if self._primal_dual(c):
+                    w = (self._lam_t(c, lam, dt) if not c.slip else np.asarray(c.lam_t, float)) \
+                        + self._c_pd(c) * dt
+                    nw = float(np.linalg.norm(w))
+                    if not c.slip:
+                        kraft += max(0.0, nw - limit)
+                    elif nw < limit:
+                        kraft += limit - nw
+                    elif nw > 0 and c.slip_dir is not None:
+                        kraft += limit * float(np.linalg.norm(c.slip_dir - w / nw))
+                elif not c.slip:
+                    kraft += max(0.0, float(np.linalg.norm(c.kt * dt)) - limit)
+                elif c.slip_dir is not None and float(dt @ c.slip_dir) < 0.0:
+                    kraft += limit
+            aus[i] = (float(kraft), 0.0)
+        return aus, float(kontaktkraft)
 
     def richtungen_pendeln(self, mindestens: int = 4) -> int:
         """Gleitende Knoten mit einer Reibkraft ueber f_tol, deren Versuchskraft
@@ -1893,42 +1977,52 @@ class ContactSystem:
         stimmte."""
         full_slip = self._full_slip_groups()
         for c in self.cons:
-            ue = u[c.dofs]
-            g = float(c.g0 + c.cn @ ue)
+            g, roh, Fn, Ft, _dt = self._kraft_einer(c, u, lam, full_slip)
             c.g = g
-            dt = None if c.ct is None else np.array([c.ct[0] @ ue, c.ct[1] @ ue])
-            if not c.active:
-                c.Fn = 0.0
-                c.Ft = (c.kt * dt if (dt is not None and (c.bindung or getattr(c, "schub_halt", False)))
-                        else np.zeros(2))
-                continue
-            roh = self._normalkraft(c, g, lam)
-            c.zug_roh = roh
-            fn_alt = c.Fn                       # mit ihr steht die Reibkraft in Fc
-            c.Fn = roh if c.zug else max(roh, 0.0)
-            if dt is None or not (c.mu > 0 or c.haften):
-                c.Ft = np.zeros(2)
-            elif not c.slip:
-                c.Ft = (np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
-                        else c.kt * dt)
+            c.Fn, c.Ft = Fn, Ft
+            if c.active:
+                c.zug_roh = roh
+
+    def _kraft_einer(self, c: Constraint, u: np.ndarray, lam, full_slip: dict) -> tuple:
+        """(g, Fn ungekappt, Fn, Ft, d_t) einer Bedingung in der Loesung ``u`` -
+        die Rechnung von :meth:`kraefte_der_loesung`, ohne etwas zu setzen (seit
+        dem 14.10.2026 eine eigene Methode, damit :meth:`kraefte_von` dieselben
+        Zahlen liest). ``roh`` ist bei einer offenen Bedingung 0."""
+        ue = u[c.dofs]
+        g = float(c.g0 + c.cn @ ue)
+        dt = None if c.ct is None else np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+        if not c.active:
+            Ft = (c.kt * dt if (dt is not None and (c.bindung or getattr(c, "schub_halt", False)))
+                  else np.zeros(2))
+            return g, 0.0, 0.0, Ft, dt
+        roh = self._normalkraft(c, g, lam)
+        fn_alt = c.Fn                       # mit ihr steht die Reibkraft in Fc
+        # eingefroren geschlossen (Pendeln): der Zug, den die Bedingung in dieser Loesung
+        # traegt, gehoert ins Gleichgewicht und ins Ergebnis - nicht auf null gekappt
+        Fn = roh if (c.zug or c.pendel_fest) else max(roh, 0.0)
+        if dt is None or not (c.mu > 0 or c.haften):
+            Ft = np.zeros(2)
+        elif not c.slip:
+            Ft = (np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
+                  else c.kt * dt)
+        else:
+            fr = c.mu * max(fn_alt, 0.0)
+            Ft = np.zeros(2)
+            if self._gekoppelt(c):
+                Ft = Ft + c.mu * roh * np.asarray(c.quer_dir, float)                     + fr * (np.asarray(c.slip_dir, float) - np.asarray(c.quer_dir, float))
             else:
-                fr = c.mu * max(fn_alt, 0.0)
-                Ft = np.zeros(2)
-                if self._gekoppelt(c):
-                    Ft = Ft + c.mu * roh * np.asarray(c.quer_dir, float)                         + fr * (np.asarray(c.slip_dir, float) - np.asarray(c.quer_dir, float))
-                else:
-                    Ft = Ft + fr * np.asarray(c.slip_dir, float)
-                k_res = self._k_res(c, full_slip)
-                fein = k_res < SLIP_STIFFNESS * c.kt
-                ausgl = (AUSGLEICH_RESTSTEIFIGKEIT and c.dt_last is not None
-                         and (fein or (AUSGLEICH_WIEDER_ZU and c.wieder_zu
-                                       and not self._ohne_halt(c, full_slip))))
-                Ft = Ft + k_res * (dt - c.dt_last if ausgl else dt)
-                if c.k_quer > 0.0 and c.quer_dir is not None and self._primal_dual(c):
-                    q = np.array([-c.quer_dir[1], c.quer_dir[0]])
-                    weg = dt - c.dt_last if c.dt_last is not None else dt
-                    Ft = Ft + c.k_quer * float(q @ weg) * q
-                c.Ft = Ft
+                Ft = Ft + fr * np.asarray(c.slip_dir, float)
+            k_res = self._k_res(c, full_slip)
+            fein = k_res < SLIP_STIFFNESS * c.kt
+            ausgl = (AUSGLEICH_RESTSTEIFIGKEIT and c.dt_last is not None
+                     and (fein or (AUSGLEICH_WIEDER_ZU and c.wieder_zu
+                                   and not self._ohne_halt(c, full_slip))))
+            Ft = Ft + k_res * (dt - c.dt_last if ausgl else dt)
+            if c.k_quer > 0.0 and c.quer_dir is not None and self._primal_dual(c):
+                q = np.array([-c.quer_dir[1], c.quer_dir[0]])
+                weg = dt - c.dt_last if c.dt_last is not None else dt
+                Ft = Ft + c.k_quer * float(q @ weg) * q
+        return g, roh, Fn, Ft, dt
 
     def endzustand_kennung(self) -> str:
         """Kennung des Kontaktzustands, **prozessfest**: 16 Hexziffern aus
@@ -2547,7 +2641,9 @@ class ContactSystem:
             if c.active:
                 Fn = self._normalkraft(c, g, lam)
                 kontaktkraft += max(Fn, 0.0)
-                if c.ct is not None and c.mu > 0 and not c.haften:
+                # Eingefroren (Pendeln, solver.PENDEL_STABILISIEREN): ihr Rest steht
+                # nicht im Residuum - geprueft wird er am Ende des Laufs
+                if c.ct is not None and c.mu > 0 and not c.haften and not c.pendel_fest:
                     dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                     limit = c.mu * max(Fn, 0.0)
                     if self._primal_dual(c):
@@ -2572,7 +2668,7 @@ class ContactSystem:
                         nrm = float(np.linalg.norm(dt))
                         if nrm > 0 and float(dt @ c.slip_dir) < 0:
                             gegen_summe += limit
-            if c.zug or (c.frozen and not c.starr) or (c.gehalten and c.starr):
+            if c.zug or (c.frozen and not c.starr) or (c.gehalten and c.starr) or c.pendel_fest:
                 continue
             if c.active:
                 if not Fn > -self.f_tol:
@@ -2630,9 +2726,10 @@ class ContactSystem:
                 new_active = id(c) not in umstellen
                 # Im Verbund bleibt die Bedingung auch unter Zug zu - und die
                 # Zugkraft gehoert ins Ergebnis, nicht auf null gekappt
-                c.Fn = Fn if c.zug else max(Fn, 0.0)
+                # eingefroren (Pendeln): wie im Verbund ungekappt - der Zug steht im Ergebnis
+                c.Fn = Fn if (c.zug or c.pendel_fest) else max(Fn, 0.0)
                 c.zug_roh = Fn                  # ungekappt, fuer solver._gehaltene_unter_zug
-                if c.limit > 0:
+                if c.limit > 0 and not c.pendel_fest:
                     if not c.yielding and new_active and Fn > c.limit:
                         c.yielding = True       # Grenzkraft erreicht -> plastisch
                         c.g_yield = g
@@ -2706,9 +2803,10 @@ class ContactSystem:
                     w = c.lam_t + cq * dt
                     nw = float(np.linalg.norm(w))
                     c.Ft = c.lam_t.copy()
-                    guete += max(0.0, nw - limit)
-                    if ruhe:
-                        pass
+                    if not c.pendel_fest:
+                        guete += max(0.0, nw - limit)
+                    if ruhe or c.pendel_fest:
+                        pass                    # eingefroren (Pendeln): haftet weiter, Pruefung am Ende
                     elif nw > limit * (1 + 1e-6) and limit >= 0:
                         if id(c) in zu_in_runde:
                             c.slip = True
@@ -2736,7 +2834,12 @@ class ContactSystem:
                     # eine Reibkraft unter f_tol hat keine Richtung, die zaehlt
                     gegen = (c.slip_dir is not None and limit > self.f_tol
                              and float(w @ c.slip_dir) < 0.0)
-                    if ruhe:
+                    if c.pendel_fest:
+                        # eingefroren (Pendeln): gleitet weiter in seiner Richtung mit
+                        # mu Fn dieser Loesung; Pruefung am Ende des Laufs
+                        c.lam_t = limit * c.slip_dir
+                        c.Ft = c.lam_t.copy()
+                    elif ruhe:
                         c.Ft = limit * c.slip_dir       # Zustand steht (Residuum)
                     elif limit > 0 and nw < limit * (1 - 1e-6):
                         # Die Versuchskraft liegt im Kegel: der Knoten haftet. Verworfen
@@ -2814,8 +2917,9 @@ class ContactSystem:
                         c.Ft = c.lam_t.copy()
                 elif not c.slip:
                     c.Ft = Ft_el
-                    guete += max(0.0, float(np.linalg.norm(Ft_el)) - limit)
-                    if ruhe:
+                    if not c.pendel_fest:
+                        guete += max(0.0, float(np.linalg.norm(Ft_el)) - limit)
+                    if ruhe or c.pendel_fest:
                         pass                    # Residuum unter der Loesergenauigkeit: Zustand steht
                     elif np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
                         # Ein in dieser Runde wieder geschlossener Knoten gleitet

@@ -270,6 +270,16 @@ class Plastizitaet:
     #: Modell wie bis dahin. Eine Datei ohne den Schluessel rechnet die
     #: Vorgabe; ein unbekannter Wert ebenso, und der Loeser meldet ihn.
     abbruch: str = ABBRUCH_WEGE[0]
+    #: Konvergenz des Kontaktlaufs ueber Ingenieurgroessen (14.10.2026,
+    #: Entscheidung des Anwenders): pendelt der Status von Kontaktknoten mit
+    #: Periode 2, wird er eingefroren und geprueft (solver.PENDEL_STABILISIEREN).
+    #: Der Lauf gilt als konvergiert, wenn die Restwechsel zusammen hoechstens
+    #: ``pendel_kraft_anteil`` der Kontaktkraft tragen (Vorgabe 0,1 %) und ihre
+    #: Klaffung bzw. Durchdringung hoechstens ``pendel_weg`` [m] ist (Vorgabe
+    #: 1 µm). Gilt fuer jeden Kontaktlauf, auch ohne Fliessen; eine Schranke 0
+    #: schaltet die Regel ab (streng wie vor dem 14.10.2026).
+    pendel_kraft_anteil: float = 1.0e-3
+    pendel_weg: float = 1.0e-6
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
