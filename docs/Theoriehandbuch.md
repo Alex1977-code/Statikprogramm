@@ -3688,6 +3688,29 @@ Fließen (Periode-2-Regel aus) 687 statt 386 Runden. Am Drehlager (A 14,7 →
 12,6 µm, 86 % statt 50 %) spart es drei von vier Halbierungen je Stufe; das
 misst die Abnahme dort.
 
+**4. Ingenieurkriterium: zuerst Δσ, dann Δu; Residuum je Stufe**
+(`spannung_zuerst`, Vorgabe an). `solver._ingenieur_abschluss` misst Δσ_v
+zuerst (Schranke `ABSCHLUSS_SPANNUNG` = 1 N/mm²) und entscheidet dann am Weg mit
+Δu ≤ max(`ABSCHLUSS_WEG_ANTEIL`·u_max, Δσ_S·L/E_max) (`_weg_aus_spannung`, L
+die Diagonale der Volumenknoten, E_max das größte E der Volumen, je Modell
+gemerkt). Begründung: Δσ_S/E ist die Dehnungsänderung, die zur
+Spannungsschranke gehört, über L ein Weg; eine Bewegung darunter ändert die
+Spannung höchstens um die Schranke. Normalbedingung und Gleichgewicht
+(`ABSCHLUSS_GLEICHGEWICHT` 10⁻⁴) bleiben Pflicht – Δσ ergänzt das
+Kraftresiduum, ersetzt es nicht. `_KontaktImNewton.residuum_stufe` prüft am Ende
+jeder Laststufe |ΣR + ΣF_k| / Σ|F_k,i| (ΣF_p = 0, Σ dK·u = 0 translatorisch) und
+nennt das Kontaktresiduum des letzten Laufs; über 10⁻⁴ bei konvergiertem
+Kontaktlauf ist die Stufe nicht konvergiert, bei nicht konvergiertem nur
+gemeldet (sonst wäre es `KONTAKT_IN_KONVERGENZ` durch die Hintertür, die bis zur
+Freigabe aus steht). Bezug Σ|F|: an der Prüfplatte waren 29 N bei 160 kN Schub
+1,8·10⁻⁴ von |ΣF|, aber 3,7·10⁻⁶ von Σ|F| (4 MN Vorspannung, in sich im
+Gleichgewicht). Gemessen: Stempel auf Sockel (nur Kontakt) 14 → 6 Runden, 8 → 6
+Zerlegungen, u_max 0,39381 → 0,39369 mm (Δσ 0,57 N/mm², Δu 0,93 µm, Schranke
+4,69 statt 0,39 µm); Prüfplatte, gequetschter Block, Richtungs- und Pendelmodell
+unverändert (dort lag Δσ über 1 N/mm² oder Δu im Millimeterbereich);
+Pendelmodell mit Fließen: Residuum 21,9 / 51,7 kN = 7,2·10⁻⁴ / 8,5·10⁻⁴ (Halt für
+Teile), nicht konvergiert.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf

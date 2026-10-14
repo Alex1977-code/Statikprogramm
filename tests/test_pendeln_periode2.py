@@ -256,7 +256,13 @@ def test_plastizitaet():
           pz0.get("halbiert", 0) >= 1 and any(e.get("grund") == "deckel" for e in lb0),
           f"halbiert {pz0.get('halbiert')}, {sum(1 for e in lb0 if e.get('grund') == 'deckel')} von {len(lb0)} "
           f"Läufen am Deckel, Newton {pz0.get('iterationen')}, fließend {pz0.get('fliessend')}")
-    r = solver.solve_static(pendelmodell(0.5e6, fy=FY))
+    # Seit dem 14.10.2026 prueft die Plastizitaet am Ende jeder Stufe das Gleichgewicht
+    # (Vorschlag 4, tests.test_kontakt_warmstart) - und findet hier den Halt fuer Teile
+    # (siehe oben: 25 bis 29 kN fehlen). Die Regel hier wird ohne diese Pruefung
+    # geprueft, die Pruefung selbst unten
+    m_ = pendelmodell(0.5e6, fy=FY)
+    m_.plastizitaet.spannung_zuerst = False
+    r = solver.solve_static(m_)
     pz = r.info.get("plastizitaet") or {}
     lb = r.info.get("laeufe") or []
     gep = [e for e in lb if e.get("pendeln")]
@@ -267,6 +273,12 @@ def test_plastizitaet():
     check("  … und das Pendeln war da: Läufe mit eingefrorenen Knoten, alle unter den Schranken",
           len(gep) >= 1 and all(e["pendeln"].get("ok") for e in gep),
           str([(e["nr"], e["pendeln"].get("knoten"), round(100 * e["pendeln"].get("anteil", 0), 4)) for e in gep][:6]))
+    r2 = solver.solve_static(pendelmodell(0.5e6, fy=FY))
+    pz2 = r2.info.get("plastizitaet") or {}
+    gg = [z for z in pz2.get("log") or [] if "Residuum am Ende" in z and "nicht konvergiert" in z]
+    check("  mit der Prüfung des Residuums (Vorgabe): der Halt fehlt im Gleichgewicht, Plastizität nicht konvergiert",
+          pz2.get("konvergiert") is False and gg and not pz2.get("halbiert"),
+          (gg[0][:150] if gg else f"konvergiert {pz2.get('konvergiert')}"))
 
 
 def test_einstellungen():
@@ -323,11 +335,18 @@ def test_kontakt_offen_vorbereitet():
     # enden am Deckel, die Plastizitaet urteilt allein an F_p
     alt_h = pl.HALBIEREN_MAX
     pl.HALBIEREN_MAX = 0
+
+    def ohne_residuum():
+        # die Pruefung des Residuums am Stufenende (Vorschlag 4, 14.10.2026) faende den
+        # Halt fuer Teile (siehe test_plastizitaet) - hier geht es nur um den Schalter
+        m_ = pendelmodell(0.5e6, fy=FY, schwellen=(0.0, 0.0))
+        m_.plastizitaet.spannung_zuerst = False
+        return m_
     try:
-        r0 = solver.solve_static(pendelmodell(0.5e6, fy=FY, schwellen=(0.0, 0.0)))
+        r0 = solver.solve_static(ohne_residuum())
         pl.KONTAKT_IN_KONVERGENZ = True
         try:
-            r1 = solver.solve_static(pendelmodell(0.5e6, fy=FY, schwellen=(0.0, 0.0)))
+            r1 = solver.solve_static(ohne_residuum())
         finally:
             pl.KONTAKT_IN_KONVERGENZ = False
     finally:

@@ -320,12 +320,21 @@ class Plastizitaet:
     #: Halbierungen bei 11,6 bis 14,7 µm - dort spart er drei Halbierungen je
     #: Stufe; ob er eingeschaltet wird, entscheidet die Abnahme am Drehlager.
     halbieren_lastabhaengig: bool = False
+    #: Ingenieurkriterium des Kontaktlaufs: zuerst Δσ messen, dann an Δu
+    #: entscheiden (Vorschlag 4, 14.10.2026; solver._ingenieur_abschluss): die
+    #: Wegschranke ist dann die, die zur Spannungsschranke passt (1 N/mm2 / E mal
+    #: Modellgroesse, solver._weg_aus_spannung), mindestens 0,1 % u_max wie bisher.
+    #: Gleichgewicht und Normalbedingung bleiben Pflicht; am Ende jeder Laststufe
+    #: wird das Residuum geprueft und protokolliert (Gleichgewicht ueber 1e-4: die
+    #: Stufe ist nicht konvergiert). Gilt fuer jeden Kontaktlauf.
+    spannung_zuerst: bool = True
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
     NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0,
                  "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
-                 "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False}
+                 "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
+                 "spannung_zuerst": True}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
@@ -1951,6 +1960,17 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
                            f"nicht konvergiert ({stab_offen or _mass_text(zonen, mess, diff, mass)}"
                            f"{'' if stab_offen else f' > {einst.toleranz:g}'})")
+        # Vorschlag 4 (14.10.2026): das Residuum am Ende jeder Stufe pruefen und
+        # protokollieren - Δσ ergaenzt das Kraftresiduum, ersetzt es nicht
+        pruef = getattr(kontakt, "residuum_stufe", None) if kontakt is not None else None
+        if pruef is not None:
+            zeile, gg_ok = pruef(F_k, f"{k}/{len(faktoren)}")
+            if zeile and log is not None:
+                log.append(zeile)
+            if zeile and progress is not None:
+                progress(zeile)
+            if not gg_ok:
+                info["konvergiert"] = False
         basis, F_p = zustand_stufe, F_p_stufe
         lam_alt = lam_k
     stufen_gerechnet = len(faktoren)

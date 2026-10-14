@@ -129,7 +129,7 @@ def kurz(r) -> str:
 # Einstellungen: Vorgabe, nur abweichend gespeichert, NEUE_FELDER
 # --------------------------------------------------------------------------
 SCHALTER = {"kaltstart_nicht_proportional": True, "pendelschutz_winkel": True, "gleit_toleranz": 1.0e-6,
-            "halbieren_lastabhaengig": False}
+            "halbieren_lastabhaengig": False, "spannung_zuerst": True}
 
 
 def test_einstellungen():
@@ -333,8 +333,56 @@ def test_vorschlag3():
           (nicht[0][:170] if nicht else "keine Zeile"))
 
 
+# --------------------------------------------------------------------------
+# Vorschlag 4: Ingenieurkriterium zuerst Δσ, dann Δu; Residuum am Ende jeder Stufe
+# --------------------------------------------------------------------------
+def test_vorschlag4():
+    print("\n--- Vorschlag 4: zuerst Δσ, dann Δu; Residuum am Ende jeder Stufe ---")
+    m = platte()
+    w = solver._weg_aus_spannung(m)
+    m_aus = platte(schalter={"spannung_zuerst": False})
+    check("Wegschranke aus der Spannungsschranke: 1 N/mm² / E mal Diagonale (1,43 m) = 6,8 µm; aus: 0",
+          abs(w - 1e6 * np.sqrt(1.0 + 1.0 + 0.04) / 210e9) < 1e-12 and solver._weg_aus_spannung(m_aus) == 0.0,
+          f"{w * 1e6:.3f} µm")
+    # (a) Stempel auf Sockel (tests.test_plastizitaet, nur Kontakt): der ganz gleitende
+    #     Stempel pendelt um 0,93 µm bei 0,57 N/mm² - vorher lag die Schranke bei 0,39 µm
+    from tests import test_plastizitaet as tpl
+
+    def stempel(an):
+        m_ = tpl._drehlagerartiges_modell()
+        m_.plastizitaet.an = False
+        m_.plastizitaet.spannung_zuerst = an
+        return m_
+    a, ta = rechnen(stempel(False))
+    b, tb = rechnen(stempel(True))
+    ing = zeilen(b, "Abschluss nach dem Ingenieurkriterium", "Schranke")
+    ua = float(np.linalg.norm(u3(a), axis=1).max())
+    ub = float(np.linalg.norm(u3(b), axis=1).max())
+    print(f"      aus: {kurz(a)} ({ta:.1f} s), an: {kurz(b)} ({tb:.1f} s); u_max {ua * 1e3:.5f} / {ub * 1e3:.5f} mm")
+    check("Stempel: an früher angenommen (Δσ zuerst, Schranke 4,69 µm), u_max auf 0,1 % gleich",
+          ing and "4,69 µm" in ing[0].replace(".", ",") and laeufe(b)[0]["schritte"] < laeufe(a)[0]["schritte"]
+          and abs(ub - ua) <= 1e-3 * ua and b.info.get("contact_converged"),
+          (ing[0][60:230] if ing else "keine Zeile"))
+    # (b) Residuum am Ende jeder Stufe, geprueft und protokolliert
+    r1, _t1 = rechnen(platte())
+    r0, _t0 = rechnen(platte(schalter={"spannung_zuerst": False}))
+    res1 = [z for z in (r1.info.get("plastizitaet") or {}).get("log", []) if "Residuum am Ende" in z]
+    res0 = [z for z in (r0.info.get("plastizitaet") or {}).get("log", []) if "Residuum am Ende" in z]
+    check("Residuum am Ende jeder Stufe protokolliert (drei Stufen, unter 1e-4), aus: keine Zeile, sonst bitgleich",
+          len(res1) == 3 and all("nicht konvergiert" not in z for z in res1) and not res0 and bitgleich(r0, r1)
+          and solver.konvergenz_zustand(r1.info) == "konvergiert",
+          (res1[0][:150] if res1 else "keine Zeile"))
+    # (c) Nicht konvergierter Kontaktlauf: Residuum gemeldet, entscheidet nicht (KONTAKT_IN_KONVERGENZ aus)
+    r2, _t2 = rechnen(platte(schalter={"kaltstart_nicht_proportional": False, "pendelschutz_winkel": False}))
+    res2 = [z for z in (r2.info.get("plastizitaet") or {}).get("log", []) if "Residuum am Ende" in z]
+    check("  Stufe mit nicht konvergiertem Kontaktlauf: gemeldet, vorläufig gekennzeichnet, nicht zusätzlich verworfen",
+          res2 and "der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet" in res2[0]
+          and (r2.info.get("plastizitaet") or {}).get("konvergiert") is True and r2.info.get("vorlaeufig"),
+          (res2[0][:170] if res2 else "keine Zeile"))
+
+
 def main() -> int:
-    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2, test_vorschlag3):
+    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2, test_vorschlag3, test_vorschlag4):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

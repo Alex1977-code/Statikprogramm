@@ -6805,6 +6805,39 @@ angenommen, steht dahinter, an welcher Schranke es lag, zum Beispiel
 „Ingenieurkriterium nicht erfüllt: Δu 19.5 µm > 0.498 µm“. An der Rechnung ändert
 das nichts.
 
+**Zuerst die Spannung, dann der Weg (seit 14.10.2026).** Bis zum 14.10.2026 prüfte
+das Ingenieurkriterium zuerst, ob sich ein Knoten um mehr als ein Tausendstel der
+größten Verschiebung bewegt, und maß die Spannung nur, wenn das nicht so war. Bei
+reiner Vorspannung ist die größte Verschiebung klein, am Drehlager hieß die
+Schranke dann 0,11 µm, und ein Lauf, der sich je Runde um 12 µm bewegte, wurde
+abgelehnt, ohne dass seine Spannungsänderung je gemessen wurde. Jetzt misst das
+Kriterium zuerst die Änderung der Vergleichsspannung (höchstens 1 N/mm²) und
+entscheidet dann am Weg, mit einer Schranke, die zu dieser Spannung passt: eine
+Spannungsänderung von 1 N/mm² ist eine Dehnungsänderung von 1 N/mm² geteilt durch
+den Elastizitätsmodul, über die Größe des Modells (die Diagonale um alle
+Volumenknoten) ein Weg von rund 4,8 µm je Meter bei Stahl. Es gilt der größere
+Wert aus dieser Schranke und dem Tausendstel der größten Verschiebung. Das
+Gleichgewicht der angenommenen Lösung und die Normalbedingung bleiben Pflicht.
+Die Fortschrittszeile nennt die Schranke, etwa „Ingenieurkriterium nicht
+erfüllt: Δσ_v 0,187 N/mm² erfüllt, aber Δu 1,45e+03 µm > 6,8 µm“, und die Zeile
+der Annahme „… u um 0,926 µm (u_max 0,3937 mm, Schranke 4,69 µm)“. Dazu prüft
+die Plastizität am Ende jeder Laststufe das Kraftresiduum und schreibt es ins
+Protokoll: „Plastizität: Laststufe 1/3: Residuum am Ende - Gleichgewicht
+0,0301 kN = 3,7e-06 der Lasten (Schranke 1e-04), Kontakt 2,2e-06 der
+Kontaktkraft“. Bezug ist die Summe der Beträge der Knotenlasten, weil eine
+Vorspannung in sich im Gleichgewicht ist und zur Summe der Lasten nichts
+beiträgt. Liegt das Gleichgewicht über 10⁻⁴ und ist der Kontaktlauf der Stufe
+konvergiert, ist die Stufe nicht konvergiert; ist schon der Kontaktlauf nicht
+konvergiert, ist die Stufe ohnehin vorläufig gekennzeichnet, und die Zeile sagt
+das. Ausschalten lässt sich beides am Modell mit
+`plastizitaet.spannung_zuerst = False` (Vorgabe an; gespeichert nur, wenn er
+abweicht). Am Stempel auf dem Sockel der Prüfungen (ganz gleitend, in der Ebene
+unbestimmt) nimmt das Kriterium jetzt in Runde 6 statt nach 14 Runden an; die
+größte Verschiebung ändert sich um 0,03 %. Am Pendelmodell mit Fließen
+(`tests/test_pendeln_periode2.py`) findet die Prüfung des Residuums den Halt für
+Teile, der dort 22 bis 52 kN trägt: die Plastizität heißt dann nicht
+konvergiert.
+
 **Pendeln mit Periode 2: erkennen, einfrieren, prüfen (seit 14.10.2026).** Bis
 zum 14.10.2026 lief ein Kontaktlauf, dessen Zustand mit Periode 2 hin und her
 sprang und den das Ingenieurkriterium nicht annahm, bis zum Deckel der

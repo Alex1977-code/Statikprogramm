@@ -4888,6 +4888,54 @@ class _KontaktImNewton:
         return any(not e.get("konvergiert", True) and not e.get("abgekuerzt") and not e.get("verworfen")
                    for e in laeufe[marke["lauf"]:])
 
+    def residuum_stufe(self, F_k, k) -> tuple:
+        """Vorschlag 4 (14.10.2026): das Residuum am Ende einer Laststufe - das
+        Gleichgewicht |Summe R + Summe F_k| der letzten Loesung (die plastische Last
+        F_p und die Tangente dK tragen zur Summe nichts bei), bezogen auf die Summe
+        der Betraege der Knotenlasten, und das Kontaktresiduum des letzten
+        Kontaktlaufs (Verstoesse als Kraft gegen die Kontaktkraft,
+        contact.RESIDUUM_ANTEIL). Rueckgabe (Zeile, ok): ok heisst Gleichgewicht
+        hoechstens ABSCHLUSS_GLEICHGEWICHT. Ausgeschaltet (Plastizitaet.
+        spannung_zuerst) ("", True).
+
+        Bezug ist die Summe der Betraege, nicht der Betrag der Summe wie im
+        Ingenieurkriterium: eine Vorspannung (Temperatur im Anker) ist in sich im
+        Gleichgewicht und traegt zur Summe der Lasten nichts bei. An der
+        Pruefplatte (4 MN Vorspannung, 160 kN Schub in Stufe 1) waren 29 N
+        Ungleichgewicht einer konvergierten Stufe 1,8e-4 der Summe - aber 3,6e-6 der
+        Lasten, die wirklich wirken (gemessen 14.10.2026)."""
+        model = self.res.model
+        if not bool(getattr(getattr(model, "plastizitaet", None), "spannung_zuerst", True)):
+            return "", True
+        R = self.halter.get("R")
+        if R is None:
+            return "", True
+        n6 = model.nn * NDOF
+        Fn = np.asarray(F_k, float)[:n6].reshape(-1, NDOF)[:, :3]
+        Fk = Fn.sum(0)
+        Rk = np.asarray(R, float)[:n6].reshape(-1, NDOF)[:, :3].sum(0)
+        bez = float(np.linalg.norm(Fn, axis=1).sum())
+        rest = float(np.linalg.norm(Rk + Fk))
+        gg = rest / bez if bez > 0.0 else 0.0
+        from .contact import RUNDEN_FELDER
+        laeufe = self.res.info.get("laeufe") or []
+        runden = (laeufe[-1].get("runden") or []) if laeufe else []
+        i_res = RUNDEN_FELDER.index("residuum")
+        kres = float(runden[-1][i_res]) if runden and len(runden[-1]) > i_res else None
+        # Entscheidet nur, wenn der letzte Kontaktlauf konvergiert ist: ein nicht
+        # konvergierter ist schon als vorlaeufig gekennzeichnet, und ob er die Stufe
+        # haelt, entscheidet plastizitaet.KONTAKT_IN_KONVERGENZ (aus bis zur Freigabe)
+        kontakt_konv = bool(laeufe[-1].get("konvergiert", True)) if laeufe else True
+        ok = gg <= ABSCHLUSS_GLEICHGEWICHT or not kontakt_konv
+        from .zahlen import zahl_text as _z
+        text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
+                f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
+                + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else "")
+                + ("" if gg <= ABSCHLUSS_GLEICHGEWICHT else
+                   " - die Stufe ist nicht konvergiert" if kontakt_konv else
+                   " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet"))
+        return text, ok
+
     def halbieren_am_deckel(self, marke, anteil: float) -> tuple:
         """Vorschlag 3 (Entscheidung des Anwenders vom 14.10.2026): am Deckel nur
         halbieren, wenn das Pendeln vom Lastanteil abhaengt; erkanntes Pendeln
@@ -7966,6 +8014,39 @@ def _vergleichsspannungen(model: Model, system, u: np.ndarray) -> np.ndarray:
     return spn.volumen_werte(S, "sv") if len(S) else np.zeros(0)
 
 
+def _weg_aus_spannung(model: Model) -> float:
+    """Vorschlag 4 (14.10.2026): die Wegschranke des Ingenieurkriteriums, die zur
+    Spannungsschranke passt - oder 0, wenn ausgeschaltet (Plastizitaet.
+    spannung_zuerst) oder ohne Volumen. Eine Aenderung der Vergleichsspannung um
+    ABSCHLUSS_SPANNUNG entspricht einer Dehnungsaenderung von ABSCHLUSS_SPANNUNG / E;
+    ueber die Groesse L des Modells (Diagonale der Volumenknoten) ist das ein Weg von
+    ABSCHLUSS_SPANNUNG * L / E. Mit dem groessten E der Volumen (die kleinste, also
+    vorsichtigste Schranke). Bei 3 m Modellgroesse und Stahl rund 14 µm, an der
+    Pruefplatte von tests/test_kontakt_warmstart (Diagonale 1,43 m) 6,8 µm; 0,1 %
+    u_max waren am Drehlager bei reiner Vorspannung 0,11 µm (v36_werk, 14.10.2026)."""
+    pz = getattr(model, "plastizitaet", None)
+    if not bool(getattr(pz, "spannung_zuerst", True)):
+        return 0.0
+    gespeichert = getattr(model, "_weg_aus_spannung", None)
+    kenn = (len(model.elements), model.nn)
+    if gespeichert is not None and gespeichert[0] == kenn:
+        return gespeichert[1]
+    vol = [e for e in model.elements if e.typ in asm.SOLID_TYPES]
+    wert = 0.0
+    if vol:
+        kn = np.unique(np.concatenate([np.asarray(e.nodes, np.int64) for e in vol]))
+        X = np.asarray(model.nodes, float)[kn]
+        L = float(np.linalg.norm(X.max(0) - X.min(0)))
+        E = max((float(getattr(model.materials.get(e.mat), "E", 0.0) or 0.0) for e in vol), default=0.0)
+        if E > 0.0 and L > 0.0:
+            wert = ABSCHLUSS_SPANNUNG * L / E
+    try:
+        model._weg_aus_spannung = (kenn, wert)
+    except Exception:                       # noqa: BLE001 - Stumpf ohne Attribute
+        pass
+    return wert
+
+
 def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, merker: dict):
     """Prueft das Ingenieurkriterium (ABSCHLUSS_*) fuer die Loesung ``u`` gegen die
     vorige ``u_vor``. Rueckgabe None (nicht erfuellt; Kraefte unveraendert) oder ein
@@ -7980,8 +8061,15 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     j = int(np.argmax(du)) if len(du) else 0
     du_max = float(du[j]) if len(du) else 0.0
     aus = {"du_max": du_max, "du_knoten": j, "u_max": u_max}
-    if du_max > ABSCHLUSS_WEG_ANTEIL * u_max:
-        merker["abgelehnt"] = (f"Δu {du_max * 1e6:.3g} µm > {ABSCHLUSS_WEG_ANTEIL * u_max * 1e6:.3g} µm")
+    # Vorschlag 4 (14.10.2026, Plastizitaet.spannung_zuerst): zuerst Δσ messen, dann
+    # an Δu entscheiden - mit einer Wegschranke, die zur Spannungsschranke passt
+    # (_weg_aus_spannung), mindestens 0,1 % u_max. Gleichgewicht und Normalbedingung
+    # bleiben Pflicht (unten). Ausgeschaltet die Reihenfolge und Schranke wie bisher
+    w_sp = _weg_aus_spannung(model)
+    grenze_u = max(ABSCHLUSS_WEG_ANTEIL * u_max, w_sp)
+    aus["du_grenze"] = grenze_u
+    if not w_sp and du_max > grenze_u:
+        merker["abgelehnt"] = (f"Δu {du_max * 1e6:.3g} µm > {grenze_u * 1e6:.3g} µm")
         return None
     sv = _vergleichsspannungen(model, system, u)
     alt = merker.get("sv") if merker.get("u_id") is u_vor else None
@@ -7992,6 +8080,10 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     aus["dsv_max"] = dsv
     if dsv > ABSCHLUSS_SPANNUNG:
         merker["abgelehnt"] = f"Δσ_v {dsv / 1e6:.3g} N/mm² > {ABSCHLUSS_SPANNUNG / 1e6:.3g} N/mm²"
+        return None
+    if w_sp and du_max > grenze_u:
+        merker["abgelehnt"] = (f"Δσ_v {dsv / 1e6:.3g} N/mm² erfüllt, aber Δu {du_max * 1e6:.3g} µm > "
+                               f"{grenze_u * 1e6:.3g} µm")
         return None
     # Normalbedingung im angenommenen Zustand: kein Zug an einer geschlossenen
     # und keine Durchdringung (als Kraft) an einer offenen Bedingung ueber
@@ -8744,7 +8836,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 text = (f"Kontakt: Abschluss nach dem Ingenieurkriterium in Runde {it}"
                         + (" (warm gestartet)" if warm else "") + f" - {grund_text}; "
                         f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
-                        f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm), "
+                        f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm, "
+                        f"Schranke {ingenieur['du_grenze'] * 1e6:.3g} µm), "
                         f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}; Normalbedingung: "
                         f"Zug höchstens {ingenieur['zug_max']:.3g} N, Durchdringung höchstens "
                         f"{ingenieur['durchdringung_max']:.3g} N (Schranke {ingenieur['normal_grenze']:.3g} N)")

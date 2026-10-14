@@ -271,8 +271,11 @@ def test_protokoll_je_runde():
     ort = [z for z in kz[1:] if "größtes Δu" in z and "Verformungsanteil" in z]
     check("ab der zweiten Runde: Knoten, Bauteil und Verformungsanteil der groessten Bewegung",
           kz and len(ort) == len(kz) - 1, (ort[-1][-110:] if ort else str(kz[-1:])[:110]))
-    ab = [z for z in kz if "Ingenieurkriterium nicht erfüllt: Δu" in z]
-    check("geprueft und nicht angenommen: die Runde nennt die Schranke (hier Δu)",
+    # seit dem 14.10.2026 (Vorschlag 4) misst das Kriterium zuerst Δσ und nennt dann
+    # diese Schranke - oder Δσ erfuellt und die Wegschranke
+    ab = [z for z in kz if "Ingenieurkriterium nicht erfüllt: Δu" in z
+          or "Ingenieurkriterium nicht erfüllt: Δσ_v" in z]
+    check("geprueft und nicht angenommen: die Runde nennt die Schranke (Δσ oder Δu)",
           len(ab) >= 1, (ab[-1][-90:] if ab else "keine Zeile"))
 
 

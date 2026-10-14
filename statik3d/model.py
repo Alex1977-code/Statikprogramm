@@ -9627,7 +9627,8 @@ NEUE_FELDER = {
                      "spannstufen": 0,
                      # kontakt/warmstart (Vorschlaege 1-5 vom 14.10.2026, je Massnahme ein Schalter)
                      "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
-                     "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False},
+                     "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
+                     "spannung_zuerst": True},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
