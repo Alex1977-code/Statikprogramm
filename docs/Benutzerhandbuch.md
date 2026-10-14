@@ -11360,6 +11360,26 @@ Magenta. Bis zum 10.10.2026 nahmen Legende, Zusammenfassung,
 Bericht und Nachweise ihr Maximum über alle Elemente, auch über die
 netzabhängigen Stellen.
 
+**Rand der Zonen (seit 14.10.2026).** Ein Knoten am Rand einer Zone gehört
+zu Elementen der Zone und zu Elementen außerhalb. Sein Mittelwert nahm bis zum
+14.10.2026 beide Seiten auf, und die Spitze der Zone färbte damit den Rand
+außerhalb mit: An der Ankerplatte V21 des Drehlagers war ein breiter Streifen
+außerhalb der Schraffur magenta. Jetzt ist die Färbung an der Grenze der Zone
+unstetig. Außen trägt jeder Randknoten das Mittel nur der Elemente außerhalb,
+innen bekommen die Elemente der Zone eigene Knotenwerte aus ihrem eigenen
+Mittel. Farbskala, Max-/Min-Marken, Kennwerte, die Zusammenfassung und die
+Übersicht im Bericht nehmen den Wert von außen; an V21 (LF1, Netz Mittel) liegt die Farbskala
+damit bis 292,8 N/mm² am Knoten 921006, und außerhalb der Schraffur liegt
+kein Punkt darüber. Der Volumennachweis zählt außerhalb nur Elementecken, die
+nicht auf einem Knoten der Zonen liegen; liegen alle Ecken eines Elements
+dort, gilt sein Elementwert. Die Ermüdung nahm die Knoten der Zonen schon
+vorher aus. An der Lochplatte des Prüfkörpers (elastisch, eine auffällige
+Stelle) fällt die maßgebende Eckspannung des Volumennachweises dadurch von
+1 315,9 auf 1 287,2 N/mm². Die Schraffur ist seit demselben Tag dichter und
+breiter, mit einem Linienabstand von einem Drittel der örtlichen Kantenlänge
+und 2,5 Bildpunkten Breite. Bis dahin waren es die halbe Kantenlänge und
+1,5 Bildpunkte, was neben den schwarzen Netzkanten kaum zu sehen war.
+
 **Volumenspannungen nach einer plastischen Rechnung (seit 13.10.2026).** Ist
 die Plastizität eingeschaltet, übernimmt Statik3D für Volumen die Werte der
 Integrationspunkte auf die Knoten, wie ANSYS es bei Plastizität macht

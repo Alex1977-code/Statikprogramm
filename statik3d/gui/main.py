@@ -26204,6 +26204,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Texte des Bildes, die viewport.texte_ordnen vor jedem Bild nach
         # ihren Rechtecken ordnet (seit 13.10.2026)
         self._bildtexte, self._skalentitel, self._legende_namen = {}, {}, []
+        self._zonen_farbe = None
         vp.texte_ordnen_einrichten(self.plotter, self._textlage_info)
         show_edges = self.act_edges.isChecked()
         modus = getattr(self, "darstellung", "Voll")
@@ -26373,8 +26374,23 @@ class MainWindow(QtWidgets.QMainWindow):
             # Knoten ausserhalb ihrer Zonen, die Spitze getrennt daneben
             einheit_l = titel[titel.rfind("[") + 1:-1] if titel.endswith("]") and "[" in titel else ""
             self._spitzen_feld = self._spitzen_fuer_feld(m, r, field, faktor_e, einheit_l, ps_wahr)
+            self._zonen_farbe = None
             if self._spitzen_feld is not None:
-                ohne = ~self._spitzen_feld["zk"]
+                spz_ = self._spitzen_feld
+                if spz_.get("aussen") is not None and ps_fest is not None and len(ps_fest) == m.nn:
+                    # Randknoten der Zone nur aus den Aussenelementen, die
+                    # Zonenelemente mit eigenen Knotenwerten (14.10.2026). Bis
+                    # dahin mischten die Randknoten beide Seiten, und die Farbe
+                    # „> Skalenmax“ lief weit in die Aussenelemente (Bild V21)
+                    a_ = np.asarray(spz_["aussen"], float)
+                    ps_fest = np.where(np.isfinite(a_), a_, np.asarray(ps_fest, float))
+                    point_scalars = ps_fest * faktor_e if faktor_e != 1.0 else ps_fest
+                    ps_wahr = point_scalars
+                    ohne = ~np.asarray(spz_["nur_zone"], bool)
+                    self._zonen_farbe = {"elemente": spz_["zone_el"],
+                                         "werte": np.asarray(spz_["zone"], float) * faktor_e}
+                else:
+                    ohne = ~spz_["zk"]
                 sicht_maske = ohne if sicht_maske is None else (sicht_maske & ohne)
             klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
             if point_scalars is not None and klassen:
@@ -26401,6 +26417,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     skala = vp.skala_umrechnen(skala, faktor_e)
                     point_scalars = skala["werte"]
                     clim = list(skala["clim"])
+                    zf_ = getattr(self, "_zonen_farbe", None)
+                    if zf_ is not None and skala.get("nur_ueber") and skala.get("grenze") is not None:
+                        b_ = np.abs(np.asarray(zf_["werte"], float))
+                        zf_["werte"] = np.where(b_ > float(skala["grenze"]), b_, np.nan)
                     farben = {"n_colors": skala["n_colors"], "nan_color": vp.FARBE_OHNE_WERT}
                     if skala["above_color"]:
                         farben["above_color"] = skala["above_color"]
@@ -26491,7 +26511,12 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.plotter.add_mesh(umriss, color="#b0b0b0", opacity=0.6,
                                                   line_width=1, name=f"undeformed_{nm}")
                 if point_scalars is not None:
-                    warped.point_data[name] = np.asarray(point_scalars)[kn]
+                    zf_ = getattr(self, "_zonen_farbe", None) if nm == "netz" else None
+                    if zf_ is not None:
+                        warped = vp.zonen_getrennt(warped, kn, name, np.asarray(point_scalars, float),
+                                                   zf_["elemente"], zf_["werte"])
+                    else:
+                        warped.point_data[name] = np.asarray(point_scalars)[kn]
                     farbtafel = farben.pop("cmap", "turbo") if "cmap" in farben else "turbo"
                     self.plotter.add_mesh(warped, scalars=name, cmap=farbtafel, clim=clim,
                                           scalar_bar_args=dict(self._farbskala(), title=titel, **balken),
@@ -26648,16 +26673,39 @@ class MainWindow(QtWidgets.QMainWindow):
         sp_ = sa.spitze(r, self.analysis)
         if zk is None or sp_ is None or len(zk) != m.nn:
             return None
+        # Knotenwerte getrennt nach Zone und aussen (seit 14.10.2026): die
+        # Randknoten der Zone faerben die Aussenelemente nur mit deren Mittel
+        analysis = self.analysis
+        g = None
+        try:
+            if field.startswith("Vergleich"):
+                if not hasattr(r, "node_vm_max"):
+                    g = sa.getrennt(m, r, "vergleich", analysis=analysis)
+                teiler = 1e6                    # result_field: node_vm / 1e6
+            else:
+                g = sa.getrennt(m, r, "volumen", ak[1], "max", analysis=analysis)
+                teiler = 1.0
+        except Exception as ex:             # noqa: BLE001 - dann gemischt wie bisher
+            self.log.appendPlainText(f"Zonengrenze: {ex}")
+            g = None
         if field.startswith("Vergleich") or ak[1] == "sv":
             zeile = sa.legende_text(sp_, faktor, einheit)
         else:
-            w = np.asarray(werte, float)[zk] if werte is not None and len(werte) == m.nn else np.zeros(0)
+            if g is not None:
+                w = np.asarray(g["zone"], float) / teiler * faktor
+            else:
+                w = np.asarray(werte, float)[zk] if werte is not None and len(werte) == m.nn else np.zeros(0)
             w = w[np.isfinite(w)]
             if not len(w):
                 return None
             zeile = (f"in netzabhängigen Stellen {spn.dezimal(float(w.min()))} … "
                      f"{spn.dezimal(float(w.max()))} {einheit} (netzabhängig)")
-        return {"zk": zk, "zeile": zeile}
+        aus = {"zk": zk, "zeile": zeile,
+               "getrennt": lambda art, gr, seite: sa.getrennt(m, r, art, gr, seite, analysis=analysis)}
+        if g is not None:
+            aus.update(aussen=np.asarray(g["aussen"], float) / teiler, zone=np.asarray(g["zone"], float) / teiler,
+                       nur_zone=np.asarray(g["nur_zone"], bool), zone_el=np.asarray(g["elemente"], np.int64))
+        return aus
 
     def _spitzen_zeichnen(self, m, r, lage, ausser=None) -> None:
         """Netzabhaengige Spannungsspitzen ins Bild (seit 10.10.2026): die

@@ -120,6 +120,53 @@ def zonenknoten(model, res, analysis=None) -> np.ndarray | None:
     return zk
 
 
+def getrennt(model, res, art: str, groesse: str = "sv", seite: str = "max", analysis=None,
+             elemente=None) -> dict | None:
+    """Knotenwerte getrennt nach Zone und aussen (seit 14.10.2026): an einem
+    Randknoten der Zone - an dem Zonen- und Aussenelemente haengen - gilt fuer
+    die Aussenelemente das Mittel nur ueber sie, fuer die Zonenelemente das
+    Mittel nur ueber diese; die Faerbung ist an der Zonengrenze unstetig.
+
+    Anlass: Bild V21 in normaler Skala, 13.10.2026 - ein grosser Teil der
+    Platte ausserhalb der Schraffur war magenta („> Skalenmax“), weil die
+    Randknoten beide Seiten mittelten (131 von 226 Randknoten ueber dem
+    Groesstwert ausserhalb, 318 Aussenelemente, 29,5 % des Volumens
+    ausserhalb, zogen die Farbe herein).
+
+    ``art`` „volumen“ (N/mm², wie spannungen.je_knoten) oder „vergleich“
+    (Pa, wie Results.node_vm); ``elemente`` die Zonenelemente, sonst die der
+    auffaelligen Stellen. Rueckgabe {"aussen", "zone": (nn,) mit NaN ohne
+    Beitrag, "nur_zone": Knoten nur an Zonenelementen (bool), "zk": Knoten
+    der Zonen (bool), "elemente"} oder None ohne Zone bzw. ohne Werte. Einmal
+    je Ergebnis und Groesse (res._cache)."""
+    from . import spannungen as spn
+    el = np.asarray(zonen_elemente(res, analysis) if elemente is None else list(elemente), np.int64)
+    if not len(el):
+        return None
+    schl = ("zonen_getrennt", art, groesse, seite, hash(el.tobytes()))
+    cache = getattr(res, "_cache", None)
+    if isinstance(cache, dict) and schl in cache:
+        return cache[schl]
+    zeilen = spn.knotenwerte_zeilen(model, res, art, groesse, seite)
+    if zeilen is None:
+        return None
+    kn, w, e = zeilen
+    nn = int(model.nn)
+    in_z = np.isin(e, el)
+    aussen = spn.knotenmittel(nn, kn[~in_z], w[~in_z])
+    zone = spn.knotenmittel(nn, kn[in_z], w[in_z])
+    zk = np.zeros(nn, bool)
+    for i in el.tolist():
+        if 0 <= i < len(model.elements):
+            k = np.asarray(model.elements[i].nodes, np.int64)
+            zk[k[(k >= 0) & (k < nn)]] = True
+    aus = {"aussen": aussen, "zone": zone, "nur_zone": np.isnan(aussen) & np.isfinite(zone), "zk": zk,
+           "elemente": el}
+    if isinstance(cache, dict):
+        cache[schl] = aus
+    return aus
+
+
 def spitze(res, analysis=None) -> dict | None:
     """Die Spitze der auffaelligen Stellen: ``sv`` [Pa] an den
     Integrationspunkten (sv_max aus Paket 1, nicht der Elementwert), ``eps_p``
@@ -206,7 +253,9 @@ def bauteil_des_knotens(model, k: int) -> str:
 def uebersicht(model, res) -> dict | None:
     """Die Werte der Zusammenfassung mit auffaelligen Stellen (sonst None):
     ``sv`` (Pa, Knoten, Bauteil) - das groesste Knotenmittel der
-    Vergleichsspannung (Results.node_vm) ausserhalb der Knoten der Zonen;
+    Vergleichsspannung (wie Results.node_vm) ueber die Aussenelemente: an den
+    Randknoten der Zone nur aus diesen (getrennt, seit 14.10.2026; bis dahin
+    fielen die Randknoten ganz weg, und das Bild faerbte sie mit der Zone);
     ``eps_p`` (Wert, Element, Bauteil) - die groesste plastische Dehnung
     ausserhalb der Zonenelemente oder None ohne Plastizitaet; ``spitze``
     (:func:`spitze`). Einmal je Ergebnis gerechnet (res._cache)."""
@@ -220,11 +269,12 @@ def uebersicht(model, res) -> dict | None:
     el = set(int(i) for i in zonen_elemente(res).tolist())
     aus: dict = {"spitze": spitze(res), "sv": None, "eps_p": None}
     try:
-        nv = np.asarray(res.node_vm, float)
+        g = getrennt(model, res, "vergleich")
+        nv = np.asarray(g["aussen"], float) if g is not None else None
     except Exception:                         # noqa: BLE001 - ohne Knotenwerte keine Zeile
         nv = None
     if nv is not None and nv.size and zk is not None and len(zk) == len(nv):
-        w = np.where(zk, np.nan, nv)
+        w = nv
         if np.isfinite(w).any():
             k = int(np.nanargmax(w))
             aus["sv"] = (float(w[k]), k, bauteil_des_knotens(model, k))

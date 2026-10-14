@@ -2627,11 +2627,16 @@ class Report:
                        "größte Wert an den Integrationspunkten der Zone, ε_p die größte plastische "
                        "Vergleichsdehnung. Die Werte bleiben stehen, gelten aber nicht für den "
                        "Nachweis: Übersicht, Volumennachweis und Ermüdung nehmen die Zonen aus ihrem "
-                       "Maximum und nennen sie als „nur berichtet“. In den Bildern der Ansicht sind "
+                       "Maximum und nennen sie als „nur berichtet“; außerhalb zählen nur "
+                       "Elementecken, die nicht auf einem Knoten der Zonen liegen (bis zum "
+                       "14.10.2026 auch die Ecken am Rand der Zone, deren Wert die Zonenelemente "
+                       "mitmittelten). In den Bildern der Ansicht sind "
                        "die Zonen grau schraffiert (Legendeneintrag „netzabhängig (schraffiert)“), "
                        "die Farbe darunter bleibt sichtbar; Werte über der Farbskala sind magenta "
-                       "(„> Skalenmax“). Bis zum 13.10.2026 waren die Zonen magenta umrandet und "
-                       "Werte über dem Grenzwert grau."))
+                       "(„> Skalenmax“). Die Färbung ist an der Grenze der Zonen unstetig: die "
+                       "Knoten am Rand tragen außen das Mittel nur der Elemente außerhalb, innen "
+                       "das der Zonenelemente. Bis zum 13.10.2026 waren die Zonen magenta umrandet "
+                       "und Werte über dem Grenzwert grau."))
         rows = [["Rang", "Ort", "Bauteil", "Ursache", "Kraft [kN]", "σ_v [N/mm²]", "ε_p [%]",
                  "Elemente der Zone", "Volumen der Zone [cm³]", "Ergebnis", "Vermerk"]]
         reihe = sorted(je.values(), key=lambda v: (-(v[0].get("sv_fy") or 0.0),

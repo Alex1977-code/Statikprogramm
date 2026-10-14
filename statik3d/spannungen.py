@@ -378,7 +378,7 @@ def _ip_daten(model, res):
     return aus
 
 
-def anzeige_knotenwerte(model, res, groesse: str, alle: bool = False):
+def anzeige_knotenwerte(model, res, groesse: str, alle: bool = False, elemente: bool = False):
     """(Knoten, Werte) der Volumen fuer die Anzeige - je Element und Knoten
     eine Zeile, in der Einheit der Spannungen [Pa] - oder None bei
     elastischer Rechnung (dann gilt der Elementwert an allen Knoten, wie
@@ -395,12 +395,13 @@ def anzeige_knotenwerte(model, res, groesse: str, alle: bool = False):
     Integrationspunkte hinaus: am Drehlager (LF1 Mittel) bis 14 599 N/mm2,
     wo die Punkte desselben Elements 343 N/mm2 haben. ``alle``: auch die
     uebrigen Elemente aus ``solid_res`` (Scheiben), mit ihrem Elementwert -
-    fuer Results.node_vm."""
+    fuer Results.node_vm. ``elemente``: dazu je Zeile das Element (fuer die
+    getrennte Mittelung an der Zonengrenze, spitzenanzeige.getrennt)."""
     daten = _ip_daten(model, res)
     if daten is None:
         return None
     vol, _schalen, _ebene = _typen()
-    kn_l, w_l = [], []
+    kn_l, w_l, el_l = [], [], []
     erfasst: set = set()
     for typ, ids, S, W in daten["teile"]:
         K = np.array([model.elements[int(i)].nodes for i in ids.tolist()], np.int64)
@@ -408,6 +409,8 @@ def anzeige_knotenwerte(model, res, groesse: str, alle: bool = False):
             T = np.einsum("kp,npc->nkc", W, S[a0:a0 + IP_STAPEL])
             kn_l.append(K[a0:a0 + IP_STAPEL].ravel())
             w_l.append(volumen_werte(T.reshape(-1, 6), groesse))
+            if elemente:
+                el_l.append(np.repeat(np.asarray(ids[a0:a0 + IP_STAPEL], np.int64), K.shape[1]))
         erfasst.update(int(i) for i in ids.tolist())
     so = res.solid_res
     rest = [i for i in so if int(i) not in erfasst and (alle or model.elements[int(i)].typ in vol)]
@@ -417,9 +420,13 @@ def anzeige_knotenwerte(model, res, groesse: str, alle: bool = False):
         kn_l.append(np.fromiter((int(n) for i in rest for n in model.elements[int(i)].nodes), np.int64,
                                 count=int(laengen.sum())))
         w_l.append(np.repeat(v, laengen))
+        if elemente:
+            el_l.append(np.repeat(np.asarray(rest, np.int64), laengen))
     if not kn_l:
-        return np.zeros(0, np.int64), np.zeros(0)
-    return np.concatenate(kn_l), np.concatenate(w_l)
+        leer = (np.zeros(0, np.int64), np.zeros(0))
+        return leer + ((np.zeros(0, np.int64),) if elemente else ())
+    aus = (np.concatenate(kn_l), np.concatenate(w_l))
+    return aus + ((np.concatenate(el_l),) if elemente else ())
 
 
 def anzeige_tensoren(model, res) -> dict:
@@ -512,6 +519,50 @@ def je_knoten(model, res, art: str, groesse: str, seite: str = "max") -> np.ndar
     else:
         raise KeyError(art)
     return knotenmittel(nn, kn, w)
+
+
+def knotenwerte_zeilen(model, res, art: str, groesse: str, seite: str = "max"):
+    """(Knoten, Werte, Elemente) je Element und Knoten - die Zeilen, die
+    :func:`je_knoten` (``art`` „volumen“, in N/mm²) bzw. Results.node_vm
+    (``art`` „vergleich“: Volumen, Schalen und Staebe, in Pa) mittelt; None
+    fuer die uebrigen Arten. Fuer die getrennte Mittelung an der Grenze der
+    netzabhaengigen Zonen (spitzenanzeige.getrennt, seit 14.10.2026)."""
+    vol, _schalen, _ebene = _typen()
+    if art not in ("volumen", "vergleich"):
+        return None
+    kn_l, w_l, el_l = [], [], []
+    if art == "vergleich":
+        for i, d in (getattr(res, "beam_forces", None) or {}).items():
+            nodes = model.elements[i].nodes
+            kn_l.append(np.asarray(nodes, np.int64))
+            w_l.append(np.full(len(nodes), float(d["sig_max"])))
+            el_l.append(np.full(len(nodes), int(i), np.int64))
+        for i, d in (getattr(res, "shell_stress", None) or {}).items():
+            nodes = model.elements[i].nodes
+            kn_l.append(np.asarray(nodes, np.int64))
+            w_l.append(np.full(len(nodes), float(d["vM"])))
+            el_l.append(np.full(len(nodes), int(i), np.int64))
+        gr, faktor, alle = "sv", 1.0, True
+    else:
+        gr, faktor, alle = groesse, MPA, False
+    kw = anzeige_knotenwerte(model, res, gr, alle=alle, elemente=True) if res.solid_res else None
+    if kw is not None:
+        kn_l.append(kw[0])
+        w_l.append(kw[1] * faktor)
+        el_l.append(kw[2])
+    elif res.solid_res:
+        ids = [int(i) for i in res.solid_res if alle or model.elements[int(i)].typ in vol]
+        if ids:
+            S = np.array([res.solid_res[i] for i in ids], float).reshape(-1, 6)
+            v = volumen_werte(S, gr) * faktor
+            laengen = np.fromiter((len(model.elements[i].nodes) for i in ids), int, count=len(ids))
+            kn_l.append(np.fromiter((int(n) for i in ids for n in model.elements[i].nodes), np.int64,
+                                    count=int(laengen.sum())))
+            w_l.append(np.repeat(v, laengen))
+            el_l.append(np.repeat(np.asarray(ids, np.int64), laengen))
+    if not kn_l:
+        return np.zeros(0, np.int64), np.zeros(0), np.zeros(0, np.int64)
+    return np.concatenate(kn_l), np.concatenate(w_l), np.concatenate(el_l)
 
 
 # --------------------------------------------------------------------------

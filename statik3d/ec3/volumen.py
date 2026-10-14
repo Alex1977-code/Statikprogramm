@@ -487,7 +487,41 @@ class VolumenResults:
 
 
 # --------------------------------------------------------------------------
-def _elementspannungen(model, res, elemente) -> list:
+def _ecke_ohne_zone(model, res, i: int, zonen_knoten) -> tuple | None:
+    """(Spannung, Eckknoten) der groessten geglaetteten Ecke des Elements
+    ``i`` ohne die Ecken auf Knoten der Zonen - None, wenn alle Ecken dort
+    liegen. Liest dieselbe Knotentabelle wie Results.solid_rand."""
+    from ..elements import solid as sl
+    sk = getattr(res, "solid_knoten", None) or {}
+    if not sk or "spannung" not in sk:
+        return None
+    cache = getattr(res, "_cache", None)
+    zw = cache.get("ecke_ohne_zone_index") if isinstance(cache, dict) else None
+    if zw is None:
+        ng = max(1, len(sk["gruppen"]))
+        pos = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"], np.int64) * ng
+                                                + np.asarray(sk["gruppe"], np.int64))}
+        grp = {g: j for j, g in enumerate(sk["gruppen"])}
+        zw = (ng, pos, grp, np.asarray(sk["spannung"], float))
+        if isinstance(cache, dict):
+            cache["ecke_ohne_zone_index"] = zw
+    ng, pos, grp, S = zw
+    e = model.elements[int(i)]
+    if e.typ not in sl.ECKEN_NATUERLICH:
+        return None
+    g = grp.get((str(getattr(e, "group", "")), str(e.mat)))
+    if g is None:
+        return None
+    nk = len(sl.ECKEN_NATUERLICH[e.typ])
+    js = [pos.get(int(n) * ng + g) for n in e.nodes[:nk] if not zonen_knoten[int(n)]]
+    js = [j for j in js if j is not None]
+    if not js:
+        return None
+    j = max(js, key=lambda jj: vergleichsspannung(S[jj]))
+    return S[j], int(sk["knoten"][j])
+
+
+def _elementspannungen(model, res, elemente, zonen_knoten=None) -> list:
     """
     Massgebende Spannung je Element. Rueckgabe je Element ein Tripel
     (Elementnummer, Spannungsvektor, Auswertepunkt).
@@ -505,6 +539,13 @@ def _elementspannungen(model, res, elemente) -> list:
 
     Ohne Knotenwerte (aeltere Ergebnisdatei, Kombination verschiedener
     Situationen) bleibt es beim Elementwert aus res.solid_res.
+
+    ``zonen_knoten`` (bool je Knoten, seit 14.10.2026): Ecken auf Knoten der
+    Zonen netzabhaengiger Stellen zaehlen nicht - das Knotenmittel dort
+    mischt Zonen- und Aussenelemente. Massgebend ist dann die groesste der
+    uebrigen Ecken, ohne solche der Elementwert. Bis zum 14.10.2026 las der
+    Nachweis an Aussenelementen auch diese gemischte Ecke: an der Platte mit
+    Loch (elastisch) war sie massgebend, 1 315,9 statt 1 287,2 N/mm².
     """
     from ..elements import solid as sl
     u = np.asarray(getattr(res, "u", None))
@@ -522,6 +563,16 @@ def _elementspannungen(model, res, elemente) -> list:
     for i in elemente:
         if i in rand:
             S, knoten = rand[i]
+            if zonen_knoten is not None and zonen_knoten[int(knoten)]:
+                ohne = _ecke_ohne_zone(model, res, i, zonen_knoten)
+                if ohne is None:
+                    roh = getattr(res, "solid_res", {}).get(i)
+                    if roh is not None:
+                        out.append((i, np.asarray(roh, float), "Element (alle Ecken an der Zone)"))
+                    continue
+                S, knoten = ohne
+                out.append((i, np.asarray(S, float), f"Knoten {int(knoten) + 1} (geglättet, ohne Zonenknoten)"))
+                continue
             # an einer freien Oberflaeche auf sigma n = 0 gezogen (solver.rand_projizieren) -
             # der Bericht sagt, welche Randspannung gerechnet wurde
             art = "geglättet, σ·n = 0" if i in frei else "geglättet"
@@ -782,6 +833,10 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                 elemente = [e for e in vb_el if int(e) not in zone]
                 in_zone.update(int(e) for e in innen)
                 zw = _elementspannungen(model, res, innen) if innen else []
+                zk_ = np.zeros(int(model.nn), bool)
+                for e_ in zone:
+                    if 0 <= int(e_) < len(model.elements):
+                        zk_[np.asarray(model.elements[int(e_)].nodes, np.int64)] = True
                 if zw:
                     zsv = [vergleichsspannung(x) for _e, x, _pt in zw]
                     jz = int(np.argmax(zsv))
@@ -789,7 +844,8 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                     if eta_z >= c.zone_eta:
                         c.zone_eta, c.zone_sigma_v = float(eta_z), float(zsv[jz])
                         c.zone_element, c.zone_kombination = int(zw[jz][0]), kname
-            werte = _elementspannungen(model, res, elemente) if elemente else []
+            werte = (_elementspannungen(model, res, elemente, zk_ if zone else None)
+                     if elemente else [])
             if not werte:
                 continue
             svs = np.array([vergleichsspannung(sp) for _e, sp, _pt in werte])
@@ -815,7 +871,8 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                 "auffälliger Stellen, an denen Kraft ohne Auflagefläche in das Volumen geht) und "
                 f"{'ist' if c.zone_n == 1 else 'sind'} nur berichtet: dort σ_v bis "
                 f"{c.zone_sigma_v / 1e6:.1f} N/mm², η = {c.zone_eta:.3f} ({c.zone_kombination}, "
-                f"Element {c.zone_element + 1}) – netzabhängig, nicht für den Nachweis.")
+                f"Element {c.zone_element + 1}) – netzabhängig, nicht für den Nachweis. "
+                "Außerhalb zählen nur Elementecken, die nicht auf einem Knoten der Zonen liegen.")
         if not c.je_kombination and c.zone_n:
             c.fehler = ("alle Elemente des Bereichs liegen in netzabhängigen Stellen - "
                         "nur berichtet. " + zonentext)

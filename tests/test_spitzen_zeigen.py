@@ -119,10 +119,15 @@ def test_volumennachweis(platte):
           len(zone) > 0 and zone <= set(hexa), f"{len(zone)} Zonenelemente von {len(hexa)}")
     c = an.volumen.bereiche["B1"]
     fyd = 355e6 / m.design.gamma_M0
-    # unabhaengig: sigma_v je Element wie der Nachweis (geglaettete Eckspannung)
+    # unabhaengig: sigma_v je Element wie der Nachweis (geglaettete Eckspannung);
+    # seit 14.10.2026 zaehlen Ecken auf Knoten der Zone an Aussenelementen nicht
+    # (tests/test_zonenrand.py) - bis dahin las der Nachweis dort die Ecke, die
+    # Zonen- und Aussenelemente mischt
     werte = {e: vol.vergleichsspannung(s) for e, s, _p in vol._elementspannungen(m, r, hexa)}
     eta_mit = max(werte.values()) / fyd
-    aussen = {e: v for e, v in werte.items() if e not in zone}
+    zk = _zonenknoten(m, zone)
+    aussen = {e: vol.vergleichsspannung(s) for e, s, _p in
+              vol._elementspannungen(m, r, [e for e in hexa if e not in zone], zk)}
     innen = {e: v for e, v in werte.items() if e in zone}
     eta_ohne = max(aussen.values()) / fyd
     print(f"   η mit Zone (bis 13.10.2026) {eta_mit:.3f}, η ohne Zone {eta_ohne:.3f}, "
@@ -163,7 +168,9 @@ def test_alternative_ohne_eintrag():
     zone = _zone(r)
     werte = {e: vol.vergleichsspannung(s) for e, s, _p in vol._elementspannungen(m, r.scaled(1.35), hexa)}
     fyd = 355e6 / m.design.gamma_M0
-    ohne = max(v for e, v in werte.items() if e not in zone) / fyd
+    zk = _zonenknoten(m, zone)
+    ohne = max(vol.vergleichsspannung(s) for e, s, _p in vol._elementspannungen(
+        m, r.scaled(1.35), [e for e in hexa if e not in zone], zk)) / fyd
     mit = max(werte.values()) / fyd
     print(f"   EK1 [1]: η mit Zone {mit:.3f}, ohne {ohne:.3f}, Nachweis {c.util:.3f} ({c.kombination})")
     check("Alternative einer Ergebniskombination (im Nachweis überlagert): η ohne Zone",
@@ -329,6 +336,20 @@ def test_oberflaeche(platte):
           and schr.prop.color.hex_rgb.lower() == vp.FARBE_SPITZE.lower()
           and rand is not None and rand.prop.color.hex_rgb.lower() == vp.FARBE_SPITZE.lower(),
           f"{getattr(getattr(schr, 'mapper', None), 'dataset', None) and schr.mapper.dataset.n_lines} Linien")
+    # seit 14.10.2026 dichter und breiter (Bild V21: h/2 und 1,5 px waren
+    # neben den schwarzen Netzkanten kaum zu sehen): h/3, 2,5 px
+    hs = [float(s["h"]) for s in r.info["spitzenstellen"]["stellen"] if s["auffaellig"] and s.get("h")]
+    if schr is not None and hs:
+        d = vp._SCHRAFFUR_RICHTUNG / np.linalg.norm(vp._SCHRAFFUR_RICHTUNG)
+        ebenen = np.unique(np.round(np.asarray(schr.mapper.dataset.points, float) @ d, 9))
+        abst = float(np.median(np.diff(ebenen))) if len(ebenen) > 1 else float("nan")
+        soll = float(np.median(hs)) / 3.0
+        check("… Schraffur: Abstand ein Drittel der örtlichen Kantenlänge, Linien 2,5 px breit",
+              abs(abst - soll) <= 1e-6 * soll and abs(schr.prop.line_width - 2.5) < 1e-9,
+              f"Abstand {abst * 1000:.3f} mm (h/3 = {soll * 1000:.3f} mm), Breite {schr.prop.line_width:g} px")
+    else:
+        check("… Schraffur: Abstand ein Drittel der örtlichen Kantenlänge, Linien 2,5 px breit", False,
+              "keine Schraffur oder kein h")
     leg = w.plotter.actors.get("spitzen_schraffur_legende")
     muster = w.plotter.actors.get("spitzen_schraffur_muster")
     check("… eigener Legendeneintrag „netzabhängig (schraffiert)“ mit Muster, in Grau",

@@ -2675,9 +2675,47 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
 FARBE_SPITZE = "#646464"
 #: Text des Legendeneintrags der Schraffur
 SCHRAFFUR_TEXT = "netzabhängig (schraffiert)"
+#: Linien je oertlicher Kantenlaenge h und ihre Breite [px] (14.10.2026)
+SCHRAFFUR_DICHTE = 3.0
+SCHRAFFUR_BREITE = 2.5
 #: Richtung, quer zu der die Schraffurlinien laufen (Ebenen d·x = k·Abstand),
 #: schief zu allen Achsen, damit jede Seite eines Quaders Linien bekommt
 _SCHRAFFUR_RICHTUNG = np.array([0.80, 0.53, 0.28])
+
+
+def zonen_getrennt(flaeche, kn, name: str, werte, zonen_elemente, zonen_werte):
+    """Die Ergebnisoberflaeche mit unstetiger Faerbung an der Grenze der
+    netzabhaengigen Zonen (seit 14.10.2026): die Zellen der Zonenelemente
+    bekommen eigene Punkte mit ``zonen_werte`` (je Modellknoten, Mittel nur
+    ueber die Zonenelemente), die uebrigen behalten ``werte`` (an den
+    Randknoten das Mittel nur ueber die Aussenelemente). ``kn`` je Punkt der
+    Modellknoten, Zellen mit ``cell_data["elem"]``. Rueckgabe ein Gitter mit
+    denselben Feldern (``vtkOriginalPointIds`` = Modellknoten, ``elem``);
+    ohne Zonenzelle die Oberflaeche selbst mit ``werte``."""
+    kn = np.asarray(kn, np.int64)
+    werte = np.asarray(werte, float)
+    elem = np.asarray(flaeche.cell_data["elem"], np.int64)
+    in_z = np.isin(elem, np.asarray(zonen_elemente, np.int64))
+    if not in_z.any():
+        flaeche.point_data[name] = werte[kn]
+        return flaeche
+    f = flaeche.copy(deep=False)
+    f.point_data["_kn"] = kn
+    f.cell_data["_zelle"] = np.arange(f.n_cells)
+    teile = []
+    for maske, w in ((~in_z, werte), (in_z, np.asarray(zonen_werte, float))):
+        if not maske.any():
+            continue
+        t = f.extract_cells(np.flatnonzero(maske))
+        t.point_data[name] = w[np.asarray(t.point_data["_kn"], np.int64)]
+        teile.append(t)
+    neu = teile[0].merge(teile[1:], merge_points=False) if len(teile) > 1 else teile[0]
+    neu.point_data["vtkOriginalPointIds"] = np.asarray(neu.point_data["_kn"], np.int64)
+    if "vtkOriginalCellIds" in flaeche.cell_data:
+        neu.cell_data["vtkOriginalCellIds"] = np.asarray(flaeche.cell_data["vtkOriginalCellIds"])[
+            np.asarray(neu.cell_data["_zelle"], np.int64)]
+    neu.set_active_scalars(name)
+    return neu
 
 
 def schraffur(flaeche, abstand: float):
@@ -2763,13 +2801,16 @@ def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: fl
         if kanten.n_cells:
             plotter.add_mesh(kanten, color=FARBE_SPITZE, line_width=2, name="spitzen_zonen")
         # grau schraffiert ueber der Ergebnisfarbe (seit 13.10.2026): Abstand
-        # die halbe oertliche Kantenlaenge der Stellen
+        # ein Drittel der oertlichen Kantenlaenge der Stellen, 2,5 px breit.
+        # Bis zum 14.10.2026 h/2 und 1,5 px - auf dem Bild V21 kaum von den
+        # schwarzen Netzkanten zu unterscheiden; ein heller Rand um die Linien
+        # (Probe n3/proto_schraffur.png) deckte die Farbe darunter zu
         hs = [float(s.get("h", 0.0) or 0.0) for s in stellen if float(s.get("h", 0.0) or 0.0) > 0]
-        abstand = 0.5 * float(np.median(hs)) if hs else 0.02 * float(np.linalg.norm(
+        abstand = float(np.median(hs)) / SCHRAFFUR_DICHTE if hs else 0.02 * float(np.linalg.norm(
             np.ptp(np.asarray(huelle.points, float), axis=0)))
         linien = schraffur(huelle, abstand)
         if linien is not None:
-            plotter.add_mesh(linien, color=FARBE_SPITZE, line_width=1.5, name="spitzen_schraffur")
+            plotter.add_mesh(linien, color=FARBE_SPITZE, line_width=SCHRAFFUR_BREITE, name="spitzen_schraffur")
     punkte, texte = [], []
     for s in stellen:
         kn = np.asarray(s.get("knoten", []), np.int64)
@@ -4603,21 +4644,36 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             zeilen.append(zeile(nm, z(R[a, j], art), f"Knoten {a}",
                                 z(R[b, j], art), f"Knoten {b}", E.einheit(art)))
     zk = (spitzen or {}).get("zk")
+    getrennt_fn = (spitzen or {}).get("getrennt")
 
-    def ohne_zone(a):
-        # ohne die Knoten der Zonen auffaelliger netzabhaengiger Stellen
-        if zk is None or a is None or len(a) != len(zk):
+    def ohne_zone(a, art=None):
+        # ausserhalb der Zonen auffaelliger netzabhaengiger Stellen: seit
+        # 14.10.2026 mit den Randknoten, gemittelt nur ueber die
+        # Aussenelemente (spitzenanzeige.getrennt) - wie Faerbung und Skala;
+        # bis dahin fielen alle Knoten der Zonen weg
+        if a is None:
+            return a
+        g = None
+        if getrennt_fn is not None and art is not None:
+            try:
+                g = getrennt_fn(*art)
+            except Exception:               # noqa: BLE001 - dann wie bisher
+                g = None
+        if g is not None and len(g["aussen"]) == len(a):
+            return np.where(g["nur_zone"], np.nan, g["aussen"])
+        if zk is None or len(a) != len(zk):
             return a
         b = np.array(a, float, copy=True)
         b[np.asarray(zk, bool)] = np.nan
         return b
     vm = getattr(res, "node_vm_max", None) if gewaehlt("sig_v") else None
+    huelle = vm is not None
     if vm is None and gewaehlt("sig_v"):
         vm = getattr(res, "node_vm", None)
+    if vm is not None:
+        vm = ohne_zone(vm, None if huelle else ("vergleich", "sv", "max"))
     if vm is not None and sicht is not None:
         vm = nur_sicht(vm)
-    if vm is not None:
-        vm = ohne_zone(vm)
     if vm is not None and len(vm) and np.isfinite(vm).any():
         k = int(np.nanargmax(vm))
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
@@ -4638,9 +4694,10 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         # eine Spannungsgroesse: kleinster und groesster Wert mit Knoten, in
         # der Einheit ihrer Farbskala
         try:
-            werte_k = nur_sicht(np.asarray(spn.je_knoten(model, res, ak[0], ak[1], seite), float))
+            werte_k = np.asarray(spn.je_knoten(model, res, ak[0], ak[1], seite), float)
             if ak[0] == "volumen":
-                werte_k = ohne_zone(werte_k)
+                werte_k = ohne_zone(werte_k, (ak[0], ak[1], seite))
+            werte_k = nur_sicht(werte_k)
         except Exception:                   # noqa: BLE001
             werte_k = None
         if werte_k is not None and len(werte_k) and np.isfinite(werte_k).any():
