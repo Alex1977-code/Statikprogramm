@@ -8,6 +8,8 @@ Neu gegenueber Version 1:
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from scipy import sparse
 
@@ -1781,13 +1783,35 @@ def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L, phy: float = 0.0,
     return f
 
 
+def projektionsfaktor(t, q) -> float:
+    """Laenge der Projektion je Stablaenge fuer eine Last in Richtung ``q``:
+    sqrt(1 - (t . d)^2) mit der Stabachse t und d = q/|q| - die Projektion des
+    Stabs auf die Ebene senkrecht zur Lastrichtung (beim waagerechten Stab und
+    lotrechter Last 1, beim lotrechten 0)."""
+    q = np.asarray(q, float)
+    n = float(np.linalg.norm(q))
+    if n <= 0:
+        return 1.0
+    c = float(np.dot(np.asarray(t, float), q / n))
+    return math.sqrt(max(0.0, 1.0 - c * c))
+
+
 def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
-    """Lokale Streckenlast (q1, q2) eines BeamLoad."""
+    """Lokale Streckenlast (q1, q2) eines BeamLoad, je Stablaenge.
+
+    Eine globale Last „je Projektion“ (``bl.bezugslaenge``, RFEM „projizierte
+    Länge“, seit 14.10.2026) gilt je Laenge der Projektion des Stabs senkrecht
+    zur Lastrichtung; je Stablaenge ist sie um :func:`projektionsfaktor`
+    kleiner, die Summe q l_proj bleibt. Bis zum 14.10.2026 liess der
+    RFEM-Import solche Lasten weg („Lastrichtung unbekannt“)."""
     X = model.nodes[e.nodes]
     T3, L = bm.local_axes(X[0], X[1], e.roll)
     q1 = np.asarray(bl.q, float)
     q2 = np.asarray(bl.q2, float) if bl.q2 is not None else q1.copy()
     if bl.system == "global":
+        if getattr(bl, "bezugslaenge", "") == "projektion":
+            f = projektionsfaktor(T3[0], q1 if np.any(q1) else q2)
+            q1, q2 = f * q1, f * q2
         q1 = T3 @ q1
         q2 = T3 @ q2
     return q1, q2

@@ -1206,6 +1206,11 @@ class BeamLoad:
     q2: Optional[list[float]] = None   # Wert am Stabende (None = gleich q)
     a: float = 0.0                     # Anfang des Abschnitts [m]
     b: Optional[float] = None          # Ende des Abschnitts [m], None = Elementende
+    # Bezug der globalen Last (14.10.2026, RFEM „wahre“ bzw. „projizierte
+    # Länge“): "" je Stablaenge (beim Seil je Bogenlaenge, Kettenlinie),
+    # "projektion" je Laenge der Projektion senkrecht zur Lastrichtung (beim
+    # Seil die Parabel). Lokale Lasten kennen nur "".
+    bezugslaenge: str = ""
 
     @property
     def teilweise(self) -> bool:
@@ -1388,6 +1393,9 @@ class Linienlast:
     # gespeichert wird er nicht, er ergibt sich beim Laden neu. Bis zum
     # 07.10.2026 stand er im Kommentar und ueberschrieb den des Anwenders (N05).
     verteilt: str = ""
+    # Bezug einer globalen Stablast (14.10.2026, wie BeamLoad.bezugslaenge):
+    # "" je Stablaenge, "projektion" je Laenge der Projektion
+    bezugslaenge: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1399,6 +1407,8 @@ class Linienlast:
                                           else " bis zum Ende")
         if self.system == "local":
             t += " (lokal)"
+        elif self.bezugslaenge == "projektion":
+            t += " (je Projektion)"
         return t + (f" – {self.kommentar}" if self.kommentar else "")
 
 
@@ -1833,13 +1843,16 @@ class LoadCase:
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
             "nodal_loads": [asdict(l) for l in self.eigene("nodal_loads")],
-            "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
+            # ohne leeren Bezug (bezugslaenge, 14.10.2026): so liest auch ein
+            # aelterer Stand (BeamLoad(**l)) die Datei
+            "beam_loads": [{k: v for k, v in asdict(l).items() if k != "bezugslaenge" or v}
+                           for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
             # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei;
             # den Stand des Verteilens (verteilt) schreibt niemand, er entsteht neu
             "linienlasten": [{k: v for k, v in asdict(l).items()
-                              if k != "verteilt" and (k != "erzeuger" or v)}
+                              if k != "verteilt" and (k not in ("erzeuger", "bezugslaenge") or v)}
                              for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [l.als_dict() for l in (getattr(self, "vorspannungen", None) or [])],
@@ -6822,7 +6835,8 @@ class Model:
                 qb = (1 - t_hi) * q1 + t_hi * q2
                 out.append(BeamLoad(int(e), qa.tolist(), ll.system, qb.tolist(),
                                     a=float(lo - s0),
-                                    b=None if hi >= s1 - 1e-12 else float(hi - s0)))
+                                    b=None if hi >= s1 - 1e-12 else float(hi - s0),
+                                    bezugslaenge=str(getattr(ll, "bezugslaenge", "") or "")))
             return out
         # Linie: Knotenlasten int N_i q ds aus den Formfunktionen ihrer
         # Elementkanten (linienverteilung). Bis zum 06.10.2026 lief die Kette
@@ -7078,15 +7092,17 @@ class Model:
 
     def add_linienlast(self, ziel: str, q, art: str = "stab", q2=None,
                        system: str = "global", von: float = 0.0, bis: float = None,
-                       case: str = None) -> "Linienlast":
+                       case: str = None, bezugslaenge: str = "") -> "Linienlast":
         """Eine Linienlast an einen Stab oder eine Linie haengen.
 
         Sie wird sofort auf vorhandene Elemente gelegt (lasten_verteilen) und
-        nach jedem Neuvernetzen wieder.
+        nach jedem Neuvernetzen wieder. ``bezugslaenge`` "projektion": die
+        globale Last gilt je Laenge der Projektion (Linienlast.bezugslaenge).
         """
         ll = Linienlast(str(ziel), str(art), [float(x) for x in q],
                         [float(x) for x in q2] if q2 is not None else None,
-                        str(system), float(von), None if bis is None else float(bis))
+                        str(system), float(von), None if bis is None else float(bis),
+                        bezugslaenge=str(bezugslaenge or ""))
         self.case(case).linienlasten.append(ll)
         return ll
 
@@ -7460,11 +7476,13 @@ class Model:
         self.case(case).nodal_loads.append(NodalLoad(int(node), [Fx, Fy, Fz, Mx, My, Mz]))
 
     def load_beam(self, elem: int, qx=0.0, qy=0.0, qz=0.0, system="global",
-                  case: str = None, q2=None, a: float = 0.0, b: float = None):
-        """Streckenlast auf ein Stabelement; a..b grenzt den Abschnitt ein [m]."""
+                  case: str = None, q2=None, a: float = 0.0, b: float = None,
+                  bezugslaenge: str = ""):
+        """Streckenlast auf ein Stabelement; a..b grenzt den Abschnitt ein [m];
+        ``bezugslaenge`` "projektion": je Laenge der Projektion (BeamLoad)."""
         self.case(case).beam_loads.append(
             BeamLoad(int(elem), [qx, qy, qz], system, list(q2) if q2 is not None else None,
-                     float(a), None if b is None else float(b)))
+                     float(a), None if b is None else float(b), str(bezugslaenge or "")))
 
     def load_face(self, elem: int, p: float, face: int = 0, case: str = None,
                   direction=None):

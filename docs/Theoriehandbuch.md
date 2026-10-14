@@ -235,9 +235,10 @@ w = 87,951 mm, T = 113,81 kN, auf 3·10⁻¹⁴ genau.
 Streckenlast w je ungedehnter Länge in fester Richtung. Eine Streckenlast q,
 die über die ganze Seillänge gleich ist (global oder lokal, die lokale
 Richtung in der Ausgangslage, richtungstreu wie alle Lasten der Theorie III.
-Ordnung), geht deshalb wie das Eigengewicht in die Kettenlinie ein, mit
-w = q·L/L₀ (dieselbe Summe q·L wie nach Theorie I. Ordnung) und dem Faktor
-der Kombination (`theorie3.seil_streckenlasten`). Trapezförmig oder
+Ordnung), geht deshalb wie das Eigengewicht in die Kettenlinie ein, je
+ungedehnter Bogenlänge (w = q, Summe q·L₀; bis zum 14.10.2026 w = q·L/L₀
+mit der Sehne L, siehe unten) und mit dem Faktor der Kombination
+(`theorie3.seil_streckenlasten`). Trapezförmig oder
 abschnittsweise bildet die Kettenlinie eine Last nicht ab. Als Knotenlast an
 den Seilenden ginge sie am Seil vorbei in die Lager, denn ein Seilelement
 zwischen zwei Festpunkten trüge von ihr nichts, und das Seil in der
@@ -250,6 +251,54 @@ Seil von 10 m aus zwei Elementen (Ø 20 mm, 10 kN Vorspannung) mit
 q = 1 kN/m: global und lokal bitgleich dasselbe wie mit einem Eigengewicht
 ρ·A·g = 1 kN/m, Durchhang 182,456 mm, Seilkraft 68,661 kN, Auflager z
 10 kN; als flache Parabel von Hand 182,391 mm.
+
+**Bezug der Streckenlast: je Bogenlänge oder je Projektion** (seit
+14.10.2026). Eine Stablast hat einen Bezug (`BeamLoad.bezugslaenge`,
+`Linienlast.bezugslaenge`): leer heißt je Stablänge, beim Seil je
+Bogenlänge; „projektion“ heißt je Länge der Projektion des Stabs auf die
+Ebene senkrecht zur Lastrichtung (Schnee, Eis). Aus RFEM kommt der Bezug mit
+der Kennzahl der Lastrichtung (Abschnitt Import RFEM 6 in
+`docs/Schnittstellen.md`). Nach Theorie I. und II. Ordnung wird eine Last je
+Projektion auf die Stablänge umgerechnet, q·√(1 − (t·d)²) mit der Stabachse t
+und der Lastrichtung d (`asm.projektionsfaktor`); die Summe ist q·l_proj. Am
+Seil nach Theorie III. Ordnung gilt:
+
+* **je Bogenlänge: elastische Kettenlinie** wie oben, w = q je ungedehnter
+  Länge, Summe q·L₀. Bis zum 14.10.2026 rechnete die Kettenlinie mit
+  w = q·L/L₀, also je Sehnenlänge. Mit Länge₀ = 0 (der Sehne) ist das
+  dasselbe; ein Seil mit Länge₀ über der Sehne trug zu wenig (Spannweite
+  10 m, L₀ = 10,42 m, 1 kN/m: Auflager 10,00 statt 10,42 kN, Horizontalzug
+  9,598 statt 10,000 kN).
+* **je Projektion: elastische Parabel** (`verbindung.seil_parabel`). In der
+  Ebene aus Sehne und Last ist der Horizontalzug H konstant, der Vertikalzug
+  wächst mit der Projektion, V(x) = V₀ + q·x, die Seillinie ist die Parabel
+  z′ = V/H, und durch das zweite Ende folgt V₀ = H·h/l − q·l/2. H ergibt sich
+  aus der ungedehnten Länge: mit ds = ds₀·(1 + T/EA), T = √(H² + V²) und
+  V = H·sinh u ist L₀ = (EA·H/q)·∫ cosh²u/(EA + H·cosh u) du von
+  asinh(V₀/H) bis asinh(V₂/H); der Integrand ist glatt, Gauß-Legendre
+  (48 Punkte je Teilstück der Länge 4) rechnet ihn auf Maschinengenauigkeit,
+  und L₀(H) fällt streng, H folgt mit `brentq` in log H. Die Summe der Last
+  ist q·l und ändert sich mit der Lage der Enden; die Tangente kommt aus
+  zentralen Differenzen der Endkräfte (nicht symmetrisch).
+
+Geprüft an einem Seil von 10 m aus zwei Elementen (Ø 20 mm), Länge₀ aus der
+geschlossenen Lösung zu H = 10 kN (`tests/test_stab_querlast.py`): je
+Projektion Stich q·l²/(8H) = 1,250 m, H = 10 kN und Auflager q·l = 10 kN
+auf 10⁻¹⁴, mit 2 m Höhenunterschied ebenso (Auflager unten q·l/2 − H·h/l =
+3 kN); je Bogenlänge gegen die elastische Kettenlinie nach Irvine
+(l = H·L₀/EA + (2H/w)·asinh(w·L₀/(2H))) Stich 1,276054 m, Auflager
+w·L₀ = 10,420 kN, bitgleich mit einem gleich schweren Eigengewicht. Bis zum
+14.10.2026 rechnete das Seil auch eine Last je Projektion als Kettenlinie:
+H = 9,842 statt 10,000 kN, Stich 1,2454 statt 1,2500 m.
+
+**Offene Punkte am Seil.** Eine Last je Projektion und eine je Bogenlänge
+(auch das Eigengewicht) zugleich auf demselben Seil bildet weder die
+Kettenlinie noch die Parabel ab; der Lastfall ist dann nach Theorie III.
+Ordnung gesperrt, die Meldung nennt Seil und Grund. Ebenso gesperrt bleiben
+Lasten je Projektion in verschiedenen Richtungen auf einem Seil und eine
+**trapezförmige oder abschnittsweise Streckenlast** auf dem Seil (je
+Bogenlänge wie je Projektion); dafür das Seil an den Laststellen in Elemente
+teilen oder die Last als Knotenlast ansetzen.
 
 **Wölbkrafttorsion.** Ein Balken mit dem Haken `woelb` und einem Querschnitt
 mit Wölbwiderstand I_w > 0 bekommt an jedem seiner Knoten einen **siebten

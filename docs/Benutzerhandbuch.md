@@ -6333,6 +6333,23 @@ Betrag („Seil S1, Lastfall LF1: trapezförmig 1 → 2 kN/m“). Teilen Sie das
 Seil an den Laststellen in Elemente, sodass die Last auf jedem gleich ist,
 oder setzen Sie sie als Knotenlast an.
 
+**Je Bogenlänge oder je Projektion** (seit 14.10.2026). Eine Streckenlast
+gilt je Länge des Stabs, beim Seil je Bogenlänge; aus RFEM kann sie auch je
+Projektion kommen (RFEM „projizierte Länge“, etwa Schnee oder Eis). Nach
+Theorie I. und II. Ordnung rechnet Statik3D eine Last je Projektion auf die
+Stablänge um: 1 kN/m je Projektion auf einem Stab, der 3 m waagerecht und
+4 m hoch läuft, gibt 3 kN, je Stablänge 5 kN. Am Seil nach Theorie III.
+Ordnung entscheidet der Bezug über die Form: je Bogenlänge hängt das Seil als
+**Kettenlinie** durch (wie unter seinem Eigengewicht, Summe Last mal
+ungedehnter Seillänge), je Projektion als **Parabel** (Summe Last mal
+Projektion). Bis zum 14.10.2026 rechnete eine Last je Projektion als
+Kettenlinie, und eine Last je Bogenlänge galt je Sehnenlänge; an einem Seil
+von 10 m Spannweite mit 10,42 m Länge₀ und 1 kN/m trug es dann 10,00 statt
+10,42 kN. **Offen** sind die trapezförmige oder abschnittsweise Streckenlast
+auf einem Seil sowie eine Last je Projektion zusammen mit dem Eigengewicht
+oder einer Last je Bogenlänge auf demselben Seil: Solche Lastfälle rechnen
+nach Theorie III. Ordnung nicht, und die Meldung nennt Seil und Grund.
+
 **Wölbkrafttorsion.** Der Haken „Wölbkrafttorsion“ am Stab gibt jedem seiner
 Knoten einen siebten Freiheitsgrad, die Verwölbung. Voraussetzung ist ein
 Querschnitt mit Wölbwiderstand I_w (die Profildatenbank bringt ihn mit). Am
@@ -7029,6 +7046,16 @@ andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
 **Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
+**Stablasten je projizierter Länge** (seit 14.10.2026). RFEM legt den Bezug
+einer Stablast in die Lastrichtung: 11, 12 und 13 sind global X, Y und Z je
+wahrer Länge, 14, 15 und 16 dieselben Richtungen je projizierter Länge (so
+heißen sie in der Schnittstelle von RFEM 6.15). Statik3D übernimmt beide; die
+Last je Projektion trägt den Bezug „je Projektion“, und das Protokoll nennt
+sie („davon 1 je projizierter Länge …“). Am Seil ist je wahrer Länge die
+Kettenlinie, je Projektion die Parabel. Bis zum 14.10.2026 ließ der Import
+eine Stablast je projizierter Länge weg und nannte sie unter „Lastrichtung
+unbekannt: Kennzahl 16“.
+
 Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
 Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
 Lastzeile und nicht je Stab („62 Stablasten (Gleichlast) an ihre Staebe

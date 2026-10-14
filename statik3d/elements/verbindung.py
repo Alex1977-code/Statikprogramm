@@ -3,6 +3,7 @@ Verbindungs- und Sonderelemente.
 
 * Zweiknotenfeder mit sechs lokalen Steifigkeiten
 * Seil als elastische Kettenlinie (Peyrot/Goulois 1979, Jayaraman/Knudson 1981)
+* Seil als elastische Parabel (Streckenlast je Projektion, 14.10.2026)
 * Starre Koerper RBE2 / RBE3 als Zwangsbedingungen (Strafverfahren)
 * Grenzschichtelement ohne Dicke (Interface) mit 3 oder 4 Knoten je Seite
 
@@ -368,6 +369,118 @@ def seil_kettenlinie(P1, P2, L0: float, EA: float, w, k_min: float = 0.0):
     L = L0 + _int_T(H, V2, V0, q * L0) / (EA * q)
     info.update(H=H, Tmax=max(T1, T2), Tmin=Tmin, Durchhang=f_sag, L=L,
                 V1=V0, V2=V2, iterationen=it)
+    return f_int, Kt, info
+
+
+_GL_X, _GL_W = np.polynomial.legendre.leggauss(48)
+
+
+def _parabel_L0(H: float, V0: float, q: float, l: float, EA: float) -> float:
+    """Ungedehnte Laenge der elastischen Parabel: Horizontalzug H, Vertikalzug
+    V0 am Anfang, Last q je Projektion, Projektion l.
+
+    Mit V = V0 + q x, T = sqrt(H^2 + V^2) und ds = ds0 (1 + T/EA) ist
+    L0 = int_0^l T/(H (1 + T/EA)) dx. Mit V = H sinh u (T = H cosh u,
+    dx = H cosh u du/q) wird daraus
+    L0 = (EA H/q) int cosh^2 u/(EA + H cosh u) du von asinh(V0/H) bis
+    asinh(V2/H): glatt in u, Gauss-Legendre (je Teilstueck hoechstens 4 lang)
+    ist auf Maschinengenauigkeit. Fuer EA -> unendlich die Bogenlaenge der
+    Parabel (H/q)[u/2 + sinh(2u)/4]."""
+    u0 = math.asinh(V0 / H)
+    u2 = math.asinh((V0 + q * l) / H)
+    n = max(1, int(math.ceil((u2 - u0) / 4.0)))
+    summe = 0.0
+    for k in range(n):
+        a = u0 + (u2 - u0) * k / n
+        b = u0 + (u2 - u0) * (k + 1) / n
+        u = 0.5 * (a + b) + 0.5 * (b - a) * _GL_X
+        c = np.cosh(u)
+        summe += 0.5 * (b - a) * float(np.dot(_GL_W, c * c / (EA + H * c)))
+    return EA * H / q * summe
+
+
+def _parabel_H(l: float, h: float, L0: float, EA: float, q: float) -> float:
+    """Horizontalzug der elastischen Parabel zur ungedehnten Laenge L0
+    (L0(H) faellt streng mit H; Wurzel in log H)."""
+    def g(t):
+        H = math.exp(t)
+        V0 = H * h / l - 0.5 * q * l
+        return _parabel_L0(H, V0, q, l, EA) / L0 - 1.0
+    t = math.log(max(q * l, 1e-12 * EA))
+    lo = hi = t
+    for _ in range(200):
+        if g(lo) > 0:
+            break
+        lo -= 2.0
+    for _ in range(200):
+        if g(hi) < 0:
+            break
+        hi += 2.0
+    return math.exp(brentq(g, lo, hi, xtol=1e-15, rtol=1e-15, maxiter=500))
+
+
+def seil_parabel(P1, P2, L0: float, EA: float, p, k_min: float = 0.0):
+    """Seilelement als elastische **Parabel**: Streckenlast ``p`` (3,) [N/m]
+    je Laenge der **Projektion** der Sehne auf die Ebene senkrecht zur
+    Lastrichtung (RFEM „projizierte Länge“; Schnee, Eis auf flachem Seil).
+
+    Gleichgewicht in der Ebene aus Sehne und Last wie bei der Kettenlinie: der
+    Horizontalzug H ist konstant, der Vertikalzug waechst mit der Projektion,
+    V(x) = V0 + q x - die Seillinie ist eine Parabel z' = V/H, durch das
+    zweite Ende z(l) = h gilt V0 = H h/l - q l/2. H folgt aus der
+    ungedehnten Laenge L0 (:func:`_parabel_L0`). Die Last je Projektion ist
+    q l, sie aendert sich mit der Lage der Enden.
+
+    Rueckgabe wie :func:`seil_kettenlinie` (f_int (6,), Kt (6,6), info); Kt
+    aus zentralen Differenzen der Endkraefte nach der Sehne (Form
+    [[Kc, -Kc], [-Kc, Kc]], nicht symmetrisiert: die Last haengt an l).
+    Ohne Last oder bei einer Sehne parallel zur Last (Projektion 0) ein
+    gerader Zugstab wie in seil_kettenlinie."""
+    P1 = np.asarray(P1, float)
+    P2 = np.asarray(P2, float)
+    p = np.asarray(p, float)
+    e_x, e_up, e_y, l, h, c, q = _seil_ebene(P1, P2, p)
+    if q <= 0 or l <= 0:
+        return seil_kettenlinie(P1, P2, L0, EA, np.zeros(3), k_min)
+
+    def kraefte(d):
+        """(Kraft am Ende 2 (3,), H, V0, V2, l, h) zur Sehne d."""
+        hh = float(d @ e_up)
+        dh = d - hh * e_up
+        ll = float(np.linalg.norm(dh))
+        ex = dh / ll
+        H = _parabel_H(ll, hh, L0, EA, q)
+        V0 = H * hh / ll - 0.5 * q * ll
+        V2 = V0 + q * ll
+        return H * ex + V2 * e_up, H, V0, V2, ll, hh
+
+    d = P2 - P1
+    f2, H, V0, V2, l, h = kraefte(d)
+    f_int = np.zeros(6)
+    f_int[:3] = -(H * e_x + V0 * e_up)
+    f_int[3:] = f2
+    Kc = np.zeros((3, 3))
+    dl = 1e-6 * c
+    for j in range(3):
+        s = np.zeros(3)
+        s[j] = dl
+        Kc[:, j] = (kraefte(d + s)[0] - kraefte(d - s)[0]) / (2.0 * dl)
+    Kt = np.zeros((6, 6))
+    Kt[:3, :3] = Kc
+    Kt[3:, 3:] = Kc
+    Kt[:3, 3:] = -Kc
+    Kt[3:, :3] = -Kc
+    T1 = math.hypot(H, V0)
+    T2 = math.hypot(H, V2)
+    Tmin = H if V0 < 0 < V2 else min(T1, T2)
+    # Stich in Feldmitte lotrecht zur Projektion q l^2/(8 H), senkrecht zur Sehne mal l/c
+    f_sag = q * l * l / (8.0 * H) * l / c
+
+    def bogen(y):
+        return 0.5 * (y * math.sqrt(1.0 + y * y) + math.asinh(y))
+    L = H / q * (bogen(V2 / H) - bogen(V0 / H))
+    info = {"H": H, "Tmax": max(T1, T2), "Tmin": Tmin, "Durchhang": f_sag, "L": L,
+            "V1": V0, "V2": V2, "schlaff": False, "iterationen": 0, "form": "Parabel"}
     return f_int, Kt, info
 
 

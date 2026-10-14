@@ -222,12 +222,22 @@ class _Seil:
     Vorspannung bitgleich denen ohne).
 
     ``q_last``: eine gleichmaessige Streckenlast ueber die ganze Seillaenge,
-    global [N/m] je Laenge der Ausgangslage (:func:`seil_streckenlasten`). Sie
-    geht wie das Eigengewicht in die Kettenlinie, mit derselben Summe q L wie
-    nach Theorie I. Ordnung. Bis zum 14.10.2026 fiel sie hier still weg.
+    global [N/m] **je Bogenlaenge** (:func:`seil_streckenlasten`). Sie geht wie
+    das Eigengewicht in die Kettenlinie, je ungedehnter Laenge, Summe q L0.
+    Bis zum 14.10.2026 galt sie je Sehnenlaenge (w = q L/L0, Summe q L): ein
+    Seil mit Laenge0 ueber der Sehne trug zu wenig (Spannweite 10 m,
+    L0 = 10,42 m, 1 kN/m: Auflager 10,00 statt 10,42 kN, Horizontalzug 9,60
+    statt 10,00 kN; mit Laenge0 = 0, der Sehne, ist beides dasselbe).
+
+    ``p_last``: eine gleichmaessige Streckenlast **je Projektion** (RFEM
+    „projizierte Länge“, BeamLoad.bezugslaenge = "projektion", seit dem
+    14.10.2026), global [N/m]: das Seil rechnet dann als elastische Parabel
+    (verbindung.seil_parabel), Summe p l mit der Projektion l. Kettenlinie
+    und Parabel zugleich bildet das Element nicht ab - solve_theorie3 sperrt
+    den Lastfall vorher.
     """
 
-    def __init__(self, model: Model, i: int, g, n_anfang: float = 0.0, q_last=None):
+    def __init__(self, model: Model, i: int, g, n_anfang: float = 0.0, q_last=None, p_last=None):
         e = model.elements[i]
         mat = model.materials[e.mat]
         sec = model.sections[e.sec]
@@ -240,8 +250,10 @@ class _Seil:
         # Streckenlast je ungedehnter Laenge: das Eigengewicht des Lastfalls
         self.w = np.asarray(g, float) * mat.rho * sec.A
         if q_last is not None:
-            # je Laenge der Ausgangslage -> je ungedehnter Laenge (Summe q L)
-            self.w = self.w + np.asarray(q_last, float) * (L / self.L0)
+            # je Bogenlaenge = je ungedehnter Laenge wie das Eigengewicht
+            self.w = self.w + np.asarray(q_last, float)
+        # je Projektion: die Parabel (die Projektion aendert keine Vorspannung)
+        self.p = None if p_last is None or not np.any(p_last) else np.asarray(p_last, float)
         self.n_anfang = float(n_anfang or 0.0)
         if self.n_anfang:
             L0 = self.L0
@@ -252,13 +264,22 @@ class _Seil:
 
     def zustand(self, X: np.ndarray):
         """(innere Knotenkraefte (6,), Tangente (6,6), Angaben) in dieser Lage."""
-        from .elements.verbindung import seil_kettenlinie
+        from .elements.verbindung import seil_kettenlinie, seil_parabel
+        if self.p is not None:
+            return seil_parabel(X[self.nodes[0]], X[self.nodes[1]], self.L0, self.EA, self.p)
         return seil_kettenlinie(X[self.nodes[0]], X[self.nodes[1]], self.L0, self.EA, self.w)
 
 
 def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
     """Die Streckenlasten auf Seilen fuer Theorie III. Ordnung: ({Element:
-    q global [N/m]}, [Zeilen]).
+    q global [N/m] je Bogenlaenge}, {Element: p global [N/m] je Projektion},
+    [Zeilen]).
+
+    Seit dem 14.10.2026 zaehlt der Bezug der Last (BeamLoad.bezugslaenge, aus
+    RFEM „wahre“ bzw. „projizierte Länge“): je Bogenlaenge geht sie in die
+    Kettenlinie, je Projektion in die Parabel (verbindung.seil_parabel). Eine
+    lokale Last gilt je Bogenlaenge. Lasten je Projektion in verschiedenen
+    Richtungen auf demselben Seil bildet die Parabel nicht ab - Zeile.
 
     Das Seil rechnet hier als Kettenlinie (verbindung.seil_kettenlinie), und
     die kennt nur eine gleichmaessige Streckenlast je Laenge in fester
@@ -280,6 +301,7 @@ def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
     from .solver import _stab_namen
     namen = None
     gleich: dict = {}
+    projektion: dict = {}
     zeilen: list = []
     for lf, f in factors.items():
         lc = model.load_cases.get(lf)
@@ -294,7 +316,14 @@ def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
                 continue
             X = model.nodes[e.nodes]
             T3, L = bm.local_axes(X[0], X[1], e.roll)
-            q1, q2 = asm.beam_load_local(model, e, bl)
+            proj = bl.system == "global" and getattr(bl, "bezugslaenge", "") == "projektion"
+            if proj:
+                # je Projektion: die globale Last wie eingegeben (ohne die
+                # Umrechnung je Stablaenge, asm.projektionsfaktor)
+                q1 = T3 @ np.asarray(bl.q, float)
+                q2 = T3 @ np.asarray(bl.q2 if bl.q2 is not None else bl.q, float)
+            else:
+                q1, q2 = asm.beam_load_local(model, e, bl)
             a = max(0.0, float(getattr(bl, "a", 0.0) or 0.0))
             b = L if getattr(bl, "b", None) is None else min(float(bl.b), L)
             if b <= a:
@@ -302,6 +331,17 @@ def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
             groesse = max(float(np.abs(q1).max()), float(np.abs(q2).max()), 1e-300)
             konstant = float(np.abs(q1 - q2).max()) <= 1e-12 * groesse
             ganz = a <= 1e-9 * L and b >= L * (1.0 - 1e-9)
+            if konstant and ganz and proj:
+                neu = float(f) * (T3.T @ q1)
+                alt = projektion.get(i)
+                if alt is not None and np.any(alt) and np.any(neu) and float(
+                        np.linalg.norm(np.cross(alt, neu))) > 1e-9 * float(np.linalg.norm(alt) * np.linalg.norm(neu)):
+                    if namen is None:
+                        namen = _stab_namen(model)
+                    zeilen.append(f"Seil {namen.get(i, f'Element {i + 1}')}, Lastfall {lf}: je Projektion in "
+                                  "einer anderen Richtung als die übrigen Lasten je Projektion")
+                projektion[i] = (np.zeros(3) if alt is None else alt) + neu
+                continue
             if konstant and ganz:
                 gleich[i] = gleich.get(i, np.zeros(3)) + float(f) * (T3.T @ q1)
                 continue
@@ -312,8 +352,9 @@ def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
             art = ", ".join(([] if konstant else ["trapezförmig"]) + ([] if ganz else ["abschnittsweise"]))
             betrag = f"{b1} kN/m" if konstant else f"{b1} → {b2} kN/m"
             ort = "" if ganz else f" von {zl.zahl_text(a)} bis {zl.zahl_text(b)} m"
-            zeilen.append(f"Seil {namen.get(i, f'Element {i + 1}')}, Lastfall {lf}: {art} {betrag}{ort}")
-    return gleich, zeilen
+            zeilen.append(f"Seil {namen.get(i, f'Element {i + 1}')}, Lastfall {lf}: {art} {betrag}{ort}"
+                          + (" je Projektion" if proj else ""))
+    return gleich, projektion, zeilen
 
 
 # ==========================================================================
@@ -363,7 +404,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     feq_anf = case_feq_sofort(model, factors, aktiv)
     # Streckenlasten auf Seilen gehen wie das Eigengewicht in die
     # Kettenlinie; was sie nicht abbildet, sperrt den Lastfall (14.10.2026)
-    q_seil, nicht_abbildbar = seil_streckenlasten(model, factors, aktiv)
+    q_seil, p_seil, nicht_abbildbar = seil_streckenlasten(model, factors, aktiv)
     if nicht_abbildbar:
         raise ValueError(
             "Theorie III. Ordnung: die Kettenlinie eines Seils trägt nur eine gleichmäßige "
@@ -371,8 +412,27 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             + "; ".join(nicht_abbildbar[:6]) + (" …" if len(nicht_abbildbar) > 6 else "")
             + ". Das Seil an den Laststellen in Elemente teilen (je Element gleichmäßig) oder "
               "die Last als Knotenlast ansetzen")
+    # je Projektion (Parabel) und je Bogenlaenge (Kettenlinie, auch das
+    # Eigengewicht) zugleich auf einem Seil bildet keins der beiden ab
+    gemischt = []
+    for i in sorted(p_seil):
+        if not np.any(p_seil[i]):
+            continue
+        e = model.elements[i]
+        gewicht = np.any(g_ges) and float(model.materials[e.mat].rho or 0.0) > 0.0
+        if gewicht or (i in q_seil and np.any(q_seil[i])):
+            from .solver import stab_name
+            gemischt.append(f"Seil {stab_name(model, i)}: "
+                            + ("Eigengewicht" if gewicht else "Streckenlast je Bogenlänge")
+                            + " und Streckenlast je Projektion")
+    if gemischt:
+        raise ValueError(
+            "Theorie III. Ordnung: ein Seil rechnet mit einer Streckenlast je Bogenlänge als "
+            "Kettenlinie, mit einer je Projektion als Parabel – beides zugleich nicht; nicht "
+            "gerechnet wegen " + "; ".join(gemischt[:6]) + (" …" if len(gemischt) > 6 else "")
+            + ". Die Lasten auf einen Bezug bringen (etwa je Bogenlänge) oder getrennt rechnen")
     seile = [_Seil(model, i, g_ges, asm.anfangsnormalkraft(feq_anf[i]) if i in feq_anf else 0.0,
-                   q_seil.get(i))
+                   q_seil.get(i), p_seil.get(i))
              for i in wirksam if model.elements[i].typ == "seil"]
     for sl_ in seile:
         e = model.elements[sl_.i]

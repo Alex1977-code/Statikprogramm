@@ -48,6 +48,28 @@ Geprueft gegen Hand (Einfeldtraeger):
 * Theorie II. Ordnung („auto“) ueber solve_all: Zusammenfassung, Tabelle und
   Bericht nennen den Einzelstab.
 
+3. **Seillasten aus RFEM je Bogenlaenge und je Projektion.** RFEM fuehrt den
+   Bezug in der Kennzahl der Lastrichtung (``loadDirection``: 11/12/13 global
+   X/Y/Z je wahrer Laenge, 14/15/16 je projizierter Laenge; Schnittstelle
+   RFEM 6.15, member_load.proto). Der Import liess 14 bis 16 bis zum
+   14.10.2026 als „Lastrichtung unbekannt“ weg. Jetzt traegt die Last den
+   Bezug (BeamLoad/Linienlast.bezugslaenge): nach Theorie I./II. Ordnung je
+   Laenge der Projektion, am Seil nach Theorie III. Ordnung die Parabel; je
+   Bogenlaenge die Kettenlinie, je ungedehnter Laenge wie das Eigengewicht
+   (bis zum 14.10.2026 je Sehnenlaenge, Summe q L statt q L0).
+
+* synthetische rf6 mit einem Seil und zwei Stablasten (Kennzahl 13 und 16).
+* Seil 10 m, zwei Elemente, Laenge0 aus der geschlossenen Loesung zu
+  H = 10 kN: je Projektion (Parabel) Stich q l^2/(8 H) = 1,25 m, Auflager
+  q l = 10 kN; je Bogenlaenge (elastische Kettenlinie nach Irvine) Stich
+  1,276 m, Auflager q L0 = 10,42 kN; schraeg (Hoehenunterschied 2 m) ebenso.
+* je Projektion zusammen mit Eigengewicht: gesperrt; trapezfoermig je
+  Projektion: gesperrt.
+* Theorie I. Ordnung: am schraegen Balken (3/4/5 m) gibt 1 kN/m je
+  Projektion 3 kN Auflagersumme, je Stablaenge 5 kN.
+* Speichern und Laden behalten den Bezug; ohne Bezug steht das Feld nicht in
+  der Datei.
+
 Aufruf:  python -m tests.test_stab_querlast
 """
 import math
@@ -379,10 +401,199 @@ def test_einzelstab_ausgabe():
         check(f"Bericht nennt „{text}“", text in h)
 
 
+# --------------------------------------------------------------------------
+# 3. Seillasten je Bogenlaenge und je Projektion
+# --------------------------------------------------------------------------
+E_SEIL = 210e9
+D_SEIL = 0.02
+EA_SEIL = E_SEIL * math.pi * D_SEIL ** 2 / 4
+SPANNE = 10.0
+
+
+def _rf6_seillasten(tmp):
+    """Synthetische rf6: Stab 1 ein Seil (MemberImplCable) von (0,0,0) nach
+    (10,0,0), Lastfall LF1 mit zwei Stablasten: -1000 N/m Kennzahl 13 (global
+    Z je wahrer Laenge) und -500 N/m Kennzahl 16 (global Z je projizierter Laenge)."""
+    import sqlite3
+    import zipfile
+    from tests.test_rfem6 import INF, build_db
+    db = os.path.join(tmp, "model.db")
+    build_db(db, nodes=[(0, 0, 0), (10, 0, 0)], lines=[[1, 2]],
+             members=[(1, None, None, "MemberImplTension")],
+             supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1, 2])],
+             load_cases=[("LF1", 1, 0.0)],
+             member_loads=[(1, [1], 0, 13, -1000.0, None), (1, [1], 0, 16, -500.0, None)])
+    con = sqlite3.connect(db)
+    try:
+        spalten = [r[1] for r in con.execute("PRAGMA table_info(MemberImplTension)")]
+        con.execute("CREATE TABLE MemberImplCable AS SELECT * FROM MemberImplTension WHERE 0")
+        con.execute(f"INSERT INTO MemberImplCable SELECT {', '.join(spalten)} FROM MemberImplTension WHERE id=1")
+        con.execute("DELETE FROM MemberImplTension WHERE id=1")
+        con.execute("UPDATE Member SET impl_table='MemberImplCable' WHERE id=1")
+        con.commit()
+    finally:
+        con.close()
+    rf6 = os.path.join(tmp, "seillasten.rf6")
+    with zipfile.ZipFile(rf6, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(db, "model.db")
+        z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1773229130\n")
+    os.remove(db)
+    return rf6
+
+
+def test_rfem_bezug():
+    print("\n--- 3: RFEM-Import – Stablast je wahrer und je projizierter Länge ---")
+    import shutil
+    import tempfile
+    from statik3d.importers import rfem6_db as R6
+    tmp = tempfile.mkdtemp()
+    try:
+        log = []
+        m = R6.read_rf6(_rf6_seillasten(tmp), log=log)
+        lasten = [(round(ll.q[2]), getattr(ll, "bezugslaenge", None))
+                  for lc in m.load_cases.values() for ll in lc.linienlasten]
+        check("beide Stablasten kommen an, mit ihrem Bezug",
+              sorted(lasten) == [(-1000, ""), (-500, "projektion")], str(lasten))
+        txt = " | ".join(str(z) for z in log)
+        check("das Protokoll nennt die Last je projizierter Länge",
+              "davon 1 je projizierter Länge" in txt and "Kennzahl 16" not in txt, txt[-300:])
+        m.lasten_verteilen()
+        bl = [b.bezugslaenge for lc in m.load_cases.values() for b in lc.beam_loads]
+        check("die Elementlasten tragen den Bezug", sorted(bl) == ["", "projektion"], str(bl))
+        # Speichern und Laden
+        p = os.path.join(tmp, "m.json")
+        m.save(p)
+        with open(p, encoding="utf-8") as f:
+            text = f.read()
+        check("gespeichert: der Bezug steht nur bei der Last je Projektion",
+              text.count('"bezugslaenge"') == 1, f"{text.count(chr(34) + 'bezugslaenge' + chr(34))}-mal")
+        m2 = Model.load(p)
+        l2 = sorted((round(ll.q[2]), ll.bezugslaenge) for lc in m2.load_cases.values() for ll in lc.linienlasten)
+        check("geladen: der Bezug bleibt", l2 == [(-1000, ""), (-500, "projektion")], str(l2))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _L0_parabel(H, q, l, h=0.0):
+    """Ungedehnte Laenge der elastischen Parabel, unabhaengig integriert:
+    int_0^l sqrt(1 + z'^2)/(1 + T/EA) dx, z' = h/l + q (x - l/2)/H."""
+    from scipy.integrate import quad
+
+    def g(x):
+        zs = h / l + q * (x - l / 2) / H
+        T = H * math.sqrt(1 + zs * zs)
+        return math.sqrt(1 + zs * zs) / (1 + T / EA_SEIL)
+    return quad(g, 0, l, epsabs=0, epsrel=1e-13, limit=200)[0]
+
+
+def _seil_th3(L0_je_element, bezug, q=1e3, h=0.0, rho=0.0, q2=None):
+    """Seil von (0,0,0) nach (10,0,h) aus zwei Elementen (Mittelknoten auf der
+    Sehne, in x und z frei), Rundstahl 20 mm, Laenge0 je Element vorgegeben,
+    Streckenlast qz = -q global mit dem Bezug ``bezug``."""
+    m = Model("Seil")
+    m.add_material(Material("S", E=E_SEIL, nu=0.3, rho=rho))
+    m.add_section(Section.circle("D", D_SEIL))
+    a = m.add_node(0, 0, 0)
+    b = m.add_node(SPANNE / 2, 0, h / 2)
+    c = m.add_node(SPANNE, 0, h)
+    m.fix(a, "all")
+    m.fix(c, "all")
+    m.fix(b, [1, 3, 4, 5])
+    els = [m.add_element("seil", [a, b], "S", "D"), m.add_element("seil", [b, c], "S", "D")]
+    for e, L0 in zip(els, L0_je_element):
+        m.elements[e].laenge0 = L0
+    m.add_member("Tragseil", els)
+    m.add_load_case("LF1").gravity = [0, 0, -9.81] if rho else [0, 0, 0]
+    for e in els:
+        m.load_beam(e, qz=-q, case="LF1", bezugslaenge=bezug,
+                    q2=None if q2 is None else [0, 0, -q2])
+    m.design.imperfektionen = False
+    return m, b
+
+
+def _halbe_parabel(H, q, l, h):
+    """Laenge0 der beiden Haelften (Mittelknoten bei x = l/2) der Parabel."""
+    from scipy.integrate import quad
+
+    def g(x):
+        zs = h / l + q * (x - l / 2) / H
+        T = H * math.sqrt(1 + zs * zs)
+        return math.sqrt(1 + zs * zs) / (1 + T / EA_SEIL)
+    return (quad(g, 0, l / 2, epsabs=0, epsrel=1e-13, limit=200)[0],
+            quad(g, l / 2, l, epsabs=0, epsrel=1e-13, limit=200)[0])
+
+
+def test_parabel_kettenlinie():
+    print("\n--- 3: Seil nach Theorie III. Ordnung – Parabel je Projektion, Kettenlinie je Bogenlänge ---")
+    from scipy.optimize import brentq
+    H, q, l = 10e3, 1e3, SPANNE
+    for h in (0.0, 2.0):
+        L1, L2 = _halbe_parabel(H, q, l, h)
+        m, b = _seil_th3((L1, L2), "projektion", q=q, h=h)
+        try:
+            res, info = theorie3.solve_theorie3(m, {"LF1": 1.0}, "LF1", schritte=10, imperfektionen=False)
+        except ValueError as ex:
+            check(f"Parabel h = {h} m: gerechnet", False, str(ex)[:120])
+            continue
+        R = np.asarray(res.reactions)
+        # die Parabel z = h x/l - q x (l - x)/(2 H) bei x = l/2
+        z_mitte = h / 2 - q * l * l / (8 * H)
+        nahe(f"Parabel h = {h} m: Lage Mitte = h/2 − q l²/(8 H)", res.u[b, 2] + h / 2, z_mitte, 1e-7, "m")
+        nahe(f"Parabel h = {h} m: Horizontalzug H = 10 kN", abs(R[0, 0]), H, 1e-7, "N")
+        nahe(f"Parabel h = {h} m: Summe der Auflager z = q l", R[:, 2].sum(), q * l, 1e-9, "N")
+        nahe(f"Parabel h = {h} m: Auflager unten = q l/2 − H h/l", R[0, 2], q * l / 2 - H * h / l, 1e-7, "N")
+    # Kettenlinie je Bogenlaenge (Irvine, symmetrisch): l = H L0/EA + (2H/w) asinh(w L0/(2H))
+    w = q
+    L0 = brentq(lambda L0: H * L0 / EA_SEIL + 2 * H / w * math.asinh(w * L0 / (2 * H)) - l, 0.5 * l, 2 * l,
+                xtol=1e-15)
+    stich = H / w * (math.sqrt(1 + (w * L0 / (2 * H)) ** 2) - 1) + w * (L0 / 2) ** 2 / (2 * EA_SEIL)
+    m, b = _seil_th3((L0 / 2, L0 / 2), "", q=w)
+    res, info = theorie3.solve_theorie3(m, {"LF1": 1.0}, "LF1", schritte=10, imperfektionen=False)
+    R = np.asarray(res.reactions)
+    nahe("Kettenlinie: Stich (Irvine)", -res.u[b, 2], stich, 1e-7, "m")
+    nahe("Kettenlinie: Horizontalzug H = 10 kN", abs(R[0, 0]), H, 1e-7, "N")
+    nahe("Kettenlinie: Summe der Auflager z = w L0 (je Bogenlänge)", R[:, 2].sum(), w * L0, 1e-9, "N")
+    check("Kettenlinie und Parabel unterscheiden sich (Summe 10,42 gegen 10 kN)", w * L0 > q * l * 1.04)
+    # dasselbe Seil mit Eigengewicht w (rho A g = w): dieselbe Kettenlinie
+    A = math.pi * D_SEIL ** 2 / 4
+    mg, bg = _seil_th3((L0 / 2, L0 / 2), "", q=0.0, rho=w / (A * 9.81))
+    rg, _ig = theorie3.solve_theorie3(mg, {"LF1": 1.0}, "LF1", schritte=10, imperfektionen=False)
+    nahe("Kettenlinie: Streckenlast je Bogenlänge = gleich schweres Eigengewicht", res.u[b, 2], rg.u[bg, 2],
+         1e-9, "m")
+
+
+def test_projektion_gesperrt():
+    print("\n--- 3: Gesperrt – je Projektion mit Eigengewicht, trapezförmig je Projektion ---")
+    A = math.pi * D_SEIL ** 2 / 4
+    for titel, kw, wort in (("mit Eigengewicht", dict(rho=500.0 / (A * 9.81)), "Eigengewicht"),
+                            ("trapezförmig", dict(q2=2e3), "trapezförmig")):
+        m, _b = _seil_th3((5.2, 5.2), "projektion", **kw)
+        try:
+            theorie3.solve_theorie3(m, {"LF1": 1.0}, "LF1", schritte=5, imperfektionen=False)
+            check(f"je Projektion {titel}: gesperrt", False, "gerechnet, ohne Meldung")
+        except ValueError as ex:
+            text = str(ex)
+            check(f"je Projektion {titel}: gesperrt, die Meldung nennt Seil und Grund",
+                  "Tragseil" in text and wort in text and "Projektion" in text, text[:160])
+
+
+def test_projektion_theorie1():
+    print("\n--- 3: Theorie I. Ordnung – je Projektion am schrägen Stab ---")
+    for bezug, soll in (("projektion", 3e3), ("", 5e3)):
+        m, e, a, b = _stab(typ="beam", X2=(3.0, 0.0, 4.0))
+        m.fix(a, "all")
+        m.fix(b, "all")
+        m.load_beam(e, qz=-Q, case="LF1", bezugslaenge=bezug)
+        r = _rechnen(m)
+        nahe(f"schräger Balken 3/4/5 m, 1 kN/m {'je Projektion' if bezug else 'je Stablänge'}: "
+             "Summe der Auflager z", np.asarray(r.reactions)[:, 2].sum(), soll, 1e-9, "N")
+
+
 def main():
     for t in (test_gleichlast, test_trapez_und_teillast, test_eigengewicht_schraeg, test_querlast_y,
               test_temperatur, test_zug_druckstab, test_seil, test_fachwerktraeger,
-              test_einzelstab_pendel, test_einzelstab_achsen_und_laenge, test_einzelstab_ausgabe):
+              test_einzelstab_pendel, test_einzelstab_achsen_und_laenge, test_einzelstab_ausgabe,
+              test_rfem_bezug, test_parabel_kettenlinie, test_projektion_gesperrt, test_projektion_theorie1):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

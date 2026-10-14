@@ -1247,6 +1247,23 @@ Die Lastrichtung (`loadDirection`) steht mit Rohwert und Deutung im Protokoll
 (`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y`) — die Deutung
 folgt der Reihenfolge des RFEM-Dialogs und ist damit Annahme.
 
+**Stablasten: Bezug in der Lastrichtung** (seit 14.10.2026). Eine eigene
+Spalte für „je wahrer“ oder „je projizierter Länge“ hat `LineTypeLoadImplForce`
+nicht; der Bezug steckt in `loadDirection`. Die Schnittstelle von RFEM 6.15
+(`tools/WebServiceGrpc/proto/dlubal/api/rfem/loads/member_load.proto`,
+`MemberLoad.LoadDirection`) nennt `LOAD_DIRECTION_LOCAL_X = 0`, `LOCAL_Y = 1`,
+`LOCAL_Z = 2`, `PRINCIPAL_U = 3`, `PRINCIPAL_V = 4`,
+`GLOBAL_X/Y/Z_OR_USER_DEFINED_U/V/W_TRUE_LENGTH = 11/12/13` und
+`…_PROJECTED_LENGTH = 14/15/16`. 11 bis 13 stimmen mit der Deutung aus den
+Daten des CBG-Trolley überein (dort kommen nur 0, 11, 12 und 13 vor). Der
+Import übernimmt 14 bis 16 als globale Last mit dem Bezug „je Projektion“
+(`rfem6_db.LOAD_DIRECTION_PROJEKTION`, `Linienlast.bezugslaenge`); beim Seil
+rechnet Theorie III. Ordnung daraus die Parabel, aus 11 bis 13 die
+Kettenlinie. Bis zum 14.10.2026 standen 14 bis 16 als „Lastrichtung
+unbekannt“ im Protokoll und fehlten. Die Werte 1 bis 3 für Stablasten
+(laut Schnittstelle lokal y, lokal z, Hauptachse u) deutet `_stablasten`
+weiter mit der Tabelle oben als global; an einer Datei belegt ist das nicht.
+
 Querschnitte kommen aus `SectionData_parameterValues` mit ihren SI-Kennwerten
 (A, A_y, A_z, I_y, I_z, I_t); der Name entsteht aus den Bemaßungssymbolen der
 Parameterform, etwa `Rund 40` aus `d = 40 mm`. Materialnamen führt RFEM in der

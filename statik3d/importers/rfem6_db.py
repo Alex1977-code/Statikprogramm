@@ -2996,6 +2996,23 @@ LOAD_DIRECTION = {
 }
 
 
+#: Stablasten je **projizierter Laenge** (14.10.2026). Die Kennzahl der
+#: Lastrichtung (``loadDirection`` in ``LineTypeLoadImplForce``, eine eigene
+#: Spalte fuer den Bezug gibt es nicht) traegt ihn: in der Schnittstelle von
+#: RFEM 6.15 (tools/WebServiceGrpc/proto/dlubal/api/rfem/loads/
+#: member_load.proto, MemberLoad.LoadDirection) heissen 11/12/13
+#: GLOBAL_X/Y/Z_OR_USER_DEFINED_U/V/W_TRUE_LENGTH und 14/15/16 dieselben
+#: Richtungen mit _PROJECTED_LENGTH. 11 bis 13 stimmen mit der Deutung aus den
+#: Daten oben ueberein. Beim Seil heisst „wahre Länge“ je Bogenlaenge
+#: (Kettenlinie), „projizierte Länge“ je Projektion (Parabel). Bis zum
+#: 14.10.2026 liess der Import 14 bis 16 als „Lastrichtung unbekannt“ weg.
+LOAD_DIRECTION_PROJEKTION = {
+    14: ("X", "global X je projizierter Länge"),
+    15: ("Y", "global Y je projizierter Länge"),
+    16: ("Z", "global Z je projizierter Länge"),
+}
+
+
 def _load_case_of(db: Db, handle: str) -> dict:
     """{Last-id: LoadCase-id} ueber parentModelObject."""
     out = {}
@@ -3419,6 +3436,7 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
     andere_verteilung: dict = {}
     andere_richtung: dict = {}
     gedeutet: set = set()
+    n_projektion = 0
     for h, impl in db.impls("MemberLoad"):
         tbl = h.get("impl_table") or ""
         lc = lc_name.get(case_of.get(h["id"]))
@@ -3437,7 +3455,13 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
             andere_verteilung[verteilung] = andere_verteilung.get(verteilung, 0) + 1
             continue
         rd = int(impl.get("loadDirection") or 0)
-        richtung = _richtung_aus_kennzahl(rd)
+        bezugslaenge = ""
+        if rd in LOAD_DIRECTION_PROJEKTION:
+            richtung = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0),
+                        "Z": (0.0, 0.0, 1.0)}[LOAD_DIRECTION_PROJEKTION[rd][0]]
+            bezugslaenge = "projektion"
+        else:
+            richtung = _richtung_aus_kennzahl(rd)
         if richtung is None:
             andere_richtung[rd] = andere_richtung.get(rd, 0) + 1
             continue
@@ -3453,7 +3477,9 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
         q1 = [p1 * c for c in richtung]
         q2 = [p2 * c for c in richtung] if (p2 and p2 != p1) else None
         for name in ziele:
-            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc)
+            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc, bezugslaenge=bezugslaenge)
+        if bezugslaenge:
+            n_projektion += 1
         # Je Lastzeile zaehlen, nicht je Stab - sonst geht die Summe unten
         # nicht gegen die Rohzeilen auf.
         n_ok += 1
@@ -3469,6 +3495,10 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
     if n_ok:
         C.say(log, f"  {n_ok} Stablasten (Gleichlast) an ihre Staebe gehaengt"
                    + (f" ({n_zuordnungen} Stabzuordnungen)" if n_zuordnungen != n_ok else ""))
+    if n_projektion:
+        C.say(log, f"    davon {n_projektion} je projizierter Länge (Lastrichtung 14 bis 16): "
+                   "am schrägen Stab je Länge der Projektion, am Seil nach Theorie III. Ordnung "
+                   "als Parabel statt Kettenlinie")
     if fehlende_zuordnungen:
         stab = db.by_id("Member")
 
