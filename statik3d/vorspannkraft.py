@@ -231,6 +231,37 @@ def _einfluss_loesen(A: np.ndarray, F: np.ndarray, staebe: list) -> np.ndarray:
 # --------------------------------------------------------------------------
 # Rechnung
 # --------------------------------------------------------------------------
+#: Spannschritt in Stufen (14.10.2026, Entscheidung des Anwenders: „Vorspannung
+#: als eigenen, ggf. gestuften Spannschritt vor den äußeren Lasten aufbringen“).
+#: Bis dahin wirkte das Kraeftepaar F_soll im Spannschritt in einem Zug: mit
+#: Kontakt ein Kontaktlauf von der Geometrie bis zur vollen Kraft, mit Fliessen
+#: in jeder Laststufe der Plastizitaet die volle Kraft (F_S = F, stufenlast). In
+#: n Stufen waechst es in n gleichen Schritten auf F_soll, und jede Stufe rechnet
+#: Kontakt und Fliessen vom Zustand der vorigen aus bis zum Gleichgewicht.
+#: Vorgabe (``Plastizitaet.spannstufen`` = 0): mit Kontakt oder Fliessen
+#: SPANNSTUFEN_AUTOMATISCH Stufen, sonst eine. Warum: Reibung und Fliessen
+#: haengen am Weg - gespannt wird mit der Presse allmaehlich, und eine Fuge, die
+#: sich unter dem Anziehen schliesst und haftet, oder ein Lochrand, der unter der
+#: Mutter fliesst, folgt dieser Geschichte, nicht einem Sprung von null auf
+#: F_soll; dazu beginnt jede Stufe beim Zustand der vorigen, die Kontaktlaeufe
+#: haben weniger Zustandswechsel vor sich. Ohne beides ist die Rechnung linear und
+#: wegunabhaengig, eine Stufe ist dort exakt, und jede weitere kostete nur Zeit.
+#: Drei wie die Vorgabe der Laststufen der Plastizitaet - gewaehlt, nicht gemessen.
+SPANNSTUFEN_AUTOMATISCH = 3
+
+
+def spannstufen(model) -> int:
+    """Wie viele Stufen der Spannschritt hat (siehe :data:`SPANNSTUFEN_AUTOMATISCH`)."""
+    from . import solver as sv
+    try:
+        n = int(getattr(getattr(model, "plastizitaet", None), "spannstufen", 0) or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        return n
+    return SPANNSTUFEN_AUTOMATISCH if (getattr(model, "has_contact", False) or sv._plastisch(model)) else 1
+
+
 def weg(model, soll: list) -> str:
     """Welcher Weg: Spannen und Verriegeln bei Kontakt, Plastizitaet,
     Ausfallstaeben oder reihenweisem Spannen; sonst :data:`LINEAR_WEG`."""
@@ -280,12 +311,22 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
                           start_von="Spannschritt" if z["kontakt"] is not None else start_von,
                           zusatz=zusatz, **kw)
     info = {"weg": WEG_SPANNEN, "reihenfolge": [list(g) for g in z["reihenfolge"]], "staebe": {},
-            "zustaende": ["spannen", "verankert"], "zeit_spannen": float(z["zeit"])}
+            "zustaende": ["spannen", "verankert"], "zeit_spannen": float(z["zeit"]),
+            "spannstufen": int(z.get("spannstufen", 1))}
     for s in soll:
         d = dict(z["staebe"][s.stab])
         d["N_ende"] = _n_ergebnis(res, els[s.stab])
         info["staebe"][s.stab] = d
     res.info["vorspannung"] = info
+    # Ein vorlaeufiger Spannzustand macht den Lastfall vorlaeufig: er startet von
+    # ihm (Entscheidung des Anwenders vom 14.10.2026)
+    sp_vorl = [str(x.info["vorlaeufig"].get("text", "")) for x in z["spannen"]
+               if isinstance(getattr(x, "info", {}).get("vorlaeufig"), dict)]
+    if sp_vorl:
+        v = dict(res.info.get("vorlaeufig") or {"grund": "kontakt", "stellen": []})
+        v["stellen"] = ["Spannschritt"] + [x for x in (v.get("stellen") or []) if x != "Spannschritt"]
+        v["text"] = f"{sv.VORLAEUFIG} in " + ", ".join(v["stellen"])
+        res.info["vorlaeufig"] = v
     res.vorspannzustaende = {"spannen": list(z["spannen"]), "verankert": z["verankert"]}
     return res
 
@@ -335,8 +376,9 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
     Lastfaelle mit denselben Sollkraeften teilen den Spannzustand)."""
     from . import solver as sv
     c = _cache(system)
+    n_st = spannstufen(model)
     key = ("spannen", tuple(sorted((s.stab, round(float(s.kraft), 6), int(s.gruppe)) for s in soll)),
-           bool(probelauf))
+           bool(probelauf), n_st)
     if key in c:
         return c[key]
     t0 = time.time()
@@ -363,24 +405,44 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                 maske[els[s.stab]] = False
         sv._melde(progress, f"Spannschritt Gruppe {g}: "
                             + ", ".join(s.stab for s in jetzt[:8]) + (" …" if len(jetzt) > 8 else "")
-                            + " gespannt (Stäbe inaktiv, Kräftepaar F_soll)")
+                            + " gespannt (Stäbe inaktiv, Kräftepaar F_soll"
+                            + (f", in {n_st} Stufen)" if n_st > 1 else ")"))
         sys_s = sv.StaticSystem(model, workers, progress, aktiv=maske,
                                 situation=getattr(system, "situation", "") or "")
         F_sp, _feq = _stablast(model, [(s.stab, s.kraft) for s in jetzt], basis)
-        zus = {"F": F_lock + F_sp, "feq": dict(feq_lock), "F_S": F_lock + F_sp, "n0": n0,
-               "plast_start": plast, "plast_merken": True, "ohne_grund": True}
+        vorl = []               # Spannstufen vor der letzten mit nicht konvergiertem Kontakt
         try:
-            r = sv._solve_loads(model, sys_s, {}, f"Spannschritt Gruppe {g}", "case", workers,
-                                progress, start=kontakt, probelauf=probelauf,
-                                start_von=None if kontakt is None else "Spannschritt",
-                                zusatz=zus)
+            # n gleiche Stufen (spannstufen); jede vom Kontakt- und plastischen
+            # Zustand der vorigen aus, in ihr wirkt ihre Kraft sofort voll (F_S).
+            # Mit einer Stufe ist es der Spannschritt bis zum 14.10.2026, Zahl
+            # fuer Zahl (1.0 * F_sp ist F_sp)
+            for k in range(1, n_st + 1):
+                F_k = F_lock + (k / n_st) * F_sp
+                zus = {"F": F_k, "feq": dict(feq_lock), "F_S": F_k, "n0": n0,
+                       "plast_start": plast, "plast_merken": True, "ohne_grund": True}
+                name = f"Spannschritt Gruppe {g}" + (f", Stufe {k}/{n_st}" if n_st > 1 else "")
+                if n_st > 1:
+                    sv._melde(progress, f"{name}: {100.0 * k / n_st:.4g} % von F_soll".replace(".", ","))
+                r = sv._solve_loads(model, sys_s, {}, name, "case", workers,
+                                    progress, start=kontakt, probelauf=probelauf,
+                                    start_von=None if kontakt is None else "Spannschritt",
+                                    zusatz=zus)
+                plast = getattr(r, "_plast_ende", None) or plast
+                if hasattr(r, "_plast_ende"):
+                    del r._plast_ende
+                kontakt = getattr(r, "kontaktzustand", None) or kontakt
+                if k < n_st and isinstance(r.info.get("vorlaeufig"), dict):
+                    vorl.append(f"Spannstufe {k}/{n_st}")
         finally:
             _freigeben(sys_s)
+        if vorl:
+            # Auch eine fruehere Stufe mit nicht konvergiertem Kontakt macht den
+            # Spannzustand vorlaeufig (Entscheidung des Anwenders vom 14.10.2026)
+            v = dict(r.info.get("vorlaeufig") or {"grund": "kontakt", "stellen": []})
+            v["stellen"] = vorl + list(v.get("stellen") or [])
+            v["text"] = f"{sv.VORLAEUFIG} in " + ", ".join(v["stellen"])
+            r.info["vorlaeufig"] = v
         u = _u_voll(model, r)
-        plast = getattr(r, "_plast_ende", None) or plast
-        if hasattr(r, "_plast_ende"):
-            del r._plast_ende
-        kontakt = getattr(r, "kontaktzustand", None) or kontakt
         # im Spannzustand tragen die gespannten Staebe das Kraeftepaar F_soll
         for s in jetzt:
             for i in els[s.stab]:
@@ -418,7 +480,7 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                                "P_verriegelt": float(np.mean([P[i] for i in els[s.stab]]))})
     z = {"F": F_lock, "feq": feq_lock, "n0": n0, "plast": plast, "kontakt": kontakt,
          "spannen": spannen, "verankert": v, "staebe": staebe, "reihenfolge": reihenfolge,
-         "zeit": time.time() - t0}
+         "zeit": time.time() - t0, "spannstufen": n_st}
     c[key] = z
     return z
 

@@ -4180,6 +4180,7 @@ def konvergenz_zustand(info) -> str:
     # Seit dem 14.10.2026 mit der Kennzeichnung „vorläufig – Kontakt nicht
     # konvergiert in Stufe …“ (kontakt_vorlaeufig), die Zahl der Laeufe dahinter
     vorl = kontakt_vorlaeufig(info) or VORLAEUFIG
+    n_vor_kontakt = len(gruende)
     if z is not None:
         nicht, laeufe, letzter = z
         if nicht > 0:
@@ -4190,6 +4191,11 @@ def konvergenz_zustand(info) -> str:
                                + ("" if letzter else ", darunter der letzte") + ")")
     elif info.get("contact_converged") is False:
         gruende.append(vorl)
+    if (len(gruende) == n_vor_kontakt and isinstance(info.get("vorlaeufig"), dict)
+            and info["vorlaeufig"].get("text")):
+        # vorlaeufig ohne eigenen nicht konvergierten Lauf: der Spannschritt der
+        # Vorspannkraft, von dem der Lastfall startet (vorspannkraft.rechnen)
+        gruende.append(str(info["vorlaeufig"]["text"]))
     pz = info.get("plastizitaet")
     if isinstance(pz, dict) and pz.get("konvergiert", True) is False:
         gruende.append("Plastizität nicht konvergiert")

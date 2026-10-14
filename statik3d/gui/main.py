@@ -17001,7 +17001,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Ingenieurgroessen - wie viel die Restwechsel pendelnder Knoten tragen und
         # wie weit sie klaffen duerfen. Am Modell gespeichert (Plastizitaet.
         # pendel_kraft_anteil, pendel_weg), gilt fuer jeden Kontaktlauf, auch ohne Fliessen
-        gk = QtWidgets.QGroupBox("Kontaktlauf (Einstellung am Modell)")
+        gk = QtWidgets.QGroupBox("Kontaktlauf und Spannschritt (Einstellung am Modell)")
         gkl = QtWidgets.QVBoxLayout(gk)
         self.sp_pendel_kraft = QtWidgets.QDoubleSpinBox()
         self.sp_pendel_kraft.setRange(0.0, 10.0)
@@ -17029,6 +17029,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # Bereich hat 450 (tests/test_register_berechnung)
         gkl.addWidget(row("Restwechsel bis", self.sp_pendel_kraft))
         gkl.addWidget(row("Klaffung bis", self.sp_pendel_weg))
+        # Spannschritt einer Vorspannkraft in Stufen (14.10.2026, Plastizitaet.spannstufen)
+        self.sp_spannstufen = QtWidgets.QSpinBox()
+        self.sp_spannstufen.setRange(0, 20)
+        self.sp_spannstufen.setSpecialValueText("automatisch")
+        self.sp_spannstufen.setSuffix(" Stufen")
+        self.sp_spannstufen.setValue(0)
+        self.sp_spannstufen.setToolTip(
+            "Vorspannkraft (Soll nach Verankerung): das Kräftepaar F_soll des Spannschritts wächst in so "
+            "vielen gleichen Stufen auf F_soll, jede vom Kontakt- und Fließzustand der vorigen aus - wie "
+            "beim Spannen mit der Presse. Automatisch: mit Kontakt oder Fließen 3 Stufen, sonst eine "
+            "(linear ist das Ergebnis vom Weg unabhängig). Nach dem Verriegeln trägt jeder Stab F_soll, "
+            "gleich wie viele Stufen.")
+        gkl.addWidget(row("Spannschritt in", self.sp_spannstufen))
         lay.addWidget(gk)
 
         self.experten = msk.Einklappabschnitt(
@@ -24261,6 +24274,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "sp_pendel_kraft"):
             self.sp_pendel_kraft.setValue(float(getattr(pz, "pendel_kraft_anteil", 1e-3)) * 100.0)
             self.sp_pendel_weg.setValue(float(getattr(pz, "pendel_weg", 1e-6)) * 1e6)
+        if hasattr(self, "sp_spannstufen"):
+            self.sp_spannstufen.setValue(int(getattr(pz, "spannstufen", 0) or 0))
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -24295,6 +24310,8 @@ class MainWindow(QtWidgets.QMainWindow):
             w_ = float(self.sp_pendel_weg.value()) / 1e6
             pz.pendel_kraft_anteil = alt_k if round(alt_k * 100.0, 3) == round(k * 100.0, 3) else k
             pz.pendel_weg = alt_w if round(alt_w * 1e6, 2) == round(w_ * 1e6, 2) else w_
+        if hasattr(self, "sp_spannstufen"):
+            pz.spannstufen = int(self.sp_spannstufen.value())
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()

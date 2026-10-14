@@ -280,6 +280,10 @@ class Plastizitaet:
     #: schaltet die Regel ab (streng wie vor dem 14.10.2026).
     pendel_kraft_anteil: float = 1.0e-3
     pendel_weg: float = 1.0e-6
+    #: Spannschritt einer Vorspannkraft (Soll nach Verankerung) in so vielen
+    #: gleichen Stufen (statik3d.vorspannkraft.spannstufen, 14.10.2026); 0 heisst
+    #: automatisch: mit Kontakt oder Fliessen gestuft, sonst ein Schritt.
+    spannstufen: int = 0
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
