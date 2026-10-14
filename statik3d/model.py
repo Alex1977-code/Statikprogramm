@@ -3639,6 +3639,11 @@ class StarrKoerper:
     art: str = "RBE2"
     gewichte: list = field(default_factory=list)
     kommentar: str = ""
+    #: nur RBE3 (seit 14.10.2026): je Slave der Vektor s_i [m3] der
+    #: Momentenzeilen, Integral N_i (x - x_Master) dA bei der verteilenden
+    #: Einleitung eines Stabendes (verbindung.starrkoerper_matrix); leer:
+    #: klassisch s_i = w_i r_i. Steht nur in der Datei, wenn belegt.
+    momente: list = field(default_factory=list)
 
 
 @dataclass
@@ -5075,13 +5080,14 @@ class Model:
         return gp
 
     def add_starrkoerper(self, master: int, slaves, art: str = "RBE2", gewichte=None,
-                         name: str = "", kommentar: str = "") -> StarrKoerper:
+                         name: str = "", kommentar: str = "", momente=None) -> StarrKoerper:
         art = str(art).upper()
         if art not in ("RBE2", "RBE3"):
             raise KeyError("Starrkoerper-Art: RBE2 oder RBE3")
         sk = StarrKoerper(name or f"SK{len(self.starrkoerper) + 1}", int(master),
                           [int(n) for n in slaves], art,
-                          [float(w) for w in (gewichte or [])], kommentar)
+                          [float(w) for w in (gewichte or [])], kommentar,
+                          [[float(x) for x in s] for s in (momente or [])])
         self.starrkoerper.append(sk)
         return sk
 
@@ -9156,7 +9162,7 @@ class Model:
             "punktmassen": [asdict(x) for x in self.punktmassen],
             "daempfer": [asdict(x) for x in self.daempfer],
             "federn": [asdict(x) for x in self.federn.values()],
-            "starrkoerper": [asdict(x) for x in self.starrkoerper],
+            "starrkoerper": [_ohne_vorgabe("starrkoerper", asdict(x)) for x in self.starrkoerper],
             "grenzschichten": [asdict(x) for x in self.grenzschichten.values()],
             "subsysteme": [asdict(x) for x in self.subsysteme.values()],
             "layer": [asdict(x) for x in self.layer.values()],
@@ -9635,6 +9641,8 @@ NEUE_FELDER = {
     "volumenbereiche": {"eps_grenze": 0.05},
     # stab/rbe3 (Einleitung je Stabende)
     "members": {"einleitung": {}},
+    # kopplung/drehanteil (konsistente Momentenzeilen der verteilenden Einleitung)
+    "starrkoerper": {"momente": []},
     # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
     # alten Felds category und zaehlt wie jede andere Kategorie)
     "load_cases": {"faktorisiert": False},

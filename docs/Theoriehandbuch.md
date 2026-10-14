@@ -5405,17 +5405,35 @@ Last der gleichmäßigen Spannung F/A: am Quader 20 × 20 × 40 mm (tet10) mit
 einem Zugstab von 10 kN mittig auf der Stirnfläche ist σ_zz in allen 30
 Elementen an der Stirnfläche 25,000 N/mm² = F/A, an 1–3 Knoten wie bisher
 dagegen bis 398,6 N/mm² (σ_v an den Knoten bis 648,1 N/mm²). Ein Moment geht
-über die sechs Gleichungen des RBE3 als f_i = w_i (λ_f + λ_m × r_i) in die
-Fläche. Das ist statisch gleichwertig, aber nicht die konsistente Last der
-linearen Spannung, bei der am tet10 auch die Ecken tragen: Am selben Quader
-mit einem Kragarm Rund 16 von 50 mm und 1 kN quer liegt das größte |σ_zz| der
-Elemente an der Stirnfläche 7 % über dem unter der konsistenten linearen
-Flächenlast (47,25 gegen 44,14 N/mm²), 8 bis 12 mm darunter ist es gleich
-(48,74 N/mm²). Am Drehlager hängen nur Zugstäbe, dort gibt es keine Momente.
+seit dem 14.10.2026 als konsistente Last der linear verteilten Spannung in die
+Fläche: Die Momentenzeilen des RBE3 tragen statt w_i r_i die Vektoren
+s_i = ∫ N_i (x − x_m) dA (`StarrKoerper.momente`, beim Anschließen mit
+derselben Integrationsregel wie w_i gerechnet, beim Kreisring mit der
+Indikatorfunktion), also
+
+  Σ w_i (u_i − u_m − θ_m × r_i) = 0,   Σ s_i × (u_i − u_m − θ_m × r_i) = 0,
+
+und die Kopplungskräfte sind f_i = w_i λ_f − s_i × λ_m = ∫ N_i (λ_f + λ_m × (x − x_m)) dA,
+genau die konsistente Last des linearen Feldes (Biegung als Normalspannung,
+Torsion als Schub, beide linear im Abstand); am tet10 tragen dabei auch die
+Ecken, deren w_i null ist (s_i = A/60 (2 r_i − r_j − r_k) an der ebenen
+tri6-Seite). Gebundene Seitenmitten fallen wie bei w_i heraus, die s_i werden
+mit demselben Faktor normiert. Am selben Quader mit einem Kragarm Rund 16 von
+50 mm und 1 kN quer ist das größte |σ_zz| der Elemente an der Stirnfläche
+jetzt 44,14 N/mm² wie unter der konsistenten linearen Flächenlast, 8 bis 12 mm
+darunter 48,74 wie dort. Bis zum 14.10.2026 standen w_i r_i in den
+Momentenzeilen, das Moment ging als f_i = w_i (λ_f + λ_m × r_i) in die Fläche,
+statisch gleichwertig, aber an der Stirnfläche 7 % über der konsistenten Last
+(47,25 gegen 44,14 N/mm²). Jede Wahl von s_i hält das Gleichgewicht, denn G
+verschwindet für jede Starrkörperbewegung (u_i − u_m − θ_m × r_i = 0 je
+Knoten). Eine Kopplung, die vor dem 14.10.2026 angelegt wurde und keine s_i
+trägt, schließt `fugen.stabenden_erneuern` vor der Rechnung neu an. Am
+Drehlager hängen nur Zugstäbe, dort gibt es keine Momente.
 
 Strafverfahren: k = 10⁴ · max diag(K) ohne die Straffedern der Kopplungen,
 also derselbe Wert wie bei den starren Kopplungen der Stabenden. Die drei
-Momentenzeilen von G werden durch ρ = (Σ |w_i| |r_i|²)^½ geteilt, damit die
+Momentenzeilen von G werden durch ρ = (Σ |s_i| |r_i|)^½ geteilt (klassisch
+s_i = w_i r_i, also (Σ |w_i| |r_i|²)^½), damit die
 Strafe für die Drehung des Masters k ρ² ist und nicht k ρ⁴; bei ρ = 8 mm wäre
 sie sonst um den Faktor 1,6·10⁴ weicher und läge in der Größe der
 Biegesteifigkeit eines Rund 16 (4 E I / L = 5,4·10⁴ Nm/rad bei L = 50 mm).
@@ -5435,6 +5453,111 @@ dF = 1,8·10⁻⁷ N bei 10 kN (Toleranz 0,01 N), am Kragarm dM = 1,3·10⁻⁹ 
 weil der Quader unter der Querkraft selbst um V L² / (2 E I) kippt). Eine
 verteilt eingeleitete Stelle trägt ihre ganze Fläche (A_trag = Fläche) und ist
 nach der Regel oben eine Fläche, keine Stelle: am Drehlager 48 Punkte → 0.
+
+**Kopplungen mit Drehanteil (seit 14.10.2026, Entscheidung des Anwenders vom
+14.10.2026).** Eine Kopplung zwischen Knoten, die nicht aufeinander liegen,
+ist nur dann im Gleichgewicht der Momente, wenn sie jede Starrkörperbewegung
+ohne Kraft zulässt: G Φ = 0 für u_i = a + ω × x_i, θ_i = ω. Die Feder
+k c cᵀ mit c = [−n, n] zwischen Knoten a und b (`assemble.kopplungen`) tut
+das nur für r = x_b − x_a ∥ n. Für versetzte Knoten hat sie die Kraftsumme
+null, aber das Moment r × f. Gemessen am Würfel 1 m (tet4, h 0,25), Boden
+fest, Stütze Rund 100 bis z = 3 m mit 10 kN quer am Kopf
+(`tests/test_kopplung_drehanteil.py`, vorher und nachher):
+
+| Fall | vorher: Kopf, Fundament, Moment der Kopplung | nachher |
+|---|---|---|
+| eingespannt bei z = 0,84 bzw. 1,0 (Bezug) | 32,625 bzw. 25,904 mm (Hand 32,587 bzw. 25,869, ohne Schub) | – |
+| Stabende im Block bei z = 0,6, zweiter Stabknoten bei 0,84 | 36,587 mm, −5,345 kNm, 24,655 kNm | 32,638 mm, −30,000 kNm, 2·10⁻⁷ Nm |
+| Stabende in der Deckelfläche | singulär | 25,924 mm, −30,000 kNm, 2·10⁻⁶ Nm |
+| Stab von z = 0,2 bis 1,0 durch den Block | 28,700 mm, −13,921 kNm, 16,8 kNm | 25,924 mm, −30,000 kNm, 2·10⁻⁶ Nm |
+
+Nachher sitzt die Stütze so fest wie eingespannt beim obersten gekoppelten
+Knoten, um 0,04 bzw. 0,08 % weicher (Nachgiebigkeit des Blocks). Umgesetzt:
+
+* **Starre Scheibe** (`fugen.starre_flaechen_koppeln`, Gruppe „starr …“):
+  RBE2 mit Drehanteil, u_s = u_m + θ_m × r_s, je Richtung n die Zeile
+  c = [−n, −(r × n), n] auf (u_m, θ_m, u_s). Der Master bekommt seine drei
+  Verdrehungen als Kopplungsknoten: Jeder Knoten hat sechs FHG, und
+  `constrained_dofs` sperrt einen nur, solange seine Hauptdiagonale null ist;
+  ein Hilfsknoten ist darum nicht nötig. Ein Fachwerkstab am Master nimmt
+  kein Moment, die Scheibe kippt mit dem Körper. Liegen alle Slaves auf einer
+  Geraden durch den Master (Σ (|r|² I − r rᵀ) nicht positiv definit,
+  `_drehung_bestimmt`), bleibt die Scheibe ohne Drehanteil, sonst bliebe die
+  Drehung um diese Gerade frei. Gebundene Seitenmitten fallen heraus und
+  folgen ihren Ecken (wie b009aff bei der Verteilkopplung); `_belegte_knoten`
+  zählt von der Scheibe nur den Master. Annahme: RFEM bewegt eine starre
+  Fläche als starren Körper; am RFEM-Modell geprüft ist das nicht.
+* **Stabende an 1–4 Knoten** (`fugen.stabenden_koppeln`, Gruppe
+  „Stabende …“): RBE3 je Stabknoten (`assemble.stabende_zwang`). Die
+  Kraftzeilen mit den baryzentrischen Koordinaten λ_i des Stabendes im
+  Element (Σ λ_i x_i = x_m, kleinste Quadrate): Der Stabknoten folgt dem
+  Verschiebungsfeld des Elements, wie ein integrierter Knoten, der zum Netz
+  gehört. Hängt am Knoten ein Biegestab, kommen die Momentenzeilen mit
+  gleichen Gewichten dazu (geteilt durch ρ = (Σ |r_i|²)^½), sonst nicht: Ein
+  Fachwerkstab oder Seil trägt kein Moment, und mit Σ λ_i r_i = 0 sind die
+  Kraftzeilen allein schon objektiv, bis auf den Abstand des Stabendes von
+  der Seite (Toleranz der Punktsuche 0,1 mm). Für die Momentenzeilen braucht
+  es drei Knoten, die nicht auf einer Geraden durch das Stabende liegen. Auf
+  einer Kante oder Ecke des Netzes hängt ein Biegestab darum an allen vier
+  Ecken des Elements, mit Protokollzeile. Bis zum 14.10.2026 hing das
+  Stabende über u_m = u_i starr an jedem Knoten.
+* **Starrkörper RBE2/RBE3** (`assemble.starrkoerper`,
+  `verbindung.starrkoerper_matrix`, Import Nastran, Oberfläche) und die
+  **Verteilkopplung der Stabenden**: waren schon im Gleichgewicht (G Φ = 0).
+* **Fugen** (`fugen.kontaktfuge_ausfuehren`): Kopplungen und Spaltelemente
+  zwischen verdoppelten, deckungsgleichen Knoten (r = 0), im Gleichgewicht;
+  ihre Matrix ist bitgleich wie vorher.
+* **Mittelknotenbindung** u_m = (u_a + u_b)/2: objektiv, solange die Mitte
+  auf der Sehne steht (`mittelknoten_auf_sehne`).
+* **Feder** (Elementtyp `feder`) zwischen versetzten Knoten mit
+  Quersteifigkeit: wie die alte Kopplung nicht momentenrichtig (K = Tᵀ k T
+  ohne den Hebel L × Querkraft). Sie ist keine starre Kopplung und bleibt,
+  wie sie ist; die globale Kontrolle unten meldet ihre Wirkung.
+* **Starre Stäbe und Kopplungsstäbe** aus RFEM (`MemberImplRigid`,
+  `MemberImplCoupling…`) sind Balken- bzw. Fachwerkelemente und objektiv.
+
+Am Drehlager (Netz Mittel, gespeicherter Lauf LF1 vom 09.10.2026, nur
+geladen und gekoppelt, nicht gerechnet) ändern sich die gespeicherten
+Kopplungen dadurch nicht; die Erneuerung vor der Rechnung ändert wie seit dem
+10.10.2026 sechs Scheiben. Anders gerechnet werden alle 64 starren Scheiben
+(2 560 Kopplungen; an jeder legen die 40 Knoten des Lochrands die Drehung
+fest, keiner ist eine gebundene Mitte) und alle 48 Stabenden der Zugstäbe (9
+an einem, 19 an zwei, 20 an drei Knoten; alle Fachwerkstäbe, also nur die
+Kraftzeilen, das Stabende liegt höchstens 0,125 mm neben seinem
+baryzentrischen Punkt). Die 64 Mittelknoten bekommen je drei Verdrehungen.
+Im gespeicherten Ergebnis trugen die Kopplungen der Ankerscheiben bis
+3,63 kNm (F565), 2,77 (F25), 2,13 (F554) und 1,69 kNm (F410), die der
+Zugstabscheiben 0,10 bis 0,28 kNm und die der Stabenden bis 0,07 kNm,
+zusammen als Vektor 14,7 kNm gegen ein Lagermoment von 5 072 kNm um den
+Ursprung (ausgewertet am gespeicherten Ergebnis mit k aus dem Kraftgleichgewicht
+je Mittelknoten, an allen 112 Gruppen 4,11 bis 4,13·10¹⁵ N/m). Die Ringe waren dabei auf 10⁻¹⁰ rad am
+Kippen gehindert, während die Plattenoberfläche um sie herum (Kreisring r bis
+2r) um 0,09 bis 1,46 mrad kippte, am stärksten an F565, F554, F25 und F410,
+also genau dort, wo die Kopplung das größte Moment trug. Am Lochrand sind das
+2 bis 37 µm gegen die 1,8 bis 2,56 mm, um die die Ringe einsinken. Als
+Abschätzung, nicht gerechnet: Mit Drehanteil kippen die Ringe mit, die
+Ringkräfte verlieren die Schwankung von bis zu ±31 % (F565), ±24 % (F25),
+±19 % (F554) und ±15 % (F410) um ihren Mittelwert, die Ankerkräfte bleiben,
+und die örtlichen Werte an diesen vier Lochrändern ändern sich spürbar,
+an den übrigen zwölf kaum. An den Zugstabscheiben überwog das Scheinmoment
+die Stabkraft (bis zum 3,6-Fachen von N r / 2); dort ändert sich die
+Verteilung der kleinen Kräfte ganz, ihr Betrag bleibt klein.
+
+**Globale Gleichgewichtskontrolle (seit 14.10.2026, `statik3d/gleichgewicht.py`).**
+Nach jeder Rechnung (`solver._solve_loads`, auch plastisch und mit Kontakt;
+Überlagerungen linear aus ihren Anteilen) gilt an einem objektiven Modell
+Φᵀ (F + R) = Φᵀ K u = 0, also Σ F_i + Σ R_i = 0 und
+Σ (x_i − x0) × (F_i + R_i) + M_i + M_R,i = 0 über die Knoten, x0 = Mitte der
+Hülle aller Knoten. F ist der Lastvektor der Rechnung, R die Reaktionen
+(starre und Federlager, einseitige Lager, gesperrte FHG); Zusatz-FHG (Wölbung,
+Ordnung p) arbeiten unter Φ nicht mit. Bezogen wird auf den Umsatz Σ |F_i| +
+Σ |R_i| bzw. Σ |(x_i − x0) × F_i + M_i| + … ; Schranke 10⁻⁴ wie
+`solver.ABSCHLUSS_GLEICHGEWICHT`. Ergebnis in `res.info["gleichgewicht_global"]`,
+eine Zeile je Ergebnis, eine gebündelte in der Zusammenfassung der Analyse,
+ein Satz im Bericht. Am Würfel mit der alten, versetzten Kopplung (von Hand
+angelegt) meldet sie ΣM 24,657 kNm, bezogen 0,96; mit Drehanteil sind es
+bezogen 10⁻¹¹. Theorie II. Ordnung rechnet ihr Ergebnis außerhalb von
+`_solve_loads` und trägt die Kontrolle nicht.
 
 **Zonen in Anzeige und Nachweis (seit 10.10.2026).** Bis zum 10.10.2026
 nahmen Farbskala, Zusammenfassung, Bericht, Volumennachweis und Ermüdung ihr

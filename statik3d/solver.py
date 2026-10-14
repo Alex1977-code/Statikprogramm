@@ -1811,6 +1811,11 @@ class Results:
             out.info["freie_teile"] = freie
         # Last an automatisch gehaltenen FHG: die Anteile mit ihrem Faktor
         auto_gehalten_kombinieren(out, parts)
+        # Globale Gleichgewichtskontrolle (14.10.2026): linear wie die Anteile
+        from . import gleichgewicht as _gg
+        gg = _gg.ueberlagern(parts)
+        if gg:
+            out.info["gleichgewicht_global"] = gg
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1873,6 +1878,10 @@ class Results:
         if self.reactions is not None and self.reactions.size:
             R = self.reactions[:, :3].sum(axis=0)
             s.append(f"Summe Auflagerkräfte    : [{R[0]:.1f}, {R[1]:.1f}, {R[2]:.1f}] N")
+        # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
+        if self.info.get("gleichgewicht_global"):
+            from . import gleichgewicht as _gg
+            s.append(_gg.zeile(self.info["gleichgewicht_global"]))
         # verteilend eingeleitete Stabenden (seit 13.10.2026)
         if self.info.get("stabenden_kraftsumme"):
             from . import stabeinleitung as _se
@@ -5724,6 +5733,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # Stabstatus nach Abschluss: kein aktiver Zugstab mit Druck (13.10.2026)
         zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
     _stabenden_pruefen(model, res, F)
+    _gleichgewicht_pruefen(model, res, F)
     if model.has_contact:
         # vorlaeufig, wenn ein Kontaktlauf, der zaehlt, nicht konvergierte (14.10.2026)
         vorlaeufig_eintragen(res, progress)
@@ -5745,6 +5755,21 @@ def _stabenden_pruefen(model: Model, res: Results, F) -> None:
             res.info["stabenden_kraftsumme"] = info
     except Exception as ex:                  # noqa: BLE001 - die Pruefung ist Beiwerk
         res.info["stabenden_kraftsumme_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"
+
+
+def _gleichgewicht_pruefen(model: Model, res: Results, F) -> None:
+    """Globale Gleichgewichtskontrolle (seit 14.10.2026, statik3d.gleichgewicht):
+    Summe der Kraefte und Momente der Lasten und Lagerkraefte nach
+    ``res.info["gleichgewicht_global"]``. Ein Fehler hier haelt kein Ergebnis auf."""
+    if res.info.get("abbruch"):
+        return                                 # ohne Gleichgewicht keine Lagerkraefte
+    try:
+        from . import gleichgewicht as _gg
+        g = _gg.pruefen(model, res, F)
+        if g:
+            res.info["gleichgewicht_global"] = g
+    except Exception as ex:                  # noqa: BLE001 - die Pruefung ist Beiwerk
+        res.info["gleichgewicht_global_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"
 
 
 def singularitaet_info(s) -> dict:
@@ -9200,6 +9225,9 @@ class Analysis:
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
         from . import stabeinleitung as _se
         s += _se.pruefung_gebuendelt(self.all_results().items())
+        # globale Gleichgewichtskontrolle: eine Zeile ueber alle Ergebnisse (14.10.2026)
+        from . import gleichgewicht as _gg
+        s += _gg.gebuendelt(self.all_results().items())
         # Jede Umhuellende unter dem Namen, den Liste und Baum zeigen
         # (umhuellende_kurz). Bis zur Nachbesserung vom 04.10.2026 (Befund S3)
         # stand hier env.name, bei einer Ergebniskombination ihr blosser Name:

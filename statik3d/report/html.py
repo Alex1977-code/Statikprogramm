@@ -2740,6 +2740,9 @@ class Report:
                                  "Reaktionen vom Lager auf das Tragwerk)", None, "compact"))
         if note:
             b.append(("note", note))
+        # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
+        from .. import gleichgewicht as _GG
+        b.extend(_GG.bericht_saetze(allres))
         spitzen = [_SA.spitze(r) for _n, r in allres]
         spitzen = [x for x in spitzen if x is not None]
         if spitzen:

@@ -558,7 +558,7 @@ def seil_laenge_aus_durchhang(P1, P2, EA: float, w, f: float) -> float:
 # ==========================================================================
 # Starre Koerper RBE2 / RBE3
 # ==========================================================================
-def starrkoerper_matrix(P_m, P_s, art: str = "RBE2", gewichte=None) -> np.ndarray:
+def starrkoerper_matrix(P_m, P_s, art: str = "RBE2", gewichte=None, momente=None) -> np.ndarray:
     """Zwangsbedingungen G fuer einen starren Koerper, G u = 0 mit
     u = [u_m (6), u_s1 (6), u_s2 (6), ...] (Master zuerst, dann Slaves).
 
@@ -566,9 +566,17 @@ def starrkoerper_matrix(P_m, P_s, art: str = "RBE2", gewichte=None) -> np.ndarra
         u_s - u_m - theta_m x r_s = 0,   theta_s - theta_m = 0,   r_s = P_s - P_m
     art "RBE3": 6 Zeilen, gewichtete kleinste Quadrate der Starrkoerperbewegung
         sum w_i (u_i - u_m - theta_m x r_i) = 0
-        sum w_i r_i x (u_i - u_m - theta_m x r_i) = 0
+        sum s_i x (u_i - u_m - theta_m x r_i) = 0
       (nur Verschiebungen der Slaves; der Master folgt den Slaves).
-    gewichte (n,) nur fuer RBE3, Vorgabe 1.
+    gewichte (n,) nur fuer RBE3, Vorgabe 1. ``momente`` (n, 3) nur fuer RBE3
+    (seit 14.10.2026): die Vektoren s_i der Momentenzeilen, Vorgabe
+    s_i = w_i r_i (das klassische RBE3). Die Kraefte der Kopplung auf die
+    Slaves sind f_i = w_i lambda_f - s_i x lambda_m; mit s_i = Integral
+    N_i (x - P_m) dA ist das die konsistente Last einer linear verteilten
+    Spannung (Biegung und Torsion) statt w_i (lambda_f + lambda_m x r_i).
+    Jede Wahl von s_i haelt das Gleichgewicht: G verschwindet fuer jede
+    Starrkoerperbewegung, die Kopplungskraefte haben Kraft- und Momentensumme
+    null.
     """
     P_m = np.asarray(P_m, float)
     P_s = np.atleast_2d(np.asarray(P_s, float))
@@ -592,21 +600,28 @@ def starrkoerper_matrix(P_m, P_s, art: str = "RBE2", gewichte=None) -> np.ndarra
         wgt = np.ones(n) if gewichte is None else np.asarray(gewichte, float)
         if wgt.shape != (n,):
             raise ValueError("gewichte braucht einen Wert je Slave")
+        if momente is not None:
+            mom = np.asarray(momente, float).reshape(-1, 3)
+            if mom.shape != (n, 3):
+                raise ValueError("momente braucht einen Vektor je Slave")
         G = np.zeros((6, 6 * (n + 1)))
         W = float(wgt.sum())
         Sr = np.zeros((3, 3))          # sum w_i [r_i]x
-        Srr = np.zeros((3, 3))         # sum w_i [r_i]x [r_i]x
+        Ss = np.zeros((3, 3))          # sum [s_i]x   (klassisch: Sr)
+        Srr = np.zeros((3, 3))         # sum [s_i]x [r_i]x
         for i in range(n):
             r = P_s[i] - P_m
             S = bm._skew(r)
+            Si = wgt[i] * S if momente is None else bm._skew(mom[i])
             cs = 6 * (i + 1)
             G[0:3, cs:cs + 3] = wgt[i] * I3
-            G[3:6, cs:cs + 3] = wgt[i] * S
+            G[3:6, cs:cs + 3] = Si
             Sr += wgt[i] * S
-            Srr += wgt[i] * S @ S
+            Ss += Si
+            Srr += Si @ S
         G[0:3, 0:3] = -W * I3
         G[0:3, 3:6] = Sr
-        G[3:6, 0:3] = -Sr
+        G[3:6, 0:3] = -Ss
         G[3:6, 3:6] = Srr
         return G
     raise ValueError(f"Unbekannte Starrkoerperart {art!r} (RBE2 oder RBE3)")

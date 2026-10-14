@@ -1031,8 +1031,15 @@ def _belegte_knoten(model) -> tuple:
     for g in (model.gap_elements or []):
         for n in (g.node_a, g.node_b):
             hart.setdefault(int(n), f"Spaltelement {g.node_a}-{g.node_b}")
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
     for k in (getattr(model, "kopplungen", None) or []):
-        for n in (k.node_a, k.node_b):
+        # Starre Scheiben und Stabenden (seit 14.10.2026, wie die
+        # Verteilkopplung): eine gebundene Mitte faellt aus ihnen heraus
+        # (kopplungen), nur ihr Master zaehlt
+        g = str(getattr(k, "gruppe", "") or "")
+        knoten = ((k.node_a,) if DREHANTEIL and (g.startswith(STARR_GRUPPE) or g.startswith(STABENDE_GRUPPE))
+                  else (k.node_a, k.node_b))
+        for n in knoten:
             hart.setdefault(int(n), f"Kopplung {getattr(k, 'gruppe', '') or ''}".strip())
     from .stabeinleitung import ist_verteilkopplung
     for sk in (getattr(model, "starrkoerper", None) or []):
@@ -1390,6 +1397,73 @@ def _trans_dofs(node: int) -> list[int]:
     return [NDOF * node, NDOF * node + 1, NDOF * node + 2]
 
 
+#: Kopplungen mit Drehanteil (seit 14.10.2026): starre Scheiben als RBE2,
+#: Stabenden an 1-4 Knoten als RBE3. Der Schalter ist nur fuer die
+#: Ruecknahmeprobe da (tests.test_kopplung_drehanteil); im Programm steht er
+#: immer auf an.
+DREHANTEIL = True
+
+
+def _drehung_bestimmt(r: np.ndarray) -> bool:
+    """Bestimmen die Abstaende r (n, 3) der Slaves vom Master seine Drehung?
+    Nein, wenn alle auf einer Geraden durch den Master liegen (oder null
+    sind): dann bliebe die Drehung um diese Gerade frei - ohne Biegestab am
+    Master eine singulaere Richtung, die die Pruefung schwacher FHG nicht
+    faengt. Massgebend ist sum (|r|^2 I - r r^T), positiv definit genau dann."""
+    r = np.asarray(r, float).reshape(-1, 3)
+    if not len(r):
+        return False
+    J = np.eye(3) * float(np.einsum("ij,ij->", r, r)) - r.T @ r
+    ew = np.linalg.eigvalsh(J)
+    return bool(ew[-1] > 0 and ew[0] > 1e-9 * ew[-1])
+
+
+def biegeknoten(model: Model) -> set:
+    """Knoten, an denen ein Biegestab (beam) haengt - nur deren Verdrehung
+    traegt ein Moment. Fachwerkstab und Seil fuehren keine."""
+    return {int(x) for e in model.elements if e.typ == "beam" for x in e.nodes}
+
+
+def stabende_zwang(X: np.ndarray, master: int, partner, moment: bool):
+    """(G, FHG) der Kopplung eines Stabendes an die Knoten ``partner`` des
+    Elements, in dem es liegt (fugen.stabenden_koppeln), als RBE3 (seit
+    14.10.2026; bis dahin hing es ueber u_m = u_i starr an jedem Knoten).
+
+    Der Stabknoten folgt dem baryzentrischen Mittel der Knoten - genau dem
+    Verschiebungsfeld des Elements an seinem Ort: Kraftzeilen
+    sum lambda_i (u_i - u_m - theta_m x r_i) = 0 mit sum lambda_i x_i = x_m.
+    Mit ``moment`` (am Knoten haengt ein Biegestab, die Knoten liegen nicht
+    auf einer Geraden durch ihn) dazu die Momentenzeilen mit gleichen
+    Gewichten, durch rho = (sum |r_i|^2)^1/2 geteilt wie in
+    stabeinleitung.zwangsmatrix: Der Stabknoten folgt auch der Drehung der
+    Knoten, ein Moment geht als Kraeftepaare in das Volumen. Sonst nur die
+    Kraftzeilen ohne theta_m: Der Knoten traegt dann kein Moment (Fachwerkstab,
+    Seil, Gelenk), und weil sum lambda_i r_i = 0 ist, bleiben die Kraefte auch
+    so im Momentengleichgewicht - bis auf die Lage des Stabendes neben der
+    Seite (Toleranz der Punktsuche, 0,1 mm), um die der Hebel abweicht.
+    Spalten: bei ``moment`` die sechs FHG des Masters, sonst seine drei
+    Verschiebungen, dann je Knoten die drei Verschiebungen."""
+    from .elements import verbindung as vb
+    P = [int(q) for q in partner]
+    Xp = X[P]
+    m = int(master)
+    A = np.vstack([Xp.T, np.ones(len(P))])
+    lam = np.linalg.lstsq(A, np.append(X[m], 1.0), rcond=None)[0]
+    r = Xp - X[m]
+    if moment and _drehung_bestimmt(r):
+        G = vb.starrkoerper_matrix(X[m], Xp, "RBE3", lam, momente=r)
+        rho = math.sqrt(float(np.einsum("ij,ij->", r, r))) or 1.0
+        G[3:6] /= rho
+        spalten = list(range(6)) + [6 * (i + 1) + j for i in range(len(P)) for j in range(3)]
+        fhg = list(range(NDOF * m, NDOF * m + NDOF)) + [NDOF * q + j for q in P for j in range(3)]
+        return G[:, spalten], np.asarray(fhg, np.int64)
+    G = np.zeros((3, 3 + 3 * len(P)))
+    G[:, :3] = -np.eye(3)
+    for i, w in enumerate(lam):
+        G[:, 3 + 3 * i:6 + 3 * i] = w * np.eye(3)
+    return G, np.asarray(_trans_dofs(m) + [NDOF * q + j for q in P for j in range(3)], np.int64)
+
+
 def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.spmatrix:
     """Steifigkeit der Knotenkopplungen (Kontaktfugen, starr oder federnd).
 
@@ -1402,6 +1476,29 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     groesste vorhandene Hauptdiagonale. Das ist das uebliche Strafverfahren;
     groesser gewaehlt wuerde die Matrix schlecht konditioniert, kleiner
     liesse die Fuge nach.
+
+    **Mit Drehanteil (seit 14.10.2026).** Fuer Knoten, die nicht aufeinander
+    liegen, ist c = [-n, n] keine Starrkoerperbewegung: Die Kraefte haben die
+    Summe null, aber ein Moment (Befund b3: 24,7 kNm an einer Stuetze, die im
+    Block endet). Darum:
+
+    * **Starre Scheibe** (Gruppe fugen.STARR_GRUPPE): RBE2,
+      u_b = u_a + theta_a x r mit r = x_b - x_a, also
+      c = [-n, -(r x n), n] auf (u_a, theta_a, u_b). Der Master bekommt so
+      seine Verdrehung als Kopplungsknoten - jeder Knoten hat sechs FHG, die
+      Pruefung schwacher FHG (constrained_dofs) sperrt sie nur, solange
+      nichts an ihnen haengt. Ein Fachwerkstab am Master nimmt kein Moment:
+      die Scheibe kippt frei mit dem Koerper (wie die starre Flaeche in
+      RFEM). Liegen alle Slaves auf einer Geraden durch den Master, bleibt es
+      ohne Drehanteil. Gebundene Seitenmitten (mittelknoten_bindungen) fallen
+      heraus wie bei der Verteilkopplung (b009aff): sie folgen ihren Ecken.
+    * **Stabende an 1-4 Knoten** (Gruppe fugen.STABENDE_GRUPPE, starr): RBE3
+      je Stabknoten (:func:`stabende_zwang`), Strafbeiwert k G^T G wie bei
+      den starren Kopplungen.
+
+    Alle anderen Kopplungen (Kontaktfugen zwischen deckungsgleichen Knoten,
+    von Hand) bleiben wie bisher; ohne Kopplungen der beiden Gruppen ist die
+    Matrix bitgleich.
     """
     kopp = getattr(model, "kopplungen", None)
     if not kopp:
@@ -1417,9 +1514,20 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     if aktiv is not None:
         from .situationen import aktive_knoten
         kn_aktiv = aktive_knoten(model, aktiv)
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
+    scheiben: dict = {}                   # Gruppe -> [Kopplung]
+    enden: dict = {}                      # Stabknoten -> [Kopplung]
     for kp in kopp:
         if kn_aktiv is not None and not (kn_aktiv[int(kp.node_a)] and kn_aktiv[int(kp.node_b)]):
             continue                      # Fuge an einem Knoten ohne wirksames Element
+        if DREHANTEIL:
+            g = str(getattr(kp, "gruppe", "") or "")
+            if g.startswith(STARR_GRUPPE):
+                scheiben.setdefault(g, []).append(kp)
+                continue
+            if g.startswith(STABENDE_GRUPPE) and all(not np.isfinite(w) for _r, w in kp.paare()):
+                enden.setdefault(int(kp.node_a), []).append(kp)
+                continue
         d = np.array(_trans_dofs(int(kp.node_a)) + _trans_dofs(int(kp.node_b)), int)
         for richtung, wert in kp.paare():
             k = starr if not np.isfinite(wert) else float(wert)
@@ -1431,11 +1539,61 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(ke.ravel())
+    if scheiben or enden:
+        _drehanteil_einbauen(model, scheiben, enden, starr, rows, cols, vals)
     if not rows:
         return None
     return sparse.coo_matrix(
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
         shape=(n, n))
+
+
+def _drehanteil_einbauen(model: Model, scheiben: dict, enden: dict, starr: float,
+                         rows: list, cols: list, vals: list) -> None:
+    """Die Kopplungen der starren Scheiben (RBE2) und der Stabenden (RBE3)
+    mit Drehanteil in die Tripel (siehe :func:`kopplungen`)."""
+    X = np.asarray(model.nodes, float)
+    bindung: set = set()
+    if scheiben and any(EL.ist_quadratisch(e.typ) for e in model.elements if e.typ in SOLID_TYPES):
+        bindung = {int(t[0]) for t in mittelknoten_bindungen(model)}
+    for _g, liste in scheiben.items():
+        liste = [kp for kp in liste if int(kp.node_b) not in bindung]
+        if not liste:
+            continue
+        a0 = int(liste[0].node_a)
+        dreh = _drehung_bestimmt(X[[int(kp.node_b) for kp in liste]] - X[a0])
+        for kp in liste:
+            a, b = int(kp.node_a), int(kp.node_b)
+            r = X[b] - X[a]
+            mit = dreh and a == a0
+            if mit:
+                d = np.array(list(range(NDOF * a, NDOF * a + 6)) + _trans_dofs(b), int)
+            else:
+                d = np.array(_trans_dofs(a) + _trans_dofs(b), int)
+            for richtung, wert in kp.paare():
+                k = starr if not np.isfinite(wert) else float(wert)
+                if k <= 0:
+                    continue
+                if mit:
+                    c = np.concatenate([-richtung, -np.cross(r, richtung), richtung])
+                else:
+                    c = np.concatenate([-richtung, richtung])
+                r_, cc = np.meshgrid(d, d, indexing="ij")
+                rows.append(r_.ravel())
+                cols.append(cc.ravel())
+                vals.append((k * np.outer(c, c)).ravel())
+    if not enden:
+        return
+    from .elements import verbindung as vb
+    biege = biegeknoten(model)
+    for m, liste in enden.items():
+        partner = list(dict.fromkeys(int(kp.node_b) for kp in liste))
+        G, d = stabende_zwang(X, m, partner, m in biege)
+        Ke = vb.starrkoerper_steifigkeit(G, starr)
+        r_, cc = np.meshgrid(d, d, indexing="ij")
+        rows.append(r_.ravel())
+        cols.append(cc.ravel())
+        vals.append(Ke.ravel())
 
 
 def mass(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:

@@ -925,22 +925,26 @@ def test_starre_flaeche():
           float(r.reactions[oben, 2]), soll, 1e-6 * Fv, " N")
     check("die Stabkraft liegt knapp unter F_v (Nachgiebigkeit des Wuerfels)",
           0.999 * Fv < soll < Fv, f"{soll:.1f} N")
-    abw = max(float(np.linalg.norm(r.u[s, :3] - u_m)) for s in slaves)
-    check("die Knoten in der Scheibe bewegen sich wie das Stabende (starr)",
+    # Seit 14.10.2026 als RBE2 mit Drehanteil: die Knoten folgen dem
+    # Stabende als starrer Koerper, u_s = u_m + theta_m x r (bis dahin u_s = u_m)
+    th = r.u[mitte, 3:6]
+    abw = max(float(np.linalg.norm(r.u[s, :3] - u_m - np.cross(th, m.nodes[s] - m.nodes[mitte])))
+              for s in slaves)
+    check("die Knoten in der Scheibe bewegen sich mit dem Stabende als starrer Koerper (u_m + theta x r)",
           abw <= 1e-3 * float(np.linalg.norm(u_m)) and float(np.linalg.norm(u_m)) > 0,
-          f"Abweichung {abw:.2e} m bei u = {float(np.linalg.norm(u_m)):.2e} m")
+          f"Abweichung {abw:.2e} m bei u = {float(np.linalg.norm(u_m)):.2e} m, theta {np.round(th, 12)}")
     d = Model.from_dict(m.to_dict())
     check("Steifigkeitsart und Kopplungen ueberleben Speichern und Laden",
           d.flaechen["Scheibe"].steifigkeit == "starr" and len(d.kopplungen) == len(m.kopplungen))
 
-    # Was die Kopplung **nicht** tut: ein Moment weitergeben. Sie fuehrt drei
-    # Richtungen, nicht sechs, und in der Steifigkeitsmatrix steht sie
-    # ausschliesslich auf Verschiebungsfreiheitsgraden - die Verdrehung des
-    # Stabendes kommt in keiner Zeile vor. Das ist genau die Wirkung, die RFEM
-    # hier ueber ein Liniengelenk vorschreibt (Verschiebungen starr,
-    # Verdrehungen frei); die Volumenelemente unter der Scheibe haben ohnehin
-    # keine Verdrehungsfreiheitsgrade, an denen ein Moment ankaeme.
-    check("die Kopplung fuehrt nur die drei Verschiebungen",
+    # Seit 14.10.2026 bewegt sich die Scheibe als starrer Koerper (RBE2): je
+    # Knoten drei Richtungen, in der Steifigkeitsmatrix dazu die drei
+    # Verdrehungen des Stabendes - die Drehung der Scheibe, die sich aus ihren
+    # Knoten ergibt. Der Fachwerkstab dort nimmt kein Moment auf, die
+    # Volumenknoten haben keine Verdrehungen. Bis dahin stand die Kopplung nur
+    # auf Verschiebungen, die Scheibe konnte nicht kippen, und ihre Kraefte
+    # hatten ein Moment ohne Gegenueber (tests.test_kopplung_drehanteil).
+    check("die Kopplung fuehrt je Knoten die drei Verschiebungen",
           all(len(k.richtungen) == 3 and len(k.steifigkeiten) == 3
               for k in m.kopplungen),
           f"{len(m.kopplungen[0].richtungen)} Richtungen")
@@ -949,8 +953,12 @@ def test_starre_flaeche():
     belegt = sorted({int(i) for i in Kk.tocoo().row} | {int(j) for j in Kk.tocoo().col})
     from statik3d.model import NDOF as _NDOF
     dreh = [i for i in belegt if i % _NDOF >= 3]
-    check("und steht nur auf Verschiebungsfreiheitsgraden - kein Moment geht durch",
-          not dreh, f"{len(belegt)} belegte Freiheitsgrade, davon {len(dreh)} Verdrehungen")
+    check("und dazu genau die drei Verdrehungen des Stabendes (RBE2 mit Drehanteil)",
+          sorted(dreh) == [_NDOF * mitte + 3, _NDOF * mitte + 4, _NDOF * mitte + 5],
+          f"{len(belegt)} belegte Freiheitsgrade, davon {len(dreh)} Verdrehungen")
+    N_stab = solver.beam_end_forces(m, e, r.beam_end[e])
+    check("der Fachwerkstab bekommt kein Moment",
+          max(abs(N_stab[k][j]) for k in ("My", "Mz", "Mt") for j in (0, 1)) == 0.0, "")
 
 
 #: Ringplatte fuer die starren Scheiben ueber der Bohrung: Lochradius, Dicke,

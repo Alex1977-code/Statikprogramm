@@ -299,9 +299,10 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
     Durchstosspunkt der Stabachse; Seiten, die der Ring schneidet, werden
     in Teilzellen integriert.
 
-    Rueckgabe {"knoten", "gewichte" (Integral N_i dA [m2]), "flaeche" [m2],
-    "normale", "punkt" (Durchstosspunkt), "seiten"} - oder {"grund": Text},
-    wenn es die Flaeche nicht gibt."""
+    Rueckgabe {"knoten", "gewichte" (Integral N_i dA [m2]), "momente"
+    (Integral N_i (x - x_Stabknoten) dA [m3], seit 14.10.2026), "flaeche"
+    [m2], "normale", "punkt" (Durchstosspunkt), "seiten"} - oder
+    {"grund": Text}, wenn es die Flaeche nicht gibt."""
     from .elements import solid as sl
     cache = {} if cache is None else cache
     X = np.asarray(model.nodes, float)
@@ -355,6 +356,7 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
         t = float((X[R["ecken"][saat[0]][0]] - p) @ n0) / float(achse @ n0)
         P0 = p + t * achse
     gewicht: dict = {}
+    moment: dict = {}
     ring = str(e.get("art")) == "ring"
     ri = 0.5 * float(e.get("d_innen", 0.0) or 0.0)
     ra = 0.5 * float(e.get("d_aussen", 0.0) or 0.0)
@@ -386,7 +388,9 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
                 if r_min >= ra or r_max <= ri:
                     continue                        # ganz ausserhalb des Rings
                 if r_min >= ri and r_max <= ra:
-                    w = sl.seiten_integration_stapel(P[None])["knotenflaechen"][0]
+                    d_ = sl.seiten_integration_stapel(P[None])
+                    w = d_["knotenflaechen"][0]
+                    s_ = np.einsum("m,mk,mj->kj", d_["dA"][0], d_["N"], d_["punkte"][0] - p)
                 else:
                     h = float(np.max(np.linalg.norm(P[:kc] - np.roll(P[:kc], -1, axis=0), axis=1)))
                     s = int(min(64, max(4, math.ceil(RING_TEILUNG * h / (ra - ri)))))
@@ -396,19 +400,23 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
                     r = np.linalg.norm(pk, axis=1)
                     chi = ((r >= ri) & (r <= ra)).astype(float)
                     w = (d_["dA"][0] * chi) @ d_["N"]
+                    s_ = np.einsum("m,mk,mj->kj", d_["dA"][0] * chi, d_["N"], d_["punkte"][0] - p)
                     if not np.any(chi):
                         continue
             else:
-                w = sl.seiten_integration_stapel(P[None])["knotenflaechen"][0]
+                d_ = sl.seiten_integration_stapel(P[None])
+                w = d_["knotenflaechen"][0]
+                s_ = np.einsum("m,mk,mj->kj", d_["dA"][0], d_["N"], d_["punkte"][0] - p)
             benutzt += 1
-            for q, wq in zip(voll, w.tolist()):
+            for q, wq, sq in zip(voll, w.tolist(), s_):
                 gewicht[int(q)] = gewicht.get(int(q), 0.0) + float(wq)
+                moment[int(q)] = moment.get(int(q), np.zeros(3)) + sq
     if not gewicht:
         return {"grund": "der Kreisring trifft keine Randseite der Stirnfläche"}
     kn = sorted(gewicht)
     w = [gewicht[q] for q in kn]
-    aus = {"knoten": kn, "gewichte": w, "flaeche": float(sum(w)), "normale": n0, "punkt": P0,
-           "seiten": benutzt}
+    aus = {"knoten": kn, "gewichte": w, "momente": [[float(x) for x in moment[q]] for q in kn],
+           "flaeche": float(sum(w)), "normale": n0, "punkt": P0, "seiten": benutzt}
     if ring:
         aus["flaeche_nenn"] = math.pi * (ra * ra - ri * ri)
     return aus
@@ -456,10 +464,17 @@ def wirksame_gewichte(model, sk, bindung=None) -> dict:
        unter sum w = 1 und sum w_i (x_i - P) = 0 in der Ebene. Gewichte null
        bleiben null.
 
-    Rueckgabe {"slaves", "w", "P", "normale", "ausgeschlossen",
-    "abstand_vorher", "abstand_nachher" [m], "aenderung" (groesste Aenderung
-    eines Gewichts, auf das groesste bezogen), "negativ" (Zahl negativer
-    Gewichte nach dem Ausgleich)}."""
+    4. (seit 14.10.2026) Traegt die Kopplung die Momentvektoren s_i
+       (StarrKoerper.momente, Integral N_i (x - x_m) dA), gehen sie mit:
+       ein Knoten bleibt auch mit Gewicht null, wenn sein s_i nicht null ist
+       (die Ecken eines ebenen tri6 tragen keine Kraft, aber ihren Teil der
+       linearen Spannung), gebundene Mitten fallen auch hier heraus, und die
+       s_i werden mit demselben Faktor wie die Gewichte normiert.
+
+    Rueckgabe {"slaves", "w", "s" ((n, 3) oder None: klassisch), "P",
+    "normale", "ausgeschlossen", "abstand_vorher", "abstand_nachher" [m],
+    "aenderung" (groesste Aenderung eines Gewichts, auf das groesste
+    bezogen), "negativ" (Zahl negativer Gewichte nach dem Ausgleich)}."""
     X = np.asarray(model.nodes, float)
     m = int(sk.master)
     sl_ = [int(x) for x in sk.slaves]
@@ -470,20 +485,31 @@ def wirksame_gewichte(model, sk, bindung=None) -> dict:
         from . import assemble as asm
         bindung = {int(t[0]) for t in asm.mittelknoten_bindungen(model)}
     nn = len(X)
+    m0 = list(getattr(sk, "momente", None) or [])
+    mit_s = len(m0) == len(sl_) and len(sl_) > 0
+    s0 = {int(s): np.asarray(v, float) for s, v in zip(sl_, m0)} if mit_s else {}
     paare = [(s, float(w)) for s, w in zip(sl_, w0) if 0 <= s < nn and s != m]
     # Gewicht null: die Ecken einer ebenen tri6-Seite (Integral N dA = 0, als
-    # Rundung bis 1e-20 m2) - sie tragen nichts und bleiben aussen vor
+    # Rundung bis 1e-20 m2) - sie tragen nichts und bleiben aussen vor, es sei
+    # denn, sie tragen einen Teil des Moments (s_i, seit 14.10.2026)
     klein = 1e-12 * max((abs(w) for _s, w in paare), default=0.0)
+    klein_s = 1e-12 * max((float(np.linalg.norm(v)) for v in s0.values()), default=0.0)
+
+    def traegt(s, w):
+        return abs(w) > klein or (mit_s and float(np.linalg.norm(s0[s])) > klein_s)
     ausgeschlossen = sum(1 for s, w in paare if s in bindung and abs(w) > klein)
-    paare = [(s, w) for s, w in paare if s not in bindung and abs(w) > klein]
-    aus = {"slaves": np.zeros(0, np.int64), "w": np.zeros(0), "P": X[m].copy() if 0 <= m < nn else np.zeros(3),
+    paare = [(s, w) for s, w in paare if s not in bindung and traegt(s, w)]
+    aus = {"slaves": np.zeros(0, np.int64), "w": np.zeros(0), "s": None,
+           "P": X[m].copy() if 0 <= m < nn else np.zeros(3),
            "normale": np.zeros(3), "ausgeschlossen": ausgeschlossen, "abstand_vorher": 0.0,
            "abstand_nachher": 0.0, "aenderung": 0.0, "negativ": 0}
-    if not paare or not 0 <= m < nn:
+    if not paare or not 0 <= m < nn or not sum(w for _s, w in paare):
         return aus
     S = np.asarray([s for s, _w in paare], np.int64)
     w = np.asarray([w for _s, w in paare], float)
-    w = w / w.sum()
+    summe = w.sum()
+    w = w / summe
+    s_neu = np.asarray([s0[int(s)] for s in S], float) / summe if mit_s else None
     Xs = X[S]
     # Ebene der Flaechenknoten (alle gespeicherten, damit sie nicht vom
     # Ausschluss abhaengt) und Durchstosspunkt der Stabachse
@@ -517,7 +543,7 @@ def wirksame_gewichte(model, sk, bindung=None) -> dict:
             w_neu = w + Cw * (A.T @ lam)
     except np.linalg.LinAlgError:
         w_neu = w
-    aus.update({"slaves": S, "w": w_neu, "P": P, "normale": n, "abstand_vorher": vorher,
+    aus.update({"slaves": S, "w": w_neu, "s": s_neu, "P": P, "normale": n, "abstand_vorher": vorher,
                 "abstand_nachher": float(np.linalg.norm(A[1:] @ w_neu)),
                 "aenderung": float(np.max(np.abs(w_neu - w)) / max(float(np.max(np.abs(w))), 1e-300)),
                 "negativ": int(np.sum(w_neu < 0.0))})
@@ -529,7 +555,17 @@ def zwangsmatrix(model, sk, bindung=None) -> tuple:
     die sechs Zeilen des RBE3 (verbindung.starrkoerper_matrix) mit den
     wirksamen Gewichten, die drei Momentenzeilen durch den Traegheitsradius
     rho geteilt; Spalten: die sechs FHG des Masters, dann die drei
-    Verschiebungen je Slave."""
+    Verschiebungen je Slave.
+
+    **Konsistente Momentenzeilen (seit 14.10.2026).** Traegt die Kopplung die
+    Vektoren s_i = Integral N_i (x - x_m) dA (StarrKoerper.momente), stehen
+    sie statt w_i r_i in den Momentenzeilen: Ein Moment geht dann als
+    konsistente Last der linear verteilten Spannung in die Flaeche (Biegung
+    als Normalspannung linear im Abstand, Torsion als Schub linear im
+    Abstand), auch ueber die Ecken eines tri6. Bis dahin ging es als
+    f_i = w_i (lambda_f + lambda_m x r_i), und an der Stirnflaeche lag die
+    Biegespannung 7 % ueber der konsistenten (Theoriehandbuch, b009aff).
+    rho^2 ist dann sum |s_i| |r_i| (klassisch: sum |w_i| |r_i|^2)."""
     from .elements import verbindung as vb
     from .model import NDOF
     wk = wirksame_gewichte(model, sk, bindung)
@@ -538,9 +574,13 @@ def zwangsmatrix(model, sk, bindung=None) -> tuple:
         return None, None, wk
     X = np.asarray(model.nodes, float)
     m = int(sk.master)
-    G = vb.starrkoerper_matrix(X[m], X[S], "RBE3", w)
+    s = wk.get("s")
+    G = vb.starrkoerper_matrix(X[m], X[S], "RBE3", w, momente=s)
     r = X[S] - X[m]
-    rho = math.sqrt(max(float(np.abs(w) @ np.einsum("ij,ij->i", r, r)), 0.0)) or 1.0
+    if s is not None:
+        rho = math.sqrt(max(float(np.linalg.norm(s, axis=1) @ np.linalg.norm(r, axis=1)), 0.0)) or 1.0
+    else:
+        rho = math.sqrt(max(float(np.abs(w) @ np.einsum("ij,ij->i", r, r)), 0.0)) or 1.0
     G[3:6] /= rho
     spalten = list(range(6)) + [6 * (i + 1) + j for i in range(len(S)) for j in range(3)]
     fhg = list(range(NDOF * m, NDOF * m + NDOF)) + [NDOF * int(s) + j for s in S for j in range(3)]

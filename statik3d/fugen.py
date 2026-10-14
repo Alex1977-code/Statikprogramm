@@ -1991,16 +1991,30 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
     Flaeche), bleibt es bei den 1-3 Knoten, und das Protokoll sagt warum.
     Lastknoten und Lagerknoten haengen immer an den 1-3 Knoten.
 
+    **Mit Drehanteil (seit 14.10.2026).** Die Kopplung an die 1-4 Knoten
+    rechnet assemble.kopplungen als RBE3 (assemble.stabende_zwang): Der
+    Stabknoten folgt dem Verschiebungsfeld des Elements und, wenn an ihm ein
+    Biegestab haengt, auch der Drehung der Knoten - ein Moment geht als
+    Kraeftepaare ins Volumen. Bis dahin hing er ueber u_m = u_i starr an jedem
+    Knoten, und die Kopplung trug ein Moment, das keinem Teil des Modells das
+    Gleichgewicht hielt (Befund b3). Dafuer braucht es mindestens drei Knoten,
+    die nicht auf einer Geraden durch das Stabende liegen. Liegt das Ende
+    eines Biegestabs auf einer Kante oder einer Ecke des Netzes (2 bzw. 1
+    Knoten), haengt es darum an allen vier Ecken des Elements, und das
+    Protokoll nennt es (``erweitert``).
+
     Rueckgabe {"stabenden": n, "kopplungen": n, "anschluesse": [(Knoten,
     Stab oder Grund, Koerper, Zahl der Knoten)], "verteilt": [(Knoten, Stab,
     Koerper, Kennung, Zahl der Knoten, Flaeche [m2])], "rueckfall": [(Knoten,
-    Stab, Grund)]}. Vorhandene Kopplungen und Verteilkopplungen dieser Art
-    werden vorher entfernt (neues Netz).
+    Stab, Grund)], "erweitert": [(Knoten, Stab)]}. Vorhandene Kopplungen und
+    Verteilkopplungen dieser Art werden vorher entfernt (neues Netz).
     """
     from scipy.spatial import cKDTree
     from .importers import _common as C
     from . import stabeinleitung as SE
-    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": [], "verteilt": [], "rueckfall": []}
+    from . import assemble as _asm
+    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": [], "verteilt": [], "rueckfall": [],
+               "erweitert": []}
     model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
                         if not str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE)]
     if any(SE.ist_verteilkopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
@@ -2107,7 +2121,8 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
                     text = (f"{SE.kennung(e)}: {'Kreisring' if e['art'] == 'ring' else 'Stirnfläche'} "
                             f"{SE.mm2(fl['flaeche'])} mm², {len(fl['knoten'])} Knoten ({e['quelle']})")
                     model.add_starrkoerper(int(n), fl["knoten"], "RBE3", fl["gewichte"],
-                                           name=STABENDE_GRUPPE + f"K{n}", kommentar=text)
+                                           name=STABENDE_GRUPPE + f"K{n}", kommentar=text,
+                                           momente=fl.get("momente"))
                     bericht["stabenden"] += 1
                     bericht["verteilt"].append((int(n), sname, kname[kand[j]], SE.kennung(e),
                                                 len(fl["knoten"]), float(fl["flaeche"]),
@@ -2115,6 +2130,12 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
                     continue
                 bericht["rueckfall"].append((int(n), sname, fl["grund"]))
                 model._stabende_rueckfall[int(n)] = SE.kennung(e)
+            # Ein Biegestab braucht fuer sein Moment mindestens drei Knoten,
+            # die nicht auf einer Geraden durch das Stabende liegen (14.10.2026)
+            if (any(model.elements[i].typ == "beam" for i in stab[n])
+                    and not _asm._drehung_bestimmt(N[partner] - p)):
+                partner = [int(x) for x in T[kand[j]]]
+                bericht["erweitert"].append((int(n), sname))
         for q in partner:
             model.kopplungen.append(Kopplung(int(n), int(q),
                                              [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -2129,12 +2150,19 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         C.warn(log, f"{len(bericht['rueckfall'])} Stabenden ohne Einleitungsfläche, sie hängen weiter an "
                     "1–3 Knoten: " + "; ".join(f"{s} (K{n}): {g}" for n, s, g in bericht["rueckfall"][:6])
                + (" …" if len(bericht["rueckfall"]) > 6 else ""))
+    if log is not None and bericht["erweitert"]:
+        C.say(log, f"{len(bericht['erweitert'])} Enden von Biegestäben liegen auf einer Kante oder Ecke des "
+                   "Netzes – für ihr Moment hängen sie an allen vier Ecken des Elements (mindestens drei Knoten, "
+                   "die nicht auf einer Geraden liegen): "
+                   + ", ".join(f"{s} (K{n})" for n, s in bericht["erweitert"][:6])
+                   + (" …" if len(bericht["erweitert"]) > 6 else ""))
     if log is not None and bericht["anschluesse"]:
         liste = ", ".join(f"{s} (K{n}) → {k}" for n, s, k, _z in bericht["anschluesse"][:6])
         arten = sorted({grund[n] for n, _s, _k, _z in bericht["anschluesse"]})
         C.say(log, f"{len(bericht['anschluesse'])} Knoten an Volumen angeschlossen ({', '.join(arten)}) - "
                    f"der Knoten liegt auf oder in dem Körper, wie in RFEM integriert; "
-                   f"{bericht['kopplungen']} starre Kopplungen an die Knoten des Elements dort: {liste}"
+                   f"{bericht['kopplungen']} Kopplungen an die Knoten des Elements dort (RBE3, mit "
+                   f"Drehanteil an Biegestäben): {liste}"
                    + (" …" if len(bericht["anschluesse"]) > 6 else ""))
     return bericht
 
@@ -2153,22 +2181,37 @@ def stabenden_erneuern(model: Model, log: list = None) -> bool:
     from . import stabeinleitung as SE
     if not model.elements or not getattr(model, "koerper", None):
         return False
+    from . import assemble as _asm
     ist: dict = {}
+    partner: dict = {}
     for k in (getattr(model, "kopplungen", None) or []):
         if str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE):
             ist.setdefault(int(k.node_a), "punkt")
+            partner.setdefault(int(k.node_a), []).append(int(k.node_b))
+    ohne_momente = False
     for sk in (getattr(model, "starrkoerper", None) or []):
         if SE.ist_verteilkopplung(sk):
             ist[int(sk.master)] = SE.kennung_der_kopplung(sk)
-    if not ist:
+            ohne_momente = ohne_momente or len(getattr(sk, "momente", None) or []) != len(sk.slaves)
+    if not ist or ohne_momente:
+        # aeltere Datei: ohne Anschluss, oder verteilend ohne die konsistenten
+        # Momentenzeilen (vor dem 14.10.2026)
         stabenden_koppeln(model, log)
         return True
     stab = SE.stabelemente_an(model)
     enden = SE.staebe_an_enden(model)
     rueck = getattr(model, "_stabende_rueckfall", None) or {}
+    X = np.asarray(model.nodes, float)
+    biege = _asm.biegeknoten(model)
     for n, k_ist in ist.items():
         if n not in stab:
             continue                                   # Last- und Lagerknoten: immer 1-3 Knoten
+        if (k_ist == "punkt" and n in biege
+                and not _asm._drehung_bestimmt(X[partner.get(n, [])] - X[n])):
+            # angeschlossen vor dem 14.10.2026 an 1-2 Knoten: fuer das Moment
+            # des Biegestabs an die Ecken des Elements (stabenden_koppeln)
+            stabenden_koppeln(model, log)
+            return True
         k_soll = SE.kennung(SE.einstellung(model, n, enden))
         if k_ist == "punkt" and rueck.get(n) == k_soll:
             continue                                   # die Flaeche fehlte schon beim letzten Mal

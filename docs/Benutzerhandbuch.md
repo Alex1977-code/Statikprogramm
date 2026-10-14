@@ -7501,13 +7501,33 @@ Schraubenvolumens (Knoten 1093 auf V49) und an nichts. Die Schrauben trugen
 keinen Zug, die Deckel V33 und V35 hoben ab, die Kontakt-Iteration brach ab.
 Nach dem Vernetzen hängt jetzt jeder Knoten, der auf oder in einem
 vernetzten Volumen liegt und an dem etwas hängt — ein Stabende, eine
-Knotenlast, ein Lager, integriert oder nicht —, über starre Kopplungen an
+Knotenlast, ein Lager, integriert oder nicht —, über eine Kopplung an
 den Knoten des Elements dort (ein integrierter Knoten, an dem nichts hängt,
 bleibt frei: er trägt nichts, und jede Straffeder mehr kostet Rechengenauigkeit): drei Knoten auf einer Seitenfläche, vier im
 Innern, einer, wenn er mit einem Netzknoten zusammenfällt; bis 0,1 mm
-Abstand gilt ein Punkt noch als „auf" der Seite. Das ist dieselbe Umsetzung
-wie bei der starren Scheibe, und sie entspricht dem integrierten Knoten in
-RFEM. Das Protokoll nennt jeden Anschluss („2 Knoten an Volumen
+Abstand gilt ein Punkt noch als „auf" der Seite. Das entspricht dem
+integrierten Knoten in RFEM, der dort Teil des Netzes wird.
+
+**Seit dem 14.10.2026 mit Drehanteil.** Der Knoten folgt dem
+Verschiebungsfeld des Elements an seinem Ort, also dem nach seiner Lage
+gewichteten Mittel der Elementknoten, und, wenn an ihm ein Biegestab hängt,
+auch ihrer Drehung (RBE3). Ein Moment des Stabes geht dann als Kräftepaare in
+das Volumen, und die Kopplung ist im Gleichgewicht der Kräfte und der
+Momente. Dafür braucht es mindestens drei Knoten, die nicht auf einer Geraden
+durch das Stabende liegen. Endet ein Biegestab auf einer Kante oder einer
+Ecke des Netzes, hängt er deshalb an allen vier Ecken des Elements, und das
+Protokoll nennt ihn („… Enden von Biegestäben liegen auf einer Kante oder
+Ecke des Netzes …“). Ein Fachwerkstab, ein Seil und ein Stab mit
+Momentengelenk am Ende geben kein Moment weiter; die Kopplung bleibt auch
+dann im Gleichgewicht. Bis zum 14.10.2026 hing der Knoten über starre
+Kopplungen nur in den Verschiebungen an jedem Elementknoten. Für Knoten, die
+nicht aufeinander liegen, ist das keine Starrkörperbewegung: Die
+Kopplungskräfte hatten die Summe null, aber ein Moment, das keinem Teil des
+Modells das Gleichgewicht hielt. Eine Stütze Rund 100, die in einem Würfel
+von 1 m endet und am Kopf in 3 m Höhe 10 kN quer trägt, gab dem Fundament
+5,345 statt 30 kNm, und ihr Kopf verschob sich um 36,587 statt 32,638 mm;
+endete sie in der Deckelfläche, brach die Rechnung als singulär ab. Jetzt
+hält das Fundament 30,000 kNm (`tests/test_kopplung_drehanteil.py`). Das Protokoll nennt jeden Anschluss („2 Knoten an Volumen
 angeschlossen (Stabende) … Zug (K211) → V1"). Ein Stabende an keinem Volumen
 (Ankerstab im Fundament, Kragarm) bleibt frei; ein Knoten, der schon in einer
 Kopplung steht (Mitte einer starren Scheibe), wird nicht doppelt
@@ -7550,8 +7570,15 @@ Durchmessern um den Durchstoßpunkt der Stabachse. Seitenmitten, die an einer
 Kontakt- oder Lagerseite gebunden sind, fallen aus der Kopplung heraus. Die
 übrigen Gewichte bringt das Programm auf die Summe eins und gleicht sie mit
 der kleinsten Änderung so aus, dass ihr Schwerpunkt auf der Stabachse liegt.
-Eine reine Längskraft geht dann gleichmäßig in die Fläche, ein Moment linear
-über die Gewichte verteilt, und ein Gelenk am Stabende bleibt ein Gelenk.
+Eine reine Längskraft geht dann gleichmäßig in die Fläche, und ein Gelenk am
+Stabende bleibt ein Gelenk. Ein Moment geht seit dem 14.10.2026 als
+konsistente Last einer linear verteilten Spannung in die Fläche: die Biegung
+als Normalspannung, die linear mit dem Abstand vom Durchstoßpunkt wächst, die
+Torsion als Schub, ebenso linear, flächenanteilig über alle Knoten der Fläche
+einschließlich der Ecken. Bis dahin ging es über die Knotengewichte allein,
+und am Prüfquader (Kragarm Rund 16, 1 kN quer) lag die Biegespannung der
+Elemente an der Stirnfläche 7 % über der konsistenten (47,25 gegen
+44,14 N/mm²); jetzt sind es 44,14 gegen 44,14 N/mm².
 Findet das Programm keine Fläche, etwa weil das Stabende im Innern liegt oder
 der Stab schräger steht, bleibt es bei den 1–3 Knoten, und das Protokoll
 sagt warum. Knotenlasten und Lager in Volumen hängen immer an den 1–3 Knoten.
@@ -7608,7 +7635,50 @@ Kopplungen anderer Art, etwa an Stabenden oder von Hand angelegt, bleiben
 unberührt. Bis zum 13.10.2026 koppelte die Oberfläche vor der Rechnung nur
 dann neu, wenn eine Datei noch gar keine Kopplung einer starren Fläche hatte;
 ein vor dem 10.10.2026 gespeichertes Modell rechnete deshalb weiter mit den
-16 Knoten zu viel. Eine
+16 Knoten zu viel.
+
+**Seit dem 14.10.2026 bewegt sich die starre Scheibe als starrer Körper,
+mit Drehung (RBE2).** Jeder Knoten der Scheibe folgt dem Mittelknoten mit
+u = u_Mitte + φ_Mitte × r, wobei r der Abstand vom Mittelknoten ist; die
+Verdrehung φ des Mittelknotens ergibt sich aus der Scheibe. Hängt dort ein
+Fachwerkstab wie die Anker und Zugstäbe des Drehlagers, nimmt er kein Moment
+auf: Die Scheibe kippt frei mit der Platte, und die Kopplung gibt nur die
+Stabkraft weiter. Hängt ein Biegestab dort, geht sein Moment über die Scheibe
+in den Körper. So behandelt RFEM nach unserem Verständnis eine starre Fläche
+(sie bewegt sich als starrer Körper); belegt ist das am RFEM-Modell nicht.
+Bis zum 14.10.2026 hielt die Kopplung jeden Knoten der Scheibe nur in den
+Verschiebungen am Mittelknoten fest (u = u_Mitte). Die Scheibe konnte also
+nicht kippen, und die Kopplung trug ein Moment, das keinem Teil des Modells
+das Gleichgewicht hielt. Am gespeicherten Drehlager (LF1, Netz Mittel, Lauf
+vom 09.10.2026) waren das an den 16 Ankerscheiben bis 3,63 kNm je Scheibe
+(die Ringkräfte schwankten dadurch um bis zu ±31 % um ihren Mittelwert) und
+an den 48 Scheiben der Zugstäbe 0,10 bis 0,28 kNm, zusammen als Vektor
+14,7 kNm. Mit dem Drehanteil ändern sich die gespeicherten Kopplungen des
+Drehlagers nicht; anders gerechnet werden alle 64 Scheiben und alle 48
+Stabenden, und die Scheiben können mit der Platte kippen, um die sich die
+Plattenoberfläche dort im gespeicherten Ergebnis um bis zu 1,46 mrad neigte
+(Theoriehandbuch, *Kopplungen mit Drehanteil*). Eine Seitenmitte eines tet10, die an einer Kontakt- oder Lagerseite
+gebunden ist, fällt aus der Scheibe heraus und folgt ihren Ecken, wie bei der
+verteilenden Einleitung der Stabenden; bis zum 14.10.2026 brach die Rechnung
+an ihr ab.
+
+**Globale Gleichgewichtskontrolle (seit 14.10.2026).** Nach jeder Rechnung
+prüft das Programm, ob die Lasten und die Lagerkräfte zusammen im
+Gleichgewicht sind: die Summe der Kräfte und die Summe der Momente um die
+Mitte des Modells (Mitte der Hülle aller Knoten). Gezählt werden alle Lasten,
+wie sie in die Rechnung gehen, und alle Lagerkräfte, auch die der Federlager
+und der einseitigen Lager. Die Zusammenfassung jedes Ergebnisses nennt die
+Zeile „Gleichgewicht global: erfüllt – Lasten + Lager ΣF … kN, ΣM … kNm um
+(x; y; z) m“ mit der auf den Umsatz bezogenen Abweichung. Der Umsatz ist die
+Summe der Beträge aller Knotenlasten und Lagerkräfte bzw. ihrer Momente um
+die Mitte. Die Zusammenfassung aller Ergebnisse im Protokoll und der Bericht
+(Kapitel Ergebnisse, Übersicht) fassen das in einem Satz zusammen. Liegt die
+bezogene Abweichung über 10⁻⁴, steht dort eine WARNUNG mit den betroffenen
+Ergebnissen. 10⁻⁴ ist dieselbe Schranke, mit der der Kontaktlauf sein
+Kraftgleichgewicht annimmt; der Gleichungslöser hält 10⁻⁶. Eine Kopplung, die
+keine Starrkörperbewegung zulässt, verfehlt das Gleichgewicht dagegen um ihr
+ganzes Moment. Bis zum 14.10.2026 stand in der Zusammenfassung nur die Summe
+der Lagerkräfte, und das Moment prüfte niemand. Eine
 Scheibe genau über einer Bohrung leitet ihre Kraft ohne Auflagefläche in die
 Platte; was das Programm daraus macht, steht unter *Netzabhängige
 Spannungsspitzen*.

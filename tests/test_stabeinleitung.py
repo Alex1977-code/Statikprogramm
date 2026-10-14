@@ -299,8 +299,11 @@ def test_moment():
           f"{z.get('F_kopplung', [0])[0]:.9f} N")
     check("biegesteif: 8-12 mm unter der Flaeche dieselbe Biegespannung wie unter der konsistenten "
           "linearen Flaechenlast (auf 1 %)", abs(s_tief / b_tief - 1.0) < 0.01, f"{s_tief / b_tief:.4f}")
-    check("biegesteif: an der Flaeche selbst hoechstens 10 % ueber der konsistenten Last",
-          s_st / b_st < 1.10, f"{s_st / b_st:.4f}")
+    # Seit 14.10.2026 mit den konsistenten Momentenzeilen (s_i = Integral
+    # N_i r dA): an der Flaeche dieselbe Spannung wie unter der konsistenten
+    # Last. Bis dahin (Momentenzeilen w_i r_i) 7 % darueber, 47,25 gegen 44,14.
+    check("biegesteif: auch an der Flaeche selbst dieselbe Biegespannung wie unter der konsistenten "
+          "Last (auf 1 %)", abs(s_st / b_st - 1.0) < 0.01, f"{s_st / b_st:.4f}")
     m, r = _kragarm("stirn", last="torsion")
     z = ((r.info.get("stabenden_kraftsumme") or {}).get("je_stabende") or [{}])[0]
     M = np.asarray(z.get("M_kopplung", [0, 0, 0]))
