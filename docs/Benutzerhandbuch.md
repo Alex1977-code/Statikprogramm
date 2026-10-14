@@ -7132,12 +7132,37 @@ nicht kostet; ein solcher Rest verschiebt die Kontaktkräfte höchstens in der
 Größenordnung, die der Kontaktlauf als Restwechsel ohnehin annimmt.
 Ausschalten lässt es sich am Modell mit
 `plastizitaet.kaltstart_nicht_proportional = False` (Vorgabe an; gespeichert
-wird der Schalter nur, wenn er abweicht). An der Platte der Prüfung
+wird der Schalter nur, wenn er abweicht). Seit dem 14.10.2026 gilt das auch mit
+Zugstäben, Druckstäben und Seilen, deren Ausfall-Iteration den Kontakt jetzt
+warm startet (siehe den folgenden Absatz). An der Platte der Prüfung
 (`tests/test_kontakt_warmstart.py`: Stahlplatte auf „Starr“ mit Reibung 0,2,
 vier vorgespannte Anker, Schub gestuft in drei Stufen) endete die erste Stufe
 warm gestartet mit dem Grund „pendeln“, die folgenden am Deckel, zusammen 254
 Kontaktrunden in 3,5 s, das Ergebnis war vorläufig; kalt gestartet sind es 66
 Runden in 0,5 s, und alles ist konvergiert.
+
+**Warmstart der Kontaktläufe in der Ausfall-Iteration (seit 14.10.2026).** Trägt
+ein Modell Stäbe, die nur Zug oder nur Druck aufnehmen, oder Seile, rechnet das
+Programm jede Lösung in einer Ausfall-Iteration: es löst mit allen Stäben, nimmt
+die heraus, die die falsche Kraft tragen, und löst neu, bis sich nichts mehr
+ändert. Mit Kontakt ist jede dieser Lösungen ein ganzer Kontaktlauf. Bis zum
+14.10.2026 begann jeder davon bei der Geometrie, auch der zweite Lauf derselben
+Lösung und jeder Newton-Schritt der Plastizität; am Drehlager mit 64 Zugstäben
+brauchte so schon der Vorlauf zweimal 44 Runden und 1106 s. Jetzt beginnt der
+erste Lauf beim Zustand, den die Rechnung anbietet (der Vorlauf, der vorige
+Newton-Schritt oder der vorige Lastfall), und jeder weitere beim Zustand des
+letzten *konvergierten* Laufs dieser Iteration; ein Lauf, der am Deckel endete,
+gibt nichts weiter. Die Plastizität sieht nur die Lösung, mit der die Iteration
+endet, und rechnet ihre plastischen Dehnungen immer vom Anfang der Laststufe aus;
+was in verworfenen Iterationen war, wird nicht aufaddiert. An der Prüfplatte
+mit einer Strebe, die nur Zug trägt und vom Schub gedrückt wird
+(`tests/test_kontakt_warmstart.py`), brauchte die Rechnung vorher 178
+Kontaktrunden, jetzt 94, bei derselben Lösung auf 10⁻¹⁰ m; mit Fließen 424 statt
+228 Runden, 2,4 statt 4,1 s, mit derselben Zahl Rückführungen (11) und derselben
+plastischen Dehnung auf 10⁻⁵. Im Ergebnis steht dann nicht mehr „Ausfallweg ohne
+Warmstart“, sondern, von welchem Lastfall der Start angeboten wurde. Ausschalten
+lässt es sich am Modell mit `plastizitaet.ausfall_warm = False` (Vorgabe an;
+gespeichert nur, wenn er abweicht).
 
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 

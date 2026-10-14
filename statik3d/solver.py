@@ -5700,15 +5700,27 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         Fg = F if F_ges is None else F_ges
         st = start if start_ is None else start_
         if model.hat_ausfallstaebe():
+            # Vorschlag 5 (14.10.2026, Plastizitaet.ausfall_warm): der Start geht an
+            # die Kontaktlaeufe der Ausfall-Iteration; aus wie bisher kalt
+            warm_a = bool(getattr(model.plastizitaet, "ausfall_warm", True)) and model.has_contact
+            st_a = (None if (probelauf and start_ is None) else st) if warm_a else None
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
                 model, system, Fg, us=us, progress=progress, uebermass=ueber,
-                K_zusatz=K_zusatz, probelauf=probelauf, n0=n0_ausfall)
+                K_zusatz=K_zusatz, probelauf=probelauf, n0=n0_ausfall,
+                start=st_a, fortsetzung=start_ is not None)
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
                 res.contact, res.contact_forces, cinfo = kontakt
-                # solve_with_ausfall reicht keinen Start weiter: kalt
-                res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], None))
+                if warm_a:
+                    res.kontaktzustand = cinfo.pop("contact_state_weiter", None)
+                    cinfo.pop("contact_state", None)
+                    res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"],
+                                                          _start_von_lauf(st_a)))
+                    zustaende.append((len(res.info["laeufe"]), res.kontaktzustand))
+                else:
+                    # solve_with_ausfall reicht keinen Start weiter: kalt
+                    res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], None))
             return u_, R_, aktiv_
         if model.has_contact:
             # Derselbe Ausdruck wie unten im Aufruf, nur fuer das Laufbuch
@@ -5856,7 +5868,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             res.info.update(ausweich_info(system, ausweich_vorher))
             raise
     if model.has_contact:
-        _startherkunft_eintragen(res, start, start_von, model.hat_ausfallstaebe())
+        _startherkunft_eintragen(res, start, start_von, model.hat_ausfallstaebe()
+                                 and not bool(getattr(model.plastizitaet, "ausfall_warm", True)))
     if hilfs:
         u = system.ohne_starrkoerper(u)
     # Frei bewegliche Teile (B5, 08.10.2026): gestoerte Pivots sagen, dass etwas
@@ -6158,7 +6171,7 @@ def _anfang_ausfall(model: Model, factors: dict, aktiv=None, zusatz: dict = None
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
                        progress=None, max_iter: int = 50, uebermass: dict = None,
                        K_zusatz: sparse.spmatrix = None, probelauf: bool = False,
-                       n0: dict = None):
+                       n0: dict = None, start=None, fortsetzung: bool = False):
     """Aktivmengen-Iteration fuer Staebe, die nur Zug oder nur Druck aufnehmen
     (Fachwerkstab/Feder mit ``nur``, Seile).
 
@@ -6185,6 +6198,21 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     Bis zum 13.10.2026 kannte ``n0`` nur die Verriegelung - Temperatur und
     Vorspannung im Stab zaehlten nicht mit (Befund 2). Ohne Anfangsdehnung
     rechnet die Iteration wie bisher.
+
+    **Warmstart der Kontaktlaeufe** (Vorschlag 5, Entscheidung des Anwenders vom
+    14.10.2026; Plastizitaet.ausfall_warm): bis dahin begann jeder Kontaktlauf der
+    Iteration kalt, und jede Loesung brauchte mindestens zwei volle Laeufe (am
+    Drehlager mit 64 Zugstaeben der Vorlauf 2 x 44 Runden, 1106 s). Eingeschaltet
+    beginnt der erste Lauf bei ``start`` (dem Zustand, den der Loeser anbietet:
+    Vorlauf, voriger Newton-Schritt), jeder weitere beim Zustand des letzten
+    **konvergierten** Laufs dieser Iteration - ein Lauf, der am Deckel endete, gibt
+    nichts weiter. ``fortsetzung`` sagt dem Kontaktlauf, ob ``start`` aus demselben
+    Lastfall stammt (solve_with_contact); die Iteration selbst setzt immer fort.
+    Die Plastizitaet sieht nur die Loesung, mit der die Iteration endet: ihre
+    Rueckfuehrung geht von der Basis der Laststufe aus, nie von einer verworfenen
+    Iteration (plastizitaet._newton) - eps_p wird darum nicht aufsummiert.
+    Rueckgabe dann zusaetzlich in ``kontakt[2]["contact_state"]`` der Zustand fuer
+    den naechsten Aufruf.
     """
     if probelauf:
         max_iter = 1            # siehe solve_with_contact: ein Schritt genuegt
@@ -6203,6 +6231,10 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     n = model.ndof
     u = R = None
     kontakt = None
+    # Vorschlag 5: Warmstart vom letzten konvergierten Zustand (ausfall_warm)
+    warm = bool(getattr(getattr(model, "plastizitaet", None), "ausfall_warm", True)) and not probelauf
+    st_warm, st_fort = (start, bool(fortsetzung)) if warm else (None, False)
+    zustaende: list = []        # Kontaktzustand je Lauf (fuer den Laufbuch-Eintrag des Loesers)
     for it in range(1, max_iter + 1):
         K_aus = K_zusatz
         if aus:
@@ -6230,8 +6262,15 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
             u, R, cons, cf, cinfo = solve_with_contact(model, system, F, progress=progress,
                                                        uebermass=uebermass,
                                                        us=us, K_zusatz=K_aus,
-                                                       probelauf=probelauf)
+                                                       probelauf=probelauf,
+                                                       start=st_warm, fortsetzung=st_fort)
             kontakt = (cons, cf, cinfo)
+            if warm:
+                z_ = cinfo.get("contact_state")
+                zustaende.append(z_)
+                if isinstance(z_, dict) and z_.get("konvergiert", True):
+                    # der naechste Lauf setzt beim letzten konvergierten fort
+                    st_warm, st_fort = z_, True
         else:
             u = system.solve(F, K_extra=K_aus, us=us)
             R = system.reactions(u, F, K_aus)
@@ -6265,6 +6304,10 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     aktiv = np.ones(ne, dtype=bool) if system.aktiv is None else np.asarray(system.aktiv, bool).copy()
     for i in aus:
         aktiv[i] = False
+    if warm and kontakt is not None:
+        # fuer den naechsten Aufruf: der letzte konvergierte Zustand dieser Iteration
+        # (oder der angebotene Start, wenn keiner konvergierte)
+        kontakt[2]["contact_state_weiter"] = st_warm
     return u, R, aktiv, sorted(int(i) for i in aus), log, kontakt
 
 

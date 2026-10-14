@@ -3711,6 +3711,23 @@ unverändert (dort lag Δσ über 1 N/mm² oder Δu im Millimeterbereich);
 Pendelmodell mit Fließen: Residuum 21,9 / 51,7 kN = 7,2·10⁻⁴ / 8,5·10⁻⁴ (Halt für
 Teile), nicht konvergiert.
 
+**5. Warmstart in der Ausfall-Iteration** (`ausfall_warm`, Vorgabe an).
+`solve_with_ausfall(…, start, fortsetzung)`: der erste Kontaktlauf beginnt bei
+`start` (in `_solve_loads._rechnen` derselbe Start wie im Kontaktweg, mit
+`fortsetzung`, wenn er aus demselben Lastfall stammt), jeder weitere beim
+Zustand des letzten konvergierten Laufs der Iteration (`contact_state` mit
+`konvergiert`), fortgesetzt; ein Lauf am Deckel gibt nichts weiter. Den Zustand
+für den nächsten Aufruf gibt `contact_state_weiter` zurück, `_rechnen` legt ihn
+in `res.kontaktzustand` – damit startet auch die erste Laststufe vom Vorlauf und
+Vorschlag 1 greift im Ausfallweg. ε_p: `plastizitaet._newton` ruft je
+Newton-Schritt einmal `loesen` (die ganze Ausfall-Iteration) und danach
+`schritt` mit der Basis der Stufe; Lösungen verworfener Iterationen erreichen
+die Rückführung nicht. Gemessen (Prüfplatte mit Strebe „nur Zug“, die ausfällt):
+178 → 94 Runden, |Δu| 1,1·10⁻¹⁰ m; mit Fließen (f_y 30 N/mm²) 424 → 228 Runden,
+4,09 → 2,39 s, 11 Rückführungen, 10 Newton-Schritte und ε_p,max 0,00784 % auf
+1,1·10⁻⁶ relativ gleich, jeweils 24 Kontaktläufe. `_startherkunft_eintragen`
+schreibt „Ausfallweg ohne Warmstart“ nur noch ausgeschaltet.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf

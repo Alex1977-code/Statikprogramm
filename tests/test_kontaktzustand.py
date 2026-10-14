@@ -1093,13 +1093,23 @@ def test_start_beim_einfrieren_und_im_ausfallweg():
     m2.elements[e].nur = "zug"
     check("Pruefmodell: Kontakt und ein Zugstab (Ausfallweg)",
           m2.has_contact and m2.hat_ausfallstaebe())
+    # Seit dem 14.10.2026 (Vorschlag 5, Plastizitaet.ausfall_warm, Vorgabe an) reicht der
+    # Ausfallweg den Start an seine Kontaktlaeufe weiter; ausgeschaltet wie bis dahin
+    m2.plastizitaet.ausfall_warm = False
     ia = solver.solve_cases(m2, [lf, "LF2"])["LF2"].info
-    check("Ausfallweg: nichts angeboten, mit Vermerk, und der Lauf ist kalt",
+    check("Ausfallweg, Warmstart aus: nichts angeboten, mit Vermerk, und der Lauf ist kalt",
           ia.get("start_angeboten_von") is None and ia.get("start_genutzt") is False
           and ia.get("start_vermerk") == "Ausfallweg ohne Warmstart"
           and bool(ia.get("laeufe")) and not ia["laeufe"][0]["warm"]
           and ia["laeufe"][0]["start_von_lauf"] is None,
           f"{ia.get('start_angeboten_von')} / {ia.get('start_vermerk')}")
+    m2.plastizitaet.ausfall_warm = True
+    ib = solver.solve_cases(m2, [lf, "LF2"])["LF2"].info
+    check("Ausfallweg, Warmstart an (Vorgabe): angeboten vom Lastfall davor, im Laufbuch Quelle 0, ohne Vermerk",
+          ib.get("start_angeboten_von") == f"Lastfall {lf}" and "start_vermerk" not in ib
+          and bool(ib.get("laeufe")) and ib["laeufe"][0]["start_von_lauf"] == 0,
+          f"{ib.get('start_angeboten_von')} / {ib.get('start_genutzt')} / "
+          f"{(ib.get('laeufe') or [{}])[0].get('start_von_lauf')}")
 
 
 def test_kette_und_auftrag_stehen_im_ergebnis():

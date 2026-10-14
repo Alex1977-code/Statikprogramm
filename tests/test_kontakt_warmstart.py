@@ -50,9 +50,12 @@ def check(name, ok, detail=""):
 
 
 def platte(mu=0.2, Fv=1.0e6, rx=0.6, ry=0.2, typ="tet10", h=0.25, stufen=3, fy=None,
-           anker_nur_zug=False, schalter=None):
+           anker_nur_zug=False, schalter=None, strebe=False):
     """Das Pruefmodell (siehe oben). ``Fv`` je Anker (0: ohne Vorspannung, dann
-    ist die Stufe proportional), ``schalter`` {Feld: Wert} an Plastizitaet."""
+    ist die Stufe proportional), ``schalter`` {Feld: Wert} an Plastizitaet.
+    ``strebe``: dazu ein Zugstab Rund 40 (nur Zug) von der Mitte der Kante x = L,
+    oben, 2 m waagrecht in +x zu einem festen Punkt - der Schub drueckt ihn, er
+    faellt aus, und die Ausfall-Iteration braucht zwei Kontaktlaeufe je Loesung."""
     from statik3d.model import Material, Section
     from tests import pruefkoerper as pk
     from tests import pruefmatrix as pm
@@ -80,6 +83,13 @@ def platte(mu=0.2, Fv=1.0e6, rx=0.6, ry=0.2, typ="tet10", h=0.25, stufen=3, fy=N
         m.add_member(f"A{i}", [e])
         if Fv:
             m.load_temp(e, -Fv / (E_ANKER * A_s * ALPHA), case="LF1")
+    if strebe:
+        k = min(oben, key=lambda n: (X[n, 0] - L) ** 2 + (X[n, 1] - 0.5 * B) ** 2)
+        fest = m.add_node(X[k, 0] + 2.0, X[k, 1], X[k, 2])
+        m.fix(int(fest), "all")
+        e = m.add_element("truss", [int(k), fest], "Anker", "Rund 40", group="Strebe")
+        m.elements[e].nur = "zug"
+        m.add_member("Strebe", [e])
     V = 4.0 * (Fv or 1.0e6)
     pk.spannung_auf_seiten(m, deckel, lambda x: np.array([rx * mu * V / (L * B), ry * mu * V / (L * B), 0.0]))
     if not Fv:
@@ -129,7 +139,7 @@ def kurz(r) -> str:
 # Einstellungen: Vorgabe, nur abweichend gespeichert, NEUE_FELDER
 # --------------------------------------------------------------------------
 SCHALTER = {"kaltstart_nicht_proportional": True, "pendelschutz_winkel": True, "gleit_toleranz": 1.0e-6,
-            "halbieren_lastabhaengig": False, "spannung_zuerst": True}
+            "halbieren_lastabhaengig": False, "spannung_zuerst": True, "ausfall_warm": True}
 
 
 def test_einstellungen():
@@ -381,8 +391,110 @@ def test_vorschlag4():
           (res2[0][:170] if res2 else "keine Zeile"))
 
 
+# --------------------------------------------------------------------------
+# Vorschlag 5: Warmstart der Kontaktlaeufe in der Ausfall-Iteration
+# --------------------------------------------------------------------------
+@contextlib.contextmanager
+def kontaktlaeufe_mitschreiben(aufz: list, unkonvergiert=()):
+    """solver.solve_with_contact umwickeln (nur die aeusseren Aufrufe): Start, Runden
+    und zurueckgegebener Zustand je Lauf. ``unkonvergiert``: Nummern (ab 0) der
+    Laeufe, deren Zustand als nicht konvergiert zurueckgemeldet wird."""
+    alt = solver.solve_with_contact
+    tiefe = [0]
+
+    def neu(*a, **kw):
+        tiefe[0] += 1
+        try:
+            erg = alt(*a, **kw)
+        finally:
+            tiefe[0] -= 1
+        if tiefe[0] == 0:
+            z = erg[4].get("contact_state")
+            if len(aufz) in unkonvergiert and isinstance(z, dict):
+                z = dict(z, konvergiert=False)
+                erg[4]["contact_state"] = z
+            aufz.append({"start": kw.get("start"), "fortsetzung": kw.get("fortsetzung"),
+                         "runden": int(erg[4].get("contact_iterations", 0) or 0), "zustand": z})
+        return erg
+    solver.solve_with_contact = neu
+    try:
+        yield
+    finally:
+        solver.solve_with_contact = alt
+
+
+def test_vorschlag5():
+    print("\n--- Vorschlag 5: Warmstart in der Ausfall-Iteration, vom letzten konvergierten Zustand ---")
+    # (a) Platte mit einer Strebe "nur Zug", die der Schub drueckt: je Loesung zwei Laeufe
+    l0, l1 = [], []
+    with kontaktlaeufe_mitschreiben(l0):
+        a, ta = rechnen(platte(strebe=True, schalter={"ausfall_warm": False}))
+    with kontaktlaeufe_mitschreiben(l1):
+        b, tb = rechnen(platte(strebe=True))
+    n0, n1 = sum(x["runden"] for x in l0), sum(x["runden"] for x in l1)
+    print(f"      aus: {len(l0)} Kontaktläufe, {n0} Runden, {ta:.1f} s; an: {len(l1)} Läufe, {n1} Runden, {tb:.1f} s")
+    check("aus: jeder Kontaktlauf der Ausfall-Iteration kalt (Stand vor dem 14.10.2026)",
+          l0 and all(x["start"] is None for x in l0) and len(l0) == 2 * len(laeufe(a)),
+          f"{len(l0)} Läufe, {len(laeufe(a))} Lösungen")
+    zweite = l1[1::2]
+    check("an: der zweite Lauf jeder Lösung startet beim Zustand des ersten, fortgesetzt",
+          len(l1) == len(l0) and all(z["start"] is v["zustand"] and z["fortsetzung"]
+                                     for v, z in zip(l1[0::2], zweite)),
+          f"{len(l1)} Läufe")
+    check("  weniger als 60 % der Runden, dasselbe Ergebnis (|Δu| < 1e-9 m), konvergiert",
+          n1 < 0.6 * n0 and max_du(a, b) < 1e-9 and solver.konvergenz_zustand(b.info) == "konvergiert"
+          and solver.konvergenz_zustand(a.info) == "konvergiert",
+          f"{n1} statt {n0} Runden, max |Δu| {max_du(a, b):.1e} m")
+    # (b) Vom letzten konvergierten Zustand: meldet der erste Lauf "nicht konvergiert",
+    #     beginnt der zweite beim angebotenen Start, nicht bei diesem Zustand
+    m = platte(strebe=True)
+    system = solver.StaticSystem(m)
+    F = solver.case_loads(m, {"LF1": 1.0})[0]
+    n0a = solver._anfang_ausfall(m, {"LF1": 1.0}, None, None)
+    vor = []
+    with kontaktlaeufe_mitschreiben(vor):
+        solver.solve_with_ausfall(m, system, F, n0=n0a)
+    start = vor[-1]["zustand"]
+    mit = []
+    with kontaktlaeufe_mitschreiben(mit, unkonvergiert=(0,)):
+        solver.solve_with_ausfall(m, system, F, n0=n0a, start=start, fortsetzung=True)
+    check("  vom letzten konvergierten: nach einem nicht konvergierten Lauf wieder der angebotene Start",
+          len(mit) == 2 and mit[0]["start"] is start and mit[1]["start"] is start
+          and mit[0]["zustand"].get("konvergiert") is False,
+          f"Start 2. Lauf ist der angebotene: {len(mit) == 2 and mit[1]['start'] is start}")
+    # (c) eps_p aus verworfenen Iterationen wird nicht aufsummiert: mit Fliessen dieselben
+    #     Rueckfuehrungen und dasselbe eps_p, obwohl jede Loesung zwei Kontaktlaeufe hat
+    #     (auf 1e-5: die Kontaktlaeufe enden am Residuum 1e-6 der Kontaktkraft, nicht bitgleich)
+    zaehler = {"n": 0}
+    alt_s = pl.schritt
+
+    def schritt(*a_, **kw_):
+        zaehler["n"] += 1
+        return alt_s(*a_, **kw_)
+    erg = {}
+    pl.schritt = schritt
+    try:
+        for an in (False, True):
+            zaehler["n"] = 0
+            lz = []
+            with kontaktlaeufe_mitschreiben(lz):
+                r, _t = rechnen(platte(strebe=True, fy=30e6, schalter={"ausfall_warm": an}))
+            pz = r.info.get("plastizitaet") or {}
+            erg[an] = (r, zaehler["n"], float(pz.get("eps_p_max") or 0.0), int(pz.get("iterationen") or 0),
+                       sum(x["runden"] for x in lz), len(lz))
+    finally:
+        pl.schritt = alt_s
+    (ra, sa, ea, na, ka, la), (rb, sb, eb, nb, kb, lb) = erg[False], erg[True]
+    print(f"      Fließen aus: {sa} Rückführungen, ε_p {ea * 100:.5f} %, {na} Newton, {ka} Runden in {la} Läufen; "
+          f"an: {sb}, {eb * 100:.5f} %, {nb}, {kb} Runden in {lb} Läufen")
+    check("  mit Fließen: Rückführungen und Newton-Schritte gleich, ε_p auf 1e-5 gleich, weniger Runden",
+          sa == sb and na == nb and ea > 0 and abs(eb - ea) <= 1e-5 * ea and kb < ka and la == lb == 2 * len(laeufe(ra)),
+          f"{sb} Rückführungen bei {lb} Kontaktläufen, Δε_p {abs(eb - ea):.1e}")
+
+
 def main() -> int:
-    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2, test_vorschlag3, test_vorschlag4):
+    for t in (test_einstellungen, test_vorschlag1, test_vorschlag2, test_vorschlag3, test_vorschlag4,
+              test_vorschlag5):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

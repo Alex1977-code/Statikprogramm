@@ -328,13 +328,21 @@ class Plastizitaet:
     #: wird das Residuum geprueft und protokolliert (Gleichgewicht ueber 1e-4: die
     #: Stufe ist nicht konvergiert). Gilt fuer jeden Kontaktlauf.
     spannung_zuerst: bool = True
+    #: Warmstart der Kontaktlaeufe in der Ausfall-Iteration (Zug-/Druckstaebe,
+    #: Seile; Vorschlag 5, 14.10.2026; solver.solve_with_ausfall): der erste Lauf
+    #: beginnt beim angebotenen Zustand (Vorlauf, voriger Newton-Schritt), jeder
+    #: weitere beim letzten konvergierten dieser Iteration. Bis dahin begann jeder
+    #: kalt. Die Plastizitaet sieht nur die letzte Loesung der Iteration, eps_p aus
+    #: verworfenen Iterationen wird nicht aufsummiert. Gilt fuer jeden Lastfall mit
+    #: solchen Staeben und Kontakt, auch ohne Fliessen.
+    ausfall_warm: bool = True
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
     NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0,
                  "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
                  "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
-                 "spannung_zuerst": True}
+                 "spannung_zuerst": True, "ausfall_warm": True}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
