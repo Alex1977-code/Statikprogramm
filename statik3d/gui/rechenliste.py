@@ -182,6 +182,16 @@ def zustand_aus_info(info) -> str:
     return konvergenz_zustand(info)
 
 
+def meldung_aus_info(info) -> str:
+    """Die Meldung eines fertigen Postens mit nicht konvergiertem Kontakt:
+    „vorläufig – Kontakt nicht konvergiert in Stufe …“
+    (:func:`statik3d.solver.kontakt_vorlaeufig`, Entscheidung des Anwenders
+    vom 14.10.2026), sonst "". Bis dahin stand dort die letzte Meldung des
+    Laufs, etwa die Deckelzeile des Kontaktsystems - ohne Stufe."""
+    from ..solver import kontakt_vorlaeufig
+    return kontakt_vorlaeufig(info)
+
+
 def farm_text(status: dict) -> str:
     """Der Stand der Rechnerfarm in einer Zeile (farm._State.status).
 
@@ -399,6 +409,8 @@ if QtWidgets is not None:
                     neu = PROBELAUF
                 elif z.startswith("NICHT"):
                     neu = NICHT_KONVERGIERT
+                    # vorlaeufig: die Stufen mit nicht konvergiertem Kontaktlauf (14.10.2026)
+                    meldung = meldung_aus_info(info)
                 elif bisher:
                     neu = KONVERGIERT
                     if bisher == NICHT_KONVERGIERT:

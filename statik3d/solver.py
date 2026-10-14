@@ -1896,6 +1896,11 @@ class Results:
                             if self.info.get("contact_nachfuehrungen") else "")
                          + ("  (NICHT konvergiert)" if not kontakt_konvergiert(self.info)
                             else f"  (konvergiert; {hinweis})" if hinweis else ""))
+            # Entscheidung des Anwenders vom 14.10.2026: jede Laststufe mit nicht
+            # konvergiertem Kontaktlauf im Ergebnis kennzeichnen
+            vorl = kontakt_vorlaeufig(self.info)
+            if vorl:
+                s.append(f"Ergebnis                : {vorl}")
         if self.freqs is not None:
             s.append("Eigenfrequenzen [Hz]    : "
                      + ", ".join(f"{f:.3f}" for f in self.freqs[:10]))
@@ -4020,6 +4025,106 @@ def kontakt_hinweis(info) -> str:
     return "gedeckelt war nur ein abgekürzter oder verworfener Lauf, er zählt nicht"
 
 
+# --------------------------------------------------------------------------
+# Vorlaeufig: nicht konvergierter Kontakt im Ergebnis (14.10.2026)
+# --------------------------------------------------------------------------
+#
+# Entscheidung des Anwenders vom 14.10.2026: „Ergebnisse des Entwurf-Laufs
+# (Ankerkraftverlust, Fließen der Ankerringe) gelten als vorläufig, weil der
+# Kontakt nicht konvergiert ist. Künftig jede Laststufe mit nicht
+# konvergiertem Kontaktlauf im Ergebnis kennzeichnen.“ Bis dahin stand an
+# einem solchen Ergebnis „NICHT konvergiert: 3 von 11 Kontaktläufen nicht
+# konvergiert“ - ohne zu sagen, in welcher Laststufe, und ohne das Wort, das
+# der Anwender fuer den Umgang mit den Zahlen gewaehlt hat.
+VORLAEUFIG = "vorläufig – Kontakt nicht konvergiert"
+
+
+def _prozent(x: float) -> str:
+    """Lastanteil 0..1 als „33,3“ (Komma, hoechstens vier Stellen)."""
+    return f"{100.0 * float(x):.4g}".replace(".", ",")
+
+
+def vorlaeufige_stellen(info) -> list:
+    """Die Stellen des Laufbuchs, an denen ein Kontaktlauf zaehlt und nicht
+    konvergiert ist - in der Reihenfolge der Rechnung, jede einmal: „Stufe 2
+    (bis 66,7 % der Last)“, „Abschluss“, bei einer reinen Kontaktrechnung
+    „Kontaktlauf 1“. Es zaehlen dieselben Laeufe wie in
+    :func:`konvergenz_zustand` - nicht der elastische Vorlauf, nicht die
+    abgekuerzten und nicht die verworfenen."""
+    info = info if isinstance(info, dict) else {}
+    n_vor = int(info.get("contact_vorlauf_laeufe", 0) or 0)
+    aus: list = []
+    for e in info.get("laeufe") or []:
+        if not isinstance(e, dict) or _lauf_zaehlt_nicht(e) or int(e.get("nr", 0) or 0) <= n_vor:
+            continue
+        art, k = str(e.get("art") or ""), e.get("stufe")
+        fliessen = art in ("Laststufe", "Newton", "Abnahme", "Fliessschritt")
+        if art == "Abschluss" or (fliessen and k is not None and int(k) <= 0):
+            text = "Abschluss"
+        elif fliessen and k is not None:
+            text = f"Stufe {int(k)}"
+            if e.get("last") is not None:
+                text += f" (bis {_prozent(e['last'])} % der Last)"
+        elif fliessen or art == "Fliessen":
+            text = "Fließschritt"            # Art nicht nachgezeichnet (_fliessarten_eintragen)
+        else:
+            text = f"Kontaktlauf {int(e.get('nr', 0) or 0)}"
+        if text not in aus:
+            aus.append(text)
+    return aus
+
+
+def kontakt_vorlaeufig(info) -> str:
+    """„vorläufig – Kontakt nicht konvergiert in Stufe 2 (bis 66,7 % der
+    Last), Abschluss“ - oder "", wenn der Kontakt des Ergebnisses nach
+    :func:`kontakt_konvergiert` konvergiert ist (ein gedeckelter elastischer
+    Vorlauf zaehlt nicht) oder es ein Probelauf ist. Steht die Kennzeichnung
+    schon im Ergebnis (``info["vorlaeufig"]``, auch aus einer Ergebnisdatei),
+    gilt sie; sonst wird sie aus dem Laufbuch gelesen - so tragen auch
+    Ergebnisse von vor dem 14.10.2026 sie."""
+    info = info if isinstance(info, dict) else {}
+    v = info.get("vorlaeufig")
+    if isinstance(v, dict) and v.get("text"):
+        return str(v["text"])
+    if info.get("probelauf") or kontakt_konvergiert(info):
+        return ""
+    stellen = vorlaeufige_stellen(info)
+    if not stellen:
+        return VORLAEUFIG
+    return f"{VORLAEUFIG} in " + ", ".join(stellen)
+
+
+def vorlaeufig_eintragen(res, progress=None) -> None:
+    """Die Kennzeichnung in ``res.info["vorlaeufig"]`` (Text und Stellen) und
+    als Zeile in den Fortschritt - am Ende jeder Rechnung eines Lastfalls oder
+    einer direkt geloesten Kombination (_solve_loads). Ohne nicht
+    konvergierten Kontakt bleibt ``res.info`` unberuehrt."""
+    info = getattr(res, "info", None)
+    if not isinstance(info, dict):
+        return
+    info.pop("vorlaeufig", None)
+    text = kontakt_vorlaeufig(info)
+    if not text:
+        return
+    info["vorlaeufig"] = {"grund": "kontakt", "text": text, "stellen": vorlaeufige_stellen(info)}
+    _melde(progress, f"{getattr(res, 'name', '')}: {text}".lstrip(": "))
+
+
+def vorlaeufig_gebuendelt(ergebnisse) -> list:
+    """Eine WARNUNG fuer die Zusammenfassung der Rechnung: die vorlaeufigen
+    Ergebnisse mit ihren Stellen, hoechstens sechs genannt."""
+    teile = []
+    for name, r in ergebnisse:
+        t = kontakt_vorlaeufig(getattr(r, "info", None))
+        if t:
+            stellen = t[len(VORLAEUFIG):].strip()
+            teile.append(f"{name}" + (f" ({stellen[3:]})" if stellen.startswith("in ") else ""))
+    if not teile:
+        return []
+    return [f"WARNUNG: {VORLAEUFIG}: " + "; ".join(teile[:6])
+            + (f" … ({len(teile)} Ergebnisse)" if len(teile) > 6 else "")]
+
+
 def konvergenz_zustand(info) -> str:
     """Der Konvergenzstand eines fertigen Postens aus ``Results.info``.
 
@@ -4067,16 +4172,19 @@ def konvergenz_zustand(info) -> str:
     if info.get("abbruch"):
         gruende.append("abgebrochen (" + str(info["abbruch"]).splitlines()[0][:80] + ")")
     z = _kontaktlaeufe_zaehlen(info)
+    # Seit dem 14.10.2026 mit der Kennzeichnung „vorläufig – Kontakt nicht
+    # konvergiert in Stufe …“ (kontakt_vorlaeufig), die Zahl der Laeufe dahinter
+    vorl = kontakt_vorlaeufig(info) or VORLAEUFIG
     if z is not None:
         nicht, laeufe, letzter = z
         if nicht > 0:
             if laeufe <= 1:
-                gruende.append("Kontaktlauf nicht konvergiert")
+                gruende.append(vorl)
             else:
-                gruende.append(f"{nicht} von {laeufe} Kontaktläufen nicht konvergiert"
-                               + ("" if letzter else ", darunter der letzte"))
+                gruende.append(f"{vorl} ({nicht} von {laeufe} Kontaktläufen nicht konvergiert"
+                               + ("" if letzter else ", darunter der letzte") + ")")
     elif info.get("contact_converged") is False:
-        gruende.append("Kontakt nicht konvergiert")
+        gruende.append(vorl)
     pz = info.get("plastizitaet")
     if isinstance(pz, dict) and pz.get("konvergiert", True) is False:
         gruende.append("Plastizität nicht konvergiert")
@@ -4214,9 +4322,16 @@ def _fliessarten_eintragen(res, info: dict, einst, aufrufe: list) -> None:
            for (_i, tang), (art, _k, _s) in zip(aufrufe, arten)):
         return
     laeufe = res.info.get("laeufe") or []
-    for (i, tang), (art, k, s) in zip(aufrufe, arten):
+    # Lastanteil je Aufruf (plastizitaet._newton, 14.10.2026) - nur, wenn er
+    # zu den Aufrufen passt; sonst bleibt die Stufe ohne Lastanteil
+    lasten = list(info.get("aufrufe_last") or [])
+    if len(lasten) != len(aufrufe):
+        lasten = [None] * len(aufrufe)
+    for (i, tang), (art, k, s), last in zip(aufrufe, arten, lasten):
         if i is not None and 0 <= i < len(laeufe):
             laeufe[i].update({"art": art, "stufe": k, "schritt": s, "tangente": bool(tang)})
+            if last is not None:
+                laeufe[i]["last"] = float(last)
 
 
 def _gemeinsam(model, probelauf: bool = False, einfrieren=None) -> bool:
@@ -5314,6 +5429,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # Stabstatus nach Abschluss: kein aktiver Zugstab mit Druck (13.10.2026)
         zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
     _stabenden_pruefen(model, res, F)
+    if model.has_contact:
+        # vorlaeufig, wenn ein Kontaktlauf, der zaehlt, nicht konvergierte (14.10.2026)
+        vorlaeufig_eintragen(res, progress)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
 
@@ -8498,6 +8616,8 @@ class Analysis:
         s += zugstab_druck_gebuendelt(self.all_results().items())
         # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)
         s += seil_querlast_gebuendelt(self.all_results().items())
+        # Ergebnisse mit nicht konvergiertem Kontakt sind vorlaeufig (14.10.2026)
+        s += vorlaeufig_gebuendelt(self.all_results().items())
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)

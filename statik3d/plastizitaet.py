@@ -1633,10 +1633,17 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     stufen = int(max(1, einst.laststufen))
     gemeinsam = kontakt is not None and bool(kontakt.gemeinsam)
     aufrufe = info.setdefault("aufrufe", []) if kontakt is not None else None
+    # Lastanteil je Aufruf, parallel zu ``aufrufe`` (14.10.2026): die
+    # Kennzeichnung „vorläufig – Kontakt nicht konvergiert in Stufe …“
+    # (solver.kontakt_vorlaeufig) nennt die Stufe mit ihrem Lastanteil - nach
+    # dem Halbieren sagt die Nummer allein nicht, welche Last gemeint ist
+    lasten = info.setdefault("aufrufe_last", []) if kontakt is not None else None
+    stufe_last = [0.0]
 
     def _loesen(Fg, dK, art, k_, it_, voll=True):
         if aufrufe is not None:
             aufrufe.append((art, k_, it_))
+            lasten.append(1.0 if art == "Abschluss" else float(stufe_last[0]))
         if gemeinsam:
             return loesen(Fg, voll=voll) if dK is None else loesen_tangente(Fg, dK, voll=voll)
         return loesen(Fg) if dK is None else loesen_tangente(Fg, dK)
@@ -1658,6 +1665,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     k = 0
     while k < len(faktoren):
         lam_k, tiefe = faktoren[k]
+        stufe_last[0] = lam_k
         k += 1
         letzte = k == len(faktoren)
         # Temperatur und Vorspannung wirken ab der ersten Stufe voll, auch in

@@ -2543,6 +2543,11 @@ class Report:
             kv.append(("Kontakt-Iterationen", f"{res.info['contact_iterations']}"
                        + (" – NICHT konvergiert" if not kontakt_konvergiert(res.info)
                           else f" – konvergiert; {hinweis}" if hinweis else "")))
+            # vorlaeufig mit den Stufen (Entscheidung des Anwenders vom 14.10.2026)
+            from ..solver import kontakt_vorlaeufig
+            vorl = kontakt_vorlaeufig(res.info)
+            if vorl:
+                kv.append(("Ergebnis", vorl))
         b.append(("kv", kv, f"Kennwerte {name}"))
         # Auflagerreaktionen
         if getattr(res, "reactions", None) is not None and res.reactions.size:
@@ -2879,9 +2884,12 @@ class Report:
                         b.append(("list", log))
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
                     # gedeckelter elastischer Vorlauf allein: konvergiert (F39)
-                    from ..solver import kontakt_konvergiert
+                    from ..solver import kontakt_konvergiert, kontakt_vorlaeufig
                     if not kontakt_konvergiert(res.info):
-                        self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
+                        # mit den Stufen: das Ergebnis ist vorlaeufig (14.10.2026)
+                        vorl = kontakt_vorlaeufig(res.info)
+                        self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert"
+                                              + (f" – {vorl}" if vorl else ""))
                 # Die uebrigen Ergebnisse bekommen im Vorgabeumfang keine
                 # Einzeltabelle - ihre WARNUNGEN duerfen deshalb nicht mit
                 # wegfallen. Bei 1931 Kontaktergebnissen nannte der Bericht den
