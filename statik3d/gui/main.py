@@ -26854,7 +26854,8 @@ class MainWindow(QtWidgets.QMainWindow):
             with self._Stille(self.plotter):
                 self._auswahl_auffrischen(m)
         elif art == "sicht":
-            if getattr(self, "_szene_ergebnis", False) or self.schnitt is not None:
+            # mit Schnittebene oder Schnittbox (Paket C) weiter Neuaufbau
+            if getattr(self, "_szene_ergebnis", False) or self.schnitt_aktiv():
                 return False
             try:
                 if len(self.plotter.scalar_bars):
@@ -29243,7 +29244,8 @@ class MainWindow(QtWidgets.QMainWindow):
         central = self.centralWidget()
         self.ruecksetzer = rs.Ruecksetzer(central)
         self.ruecksetzer.teile_einblenden.connect(self.alles_zeigen)
-        self.ruecksetzer.schnitt_aus.connect(lambda: self.act_schnitt.setChecked(False))
+        # „Schnitt aus“ nimmt Ebene und Box (Paket C, MainWindow.schnitt_aus)
+        self.ruecksetzer.schnitt_aus.connect(self.schnitt_aus)
         self._sichttasten = rs.SichtTasten(self.plotter.interactor, self._sicht_taste)
         self._radbeobachter = rs.RadBeobachter(self.plotter.interactor, self._rad_vereinfachen)
         self._rad_takt = QtCore.QTimer(self)
@@ -29333,7 +29335,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             n, text = self._ausgeblendete_teile() if any(self.versteckt.values()) else (0, "")
-            r_.aktualisieren(n, self.schnitt is not None, text)
+            r_.aktualisieren(n, self.schnitt_aktiv(), text)
         except Exception as ex:             # noqa: BLE001 - die Knoepfe sind Beiwerk
             self.log.appendPlainText(f"Rücksetzer: {ex}")
 

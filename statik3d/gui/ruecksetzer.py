@@ -96,10 +96,11 @@ class Ruecksetzer(QtWidgets.QWidget):
     teile_einblenden = QtCore.Signal()
     #: Abstand zum Rand [px]
     RAND = 10
-    #: Rechts frei für das Achsenkreuz unten rechts (Darsteller ``add_axes``,
-    #: viewport 0,86 … 1,0 der Breite). Entfällt das Achsenkreuz (Paket A,
-    #: Gizmo statt Würfel), kann der Anteil 0 werden.
-    RECHTS_FREI = 0.14
+    #: Rechts frei für ein Achsenkreuz unten rechts. Seit Paket C (14.10.2026)
+    #: hat die Ansicht keines mehr (das Gizmo oben rechts zeigt die Achsen, nur
+    #: das Berichtsbild trägt ein kleines); die Ecke ist frei, darum 0. Bis
+    #: zur Zusammenführung 0,14 (``add_axes``, viewport 0,86 … 1,0).
+    RECHTS_FREI = 0.0
 
     def __init__(self, ansicht: QtWidgets.QWidget):
         super().__init__(ansicht)

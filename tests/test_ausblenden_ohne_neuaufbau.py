@@ -418,11 +418,65 @@ def test_handbuch():
           and "Teile einblenden" in t, t[:120])
 
 
+def test_schnittbox_und_haut():
+    """Zusammenfuehrung mit Paket C (14.10.2026): die Schnittbox zaehlt als
+    Schnitt (Ruecksetzer, Neuaufbau beim Ausblenden, „Schnitt aus“ nimmt auch
+    die Box), die Ecke unten rechts ist frei (kein Achsenkreuz mehr), und die
+    Haut je Koerper ordnet auch bei tet10 jedem Punkt seinen Knoten zu."""
+    from statik3d.gui import ruecksetzer as rs
+    from statik3d.gui import viewport as vp
+    w, app, teile = _modell_im_fenster()
+    r_ = w.ruecksetzer
+    check("Ruecksetzer: rechts nichts frei (kein Achsenkreuz in der Ansicht)", rs.Ruecksetzer.RECHTS_FREI == 0,
+          str(rs.Ruecksetzer.RECHTS_FREI))
+    w.act_schnittbox.setChecked(True)
+    app.processEvents()
+    check("Schnittbox an: „Schnitt aus“ steht unten rechts", w.schnittbox_grenzen() is not None
+          and r_.isVisible() and r_.btn_schnitt.isVisible())
+    # die Box schneidet mitten durch A und B (die erste umschliesst alles)
+    w.schnittbox.box[1] = 0.5 * (w.schnittbox.box[0] + w.schnittbox.box[1])
+    w.redraw()
+    app.processEvents()
+    w.sel_koerper[:] = ["C"]
+    with _Zaehler(w) as z:
+        w.auswahl_ausblenden()
+        app.processEvents()
+    check("mit Schnittbox baut das Ausblenden neu auf (Werte auf Schnittflaechen, Paket C)",
+          z.z["_aufbauen"] == 1, str(z.z))
+    check("… mit den Gewichten der Schnittpunkte, nicht mit der Haut je Koerper",
+          getattr(w, "_schnittgewichte", None) is not None, type(getattr(w, "_schnittgewichte", None)).__name__)
+    r_.btn_schnitt.click()
+    app.processEvents()
+    check("„Schnitt aus“ nimmt auch die Schnittbox", w.schnittbox_grenzen() is None
+          and not w.act_schnittbox.isChecked() and not r_.btn_schnitt.isVisible())
+    w.alles_zeigen()
+    # Haut je Koerper an tet10: jeder Punkt liegt auf seinem Knoten (fed6ecf)
+    from tests import pruefkoerper as pk
+    from statik3d.model import Volumenkoerper
+    m, _ids = pk.quader("tet10", 4, 2, 2, 0.4, 0.2, 0.2)
+    m.koerper["Q"] = Volumenkoerper("Q", [], material=next(iter(m.materials)),
+                                   elemente=list(range(len(m.elements))))
+    w.model = m
+    typen = sorted(vp.CELL_MAP)
+    netzstand = (id(m), len(m.elements), m.nn, hash(np.asarray(m.nodes, float).tobytes()), tuple(typen))
+    haut = w._teiloberflaeche(netzstand, typen)
+    teil = haut.teil(set()) if haut is not None else None
+    if check("tet10: Haut je Koerper gebildet", teil is not None):
+        pd, kn = teil
+        d = float(np.abs(np.asarray(pd.points) - np.asarray(m.nodes, float)[np.asarray(kn)]).max())
+        check("tet10: jeder Punkt der Haut liegt auf seinem Knoten", d < 1e-12, f"{d:.1e} m")
+        neu, kn2 = vp.oberflaeche(vp.to_grid(m, typen=typen))
+        check("tet10: dieselben Punkte wie die neu gebildete Oberflaeche (vp.oberflaeche)",
+              sorted(set(np.asarray(kn).tolist())) == sorted(set(np.asarray(kn2).tolist())),
+              f"{len(set(np.asarray(kn).tolist()))} / {len(set(np.asarray(kn2).tolist()))} Knoten")
+    w.new_model()
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_haut_gleiche_zellen, test_auswahl_ohne_neuaufbau, test_tasten_und_ruecksetzer, test_baum,
-              test_radzoom_vereinfacht, test_lager_ein_darsteller, test_handbuch):
+              test_radzoom_vereinfacht, test_lager_ein_darsteller, test_schnittbox_und_haut, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
