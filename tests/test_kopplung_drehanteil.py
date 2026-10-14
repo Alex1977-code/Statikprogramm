@@ -269,8 +269,10 @@ def test_gleichgewichtskontrolle_warnt():
     s = r.summary()
     zeile = next((z for z in s.splitlines() if "Gleichgewicht" in z), "")
     print(f"    {zeile}")
-    check("die Kontrolle meldet die Abweichung im Moment (Warnung)",
-          gg and not gg.get("ok") and gg.get("dM", 0) > 1e3 and "WARNUNG" in zeile, str(gg)[:200])
+    # seit dem 14.10.2026 ab 1e-2 des Umsatzes „nicht gültig“ (hier bezogen 0,96)
+    check("die Kontrolle meldet die Abweichung im Moment: nicht gültig (bezogen über 1e-2)",
+          gg and not gg.get("ok") and gg.get("dM", 0) > 1e3 and "NICHT GÜLTIG" in zeile
+          and "Gleichgewicht verletzt" in solver.gueltigkeit(r.info), str(gg)[:200])
 
 
 def test_ohne_versetzte_kopplung_bitgleich():
