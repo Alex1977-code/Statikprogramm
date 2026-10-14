@@ -684,19 +684,37 @@ def _erzeugnisdicke(model, elemente, koerper=None) -> float:
     355 statt 335 N/mm2 nach, eta fiel rund 6 % zu klein aus - auf der
     unsicheren Seite. Der Stabnachweis macht es seit jeher richtig
     (``design.py``: ``mat.yield_strength(sec.t_max)``).
+
+    Jeder beruehrte Koerper wird **einmal** gelesen (seit 14.10.2026). Bis
+    dahin las die Schleife je ausgewaehltem Element alle Elemente seines
+    Koerpers, quadratisch in der Zahl der Elemente: das ganze Drehlager
+    (Netz Mittel, 617 177 Volumen in 93 Koerpern) als ein Bereich brauchte
+    dafuer ueber 30 min, jetzt 1,9 s; ein Koerper aus 2 400 Hexaedern
+    5,7 s statt 0,002 s. Das Ergebnis ist dasselbe
+    (tests/test_volumen.py, test_erzeugnisdicke_linear).
     """
     import numpy as _np
     marke, gruppen = koerper if koerper is not None else _koerper(model)
-    kn = set()
+    n_el = len(model.elements)
+    koerper_da, einzeln = set(), set()
     for i in elemente:
         i = int(i)
-        if not 0 <= i < len(model.elements):
+        if not 0 <= i < n_el:
             continue
-        for j in gruppen.get(marke.get(i, -1), (i,)):
-            kn.update(int(x) for x in model.elements[j].nodes)
-    if not kn:
+        g = marke.get(i, -1)
+        if g in gruppen:
+            koerper_da.add(g)
+        else:
+            # kein Volumen (etwa ein Stab in der Auswahl): seine eigenen Knoten
+            einzeln.add(i)
+    els = [j for g in koerper_da for j in gruppen[g]]
+    els.extend(einzeln)
+    if not els:
         return 0.0
-    X = _np.asarray(model.nodes, float)[sorted(kn)]
+    kn = _np.unique(_np.fromiter((int(x) for j in els for x in model.elements[j].nodes), dtype=_np.int64))
+    if not kn.size:
+        return 0.0
+    X = _np.asarray(model.nodes, float)[kn]
     d = X.max(axis=0) - X.min(axis=0)
     return float(d.min())
 

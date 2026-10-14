@@ -8993,6 +8993,10 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
   wenn sie selbst angegeben wurde), und wenn sie f_y abmindert, sagt der
   Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
   immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
+  Für große Bereiche bestimmt das Programm die Dicke seit dem 14.10.2026 in
+  Sekunden: das ganze Drehlager (Netz Mittel, 617 177 Volumen in 93 Körpern)
+  als ein Bereich braucht dafür 1,9 s. Bis dahin las es für jedes Element
+  des Bereichs seinen ganzen Körper neu, was dort über 30 min dauerte.
 
 Ist **„Nachweis führen“** nicht gesetzt, bleibt der Bereich angelegt, sein
 Nachweis läuft aber nicht. In der Tabelle „Volumen“ und im Bericht steht er mit
