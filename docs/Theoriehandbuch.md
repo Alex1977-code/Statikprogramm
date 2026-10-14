@@ -231,6 +231,26 @@ fiel still weg. Geprüft an einer Saite aus zwei Seilen (je 2 m, Ø 20 mm,
 N₀ = 50 kN, Querlast 10 kN) gegen 2·T·w/c = F mit c = √(L² + w²):
 w = 87,951 mm, T = 113,81 kN, auf 3·10⁻¹⁴ genau.
 
+**Streckenlast auf dem Seil** (seit 14.10.2026). Die Kettenlinie kennt eine
+Streckenlast w je ungedehnter Länge in fester Richtung. Eine Streckenlast q,
+die über die ganze Seillänge gleich ist (global oder lokal, die lokale
+Richtung in der Ausgangslage, richtungstreu wie alle Lasten der Theorie III.
+Ordnung), geht deshalb wie das Eigengewicht in die Kettenlinie ein, mit
+w = q·L/L₀ (dieselbe Summe q·L wie nach Theorie I. Ordnung) und dem Faktor
+der Kombination (`theorie3.seil_streckenlasten`). Trapezförmig oder
+abschnittsweise bildet die Kettenlinie eine Last nicht ab. Als Knotenlast an
+den Seilenden ginge sie am Seil vorbei in die Lager, denn ein Seilelement
+zwischen zwei Festpunkten trüge von ihr nichts, und das Seil in der
+Rechnung zu teilen wäre ein Umbau. Darum ist ein solcher Lastfall bzw. eine
+solche Kombination nach Theorie III. Ordnung gesperrt; die Meldung nennt
+Seil, Lastfall, Art und Betrag. Bis zum 14.10.2026 nahm `solve_theorie3` mit
+den Lasten des Seils auch jede Streckenlast aus dem Lastvektor: 10 kN quer
+auf ein Seil ergaben u = 0 und eine Auflagerkraft z von 0. Geprüft an einem
+Seil von 10 m aus zwei Elementen (Ø 20 mm, 10 kN Vorspannung) mit
+q = 1 kN/m: global und lokal bitgleich dasselbe wie mit einem Eigengewicht
+ρ·A·g = 1 kN/m, Durchhang 182,456 mm, Seilkraft 68,661 kN, Auflager z
+10 kN; als flache Parabel von Hand 182,391 mm.
+
 **Wölbkrafttorsion.** Ein Balken mit dem Haken `woelb` und einem Querschnitt
 mit Wölbwiderstand I_w > 0 bekommt an jedem seiner Knoten einen **siebten
 Freiheitsgrad**: die Verwölbung ω = θ'. Diese Freiheitsgrade stehen hinter

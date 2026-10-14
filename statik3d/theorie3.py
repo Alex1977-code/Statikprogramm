@@ -220,9 +220,14 @@ class _Seil:
     bleibt dasselbe (w L0 gleich). Bis zum 13.10.2026 fiel die Vorspannung
     eines Seils hier still weg (Befund 3: u_x und Seilkraft am Seil mit 70 kN
     Vorspannung bitgleich denen ohne).
+
+    ``q_last``: eine gleichmaessige Streckenlast ueber die ganze Seillaenge,
+    global [N/m] je Laenge der Ausgangslage (:func:`seil_streckenlasten`). Sie
+    geht wie das Eigengewicht in die Kettenlinie, mit derselben Summe q L wie
+    nach Theorie I. Ordnung. Bis zum 14.10.2026 fiel sie hier still weg.
     """
 
-    def __init__(self, model: Model, i: int, g, n_anfang: float = 0.0):
+    def __init__(self, model: Model, i: int, g, n_anfang: float = 0.0, q_last=None):
         e = model.elements[i]
         mat = model.materials[e.mat]
         sec = model.sections[e.sec]
@@ -234,6 +239,9 @@ class _Seil:
         self.EA = float(mat.E * sec.A)
         # Streckenlast je ungedehnter Laenge: das Eigengewicht des Lastfalls
         self.w = np.asarray(g, float) * mat.rho * sec.A
+        if q_last is not None:
+            # je Laenge der Ausgangslage -> je ungedehnter Laenge (Summe q L)
+            self.w = self.w + np.asarray(q_last, float) * (L / self.L0)
         self.n_anfang = float(n_anfang or 0.0)
         if self.n_anfang:
             L0 = self.L0
@@ -246,6 +254,66 @@ class _Seil:
         """(innere Knotenkraefte (6,), Tangente (6,6), Angaben) in dieser Lage."""
         from .elements.verbindung import seil_kettenlinie
         return seil_kettenlinie(X[self.nodes[0]], X[self.nodes[1]], self.L0, self.EA, self.w)
+
+
+def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
+    """Die Streckenlasten auf Seilen fuer Theorie III. Ordnung: ({Element:
+    q global [N/m]}, [Zeilen]).
+
+    Das Seil rechnet hier als Kettenlinie (verbindung.seil_kettenlinie), und
+    die kennt nur eine gleichmaessige Streckenlast je Laenge in fester
+    Richtung - wie das Eigengewicht. Eine Streckenlast, die ueber die ganze
+    Seillaenge gleich ist (global oder lokal, die lokale Richtung in der
+    Ausgangslage, richtungstreu wie alle Lasten hier), geht so hinein; mit
+    ihrem Faktor der Kombination. Trapezfoermig oder abschnittsweise bildet
+    die Kettenlinie sie nicht ab: als Knotenlast an den Seilenden ginge sie
+    am Seil vorbei in die Lager (ein Seilelement zwischen zwei Festpunkten
+    truege von ihr nichts), und ein Teilen des Seils in der Rechnung waere ein
+    Umbau. Solche Lasten stehen als Zeile mit Seil, Lastfall und Betrag in
+    der zweiten Liste; solve_theorie3 sperrt dann den Lastfall.
+
+    Bis zum 14.10.2026 nahm solve_theorie3 die Lasten des Seils aus dem
+    Lastvektor (das Eigengewicht steckt in der Kettenlinie) und mit ihnen
+    jede Streckenlast: 10 kN quer auf ein Seil ergaben u = 0 und
+    Auflager z = 0 (tests/test_stab_nachzug.py)."""
+    from . import zahlen as zl
+    from .solver import _stab_namen
+    namen = None
+    gleich: dict = {}
+    zeilen: list = []
+    for lf, f in factors.items():
+        lc = model.load_cases.get(lf)
+        if lc is None or not f:
+            continue
+        for bl in lc.beam_loads:
+            i = int(bl.elem)
+            if not 0 <= i < len(model.elements):
+                continue
+            e = model.elements[i]
+            if e.typ != "seil" or (aktiv is not None and not aktiv[i]):
+                continue
+            X = model.nodes[e.nodes]
+            T3, L = bm.local_axes(X[0], X[1], e.roll)
+            q1, q2 = asm.beam_load_local(model, e, bl)
+            a = max(0.0, float(getattr(bl, "a", 0.0) or 0.0))
+            b = L if getattr(bl, "b", None) is None else min(float(bl.b), L)
+            if b <= a:
+                continue                  # wirkt nirgends (wie in den Stablasten)
+            groesse = max(float(np.abs(q1).max()), float(np.abs(q2).max()), 1e-300)
+            konstant = float(np.abs(q1 - q2).max()) <= 1e-12 * groesse
+            ganz = a <= 1e-9 * L and b >= L * (1.0 - 1e-9)
+            if konstant and ganz:
+                gleich[i] = gleich.get(i, np.zeros(3)) + float(f) * (T3.T @ q1)
+                continue
+            if namen is None:
+                namen = _stab_namen(model)
+            b1 = zl.zahl_text(float(np.linalg.norm(q1)) / 1e3)
+            b2 = zl.zahl_text(float(np.linalg.norm(q2)) / 1e3)
+            art = ", ".join(([] if konstant else ["trapezförmig"]) + ([] if ganz else ["abschnittsweise"]))
+            betrag = f"{b1} kN/m" if konstant else f"{b1} → {b2} kN/m"
+            ort = "" if ganz else f" von {zl.zahl_text(a)} bis {zl.zahl_text(b)} m"
+            zeilen.append(f"Seil {namen.get(i, f'Element {i + 1}')}, Lastfall {lf}: {art} {betrag}{ort}")
+    return gleich, zeilen
 
 
 # ==========================================================================
@@ -293,7 +361,18 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     # spannungsfreien Laenge (_Seil) - nicht mehr als Knotenlast
     from .solver import case_sofort, case_feq_sofort
     feq_anf = case_feq_sofort(model, factors, aktiv)
-    seile = [_Seil(model, i, g_ges, asm.anfangsnormalkraft(feq_anf[i]) if i in feq_anf else 0.0)
+    # Streckenlasten auf Seilen gehen wie das Eigengewicht in die
+    # Kettenlinie; was sie nicht abbildet, sperrt den Lastfall (14.10.2026)
+    q_seil, nicht_abbildbar = seil_streckenlasten(model, factors, aktiv)
+    if nicht_abbildbar:
+        raise ValueError(
+            "Theorie III. Ordnung: die Kettenlinie eines Seils trägt nur eine gleichmäßige "
+            "Streckenlast über die ganze Seillänge – nicht gerechnet wegen "
+            + "; ".join(nicht_abbildbar[:6]) + (" …" if len(nicht_abbildbar) > 6 else "")
+            + ". Das Seil an den Laststellen in Elemente teilen (je Element gleichmäßig) oder "
+              "die Last als Knotenlast ansetzen")
+    seile = [_Seil(model, i, g_ges, asm.anfangsnormalkraft(feq_anf[i]) if i in feq_anf else 0.0,
+                   q_seil.get(i))
              for i in wirksam if model.elements[i].typ == "seil"]
     for sl_ in seile:
         e = model.elements[sl_.i]

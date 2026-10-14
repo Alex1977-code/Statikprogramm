@@ -6291,6 +6291,19 @@ Seil unter 70 kN Vorspannung waren Verschiebung (−1,625 mm) und Seilkraft
 eines Stabs nach Theorie III. Ordnung im Stab selbst und dreht mit ihm mit,
 statt als feste Knotenlast zu stehen.
 
+Eine **Streckenlast auf einem Seil** wirkt nach Theorie III. Ordnung seit dem
+14.10.2026 wie das Eigengewicht in der Kettenlinie, wenn sie über die ganze
+Länge des Seilelements gleich ist (global oder lokal). Bis zum 14.10.2026 fiel
+sie dort still weg: 10 kN quer auf ein Seil ergaben keine Verformung und keine
+Auflagerkraft. Jetzt hängt ein Seil von 10 m mit 10 kN Vorspannung unter
+1 kN/m um 182,5 mm durch und trägt 68,66 kN, genau wie unter einem
+gleich schweren Eigengewicht. Eine trapezförmige oder abschnittsweise
+Streckenlast kann die Kettenlinie nicht abbilden. Dann rechnet der Lastfall
+nach Theorie III. Ordnung nicht, und die Meldung nennt Seil, Lastfall und
+Betrag („Seil S1, Lastfall LF1: trapezförmig 1 → 2 kN/m“). Teilen Sie das
+Seil an den Laststellen in Elemente, sodass die Last auf jedem gleich ist,
+oder setzen Sie sie als Knotenlast an.
+
 **Wölbkrafttorsion.** Der Haken „Wölbkrafttorsion“ am Stab gibt jedem seiner
 Knoten einen siebten Freiheitsgrad, die Verwölbung. Voraussetzung ist ein
 Querschnitt mit Wölbwiderstand I_w (die Profildatenbank bringt ihn mit). Am
