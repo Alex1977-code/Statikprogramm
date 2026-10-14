@@ -3936,6 +3936,24 @@ Zugband einer Kragstütze (Rundstahl 30 mm, 13,77 kN) hielt den Kopf zu steif,
 unsicheren Seite. Seither: 200 (Knicken ebenso), u wie geschlossen, und
 2 679,151 gegen 2 679,145 (`tests/test_stab_nachzug.py`).
 
+**Einzelknicken der Fachwerk-Druckstäbe** (seit 14.10.2026). Die Saitenform
+hält den Fachwerkstab zwischen seinen Knoten gerade; sein Ausknicken dort
+kommt in der Verzweigung des Systems nicht vor. `theorie2.einzelstab_knicken`
+bestimmt es darum je gedrücktem Fachwerkstab (Elementtyp truss, auch „nur
+Druck“; ein Zugstab fällt bei Druck aus) gesondert:
+α_cr,i = π²·E·I/(L²·N_Ed). L ist die Systemlänge, gelenkig (die Länge des
+Stabs aus seinen Elementen), I das kleinere Trägheitsmoment der beiden
+Hauptachsen, N_Ed die größte Druckkraft seiner Elemente im Zustand nach
+Theorie I. Ordnung mit der Anfangsdehnung wie im Ergebnis. `alpha_cr` gibt
+den kleinsten Wert mit seinem Stab und alle Druckstäbe zurück; das α_cr des
+Systems bleibt, was es ist, und entscheidet weiter nach 5.2.1(3). Die
+Übersicht (Zusammenfassung, Tabelle, Bericht) nennt min(System; Einzelstab)
+mit dem maßgebenden Stab. Bis zum 14.10.2026 stand nur das α_cr des Systems
+da: ein Pendelstab (Rundstahl 50 mm, 2 m, P = 1 kN) mit Querfeder k am Kopf
+hatte α_cr = 200, obwohl der Stab selbst bei 158,97 knickt; ein gelenkig
+gehaltener Druckstab ohne Querfreiheitsgrad hatte gar keins („keine
+Normalkräfte“). Geprüft gegen die Hand in `tests/test_stab_querlast.py`.
+
 **Wie α_cr gelöst wird.** Gerechnet wird −K_g v = μ K v mit α = 1/μ;
 α_cr ist der Kehrwert des größten positiven μ. K ist nach dem Einbau der
 Lager positiv definit und dient dem Eigenwertlöser (ARPACK über `eigsh`)

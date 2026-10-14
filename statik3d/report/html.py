@@ -2324,11 +2324,13 @@ class Report:
         b.append(("list", items))
 
         b.append(self._h(2, "Übersicht"))
-        rows = [["Kombination", "α_cr", "Grenze", "Verfahren", "Iterationen",
+        rows = [["Kombination", "α_cr", "α_cr Einzelstab", "Grenze", "Verfahren", "Iterationen",
                  "u_I [mm]", "u_II [mm]", "Zuwachs", "Status"]]
         for n, i in t2.kombinationen.items():
+            a_st = getattr(i, "alpha_cr_stab", math.inf)
             rows.append([n,
                          fmt(i.alpha_cr, 2) if math.isfinite(i.alpha_cr) else "∞",
+                         f"{fmt(a_st, 2)} ({i.stab_massgebend})" if math.isfinite(a_st) else "–",
                          fmt(i.grenze, 0),
                          "II. Ordnung" if i.gerechnet else "I. Ordnung",
                          str(i.iterationen) if i.gerechnet else "–",
@@ -2386,6 +2388,34 @@ class Report:
                     f"{worst.u_max_I * 1e3:.2f} / {worst.u_max_II * 1e3:.2f} mm "
                     f"({worst.zuwachs * 100:+.1f} %)")]
         b.append(("kv", kv, f"Kombination {worst.kombination}"))
+
+        # Einzelknicken der Fachwerk-Druckstaebe (14.10.2026): die Saitenform
+        # der geometrischen Steifigkeit enthaelt es nicht
+        a_st, stab, k_st = t2.einzelstab_min
+        if math.isfinite(a_st):
+            info_st = t2.kombinationen[k_st]
+            a_sys = t2.alpha_cr_min
+            b.append(self._h(2, "Einzelknicken der Fachwerk-Druckstäbe"))
+            b.append(("p", "Die geometrische Steifigkeit eines Fachwerkstabs ist die einer Saite "
+                           "(N/L quer zum Stab); sie hält ihn zwischen seinen Knoten gerade. Sein "
+                           "Ausknicken zwischen den Knoten steht darum nicht im α_cr des Systems. Es "
+                           "wird je gedrücktem Fachwerkstab (auch „nur Druck“) gesondert bestimmt, "
+                           "α_cr,i = π²·E·I/(L²·N_Ed) mit der Systemlänge L (gelenkig) und dem "
+                           "kleineren Trägheitsmoment der beiden Hauptachsen. Über Theorie II. "
+                           "Ordnung entscheidet weiter das α_cr des Systems nach 5.2.1(3); das "
+                           "Einzelknicken erfasst der Stabnachweis (Biegeknicken nach 6.3.1)."))
+            kv2 = [("α_cr des Systems (kleinstes)",
+                    fmt(a_sys, 3) if math.isfinite(a_sys) else "∞"),
+                   ("α_cr,i Einzelstab (kleinstes)", f"{fmt(a_st, 3)} – Stab {stab}, Kombination {k_st}"),
+                   ("maßgebend min(System; Einzelstab)",
+                    f"{fmt(min(a_sys, a_st), 3)} ({'Einzelstab ' + stab if a_st < a_sys else 'System'})")]
+            b.append(("kv", kv2, "Verzweigung: System und Einzelstab"))
+            rows = [["Stab", "L [m]", "N_Ed [kN]", "Achse", "I [cm⁴]", "α_cr,i"]]
+            for d in (info_st.einzelstaebe or [])[:50]:
+                rows.append([d["stab"], fmt(d["L"], 3), fmt(d["N"] / 1e3, 2), d["achse"],
+                             fmt(d["I"] * 1e8, 1), fmt(d["alpha_cr"], 3)])
+            b.append(("table", rows, f"Gedrückte Fachwerkstäbe in {k_st} (kleinstes α_cr,i zuerst)",
+                      None, "compact"))
 
         if sk.get("je_stiel"):
             rows = [["Stiel", "N_Ed [kN]", "H_Ed = φ N_Ed [kN]", "Knoten Fuß",

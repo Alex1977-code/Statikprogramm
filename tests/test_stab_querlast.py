@@ -31,6 +31,23 @@ Geprueft gegen Hand (Einfeldtraeger):
 * Fachwerktraeger mit Eigengewicht (ebenes Fachwerk): keine Lagermomente,
   Summe der Auflager = Gewicht + Last.
 
+2. **Einzelknicken der Fachwerk-Druckstaebe in alpha_cr.** Die geometrische
+   Steifigkeit des Fachwerkstabs ist die Saitenform N/L; das Knicken eines
+   Druckstabs zwischen seinen Knoten steht darum nicht im alpha_cr des
+   Systems. Je Druckstab (truss, auch „nur Druck“) wird alpha_cr,i =
+   pi^2 E I/(L^2 N_Ed) mit der Systemlaenge und dem kleineren I ausgegeben, die
+   Uebersicht nennt min(System; Einzelstab) mit dem massgebenden Stab.
+
+* Pendelstab mit Querfeder (System k L/P = 200) aus Rundstahl 50 mm, 2 m,
+  P = 1 kN: Einzelstab pi^2 E I/(L^2 P) = 158,97 ist massgebend.
+* Rechteck 20 x 40 mm: das kleinere I (um z) zaehlt.
+* Gelenkig gehaltener Druckstab aus zwei Elementen: L ist die Stablaenge;
+  das System hat kein Verzweigungsproblem (alpha_cr unendlich), der
+  Einzelstab schon.
+* Ein Zugstab, ein gezogener Fachwerkstab und ein Balken zaehlen nicht.
+* Theorie II. Ordnung („auto“) ueber solve_all: Zusammenfassung, Tabelle und
+  Bericht nennen den Einzelstab.
+
 Aufruf:  python -m tests.test_stab_querlast
 """
 import math
@@ -264,9 +281,108 @@ def test_fachwerktraeger():
     check("Fachwerkträger: keine Lagermomente", _lagermoment(r) <= 1e-6, f"{_lagermoment(r):.3g} Nm")
 
 
+# --------------------------------------------------------------------------
+# 2. Einzelknicken der Fachwerk-Druckstaebe
+# --------------------------------------------------------------------------
+def _ac(m, faktoren=None):
+    from statik3d import theorie2
+    system = solver.StaticSystem(m)
+    u = system.solve(solver.case_loads(m, faktoren or {"LF1": 1.0})[0])
+    return theorie2.alpha_cr(m, system, u)
+
+
+def test_einzelstab_pendel():
+    print("\n--- 2: Pendelstab – System k L/P gegen Einzelstab π²EI/(L²P) ---")
+    from tests.test_stab_nachzug import K_FEDER, L_PENDEL, _pendel
+    m, e, b = _pendel()
+    ac = _ac(m)
+    I = math.pi * 0.05 ** 4 / 64
+    soll = math.pi ** 2 * 210e9 * I / (L_PENDEL ** 2 * 1e3)
+    nahe("Pendel: alpha_cr des Systems = k L/P = 200", ac["alpha_cr"], K_FEDER * L_PENDEL / 1e3, 1e-9)
+    nahe("Pendel: alpha_cr,i Einzelstab = π²EI/(L²P)", ac.get("alpha_cr_stab", math.inf), soll, 1e-9)
+    check("Pendel: der Stab heißt St", ac.get("stab") == "St", str(ac.get("stab")))
+    d = (ac.get("einzelstaebe") or [{}])[0]
+    nahe("Pendel: N_Ed = 1 kN", d.get("N", 0.0), 1e3, 1e-9, "N")
+    nahe("Pendel: L = 2 m", d.get("L", 0.0), L_PENDEL, 1e-12, "m")
+    # „nur Druck“ zaehlt, „nur Zug“ faellt bei Druck aus und zaehlt nicht
+    m2, _e2, _b2 = _pendel(nur="druck")
+    nahe("Pendel „nur Druck“: Einzelstab ebenso", _ac(m2).get("alpha_cr_stab", math.inf), soll, 1e-9)
+    m3, _e3, _b3 = _pendel(typ="beam")
+    check("Pendel als Balken: kein Einzelstab (sein Knicken steht im System)",
+          not _ac(m3).get("einzelstaebe") and "alpha_cr_stab" in _ac(m3))
+
+
+def test_einzelstab_achsen_und_laenge():
+    print("\n--- 2: Rechteck 20 x 40 mm, Stab aus zwei Elementen, gelenkig ---")
+    m = Model("Druckstab")
+    m.add_material(Material("S", E=210e9, nu=0.3, rho=0.0, fy=FY))
+    m.add_section(Section.rectangle("R", 0.02, 0.04))
+    a, c, b = m.add_node(0, 0, 0), m.add_node(1.5, 0, 0), m.add_node(3.0, 0, 0)
+    m.fix(a, [0, 1, 2])
+    m.fix(b, [1, 2])
+    m.fix(c, [1, 2])
+    e1 = m.add_element("truss", [a, c], "S", "R")
+    e2 = m.add_element("truss", [c, b], "S", "R")
+    m.add_member("D1", [e1, e2])
+    # daneben ein Zugstab (gedrueckt, faellt aus) und ein gezogener Fachwerkstab
+    d1, d2 = m.add_node(0, 1, 0), m.add_node(3, 1, 0)
+    m.fix(d1, [0, 1, 2])
+    m.fix(d2, [1, 2])
+    ez = m.add_element("truss", [d1, d2], "S", "R")
+    m.elements[ez].nur = "zug"
+    m.add_member("Z1", [ez])
+    g1, g2 = m.add_node(0, 2, 0), m.add_node(3, 2, 0)
+    m.fix(g1, [0, 1, 2])
+    m.fix(g2, [1, 2])
+    m.add_member("G1", [m.add_element("truss", [g1, g2], "S", "R")])
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    P = 5e3
+    lc.nodal_loads.append(NodalLoad(b, [-P, 0, 0, 0, 0, 0]))
+    lc.nodal_loads.append(NodalLoad(d2, [-P, 0, 0, 0, 0, 0]))
+    lc.nodal_loads.append(NodalLoad(g2, [+P, 0, 0, 0, 0, 0]))
+    ac = _ac(m)
+    Iz = 0.04 * 0.02 ** 3 / 12
+    soll = math.pi ** 2 * 210e9 * Iz / (3.0 ** 2 * P)
+    check("Druckstab: das System hat kein Verzweigungsproblem (alpha_cr ∞)", math.isinf(ac["alpha_cr"]),
+          f"{ac['alpha_cr']}")
+    nahe("Druckstab: alpha_cr,i mit dem kleineren I (um z) und L = 3 m", ac.get("alpha_cr_stab", math.inf),
+         soll, 1e-9)
+    check("Druckstab: Achse z", (ac.get("einzelstaebe") or [{}])[0].get("achse") == "z")
+    check("Zugstab und gezogener Fachwerkstab zählen nicht",
+          [d["stab"] for d in ac.get("einzelstaebe") or []] == ["D1"],
+          str([d["stab"] for d in ac.get("einzelstaebe") or []]))
+
+
+def test_einzelstab_ausgabe():
+    print("\n--- 2: Ausgabe über „Alle Lastfälle“: Zusammenfassung, Tabelle, Bericht ---")
+    from tests.test_stab_nachzug import _pendel
+    from statik3d.report import Report
+    m, e, b = _pendel()
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    m.design.theorie2 = "auto"
+    an = solver.solve_all(m, design=False)
+    t2 = an.theorie2
+    info = t2.kombinationen.get("K1") if t2 else None
+    check("K1: Einzelstab im α_cr-Ergebnis", info is not None and info.stab_massgebend == "St"
+          and math.isfinite(info.alpha_cr_stab), str(getattr(info, "stab_massgebend", None)))
+    s = t2.summary() if t2 else ""
+    check("Zusammenfassung: min(System; Einzelstab) mit dem Stab",
+          "min. α_cr = 158.97 (System 200.00; Einzelstab 158.97, Stab St)" in s, s)
+    check("Zusammenfassung aller Ergebnisse ebenso", "Einzelstab 158.97, Stab St" in an.summary())
+    tab = t2.table()
+    check("Tabelle: Spalte „α_cr Einzelstab“ mit Stab", tab[0][2] == "α_cr Einzelstab"
+          and tab[1][2] == "158.97 (St)", str(tab[:2]))
+    h = Report(m, an).html()
+    for text in ("Einzelknicken der Fachwerk-Druckstäbe", "α_cr,i = π²·E·I/(L²·N_Ed)",
+                 "maßgebend min(System; Einzelstab)", "Einzelstab St"):
+        check(f"Bericht nennt „{text}“", text in h)
+
+
 def main():
     for t in (test_gleichlast, test_trapez_und_teillast, test_eigengewicht_schraeg, test_querlast_y,
-              test_temperatur, test_zug_druckstab, test_seil, test_fachwerktraeger):
+              test_temperatur, test_zug_druckstab, test_seil, test_fachwerktraeger,
+              test_einzelstab_pendel, test_einzelstab_achsen_und_laenge, test_einzelstab_ausgabe):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

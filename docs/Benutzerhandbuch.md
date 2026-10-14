@@ -9140,6 +9140,22 @@ Kragstütze dagegen α_cr = 4 126 statt 2 679, also 54 % zu hoch und damit auf
 der unsicheren Seite. Jetzt sind es 200 und 2 679,15 gegen geschlossen
 2 679,15.
 
+**Einzelknicken der Fachwerk-Druckstäbe** (seit 14.10.2026). Weil der
+Fachwerkstab in α_cr als Saite steht, ist sein eigenes Ausknicken zwischen
+den Knoten darin nicht enthalten. Statik3D bestimmt es darum je gedrücktem
+Fachwerkstab, auch „nur Druck“, gesondert als α_cr,i = π²·E·I/(L²·N_Ed) mit
+der Systemlänge L des Stabs (gelenkig) und dem kleineren Trägheitsmoment der
+beiden Hauptachsen. Die Zusammenfassung nennt dann min(System; Einzelstab)
+mit dem maßgebenden Stab, etwa „min. α_cr = 158.97 (System 200.00;
+Einzelstab 158.97, Stab St)“, die Tabelle des Theoriekapitels hat die Spalte
+„α_cr Einzelstab“, und der Bericht führt einen Abschnitt „Einzelknicken der
+Fachwerk-Druckstäbe“ mit allen gedrückten Fachwerkstäben der maßgebenden
+Kombination. Ob nach Theorie II. Ordnung gerechnet wird, entscheidet weiter
+das α_cr des Systems; das Knicken des einzelnen Stabs weist der Stabnachweis
+(Biegeknicken) nach. Bis zum 14.10.2026 stand nur das α_cr des Systems in
+der Übersicht, auch wenn ein Druckstab schon bei einem kleineren Faktor
+knickte.
+
 **α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
 eines Lastfalls oder einer Kombination abgeschaltet ist oder als
 „deaktiviert“ nirgends wirkt, zählt für α_cr nicht mehr mit, genau wie in
