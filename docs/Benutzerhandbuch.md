@@ -3140,7 +3140,10 @@ passt es ein. Bearbeitet wird es über Rechtsklick *Bearbeiten …* oder die
 Eingabetaste; bis zum 14.10.2026 öffnete der Doppelklick auf einen Knoten oder
 eine Linie den Dialog und auf eine Fläche oder ein Volumen die Maske. Unten
 rechts in der Ansicht stehen **Rücksetzer-Knöpfe**, nur solange es etwas
-zurückzunehmen gibt: *Schnitt aus*, solange die Schnittebene an ist, und
+zurückzunehmen gibt: *Schnitt aus*, solange die Schnittebene oder die
+Schnittbox an ist (der Knopf nimmt beide zurück wie *Schnitt aus* im Ribbon;
+mit Schnittebene oder Schnittbox baut das Ausblenden die Szene weiter neu auf,
+damit die Werte auf den Schnittflächen stehen), und
 *N Teile einblenden*, solange von Hand etwas ausgeblendet ist (gezählt werden
 Körper, Stäbe und Flächen, sonst Elemente, Linien oder Knoten; der Hinweis
 nennt sie). Bis zum 14.10.2026 baute jede Auswahl und jedes Ausblenden die
