@@ -2619,6 +2619,16 @@ class Netzeinstellungen:
     #: und sich allein in der (beim Vernetzen halbierten) Kantenlaenge
     #: unterscheidet.
     stufe: str = ""
+    #: **Krafteinleitungen ohne Flaeche feiner vernetzen** (13.10.2026,
+    #: elementstufe.kraft_an): bei Mittel und Fein am Lochrand starrer
+    #: Scheiben ueber Bohrungen 9 statt 18 Grad je Abschnitt (hoechstens die
+    #: halbe Kantenlaenge) und an Stabenden auf Volumen die halbe
+    #: Kantenlaenge, je zwei Elementringe weit (netzfeld.krafteinleitungen).
+    #: Vorgabe ein - der Anwender hat es am 13.10.2026 gewuenscht; aeltere
+    #: Dateien ohne das Feld bekommen beim Laden die Vorgabe und damit beim
+    #: naechsten Vernetzen die neue Regel. Aus gibt das Netz von Mittel, wie
+    #: es bis zum 13.10.2026 war (etwa fuer eine Vergleichsrechnung).
+    krafteinleitung_fein: bool = True
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""

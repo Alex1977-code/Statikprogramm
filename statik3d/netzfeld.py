@@ -757,6 +757,359 @@ def fein_verfeinerungen(ziele: dict) -> list:
     return aus
 
 
+# --------------------------------------------------------------------------
+# Krafteinleitungen ohne Flaeche: starre Scheiben ueber Bohrungen, Stabenden
+# (13.10.2026)
+# --------------------------------------------------------------------------
+#: Reichweite der Quellen an Krafteinleitungen ohne Flaeche in Vielfachen
+#: ihrer Kantenlaenge: zwei Elementringe um den Lochrand bzw. das Stabende,
+#: also ein Umkreis r + 2 h um die Mitte (Anwender 13.10.2026: „über Radius
+#: bzw. max. 1–2 Elementringe begrenzen und im Lochbereich feiner bzw.
+#: quadratisch vernetzen“). Dahinter waechst das Feld mit WACHSTUM ins Netz
+#: von Mittel.
+KRAFT_REICHWEITE = 2.0
+#: Abtastung des Scheibenrands [Grad je Punkt] fuer die Erkennung; die
+#: Quellen selbst liegen im Abstand h/2 (kraft_ziele)
+KRAFT_ABTASTUNG = 2.0
+
+
+def _ebene_koerperflaechen(model) -> list:
+    """Die **ebenen** Randflaechen der Koerper, einmal aufbereitet: je Flaeche
+    ein Woerterbuch mit Mitte ``c``, Achsen ``e1``, ``e2``, Normale ``n``,
+    den Ringen (Rand, Oeffnungen) in der Ebene, Schachtel ``lo``/``hi``, den
+    Koerpern und Linien. Gekruemmte Flaechen fehlen - eine Scheibe oder ein
+    Stabende auf einer Zylinderwand erkennt :func:`krafteinleitungen` nicht."""
+    from .mesher3d import ausgleichsebene, ist_eben
+    besitzer: dict = {}
+    for k in (getattr(model, "koerper", None) or {}).values():
+        for fn in (k.flaechen or []):
+            besitzer.setdefault(fn, []).append(k.name)
+    aus = []
+    for fn, ks in besitzer.items():
+        f = model.flaechen.get(fn)
+        if f is None:
+            continue
+        try:
+            rand = np.asarray(f.randpunkte(model, 16), float).reshape(-1, 3)
+            loecher = [np.asarray(P, float).reshape(-1, 3) for P in f.oeffnungspunkte(model, 16)]
+        except Exception:                   # noqa: BLE001 - dann ohne diese Flaeche
+            continue
+        if len(rand) < 3:
+            continue
+        alle = np.vstack([rand] + loecher)
+        if not ist_eben(alle):
+            continue
+        c, e1, e2, n, _abw = ausgleichsebene(rand)
+        ringe = [np.column_stack([(R - c) @ e1, (R - c) @ e2]) for R in [rand] + loecher]
+        aus.append(dict(name=fn, c=c, e1=e1, e2=e2, n=n, ringe=ringe, lo=alle.min(axis=0),
+                        hi=alle.max(axis=0), koerper=list(ks), linien=_linien_von(f)))
+    return aus
+
+
+def _auf_flaeche(fl: dict, X: np.ndarray, tol_ebene: float, tol_rand: float) -> np.ndarray:
+    """Liegen die Punkte X (n, 3) auf der ebenen Flaeche ``fl`` - in ihrer
+    Ebene und im Umriss (ohne Oeffnungen) oder hoechstens ``tol_rand`` daneben?"""
+    from .mesher3d import _in_polygon_2d, randstreckenabstand
+    X = np.asarray(X, float).reshape(-1, 3)
+    aus = np.zeros(len(X), bool)
+    D = X - fl["c"]
+    eben = np.abs(D @ fl["n"]) <= tol_ebene
+    if not eben.any():
+        return aus
+    Q = np.column_stack([D[eben] @ fl["e1"], D[eben] @ fl["e2"]])
+    drin = _in_polygon_2d(Q, fl["ringe"])
+    if not drin.all() and tol_rand > 0:
+        weg = np.flatnonzero(~drin)
+        drin[weg] = randstreckenabstand(Q[weg], fl["ringe"]) <= tol_rand
+    aus[np.flatnonzero(eben)] = drin
+    return aus
+
+
+def _schachtel_probe(flaechen: list):
+    """Die Probe ``f(lo, hi, tol) -> [Flaeche]``: die Flaechen, deren Schachtel
+    die Schachtel lo/hi (um tol geweitet) trifft - in einem Zug ueber alle
+    Flaechen (am Drehlager 1 375 Flaechen x 128 Proben: 0,6 s als Schleife)."""
+    LO = np.array([fl["lo"] for fl in flaechen], float).reshape(-1, 3)
+    HI = np.array([fl["hi"] for fl in flaechen], float).reshape(-1, 3)
+
+    def probe(lo, hi, tol: float) -> list:
+        ok = np.all(LO <= np.asarray(hi, float) + tol, axis=1) & np.all(HI >= np.asarray(lo, float) - tol, axis=1)
+        return [flaechen[i] for i in np.flatnonzero(ok)]
+    return probe
+
+
+def krafteinleitungen(model) -> dict:
+    """**Krafteinleitungen ohne Flaeche vor dem Vernetzen** (13.10.2026).
+
+    spitzenstellen.kandidaten erkennt sie am fertigen Netz ueber die
+    Kopplungen; die entstehen aber erst nach dem Vernetzen
+    (fugen.starre_flaechen_koppeln, fugen.stabenden_koppeln). Vor dem
+    Vernetzen gibt es nur die Geometrie, und aus ihr folgt hier dasselbe:
+
+    * **Starre Scheibe ueber einer Bohrung** (fugen.starre_flaechen): sie
+      koppelt die Netzknoten in ihrer Ebene und in ihrem Umriss. Decken
+      ebene Koerperflaechen in ihrer Ebene weniger als
+      spitzenstellen.FLAECHE_ANTEIL ihres Inhalts, haengt sie nur am Rand -
+      am Drehlager am Lochrand der 16 Ankerringe und 48 Schraubenringe. Ihre
+      Quelle ist der Teil ihres Umrisses, der auf einer Koerperflaeche
+      liegt; dazu die krummen Linien der Koerper, die auf dem Umriss liegen
+      (der Lochrand), fuer den feineren Bogenwinkel. Deckt eine
+      Koerperflaeche mehr (die Scheibe liegt auf), traegt sie eine Flaeche
+      und ist keine Stelle (``flaechig``) - wie in spitzenstellen.
+    * **Stabende auf einem Volumen**: ein Endknoten eines Stabes (truss,
+      beam; Knoten an genau einem Stabelement), der auf einer ebenen
+      Randflaeche eines Koerpers liegt oder von RFEM in eine integriert ist
+      (Flaeche.integrierte_knoten). fugen.stabenden_koppeln haengt ihn an die
+      drei oder vier Knoten des Elements dort. Ein Stabende in der Mitte
+      einer starren Scheibe ist deren Master und zaehlt nicht; ein Stabende
+      im Innern eines Koerpers (nicht auf seiner Huelle) wird hier nicht
+      erkannt.
+
+    Rueckgabe {"ringe": [{"name", "punkte" (n, 3) auf Koerpern, "linien",
+    "mitte", "r", "koerper"}], "punkte": [{"knoten", "punkt", "koerper"}],
+    "flaechig": [Name]}. Nur Geometrie, nichts wird veraendert.
+    """
+    from . import fugen
+    from .mesher3d import _in_polygon_2d, _linienpunkte as _lp, ausgleichsebene
+    from .spitzenstellen import FLAECHE_ANTEIL
+    aus = {"ringe": [], "punkte": [], "flaechig": []}
+    starre = fugen.starre_flaechen(model)
+    els = getattr(model, "elements", None) or []
+    grad: dict = {}
+    for e in els:
+        if e.typ in ("truss", "beam"):
+            for x in e.nodes:
+                grad[int(x)] = grad.get(int(x), 0) + 1
+    enden = sorted(n for n, g in grad.items() if g == 1 and 0 <= n < int(model.nn))
+    if not starre and not enden:
+        return aus
+    flaechen = _ebene_koerperflaechen(model)
+    if not flaechen:
+        return aus
+    schachtel = _schachtel_probe(flaechen)
+    linien_der = {}
+    mitten = []                      # (Mitte, Normale, Fangkreis, Ebenentoleranz) je Scheibe
+    for f in starre:
+        try:
+            teil = max(8, int(np.ceil(180.0 / KRAFT_ABTASTUNG)))
+            P = np.asarray(f.randpunkte(model, teil), float).reshape(-1, 3)
+        except Exception:                   # noqa: BLE001
+            continue
+        if len(P) < 3:
+            continue
+        c, e1, e2, n, abw = ausgleichsebene(P)
+        r = float(np.linalg.norm(P - c, axis=1).max())
+        if r <= 0:
+            continue
+        tol_e = max(fugen.STARR_TOL_EBENE, abw, 1e-3 * r)
+        # Die Koerperflaechen sind mit 16 Punkten je Linie abgetastet: an
+        # einem Halbkreis liegt die Sehne bis 0,5 % von r innen - 2 % fangen
+        # das sicher, ohne eine Nachbarlinie zu treffen
+        tol_r = max(fugen.STARR_TOL_RAND, 0.02 * r)
+        mitten.append((c, n, max(0.5e-3, 0.1 * r), tol_e))
+        kand = [fl for fl in schachtel(P.min(axis=0), P.max(axis=0), tol_r)
+                if abs(float(fl["n"] @ n)) >= 1.0 - 1e-6 and abs(float((c - fl["c"]) @ fl["n"])) <= tol_e]
+        if not kand:
+            continue
+        # Wieviel der Scheibe decken Koerperflaechen? Gitter im um 10 %
+        # verkleinerten Umriss (der Rand selbst zaehlt nicht)
+        P2 = np.column_stack([(P - c) @ e1, (P - c) @ e2])
+        G = _gitter_im_polygon([0.9 * P2], r / 8.0)
+        if len(G):
+            X = c + G[:, :1] * e1 + G[:, 1:] * e2
+            gedeckt = np.zeros(len(X), bool)
+            for fl in kand:
+                gedeckt |= _auf_flaeche(fl, X, tol_e, 0.0)
+            if float(gedeckt.mean()) >= FLAECHE_ANTEIL:
+                aus["flaechig"].append(f.name)
+                continue
+        # Der Teil des Umrisses, der auf einer Koerperflaeche liegt
+        auf = np.zeros(len(P), bool)
+        trifft = []
+        for fl in kand:
+            a = _auf_flaeche(fl, P, tol_e, tol_r)
+            if a.any():
+                trifft.append(fl)
+                auf |= a
+        if not auf.any():
+            continue
+        # Krumme Linien der getroffenen Flaechen, die ganz auf dem Umriss
+        # liegen: der Lochrand (am Drehlager dieselben Linien wie die Scheibe)
+        from scipy.spatial import cKDTree
+        baum = cKDTree(P)
+        linien = []
+        for fl in trifft:
+            for ln in fl["linien"]:
+                if ln in linien:
+                    continue
+                line = model.lines.get(ln)
+                if line is None or (line.typ or "polyline") == "polyline":
+                    continue
+                if ln not in linien_der:
+                    try:
+                        linien_der[ln] = np.asarray(_lp(model, ln, 8), float).reshape(-1, 3)
+                    except Exception:       # noqa: BLE001
+                        linien_der[ln] = np.zeros((0, 3))
+                Q = linien_der[ln]
+                if len(Q) and float(baum.query(Q)[0].max()) <= tol_r:
+                    linien.append(ln)
+        koerper = sorted({k for fl in trifft for k in fl["koerper"]})
+        aus["ringe"].append(dict(name=f.name, punkte=P[auf], linien=linien, mitte=c, r=r, koerper=koerper))
+    if enden:
+        integriert: dict = {}
+        for fl in flaechen:
+            for kn in (getattr(model.flaechen[fl["name"]], "integrierte_knoten", None) or []):
+                integriert.setdefault(int(kn), []).append(fl)
+        X = np.asarray(model.nodes, float)
+        for kn in enden:
+            p = X[kn]
+            # Master einer starren Scheibe: die Scheibe koppelt es
+            if any(float(np.linalg.norm(p - c)) <= fang and abs(float((p - c) @ n)) <= tol_e
+                   for c, n, fang, tol_e in mitten):
+                continue
+            tol = 1e-4                     # wie fugen.stabenden_koppeln
+            auf = list(integriert.get(kn, []))
+            for fl in schachtel(p, p, tol):
+                if fl not in auf and _auf_flaeche(fl, p, tol, tol)[0]:
+                    auf.append(fl)
+            if not auf:
+                continue
+            aus["punkte"].append(dict(knoten=int(kn), punkt=p.copy(),
+                                      koerper=sorted({k for fl in auf for k in fl["koerper"]})))
+    return aus
+
+
+def _h_mittel_je_koerper(model, netz, namen, merker: dict) -> float:
+    """Die kleinste Kantenlaenge von Mittel unter diesen Koerpern (wie
+    :func:`fein_ziele`: Netzdichte bzw. Ziellaenge, an kleine Bauteile
+    angepasst), 0 ohne brauchbaren Wert. ``merker`` haelt sie je Koerper."""
+    from . import mesher3d as M3
+    from . import netzdichte as nd
+    werte = []
+    for kn in namen:
+        if kn not in merker:
+            k = model.koerper.get(kn)
+            hk = 0.0
+            if k is not None:
+                try:
+                    hk = float(nd.elementlaenge(model, netz, k)["h"])
+                    hk = float(M3._kantenlaenge(model, k, hk, []))
+                except Exception:           # noqa: BLE001 - eine Schaetzung darf nie sperren
+                    hk = 0.0
+            merker[kn] = hk
+        if merker[kn] > 0:
+            werte.append(merker[kn])
+    return min(werte) if werte else 0.0
+
+
+def kraft_ziele(model, netz=None, bogenwinkel: float = 9.0, faktor: float = 0.5, stellen: dict = None,
+                ringanteil: float = 1.0) -> dict:
+    """Was an den Krafteinleitungen ohne Flaeche feiner wird (13.10.2026) -
+    nach derselben Regel wie die Boegen und Flaechen von Fein
+    (:func:`fein_ziele`, Stufe ``bogenwinkel``/``faktor`` aus
+    elementstufe.fein_stufe):
+
+    * **Ring** einer starren Scheibe: Kantenlaenge h_R = min(``faktor`` *
+      h_Mittel, Bogenlaenge eines Abschnitts mit ``bogenwinkel`` Grad) - am
+      Lochrand die Laenge L / Abschnitte der Linie wie an einem Bogen von
+      Fein, sonst r * Winkel. Die Linien des Lochrands bekommen
+      ``bogenwinkel`` Grad je Abschnitt. Ist der Winkel nicht kleiner als die
+      Vorgabe (mesher3d.BOGENWINKEL, 18 Grad), entfaellt der Ring - wie die
+      Boegen von Fein.
+    * **Stabende**: h_P = ``faktor`` * h_Mittel des Koerpers; ab Faktor 1
+      entfaellt es.
+    * ``ringanteil``: nur dieser Anteil der Ringe wird verfeinert, die mit dem
+      **groessten Radius** zuerst (Gleichstand bleibt zusammen); 0 heisst
+      keiner. Der Aufwand je Ring ist ungefaehr gleich - die Zahl der Elemente
+      im Kegel der Quelle haengt von der Zahl der Abschnitte ab, nicht vom
+      Radius (am Drehlager gemessen: siehe elementstufe.KRAFT_STUFEN) -, der
+      Gewinn an Zonentiefe (zwei Elementringe, 2 * r * Winkel) waechst aber mit
+      dem Radius. Reicht das Netz nicht (Grenze in Unbekannten), fallen darum
+      die kleinen Ringe zuerst weg.
+
+    Jede Quelle reicht KRAFT_REICHWEITE * h weit (zwei Elementringe) und
+    waechst dahinter mit WACHSTUM. ``stellen``: das Ergebnis von
+    :func:`krafteinleitungen`, sonst wird es hier bestimmt.
+
+    Rueckgabe {"ringe": [{"name", "punkte", "linien", "h", "h_mittel",
+    "winkel", "r"}], "punkte": [{"knoten", "punkt", "h", "h_mittel"}],
+    "flaechig", "bogenwinkel", "faktor", "ringanteil", "ringe_gesamt" (alle
+    Ringe des Modells, auch die nicht verfeinerten)}. Gespeichert wird davon
+    nichts.
+    """
+    from . import mesher3d as M3
+    netz = netz if netz is not None else model.netz
+    stellen = krafteinleitungen(model) if stellen is None else stellen
+    merker: dict = {}
+    vorgabe = M3.bogenwinkel_vorgabe(model)
+    ringe = []
+    alle_ringe = list(stellen.get("ringe", []))
+    waehlen = alle_ringe
+    if float(ringanteil) < 1.0:
+        radien = sorted((float(s["r"]) for s in alle_ringe), reverse=True)
+        n_ = int(np.ceil(max(float(ringanteil), 0.0) * len(radien) - 1e-9))
+        r_min = radien[n_ - 1] if n_ >= 1 else float("inf")
+        waehlen = [s for s in alle_ringe if float(s["r"]) >= r_min * (1.0 - 1e-9)]
+    if bogenwinkel and float(bogenwinkel) < vorgabe:
+        for s in waehlen:
+            hm = _h_mittel_je_koerper(model, netz, s["koerper"], merker)
+            if hm <= 0:
+                continue
+            bogen = []
+            for ln in s["linien"]:
+                try:
+                    n_ = M3._bogenabschnitte(model, ln, float(bogenwinkel))
+                    L = float(M3._linienlaenge(model, ln))
+                except Exception:           # noqa: BLE001
+                    continue
+                if L > 0 and n_ > 0:
+                    bogen.append(L / n_)
+            hb = min(bogen) if bogen else float(s["r"]) * np.radians(float(bogenwinkel))
+            h = min(float(faktor) * hm, hb)
+            if h <= 0:
+                continue
+            P = np.asarray(s["punkte"], float).reshape(-1, 3)
+            if len(P) > 1:
+                # Abstand der Quellen hoechstens h/2: jede Stelle des Rings hat
+                # eine Quelle naeher als ihre Reichweite
+                schritt = float(np.median(np.linalg.norm(np.diff(P, axis=0), axis=1))) or h
+                P = P[::max(1, int(0.5 * h / schritt))]
+            ringe.append(dict(name=s["name"], punkte=P, linien=list(s["linien"]), h=h, h_mittel=hm,
+                              winkel=float(bogenwinkel), r=float(s["r"])))
+    punkte = []
+    if float(faktor) < 1.0:
+        for s in stellen.get("punkte", []):
+            hm = _h_mittel_je_koerper(model, netz, s["koerper"], merker)
+            if hm > 0:
+                punkte.append(dict(knoten=s["knoten"], punkt=np.asarray(s["punkt"], float), h=float(faktor) * hm,
+                                   h_mittel=hm))
+    return {"ringe": ringe, "punkte": punkte, "flaechig": list(stellen.get("flaechig", [])),
+            "bogenwinkel": float(bogenwinkel), "faktor": float(faktor), "ringanteil": float(ringanteil),
+            "ringe_gesamt": len(alle_ringe)}
+
+
+def kraft_verfeinerungen(ziele: dict) -> list:
+    """Die Quellen an Krafteinleitungen als Eintraege fuer
+    ``netz.verfeinerungen`` - wie die von Fein nur fuer die Dauer des
+    Vernetzens (elementstufe.wirksam), nie gespeichert:
+    ``{"art": "fein_kraft_ring", "name", "punkte", "linien", "h", "winkel",
+    "reichweite", "h_mittel"}`` und ``{"art": "fein_kraft_punkt", "name",
+    "mitte", "h", "reichweite", "h_mittel"}``. Nur Zahlen und Listen, damit
+    zwei Stufen der Grenze vergleichbar bleiben (mesher._gleich_vernetzt)."""
+    aus = []
+    for s in ziele.get("ringe", []):
+        aus.append({"art": "fein_kraft_ring", "name": str(s["name"]),
+                    "punkte": [[float(x) for x in p] for p in np.asarray(s["punkte"], float).reshape(-1, 3)],
+                    "linien": [str(x) for x in s["linien"]], "h": float(s["h"]), "winkel": float(s["winkel"]),
+                    "reichweite": KRAFT_REICHWEITE * float(s["h"]), "h_mittel": float(s["h_mittel"])})
+    for s in ziele.get("punkte", []):
+        aus.append({"art": "fein_kraft_punkt", "name": f"K{int(s['knoten'])}",
+                    "mitte": [float(x) for x in np.asarray(s["punkt"], float).ravel()[:3]],
+                    "h": float(s["h"]), "reichweite": KRAFT_REICHWEITE * float(s["h"]),
+                    "h_mittel": float(s["h_mittel"])})
+    return aus
+
+
 def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | None":
     """Das Groessenfeld des Modells aus den Netzeinstellungen - oder None,
     wenn nichts darin steht und das Feld ohne Wirkung waere.
@@ -768,7 +1121,13 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
     Feldpunkte sind ``[x, y, z, h]`` oder ``[x, y, z, h, r]``. Dazu kommen
     bei Fein, nur fuer die Dauer des Vernetzens, ``{"art": "fein_flaeche",
     "name", "h", "h_mittel"}`` und ``{"art": "fein_bogen", "name", "h",
-    "winkel"}`` (:func:`fein_verfeinerungen`, seit 07.10.2026).
+    "winkel"}`` (:func:`fein_verfeinerungen`, seit 07.10.2026), und bei
+    Mittel und Fein an Krafteinleitungen ohne Flaeche ``{"art":
+    "fein_kraft_ring", "punkte", "linien", "h", "winkel", "reichweite"}`` und
+    ``{"art": "fein_kraft_punkt", "mitte", "h", "reichweite"}``
+    (:func:`kraft_verfeinerungen`, seit 13.10.2026). Stehen nur diese im Feld,
+    deckelt es nicht: ohne Quelle in der Naehe bleibt jede Kantenlaenge, wie
+    Mittel sie nimmt.
     """
     netz = getattr(model, "netz", None)
     if netz is None:
@@ -788,6 +1147,14 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
               if str(v.get("art", "")).startswith("fein_")]
     if h_fein:
         h_max = max(h_max, max(h_fein))
+    # Nur Quellen an Krafteinleitungen (Mittel, 13.10.2026): das Feld nennt
+    # fern von ihnen keine Laenge (h_max unendlich). Mit der Ziellaenge als
+    # Deckel machte es sonst jeden Koerper, den die Netzdichte groeber
+    # vernetzt als die Ziellaenge, im Ganzen feiner - bis dahin hatte Mittel
+    # ohne Netzverfeinerung gar kein Feld.
+    fp = getattr(netz, "feldpunkte", None) or []
+    if verfeinerungen and not fp and all(str(v.get("art", "")).startswith("fein_kraft_") for v in verfeinerungen):
+        h_max = 0.0
     feld = Groessenfeld(h_max)
     feine: dict = {}
     for v in verfeinerungen:
@@ -815,6 +1182,22 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
                     w = float(v.get("winkel", 0.0) or 0.0)
                     if w > 0:
                         feine[name] = min(w, feine.get(name, w))
+            elif art == "fein_kraft_ring":
+                # Krafteinleitung ohne Flaeche (13.10.2026): der Rand einer
+                # starren Scheibe, wo er auf dem Koerper liegt, mit zwei
+                # Elementringen Reichweite; der Lochrand mit dem feineren
+                # Bogenwinkel in der Linienteilung - wie ein Bogen von Fein
+                P = np.asarray(v.get("punkte") or [], float).reshape(-1, 3)
+                feld.punkte(P, h, float(v.get("reichweite", 0.0) or 0.0), "Krafteinleitung Ring")
+                w = float(v.get("winkel", 0.0) or 0.0)
+                if w > 0:
+                    for name in (v.get("linien") or []):
+                        if name in model.lines:
+                            feine[name] = min(w, feine.get(name, w))
+            elif art == "fein_kraft_punkt":
+                # Stabende auf einem Volumen (13.10.2026)
+                feld.kugel(v.get("mitte", [0, 0, 0]), float(v.get("reichweite", 0.0) or 0.0), h,
+                           "Krafteinleitung Punkt")
             elif art == "kugel":
                 feld.kugel(v.get("mitte", [0, 0, 0]), float(v.get("radius", 0.0) or 0.0), h, "Kugel")
             elif art == "flaeche":
@@ -835,7 +1218,6 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
         except Exception as ex:             # noqa: BLE001 - eine Verfeinerung darf nie sperren
             if log is not None:
                 log.append(f"WARNUNG: Netzverfeinerung {v} nicht lesbar ({ex}) - übergangen.")
-    fp = getattr(netz, "feldpunkte", None) or []
     if fp:
         A = np.asarray(fp, float).reshape(len(fp), -1)
         if A.shape[1] >= 4:
@@ -849,7 +1231,12 @@ def aufbauen(model, h_max: float = 0.0, log: list = None) -> "Groessenfeld | Non
         b = bedeutung(model)
         feld.grobe_linien = frozenset(b["neben_linien"])
     feld.feine_linien = feine
-    feld.dreiecksgitter = any(str(v.get("art", "")).startswith("fein_") for v in verfeinerungen)
+    # Das Dreiecksgitter nur mit den Quellen von Fein selbst: die Quellen an
+    # Krafteinleitungen gibt es auch bei Mittel, und dort aenderte das
+    # Dreiecksgitter jede Flaeche mit feinem Rand (siehe
+    # mesher3d._verdichten_2d_dreieck) - nicht nur die an der Stelle
+    feld.dreiecksgitter = any(str(v.get("art", "")).startswith("fein_")
+                              and not str(v.get("art", "")).startswith("fein_kraft_") for v in verfeinerungen)
     if feld.leer and not feld.grobe_linien and not feld.feine_linien:
         return None
     n = feld.abschliessen()

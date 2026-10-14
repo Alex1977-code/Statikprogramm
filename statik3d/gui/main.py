@@ -13363,8 +13363,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         Ueberschreitet das Netz die Grenze in Unbekannten, vernetzt Fein
         selbsttaetig groeber ueber seine Stufen (elementstufe.fein_stufen,
-        seit 08.10.2026); Entwurf und Mittel haben keine Stufen - dort bleibt
-        das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
+        seit 08.10.2026); Mittel hat sie seit 13.10.2026 an einem Modell mit
+        Krafteinleitungen ohne Flaeche (feiner an starren Scheiben ueber
+        Bohrungen und Stabenden, Schalter ``krafteinleitung_fein``), Entwurf
+        und Mittel sonst keine - dort bleibt das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
         Vernetzen, vor der Rechnung, „Vernetzen“ beim Uebernehmen und Anlegen
         von Flaechen und Koerpern, nach Spalt und Spiel) kommen hier durch;
         nur die adaptive Vernetzung nicht (ohne Quellen von Fein)."""
@@ -19370,6 +19372,18 @@ class MainWindow(QtWidgets.QMainWindow):
         def stufentext(s):
             return f"{es.ELEMENTE[s]} – {es.ZWECK[s]}"
 
+        # Die Krafteinleitungen ohne Flaeche (starre Scheiben ueber Bohrungen,
+        # Stabenden) bestimmt die Maske einmal und merkt sie sich: am Drehlager
+        # kostet das 3 s, und jede Aenderung eines Feldes fuehrt die wirksame
+        # Kantenlaenge nach (13.10.2026)
+        kraftstellen: dict = {}
+
+        def stellen():
+            if "s" not in kraftstellen:
+                from .. import netzfeld
+                kraftstellen["s"] = netzfeld.krafteinleitungen(self.model)
+            return kraftstellen["s"]
+
         def mm(v):
             # Laengen in mm - so denkt man beim Vernetzen („Netzeinstellungen
             # in mm", 13.09.2026); das Modell rechnet in m. Leer = None: seit
@@ -19394,7 +19408,8 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("elemente", "Elemente", "wahl", es.AUSWAHL[stufe_jetzt], [es.AUSWAHL[s] for s in es.STUFEN],
                     hinweis="Entwurf: tet4, hex8 (VQ83), Schalen linear – schnell, Spannungen zu niedrig. "
                             "Mittel (Vorgabe): tet10, hex20 (VQ203), Schalen quadratisch – für die "
-                            "Nachweise. Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
+                            "Nachweise, feiner an Krafteinleitungen ohne Fläche (starre Scheiben über "
+                            "Bohrungen, Stabenden). Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
                             "Kantenlänge) und an den Bögen der Kontakt- und Lagerflächen (9° statt 18° je "
                             "Abschnitt) – Bohrungen, Kerben, Ermüdung. Sechsflächner entstehen "
                             "automatisch nur dort, wo sie sauber "
@@ -19402,10 +19417,22 @@ class MainWindow(QtWidgets.QMainWindow):
                             "Netz → Elementübersicht"),
                   F("elemente_info", "", "info", stufentext(stufe_jetzt), anzeige=True),
                   F("kantenlaenge", "Kantenlänge (wirksam)", "info",
-                    es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model),
+                    es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model, stellen=stellen),
                     hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein dieselbe wie bei Mittel, "
-                            "dazu, welche Flächen und Bögen feiner werden; die Einstellungen darunter "
-                            "bleiben die für Mittel", anzeige=True)]
+                            "dazu, welche Flächen und Bögen feiner werden, und bei Mittel und Fein, was an "
+                            "Krafteinleitungen ohne Fläche feiner wird; die Einstellungen darunter "
+                            "bleiben die für Mittel", anzeige=True),
+                  # Krafteinleitungen ohne Flaeche (13.10.2026, Anwender: „im Lochbereich
+                  # feiner bzw. quadratisch vernetzen“): Vorgabe ein
+                  F("krafteinleitung_fein", "Krafteinleitungen ohne Fläche feiner vernetzen", "haken",
+                    bool(getattr(n, "krafteinleitung_fein", True)),
+                    hinweis="Bei Mittel und Fein: starre Scheiben über Bohrungen (die Kopplung hängt nur am "
+                            "Lochrand) bekommen am Lochrand 9° statt 18° je Abschnitt, höchstens die halbe "
+                            "Kantenlänge, und Stabenden auf einem Volumen die halbe Kantenlänge - je zwei "
+                            "Elementringe weit, von dort wachsend. Das macht die Zone der netzabhängigen "
+                            "Spannungsspitzen dort klein. Es kostet Elemente; die Höchstzahl Unbekannte "
+                            "vergröbert selbsttätig. Entwurf bleibt wie er ist. Aus: das Netz von Mittel wie "
+                            "bis zum 13.10.2026, etwa für eine Vergleichsrechnung")]
         if gruende:
             felder.append(F("sperre", "Kontakt", "info", es.sperrtext(gruende)))
         felder += [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
@@ -19424,8 +19451,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     int(getattr(n, "hoechstens_unbekannte", 0) or 0),
                     hinweis="Grenze für das ganze Netz, drei Unbekannte je Knoten, gezählt beim "
                             "Vernetzen. Wird sie überschritten, vernetzt das Programm selbsttätig gröber "
-                            "(Fein in Stufen) und nennt jede Stufe im Protokoll; Entwurf und Mittel "
-                            "haben keine gröbere Stufe – dort bleibt das Netz, und es kommt eine Warnung. "
+                            "(Fein in Stufen, Mittel an Krafteinleitungen ohne Fläche) und nennt jede Stufe "
+                            "im Protokoll; Entwurf und Mittel sonst haben keine gröbere Stufe – dort bleibt das "
+                            "Netz, und es kommt eine Warnung. "
                             "0 = keine Grenze; Vorgabe 4 000 000 (für 128 GB Arbeitsspeicher; "
                             "mit weniger Speicher die Grenze senken)"),
                   F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
@@ -19492,9 +19520,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 netz_ = self._netz_aus_maske(maske.werte())
             except (ValueError, TypeError):
                 return
-            maske.setzen("kantenlaenge", es.kantenlaenge_text(es.setzen(netz_, s), self.model))
+            maske.setzen("kantenlaenge", es.kantenlaenge_text(es.setzen(netz_, s), self.model, stellen=stellen))
         cb.currentTextChanged.connect(nachfuehren)
         maske._felder["dichte"].currentTextChanged.connect(nachfuehren)
+        maske._felder["krafteinleitung_fein"].toggled.connect(nachfuehren)
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
 
@@ -19633,6 +19662,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       hoechstens_unbekannte=max(0, int(float(
                           w.get("hoechstens_unbekannte", getattr(n, "hoechstens_unbekannte", 0)) or 0))),
                       form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
+                      krafteinleitung_fein=bool(w.get("krafteinleitung_fein",
+                                                      getattr(n, "krafteinleitung_fein", True))),
                       abgebildet=bool(w.get("abgebildet", n.abgebildet)),
                       teilung_uebersteuern=bool(w.get("uebersteuern", True)))
         # Die Stufe setzt Ordnung und Sweep (25.09.2026): Sweep immer „sauber“ -
