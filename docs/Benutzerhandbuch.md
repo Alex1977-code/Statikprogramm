@@ -10291,7 +10291,9 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   die Regel ab. „Spannschritt in … Stufen“ (Vorgabe „automatisch“: drei mit
   Kontakt oder Fließen, sonst eine) teilt den Spannschritt einer Vorspannkraft
   (siehe „Spannschritt in Stufen“ bei den Lastarten). Eine Datei ohne diese
-  Einstellungen bekommt die Vorgaben.
+  Einstellungen bekommt die Vorgaben; mit der Vorgabe schreibt das Programm sie auch
+  nicht in die Datei, damit ältere Modelle beim Speichern Byte für Byte bleiben und
+  ihre Ergebnisdateien weiter passen.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die

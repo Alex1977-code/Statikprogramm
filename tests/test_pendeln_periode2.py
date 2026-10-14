@@ -280,6 +280,10 @@ def test_einstellungen():
     check("ältere Datei ohne die Schlüssel: Vorgabe",
           (getattr(m3.plastizitaet, "pendel_kraft_anteil", None), getattr(m3.plastizitaet, "pendel_weg", None))
           == (1e-3, 1e-6))
+    d0 = Model("y").to_dict()["plastizitaet"]
+    check("mit der Vorgabe nicht in der Datei (ältere Dateien und ihre Ergebnisdateien passen weiter)",
+          "pendel_kraft_anteil" not in d0 and "pendel_weg" not in d0
+          and "pendel_kraft_anteil" in m.to_dict()["plastizitaet"], str(sorted(d0)))
     from tests import test_fehler_p15 as p15
     w, app = p15._fenster()
     if not hasattr(w, "sp_pendel_kraft"):

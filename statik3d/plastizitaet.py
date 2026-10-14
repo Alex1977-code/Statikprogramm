@@ -75,7 +75,7 @@ test_newton_konvergiert_quadratisch).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
@@ -284,6 +284,24 @@ class Plastizitaet:
     #: gleichen Stufen (statik3d.vorspannkraft.spannstufen, 14.10.2026); 0 heisst
     #: automatisch: mit Kontakt oder Fliessen gestuft, sonst ein Schritt.
     spannstufen: int = 0
+
+    #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
+    #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
+    NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0}
+
+    def als_dict(self) -> dict:
+        """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
+        wenn sie von ihrer Vorgabe abweichen - wie Vorspannung.als_dict. Sonst
+        wuchs eine aeltere Datei beim Laden und Speichern um 75 Byte
+        (tests/test_vorspannkraft: „alte Datei … bitgleich“, 6431 / 6506 Byte),
+        und jede Ergebnisdatei passte nicht mehr zu ihrem Modell, denn die
+        Rechenkennung (ergebnisse.rechenkennung) liest dieselbe Form. Eine Datei
+        ohne die Schluessel bekommt beim Laden die Vorgabe."""
+        d = asdict(self)
+        for k, v in self.NEU_14_10.items():
+            if k in d and d[k] == v:
+                del d[k]
+        return d
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""

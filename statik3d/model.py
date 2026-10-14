@@ -9140,7 +9140,9 @@ class Model:
             "bericht": [asdict(x) for x in self.bericht],
             "netz": _ohne_vorgabe("netz", asdict(self.netz)),
             "design": _ohne_vorgabe("design", asdict(self.design)),
-            "plastizitaet": asdict(self.plastizitaet),
+            # die Einstellungen vom 14.10.2026 nur abweichend von der Vorgabe
+            # (Plastizitaet.als_dict; plastizitaet.abbruch steht immer da)
+            "plastizitaet": self.plastizitaet.als_dict(),
             "knotendilatation": bool(self.knotendilatation),
             "randspannung": str(getattr(self, "randspannung", "frei") or "frei"),
             "contact_supports": [asdict(c) for c in self.contact_supports],
