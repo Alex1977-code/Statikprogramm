@@ -9624,7 +9624,9 @@ NEUE_FELDER = {
     # kontakt/pendeln (Pendeln mit Periode 2, Spannstufen; Plastizitaet.NEU_14_10,
     # die Plastizitaet.als_dict beim Speichern weglaesst)
     "plastizitaet": {"abbruch": "ingenieurmaessig", "pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6,
-                     "spannstufen": 0},
+                     "spannstufen": 0,
+                     # kontakt/warmstart (Vorschlaege 1-5 vom 14.10.2026, je Massnahme ein Schalter)
+                     "kaltstart_nicht_proportional": True},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben

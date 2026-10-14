@@ -7008,6 +7008,40 @@ wirkten in den Laststufen der Plastizität schon vorher ab der ersten Stufe
 voll. Rechnungen ohne Laststufen ändern sich nicht, und ohne Temperaturlast
 und Vorspannkraft rechnet jede Stufe bitgleich wie vorher.
 
+**Erste Laststufe beim Kontakt kalt, wenn ihre Last nicht proportional ist
+(seit 14.10.2026).** Die erste Laststufe der Plastizität rechnet den Kontakt vom
+Zustand des elastischen Vorlaufs aus weiter, und der Vorlauf trägt die volle
+Last. Das passt, solange die Last der Stufe ein Vielfaches davon ist: ein
+Kontakt ohne Anfangsspalt hat dann dieselbe Lösung, nur verkleinert. Seit
+Temperatur und Vorspannung ab der ersten Stufe voll wirken, ist die Stufenlast
+aber kein Vielfaches mehr. Bis zum 14.10.2026 startete die Stufe trotzdem warm
+aus dem Gleitzustand des Vorlaufs; am Drehlager pendelten dann unter der
+Stahlplatte V36 (Lager „Starr“, Reibung 0,1) zwei Flecken in ihrer
+Gleitrichtung bis zum Deckel, kalt gestartet pendelte nichts. Jetzt misst das
+Programm, wie weit die Last der ersten Stufe von einem Vielfachen der vollen
+Last abweicht: den Rest nach der besten Skalierung, bezogen auf die Stufenlast.
+Liegt er über 0,1 %, startet die Stufe beim Kontaktstatus kalt, und im
+Protokoll der Plastizität steht „Kontakt: die Last der ersten Laststufe ist
+nicht proportional zur Last des Vorlaufs (… Rest nach der besten Skalierung
+49,6 % der Stufenlast, Schranke 0,1 %) - die Stufe startet beim Kontaktstatus
+kalt, der plastische Zustand bleibt“. Zurückgesetzt wird nur der Kontakt;
+der plastische Zustand, etwa der Spannschritt einer Vorspannkraft, bleibt, wie
+er ist. Die weiteren Stufen starten wie bisher vom Zustand der vorigen Stufe,
+denn der liegt auf dem Lastpfad. Bei proportionalen Stufen (ohne Temperatur und
+Vorspannung, oder mit nur einer Laststufe) bleibt der Warmstart, und die
+Rechnung ist bitgleich wie vorher. Die 0,1 % sind so gewählt, dass eine kleine
+Temperatur- oder Vorspannlast neben einer großen gestuften Last den Warmstart
+nicht kostet; ein solcher Rest verschiebt die Kontaktkräfte höchstens in der
+Größenordnung, die der Kontaktlauf als Restwechsel ohnehin annimmt.
+Ausschalten lässt es sich am Modell mit
+`plastizitaet.kaltstart_nicht_proportional = False` (Vorgabe an; gespeichert
+wird der Schalter nur, wenn er abweicht). An der Platte der Prüfung
+(`tests/test_kontakt_warmstart.py`: Stahlplatte auf „Starr“ mit Reibung 0,2,
+vier vorgespannte Anker, Schub gestuft in drei Stufen) endete die erste Stufe
+warm gestartet mit dem Grund „pendeln“, die folgenden am Deckel, zusammen 254
+Kontaktrunden in 3,5 s, das Ergebnis war vorläufig; kalt gestartet sind es 66
+Runden in 0,5 s, und alles ist konvergiert.
+
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
 Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann

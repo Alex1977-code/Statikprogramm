@@ -5321,9 +5321,42 @@ def _spitzen_konvergenz_eintragen(res) -> None:
     eintrag["auffaellig"] = [x["nr"] for x in eintrag.get("stellen") or [] if x.get("auffaellig")]
 
 
+def _kaltstart_nicht_proportional(model, F, F_S):
+    """Vorschlag 1 (Entscheidung des Anwenders vom 14.10.2026): die erste
+    Laststufe startet vom Kontaktzustand des elastischen Vorlaufs, und der
+    rechnet die volle Last F. Ist die Last der Stufe F_S + lam (F - F_S) nicht
+    proportional zu F (plastizitaet.nicht_proportional ueber der Schranke
+    plastizitaet.PROPORTIONAL_SCHRANKE), passt dieser Zustand nicht: die Stufe
+    startet beim Kontaktstatus kalt. Rueckgabe None (warm wie bisher) oder die
+    Angaben fuer Protokoll und Ergebnis.
+
+    Nur die erste Stufe: die weiteren starten vom Zustand der vorigen Stufe,
+    und der liegt auf dem Lastpfad - das ist der Sinn der Stufen (die Reibung
+    haengt vom Weg ab). Nur der Kontaktstatus: der plastische Zustand (der
+    Spannschritt einer Vorspannkraft, plast_start) bleibt, und der Newton
+    rechnet ihn wie bisher fort. Ausgeschaltet (Plastizitaet.
+    kaltstart_nicht_proportional) rechnet alles wie vor dem 14.10.2026."""
+    from . import plastizitaet as pl
+    pz = getattr(model, "plastizitaet", None)
+    if pz is None or not bool(getattr(pz, "kaltstart_nicht_proportional", True)) or F_S is None:
+        return None
+    lam = 1.0 / int(max(1, getattr(pz, "laststufen", 1)))
+    rest = pl.nicht_proportional(F, F_S, lam)
+    if rest <= pl.PROPORTIONAL_SCHRANKE:
+        return None
+    from .zahlen import zahl_text
+    text = (f"Kontakt: die Last der ersten Laststufe ist nicht proportional zur Last des Vorlaufs "
+            f"(Temperatur und Vorspannung wirken voll; Rest nach der besten Skalierung "
+            f"{zahl_text(100.0 * rest, stellen=3)} % der Stufenlast, Schranke "
+            f"{zahl_text(100.0 * pl.PROPORTIONAL_SCHRANKE, stellen=3)} %) - die Stufe startet beim "
+            f"Kontaktstatus kalt, der plastische Zustand bleibt")
+    return {"anteil": float(rest), "schranke": float(pl.PROPORTIONAL_SCHRANKE), "text": text}
+
+
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                           gemeinsam: bool = False, F_sofort=None, system=None, factors=None, feq=None,
-                          plast_start=None, plast_merken: bool = False, feq_sofort_dazu=None):
+                          plast_start=None, plast_merken: bool = False, feq_sofort_dazu=None,
+                          vorab=None):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
     Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
     Zusatzlast F_p, mit Kontakt warm gestartet vom letzten Zustand.
@@ -5353,7 +5386,7 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     ``feq_sofort_dazu`` sind die Verriegelungskraefte der Staebe - sie wirken
     wie jede Vorspannung ab der ersten Stufe voll."""
     from . import plastizitaet as pl
-    log: list = []
+    log: list = list(vorab or [])       # Zeilen vor der Iteration (Kaltstart, Vorschlag 1)
     _kontakt_weg_melden(model, log)
     kn = _KontaktImNewton(rechnen, res, start, aktiv, log, gemeinsam,
                           float(model.plastizitaet.toleranz), stabstatus=model.hat_ausfallstaebe())
@@ -5661,6 +5694,15 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         pl_extra = {} if zusatz is None else {
             "plast_start": zusatz.get("plast_start"), "plast_merken": bool(zusatz.get("plast_merken")),
             "feq_sofort_dazu": zusatz.get("feq")}
+        if zs is not None and start_pl is zs:
+            # Vorschlag 1 (14.10.2026): Kontaktstatus der ersten Stufe kalt, wenn
+            # ihre Last nicht proportional zur Last des Vorlaufs ist - nur der
+            # Kontaktstatus, der plastische Zustand (plast_start) bleibt
+            kalt = _kaltstart_nicht_proportional(model, F, F_S)
+            if kalt is not None:
+                start_pl = None
+                res.info["kontakt_kaltstart"] = kalt
+                pl_extra["vorab"] = [kalt["text"]]
         try:
             try:
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,

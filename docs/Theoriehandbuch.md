@@ -3606,6 +3606,35 @@ erste Stufe nicht mehr im ersten Newton-Schritt an, dessen Kontaktlauf am
 Deckel endete, sondern erst mit einem konvergierten Lauf (8 statt 6
 Newton-Schritte). Eingeschaltet wird nach der V36-Klärung und auf Freigabe.
 
+### 4.0d Warmstart und Pendelschutz der Gleitrichtung (14.10.2026)
+
+Befund am Drehlager (V36 auf „Starr“, μ = 0,1): zwei Flecken an der Haft-/
+Gleitgrenze pendelten in der Gleitrichtung, nicht zwischen offen und
+geschlossen; Ursache war der warme Start der ersten Laststufe aus dem
+Gleitzustand des Vorlaufs, seit die Stufenlast F_S + λ (F − F_S) nicht mehr
+proportional zur Vorlauflast F ist. Entscheidung des Anwenders vom 14.10.2026:
+Vorschläge 1 bis 5 bauen, jede Maßnahme einzeln schaltbar (Feld an
+`Plastizitaet`, gespeichert nur abweichend von der Vorgabe, eingetragen in
+`model.NEUE_FELDER`) und einzeln geprüft (`tests/test_kontakt_warmstart.py`).
+
+**1. Kaltstart bei nicht proportionaler Stufe** (`kaltstart_nicht_proportional`,
+Vorgabe an). Maß ist der Rest r = |F_1 − a F| / |F_1| mit a = F_1·F / F·F
+(`plastizitaet.nicht_proportional`). Ein Reibkontakt ohne Anfangsspalt ist
+positiv homogen: der Zustand zu F löst auch λF. Ist r > 10⁻³
+(`PROPORTIONAL_SCHRANKE`), startet die erste Stufe beim Kontakt kalt
+(`solver._kaltstart_nicht_proportional`, in `_solve_loads` statt des
+Vorlaufzustands `None` als Start); Zustand und F_p der Plastizität (auch
+`plast_start` des Spannschritts) bleiben. Die Schranke: λF ist bis auf die
+Rundung proportional (r ≈ 10⁻¹⁶), jede Schranke über 10⁻¹² hält proportionale
+Stufen bitgleich; 10⁻³ lässt kleine Temperatur- oder Vorspannanteile warm
+rechnen, weil ihr Einfluss auf die Kontaktkräfte unter den Schranken liegt,
+die der Kontaktlauf ohnehin annimmt (0,1 % der Kontaktkraft, 0,1 % u_max).
+Stufen k > 1 starten vom Zustand der Stufe k − 1, der auf dem Lastpfad liegt;
+die Reibung hängt vom Weg ab, dort bleibt der Warmstart. Gemessen an der
+Prüfplatte (4 Anker zu 1 MN als Temperatur, μ = 0,2, Schub 0,6 μV / 0,2 μV,
+drei Stufen, elastisch): warm Stufe 1 „pendeln“ nach 18 Runden, Stufen 2, 3
+und Abschluss am Deckel, 254 Runden, vorläufig; kalt 66 Runden, konvergiert.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf

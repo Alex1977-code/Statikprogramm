@@ -284,10 +284,19 @@ class Plastizitaet:
     #: gleichen Stufen (statik3d.vorspannkraft.spannstufen, 14.10.2026); 0 heisst
     #: automatisch: mit Kontakt oder Fliessen gestuft, sonst ein Schritt.
     spannstufen: int = 0
+    #: Kontaktstatus der ersten Laststufe kalt, wenn ihre Last nicht proportional
+    #: zur Last des Vorlaufs ist (Vorschlag 1, Entscheidung des Anwenders vom
+    #: 14.10.2026; :func:`nicht_proportional`). Nur der Kontaktstatus wird
+    #: zurueckgesetzt, nie der plastische Zustand; bei proportionalen Stufen
+    #: bleibt der Warmstart. Vorgabe an: am Drehlager (V36, Starr mit mu 0,1)
+    #: pendelte der warme Start der Stufe 1 aus dem Vorlauf mit voller Last am
+    #: Deckel, kalt gestartet nicht (v36_werk, 14.10.2026).
+    kaltstart_nicht_proportional: bool = True
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
-    NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0}
+    NEU_14_10 = {"pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6, "spannstufen": 0,
+                 "kaltstart_nicht_proportional": True}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
@@ -1469,6 +1478,46 @@ def stufenlast(F, F_sofort, lam: float):
     if F_sofort is None or lam == 1.0:
         return lam * F
     return F_sofort + lam * (F - F_sofort)
+
+
+#: Schranke fuer "proportional" (Vorschlag 1, 14.10.2026): die Stufenlast gilt als
+#: proportional zur Last des Vorlaufs, wenn ihr Rest nach der besten Skalierung
+#: hoechstens dieser Anteil ihres Betrags ist (:func:`nicht_proportional`). Warum
+#: 1e-3: ein Faktor lam * F ist bis auf die Rundung (1e-16) proportional, also
+#: genuegte jede Schranke ueber 1e-12, damit proportionale Stufen bitgleich warm
+#: bleiben. Hoeher liegt sie, damit eine kleine Temperatur- oder Vorspannlast
+#: neben einer grossen gestuften Last den Warmstart nicht kostet: ein Rest von
+#: 0,1 % der Stufenlast verschiebt die Kontaktkraefte hoechstens in der
+#: Groessenordnung, die der Kontaktlauf als Restwechsel ohnehin annimmt
+#: (Plastizitaet.pendel_kraft_anteil 0,1 % der Kontaktkraft, Weg 0,1 % u_max im
+#: Ingenieurkriterium). Am Drehlager (LF1) ist die Vorspannung kein kleiner Rest.
+PROPORTIONAL_SCHRANKE = 1.0e-3
+
+
+def nicht_proportional(F, F_sofort, lam: float) -> float:
+    """Der Anteil der Stufenlast F_k = F_S + lam (F - F_S) (:func:`stufenlast`),
+    der nicht proportional zur Last ``F`` des Vorlaufs ist: |F_k - a F| / |F_k|
+    mit dem besten Faktor a = F_k . F / F . F. Ohne Temperatur und Vorspannung
+    (``F_sofort`` None) und in der letzten Stufe ist die Stufe proportional (0).
+
+    Warum (Vorschlag 1, 14.10.2026): ein Kontaktzustand ohne Anfangsspalt ist
+    positiv homogen in der Last - der Zustand des Vorlaufs mit der vollen Last
+    passt zu jedem Vielfachen. Wirken Temperatur und Vorspannung ab der ersten
+    Stufe voll (10.10.2026), ist die Stufenlast kein Vielfaches mehr; der warme
+    Start aus dem Gleitzustand des Vorlaufs pendelte am Drehlager (V36) bis zum
+    Deckel, kalt gestartet nicht."""
+    if F_sofort is None or lam == 1.0:
+        return 0.0
+    F = np.asarray(F, float)
+    F_k = np.asarray(stufenlast(F, F_sofort, lam), float)
+    nk = float(np.linalg.norm(F_k))
+    nF = float(F @ F)
+    if nk <= 0.0:
+        return 0.0
+    if nF <= 0.0:
+        return 1.0
+    a = float(F_k @ F) / nF
+    return float(np.linalg.norm(F_k - a * F)) / nk
 
 
 def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
