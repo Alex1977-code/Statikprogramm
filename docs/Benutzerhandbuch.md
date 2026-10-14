@@ -10411,7 +10411,10 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   der erste plastische Lauf braucht verschachtelt 21 Kontaktschritte,
   gemeinsam 31, die übrigen Läufe gleich viele, und am Ende liegen die
   Verschiebungen um höchstens 1,0·10⁻¹¹ m auseinander (u_max 6,1·10⁻⁴ m);
-  jeder Weg für sich ist
+  so ist es noch mit „Spannung zuerst“ aus. Seit dem 14.10.2026 schließt die
+  Kontaktiteration nach Spannung und Weg ab (Vorschlag 4, Vorgabe an); damit
+  liegen die beiden Wege dort 3,2·10⁻⁹ m auseinander, weit unter der
+  Wegschranke des Kriteriums (3,3·10⁻⁶ m). Jeder Weg für sich ist
   wiederholt bitgleich. Am fließenden Kontaktmodell mit gewählter
   Anfangsdehnung sind beide Wege bitgleich. Bis zum 07.10.2026 stand hier,
   das Ergebnis bleibe bitgleich.)
