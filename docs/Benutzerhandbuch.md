@@ -6940,7 +6940,11 @@ Solche Körper bringen kein Eigengewicht und schwingen in der Modalanalyse
 als masselose Teile mit. Bis zum 13.10.2026 wurde aus der 0 still 7850 kg/m³
 – am Drehlager trug das „Nullmaterial“ das Gewicht von Stahl –, und die
 Werkstoffmaske tat beim Übernehmen dasselbe; dort bedeutet jetzt 0
-gewichtslos und ein leeres Feld 7850.
+gewichtslos und ein leeres Feld 7850. Seit dem 14.10.2026 gilt dasselbe für
+die RFEM-Tabellen (CSV oder Excel, Spalten Dichte bzw. Wichte) und für die
+Werkstofftabellen eines HiCAD-Archivs (Spalte RHO): eine angegebene 0 bleibt
+0, mit demselben Hinweis, und 7850 kg/m³ gilt nur ohne Wert. Bis dahin
+machten beide aus der 0 still Stahl.
 
 **Elemente beim Import (seit 25.09.2026).** `mesh.xml` gibt **keine
 Elementordnung** vor – es gibt dort keinen Schlüssel für lineare oder

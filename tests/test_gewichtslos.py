@@ -109,6 +109,73 @@ def test_import():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_import_tabellen():
+    """RFEM-Tabellen (CSV/Excel, importers/rfem_tables.py) wie RFEM 6 seit dem
+    14.10.2026: Dichte 0 oder Wichte 0 bleibt 0, mit Hinweis. Bis dahin
+    machte ``if rho:`` aus einer 0 den Vorgabewert 7850."""
+    from statik3d.importers.rfem_tables import import_rfem_tables
+    d = tempfile.mkdtemp(prefix="s3d_rho_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;0;0;4\n")
+        w("1.2 Linien.csv", "Linie Nr.;Knoten Nr.\n1;1,2\n")
+        w("1.3 Materialien.csv",
+          "Material Nr.;Bezeichnung;E-Modul [kN/cm2];Dichte [kg/m3];Wichte [kN/m3]\n"
+          "1;S235;21000;7850;\n"
+          "2;Nullmaterial;21000;0;0\n"
+          "3;Hilfsmaterial;21000;;0\n"
+          "4;Werkstoff Wichte;21000;;78,5\n"
+          "5;Werkstoff ohne;21000;;\n")
+        w("1.7 Staebe.csv", "Stab Nr.;Linie Nr.;Querschnitt;Material\n1;1;HEB 200;1\n")
+        log = []
+        m = import_rfem_tables(d, Model("Rho"), log)
+        faelle = [("S235", "ρ = 7850", 7850.0, False), ("Nullmaterial", "ρ = 0 und Wichte 0", 0.0, True),
+                  ("Hilfsmaterial", "ρ fehlt, Wichte 0", 0.0, True),
+                  ("Werkstoff Wichte", "ρ fehlt, Wichte 78,5 kN/m³", 78500.0 / 9.81, False),
+                  ("Werkstoff ohne", "ρ und Wichte fehlen: 7850 wie bisher", 7850.0, False)]
+        for name, titel, soll, hinweis in faelle:
+            mt = m.materials.get(name)
+            zeilen = [z for z in log if HINWEIS in z and f"‚{name}‘" in z]
+            check(f"RFEM-Tabellen {titel}: ρ = {soll:.1f} kg/m³" + (", mit Hinweis" if hinweis else ", kein Hinweis"),
+                  mt is not None and abs(mt.rho - soll) <= 1e-9 * max(soll, 1.0) and bool(zeilen) == hinweis,
+                  f"ρ {getattr(mt, 'rho', None)!r}, {zeilen[:1]}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_import_hicad():
+    """HiCAD-Teiletabellen (importers/hicad_sza.py, Spalte RHO in g/cm³) seit
+    dem 14.10.2026: RHO 0 bleibt 0, mit Hinweis; ohne Wert 7,85 g/cm³ wie
+    bisher. Bis dahin machte ``rho or 7.85`` aus der 0 Stahl."""
+    from statik3d.importers import hicad as H
+    from statik3d.importers import hicad_sza as A
+    tab = {"kategorie": "WERKSTOFFE", "spalten": ["BZ", "RHO", "RE", "RM"],
+           "zeilen": [["S235JR", "7,85", "235", "360"], ["Hilfsmaterial", "0", "", ""],
+                      ["Werkstoff ohne", "", "", ""]]}
+    mats = A.table_materials(tab)
+    check("HiCAD-Tabelle: RHO 7,85 -> 7850, RHO 0 -> 0, ohne Wert -> 7850",
+          mats["S235JR"][0] == 7850.0 and mats["Hilfsmaterial"][0] == 0.0 and mats["Werkstoff ohne"][0] == 7850.0,
+          str({k: v[0] for k, v in mats.items()}))
+    alt = (A.archive_entries, A.part_designations, A.part_tables)
+    try:
+        A.archive_entries = lambda *a, **k: []
+        A.part_designations = lambda *a, **k: []
+        A.part_tables = lambda *a, **k: {"WERKSTOFFE.IPT": tab}
+        log = []
+        m = H._from_archive("x.sza", Model("HiCAD"), log, geometrie=False)
+    finally:
+        A.archive_entries, A.part_designations, A.part_tables = alt
+    for name, soll, hinweis in (("S235JR", 7850.0, False), ("Hilfsmaterial", 0.0, True),
+                                ("Werkstoff ohne", 7850.0, False)):
+        mt = m.materials.get(name)
+        zeilen = [z for z in log if HINWEIS in z and f"‚{name}‘" in z]
+        check(f"HiCAD-Import {name}: ρ = {soll:.1f} kg/m³" + (", mit Hinweis" if hinweis else ", kein Hinweis"),
+              mt is not None and mt.rho == soll and bool(zeilen) == hinweis,
+              f"ρ {getattr(mt, 'rho', None)!r}, {zeilen[:1]}")
+
+
 # --------------------------------------------------------------------------
 # Werkstoffmaske
 # --------------------------------------------------------------------------
@@ -200,7 +267,8 @@ def test_schwingung():
 
 
 def main():
-    for t in (test_import, test_maske, test_eigengewicht, test_schwingung):
+    for t in (test_import, test_import_tabellen, test_import_hicad, test_maske, test_eigengewicht,
+              test_schwingung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

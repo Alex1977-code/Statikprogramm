@@ -546,8 +546,7 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     if rho == 0.0:
         # nur ein Vorschlag: den Schalter „vom Volumennachweis ausnehmen“
         # setzt der Anwender (13.10.2026), nie der Import
-        C.say(log, f"Hinweis: Werkstoff ‚{name}‘ ist gewichtslos – Hilfsmaterial? Körper daraus "
-                   "können vom Volumennachweis ausgenommen werden.")
+        C.hinweis_gewichtslos(log, name)
     if art == "Spannstahl":
         from ..zahlen import zahl_text
 
