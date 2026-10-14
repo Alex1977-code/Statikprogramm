@@ -2832,7 +2832,10 @@ die Layer im Register *Ansicht* und im Modellbaum.
 **Verborgenes im Hintergrund.** Der Schalter (Register *Ansicht → Sicht*,
 auch in der Glasleiste) zeigt alles Ausgeblendete blass und durchscheinend
 als „Geist“ hinter dem Modell: man sieht, wo das Versteckte liegt, und
-arbeitet ungestört an dem, was normal dargestellt ist. Der Geist ist
+arbeitet ungestört an dem, was normal dargestellt ist. Seine Kanten sind
+seit dem 14.10.2026 blassblau (#9fb8d6). Bis dahin waren sie hellgrau
+(#c9cfd5) und kaum vom Grau zu unterscheiden, mit dem die Färbung Knoten und
+Elemente ohne Wert zeigt (#d0d4d8, Farbabstand ΔE 2,3, jetzt 18,9). Der Geist ist
 **nicht wählbar** — weder mit der Maus noch im Auswahlfenster. Das ist die
 allgemeine Regel der Ansicht: **Was nicht dargestellt ist, lässt sich nicht
 wählen.** Ausgeblendete Objekte (Sicht) bleiben außen vor, ebenso alles,

@@ -27560,7 +27560,11 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Verborgenes im Hintergrund (Geist) ---------------------------------
     #: Farbe und Deckkraft des Geistes: blass, hinter allem, unantastbar
     GEIST_FARBE = "#aab2ba"
-    GEIST_KANTE = "#c9cfd5"
+    #: Kante des Geists blassblau (seit 14.10.2026): bis dahin #c9cfd5, dE 2,3
+    #: neben „ohne Wert“ (viewport.FARBE_OHNE_WERT #d0d4d8) - ein
+    #: ausgeblendetes Teil sah aus wie eines ohne Ergebniswert. Jetzt dE 18,9
+    #: dazu und mindestens 18 zu jeder Farbe der Ansicht
+    GEIST_KANTE = "#9fb8d6"
     GEIST_DECKKRAFT = 0.14
 
     def _schnitt_umschalten(self, an: bool):

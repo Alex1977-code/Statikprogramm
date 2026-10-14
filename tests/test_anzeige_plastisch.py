@@ -435,8 +435,8 @@ def test_farbe_ueber_grenze():
           dE_T.min() >= 25.0 and min(dE.values()) >= 25.0,
           f"Tafel {dE_T.min():.1f}, übrige {min(dE.values()):.1f} ({min(dE, key=dE.get)})")
     # die Farben der Legende (Skalenfelder, Schraffur, ohne Wert) gegen alle;
-    # die uebrigen Paare untereinander sind nicht Gegenstand (Befund 13.10.2026:
-    # „ohne Wert“ #d0d4d8 und Geist-Kante #c9cfd5 liegen bei dE 2,3)
+    # die uebrigen Paare untereinander sind nicht Gegenstand („ohne Wert“ und
+    # Geist-Kante, bis zum 14.10.2026 bei dE 2,3: test_farbe_ohne_wert_geist)
     legende = ("über der Skala", "unter der Grenze", "netzabhängig")
     paare = [(a, b, float(np.linalg.norm(_lab(np.array(to_rgb(farben[a]))) - _lab(np.array(to_rgb(farben[b]))))))
              for a in legende for b in farben if b != a]
@@ -457,6 +457,31 @@ def test_farbe_ueber_grenze():
           f"{text!r} | {w.cb_skala.toolTip()[:80]!r}")
 
 
+def test_farbe_ohne_wert_geist():
+    """„Ohne Wert“ (#d0d4d8) und die Kante des Geists lagen bis zum 14.10.2026
+    bei dE 2,3 (Geist-Kante #c9cfd5) - ein ausgeblendetes Teil im Hintergrund
+    sah aus wie ein Teil ohne Ergebniswert. Seitdem ist die Kante des Geists
+    blassblau; „ohne Wert“ bleibt das neutrale Grau, als das es im Handbuch
+    steht."""
+    from matplotlib.colors import to_rgb
+    from statik3d.gui import viewport as vp
+    from statik3d.gui.main import MainWindow
+    farben = _farben_der_ansicht()
+
+    def dE(a, b):
+        return float(np.linalg.norm(_lab(np.array(to_rgb(a))) - _lab(np.array(to_rgb(b)))))
+    paar = dE(vp.FARBE_OHNE_WERT, MainWindow.GEIST_KANTE)
+    check("„ohne Wert“ und Geist-Kante klar getrennt: dE ≥ 15",
+          paar >= 15.0, f"{vp.FARBE_OHNE_WERT} / {MainWindow.GEIST_KANTE}: dE {paar:.1f}")
+    d = {k: dE(MainWindow.GEIST_KANTE, v) for k, v in farben.items() if k not in ("Geist", "Geist-Kante")}
+    k = min(d, key=d.get)
+    check("… die Geist-Kante dE ≥ 15 zu jeder anderen Farbe der Ansicht",
+          d[k] >= 15.0, f"knappste: {k} {d[k]:.1f}")
+    lab = _lab(np.array(to_rgb(vp.FARBE_OHNE_WERT)))
+    check("… „ohne Wert“ bleibt ein neutrales Grau (Buntheit C* < 5)",
+          float(np.hypot(lab[1], lab[2])) < 5.0, f"{vp.FARBE_OHNE_WERT}, C* {float(np.hypot(lab[1], lab[2])):.1f}")
+
+
 def main():
     platten = {}
     for k, plast in (("pl", True), ("el", False)):
@@ -468,7 +493,7 @@ def main():
             RESULTS.append((f"Platte rechnen {k} (Ausnahme: {ex})", False))
     for t, k in ((test_einzelelement, None), (test_plastisch, "pl"), (test_alte_datei, "pl"),
                  (test_elastisch, "el"), (test_nachweise_unveraendert, "pl"), (test_farbe, None),
-                 (test_farbe_ueber_grenze, None)):
+                 (test_farbe_ueber_grenze, None), (test_farbe_ohne_wert_geist, None)):
         print(f"\n--- {t.__name__} ---")
         try:
             if k is None:
