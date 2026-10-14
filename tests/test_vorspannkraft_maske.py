@@ -104,8 +104,9 @@ def test_maske_und_anzeige():
     check("Lasttabelle: Vorspannkraft (Soll) mit F_soll und Gruppe",
           z_soll and "F_soll = 944,7 kN, Gruppe 2" in z_soll[0], str(z_soll[:1]))
     z_dt = [r for r in zeilen if "Temperatur" in r]
-    check("Lasttabelle: ΔT mit „aus Vorspannung 952 kN, E = 205 000 N/mm², α = 1,0e-5 1/K“",
-          z_dt and "aus Vorspannung 952 kN, E = 205 000 N/mm², α = 1,0e-5 1/K" in z_dt[0], str(z_dt[:1]))
+    satz = "Vorspannung 952 kN (eingeprägte Dehnung, E = 205 000 N/mm², α = 1,0e-5 1/K)"
+    check(f"Lasttabelle: ΔT mit „{satz}“ (Form des Imports seit 14.10.2026)",
+          z_dt and satz in z_dt[0], str(z_dt[:1]))
     # Lastmaske der Sollkraft: Kraft und Gruppe aendern
     w._lastmaske(fall, "vorspannungen", 0)
     app.processEvents()

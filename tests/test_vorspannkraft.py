@@ -411,9 +411,11 @@ def test_import_hinweis_und_umwandlung():
         tl = m.case(lf).temp_loads
         mat = m.materials[m.elements[tl[0].elem].mat] if tl else None
         text = tl[0].bezug(m) if tl else ""
+        # seit der Zusammenfuehrung (14.10.2026) in der Form des Imports
+        # (TempLoad.vorspann_text); bis dahin „aus Vorspannung 120 kN, E = …“
         check("ΔT-Last zeigt die Kraft mit E und α der Umrechnung",
-              mat is not None and "aus Vorspannung 120 kN" in text and "E = 210 000 N/mm²" in text
-              and "α = 1,2e-5 1/K" in text, text)
+              mat is not None and "Vorspannung 120 kN (eingeprägte Dehnung, E = 210 000 N/mm², "
+              "α = 1,2e-5 1/K)" in text, text)
         n = vk.in_sollkraft_umwandeln(m)
         v = m.case(lf).vorspannungen
         check("Umwandlung: ΔT weg, Lastart Sollkraft mit dem RFEM-Wert (kein Spannstahl)",

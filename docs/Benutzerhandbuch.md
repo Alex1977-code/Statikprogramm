@@ -882,7 +882,11 @@ Sie in der Maske der einzelnen Last.
 **Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
 RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
 (ΔT = −N₀/(E·A·α)). Die Lasttabelle und die Maske der Temperaturlast nennen
-dazu die Kraft und die Werte der Umrechnung, etwa „aus Vorspannung 952 kN,
+dazu die Kraft und die Werte der Umrechnung, in derselben Form wie eine
+Vorspannung, die der Import seit dem 13.10.2026 als Kraft kennzeichnet (siehe
+„Eine aus RFEM übernommene Vorspannung steht als Kraft da“), etwa
+„ΔT = −445,6 K – Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+α = 1,0e-5 1/K)“. Bis zum 14.10.2026 stand dort „aus Vorspannung 952 kN,
 E = 170 000 N/mm², α = 1,0e-5 1/K“. Der Import gibt den Hinweis
 „Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
 Sollkraft umwandeln?“. X ist die Stabkraft unter der Vorspannung allein. Das
@@ -926,6 +930,10 @@ kraftgesteuerte Vorspannung („Vorspannkraft nach Verankerung“) die Umrechnun
 ersetzt. Das Importprotokoll nennt E und α der Umrechnung einmal. Eine Datei
 von vor dem 13.10.2026 behält ihre Temperaturlasten, wie sie sind: nichts wird
 beim Öffnen umgestellt, und gespeichert steht das Merkmal nur, wo es gesetzt ist.
+Eine solche Temperatur an einem Zug- oder Seilstab nennen Lasttabelle, Maske und
+Protokoll seit dem 14.10.2026 mit dem ΔT und dahinter in derselben Form,
+„ΔT = −445,6 K – Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+α = 1,0e-5 1/K)“, mit dem E und α des Werkstoffs.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall.

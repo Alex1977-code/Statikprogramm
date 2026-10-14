@@ -81,8 +81,48 @@ def test_spannstahl_art():
     check("Vorspannkraft und Stabnachweis sagen dasselbe, was Spannstahl ist", gleich)
 
 
+def test_vorspannung_ein_merkmal():
+    print("\n--- Vorspannung als Last: ein Merkmal, eine Anzeige ---")
+    m, e = _anker(name="Material 3", art="Spannstahl")
+    A = m.sections["Rund 40"].A
+    dT = -952e3 / (170e9 * A * 1e-5)
+    fall = m.active_case
+    # wie der Import seit dem 13.10.2026: mit gespeichertem Merkmal
+    m.load_temp(e, dT, case=fall, aus_vorspannung=952e3, vorspann_E=170e9, vorspann_alpha=1e-5)
+    # wie eine Datei, die vor dem 13.10.2026 aus RFEM kam: nur die Temperatur
+    m.load_temp(e, dT, case=fall)
+    neu, alt = m.case(fall).temp_loads
+    check("gespeichertes Merkmal: der Satz des Imports", neu.vorspann_text(m) == SATZ, neu.vorspann_text(m))
+    check("nur die Temperatur (Datei von vorher): derselbe Satz", alt.vorspann_text(m) == SATZ,
+          alt.vorspann_text(m))
+    check("… Kraft und Umrechnung einzeln wie beim Import",
+          alt.vorspann_kraft_text(model=m) == "952 kN"
+          and alt.vorspann_umrechnung_text(model=m) == "eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K",
+          f"{alt.vorspann_kraft_text(model=m)} | {alt.vorspann_umrechnung_text(model=m)}")
+    check("ohne Modell: nur das gespeicherte Merkmal", neu.vorspann_text() == SATZ and alt.vorspann_text() == "",
+          f"{neu.vorspann_text()!r} / {alt.vorspann_text()!r}")
+    b_neu, b_alt = neu.bezug(m), alt.bezug(m)
+    check("Bezug mit Merkmal: nur die Kraft", b_neu == f"Element {e}: {SATZ}", b_neu)
+    check("Bezug ohne Merkmal: ΔT und dahinter derselbe Satz",
+          b_alt == f"Element {e}: ΔT = {dT:+.1f} K → {SATZ}", b_alt)
+    check("die alte Form „aus Vorspannung …, E = …“ gibt es nicht mehr",
+          "aus Vorspannung" not in b_alt and not hasattr(TempLoad, "vorspanntext"))
+    m3, e3 = _anker()
+    m3.elements[e3].typ = "beam"
+    balken = TempLoad(e3, 20.0)
+    check("eine gewöhnliche Temperatur an einem Balken bleibt eine Temperatur",
+          balken.vorspann_text(m3) == "" and balken.bezug(m3) == f"Element {e3}: ΔT = +20.0 K",
+          balken.bezug(m3))
+    from statik3d import vorspannkraft as vk
+    log = []
+    vk.import_hinweise(m, log=log)
+    zeilen = [z for z in log if "als ΔT gerechnet" in z]
+    check("Importhinweis der Umwandlung nennt die Vorspannung in derselben Form",
+          zeilen and "als ΔT gerechnet: Vorspannung 952 kN (eingeprägte Dehnung" in zeilen[0], str(zeilen[:1]))
+
+
 def main():
-    for t in (test_spannstahl_art,):
+    for t in (test_spannstahl_art, test_vorspannung_ein_merkmal):
         try:
             t()
         except Exception as ex:          # noqa: BLE001 - jede Pruefung meldet sich

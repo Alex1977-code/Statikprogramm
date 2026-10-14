@@ -582,8 +582,8 @@ def import_hinweise(model, log: list = None, system=None) -> list:
         faelle = sorted({t.fall for t in liste})
         t0_ = liste[0]
         umfang = (f"{len(staebe)} {'Stab' if len(staebe) == 1 else 'Stäbe'} in {len(faelle)} "
-                  f"{'Lastfall' if len(faelle) == 1 else 'Lastfällen'}; als ΔT gerechnet "
-                  f"{t0_.lasten[0].vorspanntext(model)}")
+                  f"{'Lastfall' if len(faelle) == 1 else 'Lastfällen'}; als ΔT gerechnet: "
+                  f"{t0_.lasten[0].vorspann_text(model)}")
         zusatz = (f"X nach der ersten Rechnung: {grund}" if not xs and grund else
                   f"X linear in {zeit:.2f} s" if xs else "")
         h = {"art": "vorspannung", "text": f"{text} ({umfang}" + (f"; {zusatz}" if zusatz else "") + ")",

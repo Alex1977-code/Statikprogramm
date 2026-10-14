@@ -10099,9 +10099,10 @@ class MainWindow(QtWidgets.QMainWindow):
             t = (str(ziel) if ziel else f"E{l.elem}") + f": ΔT = {z(float(l.dT))} K"
             if getattr(l, "dT_z", 0.0):
                 t += f", ΔT oben−unten = {z(float(l.dT_z))} K"
-            # eine Vorspannung, die als Temperatur steht (RFEM-Import): mit Kraft,
-            # E und α der Umrechnung (13.10.2026)
-            vs = l.vorspanntext(self.model) if hasattr(l, "vorspanntext") else ""
+            # eine Vorspannung, die als Temperatur steht (RFEM-Import vor dem
+            # 13.10.2026): mit Kraft, E und α der Umrechnung, in derselben Form wie
+            # das Merkmal des Imports (TempLoad.vorspann_text, 14.10.2026)
+            vs = l.vorspann_text(self.model) if hasattr(l, "vorspann_text") else ""
             if vs:
                 t += f" – {vs}"
             return t
@@ -10385,10 +10386,10 @@ class MainWindow(QtWidgets.QMainWindow):
             titel = f"Temperaturlast E{obj.elem}"
             felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
                        F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
-            vs = obj.vorspanntext(m) if hasattr(obj, "vorspanntext") else ""
+            vs = obj.vorspann_text(m) if hasattr(obj, "vorspann_text") else ""
             if vs:
                 felder.append(F("vorspannung", "Vorspannung", "info",
-                                vs[0].upper() + vs[1:] + " – umwandeln in die Sollkraft: Lasten › "
+                                vs + " – umwandeln in die Sollkraft: Lasten › "
                                 "Vorspannung, Lastart „ΔT-Vorspannung in Sollkraft umwandeln“"))
         elif liste == "zwangsverformungen":
             titel = f"Zwangsverformung K{obj.node}"
@@ -14839,7 +14840,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {tab.festkomma(l.dT, 2)} K",
                                f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
-                               l.vorspanntext(self.model)])
+                               l.vorspann_text(self.model)])
                 i += 1
             for l in lc.geometrielasten:
                 ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)

@@ -825,6 +825,12 @@ Fläche der Umrechnung. Am Drehlager (E = 170 000 N/mm², α = 1,0e-5 1/K, 16 An
 mit 952 kN bzw. 805 kN) ist das ΔT = −445,634 K bzw. −376,823 K. Die
 kraftgesteuerte Vorspannung („Vorspannkraft nach Verankerung“) ersetzt die
 Umrechnung später; bis dahin nennt das Importprotokoll E und α einmal.
+Seit der Zusammenführung vom 14.10.2026 ist das Merkmal das einzige:
+`TempLoad.vorspann_werte` liefert (N₀, E, α) aus dem Merkmal, und ohne Merkmal
+(Datei von vor dem 13.10.2026) die Kraft N = E·A·α·(−ΔT) eines Zug- oder
+Seilstabs mit E und α des Werkstoffs. Beide erscheinen in derselben Form; die
+Vorspannkraft hatte bis dahin eine eigene Anzeige („aus Vorspannung 952 kN,
+E = …, α = …“).
 
 ## 2 Lasten
 

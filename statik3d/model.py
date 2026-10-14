@@ -1541,9 +1541,37 @@ class TempLoad:
     def ist_vorspannung(self) -> bool:
         return bool(self.aus_vorspannung)
 
+    def vorspann_werte(self, model=None):
+        """(F [N], E [Pa], alpha [1/K]) der Vorspannung, die diese Temperaturlast
+        darstellt - oder None.
+
+        Ein Merkmal aus zwei Quellen (Zusammenfuehrung am 14.10.2026; bis dahin
+        hatten der RFEM-Import und die Vorspannkraft je eine eigene Anzeige):
+
+        * gespeichert (``aus_vorspannung``, ``vorspann_E``, ``vorspann_alpha``):
+          der RFEM-Import seit dem 13.10.2026 haelt die Kraft und die Werte der
+          Umrechnung fest; es gilt die Kraft der Quelldatei, auch wenn sich E
+          oder A des Stabs spaeter aendern;
+        * abgeleitet (nur mit ``model``, ohne gespeichertes Merkmal): die Kraft,
+          die die Temperatur in einem Zug- oder Seilstab erzeugt
+          (:meth:`vorspannkraft`), mit E und alpha des Werkstoffs - so steht eine
+          Vorspannung, die vor dem 13.10.2026 aus RFEM kam (am Drehlager
+          „Material 3“, dT = -445,6 K)."""
+        if self.aus_vorspannung:
+            return (float(self.aus_vorspannung), float(self.vorspann_E or 0.0),
+                    float(self.vorspann_alpha or 0.0))
+        if model is None:
+            return None
+        N = self.vorspannkraft(model)
+        if abs(N) <= 1.0:
+            return None
+        mat = model.materials.get(getattr(model.elements[int(self.elem)], "mat", ""))
+        return N, float(mat.E), float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
+
     def vorspann_text(self, model=None, punkt: bool = False) -> str:
         """„Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
-        α = 1,0e-5 1/K)“ - leer, wenn die Last keine Vorspannung ist.
+        α = 1,0e-5 1/K)“ - leer, wenn die Last keine Vorspannung ist
+        (:meth:`vorspann_werte`; ohne ``model`` nur das gespeicherte Merkmal).
 
         Der Anwender sieht die Kraft, nicht die Temperatur, mit der das
         Programm sie rechnet (Entscheidung vom 13.10.2026: „Vorspannung als
@@ -1552,32 +1580,38 @@ class TempLoad:
         Dehnung wieder die Kraft, und bis die kraftgesteuerte Vorspannung da
         ist, haengt die Kraft im Stab an ihnen. ``punkt``: Dezimalpunkt statt
         Komma (Ansicht, Baum). Das alpha steht mit Exponenten - eine
-        Werkstoffkonstante der Groesse 1e-5 als „0,00001“ liest niemand."""
-        if not self.aus_vorspannung:
+        Werkstoffkonstante der Groesse 1e-5 als „0,00001“ liest niemand.
+        Dieselbe Form gilt fuer die abgeleitete Vorspannung; bis zum 14.10.2026
+        stand diese als „aus Vorspannung 952 kN, E = …, α = …“ da."""
+        w = self.vorspann_werte(model)
+        if w is None:
             return ""
-        return (f"Vorspannung {self.vorspann_kraft_text(punkt)} ("
-                f"{self.vorspann_umrechnung_text(punkt)})")
+        return (f"Vorspannung {self.vorspann_kraft_text(punkt, model)} ("
+                f"{self.vorspann_umrechnung_text(punkt, model)})")
 
-    def vorspann_kraft_text(self, punkt: bool = False) -> str:
+    def vorspann_kraft_text(self, punkt: bool = False, model=None) -> str:
         """„952 kN“ - die Vorspannkraft allein (Tabellenspalte, Ansicht)."""
         from .zahlen import zahl_text
-        return f"{zahl_text(self.aus_vorspannung / 1e3, punkt=punkt)} kN"
+        w = self.vorspann_werte(model)
+        return f"{zahl_text(round((w[0] if w else 0.0) / 1e3, 1), punkt=punkt)} kN"
 
-    def vorspann_umrechnung_text(self, punkt: bool = False) -> str:
+    def vorspann_umrechnung_text(self, punkt: bool = False, model=None) -> str:
         """„eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K“ - womit die
         Kraft in die Rechnung eingeht."""
         from .zahlen import zahl_text
+        w = self.vorspann_werte(model) or (0.0, 0.0, 0.0)
         teile = ["eingeprägte Dehnung"]
-        if self.vorspann_E:
-            teile.append(f"E = {zahl_text(self.vorspann_E / 1e6, punkt=punkt)} N/mm²")
-        if self.vorspann_alpha:
-            teile.append(f"α = {self.vorspann_alpha_text(punkt)} 1/K")
+        if w[1]:
+            teile.append(f"E = {zahl_text(round(w[1] / 1e6, 1), punkt=punkt)} N/mm²")
+        if w[2]:
+            teile.append(f"α = {self.vorspann_alpha_text(punkt, w[2])} 1/K")
         return ", ".join(teile)
 
-    def vorspann_alpha_text(self, punkt: bool = False) -> str:
+    def vorspann_alpha_text(self, punkt: bool = False, alpha: float = None) -> str:
         """„1,0e-5“ - das alpha der Umrechnung mit Exponent (eine Werkstoff-
         konstante dieser Groesse als „0,00001“ liest niemand)."""
-        mant, _, ex = f"{float(self.vorspann_alpha):.1e}".partition("e")
+        a = self.vorspann_alpha if alpha is None else alpha
+        mant, _, ex = f"{float(a):.1e}".partition("e")
         return f"{mant if punkt else mant.replace('.', ',')}e{int(ex)}"
 
     def vorspannkraft(self, model) -> float:
@@ -1603,39 +1637,22 @@ class TempLoad:
         alpha = float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
         return float(mat.E) * A * alpha * (-float(self.dT))
 
-    def vorspanntext(self, model) -> str:
-        """„aus Vorspannung 952 kN, E = 170 000 N/mm², α = 1,0e-5 1/K“ - die
-        Kraft, aus der der Import diese Temperatur gerechnet hat, mit E und α
-        der Umrechnung; leer, wenn die Last keine Vorspannung ist.
-
-        Entscheidung des Anwenders vom 13.10.2026: „Vorspannung … als Kraft
-        anzeigen, nicht als Temperatur ΔT. Bis zur Umstellung nach Punkt 1 das
-        verwendete E und α der Umrechnung angeben.“ Umgestellt wird mit
-        statik3d.vorspannkraft.in_sollkraft_umwandeln."""
-        N = self.vorspannkraft(model)
-        if abs(N) <= 1.0:
-            return ""
-        from .zahlen import zahl_text
-        mat = model.materials.get(getattr(model.elements[int(self.elem)], "mat", ""))
-        alpha = float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
-        mant, hoch = f"{alpha:.1e}".split("e")
-        return (f"aus Vorspannung {zahl_text(round(N / 1e3, 1))} kN, "
-                f"E = {zahl_text(round(float(mat.E) / 1e6, 1))} N/mm², "
-                f"α = {mant.replace('.', ',')}e{int(hoch)} 1/K")
-
     def bezug(self, model=None) -> str:
-        """Eine Zeile fuer Tabelle und Protokoll - bei einem vorgespannten
-        Zugstab mit der Kraft, nicht nur mit der Temperatur, und mit E und α
-        der Umrechnung (13.10.2026; bis dahin „→ Vorspannung 952 kN (Zugstab)“)."""
+        """Eine Zeile fuer Tabelle und Protokoll - bei einer Vorspannung mit der
+        Kraft und mit E und α der Umrechnung (:meth:`vorspann_text`). Mit dem
+        gespeicherten Merkmal steht nur die Kraft da; eine abgeleitete
+        Vorspannung (Datei von vor dem 13.10.2026) behaelt ihr ΔT davor, weil sie
+        in der Datei eine Temperaturlast ist. Bis zum 14.10.2026 hiess der
+        Zusatz „→ aus Vorspannung 952 kN, E = …, α = … (Zugstab)“."""
         if self.aus_vorspannung:
             return f"Element {self.elem}: {self.vorspann_text(model)}"
         text = f"Element {self.elem}: ΔT = {self.dT:+.1f} K"
         if self.dT_z:
             text += f", ΔT über die Höhe {self.dT_z:+.1f} K"
         if model is not None:
-            vs = self.vorspanntext(model)
+            vs = self.vorspann_text(model)
             if vs:
-                text += f" → {vs} (Zugstab)"
+                text += f" → {vs}"
         return text
 
 
