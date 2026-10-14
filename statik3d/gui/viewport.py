@@ -185,6 +185,394 @@ def farbskalen_heben_aktiv(renderer) -> bool:
 _SKALA_HEBEN: dict = {}
 
 
+# --------------------------------------------------------------------------
+# Lage der Texte im Bild (seit 13.10.2026)
+# --------------------------------------------------------------------------
+# Anwender zum Bild vom 13.10.2026: „Textzeilen unten links und Fußzeile
+# überlagern sich. Legendentitel und Magenta-Hinweis rechts abgeschnitten.“
+# Gemessen in der echten Ansicht (tests/test_textlage.py): die Kopfzeile war
+# bis 803 px breit und lief bei 1280 x 800 (Ansicht 552 px) rechts aus dem
+# Bild, die Kennwerte 571 px; der Titel der Farbskala stand mittig ueber ihr
+# und lief rechts hinaus; Legendeneintrag und Hinweis unter der Skala lagen
+# auf dem Achsenkreuz, in der Kompaktstufe auf der gehobenen Skala. Die
+# Lagen wurden beim Zeichnen gesetzt und blieben beim Vergroessern oder
+# Verkleinern der Ansicht stehen. Jetzt ordnet texte_ordnen sie vor jedem
+# Bild nach den gemessenen Rechtecken.
+
+#: Abstand der Texte zum Rand und zueinander [px bei Massstab 1]
+TEXT_RAND = 12
+TEXT_LUFT = 4
+#: Ausschnitt des Achsenkreuzes (main: add_axes(viewport=...))
+ACHSEN_AUSSCHNITT = (0.86, 0.0, 1.0, 0.16)
+_MASS_ZWISCHEN: dict = {}
+
+
+def textmass(tprop, text: str, dpi: int = 72) -> tuple:
+    """(Breite, Hoehe) eines Textes in Bildpunkten, mit seiner Schrift."""
+    import vtk
+    schl = (str(text), tprop.GetFontSize(), tprop.GetFontFamily(), tprop.GetBold(), int(dpi))
+    if schl in _MASS_ZWISCHEN:
+        return _MASS_ZWISCHEN[schl]
+    bb = [0, 0, 0, 0]
+    try:
+        vtk.vtkTextRenderer.GetInstance().GetBoundingBox(tprop, str(text) or " ", bb, int(dpi))
+    except Exception:                       # noqa: BLE001 - Schaetzung
+        n = max((len(z) for z in str(text).split("\n")), default=1)
+        bb = [0, int(0.6 * tprop.GetFontSize() * n), 0, int(1.2 * tprop.GetFontSize() * (str(text).count("\n") + 1))]
+    erg = (float(bb[1] - bb[0] + 1), float(bb[3] - bb[2] + 1))
+    if len(_MASS_ZWISCHEN) > 4000:
+        _MASS_ZWISCHEN.clear()
+    _MASS_ZWISCHEN[schl] = erg
+    return erg
+
+
+def umbrechen(text: str, tprop, max_breite: float, dpi: int = 72, einzug: str = "  ") -> str:
+    """Jede Zeile, die breiter als ``max_breite`` ist, an Trennstellen („ · “,
+    „, “, Leerzeichen) umbrechen; Folgezeilen eingerueckt. Was sich nicht
+    trennen laesst, bleibt (lieber zu breit als zerrissen)."""
+    if max_breite <= 0:
+        return str(text)
+    aus = []
+    for zeile in str(text).split("\n"):
+        if textmass(tprop, zeile, dpi)[0] <= max_breite:
+            aus.append(zeile)
+            continue
+        vorn = zeile[:len(zeile) - len(zeile.lstrip(" "))]
+        teile, rest = [], zeile.strip(" ")
+        import re
+        for stueck in re.split(r"(?<= · )|(?<=, )|(?<= )", rest):
+            if stueck:
+                teile.append(stueck)
+        akt = vorn
+        for st in teile:
+            probe = akt + st
+            if akt.strip() and textmass(tprop, probe.rstrip(), dpi)[0] > max_breite:
+                aus.append(akt.rstrip())
+                akt = vorn + einzug + st
+            else:
+                akt = probe
+        if akt.strip():
+            aus.append(akt.rstrip())
+    return "\n".join(aus)
+
+
+def _rechteck(renderer, akt) -> tuple | None:
+    try:
+        return kennwerte_rahmen(renderer, akt)
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def _ueber(a, b, luft: float = 0.0) -> bool:
+    return not (a[1] + luft <= b[0] or b[1] + luft <= a[0] or a[3] + luft <= b[2] or b[3] + luft <= a[2])
+
+
+def _muster_punkte(x0: float, y0: float, seite: float):
+    import vtk
+    pts = vtk.vtkPoints()
+    lines = vtk.vtkCellArray()
+
+    def strich(a, b):
+        i = pts.InsertNextPoint(a[0], a[1], 0.0)
+        j = pts.InsertNextPoint(b[0], b[1], 0.0)
+        lines.InsertNextCell(2)
+        lines.InsertCellPoint(i)
+        lines.InsertCellPoint(j)
+    s = float(seite)
+    ecken = [(x0, y0), (x0 + s, y0), (x0 + s, y0 + s), (x0, y0 + s)]
+    for k in range(4):
+        strich(ecken[k], ecken[(k + 1) % 4])
+    for t in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75):
+        a = (x0 + min(t, 1.0) * s, y0 + max(t - 1.0, 0.0) * s)
+        b = (x0 + max(t - 1.0, 0.0) * s, y0 + min(t, 1.0) * s)
+        strich(a, b)
+    poly = vtk.vtkPolyData()
+    poly.SetPoints(pts)
+    poly.SetLines(lines)
+    return poly
+
+
+def _skala_zu(plotter, titel):
+    """Die Farbskala zu einem Titel (pyvista ScalarBars hat kein get) oder None."""
+    try:
+        return plotter.scalar_bars[titel]
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def _alle_skalen(plotter) -> list:
+    try:
+        return list(plotter.scalar_bars.values())
+    except Exception:                       # noqa: BLE001
+        return []
+
+
+def _legende_stapeln(plotter, ren, akte, roh, leg, x_r, y0, nach_unten, s, dpi, rand, luft) -> list:
+    """Legendeneintraege rechtsbuendig an x_r stapeln, ab y0 nach unten (oben
+    buendig) oder nach oben (unten buendig); mit Muster rechts das
+    schraffierte Quadrat. Rueckgabe [(Name, Rechteck)]."""
+    aus = []
+    y = y0
+    for name, muster in (leg if nach_unten else list(reversed(leg))):
+        a = akte[name]
+        tp = a.GetTextProperty()
+        tp.SetJustificationToRight()
+        if nach_unten:
+            tp.SetVerticalJustificationToTop()
+        else:
+            tp.SetVerticalJustificationToBottom()
+        seite = min(14.0 * s, max(6.0 * s, textmass(tp, "Xg", dpi)[1])) if muster else 0.0
+        t = umbrechen(roh[name], tp, max(40.0 * s, x_r - seite - 2 * rand), dpi, "")
+        if a.GetInput() != t:
+            a.SetInput(t)
+        a.SetPosition(x_r - (seite + luft if muster else 0.0), y)
+        r = _rechteck(ren, a)
+        if r is None:
+            continue
+        if muster and akte.get(muster) is not None:
+            hoehe = r[3] - r[2]
+            poly = _muster_punkte(x_r - seite, r[2] + (hoehe - seite) / 2.0, seite)
+            akte[muster].GetMapper().SetInputData(poly)
+            r = (r[0], x_r, r[2], r[3])
+        aus.append((name, r))
+        y = (r[2] - luft) if nach_unten else (r[3] + luft)
+    return aus
+
+
+def texte_ordnen(plotter, info: dict) -> dict:
+    """Die Texte des Bildes vor dem Zeichnen ordnen. ``info`` aus der
+    Oberflaeche (MainWindow._textlage_info): ``massstab``, ``texte`` {Name:
+    roher Text}, ``skalentitel`` {Textname: Titel der Farbskala},
+    ``legende`` [(Name, Mustername oder None)], ``glas`` (Hoehe der
+    Glasleiste in Qt-Punkten), ``wuerfel`` (x0, x1, y0, y1) oder None.
+
+    Reihenfolge: Kennwerte unten links (auf die Breite umgebrochen), senkrechte
+    Farbskalen mit eigenem Titel rechtsbuendig darueber (umgebrochen, die
+    Skala wird kuerzer, wenn der Titel sonst in den Wuerfel liefe),
+    Legendeneintraege und Hinweis rechts unter der Skala - links vom
+    Achsenkreuz, wenn sie dorthin reichten, und die Skala ruckt hoch, wenn
+    sie sonst auf den Kennwerten laegen -, zuletzt die Kopfzeile oben links,
+    so schmal, dass sie neben Skala und Titel bleibt. Rueckgabe {Name:
+    Rechteck} (x0, x1, y0, y1) in Bildpunkten, y von unten."""
+    ren = plotter.renderer
+    try:
+        breit, hoch = (float(v) for v in ren.GetSize())
+    except Exception:                       # noqa: BLE001
+        return {}
+    if breit <= 0 or hoch <= 0:
+        return {}
+    try:
+        dpi = int(ren.GetRenderWindow().GetDPI())
+    except Exception:                       # noqa: BLE001
+        dpi = 72
+    s = max(1.0, float(info.get("massstab", 1.0) or 1.0))
+    rand, luft = TEXT_RAND * s, TEXT_LUFT * s
+    roh = info.get("texte") or {}
+    akte = plotter.actors
+    lage: dict = {}
+
+    def setzen(name, text, max_b, einzug="  "):
+        a = akte.get(name)
+        if a is None:
+            return None
+        t = umbrechen(text, a.GetTextProperty(), max_b, dpi, einzug)
+        if a.GetInput() != t:
+            a.SetInput(t)
+        return a
+    achsen = (ACHSEN_AUSSCHNITT[0] * breit, ACHSEN_AUSSCHNITT[2] * breit,
+              ACHSEN_AUSSCHNITT[1] * hoch, ACHSEN_AUSSCHNITT[3] * hoch)
+    # 1) Kennwerte unten links, links vom Achsenkreuz unten rechts
+    k = None
+    if "kennwerte" in roh:
+        k = setzen("kennwerte", roh["kennwerte"], max(80.0 * s, achsen[0] - rand - luft))
+        if k is not None:
+            k.SetPosition(rand, 10 * s)
+            r = _rechteck(ren, k)
+            if r is not None:
+                lage["kennwerte"] = r
+    # 2) Farbskalen mit eigenem Titel. Waagerecht (Kompaktstufe): der Titel
+    # mittig ueber der Skala, nicht ueber den Rand hinaus, umgebrochen; die
+    # Skala hat farbskalen_heben schon ueber die Kennwerte gehoben
+    skalen = []
+    waag_oben = 0.0
+    for tname, titel in (info.get("skalentitel") or {}).items():
+        sb = _skala_zu(plotter, titel)
+        a = akte.get(tname)
+        if sb is None or a is None:
+            continue
+        if sb.GetOrientation() != 1:
+            px, py = sb.GetPositionCoordinate().GetValue()[:2]
+            # das Feld „> Skalenmax“ beschriftet VTK unter der Skala: so weit
+            # heben, dass es ueber den Kennwerten steht (Bild V21 1280 x 800,
+            # 13.10.2026: es lag hinter der Kennwertzeile)
+            notiz = sb.GetAboveRangeAnnotation() if sb.GetDrawAboveRangeSwatch() else ""
+            kr = lage.get("kennwerte")
+            if notiz and kr is not None:
+                nh = textmass(sb.GetAnnotationTextProperty(), notiz, dpi)[1]
+                fehlt = kr[3] + luft + nh + luft - py * hoch
+                if fehlt > 0.5:
+                    py += fehlt / hoch
+                    sb.SetPosition(px, py)
+                lage[tname + "_notiz"] = ((px + sb.GetWidth()) * breit - textmass(
+                    sb.GetAnnotationTextProperty(), notiz, dpi)[0], (px + sb.GetWidth()) * breit,
+                    py * hoch - nh - luft, py * hoch)
+            setzen(tname, roh.get(tname, titel), breit - 2 * rand, einzug="")
+            tp = a.GetTextProperty()
+            tp.SetJustificationToCentered()
+            tp.SetVerticalJustificationToBottom()
+            bw = textmass(tp, a.GetInput(), dpi)[0]
+            mitte = (px + sb.GetWidth() / 2.0) * breit
+            mitte = min(max(mitte, rand + bw / 2.0), breit - rand - bw / 2.0)
+            a.SetPosition(mitte, (py + sb.GetHeight()) * hoch + luft)
+            r = _rechteck(ren, a)
+            if r is not None:
+                lage[tname] = r
+                waag_oben = max(waag_oben, r[3])
+            continue
+        skalen.append((tname, titel, sb, a))
+    oben_grenze = hoch - luft
+    wue = info.get("wuerfel")
+    if wue is not None:
+        oben_grenze = min(oben_grenze, float(wue[2]) - luft)
+    lage["achsenkreuz"] = achsen
+    for _runde in range(3):
+        titel_r = []
+        for tname, titel, sb, a in sorted(skalen, key=lambda x: -x[2].GetPositionCoordinate().GetValue()[0]):
+            px, py = sb.GetPositionCoordinate().GetValue()[:2]
+            x1 = min((px + sb.GetWidth()) * breit, breit - luft)
+            max_b = max(40.0 * s, min(0.42 * breit, x1 - rand))
+            setzen(tname, roh.get(tname, titel), max_b, einzug="")
+            tp = a.GetTextProperty()
+            tp.SetJustificationToRight()
+            tp.SetVerticalJustificationToBottom()
+            y = (py + sb.GetHeight()) * hoch + luft
+            a.SetPosition(x1, y)
+            r = _rechteck(ren, a)
+            for andere in titel_r:
+                if r is not None and _ueber(r, andere, luft):
+                    y = andere[3] + luft
+                    a.SetPosition(x1, y)
+                    r = _rechteck(ren, a)
+            if r is not None:
+                titel_r.append(r)
+                lage[tname] = r
+        # Titel zu hoch: alle senkrechten Skalen kuerzen
+        zu_hoch = max((r[3] for r in titel_r), default=0.0) - oben_grenze
+        if zu_hoch > 0.5:
+            for _t, _ti, sb, _a in skalen:
+                sb.SetHeight(max(0.05, sb.GetHeight() - zu_hoch / hoch))
+            continue
+        # 3) Legendeneintraege und Hinweis: unter der untersten senkrechten
+        # Skala (von oben nach unten), sonst ueber den waagerechten
+        leg = [(n, m) for n, m in (info.get("legende") or []) if n in akte and n in roh]
+        if not leg:
+            break
+        waag = [sb for sb in _alle_skalen(plotter) if sb.GetOrientation() == 0 and sb.GetVisibility()]
+        if skalen:
+            nach_unten, y0 = True, min(sb.GetPositionCoordinate().GetValue()[1]
+                                       for _t, _ti, sb, _a in skalen) * hoch - luft
+        elif waag:
+            nach_unten, y0 = False, max(max((sb.GetPositionCoordinate().GetValue()[1] + sb.GetHeight())
+                                            for sb in waag) * hoch, waag_oben) + luft
+        else:
+            nach_unten, y0 = True, 0.17 * hoch
+        x_r = breit * 0.99
+        rechtecke, block = [], None
+        for versuch in range(2):
+            rechtecke = _legende_stapeln(plotter, ren, akte, roh, leg, x_r, y0, nach_unten, s, dpi, rand, luft)
+            block = (min(r[0] for _n, r in rechtecke), max(r[1] for _n, r in rechtecke),
+                     min(r[2] for _n, r in rechtecke), max(r[3] for _n, r in rechtecke)) if rechtecke else None
+            if block is not None and versuch == 0 and _ueber(block, achsen, luft):
+                x_r = achsen[0] - luft
+                continue
+            break
+        hoch_noetig = 0.0
+        if block is not None and skalen:
+            kr = lage.get("kennwerte")
+            boden = (kr[3] + luft) if (kr is not None and _ueber((block[0], block[1], -1e9, 1e9), kr)) else luft
+            if block[2] < boden:
+                hoch_noetig = boden - block[2]
+        if hoch_noetig > 0.5:
+            # die Skalen ruecken hoch und werden kuerzer, oben bleibt
+            for _t, _ti, sb, _a in skalen:
+                px, py = sb.GetPositionCoordinate().GetValue()[:2]
+                d = hoch_noetig / hoch
+                sb.SetPosition(px, py + d)
+                sb.SetHeight(max(0.05, sb.GetHeight() - d))
+            continue
+        for name, r in rechtecke:
+            lage[name] = r
+        break
+    for _t, titel, sb, _a in skalen:
+        px, py = sb.GetPositionCoordinate().GetValue()[:2]
+        lage["farbskala:" + titel] = (px * breit, (px + sb.GetWidth()) * breit, py * hoch,
+                                      (py + sb.GetHeight()) * hoch)
+    # 4) Kopfzeile oben links, neben Skalen und Titeln
+    if "kopfzeile" in roh and akte.get("kopfzeile") is not None:
+        a = akte["kopfzeile"]
+        oben = hoch - (float(info.get("glas", 30)) + 16.0) * s
+        # rechts von ihr: Skalen, ihre Titel, Legendeneintraege - soweit sie
+        # in ihrer Hoehe liegen; zweimal, denn das Umbrechen macht sie hoeher
+        andere = [r for nm, r in lage.items() if nm not in ("kennwerte", "kopfzeile", "achsenkreuz")]
+        if wue is not None:
+            # lieber schmaler neben dem Wuerfel als unter ihm (dort laege sie
+            # auf Skala und Titel)
+            andere.append(tuple(float(v) for v in wue))
+        tp = a.GetTextProperty()
+        max_b = breit - 2 * rand
+        for _i in range(3):
+            setzen("kopfzeile", roh["kopfzeile"], max(80.0 * s, max_b), einzug="    ")
+            hoehe = textmass(tp, a.GetInput(), dpi)[1]
+            y0, y1 = oben - hoehe, oben
+            neben = [r[0] for r in andere if not (r[3] <= y0 or r[2] >= y1) and r[0] > rand]
+            neu_b = min(neben, default=breit - rand) - rand - luft
+            if abs(neu_b - max_b) < 1.0:
+                break
+            max_b = neu_b
+        hoehe = textmass(tp, a.GetInput(), dpi)[1]
+        y = max(oben - hoehe, 6.0 * s)
+        a.SetPosition(rand, y)
+        r = _rechteck(ren, a)
+        if r is not None and wue is not None:
+            neu = kopfzeile_ausweichen(r, wue, 6 * s)
+            if neu is not None:
+                a.SetPosition(rand, max(neu, 6.0 * s))
+                r = _rechteck(ren, a)
+        if r is not None:
+            lage["kopfzeile"] = r
+    return lage
+
+
+def texte_ordnen_einrichten(plotter, info_fn) -> bool:
+    """texte_ordnen vor jedem Bild aufrufen (Renderer, StartEvent); ``info_fn()``
+    liefert die Angaben oder None (dann nichts). Einmal je Renderer."""
+    ren = getattr(plotter, "renderer", None)
+    if ren is None:
+        return False
+    ref = _TEXTE_ORDNEN.get(id(ren))
+    if ref is not None and ref() is ren:
+        return True
+    import weakref
+    rref = weakref.ref(ren)
+    pref = weakref.ref(plotter)
+
+    def vor_bild(_obj, _ereignis):
+        p = pref()
+        try:
+            if p is not None and rref() is not None:
+                i = info_fn()
+                if i:
+                    texte_ordnen(p, i)
+        except Exception:                   # noqa: BLE001 - das Bild darf nie scheitern
+            pass
+    ren.AddObserver("StartEvent", vor_bild)
+    _TEXTE_ORDNEN[id(ren)] = rref
+    return True
+
+
+_TEXTE_ORDNEN: dict = {}
+
+
 def kanten_vor_flaechen() -> bool:
     """Linien gewinnen gegen die Flaeche, auf der sie liegen.
 
@@ -1267,6 +1655,25 @@ def to_grid(model: Model, typen=None, ausser=None, nur=None) -> pv.UnstructuredG
     return g
 
 
+def oberflaeche(grid):
+    """(Oberflaeche, Knoten je Punkt) eines Gitters aus :func:`to_grid`.
+
+    Die Knotennummer reist als Punktfeld durch extract_surface. Bis zum
+    14.10.2026 kam sie aus ``vtkOriginalPointIds`` - mit VTK 9.7 sind das bei
+    quadratischen Elementen (tet10) die Nummern der Oberflaeche selbst,
+    nicht die Modellknoten: am Drehlager lag ein Punkt bis 3,52 m neben dem
+    Knoten, dessen Verschiebung und Farbe er bekam; am tet10-Kragarm
+    (tests/test_oberflaeche_knoten.py) 0,185 mm falscher Wert je Punkt und
+    19,4 mm falsche Lage bei Ueberhoehung 100. Bei hex8 und tet4 stimmte es."""
+    g = grid.copy(deep=False)
+    g.point_data["_knoten"] = np.arange(g.n_points, dtype=float)
+    flaeche = g.extract_surface(pass_pointid=False, pass_cellid=True, algorithm="dataset_surface")
+    kidx = np.rint(np.asarray(flaeche.point_data["_knoten"], float)).astype(np.int64)
+    flaeche.point_data["vtkOriginalPointIds"] = kidx
+    del flaeche.point_data["_knoten"]
+    return flaeche, kidx
+
+
 def teilnetz(model: Model, elemente) -> pv.UnstructuredGrid:
     """Ein Gitter aus **nur** den genannten Elementen.
 
@@ -2257,6 +2664,230 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
+#: Netzabhaengige Spannungsspitzen: Schraffur, Umrandung, Zeichen, Hinweis und
+#: Legendeneintrag in einem dunklen Grau (Bild des Anwenders vom 13.10.2026:
+#: „netzabhängig als graue Schraffur mit eigenem Legendeneintrag“). Es ist
+#: das Grau, das bis dahin „über der Grenze“ hiess (spannungen.FARBE_UEBER, das
+#: seitdem wieder Magenta ist): dE (CIE-Lab) 43,2 zur Tafel turbo, auch zu
+#: ihrem fast schwarzen unteren Ende, mindestens 29,5 zu den Grautoenen der
+#: Ansicht, als Schrift auf Weiss 5,9:1. Bis zum 13.10.2026 Magenta, davor
+#: violett #6a1b9a.
+FARBE_SPITZE = "#646464"
+#: Text des Legendeneintrags der Schraffur
+SCHRAFFUR_TEXT = "netzabhängig (schraffiert)"
+#: Linien je oertlicher Kantenlaenge h und ihre Breite [px] (14.10.2026)
+SCHRAFFUR_DICHTE = 3.0
+SCHRAFFUR_BREITE = 2.5
+#: Richtung, quer zu der die Schraffurlinien laufen (Ebenen d·x = k·Abstand),
+#: schief zu allen Achsen, damit jede Seite eines Quaders Linien bekommt
+_SCHRAFFUR_RICHTUNG = np.array([0.80, 0.53, 0.28])
+
+
+def zonen_getrennt(flaeche, kn, name: str, werte, zonen_elemente, zonen_werte):
+    """Die Ergebnisoberflaeche mit unstetiger Faerbung an der Grenze der
+    netzabhaengigen Zonen (seit 14.10.2026): die Zellen der Zonenelemente
+    bekommen eigene Punkte mit ``zonen_werte`` (je Modellknoten, Mittel nur
+    ueber die Zonenelemente), die uebrigen behalten ``werte`` (an den
+    Randknoten das Mittel nur ueber die Aussenelemente). ``kn`` je Punkt der
+    Modellknoten, Zellen mit ``cell_data["elem"]``. Rueckgabe ein Gitter mit
+    denselben Feldern (``vtkOriginalPointIds`` = Modellknoten, ``elem``);
+    ohne Zonenzelle die Oberflaeche selbst mit ``werte``."""
+    kn = np.asarray(kn, np.int64)
+    werte = np.asarray(werte, float)
+    elem = np.asarray(flaeche.cell_data["elem"], np.int64)
+    in_z = np.isin(elem, np.asarray(zonen_elemente, np.int64))
+    if not in_z.any():
+        flaeche.point_data[name] = werte[kn]
+        return flaeche
+    f = flaeche.copy(deep=False)
+    f.point_data["_kn"] = kn
+    f.cell_data["_zelle"] = np.arange(f.n_cells)
+    teile = []
+    for maske, w in ((~in_z, werte), (in_z, np.asarray(zonen_werte, float))):
+        if not maske.any():
+            continue
+        t = f.extract_cells(np.flatnonzero(maske))
+        t.point_data[name] = w[np.asarray(t.point_data["_kn"], np.int64)]
+        teile.append(t)
+    neu = teile[0].merge(teile[1:], merge_points=False) if len(teile) > 1 else teile[0]
+    neu.point_data["vtkOriginalPointIds"] = np.asarray(neu.point_data["_kn"], np.int64)
+    if "vtkOriginalCellIds" in flaeche.cell_data:
+        neu.cell_data["vtkOriginalCellIds"] = np.asarray(flaeche.cell_data["vtkOriginalCellIds"])[
+            np.asarray(neu.cell_data["_zelle"], np.int64)]
+    neu.set_active_scalars(name)
+    return neu
+
+
+def schraffur(flaeche, abstand: float):
+    """Schraffurlinien auf einer Oberflaeche: die Schnitte mit den parallelen
+    Ebenen d·x = k·abstand. Linien, keine Flaeche - die Farbe darunter bleibt
+    zwischen ihnen sichtbar. None, wenn keine Linie entsteht."""
+    if flaeche is None or not getattr(flaeche, "n_points", 0) or not abstand > 0:
+        return None
+    f = flaeche.triangulate() if hasattr(flaeche, "triangulate") else flaeche
+    d = _SCHRAFFUR_RICHTUNG / np.linalg.norm(_SCHRAFFUR_RICHTUNG)
+    s = np.asarray(f.points, float) @ d / float(abstand)
+    f = f.copy()
+    f.point_data["_schraffur"] = s
+    werte = np.arange(np.floor(s.min()) + 0.5, np.ceil(s.max()), 1.0)
+    if not len(werte):
+        return None
+    try:
+        linien = f.contour(isosurfaces=[float(x) for x in werte], scalars="_schraffur")
+    except Exception:                     # noqa: BLE001 - dann ohne Schraffur
+        return None
+    return linien if linien.n_cells else None
+
+
+def schraffur_muster(x0: float, y0: float, seite: float, farbe: str = None):
+    """Ein schraffiertes Quadrat (Rahmen und Diagonalen) in Bildpunkten der
+    Ansicht - das Muster des Legendeneintrags, als 2D-Darsteller. Die Lage
+    setzt texte_ordnen vor jedem Bild neu (_muster_punkte)."""
+    import vtk
+    from matplotlib.colors import to_rgb
+    poly = _muster_punkte(x0, y0, seite)
+    koord = vtk.vtkCoordinate()
+    koord.SetCoordinateSystemToDisplay()
+    mapper = vtk.vtkPolyDataMapper2D()
+    mapper.SetInputData(poly)
+    mapper.SetTransformCoordinate(koord)
+    akt = vtk.vtkActor2D()
+    akt.SetMapper(mapper)
+    akt.GetProperty().SetColor(*to_rgb(farbe or FARBE_SPITZE))
+    akt.GetProperty().SetLineWidth(1.5)
+    return akt
+
+
+def add_spitzenzonen(plotter, model: Model, stellen: list, lage=None, faktor: float = 1.0,
+                     einheit: str = "N/mm²", textgroesse: int = 10, ausser=None) -> int:
+    """Die Zonen auffaelliger netzabhaengiger Stellen umranden und an jeder
+    Stelle ein Zeichen setzen (Plan Singularitaeten vom 10.10.2026, Paket 2).
+
+    Umrandet wird die Oberflaeche der Zonenelemente an ihren Kanten (Knick ab
+    30 Grad) - so steht die Zone auch ueber einer Faerbung sichtbar da, ohne
+    sie zu verdecken. Das Zeichen sitzt in der Mitte der Stelle und nennt
+    sigma_v an den Integrationspunkten mit „netzabhängig“. ``lage`` ist die
+    gezeichnete Lage der Knoten (verformt) oder None; ``ausser`` die
+    ausgeblendeten Elemente - eine Zone, die ganz darin liegt, entfaellt.
+    Rueckgabe: Zahl der gezeichneten Stellen."""
+    from ..spannungen import dezimal
+    # add_point_labels legt „<Name>-points“ und „<Name>-labels“ an
+    for n in ("spitzen_zonen", "spitzen_schraffur", "spitzen_zeichen", "spitzen_zeichen-points",
+              "spitzen_zeichen-labels"):
+        try:
+            plotter.remove_actor(n)
+        except Exception:                 # noqa: BLE001 - war noch nicht da
+            pass
+    if ausser:
+        weg = np.fromiter((int(i) for i in ausser), np.int64)
+        stellen = [s for s in stellen
+                   if not np.isin(np.asarray(s.get("zone", []), np.int64), weg).all()]
+    if not stellen:
+        return 0
+    el = np.unique(np.concatenate([np.asarray(s.get("zone", []), np.int64) for s in stellen]))
+    if ausser:
+        el = el[~np.isin(el, weg)]
+    g = teilnetz(model, el)
+    X = np.asarray(lage if lage is not None else model.nodes, float)
+    if g.n_cells:
+        if lage is not None and len(lage) == g.n_points:
+            g.points = X
+        try:
+            huelle = g.extract_surface(algorithm="dataset_surface")
+        except TypeError:                 # aeltere pyvista ohne die Wahl
+            huelle = g.extract_surface()
+        kanten = huelle.extract_feature_edges(
+            feature_angle=30.0, boundary_edges=True, non_manifold_edges=False, manifold_edges=False)
+        if kanten.n_cells:
+            plotter.add_mesh(kanten, color=FARBE_SPITZE, line_width=2, name="spitzen_zonen")
+        # grau schraffiert ueber der Ergebnisfarbe (seit 13.10.2026): Abstand
+        # ein Drittel der oertlichen Kantenlaenge der Stellen, 2,5 px breit.
+        # Bis zum 14.10.2026 h/2 und 1,5 px - auf dem Bild V21 kaum von den
+        # schwarzen Netzkanten zu unterscheiden; ein heller Rand um die Linien
+        # (Probe n3/proto_schraffur.png) deckte die Farbe darunter zu
+        hs = [float(s.get("h", 0.0) or 0.0) for s in stellen if float(s.get("h", 0.0) or 0.0) > 0]
+        abstand = float(np.median(hs)) / SCHRAFFUR_DICHTE if hs else 0.02 * float(np.linalg.norm(
+            np.ptp(np.asarray(huelle.points, float), axis=0)))
+        linien = schraffur(huelle, abstand)
+        if linien is not None:
+            plotter.add_mesh(linien, color=FARBE_SPITZE, line_width=SCHRAFFUR_BREITE, name="spitzen_schraffur")
+    punkte, texte = [], []
+    for s in stellen:
+        kn = np.asarray(s.get("knoten", []), np.int64)
+        kn = kn[(kn >= 0) & (kn < len(X))]
+        punkte.append(X[kn].mean(axis=0) if len(kn) else np.asarray(s.get("mitte"), float))
+        texte.append(bildtext(f"netzabhängig {dezimal(float(s.get('sv_max', 0.0)) / 1e6 * faktor)} "
+                              f"{einheit}"))
+    plotter.add_point_labels(np.asarray(punkte, float), texte, font_size=int(textgroesse),
+                             text_color=FARBE_SPITZE, point_color=FARBE_SPITZE, point_size=10,
+                             render_points_as_spheres=True, shape="rounded_rect",
+                             shape_color="#ffffff", shape_opacity=0.8, always_visible=True,
+                             name="spitzen_zeichen")
+    return len(stellen)
+
+
+#: Kennzeichen verteilend eingeleiteter Stabenden (seit 13.10.2026): Umriss der
+#: Einleitungsflaeche und ein Punkt am Stabknoten, petrol - neben den gruenen
+#: Lagern und den Magenta-Spitzen gut zu unterscheiden
+FARBE_STABEINLEITUNG = "#00838f"
+
+
+def stabeinleitung_umrisse(model: Model, lage=None) -> tuple:
+    """(Umrisse, Punkte) der verteilend eingeleiteten Stabenden: je
+    Kopplung die konvexe Huelle ihrer Flaechenknoten in deren Ebene als
+    geschlossener Linienzug, dazu der Stabknoten. ``lage`` sind verformte
+    Knotenlagen oder None."""
+    from ..stabeinleitung import ist_verteilkopplung
+    X = np.asarray(lage if lage is not None and len(lage) == model.nn else model.nodes, float)
+    linien, punkte = [], []
+    for sk in getattr(model, "starrkoerper", None) or []:
+        if not ist_verteilkopplung(sk):
+            continue
+        S = np.asarray([int(x) for x in sk.slaves if 0 <= int(x) < len(X)], np.int64)
+        if len(S) < 3 or not 0 <= int(sk.master) < len(X):
+            continue
+        P = X[S]
+        c = P.mean(axis=0)
+        _u, _s, vt = np.linalg.svd(P - c, full_matrices=False)
+        Q = np.column_stack([(P - c) @ vt[0], (P - c) @ vt[1]])
+        try:
+            from scipy.spatial import ConvexHull
+            reihe = ConvexHull(Q).vertices
+        except Exception:                 # noqa: BLE001 - entartet: keine Huelle
+            continue
+        linien.append(P[list(reihe) + [reihe[0]]])
+        punkte.append(X[int(sk.master)])
+    return linien, punkte
+
+
+def add_stabeinleitungen(plotter, model: Model, lage=None) -> int:
+    """Verteilend eingeleitete Stabenden in der Ansicht kennzeichnen: der
+    Umriss ihrer Einleitungsflaeche und ein Punkt am Stabknoten. Rueckgabe:
+    Zahl der gezeichneten."""
+    for n in ("stabeinleitungen", "stabeinleitungen_punkte"):
+        try:
+            plotter.remove_actor(n)
+        except Exception:                 # noqa: BLE001 - war noch nicht da
+            pass
+    try:
+        linien, punkte = stabeinleitung_umrisse(model, lage)
+    except Exception:                     # noqa: BLE001 - ein Kennzeichen darf nichts sperren
+        return 0
+    if not linien:
+        return 0
+    # ein Linienzug je Umriss in einem PolyData
+    pkt = np.vstack(linien)
+    zellen, start = [], 0
+    for z in linien:
+        zellen += [len(z)] + list(range(start, start + len(z)))
+        start += len(z)
+    netz = pv.PolyData(pkt, lines=np.asarray(zellen, np.int64))
+    plotter.add_mesh(netz, color=FARBE_STABEINLEITUNG, line_width=3, name="stabeinleitungen")
+    plotter.add_mesh(pv.PolyData(np.asarray(punkte, float)), color=FARBE_STABEINLEITUNG, point_size=9,
+                     render_points_as_spheres=True, name="stabeinleitungen_punkte")
+    return len(linien)
+
+
 def flaechenecken(model: Model, f):
     """Die vier benannten Eckpunkte einer Flaeche - oder None."""
     e = [int(x) for x in (getattr(f, "ecken", None) or [])]
@@ -2834,18 +3465,28 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                                      lines=np.asarray(rahmen_lines)),
                          color=FARBE_LAST, line_width=2, name="lastfenster")
     # ---- Temperatur auf Elementen -------------------------------------------
+    vorgespannt: list = []      # Temperaturlasten, die eine umgerechnete Vorspannung sind
     for k_l, tl in enumerate(case.temp_loads):
         if getattr(tl, "_geo", False) or not 0 <= int(tl.elem) < len(model.elements) \
                 or int(tl.elem) in weg_e:
             continue
         e = model.elements[tl.elem]
         c = model.nodes[[int(n) for n in e.nodes]].mean(axis=0)
+        if getattr(tl, "aus_vorspannung", 0.0):
+            # eine umgerechnete Vorspannung (RFEM-Import): die Kraft steht da,
+            # nicht die Temperatur, mit der sie gerechnet wird (13.10.2026);
+            # E und alpha der Umrechnung nennt der Text der gewaehlten Last
+            vorgespannt.append(c)
+            merken("vorspannung", c, f"Vorspannung {lz(tl.aus_vorspannung, 'vorspannung')} {eh.einheit('kraft')}")
+            merke("temp_loads", k_l, c)
+            continue
         (warm if tl.dT >= 0 else kalt).append(c)
         merken("temperatur", c, f"ΔT {_lastzahl(tl.dT, 1)}")
         merke("temp_loads", k_l, c)
     d = max(4.0, 0.012 * size)
     for punkte, farbe, name in ((warm, FARBE_LAST_WARM, "temp_warm"),
-                                (kalt, FARBE_LAST_KALT, "temp_kalt")):
+                                (kalt, FARBE_LAST_KALT, "temp_kalt"),
+                                (vorgespannt, FARBE_VORSPANNUNG, "temp_vorspannung")):
         if punkte:
             P = np.asarray(punkte, float).reshape(-1, 3)
             if len(P) > PFEILE_MAX:
@@ -2889,7 +3530,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         vvec += [-d * Fv, d * Fv]
         merke("vorspannungen", k_l, a, -d * Fv)
         merke("vorspannungen", k_l, b, d * Fv)
-        merken("vorspannung", 0.5 * (a + b), "F_v " + lz(abs(Fv), "vorspannung"))
+        # die Sollkraft nach Verankerung (13.10.2026) als F_soll, die
+        # Anfangsdehnung wie bisher als F_v
+        merken("vorspannung", 0.5 * (a + b),
+               ("F_soll " if getattr(v, "sollkraft", False) else "F_v ") + lz(abs(Fv), "vorspannung"))
     _pfeile(plotter, vpts, vvec, size, "vorspannung", FARBE_VORSPANNUNG)
     # ---- die angeklickte Last: dieselben Symbole in der Hervorhebungsfarbe ----
     if h_pts:
@@ -3235,8 +3879,7 @@ def skala_umrechnen(skala: dict, faktor: float) -> dict:
     for k in ("wmin", "wmax", "grenze"):
         if out.get(k) is not None:
             out[k] = float(out[k]) * f
-    if out.get("above_label") and out.get("wmax") is not None:
-        out["above_label"] = _text(out["wmax"])
+    # ueber der Skala steht seit dem 13.10.2026 „> Skalenmax“, keine Zahl
     if out.get("below_label") and out.get("wmin") is not None:
         out["below_label"] = _text(out["wmin"])
     return out
@@ -3841,7 +4484,7 @@ def _stabname(model: Model, elem: int, breite: int = 12) -> str:
 
 def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
               ueberschrift: str = "", einheiten=None, knoten=None, elemente=None,
-              feld: str = None, seite: str = "max") -> list:
+              feld: str = None, seite: str = "max", spitzen: dict = None) -> list:
     """Die Kennzahlen des gezeigten Ergebnisses als Textzeilen.
 
     Das sind die Zahlen, nach denen zuerst gefragt wird: groesste Ausnutzung,
@@ -3861,6 +4504,11 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     die Zahlen im Bild untereinander stehen und die Zeile nicht ueber das
     Modell laeuft. Einheiten und Nachkommastellen kommen aus *einheiten*
     (einheiten.Einheiten, sonst ``model.einheiten``).
+
+    ``spitzen`` (seit 10.10.2026, Plan Singularitaeten Paket 2): zu einer
+    Volumenspannung oder der Vergleichsspannung ``{"zk": Maske der Knoten in
+    den Zonen auffaelliger Stellen, "zeile": Text}`` - der Groesstwert steht
+    dann ausserhalb der Zonen, die Spitze in der Zeile darunter.
     """
     from ..einheiten import Einheiten
     from .. import spannungen as spn
@@ -3995,15 +4643,43 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             a, b = int(np.argmin(R[:, j])), int(np.argmax(R[:, j]))
             zeilen.append(zeile(nm, z(R[a, j], art), f"Knoten {a}",
                                 z(R[b, j], art), f"Knoten {b}", E.einheit(art)))
+    zk = (spitzen or {}).get("zk")
+    getrennt_fn = (spitzen or {}).get("getrennt")
+
+    def ohne_zone(a, art=None):
+        # ausserhalb der Zonen auffaelliger netzabhaengiger Stellen: seit
+        # 14.10.2026 mit den Randknoten, gemittelt nur ueber die
+        # Aussenelemente (spitzenanzeige.getrennt) - wie Faerbung und Skala;
+        # bis dahin fielen alle Knoten der Zonen weg
+        if a is None:
+            return a
+        g = None
+        if getrennt_fn is not None and art is not None:
+            try:
+                g = getrennt_fn(*art)
+            except Exception:               # noqa: BLE001 - dann wie bisher
+                g = None
+        if g is not None and len(g["aussen"]) == len(a):
+            return np.where(g["nur_zone"], np.nan, g["aussen"])
+        if zk is None or len(a) != len(zk):
+            return a
+        b = np.array(a, float, copy=True)
+        b[np.asarray(zk, bool)] = np.nan
+        return b
     vm = getattr(res, "node_vm_max", None) if gewaehlt("sig_v") else None
+    huelle = vm is not None
     if vm is None and gewaehlt("sig_v"):
         vm = getattr(res, "node_vm", None)
+    if vm is not None:
+        vm = ohne_zone(vm, None if huelle else ("vergleich", "sv", "max"))
     if vm is not None and sicht is not None:
         vm = nur_sicht(vm)
     if vm is not None and len(vm) and np.isfinite(vm).any():
         k = int(np.nanargmax(vm))
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
                             f"Knoten {k}", E.einheit("spannung")))
+        if spitzen:
+            zeilen.append(bildtext(spitzen["zeile"]))
     werte = dict(util or {}) if gewaehlt("ausnutzung") else {}
     # wie result_field: die elastische Ausnutzung nur ohne Nachweis (util
     # None). Bis zum 24.09.2026 "if not werte": bei leerer Ermuedungskarte
@@ -4018,7 +4694,10 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         # eine Spannungsgroesse: kleinster und groesster Wert mit Knoten, in
         # der Einheit ihrer Farbskala
         try:
-            werte_k = nur_sicht(np.asarray(spn.je_knoten(model, res, ak[0], ak[1], seite), float))
+            werte_k = np.asarray(spn.je_knoten(model, res, ak[0], ak[1], seite), float)
+            if ak[0] == "volumen":
+                werte_k = ohne_zone(werte_k, (ak[0], ak[1], seite))
+            werte_k = nur_sicht(werte_k)
         except Exception:                   # noqa: BLE001
             werte_k = None
         if werte_k is not None and len(werte_k) and np.isfinite(werte_k).any():
@@ -4030,6 +4709,8 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             zeilen.append(bildtext(f"{titel}: min {spn.dezimal(werte_k[a] * f_)} "
                                    f"(Knoten {a}), max {spn.dezimal(werte_k[b] * f_)} "
                                    f"(Knoten {b}) [{neu}]"))
+            if spitzen and ak[0] == "volumen":
+                zeilen.append(bildtext(spitzen["zeile"]))
     if werte:
         i = max(werte, key=lambda k: werte[k])
         zeilen.append(f"max. Ausnutzung {werte[i]:.{E.nk_ausnutzung}f} an {_stabname(model, i)}"

@@ -124,6 +124,8 @@ MODELLTEILE = {
     "lines": "geometrie", "flaechen": "geometrie", "koerper": "geometrie",
     "supports": "lager", "line_supports": "lager", "surface_supports": "lager",
     "hinges": "gelenke", "kopplungen": "gelenke", "starrkoerper": "gelenke", "federn": "gelenke",
+    # Einleitung der Stabenden in Volumen (13.10.2026) - steht nur in der Datei, wenn gesetzt
+    "stabeinleitung": "gelenke",
     "grenzschichten": "gelenke",
     # je Lastfall geteilt: die Lasten nach „lasten“, der Rest nach „lastfaelle“;
     # die Lastgenerierer stehen bei den Lasten, die sie erzeugen
@@ -148,6 +150,9 @@ TEXTFELDER = frozenset(("kommentar", "comment", "beschreibung", "description", "
 #: die Nummer eines Lastfalls und einer Kombination (ihr Name ist der
 #: Schluessel), die Groesse des Lagersymbols
 ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",)}
+#: Neue Felder mit ihrer Vorgabe zaehlen nicht: model.NEUE_FELDER (ein Mechanismus
+#: fuer alle Pakete seit der Zusammenfuehrung am 14.10.2026; bis dahin standen hier
+#: NEUE_VORGABEN, NEU_AUF_VORGABE und SPAETERE_FELDER).
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
               "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
@@ -273,16 +278,19 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool):
     weg = set(TEXTFELDER) | set(ANZEIGEFELDER.get(schluessel, ()))
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
+    from .model import ist_vorgabe
 
     def objekt(x):
         if not isinstance(x, dict):
             return x
-        y = {k: v for k, v in x.items() if k not in weg}
+        # neue Felder mit ihrer Vorgabe zaehlen nicht (model.NEUE_FELDER)
+        y = {k: v for k, v in x.items() if k not in weg and not ist_vorgabe(schluessel, k, v)}
         if schluessel == "load_cases":
             for f in LASTFELDER:
                 if isinstance(y.get(f), list):
-                    y[f] = [{k: v for k, v in l.items() if k not in TEXTFELDER} if isinstance(l, dict) else l
-                            for l in y[f]]
+                    y[f] = [{k: v for k, v in l.items()
+                             if k not in TEXTFELDER and not ist_vorgabe(f"load_cases.{f}", k, v)}
+                            if isinstance(l, dict) else l for l in y[f]]
         return y
     if isinstance(wert, list):
         return [objekt(x) for x in wert]
@@ -307,9 +315,10 @@ def rechenkennung(model) -> tuple:
     verwendet = _verwendete_namen(model, d)
     teile: dict = {g: [] for g in GRUPPEN}
     einzeln: dict = {}
+    from .model import ist_vorgabe
     for schluessel, wert in d.items():
         gruppe = MODELLTEILE.get(schluessel, "sonstiges")
-        if gruppe is None:
+        if gruppe is None or ist_vorgabe("", schluessel, wert):
             continue
         if schluessel in _NAMENSSAMMLUNGEN and isinstance(wert, dict):
             wert = {k: v for k, v in wert.items() if k in verwendet}

@@ -1684,6 +1684,56 @@ def _punkte_im_polygon(P2: np.ndarray, Q: np.ndarray, rand: float = 0.0) -> np.n
     return innen
 
 
+def _abstand_zum_vieleck(P2: np.ndarray, Q: np.ndarray, block: int = 2_000_000) -> np.ndarray:
+    """Abstand der Punkte Q (m,2) zum Rand des geschlossenen Vielecks P2 (n,2)
+    - ueber alle Randstrecken, in Bloecken von hoechstens ``block`` Paaren."""
+    P2 = np.asarray(P2, float)
+    Q = np.asarray(Q, float).reshape(-1, 2)
+    A = P2
+    B = np.roll(P2, -1, axis=0)
+    AB = B - A
+    L2 = np.maximum(np.einsum("ij,ij->i", AB, AB), 1e-300)
+    aus = np.full(len(Q), np.inf)
+    schritt = max(1, block // max(1, len(A)))
+    for a0 in range(0, len(Q), schritt):
+        q = Q[a0:a0 + schritt, None, :]                       # (k, 1, 2)
+        t = np.clip(np.einsum("kij,ij->ki", q - A[None], AB) / L2, 0.0, 1.0)
+        fuss = A[None] + t[:, :, None] * AB[None]
+        aus[a0:a0 + schritt] = np.linalg.norm(q - fuss, axis=2).min(axis=1)
+    return aus
+
+
+#: Toleranzen der starren Scheibe (seit 10.10.2026): Abstand zur Ebene und
+#: zum Umriss, in dem ein Netzknoten noch zur Scheibe gehoert. Bis dahin galt
+#: fuer beides max(0,5 mm; 0,1 r) - am Drehlager (r = 25,5 bis 28,3 mm) also
+#: bis 2,8 mm, und an 6 der 64 Scheiben hingen 16 Knoten im Inneren der
+#: Platte mit an der Scheibe (bis 2,46 mm unter der Oberflaeche, bis 2,4 mm
+#: neben dem Lochrand), die RFEM nicht koppelt. Die Knoten des Lochrands
+#: weichen dort hoechstens 0,03 mm vom Kreis ab (Pruefung gegen die rf6,
+#: scratchpad scheiben_werk).
+STARR_TOL_EBENE = 1e-5
+STARR_TOL_RAND = 1e-4
+#: Bogenlaenge je Abschnitt beim Abtasten krummer Raender: die Sehne
+#: liegt dann hoechstens s^2/(8 R) innen, bei R = 8 mm 0,004 mm - weit unter
+#: STARR_TOL_RAND. Mit fester Teilung 32 je Bogen waeren es bei einem
+#: Vollkreis von 25,5 mm 0,12 mm, mehr als die Toleranz.
+STARR_ABTASTUNG = 5e-4
+
+
+def _starre_teilung(model: Model, f) -> int:
+    """Teilung je krummer Randlinie fuer STARR_ABTASTUNG (32 bis 4096)."""
+    laenge = 0.0
+    for name in (f.linien or []):
+        ln = model.lines.get(name)
+        if ln is None or (ln.typ or "polyline") == "polyline":
+            continue
+        try:
+            laenge = max(laenge, float(ln.laenge(model)))
+        except Exception:                 # noqa: BLE001 - dann die Grundteilung
+            continue
+    return int(min(4096, max(32, np.ceil(laenge / STARR_ABTASTUNG))))
+
+
 def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     """Starre Flaechen (RFEM: SurfaceStiffnessRigid) als starre Kopplung umsetzen.
 
@@ -1696,6 +1746,12 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     Stabknoten) ist Master, alle Netzknoten in der Scheibe haengen ueber
     starre Kopplungen an ihm. So geht die Stabkraft in den Koerper, und die
     Scheibe verformt sich nicht.
+
+    „In der Scheibe“ heisst: auf ihrer Ebene (STARR_TOL_EBENE) und in ihrem
+    Umriss oder hoechstens STARR_TOL_RAND daneben. Liegt die Scheibe genau
+    ueber einer Bohrung - am Drehlager alle 64, Deckel mit dem Durchmesser
+    des Lochs, ohne Mutter oder Unterlegscheibe -, sind das nur die Knoten
+    des Lochrands, und so schliesst auch RFEM sie an.
 
     Rueckgabe {"flaechen": n, "kopplungen": n, "offen": [(Name, Grund)]}.
     Vorhandene Kopplungen dieser Art werden vorher entfernt (neues Netz).
@@ -1712,12 +1768,13 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     stab: set = set()
     andere: set = set()
     for e in model.elements:
-        (stab if e.typ in ("beam", "truss") else andere).update(int(x) for x in e.nodes)
+        # Seile wie Fachwerkstaebe (14.10.2026: RFEM-Seile kommen als Seil an)
+        (stab if e.typ in ("beam", "truss", "seil") else andere).update(int(x) for x in e.nodes)
     baum = cKDTree(N)
     unendlich = float("inf")
     for f in starre:
         try:
-            P = np.asarray(f.randpunkte(model, 32), float).reshape(-1, 3)
+            P = np.asarray(f.randpunkte(model, _starre_teilung(model, f)), float).reshape(-1, 3)
         except Exception:                 # noqa: BLE001
             P = np.zeros((0, 3))
         if len(P) < 3:
@@ -1727,26 +1784,39 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
         _u, _s, vt = np.linalg.svd(P - c)
         e1, e2, nrm = vt[0], vt[1], vt[2]
         r = float(np.linalg.norm(P - c, axis=1).max())
-        tol = max(0.5e-3, 0.1 * r)
-        # Master: der Stabknoten in der Mitte - sonst der naechste Knoten dort
-        mitte = [int(i) for i in baum.query_ball_point(c, tol)]
+        # Master: der Stabknoten in der Mitte - sonst der naechste Knoten dort.
+        # Hier bleibt der weite Fangkreis: er sucht den einen Knoten, an dem
+        # der Stab endet, und der muss nicht genau in der Mitte des Umrisses
+        # liegen.
+        tol_mitte = max(0.5e-3, 0.1 * r)
+        mitte = [int(i) for i in baum.query_ball_point(c, tol_mitte)]
         master = next((i for i in mitte if i in stab), None)
         if master is None and mitte:
             master = min(mitte, key=lambda i: float(np.linalg.norm(N[i] - c)))
         if master is None:
             bericht["offen"].append((f.name, "kein Knoten in der Mitte der Scheibe"))
             continue
-        # Slaves: die Netzknoten in der Scheibe (in der Ebene und im Umriss)
-        kand = np.asarray(baum.query_ball_point(c, r + tol), dtype=int)
+        # Slaves: die Netzknoten in der Scheibe - auf ihrer Ebene und im
+        # Umriss. Ist der Rand selbst nicht ganz eben, gilt seine eigene
+        # Abweichung als Toleranz zur Ebene.
+        tol_ebene = max(STARR_TOL_EBENE, float(np.abs((P - c) @ nrm).max()))
+        kand = np.asarray(baum.query_ball_point(c, r + STARR_TOL_RAND), dtype=int)
         if not kand.size:
             bericht["offen"].append((f.name, "keine Knoten in der Scheibe"))
             continue
         D = N[kand] - c
-        ebene = np.abs(D @ nrm) <= tol
+        ebene = np.abs(D @ nrm) <= tol_ebene
+        kand, D = kand[ebene], D[ebene]
         Q = np.column_stack([D @ e1, D @ e2])
         P2 = np.column_stack([(P - c) @ e1, (P - c) @ e2])
-        innen = _punkte_im_polygon(P2, Q, rand=tol)
-        slaves = [int(i) for i in kand[ebene & innen] if int(i) != master and int(i) in andere]
+        innen = _punkte_im_polygon(P2, Q)
+        if not innen.all():
+            # knapp ausserhalb: Abstand zum Rand des Umrisses, nicht eine
+            # Streckung vom Schwerpunkt aus (die bei einem langen Umriss die
+            # Laengsseiten kaum weitet)
+            aussen = np.flatnonzero(~innen)
+            innen[aussen] = _abstand_zum_vieleck(P2, Q[aussen]) <= STARR_TOL_RAND
+        slaves = [int(i) for i in kand[innen] if int(i) != master and int(i) in andere]
         if not slaves:
             bericht["offen"].append((f.name, "keine Netzknoten in der Scheibe - liegt darunter "
                                              "kein vernetzter Koerper?"))
@@ -1769,6 +1839,75 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
         for name, grund in bericht["offen"]:
             C.warn(log, f"  starre Fläche {name} nicht gekoppelt: {grund}")
     return bericht
+
+
+def _starre_kopplungen(model: Model) -> dict:
+    """{Gruppe: (Master, Slaves)} der Kopplungen starrer Flaechen, als frozensets."""
+    aus: dict = {}
+    for k in getattr(model, "kopplungen", None) or []:
+        g = str(getattr(k, "gruppe", ""))
+        if g.startswith(STARR_GRUPPE):
+            aus.setdefault(g, (set(), set()))
+            aus[g][0].add(int(k.node_a))
+            aus[g][1].add(int(k.node_b))
+    return {g: (frozenset(a), frozenset(b)) for g, (a, b) in aus.items()}
+
+
+def starre_kopplungen_erneuern(model: Model, log: list = None) -> dict:
+    """Vor jeder Rechnung: die Kopplungen der starren Flaechen (Gruppe
+    STARR_GRUPPE) so, wie :func:`starre_flaechen_koppeln` sie heute baut.
+
+    Ein gespeichertes Modell traegt seine Kopplungen mit sich. Bis zum
+    10.10.2026 koppelte die Toleranz max(0,5 mm; 0,1 r) auch Knoten im
+    Plattenkoerper an eine Scheibe ueber einer Bohrung (Drehlager: 16 Knoten
+    an 6 Scheiben); die Oberflaeche koppelte vor der Rechnung aber nur neu,
+    wenn es noch gar keine solche Kopplung gab - das Modell rechnete weiter
+    mit der alten. Jetzt wird neu gekoppelt und verglichen: stimmt das
+    Ergebnis mit dem Bestand ueberein, bleibt der Bestand unveraendert stehen
+    (dieselben Objekte in derselben Reihenfolge, derselbe Kommentar an der
+    Flaeche); sonst gilt die neue Kopplung, und ``log`` bekommt eine Zeile.
+    Kopplungen anderer Gruppen (Stabenden, Fugen, von Hand) fasst das nicht an.
+
+    Rueckgabe {"geaendert": bool, "vorher": {Gruppe: Knotenzahl},
+    "nachher": {Gruppe: Knotenzahl}}."""
+    from .begriffe import anzahl
+    starre = starre_flaechen(model)
+    if not starre or not getattr(model, "elements", None):
+        return {"geaendert": False, "vorher": {}, "nachher": {}}
+    bestand = list(getattr(model, "kopplungen", None) or [])
+    alt = _starre_kopplungen(model)
+    merk = {f.name: (f.kommentar, getattr(f, "steifigkeit", "")) for f in starre}
+    teil_log: list = []
+    starre_flaechen_koppeln(model, teil_log)
+    neu = _starre_kopplungen(model)
+    vorher = {g: len(s) for g, (_m, s) in alt.items()}
+    nachher = {g: len(s) for g, (_m, s) in neu.items()}
+    if neu == alt:
+        model.kopplungen = bestand
+        for f in starre:
+            f.kommentar, f.steifigkeit = merk[f.name]
+        return {"geaendert": False, "vorher": vorher, "nachher": nachher}
+    if log is not None and not alt:
+        # aeltere Datei ganz ohne Kopplung: gemeldet wie bisher
+        log.extend(teil_log)
+    elif log is not None:
+        def spanne(werte) -> str:
+            werte = sorted(werte)
+            if not werte:
+                return "0"
+            return f"{werte[0]}" if werte[0] == werte[-1] else f"{werte[0]}–{werte[-1]}"
+        n = len(neu)
+        anders = sorted((g[len(STARR_GRUPPE):] for g in set(alt) | set(neu) if alt.get(g) != neu.get(g)),
+                        key=lambda s: (len(s), s))
+        liste = ", ".join(anders[:8]) + (f" und {len(anders) - 8} weitere" if len(anders) > 8 else "")
+        je = "je " if n > 1 and len(set(nachher.values())) == 1 else ""
+        log.append(f"{anzahl(n, 'starre Fläche', 'starre Flächen')} neu gekoppelt, die alten "
+                   f"Kopplungen sind erneuert (Regel seit 10.10.2026): jetzt {je}"
+                   f"{spanne(nachher.values())} Knoten, zusammen {sum(nachher.values())}; vorher "
+                   f"{spanne(vorher.values())}, zusammen {sum(vorher.values())}; geändert an "
+                   f"{anzahl(len(anders), 'Fläche', 'Flächen')}: {liste}")
+        log.extend(z for z in teil_log if z.startswith("WARNUNG"))
+    return {"geaendert": True, "vorher": vorher, "nachher": nachher}
 
 
 STABENDE_GRUPPE = "Stabende "
@@ -1843,21 +1982,52 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
     Knoten, den RFEM als integriert fuehrt (Flaeche.integrierte_knoten), ohne
     dass etwas an ihm haengt, bleibt frei - er traegt nichts.
 
+    **Verteilend (seit 13.10.2026).** Verlangt die Einstellung des Stabendes
+    (Member.einleitung, sonst Model.stabeinleitung) die Stirnflaeche oder
+    einen Kreisring, haengt das Stabende statt an den 1-3 Knoten ueber eine
+    Verteilkopplung (RBE3, Starrkoerper "Stabende K<n>") an allen Knoten
+    dieser Flaeche, flaechenanteilig gewichtet (statik3d.stabeinleitung).
+    Findet sich die Flaeche nicht (Stabende im Innern, Stab schraeg zur
+    Flaeche), bleibt es bei den 1-3 Knoten, und das Protokoll sagt warum.
+    Lastknoten und Lagerknoten haengen immer an den 1-3 Knoten.
+
+    **Mit Drehanteil (seit 14.10.2026).** Die Kopplung an die 1-4 Knoten
+    rechnet assemble.kopplungen als RBE3 (assemble.stabende_zwang): Der
+    Stabknoten folgt dem Verschiebungsfeld des Elements und, wenn an ihm ein
+    Biegestab haengt, auch der Drehung der Knoten - ein Moment geht als
+    Kraeftepaare ins Volumen. Bis dahin hing er ueber u_m = u_i starr an jedem
+    Knoten, und die Kopplung trug ein Moment, das keinem Teil des Modells das
+    Gleichgewicht hielt (Befund b3). Dafuer braucht es mindestens drei Knoten,
+    die nicht auf einer Geraden durch das Stabende liegen. Liegt das Ende
+    eines Biegestabs auf einer Kante oder einer Ecke des Netzes (2 bzw. 1
+    Knoten), haengt es darum an allen vier Ecken des Elements, und das
+    Protokoll nennt es (``erweitert``).
+
     Rueckgabe {"stabenden": n, "kopplungen": n, "anschluesse": [(Knoten,
-    Stab oder Grund, Koerper, Zahl der Knoten)]}. Vorhandene Kopplungen
-    dieser Art werden vorher entfernt (neues Netz).
+    Stab oder Grund, Koerper, Zahl der Knoten)], "verteilt": [(Knoten, Stab,
+    Koerper, Kennung, Zahl der Knoten, Flaeche [m2])], "rueckfall": [(Knoten,
+    Stab, Grund)], "erweitert": [(Knoten, Stab)]}. Vorhandene Kopplungen und
+    Verteilkopplungen dieser Art werden vorher entfernt (neues Netz).
     """
     from scipy.spatial import cKDTree
     from .importers import _common as C
-    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": []}
+    from . import stabeinleitung as SE
+    from . import assemble as _asm
+    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": [], "verteilt": [], "rueckfall": [],
+               "erweitert": []}
     model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
                         if not str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE)]
+    if any(SE.ist_verteilkopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
+        model.starrkoerper = [sk for sk in model.starrkoerper if not SE.ist_verteilkopplung(sk)]
+    model._stabende_rueckfall = {}
     if not model.nn or not model.elements:
         return bericht
     stab: dict = {}
     andere: set = set()
     for i, e in enumerate(model.elements):
-        if e.typ in ("beam", "truss"):
+        # Seilenden wie die der Zugstaebe (14.10.2026: RFEM-Seile kommen als
+        # Seil an, bis dahin als Fachwerkstab - sonst hingen sie im Leeren)
+        if e.typ in ("beam", "truss", "seil"):
             for x in e.nodes:
                 stab.setdefault(int(x), []).append(i)
         else:
@@ -1903,6 +2073,8 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         for i in (getattr(mem, "elements", None) or []):
             stabname[int(i)] = str(mname)
     unendlich = float("inf")
+    enden = SE.staebe_an_enden(model)
+    randseiten: dict = {}
     for n in sorted(kandidaten):
         p = N[n]
         kand = np.asarray(baum.query_ball_point(p, float(radius.max()) + toleranz), dtype=int)
@@ -1939,24 +2111,114 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         partner = [int(T[kand[j], i]) for i in range(4) if abstand[j, i] > toleranz]
         if not partner:                                    # numerisch entartet: alle vier
             partner = [int(x) for x in T[kand[j]]]
+        sname = (", ".join(sorted({stabname.get(i, f"E{i}") for i in stab[n]}))
+                 if n in stab else grund[n])
+        if n in stab:
+            e = SE.einstellung(model, n, enden)
+            if e["art"] != "punkt":
+                fl = SE.flaeche_finden(model, n, kname[kand[j]], e, randseiten, toleranz)
+                if "grund" not in fl:
+                    text = (f"{SE.kennung(e)}: {'Kreisring' if e['art'] == 'ring' else 'Stirnfläche'} "
+                            f"{SE.mm2(fl['flaeche'])} mm², {len(fl['knoten'])} Knoten ({e['quelle']})")
+                    model.add_starrkoerper(int(n), fl["knoten"], "RBE3", fl["gewichte"],
+                                           name=STABENDE_GRUPPE + f"K{n}", kommentar=text,
+                                           momente=fl.get("momente"))
+                    bericht["stabenden"] += 1
+                    bericht["verteilt"].append((int(n), sname, kname[kand[j]], SE.kennung(e),
+                                                len(fl["knoten"]), float(fl["flaeche"]),
+                                                float(fl.get("flaeche_nenn", 0.0))))
+                    continue
+                bericht["rueckfall"].append((int(n), sname, fl["grund"]))
+                model._stabende_rueckfall[int(n)] = SE.kennung(e)
+            # Ein Biegestab braucht fuer sein Moment mindestens drei Knoten,
+            # die nicht auf einer Geraden durch das Stabende liegen (14.10.2026)
+            if (any(model.elements[i].typ == "beam" for i in stab[n])
+                    and not _asm._drehung_bestimmt(N[partner] - p)):
+                partner = [int(x) for x in T[kand[j]]]
+                bericht["erweitert"].append((int(n), sname))
         for q in partner:
             model.kopplungen.append(Kopplung(int(n), int(q),
                                              [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                                              [unendlich, unendlich, unendlich],
                                              STABENDE_GRUPPE + f"K{n}"))
-        sname = (", ".join(sorted({stabname.get(i, f"E{i}") for i in stab[n]}))
-                 if n in stab else grund[n])
         bericht["stabenden"] += 1
         bericht["kopplungen"] += len(partner)
         bericht["anschluesse"].append((int(n), sname, kname[kand[j]], len(partner)))
-    if log is not None and bericht["stabenden"]:
+    if log is not None and bericht["verteilt"]:
+        C.say(log, SE.verteilt_zeile(bericht["verteilt"]))
+    if log is not None and bericht["rueckfall"]:
+        C.warn(log, f"{len(bericht['rueckfall'])} Stabenden ohne Einleitungsfläche, sie hängen weiter an "
+                    "1–3 Knoten: " + "; ".join(f"{s} (K{n}): {g}" for n, s, g in bericht["rueckfall"][:6])
+               + (" …" if len(bericht["rueckfall"]) > 6 else ""))
+    if log is not None and bericht["erweitert"]:
+        C.say(log, f"{len(bericht['erweitert'])} Enden von Biegestäben liegen auf einer Kante oder Ecke des "
+                   "Netzes – für ihr Moment hängen sie an allen vier Ecken des Elements (mindestens drei Knoten, "
+                   "die nicht auf einer Geraden liegen): "
+                   + ", ".join(f"{s} (K{n})" for n, s in bericht["erweitert"][:6])
+                   + (" …" if len(bericht["erweitert"]) > 6 else ""))
+    if log is not None and bericht["anschluesse"]:
         liste = ", ".join(f"{s} (K{n}) → {k}" for n, s, k, _z in bericht["anschluesse"][:6])
         arten = sorted({grund[n] for n, _s, _k, _z in bericht["anschluesse"]})
-        C.say(log, f"{bericht['stabenden']} Knoten an Volumen angeschlossen ({', '.join(arten)}) - "
+        C.say(log, f"{len(bericht['anschluesse'])} Knoten an Volumen angeschlossen ({', '.join(arten)}) - "
                    f"der Knoten liegt auf oder in dem Körper, wie in RFEM integriert; "
-                   f"{bericht['kopplungen']} starre Kopplungen an die Knoten des Elements dort: {liste}"
+                   f"{bericht['kopplungen']} Kopplungen an die Knoten des Elements dort (RBE3, mit "
+                   f"Drehanteil an Biegestäben): {liste}"
                    + (" …" if len(bericht["anschluesse"]) > 6 else ""))
     return bericht
+
+
+def stabenden_erneuern(model: Model, log: list = None) -> bool:
+    """Die Anschluesse der Stabenden an die Einstellung angleichen - vor jeder
+    Rechnung und nach dem Umstellen (seit 13.10.2026).
+
+    Gibt es noch keinen Anschluss (aeltere Datei), wird angeschlossen wie
+    bisher. Sonst wird je angeschlossenem Stabende verglichen, wie es haengt
+    (an 1-3 Knoten oder verteilt, mit welcher Flaeche) und wie es nach
+    Member.einleitung bzw. Model.stabeinleitung haengen soll; nur bei einem
+    Unterschied wird neu angeschlossen. Ohne die Einstellung und mit den
+    Anschluessen von davor aendert sich nichts. True, wenn neu angeschlossen
+    wurde."""
+    from . import stabeinleitung as SE
+    if not model.elements or not getattr(model, "koerper", None):
+        return False
+    from . import assemble as _asm
+    ist: dict = {}
+    partner: dict = {}
+    for k in (getattr(model, "kopplungen", None) or []):
+        if str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE):
+            ist.setdefault(int(k.node_a), "punkt")
+            partner.setdefault(int(k.node_a), []).append(int(k.node_b))
+    ohne_momente = False
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        if SE.ist_verteilkopplung(sk):
+            ist[int(sk.master)] = SE.kennung_der_kopplung(sk)
+            ohne_momente = ohne_momente or len(getattr(sk, "momente", None) or []) != len(sk.slaves)
+    if not ist or ohne_momente:
+        # aeltere Datei: ohne Anschluss, oder verteilend ohne die konsistenten
+        # Momentenzeilen (vor dem 14.10.2026)
+        stabenden_koppeln(model, log)
+        return True
+    stab = SE.stabelemente_an(model)
+    enden = SE.staebe_an_enden(model)
+    rueck = getattr(model, "_stabende_rueckfall", None) or {}
+    X = np.asarray(model.nodes, float)
+    biege = _asm.biegeknoten(model)
+    for n, k_ist in ist.items():
+        if n not in stab:
+            continue                                   # Last- und Lagerknoten: immer 1-3 Knoten
+        if (k_ist == "punkt" and n in biege
+                and not _asm._drehung_bestimmt(X[partner.get(n, [])] - X[n])):
+            # angeschlossen vor dem 14.10.2026 an 1-2 Knoten: fuer das Moment
+            # des Biegestabs an die Ecken des Elements (stabenden_koppeln)
+            stabenden_koppeln(model, log)
+            return True
+        k_soll = SE.kennung(SE.einstellung(model, n, enden))
+        if k_ist == "punkt" and rueck.get(n) == k_soll:
+            continue                                   # die Flaeche fehlte schon beim letzten Mal
+        if k_ist != k_soll:
+            stabenden_koppeln(model, log)
+            return True
+    return False
 
 
 def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:

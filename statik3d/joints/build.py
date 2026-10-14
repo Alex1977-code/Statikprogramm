@@ -169,9 +169,11 @@ def add_bolt(model: Model, node_a: int, node_b: int, bolt: Bolt,
     axis = axis / grip
     matname = f"Schraube {bolt.grade}"
     if matname not in model.materials:
+        # Art Schraube (13.10.2026): f_yb und f_ub heissen so in der Maske, und
+        # ein Schraubenkoerper aus Volumen verfestigt bis f_ub
         model.add_material(Material(matname, E=210e9, nu=0.3, rho=7850.0,
                                     alpha=1.2e-5, fy=bolt.fyb, fu=bolt.fub,
-                                    grade=""))
+                                    grade="", art="Schraube"))
     secname = f"{bolt.size} Schaft"
     if secname not in model.sections:
         from ..model import Section

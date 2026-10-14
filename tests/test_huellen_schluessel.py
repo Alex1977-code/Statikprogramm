@@ -31,7 +31,10 @@ Die Abnahme (vorher festgelegt, R1a bis R1f):
   Kombinationen, Umhuellende, EC3 und Ermuedung bitgleich mit 6791f9f.
   Seit B4 (1854da3, 08.10.2026) traegt der Kontaktzustand eines Ergebnisses
   zwei Felder mehr, die Pendelmarken (NEU_IM_KONTAKTZUSTAND); sie werden
-  geprueft und fuer den Vergleich abgenommen.
+  geprueft und fuer den Vergleich abgenommen. Seit dem 13.10.2026 (N1)
+  tragen die Ermuedungsergebnisse das Feld ``nicht_anwendbar``
+  (NEU_IN_NACHWEISEN); mit seinem Leerwert wird es fuer den Vergleich
+  abgenommen, mit einem anderen Wert bleibt es und der Vergleich schlaegt an.
 
 Nachbesserung nach der Gegenpruefung von dc80e1f (04.10.2026, R1g bis R1j):
 
@@ -87,6 +90,27 @@ _REF = {}
 #: dass sie da und im Beispiel ueberall null sind (nichts pendelt), und nimmt sie
 #: fuer den Vergleich mit 6791f9f ab.
 NEU_IM_KONTAKTZUSTAND = ("umkehr", "pendel")
+
+#: Felder der Nachweisergebnisse, die nach 6791f9f dazukamen, mit ihrem
+#: Leerwert im Fingerabdruck (erzeugen.wert): ``nicht_anwendbar`` der Ermuedung
+#: (13.10.2026, plastische Rechnung). Bis zum 13.10.2026 stand hier nichts -
+#: das neue Feld liess R1e und R1f („bitgleich mit 6791f9f“) anschlagen,
+#: obwohl keine Zahl anders war.
+NEU_IN_NACHWEISEN = {"nicht_anwendbar": (False, "")}
+
+
+def _ohne_neue_felder(x):
+    """Den Fingerabdruck eines Nachweises (Felder als [Name, Wert]) ohne die
+    Felder aus NEU_IN_NACHWEISEN, solange sie ihren Leerwert tragen."""
+    if isinstance(x, list):
+        aus = []
+        for y in x:
+            if (isinstance(y, list) and len(y) == 2 and isinstance(y[0], str)
+                    and y[0] in NEU_IN_NACHWEISEN and y[1] in NEU_IN_NACHWEISEN[y[0]]):
+                continue
+            aus.append(_ohne_neue_felder(y))
+        return aus
+    return x
 
 #: Typen, die solve_all in der Umhuellenden GZT (Schluessel ULS) sammelt
 GZT_GRUPPE = ("ULS", "EQU", "ACC", "USER")
@@ -491,7 +515,7 @@ def test_r1e_ermuedung():
           lesbar == soll["lesbar"],
           "; ".join(f"{k}: D = {v['D']!r}, {v['governing'][:30]}" for k, v in lesbar.items()))
     check("R1e: der ganze Ermüdungsnachweis bitgleich mit 6791f9f",
-          R["wert"](an.fatigue) == soll["fatigue"], an.fatigue.summary())
+          _ohne_neue_felder(R["wert"](an.fatigue)) == soll["fatigue"], an.fatigue.summary())
     # Gegenstueck: dieselbe Ergebniskombination unter dem Namen „FAT“ - die
     # Ermuedung liest Lastfaelle, keine Umhuellende, und bleibt gleich
     m2 = R["hallenrahmen_ermuedung"]("FAT")
@@ -531,7 +555,9 @@ def test_r1f_beispiele():
         if b == "contact":
             check(f"R1f {b}: Kontaktzustand mit den Pendelmarken aus B4, keine Bedingung pendelte",
                   bool(marken) and all(da and z == 0 for da, z in marken.values()), str(marken))
-        ist = R["verdichtet"](R["analyse"](an))
+        abdruck = R["analyse"](an)
+        abdruck["fatigue"] = _ohne_neue_felder(abdruck["fatigue"])
+        ist = R["verdichtet"](abdruck)
         anders = [f"{teil}/{k}" for teil in soll[b] if isinstance(soll[b][teil], dict)
                   for k in set(soll[b][teil]) | set(ist.get(teil) or {})
                   if (ist.get(teil) or {}).get(k) != soll[b][teil].get(k)]

@@ -530,9 +530,9 @@ RFEM 6 legt je Stabtyp eine eigene Umsetzungstabelle an — der Tabellenname
 | `MemberImplRigid` | starrer Stab | `beam` | — |
 | `MemberImplRib` | Rippe | `beam` | die mitwirkende Plattenbreite fehlt |
 | `MemberImplTruss`, `MemberImplTrussOnlyN` | Fachwerkstab | `truss` | — |
-| `MemberImplTension` | Zugstab | `truss` | fällt in RFEM bei Druck aus – hier trägt er auch Druck |
-| `MemberImplCompression` | Druckstab | `truss` | fällt in RFEM bei Zug aus – hier trägt er auch Zug |
-| `MemberImplCable` | Seil | `truss` | Seiltheorie (Durchhang, Ausfall bei Druck) fehlt |
+| `MemberImplTension` | Zugstab | `truss`, „trägt nur: Zug“ (mit `isActiveInCompression` = 1 Zug und Druck) | — (bis zum 14.10.2026: fällt in RFEM bei Druck aus – hier trägt er auch Druck) |
+| `MemberImplCompression` | Druckstab | `truss`, „trägt nur: Druck“ | — (bis zum 14.10.2026: fällt in RFEM bei Zug aus – hier trägt er auch Zug) |
+| `MemberImplCable` | Seil | `seil`, „trägt nur: Zug“ (Kettenlinie nach Theorie III. Ordnung) | — (bis zum 14.10.2026: `truss`, Seiltheorie (Durchhang, Ausfall bei Druck) fehlt) |
 | `MemberImplBuckling` | Knickstab | `beam` | — |
 | `MemberImplSpring`, `MemberImplDamper` | Feder-/Dämpferstab | `truss` | nur die Achssteifigkeit |
 | `MemberImplCoupling…` | Kopplungen | `beam` bzw. `truss` | — |
@@ -544,7 +544,20 @@ Importprotokoll:
 
     64 Staebe mit 64 Stabelementen gelesen
       Stabtypen: 64x Zugstab
-    WARNUNG:   Stabtyp Zugstab: faellt in RFEM bei Druck aus - hier traegt er auch Druck.
+      64 Zugstäbe tragen nur Zug (fallen wie in RFEM bei Druck aus): S1, S2, …
+
+`rfem6_db.stab_nur` setzt „trägt nur“ (seit 14.10.2026); ein vorher
+gespeichertes Modell bekommt beim Öffnen einen Importhinweis „zugstab“, und
+`rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um, in der
+Oberfläche seit dem 14.10.2026 über Datei › Austausch › „Stabtypen aus RFEM
+nachlesen…“ (Maske „Stabtypen aus RFEM“, `rfem6_db.rfem_datei` nennt die
+Datei). Ein Seil
+kommt seit dem 14.10.2026 als Seil an („1 Seil trägt nur Zug (fällt wie in
+RFEM bei Druck aus; Durchhang als Kettenlinie nach Theorie III. Ordnung): S1“),
+das Modell trägt dazu das Merkmal `meta["rfem_seile"]`; fehlt es, kommt
+derselbe Hinweis, und die Umstellung macht aus dem Fachwerkstab wieder ein
+Seil. Seilenden auf einem Körper hängen wie die Enden der Zugstäbe an dessen
+Netz (`fugen.stabenden_koppeln`).
 
 Ein unbekannter Tabellenname wird als Balken übernommen und mit seinem Namen
 genannt — eine neue RFEM-Version bleibt so lesbar.
@@ -819,11 +832,18 @@ auf geneigte Flächen beschränkt: schon bei einer waagerechten hing das
 Vorzeichen am **Umlaufsinn des Randpolygons** (gemessen: Umlauf 1‑2‑3‑4 gab
 R_z = +8000 N, Umlauf 4‑3‑2‑1 gab −8000 N; mit Richtung in beiden Fällen
 +8000 N). Umgerechnet wird mit derselben Tabelle wie bei Stab- und
-Linienlasten (`_richtung_aus_kennzahl`); Kennzahl 0 bleibt der Normaldruck,
-eine nicht geführte Kennzahl wird als Normaldruck angesetzt **und das steht
-im Protokoll**. Ob RFEM eine Flächenlast auf die wahre oder auf die
-projizierte Fläche bezieht, ist aus der Datei nicht lesbar — angesetzt wird
-die wahre Fläche, und auch das sagt das Protokoll.
+Linienlasten (`LOAD_DIRECTION`, siehe „Lastrichtung nach der Schnittstelle“
+unten): 0, 1 und 2 (lokal x, y und z) wirken in den lokalen Flächenachsen
+(„Flächenlasten in den lokalen Flächenachsen“ unten), 11 bis 13 global je
+wahrer Fläche, 14 bis 16 global je projizierter Fläche (je Element mit
+|n · e| auf die Elementfläche umgerechnet). Jede unbekannte Kennzahl wird
+nicht angesetzt, sondern als WARNUNG mit Zahl und Bedeutung genannt, ebenso
+14 bis 16 auf einer Fläche ohne Netz. Bis zum 14.10.2026 galt 0 als
+Normaldruck, 1 als global Z, 2 als global X und 3 als global Y; eine nicht
+geführte Kennzahl wurde als Normaldruck angesetzt, und ob die wahre oder die
+projizierte Fläche gemeint war, galt als nicht lesbar. Am Vormittag des
+14.10.2026 galt kurz 2 als Druck nach der Netznormalen, und 0 und 1 wurden
+nur genannt.
 
 **Die Flächenlasten zählen sich ab.** Jede Zeile der Tabelle `SurfaceLoad`
 taucht im Protokoll auf — auch die, die nicht übernommen wird: Lasten anderer
@@ -871,6 +891,22 @@ Lastzeilen zählt. Gemessen an zwei Gleichlasten auf den Stäben [1, 2] und
 (Gleichlast) an ihre Staebe gehaengt“, jetzt steht dazu „2
 Stabzuordnungen … (Stab 2, 77)“. Fehlen einer Lastzeile alle Stäbe, zählt sie
 wie bisher unter „ohne Ziel oder ohne Betrag“.
+
+**Stand seit 13.10.2026.** Der Abschnitt „Einwirkungskategorie“ unten und die
+folgenden zu Bemessungssituation und Ermüdung im Namen beschreiben den Import bis
+zum 12.10.2026 (`ACTION_CATEGORY`, 11 → Q, der Name verfeinert das Rückfall-Q).
+Seitdem gilt: Die Kennzahl 11 ist die Vorgabe jedes neuen Lastfalls und sagt nichts;
+die Einwirkung kommt aus der Aufzählung `LoadCase.ActionCategory` der Dlubal-API
+(`KATEGORIE_AUS_KENNZAHL`), aus einer Aktion mit anderer Kennzahl, aus der Struktur
+(nur in Ermüdungskombinationen: FAT) und aus dem Inhalt (nur Vorspannlasten: P, nur
+Eigengewicht: G); sonst ist der Lastfall „nicht zugeordnet“ (`NZ`), und Kombinationen
+mit ihm werden nicht gerechnet. Der Name setzt nichts: `category_from_text` (die
+Regeln unten) liefert nur den „Vorschlag nach dem Namen“ im Protokoll. Das Kennzeichen
+„Bemessungslastfall, bereits faktorisiert“ setzt der Import, wenn der Lastfall in der
+Quelldatei nur in GZT-Kombinationen steht, jedes Mal als eigene Alternative mit dem
+Faktor 1,0. Eine Stabvorspannung kommt als `TempLoad` mit dem Merkmal „aus
+Vorspannung“ (Kraft, E, α). Einzelheiten: Benutzerhandbuch, Kapitel 4, „Einwirkung
+nicht zugeordnet, Bemessungslastfall und Vorspannung“.
 
 **Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
 alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
@@ -1214,9 +1250,135 @@ Enthält eine Ergebniskombination Klammern oder Zwischenergebnisse, wird das
 gemeldet: die Überlagerung innerhalb einer Alternative trifft die Absicht
 dann nur bei linearer Rechnung.
 
-Die Lastrichtung (`loadDirection`) steht mit Rohwert und Deutung im Protokoll
-(`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y`) — die Deutung
-folgt der Reihenfolge des RFEM-Dialogs und ist damit Annahme.
+**Lastrichtung nach der Schnittstelle** (seit 14.10.2026). Die Lastrichtung
+(`loadDirection`) steht mit Rohwert und Deutung im Protokoll. Die Deutung
+folgt der Schnittstelle von RFEM 6.15 (`member_load.proto`, `line_load.proto`,
+`surface_load.proto`, Enum `LoadDirection`): 0, 1 und 2 sind lokal x, y und
+z, 3 und 4 die Hauptachsen u und v (nur bei Stäben), 11 bis 13 global X, Y
+und Z je wahrer Länge bzw. Fläche, 14 bis 16 dieselben je projizierter. Dass
+die Datenbank der rf6-Datei genau diese Zahlen führt, zeigt das
+Drehlager-Modell: Seine Flächenlasten mit `loadDirection` 0 und 1 stehen in
+RFEMs eigenem, in der Datei gespeichertem Bericht als „Lokales
+Koordinatensystem, Richtung x“ bzw. „y“. Bis zum 14.10.2026 galt
+`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y` – eine Annahme
+nach der Reihenfolge des RFEM-Dialogs, die nicht stimmte.
+
+Übernommen wird, was sich ohne Annahme abbilden lässt. Stablasten in lokal x
+gehen als lokale Stablast an den Stab, ebenso lokal y und z an jedem Stab,
+der nicht senkrecht steht. Dort bilden RFEM und Statik3D die Stabachsen auf
+dieselbe Weise: x vom Anfang zum Ende, z in der Ebene aus x und global Z zu +Z
+hin, y = z × x, gedreht um den Stabdrehwinkel. Am senkrechten Stab bildet
+Statik3D die y-Achse aus global X, und ob RFEM dieselbe Achse nimmt, ist nicht
+belegt; eine Last in lokal y oder z an einem senkrechten Stab wird darum
+genannt und nicht angesetzt. Ebenso werden die Hauptachsen u und v genannt
+und Linienlasten in lokalen Linienachsen (0 bis 2), weil das Programm die
+lokalen Linienachsen von RFEM nicht übernimmt (sie hängen an eigenen
+Drehangaben der Linie: `rotationType`, `angle`, `helpNode`, `inPlaneXY`,
+`surface` – das ist kein kleiner Schritt und offen). Linienlasten je
+projizierter Länge (14 bis 16) tragen den Bezug „je Projektion“. Bis zum
+14.10.2026 kam eine Stablast in lokal y als global Z an, eine in lokal z als
+global X, und eine in lokal x fiel als „unbekannt“ weg; Linienlasten in jeder
+anderen Kennzahl als 2 und 3 wurden global Z.
+
+**Flächenlasten in den lokalen Flächenachsen** (seit 14.10.2026,
+`rfem6_db._flaechenachsen`). Eine Flächenlast in lokal x, y oder z geht als
+Last in der globalen Richtung dieser Achse an die Elemente der Fläche bzw. als
+Geometrielast an die Fläche; jede Zielfläche bekommt ihre eigenen Achsen. Die
+Achsenangaben stehen in der Tabelle `SurfaceAxes` (über `axes_id` der
+Flächenumsetzung): `inputAxesRotationSpecificationType` (0 Drehung um Winkel,
+die Vorgabe; 1 parallel zu Linien; 2 zum Punkt gerichtet; 3 parallel zu einem
+Koordinatensystem – `surface.proto`, `InputAxesRotationSpecificationType`),
+`inputAxesAngularRotation` und `reversedLocalAxisZ`. Übernommen wird nur die
+Kategorie 0, und nur an ebenen Flächen.
+
+Die Regel für die Achsen ist **zum Teil belegt und im Übrigen angenommen**.
+Belegt ist: Eine Fläche in der XY-Ebene hat ihre x-Achse in Richtung der
+globalen X-Achse, an einer geneigten Fläche dreht sich das System mit, und die
+Richtung von z hängt an der Definitionsrichtung und der Reihenfolge der
+Randlinien (Dlubal-FAQ 000292 „Anzeige und Umkehrung der lokalen Achsen“ und
+005361). „Lokale z-Achse umkehren“ dreht z und y um (Online-Handbuch RFEM 6,
+Kapitel „Flächen“, Abschnitt „Spezifische Achsen“; im RFEM-5-Handbuch: z
+umgekehrt, die übrigen Achsen nach der Rechte-Hand-Regel), die Kategorie
+„Drehung um Winkel“ dreht x und y um z. Angenommen ist: z ist die Normale des
+Randumlaufs nach der Rechte-Hand-Regel, beginnend mit der ersten Randlinie in
+ihrer Definitionsrichtung; x ist die globale X-Achse in die Ebene projiziert,
+an einer Fläche quer zu X (Projektion kürzer als 0,001) die Y-Achse; der
+Winkel dreht rechtsdrehend um die gegebenenfalls umgekehrte z-Achse und steht
+im Bogenmaß; y = z × x. Weder das Handbuch noch die Schnittstelle (die nur die
+Eingabefelder führt), noch RFEMs in der Datei gespeicherter Bericht (die
+Tabelle „Flächen – Achsen“ hat dort keine Daten) noch die 21 mitgelieferten
+Beispielmodelle (keine einzige Flächenlast in lokal x oder y, keine
+Ergebnisse) legen die Projektion, den Umlaufsinn oder den Drehsinn genauer
+fest. Das Importprotokoll nennt die Annahme darum als WARNUNG.
+
+Gewölbte Flächen bekommen keine Achsen aus RFEM: dort beziehen sich die
+Flächenachsen in RFEM auf die Achsen der einzelnen finiten Elemente (Handbuch
+RFEM 6, „Verformungen“). Lokal z wirkt dort wie bisher senkrecht nach der
+Netznormalen (eine in RFEM umgedrehte z-Achse wirkt dort nicht). Lokal x und y
+setzt der Import seit dem 14.10.2026 (abends) **nicht** an. Er hängt sie als
+Geometrielast mit `lokal = {"achse": 0|1}` an die Fläche und nennt sie als
+WARNUNG mit Flächen, Lastfällen und Beträgen, dazu den Weg über zylindrische
+Achsen (`rfem6_db._gewoelbt_melden`). Bis zum 14.10.2026 (vormittags) fielen
+lokal x und y an jeder Fläche weg, und lokal z folgte immer der Netznormalen.
+
+Der Grund ist die **Sichtprüfung des Anwenders in RFEM vom 14.10.2026** an den
+Flächen 142 und 159 des Drehlagers. Sie belegt RFEMs Achsenregel für diese
+gewölbten Viereckflächen: x läuft um den Umfang, auf beiden Flächen im
+Umlaufsinn entgegengesetzt, das ist global X in die Tangentialebene
+projiziert. z zeigt bei beiden von der Bolzenachse weg, bei 142 nach der
+Umkehrung. RFEMs Lastdarstellung derselben Lasten zeigt dagegen 1 394,75 kN/m²
+axial und gleichgerichtet und 339 kN/m² gleichsinnig um den Umfang. Achsen und
+Lastbild passen nicht zusammen; der Anwender hält das für einen Fehler in RFEM.
+Was RFEM rechnet, ist nicht bekannt, darum rät der Import nicht.
+
+**Zylindrische Flächenachsen** (`Flaeche.lokale_achsen = "zylinder"`,
+`Flaeche.achse_plus_x`, beide in `NEUE_FELDER`; Maske der Fläche „Lokale
+Achsen“ und „+x (axial)“, nur bei gewölbten Flächen). Die Achse bestimmt
+`model.zylinderachse` aus der Geometrie: Die Richtung kommt aus den geraden
+Randlinien (sonst aus zwei Bogenmittelpunkten), der Punkt aus einem
+Bogenmittelpunkt; alle Randpunkte müssen denselben Abstand zur Achse haben.
++x ist `achse_plus_x`, auf die Achse projiziert, sonst die Richtung der ersten
+geraden Randlinie. Je Elementseite gilt: x axial, z radial nach außen,
+y = x × z, also rechtsdrehend um +x um den Umfang. Das System ist linkshändig,
+weil y um +x rechtsdrehend und z nach außen beides verlangt war; gebraucht
+werden nur die Richtungen. Die Lasten verteilt `Model._geometrielast_legen` je
+Elementseite (`zylinderachsen_je_seite`). Ohne die Einstellung entsteht keine
+Elementlast, und die Last trägt den Grund „lokale Achsen der gewölbten Fläche
+nicht gewählt“. Die Maske setzt die Wahl für alle Flächen derselben Bohrung,
+die Lasten in lokalen Achsen tragen (`flaechen_gleicher_achse`). Automatisch
+gesetzt wird sie nie.
+
+**Am Drehlager-Modell** (`Drehlager_V15_4_export.rf6`) stehen alle 711
+Flächenlasten (315 in lokal x, 396 in lokal y) auf den Flächen 142 und 159.
+Beide sind keine waagerechten Ebenen, sondern Viereckflächen aus zwei Geraden
+und zwei Bögen: die beiden Halbmäntel der Bolzenbohrung in V30 (Radius 300 mm,
+Länge 230 mm, Achse in global Y bei X = 0, Z = −1,28 m; 142 auf der −Z-Seite
+mit umgekehrter z-Achse, 159 auf der +Z-Seite). Der Import hängt sie an die
+Flächen und setzt sie nicht an. Am Mittel-Modell gemessen (550 Elementseiten
+je Fläche, Lastsumme aus den Seitenlasten wie in der Rechnung, Kopie
+`drehlager_zylinderachsen.json` mit zylindrischen Achsen und +x = +Y in RFEM)
+ergibt sich in LF1 aus lokal x 604,7 kN axial in −Y (RFEM) und aus lokal y ein
+Moment von 44,07 kNm um die Bolzenachse ohne Restkraft. Mit RFEMs angezeigten
+Achsen wären es 385,2 kN in −X und keine axiale Kraft. Bis zum Vormittag des
+14.10.2026 kamen diese Lasten senkrecht zur Fläche bzw. in global Z an,
+danach wurden sie nur genannt.
+
+**Stablasten: Bezug in der Lastrichtung** (seit 14.10.2026). Eine eigene
+Spalte für „je wahrer“ oder „je projizierter Länge“ hat `LineTypeLoadImplForce`
+nicht; der Bezug steckt in `loadDirection`. Die Schnittstelle von RFEM 6.15
+(`tools/WebServiceGrpc/proto/dlubal/api/rfem/loads/member_load.proto`,
+`MemberLoad.LoadDirection`) nennt `LOAD_DIRECTION_LOCAL_X = 0`, `LOCAL_Y = 1`,
+`LOCAL_Z = 2`, `PRINCIPAL_U = 3`, `PRINCIPAL_V = 4`,
+`GLOBAL_X/Y/Z_OR_USER_DEFINED_U/V/W_TRUE_LENGTH = 11/12/13` und
+`…_PROJECTED_LENGTH = 14/15/16`. 11 bis 13 stimmen mit der Deutung aus den
+Daten des CBG-Trolley überein (dort kommen nur 0, 11, 12 und 13 vor). Der
+Import übernimmt 14 bis 16 als globale Last mit dem Bezug „je Projektion“
+(`rfem6_db.LOAD_DIRECTION_PROJEKTION`, `Linienlast.bezugslaenge`); beim Seil
+rechnet Theorie III. Ordnung daraus die Parabel, aus 11 bis 13 die
+Kettenlinie. Bis zum 14.10.2026 standen 14 bis 16 als „Lastrichtung
+unbekannt“ im Protokoll und fehlten. Die Werte 0 bis 4 deutet `_stablasten`
+seit dem 14.10.2026 nach der Schnittstelle (siehe „Lastrichtung nach der
+Schnittstelle“ oben); bis dahin galten 1 bis 3 als global Z, X und Y.
 
 Querschnitte kommen aus `SectionData_parameterValues` mit ihren SI-Kennwerten
 (A, A_y, A_z, I_y, I_z, I_t); der Name entsteht aus den Bemaßungssymbolen der
@@ -1486,6 +1648,11 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 **Der Rückweg ist geprüft:** Was Statik3D auch lesen kann, wird in
 `tests/test_exporters.py` exportiert, wieder eingelesen und verglichen —
 Knotenzahl, Stäbe, Profilkennwerte, Lager, Lastfälle.
+
+**Seile** stehen im DXF-Export als LINE und im Nastran-Export als CBAR wie
+die Fachwerkstäbe. Bis zum 14.10.2026 ließen beide Exporte Seilelemente weg;
+seit dem 14.10.2026 kommen auch die Seile aus RFEM 6 als Seil an, die bis
+dahin als Fachwerkstab im Export standen.
 
 ### Zum SAF-Export: Stablasten und Ergebniskombinationen
 

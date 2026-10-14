@@ -39,6 +39,15 @@ def warn(log: Optional[list], msg: str) -> None:
     say(log, "WARNUNG: " + msg)
 
 
+def hinweis_gewichtslos(log: Optional[list], name: str) -> None:
+    """Hinweis zu einem Werkstoff mit Dichte 0 (gewichtsloses Hilfsmaterial,
+    Klarstellung des Anwenders vom 13.10.2026). Nur ein Vorschlag: den
+    Schalter „vom Volumennachweis ausnehmen“ setzt der Anwender, nie der
+    Import. Gleicher Wortlaut fuer RFEM 6, RFEM-Tabellen und HiCAD."""
+    say(log, f"Hinweis: Werkstoff ‚{name}‘ ist gewichtslos – Hilfsmaterial? Körper daraus "
+             "können vom Volumennachweis ausgenommen werden.")
+
+
 # --------------------------------------------------------------------------
 # Knoten
 # --------------------------------------------------------------------------

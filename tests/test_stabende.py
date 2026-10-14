@@ -85,10 +85,15 @@ def test_anschluss():
     R = float(r.reactions[unten, 2].sum())
     check("das Fundament traegt die 70 kN der beiden Zugstaebe (vorher: 0, die Staebe hingen im Leeren)",
           abs(R + 70e3) < 1e-3 * 70e3, f"{R:.1f} N")
+    # Seit 14.10.2026 haengt das Stabende als RBE3 an den Knoten: es folgt
+    # ihrem baryzentrischen Mittel, dem Verschiebungsfeld der Seite an seinem
+    # Ort (bis dahin starr an jedem Knoten, u_f = u_q)
     u_f = r.u[fuss, :3]
-    u_p = r.u[pf, :3].mean(axis=0)
-    check("das Stabende bewegt sich mit den gekoppelten Knoten (starr)",
-          float(np.linalg.norm(u_f - u_p)) < 1e-3 * max(float(np.linalg.norm(u_f)), 1e-12), f"{np.linalg.norm(u_f - u_p):.2e} m")
+    Xp = np.asarray(m.nodes, float)[pf]
+    lam = np.linalg.lstsq(np.vstack([Xp.T, np.ones(len(pf))]), np.append(m.nodes[fuss], 1.0), rcond=None)[0]
+    u_p = lam @ r.u[pf, :3]
+    check("das Stabende folgt dem baryzentrischen Mittel der gekoppelten Knoten (RBE3)",
+          float(np.linalg.norm(u_f - u_p)) < 1e-4 * max(float(np.linalg.norm(u_f)), 1e-12), f"{np.linalg.norm(u_f - u_p):.2e} m")
     check("die Zugstaebe tragen ihre Last: der obere Stab 50 kN",
           abs(float(np.linalg.norm(r.u[kopf, :3] - r.u[fuss, :3])) * 210e9 * 1e-4 / 0.6 - 50e3) < 50, "")
 

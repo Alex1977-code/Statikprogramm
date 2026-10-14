@@ -2440,6 +2440,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 lasten = je_art.get(art)
                 if not lasten:
                     continue
+                titel = lc.lastart_titel(art)
                 if art == "eigengewicht":
                     g = lasten[0]
                     zahl = (f"g = ({zl.zahl_text(g[0], punkt=True)}, {zl.zahl_text(g[1], punkt=True)}, {zl.zahl_text(g[2], punkt=True)}) m/s²" if (g[0] or g[1])

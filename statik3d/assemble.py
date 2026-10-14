@@ -8,6 +8,8 @@ Neu gegenueber Version 1:
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from scipy import sparse
 
@@ -696,10 +698,11 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
         idx = np.array([i for i, _ in springs])
         val = np.array([k for _, k in springs])
         K = (K + sparse.coo_matrix((val, (idx, idx)), shape=K.shape)).tocsr()
+    K_bezug = K                 # Elemente und Federn, ohne Straffedern (Stabenden-RBE3)
     Kk = kopplungen(model, K, aktiv=aktiv)
     if Kk is not None:
         K = (K + Kk).tocsr()
-    Ks = starrkoerper(model, K)
+    Ks = starrkoerper(model, K, K_bezug=K_bezug)
     return (K + Ks).tocsr() if Ks is not None else K
 
 
@@ -1028,11 +1031,22 @@ def _belegte_knoten(model) -> tuple:
     for g in (model.gap_elements or []):
         for n in (g.node_a, g.node_b):
             hart.setdefault(int(n), f"Spaltelement {g.node_a}-{g.node_b}")
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
     for k in (getattr(model, "kopplungen", None) or []):
-        for n in (k.node_a, k.node_b):
+        # Starre Scheiben und Stabenden (seit 14.10.2026, wie die
+        # Verteilkopplung): eine gebundene Mitte faellt aus ihnen heraus
+        # (kopplungen), nur ihr Master zaehlt
+        g = str(getattr(k, "gruppe", "") or "")
+        knoten = ((k.node_a,) if DREHANTEIL and (g.startswith(STARR_GRUPPE) or g.startswith(STABENDE_GRUPPE))
+                  else (k.node_a, k.node_b))
+        for n in knoten:
             hart.setdefault(int(n), f"Kopplung {getattr(k, 'gruppe', '') or ''}".strip())
+    from .stabeinleitung import ist_verteilkopplung
     for sk in (getattr(model, "starrkoerper", None) or []):
-        for n in [sk.master] + list(sk.slaves):
+        # Die verteilende Kopplung eines Stabendes laesst gebundene Mitten
+        # selbst aus (stabeinleitung.wirksame_gewichte) - nur ihr Master zaehlt
+        knoten = [sk.master] if ist_verteilkopplung(sk) else [sk.master] + list(sk.slaves)
+        for n in knoten:
             hart.setdefault(int(n), f"Starrkörper {getattr(sk, 'name', '') or ''}".strip())
     for ss in (model.surface_supports or []):
         for n in _flaechenlager_knoten(model, ss):
@@ -1313,15 +1327,24 @@ def mittelknoten_nachfuehren(model: Model, u: np.ndarray) -> np.ndarray:
     return u
 
 
-def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
+def starrkoerper(model: Model, K: sparse.spmatrix = None, K_bezug: sparse.spmatrix = None) -> sparse.spmatrix:
     """Steifigkeit der starren Koerper (RBE2) und Verteilkopplungen (RBE3)
     im Strafverfahren: K += k Gᵀ G mit den Zwangsbedingungszeilen G aus
     verbindung.starrkoerper_matrix und k = 1e4-mal die groesste
-    Hauptdiagonale (wie bei den Kopplungen)."""
+    Hauptdiagonale (wie bei den Kopplungen).
+
+    Verteilende Kopplungen der Stabenden (seit 13.10.2026,
+    statik3d.stabeinleitung): G aus stabeinleitung.zwangsmatrix (gebundene
+    Seitenmitten heraus, Gewichte normiert, Schwerpunkt auf der Stabachse,
+    Momentenzeilen durch rho), k = 1e4-mal die groesste Hauptdiagonale von
+    ``K_bezug`` - der Matrix ohne die Straffedern der Kopplungen, also derselbe
+    Wert wie bei den starren Kopplungen der Stabenden. Er steht danach in
+    ``model._stabende_strafe`` (fuer die Pruefung der Kraftsumme)."""
     sk_liste = getattr(model, "starrkoerper", None) or []
     if not sk_liste:
         return None
     from .elements import verbindung as vb
+    from . import stabeinleitung as _se
     n = model.ndof
     if K is None:
         K = _assemble_triplets(model, _matrix_chunk, None)
@@ -1329,7 +1352,22 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
     gross = float(diag[diag > 0].max()) if np.any(diag > 0) else 1.0
     k = 1e4 * gross
     rows, cols, vals = [], [], []
+    k_stab, bindung = None, None
     for sk in sk_liste:
+        if _se.ist_verteilkopplung(sk):
+            if k_stab is None:
+                d_b = np.abs(np.asarray((K if K_bezug is None else K_bezug).diagonal()).ravel())
+                k_stab = _se.STRAFE * (float(d_b[d_b > 0].max()) if np.any(d_b > 0) else 1.0)
+                bindung = {int(t[0]) for t in mittelknoten_bindungen(model)}
+            G, d, _wk = _se.zwangsmatrix(model, sk, bindung)
+            if G is None:
+                continue
+            Ke = vb.starrkoerper_steifigkeit(G, k_stab)
+            r, c = np.meshgrid(d, d, indexing="ij")
+            rows.append(r.ravel())
+            cols.append(c.ravel())
+            vals.append(Ke.ravel())
+            continue
         slaves = [int(x) for x in sk.slaves if 0 <= int(x) < model.nn and int(x) != int(sk.master)]
         if not slaves or not 0 <= int(sk.master) < model.nn:
             continue
@@ -1343,6 +1381,11 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
         rows.append(r.ravel())
         cols.append(c.ravel())
         vals.append(Ke.ravel())
+    if k_stab is not None:
+        try:
+            model._stabende_strafe = float(k_stab)
+        except AttributeError:
+            pass
     if not rows:
         return None
     return sparse.coo_matrix(
@@ -1352,6 +1395,73 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
 def _trans_dofs(node: int) -> list[int]:
     """Die drei Verschiebungs-FHG eines Knotens."""
     return [NDOF * node, NDOF * node + 1, NDOF * node + 2]
+
+
+#: Kopplungen mit Drehanteil (seit 14.10.2026): starre Scheiben als RBE2,
+#: Stabenden an 1-4 Knoten als RBE3. Der Schalter ist nur fuer die
+#: Ruecknahmeprobe da (tests.test_kopplung_drehanteil); im Programm steht er
+#: immer auf an.
+DREHANTEIL = True
+
+
+def _drehung_bestimmt(r: np.ndarray) -> bool:
+    """Bestimmen die Abstaende r (n, 3) der Slaves vom Master seine Drehung?
+    Nein, wenn alle auf einer Geraden durch den Master liegen (oder null
+    sind): dann bliebe die Drehung um diese Gerade frei - ohne Biegestab am
+    Master eine singulaere Richtung, die die Pruefung schwacher FHG nicht
+    faengt. Massgebend ist sum (|r|^2 I - r r^T), positiv definit genau dann."""
+    r = np.asarray(r, float).reshape(-1, 3)
+    if not len(r):
+        return False
+    J = np.eye(3) * float(np.einsum("ij,ij->", r, r)) - r.T @ r
+    ew = np.linalg.eigvalsh(J)
+    return bool(ew[-1] > 0 and ew[0] > 1e-9 * ew[-1])
+
+
+def biegeknoten(model: Model) -> set:
+    """Knoten, an denen ein Biegestab (beam) haengt - nur deren Verdrehung
+    traegt ein Moment. Fachwerkstab und Seil fuehren keine."""
+    return {int(x) for e in model.elements if e.typ == "beam" for x in e.nodes}
+
+
+def stabende_zwang(X: np.ndarray, master: int, partner, moment: bool):
+    """(G, FHG) der Kopplung eines Stabendes an die Knoten ``partner`` des
+    Elements, in dem es liegt (fugen.stabenden_koppeln), als RBE3 (seit
+    14.10.2026; bis dahin hing es ueber u_m = u_i starr an jedem Knoten).
+
+    Der Stabknoten folgt dem baryzentrischen Mittel der Knoten - genau dem
+    Verschiebungsfeld des Elements an seinem Ort: Kraftzeilen
+    sum lambda_i (u_i - u_m - theta_m x r_i) = 0 mit sum lambda_i x_i = x_m.
+    Mit ``moment`` (am Knoten haengt ein Biegestab, die Knoten liegen nicht
+    auf einer Geraden durch ihn) dazu die Momentenzeilen mit gleichen
+    Gewichten, durch rho = (sum |r_i|^2)^1/2 geteilt wie in
+    stabeinleitung.zwangsmatrix: Der Stabknoten folgt auch der Drehung der
+    Knoten, ein Moment geht als Kraeftepaare in das Volumen. Sonst nur die
+    Kraftzeilen ohne theta_m: Der Knoten traegt dann kein Moment (Fachwerkstab,
+    Seil, Gelenk), und weil sum lambda_i r_i = 0 ist, bleiben die Kraefte auch
+    so im Momentengleichgewicht - bis auf die Lage des Stabendes neben der
+    Seite (Toleranz der Punktsuche, 0,1 mm), um die der Hebel abweicht.
+    Spalten: bei ``moment`` die sechs FHG des Masters, sonst seine drei
+    Verschiebungen, dann je Knoten die drei Verschiebungen."""
+    from .elements import verbindung as vb
+    P = [int(q) for q in partner]
+    Xp = X[P]
+    m = int(master)
+    A = np.vstack([Xp.T, np.ones(len(P))])
+    lam = np.linalg.lstsq(A, np.append(X[m], 1.0), rcond=None)[0]
+    r = Xp - X[m]
+    if moment and _drehung_bestimmt(r):
+        G = vb.starrkoerper_matrix(X[m], Xp, "RBE3", lam, momente=r)
+        rho = math.sqrt(float(np.einsum("ij,ij->", r, r))) or 1.0
+        G[3:6] /= rho
+        spalten = list(range(6)) + [6 * (i + 1) + j for i in range(len(P)) for j in range(3)]
+        fhg = list(range(NDOF * m, NDOF * m + NDOF)) + [NDOF * q + j for q in P for j in range(3)]
+        return G[:, spalten], np.asarray(fhg, np.int64)
+    G = np.zeros((3, 3 + 3 * len(P)))
+    G[:, :3] = -np.eye(3)
+    for i, w in enumerate(lam):
+        G[:, 3 + 3 * i:6 + 3 * i] = w * np.eye(3)
+    return G, np.asarray(_trans_dofs(m) + [NDOF * q + j for q in P for j in range(3)], np.int64)
 
 
 def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.spmatrix:
@@ -1366,6 +1476,29 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     groesste vorhandene Hauptdiagonale. Das ist das uebliche Strafverfahren;
     groesser gewaehlt wuerde die Matrix schlecht konditioniert, kleiner
     liesse die Fuge nach.
+
+    **Mit Drehanteil (seit 14.10.2026).** Fuer Knoten, die nicht aufeinander
+    liegen, ist c = [-n, n] keine Starrkoerperbewegung: Die Kraefte haben die
+    Summe null, aber ein Moment (Befund b3: 24,7 kNm an einer Stuetze, die im
+    Block endet). Darum:
+
+    * **Starre Scheibe** (Gruppe fugen.STARR_GRUPPE): RBE2,
+      u_b = u_a + theta_a x r mit r = x_b - x_a, also
+      c = [-n, -(r x n), n] auf (u_a, theta_a, u_b). Der Master bekommt so
+      seine Verdrehung als Kopplungsknoten - jeder Knoten hat sechs FHG, die
+      Pruefung schwacher FHG (constrained_dofs) sperrt sie nur, solange
+      nichts an ihnen haengt. Ein Fachwerkstab am Master nimmt kein Moment:
+      die Scheibe kippt frei mit dem Koerper (wie die starre Flaeche in
+      RFEM). Liegen alle Slaves auf einer Geraden durch den Master, bleibt es
+      ohne Drehanteil. Gebundene Seitenmitten (mittelknoten_bindungen) fallen
+      heraus wie bei der Verteilkopplung (b009aff): sie folgen ihren Ecken.
+    * **Stabende an 1-4 Knoten** (Gruppe fugen.STABENDE_GRUPPE, starr): RBE3
+      je Stabknoten (:func:`stabende_zwang`), Strafbeiwert k G^T G wie bei
+      den starren Kopplungen.
+
+    Alle anderen Kopplungen (Kontaktfugen zwischen deckungsgleichen Knoten,
+    von Hand) bleiben wie bisher; ohne Kopplungen der beiden Gruppen ist die
+    Matrix bitgleich.
     """
     kopp = getattr(model, "kopplungen", None)
     if not kopp:
@@ -1381,9 +1514,20 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     if aktiv is not None:
         from .situationen import aktive_knoten
         kn_aktiv = aktive_knoten(model, aktiv)
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
+    scheiben: dict = {}                   # Gruppe -> [Kopplung]
+    enden: dict = {}                      # Stabknoten -> [Kopplung]
     for kp in kopp:
         if kn_aktiv is not None and not (kn_aktiv[int(kp.node_a)] and kn_aktiv[int(kp.node_b)]):
             continue                      # Fuge an einem Knoten ohne wirksames Element
+        if DREHANTEIL:
+            g = str(getattr(kp, "gruppe", "") or "")
+            if g.startswith(STARR_GRUPPE):
+                scheiben.setdefault(g, []).append(kp)
+                continue
+            if g.startswith(STABENDE_GRUPPE) and all(not np.isfinite(w) for _r, w in kp.paare()):
+                enden.setdefault(int(kp.node_a), []).append(kp)
+                continue
         d = np.array(_trans_dofs(int(kp.node_a)) + _trans_dofs(int(kp.node_b)), int)
         for richtung, wert in kp.paare():
             k = starr if not np.isfinite(wert) else float(wert)
@@ -1395,11 +1539,61 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(ke.ravel())
+    if scheiben or enden:
+        _drehanteil_einbauen(model, scheiben, enden, starr, rows, cols, vals)
     if not rows:
         return None
     return sparse.coo_matrix(
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
         shape=(n, n))
+
+
+def _drehanteil_einbauen(model: Model, scheiben: dict, enden: dict, starr: float,
+                         rows: list, cols: list, vals: list) -> None:
+    """Die Kopplungen der starren Scheiben (RBE2) und der Stabenden (RBE3)
+    mit Drehanteil in die Tripel (siehe :func:`kopplungen`)."""
+    X = np.asarray(model.nodes, float)
+    bindung: set = set()
+    if scheiben and any(EL.ist_quadratisch(e.typ) for e in model.elements if e.typ in SOLID_TYPES):
+        bindung = {int(t[0]) for t in mittelknoten_bindungen(model)}
+    for _g, liste in scheiben.items():
+        liste = [kp for kp in liste if int(kp.node_b) not in bindung]
+        if not liste:
+            continue
+        a0 = int(liste[0].node_a)
+        dreh = _drehung_bestimmt(X[[int(kp.node_b) for kp in liste]] - X[a0])
+        for kp in liste:
+            a, b = int(kp.node_a), int(kp.node_b)
+            r = X[b] - X[a]
+            mit = dreh and a == a0
+            if mit:
+                d = np.array(list(range(NDOF * a, NDOF * a + 6)) + _trans_dofs(b), int)
+            else:
+                d = np.array(_trans_dofs(a) + _trans_dofs(b), int)
+            for richtung, wert in kp.paare():
+                k = starr if not np.isfinite(wert) else float(wert)
+                if k <= 0:
+                    continue
+                if mit:
+                    c = np.concatenate([-richtung, -np.cross(r, richtung), richtung])
+                else:
+                    c = np.concatenate([-richtung, richtung])
+                r_, cc = np.meshgrid(d, d, indexing="ij")
+                rows.append(r_.ravel())
+                cols.append(cc.ravel())
+                vals.append((k * np.outer(c, c)).ravel())
+    if not enden:
+        return
+    from .elements import verbindung as vb
+    biege = biegeknoten(model)
+    for m, liste in enden.items():
+        partner = list(dict.fromkeys(int(kp.node_b) for kp in liste))
+        G, d = stabende_zwang(X, m, partner, m in biege)
+        Ke = vb.starrkoerper_steifigkeit(G, starr)
+        r_, cc = np.meshgrid(d, d, indexing="ij")
+        rows.append(r_.ravel())
+        cols.append(cc.ravel())
+        vals.append(Ke.ravel())
 
 
 def mass(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
@@ -1474,23 +1668,100 @@ def daempfung(model: Model) -> sparse.csr_matrix:
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n)).tocsr()
 
 
-def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None) -> sparse.csr_matrix:
+# --------------------------------------------------------------------------
+# Normalkraft eines Stabs mit Anfangsdehnung (13.10.2026)
+# --------------------------------------------------------------------------
+#
+# Die Normalkraft eines Stabs ist E A Δl/L plus die Kraft seiner
+# Anfangsdehnung - Temperatur dT, Vorspannung als eingepraegte Dehnung
+# (Vorspannung, RFEM-Import als Abkuehlung) und die Verriegelung einer
+# Sollkraft (statik3d.vorspannkraft). Das Ergebnis rechnet so (Stabendkraefte
+# k u - f0, solver._post_chunk). Bis zum 13.10.2026 lasen die geometrische
+# Steifigkeit (Theorie II. Ordnung, alpha_cr, Knicken) und die
+# Ausfall-Iteration der Zugstaebe nur E A Δl/L: ein Zugband mit 70 kN
+# Anfangsdehnung trug im Ergebnis +6,50 kN, K_G rechnete mit -63,50 kN
+# (alpha_cr 1,688), und ein Zugstab „nur Zug“ mit 500 kN Vorspannung als dT
+# fiel aus und trug 0 statt 400 kN. Seither lesen alle diese Stellen
+# :func:`stab_normalkraft`, die Kraft der Anfangsdehnung kommt aus den
+# Stabendlasten (:func:`anfangsnormalkraft`).
+def anfangsnormalkraft(f0) -> float:
+    """Normalkraft (Zug positiv) der Anfangsdehnung eines Stabelements aus
+    seinen lokalen Stabendlasten ``f0`` (12,) - die Kraft bei festgehaltenen
+    Enden: -(f0[6] - f0[0])/2. Temperatur dT: -E A alpha dT; Vorspannung F
+    (eingepraegte Dehnung -F/(E A)): +F. Eine Streckenlast in Stabrichtung
+    gibt an beiden Enden dieselbe Last und zaehlt nicht mit; darum die
+    Stabendlasten **nur** der Anfangsdehnung uebergeben (solver.anfangs_feq)."""
+    f0 = np.asarray(f0, float)
+    return float(-0.5 * (f0[6] - f0[0]))
+
+
+def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _achsen=None) -> float:
+    """Normalkraft (Zug positiv) eines Stabelements aus dem Verschiebungsvektor
+    ``u`` (ndof,) wie im Ergebnis: E A Δl/L des Stabs hinter seinen Versaetzen
+    (Exzentrizitaet) plus ``n_anfang``, die Kraft seiner Anfangsdehnung bei
+    festgehaltenen Enden (:func:`anfangsnormalkraft`). Mit Federgelenken in
+    Stabrichtung (lokaler FHG 0, 6) wirkt der Stab in Reihe mit den Federn:
+    N = k_R (Δl + n_anfang L/(E A)), 1/k_R = L/(E A) + 1/k_1 + 1/k_2.
+    Ohne Versatz, Laengsfeder und Anfangsdehnung ist es dieselbe Zahl wie bis
+    zum 13.10.2026 (E A Δl/L). Gemittelt ueber das Element - eine
+    Streckenlast in Stabrichtung aendert N entlang des Stabs.
+    ``_achsen`` (T, L): schon gerechnete Transformation (geometric_stiffness)."""
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    if _achsen is None:
+        X = model.nodes[e.nodes]
+        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T = bm.transform_matrix(T3)
+    else:
+        T, L = _achsen
+    ul = T @ np.asarray(u, float)[element_dofs(e, model)[:12]]
+    A = beam_versatz(e)
+    if A is not None:
+        ul = A @ ul                     # das Stabende hinter dem Versatz
+    federn = [(int(d), float(k)) for d, k in (getattr(e, "hinge_springs", None) or [])
+              if int(d) in (0, 6) and k and float(k) > 0]
+    EA_L = mat.E * sec.A / L
+    if federn:
+        nachgiebig = 1.0 / EA_L + sum(1.0 / k for _d, k in federn)
+        return float((ul[6] - ul[0] + float(n_anfang) / EA_L) / nachgiebig)
+    N = EA_L * (ul[6] - ul[0])          # Zug positiv
+    return N + float(n_anfang) if n_anfang else N
+
+
+def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> sparse.csr_matrix:
     """Geometrische Steifigkeit aus vorhandenem Verformungszustand (nur Staebe);
-    abgeschaltete Elemente (``aktiv`` False) bleiben weg."""
+    abgeschaltete Elemente (``aktiv`` False) bleiben weg.
+
+    ``n_anfang`` {Element: Normalkraft der Anfangsdehnung} (seit dem
+    13.10.2026, solver.anfangsnormalkraefte): Temperatur, Vorspannung und
+    Verriegelung zaehlen in N mit wie im Ergebnis (:func:`stab_normalkraft`).
+    Ohne sie rechnet K_G wie bisher mit E A Δl/L.
+
+    Fachwerkstab, Zug-/Druckstab und Seil (Elementtyp truss, seil) haben
+    keine Biegesteifigkeit; ihre geometrische Steifigkeit ist die Saite N/L
+    auf den Querverschiebungen (bm.kg_local_saite), wie in Theorie III.
+    Ordnung (theorie3._Stab). Ein Balken behaelt die Balkenform, auch mit
+    „trägt nur“ - er biegt sich. Bis zum 14.10.2026 bekam jeder Stab die
+    Balkenform (6/5 N/L mit Drehanteilen): ein Pendelstab mit Querfeder k
+    hatte alpha_cr 166,67 statt k L/P = 200, das gezogene Zugband einer
+    Kragstuetze alpha_cr 4 126 statt 2 679 - 54 % auf der unsicheren Seite
+    (tests/test_stab_nachzug.py)."""
     n = model.ndof
+    n_anfang = n_anfang or {}
     rows, cols, vals = [], [], []
     for i, e in enumerate(model.elements):
         if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
             continue
-        mat = model.materials[e.mat]
         sec = model.sections[e.sec]
         X = model.nodes[e.nodes]
         T3, L = bm.local_axes(X[0], X[1], e.roll)
         T = bm.transform_matrix(T3)
         d = element_dofs(e, model)[:12]
-        ul = T @ u[d]
-        N = mat.E * sec.A / L * (ul[6] - ul[0])      # Zug positiv
-        kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
+        N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L))
+        if e.typ in ("truss", "seil"):
+            kg = bm.kg_local_saite(N, L)
+        else:
+            kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
         kg = T.T @ kg @ T
         r, c = np.meshgrid(d, d, indexing="ij")
         rows.append(r.ravel())
@@ -1551,6 +1822,41 @@ def stab_schubparameter(model: Model, e, L: float) -> tuple:
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     return bm.schubparameter(mat.E, mat.G, sec.Iy, sec.Iz, L, sec.Asy, sec.Asz)
+
+
+def gelenkige_ersatzlasten(f: np.ndarray, L: float) -> np.ndarray:
+    """Die Ersatzknotenlasten eines Fachwerkstabs oder Seils aus denen des
+    beidseitig eingespannten Stabes (``f`` lokal, 12 Werte): die Querkraefte
+    als Auflagerkraefte des **Einfeldtraegers** (Hebelgesetz), keine Knoten-
+    und Torsionsmomente; die Laengskraefte bleiben.
+
+    Der Fachwerkstab hat keine Biegesteifigkeit und gelenkige Enden. Seine
+    Querlast geht als Kraft an die Knoten, das Biegemoment bleibt im Stab: bei
+    Gleichlast q L/2 an jedem Ende und M = q L^2/8 in Feldmitte. Aus den
+    Volleinspanngroessen folgt das ohne eigene Integration: das Lastmoment um
+    Knoten 1 steckt in f[4] + f[10] - f[8] L (Ebene x-z) bzw. f[5] + f[11] +
+    f[7] L (x-y), die Summe der Querkraefte in f[2] + f[8] bzw. f[1] + f[7].
+    Das gilt fuer Gleich-, Trapez- und Teillasten und das Eigengewicht.
+
+    Bis zum 14.10.2026 bekam der Fachwerkstab die Ersatzlasten des
+    eingespannten Balkens, mit den Momenten -+q L^2/12 auf den Knoten. Weil
+    der Fachwerkstab dort keine Drehsteifigkeit hat, landeten sie in den
+    automatisch gehaltenen Drehfreiheitsgraden: an gelenkigen Lagern standen
+    Lagermomente My = +-1,333 kNm (4 m, 1 kN/m), und im Stab ergab sich der
+    Verlauf des eingespannten Balkens mit q L^2/24 im Feld statt q L^2/8 -
+    um den Faktor 3 auf der unsicheren Seite; eine Trapezlast 0 -> 2 kN/m
+    verteilte sich 1,2/2,8 statt 1,333/2,667 kN auf die Lager
+    (tests/test_stab_querlast.py)."""
+    g = np.asarray(f, float).copy()
+    if L <= 0:
+        return g
+    Rz2 = g[8] - (g[4] + g[10]) / L
+    Ry2 = g[7] + (g[5] + g[11]) / L
+    Rz1 = g[2] + g[8] - Rz2
+    Ry1 = g[1] + g[7] - Ry2
+    g[1], g[2], g[7], g[8] = Ry1, Rz1, Ry2, Rz2
+    g[[3, 4, 5, 9, 10, 11]] = 0.0
+    return g
 
 
 def trapezoid_fixed_end_forces(q1, q2, L, phy: float = 0.0, phz: float = 0.0) -> np.ndarray:
@@ -1635,13 +1941,35 @@ def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L, phy: float = 0.0,
     return f
 
 
+def projektionsfaktor(t, q) -> float:
+    """Laenge der Projektion je Stablaenge fuer eine Last in Richtung ``q``:
+    sqrt(1 - (t . d)^2) mit der Stabachse t und d = q/|q| - die Projektion des
+    Stabs auf die Ebene senkrecht zur Lastrichtung (beim waagerechten Stab und
+    lotrechter Last 1, beim lotrechten 0)."""
+    q = np.asarray(q, float)
+    n = float(np.linalg.norm(q))
+    if n <= 0:
+        return 1.0
+    c = float(np.dot(np.asarray(t, float), q / n))
+    return math.sqrt(max(0.0, 1.0 - c * c))
+
+
 def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
-    """Lokale Streckenlast (q1, q2) eines BeamLoad."""
+    """Lokale Streckenlast (q1, q2) eines BeamLoad, je Stablaenge.
+
+    Eine globale Last „je Projektion“ (``bl.bezugslaenge``, RFEM „projizierte
+    Länge“, seit 14.10.2026) gilt je Laenge der Projektion des Stabs senkrecht
+    zur Lastrichtung; je Stablaenge ist sie um :func:`projektionsfaktor`
+    kleiner, die Summe q l_proj bleibt. Bis zum 14.10.2026 liess der
+    RFEM-Import solche Lasten weg („Lastrichtung unbekannt“)."""
     X = model.nodes[e.nodes]
     T3, L = bm.local_axes(X[0], X[1], e.roll)
     q1 = np.asarray(bl.q, float)
     q2 = np.asarray(bl.q2, float) if bl.q2 is not None else q1.copy()
     if bl.system == "global":
+        if getattr(bl, "bezugslaenge", "") == "projektion":
+            f = projektionsfaktor(T3[0], q1 if np.any(q1) else q2)
+            q1, q2 = f * q1, f * q2
         q1 = T3 @ q1
         q2 = T3 @ q2
     return q1, q2
@@ -1698,9 +2026,11 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             f[10] += Mt_
         out[tl.elem] = out.get(tl.elem, np.zeros(12)) + f
     # Vorspannung in Staeben: der Stab will sich um F/(EA) verkuerzen - wie
-    # eine Abkuehlung ziehen die aequivalenten Knotenlasten die Enden zusammen
+    # eine Abkuehlung ziehen die aequivalenten Knotenlasten die Enden zusammen.
+    # Eine Sollkraft (Vorspannung.sollkraft, 13.10.2026) ist keine
+    # Anfangsdehnung: sie rechnet statik3d.vorspannkraft im Spannschritt.
     for v in getattr(case, "vorspannungen", None) or []:
-        if getattr(v, "art", "stab") != "stab" or not v.kraft:
+        if getattr(v, "art", "stab") != "stab" or not v.kraft or getattr(v, "sollkraft", False):
             continue
         mem = model.members.get(v.ziel)
         for i in (mem.elements if mem else []):
@@ -1712,6 +2042,11 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             f[0] += float(v.kraft)
             f[6] -= float(v.kraft)
             out[i] = out.get(i, np.zeros(12)) + f
+    # Fachwerkstab und Seil: Querlasten als Kraefte des Einfeldtraegers an die
+    # Knoten, keine Knotenmomente (14.10.2026, gelenkige_ersatzlasten)
+    for i in out:
+        if model.elements[i].typ in ("truss", "seil"):
+            out[i] = gelenkige_ersatzlasten(out[i], model.element_length(i))
     return out
 
 
@@ -1853,6 +2188,27 @@ def solid_prestress(model: Model, v) -> dict:
     return {i: s0 for i in elems if model.elements[i].typ in SOLID_TYPES}
 
 
+def stablasten_einbauen(model: Model, feq: dict, F: np.ndarray) -> None:
+    """Lokale aequivalente Knotenlasten je Stabelement (``feq``, wie aus
+    :func:`element_equivalent_loads`) in den globalen Lastvektor F:
+    Stablasten (Strecken-, Eigengewicht, Temperatur) mit Gelenkkondensation;
+    bei Exzentrizitaet auf die Knoten umgerechnet (f_knoten = Aᵀ f_stab).
+    Bis zum 13.10.2026 Teil von :func:`load_vector`; die Verriegelungskraefte
+    der Vorspannkraft (statik3d.vorspannkraft, je Element verschieden) gehen
+    seither denselben Weg."""
+    for i, fl in feq.items():
+        e = model.elements[i]
+        kl, T3, T, L = beam_local(model, e)
+        if getattr(e, "hinge_springs", None):
+            kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
+        if e.hinges:
+            _, fl, _ = condense(kl, fl, e.hinges)
+        A = beam_versatz(e)
+        if A is not None:
+            fl = A.T @ fl
+        F[element_dofs(e, model)[:12]] += T.T @ fl
+
+
 def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
     """Globaler Lastvektor eines Lastfalls (default: aktiver Lastfall).
     ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last;
@@ -1872,19 +2228,7 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             continue
         F[NDOF * l.node: NDOF * l.node + 6] += np.asarray(l.F, float)
 
-    # Stablasten (Strecken-, Eigengewicht, Temperatur) mit Gelenkkondensation;
-    # bei Exzentrizitaet auf die Knoten umgerechnet (f_knoten = Aᵀ f_stab)
-    for i, fl in element_equivalent_loads(model, case, aktiv).items():
-        e = model.elements[i]
-        kl, T3, T, L = beam_local(model, e)
-        if getattr(e, "hinge_springs", None):
-            kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
-        if e.hinges:
-            _, fl, _ = condense(kl, fl, e.hinges)
-        A = beam_versatz(e)
-        if A is not None:
-            fl = A.T @ fl
-        F[element_dofs(e, model)[:12]] += T.T @ fl
+    stablasten_einbauen(model, element_equivalent_loads(model, case, aktiv), F)
 
     for l in case.face_loads:
         if not _wirkt(aktiv, l.elem):
@@ -2066,6 +2410,18 @@ def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) ->
 def constrained_dofs(model: Model, K: sparse.csr_matrix):
     """Gesperrte FHG: Lager + FHG ohne Steifigkeit (z.B. Rotation an Volumenknoten).
     Rueckgabe (fixed_idx, prescribed_values)."""
+    fixed, vals, _auto = gesperrte_und_automatische(model, K)
+    return fixed, vals
+
+
+def gesperrte_und_automatische(model: Model, K: sparse.csr_matrix):
+    """Wie :func:`constrained_dofs`, dazu die Maske der **automatisch**
+    gehaltenen FHG: ohne Steifigkeit (Diagonale unter 1e-12 der groessten)
+    und von keinem Lager gesperrt - die Drehungen an Knoten nur mit
+    Fachwerkstaeben, Seilen oder Volumen, die Querrichtungen einer
+    Fachwerkstab-Kette, ein Knoten ohne Bauteil. Eine Kraft, die dort
+    ankommt, traegt kein Bauteil (solver.auto_gehalten_abtrennen, 14.10.2026).
+    Rueckgabe (fixed, vals, auto)."""
     n = model.ndof
     fixed = np.zeros(n, dtype=bool)
     vals = np.zeros(n)
@@ -2081,6 +2437,7 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if held:
             weak[np.fromiter(held, dtype=int, count=len(held))] = False
     fixed |= weak
+    gelagert = np.zeros(n, dtype=bool)
 
     from . import supports as sup
     lin, _ = sup.split(sup.expand(model))
@@ -2088,6 +2445,7 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if e.typ == "rigid":
             fixed[e.index] = True
             vals[e.index] = e.value
+            gelagert[e.index] = True
     # Tetraeder mit Ordnung p: an einer starr gelagerten Randseite sind die
     # Zusatz-FHG in der gelagerten Richtung null (tetp.gesperrte_fhg)
     if model.hat_tetp():
@@ -2096,10 +2454,12 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if len(gs):
             fixed[gs] = True
             vals[gs] = 0.0
+            gelagert[gs] = True
     # Woelbeinspannung: die Verwoelbung ist am Knoten behindert
     wi = model.woelb_index() if model.ndof > model.nn * NDOF else {}
     if wi:
         for s_ in model.supports:
             if getattr(s_, "woelb", False) and int(s_.node) in wi:
                 fixed[wi[int(s_.node)]] = True
-    return fixed, vals
+                gelagert[wi[int(s_.node)]] = True
+    return fixed, vals, weak & ~gelagert

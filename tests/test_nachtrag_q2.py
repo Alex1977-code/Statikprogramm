@@ -243,11 +243,29 @@ def test_n33_handbuchsatz_anfangsdehnung():
           f"{len(av)} / {len(ag)} Läufe")
     uv, ug = np.asarray(rv.u, float), np.asarray(rg.u, float)
     du, umax = float(np.abs(uv - ug).max()), float(np.abs(uv).max())
-    check("N33 gemessen: nicht bitgleich, aber auf 1e-6 relativ gleich (anderer Weg)",
-          not np.array_equal(uv, ug) and 0.0 < du <= 1e-6 * umax
+    # Seit dem 14.10.2026 (kontakt/warmstart, Vorschlag 4, Plastizitaet.
+    # spannung_zuerst) schliessen beide Wege nach demselben ingenieurmaessigen
+    # Kriterium ab; sie duerfen sich um dessen Wegschranke unterscheiden,
+    # max(1e-3 u_max; 1 N/mm² L/E) (solver._weg_aus_spannung). Bis dahin
+    # verlangte die Pruefung 1e-6 relativ - gemessen danach 3,17e-9 m bei
+    # u_max 6,10e-4 m (5,2e-6 relativ).
+    schranke = max(1e-3 * umax, solver._weg_aus_spannung(_block_mit_reibung(-20e6, 4e6)))
+    check("N33 gemessen: nicht bitgleich, aber innerhalb der Wegschranke des Kriteriums (anderer Weg)",
+          not np.array_equal(uv, ug) and 0.0 < du <= schranke
           and rv.info.get("contact_iterations") != rg.info.get("contact_iterations"),
-          f"max |Δu| {du:.2e} m bei u_max {umax:.2e} m, Kontaktschritte "
+          f"max |Δu| {du:.2e} m bei u_max {umax:.2e} m, Schranke {schranke:.2e} m, Kontaktschritte "
           f"{rv.info.get('contact_iterations')} / {rg.info.get('contact_iterations')}")
+    # Gegenprobe: mit spannung_zuerst aus bleibt die strenge Gleichheit (1e-6 relativ)
+    r0 = {}
+    for weg in ("verschachtelt", "gemeinsam"):
+        m = _block_mit_reibung(-20e6, 4e6)
+        m.plastizitaet.kontakt = weg
+        m.plastizitaet.spannung_zuerst = False
+        r0[weg] = solver.solve_static(m)
+    u0v, u0g = np.asarray(r0["verschachtelt"].u, float), np.asarray(r0["gemeinsam"].u, float)
+    du0 = float(np.abs(u0v - u0g).max())
+    check("N33 Gegenprobe: mit spannung_zuerst aus auf 1e-6 relativ gleich",
+          0.0 < du0 <= 1e-6 * float(np.abs(u0v).max()), f"max |Δu| {du0:.2e} m")
     bh = absatz("**Fließen und Kontakt: verschachtelt oder gemeinsam**")
     check("N33 Benutzerhandbuch: nicht mehr „das Ergebnis bleibt bitgleich“",
           bh and "das Ergebnis bleibt bitgleich" not in bh, "")

@@ -24,7 +24,7 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 
 from ..model import (Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM,
-                     FLAECHENARTEN, NameVergeben)
+                     FLAECHENARTEN, NameVergeben, LOKALE_ACHSEN, ACHSE_PLUS_X, flaechen_gleicher_achse)
 from .. import solver, mesher, parallel, supports, __version__
 from .. import passungen as pss
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
@@ -64,9 +64,11 @@ from .fenster import starten as fenster_starten
 from . import sprache
 from .sprache import kuerzel_text
 from . import layer as lyr
+from . import stabeinleitung_felder as sef
 from . import skizze as skg
 from .. import skizze as sk
 from .. import spannungen as spn
+from .. import spitzenanzeige as sa
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
 #: Daten-Rolle der langen Form eines Eintrags der Ergebnisauswahl (Teilpaket
@@ -2328,7 +2330,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     ("tx", "Teilung x", "ganz", *teil(0), None), ("ty", "Teilung y", "ganz", *teil(1), None),
                     ("tz", "Teilung z", "ganz", *teil(2), None),
                     ("kommentar", "Kommentar", "text", lambda n: m.koerper[n].kommentar or "",
-                     lambda n, v: setattr(m.koerper[n], "kommentar", v), None)]
+                     lambda n, v: setattr(m.koerper[n], "kommentar", v), None),
+                    ("ausnehmen", "vom Volumennachweis ausnehmen", "jn",
+                     lambda n: bool(getattr(m.koerper[n], "nachweis_ausnehmen", False)),
+                     lambda n, v: setattr(m.koerper[n], "nachweis_ausnehmen", bool(v)), None)]
         if art == "lager":
             def gesperrt(d):
                 return lambda i: d in (m.supports[i].dofs or [])
@@ -5439,6 +5444,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 symbol="csv")
         g.klein("Netz + Ergebnisse als VTK…", self.export_vtk,
                 hinweis="Netz und Ergebnisfelder als VTK-Datei, etwa für ParaView")
+        # die Umstellung eines vor dem 14.10.2026 aus RFEM 6 uebernommenen
+        # Modells (Importhinweis „zugstab“) - bis dahin nur eine Funktion
+        g.klein("Stabtypen aus RFEM nachlesen…", self.maske_stabtypen_rfem,
+                hinweis="Zugstäbe, Druckstäbe und Seile eines vor dem 14.10.2026 aus RFEM 6 übernommenen "
+                        "Modells aus der RFEM-Datei nachlesen: „trägt nur“ setzen, Seile als Seil anlegen",
+                symbol="staebe")
         g = r.gruppe("Beispiele")
         # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
         # (24.09.2026) - die Suche findet die Beispiele weiter
@@ -5996,7 +6007,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_werteskala = g.gross(
             "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
             hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
-                    "Grenzwert wie 355 für S355 - darüber magenta, der Größtwert an der Skala; "
+                    "Grenzwert wie 355 für S355 - darüber magenta mit „> Skalenmax“; "
                     "wahlweise nur die Überschreitungen färben", symbol="skala")
         g = r.gruppe("Tabelle ausgeben")
         g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
@@ -8380,6 +8391,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             hinweis="RFEM „für Berechnung deaktiviert“: der Stab bleibt als Objekt, trägt aber "
                                     "in keiner Situation Steifigkeit oder Last")]
                 titel = f"Stab {name}"
+                # Einleitung der Enden, die in einem Volumen haengen (13.10.2026)
+                felder += sef.felder_stab(m, name)
                 if mem is not None:
                     zusatz = [("Nachweisparameter …", lambda: self.stab_nachweisparameter(name))]
         elif art in self.VERBINDUNGEN or art in ("punktmassen", "federn", "grenzschichten"):
@@ -8492,6 +8505,25 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("elemente", "Elemente", "info", str(len(f.elemente)) if f else "0"),
                           F("vernetzen", "gleich vernetzen", "haken", not (f is not None and f.elemente)),
                           F("kommentar", "Kommentar", "text", (f.kommentar if f else ""), breite=160)]
+                if f is not None and str(getattr(f, "typ", "") or "eben") != "eben":
+                    # Lasten in lokal x/y einer gewoelbten Flaeche wirken nur mit
+                    # gewaehlten Achsen (14.10.2026); nie automatisch gesetzt
+                    plus = list(getattr(f, "achse_plus_x", None) or [])
+                    felder[-1:-1] = [
+                        F("lokale_achsen", "Lokale Achsen", "wahl",
+                          next((k for k, v in LOKALE_ACHSEN.items()
+                                if v == (getattr(f, "lokale_achsen", "") or "")),
+                               next(iter(LOKALE_ACHSEN))), list(LOKALE_ACHSEN),
+                          hinweis="Für Lasten in lokal x/y aus RFEM. RFEMs eigene Achsen einer "
+                                  "gewölbten Fläche (x = global X in die Tangentialebene projiziert) "
+                                  "passen am Drehlager nicht zu RFEMs Lastbild – darum wirken solche "
+                                  "Lasten erst mit zylindrischen Achsen. Gilt für alle Flächen derselben "
+                                  "Bohrung."),
+                        F("achse_plus_x", "+x (axial)", "wahl",
+                          next((k for k, v in ACHSE_PLUS_X.items() if v == plus),
+                               next(iter(ACHSE_PLUS_X))), list(ACHSE_PLUS_X),
+                          hinweis="Richtung von +x längs der Zylinderachse; eine Last in lokal x "
+                                  "wirkt auf allen Flächen der Bohrung in dieselbe globale Richtung")]
                 titel = f"Fläche {name}"
         elif art in ("geokoerper", "geokoerper_einzeln"):
             if not eintrag:
@@ -8525,6 +8557,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             breite=80,
                             hinweis="Kerbfall an verschweißten Berührungsstellen mit anderen Volumen "
                                     "(gemeinsame Knoten ohne Kontaktbedingung); leer = wie Kerbfall"),
+                          F("ausnehmen", "vom Volumennachweis ausnehmen (Hilfs- oder Krafteinleitungskörper)", "haken",
+                            bool(getattr(k, "nachweis_ausnehmen", False)) if k is not None else False,
+                            hinweis="Der Körper geht in keinen Volumennachweis ein und steht dort als "
+                                    "„ausgenommen“. Das Programm setzt den Schalter nie selbst."),
                           F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
                 titel = f"Volumen {name}"
         elif art in ("lastfaelle", "lastfall"):
@@ -8556,7 +8592,15 @@ class MainWindow(QtWidgets.QMainWindow):
                             m.naechste_lastfallnummer(), hinweis="Lastfallnummer (0 = keine)"),
                           F("name", "Name", "text", name, breite=140),
                           F("beschreibung", "Beschreibung", "text", (lc.description if lc else ""), breite=180),
-                          F("kategorie", "Einwirkung", "wahl", kat, kats)]
+                          F("kategorie", "Einwirkung", "wahl", kat, kats,
+                            hinweis="„nicht zugeordnet“: Kombinationen mit diesem Lastfall werden nicht "
+                                    "gerechnet, bis hier eine Einwirkung gewählt oder der Haken "
+                                    "„Bemessungslastfall“ gesetzt ist. Einzeln lässt er sich weiter rechnen."),
+                          F("faktorisiert", "Bemessungslastfall, bereits faktorisiert", "haken",
+                            bool(getattr(lc, "faktorisiert", False)) if lc else False,
+                            hinweis="Die Lasten sind schon Bemessungswerte (γ und ψ stecken darin): in jeder "
+                                    "Kombination geht der Lastfall mit γ = 1,0 und ohne ψ ein. Ohne den Haken "
+                                    "bekäme er sein γ ein zweites Mal.")]
                 je_art = lc.lasten_je_art() if lc is not None else {}
                 for art_, titel_ in LASTARTEN_NAMEN:
                     if je_art.get(art_):
@@ -8648,19 +8692,56 @@ class MainWindow(QtWidgets.QMainWindow):
                 titel, knopf = "Werkstoffe", self._neu_text("werkstoffe")
             else:
                 mt = m.materials.get(name)
+                # Verfestigung und ihre Grenze (13.10.2026): bilinear bis f_u
+                # (Schraube f_ub, Spannstahl f_p0,1k bis f_pk), danach ideal plastisch
+                from .. import plastizitaet as pl_
+                pz_ = getattr(m, "plastizitaet", None)
+                r_vor = pl_.werkstoff_verfestigung(None, pz_)
+                verf = pl_.verfestigung_text(getattr(mt, "verfestigung", None) if mt else None, r_vor)
+                verf_wahl = [pl_.verfestigung_text(None, r_vor), pl_.VERFESTIGUNG_TEXT_OHNE]
                 felder = [F("name", "Name", "text", name, breite=120),
                           F("E", "E [GPa]", "zahl", (mt.E / 1e9 if mt else 210.0)),
                           F("nu", "Querdehnzahl ν", "zahl", (mt.nu if mt else 0.3)),
-                          F("rho", "Dichte [kg/m³]", "zahl", (mt.rho if mt else 7850.0)),
+                          F("rho", "Dichte [kg/m³]", "zahl", (mt.rho if mt else 7850.0), leer=True,
+                            hinweis="0 = gewichtslos (Hilfsmaterial), leer = 7850"),
                           F("alpha", "α_T [1e-6/K]", "zahl", (mt.alpha * 1e6 if mt else 12.0)),
-                          F("fy", "f_y [N/mm²]", "zahl", (mt.fy / 1e6 if mt and mt.fy else None), breite=78,
+                          F("fy", f"{mt.fliess_name() if mt else 'f_y'} [N/mm²]", "zahl",
+                            (mt.fy / 1e6 if mt and mt.fy else None), breite=78,
                             hinweis="leer = aus der Stahlsorte", leer=True),
-                          F("fu", "f_u [N/mm²]", "zahl", (mt.fu / 1e6 if mt and mt.fu else None), breite=78,
-                            leer=True),
+                          F("fu", f"{mt.grenze_name() if mt else 'f_u'} [N/mm²]", "zahl",
+                            (mt.fu / 1e6 if mt and mt.fu else None), breite=78, leer=True),
+                          F("verfestigung", "Verfestigung", "wahl", verf,
+                            verf_wahl + ([verf] if verf not in verf_wahl else []), breite=190,
+                            frei=True,
+                            hinweis="Steigung der Spannungs-Dehnungs-Linie nach dem Fließen "
+                                    "(Plastizität der Volumen, EN 1993-1-5 C.6): Vorgabe E/100, "
+                                    "„ohne Verfestigung“ E/10 000, sonst E/n eintippen. Bis "
+                                    f"{mt.grenze_name() if mt else 'f_u'} verfestigt der Werkstoff, "
+                                    "danach fließt er ideal plastisch."),
+                          F("grenze", "Grenze", "info", (pl_.grenze_text(mt, pz_) if mt else "–")),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
+                          # Hilfs- oder Krafteinleitungskoerper (13.10.2026): nur
+                          # der Anwender setzt ihn, nie das Programm nach dem Namen
+                          F("ausnehmen", "vom Volumennachweis ausnehmen (Hilfs- oder Krafteinleitungskörper)", "haken",
+                            bool(getattr(mt, "nachweis_ausnehmen", False)) if mt else False,
+                            hinweis="Körper aus diesem Werkstoff gehen in keinen Volumennachweis ein und stehen dort als „ausgenommen“ - für Hilfs- und Krafteinleitungskörper. Das Programm setzt den Schalter nie selbst."),
+                          *self._spannstahl_felder(F, mt),
                           F("benutzt", "benutzt von", "info",
                             f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
+                if mt is not None and (mt.fy_dicke or mt.fu_dicke):
+                    # die Dickentabelle aus der Quelldatei (RFEM): die Nachweise nehmen
+                    # den Wert der Dicke des Bauteils, f_y und f_u oben sind die duennste
+                    # Stufe. Sie wird angezeigt, damit sichtbar ist, was „Übernehmen“
+                    # behaelt (13.10.2026)
+                    felder.insert(len(felder) - 1, F(
+                        "nach_dicke", "nach Dicke", "info",
+                        "\n".join(f"{mt.fliess_name() if was == 'fy' else mt.grenze_name()} {mt.dickentext(was)}"
+                                  for was, tab in (("fy", mt.fy_dicke), ("fu", mt.fu_dicke)) if tab),
+                        hinweis="Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; die "
+                                "Nachweise nehmen den Wert der Dicke des Bauteils. f_y und f_u oben sind die "
+                                "Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, die "
+                                "übrigen bleiben."))
                 titel = f"Werkstoff {name}"
         elif art == "querschnitt":
             sec = m.sections.get(name)
@@ -8687,6 +8768,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       F("r", "r [mm]", "zahl", (sec.r if sec else 0.0) * 1e3),
                       F("fabrication", "Herstellung", "wahl", (sec.fabrication if sec else "rolled"),
                         ["rolled", "welded", "cold_formed"]),
+                      *self._gewinde_felder(F, sec),
                       F("benutzt", "benutzt von", "info", bg.anzahl(benutzt, "Element", "Elementen"))]
             titel = f"Querschnitt {name}"
             hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
@@ -10035,9 +10117,19 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"E{l.elem}" + (f" Seite {seite}" if seite is not None else "") + f": p = {kn(l.p)} kN/m²"
         if art == "temperatur":
             ziel = getattr(l, "ziel", None)
+            if getattr(l, "aus_vorspannung", 0.0):
+                # eine umgerechnete Vorspannung: die Kraft, nicht die Temperatur
+                # (13.10.2026), mit E und alpha der Umrechnung
+                return f"E{l.elem}: " + l.vorspann_text(self.model)
             t = (str(ziel) if ziel else f"E{l.elem}") + f": ΔT = {z(float(l.dT))} K"
             if getattr(l, "dT_z", 0.0):
                 t += f", ΔT oben−unten = {z(float(l.dT_z))} K"
+            # eine Vorspannung, die als Temperatur steht (RFEM-Import vor dem
+            # 13.10.2026): mit Kraft, E und α der Umrechnung, in derselben Form wie
+            # das Merkmal des Imports (TempLoad.vorspann_text, 14.10.2026)
+            vs = l.vorspann_text(self.model) if hasattr(l, "vorspann_text") else ""
+            if vs:
+                t += f" – {vs}"
             return t
         if art == "zwang":
             namen = ["ux", "uy", "uz", "φx", "φy", "φz"]
@@ -10046,6 +10138,10 @@ class MainWindow(QtWidgets.QMainWindow):
                      for d in (l.dofs or []) if 0 <= int(d) < 6]
             return f"K{l.node}: " + (", ".join(teile) or "–")
         if art == "vorspannung":
+            if getattr(l, "sollkraft", False):
+                g = int(getattr(l, "gruppe", 1) or 1)
+                return (f"{getattr(l, 'ziel', '?')}: F_soll = {kn(getattr(l, 'kraft', 0.0))} kN "
+                        f"(nach Verankerung" + (f", Gruppe {g}" if g != 1 else "") + ")")
             return f"{getattr(l, 'ziel', '?')}: F_v = {kn(getattr(l, 'kraft', 0.0))} kN"
         if art == "uebermass":
             t = (f"Fuge {getattr(l, 'ziel', '?')}: Ü = "
@@ -10080,7 +10176,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = m.load_cases.get(fall)
         if lc is None:
             return
-        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        titel = lc.lastart_titel(art)
         lasten = lc.lasten_je_art().get(art, [])
         if m.active_case != fall:
             m.active_case = fall                # seine Lasten sind in der Ansicht zu sehen
@@ -10139,7 +10235,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = m.load_cases.get(fall)
         if lc is None:
             return
-        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        titel = lc.lastart_titel(art)
         n_ = len(lc.lasten_je_art().get(art, []))
         if not n_:
             return self.info(f"Im Lastfall {fall} gibt es keine {titel}")
@@ -10303,10 +10399,23 @@ class MainWindow(QtWidgets.QMainWindow):
                        F("q2z", "q2_z [kN/m]", "zahl", q2[2] / 1e3),
                        F("von", "Abschnitt von [m]", "zahl", float(obj.von or 0.0)),
                        F("bis", "bis [m] (0 = Ende)", "zahl", float(obj.bis or 0.0))]
+        elif liste == "temp_loads" and getattr(obj, "aus_vorspannung", 0.0):
+            # umgerechnete Vorspannung (RFEM-Import): die Kraft ist die Eingabe,
+            # die Temperatur der Rechenwert daraus (13.10.2026)
+            titel = f"Vorspannung E{obj.elem}"
+            felder += [F("F", "Vorspannkraft F_v [kN]", "zahl", float(obj.aus_vorspannung) / 1e3,
+                         hinweis="gerechnet als eingeprägte Dehnung: dT = −F/(E·A·α)"),
+                       F("umrechnung", "Umrechnung", "info", obj.vorspann_umrechnung_text()),
+                       F("dT_rechenwert", "Rechenwert ΔT [K]", "info", zl.zahl_text(float(obj.dT)))]
         elif liste == "temp_loads":
             titel = f"Temperaturlast E{obj.elem}"
             felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
                        F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
+            vs = obj.vorspann_text(m) if hasattr(obj, "vorspann_text") else ""
+            if vs:
+                felder.append(F("vorspannung", "Vorspannung", "info",
+                                vs + " – umwandeln in die Sollkraft: Lasten › "
+                                "Vorspannung, Lastart „ΔT-Vorspannung in Sollkraft umwandeln“"))
         elif liste == "zwangsverformungen":
             titel = f"Zwangsverformung K{obj.node}"
             u = (list(obj.u or []) + [0.0] * 6)[:6]
@@ -10316,6 +10425,14 @@ class MainWindow(QtWidgets.QMainWindow):
             felder.append(F("dofs", "vorgegebene Richtungen", "text",
                             ", ".join(namen[int(d)] for d in (obj.dofs or []) if 0 <= int(d) < 6), breite=150,
                             hinweis="welche Richtungen vorgegeben sind (auch mit dem Wert 0), durch Komma"))
+        elif liste == "vorspannungen" and getattr(obj, "sollkraft", False):
+            titel = f"Vorspannkraft (Soll nach Verankerung) Stab {obj.ziel}"
+            felder += [F("F", "Sollkraft F_soll [kN]", "zahl", float(obj.kraft) / 1e3,
+                         hinweis="die Kraft, die der Stab nach dem Verankern trägt"),
+                       F("gruppe", "Gruppe beim Spannen", "ganz", int(getattr(obj, "gruppe", 1) or 1),
+                         hinweis="gleiche Gruppe = gleichzeitig gespannt; mehrere Gruppen nacheinander "
+                                 "(1, 2, …) - früher gespannte verlieren dann Kraft"),
+                       F("kommentar", "Bemerkung", "text", obj.kommentar or "", breite=150)]
         elif liste == "vorspannungen":
             titel = f"Vorspannung {'Stab' if obj.art == 'stab' else 'Volumen'} {obj.ziel}"
             felder += [F("F", "Vorspannkraft F_v [kN]", "zahl", float(obj.kraft) / 1e3),
@@ -10397,6 +10514,14 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 obj.p = z("p") * 1e3
                 obj.projiziert = bool(w.get("projiziert"))
+        elif liste == "temp_loads" and getattr(obj, "aus_vorspannung", 0.0):
+            # dT = −F/(E·A·α) ist linear in F: die neue Kraft skaliert den Rechenwert
+            neu_F = z("F") * 1e3
+            if neu_F:
+                obj.dT = obj.dT * neu_F / obj.aus_vorspannung
+                obj.aus_vorspannung = neu_F
+            else:
+                obj.dT, obj.aus_vorspannung = 0.0, 0.0
         elif liste == "temp_loads":
             obj.dT = z("dT")
             obj.dT_z = z("dTz")
@@ -10407,6 +10532,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif liste == "vorspannungen":
             obj.kraft = z("F") * 1e3
             obj.kommentar = str(w.get("kommentar", "") or "")
+            if getattr(obj, "sollkraft", False):
+                obj.gruppe = max(1, int(round(z("gruppe", float(obj.gruppe or 1)))))
         elif liste == "gravity":
             lc.gravity = [0.0, 0.0, z("gz")]
         neu = str(w.get("fall", fall) or fall)
@@ -10693,7 +10820,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if art in ("lastfall", "kombination", "werkstoff", "dicke", "querschnitt", "gelenk",
                        "berichtseintrag", "kontaktbedingung", "stellung") or art in self.LAGER_ARTEN:
-                return self._eigenschaften_uebernehmen(art, name, w, neu)
+                return self._eigenschaften_uebernehmen(art, name, w, neu, geaendert)
             if art == "knoten":
                 i = int(name)
                 if not 0 <= i < m.nn:
@@ -10818,6 +10945,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # nahm nur der Rahmen des „Uebernehmen“ einer Maske wieder weg.
                 if neuname in m.members and (neu or neuname != name):
                     return self.hinweis(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
+                sef.stab_pruefen(w)
                 self.merken(f"Stab {neuname}")
                 if neu:
                     m.add_member(neuname, els, design=bool(w.get("design", True)))
@@ -10840,6 +10968,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         setattr(mem, k, float(w.get(k)) or 1.0)
                 if "lt" in w:
                     mem.lt_check = bool(w.get("lt"))
+                if sef.stab_uebernehmen(m, name, w):
+                    sef.erneuern(self)
                 if "aus" in w and bool(w.get("aus")) != bool(getattr(mem, "aus", False)):
                     mem.aus = bool(w.get("aus"))
                     self.analysis = None
@@ -10886,6 +11016,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             m.elemente_loeschen(f.elemente)
                             f.elemente, f.randseiten = [], []
                         f.typ = typ
+                    if "lokale_achsen" in w:
+                        # zylindrische Achsen (14.10.2026): fuer alle Flaechen
+                        # derselben Bohrung gleich, damit lokal x ueberall in
+                        # dieselbe globale Richtung wirkt
+                        modus = LOKALE_ACHSEN.get(str(w.get("lokale_achsen") or ""), "")
+                        plus = list(ACHSE_PLUS_X.get(str(w.get("achse_plus_x") or ""), []))
+                        for n in flaechen_gleicher_achse(m, name):
+                            m.flaechen[n].lokale_achsen = modus
+                            m.flaechen[n].achse_plus_x = list(plus)
+                        m.lasten_verteilen()
             elif art == "geokoerper_einzeln":
                 flaechen = self._namensliste(w.get("flaechen"))
                 fehlt = [x for x in flaechen if x not in m.flaechen]
@@ -10917,6 +11057,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     k.flaechen, k.material = flaechen, w.get("material", "")
                     k.teilung, k.kommentar = teilung, str(w.get("kommentar", "") or "")
                 kp_ = m.koerper[name]
+                # vom Volumennachweis ausnehmen (13.10.2026)
+                kp_.nachweis_ausnehmen = bool(w.get("ausnehmen", False))
                 if abs(float(kp_.kerbfall or 0.0) - kerbfall) > 1e-6:
                     kp_.kerbfall = kerbfall
                     kp_.kerbfall_vorschlag = False        # eingegeben heisst bestaetigt
@@ -10944,11 +11086,113 @@ class MainWindow(QtWidgets.QMainWindow):
         # rechts bleibt die Maske des Objekts, jetzt im Bearbeiten-Zustand
         self._objektmaske(art if art != "stabelement" else "stabelement", name)
 
-    def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
+    # ---- Spannstahl und Gewinde (13.10.2026) ---------------------------------
+    @staticmethod
+    def _nmm(v) -> str:
+        return zl.zahl_text(v / 1e6)
+
+    #: Werkstoffart in der Maske -> Material.art (plast/verfestigung)
+    WERKSTOFFART_WAHL = {"Stahl": "", "Schraube": "Schraube", "Spannstahl": "Spannstahl"}
+
+    def _spannstahl_felder(self, F, mt) -> list:
+        """Werkstoffart (waehlbar, 13.10.2026) und die Grenzen des Spannstahls
+        fuer die Werkstoffmaske: die Spannungsgrenzen beim Spannen und nach dem
+        Verankern (leer = Vorgabe nach EN 1992-1-1; der Hinweis nennt sie).
+        f_p0,1k und f_pk sind beim Spannstahl die Felder f_y und f_u."""
+        import dataclasses
+        from ..ec3 import spannstahl as sp
+        vorgabe = dataclasses.replace(mt, sigma_pmax=None, sigma_pm0=None) if mt is not None else None
+        pmax = sp.sigma_p_max(vorgabe)[0] if vorgabe is not None else 0.0
+        pm0 = sp.sigma_pm0(vorgabe)[0] if vorgabe is not None else 0.0
+
+        def mpa(v):
+            return v / 1e6 if v else None
+        art = (mt.werkstoffart() if mt is not None and callable(getattr(mt, "werkstoffart", None)) else "")
+        wahl = next((k for k, v in self.WERKSTOFFART_WAHL.items() if v == art), "Stahl")
+        felder = [F("art", "Werkstoffart", "wahl", wahl, list(self.WERKSTOFFART_WAHL),
+                    hinweis="Stahl: f_y/f_u. Schraube: f_yb/f_ub. Spannstahl: f_p0,1k/f_pk in den Feldern "
+                            "darüber und Stabnachweis nach EN 1992-1-1 bzw. Zulassung im Spannungsquerschnitt "
+                            "A_s – σ ≤ f_p0,1k/1,15 in jedem Lastzustand, beim Spannen σ_p,max, nach dem "
+                            "Verankern σ_pm0"),
+                  F("sigma_pmax", "σ_p,max [N/mm²]", "zahl", mpa(getattr(mt, "sigma_pmax", None)), breite=78,
+                    leer=True, hinweis="nur Spannstahl, Grenze beim Spannen; leer = min(0,8·f_pk; 0,9·f_p0,1k)"
+                                       + (f" = {self._nmm(pmax)} N/mm²" if pmax else "")
+                                       + " (EN 1992-1-1, 5.10.2.1) – eintragen, wenn die Zulassung abweicht"),
+                  F("sigma_pm0", "σ_pm0 [N/mm²]", "zahl", mpa(getattr(mt, "sigma_pm0", None)), breite=78,
+                    leer=True, hinweis="nur Spannstahl, Grenze nach dem Verankern; leer = min(0,75·f_pk; 0,85·f_p0,1k)"
+                                       + (f" = {self._nmm(pm0)} N/mm²" if pm0 else "")
+                                       + " (EN 1992-1-1, 5.10.3) – eintragen, wenn die Zulassung abweicht")]
+        if mt is not None and getattr(mt, "Ep", None):
+            felder.append(F("spannkennwerte", "E_p aus der Quelldatei", "info",
+                            f"{self._nmm(mt.Ep)} N/mm² – gerechnet wird mit E"))
+        return felder
+
+    @staticmethod
+    def _spannstahl_lesen(w: dict, alt, zahl):
+        """{art, Ep, sigma_pmax, sigma_pm0} fuer den neuen Werkstoff - oder der
+        Grund, warum eine Eingabe nicht geht. Ein Feld, das die Maske nicht
+        traegt, behaelt den Wert des alten Werkstoffs (E_p aus dem Import)."""
+        if "art" in w:
+            art = MainWindow.WERKSTOFFART_WAHL.get(str(w.get("art") or ""), "")
+        else:
+            art = getattr(alt, "art", "") if alt is not None else ""
+        out = {"art": art, "Ep": getattr(alt, "Ep", None)}
+        for key, text in (("sigma_pmax", "σ_p,max"), ("sigma_pm0", "σ_pm0")):
+            if key in w:
+                v = zahl(key)
+                if v is not None and v <= 0:
+                    return f"{text} muss größer als null sein – leer lassen heißt Vorgabe. Nicht übernommen."
+                out[key] = None if v is None else v * 1e6
+            else:
+                out[key] = getattr(alt, key, None) if alt is not None else None
+        return out
+
+    def _gewinde_felder(self, F, sec) -> list:
+        """A_s und Gewinde fuer die Querschnittsmaske."""
+        from ..ec3 import spannstahl as sp
+        gew = str(getattr(sec, "gewinde", "") or "") if sec is not None else ""
+        wahl = (sp.GEWINDE_AUFGEWALZT_TEXT if gew == sp.GEWINDE_AUFGEWALZT
+                else gew if gew in sp.schraubengroessen() else "–")
+        As = getattr(sec, "A_s", None) if sec is not None else None
+        return [F("A_s", "A_s Gewinde [mm²]", "zahl", As * 1e6 if As else None, breite=78, leer=True,
+                  hinweis="Spannungsquerschnitt aus der Zulassung (Spannstahl); leer = Nennquerschnitt A mit "
+                          "Meldung. Die Steifigkeit bleibt bei A (Schaft)"),
+                F("gewinde", "Gewinde", "wahl", wahl, ["–", sp.GEWINDE_AUFGEWALZT_TEXT] + list(sp.schraubengroessen()),
+                  hinweis="aufgewalzter Gewindestab: A_s = Nennquerschnitt ohne Meldung; M12 … M36: A_s nach "
+                          "EN ISO 898-1 (M16 157, M20 245 mm²), der Stab wird als Schraube auf Zug nach "
+                          "EN 1993-1-8 nachgewiesen")]
+
+    @staticmethod
+    def _gewinde_lesen(w: dict, sec, zahl):
+        """{A_s, gewinde} fuer den Querschnitt - oder der Grund, warum nicht.
+        Eine Schraubengroesse setzt A_s nach der Tabelle, „aufgewalzt“ leert es."""
+        from ..ec3 import spannstahl as sp
+        gew = str(getattr(sec, "gewinde", "") or "")
+        if "gewinde" in w:
+            t = str(w.get("gewinde") or "").strip()
+            gew = (sp.GEWINDE_AUFGEWALZT if "aufgewalzt" in t
+                   else t.upper() if t.upper() in sp.schraubengroessen() else "")
+        As = getattr(sec, "A_s", None)
+        if "A_s" in w:
+            v = zahl("A_s")
+            if v is not None and v <= 0:
+                return "A_s muss größer als null sein – leer lassen heißt Nennquerschnitt. Nicht übernommen."
+            As = None if v is None else v * 1e-6
+        if gew in sp.schraubengroessen():
+            As = sp.schraubengroessen()[gew]
+        elif gew == sp.GEWINDE_AUFGEWALZT:
+            As = None
+        return {"A_s": As, "gewinde": gew}
+
+    def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False, geaendert=None):
         """Lastfall, Kombination, Werkstoff oder Dicke aus der Objektmaske
         schreiben - auch umbenennen; Verweise (Elemente, Flächen, Kombinationen)
-        werden mitgezogen."""
-        from ..model import ACTION_CATEGORIES, Material, ShellProp, Combination, GRUNDSTELLUNG
+        werden mitgezogen.
+
+        ``geaendert``: die Felder, die sich in der Maske geaendert haben (None =
+        unbekannt). Der Werkstoff nutzt es (13.10.2026): er bleibt das Objekt, das
+        er war, und nur diese Felder werden geschrieben."""
+        from ..model import ACTION_CATEGORIES, Material, ShellProp, Combination, GRUNDSTELLUNG, werte_gleich
         from .dialogs import THEORIEN
         m = self.model
         neuname = str(w.get("name", "") or "").strip() or name
@@ -11016,6 +11260,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.situation = "" if sit in ("", GRUNDSTELLUNG) else sit
             lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
             lc.grundlast = bool(w.get("grundlast", False))
+            lc.faktorisiert = bool(w.get("faktorisiert", False))
             lc.nummer = nummer          # oben gelesen und geprueft
             g = zahl("g_z", 0.0)
             grav = list(lc.gravity) + [0.0] * (3 - len(lc.gravity))
@@ -11105,16 +11350,59 @@ class MainWindow(QtWidgets.QMainWindow):
             grund = dg.streckgrenze_fehler(fy)
             if grund:
                 return self.hinweis(grund)
+            # Verfestigung (13.10.2026): „Vorgabe …“, „ohne Verfestigung …“ oder
+            # E/n; ohne das Feld (Attrappe, aeltere Maske) bleibt sie, wie sie
+            # war - ebenso die Werkstoffart
+            from .. import plastizitaet as pl_
+            alt_mt = m.materials.get(name)
+            r_verf = getattr(alt_mt, "verfestigung", None) if alt_mt is not None else None
+            if "verfestigung" in w:
+                ok_v, r_verf, grund = pl_.verfestigung_lesen(w.get("verfestigung"))
+                if not ok_v:
+                    return self.hinweis(grund)
+            # Werkstoffart, E_p und die Spannungsgrenzen des Spannstahls (13.10.2026):
+            # aus der Maske; was sie nicht traegt, bleibt wie am alten Werkstoff
+            spann = self._spannstahl_lesen(w, None if neu else alt_mt, zahl)
+            if isinstance(spann, str):
+                return self.hinweis(spann)
             self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
             # _stahlsorte_lesen)
             sorte, sorte_art, sorte_text = _stahlsorte_lesen(w.get("grade"), bool(fy))
-            mt = Material(neuname, E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
-                          rho=float(w.get("rho", 7850.0) or 7850.0),
+            werte_ = dict(E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
+                          # 0 ist eine Angabe (gewichtsloses Hilfsmaterial), leer die
+                          # Vorgabe; bis zum 13.10.2026 wurde auch die 0 still 7850
+                          rho=float(zahl("rho", 7850.0)),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte)
+                          grade=sorte, verfestigung=r_verf, **spann)
+            # art, sigma_pmax, sigma_pm0 schreibt die Schleife unten wie jedes Feld der
+            # Maske; E_p (kein Eingabefeld) bleibt am vorhandenen Werkstoff, wie es war
+            dicken_zeilen = []
+            if alt_mt is None:
+                mt = Material(neuname, **werte_,
+                              nachweis_ausnehmen=bool(w.get("ausnehmen", False)))
+            else:
+                # Der Werkstoff bleibt, wie er war, und nur die Felder, die die Maske
+                # geaendert hat, werden geschrieben (13.10.2026). Bis dahin wurde er
+                # aus den Feldern der Maske neu gebaut: die Dickentabellen (fy_dicke,
+                # fu_dicke aus dem RFEM-Import) gingen schon bei einer geaenderten
+                # Dichte verloren, ebenso jedes Feld, das die Maske nicht zeigt.
+                import copy
+                mt = copy.deepcopy(alt_mt)
+                mt.name = neuname
+                for k, v in werte_.items():
+                    if k in w and (geaendert is None or k in geaendert) \
+                            and not werte_gleich(getattr(mt, k, None), v):
+                        setattr(mt, k, v)
+                # f_y oder f_u von Hand geaendert: die Tabelle bleibt, ihre duennste
+                # Stufe folgt (Material.dickentabellen_nachfuehren), das Protokoll sagt es
+                dicken_zeilen = mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
+                # vom Volumennachweis ausnehmen (13.10.2026, Maskenfeld „ausnehmen“):
+                # wie die anderen Felder nur geschrieben, wenn die Maske es geaendert hat
+                if "ausnehmen" in w and (geaendert is None or "ausnehmen" in geaendert):
+                    mt.nachweis_ausnehmen = bool(w.get("ausnehmen", False))
             if not neu and neuname != name and name in m.materials:
                 del m.materials[name]
                 for e in m.elements:
@@ -11128,6 +11416,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         k.material = neuname
             m.materials[neuname] = mt
             name = neuname
+            for zeile in dicken_zeilen:
+                self.info(zeile)
             if sorte_art == "info":
                 self.info(sorte_text)
         elif art == "querschnitt":
@@ -11145,9 +11435,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 werte[key] = float(zahl(key, getattr(sec, key) / faktor)) * faktor
             if werte["A"] <= 0 or werte["Iy"] <= 0 or werte["Iz"] <= 0:
                 return self.hinweis("A, Iy und Iz müssen größer als null sein")
+            gewinde = self._gewinde_lesen(w, sec, zahl)
+            if isinstance(gewinde, str):
+                return self.hinweis(gewinde)
             self.merken(f"Querschnitt {neuname}")
             neu_sec = dataclasses.replace(sec, name=neuname, fabrication=str(w.get("fabrication", sec.fabrication)),
-                                          **werte)
+                                          **werte, **gewinde)
             del m.sections[name]
             m.add_section(neu_sec)
             if neuname != name:
@@ -12449,6 +12742,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.cb_diagram.setCurrentIndex(i)     # zeichnet neu
                 self.info(f"Schnittgrößenverlauf {wert}")
             return
+        if art == "spitze":
+            return self._spitze_zeigen(int(wert or 0))
         if art == "nachweis":
             tabelle = self.NACHWEIS_TABELLE.get(wert)
             if tabelle and self.tabelle_zeigen(tabelle):
@@ -13097,8 +13392,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         Ueberschreitet das Netz die Grenze in Unbekannten, vernetzt Fein
         selbsttaetig groeber ueber seine Stufen (elementstufe.fein_stufen,
-        seit 08.10.2026); Entwurf und Mittel haben keine Stufen - dort bleibt
-        das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
+        seit 08.10.2026); Mittel hat sie seit 13.10.2026 an einem Modell mit
+        Krafteinleitungen ohne Flaeche (feiner an starren Scheiben ueber
+        Bohrungen, mit eigenem Haken Stabenden, Schalter
+        ``krafteinleitung_fein`` und ``krafteinleitung_stabenden``, beide
+        in der Vorgabe aus), Entwurf
+        und Mittel sonst keine - dort bleibt das Netz, mit Warnung. Alle Wege zum Vernetzen im Fenster (Netz ->
         Vernetzen, vor der Rechnung, „Vernetzen“ beim Uebernehmen und Anlegen
         von Flaechen und Koerpern, nach Spalt und Spiel) kommen hier durch;
         nur die adaptive Vernetzung nicht (ohne Quellen von Fein)."""
@@ -13542,6 +13841,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.merken(f"Werkstoff {name}")
         del self.model.materials[name]
         self.model.add_material(neu)
+        for zeile in getattr(d, "dicken_meldungen", []):
+            self.info(zeile)
         if neu.name != name:
             for e in self.model.elements:
                 if e.mat == name:
@@ -13857,6 +14158,13 @@ class MainWindow(QtWidgets.QMainWindow):
         for art in spn.arten_im_ergebnis(self.model, self._spannungsergebnis()):
             out[spn.GRUPPE[art]] = [(text, einheit, spn.schluessel(art, g))
                                     for g, (text, einheit) in spn.GROESSEN[art].items()]
+        # Netzabhaengige Spannungsspitzen des gezeigten Ergebnisses (seit
+        # 10.10.2026): je auffaelliger Stelle Bauteil, Ursache, Kraft, sigma_v
+        # und eps_p; ein Klick fuehrt zur Stelle
+        if r is not None and passt != "anders":
+            eintr = sa.baum_eintraege_fuer(sa.stellen_zum_zeigen(r, an))
+            if eintr:
+                out[sa.TITEL] = eintr
         sing = self.singularitaeten()
         if sing:
             out["Freie Bewegungen"] = [
@@ -14444,7 +14752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_gelenk, zeilen)
         # Lastfaelle
         self._fill(self.tbl_lastfall,
-                   [[name, int(getattr(lc, "nummer", 0) or 0) or "", f"{lc.category}", lc.description, lc.n_loads,
+                   [[name, int(getattr(lc, "nummer", 0) or 0) or "", lc.einwirkung_text(), lc.description, lc.n_loads,
                      float(lc.gravity[2]) if len(lc.gravity) > 2 else 0.0,
                      getattr(lc, "exclusive_group", "") or "",
                      getattr(lc, "situation", "") or GRUNDSTELLUNG,
@@ -14558,10 +14866,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
             for l in lc.eigene("temp_loads"):
+                if l.aus_vorspannung:
+                    # eine umgerechnete Vorspannung: die Kraft, mit E und alpha
+                    # der Umrechnung (13.10.2026); der Rechenwert dT steht in
+                    # der Maske der Last
+                    zeilen.append([i, lcname, "Vorspannung", f"E{l.elem}",
+                                   f"F_v = {l.vorspann_kraft_text()}",
+                                   l.vorspann_umrechnung_text(), ""])
+                    i += 1
+                    continue
+                # eine Vorspannung als Temperatur: Kraft, E und α der Umrechnung (13.10.2026)
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {tab.festkomma(l.dT, 2)} K",
                                f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
-                               ""])
+                               l.vorspann_text(self.model)])
                 i += 1
             for l in lc.geometrielasten:
                 ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)
@@ -14606,9 +14924,12 @@ class MainWindow(QtWidgets.QMainWindow):
                                l.bezug().split(": ", 1)[-1], "global", ""])
                 i += 1
             for l in getattr(lc, "vorspannungen", None) or []:
-                zeilen.append([i, lcname, "Vorspannung",
+                soll = getattr(l, "sollkraft", False)
+                zeilen.append([i, lcname, "Vorspannkraft (Soll)" if soll else "Vorspannung",
                                ("Stab " if l.art == "stab" else "Volumen ") + str(l.ziel),
-                               f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
+                               (f"F_soll = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN"
+                                + (f", Gruppe {int(l.gruppe)}" if soll and int(l.gruppe or 1) != 1 else ""))
+                               if soll else f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
                                "Stabachse" if l.art == "stab" else
                                ("längste Abmessung" if l.achse is None else
                                 "(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.achse) + ")"),
@@ -15228,9 +15549,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.hinweis(grund)
                 return False
             self.merken(f"Werkstoff {name}")
+            fy_alt = v.fy
             v.fy = None if fy is None else fy * 1e6
             self._zelle_uebernommen(f"Werkstoff {name}: {self.tbl_mat.modell.spalten[k].kopf()} = "
                                     f"{'leer' if fy is None else wert}")
+            # wie die Maske (13.10.2026): eine Dickentabelle aus der Quelldatei bleibt, ihre
+            # duennste Stufe folgt dem neuen f_y - sonst bliebe die Eingabe fuer Staebe wirkungslos
+            for zeile in v.dickentabellen_nachfuehren(fy_alt, v.fu):
+                self.info(zeile)
             return True
         w = float(wert)
         if k == 1 and not self._pruefen(w, unten=0.0, was="E-Modul"):
@@ -15556,8 +15882,14 @@ class MainWindow(QtWidgets.QMainWindow):
                    hinweis="Vergleichsspannung nach von Mises"),
             Spalte("h", "", "zahl", 2,
                    hinweis="Mehrachsigkeit σ_m/σ_v; bei dreiachsigem Zug kritisch"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="σ_v/(f_y/γ_M0); Filter z. B. > 1",
+            Spalte("Ausnutzung", "", "zahl", 3,
+                   hinweis="σ_v/(f_y/γ_M0), bei plastischer Rechnung ε_p,1/Grenzwert; Filter z. B. > 1",
                    ampel=True),
+            # plastische Rechnung (13.10.2026): Dehnung, Bauteil und Ort
+            Spalte("ε_p,1", "%", "zahl", 3,
+                   hinweis="größte plastische Hauptdehnung am Integrationspunkt (plastische Rechnung)"),
+            Spalte("Bauteil", hinweis="Körper des maßgebenden Punkts (plastische Rechnung)"),
+            Spalte("Ort", hinweis="Element und Integrationspunkt mit Koordinaten (plastische Rechnung)"),
             Spalte("Kombination"), Spalte("Status", ampel=True)],
             "Volumen", self, mit_kennwerten=True)
         self.tbl_vol.zeile_gewaehlt.connect(self._tabelle_volumen)
@@ -16275,6 +16607,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return pfad
 
     def din19704_bilden(self):
+        # Lastfaelle ohne Einwirkung: der Hinweis vor dem Merken und Bilden (13.10.2026)
+        offen = self.model.lastfaelle_ohne_einwirkung()
+        if offen:
+            from ..combinations import sperrhinweis_erzeugen
+            return self.hinweis(sperrhinweis_erzeugen(offen))
         from ..bridges.din19704 import Regelwerk, pruefliste
         rw = getattr(self, "regelwerk", None) or Regelwerk()
         self.regelwerk = rw
@@ -16638,12 +16975,33 @@ class MainWindow(QtWidgets.QMainWindow):
             "Darum ist „gemeinsam“ ein Versuch: jedes so gerechnete Ergebnis trägt eine Warnung "
             "in seiner Zusammenfassung und in den Hinweisen des Berichts, ein Lastfall auch im "
             "Protokoll und in der Rechenliste - es ist mit „verschachtelt“ gegenzuprüfen.")
+        self.cb_plast_abbruch = QtWidgets.QComboBox()
+        # Erster Eintrag = Vorgabe (plastizitaet.ABBRUCH_WEGE[0], 13.10.2026);
+        # ein unbekannter Wert aus einer Datei zeigt die Vorgabe, der Loeser
+        # rechnet sie auch und meldet den Wert
+        for t_, v_ in (("ingenieurmäßig (Vorgabe)", "ingenieurmaessig"), ("streng", "streng")):
+            self.cb_plast_abbruch.addItem(t_, v_)
+        self.cb_plast_abbruch.setToolTip(
+            "Wann eine Laststufe als konvergiert gilt.\n\n"
+            "Ingenieurmäßig (Vorgabe) - netzabhängige Spitzen ausgenommen: Stellen, an denen Kraft "
+            "ohne Auflagefläche in ein Volumen geht und die das Programm als auffällig erkennt "
+            "(σ_v ≥ 2·f_y oder Pressung über die Hülle ≥ f_y, etwa ein Anker an einer starren Scheibe, "
+            "die nur den Lochrand koppelt), zählen nicht mit. Die Laststufe ist fertig, wenn sich die "
+            "plastischen Knotenlasten außerhalb dieser Zonen um weniger als die Toleranz ändern, die "
+            "Kraft durch jede solche Stelle um höchstens 0,5 % und die Verschiebung außerhalb um "
+            "höchstens 0,1 %. Die Zonen rechnen weiter plastisch mit; ihre Werte stehen im Ergebnis "
+            "als „nicht auskonvergiert“.\n\n"
+            "Streng: die Änderung über das ganze Modell, wie bis zum 13.10.2026. An Spitzen, die mit "
+            "dem Netz wachsen, kostet das Newton-Schritte, ohne die Werte dort richtiger zu machen.")
         self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
         self.sp_plast_verf.setRange(0.0, 50.0)
         self.sp_plast_verf.setDecimals(2)
         self.sp_plast_verf.setSuffix(" %")
         self.sp_plast_verf.setValue(1.0)
-        self.sp_plast_verf.setToolTip("Tangente E_t/E nach dem Fließen: 0 % ideal-plastisch, Vorgabe 1 %")
+        self.sp_plast_verf.setToolTip("Tangente E_t/E nach dem Fließen: 0 % ideal-plastisch, Vorgabe 1 % = E/100.\n"
+                                      "Sie gilt für jeden Werkstoff, der in seiner Maske „Vorgabe“ trägt; "
+                                      "dort lässt sie sich je Werkstoff einstellen (seit 13.10.2026).\n"
+                                      "Bis f_u verfestigt der Werkstoff, danach fließt er ideal plastisch.")
         self.sp_plast_stufen = QtWidgets.QSpinBox()
         self.sp_plast_stufen.setRange(1, 20)
         self.sp_plast_stufen.setValue(3)
@@ -16662,10 +17020,58 @@ class MainWindow(QtWidgets.QMainWindow):
         # Felder in einer Zeile waren 815 px (Paket 13r)
         gpl.addWidget(row("Verfahren", self.cb_plast_weg))
         gpl.addWidget(row("Verfahren mit Kontakt", self.cb_plast_kontakt))
+        gpl.addWidget(row("Abbruch", self.cb_plast_abbruch))
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen))
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
         lay.addWidget(gp)
+
+        # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
+        # Ingenieurgroessen - wie viel die Restwechsel pendelnder Knoten tragen und
+        # wie weit sie klaffen duerfen. Am Modell gespeichert (Plastizitaet.
+        # pendel_kraft_anteil, pendel_weg), gilt fuer jeden Kontaktlauf, auch ohne Fliessen
+        gk = QtWidgets.QGroupBox("Kontaktlauf und Spannschritt (Einstellung am Modell)")
+        gkl = QtWidgets.QVBoxLayout(gk)
+        self.sp_pendel_kraft = QtWidgets.QDoubleSpinBox()
+        self.sp_pendel_kraft.setRange(0.0, 10.0)
+        self.sp_pendel_kraft.setDecimals(3)
+        self.sp_pendel_kraft.setSingleStep(0.05)
+        self.sp_pendel_kraft.setSuffix(" %")
+        self.sp_pendel_kraft.setValue(0.1)
+        self.sp_pendel_weg = QtWidgets.QDoubleSpinBox()
+        self.sp_pendel_weg.setRange(0.0, 1000.0)
+        self.sp_pendel_weg.setDecimals(2)
+        self.sp_pendel_weg.setSingleStep(0.5)
+        self.sp_pendel_weg.setSuffix(" µm")
+        self.sp_pendel_weg.setValue(1.0)
+        tip = ("Pendelt der Status einzelner Kontaktknoten mit Periode 2 (offen/geschlossen oder "
+               "Haften/Gleiten wechseln jede Runde hin und her), wird ihr Status eingefroren, der Rest "
+               "rechnet weiter, und am Ende wird geprüft. Der Kontaktlauf gilt als konvergiert, wenn die "
+               "Restwechsel zusammen höchstens diesen Anteil der Kontaktkraft tragen und ihre Klaffung "
+               "bzw. Durchdringung höchstens diesen Weg erreicht. Sonst ist er nicht konvergiert, und mit "
+               "Fließen wird die Laststufe halbiert.\n\n"
+               "Vorgabe 0,1 % und 1 µm (Entscheidung vom 14.10.2026). 0 schaltet die Regel ab: dann "
+               "endet ein pendelnder Lauf wie bisher am Deckel der Reibungsnachprüfung.")
+        self.sp_pendel_kraft.setToolTip(tip)
+        self.sp_pendel_weg.setToolTip(tip)
+        # je Feld eine Zeile: beide in einer waren mit Segoe UI 493 px breit, der rechte
+        # Bereich hat 450 (tests/test_register_berechnung)
+        gkl.addWidget(row("Restwechsel bis", self.sp_pendel_kraft))
+        gkl.addWidget(row("Klaffung bis", self.sp_pendel_weg))
+        # Spannschritt einer Vorspannkraft in Stufen (14.10.2026, Plastizitaet.spannstufen)
+        self.sp_spannstufen = QtWidgets.QSpinBox()
+        self.sp_spannstufen.setRange(0, 20)
+        self.sp_spannstufen.setSpecialValueText("automatisch")
+        self.sp_spannstufen.setSuffix(" Stufen")
+        self.sp_spannstufen.setValue(0)
+        self.sp_spannstufen.setToolTip(
+            "Vorspannkraft (Soll nach Verankerung): das Kräftepaar F_soll des Spannschritts wächst in so "
+            "vielen gleichen Stufen auf F_soll, jede vom Kontakt- und Fließzustand der vorigen aus - wie "
+            "beim Spannen mit der Presse. Automatisch: mit Kontakt oder Fließen 3 Stufen, sonst eine "
+            "(linear ist das Ergebnis vom Weg unabhängig). Nach dem Verriegeln trägt jeder Stab F_soll, "
+            "gleich wie viele Stufen.")
+        gkl.addWidget(row("Spannschritt in", self.sp_spannstufen))
+        lay.addWidget(gk)
 
         self.experten = msk.Einklappabschnitt(
             "Experten", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
@@ -16761,6 +17167,17 @@ class MainWindow(QtWidgets.QMainWindow):
             "„u gesamt“ nur das Maximum")
         self.cb_extremmarken.toggled.connect(self.redraw)
         lay.addWidget(row(self.cb_verlaufswerte, self.cb_extremmarken))
+        # Netzabhaengige Spannungsspitzen (seit 10.10.2026, Plan Singularitaeten
+        # Paket 2): die Zonen der auffaelligen Stellen umranden, mit Zeichen
+        self.cb_spitzenzonen = QtWidgets.QCheckBox("Netzabhängige Stellen kennzeichnen")
+        self.cb_spitzenzonen.setChecked(True)
+        self.cb_spitzenzonen.setToolTip(
+            "Die Zonen der auffälligen Stellen, an denen Kraft ohne Auflagefläche in ein Volumen "
+            "geht, umranden und an der Stelle ein Zeichen mit σ_v setzen. Legende, Marken und "
+            "Kennwerte nehmen ihr Maximum immer außerhalb dieser Zonen; die Spitze steht getrennt "
+            "daneben (netzabhängig, nicht für den Nachweis)")
+        self.cb_spitzenzonen.toggled.connect(self.redraw)
+        lay.addWidget(self.cb_spitzenzonen)
         self.cb_mode = QtWidgets.QComboBox()
         self.cb_mode.currentIndexChanged.connect(self.redraw)
         # die Glasleiste fuehrt die Formen mit (24.09.2026)
@@ -17329,8 +17746,10 @@ class MainWindow(QtWidgets.QMainWindow):
                            ("fest (unten … oben)", "fest"),
                            ("Grenzwert (0 … Grenze, darüber eigene Farbe)", "grenze")):
             self.cb_skala.addItem(text, wert)
-        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird magenta, "
-                                 "die Skala nennt darüber den tatsächlichen Größtwert; bei "
+        # seit 13.10.2026 Magenta mit „> Skalenmax“; der Groesstwert steht in
+        # den Kennwerten (bis dahin grau und der Groesstwert an der Skala)
+        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird magenta "
+                                 "(„> Skalenmax“), der Größtwert steht in den Kennwerten; bei "
                                  "negativen Werten reicht sie von −Grenze bis Grenze")
         f.addRow("Grenzen", self.cb_skala)
         self.ed_skala_unten = QtWidgets.QDoubleSpinBox()
@@ -17446,7 +17865,8 @@ class MainWindow(QtWidgets.QMainWindow):
             text = (f" · Skala {zl.zahl_text(s.unten, punkt=True)} … "
                     f"{zl.zahl_text(s.oben, punkt=True)}{e}")
         else:
-            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, darüber magenta"
+            # seit 13.10.2026 Magenta mit „> Skalenmax“ (bis dahin grau)
+            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, {spn.UEBER_TEXT} magenta"
             if s.nur_ueber:
                 text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}{e}"
         return text
@@ -18404,19 +18824,37 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         erg = getattr(self.analysis, "volumen", None) if self.analysis is not None else None
         zeilen = []
+
+        def _status(c):
+            # Zone und ausgenommene Koerper/Werkstoffe (13.10.2026) im Status
+            s = c.status()
+            if getattr(c, "zone_n", 0):
+                s += "; netzabhängige Stellen nur berichtet"
+            if getattr(c, "ausgenommen", None):
+                s += ((": " if getattr(c, "alle_ausgenommen", False) else "; ausgenommen: ")
+                      + ", ".join(c.ausgenommen))
+            return s
         for name, vb in self.model.volumenbereiche.items():
             c = erg.bereiche.get(name) if erg is not None else None
             w = (c.werte or {}) if c is not None else {}
+            # plastische Rechnung (13.10.2026): Dehnung statt Spannung
+            dehnung = c is not None and getattr(c, "kriterium", "") == "dehnung"
+            sp = w if not dehnung else {}
             zeilen.append([name, len(vb.elemente),
                            (c.material if c is not None else ""),
                            (c.fy / 1e6 if c is not None and c.fy else ""),
-                           (w.get("s1", 0.0) / 1e6 if w else ""),
-                           (w.get("s3", 0.0) / 1e6 if w else ""),
-                           (w.get("sigma_v", 0.0) / 1e6 if w else ""),
-                           (w.get("h", 0.0) if w else ""),
-                           (c.util if c is not None and not c.singular else ""),
+                           (sp.get("s1", 0.0) / 1e6 if sp else ""),
+                           (sp.get("s3", 0.0) / 1e6 if sp else ""),
+                           (sp.get("sigma_v", 0.0) / 1e6 if sp else ""),
+                           (sp.get("h", 0.0) if sp else ""),
+                           (c.util if c is not None and not c.singular
+                            and not getattr(c, "nicht_bewertet", "")
+                            and not getattr(c, "alle_ausgenommen", False) else ""),
+                           (c.eps_p1 * 100.0 if dehnung else ""),
+                           (c.bauteil if dehnung else ""),
+                           (c.ort_text() if dehnung else ""),
                            (c.kombination if c is not None else ""),
-                           (c.status() if c is not None else "nicht gerechnet")])
+                           (_status(c) if c is not None else "nicht gerechnet")])
         self._fill(self.tbl_vol, zeilen)
 
     def _tabelle_beulfeld(self, wert):
@@ -18711,7 +19149,9 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for lc in m.load_cases.values():
             p = lc.psi_factors
-            rows.append([lc.name, lc.category, "/".join(zl.zahl_text(x, tausender=False, punkt=True) for x in p[:3]), lc.n_loads,
+            rows.append([lc.name, lc.einwirkung_text(),
+                         "–" if lc.kategorie_offen or lc.faktorisiert else
+                         "/".join(zl.zahl_text(x, tausender=False, punkt=True) for x in p[:3]), lc.n_loads,
                          lc.description + (f"  [Gruppe {lc.exclusive_group}]" if lc.exclusive_group else "")
                          + (f"  [Situation {lc.situation}]" if getattr(lc, "situation", "") else "")])
         self.tbl_lc.blockSignals(True)
@@ -18720,7 +19160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if m.active_case in names:
             self.tbl_lc.selectRow(names.index(m.active_case))
         self.tbl_lc.blockSignals(False)
-        self.lbl_active.setText(f"aktiver Lastfall: {m.active_case} ({m.case().category})")
+        self.lbl_active.setText(f"aktiver Lastfall: {m.active_case} ({m.case().einwirkung_text()})")
         self.cb_g.blockSignals(True)
         self.cb_g.setChecked(bool(np.any(m.gravity)))
         self.cb_g.blockSignals(False)
@@ -19010,6 +19450,18 @@ class MainWindow(QtWidgets.QMainWindow):
         def stufentext(s):
             return f"{es.ELEMENTE[s]} – {es.ZWECK[s]}"
 
+        # Die Krafteinleitungen ohne Flaeche (starre Scheiben ueber Bohrungen,
+        # Stabenden) bestimmt die Maske einmal und merkt sie sich: am Drehlager
+        # kostet das 3 s, und jede Aenderung eines Feldes fuehrt die wirksame
+        # Kantenlaenge nach (13.10.2026)
+        kraftstellen: dict = {}
+
+        def stellen():
+            if "s" not in kraftstellen:
+                from .. import netzfeld
+                kraftstellen["s"] = netzfeld.krafteinleitungen(self.model)
+            return kraftstellen["s"]
+
         def mm(v):
             # Laengen in mm - so denkt man beim Vernetzen („Netzeinstellungen
             # in mm", 13.09.2026); das Modell rechnet in m. Leer = None: seit
@@ -19034,7 +19486,8 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("elemente", "Elemente", "wahl", es.AUSWAHL[stufe_jetzt], [es.AUSWAHL[s] for s in es.STUFEN],
                     hinweis="Entwurf: tet4, hex8 (VQ83), Schalen linear – schnell, Spannungen zu niedrig. "
                             "Mittel (Vorgabe): tet10, hex20 (VQ203), Schalen quadratisch – für die "
-                            "Nachweise. Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
+                            "Nachweise, auf Wunsch feiner an Krafteinleitungen ohne Fläche (starre "
+                            "Scheiben über Bohrungen, Stabenden). Fein: wie Mittel, feiner an Kontakt-, Lager- und Lastflächen (halbe "
                             "Kantenlänge) und an den Bögen der Kontakt- und Lagerflächen (9° statt 18° je "
                             "Abschnitt) – Bohrungen, Kerben, Ermüdung. Sechsflächner entstehen "
                             "automatisch nur dort, wo sie sauber "
@@ -19042,10 +19495,30 @@ class MainWindow(QtWidgets.QMainWindow):
                             "Netz → Elementübersicht"),
                   F("elemente_info", "", "info", stufentext(stufe_jetzt), anzeige=True),
                   F("kantenlaenge", "Kantenlänge (wirksam)", "info",
-                    es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model),
+                    es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model, stellen=stellen),
                     hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein dieselbe wie bei Mittel, "
-                            "dazu, welche Flächen und Bögen feiner werden; die Einstellungen darunter "
-                            "bleiben die für Mittel", anzeige=True)]
+                            "dazu, welche Flächen und Bögen feiner werden, und bei Mittel und Fein, was an "
+                            "Krafteinleitungen ohne Fläche feiner wird; die Einstellungen darunter "
+                            "bleiben die für Mittel", anzeige=True),
+                  # Krafteinleitungen ohne Flaeche (13.10.2026, Anwender: „im Lochbereich
+                  # feiner bzw. quadratisch vernetzen“): Vorgabe aus, am Drehlager gemessen
+                  F("krafteinleitung_fein", "Krafteinleitungen ohne Fläche feiner vernetzen", "haken",
+                    bool(getattr(n, "krafteinleitung_fein", False)),
+                    hinweis="Bei Mittel und Fein: starre Scheiben über Bohrungen (die Kopplung hängt nur am "
+                            "Lochrand) bekommen am Lochrand 9° statt 18° je Abschnitt, höchstens die halbe "
+                            "Kantenlänge - zwei Elementringe weit, von dort wachsend. Das macht die Zone der "
+                            "netzabhängigen Spannungsspitzen dort klein. Es kostet Elemente und Zeit; die "
+                            "Höchstzahl Unbekannte vergröbert selbsttätig (zuerst fallen die kleinen Ringe "
+                            "weg). Ringe, deren Kantenlänge unter der Mindestweite des Vernetzers (Kantenlänge "
+                            "von Mittel geteilt durch 30) läge, bleiben wie Mittel. Entwurf bleibt, wie er "
+                            "ist. Aus: das Netz von Mittel wie bis zum 13.10.2026"),
+                  F("krafteinleitung_stabenden", "… auch Stabenden auf Volumen", "haken",
+                    bool(getattr(n, "krafteinleitung_stabenden", False)),
+                    hinweis="Zusätzlich bekommen Stabenden, die auf einer ebenen Fläche eines Volumens enden, "
+                            "die halbe Kantenlänge, zwei Elementringe weit. Der Kegel dahinter reicht in die "
+                            "Nachbarkörper und kann ein großes Modell erheblich verteuern (am Drehlager "
+                            "wuchsen mit Ringen und Stabenden zusammen Nachbarplatten um bis zu 63 % der "
+                            "Knoten); nur mit dem Haken darüber wirksam")]
         if gruende:
             felder.append(F("sperre", "Kontakt", "info", es.sperrtext(gruende)))
         felder += [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
@@ -19064,8 +19537,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     int(getattr(n, "hoechstens_unbekannte", 0) or 0),
                     hinweis="Grenze für das ganze Netz, drei Unbekannte je Knoten, gezählt beim "
                             "Vernetzen. Wird sie überschritten, vernetzt das Programm selbsttätig gröber "
-                            "(Fein in Stufen) und nennt jede Stufe im Protokoll; Entwurf und Mittel "
-                            "haben keine gröbere Stufe – dort bleibt das Netz, und es kommt eine Warnung. "
+                            "(Fein in Stufen, Mittel an Krafteinleitungen ohne Fläche) und nennt jede Stufe "
+                            "im Protokoll; Entwurf und Mittel sonst haben keine gröbere Stufe – dort bleibt das "
+                            "Netz, und es kommt eine Warnung. "
                             "0 = keine Grenze; Vorgabe 4 000 000 (für 128 GB Arbeitsspeicher; "
                             "mit weniger Speicher die Grenze senken)"),
                   F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
@@ -19092,6 +19566,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     hinweis="MMG3D (LGPL, getrenntes Programm mmg3d_O3) optimiert das fertige Netz bei "
                             "fester Hülle - der Weg zu einer Mindestgüte aller Elemente; "
                             "„Vernetzer installieren…“ lädt es nach, wo es liegt, weiß das Programm")]
+        # Stabenden in Volumen: an 1-3 Knoten oder verteilt (13.10.2026)
+        felder += sef.felder_netz(self.model)
         # Das Pfadfeld fuer mmg3d_O3 ist heraus (13.09.2026): "der Pfad steht
         # doch bei Installation fest und kann programmintern verarbeitet
         # werden" - vernetzer_extern.mmg3d_programm nimmt das nachgeladene
@@ -19130,9 +19606,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 netz_ = self._netz_aus_maske(maske.werte())
             except (ValueError, TypeError):
                 return
-            maske.setzen("kantenlaenge", es.kantenlaenge_text(es.setzen(netz_, s), self.model))
+            maske.setzen("kantenlaenge", es.kantenlaenge_text(es.setzen(netz_, s), self.model, stellen=stellen))
         cb.currentTextChanged.connect(nachfuehren)
         maske._felder["dichte"].currentTextChanged.connect(nachfuehren)
+        maske._felder["krafteinleitung_fein"].toggled.connect(nachfuehren)
+        maske._felder["krafteinleitung_stabenden"].toggled.connect(nachfuehren)
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
 
@@ -19271,6 +19749,10 @@ class MainWindow(QtWidgets.QMainWindow):
                       hoechstens_unbekannte=max(0, int(float(
                           w.get("hoechstens_unbekannte", getattr(n, "hoechstens_unbekannte", 0)) or 0))),
                       form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
+                      krafteinleitung_fein=bool(w.get("krafteinleitung_fein",
+                                                      getattr(n, "krafteinleitung_fein", False))),
+                      krafteinleitung_stabenden=bool(w.get("krafteinleitung_stabenden",
+                                                           getattr(n, "krafteinleitung_stabenden", False))),
                       abgebildet=bool(w.get("abgebildet", n.abgebildet)),
                       teilung_uebersteuern=bool(w.get("uebersteuern", True)))
         # Die Stufe setzt Ordnung und Sweep (25.09.2026): Sweep immer „sauber“ -
@@ -19312,12 +19794,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _netzeinstellungen_setzen(self, w: dict):
         try:
             netz = self._netz_aus_maske(w)
+            sef.netz_uebernehmen(self.model, w, nur_pruefen=True)
         except zl.Eingabefehler as ex:          # nur die Eingabe ist ein Hinweis (9b, S3)
             return self.hinweis(f"Eingabe: {ex}")
         except (ValueError, TypeError) as ex:
             return self.error(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
         self.model.netz = netz
+        if sef.netz_uebernehmen(self.model, w):
+            sef.erneuern(self)
         # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
         from .. import elementstufe as es
         sperre = es.sperre_anwenden(self.model)
@@ -19560,6 +20045,11 @@ class MainWindow(QtWidgets.QMainWindow):
                       f"{bg.anzahl(len(m.load_cases), 'Lastfall', 'Lastfälle')}, "
                       f"{bg.anzahl(len(m.members), 'Stab', 'Stäbe')}")
             self._fortschritt_ende()
+            # Schraubenguete (13.10.2026): der Hinweis steht orange im Protokoll und
+            # gelb in der Statuszeile - am Drehlager sonst unter tausend Importzeilen
+            sg = next((s for s in msgs if "Schraubengüte prüfen" in s), "")
+            if sg:
+                self._hinweis_statuszeile(sg.replace("WARNUNG: ", "", 1).split(" Betroffen:")[0])
             QtWidgets.QApplication.restoreOverrideCursor()
             if target is None:
                 # Elementwahl nach dem Import (Paket E, 25.09.2026): die
@@ -20481,46 +20971,118 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Achse der Vorspannung eines Volumenkoerpers in der Maske
     VORSPANN_ACHSEN = ["automatisch (längste Abmessung)", "global x", "global y", "global z"]
 
+    #: Lastarten der Vorspannungsmaske (13.10.2026): die Anfangsdehnung wie
+    #: bisher, die Sollkraft nach Verankerung und die Umwandlung einer
+    #: Temperatur-Vorspannung (RFEM-Import) in die Sollkraft
+    VORSPANN_ARTEN = ["Anfangsdehnung (F_v)", "Vorspannkraft (Soll nach Verankerung)",
+                      "ΔT-Vorspannung in Sollkraft umwandeln"]
+
     @_maskenweg()
     def maske_vorspannung(self):
-        """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung."""
-        felder = [msk.Feld("F", "Vorspannkraft F_v [kN]", wert=100.0,
-                           hinweis="positiv = Zug im vorgespannten Bauteil (es klemmt die Umgebung)"),
+        """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung
+        oder (seit 13.10.2026) als Sollkraft nach Verankerung."""
+        from .. import vorspannkraft as vk
+        felder = [msk.Feld("art", "Lastart", "wahl", self.VORSPANN_ARTEN[0], list(self.VORSPANN_ARTEN),
+                           hinweis="Anfangsdehnung: das Bauteil will sich um F_v/(EA) verkürzen und trägt "
+                                   "danach F_v minus die Verkürzung der Umgebung. Sollkraft (nur Stäbe): "
+                                   "der Stab trägt nach dem Verankern genau F_soll - gespannt in einem "
+                                   "eigenen Schritt vor den übrigen Lasten. Umwandeln: die aus RFEM "
+                                   "übernommene Vorspannung als Temperatur (ΔT) wird zur Sollkraft"),
+                  msk.Feld("F", "Vorspannkraft F_v / F_soll [kN]", wert=100.0,
+                           hinweis="positiv = Zug im vorgespannten Bauteil (es klemmt die Umgebung); "
+                                   "beim Umwandeln 0 = Vorschlag (0,9·f_p0,1k·A bei Spannstahl, sonst "
+                                   "der Wert aus RFEM)"),
+                  msk.Feld("gruppe", "Gruppe beim Spannen", "ganz", 1,
+                           hinweis="nur Sollkraft: Stäbe derselben Gruppe werden gleichzeitig gespannt, "
+                                   "mehrere Gruppen nacheinander (1, 2, …) - die früher gespannten "
+                                   "verlieren dann Kraft"),
                   msk.Feld("achse", "Achse (Volumen)", "wahl", self.VORSPANN_ACHSEN[0],
                            list(self.VORSPANN_ACHSEN),
                            hinweis="Richtung der Schraube; bei Stäben ist es die Stabachse"),
                   msk.Feld("kommentar", "Bemerkung", "text", "", breite=150),
-                  self._lastfallfeld()]
+                  self._lastfallfeld(),
+                  msk.Feld("alle", "Umwandeln in allen Lastfällen mit derselben Anfangsvorspannung",
+                           "haken", True,
+                           hinweis="sonst nur im gewählten Lastfall; ein Lastfall mit anderer Kraft "
+                                   "(am Drehlager 805 statt 952 kN) bleibt, wie er ist")]
+        offen = [h for h in (getattr(self.model, "importhinweise", None) or [])
+                 if h.get("art") == "vorspannung" and not h.get("erledigt")]
+        if offen:
+            felder.append(msk.Feld("hinweise", "Aus dem Import", "info",
+                                   " · ".join(str(h.get("text", "")) for h in offen[:3])))
+        elif vk.temperatur_vorspannungen(self.model):
+            felder.append(msk.Feld("hinweise", "Im Modell", "info",
+                                   "Vorspannungen als Temperatur (ΔT) auf Zugstäben - umwandeln mit "
+                                   f"der Lastart „{self.VORSPANN_ARTEN[2]}“"))
         m = msk.Maske("Vorspannung", felder, knopf="Last aufbringen",
                       hinweis="Stäbe oder Volumen in der Ansicht wählen (Auswahlart „Stab“ oder "
-                              "„Volumen“), Kraft eintragen, „Last aufbringen“. Das Bauteil will "
-                              "sich um F_v/(EA) verkürzen; hält die Umgebung es fest, trägt es "
-                              "F_v als Zug - wie eine angezogene Schraube.")
+                              "„Volumen“), Lastart und Kraft eintragen, „Last aufbringen“. "
+                              "Anfangsdehnung: das Bauteil will sich um F_v/(EA) verkürzen; hält die "
+                              "Umgebung es fest, trägt es F_v als Zug - wie eine angezogene Schraube. "
+                              "Sollkraft: der Stab trägt nach dem Verankern F_soll. Umwandeln: ohne "
+                              "Auswahl alle Stäbe mit einer Temperatur-Vorspannung.")
         m.angewendet.connect(self._vorspannung_aufbringen)
         self.maske_erzeugen(m)
 
     def _vorspannung_aufbringen(self, w: dict):
         m = self.model
+        lastart = str(w.get("art", "") or self.VORSPANN_ARTEN[0])
+        if lastart == self.VORSPANN_ARTEN[2]:
+            return self._vorspannung_umwandeln(w)
+        soll = lastart == self.VORSPANN_ARTEN[1]
         ziele = [(n, "stab") for n in self.sel_staebe if n in m.members] \
             + [(n, "koerper") for n in self.sel_koerper if n in m.koerper]
         if not ziele:
             return self.hinweis("Zuerst Stäbe oder Volumen in der Ansicht wählen "
                               "(Auswahlart „Stab“ oder „Volumen“)")
+        if soll and any(a == "koerper" for _n, a in ziele):
+            return self.hinweis("Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab - "
+                                "die Volumen abwählen oder die Anfangsdehnung wählen")
         F = float(w.get("F", 0.0) or 0.0) * 1e3
         if not F:
             return self.hinweis("Die Vorspannkraft ist null")
         achse = {"global x": [1.0, 0.0, 0.0], "global y": [0.0, 1.0, 0.0],
                  "global z": [0.0, 0.0, 1.0]}.get(str(w.get("achse", "")))
         fall = w.get("fall") or None
+        gruppe = max(1, int(float(w.get("gruppe", 1) or 1)))
         self.merken("Vorspannung")
         for name, art in ziele:
             m.add_vorspannung(name, F, art=art, achse=achse if art == "koerper" else None,
-                              case=fall, kommentar=str(w.get("kommentar", "") or ""))
+                              case=fall, kommentar=str(w.get("kommentar", "") or ""),
+                              sollkraft=soll, gruppe=gruppe)
         self.analysis = None
         self.results = None
-        self.info(f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN auf "
+        self.info((f"Vorspannkraft F_soll = {zl.zahl_text(F / 1e3, punkt=True)} kN (Soll nach "
+                   f"Verankerung, Gruppe {gruppe})" if soll else
+                   f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN") + " auf "
                   f"{bg.anzahl(len(ziele), 'Bauteil', 'Bauteile')} im Lastfall "
                   f"{fall or m.active_case}")
+        self.refresh_all()
+
+    def _vorspannung_umwandeln(self, w: dict):
+        """Die Temperatur-Vorspannung (RFEM-Import, dT auf Zugstaeben) der
+        gewaehlten Staebe - ohne Auswahl aller - in die Sollkraft umstellen.
+        Auf Anweisung des Anwenders, nie von selbst (13.10.2026)."""
+        from .. import vorspannkraft as vk
+        m = self.model
+        staebe = [n for n in self.sel_staebe if n in m.members] or None
+        fall = str(w.get("fall") or m.active_case)
+        eintraege = vk.temperatur_vorspannungen(m, faelle=[fall], staebe=staebe)
+        if not eintraege:
+            return self.hinweis(f"Im Lastfall {fall} steht keine Vorspannung als Temperatur auf einem "
+                                "Zugstab" + (" der gewählten Stäbe" if staebe else ""))
+        faelle = None if w.get("alle") else [fall]
+        N0 = sorted({t.N0 for t in eintraege})
+        F = float(w.get("F", 0.0) or 0.0) * 1e3 or None
+        gruppe = max(1, int(float(w.get("gruppe", 1) or 1)))
+        self.merken("Vorspannung umgewandelt")
+        n = vk.in_sollkraft_umwandeln(m, staebe=staebe, faelle=faelle, kraft=F, gruppe=gruppe, N0=N0)
+        self.analysis = None
+        self.results = None
+        self.info(f"{n} Temperatur-Vorspannungen in die Sollkraft umgewandelt ("
+                  + ("F_soll = " + zl.zahl_text(F / 1e3, punkt=True) + " kN" if F else "Vorschlag je Stab")
+                  + (", alle Lastfälle mit " if faelle is None else f", Lastfall {fall}, ")
+                  + "Anfangsvorspannung " + ", ".join(zl.zahl_text(x / 1e3, punkt=True) for x in N0) + " kN)")
         self.refresh_all()
 
     #: Ansatz, mit dem aus den Abmassen einer Passung das Uebermass wird
@@ -20749,6 +21311,56 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
         self.refresh_all()
         self.info(f"Spiel {zl.zahl_text(spiel * 1e3, punkt=True)} mm gegeben: {', '.join(dict.fromkeys(betroffen))}")
+
+    # ---- Stabtypen aus RFEM nachlesen (14.10.2026) ----------------------------
+    @_maskenweg()
+    def maske_stabtypen_rfem(self):
+        """Zugstaebe, Druckstaebe und Seile eines Modells, das vor dem
+        14.10.2026 aus RFEM 6 uebernommen wurde, aus der RFEM-Datei nachlesen
+        (Importhinweis „zugstab“, model.zugstab_hinweis). Der Import legte sie
+        bis dahin als Fachwerkstaebe an, die Zug und Druck trugen. Die Maske
+        zeigt den Hinweis und die Datei; umgestellt wird erst mit „Stabtypen
+        nachlesen“ (rfem6_db.zugstaebe_aus_rfem) - bis zum 14.10.2026 gab es
+        die Umstellung nur als Funktion fuer die Konsole."""
+        from ..importers import rfem6_db as R6
+        m = self.model
+        offen = [h for h in (getattr(m, "importhinweise", None) or [])
+                 if h.get("art") == "zugstab" and not h.get("erledigt")]
+        felder = [msk.Feld("hinweise", "Aus dem Import", "info",
+                           " · ".join(str(h.get("text", "")) for h in offen[:2]) if offen else
+                           "kein offener Hinweis – das Modell kennt seine Stabtypen (übernommen ab dem "
+                           "14.10.2026) oder ist schon umgestellt"),
+                  msk.Feld("pfad", "RFEM-Datei (.rf6)", "text", R6.rfem_datei(m) or "", breite=260,
+                           hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
+                                   "woanders, hier ihren Pfad eintragen")]
+        maske = msk.Maske("Stabtypen aus RFEM", felder, knopf="Stabtypen nachlesen",
+                          hinweis="Liest die Stabtypen aus der RFEM-Datei nach und stellt um, was der Import "
+                                  "vor dem 14.10.2026 als Fachwerkstab mit Zug und Druck angelegt hat: "
+                                  "Zugstäbe „trägt nur: Zug“, Druckstäbe „trägt nur: Druck“, Seile als Seil. "
+                                  "Was Sie an einem Stab selbst eingestellt haben, bleibt. Ein Schritt, "
+                                  "Rückgängig nimmt ihn zurück.")
+        maske.angewendet.connect(self._stabtypen_rfem_anwenden)
+        return self.maske_erzeugen(maske)
+
+    def _stabtypen_rfem_anwenden(self, w: dict):
+        from ..importers import rfem6_db as R6
+        m = self.model
+        datei = R6.rfem_datei(m, str(w.get("pfad", "") or "").strip().strip('"') or None)
+        if not datei or not os.path.isfile(datei):
+            return self.hinweis(f"RFEM-Datei „{datei or '–'}“ nicht gefunden – den Pfad der .rf6-Datei "
+                                "eintragen, aus der das Modell übernommen wurde; umgestellt ist nichts")
+        self.merken("Stabtypen aus RFEM nachgelesen")
+        log: list = []
+        try:
+            R6.zugstaebe_aus_rfem(m, datei, log)
+        except Exception as ex:          # noqa: BLE001 - fremde oder beschaedigte Datei
+            return self.error(f"Stabtypen aus {os.path.basename(datei)} nicht gelesen: {ex}")
+        for z in log:
+            self.log.appendPlainText(z.strip())
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
+        self.statusBar().showMessage(log[-1].strip() if log else "Stabtypen nachgelesen", 8000)
 
     # ---- Importhinweise (17.09.2026) -----------------------------------------
     def _maskenzahl(self, feld: str):
@@ -22911,6 +23523,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                      nummer=self.model.nummer_fuer(name, "LF"))
             self.model.load_cases[name].situation = d.situation_name()
             self.model.load_cases[name].theorie = d.theorie_name()
+            if hasattr(d, "ist_faktorisiert"):      # ein ersetzter Dialog kennt den Haken nicht
+                self.model.load_cases[name].faktorisiert = d.ist_faktorisiert()
             self._namen_geaendert()
             self.refresh_all()
 
@@ -22930,6 +23544,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self.hinweis(grund)
             self.merken(f"Lastfall {old}")
             lc.category, lc.description, lc.exclusive_group = cat, desc, grp
+            if hasattr(d, "ist_faktorisiert"):
+                lc.faktorisiert = d.ist_faktorisiert()
             lc.situation = d.situation_name()
             lc.theorie = d.theorie_name()
             if name != old:
@@ -22963,6 +23579,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
 
     def auto_combinations(self):
+        # Lastfaelle ohne Einwirkung: der Generator kennt gamma und psi nicht
+        # (13.10.2026) - der Hinweis kommt vor dem Dialog, nicht erst danach
+        offen = self.model.lastfaelle_ohne_einwirkung()
+        if offen:
+            from ..combinations import sperrhinweis_erzeugen
+            return self.hinweis(sperrhinweis_erzeugen(offen))
         d = AutoCombinationDialog(self, self.model.design)
         if d.exec():
             from ..combinations import generate_combinations
@@ -23337,6 +23959,8 @@ class MainWindow(QtWidgets.QMainWindow):
         Regel wie der Status im Bericht (ec3.fatigue._status, Stand
         24.09.2026) - tests/test_nachweisampel.py haelt beide gleich.
         getattr: Ergebnisse aus aelteren Dateien kennen die Felder nicht."""
+        if getattr(x, "nicht_anwendbar", False):
+            return "nicht anwendbar"           # plastische Rechnung (13.10.2026)
         if getattr(x, "fehler", ""):
             return "nicht geführt"
         if float(getattr(x, "util", 0.0) or 0.0) > 1.0:
@@ -23362,6 +23986,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return " - erfüllt"
         if all(u == "nicht geführt" for u in urteile):
             return " - nicht geführt"
+        if all(u == "nicht anwendbar" for u in urteile):
+            return " - nicht anwendbar"
         return " - unvollständig"
 
     def _ermuedung_zeilen(self, fat) -> list:
@@ -23672,6 +24298,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
         w = self.cb_plast_kontakt.findData(str(getattr(pz, "kontakt", "verschachtelt")))
         self.cb_plast_kontakt.setCurrentIndex(w if w >= 0 else 0)
+        w = self.cb_plast_abbruch.findData(str(getattr(pz, "abbruch", "ingenieurmaessig")))
+        self.cb_plast_abbruch.setCurrentIndex(w if w >= 0 else 0)
+        if hasattr(self, "sp_pendel_kraft"):
+            self.sp_pendel_kraft.setValue(float(getattr(pz, "pendel_kraft_anteil", 1e-3)) * 100.0)
+            self.sp_pendel_weg.setValue(float(getattr(pz, "pendel_weg", 1e-6)) * 1e6)
+        if hasattr(self, "sp_spannstufen"):
+            self.sp_spannstufen.setValue(int(getattr(pz, "spannstufen", 0) or 0))
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -23697,6 +24330,17 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.toleranz = float(self.cb_plast_tol.currentData() or 1e-3)
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
         pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
+        pz.abbruch = str(self.cb_plast_abbruch.currentData() or "ingenieurmaessig")
+        if hasattr(self, "sp_pendel_kraft"):
+            # gerundet wie angezeigt: sonst aenderte schon das Oeffnen der Maske
+            # die Einstellung um Rundungsreste und meldete eine Aenderung
+            alt_k, alt_w = float(getattr(pz, "pendel_kraft_anteil", 1e-3)), float(getattr(pz, "pendel_weg", 1e-6))
+            k = float(self.sp_pendel_kraft.value()) / 100.0
+            w_ = float(self.sp_pendel_weg.value()) / 1e6
+            pz.pendel_kraft_anteil = alt_k if round(alt_k * 100.0, 3) == round(k * 100.0, 3) else k
+            pz.pendel_weg = alt_w if round(alt_w * 1e6, 2) == round(w_ * 1e6, 2) else w_
+        if hasattr(self, "sp_spannstufen"):
+            pz.spannstufen = int(self.sp_spannstufen.value())
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
@@ -24340,23 +24984,24 @@ class MainWindow(QtWidgets.QMainWindow):
         vernetzen (nach Rueckfrage). False, wenn der Anwender abbricht."""
         from ..diagnose import diagnose
         from .. import fugen
-        # Starre Flaechen aus einer aelteren Datei: ihre Kopplungen fehlen noch
-        if fugen.starre_flaechen(self.model) and self.model.elements and not any(
-                str(getattr(k, "gruppe", "")).startswith(fugen.STARR_GRUPPE)
-                for k in self.model.kopplungen):
-            log = []
-            fugen.starre_flaechen_koppeln(self.model, log)
-            for z in log:
-                self.log.appendPlainText(z)
+        # Starre Flaechen: vor jeder Rechnung so gekoppelt, wie die Regel es
+        # heute tut. Bis zum 10.10.2026 nur, wenn die Kopplungen ganz fehlten
+        # (aeltere Datei) - ein Modell mit den Kopplungen von vor dem
+        # 10.10.2026 rechnete weiter mit den Knoten im Plattenkoerper, die die
+        # alte Toleranz mit an die Scheibe haengte (Drehlager: 16 an 6
+        # Scheiben). Stimmt der Bestand, bleibt er unveraendert.
+        log = []
+        fugen.starre_kopplungen_erneuern(self.model, log)
+        for z in log:
+            self.log.appendPlainText(z)
         # Stabenden, integrierte, belastete und gelagerte Knoten aus einer
-        # aelteren Datei: ihr Anschluss an die Koerper fehlt noch
-        if self.model.elements and getattr(self.model, "koerper", None) \
-                and not any(str(getattr(k, "gruppe", "")).startswith(fugen.STABENDE_GRUPPE)
-                            for k in self.model.kopplungen):
-            log = []
-            fugen.stabenden_koppeln(self.model, log)
-            for z in log:
-                self.log.appendPlainText(z)
+        # aelteren Datei: ihr Anschluss an die Koerper fehlt noch. Seit
+        # 13.10.2026 auch: haengen die Stabenden so, wie es die Einstellung
+        # will (an 1-3 Knoten oder verteilt)? fugen.stabenden_erneuern
+        log = []
+        fugen.stabenden_erneuern(self.model, log)
+        for z in log:
+            self.log.appendPlainText(z)
         d = diagnose(self.model)
         nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
         if not nf and not nk:
@@ -24416,6 +25061,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bottom_tabs.setCurrentIndex(0)
 
     def do_solve(self, kind: str = None):
+        # Kombinationen mit Lastfaellen ohne Einwirkung werden nicht gerechnet
+        # (13.10.2026): ein Bedienhinweis gleich beim Start - vor dem Vernetzen
+        # und der Netzabnahme, nicht ein Fehlerfenster nach den Lastfaellen.
+        # Einzelne Lastfaelle („Nur aktiver Lastfall“) gehen weiter.
+        art_ = kind or ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
+        if art_ == "all":
+            gesperrt = self.model.gesperrte_kombinationen()
+            if gesperrt:
+                return self.hinweis(self.model.sperrhinweis(gesperrt))
         if not self._vor_rechnung_vernetzen():
             return
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
@@ -25631,9 +26285,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     # kennt die inneren Tetraeder nicht.
                     grid = vp.schneiden(grid, *self.schnitt)
                 if np.isin(grid.celltypes, list(volumen_typen)).any():
-                    flaeche = grid.extract_surface(pass_pointid=True, pass_cellid=True,
-                                                   algorithm="dataset_surface")
-                    kidx = np.asarray(flaeche.point_data["vtkOriginalPointIds"], int)
+                    # Knoten je Punkt ueber ein Punktfeld (vp.oberflaeche):
+                    # vtkOriginalPointIds stimmte bei tet10 nicht (14.10.2026)
+                    flaeche, kidx = vp.oberflaeche(grid)
                     grid = flaeche
             except Exception as ex:             # noqa: BLE001
                 self.log.appendPlainText(f"Oberfläche: {ex}")
@@ -25738,6 +26392,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _aufbauen(self, m):
         """Alle Darsteller der Ansicht aufbauen (ohne Zwischenbilder)."""
+        # Texte des Bildes, die viewport.texte_ordnen vor jedem Bild nach
+        # ihren Rechtecken ordnet (seit 13.10.2026)
+        self._bildtexte, self._skalentitel, self._legende_namen = {}, {}, []
+        self._zonen_farbe = None
+        vp.texte_ordnen_einrichten(self.plotter, self._textlage_info)
         show_edges = self.act_edges.isChecked()
         modus = getattr(self, "darstellung", "Voll")
         size = m.characteristic_size()
@@ -25866,6 +26525,8 @@ class MainWindow(QtWidgets.QMainWindow):
         point_scalars = cell_scalars = ps_wahr = None
         name = titel = ""
         clim = None
+        # netzabhaengige Spannungsspitzen zur Faerbung (seit 10.10.2026)
+        self._spitzen_feld = None
         farben, balken = {}, {}
         sicht_knoten = self._sichtbare_knoten()          # None = alle
         sicht_maske = None
@@ -25899,6 +26560,29 @@ class MainWindow(QtWidgets.QMainWindow):
             if point_scalars is not None and faktor_e != 1.0:
                 point_scalars = np.asarray(point_scalars, float) * faktor_e
             ps_wahr = point_scalars
+            # Auffaellige netzabhaengige Stellen (seit 10.10.2026, Plan
+            # Singularitaeten Paket 2): Skala, Marken und Kennwerte aus den
+            # Knoten ausserhalb ihrer Zonen, die Spitze getrennt daneben
+            einheit_l = titel[titel.rfind("[") + 1:-1] if titel.endswith("]") and "[" in titel else ""
+            self._spitzen_feld = self._spitzen_fuer_feld(m, r, field, faktor_e, einheit_l, ps_wahr)
+            self._zonen_farbe = None
+            if self._spitzen_feld is not None:
+                spz_ = self._spitzen_feld
+                if spz_.get("aussen") is not None and ps_fest is not None and len(ps_fest) == m.nn:
+                    # Randknoten der Zone nur aus den Aussenelementen, die
+                    # Zonenelemente mit eigenen Knotenwerten (14.10.2026). Bis
+                    # dahin mischten die Randknoten beide Seiten, und die Farbe
+                    # „> Skalenmax“ lief weit in die Aussenelemente (Bild V21)
+                    a_ = np.asarray(spz_["aussen"], float)
+                    ps_fest = np.where(np.isfinite(a_), a_, np.asarray(ps_fest, float))
+                    point_scalars = ps_fest * faktor_e if faktor_e != 1.0 else ps_fest
+                    ps_wahr = point_scalars
+                    ohne = ~np.asarray(spz_["nur_zone"], bool)
+                    self._zonen_farbe = {"elemente": spz_["zone_el"],
+                                         "werte": np.asarray(spz_["zone"], float) * faktor_e}
+                else:
+                    ohne = ~spz_["zk"]
+                sicht_maske = ohne if sicht_maske is None else (sicht_maske & ohne)
             klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
             if point_scalars is not None and klassen:
                 # Groesse in Klassen (Kontaktzustand): feste Farben, Beschriftung
@@ -25924,6 +26608,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     skala = vp.skala_umrechnen(skala, faktor_e)
                     point_scalars = skala["werte"]
                     clim = list(skala["clim"])
+                    zf_ = getattr(self, "_zonen_farbe", None)
+                    if zf_ is not None and skala.get("nur_ueber") and skala.get("grenze") is not None:
+                        b_ = np.abs(np.asarray(zf_["werte"], float))
+                        zf_["werte"] = np.where(b_ > float(skala["grenze"]), b_, np.nan)
                     farben = {"n_colors": skala["n_colors"], "nan_color": vp.FARBE_OHNE_WERT}
                     if skala["above_color"]:
                         farben["above_color"] = skala["above_color"]
@@ -25932,6 +26620,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     balken = {"n_labels": skala["n_labels"], "fmt": spn.skalenformat(*clim)}
                     if skala["above_label"]:
                         balken["above_label"] = skala["above_label"]
+                    zk_ = (self._spitzen_feld or {}).get("zk")
+                    if zk_ is not None and not farben.get("above_color") and not skala.get("nur_ueber"):
+                        # Knoten der Zonen ueber der Skala (die gilt ausserhalb):
+                        # die Farbe „> Skalenmax“, nicht die oberste der Skala;
+                        # die Zone selbst ist grau schraffiert. Bis zum
+                        # 13.10.2026 eine eigene Farbe „netzabh.“ (Magenta)
+                        zw = np.asarray(skala["werte"], float)[zk_]
+                        if np.isfinite(zw).any() and float(np.nanmax(zw)) > clim[1]:
+                            farben["above_color"] = spn.FARBE_UEBER
+                            balken["above_label"] = spn.UEBER_TEXT
                     if skala["below_label"]:
                         balken["below_label"] = skala["below_label"]
                     # mit dem Titel der Legende: Zahl und Einheit passen
@@ -26004,7 +26702,12 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.plotter.add_mesh(umriss, color="#b0b0b0", opacity=0.6,
                                                   line_width=1, name=f"undeformed_{nm}")
                 if point_scalars is not None:
-                    warped.point_data[name] = np.asarray(point_scalars)[kn]
+                    zf_ = getattr(self, "_zonen_farbe", None) if nm == "netz" else None
+                    if zf_ is not None:
+                        warped = vp.zonen_getrennt(warped, kn, name, np.asarray(point_scalars, float),
+                                                   zf_["elemente"], zf_["werte"])
+                    else:
+                        warped.point_data[name] = np.asarray(point_scalars)[kn]
                     farbtafel = farben.pop("cmap", "turbo") if "cmap" in farben else "turbo"
                     self.plotter.add_mesh(warped, scalars=name, cmap=farbtafel, clim=clim,
                                           scalar_bar_args=dict(self._farbskala(), title=titel, **balken),
@@ -26068,6 +26771,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(r, "contact", None) and getattr(self, "act_kontaktmarken", None) is not None \
                     and self.act_kontaktmarken.isChecked():
                 vp.add_contact_markers(self.plotter, m, r.contact, size)
+            self._spitzen_zeichnen(m, r, lage, ausser)
 
         sichtbare_knoten = self._sichtbare_knoten()      # None = alle
         try:
@@ -26085,6 +26789,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
                               ausser=self.verborgen["linien"], netz=self._linien_netz())
+            vp.add_stabeinleitungen(self.plotter, m, lage=lage)
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             self._kontakte_zeichnen(m)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
@@ -26120,6 +26825,7 @@ class MainWindow(QtWidgets.QMainWindow):
             sel_ = sel_[(sel_ >= 0) & (sel_ < len(X_))]
             self.plotter.add_points(X_[sel_], color="#ff8800", point_size=11,
                                     render_points_as_spheres=True, name="selection")
+        self._skalentitel_setzen()
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
         if u is not None and not modal:
@@ -26141,6 +26847,243 @@ class MainWindow(QtWidgets.QMainWindow):
         return r
 
     # ---- Ergebnisdarstellung: Marken und Verlauf (Paket 6b, 25.09.2026) --
+    def _spitzen_fuer_feld(self, m, r, field: str, faktor: float, einheit: str, werte=None):
+        """Zur Faerbung einer Volumenspannung oder der Vergleichsspannung eines
+        Ergebnisses mit auffaelligen netzabhaengigen Stellen (seit 10.10.2026,
+        Plan Singularitaeten Paket 2): {"zk": Maske der Knoten der Zonen,
+        "zeile": der Text der Spitze}. Legende, Skala, Marken und Kennwerte
+        nehmen ihr Maximum ausserhalb der Zonen, die Spitze steht getrennt
+        daneben - fuer sigma_v der Wert an den Integrationspunkten (Paket 1,
+        sv_max), nicht der Elementwert. Sonst None."""
+        ak = spn.feld(field)
+        if not (field.startswith("Vergleich") or (ak is not None and ak[0] == "volumen")):
+            return None
+        if r is None or getattr(self, "_ergebnis_veraltet", False):
+            return None
+        zk = sa.zonenknoten(m, r, self.analysis)
+        sp_ = sa.spitze(r, self.analysis)
+        if zk is None or sp_ is None or len(zk) != m.nn:
+            return None
+        # Knotenwerte getrennt nach Zone und aussen (seit 14.10.2026): die
+        # Randknoten der Zone faerben die Aussenelemente nur mit deren Mittel
+        analysis = self.analysis
+        g = None
+        try:
+            if field.startswith("Vergleich"):
+                if not hasattr(r, "node_vm_max"):
+                    g = sa.getrennt(m, r, "vergleich", analysis=analysis)
+                teiler = 1e6                    # result_field: node_vm / 1e6
+            else:
+                g = sa.getrennt(m, r, "volumen", ak[1], "max", analysis=analysis)
+                teiler = 1.0
+        except Exception as ex:             # noqa: BLE001 - dann gemischt wie bisher
+            self.log.appendPlainText(f"Zonengrenze: {ex}")
+            g = None
+        if field.startswith("Vergleich") or ak[1] == "sv":
+            zeile = sa.legende_text(sp_, faktor, einheit)
+        else:
+            if g is not None:
+                w = np.asarray(g["zone"], float) / teiler * faktor
+            else:
+                w = np.asarray(werte, float)[zk] if werte is not None and len(werte) == m.nn else np.zeros(0)
+            w = w[np.isfinite(w)]
+            if not len(w):
+                return None
+            zeile = (f"in netzabhängigen Stellen {spn.dezimal(float(w.min()))} … "
+                     f"{spn.dezimal(float(w.max()))} {einheit} (netzabhängig)")
+        aus = {"zk": zk, "zeile": zeile,
+               "getrennt": lambda art, gr, seite: sa.getrennt(m, r, art, gr, seite, analysis=analysis)}
+        if g is not None:
+            aus.update(aussen=np.asarray(g["aussen"], float) / teiler, zone=np.asarray(g["zone"], float) / teiler,
+                       nur_zone=np.asarray(g["nur_zone"], bool), zone_el=np.asarray(g["elemente"], np.int64))
+        return aus
+
+    def _spitzen_zeichnen(self, m, r, lage, ausser=None) -> None:
+        """Netzabhaengige Spannungsspitzen ins Bild (seit 10.10.2026): die
+        Zonen der auffaelligen Stellen umrandet und mit Zeichen (Schalter
+        „Netzabhängige Stellen kennzeichnen“ der Ergebnisanzeige), dazu unter
+        der Farbskala getrennt die Spitze."""
+        self._spitzen_legende = ""
+        try:
+            spz = getattr(self, "_spitzen_feld", None)
+            schalter = getattr(self, "cb_spitzenzonen", None)
+            zeigen = schalter is None or schalter.isChecked()
+            if spz is not None:
+                self._spitzen_legende = spz["zeile"]
+                text = vp.bildtext(spz["zeile"]).replace(" Stellen ", " Stellen\n", 1)
+                # rechts unter der Farbskala: der Legendeneintrag der Schraffur
+                # (seit 13.10.2026, nur wenn die Zonen gezeigt werden) und der
+                # Hinweis, beide in Grau
+                eintraege = ([("spitzen_schraffur_legende", vp.bildtext(vp.SCHRAFFUR_TEXT), True)]
+                             if zeigen else []) + [("spitzen_legende", text, False)]
+                self._legende_rechts(eintraege)
+            if not zeigen:
+                return
+            stellen = sa.stellen_zum_zeigen(r, self.analysis)
+            if stellen:
+                E = self._einheiten_modell()
+                f_, einheit = vp._einheit_umrechnen("N/mm²", E)
+                vp.add_spitzenzonen(self.plotter, m, stellen, lage=lage, faktor=f_, einheit=einheit,
+                                    textgroesse=int(m.bemassung_einstellungen().textgroesse),
+                                    ausser=ausser)
+        except Exception as ex:             # noqa: BLE001 - ein Zeichen darf die Ansicht nicht sperren
+            self.log.appendPlainText(f"Netzabhängige Stellen nicht gezeichnet: {ex}")
+
+    def _legende_rechts(self, eintraege: list) -> list:
+        """Texte rechtsbuendig an der Farbskala stapeln - senkrechte Skala:
+        darunter, von oben nach unten; waagerechte: darueber, von unten nach
+        oben. ``eintraege`` [(Name, Text, Muster)]; mit Muster steht rechts
+        neben dem Text das schraffierte Quadrat (Name + „_muster“ statt
+        „_legende“). Gemessen wird jeder Text an seinem Rechteck, nicht
+        geschaetzt. Rueckgabe die Rechtecke (x0, x1, y0, y1) in Bildpunkten."""
+        sk = self._farbskala()
+        try:
+            breit, hoch = (float(v) for v in self.plotter.render_window.GetSize())
+        except Exception:                   # noqa: BLE001
+            return []
+        s = self._pixelmass()
+        senkrecht = sk.get("vertical", True)
+        rechts = 0.99 * breit
+        y = ((max(0.02, float(sk["position_y"]) - 0.01)) if senkrecht
+             else float(sk["position_y"]) + float(sk["height"]) + 0.01) * hoch
+        rahmen = []
+        for name, text, muster in (eintraege if senkrecht else list(reversed(eintraege))):
+            akt = self.plotter.add_text(text, position=(rechts, y), font_size=self.SCHRIFT_KENNWERTE,
+                                        color=vp.FARBE_SPITZE, name=name)
+            tp = akt.GetTextProperty()
+            # grau auf den Farben des Modells war kaum zu lesen (Bild V21,
+            # 13.10.2026): ein heller Grund unter dem Text
+            tp.SetBackgroundColor(1.0, 1.0, 1.0)
+            tp.SetBackgroundOpacity(0.8)
+            tp.SetJustificationToRight()
+            if senkrecht:
+                tp.SetVerticalJustificationToTop()
+            self._bildtexte[name] = text
+            self._legende_namen.append((name, name.replace("_legende", "_muster") if muster else None))
+            r = vp.kennwerte_rahmen(self.plotter.renderer, akt)
+            if r is None:
+                continue
+            hoehe = r[3] - r[2]
+            if muster:
+                seite = max(6.0 * s, min(hoehe, 14.0 * s))
+                akt.SetPosition(rechts - seite - 4.0 * s, y)
+                y0 = (y - hoehe + (hoehe - seite) / 2) if senkrecht else (y + (hoehe - seite) / 2)
+                quad = vp.schraffur_muster(rechts - seite, y0, seite)
+                self.plotter.add_actor(quad, name=name.replace("_legende", "_muster"), reset_camera=False)
+                r = vp.kennwerte_rahmen(self.plotter.renderer, akt)
+                r = (r[0], rechts, r[2], r[3])
+            rahmen.append(r)
+            y = (y - hoehe - 3.0 * s) if senkrecht else (y + hoehe + 3.0 * s)
+        return rahmen
+
+    def _skalentitel_setzen(self) -> dict:
+        """Den Titel jeder senkrechten Farbskala als eigenen Text (seit
+        13.10.2026): VTK setzt ihn mittig ueber die Skala am rechten Rand, und
+        ein langer Titel („Volumen sigma_v (von Mises) [N/mm²]“) lief rechts aus
+        dem Bild. Der Titel der Skala wird durchsichtig, der eigene Text steht
+        rechtsbuendig darueber und wird umgebrochen (viewport.texte_ordnen).
+        Ebenso bei waagerechten Skalen (Kompaktstufe): dort stand der Titel
+        mittig und lief in einer schmalen Ansicht links und rechts hinaus."""
+        self._skalentitel = {}
+        try:
+            bars = list(self.plotter.scalar_bars.items())
+        except Exception:                   # noqa: BLE001
+            return {}
+        k = 0
+        for titel, sb in bars:
+            name = "farbskala_titel" if k == 0 else f"farbskala_titel{k}"
+            k += 1
+            quelle = sb.GetTitleTextProperty()
+            akt = self.plotter.add_text(sb.GetTitle() or str(titel), position=(10, 10), name=name)
+            tp = akt.GetTextProperty()
+            tp.ShallowCopy(quelle)
+            tp.SetOpacity(1.0)
+            tp.SetJustificationToRight()
+            tp.SetVerticalJustificationToBottom()
+            quelle.SetOpacity(0.0)
+            # heller Grund unter Titel, Zahlen und „> Skalenmax“: die Skala
+            # liegt oft auf dem Modell (Kompaktstufe, Bild V21 13.10.2026)
+            for p_ in (tp, sb.GetLabelTextProperty(), sb.GetAnnotationTextProperty()):
+                p_.SetBackgroundColor(1.0, 1.0, 1.0)
+                p_.SetBackgroundOpacity(0.8)
+            self._skalentitel[name] = titel
+            self._bildtexte[name] = sb.GetTitle() or str(titel)
+        return self._skalentitel
+
+    def _textlage_info(self):
+        """Die Angaben fuer viewport.texte_ordnen: Texte, Titel der Skalen,
+        Legendeneintraege, Glasleiste und Wuerfel (Qt-Fenster ueber der Ansicht)
+        in Bildpunkten der Ansicht - oder None ohne Texte."""
+        texte = getattr(self, "_bildtexte", None) or {}
+        if not texte:
+            return None
+        s = self._pixelmass()
+        glas = self.glasleiste.height() if getattr(self, "glasleiste", None) else 30
+        wue = None
+        wid = getattr(self, "ansichtswuerfel", None)
+        try:
+            if wid is not None and wid.isVisible():
+                hoch = self.plotter.render_window.GetSize()[1]
+                lo = self.plotter.interactor.mapFromGlobal(wid.mapToGlobal(QtCore.QPoint(0, 0)))
+                wue = (lo.x() * s, (lo.x() + wid.width()) * s, hoch - (lo.y() + wid.height()) * s,
+                       hoch - lo.y() * s)
+        except Exception:                   # noqa: BLE001
+            wue = None
+        return {"massstab": s, "texte": texte, "skalentitel": dict(getattr(self, "_skalentitel", {}) or {}),
+                "legende": list(getattr(self, "_legende_namen", []) or []), "glas": glas, "wuerfel": wue}
+
+    def _spitze_zeigen(self, nr: int):
+        """Eine netzabhaengige Spannungsspitze aus dem Ergebnisbaum: der Blick
+        geht auf die Stelle (die Blickrichtung bleibt), die Meldung nennt
+        Bauteil, Ursache, Kraft, sigma_v und eps_p mit dem Vermerk."""
+        r = self.current_result()
+        s = None
+        for x in sa.stellen_zum_zeigen(r, self.analysis):
+            if int(x.get("nr", -1)) == int(nr):
+                s = x
+        if s is None:
+            return self.info("Diese netzabhängige Stelle gibt es im gezeigten Ergebnis nicht (mehr)")
+        X = self._bildlage if getattr(self, "_bildlage", None) is not None else np.asarray(self.model.nodes, float)
+        kn = np.asarray(s.get("knoten", []), int)
+        kn = kn[(kn >= 0) & (kn < len(X))]
+        ziel = X[kn].mean(axis=0) if len(kn) else np.asarray(s.get("mitte"), float)
+        # Abstand: die gezeichnete Zone ganz im Blick - mit Ueberhoehung ist
+        # sie verzerrt (Drehlager: Ring 2,56 mm tief, x170 gezeichnet 0,43 m)
+        zk = sorted({int(n) for e in s.get("zone", []) if 0 <= int(e) < len(self.model.elements)
+                     for n in self.model.elements[int(e)].nodes if 0 <= int(n) < len(X)})
+        ausdehnung = float(np.linalg.norm(X[zk] - ziel, axis=1).max()) if zk else 0.0
+        try:
+            pos, blick, oben = self.plotter.camera_position
+            richtung = np.asarray(blick, float) - np.asarray(pos, float)
+            richtung = richtung / max(float(np.linalg.norm(richtung)), 1e-12)
+            weite = max(8.0 * float(s.get("zone_radius", 0.0) or 0.0), 3.0 * ausdehnung, 1e-3)
+            self.plotter.camera_position = [(ziel - richtung * weite).tolist(), ziel.tolist(), list(oben)]
+            self._kamera_steht = True
+            self.plotter.render()
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Netzabhängige Stelle: {ex}")
+        text, zusatz, _s = sa.baum_eintraege_fuer([s])[0]
+        return self.info(f"{sa.TITEL}: {text} – {zusatz}; {sa.VERMERK}")
+
+    def _spitzen_nachholen(self, an) -> None:
+        """Ergebnisdatei von vor dem 10.10.2026: die Kennzeichnung
+        netzabhaengiger Spannungsspitzen aus dem gespeicherten Ergebnis
+        nachholen (spitzenstellen.nachholen, ohne Rechnung) - sonst
+        erschiene sie erst nach einer neuen Rechnung."""
+        try:
+            from .. import spitzenstellen as sp
+            t0 = time.time()
+            n = sp.nachholen(self.model, an)
+        except Exception as ex:             # noqa: BLE001 - die Kennzeichnung ist Beiwerk
+            self.log.appendPlainText(f"Netzabhängige Spannungsspitzen nicht nachgeholt: {ex}")
+            return
+        if n:
+            k = max((len(sa.auffaellige(r)) for r in an.all_results().values()), default=0)
+            self.log.appendPlainText(
+                f"Netzabhängige Spannungsspitzen nachgeholt für {bg.anzahl(n, 'Ergebnis', 'Ergebnisse')} "
+                f"(Ergebnisdatei von vor dem 10.10.2026, {time.time() - t0:.1f} s): bis "
+                f"{bg.anzahl(k, 'auffällige Stelle', 'auffällige Stellen')} je Ergebnis")
+
     def _marke(self, punkt, text: str, farbe: str, name: str) -> None:
         """Eine Marke mit Punkt und Schild - fuer Max/Min an der Extremstelle."""
         try:
@@ -26638,6 +27581,7 @@ class MainWindow(QtWidgets.QMainWindow):
             zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste",
                                      "      oder Register Ergebnisse → „Ergebnisse zeigen“)"]
         self._kopfzeile_zeilen = zeilen
+        self._bildtexte["kopfzeile"] = "\n".join(vp.bildzeichen(z) for z in zeilen)
         try:
             # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen
             # Fenster reicht die Leiste bis in die linke Ecke. VTK zaehlt die
@@ -26649,6 +27593,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                   font_size=self.SCHRIFT_KOPF, font="courier",
                                   color="#203040", name="kopfzeile")
             akt = self.plotter.renderer.actors.get("kopfzeile")
+            if akt is not None:
+                # heller Grund wie bei den Kennwerten (13.10.2026)
+                akt.GetTextProperty().SetBackgroundColor(1.0, 1.0, 1.0)
+                akt.GetTextProperty().SetBackgroundOpacity(0.8)
             wue = getattr(self, "ansichtswuerfel", None)
             if akt is not None and wue is not None and wue.isVisible():
                 ia = self.plotter.interactor
@@ -26685,7 +27633,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # dieselbe Ausnutzung wie die Faerbung
             zeilen = vp.kennwerte(self.model, r, self._util_map(feld),
                                   self.cb_diagram.currentText(), knoten=sicht, elemente=elemente,
-                                  feld=feld, seite=seite)
+                                  feld=feld, seite=seite,
+                                  spitzen=getattr(self, "_spitzen_feld", None))
             if sicht is not None and zeilen:
                 zeilen.insert(0, "nur sichtbare Teile")
         except Exception as ex:             # noqa: BLE001
@@ -26693,12 +27642,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._kennwerte_zeilen = []
             return []
         self._kennwerte_zeilen = zeilen
+        if zeilen:
+            self._bildtexte["kennwerte"] = "\n".join(zeilen)
         if not zeilen:
             return []
         try:
-            self.plotter.add_text("\n".join(zeilen), position=(12, 10),
-                                  font_size=self.SCHRIFT_KENNWERTE, font="courier",
-                                  color="#203040", name="kennwerte")
+            akt = self.plotter.add_text("\n".join(zeilen), position=(12, 10),
+                                        font_size=self.SCHRIFT_KENNWERTE, font="courier",
+                                        color="#203040", name="kennwerte")
+            # ein heller Grund: die Zeilen liegen oft auf dem Modell (Bild V21,
+            # 13.10.2026 - „max 207 (Knoten …)“ war auf den Farben nicht zu lesen)
+            akt.GetTextProperty().SetBackgroundColor(1.0, 1.0, 1.0)
+            akt.GetTextProperty().SetBackgroundOpacity(0.8)
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kennwerte: {ex}")
         return zeilen
@@ -26796,7 +27751,11 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Verborgenes im Hintergrund (Geist) ---------------------------------
     #: Farbe und Deckkraft des Geistes: blass, hinter allem, unantastbar
     GEIST_FARBE = "#aab2ba"
-    GEIST_KANTE = "#c9cfd5"
+    #: Kante des Geists blassblau (seit 14.10.2026): bis dahin #c9cfd5, dE 2,3
+    #: neben „ohne Wert“ (viewport.FARBE_OHNE_WERT #d0d4d8) - ein
+    #: ausgeblendetes Teil sah aus wie eines ohne Ergebniswert. Jetzt dE 18,9
+    #: dazu und mindestens 18 zu jeder Farbe der Ansicht
+    GEIST_KANTE = "#9fb8d6"
     GEIST_DECKKRAFT = 0.14
 
     def _schnitt_umschalten(self, an: bool):
@@ -28119,6 +29078,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.hinweis(f"Ergebnisdatei nicht geladen ({os.path.basename(epfad)}): {passt_nicht} – "
                              "bitte neu rechnen")
             if an is not None:
+                self._spitzen_nachholen(an)
                 self._solve_done("all", an)
                 self.info(f"Ergebnisse geladen: {bg.anzahl(len(an.cases), 'Lastfall', 'Lastfälle')}, "
                           f"{bg.anzahl(len(an.combinations), 'Kombination', 'Kombinationen')} "
@@ -28128,6 +29088,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Datei von vor dem 06.10.2026: geladen, aber nicht still als
                     # passend (F06) - Statuszeile und Protokoll sagen es
                     self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
+        # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
+        # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
+        # Protokollzeile steht schon oben (_ladehinweise)
+        if any(h.get("art") == "zugstab" and not h.get("erledigt")
+               for h in (getattr(self.model, "importhinweise", None) or [])):
+            self._hinweis_statuszeile("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
+                                      "– Datei › Austausch › „Stabtypen aus RFEM nachlesen…“")
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True

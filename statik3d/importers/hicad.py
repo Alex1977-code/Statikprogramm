@@ -254,6 +254,8 @@ def _from_archive(path: str, model=None, log=None, **options):
                        + (f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
                        + (f", f_u = {fu / 1e6:g} N/mm^2" if fu else "")
                        + f" [{quelle}]")
+            if rho == 0.0:
+                C.hinweis_gewichtslos(log, name)
     grades = sorted(m.materials)
     fasten = {}
     for _t, table in A.part_tables(path, None).items():

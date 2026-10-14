@@ -140,6 +140,23 @@ def kg_local_beam(N: float, L: float, A: float = 0.0, Ip: float = 0.0) -> np.nda
     return kg
 
 
+def kg_local_saite(N: float, L: float) -> np.ndarray:
+    """Geometrische Steifigkeit eines Stabs ohne Biegesteifigkeit (Fachwerkstab,
+    Zug-/Druckstab, Seil): die Saite, N/L auf den Querverschiebungen beider
+    Enden, keine Drehanteile. N > 0 = Zug. Ein gezogener Stab der Laenge L
+    haelt sein Ende quer mit N/L (die Rueckstellkraft N sin(phi), phi = v/L),
+    ein gedrueckter treibt es mit |N|/L weg - nicht mit 6/5 N/L wie der
+    Balken, dessen kubische Biegelinie die Drehanteile dazunimmt."""
+    kg = np.zeros((12, 12))
+    if L <= 0:
+        return kg
+    f = N / L
+    for a, b in ((1, 7), (2, 8)):
+        kg[a, a] = kg[b, b] = f
+        kg[a, b] = kg[b, a] = -f
+    return kg
+
+
 def m_local_beam(rho, A, L, Ix_polar=0.0) -> np.ndarray:
     """Konsistente Massenmatrix 12x12 (ohne Schubeinfluss)."""
     m = np.zeros((12, 12))

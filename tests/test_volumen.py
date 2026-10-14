@@ -493,6 +493,20 @@ def test_bericht():
         check(f"Bericht nennt „{text}“", text in html)
     check("Zusammenfassung nennt die Volumen",
           "Volumen (EN 1993-1-1, 6.2.1(5))" in an.summary())
+    # die Elementnummer zaehlt in der Zusammenfassung des Berichts wie im
+    # Einzelkapitel ab 1 (bis zum 14.10.2026 dort ab 0, eins daneben)
+    import html as _h
+    import re
+    c = an.volumen.bereiche["Schaft"]
+    text = _h.unescape(re.sub(r"<[^>]+>", " ", html))
+    text = re.sub(r"\s+", " ", text)
+    kapitel = re.search(r"maßgebendes Element (\d+)", text)
+    zusammen = re.search(r"maßgebend \(Volumen\) Schaft: Element (\d+)", text)
+    check("Bericht: Elementnummer in Zusammenfassung und Einzelkapitel gleich, ab 1",
+          kapitel is not None and zusammen is not None
+          and kapitel.group(1) == zusammen.group(1) == str(c.element + 1),
+          f"Zusammenfassung {zusammen and zusammen.group(1)}, Einzelkapitel "
+          f"{kapitel and kapitel.group(1)}, Element (ab 0) {c.element}")
 
     # ohne Bereiche kein Kapitel
     m2, _e2, _s2 = zugkoerper()
@@ -823,11 +837,99 @@ def test_erzeugnisdicke_ist_angebbar():
           abs(m.copy().volumenbereiche["Schaft"].dicke - 0.020) < 1e-12)
 
 
+def _erzeugnisdicke_bis_1410(model, elemente, koerper):
+    """Die Erzeugnisdicke, wie sie bis zum 14.10.2026 gerechnet wurde: je
+    ausgewaehltem Element alle Elemente seines Koerpers - quadratisch in der
+    Zahl der Elemente (das ganze Drehlager als ein Bereich: ueber 30 min).
+    Vergleichsmass fuer test_erzeugnisdicke_linear."""
+    marke, gruppen = koerper
+    kn = set()
+    for i in elemente:
+        i = int(i)
+        if not 0 <= i < len(model.elements):
+            continue
+        for j in gruppen.get(marke.get(i, -1), (i,)):
+            kn.update(int(x) for x in model.elements[j].nodes)
+    if not kn:
+        return 0.0
+    X = np.asarray(model.nodes, float)[sorted(kn)]
+    d = X.max(axis=0) - X.min(axis=0)
+    return float(d.min())
+
+
+def test_erzeugnisdicke_linear():
+    """Die Erzeugnisdicke rechnet seit dem 14.10.2026 je Koerper einmal statt
+    je Element den ganzen Koerper: linear statt quadratisch. Das ganze
+    Drehlager als ein Bereich brauchte dafuer ueber 30 min, jetzt 1,9 s
+    (gemessen am gespeicherten Modell, Netz Mittel). Die Ergebnisse
+    sind dieselben wie vorher - an den Beispielen, an mehreren Koerpern, an
+    Auswahlen ueber Koerpergrenzen, mit einem Stab in der Auswahl und mit
+    Nummern ausserhalb des Modells."""
+    import time
+    from statik3d import examples_lib as ex
+    from statik3d.ec3.volumen import _erzeugnisdicke, _koerper
+    from statik3d.elemente import VOLUMEN_TYPEN
+    from tests import pruefkoerper as pk
+    faelle = []
+    for name in ("solid_example", "contact_example", "block_friction_example", "gate_example"):
+        try:
+            m = getattr(ex, name)()
+        except Exception as e:                    # noqa: BLE001
+            check(f"Beispiel {name} laesst sich bauen", False, str(e))
+            continue
+        vol = [i for i, e in enumerate(m.elements) if e.typ in VOLUMEN_TYPEN]
+        if not vol:
+            continue
+        kp = _koerper(m)
+        auswahlen = {"alle Volumen": vol, "erstes Element": vol[:1], "letztes Element": vol[-1:],
+                     "jedes dritte": vol[::3], "alle Elemente samt Staeben": list(range(len(m.elements))),
+                     "mit Nummern ausserhalb": vol[:5] + [len(m.elements) + 3, -1]}
+        for vb_name, vb in getattr(m, "volumenbereiche", {}).items():
+            auswahlen[f"Bereich {vb_name}"] = list(vb.elemente)
+        for g, els in kp[1].items():
+            auswahlen[f"Koerper {g}"] = els[:2]
+        for a, els in auswahlen.items():
+            faelle.append((f"{name}: {a}", m, els, kp))
+    # zwei Koerper und ein Stab: der Stab in der Auswahl zaehlt mit seinen
+    # Knoten (wie bisher), die Auswahl reicht ueber beide Koerper
+    m, _ids = pk.quader("hex8", 4, 2, 2, 0.4, 0.2, 0.2)
+    n0 = m.nn
+    zweiter, _ids2 = pk.quader("hex8", 2, 2, 1, 0.3, 0.3, 0.012)
+    for x, y, z in np.asarray(zweiter.nodes, float):
+        m.add_node(x + 1.0, y, z)
+    erste_zwei = len(m.elements)
+    for e in zweiter.elements:
+        m.add_element(e.typ, [int(k) + n0 for k in e.nodes], e.mat)
+    stab = m.add_element("truss", [0, m.add_node(-0.5, 0.0, 0.0)], e.mat)
+    kp = _koerper(m)
+    for a, els in (("erster Koerper, ein Element", [0]), ("zweiter Koerper, ein Element", [erste_zwei]),
+                   ("ueber beide Koerper", [1, erste_zwei + 1]),
+                   ("mit dem Stab", [erste_zwei, stab]), ("nur der Stab", [stab]), ("leer", [])):
+        faelle.append((f"zwei Koerper und ein Stab: {a}", m, els, kp))
+    abw = [(n, _erzeugnisdicke(mm, els, kp), _erzeugnisdicke_bis_1410(mm, els, kp))
+           for n, mm, els, kp in faelle]
+    schlecht = [(n, a, b) for n, a, b in abw if a != b]
+    check("Erzeugnisdicke: bitgleich mit der Rechnung bis zum 14.10.2026",
+          len(faelle) >= 20 and not schlecht,
+          f"{len(faelle)} Auswahlen, abweichend {schlecht[:3]}")
+    # Zeit: ein Koerper aus 2 400 Hexaedern, alle ausgewaehlt. Quadratisch
+    # waeren das 2 400 x 2 400 x 8 Knoten (gemessen 5,7 s), linear unter
+    # 0,5 s auch auf einem belasteten Rechner
+    m, _ids = pk.quader("hex8", 20, 12, 10, 2.0, 1.2, 1.0)
+    vol = list(range(len(m.elements)))
+    kp = _koerper(m)
+    t0 = time.perf_counter()
+    d = _erzeugnisdicke(m, vol, kp)
+    dt = time.perf_counter() - t0
+    check("Erzeugnisdicke: ein Koerper aus 2 400 Elementen in unter 0,5 s",
+          dt < 0.5 and abs(d - 1.0) < 1e-12, f"{dt:.3f} s, {d * 1000:.1f} mm")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Volumennachweise (DIN EN 1993-1-1, 6.2.1(5))")
     print("=" * 92)
-    for t in (test_erzeugnisdicke_mindert_die_streckgrenze,
+    for t in (test_erzeugnisdicke_mindert_die_streckgrenze, test_erzeugnisdicke_linear,
               test_erzeugnisdicke_ist_angebbar, test_spannungsformeln, test_zugkoerper, test_randspannung,
               test_nachweis_nimmt_die_spannung_des_loesers, test_elementmittel,
               test_randspannung_geglaettet, test_randspannung_fliessend,

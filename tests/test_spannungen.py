@@ -224,8 +224,10 @@ def test_werteskala():
     w = np.array([0.0, 100.0, 250.0, 400.0, np.nan])
     s = sp.Werteskala(modus="grenze", grenze=355.0, stufen=9)
     g = sp.grenzen(s, w)
-    check("Grenze 355: Skala 0 … 355, darueber eigene Farbe, Beschriftung = Groesstwert 400",
-          g["clim"] == [0.0, 355.0] and g["above_color"] == sp.FARBE_UEBER and g["above_label"] == "400"
+    # Beschriftung seit 13.10.2026 „> Skalenmax“ (Bild des Anwenders), bis
+    # dahin der Groesstwert („400“); der steht in den Kennwerten
+    check("Grenze 355: Skala 0 … 355, darueber eigene Farbe, Beschriftung „> Skalenmax“",
+          g["clim"] == [0.0, 355.0] and g["above_color"] == sp.FARBE_UEBER and g["above_label"] == "> Skalenmax"
           and g["anzahl_ueber"] == 1 and g["below_color"] is None and g["n_colors"] == 9 and g["n_labels"] == 10,
           str({k: g[k] for k in ("clim", "above_label", "anzahl_ueber")}))
     g = sp.grenzen(s, np.array([0.0, 100.0, 250.0]))
@@ -250,7 +252,7 @@ def test_werteskala():
           np.isnan(g["werte"]).all() and g["anzahl_ueber"] == 0 and g["clim"] == [355.0, 356.0])
     g = sp.grenzen(sp.Werteskala(modus="fest", unten=10.0, oben=200.0), w)
     check("fest: unten/oben, darueber und darunter je eigene Farbe",
-          g["clim"] == [10.0, 200.0] and g["above_label"] == "400" and g["below_label"] == "0"
+          g["clim"] == [10.0, 200.0] and g["above_label"] == "> Skalenmax" and g["below_label"] == "0"
           and g["anzahl_ueber"] == 2 and g["anzahl_unter"] == 1)
     g = sp.grenzen(sp.Werteskala(), w)
     check("auto: Grenzen aus den Werten (ohne NaN)", g["clim"] == [0.0, 400.0] and g["above_color"] is None)

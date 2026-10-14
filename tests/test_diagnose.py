@@ -2213,7 +2213,12 @@ def _deckelbeule(dz, x, y, v, alle=False):
     m.nodes[kn] = m.nodes[kn] + np.asarray(v, float)
     deckel = np.array([[0, 0, 1], [1, 0, 1], [1, 1, 1 + dz], [0, 1, 1]], float)
     d_mm = 1e3 * float(dg._bilinear_abstand(m.nodes[kn][None, :], deckel)[0])
-    bef = [b for b in dg.abnahme(m, warnungen=True) if alle or b.pruefung in _NETZ_BEFUNDE]
+    # Die vier Eckknoten des Bodens sind Punktlager - seit dem 10.10.2026 nennt
+    # die Abnahme sie als WARNUNG „Kraft ohne Fläche“ (tests.test_spitzenstellen).
+    # Hier geht es um den Netzrand; „alle“ heisst: alle Befunde zum Netz.
+    from statik3d.spitzenstellen import PRUEFUNG as _KRAFT_OHNE_FLAECHE
+    bef = [b for b in dg.abnahme(m, warnungen=True)
+           if (alle and b.pruefung != _KRAFT_OHNE_FLAECHE) or b.pruefung in _NETZ_BEFUNDE]
     return len(els), [(b.stufe, b.pruefung, b.wert) for b in bef], d_mm
 
 

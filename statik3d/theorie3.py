@@ -14,8 +14,9 @@ Steifigkeit (Timoshenko/Bernoulli, Gelenke kondensiert) angewandt:
 
 Knotendrehungen sind endliche Drehungen: je Knoten eine Drehmatrix R, die
 mit jedem Iterationsschritt multiplikativ fortgeschrieben wird
-(R ← exp(Δθ)·R). Gleichgewicht: f_int(u, R) = λ·F + F_imp; geloest mit
-Newton-Raphson in Laststufen λ = 1/n … 1, Tangente T ᵀ (k_l + k_g(N)) T
+(R ← exp(Δθ)·R). Gleichgewicht: f_int(u, R) = F_S + λ·(F − F_S) + F_imp;
+geloest mit Newton-Raphson in Laststufen λ = 1/n … 1, Tangente
+T ᵀ (k_l + k_g(N)) T
 (korotational mit geometrischer Steifigkeit; der Rest der konsistenten
 Tangente fehlt, dafuer ist das Residuum exakt - die Iteration konvergiert
 gegen das richtige Gleichgewicht, nur nicht quadratisch).
@@ -24,6 +25,11 @@ Lasten sind richtungstreu (konservativ) und werden als Knotenlasten der
 Ausgangslage angesetzt; Ersatzimperfektionen nach EC3 5.3.2 (Schiefstellung,
 Vorkruemmung) kommen wie bei Theorie II. Ordnung als gleichwertige Lasten
 dazu und werden je Laststufe aus den Normalkraeften neu gebildet.
+
+Temperaturlasten und Vorspannkraefte (F_S) wirken seit dem 10.10.2026 ab
+der ersten Laststufe voll, gesteigert wird nur der Rest
+(plastizitaet.stufenlast; bis dahin wuchsen sie mit λ mit). Ohne beides
+rechnet jede Stufe wie bisher.
 
 Grenzen: nur Stab- und Fachwerkelemente (keine Schalen, Volumen), kein
 Kontakt, keine Zwangsverformungen; kleine Dehnungen (linear-elastisch).
@@ -128,9 +134,18 @@ class Th3Results:
 # Element
 # ==========================================================================
 class _Stab:
-    """Ein Stabelement mit Ausgangslage, lokaler Steifigkeit und Lasten."""
+    """Ein Stabelement mit Ausgangslage, lokaler Steifigkeit und Lasten.
 
-    def __init__(self, model: Model, i: int, feq: dict):
+    ``f_anf``: die lokalen Stabendlasten seiner Anfangsdehnung (Temperatur,
+    Vorspannung; solver.case_feq_sofort). Seit dem 13.10.2026 steckt die
+    Anfangsdehnung in der inneren Kraft im mitgehenden System,
+    f_int = T^T (k_l d_l - f_anf), und N = (k_l d_l - f_anf)[6] in k_g - wie
+    im Ergebnis (asm.stab_normalkraft). Bis dahin stand sie als Knotenlast der
+    Ausgangslage in F, drehte nicht mit, und k_g las nur den elastischen
+    Anteil: eine vorgespannte Saite hatte quer keine Steifigkeit aus ihrer
+    Vorspannung."""
+
+    def __init__(self, model: Model, i: int, feq: dict, f_anf=None):
         e = model.elements[i]
         self.i = i
         self.nodes = [int(n) for n in e.nodes]
@@ -138,18 +153,26 @@ class _Stab:
         sec = model.sections[e.sec]
         self.A, self.Ip = sec.A, sec.Iy + sec.Iz
         kl, T3, T, L = asm.beam_local(model, e)
+        fa = None if f_anf is None or not np.any(f_anf) else np.asarray(f_anf, float)
+        # die Anfangsdehnung wie in asm.stablasten_einbauen: Federgelenke, dann
+        # Gelenke kondensiert
         if getattr(e, "hinge_springs", None):
-            kl, _f, _rec = asm.hinge_springs(kl, np.zeros(12), e.hinge_springs)
+            kl, fa_, _rec = asm.hinge_springs(kl, np.zeros(12) if fa is None else fa, e.hinge_springs)
+            fa = None if fa is None else fa_
         if e.hinges:
-            kl, _f, _c = asm.condense(kl, np.zeros(12), e.hinges)
+            kl, fa_, _c = asm.condense(kl, np.zeros(12) if fa is None else fa, e.hinges)
+            fa = None if fa is None else fa_
         self.kl = kl
+        self.f_anf = fa
         self.E0T = T3.T                   # Spalten: Ausgangsachsen ex, ey, ez
         self.L0 = L
         self.f0 = np.asarray(feq.get(i, np.zeros(12)), float)
         self.dofs = asm.element_dofs(e)
 
     def zustand(self, X: np.ndarray, R: np.ndarray):
-        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage."""
+        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage; f_l
+        ist der elastische Anteil k_l d_l, N die Normalkraft mit der
+        Anfangsdehnung."""
         n1, n2 = self.nodes
         d = X[n2] - X[n1]
         L = float(np.linalg.norm(d))
@@ -172,12 +195,10 @@ class _Stab:
         th2 = rot_log(E.T @ Q2)
         dl = np.concatenate([[0.0, 0.0, 0.0], th1, [L - self.L0, 0.0, 0.0], th2])
         fl = self.kl @ dl
-        N = float(fl[6])
+        N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
         if self.typ == "truss":
-            kg = np.zeros((12, 12))
-            for a, b in ((1, 7), (2, 8)):
-                kg[a, a] = kg[b, b] = N / L
-                kg[a, b] = kg[b, a] = -N / L
+            # Saite N/L - dieselbe Form wie asm.geometric_stiffness (14.10.2026)
+            kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, self.A, self.Ip)
         T = bm.transform_matrix(E.T)
@@ -191,9 +212,32 @@ class _Seil:
     ungedehnte Laenge steht am Element (``laenge0``); ist sie 0, wird die
     Sehnenlaenge der Ausgangslage genommen - das Seil ist dann gerade
     gespannt und haengt nur unter seinem Gewicht durch.
+
+    ``n_anfang``: die Kraft seiner Anfangsdehnung bei festgehaltenen Enden
+    (Vorspannung, Temperatur; asm.anfangsnormalkraft). Sie verkuerzt die
+    spannungsfreie Laenge auf L0/(1 + n_anfang/(E A)): gerade gespannt traegt
+    das Seil dann genau n_anfang, wie nach Theorie I. Ordnung. Das Gewicht
+    bleibt dasselbe (w L0 gleich). Bis zum 13.10.2026 fiel die Vorspannung
+    eines Seils hier still weg (Befund 3: u_x und Seilkraft am Seil mit 70 kN
+    Vorspannung bitgleich denen ohne).
+
+    ``q_last``: eine gleichmaessige Streckenlast ueber die ganze Seillaenge,
+    global [N/m] **je Bogenlaenge** (:func:`seil_streckenlasten`). Sie geht wie
+    das Eigengewicht in die Kettenlinie, je ungedehnter Laenge, Summe q L0.
+    Bis zum 14.10.2026 galt sie je Sehnenlaenge (w = q L/L0, Summe q L): ein
+    Seil mit Laenge0 ueber der Sehne trug zu wenig (Spannweite 10 m,
+    L0 = 10,42 m, 1 kN/m: Auflager 10,00 statt 10,42 kN, Horizontalzug 9,60
+    statt 10,00 kN; mit Laenge0 = 0, der Sehne, ist beides dasselbe).
+
+    ``p_last``: eine gleichmaessige Streckenlast **je Projektion** (RFEM
+    „projizierte Länge“, BeamLoad.bezugslaenge = "projektion", seit dem
+    14.10.2026), global [N/m]: das Seil rechnet dann als elastische Parabel
+    (verbindung.seil_parabel), Summe p l mit der Projektion l. Kettenlinie
+    und Parabel zugleich bildet das Element nicht ab - solve_theorie3 sperrt
+    den Lastfall vorher.
     """
 
-    def __init__(self, model: Model, i: int, g):
+    def __init__(self, model: Model, i: int, g, n_anfang: float = 0.0, q_last=None, p_last=None):
         e = model.elements[i]
         mat = model.materials[e.mat]
         sec = model.sections[e.sec]
@@ -205,13 +249,112 @@ class _Seil:
         self.EA = float(mat.E * sec.A)
         # Streckenlast je ungedehnter Laenge: das Eigengewicht des Lastfalls
         self.w = np.asarray(g, float) * mat.rho * sec.A
+        if q_last is not None:
+            # je Bogenlaenge = je ungedehnter Laenge wie das Eigengewicht
+            self.w = self.w + np.asarray(q_last, float)
+        # je Projektion: die Parabel (die Projektion aendert keine Vorspannung)
+        self.p = None if p_last is None or not np.any(p_last) else np.asarray(p_last, float)
+        self.n_anfang = float(n_anfang or 0.0)
+        if self.n_anfang:
+            L0 = self.L0
+            self.L0 = L0 / (1.0 + self.n_anfang / self.EA)
+            self.w = self.w * (L0 / self.L0)
         self.dofs = np.array([NDOF * self.nodes[0] + k for k in range(3)]
                              + [NDOF * self.nodes[1] + k for k in range(3)], int)
 
     def zustand(self, X: np.ndarray):
         """(innere Knotenkraefte (6,), Tangente (6,6), Angaben) in dieser Lage."""
-        from .elements.verbindung import seil_kettenlinie
+        from .elements.verbindung import seil_kettenlinie, seil_parabel
+        if self.p is not None:
+            return seil_parabel(X[self.nodes[0]], X[self.nodes[1]], self.L0, self.EA, self.p)
         return seil_kettenlinie(X[self.nodes[0]], X[self.nodes[1]], self.L0, self.EA, self.w)
+
+
+def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
+    """Die Streckenlasten auf Seilen fuer Theorie III. Ordnung: ({Element:
+    q global [N/m] je Bogenlaenge}, {Element: p global [N/m] je Projektion},
+    [Zeilen]).
+
+    Seit dem 14.10.2026 zaehlt der Bezug der Last (BeamLoad.bezugslaenge, aus
+    RFEM „wahre“ bzw. „projizierte Länge“): je Bogenlaenge geht sie in die
+    Kettenlinie, je Projektion in die Parabel (verbindung.seil_parabel). Eine
+    lokale Last gilt je Bogenlaenge. Lasten je Projektion in verschiedenen
+    Richtungen auf demselben Seil bildet die Parabel nicht ab - Zeile.
+
+    Das Seil rechnet hier als Kettenlinie (verbindung.seil_kettenlinie), und
+    die kennt nur eine gleichmaessige Streckenlast je Laenge in fester
+    Richtung - wie das Eigengewicht. Eine Streckenlast, die ueber die ganze
+    Seillaenge gleich ist (global oder lokal, die lokale Richtung in der
+    Ausgangslage, richtungstreu wie alle Lasten hier), geht so hinein; mit
+    ihrem Faktor der Kombination. Trapezfoermig oder abschnittsweise bildet
+    die Kettenlinie sie nicht ab: als Knotenlast an den Seilenden ginge sie
+    am Seil vorbei in die Lager (ein Seilelement zwischen zwei Festpunkten
+    truege von ihr nichts), und ein Teilen des Seils in der Rechnung waere ein
+    Umbau. Solche Lasten stehen als Zeile mit Seil, Lastfall und Betrag in
+    der zweiten Liste; solve_theorie3 sperrt dann den Lastfall.
+
+    Bis zum 14.10.2026 nahm solve_theorie3 die Lasten des Seils aus dem
+    Lastvektor (das Eigengewicht steckt in der Kettenlinie) und mit ihnen
+    jede Streckenlast: 10 kN quer auf ein Seil ergaben u = 0 und
+    Auflager z = 0 (tests/test_stab_nachzug.py)."""
+    from . import zahlen as zl
+    from .solver import _stab_namen
+    namen = None
+    gleich: dict = {}
+    projektion: dict = {}
+    zeilen: list = []
+    for lf, f in factors.items():
+        lc = model.load_cases.get(lf)
+        if lc is None or not f:
+            continue
+        for bl in lc.beam_loads:
+            i = int(bl.elem)
+            if not 0 <= i < len(model.elements):
+                continue
+            e = model.elements[i]
+            if e.typ != "seil" or (aktiv is not None and not aktiv[i]):
+                continue
+            X = model.nodes[e.nodes]
+            T3, L = bm.local_axes(X[0], X[1], e.roll)
+            proj = bl.system == "global" and getattr(bl, "bezugslaenge", "") == "projektion"
+            if proj:
+                # je Projektion: die globale Last wie eingegeben (ohne die
+                # Umrechnung je Stablaenge, asm.projektionsfaktor)
+                q1 = T3 @ np.asarray(bl.q, float)
+                q2 = T3 @ np.asarray(bl.q2 if bl.q2 is not None else bl.q, float)
+            else:
+                q1, q2 = asm.beam_load_local(model, e, bl)
+            a = max(0.0, float(getattr(bl, "a", 0.0) or 0.0))
+            b = L if getattr(bl, "b", None) is None else min(float(bl.b), L)
+            if b <= a:
+                continue                  # wirkt nirgends (wie in den Stablasten)
+            groesse = max(float(np.abs(q1).max()), float(np.abs(q2).max()), 1e-300)
+            konstant = float(np.abs(q1 - q2).max()) <= 1e-12 * groesse
+            ganz = a <= 1e-9 * L and b >= L * (1.0 - 1e-9)
+            if konstant and ganz and proj:
+                neu = float(f) * (T3.T @ q1)
+                alt = projektion.get(i)
+                if alt is not None and np.any(alt) and np.any(neu) and float(
+                        np.linalg.norm(np.cross(alt, neu))) > 1e-9 * float(np.linalg.norm(alt) * np.linalg.norm(neu)):
+                    if namen is None:
+                        namen = _stab_namen(model)
+                    zeilen.append(f"Seil {namen.get(i, f'Element {i + 1}')}, Lastfall {lf}: je Projektion in "
+                                  "einer anderen Richtung als die übrigen Lasten je Projektion")
+                projektion[i] = (np.zeros(3) if alt is None else alt) + neu
+                continue
+            if konstant and ganz:
+                gleich[i] = gleich.get(i, np.zeros(3)) + float(f) * (T3.T @ q1)
+                continue
+            if namen is None:
+                namen = _stab_namen(model)
+            b1 = zl.zahl_text(float(np.linalg.norm(q1)) / 1e3)
+            b2 = zl.zahl_text(float(np.linalg.norm(q2)) / 1e3)
+            art = ", ".join(([] if konstant else ["trapezförmig"]) + ([] if ganz else ["abschnittsweise"]))
+            betrag = f"{b1} kN/m" if konstant else f"{b1} → {b2} kN/m"
+            ort = "" if ganz else f" von {zl.zahl_text(a)} bis {zl.zahl_text(b)} m"
+            zeilen.append(f"Seil {namen.get(i, f'Element {i + 1}')}, Lastfall {lf}: {art} {betrag}{ort}"
+                          + (" je Projektion" if proj else ""))
+    return gleich, projektion, zeilen
 
 
 # ==========================================================================
@@ -238,6 +381,10 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                          f"{len(fremd)} Flächen-/Volumenelemente im Modell")
     if model.has_contact:
         raise ValueError("Theorie III. Ordnung nicht zusammen mit Kontakt")
+    from .vorspannkraft import theorie_sperre
+    sperre = theorie_sperre(model, factors, "III")
+    if sperre:
+        raise ValueError(sperre)         # Vorspannkraft (Soll nach Verankerung), 13.10.2026
     us = case_prescribed(model, factors)
     if us is not None and np.any(np.asarray(us) != 0):
         raise ValueError("Theorie III. Ordnung nicht mit Zwangsverformungen")
@@ -250,15 +397,68 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         lc = model.load_cases.get(lf)
         if lc is not None:
             g_ges = g_ges + float(f) * np.asarray(lc.gravity, float)
-    seile = [_Seil(model, i, g_ges) for i in wirksam if model.elements[i].typ == "seil"]
+    # Anfangsdehnung (Temperatur, Vorspannung) je Stab und Seil: sie wirkt
+    # seit dem 13.10.2026 in der inneren Kraft (_Stab) bzw. in der
+    # spannungsfreien Laenge (_Seil) - nicht mehr als Knotenlast
+    from .solver import case_sofort, case_feq_sofort
+    feq_anf = case_feq_sofort(model, factors, aktiv)
+    # Streckenlasten auf Seilen gehen wie das Eigengewicht in die
+    # Kettenlinie; was sie nicht abbildet, sperrt den Lastfall (14.10.2026)
+    q_seil, p_seil, nicht_abbildbar = seil_streckenlasten(model, factors, aktiv)
+    if nicht_abbildbar:
+        raise ValueError(
+            "Theorie III. Ordnung: die Kettenlinie eines Seils trägt nur eine gleichmäßige "
+            "Streckenlast über die ganze Seillänge – nicht gerechnet wegen "
+            + "; ".join(nicht_abbildbar[:6]) + (" …" if len(nicht_abbildbar) > 6 else "")
+            + ". Das Seil an den Laststellen in Elemente teilen (je Element gleichmäßig) oder "
+              "die Last als Knotenlast ansetzen")
+    # je Projektion (Parabel) und je Bogenlaenge (Kettenlinie, auch das
+    # Eigengewicht) zugleich auf einem Seil bildet keins der beiden ab
+    gemischt = []
+    for i in sorted(p_seil):
+        if not np.any(p_seil[i]):
+            continue
+        e = model.elements[i]
+        gewicht = np.any(g_ges) and float(model.materials[e.mat].rho or 0.0) > 0.0
+        if gewicht or (i in q_seil and np.any(q_seil[i])):
+            from .solver import stab_name
+            gemischt.append(f"Seil {stab_name(model, i)}: "
+                            + ("Eigengewicht" if gewicht else "Streckenlast je Bogenlänge")
+                            + " und Streckenlast je Projektion")
+    if gemischt:
+        raise ValueError(
+            "Theorie III. Ordnung: ein Seil rechnet mit einer Streckenlast je Bogenlänge als "
+            "Kettenlinie, mit einer je Projektion als Parabel – beides zugleich nicht; nicht "
+            "gerechnet wegen " + "; ".join(gemischt[:6]) + (" …" if len(gemischt) > 6 else "")
+            + ". Die Lasten auf einen Bezug bringen (etwa je Bogenlänge) oder getrennt rechnen")
+    seile = [_Seil(model, i, g_ges, asm.anfangsnormalkraft(feq_anf[i]) if i in feq_anf else 0.0,
+                   q_seil.get(i), p_seil.get(i))
+             for i in wirksam if model.elements[i].typ == "seil"]
     for sl_ in seile:
         e = model.elements[sl_.i]
         kl, T3, T, L = asm.beam_local(model, e)
         F_ref[asm.element_dofs(e, model)[:12]] -= T.T @ np.asarray(feq.get(sl_.i, np.zeros(12)), float)
         feq.pop(sl_.i, None)
         q.pop(sl_.i, None)
-    staebe = [_Stab(model, i, feq) for i in wirksam
+    staebe = [_Stab(model, i, feq, feq_anf.get(i)) for i in wirksam
               if model.elements[i].typ != "seil"]
+    # Die Anfangsdehnung der Staebe aus F_ref: dieselbe Last, die
+    # asm.load_vector eingebaut hat (asm.stablasten_einbauen)
+    F_anf = None
+    F_ref_voll = F_ref              # die Last mit Anfangsdehnung (Bezug I. Ordnung)
+    mit_anf = {st.i: feq_anf[st.i] for st in staebe if st.f_anf is not None}
+    if mit_anf:
+        F_anf = np.zeros(ndof)
+        asm.stablasten_einbauen(model, mit_anf, F_anf)
+        asm.mittelknoten_umlenken(model, F_anf)
+        F_ref = F_ref - F_anf
+    # Temperaturlasten und Vorspannkraefte wirken ab der ersten Laststufe
+    # voll (10.10.2026) - in Staeben und Seilen als Anfangsdehnung ohnehin;
+    # was sonst sofort wirkt, steigert die Stufe nicht
+    from .plastizitaet import SOFORT_VOLL, stufenlast
+    F_S = case_sofort(model, factors, aktiv, ohne={sl_.i for sl_ in seile} | set(mit_anf))
+    if F_S is not None or mit_anf or any(sl_.n_anfang for sl_ in seile):
+        info.hinweise.append(SOFORT_VOLL)
 
     # Lager: starr (u = 0) und Federn
     lin, _ = sup.split(sup.expand(model))
@@ -311,7 +511,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             zust[st.i] = (fl, N)
             Ke = T.T @ (st.kl + kg) @ T
             d = st.dofs
-            f_int[d] += T.T @ fl
+            f_int[d] += T.T @ (fl if st.f_anf is None else fl - st.f_anf)
             r, c = np.meshgrid(d, d, indexing="ij")
             rows.append(r.ravel())
             cols.append(c.ravel())
@@ -331,6 +531,9 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     _f0, K0, _z = aufbau()
     diag = np.abs(K0.diagonal())
     ref = diag.max() if diag.size and diag.max() > 0 else 1.0
+    # automatisch gehalten: ohne Steifigkeit und kein Lager - was dort
+    # ankommt, traegt kein Bauteil (solver.auto_gehalten_abtrennen, 14.10.2026)
+    auto = (diag < ref * 1e-12) & ~fixed
     fixed |= diag < ref * 1e-12
     fi = np.where(~fixed)[0]
     if not len(fi):
@@ -360,7 +563,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     try:
         lu0 = splu(K0[fi][:, fi].tocsc())
         u1 = np.zeros(ndof)
-        u1[fi] = lu0.solve(F_ref[fi])
+        u1[fi] = lu0.solve(F_ref_voll[fi])
         info.u_max_I = float(np.abs(u1[:, ].reshape(-1, NDOF)[:, :3]).max())
     except Exception as ex:                    # noqa: BLE001
         raise ValueError(f"Gleichungssystem singulär: {ex}") from ex
@@ -383,9 +586,17 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                 Fv, v_info = ersatzlasten_vorkruemmung(model, res_t, elastisch, alle=alle_vorkruemmungen)
                 F_imp = Fs + Fv
                 info.schiefstellung, info.vorkruemmung = s_info, v_info
-            F_ges = lam * F_ref + F_imp
+            F_stufe = stufenlast(F_ref, F_S, lam)
+            F_ges = F_stufe + F_imp
             r = F_ges - f_int
-            konv = float(np.linalg.norm(r[fi])) / (lam * lastnorm)
+            # bezogen auf die Last der Stufe - mit voller Temperatur oder
+            # Vorspannung ist das nicht mehr lam * |F|; die Anfangsdehnung der
+            # Staebe zaehlt dabei mit wie bis zum 13.10.2026 (als Knotenlast)
+            if F_anf is not None:
+                bezug = float(np.linalg.norm((F_anf + F_stufe)[fi])) or 1.0
+            else:
+                bezug = (lam * lastnorm) if F_S is None else (float(np.linalg.norm(F_stufe[fi])) or 1.0)
+            konv = float(np.linalg.norm(r[fi])) / bezug
             gesamt_it += 1
             if konv < tol:
                 break
@@ -417,6 +628,8 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     info.gerechnet = not info.fehler
     f_int, K, zust = aufbau()
     res = ergebnis(zust, F_ges, f_int)
+    from .solver import auto_gehalten_abtrennen
+    auto_gehalten_abtrennen(model, auto, res, F_ges, aktiv, progress)
     info.u_max_III = float(np.abs(res.u[:, :3]).max())
     info.drehung_max = float(np.linalg.norm(res.u[:, 3:], axis=1).max())
     if info.u_max_I > 0:
@@ -427,6 +640,11 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                      "ndof": ndof, "nfree": len(fi), "solver": "SuperLU"})
     if info.fehler:
         res.info["fehler"] = info.fehler
+    # Zug-/Druckstaebe: Theorie III. Ordnung iteriert den Ausfall nicht (das
+    # Seil wird als Kettenlinie schlaff) - ein Zugstab mit Druck steht mit
+    # Namen und Kraft im Ergebnis (13.10.2026)
+    from .solver import zugstaebe_pruefen
+    zugstaebe_pruefen(model, res, F_ref_voll, aktiv, progress=progress)
     return res, info
 
 

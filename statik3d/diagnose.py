@@ -74,6 +74,22 @@ def teiltragwerke(model) -> list:
             kopp_a.append(i)
             kopp_b.append(j)
             belegt[i] = belegt[j] = True
+    # Starrkoerper RBE2/RBE3 verbinden ihren Master mit den Slaves (seit dem
+    # 14.10.2026). Bis dahin zaehlten nur Elemente und Kopplungen: ein
+    # verteilend eingeleitetes Stabende (stabeinleitung, RBE3) stand als loses
+    # Teil da, und die Hilfsfesselung hielt Kopf und Fuss eines ausgefallenen
+    # Zugstabs als ein Teil fest - die Last am freien Kopf ging dann gegen ihre
+    # Richtung in den Koerper (tests/test_gleichgewicht_gueltig.py).
+    for sk in getattr(model, "starrkoerper", []) or []:
+        i = int(getattr(sk, "master", -1))
+        if not 0 <= i < nn:
+            continue
+        for j in getattr(sk, "slaves", None) or []:
+            j = int(j)
+            if 0 <= j < nn and j != i:
+                kopp_a.append(i)
+                kopp_b.append(j)
+                belegt[i] = belegt[j] = True
     if kopp_a:
         zeilen = np.concatenate([zeilen, np.asarray(kopp_a, int)])
         spalten = np.concatenate([spalten, np.asarray(kopp_b, int)])
@@ -545,6 +561,22 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        es keine Volumenbilanz (24.09.2026). Der Befund sagt je Gruppe,
        welcher Fall vorliegt.
 
+    8. **Kraft ohne Flaeche** (nur mit ``warnungen=True``, seit 10.10.2026) -
+       Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft
+       ohne Auflageflaeche in ein Volumen leiten (spitzenstellen.kandidaten):
+       eine WARNUNG je Art, gebuendelt („64 starre Scheiben koppeln nur einen
+       Lochrand (40 Knoten)“). Sie haelt die Rechnung nicht an.
+    9. **Werkstoff ohne f_u** (nur mit ``warnungen=True`` und eingeschalteter
+       Plastizitaet, seit 13.10.2026) - je Werkstoff der Volumen mit f_y, aber
+       ohne Grenze der Verfestigung eine WARNUNG („Werkstoff „S355“ ohne f_u –
+       Verfestigung ohne Grenze, bitte f_u eingeben“).
+    10. **Stabenden an wenigen Knoten** (nur mit ``warnungen=True``, seit
+        13.10.2026) - der Hinweis auf die verteilende Einleitung
+        (stabeinleitung.hinweis), als WARNUNG; umgestellt wird nichts. Nennt
+        Punkt 8 dieselben Stabenden schon als moegliche Spannungsspitze, steht
+        der Hinweis in dieser Zeile und nicht noch einmal fuer sich (seit
+        14.10.2026; bis dahin zwei Warnungen fuer dieselben Stabenden).
+
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
     WARNUNG mit dem Zusatz „nicht geprueft" im Namen - eine leere Liste hiesse
@@ -573,9 +605,59 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
             text="Ob das Tetraedernetz gefaltet ist (umgestülpte Tetraeder zwischen "
                  f"ihren Nachbarn), ließ sich nicht prüfen ({type(ex).__name__}: "
                  f"{str(ex)[:100]})."))
+    if warnungen:
+        # 8. Kraft ohne Flaeche (seit 10.10.2026, Plan Singularitaeten): eine
+        # Zeile je Art, nur als WARNUNG - mit diesen Stellen wird gerechnet,
+        # sie werden nach der Rechnung gekennzeichnet (spitzenstellen)
+        try:
+            from . import spitzenstellen as _sp
+            aus += _sp.abnahme_befunde(model)
+        except Exception as ex:           # noqa: BLE001 - eine Abnahme darf nie sperren
+            aus.append(Befund(
+                pruefung="Kraft ohne Fläche nicht geprüft", wert=0.0, grenze=0.0, stufe="WARNUNG",
+                text="Ob Kräfte ohne Auflagefläche in ein Volumen gehen (mögliche netzabhängige "
+                     f"Spannungsspitzen), ließ sich nicht prüfen ({type(ex).__name__}: "
+                     f"{str(ex)[:100]})."))
+        # 9. Werkstoff ohne Grenze der Verfestigung (seit 13.10.2026): mit
+        # Plastizitaet verfestigt ein Werkstoff mit f_y bis f_u (Schraube f_ub,
+        # Spannstahl f_pk) - fehlt f_u, wird ohne Grenze gerechnet, und kein
+        # Vorgabewert wird gesetzt (Entscheidung des Anwenders). Nur WARNUNG.
+        aus += _abnahme_werkstoff_grenze(model)
+        # 10. Stabenden an 1-3 Volumenknoten (seit 13.10.2026): ein Hinweis auf
+        # die verteilende Einleitung - umgestellt wird nichts. Dieselben
+        # Stabenden nennt Punkt 8 schon als moegliche Spannungsspitze („48
+        # Stabenden hängen an 1–3 Knoten – mögliche netzabhängige ...“): dann
+        # kommt der Hinweis in diese Zeile, statt als zweite Warnung (14.10.2026)
+        try:
+            from . import spitzenstellen as _sp2
+            from . import stabeinleitung as _se
+            se_bef = _se.abnahme_befund(model)
+            sp_stab = [b for b in aus if b.pruefung == _sp2.PRUEFUNG and b.objekt == _sp2.STABENDE]
+            if se_bef and sp_stab:
+                sp_stab[0].text = sp_stab[0].text.rstrip() + " " + _se.HINWEIS[:1].upper() + _se.HINWEIS[1:] + "."
+            else:
+                aus += se_bef
+        except Exception:                 # noqa: BLE001 - ein Hinweis darf nie sperren
+            pass
     if not warnungen:
         aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
     return aus
+
+
+def _abnahme_werkstoff_grenze(model) -> list:
+    """Befunde „Werkstoff ohne f_u“ (WARNUNG) - nur mit Plastizitaet."""
+    pz = getattr(model, "plastizitaet", None)
+    if pz is None or not getattr(pz, "an", False):
+        return []
+    try:
+        from . import plastizitaet as _pl
+        mats = _pl.werkstoffe_ohne_grenze(model)
+    except Exception:                     # noqa: BLE001 - eine Abnahme darf nie sperren
+        return []
+    return [Befund(pruefung="Werkstoff ohne Grenze der Verfestigung", objekt=mat.name, stufe="WARNUNG",
+                   text=_pl.meldung_ohne_grenze(mat) + " (mit Plastizität verfestigt der Werkstoff "
+                        f"bis {mat.grenze_name()}, danach fließt er ideal plastisch).")
+            for mat in mats]
 
 
 def _abnahme_gemeinsame_flaechen(model) -> list:

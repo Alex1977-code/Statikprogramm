@@ -400,7 +400,10 @@ def table_materials(table: dict, only: set = None) -> dict:
             fy, fu = min(re_, rm) * 1e6, max(re_, rm) * 1e6
         elif re_:
             fy = re_ * 1e6
-        out[name] = ((rho or 7.85) * 1000.0, fy, fu)
+        # RHO 0 bleibt 0 - ein gewichtsloses Hilfsmaterial wie beim
+        # RFEM-6-Import (seit 14.10.2026; bis dahin machte ``rho or 7.85``
+        # daraus Stahl); 7,85 g/cm3 nur ohne Wert
+        out[name] = ((7.85 if rho is None else rho) * 1000.0, fy, fu)
     return out
 
 

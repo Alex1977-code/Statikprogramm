@@ -45,6 +45,14 @@ class MemberCheck:
     #: Nachbarnachweis Volumen (ec3.volumen.VolumenCheck) unterscheidet an
     #: derselben Stelle seit jeher drei Faelle; hier waren es zwei.
     fehler: str = ""
+    # Spannstahl und Schraube (13.10.2026) tragen zwei Attribute, die keine
+    # Felder sind: ``art`` ("Spannstahl" - ec3.spannstahl, EN 1992-1-1 bzw.
+    # Zulassung im Spannungsquerschnitt A_s; "Schraube" - ec3.schraubenstab,
+    # Zug nach EN 1993-1-8) und ``zustaende`` (je geprueftem Zustand {"zustand",
+    # "quelle", "combo", "N", "x", "sigma", "grenze", "grenzname", "norm",
+    # "util", "text"}). Gelesen wird ueber getattr. Als Felder haetten sie den
+    # Abdruck jedes Stahlnachweises geaendert (tests.test_huellen_schluessel,
+    # R1f: Beispiele bitgleich mit 6791f9f, gemessen am Gesamtlauf von c3ce65b).
 
     def status(self) -> str:
         if self.fehler:
@@ -129,6 +137,10 @@ class DesignResults:
             s += f" - {anzahl(nf, 'Stab', 'Stäbe')} NICHT erfüllt"
         elif gefuehrt and not ohne:
             s += " - alle erfüllt"
+        # Spannstahl ohne A_s (13.10.2026): gerechnet mit dem Nennquerschnitt,
+        # die Meldung steht am Stab und hier als eigene Zeile
+        ohne_as = [m.member for m in gefuehrt if getattr(m, "art", "") == "Spannstahl"
+                   and any("A_s aus Zulassung eintragen" in w for w in m.warnings)]
         if ohne:
             # Namen und Grund, damit man weiss, wo man nachtragen muss; ein
             # Import kann Hunderte Staebe ohne f_y bringen - die Zeile steht
@@ -139,6 +151,9 @@ class DesignResults:
             gruende = list(dict.fromkeys(m.fehler for m in ohne))
             s += (f" - {len(ohne)} nicht geführt: {namen} ("
                   + "; ".join(gruende[:3]) + (" …" if len(gruende) > 3 else "") + ")")
+        if ohne_as:
+            s += ("\nHINWEIS: A_s aus Zulassung eintragen – Spannstahl gerechnet mit dem Nennquerschnitt: "
+                  + ", ".join(ohne_as[:10]) + (f" und {len(ohne_as) - 10} weitere" if len(ohne_as) > 10 else ""))
         return s + warnzeilen(self) + hinweiszeilen(self)
 
     def table(self) -> list[list]:
@@ -146,7 +161,9 @@ class DesignResults:
                  "maßgebender Nachweis", "Kombination", "x [m]", "Status"]]
         for m in self.members.values():
             g = m.governing
-            rows.append([m.member, m.section, m.material, f"{m.L:.2f}", str(m.cls),
+            # Spannstahl und Schraube haben keine Querschnittsklasse (13.10.2026)
+            rows.append([m.member, m.section, m.material, f"{m.L:.2f}",
+                         "–" if getattr(m, "art", "") else str(m.cls),
                          f"{m.util:.3f}", g.get("name", ""), g.get("combo", ""),
                          f"{g.get('x', 0):.2f}", m.status()])
         return rows
@@ -169,8 +186,16 @@ def hinweiszeilen(ergebnis) -> str:
 
 
 # --------------------------------------------------------------------------
-def check_member(model: Model, member: Member, results: dict, n: int = None) -> MemberCheck:
-    """Nachweise eines Stabes fuer alle uebergebenen Ergebnisse (name -> Results)."""
+def check_member(model: Model, member: Member, results: dict, n: int = None,
+                 zustaende: dict = None) -> MemberCheck:
+    """Nachweise eines Stabes fuer alle uebergebenen Ergebnisse (name -> Results).
+
+    Ein Stab aus Spannstahl wird nach EN 1992-1-1 bzw. Zulassung im
+    Spannungsquerschnitt nachgewiesen (ec3.spannstahl; ``zustaende`` sind die
+    Vorspannzustaende aus spannstahl.zustaende_sammeln), ein Stab mit
+    Schraubengroesse als Schraube auf Zug nach EN 1993-1-8
+    (ec3.schraubenstab) - beides seit 13.10.2026. Alle anderen wie bisher."""
+    from . import spannstahl, schraubenstab
     ds = model.design
     n = n or ds.stations
     e0 = model.elements[member.elements[0]]
@@ -178,6 +203,10 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
     mat = model.materials[e0.mat]
     L = model.member_length(member)
     mc = MemberCheck(member.name, sec.name, mat.name, L, elements=list(member.elements))
+    if spannstahl.ist_spannstahl(mat):
+        return spannstahl.stab_nachweis(model, member, results, n, mc, sec, mat, zustaende)
+    if schraubenstab.ist_schraube(sec, mat):
+        return schraubenstab.stab_nachweis(model, member, results, n, mc, sec, mat)
     fy = mat.yield_strength(sec.t_max)
     if not fy:
         mc.fehler = f"Werkstoff {mat.name} ohne Streckgrenze"
@@ -304,8 +333,21 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
     return mc
 
 
-def check_member_set(model: Model, names: list, results: dict, n: int = None) -> dict:
-    return {nm: check_member(model, model.members[nm], results, n) for nm in names}
+def check_member_set(model: Model, names: list, results: dict, n: int = None,
+                     zustaende: dict = None) -> dict:
+    return {nm: check_member(model, model.members[nm], results, n, zustaende=zustaende) for nm in names}
+
+
+def _hat_spannstahl(model: Model, names: list) -> bool:
+    from .spannstahl import ist_spannstahl
+    for k in names:
+        mem = model.members.get(k)
+        if mem is None or not mem.elements:
+            continue
+        e0 = model.elements[int(mem.elements[0])]
+        if ist_spannstahl(model.materials.get(e0.mat)):
+            return True
+    return False
 
 
 def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) -> dict:
@@ -526,6 +568,13 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     results = _uls_results(model, analysis, combos, warnungen=warnungen) if names else {}
     # dasselbe Ergebnis unter mehreren Namen nur einmal nachweisen (B055)
     results, gleiche = _gleiche_zusammenfassen(model, analysis, results)
+    # Vorspannzustaende fuer Staebe aus Spannstahl (13.10.2026): Lastfaelle nur
+    # mit Vorspannung und Ergebnisse mit info["zustand"] - nur wenn es solche
+    # Staebe gibt, sonst bleibt alles wie bisher
+    zustaende = {}
+    if names and results and _hat_spannstahl(model, names):
+        from .spannstahl import zustaende_sammeln
+        zustaende = zustaende_sammeln(model, analysis)
     out = DesignResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",
@@ -553,7 +602,7 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         # nach 698 Minuten bei 94 % und kam nicht weiter; ein Arbeiter starb
         # vorher mit AssertionError in multiprocessing/connection.py
         # (_get_more_data, die Pipe brach) - 21.09.2026.
-        paket = _paket_schreiben(model, stripped)
+        paket = _paket_schreiben(model, stripped, {k: (_strip(r), z) for k, (r, z) in zustaende.items()})
         try:
             jobs = [Job("design_members", {"paket": paket, "members": c})
                     for c in chunks]
@@ -574,7 +623,7 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
                 pass
         return _leere_eintragen(out, model, leer)
     for k, nm in enumerate(names):
-        out.members[nm] = check_member(model, model.members[nm], results)
+        out.members[nm] = check_member(model, model.members[nm], results, zustaende=zustaende)
         if progress and (k % 10 == 0 or k == len(names) - 1):
             _melde(progress, f"Nachweis {nm} ({k+1}/{len(names)})",
                    _anteil(anteil, (k + 1) / len(names)))
@@ -595,7 +644,7 @@ def _leere_eintragen(out: DesignResults, model: Model, leer: list) -> DesignResu
     return out
 
 
-def _paket_schreiben(model, results: dict) -> str:
+def _paket_schreiben(model, results: dict, zustaende: dict = None) -> str:
     """Modell und Ergebnisse einmal in eine Datei; der Pfad geht an die
     Auftraege.
 
@@ -609,7 +658,7 @@ def _paket_schreiben(model, results: dict) -> str:
     fd, pfad = tempfile.mkstemp(prefix="statik3d_nachweis_", suffix=".pkl")
     try:
         with os.fdopen(fd, "wb") as f:
-            pickle.dump({"model": model.to_dict(), "results": results}, f,
+            pickle.dump({"model": model.to_dict(), "results": results, "zustaende": zustaende or {}}, f,
                         protocol=pickle.HIGHEST_PROTOCOL)
     except BaseException:
         try:

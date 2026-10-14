@@ -906,10 +906,17 @@ def _draw_loads(model, lc, proj, P0, X0, nn, notes) -> str:
     g = np.asarray(lc.gravity, dtype=float)
     if np.any(g):
         notes.append(f"Eigengewicht g = ({g[0]:.2f}, {g[1]:.2f}, {g[2]:.2f}) m/s²")
-    if lc.temp_loads:
-        dts = sorted(set(round(float(t.dT), 3) for t in lc.temp_loads))
+    vorsp = [t for t in lc.temp_loads if getattr(t, "aus_vorspannung", 0.0)]
+    temp = [t for t in lc.temp_loads if not getattr(t, "aus_vorspannung", 0.0)]
+    if vorsp:
+        # eine umgerechnete Vorspannung steht als Kraft (13.10.2026)
+        kraefte = sorted(set(round(float(t.aus_vorspannung) / 1e3, 1) for t in vorsp))
+        kr_txt = f"{kraefte[0]:g} kN" if len(kraefte) == 1 else f"{kraefte[0]:g} … {kraefte[-1]:g} kN"
+        notes.append(f"{len(vorsp)} Vorspannungen ({kr_txt}, eingeprägte Dehnung)")
+    if temp:
+        dts = sorted(set(round(float(t.dT), 3) for t in temp))
         dt_txt = f"ΔT = {dts[0]:g} K" if len(dts) == 1 else f"ΔT = {dts[0]:g} … {dts[-1]:g} K"
-        notes.append(f"{len(lc.temp_loads)} Temperaturlasten ({dt_txt})")
+        notes.append(f"{len(temp)} Temperaturlasten ({dt_txt})")
     if nl or bl or fl:
         notes.insert(0, f"Lastfall {lc.name}")
     return "".join(out)

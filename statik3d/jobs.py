@@ -91,7 +91,7 @@ def _job_solve_all(model: dict, design: bool = False, fatigue: bool = False):
 #: Zuletzt gelesenes Nachweispaket je Arbeitsprozess: (Pfad, Modell, Ergebnisse).
 #: Ohne diesen Halt baut jeder Auftrag das Modell neu auf - am Drehlager
 #: 239 MB, und bei 64 Auftraegen viermal je Arbeiter (21.09.2026).
-_NACHWEIS_PAKET = (None, None, None)
+_NACHWEIS_PAKET = (None, None, None, None)
 
 
 @register_job("design_members")
@@ -112,13 +112,17 @@ def _job_design_members(members: list, paket: str = None, model: dict = None,
             import pickle
             with open(paket, "rb") as f:
                 d = pickle.load(f)
-            _NACHWEIS_PAKET = (paket, Model.from_dict(d["model"]), d["results"])
-        _pfad, m, results = _NACHWEIS_PAKET
+            # zustaende: Vorspannzustaende fuer Staebe aus Spannstahl (13.10.2026)
+            _NACHWEIS_PAKET = (paket, Model.from_dict(d["model"]), d["results"], d.get("zustaende") or {})
+        _pfad, m, results, zustaende = _NACHWEIS_PAKET
     else:
         m = Model.from_dict(model)
+        zustaende = {}
     for r in results.values():
         r.model = m
-    return check_member_set(m, members, results)
+    for r, _z in zustaende.values():
+        r.model = m
+    return check_member_set(m, members, results, zustaende=zustaende)
 
 
 @register_job("ping")

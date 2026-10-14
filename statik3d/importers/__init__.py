@@ -302,6 +302,7 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
             model = _append_model(model, loaded, tol, log)
         model.meta["quelle"] = path
         C.say(log, f"Statik3D-Modell geladen: {model.nn} Knoten, {len(model.elements)} Elemente")
+        _stabenden_hinweis(model, log)
         return model
 
     if model is None:
@@ -440,8 +441,22 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     n_new = len(model.elements) - n_elems0
     C.say(log, f"Import abgeschlossen: {n_new} neue Elemente, {model.nn} Knoten gesamt, "
                f"{len(model.supports)} Lager, {len(model.load_cases)} Lastfaelle")
+    _stabenden_hinweis(model, log)
     _melde(fortschritt, 0.95, "Import abgeschlossen")
     return model
+
+
+def _stabenden_hinweis(model: Model, log: list) -> None:
+    """Stabenden, die an 1-3 Volumenknoten haengen (oder nach dem Vernetzen
+    haengen werden): ein gebuendelter Hinweis auf die verteilende Einleitung
+    (seit 13.10.2026, stabeinleitung.hinweis). Umgestellt wird nichts."""
+    try:
+        from ..stabeinleitung import hinweis
+        text = hinweis(model)
+    except Exception:                       # noqa: BLE001 - ein Hinweis darf den Import nicht aufhalten
+        text = ""
+    if text:
+        C.say(log, "Hinweis: " + text)
 
 
 def _melde(fortschritt, anteil: float, text: str) -> None:

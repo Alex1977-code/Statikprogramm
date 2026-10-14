@@ -173,13 +173,132 @@ stehen -, und es wird neu gelöst, bis sich die Menge nicht mehr ändert. Wer
 herausgenommen wurde, darf im nächsten Schritt wieder hinein. Kontakt läuft
 innen weiter mit.
 
+**Die Kraft, über die entschieden wird** (seit 13.10.2026), ist die des
+Ergebnisses: N = E·A·Δl/L + N₀ mit der Kraft N₀ der Anfangsdehnung bei
+festgehaltenen Enden (`asm.stab_normalkraft`, `asm.anfangsnormalkraft`,
+N₀ = −(f₀[6] − f₀[0])/2 aus den Stabendlasten nur der Anfangsdehnung:
+−E·A·α·ΔT bei Temperatur, +F bei einer Vorspannung F, P bei der Verriegelung
+einer Sollkraft). Fällt ein Stab aus, nimmt er die Last seiner Anfangsdehnung
+aus dem Lastvektor mit (`solver._anfang_ausfall`). Bis zum 13.10.2026 kannte
+die Iteration nur die Verriegelung. Ein Zugstab (A = 10 cm², 1 m) mit 500 kN
+Vorspannung als Abkühlung gegen ein Klemmteil (A = 40 cm²) hat
+E·A·Δl/L = −100 kN und N = 400 kN: Er fiel aus, trug 0 statt
+F·k_K/(k_A + k_K) = 400 kN, und seine Temperaturlast blieb stehen. Unter einer
+Drucklast von 2,5 MN trug das Klemmteil dann 3,0 statt 2,5 MN
+(tests/test_stabkraft_anfangsdehnung.py). Am Drehlager haben die 16 Anker
+E·A·Δl/L = −119 bis −169 kN bei N = 782 bis 833 kN (LF1 Mittel, 09.10.2026);
+als Zugstäbe gerechnet wären alle ausgefallen. Ohne Anfangsdehnung ist die
+Iteration bitgleich die alte.
+
+**Zugstäbe in der Konvergenzbedingung** (Entscheidung des Anwenders vom
+13.10.2026). Die Aktivmengen-Iteration endet nur, wenn sich die Menge im
+letzten Schritt nicht mehr geändert hat; bricht sie nach 50 Schritten ab,
+nennt das Protokoll die Stäbe, die zuletzt wechselten. Eine Laststufe der
+Plastizität ist nur konvergiert, wenn die Lösung ihres letzten Newton-Schritts
+den Status nicht mehr geändert hat (`_KontaktImNewton.stabstatus_offen`,
+`plastizitaet._stabstatus_offen`), im Newton wie in der Anfangsdehnung,
+streng wie ingenieurmäßig, und ebenso die Schlussabnahme. Nach Abschluss
+prüft `solver.zugstaebe_pruefen` jeden aktiven Zugstab auf Druck (Druckstab
+auf Zug) jenseits
+
+      tol = max(10⁻⁵·|ΣF|, 10⁻⁹·max|N|),
+
+der Schranke für Zug an einer geschlossenen Kontaktbedingung im
+Ingenieurkriterium (`ABSCHLUSS_NORMAL_ANTEIL`) mit der Toleranz der Iteration
+als Boden (ohne äußere Last ist ΣF = 0). N ist die mittlere Normalkraft des
+Ergebnisses. Das Ergebnis trägt `res.info["stabstatus"]` (ausgefallen, druck,
+konvergiert, toleranz); ein Zugstab mit Druck steht mit Namen und Kraft im
+Ausfall-Protokoll, in beiden Zusammenfassungen und im Konvergenzstand. Nach
+Theorie II. und III. Ordnung, die den Ausfall nicht iterieren, ist das die
+einzige Stelle, an der ein gedrückter Zugstab auffällt. Geprüft am X-Verband
+mit zwei Zugdiagonalen auf einseitigen Lagern und auf einem Würfel mit
+Plastizität: D1 fällt aus, N_D2 = √2·H, die Stufen mit geändertem Status
+brauchen einen Newton-Schritt mehr (5 statt 3); ohne Zugstäbe bitgleich.
+
 **Seile.** Nach Theorie III. Ordnung ist ein Seil die **elastische
 Kettenlinie** (Peyrot/Goulois, Jayaraman/Knudson): aus der ungedehnten Länge
 L₀, der Dehnsteifigkeit EA und der Streckenlast w folgen der Horizontalzug H,
 der Durchhang und die Tangente ∂f/∂u für das Newton-Verfahren. Das Eigengewicht
 steckt in der Kettenlinie selbst und wird nicht noch einmal als Knotenlast
 angesetzt. Ist die Sehne länger als L₀, wird das Seil zum Zugstab EA/L₀; ist
-sie kürzer, wird es kraftlos.
+sie kürzer, wird es kraftlos. Eine Vorspannung oder Temperatur des Seils
+(Kraft N₀ bei festgehaltenen Enden) verkürzt seit dem 13.10.2026 die
+spannungsfreie Länge auf L₀' = L₀/(1 + N₀/(E·A)) bei gleichem Gewicht
+(w·L₀ fest): Gerade gespannt gilt dann T = E·A·(L₀ − L₀')/L₀' = N₀ genau,
+wie nach Theorie I. Ordnung. Bis zum 13.10.2026 nahm `solve_theorie3` die
+Stablasten eines Seils aus dem Lastvektor und warf sie weg; die Vorspannung
+fiel still weg. Geprüft an einer Saite aus zwei Seilen (je 2 m, Ø 20 mm,
+N₀ = 50 kN, Querlast 10 kN) gegen 2·T·w/c = F mit c = √(L² + w²):
+w = 87,951 mm, T = 113,81 kN, auf 3·10⁻¹⁴ genau.
+
+**Streckenlast auf dem Seil** (seit 14.10.2026). Die Kettenlinie kennt eine
+Streckenlast w je ungedehnter Länge in fester Richtung. Eine Streckenlast q,
+die über die ganze Seillänge gleich ist (global oder lokal, die lokale
+Richtung in der Ausgangslage, richtungstreu wie alle Lasten der Theorie III.
+Ordnung), geht deshalb wie das Eigengewicht in die Kettenlinie ein, je
+ungedehnter Bogenlänge (w = q, Summe q·L₀; bis zum 14.10.2026 w = q·L/L₀
+mit der Sehne L, siehe unten) und mit dem Faktor der Kombination
+(`theorie3.seil_streckenlasten`). Trapezförmig oder
+abschnittsweise bildet die Kettenlinie eine Last nicht ab. Als Knotenlast an
+den Seilenden ginge sie am Seil vorbei in die Lager, denn ein Seilelement
+zwischen zwei Festpunkten trüge von ihr nichts, und das Seil in der
+Rechnung zu teilen wäre ein Umbau. Darum ist ein solcher Lastfall bzw. eine
+solche Kombination nach Theorie III. Ordnung gesperrt; die Meldung nennt
+Seil, Lastfall, Art und Betrag. Bis zum 14.10.2026 nahm `solve_theorie3` mit
+den Lasten des Seils auch jede Streckenlast aus dem Lastvektor: 10 kN quer
+auf ein Seil ergaben u = 0 und eine Auflagerkraft z von 0. Geprüft an einem
+Seil von 10 m aus zwei Elementen (Ø 20 mm, 10 kN Vorspannung) mit
+q = 1 kN/m: global und lokal bitgleich dasselbe wie mit einem Eigengewicht
+ρ·A·g = 1 kN/m, Durchhang 182,456 mm, Seilkraft 68,661 kN, Auflager z
+10 kN; als flache Parabel von Hand 182,391 mm.
+
+**Bezug der Streckenlast: je Bogenlänge oder je Projektion** (seit
+14.10.2026). Eine Stablast hat einen Bezug (`BeamLoad.bezugslaenge`,
+`Linienlast.bezugslaenge`): leer heißt je Stablänge, beim Seil je
+Bogenlänge; „projektion“ heißt je Länge der Projektion des Stabs auf die
+Ebene senkrecht zur Lastrichtung (Schnee, Eis). Aus RFEM kommt der Bezug mit
+der Kennzahl der Lastrichtung (Abschnitt Import RFEM 6 in
+`docs/Schnittstellen.md`). Nach Theorie I. und II. Ordnung wird eine Last je
+Projektion auf die Stablänge umgerechnet, q·√(1 − (t·d)²) mit der Stabachse t
+und der Lastrichtung d (`asm.projektionsfaktor`); die Summe ist q·l_proj. Am
+Seil nach Theorie III. Ordnung gilt:
+
+* **je Bogenlänge: elastische Kettenlinie** wie oben, w = q je ungedehnter
+  Länge, Summe q·L₀. Bis zum 14.10.2026 rechnete die Kettenlinie mit
+  w = q·L/L₀, also je Sehnenlänge. Mit Länge₀ = 0 (der Sehne) ist das
+  dasselbe; ein Seil mit Länge₀ über der Sehne trug zu wenig (Spannweite
+  10 m, L₀ = 10,42 m, 1 kN/m: Auflager 10,00 statt 10,42 kN, Horizontalzug
+  9,598 statt 10,000 kN).
+* **je Projektion: elastische Parabel** (`verbindung.seil_parabel`). In der
+  Ebene aus Sehne und Last ist der Horizontalzug H konstant, der Vertikalzug
+  wächst mit der Projektion, V(x) = V₀ + q·x, die Seillinie ist die Parabel
+  z′ = V/H, und durch das zweite Ende folgt V₀ = H·h/l − q·l/2. H ergibt sich
+  aus der ungedehnten Länge: mit ds = ds₀·(1 + T/EA), T = √(H² + V²) und
+  V = H·sinh u ist L₀ = (EA·H/q)·∫ cosh²u/(EA + H·cosh u) du von
+  asinh(V₀/H) bis asinh(V₂/H); der Integrand ist glatt, Gauß-Legendre
+  (48 Punkte je Teilstück der Länge 4) rechnet ihn auf Maschinengenauigkeit,
+  und L₀(H) fällt streng, H folgt mit `brentq` in log H. Die Summe der Last
+  ist q·l und ändert sich mit der Lage der Enden; die Tangente kommt aus
+  zentralen Differenzen der Endkräfte (nicht symmetrisch).
+
+Geprüft an einem Seil von 10 m aus zwei Elementen (Ø 20 mm), Länge₀ aus der
+geschlossenen Lösung zu H = 10 kN (`tests/test_stab_querlast.py`): je
+Projektion Stich q·l²/(8H) = 1,250 m, H = 10 kN und Auflager q·l = 10 kN
+auf 10⁻¹⁴, mit 2 m Höhenunterschied ebenso (Auflager unten q·l/2 − H·h/l =
+3 kN); je Bogenlänge gegen die elastische Kettenlinie nach Irvine
+(l = H·L₀/EA + (2H/w)·asinh(w·L₀/(2H))) Stich 1,276054 m, Auflager
+w·L₀ = 10,420 kN, bitgleich mit einem gleich schweren Eigengewicht. Bis zum
+14.10.2026 rechnete das Seil auch eine Last je Projektion als Kettenlinie:
+H = 9,842 statt 10,000 kN, Stich 1,2454 statt 1,2500 m.
+
+**Offene Punkte am Seil.** Eine Last je Projektion und eine je Bogenlänge
+(auch das Eigengewicht) zugleich auf demselben Seil bildet weder die
+Kettenlinie noch die Parabel ab; der Lastfall ist dann nach Theorie III.
+Ordnung gesperrt, die Meldung nennt Seil und Grund. Ebenso gesperrt bleiben
+Lasten je Projektion in verschiedenen Richtungen auf einem Seil und eine
+**trapezförmige oder abschnittsweise Streckenlast** auf dem Seil (je
+Bogenlänge wie je Projektion); dafür das Seil an den Laststellen in Elemente
+teilen oder die Last als Knotenlast ansetzen.
 
 **Wölbkrafttorsion.** Ein Balken mit dem Haken `woelb` und einem Querschnitt
 mit Wölbwiderstand I_w > 0 bekommt an jedem seiner Knoten einen **siebten
@@ -658,12 +777,148 @@ die äquivalenten Knotenlasten f = [+F_v, 0, …, −F_v, 0, …] in lokalen
 Koordinaten (sie ziehen die Enden zusammen); die Stabendkräfte folgen aus
 f_l = k·u − f₀ und enthalten damit die Vorspannung: beidseitig gehalten steht
 der Stab unter N = F_v ohne Verschiebung, frei verkürzt er sich um F_v·L/(E·A)
-ohne Kraft. Für Volumenkörper (Schraubenschaft) ist die Anfangsspannung
+ohne Kraft. Dieselbe Normalkraft lesen seit dem 13.10.2026 auch die
+geometrische Steifigkeit, die Ausfall-Iteration und die Theorie III. Ordnung
+(§ 1.2a, § 5.1a, § 5.1b); bis dahin lasen sie nur E·A·Δl/L. Für Volumenkörper (Schraubenschaft) ist die Anfangsspannung
 einachsig σ₀ = −F_v/A · a⊗a längs der Achse a; die Knotenlasten sind
 f = ∫Bᵀσ₀ dV über alle Elemente des Körpers, die Querschnittsfläche A das
 Volumen des Körpers geteilt durch seine Länge längs a. Die Spannungen im
 Ergebnis sind σ = D·ε − σ₀. Geprüft an geschlossenen Werten (tests/test_lasten.py):
 Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaft.
+In schrittweisen Rechnungen (Laststufen der Plastizität, Theorie III.
+Ordnung) wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe voll
+wie eine Temperaturlast (§ 5e, „Temperaturlasten und Vorspannkräfte sofort
+voll“).
+
+### Vorspannkraft (Soll nach Verankerung): Spannen, Verriegeln, Lasten (seit 13.10.2026)
+
+Mit der Anfangsdehnung trägt ein Stab nicht F_v, sondern F_v minus die
+elastische Verkürzung seiner Umgebung: zwischen Anker (Steifigkeit k_A) und
+Klemmteil (k_K) bleiben N = F_v·k_K/(k_K + k_A); am Drehlager trugen die
+Anker bei voller Last 782 bis 833 statt 952 kN. Entscheidung des Anwenders
+vom 13.10.2026: „Vorspannung kraftgesteuert eingeben. Neue Lastart
+„Vorspannkraft (Soll nach Verankerung)“ je Stab. Umsetzung als eigener
+Spannschritt vor den übrigen Lasten …“. Die Lastart ist `Vorspannung` mit
+`sollkraft = True` und der Gruppe beim Spannen; gerechnet wird sie in
+`statik3d/vorspannkraft.py`.
+
+**Spannen.** Die Stäbe der Gruppe (und der späteren Gruppen) sind inaktiv:
+ein System ohne ihre Steifigkeit. An ihren Enden wirkt das Kräftepaar
+paar(F) = [+F·e am Anfang, −F·e am Ende], derselbe Lastvektor wie eine
+Vorspannung als Anfangsdehnung mit F_soll (Gelenke, Versätze und gebundene
+Mittelknoten wie dort). Gerechnet wird bis zum Gleichgewicht mit Kontakt
+und Plastizität, ganz gewöhnlich über `solver._solve_loads`; Ergebnis sind
+u_S, der plastische Zustand (ε_p je Gaußpunkt, F_p) und der Kontaktzustand.
+Im Gleichgewicht gilt K_Rest·u_S = paar(F_soll) + F_p(ε_p,S).
+
+**Verriegeln.** Je Element die Kraft P = F_soll − N_el(u_S) mit der
+elastischen Normalkraft N_el = E·A·Δl/L aus u_S. Das ist eine eingeprägte
+Dehnung ε₀ = −P/(E·A) **je Element** - nicht über ΔT, und nicht über die
+Vorspannung des Stabs, weil die Elemente eines Stabs verschiedene Δl haben
+können. Die Stabendkraft ist N = N_el + P, bei u_S also genau F_soll. Die
+Gleichgewichtslage bleibt: mit dem aktiven Stab kommt K_Stab·u_S =
+paar(−N_el) dazu, und die Last der Verriegelung ist F_lock = paar(P) =
+paar(F_soll) + paar(−N_el). Damit ist
+
+    K_ges·u_S = K_Rest·u_S + K_Stab·u_S = paar(F_soll) + F_p + paar(−N_el) = F_lock + F_p(ε_p,S),
+
+u_S ist also die Lösung des Systems mit Stab ohne weitere Last. Gemessen
+(`tests/test_vorspannkraft.py`): N = F_soll nach dem Verriegeln auf 0 bis
+3·10⁻¹⁶, die Verschiebung des „verankerten“ Zustands gleich der des
+Spannschritts (max |Δu| = 0), und die Rechnung danach ohne Last bleibt in
+ihr (1,1·10⁻¹⁹ m). Ein ausfallender Zugstab zählt P mit; fällt er aus, nimmt
+er seine Verriegelungslast mit (`solve_with_ausfall`, `n0`).
+
+**Lasten.** Der Lastfall rechnet mit F + F_lock und feq + feq_lock, die
+Verriegelung wirkt wie jede Vorspannung ab der ersten Laststufe voll, die
+Plastizität beginnt beim Zustand des Spannschritts
+(`plastizitaet.iteration`, `start`) und der Kontakt warm bei dessen Zustand.
+Gegenprobe am Würfel, der im Spannschritt fließt (σ = 4F/A = 400 N/mm² >
+f_y): eine Zuglast entlastet ihn elastisch, N = F + k_1·Δw = 102,27 MN wie
+geschlossen; vom jungfräulichen Zustand aus wären es 108,46 MN und σ_zz
+−333,8 statt −309,1 N/mm².
+
+**Reihenweise.** Gruppe für Gruppe: Spannen der Gruppe g mit den früher
+verriegelten Stäben aktiv, verriegeln, weiter. Die früheren verlieren Kraft,
+ausgewiesen je Stab: mit zwei Ankern am Klemmteil verliert der erste
+k_1·F_2/(k_K + k_1), 60 kN von 500 kN, geschlossen und gerechnet gleich.
+
+**Spannschritt in Stufen (14.10.2026).** Entscheidung des Anwenders: „Vorspannung
+als eigenen, ggf. gestuften Spannschritt vor den äußeren Lasten aufbringen.“
+Bis dahin wirkte das Kräftepaar in einem Zug: der Spannschritt rechnete mit
+F_S = F = F_lock + paar(F_soll) als sofort voll wirkendem Anteil, und
+`plastizitaet.stufenlast` gab damit in jeder Laststufe der Plastizität die
+volle Last; mit Kontakt ging ein Lauf von der Geometrie bis zur vollen Kraft.
+Jetzt rechnet Stufe k von n mit F_k = F_lock + (k/n)·paar(F_soll) und F_S = F_k,
+vom plastischen und vom Kontaktzustand der Stufe k−1 aus; verriegelt wird nach
+Stufe n in deren Lage, die Herleitung oben gilt unverändert, N = F_soll. Mit
+n = 1 ist es die Rechnung bis zum 14.10.2026 (1,0·paar(F_soll) ist dieselbe
+Zahl). n = `Plastizitaet.spannstufen`, 0 heißt automatisch:
+`vorspannkraft.SPANNSTUFEN_AUTOMATISCH` = 3 mit Kontakt oder Fließen, sonst 1 -
+Reibung und Fließen hängen am Weg, linear ist das Ergebnis wegunabhängig; drei
+wie die Vorgabe der Laststufen, gewählt und nicht gemessen. Gemessen
+(`tests/test_spannschritt_stufen.py`): an den wegunabhängigen Prüfmodellen
+(reibungsfreies Spaltelement; Würfel einachsig und monoton fließend)
+N_verankert = F_soll mit Abweichung 0 und dasselbe u wie in einem Schritt
+(max |Δu| = 0).
+
+**Linear: Einflussmatrix.** Gleichzeitig gespannt und ohne Kontakt,
+Plastizität oder Ausfall: A_ij = N_i unter der Anfangsdehnung 1 N im Stab j
+(eine Zerlegung, n Lösungen), P = A⁻¹·F_soll. Unter der Vorspannung allein
+trägt jeder Stab F_soll. Das ist dasselbe wie Spannen und Verriegeln: im
+linearen Fall ist der Spannzustand K_Rest·u = paar(F), und die Verriegelung
+macht daraus genau die Anfangsdehnung, mit der der Stab bei u die Kraft F
+trägt - die Einflussmatrix sucht diese Dehnung direkt. Gemessen am Würfel
+mit vier ungleichen Ankern und Last: Verschiebungen auf 1,7·10⁻¹⁸ m,
+Ankerkräfte auf 1,5·10⁻⁸ N gleich. Ein Stab, den nichts hält (A_jj = 0),
+meldet sich.
+
+**Theorie II. und III. Ordnung: nicht gerechnet.** Die Einflussmatrix nach
+Theorie I. Ordnung trifft F_soll dort nicht: am Zugband einer Kragstütze
+(HEB 200, 70 kN; die eingeprägte Kraft ist 754 kN, weil die Stütze weich ist)
+gab sie nach Theorie III. Ordnung 62,56 statt 70 kN (−10,6 %: jede Änderung
+der Länge geht mit P/N ≈ 11 in N ein), und nach Theorie II. Ordnung brach die
+Rechnung an α_cr = 0,16 ab, weil `assemble.geometric_stiffness` nur
+E·A·Δl/L liest und das Zugband unter 684 kN Druck sah. Ein Lastfall mit
+Sollkraft bleibt darum nach Theorie I. Ordnung gerechnet und gekennzeichnet
+(`theorie_gewuenscht`, `theorie_fehler`). Bis zum 13.10.2026 lag das zum
+größeren Teil an den Befunden der Stabkraft (§ 1.2a, § 5.1a, § 5.1b). Mit
+ihrer Behebung rechnen dieselbe eingeprägte Kraft nach Theorie II. Ordnung
+α_cr = 136,5 und N = 69,77 kN, nach Theorie III. Ordnung N = 69,57 kN
+(−0,33 % und −0,61 %; sad_werk/sperre_messen.py der Sitzung vom 14.10.2026).
+F_soll nach dem Verankern trifft erst ein Spannschritt nach Theorie II./III.
+Ordnung; die Sperre bleibt.
+
+**Import.** Die RFEM-Anfangsvorspannung bleibt eine Abkühlung. Der Hinweis
+„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
+Sollkraft umwandeln?“ rechnet X linear über die Einflussmatrix (X = A·N₀),
+wenn das Modell keinen Kontakt hat, vernetzt und höchstens 300 000 FHG groß
+ist. Am Drehlager nicht: eine Zerlegung kostete im Lauf vom 09.10.2026 135
+bis 165 s und 31,8 GB (2 604 134 Zeilen, 4,0·10⁹ Nichtnullen im Faktor), und
+mit Kontakt hätte ein linear gerechnetes X keine Bedeutung. Dort reicht
+`solve_all` X nach, aus dem Ergebnis eines Lastfalls, der nur diese
+Vorspannung trägt (LF398).
+
+**Eine aus RFEM umgerechnete Vorspannung (seit 13.10.2026).** Der RFEM-Import
+setzt die Stablast „Vorspannung“ (InitialPrestress, Kraft N₀) mit genau dieser
+Umrechnung in eine Temperaturlast um, ΔT = −N₀/(E·A·α), mit dem E und dem α des
+Stabwerkstoffs und der Fläche A des Querschnitts. Die Last behält N₀, E und α als
+Merkmal („aus Vorspannung“, `TempLoad.aus_vorspannung`, `vorspann_E`,
+`vorspann_alpha`); Ansicht, Lasttabelle und Bericht nennen die Kraft, nicht ΔT:
+„Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K)“.
+Gerechnet wird mit ΔT, unverändert; das Merkmal ändert kein Ergebnis. Dass E und
+α angegeben werden, ist Teil des Sachverhalts: im voll gehaltenen Stab ist
+N = E·A·α·(−ΔT), die angezeigte Kraft N₀ gilt also nur für das E, das α und die
+Fläche der Umrechnung. Am Drehlager (E = 170 000 N/mm², α = 1,0e-5 1/K, 16 Anker
+mit 952 kN bzw. 805 kN) ist das ΔT = −445,634 K bzw. −376,823 K. Die
+kraftgesteuerte Vorspannung („Vorspannkraft nach Verankerung“) ersetzt die
+Umrechnung später; bis dahin nennt das Importprotokoll E und α einmal.
+Seit der Zusammenführung vom 14.10.2026 ist das Merkmal das einzige:
+`TempLoad.vorspann_werte` liefert (N₀, E, α) aus dem Merkmal, und ohne Merkmal
+(Datei von vor dem 13.10.2026) die Kraft N = E·A·α·(−ΔT) eines Zug- oder
+Seilstabs mit E und α des Werkstoffs. Beide erscheinen in derselben Form; die
+Vorspannkraft hatte bis dahin eine eigene Anzeige („aus Vorspannung 952 kN,
+E = …, α = …“).
 
 ## 2 Lasten
 
@@ -698,6 +953,27 @@ Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaf
   durch Gleichgewicht am Teilstab: Resultierende Q(x) und ihr Moment um x je
   Abschnitt, stückweise integriert; der Querkraftverlauf knickt an den
   Abschnittsenden.
+* **Querlast auf Fachwerkstab und Seil** (seit 14.10.2026). Der Fachwerkstab
+  (auch „nur Zug“ und „nur Druck“) und das Seil haben keine Biegesteifigkeit
+  und gelenkige Enden. Ihre Querlast geht darum nur als **Kraft** an die
+  Knoten, und zwar mit den Auflagerkräften des Einfeldträgers: q L/2 je Ende
+  bei Gleichlast, L(2q₁+q₂)/6 und L(q₁+2q₂)/6 bei der Trapezlast, nach dem
+  Hebelgesetz bei einer Teillast (`asm.gelenkige_ersatzlasten`). Sie folgen
+  aus den Volleinspannwerten oben: die Summe der Querkräfte bleibt, und das
+  Lastmoment um Knoten 1, f₄ + f₁₀ − f₈·L in der Ebene x-z, verteilt sie auf
+  die Enden; Knoten- und Torsionsmomente entfallen. Das Biegemoment bleibt im
+  Stab, als Einfeldträger: M = q L²/8 bei Gleichlast, und der Stabnachweis
+  führt N + M. Bis zum 14.10.2026 bekam der Fachwerkstab die Ersatzlasten des
+  eingespannten Balkens mit den Momenten ∓q L²/12. Weil der Fachwerkstab
+  keine Drehsteifigkeit hat, landeten sie in den automatisch gehaltenen
+  Drehfreiheitsgraden: an Gelenklagern standen Lagermomente M_y = ±1,333 kNm
+  (4 m, 1 kN/m), und im Stab stand der Verlauf des eingespannten Balkens mit
+  q L²/24 im Feld statt q L²/8, um den Faktor 3 auf der unsicheren Seite; eine
+  Trapezlast 0 → 2 kN/m teilte sich 1,2/2,8 statt 1,333/2,667 kN auf die
+  Lager. Das Seil ist nach Theorie I./II. Ordnung gerade: seine Querlast geht
+  ebenso mit q L/2 an die Seilenden, es trägt aber nur N (kein Moment, keine
+  Querkraft), und das Ergebnis warnt „Querlast auf Seil …“; die Seilwirkung
+  rechnet Theorie III. Ordnung (Abschnitt 1.2a).
 * **Linienlasten** hängen am Stab (Kette von Elementen) oder an einer Linie.
   Auf dem Stab werden sie in Abschnittslasten der Elemente zerlegt (q am
   Elementanfang und -ende linear interpoliert). Auf einer Linie — dem Rand
@@ -976,6 +1252,39 @@ bildet
 * außergewöhnliche Situationen nach Gl. 6.11b,
 * GZG charakteristisch (6.14b), häufig (6.15b), quasi-ständig (6.16b).
 
+**Vorspannung, nicht zugeordnete Einwirkung und Bemessungslastfall (seit
+13.10.2026).** Drei Regeln des Generators und der Rechnung, auf Entscheidung des
+Anwenders vom 13.10.2026:
+
+* *Vorspannung (Kategorie P)* ist eine ständige Einwirkung mit
+  **γ_P = 1,0**, günstig wie ungünstig (`DesignSettings.gamma_P`, Vorgabe 1,0;
+  ein eigenes `gamma_sup`/`gamma_inf` am Lastfall geht vor). Bis zum 12.10.2026
+  lief P wie G mit γ_G,sup = 1,35. Ein Lastfall hat **eine** Einwirkung und damit
+  ein γ: ein gemischter Lastfall (Vorspannung und andere Lasten in einem Lastfall)
+  geht als Ganzes mit dem γ seiner Einwirkung ein, die Vorspannung darin also etwa
+  mit γ_Q = 1,5 statt 1,0 (`tests/test_lastfall_kategorie.py`, „gemischter
+  Lastfall“). Das Programm teilt den Lastfall nicht; der Import meldet solche
+  Lastfälle, und die Abhilfe ist ein eigener Vorspannungslastfall oder das
+  Kennzeichen „Bemessungslastfall“.
+* *Nicht zugeordnet (Kategorie NZ).* Ein Lastfall, dessen Einwirkung die Quelle nicht
+  eindeutig nennt, ist weder ständig noch veränderlich noch außergewöhnlich: γ und ψ
+  stehen nicht fest. Eine Kombination, die ihn mit einem Faktor ungleich null enthält
+  – auch in einer Alternative einer Ergebniskombination –, wird nicht gerechnet
+  (`KombinationGesperrt`, ein Bedienhinweis); `solve_all` prüft das vor dem ersten
+  Lastfall, `solve_combination` und die Umhüllende der Ergebniskombination in
+  `_kombination_pruefen`, der Generator vor dem Ersetzen vorhandener Kombinationen.
+  Der Generator ließ einen solchen Lastfall sonst still weg, denn er ist in keiner der
+  drei Mengen `perm`, `var`, `acc`. Einzelne Lastfälle, Ermüdungszustände und
+  `solve_all(combinations=False)` bleiben rechenbar.
+* *Bemessungslastfall, bereits faktorisiert (`LoadCase.faktorisiert`).* Die Lasten
+  sind schon Bemessungswerte; in jeder Kombination geht der Lastfall mit γ = 1,0 und
+  ohne ψ ein, sonst bekäme er sein γ ein zweites Mal: am Drehlager ist LF1
+  („Bemessungslast im GZT …“) in RFEM die Last von LF201 („char.Last …“) mal 1,37
+  bis 1,47. Er braucht keine Einwirkung (γ und ψ stehen fest) und sperrt nichts. Der
+  Generator überlagert ihn nicht mit anderen Lastfällen, sondern bildet die
+  Kombination „1,0·LFn“ (GZT); GZG und außergewöhnliche Kombinationen nehmen ihn
+  nicht auf, denn ein Bemessungswert ist kein charakteristischer.
+
 Lastfälle derselben Ausschlussgruppe (z. B. Wind aus verschiedenen
 Richtungen) wirken nie gemeinsam. Bei linearen Systemen werden Kombinationen
 durch Superposition der Lastfallergebnisse gebildet (Verschiebungen,
@@ -1242,12 +1551,31 @@ in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
   und bekommen Schnittgrößen null. Knotenlasten an Knoten, an denen kein
   wirksames Element mehr hängt, entfallen; solche Knoten werden über die
   Regel „Freiheitsgrad ohne Steifigkeit wird festgehalten“ gesperrt.
+  Diese Regel (`asm.gesperrte_und_automatische`: Diagonale unter 10⁻¹² der
+  größten, kein Lager) trägt seit dem 14.10.2026 eine Pflicht: Was an einem
+  so gesperrten Freiheitsgrad als Reaktion ankommt, ist Last, die kein Bauteil
+  trägt (`solver.auto_gehalten_abtrennen`). Über 10⁻⁶ der Bezugskraft (Summe
+  der Beträge aller Knotenlasten und der Auflagerkräfte an echten Lagern,
+  Momente durch die Modellgröße L, deren Schranke mal L) wird sie aus den
+  Auflagerkräften genommen, mit Knoten, Richtung und Betrag gemeldet, und das
+  Ergebnis heißt „nicht gültig“ (`solver.gueltigkeit`). Darunter bleibt alles,
+  wie es war. Bis zum 14.10.2026 nahm der gesperrte Freiheitsgrad die Last
+  still auf wie ein Lager: eine Fachwerkstab-Kette mit 1 kN quer am
+  Mittelknoten zeigte u_z = 0 und „Summe Auflagerkräfte [0, 0, 1000] N“.
   Kopplungen einer Kontaktfuge an solchen Knoten entfallen ebenfalls.
 * **Kombinationen** überlagern nur Lastfälle derselben Situation (gleiche
   Steifigkeitsmatrix — sonst wäre die Superposition falsch); eine Mischung
   meldet die Modellprüfung als Fehler, der Rechenkern weist sie ab. Die
   Theorie II. Ordnung rechnet jede Kombination mit dem System ihrer
   Situation (geometrische Steifigkeit ebenfalls nur aus wirksamen Elementen).
+  Seit dem 14.10.2026 gilt das auch für α_cr (`theorie2.alpha_cr` liest
+  `system.aktiv`). Bis dahin baute α_cr K_g aus allen Elementen: Ein
+  abgeschalteter oder deaktivierter Stab, dessen Enden sich mit dem System
+  bewegen, stand mit seiner rechnerischen Normalkraft darin. Neben einer
+  Kragstütze (3 m, Vollquadrat 100 mm, 100 kN) ergab ein gedrückter
+  Fachwerkstab α_cr = 4,354 statt 4,798, ein gezogener 5,341, also 11 % auf
+  der unsicheren Seite. Seither ist es in beiden Fällen 4,797725 wie im
+  Modell ohne den Stab (`tests/test_stab_nachzug.py`).
 * **Umhüllende** und Nachweise laufen wie bisher über alle Kombinationen –
   die Stablängen bleiben bei einer Drehung erhalten.
 * **Ein einzelner Lastfall** (`solve_static`: „Nur aktiver Lastfall“,
@@ -1311,11 +1639,17 @@ Kontaktkräfte bleibt 20,00 kN.
 **Werteskala** (`Werteskala`, `grenzen`). Drei Modi: automatisch (Grenzen aus
 den endlichen Werten), fest (unten/oben) und Grenzwert. Der Grenzwert G (355
 für S355) spannt die Skala 0 … G auf, bei negativen Werten −G … G; Werte
-darüber bekommen `above_color` Magenta, darunter `below_color` Cyan — beides
-Farben, die in keiner Farbtafel vorkommen —, und die Skala trägt an dieser
-Stufe den tatsächlichen Größt- bzw. Kleinstwert als Beschriftung. So ist
-der oberste Eintrag das Maximum und der zweite die Grenze, wie es die
-Vorgabe verlangt. Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
+darüber bekommen `above_color` Magenta (`FARBE_UEBER`) mit der Beschriftung
+„> Skalenmax“ (`UEBER_TEXT`), darunter `below_color` Cyan mit dem
+Kleinstwert — beides Farben, die in keiner Farbtafel vorkommen (Magenta: ΔE
+mindestens 71,4 zur Tafel turbo). Bis zum 13.10.2026 trug das obere Feld den
+tatsächlichen Größtwert; seitdem steht er in den Kennwerten. Die Farbe war
+bis dahin für einen Teil des Tages ein Grau (#646464), davor Magenta; das Grau
+kennzeichnet jetzt allein die netzabhängigen Spannungsspitzen (Schraffur,
+Umrandung, Zeichen, Legendeneintrag: `viewport.FARBE_SPITZE`, ΔE 43,2 zur
+Tafel, mindestens 26,2 zu jeder anderen Farbe der Ansicht). Die Schraffur
+sind die Schnitte der Zonenoberfläche mit parallelen Ebenen
+d·x = k·h/2 (`viewport.schraffur`), Linien und keine Fläche. Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
 Beschriftungen an jeder Stufengrenze (`n_labels` = Stufen + 1). „Nur
 Überschreitungen“ setzt alle Beträge ≤ G auf NaN (grau) und spannt die
 Skala von G bis zum größten Betrag — die Überschreitungen behalten so ihre
@@ -1641,10 +1975,10 @@ Volumenelemente an den Ecken sich nirgends um mehr als 1 N/mm² ändert
 (`solver.ABSCHLUSS_SPANNUNG`; zwei Spannungsauswertungen je Prüfung, nur beim
 Pendeln), (ii) kein Knoten sich um mehr als 10⁻³·u_max bewegt
 (`ABSCHLUSS_WEG_ANTEIL`), keine geschlossene Bedingung Zug und keine offene
-Durchdringung über f_tol als Kraft trägt (`zustand_verstoesse`, dieselben Grenzen
-wie beim Öffnen und Schließen – ohne diese Prüfung nahm der Lauf am Drehlager in
-Runde 34 einen Zustand mit einer offenen Bedingung an, 0,088 nm durchdrungen, als
-Kraft 1,30 N bei f_tol 0,95 N) und (iii) die Auflagerkräfte der angenommenen Lösung mit
+Durchdringung als Kraft über max(f_tol, 10⁻⁵·|ΣF|) trägt
+(`ContactSystem.normal_verstoesse`, `ABSCHLUSS_NORMAL_ANTEIL`; seit dem 09.10.2026,
+Entscheidung des Anwenders – bis dahin f_tol allein wie beim Öffnen und Schließen,
+`zustand_verstoesse`) und (iii) die Auflagerkräfte der angenommenen Lösung mit
 der Last auf 10⁻⁴ im Gleichgewicht sind (`ABSCHLUSS_GLEICHGEWICHT`). Für (iii)
 setzt `ContactSystem.kraefte_der_loesung` Normal- und Reibkraft jeder Bedingung
 auf die Kräfte, mit denen sie in dieser Lösung wirkt (Multiplikatoren, die
@@ -1660,16 +1994,53 @@ etwas, das nicht vernachlässigbar ist, und der Lauf endet weiter am Deckel.
 Die noch pendelnden Bedingungen stehen im Protokoll (WARNUNG, wenn ihre Reibkraft
 über 10⁻⁴ der Last liegt). Es greift nur in Phase 2 (Phase 1 rechnet gleitende
 Knoten mit der groben Reststeifigkeit; am Drehlager änderte Phase 2 danach σ_v
-noch um bis zu rund 230 N/mm²), nur im kalten Lauf und nicht in abgekürzten
-Läufen: ein warm gestarteter Lauf prüft nach dem Ende seine
-Gleitrichtungen gegen den Startzustand (`warmstart_verstoesse`) und hätte nach
-einem früheren Abschluss nur fortgesetzt (`tests/test_kontaktzustand`, LF3 nach
-LF2: 11 statt höchstens 8 Schritte). Pendeln heißt dabei: der Zustand hat sich
+noch um bis zu rund 230 N/mm²) und nicht in abgekürzten Läufen und
+Probeläufen. Bis zum 08.10.2026 abends galt es nur im kalten Lauf; seither auch in
+warm gestarteten Läufen (Newton-Schritte der Plastizität, Folgelastfälle) mit
+denselben Schranken, dort aber erst bei einem **bestätigten** Zyklus
+(`solver._zyklus_bestaetigt`): die Runde wiederholt den Zustand von p Runden
+vorher, und die Runde davor ebenso den Zustand von p Runden vor ihr; eine
+Richtungsumkehr zählt warm erst, wenn sie viermal in diesem Lauf geschah (die
+Zähler `umkehr` kommen sonst aus dem Startzustand). Mit der ersten Wiederholung
+wie im kalten Lauf nahm die Iteration warme Läufe an, die nur zu ihrem
+Startzustand zurückkehrten und danach streng endeten – gemessen mit dem
+Kriterium probeweise warm wie kalt: `tests/test_kontaktzustand` LF3 nach LF2 in
+Runde 4 angenommen, danach setzte `warmstart_verstoesse` fort, 11 statt 6
+Runden; `tests/test_fehler_p8` K1 82 statt 90 Runden; Block mit Reibung LF2
+4 statt 14 Runden und 0,17 N in den Reaktionen anders. Nach der Annahme prüft
+`warmstart_verstoesse` die pendelnden Bedingungen nicht (Argument `ohne`): eine
+Runde später angenommen, stand der Pendelknoten am Prüfblock gegen seine
+Startrichtung, die Prüfung setzte ihn zurück, und der Lauf pendelte von vorn
+(15 statt 6 Runden). Am fließenden Prüfblock (`tests/test_ingenieur_warm`,
+Pendelschutz aus, Schranken für Δσ und Δu weit, weil dort ein Knoten 3 % der
+Last trägt) endete vorher jeder warme Lauf nach 69 Runden am Deckel, die
+Plastizität halbierte elfmal und konvergierte nicht (146 Kontaktläufe, 9 090
+Runden); mit der Änderung 9 Läufe, 47 Runden, Newton in 7 Schritten, und u liegt
+auf 1·10⁻⁶·u_max beim streng konvergierten Lauf mit Pendelschutz. Pendeln heißt dabei: der Zustand hat sich
 geändert und ist zu einem schon gelösten zurückgekehrt – Setz- und
 Richtungsrunden ohne Wechsel zählen nicht –, und Richtungsumkehr zählt erst ab
 vier Runden in Folge. Mit dem lockeren ersten Auslöser (jede Runde ohne Wechsel,
 zwei Umkehrungen) endete das Beispiel „Block mit Reibung“ nach 12 statt 29
 Runden und war nicht mehr bitgleich; so ist es bitgleich.
+
+Warum die Normalbedingung bei der Annahme relativ zur Last gemessen wird
+(09.10.2026): f_tol = 10⁻⁶·f_ref ist am Drehlager 0,95 N, das Kraftungleichgewicht
+der Lösung selbst 1,33 N (1,33·10⁻⁷·|ΣF| mit |ΣF| = 9,95 MN; 52 gestörte Pivots aus
+den frei beweglichen Platten, Befund B5). Eine Bedingung am Rand des Aufliegens
+pendelte im Vorlauf zwischen Durchdringung und Zug von 1,30 / 3,07 / 1,82 / 2,92 N
+und wurde nur angenommen, weil ein Zustand zufällig bei 0,941 N lag (Runde 38;
+ohne die Prüfung wäre es Runde 34 gewesen); im Newton-Schritt 2 der Laststufe 1
+nahm das Kriterium neun Runden lang nichts an, bei je Runde gleicher
+Verschiebungsänderung (Δu 7,3·10⁻⁵ bezogen auf max |u|) – welche Schranke dort
+scheiterte, ist nicht gemessen, das Muster ist dasselbe. Die Iteration öffnet und schließt weiter an f_tol, die
+Lösungsmenge des strengen Abschlusses ist unverändert. Am Prüfblock
+(`tests/test_ingenieur_warm`, Schranke 504 N bei |ΣF| = 50,4 MN) wird ein
+eingespielter Zug von 100 N angenommen und einer von 2 000 N nicht.
+Gleichzeitig zählt eine Richtungsumkehr in einer Fortsetzung desselben Lastfalls
+(`fortsetzung`, Newton-Schritte) ab Runde 2 – es ist dasselbe Pendeln wie im Lauf
+davor; am Drehlager waren die Runden 3 und 4 des ersten Newton-Schritts schon
+reines Pendeln (Δu 7,2·10⁻⁵), angenommen wurde erst in Runde 5. Aus einem fremden
+Start bleibt es bei vier Umkehrungen in diesem Lauf.
 
 Verworfen, gemessen am 08.10.2026: (a) jeden Knoten haften lassen, der zweimal
 hintereinander umkehrt, auch mit Reibung in zwei Richtungen. Am gequetschten
@@ -3114,6 +3485,254 @@ dem Laufbuch ableitbar, die Zusammenfassung gehört aber zur Kennzeichnung
 (Vorschlag 2) und wird dort entschieden. Ebenso die Einträge der inneren
 Kontaktläufe des Ausfallwegs (siehe „Grenzen").
 
+### 4.0c Pendeln mit Periode 2: Einfrieren und Prüfung; vorläufige Ergebnisse (14.10.2026)
+
+Entscheidung des Anwenders vom 14.10.2026: „Bei Pendeln mit Periode 2 nicht
+halbieren, sondern erkennen und stabilisieren: Statuswechsel mit Toleranzen
+(Durchdringung g_tol, Zug p_tol) oder Status pendelnder Knoten einfrieren mit
+anschließender Prüfung. Konvergenz des Kontaktlaufs über Ingenieurgrößen
+definieren: Restwechsel nur an Knoten mit zusammen < 0,1 % der Kontaktkraft und
+Klaffung/Durchdringung < 1 µm, beides einstellbar.“
+
+**Erkennen.** Ab Phase 2 merkt `solve_with_contact` je Runde den Status jeder
+Bedingung, s_i = (aktiv, gleitet, fließt), und die Gleitrichtung d_i gleitender
+Knoten (`ContactSystem.zustand_bits`, `gleitrichtungen`). Gilt in Runde n
+s(n) = s(n−2) ≠ s(n−1) für den ganzen Zustand und kehrt jede Gleitrichtung
+zurück, |d_i(n) − d_i(n−2)| ≤ max(QUER_TOL, 0,1·|d_i(n) − d_i(n−1)|), werden die
+Kräfte dieser Lösung für die Menge P der Bedingungen gemerkt, die sich zwischen
+s(n) und s(n−1) unterscheiden oder deren Richtung um mehr als QUER_TOL springt
+(`_pendel_kandidaten`, `ContactSystem.kraefte_von`, dieselbe Rechnung wie
+`kraefte_der_loesung`, ohne etwas zu setzen). Galt dasselbe schon in Runde n−1
+mit derselben Menge, ist das Pendeln bestätigt (A B A B). Erkannt wird am ganzen
+Zustand und nicht je Knoten: je Knoten erkannt, fror die Regel am Prüfmodell in
+Runde 8 einen Knoten ein, der nur zweimal hin und her sprang, während sich der
+Rest noch einspielte; danach lief der Lauf 76 statt 57 Runden bis zum Deckel,
+und der eingefrorene Knoten trug am Ende 0,29 % der Kontaktkraft. Die
+Gleitrichtungen gehören zum Zustand, weil am Block auf dem Lager in
+Flächenachsen (μ = 0,6, Schub 1,5 μp) neben dem einen Knoten, der öffnete und
+schloss, 14 gleitende Knoten jede Runde ihre Richtung hin und her drehten; mit
+dem Knoten allein eingefroren, drehten sie weiter, bis die Grenze der
+Richtungsrunden (QUER_RUNDEN_MAX) den Lauf beendete.
+
+**Messen.** Je Knoten i ∈ P aus den Kräften beider Zustände A und B:
+der Kraftwechsel f_i = √((F_n,A − F_n,B)² + |F_t,A − F_t,B|²) mit der ungekappten
+Normalkraft (an einer geschlossenen exakten Bedingung der Multiplikator, Zug
+negativ; offen 0), und der Weg w_i: wechselt die Aktivität, |g| im offenen
+Zustand (Klaffung oder Durchdringung); wechselt Haften/Gleiten oder die
+Richtung, |d_t,A − d_t,B| (Weg in der Fuge zwischen den Zuständen).
+
+**Einfrieren.** Die Bedingungen in P bekommen `Constraint.pendel_fest`: in
+`_update_states` wünschen sie kein Öffnen oder Schließen mehr, wechseln nicht
+zwischen Haften und Gleiten, und ein gleitender Knoten behält seine Richtung
+mit der Reibkraft μF_n dieser Lösung; in das Residuum und die Liniensuche des
+Gleitens gehen sie nicht mehr ein. Die Bedingung selbst bleibt: geschlossen
+g = 0 exakt mit Multiplikator, offen keine Kraft. Eingefroren wird im Zustand
+der Lösung, an der das Pendeln bestätigt ist. Die übrigen Bedingungen
+iterieren weiter; ein weiteres Pendeln wird ebenso erkannt und kommt dazu. Ein
+eingefrorener geschlossener Knoten meldet seinen Zug ungekappt.
+
+**Prüfen.** Endet der Lauf, misst `ContactSystem.pendel_pruefen` an der letzten
+Lösung je eingefrorenem Knoten den Verstoß v_i (Zug, Kegelüberschreitung,
+Abweichung der Reibkraft von μF_n längs der Versuchskraft) und die
+Durchdringung p_i eines offenen. Konvergiert heißt
+
+    Σ_i max(f_i, v_i) ≤ η_F · F_Kontakt   und   max_i max(w_i, p_i) ≤ η_w
+
+mit F_Kontakt der Summe der Druckkräfte dieser Lösung, η_F =
+`Plastizitaet.pendel_kraft_anteil` (10⁻³) und η_w = `pendel_weg` (10⁻⁶ m), und
+der Rest muss streng oder nach dem Ingenieurkriterium konvergiert sein. Sonst
+ist der Lauf nicht konvergiert, Grund „pendeln“ (`solver._pendel_abschluss`,
+Laufbuch-Eintrag `pendeln`). Eine Schranke 0 schaltet ab
+(`PENDEL_STABILISIEREN`, `pendel_schwellen`): dann ist alles wie vor dem
+14.10.2026, am Prüfmodell max |Δu| = 0 und gleich viele Runden.
+
+**Warum Einfrieren und keine Hysterese.** Die Prüfung ist genau die
+Konvergenzbedingung des Anwenders: die eingefrorenen Knoten sind die
+Restwechsel, ihre Kraft und ihr Weg werden gemessen. Eine Hysterese
+(Statuswechsel erst ab g_tol bzw. p_tol) entschiede jeden Wechsel aller Knoten
+an einem Band; wo die Rechnung darin stehen bleibt, hinge am Weg, und die
+Abweichung wäre nur durch das Band beschränkt, nicht gemessen. Ein Band auf die
+Durchdringung beschränkt die Kraft auch nicht: an der exakten Bedingung des
+Drehlagers (örtliche Steifigkeit um 2·10¹⁰ N/m) sind 1 µm rund 20 kN. Und wer
+nicht pendelt, rechnet mit dem Einfrieren bitgleich, mit einer Hysterese nicht.
+
+**Zusammenspiel.** Das Ingenieurkriterium (§ 4, Abschluss nach dem
+Ingenieurkriterium) prüft je Runde zuerst und misst die Wirkung des Pendelns
+auf das ganze Ergebnis; nimmt es an, ist der Lauf fertig wie bisher. Die neue
+Regel greift danach und misst die Ursache an den pendelnden Knoten. Der
+Pendelschutz B4 (UMKEHR_HAFTET, PENDEL_EINZELN) ändert die Aktualisierung
+pendelnder Reibknoten in jeder Runde und löst so viele Zyklen auf, bevor sie
+bestätigt sind; am Block aus `tests/test_kontakt_pendeln` ohne Pendelschutz
+endet der Lauf mit der neuen Regel nach 20 Runden mit dem Grund „pendeln“ -
+der Kantenknoten läuft ±10 µm, die Restwechsel liegen über den Schranken -,
+vorher nach 75 Runden am Deckel; nicht konvergiert ist er beide Male. Eine Plastizität, deren Kontaktlauf nach Einfrieren und Prüfung
+konvergiert ist, halbiert nicht (`_KontaktImNewton.deckel_seit` sieht keinen
+nicht konvergierten Lauf); sie halbiert nur bei echtem Nichtkonvergieren.
+
+**Gemessen** (`tests/test_pendeln_periode2.py`). Ein Pendeln mit Periode 2 in
+einem kleinen Modell zu finden, das ohne Halt im Gleichgewicht steht, gelang
+nicht: in einer Suche über rund 680 Blöcke auf Lagern mit und ohne Reibung,
+mit Abheben, Schub und Seitenlager endeten die gedeckelten Läufe entweder
+ohne Zyklus, mit großen Kraftwechseln (10 bis 140 % der Kontaktkraft, ganze
+Bauteile im Gleiten) oder an Blöcken, die nur der Halt für Teile oder eine
+Hilfsfesselung hält. Das Prüfmodell ist ein Block nahe der Kippgrenze
+(Resultierende bei y = 1,0, der Halt für Teile hält einen Knoten der Sohle;
+die Auflagersumme von Block B liegt darum mit und ohne die Regel um 25 bzw.
+29 kN neben der Last von 500 kN), daneben ein zweiter Block, der die
+Kontaktkraft groß macht. Ohne die Regel 62 Runden bis zum Deckel; mit ihr
+erkannt in Runde 27, konvergiert in Runde 28 mit 28,8 kN = 0,048 % der
+Kontaktkraft und 0,60 µm; mit Fließen (zwei Laststufen) vorher dreimal
+halbiert, nachher nicht, 8 statt 14 Kontaktläufe. Mit der zehnfachen Last auf
+Block B: 0,44 % und an der letzten Lösung 6,05 µm Durchdringung der
+eingefrorenen offenen Bedingung, nicht konvergiert.
+
+**Vorläufige Ergebnisse.** Entscheidung des Anwenders vom 14.10.2026: jede
+Laststufe mit nicht konvergiertem Kontaktlauf wird im Ergebnis gekennzeichnet.
+`solver.vorlaeufige_stellen` liest aus dem Laufbuch die Stellen, an denen ein
+zählender Lauf (§ 4.0b) nicht konvergiert ist, mit Art, Stufe und Lastanteil
+(`plastizitaet._newton` führt den Lastanteil je Aufruf in `aufrufe_last`);
+`kontakt_vorlaeufig` macht daraus „vorläufig – Kontakt nicht konvergiert in
+Stufe 2 (bis 100 % der Last), Abschluss“, `vorlaeufig_eintragen` legt es am
+Ende von `_solve_loads` in `res.info["vorlaeufig"]` ab. Zusammenfassung,
+Konvergenzstand, Rechenliste und Bericht lesen es.
+
+**Vorbereitet, aus: Kontaktlauf konvergiert im Abbruch der Plastizität.**
+`plastizitaet._kontakt_offen` fragt `_KontaktImNewton.kontakt_offen`: leer, wenn
+der letzte volle Kontaktlauf konvergiert ist, sonst der Grund mit Laufnummer;
+aufgerufen wird es mit dem Stabstatus an denselben Stellen (`_offen`). Der
+Schalter `plastizitaet.KONTAKT_IN_KONVERGENZ` steht aus, dann ist es immer leer.
+Eingeschaltet (nur in der Prüfung) nahm die Plastizität am Prüfmodell die
+erste Stufe nicht mehr im ersten Newton-Schritt an, dessen Kontaktlauf am
+Deckel endete, sondern erst mit einem konvergierten Lauf (8 statt 6
+Newton-Schritte). Eingeschaltet wird nach der V36-Klärung und auf Freigabe.
+
+### 4.0d Warmstart und Pendelschutz der Gleitrichtung (14.10.2026)
+
+Befund am Drehlager (V36 auf „Starr“, μ = 0,1): zwei Flecken an der Haft-/
+Gleitgrenze pendelten in der Gleitrichtung, nicht zwischen offen und
+geschlossen; Ursache war der warme Start der ersten Laststufe aus dem
+Gleitzustand des Vorlaufs, seit die Stufenlast F_S + λ (F − F_S) nicht mehr
+proportional zur Vorlauflast F ist. Entscheidung des Anwenders vom 14.10.2026:
+Vorschläge 1 bis 5 bauen, jede Maßnahme einzeln schaltbar (Feld an
+`Plastizitaet`, gespeichert nur abweichend von der Vorgabe, eingetragen in
+`model.NEUE_FELDER`) und einzeln geprüft (`tests/test_kontakt_warmstart.py`).
+
+**1. Kaltstart bei nicht proportionaler Stufe** (`kaltstart_nicht_proportional`,
+Vorgabe an). Maß ist der Rest r = |F_1 − a F| / |F_1| mit a = F_1·F / F·F
+(`plastizitaet.nicht_proportional`). Ein Reibkontakt ohne Anfangsspalt ist
+positiv homogen: der Zustand zu F löst auch λF. Ist r > 10⁻³
+(`PROPORTIONAL_SCHRANKE`), startet die erste Stufe beim Kontakt kalt
+(`solver._kaltstart_nicht_proportional`, in `_solve_loads` statt des
+Vorlaufzustands `None` als Start); Zustand und F_p der Plastizität (auch
+`plast_start` des Spannschritts) bleiben. Die Schranke: λF ist bis auf die
+Rundung proportional (r ≈ 10⁻¹⁶), jede Schranke über 10⁻¹² hält proportionale
+Stufen bitgleich; 10⁻³ lässt kleine Temperatur- oder Vorspannanteile warm
+rechnen, weil ihr Einfluss auf die Kontaktkräfte unter den Schranken liegt,
+die der Kontaktlauf ohnehin annimmt (0,1 % der Kontaktkraft, 0,1 % u_max).
+Stufen k > 1 starten vom Zustand der Stufe k − 1, der auf dem Lastpfad liegt;
+die Reibung hängt vom Weg ab, dort bleibt der Warmstart. Gemessen an der
+Prüfplatte (4 Anker zu 1 MN als Temperatur, μ = 0,2, Schub 0,6 μV / 0,2 μV,
+drei Stufen, elastisch): warm Stufe 1 „pendeln“ nach 18 Runden, Stufen 2, 3
+und Abschluss am Deckel, 254 Runden, vorläufig; kalt 66 Runden, konvergiert.
+
+**2. Pendelschutz der Gleitrichtung mit Winkeltoleranz** (`pendelschutz_winkel`,
+Vorgabe an; `gleit_toleranz`, Vorgabe 1 µm). `contact.UMKEHR_HAFTET` griff nur bei
+genauer Umkehr |d + w/|w|| ≤ 10⁻⁶ (Reibung in einer Richtung). Eingeschaltet
+(`ContactSystem.umkehr_winkel`, je Lauf aus dem Modell gesetzt) haftet ein
+gleitender Knoten schon, wenn w·d < 0 in `UMKEHR_RUNDEN` = 2 Runden
+hintereinander gilt, also bei einer Drehung über 90 Grad; er wird gemerkt
+(`umkehr_fest`, `dt_fest` = d_t beim Festhalten). Am 08.10.2026 war genau diese
+Regel verworfen worden (gequetschter Block: u_max 42,130 / 42,580 statt
+42,667 mm). Darum prüft `ContactSystem.festgehalten_pruefen` nach einem
+konvergierten Lauf jeden gemerkten Knoten an der letzten Lösung: s = d_t − d_t,fest
+(haftend; die Haftzeilen c_t u = 0 halten an der Ausgangslage, das Festhalten
+kann ihn also zurückziehen) bzw. s = d_t (wieder gleitend, Gleitweg gegen die
+Haftlage). Erfüllt ist |s| ≤ Gleittoleranz oder F_t·s > 0 (die Kraft auf das
+Tragwerk −F_t wirkt der Bewegung entgegen, F_t aus `_kraft_einer`). Sonst ist
+der Lauf nicht konvergiert, Grund „gleitrichtung“ (`solver._gleit_pruefung`,
+`cinfo["contact_gleitrichtung"]`). Die Toleranz 1 µm ist die Wegschranke der
+Restwechsel (`pendel_weg`); die B4-Pendler am Drehlager liefen ±0,01 bis
+0,2 µm, der Block-Knoten 94 µm. Gemessen: gequetschter Block mit 1 und 4
+Laststufen bitgleich im Ergebnis (Δu = 0, zwei Newton-Schritte mehr);
+Prüfplatte ohne Vorspannung, Schub 0,6 μV in x: 373 → 73 Runden, Deckel →
+konvergiert, u_max 5,10 → 0,007 mm (vorher wanderte die Platte im Pendeln);
+Richtungsmodell aus `tests/test_pendeln_periode2.py`: 32 Runden „pendeln“ →
+17 Runden „gleitrichtung“, beide nicht konvergiert; Prüfplatte warm aus dem
+Vorlauf (Vorschlag 1 aus): Haftknoten bis 13,2 µm zurückgezogen, Winkel
+0,3 bis 66 Grad zwischen Haftkraft auf das Tragwerk und Bewegung – nicht
+konvergiert. Nicht in abgekürzten Läufen der gemeinsamen Iteration und im
+Probelauf: abgekürzte Läufe enden nie konvergiert, die Prüfung käme nie, und
+der festgehaltene Zustand ginge ungeprüft in den nächsten Lauf. Mit der Regel
+auch dort lag der gequetschte Block (4 Stufen) gemeinsam 1,17·10⁻⁴ m neben
+verschachtelt (Prüfung in `tests/test_plastizitaet.py`: 2·10⁻⁵ relativ);
+ohne sie 2,3·10⁻⁷ m.
+
+**3. Am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhängt**
+(`halbieren_lastabhaengig`, Vorgabe aus). `plastizitaet._newton` fragt am
+Deckel `_KontaktImNewton.halbieren_am_deckel(marke, Δλ)`. Kriterium
+„lastabhängig“, ohne zusätzlichen Lauf: der erste nicht konvergierte Lauf einer
+Stufe halbiert wie bisher und merkt (A, Δλ); A ist die größte Knotenbewegung
+der letzten Runde (Laufbuch `ausschlag`), bei Grund „pendeln“ oder
+„gleitrichtung“ das Größere aus ihr und dem Weg der Prüfung. Endet ein Lauf
+der kleineren Stufe Δλ' < Δλ ebenfalls nicht konvergiert, ist das Pendeln
+lastabhängig, wenn A'/A ≤ Δλ'/Δλ; dann wird halbiert und (A', Δλ') gemerkt,
+sonst nicht mehr (Pendeln erkannt, Zeile im Protokoll, Ergebnis vorläufig).
+Ein Zyklus (Laufbuch `zyklus`: Ingenieurkriterium geprüft, Periode 2,
+Festhalten verfehlt) wird gemeldet, entscheidet aber nicht – erwogen und
+gemessen: „erkannter Zyklus halbiert nie“ ließ den gequetschten Block (eine
+Stufe) vorläufig und 0,64 mm neben dem Ergebnis enden, dort löst erst die
+Halbierung das Pendeln. Warum die Vorgabe aus ist: auch mit dem Kriterium
+stoppt es dort nach drei Halbierungen (Ausschlag 669 → 314 → 373 µm, die
+vierte hätte konvergiert), vorläufig, 0,12 mm daneben; am Pendelmodell mit
+Fließen (Periode-2-Regel aus) 687 statt 386 Runden. Am Drehlager (A 14,7 →
+12,6 µm, 86 % statt 50 %) spart es drei von vier Halbierungen je Stufe; das
+misst die Abnahme dort.
+
+**4. Ingenieurkriterium: zuerst Δσ, dann Δu; Residuum je Stufe**
+(`spannung_zuerst`, Vorgabe an). `solver._ingenieur_abschluss` misst Δσ_v
+zuerst (Schranke `ABSCHLUSS_SPANNUNG` = 1 N/mm²) und entscheidet dann am Weg mit
+Δu ≤ max(`ABSCHLUSS_WEG_ANTEIL`·u_max, Δσ_S·L/E_max) (`_weg_aus_spannung`, L
+die Diagonale der Volumenknoten, E_max das größte E der Volumen, je Modell
+gemerkt). Begründung: Δσ_S/E ist die Dehnungsänderung, die zur
+Spannungsschranke gehört, über L ein Weg; eine Bewegung darunter ändert die
+Spannung höchstens um die Schranke. Normalbedingung und Gleichgewicht
+(`ABSCHLUSS_GLEICHGEWICHT` 10⁻⁴) bleiben Pflicht – Δσ ergänzt das
+Kraftresiduum, ersetzt es nicht. `_KontaktImNewton.residuum_stufe` prüft am Ende
+jeder Laststufe |ΣR + ΣF_k| / Σ|F_k,i| (ΣF_p = 0, Σ dK·u = 0 translatorisch) und
+nennt das Kontaktresiduum des letzten Laufs; über 10⁻⁴ bei konvergiertem
+Kontaktlauf ist die Stufe nicht konvergiert, bei nicht konvergiertem nur
+gemeldet (sonst wäre es `KONTAKT_IN_KONVERGENZ` durch die Hintertür, die bis zur
+Freigabe aus steht). Bezug Σ|F|: an der Prüfplatte waren 29 N bei 160 kN Schub
+1,8·10⁻⁴ von |ΣF|, aber 3,7·10⁻⁶ von Σ|F| (4 MN Vorspannung, in sich im
+Gleichgewicht). Dazu, nur mit der weiteren Wegschranke, das Kraftresiduum der
+Lösung (`ContactSystem.kraftresiduum`, dieselbe Summe wie das Residuum in
+`_update_states`) höchstens `pendel_kraft_anteil` (0,1 %) der Kontaktkraft – Δσ
+ergänzt das Kraftresiduum, ersetzt es nicht. Ohne diese Bedingung nahm das
+Kriterium den Stempel auf dem Sockel in Runde 6 statt 14 an (u_max −0,03 %),
+mit einem haftenden Knoten 6,3 % über dem Kegel (`tests/test_kontakt_exakt.py`
+rot); mit ihr wird abgelehnt (Kraftresiduum 0,171 %), der Lauf ist bitgleich wie
+ohne den Schalter. Gemessen: Stempel, Prüfplatte, gequetschter Block, Richtungs- und Pendelmodell
+unverändert (dort lag Δσ über 1 N/mm² oder Δu im Millimeterbereich);
+Pendelmodell mit Fließen: Residuum 21,9 / 51,7 kN = 7,2·10⁻⁴ / 8,5·10⁻⁴ (Halt für
+Teile), nicht konvergiert.
+
+**5. Warmstart in der Ausfall-Iteration** (`ausfall_warm`, Vorgabe an).
+`solve_with_ausfall(…, start, fortsetzung)`: der erste Kontaktlauf beginnt bei
+`start` (in `_solve_loads._rechnen` derselbe Start wie im Kontaktweg, mit
+`fortsetzung`, wenn er aus demselben Lastfall stammt), jeder weitere beim
+Zustand des letzten konvergierten Laufs der Iteration (`contact_state` mit
+`konvergiert`), fortgesetzt; ein Lauf am Deckel gibt nichts weiter. Den Zustand
+für den nächsten Aufruf gibt `contact_state_weiter` zurück, `_rechnen` legt ihn
+in `res.kontaktzustand` – damit startet auch die erste Laststufe vom Vorlauf und
+Vorschlag 1 greift im Ausfallweg. ε_p: `plastizitaet._newton` ruft je
+Newton-Schritt einmal `loesen` (die ganze Ausfall-Iteration) und danach
+`schritt` mit der Basis der Stufe; Lösungen verworfener Iterationen erreichen
+die Rückführung nicht. Gemessen (Prüfplatte mit Strebe „nur Zug“, die ausfällt):
+178 → 94 Runden, |Δu| 1,1·10⁻¹⁰ m; mit Fließen (f_y 30 N/mm²) 424 → 228 Runden,
+4,09 → 2,39 s, 11 Rückführungen, 10 Newton-Schritte und ε_p,max 0,00784 % auf
+1,1·10⁻⁶ relativ gleich, jeweils 24 Kontaktläufe. `_startherkunft_eintragen`
+schreibt „Ausfallweg ohne Warmstart“ nur noch ausgeschaltet.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
@@ -3611,6 +4230,57 @@ Grundzustand. Die Einstellung `theorie2` kennt drei Werte: `aus`, `auto`
 (α_cr je Kombination bestimmen und nur bei Unterschreitung am verformten
 System rechnen) und `ein` (immer).
 
+**Die Normalkraft in K_g** ist seit dem 13.10.2026 die des Ergebnisses,
+N = E·A·Δl/L + N₀ mit der Kraft N₀ der Anfangsdehnung (Temperatur,
+Vorspannung, Verriegelung; `asm.stab_normalkraft`,
+`solver.anfangsnormalkraefte`), in `alpha_cr`, `solve_theorie2`,
+`check_theorie2` und `solve_buckling`. Bis zum 13.10.2026 las
+`assemble.geometric_stiffness` nur E·A·Δl/L. Ein Zugband mit 70 kN
+Anfangsdehnung, das im Ergebnis +6,50 kN trägt, stand dort mit −63,50 kN
+(α_cr 1,688), und ein Stab unter reinem Temperatur-Zwang (Δl = 0) hatte
+„keine Normalkräfte“. Geprüft: K_g des Zugbands ist die Formel mit N aus dem
+Ergebnis (10⁻¹⁷), α_cr gleich dem der gleichwertigen Rechnung, in der der
+Anker um F·L/(E·A) verschoben wird (4·10⁻¹³), und der beidseits gelenkige
+Stab (4 m, Vollquadrat 100 mm, ΔT = 20 K, 16 Elemente) hat
+α_cr = 2,141846 gegen π²·E·I/L²/(E·A·α·ΔT) = 2,141841. Ohne Anfangsdehnung
+ist K_g bitgleich die alte.
+
+**Die Form von K_g** hängt seit dem 14.10.2026 vom Elementtyp ab. Der Balken
+hat die konsistente Form nach Przemieniecki (6/5·N/L auf den
+Querverschiebungen, dazu Drehanteile aus der kubischen Biegelinie und der
+Torsionsanteil N·I_p/(A·L)). Fachwerkstab, Zug-/Druckstab und Seil haben
+keine Biegesteifigkeit, ihre Querverschiebung ist linear über den Stab, und
+die geometrische Steifigkeit ist die der Saite: N/L auf den
+Querverschiebungen beider Enden, keine Drehanteile
+(`beam3d.kg_local_saite`, in `asm.geometric_stiffness` und in Theorie III.
+Ordnung). Ein Balken mit „trägt nur“ behält die Balkenform. Bis zum
+14.10.2026 bekam jeder Stab die Balkenform. Am Fachwerkknoten ohne
+Drehsteifigkeit fallen die Drehanteile weg, es blieb 6/5·N/L: ein Pendelstab
+(2 m) mit Querfeder k am Kopf hatte α_cr = 166,67 statt k·L/P = 200, und
+Theorie II. Ordnung gab u = H/(k − 1,2·P/L) statt H/(k − P/L). Das gezogene
+Zugband einer Kragstütze (Rundstahl 30 mm, 13,77 kN) hielt den Kopf zu steif,
+α_cr = 4 126,25 statt π²·E·I/L²/N_Stütze = 2 679,15, 54 % auf der
+unsicheren Seite. Seither: 200 (Knicken ebenso), u wie geschlossen, und
+2 679,151 gegen 2 679,145 (`tests/test_stab_nachzug.py`).
+
+**Einzelknicken der Fachwerk-Druckstäbe** (seit 14.10.2026). Die Saitenform
+hält den Fachwerkstab zwischen seinen Knoten gerade; sein Ausknicken dort
+kommt in der Verzweigung des Systems nicht vor. `theorie2.einzelstab_knicken`
+bestimmt es darum je gedrücktem Fachwerkstab (Elementtyp truss, auch „nur
+Druck“; ein Zugstab fällt bei Druck aus) gesondert:
+α_cr,i = π²·E·I/(L²·N_Ed). L ist die Systemlänge, gelenkig (die Länge des
+Stabs aus seinen Elementen), I das kleinere Trägheitsmoment der beiden
+Hauptachsen, N_Ed die größte Druckkraft seiner Elemente im Zustand nach
+Theorie I. Ordnung mit der Anfangsdehnung wie im Ergebnis. `alpha_cr` gibt
+den kleinsten Wert mit seinem Stab und alle Druckstäbe zurück; das α_cr des
+Systems bleibt, was es ist, und entscheidet weiter nach 5.2.1(3). Die
+Übersicht (Zusammenfassung, Tabelle, Bericht) nennt min(System; Einzelstab)
+mit dem maßgebenden Stab. Bis zum 14.10.2026 stand nur das α_cr des Systems
+da: ein Pendelstab (Rundstahl 50 mm, 2 m, P = 1 kN) mit Querfeder k am Kopf
+hatte α_cr = 200, obwohl der Stab selbst bei 158,97 knickt; ein gelenkig
+gehaltener Druckstab ohne Querfreiheitsgrad hatte gar keins („keine
+Normalkräfte“). Geprüft gegen die Hand in `tests/test_stab_querlast.py`.
+
 **Wie α_cr gelöst wird.** Gerechnet wird −K_g v = μ K v mit α = 1/μ;
 α_cr ist der Kehrwert des größten positiven μ. K ist nach dem Einbau der
 Lager positiv definit und dient dem Eigenwertlöser (ARPACK über `eigsh`)
@@ -3762,12 +4432,27 @@ Verschiebungen und endliche Drehungen bei kleinen Dehnungen — in
 * Die im mitgehenden System verbleibende Verformung ist klein:
   d_l = (0, θ₁ˡ, ΔL, θ₂ˡ) mit θᵢˡ = log(Eᵀ·Rᵢ·E₀ᵀ) und ΔL = L − L₀. Darauf
   wirkt die lineare lokale Steifigkeit (Timoshenko/Bernoulli, Federgelenke
-  und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l.
-* Gleichgewicht f_int(u, R) = λ·F + F_imp, gelöst mit Newton-Raphson in
-  Laststufen λ = 1/n … 1 mit der Tangente Tᵀ(k_l + k_g(N))T. Der Rest der
-  konsistenten Tangente fehlt; das Residuum ist exakt, die Iteration
-  konvergiert deshalb gegen das richtige Gleichgewicht (linear statt
-  quadratisch). Konvergenz: ‖Residuum‖ < 10⁻⁶·‖λF‖.
+  und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l. Mit
+  Anfangsdehnung (Temperatur, Vorspannung) seit dem 13.10.2026
+  f_int = Tᵀ(f_l − f_anf) und N = (f_l − f_anf)[6] in k_g: die Anfangsdehnung
+  steckt im Stab und dreht mit ihm. Bis zum 13.10.2026 stand sie als
+  Knotenlast der Ausgangslage im Lastvektor und k_g las nur f_l[6]; eine
+  vorgespannte Saite hatte so quer keine Steifigkeit aus ihrer Vorspannung.
+  Geprüft an einer Saite aus zwei Fachwerkstäben (N₀ = 50 kN, Querlast
+  10 kN) gegen 2·N·w/c = F mit N = E·A·(c − L)/L + N₀: auf 4·10⁻¹⁵ genau.
+* Gleichgewicht f_int(u, R) = F_S + λ·(F − F_S) + F_imp, gelöst mit
+  Newton-Raphson in Laststufen λ = 1/n … 1 mit der Tangente
+  Tᵀ(k_l + k_g(N))T. F_S ist der Anteil der Temperaturlasten und
+  Vorspannkräfte (ohne die der Seile, deren Lasten hier herausgenommen
+  sind, und seit dem 13.10.2026 ohne die Anfangsdehnung der Stäbe, die in
+  f_int steckt; das Konvergenzmaß rechnet sie weiter wie eine Last mit);
+  er wirkt seit dem 10.10.2026 ab der ersten Stufe voll
+  (`plastizitaet.stufenlast`), bis dahin stand hier λ·F. Zuerst galt das nur
+  für die Temperaturlasten (F_T), am selben Tag kamen die Vorspannkräfte
+  dazu. Der Rest der konsistenten Tangente fehlt; das Residuum ist exakt, die
+  Iteration konvergiert deshalb gegen das richtige Gleichgewicht (linear
+  statt quadratisch). Konvergenz: ‖Residuum‖ < 10⁻⁶·‖F_S + λ(F − F_S)‖, ohne
+  Temperaturlast und Vorspannkraft wie bisher 10⁻⁶·λ‖F‖.
 * Lasten sind richtungstreu (konservativ) und werden als äquivalente
   Knotenlasten der Ausgangslage angesetzt; Ersatzimperfektionen nach 5.3.2
   wie bei Theorie II. Ordnung, je Laststufe aus den Normalkräften.
@@ -3934,6 +4619,61 @@ Wölbsteifigkeit die Torsionsmomente anders auf die Stäbe, als die Rechnung mit
 sechs Freiheitsgraden es tut. Der Anteil je Stab ist dann eine Näherung; das
 steht im Bericht.
 
+### 5.3b Stäbe aus Spannstahl und Stäbe mit Schraubengröße (seit 13.10.2026)
+
+Ein Stab aus einem Werkstoff der Art „Spannstahl“ (RFEM-Werkstofftyp 15) wird
+im Spannungsquerschnitt A_s nachgewiesen (Entscheidung des Anwenders vom
+13.10.2026, `ec3/spannstahl.py`). Die Spannung ist σ = |N| / A_s an der Stelle
+des größten |N| des Stabes. Geprüft wird jeder Zustand gegen seine Grenze, und
+die Ausnutzung des Stabes ist das Größte der Verhältnisse σ / Grenze. Im
+Lastzustand (GZT-Kombination, abgelegte Laststufe einer plastischen Rechnung,
+sonst deren Endzustand mit Vermerk) ist die Grenze f_pd = f_p0,1k / γ_s mit γ_s
+= 1,15 nach EN 1992-1-1, 3.3.6 und Tabelle 2.1N bzw. nach der Zulassung. Beim
+Spannen ist sie σ_p,max = min(k_1 · f_pk; k_2 · f_p0,1k) mit k_1 = 0,8 und k_2
+= 0,9 nach 5.10.2.1(1), nach dem Verankern σ_pm0 = min(k_7 · f_pk; k_8 ·
+f_p0,1k) mit k_7 = 0,75 und k_8 = 0,85 nach 5.10.3(2). Eine Eingabe am
+Werkstoff ersetzt die Formel, wenn die Zulassung abweicht. f_p0,1k und f_pk
+sind die Felder f_y und f_u des Werkstoffs, dessen Art (`Material.art`,
+eingeführt mit der Verfestigung bis f_u) Spannstahl ist. Liefert die
+kraftgesteuerte Vorspannung je Stab N_spannen und N_verankert
+(`res.info["vorspannung"]["staebe"]`), sind das die Kräfte der beiden
+Vorspannzustände. Sonst ist der Zustand beim Spannen die eingegebene
+Vorspannkraft N_0, entweder als Vorspannung am Stab oder als gleichwertige
+Temperaturlast N_0 = E · A · α · (−ΔT) in einem Lastfall der Kategorie P, und
+jedes Ergebnis mit dem Zustand „spannen“. Der Zustand nach dem Verankern ist
+das Ergebnis eines Lastfalls, der nur Vorspannung trägt, oder ein Ergebnis mit
+dem Zustand „verankert“; fehlt beides, gilt N_0 ohne Verluste. Mit F = 944,7 kN
+und A = 1 256,6 mm² ergibt sich σ = 751,8 N/mm², das Verhältnis zu σ_p,max =
+751,5 N/mm² ist 1,0004 und zu σ_pm0 = 709,75 N/mm² 1,059 (Prüfung
+`tests.test_spannstahl` am beidseitig festen Stab).
+
+Überschreitet die Kraft beim Spannen oder nach dem Verankern ihre Grenze,
+schreibt der Nachweis je Zustand eine Zeile „Befund Vorspannung“ mit Kraft,
+Spannung, Grenze, Verhältnis und der zulässigen Kraft Grenze · A_s an den Stab
+(seit 13.10.2026).
+
+A_s kommt in dieser Reihenfolge aus der Schraubengröße des Querschnitts (M12
+bis M36, A_s nach EN ISO 898-1 wie in der Schraubentabelle der Anschlüsse), aus
+der Angabe „aufgewalzter Gewindestab“ (A_s = A), aus der Eingabe der Zulassung
+oder, wenn nichts davon gesetzt ist, aus dem Nennquerschnitt A mit der Meldung
+„A_s aus Zulassung eintragen“. Die Steifigkeit des Stabes rechnet immer mit A.
+Momente im Gewinde werden genannt und nicht nachgewiesen.
+
+Ein Stab mit Schraubengröße aus einem anderen Werkstoff ist eine Schraube auf
+Zug nach EN 1993-1-8, Tabelle 3.4: F_t,Rd = k_2 · f_ub · A_s / γ_M2 mit k_2 =
+0,9 und f_ub = f_u des Werkstoffs (`ec3/schraubenstab.py`). Alle anderen Stäbe
+werden wie bisher nach 5.3 und 5.4 nachgewiesen; ihre Ausnutzung ist bitgleich
+mit dem Stand vor dem 13.10.2026 (Bezugswerte in `tests.test_spannstahl`).
+
+Die neuen Felder (E_p, σ_p,max und σ_pm0 am Werkstoff, A_s und Gewinde am
+Querschnitt, dazu Werkstoffart und Verfestigung aus der Verfestigung bis f_u)
+zählen in der Kennung der Ergebnisdatei nur, wenn sie gesetzt sind
+(seit der Zusammenführung vom 14.10.2026 `model.NEUE_FELDER`, ein Verzeichnis
+der neuen Felder aller Pakete; bis dahin `ergebnisse.NEU_AUF_VORGABE`). Ohne diese Regel hätte schon das Anfügen der
+Felder jede gespeicherte Ergebnisdatei ungültig gemacht; am Drehlager-Lauf vom
+09.10.2026 hieß es beim Lesen „seit der Rechnung geändert: Werkstoffe,
+Querschnitte und Dicken“.
+
 ### 5.4 Stabilitätsnachweise (6.3)
 
 * Biegeknicken 6.3.1: N_cr = π² E I / L_cr² um y und z mit Knicklänge
@@ -4085,6 +4825,14 @@ die Lastspielzahlen gelten für so viele Jahre), folgt daraus die rechnerische
 **Lebensdauer** als Bezugszeitraum / D — die Schädigung wächst linear. Ohne
 Bezugszeitraum gelten die Lastspielzahlen für die ganze Nutzungsdauer, und es
 gibt keine Lebensdauer zu nennen.
+
+**Plastische Rechnung (seit 13.10.2026).** Verweist eine Ermüdungslast auf
+ein Ergebnis aus einer plastischen Rechnung, auch über eine Überlagerung, ist
+der Nachweis „nicht anwendbar – erfordert elastische Ermüdungslastfälle“
+(`ec3.fatigue.NICHT_ANWENDBAR`), für alle Stäbe und Volumen mit Kerbfall. Die
+Wöhlerlinien gelten für Spannungsschwingbreiten im elastischen Bereich; eine
+Schwingbreite aus plastischen Zuständen ist keine solche Größe. Bis zum
+13.10.2026 wurde sie trotzdem gezählt.
 
 #### 5.5-3 Volumen: Hauptspannung je Knoten
 
@@ -4425,6 +5173,33 @@ nach von Mises:
 
       σ_v = √(½[(σ_1−σ_2)² + (σ_2−σ_3)² + (σ_3−σ_1)²]) ≤ f_y/γ_M0
 
+**Nach einer plastischen Rechnung: die plastische Hauptdehnung (seit
+13.10.2026).** Dieser Spannungsnachweis setzt einen elastischen Zustand
+voraus. Stammt ein Ergebnis aus einer plastischen Rechnung
+(`info["plastizitaet"]`), wird statt der Spannung die größte plastische
+Hauptdehnung am Integrationspunkt nachgewiesen:
+
+      ε_p,1 = max über die Punkte λ_max(ε_p),   η = ε_p,1 / ε_lim
+
+mit dem Tensor der plastischen Dehnung ε_p (Gleitungen der Voigt-Form halbiert)
+an jedem Integrationspunkt der Elemente des Bereichs außerhalb netzabhängiger
+Stellen und dem Grenzwert ε_lim (`Volumenbereich.eps_grenze`, Vorgabe 5 % nach
+EN 1993-1-5 Anh. C / EN 1993-1-14). Der Löser legt ε_p und die Lage der Punkte
+dafür im Ergebnis ab (`info["ip_dehnungen"]`, `solver.ip_dehnungen_ablegen`).
+Geprüft am Zugstab mit freier Querdehnung unter σ = 1,2 f_y bei linearer
+Verfestigung H = E r/(1 − r): ε_p,x = (σ − f_y)/H, ε_p,y = ε_p,z = −ε_p,x/2,
+also ε_p,1 = ε_p,x, an allen Punkten auf 1e-6 genau
+(`tests/test_volumen_dehnung.py`). Eine Überlagerung plastischer Ergebnisse
+hat keine plastische Dehnung (sie ist nicht überlagerbar), eine Ergebnisdatei
+von vor dem 13.10.2026 keine abgelegte: dann „nicht bewertet – plastische
+Rechnung“ mit dem Grund. Schrauben, Ankerstäbe und Gewindeteile bleiben beim
+Nachweis über Kraft bzw. Spannung nach EN 1993-1-8. Körper und Werkstoffe mit
+`nachweis_ausnehmen` (Hilfs- und Krafteinleitungskörper, vom Anwender gesetzt)
+gehen in keinen Volumennachweis ein und werden als ausgenommen ausgewiesen.
+Bis zum 13.10.2026 stand der Bereich plastisch als „nicht bewertet“, davor las
+er die geglättete Eckspannung; am Drehlager kam sie außerhalb der Zonen auf
+1 596 N/mm², an Ecken nicht fließender Elemente.
+
 mit den Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3 als Eigenwerten des Spannungstensors.
 **Wo wird ausgewertet? — die Auswerteregel (22.09.2026).** Nachgewiesen wird an
 den **Eckknoten**, mit der **geglätteten** Spannung: an jedem Eckknoten das Mittel
@@ -4695,6 +5470,276 @@ Singularitäten gibt keine der drei eine brauchbare Zahl. Was fehlt, ist nicht
 eine andere Regel, sondern eine Erkennung, **ob** ein Spitzenwert an einer
 Kerbe sitzt — das ist eine offene Baustelle und wird hier nicht geraten.
 
+**Erkennung der Krafteinleitung ohne Fläche (seit 10.10.2026).** Für eine
+Sorte Singularität gibt es sie jetzt (`statik3d/spitzenstellen.py`): Kraft,
+die ohne Fläche in ein Volumen geht. Für jede Kopplung, jedes Stabende, jede
+Knotenlast, jedes Knoten- und Linienlager und jede Linienlast auf
+Volumenknoten S zählen die getragene Fläche A_trag (Randseiten mit allen Ecken
+in S), die Hülle A_Hülle von S in ihrer Ausgleichsebene und die örtliche
+Kantenlänge h. Eine Fläche ist es bei A_trag ≥ 0,1 A_Hülle und A_trag ≥ 2 h²,
+oder wenn die getragenen Seiten eine ganze ebene Fläche des Körpers decken
+(keine nicht getragene Randseite schließt mit weniger als 30° Knick an; so
+bleibt ein ganz gelagerter Boden eine Fläche, wo das Netz nur ein Element
+breit ist). Sonst ist es ein Punkt, wenn die Ausdehnung r ≤ 2 h ist, und
+sonst eine Linie. Nach der
+Rechnung gilt als Zone (seit 13.10.2026) der erste Elementring – die
+Elemente mit einem Knoten aus S – und der zweite – die Elemente mit einem
+Eckknoten des ersten –, dieser nur, soweit sein Schwerpunkt höchstens r + 2 h
+von der Mitte von S entfernt ist (`ZONE_RINGE`, `ZONE_RADIUS_H`;
+Entscheidung des Anwenders: „über Radius bzw. max. 1–2 Elementringe
+begrenzen“). Bis zum 13.10.2026 war es alles im Umkreis max(4 h; r) der
+Knoten, was mit den Elementen an S zusammenhängt – am Drehlager 11 703
+Elemente (7 719 cm³) in den 16 auffälligen Zonen, jetzt 5 833 (1 520 cm³).
+Ein Eintrag der älteren Fassung (`FASSUNG` 1) wird beim Öffnen neu
+ausgewertet (`nachholen`, `veraltet`). Auffällig ist eine Stelle, wenn in der Zone
+σ_v ≥ 2 f_y gilt oder F / (A_Hülle · f_y) ≥ 1 (Entscheidung des Anwenders vom
+10.10.2026); das zweite Maß zählt nur, wo A_Hülle ≥ 2 h² ist, denn am Punkt
+ist die Hülle eine Elementseite, und F/A wächst mit dem Netz. σ_v wird an den
+Gaußpunkten gemessen, aus dem eben genannten Grund: Am Drehlager (LF1, Netz
+Mittel) erreichten drei Zonen von Stabenden als Eckwert nicht fließender
+Elemente 712 bis 740 N/mm² ≥ 2 f_y, an den Gaußpunkten aber nur 358 bis
+426 N/mm². An der gespeicherten Rechnung findet die Regel 112 Stellen in
+1,1 s, keine davon eine Fläche, und genau die 16 Ankerscheiben sind auffällig
+(σ_v 884 bis 1 187 N/mm², F / (A_Hülle · f_y) 1,08 bis 1,13); an allen
+übrigen Stellen bleibt σ_v / f_y ≤ 1,58 und F / (A_Hülle · f_y) ≤ 0,37.
+Kontaktränder und einspringende Kanten findet die Regel nicht, und die Werte in
+den Zonen werden durch die Kennzeichnung nicht richtiger.
+
+**Verteilende Einleitung der Stabenden (seit 13.10.2026,
+`statik3d/stabeinleitung.py`).** Ein Stabende in einem Volumen kann statt an
+den 1–3 Knoten seines Elements über die vorhandene Verteilkopplung RBE3
+(`verbindung.starrkoerper_matrix`, Master = Stabknoten) an allen Knoten seiner
+Einleitungsfläche hängen; die Fläche wird dabei nicht starr. Die gespeicherten
+Gewichte sind w_i = ∫ N_i dA über die Randseiten der Fläche, also die
+konsistente Lastverteilung (ebenes tri6: Ecken 0, Kantenmitten je A/3; tri3:
+A/3 je Ecke). Die Stirnfläche ist die zusammenhängende Menge der Randseiten
+des Körpers, die mit der Seite am Stabknoten über Ecken verbunden sind, bis
+0,1 mm in ihrer Ebene liegen und deren Normale höchstens 5° abweicht; die
+Stabachse darf um bis zu 30° von der Normale abweichen. Beim Kreisring
+r_i ≤ r ≤ r_a um den Durchstoßpunkt P wird mit der Indikatorfunktion
+integriert, für Seiten, die der Ring schneidet, mit einer Mittelpunktregel
+auf s² Teilzellen (s = 16 je Ringbreite, 4 ≤ s ≤ 64); am Quader 20 × 20 mm
+mit Ring 6/16 mm ergibt das 173,17 gegen 172,79 mm² (+0,22 %).
+
+Gerechnet wird mit wirksamen Gewichten: Gebundene Seitenmitten (Kontakt- und
+Lagerseiten, Paket Q1, `assemble.mittelknoten_bindungen`) und Gewichte unter 10⁻¹² des größten fallen weg, die
+übrigen werden auf Σ w = 1 gebracht und mit
+min Σ (Δw_i)² / |w_i| unter Σ w_i = 1 und Σ w_i (x_i − P)·e₁,₂ = 0
+(e₁, e₂ in der Ebene) so ausgeglichen, dass der Schwerpunkt in P liegt; ein
+Gewicht null bleibt null (Entscheidung des Anwenders vom 13.10.2026). Mit dem
+Schwerpunkt in P wird eine Längskraft zu f_i = w_i F, genau der konsistenten
+Last der gleichmäßigen Spannung F/A: am Quader 20 × 20 × 40 mm (tet10) mit
+einem Zugstab von 10 kN mittig auf der Stirnfläche ist σ_zz in allen 30
+Elementen an der Stirnfläche 25,000 N/mm² = F/A, an 1–3 Knoten wie bisher
+dagegen bis 398,6 N/mm² (σ_v an den Knoten bis 648,1 N/mm²). Ein Moment geht
+seit dem 14.10.2026 als konsistente Last der linear verteilten Spannung in die
+Fläche: Die Momentenzeilen des RBE3 tragen statt w_i r_i die Vektoren
+s_i = ∫ N_i (x − x_m) dA (`StarrKoerper.momente`, beim Anschließen mit
+derselben Integrationsregel wie w_i gerechnet, beim Kreisring mit der
+Indikatorfunktion), also
+
+  Σ w_i (u_i − u_m − θ_m × r_i) = 0,   Σ s_i × (u_i − u_m − θ_m × r_i) = 0,
+
+und die Kopplungskräfte sind f_i = w_i λ_f − s_i × λ_m = ∫ N_i (λ_f + λ_m × (x − x_m)) dA,
+genau die konsistente Last des linearen Feldes (Biegung als Normalspannung,
+Torsion als Schub, beide linear im Abstand); am tet10 tragen dabei auch die
+Ecken, deren w_i null ist (s_i = A/60 (2 r_i − r_j − r_k) an der ebenen
+tri6-Seite). Gebundene Seitenmitten fallen wie bei w_i heraus, die s_i werden
+mit demselben Faktor normiert. Am selben Quader mit einem Kragarm Rund 16 von
+50 mm und 1 kN quer ist das größte |σ_zz| der Elemente an der Stirnfläche
+jetzt 44,14 N/mm² wie unter der konsistenten linearen Flächenlast, 8 bis 12 mm
+darunter 48,74 wie dort. Bis zum 14.10.2026 standen w_i r_i in den
+Momentenzeilen, das Moment ging als f_i = w_i (λ_f + λ_m × r_i) in die Fläche,
+statisch gleichwertig, aber an der Stirnfläche 7 % über der konsistenten Last
+(47,25 gegen 44,14 N/mm²). Jede Wahl von s_i hält das Gleichgewicht, denn G
+verschwindet für jede Starrkörperbewegung (u_i − u_m − θ_m × r_i = 0 je
+Knoten). Eine Kopplung, die vor dem 14.10.2026 angelegt wurde und keine s_i
+trägt, schließt `fugen.stabenden_erneuern` vor der Rechnung neu an. Am
+Drehlager hängen nur Zugstäbe, dort gibt es keine Momente.
+
+Strafverfahren: k = 10⁴ · max diag(K) ohne die Straffedern der Kopplungen,
+also derselbe Wert wie bei den starren Kopplungen der Stabenden. Die drei
+Momentenzeilen von G werden durch ρ = (Σ |s_i| |r_i|)^½ geteilt (klassisch
+s_i = w_i r_i, also (Σ |w_i| |r_i|²)^½), damit die
+Strafe für die Drehung des Masters k ρ² ist und nicht k ρ⁴; bei ρ = 8 mm wäre
+sie sonst um den Faktor 1,6·10⁴ weicher und läge in der Größe der
+Biegesteifigkeit eines Rund 16 (4 E I / L = 5,4·10⁴ Nm/rad bei L = 50 mm).
+Am Kragarm folgt der Master der Drehung der Fläche (9,85·10⁻⁴ rad, aus den
+Verschiebungen der Flächenknoten ausgeglichen ebenso) und G u ist 10⁻¹⁰.
+
+Prüfung im Ergebnis: Die Kopplungskräfte f = k Gᵀ G u sind für jedes u im
+Gleichgewicht (Σ f = 0 und Σ r × f = 0 folgen aus dem Aufbau von G). Geprüft
+wird darum das Gleichgewicht am Stabknoten: Kraft und Moment um P, die die
+Kopplung in die Fläche gibt, gegen die Gegenkraft der Stabendkraft (hinter
+einem Versatz) samt Knotenlast am Stabknoten. Toleranz ist die
+Residuumschranke des Gleichungslösers mal ‖F‖, denn nach dem Lösen gilt
+‖K u − F‖ ≤ Schranke · ‖F‖ und damit für jeden Knoten. Gemessen am Quader:
+dF = 1,8·10⁻⁷ N bei 10 kN (Toleranz 0,01 N), am Kragarm dM = 1,3·10⁻⁹ Nm bei
+50 Nm. Ein Momentengelenk am Stabende gibt kein Biegemoment in die Fläche
+(gemessen 0,0 Nm; biegesteif am selben gestützten Balken 0,067 Nm, klein,
+weil der Quader unter der Querkraft selbst um V L² / (2 E I) kippt). Eine
+verteilt eingeleitete Stelle trägt ihre ganze Fläche (A_trag = Fläche) und ist
+nach der Regel oben eine Fläche, keine Stelle: am Drehlager 48 Punkte → 0.
+
+**Kopplungen mit Drehanteil (seit 14.10.2026, Entscheidung des Anwenders vom
+14.10.2026).** Eine Kopplung zwischen Knoten, die nicht aufeinander liegen,
+ist nur dann im Gleichgewicht der Momente, wenn sie jede Starrkörperbewegung
+ohne Kraft zulässt: G Φ = 0 für u_i = a + ω × x_i, θ_i = ω. Die Feder
+k c cᵀ mit c = [−n, n] zwischen Knoten a und b (`assemble.kopplungen`) tut
+das nur für r = x_b − x_a ∥ n. Für versetzte Knoten hat sie die Kraftsumme
+null, aber das Moment r × f. Gemessen am Würfel 1 m (tet4, h 0,25), Boden
+fest, Stütze Rund 100 bis z = 3 m mit 10 kN quer am Kopf
+(`tests/test_kopplung_drehanteil.py`, vorher und nachher):
+
+| Fall | vorher: Kopf, Fundament, Moment der Kopplung | nachher |
+|---|---|---|
+| eingespannt bei z = 0,84 bzw. 1,0 (Bezug) | 32,625 bzw. 25,904 mm (Hand 32,587 bzw. 25,869, ohne Schub) | – |
+| Stabende im Block bei z = 0,6, zweiter Stabknoten bei 0,84 | 36,587 mm, −5,345 kNm, 24,655 kNm | 32,638 mm, −30,000 kNm, 2·10⁻⁷ Nm |
+| Stabende in der Deckelfläche | singulär | 25,924 mm, −30,000 kNm, 2·10⁻⁶ Nm |
+| Stab von z = 0,2 bis 1,0 durch den Block | 28,700 mm, −13,921 kNm, 16,8 kNm | 25,924 mm, −30,000 kNm, 2·10⁻⁶ Nm |
+
+Nachher sitzt die Stütze so fest wie eingespannt beim obersten gekoppelten
+Knoten, um 0,04 bzw. 0,08 % weicher (Nachgiebigkeit des Blocks). Umgesetzt:
+
+* **Starre Scheibe** (`fugen.starre_flaechen_koppeln`, Gruppe „starr …“):
+  RBE2 mit Drehanteil, u_s = u_m + θ_m × r_s, je Richtung n die Zeile
+  c = [−n, −(r × n), n] auf (u_m, θ_m, u_s). Der Master bekommt seine drei
+  Verdrehungen als Kopplungsknoten: Jeder Knoten hat sechs FHG, und
+  `constrained_dofs` sperrt einen nur, solange seine Hauptdiagonale null ist;
+  ein Hilfsknoten ist darum nicht nötig. Ein Fachwerkstab am Master nimmt
+  kein Moment, die Scheibe kippt mit dem Körper. Liegen alle Slaves auf einer
+  Geraden durch den Master (Σ (|r|² I − r rᵀ) nicht positiv definit,
+  `_drehung_bestimmt`), bleibt die Scheibe ohne Drehanteil, sonst bliebe die
+  Drehung um diese Gerade frei. Gebundene Seitenmitten fallen heraus und
+  folgen ihren Ecken (wie b009aff bei der Verteilkopplung); `_belegte_knoten`
+  zählt von der Scheibe nur den Master. Annahme: RFEM bewegt eine starre
+  Fläche als starren Körper; am RFEM-Modell geprüft ist das nicht.
+* **Stabende an 1–4 Knoten** (`fugen.stabenden_koppeln`, Gruppe
+  „Stabende …“): RBE3 je Stabknoten (`assemble.stabende_zwang`). Die
+  Kraftzeilen mit den baryzentrischen Koordinaten λ_i des Stabendes im
+  Element (Σ λ_i x_i = x_m, kleinste Quadrate): Der Stabknoten folgt dem
+  Verschiebungsfeld des Elements, wie ein integrierter Knoten, der zum Netz
+  gehört. Hängt am Knoten ein Biegestab, kommen die Momentenzeilen mit
+  gleichen Gewichten dazu (geteilt durch ρ = (Σ |r_i|²)^½), sonst nicht: Ein
+  Fachwerkstab oder Seil trägt kein Moment, und mit Σ λ_i r_i = 0 sind die
+  Kraftzeilen allein schon objektiv, bis auf den Abstand des Stabendes von
+  der Seite (Toleranz der Punktsuche 0,1 mm). Für die Momentenzeilen braucht
+  es drei Knoten, die nicht auf einer Geraden durch das Stabende liegen. Auf
+  einer Kante oder Ecke des Netzes hängt ein Biegestab darum an allen vier
+  Ecken des Elements, mit Protokollzeile. Bis zum 14.10.2026 hing das
+  Stabende über u_m = u_i starr an jedem Knoten.
+* **Starrkörper RBE2/RBE3** (`assemble.starrkoerper`,
+  `verbindung.starrkoerper_matrix`, Import Nastran, Oberfläche) und die
+  **Verteilkopplung der Stabenden**: waren schon im Gleichgewicht (G Φ = 0).
+* **Fugen** (`fugen.kontaktfuge_ausfuehren`): Kopplungen und Spaltelemente
+  zwischen verdoppelten, deckungsgleichen Knoten (r = 0), im Gleichgewicht;
+  ihre Matrix ist bitgleich wie vorher.
+* **Mittelknotenbindung** u_m = (u_a + u_b)/2: objektiv, solange die Mitte
+  auf der Sehne steht (`mittelknoten_auf_sehne`).
+* **Feder** (Elementtyp `feder`) zwischen versetzten Knoten mit
+  Quersteifigkeit: wie die alte Kopplung nicht momentenrichtig (K = Tᵀ k T
+  ohne den Hebel L × Querkraft). Sie ist keine starre Kopplung und bleibt,
+  wie sie ist; die globale Kontrolle unten meldet ihre Wirkung.
+* **Starre Stäbe und Kopplungsstäbe** aus RFEM (`MemberImplRigid`,
+  `MemberImplCoupling…`) sind Balken- bzw. Fachwerkelemente und objektiv.
+
+Am Drehlager (Netz Mittel, gespeicherter Lauf LF1 vom 09.10.2026, nur
+geladen und gekoppelt, nicht gerechnet) ändern sich die gespeicherten
+Kopplungen dadurch nicht; die Erneuerung vor der Rechnung ändert wie seit dem
+10.10.2026 sechs Scheiben. Anders gerechnet werden alle 64 starren Scheiben
+(2 560 Kopplungen; an jeder legen die 40 Knoten des Lochrands die Drehung
+fest, keiner ist eine gebundene Mitte) und alle 48 Stabenden der Zugstäbe (9
+an einem, 19 an zwei, 20 an drei Knoten; alle Fachwerkstäbe, also nur die
+Kraftzeilen, das Stabende liegt höchstens 0,125 mm neben seinem
+baryzentrischen Punkt). Die 64 Mittelknoten bekommen je drei Verdrehungen.
+Im gespeicherten Ergebnis trugen die Kopplungen der Ankerscheiben bis
+3,63 kNm (F565), 2,77 (F25), 2,13 (F554) und 1,69 kNm (F410), die der
+Zugstabscheiben 0,10 bis 0,28 kNm und die der Stabenden bis 0,07 kNm,
+zusammen als Vektor 14,7 kNm gegen ein Lagermoment von 5 072 kNm um den
+Ursprung (ausgewertet am gespeicherten Ergebnis mit k aus dem Kraftgleichgewicht
+je Mittelknoten, an allen 112 Gruppen 4,11 bis 4,13·10¹⁵ N/m). Die Ringe waren dabei auf 10⁻¹⁰ rad am
+Kippen gehindert, während die Plattenoberfläche um sie herum (Kreisring r bis
+2r) um 0,09 bis 1,46 mrad kippte, am stärksten an F565, F554, F25 und F410,
+also genau dort, wo die Kopplung das größte Moment trug. Am Lochrand sind das
+2 bis 37 µm gegen die 1,8 bis 2,56 mm, um die die Ringe einsinken. Als
+Abschätzung, nicht gerechnet: Mit Drehanteil kippen die Ringe mit, die
+Ringkräfte verlieren die Schwankung von bis zu ±31 % (F565), ±24 % (F25),
+±19 % (F554) und ±15 % (F410) um ihren Mittelwert, die Ankerkräfte bleiben,
+und die örtlichen Werte an diesen vier Lochrändern ändern sich spürbar,
+an den übrigen zwölf kaum. An den Zugstabscheiben überwog das Scheinmoment
+die Stabkraft (bis zum 3,6-Fachen von N r / 2); dort ändert sich die
+Verteilung der kleinen Kräfte ganz, ihr Betrag bleibt klein.
+
+**Globale Gleichgewichtskontrolle (seit 14.10.2026, `statik3d/gleichgewicht.py`).**
+Nach jeder Rechnung (`solver._solve_loads`, auch plastisch und mit Kontakt;
+Überlagerungen linear aus ihren Anteilen) gilt an einem objektiven Modell
+Φᵀ (F + R) = Φᵀ K u = 0, also Σ F_i + Σ R_i = 0 und
+Σ (x_i − x0) × (F_i + R_i) + M_i + M_R,i = 0 über die Knoten, x0 = Mitte der
+Hülle aller Knoten. F ist der Lastvektor der Rechnung, R die Reaktionen
+(starre und Federlager, einseitige Lager, gesperrte FHG); Zusatz-FHG (Wölbung,
+Ordnung p) arbeiten unter Φ nicht mit. Bezogen wird auf den Umsatz Σ |F_i| +
+Σ |R_i| bzw. Σ |(x_i − x0) × F_i + M_i| + … ; Schranke 10⁻⁴ wie
+`solver.ABSCHLUSS_GLEICHGEWICHT`. Ergebnis in `res.info["gleichgewicht_global"]`,
+eine Zeile je Ergebnis, eine gebündelte in der Zusammenfassung der Analyse,
+ein Satz im Bericht. Am Würfel mit der alten, versetzten Kopplung (von Hand
+angelegt) meldet sie ΣM 24,657 kNm, bezogen 0,96; mit Drehanteil sind es
+bezogen 10⁻¹¹. Theorie II. Ordnung rechnet ihr Ergebnis außerhalb von
+`_solve_loads` und trägt die Kontrolle nicht. Ab `gleichgewicht.UNGUELTIG` =
+10⁻² des Umsatzes ist das Ergebnis nicht gültig (`solver.gueltigkeit`, seit
+dem 14.10.2026; ein vorläufiges bleibt vorläufig). Richtig Gerechnetes liegt
+bei 10⁻⁶ bis 10⁻⁴, eine nicht objektive Kopplung am Drehlager bei rund 10⁻³;
+10⁻² liegt einen Faktor 10 darüber und erreicht nur, wer einen Teil der Last
+gar nicht in die Lager bringt.
+
+**Zonen in Anzeige und Nachweis (seit 10.10.2026).** Bis zum 10.10.2026
+nahmen Farbskala, Zusammenfassung, Bericht, Volumennachweis und Ermüdung ihr
+Maximum über alle Elemente. Seitdem bleiben die Elemente der Zonen
+auffälliger Stellen aus jedem Maximum heraus und stehen getrennt als „nur
+berichtet“ da (`statik3d/spitzenanzeige.py`). Der Volumennachweis
+(6.2.1(5)) läuft über die übrigen Elemente des Bereichs; die Ermüdung der
+Volumen über die Orte, die an keinem Zonenelement liegen (Regel „knoten“:
+Knoten, Regel „element“: Elemente). Ein Ergebnis, das der Nachweis erst
+bildet, etwa die überlagerte Alternative einer Ergebniskombination, wird
+dafür zuerst ausgewertet; an der Platte mit Loch und EK1 = 1,35 LF1 hätte der
+Nachweis sonst η = 19,803 statt 3,767 gelesen. Der Spitzenwert einer Zone ist
+σ_v an den Gaußpunkten (sv_max), die Größe außerhalb ist die bisherige
+Anzeigegröße, das Knotenmittel der Elementwerte.
+
+**Anzeige nach einer plastischen Rechnung (seit 13.10.2026).** Bis zum
+13.10.2026 war der Elementwert eines Elements, das nicht fließt, auch in
+einer plastischen Rechnung der größte Auswertepunkt (Mitte oder Ecke), und er
+stand an allen Knoten des Elements. Die Ecken nicht fließender tet10
+erreichten am Drehlager bis 14 599 N/mm² bei 343 N/mm² an den Gaußpunkten
+desselben Elements; das Knotenmittel lag außerhalb der Zonen mit 6 676 N/mm²
+in V15 weit über der Spitze der Zonen (1 187 N/mm²). Seitdem übernimmt die
+Anzeige in einer plastischen Rechnung die Werte der Gaußpunkte auf die
+Knoten, wie ANSYS mit ERESX,NO (`spannungen.anzeige_knotenwerte`): Knoten k
+eines Elements bekommt σ_k = Σ_p W_kp σ_p mit W_kp = 1/m für die m
+nächstgelegenen Gaußpunkte und 0 sonst. „Nächstgelegen“ misst sich im
+Bezugselement, beim Tetraeder in Volumenkoordinaten (L0 … L3), beim Keil in
+Flächenkoordinaten des Dreiecks und ζ, sonst in (r, s, t); so liegt eine
+Kantenmitte von den Punkten ihrer beiden Ecken gleich weit. Für den tet10
+(vier Punkte) ergibt das je Ecke den Punkt mit L = 0,585 an ihr und je
+Kantenmitte das Mittel zweier Punkte, für den hex8 je Ecke den Punkt ihres
+Achtels, für den hex20 (27 Punkte) je Ecke den Eckpunkt und je Kantenmitte
+den Punkt auf ihrer Kantenmitte, für den pent15 (18 Punkte) je Knoten genau
+einen Punkt und für die Pyramide an der Spitze das Mittel der vier oberen
+Punkte. Danach wird je Knoten über die Elemente gemittelt wie bisher. Die
+Punkte nicht fließender Elemente rechnet die Anzeige aus u nach (σ = D B u
+minus Temperatur und Vorspannung, ε_p = 0), die fließender Elemente legt der
+Löser seit dem 13.10.2026 beim Ergebnis ab (`ip_spannungen`), denn ε_p je
+Punkt steht nicht im Ergebnis. Einer Ergebnisdatei von davor fehlen sie, und
+fließende Elemente zeigen dort ihren größten Punkt an allen Knoten. tet4
+bleibt beim Elementwert (konstante Spannung; mit Knotendilatation ist der
+Elementwert der richtige). Am Drehlager sind das 604 951 nachgerechnete
+Elemente in rund 30 s. Außerhalb aller 112 Stellen liegt die Anzeige dann
+bei 460,0 N/mm² am Knoten in V16, außerhalb der 16 auffälligen Stellen bei
+545,3 N/mm² in V90; beide Werte liegen an fließenden Elementen, für die die
+gespeicherte Datei noch keine Punkte trägt. Die Nachweise lesen das nicht:
+Volumennachweis und Ermüdung (Regel „knoten“) nehmen weiter die geglättete
+Eckspannung, die Regel „element“ den Elementwert. Elastische Rechnungen
+bleiben bitgleich.
+
 **Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
 Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)
 liegen außerhalb, und die abgezogene Vorspannung D·ε_p ist das Mittel über die
@@ -4732,6 +5777,10 @@ Vergleichsspannung q = √(3/2 s:s) des Spannungsdeviators s bleibt unter
 fy + H·ε_p,eq; der Verfestigungsmodul H folgt aus der eingestellten
 Tangente E_t = r·E nach dem Fließen: H = E·r/(1 − r) (uniaxial gilt
 σ = fy + H·ε_p und ε = σ/E + ε_p, also dσ/dε = E·H/(E + H) = E_t).
+Seit dem 13.10.2026 endet die Verfestigung bei f_u des Werkstoffs (bei
+Schrauben f_ub, bei Spannstahl f_pk), danach fließt er ideal plastisch, und
+r steht je Werkstoff (§ 5e.5). Bis zum 13.10.2026 verfestigte jeder Werkstoff
+ohne Grenze mit dem r der Einstellung.
 Rückführung (radial return) je Element, an der Elementmitte:
 
     σ_trial = D (ε − ε_p,alt),  s = dev σ_trial,  q = √(3/2 s:s),  f = q − (fy + H ε_p,eq)
@@ -4740,7 +5789,7 @@ Rückführung (radial return) je Element, an der Elementmitte:
 (Voigt-Reihenfolge wie im Element, plastische Gleitungen als
 Ingenieurgleitungen, also doppelte Schubanteile). Werkstoffe ohne
 Streckgrenze („Starr“, Beton ohne fy) bleiben elastisch; das Protokoll
-nennt sie.
+nennt sie einmal je Lastfall (bis zum 13.10.2026 bei jedem Schritt).
 
 **Verfahren: Anfangsdehnungs-Iteration.** Der Löser dieses Programms ist
 linear-elastisch plus Kontakt (Aktivmengen-Iteration mit fester
@@ -4762,6 +5811,30 @@ auf dem Belastungspfad bleibt. Konvergenzmaß ist seit dem 23.09.2026 der
 |F_p,k − F_p,k−1| / |F| · max(1, ρ/(1 − ρ)) ≤ Toleranz (Vorgabe 1e-3), mit
 der Rate ρ aus dem Verlauf der Änderungen (§ 5e.2); vorher die Änderung
 allein.
+
+**Temperaturlasten und Vorspannkräfte sofort voll (10.10.2026,
+`plastizitaet.stufenlast`).** Die Last der Stufe mit dem Faktor λ ist
+F_S + λ·(F − F_S), wobei F_S der Anteil der Temperaturlasten und der
+Vorspannkräfte (Stab und Körper, § „Vorspannung als Anfangsdehnung“) an F
+ist, mit dem Faktor der Kombination (`solver.case_sofort`: derselbe
+Lastvektor aus einem Lastfall, der nur die Temperaturlasten und
+Vorspannungen trägt). Das gilt in beiden Wegen, in der gemeinsamen Iteration
+und in halbierten Stufen; die letzte Stufe rechnet mit F selbst. Bis dahin
+war es λ·F, und eine Vorspannung wirkte in der ersten von drei Stufen zu
+einem Drittel (Entscheidung des Anwenders: „ohne vorspannung mehr verformung
+und dann längere rechenzeit“). Zuerst galt die Regel nur für die
+Temperaturlasten (F_T, `solver.case_temperatur`); weil die Begründung die
+Vorspannung ist, kamen am selben Tag die Vorspannkräfte dazu. Ohne
+Temperaturlast und Vorspannkraft ist die Rechnung bitgleich wie vorher. Am
+vorgespannten Würfel (ein Hexaeder, vier Ankerstäbe,
+`tests/test_temperatur_sofort.py`) ist Stufe 1 die lineare Lösung
+„Temperatur voll + 1/3 der Last“ auf 5·10⁻¹⁶, das Ende trifft die
+geschlossene bilineare Lösung auf weniger als 10⁻¹⁴ und ist im Newton-Weg
+bitgleich zum Stand davor, weil Würfel und Anker monoton belastet werden.
+Mit einer Vorspannkraft von 48,825 MN je Anker statt der Abkühlung (dieselbe
+Kraft) gilt dasselbe auf 4,9·10⁻¹⁶ (`tests/test_vorspannung_sofort.py`, dort
+auch die Kombination, das Halbieren, Temperatur und Vorspannung zusammen, ein
+als Körper vorgespannter Bolzen und die Theorie III. Ordnung).
 
 **Beschleunigung (Aitken).** Das Anfangssteifigkeitsverfahren zieht sich
 mit dem Faktor E_t/E zusammen: bei 2 % Verfestigung 0,98 je Schritt —
@@ -4974,6 +6047,31 @@ genügt für linear-tetraedrische und trilinear-hexaedrische Netze; feiner
 aufgelöstes Fließen braucht ein feineres Netz, nicht mehr
 Auswertepunkte. Große Verformungen (Theorie II. Ordnung der Volumen)
 bleiben außen vor.
+
+**Anfangsspannung in der Fließprüfung (10.10.2026).** Eine Vorspannung als
+Körper ist eine Anfangsspannung σ₀ = −F_v/A·a⊗a, die wahre Spannung ist
+σ = D(ε − ε_p) − σ₀. Die Rückführung prüft seitdem genau diese:
+σ_trial = D(ε − ε_p) − σ₀ (`plastizitaet.Zustand.sigma0`, im Stapel und in
+der Schleife). Bis dahin prüfte sie D(ε − ε_p) und sah σ₀ nicht, während der
+Spannungsnachlauf σ₀ abzog. Für eine Temperatur im Volumen ist das
+gleichgültig, die Dehnung α·ΔT·δ ist isotrop und D α ΔT δ rein hydrostatisch
+— von Mises und die Fließrichtung sehen nur den Deviator. Eine einachsige
+Bolzenvorspannung ist dagegen deviatorisch: am Bolzen mit F_v = 0,98·f_y·A
+und einem Klemmpaket k_K = 19·k_B (`tests/test_vorspannung_fliessen.py`,
+Fließbeginn der geschlossenen Lösung bei P_y = F_v + (k_B + k_K)·(L/E)·
+(f_y − F_v/A) = 1,38·f_y·A) floss bei 1,01·P_y und 1,3·P_y nichts, und die
+angezeigte Spannung lag mit 362,3 N/mm² über f_y; jetzt fließt er bei
+1,01·P_y und bei 0,99·P_y nicht, und Kopfverschiebung, σ_zz,
+σ_v = f_y + H·ε_p, ε_p und das Gleichgewicht am Kopf treffen die bilineare
+Lösung auf 2·10⁻¹⁶ relativ (ε_p auf 5·10⁻¹²). Die
+inkompatiblen Moden des hex8 und pent6 bleiben davon frei, weil
+Σ w|J|·B_a = 0 ist (Taylor-Korrektur, an verzerrten Elementen 10⁻¹⁶
+gemessen): eine je Element konstante σ₀ belastet sie nicht, wie im linearen
+Lastvektor. σ₀ bleibt über alle Laststufen voll, denn die Vorspannkraft wirkt
+seit demselben Tag ab der ersten Stufe voll (`stufenlast`); vorher wäre σ₀
+nur mit dem Lastfaktor der Stufe richtig gewesen. Die konsistente Tangente
+bleibt die Ableitung (zentrale Differenzen mit σ₀: 2,6·10⁻¹⁰ am hex8,
+2,7·10⁻¹⁰ am tet4).
 
 ### 5e.1 Plastizität am Gaußpunkt, und die Moden des Sechsflächners (20.09.2026)
 
@@ -5197,6 +6295,10 @@ waren es 752, davon 650 verworfen (jeder solche Lauf 69 Runden bis zur Grenze
 der Richtungsrunden). In der gemeinsamen Iteration (5e.3) wird eine Stufe,
 in der nach abgekürzten Läufen ein voller Kontaktlauf am Deckel endet,
 verschachtelt wiederholt.
+Seit dem 14.10.2026 zählt ein Kontaktlauf, dessen Pendeln mit Periode 2
+eingefroren und geprüft ist, nicht als gescheitert, wenn die Restwechsel
+unter den Schranken liegen (§ 4.0c): dann wird nicht halbiert. Bis dahin
+halbierte jeder solche Lauf am Deckel die Stufe.
 
 ### 5e.3 Fließen und Kontakt gemeinsam iteriert (23./24.09.2026)
 
@@ -5538,6 +6640,310 @@ Blocks sechs, des kippenden Stempels fünf, des gleitenden Stempels vier, des
 Modells „zwei Körper“ zwei (`zustand_verstoesse` am End-u, 24.09.2026). Ob
 das in die Abnahme gehört, entscheiden Anwender und Löser-Sitzung.
 
+### 5e.4 Abbruch ohne die netzabhängigen Spitzen (13.10.2026)
+
+**Anlass.** Der Newton misst seine Konvergenz an der Änderung der
+plastischen Knotenlast über das ganze Modell, ‖F_p,k − F_p,k−1‖ / ‖F‖ ≤
+Toleranz; am selben Maß hängt das Halbieren einer weglaufenden Stufe. Am
+vollen LF1 des Drehlagers (Netz Mittel) trugen die Zonen der 16 Ankerringe
+96,7 bzw. 99,3 % des Quadrats dieser Änderung (zwei unabhängige Näherungen,
+Plan Singularitäten vom 10.10.2026, Abschnitt 2). Die Ankerringe sind
+starre Scheiben, die nur den Lochrand koppeln, eine Stelle „Kraft ohne
+Fläche“ (§ 5d); ihre Spitze wächst mit dem Netz (ε_p 2,7 bis 5,9 % im
+Entwurf, 24,9 bis 39,2 % mit Mittel). Das Maß war damit praktisch eines der
+Werte, die keine Iteration richtiger macht. Entscheidung des Anwenders vom
+10.10.2026: Spannungsspitzen und Singularitäten „sollten nicht dafür sorgen
+dass sich die rechenzeit verlängert“, das neue Kriterium ist gleich die
+Vorgabe, das strenge bleibt wählbar (`Plastizitaet.abbruch`,
+`plastizitaet.ABBRUCH_WEGE` = „ingenieurmaessig“, „streng“). Bis zum
+13.10.2026 maß der Newton immer streng.
+
+**Kriterium.** Nach jedem Newton-Schritt stellt der Löser
+(`solver._SpitzenImNewton.messen`) aus dem aktuellen Zustand fest, welche
+Stellen auffällig sind, mit denselben Regeln wie der Nachlauf in § 5d
+(`spitzenstellen.kraefte`, `.bewerten`): σ_v ≥ 2·f_y an den
+Integrationspunkten der Zone oder F / (A_Hülle·f_y) ≥ 1. σ_v nimmt er aus dem
+Schritt der Plastizität selbst, als größten Integrationspunkt nach der
+Rückführung, ε_p aus dessen Zustand. Die Kraft durch die Stelle rechnet er
+aus u wie der Nachlauf, mit Temperatur und Vorspannung voll und den übrigen
+Lasten mit dem Lastfaktor der Stufe (`stufenlast`, `solver.case_feq_sofort`).
+Die Kandidaten mit ihren Zonen bestimmt er einmal je Rechnung (am System
+gemerkt, am Drehlager 1,5 s). Eine Stelle, die einmal auffällig war, bleibt
+im Lastfall ausgenommen, damit das Maß nicht zwischen zwei Zonenmengen
+pendelt. Mit „ingenieurmäßig“ und mindestens einer ausgenommenen Stelle ist
+eine Laststufe konvergiert, wenn gleichzeitig gilt (`plastizitaet._zonen_mass`):
+
+1. ‖ΔF_p‖ außerhalb der Zonen / ‖F‖ ≤ Toleranz, wobei alle Freiheitsgrade der
+   Knoten der Zonenelemente, der Stelle und ihres Masters herausfallen;
+2. die Kraft durch jede ausgenommene Stelle ändert sich gegen den vorigen
+   Schritt um höchstens 0,5 % (`SPITZEN_KRAFT`);
+3. die Verschiebung außerhalb der Zonen ändert sich um höchstens 0,5 % ihres
+   Größtwerts (`SPITZEN_VERSCHIEBUNG`);
+4. σ_v ändert sich an jedem Integrationspunkt der Elemente außerhalb der
+   Zonen um höchstens 1 N/mm² gegen den vorigen Schritt (`SPITZEN_SPANNUNG`,
+   seit dem 14.10.2026; die Werte nach der Rückführung, die der
+   Plastizitätsschritt ohnehin hat, `info["sv_punkte"]`). Anlass waren die
+   kleineren Zonen aus zwei Elementringen (r + 2 h): an der Ankerplatte der
+   Prüfung brach „ingenieurmäßig“ ohne diese Bedingung nach 15 Schritten ab,
+   und direkt neben der Zone stand σ_v bis 3,26 N/mm² neben der strengen
+   Rechnung (29 Schritte). Mit ihr sind es 20 Schritte und 0,10 N/mm²; die
+   Messung kostet dort rund 2 ms je Schritt bei rund 0,32 s je Newton-Schritt.
+
+Was streng konvergiert, ist auch ingenieurmäßig konvergiert: ‖ΔF_p‖ / ‖F‖ ≤
+Toleranz über das ganze Modell genügt immer, auch wenn Kraft oder
+Verschiebung die Bedingungen 2 bis 4 verfehlen. Sie kommen nur dazu,
+wo die Zonen ausgenommen werden, und dürfen keine Stufe länger machen als
+das strenge Kriterium. Am Drehlager (Entwurf, LF1) änderte der Kontakt,
+dessen Läufe dort am Deckel enden, die Verschiebung außerhalb der Zonen in
+einem Schritt um 6,6 %, in dem F_p überall unter der Toleranz blieb; zu Beginn
+einer Stufe enthält die Änderung von u außerdem den Lastschritt selbst
+(47,8 % beim Übergang auf Stufe 2/7, bei unverändertem F_p). Ohne diese
+Regel hätte „ingenieurmäßig“ dort mehr Schritte gebraucht als „streng“; sie
+kam am 13.10.2026 nach dem strengen Abnahmelauf dazu (Commit nach a1194ef).
+
+Dasselbe Maß entscheidet über das Halbieren einer weglaufenden Stufe, in der
+gemeinsamen Iteration (§ 5e.3) über abgekürzt, voll und zurück und über die
+Schlussabnahme mit Kontakt; dort wird gegen den Stand gemessen, an dem F_p
+gerechnet ist. Die Zonen rechnen weiter plastisch mit, die Physik ist
+unverändert. Ohne auffällige Stelle ist das Maß die Änderung über das ganze
+Modell, und die Rechnung ist bitgleich zum Stand davor: geprüft am
+gequetschten Block, an der Ankerplatte mit kleiner Ankerkraft (sie fließt,
+ist aber nicht auffällig) und an der Prüfmatrix. „Streng“ misst ebenso wie
+vorher, protokolliert aber je Schritt dieselbe Zeile wie „ingenieurmäßig“.
+
+**Warum die Kraft.** Was in der Zone nicht auskonvergiert ist, wirkt nach
+außen als Kräftegruppe im Gleichgewicht und klingt ab. Die Kraft durch die
+Stelle klingt nicht ab: am Drehlager hängt die Ankerkraft an der Einsenkung
+des Rings, rund 66 kN je mm.
+
+**Warum 0,5 % für die Verschiebung und nicht 1 % wie im Plan.** Ein Newton,
+der an der Zone nur noch linear konvergiert (am Ring der Ankerplatte etwa
+mit 0,5 je Schritt), steht nach dem Abbruch ungefähr um die letzte Änderung
+neben seiner Lösung. Mit 1 % läge die Verschiebung also bis zu 1 % daneben,
+genau an der Grenze der Abnahme. Enger als 0,5 % geht aber auch nicht gut:
+an der Ankerplatte mit feinem Netz pendelt die Zone mit einer Periode von
+drei Schritten und bewegt die Knoten außerhalb im Takt um 0,28 bis 0,46 %,
+während F_p außerhalb gleich bleibt und die Ankerkraft sich um 0,1 %
+ändert. Mit 10⁻³ kam diese Stufe nie an und hieß nach 25 Schritten „nicht
+konvergiert“. Gemessen (Ankerplatte, `sp3_werk/p5_serie.out`):
+
+| Netz, Last | streng | 10⁻³ | 5·10⁻³ | 10⁻² |
+|---|---|---|---|---|
+| grob (h ≈ 10 mm), 0,9 + 0,3 MN: Newton-Schritte | 29 | 17 | 14 | 14 |
+| … Δσ_v außerhalb max [N/mm²] | – | 0,33 | 0,20 | 0,20 |
+| … Ankerkraft gegen streng | – | −0,15 % | +0,14 % | +0,14 % |
+| fein (h ≈ 5 mm), 0,8 + 0,2 MN: Newton-Schritte | 53 (2-mal halbiert) | 33, nicht konvergiert | 15 | 14 |
+| … Δσ_v neben der Zone (30–40 mm vom Ring) | – | 71,6 | 74,3 | 69,2 |
+| … Δσ_v ab 60 mm vom Ring | – | 1,13 | 1,18 | 1,07 |
+
+**Was das Kriterium nicht kann.** Es macht die Werte in den Zonen nicht
+richtiger; sie bleiben Eigenschaften des Netzes und stehen im Ergebnis als
+„nicht auskonvergiert“ (`res.info["spitzenstellen"]`, Feld
+`nicht_auskonvergiert` je Stelle mit `kraft_aenderung`, `sv_aenderung`,
+`eps_p_aenderung`, `fp_aenderung_zone`, Stufe und Schritt; dazu
+`res.info["plastizitaet"]["spitzen"]` mit dem Verlauf je Schritt). Der Weg
+hängt vom Lastpfad ab: eine Zone, die je Stufe früher abgebrochen wird,
+sammelt anderes ε_p, und die Eigenspannungen daraus klingen erst über
+etwa einen Zonenradius ab. An der feinen Ankerplatte lagen die Elemente
+unmittelbar neben der Zone (Zonenradius 25 mm, 30 bis 40 mm vom Ring) bis
+74 N/mm² neben der strengen Rechnung, die ihre erste Stufe zweimal halbiert
+hatte; 40 bis 60 mm vom Ring bis 6 N/mm², ab 60 mm unter 1,2 N/mm². Am
+groben Netz (Zonenradius 46 mm, vier Kantenlängen) blieb jede Abweichung
+außerhalb unter 0,33 N/mm².
+
+**Drehlager, Stand 14.10.2026 — Abnahme offen.** Der Vergleich streng gegen
+ingenieurmäßig am Entwurf (LF1) ist noch nicht gerechnet. Ein erster
+strenger Lauf (Stand a1194ef, 13.10.2026) brach nach 4,7 h unvollständig ab;
+der Rechner lief mit acht weiteren Rechnungen am Speicherlimit. Was er bis
+dahin zeigte: Im ersten Newton-Schritt trugen die 16 Ankerringe die
+Änderung fast allein (2,80·10⁻² in den Zonen gegen 2,55·10⁻⁴ außerhalb,
+Ankerkräfte 944 bis 945 kN, alle 16 ab dem ersten Schritt auffällig). Danach
+lag die Änderung außerhalb meist über der in den Zonen (etwa 10⁻³ gegen
+2·10⁻⁴), weil auch außerhalb Elemente fließen. Von 50 Kontaktläufen endeten
+48 am Deckel von 40 Runden (`contact.MAX_CYCLES`), mit einer Aktivmenge, die
+von Runde zu Runde zwischen zwei Zuständen wechselte. Die Verschiebung
+außerhalb der Zonen änderte sich dabei innerhalb einer Stufe um bis zu 9 %
+je Newton-Schritt (Stufe 1/7: 9,2 %, 5,9 %, 6,6 %) und beim Übergang auf
+eine neue Stufe um 4 bis 50 %. Die Läufe am Deckel ließen die Stufen bis zur
+Grenze von vier Halbierungen teilen; beim Abbruch rechnete der Lauf Stufe 21
+von 22. Die Messung der Zonen kostet am Netz Mittel
+0,14 bis 0,26 s je Newton-Schritt; einmal je Rechnung kommen 2,4 s für
+Kandidaten und Zonen dazu.
+
+### 5e.5 Verfestigung bis f_u, danach ideal plastisch (13.10.2026)
+
+**Anlass.** Bis zum 13.10.2026 verfestigte jeder Werkstoff ohne Grenze:
+σ_y = f_y + H·ε_p,eq wuchs mit der plastischen Dehnung beliebig weiter. Am
+Drehlager stand der Schraubenkörper V90 so bei 560,6 N/mm² und ε_p 9,69 %,
+also über der Zugfestigkeit seines Werkstoffs (f_u = 490 N/mm²). Die
+Entscheidung des Anwenders vom 13.10.2026 lautet: „Option 1: bilinear mit
+E/100 bis f_u, danach ideal plastisch (entspricht EN 1993-1-5 C.6).
+Verfestigungsmodul je Werkstoff einstellbar, Vorgabe E/100, wählbar auch ohne
+Verfestigung (E/10 000). f_u immer aus dem Werkstoff nehmen. Fehlt er, eine
+Meldung ausgeben und keinen Vorgabewert setzen. Schrauben bis f_ub, Spannstahl
+f_p0,1k bis f_pk. Konvergenzverhalten in den Prüfreihen mit beobachten.
+Multilinear später.“
+
+**Werkstoffgesetz.** Die Fließbedingung ist
+
+    σ_y(ε_p,eq) = min(f_y + H·ε_p,eq, f_u),   der Knick liegt bei ε_p,u = (f_u − f_y)/H.
+
+Bis zum Knick verfestigt der Werkstoff linear, danach fließt er ideal
+plastisch. Ist f_u kleiner als f_y (eine widersprüchliche Eingabe), gilt f_y
+als Grenze, also ideal plastisch ab f_y, und das Protokoll sagt es.
+
+**Was „E/100“ ist.** EN 1993-1-5 zeichnet die Steigungen in Bild C.2 in das
+σ-ε-Bild, also als Tangente E_t der Gesamtkurve und nicht als
+Verfestigungsmodul H der Fließbedingung. Mit E_t = E·H/(E + H) folgt für
+E_t = r·E der Modul H = E·r/(1 − r). Das ist genau die Lesart der bisherigen
+Einstellung „Verfestigung E_t/E“ (§ 5e, Werkstoffgesetz): E/100 ist r = 1 %,
+H = E/99 = 2121,2 N/mm² bei E = 210 000 N/mm², „ohne Verfestigung“ ist
+r = 10⁻⁴, H = E/9 999 = 21,0 N/mm². Rechnungen, in denen kein Punkt f_u
+erreicht, bleiben deshalb bitgleich: am Zugstab bei ε = 3 % (hex8 und tet10)
+und am Kragträger unter 1,20 M_el sind u, F_p und die Zahl der
+Newton-Schritte mit und ohne f_u identisch
+(`tests/test_verfestigung_grenze.py`, test_unter_fu_bitgleich). Hätte „E/100“
+den Modul H gemeint, wäre H = 2100 statt 2121,2 N/mm² (1,0 % weicher), σ_y
+bei ε_p = 5 % 460,00 statt 461,06 N/mm², und f_u = 490 bei f_y = 355 N/mm²
+wäre bei ε_p = 6,429 % statt 6,364 % erreicht. Der Normtext lag bei dieser
+Änderung nicht vor; die Lesart folgt aus der Darstellung als σ-ε-Linie, auf
+die sich die Entscheidung beruft.
+
+**Je Werkstoff.** `Material.verfestigung` trägt r = E_t/E des Werkstoffs.
+None heißt „Vorgabe“: dann gilt `Plastizitaet.verfestigung` der Rechnung, ab
+Werk 1 % = E/100. Bis zum 13.10.2026 gab es nur diese eine Einstellung für
+alle Werkstoffe. Eine Datei ohne den Schlüssel (vor dem 13.10.2026) liest
+None, also die Vorgabe. Die Grenze ist `Material.fu` (`plastizitaet.werkstoff_grenze`),
+**immer aus dem Werkstoff**: nicht 1,3·f_y wie `Material.ultimate_strength`,
+nicht die Sortentabelle und nicht die Dickentabelle. Das ist dieselbe Regel,
+nach der die Plastizität f_y liest (nur `Material.fy`, § 5e).
+
+**Ohne f_u.** Fehlt f_u, wird kein Vorgabewert gesetzt. Der Werkstoff
+verfestigt dann ohne Grenze wie bis zum 13.10.2026; das Protokoll der
+Plastizität sagt es einmal je Lastfall und Werkstoff („Werkstoff „S355“ ohne
+f_u – Verfestigung ohne Grenze, bitte f_u eingeben“), die Netzabnahme
+(`diagnose.abnahme` mit Warnungen, Prüfung 9) meldet es als WARNUNG vor der
+Rechnung, und die Werkstoffmaske zeigt „f_u fehlt“. Abgebrochen wird nicht,
+aus zwei Gründen. Ein Abbruch machte jede Rechnung mit Plastizität
+unmöglich, deren Werkstoff nur f_y trägt — von Hand angelegte Werkstoffe,
+Importe ohne Zugfestigkeit und alle bisherigen Prüfungen und Prüfmatrixfälle
+mit Plastizität. Und „keinen Vorgabewert setzen“ ist mit dem Weiterrechnen
+erfüllt: es wird kein f_u erfunden, sondern ohne Grenze gerechnet, und das
+steht an drei Stellen da.
+
+**Schrauben und Spannstahl.** Die Werte stehen wie bisher in `fy` und `fu`;
+`Material.art` („Schraube“, „Spannstahl“ oder leer) gibt ihnen nur die
+Namen. Der Anschlussbau (`joints.build.add_bolt`) legt „Schraube 10.9“ mit
+f_yb = 900 und f_ub = 1000 N/mm² als Art Schraube an; eine ältere Datei
+erkennt `Material.werkstoffart` am Namen oder an der Sorte (Festigkeitsklasse
+nach EN 1993-1-8 Tab. 3.1). Der RFEM-6-Import liest f_p0,1k nach `fy` und
+f_pk nach `fu` (wie bisher) und setzt die Art Spannstahl, wenn
+`MaterialImpl.materialType` 15 ist (am Drehlager Material 3, die Ankerstäbe)
+oder nur f_p0,1k da ist. Die Grenze wirkt nur, wo die Plastizität rechnet,
+in den **Volumen**. Stäbe fließen in diesem Programm nicht; die Zug- und
+Ankerstäbe aus diesen Werkstoffen bleiben elastisch wie bisher.
+
+**Rückführung am Knick** (`plastizitaet.rueckfuehrung`, im Stapel
+`_schritt_teil`). Mit dem Δγ_H = f/(3G + H) des verfestigenden Asts gilt:
+liegt f_y + H·(ε_p,n + Δγ_H) ≤ f_u, endet der Punkt auf dem verfestigenden
+Ast. Sonst — der Punkt liegt schon auf dem Plateau oder der Schritt läuft
+über den Knick — endet er auf q = f_u mit
+
+    Δγ = (q_trial − f_u) / (3G).
+
+Das ist die einzige Lösung von q_trial − 3G·Δγ = σ_y(ε_p,n + Δγ), denn die
+linke Seite fällt in Δγ und die rechte steigt nicht. Ein Schritt aus dem
+ungedehnten Zustand mit q_trial = 20 000 N/mm² endet auf 490 N/mm² (1,8·10⁻¹⁵
+relativ) bei ε_p = 8,05 % hinter dem Knick (6,36 %); ohne f_u ist jeder
+Punkt unter dem Knick bitgleich wie vorher.
+
+**Konsistente Tangente.** Auf dem verfestigenden Ast bleibt sie, wie sie war
+(§ 5e). Auf dem Plateau, auch nach einem Schritt über den Knick, ist
+dΔγ/dq_trial = 1/(3G), die Tangente rechnet also mit H = 0
+(`plastizitaet.verfestigung_wirksam`): θ̄ = θ, und D_ep ist in Richtung N
+singulär. Geprüft gegen die zentrale Differenz: am Punkt über 6 Zustände auf
+dem verfestigenden Ast (größte Abweichung 2,1·10⁻¹⁰), 19 auf dem Plateau
+(6,9·10⁻¹⁰) und 20 mit Wechsel im Schritt (2,7·10⁻⁹); am Netz ΔK = −∂F_p/∂u
+für hex8 (15 Punkte verfestigend, 1 auf dem Plateau) auf 5,8·10⁻⁹ und tet10
+(4 verfestigend, 44 auf dem Plateau) auf 1,1·10⁻⁸, beide ohne den Boden
+`H_TANGENTE`.
+
+**Der Boden H_TANGENTE.** Damit K + ΔK regulär bleibt, rechnet ΔK mit
+mindestens H = 10⁻⁴·3G = 24,2 N/mm² (§ 5e.2). Auf dem Plateau greift er
+immer, und bei „ohne Verfestigung“ ebenfalls, weil 21,0 N/mm² darunter
+liegt. Dort ist ΔK um den Boden steifer als die konsistente Tangente: am
+Netz mit Boden 1,8·10⁻⁵ (hex8) bzw. 3,8·10⁻⁵ (tet10) neben der zentralen
+Differenz. Die Rückführung rechnet mit dem wahren H; das Ergebnis im
+Gleichgewicht hängt am Boden nicht. Er kostet Konvergenz, und zwar beim
+hex8 deutlich mehr als beim tet10 (siehe unten).
+
+**Zugstab über den Knick.** Quader 0,3 × 0,1 × 0,1 m an drei Symmetrieebenen
+gehalten, das Ende um ε·L gezogen (Weg vorgegeben, weil es hinter f_u unter
+Kraft kein Gleichgewicht gibt), S355 mit f_u = 490 N/mm², E/100. Die
+geschlossene Lösung ist σ = f_y + E_t·(ε − f_y/E) bis f_u, danach f_u, und
+ε_p,eq = ε − σ/E. Bei ε = 3 % treffen hex8 und tet10 414,45 N/mm² an allen
+Integrationspunkten auf 2·10⁻¹³, bei ε = 10 % in einer und in drei
+Laststufen 490,00 N/mm² auf 6·10⁻¹⁰ (hex8) und 8·10⁻¹³ (tet10), quer
+spannungsfrei, und ε_p,eq = 9,767 %. Ebenso die Schraube 10.9 (954,00 N/mm²
+bei 3 %, 1000 N/mm² bei 8 %), der Spannstahl (1030 N/mm² bei 15 %, E = 170 000
+N/mm²) und „ohne Verfestigung“ (355,38 N/mm² bei 2 %). Durch den ganzen
+Löser (`solve_static`, hex8, 10 %) steht σ_v an allen Knoten auf 490,0000
+N/mm².
+
+**Konvergenz.** In den fünf Prüfreihen der Plastizität (`test_plastizitaet`,
+`test_spitzen_abbruch`, `test_vorspannung_fliessen`,
+`test_temperatur_sofort`, `test_vorspannung_sofort`) ändern sich weder die
+Newton-Schritte noch die Halbierungen. Gezählt wurde je Aufruf von
+`plastizitaet.iteration`, vorher auf 192317a, nachher auf 6e11a7c, jeweils
+aus einem festen Arbeitsbaum:
+
+| Prüfreihe | Aufrufe | Newton-Schritte vorher / nachher | Halbierungen vorher / nachher | nicht konvergiert vorher / nachher |
+|---|---|---|---|---|
+| test_plastizitaet | 84 | 1455 / 1455 | 37 / 37 | 8 / 8 |
+| test_spitzen_abbruch | 10 | 224 / 224 | 9 / 9 | 0 / 0 |
+| test_vorspannung_fliessen | 4 | 16 / 16 | 0 / 0 | 0 / 0 |
+| test_temperatur_sofort | 5 | 27 / 27 | 1 / 1 | 0 / 0 |
+| test_vorspannung_sofort | 7 | 43 / 43 | 1 / 1 | 0 / 0 |
+
+Die acht „nicht konvergiert“ in `test_plastizitaet` sind Vergleichs- und
+Rücknahmeläufe, die die Prüfreihe so erwartet (etwa die Anfangsdehnung bei
+kleiner Verfestigung, das Halbieren abgeschaltet, das Übermaß ohne den
+neuen Bezug), vorher wie nachher dieselben. f_u
+erreicht in diesen Reihen nur die Ankerplatte von `test_spitzen_abbruch`
+(S355 mit f_u = 510 N/mm²): in der Zone am Ring steht σ_v jetzt bei 510 statt
+531,7 N/mm², ε_p max wächst von 8,44 auf 8,77 % (streng) und von 8,33 auf
+8,60 % (ingenieurmäßig), bei denselben 29 und 14 Newton-Schritten. Die
+übrigen Prüfkörper dieser Reihen haben kein f_u und rechnen ohne Grenze wie
+vorher; sie sagen über das Plateau also nichts. Die Tabelle in § 5e.4 ist
+vor der Grenze gemessen. An der groben Ankerplatte mit 5·10⁻³ weicht σ_v
+außerhalb der Zone jetzt um 0,29 statt 0,20 N/mm² ab und die Ankerkraft um
++0,18 statt +0,14 %; die übrigen Spalten und die feine Ankerplatte sind
+nicht nachgemessen.
+
+Das Plateau selbst zeigt der Zugstab (Newton-Schritte in einer bzw. drei
+Laststufen; „vorher“ bei 10 % heißt ohne Grenze, 561,45 statt 490 N/mm²):
+
+| Zugstab | Toleranz | hex8 vorher | hex8 nachher | tet10 vorher | tet10 nachher |
+|---|---|---|---|---|---|
+| ε = 3 % (unter f_u) | 10⁻³, 10⁻⁴, 10⁻⁸ | 3 / 5 | 3 / 5 | 3 / 5 | 3 / 5 |
+| ε = 10 % (über den Knick) | 10⁻³ | 3 / 5 | 3 / 5 | 3 / 5 | 3 / 5 |
+| ε = 10 % | 10⁻⁴ | 3 / 5 | 3 / 5 | 3 / 5 | 3 / 5 |
+| ε = 10 % | 10⁻⁸ | 3 / 5 | **8 / 10** | 3 / 5 | 4 / 6 |
+
+Bei den Toleranzen, die die Oberfläche anbietet (10⁻², 10⁻³, 10⁻⁴), ändert
+sich also nichts. Darunter konvergiert der hex8 auf dem Plateau **nur noch
+linear**: nach 2,05·10⁻⁶ im dritten Schritt fiel die Änderung mit dem Faktor
+0,6 je Schritt (8,6·10⁻⁸, 3,4·10⁻⁸, 2,1·10⁻⁸, 1,2·10⁻⁸ …), und mit Toleranz
+10⁻¹⁰ kam er in 40 Schritten nicht an; der Verlauf sprang alle elf Schritte
+wieder auf 8·10⁻⁸. Ohne den Boden H_TANGENTE stand die Änderung schon nach
+dem dritten Schritt bei 2,1·10⁻⁹, und der tet10 braucht mit Boden vier
+Schritte bis 3·10⁻¹¹. Vermutlich wirkt der Boden beim hex8 über die
+kondensierten inneren Moden stärker: sie werden mit (K_aa + ΔK_aa)⁻¹
+herauskondensiert, und auf dem Plateau ist ΔK_aa in Fließrichtung bis auf
+den Boden null. Das ist nicht weiter zerlegt. Ideal plastisch konvergiert der
+Newton damit schlechter, aber erst unter den Toleranzen, die die Oberfläche
+anbietet.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
@@ -5719,8 +7125,19 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 * Eigenschwingungen: verallgemeinertes Eigenwertproblem (K − ω² M) φ = 0
   mit konsistenter Balkenmassenmatrix bzw. konzentrierten Massen (Schalen,
   Volumen), Shift-Invert-Lanczos (ARPACK).
+  Gesperrt sind die Lager und die Freiheitsgrade ohne Steifigkeit, nicht die
+  ohne Masse: Teile aus einem gewichtslosen Werkstoff (ρ = 0, Hilfsmaterial)
+  schwingen als masselose Teile mit – M ist dann nur positiv semidefinit, was
+  Shift-Invert zulässt; es gibt höchstens so viele Formen wie Freiheitsgrade
+  mit Masse, und ein Modell ganz ohne Masse wird mit einer Meldung
+  abgewiesen. Bis zum 13.10.2026 sperrte die Modalanalyse jeden
+  Freiheitsgrad ohne Masse wie ein Lager: am Kragarm 1,2 m aus hex8 mit
+  gewichtsloser Spitze (0,2 m) kam f₁ = 427,3 statt 82,9 Hz heraus, aus
+  Stäben 151,4 statt 28,9 Hz (`tests/test_gewichtslos.py`, Vergleich mit der
+  Spitze bei 10⁻⁶ der Dichte).
 * Lineares Knicken: (K + λ K_g) φ = 0 mit der geometrischen Steifigkeit der
-  Stäbe (Przemieniecki) aus dem Grundzustand eines Lastfalls oder einer
+  Stäbe (Balken nach Przemieniecki, Fachwerkstab, Zug-/Druckstab und Seil
+  als Saite N/L, seit 14.10.2026) aus dem Grundzustand eines Lastfalls oder einer
   Kombination, im System seiner Situation (Abschnitt 3.1). Der
   Knicklastfaktor λ multipliziert die Lasten des Grundzustands.
   Gelöst wird mit K als Metrik: (−K_g) φ = μ K φ, λ = 1/μ, die
@@ -6615,6 +8032,83 @@ entsteht — denn die Hülle ist der Hebel (3,4 Tetraeder je Randdreieck am Dreh
 | Flächen | das gleichmäßige Dreiecksgitter wird wie in einem Quadtree verdichtet, wo das Feld unter 70 % der Zellweite fällt (vier Kinder halber Weite, bis acht Stufen), dann auf die Feldweite ausgedünnt und **geglättet**: jeder Innenpunkt wandert um den halben Schritt zum Schwerpunkt seiner Nachbarn, behalten wird nur, was die schlechteste Güte seiner Dreiecke bessert (Quadrat 1 × 1 m, h = 100 mm, geteilter Rand, 20-mm-Stelle: Güte min 0,65 → 0,79 in der Mitte, 0,24 → 0,52 an der Ecke, Stufenfeld 0,22 → 0,35) |
 | Tetraeder | dritte Schranke der Sollgröße neben h und der Randkantenregel; die Verfeinerung selbst bleibt (Platte, Kugel 15 mm bei h = 100 mm: 11,9 mm in der Kugel, 79 mm im Feld, Güte min 0,114) |
 | gmsh / MMG3D | gmsh bekommt einen Größen-Rückruf mit derselben Sollgröße; MMG3D die Kantenlänge je Knoten als Metrik (`.sol`) und passt das Innere bei fester Hülle an (Quader, Hülle 50 mm, Kugel 5 mm: 12,8 mm im Ziel, Güte min 0,507, 0,4 s). **Der gmsh-Rückruf ist keine Zusage:** an der Platte mit 100-mm-Hülle traf HXT die 10-mm-Kugel je Prozesszustand mit 14,5 oder 38,5 mm — bei identischen Fragen und Antworten bis zur 579. Anfrage; die Abweichung entsteht in gmsh, die Ursache ist nicht gefunden. Verlässlich ist die Metrik von MMG3D; ohne sie warnt das Protokoll |
+
+**Krafteinleitungen ohne Fläche: Quellen vor dem Vernetzen (13./14.10.2026).** Eine
+starre Scheibe über einer Bohrung koppelt nur den Lochrand, ein Stabende hängt an
+drei oder vier Knoten eines Elements; die Kraft tritt an einer Linie bzw. in
+einem Punkt ins Volumen, die Spannung dort wächst mit jeder Verfeinerung (§ 7b),
+und die Zone, die man deshalb nicht auswertet (`spitzenstellen`), ist so groß
+wie die Elemente. Am Netz erkennt `spitzenstellen.kandidaten` die Stellen über
+die Kopplungen, die aber erst beim Vernetzen entstehen
+(`fugen.starre_flaechen_koppeln`, `fugen.stabenden_koppeln`). Das Größenfeld
+braucht sie davor; `netzfeld.krafteinleitungen` bestimmt sie darum aus der
+Geometrie allein:
+
+* **starre Scheibe** (`fugen.starre_flaechen`): Ein Gitter im um 10 % verkleinerten
+  Umriss der Scheibe wird auf die ebenen Körperflächen in ihrer Ebene projiziert.
+  Deckt eine Körperfläche mindestens `FLAECHE_ANTEIL` = 10 % davon, trägt die
+  Scheibe eine Fläche und ist keine Stelle. Sonst ist ihre Quelle der Teil ihres
+  Umrisses, der auf einer Körperfläche liegt (Toleranz max(`STARR_TOL_RAND`; 2 % r),
+  weil die Körperflächen mit 16 Punkten je Linie abgetastet sind und die Sehne eines
+  Halbkreises bis 0,5 % von r innen liegt), und die krummen Linien dieser Flächen, die
+  ganz auf dem Umriss liegen: der Lochrand.
+* **Stabende**: ein Knoten an genau einem truss- oder beam-Element, der auf einer
+  ebenen Randfläche eines Körpers liegt (0,1 mm wie `fugen.stabenden_koppeln`) oder von
+  RFEM in sie integriert ist. Das Ende in der Mitte einer starren Scheibe ist deren
+  Master und zählt nicht.
+
+Am Drehlager findet das 64 Scheiben (16 Ankerringe r 25,5 mm, 48 Schraubenringe r 8
+und 10 mm) und 48 Stabenden, keine flächige Scheibe, in 2,9 s: dieselben Zahlen wie
+die Abnahme nach dem Vernetzen.
+
+*Ziellänge.* Wo die Linie schon einen Bogen hat, gilt derselbe Wert wie an den Bögen
+der Kontaktflächen von Fein, 9° je Abschnitt (kein neuer Wert); die Kantenlänge am
+Ring ist h_R = min(½ h_Mittel; r · 9°), so dass das Netz am Rand nie gröber als die
+halbe Kantenlänge von Mittel wird (r · 9° ist größer als ½ h_Mittel erst bei einem Loch
+mit r > 3,2 h_Mittel). Das Stabende bekommt h_P = ½ h_Mittel seines Körpers, wie die
+Flächen von Fein. Die Reichweite ist 2 h (zwei Elementringe), der Umkreis also etwa
+r + 2 h; dahinter wächst das Feld wie jede Quelle mit 0,35 je Meter. Der Lochrand
+läuft über den Weg der Bögen von Fein (`Groessenfeld.feine_linien`, Linienteilung),
+das Innere über eine Quelle je h/2 am Ring. Quadratisch sind Mittel und Fein ohnehin
+(tet10); Entwurf bleibt linear und ohne diese Quellen, weil tet4 neben tet10 in einem
+Netz keine verträglichen Elemente gäbe.
+
+*Untergrenze: die Mindestweite.* Ein Ring mit h_R < h_Mittel / 30
+(`mesher3d.mindestweite`, `MINDESTWEITE_TEILER`) bekommt keine Quelle. Das ist die
+Länge, unter der der Vernetzer von sich aus keine Hüllkante erzeugen soll, weil
+daraus Splitter werden, die kein Volumenschritt mehr los wird (21.09.2026: 189
+Splitter am Drehlager, bei allen die kürzeste Kante eine Hüllkante von 0,13 bis
+1,36 mm bei h = 50 mm). Am Drehlager liegen die 48 Schraubenringe darunter (h_R 1,26
+und 1,57 mm gegen 1,67 mm), 18, 18 und 12 in den Körpern V33, V35 und V31, die
+16 Ankerringe darüber (4,01 mm gegen 1,33 mm). Ohne diese Grenze verfeinerte die erste
+Fassung auch die Schraubenringe; die Grenze folgt der Regel des Vernetzers und ist nicht
+an Messwerten dieser Körper eingestellt.
+
+*Aufwand.* Die Zahl der Tetraeder im Kegel um eine Linienquelle der Länge L mit
+Kantenlänge h₀ und Steigung g (Tetraeder mit Kante h hat das Volumen v₀ h³,
+v₀ = 1/(6√2) = 0,1179) ist im Vollraum
+
+    N = L ∫ 2π d dd / (v₀ (h₀ + g d)³) = π L / (v₀ g² h₀) = 217 · L / h₀   (g = 0,35),
+
+an einer Oberfläche halb so viel. Für einen Ring mit Winkel Δφ je Abschnitt ist
+L / h₀ = 2π / Δφ, also 40 bei 9°: rund 8 700 Tetraeder im Vollraum, **unabhängig vom
+Radius**. Die Tiefe der Zone dagegen, zwei Elementringe 2 · r · Δφ, wächst mit dem
+Radius; darum fallen bei der Grenze in Unbekannten zuerst die Stabenden und dann die
+kleineren Ringe weg (`elementstufe.KRAFT_STUFEN`). Geschätzt am gespeicherten
+Mittel-Netz des Drehlagers (jedes Tetraeder auf min(alt; Feld) am Schwerpunkt gesetzt,
+V / (v₀ h³); keine Vernetzung): alle 64 Ringe 9° und 48 Stabenden h/2 981 291 statt
+617 177 tet10 (4,85 statt 3,05 Mio. Unbekannte), nur die 16 Ankerringe und die Stabenden
+737 298 (3,64 Mio.), nur die Stabenden 658 298 (3,25 Mio.): 4,9 · 10³ Tetraeder je
+Ankerring und 5,1 · 10³ je Schraubenring. **Gemessen** (Messlauf 14.10.2026, Stufe 1:
+Ankerringe und Stabenden) kam das Netz auf 4 234 851 Unbekannte, die Schätzung lag also
+14 % darunter, weil sie die Nachbarkörper nur über den Schwerpunkt der alten Elemente
+sieht: Die Platten V15, V33, V35 und V31 wuchsen um 63, 44, 43 und 27 % der Knoten. Jede
+Ankerplatte wuchs von rund 1 300 auf rund 9 200 Tetraeder (nach der Nachbesserung),
+also, im Verhältnis der Tetraeder hochgerechnet, um etwa 42 000 Unbekannte; 16 davon sind 0,67 Mio., und die 16 Ankerringe allein
+ergäben rund 3,7 Mio. Unbekannte (Schätzung ohne die Wirkung auf die Nachbarkörper).
+Die Stufe mit den Stabenden allein kam in 106 Minuten nicht zu Ende. Ein Kegel mit
+Steigung 0,35 reicht von 3 mm auf 50 mm über 134 mm in die Nachbarkörper; das
+Größenfeld ist ein Feld des ganzen Modells und kennt keine Grenze am eigenen Körper.
 
 **Bedeutung der Flächen — Nebenflächen grob.** Am Drehlager stammen 85 % der Elemente
 aus acht Körpern, alle mit derselben Ziellänge 50 mm; ihre Elementzahl kommt aus der
@@ -10106,8 +11600,9 @@ Statt dessen wird gesagt, **welches** Bauteil sich **wie** bewegen kann,
 
 ### 7b.1 Stufe 1a: Restfreiheiten je Teiltragwerk
 
-Ein Teil, das nur über Elemente und Kopplungen zusammenhängt (§ 7a,
-`diagnose.teiltragwerke`), ist in sich starr. Eine Starrkörperbewegung ist
+Ein Teil, das nur über Elemente, Kopplungen und (seit dem 14.10.2026)
+Starrkörper RBE2/RBE3 zusammenhängt (§ 7a, `diagnose.teiltragwerke`), ist in
+sich starr. Eine Starrkörperbewegung ist
 
     u(p) = t + ω × r ,      r = p − c   (c = Schwerpunkt der Knoten des Teils)
 

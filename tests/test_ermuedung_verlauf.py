@@ -1148,24 +1148,21 @@ def test_volumen_regel_rueckfall_und_fliessen():
     anp = solver.solve_all(mp, design=False, fatigue=True)
     fliessend = len(anp.cases[lfp].info.get("plastisch") or {})
     fv = anp.fatigue.volumen["B"]
-    check("fließende Elemente: Meldung nennt Zustand und Zahl, Nachweis gerechnet",
-          fliessend > 0 and getattr(fv, "regel", "") == "knoten" and not fv.fehler
-          and any("fließen" in w and lfp in w and f"{fliessend} " in w for w in fv.warnings),
-          f"{fliessend} fließend, {fv.warnings}")
-    check("fließend: die Meldung sagt, dass der Knoten das Mittel trägt (Beitrag des nächsten "
-          "Integrationspunkts)",
-          any("Knotenmittel" in w and "nächsten Integrationspunkts bei" in w
-              and "tragen die Spannung des nächsten" not in w for w in fv.warnings),
-          str(fv.warnings))
-    sk = anp.cases[lfp].solid_knoten
-    kn = np.asarray(sk["knoten"])
-    orte = getattr(fv, "orte", None)
-    d_je = getattr(fv, "dsig_je_ort", None)
-    soll = np.abs(F.signalspannung(np.asarray(sk["spannung"]))) * mp.design.gamma_Ff
-    gleich = (orte is not None and d_je is not None and np.array_equal(np.asarray(orte), kn)
-              and np.allclose(np.asarray(d_je), soll, rtol=1e-12, atol=1e-3))
-    check("fließend: die Schwingbreite ist die Knotenspannung des Lösers (dort ohne σ·n = 0)", gleich,
-          f"{0 if orte is None else len(orte)} Orte / {len(kn)} Knoten")
+    # Bis zum 13.10.2026 wurde hier gerechnet: Schwingbreite aus der
+    # Knotenspannung des Loesers, mit einem Hinweis auf die fliessenden
+    # Elemente. Seit der Entscheidung des Anwenders vom 13.10.2026 ist die
+    # Ermuedung bei plastischer Rechnung „nicht anwendbar – erfordert
+    # elastische Ermüdungslastfälle“ (tests/test_plastisch_nachweise.py).
+    check("fließende Elemente: Ermüdung „nicht anwendbar“, nichts gerechnet, Grund nennt den Zustand",
+          fliessend > 0 and fv.status() == "nicht anwendbar" and fv.D == 0.0 and fv.util == 0.0
+          and "nicht anwendbar – erfordert elastische Ermüdungslastfälle" in fv.fehler and lfp in fv.fehler,
+          f"{fliessend} fließend, {fv.status()}, {fv.fehler!r}")
+    check("fließend: keine Schwingbreite je Ort",
+          not len(getattr(fv, "orte", None) or []) and fv.dsig_max == 0.0,
+          f"{len(getattr(fv, 'orte', None) or [])} Orte")
+    check("fließend: Zusammenfassung sagt „nicht anwendbar“ statt einer Schädigung",
+          "nicht anwendbar" in anp.fatigue.summary() and "D = " not in anp.fatigue.summary(),
+          anp.fatigue.summary()[:140])
 
 
 def test_volumen_abgeschaltete_elemente():
@@ -1294,7 +1291,7 @@ def test_volumen_ergebnis_aelterer_fassung():
     check("ältere Fassung: der Bericht sagt, woher das Ergebnis kommt und was neu gerechnet gilt",
           "älteren Programmfassung" in block and "nicht neu gerechnet" in block
           and "ermuedung_volumen = „knoten“" in block
-          and f"Element {fv2.element}" in block and "314.3" in block, block[:400])
+          and f"Element {fv2.element + 1}" in block and "314.3" in block, block[:400])
     zus = t[t.rfind("Zusammenfassung"):]
     check("ältere Fassung: Hinweis auch in der Zusammenfassung",
           "Ermüdung Volumen R" in zus and "älteren Programmfassung" in zus, zus[:300])
@@ -1836,8 +1833,58 @@ def test_lastfall_loeschen_nimmt_umhuellende_und_ermuedung_mit():
     check("solve_all laeuft durch, Umhuellende und Ermuedung gerechnet", gut, detail)
 
 
+def test_volumen_elementnummer_ab_1():
+    """Die Ermuedung der Volumen nennt Elemente ab 1 wie Knoten und wie der
+    Volumennachweis (c76c972). Bis zum 14.10.2026 standen in der Tabelle der
+    Ermuedung, im Bericht (maßgebende Stelle, Schwingbreite je Last, Zone) und
+    im Zonenhinweis die Elemente ab 0, die Knoten ab 1."""
+    import re
+    import tempfile
+    from statik3d import spitzenanzeige as SA
+    from statik3d.report.html import Report
+    m, kr, lf, rechts, n = _kragarm_volumen((8, 2, 4))
+    m.design.ermuedung_volumen = "element"
+    an = solver.solve_all(m, design=False, fatigue=True)
+    fv = an.fatigue.volumen["R"]
+    soll = f"Element {fv.element + 1}"
+    zeile = [r for r in an.fatigue.table() if str(r[0]) == "Volumen R"]
+    check("Tabelle der Ermüdung: maßgebendes Element ab 1",
+          zeile and zeile[0][-1].startswith(soll), f"{zeile[0][-1] if zeile else None} (ab 0: {fv.element})")
+    p = os.path.join(tempfile.mkdtemp(), "b.html")
+    Report(m, an).to_html(p)
+    with open(p, encoding="utf-8") as fh:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fh.read()))
+    stelle = re.search(r"Schädigung D an der maßgebenden Stelle [\d.,]+ \(Element (\d+)\)", t)
+    check("Bericht: maßgebende Stelle ab 1", stelle is not None and stelle.group(1) == str(fv.element + 1),
+          f"{stelle and stelle.group(0)}")
+    je_last = [r for r in fv.ranges]
+    check("Bericht: Schwingbreite je Ermüdungslast, Stelle ab 1",
+          je_last and all(f"Element {int(r[3]) + 1}" in t for r in je_last),
+          str([int(r[3]) + 1 for r in je_last]))
+    # eine Zone an einem Element des Koerpers (nachgebildet): Hinweis und Bericht
+    zone = int(rechts[0]) if int(rechts[0]) != fv.element else int(rechts[1])
+    echt = SA.nachweis_zonen
+    SA.nachweis_zonen = lambda model, ergebnisse: {k: {zone} for k in ergebnisse}
+    try:
+        fz = F.check_fatigue(m, an)
+    finally:
+        SA.nachweis_zonen = echt
+    fvz = fz.volumen["R"]
+    hinweis = " ".join(fvz.warnings)
+    check("Zonenhinweis der Ermüdung: Element ab 1",
+          fvz.zone_element == zone and f"(Element {zone + 1})" in hinweis, hinweis[:200])
+    an.fatigue = fz
+    Report(m, an).to_html(p)
+    with open(p, encoding="utf-8") as fh:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fh.read()))
+    zz = re.search(r"netzabhängige Stellen \(nur berichtet\) .*? \(Element (\d+)\)", t)
+    check("Bericht: Zone der Ermüdung ab 1", zz is not None and zz.group(1) == str(zone + 1),
+          f"{zz and zz.group(0)[-80:]}")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
+              test_volumen_elementnummer_ab_1,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
               test_lastfall_umbenennen_zieht_ermuedungslasten_nach,

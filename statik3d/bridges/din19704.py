@@ -228,9 +228,21 @@ class Regelwerk:
             grund = f"Präfix „{praefix}“ beginnt mit einem Leerzeichen - bitte ohne"
         if grund:
             raise NameVergeben(f"{grund} (mit dem Präfix hießen alle erzeugten Kombinationen so)")
+        # Ein Lastfall ohne zugeordnete Einwirkung (13.10.2026) wuerde hier
+        # still wegfallen - er steht in keiner Einwirkungsart dieses
+        # Regelwerks. Der Generator weigert sich wie der nach EN 1990.
+        offen = model.lastfaelle_ohne_einwirkung()
+        if offen:
+            from ..combinations import sperrhinweis_erzeugen
+            from ..model import KombinationGesperrt
+            raise KombinationGesperrt(sperrhinweis_erzeugen(offen), lastfaelle=offen)
         klassen = list(klassen or ("LF1", "LF2", "LF3"))
         nach_art: dict[str, list[str]] = {}
+        faktorisiert: list[str] = []
         for name, lc in model.load_cases.items():
+            if getattr(lc, "faktorisiert", False):
+                faktorisiert.append(name)      # schon Bemessungswert: kein zweites gamma
+                continue
             nach_art.setdefault((lc.category or "Q").strip(), []).append(name)
         angelegt = []
         belegt_jetzt: set = set()
@@ -281,6 +293,10 @@ class Regelwerk:
                 anlegen(f"{praefix}{kl}.{k}", faktoren,
                         f"{kl}, Leiteinwirkung {art_l} ({leit}) - {KLASSEN_TEXT[kl]}")
         if log is not None:
+            if faktorisiert:
+                log.append(f"  {len(faktorisiert)} Bemessungslastfälle (bereits faktorisiert) nicht "
+                           f"kombiniert: {', '.join(faktorisiert[:6])}"
+                           + (" …" if len(faktorisiert) > 6 else ""))
             log.append(f"{len(angelegt)} Kombinationen nach {self.name} gebildet "
                        f"({', '.join(klassen)})")
             for z in self.offen()[:5]:

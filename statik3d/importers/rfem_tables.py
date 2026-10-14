@@ -681,15 +681,22 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 m.nu = max(0.0, E / (2 * G) - 1.0)
             rho = t.num(row, "rho")
             gamma = t.num(row, "gamma")
+            # Dichte, sonst Wichte; eine angegebene 0 bleibt 0 - ein
+            # gewichtsloses Hilfsmaterial wie beim RFEM-6-Import (seit
+            # 14.10.2026). Bis dahin blieb bei 0 der Vorgabewert 7850 stehen.
             if rho:
                 m.rho = rho * f_rho
             elif gamma:
                 m.rho = gamma * f_gamma / 9.81
+            elif rho == 0.0 or gamma == 0.0:
+                m.rho = 0.0
             al = t.num(row, "alpha")
             if al:
                 m.alpha = al
             model.add_material(m)
             mat_by_no[no] = m.name
+            if m.rho == 0.0:
+                C.hinweis_gewichtslos(log, m.name)
         C.say(log, f"{len(mat_by_no)} Materialien")
 
     def material(ref) -> str:

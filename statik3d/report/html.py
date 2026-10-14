@@ -35,6 +35,7 @@ from .. import __version__
 from ..model import ACTION_CATEGORIES, DOF_NAMES, Combination
 from .. import elemente as _EL
 from .. import begriffe as _BG
+from .. import spitzenanzeige as _SA
 from ..combinations import combination_table
 from . import svg as sv
 
@@ -67,7 +68,8 @@ COMBO_TYPES = dict(_BG.TYP_KURZ)
 ENVELOPE_NAMES = {k: b.lang for k, b in _BG.UMHUELLENDE.items()}
 
 KIND_NAMES = {"Querschnitt": "Querschnittsnachweis", "Stabilitaet": "Stabilitätsnachweis",
-              "section": "Querschnittsnachweis"}
+              "section": "Querschnittsnachweis", "Spannstahl": "Spannstahlnachweis",
+              "Schraube": "Schraubennachweis auf Zug"}
 
 FORCE_UNITS = {"N": "kN", "Vy": "kN", "Vz": "kN", "Mt": "kNm", "My": "kNm", "Mz": "kNm"}
 
@@ -738,7 +740,12 @@ class Report:
         elif name == "Lastfälle":
             rows = [["Lastfall", "Art", "Lasten", "Beschreibung"]]
             for lc in m.load_cases.values():
-                rows.append([lc.name, ACTION_CATEGORIES.get(lc.category, lc.category),
+                # der Text der Einwirkung, nicht das Tupel der Tabelle (Text und psi);
+                # bei einem Bemessungslastfall mit dem Kennzeichen (13.10.2026)
+                rows.append([lc.name,
+                             ACTION_CATEGORIES.get(lc.category, (lc.category,))[0]
+                             + (", Bemessungslastfall, bereits faktorisiert"
+                                if getattr(lc, "faktorisiert", False) else ""),
                              str(lc.n_loads), lc.description or ""])
         elif name == "Kombinationen":
             rows = ([list(map(str, r)) for r in combination_table(m, self._theorie_spalte)]
@@ -1032,9 +1039,24 @@ class Report:
         else:
             fliessen = f"in {k} davon fließen Elemente, höchstens {max(fl)} je Ergebnis"
         r = float(getattr(getattr(self.model, "plastizitaet", None), "verfestigung", 0.0) or 0.0)
+        # Seit dem 13.10.2026 bis f_u (Schraube f_ub, Spannstahl f_pk), danach
+        # ideal plastisch; Werkstoffe mit eigener Verfestigung und solche ohne
+        # f_u werden genannt
+        from .. import plastizitaet as _pl
+        eigene, ohne_fu = [], []
+        try:
+            for mat in self.model.materials.values():
+                if getattr(mat, "verfestigung", None) is not None and getattr(mat, "fy", None):
+                    eigene.append(f"{mat.name} {_pl.verfestigung_text(mat.verfestigung)}")
+            ohne_fu = [mat.name for mat in _pl.werkstoffe_ohne_grenze(self.model)]
+        except Exception:                 # noqa: BLE001 - der Satz darf den Bericht nicht anhalten
+            pass
         return ("Die Berechnung ist elastisch-plastisch: Plastizität der Volumenelemente "
                 f"(von Mises mit isotroper linearer Verfestigung, E_t/E = {r * 100:g} %"
                 + (", ideal-plastisch" if r <= 0 else "")
+                + (f" (eigene: {', '.join(eigene)})" if eigene else "")
+                + " bis f_u, danach ideal plastisch"
+                + (f"; ohne f_u und darum ohne Grenze: {', '.join(ohne_fu)}" if ohne_fu else "")
                 + "; Werkstoffe ohne Streckgrenze f_y bleiben elastisch) ist in "
                 f"{len(pz)} von {n_ges} Ergebnis{'' if n_ges == 1 else 'sen'} gerechnet, "
                 f"{fliessen}; keine Theorie III. Ordnung/große Verformungen. ")
@@ -1376,6 +1398,10 @@ class Report:
         beam = lc.eigene("beam_loads") if hasattr(lc, "eigene") else lc.beam_loads
         face = lc.eigene("face_loads") if hasattr(lc, "eigene") else lc.face_loads
         temp = lc.eigene("temp_loads") if hasattr(lc, "eigene") else lc.temp_loads
+        # umgerechnete Vorspannungen (RFEM-Import) stehen als Kraft, nicht als
+        # Temperatur (13.10.2026) - eigene Tabelle unten
+        vorsp = [l for l in temp if getattr(l, "aus_vorspannung", 0.0)]
+        temp = [l for l in temp if not getattr(l, "aus_vorspannung", 0.0)]
         # Knotenlasten (gleiche Lastvektoren zusammenfassen)
         if nodal:
             groups = {}
@@ -1466,8 +1492,10 @@ class Report:
                         for pt in P)
                 rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
                              fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
-                             "senkrecht" if not g.richtung else
-                             "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")",
+                             (f"lokal {'xyz'[int(g.lokal.get('achse', 0))]} (Flächenachsen)"
+                              if getattr(g, "lokal", None) else
+                              "senkrecht" if not g.richtung else
+                              "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")"),
                              "ja" if g.projiziert else "nein",
                              g.bereich.get("art", "ja") if g.bereich else "–",
                              g.kommentar or "–"])
@@ -1497,8 +1525,13 @@ class Report:
                 b.append(("note", note))
         if getattr(lc, "vorspannungen", None):
             rows = [["Bauteil", "Art", "F_v [kN]", "Achse", "Bemerkung"]]
+            soll = False
             for v in lc.vorspannungen:
-                rows.append([str(v.ziel), "Stab" if v.art == "stab" else "Volumen",
+                ist_soll = bool(getattr(v, "sollkraft", False))
+                soll = soll or ist_soll
+                rows.append([str(v.ziel),
+                             (f"Stab, Sollkraft nach Verankerung (Gruppe {int(v.gruppe or 1)})" if ist_soll
+                              else "Stab" if v.art == "stab" else "Volumen"),
                              fmt(v.kraft / 1e3, 2),
                              "Stabachse" if v.art == "stab" else
                              ("längste Abmessung" if v.achse is None else
@@ -1506,7 +1539,9 @@ class Report:
                              v.kommentar or "–"])
             b.append(("table", rows, f"Vorspannung Lastfall {lc.name}: Vorspannkraft als "
                                      "Anfangsdehnung - das Bauteil will sich um F_v/(EA) verkürzen; "
-                                     "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie",
+                                     "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie"
+                                     + ("; eine Sollkraft trägt der Stab nach dem Verankern (eigener "
+                                        "Spannschritt vor den übrigen Lasten)" if soll else ""),
                       None, ""))
         if getattr(lc, "uebermasse", None):
             rows = [["Fuge", "Gesamtüberdeckung [µm]", "Passung", "Bemerkung"]]
@@ -1522,6 +1557,27 @@ class Report:
                                      "Aus der Pressung und dem Reibbeiwert der Fuge folgt "
                                      "ihre Schubtragfähigkeit",
                       None, ""))
+        if vorsp:
+            groups = {}
+            for l in vorsp:
+                key = (round(float(l.aus_vorspannung), 3), round(float(l.vorspann_E), 3),
+                       float(l.vorspann_alpha))
+                groups.setdefault(key, []).append(l)
+            rows = [["Elemente", "Anzahl", "Vorspannkraft F_v [kN]", "E [N/mm²]", "α [1/K]"]]
+            saetze = []
+            for ls in groups.values():
+                l0 = ls[0]
+                rows.append([_ids_text([l.elem for l in ls]), str(len(ls)),
+                             fmt(l0.aus_vorspannung / 1e3, 2), fmt(l0.vorspann_E / 1e6, 0),
+                             l0.vorspann_alpha_text() if l0.vorspann_alpha else "–"])
+                saetze.append(l0.vorspann_text())
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Vorspannung Lastfall {lc.name} (aus der Quelldatei als "
+                                     "Stabkraft übernommen, gerechnet als eingeprägte Dehnung "
+                                     "ε₀ = −F_v/(E·A))", None, ""))
+            b.append(("p", "; ".join(dict.fromkeys(saetze)) + "."))
+            if note:
+                b.append(("note", note))
         if temp:
             groups = {}
             for l in temp:
@@ -1552,16 +1608,31 @@ class Report:
         for lc in m.load_cases.values():
             psi = lc.psi_factors
             cat = ACTION_CATEGORIES.get(lc.category, ("–", psi))[0]
-            if lc.is_permanent:
+            gamma_text = None
+            if getattr(lc, "faktorisiert", False):
+                # schon Bemessungswert: in jeder Kombination gamma = 1,0 ohne psi
+                cat += " – Bemessungslastfall, bereits faktorisiert (γ = 1,0, ohne ψ)"
+                gs = gi = 1.0
+                psi = None
+            elif lc.category == "P":
+                gs = lc.gamma_sup if lc.gamma_sup is not None else getattr(ds, "gamma_P", 1.0)
+                gi = lc.gamma_inf if lc.gamma_inf is not None else getattr(ds, "gamma_P", 1.0)
+            elif lc.is_permanent:
                 gs = lc.gamma_sup if lc.gamma_sup is not None else ds.gamma_G_sup
                 gi = lc.gamma_inf if lc.gamma_inf is not None else ds.gamma_G_inf
             elif lc.is_variable:
                 gs = lc.gamma_sup if lc.gamma_sup is not None else ds.gamma_Q
                 gi = ds.gamma_Q_fav
+            elif lc.kategorie_offen:
+                gamma_text = ("–", "–")
+                psi = None
             else:
                 gs, gi = 1.0, 1.0
-            rows.append([lc.name, lc.category, cat, lc.description or "–", fmt(psi[0], 2),
-                         fmt(psi[1], 2), fmt(psi[2], 2), fmt(gs, 2), fmt(gi, 2),
+            if gamma_text is None:
+                gamma_text = (fmt(gs, 2), fmt(gi, 2))
+            psi_text = ("–", "–", "–") if psi is None else (fmt(psi[0], 2), fmt(psi[1], 2), fmt(psi[2], 2))
+            rows.append([lc.name, lc.category, cat, lc.description or "–", psi_text[0],
+                         psi_text[1], psi_text[2], gamma_text[0], gamma_text[1],
                          lc.exclusive_group or "–", getattr(lc, "situation", "") or "Grundstellung",
                          self._theorie_spalte(lc),
                          str(lc.n_loads)])
@@ -1694,6 +1765,31 @@ class Report:
             "Steifigkeit ist nur für Stabelemente gebildet), Plastizieren und "
             "die Ermüdung aus dem räumlichen Spannungszustand.",
         ]))
+        from ..ec3 import volumen as _vol
+        dehnung = [c for c in v.bereiche.values() if getattr(c, "kriterium", "") == "dehnung"]
+        if dehnung or any(getattr(c, "nicht_bewertet", "") for c in v.bereiche.values()):
+            # plastische Rechnung (Entscheidung des Anwenders vom 13.10.2026)
+            b.append(("list", [
+                "Bei plastischer Rechnung ist die Spannung keine Nachweisgröße: sie liegt in "
+                "den fließenden Bereichen auf der verfestigten Fließfläche, und die geglättete "
+                "Spannung nicht fließender Elemente daneben ist eine Extrapolation. Nachgewiesen "
+                "wird dort die größte plastische Hauptdehnung ε_p,1 an den Integrationspunkten "
+                f"gegen einen Grenzwert (Vorgabe 5 % nach {_vol.NORM_DEHNUNG}, je Bereich "
+                "einstellbar): η = ε_p,1 / Grenzwert.",
+                "ε_p,1 ist der größte Eigenwert des Tensors der plastischen Dehnung an einem "
+                "Integrationspunkt; maßgebend ist der größte Punkt des Bereichs außerhalb "
+                "netzabhängiger Stellen. Eine Überlagerung von Ergebnissen einer plastischen "
+                "Rechnung hat keine plastische Dehnung - sie wird nicht bewertet.",
+                "Schrauben, Ankerstäbe und Gewindeteile werden nicht über die Dehnung "
+                "nachgewiesen, sondern über Kraft bzw. Spannung nach DIN EN 1993-1-8 (Stab- "
+                "bzw. Anschlussnachweis). Sind sie als Volumen modelliert, gehören sie nicht "
+                "in einen Volumenbereich oder werden ausgenommen.",
+            ]))
+        if any(getattr(c, "ausgenommen", None) for c in v.bereiche.values()):
+            b.append(("list", [
+                "Körper und Werkstoffe mit dem Schalter „vom Volumennachweis ausnehmen“ "
+                "(Hilfs- oder Krafteinleitungskörper; gesetzt vom Anwender) gehen in keinen "
+                "Nachweis ein und stehen als „ausgenommen“ mit Namen in der Übersicht."]))
 
         b.append(self._h(2, "Übersicht"))
         rows = [["Bereich", "Elemente", "Material", "t [mm]", "f_y [MPa]", "σ_v [MPa]",
@@ -1705,16 +1801,57 @@ class Report:
             # Eine selbst angegebene wird mit * gekennzeichnet.
             t_mm = (fmt(w.get("dicke", 0.0) * 1e3, 0)
                     + ("*" if w.get("dicke_gesetzt") else "")) if w.get("dicke") else "–"
+            if getattr(c, "nicht_bewertet", "") or getattr(c, "alle_ausgenommen", False):
+                # plastisch ohne auswertbare Dehnung bzw. alles ausgenommen
+                # (13.10.2026): kein Zahlenwert
+                rows.append([c.name, str(c.n_elemente), c.material, "–", fmt(c.fy / 1e6, 0),
+                             "–", "–", "–", "–", "–", "", c.status()
+                             + (": " + ", ".join(c.ausgenommen) if c.alle_ausgenommen else "")])
+                continue
+            if getattr(c, "kriterium", "") == "dehnung":
+                # plastische Rechnung: η aus der Dehnung, keine Spannungsspalten
+                rows.append([c.name, str(c.n_elemente), c.material, t_mm, fmt(c.fy / 1e6, 0),
+                             "–", "–", "–", "–",
+                             ("–" if c.singular or c.ausgeschaltet else Util(c.util)),
+                             c.kombination, c.status()])
+                if getattr(c, "zone_n", 0):
+                    rows.append([f"{c.name} (netzabhängige Stellen)", str(c.zone_n), c.material, "–",
+                                 fmt(c.fy / 1e6, 0), "–", "–", "–", "–", fmt(c.zone_eta, 3),
+                                 c.zone_kombination, "nur berichtet"])
+                if c.ausgenommen:
+                    rows.append([f"{c.name} (ausgenommen)", str(c.n_ausgenommen), "", "–", "–", "–",
+                                 "–", "–", "–", "–", "", "ausgenommen: " + ", ".join(c.ausgenommen)])
+                continue
             rows.append([c.name, str(c.n_elemente), c.material, t_mm,
                          fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
                          fmt(w.get("s1", 0) / 1e6, 1), fmt(w.get("s3", 0) / 1e6, 1),
                          fmt(w.get("h", 0.0), 2),
                          ("–" if c.singular or c.ausgeschaltet else Util(c.util)),
                          c.kombination, c.status()])
+            if getattr(c, "zone_n", 0):
+                # netzabhaengige Stellen: getrennt, nur berichtet (10.10.2026)
+                rows.append([f"{c.name} (netzabhängige Stellen)", str(c.zone_n), c.material, "–",
+                             fmt(c.fy / 1e6, 0), fmt(c.zone_sigma_v / 1e6, 1), "–", "–", "–",
+                             fmt(c.zone_eta, 3), c.zone_kombination, "nur berichtet"])
+            if getattr(c, "ausgenommen", None):
+                rows.append([f"{c.name} (ausgenommen)", str(c.n_ausgenommen), "", "–", "–", "–",
+                             "–", "–", "–", "–", "", "ausgenommen: " + ", ".join(c.ausgenommen)])
         b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
                   None, "t ist die Erzeugnisdicke für die Abminderung von f_y "
                   "nach EN 1993-1-1 Tab. 3.1; ohne * die kleinste Abmessung "
                   "des Körpers, mit * am Bereich angegeben."))
+        if dehnung:
+            # plastische Rechnung (13.10.2026): Wert, Grenzwert, Ort und Bauteil
+            rows = [["Bereich", "Grenzwert [%]", "ε_p,1 [%]", "η", "Ort", "Bauteil", "Werkstoff",
+                     "Komb.", "Status"]]
+            for c in dehnung:
+                rows.append([c.name, _vol.prozent(c.eps_grenze), fmt(c.eps_p1 * 100.0, 3),
+                             ("–" if c.singular else Util(c.util)), c.ort_text(), c.bauteil or "–",
+                             c.werkstoff_ort or "–", c.kombination, c.status()])
+            b.append(("table", rows, "Plastische Rechnung: größte plastische Hauptdehnung ε_p,1 "
+                                     "am Integrationspunkt", None,
+                      f"Grenzwert nach {_vol.NORM_DEHNUNG}; Ort des maßgebenden Integrationspunkts "
+                      "(IP) mit seinen Koordinaten."))
         if self.opt("figures"):
             liste = [c for c in v.bereiche.values()
                      if not c.fehler and not c.singular and not c.ausgeschaltet][:60]
@@ -1734,9 +1871,22 @@ class Report:
                 b.append(("p", "Der Nachweis ist für diesen Bereich ausgeschaltet "
                                "(„Nachweis führen“ nicht gesetzt)."))
                 continue
+            if getattr(c, "alle_ausgenommen", False):
+                b.append(("p", "Alle Elemente des Bereichs sind vom Nachweis ausgenommen: "
+                               + ", ".join(c.ausgenommen) + "."))
+                continue
+            if getattr(c, "nicht_bewertet", ""):
+                b.append(("p", f"{_pretty(c.fehler)}. Ein Nachweis über die Dehnung ist für "
+                               "diese Ergebnisse nicht möglich, einer über die Spannung wird "
+                               "nicht ausgegeben."))
+                self._warnings.append(f"Volumenbereich {c.name}: {c.status()}")
+                continue
             if c.fehler:
                 b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
                 self._warnings.append(f"Volumenbereich {c.name}: {c.fehler}")
+                continue
+            if getattr(c, "kriterium", "") == "dehnung":
+                b += self._volumen_dehnung(c)
                 continue
             w = c.werte or {}
             kv = []
@@ -1772,6 +1922,13 @@ class Report:
                     else Util(c.util)),
                    ("Vergleich nach Tresca (σ_1−σ_3)/f_yd",
                     fmt(w.get("eta_tresca", 0.0), 3))]
+            if getattr(c, "zone_n", 0):
+                kv.append(("netzabhängige Stellen (nur berichtet)",
+                           f"{c.zone_n} Elemente, σ_v bis {fmt(c.zone_sigma_v / 1e6, 1)} N/mm², "
+                           f"η = {fmt(c.zone_eta, 3)} ({c.zone_kombination}, Element "
+                           f"{c.zone_element + 1}) – {_SA.VERMERK}"))
+            if getattr(c, "ausgenommen", None):
+                kv.append(("ausgenommen", f"{', '.join(c.ausgenommen)} ({c.n_ausgenommen} Elemente)"))
             if "ausrundung" in w:
                 kv.append(("Kerbradius / mittlere Elementgröße",
                            f"{w['ausrundung'] * 1e3:.1f} / "
@@ -1800,6 +1957,53 @@ class Report:
                     b.append(("note", note))
         # "Volumennachweis NICHT erfüllt für: …" legt chapter_summary an - hier
         # fehlte er bis zum 23.09.2026, sobald die Berichtsoption aus ist.
+        return b
+
+    def _volumen_dehnung(self, c) -> list:
+        """Einzelnachweis eines Volumenbereichs ueber die plastische
+        Hauptdehnung (plastische Rechnung, 13.10.2026)."""
+        from ..ec3 import volumen as _vol
+        b = []
+        kv = []
+        if c.beschreibung:
+            kv.append(("Beschreibung", c.beschreibung))
+        kv += [("Bereich", f"{c.n_elemente} Volumenelemente"),
+               ("Material", f"{c.material}, f_y = {c.fy / 1e6:.0f} N/mm²"),
+               ("Kriterium", "größte plastische Hauptdehnung ε_p,1 am Integrationspunkt ≤ Grenzwert"),
+               ("Grenzwert", f"{_vol.prozent(c.eps_grenze)} % ({_vol.NORM_DEHNUNG})"),
+               ("maßgebende Kombination", c.kombination),
+               ("Ort", c.ort_text()),
+               ("Bauteil (Körper)", c.bauteil or "–"),
+               ("Werkstoff am Ort", c.werkstoff_ort or "–"),
+               ("plastische Hauptdehnung ε_p,1", f"{fmt(c.eps_p1 * 100.0, 3)} %"),
+               ("Ausnutzung ε_p,1/Grenzwert",
+                "– (nur berichtet, Singularität)" if c.singular else Util(c.util))]
+        if getattr(c, "zone_n", 0):
+            kv.append(("netzabhängige Stellen (nur berichtet)",
+                       f"{c.zone_n} Elemente, ε_p,1 bis {fmt(c.zone_eps * 100.0, 3)} %, "
+                       f"η = {fmt(c.zone_eta, 3)} ({c.zone_kombination}"
+                       + (f", Element {c.zone_element + 1}" if c.zone_element >= 0 else "")
+                       + f") – {_SA.VERMERK}"))
+        if getattr(c, "ausgenommen", None):
+            kv.append(("ausgenommen", f"{', '.join(c.ausgenommen)} ({c.n_ausgenommen} Elemente)"))
+        kv.append(("Status", {"erfüllt": "Nachweis erfüllt",
+                              "NICHT erfüllt": "Nachweis NICHT erfüllt",
+                              "nur berichtet": "kein Nachweis geführt (Singularität)"}.get(
+                                  c.status(), c.status())))
+        b.append(("kv", kv, f"Volumenbereich {c.name}"))
+        if c.hinweise:
+            b.append(("list", [f"Hinweis: {_pretty(h)}" for h in c.hinweise]))
+        if len(c.je_kombination) > 1:
+            zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
+            rows = [["Kombination", "Element", "ε_p,1 [%]", "Ausnutzung"]]
+            for d in zeilen:
+                rows.append([d["kombination"], str(d["element"] + 1) if d["element"] >= 0 else "–",
+                             fmt(d.get("eps_p1", 0.0) * 100.0, 3) if d.get("kriterium") == "dehnung" else "–",
+                             Util(d["eta"])])
+            rows, note = self._truncate(rows, self.opt("max_detail_combinations") or 12)
+            b.append(("table", rows, "Nachweis je Kombination (absteigend geordnet)", None, ""))
+            if note:
+                b.append(("note", note))
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)
@@ -2122,11 +2326,13 @@ class Report:
         b.append(("list", items))
 
         b.append(self._h(2, "Übersicht"))
-        rows = [["Kombination", "α_cr", "Grenze", "Verfahren", "Iterationen",
+        rows = [["Kombination", "α_cr", "α_cr Einzelstab", "Grenze", "Verfahren", "Iterationen",
                  "u_I [mm]", "u_II [mm]", "Zuwachs", "Status"]]
         for n, i in t2.kombinationen.items():
+            a_st = getattr(i, "alpha_cr_stab", math.inf)
             rows.append([n,
                          fmt(i.alpha_cr, 2) if math.isfinite(i.alpha_cr) else "∞",
+                         f"{fmt(a_st, 2)} ({i.stab_massgebend})" if math.isfinite(a_st) else "–",
                          fmt(i.grenze, 0),
                          "II. Ordnung" if i.gerechnet else "I. Ordnung",
                          str(i.iterationen) if i.gerechnet else "–",
@@ -2184,6 +2390,34 @@ class Report:
                     f"{worst.u_max_I * 1e3:.2f} / {worst.u_max_II * 1e3:.2f} mm "
                     f"({worst.zuwachs * 100:+.1f} %)")]
         b.append(("kv", kv, f"Kombination {worst.kombination}"))
+
+        # Einzelknicken der Fachwerk-Druckstaebe (14.10.2026): die Saitenform
+        # der geometrischen Steifigkeit enthaelt es nicht
+        a_st, stab, k_st = t2.einzelstab_min
+        if math.isfinite(a_st):
+            info_st = t2.kombinationen[k_st]
+            a_sys = t2.alpha_cr_min
+            b.append(self._h(2, "Einzelknicken der Fachwerk-Druckstäbe"))
+            b.append(("p", "Die geometrische Steifigkeit eines Fachwerkstabs ist die einer Saite "
+                           "(N/L quer zum Stab); sie hält ihn zwischen seinen Knoten gerade. Sein "
+                           "Ausknicken zwischen den Knoten steht darum nicht im α_cr des Systems. Es "
+                           "wird je gedrücktem Fachwerkstab (auch „nur Druck“) gesondert bestimmt, "
+                           "α_cr,i = π²·E·I/(L²·N_Ed) mit der Systemlänge L (gelenkig) und dem "
+                           "kleineren Trägheitsmoment der beiden Hauptachsen. Über Theorie II. "
+                           "Ordnung entscheidet weiter das α_cr des Systems nach 5.2.1(3); das "
+                           "Einzelknicken erfasst der Stabnachweis (Biegeknicken nach 6.3.1)."))
+            kv2 = [("α_cr des Systems (kleinstes)",
+                    fmt(a_sys, 3) if math.isfinite(a_sys) else "∞"),
+                   ("α_cr,i Einzelstab (kleinstes)", f"{fmt(a_st, 3)} – Stab {stab}, Kombination {k_st}"),
+                   ("maßgebend min(System; Einzelstab)",
+                    f"{fmt(min(a_sys, a_st), 3)} ({'Einzelstab ' + stab if a_st < a_sys else 'System'})")]
+            b.append(("kv", kv2, "Verzweigung: System und Einzelstab"))
+            rows = [["Stab", "L [m]", "N_Ed [kN]", "Achse", "I [cm⁴]", "α_cr,i"]]
+            for d in (info_st.einzelstaebe or [])[:50]:
+                rows.append([d["stab"], fmt(d["L"], 3), fmt(d["N"] / 1e3, 2), d["achse"],
+                             fmt(d["I"] * 1e8, 1), fmt(d["alpha_cr"], 3)])
+            b.append(("table", rows, f"Gedrückte Fachwerkstäbe in {k_st} (kleinstes α_cr,i zuerst)",
+                      None, "compact"))
 
         if sk.get("je_stiel"):
             rows = [["Stiel", "N_Ed [kN]", "H_Ed = φ N_Ed [kN]", "Knoten Fuß",
@@ -2249,6 +2483,11 @@ class Report:
             nv = res.node_vm
             if nv is not None and np.any(np.isfinite(nv)):
                 vm = fmt(np.nanmax(nv) / 1e6, 1)
+                # mit auffaelligen netzabhaengigen Stellen das Maximum
+                # ausserhalb ihrer Zonen (Stern, Fussnote unter der Tabelle)
+                u = _SA.uebersicht(self.model, res)
+                if u is not None and u["sv"] is not None:
+                    vm = fmt(u["sv"][0] / 1e6, 1) + "*"
         except Exception:
             pass
         ct = "–"
@@ -2279,7 +2518,17 @@ class Report:
                 kv.append(("max. Verdrehung", f"{fmt(rm[j] * 1e3, 3)} mrad am Knoten {j}"))
         try:
             nv = res.node_vm
-            if nv is not None and np.any(np.isfinite(nv)):
+            u = _SA.uebersicht(self.model, res)
+            if u is not None and u["sv"] is not None:
+                v, k, bt = u["sv"]
+                kv.append(("max. Vergleichsspannung (Knotenmittel) außerhalb der netzabhängigen "
+                           "Stellen", f"{fmt(v / 1e6, 1)} N/mm² am Knoten {k}" + (f" ({bt})" if bt else "")))
+                sp_ = u["spitze"]
+                kv.append((f"in netzabhängigen Stellen ({sp_['n']})",
+                           f"σ_v bis {fmt(sp_['sv'] / 1e6, 1)} N/mm² an den Integrationspunkten"
+                           + (f", ε_p bis {fmt(sp_['eps_p'] * 100, 2)} %" if sp_["eps_p"] > 0 else "")
+                           + f" – {_SA.VERMERK}"))
+            elif nv is not None and np.any(np.isfinite(nv)):
                 k = int(np.nanargmax(nv))
                 kv.append(("max. Vergleichsspannung (Knotenmittel)",
                            f"{fmt(nv[k] / 1e6, 1)} N/mm² am Knoten {k}"))
@@ -2296,6 +2545,11 @@ class Report:
             kv.append(("Kontakt-Iterationen", f"{res.info['contact_iterations']}"
                        + (" – NICHT konvergiert" if not kontakt_konvergiert(res.info)
                           else f" – konvergiert; {hinweis}" if hinweis else "")))
+            # vorlaeufig mit den Stufen (Entscheidung des Anwenders vom 14.10.2026)
+            from ..solver import kontakt_vorlaeufig
+            vorl = kontakt_vorlaeufig(res.info)
+            if vorl:
+                kv.append(("Ergebnis", vorl))
         b.append(("kv", kv, f"Kennwerte {name}"))
         # Auflagerreaktionen
         if getattr(res, "reactions", None) is not None and res.reactions.size:
@@ -2350,17 +2604,98 @@ class Report:
             # vektorisiert (spannungen.volumen_werte): res.solid_stress rechnete je
             # Element eigvalsh in Python - 38 s je Ergebnis am Drehlager (12.09.2026)
             from .. import spannungen as spn
+            # plastisch: die Integrationspunkte (spannungen.anzeige_tensoren,
+            # seit 13.10.2026), elastisch solid_res wie bisher
+            so = spn.anzeige_tensoren(self.model, res)
             ids = list(so)
+            # ohne die Elemente der Zonen auffaelliger Stellen (seit 10.10.2026);
+            # ihre Spitze steht in einer eigenen Zeile
+            zone = set(int(i) for i in _SA.zonen_elemente(res).tolist())
+            if zone and len(zone) < len(ids):
+                ids = [i for i in ids if int(i) not in zone]
+            else:
+                zone = set()
             S = np.array([so[i] for i in ids], float).reshape(-1, 6)
             sv = spn.volumen_werte(S, "sv")
             s1 = spn.volumen_werte(S, "s1")
             s3 = spn.volumen_werte(S, "s3")
             k_v, k_1, k_3 = int(np.argmax(sv)), int(np.argmax(s1)), int(np.argmin(s3))
+            zus = " außerhalb der netzabhängigen Stellen" if zone else ""
             rows = [["Größe", "Wert [N/mm²]", "Element"],
-                    ["max. Vergleichsspannung σ_v", fmt(float(sv[k_v]) / 1e6, 1), str(ids[k_v])],
-                    ["max. Hauptspannung σ_1", fmt(float(s1[k_1]) / 1e6, 1), str(ids[k_1])],
-                    ["min. Hauptspannung σ_3", fmt(float(s3[k_3]) / 1e6, 1), str(ids[k_3])]]
+                    ["max. Vergleichsspannung σ_v" + zus, fmt(float(sv[k_v]) / 1e6, 1), str(ids[k_v])],
+                    ["max. Hauptspannung σ_1" + zus, fmt(float(s1[k_1]) / 1e6, 1), str(ids[k_1])],
+                    ["min. Hauptspannung σ_3" + zus, fmt(float(s3[k_3]) / 1e6, 1), str(ids[k_3])]]
+            sp_ = _SA.spitze(res) if zone else None
+            if sp_ is not None:
+                rows.append(["σ_v in netzabhängigen Stellen (Integrationspunkte)",
+                             fmt(sp_["sv"] / 1e6, 1),
+                             f"{sp_['stelle_sv'].get('sv_element', '–')} – {_SA.VERMERK}"])
             b.append(("table", rows, f"Spannungen der Volumenelemente {name}", None, ""))
+        return b
+
+    def _spitzen_bloecke(self) -> list:
+        """Abschnitt „Netzabhängige Spannungsspitzen“ (seit 10.10.2026, Plan
+        Singularitaeten Paket 2): je auffaelliger Stelle eine Zeile mit dem
+        Ergebnis, in dem ihr sigma_v am groessten ist. Leer ohne auffaellige
+        Stelle - dann bleibt der Bericht, wie er war."""
+        je: dict = {}
+        for name, res in self.all_results():
+            for s in _SA.auffaellige(res):
+                key = (s.get("nr"), s.get("name"))
+                alt = je.get(key)
+                if alt is None:
+                    je[key] = [s, name, [name]]
+                    continue
+                alt[2].append(name)
+                if float(s.get("sv_max", 0.0) or 0.0) > float(alt[0].get("sv_max", 0.0) or 0.0):
+                    alt[0], alt[1] = s, name
+        if not je:
+            return []
+        b = [self._h(2, _SA.TITEL)]
+        b.append(("p", "An diesen Stellen geht Kraft ohne Auflagefläche in ein Volumen – etwa über eine "
+                       "starre Scheibe, die nur den Lochrand koppelt, oder ein Stabende an wenigen "
+                       "Netzknoten. Dort wächst die Spannung mit jeder Netzverfeinerung; ihr "
+                       "Spitzenwert ist eine Eigenschaft des Netzes und keine Nachweisgröße. "
+                       "Gekennzeichnet sind nur die auffälligen Stellen: σ_v ≥ 2·f_y in der Zone "
+                       "oder die Kraft über die Fläche der Stelle F/(A·f_y) ≥ 1. Die Zone sind "
+                       "höchstens zwei Elementringe um die Knoten der Stelle, der zweite bis zum "
+                       "Radius der Stelle plus zwei Elementkanten (bis zum 13.10.2026 alle Elemente "
+                       "im Umkreis von vier Elementkanten oder dem Radius der Stelle); σ_v ist der "
+                       "größte Wert an den Integrationspunkten der Zone, ε_p die größte plastische "
+                       "Vergleichsdehnung. Die Werte bleiben stehen, gelten aber nicht für den "
+                       "Nachweis: Übersicht, Volumennachweis und Ermüdung nehmen die Zonen aus ihrem "
+                       "Maximum und nennen sie als „nur berichtet“; außerhalb zählen nur "
+                       "Elementecken, die nicht auf einem Knoten der Zonen liegen (bis zum "
+                       "14.10.2026 auch die Ecken am Rand der Zone, deren Wert die Zonenelemente "
+                       "mitmittelten). In den Bildern der Ansicht sind "
+                       "die Zonen grau schraffiert (Legendeneintrag „netzabhängig (schraffiert)“), "
+                       "die Farbe darunter bleibt sichtbar; Werte über der Farbskala sind magenta "
+                       "(„> Skalenmax“). Die Färbung ist an der Grenze der Zonen unstetig: die "
+                       "Knoten am Rand tragen außen das Mittel nur der Elemente außerhalb, innen "
+                       "das der Zonenelemente. Bis zum 13.10.2026 waren die Zonen magenta umrandet "
+                       "und Werte über dem Grenzwert grau."))
+        rows = [["Rang", "Ort", "Bauteil", "Ursache", "Kraft [kN]", "σ_v [N/mm²]", "ε_p [%]",
+                 "Elemente der Zone", "Volumen der Zone [cm³]", "Ergebnis", "Vermerk"]]
+        reihe = sorted(je.values(), key=lambda v: (-(v[0].get("sv_fy") or 0.0),
+                                                   -float(v[0].get("sv_max", 0.0) or 0.0)))
+        for i, (s, name, namen) in enumerate(reihe, 1):
+            x, y, z = (float(c) for c in (s.get("mitte") or (0.0, 0.0, 0.0)))
+            F = s.get("kraft")
+            rows.append([str(i), f"{s.get('name', '')} (x {fmt(x, 3)}, y {fmt(y, 3)}, z {fmt(z, 3)} m)",
+                         _SA.bauteil(s), _SA.ursache(s),
+                         fmt(F / 1e3, 1) if F is not None else "–",
+                         fmt(float(s.get("sv_max", 0.0)) / 1e6, 1),
+                         fmt(float(s.get("eps_p_max", 0.0)) * 100, 2),
+                         str(len(s.get("zone", []))), fmt(float(s.get("zone_volumen", 0.0)) * 1e6, 1),
+                         name + (f" (gekennzeichnet in {len(namen)} Ergebnissen)" if len(namen) > 1 else ""),
+                         _SA.VERMERK])
+        rows, note = self._truncate(rows)
+        b.append(("table", rows, f"{_SA.TITEL}: auffällige Stellen, je Stelle das Ergebnis mit dem "
+                                 "größten σ_v", None, "compact"))
+        if note:
+            b.append(("note", note))
+        self._warnings.append(f"{len(je)} netzabhängige Spannungsspitzen gekennzeichnet (Kraft ohne "
+                              f"Auflagefläche) – {_SA.VERMERK}; siehe Abschnitt „{_SA.TITEL}“")
         return b
 
     def _member_envelope(self, env, member):
@@ -2407,6 +2742,17 @@ class Report:
                                  "Reaktionen vom Lager auf das Tragwerk)", None, "compact"))
         if note:
             b.append(("note", note))
+        # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
+        from .. import gleichgewicht as _GG
+        b.extend(_GG.bericht_saetze(allres))
+        spitzen = [_SA.spitze(r) for _n, r in allres]
+        spitzen = [x for x in spitzen if x is not None]
+        if spitzen:
+            gross = max(spitzen, key=lambda x: x["sv"])
+            b.append(("note", "* max σ_v außerhalb der netzabhängigen Spannungsspitzen; dort bis "
+                              f"{fmt(gross['sv'] / 1e6, 1)} N/mm² an den Integrationspunkten "
+                              f"({_SA.bauteil(gross['stelle_sv'])}) – {_SA.VERMERK}, siehe "
+                              f"Abschnitt „{_SA.TITEL}“."))
         gname, gres = self._governing_result()
         if self.opt("figures") and gres is not None and m.nn:
             views = self._views()
@@ -2418,6 +2764,8 @@ class Report:
             b.append(self._figure(svg_text, f"Verformte Lage für {gname} (Ausgangslage "
                                             "gestrichelt, Farbe: Verschiebungsbetrag)"
                                   + sv.figur_hinweis(m)))
+        # ---- Netzabhaengige Spannungsspitzen (seit 10.10.2026)
+        b.extend(self._spitzen_bloecke())
         # ---- Lastfaelle
         if self.opt("results_cases") and self.cases and int(self.opt("max_detail_cases") or 0) > 0:
             b.append(self._h(2, "Ergebnisse je Lastfall"))
@@ -2541,9 +2889,12 @@ class Report:
                         b.append(("list", log))
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
                     # gedeckelter elastischer Vorlauf allein: konvergiert (F39)
-                    from ..solver import kontakt_konvergiert
+                    from ..solver import kontakt_konvergiert, kontakt_vorlaeufig
                     if not kontakt_konvergiert(res.info):
-                        self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
+                        # mit den Stufen: das Ergebnis ist vorlaeufig (14.10.2026)
+                        vorl = kontakt_vorlaeufig(res.info)
+                        self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert"
+                                              + (f" – {vorl}" if vorl else ""))
                 # Die uebrigen Ergebnisse bekommen im Vorgabeumfang keine
                 # Einzeltabelle - ihre WARNUNGEN duerfen deshalb nicht mit
                 # wegfallen. Bei 1931 Kontaktergebnissen nannte der Bericht den
@@ -2665,6 +3016,40 @@ class Report:
             for text, (e, namen) in frei.items():
                 self._warnings.append(
                     f"Frei bewegliche Teile ({namen[0]}" + (f" und {len(namen) - 1} weitere" if len(namen) > 1 else "")
+                    + f"): {text}")
+        # ---- Last an automatisch gehaltenen Freiheitsgraden (14.10.2026)
+        # Ein Mechanismus, kein Rundungsrest: die Last traegt kein Bauteil,
+        # das Ergebnis ist nicht gueltig (solver.gueltigkeit). Gebuendelt wie
+        # oben; die Kraft steht nicht in den Auflagerreaktionen.
+        auto: dict = {}
+        for name, res in allres:
+            for e in ((getattr(res, "info", None) or {}).get("auto_gehalten") or [])[:20]:
+                auto.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+        if auto:
+            b.append(self._h(2, "Last an automatisch gehaltenen Freiheitsgraden"))
+            b.append(("p", "Das Programm hält jeden Freiheitsgrad fest, in dem kein Bauteil "
+                           "Steifigkeit hat – etwa die Drehungen an Knoten nur mit "
+                           "Fachwerkstäben oder Volumen und die Querrichtungen einer "
+                           "Fachwerkstab-Kette. An den genannten Stellen kommt dort eine Last an: "
+                           "Das ist ein Mechanismus, die Last wird von keinem Bauteil getragen. "
+                           "Diese Ergebnisse sind nicht gültig. Sie bleiben sichtbar, damit man "
+                           "sieht, wo die Last verschwindet; die Kraft steht nicht in den "
+                           "Auflagerreaktionen. Abhilfe ist ein Bauteil oder Lager, das die "
+                           "Richtung hält, oder die Last an einen tragenden Knoten zu legen."))
+            rows = [["Knoten", "Größe", "Last", "Ursache", "Ergebnisse"]]
+            for text, (e, namen) in auto.items():
+                d = int(e.get("fhg", 0))
+                wo = ", ".join(namen[:4]) + (f" … ({len(namen)} Ergebnisse)" if len(namen) > 4 else "")
+                rows.append([f"K{e.get('knoten')}", ("F_", "M_")[d >= 3] + "xyz"[d % 3],
+                             fmt(float(e.get("last", 0.0)) / 1e3, 3) + (" kN" if d < 3 else " kNm"),
+                             str(e.get("ursache", "")), wo])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Last an automatisch gehaltenen Freiheitsgraden", None, "compact"))
+            if note:
+                b.append(("note", note))
+            for text, (e, namen) in auto.items():
+                self._warnings.append(
+                    f"Nicht gültig ({namen[0]}" + (f" und {len(namen) - 1} weitere" if len(namen) > 1 else "")
                     + f"): {text}")
         # ---- Modal
         if self.opt("modal"):
@@ -2898,6 +3283,19 @@ class Report:
             kv.append(("Gleiche Ergebnisse, einmal nachgewiesen",
                        "; ".join(" = ".join(v) for v in gl[:40])
                        + (" …" if len(gl) > 40 else "")))
+        # Staebe aus Spannstahl und Staebe mit Schraubengroesse (13.10.2026)
+        arten = {getattr(mc, "art", "") for mc in d.members.values()}
+        if "Spannstahl" in arten:
+            kv.append(("Stäbe aus Spannstahl",
+                       "nach EN 1992-1-1 bzw. Zulassung, nicht nach EN 1993-1-1: σ = |N| / A_s im "
+                       "Spannungsquerschnitt des Gewindes; in jedem Lastzustand σ ≤ f_pd = f_p0,1k / γ_s "
+                       "mit γ_s = 1.15 (3.3.6 bzw. Zulassung), beim Spannen σ ≤ σ_p,max (5.10.2.1), nach dem "
+                       "Verankern σ ≤ σ_pm0 (5.10.3); maßgebend ist der ungünstigste Zustand"))
+        if "Schraube" in arten:
+            kv.append(("Stäbe mit Schraubengröße",
+                       "Zug nach EN 1993-1-8, Tab. 3.4: F_t,Rd = 0.9 · f_ub · A_s / γ_M2 mit A_s nach "
+                       "EN ISO 898-1; die Steifigkeit bleibt beim Schaft. Abscheren, Lochleibung und "
+                       "Durchstanzen gehören zum Anschluss"))
         b.append(("kv", kv, "Einstellungen der Nachweise"))
         # Uebersicht
         b.append(self._h(2, "Übersicht"))
@@ -2905,7 +3303,8 @@ class Report:
                  "maßgebender Nachweis", "Kombination", "x [m]", "Status"]]
         for mc in d.members.values():
             g = mc.governing
-            rows.append([mc.member, mc.section, mc.material, fmt(mc.L, 2), str(mc.cls),
+            rows.append([mc.member, mc.section, mc.material, fmt(mc.L, 2),
+                         "–" if getattr(mc, "art", "") else str(mc.cls),
                          Util(mc.util), g.get("name", "–"), g.get("combo", "–"),
                          fmt(g.get("x", 0.0), 2),
                          mc.status()])
@@ -3077,7 +3476,62 @@ class Report:
         ]))
         return out
 
+    def _zustaende_blocks(self, mc) -> list:
+        """Stab aus Spannstahl oder mit Schraubengroesse (13.10.2026): Kennwerte
+        und je Zustand Kraft, Spannung, Grenze und Ausnutzung."""
+        from ..ec3 import spannstahl as sp
+        m = self.model
+        b = [self._h(3, f"Stab {mc.member}")]
+        sec = m.sections.get(mc.section)
+        mat = m.materials.get(mc.material)
+        kv = [("Querschnitt", f"{mc.section}" + (f" – {sec.describe()}" if sec else "")),
+              ("Stablänge", f"{fmt(mc.L, 3)} m, Elemente {_ids_text(mc.elements)}")]
+        if sec is not None:
+            A_s, vermerk, meldung = sp.spannungsquerschnitt(sec)
+            kv.append(("Spannungsquerschnitt A_s", f"{fmt(A_s * 1e6, 1)} mm² – {vermerk}"
+                       + (" (A_s aus Zulassung eintragen)" if meldung else "")
+                       + f"; Steifigkeit mit A = {fmt(sec.A * 1e6, 1)} mm²"))
+        if mat is not None and mc.art == "Spannstahl":
+            pmax, h1 = sp.sigma_p_max(mat)
+            pm0, h2 = sp.sigma_pm0(mat)
+            kv.append(("Werkstoff", f"{mc.material}: Spannstahl, f_p0,1k = {fmt(sp.f_p01k(mat) / 1e6, 0)} N/mm², "
+                                    f"f_pk = {fmt(sp.f_pk(mat) / 1e6, 0)} N/mm²"
+                                    + (f", E_p = {fmt(mat.Ep / 1e6, 0)} N/mm²" if getattr(mat, "Ep", None) else "")
+                                    + f"; gerechnet mit E = {fmt(mat.E / 1e6, 0)} N/mm²"))
+            kv.append(("Grenzen", f"f_pd = f_p0,1k / γ_s = {fmt(sp.f_pd(mat) / 1e6, 2)} N/mm² ({sp.NORM_FPD}); "
+                                  f"σ_p,max = {fmt(pmax / 1e6, 2)} N/mm² ({h1}); "
+                                  f"σ_pm0 = {fmt(pm0 / 1e6, 2)} N/mm² ({h2})"))
+        elif mat is not None:
+            kv.append(("Werkstoff", f"{mc.material}: f_ub = f_u = {fmt(mat.fu / 1e6 if mat.fu else 0, 0)} N/mm²"))
+        g = mc.governing
+        if g:
+            kv.append(("Maßgebender Nachweis", f"{g.get('name', '')}, {g.get('combo', '')}"))
+        kv.append(("Ausnutzung", Util(mc.util)))
+        kv.append(("Status", "Nachweis " + mc.status()))
+        b.append(("kv", kv, f"Stab {mc.member}"))
+        z = list(getattr(mc, "zustaende", None) or [])
+        if z:
+            rows = [["Zustand", "Ergebnis bzw. Eingabe", "N [kN]", "σ [N/mm²]", "Grenze", "Grenzwert",
+                     "Normstelle", "Ausnutzung"]]
+            for e in z:
+                kraft = e.get("grenzname") == "F_t,Rd"
+                rows.append([e.get("zustand", ""), e.get("quelle", ""), fmt(e.get("N", 0.0) / 1e3, 1),
+                             fmt(e.get("sigma", 0.0) / 1e6, 1), e.get("grenzname", ""),
+                             (fmt(e.get("grenze", 0.0) / 1e3, 1) + " kN") if kraft
+                             else (fmt(e.get("grenze", 0.0) / 1e6, 2) + " N/mm²"),
+                             e.get("norm", ""), Util(e.get("util", 0.0))])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Nachweis je Zustand – maßgebend ist der ungünstigste", None, "compact"))
+            if note:
+                b.append(("note", note))
+        if mc.warnings:
+            b.append(("list", [f"Hinweis: {w}" for w in mc.warnings]))
+            self._warnings.extend(f"Stab {mc.member}: {w}" for w in mc.warnings)
+        return b
+
     def _member_design_blocks(self, mc) -> list:
+        if getattr(mc, "art", "") and not mc.fehler:
+            return self._zustaende_blocks(mc)
         m = self.model
         b = [self._h(3, f"Stab {mc.member}")]
         mem = m.members.get(mc.member)
@@ -3598,7 +4052,18 @@ class Report:
                 b.append(("p", "Es wurden keine Ermüdungsnachweise geführt (keine Stäbe mit "
                                "Kerbfall oder keine Ergebnisse)."))
             return b
-        from ..ec3.fatigue import DETAIL_EXAMPLES, sn_life, GAMMA_MF
+        from ..ec3.fatigue import DETAIL_EXAMPLES, sn_life, GAMMA_MF, NICHT_ANWENDBAR
+        if getattr(f, "nicht_anwendbar", ""):
+            # plastische Rechnung (13.10.2026): kein D, keine Schwingbreite
+            namen = ([f"Stab {x}" for x in (f.members or {})]
+                     + [f"Volumen {x}" for x in (f.volumen or {})])
+            b.append(("p", f"Der Ermüdungsnachweis ist {NICHT_ANWENDBAR}: "
+                           f"{_pretty(f.nicht_anwendbar)}. Eine Schwingbreite aus plastischen "
+                           "Zuständen ist keine Ermüdungsgröße; nötig sind elastisch gerechnete "
+                           "Ermüdungslastfälle. Betroffen: " + ", ".join(namen[:20])
+                           + (f" und {len(namen) - 20} weitere" if len(namen) > 20 else "") + "."))
+            self._warnings.append(f"Ermüdung: {NICHT_ANWENDBAR}")
+            return b
         ds = m.design
         b.append(self._h(2, "Grundlagen"))
         # Ohne Markdown-Sternchen: Listenpunkte gehen in HTML und PDF durch
@@ -3752,7 +4217,8 @@ class Report:
             return getattr(fv, "regel", "element") == "knoten" and getattr(fv, "knoten", -1) >= 0
 
         def stelle(fv) -> str:
-            return f"Knoten {fv.knoten + 1}" if knotenregel(fv) else f"Element {fv.element}"
+            # Elemente wie Knoten ab 1 (bis zum 14.10.2026 ab 0)
+            return f"Knoten {fv.knoten + 1}" if knotenregel(fv) else f"Element {fv.element + 1}"
 
         def art(fv) -> str:
             # "alt": aus der Ergebnisdatei einer Fassung ohne ermuedung_volumen.
@@ -3834,6 +4300,12 @@ class Report:
             von = f" ({fv.n_elemente} Elemente)" if knotenregel(fv) else f" von {fv.n_elemente}"
             rows.append(zeile + [stelle(fv) + (" an der Naht" if fv.naht else "")
                                  + von + _ermuedung_unvollstaendig(fv)])
+            if getattr(fv, "zone_n", 0):
+                # netzabhaengige Stellen: getrennt, nur berichtet (10.10.2026)
+                rows.append([f"{fv.name} (netzabhängige Stellen)", kf, fv.konzept or "–",
+                             fmt(fv.gamma_Mf, 2), fmt(fv.zone_dsig / 1e6, 1), "–", fmt(fv.zone_D, 3),
+                             "nur berichtet"] + (["–"] if jahre else [])
+                            + [f"{fv.zone_n} Orte – {_SA.VERMERK}"])
         b.append(("table", rows, "Ermüdungsnachweis je Volumenkörper", None, ""))
         for fv in f.volumen.values():
             b.append(self._h(3, f"Volumen {fv.name}"))
@@ -3868,6 +4340,12 @@ class Report:
                    f"{0.549 * 0.737 * fv.category / fv.gamma_Mf / 1e6:.1f} MPa"),
                   ("Schädigung D an der maßgebenden Stelle", f"{fmt(fv.D, 4)} ({stelle(fv)})"),
                   ("Ausnutzung D", Util(fv.util))]
+            if getattr(fv, "zone_n", 0):
+                wo = (f"Knoten {fv.zone_knoten + 1}" if getattr(fv, "zone_knoten", -1) >= 0
+                      else f"Element {fv.zone_element + 1}")
+                kv.append(("netzabhängige Stellen (nur berichtet)",
+                           f"{fv.zone_n} Orte, D bis {fmt(fv.zone_D, 4)}, Δσ bis "
+                           f"{fmt(fv.zone_dsig / 1e6, 1)} N/mm² ({wo}) – {_SA.VERMERK}"))
             if np.isfinite(getattr(fv, "jahre", np.inf)) and getattr(fv, "bezugsjahre", 0) > 0:
                 kv.append(("Rechnerische Lebensdauer",
                            f"{fmt(fv.bezugsjahre, 0)} a / D = {fmt(fv.jahre, 0)} a"))
@@ -3887,7 +4365,7 @@ class Report:
                 rows.append([r[2], fmt(r[0] / 1e6, 1), f"{r[1]:.3g}",
                              f"{NR:.3g}" if np.isfinite(NR) else "∞",
                              fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
-                             f"Knoten {r[4] + 1}" if len(r) > 4 else f"Element {r[3]}"])
+                             f"Knoten {r[4] + 1}" if len(r) > 4 else f"Element {r[3] + 1}"])
             b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht; sie "
                                      "liegen im Allgemeinen an verschiedenen Stellen.", None, ""))
             hinweise = list(fv.warnings) + ([alt_hinweis] if art(fv) == "alt" else [])
@@ -4297,6 +4775,13 @@ class Report:
         # 22.09.2026 stand dann "Alle Nachweise erfüllt." hier, und der
         # Hinweis nur darunter (Befund FE5, gemessen).
         unvollstaendig: list = []
+        na_f = f is not None and bool(getattr(f, "nicht_anwendbar", ""))
+        if na_f:
+            # plastische Rechnung (13.10.2026): weder erfuellt noch nicht erfuellt
+            from ..ec3.fatigue import NICHT_ANWENDBAR
+            kv.append(("Ermüdung", NICHT_ANWENDBAR))
+            nicht_gefuehrt.append(f"Ermüdung ({NICHT_ANWENDBAR})")
+            f = None
         if f is not None and getattr(f, "members", None):
             gefuehrte_e = [fm for fm in f.members.values() if not getattr(fm, "fehler", "")]
             if gefuehrte_e:
@@ -4386,21 +4871,39 @@ class Report:
         # wie ein Stab mit design=False, den check_members nicht aufnimmt. Bis
         # zum 23.09.2026 stand er in ``fehler`` und kippte das Urteil auf
         # "nicht geführt wurden: 1 Volumenbereiche" (Befund B058).
-        vo_aktiv = ([c for c in vo.bereiche.values() if not c.ausgeschaltet]
+        vo_aktiv = ([c for c in vo.bereiche.values() if not c.ausgeschaltet
+                     and not getattr(c, "alle_ausgenommen", False)]
                     if vo is not None and getattr(vo, "bereiche", None) else [])
         if vo_aktiv:
             gefuehrte = [c for c in vo_aktiv if not c.singular and not c.fehler]
             if gefuehrte:
                 schlimmster = max(gefuehrte, key=lambda c: c.util)
                 kv.append(("max. Ausnutzung Volumen", Util(schlimmster.util)))
-                kv.append(("maßgebend (Volumen)",
-                           f"{schlimmster.name}: Element {schlimmster.element}, "
-                           f"{schlimmster.kombination}"))
+                if getattr(schlimmster, "kriterium", "") == "dehnung":
+                    # plastische Rechnung (13.10.2026): Dehnung, Ort und Bauteil
+                    from ..ec3.volumen import prozent
+                    kv.append(("maßgebend (Volumen)",
+                               f"{schlimmster.name}: ε_p,1 = {fmt(schlimmster.eps_p1 * 100.0, 3)} % "
+                               f"von {prozent(schlimmster.eps_grenze)} %, {schlimmster.ort_text()}"
+                               + (f", {schlimmster.bauteil}" if schlimmster.bauteil else "")
+                               + f", {schlimmster.kombination}"))
+                else:
+                    # Elementnummer ab 1 wie im Einzelkapitel (bis zum
+                    # 14.10.2026 hier ab 0, eins daneben)
+                    kv.append(("maßgebend (Volumen)",
+                               f"{schlimmster.name}: Element {schlimmster.element + 1}, "
+                               f"{schlimmster.kombination}"))
                 nf_v = [c.name for c in gefuehrte if c.util > 1.0]
                 if nf_v:
                     status_ok = False
                     nicht_erfuellt.append(("Volumennachweis", nf_v, "volumen"))
-            offen = [c.name for c in vo_aktiv if c.fehler]
+            nb = [c.name for c in vo_aktiv if getattr(c, "nicht_bewertet", "")]
+            if nb:
+                from ..ec3.volumen import NICHT_BEWERTET
+                kv.append(("Volumennachweis", f"{', '.join(nb[:5])}: {NICHT_BEWERTET}"))
+                nicht_gefuehrt.append(_anzahl(len(nb), "Volumenbereich", "Volumenbereiche")
+                                      + " (nicht bewertet – plastische Rechnung)")
+            offen = [c.name for c in vo_aktiv if c.fehler and c.name not in nb]
             if offen:
                 nicht_gefuehrt.append(_anzahl(len(offen), "Volumenbereich", "Volumenbereiche"))
         if f is not None and getattr(f, "volumen", None):
@@ -4446,6 +4949,17 @@ class Report:
                     or (bl is not None and getattr(bl, "felder", None))
                     or (li is not None and getattr(li, "stellen", None))
                     or any(not c.singular and not c.fehler for c in vo_aktiv))
+        # Last an automatisch gehaltenen FHG (14.10.2026): ein Mechanismus macht
+        # das Ergebnis ungueltig - das steht vor jedem Urteil ueber Nachweise
+        ungueltig = [str(n) for n, r in self.all_results()
+                     if (getattr(r, "info", None) or {}).get("auto_gehalten")]
+        if ungueltig:
+            b.append(("status", f"NICHT gültig: {len(ungueltig)} "
+                                f"{'Ergebnis' if len(ungueltig) == 1 else 'Ergebnisse'} ("
+                                + ", ".join(ungueltig[:5]) + (" …" if len(ungueltig) > 5 else "")
+                                + ") – Mechanismus, eine Last an automatisch gehaltenen "
+                                  "Freiheitsgraden wird von keinem Bauteil getragen (siehe die "
+                                  "Hinweise unten).", False))
         # "or not status_ok": ein nicht erfuellter Eintrag darf nie hinter
         # "Kein Nachweis geführt" verschwinden
         if gefuehrt or not status_ok:
@@ -4505,6 +5019,10 @@ class Report:
         # Ergebnisse aus der Iteration „gemeinsam“, einem Versuch (Fehlerliste
         # F12, 06.10.2026; bis dahin stand davon nichts im Bericht)
         self._warnings.extend(gemeinsam_gebuendelt(ergebnisse))
+        # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)
+        from ..solver import seil_querlast_gebuendelt
+        self._warnings.extend(z[len("WARNUNG: "):] if z.startswith("WARNUNG: ") else z
+                              for z in seil_querlast_gebuendelt(ergebnisse))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]

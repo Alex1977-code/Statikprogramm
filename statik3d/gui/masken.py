@@ -99,6 +99,10 @@ class Feld:
     #: ist, folgt das Feld (Maske.namen_umbenennen, R2-A1 Nachbesserung G2):
     #: bis dahin schrieb „Übernehmen“ der Windmaske den alten Lastfall zurueck.
     verweis: str = ""
+    #: Eine Wahl, in die man auch eintippen darf (art="wahl"): die Eintraege
+    #: sind Vorschlaege, „Übernehmen“ liest den Text (Verfestigung „E/250“ in
+    #: der Werkstoffmaske, 13.10.2026)
+    frei: bool = False
 
 
 def _verweis_passt(verweis: str, art: str) -> bool:
@@ -891,6 +895,11 @@ class Maske(QtWidgets.QFrame):
         if f.art == "wahl":
             w = QtWidgets.QComboBox(self)
             w.addItems([str(x) for x in f.werte])
+            if f.frei:
+                w.setEditable(True)
+                w.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
+                w.setMinimumWidth(f.breite)
+                w.lineEdit().returnPressed.connect(self.anwenden)
             if f.wert:
                 w.setCurrentText(str(f.wert))
             return w

@@ -317,6 +317,19 @@ CREATE TABLE SpringConstants_partialActivities (id INTEGER, container_order INTE
 INF = float("inf")
 
 
+def _zuordnen(m, kat="G"):
+    """Die Einwirkung der importierten Lastfaelle zuordnen. Seit dem 13.10.2026
+    bleibt ein Lastfall, dessen Einwirkung die Quelle nicht eindeutig nennt,
+    „nicht zugeordnet“, und Kombinationen mit ihm werden nicht gerechnet
+    (tests/test_lastfall_kategorie.py). Wer in einer Pruefung die Kombinationen
+    rechnen will, ordnet sie hier zu - so wie der Anwender es in der
+    Lastfallmaske tut."""
+    for lc in m.load_cases.values():
+        if lc.kategorie_offen:
+            lc.category = kat
+    return m
+
+
 def _spring(con, sid, owner, table, k, nl=(0,) * 6, friction=None):
     con.execute(
         "INSERT INTO SpringConstants (id,version,owner_id,owner_table,"
@@ -1129,17 +1142,25 @@ def test_stabtypen():
         check("Protokoll listet die Stabtypen",
               any("Stabtypen:" in x and "Balken" in x and "Zugstab" in x for x in log),
               next((x for x in log if "Stabtypen" in x), "-"))
-        check("Zugstab-Hinweis (traegt hier auch Druck) steht im Protokoll",
-              any("Zugstab" in x and "faellt in RFEM bei Druck aus" in x for x in log),
-              next((x for x in log if "Zugstab" in x and "faellt" in x), "-"))
+        # seit dem 14.10.2026 traegt der Zugstab nur Zug wie in RFEM (bis dahin
+        # auch Druck, mit der Warnung „faellt in RFEM bei Druck aus - hier traegt
+        # er auch Druck“; tests/test_rfem6_zugstab.py)
+        check("Zugstab traegt nur Zug, und das Protokoll sagt es",
+              m.elements[1].nur == "zug"
+              and any("Zugstab trägt nur Zug" in x for x in log),
+              next((x for x in log if "nur Zug" in x), "-"))
         check("Ergebnisstab als Nicht-Tragglied genannt",
               any("keine Tragglieder" in x and "Ergebnisstab" in x for x in log),
               next((x for x in log if "Tragglieder" in x), "-"))
         check("member_type: unbekannte Tabelle -> Balken",
               R6.member_type("MemberImplNeu")[0] == "beam")
-        check("member_type: Seil ist Fachwerkstab mit Hinweis",
-              R6.member_type("MemberImplCable")[0] == "truss"
-              and "Seiltheorie" in R6.member_type("MemberImplCable")[2])
+        # seit dem 14.10.2026 ein Seil, das nur Zug traegt (bis dahin ein
+        # Fachwerkstab mit dem Hinweis „Seiltheorie ... fehlt“;
+        # tests/test_stab_nachzug.py)
+        check("member_type: Seil ist Seil, ohne Hinweis, und trägt nur Zug",
+              R6.member_type("MemberImplCable")[0] == "seil"
+              and R6.member_type("MemberImplCable")[2] == ""
+              and R6.stab_nur("MemberImplCable", {}) == "zug")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1445,6 +1466,7 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
               "Kombinationen gelten in der Situation" in txt,
               next((x for x in log if "gelten in der Situation" in x), "-"))
         # Die Umhuellende trennt Ermuedung von GZT
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True)
         check("der Loeser bildet eine eigene Umhuellende „FAT“",
               "FAT" in an.envelopes and "ULS" in an.envelopes,
@@ -1522,6 +1544,7 @@ def test_gemischte_kombination_wird_aufgeteilt():
               next((x for x in log if "gelten in der Situation" in x), "-"))
         fremd = [x for x in m.check() if "anderen Situation" in x]
         check("das Modell hat nichts mehr zu beanstanden", not fremd, str(fremd))
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True)
         check("der Loeser rechnet beide Teile",
               "Bemessung (Grundstellung)" in an.combinations
@@ -1599,6 +1622,7 @@ def test_ergebniskombination_oder():
         check("die Modellpruefung hat nichts zu beanstanden",
               not [x for x in m.check() if "anderen Situation" in x or "unbekannt" in x],
               str([x for x in m.check() if "FEHLER" in x][:3]))
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True)
         check("der Loeser bildet je Teil eine Umhuellende und die Umhuellende GZT darueber",
               "EK oder (Grundstellung)" in an.envelopes and "EK oder (Ankerausfall)" in an.envelopes
@@ -1696,6 +1720,7 @@ def test_ermuedungslasten_aus_fat():
         # (40 -> 25 -> 5 kN) und EK eins (40 kN gegen Null) je eine Stufe mit
         # der globalen Lastspielzahl; die Sammlung (0) traegt nichts bei.
         m.design.ermuedung_lastspiele = 1.0
+        _zuordnen(m)
         an = solver.solve_all(m, combinations=True, envelopes=True, fatigue=True)
         fm = an.fatigue.members.get("S1") if an.fatigue is not None else None
         A = m.sections[m.elements[zug.elements[0]].sec].A if zug else 1.0
@@ -1740,7 +1765,7 @@ def test_flaechenlast_richtung():
             lines=[], members=[], supports=[],
             surfaces=[([1, 2, 3, 4], 0.010)],
             load_cases=[("Last", 12, 0.0)],
-            surface_loads=[(1, [1], -3000.0, 1)],       # 1 = global Z
+            surface_loads=[(1, [1], -3000.0, 13)],      # 13 = global Z
         )
         m = R6.read_rf6(f, log=[])
         for nd in range(m.nn):
@@ -1764,7 +1789,7 @@ def test_flaechenlast_richtung():
                 lines=[], members=[], supports=[],
                 surfaces=[(umlauf, 0.010)],
                 load_cases=[("Last", 12, 0.0)],
-                surface_loads=[(1, [1], -2000.0, 1)],
+                surface_loads=[(1, [1], -2000.0, 13)],
                 boundary_lines=None,
             )
             m2 = R6.read_rf6(g, log=[])
@@ -1784,7 +1809,7 @@ def test_flaechenlast_richtung():
             lines=[], members=[], supports=[],
             surfaces=[[1, 2, 3, 4]],
             load_cases=[("Last", 12, 0.0)],
-            surface_loads=[(1, [1], -3000.0, 1)],
+            surface_loads=[(1, [1], -3000.0, 13)],
         )
         m3 = R6.read_rf6(h, log=[])
         geo = [g for lc in m3.load_cases.values() for g in lc.geometrielasten]
@@ -1817,10 +1842,10 @@ def test_flaechenlasten_werden_abgezaehlt():
                  lines=[], members=[], supports=[],
                  surfaces=[([1, 2, 3, 4], 0.010)],
                  load_cases=[("Last", 12, 0.0)],
-                 surface_loads=[(1, [1], -2000.0, 0),      # normal
-                                (1, [1], -1000.0, 0),      # -> andere Art
-                                (1, [1], 0.0, 0),          # ohne Betrag
-                                (1, [1], -500.0, 0)])      # -> Tabelle fehlt
+                 surface_loads=[(1, [1], -2000.0, 2),      # normal (2 = lokal z)
+                                (1, [1], -1000.0, 2),      # -> andere Art
+                                (1, [1], 0.0, 2),          # ohne Betrag
+                                (1, [1], -500.0, 2)])      # -> Tabelle fehlt
         con = sqlite3.connect(db)
         con.execute("UPDATE SurfaceLoad SET impl_table = "
                     "'SurfaceTypeLoadImplTemperature' WHERE id = 2")
@@ -1889,8 +1914,8 @@ def test_flaechenlast_ohne_lastfall():
                  lines=[], members=[], supports=[],
                  surfaces=[([1, 2, 3, 4], 0.010)],
                  load_cases=[("Last", 12, 0.0)],
-                 surface_loads=[(1, [1], -2000.0, 0),
-                                (1, [1], -1000.0, 0)])     # -> Lastfall 99
+                 surface_loads=[(1, [1], -2000.0, 2),
+                                (1, [1], -1000.0, 2)])     # -> Lastfall 99
         con = sqlite3.connect(db)
         con.execute("UPDATE SurfaceLoad SET parentModelObject_id = 99 WHERE id = 2")
         con.commit()
@@ -1927,29 +1952,18 @@ def test_flaechenlast_ohne_lastfall():
 
 
 def test_einwirkungskategorie_wird_genannt():
-    """Was als „Q“ endet, steht im Protokoll - und der Name verbessert nur,
-    was die Kennzahl nicht hergibt.
+    """Was die Quelle nicht eindeutig sagt, bleibt „nicht zugeordnet“ und steht
+    im Protokoll - der Name setzt nichts, er schlaegt nur vor.
 
-    `ACTION_CATEGORY` fuehrt nur wenige Kennzahlen; alles Uebrige wurde still
-    zu „Q“ (veraenderlich, allgemein, psi0 = 0,80) und das Protokoll meldete
-    „Einwirkungskategorie uebernommen“. Schnee, Wind und Vorspannung rechnen
-    aber mit anderen Beiwerten.
-
-    Die Namensdeutung greift **nur innerhalb von Q**: ein „G“ aus der
-    Kennzahl darf der Freitext nicht umstossen, sonst wuerde ein Lastfall
-    „Windverband Eigenlast“ mit der Kennzahl 1 zu W und damit veraenderlich.
-    Genau das ist die Gegenprobe unten.
-
-    **Auch die gefuehrten Kennzahlen sind eine Annahme** (Befund FM9): keine
-    ist an einer echten Datei belegt. Gemessen am CBG-Trolley tragen 8
-    Lastfaelle die Kennzahl 11, 7 davon heissen „G - ...“ und werden nur ueber
-    den Namen zu G; am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11,
-    darunter 128 „Bemessungslast im GZT ...“, 164 „Ermuedungslast ...“,
-    128 „char.Last ...“ und 2 „Vorspannung der Zuganker ...“ (nachgezaehlt
-    am 23.09.2026). Bis zum 22.09.2026 stand fuer
-    eine gefuehrte Kennzahl nur die Verteilung im Protokoll, ohne Warnung.
-    LF5 (neutraler Name, Kennzahl 11) und LF6 („G - Stahlbau“, Kennzahl 11)
-    pruefen das.
+    Bis zum 13.10.2026 stand hier eine Annahme ohne Quelle (1, 2 -> G; 3, 11,
+    12, 13 -> Q), und der Name verfeinerte das Rueckfall-Q (Befund FM9). Die
+    Kennzahlen kommen jetzt aus der Aufzaehlung der Dlubal-API (11 = „Permanent
+    G“, die Vorgabe jedes neuen Lastfalls; 54 = Schnee bis 1000 m; 61 = Wind) und
+    sind an den Beispielmodellen von RFEM 6.15 belegt. Am Drehlager tragen alle
+    422 Lastfaelle die Kennzahl 11, darunter 128 „Bemessungslast im GZT ...“, 164
+    „Ermuedungslast ...“, 128 „char.Last ...“ und 2 „Vorspannung der Zuganker
+    ...“ (nachgezaehlt am 23.09.2026): sie sagt dort nichts, und eine Annahme Q
+    setzte gamma_Q = 1,5 auf Lasten, die schon Bemessungswerte sind.
     """
     tmp = tempfile.mkdtemp()
     try:
@@ -1962,43 +1976,50 @@ def test_einwirkungskategorie_wird_genannt():
                         ("Wind quer", 92, 0.0),
                         ("Windverband Eigenlast", 1, 0.0),
                         ("Lastfall A", 11, 0.0),
-                        ("G - Stahlbau", 11, 0.0)],
+                        ("G - Stahlbau", 11, 0.0),
+                        ("Schnee", 54, 0.0),
+                        ("Wind in +X", 61, 0.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
         txt = "\n".join(log)
-        check("die Kennzahl ohne Eintrag wird genannt",
-              "unbekannter Kennzahl" in txt and "91" in txt and "92" in txt,
-              next((x for x in log if "unbekannter Kennzahl" in x), "keine Zeile"))
-        check("die Verteilung der Kategorien steht im Protokoll",
-              "Einwirkungskategorie:" in txt,
-              next((x for x in log if "Einwirkungskategorie:" in x), "keine Zeile"))
-        check("der Name verbessert das Rueckfall-Q: Schnee wird S",
-              m.load_cases["LF2"].category == "S", m.load_cases["LF2"].category)
-        check("und Wind wird W", m.load_cases["LF3"].category == "W",
-              m.load_cases["LF3"].category)
-        # Gegenprobe: die Namensdeutung darf ein G aus der Datei nicht kippen
-        check("„Windverband Eigenlast“ mit Kennzahl 1 bleibt staendig",
-              m.load_cases["LF4"].category == "G", m.load_cases["LF4"].category)
-        check("die Probe ist scharf: ohne die Kennzahlschranke waere es W",
-              _C.category_from_text("Windverband Eigenlast", "Q") == "W",
-              _C.category_from_text("Windverband Eigenlast", "Q"))
-        # FM9: die gefuehrte Kennzahl 11 ist eine Annahme und steht als solche da
-        check("Kennzahl 11 steht mit angenommener Kategorie im Protokoll",
-              any("Kennzahl 11 -> Q" in z and "Annahme" in z for z in log),
+        kat = {n: lc.category for n, lc in m.load_cases.items()}
+        check("eine Kennzahl, die die Tabelle nicht fuehrt, wird genannt (1, 91, 92)",
+              any(z.startswith("WARNUNG") and "nicht führt" in z and "91" in z and "92" in z
+                  and "1 (" in z for z in log),
+              next((x for x in log if "nicht führt" in x), "keine Zeile"))
+        check("die Verteilung der Einwirkungen steht im Protokoll",
+              any(z.strip().startswith("Einwirkung:") for z in log),
+              next((x for x in log if "Einwirkung:" in x), "keine Zeile"))
+        check("die Kennzahl 54 (Schnee bis 1000 m) gibt S, 61 (Wind) gibt W",
+              kat["LF7"] == "S" and kat["LF8"] == "W", f"{kat['LF7']} {kat['LF8']}")
+        check("eine unbekannte Kennzahl gibt „nicht zugeordnet“, auch wenn der Name Schnee nennt",
+              kat["LF2"] == "NZ" and kat["LF3"] == "NZ", f"{kat['LF2']} {kat['LF3']}")
+        check("die Kennzahl 1 gibt es in der Aufzaehlung nicht: LF4 bleibt offen; LF1 (nur Eigengewicht) "
+              "wird G, aber aus dem Inhalt, nicht aus der Kennzahl",
+              kat["LF4"] == "NZ" and kat["LF1"] == "G", f"{kat['LF1']} {kat['LF4']}")
+        check("die Vorgabe 11 sagt nichts: LF5 und „G - Stahlbau“ bleiben offen (nicht Q, nicht G)",
+              kat["LF5"] == "NZ" and kat["LF6"] == "NZ", f"{kat['LF5']} {kat['LF6']}")
+        check("das Protokoll nennt die Kennzahl 11 als Vorgabe jedes neuen Lastfalls",
+              any("Kennzahl 11" in z and "Vorgabe" in z and "Permanent G" in z for z in log),
               next((x.strip() for x in log if "Kennzahl 11" in x), "keine Zeile"))
-        check("die Annahme steht als Warnung da, mit psi und gamma",
-              any(z.startswith("WARNUNG") and "angenommen" in z and "11" in z
-                  and "psi" in z for z in log),
-              next((x.strip()[:120] for x in log if x.startswith("WARNUNG") and "angenommen" in x),
-                   "keine Zeile"))
-        check("der Lastfall, den der Name umgestellt hat, wird genannt",
-              any("LF6" in z and "Namen" in z for z in log),
-              next((x.strip() for x in log if "LF6" in x), "keine Zeile"))
-        check("der neutrale Name bleibt beim angenommenen Q",
-              m.load_cases["LF5"].category == "Q", m.load_cases["LF5"].category)
-        check("„G - Stahlbau“ mit Kennzahl 11 wird ueber den Namen G",
-              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
+        check("… und nimmt sie nicht mehr als Q an",
+              "11 -> Q" not in txt and "angenommen" not in txt)
+        # Der Name schlaegt vor, setzt aber nichts
+        vorschlag = [z for z in log if "Vorschlag nach dem Namen" in z]
+        check("der Name steht als Vorschlag im Protokoll: Schnee fuer LF2, Wind fuer LF3 und LF4",
+              any("S für LF2" in z for z in vorschlag) and any("W für LF3 und LF4" in z for z in vorschlag),
+              " | ".join(z.strip() for z in vorschlag))
+        check("… „G - Stahlbau“ als G-Vorschlag (LF1 ist schon G: nur Eigengewicht)",
+              any(z.strip().endswith("G für LF6") for z in vorschlag),
+              " | ".join(z.strip() for z in vorschlag))
+        check("… die Warnung nennt den Weg zur Zuordnung",
+              any(z.startswith("WARNUNG") and "ohne zugeordnete Einwirkung" in z and "Modellbaum" in z
+                  for z in log), next((z[:100] for z in log if "ohne zugeordnete" in z), "keine Zeile"))
+        check("die Lastfaelle ohne Einwirkung sperren ihre Kombinationen, nicht sich selbst",
+              all(m.load_cases[n].kombination_gesperrt for n in ("LF2", "LF3", "LF4", "LF5", "LF6"))
+              and not m.load_cases["LF1"].kombination_gesperrt
+              and not m.load_cases["LF7"].kombination_gesperrt)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2162,7 +2183,8 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
         check(f"Handbuch nennt: {name} -> {soll}", ist == soll and genannt,
               f"{ist}" + ("" if genannt else f", {stelle} fehlt im Absatz"))
 
-    # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
+    # ueber den ganzen Import: Kennzahl 11 sagt nichts, der Name setzt nichts -
+    # er schlaegt vor, und die Situation im Namen schlaegt weder G noch A vor
     tmp = tempfile.mkdtemp()
     try:
         f = make_rf6(
@@ -2179,54 +2201,33 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
         )
         log = []
         m = R6.read_rf6(f, log=log)
-        for i, (name, soll) in enumerate(DREHLAGER_NAMEN, start=1):
-            lc = m.load_cases[f"LF{i}"]
-            check(f"Import LF{i} -> {soll}", lc.category == soll, lc.category)
-        check("kein Lastfall wird ueber die Situation staendig",
-              not any(m.load_cases[f"LF{i}"].is_permanent for i in (1, 2)),
-              str([m.load_cases[f"LF{i}"].category for i in (1, 2)]))
-        check("kein Lastfall wird ueber die Situation aussergewoehnlich",
-              not m.load_cases["LF3"].is_accidental, m.load_cases["LF3"].category)
-        check("Gegenprobe: „Eigengewicht“ mit Kennzahl 11 wird G",
-              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
-        # am Stand d5e565d wurde dieser Lastfall Q und stand mit 1,5 bzw. 1,2
-        # in 16 von 26 erzeugten ULS-Kombinationen statt mit 1,0 in 2 ACC,
-        # ohne dass das Protokoll ihn als umgestellt nannte (gemessen am
-        # 24.09.2026 an einem Modell aus 5 Lastfaellen: Eigengewicht, zwei
-        # Erdbeben-Namen, Nutzlast, Ermuedungslast mit Kennzahl 1)
-        check("Gegenprobe: „Erdbeben - Erdbeben-Bemessungssituation“ bleibt "
-              "aussergewoehnlich", m.load_cases["LF7"].is_accidental,
-              m.load_cases["LF7"].category)
-        # der Name verfeinert nur, wenn die Kennzahl Q ergibt: mit Kennzahl 1
-        # bleibt eine Ermuedungslast G (so steht es im Handbuch)
-        check("Kennzahl 1: „Ermüdungslast - Eigengewicht“ bleibt G",
-              m.load_cases["LF8"].category == "G", m.load_cases["LF8"].category)
-        zeile = next((z for z in log if "Kennzahl 11" in z), "")
-        check("das Protokoll nennt die Ermuedungslasten als umgestellt",
-              "zu FAT: LF4, LF5" in zeile, zeile.strip())
-        check("das Protokoll nennt den Erdbeben-Lastfall als umgestellt",
-              "zu A: LF7" in zeile, zeile.strip())
-        # ohne Adjektivendung keine Situationsangabe: „Staendig“ bleibt G, und
-        # das Protokoll nennt den Lastfall (am Stand 28c9326 still Q)
-        check("„Ständig - Bemessungssituation 1“ mit Kennzahl 11 wird G",
-              m.load_cases["LF9"].category == "G", m.load_cases["LF9"].category)
-        check("das Protokoll nennt ihn als umgestellt", "zu G: LF6, LF9" in zeile,
-              zeile.strip())
-        # „Erdbeben“ nach „Bemessungssituation“ faellt mit der Angabe heraus:
-        # Q wie aus der Kennzahl, darum nennt das Protokoll ihn nicht (so steht
-        # es in docs/Schnittstellen.md; am Stand ec6448c A und genannt)
-        check("„Bemessungssituation - Erdbeben“ mit Kennzahl 11 bleibt Q",
-              m.load_cases["LF10"].category == "Q", m.load_cases["LF10"].category)
-        check("das Protokoll nennt ihn nicht als umgestellt", "LF10" not in zeile,
-              zeile.strip())
-        # die englische Angabe mit „or“ faellt ganz heraus, „seismic“ mit ihr:
-        # Q und nicht genannt, so steht es jetzt im Benutzerhandbuch (am Stand
-        # ec6448c A und genannt, gemessen am 24.09.2026)
-        check("„Nutzlast - seismic or accidental design situation“ mit Kennzahl "
-              "11 bleibt Q", m.load_cases["LF11"].category == "Q",
-              m.load_cases["LF11"].category)
-        check("das Protokoll nennt ihn nicht als umgestellt", "LF11" not in zeile,
-              zeile.strip())
+        vorschlag = [z.strip() for z in log if "Vorschlag nach dem Namen" in z]
+        check("kein Lastfall bekommt seine Einwirkung aus dem Namen: bis auf die beiden, an denen nur "
+              "Eigengewicht haengt (LF6, LF8), bleiben alle nicht zugeordnet",
+              all(lc.category == ("G" if n in ("LF6", "LF8") else "NZ") for n, lc in m.load_cases.items()),
+              str({n: lc.category for n, lc in m.load_cases.items() if lc.category != "NZ"}))
+        # Was der Name vorschlaegt, ist das, was category_from_text liefert (die
+        # Namensdeutung selbst pruefen die Zeilen oben)
+        alle = " | ".join(vorschlag)
+        check("der Name schlaegt Ermuedung fuer die beiden Ermuedungslasten vor (LF4, LF5); LF8 ist schon G",
+              any(z.endswith("FAT für LF4 und LF5") for z in vorschlag), alle)
+        check("… „Ständig - Bemessungssituation 1“ als G (LF9); „Eigengewicht“ (LF6) ist schon G",
+              any(z.endswith("G für LF9") for z in vorschlag), alle)
+        check("… „Erdbeben - Erdbeben-Bemessungssituation“ als A (LF7) - vorgeschlagen, nicht gesetzt",
+              any(z.endswith("A für LF7") for z in vorschlag) and m.load_cases["LF7"].category == "NZ", alle)
+        kat_vorschlaege = [z for z in vorschlag if "Bemessungslastfall" not in z]
+        check("die Situation im Namen („staendige Bemessungssituation“, LF1 bis LF3) schlaegt keine "
+              "Einwirkung vor",
+              not any(re.search(r"LF[123]", z) for z in kat_vorschlaege), alle)
+        check("„Bemessungssituation - Erdbeben“ (LF10) schlaegt nichts vor",
+              not any("LF10" in z for z in kat_vorschlaege), alle)
+        check("„Nutzlast - seismic or accidental design situation“ (LF11): Q vom Wort Nutzlast, nicht A "
+              "von der Situation", any(z.endswith("Q für LF11") for z in kat_vorschlaege)
+              and not any("A für" in z and "LF11" in z for z in kat_vorschlaege), alle)
+        check("die Lastfaelle „Bemessungslast ...“ (LF1, LF3) bekommen den Vorschlag Bemessungslastfall - "
+              "die Datei fuehrt sie nicht als GZT-Alternative, darum nur ein Vorschlag",
+              any("Bemessungslastfall für LF1 und LF3" in z for z in vorschlag)
+              and not m.load_cases["LF1"].faktorisiert and not m.load_cases["LF3"].faktorisiert, alle)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2240,9 +2241,9 @@ def test_lastfaelle_und_lasten():
                    (4, 0, 0), (4, 2, 0)],
             lines=[], members=[], supports=[],
             surfaces=[([1, 2, 3, 4], 0.010), [2, 5, 6, 3]],
-            load_cases=[("Eigengewicht", 1, 1.0), ("Schnee", 12, 0.0)],
+            load_cases=[("Eigengewicht", 11, 1.0), ("Schnee", 54, 0.0)],
             # 2 kN/m^2 auf die vernetzte Flaeche, 3 kN/m^2 auf die Flaeche ohne Dicke
-            surface_loads=[(2, [1], -2000.0, 0), (2, [2], -3000.0, 1)],
+            surface_loads=[(2, [1], -2000.0, 2), (2, [2], -3000.0, 13)],
             free_loads=5,
         )
         log = []
@@ -2251,8 +2252,10 @@ def test_lastfaelle_und_lasten():
         check("beide Lastfaelle uebernommen", len(m.load_cases) == 2, str(list(m.load_cases)))
         lf2 = m.load_cases["LF2"]
         check("Lastfallname als Beschreibung", lf2.description == "Schnee", lf2.description)
-        check("Einwirkungskategorie aus RFEM", m.load_cases["LF1"].category == "G",
-              m.load_cases["LF1"].category)
+        check("Einwirkungskategorie aus der RFEM-Kennzahl (54 = Schnee bis 1000 m)",
+              m.load_cases["LF2"].category == "S", m.load_cases["LF2"].category)
+        check("… ein Lastfall mit der Vorgabe 11, an dem nur Eigengewicht haengt, wird G (aus dem Inhalt)",
+              m.load_cases["LF1"].category == "G", m.load_cases["LF1"].category)
         close("Eigengewicht nur im ersten Lastfall",
               m.load_cases["LF1"].gravity[2], -9.81, 1e-9, " m/s^2")
         close("zweiter Lastfall ohne Eigengewicht", lf2.gravity[2], 0.0, 1e-12, " m/s^2")
@@ -2796,9 +2799,9 @@ def test_stab_und_knotenlasten():
               any(abs(v - 1001.0) < 1e-6 for v in qx), f"q_x = {qx}")
     check("die Einzellast wird genannt statt still weggelassen",
           "Verteilung 2" in txt, "Protokoll nennt die Verteilung")
-    check("die abgeleitete Deutung der Lastrichtung steht im Protokoll",
-          "abgeleitet" in txt and "nachpruefen" in txt,
-          "Protokoll nennt sie als abgeleitet")
+    check("die Deutung der Lastrichtung steht mit ihrer Quelle im Protokoll",
+          "global X" in txt and "Schnittstelle RFEM 6.15" in txt,
+          "Protokoll nennt die Schnittstelle")
 
     kl = [x for lc in m.load_cases.values() for x in lc.nodal_loads]
     check("die Knotenlast der neueren Fassung kommt an", len(kl) == 1,
@@ -3092,8 +3095,357 @@ def test_hex_order_nie_falsch():
     check("kein Sechsflächner -> None (freier Vernetzer)", o is None, str(o))
 
 
+def _rf6_aus_db(db: str, pfad: str) -> str:
+    with zipfile.ZipFile(pfad, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(db, "model.db")
+        z.writestr("mesh.xml", MESH_XML)
+        z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1\n")
+        z.writestr("general_data.xml", "<?xml version='1.0'?><property key='generalData'/>")
+    return pfad
+
+
+def test_lastrichtung_nach_schnittstelle():
+    """Die Kennzahl ``loadDirection`` nach der Schnittstelle von RFEM 6.15
+    (member_load.proto, line_load.proto, surface_load.proto): 0/1/2 lokal
+    x/y/z, 3/4 Hauptachse u/v (Stab), 11-13 global je wahrer, 14-16 je
+    projizierter Laenge bzw. Flaeche.
+
+    Bis zum 14.10.2026 galt 0 = lokal z, 1 = global Z, 2 = global X,
+    3 = global Y: eine Stablast lokal y kam als global Z an, eine
+    Flaechenlast lokal x (in der Ebene) als Druck senkrecht zur Flaeche. Am
+    Drehlager-Modell waren das 315 + 396 Flaechenlasten mit 0 und 1, die RFEMs
+    eigener Bericht als „Lokales Koordinatensystem, Richtung x/y“ fuehrt."""
+    tmp = tempfile.mkdtemp()
+    try:
+        # (1) Stablasten am waagerechten Traeger in x, beidseits eingespannt
+        ein = ("Fest", (INF,) * 6, (0,) * 6, None, [1, 2])
+        for rd, soll_q, soll_R, achse in ((1, (0.0, 1000.0, 0.0), (0.0, -4000.0, 0.0), "y"),
+                                          (2, (0.0, 0.0, 1000.0), (0.0, 0.0, -4000.0), "z"),
+                                          (0, (1000.0, 0.0, 0.0), (-4000.0, 0.0, 0.0), "x")):
+            log = []
+            f = make_rf6(os.path.join(tmp, f"stab_{rd}.rf6"), nodes=[(0, 0, 0), (4, 0, 0)],
+                         lines=[[1, 2]], members=[(1, None, None)], supports=[ein],
+                         load_cases=[("LF1", 1, 0.0)],
+                         member_loads=[(1, [1], 0, rd, 1000.0, None)])
+            m = R6.read_rf6(f, log=log)
+            m.lasten_verteilen()
+            ll = [x for lc in m.load_cases.values() for x in lc.linienlasten]
+            check(f"Stablast Kennzahl {rd}: lokal angesetzt mit q = {soll_q}",
+                  len(ll) == 1 and ll[0].system == "local"
+                  and np.allclose(ll[0].q, soll_q), str([(x.system, x.q) for x in ll]))
+            r = solver.solve_static(m, case="LF1")
+            R = np.asarray(r.reactions, float)[:, :3].sum(axis=0)
+            check(f"  und wirkt am Traeger in x global in {achse}",
+                  np.allclose(R, soll_R, atol=1e-6), str(R.round(3)))
+        # Hauptachse u und lokal z am senkrechten Stab: genannt, nicht angesetzt
+        log = []
+        f = make_rf6(os.path.join(tmp, "stab_u.rf6"), nodes=[(0, 0, 0), (4, 0, 0), (0, 0, 3)],
+                     lines=[[1, 2], [1, 3]], members=[(1, None, None), (2, None, None)],
+                     supports=[ein], load_cases=[("LF1", 1, 0.0)],
+                     member_loads=[(1, [1], 0, 3, 1000.0, None), (1, [2], 0, 2, 500.0, None)])
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        ll = [x for lc in m.load_cases.values() for x in lc.linienlasten]
+        check("Hauptachse u und lokal z am senkrechten Stab: nichts angesetzt", not ll,
+              str([(x.ziel, x.q) for x in ll]))
+        check("  beide genannt (Hauptachse u, senkrechter Stab)",
+              "Kennzahl 3 (Hauptachse u)" in txt and "senkrechten Staeben" in txt
+              and "Kennzahl 2 (lokal z)" in txt, txt[-400:])
+
+        # (2) Flaechenlasten: 0 lokal x (in der Ebene) genannt, 2 senkrecht,
+        #     16 je projizierter Flaeche auf der geneigten Flaeche
+        log = []
+        f = make_rf6(os.path.join(tmp, "flaeche.rf6"),
+                     nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 2), (0, 2, 2)],
+                     lines=[], members=[], supports=[], surfaces=[([1, 2, 3, 4], 0.010)],
+                     load_cases=[("LF1", 12, 0.0), ("LF2", 12, 0.0), ("LF3", 12, 0.0),
+                                 ("LF4", 12, 0.0)],
+                     surface_loads=[(1, [1], -1000.0, 0), (2, [1], -1000.0, 2),
+                                    (3, [1], -1000.0, 16), (4, [1], -1000.0, 13)])
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        # Bis zum 14.10.2026 (vormittags) fiel lokal x hier mit WARNUNG weg;
+        # seither geht sie ueber die lokalen Flaechenachsen an die Elemente:
+        # die globale X-Achse liegt in dieser Ebene, also x = X.
+        fl1 = m.load_cases["LF1"].face_loads
+        check("Flaechenlast lokal x: in Richtung der lokalen x-Achse = global X angesetzt",
+              len(fl1) > 0 and all(f.direction is not None and np.allclose(f.direction, (1, 0, 0))
+                                   for f in fl1), str([f.direction for f in fl1][:3]))
+        check("  mit der angenommenen Achsenregel im Protokoll",
+              any("WARNUNG" in z and "angenommen" in z and "lokalen Flaechenachsen" in z
+                  for z in log), txt[-300:])
+        for nd in range(m.nn):
+            m.support(nd, [0, 1, 2, 3, 4, 5])
+        A_wahr, A_proj = 2.0 * 2.0 * np.sqrt(2.0), 4.0
+        R1 = np.asarray(solver.solve_static(m, case="LF1").reactions, float)[:, :3].sum(axis=0)
+        check("  Summe der Lagerkraefte = -p A in X", np.allclose(R1, (1000.0 * A_wahr, 0, 0),
+                                                              atol=1e-6 * 1000.0 * A_wahr),
+              str(R1.round(3)))
+        R2 = np.asarray(solver.solve_static(m, case="LF2").reactions, float)[:, :3].sum(axis=0)
+        n = np.array([0.0, -1.0, 1.0]) / np.sqrt(2.0)
+        check("Flaechenlast lokal z: senkrecht zur Flaeche, Betrag p A",
+              abs(float(np.linalg.norm(R2)) - 1000.0 * A_wahr) < 1e-6 * 1000.0 * A_wahr
+              and abs(abs(float(R2 @ n)) - 1000.0 * A_wahr) < 1e-6 * 1000.0 * A_wahr,
+              str(R2.round(3)))
+        R3 = np.asarray(solver.solve_static(m, case="LF3").reactions, float)[:, :3].sum(axis=0)
+        close("Flaechenlast global Z je projizierter Flaeche: Summe p A_proj", float(R3[2]),
+              1000.0 * A_proj, 1e-9, " N")
+        R4 = np.asarray(solver.solve_static(m, case="LF4").reactions, float)[:, :3].sum(axis=0)
+        close("Flaechenlast global Z je wahrer Flaeche: Summe p A", float(R4[2]),
+              1000.0 * A_wahr, 1e-9, " N")
+
+        # (3) Linienlasten: lokal y genannt, global Z angesetzt
+        db = os.path.join(tmp, "model.db")
+        build_db(db, nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)], lines=[[1, 2]],
+                 members=[], supports=[], surfaces=[([1, 2, 3, 4], 0.010)],
+                 load_cases=[("LF1", 12, 0.0)])
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE LineLoad (id INTEGER PRIMARY KEY, version INTEGER, "
+                    "parentModelObject_id bigint, parentModelObject_table TEXT, userID INTEGER, "
+                    "impl_id bigint, impl_table TEXT)")
+        con.execute("CREATE TABLE LineLoadImplForceT (id INTEGER PRIMARY KEY, version INTEGER, "
+                    "parent_id bigint, parent_table TEXT, magnitude double precision, "
+                    "loadDirection INTEGER)")
+        con.execute("CREATE TABLE LineLoadImplForceT_assignedTo (id INTEGER, container_order "
+                    "INTEGER, value_id bigint)")
+        linie = con.execute("SELECT MIN(id) FROM Line").fetchone()[0]
+        for i, rd in ((1, 1), (2, 13)):
+            con.execute("INSERT INTO LineLoad VALUES (?,1,1,'LoadCase',?,?,'LineLoadImplForceT')",
+                        (i, i, i))
+            con.execute("INSERT INTO LineLoadImplForceT VALUES (?,1,?,'LineLoad',-700.0,?)",
+                        (i, i, rd))
+            con.execute("INSERT INTO LineLoadImplForceT_assignedTo VALUES (?,0,?)", (i, linie))
+        con.commit()
+        con.close()
+        log = []
+        m = R6.read_rf6(_rf6_aus_db(db, os.path.join(tmp, "linie.rf6")), log=log)
+        txt = "\n".join(log)
+        ll = [x for lc in m.load_cases.values() for x in lc.linienlasten if x.art == "linie"]
+        check("Linienlast: nur global Z angesetzt (q_z = -700)",
+              len(ll) == 1 and np.allclose(ll[0].q, (0.0, 0.0, -700.0)), str([x.q for x in ll]))
+        check("  lokal y genannt statt als global Z angesetzt",
+              any("WARNUNG" in z and "Lastrichtung 1 = lokal y" in z for z in log), txt[-300:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_flaechenlast_in_lokalen_flaechenachsen():
+    """Flaechenlasten in lokal x, y, z (loadDirection 0, 1, 2) gehen ueber die
+    lokalen Flaechenachsen als globale Richtung an die Elemente bzw. an die
+    Flaeche (14.10.2026). Bis dahin fielen lokal x und y mit WARNUNG weg, und
+    lokal z wirkte nach der Netznormalen - ohne Ruecksicht auf die in RFEM
+    umgedrehte z-Achse.
+
+    Die Achsen folgen der angenommenen RFEM-Regel (rfem6_db._flaechenachsen):
+    z = Normale des Randumlaufs (erste Randlinie in ihrer Richtung), umgedreht
+    bei reversedLocalAxisZ; x = globale X-Achse in die Ebene projiziert, um
+    den Winkel alpha um z gedreht; y = z x x. Hier von Hand gerechnet:
+
+    Flaeche 1, Rand 1-2-3-4 = (0,0,0) (2,0,0) (2,2,2) (0,2,2), Dicke 10 mm,
+    alpha = 30 Grad, z umgedreht. Umlaufnormale (0,-1,1)/sqrt2, umgedreht
+    z = (0, 0.7071, -0.7071); x0 = (1,0,0) liegt in der Ebene; z x x0 =
+    (0,-1,-1)/sqrt2; x = cos30 x0 + sin30 (z x x0) = (0.8660, -0.3536,
+    -0.3536); y = z x x = (-0.5, -0.6124, -0.6124). A = 2 * 2 sqrt2.
+    Flaeche 2 waagerecht, Rand gegen den Uhrzeiger von oben, ohne Dicke und
+    ohne Achsenzeile (Vorgabe): z = +Z, x = +X, y = +Y.
+    Flaeche 3 gewoelbt (Halbzylinder aus zwei Boegen): genannt, nicht angesetzt.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        db = os.path.join(tmp, "model.db")
+        build_db(db,
+                 nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 2), (0, 2, 2),
+                        (5, 0, 0), (7, 0, 0), (7, 2, 0), (5, 2, 0),
+                        (10.3, 0, 0), (10.3, 1, 0), (9.7, 1, 0), (9.7, 0, 0)],
+                 lines=[[1, 2], [2, 3], [3, 4], [4, 1],
+                        [5, 6], [6, 7], [7, 8], [8, 5],
+                        [9, 10], ([10, 11], (10.0, 1.0, 0.3)), [11, 12],
+                        ([12, 9], (10.0, 0.0, 0.3))],
+                 members=[], supports=[],
+                 surfaces=[([1, 2, 3, 4], 0.010), ([5, 6, 7, 8], 0.0), [9, 10, 11, 12]],
+                 boundary_lines={1: [1, 2, 3, 4], 2: [5, 6, 7, 8], 3: [9, 10, 11, 12]},
+                 load_cases=[("LF1", 12, 0.0), ("LF2", 12, 0.0), ("LF3", 12, 0.0)],
+                 # je Lastfall eine Last auf die vernetzte Flaeche 1 und eine
+                 # auf die Flaechen ohne Netz (eine Last auf beides zugleich
+                 # legt der Import nur auf die vernetzte - nicht Gegenstand hier)
+                 surface_loads=[(1, [1], -1000.0, 0), (1, [2, 3], -1000.0, 0),
+                                (2, [1], -1000.0, 1), (2, [2], -1000.0, 1),
+                                (3, [1], -1000.0, 2), (3, [2], -1000.0, 2)])
+        con = sqlite3.connect(db)
+        # Achsen wie in RFEM 6.15: SurfaceAxes ueber axes_id der Flaechenumsetzung
+        con.execute("ALTER TABLE SurfaceImplPlane ADD COLUMN axes_id bigint")
+        con.execute("CREATE TABLE SurfaceAxes (id INTEGER PRIMARY KEY, version INTEGER, "
+                    "owner_id bigint, owner_table TEXT, inputAxesRotationSpecificationType "
+                    "INTEGER, inputAxesAngularRotation double precision, "
+                    "reversedLocalAxisZ boolean)")
+        con.execute("INSERT INTO SurfaceAxes VALUES (1,1,1,'SurfaceImplPlane',0,?,1)",
+                    (math.radians(30.0),))
+        con.execute("UPDATE SurfaceImplPlane SET axes_id = 1 WHERE id = 1")
+        con.commit()
+        con.close()
+        log = []
+        m = R6.read_rf6(_rf6_aus_db(db, os.path.join(tmp, "achsen.rf6")), log=log)
+        txt = "\n".join(log)
+        for nd in range(m.nn):
+            m.support(nd, [0, 1, 2, 3, 4, 5])
+        A = 2.0 * 2.0 * math.sqrt(2.0)
+        r2 = math.sqrt(0.5)
+        soll = {"LF1": (np.array([math.cos(math.radians(30)), -0.5 * r2, -0.5 * r2]), (1, 0, 0)),
+                "LF2": (np.array([-0.5, -math.sqrt(0.375), -math.sqrt(0.375)]), (0, 1, 0)),
+                "LF3": (np.array([0.0, r2, -r2]), (0, 0, 1))}
+        for lf, (d1, d2) in soll.items():
+            # Lagerkraefte = -(Last); die Last ist p A d mit p = -1000 N/m^2
+            R = np.asarray(solver.solve_static(m, case=lf).reactions, float)[:, :3].sum(axis=0)
+            check(f"{lf} Flaeche 1 (geneigt, 30 Grad, z umgedreht): Summe = 1000 A d",
+                  np.allclose(R, 1000.0 * A * d1, atol=1e-6 * 1000.0 * A),
+                  f"{R.round(3)} / {(1000.0 * A * d1).round(3)}")
+            gl = [g for g in m.load_cases[lf].geometrielasten if g.ziel == "F2"]
+            check(f"{lf} Flaeche 2 (waagerecht, Vorgabe): Geometrielast p = -1000 in {d2}",
+                  len(gl) == 1 and abs(gl[0].p + 1000.0) < 1e-9
+                  and gl[0].richtung is not None and np.allclose(gl[0].richtung, d2)
+                  and not gl[0].projiziert,
+                  str([(g.p, g.richtung) for g in gl]))
+        gl3 = [g for lc in m.load_cases.values() for g in lc.geometrielasten if g.ziel == "F3"]
+        # seit 14.10.2026 (abends) haengt sie an der Flaeche und wirkt erst mit
+        # zylindrischen Achsen (test_gewoelbte_flaeche_zylinderachsen)
+        m.lasten_verteilen()
+        check("Flaeche 3 (gewoelbt): lokal x nicht angesetzt (wartet auf Achsen)",
+              len(gl3) == 1 and gl3[0].richtung is None and gl3[0].lokal == {"achse": 0}
+              and "nicht gewählt" in (gl3[0].kommentar or ""),
+              str([(g.p, g.richtung, g.lokal, g.kommentar) for g in gl3]))
+        check("  und als WARNUNG mit Grund und Flaeche genannt",
+              any("WARNUNG" in z and "gewoelbt" in z and "F3" in z for z in log), txt[-600:])
+        check("Protokoll nennt die Achsenregel als Annahme",
+              any("angenommen" in z and "lokalen Flaechenachsen" in z for z in log), txt[-600:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_gewoelbte_flaeche_zylinderachsen():
+    """Lasten in lokal x/y auf gewoelbten Flaechen (14.10.2026): beim Import
+    nicht angesetzt, sondern als Geometrielast mit ``lokal`` an die Flaeche
+    gehaengt und mit Flaechen, Lastfaellen und Betraegen gemeldet. Sie wirken
+    erst mit zylindrischen Flaechenachsen (Flaeche.lokale_achsen): x laengs der
+    Achse in Richtung achse_plus_x, y rechtsdrehend um +x um den Umfang, z
+    nach aussen.
+
+    Halbzylinderpaar R = 0,3 m, L = 1 m, Achse global Y durch (0, ., 0):
+    A oben (+Z), erste Randlinie in +Y; B unten (-Z), erste Randlinie in -Y.
+    Handrechnung mit A_ges = 2 * pi R L (hier die Facettenflaeche der
+    Pruefvernetzung): lokal x p = -1000 N/m^2 mit +x = +Y auf beiden ->
+    Summe p A_ges in Y = -1000 A_ges, keine Kraft quer, kein Moment um Y;
+    lokal y tau = -500 N/m^2 -> keine Restkraft, Moment um +Y (+x)
+    tau A_ges R (an den Elementmitten R cos(pi/2N))."""
+    tmp = tempfile.mkdtemp()
+    try:
+        R0, L0 = 0.3, 1.0
+        db = os.path.join(tmp, "model.db")
+        build_db(db,
+                 nodes=[(R0, 0, 0), (R0, L0, 0), (-R0, L0, 0), (-R0, 0, 0),
+                        (R0, L0, 0), (R0, 0, 0), (-R0, 0, 0), (-R0, L0, 0)],
+                 lines=[[1, 2], ([2, 3], (0.0, L0, R0)), [3, 4], ([4, 1], (0.0, 0.0, R0)),
+                        [5, 6], ([6, 7], (0.0, 0.0, -R0)), [7, 8], ([8, 5], (0.0, L0, -R0))],
+                 members=[], supports=[],
+                 surfaces=[[1, 2, 3, 4], [5, 6, 7, 8]],
+                 boundary_lines={1: [1, 2, 3, 4], 2: [5, 6, 7, 8]},
+                 load_cases=[("LF1", 12, 0.0), ("LF2", 12, 0.0)],
+                 surface_loads=[(1, [1, 2], -1000.0, 0), (1, [1, 2], -500.0, 1),
+                                (2, [1, 2], 1000.0, 0)])
+        log = []
+        m = R6.read_rf6(_rf6_aus_db(db, os.path.join(tmp, "zyl.rf6")), log=log)
+        txt = "\n".join(log)
+        gl = [g for g in m.load_cases["LF1"].geometrielasten]
+        check("Import: lokal x/y auf gewoelbten Flaechen nicht als Elementlast angesetzt",
+              not m.load_cases["LF1"].face_loads, str(len(m.load_cases["LF1"].face_loads)))
+        check("  sondern als Geometrielast mit lokal an F1 und F2 (je Last und Flaeche)",
+              len(gl) == 4 and all(g.lokal and g.richtung is None for g in gl)
+              and sorted(g.ziel for g in gl) == ["F1", "F1", "F2", "F2"],
+              str([(g.ziel, g.lokal, g.richtung) for g in gl]))
+        check("  WARNUNG nennt Flaechen, Lastfaelle, Betraege und die zylindrischen Achsen",
+              any("WARNUNG" in z and "NICHT angesetzt" in z and "F1, F2" in z
+                  and "LF1: x -1,00 kN/m², y -0,50 kN/m²" in z and "LF2: x +1,00 kN/m²" in z
+                  and "zylindrisch" in z for z in log), txt[-700:])
+
+        # Pruefvernetzung: je Halbschale N Streifen ueber den Umfang
+        N = 24
+        for fname, seite in (("F1", 1.0), ("F2", -1.0)):
+            f = m.flaechen[fname]
+            ids = {}
+            for i in range(N + 1):
+                phi = math.pi * i / N
+                for j, y in enumerate((0.0, L0)):
+                    ids[(i, j)] = m.add_node(R0 * math.cos(phi), y, seite * R0 * math.sin(phi))
+            for i in range(N):
+                # Knotenfolge bei jeder zweiten Schale umgekehrt: die
+                # Richtung darf nicht an der Elementnormalen haengen
+                kn = [ids[(i, 0)], ids[(i + 1, 0)], ids[(i + 1, 1)], ids[(i, 1)]]
+                f.elemente.append(m.add_element("shell4", kn if i % 2 else kn[::-1], "S355", None))
+
+        def summe(lf):
+            F, M, A, gesehen = np.zeros(3), np.zeros(3), 0.0, set()
+            for fl in m.load_cases[lf].face_loads:
+                X = np.asarray(m.nodes[list(m.elements[fl.elem].nodes)], float)
+                a = 0.5 * float(np.linalg.norm(np.cross(X[2] - X[0], X[3] - X[1])))
+                c = X.mean(axis=0)
+                kraft = fl.p * a * np.asarray(fl.direction, float)
+                F += kraft
+                M += np.cross(c - np.array([0.0, c[1], 0.0]), kraft)
+                if fl.elem not in gesehen:           # Flaeche je Element einmal
+                    gesehen.add(fl.elem)
+                    A += a
+            return F, M, A
+
+        m.lasten_verteilen()
+        check("ohne gewaehlte Achsen: keine Elementlast, Grund an der Last",
+              not m.load_cases["LF1"].face_loads
+              and all("nicht gewählt" in (g.kommentar or "") for g in gl),
+              str([g.kommentar for g in gl][:1]))
+        for fname in ("F1", "F2"):
+            m.flaechen[fname].lokale_achsen = "zylinder"
+            m.flaechen[fname].achse_plus_x = [0.0, 1.0, 0.0]
+        m.lasten_verteilen()
+        F, M, A_ges = summe("LF1")
+        check("mit zylindrischen Achsen: je Schale eine Elementlast (2 Lasten x 2 x 24)",
+              len(m.load_cases["LF1"].face_loads) == 96, str(len(m.load_cases["LF1"].face_loads)))
+        # nur die x-Last: LF2 hat dieselbe mit umgekehrtem Vorzeichen
+        F2, M2, _A = summe("LF2")
+        close("LF1 axial + Umfang: Summe in Y = p A_ges (p = -1000, +x = +Y)",
+              float(F[1]), -1000.0 * A_ges, 1e-9, " N")
+        check("  keine Restkraft quer zur Achse (X, Z)", abs(F[0]) < 1e-6 and abs(F[2]) < 1e-6,
+              str(F.round(6)))
+        R_c = R0 * math.cos(math.pi / (2 * N))
+        close("  Moment um +Y = tau A_ges R (tau = -500, rechtsdrehend um +x)",
+              float(M[1]), -500.0 * A_ges * R_c, 1e-9, " Nm")
+        close("  A_ges = Facettenflaeche, nahe 2 pi R L", A_ges, 2 * math.pi * R0 * L0, 2e-3, " m²")
+        close("LF2: axiale Last umgekehrt (+1000 A_ges in Y)", float(F2[1]), 1000.0 * A_ges,
+              1e-9, " N")
+        # Vorgabe ohne achse_plus_x: Richtung der ersten geraden Randlinie -
+        # A (+Y) und B (-Y) heben sich dann gegenseitig auf
+        for fname in ("F1", "F2"):
+            m.flaechen[fname].achse_plus_x = []
+        m.lasten_verteilen()
+        F0, _M0, _A0 = summe("LF2")
+        check("Vorgabe +x = erste gerade Randlinie: A in +Y, B in -Y -> Summe 0",
+              abs(F0[1]) < 1e-6, str(F0.round(6)))
+        # Speichern und Laden behaelt die Einstellung und die Lasten
+        d = m.to_dict()
+        m2 = Model.from_dict(d)
+        check("Speichern/Laden: lokale_achsen und lokal bleiben erhalten",
+              m2.flaechen["F1"].lokale_achsen == "zylinder"
+              and all(g.lokal for g in m2.load_cases["LF1"].geometrielasten),
+              str([m2.flaechen["F1"].lokale_achsen]))
+        m3 = R6.read_rf6(os.path.join(tmp, "zyl.rf6"), log=[])
+        check("Vorgabewerte stehen nicht in der Datei (NEUE_FELDER)",
+              all("lokale_achsen" not in x and "achse_plus_x" not in x
+                  for x in m3.to_dict()["flaechen"])
+              and any(x.get("lokale_achsen") == "zylinder" for x in d["flaechen"]), "")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for t in (test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
+    for t in (test_gewoelbte_flaeche_zylinderachsen, test_flaechenlast_in_lokalen_flaechenachsen, test_lastrichtung_nach_schnittstelle,
+              test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
               test_flaechenlast_ohne_lastfall,
               test_stablasten_werden_abgezaehlt, test_vorspannung_zeile_je_lastfall,
               test_stablast_auf_fehlendem_stab, test_hex_order_nie_falsch,

@@ -90,6 +90,13 @@ ACTION_CATEGORIES = {
     "SET":  ("Baugrundsetzungen", (1.0, 1.0, 1.0)),
     "A":    ("Aussergewoehnliche Einwirkung", (1.0, 1.0, 1.0)),
     "FAT":  ("Ermuedungslast (nur fuer Ermuedungsnachweis)", (0.0, 0.0, 0.0)),
+    # Nicht zugeordnet (13.10.2026): die Quelle sagt nicht eindeutig, welche
+    # Einwirkung der Lastfall ist (RFEM-Import mit der Vorgabe-Kennzahl 11).
+    # Die ψ-Werte hier sind nur ein Platzhalter der Tabelle - sie gelten nie:
+    # eine Kombination mit so einem Lastfall wird nicht gerechnet
+    # (Model.gesperrte_kombinationen), solange er weder zugeordnet noch als
+    # Bemessungslastfall gekennzeichnet ist.
+    "NZ":   ("nicht zugeordnet (Kombinationen gesperrt)", (1.0, 1.0, 1.0)),
     # --- Stahlwasserbau und bewegliche Bruecken (DIN 19704, ZTV-ING) ---
     # Die psi-Werte sind Voreinstellungen und gegen die geltende Fassung zu
     # bestaetigen; siehe statik3d.bridges.din19704.Regelwerk.
@@ -107,6 +114,9 @@ ACTION_CATEGORIES = {
     "MONT":   ("Montage- und Revisionszustand", (1.0, 1.0, 1.0)),
     "ERD":    ("Erdbeben (DIN EN 1998)", (1.0, 1.0, 1.0)),
 }
+
+#: Schluessel der Kategorie „nicht zugeordnet“ in ACTION_CATEGORIES
+KATEGORIE_OFFEN = "NZ"
 
 
 # --------------------------------------------------------------------------
@@ -203,6 +213,46 @@ def stahlsorte_normiert(text) -> str:
     return stahlsorte_schluessel(text) or str(text or "").strip()
 
 
+def zugstab_hinweis(model) -> list:
+    """Ein Modell, das vor dem 14.10.2026 aus RFEM 6 uebernommen wurde, kennt
+    seine Zugstaebe nicht: der Import legte einen RFEM-Zugstab als
+    Fachwerkstab an, der auch Druck trug (am Drehlager alle 64 Staebe, S57 mit
+    -0,59 kN im LF1), ebenso ein RFEM-Seil. Beim **Oeffnen** einer solchen
+    Datei - Quelle eine .rf6-Datei, ohne die Merkmale des Imports
+    (rfem6_db.ZUGSTAEBE_MERKMAL und SEILE_MERKMAL), mit Fachwerkstaeben ohne
+    „trägt nur“ - steht ein Importhinweis „zugstab“ mit der Umstellung als
+    Vorschlag (rfem6_db.zugstaebe_aus_rfem liest die Stabtypen aus der
+    RFEM-Datei nach) und eine Zeile fuers Protokoll. Umgestellt wird nichts:
+    das loest der Anwender aus. Rueckgabe die Zeilen."""
+    meta = getattr(model, "meta", None) or {}
+    quelle = str(meta.get("quelle", "") or "")
+    if not quelle.lower().endswith(".rf6") or (meta.get("rfem_zugstaebe") and meta.get("rfem_seile")):
+        return []
+    frei = []
+    for name, mem in (getattr(model, "members", None) or {}).items():
+        els = [model.elements[int(i)] for i in mem.elements if 0 <= int(i) < len(model.elements)]
+        if els and all(e.typ == "truss" and not getattr(e, "nur", "") for e in els):
+            frei.append(str(name))
+    if not frei:
+        return []
+    datei = os.path.basename(quelle)
+    anzahl = "1 Fachwerkstab trägt" if len(frei) == 1 else f"{len(frei)} Fachwerkstäbe tragen"
+    text = (f"Aus RFEM 6 übernommen vor dem 14.10.2026: {anzahl} Zug und Druck. "
+            "Ein RFEM-Zugstab oder -Seil fällt dort bei Druck aus, hier trug er bis zum 14.10.2026 auch Druck – "
+            f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen bzw. Seile als Seil anlegen?")
+    # der Weg in der Oberflaeche (14.10.2026; bis dahin nannte der Vorschlag
+    # die Funktion statik3d.importers.rfem6_db.zugstaebe_aus_rfem fuer die Konsole)
+    vorschlag = ("Datei › Austausch › „Stabtypen aus RFEM nachlesen…“ liest die Stabtypen aus der "
+                 "RFEM-Datei nach – oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    if not any(h.get("art") == "zugstab" and not h.get("erledigt") for h in hinweise):
+        hinweise.append({"art": "zugstab", "text": text, "objekte": frei, "vorschlag": vorschlag,
+                         "erledigt": False, "datei": quelle})
+    return [text + " (" + vorschlag + ")"]
+
+
 def werkstoffe_alter_datei_nachziehen(model) -> list:
     """Stellt f_u der Werkstoffe einer **geoeffneten Datei** auf die Sortentabelle um (M26,
     07.10.2026) und gibt die Zeilen fuers Protokoll zurueck.
@@ -234,6 +284,32 @@ def werkstoffe_alter_datei_nachziehen(model) -> list:
     return zeilen
 
 
+#: Werkstoffarten mit eigenen Namen der Kennwerte (Material.art, 13.10.2026)
+WERKSTOFFARTEN = ("Schraube", "Spannstahl")
+#: Festigkeitsklassen der Schrauben nach EN 1993-1-8 Tab. 3.1 (wie
+#: joints.bolts.GRADES) - daran erkennt Material.werkstoffart eine Schraube
+SCHRAUBENKLASSEN = ("4.6", "4.8", "5.6", "5.8", "6.8", "8.8", "10.9")
+
+
+def werte_gleich(a, b, rel: float = 1e-9) -> bool:
+    """Sind zwei Werkstoffwerte dieselben? Zahlen auf ``rel`` genau (ein Wert, der durch
+    ein Textfeld und zurueck gelaufen ist, aendert sich in der letzten Stelle), ``None``
+    nur gegen ``None``, alles andere (eine Sorte) mit ``==``. Maske und Dialog lassen
+    damit einen Wert, den der Anwender nicht angefasst hat, bitgleich stehen."""
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        fa, fb = float(a), float(b)
+    except (TypeError, ValueError):
+        return a == b
+    return abs(fa - fb) <= rel * max(abs(fa), abs(fb))
+
+
+def _mpa_text(wert) -> str:
+    """Ein Wert [Pa] als „355“ [N/mm²], leer als „leer“ (fuer die Zeilen des Protokolls)."""
+    return f"{float(wert) / 1e6:g}" if wert else "leer"
+
+
 @dataclass
 class Material:
     name: str
@@ -250,12 +326,72 @@ class Material:
     #: leer = nur fy/fu, dann gilt die Zweistufen-Regel der Stahlsorte
     fy_dicke: list = field(default_factory=list)
     fu_dicke: list = field(default_factory=list)
+    #: Verfestigung der Plastizitaet (Volumen) als Steigung des plastischen
+    #: Asts der Spannungs-Dehnungs-Linie, bezogen auf E: E_t/E (seit dem
+    #: 13.10.2026, Entscheidung des Anwenders: „Verfestigungsmodul je Werkstoff
+    #: einstellbar, Vorgabe E/100, wählbar auch ohne Verfestigung (E/10 000)“).
+    #: None = die Vorgabe der Rechnung (``Plastizitaet.verfestigung``, Vorgabe
+    #: 0,01 = E/100); 1e-4 = „ohne Verfestigung“ (E/10 000). Bis f_u (bei
+    #: Schrauben f_ub, bei Spannstahl f_pk) verfestigt der Werkstoff, danach
+    #: fliesst er ideal plastisch (plastizitaet.rueckfuehrung). Dateien vor dem
+    #: 13.10.2026 kennen den Schluessel nicht und rechnen mit der Vorgabe.
+    verfestigung: Optional[float] = None
+    #: Werkstoffart fuer die Namen der Kennwerte: "" (Stahl und alles andere:
+    #: f_y, f_u), "Schraube" (f_yb, f_ub) oder "Spannstahl" (f_p0,1k, f_pk).
+    #: Die Werte selbst stehen immer in ``fy`` und ``fu`` - der RFEM-Import legt
+    #: f_p0,1k und f_pk dort ab, der Anschlussbau f_yb und f_ub. Leer bei
+    #: Dateien vor dem 13.10.2026; dann liest :meth:`werkstoffart` Name und Sorte.
+    art: str = ""
+    #: Koerper aus diesem Werkstoff vom Volumennachweis ausnehmen - Hilfs- oder
+    #: Krafteinleitungskoerper (Entscheidung des Anwenders vom 13.10.2026:
+    #: „Nullmaterial- und Krafteinleitungskörper vom Nachweis ausnehmen und
+    #: als ausgenommen ausweisen“). Setzt nur der Anwender, nie das Programm
+    #: nach dem Namen; ec3/volumen.py weist die Elemente als ausgenommen aus.
+    nachweis_ausnehmen: bool = False
+    #: Spannstahl (13.10.2026, Stabnachweis ec3.spannstahl): f_p0,1k und f_pk
+    #: stehen in ``fy`` und ``fu`` (siehe ``art``); E_p ist der E-Modul des
+    #: Spannstahls, wie die Quelldatei ihn fuehrt [Pa]. Gerechnet wird weiter
+    #: mit ``E`` - am Drehlager E 170 000 aus der Datenbank, E_p 205 000
+    #: eingegeben; welchen RFEM rechnet, ist aus der Datei nicht zu belegen.
+    Ep: Optional[float] = None
+    #: Spannungsgrenzen beim Spannen (sigma_p,max, EN 1992-1-1, 5.10.2.1) und
+    #: nach dem Verankern (sigma_pm0, 5.10.3) [Pa]; None = Vorgabe nach den
+    #: Formeln min(0,8 f_pk; 0,9 f_p0,1k) bzw. min(0,75 f_pk; 0,85 f_p0,1k).
+    #: Eine Eingabe gilt, wenn die Zulassung abweicht.
+    sigma_pmax: Optional[float] = None
+    sigma_pm0: Optional[float] = None
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
         # nach dem Laden einer Datei, in der sie „s235“ oder „S 235“ heisst
         # (F08, 06.10.2026); eine leere Sorte (null in alten Dateien) wird ""
         self.grade = stahlsorte_normiert(self.grade)
+
+    def werkstoffart(self) -> str:
+        """"Schraube", "Spannstahl" oder "" (Stahl und alles andere).
+
+        Ausdruecklich gesetzt (``art``) gilt der Eintrag. Sonst ist ein
+        Werkstoff eine Schraube, wenn Name oder Sorte eine Festigkeitsklasse
+        nach EN 1993-1-8 Tab. 3.1 nennt („Schraube 10.9“, „8.8“) - so heissen
+        die Werkstoffe, die der Anschlussbau vor dem 13.10.2026 anlegte."""
+        art = str(self.art or "").strip()
+        if art in WERKSTOFFARTEN:
+            return art
+        import re
+        for text in (self.name, self.grade):
+            t = str(text or "").strip()
+            if re.fullmatch(r"(?i)(schraube\s*)?(" + "|".join(re.escape(k) for k in SCHRAUBENKLASSEN)
+                            + r")", t):
+                return "Schraube"
+        return ""
+
+    def grenze_name(self) -> str:
+        """Der Name der Grenze der Verfestigung: f_u, f_ub oder f_pk."""
+        return {"Schraube": "f_ub", "Spannstahl": "f_pk"}.get(self.werkstoffart(), "f_u")
+
+    def fliess_name(self) -> str:
+        """Der Name der Fliessgrenze: f_y, f_yb oder f_p0,1k."""
+        return {"Schraube": "f_yb", "Spannstahl": "f_p0,1k"}.get(self.werkstoffart(), "f_y")
 
     def _sorte(self) -> Optional[str]:
         """Der Tabellenschluessel der Sorte oder None. Ueber ihn laufen alle
@@ -286,6 +422,40 @@ class Material:
             return ""
         return ", ".join(f"≤{t * 1e3:g}: {w / 1e6:g}" for t, w in sorted((float(a), float(b)) for a, b in tabelle)) \
             + " N/mm²"
+
+    def dickentabellen_nachfuehren(self, fy_alt, fu_alt) -> list:
+        """Fuehrt die Dickentabellen nach, wenn jemand f_y oder f_u **von Hand**
+        geaendert hat (Werkstoffmaske, Werkstoffdialog; 13.10.2026), und gibt die
+        Zeilen fuers Protokoll zurueck. ``fy_alt``, ``fu_alt``: die Werte vorher [Pa].
+
+        f_y und f_u am Werkstoff sind der Wert der duennsten Stufe (so legt sie der
+        Import ab), die Nachweise lesen aber zuerst die Tabelle. Bliebe sie
+        unveraendert, waere die Eingabe fuer Staebe und Schalen wirkungslos; wuerde
+        sie verworfen, gingen die Stufen der dickeren Erzeugnisse ohne Absicht
+        verloren. Darum bleibt die Tabelle, ihre duennste Stufe folgt dem neuen Wert,
+        die uebrigen Stufen bleiben. Ein geleertes Feld laesst die Tabelle
+        unveraendert (es gibt keinen Wert, dem sie folgen koennte), und das Protokoll
+        sagt es. Ein gleichgebliebener Wert aendert nichts und meldet nichts."""
+        zeilen = []
+        for was, alt, neu, tabelle, kennwert in (
+                ("fy", fy_alt, self.fy, self.fy_dicke, self.fliess_name()),
+                ("fu", fu_alt, self.fu, self.fu_dicke, self.grenze_name())):
+            if not tabelle or (not alt and not neu) or werte_gleich(alt, neu):
+                continue
+            kopf = (f"Werkstoff {self.name}: {kennwert} {_mpa_text(alt)} N/mm² → leer." if not neu else
+                    f"Werkstoff {self.name}: {kennwert} {_mpa_text(alt)} → {_mpa_text(neu)} N/mm².")
+            if not neu:
+                zeilen.append(kopf + " Die Dickentabelle der Quelldatei bleibt unverändert und gilt weiter "
+                              f"für die Nachweise ({kennwert} {self.dickentext(was)}).")
+                continue
+            i = min(range(len(tabelle)), key=lambda k: float(tabelle[k][0]))
+            if werte_gleich(tabelle[i][1], neu):
+                continue
+            tabelle[i] = [tabelle[i][0], float(neu)]
+            zeilen.append(kopf + " Die Dickentabelle der Quelldatei bleibt erhalten, nur ihre dünnste Stufe "
+                          f"(≤{float(tabelle[i][0]) * 1e3:g} mm) folgt dem neuen Wert; die übrigen Stufen "
+                          f"sind unverändert. Jetzt: {kennwert} {self.dickentext(was)}.")
+        return zeilen
 
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
@@ -369,6 +539,17 @@ class Section:
     Iz_geo: float = 0.0
     Iyz_geo: float = 0.0
     parts: list = field(default_factory=list)   # zusammengesetzt: Teilquerschnitte
+    #: Spannungsquerschnitt des Gewindes [m^2], Eingabe aus der Zulassung
+    #: (13.10.2026). None = nicht eingetragen: der Nachweis eines Spannstahl-
+    #: stabs rechnet dann mit dem Nennquerschnitt A und meldet „A_s aus
+    #: Zulassung eintragen“. Die Steifigkeit bleibt immer bei A (Schaft).
+    A_s: Optional[float] = None
+    #: Gewinde des Stabs: "" (nicht angegeben), "aufgewalzt" (aufgewalzter
+    #: Gewindestab, A_s = Nennquerschnitt ohne Meldung) oder eine
+    #: Schraubengroesse "M12" … "M36" (A_s nach EN ISO 898-1, Tabelle
+    #: joints.bolts.SIZES; der Stab wird dann als Schraube auf Zug nach
+    #: EN 1993-1-8 nachgewiesen) - ec3.spannstahl.spannungsquerschnitt
+    gewinde: str = ""
 
     def __post_init__(self):
         if self.Wel_y <= 0 and self.zmax > 0:
@@ -1025,6 +1206,11 @@ class BeamLoad:
     q2: Optional[list[float]] = None   # Wert am Stabende (None = gleich q)
     a: float = 0.0                     # Anfang des Abschnitts [m]
     b: Optional[float] = None          # Ende des Abschnitts [m], None = Elementende
+    # Bezug der globalen Last (14.10.2026, RFEM „wahre“ bzw. „projizierte
+    # Länge“): "" je Stablaenge (beim Seil je Bogenlaenge, Kettenlinie),
+    # "projektion" je Laenge der Projektion senkrecht zur Lastrichtung (beim
+    # Seil die Parabel). Lokale Lasten kennen nur "".
+    bezugslaenge: str = ""
 
     @property
     def teilweise(self) -> bool:
@@ -1089,6 +1275,12 @@ class Geometrielast:
     #: geben einen linearen Verlauf entlang ihrer Verbindung (Wasserdruck,
     #: Erddruck), drei Punkte eine Ebene der Lastwerte. Leer = gleichmaessig p.
     verlauf: dict = field(default_factory=dict)
+    #: Last in den **lokalen Achsen einer gewoelbten Flaeche** (RFEM-Import,
+    #: 14.10.2026): {"achse": 0 (x) oder 1 (y)}; ``richtung`` bleibt leer.
+    #: Sie wirkt erst, wenn an der Flaeche zylindrische Achsen gewaehlt sind
+    #: (Flaeche.lokale_achsen = "zylinder") - dann je Elementseite in der
+    #: Richtung dieser Achse. Leer = keine solche Last.
+    lokal: dict = field(default_factory=dict)
 
     def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
@@ -1207,6 +1399,9 @@ class Linienlast:
     # gespeichert wird er nicht, er ergibt sich beim Laden neu. Bis zum
     # 07.10.2026 stand er im Kommentar und ueberschrieb den des Anwenders (N05).
     verteilt: str = ""
+    # Bezug einer globalen Stablast (14.10.2026, wie BeamLoad.bezugslaenge):
+    # "" je Stablaenge, "projektion" je Laenge der Projektion
+    bezugslaenge: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1218,6 +1413,8 @@ class Linienlast:
                                           else " bis zum Ende")
         if self.system == "local":
             t += " (lokal)"
+        elif self.bezugslaenge == "projektion":
+            t += " (je Projektion)"
         return t + (f" – {self.kommentar}" if self.kommentar else "")
 
 
@@ -1261,16 +1458,45 @@ class Vorspannung:
     art:    "stab" | "koerper"
     kraft:  Vorspannkraft [N], positiv = Zug im vorgespannten Bauteil
     achse:  Achsrichtung beim Koerper; None = seine laengste Abmessung
+
+    **Vorspannkraft (Soll nach Verankerung)** (``sollkraft``, seit dem
+    13.10.2026, nur im Stab): ``kraft`` ist dann die Kraft, die der Stab nach
+    dem Verankern **traegt**, nicht die Anfangsdehnung. Gerechnet wird sie in
+    einem eigenen Spannschritt vor den uebrigen Lasten (statik3d.vorspannkraft):
+    der Stab ist inaktiv und wirkt als Kraeftepaar F_soll an seinen Enden,
+    danach wird er in der verformten Lage mit N = F_soll verriegelt. Mit der
+    Anfangsdehnung traegt er dagegen F_v minus die elastische Verkuerzung der
+    Umgebung. Entscheidung des Anwenders: „Vorspannung kraftgesteuert eingeben.
+    Neue Lastart „Vorspannkraft (Soll nach Verankerung)“ je Stab.“
+    ``gruppe`` ist die Reihenfolge beim Spannen: Staebe derselben Gruppe
+    werden gleichzeitig gespannt, mehrere Gruppen nacheinander in
+    aufsteigender Nummer - dann verlieren die frueher gespannten Kraft.
+    Beide Felder werden nur fuer eine Sollkraft gespeichert, damit Dateien mit
+    der Anfangsdehnung bleiben, wie sie sind.
     """
     ziel: str = ""
     art: str = "stab"
     kraft: float = 0.0
     achse: Optional[list[float]] = None
     kommentar: str = ""
+    sollkraft: bool = False
+    gruppe: int = 1
 
     def bezug(self) -> str:
+        if self.sollkraft:
+            return (f"Stab {self.ziel}: F_soll = {self.kraft / 1e3:g} kN (nach Verankerung"
+                    + (f", Gruppe {int(self.gruppe)}" if int(self.gruppe or 1) != 1 else "") + ")")
         return (("Stab " if self.art == "stab" else "Volumen ") + str(self.ziel)
                 + f": F_v = {self.kraft / 1e3:g} kN")
+
+    def als_dict(self) -> dict:
+        """Zum Speichern: ``sollkraft`` und ``gruppe`` nur bei einer Sollkraft -
+        eine Datei mit der Anfangsdehnung bleibt Byte fuer Byte, wie sie war."""
+        d = asdict(self)
+        if not self.sollkraft:
+            d.pop("sollkraft", None)
+            d.pop("gruppe", None)
+        return d
 
 
 @dataclass
@@ -1320,6 +1546,93 @@ class TempLoad:
     elem: int
     dT: float = 0.0
     dT_z: float = 0.0
+    #: Merkmal „aus Vorspannung“ (RFEM-Import, 13.10.2026): die Kraft F [N], aus
+    #: der dT beim Import umgerechnet wurde (dT = -F/(E A alpha)), mit dem E
+    #: [Pa] und dem alpha [1/K] dieser Umrechnung. 0 = gewoehnliche
+    #: Temperaturlast. Nur die Darstellung liest es: Anzeige, Tabelle und
+    #: Bericht nennen die Kraft statt der Temperatur und sagen, mit welchem E
+    #: und alpha sie in eine eingepraegte Dehnung umgesetzt ist. Gerechnet
+    #: wird weiter mit dT.
+    aus_vorspannung: float = 0.0
+    vorspann_E: float = 0.0
+    vorspann_alpha: float = 0.0
+
+    @property
+    def ist_vorspannung(self) -> bool:
+        return bool(self.aus_vorspannung)
+
+    def vorspann_werte(self, model=None):
+        """(F [N], E [Pa], alpha [1/K]) der Vorspannung, die diese Temperaturlast
+        darstellt - oder None.
+
+        Ein Merkmal aus zwei Quellen (Zusammenfuehrung am 14.10.2026; bis dahin
+        hatten der RFEM-Import und die Vorspannkraft je eine eigene Anzeige):
+
+        * gespeichert (``aus_vorspannung``, ``vorspann_E``, ``vorspann_alpha``):
+          der RFEM-Import seit dem 13.10.2026 haelt die Kraft und die Werte der
+          Umrechnung fest; es gilt die Kraft der Quelldatei, auch wenn sich E
+          oder A des Stabs spaeter aendern;
+        * abgeleitet (nur mit ``model``, ohne gespeichertes Merkmal): die Kraft,
+          die die Temperatur in einem Zug- oder Seilstab erzeugt
+          (:meth:`vorspannkraft`), mit E und alpha des Werkstoffs - so steht eine
+          Vorspannung, die vor dem 13.10.2026 aus RFEM kam (am Drehlager
+          „Material 3“, dT = -445,6 K)."""
+        if self.aus_vorspannung:
+            return (float(self.aus_vorspannung), float(self.vorspann_E or 0.0),
+                    float(self.vorspann_alpha or 0.0))
+        if model is None:
+            return None
+        N = self.vorspannkraft(model)
+        if abs(N) <= 1.0:
+            return None
+        mat = model.materials.get(getattr(model.elements[int(self.elem)], "mat", ""))
+        return N, float(mat.E), float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
+
+    def vorspann_text(self, model=None, punkt: bool = False) -> str:
+        """„Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+        α = 1,0e-5 1/K)“ - leer, wenn die Last keine Vorspannung ist
+        (:meth:`vorspann_werte`; ohne ``model`` nur das gespeicherte Merkmal).
+
+        Der Anwender sieht die Kraft, nicht die Temperatur, mit der das
+        Programm sie rechnet (Entscheidung vom 13.10.2026: „Vorspannung als
+        Kraft anzeigen, nicht als Temperatur ΔT“). Das E und das alpha der
+        Umrechnung stehen dabei: ihr Produkt mit der Stabflaeche macht aus der
+        Dehnung wieder die Kraft, und bis die kraftgesteuerte Vorspannung da
+        ist, haengt die Kraft im Stab an ihnen. ``punkt``: Dezimalpunkt statt
+        Komma (Ansicht, Baum). Das alpha steht mit Exponenten - eine
+        Werkstoffkonstante der Groesse 1e-5 als „0,00001“ liest niemand.
+        Dieselbe Form gilt fuer die abgeleitete Vorspannung; bis zum 14.10.2026
+        stand diese als „aus Vorspannung 952 kN, E = …, α = …“ da."""
+        w = self.vorspann_werte(model)
+        if w is None:
+            return ""
+        return (f"Vorspannung {self.vorspann_kraft_text(punkt, model)} ("
+                f"{self.vorspann_umrechnung_text(punkt, model)})")
+
+    def vorspann_kraft_text(self, punkt: bool = False, model=None) -> str:
+        """„952 kN“ - die Vorspannkraft allein (Tabellenspalte, Ansicht)."""
+        from .zahlen import zahl_text
+        w = self.vorspann_werte(model)
+        return f"{zahl_text(round((w[0] if w else 0.0) / 1e3, 1), punkt=punkt)} kN"
+
+    def vorspann_umrechnung_text(self, punkt: bool = False, model=None) -> str:
+        """„eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K“ - womit die
+        Kraft in die Rechnung eingeht."""
+        from .zahlen import zahl_text
+        w = self.vorspann_werte(model) or (0.0, 0.0, 0.0)
+        teile = ["eingeprägte Dehnung"]
+        if w[1]:
+            teile.append(f"E = {zahl_text(round(w[1] / 1e6, 1), punkt=punkt)} N/mm²")
+        if w[2]:
+            teile.append(f"α = {self.vorspann_alpha_text(punkt, w[2])} 1/K")
+        return ", ".join(teile)
+
+    def vorspann_alpha_text(self, punkt: bool = False, alpha: float = None) -> str:
+        """„1,0e-5“ - das alpha der Umrechnung mit Exponent (eine Werkstoff-
+        konstante dieser Groesse als „0,00001“ liest niemand)."""
+        a = self.vorspann_alpha if alpha is None else alpha
+        mant, _, ex = f"{float(a):.1e}".partition("e")
+        return f"{mant if punkt else mant.replace('.', ',')}e{int(ex)}"
 
     def vorspannkraft(self, model) -> float:
         """Die Kraft [N], die diese Temperaturlast in einem Zugstab erzeugt:
@@ -1334,7 +1647,9 @@ class TempLoad:
         if not (0 <= int(self.elem) < len(model.elements)) or not self.dT:
             return 0.0
         e = model.elements[int(self.elem)]
-        if getattr(e, "typ", "") not in ("truss", "cable"):
+        # Fachwerkstab und Seil (bis zum 14.10.2026 stand hier "cable" - einen
+        # Elementtyp dieses Namens gibt es nicht, ein Seil hatte die Kraft 0)
+        if getattr(e, "typ", "") not in ("truss", "seil"):
             return 0.0
         mat = model.materials.get(getattr(e, "mat", ""))
         sec = model.sections.get(getattr(e, "sec", ""))
@@ -1345,15 +1660,21 @@ class TempLoad:
         return float(mat.E) * A * alpha * (-float(self.dT))
 
     def bezug(self, model=None) -> str:
-        """Eine Zeile fuer Tabelle und Protokoll - bei einem vorgespannten
-        Zugstab mit der Kraft, nicht nur mit der Temperatur."""
+        """Eine Zeile fuer Tabelle und Protokoll - bei einer Vorspannung mit der
+        Kraft und mit E und α der Umrechnung (:meth:`vorspann_text`). Mit dem
+        gespeicherten Merkmal steht nur die Kraft da; eine abgeleitete
+        Vorspannung (Datei von vor dem 13.10.2026) behaelt ihr ΔT davor, weil sie
+        in der Datei eine Temperaturlast ist. Bis zum 14.10.2026 hiess der
+        Zusatz „→ aus Vorspannung 952 kN, E = …, α = … (Zugstab)“."""
+        if self.aus_vorspannung:
+            return f"Element {self.elem}: {self.vorspann_text(model)}"
         text = f"Element {self.elem}: ΔT = {self.dT:+.1f} K"
         if self.dT_z:
             text += f", ΔT über die Höhe {self.dT_z:+.1f} K"
         if model is not None:
-            N = self.vorspannkraft(model)
-            if abs(N) > 1.0:
-                text += f" → Vorspannung {N / 1e3:.0f} kN (Zugstab)"
+            vs = self.vorspann_text(model)
+            if vs:
+                text += f" → {vs}"
         return text
 
 
@@ -1403,6 +1724,15 @@ class LoadCase:
     #: jeder der 164 Ermuedungszustaende einen anderen Kontaktzustand. In
     #: einem linearen Modell ist sie ein gewoehnlicher Lastfall (Ueberlagerung).
     grundlast: bool = False
+    #: „Bemessungslastfall, bereits faktorisiert“ (13.10.2026): die Lasten sind
+    #: schon Bemessungswerte - die Teilsicherheits- und Kombinationsbeiwerte
+    #: stecken in ihnen. In jeder Kombination geht der Lastfall mit
+    #: gamma = 1,0 und ohne psi ein (combinations._gamma); sonst bekaeme er sein
+    #: gamma ein zweites Mal. Beispiel: RFEM-Lastfaelle „Bemessungslast im GZT
+    #: ...“, die eine Ergebniskombination der Bemessungssituation GZT mit dem
+    #: Faktor 1,0 fuehrt. Ein solcher Lastfall braucht keine Einwirkung: er
+    #: haelt keine Kombination wegen „nicht zugeordnet“ auf.
+    faktorisiert: bool = False
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1421,6 +1751,37 @@ class LoadCase:
         if self.psi is not None:
             return tuple(self.psi)
         return ACTION_CATEGORIES.get(self.category, ACTION_CATEGORIES["Q"])[1]
+
+    def lastart_titel(self, art: str) -> str:
+        """Der Titel einer Lastart des Lastfalls (Modellbaum, Maske): die
+        Temperaturlasten heissen „Vorspannung (eingeprägte Dehnung)“, wenn alle
+        aus einer umgerechneten Vorspannung stammen (13.10.2026) - der Anwender
+        sucht dort keine Temperatur."""
+        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        if art == "temperatur":
+            alle = self.lasten_je_art().get("temperatur", [])
+            if alle and all(getattr(l, "aus_vorspannung", 0.0) for l in alle):
+                return "Vorspannung (eingeprägte Dehnung)"
+        return titel
+
+    def einwirkung_text(self) -> str:
+        """Die Einwirkung zum Lesen in Tabellen: der Schluessel („G“, „Q_A“),
+        bei „nicht zugeordnet“ der Klartext, und das Kennzeichen
+        „Bemessungslastfall“ dahinter."""
+        t = "nicht zugeordnet" if self.kategorie_offen else str(self.category)
+        return t + (", Bemessungslastfall" if getattr(self, "faktorisiert", False) else "")
+
+    @property
+    def kategorie_offen(self) -> bool:
+        """Die Einwirkung ist nicht zugeordnet (Kategorie ``NZ``)."""
+        return self.category == KATEGORIE_OFFEN
+
+    @property
+    def kombination_gesperrt(self) -> bool:
+        """Ob eine Kombination mit diesem Lastfall nicht gerechnet wird: seine
+        Einwirkung ist nicht zugeordnet, und er ist auch kein
+        Bemessungslastfall (``faktorisiert``), dessen Beiwerte feststehen."""
+        return self.kategorie_offen and not self.faktorisiert
 
     @property
     def is_permanent(self) -> bool:
@@ -1475,7 +1836,7 @@ class LoadCase:
         return [l for l in getattr(self, liste) if not getattr(l, "_geo", False)]
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name, "category": self.category,
             "description": self.description, "psi": self.psi,
             "exclusive_group": self.exclusive_group,
@@ -1488,21 +1849,34 @@ class LoadCase:
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
             "nodal_loads": [asdict(l) for l in self.eigene("nodal_loads")],
-            "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
+            # ohne leeren Bezug (bezugslaenge, 14.10.2026): so liest auch ein
+            # aelterer Stand (BeamLoad(**l)) die Datei
+            "beam_loads": [{k: v for k, v in asdict(l).items() if k != "bezugslaenge" or v}
+                           for l in self.eigene("beam_loads")],
             "face_loads": [asdict(l) for l in self.eigene("face_loads")],
-            "geometrielasten": [asdict(l) for l in self.geometrielasten],
+            "geometrielasten": [_ohne_vorgabe("load_cases.geometrielasten", asdict(l))
+                                for l in self.geometrielasten],
             # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei;
             # den Stand des Verteilens (verteilt) schreibt niemand, er entsteht neu
             "linienlasten": [{k: v for k, v in asdict(l).items()
-                              if k != "verteilt" and (k != "erzeuger" or v)}
+                              if k != "verteilt" and (k not in ("erzeuger", "bezugslaenge") or v)}
                              for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
-            "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
+            "vorspannungen": [l.als_dict() for l in (getattr(self, "vorspannungen", None) or [])],
             "uebermasse": [asdict(l) for l in (getattr(self, "uebermasse", None) or [])],
-            "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
+            # das Merkmal „aus Vorspannung“ nur, wo es gesetzt ist: so liest auch
+            # ein aelterer Stand die Datei, und eine alte Datei bleibt, wie sie war
+            "temp_loads": [{k: v for k, v in asdict(l).items()
+                            if v or k not in ("aus_vorspannung", "vorspann_E", "vorspann_alpha")}
+                           for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
         }
+        # das Kennzeichen nur, wo es gesetzt ist: eine alte Datei bleibt beim
+        # Speichern, wie sie war, und ein aelterer Stand liest die neue
+        if getattr(self, "faktorisiert", False):
+            d["faktorisiert"] = True
+        return d
 
     @staticmethod
     def from_dict(d: dict) -> "LoadCase":
@@ -1514,6 +1888,8 @@ class LoadCase:
         # Dateien vor R2-A1 (04.10.2026) kennen das Feld nicht: leer
         lc.bezeichnung = str(d.get("bezeichnung", "") or "")
         lc.grundlast = bool(d.get("grundlast", False))
+        # Dateien vor dem 13.10.2026 kennen das Kennzeichen nicht: kein Bemessungslastfall
+        lc.faktorisiert = bool(d.get("faktorisiert", False))
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -1837,6 +2213,30 @@ class Member:
     fatigue_points: str = "flanges"    # Spannungspunkte fuer Ermuedung
     consequence: str = "low"           # low | high (Schadensfolge, gamma_Mf)
     assessment: str = "damage_tolerant"  # damage_tolerant | safe_life
+    #: Einleitung der Stabenden in ein Volumen, je Ende ("A" Anfang, "E" Ende)
+    #: {"art": "punkt" | "stirn" | "ring", "d_innen": m, "d_aussen": m}.
+    #: Leer = wie die Modelleinstellung (Model.stabeinleitung). Seit
+    #: 13.10.2026; die Datei fuehrt den Schluessel nur, wenn er belegt ist.
+    einleitung: dict = field(default_factory=dict)
+
+
+#: Einleitung eines Stabendes in ein Volumen (Entscheidung des Anwenders vom
+#: 13.10.2026): "punkt" haengt es wie RFEM an die 1-3 Knoten des Elements, in
+#: dem es liegt (fugen.stabenden_koppeln); "stirn" verteilt es ueber die
+#: Stirnflaeche des Koerpers, "ring" ueber einen Kreisring - beides als
+#: Verteilkopplung RBE3 ohne Versteifung, flaechenanteilig gewichtet.
+EINLEITUNG_PUNKT, EINLEITUNG_STIRN, EINLEITUNG_RING = "punkt", "stirn", "ring"
+EINLEITUNGEN = (EINLEITUNG_PUNKT, EINLEITUNG_STIRN, EINLEITUNG_RING)
+
+
+@dataclass
+class Stabeinleitung:
+    """Modelleinstellung: wie Stabenden in Volumen eingeleitet werden - die
+    Vorgabe fuer jedes Stabende, das Member.einleitung nicht selbst regelt.
+    d_innen/d_aussen [m]: Kreisring der Auflageflaeche (Art "ring")."""
+    art: str = EINLEITUNG_PUNKT
+    d_innen: float = 0.0
+    d_aussen: float = 0.0
 
 
 @dataclass
@@ -1876,6 +2276,13 @@ class Volumenbereich:
     singular: bool = False
     beschreibung: str = ""
     dicke: float = 0.0
+    #: Grenzwert der groessten plastischen Hauptdehnung eps_p,1 am
+    #: Integrationspunkt fuer den Nachweis einer plastischen Rechnung
+    #: (Entscheidung des Anwenders vom 13.10.2026; Vorgabe 5 % nach
+    #: EN 1993-1-5 Anh. C / EN 1993-1-14), als Zahl (0,05 = 5 %). Bis zum
+    #: 13.10.2026 gab es ihn nicht: plastisch stand der Bereich als „nicht
+    #: bewertet“, davor mit der Spannung als Zahlenwert.
+    eps_grenze: float = 0.05
 
     def bezug(self) -> str:
         n = len(self.elemente)
@@ -2219,6 +2626,25 @@ class Netzeinstellungen:
     #: und sich allein in der (beim Vernetzen halbierten) Kantenlaenge
     #: unterscheidet.
     stufe: str = ""
+    #: **Krafteinleitungen ohne Flaeche feiner vernetzen** (13.10.2026,
+    #: elementstufe.kraft_an): bei Mittel und Fein am Lochrand starrer
+    #: Scheiben ueber Bohrungen 9 statt 18 Grad je Abschnitt (hoechstens die
+    #: halbe Kantenlaenge), je zwei Elementringe weit, von dort wachsend
+    #: (netzfeld.krafteinleitungen). Vorgabe **aus**: der Anwender hat es am
+    #: 13.10.2026 gewuenscht, am Drehlager aber ist die Verfeinerung mit den
+    #: Stabenden zusammen nicht in vertretbarer Zeit vernetzt worden
+    #: (Benutzerhandbuch, „Elementstufe“); aeltere Dateien ohne das Feld
+    #: bekommen die Vorgabe, ihr Netz aendert sich nicht. Aus gibt das Netz
+    #: von Mittel, wie es bis zum 13.10.2026 war.
+    krafteinleitung_fein: bool = False
+    #: **auch Stabenden** (13.10.2026, elementstufe.stabenden_an): zusaetzlich
+    #: zu den Ringen bekommen Stabenden auf Volumen die halbe Kantenlaenge. Nur
+    #: wirksam mit ``krafteinleitung_fein``. Vorgabe aus: die Kegel der
+    #: Stabenden reichen in die Nachbarkoerper (Wachstum 0,35 je m); am
+    #: Drehlager hat die Stufe mit Stabenden allein in ueber 70 Minuten kein
+    #: Netz geliefert, und mit Ringen zusammen wuchsen die Nachbarplatten V15
+    #: um 63 %, V33 und V35 um 44 % der Knoten (Messung 14.10.2026).
+    krafteinleitung_stabenden: bool = False
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
@@ -2446,13 +2872,30 @@ class Flaeche:
     gelenkwirkung: str = ""
     #: Knoten (Modellnummern) und Linien, die in RFEM **in die Flaeche
     #: integriert** sind: sie liegen auf der Flaeche und gehoeren zu ihrem
-    #: Netz - das Ende eines Zugstabs auf der Stirnflaeche eines
-    #: Schraubenvolumens, der Kreis einer starren Scheibe auf dem Deckel.
+    #: Netz - etwa das Ende eines Zugstabs auf der Stirnflaeche eines
+    #: Schraubenvolumens. Die Kreise der starren Scheiben sind **keine**
+    #: integrierten Linien: am Drehlager sind sie die eigenen Randlinien der
+    #: Scheibe und bilden zugleich die Oeffnung der Bohrung (Pruefung an der
+    #: rf6, 10.10.2026; die integrierten Linien liegen dort alle in Flaechen
+    #: ohne Dicke, keine in der Ebene einer Scheibe).
     #: Die Knoten haengt fugen.stabenden_koppeln nach dem Vernetzen an das
     #: Netz des Koerpers; die Linien stehen hier fest, das Netz folgt ihnen
     #: (noch) nicht.
     integrierte_knoten: list[int] = field(default_factory=list)
     integrierte_linien: list[str] = field(default_factory=list)
+    #: Lokale Flaechenachsen fuer Lasten in lokal x/y einer **gewoelbten**
+    #: Flaeche (Geometrielast.lokal, 14.10.2026): "" = keine (die Lasten
+    #: wirken nicht), "zylinder" = zylindrische Achsen: x laengs der
+    #: Zylinderachse in Richtung ``achse_plus_x``, y gleichsinnig um den
+    #: Umfang (rechtsdrehend um +x), z nach aussen. Gesetzt wird das nie
+    #: automatisch, nur vom Anwender (Flaeche bearbeiten). RFEMs eigene Achsen
+    #: einer gewoelbten Flaeche (x = global X in die Tangentialebene
+    #: projiziert) passen am Drehlager nicht zu RFEMs Lastbild - siehe
+    #: docs/Schnittstellen.md.
+    lokale_achsen: str = ""
+    #: Globale Richtung von +x bei zylindrischen Achsen (wird auf die Achse
+    #: projiziert); leer = Richtung der ersten geraden Randlinie.
+    achse_plus_x: list[float] = field(default_factory=list)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -2567,6 +3010,10 @@ class Volumenkoerper:
     #: automatische Wahl, und eine aeltere Datei ohne das Feld soll rechnen wie
     #: bisher. Model.check lehnt andere Werte ab.
     ordnung: Optional[int] = None
+    #: Diesen Koerper vom Volumennachweis ausnehmen - Hilfs- oder
+    #: Krafteinleitungskoerper (13.10.2026, wie Material.nachweis_ausnehmen).
+    #: Setzt nur der Anwender; ein Importhinweis darf es vorschlagen.
+    nachweis_ausnehmen: bool = False
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -2661,6 +3108,155 @@ def polygon_eben(P, tol: float = 1e-3) -> bool:
         return True
     n = np.linalg.svd(Q, full_matrices=False)[2][2]
     return float(np.abs(Q @ n).max()) <= tol * groesse
+
+
+# --------------------------------------------------------------------------
+# Zylindrische Flaechenachsen (14.10.2026)
+# --------------------------------------------------------------------------
+def polygon_gerade(Q, tol: float = 1e-6) -> bool:
+    """Liegen die Punkte auf einer Geraden?"""
+    Q = np.asarray(Q, float)
+    d = Q[-1] - Q[0]
+    L = float(np.linalg.norm(d))
+    if L <= 0:
+        return True
+    abst = np.linalg.norm(np.cross(Q - Q[0], d / L), axis=1)
+    return float(abst.max()) <= tol * max(L, 1.0)
+
+
+def _kreismitte(a, b, c):
+    """Mittelpunkt des Kreises durch drei Punkte - oder None."""
+    a, b, c = (np.asarray(x, float) for x in (a, b, c))
+    u, v = b - a, c - a
+    w = np.cross(u, v)
+    w2 = float(w @ w)
+    if w2 <= 1e-24:
+        return None
+    return a + (np.cross(w, u) * float(v @ v) + np.cross(v, w) * float(u @ u)) / (2.0 * w2)
+
+
+def _linie_punkte(model, name: str, teilung: int = 16):
+    """Punkte einer Linie in ihrer Definitionsrichtung (krumme abgetastet) - oder None."""
+    ln = model.lines.get(name)
+    if ln is None or len(ln.nodes) < 2:
+        return None
+    p0 = np.asarray(model.nodes[int(ln.nodes[0])], float)
+    if (ln.typ or "polyline") != "polyline":
+        try:
+            Q = np.asarray(ln.kurve(model).punkte(max(teilung, 4)), float)
+        except Exception:                # noqa: BLE001 - krumm, aber unbrauchbar
+            Q = None
+        if Q is not None and len(Q) > 1:
+            return Q[::-1] if np.linalg.norm(Q[0] - p0) > np.linalg.norm(Q[-1] - p0) else Q
+    return np.asarray(model.nodes[[int(k) for k in ln.nodes]], float)
+
+
+def zylinderachse(model, f, tol: float = 1e-3):
+    """(Punkt, Einheitsrichtung, Radius) der Zylinderachse einer gewoelbten
+    Flaeche aus ihrer Geometrie - oder None.
+
+    Die Richtung geben die geraden Randlinien (Mantellinien), den Punkt der
+    Mittelpunkt eines Bogens; ohne gerade Randlinie verbindet die Achse zwei
+    Bogenmittelpunkte. Geprueft wird, dass alle abgetasteten Randpunkte
+    denselben Abstand zur Achse haben (relativ ``tol``)."""
+    gerade, mitten = [], []
+    for ln_name in (f.linien or []):
+        Q = _linie_punkte(model, ln_name, 16)
+        if Q is None:
+            continue
+        d = Q[-1] - Q[0]
+        L = float(np.linalg.norm(d))
+        if len(Q) < 3 or polygon_gerade(Q):
+            if L > 0:
+                gerade.append(d / L)
+            continue
+        mi = _kreismitte(Q[0], Q[len(Q) // 2], Q[-1])
+        if mi is not None:
+            mitten.append(mi)
+    if not mitten:
+        return None
+    if gerade:
+        e = gerade[0]
+        if any(abs(abs(float(g @ e)) - 1.0) > tol for g in gerade):
+            return None
+    elif len(mitten) >= 2 and float(np.linalg.norm(mitten[1] - mitten[0])) > 0:
+        e = (mitten[1] - mitten[0]) / float(np.linalg.norm(mitten[1] - mitten[0]))
+    else:
+        return None
+    a0 = mitten[0]
+    P = np.asarray(f.randpunkte(model, 16), float)
+    r = P - a0
+    r = r - np.outer(r @ e, e)
+    rr = np.linalg.norm(r, axis=1)
+    R = float(rr.mean())
+    if R <= 0 or float(np.abs(rr - R).max()) > 10.0 * tol * R:
+        return None
+    return a0, e, R
+
+
+def zylinder_plus_x(model, f, e):
+    """+x der zylindrischen Achsen: ``achse_plus_x`` der Flaeche, sonst die
+    Richtung der ersten geraden Randlinie - als Vorzeichen auf der Achse e."""
+    v = np.asarray(f.achse_plus_x, float) if len(f.achse_plus_x or []) == 3 else None
+    if v is None:
+        for ln_name in (f.linien or []):
+            Q = _linie_punkte(model, ln_name, 4)
+            if Q is not None and polygon_gerade(Q):
+                v = Q[-1] - Q[0]
+                break
+    if v is None or abs(float(v @ e)) <= 1e-9:
+        return np.asarray(e, float)
+    return np.asarray(e, float) if float(v @ e) > 0 else -np.asarray(e, float)
+
+
+#: Wahl der lokalen Achsen einer gewoelbten Flaeche in der Maske -> Feldwert
+LOKALE_ACHSEN = {"keine (Lasten in lokal x/y wirken nicht)": "",
+                 "zylindrisch (x axial, y um den Umfang, z nach außen)": "zylinder"}
+#: Wahl der Richtung von +x bei zylindrischen Achsen -> achse_plus_x
+ACHSE_PLUS_X = {"Richtung der ersten geraden Randlinie": [],
+                "+X": [1.0, 0.0, 0.0], "−X": [-1.0, 0.0, 0.0],
+                "+Y": [0.0, 1.0, 0.0], "−Y": [0.0, -1.0, 0.0],
+                "+Z": [0.0, 0.0, 1.0], "−Z": [0.0, 0.0, -1.0]}
+
+
+def flaechen_gleicher_achse(model, name: str, tol: float = 1e-3) -> list:
+    """Die Flaeche ``name`` und alle Flaechen mit Lasten in lokalen Achsen
+    (Geometrielast.lokal), die auf derselben Zylinderachse liegen - die
+    Halbmaentel einer Bohrung. Fuer sie gilt dieselbe Achsenwahl."""
+    f = model.flaechen.get(name)
+    a = zylinderachse(model, f) if f is not None else None
+    if a is None:
+        return [name] if f is not None else []
+    a0, e, R = a
+    kandidaten = {gl.ziel for lc in model.load_cases.values() for gl in lc.geometrielasten
+                  if gl.lokal and gl.art == "flaeche"}
+    out = [name]
+    for n in sorted(kandidaten - {name}):
+        g = model.flaechen.get(n)
+        b = zylinderachse(model, g) if g is not None else None
+        if b is None:
+            continue
+        d = b[0] - a0
+        abstand = float(np.linalg.norm(d - float(d @ e) * e))
+        if abs(abs(float(b[1] @ e)) - 1.0) <= tol and abstand <= tol * max(R, 1e-9) * 10:
+            out.append(n)
+    return out
+
+
+def zylinderachsen_je_seite(mitte, a0, x):
+    """(x, y, z) zylindrischer Flaechenachsen an einem Punkt: x laengs der
+    Achse (schon mit Vorzeichen), z radial nach aussen, y = x x z - also
+    rechtsdrehend um +x um den Umfang. (x, y, z) ist damit **linkshaendig**:
+    die Vorgabe des Anwenders (y rechtsdrehend um +x, z nach aussen) laesst
+    sich nicht anders erfuellen; gerechnet wird nur mit den Richtungen."""
+    x = np.asarray(x, float)
+    r = np.asarray(mitte, float) - np.asarray(a0, float)
+    r = r - float(r @ x) * x
+    L = float(np.linalg.norm(r))
+    if L <= 0:
+        return None
+    z = r / L
+    return x, np.cross(x, z), z
 
 
 def _randstuecke(model, linien: list[str]) -> list:
@@ -3062,6 +3658,10 @@ class DesignSettings:
     gamma_G_inf: float = 1.0
     gamma_Q: float = 1.5
     gamma_Q_fav: float = 0.0
+    #: Teilsicherheitsbeiwert der Vorspannung (Kategorie P), guenstig wie
+    #: unguenstig (Entscheidung des Anwenders vom 13.10.2026: γ_P = 1,0). Bis
+    #: dahin lief P als staendige Einwirkung mit gamma_G,sup = 1,35.
+    gamma_P: float = 1.0
     stations: int = 9                  # Nachweisstellen je Element
     #: Bezugszeitraum der Ermuedungs-Lastspielzahlen [Jahre]. 0 = die
     #: Lastspielzahlen gelten fuer die ganze Nutzungsdauer, dann gibt es keine
@@ -3208,6 +3808,11 @@ class StarrKoerper:
     art: str = "RBE2"
     gewichte: list = field(default_factory=list)
     kommentar: str = ""
+    #: nur RBE3 (seit 14.10.2026): je Slave der Vektor s_i [m3] der
+    #: Momentenzeilen, Integral N_i (x - x_Master) dA bei der verteilenden
+    #: Einleitung eines Stabendes (verbindung.starrkoerper_matrix); leer:
+    #: klassisch s_i = w_i r_i. Steht nur in der Datei, wenn belegt.
+    momente: list = field(default_factory=list)
 
 
 @dataclass
@@ -3438,6 +4043,21 @@ class NameVergeben(ValueError):
     Die Oberflaeche zeigt ihn als Hinweis, der Webserver als Fehlermeldung."""
 
 
+class KombinationGesperrt(ValueError):
+    """Eine Kombination enthaelt einen Lastfall, dessen Einwirkung nicht
+    zugeordnet ist (Kategorie „nicht zugeordnet“, 13.10.2026), und wird darum
+    nicht gerechnet. Ein Bedienhinweis, kein Fehler: der Text sagt, welche
+    Lastfaelle es sind und wie die Zuordnung geht. ``kombinationen`` ist
+    {Kombination: [Lastfaelle]}, ``lastfaelle`` die Lastfaelle ohne Einwirkung.
+    Als Unterklasse von ValueError fangen sie alle bisherigen
+    ``except ValueError`` weiter; die Oberflaeche zeigt sie als Hinweis."""
+
+    def __init__(self, text: str, kombinationen: dict = None, lastfaelle: list = None):
+        super().__init__(text)
+        self.kombinationen = dict(kombinationen or {})
+        self.lastfaelle = list(lastfaelle or [])
+
+
 def _namensnummer(name) -> tuple:
     """("LF", 3) zu „LF3“, ("LK", 7) zu „LK7“, sonst ("", 0): ein Name dieser
     Form belegt seine Nummer (R2-A1). Gross/Klein, Leerzeichen und fuehrende
@@ -3557,6 +4177,9 @@ class Model:
         #: bis zum 23.09.2026. Welche gerechnet wurde, steht in res.info und
         #: an der Nachweisstelle.
         self.randspannung = "frei"
+        #: Stabenden in Volumen: an 1-3 Knoten (wie RFEM) oder verteilt ueber
+        #: Stirnflaeche bzw. Kreisring (seit 13.10.2026, fugen.stabenden_koppeln)
+        self.stabeinleitung = Stabeinleitung()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
@@ -3921,6 +4544,57 @@ class Model:
         return list(self.load_cases) + [n for n, c in self.combinations.items()
                                         if n not in self.load_cases
                                         and not c.ist_umhuellende]
+
+    # ---------------- Lastfaelle ohne Einwirkung (13.10.2026) ----------------
+    def lastfaelle_ohne_einwirkung(self, namen=None) -> list[str]:
+        """Die Lastfaelle, deren Einwirkung nicht zugeordnet ist und die auch
+        kein Bemessungslastfall sind - fuer sie stehen gamma und psi nicht
+        fest. ``namen`` schraenkt auf diese Lastfaelle ein."""
+        return [n for n, lc in self.load_cases.items()
+                if lc.kombination_gesperrt and (namen is None or n in namen)]
+
+    def gesperrte_kombinationen(self, namen=None) -> dict:
+        """{Kombination: [Lastfaelle ohne Einwirkung]} - die Kombinationen, die
+        nicht gerechnet werden, weil sie einen Lastfall mit der Einwirkung
+        „nicht zugeordnet“ enthalten (Faktor ungleich null, auch in einer
+        Alternative einer Ergebniskombination). ``namen`` schraenkt auf diese
+        Kombinationen ein. Einzelne Lastfaelle bleiben rechenbar."""
+        offen = {n for n, lc in self.load_cases.items() if lc.kombination_gesperrt}
+        if not offen:
+            return {}
+        aus = {}
+        for n, c in self.combinations.items():
+            if namen is not None and n not in namen:
+                continue
+            treffer = [k for k in c.lastfaelle() if k in offen]
+            if treffer:
+                aus[n] = treffer
+        return aus
+
+    def sperrhinweis(self, gesperrt: dict = None, lastfaelle: list = None) -> str:
+        """Der Bedienhinweis zu gesperrten Kombinationen: welche Lastfaelle
+        keine Einwirkung haben, welche Kombinationen deshalb nicht gerechnet
+        werden und wie die Zuordnung geht. Leer, wenn nichts gesperrt ist.
+
+        ``gesperrt`` ist das Ergebnis von :meth:`gesperrte_kombinationen`
+        (sonst wird es gebildet); ``lastfaelle`` nennt die Lastfaelle, von
+        denen die Rede ist (sonst die der gesperrten Kombinationen)."""
+        gesperrt = self.gesperrte_kombinationen() if gesperrt is None else gesperrt
+        if not gesperrt:
+            return ""
+        lfs = list(lastfaelle) if lastfaelle is not None else \
+            list(dict.fromkeys(k for ks in gesperrt.values() for k in ks))
+        from .begriffe import lastfaelle_kurz
+        return (f"Kombinationen gesperrt: {anzahl(len(gesperrt), 'Kombination enthält', 'Kombinationen enthalten')} "
+                f"{anzahl(len(lfs), 'Lastfall', 'Lastfälle')} ohne zugeordnete Einwirkung "
+                f"({lastfaelle_kurz(lfs)}).\n"
+                "Ohne Einwirkung stehen weder der Teilsicherheitsbeiwert γ noch der "
+                "Kombinationsbeiwert ψ fest, darum werden diese Kombinationen nicht gerechnet: "
+                + aufzaehlung(list(gesperrt), 6) + ".\n"
+                "So geht es weiter: Lastfall im Modellbaum anklicken und rechts unter „Einwirkung“ "
+                "die Einwirkung wählen – oder, wenn seine Lasten schon Bemessungswerte sind, den Haken "
+                "„Bemessungslastfall, bereits faktorisiert“ setzen. Einzelne Lastfälle lassen sich "
+                "weiter rechnen („Nur aktiver Lastfall“).")
 
     def namenskollisionen(self) -> list[str]:
         """FEHLER-Zeilen fuer Namen, unter denen die Ergebnisse einander
@@ -4575,13 +5249,14 @@ class Model:
         return gp
 
     def add_starrkoerper(self, master: int, slaves, art: str = "RBE2", gewichte=None,
-                         name: str = "", kommentar: str = "") -> StarrKoerper:
+                         name: str = "", kommentar: str = "", momente=None) -> StarrKoerper:
         art = str(art).upper()
         if art not in ("RBE2", "RBE3"):
             raise KeyError("Starrkoerper-Art: RBE2 oder RBE3")
         sk = StarrKoerper(name or f"SK{len(self.starrkoerper) + 1}", int(master),
                           [int(n) for n in slaves], art,
-                          [float(w) for w in (gewichte or [])], kommentar)
+                          [float(w) for w in (gewichte or [])], kommentar,
+                          [[float(x) for x in s] for s in (momente or [])])
         self.starrkoerper.append(sk)
         return sk
 
@@ -4887,6 +5562,9 @@ class Model:
             for key in ("mitte", "zentrum", "normale", "achse", "richtung"):
                 if key in g and g[key] is not None and hasattr(g[key], "__len__"):
                     g[key] = dreh_punkt(g[key])
+        for f in (self.flaechen or {}).values():
+            if len(getattr(f, "achse_plus_x", None) or []) == 3:
+                f.achse_plus_x = dreh_punkt(f.achse_plus_x)
         for lc in self.load_cases.values():
             for l in lc.nodal_loads:
                 l.F = dreh_vektor6(l.F)
@@ -6354,7 +7032,8 @@ class Model:
                 qb = (1 - t_hi) * q1 + t_hi * q2
                 out.append(BeamLoad(int(e), qa.tolist(), ll.system, qb.tolist(),
                                     a=float(lo - s0),
-                                    b=None if hi >= s1 - 1e-12 else float(hi - s0)))
+                                    b=None if hi >= s1 - 1e-12 else float(hi - s0),
+                                    bezugslaenge=str(getattr(ll, "bezugslaenge", "") or "")))
             return out
         # Linie: Knotenlasten int N_i q ds aus den Formfunktionen ihrer
         # Elementkanten (linienverteilung). Bis zum 06.10.2026 lief die Kette
@@ -6434,6 +7113,12 @@ class Model:
                 else self.koerper.get(gl.ziel))
         if ziel is None:
             return "Ziel gibt es im Modell nicht"
+        if gl.lokal and gl.art == "flaeche":
+            if getattr(ziel, "lokale_achsen", "") != "zylinder":
+                return ("lokale Achsen der gewölbten Fläche nicht gewählt – wirkt erst mit "
+                        "zylindrischen Flächenachsen (Fläche bearbeiten)")
+            if zylinderachse(self, ziel) is None:
+                return "die Fläche ist kein Zylindermantel – zylindrische Achsen nicht bestimmbar"
         if gl.art == "flaeche" and not (ziel.elemente or ziel.randseiten):
             return "Ziel noch nicht vernetzt"
         if gl.art != "flaeche" and not ziel.elemente:
@@ -6570,7 +7255,14 @@ class Model:
                 p = gl.p
             if c is not None:
                 p = p * (-c)        # Last je Quadratmeter der Projektion
-            out.append(FaceLoad(int(e), p, int(seite), richtung))
+            r_seite = richtung
+            if zyl is not None:
+                # zylindrische Flaechenachsen je Seite (Geometrielast.lokal)
+                ax = zylinderachsen_je_seite(self._seitenmitte(e, seite), zyl[0], zyl[1])
+                if ax is None:
+                    return
+                r_seite = [float(v) for v in ax[int(gl.lokal.get("achse", 0))]]
+            out.append(FaceLoad(int(e), p, int(seite), r_seite))
 
         flaechen = []
         if gl.art == "flaeche":
@@ -6582,6 +7274,17 @@ class Model:
             if k is not None:
                 flaechen = [self.flaechen[n] for n in (k.flaechen or [])
                             if n in self.flaechen]
+        zyl = None
+        if gl.lokal:
+            # Last in lokalen Achsen einer gewoelbten Flaeche: sie wirkt nur
+            # mit gewaehlten zylindrischen Achsen (Flaeche.lokale_achsen)
+            f0 = flaechen[0] if (gl.art == "flaeche" and flaechen) else None
+            if f0 is None or f0.lokale_achsen != "zylinder":
+                return out
+            achse = zylinderachse(self, f0)
+            if achse is None:
+                return out
+            zyl = (achse[0], zylinder_plus_x(self, f0, achse[1]))
         for f in flaechen:
             for e in (f.elemente or []):
                 nimm(e, 0)
@@ -6594,31 +7297,34 @@ class Model:
                           bereich: dict = None,
                           projiziert: bool = False, lastart: str = "druck",
                           dT: float = 0.0, dT_z: float = 0.0,
-                          verlauf: dict = None) -> "Geometrielast":
+                          verlauf: dict = None, lokal: dict = None) -> "Geometrielast":
         """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen).
 
         ``lastart`` "druck" (Flaechenlast p, gleichmaessig oder mit
         ``verlauf``) oder "temperatur" (dT, dT_z auf alle Elemente).
+        ``lokal`` siehe :attr:`Geometrielast.lokal`.
         """
         gl = Geometrielast(str(ziel), art, float(p),
                            list(richtung) if richtung else None,
                            dict(bereich or {}), bool(projiziert),
                            lastart=str(lastart), dT=float(dT), dT_z=float(dT_z),
-                           verlauf=dict(verlauf or {}))
+                           verlauf=dict(verlauf or {}), lokal=dict(lokal or {}))
         self.case(case).geometrielasten.append(gl)
         return gl
 
     def add_linienlast(self, ziel: str, q, art: str = "stab", q2=None,
                        system: str = "global", von: float = 0.0, bis: float = None,
-                       case: str = None) -> "Linienlast":
+                       case: str = None, bezugslaenge: str = "") -> "Linienlast":
         """Eine Linienlast an einen Stab oder eine Linie haengen.
 
         Sie wird sofort auf vorhandene Elemente gelegt (lasten_verteilen) und
-        nach jedem Neuvernetzen wieder.
+        nach jedem Neuvernetzen wieder. ``bezugslaenge`` "projektion": die
+        globale Last gilt je Laenge der Projektion (Linienlast.bezugslaenge).
         """
         ll = Linienlast(str(ziel), str(art), [float(x) for x in q],
                         [float(x) for x in q2] if q2 is not None else None,
-                        str(system), float(von), None if bis is None else float(bis))
+                        str(system), float(von), None if bis is None else float(bis),
+                        bezugslaenge=str(bezugslaenge or ""))
         self.case(case).linienlasten.append(ll)
         return ll
 
@@ -6641,9 +7347,12 @@ class Model:
         return zv
 
     def add_vorspannung(self, ziel: str, kraft: float, art: str = None, achse=None,
-                        case: str = None, kommentar: str = "") -> Vorspannung:
+                        case: str = None, kommentar: str = "", sollkraft: bool = False,
+                        gruppe: int = 1) -> Vorspannung:
         """Vorspannkraft [N] in einem Stab oder Volumenkoerper (siehe
-        :class:`Vorspannung`); ``art`` wird am Namen erkannt."""
+        :class:`Vorspannung`); ``art`` wird am Namen erkannt. ``sollkraft``:
+        die Lastart „Vorspannkraft (Soll nach Verankerung)“ (nur im Stab),
+        ``gruppe`` ihre Reihenfolge beim Spannen."""
         ziel = str(ziel)
         if art is None:
             art = ("stab" if ziel in self.members else
@@ -6654,8 +7363,12 @@ class Model:
             raise KeyError(f"Volumen {ziel} gibt es nicht")
         if art not in ("stab", "koerper"):
             raise KeyError(f"{ziel} ist weder Stab noch Volumenkörper")
+        if sollkraft and art != "stab":
+            raise ValueError(f"Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab, "
+                             f"nicht im Volumen {ziel}")
         v = Vorspannung(ziel, art, float(kraft),
-                        None if achse is None else [float(x) for x in achse], str(kommentar or ""))
+                        None if achse is None else [float(x) for x in achse], str(kommentar or ""),
+                        bool(sollkraft), int(gruppe or 1))
         self.case(case).vorspannungen.append(v)
         return v
 
@@ -6985,19 +7698,28 @@ class Model:
         self.case(case).nodal_loads.append(NodalLoad(int(node), [Fx, Fy, Fz, Mx, My, Mz]))
 
     def load_beam(self, elem: int, qx=0.0, qy=0.0, qz=0.0, system="global",
-                  case: str = None, q2=None, a: float = 0.0, b: float = None):
-        """Streckenlast auf ein Stabelement; a..b grenzt den Abschnitt ein [m]."""
+                  case: str = None, q2=None, a: float = 0.0, b: float = None,
+                  bezugslaenge: str = ""):
+        """Streckenlast auf ein Stabelement; a..b grenzt den Abschnitt ein [m];
+        ``bezugslaenge`` "projektion": je Laenge der Projektion (BeamLoad)."""
         self.case(case).beam_loads.append(
             BeamLoad(int(elem), [qx, qy, qz], system, list(q2) if q2 is not None else None,
-                     float(a), None if b is None else float(b)))
+                     float(a), None if b is None else float(b), str(bezugslaenge or "")))
 
     def load_face(self, elem: int, p: float, face: int = 0, case: str = None,
                   direction=None):
         self.case(case).face_loads.append(
             FaceLoad(int(elem), p, face, list(direction) if direction is not None else None))
 
-    def load_temp(self, elem: int, dT: float, dT_z: float = 0.0, case: str = None):
-        self.case(case).temp_loads.append(TempLoad(int(elem), dT, dT_z))
+    def load_temp(self, elem: int, dT: float, dT_z: float = 0.0, case: str = None,
+                  aus_vorspannung: float = 0.0, vorspann_E: float = 0.0,
+                  vorspann_alpha: float = 0.0):
+        """Temperaturlast. ``aus_vorspannung`` (Kraft [N]) mit ``vorspann_E`` und
+        ``vorspann_alpha`` kennzeichnet sie als umgerechnete Vorspannung
+        (:class:`TempLoad`): die Anzeige nennt dann die Kraft."""
+        self.case(case).temp_loads.append(
+            TempLoad(int(elem), dT, dT_z, float(aus_vorspannung), float(vorspann_E),
+                     float(vorspann_alpha)))
 
     def set_gravity(self, gz: float = -9.81, case: str = None):
         self.case(case).gravity = np.array([0.0, 0.0, gz])
@@ -7451,7 +8173,10 @@ class Model:
         for fall, lc in self.load_cases.items():
             for v in (getattr(lc, "vorspannungen", None) or []):
                 if getattr(v, "art", "stab") == "stab" and v.ziel == name:
-                    out.append((fall, float(v.kraft)))
+                    # die Sollkraft ist eine andere Lastart als die Anfangsdehnung
+                    wo = (fall if not getattr(v, "sollkraft", False)
+                          else f"{fall} (Sollkraft, Gruppe {int(v.gruppe or 1)})")
+                    out.append((wo, float(v.kraft)))
         return tuple(sorted(out, key=repr))
 
     @staticmethod
@@ -8399,6 +9124,11 @@ class Model:
             for k in c.lastfaelle():
                 if k not in self.load_cases:
                     msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
+        # Lastfaelle ohne Einwirkung halten ihre Kombinationen auf (13.10.2026):
+        # nur eine Warnung - einzelne Lastfaelle rechnen weiter
+        gesperrt = self.gesperrte_kombinationen()
+        if gesperrt:
+            msgs.append("WARNUNG: " + self.sperrhinweis(gesperrt).replace("\n", " "))
         # Namen, unter denen Ergebnisse einander verdecken (04.10.2026)
         msgs += self.namenskollisionen()
         # doppelte Nummern: nur eine Warnung (aeltere Dateien, R2-A1 G4)
@@ -8587,8 +9317,8 @@ class Model:
             # tetp_kantenmitten_gelesen
             "tetp_kantenmitten": _kantenmitten_liste(tetp_kantenmitten_gelesen(
                 getattr(self, "tetp_kantenmitten", None), self.elements)),
-            "materials": {k: asdict(v) for k, v in self.materials.items()},
-            "sections": {k: asdict(v) for k, v in self.sections.items()},
+            "materials": {k: _ohne_vorgabe("materials", asdict(v)) for k, v in self.materials.items()},
+            "sections": {k: _ohne_vorgabe("sections", asdict(v)) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
             "supports": [_support_dict(s) for s in self.supports],
             "line_supports": [_beh_dict(asdict(x)) for x in self.line_supports],
@@ -8599,20 +9329,23 @@ class Model:
             "active_case": self.active_case,
             "combinations": [asdict(c) for c in self.combinations.values()],
             "fatigue_loads": [asdict(f) for f in self.fatigue_loads.values()],
-            "members": [asdict(m) for m in self.members.values()],
+            "members": [_member_dict(m) for m in self.members.values()],
             "joints": [asdict(j) for j in self.joints.values()],
             "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
-            "volumenbereiche": [asdict(x) for x in self.volumenbereiche.values()],
+            "volumenbereiche": [_ohne_vorgabe("volumenbereiche", asdict(x))
+                                 for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
             "kontaktbedingungen": [_beh_dict(asdict(x))
                                    for x in self.kontaktbedingungen.values()],
-            "flaechen": [asdict(x) for x in self.flaechen.values()],
-            "koerper": [asdict(x) for x in self.koerper.values()],
+            "flaechen": [_ohne_vorgabe("flaechen", asdict(x)) for x in self.flaechen.values()],
+            "koerper": [_ohne_vorgabe("koerper", asdict(x)) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
-            "netz": asdict(self.netz),
-            "design": asdict(self.design),
-            "plastizitaet": asdict(self.plastizitaet),
+            "netz": _ohne_vorgabe("netz", asdict(self.netz)),
+            "design": _ohne_vorgabe("design", asdict(self.design)),
+            # die Einstellungen vom 14.10.2026 nur abweichend von der Vorgabe
+            # (Plastizitaet.als_dict; plastizitaet.abbruch steht immer da)
+            "plastizitaet": self.plastizitaet.als_dict(),
             "knotendilatation": bool(self.knotendilatation),
             "randspannung": str(getattr(self, "randspannung", "frei") or "frei"),
             "contact_supports": [asdict(c) for c in self.contact_supports],
@@ -8626,7 +9359,7 @@ class Model:
             "punktmassen": [asdict(x) for x in self.punktmassen],
             "daempfer": [asdict(x) for x in self.daempfer],
             "federn": [asdict(x) for x in self.federn.values()],
-            "starrkoerper": [asdict(x) for x in self.starrkoerper],
+            "starrkoerper": [_ohne_vorgabe("starrkoerper", asdict(x)) for x in self.starrkoerper],
             "grenzschichten": [asdict(x) for x in self.grenzschichten.values()],
             "subsysteme": [asdict(x) for x in self.subsysteme.values()],
             "layer": [asdict(x) for x in self.layer.values()],
@@ -8646,6 +9379,12 @@ class Model:
             "bericht_rahmen": (asdict(self.bericht_rahmen)
                                if getattr(self, "bericht_rahmen", None) is not None else None),
             "einheiten": asdict(self.einheiten),
+            # Einleitung der Stabenden in Volumen (13.10.2026): nur, wenn sie
+            # von der Vorgabe abweicht - eine Datei ohne die Einstellung bleibt
+            # beim Speichern Zeichen fuer Zeichen, wie sie war
+            **({"stabeinleitung": asdict(self.stabeinleitung)}
+               if asdict(getattr(self, "stabeinleitung", None) or Stabeinleitung())
+               != asdict(Stabeinleitung()) else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -8807,6 +9546,8 @@ class Model:
                 m.bemassung_einstellung = _dc(BemassungEinstellung, d["bemassung_einstellung"])
         if d.get("einheiten"):
             m.einheiten = _dc(Einheiten, d["einheiten"])
+        if d.get("stabeinleitung"):
+            m.stabeinleitung = _dc(Stabeinleitung, d["stabeinleitung"])
         if d.get("werteskala"):
             from .spannungen import Werteskala
             m.werteskala = Werteskala.from_dict(d["werteskala"])
@@ -8888,8 +9629,15 @@ class Model:
     def _geoeffnet(m: "Model") -> "Model":
         """Was nur das Oeffnen einer Datei umstellt (nicht jedes ``from_dict``): f_u der Werkstoffe
         nach der Sortentabelle von heute (M26). Die Zeilen stehen in ``_ladehinweise`` und kommen
-        beim Oeffnen und Importieren ins Protokoll."""
+        beim Oeffnen und Importieren ins Protokoll. Seit dem 14.10.2026 dazu der Hinweis zu den
+        Zugstaeben eines vor diesem Tag aus RFEM 6 uebernommenen Modells (:func:`zugstab_hinweis`,
+        nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
+        m._ladehinweise.extend(zugstab_hinweis(m))
+        # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
+        # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
+        from .ec3.spannstahl import ladehinweise
+        m._ladehinweise.extend(ladehinweise(m))
         return m
 
     def copy(self) -> "Model":
@@ -9042,3 +9790,100 @@ def _dc(cls, d: dict):
     """Dataclass aus dict, unbekannte Schluessel ignorieren (Vorwaertskompatibilitaet)."""
     names = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in names})
+
+
+#: **Neue Felder mit ihrer Vorgabe** - ein Mechanismus fuer alle Pakete vom
+#: 13./14.10.2026 (Zusammenfuehrung integ/gesamt). Je Schluessel der Modelldatei
+#: (Model.to_dict) die Felder, die spaeter dazukamen, mit ihrem Vorgabewert;
+#: "load_cases.<liste>" meint die Lasten eines Lastfalls, "" die Schluessel der
+#: Modelldatei selbst. Ein Feld mit seiner Vorgabe
+#:
+#: * zaehlt nicht in der Kennung der Ergebnisdatei (ergebnisse.rechenkennung):
+#:   eine Ergebnisdatei von davor passt weiter, ein gesetzter Wert macht sie
+#:   ungueltig wie jede andere Aenderung;
+#: * steht nicht in der Datei (to_dict mit _ohne_vorgabe; Vorspannung.als_dict,
+#:   LoadCase.to_dict und _member_dict tun es fuer ihre Felder selbst): eine
+#:   Datei von davor bleibt beim Speichern Zeichen fuer Zeichen, wie sie war.
+#:   Beim Laden setzt der Datenklassen-Bau (_dc) die Vorgabe. Ausnahme:
+#:   plastizitaet.abbruch steht seit dem 13.10.2026 (spitzen/kriterium) immer
+#:   in der Datei - die Dateien dieses Tages tragen ihn, und sie bleiben so
+#:   bitgleich (tests.test_vorspannkraft, Datei vom Stand 192317a).
+#:
+#: Bis dahin gab es dafuer drei Tabellen in ergebnisse (NEUE_VORGABEN aus
+#: spitzen/kriterium 65760f6, SPAETERE_FELDER aus spitzen/zeigen 43f3dca,
+#: NEU_AUF_VORGABE aus nachweis/spannstahl 71d6386) und keine fuer die
+#: uebrigen Pakete; ohne Eintrag wies das Programm jede alte Ergebnisdatei ab
+#: (am 13.10.2026 das LF1 Mittel des Drehlagers vom 09.10.: „seit der Rechnung
+#: geändert: Rechenart und Einstellungen“). Wer ein Feld an ein Objekt der
+#: Modelldatei anfuegt, traegt es hier ein.
+NEUE_FELDER = {
+    # spitzen/kriterium (Abbruch ohne die netzabhaengigen Spitzen; steht immer in
+    # der Datei) und die Einstellungen vom 14.10.2026 aus kontakt/pendeln und
+    # kontakt/warmstart. Diese fuehrt Plastizitaet.NEU_14_10 - dieselbe Tabelle,
+    # nach der Plastizitaet.als_dict sie beim Speichern weglaesst; hier wird sie
+    # nur gelesen, damit es die Vorgaben einmal gibt (Zusammenfuehrung 14.10.2026).
+    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10},
+    # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
+    "design": {"gamma_P": 1.0},
+    # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
+    # zaehlen nicht in der Kennung - das Netz selbst steht in Knoten und Elementen)
+    "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False},
+    # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
+    # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
+    "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
+                  "sigma_pmax": None, "sigma_pm0": None},
+    # nachweis/spannstahl
+    "sections": {"A_s": None, "gewinde": ""},
+    # spitzen/zeigen N2
+    "koerper": {"nachweis_ausnehmen": False},
+    "volumenbereiche": {"eps_grenze": 0.05},
+    # stab/rbe3 (Einleitung je Stabende)
+    "members": {"einleitung": {}},
+    # kopplung/drehanteil (konsistente Momentenzeilen der verteilenden Einleitung)
+    "starrkoerper": {"momente": []},
+    # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
+    # alten Felds category und zaehlt wie jede andere Kategorie)
+    "load_cases": {"faktorisiert": False},
+    # vorspannung/kraft (Sollkraft nach Verankerung)
+    "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
+    # import/lastfaelle (Merkmal „aus Vorspannung“)
+    "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
+    # stab/querlast (Bezug einer globalen Stab- bzw. Linienlast: "" = je
+    # Stablaenge, "projektion" = je Laenge der Projektion; seit 14.10.2026)
+    "load_cases.beam_loads": {"bezugslaenge": ""},
+    "load_cases.linienlasten": {"bezugslaenge": ""},
+    # import/gewoelbt (Lasten in lokalen Achsen gewoelbter Flaechen und
+    # zylindrische Flaechenachsen; seit 14.10.2026)
+    "load_cases.geometrielasten": {"lokal": {}},
+    "flaechen": {"lokale_achsen": "", "achse_plus_x": []},
+    # stab/rbe3 (Modelleinstellung der Stabenden in Volumen)
+    "": {"stabeinleitung": asdict(Stabeinleitung())},
+}
+
+
+def ist_vorgabe(schluessel: str, feld: str, wert) -> bool:
+    """Traegt das neue Feld ``feld`` unter ``schluessel`` (:data:`NEUE_FELDER`)
+    seine Vorgabe? Wahr und Zahl werden nicht verwechselt (False ist nicht 0.0)."""
+    vg = NEUE_FELDER.get(schluessel)
+    if not vg or feld not in vg:
+        return False
+    v0 = vg[feld]
+    return (wert == v0 and isinstance(wert, bool) == isinstance(v0, bool)
+            and (wert is None) == (v0 is None))
+
+
+def _ohne_vorgabe(schluessel: str, d: dict) -> dict:
+    """``d`` ohne die neuen Felder (:data:`NEUE_FELDER`), die ihre Vorgabe tragen."""
+    if schluessel not in NEUE_FELDER or not isinstance(d, dict):
+        return d
+    return {k: v for k, v in d.items() if not ist_vorgabe(schluessel, k, v)}
+
+
+def _member_dict(m: Member) -> dict:
+    """Ein Stab fuer die Datei - ohne den Schluessel ``einleitung``, solange
+    beide Enden der Modelleinstellung folgen (13.10.2026): so bleibt eine Datei
+    ohne die Einstellung beim Speichern, wie sie war."""
+    d = asdict(m)
+    if not d.get("einleitung"):
+        d.pop("einleitung", None)
+    return d

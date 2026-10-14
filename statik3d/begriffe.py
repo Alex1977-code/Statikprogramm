@@ -141,6 +141,29 @@ def aufzaehlung(teile, maximal: int = 0) -> str:
     return ", ".join(teile[:-1]) + " und " + teile[-1]
 
 
+def lastfaelle_kurz(namen, maximal: int = 8) -> str:
+    """Lastfallnamen zum Lesen: Reihen aufeinanderfolgender Nummern stehen als
+    „LF201–LF328“, einzelne als „LF5“, mehr als ``maximal`` Teile werden mit
+    „und n weitere“ gekuerzt (13.10.2026: 128 Lastfaelle ohne Einwirkung
+    stuenden sonst einzeln im Hinweis). Namen, die nicht die Form „LF<Nummer>“
+    haben, bleiben, wie sie sind, hinter den Reihen."""
+    import re
+    namen = list(dict.fromkeys(str(n) for n in namen))
+    nummern = sorted({int(t.group(1)) for t in (re.fullmatch(r"LF(\d+)", n) for n in namen) if t})
+    teile, i = [], 0
+    while i < len(nummern):
+        j = i
+        while j + 1 < len(nummern) and nummern[j + 1] == nummern[j] + 1:
+            j += 1
+        if j - i >= 2:
+            teile.append(f"LF{nummern[i]}–LF{nummern[j]}")
+        else:
+            teile.extend(f"LF{k}" for k in nummern[i:j + 1])
+        i = j + 1
+    teile += [n for n in namen if not re.fullmatch(r"LF\d+", n)]
+    return aufzaehlung(teile, maximal)
+
+
 def typ_kurz(typ) -> str:
     """„GZT (STR/GEO)“ zu ``ULS`` - ein unbekannter Typ bleibt, wie er ist."""
     b = KOMBINATIONSTYPEN.get(str(typ))

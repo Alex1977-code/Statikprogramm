@@ -343,34 +343,111 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
 # ==========================================================================
 # alpha_cr (5.2.1)
 # ==========================================================================
-def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1) -> dict:
+def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dict = None) -> dict:
     """
     Kleinster positiver Verzweigungslastfaktor zum Verformungszustand ``u``.
 
     Geloest wird (K + alpha K_g) v = 0 in der Form -K_g v = mu K v mit
     alpha = 1/mu; gesucht ist das groesste positive mu.
 
-    Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": ""}.
+    ``n_anfang`` {Element: Normalkraft der Anfangsdehnung}
+    (solver.anfangsnormalkraefte, seit dem 13.10.2026): Temperatur,
+    Vorspannung und Verriegelung zaehlen in K_g mit wie im Ergebnis. Bis
+    dahin las K_g nur E A Δl/L - ein Zugband mit 70 kN Anfangsdehnung, das im
+    Ergebnis +6,50 kN traegt, stand mit -63,50 kN darin (alpha_cr 1,688), und
+    ein Stab unter reinem Temperatur-Zwang hatte "keine Normalkräfte".
+
+    K_g nimmt nur die Elemente, die im ``system`` wirken (``system.aktiv``:
+    Situation, abgeschaltete Staebe), wie K und wie solve_theorie2 und
+    solve_buckling. Bis zum 14.10.2026 baute alpha_cr K_g aus allen
+    Elementen: ein in der Situation abgeschalteter Fachwerkstab neben einer
+    Kragstuetze, dessen Enden sich mit ihr bewegen, stand mit seiner
+    rechnerischen Normalkraft darin: gedrueckt alpha_cr 4,354 statt 4,798
+    (-9 %), gezogen 5,341 statt 4,798 (+11 %, auf der unsicheren Seite;
+    tests/test_stab_nachzug.py).
+
+    Dazu das **Einzelknicken** der gedrueckten Fachwerkstaebe
+    (:func:`einzelstab_knicken`, seit 14.10.2026): ``einzelstaebe`` (Liste,
+    kleinstes zuerst), ``alpha_cr_stab`` und ``stab`` (der massgebende Stab;
+    inf und "" ohne gedrueckten Fachwerkstab). ``alpha_cr`` bleibt das des
+    Systems und entscheidet weiter nach 5.2.1(3).
+
+    Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": "",
+    "einzelstaebe": [...], "alpha_cr_stab": ..., "stab": ...}.
     """
-    Kg = asm.geometric_stiffness(model, u)
+    einzel = einzelstab_knicken(model, u, getattr(system, "aktiv", None), n_anfang)
+    stab = {"einzelstaebe": einzel,
+            "alpha_cr_stab": einzel[0]["alpha_cr"] if einzel else math.inf,
+            "stab": einzel[0]["stab"] if einzel else ""}
+    Kg = asm.geometric_stiffness(model, u, getattr(system, "aktiv", None), n_anfang=n_anfang)
     fi = system.fi
     Kgff = Kg[fi][:, fi].tocsc()
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:
         return {"alpha_cr": math.inf, "fehler": "keine Normalkräfte - "
-                                                "kein Verzweigungsproblem"}
+                                                "kein Verzweigungsproblem", **stab}
     try:
         mu, vecs = groesstes_mu(system.Kff, Kgff, k=nmodes)
     except Exception as exc:                       # pragma: no cover
-        return {"alpha_cr": math.inf, "fehler": f"Eigenwertlöser: {exc}"}
+        return {"alpha_cr": math.inf, "fehler": f"Eigenwertlöser: {exc}", **stab}
     if mu is None:
         return {"alpha_cr": math.inf,
-                "fehler": "kein positiver Verzweigungslastfaktor"}
+                "fehler": "kein positiver Verzweigungslastfaktor", **stab}
     modus = np.zeros(model.ndof)
     modus[fi] = vecs[:, 0]
     mx = float(np.abs(modus).max())
     if mx > 0:
         modus /= mx
-    return {"alpha_cr": float(1.0 / mu[0]), "modus": modus, "fehler": ""}
+    return {"alpha_cr": float(1.0 / mu[0]), "modus": modus, "fehler": "", **stab}
+
+
+def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> list:
+    """Das Knicken der einzelnen gedrueckten Fachwerkstaebe (Elementtyp
+    truss, auch „nur Druck“; ein Zugstab faellt bei Druck aus):
+    alpha_cr,i = pi^2 E I / (L^2 N_Ed) je Stab. Knicklaenge L ist die
+    Systemlaenge, gelenkig: die Laenge des Stabs aus seinen Elementen, ein
+    Element ohne Stab mit seiner Laenge. I ist das kleinere der beiden
+    Hauptachsen (Iy, Iz), N_Ed die groesste Druckkraft seiner Elemente im
+    Zustand ``u`` wie im Ergebnis (mit der Anfangsdehnung ``n_anfang``).
+    Rueckgabe je gedrueckten Stab {stab, L, N (Druck positiv), I, achse, E,
+    alpha_cr}, das kleinste alpha_cr zuerst.
+
+    Die geometrische Steifigkeit des Fachwerkstabs ist die Saitenform N/L
+    (asm.geometric_stiffness): sie haelt den Stab zwischen seinen Knoten
+    gerade, sein Ausknicken dort steht in der Verzweigung des Systems nicht.
+    Bis zum 14.10.2026 nannte das Programm nur das alpha_cr des Systems: ein
+    Fachwerk, dessen Druckstab laengst knickt, stand mit einem hohen alpha_cr
+    da (tests/test_stab_querlast.py)."""
+    from .solver import _stab_namen
+    namen = _stab_namen(model)
+    n_anfang = n_anfang or {}
+    je_stab: dict = {}
+    for i, e in enumerate(model.elements):
+        if e.typ != "truss" or getattr(e, "nur", "") == "zug":
+            continue
+        if aktiv is not None and not aktiv[i]:
+            continue
+        N = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0))
+        name = namen.get(i, f"Element {i + 1}")
+        alt = je_stab.get(name)
+        if alt is None or -N > alt[0]:
+            je_stab[name] = (-N, i)
+    out = []
+    for name, (Nc, i) in je_stab.items():
+        if Nc <= 0:
+            continue
+        e = model.elements[i]
+        mat = model.materials[e.mat]
+        sec = model.sections[e.sec]
+        mem = model.members.get(name)
+        L = model.member_length(mem) if mem is not None else model.element_length(i)
+        I, achse = (sec.Iz, "z") if sec.Iz <= sec.Iy else (sec.Iy, "y")
+        if L <= 0 or I <= 0:
+            continue
+        a = math.pi ** 2 * mat.E * I / (L ** 2 * Nc)
+        out.append({"stab": str(name), "L": float(L), "N": float(Nc), "I": float(I),
+                    "achse": achse, "E": float(mat.E), "alpha_cr": float(a)})
+    out.sort(key=lambda d: d["alpha_cr"])
+    return out
 
 
 def _definit_zerlegen(C):
@@ -485,6 +562,11 @@ class Th2Info:
     kombination: str = ""
     alpha_cr: float = math.inf
     grenze: float = 10.0
+    # Einzelknicken der gedrueckten Fachwerkstaebe (14.10.2026,
+    # einzelstab_knicken): kleinstes alpha_cr,i, sein Stab, alle Druckstaebe
+    alpha_cr_stab: float = math.inf
+    stab_massgebend: str = ""
+    einzelstaebe: list = field(default_factory=list)
     gerechnet: bool = False
     iterationen: int = 0
     konvergenz: float = 0.0
@@ -495,6 +577,17 @@ class Th2Info:
     zuwachs: float = 0.0
     hinweise: list = field(default_factory=list)
     fehler: str = ""
+
+    @property
+    def alpha_cr_gesamt(self) -> float:
+        """min(System; Einzelstab)."""
+        return min(self.alpha_cr, getattr(self, "alpha_cr_stab", math.inf))
+
+    def stab_aus(self, ac: dict) -> None:
+        """Die Einzelstabwerte aus dem Ergebnis von :func:`alpha_cr` uebernehmen."""
+        self.alpha_cr_stab = float(ac.get("alpha_cr_stab", math.inf))
+        self.stab_massgebend = str(ac.get("stab", "") or "")
+        self.einzelstaebe = list(ac.get("einzelstaebe") or [])
 
     def text(self) -> str:
         if self.fehler:
@@ -522,7 +615,13 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     Rueckgabe (Results, Th2Info).
     """
     from .solver import (StaticSystem, case_loads, case_prescribed, postprocess, Results,
-                         ausweich_info, ausweichgruende_zaehlen)
+                         ausweich_info, ausweichgruende_zaehlen, anfangsnormalkraefte)
+    from .vorspannkraft import theorie_sperre
+    sperre = theorie_sperre(model, factors, "II")
+    if sperre:
+        # Vorspannkraft (Soll nach Verankerung, 13.10.2026): das Ergebnis nach
+        # Theorie I. Ordnung bleibt stehen und wird gekennzeichnet
+        return Results(name=name, kind="combination", model=model), Th2Info(kombination=name, fehler=sperre)
     t0 = time.time()
     system = system or StaticSystem(model)
     # Das Ergebnis ersetzt die lineare Kombination - ein Ausweichen des
@@ -531,17 +630,23 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     aktiv = getattr(system, "aktiv", None)          # Situation: abgeschaltete Elemente
     F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors)
+    # Normalkraefte der Anfangsdehnung (Temperatur, Vorspannung) fuer K_g -
+    # wie im Ergebnis (13.10.2026)
+    n_anf = anfangsnormalkraefte(model, factors, aktiv)
 
     # --- Theorie I. Ordnung als Ausgangspunkt
     u1 = system.solve(F, us=us)
     res1 = Results(name=name, kind="combination", model=model)
-    from .solver import verschiebungen_eintragen
+    from .solver import auto_gehalten_abtrennen, verschiebungen_eintragen
     verschiebungen_eintragen(model, res1, u1, system.reactions(u1, F))
+    # Last an automatisch gehaltenen FHG: nie still (14.10.2026)
+    auto_gehalten_abtrennen(model, getattr(system, "auto", None), res1, F, aktiv)
     postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
-    ac = alpha_cr(model, system, u1)
+    ac = alpha_cr(model, system, u1, n_anfang=n_anf)
     info.alpha_cr = ac["alpha_cr"]
+    info.stab_aus(ac)
     if ac.get("fehler"):
         info.hinweise.append(ac["fehler"])
     if info.alpha_cr <= 1.0:
@@ -572,7 +677,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
             Fimp = Fs + Fv
             info.schiefstellung, info.vorkruemmung = s_info, v_info
         Fges = F + Fimp
-        Kg = asm.geometric_stiffness(model, u, aktiv)
+        Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf)
         try:
             u_neu = system.solve(Fges, K_extra=Kg, us=us)
         except Exception as exc:
@@ -583,6 +688,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         u = u_neu
         res = Results(name=name, kind="combination", model=model)
         verschiebungen_eintragen(model, res, u, system.reactions(u, Fges, K_extra=Kg))
+        auto_gehalten_abtrennen(model, getattr(system, "auto", None), res, Fges, aktiv)
         postprocess(model, u, res, feq, q, temp, aktiv=aktiv)
         info.iterationen = it
         info.konvergenz = d / bezug
@@ -600,10 +706,15 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         info.zuwachs = info.u_max_II / info.u_max_I - 1.0
     res.info.update({"typ": model.combinations[name].typ if name in model.combinations else "",
                      "theorie": "II. Ordnung", "alpha_cr": info.alpha_cr,
+                     "alpha_cr_stab": info.alpha_cr_stab, "stab_massgebend": info.stab_massgebend,
                      "iterationen": info.iterationen, "time": time.time() - t0,
                      "factors": dict(factors), "solver": system.backend,
                      "ndof": model.ndof, "nfree": len(system.fi),
                      **ausweich_info(system, ausweich_vorher)})
+    # Zug-/Druckstaebe: Theorie II. Ordnung iteriert den Ausfall nicht - ein
+    # Zugstab mit Druck steht mit Namen und Kraft im Ergebnis (13.10.2026)
+    from .solver import zugstaebe_pruefen
+    zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
     if progress:
         progress(f"{name}: Theorie II. Ordnung, {info.iterationen} Iterationen")
     return res, info
@@ -625,6 +736,17 @@ class Th2Results:
         return min(w) if w else math.inf
 
     @property
+    def einzelstab_min(self) -> tuple:
+        """(alpha_cr,i, Stab, Kombination) des kleinsten Einzelstabknickens
+        ueber alle Kombinationen - (inf, "", "") ohne gedrueckten Fachwerkstab."""
+        best = (math.inf, "", "")
+        for n, i in self.kombinationen.items():
+            a = getattr(i, "alpha_cr_stab", math.inf)
+            if math.isfinite(a) and a < best[0]:
+                best = (a, i.stab_massgebend, n)
+        return best
+
+    @property
     def zuwachs_max(self) -> float:
         return max((i.zuwachs for i in self.kombinationen.values()), default=0.0)
 
@@ -633,9 +755,15 @@ class Th2Results:
             return "Theorie II. Ordnung: nicht gerechnet"
         n2 = sum(1 for i in self.kombinationen.values() if i.gerechnet)
         a = self.alpha_cr_min
+        a_st, stab, _k = self.einzelstab_min
         s = (f"Theorie II. Ordnung: {n2} von {len(self.kombinationen)} Kombinationen "
              f"am verformten System")
-        if math.isfinite(a):
+        if math.isfinite(a_st):
+            # min(System; Einzelstab) mit dem massgebenden Stab (14.10.2026)
+            s += (f", min. α_cr = {min(a, a_st):.2f} (System "
+                  + (f"{a:.2f}" if math.isfinite(a) else "∞")
+                  + f"; Einzelstab {a_st:.2f}, Stab {stab})")
+        elif math.isfinite(a):
             s += f", min. α_cr = {a:.2f}"
         if n2:
             s += f", max. Verformungszuwachs {self.zuwachs_max * 100:+.1f} %"
@@ -645,10 +773,12 @@ class Th2Results:
         return s
 
     def table(self) -> list[list]:
-        rows = [["Kombination", "α_cr", "Grenze", "Verfahren", "Iterationen",
+        rows = [["Kombination", "α_cr", "α_cr Einzelstab", "Grenze", "Verfahren", "Iterationen",
                  "u_I [mm]", "u_II [mm]", "Zuwachs"]]
         for n, i in self.kombinationen.items():
+            a_st = getattr(i, "alpha_cr_stab", math.inf)
             rows.append([n, f"{i.alpha_cr:.2f}" if math.isfinite(i.alpha_cr) else "∞",
+                         f"{a_st:.2f} ({i.stab_massgebend})" if math.isfinite(a_st) else "–",
                          f"{i.grenze:.0f}",
                          "II. Ordnung" if i.gerechnet else "I. Ordnung",
                          str(i.iterationen) if i.gerechnet else "-",
@@ -741,12 +871,14 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             continue
         if modus == "auto" and n not in (erzwungen or ()):
             # Grundzustand und alpha_cr zuerst
-            from .solver import case_loads, case_prescribed
+            from .solver import case_loads, case_prescribed, anfangsnormalkraefte
             F, _feq, _q, _temp = case_loads(model, faktoren, getattr(system, "aktiv", None))
             u1 = system.solve(F, us=case_prescribed(model, faktoren))
-            ac = alpha_cr(model, system, u1)
+            ac = alpha_cr(model, system, u1,
+                          n_anfang=anfangsnormalkraefte(model, faktoren, getattr(system, "aktiv", None)))
             info = Th2Info(kombination=zeile, alpha_cr=ac["alpha_cr"], grenze=grenze,
                            u_max_I=float(np.abs(u1).max()))
+            info.stab_aus(ac)
             if ac.get("fehler"):
                 info.hinweise.append(ac["fehler"])
             if ac["alpha_cr"] >= grenze:

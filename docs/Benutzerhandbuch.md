@@ -777,7 +777,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
 | Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
-| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
+| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung (auch **„nicht zugeordnet“**; seit 13.10.2026 dazu der Haken **„Bemessungslastfall, bereits faktorisiert“**, siehe Kapitel 4), darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (im Klartext wie „GZT (STR/GEO)“ oder „GZG häufig“, auch **Ermüdung**; siehe Kapitel 4, *Kombinationstypen und Umhüllende im Klartext*), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt, per **Klick ins Feld** und dann in der Ansicht (seit 15.09.2026) oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
@@ -822,7 +822,139 @@ in allen Elementen des Körpers (A = Volumen / Länge, der Schaftquerschnitt);
 die Spannungen im Ergebnis enthalten die Vorspannung. In der Ansicht stehen
 an beiden Enden violette Pfeile nach außen mit der Kraft, im Modellbaum steht
 sie als Unterpunkt „Vorspannung“ des Lastfalls, in Tabelle und Bericht mit
-Bauteil, Kraft und Achse.
+Bauteil, Kraft und Achse. In den Laststufen der Plastizität und der Theorie
+III. Ordnung wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe
+voll, gesteigert werden nur die übrigen Lasten (siehe „Temperaturlasten und
+Vorspannungen wirken in den Laststufen sofort voll“); bis dahin wuchs sie mit
+den Stufen mit.
+
+**Temperatur und Vorspannung zählen in jeder Stabkraft.** Die Normalkraft
+eines Stabs ist E·A·Δl/L plus die Kraft seiner Anfangsdehnung, also seiner
+Temperatur, seiner Vorspannung als Anfangsdehnung und der Verriegelung einer
+Sollkraft. Das Ergebnis rechnete immer so. Bis zum 13.10.2026 lasen aber drei
+Stellen nur E·A·Δl/L: die geometrische Steifigkeit (α_cr, Theorie II.
+Ordnung, Knicken), die Ausfall-Iteration der Zug- und Druckstäbe und die
+Theorie III. Ordnung. Ein Zugband mit 70 kN Vorspannung, das im Ergebnis
++6,50 kN trägt, stand in der geometrischen Steifigkeit mit −63,50 kN, und
+α_cr kam mit 1,688 heraus. Ein Stab unter reinem Temperatur-Zwang hatte dort
+„keine Normalkräfte“ und kein α_cr. Ein Zugstab „nur Zug“ mit 500 kN
+Vorspannung als Abkühlung fiel aus und trug 0 statt 400 kN, und seine
+Temperaturlast blieb als Last stehen. Nach Theorie III. Ordnung fiel die
+Vorspannung eines Seils still weg. Seither lesen alle diese Stellen dieselbe
+Normalkraft wie das Ergebnis. Ohne Temperatur und Vorspannung im Stab rechnet
+alles wie vorher.
+
+**Vorspannkraft (Soll nach Verankerung)** (seit 13.10.2026). Bis zum
+13.10.2026 gab es die Vorspannung nur als Anfangsdehnung, und ein Anker trug
+danach nicht F_v, sondern F_v minus die elastische Verkürzung seiner
+Umgebung - am Drehlager bei voller Last 782 bis 833 statt 952 kN. Seither
+hat die Maske *Lasten → Vorspannung* eine **Lastart**. Mit „Vorspannkraft
+(Soll nach Verankerung)“ geben Sie die Kraft an, die der Stab nach dem
+Verankern trägt. Sie gilt nur für Stäbe. Das Programm spannt in einem
+eigenen Schritt vor den übrigen Lasten: Der Stab ist dabei inaktiv und
+drückt mit F_soll auf seine Enden, die Umgebung verformt sich bis zum
+Gleichgewicht, mit Kontakt und Plastizität. Danach wird der Stab in der
+verformten Lage verriegelt und trägt genau F_soll. Erst dann folgen die
+äußeren Lasten, mit Laststufen und Temperatur wie sonst, und der Stab
+nimmt seinen Anteil an ihnen auf. Das Feld **Gruppe beim Spannen** legt die
+Reihenfolge fest. Stäbe derselben Gruppe werden gleichzeitig gespannt, und
+das ist die Vorgabe. Mit mehreren Gruppen (1, 2, …) spannt das Programm
+nacheinander, und die früher gespannten Stäbe verlieren dabei Kraft. Im
+Ergebnis stehen je Stab die Sollkraft, die Kraft beim Spannen, die Kraft
+nach dem Verankern, der Verlust und die Kraft unter allen Lasten
+(`res.info["vorspannung"]`), dazu die Zustände „spannen“ und „verankert“.
+In einer linear-elastischen Rechnung mit gleichzeitigem Spannen rechnet das
+Programm schneller über eine eingeprägte Dehnung je Stab, so bemessen, dass
+unter der Vorspannung allein jeder Stab genau F_soll trägt; das Ergebnis ist
+dasselbe. Nach Theorie II. und III. Ordnung wird eine Sollkraft noch nicht
+gerechnet: Der Lastfall bleibt nach Theorie I. Ordnung gerechnet, und das
+Ergebnis sagt es. Bis zum 13.10.2026 lag das auch daran, dass die
+geometrische Steifigkeit die Vorspannung nicht las (siehe „Temperatur und
+Vorspannung zählen in jeder Stabkraft“). Seither rechnen Theorie II. und
+III. Ordnung die eingeprägte Dehnung zwar durch, treffen F_soll nach dem
+Verankern aber nicht genau: Am Zugband einer Kragstütze trägt der Stab nach
+Theorie II. Ordnung 69,77 kN und nach Theorie III. Ordnung 69,57 kN statt
+70 kN. Darum bleibt es bei Theorie I. Ordnung, bis es den Spannschritt auch
+nach Theorie II. und III. Ordnung gibt. In der Ansicht steht die Kraft als „F_soll“, in der
+Lasttabelle als „Vorspannkraft (Soll)“ mit Gruppe. Kraft und Gruppe ändern
+Sie in der Maske der einzelnen Last.
+
+**Spannschritt in Stufen** (seit 14.10.2026). Bis zum 14.10.2026 brachte das
+Programm den Spannschritt in einem Zug auf: mit Kontakt rechnete ein
+Kontaktlauf von der unbelasteten Lage bis zur vollen Kraft, mit Fließen wirkte
+die volle Kraft in jeder Laststufe der Plastizität. Jetzt wächst das Kräftepaar
+in n gleichen Stufen auf F_soll, und jede Stufe rechnet Kontakt und Fließen vom
+Zustand der vorigen aus, wie beim Spannen mit der Presse. Unter *Berechnung →
+Einstellungen*, Gruppe „Kontaktlauf und Spannschritt“, steht „Spannschritt in
+… Stufen“. „Automatisch“ ist die Vorgabe und heißt drei Stufen, wenn das
+Modell Kontakt hat oder Fließen gerechnet wird, sonst einen Schritt. Gestuft
+wird dort, weil Reibung und Fließen vom Weg abhängen: eine Fuge, die sich beim
+Anziehen schließt und haftet, oder ein Lochrand, der unter der Mutter fließt,
+folgt der Geschichte des Spannens und nicht einem Sprung von null auf F_soll;
+dazu beginnt jede Stufe beim Zustand der vorigen, und ihre Kontaktläufe haben
+weniger Zustandswechsel vor sich. Ohne Kontakt und Fließen ist die Rechnung
+linear und vom Weg unabhängig, ein Schritt ist dort genau, und weitere
+kosteten nur Zeit. Drei Stufen sind gewählt wie die Vorgabe der Laststufen der
+Plastizität, nicht gemessen. Verriegelt wird in der Lage der letzten Stufe, und
+jeder Stab trägt danach genau F_soll, gleich mit wie vielen Stufen. Im
+Fortschritt steht „Spannschritt Gruppe 1, Stufe 2/3: 66,67 % von F_soll“, im
+Ergebnis `res.info["vorspannung"]["spannstufen"]`.
+
+**Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
+RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
+(ΔT = −N₀/(E·A·α)). Die Lasttabelle und die Maske der Temperaturlast nennen
+dazu die Kraft und die Werte der Umrechnung, in derselben Form wie eine
+Vorspannung, die der Import seit dem 13.10.2026 als Kraft kennzeichnet (siehe
+„Eine aus RFEM übernommene Vorspannung steht als Kraft da“), etwa
+„ΔT = −445,6 K – Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+α = 1,0e-5 1/K)“. Bis zum 14.10.2026 stand dort „aus Vorspannung 952 kN,
+E = 170 000 N/mm², α = 1,0e-5 1/K“. Der Import gibt den Hinweis
+„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
+Sollkraft umwandeln?“. X ist die Stabkraft unter der Vorspannung allein. Das
+Programm rechnet sie beim Import, wenn das Modell keinen Kontakt hat,
+vernetzt ist und höchstens 300 000 Freiheitsgrade hat. Sonst, wie am
+Drehlager, folgt X nach der ersten Rechnung aus einem Lastfall, der nur die
+Vorspannung trägt (dort LF398). Umgewandelt wird nur auf Ihre Anweisung: in
+der Maske *Lasten → Vorspannung* die Lastart „ΔT-Vorspannung in Sollkraft
+umwandeln“ wählen, Stäbe wählen (ohne Auswahl gelten alle Zugstäbe mit einer
+Temperatur-Vorspannung) und „Last aufbringen“. Mit dem Haken „in allen
+Lastfällen mit derselben Anfangsvorspannung“ gilt die Umwandlung für jeden
+Lastfall mit derselben Kraft; am Drehlager sind das die 129 Lastfälle mit
+952 kN, die 293 Lastfälle mit 805 kN bleiben. Die Kraft 0 heißt Vorschlag:
+0,9·f_p0,1k·A bei Spannstahl, sonst der Wert aus RFEM. Spannstahl ist ein
+Werkstoff mit der Werkstoffart „Spannstahl“ (Maske des Werkstoffs); der
+RFEM-Import setzt sie beim Werkstofftyp 15 und wenn die Datei f_p0,1k statt
+f_y führt, und der Stabnachweis liest dieselbe Art. Bis zum 14.10.2026
+erkannte die Umwandlung Spannstahl außerdem am Werkstoffnamen (etwa
+„St 835/1030“) und an einer eigenen Kennzeichnung des Imports. Ein vor dem
+13.10.2026 übernommener Werkstoff wie „Material 3 (DB 2309)“ am Drehlager
+trägt die Art nicht, und das Protokoll weist beim Öffnen darauf hin. Dort
+setzen Sie die Werkstoffart oder tragen die Kraft selbst ein, etwa 944,7 kN.
+
+**Eine aus RFEM übernommene Vorspannung steht als Kraft da** (seit
+13.10.2026). RFEM kennt die Stablast „Vorspannung“ (InitialPrestress); der
+Import setzt sie in eine eingeprägte Dehnung um, ΔT = −N₀/(E·A·α), und legte sie
+bisher als Temperaturlast ab, in der Ansicht, der Lasttabelle und im Bericht
+als „ΔT = −445,6 K“. Seit dem 13.10.2026 trägt eine solche Last das Merkmal „aus
+Vorspannung“ mit der Kraft und dem E und α der Umrechnung, und alle drei Stellen
+nennen die Kraft: „Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+α = 1,0e-5 1/K)“. In der Ansicht erscheint sie als violette Punkte mit
+„Vorspannung 952 kN“, in der Lasttabelle als Art „Vorspannung“ mit „F_v = 952 kN“
+und der Umrechnung daneben, im Bericht in einer eigenen Tabelle je Lastfall mit
+F_v, E und α, im Lastbild als „16 Vorspannungen (952 kN, eingeprägte Dehnung)“.
+Die Maske der einzelnen Last nimmt die Kraft als Eingabe und zeigt die Temperatur
+nur als Rechenwert. **Gerechnet wird weiter mit der Temperatur**; das E und das α
+stehen dabei, weil die Kraft im Stab von ihnen abhängt: ändert sich E oder die
+Querschnittsfläche des Stabes nach dem Import, ändert sich die Kraft im Stab mit,
+nicht die Zahl in der Tabelle. Das gilt, bis die
+kraftgesteuerte Vorspannung („Vorspannkraft nach Verankerung“) die Umrechnung
+ersetzt. Das Importprotokoll nennt E und α der Umrechnung einmal. Eine Datei
+von vor dem 13.10.2026 behält ihre Temperaturlasten, wie sie sind: nichts wird
+beim Öffnen umgestellt, und gespeichert steht das Merkmal nur, wo es gesetzt ist.
+Eine solche Temperatur an einem Zug- oder Seilstab nennen Lasttabelle, Maske und
+Protokoll seit dem 14.10.2026 mit dem ΔT und dahinter in derselben Form,
+„ΔT = −445,6 K – Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
+α = 1,0e-5 1/K)“, mit dem E und α des Werkstoffs.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall.
@@ -1364,11 +1496,13 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Angabe | Bedeutung |
 |---|---|
 | Elemente | **Entwurf**, **Mittel** (Vorgabe) oder **Fein** – welche Elemente das Netz bekommt, in drei Stufen, die in Genauigkeit und Rechenzeit zusammenpassen (seit 25.09.2026; ersetzt den Elementansatz linear/quadratisch und die Haken „Elemente wählen“). Das erste Feld der Maske; darunter stehen Elemente und Zweck der gewählten Stufe und die **wirksame Kantenlänge**. Einzelheiten im Abschnitt „Elementstufe: Entwurf, Mittel, Fein“ unten |
+| Krafteinleitungen ohne Fläche feiner vernetzen (seit 13.10.2026) | Haken, Vorgabe **aus**. Bei Mittel und Fein werden starre Scheiben über Bohrungen (ihre Kopplung hängt nur am Lochrand) feiner vernetzt: am Lochrand 9° statt 18° je Abschnitt (höchstens die halbe Kantenlänge von Mittel), zwei Elementringe weit und von dort wachsend. Ringe, deren Kantenlänge unter der Mindestweite des Vernetzers (Kantenlänge von Mittel geteilt durch 30) läge, bleiben wie Mittel; das Protokoll nennt sie. Das kostet Elemente und Zeit; die Höchstzahl Unbekannte vergröbert selbsttätig (Abschnitt „Elementstufe“). Aus: das Netz von Mittel wie bis zum 13.10.2026. Entwurf bleibt linear und ohne diese Verfeinerung. Eine ältere Datei ohne das Feld hat ihn aus, ihr Netz ändert sich nicht |
+| … auch Stabenden auf Volumen (seit 13.10.2026) | Haken, Vorgabe **aus**, nur mit dem Haken darüber. Stabenden, die auf einer ebenen Fläche eines Volumens enden, bekommen die halbe Kantenlänge, zwei Elementringe weit. Der Kegel dahinter reicht in die Nachbarkörper; am Drehlager wuchsen mit Ringen und Stabenden zusammen Nachbarplatten um bis zu 63 % der Knoten, und die Stufe mit den Stabenden allein lieferte in über 70 Minuten kein Netz (Abschnitt „Elementstufe“) |
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
 | Ziellänge, kleinste und größte Elementgröße | in **mm** (seit 13.09.2026; vorher in m) - so, wie man beim Vernetzen denkt; gespeichert und gerechnet wird in m. Auch die Netzqualität *Kantenlänge* färbt in mm |
 | Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge im Feld: eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern. Fein wird es **örtlich**, an drei zusammengehörenden Stellen: die Bohrungsränder nach ihrer Krümmung, eine Linie neben einer viel feineren (die **Mantellinie** einer Bohrung stand sonst mit *einem* Abschnitt über der ganzen Bohrtiefe), Kränze um jede Öffnung in der Fläche, und von dort wachsend ins Innere. Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer 900-mm-Platte: der Anteil der Tetraeder unter der Güte 0,3 an der Bohrungswand fällt von 6,8 % auf 1,0 % — für doppelt so viele Elemente. Ohne den Haken bleibt es bei ⌈L/h⌉ je Linie |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)). **Sie schützt nicht vor einem zu großen Netz:** Die Schätzung kennt die Verfeinerung an Bohrungen und Rändern nicht und lag am Drehlager je Körper im Median um den Faktor 758 unter dem echten Netz. Für die Größe des ganzen Netzes gilt die Höchstzahl Unbekannte in der nächsten Zeile |
-| Höchstzahl Unbekannte (seit 07.10.2026) | Die Grenze für das ganze Netz in Unbekannten, gezählt als drei je Knoten des Modells (Kantenmitten und Knoten der Geometrie eingeschlossen; auch Knoten von Schalen und Stäben zählen hier mit drei). Die Vorgabe ist **4 000 000**. Bis zum 08.10.2026 galt sie als vorläufig, bis eine Zerlegung am Drehlager gemessen ist; seither ist sie festgelegt, weil sie eine Grenze des Speichers ist und der Pool vor großen Zerlegungen Platz macht (Abschnitt „Der Pool macht Platz für große Zerlegungen“). Gemessen ist Mittel am Drehlager mit 3,05 Millionen Unbekannten: 52,3 GiB Arbeitssatz und 60,6 GiB Commit im Hauptprozess an der Spitze der Zerlegung, 169 Sekunden. Für 4,0 Millionen ergibt die Hochrechnung (Schätzung, nicht gemessen) rund 74 GiB Arbeitssatz, 85 GiB Commit und 5 Minuten je Zerlegung; das passt in einen Rechner mit 128 GB neben der übrigen Belegung. Fein Stufe 3 am Drehlager (4,65 Millionen Unbekannte, rund 89 GiB) passt nicht und fällt auf Stufe 4. Auf einem Rechner mit weniger Arbeitsspeicher ist die Grenze zu senken; sonst bricht die Rechnung vor der Zerlegung mit einer Meldung ab. 0 heißt keine Grenze, und eine ältere Datei ohne das Feld bekommt die Vorgabe. Gezählt wird beim Vernetzen nach jedem fertigen Volumen; beim parallelen Vernetzen zählen fertige, noch nicht eingebaute Volumen mit ihren inneren Knoten mit, damit der Halt nicht auf das große Volumen vorn in der Reihe wartet. Wird die Grenze überschritten, hält das Vernetzen früh an, verwirft das halbe Netz und vernetzt **selbsttätig gröber** mit der nächsten Stufe, bis das Netz passt. Das Protokoll nennt jede Stufe mit Grund und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 3 von 20 Volumen angehalten – 16 242 Unbekannte über der Grenze von 15 297 …; größte: P01 (1 238 Knoten) …“ und danach „Netzgrenze: vernetzt mit Stufe 1 – 15 297 Unbekannte, unter der Grenze von 15 297.“ Gröbere Stufen gibt es nur bei Fein (Abschnitt „Elementstufe“ unten). Entwurf und Mittel haben keine, damit sich ihr Netz nicht unbemerkt ändert: Dort bleibt das Netz, wie es ist, und das Protokoll und eine Meldung warnen („WARNUNG: Das Netz hat … Unbekannte und liegt über der Grenze von …“). Ebenso warnt das Programm, wenn auch die gröbste Stufe von Fein über der Grenze liegt; dann gilt deren Netz. Ein Netz, das die Grenze einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Bis zum 07.10.2026 gab es keine Grenze für das ganze Netz, sondern nur die geschätzte Höchstzahl Elemente je Objekt |
+| Höchstzahl Unbekannte (seit 07.10.2026) | Die Grenze für das ganze Netz in Unbekannten, gezählt als drei je Knoten des Modells (Kantenmitten und Knoten der Geometrie eingeschlossen; auch Knoten von Schalen und Stäben zählen hier mit drei). Die Vorgabe ist **4 000 000**. Bis zum 08.10.2026 galt sie als vorläufig, bis eine Zerlegung am Drehlager gemessen ist; seither ist sie festgelegt, weil sie eine Grenze des Speichers ist und der Pool vor großen Zerlegungen Platz macht (Abschnitt „Der Pool macht Platz für große Zerlegungen“). Gemessen ist Mittel am Drehlager mit 3,05 Millionen Unbekannten: 52,3 GiB Arbeitssatz und 60,6 GiB Commit im Hauptprozess an der Spitze der Zerlegung, 169 Sekunden. Für 4,0 Millionen ergibt die Hochrechnung (Schätzung, nicht gemessen) rund 74 GiB Arbeitssatz, 85 GiB Commit und 5 Minuten je Zerlegung; das passt in einen Rechner mit 128 GB neben der übrigen Belegung. Fein Stufe 3 am Drehlager (4,65 Millionen Unbekannte, rund 89 GiB) passt nicht und fällt auf Stufe 4. Auf einem Rechner mit weniger Arbeitsspeicher ist die Grenze zu senken; sonst bricht die Rechnung vor der Zerlegung mit einer Meldung ab. 0 heißt keine Grenze, und eine ältere Datei ohne das Feld bekommt die Vorgabe. Gezählt wird beim Vernetzen nach jedem fertigen Volumen; beim parallelen Vernetzen zählen fertige, noch nicht eingebaute Volumen mit ihren inneren Knoten mit, damit der Halt nicht auf das große Volumen vorn in der Reihe wartet. Wird die Grenze überschritten, hält das Vernetzen früh an, verwirft das halbe Netz und vernetzt **selbsttätig gröber** mit der nächsten Stufe, bis das Netz passt. Das Protokoll nennt jede Stufe mit Grund und erreichter Zahl, etwa „Netzgrenze: Stufe 0 bei 3 von 20 Volumen angehalten – 16 242 Unbekannte über der Grenze von 15 297 …; größte: P01 (1 238 Knoten) …“ und danach „Netzgrenze: vernetzt mit Stufe 1 – 15 297 Unbekannte, unter der Grenze von 15 297.“ Gröbere Stufen gibt es bei Fein und, seit dem 13.10.2026, bei Mittel an Krafteinleitungen ohne Fläche (Abschnitt „Elementstufe“ unten); dort fallen zuerst die Stabenden, dann die kleineren Ringe der starren Scheiben weg. Entwurf und Mittel sonst haben keine, damit sich ihr Netz nicht unbemerkt ändert: Dort bleibt das Netz, wie es ist, und das Protokoll und eine Meldung warnen („WARNUNG: Das Netz hat … Unbekannte und liegt über der Grenze von …“). Ebenso warnt das Programm, wenn auch die gröbste Stufe von Fein oder von Mittel über der Grenze liegt; dann gilt deren Netz. Ein Netz, das die Grenze einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Bis zum 07.10.2026 gab es keine Grenze für das ganze Netz, sondern nur die geschätzte Höchstzahl Elemente je Objekt |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 | Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; der Knopf **Vernetzer installieren…** unter der Maske (auch *Extras → Vernetzer installieren…*) lädt es nach (Abschnitt „Vernetzer und Nachbesserer nachladen“, Kap. 9). Ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
@@ -1376,6 +1510,7 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 Konsolenfenster**: vorher öffnete sich je Volumen eine Eingabeaufforderung, weil
 Windows einem Konsolenprogramm, das ein Fensterprogramm startet, eine eigene
 Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgeladen im Werkzeugordner, sonst der Suchpfad) — ein Pfadfeld gibt es seit 13.09.2026 nicht mehr; ein in einer älteren Datei gespeicherter Pfad gilt weiter. Gemessen an der Platte mit Bohrung (13.09.2026, MMG 5.8.0): h = 50 mm Güte min 0,103 → 0,453 (19 614 → 18 815 Tetraeder, 6,1 s), h = 30 mm 0,120 → 0,474 (60 610 → 57 817, 1,7 s); Hülle und Volumen unverändert (Randtreue 100 %). Das Protokoll nennt Güte min vorher/nachher |
+| Stabenden in Volumen (seit 13.10.2026) | **an 1–3 Knoten wie RFEM** (Vorgabe), **verteilt über die Stirnfläche** oder **verteilt über einen Kreisring**; das Feld „Kreisring d innen / außen [mm]“ darunter nimmt die beiden Durchmesser, etwa „17 / 30“. Es regelt, wie ein Stabende, das auf oder in einem Volumen liegt, an dessen Netz hängt, und gilt für jedes Stabende, das in der Stabmaske nichts Eigenes eingestellt hat. „Übernehmen“ schließt die Stabenden am vorhandenen Netz gleich neu an. Siehe *Stabenden verteilt einleiten* |
 | Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Seit 21.09.2026 trägt der Quader Randseiten (eine Flächenlast darauf kam vorher **nicht** an: 0 kN), teilt seine Knoten mit Nachbarn und folgt an gemeinsamen Kanten deren Teilung. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred”) und wird nur mitgeführt |
 | Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
 | Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei. Seit 07.10.2026 liegen die Quellen einer **gekrümmten** Fläche (Bohrungswand, Kegel, windschiefes Viereck) auf der Fläche selbst; bis dahin lagen sie in ihrer Ausgleichsebene, an einer halben Bohrungswand mit 60 mm Radius bis 23 mm daneben. Ein Feld, das nur die halbe Kantenlänge verlangt, erreicht das Flächennetz bei Mittel heute nicht ganz: beim Verdichten verdrängt jeder Gitterpunkt seine eigenen feineren Nachbarn, und eine Fläche mit Feld 50 mm bei 100 mm Kantenlänge bleibt im Median bei 96 mm. Mit **Fein** verdichtet das Flächennetz seit 07.10.2026 im Dreiecksgitter und hält dort 50 mm; bei Mittel bleibt es beim alten Weg, damit Mittel-Netze bitgleich bleiben |
@@ -1501,8 +1636,8 @@ wählen“, die es seit dem 25.09.2026 nicht mehr gibt.
 | Stufe | Elemente | wofür | gemessen (Quelle im Theoriehandbuch) |
 |---|---|---|---|
 | **Entwurf** | tet4, Sechsflächner hex8 (VQ83; entartete rechnen als Keil, Pyramide oder Tetraeder), Schalen linear (shell3/shell4) | schnell; für Vorbemessung und Verformungen – Spannungen fallen zu niedrig aus | tet4 verfehlt 1 N/mm² an einer Bohrung auch nach sechs Verfeinerungen: Lamé-Hohlzylinder, 888 → 132 185 Freiheitsgrade, Fehler 121,0 → 31,3 N/mm² (§ 10, „Wie genau ist tet4 an einer Bohrung?“). Am Kragarm −266 / −166 / −70 N/mm² bei 90 / 405 / 2 295 Freiheitsgraden (§ 6b-2) |
-| **Mittel** (Vorgabe) | tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), Schalen quadratisch (shell6/shell8) | für die Nachweise | Kragarm: tet10 +14 / +4 / +1 N/mm² bei 405 / 2 295 / 15 147 Freiheitsgraden (§ 6b-2); hex20 −0,02 N/mm² bei 1 359 Freiheitsgraden (§ 7a) |
-| **Fein** | wie Mittel, **feiner an Kontakt-, Lager- und Lastflächen** (halbe Kantenlänge) und an den **Bögen der Kontakt- und Lagerflächen** (9° statt 18° je Abschnitt); ohne tetp (seit 07.10.2026, bis dahin halbe Kantenlänge überall) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (gleichmäßig feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
+| **Mittel** (Vorgabe) | tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), Schalen quadratisch (shell6/shell8); auf Wunsch **feiner an Krafteinleitungen ohne Fläche** (starre Scheiben über Bohrungen, Stabenden auf Volumen; Haken in den Netzeinstellungen, Vorgabe aus, seit 13.10.2026) | für die Nachweise | Kragarm: tet10 +14 / +4 / +1 N/mm² bei 405 / 2 295 / 15 147 Freiheitsgraden (§ 6b-2); hex20 −0,02 N/mm² bei 1 359 Freiheitsgraden (§ 7a) |
+| **Fein** | wie Mittel, **feiner an Kontakt-, Lager- und Lastflächen** (halbe Kantenlänge) und an den **Bögen der Kontakt- und Lagerflächen** (9° statt 18° je Abschnitt), dazu auf Wunsch wie Mittel an den Krafteinleitungen ohne Fläche; ohne tetp (seit 07.10.2026, bis dahin halbe Kantenlänge überall) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (gleichmäßig feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
 
 *Gemessen gegen den Sollwert 355 N/mm² an der Nachweisstelle des
 Kragarm-Prüfkörpers bzw. gegen die Lamé-Lösung am Innenrand; Freiheitsgrade =
@@ -1590,7 +1725,8 @@ vor der Rechnung, „Vernetzen“ beim Übernehmen einer Fläche oder eines Kör
 und beim Anlegen aus der Auswahl, Neuvernetzen nach Spalt und Spiel) und für
 `statik3d modell.json --vernetzen`; die adaptive Vernetzung
 nimmt die Quellen von Fein nicht und vergröbert darum auch nicht in Stufen.
-Entwurf und Mittel werden nie selbsttätig gröber. Ein Netz, das die Grenze
+Entwurf wird nie selbsttätig gröber, Mittel nur an den Krafteinleitungen ohne
+Fläche, wenn der Haken dafür an ist (übernächster Absatz). Ein Netz, das die Grenze
 einhält, ist Knoten für Knoten dasselbe wie ohne Grenze. Am Drehlager (nur
 vernetzt, Grenze 4 000 000, Sperre für die Messung aufgehoben, 08.10.2026)
 hielt das Programm Stufe 0 nach 51 von 108 Volumen bei 4,41 Millionen
@@ -1600,6 +1736,108 @@ Unbekannten an, Stufe 1 nach 51 Volumen bei 4,08 Millionen und Stufe 2 nach
 Millionen Unbekannten. Das dauerte zusammen 71 Minuten, davon 28 Minuten für
 die verworfene Stufe 3; mit dieser Grenze endet Fein am Drehlager also beim
 Netz von Mittel. Bis zum 07.10.2026 vernetzte Fein ohne Grenze.
+
+**Krafteinleitungen ohne Fläche feiner (seit 13.10.2026).** Eine starre Scheibe
+über einer Bohrung koppelt nur die Knoten am Lochrand an ihren Mittelpunkt, und
+ein Stab endet an den drei oder vier Knoten eines Elements: Die Kraft geht dort
+an einer Linie oder in einem Punkt ins Volumen und nicht über eine Fläche. Die
+Spannung an solchen Stellen hängt von der Elementgröße ab (Abschnitt „Freie
+Bewegungen (Singularitäten)“), und das Gebiet, das man deshalb nicht
+auswerten kann, ist so groß wie die Elemente dort. Der Anwender wünschte am
+13.10.2026: „Netzabhängige Zonen sind zu groß, weil elementweise auf grobem
+Netz bestimmt. Bitte über Radius bzw. max. 1–2 Elementringe begrenzen und im
+Lochbereich feiner bzw. quadratisch vernetzen.“ Die Begrenzung der Zonen ist
+ein eigener Schritt; dieser Absatz beschreibt das feinere Vernetzen.
+
+Bei Mittel und Fein legt das Programm vor dem Vernetzen Quellen ins Größenfeld,
+und zwar dort, wo es die Stellen aus der Geometrie schon kennt. Die Stellen
+erkennt es sonst erst am fertigen Netz, weil die Kopplungen erst beim
+Vernetzen entstehen (Abschnitt „Netzabhängige Spannungsspitzen“). Erkannt werden **starre
+Scheiben**, die weniger als ein Zehntel ihrer Fläche auf einer Körperfläche
+aufliegen (also nur mit ihrem Rand, am Drehlager die Deckel der 16 Ankerringe
+und der 48 Schraubenringe), und **Stabenden**, die auf einer ebenen Randfläche
+eines Volumens enden. An der Scheibe bekommen die Linien des Lochrands 9° statt
+18° je Abschnitt, und die Kantenlänge am Rand ist die kleinere von der
+Bogenlänge eines 9°-Abschnitts und der halben Kantenlänge von Mittel. Am
+Stabende gilt die halbe Kantenlänge des Körpers. Ein Ring, dessen Kantenlänge
+unter die **Mindestweite** des Vernetzers fiele (die Kantenlänge von Mittel
+geteilt durch 30; darunter erzeugt der Vernetzer Hüllkanten, aus denen Splitter
+werden, die kein Volumenschritt mehr los wird), bleibt, wie Mittel ihn vernetzt;
+das Protokoll nennt ihn ausdrücklich. Am Drehlager sind das die 48 Schraubenringe
+(Radius 8 und 10 mm: 1,3 und 1,6 mm gegen 1,7 mm Mindestweite), die zu 18, 18 und
+12 in drei Körpern sitzen; die 16 Ankerringe (Radius 25,5 mm, 4,0 mm) werden
+verfeinert. Beide Quellen reichen zwei
+Elementringe weit (ein Umkreis von etwa r + 2 h); dahinter wächst die
+Kantenlänge wie überall mit 0,35 je Meter bis zur Kantenlänge von Mittel. Das
+ist derselbe Weg, auf dem die Bögen der Kontakt- und Lagerflächen bei Fein vorab
+9° bekommen. Weil gegenüberliegende Seiten einer abgebildeten Bohrungswand
+gleich viele Abschnitte haben, teilt sich auch der Lochrand auf der anderen
+Seite der Platte mit 9°. Nicht erkannt werden Scheiben und Stabenden auf einer
+gekrümmten Fläche und Stabenden im Innern eines Körpers; sie bleiben, wie
+Mittel sie vernetzt. **Entwurf bleibt linear (tet4) und ohne diese
+Verfeinerung**: Er ist die schnelle Stufe für Verformungen, die Spannungen an
+einer Linienlast fallen in tet4 ohnehin zu niedrig aus, und tet4 neben tet10
+in einem Netz gäbe keine verträglichen Elemente.
+
+**Zwei Haken in den Netzeinstellungen, in der Vorgabe beide aus.** „Krafteinleitungen
+ohne Fläche feiner vernetzen“ schaltet die Ringe ein, „… auch Stabenden auf
+Volumen“ dazu die Stabenden (nur mit dem ersten wirksam). Der Anwender hat das
+Feinere gewünscht, trotzdem stehen beide auf **aus**, und zwar wegen der Messung am
+Drehlager (Absatz unten): Mit Ringen und Stabenden zusammen lieferte das
+Vernetzen dort in über zwei Stunden kein Netz unter der Grenze. Ob die Ringe
+allein tragbar sind, ist nicht gemessen; die 16 Ankerringe liegen in kleinen
+Körpern (je rund 9 200 Tetraeder gegen 1 300 bei Mittel), die in wenigen Sekunden vernetzt sind. Wer die Ringe will, schaltet sie ein, nach
+Möglichkeit zuerst an einem Modell, das schneller vernetzt. Mit beiden Haken aus
+ist das Netz von Mittel dasselbe wie bis zum 13.10.2026 (Knoten für Knoten,
+geprüft in tests/test_krafteinleitung.py). Die Haken werden mit der Datei
+gespeichert; **bis zum 13.10.2026 vernetzte Mittel an diesen Stellen so grob wie
+überall** (am Drehlager 40 Knoten am Lochrand jedes Ankerrings, 18° je
+Abschnitt), und eine ältere Datei hat die Haken nicht und bekommt beim Laden die
+Vorgabe aus, ihr Netz ändert sich also beim Neuvernetzen nicht. Ist ein Haken
+an, beginnt das Protokoll beim Vernetzen mit einer Zeile „Elemente Mittel:
+feiner an Krafteinleitungen ohne Fläche: …“ (bei Fein „Elemente Fein: …;
+feiner an Krafteinleitungen ohne Fläche: …“), und die Maske nennt dasselbe in
+der Zeile *Kantenlänge (wirksam)*.
+
+**Die Höchstzahl Unbekannte begrenzt es in vier Stufen.** Der Aufwand je Ring ist
+ungefähr gleich, ob er den Radius 8 mm oder 25,5 mm hat (die Zahl der
+Elemente im Kegel einer Ringquelle hängt von der Zahl der Abschnitte ab, nicht
+vom Radius; Theoriehandbuch), die Tiefe der Zone dagegen (zwei Elementringe, 2 · r ·
+Winkel) wächst mit dem Radius. Darum fallen bei zu großem Netz zuerst die
+Stabenden weg und dann die kleineren Ringe: Stufe 0 sind alle Ringe mit 9° und
+die Stabenden mit der halben Kantenlänge; Stufe 1 hat nur noch die Ringe; Stufe 2
+behält nur das größte Viertel der Ringe (die mit dem größten Radius, Gleichstand
+bleibt zusammen); Stufe 3 ist Mittel ohne diese Verfeinerung. Ohne den Haken für
+Stabenden gleicht Stufe 1 der Stufe 0 und wird übersprungen. Das Protokoll nennt
+jede Stufe wie bei Fein, etwa „Netzgrenze: vernetzt mit Stufe 2 (Mittel Stufe 2:
+Ringe 9° (das größte Viertel)) – … Unbekannte, unter der Grenze von …“. Fein
+vergröbert zuerst seine eigenen Stufen mit den Krafteinleitungen in Stufe 0 und
+setzt danach mit den Stufen von Mittel fort, damit Fein an derselben Stelle nie
+gröber ist als Mittel; mit Krafteinleitungen hat Fein deshalb acht statt fünf
+Stufen. Ohne solche Stellen im Modell, mit den Haken aus und bei Entwurf
+ändert sich nichts.
+
+**Gemessen am Drehlager (nur vernetzt, 14.10.2026).** Das gespeicherte Netz von Mittel (08.10.2026, 31 Arbeitsprozesse) hat 617 177 tet10, 1 015 610 Knoten
+und 3 046 830 Unbekannte, brauchte 809 Sekunden zum Vernetzen und hat an jedem Ankerring 40 Knoten
+am Lochrand (18° je Abschnitt). Mit beiden Haken an, der Grenze 4 000 000 und denselben 31 Arbeitern
+(der Rechner war bis auf die eigenen Arbeiter leer, die CPU-Last lag im Mittel bei 68 %, der freie
+Speicher nie unter 88 GiB) ging es so: **Stufe 0** (alle 64 Ringe mit 9°, 48 Stabenden) hielt nach 26
+Minuten bei 55 von 108 Volumen an, 4 314 924 Unbekannte über der Grenze. **Stufe 1** (nur die 16
+Ankerringe und die Stabenden) vernetzte alle 108 Volumen in 25 Minuten und kam auf 4 234 851
+Unbekannte, 5,9 % über der Grenze; das Netz wurde verworfen. Dabei hatten die Platten V15, V33, V35
+und V31 122 591, 161 986, 160 441 und 160 697 Knoten gegen 75 219, 112 371, 112 274 und 126 930 bei
+Mittel (+63, +44, +43 und +27 %); an V33 stand der schlechteste Tetraeder bei 0,019 (Abnahmegrenze
+0,05) mit 552 Hüllkanten unter der Mindestweite (kürzeste 0,13 mm), und MMG3D mit Größenfeld scheiterte
+einmal. Jede der 16 Ankerplatten wuchs von rund 1 300 auf rund 9 200 Tetraeder. **Stufe 2** (nur die
+48 Stabenden) lieferte nach 106 Minuten noch kein Netz: 55 von 108 Volumen waren seit der sechsten Minute fertig, danach kam keines mehr hinzu, und nur noch ein bis drei Arbeiter rechneten, einer davon 102 Minuten (6 147 CPU-Sekunden) lang an einem Körper; der Lauf wurde dann von Hand beendet. Zum Vergleich: Mittel ohne
+die Verfeinerung braucht am Drehlager 13,5 Minuten. Die Zerlegung wurde nicht gemessen, weil
+kein Netz unter der Grenze entstand. Hochgerechnet mit dem Exponenten 1,29 des Handbuchs (3,05 auf 4,0 Millionen
+Unbekannte; Schätzung, nicht gemessen) bräuchte ein Netz mit den 4,23 Millionen von Stufe 1 rund 80 GiB
+Arbeitssatz statt 52,3 GiB und rund 5,6 Minuten statt 169 Sekunden je Zerlegung. Aus dem gemessenen
+Zuwachs der Ankerplatten (+42 000 Unbekannte je Platte) ergibt sich für die 16 Ankerringe allein
+ein Netz von rund 3,7 Millionen Unbekannten (Schätzung, ohne die Wirkung auf die Nachbarkörper), also rund
+68 GiB Arbeitssatz; das passt unter die Grenze, ist aber nicht gemessen. Darum stehen die Haken
+auf aus.
 
 **Kontakt: was Mittel und Fein noch sperrt.** Seit dem 08.10.2026 rechnen
 Kontaktbedingungen, Kontaktpaare und Flächenlager an Volumen auch mit tet10,
@@ -2190,7 +2428,9 @@ Für die Kennzeichnung eines **fertigen** Lastfalls aus seinen Zahlen statt aus
 dem Meldungstext gibt es `rechenliste.zustand_aus_info(res.info)`. Sie gibt
 „konvergiert“, „Probelauf“ oder „NICHT konvergiert: …“ mit den Gründen
 zurück, etwa „NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“
-oder „…, darunter der letzte“. Jeder gedeckelte Kontaktlauf zählt, auch wenn
+oder „…, darunter der letzte“, seit dem 13.10.2026 auch „NICHT konvergiert:
+Zugstab D1 trägt Druck: N = -43,832 kN“ (siehe „Zugstäbe in der
+Konvergenz“). Jeder gedeckelte Kontaktlauf zählt, auch wenn
 der letzte konvergiert ist - mit einer Ausnahme: dem elastischen Vorlauf einer
 Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
 (Theoriehandbuch § 4.0, „Welcher gedeckelte Lauf zählt“). Eine Zwischenstufe
@@ -2203,6 +2443,28 @@ noch in „N von M“;
 der letzte Lauf muss trotzdem konvergiert sein. Seit dem 24.09.2026 ebenso die
 **verworfenen**: Läufe einer Laststufe, die die gemeinsame Iteration
 aufgegeben und vom Startwert an verschachtelt wiederholt hat.
+
+**Vorläufig – Kontakt nicht konvergiert in Stufe … (seit 14.10.2026).** Bis zum
+14.10.2026 stand an einem Ergebnis mit nicht konvergiertem Kontaktlauf
+„NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“, ohne zu sagen,
+in welcher Laststufe. Seither ist ein solches Ergebnis ausdrücklich vorläufig
+(Entscheidung des Anwenders vom 14.10.2026), und die Kennzeichnung nennt, wo es
+hängt: „vorläufig – Kontakt nicht konvergiert in Stufe 2 (bis 100 % der Last),
+Abschluss“, bei einer reinen Kontaktrechnung „… in Kontaktlauf 1“. Der
+Lastanteil steht dabei, weil die Nummer einer Stufe nach dem Halbieren allein
+nicht mehr sagt, welche Last gemeint ist. Die Kennzeichnung steht in der
+Zusammenfassung des Ergebnisses als eigene Zeile „Ergebnis : vorläufig – …“,
+in der Zusammenfassung der Rechnung als WARNUNG mit den betroffenen
+Lastfällen und Kombinationen, im Konvergenzstand („NICHT konvergiert:
+vorläufig – … (3 von 11 Kontaktläufen nicht konvergiert)“), in der Spalte
+„Meldung“ der Rechenliste und im Bericht unter den Kennwerten des Ergebnisses
+und in den Hinweisen. Sie wird mit dem Ergebnis gespeichert
+(`res.info["vorlaeufig"]`, Text und Stellen) und mit der Ergebnisdatei
+geladen; ältere Ergebnisse bekommen sie aus ihrem Laufbuch. Es zählen dieselben
+Läufe wie oben: der elastische Vorlauf, abgekürzte und verworfene nicht. Endet
+im Spannschritt einer Vorspannkraft ein Kontaktlauf nicht konvergiert, ist der
+Spannzustand vorläufig („… in Spannstufe 1/3“) und mit ihm der Lastfall, der
+von ihm aus rechnet („… in Spannschritt“).
 
 Seit dem 06.10.2026 lesen **Zusammenfassung, Bericht und Rechenliste dieselbe
 Regel**. Sie steht im Rechenkern (`solver.konvergenz_zustand`, für den Kontakt
@@ -2718,7 +2980,10 @@ die Layer im Register *Ansicht* und im Modellbaum.
 **Verborgenes im Hintergrund.** Der Schalter (Register *Ansicht → Sicht*,
 auch in der Glasleiste) zeigt alles Ausgeblendete blass und durchscheinend
 als „Geist“ hinter dem Modell: man sieht, wo das Versteckte liegt, und
-arbeitet ungestört an dem, was normal dargestellt ist. Der Geist ist
+arbeitet ungestört an dem, was normal dargestellt ist. Seine Kanten sind
+seit dem 14.10.2026 blassblau (#9fb8d6). Bis dahin waren sie hellgrau
+(#c9cfd5) und kaum vom Grau zu unterscheiden, mit dem die Färbung Knoten und
+Elemente ohne Wert zeigt (#d0d4d8, Farbabstand ΔE 2,3, jetzt 18,9). Der Geist ist
 **nicht wählbar** — weder mit der Maus noch im Auswahlfenster. Das ist die
 allgemeine Regel der Ansicht: **Was nicht dargestellt ist, lässt sich nicht
 wählen.** Ausgeblendete Objekte (Sicht) bleiben außen vor, ebenso alles,
@@ -2814,6 +3079,39 @@ stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
 Achsenkreuz unten
 rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
 Texte weg. Beides kommt so auch in den Bericht.
+
+**Farbe und Verformung quadratischer Volumen (seit 14.10.2026 richtig
+zugeordnet).** Die Ansicht zeichnet Volumen als ihre Oberfläche und holt
+Verschiebung und Farbe je Punkt über die Nummer des Modellknotens. Bis zum
+14.10.2026 kam diese Nummer bei quadratischen Elementen (tet10, Netz
+*Mittel* und *Fein*) falsch aus VTK: die Punkte bekamen Werte und
+Verschiebungen fremder Knoten – am tet10-Kragarm 0,185 mm falscher Wert und
+19,4 mm falsche Lage bei Überhöhung 100, am Drehlager lag ein Punkt bis
+3,52 m neben dem Knoten, dessen Farbe er trug. Farbbilder von tet10-Netzen
+aus dieser Zeit zeigen die Werte am falschen Ort; Kennwerte, Max-/Min-Marken,
+Tabellen, Bericht und Nachweise lesen die Knoten selbst und waren nicht
+betroffen. Bei tet4, hex8 und Keilen stimmte die Zuordnung.
+
+**Lage der Texte (seit 13.10.2026).** Vor jedem Bild ordnet das Programm die
+Texte nach ihren gemessenen Rechtecken: die Kennwerte unten links bleiben
+links vom Achsenkreuz und werden dafür umgebrochen; der Titel der Farbskala
+steht rechtsbündig über ihr (in der Kompaktstufe mittig über der waagerechten
+Skala, nie über den Rand hinaus) und wird umgebrochen, die Skala wird kürzer,
+wenn er sonst in den Ansichtswürfel liefe; Legendeneintrag und Hinweis der
+netzabhängigen Stellen stehen rechts unter der Skala, links vom Achsenkreuz,
+und die Skala rückt hoch, wenn sie sonst auf den Kennwerten lägen; die
+Kopfzeile oben links wird so schmal umgebrochen, dass sie neben Würfel,
+Skala und Titel bleibt. Das gilt auch nach dem Vergrößern oder Verkleinern
+der Ansicht und im Bild für den Bericht (Strg+B), das dieselbe Zeichnung in
+der Größe der Ansicht ist. Geprüft auf dem Bildschirm bei Fenstern von
+1280 x 800, 1600 x 900, 1920 x 1080 und 1100 x 700 (`tests/test_textlage.py`):
+kein Text abgeschnitten, keiner auf einem anderen, auf der Skala, dem
+Achsenkreuz, dem Würfel oder der Glasleiste. In einem Fenster von 900 x 640
+(Ansicht rund 170 px breit) ist nichts abgeschnitten, aber nicht alles
+nebeneinander unterzubringen. Bis zum 13.10.2026 wurden die Lagen beim
+Zeichnen gesetzt: die Kopfzeile lief bei 1280 x 800 bis 803 px in eine
+552 px breite Ansicht, der Titel der Farbskala stand mittig über ihr und lief
+rechts hinaus, und Legendeneintrag und Hinweis lagen auf dem Achsenkreuz.
 
 **Drehen großer Modelle.** Ab etwa 20 000 Knoten und Elementen bleiben
 während des Drehens, Schiebens und Zoomens die Nebendarsteller
@@ -3134,7 +3432,7 @@ etwas enthält.
 |---|---|
 | Protokoll | das Protokoll der Berechnung und der Modellprüfung |
 | Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente, Schweißnähte. Die Tabelle *Elemente* führt alle finiten Elemente; bis zum 03.10.2026 hieß sie „Stäbe“, obwohl auch Schalen und Volumen darin stehen. Ein Klick auf *FE-Netz → Stabelemente*, *Flächenelemente* oder *Volumenelemente* im Modellbaum holt sie nach vorn |
-| Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog zeigt die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
+| Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog und seit 13.10.2026 auch die Werkstoffmaske rechts zeigen die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
 | Lager | Lager, Gelenke, Kontaktbedingungen |
 | Lasten | Lastfälle, Lasten, Kombinationen |
 | Ergebnisse | Stabkräfte, Auflagerkräfte, Umhüllende, Kontakt |
@@ -3412,7 +3710,7 @@ nur einen Kontrast von 3,6 zu 1, die Web-Richtlinien (WCAG, Stufe AA) verlangen
 für kleinen Text 4,5 zu 1. Gerechnet über die relative Leuchtdichte hat das
 Rot 5,6 zu 1 und das dunkle Orange 4,8 zu 1; die Prüfung steht in
 `tests/test_protokoll_lesbar.py`. Das erste Wort entscheidet, auch wenn die Zeile eingerückt
-ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Zugstab: …“), und auch
+ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Seil: …“), und auch
 ohne Doppelpunkt („FEHLER Versatz Anfang y, z [mm]: …“). Auch hinter einem
 Namen darf das Stichwort stehen: endet das erste Wort der Zeile mit einem
 Doppelpunkt und folgt darauf FEHLER oder WARNUNG, färbt die Zeile ebenso, wie
@@ -5144,7 +5442,9 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 5. **Nachweise**: Stäbe prüfen (Doppelklick: Knicklängenbeiwerte βy/βz,
    Abstand seitlicher Halterungen L_LT, Lastangriff, Kerbfall für Ermüdung).
 6. **Berechnung**: „Alle Lastfälle + Kombinationen“, Häkchen für Nachweise
-   und Ermüdung, BERECHNEN.
+   und Ermüdung, BERECHNEN. Enthält eine Kombination einen Lastfall ohne
+   zugeordnete Einwirkung (nach einem RFEM-Import die Regel), gibt es statt der
+   Rechnung einen Hinweis; siehe Kapitel 4, *Einwirkung nicht zugeordnet*.
 7. **Ergebnisse**: Umhüllende GZT zeigt Extremwerte mit maßgebender
    Kombination; Färbung „Ausnutzung EC3“ zeigt die Stabausnutzung; Verlauf
    „My“ zeichnet den Momentenverlauf.
@@ -5200,7 +5500,7 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
-| Vorspannung | gewählte **Stäbe** oder **Volumen** | F_v [kN], Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung |
+| Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v bzw. F_soll [kN], Gruppe beim Spannen, Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Sollkraft nach Verankerung** (nur Stäbe, seit 13.10.2026): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; **Umwandeln** einer RFEM-Vorspannung (ΔT) in die Sollkraft |
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
@@ -5296,9 +5596,10 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 
 * Einwirkungskategorien: G (ständig), Q_A … Q_H (Nutzlasten), Q_K (Kran),
   S / S_H (Schnee), W (Wind), T (Temperatur), H (Wasserdruck), A
-  (außergewöhnlich), P (Vorspannung), SET (Setzung), FAT (nur Ermüdung).
-  Die ψ-Beiwerte nach DIN EN 1990/NA sind hinterlegt und je Lastfall
-  überschreibbar.
+  (außergewöhnlich), P (Vorspannung, γ_P = 1,0), SET (Setzung), FAT (nur
+  Ermüdung) und seit 13.10.2026 **NZ „nicht zugeordnet“** (siehe nächster
+  Abschnitt). Die ψ-Beiwerte nach DIN EN 1990/NA sind hinterlegt und je
+  Lastfall überschreibbar.
 * Ausschlussgruppe: Lastfälle derselben Gruppe wirken nie gleichzeitig
   (Wind aus verschiedenen Richtungen, Laststellungen).
 * Automatische Kombinationen: GZT nach 6.10 (oder 6.10a/b), ständige Lasten
@@ -5328,6 +5629,105 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   erzeugte einen freien Namen („DIN LF1.1 2“), und das Protokoll sagt es.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Einwirkung nicht zugeordnet, Bemessungslastfall und Vorspannung (seit 13.10.2026)
+
+Am 13.10.2026 hat der Anwender für den Import von Lastfällen entschieden:
+„Kategorie ‚nicht zugeordnet‘ statt Q, Kombinationen bis zur Zuordnung sperren.
+Kennzeichen ‚Bemessungslastfall, bereits faktorisiert‘ einführen, damit LF1 kein
+zweites γ erhält. Vorspannung als Kategorie P mit γ_P = 1,0 führen und als Kraft
+anzeigen, nicht als Temperatur ΔT.“ Bis zum 12.10.2026 bekam jeder Lastfall des
+RFEM-Imports, dessen Kennzahl nicht zu G führte, die Einwirkung Q (ψ 0,8/0,7/0,5,
+γ_Q = 1,5); am Drehlager waren das 256 von 422 Lastfällen, darunter 128
+„Bemessungslast im GZT …“, deren Lasten in RFEM schon mit ihren Teilsicherheits-
+beiwerten versehen sind – in einer Statik3D-Kombination hätten sie ein zweites γ
+bekommen.
+
+**Nicht zugeordnet.** Ein Lastfall, dessen Einwirkung die Quelle nicht eindeutig
+nennt, heißt „nicht zugeordnet“ (Schlüssel NZ). Er ist weder ständig noch
+veränderlich noch außergewöhnlich; sein γ und sein ψ stehen nicht fest. Darum
+gilt:
+
+* **Kombinationen mit ihm werden nicht gerechnet.** „Alle Lastfälle +
+  Kombinationen“ startet nicht; stattdessen steht als Hinweis (gelb, ohne
+  Fenster) im Protokoll und in der Statuszeile, welche Lastfälle es sind
+  („LF201–LF328“), welche Kombinationen deshalb ruhen und wie die Zuordnung geht.
+  Das geschieht vor dem ersten Lastfall, nicht erst nach Stunden. Dasselbe gilt
+  für eine einzelne Kombination, für die Alternativen einer Ergebniskombination
+  und für **Lasten → Kombinationen → EN 1990…**: der Generator weigert sich, statt
+  den Lastfall still wegzulassen. Die Modellprüfung meldet es als Warnung.
+* **Einzelne Lastfälle bleiben rechenbar** („Nur aktiver Lastfall“, die Lastfälle
+  der Stellungen, die Skripte).
+* **Zuordnen**: den Lastfall im Modellbaum anklicken und rechts unter
+  „Einwirkung“ die Einwirkung wählen (Dialog *Lastfall* hat dieselbe Auswahl).
+  Mit jeder Einwirkung außer „nicht zugeordnet“ ist die Sperre für diesen
+  Lastfall aufgehoben.
+* **Alte Dateien** behalten ihre Einwirkung: ein Lastfall, der bisher Q war, ist
+  weiter Q. Nur der RFEM-Import vergibt „nicht zugeordnet“.
+
+**Was der RFEM-Import zuordnet.** Die Kennzahl der Einwirkungskategorie
+(`actionCategoryId`) liest der Import jetzt aus der Aufzählung der Dlubal-API
+(RFEM 6.15, 296 Werte; an den Beispielmodellen von RFEM 6.15 belegt für 11, 19,
+21, 32, 33, 44, 54 und 61). Die Kennzahl **11** ist „Permanent G“, aber auch die
+**Vorgabe jedes neuen Lastfalls** und jeder neuen Aktion: am Drehlager tragen alle
+422 Lastfälle sie, auch „Verkehrslage“ und „Ermüdungslast“, in den
+Beispielmodellen „Dynamic Analysis“ stehen „wind +x“ und „live load roof“ in
+Aktionen mit ihr. Sie sagt darum nichts. Zugeordnet wird, in dieser Reihenfolge,
+der erste eindeutige Fund:
+
+1. eine **Aktion** des Kombinationsassistenten mit einer anderen Kennzahl als 11;
+2. die eigene **Kennzahl** des Lastfalls, wenn sie nicht 11 ist (32 → Q_A,
+   54 → S, 61 → W, 21 → P, 6377 → FAT …; die Tabelle führt nur, was einer
+   Einwirkung von Statik3D genau entspricht, Mischformen und Erdbeben nicht);
+3. der Lastfall steht in der Quelldatei **nur in Ermüdungskombinationen**
+   (Bemessungssituation „GZT (FAT)“): FAT – das ist eine Eigenschaft der Datei,
+   nicht des Namens;
+4. an ihm hängen **nur Vorspannlasten** (und kein Eigengewicht): P, γ_P = 1,0 –
+   am Drehlager LF398 und LF399;
+5. an ihm hängt **nur Eigengewicht**: G.
+
+Alles andere bleibt „nicht zugeordnet“. **Der Name setzt nichts**: ein Name ist
+Freitext, und derselbe Text steht je Datei für anderes. Er erscheint nur als
+„Vorschlag nach dem Namen (nicht gesetzt)“ im Protokoll. Am Drehlager ergibt das:
+164× FAT, 2× P, 256× nicht zugeordnet (statt bisher 256× Q), davon 128 als
+Bemessungslastfall gekennzeichnet.
+
+**Bemessungslastfall, bereits faktorisiert.** Ein Lastfall mit diesem Kennzeichen
+(Maske: Haken unter „Einwirkung“; im Bericht und in der Tabelle der Lastfälle
+steht „Bemessungslastfall“) enthält schon Bemessungswerte: γ und ψ stecken in
+seinen Lasten. In jeder Kombination geht er mit **γ = 1,0 und ohne ψ** ein. Der
+Generator bildet für ihn eine eigene GZT-Kombination „1,0·LFn“ (ein
+Bemessungslastfall ist schon die fertige Kombination; er wird nicht mit anderen
+Lastfällen überlagert und kommt in keine GZG-Kombination). Er braucht keine
+Einwirkung und hält keine Kombination auf. Der Import setzt das Kennzeichen **nur
+bei eindeutiger Datenlage**: der Lastfall steht in der Quelldatei in
+Kombinationen der Bemessungssituation **GZT** und in **keiner anderen**, jedes Mal
+als eigene Alternative mit dem Faktor 1,0 („LF1/p oder LF3/p …“ in einer
+Bemessungskombination im GZT). RFEM bemisst dann mit genau diesem Ergebnis. Am
+Drehlager sind das die 128 Lastfälle „Bemessungslast im GZT …“, die in
+„Bemessungskombination im GZT“ stehen; die Namen stimmen bei allen 128 überein. Der
+Name allein setzt das Kennzeichen nie. Heißt ein Lastfall „Bemessungslast …“ und
+steht die Datei nicht so, bekommt er nur einen Vorschlag im Protokoll; steht er
+mit dem Faktor 1,0 in GZT-Kombinationen, heißt aber „char.“ oder
+„charakteristisch“, bleibt er ungekennzeichnet und wird gemeldet. Der Grund: Wer das
+Kennzeichen zu Unrecht setzt, rechnet Lasten ohne γ – das ist die unsichere
+Richtung; wer es zu Unrecht nicht setzt, rechnet mit einem γ zu viel.
+
+**Vorspannung: P mit γ_P = 1,0.** Die Einwirkung P (Vorspannung) ist ständig, ihr
+Teilsicherheitsbeiwert aber nicht γ_G,sup = 1,35, sondern γ_P = 1,0, günstig wie
+ungünstig. Er steht in den Einstellungen des Modells (`gamma_P`, vorbelegt mit
+1,0), die Oberfläche bietet dafür noch kein Feld; ein eigenes γ am Lastfall
+(`gamma_sup`, `gamma_inf`) geht vor. Bis zum 12.10.2026 lief P mit 1,35. Ein **reiner
+Vorspannungslastfall** (nur Vorspannlasten, wie LF398 und LF399 am Drehlager)
+bekommt beim Import P. Ein **gemischter Lastfall** – Vorspannung und andere
+Lasten in einem Lastfall, wie LF1 am Drehlager – hat nur **eine** Einwirkung und
+damit ein γ: eine Kombination gibt dem ganzen Lastfall das γ seiner Einwirkung,
+auch der Vorspannung darin (belegt in `tests/test_lastfall_kategorie.py`: ein Lastfall
+Q mit Vorspannung geht mit 1,5 ein, nicht mit γ_P = 1,0). Ist er als
+Bemessungslastfall gekennzeichnet, gilt ohnehin 1,0 für alles. Ist er es nicht,
+meldet der Import ihn mit Namen („128 Lastfälle mischen Vorspannung mit anderen
+Lasten …“); am besten legt man die Vorspannung in einen eigenen Lastfall mit
+Einwirkung P.
 
 ### Name, Nummer, Bezeichnung und Beschreibung (seit 04.10.2026)
 
@@ -5983,12 +6383,120 @@ versteifen).
 **Zugband und Druckstab.** In der Stabmaske stellt „trägt nur“ auf *Zug* oder
 *Druck*. Das Programm rechnet dann mit einer Iteration: Stäbe mit der falschen
 Kraft fallen aus, die übrigen tragen weiter, bis sich nichts mehr ändert. Das
-Protokoll nennt, wie viele Stäbe ausgefallen sind.
+Protokoll nennt, wie viele Stäbe ausgefallen sind, und die Zusammenfassung
+des Ergebnisses nennt sie mit Namen („Ausgefallene Stäbe : 1 (D1)“). Seit
+dem 13.10.2026 entscheidet die Iteration mit der Kraft, die auch im Ergebnis
+steht, also mit Temperatur und Vorspannung (siehe „Temperatur und
+Vorspannung zählen in jeder Stabkraft“), und ein ausgefallener Stab nimmt
+seine Temperatur und Vorspannung mit.
 
-**Seile** rechnen nach Theorie I. Ordnung wie ein Zugband. Wählt man für den
+**Zug- und Druckstäbe aus RFEM 6** (seit 14.10.2026). Ein Zugstab aus RFEM
+(Stabtyp „Zugstab“, der dort bei Druck ausfällt) kommt als Fachwerkstab mit
+„trägt nur: Zug“ an, ein Druckstab mit „trägt nur: Druck“. Ein Zugstab, den
+RFEM auch Druck tragen lässt (isActiveInCompression), bleibt ein gewöhnlicher
+Fachwerkstab. Ein **Seil** aus RFEM kommt als Seil an, das nur Zug trägt:
+nach Theorie I. und II. Ordnung fällt es bei Druck aus, nach Theorie III.
+Ordnung hängt es als Kettenlinie durch. Bis zum 14.10.2026 kam es als
+Fachwerkstab an, der auch Druck trug, und das Protokoll warnte
+„Seiltheorie (Durchhang, Ausfall bei Druck) fehlt“; ein Seil parallel zu
+einem Balken trug unter 10 kN Druck so die Hälfte, jetzt fällt es aus, und
+der Balken trägt die 10 kN. Liegt ein Seilende auf einem Volumenkörper,
+hängt es wie das Ende eines Zugstabs an dessen Netz. Das Importprotokoll nennt die Stäbe („64 Zugstäbe tragen nur Zug
+(fallen wie in RFEM bei Druck aus): S1, S2, …“). Bis zum 14.10.2026 trug ein
+solcher Stab hier auch Druck, und das Protokoll warnte nur („Stabtyp Zugstab:
+fällt in RFEM bei Druck aus – hier trägt er auch Druck“); am Drehlager trug S57
+im Lastfall LF1 so −0,59 kN Druck. Öffnen Sie ein Modell, das vor diesem Tag
+aus RFEM 6 übernommen wurde, nennt das Protokoll die Fachwerkstäbe ohne
+„trägt nur“, und unter den Importhinweisen steht die Umstellung als Vorschlag.
+Das Programm stellt nichts von selbst um. Die Statuszeile nennt beim Öffnen
+den Weg: Register **Datei › Austausch › „Stabtypen aus RFEM nachlesen…“**
+öffnet rechts die Maske „Stabtypen aus RFEM“ mit dem Hinweis aus dem Import
+und der RFEM-Datei, die beim Import gelesen wurde. Liegt die Datei heute
+woanders, tragen Sie ihren Pfad dort ein. **Stabtypen nachlesen** liest die
+Stabtypen aus der RFEM-Datei nach und setzt „trägt nur“ wie der Import heute;
+aus einem RFEM-Seil wird wieder ein Seil. Was Sie an einem Stab selbst
+eingestellt haben, bleibt, und Rückgängig nimmt die Umstellung als einen
+Schritt zurück. Das Protokoll nennt das Ergebnis („Stabtypen aus … nachgelesen:
+64 Zugstäbe nur Zug, …“). Fehlt die Datei, sagt ein Hinweis es, und nichts
+wird umgestellt. Bis zum 14.10.2026 gab es die Umstellung nur als Funktion
+für die Konsole (`statik3d.importers.rfem6_db.zugstaebe_aus_rfem(modell)`). Ohne die RFEM-Datei wählen Sie die Stäbe und stellen in der
+Stabmaske „trägt nur“ auf Zug.
+
+**Zugstäbe in der Konvergenz** (seit 13.10.2026). Eine Rechnung mit Zug- oder
+Druckstäben oder Seilen gilt nur als konvergiert, wenn sich der Status dieser
+Stäbe (aktiv oder ausgefallen) im letzten Schritt nicht mehr geändert hat und
+kein aktiver Zugstab Druck trägt. Das gilt beim strengen und beim
+ingenieurmäßigen Abbruch. Mit Fließen braucht eine Laststufe, in der Stäbe
+ausfallen oder wieder tragen, darum einen Newton-Schritt mehr, und das
+Protokoll sagt es: „Zugstäbe: Status im letzten Schritt geändert (D1
+ausgefallen) - noch nicht konvergiert“. Als Druck zählt, was 1e-5 der Summe
+der äußeren Kräfte überschreitet; das ist dieselbe Schranke wie für Zug in
+einer geschlossenen Kontaktfuge, am Drehlager rund 0,1 kN. Trägt nach dem
+Abschluss ein aktiver Zugstab mehr Druck oder ein Druckstab mehr Zug, steht
+er mit Namen und Kraft im Protokoll, in der Zusammenfassung („WARNUNG :
+Zugstab D1 trägt Druck: N = -43,832 kN – NICHT konvergiert“) und im
+Konvergenzstand. Das kann vor allem nach Theorie II. und III. Ordnung
+vorkommen, die den Ausfall nicht iterieren. Bis zum 13.10.2026 blieb ein
+solcher Stab ungenannt.
+
+**Querlast auf Fachwerkstäben** (seit 14.10.2026). Ein Fachwerkstab, auch
+als Zug- oder Druckstab, trägt eine Querlast (Streckenlast quer, Eigengewicht
+eines schrägen Stabs) wie ein Einfeldträger: an die Knoten gehen nur Kräfte,
+bei Gleichlast q L/2 je Ende, und das Moment bleibt im Stab, M = q L²/8 in
+Feldmitte. Es steht im Verlauf von M und V des Stabs, und der Stabnachweis
+führt N + M. An gelenkigen Lagern entstehen keine Lagermomente. Bis zum
+14.10.2026 bekam der Fachwerkstab die Ersatzlasten eines eingespannten
+Balkens: an Gelenklagern standen Lagermomente von ±q L²/12 (±1,333 kNm bei
+4 m und 1 kN/m), und im Stab ergab sich q L²/24 im Feld statt q L²/8, also um
+den Faktor 3 zu wenig; Ergebnisse von Modellen mit solchen Lasten ändern sich
+darum.
+
+**Seile** rechnen nach Theorie I. Ordnung wie ein Zugband. Eine Querlast auf
+dem Seil geht dann nur als Kraft q L/2 an die Seilenden, ohne Durchhang und
+ohne Seilkraft aus ihr; das Seil zeigt nur N, und die Zusammenfassung warnt
+„Querlast auf Seil …“. Wählt man für den
 Lastfall **Theorie III. Ordnung**, wird daraus die echte Kettenlinie: das Seil
 hängt unter seinem Eigengewicht durch, der Horizontalzug folgt aus der
-ungedehnten Länge (Feld „Länge₀“ in der Stabmaske; 0 = die Sehne).
+ungedehnten Länge (Feld „Länge₀“ in der Stabmaske; 0 = die Sehne). Eine
+Vorspannung oder Temperatur im Seil verkürzt seit dem 13.10.2026 die
+spannungsfreie Länge auf L₀/(1 + N₀/(E·A)), sodass das gerade gespannte Seil
+genau die Kraft N₀ trägt wie nach Theorie I. Ordnung. Bis zum 13.10.2026 fiel
+sie nach Theorie III. Ordnung still weg: Am Kopf einer Kragstütze mit einem
+Seil unter 70 kN Vorspannung waren Verschiebung (−1,625 mm) und Seilkraft
+(32,29 kN) dieselben wie ohne Vorspannung. Jetzt sind es +1,144 mm und
+38,70 kN, nach Theorie I. Ordnung +1,143 mm. Ebenso wirkt die Anfangsdehnung
+eines Stabs nach Theorie III. Ordnung im Stab selbst und dreht mit ihm mit,
+statt als feste Knotenlast zu stehen.
+
+Eine **Streckenlast auf einem Seil** wirkt nach Theorie III. Ordnung seit dem
+14.10.2026 wie das Eigengewicht in der Kettenlinie, wenn sie über die ganze
+Länge des Seilelements gleich ist (global oder lokal). Bis zum 14.10.2026 fiel
+sie dort still weg: 10 kN quer auf ein Seil ergaben keine Verformung und keine
+Auflagerkraft. Jetzt hängt ein Seil von 10 m mit 10 kN Vorspannung unter
+1 kN/m um 182,5 mm durch und trägt 68,66 kN, genau wie unter einem
+gleich schweren Eigengewicht. Eine trapezförmige oder abschnittsweise
+Streckenlast kann die Kettenlinie nicht abbilden. Dann rechnet der Lastfall
+nach Theorie III. Ordnung nicht, und die Meldung nennt Seil, Lastfall und
+Betrag („Seil S1, Lastfall LF1: trapezförmig 1 → 2 kN/m“). Teilen Sie das
+Seil an den Laststellen in Elemente, sodass die Last auf jedem gleich ist,
+oder setzen Sie sie als Knotenlast an.
+
+**Je Bogenlänge oder je Projektion** (seit 14.10.2026). Eine Streckenlast
+gilt je Länge des Stabs, beim Seil je Bogenlänge; aus RFEM kann sie auch je
+Projektion kommen (RFEM „projizierte Länge“, etwa Schnee oder Eis). Nach
+Theorie I. und II. Ordnung rechnet Statik3D eine Last je Projektion auf die
+Stablänge um: 1 kN/m je Projektion auf einem Stab, der 3 m waagerecht und
+4 m hoch läuft, gibt 3 kN, je Stablänge 5 kN. Am Seil nach Theorie III.
+Ordnung entscheidet der Bezug über die Form: je Bogenlänge hängt das Seil als
+**Kettenlinie** durch (wie unter seinem Eigengewicht, Summe Last mal
+ungedehnter Seillänge), je Projektion als **Parabel** (Summe Last mal
+Projektion). Bis zum 14.10.2026 rechnete eine Last je Projektion als
+Kettenlinie, und eine Last je Bogenlänge galt je Sehnenlänge; an einem Seil
+von 10 m Spannweite mit 10,42 m Länge₀ und 1 kN/m trug es dann 10,00 statt
+10,42 kN. **Offen** sind die trapezförmige oder abschnittsweise Streckenlast
+auf einem Seil sowie eine Last je Projektion zusammen mit dem Eigengewicht
+oder einer Last je Bogenlänge auf demselben Seil: Solche Lastfälle rechnen
+nach Theorie III. Ordnung nicht, und die Meldung nennt Seil und Grund.
 
 **Wölbkrafttorsion.** Der Haken „Wölbkrafttorsion“ am Stab gibt jedem seiner
 Knoten einen siebten Freiheitsgrad, die Verwölbung. Voraussetzung ist ein
@@ -6238,8 +6746,8 @@ gerechneten Zustand zurück) oder Gleitrichtungen viermal hintereinander umkehre
 und zugleich zwischen den letzten beiden Runden die Vergleichsspannung der
 Volumenelemente sich nirgends um mehr als 1 N/mm² ändert, sich kein Knoten um
 mehr als ein Tausendstel der größten Verschiebung bewegt, keine geschlossene
-Kontaktbedingung Zug und keine offene eine Durchdringung über der Toleranz
-trägt und die Summe der
+Kontaktbedingung Zug und keine offene eine Durchdringung über einem
+Hunderttausendstel der Last trägt (mindestens der Toleranz der Iteration) und die Summe der
 Auflagerkräfte der angenommenen Lösung mit der Summe der Lasten auf 10⁻⁴
 übereinstimmt. Angenommen wird die zuletzt gerechnete Lösung mit ihren eigenen
 Kräften; das Gleichgewicht stimmt dann auf die Genauigkeit des Gleichungslösers.
@@ -6248,10 +6756,252 @@ mit den Änderungen von Spannung und Verschiebung und nennt die Bedingungen, die
 noch pendeln, mit Name, Knoten, Ort, Normal- und Reibkraft und Weg; ist ihre
 Reibkraft größer als ein Zehntausendstel der Last, steht die Zeile als WARNUNG
 da. Das strenge Kriterium bleibt das erste Ziel: wo nichts pendelt, endet der
-Lauf wie bisher. Das Ingenieurkriterium gilt für den ersten Kontaktlauf eines
-Lastfalls, der von der Geometrie aus rechnet (am Drehlager der elastische
-Vorlauf); ein Lauf, der aus einem vorigen Zustand weiterrechnet (Plastizität,
-Folgelastfälle), endet wie bisher.
+Lauf wie bisher.
+
+**Auch in Läufen, die aus einem vorigen Zustand weiterrechnen (seit 08.10.2026
+abends).** Jeder Newton-Schritt der Plastizität und jeder Folgelastfall rechnet
+den Kontakt vom Zustand des vorigen Laufs aus weiter. Bis zum 08.10.2026 galt
+das Ingenieurkriterium nur für den ersten Kontaktlauf eines Lastfalls, der von
+der Geometrie aus rechnet (am Drehlager der elastische Vorlauf); ein
+weiterrechnender Lauf, dessen Aktivmenge pendelte, lief bis zum Deckel. An einem
+kleinen Prüfblock mit Fließen endete so jeder Newton-Schritt erst nach 69
+Runden, und die Plastizität konvergierte nicht. Jetzt gilt das Kriterium mit
+denselben Grenzen auch dort, und das Protokoll sagt „Kontakt: Abschluss nach dem
+Ingenieurkriterium in Runde … (warm gestartet) …“. Als Pendeln zählt in einem
+solchen Lauf erst ein bestätigter Zyklus: zwei Runden hintereinander wiederholen
+den Zustand von einer Periode vorher, oder eine Gleitrichtung kehrt in diesem
+Lauf viermal hintereinander um. Eine einzelne Rückkehr zum Startzustand ist kein
+Pendeln, denn ein weiterrechnender Lauf verlässt seinen Startzustand oft für ein
+paar Runden und kommt zu ihm zurück, bevor er ganz normal konvergiert. Wo nichts
+pendelt, rechnet das Programm bitgleich wie vorher.
+
+**Normalbedingung bei der Annahme relativ zur Last (seit 09.10.2026).** Zug an
+einer geschlossenen und Durchdringung (als Kraft) an einer offenen
+Kontaktbedingung dürfen im angenommenen Zustand höchstens ein Hunderttausendstel
+der Last betragen, mindestens aber die Toleranz, mit der die Iteration öffnet
+und schließt; am Drehlager mit rund 10 MN Last sind das rund 100 N. Bis zum
+09.10.2026 galt dafür allein die Toleranz der Iteration, am Drehlager 0,95 N. Das
+lag unter der Genauigkeit, mit der die Rechnung die Kräfte dort überhaupt trifft
+(1,3 N Ungleichgewicht der Lösung selbst): eine Bedingung, die gerade eben
+aufliegt, sprang mit 1 bis 3 N zwischen offen und geschlossen, und das Kriterium
+nahm keinen der beiden Zustände an. Die Iteration selbst öffnet und schließt
+weiter an ihrer Toleranz; nur die Annahme misst so. Das Protokoll nennt dazu den
+größten Zug, die größte Durchdringung und die verwendete Schranke. Läuft ein
+Lauf desselben Lastfalls weiter (Newton-Schritt der Plastizität) und kehrt dort
+eine Gleitrichtung um, die schon im Lauf davor pendelte, zählt das seit dem
+09.10.2026 ab der zweiten Runde; vorher wurde frühestens in der fünften Runde
+angenommen, und am Drehlager kostete das je Newton-Schritt ein bis zwei
+Zerlegungen. Aus einem anderen Lastfall gestartet bleibt es bei der fünften Runde.
+
+**Was eine Kontaktrunde bewegt (seit 09.10.2026).** Die Fortschrittszeile jeder
+Kontaktrunde nennt ab der zweiten Runde zusätzlich, an welchem Knoten und in
+welchem Bauteil sich die Verschiebung gegenüber der vorigen Runde am meisten
+geändert hat, und den Verformungsanteil dieser Änderung im Bauteil: was nach
+Abzug der bestpassenden Starrkörperbewegung des Bauteils übrig bleibt, bezogen
+auf die ganze Änderung. Ein kleiner Verformungsanteil heißt, das Bauteil wandert
+als Ganzes (etwa ein frei bewegliches oder ganz gleitendes Teil), ein großer, es
+verformt sich. Hat das Ingenieurkriterium in der Runde geprüft und nicht
+angenommen, steht dahinter, an welcher Schranke es lag, zum Beispiel
+„Ingenieurkriterium nicht erfüllt: Δu 19.5 µm > 0.498 µm“. An der Rechnung ändert
+das nichts.
+
+**Zuerst die Spannung, dann der Weg (seit 14.10.2026).** Bis zum 14.10.2026 prüfte
+das Ingenieurkriterium zuerst, ob sich ein Knoten um mehr als ein Tausendstel der
+größten Verschiebung bewegt, und maß die Spannung nur, wenn das nicht so war. Bei
+reiner Vorspannung ist die größte Verschiebung klein, am Drehlager hieß die
+Schranke dann 0,11 µm, und ein Lauf, der sich je Runde um 12 µm bewegte, wurde
+abgelehnt, ohne dass seine Spannungsänderung je gemessen wurde. Jetzt misst das
+Kriterium zuerst die Änderung der Vergleichsspannung (höchstens 1 N/mm²) und
+entscheidet dann am Weg, mit einer Schranke, die zu dieser Spannung passt: eine
+Spannungsänderung von 1 N/mm² ist eine Dehnungsänderung von 1 N/mm² geteilt durch
+den Elastizitätsmodul, über die Größe des Modells (die Diagonale um alle
+Volumenknoten) ein Weg von rund 4,8 µm je Meter bei Stahl. Es gilt der größere
+Wert aus dieser Schranke und dem Tausendstel der größten Verschiebung. Das
+Gleichgewicht der angenommenen Lösung und die Normalbedingung bleiben Pflicht, und
+weil die Spannung das Kraftresiduum nicht ersetzt, müssen mit der weiteren
+Wegschranke die Verstöße der Lösung zusammen (Zug, Durchdringung, Überschreiten
+des Reibkegels, Reibkraft gegen die Versuchskraft) unter 0,1 % der Kontaktkraft
+liegen, derselben Schranke wie die Restwechsel beim Pendeln.
+Die Fortschrittszeile nennt die Schranke, etwa „Ingenieurkriterium nicht
+erfüllt: Δσ_v 0,187 N/mm² erfüllt, aber Δu 1 450 µm > 6,8 µm“, und die Zeile
+der Annahme „… u um 0,926 µm (u_max 0,3937 mm, Schranke 4,69 µm)“. Dazu prüft
+die Plastizität am Ende jeder Laststufe das Kraftresiduum und schreibt es ins
+Protokoll: „Plastizität: Laststufe 1/3: Residuum am Ende - Gleichgewicht
+0,0301 kN = 3,7e-06 der Lasten (Schranke 1e-04), Kontakt 2,2e-06 der
+Kontaktkraft“. Bezug ist die Summe der Beträge der Knotenlasten, weil eine
+Vorspannung in sich im Gleichgewicht ist und zur Summe der Lasten nichts
+beiträgt. Liegt das Gleichgewicht über 10⁻⁴ und ist der Kontaktlauf der Stufe
+konvergiert, ist die Stufe nicht konvergiert; ist schon der Kontaktlauf nicht
+konvergiert, ist die Stufe ohnehin vorläufig gekennzeichnet, und die Zeile sagt
+das. Ausschalten lässt sich beides am Modell mit
+`plastizitaet.spannung_zuerst = False` (Vorgabe an; gespeichert nur, wenn er
+abweicht). Am Stempel auf dem Sockel der Prüfungen (ganz gleitend, in der Ebene
+unbestimmt) erfüllt Runde 6 Spannung und Weg (0,57 N/mm², 0,93 µm bei einer
+Schranke von 4,69 µm statt 0,39 µm), aber die Verstöße tragen 0,171 % der
+Kontaktkraft, ein haftender Knoten liegt 6,3 % über dem Reibkegel; das Kriterium
+lehnt ab, und der Lauf endet wie vorher streng nach 14 Runden. An den kleinen
+Prüfmodellen nimmt das Kriterium damit nirgends früher an; ob es am Drehlager
+die Runden von V36 annimmt, zeigt erst die Abnahme dort. Am Pendelmodell mit Fließen
+(`tests/test_pendeln_periode2.py`) findet die Prüfung des Residuums den Halt für
+Teile, der dort 22 bis 52 kN trägt: die Plastizität heißt dann nicht
+konvergiert.
+
+**Pendeln mit Periode 2: erkennen, einfrieren, prüfen (seit 14.10.2026).** Bis
+zum 14.10.2026 lief ein Kontaktlauf, dessen Zustand mit Periode 2 hin und her
+sprang und den das Ingenieurkriterium nicht annahm, bis zum Deckel der
+Nachprüfung (40 Wechselrunden), und mit Fließen halbierte die Plastizität dann
+die Laststufe, bis zur Tiefe vier. Am Drehlager-Entwurf endeten so am
+13.10.2026 48 von 50 Kontaktläufen am Deckel, und jeder löste eine Halbierung
+aus. Jetzt erkennt das Programm, wenn der ganze Kontaktzustand zwei Runden
+hintereinander zu dem von zwei Runden vorher zurückkehrt (A B A B). Zum Zustand
+gehören offen oder geschlossen, Haften oder Gleiten, Fließen und die Richtung
+gleitender Knoten. Dann friert es den Status genau der Knoten ein, die zwischen
+den beiden Zuständen wechseln, und rechnet den Rest weiter. Die
+Kontaktbedingung bleibt dabei dieselbe: eine eingefrorene geschlossene
+Bedingung hält ihren Knoten genau an der Fläche, eine offene trägt nichts, ein
+gleitender Knoten behält seine Richtung. Eingefroren ist nur die Entscheidung
+über den Status.
+
+Am Ende prüft das Programm die eingefrorenen Knoten an der letzten Lösung. Der
+Kontaktlauf gilt als konvergiert, wenn diese Restwechsel zusammen höchstens
+0,1 % der Kontaktkraft tragen und ihre Klaffung bzw. Durchdringung höchstens
+1 µm beträgt. Als Kraft zählt je Knoten das Größere aus der Kraft, die zwischen
+den beiden Zuständen wechselt, und dem Verstoß an der letzten Lösung (Zug an
+einem eingefrorenen geschlossenen Knoten, Überschreiten des Reibkegels). Als Weg
+zählt die Klaffung oder Durchdringung im offenen Zustand, bei Haften und
+Gleiten der Weg in der Fuge zwischen den beiden Zuständen. Beide Schranken
+stellen Sie unter *Berechnung → Einstellungen*, Gruppe „Kontaktlauf und
+Spannschritt“, ein; sie werden mit dem Modell gespeichert und gelten für jeden
+Kontaktlauf, auch ohne Fließen. Liegt der Rest darüber, ist der Lauf nicht
+konvergiert (im Laufbuch Grund „pendeln“), das Ergebnis ist vorläufig, und mit
+Fließen wird die Stufe halbiert wie bei jedem echten Nichtkonvergieren. Liegt
+er darunter, ist der Lauf konvergiert, und die Plastizität halbiert nicht. Eine
+Schranke 0 schaltet die Regel ab; dann rechnet das Programm wie vor dem
+14.10.2026. Wo nichts pendelt, rechnet es bitgleich wie vorher.
+
+Das Protokoll nennt die pendelnden Knoten mit Bauteil, Anzahl, Kraftanteil und
+Klaffung, beim Erkennen etwa „Kontakt: Pendeln mit Periode 2 erkannt in Runde
+27 - 1 Knoten eingefroren (B (Starr uz (Ausfall bei Zug)): 1; öffnet/schließt),
+Kraftwechsel zusammen 28,8 kN = 0,0477 % der Kontaktkraft 60 530 kN, Weg bis
+0,541 µm - geprüft wird an der letzten Lösung“ und am Ende „Kontakt:
+Kontaktlauf nach Ingenieurgrößen konvergiert - …“ mit Ort, Art, Kraftwechsel
+und Klaffung je Knoten, oder „… die Restwechsel überschreiten die Schranken“.
+
+Die Regel ergänzt das Ingenieurkriterium, sie ersetzt es nicht. Das Kriterium
+prüft zuerst und misst die Wirkung des Pendelns auf das ganze Ergebnis
+(Verschiebungen, Vergleichsspannung, Gleichgewicht); nimmt es einen Zustand an,
+ist der Lauf fertig wie bisher. Die neue Regel greift, wenn es ablehnt, und
+misst die Ursache an den pendelnden Knoten selbst. Der Pendelschutz der Reibung
+(seit 08.10.2026) wirkt weiter in jeder Runde und löst viele Zyklen der Reibung
+auf, bevor sie bestätigt sind. Am Prüfmodell der Tests
+(`tests/test_pendeln_periode2.py`, ein Block nahe der Kippgrenze auf einem
+Lager mit Reibung, daneben ein zweiter, gut tragender Block) endete der Lauf
+vorher nach 62 Runden am Deckel, und mit Fließen halbierte die Plastizität
+dreimal. Jetzt ist er nach 28 Runden konvergiert, mit einem Restwechsel von
+0,048 % der Kontaktkraft und 0,6 µm, und die Plastizität halbiert nicht. Mit
+der zehnfachen Last ist der eingefrorene Knoten an der letzten Lösung 6 µm
+durchdrungen; das wird nicht als konvergiert angenommen. Pendeln neben einem
+Knoten auch Gleitrichtungen hin und her, werden sie mit eingefroren und
+mitgeprüft.
+
+**Pendelschutz der Gleitrichtung mit Winkeltoleranz (seit 14.10.2026).** Bis zum
+14.10.2026 ließ der Pendelschutz der Reibung einen gleitenden Knoten nur dann
+haften, wenn seine Versuchskraft zweimal hintereinander *genau* gegen seine
+Gleitrichtung zeigte; das kommt nur an Knoten mit Reibung in einer einzigen
+Richtung vor. Knoten mit Reibung in der ganzen Ebene, deren Richtung um 150 oder
+170 Grad hin und her sprang, pendelten weiter bis zum Deckel oder bis die Regel
+„Pendeln mit Periode 2“ sie einfror. Jetzt haftet ein gleitender Knoten, sobald
+seine Versuchskraft zweimal hintereinander um mehr als 90 Grad umkehrt; die
+nächste Runde prüft ihn gegen den Reibkegel wie jeden haftenden Knoten. Weil
+genau diese Regel am 08.10.2026 am gequetschten Block der Prüfungen auf einen
+falschen Lösungsast geführt hatte, prüft das Programm am Ende des Kontaktlaufs
+jeden so festgehaltenen Knoten: Haftet er, darf er sich seit dem Festhalten
+höchstens um die Gleittoleranz bewegt haben, oder die Reibkraft muss dieser
+Bewegung entgegenwirken; gleitet er wieder, muss die Reibkraft seinem Gleitweg
+entgegenwirken. Ist das an einem Knoten nicht so, gilt der Lauf als nicht
+konvergiert (im Laufbuch Grund „gleitrichtung“), und das Ergebnis ist
+vorläufig wie bei jedem nicht konvergierten Kontaktlauf. Das Protokoll sagt
+„Kontakt: Pendelschutz der Gleitrichtung - 4 Knoten festgehalten, Bewegung
+seit dem Festhalten bis 0,646 µm (Gleittoleranz 1 µm); die Reibkraft wirkt
+überall der Bewegung entgegen“ oder nennt je verletztem Knoten Ort, Zustand,
+Bewegung, den Winkel zwischen Reibkraft und Bewegung und die Reibkraft als
+Anteil von μ·Fn. Die Gleittoleranz ist 1 µm, dieselbe Schranke wie der Weg der
+Restwechsel; die Pendler am Drehlager, für die der Schutz gebaut wurde, liefen
+um 0,01 bis 0,2 µm um ihre Ausgangslage, der Knoten des gequetschten Blocks
+dagegen um 94 µm. Beides stellen Sie am Modell ein:
+`plastizitaet.pendelschutz_winkel` (Vorgabe an) und
+`plastizitaet.gleit_toleranz` in Metern (Vorgabe 1e-6); gespeichert werden sie
+nur, wenn sie abweichen, und sie gelten für jeden Kontaktlauf, auch ohne
+Fließen. Wo kein Knoten festgehalten wird, rechnet das Programm bitgleich wie
+vorher. An der Prüfplatte ohne Vorspannung mit Schub 0,6 μV in einer Richtung
+(`tests/test_kontakt_warmstart.py`) liefen vorher alle fünf Kontaktläufe an den
+Deckel, zusammen 373 Runden in 4,5 s, und die Platte wanderte im Pendeln um
+5,1 mm; jetzt sind es 73 Runden in 0,6 s, das Ergebnis ist konvergiert, und die
+Platte steht mit 0,007 mm. Startet dieselbe Platte mit Vorspannung warm aus dem
+Vorlauf (Vorschlag 1 ausgeschaltet), zieht das Festhalten haftende Knoten bis
+13 µm zurück, und die Prüfung meldet den Lauf als nicht konvergiert.
+
+**Kontaktlauf konvergiert als Bedingung der Plastizität: vorbereitet, aus
+(14.10.2026).** Nach der Entscheidung des Anwenders kommt die Bedingung
+„Kontaktlauf konvergiert“ erst nach der Klärung des Pendelns am Drehlager
+(Bauteil V36) und auf seine Freigabe ins Abbruchkriterium der Plastizität. Sie
+ist im Programm vorbereitet, aber ausgeschaltet; eingeschaltet nähme eine
+Laststufe erst eine Lösung an, deren letzter Kontaktlauf konvergiert ist, und
+der Newton rechnete sonst weiter. Ausgeschaltet rechnet alles wie vorher.
+
+**Kontaktrunden ohne neue Zerlegung (seit 09.10.2026).** Bis zum 09.10.2026
+zerlegte jede Kontaktrunde das Gleichungssystem neu, sobald sich die Aktivmenge,
+Haften oder Gleiten, das Fließen einer Bedingung oder die Richtung eines
+gleitenden Knotens geändert hatte – auch wenn das nur eine von 30 000
+Bedingungen betraf. Am Drehlager mit der Stufe Mittel kostet eine Zerlegung
+rund 100 Sekunden, das Lösen mit einer vorhandenen Zerlegung 6 bis 8 Sekunden,
+und 77 bis 82 Prozent der Rechenzeit eines Lastfalls waren Zerlegungen. Jetzt
+löst das Programm eine solche Runde zuerst mit der Zerlegung der zuletzt
+zerlegten Matrix und rechnet die Änderung über eine kleine Zusatzmatrix nach,
+die nur die Zeilen und Spalten der geänderten Bedingungen enthält
+(Kapazitätsmatrix nach Sherman, Morrison und Woodbury). Für jede berührte Zeile
+braucht es einmal eine Lösung mit der alten Zerlegung; diese Lösungen werden
+behalten, und pendelt die Aktivmenge zwischen wenigen Zuständen, braucht eine
+Runde danach gar keine neue mehr. Anschließend wird gegen die neue Matrix
+nachiteriert, bis das Residuum so klein ist wie bei einer neuen Zerlegung.
+Gelöst wird dasselbe Gleichungssystem wie vorher, nur auf anderem Weg; die
+Kontaktbedingung ist unverändert.
+
+Neu zerlegt wird wie bisher, wenn eine Runde mehr als 200 neue Lösungen bräuchte
+(außer der Kontaktzustand war in den letzten acht Runden schon einmal da, dann
+werden sie ohnehin wieder gebraucht), wenn insgesamt mehr als 2 000 Zeilen und
+Spalten berührt sind, wenn der Speicher für die behaltenen Lösungen ein Viertel
+des Faktors übersteigt, wenn die neue Matrix (fast) singulär ist – etwa weil
+eine öffnende Bedingung ein Teil frei lässt; dann rechnet die neue Zerlegung wie
+bisher mit gestörten Pivots – oder wenn die Nachiteration das Residuum nicht
+erreicht. Jede neue Zerlegung ist danach der Bezug für die folgenden Runden. Das
+alles gilt ab einer Zerlegung mit 50 Millionen Nichtnullen, das ist ungefähr ab
+einer Sekunde Zerlegungszeit; kleinere Modelle rechnen bitgleich wie vorher. In
+der Zeile der Kontakt-Iteration steht dann „Matrix nachgeführt“ statt „Matrix
+neu“, die Zusammenfassung zählt etwa „Kontakt-Iterationen : 42, davon 14 mit
+neuer Faktorisierung, 28 nachgeführt“, und der Löser-Nachweis nennt die Zahl
+der nachgeführten Runden.
+
+Gemessen am 09.10.2026 an einem Prüfblock auf einem Flächenlager mit Reibung
+(tet10, PARDISO mit 8 Threads, Vergleich mit dem Stand davor unter derselben
+Fremdlast): bei 108 000 Unbekannten und 42 Runden, in denen die Aktivmenge am
+Ende zwischen zwei Zuständen pendelt, 14 statt 42 Zerlegungen und 217 statt
+491 Sekunden; bei 207 000 Unbekannten und 28 Runden bis zur Konvergenz 11
+statt 18 Zerlegungen und 494 statt 810 Sekunden. Die Aktivmenge war in jeder
+Runde dieselbe wie mit neuer Zerlegung, Verschiebungen und Auflagerkräfte
+stimmten auf 10⁻¹⁴ überein. Am Drehlager ist die Wirkung noch nicht gemessen.
+
+Bei spiegelsymmetrischen Modellen mit Reibung kann das Ergebnis sichtbar anders
+ausfallen, ohne falsch zu sein: Überschreiten zwei gespiegelte Knoten den
+Reibkegel genau gleich weit, stellt die Rechnung nur einen davon ins Gleiten,
+und welcher das ist, entscheidet die letzte Stelle der Lösung. Weil die
+Nachführung in der letzten Stelle anders rechnet als eine neue Zerlegung, kann
+sie dann das Spiegelbild des bisherigen Ergebnisses liefern, mit denselben
+Kräften an den gespiegelten Knoten. Dasselbe geschieht ohne Nachführung, wenn
+statt PARDISO der Gleichungslöser SuperLU rechnet. Für Vergleichsrechnungen
+lässt sich die Nachführung mit der Umgebungsvariablen
+`STATIK3D_NACHFUEHRUNG=nie` abschalten; mit `immer` gilt sie auch für kleine
+Modelle.
 
 **Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
 Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
@@ -6285,7 +7035,142 @@ verworfen)“ und in der Schlusszeile „… in 6 Laststufen (2-mal halbiert)“
 Das geschieht höchstens viermal je eingestellter Laststufe. Wozu: ob eine
 Rechnung konvergierte, hing vorher daran, wie die Last geteilt war - der
 gequetschte Block im Test lief mit vier Laststufen weg, mit einer und mit
-acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis.
+acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis. Seit dem 14.10.2026 halbiert sie nicht mehr, wenn
+der Kontaktlauf nur mit Periode 2 pendelte und die eingefrorenen Restwechsel
+unter den Schranken liegen (siehe „Pendeln mit Periode 2“ im Kapitel Kontakt):
+dieser Lauf ist konvergiert. Bis dahin löste jeder solche Lauf am Deckel eine
+Halbierung aus.
+
+**Am Deckel nur halbieren, wenn das Pendeln vom Lastanteil abhängt (Schalter
+seit 14.10.2026, Vorgabe aus).** Bis zum 14.10.2026 halbierte die Plastizität
+jede Laststufe, in der ein Kontaktlauf nicht konvergierte, bis zu viermal. Am
+Drehlager pendelte es danach jedes Mal gleich weiter: bei einem Drittel bis
+einem Achtundvierzigstel des Lastanteils bewegte sich V36 je Runde um 14,7,
+12,6, 12,6, 11,6 und 11,8 µm. Mit `plastizitaet.halbieren_lastabhaengig = True`
+misst das Programm, ob das Pendeln vom Lastanteil abhängt, ohne dafür einen
+Lauf mehr zu rechnen: die erste Halbierung geschieht wie bisher, und der
+Ausschlag des nicht konvergierten Laufs wird gemerkt. Ausschlag heißt die
+größte Bewegung eines Knotens in der letzten Runde; scheitert der Lauf an der
+Prüfung der Periode 2 oder des Festhaltens, deren Weg. Endet auch ein Lauf der
+halben Stufe nicht konvergiert, gilt das Pendeln als lastabhängig, wenn sein
+Ausschlag mindestens im Verhältnis der Lastanteile fällt, nach einer Halbierung
+also mindestens auf die Hälfte. Dann wird weiter halbiert. Fällt er weniger, ist
+das Pendeln als nicht lastabhängig erkannt: das Programm halbiert nicht weiter,
+die Stufe rechnet weiter, und das Ergebnis bleibt vorläufig mit der Stufe
+gekennzeichnet. Das Protokoll der Plastizität nennt Lauf, Grund, Ausschlag und
+das Verhältnis, etwa „Plastizität: Kontaktlauf 36 nicht konvergiert (Grund
+„gleitrichtung“, Pendeln erkannt, Ausschlag der letzten Runde 373 µm) - mit
+50 % des Lastanteils fällt der Ausschlag nur auf 119 % (314 µm vorher): das
+Pendeln hängt nicht vom Lastanteil ab, keine weitere Halbierung …“. Die Vorgabe
+ist aus, weil die Prüfungen dagegen sprechen: am gequetschten Block mit einer
+Laststufe löst erst die vierte Halbierung das Pendeln, obwohl der Ausschlag
+nach der dritten nicht mehr im Verhältnis fiel; mit dem Schalter endet die
+Rechnung vorläufig und 0,12 mm neben dem konvergierten Ergebnis. Ob er am
+Drehlager hilft, zeigt erst die Rechnung dort.
+
+**Temperaturlasten und Vorspannungen wirken in den Laststufen sofort voll
+(seit 10.10.2026).**
+Rechnet das Programm schrittweise, also in den Laststufen der Plastizität
+(auch in einer halbierten Stufe) und in den Laststufen der Theorie III.
+Ordnung, wirkt jede Temperaturlast ab der ersten Stufe mit ihrem vollen
+Wert, und nur die übrigen Lasten werden gesteigert. In einer Kombination
+wirkt die Temperatur dabei sofort mit ihrem Faktor aus der Kombination. Bis
+zum 10.10.2026 wuchs die Temperaturlast mit den Stufen mit, in der ersten
+von drei Laststufen wirkte also nur ein Drittel von ihr. Das traf vor allem
+eine Vorspannung, die als Temperaturlast eingegeben ist, wie die
+Ankervorspannung am Drehlager: ohne die volle Vorspannung verformt sich das
+Modell in den ersten Stufen stärker, und die Rechnung dauert länger. Im
+Protokoll der Plastizität steht dann die Zeile „Plastizität:
+Temperaturlasten und Vorspannungen wirken ab der ersten Laststufe voll,
+gesteigert werden nur die übrigen Lasten“; bei der Theorie III. Ordnung
+steht derselbe Satz in der Spalte „Hinweis“. Am vorgespannten Würfel der
+Prüfung (ein fließender Hexaeder, vier Ankerstäbe mit ΔT = −387,5 K und
+Druck auf den Kopf, drei Laststufen) tragen die Anker in Stufe 1 jetzt
+169,97 MN statt 51,61 MN, und das Endergebnis trifft wie vorher die
+geschlossene Lösung (`tests/test_temperatur_sofort.py`).
+
+Weil der Anwender die Entscheidung mit der Vorspannung begründet, gilt sie
+seit dem 10.10.2026 auch für eine Vorspannung, die als **Vorspannkraft**
+eingegeben ist (*Lasten → Vorspannung*, seit dem 13.10.2026 die Lastart
+„Anfangsdehnung (F_v)“), im Stab ebenso wie als Körper. Sie
+wirkt ab der ersten Stufe voll, in einer Kombination mit ihrem Faktor aus der
+Kombination, zusammen mit den Temperaturlasten. Die Lastart „Vorspannkraft
+(Soll nach Verankerung)“ vom 13.10.2026 folgt nicht dieser Regel, sondern wird
+vor allen Stufen in einem eigenen Schritt gespannt und verriegelt (siehe
+„Vorspannkraft (Soll nach Verankerung)“); auch sie steht damit ab der ersten
+Stufe voll da. Zuerst galt die Regel nur
+für Temperaturlasten, und die Zeile im Protokoll hieß „Temperaturlasten
+wirken ab der ersten Laststufe voll …“; eine Vorspannkraft wuchs bis dahin
+weiter mit den Stufen mit. Derselbe Würfel mit einer Vorspannkraft von
+48,825 MN je Anker statt der Abkühlung (das ist genau die Kraft von
+ΔT = −387,5 K bei voller Behinderung) rechnet in Stufe 1 ebenso mit 169,97 MN
+statt 51,61 MN; an einem Bolzen aus einem Hexaeder, der als Körper mit
+1,5·f_y·A vorgespannt ist und auf einem fließenden Würfel sitzt, hebt sich die
+Fuge in Stufe 1 um 1,4236 mm statt 0,6327 mm (`tests/test_vorspannung_sofort.py`).
+Keines der eingebauten Beispiele trägt eine Vorspannkraft oder eine
+Temperaturlast; sie rechnen unverändert. Zwangsverformungen und Übermaße
+wirkten in den Laststufen der Plastizität schon vorher ab der ersten Stufe
+voll. Rechnungen ohne Laststufen ändern sich nicht, und ohne Temperaturlast
+und Vorspannkraft rechnet jede Stufe bitgleich wie vorher.
+
+**Erste Laststufe beim Kontakt kalt, wenn ihre Last nicht proportional ist
+(seit 14.10.2026).** Die erste Laststufe der Plastizität rechnet den Kontakt vom
+Zustand des elastischen Vorlaufs aus weiter, und der Vorlauf trägt die volle
+Last. Das passt, solange die Last der Stufe ein Vielfaches davon ist: ein
+Kontakt ohne Anfangsspalt hat dann dieselbe Lösung, nur verkleinert. Seit
+Temperatur und Vorspannung ab der ersten Stufe voll wirken, ist die Stufenlast
+aber kein Vielfaches mehr. Bis zum 14.10.2026 startete die Stufe trotzdem warm
+aus dem Gleitzustand des Vorlaufs; am Drehlager pendelten dann unter der
+Stahlplatte V36 (Lager „Starr“, Reibung 0,1) zwei Flecken in ihrer
+Gleitrichtung bis zum Deckel, kalt gestartet pendelte nichts. Jetzt misst das
+Programm, wie weit die Last der ersten Stufe von einem Vielfachen der vollen
+Last abweicht: den Rest nach der besten Skalierung, bezogen auf die Stufenlast.
+Liegt er über 0,1 %, startet die Stufe beim Kontaktstatus kalt, und im
+Protokoll der Plastizität steht „Kontakt: die Last der ersten Laststufe ist
+nicht proportional zur Last des Vorlaufs (… Rest nach der besten Skalierung
+49,6 % der Stufenlast, Schranke 0,1 %) - die Stufe startet beim Kontaktstatus
+kalt, der plastische Zustand bleibt“. Zurückgesetzt wird nur der Kontakt;
+der plastische Zustand, etwa der Spannschritt einer Vorspannkraft, bleibt, wie
+er ist. Die weiteren Stufen starten wie bisher vom Zustand der vorigen Stufe,
+denn der liegt auf dem Lastpfad. Bei proportionalen Stufen (ohne Temperatur und
+Vorspannung, oder mit nur einer Laststufe) bleibt der Warmstart, und die
+Rechnung ist bitgleich wie vorher. Die 0,1 % sind so gewählt, dass eine kleine
+Temperatur- oder Vorspannlast neben einer großen gestuften Last den Warmstart
+nicht kostet; ein solcher Rest verschiebt die Kontaktkräfte höchstens in der
+Größenordnung, die der Kontaktlauf als Restwechsel ohnehin annimmt.
+Ausschalten lässt es sich am Modell mit
+`plastizitaet.kaltstart_nicht_proportional = False` (Vorgabe an; gespeichert
+wird der Schalter nur, wenn er abweicht). Seit dem 14.10.2026 gilt das auch mit
+Zugstäben, Druckstäben und Seilen, deren Ausfall-Iteration den Kontakt jetzt
+warm startet (siehe den folgenden Absatz). An der Platte der Prüfung
+(`tests/test_kontakt_warmstart.py`: Stahlplatte auf „Starr“ mit Reibung 0,2,
+vier vorgespannte Anker, Schub gestuft in drei Stufen) endete die erste Stufe
+warm gestartet mit dem Grund „pendeln“, die folgenden am Deckel, zusammen 254
+Kontaktrunden in 3,5 s, das Ergebnis war vorläufig; kalt gestartet sind es 66
+Runden in 0,5 s, und alles ist konvergiert.
+
+**Warmstart der Kontaktläufe in der Ausfall-Iteration (seit 14.10.2026).** Trägt
+ein Modell Stäbe, die nur Zug oder nur Druck aufnehmen, oder Seile, rechnet das
+Programm jede Lösung in einer Ausfall-Iteration: es löst mit allen Stäben, nimmt
+die heraus, die die falsche Kraft tragen, und löst neu, bis sich nichts mehr
+ändert. Mit Kontakt ist jede dieser Lösungen ein ganzer Kontaktlauf. Bis zum
+14.10.2026 begann jeder davon bei der Geometrie, auch der zweite Lauf derselben
+Lösung und jeder Newton-Schritt der Plastizität; am Drehlager mit 64 Zugstäben
+brauchte so schon der Vorlauf zweimal 44 Runden und 1106 s. Jetzt beginnt der
+erste Lauf beim Zustand, den die Rechnung anbietet (der Vorlauf, der vorige
+Newton-Schritt oder der vorige Lastfall), und jeder weitere beim Zustand des
+letzten *konvergierten* Laufs dieser Iteration; ein Lauf, der am Deckel endete,
+gibt nichts weiter. Die Plastizität sieht nur die Lösung, mit der die Iteration
+endet, und rechnet ihre plastischen Dehnungen immer vom Anfang der Laststufe aus;
+was in verworfenen Iterationen war, wird nicht aufaddiert. An der Prüfplatte
+mit einer Strebe, die nur Zug trägt und vom Schub gedrückt wird
+(`tests/test_kontakt_warmstart.py`), brauchte die Rechnung vorher 178
+Kontaktrunden, jetzt 94, bei derselben Lösung auf 10⁻¹⁰ m; mit Fließen 424 statt
+228 Runden, 2,4 statt 4,1 s, mit derselben Zahl Rückführungen (11) und derselben
+plastischen Dehnung auf 10⁻⁵. Im Ergebnis steht dann nicht mehr „Ausfallweg ohne
+Warmstart“, sondern, von welchem Lastfall der Start angeboten wurde. Ausschalten
+lässt es sich am Modell mit `plastizitaet.ausfall_warm = False` (Vorgabe an;
+gespeichert nur, wenn er abweicht).
 
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
@@ -6485,6 +7370,23 @@ prüfen, Ansicht aufbauen); das Drehlager ist in rund einer Sekunde gelesen,
 das Vernetzen danach ist die eigentliche Arbeit und hat seinen eigenen
 Balken.
 
+**Gewichtslose Werkstoffe (seit 13.10.2026).** Hat ein Werkstoff in RFEM die
+Dichte oder Wichte 0 – etwa ein „Nullmaterial“ für Hilfs- oder
+Krafteinleitungskörper –, übernimmt der Import ρ = 0, wie angegeben, und das
+Protokoll sagt: „Hinweis: Werkstoff ‚…‘ ist gewichtslos – Hilfsmaterial?
+Körper daraus können vom Volumennachweis ausgenommen werden.“ Den Schalter
+„vom Volumennachweis ausnehmen“ setzt der Import nicht; das bleibt dem
+Anwender. 7850 kg/m³ gilt nur, wenn die Datei weder Dichte noch Wichte nennt.
+Solche Körper bringen kein Eigengewicht und schwingen in der Modalanalyse
+als masselose Teile mit. Bis zum 13.10.2026 wurde aus der 0 still 7850 kg/m³
+– am Drehlager trug das „Nullmaterial“ das Gewicht von Stahl –, und die
+Werkstoffmaske tat beim Übernehmen dasselbe; dort bedeutet jetzt 0
+gewichtslos und ein leeres Feld 7850. Seit dem 14.10.2026 gilt dasselbe für
+die RFEM-Tabellen (CSV oder Excel, Spalten Dichte bzw. Wichte) und für die
+Werkstofftabellen eines HiCAD-Archivs (Spalte RHO): eine angegebene 0 bleibt
+0, mit demselben Hinweis, und 7850 kg/m³ gilt nur ohne Wert. Bis dahin
+machten beide aus der 0 still Stahl.
+
 **Elemente beim Import (seit 25.09.2026).** `mesh.xml` gibt **keine
 Elementordnung** vor – es gibt dort keinen Schlüssel für lineare oder
 quadratische Elemente (nachgesehen an beiden Drehlager-Dateien V15_4). Die
@@ -6525,6 +7427,78 @@ werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
+**Stablasten je projizierter Länge** (seit 14.10.2026). RFEM legt den Bezug
+einer Stablast in die Lastrichtung: 11, 12 und 13 sind global X, Y und Z je
+wahrer Länge, 14, 15 und 16 dieselben Richtungen je projizierter Länge (so
+heißen sie in der Schnittstelle von RFEM 6.15). Statik3D übernimmt beide; die
+Last je Projektion trägt den Bezug „je Projektion“, und das Protokoll nennt
+sie („davon 1 je projizierter Länge …“). Am Seil ist je wahrer Länge die
+Kettenlinie, je Projektion die Parabel. Bis zum 14.10.2026 ließ der Import
+eine Stablast je projizierter Länge weg und nannte sie unter „Lastrichtung
+unbekannt: Kennzahl 16“.
+
+**Lokale Lastrichtungen aus RFEM** (seit 14.10.2026). Die Kennzahlen 0, 1 und
+2 sind in RFEM lokal x, y und z, bei Stäben 3 und 4 die Hauptachsen u und v
+(Schnittstelle von RFEM 6.15). Bis zum 14.10.2026 las Statik3D 0 als lokal z,
+1 als global Z, 2 als global X und 3 als global Y. Eine Stablast in lokal y
+kam damit als global Z an, eine Flächenlast in der Ebene der Fläche als Druck
+senkrecht zu ihr. Heute gehen Stablasten in lokal x, y und z als lokale
+Stablast an den Stab; nur an einem senkrechten Stab werden lokal y und z
+nicht angesetzt, weil dort nicht belegt ist, dass RFEM und Statik3D dieselbe
+y-Achse bilden. Flächenlasten in lokal x, y und z gehen über die lokalen
+Flächenachsen an die Fläche (nächster Absatz), Flächenlasten je projizierter
+Fläche werden auf die Elementfläche umgerechnet. Was das Programm nicht
+abbilden kann – die Hauptachsen u und v, Linienlasten in lokalen Linienachsen
+und Flächenlasten auf Flächen ohne bestimmbare Achsen –, steht als WARNUNG mit
+Zahl und Bedeutung im Importprotokoll und muss von Hand angesetzt werden.
+
+**Flächenlasten in den lokalen Flächenachsen** (seit 14.10.2026). Für jede
+ebene Fläche bestimmt der Import die lokalen Achsen aus ihrer Geometrie und
+aus den Achsenangaben der Datei (Drehwinkel, umgekehrte z-Achse) und setzt eine
+Last in lokal x, y oder z als Last in der zugehörigen globalen Richtung an. Die
+Regel dafür ist nur zum Teil aus den Unterlagen von Dlubal belegt und im
+Übrigen angenommen: z steht senkrecht auf der Fläche und folgt dem Umlauf der
+Randlinien (erste Randlinie in ihrer Richtung, Rechte-Hand-Regel), die
+umgekehrte z-Achse dreht z und y um, x ist die globale X-Achse in die Ebene
+der Fläche projiziert (an einer Fläche quer zu X die Y-Achse) und um den
+Drehwinkel der Fläche um z gedreht, y = z × x. Das Importprotokoll nennt die
+Annahme als WARNUNG; bitte prüfen Sie an einer Fläche in RFEM, ob die
+angezeigten Flächenachsen dazu passen. Gewölbte Flächen (zum Beispiel ein
+Viereck aus zwei Bögen, der Mantel einer Bohrung) und Flächen mit einer anderen
+Achsenkategorie als „Drehung um Winkel“ bekommen keine Achsen aus RFEM: eine
+Last in lokal z wirkt dort wie bisher senkrecht nach der Normalen des Netzes,
+eine Last in lokal x oder y wird nicht angesetzt (nächster Absatz). Bis zum
+14.10.2026 (vormittags) fielen Flächenlasten in lokal x und y immer weg, und
+lokal z wirkte immer nach der Normalen des Netzes, auch wenn RFEM die z-Achse
+der Fläche umgedreht hatte; noch davor kamen lokal x und y senkrecht zur
+Fläche bzw. in global Z an.
+
+**Lasten in lokal x und y auf gewölbten Flächen, zylindrische Flächenachsen**
+(seit 14.10.2026). Auf einer gewölbten Fläche bildet RFEM die lokalen Achsen
+je finitem Element, und am Drehlager passen RFEMs Achsen und RFEMs Lastbild
+nicht zusammen. Die Sichtprüfung vom 14.10.2026 an den Halbmänteln 142 und 159
+der Bolzenbohrung ergab Folgendes: Die angezeigte x-Achse läuft um den Umfang,
+auf beiden Flächen im Umlaufsinn entgegengesetzt (die globale X-Achse in die
+Tangentialebene projiziert), und z zeigt nach außen. Die Lastpfeile derselben
+Lasten zeigen dagegen 1 394,75 kN/m² axial, auf beiden Flächen in dieselbe
+Richtung, und 339 kN/m² gleichsinnig um den Umfang wie ein Reibmoment. Was RFEM
+damit rechnet, ist offen. Darum setzt der Import solche Lasten **nicht** an. Er
+hängt sie an die Fläche und nennt sie als WARNUNG mit Flächen, Lastfällen und
+Beträgen. Wirksam werden sie erst, wenn Sie an der Fläche zylindrische Achsen
+wählen: Fläche bearbeiten, „Lokale Achsen: zylindrisch“, dazu „+x (axial)“.
+Dann läuft x längs der Zylinderachse in der gewählten Richtung (Vorgabe:
+Richtung der ersten geraden Randlinie), y gleichsinnig um den Umfang
+(rechtsdrehend um +x) und z nach außen. Diese Achsen bilden ein
+linkshändiges System, weil y um +x rechtsdrehend und z zugleich nach außen
+verlangt war; gerechnet wird nur mit den Richtungen. Die Achse ergibt sich aus
+der Geometrie, also aus den Bogenmittelpunkten und den geraden Randlinien. Die
+Wahl gilt für alle Flächen derselben Bohrung, die solche Lasten tragen. Eine
+Last in lokal x wirkt dann auf allen diesen Flächen axial in dieselbe globale
+Richtung, eine Last in lokal y als Moment um die Achse ohne Restkraft.
+Gesetzt wird die Einstellung nie automatisch. Am Drehlager-Modell betrifft das
+alle 711 Flächenlasten (315 in lokal x, 396 in lokal y) auf den Flächen 142
+und 159 (Radius 300 mm, Länge 230 mm, Achse in global Y).
+
 **Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
 Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
 Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
@@ -6536,7 +7510,10 @@ einem Stab liegt, den das Modell nicht führt (etwa einem Ergebnisstab), mit
 den Stabnummern; eine Flächenlast ohne auflösbaren Lastfall wird mit diesem
 Grund gemeldet statt als „Umsetzungstabelle fehlt“; die Zeile zur
 Stabvorspannung nennt die verschiedenen Stäbe und die Kraft je Lastfall statt
-einer Summe über alle Lastfälle. Beim
+einer Summe über alle Lastfälle. Seit dem 13.10.2026 steht am Ende des
+Protokolls je Anfangsvorspannung der Hinweis „Anfangsvorspannung 952 kN
+ergibt nach elastischer Verkürzung X kN – in Sollkraft umwandeln?“ (siehe
+„Vorspannung aus RFEM in die Sollkraft umwandeln“). Beim
 Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
@@ -6553,15 +7530,23 @@ Sie sie von Hand anlegen, steht im nächsten Absatz. Wo eine Meldung eine
 Zeile nennt („Zeile 5 in „2.5 Lastkombinationen““, bei einer Zeile ohne
 Nummer oder mit mehrfach geführter Nummer), ist es die Zeile des Blatts
 bzw. der CSV-Datei, Kopf- und Leerzeilen mitgezählt. Die
-**Einwirkungskategorie** eines
-RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
-belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
-die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
-in der Lastfallmaske. Den Namen fragt der Import nur, wenn die Kennzahl Q
-ergibt; ergibt sie G (Kennzahl 1 oder 2), bleibt der Lastfall G, auch wenn
-er „Ermüdungslast …“ heißt. Ergibt sie Q, wertet der Import den Namen aus,
-aber **ohne den Text in runden oder eckigen Klammern** (bei geschachtelten
-Klammern ohne den der innersten); was dort steht, zählt für die Kategorie
+**Einwirkung und Kennzeichen** eines
+RFEM-6-Lastfalls (seit 13.10.2026): Der Import ordnet die Einwirkung nur zu, wo
+die Quelle sie eindeutig nennt (Kennzahl der Dlubal-Aufzählung außer der Vorgabe 11,
+Aktion mit anderer Kennzahl, nur in Ermüdungskombinationen, nur Vorspannlasten,
+nur Eigengewicht); sonst steht der Lastfall auf „nicht zugeordnet“, und
+Kombinationen mit ihm werden nicht gerechnet. Die Regeln und ihre Gründe stehen
+in Kapitel 4, *Einwirkung nicht zugeordnet, Bemessungslastfall und Vorspannung*;
+das Protokoll nennt je Kennzahl die Zahl der Lastfälle, die Herkunft der
+Zuordnung, die Lastfälle ohne Einwirkung mit dem Weg zur Zuordnung und die als
+Bemessungslastfall gekennzeichneten. Bis zum 12.10.2026 war die Einwirkung aus
+einer Kennzahl **angenommen**, die an keiner Datei belegt war (11 → Q, 1 und 2
+→ G), und der Name verfeinerte das Rückfall-Q; das Protokoll sprach von
+„umgestellt“. **Der Name setzt seither keine Einwirkung mehr, er schlägt sie nur
+vor** („Vorschlag nach dem Namen (nicht gesetzt)“). Die Auswertung des Namens
+läuft dabei weiter nach den folgenden Regeln, aber **ohne den Text in runden oder
+eckigen Klammern** (bei geschachtelten
+Klammern ohne den der innersten); was dort steht, zählt für den Vorschlag
 nicht. Außerhalb von Klammern gilt: eine Angabe zur Bemessungssituation
 zählt nicht als Einwirkung, wenn sie so geschrieben ist: „ständig“,
 „vorübergehend“ oder „außergewöhnlich“ mit Endung (-e, -en, -er, -es, -em,
@@ -6576,30 +7561,33 @@ zählt dabei nicht, „ae“, „oe“, „ue“ und „ss“ gelten wie „ä�
 „ß“, und Satz- und Sonderzeichen gelten wie ein Leerzeichen: Bindestrich
 und Gedankenstrich ebenso wie „/“, „:“ oder „,“. „Erdbeben -
 Bemessungssituation 2“ und „Erdbeben / Bemessungssituation“ sind darum wie
-„Erdbeben-Bemessungssituation 2“ eine Situation und bleiben Q, ebenso
-„Außergewöhnliche - Bemessungssituation“ und „Nutzlast - seismic or
-accidental design situation“; das Protokoll nennt sie nicht unter
-„umgestellt“. Die genaue Regel steht im Schnittstellenhandbuch unter
+„Erdbeben-Bemessungssituation 2“ eine Situation und schlagen nichts vor, ebenso
+„Außergewöhnliche - Bemessungssituation“; bei „Nutzlast - seismic or
+accidental design situation“ bleibt von der Angabe nichts, und das Wort
+„Nutzlast“ schlägt Q vor. Die genaue Regel steht im Schnittstellenhandbuch unter
 „Bemessungssituation und Ermüdung im Namen“. Nicht heraus nimmt der Import
 etwa „ständige/vorübergehende Bemessungssituation“ (ohne „und“ oder „oder“
 bleibt „ständige“ stehen), „Bemessungssituation ständig“, „Ständig -
 Bemessungssituation“ (ohne Endung) oder „Ständig und vorübergehend“ ohne
-das Wort „Bemessungssituation“; sie machen einen Lastfall weiter zu G,
+das Wort „Bemessungssituation“; sie schlagen weiter G vor,
 „Bemessungssituation außergewöhnlich“ oder „Außergewöhnlich -
-Bemessungssituation“ zu A, und das Protokoll nennt ihn unter „umgestellt“.
-Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern enthält, wird
-FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination), auch
-wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. In Klammern
-zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ bleibt Q_K und geht in die
-erzeugten GZT-Kombinationen ein, „Eigengewicht (Ermüdung)“ wird G und
-„Temperatur [Ermüdung]“ T; ebenso bleibt „Nutzlast (Bemessungssituation
-außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall in der
-Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
+Bemessungssituation“ A. Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern
+enthält, bekommt den Vorschlag FAT (nur für den Ermüdungsnachweis, in keiner
+erzeugten Kombination), auch wenn der Name daneben „Eigengewicht“ oder „Temperatur“
+nennt; **gesetzt** wird FAT nur, wenn die Quelldatei den Lastfall nur in
+Ermüdungskombinationen führt (am Drehlager alle 164). In Klammern
+zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ schlägt Q_K vor, „Eigengewicht
+(Ermüdung)“ G und „Temperatur [Ermüdung]“ T; ebenso „Nutzlast
+(Bemessungssituation außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall
+in der Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
 außerhalb der Klammern („Kran - Ermüdung“). Am
 Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
 23.09.2026 96 Lastfälle über „ständige Bemessungssituation“ zu G, 16 über
 „außergewöhnliche Bemessungssituation“ zu A und die 164 Ermüdungslastfälle
-zu G (160) bzw. T (4); jetzt sind es 256× Q, 164× FAT und 2× P.
+zu G (160) bzw. T (4); danach waren es 256× Q, 164× FAT und 2× P (der Name
+setzte FAT und P); seit dem 13.10.2026 sind es 164× FAT (aus der Struktur der
+Datei), 2× P (aus dem Inhalt) und 256× nicht zugeordnet, davon 128 als
+Bemessungslastfall gekennzeichnet.
 Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
@@ -6657,26 +7645,76 @@ Passstift braucht Spiel — am Modell sind die beiden nicht zu unterscheiden.
 Wer eine Fuge anders haben will, stellt sie an ihrer **Kontaktbedingung** ein
 (siehe *Geometrischer Spalt an der Fuge*).
 
+**Spannstahl aus RFEM (seit 13.10.2026).** Einen Werkstoff vom
+RFEM-Werkstofftyp 15 übernimmt der Import als Spannstahl, mit f_p0,1k, f_pk und
+E_p aus der Datei; f_y und f_u sind wie bisher f_p0,1k und f_pk. Gerechnet wird
+mit dem E-Modul E. Am Drehlager steht für Material 3 (DB 2309) E = 170 000
+N/mm² aus der Datenbank und E_p = 205 000 N/mm² als Eingabe. Welchen der beiden
+RFEM rechnet, lässt sich aus der Datei nicht belegen, weil sie keine Ergebnisse
+enthält; der Schubmodul G = 65 385 N/mm², den sie führt, ist aus E = 170 000
+N/mm² abgeleitet. Das Protokoll nennt beide Werte.
+
+**Hinweis zur Schraubengüte (seit 13.10.2026).** Hängen runde Stäbe bis Ø 36 mm
+an Volumen und hat ihr Werkstoff oder der Werkstoff ihrer Schraubenkörper eine
+Streckgrenze unter 640 N/mm², meldet der Import das gebündelt in einer Zeile,
+orange im Protokoll und gelb in der Statuszeile. Umgestellt wird nichts. Am
+Drehlager lautet sie: „Schraubengüte prüfen: 48 Zugstäbe (Rund 16/20) und 48
+Schraubenkörper aus „Nullmaterial“ (f_y 355 N/mm²). Falls Schrauben z. B. 8.8
+(f_yb 640 N/mm²) oder 10.9 (f_yb 900 N/mm²) gemeint sind, bitte den Werkstoff
+im Modell anpassen; umgestellt wurde nichts. Betroffen: Stäbe S17–S64; Volumen
+V37–V60, V65–V70, V80–V91, V96–V101.“ Ein Stab hängt an einem Volumen, wenn
+einer seiner Knoten in eine Randfläche des Volumens integriert ist oder auf
+ihren Randlinien liegt. Ein Schraubenkörper ist ein Volumen, an dem ein solcher
+Stab hängt und das quer zur Stabachse in einen Kreis von 36 mm passt, mit 1 mm
+Toleranz für ein Stabende, das nicht genau in der Mitte sitzt. Die Grenze 36 mm
+ist die größte Schraube M36 der Tabellen von EN 1993-1-8 und EN ISO 898-1, die
+Grenze 640 N/mm² ist f_yb der Klasse 8.8. Die 16 Ankerstäbe Rund 40 und die 20
+Passstifte, an denen kein Stab hängt, nennt der Hinweis darum nicht. An den
+Beispielen des Programms, an den Modellen CBG und Kopfplatte HEA 200 und am
+Drehlager-Import ohne Volumen erscheint kein Hinweis.
+
 **Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
 einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
 der Mitte der Stirnfläche eines Schraubenvolumens endet, hängt dort am
 Volumen. Der Import liest diese Angaben seit dem 16.09.2026 mit (am
 Drehlager: 168 integrierte Knoten an 142 Flächen, 394 integrierte Linien an
-14 Flächen — die Kreise der starren Scheiben auf Deckeln und Ringen; 112 der
-128 Stabenden sind integrierte Knoten). Vorher endeten alle 64 Zugstäbe der
+14 Flächen ohne Dicke; 112 der 128 Stabenden sind integrierte Knoten). Die
+Kreise der starren Scheiben gehören nicht zu den integrierten Linien, wie
+hier bis zum 10.10.2026 stand: Sie sind die eigenen Randlinien der Scheiben
+und bilden zugleich die Öffnung der Bohrung darunter. Vorher endeten alle 64 Zugstäbe der
 Deckel- und Augenschrauben an keinem Element: das eine Ende hing an seiner
 starren Kreisscheibe, das andere lag genau in der Mitte der Stirnfläche des
 Schraubenvolumens (Knoten 1093 auf V49) und an nichts. Die Schrauben trugen
 keinen Zug, die Deckel V33 und V35 hoben ab, die Kontakt-Iteration brach ab.
 Nach dem Vernetzen hängt jetzt jeder Knoten, der auf oder in einem
 vernetzten Volumen liegt und an dem etwas hängt — ein Stabende, eine
-Knotenlast, ein Lager, integriert oder nicht —, über starre Kopplungen an
+Knotenlast, ein Lager, integriert oder nicht —, über eine Kopplung an
 den Knoten des Elements dort (ein integrierter Knoten, an dem nichts hängt,
 bleibt frei: er trägt nichts, und jede Straffeder mehr kostet Rechengenauigkeit): drei Knoten auf einer Seitenfläche, vier im
 Innern, einer, wenn er mit einem Netzknoten zusammenfällt; bis 0,1 mm
-Abstand gilt ein Punkt noch als „auf" der Seite. Das ist dieselbe Umsetzung
-wie bei der starren Scheibe, und sie entspricht dem integrierten Knoten in
-RFEM. Das Protokoll nennt jeden Anschluss („2 Knoten an Volumen
+Abstand gilt ein Punkt noch als „auf" der Seite. Das entspricht dem
+integrierten Knoten in RFEM, der dort Teil des Netzes wird.
+
+**Seit dem 14.10.2026 mit Drehanteil.** Der Knoten folgt dem
+Verschiebungsfeld des Elements an seinem Ort, also dem nach seiner Lage
+gewichteten Mittel der Elementknoten, und, wenn an ihm ein Biegestab hängt,
+auch ihrer Drehung (RBE3). Ein Moment des Stabes geht dann als Kräftepaare in
+das Volumen, und die Kopplung ist im Gleichgewicht der Kräfte und der
+Momente. Dafür braucht es mindestens drei Knoten, die nicht auf einer Geraden
+durch das Stabende liegen. Endet ein Biegestab auf einer Kante oder einer
+Ecke des Netzes, hängt er deshalb an allen vier Ecken des Elements, und das
+Protokoll nennt ihn („… Enden von Biegestäben liegen auf einer Kante oder
+Ecke des Netzes …“). Ein Fachwerkstab, ein Seil und ein Stab mit
+Momentengelenk am Ende geben kein Moment weiter; die Kopplung bleibt auch
+dann im Gleichgewicht. Bis zum 14.10.2026 hing der Knoten über starre
+Kopplungen nur in den Verschiebungen an jedem Elementknoten. Für Knoten, die
+nicht aufeinander liegen, ist das keine Starrkörperbewegung: Die
+Kopplungskräfte hatten die Summe null, aber ein Moment, das keinem Teil des
+Modells das Gleichgewicht hielt. Eine Stütze Rund 100, die in einem Würfel
+von 1 m endet und am Kopf in 3 m Höhe 10 kN quer trägt, gab dem Fundament
+5,345 statt 30 kNm, und ihr Kopf verschob sich um 36,587 statt 32,638 mm;
+endete sie in der Deckelfläche, brach die Rechnung als singulär ab. Jetzt
+hält das Fundament 30,000 kNm (`tests/test_kopplung_drehanteil.py`). Das Protokoll nennt jeden Anschluss („2 Knoten an Volumen
 angeschlossen (Stabende) … Zug (K211) → V1"). Ein Stabende an keinem Volumen
 (Ankerstab im Fundament, Kragarm) bleibt frei; ein Knoten, der schon in einer
 Kopplung steht (Mitte einer starren Scheibe), wird nicht doppelt
@@ -6690,9 +7728,160 @@ Keile in drei und Pyramiden in zwei Tetraeder. Ein Volumentyp, den die Suche
 nicht kennt, steht im Protokoll („die Punktsuche kennt diese Volumentypen
 nicht …“), statt still übergangen zu werden. Beim Öffnen einer älteren Datei mit Netz wird der Anschluss
 nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
-(Modelldatei); das Netz folgt ihnen noch nicht — für die starren Scheiben
-ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
-Kreises.
+(Modelldatei); das Netz folgt ihnen noch nicht.
+
+**Stabenden verteilt einleiten (seit 13.10.2026).** Ein Stabende, das wie
+oben an einem bis drei Knoten eines Volumens hängt, leitet seine ganze Kraft
+über diese Knoten ein. Dort entsteht eine Spannungsspitze, die mit jeder
+Netzverfeinerung wächst; am Drehlager (Netz Mittel) gehen an V90 19,7 kN über
+zwei Knoten der Stirnfläche. Seit dem 13.10.2026 lässt sich ein solches
+Stabende stattdessen verteilt über eine Fläche einleiten. Die Vorgabe des
+Modells steht in den Netzeinstellungen („Stabenden in Volumen“: an 1–3 Knoten
+wie RFEM, verteilt über die Stirnfläche oder verteilt über einen Kreisring mit
+Innen- und Außendurchmesser). Je Stabende lässt sie sich in der Stabmaske
+überschreiben („Volumen am Anfang“ bzw. „Volumen am Ende“, Vorgabe „wie
+Modell“); diese Felder erscheinen nur an einem Ende, das in einem Volumen hängt
+oder schon eine eigene Einstellung hat. Ohne die Einstellung bleibt alles, wie
+es war, und eine Datei ohne sie bleibt beim Speichern Zeichen für Zeichen
+gleich.
+
+Verteilt eingeleitet hängt der Stabknoten über eine Verteilkopplung (RBE3,
+als Starrkörper „Stabende K…“) an allen Knoten seiner Fläche. Die Kopplung
+versteift die Fläche nicht: Der Stabknoten folgt dem gewichteten Mittel der
+Flächenknoten. Gewichtet wird flächenanteilig mit der konsistenten
+Lastverteilung; bei tet10 trägt jede Seitenmitte ein Drittel ihrer Seite, die
+Ecken tragen nichts. Die Stirnfläche ist die zusammenhängende ebene
+Randfläche des Volumens um den Stabknoten, quer zur Stabachse (der Stab darf
+bis 30° schräg stehen); der Kreisring ist der Teil davon zwischen den beiden
+Durchmessern um den Durchstoßpunkt der Stabachse. Seitenmitten, die an einer
+Kontakt- oder Lagerseite gebunden sind, fallen aus der Kopplung heraus. Die
+übrigen Gewichte bringt das Programm auf die Summe eins und gleicht sie mit
+der kleinsten Änderung so aus, dass ihr Schwerpunkt auf der Stabachse liegt.
+Eine reine Längskraft geht dann gleichmäßig in die Fläche, und ein Gelenk am
+Stabende bleibt ein Gelenk. Ein Moment geht seit dem 14.10.2026 als
+konsistente Last einer linear verteilten Spannung in die Fläche: die Biegung
+als Normalspannung, die linear mit dem Abstand vom Durchstoßpunkt wächst, die
+Torsion als Schub, ebenso linear, flächenanteilig über alle Knoten der Fläche
+einschließlich der Ecken. Bis dahin ging es über die Knotengewichte allein,
+und am Prüfquader (Kragarm Rund 16, 1 kN quer) lag die Biegespannung der
+Elemente an der Stirnfläche 7 % über der konsistenten (47,25 gegen
+44,14 N/mm²); jetzt sind es 44,14 gegen 44,14 N/mm².
+Findet das Programm keine Fläche, etwa weil das Stabende im Innern liegt oder
+der Stab schräger steht, bleibt es bei den 1–3 Knoten, und das Protokoll
+sagt warum. Knotenlasten und Lager in Volumen hängen immer an den 1–3 Knoten.
+
+Beim Import und beim Rechenstart (Abnahme des Netzes) nennt das Programm die
+Stabenden an 1–3 Volumenknoten gebündelt, am Drehlager „48 Stabenden hängen
+an 1–3 Volumenknoten – verteilende Einleitung über die Stirnfläche möglich
+(Modelleinstellung oder je Stabende)“. Umgestellt wird dabei nichts. Am
+Rechenstart steht dieser Hinweis in der Warnung zu den netzabhängigen
+Spannungsspitzen derselben Stabenden („48 Stabenden hängen an 1–3 Knoten –
+mögliche netzabhängige Spannungsspitzen … Verteilende Einleitung über die
+Stirnfläche möglich …“), eine Warnung je Stabende statt zwei. Bis zum
+14.10.2026 standen dort zwei Warnungen für dieselben Stabenden. Nach der
+Rechnung prüft das Programm je verteilt eingeleitetem Stabende, ob die
+Kopplung genau die Kraft und das Moment um den Durchstoßpunkt in die Fläche
+gibt, die der Stab in seinen Knoten gibt. Die Toleranz ist die Genauigkeit
+des Gleichungslösers (Berechnung → Einstellungen → Experten, Vorgabe 10⁻⁶) mal
+der Größe des Lastvektors, denn um mehr kann das Gleichgewicht eines Knotens
+nach dem Lösen nicht verfehlt sein. Die Zusammenfassung nennt die größte
+Abweichung, eine Abweichung über der Toleranz steht als Warnung im
+Protokoll. In der Ansicht ist jedes verteilt eingeleitete Stabende in Petrol
+gekennzeichnet, mit dem Umriss seiner Fläche und einem Punkt am Stabknoten.
+Die Erkennung der netzabhängigen Spannungsspitzen ordnet eine verteilt
+eingeleitete Stelle als Fläche ein und meldet sie nicht mehr.
+
+Am Drehlager (Netz Mittel, ohne Rechnung) bekommen mit der Einstellung
+„Stirnfläche“ alle 48 Stabenden ihre Stirnfläche: die 24 Enden der Rund 16 je
+197,8 mm² mit 81 Knoten, die 24 Enden der Rund 20 je 309,0 mm² mit 69 oder 81
+Knoten. Je 20 gebundene Seitenmitten liegen am Rand der Bohrung und fallen
+heraus, die Ecken tragen nichts; die Kopplung rechnet mit 35 Knoten (Rund 16)
+bzw. 26 bis 35 Knoten (Rund 20). Der Schwerpunkt der Gewichte lag 0,006 bis
+0,135 mm neben der Stabachse, und der Ausgleich ändert dafür kein Gewicht um
+mehr als 4 %. Der Aufbau dauert 7,9 s statt 6,0 s für die Kopplungen an 1–3
+Knoten. Bis zum 13.10.2026 hingen Stabenden in Volumen immer an 1–3 Knoten.
+
+**Starre Flächen** (RFEM: Steifigkeitsart „starr“, ohne Dicke) setzt das
+Programm nach dem Vernetzen als starre Kopplung um: Der Knoten in ihrer Mitte,
+bevorzugt ein Stabende, hält alle Netzknoten, die in der Scheibe liegen. Seit
+dem 10.10.2026 heißt „in der Scheibe“ genau das, was RFEM anschließt: auf
+ihrer Ebene (bis 0,01 mm Abstand) und in ihrem Umriss oder höchstens 0,1 mm
+daneben. Liegt die Scheibe wie am Drehlager genau über einer Bohrung, hängen
+also nur die Knoten des Lochrands an ihr, am Drehlager je Scheibe 40. Bis zum
+10.10.2026 galt für Ebene und Umriss dieselbe Toleranz von 0,5 mm bzw. einem
+Zehntel des Scheibenradius, bei den Ankerscheiben also rund 2,6 mm. Dadurch
+hingen an 6 der 64 Scheiben zusätzlich 16 Knoten aus dem Inneren der Platte,
+bis 2,46 mm unter der Oberfläche und bis 2,4 mm neben dem Lochrand. Vor jeder
+Rechnung koppelt das Programm die starren Flächen neu und vergleicht mit den
+gespeicherten Kopplungen. Weichen sie ab, gilt die neue Kopplung, und das
+Protokoll sagt es in einer Zeile, am gespeicherten Drehlager „64 starre
+Flächen neu gekoppelt, die alten Kopplungen sind erneuert (Regel seit
+10.10.2026): jetzt je 40 Knoten, zusammen 2560; vorher 40–45, zusammen 2576;
+geändert an 6 Flächen …“. Stimmen sie überein, bleibt alles, wie es ist.
+Kopplungen anderer Art, etwa an Stabenden oder von Hand angelegt, bleiben
+unberührt. Bis zum 13.10.2026 koppelte die Oberfläche vor der Rechnung nur
+dann neu, wenn eine Datei noch gar keine Kopplung einer starren Fläche hatte;
+ein vor dem 10.10.2026 gespeichertes Modell rechnete deshalb weiter mit den
+16 Knoten zu viel.
+
+**Seit dem 14.10.2026 bewegt sich die starre Scheibe als starrer Körper,
+mit Drehung (RBE2).** Jeder Knoten der Scheibe folgt dem Mittelknoten mit
+u = u_Mitte + φ_Mitte × r, wobei r der Abstand vom Mittelknoten ist; die
+Verdrehung φ des Mittelknotens ergibt sich aus der Scheibe. Hängt dort ein
+Fachwerkstab wie die Anker und Zugstäbe des Drehlagers, nimmt er kein Moment
+auf: Die Scheibe kippt frei mit der Platte, und die Kopplung gibt nur die
+Stabkraft weiter. Hängt ein Biegestab dort, geht sein Moment über die Scheibe
+in den Körper. So behandelt RFEM nach unserem Verständnis eine starre Fläche
+(sie bewegt sich als starrer Körper); belegt ist das am RFEM-Modell nicht.
+Bis zum 14.10.2026 hielt die Kopplung jeden Knoten der Scheibe nur in den
+Verschiebungen am Mittelknoten fest (u = u_Mitte). Die Scheibe konnte also
+nicht kippen, und die Kopplung trug ein Moment, das keinem Teil des Modells
+das Gleichgewicht hielt. Am gespeicherten Drehlager (LF1, Netz Mittel, Lauf
+vom 09.10.2026) waren das an den 16 Ankerscheiben bis 3,63 kNm je Scheibe
+(die Ringkräfte schwankten dadurch um bis zu ±31 % um ihren Mittelwert) und
+an den 48 Scheiben der Zugstäbe 0,10 bis 0,28 kNm, zusammen als Vektor
+14,7 kNm. Mit dem Drehanteil ändern sich die gespeicherten Kopplungen des
+Drehlagers nicht; anders gerechnet werden alle 64 Scheiben und alle 48
+Stabenden, und die Scheiben können mit der Platte kippen, um die sich die
+Plattenoberfläche dort im gespeicherten Ergebnis um bis zu 1,46 mrad neigte
+(Theoriehandbuch, *Kopplungen mit Drehanteil*). Eine Seitenmitte eines tet10, die an einer Kontakt- oder Lagerseite
+gebunden ist, fällt aus der Scheibe heraus und folgt ihren Ecken, wie bei der
+verteilenden Einleitung der Stabenden; bis zum 14.10.2026 brach die Rechnung
+an ihr ab.
+
+**Globale Gleichgewichtskontrolle (seit 14.10.2026).** Nach jeder Rechnung
+prüft das Programm, ob die Lasten und die Lagerkräfte zusammen im
+Gleichgewicht sind: die Summe der Kräfte und die Summe der Momente um die
+Mitte des Modells (Mitte der Hülle aller Knoten). Gezählt werden alle Lasten,
+wie sie in die Rechnung gehen, und alle Lagerkräfte, auch die der Federlager
+und der einseitigen Lager. Die Zusammenfassung jedes Ergebnisses nennt die
+Zeile „Gleichgewicht global: erfüllt – Lasten + Lager ΣF … kN, ΣM … kNm um
+(x; y; z) m“ mit der auf den Umsatz bezogenen Abweichung. Der Umsatz ist die
+Summe der Beträge aller Knotenlasten und Lagerkräfte bzw. ihrer Momente um
+die Mitte. Die Zusammenfassung aller Ergebnisse im Protokoll und der Bericht
+(Kapitel Ergebnisse, Übersicht) fassen das in einem Satz zusammen. Liegt die
+bezogene Abweichung über 10⁻⁴, steht dort eine WARNUNG mit den betroffenen
+Ergebnissen. 10⁻⁴ ist dieselbe Schranke, mit der der Kontaktlauf sein
+Kraftgleichgewicht annimmt; der Gleichungslöser hält 10⁻⁶. Eine Kopplung, die
+keine Starrkörperbewegung zulässt, verfehlt das Gleichgewicht dagegen um ihr
+ganzes Moment. Bis zum 14.10.2026 stand in der Zusammenfassung nur die Summe
+der Lagerkräfte, und das Moment prüfte niemand. Ab einer bezogenen
+Abweichung von 10⁻² ist das Ergebnis **nicht gültig** („NICHT GÜLTIG –
+Gleichgewicht verletzt: ΣF … kN, ΣM … kNm“), im selben Zustand wie eine Last
+an automatisch gehaltenen Freiheitsgraden: so viel fehlt nur, wenn ein Teil
+der Last keinen Weg in die Lager hat. Zwischen 10⁻⁴ und 10⁻² bleibt es bei der
+WARNUNG; eine nicht objektive Kopplung am Drehlager lag bei rund 10⁻³. Ein
+vorläufiges Ergebnis (Kontakt nicht konvergiert) bleibt vorläufig und nennt
+die Verletzung in derselben Zeile. Seit dem 14.10.2026 verbindet auch eine
+verteilende Einleitung (RBE3) und jeder Starrkörper sein Stabende bzw. seinen
+Master mit den Slaves, wenn das Programm nach losen Teilen sucht. Bis dahin
+kam ein Zugstab „nur Zug“, der unter Druck ausfiel und am freien Kopf eine
+Last trug, mit RBE3-Einleitung als „gültig“ heraus, obwohl die Last fehlte
+und der Körper die Kraft gegen ihre Richtung bekam; jetzt meldet die Rechnung
+den Mechanismus wie bei der Einleitung an 1–3 Knoten. Eine
+Scheibe genau über einer Bohrung leitet ihre Kraft ohne Auflagefläche in die
+Platte; was das Programm daraus macht, steht unter *Netzabhängige
+Spannungsspitzen*.
 
 **Ein Statik3D-Modell (`.json`) an ein vorhandenes anhängen** (Haken „an
 vorhandenes Modell anhängen“ im Importdialog). Übertragen wird das ganze
@@ -7542,6 +8731,17 @@ Ermüdung" je Element (das größte D an seinen Ecken) und im Bericht (Block
 Kerbspannung, keine Nennspannung — der Kerbfall muss dazu passen
 (Theoriehandbuch 5.5-3).
 
+**Ermüdung und plastische Rechnung** (seit 13.10.2026). Verweist eine
+Ermüdungslast auf ein Ergebnis aus einer plastischen Rechnung, auch über eine
+Kombination oder Überlagerung, in der ein solches steckt, rechnet der
+Ermüdungsnachweis nichts. Alle Stäbe und Volumen mit Kerbfall stehen dann mit
+dem Status „nicht anwendbar – erfordert elastische Ermüdungslastfälle“ in
+Tabelle, Protokoll, Ergebnisbaum und Bericht, und die Zusammenfassung nennt die
+plastischen Ergebnisse. Eine Schwingbreite aus plastischen Zuständen ist keine
+Ermüdungsgröße. Für den Nachweis braucht es elastisch gerechnete
+Ermüdungslastfälle. Bis zum 13.10.2026 stand dort eine Schädigung aus
+plastischen Zuständen.
+
 **Berührungsstellen zwischen Volumen.** Wo zwei Volumen Knoten teilen — der
 Vernetzer teilt sie nur über eine gemeinsame Fläche, in RFEM ist das ein
 durchverbundener Stoß — und keine Kontaktbedingung zwischen beiden
@@ -7683,6 +8883,92 @@ einer Rechnung mit EC3 und einer zweiten ohne Nachweise die alte Zeile
 IPE 300 in `tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett
 leer.
 
+**Stäbe aus Spannstahl (seit 13.10.2026).** Ein Stab, dessen Werkstoff die
+Werkstoffart „Spannstahl“ trägt, wird nicht nach EN 1993-1-1 nachgewiesen,
+sondern nach EN 1992-1-1 bzw. nach der Zulassung des Spannglieds, und zwar im
+Spannungsquerschnitt A_s des Gewindes. Bis zum 13.10.2026 lief über einen
+solchen Stab der Querschnittsnachweis für Baustahl mit f_y = f_p0,1k (am
+Drehlager 835 N/mm²).
+
+Geprüft wird jeder Zustand, den das Programm kennt, und maßgebend ist der
+ungünstigste. In jedem Lastzustand, also in jeder GZT-Kombination und bei einer
+plastischen Rechnung in jeder abgelegten Laststufe, gilt σ = |N| / A_s ≤ f_pd =
+f_p0,1k / γ_s mit γ_s = 1,15 (EN 1992-1-1, 3.3.6 bzw. Zulassung). Beim Spannen
+gilt σ ≤ σ_p,max = min(0,8 · f_pk; 0,9 · f_p0,1k) nach 5.10.2.1, nach dem
+Verankern σ ≤ σ_pm0 = min(0,75 · f_pk; 0,85 · f_p0,1k) nach 5.10.3; mit f_p0,1k
+= 835 und f_pk = 1 030 N/mm² sind das 751,5 und 709,75 N/mm². Für das Spannen
+nimmt der Nachweis die eingegebene Vorspannkraft, also eine Vorspannung am Stab
+in jedem Lastfall oder die gleichwertige Temperaturlast, die der RFEM-Import
+aus einer Stabvorspannung macht, in einem Lastfall der Kategorie P. Für den
+Zustand nach dem Verankern nimmt er das Ergebnis jedes Lastfalls, der nur
+Vorspannung trägt (am Drehlager LF398 „Vorspannung der Zuganker zum Zeitpunkt
+0“). Ist kein solcher Lastfall gerechnet, setzt er die eingegebene Kraft ohne
+Verluste an, und die Zeile des Zustands sagt das. Ein Ergebnis, das in seinen
+Angaben den Zustand „spannen“ oder „verankert“ trägt, zählt ebenso. Rechnet die
+kraftgesteuerte Vorspannung, legt sie je Stab die Kraft beim Spannen N_spannen
+und nach dem Verankern N_verankert im Ergebnis ab; diese beiden Kräfte gehen
+dann vor die eingegebene Kraft und vor das Ergebnis des Lastfalls. Laststufen
+einer plastischen Rechnung legt das Programm heute nicht ab. Dann gilt der
+Endzustand, und der Stab vermerkt „Laststufen der Plastizität von LF1 nicht
+abgelegt – nachgewiesen ist der Endzustand“.
+
+Weicht die Zulassung ab, trägt man σ_p,max und σ_pm0 in der Maske des
+Werkstoffs ein. Bleiben die Felder leer, gelten die Formeln, und der Hinweis am
+Feld nennt ihren Wert. In derselben Maske ist die Werkstoffart wählbar (Stahl,
+Schraube, Spannstahl); es ist dieselbe Art, nach der die Verfestigung der
+Plastizität bis f_u, f_ub oder f_pk reicht. Beim Spannstahl heißen die Felder
+f_y und f_u dort f_p0,1k und f_pk, und E_p aus der Quelldatei steht als Anzeige
+darunter. Gerechnet wird weiter mit dem E-Modul E. Eine Datei, die vor dem
+13.10.2026 importiert wurde, trägt keine Art, am Drehlager etwa „Material 3 (DB
+2309)“. Beim Öffnen sagt das Protokoll dann, dass f_y und f_u mit 835 und 1 030
+N/mm² wie die eines Spannstahls aussehen; gesetzt wird nichts, und der
+Spannstahlnachweis gilt erst, wenn die Art in der Maske auf Spannstahl steht.
+
+**Befund Vorspannung (seit 13.10.2026).** Liegt die Kraft beim Spannen oder
+nach dem Verankern über ihrer Grenze, steht das zusätzlich als eigene Zeile am
+Stab, in den Hinweisen des Berichts und im Protokoll, mit der Kraft, die die
+Grenze zuließe. Bei f_p0,1k = 835 N/mm² und dem Nennquerschnitt Rund 40 (1
+256,6 mm²) sind das 0,9 · 835 · 1 256,64 = 944,4 kN beim Spannen und 709,75 · 1
+256,64 = 891,9 kN nach dem Verankern. Eine Vorspannkraft von 944,7 kN liegt
+beim Spannen also genau auf der Grenze (Verhältnis 1,0004) und nach dem
+Verankern darüber (1,059); die Zeile lautet dann „Befund Vorspannung, nach dem
+Verankern: … N = 944.7 kN, σ = 751.8 N/mm² > σ_pm0 = 709.75 N/mm² (Verhältnis
+1.0592); zulässig wären 891.9 kN …“. Am Drehlager stehen in LF398 die 952 kN
+aus der RFEM-Datei; das ergibt beim Spannen 1,008 und nach dem Verankern 1,067.
+
+Biegung im Gewinde gibt es in diesem Nachweis nicht. Hat der Stab Momente,
+nennt der Nachweis sie („Biegung im Gewinde wird nicht nachgewiesen: max |M_y|
+= … kNm“), weist sie aber nicht nach; Druck nennt er ebenso. In der Tabelle
+steht in der Spalte Klasse „–“, und der maßgebende Nachweis nennt Zustand,
+Grenze, Normstelle und die Herkunft von A_s, etwa „Spannstahl, nach dem
+Verankern: σ ≤ σ_pm0 (EN 1992-1-1, 5.10.3; A_s = Nennquerschnitt)“. Die Ampel
+färbt die Zeile nach dieser Ausnutzung. Der Bericht zeigt je Stab eine Tabelle
+aller Zustände mit Kraft, Spannung, Grenze, Normstelle und Ausnutzung, und
+unter den Einstellungen der Nachweise steht, dass Stäbe aus Spannstahl nicht
+nach EN 1993-1-1 nachgewiesen werden.
+
+**Spannungsquerschnitt A_s und Gewinde (seit 13.10.2026).** Die Maske des
+Querschnitts hat das Feld „A_s Gewinde [mm²]“ und die Auswahl „Gewinde“. A_s
+trägt man aus der Zulassung ein. Bleibt es leer, rechnet der Spannstahlnachweis
+mit dem Nennquerschnitt A und meldet am Stab, im Bericht und in der
+Zusammenfassung „A_s aus Zulassung eintragen“. Bei einem aufgewalzten
+Gewindestab ist A_s der Nennquerschnitt; die Auswahl „aufgewalzter Gewindestab
+(A_s = Nennquerschnitt)“ setzt das ohne Meldung. Eine Schraubengröße M12 bis
+M36 setzt A_s nach EN ISO 898-1, bei M16 157 mm² und bei M20 245 mm². Die
+Steifigkeit bleibt in jedem Fall beim Querschnitt A des Schafts. Ältere Dateien
+kennen weder A_s noch das Gewinde; die Felder bleiben dort leer, und
+Ergebnisdateien von vorher passen weiter, weil leere Felder die Kennung der
+Ergebnisdatei nicht ändern.
+
+**Stab mit Schraubengröße (seit 13.10.2026).** Trägt der Querschnitt eines
+Stabes eine Schraubengröße und ist sein Werkstoff kein Spannstahl, wird der
+Stab als Schraube auf Zug nach EN 1993-1-8, Tabelle 3.4 nachgewiesen: F_t,Ed ≤
+F_t,Rd = 0,9 · f_ub · A_s / γ_M2 mit f_ub = f_u des Werkstoffs und γ_M2 aus den
+Nachweiseinstellungen. Eine M20 der Klasse 8.8 trägt so 0,9 · 800 · 245 / 1,25
+= 141,1 kN. Abscheren, Lochleibung und Durchstanzen hängen am Anschluss, den
+der Stab nicht kennt, und werden hier nicht nachgewiesen. Ein Stab ohne
+Spannstahl und ohne Schraubengröße wird genau wie bisher nachgewiesen.
+
 **Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht
 erkannt wird —, wird sein Nachweis **nicht geführt**. Die Tabelle zeigt dann
@@ -7734,7 +9020,9 @@ f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
 23.09.2026 galt die Sorte nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
 Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
 Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
-EC3-Prüfung).
+EC3-Prüfung). Für die Plastizität der Volumen gilt das nicht: sie liest f_y und
+f_u nur aus den Feldern des Werkstoffs (siehe „Verfestigung je Werkstoff,
+bis f_u und danach ideal plastisch“ unter *Berechnung → Einstellungen*).
 
 **Schreibweise der Stahlsorte.** Die Sorte wird ohne Rücksicht auf Groß- und
 Kleinschreibung und auf Leerzeichen erkannt: „s235“, „S 235“ und „ S235 “ sind
@@ -7846,6 +9134,43 @@ speicherten f_y = 0, das wie „leer“ wirkte (die Stahlsorte gab die Streckgre
 her, ohne Sorte war der Stab „nicht geführt“), der Dialog machte daraus ohne
 Meldung „leer“, und die Tabelle zeigte f_y ohne Wert als „0“, sodass sich f_y
 nur über die 0 leeren ließ.
+
+**Dickentabelle beim Übernehmen.** Ein Werkstoff aus RFEM 6 trägt Streckgrenze
+und Zugfestigkeit nach Erzeugnisdicke (siehe oben, Zeile *Eigenschaften*).
+Diese Tabelle bleibt erhalten, wenn man den Werkstoff in der Maske rechts mit
+*Übernehmen* bestätigt, im Werkstoffdialog mit OK oder eine Zelle der
+Werkstofftabelle ändert, und zwar auch dann, wenn man nur ein ganz anderes Feld
+ändert, etwa die Dichte oder den Namen. Das Programm ändert am Werkstoff nur,
+was man bearbeitet hat; alles Übrige bleibt, wie es war, auch das, was die
+Maske gar nicht zeigt (Werkstoffart Schraube oder Spannstahl, Verfestigung).
+Die Werkstoffmaske zeigt die Tabelle unter „nach Dicke“, sobald der Werkstoff
+eine hat. Bis zum 13.10.2026 wurde der Werkstoff beim Übernehmen aus den
+Feldern der Maske neu gebaut: Schon eine geänderte Dichte leerte beide Tabellen
+(gemessen an einem Werkstoff mit den Stufen bis 16 mm 355 und bis 40 mm
+345 N/mm²), ohne dass das Programm es sagte, und die Nachweise rechneten danach
+für jede Dicke mit dem einen f_y der dünnsten Stufe, bei einer Sorte der
+Tabelle über 40 mm mit deren unterer Stufe. Dasselbe traf den Werkstoffdialog,
+und im Dialog ging außerdem eine eigene Sorte (S690 …, nicht in der Tabelle)
+verloren.
+
+Ändert man f_y oder f_u **selbst**, bleibt die Tabelle ebenfalls. Ihre dünnste
+Stufe folgt dem neuen Wert, weil f_y und f_u am Werkstoff der Wert der dünnsten
+Stufe sind; die übrigen Stufen bleiben, wie sie waren. Das Protokoll sagt es mit
+der entstandenen Tabelle, zum Beispiel „Werkstoff S355: f_y 355 → 360 N/mm².
+Die Dickentabelle der Quelldatei bleibt erhalten, nur ihre dünnste Stufe
+(≤16 mm) folgt dem neuen Wert; die übrigen Stufen sind unverändert. Jetzt: f_y
+≤16: 360, ≤40: 345, ≤63: 335, ≤80: 325 N/mm².“ (bei Schrauben und Spannstahl
+heißen die Werte f_yb und f_ub bzw. f_p0,1k und f_pk). Das ist so gewählt, weil
+die Nachweise zuerst die Tabelle lesen: bliebe sie unverändert, wäre die
+Eingabe für Stäbe und Schalen wirkungslos, und würde sie verworfen, gingen die
+Stufen der dickeren Erzeugnisse ohne Absicht verloren. Leert man das Feld f_y
+oder f_u, gibt es keinen Wert, dem die Tabelle folgen könnte: Sie gilt
+unverändert weiter, und das Protokoll sagt auch das. Die Plastizität der Volumen
+liest weiterhin nur die Felder f_y und f_u des Werkstoffs, nicht die Tabelle.
+Wählt man im Werkstoffdialog eine andere Stahlsorte der Tabelle, setzt der
+Dialog deren Werte ein, und die Tabelle aus der Quelldatei entfällt, weil sie zur
+alten Sorte gehört; der Dialog zeigt das schon vor dem OK unter „nach Dicke“
+(„entfällt – …“), und das Protokoll nennt es nach dem Bestätigen.
 
 ### Schwingungsnachweis des Verschlusses
 
@@ -8208,6 +9533,43 @@ Querschnitt. Nachgewiesen wird der **Spannungszustand** nach
 DIN EN 1993-1-1, 6.2.1(5): die Vergleichsspannung nach von Mises gegen
 f_y/γ_M0.
 
+**Nach einer plastischen Rechnung** (seit 13.10.2026) ist die Spannung keine
+Nachweisgröße mehr. Der Volumennachweis prüft dann die größte plastische
+Hauptdehnung ε_p,1 an den Integrationspunkten gegen einen Grenzwert:
+η = ε_p,1 / Grenzwert. Der Grenzwert steht in der Maske des Volumenbereichs
+(„Grenzwert ε_p,1 plastisch [%]“), Vorgabe 5 % nach EN 1993-1-5 Anh. C /
+EN 1993-1-14; er wird mit dem Modell gespeichert. Die Tabelle „Volumen“ zeigt
+dann statt der Spannungen die Ausnutzung, ε_p,1 in Prozent, das Bauteil
+(Körper) und den Ort (Element, Integrationspunkt, Koordinaten); dasselbe
+steht in Zusammenfassung und Bericht. Netzabhängige Stellen sind wie im
+elastischen Fall nur berichtet. Schrauben, Ankerstäbe und Gewindeteile werden
+nicht über die Dehnung nachgewiesen, sondern über Kraft bzw. Spannung nach
+EN 1993-1-8 (Stab- bzw. Anschlussnachweis); sind sie als Volumen modelliert,
+gehören sie nicht in einen Volumenbereich oder werden ausgenommen (unten).
+
+„Nicht bewertet – plastische Rechnung“ steht nur noch dort, wo es keine
+plastische Dehnung zum Auswerten gibt: bei einer Überlagerung plastisch
+gerechneter Ergebnisse (etwa einer Alternative einer Ergebniskombination – die
+plastische Dehnung ist nicht überlagerbar, die Kombination ist selbst
+plastisch zu rechnen) und bei einer Ergebnisdatei, die vor dem 13.10.2026
+geschrieben wurde (neu rechnen). Bis zum 13.10.2026 stand plastisch überall
+„nicht bewertet“, davor ein Zahlenwert aus der geglätteten Eckspannung; am
+Drehlager lag sie außerhalb der netzabhängigen Stellen bis 1 596 N/mm², an
+Ecken nicht fließender Elemente, deren Integrationspunkte weit darunter
+liegen.
+
+**Vom Volumennachweis ausnehmen** (seit 13.10.2026). Hilfs- und
+Krafteinleitungskörper – etwa aus einem gewichtslosen Hilfswerkstoff – sollen
+nicht nachgewiesen werden. Dafür gibt es den Schalter „vom Volumennachweis
+ausnehmen (Hilfs- oder Krafteinleitungskörper)“ in der Maske des Werkstoffs
+(gilt für alle Körper aus ihm) und in der Maske des Volumens (gilt für diesen
+Körper, auch für mehrere gewählte Volumen auf einmal). Ihre Elemente gehen in
+keinen Volumennachweis ein, weder elastisch noch plastisch, und stehen mit
+Namen als „ausgenommen“ in Tabelle, Zusammenfassung und Bericht; sind alle
+Elemente eines Bereichs ausgenommen, lautet sein Status „ausgenommen“. Den
+Schalter setzt nur der Anwender; das Programm setzt ihn nie selbst, auch nicht
+nach dem Namen.
+
 Anlegen: die Knoten des Bereichs in der Ansicht auswählen, dann Register
 *Nachweise* → „Volumen“ (oder in der Tabelle „Volumen“ auf
 „Bereich aus Auswahl…“). Es werden alle Volumenelemente aufgenommen, die
@@ -8234,6 +9596,10 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
   wenn sie selbst angegeben wurde), und wenn sie f_y abmindert, sagt der
   Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
   immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
+  Für große Bereiche bestimmt das Programm die Dicke seit dem 14.10.2026 in
+  Sekunden: das ganze Drehlager (Netz Mittel, 617 177 Volumen in 93 Körpern)
+  als ein Bereich braucht dafür 1,9 s. Bis dahin las es für jedes Element
+  des Bereichs seinen ganzen Körper neu, was dort über 30 min dauerte.
 
 Ist **„Nachweis führen“** nicht gesetzt, bleibt der Bereich angelegt, sein
 Nachweis läuft aber nicht. In der Tabelle „Volumen“ und im Bericht steht er mit
@@ -8304,6 +9670,54 @@ Dazu die **Ersatzimperfektionen nach 5.3.2**: Schiefstellung φ und
 Vorkrümmung e_0 werden als gleichwertige Lasten angesetzt, die Geometrie
 bleibt unberührt. Wer die Vorkrümmung auch für gedrungene Stäbe ansetzen
 will, schaltet „5.3.2(6) übergehen“ ein.
+
+**Temperatur und Vorspannung in α_cr.** Seit dem 13.10.2026 steht in der
+geometrischen Steifigkeit dieselbe Normalkraft wie im Ergebnis, mit
+Temperatur und Vorspannung (siehe „Temperatur und Vorspannung zählen in jeder
+Stabkraft“). Bis zum 13.10.2026 hatte ein Stab unter reinem Temperatur-Zwang
+dort keine Normalkraft und kein α_cr. Ein beidseits gelenkiger Stab von 4 m
+(Vollquadrat 100 mm), um 20 K erwärmt und an beiden Enden gehalten, hat
+jetzt α_cr = 2,142, wie
+π²·E·I/L² / (E·A·α·ΔT) es verlangt.
+
+**Fachwerkstäbe, Zug- und Druckstäbe und Seile in α_cr** (seit 14.10.2026).
+Ein Stab ohne Biegesteifigkeit hält sein Ende quer nur mit seiner
+Normalkraft: gezogen mit N/L, gedrückt treibt er es mit |N|/L weg wie eine
+Saite. So stehen Fachwerkstäbe, Zug- und Druckstäbe und Seile jetzt in der
+geometrischen Steifigkeit, für α_cr, für Theorie II. Ordnung und für das
+Knicken; nach Theorie III. Ordnung rechneten sie schon immer so. Ein Balken
+behält seine Form, auch mit „trägt nur“, denn er biegt sich. Bis zum
+14.10.2026 bekamen auch Fachwerkstäbe die Form des Balkens mit 6/5·N/L und
+Drehanteilen. Ein Pendelstab mit einer Querfeder k am Kopf hatte damit
+α_cr = 166,67 statt k·L/P = 200 (sicher), das gezogene Zugband einer
+Kragstütze dagegen α_cr = 4 126 statt 2 679, also 54 % zu hoch und damit auf
+der unsicheren Seite. Jetzt sind es 200 und 2 679,15 gegen geschlossen
+2 679,15.
+
+**Einzelknicken der Fachwerk-Druckstäbe** (seit 14.10.2026). Weil der
+Fachwerkstab in α_cr als Saite steht, ist sein eigenes Ausknicken zwischen
+den Knoten darin nicht enthalten. Statik3D bestimmt es darum je gedrücktem
+Fachwerkstab, auch „nur Druck“, gesondert als α_cr,i = π²·E·I/(L²·N_Ed) mit
+der Systemlänge L des Stabs (gelenkig) und dem kleineren Trägheitsmoment der
+beiden Hauptachsen. Die Zusammenfassung nennt dann min(System; Einzelstab)
+mit dem maßgebenden Stab, etwa „min. α_cr = 158.97 (System 200.00;
+Einzelstab 158.97, Stab St)“, die Tabelle des Theoriekapitels hat die Spalte
+„α_cr Einzelstab“, und der Bericht führt einen Abschnitt „Einzelknicken der
+Fachwerk-Druckstäbe“ mit allen gedrückten Fachwerkstäben der maßgebenden
+Kombination. Ob nach Theorie II. Ordnung gerechnet wird, entscheidet weiter
+das α_cr des Systems; das Knicken des einzelnen Stabs weist der Stabnachweis
+(Biegeknicken) nach. Bis zum 14.10.2026 stand nur das α_cr des Systems in
+der Übersicht, auch wenn ein Druckstab schon bei einem kleineren Faktor
+knickte.
+
+**α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
+eines Lastfalls oder einer Kombination abgeschaltet ist oder als
+„deaktiviert“ nirgends wirkt, zählt für α_cr nicht mehr mit, genau wie in
+der Rechnung nach Theorie II. Ordnung und beim Knicken. Bis zum 14.10.2026
+stand er mit der Normalkraft, die seine mitbewegten Enden ihm rechnerisch
+gaben, in α_cr: neben einer Kragstütze ergab ein abgeschalteter Fachwerkstab,
+der gezogen worden wäre, α_cr = 5,34 statt 4,80, also zu hoch, und ein
+gedrückter 4,35.
 
 Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
 Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der
@@ -8446,6 +9860,20 @@ Tabellen unten und der Modellbaum zeigen die Wahl; der Bericht führt je
 Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
 Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
 Drehung auf.
+
+Temperaturlasten und Vorspannkräfte wirken in den Laststufen der III.
+Ordnung seit dem 10.10.2026 ab der ersten Stufe voll, gesteigert werden nur
+die übrigen Lasten; bis dahin wuchsen sie mit den Stufen mit (zuerst wurde
+das nur für die Temperaturlasten geändert). Die Spalte „Hinweis“ sagt es mit
+dem Satz „Temperaturlasten und Vorspannungen wirken ab der ersten Laststufe
+voll, gesteigert werden nur die übrigen Lasten“. Das Gleichgewicht am Ende
+bleibt dasselbe, die Zahl der Iterationen kann sich ändern: an einer
+Kragstütze mit Zugband (ΔT = −40 K im Band, 15 K und 8 K über die Höhe in der
+Stütze, fünf Laststufen) waren es 24 statt 20 Iterationen, und die
+Verschiebungen wichen um 1·10⁻⁵ der größten voneinander ab. Mit einer
+Vorspannkraft von 70 kN im Zugband statt der Temperatur blieben es 20
+Iterationen, und die Verschiebungen wichen um 2,8·10⁻⁵ der größten
+voneinander ab.
 
 Die Spalte **Theorie** der Lastfalltabelle im Bericht nennt die
 **gerechnete** Theorie. Ist ein Lastfall nach II. oder III. Ordnung gelungen,
@@ -8866,11 +10294,20 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   eine Einstellung **am Modell**, sie reist mit der Datei): mit dem Haken
   fließen Volumenelemente, deren Vergleichsspannung (von Mises) die
   Streckgrenze fy ihres Werkstoffs übersteigt — die Spannung bleibt bei
-  fy + H·ε_p, die Kraft verteilt sich um, die Verformung wächst. Werkstoffe
-  ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie.
+  fy + H·ε_p, seit dem 13.10.2026 höchstens bei f_u, die Kraft verteilt sich
+  um, die Verformung wächst. Werkstoffe
+  ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie einmal je
+  Lastfall. Bis zum 13.10.2026 stand diese Zeile bei jedem Newton-Schritt
+  neu im Protokoll, am Bolzen der Tests in 11 von 13 Zeilen.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
-  ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
-  Last stufenweise auf, **Schritte je Stufe** (Vorgabe 25) und die
+  ideal-plastisch, Vorgabe 1 % = E/100). Seit dem 13.10.2026 gilt sie für
+  jeden Werkstoff, der in seiner Maske „Vorgabe“ trägt, und lässt sich dort je
+  Werkstoff einstellen; bis dahin galt sie für alle Werkstoffe (siehe den
+  nächsten Punkt). **Laststufen** (Vorgabe 3) bringen die
+  Last stufenweise auf (Temperaturlasten und Vorspannkräfte wirken seit dem
+  10.10.2026 ab der ersten Stufe voll, siehe „Temperaturlasten und
+  Vorspannungen wirken in den Laststufen sofort voll“), **Schritte je Stufe**
+  (Vorgabe 25) und die
   **Toleranz** (geschätzter Fehler der plastischen Knotenlasten gegen die
   Last, Vorgabe 1e-3; bis zum 23.09.2026 die Änderung je Schritt, die nahe
   der Grenzlast zu früh „konvergiert“ meldete) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
@@ -8882,11 +10319,89 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   in Laststufen“. Der Bericht sagt unter „Gültigkeitsbereich und Hinweise“,
   dass elastisch-plastisch gerechnet ist, in wie vielen Ergebnissen, in wie
   vielen davon Elemente fließen und nach welchem Werkstoffgesetz (von Mises
-  mit isotroper linearer Verfestigung, E_t/E aus der Einstellung). Bis zum
+  mit isotroper linearer Verfestigung, E_t/E aus der Einstellung, seit dem
+  13.10.2026 mit dem Zusatz „bis f_u, danach ideal plastisch“ und den
+  Werkstoffen mit eigener Verfestigung oder ohne f_u). Bis zum
   07.10.2026 stand dort auch dann „Die Berechnung ist elastisch (keine
   Plastizität, …)“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
   1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
   Verfahren in `docs/Theoriehandbuch.md`, Abschnitt 5e).
+  Ein Volumenkörper mit **Vorspannung als Körper** (*Lasten → Vorspannung*,
+  etwa ein Schraubenschaft) wird seit dem 10.10.2026 mit seiner wahren
+  Spannung auf Fließen geprüft, also mit der Vorspannung darin. Bis dahin sah
+  die Fließprüfung nur den Teil der Spannung, der aus der Verformung kommt,
+  und nicht die Vorspannung selbst; angezeigt wurde trotzdem die volle
+  Spannung. Ein vorgespannter Bolzen konnte darum über f_y stehen, ohne zu
+  fließen: am Prüfbolzen mit F_v = 0,98·f_y·A und einem 19-mal steiferen
+  Klemmpaket floss bei 1,3-facher Last des Fließbeginns nichts, angezeigt
+  wurden 362,3 N/mm² statt der richtigen 355,2 N/mm². Jetzt fließt er bei
+  1,01-facher Last des Fließbeginns der geschlossenen Lösung und bei
+  0,99-facher nicht, und Verschiebung, Spannung, ε_p und Auflagerkräfte
+  treffen sie (`tests/test_vorspannung_fliessen.py`).
+  Eine Temperaturlast im Volumen betrifft das nicht, weil sie die Form der
+  Spannung nicht ändert, nur ihren allseitigen Anteil.
+* **Verfestigung je Werkstoff, bis f_u und danach ideal plastisch**
+  (13.10.2026, Entscheidung des Anwenders): Ein Werkstoff verfestigt nach
+  dem Fließen mit der Steigung E/100 bis zu seiner Zugfestigkeit f_u und
+  fließt danach ideal plastisch; die Spannung bleibt dann bei f_u. Das
+  entspricht dem Werkstoffmodell mit linearer Verfestigung nach EN 1993-1-5,
+  Anhang C.6. E/100 ist die Steigung der Spannungs-Dehnungs-Linie, so wie die
+  Norm sie in Bild C.2 zeichnet, und damit dieselbe Steigung, die die
+  Einstellung „Verfestigung E_t/E = 1 %“ schon bisher meinte. Rechnungen, in
+  denen kein Werkstoff f_u erreicht, ergeben darum genau dieselben Zahlen wie
+  vorher. **Bis zum 13.10.2026** verfestigte jeder Werkstoff ohne Grenze
+  weiter; am Drehlager stand ein Schraubenkörper (V90) dadurch bei
+  560,6 N/mm² und 9,69 % plastischer Dehnung, über seinem f_u von 490 N/mm².
+  Auch Dateien, die vor dem 13.10.2026 gespeichert wurden, rechnen jetzt mit
+  dieser Grenze; ihre Ergebnisse ändern sich überall dort, wo die Spannung
+  f_u bisher überschritten hatte.
+
+  In der **Werkstoffmaske** (Doppelklick auf einen Werkstoff) steht dafür das
+  Feld **Verfestigung**. Zur Wahl stehen „Vorgabe E/100“ und „ohne
+  Verfestigung (E/10 000)“; jede andere Steigung lässt sich als „E/250“
+  eintippen. „Vorgabe“ heißt, dass der Werkstoff die Einstellung
+  *Verfestigung E_t/E* unter *Berechnung → Einstellungen → Plastizität*
+  nimmt, und die steht ab Werk auf 1 % = E/100. Eine Eingabe, die das
+  Programm nicht versteht, wird nicht übernommen, und die Meldungszeile sagt,
+  was gemeint sein kann. Darunter zeigt die Zeile **Grenze**, bis wohin der
+  Werkstoff verfestigt und bei welcher plastischen Dehnung das erreicht ist,
+  etwa „f_u = 490 N/mm², erreicht bei ε_p = 6,36 %, danach ideal plastisch“.
+  Gespeichert wird die Verfestigung mit dem Werkstoff; eine Datei, die sie
+  noch nicht kennt, bekommt die Vorgabe.
+
+  **f_u kommt immer aus dem Werkstoff**, also aus dem Feld f_u der Maske,
+  nicht aus der Stahlsorte und nicht aus 1,3·f_y. Fehlt es, setzt das
+  Programm keinen Ersatzwert ein. Der Werkstoff verfestigt dann ohne Grenze
+  wie bis zum 13.10.2026, das Protokoll der Rechnung sagt einmal je Lastfall
+  „Werkstoff „S355“ ohne f_u – Verfestigung ohne Grenze, bitte f_u
+  eingeben“, die Netzabnahme vor der Rechnung warnt mit demselben Text, und
+  die Zeile Grenze der Maske zeigt „f_u fehlt“. Die Rechnung läuft trotzdem.
+
+  **Schrauben und Spannstahl.** Ein Werkstoff der Art Schraube verfestigt
+  von f_yb bis f_ub, ein Spannstahl von f_p0,1k bis f_pk. Die Werte stehen in
+  den Feldern f_y und f_u, und die Maske beschriftet sie dann mit f_yb und
+  f_ub bzw. f_p0,1k und f_pk. Der Anschlussbau legt seine Schraubenwerkstoffe
+  („Schraube 10.9“) als Schraube an; in älteren Dateien erkennt das Programm
+  sie am Namen. Beim Import aus RFEM 6 wird ein Werkstoff vom Typ Spannstahl
+  (am Drehlager die Ankerstäbe) zum Spannstahl, und das Importprotokoll nennt
+  f_p0,1k und f_pk.
+
+  Die Grenze wirkt nur in der Plastizität der **Volumen**. Stäbe fließen in
+  dieser Rechnung nicht, auch nicht Zugstäbe oder Ankerstäbe aus Spannstahl;
+  ihre Spannung wird nicht begrenzt. Der Bericht nennt unter
+  „Gültigkeitsbereich und Hinweise“ die Grenze, die Werkstoffe mit eigener
+  Verfestigung und die Werkstoffe ohne f_u.
+
+  **Konvergenz auf dem Plateau.** Über f_u und bei „ohne Verfestigung“
+  rechnet der Newton mit einer Tangente, die um eine kleine
+  Mindeststeifigkeit steifer ist als die exakte, damit das Gleichungssystem
+  regulär bleibt. Bei den Toleranzen, die die Maske anbietet (1e-2, 1e-3, 1e-4), braucht der
+  Newton dafür nicht mehr Schritte: am Zugstab mit 10 % Dehnung waren es vor
+  und nach der Änderung 3 Schritte in einer Laststufe. Erst bei viel engeren
+  Toleranzen merkt man es, vor allem bei Sechsflächnern (hex8): bei 1e-8
+  waren es 8 statt 3 Schritte, bei Tetraedern (tet10) 4 statt 3. In den
+  Prüfreihen der Plastizität ändert sich die Zahl der Newton-Schritte und
+  Halbierungen nicht (Theoriehandbuch § 5e.5).
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
   Tangente** — ein Newton-Verfahren, das die Steifigkeit je Schritt neu
   aufstellt und faktorisiert. Es konvergiert quadratisch und **unabhängig
@@ -8932,7 +10447,10 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   der erste plastische Lauf braucht verschachtelt 21 Kontaktschritte,
   gemeinsam 31, die übrigen Läufe gleich viele, und am Ende liegen die
   Verschiebungen um höchstens 1,0·10⁻¹¹ m auseinander (u_max 6,1·10⁻⁴ m);
-  jeder Weg für sich ist
+  so ist es noch mit „Spannung zuerst“ aus. Seit dem 14.10.2026 schließt die
+  Kontaktiteration nach Spannung und Weg ab (Vorschlag 4, Vorgabe an); damit
+  liegen die beiden Wege dort 3,2·10⁻⁹ m auseinander, weit unter der
+  Wegschranke des Kriteriums (3,3·10⁻⁶ m). Jeder Weg für sich ist
   wiederholt bitgleich. Am fließenden Kontaktmodell mit gewählter
   Anfangsdehnung sind beide Wege bitgleich. Bis zum 07.10.2026 stand hier,
   das Ergebnis bleibe bitgleich.)
@@ -9003,6 +10521,91 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Prüfung nicht gerechnet — dort ist sie überflüssig und kostete je Lastfall
   eine Rückführung. Seit dem 25.09.2026 gilt sie auch für die Rechnung ohne
   Verfestigung (Anfangsdehnung) mit Kontakt.
+* **Abbruch der Laststufe: ingenieurmäßig oder streng** (seit dem
+  13.10.2026; *Berechnung → Einstellungen*, Zeile „Abbruch“ unter „Verfahren
+  mit Kontakt“; eine Einstellung am Modell, `plastizitaet.abbruch`). Die
+  **Vorgabe ist „ingenieurmäßig“**, das heißt: netzabhängige Spitzen sind
+  ausgenommen. Gemeint sind die Stellen, an denen Kraft ohne Auflagefläche in
+  ein Volumen geht und die das Programm als auffällig kennzeichnet (siehe
+  „Netzabhängige Spannungsspitzen“), etwa ein Anker an einer starren Scheibe,
+  die nur den Lochrand einer Bohrung koppelt. Ihre Spitze wächst mit jeder
+  Netzverfeinerung, und gerade sie hielt den Newton bisher auf: am Drehlager
+  trugen die Zonen der 16 Ankerringe 97 bis 99 % der Änderung, an der die
+  Konvergenz gemessen wurde. Mit „ingenieurmäßig“ gilt eine Laststufe als
+  konvergiert, wenn vier Bedingungen zugleich erfüllt sind. Die plastischen
+  Knotenlasten außerhalb dieser Zonen ändern sich um weniger als die
+  Toleranz, die Kraft durch jede solche Stelle ändert sich um höchstens
+  0,5 %, die Verschiebung außerhalb der Zonen ändert sich um höchstens
+  0,5 % ihres Größtwerts, und σ_v ändert sich an jedem Integrationspunkt
+  außerhalb der Zonen um höchstens 1 N/mm² gegen den vorigen Newton-Schritt
+  (seit dem 14.10.2026; das Ingenieurkriterium „Spannungen auf 1 N/mm²
+  stabil“). Was mit „streng“ konvergiert wäre, gilt auch hier
+  als konvergiert; die Bedingungen für Kraft, Verschiebung und Spannung
+  können eine Stufe also nie länger machen. Am selben Maß entscheidet sich, ob eine
+  weglaufende Stufe halbiert wird und ob der Abschluss mit Kontakt bestanden
+  ist. Die Zonen rechnen weiter plastisch mit; nur ihr Beitrag zum Maß fällt
+  weg.
+  Welche Stellen auffällig sind, stellt das Programm nach jedem Newton-Schritt
+  aus dem aktuellen Zustand fest, und eine Stelle, die einmal auffällig war,
+  bleibt es für den Rest des Lastfalls. Ausgenommen wird nur, was
+  gekennzeichnet ist; gibt es keine auffällige Stelle, rechnet „ingenieurmäßig“
+  Schritt für Schritt genau wie „streng“.
+
+  Im Ergebnis stehen die Werte der ausgenommenen Zonen als „nicht
+  auskonvergiert“, mit ihrer letzten Änderung (Kraft, σ_v, ε_p und die
+  plastischen Knotenlasten der Zone). Das Protokoll nennt je Newton-Schritt in
+  einer Zeile die Änderung außerhalb und in den Zonen, die Kräfte durch die
+  auffälligen Stellen und die Änderung der Verschiebung außerhalb, am
+  Drehlager (Entwurf) etwa „Plastizität: Laststufe 1/7, Newton-Schritt 2 -
+  Zonen (16 auffällige Stellen): Änderung außerhalb 0.00e+00, in den Zonen
+  9.35e-02; Kraft 943–944 kN ±0.17 % (V9); u außerhalb ±9.221 %“. In Klammern
+  stehen die Bauteile, an denen sich die Kraft und die Verschiebung am
+  meisten geändert haben. Diese Zeile steht auch mit „streng“ da, dort nur
+  zur Auskunft. Am Ende nennt eine Zeile, welche
+  Stellen ausgenommen waren und wie weit ihre Werte zuletzt noch liefen, und
+  die Zusammenfassung des Ergebnisses sagt „Abbruch: ingenieurmäßig - n
+  netzabhängige Stellen ausgenommen, dort nicht auskonvergiert“.
+
+  **Streng** misst wie bis zum 13.10.2026 über das ganze Modell. Das kostet an
+  solchen Spitzen Newton-Schritte, ohne die Werte dort richtiger zu machen.
+  Eine Datei ohne diese Einstellung rechnet „ingenieurmäßig“; ein unbekannter
+  Wert ebenso, und das Protokoll nennt ihn.
+
+  An der Ankerplatte der Tests (Platte mit Bohrung, starre Scheibe über dem
+  Loch, Anker mit 0,9 MN Vorspannung und 0,3 MN Zuglast, Netz wie der Entwurf
+  des Drehlagers) braucht „ingenieurmäßig“ 20 statt 29 Newton-Schritte.
+  Außerhalb der Zone weicht σ_v dabei um höchstens 0,10 N/mm² ab, die
+  Ankerkraft um 0,01 % und die Verschiebung um 0,01 %
+  (`tests/test_spitzen_abbruch.py`). Seit dem 14.10.2026 ist die Zone dort
+  kleiner (zwei Elementringe bis r + 2 h, 48 statt 128 Elemente). Ohne die
+  Bedingung für σ_v brach „ingenieurmäßig“ damit nach 15 Schritten ab, und
+  die Elemente direkt neben der kleineren Zone wichen um bis zu 3,26 N/mm²
+  ab; mit ihr sind es 20 Schritte. Mit der größeren Zone waren es 14
+  Schritte und 0,29 N/mm², 0,18 % und 0,22 %; bis zum 13.10.2026, vor der
+  Verfestigung bis f_u, 0,20 N/mm², 0,14 % und 0,17 %: seitdem verfestigt
+  die Platte (S355, f_u = 510 N/mm²) nur bis f_u, und am Ring steht σ_v bei
+  510 statt 531,7 N/mm² (siehe „Verfestigung je Werkstoff, bis f_u und
+  danach ideal plastisch“). Mit einem doppelt so feinen Netz und
+  einer Zone, die von Schritt zu Schritt pendelt, wich σ_v in den Elementen
+  unmittelbar neben der Zone dagegen um bis zu 74 N/mm² ab, ab dem
+  2,4-fachen Zonenradius um höchstens 1,2 N/mm²; die strenge Rechnung hatte
+  dort ihre erste Stufe zweimal halbiert und einen anderen Lastweg genommen.
+  Wer Werte direkt am Rand einer gekennzeichneten Zone braucht, rechnet
+  „streng“ gegen. Die Abnahme am Drehlager (Entwurf, LF1, streng gegen
+  ingenieurmäßig) steht noch aus; was der erste strenge Lauf zeigte, steht im
+  Theoriehandbuch, § 5e.4.
+* **Kontaktlauf und Spannschritt** (seit dem 14.10.2026; *Berechnung →
+  Einstellungen*, eigene Gruppe unter der Plastizität; Einstellungen am Modell,
+  `plastizitaet.pendel_kraft_anteil`, `pendel_weg`, `spannstufen`). „Restwechsel
+  bis“ (Vorgabe 0,1 %) und „Klaffung bis“ (Vorgabe 1 µm) sind die Schranken,
+  unter denen ein Kontaktlauf mit eingefrorenen pendelnden Knoten als
+  konvergiert gilt (siehe „Pendeln mit Periode 2“ im Kapitel Kontakt); 0 schaltet
+  die Regel ab. „Spannschritt in … Stufen“ (Vorgabe „automatisch“: drei mit
+  Kontakt oder Fließen, sonst eine) teilt den Spannschritt einer Vorspannkraft
+  (siehe „Spannschritt in Stufen“ bei den Lastarten). Eine Datei ohne diese
+  Einstellungen bekommt die Vorgaben; mit der Vorgabe schreibt das Programm sie auch
+  nicht in die Datei, damit ältere Modelle beim Speichern Byte für Byte bleiben und
+  ihre Ergebnisdateien weiter passen.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die
@@ -9189,6 +10792,11 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
     Gleitrichtungen und Reibkräfte stehen allein im Lastvektor. Daran liegt
     es, dass die späten Runden rasen: eine Faktorisierung kostet am Drehlager
     4,23 s bei 476 214 Zeilen, das Rückwärtseinsetzen einen Bruchteil davon.
+    Seit dem 09.10.2026 gibt es eine dritte Angabe, **Matrix nachgeführt**:
+    die Matrix hat sich geändert, gelöst wurde aber mit der behaltenen
+    Zerlegung und einer kleinen Zusatzmatrix (Abschnitt „Kontaktrunden ohne
+    neue Zerlegung“). Bis zum 09.10.2026 hieß jede geänderte Signatur „Matrix
+    neu“.
 
   Am Block mit Reibung: 21 Runden, davon 7 mit neuer Faktorisierung — und
   „20 aktiv“ steht über allen 21, teuren wie billigen. Die Zahl allein sagt
@@ -9454,6 +11062,8 @@ nichts stillschweigend Übergangenes:
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
 | Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
+| Kraft ohne Fläche (Warnung, seit 10.10.2026): Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft ohne Auflagefläche in ein Volumen leiten – eine Zeile je Art, siehe *Netzabhängige Spannungsspitzen* | – |
+| Stabenden an wenigen Knoten (Warnung, seit 13.10.2026): Stabenden, die an 1–3 Volumenknoten hängen, mit dem Hinweis auf die verteilende Einleitung – umgestellt wird nichts, siehe *Stabenden verteilt einleiten* | – |
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
@@ -10331,6 +11941,206 @@ Antwort alle 13 gesetzten Platten findet, und von der Löser-Sitzung, dass sechs
 Lösungen über den Faktor des Entwurfs 12 s kosten und die Antwort auf den
 Lastverteilplatten zu 99,999999 % eine Starrkörperbewegung ist.
 
+### Last an automatisch gehaltenen Freiheitsgraden (seit 14.10.2026)
+
+Ein Freiheitsgrad, in dem kein Bauteil Steifigkeit hat, wird vor der Rechnung
+festgehalten. Das betrifft die Drehungen an Knoten, an denen nur
+Fachwerkstäbe, Seile oder Volumenelemente hängen, die Querrichtungen einer
+geraden Kette aus Fachwerkstäben und einen Knoten ohne Bauteil. Solange dort
+keine Last ankommt, ist das richtig und ändert nichts. Bis zum 14.10.2026
+geschah es aber auch dann still, wenn dort eine Last ankam: Der festgehaltene
+Freiheitsgrad nahm sie auf wie ein Lager. Eine Kette aus zwei Fachwerkstäben
+mit 1 kN quer am Mittelknoten ist ein Mechanismus, trotzdem zeigte die
+Rechnung u_z = 0, die echten Lager trugen 0 kN, und die Zusammenfassung
+nannte nur „Summe Auflagerkräfte [0.0, 0.0, 1000.0] N“, ohne Warnung.
+
+Seit dem 14.10.2026 gilt jede Kraft und jedes Moment an einem automatisch
+gehaltenen Freiheitsgrad als Fehler des Modells. Die Rechnung wird als
+**nicht gültig** gekennzeichnet. Das Ergebnis bleibt sichtbar, damit man sieht,
+wo die Last verschwindet, ist aber kein Gleichgewicht des Tragwerks:
+Verschiebungen und Schnittgrößen gehören zu einem Tragwerk mit einem Lager,
+das es nicht gibt. Gemeldet wird je Knoten und Richtung, zum Beispiel
+„Knoten K1: F_z = -1,000 kN quer an einem Knoten nur mit Fachwerkstäben –
+Mechanismus, die Last wird von keinem Bauteil getragen“ oder „Knoten K4: M_y =
+2,000 kNm an einem Knoten nur mit Fachwerkstäben, ohne Drehsteifigkeit – …“.
+Die Meldung steht im Protokoll (als WARNUNG während der Rechnung und in der
+Zusammenfassung), in der Zusammenfassung mit der Zeile „NICHT GÜLTIG“, in der
+Rechenliste mit dem Zustand „nicht gültig“ und dem Grund als Meldung, und im
+Bericht als Kapitel „Last an automatisch gehaltenen Freiheitsgraden“, bei den
+Warnungen und als rote Zeile „NICHT gültig: …“ in der Zusammenfassung des
+Berichts. Eine Kombination trägt die Meldung ihrer Lastfälle mit dem Faktor
+weiter, die Zusammenfassung der ganzen Rechnung bündelt gleiche Meldungen.
+
+Die Kraft gehört nicht zu den Auflagerkräften. „Summe Auflagerkräfte“, die
+Tabelle der Auflagerreaktionen und die Übersicht der Ergebnisse zählen sie
+nicht mehr mit; die Zusammenfassung nennt sie getrennt in der Zeile
+„Automatisch gehalten“, mit demselben Vorzeichen wie die Auflagerkräfte. Bis
+zum 14.10.2026 stand sie in der Summe der Auflagerkräfte und am betroffenen
+Knoten als Auflagerkraft.
+
+Die Schranke ist 1·10⁻⁶ der Bezugskraft, also 1 N je MN. Die Bezugskraft ist
+die Summe der Beträge aller Knotenlasten und der Auflagerkräfte an echten
+Lagern, Momente geteilt durch die Modellgröße; Momente vergleicht die Schranke
+mal die Modellgröße. Ein festgehaltener Freiheitsgrad hat weniger als 10⁻¹² der
+größten Steifigkeit, was er aus eigener Steifigkeit aufnimmt, liegt also viele
+Zehnerpotenzen unter der Schranke, und eine Last, die ein Ingenieur bemerken
+muss, liegt weit darüber. Ein Fachwerk, dessen festgehaltene Drehungen nichts
+tragen, rechnet bitgleich wie zuvor und bekommt keine Meldung; das gilt auch
+für alle acht eingebauten Beispiele, deren Zahlen und Zusammenfassungen
+bitgleich geblieben sind. Abhilfe ist ein Bauteil oder Lager, das die
+Richtung hält, oder die Last an einen tragenden Knoten zu legen; ein Moment an
+einem Fachwerkknoten trägt ein Balken, der dort biegesteif anschließt
+(`tests/test_auto_gehalten.py`).
+
+### Netzabhängige Spannungsspitzen (seit 10.10.2026)
+
+Geht eine Kraft ohne Auflagefläche in ein Volumen, wächst die Spannung dort
+mit jeder Netzverfeinerung, und ihr Spitzenwert ist eine Eigenschaft des
+Netzes, keine Nachweisgröße. Solche Stellen sind eine starre Scheibe, die nur
+einen Lochrand koppelt, ein Stabende an ein bis drei Netzknoten, eine
+Knotenlast, ein Knoten- oder Linienlager oder eine Linienlast auf einer
+Volumenkante. Seit dem 10.10.2026 sucht das Programm sie selbst. Vor der
+Rechnung nennt die Abnahme des Netzes sie gebündelt als Warnung, eine Zeile je
+Art, am Drehlager etwa „64 starre Scheiben koppeln nur einen Lochrand
+(40–45 Knoten)“ und „48 Stabenden hängen an 1–3 Knoten“. Bei den Stabenden
+nennt dieselbe Zeile seit dem 14.10.2026 auch den Ausweg, die verteilende
+Einleitung über die Stirnfläche. Die Warnung hält die
+Rechnung nicht an. Seit dem 13.10.2026 kann Mittel (und Fein) die starren
+Scheiben über Bohrungen und, mit eigenem Haken, die Stabenden feiner vernetzen,
+damit ihre Zonen klein werden (Abschnitt „Elementstufe“, Absatz
+„Krafteinleitungen ohne Fläche feiner“); beide Haken stehen auf aus, und die
+Warnung nennt bei eingeschalteten Ringen entsprechend mehr Knoten am Lochrand. Lasten und Lager, die
+eine Fläche tragen, meldet sie nicht;
+in den eingebauten Beispielen meldet sie nur die Endlast der Konsole, die auf
+den sieben Knoten der Oberkante steht. Seit dem 13.10.2026 lässt sich ein
+Stabende auch verteilt über seine Stirnfläche oder einen Kreisring einleiten
+(siehe *Stabenden verteilt einleiten*); eine so eingeleitete Stelle trägt eine
+Fläche und erscheint nicht mehr unter den Stellen, am Drehlager fallen damit
+die 48 Stabenden heraus.
+
+Nach der Rechnung bestimmt das Programm je Stelle die Kraft, die durch sie
+geht, eine Zone aus höchstens zwei Elementringen – den Elementen an den
+Knoten der Stelle und deren Nachbarn, diese nur bis zum Radius der Stelle
+plus zwei Elementkanten – und darin den Spitzenwert von σ_v und ε_p. Bis zum
+13.10.2026 waren es alle Elemente im Umkreis von vier Elementkanten oder dem
+Radius der Stelle; auf dem groben Netz waren die Zonen damit zu groß (am
+Drehlager in den 16 Ankerplatten 11 703 Elemente und 7 719 cm³, jetzt 5 833
+Elemente und 1 520 cm³; über alle 108 Stellen 63 019 statt jetzt 30 430
+Elemente). Die Werte außerhalb der Zonen ändern sich dort nicht: σ_v außerhalb
+der 16 Zonen bleibt 545,3 N/mm² (V90), der Volumennachweis über die
+plastische Dehnung mit ausgenommenem Nullmaterial bleibt η = 0,873, und alle
+Punkte über 5 % plastischer Hauptdehnung außerhalb des Nullmaterials liegen
+weiter in den Zonen. Ergebnisdateien mit der Zone von davor wertet das
+Programm beim Öffnen neu aus. Stellen ohne Kraft fallen weg. **Auffällig** ist eine Stelle, wenn in
+ihrer Zone σ_v mindestens 2·f_y erreicht oder wenn die Kraft, verteilt auf
+die Fläche der Stelle, die Streckgrenze erreicht. σ_v ist dabei der Wert an
+den Integrationspunkten, an denen auch das Fließen gerechnet wird, nicht der
+Eckwert eines Elements, das nicht fließt. f_y ist der Wert des Werkstoffs,
+wie Sie ihn eingetragen haben; ohne f_y entfällt die Prüfung. Am Drehlager
+(LF1, Netz Mittel) sind genau die 16 Ankerscheiben der Platten V1 bis V28
+auffällig: 782 bis 833 kN, σ_v 884 bis 1 187 N/mm², ε_p 24,9 bis 39,2 % und
+das 1,08- bis 1,13-Fache der Streckgrenze über der Scheibenfläche. Die
+übrigen 92 Stellen mit Kraft bleiben zur Diagnose beim Ergebnis stehen, gelten
+aber nicht als gekennzeichnet; ihr größtes σ_v liegt bei 561 N/mm². Das
+Ergebnis wird mit der Ergebnisdatei gespeichert und wieder geladen.
+
+Seit dem 10.10.2026 zeigt das Programm die auffälligen Stellen auch, ohne
+etwas zu verschweigen. In der Ansicht sind ihre Zonen grau umrandet und grau
+schraffiert – Linien über der Ergebnisfarbe, die zwischen ihnen sichtbar
+bleibt –, rechts unter der Farbskala steht der Legendeneintrag
+„netzabhängig (schraffiert)“ mit einem schraffierten Feld, und an jeder
+Stelle steht ein Zeichen „netzabhängig“ mit σ_v; der Schalter
+„Netzabhängige Stellen kennzeichnen“ in der Maske Ergebnisse blendet beides
+aus und wieder ein. Färben Sie eine Volumenspannung oder die
+Vergleichsspannung, nehmen Farbskala, Max-/Min-Marken und die Kennwerte unten
+links ihr Maximum außerhalb der Zonen. Unter der Farbskala steht getrennt „in
+netzabhängigen Stellen bis … N/mm² (netzabhängig)“, und zwar mit dem Wert an
+den Integrationspunkten; Knoten der Zonen über der Skala bekommen die Farbe
+„> Skalenmax“ (Magenta) wie jeder Wert über der Skala. Bis zum 13.10.2026
+waren die Zonen magenta umrandet, Zeichen und Hinweis magenta, und die Knoten
+der Zonen über der Skala hatten eine eigene Farbe „netzabh.“; zugleich war
+„über dem Grenzwert“ grau, und Grau stand damit für zweierlei. Die
+Zusammenfassung des Ergebnisses nennt die größte
+Vergleichsspannung und die größte plastische Dehnung außerhalb der Zonen mit
+Knoten bzw. Bauteil und darunter die Spitze mit dem Vermerk „netzabhängig,
+nicht für den Nachweis“. Im Modellbaum steht unter Ergebnisse der Eintrag
+„Netzabhängige Spannungsspitzen“ mit je einer Zeile für Bauteil, Ursache,
+Kraft, σ_v und ε_p; ein Klick führt den Blick auf die Stelle. Der Bericht hat
+im Kapitel Ergebnisse einen gleichnamigen Abschnitt mit einer Tabelle (Ort,
+Bauteil, Ursache, Kraft, σ_v, ε_p, Zahl und Volumen der Zonenelemente,
+Vermerk), und die Übersicht aller Ergebnisse kennzeichnet ihr σ_v außerhalb
+der Zonen mit einem Stern. Volumennachweis und Ermüdung der Volumen nehmen
+die Elemente der Zonen aus ihrem Maximum. Sie nennen die Zone in einer
+eigenen Zeile „nur berichtet“, mit ihrer Spitze daneben, und sagen im
+Hinweis, welcher Wert außerhalb gilt. Am gespeicherten Drehlager sind das in
+den 16 Ankerplatten 5 833 Elemente (bis zum 13.10.2026 mit der größeren Zone
+11 703); ein für die Abnahme angelegter Volumenbereich über diese Platten fiel
+mit der Zone von davor von η = 3,020 auf 0,794. Beim Öffnen einer Ergebnisdatei von
+vor dem 10.10.2026 holt das Programm die Kennzeichnung aus dem gespeicherten
+Ergebnis nach, am Drehlager in rund 6 s, ohne neu zu rechnen. Die Farbe der
+Kennzeichnung ist seit dem 13.10.2026 ein dunkles Grau (#646464), das in der
+Farbtafel der Ergebnisse nicht vorkommt (Farbabstand ΔE mindestens 43 zu jeder
+ihrer Farben) und als Schrift auf Weiß gut lesbar ist. Bis zum 13.10.2026 war
+sie erst violett – nahe am dunklen unteren Ende der Farbtafel –, dann
+Magenta. Bis zum 10.10.2026 nahmen Legende, Zusammenfassung,
+Bericht und Nachweise ihr Maximum über alle Elemente, auch über die
+netzabhängigen Stellen.
+
+**Rand der Zonen (seit 14.10.2026).** Ein Knoten am Rand einer Zone gehört
+zu Elementen der Zone und zu Elementen außerhalb. Sein Mittelwert nahm bis zum
+14.10.2026 beide Seiten auf, und die Spitze der Zone färbte damit den Rand
+außerhalb mit: An der Ankerplatte V21 des Drehlagers war ein breiter Streifen
+außerhalb der Schraffur magenta. Jetzt ist die Färbung an der Grenze der Zone
+unstetig. Außen trägt jeder Randknoten das Mittel nur der Elemente außerhalb,
+innen bekommen die Elemente der Zone eigene Knotenwerte aus ihrem eigenen
+Mittel. Farbskala, Max-/Min-Marken, Kennwerte, die Zusammenfassung und die
+Übersicht im Bericht nehmen den Wert von außen; an V21 (LF1, Netz Mittel) liegt die Farbskala
+damit bis 292,8 N/mm² am Knoten 921006, und außerhalb der Schraffur liegt
+kein Punkt darüber. Der Volumennachweis zählt außerhalb nur Elementecken, die
+nicht auf einem Knoten der Zonen liegen; liegen alle Ecken eines Elements
+dort, gilt sein Elementwert. Die Ermüdung nahm die Knoten der Zonen schon
+vorher aus. An der Lochplatte des Prüfkörpers (elastisch, eine auffällige
+Stelle) fällt die maßgebende Eckspannung des Volumennachweises dadurch von
+1 315,9 auf 1 287,2 N/mm². Die Schraffur ist seit demselben Tag dichter und
+breiter, mit einem Linienabstand von einem Drittel der örtlichen Kantenlänge
+und 2,5 Bildpunkten Breite. Bis dahin waren es die halbe Kantenlänge und
+1,5 Bildpunkte, was neben den schwarzen Netzkanten kaum zu sehen war.
+
+**Volumenspannungen nach einer plastischen Rechnung (seit 13.10.2026).** Ist
+die Plastizität eingeschaltet, übernimmt Statik3D für Volumen die Werte der
+Integrationspunkte auf die Knoten, wie ANSYS es bei Plastizität macht
+(ERESX,NO). Jeder Knoten eines Elements bekommt den Spannungstensor des ihm
+nächstgelegenen Integrationspunkts dieses Elements, bei gleich nahen ihren
+Mittelwert; danach wird je Knoten über die angrenzenden Elemente gemittelt
+wie bisher. Beim tet10 mit vier Punkten nimmt jede Ecke den Punkt in ihrer
+Nähe und jede Kantenmitte das Mittel der Punkte ihrer beiden Ecken. Beim hex8
+nimmt jede Ecke den Punkt in ihrem Achtel, beim hex20 (27 Punkte) jede Ecke
+den Eckpunkt und jede Kantenmitte den Punkt auf der Mitte ihrer Kante. Beim
+pent6 und pent15 gilt dasselbe in Flächenkoordinaten des Dreiecks, bei der
+Pyramide nehmen die Grundecken je einen Punkt und die Spitze das Mittel der
+vier oberen. Das gilt für die Färbung der Volumenspannungen und der
+Vergleichsspannung, für Farbskala, Max-/Min-Marken und Kennwerte, für die
+Zusammenfassung und für Übersicht und Einzelergebnisse im Bericht. Bis zum
+13.10.2026 stand an allen Knoten eines Elements, das nicht fließt, sein
+größter Auswertepunkt, also eine Ecke. Eine Ecke ist eine Extrapolation über
+die Integrationspunkte hinaus und lag am Drehlager bis 14 599 N/mm², wo die
+Punkte desselben Elements 343 N/mm² haben; die Zusammenfassung nannte
+außerhalb der netzabhängigen Stellen 6 676 N/mm² in der Seitenwand V15. Die
+Punkte fließender Elemente legt der Löser seit dem 13.10.2026 beim Ergebnis
+ab. Einer älteren Ergebnisdatei fehlen sie; dort zeigen die fließenden
+Elemente ihren größten Punkt an allen Knoten, und die Zusammenfassung nennt
+ihre Zahl. Am gespeicherten Drehlager (12 226 fließende Elemente, ohne neue
+Rechnung) nennt die Zusammenfassung jetzt 662,65 N/mm² am Ankerstab S2
+(Rund 40), denn ihre Vergleichsspannung enthält wie bisher die Randspannung
+der Stäbe. Die Färbung „Volumen σ_v“ geht außerhalb der 16 Ankerringe bis
+545,3 N/mm² in der Schraube V90, an einem Stabende, das nicht als auffällig
+gilt; nimmt man alle 112 Stellen aus, sind es 460,0 N/mm² in V16. Elastische
+Rechnungen zeigen weiter den größten Auswertepunkt. Die Nachweise sind davon
+nicht berührt: Volumennachweis und Ermüdung lesen wie bisher die geglättete
+Eckspannung bzw. den Elementwert. Beim ersten Bild nach einer plastischen
+Rechnung rechnet das Programm die Punkte der nicht fließenden Elemente
+einmal nach, am Drehlager in rund 30 s.
+
 ## 10 Ergebnisse und Bericht
 
 * **Färbung**: |u|, ux/uy/uz [mm], **|φ|, φx/φy/φz** [mrad] (Verdrehungen, seit
@@ -10446,12 +12256,17 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
 * **Werteskala** (Maske Ergebnisse, Ribbon *Ergebnisse → Werteskala*): die
   Grenzen der Farbskala sind **automatisch** (kleinster … größter Wert),
   **fest** (unten … oben) oder ein **Grenzwert**: 0 … Grenze, z. B. 355 für
-  S355 (bei negativen Werten −Grenze … Grenze). Was über der Grenze liegt,
-  bekommt **Magenta** (unter der negativen Grenze Cyan), und die Skala nennt
-  darüber den tatsächlichen Größtwert: der oberste Eintrag ist das Maximum,
-  der zweite die Grenze. **Farbstufen** wie in ANSYS 9 (bis 256 = stufenlos).
+  S355 (bei negativen Werten −Grenze … Grenze). Was über der Skala liegt,
+  bekommt **Magenta** mit der Beschriftung **„> Skalenmax“** im Skalenfeld und
+  in der Kopfzeile (unter der negativen Grenze Cyan); den Größtwert nennen die
+  Kennwerte unten links. Bis zum 13.10.2026 stand im Skalenfeld der
+  tatsächliche Größtwert, und die Farbe war für einen Teil dieses Tages ein
+  Grau – dasselbe Grau, mit dem die netzabhängigen Stellen gekennzeichnet
+  waren; seitdem gehört das Grau nur noch ihnen (schraffiert), und jede
+  Farbe der Legende hat zu jeder anderen Farbe der Ansicht einen Farbabstand
+  ΔE von mindestens 15, Magenta und das Grau zur Farbtafel mindestens 43. **Farbstufen** wie in ANSYS 9 (bis 256 = stufenlos).
   **Nur Überschreitungen färben**: nur Beträge über der Grenze bekommen Farbe,
-  von der Grenze bis zum Größtwert, alles andere bleibt grau — so springen
+  von der Grenze bis zum Größtwert, alles andere bleibt hellgrau — so springen
   die Stellen ins Auge. Der Haken ist in jedem Modus anklickbar und schaltet
   die Skala selbst auf *Grenzwert* um (vorher war er im Modus *automatisch*
   grau, und das las sich als „geht nicht"). Bei einem einzeln gezeigten

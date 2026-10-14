@@ -457,6 +457,12 @@ def _friction_acts(beh: DofBehaviour, label: str, log: list) -> None:
 # --------------------------------------------------------------------------
 # Modellaufbau
 # --------------------------------------------------------------------------
+#: RFEM 6 MaterialImpl.materialType des Spannstahls (am Drehlager Material 3,
+#: Datenbanknummer 2309; Stahl ist 10) - gelesen aus der Datei des Anwenders
+#: am 13.10.2026 (scratchpad ff_werk/f5_rfem_werte.out)
+MATERIALTYP_SPANNSTAHL = 15
+
+
 def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
               chars: dict = None) -> str:
     """Material aus der Datenbank uebernehmen. Rueckgabe: Name im Modell.
@@ -473,21 +479,46 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     name = ""
     E, nu, rho, alpha, fy, fu = 210e9, 0.3, 7850.0, 1.2e-5, None, None
     dbnr = None
+    art = ""
+    Ep = None
     if h is not None:
         impl = db.by_id(h["impl_table"] or "MaterialImpl").get(h["impl_id"])
         if impl is not None:
             name = (impl.get("name") or "").strip()
             dbnr = impl.get("databaseMaterialId")
             props = _material_props(db, impl)
+            # E_p des Spannstahls (13.10.2026): am Drehlager Material 3 (DB 2309)
+            # E_p 205 000 eingegeben, E 170 000 aus der Datenbank. Gerechnet wird
+            # weiter mit E - welchen Modul RFEM rechnet, belegt die Datei nicht
+            # (G = 65 385 = 170 000 / 2,6 ist aus E abgeleitet, Ergebnisse fehlen)
+            Ep = props.get("E_p")
             E = props.get("E", E)
             nu = props.get("nu", nu)
             alpha = props.get("alpha", alpha)
             fy = props.get("f_y") or props.get("f_p01k")
             fu = props.get("f_u") or props.get("f_pk")
-            rho = props.get("rho") or 0.0
-            if not rho and props.get("gamma"):
-                rho = props["gamma"] / 9.81      # Wichte [N/m^3] -> Dichte
-            rho = rho or 7850.0
+            # Spannstahl (MaterialImpl.materialType 15, am Drehlager die
+            # Ankerstaebe): f_p0,1k ist die Fliessgrenze, f_pk die Grenze der
+            # Verfestigung - die Art traegt nur die Namen (13.10.2026)
+            if impl.get("materialType") == MATERIALTYP_SPANNSTAHL or (
+                    not props.get("f_y") and props.get("f_p01k")):
+                art = "Spannstahl"
+            # Dichte, sonst Wichte; eine angegebene 0 bleibt 0 - ein
+            # gewichtsloses Hilfsmaterial (Klarstellung des Anwenders vom
+            # 13.10.2026: „Nullmaterial ist tatsächlich vom user mit 0 wichte
+            # angegeben, das ist kein fehler“). 7850 nur, wenn RFEM keines von
+            # beiden fuehrt. Bis zum 13.10.2026 wurde aus der 0 still 7850
+            # (``rho or 7850.0``): am Drehlager trug das „Nullmaterial“ das
+            # Gewicht von Stahl.
+            rho_p, gamma_p = props.get("rho"), props.get("gamma")
+            if rho_p:
+                rho = rho_p
+            elif gamma_p:
+                rho = gamma_p / 9.81             # Wichte [N/m^3] -> Dichte
+            elif rho_p == 0.0 or gamma_p == 0.0:
+                rho = 0.0
+            else:
+                rho = 7850.0
     fy_dicke = props.get("f_y_dicke") if h is not None and impl is not None else None
     fu_dicke = props.get("f_u_dicke") if h is not None and impl is not None else None
     if chars:
@@ -503,12 +534,28 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     name = C.unique_name(model.materials, name)
     model.add_material(Material(name, E=E, nu=nu, rho=rho, alpha=alpha,
                                 fy=fy, fu=fu, grade=grade,
-                                fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or [])))
+                                fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or []),
+                                art=art, Ep=Ep if art == "Spannstahl" else None))
     C.say(log, f"  Material '{name}': E = {E / 1e9:g} GPa"
-               + (f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
+               + (f", Spannstahl f_p0,1k = {fy / 1e6:g} N/mm^2, f_pk = {fu / 1e6:g} N/mm^2"
+                  if art == "Spannstahl" and fy and fu else
+                  f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
                + (f" (nach Dicke: {model.materials[name].dickentext('fy')})" if fy_dicke else "")
                + (f", rho = {rho:g} kg/m^3" if rho else "")
                + (f" (Dlubal-Datenbanknummer {dbnr})" if dbnr else ""))
+    if rho == 0.0:
+        # nur ein Vorschlag: den Schalter „vom Volumennachweis ausnehmen“
+        # setzt der Anwender (13.10.2026), nie der Import
+        C.hinweis_gewichtslos(log, name)
+    if art == "Spannstahl":
+        from ..zahlen import zahl_text
+
+        def nmm(v):
+            return zahl_text(v / 1e6) if v else "–"
+        C.say(log, f"    Spannstahl (RFEM-Werkstofftyp {MATERIALTYP_SPANNSTAHL}): f_p0,1k = {nmm(fy)}, "
+                   f"f_pk = {nmm(fu)}, E_p = {nmm(Ep)} N/mm² - Stabnachweis nach "
+                   "EN 1992-1-1 bzw. Zulassung im Spannungsquerschnitt A_s; gerechnet wird mit "
+                   f"E = {nmm(E)} N/mm²")
     cache[mat_id] = name
     return name
 
@@ -563,6 +610,10 @@ def _material_props(db: Db, impl: dict) -> dict:
             val = row["valueSI"]
             if val not in (None, 0.0) and k not in out:
                 out[str(k)] = float(val)
+            elif val == 0.0 and str(k) in ("rho", "gamma") and str(k) not in out:
+                # Dichte oder Wichte 0 ist eine Angabe (gewichtsloses
+                # Hilfsmaterial), kein fehlender Wert - seit 13.10.2026
+                out[str(k)] = 0.0
     return out
 
 
@@ -1003,8 +1054,22 @@ def read_rf6(path: str, model: Model = None, log: list = None,
         con.close()
         if tmp_dir and not keep_db:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+    _vorspannung_hinweisen(m, log)
     _melde(fortschritt, 1.0, f"Datei gelesen: {m.nn} Knoten, {len(m.elements)} Elemente")
     return m
+
+
+def _vorspannung_hinweisen(m: Model, log: list) -> None:
+    """Die Anfangsvorspannung bleibt eine eingepraegte Dehnung (dT), der Import
+    sagt aber, welche Kraft danach bleibt: „Anfangsvorspannung 952 kN ergibt
+    nach elastischer Verkürzung X kN – in Sollkraft umwandeln?“ (Entscheidung
+    des Anwenders vom 13.10.2026; statik3d.vorspannkraft.import_hinweise).
+    Ein Fehler hier haelt den Import nicht auf."""
+    try:
+        from .. import vorspannkraft as vk
+        vk.import_hinweise(m, log)
+    except Exception as ex:                 # noqa: BLE001
+        C.warn(log, f"Hinweis zur Vorspannung nicht gebildet ({type(ex).__name__}: {str(ex)[:160]})")
 
 
 def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
@@ -1064,6 +1129,8 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
     typen: dict[str, int] = {}
     hinweise: dict[str, str] = {}
     weggelassen: dict[str, int] = {}
+    nur_je_art: dict[str, list] = {}      # "zug"/"druck"/"beides" -> Namen der Zug-/Druckstaebe
+    stabart: dict[str, str] = {}          # Stabname -> Stabtyp im Klartext (Schraubenhinweis)
     for h, impl in db.impls("Member"):
         nodes = [node_of[n] for n in line_nodes.get(impl.get("line_id"), []) if n in node_of]
         if len(nodes) < 2:
@@ -1091,8 +1158,19 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
             n_beams += 1
         if not elems:
             continue
+        # Zug- und Druckstab: „trägt nur“ wie in RFEM (14.10.2026); das Seil
+        # traegt nur Zug (seit dem 14.10.2026 ein Seil, bis dahin ein
+        # Fachwerkstab, der auch Druck trug)
+        nur = stab_nur(h.get("impl_table"), impl) if etyp in ("truss", "seil") else ""
+        for i in elems:
+            m.elements[i].nur = nur
         mem = m.add_member(C.unique_name(m.members, f"S{h.get('userID') or h['id']}"), elems)
+        if h.get("impl_table") in ("MemberImplTension", "MemberImplCompression"):
+            nur_je_art.setdefault(nur or "beides", []).append(mem.name)
+        elif h.get("impl_table") == "MemberImplCable":
+            nur_je_art.setdefault("seil", []).append(mem.name)
         member_name[h["id"]] = mem.name
+        stabart[mem.name] = ttext
         if h.get("userID") is not None:
             member_user[int(h["userID"])] = mem.name
         if impl.get("isDeactivatedForCalculation"):
@@ -1114,6 +1192,23 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         C.say(log, "  Stabtypen: " + ", ".join(f"{n}x {k}" for k, n in sorted(typen.items())))
     for k, t in sorted(hinweise.items()):
         C.warn(log, f"  Stabtyp {k}: {t}.")
+    for art, eins, mehr in (
+            ("zug", "Zugstab trägt nur Zug (fällt wie in RFEM bei Druck aus)",
+             "Zugstäbe tragen nur Zug (fallen wie in RFEM bei Druck aus)"),
+            ("druck", "Druckstab trägt nur Druck (fällt wie in RFEM bei Zug aus)",
+             "Druckstäbe tragen nur Druck (fallen wie in RFEM bei Zug aus)"),
+            ("beides", "Zug-/Druckstab trägt wie in RFEM auch Druck bzw. Zug (isActiveInCompression = 1)",
+             "Zug-/Druckstäbe tragen wie in RFEM auch Druck bzw. Zug (isActiveInCompression = 1)"),
+            ("seil", "Seil trägt nur Zug (fällt wie in RFEM bei Druck aus; Durchhang als Kettenlinie "
+                     "nach Theorie III. Ordnung)",
+             "Seile tragen nur Zug (fallen wie in RFEM bei Druck aus; Durchhang als Kettenlinie "
+             "nach Theorie III. Ordnung)")):
+        namen = nur_je_art.get(art) or []
+        if namen:
+            C.say(log, f"  {len(namen)} {eins if len(namen) == 1 else mehr}: " + ", ".join(namen[:12])
+                       + (" …" if len(namen) > 12 else ""))
+    m.meta[ZUGSTAEBE_MERKMAL] = "beim Import gesetzt (14.10.2026)"
+    m.meta[SEILE_MERKMAL] = "beim Import gesetzt (14.10.2026)"
     if weggelassen:
         C.say(log, "  nicht uebernommen (keine Tragglieder): "
                    + ", ".join(f"{n}x {k}" for k, n in sorted(weggelassen.items())))
@@ -1230,6 +1325,13 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
                 line_name, solid_name, strukturmod, fortschritt=fortschritt)
     _object_selections(db, m, log, node_user, line_name, member_user, surf_name, solid_name)
     _melde(fortschritt, 0.96, "Modell prüfen")
+    # Schraubenguete (13.10.2026, „hinweis beim import“): runde Staebe bis
+    # Ø 36 mm an Volumen und ihre Schraubenkoerper aus einem Werkstoff unter
+    # f_yb 640 werden gemeldet, gebuendelt; umgestellt wird nichts
+    from .schraubenhinweis import schraubenhinweis
+    hinweis = schraubenhinweis(m, stabarten=stabart)
+    if hinweis:
+        C.warn(log, hinweis)
     _diagnose(m, log)
 
 
@@ -1452,19 +1554,332 @@ def _diagnose(m: Model, log: list) -> None:
 
 #: Einwirkungskategorien RFEM (actionCategoryId) -> Kategorie in Statik3D.
 #:
-#: **Eine Annahme, an keiner Datei belegt** (eingefuehrt ohne Quelle; die
-#: Tabellen Action und ActionImpl sind in beiden vorliegenden Dateien leer).
-#: Gemessen am 22.09.2026: am CBG-Trolley tragen 8 Lastfaelle die Kennzahl
-#: 11, 7 davon heissen "G - ..." (Steel Structure, Bucket Wheel ...) und
-#: werden nur ueber den Namen zu G; am Drehlager tragen alle 422 Lastfaelle
-#: die Kennzahl 11, nachgezaehlt am 23.09.2026: 128 "Bemessungslast im GZT
-#: ...", 164 "Ermuedungslast - Drehlager ...", 104 "char.Last - Drehlager
-#: ...", 24 "char.Last - Verkehrslage ..." und 2 "Vorspannung der Zuganker
-#: ...". Dieselbe Kennzahl steht also je Datei und sogar innerhalb einer
-#: Datei fuer anderes. Darum nennt das Protokoll je Kennzahl die
-#: angenommene Kategorie und warnt, psi und gamma nachzusehen - wie
-#: LOAD_DIRECTION seine abgeleiteten Richtungen 11 bis 13 nennt.
-ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
+#: **Quelle** (13.10.2026): die Aufzaehlung ``LoadCase.ActionCategory`` der
+#: Dlubal-API (RFEM 6.15, dlubal/api/rfem/loading/load_case_pb2, 296 Werte).
+#: Ihre Zahlen sind die der Datenbank: belegt an den Beispielmodellen von
+#: RFEM 6.15 fuer 11 („Self-weight“, „Permanent“), 19, 21 („FF Prestress“),
+#: 32 („Imposed load“), 33 („Verkehrslast“), 44 („Dach“), 54 („Snow“) und
+#: 61 („Wind in +X“) - die Lastfallnamen dort passen zur Aufzaehlung. Die
+#: uebrigen Kennzahlen sind nur aus den Namen der Aufzaehlung gelesen, an
+#: keiner Datei gemessen. Bis zum 13.10.2026 stand hier eine Annahme ohne
+#: Quelle (1, 2 -> G; 3, 11, 12, 13 -> Q); die Kennzahlen 1 bis 3 gibt es in
+#: der Aufzaehlung nicht, 13 ist „Eislast“, und 11 ist „Permanent G“, nicht Q.
+#:
+#: Aufgenommen ist nur, was einer Einwirkungsart von Statik3D **eindeutig**
+#: entspricht (G, P, Q_A bis Q_H, S, S_H, W, T, SET, A, Q_K, FAT). Mischformen
+#: („staendig und veraenderlich“), Erdbeben, Verkehrslasten nach Brueckenvorschrift
+#: und alles, was Statik3D nicht kennt, bleiben „nicht zugeordnet“.
+_KENNZAHLEN = (
+    ("G", (11, 12, 14, 15, 16, 82, 83, 84, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270,
+           271, 272, 273, 6287, 6288, 6314, 6315, 6316, 6317, 6318, 6319, 6320, 6352, 6353,
+           6354, 6355, 6384, 6385)),
+    ("P", (21, 23, 6310)),
+    ("Q", (26, 28, 38, 40, 6286, 6356, 6374)),
+    ("Q_A", (32, 6260)), ("Q_B", (33, 6261)), ("Q_C", (34, 6262)), ("Q_D", (35, 6263)),
+    ("Q_E", (36, 6264, 6265, 6266)), ("Q_F", (42, 6268)), ("Q_G", (43, 6269)),
+    ("Q_H", (44, 47, 6270)),
+    ("S", (54, 60)), ("S_H", (53,)),
+    ("W", (61, 62, 65, 66, 67, 129, 6338)),
+    ("T", (71, 6277, 6340)),
+    ("SET", (81, 120, 140)),
+    ("A", (101, 102, 104, 105, 6373)),
+    ("Q_K", (6278,)),
+    ("FAT", (6377, 6382)),
+)
+KATEGORIE_AUS_KENNZAHL = {k: kat for kat, ks in _KENNZAHLEN for k in ks}
+
+#: Die Kennzahl, die RFEM jedem **neuen** Lastfall gibt: „Permanent | G“. Sie
+#: sagt nichts ueber die Einwirkung - am Drehlager tragen alle 422 Lastfaelle
+#: diese Kennzahl, auch „Verkehrslage“ und „Ermuedungslast“, und am CBG-Trolley
+#: 8 Lastfaelle, von denen 7 „G - ...“ heissen und einer nicht. Fuer sich
+#: genommen laesst sie darum **keine** Zuordnung zu (Entscheidung des Anwenders
+#: vom 13.10.2026: „nicht zugeordnet“ statt Q). Dasselbe gilt fuer eine
+#: **Aktion** des Kombinationsassistenten (ActionImpl) mit dieser Kennzahl:
+#: auch eine neue Aktion beginnt als „Permanent G“ (gemessen an den
+#: Beispielmodellen „Dynamic Analysis“ von RFEM 6.15, wo „wind +x“ und „live
+#: load roof“ in Aktionen mit der Kennzahl 11 stehen). Eine Aktion mit einer
+#: anderen Kennzahl ist dagegen eine Wahl des Aufstellers.
+KENNZAHL_VORGABE = 11
+
+#: Tabellen der Datenbank, an denen Lasten haengen (Griff-Tabelle mit
+#: parentModelObject_table = 'LoadCase')
+def _lasttabelle(name: str) -> bool:
+    return name.endswith("Load") or name.endswith("Loads") or "Deformation" in name
+
+
+def _aktionen(db: "Db") -> dict:
+    """{LoadCase-Griff-id: [(Kennzahl, Name der Aktion), ...]} aus den
+    Aktionen des Kombinationsassistenten (``Action``/``ActionImpl``, Lastfaelle
+    in ``ActionImpl_items``). Leer, wenn die Datei keine fuehrt (Drehlager,
+    CBG-Trolley: beide Tabellen leer)."""
+    out: dict = {}
+    if not db.has("Action") or not db.has("ActionImpl"):
+        return out
+    for h, impl in db.impls("Action"):
+        akid = int(impl.get("actionCategoryId") or 0)
+        tbl = (h.get("impl_table") or "ActionImpl") + "_items"
+        for z in db.container_rows(tbl).get(impl["id"], []):
+            lid = z.get("loadCase_id")
+            if lid is not None:
+                out.setdefault(lid, []).append((akid, (impl.get("name") or "").strip()))
+    return out
+
+
+def _lastinhalt(db: "Db") -> dict:
+    """{LoadCase-Griff-id: (Zahl Vorspannlasten, Zahl anderer Lasten)} - was
+    in der Quelldatei am Lastfall haengt, unabhaengig davon, was der Import
+    davon uebernehmen konnte. Ein Lastfall mit nur Vorspannlasten (und ohne
+    Eigengewicht) ist ein reiner Vorspannungslastfall."""
+    out: dict = {}
+    for t in sorted(db.tables):
+        if not _lasttabelle(t):
+            continue
+        cols = db.columns(t)
+        if "parentModelObject_table" not in cols or "impl_table" not in cols:
+            continue
+        cur = db.con.execute(
+            f'SELECT parentModelObject_id, impl_table FROM "{t}" WHERE parentModelObject_table = ?',
+            ("LoadCase",))
+        for pid, it in cur.fetchall():
+            v, a = out.get(pid, (0, 0))
+            if "Prestress" in (it or ""):
+                v += 1
+            else:
+                a += 1
+            out[pid] = (v, a)
+    return out
+
+
+def _kombinationsrollen(db: "Db", lc_name: dict, bem: dict) -> dict:
+    """{Lastfall: [(Art, belegt, Faktor, allein), ...]} - jedes Vorkommen eines
+    Lastfalls in einer Last- oder Ergebniskombination der Quelldatei.
+
+    ``Art`` ist die Kombinationsart der Bemessungssituation (``ULS``,
+    ``SLS_CH``, ``FAT`` ...), ``belegt`` ob sie aus einer **bekannten**
+    Kennzahl stammt (SITUATION_ART) und nicht die Rueckfallannahme „GZT“ ist,
+    ``Faktor`` Eintragsfaktor mal Gruppenfaktor, ``allein`` ob der Lastfall
+    eine Alternative fuer sich bildet („LF1/p oder LF2/p“ - eine Zeile ohne
+    Nachbarn und ohne Klammer) und nicht in einer Summe steht. Gleiche
+    Zerlegung wie _combinations."""
+    out: dict = {}
+    for handle, impl_feld in (("LoadCombination", "LoadCombinationImpl_items"),
+                              ("ResultCombination", "ResultCombinationImpl_items")):
+        if not db.count(handle):
+            continue
+        for h, impl in db.impls(handle):
+            tbl = (h.get("impl_table") or "") + "_items"
+            zeilen = db.container_rows(tbl).get(impl["id"], [])
+            if not zeilen:
+                zeilen = db.container_rows(impl_feld).get(impl["id"], [])
+            zeilen = sorted(zeilen, key=lambda z: int(z.get("container_order") or 0))
+            _n, art, tid = bem.get(impl.get("designSituation_id"), ("", "", 0))
+            belegt = bool(art)
+            if not art:
+                st = impl.get("designSituationType")
+                belegt = st is not None and int(st) in SITUATION_TYP
+                art = SITUATION_TYP.get(int(st or 0), "ULS")
+            gruppen: list = [[]]
+            for z in zeilen:
+                gruppen[-1].append(z)
+                if handle == "ResultCombination" and z.get("operator") is not None \
+                        and int(z["operator"]) == OPERATOR_ODER:
+                    gruppen.append([])
+            for g in gruppen:
+                for z in g:
+                    nm = lc_name.get(z.get("modelObject_id")) \
+                        if (z.get("modelObject_table") or "") == "LoadCase" else None
+                    if not nm:
+                        continue
+                    f = float(z.get("modelObjectFactor") or 0.0) * float(z.get("groupFactor") or 1.0)
+                    allein = (len(g) == 1 and not z.get("leftParenthesis")
+                              and not z.get("rightParenthesis") and not int(z.get("subResult") or 0))
+                    out.setdefault(nm, []).append((art, belegt, f, allein))
+    return out
+
+
+#: Namen, die gegen ein Kennzeichen „Bemessungslastfall“ sprechen bzw. es
+#: nahelegen (nach C.norm_key: klein, ohne Umlaute und Satzzeichen)
+_NAME_CHARAKTERISTISCH = re.compile(r"\bchar\b|charakterist|characteristic|gebrauchs")
+_NAME_BEMESSUNGSLAST = re.compile(r"\bbemessungslast|\bbemessungswert|\bdesign load")
+
+
+def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: list) -> None:
+    """Einwirkung und Kennzeichen „Bemessungslastfall“ der importierten
+    Lastfaelle bestimmen (Entscheidung des Anwenders vom 13.10.2026).
+
+    **Einwirkung** - in dieser Reihenfolge, der erste eindeutige Fund gilt:
+
+    1. der Lastfall steht in einer Aktion des Kombinationsassistenten, deren
+       Kennzahl nicht die Vorgabe 11 ist und die die Tabelle fuehrt;
+    2. seine eigene Kennzahl, wenn sie nicht die Vorgabe 11 ist und die
+       Tabelle sie fuehrt;
+    3. er steht in der Quelldatei **nur** in Ermuedungskombinationen
+       (Bemessungssituation „GZT (FAT)“, bekannte Kennzahl): FAT;
+    4. an ihm haengen **nur** Vorspannlasten, kein Eigengewicht: P;
+    5. an ihm haengt **nur** Eigengewicht (kein anderer Lasttyp): G - das
+       Eigengewicht der Bauteile ist nach DIN EN 1990 eine staendige Einwirkung;
+    6. sonst „nicht zugeordnet“ - Kombinationen mit ihm werden nicht gerechnet.
+
+    Der **Name** setzt nichts: er steht hoechstens als Vorschlag im Protokoll.
+    Ein Name ist Freitext, und derselbe Text („Verkehrslage“, „Eigengewicht“)
+    steht je Datei fuer anderes (gemessen am Drehlager).
+
+    **Kennzeichen „Bemessungslastfall, bereits faktorisiert“** wird gesetzt,
+    wenn die Quelldatei den Lastfall selbst so behandelt: er steht in einer
+    Kombination der Bemessungssituation **GZT** (bekannte Kennzahl) und in
+    **keiner** anderen, jedes Mal als eigene Alternative mit dem Faktor 1,0.
+    RFEM bemisst dann mit genau diesem Ergebnis - die Lasten sind Bemessungs-
+    werte, ein zweites gamma haelte sie doppelt an. Spricht der Name
+    dagegen („char.“, „charakteristisch“), wird nichts gesetzt und gemeldet.
+    Passt nur der Name („Bemessungslast“) und die Struktur nicht, gibt es
+    einen Vorschlag im Protokoll, kein Kennzeichen: setzt jemand den Haken zu
+    Unrecht, werden Lasten ohne gamma angesetzt - die unsichere Richtung."""
+    from ..model import KATEGORIE_OFFEN
+    from ..begriffe import lastfaelle_kurz, anzahl
+    aktionen = _aktionen(db)
+    inhalt = _lastinhalt(db)
+    rollen = _kombinationsrollen(db, lc_name, _bemessungssituationen(db))
+    quelle: dict = {}                   # Kategorie -> Wie -> [Lastfaelle]
+    je_kennzahl: dict = {}              # Kennzahl -> Zahl
+    je_kennzahl_kat: dict = {}          # Kennzahl -> {Kategorie: [Lastfaelle]}
+    unbekannt: dict = {}
+    widerspruch: list = []
+    vorschlag: dict = {}                # Kategorie nach dem Namen -> [Lastfaelle]
+    aus_aktion = 0
+    for nm, i in info.items():
+        lc = m.load_cases[nm]
+        akid, lcid = i["akid"], i["id"]
+        je_kennzahl[akid] = je_kennzahl.get(akid, 0) + 1
+        if akid and akid != KENNZAHL_VORGABE and akid not in KATEGORIE_AUS_KENNZAHL:
+            unbekannt[akid] = unbekannt.get(akid, 0) + 1
+        kat, wie = None, ""
+        aus_akt = {KATEGORIE_AUS_KENNZAHL.get(a) for a, _n in aktionen.get(lcid, [])
+                   if a != KENNZAHL_VORGABE} - {None}
+        eigen = KATEGORIE_AUS_KENNZAHL.get(akid) if akid != KENNZAHL_VORGABE else None
+        if len(aus_akt) > 1 or (aus_akt and eigen and eigen not in aus_akt):
+            widerspruch.append(nm)          # die Quelle sagt zwei Dinge: nicht raten
+        elif aus_akt:
+            kat, wie = next(iter(aus_akt)), "Aktion"
+            aus_aktion += 1
+        elif eigen:
+            kat, wie = eigen, "Kennzahl"
+        else:
+            r = rollen.get(nm, [])
+            if r and all(a == "FAT" and b for a, b, _f, _al in r):
+                kat, wie = "FAT", "Struktur"
+            else:
+                v, a = inhalt.get(lcid, (0, 0))
+                if v and not a and not i["eigengewicht"]:
+                    kat, wie = "P", "Inhalt"
+                elif i["eigengewicht"] and not v and not a:
+                    kat, wie = "G", "Inhalt"
+        if kat is None:
+            kat = KATEGORIE_OFFEN
+            n_ = C.category_from_text(i["name"], "")
+            if n_:
+                vorschlag.setdefault(n_, []).append(nm)
+        lc.category = kat
+        quelle.setdefault(kat, {}).setdefault(wie or "offen", []).append(nm)
+        if wie == "Kennzahl":
+            je_kennzahl_kat.setdefault(akid, {}).setdefault(kat, []).append(nm)
+
+    # ---- Bemessungslastfaelle ------------------------------------------
+    gesetzt: list = []
+    gegen_name: list = []
+    name_stimmt = 0
+    for nm, i in info.items():
+        r = rollen.get(nm, [])
+        norm = C.norm_key(i["name"])
+        aus_struktur = bool(r) and all(a == "ULS" and b and al and abs(f - 1.0) < 1e-12
+                                       for a, b, f, al in r)
+        if aus_struktur and _NAME_CHARAKTERISTISCH.search(norm):
+            gegen_name.append(nm)
+        elif aus_struktur:
+            m.load_cases[nm].faktorisiert = True
+            gesetzt.append(nm)
+            name_stimmt += bool(_NAME_BEMESSUNGSLAST.search(norm))
+    nur_name = [nm for nm, i in info.items()
+                if nm not in gesetzt and nm not in gegen_name
+                and _NAME_BEMESSUNGSLAST.search(C.norm_key(i["name"]))]
+
+    # ---- Protokoll -------------------------------------------------------
+    wie_text = {"Aktion": "aus einer Aktion des Kombinationsassistenten",
+                "Kennzahl": "aus der RFEM-Kennzahl",
+                "Struktur": "nur in Ermüdungskombinationen der Quelldatei",
+                "Inhalt": "nur Vorspannlasten bzw. nur Eigengewicht",
+                "offen": "nicht zuordenbar"}
+    n = len(info)
+    if n:
+        C.say(log, f"  Einwirkung: " + ", ".join(
+            f"{sum(len(v) for v in w.values())}x {('nicht zugeordnet' if k == KATEGORIE_OFFEN else k)}"
+            for k, w in sorted(quelle.items(), key=lambda kv: kv[0] == KATEGORIE_OFFEN)))
+        for k, w in sorted(quelle.items(), key=lambda kv: kv[0] == KATEGORIE_OFFEN):
+            for wie in ("Aktion", "Kennzahl", "Struktur", "Inhalt"):
+                if wie in w:
+                    C.say(log, f"    {k}: {len(w[wie])}x {wie_text[wie]}")
+    for akid, k in sorted(je_kennzahl.items()):
+        if akid == KENNZAHL_VORGABE:
+            C.say(log, f"    Kennzahl {akid}: {k}x - die RFEM-Vorgabe jedes neuen Lastfalls "
+                       "(„Permanent G“); sie sagt nichts über die Einwirkung")
+        elif akid in KATEGORIE_AUS_KENNZAHL:
+            C.say(log, f"    Kennzahl {akid} -> {KATEGORIE_AUS_KENNZAHL[akid]}: {k}x "
+                       "(Aufzählung der Dlubal-API 6.15)")
+    if unbekannt:
+        C.warn(log, "  Einwirkungskennzahlen, die die Tabelle nicht führt (nicht zugeordnet): "
+                    + ", ".join(f"{a} ({k}x)" for a, k in sorted(unbekannt.items())))
+    if widerspruch:
+        C.warn(log, f"  {anzahl(len(widerspruch), 'Lastfall nennt', 'Lastfälle nennen')} in Aktion und "
+                    "Kennzahl verschiedene Einwirkungen - nicht zugeordnet: " + lastfaelle_kurz(widerspruch))
+    offen = [nm for nm, lc in m.load_cases.items()
+             if nm in info and lc.category == KATEGORIE_OFFEN and not lc.faktorisiert]
+    for k, lfs in sorted(vorschlag.items()):
+        lfs = [x for x in lfs if not m.load_cases[x].faktorisiert]
+        if lfs:
+            C.say(log, f"    Vorschlag nach dem Namen (nicht gesetzt): {k} für {lastfaelle_kurz(lfs)}")
+    if offen:
+        C.warn(log, f"  {anzahl(len(offen), 'Lastfall', 'Lastfälle')} ohne zugeordnete Einwirkung "
+                    f"({lastfaelle_kurz(offen)}): "
+                    "Kombinationen mit ihnen werden nicht gerechnet, einzelne Lastfälle schon. "
+                    "Zuordnung: Lastfall im Modellbaum anklicken, rechts unter „Einwirkung“ wählen "
+                    "(oder „Bemessungslastfall“ ankreuzen).")
+    if gesetzt:
+        C.say(log, f"  {anzahl(len(gesetzt), 'Lastfall', 'Lastfälle')} als Bemessungslastfall, bereits "
+                   f"faktorisiert, gekennzeichnet ({lastfaelle_kurz(gesetzt)}): in der Quelldatei "
+                   f"{'steht er' if len(gesetzt) == 1 else 'stehen sie'} nur in "
+                   "Kombinationen der Bemessungssituation GZT, jeweils als eigene Alternative mit dem "
+                   f"Faktor 1,0 (der Name nennt „Bemessungslast“ bei {name_stimmt} von {len(gesetzt)}). "
+                   "In einer Kombination gehen sie mit γ = 1,0 und ohne ψ ein, ein zweites γ gibt es "
+                   "nicht.")
+    if gegen_name:
+        C.warn(log, f"  {anzahl(len(gegen_name), 'Lastfall steht', 'Lastfälle stehen')} in der Quelldatei "
+                    "mit dem Faktor 1,0 in GZT-Kombinationen, "
+                    f"{'heißt' if len(gegen_name) == 1 else 'heißen'} aber „charakteristisch“ "
+                    f"({lastfaelle_kurz(gegen_name)}) - nicht als Bemessungslastfall gekennzeichnet; "
+                    "bitte prüfen.")
+    if nur_name:
+        C.say(log, f"    Vorschlag nach dem Namen (nicht gesetzt): Bemessungslastfall für "
+                   f"{lastfaelle_kurz(nur_name)} - die Quelldatei führt sie nicht als GZT-Alternative "
+                   "mit dem Faktor 1,0; wenn ihre Lasten schon Bemessungswerte sind, in der Lastfallmaske "
+                   "ankreuzen.")
+    # Vorspannung im gemischten Lastfall: ein Lastfall hat eine Einwirkung und ein gamma
+    gemischt = []
+    for nm in info:
+        lc = m.load_cases[nm]
+        n_vor = sum(1 for t in lc.temp_loads if t.aus_vorspannung)
+        if n_vor and lc.n_loads > n_vor and not lc.faktorisiert and lc.category not in ("FAT", "P"):
+            gemischt.append(nm)
+    if gemischt:
+        C.warn(log, f"  {anzahl(len(gemischt), 'Lastfall mischt', 'Lastfälle mischen')} Vorspannung mit "
+                    f"anderen Lasten und {'ist kein Bemessungslastfall' if len(gemischt) == 1 else 'sind keine Bemessungslastfälle'} "
+                    f"({lastfaelle_kurz(gemischt)}): eine Kombination gibt dem "
+                    "ganzen Lastfall das γ seiner Einwirkung, die Vorspannung darin also nicht "
+                    "γ_P = 1,0. Die Vorspannung in einen eigenen Lastfall (Einwirkung P) legen "
+                    "oder den Lastfall als Bemessungslastfall kennzeichnen.")
+    pure_p = quelle.get("P", {})
+    if pure_p:
+        n_p = sum(len(v) for v in pure_p.values())
+        C.say(log, f"  {anzahl(n_p, 'reiner Vorspannungslastfall', 'reine Vorspannungslastfälle')} "
+                   "mit Einwirkung P und γ_P = 1,0.")
 
 
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
@@ -1472,22 +1887,24 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 surf_name: dict = None, line_name: dict = None,
                 solid_name: dict = None, strukturmod: dict = None,
                 fortschritt=None) -> None:
-    """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
+    """Lastfaelle mit Namen, Einwirkung und Eigengewichtsfaktor uebernehmen.
+
+    Die Einwirkung steht erst nach den Lasten und Kombinationen fest
+    (:func:`_einwirkungen_zuordnen`): sie haengt am Inhalt des Lastfalls und an
+    seinem Platz in den Kombinationen der Quelldatei. Bis dahin ist jeder
+    Lastfall „nicht zugeordnet“.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
     RFEM an Objekten, die ohne Netz nicht aufloesbar sind; ihre Anzahl steht
     im Protokoll.
     """
+    from ..model import KATEGORIE_OFFEN
     _melde(fortschritt, 0.78, "Lastfälle lesen")
     n = 0
     lc_name: dict[int, str] = {}
     mit_mod: dict[str, int] = {}
-    je_kat: dict[str, int] = {}
-    unbek_kat: dict[int, int] = {}
-    je_kennzahl: dict[int, int] = {}
-    # {Kennzahl: {Kategorie aus dem Namen: [Lastfall, ...]}} - was der Name
-    # gegenueber der Kennzahl umgestellt hat, je Lastfall (Befund FM9)
-    umgestellt: dict[int, dict[str, list]] = {}
+    #: je Lastfall, was die Zuordnung der Einwirkung aus der Quelle braucht
+    info: dict[str, dict] = {}
     ohne_mod = 0
     cases = db.impls("LoadCase")
     if cases:
@@ -1500,28 +1917,14 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     for h, impl in cases:
         name = (impl.get("name") or "").strip() or f"LF{h.get('userID') or h['id']}"
         akid = int(impl.get("actionCategoryId") or 0)
-        cat = ACTION_CATEGORY.get(akid, "Q")
-        je_kennzahl[akid] = je_kennzahl.get(akid, 0) + 1
-        if akid not in ACTION_CATEGORY:
-            unbek_kat[akid] = unbek_kat.get(akid, 0) + 1
-        aus_kennzahl = cat
-        if cat == "Q":
-            # Nur **innerhalb** der veraenderlichen Einwirkungen verfeinern.
-            # Ein "G" aus der Kennzahl darf der Freitext nicht umstossen: ein
-            # Lastfall "Windverband Eigenlast" mit Kennzahl 1 wuerde sonst zu
-            # W und damit veraenderlich (gemessen). Umgekehrt ist jedes "Q"
-            # ohnehin nur die Rueckfallkategorie und durch den Namen hoechstens
-            # zu verbessern.
-            cat = C.category_from_text(name, "Q")
-        je_kat[cat] = je_kat.get(cat, 0) + 1
         nm = C.unique_name(m.load_cases, f"LF{h.get('userID') or h['id']}")
-        if cat != aus_kennzahl:
-            umgestellt.setdefault(akid, {}).setdefault(cat, []).append(nm)
-        lc = m.add_load_case(nm, cat, description=name, activate=False)
+        lc = m.add_load_case(nm, KATEGORIE_OFFEN, description=name, activate=False)
         lc_name[h["id"]] = nm
         gz = impl.get("selfWeightFactors_z")
-        if impl.get("selfWeightActive") and gz:
+        eigengewicht = bool(impl.get("selfWeightActive") and gz)
+        if eigengewicht:
             lc.gravity = [0.0, 0.0, -9.81 * float(gz)]
+        info[nm] = {"akid": akid, "id": h["id"], "name": name, "eigengewicht": eigengewicht}
         # Rechnet der Lastfall mit einer Strukturmodifikation, gilt er in deren
         # Situation - mit dem verkleinerten System, nicht mit dem vollen.
         if impl.get("isStructureModificationEnabled"):
@@ -1538,34 +1941,8 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 ohne_mod += 1
         n += 1
     if n:
-        # Nicht mehr "Einwirkungskategorie uebernommen": uebernommen ist nur
-        # die Kennzahl, die Kategorie ist daraus angenommen (Befund FM9).
-        C.say(log, f"{n} Lastfaelle uebernommen (Namen, Eigengewichtsfaktor; "
-                   "Einwirkungskategorie aus der Kennzahl angenommen)")
-    if je_kat:
-        C.say(log, "  Einwirkungskategorie: " + ", ".join(
-            f"{k}x {c}" for c, k in sorted(je_kat.items())))
-    for akid, k in sorted(je_kennzahl.items()):
-        herkunft = ("Annahme, an keiner Datei belegt" if akid in ACTION_CATEGORY
-                    else "unbekannte Kennzahl, Rueckfall")
-        zeile = (f"    Kennzahl {akid} -> {ACTION_CATEGORY.get(akid, 'Q')} "
-                 f"({herkunft}): {k}x")
-        if akid in umgestellt:
-            zeile += "; davon ueber den Namen umgestellt: " + "; ".join(
-                f"zu {c}: {', '.join(lfs)}" for c, lfs in sorted(umgestellt[akid].items()))
-        C.say(log, zeile)
-    bekannt = sorted(a for a in je_kennzahl if a in ACTION_CATEGORY)
-    if bekannt:
-        C.warn(log, "  Einwirkungskategorie aus der Kennzahl angenommen ("
-                    + ", ".join(f"{a} -> {ACTION_CATEGORY[a]}" for a in bekannt)
-                    + "): die Zuordnung ist an keiner RFEM-Datei belegt, und "
-                      "dieselbe Kennzahl steht je Datei fuer anderes. psi und "
-                      "gamma bitte in der Lastfallmaske nachsehen.")
-    if unbek_kat:
-        C.warn(log, "  Einwirkungskategorien mit unbekannter Kennzahl: "
-                    + ", ".join(f"{c} ({k}x)" for c, k in sorted(unbek_kat.items()))
-                    + " - als „Q“ gefuehrt (veraenderlich, allgemein); "
-                      "psi und gamma bitte in der Lastfallmaske nachsehen.")
+        C.say(log, f"{n} Lastfaelle uebernommen (Namen, Eigengewichtsfaktor; Einwirkung und "
+                   "Kennzeichen Bemessungslastfall nach den Lasten und Kombinationen, siehe unten)")
     for sit, k in sorted(mit_mod.items()):
         C.say(log, f"  {k} davon in der Situation „{sit}“ (Strukturmodifikation)")
     if ohne_mod:
@@ -1576,6 +1953,10 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
            line_name, solid_name)
     _melde(fortschritt, 0.90, "Kombinationen lesen")
     _combinations(db, m, lc_name, log)
+    # Einwirkung und Kennzeichen Bemessungslastfall: erst jetzt, mit Inhalt und
+    # Kombinationen der Quelldatei (13.10.2026)
+    _melde(fortschritt, 0.93, "Einwirkungen zuordnen")
+    _einwirkungen_zuordnen(db, m, lc_name, info, log)
     _melde(fortschritt, 0.94, f"{len(m.combinations)} Kombinationen - Kerbfälle vorschlagen")
     # Die Datei fuehrt keine Kerbfaelle (Drehlager: 64 Zugstaebe Rund 40/20/16,
     # 108 Volumen - keiner). Vorschlaege aus dem Modell, als solche markiert.
@@ -2216,12 +2597,15 @@ MEMBER_TYPES = {
     "MemberImplRib": ("beam", "Rippe", "die mitwirkende Plattenbreite fehlt"),
     "MemberImplTruss": ("truss", "Fachwerkstab", ""),
     "MemberImplTrussOnlyN": ("truss", "Fachwerkstab (nur N)", ""),
-    "MemberImplTension": ("truss", "Zugstab",
-                          "faellt in RFEM bei Druck aus - hier traegt er auch Druck"),
-    "MemberImplCompression": ("truss", "Druckstab",
-                              "faellt in RFEM bei Zug aus - hier traegt er auch Zug"),
-    "MemberImplCable": ("truss", "Seil",
-                        "Seiltheorie (Durchhang, Ausfall bei Druck) fehlt"),
+    # Zug- und Druckstab: „trägt nur“ Zug bzw. Druck (stab_nur, seit 14.10.2026;
+    # bis dahin trugen sie hier auch die andere Kraft, und das Protokoll warnte)
+    "MemberImplTension": ("truss", "Zugstab", ""),
+    "MemberImplCompression": ("truss", "Druckstab", ""),
+    # Seil: das Element seil, „trägt nur“ Zug (stab_nur) - nach Theorie I./II.
+    # Ordnung ein Zugstab, der bei Druck ausfaellt, nach Theorie III. Ordnung
+    # die Kettenlinie. Bis zum 14.10.2026 ein Fachwerkstab, der auch Druck
+    # trug, mit der Warnung „Seiltheorie (Durchhang, Ausfall bei Druck) fehlt“
+    "MemberImplCable": ("seil", "Seil", ""),
     "MemberImplBuckling": ("beam", "Knickstab", ""),
     "MemberImplSpring": ("truss", "Federstab", "die Federkennlinie fehlt"),
     "MemberImplDamper": ("truss", "Daempfer", "nur die Achssteifigkeit"),
@@ -2240,6 +2624,125 @@ MEMBER_TYPES = {
 def member_type(impl_table: str) -> tuple:
     """(Elementtyp oder None, Klartext, Hinweis) zum Stabtyp."""
     return MEMBER_TYPES.get(impl_table or "", ("beam", impl_table or "unbekannt", ""))
+
+
+def stab_nur(impl_table: str, impl: dict) -> str:
+    """„trägt nur“ (Element.nur) zu einem RFEM-Stabtyp: "zug" fuer einen
+    Zugstab, der in RFEM bei Druck ausfaellt (MemberImplTension mit
+    isActiveInCompression = 0 - so am Drehlager alle 64 Staebe; fehlt die
+    Spalte, gilt der Ausfall wie in RFEM vorgegeben), "druck" fuer einen
+    Druckstab (MemberImplCompression, ausser isActiveInTension = 1), sonst "".
+    Ein Zugstab mit isActiveInCompression = 1 traegt in RFEM auch Druck und
+    bleibt ein gewoehnlicher Fachwerkstab. Ein Seil (MemberImplCable) traegt
+    nur Zug (seit dem 14.10.2026).
+
+    Bis zum 14.10.2026 legte der Import beide als Fachwerkstab an, der auch
+    die andere Kraft trug, und warnte nur im Protokoll („faellt in RFEM bei
+    Druck aus - hier traegt er auch Druck“): am Drehlager trug S57 im LF1
+    (Netz Mittel, 09.10.2026) -0,59 kN Druck."""
+    impl = impl or {}
+    if impl_table == "MemberImplTension":
+        return "" if impl.get("isActiveInCompression") else "zug"
+    if impl_table == "MemberImplCompression":
+        return "" if impl.get("isActiveInTension") else "druck"
+    if impl_table == "MemberImplCable":
+        return "zug"
+    return ""
+
+
+#: Merkmal am Modell (meta): der Import hat „trägt nur“ aus den RFEM-Stabtypen
+#: gesetzt - ein Modell ohne es, aus einer RFEM-6-Datei, ist von vor dem
+#: 14.10.2026 und bekommt beim Oeffnen einen Hinweis (model.zugstab_hinweis)
+ZUGSTAEBE_MERKMAL = "rfem_zugstaebe"
+#: ebenso fuer die Seile (seit dem 14.10.2026 ein Seil statt eines
+#: Fachwerkstabs): ohne es kommt derselbe Hinweis
+SEILE_MERKMAL = "rfem_seile"
+
+
+def rfem_datei(model: Model, pfad: str = None) -> str:
+    """Die RFEM-Datei, aus der :func:`zugstaebe_aus_rfem` nachliest: ``pfad``,
+    sonst die aus dem Importhinweis „zugstab“, sonst ``model.meta["quelle"]``
+    - leer, wenn es keine gibt. Die Oberflaeche zeigt sie in der Maske
+    „Stabtypen aus RFEM“ und prueft vor dem Umstellen, ob es sie gibt."""
+    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "zugstab"]
+    return str(pfad or (hinweise[-1].get("datei") if hinweise else None)
+               or (getattr(model, "meta", None) or {}).get("quelle") or "")
+
+
+def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict:
+    """Die Umstellung eines Modells, das vor dem 14.10.2026 aus RFEM 6
+    uebernommen wurde: die Stabtypen aus der RFEM-Datei nachlesen und
+    „trägt nur“ setzen wie der Import heute (:func:`stab_nur`) - nur auf
+    Anweisung des Anwenders (Importhinweis „zugstab“, model.zugstab_hinweis;
+    in der Oberflaeche Datei › Austausch › „Stabtypen aus RFEM nachlesen…“,
+    seit dem 14.10.2026).
+
+    ``pfad``: die RFEM-Datei; ohne Angabe die aus dem Hinweis bzw.
+    ``model.meta["quelle"]``. Zugeordnet wird ueber den Stabnamen des Imports
+    (S<Nummer in RFEM>); umgestellt wird nur ein Fachwerkstab, der noch
+    nichts traegt-nur-maessiges eingestellt hat - was der Anwender selbst
+    gesetzt hat, bleibt. Ein RFEM-Seil wird wieder ein Seil („trägt nur“
+    Zug), wie der Import es seit dem 14.10.2026 anlegt. Rueckgabe {zug,
+    druck, seil, auch_druck, ohne_stab, datei}: die Namen der umgestellten
+    Zug- und Druckstaebe und Seile, der Zugstaebe, die in RFEM auch Druck
+    tragen, und der RFEM-Zug-/Druckstaebe und Seile ohne passenden Stab.
+    FileNotFoundError, wenn die Datei fehlt - dann bleibt alles, wie es ist."""
+    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "zugstab"]
+    pfad = rfem_datei(model, pfad)
+    if not pfad or not os.path.isfile(str(pfad)):
+        raise FileNotFoundError(f"RFEM-Datei „{pfad}“ nicht gefunden - die Stabtypen lassen sich nicht "
+                                "nachlesen; Zugstäbe in der Stabmaske („trägt nur“ Zug) umstellen")
+    db_path = extract_db(str(pfad))
+    tmp_dir = os.path.dirname(db_path) if db_path != str(pfad) else None
+    je_name: dict = {}
+    con = connect(db_path)
+    try:
+        db = Db(con)
+        for h, impl in db.impls("Member"):
+            tbl = h.get("impl_table") or ""
+            if tbl in ("MemberImplTension", "MemberImplCompression", "MemberImplCable"):
+                je_name[f"S{h.get('userID') or h['id']}"] = (tbl, stab_nur(tbl, impl))
+    finally:
+        con.close()
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    aus = {"zug": [], "druck": [], "seil": [], "auch_druck": [], "ohne_stab": [], "datei": str(pfad)}
+    for name, (tbl, nur) in je_name.items():
+        mem = model.members.get(name)
+        if mem is None:
+            aus["ohne_stab"].append(name)
+            continue
+        els = [int(i) for i in mem.elements if 0 <= int(i) < len(model.elements)]
+        if not nur:
+            aus["auch_druck"].append(name)
+            continue
+        frei = [i for i in els if model.elements[i].typ == "truss" and not getattr(model.elements[i], "nur", "")]
+        if not frei:
+            continue
+        seil = tbl == "MemberImplCable"
+        for i in frei:
+            model.elements[i].nur = nur
+            if seil:
+                model.elements[i].typ = "seil"
+        aus["seil" if seil else nur].append(name)
+    for k in ("zug", "druck", "seil", "auch_druck", "ohne_stab"):
+        aus[k].sort(key=lambda s: (len(s), s))
+    model.meta[ZUGSTAEBE_MERKMAL] = "nachgelesen (14.10.2026)"
+    model.meta[SEILE_MERKMAL] = "nachgelesen (14.10.2026)"
+    for h in hinweise:
+        h["erledigt"] = True
+    from ..begriffe import anzahl
+    n_auch = len(aus["auch_druck"])
+    zeile = (f"Stabtypen aus {os.path.basename(str(pfad))} nachgelesen: "
+             f"{anzahl(len(aus['zug']), 'Zugstab', 'Zugstäbe')} nur Zug, "
+             f"{anzahl(len(aus['druck']), 'Druckstab', 'Druckstäbe')} nur Druck"
+             + (f", {anzahl(len(aus['seil']), 'Seil', 'Seile')} als Seil (nur Zug)" if aus["seil"] else "")
+             + (f", {n_auch} {'Zugstab trägt' if n_auch == 1 else 'Zugstäbe tragen'} wie in RFEM auch Druck"
+                if n_auch else "")
+             + (f", {len(aus['ohne_stab'])} ohne passenden Stab ({', '.join(aus['ohne_stab'][:6])})"
+                if aus["ohne_stab"] else ""))
+    C.say(log, zeile)
+    return aus
 
 
 # --------------------------------------------------------------------------
@@ -2470,26 +2973,52 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
 # --------------------------------------------------------------------------
 # Lasten der Lastfaelle
 # --------------------------------------------------------------------------
-#: Deutung von loadDirection - Annahme, wird mit Rohwert protokolliert
+#: Deutung von loadDirection (Stab-, Linien- und Flaechenlasten) - nach der
+#: Schnittstelle von RFEM 6.15 (tools/WebServiceGrpc/proto/dlubal/api/rfem/
+#: loads/member_load.proto, line_load.proto, surface_load.proto, Enum
+#: LoadDirection): 0 LOCAL_X, 1 LOCAL_Y, 2 LOCAL_Z, 3 PRINCIPAL_U und
+#: 4 PRINCIPAL_V (nur Stab), 11/12/13 GLOBAL_X/Y/Z_..._TRUE_LENGTH, 14/15/16
+#: dieselben je projizierter Laenge. Die Datenbank der rf6-Datei fuehrt genau
+#: diese Zahlen: im Drehlager-Modell (Drehlager_V15_4_export.rf6) stehen die
+#: Flaechenlasten mit loadDirection 0 und 1 in RFEMs eigenem Bericht als
+#: „Lokales Koordinatensystem, Richtung x“ bzw. „y“ (14.10.2026).
+#:
+#: **Bis zum 14.10.2026 stand hier 0 = lokal z, 1 = global Z, 2 = global X,
+#: 3 = global Y** - eine Annahme ohne Beleg. Eine Stablast lokal y kam damit
+#: als global Z an, lokal z als global X; eine Flaechenlast lokal x (in der
+#: Ebene) als Druck senkrecht zur Flaeche, lokal y als global Z. Am
+#: Drehlager waren das 315 + 396 = 711 Flaechenlasten.
+#:
+#: 11 bis 13 waren schon am 22.09.2026 aus den Daten abgeleitet (CBG_Trolley:
+#: „electrical equipment 200kg“ unter 11/12 mit +2000 N, unter 13 mit
+#: -2000 N; „rake … 4.908 kg on 25,3 m“ = 1903 N/m gegen 1940 N/m unter 13)
+#: und stimmen mit der Schnittstelle ueberein.
 LOAD_DIRECTION = {
-    0: ("z", "lokal z (senkrecht zur Flaeche)"),
-    1: ("Z", "global Z"),
-    2: ("X", "global X"),
-    3: ("Y", "global Y"),
-    # 11 bis 13 stehen in wirklichen RFEM-6-Dateien und fehlten hier. Sie sind
-    # **aus den Daten abgeleitet**, nicht aus einer Festlegung von RFEM
-    # belegt - darum nennt das Protokoll die Deutung, damit sie an einem
-    # bekannten Lastfall nachgeprueft werden kann (22.09.2026):
-    #
-    #   * Dieselbe Last "electrical equipment 200kg" steht im Modell
-    #     CBG_Trolley unter Richtung 11 und 12 mit **+2000 N**, unter 13 mit
-    #     **-2000 N**. Eine Masse, die unter 13 nach unten wirkt und unter
-    #     11/12 waagerecht, ist global Z bzw. global X/Y.
-    #   * "rake ... 4.908 kg on 25,3 m" ergibt 4908 kg / 25,3 m = 1903 N/m
-    #     gegen den Eintrag 1940 N/m - eine Gewichtslast, Richtung 13.
-    11: ("X", "global X (aus den Daten abgeleitet)"),
-    12: ("Y", "global Y (aus den Daten abgeleitet)"),
-    13: ("Z", "global Z (aus den Daten abgeleitet)"),
+    0: ("x", "lokal x"),
+    1: ("y", "lokal y"),
+    2: ("z", "lokal z"),
+    3: ("u", "Hauptachse u"),
+    4: ("v", "Hauptachse v"),
+    11: ("X", "global X"),
+    12: ("Y", "global Y"),
+    13: ("Z", "global Z"),
+}
+
+
+#: Stablasten je **projizierter Laenge** (14.10.2026). Die Kennzahl der
+#: Lastrichtung (``loadDirection`` in ``LineTypeLoadImplForce``, eine eigene
+#: Spalte fuer den Bezug gibt es nicht) traegt ihn: in der Schnittstelle von
+#: RFEM 6.15 (tools/WebServiceGrpc/proto/dlubal/api/rfem/loads/
+#: member_load.proto, MemberLoad.LoadDirection) heissen 11/12/13
+#: GLOBAL_X/Y/Z_OR_USER_DEFINED_U/V/W_TRUE_LENGTH und 14/15/16 dieselben
+#: Richtungen mit _PROJECTED_LENGTH. 11 bis 13 stimmen mit der Deutung aus den
+#: Daten oben ueberein. Beim Seil heisst „wahre Länge“ je Bogenlaenge
+#: (Kettenlinie), „projizierte Länge“ je Projektion (Parabel). Bis zum
+#: 14.10.2026 liess der Import 14 bis 16 als „Lastrichtung unbekannt“ weg.
+LOAD_DIRECTION_PROJEKTION = {
+    14: ("X", "global X je projizierter Länge"),
+    15: ("Y", "global Y je projizierter Länge"),
+    16: ("Z", "global Z je projizierter Länge"),
 }
 
 
@@ -2567,8 +3096,26 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     # ---- Flaechenlasten
     n_ok = n_ohne = n_geo = n_art = n_betrag = 0
     n_lf = 0                        # ohne aufloesbaren Lastfall
+    n_richtung: dict = {}           # Kennzahl -> Zahl, nicht angesetzt (14.10.2026)
     n_roh = len(db.rows("SurfaceLoad"))
     summe = 0.0
+    # lokale Flaechenachsen je Surface.id, einmal je Flaeche bestimmt (14.10.2026)
+    n_lokal_achsen = n_lokal_z_normale = 0     # Zuordnungen Last -> Flaeche
+    ohne_achsen: dict = {}          # (Kennzahl, Grund) -> [Surface.id, ...]
+    # lokal x/y auf gewoelbten Flaechen: haengen an der Flaeche, wirken erst mit
+    # zylindrischen Achsen (14.10.2026) - {Flaechenname: [(Lastfall, Kennzahl, p)]}
+    gewoelbt_info: dict = {}
+    n_gewoelbt = 0
+    _achsen_cache: dict = {}
+    _eingabe = _flaechenachsen_eingabe(db) if db.has("SurfaceLoad") else {}
+
+    def achsen_von(sid):
+        if sid not in _achsen_cache:
+            name = (surf_name or {}).get(sid)
+            _achsen_cache[sid] = (_flaechenachsen(m, name, _eingabe.get(sid))
+                                  if name else (None, "Flaeche nicht im Modell"))
+        return _achsen_cache[sid]
+
     if db.has("SurfaceLoad"):
         case_of = _load_case_of(db, "SurfaceLoad")
         richtungen: dict[int, int] = {}
@@ -2609,25 +3156,97 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             # Umlaufsinn des Randpolygons (gemessen 22.09.2026: Umlauf
             # 1-2-3-4 gab Rz = +8000 N, Umlauf 4-3-2-1 gab -8000 N; mit
             # Richtung in beiden Faellen +8000 N).
-            richtung = _richtung_aus_kennzahl(rd)
-            gelegt = False
+            #
+            # Seit dem 14.10.2026 nach der Schnittstelle (LOAD_DIRECTION): 0,
+            # 1, 2 = lokal x, y, z der Flaeche, 11 bis 13 global je wahrer
+            # Flaeche, 14 bis 16 global je projizierter Flaeche.
+            #
+            # Lokal x, y, z gehen seit dem 14.10.2026 (nachmittags) ueber die
+            # lokalen Flaechenachsen als **globale Richtung** an die Elemente
+            # bzw. an die Flaeche - je Zielflaeche eigene Achsen
+            # (_flaechenachsen: ebene Flaeche, Achsenkategorie „Drehung um
+            # Winkel“, nach einer **angenommenen** RFEM-Regel). Wo die Achsen
+            # sich nicht bestimmen lassen (gewoelbte Flaeche, andere
+            # Achsenkategorie), bleibt lokal x/y genannt und nicht angesetzt;
+            # lokal z wirkt dort wie bisher senkrecht nach der Netznormalen.
+            # Davor (bis 14.10.2026 vormittags) fielen lokal x/y ganz weg, und
+            # lokal z wirkte immer nach der Netznormalen - auch dort, wo RFEM
+            # die z-Achse der Flaeche umgedreht hatte.
+            #
+            # Lokal x/y auf einer **gewoelbten** Flaeche (seit 14.10.2026
+            # abends): nicht angesetzt, aber als Geometrielast mit ``lokal``
+            # an die Flaeche gehaengt. Sie wirkt erst, wenn der Anwender dort
+            # zylindrische Flaechenachsen waehlt. RFEMs eigene Achsen (x =
+            # global X in die Tangentialebene projiziert, je Element) und RFEMs
+            # Lastbild passen am Drehlager nicht zusammen (Sichtpruefung des
+            # Anwenders: Achsen x um den Umfang, Lastpfeile axial bzw. um den
+            # Umfang gleichsinnig) - was RFEM rechnet, ist offen, also wird
+            # nichts geraten.
+            projiziert = rd in LOAD_DIRECTION_PROJEKTION
+            lokal = rd in (0, 1, 2)
+            if projiziert:
+                richtung = _richtung_aus_kennzahl(rd - 3)
+            elif lokal:
+                richtung = None             # je Zielflaeche, unten
+            else:
+                richtung = _richtung_aus_kennzahl(rd)
+                if richtung is None:
+                    n_richtung[rd] = n_richtung.get(rd, 0) + 1
+                    continue
+            richtung_je: dict = {}          # Surface.id -> Richtung (None = Normale)
             for sid in ziele:
+                if not lokal:
+                    richtung_je[sid] = richtung
+                    continue
+                achsen, grund = achsen_von(sid)
+                if achsen is not None:
+                    richtung_je[sid] = tuple(float(c) for c in achsen[rd])
+                    n_lokal_achsen += 1
+                elif rd == 2:
+                    richtung_je[sid] = None     # wie bisher: nach der Netznormalen
+                    n_lokal_z_normale += 1
+                elif grund.startswith("gewoelbte") and sid in (surf_name or {}):
+                    richtung_je[sid] = {"achse": rd}    # wartet auf zylindrische Achsen
+                    gewoelbt_info.setdefault(surf_name[sid], []).append((lc, rd, p))
+                else:
+                    ohne_achsen.setdefault((rd, grund), []).append(sid)
+            if lokal and not richtung_je:
+                n_richtung[rd] = n_richtung.get(rd, 0) + 1
+                continue
+            wartend = [sid for sid, r in richtung_je.items() if isinstance(r, dict)]
+            for sid in wartend:
+                m.add_geometrielast(surf_name[sid], p, "flaeche", case=lc,
+                                    lokal=richtung_je.pop(sid))
+            if wartend and not richtung_je:
+                n_gewoelbt += 1
+                continue
+            gelegt = False
+            for sid in richtung_je:
+                r_sid = richtung_je[sid]
                 for e in surf_els.get(sid, []):
-                    m.load_face(e, p, case=lc, direction=richtung)
+                    # je projizierter Flaeche: auf die wahre Flaeche des
+                    # Elements umgerechnet, p |n . e| (n Elementnormale)
+                    f = _projektionsanteil(m, e, r_sid) if projiziert else 1.0
+                    m.load_face(e, p * f, case=lc, direction=r_sid)
                     gelegt = True
             if gelegt:
                 n_ok += 1
                 summe += abs(p)
                 continue
+            if projiziert:
+                # ohne Netz kein Element, an dem sich die Projektion
+                # umrechnen liesse - genannt statt je wahrer Flaeche angesetzt
+                n_richtung[rd] = n_richtung.get(rd, 0) + 1
+                continue
             # Kein Netz auf der Zielflaeche - die Last bleibt trotzdem im
             # Modell: sie haengt an der Flaeche und wird beim Vernetzen auf
             # die Elemente verteilt. Frueher fiel sie hier still weg.
-            fuer_flaeche = [surf_name[sid] for sid in ziele
+            fuer_flaeche = [(surf_name[sid], richtung_je[sid]) for sid in richtung_je
                             if sid in (surf_name or {})]
             if fuer_flaeche:
-                for name in fuer_flaeche:
+                for name, r_sid in fuer_flaeche:
                     m.add_geometrielast(name, p, "flaeche", case=lc,
-                                        richtung=richtung)
+                                        richtung=r_sid)
                 n_geo += 1
             else:
                 n_ohne += 1
@@ -2644,7 +3263,8 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         # ist auf dem Weg verlorengegangen - db.impls() laesst eine Last ohne
         # ihre Umsetzungstabelle wortlos aus, und genau das soll nicht mehr
         # unbemerkt bleiben.
-        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag + n_lf)
+        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag + n_lf
+                         + sum(n_richtung.values()) + n_gewoelbt)
         if n_lf:
             C.warn(log, f"  {n_lf} Flaechenlasten ohne aufloesbaren Lastfall - nicht "
                         "uebernommen: der Lastfall, an dem sie haengen, fehlt in der "
@@ -2661,16 +3281,43 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             C.say(log, f"  {n_betrag} Flaechenlasten ohne lesbaren Betrag - "
                        "nicht uebernommen")
         for rd, n in sorted(richtungen.items()):
-            _k, text = LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))
-            # Eine Kennzahl, die die Tabelle nicht fuehrt, wird zum Normaldruck
-            # - das ist eine Annahme und gehoert darum ins Protokoll.
-            wie = ("" if rd == 0 or _richtung_aus_kennzahl(rd) is not None
-                   else " - senkrecht zur Flaeche angesetzt")
-            C.say(log, f"    Lastrichtung {rd} = {text}: {n}x{wie}")
-        if any(rd and _richtung_aus_kennzahl(rd) for rd in richtungen):
-            C.say(log, "    Hinweis: ob RFEM eine Flaechenlast auf die wahre "
-                       "oder auf die projizierte Flaeche bezieht, steht in der "
-                       "Datei nicht lesbar - angesetzt wird die wahre Flaeche.")
+            wie = (" - in den lokalen Flaechenachsen als globale Richtung angesetzt"
+                   if rd in (0, 1, 2) else
+                   " - je projizierter Flaeche, auf die Elementflaeche umgerechnet"
+                   if rd in LOAD_DIRECTION_PROJEKTION else
+                   " - je wahrer Flaeche" if _richtung_aus_kennzahl(rd) is not None else "")
+            C.say(log, f"    Lastrichtung {rd} = {_richtungstext(rd)}: {n}x{wie}")
+        if n_lokal_achsen:
+            # Die Regel ist aus RFEMs Unterlagen nur zum Teil belegt - darum
+            # als WARNUNG, damit der Anwender sie an einer Flaeche nachsieht.
+            C.warn(log, f"  {n_lokal_achsen} Zuordnungen Flaechenlast -> Flaeche in den lokalen "
+                        "Flaechenachsen angesetzt. Die Achsen sind aus der Geometrie nach einer "
+                        "angenommenen RFEM-Regel bestimmt (z = Normale des Randumlaufs, erste "
+                        "Randlinie in ihrer Richtung, umgedreht wie in RFEM; x = globale X-Achse "
+                        "in die Ebene projiziert, an Flaechen quer zu X die Y-Achse; gedreht um "
+                        "den Winkel der Flaeche; y = z x x) - bitte an einer Flaeche in RFEM "
+                        "nachsehen (Anzeige „Flaechenachsensysteme x, y, z“).")
+        if n_lokal_z_normale:
+            C.say(log, f"    {n_lokal_z_normale} Zuordnungen in lokal z ohne bestimmbare "
+                       "Flaechenachsen - senkrecht nach der Normalen des Netzes angesetzt "
+                       "(eine in RFEM umgedrehte z-Achse wirkt dort nicht)")
+        if gewoelbt_info:
+            _gewoelbt_melden(log, gewoelbt_info, n_gewoelbt)
+        for (rd, grund), sids in sorted(ohne_achsen.items()):
+            namen = sorted({(surf_name or {}).get(s, str(s)) for s in sids})
+            C.warn(log, f"  {len(sids)} Zuordnungen Flaechenlast -> Flaeche in "
+                        f"{_richtungstext(rd)} nicht angesetzt: {grund} - Flaechen "
+                        + ", ".join(namen[:12]) + (", …" if len(namen) > 12 else "")
+                        + "; bitte in RFEM nachsehen und von Hand ansetzen.")
+        for rd, n in sorted(n_richtung.items()):
+            grund = ("keine Zielflaeche mit bestimmbaren lokalen Achsen, siehe oben"
+                     if rd in (0, 1, 2) else
+                     "je projizierter Flaeche auf einer Flaeche ohne Netz"
+                     if rd in LOAD_DIRECTION_PROJEKTION else "Kennzahl unbekannt")
+            C.warn(log, f"  {n} Flaechenlasten mit Lastrichtung {rd} = {_richtungstext(rd)} "
+                        f"nicht uebernommen ({grund}) - bitte in RFEM nachsehen und "
+                        "von Hand ansetzen. Bis zum 14.10.2026 kamen Lastrichtung 0 "
+                        "als Druck senkrecht zur Flaeche und 1 als global Z an.")
 
     # ---- Vorspannung im Stab
     #
@@ -2690,6 +3337,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     vs_staebe: set = set()          # verschiedene Staebe mit einer Vorspannung
     vs_n0: list = []                # |N_0| je uebernommener Lastzeile
     vs_je_lf: dict = {}             # Lastfall -> Summe |N_0| ueber seine Staebe
+    vs_ea: set = set()              # (E, alpha) der Umrechnung, je Stabwerkstoff
     n_vs_el_ohne = 0                # Stabelemente ohne A oder alpha
     if db.has("MemberLoad"):
         case_of = _load_case_of(db, "MemberLoad")
@@ -2720,7 +3368,12 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                         n_vs_el_ohne += 1
                         continue
                     dT = -N0 / (mat.E * sec.A * mat.alpha)
-                    m.load_temp(e, dT, case=lc)
+                    # Merkmal „aus Vorspannung“ (13.10.2026): Anzeige, Tabelle und
+                    # Bericht nennen die Kraft N0 mit dem E und alpha dieser
+                    # Umrechnung, nicht die Temperatur
+                    m.load_temp(e, dT, case=lc, aus_vorspannung=N0,
+                                vorspann_E=float(mat.E), vorspann_alpha=float(mat.alpha))
+                    vs_ea.add((float(mat.E), float(mat.alpha)))
                     am_stab = True
                 if am_stab:
                     vs_staebe.add(nm)
@@ -2750,12 +3403,25 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             return f"{lo} kN" if lo == hi else f"{lo} bis {hi} kN"
 
         vs_n_lf, vs_n_st = len(vs_je_lf), len(vs_staebe)
+        # E und alpha, mit denen die Kraft in die eingepraegte Dehnung umgesetzt
+        # ist (13.10.2026): bis die kraftgesteuerte Vorspannung da ist, haengt
+        # die Kraft im Stab an ihnen
+        from ..zahlen import zahl_text
+
+        def ea_text(E, alpha):
+            mant, _, ex = f"{alpha:.1e}".partition("e")
+            return f"E = {zahl_text(E / 1e6)} N/mm², α = {mant.replace('.', ',')}e{int(ex)} 1/K"
+
         C.say(log, f"  {n_vs} Stabvorspannungen als gleichwertige "
                    f"Temperaturlast uebernommen (dT = -N_0/(E*A*alpha)) - "
                    f"in {vs_n_lf} {'Lastfall' if vs_n_lf == 1 else 'Lastfaellen'} auf "
                    + ("1 Stab" if vs_n_st == 1 else f"{vs_n_st} verschiedene Staebe")
                    + f", N_0 {spanne(vs_n0)} je Stab, "
                    f"je Lastfall zusammen {spanne(vs_je_lf.values())}")
+        C.say(log, "    Angezeigt wird die Vorspannung als Kraft (eingeprägte Dehnung), gerechnet mit "
+                   + "; ".join(ea_text(E, a_) for E, a_ in sorted(vs_ea))
+                   + (" (je Stabwerkstoff)" if len(vs_ea) > 1 else "")
+                   + " - gilt bis zur kraftgesteuerten Vorspannung.")
     if n_vs_ohne:
         C.say(log, f"  {n_vs_ohne} Vorspannlasten ohne Ziel, ohne Betrag oder "
                    "ohne Waermedehnzahl - nicht uebernommen")
@@ -2785,9 +3451,162 @@ def _zuordnung(db: Db, tbl: str, oid) -> list:
 
 
 def _richtung_aus_kennzahl(rd: int):
-    """Globaler Richtungsvektor zu RFEMs loadDirection - oder None (lokal)."""
+    """Globaler Richtungsvektor zu RFEMs loadDirection 11 bis 13 - oder None
+    (lokal, Hauptachse, je Projektion oder unbekannt)."""
     k, _t = LOAD_DIRECTION.get(int(rd or 0), ("?", ""))
     return {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}.get(k)
+
+
+def _richtungstext(rd) -> str:
+    """Klartext einer Kennzahl loadDirection fuer das Protokoll."""
+    rd = int(rd or 0)
+    if rd in LOAD_DIRECTION_PROJEKTION:
+        return LOAD_DIRECTION_PROJEKTION[rd][1]
+    return LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))[1]
+
+
+def _stab_senkrecht(m: Model, name: str) -> bool:
+    """Hat der Stab ein (fast) senkrechtes Element - dort bildet
+    beam3d.local_axes die y-Achse aus global X statt aus global Z."""
+    mem = (getattr(m, "members", None) or {}).get(name)
+    for i in (getattr(mem, "elements", None) or []):
+        nd = m.elements[int(i)].nodes
+        d = np.asarray(m.nodes[nd[1]], float) - np.asarray(m.nodes[nd[0]], float)
+        L = float(np.linalg.norm(d))
+        if L > 0 and abs(d[2]) / L > 0.9999:
+            return True
+    return False
+
+
+def _projektionsanteil(m: Model, e: int, richtung) -> float:
+    """|n . e| eines Flaechenelements: eine Last je projizierter Flaeche
+    (RFEM-Lastrichtung 14 bis 16) je wahrer Elementflaeche."""
+    el = m.elements[e]
+    X = np.asarray(m.nodes[list(el.nodes)], float)
+    if el.typ in ("shell4", "shell8", "ebene4", "ebene8"):        # Ecken zuerst
+        n = np.cross(X[2] - X[0], X[3] - X[1])
+    else:
+        n = np.cross(X[1] - X[0], X[2] - X[0])
+    L = float(np.linalg.norm(n))
+    return abs(float(n @ np.asarray(richtung, float))) / L if L > 0 else 0.0
+
+
+def _gewoelbt_melden(log: list, info: dict, n_lasten: int) -> None:
+    """WARNUNG fuer Lasten in lokal x/y auf gewoelbten Flaechen: Flaechen,
+    Lastfaelle und Betraege, dazu der Weg ueber zylindrische Achsen."""
+    def zahl(v):
+        return f"{v / 1e3:+.2f}".replace(".", ",") + " kN/m²"
+    namen = sorted(info)
+    je_lf: dict = {}
+    for name in namen:
+        for lc, rd, p in info[name]:
+            je_lf.setdefault(lc, {})[rd] = p
+    teile = []
+    for lc in list(je_lf)[:6]:
+        w = je_lf[lc]
+        teile.append(f"{lc}: " + ", ".join(f"{'xy'[rd]} {zahl(w[rd])}" for rd in sorted(w)))
+    rest = len(je_lf) - len(teile)
+    C.warn(log, f"  {n_lasten} Flaechenlasten in lokal x/y auf gewoelbten Flaechen ("
+                + ", ".join(namen[:12]) + (", …" if len(namen) > 12 else "")
+                + ") NICHT angesetzt - " + "; ".join(teile)
+                + (f"; und {rest} weitere Lastfaelle" if rest > 0 else "")
+                + ". Die lokalen Achsen einer gewoelbten Flaeche bildet RFEM je Element "
+                  "(x = global X in die Tangentialebene projiziert); RFEMs Lastbild zeigt "
+                  "am Drehlager etwas anderes, was RFEM rechnet, ist offen. Die Lasten "
+                  "haengen an der Flaeche und wirken erst, wenn dort zylindrische "
+                  "Flaechenachsen gewaehlt sind (Flaeche bearbeiten, „Lokale Achsen: "
+                  "zylindrisch“ mit Richtung von +x).")
+
+
+def _flaechenachsen_eingabe(db: Db) -> dict:
+    """{Surface.id: (Kategorie, Winkel [rad], z umgedreht)} aus ``SurfaceAxes``.
+
+    RFEM 6.15 (surface.proto): ``input_axes_rotation_specification_type`` 0
+    Drehung um Winkel (die Vorgabe), 1 parallel zu Linien, 2 zum Punkt
+    gerichtet, 3 parallel zu einem Koordinatensystem; dazu
+    ``input_axes_angular_rotation`` und ``reversedLocalAxisZ``. Gefunden wird
+    die Zeile ueber ``axes_id`` der Flaechenumsetzung oder rueckwaerts ueber
+    ``owner_table``/``owner_id``. Ohne Zeile gilt die Vorgabe (0, 0, nein).
+    Der Winkel steht wie alle Winkel der Datenbank im Bogenmass (Annahme -
+    am Drehlager sind alle 1375 Winkel 0).
+    """
+    if not db.has("SurfaceAxes"):
+        return {}
+    zeilen = db.by_id("SurfaceAxes")
+    rueck = {(r.get("owner_table"), r.get("owner_id")): r for r in zeilen.values()}
+    out = {}
+    for h, impl in db.impls("Surface"):
+        a = zeilen.get(impl.get("axes_id")) or rueck.get((h.get("impl_table"), impl.get("id")))
+        if a is not None:
+            out[h["id"]] = (int(a.get("inputAxesRotationSpecificationType") or 0),
+                            float(a.get("inputAxesAngularRotation") or 0.0),
+                            bool(a.get("reversedLocalAxisZ")))
+    return out
+
+
+#: Klartext der Achsenkategorien (surface.proto, InputAxesRotationSpecificationType)
+ACHSENKATEGORIE = {0: "Drehung um Winkel", 1: "parallel zu Linien",
+                   2: "zum Punkt gerichtet", 3: "parallel zu Koordinatensystem"}
+
+
+def _flaechenachsen(m: Model, name: str, eingabe=None) -> tuple:
+    """Die lokalen Achsen (x, y, z) einer **ebenen** RFEM-Flaeche, global -
+    oder (None, Grund).
+
+    Die Regel ist **angenommen**, nur zum Teil belegt (14.10.2026; Quellen
+    in docs/Schnittstellen.md):
+
+    * belegt (Dlubal-FAQ 005361/000292): eine Flaeche in der XY-Ebene hat x in
+      Richtung der globalen X-Achse, eine geneigte dreht ihre Achsen mit; die
+      Richtung von z haengt an der Definitionsrichtung und Reihenfolge der
+      Randlinien. Handbuch RFEM 6 „Flächen“: „z-Achse umkehren“ dreht z und
+      y um (x bleibt), „Drehung um Winkel“ dreht x und y um z.
+    * angenommen: z ist die Normale des Randumlaufs (Newell) - erste Randlinie
+      in ihrer Definitionsrichtung, die weiteren angehaengt - nach der
+      Rechte-Hand-Regel; x ist die globale X-Achse in die Ebene projiziert,
+      an einer Flaeche quer zu X die globale Y-Achse; der Winkel dreht
+      rechtsdrehend um das (gegebenenfalls umgedrehte) z; y = z x x.
+
+    Gewoelbte Flaechen (Rand nicht in einer Ebene) bekommen keine Achsen: dort
+    folgen sie in RFEM je finitem Element der Kruemmung, und eine einzige
+    globale Richtung je Flaeche waere falsch. Andere Achsenkategorien als
+    „Drehung um Winkel“ ebenso nicht.
+    """
+    from ..model import polygon_eben
+    kat, alpha, umgedreht = eingabe or (0, 0.0, False)
+    if kat != 0:
+        return None, (f"Achsenkategorie {kat} ({ACHSENKATEGORIE.get(kat, 'unbekannt')}) "
+                      "wird nicht uebernommen")
+    f = m.flaechen.get(name)
+    if f is None:
+        return None, "Flaeche nicht im Modell"
+    P = np.zeros((0, 3))
+    if f.linien:
+        P = np.asarray(f.randpunkte(m, 16), float)
+    if len(P) < 3 and len(f.ecken or []) >= 3:
+        P = np.asarray(m.nodes[list(f.ecken)], float)
+    if len(P) < 3:
+        return None, "Rand der Flaeche nicht aufloesbar"
+    if not polygon_eben(P):
+        return None, ("gewoelbte Flaeche - die lokalen Achsen folgen in RFEM je Element "
+                      "der Kruemmung")
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    ln = float(np.linalg.norm(n))
+    if ln <= 0.0:
+        return None, "Rand der Flaeche ohne Inhalt"
+    z = n / ln
+    if umgedreht:
+        z = -z
+    x = None
+    for g in (np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])):
+        v = g - (g @ z) * z
+        if float(np.linalg.norm(v)) > 1e-3:      # quer zu X: weiter mit Y
+            x = v / float(np.linalg.norm(v))
+            break
+    if alpha:
+        x = np.cos(alpha) * x + np.sin(alpha) * np.cross(z, x)
+    y = np.cross(z, x)
+    return (x, y, z), ""
 
 
 def _zahl(impl: dict, *namen, default: float = 0.0) -> float:
@@ -2812,6 +3631,7 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         return
     case_of = _load_case_of(db, "LineLoad")
     n_ok = n_ohne = n_art = 0
+    n_richtung: dict = {}           # Kennzahl -> Zahl, nicht angesetzt (14.10.2026)
     for h, impl in db.impls("LineLoad"):
         lc = lc_name.get(case_of.get(h["id"]))
         tbl = h.get("impl_table") or ""
@@ -2830,11 +3650,20 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         if not ziele or (not p1 and not p2):
             n_ohne += 1
             continue
-        richtung = _richtung_aus_kennzahl(impl.get("loadDirection"))
+        # Lastrichtung nach der Schnittstelle (LOAD_DIRECTION, 14.10.2026):
+        # 11 bis 13 global je wahrer Laenge, 14 bis 16 je projizierter Laenge.
+        # 0 bis 2 (lokal x, y, z der Linie) kennt das Programm nicht - genannt
+        # und nicht angesetzt. Bis zum 14.10.2026 galt 1 als global Z, 2 als
+        # global X, und jede andere Kennzahl (auch 0) wurde global Z.
+        rd = int(impl.get("loadDirection") or 0)
+        bezug = ""
+        if rd in LOAD_DIRECTION_PROJEKTION:
+            richtung, bezug = _richtung_aus_kennzahl(rd - 3), "projektion"
+        else:
+            richtung = _richtung_aus_kennzahl(rd)
         if richtung is None:
-            richtung = (0.0, 0.0, 1.0)
-        # RFEM: Kennzahl 1 = global Z, dort zeigt Z nach unten - eine positive
-        # Last wirkt in +Z; die Achsendrehung beim Import stellt sie richtig.
+            n_richtung[rd] = n_richtung.get(rd, 0) + 1
+            continue
         q1 = [p1 * c for c in richtung]
         q2 = [p2 * c for c in richtung] if ("trapez" in verteilung.lower()
                                              or "2" in verteilung or p2 != p1) else None
@@ -2842,7 +3671,7 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         bis = _zahl(impl, "distanceB", "distance_b_absolute", "distanceBAbsolute")
         for name in ziele:
             m.add_linienlast(name, q1, art="linie", q2=q2, von=von,
-                             bis=bis if bis > von else None, case=lc)
+                             bis=bis if bis > von else None, case=lc, bezugslaenge=bezug)
             n_ok += 1
     if n_ok:
         C.say(log, f"  {n_ok} Linienlasten an ihre Linie gehaengt - sie wirken auf den "
@@ -2851,6 +3680,11 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         C.say(log, f"  {n_ohne} Linienlasten ohne Ziel oder ohne Betrag - nicht uebernommen")
     if n_art:
         C.say(log, f"  {n_art} Linienlasten anderer Art (Moment, Masse) - nicht uebernommen")
+    for rd, n in sorted(n_richtung.items()):
+        C.warn(log, f"  {n} Linienlasten mit Lastrichtung {rd} = {_richtungstext(rd)} nicht "
+                    "uebernommen (die lokalen Linienachsen von RFEM uebernimmt das Programm "
+                    "nicht) - bitte in RFEM nachsehen und von Hand ansetzen. Bis zum "
+                    "14.10.2026 kamen sie als global Z bzw. X an.")
 
 
 def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
@@ -2896,7 +3730,10 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
     fehlende_zuordnungen: list = []     # Member-ids ohne Stab im Modell
     andere_verteilung: dict = {}
     andere_richtung: dict = {}
+    lokal_senkrecht: dict = {}          # lokal y/z an einem senkrechten Stab (14.10.2026)
+    n_lokal = 0
     gedeutet: set = set()
+    n_projektion = 0
     for h, impl in db.impls("MemberLoad"):
         tbl = h.get("impl_table") or ""
         lc = lc_name.get(case_of.get(h["id"]))
@@ -2915,7 +3752,26 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
             andere_verteilung[verteilung] = andere_verteilung.get(verteilung, 0) + 1
             continue
         rd = int(impl.get("loadDirection") or 0)
-        richtung = _richtung_aus_kennzahl(rd)
+        bezugslaenge = ""
+        system = "global"
+        if rd in LOAD_DIRECTION_PROJEKTION:
+            richtung = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0),
+                        "Z": (0.0, 0.0, 1.0)}[LOAD_DIRECTION_PROJEKTION[rd][0]]
+            bezugslaenge = "projektion"
+        elif rd in (0, 1, 2):
+            # lokal x, y, z des Stabes (Schnittstelle, LOAD_DIRECTION). Bis zum
+            # 14.10.2026 kam 1 als global Z und 2 als global X an, 0 fiel als
+            # „unbekannt“ weg. Die Stabachsen stimmen mit RFEM ueberein, wo
+            # beide sie aus global Z bilden: x vom Anfang zum Ende, z in der
+            # Ebene aus x und global Z zu +Z hin, y = z x x, gedreht um den
+            # Stabdrehwinkel (beam3d.local_axes, ``angle`` beim Import). Am
+            # senkrechten Stab bildet Statik3D y aus global X - ob RFEM dort
+            # dieselbe Achse nimmt, ist nicht belegt; lokal y und z werden
+            # dort darum nicht angesetzt, sondern genannt.
+            richtung = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))[rd]
+            system = "local"
+        else:
+            richtung = _richtung_aus_kennzahl(rd)
         if richtung is None:
             andere_richtung[rd] = andere_richtung.get(rd, 0) + 1
             continue
@@ -2928,10 +3784,18 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
         if not ziele or (not p1 and not p2):
             n_ohne += 1
             continue
+        if system == "local" and rd in (1, 2) and any(_stab_senkrecht(m, s) for s in ziele):
+            lokal_senkrecht[rd] = lokal_senkrecht.get(rd, 0) + 1
+            continue
         q1 = [p1 * c for c in richtung]
         q2 = [p2 * c for c in richtung] if (p2 and p2 != p1) else None
         for name in ziele:
-            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc)
+            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc, system=system,
+                             bezugslaenge=bezugslaenge)
+        if bezugslaenge:
+            n_projektion += 1
+        if system == "local":
+            n_lokal += 1
         # Je Lastzeile zaehlen, nicht je Stab - sonst geht die Summe unten
         # nicht gegen die Rohzeilen auf.
         n_ok += 1
@@ -2947,6 +3811,10 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
     if n_ok:
         C.say(log, f"  {n_ok} Stablasten (Gleichlast) an ihre Staebe gehaengt"
                    + (f" ({n_zuordnungen} Stabzuordnungen)" if n_zuordnungen != n_ok else ""))
+    if n_projektion:
+        C.say(log, f"    davon {n_projektion} je projizierter Länge (Lastrichtung 14 bis 16): "
+                   "am schrägen Stab je Länge der Projektion, am Seil nach Theorie III. Ordnung "
+                   "als Parabel statt Kettenlinie")
     if fehlende_zuordnungen:
         stab = db.by_id("Member")
 
@@ -2963,19 +3831,31 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
                     f"{', …' if len(nummern) > 12 else ''}) - dieser Anteil der Last fehlt. "
                     "Nicht uebernommen werden Staebe ohne Knoten an ihrer Linie und "
                     "Stabtypen ohne Tragwirkung (siehe Stabtypen oben).")
+    if n_lokal:
+        C.say(log, f"    davon {n_lokal} in lokalen Stabachsen (Lastrichtung 0 bis 2 = lokal x, y, z)")
     if gedeutet:
         C.say(log, "    Lastrichtung " + ", ".join(
             f"{r} = {LOAD_DIRECTION[r][1]}" for r in sorted(gedeutet))
-            + " - bitte an einem bekannten Lastfall nachpruefen")
+            + " (Schnittstelle RFEM 6.15, member_load.proto)")
     n_vert = sum(andere_verteilung.values())
-    n_richt = sum(andere_richtung.values())
+    n_richt = sum(andere_richtung.values()) + sum(lokal_senkrecht.values())
+    if lokal_senkrecht:
+        C.warn(log, f"  {sum(lokal_senkrecht.values())} Stablasten an senkrechten Staeben in lokal "
+                    "y oder z nicht uebernommen: dort bildet Statik3D die y-Achse aus global X, "
+                    "ob RFEM dieselbe nimmt, ist nicht belegt - "
+                    + ", ".join(f"{n}x Kennzahl {k} ({_richtungstext(k)})"
+                                for k, n in sorted(lokal_senkrecht.items()))
+                    + "; bitte in RFEM nachsehen und von Hand ansetzen")
     if andere_verteilung:
         C.say(log, f"  {n_vert} Stablasten nicht uebernommen, weil das Programm fuer "
                    "den Stab nur die Gleichlast kennt: " + ", ".join(
                        f"{n}x Verteilung {k}" for k, n in sorted(andere_verteilung.items())))
     if andere_richtung:
-        C.say(log, f"  {n_richt} Stablasten nicht uebernommen, Lastrichtung unbekannt: "
-              + ", ".join(f"{n}x Kennzahl {k}" for k, n in sorted(andere_richtung.items())))
+        C.warn(log, f"  {sum(andere_richtung.values())} Stablasten nicht uebernommen, "
+                    "Lastrichtung unbekannt oder nicht abbildbar: "
+                    + ", ".join(f"{n}x Kennzahl {k} ({_richtungstext(k)})"
+                                for k, n in sorted(andere_richtung.items()))
+                    + " - die Hauptachsen u, v uebernimmt das Programm nicht")
     if n_ohne:
         C.say(log, f"  {n_ohne} Stablasten ohne Ziel oder ohne Betrag - nicht uebernommen")
     if n_art:
@@ -3389,8 +4269,14 @@ def _integrierte_objekte(db: Db, m: Model, log: list, line_name: dict,
     eines Zugstabs auf der Stirnflaeche eines Schraubenvolumens ist so mit
     dem Volumen verbunden. Am Drehlager (16.09.2026) sind 112 der 128
     Stabenden integrierte Knoten (168 Knoten an 142 Flaechen, 78 davon
-    Randflaechen von Volumen); die 394 integrierten Linien an 14 Flaechen
-    sind die Kreise der starren Scheiben auf Deckeln und Ringen. Bis dahin
+    Randflaechen von Volumen). Die 394 integrierten Linien an 14 Flaechen
+    liegen alle in Flaechen ohne Dicke (Null-Element): 330 Kreisboegen mit
+    R 8, 10 und 12,5 mm und 64 Polylinien. Die Kreise der starren Scheiben
+    sind sie nicht, wie hier bis zum 10.10.2026 stand: keine Scheibe fuehrt
+    eine integrierte Linie, die Randlinien jeder Scheibe sind zugleich die
+    Oeffnung der Bohrung darunter, und die 192 Boegen auf der Achse einer
+    Scheibe liegen mindestens 35 mm von ihr entfernt (Pruefung an der rf6,
+    scratchpad scheiben_werk). Bis zum 16.09.2026
     las der Import nur die integrierten Oeffnungen - die Knoten hingen an
     nichts, die Schrauben trugen keinen Zug. Die Knoten stehen jetzt in
     ``Flaeche.integrierte_knoten`` (Modellnummern) und werden nach dem
