@@ -240,9 +240,10 @@ def test_neue_felder_ein_mechanismus():
     # die neuen Felder aller Pakete mit ihrer Vorgabe (Liste des Koordinators
     # vom 14.10.2026); "" = Schluessel der Modelldatei selbst
     soll = {
-        "plastizitaet": {"abbruch": "ingenieurmaessig"},
+        "plastizitaet": {"abbruch": "ingenieurmaessig", "pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6,
+                         "spannstufen": 0},
         "design": {"gamma_P": 1.0},
-        "netz": {"krafteinleitung_fein": True},
+        "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False},
         "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
                       "sigma_pmax": None, "sigma_pm0": None},
         "sections": {"A_s": None, "gewinde": ""},
@@ -260,6 +261,11 @@ def test_neue_felder_ein_mechanismus():
     fehlt = [f"{s}.{f}" for s, ff in soll.items() for f in ff
              if s not in tabelle or f not in tabelle[s] or tabelle[s][f] != ff[f]]
     check("model.NEUE_FELDER führt jedes neue Feld mit seiner Vorgabe", not fehlt, f"fehlt: {fehlt}")
+    from statik3d.plastizitaet import Plastizitaet
+    neu_pl = dict(getattr(Plastizitaet, "NEU_14_10", {}) or {})
+    check("… auch die Einstellungen, die Plastizitaet.als_dict weglässt (NEU_14_10)",
+          all(tabelle.get("plastizitaet", {}).get(k, object()) == v for k, v in neu_pl.items()),
+          str(neu_pl))
     m = _reiches_modell()
     k_jetzt = ergebnisse.kennung(m)
     echt = Model.to_dict
@@ -304,6 +310,9 @@ def test_neue_felder_ein_mechanismus():
     faelle = [
         ("Plastizitaet.abbruch", lambda: setze(m.plastizitaet, "abbruch", "streng")),
         ("DesignSettings.gamma_P", lambda: setze(m.design, "gamma_P", 1.35)),
+        ("Plastizitaet.pendel_kraft_anteil", lambda: setze(m.plastizitaet, "pendel_kraft_anteil", 2e-3)),
+        ("Plastizitaet.pendel_weg", lambda: setze(m.plastizitaet, "pendel_weg", 2e-6)),
+        ("Plastizitaet.spannstufen", lambda: setze(m.plastizitaet, "spannstufen", 3)),
         ("Material.verfestigung", lambda: setze(mat, "verfestigung", 1e-4)),
         ("Material.art", lambda: setze(mat, "art", "Spannstahl")),
         ("Material.Ep", lambda: setze(mat, "Ep", 205e9)),

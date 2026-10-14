@@ -9614,13 +9614,16 @@ def _dc(cls, d: dict):
 #: geändert: Rechenart und Einstellungen“). Wer ein Feld an ein Objekt der
 #: Modelldatei anfuegt, traegt es hier ein.
 NEUE_FELDER = {
-    # spitzen/kriterium (Abbruch ohne die netzabhaengigen Spitzen)
-    "plastizitaet": {"abbruch": "ingenieurmaessig"},
+    # spitzen/kriterium (Abbruch ohne die netzabhaengigen Spitzen) und
+    # kontakt/pendeln (Pendeln mit Periode 2, Spannstufen; Plastizitaet.NEU_14_10,
+    # die Plastizitaet.als_dict beim Speichern weglaesst)
+    "plastizitaet": {"abbruch": "ingenieurmaessig", "pendel_kraft_anteil": 1.0e-3, "pendel_weg": 1.0e-6,
+                     "spannstufen": 0},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
     # zaehlen nicht in der Kennung - das Netz selbst steht in Knoten und Elementen)
-    "netz": {"krafteinleitung_fein": True},
+    "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False},
     # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
     # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
     "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
