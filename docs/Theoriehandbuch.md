@@ -4181,6 +4181,11 @@ und A = 1 256,6 mm² ergibt sich σ = 751,8 N/mm², das Verhältnis zu σ_p,max 
 751,5 N/mm² ist 1,0004 und zu σ_pm0 = 709,75 N/mm² 1,059 (Prüfung
 `tests.test_spannstahl` am beidseitig festen Stab).
 
+Überschreitet die Kraft beim Spannen oder nach dem Verankern ihre Grenze,
+schreibt der Nachweis je Zustand eine Zeile „Befund Vorspannung“ mit Kraft,
+Spannung, Grenze, Verhältnis und der zulässigen Kraft Grenze · A_s an den Stab
+(seit 13.10.2026).
+
 A_s kommt in dieser Reihenfolge aus der Schraubengröße des Querschnitts (M12
 bis M36, A_s nach EN ISO 898-1 wie in der Schraubentabelle der Anschlüsse), aus
 der Angabe „aufgewalzter Gewindestab“ (A_s = A), aus der Eingabe der Zulassung

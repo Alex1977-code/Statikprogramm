@@ -8093,6 +8093,18 @@ darunter. Gerechnet wird weiter mit dem E-Modul E. Eine Datei, die vor dem
 N/mm² wie die eines Spannstahls aussehen; gesetzt wird nichts, und der
 Spannstahlnachweis gilt erst, wenn die Art in der Maske auf Spannstahl steht.
 
+**Befund Vorspannung (seit 13.10.2026).** Liegt die Kraft beim Spannen oder
+nach dem Verankern über ihrer Grenze, steht das zusätzlich als eigene Zeile am
+Stab, in den Hinweisen des Berichts und im Protokoll, mit der Kraft, die die
+Grenze zuließe. Bei f_p0,1k = 835 N/mm² und dem Nennquerschnitt Rund 40 (1
+256,6 mm²) sind das 0,9 · 835 · 1 256,64 = 944,4 kN beim Spannen und 709,75 · 1
+256,64 = 891,9 kN nach dem Verankern. Eine Vorspannkraft von 944,7 kN liegt
+beim Spannen also genau auf der Grenze (Verhältnis 1,0004) und nach dem
+Verankern darüber (1,059); die Zeile lautet dann „Befund Vorspannung, nach dem
+Verankern: … N = 944.7 kN, σ = 751.8 N/mm² > σ_pm0 = 709.75 N/mm² (Verhältnis
+1.0592); zulässig wären 891.9 kN …“. Am Drehlager stehen in LF398 die 952 kN
+aus der RFEM-Datei; das ergibt beim Spannen 1,008 und nach dem Verankern 1,067.
+
 Biegung im Gewinde gibt es in diesem Nachweis nicht. Hat der Stab Momente,
 nennt der Nachweis sie („Biegung im Gewinde wird nicht nachgewiesen: max |M_y|
 = … kNm“), weist sie aber nicht nach; Druck nennt er ebenso. In der Tabelle

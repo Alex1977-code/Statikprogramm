@@ -501,6 +501,19 @@ def test_zustaende():
         check(f"[{quelle}] massgebend ist der ungünstigste Zustand: nach dem Verankern (σ_pm0)",
               nah(mc.util, sigma / 709.75e6, 1e-5) and "σ_pm0" in str(mc.governing.get("name"))
               and mc.status() == "NICHT erfüllt", f"{float(mc.util):.5f}")
+        # Befund (Ergaenzung des Anwenders): bei 944,7 kN liegt der Anker beim
+        # Spannen auf der Grenze (0,9 · 835 · 1 256,64 = 944,36 kN) und nach dem
+        # Verankern darueber (709,75 N/mm² ≙ 891,9 kN) - das steht als Befund am Stab
+        bef = [w_ for w_ in mc.warnings if w_.startswith("Befund Vorspannung")]
+        print(f"        Befunde: {bef}")
+        check(f"[{quelle}] Befund beim Spannen: 944.7 kN > zulässig 944.4 kN (σ_p,max, Verhältnis 1.0004)",
+              any("Spannen" in b and "944.7 kN" in b and "944.4 kN" in b and "1.0004" in b for b in bef), str(bef))
+        check(f"[{quelle}] Befund nach dem Verankern: > zulässig 891.9 kN (σ_pm0, Verhältnis 1.0592)",
+              any("nach dem Verankern" in b and "891.9 kN" in b and "1.0592" in b for b in bef), str(bef))
+    # Gegenprobe: 800 kN liegen unter beiden Grenzen - kein Befund
+    an8, d8 = nachweis(anker(F_v=800e3))
+    bef8 = [w_ for w_ in d8.members["A1"].warnings if w_.startswith("Befund Vorspannung")]
+    check("Gegenprobe 800 kN (σ = 636.6 N/mm²): kein Befund Vorspannung", not bef8, str(bef8))
     # Schnittstelle fuer den kuenftigen Spannschritt: res.info["zustand"]
     from statik3d import solver
     from statik3d.ec3.design import check_members

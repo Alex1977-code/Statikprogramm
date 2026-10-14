@@ -356,6 +356,20 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat, zustaende:
                 "σ_pm0", NORM_VERANKERT, h_pm0))
     mc.zustaende = eintraege
     mc.extremes = ext
+    # Befund Vorspannung (Ergaenzung des Anwenders vom 13.10.2026): liegt die
+    # Kraft beim Spannen oder nach dem Verankern ueber ihrer Grenze, steht das
+    # als eigene Zeile am Stab, mit der Kraft, die die Grenze zuliesse - am
+    # Drehlager 0,9 · 835 · 1 256,64 = 944,36 kN beim Spannen und
+    # 709,75 · 1 256,64 = 891,9 kN nach dem Verankern
+    for zst in (ZUSTAND_SPANNEN, ZUSTAND_VERANKERT):
+        ueber = [e for e in eintraege if e["zustand"] == zst and e["util"] > 1.0]
+        if ueber:
+            e = max(ueber, key=lambda x: x["util"])
+            mc.warnings.append(
+                f"Befund Vorspannung, {zst}: {e['quelle']} – N = {abs(e['N']) / 1e3:.1f} kN, "
+                f"σ = {e['sigma'] / 1e6:.1f} N/mm² > {e['grenzname']} = {e['grenze'] / 1e6:.2f} N/mm² "
+                f"(Verhältnis {e['util']:.4f}); zulässig wären {e['grenze'] * A_s / 1e3:.1f} kN mit "
+                f"A_s = {A_s * 1e6:.1f} mm² – Vorspannkraft gegen die Zulassung prüfen")
     if momente:
         q, my, mz = max(momente, key=lambda t: max(t[1], t[2]))
         mc.warnings.append(f"Biegung im Gewinde wird nicht nachgewiesen: max |M_y| = {my / 1e3:.3f} kNm, "
