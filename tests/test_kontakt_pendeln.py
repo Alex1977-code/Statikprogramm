@@ -106,6 +106,9 @@ def lager_in_flaechenachsen(typ="tet10", h=0.25, rx=1.2, ry=0.3, ausmitte=1.0 / 
     pk.spannung_auf_seiten(m, deckel, lambda x: np.array(
         [rx * MU * P0, ry * MU * P0, -P0 * (1.0 + 6.0 * ausmitte * (2.0 * x[1] / L - 1.0))]))
     m.plastizitaet.an = False
+    # Pendel-Pruefmodell des bisherigen Reibverfahrens: mit der Reibungstangente (Vorgabe
+    # seit 15.10.2026) pendelt es nicht; der Pendelschutz wird am bisherigen geprueft
+    m.plastizitaet.reibungstangente = False
     return m
 
 
@@ -129,6 +132,7 @@ def block_auf_reiblager(typ="tet10", h=0.25, r=0.6, winkel=0.0, anschlag=False, 
     c, s = math.cos(math.radians(winkel)), math.sin(math.radians(winkel))
     pk.spannung_auf_seiten(m, deckel, lambda x: np.array([r * MU * P0 * c, r * MU * P0 * s, -P0]))
     m.plastizitaet.an = False
+    m.plastizitaet.reibungstangente = False       # bisheriges Verfahren (siehe oben)
     return m, knoten
 
 

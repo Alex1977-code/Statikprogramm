@@ -136,8 +136,11 @@ def test_warmstart():
     systeme = {}
     a = solver.solve_cases(m, [lf1], systeme=systeme)[lf1]
     b = solver.solve_cases(m, [lf1], systeme=systeme)[lf1]
-    check("derselbe Lastfall noch einmal: 1 Schritt, 0 Faktorisierungen, dieselbe Loesung auf 1e-4",
-          b.info.get("contact_warm") and b.info.get("contact_iterations") == 1
+    # Mit der Reibungstangente (Vorgabe seit 15.10.2026) braucht der Lauf zwei Runden:
+    # die erste rechnet mit der Tangente des gesicherten Zustands, die zweite bestaetigt
+    # das Residuum der Rueckabbildung - weiterhin ohne neue Zerlegung
+    check("derselbe Lastfall noch einmal: höchstens 2 Schritte, 0 Faktorisierungen, dieselbe Loesung auf 1e-4",
+          b.info.get("contact_warm") and b.info.get("contact_iterations") <= 2
           and b.info.get("contact_factorisations") == 0
           and float(np.abs(b.u - a.u).max()) < 1e-4 * max(float(np.abs(a.u).max()), 1e-30),
           f"{b.info.get('contact_iterations')} Schritte, {b.info.get('contact_factorisations')} Fakt., "
@@ -161,10 +164,14 @@ def test_warmstart():
     # zurueckgesetzt und die Iteration laeuft weiter, statt kalt neu zu
     # beginnen. Das Ergebnis ist das kalte (gemessen: u 1,3e-5 relativ,
     # Auflagersummen gleich); die Pruefung darunter misst es auf 1e-4.
+    # Mit der Reibungstangente (Vorgabe seit 15.10.2026) folgt der Reibzustand aus u
+    # (Rueckabbildung), eine uebernommene Richtung gibt es nicht zu verwerfen; ob der
+    # Weg das Ergebnis aendert, misst die Pruefung darunter (wie kalt auf 1e-4)
+    rt_an = solver.reibungstangente(m)[0]
     check("umgekehrte Last: der fremde Zustand wird verworfen oder an den Knoten gegen ihre "
-          "Richtung zurueckgesetzt (steht im Protokoll)",
-          any("Warmstart verworfen" in str(z) or "zurückgesetzt" in str(z)
-              for z in warm4.info.get("contact_log", [])),
+          "Richtung zurueckgesetzt (steht im Protokoll) - mit der Reibungstangente nicht nötig",
+          rt_an or any("Warmstart verworfen" in str(z) or "zurückgesetzt" in str(z)
+                       for z in warm4.info.get("contact_log", [])),
           str([z for z in warm4.info.get("contact_log", []) if "Warmstart" in str(z)])[:120])
     check("umgekehrte Last: dieselben Auflagerkraefte wie kalt, u auf 1e-4",
           np.allclose(warm4.reactions.sum(axis=0), kalt4.reactions.sum(axis=0), rtol=1e-9, atol=1e-6)
@@ -1034,8 +1041,12 @@ def test_start_angeboten_und_genutzt():
     i4 = solver.solve_cases(m, [lf1, "LF4"])["LF4"].info
     # verworfen (Neustart, nicht genutzt) oder zurueckgesetzt (genutzt, mit
     # Neustart der Iteration) - seit der Reibung primal-dual das zweite
-    check("umgekehrte Last: angeboten von LF1, nicht unbesehen genutzt (verworfen oder zurueckgesetzt)",
-          i4.get("start_angeboten_von") == f"Lastfall {lf1}" and i4["laeufe"][0]["neustart"],
+    # (mit der Reibungstangente, Vorgabe seit 15.10.2026, ist der Zustand aus u
+    # bestimmt: genutzt ohne Neustart, das Ergebnis wie kalt prueft test_warmstart)
+    check("umgekehrte Last: angeboten von LF1, nicht unbesehen genutzt (verworfen oder zurueckgesetzt) "
+          "- mit der Reibungstangente genutzt",
+          i4.get("start_angeboten_von") == f"Lastfall {lf1}"
+          and (i4["laeufe"][0]["neustart"] or solver.reibungstangente(m)[0]),
           f"{i4.get('start_angeboten_von')} / {i4.get('start_genutzt')} / "
           f"Neustart {i4['laeufe'][0]['neustart']}")
     # Kombination: vom Zustand, den das System vom letzten Lastfall haelt

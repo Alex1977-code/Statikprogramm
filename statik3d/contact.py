@@ -2254,7 +2254,7 @@ class ContactSystem:
         b.update(repr(sorted(self._full_slip_groups().items())).encode("utf-8"))
         return b.hexdigest()
 
-    def runden_text(self, n: int = None) -> str:
+    def runden_text(self, n: int = None, alle_phasen: bool = False) -> str:
         """Die Phase-2-Runden mit Wechsel als Satz, etwa
         " - in 40 Runden: 31 mit Öffnen/Schließen reibungsfreier Bedingungen
         (212 Wechsel), 12 mit neuem Gleiten (340 Knoten)". ``n``: nur die
@@ -2262,8 +2262,9 @@ class ContactSystem:
         denn ``cycles`` beginnt beim Wechsel 1->2 und in zustand_setzen bei
         null, und dort beginnt auch ``runden`` (Setzrunden haben kein
         Ereignis und zaehlen nicht)."""
+        # alle_phasen (Deckel ueber alle Runden, 15.10.2026): auch die Runden der Phase 1
         runden = [r for r in (getattr(self, "runden", None) or [])
-                  if r[0] == 2 and any(r[1:1 + len(RUNDEN_EREIGNISSE)])]
+                  if (alle_phasen or r[0] == 2) and any(r[1:1 + len(RUNDEN_EREIGNISSE)])]
         if n:
             runden = runden[-int(n):]
         if not runden:
@@ -2355,7 +2356,7 @@ class ContactSystem:
         Nur starre, aktive, nicht fliessende - und nicht im Hilfsschritt
         (stabilise: dort sind alle Bedingungen reine Federn an ihrer Lage)."""
         return bool(c.starr and c.active and not c.yielding
-                    and not (self.stabilising and getattr(c, "stabilised", False)))
+                    and not (getattr(self, "stabilising", False) and getattr(c, "stabilised", False)))
 
     def _primal_dual(self, c: Constraint) -> bool:
         """Wird der Reibzustand dieses Knotens in diesem Schritt primal-dual
@@ -2807,7 +2808,8 @@ class ContactSystem:
         n = len(getattr(self, "runden", None) or [])
         if weiter and n >= MAX_CYCLES:
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
-                            f"{MAX_CYCLES} Runden abgebrochen" + self.runden_text(MAX_CYCLES))
+                            f"{MAX_CYCLES} Runden abgebrochen"
+                            + self.runden_text(MAX_CYCLES, alle_phasen=True))
             self.am_deckel = True
             return False
         return weiter

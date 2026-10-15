@@ -2135,7 +2135,8 @@ Gleichungslöser ama scheitert am Sattelpunkt des Stempels auf Sockel schon in
 der ersten Kontaktrunde - vorbestehend, auch am Stand ec3b464.
 
 **Reibung mit konsistenter Tangente (seit 15.10.2026, `contact.REIBUNGSTANGENTE`,
-Schalter `Plastizitaet.reibungstangente`, Vorgabe aus).** Eingeschaltet rechnet jeder
+Schalter `Plastizitaet.reibungstangente`, Vorgabe an seit der Abnahme am Drehlager;
+aus ist das bisherige Verfahren, nur zum Vergleich).** Eingeschaltet rechnet jeder
 Reibknoten an einer exakten Normalbedingung (starr, aktiv, nicht fließend, keine
 Hilfe des Lösers) in beiden Phasen die Rückabbildung (Return-Mapping) des
 Coulomb-Gesetzes. Mit dem Weg d_t = C_t·u in der Fugenebene, der Normalkraft p
@@ -2209,13 +2210,25 @@ Runden konvergiert – Gleitweg 1,09 statt 100 µm, Federkraft 0,1 statt 10 kN,
 Gleichgewicht 4,8 % (`gleichgewicht_global` meldet „verletzt“, das Protokoll nicht).
 Am Stahlklotz (E = 2,1·10¹¹) sind es 4,6 N von 10 kN.
 
-**Offen.** Am gequetschten Block (`tests/test_plastizitaet`) hängt der Zustand mit
-der Reibungstangente an der Teilung der Last: 42,130 / 42,241 / 42,580 / 42,666 mm
-für 1 / 2 / 4 / 8 Laststufen, primal-dual 42,667 mm für alle. Es sind dieselben
-Zahlen wie beim am 28.09.2026 verworfenen „wer sich gegen seine Gleitrichtung
-bewegt, haftet“; beide Zustände erfüllen Gleichgewicht und Coulomb. Mit wachsender
-Teilung nähert sich die Reibungstangente dem primal-dualen Zustand. Federn des
-Anwenders rechnen weiter wie bisher. Gleichungslöser: pypardiso zerlegt jede Matrix
+**Abnahme am Drehlager (15.10.2026).** E0-neu (Entwurf, μ 0,1) mit der Tangente:
+nicht vorläufig, 11 Kontaktläufe mit 19 Runden, keiner am Deckel, 26 min; mit dem
+bisherigen Verfahren in 5,3 h nur bis 68,75 % der Last, alle Läufe am Deckel. Seitdem
+ist die Tangente die Vorgabe.
+
+**Lastteilung am gequetschten Block (`tests/test_plastizitaet`, 15.10.2026).** Mit
+der Tangente hängt der Zustand bei grober Teilung an der Zahl der Laststufen: 42,130 /
+42,241 / 42,580 / 42,666 mm für 1 / 2 / 4 / 8 Stufen – dieselben Zahlen wie beim am
+28.09.2026 verworfenen „wer sich gegen seine Gleitrichtung bewegt, haftet“. Die
+Verfeinerungsreihe zeigt, dass beide Verfahren gegen denselben Wert gehen: 10 / 20 /
+40 / 80 Stufen geben mit der Tangente 42,698 / 42,765 / 42,796 / 42,812 mm, mit dem
+bisherigen Verfahren 42,708 / 42,765 / 42,796 / 42,812 mm (ab 20 Stufen auf 10⁻⁴ mm
+gleich; mit dem Deckel über alle Runden gibt das bisherige Verfahren für 1 bis 4
+Stufen 42,720 mm statt 42,667 mm). Der Zuwachs halbiert sich je Verdopplung (0,067 /
+0,032 / 0,016 mm), Konvergenz erster Ordnung gegen etwa 42,83 mm; ε_p max 13,06 %,
+ΣFn = 60 MN und |ΣF_t| = 9 MN in jeder Zeile. Der von der Teilung scheinbar
+unabhängige Wert des bisherigen Verfahrens war also nicht der Grenzwert. Runden je
+Rechnung: Tangente 33 / 45 / 115 / 113 / 120 / 202 / 390 / 656, bisher 734 / 706 /
+673 / 500 / 448 / 640 / 1 043 / 1 642. Federn des Anwenders rechnen weiter wie bisher. Gleichungslöser: pypardiso zerlegt jede Matrix
 mit `mtype` 11 (reell unsymmetrisch, mit symmetrisiertem Muster), auch die
 symmetrischen. Die Spalte −μ·t besetzt je gleitendem Knoten seine
 Tangentialfreiheitsgrade in der Spalte seiner Normalzeile; an Fugen stehen dort schon
@@ -2963,6 +2976,14 @@ Reibung in Phase 2 bricht nach `MAX_CYCLES = 40` Zustandswechseln ab
 bei echter Konvergenz**. `solve_with_contact` las beides als „fertig" und
 setzte `contact_converged` auf wahr; die Warnung stand allein im
 `contact_log`.
+
+Seit dem 15.10.2026 zählt der Deckel **alle** Runden eines Kontaktlaufs
+(`ContactSystem.update` über `_update_entscheiden`, Zahl der Einträge in `runden`),
+nicht mehr nur die Runden mit Zustandswechsel in Phase 2: am Drehlager (G∞, μ 1e6,
+Spannstufe 1) lief ein Lauf sonst 121 Runden bis `max_iter`, ohne Deckelzeile. Die
+Zeile heißt jetzt „Nachpruefung der Reibung nach 40 Runden abgebrochen“; ein solcher
+Lauf ist nicht konvergiert, und das Ergebnis ist vorläufig – auch in der Kopfzeile und
+der Statuszeile der Oberfläche.
 
 Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
 eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf

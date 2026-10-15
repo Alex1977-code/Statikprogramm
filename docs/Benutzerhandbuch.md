@@ -7273,15 +7273,15 @@ Platte steht mit 0,007 mm. Startet dieselbe Platte mit Vorspannung warm aus dem
 Vorlauf (Vorschlag 1 ausgeschaltet), zieht das Festhalten haftende Knoten bis
 13 µm zurück, und die Prüfung meldet den Lauf als nicht konvergiert.
 
-**Reibung mit konsistenter Tangente (seit 15.10.2026, Schalter, Vorgabe aus).**
+**Reibung mit konsistenter Tangente (seit 15.10.2026, Vorgabe).**
 Bis zum 15.10.2026 bestimmte das Programm Haften und Gleiten der Reibung als
 Fixpunkt: es stellte haftende Knoten über eine Liniensuche schrittweise ins
 Gleiten, führte die Gleitrichtungen aus der Reibkraft der vorigen Runde nach und
 hielt pendelnde Knoten mit den Pendelschutz-Regeln fest. Am Drehlager-Entwurf
 endeten so in der plastischen Phase fast alle Kontaktläufe nach 40 Runden am Deckel,
 weil am Flächenlager „Starr“ und an der Deckelverbindung einzelne Knoten zwischen
-Haften und Gleiten oder zwischen zwei Gleitrichtungen wechselten. Mit dem Schalter
-„Reibung mit konsistenter Tangente“ rechnet jeder Reibknoten an einer starren
+Haften und Gleiten oder zwischen zwei Gleitrichtungen wechselten. Mit der
+konsistenten Tangente rechnet jeder Reibknoten an einer starren
 Normalbedingung (Fuge oder Lager mit μ ohne eigene Feder) in jeder Runde das
 Coulomb-Gesetz aus seinem Weg in der Fuge und seiner Normalkraft: er haftet, solange
 die Haftkraft – Haftsteifigkeit mal Weg – unter μ·Fn bleibt, sonst gleitet er mit μ·Fn
@@ -7292,6 +7292,15 @@ Normalkraft. Fertig ist der Lauf, wenn die Reibkräfte, mit denen gerechnet wurd
 die aus dem Coulomb-Gesetz an der neuen Lösung zusammen um höchstens ein Millionstel
 der Kontaktkraft auseinanderliegen. Die Normalbedingung bleibt dabei exakt, und die
 Ingenieurkriterien und der Deckel der Nachprüfung gelten unverändert.
+
+Vorgabe ist das Verfahren seit der Abnahme am Drehlager-Entwurf (E0-neu, μ = 0,1,
+15.10.2026): Der Lastfall war nicht vorläufig und brauchte 11 Kontaktläufe mit
+zusammen 19 Runden, keiner endete am Deckel, gerechnet in 26 Minuten. Mit dem
+bisherigen Verfahren kam derselbe Lauf in 5,3 Stunden nur bis 68,75 % der Last, und
+alle Kontaktläufe endeten am Deckel. Das bisherige Verfahren gibt es nur noch zum
+Vergleich: In der Maske heißt es „bisheriges Verfahren (nur zum Vergleich)“. Ältere
+Modelldateien enthalten keine Angabe dazu und rechnen beim nächsten Rechnen mit der
+Vorgabe; eine dort gespeicherte Ergebnisdatei bleibt, wie sie gerechnet wurde.
 
 Die Haftsteifigkeit ist kein fester Wert, sondern ein Vielfaches der Steifigkeit,
 die der Knoten aus seinen angrenzenden Elementen hat – auch an starren Lagern, die
@@ -7321,18 +7330,46 @@ vorgespanntes Blechpaket unter Querkraft haftet bis μ·F_v und gleitet darüber
 statt 30 µm in 44 Runden; neu 30,003 µm in 8 Runden). Die Reibarbeit ist je Laststufe
 und Knoten nicht negativ.
 
-Bekannt und noch offen: Am gequetschten Block der Prüfungen (60 MN über der
-Quetschlast, 12 % plastische Dehnung) hängt das Ergebnis mit dem Schalter an der
-Teilung der Last – 42,13 / 42,24 / 42,58 / 42,67 mm größte Verschiebung für 1 / 2 /
-4 / 8 Laststufen, ohne ihn 42,67 mm für alle. Beide Zustände erfüllen Gleichgewicht
-und Coulomb-Gesetz. Ob der Schalter zur Vorgabe wird, entscheidet die Abnahme am
-Drehlager. Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
-bisher. Den Schalter und den Faktor stellen Sie unter *Berechnung → Einstellungen*
-in der Gruppe „Kontaktlauf und Spannschritt“ ein (`plastizitaet.reibungstangente`,
+Grobe Lastteilung bei großem Fließen: Am gequetschten Block der Prüfungen (60 MN über
+der Quetschlast, 13 % plastische Dehnung) hängt die größte Verschiebung an der Zahl der
+Laststufen. Gemessen am 15.10.2026 (größte Verschiebung in mm, mit der konsistenten
+Tangente gegen das bisherige Verfahren):
+
+| Laststufen | 1 | 2 | 4 | 8 | 10 | 20 | 40 | 80 |
+|---|---|---|---|---|---|---|---|---|
+| konsistente Tangente | 42,130 | 42,241 | 42,580 | 42,666 | 42,698 | 42,765 | 42,796 | 42,812 |
+| bisheriges Verfahren | 42,720 | 42,720 | 42,720 | 42,685 | 42,708 | 42,765 | 42,796 | 42,812 |
+
+Ab 20 Laststufen liegen beide Verfahren auf 0,0001 mm beieinander, und der Zuwachs
+halbiert sich mit jeder Verdopplung (0,067 / 0,032 / 0,016 mm) – die Abhängigkeit von
+der Lastteilung konvergiert, gegen etwa 42,83 mm. Auch der scheinbar von der Teilung
+unabhängige Wert des bisherigen Verfahrens bei wenigen Stufen war nicht der Grenzwert.
+Summe der Normal- und Reibkräfte (60 / 9 MN) und Gleichgewicht stimmen in jeder Zeile;
+die Kontaktrunden je Rechnung liegen mit der Tangente bei 33 bis 656, mit dem
+bisherigen Verfahren bei 448 bis 1 642. Wer ein Bauteil weit über seiner Grenzlast
+rechnet, teilt die Last darum fein.
+
+Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie bisher.
+Das Verfahren („Reibung“: „konsistente Tangente (Vorgabe)“ oder „bisheriges Verfahren
+(nur zum Vergleich)“) und den Faktor stellen Sie unter *Berechnung → Einstellungen* in
+der Gruppe „Kontaktlauf und Spannschritt“ ein (`plastizitaet.reibungstangente`,
 `plastizitaet.haft_faktor`); gespeichert werden sie nur, wenn sie von der Vorgabe
-abweichen, und sie gelten für jeden Kontaktlauf, auch ohne Fließen. Ausgeschaltet
-rechnet das Programm bitgleich wie vorher, und reibungsfreie Fugen rechnen mit und
-ohne Schalter bitgleich.
+abweichen, und sie gelten für jeden Kontaktlauf, auch ohne Fließen. Reibungsfreie
+Fugen rechnen mit beiden Verfahren bitgleich.
+
+**Der Deckel zählt alle Runden (seit 15.10.2026).** Bis zum 15.10.2026 zählte der
+Deckel der Nachprüfung nur die Runden der zweiten Phase, in denen sich ein Zustand
+änderte. Runden der ersten Phase und Runden, in denen sich nur Gleitrichtungen
+einspielten, zählten nicht. Am Drehlager lief ein Kontaktlauf so 121 Runden, bis die
+Höchstzahl der Iteration erreicht war, ohne dass die Zeile des Deckels kam. Jetzt
+zählt jede Runde eines Kontaktlaufs. Nach 40 Runden endet er mit der Zeile „Kontakt:
+Nachprüfung der Reibung nach 40 Runden abgebrochen“, er gilt als nicht konvergiert, und
+das Ergebnis ist vorläufig. Das steht in der Zusammenfassung, in der Rechenliste, im
+Bericht und in der Ergebnisdatei, seit dem 15.10.2026 auch in der Kopfzeile
+(„berechnet · vorläufig“, farbig) und nach der Rechnung in der Statuszeile („⚠ Ergebnis
+vorläufig (Kontakt nicht konvergiert): LF1 …“). Mit der konsistenten Tangente brauchen
+Kontaktläufe meist unter zehn Runden; das bisherige Verfahren endet dadurch öfter am
+Deckel als bis zum 15.10.2026 und rechnet nicht mehr bitgleich wie damals.
 
 **Kontaktlauf konvergiert als Bedingung der Plastizität: vorbereitet, aus
 (14.10.2026).** Nach der Entscheidung des Anwenders kommt die Bedingung
@@ -11043,9 +11080,10 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Einstellungen bekommt die Vorgaben; mit der Vorgabe schreibt das Programm sie auch
   nicht in die Datei, damit ältere Modelle beim Speichern Byte für Byte bleiben und
   ihre Ergebnisdateien weiter passen. Seit dem 15.10.2026 stehen in derselben Gruppe
-  der Schalter „Reibung mit konsistenter Tangente“ (Vorgabe aus) und die
-  „Haftsteifigkeit“ als Vielfaches der Knotensteifigkeit (Vorgabe × 1000); was sie
-  tun, steht im Kapitel Kontakt unter „Reibung mit konsistenter Tangente“.
+  die Auswahl „Reibung“ („konsistente Tangente (Vorgabe)“ oder „bisheriges Verfahren
+  (nur zum Vergleich)“) und die „Haftsteifigkeit“ als Vielfaches der
+  Knotensteifigkeit (Vorgabe × 1000); was sie tun, steht im Kapitel Kontakt unter
+  „Reibung mit konsistenter Tangente“.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die

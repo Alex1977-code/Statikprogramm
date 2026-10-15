@@ -9042,8 +9042,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # Fehlt der Merker (ein Kontaktsystem, dessen update() ihn nicht
             # setzt), gilt die alte, vorsichtige Probe: ein fehlender Merker
             # darf nicht "konvergiert" heissen (Gegenpruefung, 22.09.2026).
+            # (seit 15.10.2026 zaehlt der Deckel alle Runden des Laufs)
             deckel = bool(getattr(cs, "am_deckel",
-                                  cs.phase == 2 and cs.cycles >= _MAX_CYCLES))
+                                  len(getattr(cs, "runden", None) or []) >= _MAX_CYCLES))
             converged = not deckel
             break
     pendel_verletzt = False

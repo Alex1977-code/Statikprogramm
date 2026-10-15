@@ -193,7 +193,11 @@ def test_verschachtelt_ohne_warnung():
     check("keine Warnung im Strom und in der Rechenliste",
           not any(_warnt(z) for z in strom)
           and not any(_warnt(v[1]) for v in _rechenliste(m, strom).values()), "")
-    soll = {"LF1": (2.9403970836312483e-06, 84, 7, 5, 3), "K1": (7.844300353569184e-06, 90, 9, 7, 5)}
+    # Seit dem 15.10.2026 rechnet die Reibung mit der konsistenten Tangente (Vorgabe):
+    # Kontaktrunden LF1 84 -> 21, K1 90 -> 21; u_max 2.9403970836312483e-06 -> ...408 und
+    # 7.844300353569184e-06 -> ...308 (1e-6 relativ, Haftfeder statt exakter Haftzeile);
+    # Laeufe, Newton-Schritte und Zerlegungen der Plastizitaet unveraendert
+    soll = {"LF1": (2.940408188840527e-06, 21, 7, 5, 3), "K1": (7.844307765287515e-06, 21, 9, 7, 5)}
     for n, (umax, it, laeufe, pl_it, fakt) in soll.items():
         r = an.all_results()[n]
         pz = r.info.get("plastizitaet") or {}

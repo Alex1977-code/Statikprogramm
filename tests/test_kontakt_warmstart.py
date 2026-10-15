@@ -97,6 +97,11 @@ def platte(mu=0.2, Fv=1.0e6, rx=0.6, ry=0.2, typ="tet10", h=0.25, stufen=3, fy=N
         pk.spannung_auf_seiten(m, deckel, lambda x: np.array([0.0, 0.0, -V / (L * B)]))
     m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.01, laststufen=stufen, iterationen=25,
                                      toleranz=1e-3)
+    # Die Vorschlaege 1-5 (14.10.2026) sind Regeln gegen das Pendeln des bisherigen
+    # Reibverfahrens; mit der Reibungstangente (Vorgabe seit 15.10.2026) pendelt diese
+    # Platte nicht mehr (tests/test_reibungstangente: 66 -> 21 Runden). Gemessen werden
+    # sie darum am bisherigen Verfahren, das es nur noch zum Vergleich gibt.
+    m.plastizitaet.reibungstangente = False
     if fy is None:
         m.materials["S"].fy = 1e12
     for k, v in (schalter or {}).items():
@@ -251,9 +256,11 @@ def test_vorschlag2():
     check("aus: Vorlauf und Stufen am Deckel, vorläufig (Stand vor dem 14.10.2026)",
           laeufe(a)[0].get("grund") == "deckel" and a.info.get("vorlaeufig"),
           f"Gründe {[e.get('grund') for e in laeufe(a)]}")
-    check("an: Knoten festgehalten und geprüft, Ergebnis konvergiert, weniger als ein Drittel der Runden",
+    # (seit 15.10.2026 zaehlt der Deckel alle Runden: aus endet jeder Lauf nach 40 statt
+    # vorher bis zu 120 Runden - 200 statt 373 Runden, darum die Haelfte statt ein Drittel)
+    check("an: Knoten festgehalten und geprüft, Ergebnis konvergiert, weniger als die Hälfte der Runden",
           fest and solver.konvergenz_zustand(b.info) == "konvergiert"
-          and b.info.get("contact_iterations", 999) * 3 < a.info.get("contact_iterations", 0),
+          and b.info.get("contact_iterations", 999) * 2 < a.info.get("contact_iterations", 0),
           (fest[-1][:150] if fest else "keine Zeile"))
     # (b) Pruefung greift: warm aus dem Vorlauf (Vorschlag 1 aus) zieht das Festhalten
     #     haftende Knoten bis 13 µm zurueck, und die Haftkraft schiebt sie dorthin
@@ -272,6 +279,7 @@ def test_vorschlag2():
 
             def bau(s):
                 m_ = tp2.pendelmodell(0.5e6)
+                m_.plastizitaet.reibungstangente = False      # bisheriges Verfahren (siehe platte)
                 for k_, v_ in s.items():
                     setattr(m_.plastizitaet, k_, v_)
                 return m_
@@ -320,9 +328,11 @@ def test_vorschlag3():
     from tests import test_plastizitaet as tpl
     m0 = tpl._gequetschter_block()
     m0.plastizitaet.laststufen = 1
+    m0.plastizitaet.reibungstangente = False      # bisheriges Verfahren (siehe platte)
     r0, t0 = rechnen(m0)
     m1 = tpl._gequetschter_block()
     m1.plastizitaet.laststufen = 1
+    m1.plastizitaet.reibungstangente = False
     m1.plastizitaet.halbieren_lastabhaengig = True
     r1, t1 = rechnen(m1)
     p0, p1 = r0.info.get("plastizitaet") or {}, r1.info.get("plastizitaet") or {}
@@ -331,14 +341,18 @@ def test_vorschlag3():
           f"{solver.konvergenz_zustand(r0.info)[:40]}")
     print(f"      an:  halbiert {p1.get('halbiert')}, {r1.info.get('contact_iterations')} Runden, {t1:.1f} s, "
           f"{solver.konvergenz_zustand(r1.info)[:60]}")
-    check("gequetschter Block, Vorgabe aus: viermal halbiert, konvergiert (wie vor dem 14.10.2026)",
-          p0.get("halbiert") == 4 and solver.konvergenz_zustand(r0.info) == "konvergiert"
+    # (seit 15.10.2026 mit dem Deckel ueber alle Runden siebenmal statt viermal)
+    check("gequetschter Block, Vorgabe aus: mehrmals halbiert, konvergiert (wie vor dem 14.10.2026)",
+          int(p0.get("halbiert") or 0) >= 4 and solver.konvergenz_zustand(r0.info) == "konvergiert"
           and not [z for z in (p0.get("log") or []) if "Lastanteil ab" in z],
           f"halbiert {p0.get('halbiert')}")
     nicht = [z for z in log1 if "hängt nicht vom Lastanteil ab" in z]
     ja = [z for z in log1 if "hängt vom Lastanteil ab, die Stufe wird halbiert" in z]
-    check("  an: Kriterium im Protokoll, nach drei Halbierungen nicht lastabhängig, Ergebnis vorläufig",
-          p1.get("halbiert") == 3 and nicht and ja and r1.info.get("vorlaeufig")
+    # (seit 15.10.2026 mit dem Deckel ueber alle Runden: weniger Halbierungen als aus,
+    # vorher genau drei)
+    check("  an: Kriterium im Protokoll, früher nicht lastabhängig als aus, Ergebnis vorläufig",
+          int(p1.get("halbiert") or 0) < int(p0.get("halbiert") or 0) and nicht and ja
+          and r1.info.get("vorlaeufig")
           and all(e.get("ausschlag") is not None for e in laeufe(r1)),
           (nicht[0][:170] if nicht else "keine Zeile"))
 
@@ -364,6 +378,7 @@ def test_vorschlag4():
     def stempel(an):
         m_ = tpl._drehlagerartiges_modell()
         m_.plastizitaet.an = False
+        m_.plastizitaet.reibungstangente = False      # bisheriges Verfahren (siehe platte)
         m_.plastizitaet.spannung_zuerst = an
         return m_
     a, ta = rechnen(stempel(False))
