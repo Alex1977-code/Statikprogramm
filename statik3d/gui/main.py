@@ -5634,12 +5634,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 symbol="csv")
         g.klein("Netz + Ergebnisse als VTK…", self.export_vtk,
                 hinweis="Netz und Ergebnisfelder als VTK-Datei, etwa für ParaView")
-        # die Umstellung eines vor dem 14.10.2026 aus RFEM 6 uebernommenen
-        # Modells (Importhinweis „zugstab“) - bis dahin nur eine Funktion
-        g.klein("Stabtypen aus RFEM nachlesen…", self.maske_stabtypen_rfem,
-                hinweis="Zugstäbe, Druckstäbe und Seile eines vor dem 14.10.2026 aus RFEM 6 übernommenen "
-                        "Modells aus der RFEM-Datei nachlesen: „trägt nur“ setzen, Seile als Seil anlegen",
-                symbol="staebe")
+        # die Umstellungen eines frueher aus RFEM 6 uebernommenen Modells: die
+        # Stabtypen (14.10.2026, Importhinweis „zugstab“, bis dahin nur eine
+        # Funktion) und die Lagerreibung (15.10.2026, „lagerreibung“). Ein
+        # Menueknopf statt zweier kleiner Knoepfe: ein vierter kleiner Knopf
+        # oeffnete eine neue Spalte, und das Register Datei wurde mit Segoe UI
+        # 1294 statt 1100 px breit (Grenze bei 1280 px: 1241,
+        # tests/test_glasleiste_ribbon.py)
+        g.menue("Aus RFEM nachlesen ▾", [
+            ("Stabtypen aus RFEM nachlesen…", self.maske_stabtypen_rfem,
+             "Zugstäbe, Druckstäbe und Seile eines vor dem 14.10.2026 aus RFEM 6 übernommenen "
+             "Modells aus der RFEM-Datei nachlesen: „trägt nur“ setzen, Seile als Seil anlegen"),
+            ("Lager aus RFEM nachlesen…", self.maske_lager_rfem,
+             "Lager eines vor dem 15.10.2026 aus RFEM 6 übernommenen Modells aus der RFEM-Datei "
+             "nachlesen: einen Reibbeiwert ohne Reibungsart zurücknehmen")],
+            hinweis="Ein früher aus RFEM 6 übernommenes Modell aus der RFEM-Datei nachlesen: "
+                    "Stabtypen (bis 14.10.2026) oder Lagerreibung (bis 15.10.2026)",
+            symbol="import")
         g = r.gruppe("Beispiele")
         # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
         # (24.09.2026) - die Suche findet die Beispiele weiter
@@ -8822,6 +8833,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not je_art:
                     felder.append(F("last_keine", "Lasten", "info",
                                     "keine - Ribbon Lasten: Knotenlast, Linienlast, Flächenlast, Temperatur …"))
+                # Vorspannung aus RFEM uebernommen - pruefen (15.10.2026)
+                from .. import vorspannkraft as _vk
+                if lc is not None and name in _vk.rfem_pruefen(m):
+                    felder.append(F("rfem_pruefen", "Vorspannung", "info",
+                                    f"{_vk.VERMERK_RFEM}: als eingeprägte Dehnung übernommen – "
+                                    f"{_vk.RFEM_PRUEFEN} (Lasten › Vorspannung)"))
                 felder += [F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
                             hinweis="Lastfälle einer Gruppe wirken nie gemeinsam"),
                           F("situation", "Situation", "wahl",
@@ -10352,10 +10369,16 @@ class MainWindow(QtWidgets.QMainWindow):
                      for d in (l.dofs or []) if 0 <= int(d) < 6]
             return f"K{l.node}: " + (", ".join(teile) or "–")
         if art == "vorspannung":
+            # Benennung vom 14.10.2026: Anfangsvorspannung (Pressenkraft P0) und
+            # Endvorspannung; bis dahin „F_soll = … kN (nach Verankerung)“
+            g = int(getattr(l, "gruppe", 1) or 1)
+            if callable(getattr(l, "ist_presse", None)) and l.ist_presse():
+                return (f"{getattr(l, 'ziel', '?')}: P₀ = {kn(getattr(l, 'kraft', 0.0))} kN "
+                        f"(Anfangsvorspannung, Δs = {z(float(getattr(l, 'schlupf', 0.0) or 0.0) * 1e3)} mm"
+                        + (f", Gruppe {g}" if g != 1 else "") + ")")
             if getattr(l, "sollkraft", False):
-                g = int(getattr(l, "gruppe", 1) or 1)
                 return (f"{getattr(l, 'ziel', '?')}: F_soll = {kn(getattr(l, 'kraft', 0.0))} kN "
-                        f"(nach Verankerung" + (f", Gruppe {g}" if g != 1 else "") + ")")
+                        f"(Endvorspannung" + (f", Gruppe {g}" if g != 1 else "") + ")")
             return f"{getattr(l, 'ziel', '?')}: F_v = {kn(getattr(l, 'kraft', 0.0))} kN"
         if art == "uebermass":
             t = (f"Fuge {getattr(l, 'ziel', '?')}: Ü = "
@@ -10627,9 +10650,10 @@ class MainWindow(QtWidgets.QMainWindow):
                        F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
             vs = obj.vorspann_text(m) if hasattr(obj, "vorspann_text") else ""
             if vs:
+                from ..vorspannkraft import LASTART_UMWANDELN
                 felder.append(F("vorspannung", "Vorspannung", "info",
-                                vs + " – umwandeln in die Sollkraft: Lasten › "
-                                "Vorspannung, Lastart „ΔT-Vorspannung in Sollkraft umwandeln“"))
+                                vs + " – umwandeln in die Endvorspannung: Lasten › "
+                                f"Vorspannung, Lastart „{LASTART_UMWANDELN}“"))
         elif liste == "zwangsverformungen":
             titel = f"Zwangsverformung K{obj.node}"
             u = (list(obj.u or []) + [0.0] * 6)[:6]
@@ -10640,9 +10664,22 @@ class MainWindow(QtWidgets.QMainWindow):
                             ", ".join(namen[int(d)] for d in (obj.dofs or []) if 0 <= int(d) < 6), breite=150,
                             hinweis="welche Richtungen vorgegeben sind (auch mit dem Wert 0), durch Komma"))
         elif liste == "vorspannungen" and getattr(obj, "sollkraft", False):
-            titel = f"Vorspannkraft (Soll nach Verankerung) Stab {obj.ziel}"
-            felder += [F("F", "Sollkraft F_soll [kN]", "zahl", float(obj.kraft) / 1e3,
-                         hinweis="die Kraft, die der Stab nach dem Verankern trägt"),
+            # Endvorspannung (bis 14.10.2026 „Vorspannkraft (Soll nach
+            # Verankerung)“) und Anfangsvorspannung (Pressenkraft P0) mit Schlupf
+            from .. import vorspannkraft as vk
+            presse = callable(getattr(obj, "ist_presse", None)) and obj.ist_presse()
+            titel = f"{vk.LASTART_PRESSE if presse else vk.LASTART_ENDE} Stab {obj.ziel}"
+            felder += [F("kraftart", "Kraftart", "wahl", vk.LASTART_PRESSE if presse else vk.LASTART_ENDE,
+                         [vk.LASTART_ENDE, vk.LASTART_PRESSE],
+                         hinweis=f"{vk.LASTART_ENDE}: {vk.ERKLAERUNG_ENDE} {vk.LASTART_PRESSE}: "
+                                 f"{vk.ERKLAERUNG_PRESSE}"),
+                       F("F", "Pressenkraft P₀ [kN]" if presse else "Endvorspannung F_soll [kN]", "zahl",
+                         float(obj.kraft) / 1e3,
+                         hinweis=vk.ERKLAERUNG_PRESSE if presse else vk.ERKLAERUNG_ENDE),
+                       F("schlupf", "Verankerungsschlupf Δs [mm]", "zahl",
+                         float(getattr(obj, "schlupf", 0.0) or 0.0) * 1e3,
+                         hinweis="nur Anfangsvorspannung: um so viel rutscht der Stab beim Verankern nach; "
+                                 "er verliert gegen starre Umgebung E·A/L·Δs (L = Stablänge)"),
                        F("gruppe", "Gruppe beim Spannen", "ganz", int(getattr(obj, "gruppe", 1) or 1),
                          hinweis="gleiche Gruppe = gleichzeitig gespannt; mehrere Gruppen nacheinander "
                                  "(1, 2, …) - früher gespannte verlieren dann Kraft"),
@@ -10748,6 +10785,13 @@ class MainWindow(QtWidgets.QMainWindow):
             obj.kommentar = str(w.get("kommentar", "") or "")
             if getattr(obj, "sollkraft", False):
                 obj.gruppe = max(1, int(round(z("gruppe", float(obj.gruppe or 1)))))
+                # Kraftart und Schlupf (14.10.2026); der Schlupf gilt nur bei der
+                # Anfangsvorspannung, die Endvorspannung behaelt 0
+                from .. import vorspannkraft as vk
+                if "kraftart" in w:
+                    presse = str(w.get("kraftart")) == vk.LASTART_PRESSE
+                    obj.kraftart = "presse" if presse else ""
+                    obj.schlupf = max(0.0, z("schlupf", 0.0) / 1e3) if presse else 0.0
         elif liste == "gravity":
             lc.gravity = [0.0, 0.0, z("gz")]
         neu = str(w.get("fall", fall) or fall)
@@ -11362,8 +11406,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return out
 
     def _gewinde_felder(self, F, sec) -> list:
-        """A_s und Gewinde fuer die Querschnittsmaske."""
+        """A_s und Gewinde fuer die Querschnittsmaske - beim Rundstahl (Section.typ
+        „circle“) und bei jedem Querschnitt, der schon ein Gewinde oder A_s traegt
+        (15.10.2026: bei einem Rechteck oder I-Profil gibt es kein Gewinde)."""
         from ..ec3 import spannstahl as sp
+        if sec is not None and getattr(sec, "typ", "") != "circle"                 and not getattr(sec, "gewinde", "") and getattr(sec, "A_s", None) is None:
+            return []
         gew = str(getattr(sec, "gewinde", "") or "") if sec is not None else ""
         wahl = (sp.GEWINDE_AUFGEWALZT_TEXT if gew == sp.GEWINDE_AUFGEWALZT
                 else gew if gew in sp.schraubengroessen() else "–")
@@ -11392,9 +11440,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if v is not None and v <= 0:
                 return "A_s muss größer als null sein – leer lassen heißt Nennquerschnitt. Nicht übernommen."
             As = None if v is None else v * 1e-6
-        if gew in sp.schraubengroessen():
-            As = sp.schraubengroessen()[gew]
+        tabelle = sp.schraubengroessen()
+        alt = str(getattr(sec, "gewinde", "") or "")
+        if gew in tabelle:
+            As = tabelle[gew]
         elif gew == sp.GEWINDE_AUFGEWALZT:
+            As = None
+        elif alt in tabelle and As is not None and abs(As - tabelle[alt]) <= 1e-9 * tabelle[alt]:
+            # zurueck auf „ohne Gewinde“: das A_s, das aus der Tabelle der Schraubengroesse stammte,
+            # geht mit ihr (15.10.2026); ein von Hand eingetragenes A_s (Zulassung) bleibt
             As = None
         return {"A_s": As, "gewinde": gew}
 
@@ -11657,6 +11711,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                           **werte, **gewinde)
             del m.sections[name]
             m.add_section(neu_sec)
+            # passt das Gewinde zum Stabdurchmesser? Nur ein Hinweis (15.10.2026), keine Sperre; er
+            # geht nicht ueber hinweis(), das ein „Uebernehmen“ als abgewiesen zaehlt
+            try:
+                from ..ec3 import spannstahl as _sp_
+                passt = _sp_.gewinde_hinweis(neu_sec)
+            except Exception:                   # noqa: BLE001 - der Hinweis darf die Uebernahme nie kippen
+                passt = ""
+            if passt:
+                self.log.appendPlainText("HINWEIS: " + passt)
+                self._hinweis_statuszeile("Hinweis: " + passt)
             if neuname != name:
                 for e in m.elements:
                     if getattr(e, "sec", "") == name:
@@ -15111,6 +15175,8 @@ class MainWindow(QtWidgets.QMainWindow):
         nur = cb.currentText()
         zeilen = []
         i = 0
+        from .. import vorspannkraft as _vk_
+        rfem_pruefen = _vk_.rfem_pruefen(m)
         for lcname, lc in m.load_cases.items():
             if nur not in ("(alle)", "", lcname):
                 continue
@@ -15143,6 +15209,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²",
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
+            # Vorspannung aus RFEM uebernommen (15.10.2026): Vermerk „prüfen“
+            pruefen = lcname in rfem_pruefen
             for l in lc.eigene("temp_loads"):
                 if l.aus_vorspannung:
                     # eine umgerechnete Vorspannung: die Kraft, mit E und alpha
@@ -15150,14 +15218,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     # der Maske der Last
                     zeilen.append([i, lcname, "Vorspannung", f"E{l.elem}",
                                    f"F_v = {l.vorspann_kraft_text()}",
-                                   l.vorspann_umrechnung_text(), ""])
+                                   l.vorspann_umrechnung_text(), _vk_.VERMERK_RFEM if pruefen else ""])
                     i += 1
                     continue
                 # eine Vorspannung als Temperatur: Kraft, E und α der Umrechnung (13.10.2026)
+                vs = l.vorspann_text(self.model)
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {tab.festkomma(l.dT, 2)} K",
                                f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
-                               l.vorspann_text(self.model)])
+                               vs + (f" – {_vk_.VERMERK_RFEM}" if pruefen and vs else "")])
                 i += 1
             for l in lc.geometrielasten:
                 ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)
@@ -15203,10 +15272,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 i += 1
             for l in getattr(lc, "vorspannungen", None) or []:
                 soll = getattr(l, "sollkraft", False)
-                zeilen.append([i, lcname, "Vorspannkraft (Soll)" if soll else "Vorspannung",
+                presse = callable(getattr(l, "ist_presse", None)) and l.ist_presse()
+                # Benennung vom 14.10.2026; bis dahin „Vorspannkraft (Soll)“
+                zeilen.append([i, lcname, "Anfangsvorspannung (P₀)" if presse else "Endvorspannung" if soll
+                               else "Vorspannung (eingeprägte Dehnung)",
                                ("Stab " if l.art == "stab" else "Volumen ") + str(l.ziel),
-                               (f"F_soll = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN"
-                                + (f", Gruppe {int(l.gruppe)}" if soll and int(l.gruppe or 1) != 1 else ""))
+                               ((f"P₀ = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN, Δs = "
+                                 f"{zl.zahl_text(float(l.schlupf or 0.0) * 1e3, tausender=False)} mm") if presse
+                                else f"F_soll = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN")
+                               + (f", Gruppe {int(l.gruppe)}" if int(l.gruppe or 1) != 1 else "")
                                if soll else f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
                                "Stabachse" if l.art == "stab" else
                                ("längste Abmessung" if l.achse is None else
@@ -17343,11 +17417,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_spannstufen.setSuffix(" Stufen")
         self.sp_spannstufen.setValue(0)
         self.sp_spannstufen.setToolTip(
-            "Vorspannkraft (Soll nach Verankerung): das Kräftepaar F_soll des Spannschritts wächst in so "
-            "vielen gleichen Stufen auf F_soll, jede vom Kontakt- und Fließzustand der vorigen aus - wie "
-            "beim Spannen mit der Presse. Automatisch: mit Kontakt oder Fließen 3 Stufen, sonst eine "
-            "(linear ist das Ergebnis vom Weg unabhängig). Nach dem Verriegeln trägt jeder Stab F_soll, "
-            "gleich wie viele Stufen.")
+            "Endvorspannung und Anfangsvorspannung (Pressenkraft P₀): das Kräftepaar des Spannschritts "
+            "(F_soll bzw. P₀) wächst in so vielen gleichen Stufen auf seinen vollen Wert, jede vom Kontakt- "
+            "und Fließzustand der vorigen aus - wie beim Spannen mit der Presse. Automatisch: mit Kontakt "
+            "oder Fließen 3 Stufen, sonst eine (linear ist das Ergebnis vom Weg unabhängig). Nach dem "
+            "Verriegeln trägt jeder Stab F_soll bzw. P₀ abzüglich Schlupf, gleich wie viele Stufen.")
         gkl.addWidget(row("Spannschritt in", self.sp_spannstufen))
         lay.addWidget(gk)
 
@@ -21265,9 +21339,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     #: Lastarten der Vorspannungsmaske (13.10.2026): die Anfangsdehnung wie
     #: bisher, die Sollkraft nach Verankerung und die Umwandlung einer
-    #: Temperatur-Vorspannung (RFEM-Import) in die Sollkraft
-    VORSPANN_ARTEN = ["Anfangsdehnung (F_v)", "Vorspannkraft (Soll nach Verankerung)",
-                      "ΔT-Vorspannung in Sollkraft umwandeln"]
+    #: Temperatur-Vorspannung (RFEM-Import) in die Sollkraft. Seit dem
+    #: 14.10.2026 mit den Namen des Anwenders (vorspannkraft.LASTART_*): die
+    #: Sollkraft heisst Endvorspannung, dazu kommt die Anfangsvorspannung
+    #: (Pressenkraft P0) mit Verankerungsschlupf. Bis dahin hiessen die Arten
+    #: „Anfangsdehnung (F_v)“, „Vorspannkraft (Soll nach Verankerung)“ und
+    #: „ΔT-Vorspannung in Sollkraft umwandeln“.
+    from ..vorspannkraft import LASTART_DEHNUNG, LASTART_ENDE, LASTART_PRESSE, LASTART_UMWANDELN
+    VORSPANN_ARTEN = [LASTART_DEHNUNG, LASTART_ENDE, LASTART_PRESSE, LASTART_UMWANDELN]
 
     @_maskenweg()
     def maske_vorspannung(self):
@@ -21275,61 +21354,75 @@ class MainWindow(QtWidgets.QMainWindow):
         oder (seit 13.10.2026) als Sollkraft nach Verankerung."""
         from .. import vorspannkraft as vk
         felder = [msk.Feld("art", "Lastart", "wahl", self.VORSPANN_ARTEN[0], list(self.VORSPANN_ARTEN),
-                           hinweis="Anfangsdehnung: das Bauteil will sich um F_v/(EA) verkürzen und trägt "
-                                   "danach F_v minus die Verkürzung der Umgebung. Sollkraft (nur Stäbe): "
-                                   "der Stab trägt nach dem Verankern genau F_soll - gespannt in einem "
-                                   "eigenen Schritt vor den übrigen Lasten. Umwandeln: die aus RFEM "
-                                   "übernommene Vorspannung als Temperatur (ΔT) wird zur Sollkraft"),
-                  msk.Feld("F", "Vorspannkraft F_v / F_soll [kN]", wert=100.0,
+                           hinweis="Eingeprägte Dehnung: das Bauteil will sich um F_v/(EA) verkürzen und trägt "
+                                   "danach F_v minus die Verkürzung der Umgebung. "
+                                   f"{vk.LASTART_ENDE} (nur Stäbe): {vk.ERKLAERUNG_ENDE} "
+                                   f"{vk.LASTART_PRESSE} (nur Stäbe): {vk.ERKLAERUNG_PRESSE} Beide werden in "
+                                   "einem eigenen Spannschritt vor den übrigen Lasten gespannt. Umwandeln: die aus "
+                                   "RFEM übernommene Vorspannung als eingeprägte Dehnung (ΔT) wird zur "
+                                   "Endvorspannung"),
+                  msk.Feld("F", "Vorspannkraft F_v / F_soll / P₀ [kN]", wert=100.0,
                            hinweis="positiv = Zug im vorgespannten Bauteil (es klemmt die Umgebung); "
+                                   "bei der Anfangsvorspannung die Pressenkraft P₀; "
                                    "beim Umwandeln 0 = Vorschlag (0,9·f_p0,1k·A bei Spannstahl, sonst "
                                    "der Wert aus RFEM)"),
+                  msk.Feld("schlupf", "Verankerungsschlupf Δs [mm]", wert=0.0,
+                           hinweis="nur Anfangsvorspannung (Pressenkraft P₀): um so viel rutscht der Stab "
+                                   "beim Verankern nach; er verliert gegen starre Umgebung E·A/L·Δs "
+                                   "(L = Stablänge), die Umgebung federt einen Teil zurück"),
                   msk.Feld("gruppe", "Gruppe beim Spannen", "ganz", 1,
-                           hinweis="nur Sollkraft: Stäbe derselben Gruppe werden gleichzeitig gespannt, "
-                                   "mehrere Gruppen nacheinander (1, 2, …) - die früher gespannten "
-                                   "verlieren dann Kraft"),
+                           hinweis="nur End- und Anfangsvorspannung: Stäbe derselben Gruppe werden "
+                                   "gleichzeitig gespannt, mehrere Gruppen nacheinander (1, 2, …) - die "
+                                   "früher gespannten verlieren dann Kraft"),
                   msk.Feld("achse", "Achse (Volumen)", "wahl", self.VORSPANN_ACHSEN[0],
                            list(self.VORSPANN_ACHSEN),
                            hinweis="Richtung der Schraube; bei Stäben ist es die Stabachse"),
                   msk.Feld("kommentar", "Bemerkung", "text", "", breite=150),
                   self._lastfallfeld(),
-                  msk.Feld("alle", "Umwandeln in allen Lastfällen mit derselben Anfangsvorspannung",
+                  msk.Feld("alle", "Umwandeln in allen Lastfällen mit derselben eingeprägten Dehnung",
                            "haken", True,
                            hinweis="sonst nur im gewählten Lastfall; ein Lastfall mit anderer Kraft "
                                    "(am Drehlager 805 statt 952 kN) bleibt, wie er ist")]
-        offen = [h for h in (getattr(self.model, "importhinweise", None) or [])
-                 if h.get("art") == "vorspannung" and not h.get("erledigt")]
+        # gespeicherte Importhinweise und - seit 15.10.2026 - die beim Oeffnen
+        # aus ΔT abgeleiteten eines aelteren Modells
+        offen = [h for h in vk._rfem_hinweise(self.model) if not h.get("erledigt")]
         if offen:
             felder.append(msk.Feld("hinweise", "Aus dem Import", "info",
-                                   " · ".join(str(h.get("text", "")) for h in offen[:3])))
+                                   " · ".join(h["text"] if h.get("abgeleitet") else
+                                              vk.hinweis_anzeige(self.model, h) for h in offen[:3])))
         elif vk.temperatur_vorspannungen(self.model):
             felder.append(msk.Feld("hinweise", "Im Modell", "info",
-                                   "Vorspannungen als Temperatur (ΔT) auf Zugstäben - umwandeln mit "
-                                   f"der Lastart „{self.VORSPANN_ARTEN[2]}“"))
+                                   "Vorspannungen als eingeprägte Dehnung (ΔT) auf Zugstäben - umwandeln mit "
+                                   f"der Lastart „{vk.LASTART_UMWANDELN}“"))
         m = msk.Maske("Vorspannung", felder, knopf="Last aufbringen",
                       hinweis="Stäbe oder Volumen in der Ansicht wählen (Auswahlart „Stab“ oder "
                               "„Volumen“), Lastart und Kraft eintragen, „Last aufbringen“. "
                               "Anfangsdehnung: das Bauteil will sich um F_v/(EA) verkürzen; hält die "
                               "Umgebung es fest, trägt es F_v als Zug - wie eine angezogene Schraube. "
-                              "Sollkraft: der Stab trägt nach dem Verankern F_soll. Umwandeln: ohne "
+                              "Endvorspannung: der Stab trägt nach dem Verankern F_soll. "
+                              "Anfangsvorspannung: die Presse spannt mit P₀, beim Verankern gehen der "
+                              "Schlupf Δs und die elastischen Verluste ab. Umwandeln: ohne "
                               "Auswahl alle Stäbe mit einer Temperatur-Vorspannung.")
         m.angewendet.connect(self._vorspannung_aufbringen)
         self.maske_erzeugen(m)
 
     def _vorspannung_aufbringen(self, w: dict):
         m = self.model
+        from .. import vorspannkraft as vk
         lastart = str(w.get("art", "") or self.VORSPANN_ARTEN[0])
-        if lastart == self.VORSPANN_ARTEN[2]:
+        if lastart == vk.LASTART_UMWANDELN:
             return self._vorspannung_umwandeln(w)
-        soll = lastart == self.VORSPANN_ARTEN[1]
+        presse = lastart == vk.LASTART_PRESSE
+        soll = lastart == vk.LASTART_ENDE or presse
+        schlupf = max(0.0, float(w.get("schlupf", 0.0) or 0.0)) / 1e3 if presse else 0.0
         ziele = [(n, "stab") for n in self.sel_staebe if n in m.members] \
             + [(n, "koerper") for n in self.sel_koerper if n in m.koerper]
         if not ziele:
             return self.hinweis("Zuerst Stäbe oder Volumen in der Ansicht wählen "
                               "(Auswahlart „Stab“ oder „Volumen“)")
         if soll and any(a == "koerper" for _n, a in ziele):
-            return self.hinweis("Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab - "
-                                "die Volumen abwählen oder die Anfangsdehnung wählen")
+            return self.hinweis("Die End- und die Anfangsvorspannung gibt es nur im Stab - "
+                                "die Volumen abwählen oder die eingeprägte Dehnung wählen")
         F = float(w.get("F", 0.0) or 0.0) * 1e3
         if not F:
             return self.hinweis("Die Vorspannkraft ist null")
@@ -21341,11 +21434,14 @@ class MainWindow(QtWidgets.QMainWindow):
         for name, art in ziele:
             m.add_vorspannung(name, F, art=art, achse=achse if art == "koerper" else None,
                               case=fall, kommentar=str(w.get("kommentar", "") or ""),
-                              sollkraft=soll, gruppe=gruppe)
+                              sollkraft=soll, gruppe=gruppe, kraftart="presse" if presse else "",
+                              schlupf=schlupf if art == "stab" else 0.0)
         self.analysis = None
         self.results = None
-        self.info((f"Vorspannkraft F_soll = {zl.zahl_text(F / 1e3, punkt=True)} kN (Soll nach "
-                   f"Verankerung, Gruppe {gruppe})" if soll else
+        self.info((f"Anfangsvorspannung P₀ = {zl.zahl_text(F / 1e3, punkt=True)} kN (Pressenkraft, "
+                   f"Δs = {zl.zahl_text(schlupf * 1e3, punkt=True)} mm, Gruppe {gruppe})" if presse else
+                   f"Endvorspannung F_soll = {zl.zahl_text(F / 1e3, punkt=True)} kN (bleibend nach dem "
+                   f"Verankern, Gruppe {gruppe})" if soll else
                    f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN") + " auf "
                   f"{bg.anzahl(len(ziele), 'Bauteil', 'Bauteile')} im Lastfall "
                   f"{fall or m.active_case}")
@@ -21371,10 +21467,10 @@ class MainWindow(QtWidgets.QMainWindow):
         n = vk.in_sollkraft_umwandeln(m, staebe=staebe, faelle=faelle, kraft=F, gruppe=gruppe, N0=N0)
         self.analysis = None
         self.results = None
-        self.info(f"{n} Temperatur-Vorspannungen in die Sollkraft umgewandelt ("
+        self.info(f"{n} Vorspannungen als eingeprägte Dehnung in die Endvorspannung umgewandelt ("
                   + ("F_soll = " + zl.zahl_text(F / 1e3, punkt=True) + " kN" if F else "Vorschlag je Stab")
                   + (", alle Lastfälle mit " if faelle is None else f", Lastfall {fall}, ")
-                  + "Anfangsvorspannung " + ", ".join(zl.zahl_text(x / 1e3, punkt=True) for x in N0) + " kN)")
+                  + "eingeprägte Dehnung " + ", ".join(zl.zahl_text(x / 1e3, punkt=True) for x in N0) + " kN)")
         self.refresh_all()
 
     #: Ansatz, mit dem aus den Abmassen einer Passung das Uebermass wird
@@ -21653,6 +21749,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results = None
         self.refresh_all()
         self.statusBar().showMessage(log[-1].strip() if log else "Stabtypen nachgelesen", 8000)
+
+    # ---- Lager aus RFEM nachlesen (15.10.2026) --------------------------------
+    @_maskenweg()
+    def maske_lager_rfem(self):
+        """Die Lager eines Modells, das vor dem 15.10.2026 aus RFEM 6
+        uebernommen wurde, aus der RFEM-Datei nachlesen (Importhinweis
+        „lagerreibung“, model.lagerreibung_hinweis): der Import setzte bis
+        dahin einen Reibbeiwert auch ohne Reibungsart an. Die Maske zeigt den
+        Hinweis und die Datei; umgestellt wird erst mit „Lager nachlesen“
+        (rfem6_db.lager_aus_rfem)."""
+        from ..importers import rfem6_db as R6
+        m = self.model
+        offen = [h for h in (getattr(m, "importhinweise", None) or [])
+                 if h.get("art") == "lagerreibung" and not h.get("erledigt")]
+        felder = [msk.Feld("hinweise", "Aus dem Import", "info",
+                           " · ".join(str(h.get("text", "")) for h in offen[:2]) if offen else
+                           "kein offener Hinweis – das Modell kennt die Regel für Lagerreibung (übernommen ab "
+                           "dem 15.10.2026) oder ist schon nachgelesen"),
+                  msk.Feld("pfad", "RFEM-Datei (.rf6)", "text", R6.rfem_datei(m, art="lagerreibung") or "",
+                           breite=260,
+                           hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
+                                   "woanders, hier ihren Pfad eintragen")]
+        maske = msk.Maske("Lager aus RFEM", felder, knopf="Lager nachlesen",
+                          hinweis="Liest die Knoten-, Linien- und Flächenlager aus der RFEM-Datei nach und nimmt "
+                                  "einen Reibbeiwert zurück, der dort ohne Reibungsart steht – RFEM rechnet dann "
+                                  "keine Reibung. Der Freiheitsgrad gilt danach nach seiner Federkonstanten "
+                                  "(0 = frei). Ein Beiwert, den Sie selbst geändert haben, bleibt. Ein Schritt, "
+                                  "Rückgängig nimmt ihn zurück.")
+        maske.angewendet.connect(self._lager_rfem_anwenden)
+        return self.maske_erzeugen(maske)
+
+    def _lager_rfem_anwenden(self, w: dict):
+        from ..importers import rfem6_db as R6
+        m = self.model
+        datei = R6.rfem_datei(m, str(w.get("pfad", "") or "").strip().strip('"') or None, art="lagerreibung")
+        if not datei or not os.path.isfile(datei):
+            return self.hinweis(f"RFEM-Datei „{datei or '–'}“ nicht gefunden – den Pfad der .rf6-Datei "
+                                "eintragen, aus der das Modell übernommen wurde; umgestellt ist nichts")
+        self.merken("Lager aus RFEM nachgelesen")
+        log: list = []
+        try:
+            R6.lager_aus_rfem(m, datei, log)
+        except Exception as ex:          # noqa: BLE001 - fremde oder beschaedigte Datei
+            return self.error(f"Lager aus {os.path.basename(datei)} nicht gelesen: {ex}")
+        for z in log:
+            self.log.appendPlainText(z.strip())
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
+        self.statusBar().showMessage(log[-1].strip() if log else "Lager nachgelesen", 8000)
 
     # ---- Importhinweise (17.09.2026) -----------------------------------------
     def _maskenzahl(self, feld: str):
@@ -30218,10 +30364,29 @@ class MainWindow(QtWidgets.QMainWindow):
         # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
         # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
         # Protokollzeile steht schon oben (_ladehinweise)
+        # Mehrere Hinweise stehen zusammen in der Statuszeile (15.10.2026): bis dahin
+        # ueberschrieb der letzte den ersten, und am Drehlager von vor dem 14.10.2026
+        # (Zugstaebe, Lagerreibung, Vorspannung) sah der Anwender nur einen.
+        status_hinweise = []
         if any(h.get("art") == "zugstab" and not h.get("erledigt")
                for h in (getattr(self.model, "importhinweise", None) or [])):
-            self._hinweis_statuszeile("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
-                                      "– Datei › Austausch › „Stabtypen aus RFEM nachlesen…“")
+            status_hinweise.append("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
+                                   "– Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus RFEM nachlesen…“")
+        # ebenso die Lagerreibung (Importhinweis „lagerreibung“, 15.10.2026)
+        if any(h.get("art") == "lagerreibung" and not h.get("erledigt")
+               for h in (getattr(self.model, "importhinweise", None) or [])):
+            status_hinweise.append("Hinweis: Lager aus RFEM 6 tragen hier Reibung, die RFEM vielleicht nicht "
+                                   "rechnet – Datei › Austausch › „Aus RFEM nachlesen ▾“ › "
+                                   "„Lager aus RFEM nachlesen…“")
+        # und die Vorspannung aus RFEM als eingepraegte Dehnung (15.10.2026), auch die aus ΔT
+        # abgeleitete einer alten Datei
+        from .. import vorspannkraft as _vk_
+        if any(not h.get("erledigt") for h in _vk_._rfem_hinweise(self.model)):
+            status_hinweise.append("Hinweis: Vorspannung aus RFEM steht als eingeprägte Dehnung (ΔT), zu prüfen – "
+                                   "Lasten › Vorspannung, Lastart „" + _vk_.LASTART_UMWANDELN
+                                   + "“ oder Anfangs-/Endvorspannung")
+        if status_hinweise:
+            self._hinweis_statuszeile(" · ".join(status_hinweise))
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True

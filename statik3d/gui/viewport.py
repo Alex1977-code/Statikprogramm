@@ -3602,8 +3602,12 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         merke("vorspannungen", k_l, b, d * Fv)
         # die Sollkraft nach Verankerung (13.10.2026) als F_soll, die
         # Anfangsdehnung wie bisher als F_v
+        # seit 14.10.2026 die Anfangsvorspannung als P0 mit Schlupf
+        presse = callable(getattr(v, "ist_presse", None)) and v.ist_presse()
         merken("vorspannung", 0.5 * (a + b),
-               ("F_soll " if getattr(v, "sollkraft", False) else "F_v ") + lz(abs(Fv), "vorspannung"))
+               ("P₀ " if presse else "F_soll " if getattr(v, "sollkraft", False) else "F_v ")
+               + lz(abs(Fv), "vorspannung")
+               + (f", Δs {float(getattr(v, 'schlupf', 0.0) or 0.0) * 1e3:.2f} mm" if presse else ""))
     _pfeile(plotter, vpts, vvec, size, "vorspannung", FARBE_VORSPANNUNG)
     # ---- die angeklickte Last: dieselben Symbole in der Hervorhebungsfarbe ----
     if h_pts:

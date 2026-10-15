@@ -242,7 +242,8 @@ def zugstab_hinweis(model) -> list:
             f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen bzw. Seile als Seil anlegen?")
     # der Weg in der Oberflaeche (14.10.2026; bis dahin nannte der Vorschlag
     # die Funktion statik3d.importers.rfem6_db.zugstaebe_aus_rfem fuer die Konsole)
-    vorschlag = ("Datei › Austausch › „Stabtypen aus RFEM nachlesen…“ liest die Stabtypen aus der "
+    vorschlag = ("Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus RFEM nachlesen…“ liest die "
+                 "Stabtypen aus der "
                  "RFEM-Datei nach – oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
     hinweise = getattr(model, "importhinweise", None)
     if hinweise is None:
@@ -251,6 +252,71 @@ def zugstab_hinweis(model) -> list:
         hinweise.append({"art": "zugstab", "text": text, "objekte": frei, "vorschlag": vorschlag,
                          "erledigt": False, "datei": quelle})
     return [text + " (" + vorschlag + ")"]
+
+
+def lagerreibung_hinweis(model) -> list:
+    """Ein Modell, das vor dem 15.10.2026 aus RFEM 6 uebernommen wurde, kann
+    an seinen Lagern Reibung tragen, die RFEM nicht rechnet: der Import setzte
+    einen Reibbeiwert der Datei auch ohne Reibungsart an - das Feld traegt in
+    RFEM immer einen Wert (Vorgabe 0,1). Am Drehlager haftete so das
+    Flaechenlager „Starr“ (Ausfall bei Zug, in der Flaeche frei) in der Flaeche
+    bis mu * N. Beim **Oeffnen** einer solchen Datei - Quelle eine .rf6-Datei,
+    ohne das Merkmal des Imports (rfem6_db.LAGERREIBUNG_MERKMAL), mit
+    mindestens einem Lager mit Reibbeiwert - steht ein Importhinweis
+    „lagerreibung“ mit der Aktion „Lager aus RFEM nachlesen…“
+    (rfem6_db.lager_aus_rfem) und eine Zeile fuers Protokoll. Ob die Reibung
+    in RFEM eine Reibungsart hat, weiss erst die Datei; umgestellt wird
+    nichts: das loest der Anwender aus. Rueckgabe die Zeilen."""
+    meta = getattr(model, "meta", None) or {}
+    quelle = str(meta.get("quelle", "") or "")
+    if not quelle.lower().endswith(".rf6") or meta.get("rfem_lagerreibung"):
+        return []
+    # je Lager die Freiheitsgrade mit Reibbeiwert, damit der Anwender sieht, was er pruefen soll
+    # (15.10.2026); ob ein Beiwert aus dem Import stammt oder von Hand gesetzt wurde, steht im
+    # gespeicherten Modell nicht - das Merkmal sagt nur, dass der Import vor der Regel lief
+    fhg = ("ux", "uy", "uz", "φx", "φy", "φz")
+    je_lager: dict = {}
+    alle = ([(s.name or f"Knotenlager {s.node}", s) for s in getattr(model, "supports", None) or []]
+            + [(s.name or "ohne Namen", s) for s in list(getattr(model, "line_supports", None) or [])
+               + list(getattr(model, "surface_supports", None) or [])])
+    for nm, s in alle:
+        je_mu: dict = {}
+        for d in range(NDOF):
+            mu = float(s.dof_behaviour(d).mu)
+            if mu > 0:
+                je_mu.setdefault(f"{mu:.6g}".replace(".", ","), []).append(fhg[d])
+        if je_mu:
+            je_lager.setdefault(nm, {}).update(je_mu)
+    mit = list(je_lager)
+    if not mit:
+        return []
+    beschr = ["{} ({})".format(nm, "; ".join(", ".join(ds) + f" μ = {mu}" for mu, ds in je_mu.items()))
+              for nm, je_mu in je_lager.items()]
+    datei = os.path.basename(quelle)
+    anzahl = "1 Lager trägt" if len(mit) == 1 else f"{len(mit)} Lager tragen"
+    da = os.path.isfile(quelle)
+    stand = (f"Die RFEM-Datei liegt noch unter {quelle}." if da else
+             f"Die RFEM-Datei liegt nicht mehr unter {quelle} – ihren Pfad in der Maske „Lager aus RFEM“ eintragen "
+             "oder die Reibung in der Lagermaske von Hand prüfen.")
+    text = (f"Aus RFEM 6 übernommen vor dem 15.10.2026: {anzahl} Reibung ("
+            + ", ".join(beschr[:6]) + (" …" if len(beschr) > 6 else "") + "). "
+            "Bis zum 15.10.2026 setzte der Import einen Reibbeiwert der RFEM-Datei auch ohne Reibungsart an "
+            "(RFEM trägt im Feld immer einen Wert, Vorgabe 0,1), dann rechnet RFEM dort keine Reibung (am "
+            "Drehlager „Starr“: in RFEM in der Fläche frei, hier haftend bis μ·N). Ob es bei einem dieser Lager "
+            "so ist, steht erst in der RFEM-Datei - am gespeicherten Modell ist es nicht zu erkennen, darum "
+            f"wird nichts umgestellt. Die Lager aus {datei} nachlesen?")
+    vorschlag = ("Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Lager aus RFEM nachlesen…“ liest die Lager "
+                 "aus der RFEM-Datei nach und "
+                 "nimmt einen Reibbeiwert ohne Reibungsart zurück – oder die Reibung in der Lagermaske prüfen")
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    if not any(h.get("art") == "lagerreibung" and not h.get("erledigt") for h in hinweise):
+        hinweise.append({"art": "lagerreibung", "text": text, "objekte": mit, "vorschlag": vorschlag,
+                         "erledigt": False, "datei": quelle})
+    # ob die RFEM-Datei noch da liegt, steht nur in der Protokollzeile: der gespeicherte
+    # Hinweistext soll nicht veralten, wenn die Datei spaeter verschoben wird
+    return [text + " " + stand + " (" + vorschlag + ")"]
 
 
 def werkstoffe_alter_datei_nachziehen(model) -> list:
@@ -1442,6 +1508,11 @@ class Zwangsverformung:
         return f"Knoten {self.node}: " + (", ".join(teile) or "nichts vorgegeben")
 
 
+#: Kraftart der Anfangsvorspannung (Pressenkraft P0 mit Verankerungsschlupf,
+#: Vorspannung.kraftart, 14.10.2026); leer ist die Endvorspannung
+VORSPANN_PRESSE = "presse"
+
+
 @dataclass
 class Vorspannung:
     """Vorspannung als Last: eine Vorspannkraft F_v in einem Stab (Zugstange,
@@ -1473,6 +1544,17 @@ class Vorspannung:
     aufsteigender Nummer - dann verlieren die frueher gespannten Kraft.
     Beide Felder werden nur fuer eine Sollkraft gespeichert, damit Dateien mit
     der Anfangsdehnung bleiben, wie sie sind.
+
+    Seit dem 14.10.2026 heisst die Sollkraft in der Oberflaeche
+    „Endvorspannung (bleibend nach dem Verankern)“, und daneben gibt es die
+    **Anfangsvorspannung (Pressenkraft P0)** (``kraftart`` = "presse",
+    Vorgabe des Anwenders vom 14.10.2026: „Bitte im Spannschritt wahlweise
+    „Pressenkraft + Verankerungsschlupf (mm)“ ermöglichen“): ``kraft`` ist
+    dann die Kraft der Presse im Spannschritt, ``schlupf`` [m] der
+    Verankerungsschlupf Δs. Beim Verriegeln verliert der Stab den Schlupf
+    (k_A·Δs gegen starre Umgebung, k_A = E A / L des Stabs), die Umgebung
+    federt zurueck (statik3d.vorspannkraft). Beide Felder stehen nur in der
+    Datei, wenn sie von ihrer Vorgabe abweichen (model.NEUE_FELDER).
     """
     ziel: str = ""
     art: str = "stab"
@@ -1481,10 +1563,20 @@ class Vorspannung:
     kommentar: str = ""
     sollkraft: bool = False
     gruppe: int = 1
+    kraftart: str = ""
+    schlupf: float = 0.0
+
+    def ist_presse(self) -> bool:
+        """Anfangsvorspannung (Pressenkraft P0, mit Verankerungsschlupf)?"""
+        return bool(self.sollkraft) and str(self.kraftart or "") == VORSPANN_PRESSE
 
     def bezug(self) -> str:
+        if self.ist_presse():
+            return (f"Stab {self.ziel}: P₀ = {self.kraft / 1e3:g} kN (Anfangsvorspannung, "
+                    f"Δs = {float(self.schlupf or 0.0) * 1e3:g} mm"
+                    + (f", Gruppe {int(self.gruppe)}" if int(self.gruppe or 1) != 1 else "") + ")")
         if self.sollkraft:
-            return (f"Stab {self.ziel}: F_soll = {self.kraft / 1e3:g} kN (nach Verankerung"
+            return (f"Stab {self.ziel}: F_soll = {self.kraft / 1e3:g} kN (Endvorspannung"
                     + (f", Gruppe {int(self.gruppe)}" if int(self.gruppe or 1) != 1 else "") + ")")
         return (("Stab " if self.art == "stab" else "Volumen ") + str(self.ziel)
                 + f": F_v = {self.kraft / 1e3:g} kN")
@@ -1496,6 +1588,11 @@ class Vorspannung:
         if not self.sollkraft:
             d.pop("sollkraft", None)
             d.pop("gruppe", None)
+        # Anfangsvorspannung (14.10.2026): Kraftart und Schlupf nur, wenn sie
+        # von der Vorgabe abweichen - die Endvorspannung bleibt in der Datei, wie sie war
+        for k in ("kraftart", "schlupf"):
+            if not self.sollkraft or ist_vorgabe("load_cases.vorspannungen", k, d.get(k)):
+                d.pop(k, None)
         return d
 
 
@@ -7402,11 +7499,13 @@ class Model:
 
     def add_vorspannung(self, ziel: str, kraft: float, art: str = None, achse=None,
                         case: str = None, kommentar: str = "", sollkraft: bool = False,
-                        gruppe: int = 1) -> Vorspannung:
+                        gruppe: int = 1, kraftart: str = "", schlupf: float = 0.0) -> Vorspannung:
         """Vorspannkraft [N] in einem Stab oder Volumenkoerper (siehe
         :class:`Vorspannung`); ``art`` wird am Namen erkannt. ``sollkraft``:
-        die Lastart „Vorspannkraft (Soll nach Verankerung)“ (nur im Stab),
-        ``gruppe`` ihre Reihenfolge beim Spannen."""
+        die Lastart „Endvorspannung (bleibend nach dem Verankern)“ (nur im
+        Stab), ``gruppe`` ihre Reihenfolge beim Spannen; mit ``kraftart`` =
+        "presse" die „Anfangsvorspannung (Pressenkraft P₀)“ mit dem
+        Verankerungsschlupf ``schlupf`` [m] (seit 14.10.2026)."""
         ziel = str(ziel)
         if art is None:
             art = ("stab" if ziel in self.members else
@@ -7418,11 +7517,22 @@ class Model:
         if art not in ("stab", "koerper"):
             raise KeyError(f"{ziel} ist weder Stab noch Volumenkörper")
         if sollkraft and art != "stab":
-            raise ValueError(f"Die Vorspannkraft (Soll nach Verankerung) gibt es nur im Stab, "
+            raise ValueError(f"Die End- und die Anfangsvorspannung gibt es nur im Stab, "
                              f"nicht im Volumen {ziel}")
+        kraftart = str(kraftart or "")
+        if kraftart not in ("", VORSPANN_PRESSE):
+            raise ValueError(f"Kraftart {kraftart!r} unbekannt (leer oder {VORSPANN_PRESSE!r})")
+        if kraftart and not sollkraft:
+            raise ValueError("Die Anfangsvorspannung (Pressenkraft P₀) gehört zum Spannschritt - "
+                             "nur mit sollkraft=True")
+        if float(schlupf or 0.0) < 0.0:
+            raise ValueError(f"Verankerungsschlupf {float(schlupf) * 1e3:g} mm: negativ gibt es nicht")
+        if schlupf and kraftart != VORSPANN_PRESSE:
+            raise ValueError("Einen Verankerungsschlupf gibt es nur bei der Anfangsvorspannung "
+                             "(Pressenkraft P₀)")
         v = Vorspannung(ziel, art, float(kraft),
                         None if achse is None else [float(x) for x in achse], str(kommentar or ""),
-                        bool(sollkraft), int(gruppe or 1))
+                        bool(sollkraft), int(gruppe or 1), kraftart, float(schlupf or 0.0))
         self.case(case).vorspannungen.append(v)
         return v
 
@@ -8230,6 +8340,9 @@ class Model:
                     # die Sollkraft ist eine andere Lastart als die Anfangsdehnung
                     wo = (fall if not getattr(v, "sollkraft", False)
                           else f"{fall} (Sollkraft, Gruppe {int(v.gruppe or 1)})")
+                    if getattr(v, "kraftart", ""):
+                        # Anfangsvorspannung: Kraftart und Schlupf gehoeren dazu (14.10.2026)
+                        wo += f" ({v.kraftart}, Δs {float(getattr(v, 'schlupf', 0.0) or 0.0)!r})"
                     out.append((wo, float(v.kraft)))
         return tuple(sorted(out, key=repr))
 
@@ -9694,10 +9807,19 @@ class Model:
         nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
         m._ladehinweise.extend(zugstab_hinweis(m))
+        # Reibung an Lagern aus RFEM ohne Reibungsart (15.10.2026): nur ein Hinweis
+        m._ladehinweise.extend(lagerreibung_hinweis(m))
         # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
         # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
         from .ec3.spannstahl import ladehinweise
         m._ladehinweise.extend(ladehinweise(m))
+        # Vorspannung aus RFEM uebernommen - in Statik3D pruefen (15.10.2026):
+        # die offenen Importhinweise, in der Form von heute, die Datei bleibt
+        try:
+            from .vorspannkraft import vorspannung_ladehinweise
+            m._ladehinweise.extend(vorspannung_ladehinweise(m))
+        except Exception:                   # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
+            pass
         return m
 
     def copy(self) -> "Model":
@@ -9904,8 +10026,9 @@ NEUE_FELDER = {
     # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
     # alten Felds category und zaehlt wie jede andere Kategorie)
     "load_cases": {"faktorisiert": False},
-    # vorspannung/kraft (Sollkraft nach Verankerung)
-    "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1},
+    # vorspannung/kraft (Sollkraft nach Verankerung); vorspannung/presse
+    # (Anfangsvorspannung mit Pressenkraft P0 und Verankerungsschlupf, 14.10.2026)
+    "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1, "kraftart": "", "schlupf": 0.0},
     # import/lastfaelle (Merkmal „aus Vorspannung“)
     "load_cases.temp_loads": {"aus_vorspannung": 0.0, "vorspann_E": 0.0, "vorspann_alpha": 0.0},
     # stab/querlast (Bezug einer globalen Stab- bzw. Linienlast: "" = je

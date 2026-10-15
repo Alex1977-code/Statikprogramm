@@ -790,7 +790,14 @@ Ordnung) wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe voll
 wie eine Temperaturlast (§ 5e, „Temperaturlasten und Vorspannkräfte sofort
 voll“).
 
-### Vorspannkraft (Soll nach Verankerung): Spannen, Verriegeln, Lasten (seit 13.10.2026)
+### Endvorspannung (bleibend nach dem Verankern): Spannen, Verriegeln, Lasten (seit 13.10.2026)
+
+Bis zum 14.10.2026 hieß die Lastart „Vorspannkraft (Soll nach Verankerung)“.
+Seither heißt sie nach dem Wunsch des Anwenders („vllt sollte man das
+Anfangsvorspannung und Endvorspannung nennen mit erklärung“) „Endvorspannung
+(bleibend nach dem Verankern)“: die Kraft, die nach dem Verankern im Stab
+verbleibt, vor den äußeren Lasten. Daneben steht die Anfangsvorspannung
+(Pressenkraft P₀) mit Verankerungsschlupf, siehe unten.
 
 Mit der Anfangsdehnung trägt ein Stab nicht F_v, sondern F_v minus die
 elastische Verkürzung seiner Umgebung: zwischen Anker (Steifigkeit k_A) und
@@ -889,9 +896,72 @@ ihrer Behebung rechnen dieselbe eingeprägte Kraft nach Theorie II. Ordnung
 F_soll nach dem Verankern trifft erst ein Spannschritt nach Theorie II./III.
 Ordnung; die Sperre bleibt.
 
-**Import.** Die RFEM-Anfangsvorspannung bleibt eine Abkühlung. Der Hinweis
-„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
-Sollkraft umwandeln?“ rechnet X linear über die Einflussmatrix (X = A·N₀),
+**Anfangsvorspannung (Pressenkraft P₀) mit Verankerungsschlupf (seit
+14.10.2026).** Vorgabe des Anwenders: „Bitte im Spannschritt wahlweise
+„Pressenkraft + Verankerungsschlupf (mm)“ ermöglichen und getrennt nachweisen“.
+`Vorspannung.kraftart` = "presse", `kraft` = P₀, `schlupf` = Δs [m]; beide
+Felder stehen in `model.NEUE_FELDER` mit den Vorgaben "" und 0,0 und nur bei
+einer Abweichung in der Datei. Im Spannschritt wirkt paar(P₀), N_spannen = P₀.
+Der Schlupf vergrößert die spannungsfreie Länge des Stabs um Δs; gegen starre
+Umgebung sinkt N um k_A·Δs mit 1/k_A = Σ L_i/(E_i·A_i) (dazu Längsfedern der
+Gelenke) über die Elemente des Stabs. L ist die Stablänge zwischen den
+Ankerpunkten, dieselbe, mit der die Stabsteifigkeit rechnet: nur dann ist die
+eingeprägte Kraft −k_A·Δs genau eine Verlängerung um Δs. Eine davon
+abweichende „freie Länge“ gäbe zu derselben Kraft einen anderen Weg und wäre
+nicht mehr der Stab im Modell; wer eine Verbundlänge ausnehmen will, lässt sie
+im Modell weg. Verriegelt wird darum auf
+
+    P_e = (P₀ − k_A·Δs) − N_el(u_S)   je Element.
+
+u_S ist dann kein Gleichgewicht mehr (Restkraft paar(k_A·Δs)), die Umgebung
+federt zurück. Zwischen Anker k_A und Klemmteil k_K:
+
+    N_verankert = P₀ − k_A·Δs · k_K/(k_A + k_K)
+
+(Federverteilung; mit starrer Umgebung P₀ − k_A·Δs). **Linear** ist der
+Schlupf eine eingeprägte Kraft −k_A·Δs, und die Einflussmatrix verteilt ihn:
+P = A⁻¹·P₀ − k∘Δs, N_verankert = A·P = P₀ − A·(k∘Δs). **Nichtlinear** folgt
+nach dem letzten Spannschritt, wenn dessen Gruppe einen Schlupf hat, ein
+Verankerungsschritt am System des Lastfalls (alle Stäbe wirksam) mit F_lock,
+Kontakt und Plastizität vom Spannzustand aus; sein Gleichgewicht ist der
+Zustand „verankert“, und der Lastfall beginnt dort. Frühere Gruppen gleicht der
+nächste Spannschritt ohnehin aus, ihre Restkraft steckt in F_lock. Reihenweise
+mit zwei Ankern (k_1, k_2, Gruppen 1 und 2):
+
+    N_1 = P₀₁ − k_1·Δs_1·k_K/(k_1 + k_K) − k_1·P₀₂/(k_1 + k_K) + k_1·k_2·Δs_2/Σk
+    N_2 = P₀₂ − k_2·Δs_2·(k_1 + k_K)/Σk
+
+Gemessen (`tests/test_vorspannung_presse.py`, E = 210 000 N/mm², L = 1 m,
+k_A = 210 kN/mm, k_K = 840 kN/mm, P₀ = 500 kN, Δs = 0,5 mm): N_verankert =
+416 kN linear, über Spannen und Verriegeln und mit Spaltelement, jeweils auf
+10⁻⁹ genau; mit 200 kN Zug am Kopf 456 kN; zwei Anker gleichzeitig und
+reihenweise wie die Formeln, linear und nichtlinear. Ohne Schlupf rechnet die
+Anfangsvorspannung Zahl für Zahl wie die Endvorspannung mit F_soll = P₀, und
+die Endvorspannung behält ihre Einträge im Ergebnis (keine neuen Schlüssel).
+
+**Import.** Die RFEM-Vorspannung bleibt eine eingeprägte Dehnung (Abkühlung);
+bis zum 14.10.2026 hieß sie hier „RFEM-Anfangsvorspannung“. Seit dem
+15.10.2026 (Nachtrag des Anwenders: „beim import des modells und der
+lastfälle einen hinweis an den user, dass der wert von rfem übernommen wurde
+und in statik3d zu prüfen und ggf anzupassen ist“) gibt der Import je
+Vorspannungswert N₀ einen Hinweis „Vorspannung N₀ an <Stäbe> in n Lastfällen
+aus RFEM übernommen (als eingeprägte Dehnung, E, α; X) – in Statik3D prüfen
+und ggf. als Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“
+(`vorspannkraft.rfem_hinweis_text`). Er steht als Importhinweis am Modell
+(mit Stäben, Lastfällen, Umrechnung und X), beim Öffnen im Protokoll
+(`vorspannung_ladehinweise`, aus den gespeicherten Feldern neu gesetzt, die
+Datei bleibt), und `rfem_pruefen` nennt die Lastfälle, in denen die
+Vorspannung noch als eingeprägte Dehnung steht (Vermerk in Lastfallmaske und
+Lasttabelle). Bei einem Modell, das vor dem 13.10.2026 übernommen wurde (Quelle
+.rf6, kein Importhinweis zur Vorspannung), leitet `abgeleitete_hinweise` beim
+Öffnen dieselben Hinweise aus den ΔT-Lasten an Zug- und Seilstäben ab
+(`TempLoad.vorspann_werte`, N = E·A·α·(−ΔT)), je Wert gebündelt, mit „aus ΔT
+abgeleitet“ in der Klammer und ohne X; sie hängen nur am geöffneten Modell
+(`_rfem_hinweise_abgeleitet`), die Datei bleibt. Bis zum 15.10.2026 hieß der Hinweis „Vorspannung als eingeprägte
+Dehnung (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in
+Endvorspannung umwandeln?“, bis zum 14.10.2026 „Anfangsvorspannung 952 kN
+ergibt … – in Sollkraft umwandeln?“. X rechnet das Programm
+linear über die Einflussmatrix (X = A·N₀),
 wenn das Modell keinen Kontakt hat, vernetzt und höchstens 300 000 FHG groß
 ist. Am Drehlager nicht: eine Zerlegung kostete im Lauf vom 09.10.2026 135
 bis 165 s und 31,8 GB (2 604 134 Zeilen, 4,0·10⁹ Nichtnullen im Faktor), und
@@ -4646,6 +4716,36 @@ dem Zustand „verankert“; fehlt beides, gilt N_0 ohne Verluste. Mit F = 944,7
 und A = 1 256,6 mm² ergibt sich σ = 751,8 N/mm², das Verhältnis zu σ_p,max =
 751,5 N/mm² ist 1,0004 und zu σ_pm0 = 709,75 N/mm² 1,059 (Prüfung
 `tests.test_spannstahl` am beidseitig festen Stab).
+
+Seit dem 14.10.2026 sind die drei Zustände mit der Anfangsvorspannung
+(Pressenkraft P₀) getrennt: Spannen N_spannen = P₀ gegen σ_p,max, nach dem
+Verankern N_verankert (P₀ minus Schlupf mit Federverteilung und elastische
+Verluste) gegen σ_pm0, Lastzustand N_Ed gegen f_pd. Bei der Endvorspannung ist
+N_spannen = F_soll wie bisher; in der linearen Rechnung über die
+Einflussmatrix steht N_spannen seitdem ebenfalls im Ergebnis. Ohne Ergebnis
+setzt der Nachweis nach dem Verankern P₀ − k_A·Δs an (starre Umgebung, die
+obere Schranke des Verlusts, also die untere der Kraft), mit Vermerk
+(`spannstahl.eingegebene_endvorspannung`). `spannstahl.je_anker` fasst je
+Zustand den ungünstigsten Eintrag zusammen; der Bericht zeigt sie als Tabelle
+„Spannstahl je Anker“. Kontrollzahlen des Anwenders (A = 1 256,64 mm², f_p0,1k
+835, f_pk 1 030 N/mm²), gemessen in `tests.test_vorspannung_presse`: bleibend
+944,7 kN gibt σ = 751,77 N/mm², nach dem Verankern 751,77/709,75 = 1,0592, im
+GZT 751,77/726,09 = 1,0354 (der Anwender rundet auf 1,035), beim Spannen mit
+P₀ = 944,7 kN 1,0004; mit Δs = 1 mm und k_A = 170 000 · 1 256,64 / 3 230 =
+66,14 kN/mm wird P₀ = 1 010,84 kN und beim Spannen 1,0704.
+
+Freie Ankerlänge und Kraftverlust (seit 15.10.2026, `spannstahl.schlupfangaben`,
+Ausgabe `schlupf_zeilen`): L_frei ist die Summe der Elementlängen des Stabs, die
+Länge, mit der `vorspannkraft.k_stab` rechnet (k_A = 1/Σ L_i/(E_i A_i), bei einem
+Querschnitt E·A/L_frei). Der Verlust aus dem Schlupf ist gegen starre Umgebung
+k_A·Δs und mit nachgiebiger Umgebung (Steifigkeit k_K) ΔP = k_A·Δs·k_K/(k_A + k_K).
+Der Nachweis liest ΔP = P₀ − N_verankert aus dem Ergebnis des Spannschritts;
+beim reihenweisen Spannen enthält es auch die elastischen Verluste der übrigen
+Anker. Ohne dieses Ergebnis ist ΔP = k_A·Δs (obere Schranke). Handprobe in
+`tests.test_spannstahl_schlupfanzeige`: k_A = 210 kN/mm, k_K = 840 kN/mm,
+Δs = 0,5 mm gibt ΔP = 84 kN und N_verankert = 416 kN. Das Gewinde eines
+Rundstahls gegen seinen Durchmesser prüft `spannstahl.gewinde_hinweis` (nur ein
+Hinweis).
 
 Überschreitet die Kraft beim Spannen oder nach dem Verankern ihre Grenze,
 schreibt der Nachweis je Zustand eine Zeile „Befund Vorspannung“ mit Kraft,

@@ -7,7 +7,8 @@ an, die Zug und Druck trugen. Beim Öffnen steht ein Importhinweis „zugstab“
 die Umstellung (rfem6_db.zugstaebe_aus_rfem) gab es bis dahin nur als
 Funktion für die Konsole. Seither:
 
-* Register Datei › Austausch › „Stabtypen aus RFEM nachlesen…“ öffnet rechts
+* Register Datei › Austausch › „Stabtypen aus RFEM nachlesen…“ (seit dem
+  15.10.2026 im Menüknopf „Aus RFEM nachlesen ▾“) öffnet rechts
   die Maske „Stabtypen aus RFEM“ mit dem Hinweis aus dem Import und der
   RFEM-Datei; „Stabtypen nachlesen“ stellt um (ein Rückgängig-Schritt).
 * Beim Öffnen eines solchen Modells nennt der Hinweis (Statuszeile und

@@ -851,13 +851,17 @@ Vorspannung eines Seils still weg. Seither lesen alle diese Stellen dieselbe
 Normalkraft wie das Ergebnis. Ohne Temperatur und Vorspannung im Stab rechnet
 alles wie vorher.
 
-**Vorspannkraft (Soll nach Verankerung)** (seit 13.10.2026). Bis zum
+**Endvorspannung (bleibend nach dem Verankern)** (seit 13.10.2026, bis zum
+14.10.2026 „Vorspannkraft (Soll nach Verankerung)“). Bis zum
 13.10.2026 gab es die Vorspannung nur als Anfangsdehnung, und ein Anker trug
 danach nicht F_v, sondern F_v minus die elastische Verkürzung seiner
 Umgebung - am Drehlager bei voller Last 782 bis 833 statt 952 kN. Seither
-hat die Maske *Lasten → Vorspannung* eine **Lastart**. Mit „Vorspannkraft
-(Soll nach Verankerung)“ geben Sie die Kraft an, die der Stab nach dem
-Verankern trägt. Sie gilt nur für Stäbe. Das Programm spannt in einem
+hat die Maske *Lasten → Vorspannung* eine **Lastart**. Mit „Endvorspannung
+(bleibend nach dem Verankern)“ geben Sie die Kraft an, die der Stab nach dem
+Verankern trägt: die Kraft, die nach dem Verankern im Stab verbleibt, vor den
+äußeren Lasten. Bis zum 14.10.2026 hieß die Lastart „Vorspannkraft (Soll
+nach Verankerung)“, die Anfangsdehnung „Anfangsdehnung (F_v)“; seither heißt
+diese „Vorspannung als eingeprägte Dehnung (F_v)“. Sie gilt nur für Stäbe. Das Programm spannt in einem
 eigenen Schritt vor den übrigen Lasten: Der Stab ist dabei inaktiv und
 drückt mit F_soll auf seine Enden, die Umgebung verformt sich bis zum
 Gleichgewicht, mit Kontakt und Plastizität. Danach wird der Stab in der
@@ -883,8 +887,43 @@ Verankern aber nicht genau: Am Zugband einer Kragstütze trägt der Stab nach
 Theorie II. Ordnung 69,77 kN und nach Theorie III. Ordnung 69,57 kN statt
 70 kN. Darum bleibt es bei Theorie I. Ordnung, bis es den Spannschritt auch
 nach Theorie II. und III. Ordnung gibt. In der Ansicht steht die Kraft als „F_soll“, in der
-Lasttabelle als „Vorspannkraft (Soll)“ mit Gruppe. Kraft und Gruppe ändern
-Sie in der Maske der einzelnen Last.
+Lasttabelle als „Endvorspannung“ mit Gruppe (bis zum 14.10.2026 „Vorspannkraft
+(Soll)“). Kraft, Gruppe und seit dem 14.10.2026 die Kraftart ändern Sie in der
+Maske der einzelnen Last.
+
+**Anfangsvorspannung (Pressenkraft P₀) mit Verankerungsschlupf** (seit
+14.10.2026). Bis zum 14.10.2026 gab es im Spannschritt nur die Endvorspannung:
+Der Stab trug nach dem Verankern genau die eingegebene Kraft, und einen
+Verankerungsschlupf kannte das Programm nicht. Seither hat die Maske *Lasten →
+Vorspannung* die Lastart „Anfangsvorspannung (Pressenkraft P₀)“. Sie geben die
+Kraft der Presse beim Spannen ein, also vor dem Verankern, und im Feld
+„Verankerungsschlupf Δs [mm]“ den Weg, um den der Stab beim Verankern
+nachrutscht. Nach dem Verankern ist die Kraft um den Schlupf und um die
+elastischen Verluste kleiner. Im Spannschritt drückt P₀ als Kräftepaar auf die
+Stabenden wie sonst F_soll. Beim Verriegeln verliert der Stab gegen eine starre
+Umgebung k_A·Δs mit k_A = E·A/L. L ist die Stablänge, also die Länge zwischen
+den Ankerpunkten, über die sich die Dehnung des Stabs verteilt, dieselbe Länge,
+mit der das Programm die Steifigkeit des Stabs rechnet; nur mit ihr ist der
+Schlupf genau eine Verlängerung um Δs. Besteht der Stab aus mehreren Elementen,
+zählen sie in Reihe. Danach federt die Umgebung zurück und gibt dem Stab einen
+Teil wieder: zwischen einem Anker k_A und einem Klemmteil k_K bleiben nach dem
+Verankern N = P₀ − k_A·Δs·k_K/(k_A + k_K). Diese Kraft steht als N_verankert im
+Ergebnis. Linear rechnet das Programm sie über die Einflussmatrix, mit Kontakt
+oder Fließen in einem eigenen Verankerungsschritt nach dem Spannschritt, im
+Fortschritt als „Verankern: Verankerungsschlupf, die Umgebung federt zurück“;
+der Lastfall beginnt dann in dessen Zustand. Spannen Sie in mehreren Gruppen,
+kommen die elastischen Verluste der früher gespannten Stäbe wie bisher dazu.
+Mit Δs = 0 rechnet die Anfangsvorspannung Zahl für Zahl wie die Endvorspannung
+mit F_soll = P₀. Im Ergebnis stehen je Stab zusätzlich die Kraftart, der
+Schlupf, k_A, der Schlupfverlust k_A·Δs und die Kraft direkt nach dem
+Verriegeln P₀ − k_A·Δs. In der Lasttabelle steht die Last als
+„Anfangsvorspannung (P₀)“ mit „P₀ = 1010,84 kN, Δs = 1 mm“, in der Ansicht als
+„P₀ … kN, Δs … mm“. In der Maske der einzelnen Last stellen Sie die Kraftart
+zwischen End- und Anfangsvorspannung um und ändern den Schlupf; bei der
+Endvorspannung ist er immer 0. Gespeichert werden Kraftart und Schlupf nur bei
+einer Anfangsvorspannung, und Dateien von vorher bleiben beim Laden und
+Speichern bitgleich. Am Drehlager (Entwurf, 215 MB) ergibt das Laden und
+unveränderte Speichern dieselbe Datei Byte für Byte.
 
 **Spannschritt in Stufen** (seit 14.10.2026). Bis zum 14.10.2026 brachte das
 Programm den Spannschritt in einem Zug auf: mit Kontakt rechnete ein
@@ -925,25 +964,86 @@ Platte zusammen, und der Anker trägt nach dem Verankern F_soll. Am Drehlager
 hat der Spannschritt damit so viele Unbekannte wie das ganze System
 (426 867, bis dahin 426 771).
 
-**Vorspannung aus RFEM in die Sollkraft umwandeln** (seit 13.10.2026). Eine
-RFEM-Anfangsvorspannung kommt weiter als Abkühlung des Stabs an
-(ΔT = −N₀/(E·A·α)). Die Lasttabelle und die Maske der Temperaturlast nennen
+**Vorspannung aus RFEM in die Endvorspannung umwandeln** (seit 13.10.2026).
+Eine RFEM-Vorspannung kommt weiter als Vorspannung als eingeprägte Dehnung an,
+gerechnet als Abkühlung des Stabs (ΔT = −N₀/(E·A·α)). Bis zum 14.10.2026 hieß
+sie hier „RFEM-Anfangsvorspannung“; seither meint „Anfangsvorspannung“ nur die
+Pressenkraft P₀ (siehe „Anfangsvorspannung (Pressenkraft P₀) mit
+Verankerungsschlupf“). Die Lasttabelle und die Maske der Temperaturlast nennen
 dazu die Kraft und die Werte der Umrechnung, in derselben Form wie eine
 Vorspannung, die der Import seit dem 13.10.2026 als Kraft kennzeichnet (siehe
 „Eine aus RFEM übernommene Vorspannung steht als Kraft da“), etwa
 „ΔT = −445,6 K – Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
 α = 1,0e-5 1/K)“. Bis zum 14.10.2026 stand dort „aus Vorspannung 952 kN,
-E = 170 000 N/mm², α = 1,0e-5 1/K“. Der Import gibt den Hinweis
-„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
-Sollkraft umwandeln?“. X ist die Stabkraft unter der Vorspannung allein. Das
+E = 170 000 N/mm², α = 1,0e-5 1/K“.
+
+**Vorspannung aus RFEM übernommen – in Statik3D prüfen** (seit 15.10.2026).
+Der Import gibt je Vorspannungswert einen Hinweis, etwa „Vorspannung 952 kN an
+S1–S16 in 129 Lastfällen aus RFEM übernommen (als eingeprägte Dehnung,
+E = 170 000 N/mm², α = 1,0e-5 1/K; die Kraft nach elastischer Verkürzung
+folgt nach der ersten Rechnung eines Lastfalls nur mit der Vorspannung: das
+Modell hat Kontakt) – in Statik3D prüfen und ggf. als Anfangsvorspannung
+(Pressenkraft) oder Endvorspannung anpassen“. Kann das Programm die Kraft nach
+elastischer Verkürzung beim Import rechnen, steht sie in der Klammer, etwa
+„nach elastischer Verkürzung 80 kN“. Der Hinweis steht im Importprotokoll, als
+Importhinweis am Modell und beim Öffnen der Datei im Protokoll, solange er
+offen ist. In der Lastfallmaske steht bei jedem betroffenen Lastfall die Zeile
+„Vorspannung: aus RFEM übernommen – prüfen …“, in der Lasttabelle hinter der
+Vorspannung „aus RFEM übernommen – prüfen“. Betroffen ist ein Lastfall, solange
+die übernommene Vorspannung dort noch als eingeprägte Dehnung steht; wandeln
+Sie sie um oder ersetzen sie von Hand, verschwindet der Vermerk dort. Am
+Drehlager gibt der Import zwei Hinweise, 952 kN an S1–S16 in 129 Lastfällen
+und 805 kN an S1–S16 in 293 Lastfällen. Bis zum 15.10.2026 lautete der Hinweis
+„Vorspannung als eingeprägte Dehnung (RFEM) 952 kN ergibt nach elastischer
+Verkürzung X kN – in Endvorspannung umwandeln?“ mit Umfang und Umrechnung
+dahinter, bis zum 14.10.2026 „Anfangsvorspannung 952 kN ergibt nach
+elastischer Verkürzung X kN – in Sollkraft umwandeln?“; einen Vermerk an den
+Lastfällen gab es nicht. Eine Datei mit einem Hinweis in der alten Form zeigt
+ihn beim Öffnen in der neuen Form, und die Datei selbst bleibt, wie sie ist.
+
+Ein Modell, das vor dem 13.10.2026 aus RFEM übernommen wurde, trägt weder
+diesen Hinweis noch an seinen ΔT-Lasten die gespeicherte Kraft. Seit dem
+15.10.2026 erkennt das Programm beim Öffnen eines solchen Modells (Quelle eine
+.rf6-Datei) die Vorspannungen, die noch als ΔT an Zug- oder Seilstäben stehen,
+leitet ihre Kraft aus ΔT ab und gibt denselben Hinweis und denselben Vermerk,
+gebündelt je Wert, mit „aus ΔT abgeleitet“ in der Klammer. Die Kraft nach
+elastischer Verkürzung rechnet das Öffnen nicht. Die Datei ändert sich dabei
+nicht; die Hinweise hängen nur am geöffneten Modell. Am gespeicherten
+Drehlager, dessen LF1 schon auf die Endvorspannung umgestellt ist, stehen beim
+Öffnen „Vorspannung 952 kN an S1–S16 in 128 Lastfällen aus RFEM übernommen
+(als eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K, aus ΔT
+abgeleitet; …)“ und dasselbe für 805 kN in 293 Lastfällen; der Vermerk steht
+an 421 Lastfällen, und die Datei bleibt beim Öffnen und Speichern bitgleich.
+Ein Modell ohne RFEM als Quelle bekommt keinen solchen Hinweis, auch wenn ein
+Zugstab dort abgekühlt wird.
+
+Was dann zu tun ist, sagen seit dem 15.10.2026 eine eigene Protokollzeile beim
+Öffnen und die Statuszeile: Register **Lasten › Vorspannung**, Lastart
+„Eingeprägte Dehnung (RFEM, ΔT) in Endvorspannung umwandeln“ stellt die
+Vorspannung auf die Endvorspannung um, mit „Anfangsvorspannung (Pressenkraft
+P₀)“ und Δs setzen Sie stattdessen die Pressenkraft. Das Programm stellt nichts
+von selbst um. Bei einer aus ΔT abgeleiteten Vorspannung steht dabei, dass die
+alte Datei die Herkunft nicht gespeichert hat: Eine Abkühlung eines Zugstabs
+ist von einer Vorspannung nicht zu unterscheiden, auch die Lastfallkategorie
+hilft nicht (am Drehlager steht dieselbe ΔT in Lastfällen der Kategorien P, Q
+und FAT), und eine echte Temperaturlast bleibt, wie sie ist. Eine Datei mit
+einem Merkmal des Imports ab dem 14.10.2026 (Zugstäbe, Seile oder Lagerreibung
+in den Metadaten) bekommt keine abgeleitete Vorspannung mehr: Dort steht jede
+Vorspannung mit ihrer Kraft an der ΔT-Last, und eine ΔT ohne diese Kraft ist
+eine echte Temperaturlast. Stehen mehrere Hinweise des Imports an (Zugstäbe,
+Lagerreibung, Vorspannung), zeigt die Statuszeile sie zusammen.
+
+X ist die Stabkraft unter der Vorspannung allein. Das
 Programm rechnet sie beim Import, wenn das Modell keinen Kontakt hat,
 vernetzt ist und höchstens 300 000 Freiheitsgrade hat. Sonst, wie am
 Drehlager, folgt X nach der ersten Rechnung aus einem Lastfall, der nur die
 Vorspannung trägt (dort LF398). Umgewandelt wird nur auf Ihre Anweisung: in
-der Maske *Lasten → Vorspannung* die Lastart „ΔT-Vorspannung in Sollkraft
-umwandeln“ wählen, Stäbe wählen (ohne Auswahl gelten alle Zugstäbe mit einer
-Temperatur-Vorspannung) und „Last aufbringen“. Mit dem Haken „in allen
-Lastfällen mit derselben Anfangsvorspannung“ gilt die Umwandlung für jeden
+der Maske *Lasten → Vorspannung* die Lastart „Eingeprägte Dehnung (RFEM, ΔT)
+in Endvorspannung umwandeln“ wählen (bis zum 14.10.2026 „ΔT-Vorspannung in
+Sollkraft umwandeln“), Stäbe wählen (ohne Auswahl gelten alle Zugstäbe mit
+einer Temperatur-Vorspannung) und „Last aufbringen“. Mit dem Haken „in allen
+Lastfällen mit derselben eingeprägten Dehnung“ (bis zum 14.10.2026 „… mit
+derselben Anfangsvorspannung“) gilt die Umwandlung für jeden
 Lastfall mit derselben Kraft; am Drehlager sind das die 129 Lastfälle mit
 952 kN, die 293 Lastfälle mit 805 kN bleiben. Die Kraft 0 heißt Vorschlag:
 0,9·f_p0,1k·A bei Spannstahl, sonst der Wert aus RFEM. Spannstahl ist ein
@@ -5748,7 +5848,7 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
-| Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v bzw. F_soll [kN], Gruppe beim Spannen, Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Sollkraft nach Verankerung** (nur Stäbe, seit 13.10.2026): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; **Umwandeln** einer RFEM-Vorspannung (ΔT) in die Sollkraft |
+| Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v, F_soll bzw. P₀ [kN], Verankerungsschlupf Δs [mm], Gruppe beim Spannen, Achse (Volumen) | als eingeprägte Dehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Endvorspannung (bleibend nach dem Verankern)** (nur Stäbe, seit 13.10.2026, bis 14.10.2026 „Sollkraft nach Verankerung“): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; als **Anfangsvorspannung (Pressenkraft P₀)** (nur Stäbe, seit 14.10.2026): die Presse spannt mit P₀, nach dem Verankern fehlen der Schlupf Δs und die elastischen Verluste; **Umwandeln** einer RFEM-Vorspannung (eingeprägte Dehnung, ΔT) in die Endvorspannung |
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
@@ -6657,7 +6757,8 @@ im Lastfall LF1 so −0,59 kN Druck. Öffnen Sie ein Modell, das vor diesem Tag
 aus RFEM 6 übernommen wurde, nennt das Protokoll die Fachwerkstäbe ohne
 „trägt nur“, und unter den Importhinweisen steht die Umstellung als Vorschlag.
 Das Programm stellt nichts von selbst um. Die Statuszeile nennt beim Öffnen
-den Weg: Register **Datei › Austausch › „Stabtypen aus RFEM nachlesen…“**
+den Weg: Register **Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus
+RFEM nachlesen…“** (bis zum 15.10.2026 ein eigener Knopf in der Gruppe Austausch)
 öffnet rechts die Maske „Stabtypen aus RFEM“ mit dem Hinweis aus dem Import
 und der RFEM-Datei, die beim Import gelesen wurde. Liegt die Datei heute
 woanders, tragen Sie ihren Pfad dort ein. **Stabtypen nachlesen** liest die
@@ -6870,6 +6971,52 @@ Bettung ab 10¹¹ N/m³ mit Ausfall gilt in Statik3D als **starres Lager mit
 Ausfall** (exakte Bedingung, kein Festhalten mehr); das Protokoll nennt die
 Umdeutung beim Import und beim Rechnen. Echte Bettungen (Boden, Elastomer)
 liegen Größenordnungen darunter und bleiben Federn.
+
+**Reibung an Lagern aus RFEM 6 nur mit Reibungsart** (seit 15.10.2026). In
+RFEM ist Reibung an einem Lager eine eigene Art der Nichtlinearität: beim
+Flächenlager gehört zum Ausfall bei Zug oder Druck die Art „Reibung in der
+Ebene xy“, beim Knoten- und Linienlager je Freiheitsgrad eine der
+Nichtlinearitäten „Reibung Richtung …“. Das Feld des Reibbeiwerts trägt in
+jeder RFEM-Datei einen Wert, auch wenn keine Reibung gewählt ist; am Drehlager
+steht 0,1 an allen sechs Flächenlagertypen, auch an den linearen. Statik3D setzt
+den Beiwert seither nur an, wenn RFEM die Reibungsart nennt. Sonst gilt der
+Freiheitsgrad nach seiner Federkonstanten, also frei bei 0, und das
+Importprotokoll nennt die nicht angesetzten Beiwerte in einem Satz („HINWEIS:
+Reibbeiwert aus der Datei ohne Reibungsart nicht angesetzt: Flächenlager
+„Starr“ (ux, uy μ = 0,1) …“). Bis zum 15.10.2026 setzte der Import den Beiwert
+an, sobald das Lager irgendeine Nichtlinearität hatte: aus dem Flächenlager
+„Starr“ des Drehlagers (senkrecht starr mit Ausfall bei Zug, in der Fläche
+frei) wurde so ein Lager, das an den 50 Flächen der Grundplatte in der Fläche
+bis μ·N haftete, und an dieser Reibung, die RFEM nicht rechnet, endeten die
+Kontaktläufe am Deckel. Ein Knoten- oder Linienlager mit Reibbeiwert ohne
+Reibungsart bekam bis dahin ebenfalls Reibung. Öffnen Sie ein Modell, das vor
+diesem Tag aus RFEM 6 übernommen wurde und an einem Lager Reibung trägt,
+nennt das Protokoll die Lager, und unter den Importhinweisen steht das
+Nachlesen als Vorschlag; die Statuszeile nennt den Weg. Ob die Reibung in RFEM
+eine Reibungsart hat, steht erst in der RFEM-Datei, deshalb stellt das
+Programm nichts von selbst um. Register **Datei › Austausch › „Aus RFEM
+nachlesen ▾“ › „Lager aus RFEM nachlesen…“** öffnet rechts die Maske „Lager aus RFEM“ mit dem Hinweis und der
+RFEM-Datei; liegt die Datei heute woanders, tragen Sie ihren Pfad dort ein.
+**Lager nachlesen** liest die Knoten-, Linien- und Flächenlager aus der Datei
+und nimmt an den gleichnamigen Lagern einen Reibbeiwert zurück, der in RFEM
+ohne Reibungsart steht; der Freiheitsgrad gilt danach wie beim Import von heute
+nach seiner Federkonstanten, Ausfall, Schlupf und Grenzkraft bleiben. Ein Lager
+mit Reibungsart in RFEM behält seine Reibung, und einen Beiwert, den Sie selbst
+geändert haben, lässt das Nachlesen stehen. Das Protokoll nennt das Ergebnis
+(„Lager aus … nachgelesen: Reibbeiwert ohne Reibungsart zurückgenommen an
+Starr“), und Rückgängig nimmt das Nachlesen als einen Schritt zurück. Fehlt
+die Datei, sagt ein Hinweis es, und nichts wird umgestellt.
+
+Ob ein Reibbeiwert in einem früher übernommenen Modell aus dem Import stammt, ist
+am gespeicherten Modell nicht sicher zu erkennen: Das Merkmal des Imports sagt
+nur, dass die Datei vor dem 15.10.2026 übernommen wurde, und ein Lager mit
+Reibungsart in RFEM sieht in Statik3D genauso aus wie eines, dessen Beiwert nur
+der Vorgabewert 0,1 war (am Drehlager gelesen: „Starr“ mit μ = 0,1 in ux und
+uy). Darum steht beim Öffnen nur der Hinweis, und er nennt je Lager die
+Freiheitsgrade mit ihrem Beiwert (etwa „Starr (ux, uy μ = 0,1)“) und ob die
+RFEM-Datei noch am gemerkten Ort liegt; umgestellt wird erst mit „Lager
+nachlesen“. Der gespeicherte Hinweis trägt den Stand der Datei nicht, nur die
+Protokollzeile beim Öffnen.
 
 **„Verstöße unter der Lösergenauigkeit - der Zustand steht“** (Protokoll,
 seit 27.09.2026): Die Kontaktiteration endet, sobald die Summe aller
@@ -7340,13 +7487,16 @@ geschlossene Lösung (`tests/test_temperatur_sofort.py`).
 Weil der Anwender die Entscheidung mit der Vorspannung begründet, gilt sie
 seit dem 10.10.2026 auch für eine Vorspannung, die als **Vorspannkraft**
 eingegeben ist (*Lasten → Vorspannung*, seit dem 13.10.2026 die Lastart
-„Anfangsdehnung (F_v)“), im Stab ebenso wie als Körper. Sie
+„Anfangsdehnung (F_v)“, seit dem 14.10.2026 „Vorspannung als eingeprägte
+Dehnung (F_v)“), im Stab ebenso wie als Körper. Sie
 wirkt ab der ersten Stufe voll, in einer Kombination mit ihrem Faktor aus der
-Kombination, zusammen mit den Temperaturlasten. Die Lastart „Vorspannkraft
-(Soll nach Verankerung)“ vom 13.10.2026 folgt nicht dieser Regel, sondern wird
+Kombination, zusammen mit den Temperaturlasten. Die Lastart „Endvorspannung
+(bleibend nach dem Verankern)“ vom 13.10.2026 (bis zum 14.10.2026
+„Vorspannkraft (Soll nach Verankerung)“) und die Anfangsvorspannung
+(Pressenkraft P₀) vom 14.10.2026 folgen nicht dieser Regel, sondern werden
 vor allen Stufen in einem eigenen Schritt gespannt und verriegelt (siehe
-„Vorspannkraft (Soll nach Verankerung)“); auch sie steht damit ab der ersten
-Stufe voll da. Zuerst galt die Regel nur
+„Endvorspannung (bleibend nach dem Verankern)“); auch sie stehen damit ab der
+ersten Stufe voll da. Zuerst galt die Regel nur
 für Temperaturlasten, und die Zeile im Protokoll hieß „Temperaturlasten
 wirken ab der ersten Laststufe voll …“; eine Vorspannkraft wuchs bis dahin
 weiter mit den Stufen mit. Derselbe Würfel mit einer Vorspannkraft von
@@ -7759,9 +7909,13 @@ den Stabnummern; eine Flächenlast ohne auflösbaren Lastfall wird mit diesem
 Grund gemeldet statt als „Umsetzungstabelle fehlt“; die Zeile zur
 Stabvorspannung nennt die verschiedenen Stäbe und die Kraft je Lastfall statt
 einer Summe über alle Lastfälle. Seit dem 13.10.2026 steht am Ende des
-Protokolls je Anfangsvorspannung der Hinweis „Anfangsvorspannung 952 kN
-ergibt nach elastischer Verkürzung X kN – in Sollkraft umwandeln?“ (siehe
-„Vorspannung aus RFEM in die Sollkraft umwandeln“). Beim
+Protokolls je Vorspannungswert der Hinweis „Vorspannung 952 kN an S1–S16 in
+129 Lastfällen aus RFEM übernommen (…) – in Statik3D prüfen und ggf. als
+Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“ (seit
+15.10.2026; bis dahin „Vorspannung als eingeprägte Dehnung (RFEM) 952 kN
+ergibt nach elastischer Verkürzung X kN – in Endvorspannung umwandeln?“, bis
+zum 14.10.2026 „Anfangsvorspannung 952 kN ergibt … – in Sollkraft
+umwandeln?“; siehe „Vorspannung aus RFEM übernommen – in Statik3D prüfen“). Beim
 Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
@@ -9163,6 +9317,60 @@ einer plastischen Rechnung legt das Programm heute nicht ab. Dann gilt der
 Endzustand, und der Stab vermerkt „Laststufen der Plastizität von LF1 nicht
 abgelegt – nachgewiesen ist der Endzustand“.
 
+**Drei Zustände je Anker mit Anfangs- und Endvorspannung** (seit 14.10.2026).
+Mit der Anfangsvorspannung (Pressenkraft P₀) sind die drei Zustände getrennt:
+Beim Spannen gilt P₀ gegen σ_p,max, nach dem Verankern die Endvorspannung
+N_verankert (P₀ minus Schlupf und elastische Verluste) gegen σ_pm0 und im
+Lastzustand N_Ed gegen f_pd = f_p0,1k/γ_s mit γ_s = 1,15. Bei der
+Endvorspannung ist die Kraft beim Spannen F_soll; das galt schon vorher und
+bleibt so, und seit dem 14.10.2026 steht N_spannen = F_soll auch in einer
+linearen Rechnung über die Einflussmatrix im Ergebnis (bis dahin nahm der
+Nachweis dort nur die Eingabe). Die Zeilen nennen die Begriffe, etwa
+„LF_V: N_spannen = Anfangsvorspannung P₀ (Pressenkraft, Spannschritt)“ und
+„LF_V: N_verankert = Endvorspannung nach dem Verankern (P₀ − Schlupf Δs =
+1.00 mm und elastische Verluste)“. Ist kein Spannschritt gerechnet, setzt der
+Nachweis nach dem Verankern P₀ − k_A·Δs an (starre Umgebung, ohne elastische
+Verluste) und sagt das. Der Bericht hat unter der Übersicht der Stabnachweise
+die Tabelle „Spannstahl je Anker“: je Anker eine Zeile mit der Eingabe und je
+Zustand Kraft, Spannung und Ausnutzung, nämlich Anfangsvorspannung P₀ beim
+Spannen, Endvorspannung nach dem Verankern und Kraft im Lastzustand, dazu der
+maßgebende Zustand. Die Kontrollzahlen des Anwenders mit A = 1 256,64 mm²,
+f_p0,1k = 835 und f_pk = 1 030 N/mm² kommen heraus: Bei bleibenden 944,7 kN
+ist σ = 751,77 N/mm², nach dem Verankern 751,77/709,75 = 1,059 und im GZT
+751,77/726,09 = 1,035 (vierstellig 1,0354). Beim Spannen ergibt
+P₀ = 944,7 kN 1,0004; mit Δs = 1 mm am beidseitig festen Anker Rund 40 von
+3,23 m (E = 170 000 N/mm², k_A = 66,14 kN/mm) braucht die Presse
+P₀ = 1 010,84 kN für bleibende 944,7 kN, und das ergibt beim Spannen 1,0704.
+Am Drehlager (Entwurf, Lauf vom 14.10.2026 mit der Endvorspannung 944,7 kN an
+S1 bis S16, Werkstoffart Spannstahl in einer Kopie gesetzt, nichts neu
+gerechnet) gibt der Nachweis aus den abgelegten Zuständen beim Spannen in LF1
+1,0004, nach dem Verankern 1,0592 und im Endzustand von LF1 (N_ende 944,2 bis
+945,8 kN, gegen f_pd gelesen) 1,0348 bis 1,0365, Programm und Handrechnung
+gleich. Die 952 kN der RFEM-Vorspannung als eingeprägte Dehnung in LF398
+geben beim Spannen 1,0081 und sind dort maßgebend. Die Anker sind 3,23 m lang
+mit k_A = 66,14 kN/mm, ein Millimeter Schlupf kostet gegen starre Umgebung also
+66,14 kN.
+
+**Freie Ankerlänge und Kraftverlust aus dem Schlupf** (seit 15.10.2026). Trägt
+ein Anker eine Anfangsvorspannung mit Verankerungsschlupf, nennt der Nachweis
+dazu die freie Ankerlänge L_frei in m, den Schlupf Δs in mm und den Kraftverlust
+ΔP in kN, und zwar in der Ausgabe nach dem Nachweis (Protokoll und Maske
+Ergebnisse, eine Zeile „Verankerungsschlupf S1 bis S16 …“ für gleiche Anker), im
+Bericht bei den Kennwerten des Stabs („Freie Ankerlänge“, „Verankerungsschlupf“,
+„Kraftverlust ΔP“) und in der Tabelle „Spannstahl je Anker“ mit den Spalten
+L_frei [m], Δs [mm] und ΔP [kN]. L_frei ist die Stablänge zwischen den
+Ankerpunkten, dieselbe Länge, mit der die Stabsteifigkeit k_A = E·A/L_frei
+rechnet. ΔP = k_A·Δs·k_K/(k_A + k_K) mit k_K der Steifigkeit der Umgebung; am
+beidseitig festen Anker ist es k_A·Δs. Im Ergebnis des Spannschritts steht die
+verankerte Kraft, ΔP wird daraus als P₀ − N_verankert gelesen (beim reihenweisen
+Spannen enthält es auch die elastischen Verluste der übrigen Anker); ohne
+dieses Ergebnis gilt die starre Umgebung, und die Zeile sagt es. Handprobe: ein
+Anker mit k_A = 210 kN/mm neben einem Klemmteil von k_K = 840 kN/mm, P₀ =
+500 kN und Δs = 0,5 mm hat ΔP = 105 · 840 / 1 050 = 84 kN, verankert also
+416 kN, und genau das steht im Ergebnis. Beim Anker Rund 40 mit 3,23 m und
+Δs = 1 mm sind es 66,14 kN, aus P₀ = 1 010,84 kN werden 944,70 kN
+(`tests.test_spannstahl_schlupfanzeige`).
+
 Weicht die Zulassung ab, trägt man σ_p,max und σ_pm0 in der Maske des
 Werkstoffs ein. Bleiben die Felder leer, gelten die Formeln, und der Hinweis am
 Feld nennt ihren Wert. In derselben Maske ist die Werkstoffart wählbar (Stahl,
@@ -9210,6 +9418,22 @@ Steifigkeit bleibt in jedem Fall beim Querschnitt A des Schafts. Ältere Dateien
 kennen weder A_s noch das Gewinde; die Felder bleiben dort leer, und
 Ergebnisdateien von vorher passen weiter, weil leere Felder die Kennung der
 Ergebnisdatei nicht ändern.
+
+**Gewinde am Rundstahl selbst einstellen (seit 15.10.2026).** Ein Rundstahl aus
+RFEM kommt als Rundstahl ohne Gewinde an: „Rund 16“ bleibt „Rund 16“, das
+Programm setzt kein Gewinde von selbst und deutet nichts nach dem Namen um. Wer
+den Stab als Schraube nachweisen will, stellt in der Maske des Querschnitts die
+Auswahl „Gewinde“ von „–“ (ohne) auf eine Schraubengröße, etwa M16. Das Feld
+„A_s Gewinde [mm²]“ zeigt danach den Wert aus EN ISO 898-1 (M16 157 mm², M20
+245 mm²), und der Stab wird als Schraube auf Zug nach EN 1993-1-8 nachgewiesen;
+die Güte kommt aus dem Werkstoff (f_ub = f_u). Die Auswahl und das Feld A_s
+gibt es nur beim Rundstahl, bei einem Rechteck oder I-Profil nicht. Passt der
+Nenndurchmesser des Gewindes nicht zum Stabdurchmesser (M20 an Rund 16), steht
+im Protokoll und in der Statuszeile ein Hinweis, und der Nachweis nennt ihn am
+Stab; gesperrt ist nichts, gerechnet wird mit dem gewählten Gewinde. Stellt man
+das Gewinde auf „–“ zurück, geht das A_s mit, das aus der Tabelle stammte; ein
+von Hand eingetragenes A_s bleibt. Gespeichert wird das Gewinde nur, wenn es
+gesetzt ist (`tests.test_rundstahl_gewinde`).
 
 **Stab mit Schraubengröße (seit 13.10.2026).** Trägt der Querschnitt eines
 Stabes eine Schraubengröße und ist sein Werkstoff kein Spannstahl, wird der
