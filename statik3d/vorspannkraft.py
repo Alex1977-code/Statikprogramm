@@ -794,6 +794,20 @@ def hinweis_anzeige(model, h: dict) -> str:
                              umrechnung, h.get("X"), grund or "", h.get("X_aus"))
 
 
+#: Merkmale in ``model.meta``, die der RFEM-6-Import seit dem 14.10.2026 setzt
+#: (rfem6_db.ZUGSTAEBE_MERKMAL, SEILE_MERKMAL, LAGERREIBUNG_MERKMAL). Der
+#: Import hielt die Vorspannung schon seit dem 13.10.2026 mit Merkmal fest.
+MERKMALE_NEUER_IMPORT = ("rfem_zugstaebe", "rfem_seile", "rfem_lagerreibung")
+
+#: Was der Anwender mit einer aus RFEM uebernommenen Vorspannung als eingepraegter
+#: Dehnung tun kann (Protokoll, Statuszeile, Vorschlag am Hinweis; 15.10.2026)
+WEG_UMSTELLEN = (f"Lasten › Vorspannung, Lastart „{LASTART_UMWANDELN}“ stellt sie auf die Endvorspannung um, "
+                 f"mit „{LASTART_PRESSE}“ und Δs setzen Sie stattdessen die Pressenkraft; umgestellt wird nur auf "
+                 "Ihre Anweisung")
+#: Zusatz bei einer aus ΔT abgeleiteten Vorspannung: die alte Datei kennt die Herkunft nicht
+HERKUNFT_UNSICHER = ("; die Datei hat die Herkunft nicht gespeichert: eine Abkühlung eines Zugstabs ist von einer "
+                     "Vorspannung nicht zu unterscheiden – ist es eine echte Temperaturlast, bleibt sie, wie sie ist")
+
 #: Vermerk in der Klammer eines Hinweises, dessen Kraft aus ΔT abgeleitet ist
 #: (Datei von vor dem 13.10.2026 ohne gespeichertes Merkmal)
 AUS_DT = "aus ΔT abgeleitet"
@@ -814,6 +828,13 @@ def abgeleitete_hinweise(model) -> list:
         return []
     if any(h.get("art") == "vorspannung" for h in (getattr(model, "importhinweise", None) or [])):
         return []
+    # Ein Import ab dem 14.10.2026 setzt Merkmale ans Modell (Zugstaebe, Seile,
+    # Lagerreibung) und haelt jede Vorspannung mit ihrem Merkmal an der ΔT-Last
+    # fest: dort ist eine ΔT ohne Merkmal eine echte Temperaturlast, keine
+    # Vorspannung (15.10.2026). Nur eine Datei ohne diese Merkmale kann eine
+    # Vorspannung als blosse ΔT tragen.
+    if any(meta.get(k) for k in MERKMALE_NEUER_IMPORT):
+        return []
     je: dict = {}
     for t in temperatur_vorspannungen(model):
         je.setdefault(round(t.N0, 3), []).append(t)
@@ -827,7 +848,8 @@ def abgeleitete_hinweise(model) -> list:
         if not all(getattr(x, "aus_vorspannung", 0.0) for t in liste for x in t.lasten):
             umrechnung += ", " + AUS_DT
         h = {"art": "vorspannung", "abgeleitet": True, "objekte": staebe, "faelle": faelle,
-             "N0": float(N0), "umrechnung": umrechnung, "grund": grund, "X": None, "erledigt": False}
+             "N0": float(N0), "umrechnung": umrechnung, "grund": grund, "X": None, "erledigt": False,
+             "vorschlag": WEG_UMSTELLEN + HERKUNFT_UNSICHER}
         h["text"] = rfem_hinweis_text(N0, staebe, faelle, umrechnung, None, grund)
         out.append(h)
     return out
@@ -846,8 +868,14 @@ def vorspannung_ladehinweise(model) -> list:
     dem 13.10.2026 uebernommenen Modell die abgeleiteten - die setzt diese
     Funktion ans Modell (nicht in die Datei)."""
     model._rfem_hinweise_abgeleitet = abgeleitete_hinweise(model)
-    return [h["text"] if h.get("abgeleitet") else hinweis_anzeige(model, h)
-            for h in _rfem_hinweise(model) if not h.get("erledigt")]
+    offen = [h for h in _rfem_hinweise(model) if not h.get("erledigt")]
+    out = [h["text"] if h.get("abgeleitet") else hinweis_anzeige(model, h) for h in offen]
+    if offen:
+        # eine Zeile mit dem Weg, einmal fuer alle Hinweise (15.10.2026); bei einer
+        # abgeleiteten Vorspannung dazu, dass die Herkunft nicht sicher ist
+        out.append(f"Vorspannung als eingeprägte Dehnung (ΔT): {WEG_UMSTELLEN}"
+                   + (HERKUNFT_UNSICHER if any(h.get("abgeleitet") for h in offen) else ""))
+    return out
 
 
 def rfem_pruefen(model) -> dict:

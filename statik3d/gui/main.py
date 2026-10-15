@@ -30344,16 +30344,29 @@ class MainWindow(QtWidgets.QMainWindow):
         # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
         # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
         # Protokollzeile steht schon oben (_ladehinweise)
+        # Mehrere Hinweise stehen zusammen in der Statuszeile (15.10.2026): bis dahin
+        # ueberschrieb der letzte den ersten, und am Drehlager von vor dem 14.10.2026
+        # (Zugstaebe, Lagerreibung, Vorspannung) sah der Anwender nur einen.
+        status_hinweise = []
         if any(h.get("art") == "zugstab" and not h.get("erledigt")
                for h in (getattr(self.model, "importhinweise", None) or [])):
-            self._hinweis_statuszeile("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
-                                      "– Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus RFEM nachlesen…“")
+            status_hinweise.append("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
+                                   "– Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus RFEM nachlesen…“")
         # ebenso die Lagerreibung (Importhinweis „lagerreibung“, 15.10.2026)
         if any(h.get("art") == "lagerreibung" and not h.get("erledigt")
                for h in (getattr(self.model, "importhinweise", None) or [])):
-            self._hinweis_statuszeile("Hinweis: Lager aus RFEM 6 tragen hier Reibung, die RFEM vielleicht nicht "
-                                      "rechnet – Datei › Austausch › „Aus RFEM nachlesen ▾“ › "
-                                      "„Lager aus RFEM nachlesen…“")
+            status_hinweise.append("Hinweis: Lager aus RFEM 6 tragen hier Reibung, die RFEM vielleicht nicht "
+                                   "rechnet – Datei › Austausch › „Aus RFEM nachlesen ▾“ › "
+                                   "„Lager aus RFEM nachlesen…“")
+        # und die Vorspannung aus RFEM als eingepraegte Dehnung (15.10.2026), auch die aus ΔT
+        # abgeleitete einer alten Datei
+        from .. import vorspannkraft as _vk_
+        if any(not h.get("erledigt") for h in _vk_._rfem_hinweise(self.model)):
+            status_hinweise.append("Hinweis: Vorspannung aus RFEM steht als eingeprägte Dehnung (ΔT), zu prüfen – "
+                                   "Lasten › Vorspannung, Lastart „" + _vk_.LASTART_UMWANDELN
+                                   + "“ oder Anfangs-/Endvorspannung")
+        if status_hinweise:
+            self._hinweis_statuszeile(" · ".join(status_hinweise))
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True

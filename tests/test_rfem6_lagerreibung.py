@@ -215,6 +215,14 @@ def test_gespeichertes_modell():
         check("... mit der Aktion als Vorschlag und der RFEM-Datei",
               h and AKTION.rstrip("…") in str(h[0].get("vorschlag", "")) and h[0].get("datei") == rf6,
               str(h[0].get("vorschlag", ""))[:120] if h else "")
+        # die Liste nennt je Lager Freiheitsgrade und Beiwert (15.10.2026) und den Stand der RFEM-Datei
+        txt = h[0].get("text", "") if h else ""
+        check("... die Liste nennt je Lager Freiheitsgrade und Beiwert",
+              "Starr (ux, uy μ = 0,1)" in txt and "Gleit (ux, uy μ = 0,1)" in txt
+              and "Eigen (ux, uy μ = 0,3)" in txt, txt[:260])
+        zeile = next((z for z in alt._ladehinweise if "Reibung" in z), "")
+        check("... die Protokollzeile sagt, ob die RFEM-Datei noch da liegt (der gespeicherte Text nicht)",
+              "Die RFEM-Datei liegt noch unter" in zeile and "RFEM-Datei liegt" not in txt, zeile[-260:])
         check("... und im Protokoll des Oeffnens", any("Reibung" in z and "RFEM" in z for z in alt._ladehinweise),
               next((z[:160] for z in alt._ladehinweise if "Reibung" in z), "-"))
         check("von selbst wird nichts umgestellt", _mu(alt, "Starr").mu == 0.1 and _mu(alt, "Starr").typ == "rigid")
@@ -240,6 +248,12 @@ def test_gespeichertes_modell():
         check("nach dem Speichern: kein neuer Hinweis, die Einstellung bleibt",
               not any(x.get("art") == "lagerreibung" and not x.get("erledigt") for x in wieder.importhinweise)
               and _mu(wieder, "Starr").typ == "free")
+        # liegt die RFEM-Datei nicht mehr da, sagt es schon die Protokollzeile beim Oeffnen
+        pfad3, rf3 = _alt(tempfile.mkdtemp(dir=tmp))
+        os.remove(rf3)
+        zeile3 = next((z for z in Model.load(pfad3)._ladehinweise if "Reibung" in z), "")
+        check("RFEM-Datei nicht mehr da: die Protokollzeile sagt es und nennt den Pfad der Maske",
+              "liegt nicht mehr unter" in zeile3 and "Maske „Lager aus RFEM“" in zeile3, zeile3[-300:])
         # fehlt die RFEM-Datei, sagt es das Nachlesen und aendert nichts
         pfad2, _ = _alt(tempfile.mkdtemp(dir=tmp))
         alt2 = Model.load(pfad2)

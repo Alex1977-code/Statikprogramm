@@ -145,6 +145,9 @@ def test_alte_datei(pfad):
     m.importhinweise = [h for h in m.importhinweise if h.get("art") != "vorspannung"]
     # die Quelle setzt der Import ueber statik3d.importers (Oberflaeche), read_rf6 allein nicht
     m.meta["quelle"] = os.path.join(TMP, "anker.rf6")
+    # eine Datei von vor dem 13.10.2026 kennt auch die Merkmale des Imports ab 14.10.2026 nicht
+    for k in vk.MERKMALE_NEUER_IMPORT:
+        m.meta.pop(k, None)
     for lc in m.load_cases.values():
         for t in lc.temp_loads:
             t.aus_vorspannung, t.vorspann_E, t.vorspann_alpha = 0.0, 0.0, 0.0
@@ -207,6 +210,60 @@ def test_drehlager_gespeichert():
     with open(pfad, "rb") as f1, open(kopie, "rb") as f2:
         check("Drehlager gespeichert: Öffnen und Speichern bitgleich", f1.read() == f2.read())
     os.remove(kopie)
+
+
+def test_wegweiser(alt):
+    print("\n--- Datei von vor dem 13.10.2026: der Hinweis sagt, was zu tun ist (15.10.2026) ---")
+    from statik3d.model import Model
+    from statik3d import vorspannkraft as vk
+    m = Model.load(alt)
+    z = [s for s in getattr(m, "_ladehinweise", []) if "Lasten › Vorspannung" in s]
+    for s in z:
+        print(f"     {s}")
+    check("eine eigene Protokollzeile zur Umstellung (nicht doppelt)", len(z) == 1, str(len(z)))
+    t = z[0] if z else ""
+    for k in (f"„{vk.LASTART_UMWANDELN}“", "Anfangsvorspannung (Pressenkraft", "nur auf Ihre Anweisung",
+              "nicht zu unterscheiden", "echte Temperaturlast"):
+        check(f"… nennt „{k}“", k in t)
+    check("die Zeile enthaelt nicht den Satz des Hinweises (der Hinweis bleibt je Wert einer)",
+          "aus RFEM übernommen" not in t)
+    ab = list(getattr(m, "_rfem_hinweise_abgeleitet", None) or [])
+    check("jeder abgeleitete Hinweis traegt einen Vorschlag mit dem Weg",
+          ab and all("Lasten › Vorspannung" in str(h.get("vorschlag", "")) for h in ab),
+          str([h.get("vorschlag") for h in ab][:1]))
+    # in der Datei steht davon nichts
+    p2 = os.path.join(TMP, "anker_wegweiser.json")
+    m.save(p2)
+    with open(p2, "rb") as f:
+        check("die gespeicherte Datei enthaelt keinen Vorschlag", "Lasten › Vorspannung".encode("utf-8") not in f.read())
+
+
+def test_neue_datei_ohne_ableitung(alt):
+    print("\n--- Datei mit den Merkmalen des Imports ab 14.10.2026: ΔT ohne Merkmal ist eine echte Temperaturlast ---")
+    from statik3d.model import Model
+    m = Model.load(alt)
+    check("Ausgangslage: die nachgestellte alte Datei bekommt Hinweise",
+          [s for s in m._ladehinweise if "aus RFEM übernommen" in s])
+    for schluessel in ("rfem_zugstaebe", "rfem_lagerreibung"):
+        m2 = Model.load(alt)
+        m2.meta[schluessel] = "beim Import gesetzt"
+        p = os.path.join(TMP, f"anker_{schluessel}.json")
+        m2.save(p)
+        m3 = Model.load(p)
+        z = [s for s in m3._ladehinweise if "aus RFEM übernommen" in s or "Lasten › Vorspannung" in s]
+        check(f"Merkmal {schluessel}: keine abgeleitete Vorspannung (jede Vorspannung steht dort mit Merkmal)",
+              not z, str(z[:1]))
+
+
+def test_statuszeile(alt):
+    print("\n--- Oberfläche: die Statuszeile nennt den Weg (15.10.2026) ---")
+    w, app = _fenster()
+    w.modell_laden(alt, fragen=False)
+    app.processEvents()
+    status = w.statusBar().currentMessage()
+    check("beim Öffnen: Statuszeile nennt Lasten › Vorspannung und Umwandeln",
+          "Lasten › Vorspannung" in status and "umwandeln" in status.lower(), status[:240])
+    check("… als eingeprägte Dehnung aus RFEM, zu prüfen", "RFEM" in status and "prüfen" in status, status[:240])
 
 
 def _fenster():
@@ -291,7 +348,16 @@ def main():
         try:
             if t is test_import:
                 pfad = t()
-            elif t in (test_laden, test_alte_datei, test_oberflaeche):
+            elif t is test_alte_datei:
+                alt = t(pfad)
+                for folge in (test_wegweiser, test_neue_datei_ohne_ableitung, test_statuszeile):
+                    try:
+                        folge(alt)
+                    except Exception as ex:      # noqa: BLE001
+                        import traceback
+                        traceback.print_exc()
+                        RESULTS.append((folge.__name__ + f" (Ausnahme: {type(ex).__name__}: {ex})", False))
+            elif t in (test_laden, test_oberflaeche):
                 t(pfad)
             else:
                 t()

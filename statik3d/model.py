@@ -271,23 +271,40 @@ def lagerreibung_hinweis(model) -> list:
     quelle = str(meta.get("quelle", "") or "")
     if not quelle.lower().endswith(".rf6") or meta.get("rfem_lagerreibung"):
         return []
-    mit: list = []
-    for s in getattr(model, "supports", None) or []:
-        if any(s.dof_behaviour(d).mu > 0 for d in range(NDOF)):
-            mit.append(s.name or f"Knotenlager {s.node}")
-    for s in list(getattr(model, "line_supports", None) or []) + list(getattr(model, "surface_supports", None) or []):
-        if any(s.dof_behaviour(d).mu > 0 for d in range(NDOF)):
-            mit.append(s.name or "ohne Namen")
-    mit = list(dict.fromkeys(mit))
+    # je Lager die Freiheitsgrade mit Reibbeiwert, damit der Anwender sieht, was er pruefen soll
+    # (15.10.2026); ob ein Beiwert aus dem Import stammt oder von Hand gesetzt wurde, steht im
+    # gespeicherten Modell nicht - das Merkmal sagt nur, dass der Import vor der Regel lief
+    fhg = ("ux", "uy", "uz", "φx", "φy", "φz")
+    je_lager: dict = {}
+    alle = ([(s.name or f"Knotenlager {s.node}", s) for s in getattr(model, "supports", None) or []]
+            + [(s.name or "ohne Namen", s) for s in list(getattr(model, "line_supports", None) or [])
+               + list(getattr(model, "surface_supports", None) or [])])
+    for nm, s in alle:
+        je_mu: dict = {}
+        for d in range(NDOF):
+            mu = float(s.dof_behaviour(d).mu)
+            if mu > 0:
+                je_mu.setdefault(f"{mu:.6g}".replace(".", ","), []).append(fhg[d])
+        if je_mu:
+            je_lager.setdefault(nm, {}).update(je_mu)
+    mit = list(je_lager)
     if not mit:
         return []
+    beschr = ["{} ({})".format(nm, "; ".join(", ".join(ds) + f" μ = {mu}" for mu, ds in je_mu.items()))
+              for nm, je_mu in je_lager.items()]
     datei = os.path.basename(quelle)
     anzahl = "1 Lager trägt" if len(mit) == 1 else f"{len(mit)} Lager tragen"
+    da = os.path.isfile(quelle)
+    stand = (f"Die RFEM-Datei liegt noch unter {quelle}." if da else
+             f"Die RFEM-Datei liegt nicht mehr unter {quelle} – ihren Pfad in der Maske „Lager aus RFEM“ eintragen "
+             "oder die Reibung in der Lagermaske von Hand prüfen.")
     text = (f"Aus RFEM 6 übernommen vor dem 15.10.2026: {anzahl} Reibung ("
-            + ", ".join(mit[:6]) + (" …" if len(mit) > 6 else "") + "). "
-            "Bis zum 15.10.2026 setzte der Import einen Reibbeiwert der RFEM-Datei auch ohne Reibungsart an, "
-            "dann rechnet RFEM dort keine Reibung (am Drehlager „Starr“: in RFEM in der Fläche frei, hier "
-            f"haftend bis μ·N) – die Lager aus {datei} nachlesen?")
+            + ", ".join(beschr[:6]) + (" …" if len(beschr) > 6 else "") + "). "
+            "Bis zum 15.10.2026 setzte der Import einen Reibbeiwert der RFEM-Datei auch ohne Reibungsart an "
+            "(RFEM trägt im Feld immer einen Wert, Vorgabe 0,1), dann rechnet RFEM dort keine Reibung (am "
+            "Drehlager „Starr“: in RFEM in der Fläche frei, hier haftend bis μ·N). Ob es bei einem dieser Lager "
+            "so ist, steht erst in der RFEM-Datei - am gespeicherten Modell ist es nicht zu erkennen, darum "
+            f"wird nichts umgestellt. Die Lager aus {datei} nachlesen?")
     vorschlag = ("Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Lager aus RFEM nachlesen…“ liest die Lager "
                  "aus der RFEM-Datei nach und "
                  "nimmt einen Reibbeiwert ohne Reibungsart zurück – oder die Reibung in der Lagermaske prüfen")
@@ -297,7 +314,9 @@ def lagerreibung_hinweis(model) -> list:
     if not any(h.get("art") == "lagerreibung" and not h.get("erledigt") for h in hinweise):
         hinweise.append({"art": "lagerreibung", "text": text, "objekte": mit, "vorschlag": vorschlag,
                          "erledigt": False, "datei": quelle})
-    return [text + " (" + vorschlag + ")"]
+    # ob die RFEM-Datei noch da liegt, steht nur in der Protokollzeile: der gespeicherte
+    # Hinweistext soll nicht veralten, wenn die Datei spaeter verschoben wird
+    return [text + " " + stand + " (" + vorschlag + ")"]
 
 
 def werkstoffe_alter_datei_nachziehen(model) -> list:

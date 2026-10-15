@@ -1017,6 +1017,22 @@ an 421 Lastfällen, und die Datei bleibt beim Öffnen und Speichern bitgleich.
 Ein Modell ohne RFEM als Quelle bekommt keinen solchen Hinweis, auch wenn ein
 Zugstab dort abgekühlt wird.
 
+Was dann zu tun ist, sagen seit dem 15.10.2026 eine eigene Protokollzeile beim
+Öffnen und die Statuszeile: Register **Lasten › Vorspannung**, Lastart
+„Eingeprägte Dehnung (RFEM, ΔT) in Endvorspannung umwandeln“ stellt die
+Vorspannung auf die Endvorspannung um, mit „Anfangsvorspannung (Pressenkraft
+P₀)“ und Δs setzen Sie stattdessen die Pressenkraft. Das Programm stellt nichts
+von selbst um. Bei einer aus ΔT abgeleiteten Vorspannung steht dabei, dass die
+alte Datei die Herkunft nicht gespeichert hat: Eine Abkühlung eines Zugstabs
+ist von einer Vorspannung nicht zu unterscheiden, auch die Lastfallkategorie
+hilft nicht (am Drehlager steht dieselbe ΔT in Lastfällen der Kategorien P, Q
+und FAT), und eine echte Temperaturlast bleibt, wie sie ist. Eine Datei mit
+einem Merkmal des Imports ab dem 14.10.2026 (Zugstäbe, Seile oder Lagerreibung
+in den Metadaten) bekommt keine abgeleitete Vorspannung mehr: Dort steht jede
+Vorspannung mit ihrer Kraft an der ΔT-Last, und eine ΔT ohne diese Kraft ist
+eine echte Temperaturlast. Stehen mehrere Hinweise des Imports an (Zugstäbe,
+Lagerreibung, Vorspannung), zeigt die Statuszeile sie zusammen.
+
 X ist die Stabkraft unter der Vorspannung allein. Das
 Programm rechnet sie beim Import, wenn das Modell keinen Kontakt hat,
 vernetzt ist und höchstens 300 000 Freiheitsgrade hat. Sonst, wie am
@@ -6990,6 +7006,17 @@ geändert haben, lässt das Nachlesen stehen. Das Protokoll nennt das Ergebnis
 („Lager aus … nachgelesen: Reibbeiwert ohne Reibungsart zurückgenommen an
 Starr“), und Rückgängig nimmt das Nachlesen als einen Schritt zurück. Fehlt
 die Datei, sagt ein Hinweis es, und nichts wird umgestellt.
+
+Ob ein Reibbeiwert in einem früher übernommenen Modell aus dem Import stammt, ist
+am gespeicherten Modell nicht sicher zu erkennen: Das Merkmal des Imports sagt
+nur, dass die Datei vor dem 15.10.2026 übernommen wurde, und ein Lager mit
+Reibungsart in RFEM sieht in Statik3D genauso aus wie eines, dessen Beiwert nur
+der Vorgabewert 0,1 war (am Drehlager gelesen: „Starr“ mit μ = 0,1 in ux und
+uy). Darum steht beim Öffnen nur der Hinweis, und er nennt je Lager die
+Freiheitsgrade mit ihrem Beiwert (etwa „Starr (ux, uy μ = 0,1)“) und ob die
+RFEM-Datei noch am gemerkten Ort liegt; umgestellt wird erst mit „Lager
+nachlesen“. Der gespeicherte Hinweis trägt den Stand der Datei nicht, nur die
+Protokollzeile beim Öffnen.
 
 **„Verstöße unter der Lösergenauigkeit - der Zustand steht“** (Protokoll,
 seit 27.09.2026): Die Kontaktiteration endet, sobald die Summe aller
