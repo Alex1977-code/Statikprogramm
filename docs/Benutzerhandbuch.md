@@ -7364,6 +7364,15 @@ alle Kontaktläufe endeten am Deckel. Das bisherige Verfahren gibt es nur noch z
 Vergleich: In der Maske heißt es „bisheriges Verfahren (nur zum Vergleich)“. Ältere
 Modelldateien enthalten keine Angabe dazu und rechnen beim nächsten Rechnen mit der
 Vorgabe; eine dort gespeicherte Ergebnisdatei bleibt, wie sie gerechnet wurde.
+Seit dem 15.10.2026 schreibt die Ergebnisdatei das Reibverfahren mit („konsistente
+Tangente“ oder „bisheriges Verfahren“). Eine ältere Ergebnisdatei ohne diese Angabe
+zu einem Modell mit Reibung (Kontakt mit μ > 0 oder Lager mit Reibbeiwert) wird
+geladen, die Ergebnisse bleiben sichtbar, und ein Hinweis sagt „gerechnet mit dem
+bisherigen Reibverfahren – für aktuelle Ergebnisse neu rechnen“. Speichern ohne
+neue Rechnung lässt die Angabe weg, der Hinweis kommt dann beim nächsten Öffnen
+wieder. Eine Modelldatei mit ausdrücklich „reibungstangente: true“ (gespeichert,
+als das Verfahren noch nicht Vorgabe war) gilt mit ihrer Ergebnisdatei nicht als
+geändert.
 
 Die Haftsteifigkeit ist kein fester Wert, sondern ein Vielfaches der Steifigkeit,
 die der Knoten aus seinen angrenzenden Elementen hat – auch an starren Lagern, die
