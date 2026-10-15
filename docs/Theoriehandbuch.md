@@ -2175,16 +2175,27 @@ Runden). Verworfen (gemessen 15.10.2026): statt des Haftens nach der Umkehr eine
 Längssteifigkeit μ·p/|d_t| um den letzten Zustand – jeder Lauf des gequetschten
 Blocks endete an `max_iter`.
 
+Wechselt in einer Runde nur die Reibungstangente (Haften/Gleiten oder ein offener Rest),
+geht es aus Phase 1 in Phase 2 weiter, wo Deckel, Pendeln mit Periode 2 und
+Ingenieurkriterium wirken. Ohne das pendelte der Block mit Anschlag (tet4,
+`tests/test_kontakt_pendeln`) in Phase 1 zwischen Haften und Gleiten bis `max_iter`
+(120 Runden): dort bestimmt der Löser je Runde neu, welche ganz gleitenden Gruppen
+anderswo gehalten sind, und ein einzelner Lagerknoten bekam abwechselnd die grobe und
+die feine Reststeifigkeit; jetzt 6 Runden.
+
 Gemessen (Faktor 1 000, `tests/test_reibungstangente`, Vergleich mit dem Stand
-9fb56e5): Runden je Rechnung Block mit Reibung 29 → 8, Stempel auf Sockel 14 → 8
-(plastisch 61 → 31), Platte mit Ankern wie das Drehlager (plastisch) 66 → 25
-(Zerlegungen 25 → 18), Block nahe der Grenzlast 136 → 36, kippender Stempel 76 → 36;
+9fb56e5): Runden je Rechnung Block mit Reibung 29 → 6, Stempel auf Sockel 14 → 7
+(plastisch 61 → 30), Platte mit Ankern wie das Drehlager (plastisch) 66 → 21
+(Zerlegungen 25 → 16), Block nahe der Grenzlast 136 → 34, kippender Stempel 76 → 34,
+Block mit Anschlag 13 → 6, Pendelmodell (`tests/test_pendeln_periode2`, linear) 28 → 27,
+mit Fließen 112 → 184;
 größte Abweichung von u 1,4·10⁻⁵ (Platte), Coulomb am Endzustand auf 10⁻³ Grad. Der
 Faktor f_h = 10 / 100 / 1 000 / 10 000 gab an der Platte 1,4·10⁻³ / 1,4·10⁻⁴ /
 1,4·10⁻⁵ / 2,3·10⁻⁶ Abweichung gegen das exakte Haften bei gleicher Rundenzahl.
 Geschlossene Lösungen: Klotz an einer Zugfeder (k_s = 10⁸ N/m) auf einem Lager wie
 „Starr“ haftet bis 0,999·μN und gleitet ab 1,001·μN um (F − μN)/k_s auf 10⁻⁴
-(0,2 / 50 / 100 / 200 µm), Blechpaket mit Endvorspannung haftet bis μ·F_v und gleitet
+(0,19981 / 50,0004 / 100,0007 / 200,0014 µm, soll 0,2 / 50 / 100 / 200; bei 1,001·μN ist der
+Rest die Schranke, bei der der Lauf endet, 10⁻⁶ der Kontaktkraft über k_s), Blechpaket mit Endvorspannung haftet bis μ·F_v und gleitet
 bei 1,05 / 1,5·μ·F_v um 30,003 / 300,008 µm (soll 30 / 300). Die Reibarbeit
 F_t·Δs (s = d_t − F_t/k_h) ist je Laststufe und Knoten ≥ −10⁻²⁷ J, ihre Summe
 μN·Δs auf 10⁻⁴.

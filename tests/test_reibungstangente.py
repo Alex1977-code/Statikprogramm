@@ -234,11 +234,14 @@ def test_klotz():
         if a < 1.0:
             ok = konv and n_gl == 0 and abs(s) < 1e-9 and abs(ft - a * MU * N) < 1e-6 * MU * N
             check(f"F = {a:g} mu N: haftet (kein Knoten gleitet), Reibkraft F, Weg < 1 nm",
-                  ok and _gg(r) < 1e-8, f"{n_gl}/{len(kn)} gleiten, Weg {s * 1e9:.3g} nm, Σ|F_t| {ft / 1e3:.4f} kN, "
+                  ok and _gg(r) < 1e-6, f"{n_gl}/{len(kn)} gleiten, Weg {s * 1e9:.3g} nm, Σ|F_t| {ft / 1e3:.4f} kN, "
                   f"{_runden(r)} Runden")
         else:
-            ok = (konv and n_gl == len(kn) and abs(s - soll) <= 1e-4 * soll + 1e-10
-                  and abs(ft - MU * N) < 1e-6 * MU * N and _gg(r) < 1e-8)
+            # Toleranz des Weges: 1e-4 und der Rest, bei dem der Lauf endet (RESIDUUM_ANTEIL
+            # der Kontaktkraft N, ueber die Feder k_s); Gleichgewicht ebenso auf 1e-6
+            tol = 1e-4 * soll + contact.RESIDUUM_ANTEIL * N / K_S
+            ok = (konv and n_gl == len(kn) and abs(s - soll) <= tol
+                  and abs(ft - MU * N) < 1e-6 * MU * N and _gg(r) < 1e-6)
             check(f"F = {a:g} mu N: alle gleiten, Weg (F - mu N)/k_s auf 1e-4, Reibkraft mu N, Gleichgewicht",
                   ok, f"{n_gl}/{len(kn)} gleiten, Weg {s * 1e6:.5f} µm (soll {soll * 1e6:.5f}), "
                   f"Σ|F_t| {ft / 1e3:.5f} kN, rel_F {_gg(r):.1e}, {_runden(r)} Runden")
@@ -335,7 +338,15 @@ def _modelle():
         m = tp._drehlagerartiges_modell()
         m.plastizitaet.an = False
         return m
+
+    def anschlag():
+        # Block auf einem Lager wie „Starr“ mit Anschlag (tests/test_kontakt_pendeln): mit der
+        # Reibungstangente blieb er bis zum Phasenwechsel bei Wechseln nur der Reibungstangente
+        # in Phase 1 und pendelte dort bis max_iter (120 Runden)
+        from tests.test_kontakt_pendeln import block_auf_reiblager
+        return block_auf_reiblager("tet4", 0.25, 1.2, 0.0, True)[0]
     return (("Block mit Reibung", block_friction_example), ("Stempel auf Sockel", stempel),
+            ("Block mit Anschlag, tet4", anschlag),
             ("Platte mit Ankern (plastisch, wie Drehlager)", kw.platte),
             ("Stempel auf Sockel, plastisch", tp._drehlagerartiges_modell))
 

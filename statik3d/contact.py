@@ -2808,6 +2808,12 @@ class ContactSystem:
         self.am_deckel = False
         changed = self._update_states(u, lam)
         if self.phase == 1:
+            if changed and getattr(self, "_nur_rt", False):
+                # nur noch die Reibungstangente: weiter in Phase 2 (siehe _update_states)
+                self.phase = 2
+                self.cycles = 0
+                self.richtung_runden = 0
+                return True
             if changed:
                 return True
             full = self._full_slip_groups()
@@ -2889,6 +2895,7 @@ class ContactSystem:
         kegel_summe = 0.0       # Kegelueberschreitung haftender Knoten [N]
         gegen_summe = 0.0       # Reibkraft gleitender Knoten gegen ihre Richtung [N]
         rt_summe = 0.0          # Reibungstangente: Rueckabbildung gegen linearisierte Kraft [N]
+        rt_wechsel = False      # Reibungstangente: Haften/Gleiten gewechselt (getrennt von changed)
         rt_an = bool(getattr(self, "reibungstangente", False))
         full_slip_vor = self._full_slip_groups() if rt_an else {}
         for c in self.cons:
@@ -3075,7 +3082,7 @@ class ContactSystem:
                             # die Rueckabbildung der naechsten Loesung (REIBUNGSTANGENTE)
                             gl = False
                         if gl != c.slip:
-                            changed = True
+                            rt_wechsel = True
                             z["gleiten_neu" if gl else "haften_zurueck"] += 1
                             betroffen.add(id(c))
                             if gl:
@@ -3351,11 +3358,19 @@ class ContactSystem:
                 changed = True
                 z[_gleitart(c.mu * max(c.Fn, 0.0), id(c) in zu_in_runde)] += 1
                 betroffen.add(id(c))
-        if rt_an and rt_offen and not ruhe and not changed:
-            # Reibungstangente: kein Statuswechsel, aber die Rueckabbildung weicht noch
-            # merklich von der linearisierten Kraft ab - ein Newton-Schritt mehr. In
-            # Phase 1 als Wechsel, in Phase 2 wie eine Richtungsrunde (zaehlt nicht
-            # auf den Deckel, hoechstens QUER_RUNDEN_MAX)
+        # Reibungstangente: wechselte nur sie (Haften/Gleiten oder ein offener Rest der
+        # Rueckabbildung), merkt sich das update() - in Phase 1 geht es dann in Phase 2
+        # weiter, wo Deckel, Pendeln mit Periode 2 und Ingenieurkriterium wirken. Bis dahin
+        # blieb ein Knoten, der zwischen Haften und Gleiten pendelte, in Phase 1 bis
+        # max_iter (Block mit Anschlag, tet4, tests/test_kontakt_pendeln: 120 Runden)
+        self._nur_rt = bool(rt_an and not changed and (rt_wechsel or (rt_offen and not ruhe)))
+        if rt_wechsel:
+            changed = True
+        elif rt_an and rt_offen and not ruhe and not changed:
+            # kein Statuswechsel, aber die Rueckabbildung weicht noch merklich von der
+            # linearisierten Kraft ab - ein Newton-Schritt mehr. In Phase 1 als Wechsel,
+            # in Phase 2 wie eine Richtungsrunde (zaehlt nicht auf den Deckel, hoechstens
+            # QUER_RUNDEN_MAX)
             if self.phase == 1:
                 changed = True
             else:

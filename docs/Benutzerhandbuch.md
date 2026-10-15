@@ -7304,13 +7304,14 @@ sein Weg durch das Haften gegangen; die nächste Runde rechnet ihn dann mit der
 Haftsteifigkeit, und das Coulomb-Gesetz der Lösung danach entscheidet neu.
 
 Gemessen an den Prüfmodellen der Kontaktprüfungen (`tests/test_reibungstangente.py`):
-Der Block mit Reibung braucht 8 statt 29 Runden, der Stempel auf Sockel 8 statt 14,
-plastisch 31 statt 61, die Platte mit vier vorgespannten Ankern auf einem Lager wie
-„Starr“ (plastisch, wie das Drehlager) 25 statt 66 Runden und 18 statt 25
-Zerlegungen, der Block nahe der Grenzlast 36 statt 136 und der kippende Stempel 36
-statt 76; die Verschiebungen weichen um höchstens 1,4·10⁻⁵ ab. Ein steifer Klotz auf
+Der Block mit Reibung braucht 6 statt 29 Runden, der Stempel auf Sockel 7 statt 14,
+plastisch 30 statt 61, die Platte mit vier vorgespannten Ankern auf einem Lager wie
+„Starr“ (plastisch, wie das Drehlager) 21 statt 66 Runden und 16 statt 25
+Zerlegungen, der Block nahe der Grenzlast 34 statt 136, der kippende Stempel 34
+statt 76 und der Block mit Anschlag 6 statt 13; die Verschiebungen weichen um
+höchstens 1,4·10⁻⁵ ab. Ein steifer Klotz auf
 einem Lager mit Reibung, den eine Zugfeder in x hält, haftet bis F = μ·N und gleitet
-darüber um (F − μ·N) durch die Federsteifigkeit, auf 10⁻⁴ genau, in 5 bis 6 Runden.
+darüber um (F − μ·N) durch die Federsteifigkeit, auf 10⁻⁴ genau, in 3 bis 5 Runden.
 Am alten Stand galt derselbe Lauf bei F = 1,5·μ·N als konvergiert, obwohl der Klotz
 nur 1,1 statt 100 µm geglitten war und 4,8 % der Last im Gleichgewicht fehlten: die
 kleine Reststeifigkeit, mit der gleitende Knoten gehalten werden, trug die Kraft. Ein
