@@ -135,7 +135,9 @@ CREATE TABLE SurfaceSupportImpl (id INTEGER PRIMARY KEY, version INTEGER, name T
                    springConstant_2 REAL, springConstant_3 REAL, springConstant_4 REAL,
                    nonlinearity INTEGER, negativeFrictionCoefficient REAL,
                    positiveFrictionCoefficient REAL, negativeContactStress REAL,
-                   positiveContactStress REAL);
+                   positiveContactStress REAL,
+                   negativeNonlinearityDefinitionType INTEGER,
+                   positiveNonlinearityDefinitionType INTEGER);
 CREATE TABLE SurfaceSupportImpl_surfaces (id INTEGER, container_order INTEGER, value_id bigint);
 CREATE TABLE MemberHinge (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
@@ -525,10 +527,16 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
                         (i, j, ln))
         if i in openings:
             con.execute("INSERT INTO SurfaceImplPlane_integratedOpenings VALUES (?,0,1)", (i,))
-    for i, (name, springs, nl, mu, srf) in enumerate(surface_supports, 1):
+    for i, eintrag in enumerate(surface_supports, 1):
+        # (Name, Federn, Nichtlinearitaet, mu, Flaechen[, Art]); Art der
+        # Nichtlinearitaet (negative/positiveNonlinearityDefinitionType,
+        # 2 = Reibung in der Ebene xy): Zahl = negatives Feld, Paar = beide
+        name, springs, nl, mu, srf = eintrag[:5]
+        art = eintrag[5] if len(eintrag) > 5 else 0
+        art_neg, art_pos = art if isinstance(art, (tuple, list)) else (art, 0)
         con.execute("INSERT INTO SurfaceSupport VALUES (?,1,?,?,'SurfaceSupportImpl')", (i, i, i))
-        con.execute("INSERT INTO SurfaceSupportImpl VALUES (?,1,?,?,?,?,?,?,?,?,?,?,0,0)",
-                    (i, name, i) + tuple(springs) + (nl, mu, mu))
+        con.execute("INSERT INTO SurfaceSupportImpl VALUES (?,1,?,?,?,?,?,?,?,?,?,?,0,0,?,?)",
+                    (i, name, i) + tuple(springs) + (nl, mu, mu, art_neg, art_pos))
         for j, n in enumerate(srf):
             con.execute("INSERT INTO SurfaceSupportImpl_surfaces VALUES (?,?,?)", (i, j, n))
     for i, (name, k) in enumerate(hinges, 1):
@@ -826,7 +834,9 @@ def test_grundmodell():
 def test_nichtlineare_lager():
     tmp = tempfile.mkdtemp()
     try:
-        # Zugausfall (Kennzahl 1) am Endlager, Reibung an uz mit mu = 0.3
+        # Zugausfall (Kennzahl 1) am Endlager, Reibung an ux/uy mit mu = 0.3/0.25
+        # bezogen auf uz; seit dem 15.10.2026 nur mit Reibungsart (Kennzahl 9
+        # „Reibung Richtung 2“ nach nodal_support.proto, tests/test_rfem6_lagerreibung.py)
         f = make_rf6(
             os.path.join(tmp, "nl.rf6"),
             nodes=[(0, 0, 0), (2, 0, 0), (4, 0, 0)],
@@ -836,7 +846,7 @@ def test_nichtlineare_lager():
                 ("Fest", (INF,) * 6, (0,) * 6, None, [1]),
                 # ux/uy mit Steifigkeit 0 und Reibung: haelt starr bis mu * |F_z|
                 ("Zugausfall", (0.0, 0.0, INF, 0.0, 0.0, 0.0),
-                 (0, 0, 1, 0, 0, 0), (0.0, 0.3, 0.0, 0.25, 0.0, 0.0), [3]),
+                 (9, 9, 1, 0, 0, 0), (0.0, 0.3, 0.0, 0.25, 0.0, 0.0), [3]),
             ],
             partials={("nodal", 2): [(2, (0, 0.0, 0.0, 0.0, 1, 0.0, 0.0, 0.002))]},
         )
@@ -934,7 +944,9 @@ def test_linien_flaechenlager():
             line_supports=[("Kantenlager", (0.0, 0.0, 5e7, 0.0, 0.0, 0.0),
                             (0, 0, 1, 0, 0, 0), None, [1, 2])],
             surfaces=[[1, 2, 3, 4]],
-            surface_supports=[("Bettung", (0.0, 0.0, 2.5e8, 0.0, 0.0), 1, 0.2, [1])],
+            # Ausfall bei Zug mit Reibung in der Ebene xy (Art 2); ohne die Art
+            # gilt der Beiwert seit dem 15.10.2026 nicht (test_rfem6_lagerreibung)
+            surface_supports=[("Bettung", (0.0, 0.0, 2.5e8, 0.0, 0.0), 1, 0.2, [1], 2)],
             hinges=[("Momentengelenk", (INF, INF, INF, INF, 0.0, 0.0))],
         )
         log = []

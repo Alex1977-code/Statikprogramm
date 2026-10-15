@@ -5634,12 +5634,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 symbol="csv")
         g.klein("Netz + Ergebnisse als VTK…", self.export_vtk,
                 hinweis="Netz und Ergebnisfelder als VTK-Datei, etwa für ParaView")
-        # die Umstellung eines vor dem 14.10.2026 aus RFEM 6 uebernommenen
-        # Modells (Importhinweis „zugstab“) - bis dahin nur eine Funktion
-        g.klein("Stabtypen aus RFEM nachlesen…", self.maske_stabtypen_rfem,
-                hinweis="Zugstäbe, Druckstäbe und Seile eines vor dem 14.10.2026 aus RFEM 6 übernommenen "
-                        "Modells aus der RFEM-Datei nachlesen: „trägt nur“ setzen, Seile als Seil anlegen",
-                symbol="staebe")
+        # die Umstellungen eines frueher aus RFEM 6 uebernommenen Modells: die
+        # Stabtypen (14.10.2026, Importhinweis „zugstab“, bis dahin nur eine
+        # Funktion) und die Lagerreibung (15.10.2026, „lagerreibung“). Ein
+        # Menueknopf statt zweier kleiner Knoepfe: ein vierter kleiner Knopf
+        # oeffnete eine neue Spalte, und das Register Datei wurde mit Segoe UI
+        # 1294 statt 1100 px breit (Grenze bei 1280 px: 1241,
+        # tests/test_glasleiste_ribbon.py)
+        g.menue("Aus RFEM nachlesen ▾", [
+            ("Stabtypen aus RFEM nachlesen…", self.maske_stabtypen_rfem,
+             "Zugstäbe, Druckstäbe und Seile eines vor dem 14.10.2026 aus RFEM 6 übernommenen "
+             "Modells aus der RFEM-Datei nachlesen: „trägt nur“ setzen, Seile als Seil anlegen"),
+            ("Lager aus RFEM nachlesen…", self.maske_lager_rfem,
+             "Lager eines vor dem 15.10.2026 aus RFEM 6 übernommenen Modells aus der RFEM-Datei "
+             "nachlesen: einen Reibbeiwert ohne Reibungsart zurücknehmen")],
+            hinweis="Ein früher aus RFEM 6 übernommenes Modell aus der RFEM-Datei nachlesen: "
+                    "Stabtypen (bis 14.10.2026) oder Lagerreibung (bis 15.10.2026)",
+            symbol="import")
         g = r.gruppe("Beispiele")
         # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
         # (24.09.2026) - die Suche findet die Beispiele weiter
@@ -21719,6 +21730,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         self.statusBar().showMessage(log[-1].strip() if log else "Stabtypen nachgelesen", 8000)
 
+    # ---- Lager aus RFEM nachlesen (15.10.2026) --------------------------------
+    @_maskenweg()
+    def maske_lager_rfem(self):
+        """Die Lager eines Modells, das vor dem 15.10.2026 aus RFEM 6
+        uebernommen wurde, aus der RFEM-Datei nachlesen (Importhinweis
+        „lagerreibung“, model.lagerreibung_hinweis): der Import setzte bis
+        dahin einen Reibbeiwert auch ohne Reibungsart an. Die Maske zeigt den
+        Hinweis und die Datei; umgestellt wird erst mit „Lager nachlesen“
+        (rfem6_db.lager_aus_rfem)."""
+        from ..importers import rfem6_db as R6
+        m = self.model
+        offen = [h for h in (getattr(m, "importhinweise", None) or [])
+                 if h.get("art") == "lagerreibung" and not h.get("erledigt")]
+        felder = [msk.Feld("hinweise", "Aus dem Import", "info",
+                           " · ".join(str(h.get("text", "")) for h in offen[:2]) if offen else
+                           "kein offener Hinweis – das Modell kennt die Regel für Lagerreibung (übernommen ab "
+                           "dem 15.10.2026) oder ist schon nachgelesen"),
+                  msk.Feld("pfad", "RFEM-Datei (.rf6)", "text", R6.rfem_datei(m, art="lagerreibung") or "",
+                           breite=260,
+                           hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
+                                   "woanders, hier ihren Pfad eintragen")]
+        maske = msk.Maske("Lager aus RFEM", felder, knopf="Lager nachlesen",
+                          hinweis="Liest die Knoten-, Linien- und Flächenlager aus der RFEM-Datei nach und nimmt "
+                                  "einen Reibbeiwert zurück, der dort ohne Reibungsart steht – RFEM rechnet dann "
+                                  "keine Reibung. Der Freiheitsgrad gilt danach nach seiner Federkonstanten "
+                                  "(0 = frei). Ein Beiwert, den Sie selbst geändert haben, bleibt. Ein Schritt, "
+                                  "Rückgängig nimmt ihn zurück.")
+        maske.angewendet.connect(self._lager_rfem_anwenden)
+        return self.maske_erzeugen(maske)
+
+    def _lager_rfem_anwenden(self, w: dict):
+        from ..importers import rfem6_db as R6
+        m = self.model
+        datei = R6.rfem_datei(m, str(w.get("pfad", "") or "").strip().strip('"') or None, art="lagerreibung")
+        if not datei or not os.path.isfile(datei):
+            return self.hinweis(f"RFEM-Datei „{datei or '–'}“ nicht gefunden – den Pfad der .rf6-Datei "
+                                "eintragen, aus der das Modell übernommen wurde; umgestellt ist nichts")
+        self.merken("Lager aus RFEM nachgelesen")
+        log: list = []
+        try:
+            R6.lager_aus_rfem(m, datei, log)
+        except Exception as ex:          # noqa: BLE001 - fremde oder beschaedigte Datei
+            return self.error(f"Lager aus {os.path.basename(datei)} nicht gelesen: {ex}")
+        for z in log:
+            self.log.appendPlainText(z.strip())
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
+        self.statusBar().showMessage(log[-1].strip() if log else "Lager nachgelesen", 8000)
+
     # ---- Importhinweise (17.09.2026) -----------------------------------------
     def _maskenzahl(self, feld: str):
         """Eine Zahl aus der offenen Maske - None, wenn es sie nicht gibt."""
@@ -30286,7 +30347,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if any(h.get("art") == "zugstab" and not h.get("erledigt")
                for h in (getattr(self.model, "importhinweise", None) or [])):
             self._hinweis_statuszeile("Hinweis: Zug-, Druckstäbe und Seile aus RFEM 6 tragen hier Zug und Druck "
-                                      "– Datei › Austausch › „Stabtypen aus RFEM nachlesen…“")
+                                      "– Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus RFEM nachlesen…“")
+        # ebenso die Lagerreibung (Importhinweis „lagerreibung“, 15.10.2026)
+        if any(h.get("art") == "lagerreibung" and not h.get("erledigt")
+               for h in (getattr(self.model, "importhinweise", None) or [])):
+            self._hinweis_statuszeile("Hinweis: Lager aus RFEM 6 tragen hier Reibung, die RFEM vielleicht nicht "
+                                      "rechnet – Datei › Austausch › „Aus RFEM nachlesen ▾“ › "
+                                      "„Lager aus RFEM nachlesen…“")
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True

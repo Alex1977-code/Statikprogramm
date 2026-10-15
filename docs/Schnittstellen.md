@@ -439,6 +439,33 @@ Aufbau der Datenbank (durchgehend dasselbe Muster):
 
 Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
 
+**Reibung an Lagern** (seit 15.10.2026). Die Kennzahlen der Nichtlinearität
+folgen der Schnittstelle von RFEM 6.15 (`tools/WebServiceGrpc/proto`,
+`nodal_support.proto`, `line_support.proto`, `surface_support.proto`). Am
+Knoten- und Linienlager steht sie je Freiheitsgrad in
+`SpringConstants.nonlinearityType<Achse>`: 0 keine, 1 und 2 Ausfall bei
+negativer bzw. positiver Kraft, 3 und 4 Ausfall aller Kräfte, 5 teilweise
+Wirkung, 6 Arbeitslinie, 8 und 9 Reibung Richtung 1 bzw. 2, am Knotenlager dazu
+10 „Reibung Richtung 1-2“ und 11 „1+2“; die Beiwerte stehen in
+`nonlinearityFrictionCoefficient_*`. Bis zum 15.10.2026 deutete der Import nach
+der Reihenfolge des Dialogs 5–8 als Reibung, 9 als teilweise Wirkung und 10 als
+Arbeitslinie. Am Flächenlager steht in `SurfaceSupportImpl.nonlinearity` 1 oder
+2 (Ausfall bei negativer bzw. positiver Kontaktspannung σz) und dazu in
+`negativeNonlinearityDefinitionType` bzw. `positiveNonlinearityDefinitionType`
+die Art: 0 einseitige Wirkung, 1 Fließen der Kontaktspannung, 2 Reibung in der
+Ebene xy, mit dem Beiwert in `negative`/`positiveFrictionCoefficient`. Ein
+Reibbeiwert gilt seit dem 15.10.2026 nur mit einer Reibungsart; das Feld trägt
+in jeder Datei einen Wert, an allen gelesenen Dateien (Drehlager V15_4 und V17,
+CBG, Friesenbrücke) 0,1 an jedem Flächenlager, auch an linearen. Ohne
+Reibungsart gilt der Freiheitsgrad nach seiner Federkonstanten, und das
+Importprotokoll nennt den nicht angesetzten Beiwert in einem Satz. Bis zum
+15.10.2026 galt der Beiwert am Flächenlager bei jeder Nichtlinearität und am
+Knoten- und Linienlager immer. Ein früher übernommenes Modell mit Lagerreibung
+bekommt beim Öffnen einen Importhinweis „lagerreibung“;
+`rfem6_db.lager_aus_rfem(modell)` liest die Lager auf Anweisung nach (in der
+Oberfläche Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Lager aus RFEM
+nachlesen…“). Gelenke und Flächenfreigaben lesen den Beiwert wie bisher.
+
 Übernommen werden Knoten, Linien (Polygonzüge, Bögen, Kreise, Parabeln,
 Ellipsen und NURBS — jeweils über ihre Kontrollpunkte), Stäbe mit
 Querschnitt, Material, Verdrehung, Typ und Gelenken, Knoten-, Linien- und
@@ -549,8 +576,8 @@ Importprotokoll:
 `rfem6_db.stab_nur` setzt „trägt nur“ (seit 14.10.2026); ein vorher
 gespeichertes Modell bekommt beim Öffnen einen Importhinweis „zugstab“, und
 `rfem6_db.zugstaebe_aus_rfem(modell)` stellt es auf Anweisung um, in der
-Oberfläche seit dem 14.10.2026 über Datei › Austausch › „Stabtypen aus RFEM
-nachlesen…“ (Maske „Stabtypen aus RFEM“, `rfem6_db.rfem_datei` nennt die
+Oberfläche seit dem 14.10.2026 über Datei › Austausch › „Aus RFEM nachlesen ▾“ ›
+„Stabtypen aus RFEM nachlesen…“ (bis zum 15.10.2026 ein eigener Knopf; Maske „Stabtypen aus RFEM“, `rfem6_db.rfem_datei` nennt die
 Datei). Ein Seil
 kommt seit dem 14.10.2026 als Seil an („1 Seil trägt nur Zug (fällt wie in
 RFEM bei Druck aus; Durchhang als Kettenlinie nach Theorie III. Ordnung): S1“),

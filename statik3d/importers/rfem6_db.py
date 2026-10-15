@@ -25,13 +25,16 @@ ist bei Dlubal nicht veroeffentlicht; er wurde an einer echten Projektdatei
 
 Federwerte: ``inf`` = starr, ``0`` = frei, endlich = Federsteifigkeit [N/m].
 
-Nicht dokumentiert und deshalb ausdruecklich als Annahme behandelt sind die
-Zahlenwerte der Nichtlinearitaets-Aufzaehlung (siehe NONLINEARITY_TYPES). Der
-Wert 0 = linear ist an der Datei belegt. Jede andere Kennzahl wird im Protokoll
-mit Rohwert und Deutung ausgewiesen; unbekannte Kennzahlen lassen den
-Freiheitsgrad linear und erzeugen eine Warnung. Die Zuordnung laesst sich
-ueber ``nonlinearity_map`` oder ein XSD/WSDL aus der RFEM-Installation
-(``nonlinearity_map_from_xsd``) ersetzen.
+Die Zahlenwerte der Nichtlinearitaets-Aufzaehlung (siehe NONLINEARITY_TYPES)
+folgen seit dem 15.10.2026 der Schnittstelle von RFEM 6.15 (proto-Dateien
+nodal_support, line_support, surface_support unter
+tools/WebServiceGrpc/proto); bis dahin waren sie eine Annahme nach der
+Reihenfolge des Dialogs. Der Wert 0 = linear und 1/2 = Ausfall sind an Dateien
+belegt. Jede andere Kennzahl wird im Protokoll mit Rohwert und Deutung
+ausgewiesen; unbekannte Kennzahlen lassen den Freiheitsgrad linear und
+erzeugen eine Warnung. Die Zuordnung laesst sich ueber ``nonlinearity_map``
+oder ein XSD/WSDL aus der RFEM-Installation (``nonlinearity_map_from_xsd``)
+ersetzen.
 
     from statik3d.importers.rfem6_db import read_rf6, summary
     print(summary("modell.rf6"))
@@ -73,22 +76,44 @@ FRICTION_COLUMNS = {
 }
 
 #: Deutung der Kennzahl in nonlinearityType<Achse>.
-#: 0 ist an der Datei belegt (alle linearen Lager tragen 0). Die uebrigen
-#: Eintraege folgen der Reihenfolge des RFEM-Dialogs und sind eine **Annahme**;
-#: sie werden beim Import mit Rohwert protokolliert.
+#: Seit dem 15.10.2026 nach der Schnittstelle von RFEM 6.15
+#: (nodal_support.proto / line_support.proto, Aufzaehlung
+#: Spring<X|Y|Z>Nonlinearity): 1 FAILURE_IF_NEGATIVE, 2 FAILURE_IF_POSITIVE,
+#: 3/4 FAILURE_ALL_IF_NEGATIVE/POSITIVE, 5 PARTIAL_ACTIVITY, 6 DIAGRAM,
+#: 8 FRICTION_DIRECTION_1, 9 FRICTION_DIRECTION_2, nur Knotenlager dazu
+#: 10 FRICTION_DIRECTION_1_2 und 11 FRICTION_DIRECTION_1_PLUS_2; 7 gibt es
+#: nicht. Bis dahin standen hier nach der Reihenfolge des Dialogs angenommen
+#: 5-8 Reibung, 9 teilweise Wirkung und 10 Arbeitslinie. Die Kennzahl der
+#: Datenbank ist die der Schnittstelle - belegt an 0, 1 und 2 (Lager und
+#: Flaechenfreigaben der Drehlager- und CBG-Dateien).
 NONLINEARITY_TYPES = {
     0: ("", "linear"),
     1: ("zug", "Ausfall bei Zug"),
     2: ("druck", "Ausfall bei Druck"),
     3: ("zug", "Ausfall aller Kraefte bei Zug"),
     4: ("druck", "Ausfall aller Kraefte bei Druck"),
-    5: ("friction", "Reibung"),
-    6: ("friction", "Reibung"),
-    7: ("friction", "Reibung"),
-    8: ("friction", "Reibung"),
-    9: ("partial", "teilweise Wirkung"),
-    10: ("diagram", "Arbeitslinie"),
+    5: ("partial", "teilweise Wirkung"),
+    6: ("diagram", "Arbeitslinie"),
+    8: ("friction", "Reibung Richtung 1"),
+    9: ("friction", "Reibung Richtung 2"),
+    10: ("friction", "Reibung Richtung 1-2"),
+    11: ("friction", "Reibung Richtung 1+2"),
 }
+
+#: Art der Nichtlinearitaet eines Flaechenlagers (SurfaceSupportImpl,
+#: negative/positiveNonlinearityDefinitionType; surface_support.proto:
+#: Negative/PositiveNonlinearityType): 0 einseitige Wirkung, 1 Fliessen der
+#: Kontaktspannung, 2 Reibung in der Ebene xy. Die Seite gehoert zur
+#: Kennzahl in ``nonlinearity``: 1 (Ausfall bei negativer Kontaktspannung)
+#: -> negative..., 2 (bei positiver) -> positive...
+FLAECHENLAGER_REIBUNG = 2
+FLAECHENLAGER_SEITE = {1: "negative", 2: "positive"}
+
+#: Merkmal am Modell (meta): der Import setzt einen Reibbeiwert nur mit
+#: Reibungsart an (15.10.2026). Ein Modell aus einer RFEM-6-Datei ohne es,
+#: dessen Lager Reibung tragen, bekommt beim Oeffnen einen Hinweis
+#: (model.lagerreibung_hinweis).
+LAGERREIBUNG_MERKMAL = "rfem_lagerreibung"
 
 #: Deutung der Teilwirkungs-Kennzahl (typeNegative/typePositive).
 #: 0 = wirksam ist an der Datei belegt.
@@ -374,15 +399,24 @@ def _stiffness(value) -> tuple[str, float]:
 
 
 def spring_behaviours(sc: dict, partials: list = None, nlmap: dict = None,
-                      label: str = "", log: list = None) -> dict:
+                      label: str = "", log: list = None, nur_mit_reibart: bool = False,
+                      ohne_reibart: list = None) -> dict:
     """Eine ``SpringConstants``-Zeile -> {FHG: DofBehaviour}.
 
     Beruecksichtigt Steifigkeit (starr/frei/Feder), Ausfallart, Schlupf,
     Grenzkraft (Fliessen) und Reibbeiwerte mit Bezugs-Freiheitsgrad.
+
+    ``nur_mit_reibart`` (Knoten- und Linienlager, seit dem 15.10.2026): ein
+    Reibbeiwert gilt nur, wenn die Nichtlinearitaet seines Freiheitsgrads eine
+    Reibungsart ist (Kennzahl 8-11); sonst gilt der Freiheitsgrad nach seiner
+    Federkonstanten, und ``ohne_reibart`` sammelt (FHG, mu) fuer den
+    gebuendelten Satz im Protokoll. Gelenke und Flaechenfreigaben lesen wie
+    bisher (ohne Pruefung der Art).
     """
     nlmap = nlmap or dict(NONLINEARITY_TYPES)
     partials = partials or []
     out: dict[int, DofBehaviour] = {}
+    reibart: set = set()
     for d, axis in enumerate(AXES):
         typ, k = _stiffness(sc.get("springConstant" + axis))
         beh = DofBehaviour(typ=typ, stiffness=k)
@@ -397,6 +431,8 @@ def spring_behaviours(sc: dict, partials: list = None, nlmap: dict = None,
                 C.say(log, f"  {label}FHG {d}: {text} (Kennzahl {code})")
             elif mode in ("friction", "partial", "diagram"):
                 C.say(log, f"  {label}FHG {d}: {text} (Kennzahl {code})")
+                if mode == "friction":
+                    reibart.add(d)
         # Teilweise Wirkung: Ausfall/Fliessen/Schlupf stehen dort ausdruecklich
         pa = partials[d] if d < len(partials) else None
         if pa:
@@ -433,6 +469,12 @@ def spring_behaviours(sc: dict, partials: list = None, nlmap: dict = None,
                 mu = float(sc.get(col) or 0.0)
             except (TypeError, ValueError):
                 mu = 0.0
+            if mu > 0.0 and d in out and nur_mit_reibart and d not in reibart:
+                # Beiwert in der Datei, aber keine Reibungsart: RFEM rechnet
+                # hier keine Reibung (15.10.2026)
+                if ohne_reibart is not None:
+                    ohne_reibart.append((d, mu))
+                continue
             if mu > 0.0 and d in out:
                 out[d].mu = mu
                 out[d].mu_ref = ref
@@ -452,6 +494,34 @@ def _friction_acts(beh: DofBehaviour, label: str, log: list) -> None:
         beh.typ = "rigid"
         C.say(log, f"  {label}: Steifigkeit 0 mit Reibung - haftet starr bis mu * |N|, "
                    "danach Gleiten")
+
+
+#: Namen der Freiheitsgrade im Protokoll
+FHG_NAMEN = ("ux", "uy", "uz", "φx", "φy", "φz")
+
+
+def reibung_ohne_art_melden(eintraege: list, log: list) -> None:
+    """Ein Satz fuers Importprotokoll (15.10.2026): Reibbeiwerte, die in der
+    Datei stehen, aber ohne Reibungsart nicht angesetzt wurden - gebuendelt
+    ueber alle Lager. ``eintraege``: [(Lagerart, Name, [(FHG, mu), ...])]."""
+    if not eintraege:
+        return
+    teile = []
+    for art, name, liste in eintraege:
+        je_mu: dict = {}
+        for d, mu in liste:
+            ds = je_mu.setdefault(f"{float(mu):g}".replace(".", ","), [])
+            if d not in ds:
+                ds.append(d)
+        teile.append(f"{art} „{name}“ ("
+                     + "; ".join(", ".join(FHG_NAMEN[d] for d in sorted(ds)) + f" μ = {mu}"
+                                 for mu, ds in je_mu.items()) + ")")
+    zeile = ("Reibbeiwert aus der Datei ohne Reibungsart nicht angesetzt: " + ", ".join(teile[:8])
+             + (f" und {len(teile) - 8} weitere" if len(teile) > 8 else "")
+             + ". In RFEM wirkt ein Reibbeiwert nur, wenn als Nichtlinearität eine Reibungsart gewählt ist; "
+               "hier ist keine gewählt, RFEM rechnet dort ohne Reibung. Die Freiheitsgrade gelten nach "
+               "ihrer Federkonstanten (0 = frei).")
+    C.say(log, "  HINWEIS: " + zeile)
 
 
 # --------------------------------------------------------------------------
@@ -1218,6 +1288,8 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
 
     # ---- Knotenlager ---------------------------------------------------
     n_sup = 0
+    # Reibbeiwerte ohne Reibungsart (15.10.2026): [(Lagerart, Name, [(FHG, mu)])]
+    ohne_reibart: list = []
     for h, impl in db.impls("NodalSupport"):
         tgt = db.container("NodalSupportImpl_nodes").get(impl["id"], [])
         nodes = [node_of[n] for n in tgt if n in node_of]
@@ -1226,7 +1298,11 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         if not sc:
             C.warn(log, f"{name}: keine Federkonstanten gefunden - uebersprungen.")
             continue
-        beh = spring_behaviours(sc, _partials(db, sc), nlmap, f"{name}: ", log)
+        ohne: list = []
+        beh = spring_behaviours(sc, _partials(db, sc), nlmap, f"{name}: ", log,
+                                nur_mit_reibart=True, ohne_reibart=ohne)
+        if ohne and nodes:
+            ohne_reibart.append(("Knotenlager", name, ohne))
         dofs = [d for d, b in beh.items() if b.acts]
         if not nodes:
             C.say(log, f"  {name}: keinem Knoten zugewiesen")
@@ -1249,7 +1325,11 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         sc = _spring_row(db, h.get("impl_table") or "LineSupportImpl", impl["id"])
         if not sc:
             continue
-        beh = spring_behaviours(sc, _partials(db, sc), nlmap, f"{name}: ", log)
+        ohne = []
+        beh = spring_behaviours(sc, _partials(db, sc), nlmap, f"{name}: ", log,
+                                nur_mit_reibart=True, ohne_reibart=ohne)
+        if ohne and lines:
+            ohne_reibart.append(("Linienlager", name, ohne))
         nodes: list[int] = []
         for lid in lines:
             for n in line_nodes.get(lid, []):
@@ -1278,7 +1358,10 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
     for h, impl in db.impls("SurfaceSupport"):
         sids = db.container("SurfaceSupportImpl_surfaces").get(impl["id"], [])
         name = (impl.get("name") or "").strip() or f"Flaechenlager {h.get('userID') or h['id']}"
-        beh = _surface_behaviour(impl, nlmap, name, log)
+        ohne = []
+        beh = _surface_behaviour(impl, nlmap, name, log, ohne_reibart=ohne)
+        if ohne and sids:
+            ohne_reibart.append(("Flächenlager", name, ohne))
         nodes: list[int] = []
         areas: dict[int, float] = {}
         for sid in sids:
@@ -1314,6 +1397,9 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         C.say(log, f"  {name}: {len(sids)} Flaechen ({senkrecht} senkrecht), {len(nodes)} Knoten, "
                    f"A = {sum(areas.values()):.3f} m^2 - Lager in Flaechenachsen: uz ist die "
                    "Flaechennormale, ux/uy liegen in der Flaeche")
+
+    reibung_ohne_art_melden(ohne_reibart, log)
+    m.meta[LAGERREIBUNG_MERKMAL] = "beim Import gesetzt (15.10.2026)"
 
     _melde(fortschritt, 0.58, f"{len(surf_name)} Flächen - Volumen lesen")
     solid_name = _solids(db, m, surf_nodes, log, matcache, surf_name)
@@ -2073,8 +2159,18 @@ SURFACE_TYP = {
 SURFACE_SPRINGS = {"springConstant_0": 0, "springConstant_1": 1, "springConstant_2": 2}
 
 
-def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list) -> dict:
-    """SurfaceSupportImpl -> {FHG: DofBehaviour} (Bettung je m^2)."""
+def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list,
+                       ohne_reibart: list = None) -> dict:
+    """SurfaceSupportImpl -> {FHG: DofBehaviour} (Bettung je m^2).
+
+    Reibung in der Flaeche (ux/uy, bezogen auf uz) nur mit der Art „Reibung in
+    der Ebene xy“ (FLAECHENLAGER_REIBUNG) auf der Seite der Nichtlinearitaet;
+    der Beiwert steht in RFEM an jedem Flaechenlager (Vorgabe 0,1, am
+    Drehlager an allen sechs Typen). Bis zum 15.10.2026 galt er bei jeder
+    Nichtlinearitaet: aus „Starr“ (Ausfall bei Zug, in der Flaeche frei) wurde
+    ein Lager, das in der Flaeche bis mu * N haftete. Ein Beiwert ohne die
+    Art landet mit (FHG, mu) in ``ohne_reibart`` (nur bei aktiver
+    Nichtlinearitaet - so weit galt er bis dahin)."""
     out: dict[int, DofBehaviour] = {}
     for col, d in SURFACE_SPRINGS.items():
         typ, k = _stiffness(impl.get(col))
@@ -2102,9 +2198,15 @@ def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list) -> dict:
         C.say(log, f"  {label}: Bettung {out[2].stiffness:.3g} N/m³ mit {out[2].failure} -> starr mit "
                    f"Ausfall (ab {BETTUNG_STARR:.0e} N/m³)")
         out[2] = bettung_als_starr(out[2])
-    mu = max(abs(float(impl.get("negativeFrictionCoefficient") or 0.0)),
-             abs(float(impl.get("positiveFrictionCoefficient") or 0.0)))
-    if mu and code:
+    seite = FLAECHENLAGER_SEITE.get(code)
+    mu = abs(float(impl.get(f"{seite}FrictionCoefficient") or 0.0)) if seite else 0.0
+    art = int(impl.get(f"{seite}NonlinearityDefinitionType") or 0) if seite else 0
+    if mu and art != FLAECHENLAGER_REIBUNG:
+        # Beiwert ohne Reibungsart: ux/uy nach ihrer Federkonstanten (15.10.2026)
+        if ohne_reibart is not None:
+            ohne_reibart.extend([(0, mu), (1, mu)])
+        mu = 0.0
+    if mu:
         for d in (0, 1):
             out[d].mu = mu
             out[d].mu_ref = 2
@@ -2661,12 +2763,13 @@ ZUGSTAEBE_MERKMAL = "rfem_zugstaebe"
 SEILE_MERKMAL = "rfem_seile"
 
 
-def rfem_datei(model: Model, pfad: str = None) -> str:
+def rfem_datei(model: Model, pfad: str = None, art: str = "zugstab") -> str:
     """Die RFEM-Datei, aus der :func:`zugstaebe_aus_rfem` nachliest: ``pfad``,
-    sonst die aus dem Importhinweis „zugstab“, sonst ``model.meta["quelle"]``
-    - leer, wenn es keine gibt. Die Oberflaeche zeigt sie in der Maske
-    „Stabtypen aus RFEM“ und prueft vor dem Umstellen, ob es sie gibt."""
-    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "zugstab"]
+    sonst die aus dem Importhinweis ``art`` („zugstab“; „lagerreibung“ fuer
+    :func:`lager_aus_rfem`), sonst ``model.meta["quelle"]`` - leer, wenn es
+    keine gibt. Die Oberflaeche zeigt sie in den Masken „Stabtypen aus RFEM“
+    und „Lager aus RFEM“ und prueft vor dem Umstellen, ob es sie gibt."""
+    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == art]
     return str(pfad or (hinweise[-1].get("datei") if hinweise else None)
                or (getattr(model, "meta", None) or {}).get("quelle") or "")
 
@@ -2676,7 +2779,8 @@ def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict
     uebernommen wurde: die Stabtypen aus der RFEM-Datei nachlesen und
     „trägt nur“ setzen wie der Import heute (:func:`stab_nur`) - nur auf
     Anweisung des Anwenders (Importhinweis „zugstab“, model.zugstab_hinweis;
-    in der Oberflaeche Datei › Austausch › „Stabtypen aus RFEM nachlesen…“,
+    in der Oberflaeche Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen
+    aus RFEM nachlesen…“,
     seit dem 14.10.2026).
 
     ``pfad``: die RFEM-Datei; ohne Angabe die aus dem Hinweis bzw.
@@ -2743,6 +2847,116 @@ def zugstaebe_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict
                 if n_auch else "")
              + (f", {len(aus['ohne_stab'])} ohne passenden Stab ({', '.join(aus['ohne_stab'][:6])})"
                 if aus["ohne_stab"] else ""))
+    C.say(log, zeile)
+    return aus
+
+
+def lager_aus_rfem(model: Model, pfad: str = None, log: list = None) -> dict:
+    """Die Umstellung eines Modells, das vor dem 15.10.2026 aus RFEM 6
+    uebernommen wurde: die Lager aus der RFEM-Datei nachlesen und einen
+    Reibbeiwert zuruecknehmen, der dort ohne Reibungsart steht - nur auf
+    Anweisung des Anwenders (Importhinweis „lagerreibung“,
+    model.lagerreibung_hinweis; Datei › Austausch › „Aus RFEM nachlesen ▾“ ›
+    „Lager aus RFEM nachlesen…“).
+
+    Zugeordnet wird ueber den Lagernamen des Imports (Knoten-, Linien- und
+    Flaechenlager). Zurueckgenommen wird je Freiheitsgrad nur ein Beiwert, der
+    noch dem Wert der Datei gleicht - was der Anwender selbst eingestellt hat,
+    bleibt (Rueckgabe „eigen“). Der Freiheitsgrad gilt danach wie im Import
+    von heute nach seiner Federkonstanten (0 = frei); Ausfall, Schlupf und
+    Grenzkraft bleiben. Rueckgabe {ohne_reibung, mit_reibung, eigen,
+    ohne_lager, datei}: die Namen der umgestellten Lager, der Lager mit
+    Reibungsart in RFEM, der Lager mit eigenem Beiwert und der RFEM-Lager
+    ohne passendes Lager. FileNotFoundError, wenn die Datei fehlt - dann
+    bleibt alles, wie es ist."""
+    import math as _m
+    hinweise = [h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "lagerreibung"]
+    pfad = rfem_datei(model, pfad, art="lagerreibung")
+    if not pfad or not os.path.isfile(str(pfad)):
+        raise FileNotFoundError(f"RFEM-Datei „{pfad}“ nicht gefunden - die Lager lassen sich nicht "
+                                "nachlesen; die Reibung in der Lagermaske prüfen")
+    db_path = extract_db(str(pfad))
+    tmp_dir = os.path.dirname(db_path) if db_path != str(pfad) else None
+    # (Lagerart, Name) -> ({FHG: DofBehaviour nach heutiger Regel}, {FHG: mu ohne Reibungsart})
+    neu: dict = {}
+    con = connect(db_path)
+    try:
+        db = Db(con)
+        nlmap = _load_map(None)
+        for tabelle, art, vorgabe in (("NodalSupport", "knoten", "Knotenlager"),
+                                      ("LineSupport", "linie", "Linienlager")):
+            for h, impl in db.impls(tabelle):
+                name = (impl.get("name") or "").strip() or f"{vorgabe} {h.get('userID') or h['id']}"
+                sc = _spring_row(db, h.get("impl_table") or tabelle + "Impl", impl["id"])
+                if not sc:
+                    continue
+                ohne: list = []
+                beh = spring_behaviours(sc, _partials(db, sc), nlmap, "", None,
+                                        nur_mit_reibart=True, ohne_reibart=ohne)
+                neu[(art, name)] = (beh, dict(ohne))
+        for h, impl in db.impls("SurfaceSupport"):
+            name = (impl.get("name") or "").strip() or f"Flaechenlager {h.get('userID') or h['id']}"
+            ohne = []
+            beh = _surface_behaviour(impl, nlmap, name, None, ohne_reibart=ohne)
+            neu[("flaeche", name)] = (beh, dict(ohne))
+    finally:
+        con.close()
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    aus = {"ohne_reibung": [], "mit_reibung": [], "eigen": [], "ohne_lager": [], "datei": str(pfad)}
+    gruppen = {"knoten": list(getattr(model, "supports", None) or []),
+               "linie": list(getattr(model, "line_supports", None) or []),
+               "flaeche": list(getattr(model, "surface_supports", None) or [])}
+    for (art, name), (beh, ohne) in neu.items():
+        objs = [o for o in gruppen[art] if (o.name or "") == name]
+        if any(b.mu > 0 for b in beh.values()) and objs:
+            aus["mit_reibung"].append(name)
+        if not ohne:
+            continue
+        if not objs:
+            aus["ohne_lager"].append(name)
+            continue
+        geaendert = eigen = False
+        for o in objs:
+            for d, mu_datei in ohne.items():
+                b = o.dof_behaviour(d)
+                if b.mu <= 0.0:
+                    continue
+                if not _m.isclose(b.mu, mu_datei, rel_tol=1e-6):
+                    eigen = True
+                    continue
+                nb = DofBehaviour(**vars(b))
+                nb.mu, nb.mu_ref = 0.0, None
+                ref = beh.get(d) or DofBehaviour("free")
+                nb.typ, nb.stiffness = ref.typ, ref.stiffness
+                o.behaviour.pop(str(d), None)
+                if art == "knoten":
+                    o.behaviour[d] = nb
+                    # ein freier FHG faellt aus den gesperrten, wenn keine
+                    # Liste daran haengt (Werte/Federn je gesperrtem FHG)
+                    if not nb.acts and d in o.dofs and not o.values and not o.stiffness:
+                        o.dofs.remove(d)
+                elif nb.acts:
+                    o.behaviour[d] = nb
+                else:
+                    o.behaviour.pop(d, None)
+                geaendert = True
+        if geaendert:
+            aus["ohne_reibung"].append(name)
+        if eigen:
+            aus["eigen"].append(name)
+    model.meta[LAGERREIBUNG_MERKMAL] = "nachgelesen (15.10.2026)"
+    for h in hinweise:
+        h["erledigt"] = True
+    from ..begriffe import anzahl
+    zeile = (f"Lager aus {os.path.basename(str(pfad))} nachgelesen: "
+             + (f"Reibbeiwert ohne Reibungsart zurückgenommen an {', '.join(aus['ohne_reibung'])}"
+                if aus["ohne_reibung"] else "kein Reibbeiwert zurückzunehmen")
+             + (f"; mit Reibungsart in RFEM, Reibung bleibt: {', '.join(aus['mit_reibung'])}"
+                if aus["mit_reibung"] else "")
+             + (f"; selbst eingestellter Beiwert bleibt: {', '.join(aus['eigen'])}" if aus["eigen"] else "")
+             + (f"; {anzahl(len(aus['ohne_lager']), 'RFEM-Lager', 'RFEM-Lager')} ohne passendes Lager "
+                f"({', '.join(aus['ohne_lager'][:6])})" if aus["ohne_lager"] else ""))
     C.say(log, zeile)
     return aus
 

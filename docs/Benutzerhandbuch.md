@@ -6741,7 +6741,8 @@ im Lastfall LF1 so −0,59 kN Druck. Öffnen Sie ein Modell, das vor diesem Tag
 aus RFEM 6 übernommen wurde, nennt das Protokoll die Fachwerkstäbe ohne
 „trägt nur“, und unter den Importhinweisen steht die Umstellung als Vorschlag.
 Das Programm stellt nichts von selbst um. Die Statuszeile nennt beim Öffnen
-den Weg: Register **Datei › Austausch › „Stabtypen aus RFEM nachlesen…“**
+den Weg: Register **Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus
+RFEM nachlesen…“** (bis zum 15.10.2026 ein eigener Knopf in der Gruppe Austausch)
 öffnet rechts die Maske „Stabtypen aus RFEM“ mit dem Hinweis aus dem Import
 und der RFEM-Datei, die beim Import gelesen wurde. Liegt die Datei heute
 woanders, tragen Sie ihren Pfad dort ein. **Stabtypen nachlesen** liest die
@@ -6954,6 +6955,41 @@ Bettung ab 10¹¹ N/m³ mit Ausfall gilt in Statik3D als **starres Lager mit
 Ausfall** (exakte Bedingung, kein Festhalten mehr); das Protokoll nennt die
 Umdeutung beim Import und beim Rechnen. Echte Bettungen (Boden, Elastomer)
 liegen Größenordnungen darunter und bleiben Federn.
+
+**Reibung an Lagern aus RFEM 6 nur mit Reibungsart** (seit 15.10.2026). In
+RFEM ist Reibung an einem Lager eine eigene Art der Nichtlinearität: beim
+Flächenlager gehört zum Ausfall bei Zug oder Druck die Art „Reibung in der
+Ebene xy“, beim Knoten- und Linienlager je Freiheitsgrad eine der
+Nichtlinearitäten „Reibung Richtung …“. Das Feld des Reibbeiwerts trägt in
+jeder RFEM-Datei einen Wert, auch wenn keine Reibung gewählt ist; am Drehlager
+steht 0,1 an allen sechs Flächenlagertypen, auch an den linearen. Statik3D setzt
+den Beiwert seither nur an, wenn RFEM die Reibungsart nennt. Sonst gilt der
+Freiheitsgrad nach seiner Federkonstanten, also frei bei 0, und das
+Importprotokoll nennt die nicht angesetzten Beiwerte in einem Satz („HINWEIS:
+Reibbeiwert aus der Datei ohne Reibungsart nicht angesetzt: Flächenlager
+„Starr“ (ux, uy μ = 0,1) …“). Bis zum 15.10.2026 setzte der Import den Beiwert
+an, sobald das Lager irgendeine Nichtlinearität hatte: aus dem Flächenlager
+„Starr“ des Drehlagers (senkrecht starr mit Ausfall bei Zug, in der Fläche
+frei) wurde so ein Lager, das an den 50 Flächen der Grundplatte in der Fläche
+bis μ·N haftete, und an dieser Reibung, die RFEM nicht rechnet, endeten die
+Kontaktläufe am Deckel. Ein Knoten- oder Linienlager mit Reibbeiwert ohne
+Reibungsart bekam bis dahin ebenfalls Reibung. Öffnen Sie ein Modell, das vor
+diesem Tag aus RFEM 6 übernommen wurde und an einem Lager Reibung trägt,
+nennt das Protokoll die Lager, und unter den Importhinweisen steht das
+Nachlesen als Vorschlag; die Statuszeile nennt den Weg. Ob die Reibung in RFEM
+eine Reibungsart hat, steht erst in der RFEM-Datei, deshalb stellt das
+Programm nichts von selbst um. Register **Datei › Austausch › „Aus RFEM
+nachlesen ▾“ › „Lager aus RFEM nachlesen…“** öffnet rechts die Maske „Lager aus RFEM“ mit dem Hinweis und der
+RFEM-Datei; liegt die Datei heute woanders, tragen Sie ihren Pfad dort ein.
+**Lager nachlesen** liest die Knoten-, Linien- und Flächenlager aus der Datei
+und nimmt an den gleichnamigen Lagern einen Reibbeiwert zurück, der in RFEM
+ohne Reibungsart steht; der Freiheitsgrad gilt danach wie beim Import von heute
+nach seiner Federkonstanten, Ausfall, Schlupf und Grenzkraft bleiben. Ein Lager
+mit Reibungsart in RFEM behält seine Reibung, und einen Beiwert, den Sie selbst
+geändert haben, lässt das Nachlesen stehen. Das Protokoll nennt das Ergebnis
+(„Lager aus … nachgelesen: Reibbeiwert ohne Reibungsart zurückgenommen an
+Starr“), und Rückgängig nimmt das Nachlesen als einen Schritt zurück. Fehlt
+die Datei, sagt ein Hinweis es, und nichts wird umgestellt.
 
 **„Verstöße unter der Lösergenauigkeit - der Zustand steht“** (Protokoll,
 seit 27.09.2026): Die Kontaktiteration endet, sobald die Summe aller

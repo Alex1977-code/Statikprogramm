@@ -242,13 +242,60 @@ def zugstab_hinweis(model) -> list:
             f"die Stabtypen aus {datei} nachlesen und „trägt nur“ setzen bzw. Seile als Seil anlegen?")
     # der Weg in der Oberflaeche (14.10.2026; bis dahin nannte der Vorschlag
     # die Funktion statik3d.importers.rfem6_db.zugstaebe_aus_rfem fuer die Konsole)
-    vorschlag = ("Datei › Austausch › „Stabtypen aus RFEM nachlesen…“ liest die Stabtypen aus der "
+    vorschlag = ("Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Stabtypen aus RFEM nachlesen…“ liest die "
+                 "Stabtypen aus der "
                  "RFEM-Datei nach – oder die Stäbe wählen und in der Stabmaske „trägt nur“ auf Zug stellen")
     hinweise = getattr(model, "importhinweise", None)
     if hinweise is None:
         hinweise = model.importhinweise = []
     if not any(h.get("art") == "zugstab" and not h.get("erledigt") for h in hinweise):
         hinweise.append({"art": "zugstab", "text": text, "objekte": frei, "vorschlag": vorschlag,
+                         "erledigt": False, "datei": quelle})
+    return [text + " (" + vorschlag + ")"]
+
+
+def lagerreibung_hinweis(model) -> list:
+    """Ein Modell, das vor dem 15.10.2026 aus RFEM 6 uebernommen wurde, kann
+    an seinen Lagern Reibung tragen, die RFEM nicht rechnet: der Import setzte
+    einen Reibbeiwert der Datei auch ohne Reibungsart an - das Feld traegt in
+    RFEM immer einen Wert (Vorgabe 0,1). Am Drehlager haftete so das
+    Flaechenlager „Starr“ (Ausfall bei Zug, in der Flaeche frei) in der Flaeche
+    bis mu * N. Beim **Oeffnen** einer solchen Datei - Quelle eine .rf6-Datei,
+    ohne das Merkmal des Imports (rfem6_db.LAGERREIBUNG_MERKMAL), mit
+    mindestens einem Lager mit Reibbeiwert - steht ein Importhinweis
+    „lagerreibung“ mit der Aktion „Lager aus RFEM nachlesen…“
+    (rfem6_db.lager_aus_rfem) und eine Zeile fuers Protokoll. Ob die Reibung
+    in RFEM eine Reibungsart hat, weiss erst die Datei; umgestellt wird
+    nichts: das loest der Anwender aus. Rueckgabe die Zeilen."""
+    meta = getattr(model, "meta", None) or {}
+    quelle = str(meta.get("quelle", "") or "")
+    if not quelle.lower().endswith(".rf6") or meta.get("rfem_lagerreibung"):
+        return []
+    mit: list = []
+    for s in getattr(model, "supports", None) or []:
+        if any(s.dof_behaviour(d).mu > 0 for d in range(NDOF)):
+            mit.append(s.name or f"Knotenlager {s.node}")
+    for s in list(getattr(model, "line_supports", None) or []) + list(getattr(model, "surface_supports", None) or []):
+        if any(s.dof_behaviour(d).mu > 0 for d in range(NDOF)):
+            mit.append(s.name or "ohne Namen")
+    mit = list(dict.fromkeys(mit))
+    if not mit:
+        return []
+    datei = os.path.basename(quelle)
+    anzahl = "1 Lager trägt" if len(mit) == 1 else f"{len(mit)} Lager tragen"
+    text = (f"Aus RFEM 6 übernommen vor dem 15.10.2026: {anzahl} Reibung ("
+            + ", ".join(mit[:6]) + (" …" if len(mit) > 6 else "") + "). "
+            "Bis zum 15.10.2026 setzte der Import einen Reibbeiwert der RFEM-Datei auch ohne Reibungsart an, "
+            "dann rechnet RFEM dort keine Reibung (am Drehlager „Starr“: in RFEM in der Fläche frei, hier "
+            f"haftend bis μ·N) – die Lager aus {datei} nachlesen?")
+    vorschlag = ("Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Lager aus RFEM nachlesen…“ liest die Lager "
+                 "aus der RFEM-Datei nach und "
+                 "nimmt einen Reibbeiwert ohne Reibungsart zurück – oder die Reibung in der Lagermaske prüfen")
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    if not any(h.get("art") == "lagerreibung" and not h.get("erledigt") for h in hinweise):
+        hinweise.append({"art": "lagerreibung", "text": text, "objekte": mit, "vorschlag": vorschlag,
                          "erledigt": False, "datei": quelle})
     return [text + " (" + vorschlag + ")"]
 
@@ -9741,6 +9788,8 @@ class Model:
         nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
         m._ladehinweise.extend(zugstab_hinweis(m))
+        # Reibung an Lagern aus RFEM ohne Reibungsart (15.10.2026): nur ein Hinweis
+        m._ladehinweise.extend(lagerreibung_hinweis(m))
         # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
         # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
         from .ec3.spannstahl import ladehinweise
