@@ -260,7 +260,8 @@ def test_fenster():
     me.leeren()
     w.modell_laden(p, fragen=False); app.processEvents()
     check("Fenster: ältere Ergebnisdatei mit Reibung geladen, Hinweis „bisheriges Reibverfahren“",
-          w.analysis is not None and me.hinweis_mit(HINWEIS),
+          # seit dem 16.10.2026 der Hinweis zum aelteren Rechenverfahren (rechenverfahren)
+          w.analysis is not None and me.hinweis_mit("älterem Rechenverfahren", "bisheriges Reibverfahren"),
           f"analysis {'da' if w.analysis is not None else 'None'}, {me.alle[-2:]}")
     check("… die Ergebnisse sind sichtbar (LF1 in der Analyse, passt)",
           w.analysis is not None and "LF1" in w.analysis.cases and w._analyse_passt() == "passt",

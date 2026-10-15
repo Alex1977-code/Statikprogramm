@@ -30445,11 +30445,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Datei von vor dem 06.10.2026: geladen, aber nicht still als
                     # passend (F06) - Statuszeile und Protokoll sagen es
                     self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
-                # Ergebnisdatei von vor dem 15.10.2026 zu einem Modell mit Reibung:
-                # gerechnet ohne die konsistente Tangente; die Ergebnisse bleiben
-                reib = (getattr(an, "info", None) or {}).get("reibverfahren_vorbehalt")
-                if reib:
-                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {reib}"
+                # Mit aelterem Rechenverfahren gerechnet (16.10.2026, rechenverfahren;
+                # am 15.10.2026 nur das Reibverfahren): die Ergebnisse gelten,
+                # Statuszeile und Protokoll nennen das Verfahren
+                verfahren = (getattr(an, "info", None) or {}).get("verfahren_hinweis")
+                if verfahren:
+                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {verfahren}"
                     self.hinweis(datei_hinweis)
         # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
         # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die

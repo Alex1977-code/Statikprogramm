@@ -5130,6 +5130,29 @@ vor Neu oder Beenden *Speichern* gewählt hat, sieht die Fehlermeldung, und das
 Programm hält an, statt ohne die Ergebnisse weiterzumachen. Bis zum
 25.09.2026 galt das als gespeichert.
 
+**Ergebnisdatei beim Öffnen: Modell geändert oder älteres Rechenverfahren (seit
+16.10.2026).** Das Programm trennt zwei Fälle. *Modell geändert*: Geometrie, Netz,
+Werkstoffe, Querschnitte, Lager, Lasten, Kontakte oder eine Einstellung, die der
+Anwender nach der Rechnung selbst umgestellt hat – auch eine, die zugleich das
+Rechenverfahren bestimmt, etwa das Reibverfahren oder der Abbruch der Plastizität.
+Dann ist die Ergebnisdatei ungültig und wird nicht geladen („seit der Rechnung
+geändert: …“). *Mit älterem Rechenverfahren gerechnet*: Das Modell ist dasselbe, aber
+das Programm rechnet es heute anders, weil sich eine Programmvorgabe oder das
+Verfahren selbst geändert hat. Dann gelten die Ergebnisse und werden geladen;
+Statuszeile und Protokoll sagen, womit gerechnet wurde und was heute gilt, etwa
+„gerechnet mit älterem Rechenverfahren: bisheriges Reibverfahren ohne
+Reibungstangente (aktuell: konsistente Reibungstangente, seit 15.10.2026) – die
+Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren“.
+Die Ergebnisdatei schreibt dafür den Verfahrensstand und die Verfahrensmerkmale mit
+(Reibverfahren, Deckel des Kontaktlaufs, Abbruch der Plastizität); Speichern ohne
+neue Rechnung behält die Merkmale der geladenen Datei. Bei einer Ergebnisdatei von
+vor dem 16.10.2026 nennt der Hinweis nur, was sich sicher erkennen lässt: das
+Reibverfahren (ohne Angabe in der Datei und mit Reibung im Modell das bisherige
+Verfahren), den Deckel nur über die Zustandswechsel bei einer Datei vom 15.10.2026
+mittags mit „reibungstangente: true“ oder wenn ein Kontaktlauf der Datei an diesem
+Deckel endete. Ob eine plastische Rechnung von vor dem 13.10.2026 streng
+abgebrochen hat, lässt sich der Datei nicht sicher ansehen und wird nicht genannt.
+
 **Beenden während einer Rechnung** fragt „Rechnung abbrechen und beenden?“
 (*Abbrechen und beenden* / *Weiterrechnen*). Mit Ja hält die Rechnung beim
 nächsten Rechenschritt an (eine laufende Faktorisierung läuft zu Ende),
@@ -7365,14 +7388,16 @@ Vergleich: In der Maske heißt es „bisheriges Verfahren (nur zum Vergleich)“
 Modelldateien enthalten keine Angabe dazu und rechnen beim nächsten Rechnen mit der
 Vorgabe; eine dort gespeicherte Ergebnisdatei bleibt, wie sie gerechnet wurde.
 Seit dem 15.10.2026 schreibt die Ergebnisdatei das Reibverfahren mit („konsistente
-Tangente“ oder „bisheriges Verfahren“). Eine ältere Ergebnisdatei ohne diese Angabe
-zu einem Modell mit Reibung (Kontakt mit μ > 0 oder Lager mit Reibbeiwert) wird
-geladen, die Ergebnisse bleiben sichtbar, und ein Hinweis sagt „gerechnet mit dem
-bisherigen Reibverfahren – für aktuelle Ergebnisse neu rechnen“. Speichern ohne
-neue Rechnung lässt die Angabe weg, der Hinweis kommt dann beim nächsten Öffnen
-wieder. Eine Modelldatei mit ausdrücklich „reibungstangente: true“ (gespeichert,
-als das Verfahren noch nicht Vorgabe war) gilt mit ihrer Ergebnisdatei nicht als
-geändert.
+Tangente“ oder „bisheriges Verfahren“), seit dem 16.10.2026 mit den übrigen
+Verfahrensmerkmalen (Abschnitt „Ergebnisdatei beim Öffnen: Modell geändert oder
+älteres Rechenverfahren“). Eine ältere Ergebnisdatei ohne diese Angabe zu einem
+Modell mit Reibung (Kontakt mit μ > 0 oder Lager mit Reibbeiwert) wird geladen, die
+Ergebnisse gelten, und der Hinweis nennt das bisherige Reibverfahren. Eine
+Modelldatei mit ausdrücklich „reibungstangente: true“ (gespeichert, als das
+Verfahren noch nicht Vorgabe war) gilt mit ihrer Ergebnisdatei nicht als geändert.
+Stellt der Anwender nach der Rechnung auf das bisherige Verfahren um, ist die
+Ergebnisdatei ungültig – bis zum 16.10.2026 galt sie dann bei einer Datei vom
+15.10.2026 abends weiter als passend.
 
 Die Haftsteifigkeit ist kein fester Wert, sondern ein Vielfaches der Steifigkeit,
 die der Knoten aus seinen angrenzenden Elementen hat – auch an starren Lagern, die

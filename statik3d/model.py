@@ -10048,14 +10048,15 @@ NEUE_FELDER = {
 #: Neue Felder, deren Vorgabe sich spaeter geaendert hat, mit der frueheren
 #: Vorgabe - je Schluessel der Modelldatei wie NEUE_FELDER. Eine Ergebnisdatei
 #: vom frueheren Stand traegt einen Wert, der heute die Vorgabe ist, in ihrer
-#: Kennung; heute fehlt er dort. ergebnisse.pruefen vergleicht darum auch nach
-#: den frueheren Vorgaben: der Wert, der heute Vorgabe ist, gilt als gleich.
+#: Kennung; heute fehlt er dort. ergebnisse.pruefen bildet die Kennung darum
+#: auch mit diesem Wert ausdruecklich (nie ohne einen gesetzten Wert).
 #: reibungstangente: Vorgabe False von 4073439 bis b24910b, seit 49cb8bb True
 #: (Entscheidung des Anwenders vom 15.10.2026); die Drehlager-Laeufe dieses Tages
-#: tragen „reibungstangente: true“ in der Modelldatei.
-FRUEHERE_VORGABEN = {
-    "plastizitaet": {"reibungstangente": False},
-}
+#: tragen „reibungstangente: true“ in der Modelldatei. Seit dem 16.10.2026 kommt
+#: die Tabelle aus statik3d.rechenverfahren (Wechsel der Vorgaben mit Stand und
+#: Datum): ein kuenftiger Wechsel wird nur dort eingetragen.
+from .rechenverfahren import fruehere_vorgaben as _fruehere_vorgaben  # noqa: E402
+FRUEHERE_VORGABEN = _fruehere_vorgaben()
 
 
 def ist_vorgabe(schluessel: str, feld: str, wert) -> bool:
