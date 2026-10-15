@@ -8363,6 +8363,22 @@ def pendelschutz_winkel(model) -> tuple:
     return an, (tol if np.isfinite(tol) and tol >= 0.0 else vg["gleit_toleranz"])
 
 
+def reibungstangente(model) -> tuple:
+    """(an, Haftfaktor) der Reibung mit konsistenter Tangente (15.10.2026;
+    Plastizitaet.reibungstangente, haft_faktor; contact.REIBUNGSTANGENTE). Fehlen die
+    Einstellungen (aeltere Modelle, Stuempfe), die Vorgaben; ein Faktor, der keine
+    positive Zahl ist, ebenso."""
+    from . import plastizitaet as pl
+    pz = getattr(model, "plastizitaet", None)
+    vg = pl.Plastizitaet.NEU_15_10
+    an = bool(getattr(pz, "reibungstangente", vg["reibungstangente"]))
+    try:
+        f = float(getattr(pz, "haft_faktor", vg["haft_faktor"]))
+    except (TypeError, ValueError):
+        f = vg["haft_faktor"]
+    return an, (f if np.isfinite(f) and f > 0.0 else vg["haft_faktor"])
+
+
 def _gleit_pruefung(model: Model, cs, u, lam, log: list, progress) -> dict:
     """Die Pruefung nach dem Festhalten (Vorschlag 2): contact.ContactSystem.
     festgehalten_pruefen an der letzten Loesung, mit Zeile im Protokoll.
@@ -8633,6 +8649,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     # ungeprueft in den naechsten Lauf - am gequetschten Block (4 Stufen) lag gemeinsam
     # dann 1,17e-4 m neben verschachtelt statt unter 2e-5 relativ (14.10.2026)
     cs.umkehr_winkel, cs.gleit_toleranz = pendelschutz_winkel(model)
+    # Reibung mit konsistenter Tangente (15.10.2026): je Lauf aus dem Modell
+    cs.reibungstangente, cs.haft_faktor = reibungstangente(model)
     if kurz or probelauf:
         cs.umkehr_winkel = False
     # ContactSystem.signatur() kennt nur den Kontakt. Mit einem K_zusatz, das

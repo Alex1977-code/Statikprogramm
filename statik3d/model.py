@@ -9936,7 +9936,7 @@ NEUE_FELDER = {
     # kontakt/warmstart. Diese fuehrt Plastizitaet.NEU_14_10 - dieselbe Tabelle,
     # nach der Plastizitaet.als_dict sie beim Speichern weglaesst; hier wird sie
     # nur gelesen, damit es die Vorgaben einmal gibt (Zusammenfuehrung 14.10.2026).
-    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10},
+    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben

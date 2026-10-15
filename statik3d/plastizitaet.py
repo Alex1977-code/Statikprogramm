@@ -336,6 +336,19 @@ class Plastizitaet:
     #: verworfenen Iterationen wird nicht aufsummiert. Gilt fuer jeden Lastfall mit
     #: solchen Staeben und Kontakt, auch ohne Fliessen.
     ausfall_warm: bool = True
+    #: Reibung mit konsistenter Tangente (Entscheidung des Anwenders vom 15.10.2026;
+    #: contact.REIBUNGSTANGENTE): jeder Reibknoten an einer exakten Normalbedingung
+    #: rechnet je Runde die Rueckabbildung des Coulomb-Gesetzes und wird konsistent
+    #: linearisiert (semiglatter Newton) - Haften als Feder k_h, symmetrisch; Gleiten mit
+    #: der Ableitung von mu p t/|t| nach u (unsymmetrisch, nur mit gleitenden Knoten).
+    #: Gilt fuer jeden Kontaktlauf, auch ohne Fliessen. Vorgabe aus, bis die Abnahme am
+    #: Drehlager besteht.
+    reibungstangente: bool = False
+    #: Haftfeder k_h der Reibungstangente als Vielfaches der Diagonalsteifigkeit des
+    #: Knotens (Steifigkeit der angrenzenden Elemente; an starren Lagern dieselbe, denn
+    #: dort gibt es keine Gegenseite). Je groesser, desto naeher am starren Haften: der
+    #: elastische Weg beim Haften ist F_t/k_h.
+    haft_faktor: float = 1.0e3
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
@@ -343,6 +356,8 @@ class Plastizitaet:
                  "kaltstart_nicht_proportional": True, "pendelschutz_winkel": True,
                  "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
                  "spannung_zuerst": True, "ausfall_warm": True}
+    #: ... und am 15.10.2026 (Reibungstangente), ebenso
+    NEU_15_10 = {"reibungstangente": False, "haft_faktor": 1.0e3}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
@@ -353,8 +368,8 @@ class Plastizitaet:
         Rechenkennung (ergebnisse.rechenkennung) liest dieselbe Form. Eine Datei
         ohne die Schluessel bekommt beim Laden die Vorgabe."""
         d = asdict(self)
-        for k, v in self.NEU_14_10.items():
-            if k in d and d[k] == v:
+        for k, v in {**self.NEU_14_10, **self.NEU_15_10}.items():
+            if k in d and d[k] == v and isinstance(d[k], bool) == isinstance(v, bool):
                 del d[k]
         return d
 

@@ -17392,6 +17392,30 @@ class MainWindow(QtWidgets.QMainWindow):
             "oder Fließen 3 Stufen, sonst eine (linear ist das Ergebnis vom Weg unabhängig). Nach dem "
             "Verriegeln trägt jeder Stab F_soll bzw. P₀ abzüglich Schlupf, gleich wie viele Stufen.")
         gkl.addWidget(row("Spannschritt in", self.sp_spannstufen))
+        # Reibung mit konsistenter Tangente (15.10.2026, Plastizitaet.reibungstangente,
+        # haft_faktor): Schalter und Haftsteifigkeit relativ zur Knotensteifigkeit
+        self.cb_reibungstangente = QtWidgets.QCheckBox("Reibung mit konsistenter Tangente")
+        self.cb_reibungstangente.setToolTip(
+            "Jeder Reibknoten (Fuge oder Lager mit μ an einer starren Normalbedingung) rechnet in jeder "
+            "Runde das Coulomb-Gesetz aus seinem Weg und seiner Normalkraft: Haften, solange die Haftkraft "
+            "k_h·Weg unter μ·p bleibt, sonst Gleiten mit μ·p in Richtung des Wegs. Die Runde danach wird "
+            "mit der passenden Ableitung gerechnet (Newton) - Haften symmetrisch, Gleiten mit der "
+            "Ableitung nach Richtung und Normalkraft (unsymmetrisch). Die Normalbedingung bleibt exakt.\n\n"
+            "Aus (Vorgabe bis zur Abnahme am Drehlager): wie bis zum 15.10.2026 - Haften exakt, "
+            "Gleitrichtungen als Fixpunkt mit Pendelschutz.")
+        self.sp_haft_faktor = QtWidgets.QDoubleSpinBox()
+        self.sp_haft_faktor.setRange(1.0, 1.0e6)
+        self.sp_haft_faktor.setDecimals(0)
+        self.sp_haft_faktor.setSingleStep(100.0)
+        self.sp_haft_faktor.setPrefix("× ")
+        self.sp_haft_faktor.setValue(1000.0)
+        self.sp_haft_faktor.setToolTip(
+            "Haftsteifigkeit k_h je Reibknoten als Vielfaches seiner Knotensteifigkeit (Diagonale der "
+            "Steifigkeitsmatrix, also der angrenzenden Elemente) - auch an starren Lagern, die keine "
+            "Gegenseite haben. Beim Haften gibt der Knoten um F_t/k_h nach; je größer der Faktor, desto "
+            "näher am starren Haften. Vorgabe 1000.")
+        gkl.addWidget(self.cb_reibungstangente)
+        gkl.addWidget(row("Haftsteifigkeit", self.sp_haft_faktor))
         lay.addWidget(gk)
 
         self.experten = msk.Einklappabschnitt(
@@ -24662,6 +24686,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sp_pendel_weg.setValue(float(getattr(pz, "pendel_weg", 1e-6)) * 1e6)
         if hasattr(self, "sp_spannstufen"):
             self.sp_spannstufen.setValue(int(getattr(pz, "spannstufen", 0) or 0))
+        if hasattr(self, "cb_reibungstangente"):
+            self.cb_reibungstangente.setChecked(bool(getattr(pz, "reibungstangente", False)))
+            self.sp_haft_faktor.setValue(float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3))
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -24698,6 +24725,12 @@ class MainWindow(QtWidgets.QMainWindow):
             pz.pendel_weg = alt_w if round(alt_w * 1e6, 2) == round(w_ * 1e6, 2) else w_
         if hasattr(self, "sp_spannstufen"):
             pz.spannstufen = int(self.sp_spannstufen.value())
+        if hasattr(self, "cb_reibungstangente"):
+            pz.reibungstangente = bool(self.cb_reibungstangente.isChecked())
+            # gerundet wie angezeigt (ganze Zahl): sonst meldete schon das Oeffnen eine Aenderung
+            alt_f = float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3)
+            f_ = float(self.sp_haft_faktor.value())
+            pz.haft_faktor = alt_f if round(alt_f) == round(f_) else f_
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
