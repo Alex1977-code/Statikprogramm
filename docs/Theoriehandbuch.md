@@ -4734,6 +4734,19 @@ GZT 751,77/726,09 = 1,0354 (der Anwender rundet auf 1,035), beim Spannen mit
 P₀ = 944,7 kN 1,0004; mit Δs = 1 mm und k_A = 170 000 · 1 256,64 / 3 230 =
 66,14 kN/mm wird P₀ = 1 010,84 kN und beim Spannen 1,0704.
 
+Freie Ankerlänge und Kraftverlust (seit 15.10.2026, `spannstahl.schlupfangaben`,
+Ausgabe `schlupf_zeilen`): L_frei ist die Summe der Elementlängen des Stabs, die
+Länge, mit der `vorspannkraft.k_stab` rechnet (k_A = 1/Σ L_i/(E_i A_i), bei einem
+Querschnitt E·A/L_frei). Der Verlust aus dem Schlupf ist gegen starre Umgebung
+k_A·Δs und mit nachgiebiger Umgebung (Steifigkeit k_K) ΔP = k_A·Δs·k_K/(k_A + k_K).
+Der Nachweis liest ΔP = P₀ − N_verankert aus dem Ergebnis des Spannschritts;
+beim reihenweisen Spannen enthält es auch die elastischen Verluste der übrigen
+Anker. Ohne dieses Ergebnis ist ΔP = k_A·Δs (obere Schranke). Handprobe in
+`tests.test_spannstahl_schlupfanzeige`: k_A = 210 kN/mm, k_K = 840 kN/mm,
+Δs = 0,5 mm gibt ΔP = 84 kN und N_verankert = 416 kN. Das Gewinde eines
+Rundstahls gegen seinen Durchmesser prüft `spannstahl.gewinde_hinweis` (nur ein
+Hinweis).
+
 Überschreitet die Kraft beim Spannen oder nach dem Verankern ihre Grenze,
 schreibt der Nachweis je Zustand eine Zeile „Befund Vorspannung“ mit Kraft,
 Spannung, Grenze, Verhältnis und der zulässigen Kraft Grenze · A_s an den Stab
