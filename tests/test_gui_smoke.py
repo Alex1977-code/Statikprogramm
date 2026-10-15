@@ -2713,9 +2713,12 @@ def main():
               and abs(lc_.vorspannungen[0].kraft - 150e3) < 1e-6 and len(fehler_v) == n_fv,
               str((fehler_v[n_fv:], lc_.vorspannungen)))
         check("Modellbaum: Unterpunkt „Vorspannung“ am Lastfall", "Vorspannung" in zweige(w.baum))
-        zv_ = [r for r in w.tbl_last.modell.zeilen if r[2] == "Vorspannung"]
+        # Lastart in der Tabelle seit fa709ef (14.10.2026) „Vorspannung (eingeprägte
+        # Dehnung)“ wie im Modellbaum; bis dahin „Vorspannung“
+        zv_ = [r for r in w.tbl_last.modell.zeilen if r[2] == "Vorspannung (eingeprägte Dehnung)"]
         check("Lastentabelle nennt die Vorspannung mit F_v",
-              len(zv_) == 1 and "150" in str(zv_[0][4]) and stab_ in str(zv_[0][3]), str(zv_[:1]))
+              len(zv_) == 1 and "F_v = 150" in str(zv_[0][4]) and stab_ in str(zv_[0][3]),
+              str(zv_[:1]) + " / Lastarten " + str(sorted({str(r[2]) for r in w.tbl_last.modell.zeilen})))
         w._baum_geklickt("lastart", f"{lc_.name}|vorspannung")
         app.processEvents()
         mk_ = w.maskenrand.maske
