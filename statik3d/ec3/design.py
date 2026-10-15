@@ -154,6 +154,10 @@ class DesignResults:
         if ohne_as:
             s += ("\nHINWEIS: A_s aus Zulassung eintragen – Spannstahl gerechnet mit dem Nennquerschnitt: "
                   + ", ".join(ohne_as[:10]) + (f" und {len(ohne_as) - 10} weitere" if len(ohne_as) > 10 else ""))
+        # freie Ankerlaenge, Schlupf und Kraftverlust der Anfangsvorspannung (15.10.2026)
+        from .spannstahl import schlupf_zeilen
+        for z in schlupf_zeilen(self):
+            s += "\n" + z
         return s + warnzeilen(self) + hinweiszeilen(self)
 
     def table(self) -> list[list]:

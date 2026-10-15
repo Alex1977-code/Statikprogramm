@@ -9324,6 +9324,26 @@ geben beim Spannen 1,0081 und sind dort maßgebend. Die Anker sind 3,23 m lang
 mit k_A = 66,14 kN/mm, ein Millimeter Schlupf kostet gegen starre Umgebung also
 66,14 kN.
 
+**Freie Ankerlänge und Kraftverlust aus dem Schlupf** (seit 15.10.2026). Trägt
+ein Anker eine Anfangsvorspannung mit Verankerungsschlupf, nennt der Nachweis
+dazu die freie Ankerlänge L_frei in m, den Schlupf Δs in mm und den Kraftverlust
+ΔP in kN, und zwar in der Ausgabe nach dem Nachweis (Protokoll und Maske
+Ergebnisse, eine Zeile „Verankerungsschlupf S1 bis S16 …“ für gleiche Anker), im
+Bericht bei den Kennwerten des Stabs („Freie Ankerlänge“, „Verankerungsschlupf“,
+„Kraftverlust ΔP“) und in der Tabelle „Spannstahl je Anker“ mit den Spalten
+L_frei [m], Δs [mm] und ΔP [kN]. L_frei ist die Stablänge zwischen den
+Ankerpunkten, dieselbe Länge, mit der die Stabsteifigkeit k_A = E·A/L_frei
+rechnet. ΔP = k_A·Δs·k_K/(k_A + k_K) mit k_K der Steifigkeit der Umgebung; am
+beidseitig festen Anker ist es k_A·Δs. Im Ergebnis des Spannschritts steht die
+verankerte Kraft, ΔP wird daraus als P₀ − N_verankert gelesen (beim reihenweisen
+Spannen enthält es auch die elastischen Verluste der übrigen Anker); ohne
+dieses Ergebnis gilt die starre Umgebung, und die Zeile sagt es. Handprobe: ein
+Anker mit k_A = 210 kN/mm neben einem Klemmteil von k_K = 840 kN/mm, P₀ =
+500 kN und Δs = 0,5 mm hat ΔP = 105 · 840 / 1 050 = 84 kN, verankert also
+416 kN, und genau das steht im Ergebnis. Beim Anker Rund 40 mit 3,23 m und
+Δs = 1 mm sind es 66,14 kN, aus P₀ = 1 010,84 kN werden 944,70 kN
+(`tests.test_spannstahl_schlupfanzeige`).
+
 Weicht die Zulassung ab, trägt man σ_p,max und σ_pm0 in der Maske des
 Werkstoffs ein. Bleiben die Felder leer, gelten die Formeln, und der Hinweis am
 Feld nennt ihren Wert. In derselben Maske ist die Werkstoffart wählbar (Stahl,

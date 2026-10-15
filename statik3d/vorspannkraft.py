@@ -155,6 +155,19 @@ def sollkraefte(model, factors) -> list:
     return [Soll(s, k, g, ds, pr) for s, (k, g, ds, pr) in je.items() if k]
 
 
+def freie_laenge(model, elemente: list) -> float:
+    """Freie Ankerlaenge L [m]: die Summe der Elementlaengen des Stabs - die
+    Laenge, mit der :func:`k_stab` rechnet (k_A = E A / L bei einem
+    Querschnitt). Sie steht im Spannstahlnachweis neben Δs und ΔP (15.10.2026)."""
+    from .elements import beam3d as bm
+    L = 0.0
+    for i in elemente:
+        e = model.elements[int(i)]
+        _T3, Li = bm.local_axes(model.nodes[e.nodes][0], model.nodes[e.nodes][1], e.roll)
+        L += float(Li)
+    return L
+
+
 def k_stab(model, elemente: list) -> float:
     """Laengssteifigkeit k_A [N/m] eines Stabs aus seinen Elementen in Reihe:
     1 / Σ (L_i/(E_i A_i) + 1/k_Feder) - bei einem Querschnitt E A / L, mit L

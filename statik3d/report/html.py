@@ -3328,7 +3328,10 @@ class Report:
         anker = [mc for mc in d.members.values() if getattr(mc, "art", "") == "Spannstahl" and not mc.fehler]
         if anker:
             from ..ec3 import spannstahl as _sp
-            rows = [["Stab", "Eingabe"]]
+            # freie Laenge, Schlupf und Kraftverlust (15.10.2026) - nur, wenn ein Anker
+            # eine Anfangsvorspannung mit Schlupf traegt
+            mit_schlupf = any(getattr(mc, "schlupf", None) for mc in anker)
+            rows = [["Stab", "Eingabe"] + (["L_frei [m]", "Δs [mm]", "ΔP [kN]"] if mit_schlupf else [])]
             for _z, titel in _sp.ANKER_SPALTEN:
                 rows[0] += [f"{titel}: N [kN]", "σ [N/mm²]", "η"]
             rows[0].append("maßgebend")
@@ -3336,6 +3339,10 @@ class Report:
                 je = _sp.je_anker(mc)
                 mem = m.members.get(mc.member)
                 zeile = [mc.member, (_sp.eingabe_text(m, mem) if mem is not None else "") or "–"]
+                if mit_schlupf:
+                    sa = list(getattr(mc, "schlupf", None) or [])
+                    zeile += ([fmt(sa[0]["L_frei"], 3), fmt(sa[0]["schlupf"] * 1e3, 2),
+                               fmt(sa[0]["verlust"] / 1e3, 2)] if sa else ["–", "–", "–"])
                 for z, _titel in _sp.ANKER_SPALTEN:
                     e = je.get(z)
                     zeile += ([fmt(abs(e["N"]) / 1e3, 2), fmt(e["sigma"] / 1e6, 2), fmt(e["util"], 4)]
@@ -3346,7 +3353,11 @@ class Report:
             rows, note = self._truncate(rows, 400)
             b.append(("table", rows, "Spannstahl je Anker: Anfangsvorspannung P₀ beim Spannen gegen σ_p,max, "
                                      "Endvorspannung nach dem Verankern gegen σ_pm0, Kraft im Lastzustand gegen "
-                                     "f_pd = f_p0,1k / γ_s (je Zustand der ungünstigste Eintrag)", None, "compact"))
+                                     "f_pd = f_p0,1k / γ_s (je Zustand der ungünstigste Eintrag)"
+                                     + ("; freie Ankerlänge L_frei, Verankerungsschlupf Δs und Kraftverlust "
+                                        "ΔP = k_A·Δs·k_K/(k_A + k_K) mit k_A = E·A/L_frei (Anfangsvorspannung P₀ "
+                                        "abzüglich ΔP ist die Kraft nach dem Verankern)" if mit_schlupf else ""),
+                      None, "compact"))
             if note:
                 b.append(("note", note))
         # Ein nicht gefuehrter Stab (mc.fehler) hat keine Ausnutzung: kein
@@ -3542,6 +3553,18 @@ class Report:
         g = mc.governing
         if g:
             kv.append(("Maßgebender Nachweis", f"{g.get('name', '')}, {g.get('combo', '')}"))
+        # freie Ankerlaenge, Schlupf, Kraftverlust (15.10.2026)
+        for a in (getattr(mc, "schlupf", None) or []):
+            kv.append((f"Freie Ankerlänge ({a['lastfall']})",
+                       f"L_frei = {fmt(a['L_frei'], 3)} m (Stablänge zwischen den Ankerpunkten), "
+                       f"k_A = E·A/L_frei = {fmt(a['k_A'] / 1e6, 2)} kN/mm"))
+            kv.append((f"Verankerungsschlupf ({a['lastfall']})", f"Δs = {fmt(a['schlupf'] * 1e3, 2)} mm"))
+            kv.append((f"Kraftverlust ΔP ({a['lastfall']})",
+                       f"ΔP = {fmt(a['verlust'] / 1e3, 2)} kN; P₀ − ΔP = {fmt(a['P0'] / 1e3, 2)} − "
+                       f"{fmt(a['verlust'] / 1e3, 2)} = {fmt((a['P0'] - a['verlust']) / 1e3, 2)} kN nach dem "
+                       f"Verankern; {a['herkunft']}; bei starrer Umgebung k_A·Δs = "
+                       f"{fmt(a['verlust_starr'] / 1e3, 2)} kN, mit nachgiebiger Umgebung "
+                       "ΔP = k_A·Δs·k_K/(k_A + k_K)"))
         kv.append(("Ausnutzung", Util(mc.util)))
         kv.append(("Status", "Nachweis " + mc.status()))
         b.append(("kv", kv, f"Stab {mc.member}"))

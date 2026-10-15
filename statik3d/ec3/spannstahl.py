@@ -360,6 +360,72 @@ def je_anker(mc) -> dict:
     return out
 
 
+def schlupfangaben(model, member, zustaende: dict = None) -> list:
+    """Freie Ankerlaenge, Schlupf und Kraftverlust je Anfangsvorspannung (Pressenkraft
+    P0) am Stab (15.10.2026): [{"lastfall", "P0" [N], "schlupf" [m], "L_frei" [m],
+    "k_A" [N/m], "verlust_starr" = k_A·Δs [N], "verlust" = ΔP [N], "N_verankert" [N],
+    "herkunft"}].
+
+    ΔP = k_A·Δs·k_K/(k_A + k_K) mit k_A = E·A/L_frei (k_K die Steifigkeit der
+    Umgebung); im Ergebnis des Spannschritts steht N_verankert = P0 − ΔP, daraus
+    wird ΔP gelesen (``zustaende``: spannstahl.zustaende_sammeln). Ohne dieses
+    Ergebnis gilt die starre Umgebung, ΔP = k_A·Δs - wie die Zeile
+    „nach dem Verankern“ ohne Ergebnis. Beim reihenweisen Spannen enthaelt
+    P0 − N_verankert auch die elastischen Verluste der uebrigen Anker.
+    Endvorspannung und RFEM-Vorspannung haben keinen Schlupf: keine Angabe."""
+    from ..vorspannkraft import _elemente, freie_laenge, k_stab
+    out = []
+    for name, v in _vorspannungen_am_stab(model, member):
+        if not (callable(getattr(v, "ist_presse", None)) and v.ist_presse()):
+            continue
+        ds = float(v.schlupf or 0.0)
+        if ds <= 0.0:
+            continue
+        els = _elemente(model, member.name)
+        k = k_stab(model, els)
+        P0 = float(v.kraft)
+        d = None
+        z = (zustaende or {}).get(name)
+        if z is not None and z[1] == "vorspannkraft":
+            d = (((getattr(z[0], "info", None) or {}).get("vorspannung") or {}).get("staebe") or {}).get(member.name)
+        N_ver = d.get("N_verankert") if isinstance(d, dict) and d.get("kraftart") == "presse" else None
+        if N_ver is not None:
+            verlust, herkunft = P0 - float(N_ver), "Ergebnis des Spannschritts (Umgebung federt zurück)"
+        else:
+            verlust, herkunft = k * ds, "starre Umgebung (kein Ergebnis des Spannschritts)"
+        out.append({"lastfall": name, "P0": P0, "schlupf": ds, "L_frei": freie_laenge(model, els),
+                    "k_A": float(k), "verlust_starr": float(k * ds), "verlust": float(verlust),
+                    "N_verankert": P0 - float(verlust), "herkunft": herkunft})
+    return out
+
+
+def schlupf_zeilen(design) -> list:
+    """Zeilen fuer Protokoll und Maske Ergebnisse (DesignResults.summary): je
+    Gruppe gleicher Anker eine Zeile mit freier Laenge, Schlupf und Kraftverlust."""
+    gruppen: dict = {}
+    for nm, mc in (getattr(design, "members", None) or {}).items():
+        for a in (getattr(mc, "schlupf", None) or []):
+            key = (round(a["L_frei"], 4), round(a["schlupf"], 9), round(a["P0"], 3),
+                   round(a["verlust"], 3), a["herkunft"].startswith("Ergebnis"))
+            g = gruppen.setdefault(key, (a, [], []))
+            if nm not in g[1]:
+                g[1].append(nm)
+            if a["lastfall"] not in g[2]:
+                g[2].append(a["lastfall"])
+    out = []
+    for (a, namen, faelle) in gruppen.values():
+        n = len(namen)
+        wer = namen[0] if n == 1 else f"{namen[0]} bis {namen[-1]} ({n} Anker)" if n > 2 else " und ".join(namen)
+        out.append(
+            f"Verankerungsschlupf {wer} ({', '.join(faelle[:4])}{' …' if len(faelle) > 4 else ''}): freie Länge {a['L_frei']:.3f} m, "
+            f"Δs = {a['schlupf'] * 1e3:.2f} mm, k_A = {a['k_A'] / 1e6:.2f} kN/mm, "
+            f"Kraftverlust ΔP = {a['verlust'] / 1e3:.2f} kN "
+            f"(P₀ = {a['P0'] / 1e3:.2f} kN → {(a['P0'] - a['verlust']) / 1e3:.2f} kN nach dem Verankern; "
+            + ("ΔP = P₀ − N_verankert aus dem Ergebnis" if a["herkunft"].startswith("Ergebnis")
+               else "starre Umgebung: ΔP = k_A·Δs") + ")")
+    return out
+
+
 def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat, zustaende: dict = None):
     """Den Spannstahlnachweis des Stabes in ``mc`` (MemberCheck) eintragen."""
     mc.art = ART
@@ -459,6 +525,9 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat, zustaende:
                 + " (kein Ergebnis eines Lastfalls nur mit Vorspannung)", lcname, N0, 0.0, A_s, pm0,
                 "σ_pm0", NORM_VERANKERT, h_pm0))
     mc.zustaende = eintraege
+    # freie Ankerlaenge, Schlupf und Kraftverlust (15.10.2026) - ein Attribut wie
+    # ``zustaende``, kein Feld (Abdruck der Stahlnachweise bleibt)
+    mc.schlupf = schlupfangaben(model, member, zustaende)
     mc.extremes = ext
     # Befund Vorspannung (Ergaenzung des Anwenders vom 13.10.2026): liegt die
     # Kraft beim Spannen oder nach dem Verankern ueber ihrer Grenze, steht das
