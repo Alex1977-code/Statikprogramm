@@ -83,7 +83,11 @@ QUER_TOL = 1.0e-4             # Richtungsaenderung [rad], ab der die Reibkraft (
 QUER_MATRIX_TOL = 1.0e-2
 QUER_RUNDEN_MAX = 60          # Phase 2: hoechstens so viele Runden nur fuer Richtungen (Schutz)
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
-MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Runden
+#: Deckel eines Kontaktlaufs: hoechstens so viele Runden - seit dem 15.10.2026 **alle**
+#: Runden des Laufs (Phase 1, Phase 2, Richtungs- und Setzrunden), vorher nur die Runden
+#: mit Zustandswechsel in Phase 2. Am Drehlager (G-unendlich, mu 1e6, Spannstufe 1) lief
+#: ein Lauf so 121 Runden bis max_iter, ohne dass die Deckelzeile kam.
+MAX_CYCLES = 40
 #: Pendelschutz der Reibung primal-dual (Befund B4, 08.10.2026). Zwei Regeln, die nur
 #: greifen, wenn ein Knoten tatsaechlich pendelt - wer nicht pendelt, rechnet bitgleich
 #: wie vorher; die Kontaktbedingung selbst bleibt dieselbe (Haften exakt im Kegel,
@@ -870,8 +874,9 @@ class ContactSystem:
     umkehr_winkel = False
     gleit_toleranz = 1.0e-6
     #: Reibung mit konsistenter Tangente (REIBUNGSTANGENTE oben): der Loeser setzt
-    #: beides je Lauf aus den Einstellungen; aus rechnet alles wie bisher
-    reibungstangente = False
+    #: beides je Lauf aus den Einstellungen; Vorgabe an seit dem 15.10.2026 (aus: das
+    #: bisherige Verfahren, nur zum Vergleich)
+    reibungstangente = True
     haft_faktor = HAFT_FAKTOR
 
     def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None,
@@ -2794,6 +2799,20 @@ class ContactSystem:
         self.f_ref = max(abs(f_ref), 1e-30)
 
     def update(self, u: np.ndarray, lam=None) -> bool:
+        """Wie :meth:`_update_entscheiden`, dazu der Deckel ueber **alle** Runden des
+        Laufs (MAX_CYCLES, seit dem 15.10.2026): soll die Iteration weiterlaufen und hat
+        der Lauf schon MAX_CYCLES Runden, endet er am Deckel - mit der Zeile im
+        Protokoll und ``am_deckel``, also nicht konvergiert und das Ergebnis vorlaeufig."""
+        weiter = self._update_entscheiden(u, lam)
+        n = len(getattr(self, "runden", None) or [])
+        if weiter and n >= MAX_CYCLES:
+            self.log.append("Kontakt: Nachpruefung der Reibung nach "
+                            f"{MAX_CYCLES} Runden abgebrochen" + self.runden_text(MAX_CYCLES))
+            self.am_deckel = True
+            return False
+        return weiter
+
+    def _update_entscheiden(self, u: np.ndarray, lam=None) -> bool:
         """Zustaende aus der Loesung u (und den Multiplikatoren lam der exakten
         Bedingungen, system_matrizen) aktualisieren. Rueckgabe: True, solange
         weiter iteriert werden muss.
@@ -2867,7 +2886,7 @@ class ContactSystem:
             # dieselbe Zeile - Oeffnen/Schliessen in Fugen und neues Gleiten
             # verlangen verschiedene Abhilfen (22.09.2026)
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
-                            f"{MAX_CYCLES} Zustandswechseln abgebrochen"
+                            f"{MAX_CYCLES} Runden abgebrochen"
                             + self.runden_text(self.cycles))
             self.am_deckel = True
             return False

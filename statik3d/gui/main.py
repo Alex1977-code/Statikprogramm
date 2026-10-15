@@ -14286,11 +14286,50 @@ class MainWindow(QtWidgets.QMainWindow):
             t = info.get("time") or info.get("dauer")
             zustand = "berechnet" + (f" · {float(t):.1f} s" if t else "")
             art = "gut"
+            if self._vorlaeufige_faelle():
+                # ein Kontaktlauf am Deckel oder nicht konvergiert (15.10.2026): das
+                # steht nicht nur in der Zusammenfassung, sondern sichtbar oben
+                zustand, art = zustand + " · vorläufig", "warn"
         elif self.results is not None:
             zustand, art = "Ergebnis vorhanden", "gut"
         else:
             zustand, art = "bereit", "matt"
         self.kopf.setzen(f"{modellteil} – Statik3D {ver}", modell, zustand, art)
+
+    def _vorlaeufige_faelle(self) -> list:
+        """[(Name, Kennzeichnung)] der Ergebnisse, deren Kontakt nicht konvergiert ist
+        (solver.kontakt_vorlaeufig) - der Analyse oder des einzelnen Ergebnisses."""
+        if self.analysis is not None:
+            try:
+                ergebnisse = list(self.analysis.all_results().items())
+            except Exception:                 # noqa: BLE001 - die Anzeige darf nie scheitern
+                ergebnisse = []
+        elif self.results is not None:
+            ergebnisse = [(getattr(self.results, "name", ""), self.results)]
+        else:
+            ergebnisse = []
+        aus = []
+        for name, r in ergebnisse:
+            try:
+                text = solver.kontakt_vorlaeufig(getattr(r, "info", None) or {})
+            except Exception:                 # noqa: BLE001
+                text = ""
+            if text:
+                aus.append((str(name), text))
+        return aus
+
+    def _vorlaeufig_melden(self) -> str:
+        """Nach der Rechnung in die Statuszeile (und das Protokoll): welche Ergebnisse
+        vorlaeufig sind, weil ein Kontaktlauf am Deckel endete oder nicht konvergierte.
+        Rueckgabe der Text ("" ohne solche)."""
+        faelle = self._vorlaeufige_faelle()
+        if not faelle:
+            return ""
+        namen = ", ".join(n for n, _t in faelle[:6]) + (" …" if len(faelle) > 6 else "")
+        text = (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
+                "Zusammenfassung und Bericht nennen die Stellen")
+        self.info(text)
+        return text
 
     def _baum_neu_beginnen(self):
         """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
@@ -17393,16 +17432,24 @@ class MainWindow(QtWidgets.QMainWindow):
             "Verriegeln trägt jeder Stab F_soll bzw. P₀ abzüglich Schlupf, gleich wie viele Stufen.")
         gkl.addWidget(row("Spannschritt in", self.sp_spannstufen))
         # Reibung mit konsistenter Tangente (15.10.2026, Plastizitaet.reibungstangente,
-        # haft_faktor): Schalter und Haftsteifigkeit relativ zur Knotensteifigkeit
-        self.cb_reibungstangente = QtWidgets.QCheckBox("Reibung mit konsistenter Tangente")
-        self.cb_reibungstangente.setToolTip(
-            "Jeder Reibknoten (Fuge oder Lager mit μ an einer starren Normalbedingung) rechnet in jeder "
-            "Runde das Coulomb-Gesetz aus seinem Weg und seiner Normalkraft: Haften, solange die Haftkraft "
-            "k_h·Weg unter μ·p bleibt, sonst Gleiten mit μ·p in Richtung des Wegs. Die Runde danach wird "
-            "mit der passenden Ableitung gerechnet (Newton) - Haften symmetrisch, Gleiten mit der "
-            "Ableitung nach Richtung und Normalkraft (unsymmetrisch). Die Normalbedingung bleibt exakt.\n\n"
-            "Aus (Vorgabe bis zur Abnahme am Drehlager): wie bis zum 15.10.2026 - Haften exakt, "
-            "Gleitrichtungen als Fixpunkt mit Pendelschutz.")
+        # haft_faktor): Verfahren und Haftsteifigkeit relativ zur Knotensteifigkeit. Das
+        # bisherige Verfahren gibt es seit der Abnahme am Drehlager nur noch zum Vergleich
+        self.cb_reibverfahren = QtWidgets.QComboBox()
+        self.cb_reibverfahren.addItem("konsistente Tangente (Vorgabe)", True)
+        self.cb_reibverfahren.addItem("bisheriges Verfahren (nur zum Vergleich)", False)
+        self.cb_reibverfahren.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_reibverfahren.setMinimumContentsLength(20)
+        self.cb_reibverfahren.setToolTip(
+            "Konsistente Tangente (Vorgabe seit 15.10.2026): Jeder Reibknoten (Fuge oder Lager mit μ an "
+            "einer starren Normalbedingung) rechnet in jeder Runde das Coulomb-Gesetz aus seinem Weg und "
+            "seiner Normalkraft: Haften, solange die Haftkraft k_h·Weg unter μ·p bleibt, sonst Gleiten mit "
+            "μ·p in Richtung des Wegs. Die Runde danach wird mit der passenden Ableitung gerechnet (Newton) - "
+            "Haften symmetrisch, Gleiten mit der Ableitung nach Richtung und Normalkraft (unsymmetrisch). "
+            "Die Normalbedingung bleibt exakt.\n\n"
+            "Bisheriges Verfahren (nur zum Vergleich): wie bis zum 15.10.2026 - Haften exakt, "
+            "Gleitrichtungen als Fixpunkt mit Pendelschutz. Am Drehlager endeten damit die Kontaktläufe "
+            "der plastischen Phase am Deckel.")
         self.sp_haft_faktor = QtWidgets.QDoubleSpinBox()
         self.sp_haft_faktor.setRange(1.0, 1.0e6)
         self.sp_haft_faktor.setDecimals(0)
@@ -17414,7 +17461,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Steifigkeitsmatrix, also der angrenzenden Elemente) - auch an starren Lagern, die keine "
             "Gegenseite haben. Beim Haften gibt der Knoten um F_t/k_h nach; je größer der Faktor, desto "
             "näher am starren Haften. Vorgabe 1000.")
-        gkl.addWidget(self.cb_reibungstangente)
+        gkl.addWidget(row("Reibung", self.cb_reibverfahren))
         gkl.addWidget(row("Haftsteifigkeit", self.sp_haft_faktor))
         lay.addWidget(gk)
 
@@ -24686,8 +24733,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sp_pendel_weg.setValue(float(getattr(pz, "pendel_weg", 1e-6)) * 1e6)
         if hasattr(self, "sp_spannstufen"):
             self.sp_spannstufen.setValue(int(getattr(pz, "spannstufen", 0) or 0))
-        if hasattr(self, "cb_reibungstangente"):
-            self.cb_reibungstangente.setChecked(bool(getattr(pz, "reibungstangente", False)))
+        if hasattr(self, "cb_reibverfahren"):
+            self.cb_reibverfahren.setCurrentIndex(0 if bool(getattr(pz, "reibungstangente", True)) else 1)
             self.sp_haft_faktor.setValue(float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3))
 
     def _plast_uebernehmen(self):
@@ -24725,8 +24772,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pz.pendel_weg = alt_w if round(alt_w * 1e6, 2) == round(w_ * 1e6, 2) else w_
         if hasattr(self, "sp_spannstufen"):
             pz.spannstufen = int(self.sp_spannstufen.value())
-        if hasattr(self, "cb_reibungstangente"):
-            pz.reibungstangente = bool(self.cb_reibungstangente.isChecked())
+        if hasattr(self, "cb_reibverfahren"):
+            pz.reibungstangente = bool(self.cb_reibverfahren.currentData())
             # gerundet wie angezeigt (ganze Zahl): sonst meldete schon das Oeffnen eine Aenderung
             alt_f = float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3)
             f_ = float(self.sp_haft_faktor.value())
@@ -25667,6 +25714,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # nach Eigenformen und Knicken bleibt die Analyse dieselbe - die
             # Sammelzeile stuende sonst nach jeder solchen Rechnung erneut da
             self._nachweise_melden()
+            self._vorlaeufig_melden()
 
     def _bewegungen_melden(self):
         """Freie Bewegungen aus der Rechnung ins Protokoll und in die Statuszeile."""

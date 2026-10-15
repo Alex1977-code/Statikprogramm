@@ -9223,7 +9223,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                  "Kontakt: Pendelschutz der Gleitrichtung - an festgehaltenen Knoten wirkt die Reibkraft "
                  "der Bewegung nicht entgegen, das Ergebnis ist nicht auskonvergiert"
                  if gleit_verletzt else
-                 f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Zustandswechseln "
+                 f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Runden "
                  "abgebrochen - das Ergebnis ist nicht auskonvergiert"
                  if deckel else
                  f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert"))

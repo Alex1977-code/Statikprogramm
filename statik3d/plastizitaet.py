@@ -341,9 +341,11 @@ class Plastizitaet:
     #: rechnet je Runde die Rueckabbildung des Coulomb-Gesetzes und wird konsistent
     #: linearisiert (semiglatter Newton) - Haften als Feder k_h, symmetrisch; Gleiten mit
     #: der Ableitung von mu p t/|t| nach u (unsymmetrisch, nur mit gleitenden Knoten).
-    #: Gilt fuer jeden Kontaktlauf, auch ohne Fliessen. Vorgabe aus, bis die Abnahme am
-    #: Drehlager besteht.
-    reibungstangente: bool = False
+    #: Gilt fuer jeden Kontaktlauf, auch ohne Fliessen. Vorgabe an seit der Abnahme am
+    #: Drehlager (15.10.2026, E0-neu mit mu 0,1: nicht vorlaeufig, 11 Kontaktlaeufe mit 19
+    #: Runden, keiner am Deckel, 26 min; ohne Tangente in 5,3 h nur bis 68,75 % der Last,
+    #: alle Laeufe am Deckel). False ist das bisherige Verfahren, nur noch zum Vergleich.
+    reibungstangente: bool = True
     #: Haftfeder k_h der Reibungstangente als Vielfaches der Diagonalsteifigkeit des
     #: Knotens (Steifigkeit der angrenzenden Elemente; an starren Lagern dieselbe, denn
     #: dort gibt es keine Gegenseite). Je groesser, desto naeher am starren Haften: der
@@ -357,7 +359,7 @@ class Plastizitaet:
                  "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
                  "spannung_zuerst": True, "ausfall_warm": True}
     #: ... und am 15.10.2026 (Reibungstangente), ebenso
-    NEU_15_10 = {"reibungstangente": False, "haft_faktor": 1.0e3}
+    NEU_15_10 = {"reibungstangente": True, "haft_faktor": 1.0e3}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,

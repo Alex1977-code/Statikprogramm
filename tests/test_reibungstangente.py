@@ -181,40 +181,96 @@ def test_einstellungen():
     from statik3d.model import NEUE_FELDER
     from statik3d.plastizitaet import Plastizitaet
     pz = Plastizitaet()
-    check("Vorgabe: Reibungstangente aus (bis zur Abnahme am Drehlager), Haftfaktor 1000",
-          getattr(pz, "reibungstangente", None) is False and getattr(pz, "haft_faktor", None) == 1000.0
-          and contact.HAFT_FAKTOR == 1000.0,
-          f"{getattr(pz, 'reibungstangente', None)}, {getattr(pz, 'haft_faktor', None)}")
+    check("Vorgabe (seit der Abnahme am Drehlager, 15.10.2026): Reibungstangente an, Haftfaktor 1000",
+          getattr(pz, "reibungstangente", None) is True and getattr(pz, "haft_faktor", None) == 1000.0
+          and contact.HAFT_FAKTOR == 1000.0 and contact.ContactSystem.reibungstangente is True,
+          f"{getattr(pz, 'reibungstangente', None)}, {getattr(pz, 'haft_faktor', None)}, Klasse "
+          f"{contact.ContactSystem.reibungstangente}")
     vg = NEUE_FELDER.get("plastizitaet", {})
-    check("in NEUE_FELDER mit der Vorgabe (alte Ergebnisdateien passen weiter)",
-          vg.get("reibungstangente", None) is False and vg.get("haft_faktor") == 1000.0, str(sorted(vg)))
+    check("in NEUE_FELDER mit der Vorgabe (an)",
+          vg.get("reibungstangente", None) is True and vg.get("haft_faktor") == 1000.0, str(sorted(vg)))
     m = Model("x")
     d0 = m.to_dict()["plastizitaet"]
     check("mit der Vorgabe nicht in der Datei", "reibungstangente" not in d0 and "haft_faktor" not in d0,
           str(sorted(d0)))
-    m.plastizitaet.reibungstangente, m.plastizitaet.haft_faktor = True, 250.0
+    an0, f0 = solver.reibungstangente(Model.from_dict(m.to_dict()))
+    check("ältere Datei ohne den Schlüssel rechnet mit der Vorgabe (Tangente)", an0 is True and f0 == 1000.0,
+          f"{an0}, {f0}")
+    m.plastizitaet.reibungstangente, m.plastizitaet.haft_faktor = False, 250.0
     m2 = Model.from_dict(m.to_dict())
-    check("gespeichert und geladen",
+    check("bisheriges Verfahren gespeichert und geladen",
           (getattr(m2.plastizitaet, "reibungstangente", None), getattr(m2.plastizitaet, "haft_faktor", None))
-          == (True, 250.0))
+          == (False, 250.0) and m.to_dict()["plastizitaet"].get("reibungstangente") is False)
     an, f = solver.reibungstangente(m2)
-    check("der Löser liest beide (solver.reibungstangente)", an is True and f == 250.0, f"{an}, {f}")
+    check("der Löser liest beide (solver.reibungstangente)", an is False and f == 250.0, f"{an}, {f}")
     from tests import test_fehler_p15 as p15
     w, _app = p15._fenster()
-    if not hasattr(w, "cb_reibungstangente"):
-        check("Maske Berechnung: Schalter und Haftsteifigkeit in der Gruppe „Kontaktlauf“", False, "keine Felder")
+    if not hasattr(w, "cb_reibverfahren"):
+        check("Maske Berechnung: Verfahren der Reibung und Haftsteifigkeit in der Gruppe „Kontaktlauf“", False,
+              "keine Felder")
         return
-    w.model.plastizitaet.reibungstangente, w.model.plastizitaet.haft_faktor = True, 250.0
+    texte = [w.cb_reibverfahren.itemText(i) for i in range(w.cb_reibverfahren.count())]
+    check("Maske: zwei Verfahren, das bisherige als „nur zum Vergleich“ bezeichnet",
+          len(texte) == 2 and "Vorgabe" in texte[0] and "bisheriges Verfahren (nur zum Vergleich)" in texte[1],
+          str(texte))
+    w.model.plastizitaet.reibungstangente, w.model.plastizitaet.haft_faktor = False, 250.0
     w._plast_anzeigen()
     check("Maske Berechnung zeigt beide Werte",
-          w.cb_reibungstangente.isChecked() and abs(w.sp_haft_faktor.value() - 250.0) < 1e-9,
-          f"{w.cb_reibungstangente.isChecked()}, {w.sp_haft_faktor.value()}")
-    w.cb_reibungstangente.setChecked(False)
+          w.cb_reibverfahren.currentData() is False and abs(w.sp_haft_faktor.value() - 250.0) < 1e-9,
+          f"{w.cb_reibverfahren.currentText()}, {w.sp_haft_faktor.value()}")
+    w.cb_reibverfahren.setCurrentIndex(0)
     w.sp_haft_faktor.setValue(40.0)
     w._plast_schreiben(w.model.plastizitaet)
     check("… und schreibt sie ins Modell",
-          w.model.plastizitaet.reibungstangente is False and w.model.plastizitaet.haft_faktor == 40.0,
+          w.model.plastizitaet.reibungstangente is True and w.model.plastizitaet.haft_faktor == 40.0,
           f"{w.model.plastizitaet.reibungstangente}, {w.model.plastizitaet.haft_faktor}")
+
+
+def test_gleichgewicht_alter_weg():
+    print("\n--- Globale Gleichgewichtskontrolle am Klotz des bisherigen Verfahrens ---")
+    m0, _u0, _e0 = klotz((1.5,), rt=False)
+    r0 = solver.solve_static(m0, case="F1.5")
+    g0 = solver.gueltigkeit(r0.info)
+    zs = [z for z in r0.summary().splitlines() if "NICHT GÜLTIG" in z]
+    check("bisheriges Verfahren, F = 1,5 mu N: ΣF 4,8 % -> „NICHT gültig“, auch in der Zusammenfassung",
+          g0.startswith("NICHT gültig") and _gg(r0) > 1e-2 and len(zs) == 1,
+          f"rel_F {_gg(r0):.3g}; {g0[:90]}")
+    m1, _u1, _e1 = klotz((1.5,), rt=True)
+    r1 = solver.solve_static(m1, case="F1.5")
+    check("mit der Tangente: gültig", solver.gueltigkeit(r1.info) == "" and _gg(r1) < 1e-6, f"rel_F {_gg(r1):.1e}")
+
+
+def test_deckel_alle_runden():
+    print("\n--- Deckel: alle Runden zählen, ein Lauf am Deckel ist vorläufig ---")
+    from statik3d.examples_lib import block_friction_example
+    alt = contact.MAX_CYCLES
+    contact.MAX_CYCLES = 3
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        contact.MAX_CYCLES = alt
+    gruende = [e.get("grund") for e in r.info.get("laeufe") or []]
+    zeile = [z for z in r.info.get("contact_log") or [] if "nach 3 Runden abgebrochen" in z]
+    vorl = solver.kontakt_vorlaeufig(r.info)
+    check("Deckel 3: nach 3 Runden am Deckel (auch ohne Zustandswechsel), Zeile im Protokoll",
+          "deckel" in gruende and len(zeile) >= 1 and r.info.get("contact_iterations", 0) <= 3,
+          f"Gründe {gruende}, Runden {r.info.get('contact_iterations')}, Zeile {zeile[:1]}")
+    zs = [z for z in r.summary().splitlines() if "vorläufig" in z]
+    check("… das Ergebnis ist vorläufig (Kennzeichnung und Zusammenfassung)",
+          bool(vorl) and (r.info.get("vorlaeufig") or {}).get("text") == vorl and bool(zs), f"{vorl!r}; {zs[:1]}")
+    from tests import test_fehler_p15 as p15
+    w, _app = p15._fenster()
+    w.analysis = solver.Analysis(w.model, cases={"LF1": r})
+    w._refresh_kopf()
+    kopf = w.kopf.marke_zustand.text()
+    check("Kopfzeile der Ergebnisanzeige: „vorläufig“", "vorläufig" in kopf, kopf)
+    melde = getattr(w, "_vorlaeufig_melden", None)
+    text = melde() if melde else ""
+    check("Statuszeile nach der Rechnung nennt den vorläufigen Lastfall",
+          "vorläufig" in (text or "") and "LF1" in (text or "")
+          and "vorläufig" in w.statusBar().currentMessage(), f"{text!r}")
+    w.analysis = None
+    w._refresh_kopf()
 
 
 def test_klotz():
@@ -408,7 +464,8 @@ def test_reibungsfrei_bitgleich():
 
 
 def main() -> int:
-    for t in (test_einstellungen, test_klotz, test_lastgeschichte_dissipation, test_blechpaket,
+    for t in (test_einstellungen, test_gleichgewicht_alter_weg, test_deckel_alle_runden,
+              test_klotz, test_lastgeschichte_dissipation, test_blechpaket,
               test_konvergenzrate, test_symmetrie, test_reibungsfrei_bitgleich):
         try:
             t()
