@@ -138,12 +138,10 @@ def test_vorlaeufig_nach_oeffnen():
 
 def test_moeglicherweise_betroffen():
     print("\n--- möglicherweise betroffen (Fehlerkorrektur Deckel) nach dem Öffnen ---")
-    from statik3d import ergebnisse as erg, rechenverfahren as rv, solver
-    from statik3d.examples_lib import block_friction_example
+    from statik3d import ergebnisse as erg, rechenverfahren as rv
     from statik3d.report.html import Report
     w, app = _fenster()
-    m = block_friction_example()
-    an = solver.solve_all(m, design=False)
+    m, an = _F["alt"]
     p = os.path.join(tempfile.mkdtemp(prefix="status_ob_"), "block_alt.json")
     m.save(p)
     erg.schreiben(erg.pfad_zu(p), m, an)
@@ -181,6 +179,13 @@ def test_moeglicherweise_betroffen():
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
+    # das Ergebnis fuer „möglicherweise betroffen“ vor dem Fenster rechnen: auf dem Desktop
+    # hing die Zerlegung (PARDISO) einer Rechnung im Oberflaechen-Faden, nachdem die
+    # Hintergrundrechnung des ersten Teils gelaufen war (16.10.2026, Spur im Bericht)
+    from statik3d import solver
+    from statik3d.examples_lib import block_friction_example
+    m = block_friction_example()
+    _F["alt"] = (m, solver.solve_all(m, design=False))
     for t in (test_vorlaeufig_nach_rechnung, test_vorlaeufig_nach_oeffnen, test_moeglicherweise_betroffen):
         print(f"\n--- {t.__name__} ---")
         try:
