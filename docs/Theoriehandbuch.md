@@ -790,7 +790,14 @@ Ordnung) wirkt die Vorspannkraft seit dem 10.10.2026 ab der ersten Stufe voll
 wie eine Temperaturlast (§ 5e, „Temperaturlasten und Vorspannkräfte sofort
 voll“).
 
-### Vorspannkraft (Soll nach Verankerung): Spannen, Verriegeln, Lasten (seit 13.10.2026)
+### Endvorspannung (bleibend nach dem Verankern): Spannen, Verriegeln, Lasten (seit 13.10.2026)
+
+Bis zum 14.10.2026 hieß die Lastart „Vorspannkraft (Soll nach Verankerung)“.
+Seither heißt sie nach dem Wunsch des Anwenders („vllt sollte man das
+Anfangsvorspannung und Endvorspannung nennen mit erklärung“) „Endvorspannung
+(bleibend nach dem Verankern)“: die Kraft, die nach dem Verankern im Stab
+verbleibt, vor den äußeren Lasten. Daneben steht die Anfangsvorspannung
+(Pressenkraft P₀) mit Verankerungsschlupf, siehe unten.
 
 Mit der Anfangsdehnung trägt ein Stab nicht F_v, sondern F_v minus die
 elastische Verkürzung seiner Umgebung: zwischen Anker (Steifigkeit k_A) und
@@ -889,9 +896,72 @@ ihrer Behebung rechnen dieselbe eingeprägte Kraft nach Theorie II. Ordnung
 F_soll nach dem Verankern trifft erst ein Spannschritt nach Theorie II./III.
 Ordnung; die Sperre bleibt.
 
-**Import.** Die RFEM-Anfangsvorspannung bleibt eine Abkühlung. Der Hinweis
-„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
-Sollkraft umwandeln?“ rechnet X linear über die Einflussmatrix (X = A·N₀),
+**Anfangsvorspannung (Pressenkraft P₀) mit Verankerungsschlupf (seit
+14.10.2026).** Vorgabe des Anwenders: „Bitte im Spannschritt wahlweise
+„Pressenkraft + Verankerungsschlupf (mm)“ ermöglichen und getrennt nachweisen“.
+`Vorspannung.kraftart` = "presse", `kraft` = P₀, `schlupf` = Δs [m]; beide
+Felder stehen in `model.NEUE_FELDER` mit den Vorgaben "" und 0,0 und nur bei
+einer Abweichung in der Datei. Im Spannschritt wirkt paar(P₀), N_spannen = P₀.
+Der Schlupf vergrößert die spannungsfreie Länge des Stabs um Δs; gegen starre
+Umgebung sinkt N um k_A·Δs mit 1/k_A = Σ L_i/(E_i·A_i) (dazu Längsfedern der
+Gelenke) über die Elemente des Stabs. L ist die Stablänge zwischen den
+Ankerpunkten, dieselbe, mit der die Stabsteifigkeit rechnet: nur dann ist die
+eingeprägte Kraft −k_A·Δs genau eine Verlängerung um Δs. Eine davon
+abweichende „freie Länge“ gäbe zu derselben Kraft einen anderen Weg und wäre
+nicht mehr der Stab im Modell; wer eine Verbundlänge ausnehmen will, lässt sie
+im Modell weg. Verriegelt wird darum auf
+
+    P_e = (P₀ − k_A·Δs) − N_el(u_S)   je Element.
+
+u_S ist dann kein Gleichgewicht mehr (Restkraft paar(k_A·Δs)), die Umgebung
+federt zurück. Zwischen Anker k_A und Klemmteil k_K:
+
+    N_verankert = P₀ − k_A·Δs · k_K/(k_A + k_K)
+
+(Federverteilung; mit starrer Umgebung P₀ − k_A·Δs). **Linear** ist der
+Schlupf eine eingeprägte Kraft −k_A·Δs, und die Einflussmatrix verteilt ihn:
+P = A⁻¹·P₀ − k∘Δs, N_verankert = A·P = P₀ − A·(k∘Δs). **Nichtlinear** folgt
+nach dem letzten Spannschritt, wenn dessen Gruppe einen Schlupf hat, ein
+Verankerungsschritt am System des Lastfalls (alle Stäbe wirksam) mit F_lock,
+Kontakt und Plastizität vom Spannzustand aus; sein Gleichgewicht ist der
+Zustand „verankert“, und der Lastfall beginnt dort. Frühere Gruppen gleicht der
+nächste Spannschritt ohnehin aus, ihre Restkraft steckt in F_lock. Reihenweise
+mit zwei Ankern (k_1, k_2, Gruppen 1 und 2):
+
+    N_1 = P₀₁ − k_1·Δs_1·k_K/(k_1 + k_K) − k_1·P₀₂/(k_1 + k_K) + k_1·k_2·Δs_2/Σk
+    N_2 = P₀₂ − k_2·Δs_2·(k_1 + k_K)/Σk
+
+Gemessen (`tests/test_vorspannung_presse.py`, E = 210 000 N/mm², L = 1 m,
+k_A = 210 kN/mm, k_K = 840 kN/mm, P₀ = 500 kN, Δs = 0,5 mm): N_verankert =
+416 kN linear, über Spannen und Verriegeln und mit Spaltelement, jeweils auf
+10⁻⁹ genau; mit 200 kN Zug am Kopf 456 kN; zwei Anker gleichzeitig und
+reihenweise wie die Formeln, linear und nichtlinear. Ohne Schlupf rechnet die
+Anfangsvorspannung Zahl für Zahl wie die Endvorspannung mit F_soll = P₀, und
+die Endvorspannung behält ihre Einträge im Ergebnis (keine neuen Schlüssel).
+
+**Import.** Die RFEM-Vorspannung bleibt eine eingeprägte Dehnung (Abkühlung);
+bis zum 14.10.2026 hieß sie hier „RFEM-Anfangsvorspannung“. Seit dem
+15.10.2026 (Nachtrag des Anwenders: „beim import des modells und der
+lastfälle einen hinweis an den user, dass der wert von rfem übernommen wurde
+und in statik3d zu prüfen und ggf anzupassen ist“) gibt der Import je
+Vorspannungswert N₀ einen Hinweis „Vorspannung N₀ an <Stäbe> in n Lastfällen
+aus RFEM übernommen (als eingeprägte Dehnung, E, α; X) – in Statik3D prüfen
+und ggf. als Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“
+(`vorspannkraft.rfem_hinweis_text`). Er steht als Importhinweis am Modell
+(mit Stäben, Lastfällen, Umrechnung und X), beim Öffnen im Protokoll
+(`vorspannung_ladehinweise`, aus den gespeicherten Feldern neu gesetzt, die
+Datei bleibt), und `rfem_pruefen` nennt die Lastfälle, in denen die
+Vorspannung noch als eingeprägte Dehnung steht (Vermerk in Lastfallmaske und
+Lasttabelle). Bei einem Modell, das vor dem 13.10.2026 übernommen wurde (Quelle
+.rf6, kein Importhinweis zur Vorspannung), leitet `abgeleitete_hinweise` beim
+Öffnen dieselben Hinweise aus den ΔT-Lasten an Zug- und Seilstäben ab
+(`TempLoad.vorspann_werte`, N = E·A·α·(−ΔT)), je Wert gebündelt, mit „aus ΔT
+abgeleitet“ in der Klammer und ohne X; sie hängen nur am geöffneten Modell
+(`_rfem_hinweise_abgeleitet`), die Datei bleibt. Bis zum 15.10.2026 hieß der Hinweis „Vorspannung als eingeprägte
+Dehnung (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in
+Endvorspannung umwandeln?“, bis zum 14.10.2026 „Anfangsvorspannung 952 kN
+ergibt … – in Sollkraft umwandeln?“. X rechnet das Programm
+linear über die Einflussmatrix (X = A·N₀),
 wenn das Modell keinen Kontakt hat, vernetzt und höchstens 300 000 FHG groß
 ist. Am Drehlager nicht: eine Zerlegung kostete im Lauf vom 09.10.2026 135
 bis 165 s und 31,8 GB (2 604 134 Zeilen, 4,0·10⁹ Nichtnullen im Faktor), und
@@ -2064,6 +2134,108 @@ Block auf der Platte mit Kippen lief mit ihr um das 230-Fache davon). Der
 Gleichungslöser ama scheitert am Sattelpunkt des Stempels auf Sockel schon in
 der ersten Kontaktrunde - vorbestehend, auch am Stand ec3b464.
 
+**Reibung mit konsistenter Tangente (seit 15.10.2026, `contact.REIBUNGSTANGENTE`,
+Schalter `Plastizitaet.reibungstangente`, Vorgabe an seit der Abnahme am Drehlager;
+aus ist das bisherige Verfahren, nur zum Vergleich).** Eingeschaltet rechnet jeder
+Reibknoten an einer exakten Normalbedingung (starr, aktiv, nicht fließend, keine
+Hilfe des Lösers) in beiden Phasen die Rückabbildung (Return-Mapping) des
+Coulomb-Gesetzes. Mit dem Weg d_t = C_t·u in der Fugenebene, der Normalkraft p
+(Multiplikator der Normalzeile) und der Haftfeder k_h = f_h·k_d (k_d die größte
+Diagonale der Verschiebungsfreiheitsgrade des Knotens, f_h = `haft_faktor`, Vorgabe
+1 000) ist
+
+* Versuchskraft f = k_h·d_t; |f| ≤ μ·p: **Haften**, F_t = f, Tangente k_h·I
+  (symmetrisch);
+* sonst **Gleiten**, F_t = μ·p·t mit t = d_t/|d_t|. Die konsistente Ableitung ist
+  ∂F_t/∂d_t = μ·p/|d_t|·(I − t·tᵀ) quer zur Gleitrichtung (in K_c, symmetrisch) und
+  ∂F_t/∂p = μ·t, im Sattelpunkt die Spalte −μ·t am Multiplikator der Normalzeile
+  (`D_kopplung`, wie bei der Reibung primal-dual). Das System ist nur mit gleitenden
+  Knoten unsymmetrisch. Längs t ist die Tangente null (die Reibkraft hängt nicht vom
+  Gleitweg ab); eine Reststeifigkeit 10⁻⁸·k_d mit Ausgleich auf den Weg seit dem
+  letzten Zustand hält das System regulär, ihre Kraft steht im Residuum.
+
+Linearisiert um den letzten Zustand ist die Kraft eines gleitenden Knotens
+μ·p·t + μ·p/|d_t,k|·(I − t tᵀ)(d_t − d_t,k) + μ·t·(p − p_k); weil d_t,k parallel zu t
+ist, bleibt im Lastvektor nichts übrig. Die Tangente (Richtung und Quersteifigkeit)
+wird nur nachgeführt, wenn sich die Richtung um mehr als 10⁻² dreht oder die
+Quersteifigkeit um mehr als die Hälfte ändert (`RT_MATRIX_TOL`, `RT_KQUER_TOL`);
+darunter rechnet die Runde mit der alten Matrix weiter und die Abweichung der Kraft
+steht im Lastvektor. Residuum je Knoten ist |F_t,Rückabbildung(u) − F_t,linearisiert(u)|;
+die Summe geht in das Laufresiduum (`RESIDUUM_ANTEIL` 10⁻⁶ der Kontaktkraft). Ohne
+Statuswechsel, aber mit offenem Residuum zählt die Runde in Phase 1 als Wechsel und in
+Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Der
+Weg ist wie bisher der gesamte Weg des Lastfalls (ohne Lastgeschichte): Haften heißt
+an der Ausgangslage, bis auf f/k_h.
+
+Umkehr (`RT_UMKEHR`): dreht t von einer Runde zur nächsten um mehr als 90°, rechnet die
+nächste Runde den Knoten mit der Haftfeder. Ohne die Regel lief der gequetschte Block
+in eine Periode 2: längs t hat die Tangente keine Steifigkeit, und gleiten alle
+Knoten, die den Block in x halten, springt die Lösung über das Haften hinweg auf die
+Gegenseite (Mittelknoten ±9 bis 14 µm je Runde, jeder Lauf bis `max_iter`, 18 600
+Runden). Verworfen (gemessen 15.10.2026): statt des Haftens nach der Umkehr eine
+Längssteifigkeit μ·p/|d_t| um den letzten Zustand – jeder Lauf des gequetschten
+Blocks endete an `max_iter`.
+
+Wechselt in einer Runde nur die Reibungstangente (Haften/Gleiten oder ein offener Rest),
+geht es aus Phase 1 in Phase 2 weiter, wo Deckel, Pendeln mit Periode 2 und
+Ingenieurkriterium wirken. Ohne das pendelte der Block mit Anschlag (tet4,
+`tests/test_kontakt_pendeln`) in Phase 1 zwischen Haften und Gleiten bis `max_iter`
+(120 Runden): dort bestimmt der Löser je Runde neu, welche ganz gleitenden Gruppen
+anderswo gehalten sind, und ein einzelner Lagerknoten bekam abwechselnd die grobe und
+die feine Reststeifigkeit; jetzt 6 Runden.
+
+Gemessen (Faktor 1 000, `tests/test_reibungstangente`, Vergleich mit dem Stand
+9fb56e5): Runden je Rechnung Block mit Reibung 29 → 6, Stempel auf Sockel 14 → 7
+(plastisch 61 → 30), Platte mit Ankern wie das Drehlager (plastisch) 66 → 21
+(Zerlegungen 25 → 16), Block nahe der Grenzlast 136 → 34, kippender Stempel 76 → 34,
+Block mit Anschlag 13 → 6, Pendelmodell (`tests/test_pendeln_periode2`, linear) 28 → 27,
+mit Fließen 112 → 184;
+größte Abweichung von u 1,4·10⁻⁵ (Platte), Coulomb am Endzustand auf 10⁻³ Grad. Der
+Faktor f_h = 10 / 100 / 1 000 / 10 000 gab an der Platte 1,4·10⁻³ / 1,4·10⁻⁴ /
+1,4·10⁻⁵ / 2,3·10⁻⁶ Abweichung gegen das exakte Haften bei gleicher Rundenzahl.
+Geschlossene Lösungen: Klotz an einer Zugfeder (k_s = 10⁸ N/m) auf einem Lager wie
+„Starr“ haftet bis 0,999·μN und gleitet ab 1,001·μN um (F − μN)/k_s auf 10⁻⁴
+(0,19981 / 50,0004 / 100,0007 / 200,0014 µm, soll 0,2 / 50 / 100 / 200; bei 1,001·μN ist der
+Rest die Schranke, bei der der Lauf endet, 10⁻⁶ der Kontaktkraft über k_s), Blechpaket mit Endvorspannung haftet bis μ·F_v und gleitet
+bei 1,05 / 1,5·μ·F_v um 30,003 / 300,008 µm (soll 30 / 300). Die Reibarbeit
+F_t·Δs (s = d_t − F_t/k_h) ist je Laststufe und Knoten ≥ −10⁻²⁷ J, ihre Summe
+μN·Δs auf 10⁻⁴.
+
+**Befund am Stand davor (15.10.2026).** Am Klotz mit Reibung (steif, E = 2,1·10¹⁴)
+und an den steifen Blechen des Blechpakets trägt bei der primal-dualen Reibung die
+feine Reststeifigkeit gleitender Knoten (10⁻⁸·k_t je Knoten, beim steifen Klotz
+4,3·10⁸ N/m, zusammen 10¹⁰ N/m gegen die Feder 10⁸ N/m) die Kraft: ihr Ausgleich
+kriecht, das Residuum der Reibung kennt ihre Kraft nicht, und der Lauf heißt nach 5
+Runden konvergiert – Gleitweg 1,09 statt 100 µm, Federkraft 0,1 statt 10 kN,
+Gleichgewicht 4,8 % (`gleichgewicht_global` meldet „verletzt“, das Protokoll nicht).
+Am Stahlklotz (E = 2,1·10¹¹) sind es 4,6 N von 10 kN.
+
+**Abnahme am Drehlager (15.10.2026).** E0-neu (Entwurf, μ 0,1) mit der Tangente:
+nicht vorläufig, 11 Kontaktläufe mit 19 Runden, keiner am Deckel, 26 min; mit dem
+bisherigen Verfahren in 5,3 h nur bis 68,75 % der Last, alle Läufe am Deckel. Seitdem
+ist die Tangente die Vorgabe.
+
+**Lastteilung am gequetschten Block (`tests/test_plastizitaet`, 15.10.2026).** Mit
+der Tangente hängt der Zustand bei grober Teilung an der Zahl der Laststufen: 42,130 /
+42,241 / 42,580 / 42,666 mm für 1 / 2 / 4 / 8 Stufen – dieselben Zahlen wie beim am
+28.09.2026 verworfenen „wer sich gegen seine Gleitrichtung bewegt, haftet“. Die
+Verfeinerungsreihe zeigt, dass beide Verfahren gegen denselben Wert gehen: 10 / 20 /
+40 / 80 Stufen geben mit der Tangente 42,698 / 42,765 / 42,796 / 42,812 mm, mit dem
+bisherigen Verfahren 42,708 / 42,765 / 42,796 / 42,812 mm (ab 20 Stufen auf 10⁻⁴ mm
+gleich; mit dem Deckel über alle Runden gibt das bisherige Verfahren für 1 bis 4
+Stufen 42,720 mm statt 42,667 mm). Der Zuwachs halbiert sich je Verdopplung (0,067 /
+0,032 / 0,016 mm), Konvergenz erster Ordnung gegen etwa 42,83 mm; ε_p max 13,06 %,
+ΣFn = 60 MN und |ΣF_t| = 9 MN in jeder Zeile. Der von der Teilung scheinbar
+unabhängige Wert des bisherigen Verfahrens war also nicht der Grenzwert. Runden je
+Rechnung: Tangente 33 / 45 / 115 / 113 / 120 / 202 / 390 / 656, bisher 734 / 706 /
+673 / 500 / 448 / 640 / 1 043 / 1 642. Federn des Anwenders rechnen weiter wie bisher. Gleichungslöser: pypardiso zerlegt jede Matrix
+mit `mtype` 11 (reell unsymmetrisch, mit symmetrisiertem Muster), auch die
+symmetrischen. Die Spalte −μ·t besetzt je gleitendem Knoten seine
+Tangentialfreiheitsgrade in der Spalte seiner Normalzeile; an Fugen stehen dort schon
+die Einträge von Cᵀ, an Lagerknoten (Normalzeile nur auf dem Lager-Freiheitsgrad)
+kommen Einträge dazu (Prüfplatte mit allen 121 Reibknoten gleitend: 105 von 394 538).
+Mit ama (nur symmetrisch) entfällt die Spalte wie bei der Reibung primal-dual.
+
 **Mortar-Gewichte bei ungleichen Netzen (28.09.2026, Prüfmatrix K6,
 `contact.MORTAR`, `statik3d/mortar.py`).** Die Kopplung Knoten gegen Fläche
 projiziert jeden Slave-Knoten auf ein Dreieck der Master-Fläche (Vierecke
@@ -2804,6 +2976,14 @@ Reibung in Phase 2 bricht nach `MAX_CYCLES = 40` Zustandswechseln ab
 bei echter Konvergenz**. `solve_with_contact` las beides als „fertig" und
 setzte `contact_converged` auf wahr; die Warnung stand allein im
 `contact_log`.
+
+Seit dem 15.10.2026 zählt der Deckel **alle** Runden eines Kontaktlaufs
+(`ContactSystem.update` über `_update_entscheiden`, Zahl der Einträge in `runden`),
+nicht mehr nur die Runden mit Zustandswechsel in Phase 2: am Drehlager (G∞, μ 1e6,
+Spannstufe 1) lief ein Lauf sonst 121 Runden bis `max_iter`, ohne Deckelzeile. Die
+Zeile heißt jetzt „Nachpruefung der Reibung nach 40 Runden abgebrochen“; ein solcher
+Lauf ist nicht konvergiert, und das Ergebnis ist vorläufig – auch in der Kopfzeile und
+der Statuszeile der Oberfläche.
 
 Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
 eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
@@ -4646,6 +4826,36 @@ dem Zustand „verankert“; fehlt beides, gilt N_0 ohne Verluste. Mit F = 944,7
 und A = 1 256,6 mm² ergibt sich σ = 751,8 N/mm², das Verhältnis zu σ_p,max =
 751,5 N/mm² ist 1,0004 und zu σ_pm0 = 709,75 N/mm² 1,059 (Prüfung
 `tests.test_spannstahl` am beidseitig festen Stab).
+
+Seit dem 14.10.2026 sind die drei Zustände mit der Anfangsvorspannung
+(Pressenkraft P₀) getrennt: Spannen N_spannen = P₀ gegen σ_p,max, nach dem
+Verankern N_verankert (P₀ minus Schlupf mit Federverteilung und elastische
+Verluste) gegen σ_pm0, Lastzustand N_Ed gegen f_pd. Bei der Endvorspannung ist
+N_spannen = F_soll wie bisher; in der linearen Rechnung über die
+Einflussmatrix steht N_spannen seitdem ebenfalls im Ergebnis. Ohne Ergebnis
+setzt der Nachweis nach dem Verankern P₀ − k_A·Δs an (starre Umgebung, die
+obere Schranke des Verlusts, also die untere der Kraft), mit Vermerk
+(`spannstahl.eingegebene_endvorspannung`). `spannstahl.je_anker` fasst je
+Zustand den ungünstigsten Eintrag zusammen; der Bericht zeigt sie als Tabelle
+„Spannstahl je Anker“. Kontrollzahlen des Anwenders (A = 1 256,64 mm², f_p0,1k
+835, f_pk 1 030 N/mm²), gemessen in `tests.test_vorspannung_presse`: bleibend
+944,7 kN gibt σ = 751,77 N/mm², nach dem Verankern 751,77/709,75 = 1,0592, im
+GZT 751,77/726,09 = 1,0354 (der Anwender rundet auf 1,035), beim Spannen mit
+P₀ = 944,7 kN 1,0004; mit Δs = 1 mm und k_A = 170 000 · 1 256,64 / 3 230 =
+66,14 kN/mm wird P₀ = 1 010,84 kN und beim Spannen 1,0704.
+
+Freie Ankerlänge und Kraftverlust (seit 15.10.2026, `spannstahl.schlupfangaben`,
+Ausgabe `schlupf_zeilen`): L_frei ist die Summe der Elementlängen des Stabs, die
+Länge, mit der `vorspannkraft.k_stab` rechnet (k_A = 1/Σ L_i/(E_i A_i), bei einem
+Querschnitt E·A/L_frei). Der Verlust aus dem Schlupf ist gegen starre Umgebung
+k_A·Δs und mit nachgiebiger Umgebung (Steifigkeit k_K) ΔP = k_A·Δs·k_K/(k_A + k_K).
+Der Nachweis liest ΔP = P₀ − N_verankert aus dem Ergebnis des Spannschritts;
+beim reihenweisen Spannen enthält es auch die elastischen Verluste der übrigen
+Anker. Ohne dieses Ergebnis ist ΔP = k_A·Δs (obere Schranke). Handprobe in
+`tests.test_spannstahl_schlupfanzeige`: k_A = 210 kN/mm, k_K = 840 kN/mm,
+Δs = 0,5 mm gibt ΔP = 84 kN und N_verankert = 416 kN. Das Gewinde eines
+Rundstahls gegen seinen Durchmesser prüft `spannstahl.gewinde_hinweis` (nur ein
+Hinweis).
 
 Überschreitet die Kraft beim Spannen oder nach dem Verankern ihre Grenze,
 schreibt der Nachweis je Zustand eine Zeile „Befund Vorspannung“ mit Kraft,

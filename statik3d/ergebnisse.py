@@ -274,13 +274,21 @@ def _verwendete_namen(model, d: dict) -> set:
     return namen
 
 
-def _bereinigt(schluessel: str, wert, lagernamen: bool):
+def _bereinigt(schluessel: str, wert, lagernamen: bool, frueher: bool = False):
     """Ein Schluessel der Modelldatei ohne seine Anzeigefelder (TEXTFELDER,
-    ANZEIGEFELDER, die Namen der Lager, wenn keine Stellung sie nennt)."""
+    ANZEIGEFELDER, die Namen der Lager, wenn keine Stellung sie nennt).
+    ``frueher``: die Felder aus model.FRUEHERE_VORGABEN fallen bei ihrer
+    frueheren Vorgabe weg, nicht bei der heutigen (rechenkennung)."""
     weg = set(TEXTFELDER) | set(ANZEIGEFELDER.get(schluessel, ()))
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
-    from .model import ist_vorgabe
+    from .model import FRUEHERE_VORGABEN, ist_vorgabe
+    alt = FRUEHERE_VORGABEN.get(schluessel, {}) if frueher else {}
+
+    def ist_vorgabe(s, k, v, _heute=ist_vorgabe):
+        if s == schluessel and k in alt:
+            return v == alt[k] and isinstance(v, bool) == isinstance(alt[k], bool)
+        return _heute(s, k, v)
 
     def objekt(x):
         if not isinstance(x, dict):
@@ -303,7 +311,7 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool):
     return wert
 
 
-def rechenkennung(model) -> tuple:
+def rechenkennung(model, frueher: bool = False) -> tuple:
     """({Gruppe: Hash}, {Lastfall: [Hash Eigenschaften, Hash Lasten]}) - alles,
     was das Ergebnis bestimmt, ausser Knoten und Elementen (eigene Hashes).
 
@@ -311,8 +319,19 @@ def rechenkennung(model) -> tuple:
     das, was nach Speichern und Laden wieder da ist; aus Objektlasten
     abgeleitete Elementlasten etwa stehen nicht darin, sie entstehen beim
     Verteilen neu. Sammlungen mit Namen zaehlen ohne ihre Reihenfolge, Listen
-    (Lager, Kopplungen: ueber die Nummer genannt) mit ihr."""
+    (Lager, Kopplungen: ueber die Nummer genannt) mit ihr.
+
+    ``frueher`` (15.10.2026): die Kennung, wie sie der fruehere Stand mit den
+    Vorgaben aus model.FRUEHERE_VORGABEN schrieb - ein Feld, das heute seine
+    Vorgabe traegt und darum nicht in der Modelldatei steht, zaehlt mit, wenn
+    es von der frueheren Vorgabe abweicht."""
     d = model.to_dict(netz=False)
+    if frueher:
+        from .model import FRUEHERE_VORGABEN, NEUE_FELDER
+        for schluessel, alt in FRUEHERE_VORGABEN.items():
+            if isinstance(d.get(schluessel), dict):
+                d[schluessel] = {**{k: NEUE_FELDER.get(schluessel, {}).get(k) for k in alt},
+                                 **d[schluessel]}
     namen = lagernamen_zaehlen(model)
     verwendet = _verwendete_namen(model, d)
     teile: dict = {g: [] for g in GRUPPEN}
@@ -324,7 +343,7 @@ def rechenkennung(model) -> tuple:
             continue
         if schluessel in _NAMENSSAMMLUNGEN and isinstance(wert, dict):
             wert = {k: v for k, v in wert.items() if k in verwendet}
-        wert = _bereinigt(schluessel, wert, namen)
+        wert = _bereinigt(schluessel, wert, namen, frueher)
         if (isinstance(wert, list) and isinstance(getattr(model, schluessel, None), dict)
                 and all(isinstance(x, dict) for x in wert)):
             wert = sorted(wert, key=lambda x: str(x.get("name", "")))
@@ -413,6 +432,12 @@ def pruefen(k: dict, model) -> tuple:
     """(passt, Grund, fehlt): wie passt, dazu die Teile, die die Kennung
     nicht kennt (_KENNUNGSTEILE) - lesen merkt sie sich, damit Speichern
     ohne neue Rechnung die alte Form behaelt."""
+    return _pruefen(k, model)[:3]
+
+
+def _pruefen(k: dict, model) -> tuple:
+    """(passt, Grund, fehlt, frueher) - ``frueher``: die Rechenangaben passen
+    erst nach den frueheren Vorgaben (model.FRUEHERE_VORGABEN, 15.10.2026)."""
     jetzt = kennung(model)
     if not isinstance(k, dict):
         return False, "keine Kennung", []
@@ -437,6 +462,12 @@ def pruefen(k: dict, model) -> tuple:
     if isinstance(rk, dict) and k.get("rechnung_fassung") == RECHENKENNUNG_FASSUNG:
         anders = [g for g in GRUPPEN if rk.get(g) != jetzt["rechnung"][g]]
         if anders:
+            # gerechnet mit einer frueheren Vorgabe (reibungstangente: true vom
+            # 15.10.2026, als die Vorgabe noch false war): derselbe Wert, der
+            # heute Vorgabe ist, gilt als gleich
+            alt = rechenkennung(model, frueher=True)[0]
+            if all(rk.get(g) == alt[g] for g in GRUPPEN):
+                return True, vorbehalt_text(fehlt), fehlt, True
             return False, "seit der Rechnung geändert: " + ", ".join(_gruppentext(g, k, jetzt) for g in anders), []
     else:
         fehlt.append("rechnung")
@@ -515,12 +546,47 @@ def _entpacken_results(d: dict, model):
     return res
 
 
+#: Reibverfahren in der Ergebnisdatei (15.10.2026), nach
+#: Plastizitaet.reibungstangente
+REIBVERFAHREN = {True: "konsistente Tangente", False: "bisheriges Verfahren"}
+#: Hinweis zu einer Ergebnisdatei ohne Angabe des Reibverfahrens, deren Modell
+#: Reibung hat: geschrieben vor dem 15.10.2026, gerechnet ohne die Tangente
+REIBVERFAHREN_ALT = "gerechnet mit dem bisherigen Reibverfahren – für aktuelle Ergebnisse neu rechnen"
+
+
+def reibverfahren(model) -> str:
+    """Das Reibverfahren, mit dem das Modell rechnet (solver.reibungstangente)."""
+    from .solver import reibungstangente
+    return REIBVERFAHREN[bool(reibungstangente(model)[0])]
+
+
+def modell_hat_reibung(model) -> bool:
+    """Rechnet das Modell mit Reibung? Kontaktpaar, Kontaktlager oder
+    Kontaktelement mit mu > 0, ein Knoten-, Linien- oder Flaechenlager mit
+    Reibbeiwert in einem Freiheitsgrad (wie model.lagerreibung_hinweis)."""
+    for liste in ("contact_pairs", "contact_supports", "gap_elements"):
+        if any(float(getattr(c, "mu", 0.0) or 0.0) > 0.0 for c in getattr(model, liste, None) or []):
+            return True
+    from .model import NDOF
+    for liste in ("supports", "line_supports", "surface_supports"):
+        for s in getattr(model, liste, None) or []:
+            if any(float(s.dof_behaviour(d).mu or 0.0) > 0.0 for d in range(NDOF)):
+                return True
+    return False
+
+
 def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
     """Die Analyse neben das Modell schreiben. Rueckgabe: Bytes."""
     if fortschritt:
         fortschritt(0.05, "Ergebnisse packen")
     inhalt = {"kennung": kennung(model)}
     info = getattr(analysis, "info", None) or {}
+    # das Reibverfahren (15.10.2026): das des Modells - die Kennung haelt die
+    # Einstellung, eine passende Analyse ist damit gerechnet. Aus einer Datei
+    # ohne die Angabe geladen und nicht neu gerechnet: sie bleibt weg, das
+    # naechste Oeffnen sagt den Hinweis wieder (wie kennung_vorbehalt).
+    if not info.get("reibverfahren_vorbehalt"):
+        inhalt["reibverfahren"] = reibverfahren(model)
     if info.get("kennung_vorbehalt"):
         # aus einer Datei mit aelterer Kennung geladen und nicht neu gerechnet
         # (F06, N38): die neue Kennung behauptete, Knotenlage oder
@@ -540,7 +606,7 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
         # systeme: Faktorisierungen (SuperLU/Pardiso, nicht picklebar, nach dem
         # Laden wertlos); modelle: die Modellkopien je Stellung - sie entstehen
         # bei der naechsten Rechnung neu
-        if feld in ("model", "systeme", "modelle") + _ERGEBNISGRUPPEN:
+        if feld in ("model", "systeme", "modelle", "reibverfahren") + _ERGEBNISGRUPPEN:
             continue
         inhalt[feld] = wert
     if fortschritt:
@@ -606,7 +672,7 @@ def lesen(pfad: str, model, fortschritt=None):
         fortschritt(0.05, "Ergebnisse lesen")
     with open(pfad, "rb") as fh:
         inhalt = _Leser(fh, model).load()
-    ok, grund, fehlt = pruefen(inhalt.get("kennung"), model)
+    ok, grund, fehlt, *frueher = _pruefen(inhalt.get("kennung"), model)
     # eine Kombination der Datei, die es im Modell nicht (mehr) gibt, wird
     # beim Namen genannt (R2-A1, G1) - auch neben den geaenderten Gruppen
     fremd = [n for n in (inhalt.get("combinations") or {}) if n not in model.combinations]
@@ -635,9 +701,23 @@ def lesen(pfad: str, model, fortschritt=None):
         for name, d in (inhalt.get(gruppe) or {}).items():
             getattr(an, gruppe)[name] = _entpacken_results(d, model)
     for feld, wert in inhalt.items():
-        if feld in ("kennung",) + _ERGEBNISGRUPPEN:
+        if feld in ("kennung", "reibverfahren") + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
+    # das Reibverfahren (15.10.2026): eine Datei ohne die Angabe ist vor dem
+    # 15.10.2026 geschrieben und - hat das Modell Reibung - ohne die Tangente
+    # gerechnet; die Ergebnisse bleiben, ein Hinweis sagt es. Passt die Kennung
+    # erst nach den frueheren Vorgaben, stand reibungstangente: true im Modell.
+    an.info.pop("reibverfahren_vorbehalt", None)
+    rv = inhalt.get("reibverfahren")
+    if rv is None and frueher and frueher[0]:
+        rv = REIBVERFAHREN[True]
+    if rv is not None:
+        an.info["reibverfahren"] = rv
+    else:
+        an.info.pop("reibverfahren", None)
+        if modell_hat_reibung(model):
+            an.info["reibverfahren_vorbehalt"] = REIBVERFAHREN_ALT
     # der Vorbehalt der alten Kennung (F06, N38) gilt fuer diese Analyse, bis
     # neu gerechnet wird: schreiben behaelt dann die alte Form der Kennung
     an.info.pop("kennung_vorbehalt", None)

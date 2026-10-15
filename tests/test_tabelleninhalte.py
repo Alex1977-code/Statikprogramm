@@ -595,8 +595,15 @@ def test_lasttabelle_vektoren():
     check("… im Bezugssystem „lokal“, Abschnitt „von 0,5 m bis 2 m“",
           zelle("Linienlast", 5) == "lokal" and zelle("Linienlast", 6) == "von 0,5 m bis 2 m",
           f"{zelle('Linienlast', 5)!r} / {zelle('Linienlast', 6)!r}")
-    check("Vorspannung des Koerpers mit Achse: „(1; 0; 0)“", zelle("Vorspannung", 5) == "(1; 0; 0)",
-          str(zelle("Vorspannung", 5)))
+    # Lastart seit fa709ef (14.10.2026, Benennung des Anwenders) „Vorspannung
+    # (eingeprägte Dehnung)“ wie im Modellbaum (LoadCase.lastart_titel); bis
+    # dahin „Vorspannung“ - die Pruefung suchte die Zeile unter dem alten Namen.
+    vs = "Vorspannung (eingeprägte Dehnung)"
+    check("Vorspannung des Koerpers mit Achse: „(1; 0; 0)“", zelle(vs, 5) == "(1; 0; 0)",
+          f"{zelle(vs, 5)} / Lastarten {sorted({str(z[2]) for z in zeilen})}")
+    check("… mit Kraft „F_v = 150 kN“ am „Volumen K1“",
+          zelle(vs, 4) == "F_v = 150 kN" and zelle(vs, 3) == "Volumen K1",
+          f"{zelle(vs, 4)!r} / {zelle(vs, 3)!r}")
     texte = [str(z[k]) for z in zeilen for k in (4, 5)]
     check("In keiner Groesse oder Richtung trennt „, “ noch die Teile eines Vektors",
           not any(re.search(r"\d, ", t) for t in texte),

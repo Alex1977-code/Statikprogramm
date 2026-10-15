@@ -1716,8 +1716,12 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # steht auf einem Sockel mit 6 x 6 - ungleiche Netze -, u_max 0,39381 statt
     # 0,39253 mm (+0,33 %); der Block mit Reibung hat deckungsgleiche Netze
     # und bleibt, wie er war.
-    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (15, 0, 2.6415669504283543e-06, None),
-                "Kontakt ohne Plastizität: Stempel auf Sockel": (8, 0, 0.00039380952002928657, None),
+    # 15.10.2026 (Reibung mit konsistenter Tangente als Vorgabe): Block mit Reibung 5
+    # statt 15 Zerlegungen, u_max 2.6415669504283543e-06 -> ...786 (+4,4e-6 relativ);
+    # Stempel 6 statt 8, u_max 0.00039380952002928657 -> ...1069 (+3,0e-6) - die
+    # Haftfeder k_h = 1000 x Knotensteifigkeit statt der exakten Haftzeile
+    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (5, 0, 2.641578486685606e-06, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (6, 0, 0.00039381069489834077, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
 
@@ -1891,7 +1895,8 @@ def test_gemeinsam_im_budget():
     newton = sum(1 for k, it, *_ in (pz.get("verlauf") or []) if it > 0) if pz.get("verlauf") else None
     check("(c) die Abnahme zählt nicht als Newton-Schritt: „konvergiert“, Rückführungen = Schritte + 1, "
           "der letzte Lauf der Abschluss",
-          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 5
+          # 4 Rueckfuehrungen seit der Reibungstangente (15.10.2026), vorher 5
+          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 4
           and laeufe and laeufe[-1]["art"] == "Abschluss",
           f"{zustand_aus_info(r.info)}, {pz.get('iterationen')} Rückführungen, "
           f"{[(e['art'], e['grund']) for e in laeufe[-2:]]}")
@@ -2156,33 +2161,45 @@ def test_laststufe_halbieren():
 
 
 def test_reibung_und_fliessen_wegunabhaengig():
-    """Reibung primal-dual und Halbieren zusammen (28.09.2026): der
-    gequetschte Block gibt mit 1 und 4 Laststufen denselben Zustand - gemessen
-    u_max 42,667 mm, eps_p 12,99 % fuer 1, 2, 4 und 8 Stufen -, symmetrisch
-    (mittleres u_y des Deckels unter 1e-6 m). Bis dahin hing er an der
-    Teilung: 42,25 / 42,34 / 42,66 mm (festgehaltene Richtungen, mit Quer-
-    drift bis 0,9 mm), mit der verworfenen Umkehr-Regel 42,13 / 42,24 / 42,58 /
-    42,67 mm."""
+    """Reibung und Fliessen ueber die Lastteilung (seit 15.10.2026 mit der
+    Reibungstangente als Vorgabe): der gequetschte Block haengt bei grober Teilung an
+    der Zahl der Laststufen (42,13 / 42,24 / 42,58 / 42,67 mm fuer 1 / 2 / 4 / 8), die
+    Verfeinerungsreihe konvergiert aber - 10 / 20 / 40 / 80 Stufen geben 42,698 /
+    42,765 / 42,796 / 42,812 mm, das bisherige Verfahren ab 20 Stufen auf 1e-4 mm
+    dasselbe, der Zuwachs halbiert sich je Verdopplung (rt_werk/reihe_gequetscht,
+    15.10.2026). Bis dahin stand hier „1 und 4 Laststufen geben 42,667 mm“ fuer die
+    primal-duale Reibung - auch das war nicht der Grenzwert. Geprueft wird die
+    Konvergenz der Reihe 10 / 20 / 40, die Gleichheit beider Verfahren bei 40 Stufen
+    und die Symmetrie (mittleres u_y des Deckels unter 1e-6 m)."""
     from statik3d.gui.rechenliste import zustand_aus_info
     erg = {}
-    for stufen in (1, 4):
+    for stufen, rt in ((10, True), (20, True), (40, True), (40, False)):
         m = _gequetschter_block()
         m.plastizitaet.laststufen = stufen
+        m.plastizitaet.reibungstangente = rt
         r = solver.solve_static(m)
         X = np.asarray(m.nodes, float)
         oben = [i for i in range(len(X)) if abs(X[i, 2] - 0.4) < 1e-9]
         u = np.asarray(r.u, float).reshape(-1, 6)
-        erg[stufen] = (zustand_aus_info(r.info), float(np.abs(u[:, :3]).max()),
-                       float((r.info.get("plastizitaet") or {}).get("eps_p_max") or 0.0),
-                       float(np.mean(u[oben, 1])))
-    (z1, u1, e1, y1), (z4, u4, e4, y4) = erg[1], erg[4]
-    check("1 und 4 Laststufen: beide konvergiert, u_max 42,667 mm auf 0,01 mm, gleich auf 1e-4",
-          z1 == z4 == "konvergiert" and abs(u1 - 0.042667) < 1e-5 and abs(u4 - u1) <= 1e-4 * u1,
-          f"{z1} / {z4}, u_max {u1 * 1e3:.4f} / {u4 * 1e3:.4f} mm")
-    check("… dieselbe plastische Vergleichsdehnung auf 1e-3 (12,99 %)",
-          abs(e4 - e1) <= 1e-3 * e1 and abs(e1 - 0.1299) < 5e-4, f"{e1 * 100:.3f} / {e4 * 100:.3f} %")
+        erg[(stufen, rt)] = (zustand_aus_info(r.info), float(np.abs(u[:, :3]).max()),
+                             float((r.info.get("plastizitaet") or {}).get("eps_p_max") or 0.0),
+                             float(np.mean(u[oben, 1])))
+    z10, u10, _e10, y10 = erg[(10, True)]
+    z20, u20, _e20, y20 = erg[(20, True)]
+    z40, u40, e40, y40 = erg[(40, True)]
+    zb, ub, eb, yb = erg[(40, False)]
+    check("10 / 20 / 40 Laststufen konvergiert, Zuwachs je Verdopplung mindestens halbiert "
+          "(Konvergenz der Lastteilung), 40 Stufen 42,796 mm auf 0,01 mm",
+          z10 == z20 == z40 == "konvergiert" and 0.0 < u40 - u20 <= 0.55 * (u20 - u10)
+          and abs(u40 - 0.042796) < 1e-5,
+          f"{u10 * 1e3:.4f} / {u20 * 1e3:.4f} / {u40 * 1e3:.4f} mm")
+    check("… 40 Stufen: bisheriges Verfahren dasselbe auf 1e-5 (u_max) und 1e-4 (ε_p 13,05 %)",
+          zb == "konvergiert" and abs(ub - u40) <= 1e-5 * u40 and abs(eb - e40) <= 1e-4 * e40
+          and abs(e40 - 0.1305) < 5e-4,
+          f"{ub * 1e3:.5f} / {u40 * 1e3:.5f} mm, ε_p {eb * 100:.4f} / {e40 * 100:.4f} %")
     check("… symmetrisch: mittleres u_y des Deckels unter 1e-6 m",
-          abs(y1) < 1e-6 and abs(y4) < 1e-6, f"{y1:.1e} / {y4:.1e} m")
+          max(abs(y10), abs(y20), abs(y40), abs(yb)) < 1e-6,
+          f"{y10:.1e} / {y20:.1e} / {y40:.1e} / {yb:.1e} m")
 
 
 def main():

@@ -88,7 +88,12 @@ def test_maske_und_anzeige():
     check("Maske Vorspannung: Lastart und Gruppe beim Spannen",
           "art" in felder and "gruppe" in felder, str(felder))
     check("… mit dem Hinweis auf die Temperatur-Vorspannung im Modell", "hinweise" in felder, str(felder))
-    mk.setzen("art", w.VORSPANN_ARTEN[1])
+    from statik3d import vorspannkraft as vk
+    check("Lastarten mit den Namen des Anwenders (14.10.2026)",
+          w.VORSPANN_ARTEN == [vk.LASTART_DEHNUNG, vk.LASTART_ENDE, vk.LASTART_PRESSE, vk.LASTART_UMWANDELN]
+          and vk.LASTART_ENDE == "Endvorspannung (bleibend nach dem Verankern)"
+          and vk.LASTART_PRESSE == "Anfangsvorspannung (Pressenkraft P₀)", str(w.VORSPANN_ARTEN))
+    mk.setzen("art", vk.LASTART_ENDE)
     mk.setzen("F", 944.7)
     mk.setzen("gruppe", 2)
     mk.anwenden()
@@ -100,8 +105,8 @@ def test_maske_und_anzeige():
     w.refresh_all()
     app.processEvents()
     zeilen = [list(map(str, r)) for r in w.tbl_last.modell.zeilen]
-    z_soll = [r for r in zeilen if "Vorspannkraft (Soll)" in r]
-    check("Lasttabelle: Vorspannkraft (Soll) mit F_soll und Gruppe",
+    z_soll = [r for r in zeilen if "Endvorspannung" in r]
+    check("Lasttabelle: Endvorspannung mit F_soll und Gruppe (bis 14.10.2026 „Vorspannkraft (Soll)“)",
           z_soll and "F_soll = 944,7 kN, Gruppe 2" in z_soll[0], str(z_soll[:1]))
     z_dt = [r for r in zeilen if "Temperatur" in r]
     satz = "Vorspannung 952 kN (eingeprägte Dehnung, E = 205 000 N/mm², α = 1,0e-5 1/K)"
@@ -111,8 +116,9 @@ def test_maske_und_anzeige():
     w._lastmaske(fall, "vorspannungen", 0)
     app.processEvents()
     mk = w.maskenrand.maske
-    check("Lastmaske: Titel nennt die Sollkraft, Feld Gruppe",
-          "Soll nach Verankerung" in str(getattr(mk, "titel", "")) and "gruppe" in (mk._felder or {}),
+    check("Lastmaske: Titel nennt die Endvorspannung, Feld Gruppe",
+          "Endvorspannung (bleibend nach dem Verankern)" in str(getattr(mk, "titel", ""))
+          and "gruppe" in (mk._felder or {}),
           str(getattr(mk, "titel", "")))
     mk.setzen("F", 900.0)
     mk.setzen("gruppe", 1)
@@ -126,7 +132,7 @@ def test_maske_und_anzeige():
     w.maske_vorspannung()
     app.processEvents()
     mk = w.maskenrand.maske
-    mk.setzen("art", w.VORSPANN_ARTEN[2])
+    mk.setzen("art", vk.LASTART_UMWANDELN)
     mk.setzen("F", 0.0)
     mk.anwenden()
     app.processEvents()
@@ -144,10 +150,70 @@ def test_maske_und_anzeige():
           abs(N["A1"] - 900e3) < 1e-3 and abs(N["A2"] - erwartet) < 1e-3, str(N))
 
 
+def test_anfangsvorspannung():
+    """Anfangsvorspannung (Pressenkraft P0) mit Verankerungsschlupf (14.10.2026):
+    Maske, Lasttabelle, Lasttext, Lastmaske (Kraftart und Schlupf)."""
+    from statik3d import vorspannkraft as vk
+    w, app = _fenster()
+    m, fall = _modell(w)
+    w.refresh_all()
+    app.processEvents()
+    w.sel_staebe = ["A1"]
+    w.maske_vorspannung()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    felder = getattr(mk, "_felder", {}) or {}
+    check("Maske Vorspannung: Feld Verankerungsschlupf Δs [mm]", "schlupf" in felder, str(list(felder)))
+    hinweise = " ".join(str(w_.toolTip() or "") for w_ in felder.values())
+    check("… mit den Erklärungen der Anfangs- und der Endvorspannung im Hinweis",
+          vk.ERKLAERUNG_PRESSE in hinweise and vk.ERKLAERUNG_ENDE in hinweise, hinweise[:160])
+    mk.setzen("art", vk.LASTART_PRESSE)
+    mk.setzen("F", 1010.84)
+    mk.setzen("schlupf", 1.0)
+    mk.anwenden()
+    app.processEvents()
+    vs = m.case(fall).vorspannungen
+    check("Anfangsvorspannung aufgebracht: P0 = 1 010,84 kN, Δs = 1 mm, Kraftart presse",
+          len(vs) == 1 and vs[0].sollkraft and getattr(vs[0], "kraftart", "") == "presse"
+          and abs(vs[0].kraft - 1010.84e3) < 1e-6 and abs(getattr(vs[0], "schlupf", 0.0) - 1e-3) < 1e-15,
+          str([(v.ziel, v.kraft, getattr(v, "kraftart", None), getattr(v, "schlupf", None)) for v in vs]))
+    w.refresh_all()
+    app.processEvents()
+    zeilen = [list(map(str, r)) for r in w.tbl_last.modell.zeilen]
+    z_p = [r for r in zeilen if "Anfangsvorspannung (P₀)" in r]
+    check("Lasttabelle: Anfangsvorspannung (P₀) mit P₀ und Δs",
+          z_p and "P₀ = 1010,84 kN, Δs = 1 mm" in z_p[0], str(z_p[:1]))
+    text = w._lasttext("vorspannung", vs[0])
+    check("Lasttext: „A1: P₀ = 1 010,84 kN (Anfangsvorspannung, Δs = 1 mm)“",
+          text == "A1: P₀ = 1 010,84 kN (Anfangsvorspannung, Δs = 1 mm)", text)
+    w._lastmaske(fall, "vorspannungen", 0)
+    app.processEvents()
+    mk = w.maskenrand.maske
+    felder = getattr(mk, "_felder", {}) or {}
+    check("Lastmaske: Titel Anfangsvorspannung, Felder Kraftart und Schlupf",
+          vk.LASTART_PRESSE in str(getattr(mk, "titel", "")) and "kraftart" in felder and "schlupf" in felder,
+          f"{getattr(mk, 'titel', '')}: {list(felder)}")
+    mk.setzen("schlupf", 0.5)
+    mk.anwenden()
+    app.processEvents()
+    v = m.case(fall).vorspannungen[0]
+    check("… Schlupf übernommen: 0,5 mm", abs(v.schlupf - 0.5e-3) < 1e-15 and v.kraftart == "presse",
+          f"{v.kraftart}, {v.schlupf}")
+    w._lastmaske(fall, "vorspannungen", 0)
+    app.processEvents()
+    mk = w.maskenrand.maske
+    mk.setzen("kraftart", vk.LASTART_ENDE)
+    mk.anwenden()
+    app.processEvents()
+    v = m.case(fall).vorspannungen[0]
+    check("… Kraftart auf Endvorspannung: Schlupf 0, Kraftart leer",
+          v.kraftart == "" and v.schlupf == 0.0 and v.sollkraft, f"{v.kraftart!r}, {v.schlupf}")
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
-    for t in (test_maske_und_anzeige,):
+    for t in (test_maske_und_anzeige, test_anfangsvorspannung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

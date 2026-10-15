@@ -461,9 +461,8 @@ def test_deckel_am_tatsaechlichen_austritt():
 
     def update(self, u, lam=None):
         weiter = alt[2](self, u, lam)
-        # In Phase 2 gibt update() mit Wechsel nur am Deckel False zurueck
-        self._t_deckel = (not weiter and self.phase == 2
-                          and bool(getattr(self, "_t_gewechselt", False)))
+        # am Deckel (seit 15.10.2026 ueber alle Runden, in jeder Phase): der Merker
+        self._t_deckel = not weiter and bool(getattr(self, "am_deckel", False))
         return weiter
 
     def schub_halt_loesen(self):
@@ -605,11 +604,12 @@ def test_deckel_nennt_die_wechselarten():
     if gedeckelt:
         e = gedeckelt[0]
         stelle = {f: i for i, f in enumerate(_ct.RUNDEN_FELDER)}
-        mit_wechsel = [t for t in e["runden"] if t[stelle["phase"]] == 2
-                       and any(t[stelle[k]] for k in _ct.RUNDEN_EREIGNISSE)]
-        check("der gedeckelte Lauf hat so viele Phase-2-Runden mit Wechsel, wie der Deckel zaehlt",
-              len(mit_wechsel) == e["zyklen"] == 1,
-              f"{len(mit_wechsel)} Runden, zyklen {e['zyklen']}")
+        _ = stelle
+        # seit 15.10.2026 zaehlt der Deckel alle Runden des Laufs, nicht nur die
+        # Phase-2-Runden mit Wechsel
+        check("der gedeckelte Lauf hat so viele Runden, wie der Deckel zaehlt",
+              len(e["runden"]) == e["schritte"] == 1,
+              f"{len(e['runden'])} Runden, {e['schritte']} Schritte")
         check("und traegt seinen Endzustand als Kennung und seine Verschiebung",
               isinstance(e["endzustand_kennung"], str) and len(e["endzustand_kennung"]) == 16
               and e["u_max"] is not None and e["u_max"] > 0,

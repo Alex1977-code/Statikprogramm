@@ -132,6 +132,10 @@ def pendelmodell(p1=0.5e6, p2=60e6, fy=None, laststufen=2, iterationen=10, schwe
         m.materials["S"].fy = fy
         m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=laststufen,
                                          iterationen=iterationen, toleranz=1e-3, kontakt="verschachtelt")
+    # Das Pendeln mit Periode 2 ist ein Verhalten des bisherigen Reibverfahrens; mit der
+    # Reibungstangente (Vorgabe seit 15.10.2026) pendelt dieses Modell nicht. Die Regel wird
+    # darum am bisherigen Verfahren geprueft (nur noch zum Vergleich)
+    m.plastizitaet.reibungstangente = False
     if schwellen is not None:
         m.plastizitaet.pendel_kraft_anteil, m.plastizitaet.pendel_weg = schwellen
     return m
@@ -143,6 +147,7 @@ def richtungsmodell():
     alt = (tp.MU, tp.P0)
     tp.MU, tp.P0 = 0.6, 5e6
     try:
+        # (bisheriges Verfahren, wie lager_in_flaechenachsen)
         return tp.lager_in_flaechenachsen(typ="tet10", h=0.2, rx=1.5, ry=0.5, ausmitte=0.1)
     finally:
         tp.MU, tp.P0 = alt
@@ -357,7 +362,10 @@ def test_kontakt_offen_vorbereitet():
           pz0.get("konvergiert") is True and deckel0 >= 1, f"konvergiert {pz0.get('konvergiert')}, {deckel0} Läufe am Deckel")
     zeilen1 = [z for z in pz1.get("log") or [] if "Kontaktlauf" in z and "nicht konvergiert" in z]
     check("eingeschaltet (nur hier in der Prüfung): Stufe erst mit konvergiertem Kontaktlauf angenommen",
-          zeilen1 and int(pz1.get("iterationen", 0)) > int(pz0.get("iterationen", 0)),
+          # (seit 15.10.2026 zaehlt der Deckel alle Runden; danach brauchte der eingeschaltete
+          # Weg 7 statt 11 Newton-Schritte, vorher 8 statt 6 - gemessen wird darum, dass eine
+          # Stufe mit nicht konvergiertem Kontaktlauf nicht angenommen wurde: die Zeile)
+          bool(zeilen1),
           f"Newton {pz0.get('iterationen')} -> {pz1.get('iterationen')}; " + (zeilen1[0][:150] if zeilen1 else "keine Zeile"))
 
 

@@ -114,18 +114,35 @@ def _plastisch_mit_deckel():
     m.plastizitaet.iterationen = 3
     alt_max, alt_pr, alt_h = _ct.MAX_CYCLES, solver._plastizitaet_rechnen, pl.HALBIEREN_MAX
 
+    # Seit dem 15.10.2026 zaehlt der Deckel alle Runden: mit Deckel 1 in jedem
+    # plastischen Lauf endete auch Stufe 1 am Deckel. Der erste plastische Lauf
+    # (Stufe 1) rechnet darum ohne Deckel, jeder weitere mit Deckel 1
+    alt_wc = solver.solve_with_contact
+    zaehler = {"n": 0, "an": False}
+
+    def wc(*a, **k):
+        if zaehler["an"]:
+            zaehler["n"] += 1
+            _ct.MAX_CYCLES = alt_max if zaehler["n"] == 1 else 1
+        try:
+            return alt_wc(*a, **k)
+        finally:
+            _ct.MAX_CYCLES = alt_max
+
     def plastisch_mit_deckel(*a, **k):
-        _ct.MAX_CYCLES = 1
+        zaehler["an"] = True
         try:
             return alt_pr(*a, **k)
         finally:
-            _ct.MAX_CYCLES = alt_max
+            zaehler["an"] = False
     solver._plastizitaet_rechnen = plastisch_mit_deckel
+    solver.solve_with_contact = wc
     pl.HALBIEREN_MAX = 0
     try:
         r = solver.solve_static(m)
     finally:
         solver._plastizitaet_rechnen, pl.HALBIEREN_MAX = alt_pr, alt_h
+        solver.solve_with_contact = alt_wc
         _ct.MAX_CYCLES = alt_max
     return r
 
