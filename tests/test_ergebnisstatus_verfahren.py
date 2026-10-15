@@ -136,6 +136,15 @@ def test_tabelle_und_datei():
           all(w.stand >= 1 and w.datum and w.commit for mk in rv.MERKMALE for w in mk.wechsel)
           and rv.VERFAHRENSSTAND == max(w.stand for mk in rv.MERKMALE for w in mk.wechsel),
           f"Stand {rv.VERFAHRENSSTAND}")
+    check("… jeder Wechsel ist als Verbesserung oder Fehlerkorrektur eingestuft, jedes Merkmal nennt "
+          "sein Modellmerkmal mit Prüffunktion",
+          all(w.art in (rv.VERBESSERUNG, rv.FEHLERKORREKTUR) for mk in rv.MERKMALE for w in mk.wechsel)
+          and all(mk.modellmerkmal and callable(mk.betrifft) for mk in rv.MERKMALE),
+          str({mk.name: [w.art for w in mk.wechsel] for mk in rv.MERKMALE}))
+    check("… Reibungstangente Verbesserung, Deckel Fehlerkorrektur (mit Prüfung am Ergebnis)",
+          rv.merkmal("reibverfahren").wechsel[-1].art == rv.VERBESSERUNG
+          and rv.merkmal("deckel").wechsel[-1].art == rv.FEHLERKORREKTUR
+          and rv.merkmal("deckel").im_ergebnis is not None)
     from statik3d import model as mdl
     check("… model.FRUEHERE_VORGABEN kommt aus der Tabelle",
           mdl.FRUEHERE_VORGABEN == rv.fruehere_vorgaben()
@@ -252,19 +261,19 @@ def test_datei_15_10_mit_tangente():
     _vor_15_10(p, m)
     a2, fehler = _laden(p, m)
     h = _hinweis(a2)
-    check("Datei vom 15.10.2026 mittags mit reibungstangente true: gültig, kein Hinweis zum Reibverfahren",
+    check("Datei vom 15.10.2026 mittags mit reibungstangente true: gültig, ohne Hinweis",
           a2 is not None and a2.info.get("rechenverfahren", {}).get("reibverfahren") is True
-          and "Reibverfahren" not in h, fehler or h)
-    check("… gerechnet vor 49cb8bb: der Deckel zählte nur Zustandswechsel - das sagt der Hinweis",
+          and not h and not a2.info.get("verfahren_betroffen"), fehler or h)
+    check("… gerechnet vor 49cb8bb (alter Deckel erkannt), aber kein Lauf über 40 Runden: kein Status",
           a2 is not None and a2.info.get("rechenverfahren", {}).get("deckel") == "zustandswechsel"
-          and "Deckel nur über die Zustandswechsel" in h, h)
+          and not a2.info.get("verfahren_betroffen"), str(a2.info.get("verfahren_betroffen")) if a2 else "")
     # wieder gespeichert ohne Rechnung: die Kennung hat jetzt die heutige Form, die Merkmale bleiben
     p2 = os.path.join(d, "mittags2.ergebnisse")
     erg.schreiben(p2, m, a2)
     a3, fehler = _laden(p2, m)
-    check("… ohne Rechnung wieder gespeichert: weiter gültig, Tangente, Deckel-Hinweis bleibt",
+    check("… ohne Rechnung wieder gespeichert: weiter gültig, Tangente, alter Deckel bleibt vermerkt",
           a3 is not None and a3.info.get("rechenverfahren", {}).get("reibverfahren") is True
-          and "Deckel nur über die Zustandswechsel" in _hinweis(a3)
+          and a3.info.get("rechenverfahren", {}).get("deckel") == "zustandswechsel" and not _hinweis(a3)
           and _inhalt(p2, m).get("reibverfahren") == "konsistente Tangente", fehler or _hinweis(a3))
 
 
@@ -342,9 +351,74 @@ def test_deckel_aus_protokoll():
             "Kontakt: Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen"]
     _umschreiben(p, m, alt)
     a2, fehler = _laden(p, m)
-    check("Alte Datei, Protokoll „nach 40 Zustandswechseln abgebrochen“: Deckel erkannt, Hinweis",
-          a2 is not None and a2.info.get("rechenverfahren", {}).get("deckel") == "zustandswechsel"
-          and "Deckel nur über die Zustandswechsel" in _hinweis(a2), fehler or _hinweis(a2))
+    check("Alte Datei, Protokoll „nach 40 Zustandswechseln abgebrochen“: alter Deckel erkannt",
+          a2 is not None and a2.info.get("rechenverfahren", {}).get("deckel") == "zustandswechsel", fehler)
+    check("… der Lauf endete am Deckel (vorläufig), keiner galt mit mehr als 40 Runden: kein Status",
+          a2 is not None and not a2.info.get("verfahren_betroffen"), str(a2.info.get("verfahren_betroffen")))
+
+
+def _langer_lauf(schritte=57, konvergiert=True):
+    def aendern(inhalt):
+        inhalt.pop("verfahren", None)
+        inhalt.pop("reibverfahren", None)
+        lf = next(iter(inhalt["cases"]))
+        info = inhalt["cases"][lf].setdefault("info", {})
+        info["laeufe"] = list(info.get("laeufe") or []) + [
+            {"nr": 99, "art": "Probe", "schritte": schritte, "konvergiert": konvergiert, "grund": ""}]
+    return aendern
+
+
+def test_fehlerkorrektur_deckel():
+    """Fehlerkorrektur: betroffen ist nur ein Kontaktlauf, der mehr als 40 Runden
+    brauchte und trotzdem als konvergiert galt (Laufbuch je Lauf)."""
+    from statik3d import ergebnisse as erg, rechenverfahren as rv
+    from statik3d.report.html import Report
+    import re
+    d = _ordner()
+    m, an = _klotz(True)
+    p = os.path.join(d, "lang.ergebnisse")
+    erg.schreiben(p, m, an)
+    _umschreiben(p, m, _langer_lauf(57, True))
+    a2, fehler = _laden(p, m)
+    st = str((a2.info if a2 is not None else {}).get("verfahren_betroffen") or "")
+    check("Alte Datei, ein Lauf mit 57 Runden „konvergiert“: Status „möglicherweise betroffen – neu rechnen“",
+          a2 is not None and st.startswith(rv.BETROFFEN) and "57 Runden" in st, fehler or st)
+    check("… die Ergebnisse bleiben (LF1 geladen)", a2 is not None and "LF1" in a2.cases)
+    check("… die Zusammenfassung (Protokoll) nennt ihn als WARNUNG",
+          a2 is not None and any(z.startswith("WARNUNG") and rv.BETROFFEN in z for z in a2.summary().splitlines()))
+    text = re.sub(r"<[^>]+>", " ", Report(m, a2).html()) if a2 is not None else ""
+    check("… der Bericht nennt ihn", rv.BETROFFEN in text)
+    p2 = os.path.join(d, "lang2.ergebnisse")
+    erg.schreiben(p2, m, a2)
+    a3, fehler = _laden(p2, m)
+    check("… ohne neue Rechnung gespeichert: der Status kommt wieder",
+          a3 is not None and str(a3.info.get("verfahren_betroffen") or "").startswith(rv.BETROFFEN), fehler)
+    # genau 40 Runden: auch mit dem heutigen Deckel moeglich - kein Status
+    erg.schreiben(p, m, an)
+    _umschreiben(p, m, _langer_lauf(40, True))
+    a2, fehler = _laden(p, m)
+    check("Lauf mit genau 40 Runden konvergiert (auch heute möglich): kein Status",
+          a2 is not None and not a2.info.get("verfahren_betroffen"), fehler)
+    # 57 Runden, nicht konvergiert: vorlaeufig, kein Status der Fehlerkorrektur
+    erg.schreiben(p, m, an)
+    _umschreiben(p, m, _langer_lauf(57, False))
+    a2, fehler = _laden(p, m)
+    check("Lauf mit 57 Runden, nicht konvergiert: kein Status der Fehlerkorrektur",
+          a2 is not None and not a2.info.get("verfahren_betroffen"), fehler)
+    # heutige Datei: kein Status (Angabe alle Runden)
+    erg.schreiben(p, m, an)
+    a2, fehler = _laden(p, m)
+    check("Heutige Datei: kein Status", a2 is not None and not a2.info.get("verfahren_betroffen"), fehler)
+    # Modell ohne Kontakt: das Merkmal fehlt - kein Status (Pruefung des Modellmerkmals)
+    from statik3d import examples_lib as ex, solver
+    mr = ex.frame_example()
+    ar = solver.solve_all(mr, design=False)
+    pr = os.path.join(d, "rahmen.ergebnisse")
+    erg.schreiben(pr, mr, ar)
+    _umschreiben(pr, mr, _langer_lauf(57, True))
+    a2, fehler = _laden(pr, mr)
+    check("Modell ohne Kontakt (Merkmal fehlt): kein Status, kein Hinweis",
+          a2 is not None and not a2.info.get("verfahren_betroffen") and not _hinweis(a2), fehler)
 
 
 def test_kuenftiger_wechsel():
@@ -448,7 +522,7 @@ def main():
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_tabelle_und_datei, test_modell_geaendert, test_alte_datei_mit_reibung,
               test_alte_datei_ohne_reibung, test_datei_15_10_mit_tangente, test_anwender_stellt_um,
-              test_deckel_aus_protokoll, test_kuenftiger_wechsel, test_fenster):
+              test_deckel_aus_protokoll, test_fehlerkorrektur_deckel, test_kuenftiger_wechsel, test_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

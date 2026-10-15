@@ -5145,13 +5145,36 @@ Reibungstangente (aktuell: konsistente Reibungstangente, seit 15.10.2026) – di
 Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren“.
 Die Ergebnisdatei schreibt dafür den Verfahrensstand und die Verfahrensmerkmale mit
 (Reibverfahren, Deckel des Kontaktlaufs, Abbruch der Plastizität); Speichern ohne
-neue Rechnung behält die Merkmale der geladenen Datei. Bei einer Ergebnisdatei von
-vor dem 16.10.2026 nennt der Hinweis nur, was sich sicher erkennen lässt: das
-Reibverfahren (ohne Angabe in der Datei und mit Reibung im Modell das bisherige
-Verfahren), den Deckel nur über die Zustandswechsel bei einer Datei vom 15.10.2026
-mittags mit „reibungstangente: true“ oder wenn ein Kontaktlauf der Datei an diesem
-Deckel endete. Ob eine plastische Rechnung von vor dem 13.10.2026 streng
-abgebrochen hat, lässt sich der Datei nicht sicher ansehen und wird nicht genannt.
+neue Rechnung behält die Merkmale der geladenen Datei.
+
+Jeder Wechsel des Verfahrens ist eingestuft und nennt das Modellmerkmal, bei dem er
+eine Rolle spielt. Eine *Verbesserung* – die konsistente Reibungstangente (15.10.2026,
+Modellmerkmal Reibkontakt: Kontakt mit μ > 0 oder Lager mit Reibbeiwert) und der
+ingenieurmäßige Abbruch der Plastizität (13.10.2026, plastische Rechnung) – gibt den
+Hinweis oben. Eine *Fehlerkorrektur* gibt den Status „Ergebnis möglicherweise
+betroffen – neu rechnen“: in der Kopfzeile, vorn in der Statuszeile, im Protokoll
+(Zusammenfassung als WARNUNG) und im Bericht (Kapitel Ergebnisse und
+Zusammenfassung); die Ergebnisse bleiben sichtbar, eine neue Rechnung nimmt den
+Status weg. Das ist der Deckel über alle Runden des Kontaktlaufs (15.10.2026): bis
+dahin zählte er nur die Zustandswechsel der Reibung, und ein Lauf konnte nach mehr
+als 40 Runden als konvergiert gelten. Betroffen ist darum nur ein Ergebnis, dessen
+Laufbuch einen Kontaktlauf mit mehr als 40 Runden als konvergiert führt – genau 40
+sind auch heute möglich. Hat das Modell das Merkmal nicht, kommt weder Hinweis noch
+Status. Korrekturen am Import (Lagerreibung, Zug- und Druckstäbe, Vorspannung aus ΔT)
+stehen nicht in dieser Tabelle: sie ändern die Modelldaten, nicht das Rechnen; der
+Ladehinweis nennt den Weg, und die Korrektur selbst ist eine Modelländerung.
+
+Bei einer Ergebnisdatei von vor dem 16.10.2026 zählt nur, was sich sicher erkennen
+lässt: das Reibverfahren (ohne Angabe in der Datei und mit Reibung im Modell das
+bisherige Verfahren), der alte Deckel bei einer Datei vom 15.10.2026 mittags mit
+„reibungstangente: true“, wenn ein Kontaktlauf der Datei an diesem Deckel endete
+oder wenn einer mit mehr als 40 Runden als konvergiert galt. Ob eine plastische
+Rechnung von vor dem 13.10.2026 streng abgebrochen hat, lässt sich der Datei nicht
+sicher ansehen und wird nicht genannt.
+
+Nach dem Öffnen steht „⚠ Ergebnis vorläufig …“ eines Ergebnisses mit nicht
+konvergiertem Kontaktlauf vorn in der Statuszeile; bis zum 16.10.2026 überschrieb
+die Zeile „Ergebnisse geladen …“ sie sofort, nur die Kopfzeile sagte „vorläufig“.
 
 **Beenden während einer Rechnung** fragt „Rechnung abbrechen und beenden?“
 (*Abbrechen und beenden* / *Weiterrechnen*). Mit Ja hält die Rechnung beim

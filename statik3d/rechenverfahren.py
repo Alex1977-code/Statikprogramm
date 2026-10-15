@@ -46,13 +46,21 @@ class Wechsel:
     der Vorgabe ``alt`` (reibungstangente: 4073439 bis b24910b mit False). Ein
     damals ausdruecklich gesetzter Wert, der heute die Vorgabe ist, stand dann
     in der Kennung der Ergebnisdatei und fehlt heute dort - die Kennung wird
-    darum auch mit diesem Wert ausdruecklich gebildet (ergebnisse._pruefen)."""
+    darum auch mit diesem Wert ausdruecklich gebildet (ergebnisse._pruefen).
+
+    ``art`` (Anwender, 16.10.2026): „Verbesserung“ - das alte Verfahren war
+    richtig, das neue ist besser oder schneller: Ergebnis gueltig, mit Hinweis;
+    „Fehlerkorrektur“ - das alte Verfahren konnte falsch rechnen: Status
+    „Ergebnis möglicherweise betroffen – neu rechnen“ (:data:`BETROFFEN`) in
+    Kopfzeile, Statuszeile, Protokoll und Bericht, die Ergebnisse bleiben
+    sichtbar."""
     stand: int
     datum: str
     commit: str
     alt: Any
     neu: Any
     vorher_einstellung: bool = False
+    art: str = "Verbesserung"
 
 
 @dataclass
@@ -62,14 +70,21 @@ class Merkmal:
     ``einstellung`` (Schluessel der Modelldatei, Feld): das Merkmal ist eine
     Einstellung am Modell; ihr Wert ist das Verfahren. Ohne sie ist es ein
     Verhalten des Programms (Deckel). ``texte``: Wert -> Text fuer den
-    Hinweis. ``betrifft``: spielt das Merkmal fuer dieses Modell eine Rolle
-    (sonst kein Hinweis)."""
+    Hinweis. ``modellmerkmal``: das Merkmal des Modells, bei dem das Verfahren
+    eine Rolle spielt (Reibkontakt, Kontakt, plastische Rechnung), und
+    ``betrifft`` die Pruefung, ob das Modell es hat - ohne es kein Hinweis und
+    kein Status."""
     name: str
     titel: str
     texte: dict
     wechsel: tuple
     einstellung: Optional[tuple] = None
+    modellmerkmal: str = ""
     betrifft: Callable[[Any], bool] = field(default=lambda model: True, repr=False)
+    #: nur bei einer Fehlerkorrektur: die Pruefung am Ergebnis (Analyse), ob das
+    #: alte Verfahren es beruehrt haben kann - Rueckgabe ein Text, der sagt wo, oder
+    #: "" (dann kein Status). None: jedes Ergebnis des Modells mit dem Merkmal.
+    im_ergebnis: Optional[Callable[[Any], str]] = field(default=None, repr=False)
 
     def text(self, wert) -> str:
         return str(self.texte.get(wert, wert))
@@ -105,20 +120,68 @@ def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
 
-def _reibverfahren(model) -> bool:
-    from .solver import reibungstangente
-    return bool(reibungstangente(model)[0])
+def _laeufe(infos):
+    """(Ergebnisname, Eintrag) aller Kontaktlaeufe im Laufbuch (res.info["laeufe"],
+    seit dem 22.09.2026)."""
+    for name, info in infos:
+        for e in (info.get("laeufe") or []) if isinstance(info, dict) else []:
+            if isinstance(e, dict):
+                yield name, e
 
 
-def _abbruch(model) -> str:
-    from . import plastizitaet as pl
-    wert = str(getattr(getattr(model, "plastizitaet", None), "abbruch", pl.ABBRUCH_WEGE[0]))
-    return wert if wert in pl.ABBRUCH_WEGE else pl.ABBRUCH_WEGE[0]
+def _deckel_grenze() -> int:
+    try:
+        from .contact import MAX_CYCLES
+        return int(MAX_CYCLES)
+    except Exception:                                   # noqa: BLE001
+        return 40
+
+
+def _lange_konvergierte(infos) -> list:
+    """Kontaktlaeufe, die mit mehr Runden als der Deckel (40) als konvergiert
+    galten - das konnte nur der alte Deckel (nur Zustandswechsel der Reibung):
+    seit 49cb8bb endet ein solcher Lauf am Deckel und ist vorlaeufig. Genau 40
+    Runden sind auch heute moeglich (konvergiert in der letzten erlaubten)."""
+    grenze = _deckel_grenze()
+    return [(n, e) for n, e in _laeufe(infos)
+            if bool(e.get("konvergiert")) and not e.get("abgekuerzt")
+            and int(e.get("schritte", 0) or 0) > grenze]
+
+
+def _deckel_im_ergebnis(an) -> str:
+    try:
+        infos = [(n, getattr(r, "info", None)) for n, r in an.all_results().items()]
+        infos += [(n, getattr(r, "info", None)) for n, r in (getattr(an, "alternativen", None) or {}).items()]
+    except Exception:                                   # noqa: BLE001
+        return ""
+    lang = _lange_konvergierte(infos)
+    if not lang:
+        return ""
+    namen = sorted({str(n) for n, _e in lang})
+    return (f"{len(lang)} Kontaktl{'auf' if len(lang) == 1 else 'äufe'} mit mehr als {_deckel_grenze()} "
+            f"Runden galt{'' if len(lang) == 1 else 'en'} als konvergiert (bis "
+            f"{max(int(e.get('schritte', 0) or 0) for _n, e in lang)} Runden; "
+            + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "") + ")")
+
+
+#: Arten eines Wechsels (Wechsel.art)
+VERBESSERUNG = "Verbesserung"
+FEHLERKORREKTUR = "Fehlerkorrektur"
+#: Status eines Ergebnisses, das mit einem Verfahren vor einer Fehlerkorrektur
+#: gerechnet ist, und das Modell hat das betroffene Merkmal
+BETROFFEN = "Ergebnis möglicherweise betroffen – neu rechnen"
 
 
 #: Die Tabelle. Stand 1: Abbruch der Plastizitaet (13.10.2026); Stand 2:
 #: Reibungstangente als Vorgabe und Deckel ueber alle Runden (15.10.2026, beide
-#: im selben Commit 49cb8bb).
+#: im selben Commit 49cb8bb). Einstufung (16.10.2026, zur Bestaetigung durch den
+#: Anwender): Reibungstangente Verbesserung (Vorgabe des Anwenders), Deckel
+#: Fehlerkorrektur (vorher konnte ein Lauf ohne Begrenzung als konvergiert
+#: gelten), Abbruch Verbesserung (streng ist weiter waehlbar und richtig).
+#: Nicht hier: Korrekturen am Import (Lagerreibung, Zugstaebe, Vorspannung aus
+#: ΔT) - sie aendern die Modelldaten, nicht das Rechnen; ein so eingelesenes
+#: Modell rechnet heute wie damals, der Ladehinweis nennt den Weg zur Korrektur,
+#: und die Korrektur selbst ist eine Modellaenderung (Ergebnis ungueltig).
 MERKMALE: list = [
     Merkmal(
         name="reibverfahren", titel="Reibung",
@@ -128,15 +191,20 @@ MERKMALE: list = [
         # bis 4073439 gab es die Einstellung nicht (gerechnet wie False), von
         # 4073439 bis b24910b mit der Vorgabe False, seit 49cb8bb True
         wechsel=(Wechsel(stand=2, datum="15.10.2026", commit="49cb8bb", alt=False, neu=True,
-                         vorher_einstellung=True),),
+                         vorher_einstellung=True, art=VERBESSERUNG),),
+        modellmerkmal="Reibkontakt (Kontakt mit μ > 0 oder Lager mit Reibbeiwert)",
         betrifft=_hat_reibung),
     Merkmal(
         name="deckel", titel="Deckel des Kontaktlaufs",
         texte={"alle_runden": "Deckel über alle Runden des Kontaktlaufs",
                "zustandswechsel": "Deckel nur über die Zustandswechsel der Reibung"},
         wechsel=(Wechsel(stand=2, datum="15.10.2026", commit="49cb8bb", alt="zustandswechsel",
-                         neu="alle_runden"),),
-        betrifft=_hat_kontakt),
+                         neu="alle_runden", art=FEHLERKORREKTUR),),
+        modellmerkmal="Kontakt (Kontaktpaar, Kontaktlager, Lager mit Ausfall, Reibung oder Grenzkraft)",
+        betrifft=_hat_kontakt,
+        # betroffen ist nur ein Lauf, der mehr als 40 Runden brauchte und trotzdem als
+        # konvergiert galt (Laufbuch, Runden je Lauf seit dem 22.09.2026)
+        im_ergebnis=_deckel_im_ergebnis),
     Merkmal(
         name="abbruch", titel="Abbruch der Plastizität",
         texte={"ingenieurmaessig": "ingenieurmäßiger Abbruch ohne netzabhängige Spitzen",
@@ -144,7 +212,8 @@ MERKMALE: list = [
         einstellung=("plastizitaet", "abbruch"),
         # vor a1194ef gab es die Einstellung nicht: gerechnet wurde streng
         wechsel=(Wechsel(stand=1, datum="13.10.2026", commit="a1194ef", alt="streng",
-                         neu="ingenieurmaessig"),),
+                         neu="ingenieurmaessig", art=VERBESSERUNG),),
+        modellmerkmal="plastische Rechnung",
         betrifft=_fliessen),
 ]
 
@@ -226,6 +295,8 @@ def _aus_datei(mk: Merkmal, inhalt: dict):
     if mk.name == "deckel":
         if "reibverfahren" in inhalt:          # geschrieben ab a371cf2, also nach 49cb8bb
             return "alle_runden"
+        if _lange_konvergierte(("", i) for i in _infos(inhalt)):
+            return "zustandswechsel"           # mehr als 40 Runden konvergiert: nur der alte Deckel
         for info in _infos(inhalt):
             for z in info.get("contact_log") or []:
                 z = str(z)
@@ -298,8 +369,9 @@ def merkmale_der_datei(inhalt: dict, model, ausdruecklich=()) -> dict:
 
 
 def aeltere(model, merkmale: dict) -> list:
-    """[(Merkmal, Wert der Datei, Wert heute)] fuer jedes Merkmal, das dieses
-    Modell betrifft und mit dem die Datei anders gerechnet ist als heute. Ein
+    """[(Merkmal, Wert der Datei, Wert heute, Wechsel)] fuer jedes Merkmal, das
+    dieses Modell hat (``betrifft``) und mit dem die Datei anders gerechnet ist
+    als heute; ``Wechsel`` ist der erste seither (seine ``art`` stuft ein). Ein
     unbekannter Wert (None) zaehlt nicht."""
     aus = []
     for mk in MERKMALE:
@@ -307,19 +379,43 @@ def aeltere(model, merkmale: dict) -> list:
         if wert is None or not _sicher(lambda: mk.betrifft(model)):
             continue
         jetzt = _sicher(lambda: mk.aktuell(model))
-        if jetzt is not None and wert != jetzt:
-            aus.append((mk, wert, jetzt))
+        if jetzt is None or wert == jetzt:
+            continue
+        w = next((w for w in mk.wechsel if w.alt == wert), mk.wechsel[-1])
+        aus.append((mk, wert, jetzt, w))
     return aus
 
 
+def _teil(mk, wert, jetzt, w) -> str:
+    seit = next((x.datum for x in reversed(mk.wechsel) if x.neu == jetzt), w.datum)
+    return f"{mk.text(wert)} (aktuell: {mk.text(jetzt)}, seit {seit})"
+
+
 def hinweis(model, merkmale: dict) -> str:
-    """Der Hinweis zu Ergebnissen eines aelteren Verfahrens - oder ""."""
-    alt = aeltere(model, merkmale)
+    """Der Hinweis zu Ergebnissen eines aelteren Verfahrens, soweit die Wechsel
+    seither Verbesserungen sind - oder ""."""
+    alt = [x for x in aeltere(model, merkmale) if x[3].art != FEHLERKORREKTUR]
     if not alt:
         return ""
-    teile = []
-    for mk, wert, jetzt in alt:
-        seit = next((w.datum for w in reversed(mk.wechsel) if w.neu == jetzt), mk.wechsel[-1].datum)
-        teile.append(f"{mk.text(wert)} (aktuell: {mk.text(jetzt)}, seit {seit})")
-    return ("gerechnet mit älterem Rechenverfahren: " + "; ".join(teile)
+    return ("gerechnet mit älterem Rechenverfahren: " + "; ".join(_teil(*x) for x in alt)
             + " – die Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren")
+
+
+def betroffen(model, merkmale: dict, analyse=None) -> str:
+    """Der Status zu Ergebnissen, die vor einer Fehlerkorrektur gerechnet sind,
+    deren Merkmal das Modell hat und - mit ``im_ergebnis`` - die das alte
+    Verfahren beruehrt haben kann: „Ergebnis möglicherweise betroffen – neu
+    rechnen: …“ - oder ""."""
+    teile = []
+    for mk, wert, jetzt, w in aeltere(model, merkmale):
+        if w.art != FEHLERKORREKTUR:
+            continue
+        wo = ""
+        if mk.im_ergebnis is not None:
+            wo = _sicher(lambda: mk.im_ergebnis(analyse)) if analyse is not None else ""
+            if not wo:
+                continue
+        seit = next((x.datum for x in reversed(mk.wechsel) if x.neu == jetzt), w.datum)
+        teile.append(f"gerechnet mit {mk.text(wert)}" + (f" ({wo})" if wo else "")
+                     + f", seit {seit} korrigiert: {mk.text(jetzt)}")
+    return BETROFFEN + ": " + "; ".join(teile) if teile else ""

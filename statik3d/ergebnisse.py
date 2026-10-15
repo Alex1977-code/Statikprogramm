@@ -804,7 +804,7 @@ def lesen(pfad: str, model, fortschritt=None):
     # Wert, Protokollzeilen); was sich nicht sicher erkennen laesst, bleibt None.
     # Die Ergebnisse gelten; weicht ein Merkmal, das dieses Modell betrifft, vom
     # heutigen Verfahren ab, sagt es der Hinweis (Statuszeile und Protokoll).
-    for k in ("rechenverfahren", "verfahren_hinweis", "verfahren_aus_datei", "reibverfahren",
+    for k in ("rechenverfahren", "verfahren_hinweis", "verfahren_betroffen", "verfahren_aus_datei", "reibverfahren",
               "reibverfahren_vorbehalt"):
         an.info.pop(k, None)
     merkmale = rvf.merkmale_der_datei(inhalt, model, gesetzt)
@@ -813,6 +813,11 @@ def lesen(pfad: str, model, fortschritt=None):
     hinweis = rvf.hinweis(model, merkmale)
     if hinweis:
         an.info["verfahren_hinweis"] = hinweis
+    # vor einer Fehlerkorrektur gerechnet (rechenverfahren.Wechsel.art): Status
+    # „Ergebnis möglicherweise betroffen – neu rechnen“ - die Ergebnisse bleiben
+    betroffen = rvf.betroffen(model, merkmale, an)
+    if betroffen:
+        an.info["verfahren_betroffen"] = betroffen
     # wie am 15.10.2026 (a371cf2): das Reibverfahren als Text, und der Vorbehalt
     # zu einer Datei mit dem bisherigen Verfahren an einem Modell mit Reibung
     if merkmale.get("reibverfahren") in REIBVERFAHREN:

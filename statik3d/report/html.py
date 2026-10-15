@@ -2733,6 +2733,19 @@ class Report:
                       np.concatenate(imx))
         return x, out
 
+    def _verfahren_status(self) -> list:
+        """Ergebnisse aus einer Ergebnisdatei, die vor einer Fehlerkorrektur des
+        Rechenverfahrens gerechnet sind (16.10.2026, rechenverfahren): der Status
+        „Ergebnis möglicherweise betroffen – neu rechnen“, dazu der Hinweis zu
+        einem aelteren Verfahren (Verbesserung)."""
+        info = getattr(self.analysis, "info", None) or {}
+        b = []
+        if info.get("verfahren_betroffen"):
+            b.append(("status", str(info["verfahren_betroffen"]), False))
+        if info.get("verfahren_hinweis"):
+            b.append(("note", "Ergebnisdatei " + str(info["verfahren_hinweis"])))
+        return b
+
     def chapter_results(self) -> list:
         m = self.model
         b = [self._h(1, "Ergebnisse")]
@@ -2740,6 +2753,7 @@ class Report:
         if not allres:
             b.append(("p", "Es liegen keine Berechnungsergebnisse vor."))
             return b
+        b.extend(self._verfahren_status())
         # ---- Uebersicht
         b.append(self._h(2, "Übersicht"))
         rows = [["Ergebnis", "Art", "max |u| [mm]", "Knoten", "ΣF_x [kN]", "ΣF_y [kN]",
@@ -4752,6 +4766,7 @@ class Report:
     def chapter_summary(self) -> list:
         m = self.model
         b = [self._h(1, "Zusammenfassung")]
+        b.extend(self._verfahren_status())
         kv = [("Modell", f"{m.name}: {m.nn} Knoten, {len(m.elements)} Elemente, "
                          f"{len(m.members)} Stäbe"),
               ("Lastfälle / Kombinationen", f"{len(self.cases)} / {len(self.combos)}")]

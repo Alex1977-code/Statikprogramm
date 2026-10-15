@@ -9609,6 +9609,10 @@ class Analysis:
         s += seil_querlast_gebuendelt(self.all_results().items())
         # Ergebnisse mit nicht konvergiertem Kontakt sind vorlaeufig (14.10.2026)
         s += vorlaeufig_gebuendelt(self.all_results().items())
+        # vor einer Fehlerkorrektur des Rechenverfahrens gerechnet (Ergebnisdatei,
+        # rechenverfahren, 16.10.2026): „Ergebnis möglicherweise betroffen – neu rechnen“
+        if self.info.get("verfahren_betroffen"):
+            s.append(f"WARNUNG: {self.info['verfahren_betroffen']}")
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)

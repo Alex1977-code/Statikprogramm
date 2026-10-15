@@ -14323,6 +14323,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 # ein Kontaktlauf am Deckel oder nicht konvergiert (15.10.2026): das
                 # steht nicht nur in der Zusammenfassung, sondern sichtbar oben
                 zustand, art = zustand + " · vorläufig", "warn"
+            if info.get("verfahren_betroffen"):
+                # vor einer Fehlerkorrektur des Rechenverfahrens gerechnet (16.10.2026,
+                # rechenverfahren): die Ergebnisse bleiben sichtbar, oben steht es
+                zustand, art = zustand + " · möglicherweise betroffen – neu rechnen", "warn"
         elif self.results is not None:
             zustand, art = "Ergebnis vorhanden", "gut"
         else:
@@ -14355,14 +14359,19 @@ class MainWindow(QtWidgets.QMainWindow):
         """Nach der Rechnung in die Statuszeile (und das Protokoll): welche Ergebnisse
         vorlaeufig sind, weil ein Kontaktlauf am Deckel endete oder nicht konvergierte.
         Rueckgabe der Text ("" ohne solche)."""
+        text = self._vorlaeufig_text()
+        if text:
+            self.info(text)
+        return text
+
+    def _vorlaeufig_text(self) -> str:
+        """„⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): LF1 - …“ oder ""."""
         faelle = self._vorlaeufige_faelle()
         if not faelle:
             return ""
         namen = ", ".join(n for n, _t in faelle[:6]) + (" …" if len(faelle) > 6 else "")
-        text = (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
+        return (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
                 "Zusammenfassung und Bericht nennen die Stellen")
-        self.info(text)
-        return text
 
     def _baum_neu_beginnen(self):
         """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
@@ -30416,6 +30425,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         epfad = erg.pfad_zu(p)
         datei_hinweis = ""
+        # vorn in der Statuszeile nach dem Oeffnen (16.10.2026): Status und Hinweise
+        # zur Ergebnisdatei - sonst ueberschrieb „Ergebnisse geladen …“ die Zeile
+        # „⚠ Ergebnis vorläufig …“ aus _solve_done
+        status_vorn = []
         if os.path.exists(epfad):
             self._fortschritt_beginnen(1000, f"Ergebnisse laden: {os.path.basename(epfad)} …",
                                        abbrechbar=False)
@@ -30448,6 +30461,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Mit aelterem Rechenverfahren gerechnet (16.10.2026, rechenverfahren;
                 # am 15.10.2026 nur das Reibverfahren): die Ergebnisse gelten,
                 # Statuszeile und Protokoll nennen das Verfahren
+                # vor einer Fehlerkorrektur gerechnet: Status statt nur Hinweis - vorn
+                # in der Statuszeile, im Protokoll (Kopfzeile, Zusammenfassung und
+                # Bericht nennen ihn auch); die Ergebnisse bleiben
+                betroffen = (getattr(an, "info", None) or {}).get("verfahren_betroffen")
+                if betroffen:
+                    zeile = f"⚠ {betroffen} (Ergebnisdatei {os.path.basename(epfad)})"
+                    self.hinweis(zeile)
+                    status_vorn.append(zeile)
+                vorl = self._vorlaeufig_text()
+                if vorl:
+                    status_vorn.append(vorl)
                 verfahren = (getattr(an, "info", None) or {}).get("verfahren_hinweis")
                 if verfahren:
                     datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {verfahren}"
@@ -30476,9 +30500,10 @@ class MainWindow(QtWidgets.QMainWindow):
             status_hinweise.append("Hinweis: Vorspannung aus RFEM steht als eingeprägte Dehnung (ΔT), zu prüfen – "
                                    "Lasten › Vorspannung, Lastart „" + _vk_.LASTART_UMWANDELN
                                    + "“ oder Anfangs-/Endvorspannung")
-        if status_hinweise and datei_hinweis:
+        if (status_hinweise or status_vorn) and datei_hinweis:
             # der Hinweis zur Ergebnisdatei bleibt in der Statuszeile stehen
             status_hinweise.insert(0, "Hinweis: " + datei_hinweis)
+        status_hinweise = status_vorn + status_hinweise
         if status_hinweise:
             self._hinweis_statuszeile(" · ".join(status_hinweise))
         # Modell und Ergebnisse sind die der Datei
