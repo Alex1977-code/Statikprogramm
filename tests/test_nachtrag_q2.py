@@ -144,8 +144,8 @@ def test_n31_kombination_meldet():
     ist = (float(np.abs(np.asarray(r.u, float)[:, :3]).max()), r.info.get("contact_iterations"),
            r.info.get("contact_laeufe"), pz.get("iterationen"), pz.get("faktorisierungen"))
     check("N31 K1 wie am Stand d50592e (tests.test_fehler_p8: u_max, Kontakt, Läufe, Newton, Zerlegungen)",
-          abs(ist[0] - 7.844300353569184e-06) <= 1e-12 * 7.844300353569184e-06
-          and ist[1:] == (90, 9, 7, 5), str(ist))
+          abs(ist[0] - 7.844307765287515e-06) <= 1e-12 * 7.844307765287515e-06
+          and ist[1:] == (21, 9, 7, 5), str(ist))        # Reibungstangente seit 15.10.2026 (vorher 90 Runden)
 
     # Ein Abbruch greift jetzt in der Kombination: bei der ersten
     # Kontakt-Iteration nach der Marke von LF1 halten

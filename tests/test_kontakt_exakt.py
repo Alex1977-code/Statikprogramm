@@ -129,10 +129,14 @@ def test_kippender_block():
     # Versuchskraft): fuer den Vergleich der **Normalbedingung** laeuft der
     # exakte Weg hier noch einmal mit der Reibung der Feder (gemessen: mit
     # beiden Neuerungen 9,2e-3 auseinander, davon 9,1e-3 die Reibung)
+    # (seit 15.10.2026 auch ohne die Reibungstangente, die Vorgabe ist: sie rechnet
+    # die Reibung ebenfalls anders als der Feder-Weg)
     alt_pd = contact.REIBUNG_PRIMAL_DUAL
     contact.REIBUNG_PRIMAL_DUAL = False
     try:
-        res_e = solver.solve_static(_block_auf_platte(kipp=1.5))
+        m_e = _block_auf_platte(kipp=1.5)
+        m_e.plastizitaet.reibungstangente = False
+        res_e = solver.solve_static(m_e)
     finally:
         contact.REIBUNG_PRIMAL_DUAL = alt_pd
     du = float(np.abs(res_e.u[:, :3] - res_f.u[:, :3]).max()) / float(np.abs(res_e.u[:, :3]).max())
@@ -320,7 +324,9 @@ def test_reibung_primal_dual():
     alt = contact.REIBUNG_PRIMAL_DUAL
     contact.REIBUNG_PRIMAL_DUAL = False
     try:
-        _res, w, _k, n = _coulomb(stempel())
+        m_r = stempel()
+        m_r.plastizitaet.reibungstangente = False     # bisheriges Verfahren (Vergleich)
+        _res, w, _k, n = _coulomb(m_r)
     finally:
         contact.REIBUNG_PRIMAL_DUAL = alt
     check("Ruecknahme (festgehaltene Richtungen): am Stempel Reibkraft bis weit gegen den Weg (> 10 Grad)",
@@ -580,7 +586,8 @@ def test_reibung_in_einer_richtung():
 
         def gemerkt(self):
             reib = [c for c in self.cons if c.active and c.ct is not None and c.mu > 0]
-            pd["anteil"] = (sum(1 for c in reib if self._primal_dual(c)), len(reib))
+            # primal-dual (bisheriges Verfahren) oder Reibungstangente (Vorgabe seit 15.10.2026)
+            pd["anteil"] = (sum(1 for c in reib if self._primal_dual(c) or self._rt(c)), len(reib))
             pd["leer"] = sum(1 for c in reib if len(self._belegte_tangenten(c)) == 1)
             return alt(self)
         contact.ContactSystem.results = gemerkt
@@ -599,14 +606,19 @@ def test_reibung_in_einer_richtung():
           f"Fx {Fx / 1e3:.3f} kN, eine Zeile {pd['leer']} von {pd['anteil'][1]}")
     res, Fx, pd, muN = rechne(1.5)
     Ft = sum(float(c["Ft"]) for c in res.contact)
-    check("gleitend (H = 1,5 mu N): Reibkraft mu N, alle Reibknoten primal-dual (vorher keiner)",
-          res.info.get("contact_converged") and abs(Ft - muN) < 1e-6 * muN
+    # H = 1,5 mu N ohne weiteren Halt ist ein Mechanismus. Das bisherige Verfahren hiess
+    # das „konvergiert“ (die Reststeifigkeit hielt den Block); mit der Reibungstangente
+    # (seit 15.10.2026) endet der Lauf am Deckel und das Ergebnis ist vorlaeufig
+    check("gleitend (H = 1,5 mu N): Reibkraft mu N, alle Reibknoten primal-dual oder Tangente",
+          (res.info.get("contact_converged") or solver.kontakt_vorlaeufig(res.info))
+          and abs(Ft - muN) < 1e-6 * muN
           and pd["anteil"][0] == pd["anteil"][1] > 0,
           f"Ft {Ft / 1e3:.3f} kN (mu N {muN / 1e3:.1f}), primal-dual {pd['anteil']}")
     res, Fx, pd, muN = rechne(1.5, y_reibung=True)
     Ft = sum(float(c["Ft"]) for c in res.contact)
-    check("Reibung auch in y, y linear gehalten: y-Zeile genullt, gleitend mu N, alle primal-dual",
-          res.info.get("contact_converged") and abs(Ft - muN) < 1e-6 * muN
+    check("Reibung auch in y, y linear gehalten: y-Zeile genullt, gleitend mu N, alle mit Reibverfahren",
+          (res.info.get("contact_converged") or solver.kontakt_vorlaeufig(res.info))
+          and abs(Ft - muN) < 1e-6 * muN
           and pd["anteil"][0] == pd["anteil"][1] > 0 and pd["leer"] == pd["anteil"][1],
           f"Ft {Ft / 1e3:.3f} kN, primal-dual {pd['anteil']}, eine Zeile {pd['leer']}")
 

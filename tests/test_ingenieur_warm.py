@@ -87,6 +87,9 @@ def fliessender_block():
     m.materials["S"].fy = FY
     m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2, iterationen=25,
                                      toleranz=1e-3, kontakt="verschachtelt")
+    # Pendel-Pruefmodell des bisherigen Reibverfahrens (seit 15.10.2026 nur zum Vergleich):
+    # mit der Reibungstangente pendelt es nicht, das Ingenieurkriterium hat nichts anzunehmen
+    m.plastizitaet.reibungstangente = False
     return m
 
 

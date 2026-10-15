@@ -83,7 +83,11 @@ QUER_TOL = 1.0e-4             # Richtungsaenderung [rad], ab der die Reibkraft (
 QUER_MATRIX_TOL = 1.0e-2
 QUER_RUNDEN_MAX = 60          # Phase 2: hoechstens so viele Runden nur fuer Richtungen (Schutz)
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
-MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Runden
+#: Deckel eines Kontaktlaufs: hoechstens so viele Runden - seit dem 15.10.2026 **alle**
+#: Runden des Laufs (Phase 1, Phase 2, Richtungs- und Setzrunden), vorher nur die Runden
+#: mit Zustandswechsel in Phase 2. Am Drehlager (G-unendlich, mu 1e6, Spannstufe 1) lief
+#: ein Lauf so 121 Runden bis max_iter, ohne dass die Deckelzeile kam.
+MAX_CYCLES = 40
 #: Pendelschutz der Reibung primal-dual (Befund B4, 08.10.2026). Zwei Regeln, die nur
 #: greifen, wenn ein Knoten tatsaechlich pendelt - wer nicht pendelt, rechnet bitgleich
 #: wie vorher; die Kontaktbedingung selbst bleibt dieselbe (Haften exakt im Kegel,
@@ -118,6 +122,58 @@ MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Run
 UMKEHR_HAFTET = True
 PENDEL_EINZELN = True
 UMKEHR_RUNDEN = 2
+#: Reibung mit konsistenter Tangente (Entscheidung des Anwenders vom 15.10.2026;
+#: ContactSystem.reibungstangente, vom Loeser aus Plastizitaet.reibungstangente gesetzt).
+#: Eingeschaltet rechnet jeder Reibknoten an einer exakten Normalbedingung (starr, aktiv)
+#: in jeder Runde die Rueckabbildung des Coulomb-Gesetzes aus seinem Tangentialweg d_t
+#: und der Normalkraft p der Loesung - in beiden Phasen, ohne Liniensuche und ohne
+#: Pendelschutz der Gleitrichtung:
+#:
+#:     Versuchskraft f = k_h d_t;  |f| <= mu p: Haften, F_t = f;
+#:                                 sonst Gleiten, F_t = mu p d_t/|d_t|.
+#:
+#: Linearisiert wird konsistent (semiglatter Newton): Haften mit der Feder k_h
+#: (symmetrisch), Gleiten mit der Ableitung von mu p t/|t| nach u - quer zur
+#: Gleitrichtung die Feder mu p/|d_t| (I - t t^T), laengs die Abhaengigkeit von p als
+#: Spalte -mu t am Multiplikator der Normalzeile (D_kopplung, unsymmetrisch; nur mit
+#: gleitenden Knoten). Die Normalbedingung bleibt exakt (Zeile in C, Multiplikator
+#: lambda); nur das Haften ist eine Feder k_h = haft_faktor mal Diagonalsteifigkeit
+#: des Knotens - relativ zur Steifigkeit der angrenzenden Elemente, auch an starren
+#: Lagern, wo es keine Gegenseite gibt. Der Weg ist der gesamte Tangentialweg des
+#: Lastfalls (Haften heisst: an der Ausgangslage, bis auf f/k_h), wie bisher ohne
+#: Lastgeschichte. Konvergiert ist die Reibung, wenn die Kraft der Rueckabbildung an
+#: der neuen Loesung von der linearisierten Kraft, mit der geloest wurde, in Summe
+#: hoechstens RESIDUUM_ANTEIL der Kontaktkraft abweicht.
+#:
+#: Warum: am Drehlager-Entwurf (E0-neu, 15.10.2026) endeten 37 von 38 Kontaktlaeufen
+#: der plastischen Phase am Deckel von 40 Runden - die Aktivmenge aenderte sich nur um
+#: 1 bis 3, es wechselten Haften/Gleiten und Gleitrichtungen am Flaechenlager "Starr"
+#: (mu 0,1) unter V36, das Kontaktresiduum stand bei 2,5 bis 4e-3 der Kontaktkraft. Die
+#: primal-duale Reibung fuehrt die Richtung als Fixpunkt ueber den Multiplikator der
+#: vorigen Runde nach (Quertangente c mu p/|w| statt mu p/|d_t|) und stellt Knoten
+#: ueber eine Liniensuche um. Aus rechnet alles wie bisher (Schalter fuer die
+#: Ruecknahmeprobe, tests/test_reibungstangente).
+#:
+#: HAFT_FAKTOR ist die Vorgabe des Faktors fuer k_h; RT_REST die Reststeifigkeit
+#: gleitender Knoten (Anteil der Diagonale) mit Ausgleich - sie haelt das System
+#: regulaer und traegt am Ende keine Kraft, denn ihre Kraft steht im Residuum.
+HAFT_FAKTOR = 1.0e3
+RT_REST = 1.0e-8
+#: Ab dieser Drehung bzw. relativen Aenderung wird die Tangente eines gleitenden
+#: Knotens der Reibungstangente neu gesetzt (neue Matrix); darunter rechnet die Runde
+#: mit der vorigen Tangente weiter (vereinfachter Newton), die Kraft ist trotzdem die
+#: der neuen Richtung (Fc). 0 heisst: jede Runde neu (voller Newton).
+RT_MATRIX_TOL = 1.0e-2
+RT_KQUER_TOL = 0.5
+#: Kehrt die Gleitrichtung eines Knotens von einer Runde zur naechsten um mehr als
+#: 90 Grad um (cos < RT_UMKEHR_COS), rechnet die naechste Runde ihn mit der Haftfeder:
+#: laengs der Gleitrichtung hat die konsistente Tangente keine Steifigkeit (die Kraft
+#: mu p haengt nicht vom Gleitweg ab), und sind die Knoten, die ein Bauteil in dieser
+#: Richtung halten, alle gleitend, springt die Loesung ueber das Haften hinweg auf die
+#: Gegenseite und zurueck (gemessen 15.10.2026, gequetschter Block aus
+#: tests/test_plastizitaet: Mittelknoten +-9 bis 14 um je Runde, Periode 2, bis max_iter).
+RT_UMKEHR = True
+RT_UMKEHR_COS = 0.0
 #: Pendelschutz der Gleitrichtung mit Winkeltoleranz (Vorschlag 2, Entscheidung des
 #: Anwenders vom 14.10.2026): eingeschaltet (ContactSystem.umkehr_winkel, vom Loeser aus
 #: Plastizitaet.pendelschutz_winkel gesetzt) haftet ein gleitender Knoten, dessen
@@ -817,6 +873,11 @@ class ContactSystem:
     #: setzt beides je Lauf aus den Einstellungen; aus rechnet alles wie bisher
     umkehr_winkel = False
     gleit_toleranz = 1.0e-6
+    #: Reibung mit konsistenter Tangente (REIBUNGSTANGENTE oben): der Loeser setzt
+    #: beides je Lauf aus den Einstellungen; Vorgabe an seit dem 15.10.2026 (aus: das
+    #: bisherige Verfahren, nur zum Vergleich)
+    reibungstangente = True
+    haft_faktor = HAFT_FAKTOR
 
     def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None,
                  uebermass: dict = None):
@@ -1686,6 +1747,11 @@ class ContactSystem:
         for i, c in enumerate(self.cons):
             if not (c.active and c.ct is not None) or i in ohne:
                 continue
+            if self._rt(c):
+                # Reibungstangente: der Zustand folgt aus u (Rueckabbildung), eine
+                # uebernommene Richtung gibt es nicht zu pruefen - sein Rest steht
+                # im Residuum des Laufs
+                continue
             gegen = False
             if self._primal_dual(c):
                 # Primal-dual ist der konvergierte Zustand in sich stimmig (die
@@ -1786,6 +1852,17 @@ class ContactSystem:
                 continue
             dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
             limit = c.mu * max(Fn, 0.0)
+            if self._rt(c):
+                # Reibungstangente: Status und Richtung der Rueckabbildung gegen den Zustand
+                gl, _f, nd, _kq = self._rueckabbildung(c, dt, Fn)
+                if gl and not c.slip:
+                    v["kegel"] += 1
+                    kh = float(np.linalg.norm(self._k_haft(c) * dt))
+                    v["kegel_max"] = max(v["kegel_max"], kh / limit if limit > 0 else np.inf)
+                elif c.slip and (not gl or (c.slip_dir is not None and nd is not None
+                                            and float(np.linalg.norm(c.slip_dir - nd)) > 1e-3)):
+                    v["gegen"] += 1
+                continue
             if self._primal_dual(c):
                 # Versuchskraft gegen den Kegel, wie in _update_states
                 w = self._lam_t(c, lam, dt) + self._c_pd(c) * dt
@@ -1820,6 +1897,7 @@ class ContactSystem:
         es aber nicht."""
         self._pd_vorbereiten()
         kontaktkraft = summe = 0.0
+        full_slip = self._full_slip_groups() if getattr(self, "reibungstangente", False) else {}
         for c in self.cons:
             ue = u[c.dofs]
             g = c.g0 + c.cn @ ue
@@ -1830,7 +1908,9 @@ class ContactSystem:
                 if c.ct is not None and c.mu > 0 and not c.haften and not c.pendel_fest:
                     dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                     limit = c.mu * max(Fn, 0.0)
-                    if self._primal_dual(c):
+                    if self._rt(c):
+                        summe += self._rt_rest(c, u, lam, full_slip)
+                    elif self._primal_dual(c):
                         w = self._lam_t(c, lam, dt) + self._c_pd(c) * dt
                         nw = float(np.linalg.norm(w))
                         if not c.slip and nw > limit * (1 + 1e-6):
@@ -1989,7 +2069,13 @@ class ContactSystem:
             kraft = 0.0 if (c.zug or c.yielding) else max(-roh, 0.0)
             if dt is not None and c.mu > 0 and not c.haften:
                 limit = c.mu * max(roh, 0.0)
-                if self._primal_dual(c):
+                if self._rt(c):
+                    # eingefroren: gegen die Rueckabbildung an dieser Loesung
+                    gl, Ft_rm, _nd, _kq = self._rueckabbildung(c, dt, roh)
+                    Ft_z = (self._k_haft(c) * dt if not c.slip
+                            else limit * np.asarray(c.slip_dir, float))
+                    kraft += float(np.linalg.norm(Ft_rm - Ft_z))
+                elif self._primal_dual(c):
                     w = (self._lam_t(c, lam, dt) if not c.slip else np.asarray(c.lam_t, float)) \
                         + self._c_pd(c) * dt
                     nw = float(np.linalg.norm(w))
@@ -2116,7 +2202,8 @@ class ContactSystem:
         if dt is None or not (c.mu > 0 or c.haften):
             Ft = np.zeros(2)
         elif not c.slip:
-            Ft = (np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
+            Ft = (self._k_haft(c) * dt if self._rt(c)
+                  else np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
                   else c.kt * dt)
         else:
             fr = c.mu * max(fn_alt, 0.0)
@@ -2131,7 +2218,7 @@ class ContactSystem:
                      and (fein or (AUSGLEICH_WIEDER_ZU and c.wieder_zu
                                    and not self._ohne_halt(c, full_slip))))
             Ft = Ft + k_res * (dt - c.dt_last if ausgl else dt)
-            if c.k_quer > 0.0 and c.quer_dir is not None and self._primal_dual(c):
+            if c.k_quer > 0.0 and c.quer_dir is not None and (self._primal_dual(c) or self._rt(c)):
                 q = np.array([-c.quer_dir[1], c.quer_dir[0]])
                 weg = dt - c.dt_last if c.dt_last is not None else dt
                 Ft = Ft + c.k_quer * float(q @ weg) * q
@@ -2167,7 +2254,7 @@ class ContactSystem:
         b.update(repr(sorted(self._full_slip_groups().items())).encode("utf-8"))
         return b.hexdigest()
 
-    def runden_text(self, n: int = None) -> str:
+    def runden_text(self, n: int = None, alle_phasen: bool = False) -> str:
         """Die Phase-2-Runden mit Wechsel als Satz, etwa
         " - in 40 Runden: 31 mit Öffnen/Schließen reibungsfreier Bedingungen
         (212 Wechsel), 12 mit neuem Gleiten (340 Knoten)". ``n``: nur die
@@ -2175,8 +2262,9 @@ class ContactSystem:
         denn ``cycles`` beginnt beim Wechsel 1->2 und in zustand_setzen bei
         null, und dort beginnt auch ``runden`` (Setzrunden haben kein
         Ereignis und zaehlen nicht)."""
+        # alle_phasen (Deckel ueber alle Runden, 15.10.2026): auch die Runden der Phase 1
         runden = [r for r in (getattr(self, "runden", None) or [])
-                  if r[0] == 2 and any(r[1:1 + len(RUNDEN_EREIGNISSE)])]
+                  if (alle_phasen or r[0] == 2) and any(r[1:1 + len(RUNDEN_EREIGNISSE)])]
         if n:
             runden = runden[-int(n):]
         if not runden:
@@ -2268,7 +2356,7 @@ class ContactSystem:
         Nur starre, aktive, nicht fliessende - und nicht im Hilfsschritt
         (stabilise: dort sind alle Bedingungen reine Federn an ihrer Lage)."""
         return bool(c.starr and c.active and not c.yielding
-                    and not (self.stabilising and getattr(c, "stabilised", False)))
+                    and not (getattr(self, "stabilising", False) and getattr(c, "stabilised", False)))
 
     def _primal_dual(self, c: Constraint) -> bool:
         """Wird der Reibzustand dieses Knotens in diesem Schritt primal-dual
@@ -2279,6 +2367,8 @@ class ContactSystem:
         (Symmetrielager: die Zeile waere leer, das System singulaer)."""
         if not REIBUNG_PRIMAL_DUAL or getattr(self, "phase", 1) != 2:
             return False
+        if self._rt(c):
+            return False                # Reibungstangente: Rueckabbildung statt primal-dual
         if not (c.ct is not None and c.mu > 0 and not c.haften and self._exakt(c)):
             # nur an der exakten Normalbedingung (starr, lam_n Multiplikator):
             # an der Feder des Anwenders lief der Block auf der Platte mit
@@ -2385,7 +2475,7 @@ class ContactSystem:
         Runden (Block mit Reibung, LF3 nach LF2: 22 Runden und 6 Zerlegungen
         statt 6 und 0; gequetschter Block 42,130 und 42,580 mm mit und ohne,
         gemessen 28.09.2026)."""
-        return (self._primal_dual(c) and c.slip and c.quer_dir is not None
+        return ((self._primal_dual(c) or self._rt(c)) and c.slip and c.quer_dir is not None
                 and not getattr(self, "nur_symmetrisch", False))
 
     def _c_pd(self, c: Constraint) -> float:
@@ -2403,6 +2493,60 @@ class ContactSystem:
             if ref > 0:
                 return ref
         return float(c.kn / PENALTY_FACTOR)
+
+    def _rt(self, c: Constraint) -> bool:
+        """Rechnet dieser Knoten in diesem Schritt mit der Reibungstangente
+        (REIBUNGSTANGENTE)? Eingeschaltet, Reibung (mu > 0, keine Haftfuge) an
+        einer exakten Normalbedingung (starr, aktiv, nicht fliessend), keine Hilfe
+        des Loesers (gehalten, Schubhalt, eingefroren, Fuge mit gehaltenen Punkten)
+        und mindestens eine belegte Tangentialzeile - dieselben Grenzen wie die
+        primal-duale Reibung, aber in beiden Phasen."""
+        if not getattr(self, "reibungstangente", False):
+            return False
+        if not (c.ct is not None and c.mu > 0 and not c.haften and self._exakt(c)):
+            return False
+        if c.gehalten or c.frozen or getattr(c, "schub_halt", False):
+            return False
+        if _group(c) in getattr(self, "_pd_ohne", ()):
+            return False
+        return bool(np.any(np.abs(c.ct) > 1e-12))
+
+    def _k_haft(self, c: Constraint) -> float:
+        """Haftfeder k_h der Reibungstangente: haft_faktor mal Diagonalsteifigkeit
+        des Knotens (_c_pd) - relativ zur Steifigkeit der angrenzenden Elemente,
+        nicht die Strafsteifigkeit k_t = 1e4-fache Diagonale der Phase 1."""
+        return float(getattr(self, "haft_faktor", HAFT_FAKTOR)) * self._c_pd(c)
+
+    def _rueckabbildung(self, c: Constraint, dt: np.ndarray, p: float) -> tuple:
+        """Coulomb je Knoten (Return-Mapping): (gleitet, F_t (2,), Richtung (2,)
+        oder None, Quertangente mu p/|d_t|) aus dem Tangentialweg ``dt`` und der
+        Normalkraft ``p`` (ungekappt; Zug traegt keine Reibung). F_t in der
+        Ft-Konvention (parallel zum Weg, die Kraft auf das Tragwerk ist -C_t^T F_t)."""
+        dt = np.asarray(dt, float)
+        f = self._k_haft(c) * dt
+        nf = float(np.linalg.norm(f))
+        limit = c.mu * max(float(p), 0.0)
+        if nf <= limit:
+            return False, f, None, 0.0
+        nd = dt / float(np.linalg.norm(dt))
+        return True, limit * nd, nd, limit / float(np.linalg.norm(dt))
+
+    def _rt_rest(self, c: Constraint, u: np.ndarray, lam, full_slip: dict) -> float:
+        """Residuum eines Knotens der Reibungstangente [N]: die Kraft der
+        Rueckabbildung an der Loesung ``u`` gegen die linearisierte Kraft, mit der
+        diese Loesung gerechnet wurde (_kraft_einer: Haftfeder, bzw. Reibkraft mit
+        der Normalkraft der Loesung, Quertangente und Reststeifigkeit)."""
+        _g, roh, _fn, Ft_lin, dt = self._kraft_einer(c, u, lam, full_slip)
+        if dt is None:
+            return 0.0
+        _gl, Ft_rm, _nd, _kq = self._rueckabbildung(c, dt, roh)
+        if c.slip and self._ohne_halt(c, full_slip):
+            # Ganz gleitende Gruppe ohne anderen Halt ("Bauteil rutscht"): die grobe
+            # Reststeifigkeit haelt das Bauteil und traegt Kraft - das meldet die Warnung,
+            # nicht das Residuum (wie bei der primal-dualen Reibung). Sonst endete der
+            # rutschende Block (tests/test_solver_ext, H = 0,4 N > mu N) nie
+            Ft_lin = np.asarray(Ft_lin, float) - self._k_res(c, full_slip) * np.asarray(dt, float)
+        return float(np.linalg.norm(np.asarray(Ft_rm, float) - np.asarray(Ft_lin, float)))
 
     def _lam_t(self, c: Constraint, lam, dt: np.ndarray) -> np.ndarray:
         """Tangentialmultiplikator des Knotens in diesem Schritt, in der
@@ -2528,7 +2672,11 @@ class ContactSystem:
                     Fc[c.dofs] += -c.kn * c.g0 * c.cn
             if c.ct is not None and (c.mu > 0 or c.haften):
                 if not c.slip:
-                    if not (self._haftzeile(c) and not als_federn):
+                    if not als_federn and self._rt(c):
+                        # Reibungstangente: Haften als Feder k_h (symmetrisch)
+                        kmat = kmat + self._k_haft(c) * (np.outer(c.ct[0], c.ct[0])
+                                                         + np.outer(c.ct[1], c.ct[1]))
+                    elif not (self._haftzeile(c) and not als_federn):
                         kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                     # sonst Haften exakt: zwei Zeilen in C (system_matrizen), keine Feder
                 else:
@@ -2576,7 +2724,7 @@ class ContactSystem:
                         Fc[c.dofs] += k_res * (c.dt_last[0] * c.ct[0] + c.dt_last[1] * c.ct[1])
                     kmat = kmat + k_res * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                     if (not als_federn and c.k_quer > 0.0 and c.quer_dir is not None
-                            and self._primal_dual(c)):
+                            and (self._primal_dual(c) or self._rt(c))):
                         # Konsistente Tangente der Reibkraft mu lam_n w/|w| nach
                         # d_t, quer zur Richtung: c mu lam_n/|w| (I - w w^T),
                         # hoechstens c. Als Feder auf die Aenderung seit dem
@@ -2618,6 +2766,10 @@ class ContactSystem:
         Bauteilsteifigkeit statt k_t beziehen (Phase 1 verliert ihre Daempfung,
         Block und Warmstart-Fixtures laufen in den Deckel) und Ausgleich an der
         groben Feder (Fixpunkt zu langsam, K5 hex8 -79 % statt -86 %)."""
+        if self._rt(c) and not self._ohne_halt(c, full_slip):
+            # Reibungstangente: in beiden Phasen fein, mit Ausgleich - ihre Kraft
+            # steht im Residuum (_rt_rest), am Ende traegt sie nichts
+            return RT_REST * self._c_pd(c)
         if self.phase == 2 and not self._ohne_halt(c, full_slip):
             return SLIP_STIFFNESS_FINE * c.kt
         return SLIP_STIFFNESS * c.kt
@@ -2648,6 +2800,21 @@ class ContactSystem:
         self.f_ref = max(abs(f_ref), 1e-30)
 
     def update(self, u: np.ndarray, lam=None) -> bool:
+        """Wie :meth:`_update_entscheiden`, dazu der Deckel ueber **alle** Runden des
+        Laufs (MAX_CYCLES, seit dem 15.10.2026): soll die Iteration weiterlaufen und hat
+        der Lauf schon MAX_CYCLES Runden, endet er am Deckel - mit der Zeile im
+        Protokoll und ``am_deckel``, also nicht konvergiert und das Ergebnis vorlaeufig."""
+        weiter = self._update_entscheiden(u, lam)
+        n = len(getattr(self, "runden", None) or [])
+        if weiter and n >= MAX_CYCLES:
+            self.log.append("Kontakt: Nachpruefung der Reibung nach "
+                            f"{MAX_CYCLES} Runden abgebrochen"
+                            + self.runden_text(MAX_CYCLES, alle_phasen=True))
+            self.am_deckel = True
+            return False
+        return weiter
+
+    def _update_entscheiden(self, u: np.ndarray, lam=None) -> bool:
         """Zustaende aus der Loesung u (und den Multiplikatoren lam der exakten
         Bedingungen, system_matrizen) aktualisieren. Rueckgabe: True, solange
         weiter iteriert werden muss.
@@ -2668,6 +2835,12 @@ class ContactSystem:
         self.am_deckel = False
         changed = self._update_states(u, lam)
         if self.phase == 1:
+            if changed and getattr(self, "_nur_rt", False):
+                # nur noch die Reibungstangente: weiter in Phase 2 (siehe _update_states)
+                self.phase = 2
+                self.cycles = 0
+                self.richtung_runden = 0
+                return True
             if changed:
                 return True
             full = self._full_slip_groups()
@@ -2715,7 +2888,7 @@ class ContactSystem:
             # dieselbe Zeile - Oeffnen/Schliessen in Fugen und neues Gleiten
             # verlangen verschiedene Abhilfen (22.09.2026)
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
-                            f"{MAX_CYCLES} Zustandswechseln abgebrochen"
+                            f"{MAX_CYCLES} Runden abgebrochen"
                             + self.runden_text(self.cycles))
             self.am_deckel = True
             return False
@@ -2748,6 +2921,10 @@ class ContactSystem:
         kontaktkraft = 0.0      # Summe der Druckkraefte (Bezug des Residuums)
         kegel_summe = 0.0       # Kegelueberschreitung haftender Knoten [N]
         gegen_summe = 0.0       # Reibkraft gleitender Knoten gegen ihre Richtung [N]
+        rt_summe = 0.0          # Reibungstangente: Rueckabbildung gegen linearisierte Kraft [N]
+        rt_wechsel = False      # Reibungstangente: Haften/Gleiten gewechselt (getrennt von changed)
+        rt_an = bool(getattr(self, "reibungstangente", False))
+        full_slip_vor = self._full_slip_groups() if rt_an else {}
         for c in self.cons:
             ue = u[c.dofs]
             g = c.g0 + c.cn @ ue
@@ -2759,7 +2936,9 @@ class ContactSystem:
                 if c.ct is not None and c.mu > 0 and not c.haften and not c.pendel_fest:
                     dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                     limit = c.mu * max(Fn, 0.0)
-                    if self._primal_dual(c):
+                    if rt_an and self._rt(c):
+                        rt_summe += self._rt_rest(c, u, lam, full_slip_vor)
+                    elif self._primal_dual(c):
                         # Versuchskraft w = lam_t + c d_t gegen den Kegel
                         w = self._lam_t(c, lam, dt) + self._c_pd(c) * dt
                         nw = float(np.linalg.norm(w))
@@ -2796,7 +2975,9 @@ class ContactSystem:
         # Kontaktkraft (RESIDUUM_ANTEIL). Darunter steht der Zustand: nichts
         # wird umgestellt, keine Richtung nachgefuehrt, kein Wechsel gemeldet -
         # die Loesung u ist die Loesung.
-        residuum = sum(v for v, _c in wuensche) + kegel_summe + gegen_summe
+        residuum = sum(v for v, _c in wuensche) + kegel_summe + gegen_summe + rt_summe
+        self.rt_residuum = float(rt_summe)
+        rt_offen = (rt_summe > RESIDUUM_ANTEIL * kontaktkraft) if kontaktkraft > 0.0 else rt_summe > 0.0
         ruhe = kontaktkraft > 0.0 and residuum <= RESIDUUM_ANTEIL * kontaktkraft
         self.residuum, self.kontaktkraft = float(residuum), float(kontaktkraft)
         if ruhe and (wuensche or kegel_summe > 0.0 or gegen_summe > 0.0) \
@@ -2830,7 +3011,9 @@ class ContactSystem:
             c.g = g
             if c.active:
                 Fn = self._normalkraft(c, g, lam)
-                if c.slip:
+                if c.slip and not (rt_an and self._rt(c) and self._gekoppelt(c)):
+                    # (Reibungstangente gekoppelt: die Normalkraft steht implizit im
+                    # Sattelpunkt, ihre Aenderung im Residuum - keine Setzrunde)
                     self.dF_slip = max(self.dF_slip, c.mu * abs(max(Fn, 0.0) - c.Fn))
                 # Druckkraft (bzw. Zug unter der Loesergenauigkeit f_tol) -> bleibt;
                 # an der exakten Bedingung ist Fn der Multiplikator, und ein
@@ -2905,7 +3088,53 @@ class ContactSystem:
                 limit = c.mu * max(c.Fn, 0.0)
                 nrm = np.linalg.norm(dt)
                 pd = self._primal_dual(c)
-                if pd and not c.slip:
+                if rt_an and self._rt(c):
+                    # Reibungstangente: Rueckabbildung an dieser Loesung, Status und
+                    # Tangente fuer die naechste - ohne Liniensuche (REIBUNGSTANGENTE)
+                    gl, Ft_rm, nd, kq = self._rueckabbildung(c, dt, c.Fn)
+                    if c.pendel_fest:
+                        # eingefroren (Pendeln): Status bleibt, Pruefung am Ende des Laufs
+                        c.Ft = (self._k_haft(c) * dt if not c.slip
+                                else limit * np.asarray(c.slip_dir, float))
+                    elif ruhe:
+                        c.Ft = Ft_rm if gl == c.slip else (
+                            self._k_haft(c) * dt if not c.slip else limit * np.asarray(c.slip_dir, float))
+                    else:
+                        if (RT_UMKEHR and gl and c.slip and c.slip_dir is not None
+                                and float(nd @ np.asarray(c.slip_dir, float)) < RT_UMKEHR_COS):
+                            # Umkehr: die Gleitrichtung dreht ueber RT_UMKEHR_COS hinaus - der
+                            # Weg ging durch das Haften. Linearisiert wird der naechste Schritt
+                            # mit der Haftfeder (der Status der Matrix), die Kraft dieser Loesung
+                            # bleibt die der Rueckabbildung; ob der Knoten haftet, entscheidet
+                            # die Rueckabbildung der naechsten Loesung (REIBUNGSTANGENTE)
+                            gl = False
+                        if gl != c.slip:
+                            rt_wechsel = True
+                            z["gleiten_neu" if gl else "haften_zurueck"] += 1
+                            betroffen.add(id(c))
+                            if gl:
+                                c.gleit_runde = runde_nr
+                        elif gl and c.slip_dir is not None and \
+                                float(np.linalg.norm(nd - c.slip_dir)) > QUER_TOL and limit > self.f_tol:
+                            z["richtung"] += 1
+                        c.slip = gl
+                        c.Ft = np.asarray(Ft_rm, float)
+                        c.lam_t = c.Ft.copy()
+                        if gl:
+                            c.slip_dir = np.asarray(nd, float)
+                            # Die Tangente (Matrix) nur nachfuehren, wenn sie sich merklich
+                            # aendert - wie die primal-duale Reibung (QUER_MATRIX_TOL): eine
+                            # schiefe Tangente aendert die Loesung nicht, nur den Weg dorthin,
+                            # und jede neue kostet eine Zerlegung
+                            if (c.quer_dir is None or (c.k_quer <= 0.0) != (kq <= 0.0)
+                                    or float(np.linalg.norm(c.slip_dir - c.quer_dir)) > RT_MATRIX_TOL
+                                    or (c.k_quer > 0.0 and abs(kq - c.k_quer) > RT_KQUER_TOL * c.k_quer)):
+                                c.quer_dir = c.slip_dir.copy()
+                                c.k_quer = float(kq)
+                        else:
+                            c.slip_dir = None
+                            c.quer_dir, c.k_quer = None, 0.0
+                elif pd and not c.slip:
                     # Haften primal-dual: lam_t ist die Reaktion der Haftzeilen
                     # (ohne Zeile in diesem Schritt die Haftfeder); gleiten,
                     # sobald die Versuchskraft w = lam_t + c d_t den Kegel
@@ -3156,6 +3385,23 @@ class ContactSystem:
                 changed = True
                 z[_gleitart(c.mu * max(c.Fn, 0.0), id(c) in zu_in_runde)] += 1
                 betroffen.add(id(c))
+        # Reibungstangente: wechselte nur sie (Haften/Gleiten oder ein offener Rest der
+        # Rueckabbildung), merkt sich das update() - in Phase 1 geht es dann in Phase 2
+        # weiter, wo Deckel, Pendeln mit Periode 2 und Ingenieurkriterium wirken. Bis dahin
+        # blieb ein Knoten, der zwischen Haften und Gleiten pendelte, in Phase 1 bis
+        # max_iter (Block mit Anschlag, tet4, tests/test_kontakt_pendeln: 120 Runden)
+        self._nur_rt = bool(rt_an and not changed and (rt_wechsel or (rt_offen and not ruhe)))
+        if rt_wechsel:
+            changed = True
+        elif rt_an and rt_offen and not ruhe and not changed:
+            # kein Statuswechsel, aber die Rueckabbildung weicht noch merklich von der
+            # linearisierten Kraft ab - ein Newton-Schritt mehr. In Phase 1 als Wechsel,
+            # in Phase 2 wie eine Richtungsrunde (zaehlt nicht auf den Deckel, hoechstens
+            # QUER_RUNDEN_MAX)
+            if self.phase == 1:
+                changed = True
+            else:
+                self.richtung_neu = getattr(self, "richtung_neu", 0) + 1
         runden = getattr(self, "runden", None)
         if runden is None:
             # Stuempfe aus object.__new__ (tests) kennen kein __init__

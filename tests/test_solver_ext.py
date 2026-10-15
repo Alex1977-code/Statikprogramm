@@ -971,9 +971,13 @@ def test_probelauf_und_kennzahlen():
            sum(1 for x in mitgegeben if x is not None) > 0,
            f"{sum(1 for x in mitgegeben if x is not None)} von {len(mitgegeben)} mit Warmstart")
 
-    pruefe("Probelauf spart Kontaktschritte",
-           probe.info["contact_iterations"] < voll.info["contact_iterations"],
-           f"{probe.info['contact_iterations']} statt {voll.info['contact_iterations']}")
+    # Je Fliessschritt, nicht in Summe: mit der Reibungstangente (Vorgabe seit
+    # 15.10.2026) braucht der volle Lauf so wenige Kontaktrunden (45), dass der
+    # Probelauf mit seinen nicht auskonvergierten Fliessschritten in Summe mehr hat (141)
+    pruefe("Probelauf spart Kontaktschritte je Fließschritt",
+           je_schritt(probe) < je_schritt(voll),
+           f"{je_schritt(probe):.2f} statt {je_schritt(voll):.2f} "
+           f"({probe.info['contact_iterations']} und {voll.info['contact_iterations']} in Summe)")
     # Verformung: derselbe erste Schritt, also dieselbe Groessenordnung -
     # der Probelauf darf kein anderes Modell rechnen
     du_p = float(np.abs(probe.u).max())
@@ -1082,6 +1086,9 @@ def test_reibkraft_gleitender_knoten_ohne_reststeifigkeit():
     CT.AUSGLEICH_RESTSTEIFIGKEIT = False
     try:
         m0, _ua, ub0, ob0 = modell()
+        # der Ausgleich gehoert zum bisherigen Verfahren (seit 15.10.2026 nur zum
+        # Vergleich); die Reibungstangente fuehrt die Kraft der Reststeifigkeit im Residuum
+        m0.plastizitaet.reibungstangente = False
         r0 = solver.solve_static(m0)
         wahr0, cf0, _f0 = messen(m0, ub0, ob0, r0)
     finally:

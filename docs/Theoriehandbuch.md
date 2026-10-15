@@ -2134,6 +2134,108 @@ Block auf der Platte mit Kippen lief mit ihr um das 230-Fache davon). Der
 Gleichungslöser ama scheitert am Sattelpunkt des Stempels auf Sockel schon in
 der ersten Kontaktrunde - vorbestehend, auch am Stand ec3b464.
 
+**Reibung mit konsistenter Tangente (seit 15.10.2026, `contact.REIBUNGSTANGENTE`,
+Schalter `Plastizitaet.reibungstangente`, Vorgabe an seit der Abnahme am Drehlager;
+aus ist das bisherige Verfahren, nur zum Vergleich).** Eingeschaltet rechnet jeder
+Reibknoten an einer exakten Normalbedingung (starr, aktiv, nicht fließend, keine
+Hilfe des Lösers) in beiden Phasen die Rückabbildung (Return-Mapping) des
+Coulomb-Gesetzes. Mit dem Weg d_t = C_t·u in der Fugenebene, der Normalkraft p
+(Multiplikator der Normalzeile) und der Haftfeder k_h = f_h·k_d (k_d die größte
+Diagonale der Verschiebungsfreiheitsgrade des Knotens, f_h = `haft_faktor`, Vorgabe
+1 000) ist
+
+* Versuchskraft f = k_h·d_t; |f| ≤ μ·p: **Haften**, F_t = f, Tangente k_h·I
+  (symmetrisch);
+* sonst **Gleiten**, F_t = μ·p·t mit t = d_t/|d_t|. Die konsistente Ableitung ist
+  ∂F_t/∂d_t = μ·p/|d_t|·(I − t·tᵀ) quer zur Gleitrichtung (in K_c, symmetrisch) und
+  ∂F_t/∂p = μ·t, im Sattelpunkt die Spalte −μ·t am Multiplikator der Normalzeile
+  (`D_kopplung`, wie bei der Reibung primal-dual). Das System ist nur mit gleitenden
+  Knoten unsymmetrisch. Längs t ist die Tangente null (die Reibkraft hängt nicht vom
+  Gleitweg ab); eine Reststeifigkeit 10⁻⁸·k_d mit Ausgleich auf den Weg seit dem
+  letzten Zustand hält das System regulär, ihre Kraft steht im Residuum.
+
+Linearisiert um den letzten Zustand ist die Kraft eines gleitenden Knotens
+μ·p·t + μ·p/|d_t,k|·(I − t tᵀ)(d_t − d_t,k) + μ·t·(p − p_k); weil d_t,k parallel zu t
+ist, bleibt im Lastvektor nichts übrig. Die Tangente (Richtung und Quersteifigkeit)
+wird nur nachgeführt, wenn sich die Richtung um mehr als 10⁻² dreht oder die
+Quersteifigkeit um mehr als die Hälfte ändert (`RT_MATRIX_TOL`, `RT_KQUER_TOL`);
+darunter rechnet die Runde mit der alten Matrix weiter und die Abweichung der Kraft
+steht im Lastvektor. Residuum je Knoten ist |F_t,Rückabbildung(u) − F_t,linearisiert(u)|;
+die Summe geht in das Laufresiduum (`RESIDUUM_ANTEIL` 10⁻⁶ der Kontaktkraft). Ohne
+Statuswechsel, aber mit offenem Residuum zählt die Runde in Phase 1 als Wechsel und in
+Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Der
+Weg ist wie bisher der gesamte Weg des Lastfalls (ohne Lastgeschichte): Haften heißt
+an der Ausgangslage, bis auf f/k_h.
+
+Umkehr (`RT_UMKEHR`): dreht t von einer Runde zur nächsten um mehr als 90°, rechnet die
+nächste Runde den Knoten mit der Haftfeder. Ohne die Regel lief der gequetschte Block
+in eine Periode 2: längs t hat die Tangente keine Steifigkeit, und gleiten alle
+Knoten, die den Block in x halten, springt die Lösung über das Haften hinweg auf die
+Gegenseite (Mittelknoten ±9 bis 14 µm je Runde, jeder Lauf bis `max_iter`, 18 600
+Runden). Verworfen (gemessen 15.10.2026): statt des Haftens nach der Umkehr eine
+Längssteifigkeit μ·p/|d_t| um den letzten Zustand – jeder Lauf des gequetschten
+Blocks endete an `max_iter`.
+
+Wechselt in einer Runde nur die Reibungstangente (Haften/Gleiten oder ein offener Rest),
+geht es aus Phase 1 in Phase 2 weiter, wo Deckel, Pendeln mit Periode 2 und
+Ingenieurkriterium wirken. Ohne das pendelte der Block mit Anschlag (tet4,
+`tests/test_kontakt_pendeln`) in Phase 1 zwischen Haften und Gleiten bis `max_iter`
+(120 Runden): dort bestimmt der Löser je Runde neu, welche ganz gleitenden Gruppen
+anderswo gehalten sind, und ein einzelner Lagerknoten bekam abwechselnd die grobe und
+die feine Reststeifigkeit; jetzt 6 Runden.
+
+Gemessen (Faktor 1 000, `tests/test_reibungstangente`, Vergleich mit dem Stand
+9fb56e5): Runden je Rechnung Block mit Reibung 29 → 6, Stempel auf Sockel 14 → 7
+(plastisch 61 → 30), Platte mit Ankern wie das Drehlager (plastisch) 66 → 21
+(Zerlegungen 25 → 16), Block nahe der Grenzlast 136 → 34, kippender Stempel 76 → 34,
+Block mit Anschlag 13 → 6, Pendelmodell (`tests/test_pendeln_periode2`, linear) 28 → 27,
+mit Fließen 112 → 184;
+größte Abweichung von u 1,4·10⁻⁵ (Platte), Coulomb am Endzustand auf 10⁻³ Grad. Der
+Faktor f_h = 10 / 100 / 1 000 / 10 000 gab an der Platte 1,4·10⁻³ / 1,4·10⁻⁴ /
+1,4·10⁻⁵ / 2,3·10⁻⁶ Abweichung gegen das exakte Haften bei gleicher Rundenzahl.
+Geschlossene Lösungen: Klotz an einer Zugfeder (k_s = 10⁸ N/m) auf einem Lager wie
+„Starr“ haftet bis 0,999·μN und gleitet ab 1,001·μN um (F − μN)/k_s auf 10⁻⁴
+(0,19981 / 50,0004 / 100,0007 / 200,0014 µm, soll 0,2 / 50 / 100 / 200; bei 1,001·μN ist der
+Rest die Schranke, bei der der Lauf endet, 10⁻⁶ der Kontaktkraft über k_s), Blechpaket mit Endvorspannung haftet bis μ·F_v und gleitet
+bei 1,05 / 1,5·μ·F_v um 30,003 / 300,008 µm (soll 30 / 300). Die Reibarbeit
+F_t·Δs (s = d_t − F_t/k_h) ist je Laststufe und Knoten ≥ −10⁻²⁷ J, ihre Summe
+μN·Δs auf 10⁻⁴.
+
+**Befund am Stand davor (15.10.2026).** Am Klotz mit Reibung (steif, E = 2,1·10¹⁴)
+und an den steifen Blechen des Blechpakets trägt bei der primal-dualen Reibung die
+feine Reststeifigkeit gleitender Knoten (10⁻⁸·k_t je Knoten, beim steifen Klotz
+4,3·10⁸ N/m, zusammen 10¹⁰ N/m gegen die Feder 10⁸ N/m) die Kraft: ihr Ausgleich
+kriecht, das Residuum der Reibung kennt ihre Kraft nicht, und der Lauf heißt nach 5
+Runden konvergiert – Gleitweg 1,09 statt 100 µm, Federkraft 0,1 statt 10 kN,
+Gleichgewicht 4,8 % (`gleichgewicht_global` meldet „verletzt“, das Protokoll nicht).
+Am Stahlklotz (E = 2,1·10¹¹) sind es 4,6 N von 10 kN.
+
+**Abnahme am Drehlager (15.10.2026).** E0-neu (Entwurf, μ 0,1) mit der Tangente:
+nicht vorläufig, 11 Kontaktläufe mit 19 Runden, keiner am Deckel, 26 min; mit dem
+bisherigen Verfahren in 5,3 h nur bis 68,75 % der Last, alle Läufe am Deckel. Seitdem
+ist die Tangente die Vorgabe.
+
+**Lastteilung am gequetschten Block (`tests/test_plastizitaet`, 15.10.2026).** Mit
+der Tangente hängt der Zustand bei grober Teilung an der Zahl der Laststufen: 42,130 /
+42,241 / 42,580 / 42,666 mm für 1 / 2 / 4 / 8 Stufen – dieselben Zahlen wie beim am
+28.09.2026 verworfenen „wer sich gegen seine Gleitrichtung bewegt, haftet“. Die
+Verfeinerungsreihe zeigt, dass beide Verfahren gegen denselben Wert gehen: 10 / 20 /
+40 / 80 Stufen geben mit der Tangente 42,698 / 42,765 / 42,796 / 42,812 mm, mit dem
+bisherigen Verfahren 42,708 / 42,765 / 42,796 / 42,812 mm (ab 20 Stufen auf 10⁻⁴ mm
+gleich; mit dem Deckel über alle Runden gibt das bisherige Verfahren für 1 bis 4
+Stufen 42,720 mm statt 42,667 mm). Der Zuwachs halbiert sich je Verdopplung (0,067 /
+0,032 / 0,016 mm), Konvergenz erster Ordnung gegen etwa 42,83 mm; ε_p max 13,06 %,
+ΣFn = 60 MN und |ΣF_t| = 9 MN in jeder Zeile. Der von der Teilung scheinbar
+unabhängige Wert des bisherigen Verfahrens war also nicht der Grenzwert. Runden je
+Rechnung: Tangente 33 / 45 / 115 / 113 / 120 / 202 / 390 / 656, bisher 734 / 706 /
+673 / 500 / 448 / 640 / 1 043 / 1 642. Federn des Anwenders rechnen weiter wie bisher. Gleichungslöser: pypardiso zerlegt jede Matrix
+mit `mtype` 11 (reell unsymmetrisch, mit symmetrisiertem Muster), auch die
+symmetrischen. Die Spalte −μ·t besetzt je gleitendem Knoten seine
+Tangentialfreiheitsgrade in der Spalte seiner Normalzeile; an Fugen stehen dort schon
+die Einträge von Cᵀ, an Lagerknoten (Normalzeile nur auf dem Lager-Freiheitsgrad)
+kommen Einträge dazu (Prüfplatte mit allen 121 Reibknoten gleitend: 105 von 394 538).
+Mit ama (nur symmetrisch) entfällt die Spalte wie bei der Reibung primal-dual.
+
 **Mortar-Gewichte bei ungleichen Netzen (28.09.2026, Prüfmatrix K6,
 `contact.MORTAR`, `statik3d/mortar.py`).** Die Kopplung Knoten gegen Fläche
 projiziert jeden Slave-Knoten auf ein Dreieck der Master-Fläche (Vierecke
@@ -2874,6 +2976,14 @@ Reibung in Phase 2 bricht nach `MAX_CYCLES = 40` Zustandswechseln ab
 bei echter Konvergenz**. `solve_with_contact` las beides als „fertig" und
 setzte `contact_converged` auf wahr; die Warnung stand allein im
 `contact_log`.
+
+Seit dem 15.10.2026 zählt der Deckel **alle** Runden eines Kontaktlaufs
+(`ContactSystem.update` über `_update_entscheiden`, Zahl der Einträge in `runden`),
+nicht mehr nur die Runden mit Zustandswechsel in Phase 2: am Drehlager (G∞, μ 1e6,
+Spannstufe 1) lief ein Lauf sonst 121 Runden bis `max_iter`, ohne Deckelzeile. Die
+Zeile heißt jetzt „Nachpruefung der Reibung nach 40 Runden abgebrochen“; ein solcher
+Lauf ist nicht konvergiert, und das Ergebnis ist vorläufig – auch in der Kopfzeile und
+der Statuszeile der Oberfläche.
 
 Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
 eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
