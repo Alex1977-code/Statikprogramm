@@ -5650,7 +5650,9 @@ class MainWindow(QtWidgets.QMainWindow):
              "nachlesen: einen Reibbeiwert ohne Reibungsart zurücknehmen")],
             hinweis="Ein früher aus RFEM 6 übernommenes Modell aus der RFEM-Datei nachlesen: "
                     "Stabtypen (bis 14.10.2026) oder Lagerreibung (bis 15.10.2026)",
-            symbol="import")
+            # nicht „import“: das traegt „Übernehmen“ in derselben Gruppe
+            # (tests/test_symbole_ribbon, keine gleichen Symbole in einer Gruppe)
+            symbol="pruefen")
         g = r.gruppe("Beispiele")
         # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
         # (24.09.2026) - die Suche findet die Beispiele weiter
