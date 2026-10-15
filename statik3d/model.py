@@ -9745,6 +9745,13 @@ class Model:
         # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
         from .ec3.spannstahl import ladehinweise
         m._ladehinweise.extend(ladehinweise(m))
+        # Vorspannung aus RFEM uebernommen - in Statik3D pruefen (15.10.2026):
+        # die offenen Importhinweise, in der Form von heute, die Datei bleibt
+        try:
+            from .vorspannkraft import vorspannung_ladehinweise
+            m._ladehinweise.extend(vorspannung_ladehinweise(m))
+        except Exception:                   # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
+            pass
         return m
 
     def copy(self) -> "Model":

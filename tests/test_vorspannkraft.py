@@ -398,13 +398,15 @@ def test_import_hinweis_und_umwandlung():
         log = []
         m = R6.read_rf6(f, log=log)
         lf = next(iter(m.load_cases))
-        zeilen = [z.strip() for z in log if "ergibt nach elastischer Verkürzung" in z]
+        zeilen = [z.strip() for z in log if "aus RFEM übernommen" in z]
         # Zugstaebe wie die Anker am Drehlager (RFEM MemberImplTension). Stab 1
         # zieht gegen die Staebe 2 und 3 in Reihe (gleiches E A): N = N_0/3.
         # Bis zum 14.10.2026 hiess der Hinweis „Anfangsvorspannung 120 kN ergibt …
-        # – in Sollkraft umwandeln?“; seitdem meint Anfangsvorspannung die Pressenkraft
-        soll = ("Vorspannung als eingeprägte Dehnung (RFEM) 120 kN ergibt nach elastischer Verkürzung 40 kN "
-                "– in Endvorspannung umwandeln?")
+        # – in Sollkraft umwandeln?“, bis zum 15.10.2026 „Vorspannung als
+        # eingeprägte Dehnung (RFEM) 120 kN ergibt … – in Endvorspannung umwandeln?“
+        soll = ("Vorspannung 120 kN an S1 in 1 Lastfall aus RFEM übernommen (als eingeprägte Dehnung, "
+                "E = 210 000 N/mm², α = 1,2e-5 1/K; nach elastischer Verkürzung 40 kN) – in Statik3D prüfen "
+                "und ggf. als Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen")
         check("Importprotokoll: der Hinweis mit X (linear, Einflussmatrix)",
               any(soll in z for z in zeilen), str(zeilen[:2]))
         h = [x for x in (m.importhinweise or []) if x.get("art") == "vorspannung"]
@@ -446,9 +448,10 @@ def test_hinweis_nach_rechnung():
           and "Kontakt" in h[0]["text"], h[0]["text"] if h else "kein Hinweis")
     an = solver.solve_all(m, combinations=False)
     h = [x for x in m.importhinweise if x.get("art") == "vorspannung"]
-    soll = vk.hinweis_text(F1, F1 * K_K / (K_K + K_A))
+    soll = f"nach elastischer Verkürzung {vk._kn(F1 * K_K / (K_K + K_A))} kN, aus V)"
     check("nach der Rechnung: X aus dem Lastfall nur mit Vorspannung (V), nicht aus VP",
-          h and h[0]["X"] is not None and h[0]["text"].startswith(soll) and h[0].get("X_aus") == ["V"],
+          h and h[0]["X"] is not None and soll in h[0]["text"] and h[0].get("X_aus") == ["V"]
+          and "folgt nach der ersten Rechnung" not in h[0]["text"],
           h[0]["text"] if h else "")
     nahe("… X = F·k_K/(k_K + k_A) (Fuge geschlossen)", (h[0]["X"] or [0])[0] if h else 0.0,
          F1 * K_K / (K_K + K_A), 1e-9, "N")

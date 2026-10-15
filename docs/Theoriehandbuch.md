@@ -940,10 +940,22 @@ Anfangsvorspannung Zahl für Zahl wie die Endvorspannung mit F_soll = P₀, und
 die Endvorspannung behält ihre Einträge im Ergebnis (keine neuen Schlüssel).
 
 **Import.** Die RFEM-Vorspannung bleibt eine eingeprägte Dehnung (Abkühlung);
-bis zum 14.10.2026 hieß sie hier „RFEM-Anfangsvorspannung“. Der Hinweis
-„Vorspannung als eingeprägte Dehnung (RFEM) 952 kN ergibt nach elastischer
-Verkürzung X kN – in Endvorspannung umwandeln?“ (bis zum 14.10.2026
-„Anfangsvorspannung 952 kN ergibt … – in Sollkraft umwandeln?“) rechnet X
+bis zum 14.10.2026 hieß sie hier „RFEM-Anfangsvorspannung“. Seit dem
+15.10.2026 (Nachtrag des Anwenders: „beim import des modells und der
+lastfälle einen hinweis an den user, dass der wert von rfem übernommen wurde
+und in statik3d zu prüfen und ggf anzupassen ist“) gibt der Import je
+Vorspannungswert N₀ einen Hinweis „Vorspannung N₀ an <Stäbe> in n Lastfällen
+aus RFEM übernommen (als eingeprägte Dehnung, E, α; X) – in Statik3D prüfen
+und ggf. als Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“
+(`vorspannkraft.rfem_hinweis_text`). Er steht als Importhinweis am Modell
+(mit Stäben, Lastfällen, Umrechnung und X), beim Öffnen im Protokoll
+(`vorspannung_ladehinweise`, aus den gespeicherten Feldern neu gesetzt, die
+Datei bleibt), und `rfem_pruefen` nennt die Lastfälle, in denen die
+Vorspannung noch als eingeprägte Dehnung steht (Vermerk in Lastfallmaske und
+Lasttabelle). Bis zum 15.10.2026 hieß der Hinweis „Vorspannung als eingeprägte
+Dehnung (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in
+Endvorspannung umwandeln?“, bis zum 14.10.2026 „Anfangsvorspannung 952 kN
+ergibt … – in Sollkraft umwandeln?“. X rechnet das Programm
 linear über die Einflussmatrix (X = A·N₀),
 wenn das Modell keinen Kontakt hat, vernetzt und höchstens 300 000 FHG groß
 ist. Am Drehlager nicht: eine Zerlegung kostete im Lauf vom 09.10.2026 135

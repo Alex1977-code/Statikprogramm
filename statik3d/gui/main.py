@@ -8822,6 +8822,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not je_art:
                     felder.append(F("last_keine", "Lasten", "info",
                                     "keine - Ribbon Lasten: Knotenlast, Linienlast, Flächenlast, Temperatur …"))
+                # Vorspannung aus RFEM uebernommen - pruefen (15.10.2026)
+                from .. import vorspannkraft as _vk
+                if lc is not None and name in _vk.rfem_pruefen(m):
+                    felder.append(F("rfem_pruefen", "Vorspannung", "info",
+                                    f"{_vk.VERMERK_RFEM}: als eingeprägte Dehnung übernommen – "
+                                    f"{_vk.RFEM_PRUEFEN} (Lasten › Vorspannung)"))
                 felder += [F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
                             hinweis="Lastfälle einer Gruppe wirken nie gemeinsam"),
                           F("situation", "Situation", "wahl",
@@ -15138,6 +15144,8 @@ class MainWindow(QtWidgets.QMainWindow):
         nur = cb.currentText()
         zeilen = []
         i = 0
+        from .. import vorspannkraft as _vk_
+        rfem_pruefen = _vk_.rfem_pruefen(m)
         for lcname, lc in m.load_cases.items():
             if nur not in ("(alle)", "", lcname):
                 continue
@@ -15170,6 +15178,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²",
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
+            # Vorspannung aus RFEM uebernommen (15.10.2026): Vermerk „prüfen“
+            pruefen = lcname in rfem_pruefen
             for l in lc.eigene("temp_loads"):
                 if l.aus_vorspannung:
                     # eine umgerechnete Vorspannung: die Kraft, mit E und alpha
@@ -15177,14 +15187,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     # der Maske der Last
                     zeilen.append([i, lcname, "Vorspannung", f"E{l.elem}",
                                    f"F_v = {l.vorspann_kraft_text()}",
-                                   l.vorspann_umrechnung_text(), ""])
+                                   l.vorspann_umrechnung_text(), _vk_.VERMERK_RFEM if pruefen else ""])
                     i += 1
                     continue
                 # eine Vorspannung als Temperatur: Kraft, E und α der Umrechnung (13.10.2026)
+                vs = l.vorspann_text(self.model)
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {tab.festkomma(l.dT, 2)} K",
                                f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
-                               l.vorspann_text(self.model)])
+                               vs + (f" – {_vk_.VERMERK_RFEM}" if pruefen and vs else "")])
                 i += 1
             for l in lc.geometrielasten:
                 ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)
@@ -21345,7 +21356,7 @@ class MainWindow(QtWidgets.QMainWindow):
                  if h.get("art") == "vorspannung" and not h.get("erledigt")]
         if offen:
             felder.append(msk.Feld("hinweise", "Aus dem Import", "info",
-                                   " · ".join(str(h.get("text", "")) for h in offen[:3])))
+                                   " · ".join(vk.hinweis_anzeige(self.model, h) for h in offen[:3])))
         elif vk.temperatur_vorspannungen(self.model):
             felder.append(msk.Feld("hinweise", "Im Modell", "info",
                                    "Vorspannungen als eingeprägte Dehnung (ΔT) auf Zugstäben - umwandeln mit "

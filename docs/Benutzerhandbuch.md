@@ -975,11 +975,33 @@ Vorspannung, die der Import seit dem 13.10.2026 als Kraft kennzeichnet (siehe
 „Eine aus RFEM übernommene Vorspannung steht als Kraft da“), etwa
 „ΔT = −445,6 K – Vorspannung 952 kN (eingeprägte Dehnung, E = 170 000 N/mm²,
 α = 1,0e-5 1/K)“. Bis zum 14.10.2026 stand dort „aus Vorspannung 952 kN,
-E = 170 000 N/mm², α = 1,0e-5 1/K“. Der Import gibt den Hinweis
+E = 170 000 N/mm², α = 1,0e-5 1/K“.
+
+**Vorspannung aus RFEM übernommen – in Statik3D prüfen** (seit 15.10.2026).
+Der Import gibt je Vorspannungswert einen Hinweis, etwa „Vorspannung 952 kN an
+S1–S16 in 129 Lastfällen aus RFEM übernommen (als eingeprägte Dehnung,
+E = 170 000 N/mm², α = 1,0e-5 1/K; die Kraft nach elastischer Verkürzung
+folgt nach der ersten Rechnung eines Lastfalls nur mit der Vorspannung: das
+Modell hat Kontakt) – in Statik3D prüfen und ggf. als Anfangsvorspannung
+(Pressenkraft) oder Endvorspannung anpassen“. Kann das Programm die Kraft nach
+elastischer Verkürzung beim Import rechnen, steht sie in der Klammer, etwa
+„nach elastischer Verkürzung 80 kN“. Der Hinweis steht im Importprotokoll, als
+Importhinweis am Modell und beim Öffnen der Datei im Protokoll, solange er
+offen ist. In der Lastfallmaske steht bei jedem betroffenen Lastfall die Zeile
+„Vorspannung: aus RFEM übernommen – prüfen …“, in der Lasttabelle hinter der
+Vorspannung „aus RFEM übernommen – prüfen“. Betroffen ist ein Lastfall, solange
+die übernommene Vorspannung dort noch als eingeprägte Dehnung steht; wandeln
+Sie sie um oder ersetzen sie von Hand, verschwindet der Vermerk dort. Am
+Drehlager gibt der Import zwei Hinweise, 952 kN an S1–S16 in 129 Lastfällen
+und 805 kN an S1–S16 in 293 Lastfällen. Bis zum 15.10.2026 lautete der Hinweis
 „Vorspannung als eingeprägte Dehnung (RFEM) 952 kN ergibt nach elastischer
-Verkürzung X kN – in Endvorspannung umwandeln?“; bis zum 14.10.2026 lautete er
-„Anfangsvorspannung 952 kN ergibt nach elastischer Verkürzung X kN – in
-Sollkraft umwandeln?“. X ist die Stabkraft unter der Vorspannung allein. Das
+Verkürzung X kN – in Endvorspannung umwandeln?“ mit Umfang und Umrechnung
+dahinter, bis zum 14.10.2026 „Anfangsvorspannung 952 kN ergibt nach
+elastischer Verkürzung X kN – in Sollkraft umwandeln?“; einen Vermerk an den
+Lastfällen gab es nicht. Eine Datei mit einem Hinweis in der alten Form zeigt
+ihn beim Öffnen in der neuen Form, und die Datei selbst bleibt, wie sie ist.
+
+X ist die Stabkraft unter der Vorspannung allein. Das
 Programm rechnet sie beim Import, wenn das Modell keinen Kontakt hat,
 vernetzt ist und höchstens 300 000 Freiheitsgrade hat. Sonst, wie am
 Drehlager, folgt X nach der ersten Rechnung aus einem Lastfall, der nur die
@@ -7808,11 +7830,13 @@ den Stabnummern; eine Flächenlast ohne auflösbaren Lastfall wird mit diesem
 Grund gemeldet statt als „Umsetzungstabelle fehlt“; die Zeile zur
 Stabvorspannung nennt die verschiedenen Stäbe und die Kraft je Lastfall statt
 einer Summe über alle Lastfälle. Seit dem 13.10.2026 steht am Ende des
-Protokolls je Vorspannung als eingeprägte Dehnung der Hinweis „Vorspannung als
-eingeprägte Dehnung (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in
-Endvorspannung umwandeln?“, bis zum 14.10.2026 „Anfangsvorspannung 952 kN
-ergibt … – in Sollkraft umwandeln?“ (siehe „Vorspannung aus RFEM in die
-Endvorspannung umwandeln“). Beim
+Protokolls je Vorspannungswert der Hinweis „Vorspannung 952 kN an S1–S16 in
+129 Lastfällen aus RFEM übernommen (…) – in Statik3D prüfen und ggf. als
+Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“ (seit
+15.10.2026; bis dahin „Vorspannung als eingeprägte Dehnung (RFEM) 952 kN
+ergibt nach elastischer Verkürzung X kN – in Endvorspannung umwandeln?“, bis
+zum 14.10.2026 „Anfangsvorspannung 952 kN ergibt … – in Sollkraft
+umwandeln?“; siehe „Vorspannung aus RFEM übernommen – in Statik3D prüfen“). Beim
 Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und

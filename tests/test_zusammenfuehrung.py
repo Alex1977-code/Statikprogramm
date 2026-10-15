@@ -116,9 +116,13 @@ def test_vorspannung_ein_merkmal():
     from statik3d import vorspannkraft as vk
     log = []
     vk.import_hinweise(m, log=log)
-    zeilen = [z for z in log if "als ΔT gerechnet" in z]
-    check("Importhinweis der Umwandlung nennt die Vorspannung in derselben Form",
-          zeilen and "als ΔT gerechnet: Vorspannung 952 kN (eingeprägte Dehnung" in zeilen[0], str(zeilen[:1]))
+    # seit 15.10.2026 „Vorspannung 952 kN an … aus RFEM übernommen (als eingeprägte
+    # Dehnung, E = …, α = …; …) – in Statik3D prüfen …“; bis dahin stand die
+    # Umrechnung als „als ΔT gerechnet: Vorspannung 952 kN (eingeprägte Dehnung, …)“ dahinter
+    zeilen = [z for z in log if "aus RFEM übernommen" in z]
+    check("Importhinweis nennt die Vorspannung mit derselben Umrechnung",
+          zeilen and "Vorspannung 952 kN an " in zeilen[0]
+          and "(als eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K" in zeilen[0], str(zeilen[:1]))
 
 
 def test_stabenden_eine_warnung():

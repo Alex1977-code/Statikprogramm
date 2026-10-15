@@ -722,21 +722,91 @@ def _kn(x: float) -> str:
     return zahl_text(round(float(x) / 1e3, 1))
 
 
-def hinweis_text(N0: float, X=None) -> str:
-    """„Vorspannung als eingeprägte Dehnung (RFEM) 952 kN ergibt nach
-    elastischer Verkürzung X kN – in Endvorspannung umwandeln?“ - X ein Wert,
-    eine Spanne (min, max) oder None (dann folgt er nach der ersten Rechnung).
-    Bis zum 14.10.2026: „Anfangsvorspannung 952 kN ergibt … – in Sollkraft
-    umwandeln?“; seitdem meint „Anfangsvorspannung“ nur die Pressenkraft P0."""
-    if X is None:
-        x = "X kN (folgt nach der ersten Rechnung eines Lastfalls nur mit der Vorspannung)"
-    elif isinstance(X, (tuple, list)):
-        lo, hi = _kn(min(X)), _kn(max(X))
+#: Schluss des Importhinweises und Vermerk an den Lastfaellen (Nachtrag des
+#: Anwenders vom 15.10.2026: „beim import des modells und der lastfälle einen
+#: hinweis an den user, dass der wert von rfem übernommen wurde und in statik3d
+#: zu prüfen und ggf anzupassen ist“)
+RFEM_PRUEFEN = ("in Statik3D prüfen und ggf. als Anfangsvorspannung (Pressenkraft) oder Endvorspannung "
+                "anpassen")
+VERMERK_RFEM = "aus RFEM übernommen – prüfen"
+
+
+def rfem_hinweis_text(N0: float, staebe, faelle, umrechnung: str = "", X=None, grund: str = "",
+                      X_aus=None) -> str:
+    """„Vorspannung 952 kN an S1–S16 in 129 Lastfällen aus RFEM übernommen
+    (als eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K; nach
+    elastischer Verkürzung X kN) – in Statik3D prüfen und ggf. als
+    Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“ - je
+    Vorspannungswert ein Hinweis (seit 15.10.2026). X ist ein Wert, eine
+    Spanne (min, max) oder None; dann sagt ``grund``, warum es erst nach der
+    ersten Rechnung folgt.
+
+    Bis zum 15.10.2026 lautete der Hinweis „Vorspannung als eingeprägte
+    Dehnung (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in
+    Endvorspannung umwandeln?“ mit Umfang und Umrechnung in Klammern dahinter,
+    bis zum 14.10.2026 „Anfangsvorspannung 952 kN ergibt … – in Sollkraft
+    umwandeln?“."""
+    from .importers.schraubenhinweis import _bereiche
+    n = len(list(faelle or []))
+    teile = []
+    if umrechnung:
+        teile.append("als " + umrechnung)
+    if X is not None:
+        lo, hi = (_kn(min(X)), _kn(max(X))) if isinstance(X, (tuple, list)) else (_kn(X), _kn(X))
         x = f"{lo} kN" if lo == hi else f"{lo} bis {hi} kN"
-    else:
-        x = f"{_kn(X)} kN"
-    return (f"Vorspannung als eingeprägte Dehnung (RFEM) {_kn(N0)} kN ergibt nach elastischer Verkürzung {x} "
-            "– in Endvorspannung umwandeln?")
+        aus = list(X_aus or [])
+        teile.append(f"nach elastischer Verkürzung {x}"
+                     + (f", aus {', '.join(aus[:3])}{' …' if len(aus) > 3 else ''}" if aus else ""))
+    elif grund:
+        teile.append("die Kraft nach elastischer Verkürzung folgt nach der ersten Rechnung eines Lastfalls "
+                     f"nur mit der Vorspannung: {grund}")
+    return (f"Vorspannung {_kn(N0)} kN an {_bereiche(staebe or [])} in {n} {'Lastfall' if n == 1 else 'Lastfällen'} "
+            "aus RFEM übernommen" + (f" ({'; '.join(teile)})" if teile else "") + f" – {RFEM_PRUEFEN}")
+
+
+def hinweis_anzeige(model, h: dict) -> str:
+    """Der Text eines Importhinweises zur Vorspannung in der Form vom
+    15.10.2026 - auch fuer einen Hinweis, den eine aeltere Datei in der alten
+    Form traegt. Der gespeicherte Hinweis bleibt, wie er ist (die Datei bleibt
+    beim Speichern bitgleich)."""
+    umrechnung = h.get("umrechnung")
+    if umrechnung is None:
+        t = next((t for t in temperatur_vorspannungen(model, h.get("faelle"), h.get("objekte"))
+                  if round(t.N0, 3) == round(float(h.get("N0", 0.0)), 3)), None)
+        umrechnung = t.lasten[0].vorspann_umrechnung_text(model=model) if t is not None else ""
+    grund = h.get("grund")
+    if grund is None and h.get("X") is None:
+        grund = x_rechenbar(model) or "noch nicht gerechnet"
+    return rfem_hinweis_text(float(h.get("N0", 0.0)), h.get("objekte") or [], h.get("faelle") or [],
+                             umrechnung, h.get("X"), grund or "", h.get("X_aus"))
+
+
+def vorspannung_ladehinweise(model) -> list:
+    """Zeilen fuers Protokoll beim Oeffnen (Model._geoeffnet): die offenen
+    Importhinweise zur Vorspannung aus RFEM (seit 15.10.2026)."""
+    return [hinweis_anzeige(model, h) for h in (getattr(model, "importhinweise", None) or [])
+            if h.get("art") == "vorspannung" and not h.get("erledigt")]
+
+
+def rfem_pruefen(model) -> dict:
+    """{Lastfall: Hinweistext} - die Lastfaelle, in denen eine aus RFEM
+    uebernommene Vorspannung noch als eingepraegte Dehnung steht und ihr
+    Importhinweis offen ist (Vermerk „aus RFEM übernommen – prüfen“ in
+    Lastfallmaske und Lasttabelle, 15.10.2026). Ist sie umgewandelt oder von
+    Hand ersetzt, faellt der Lastfall heraus."""
+    out: dict = {}
+    lcs = getattr(model, "load_cases", None) or {}
+    for h in (getattr(model, "importhinweise", None) or []):
+        if h.get("art") != "vorspannung" or h.get("erledigt"):
+            continue
+        for f in h.get("faelle") or []:
+            lc = lcs.get(f)
+            if f in out or lc is None:
+                continue
+            if any(getattr(t, "aus_vorspannung", 0.0) or t.vorspannkraft(model) > 1.0
+                   for t in (lc.temp_loads or []) if not t.dT_z):
+                out[f] = str(h.get("text", ""))
+    return out
 
 
 def import_hinweise(model, log: list = None, system=None) -> list:
@@ -762,21 +832,25 @@ def import_hinweise(model, log: list = None, system=None) -> list:
     out = []
     for N0, liste in sorted(je.items(), key=lambda kv: -kv[0]):
         xs = [X[(t.fall, t.stab)] for t in liste if (t.fall, t.stab) in X]
-        text = hinweis_text(N0, (min(xs), max(xs)) if xs else None)
         staebe = sorted({t.stab for t in liste})
         faelle = sorted({t.fall for t in liste})
         t0_ = liste[0]
+        umrechnung = t0_.lasten[0].vorspann_umrechnung_text(model=model)
+        Xw = [float(min(xs)), float(max(xs))] if xs else None
+        # seit 15.10.2026 ein Satz: Wert, Staebe, Lastfaelle, Umrechnung, X und
+        # „in Statik3D prüfen …“ (rfem_hinweis_text); die Rechenzeit von X
+        # steht nur noch im Hinweis (``zeit_X``), nicht im Text
         umfang = (f"{len(staebe)} {'Stab' if len(staebe) == 1 else 'Stäbe'} in {len(faelle)} "
-                  f"{'Lastfall' if len(faelle) == 1 else 'Lastfällen'}; als ΔT gerechnet: "
-                  f"{t0_.lasten[0].vorspann_text(model)}")
-        zusatz = (f"X nach der ersten Rechnung: {grund}" if not xs and grund else
-                  f"X linear in {zeit:.2f} s" if xs else "")
-        h = {"art": "vorspannung", "text": f"{text} ({umfang}" + (f"; {zusatz}" if zusatz else "") + ")",
-             "objekte": staebe, "umfang": umfang,
-             "vorschlag": "in Endvorspannung umwandeln: Lasten › Vorspannung, Lastart "
+                  f"{'Lastfall' if len(faelle) == 1 else 'Lastfällen'}")
+        h = {"art": "vorspannung",
+             "text": rfem_hinweis_text(N0, staebe, faelle, umrechnung, Xw, "" if xs else grund),
+             "objekte": staebe, "umfang": umfang, "umrechnung": umrechnung, "grund": "" if xs else grund,
+             "vorschlag": "prüfen und ggf. anpassen: Lasten › Vorspannung, Lastart "
+                          f"„{LASTART_PRESSE}“ oder „{LASTART_ENDE}“, oder umwandeln mit "
                           f"„{LASTART_UMWANDELN}“",
-             "erledigt": False, "N0": float(N0), "faelle": faelle,
-             "X": [float(min(xs)), float(max(xs))] if xs else None}
+             "erledigt": False, "N0": float(N0), "faelle": faelle, "X": Xw}
+        if xs:
+            h["zeit_X"] = round(zeit, 2)
         out.append(h)
         if log is not None:
             log.append("  HINWEIS: " + h["text"])
@@ -826,10 +900,7 @@ def hinweise_nachreichen(model, ergebnisse: dict) -> list:
         faelle = sorted({f for f, _x in werte})
         h["X"] = [float(min(xs)), float(max(xs))]
         h["X_aus"] = faelle
-        quelle = "X aus " + ", ".join(faelle[:3]) + (" …" if len(faelle) > 3 else "")
-        umfang = str(h.get("umfang", "") or "")
-        h["text"] = (hinweis_text(float(h["N0"]), (min(xs), max(xs)))
-                     + f" ({umfang + '; ' if umfang else ''}{quelle})")
+        h["text"] = hinweis_anzeige(model, h)
         texte.append(h["text"])
     return texte
 
