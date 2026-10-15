@@ -2134,6 +2134,84 @@ Block auf der Platte mit Kippen lief mit ihr um das 230-Fache davon). Der
 Gleichungslöser ama scheitert am Sattelpunkt des Stempels auf Sockel schon in
 der ersten Kontaktrunde - vorbestehend, auch am Stand ec3b464.
 
+**Reibung mit konsistenter Tangente (seit 15.10.2026, `contact.REIBUNGSTANGENTE`,
+Schalter `Plastizitaet.reibungstangente`, Vorgabe aus).** Eingeschaltet rechnet jeder
+Reibknoten an einer exakten Normalbedingung (starr, aktiv, nicht fließend, keine
+Hilfe des Lösers) in beiden Phasen die Rückabbildung (Return-Mapping) des
+Coulomb-Gesetzes. Mit dem Weg d_t = C_t·u in der Fugenebene, der Normalkraft p
+(Multiplikator der Normalzeile) und der Haftfeder k_h = f_h·k_d (k_d die größte
+Diagonale der Verschiebungsfreiheitsgrade des Knotens, f_h = `haft_faktor`, Vorgabe
+1 000) ist
+
+* Versuchskraft f = k_h·d_t; |f| ≤ μ·p: **Haften**, F_t = f, Tangente k_h·I
+  (symmetrisch);
+* sonst **Gleiten**, F_t = μ·p·t mit t = d_t/|d_t|. Die konsistente Ableitung ist
+  ∂F_t/∂d_t = μ·p/|d_t|·(I − t·tᵀ) quer zur Gleitrichtung (in K_c, symmetrisch) und
+  ∂F_t/∂p = μ·t, im Sattelpunkt die Spalte −μ·t am Multiplikator der Normalzeile
+  (`D_kopplung`, wie bei der Reibung primal-dual). Das System ist nur mit gleitenden
+  Knoten unsymmetrisch. Längs t ist die Tangente null (die Reibkraft hängt nicht vom
+  Gleitweg ab); eine Reststeifigkeit 10⁻⁸·k_d mit Ausgleich auf den Weg seit dem
+  letzten Zustand hält das System regulär, ihre Kraft steht im Residuum.
+
+Linearisiert um den letzten Zustand ist die Kraft eines gleitenden Knotens
+μ·p·t + μ·p/|d_t,k|·(I − t tᵀ)(d_t − d_t,k) + μ·t·(p − p_k); weil d_t,k parallel zu t
+ist, bleibt im Lastvektor nichts übrig. Die Tangente (Richtung und Quersteifigkeit)
+wird nur nachgeführt, wenn sich die Richtung um mehr als 10⁻² dreht oder die
+Quersteifigkeit um mehr als die Hälfte ändert (`RT_MATRIX_TOL`, `RT_KQUER_TOL`);
+darunter rechnet die Runde mit der alten Matrix weiter und die Abweichung der Kraft
+steht im Lastvektor. Residuum je Knoten ist |F_t,Rückabbildung(u) − F_t,linearisiert(u)|;
+die Summe geht in das Laufresiduum (`RESIDUUM_ANTEIL` 10⁻⁶ der Kontaktkraft). Ohne
+Statuswechsel, aber mit offenem Residuum zählt die Runde in Phase 1 als Wechsel und in
+Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Der
+Weg ist wie bisher der gesamte Weg des Lastfalls (ohne Lastgeschichte): Haften heißt
+an der Ausgangslage, bis auf f/k_h.
+
+Umkehr (`RT_UMKEHR`): dreht t von einer Runde zur nächsten um mehr als 90°, rechnet die
+nächste Runde den Knoten mit der Haftfeder. Ohne die Regel lief der gequetschte Block
+in eine Periode 2: längs t hat die Tangente keine Steifigkeit, und gleiten alle
+Knoten, die den Block in x halten, springt die Lösung über das Haften hinweg auf die
+Gegenseite (Mittelknoten ±9 bis 14 µm je Runde, jeder Lauf bis `max_iter`, 18 600
+Runden). Verworfen (gemessen 15.10.2026): statt des Haftens nach der Umkehr eine
+Längssteifigkeit μ·p/|d_t| um den letzten Zustand – jeder Lauf des gequetschten
+Blocks endete an `max_iter`.
+
+Gemessen (Faktor 1 000, `tests/test_reibungstangente`, Vergleich mit dem Stand
+9fb56e5): Runden je Rechnung Block mit Reibung 29 → 8, Stempel auf Sockel 14 → 8
+(plastisch 61 → 31), Platte mit Ankern wie das Drehlager (plastisch) 66 → 25
+(Zerlegungen 25 → 18), Block nahe der Grenzlast 136 → 36, kippender Stempel 76 → 36;
+größte Abweichung von u 1,4·10⁻⁵ (Platte), Coulomb am Endzustand auf 10⁻³ Grad. Der
+Faktor f_h = 10 / 100 / 1 000 / 10 000 gab an der Platte 1,4·10⁻³ / 1,4·10⁻⁴ /
+1,4·10⁻⁵ / 2,3·10⁻⁶ Abweichung gegen das exakte Haften bei gleicher Rundenzahl.
+Geschlossene Lösungen: Klotz an einer Zugfeder (k_s = 10⁸ N/m) auf einem Lager wie
+„Starr“ haftet bis 0,999·μN und gleitet ab 1,001·μN um (F − μN)/k_s auf 10⁻⁴
+(0,2 / 50 / 100 / 200 µm), Blechpaket mit Endvorspannung haftet bis μ·F_v und gleitet
+bei 1,05 / 1,5·μ·F_v um 30,003 / 300,008 µm (soll 30 / 300). Die Reibarbeit
+F_t·Δs (s = d_t − F_t/k_h) ist je Laststufe und Knoten ≥ −10⁻²⁷ J, ihre Summe
+μN·Δs auf 10⁻⁴.
+
+**Befund am Stand davor (15.10.2026).** Am Klotz mit Reibung (steif, E = 2,1·10¹⁴)
+und an den steifen Blechen des Blechpakets trägt bei der primal-dualen Reibung die
+feine Reststeifigkeit gleitender Knoten (10⁻⁸·k_t je Knoten, beim steifen Klotz
+4,3·10⁸ N/m, zusammen 10¹⁰ N/m gegen die Feder 10⁸ N/m) die Kraft: ihr Ausgleich
+kriecht, das Residuum der Reibung kennt ihre Kraft nicht, und der Lauf heißt nach 5
+Runden konvergiert – Gleitweg 1,09 statt 100 µm, Federkraft 0,1 statt 10 kN,
+Gleichgewicht 4,8 % (`gleichgewicht_global` meldet „verletzt“, das Protokoll nicht).
+Am Stahlklotz (E = 2,1·10¹¹) sind es 4,6 N von 10 kN.
+
+**Offen.** Am gequetschten Block (`tests/test_plastizitaet`) hängt der Zustand mit
+der Reibungstangente an der Teilung der Last: 42,130 / 42,241 / 42,580 / 42,666 mm
+für 1 / 2 / 4 / 8 Laststufen, primal-dual 42,667 mm für alle. Es sind dieselben
+Zahlen wie beim am 28.09.2026 verworfenen „wer sich gegen seine Gleitrichtung
+bewegt, haftet“; beide Zustände erfüllen Gleichgewicht und Coulomb. Mit wachsender
+Teilung nähert sich die Reibungstangente dem primal-dualen Zustand. Federn des
+Anwenders rechnen weiter wie bisher. Gleichungslöser: pypardiso zerlegt jede Matrix
+mit `mtype` 11 (reell unsymmetrisch, mit symmetrisiertem Muster), auch die
+symmetrischen. Die Spalte −μ·t besetzt je gleitendem Knoten seine
+Tangentialfreiheitsgrade in der Spalte seiner Normalzeile; an Fugen stehen dort schon
+die Einträge von Cᵀ, an Lagerknoten (Normalzeile nur auf dem Lager-Freiheitsgrad)
+kommen Einträge dazu (Prüfplatte mit allen 121 Reibknoten gleitend: 105 von 394 538).
+Mit ama (nur symmetrisch) entfällt die Spalte wie bei der Reibung primal-dual.
+
 **Mortar-Gewichte bei ungleichen Netzen (28.09.2026, Prüfmatrix K6,
 `contact.MORTAR`, `statik3d/mortar.py`).** Die Kopplung Knoten gegen Fläche
 projiziert jeden Slave-Knoten auf ein Dreieck der Master-Fläche (Vierecke

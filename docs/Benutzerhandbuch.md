@@ -7273,6 +7273,65 @@ Platte steht mit 0,007 mm. Startet dieselbe Platte mit Vorspannung warm aus dem
 Vorlauf (Vorschlag 1 ausgeschaltet), zieht das Festhalten haftende Knoten bis
 13 µm zurück, und die Prüfung meldet den Lauf als nicht konvergiert.
 
+**Reibung mit konsistenter Tangente (seit 15.10.2026, Schalter, Vorgabe aus).**
+Bis zum 15.10.2026 bestimmte das Programm Haften und Gleiten der Reibung als
+Fixpunkt: es stellte haftende Knoten über eine Liniensuche schrittweise ins
+Gleiten, führte die Gleitrichtungen aus der Reibkraft der vorigen Runde nach und
+hielt pendelnde Knoten mit den Pendelschutz-Regeln fest. Am Drehlager-Entwurf
+endeten so in der plastischen Phase fast alle Kontaktläufe nach 40 Runden am Deckel,
+weil am Flächenlager „Starr“ und an der Deckelverbindung einzelne Knoten zwischen
+Haften und Gleiten oder zwischen zwei Gleitrichtungen wechselten. Mit dem Schalter
+„Reibung mit konsistenter Tangente“ rechnet jeder Reibknoten an einer starren
+Normalbedingung (Fuge oder Lager mit μ ohne eigene Feder) in jeder Runde das
+Coulomb-Gesetz aus seinem Weg in der Fuge und seiner Normalkraft: er haftet, solange
+die Haftkraft – Haftsteifigkeit mal Weg – unter μ·Fn bleibt, sonst gleitet er mit μ·Fn
+in Richtung seines Wegs. Die nächste Runde rechnet mit der passenden Ableitung
+(Newton-Verfahren): beim Haften mit der Haftsteifigkeit, beim Gleiten mit der
+Steifigkeit quer zur Gleitrichtung und mit der Abhängigkeit der Reibkraft von der
+Normalkraft. Fertig ist der Lauf, wenn die Reibkräfte, mit denen gerechnet wurde, und
+die aus dem Coulomb-Gesetz an der neuen Lösung zusammen um höchstens ein Millionstel
+der Kontaktkraft auseinanderliegen. Die Normalbedingung bleibt dabei exakt, und die
+Ingenieurkriterien und der Deckel der Nachprüfung gelten unverändert.
+
+Die Haftsteifigkeit ist kein fester Wert, sondern ein Vielfaches der Steifigkeit,
+die der Knoten aus seinen angrenzenden Elementen hat – auch an starren Lagern, die
+keine Gegenseite haben. Beim Haften gibt ein Knoten um Reibkraft durch
+Haftsteifigkeit nach; mit dem Faktor 1 000 (Vorgabe) waren das an den Prüfmodellen
+höchstens 1,4·10⁻⁵ der größten Verschiebung gegenüber dem starren Haften, mit 10
+waren es 1,4·10⁻³, und die Zahl der Runden hing am Faktor nicht. Kehrt die
+Gleitrichtung eines Knotens von einer Runde zur nächsten um mehr als 90 Grad um, ist
+sein Weg durch das Haften gegangen; die nächste Runde rechnet ihn dann mit der
+Haftsteifigkeit, und das Coulomb-Gesetz der Lösung danach entscheidet neu.
+
+Gemessen an den Prüfmodellen der Kontaktprüfungen (`tests/test_reibungstangente.py`):
+Der Block mit Reibung braucht 8 statt 29 Runden, der Stempel auf Sockel 8 statt 14,
+plastisch 31 statt 61, die Platte mit vier vorgespannten Ankern auf einem Lager wie
+„Starr“ (plastisch, wie das Drehlager) 25 statt 66 Runden und 18 statt 25
+Zerlegungen, der Block nahe der Grenzlast 36 statt 136 und der kippende Stempel 36
+statt 76; die Verschiebungen weichen um höchstens 1,4·10⁻⁵ ab. Ein steifer Klotz auf
+einem Lager mit Reibung, den eine Zugfeder in x hält, haftet bis F = μ·N und gleitet
+darüber um (F − μ·N) durch die Federsteifigkeit, auf 10⁻⁴ genau, in 5 bis 6 Runden.
+Am alten Stand galt derselbe Lauf bei F = 1,5·μ·N als konvergiert, obwohl der Klotz
+nur 1,1 statt 100 µm geglitten war und 4,8 % der Last im Gleichgewicht fehlten: die
+kleine Reststeifigkeit, mit der gleitende Knoten gehalten werden, trug die Kraft. Ein
+vorgespanntes Blechpaket unter Querkraft haftet bis μ·F_v und gleitet darüber um
+(Q − μ·F_v) durch die Steifigkeit der Rückhaltung (alter Stand bei 1,05·μ·F_v: 3,7
+statt 30 µm in 44 Runden; neu 30,003 µm in 8 Runden). Die Reibarbeit ist je Laststufe
+und Knoten nicht negativ.
+
+Bekannt und noch offen: Am gequetschten Block der Prüfungen (60 MN über der
+Quetschlast, 12 % plastische Dehnung) hängt das Ergebnis mit dem Schalter an der
+Teilung der Last – 42,13 / 42,24 / 42,58 / 42,67 mm größte Verschiebung für 1 / 2 /
+4 / 8 Laststufen, ohne ihn 42,67 mm für alle. Beide Zustände erfüllen Gleichgewicht
+und Coulomb-Gesetz. Ob der Schalter zur Vorgabe wird, entscheidet die Abnahme am
+Drehlager. Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
+bisher. Den Schalter und den Faktor stellen Sie unter *Berechnung → Einstellungen*
+in der Gruppe „Kontaktlauf und Spannschritt“ ein (`plastizitaet.reibungstangente`,
+`plastizitaet.haft_faktor`); gespeichert werden sie nur, wenn sie von der Vorgabe
+abweichen, und sie gelten für jeden Kontaktlauf, auch ohne Fließen. Ausgeschaltet
+rechnet das Programm bitgleich wie vorher, und reibungsfreie Fugen rechnen mit und
+ohne Schalter bitgleich.
+
 **Kontaktlauf konvergiert als Bedingung der Plastizität: vorbereitet, aus
 (14.10.2026).** Nach der Entscheidung des Anwenders kommt die Bedingung
 „Kontaktlauf konvergiert“ erst nach der Klärung des Pendelns am Drehlager
@@ -10981,7 +11040,10 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (siehe „Spannschritt in Stufen“ bei den Lastarten). Eine Datei ohne diese
   Einstellungen bekommt die Vorgaben; mit der Vorgabe schreibt das Programm sie auch
   nicht in die Datei, damit ältere Modelle beim Speichern Byte für Byte bleiben und
-  ihre Ergebnisdateien weiter passen.
+  ihre Ergebnisdateien weiter passen. Seit dem 15.10.2026 stehen in derselben Gruppe
+  der Schalter „Reibung mit konsistenter Tangente“ (Vorgabe aus) und die
+  „Haftsteifigkeit“ als Vielfaches der Knotensteifigkeit (Vorgabe × 1000); was sie
+  tun, steht im Kapitel Kontakt unter „Reibung mit konsistenter Tangente“.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die
