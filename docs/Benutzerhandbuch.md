@@ -1001,6 +1001,22 @@ elastischer Verkürzung X kN – in Sollkraft umwandeln?“; einen Vermerk an de
 Lastfällen gab es nicht. Eine Datei mit einem Hinweis in der alten Form zeigt
 ihn beim Öffnen in der neuen Form, und die Datei selbst bleibt, wie sie ist.
 
+Ein Modell, das vor dem 13.10.2026 aus RFEM übernommen wurde, trägt weder
+diesen Hinweis noch an seinen ΔT-Lasten die gespeicherte Kraft. Seit dem
+15.10.2026 erkennt das Programm beim Öffnen eines solchen Modells (Quelle eine
+.rf6-Datei) die Vorspannungen, die noch als ΔT an Zug- oder Seilstäben stehen,
+leitet ihre Kraft aus ΔT ab und gibt denselben Hinweis und denselben Vermerk,
+gebündelt je Wert, mit „aus ΔT abgeleitet“ in der Klammer. Die Kraft nach
+elastischer Verkürzung rechnet das Öffnen nicht. Die Datei ändert sich dabei
+nicht; die Hinweise hängen nur am geöffneten Modell. Am gespeicherten
+Drehlager, dessen LF1 schon auf die Endvorspannung umgestellt ist, stehen beim
+Öffnen „Vorspannung 952 kN an S1–S16 in 128 Lastfällen aus RFEM übernommen
+(als eingeprägte Dehnung, E = 170 000 N/mm², α = 1,0e-5 1/K, aus ΔT
+abgeleitet; …)“ und dasselbe für 805 kN in 293 Lastfällen; der Vermerk steht
+an 421 Lastfällen, und die Datei bleibt beim Öffnen und Speichern bitgleich.
+Ein Modell ohne RFEM als Quelle bekommt keinen solchen Hinweis, auch wenn ein
+Zugstab dort abgekühlt wird.
+
 X ist die Stabkraft unter der Vorspannung allein. Das
 Programm rechnet sie beim Import, wenn das Modell keinen Kontakt hat,
 vernetzt ist und höchstens 300 000 Freiheitsgrade hat. Sonst, wie am

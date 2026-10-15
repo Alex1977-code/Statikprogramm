@@ -21352,11 +21352,13 @@ class MainWindow(QtWidgets.QMainWindow):
                            "haken", True,
                            hinweis="sonst nur im gewählten Lastfall; ein Lastfall mit anderer Kraft "
                                    "(am Drehlager 805 statt 952 kN) bleibt, wie er ist")]
-        offen = [h for h in (getattr(self.model, "importhinweise", None) or [])
-                 if h.get("art") == "vorspannung" and not h.get("erledigt")]
+        # gespeicherte Importhinweise und - seit 15.10.2026 - die beim Oeffnen
+        # aus ΔT abgeleiteten eines aelteren Modells
+        offen = [h for h in vk._rfem_hinweise(self.model) if not h.get("erledigt")]
         if offen:
             felder.append(msk.Feld("hinweise", "Aus dem Import", "info",
-                                   " · ".join(vk.hinweis_anzeige(self.model, h) for h in offen[:3])))
+                                   " · ".join(h["text"] if h.get("abgeleitet") else
+                                              vk.hinweis_anzeige(self.model, h) for h in offen[:3])))
         elif vk.temperatur_vorspannungen(self.model):
             felder.append(msk.Feld("hinweise", "Im Modell", "info",
                                    "Vorspannungen als eingeprägte Dehnung (ΔT) auf Zugstäben - umwandeln mit "

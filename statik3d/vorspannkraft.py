@@ -781,11 +781,60 @@ def hinweis_anzeige(model, h: dict) -> str:
                              umrechnung, h.get("X"), grund or "", h.get("X_aus"))
 
 
+#: Vermerk in der Klammer eines Hinweises, dessen Kraft aus ΔT abgeleitet ist
+#: (Datei von vor dem 13.10.2026 ohne gespeichertes Merkmal)
+AUS_DT = "aus ΔT abgeleitet"
+
+
+def abgeleitete_hinweise(model) -> list:
+    """Hinweise fuer ein Modell, das vor dem 13.10.2026 aus RFEM uebernommen
+    wurde (Quelle eine .rf6-Datei, kein Importhinweis zur Vorspannung): die
+    Vorspannungen, die dort noch als ΔT an Zug- oder Seilstaeben stehen
+    (TempLoad.vorspann_werte bzw. vorspannkraft), gebuendelt je Wert wie beim
+    Import - mit „aus ΔT abgeleitet“ in der Klammer, wenn kein gespeichertes
+    Merkmal da ist. X wird beim Oeffnen nicht gerechnet. Die Hinweise haengen
+    nur am geoeffneten Modell (``model._rfem_hinweise_abgeleitet``), die Datei
+    aendert sich nicht (Auftrag vom 15.10.2026: der Anwender arbeitet mit
+    einem solchen gespeicherten Drehlager)."""
+    meta = getattr(model, "meta", None) or {}
+    if not str(meta.get("quelle", "") or "").lower().endswith(".rf6"):
+        return []
+    if any(h.get("art") == "vorspannung" for h in (getattr(model, "importhinweise", None) or [])):
+        return []
+    je: dict = {}
+    for t in temperatur_vorspannungen(model):
+        je.setdefault(round(t.N0, 3), []).append(t)
+    grund = x_rechenbar(model) or "beim Öffnen nicht gerechnet"
+    out = []
+    for N0, liste in sorted(je.items(), key=lambda kv: -kv[0]):
+        staebe = sorted({t.stab for t in liste})
+        faelle = sorted({t.fall for t in liste})
+        l0 = liste[0].lasten[0]
+        umrechnung = l0.vorspann_umrechnung_text(model=model)
+        if not all(getattr(x, "aus_vorspannung", 0.0) for t in liste for x in t.lasten):
+            umrechnung += ", " + AUS_DT
+        h = {"art": "vorspannung", "abgeleitet": True, "objekte": staebe, "faelle": faelle,
+             "N0": float(N0), "umrechnung": umrechnung, "grund": grund, "X": None, "erledigt": False}
+        h["text"] = rfem_hinweis_text(N0, staebe, faelle, umrechnung, None, grund)
+        out.append(h)
+    return out
+
+
+def _rfem_hinweise(model) -> list:
+    """Die Hinweise zur Vorspannung aus RFEM: gespeicherte Importhinweise und
+    die beim Oeffnen abgeleiteten (:func:`abgeleitete_hinweise`)."""
+    return ([h for h in (getattr(model, "importhinweise", None) or []) if h.get("art") == "vorspannung"]
+            + list(getattr(model, "_rfem_hinweise_abgeleitet", None) or []))
+
+
 def vorspannung_ladehinweise(model) -> list:
     """Zeilen fuers Protokoll beim Oeffnen (Model._geoeffnet): die offenen
-    Importhinweise zur Vorspannung aus RFEM (seit 15.10.2026)."""
-    return [hinweis_anzeige(model, h) for h in (getattr(model, "importhinweise", None) or [])
-            if h.get("art") == "vorspannung" and not h.get("erledigt")]
+    Importhinweise zur Vorspannung aus RFEM (seit 15.10.2026), bei einem vor
+    dem 13.10.2026 uebernommenen Modell die abgeleiteten - die setzt diese
+    Funktion ans Modell (nicht in die Datei)."""
+    model._rfem_hinweise_abgeleitet = abgeleitete_hinweise(model)
+    return [h["text"] if h.get("abgeleitet") else hinweis_anzeige(model, h)
+            for h in _rfem_hinweise(model) if not h.get("erledigt")]
 
 
 def rfem_pruefen(model) -> dict:
@@ -796,8 +845,8 @@ def rfem_pruefen(model) -> dict:
     Hand ersetzt, faellt der Lastfall heraus."""
     out: dict = {}
     lcs = getattr(model, "load_cases", None) or {}
-    for h in (getattr(model, "importhinweise", None) or []):
-        if h.get("art") != "vorspannung" or h.get("erledigt"):
+    for h in _rfem_hinweise(model):
+        if h.get("erledigt"):
             continue
         for f in h.get("faelle") or []:
             lc = lcs.get(f)

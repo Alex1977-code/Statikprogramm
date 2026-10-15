@@ -17,6 +17,15 @@ Geprueft an einer synthetischen RFEM-Datei (Vorspannung 120 kN in zwei
 Lastfaellen, 150 kN in einem dritten, ein Lastfall ohne) und, wenn die Datei
 da ist, am Drehlager (nur Import, nichts gerechnet).
 
+Nachtrag vom 15.10.2026 fuer aeltere Modelle: eine Datei, die vor dem
+13.10.2026 aus RFEM uebernommen wurde, traegt keinen Importhinweis zur
+Vorspannung und kein gespeichertes Merkmal an ihren ΔT-Lasten. Beim Oeffnen
+leitet das Programm die Vorspannungen aus ΔT ab (TempLoad.vorspann_werte) und
+gibt denselben Hinweis und denselben Vermerk, mit „aus ΔT abgeleitet“ in der
+Klammer; die Datei aendert sich nicht. Geprueft an einer so nachgestellten
+synthetischen Datei und, mit STATIK3D_DREHLAGER_JSON, am gespeicherten
+Drehlager (nur lesend).
+
 Aufruf:  python -m tests.test_vorspannung_rfem_hinweis
 """
 import os
@@ -122,6 +131,84 @@ def test_laden(pfad):
     check("Hinweis aus einer Datei vom 14.10.2026: beim Laden in der neuen Form", T120 in z3, str(z3))
 
 
+ABGELEITET = ("Vorspannung 120 kN an S1–S2 in 2 Lastfällen aus RFEM übernommen (als eingeprägte Dehnung, "
+              "E = 210 000 N/mm², α = 1,2e-5 1/K, aus ΔT abgeleitet; die Kraft nach elastischer Verkürzung "
+              "folgt nach der ersten Rechnung eines Lastfalls nur mit der Vorspannung: beim Öffnen nicht "
+              "gerechnet)" + ENDE)
+
+
+def test_alte_datei(pfad):
+    print("\n--- Datei von vor dem 13.10.2026 (ohne Importhinweis und Merkmal): aus ΔT abgeleitet ---")
+    from statik3d.model import Model
+    from statik3d import vorspannkraft as vk
+    m = Model.load(pfad)
+    m.importhinweise = [h for h in m.importhinweise if h.get("art") != "vorspannung"]
+    # die Quelle setzt der Import ueber statik3d.importers (Oberflaeche), read_rf6 allein nicht
+    m.meta["quelle"] = os.path.join(TMP, "anker.rf6")
+    for lc in m.load_cases.values():
+        for t in lc.temp_loads:
+            t.aus_vorspannung, t.vorspann_E, t.vorspann_alpha = 0.0, 0.0, 0.0
+    alt = os.path.join(TMP, "anker_vor_1310.json")
+    m.save(alt)
+    alt2 = os.path.join(TMP, "anker_vor_1310_b.json")
+    Model.load(alt).save(alt2)          # Querschnittswerte einmal ergaenzt (wie oben)
+    m2 = Model.load(alt2)
+    z = [s for s in getattr(m2, "_ladehinweise", []) if "aus RFEM übernommen" in s]
+    for s in z:
+        print(f"     {s}")
+    check("beim Öffnen: je Wert ein Hinweis (120 kN und 150 kN)", len(z) == 2, str(len(z)))
+    check("Wortlaut 120 kN mit „aus ΔT abgeleitet“", ABGELEITET in z, str(z[:1]))
+    p = vk.rfem_pruefen(m2)
+    check("Vermerk: LF1, LF2, LF3 (nicht LF4)", sorted(p) == ["LF1", "LF2", "LF3"], str(sorted(p)))
+    check("kein gespeicherter Importhinweis entsteht", not [h for h in m2.importhinweise
+                                                            if h.get("art") == "vorspannung"])
+    alt3 = os.path.join(TMP, "anker_vor_1310_c.json")
+    m2.save(alt3)
+    with open(alt2, "rb") as f1, open(alt3, "rb") as f2:
+        check("Datei von vor dem 13.10.2026: Öffnen und Speichern bitgleich", f1.read() == f2.read())
+    vk.in_sollkraft_umwandeln(m2, faelle=["LF1"], kraft=120e3)
+    check("nach dem Umwandeln von LF1: Vermerk nur noch LF2, LF3", sorted(vk.rfem_pruefen(m2)) == ["LF2", "LF3"],
+          str(sorted(vk.rfem_pruefen(m2))))
+    # ohne RFEM als Quelle: eine Abkuehlung eines Zugstabs ist kein Hinweis „aus RFEM“
+    m3 = Model.load(alt2)
+    m3.meta["quelle"] = ""
+    eigen = os.path.join(TMP, "eigen.json")
+    m3.save(eigen)
+    z3 = [s for s in getattr(Model.load(eigen), "_ladehinweise", []) if "aus RFEM übernommen" in s]
+    check("ein Modell ohne RFEM-Quelle bekommt keinen Hinweis", not z3, str(z3[:1]))
+    return alt2
+
+
+def test_drehlager_gespeichert():
+    pfad = os.environ.get("STATIK3D_DREHLAGER_JSON", "")
+    if not pfad or not os.path.exists(pfad):
+        print("\n--- gespeichertes Drehlager: STATIK3D_DREHLAGER_JSON nicht gesetzt, übersprungen ---")
+        return
+    print(f"\n--- gespeichertes Drehlager {os.path.basename(pfad)}: nur lesend ---")
+    from statik3d.model import Model
+    from statik3d import vorspannkraft as vk
+    m = Model.load(pfad)
+    z = [s for s in getattr(m, "_ladehinweise", []) if "aus RFEM übernommen" in s]
+    for s in z:
+        print(f"     {s}")
+    soll = {952: os.environ.get("STATIK3D_DREHLAGER_952", "128"), 805: os.environ.get("STATIK3D_DREHLAGER_805", "293")}
+    for N, n in soll.items():
+        a = (f"Vorspannung {N} kN an S1–S16 in {n} Lastfällen aus RFEM übernommen (als eingeprägte Dehnung, "
+             f"E = 170 000 N/mm², α = 1,0e-5 1/K, aus ΔT abgeleitet; die Kraft nach elastischer Verkürzung "
+             "folgt nach der ersten Rechnung eines Lastfalls nur mit der Vorspannung:")
+        check(f"Drehlager gespeichert: {N} kN an S1–S16 in {n} Lastfällen, aus ΔT abgeleitet",
+              any(s.startswith(a) and s.endswith(ENDE) for s in z), str(z)[:300])
+    check("Drehlager gespeichert: genau zwei Hinweise", len(z) == 2, str(len(z)))
+    p = vk.rfem_pruefen(m)
+    check(f"Drehlager gespeichert: Vermerk in {int(soll[952]) + int(soll[805])} Lastfällen",
+          len(p) == int(soll[952]) + int(soll[805]), str(len(p)))
+    kopie = os.path.join(TMP, "drehlager_gespeichert.json")
+    m.save(kopie)
+    with open(pfad, "rb") as f1, open(kopie, "rb") as f2:
+        check("Drehlager gespeichert: Öffnen und Speichern bitgleich", f1.read() == f2.read())
+    os.remove(kopie)
+
+
 def _fenster():
     if "w" in _FENSTER:
         return _FENSTER["w"], _FENSTER["app"]
@@ -199,11 +286,12 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     pfad = None
-    for t in (test_import, test_laden, test_oberflaeche, test_drehlager):
+    for t in (test_import, test_laden, test_alte_datei, test_oberflaeche, test_drehlager,
+              test_drehlager_gespeichert):
         try:
             if t is test_import:
                 pfad = t()
-            elif t in (test_laden, test_oberflaeche):
+            elif t in (test_laden, test_alte_datei, test_oberflaeche):
                 t(pfad)
             else:
                 t()

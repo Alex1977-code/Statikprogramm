@@ -952,7 +952,12 @@ und ggf. als Anfangsvorspannung (Pressenkraft) oder Endvorspannung anpassen“
 (`vorspannung_ladehinweise`, aus den gespeicherten Feldern neu gesetzt, die
 Datei bleibt), und `rfem_pruefen` nennt die Lastfälle, in denen die
 Vorspannung noch als eingeprägte Dehnung steht (Vermerk in Lastfallmaske und
-Lasttabelle). Bis zum 15.10.2026 hieß der Hinweis „Vorspannung als eingeprägte
+Lasttabelle). Bei einem Modell, das vor dem 13.10.2026 übernommen wurde (Quelle
+.rf6, kein Importhinweis zur Vorspannung), leitet `abgeleitete_hinweise` beim
+Öffnen dieselben Hinweise aus den ΔT-Lasten an Zug- und Seilstäben ab
+(`TempLoad.vorspann_werte`, N = E·A·α·(−ΔT)), je Wert gebündelt, mit „aus ΔT
+abgeleitet“ in der Klammer und ohne X; sie hängen nur am geöffneten Modell
+(`_rfem_hinweise_abgeleitet`), die Datei bleibt. Bis zum 15.10.2026 hieß der Hinweis „Vorspannung als eingeprägte
 Dehnung (RFEM) 952 kN ergibt nach elastischer Verkürzung X kN – in
 Endvorspannung umwandeln?“, bis zum 14.10.2026 „Anfangsvorspannung 952 kN
 ergibt … – in Sollkraft umwandeln?“. X rechnet das Programm
