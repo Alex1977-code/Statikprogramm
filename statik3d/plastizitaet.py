@@ -356,6 +356,16 @@ class Plastizitaet:
     #: „nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Ein Werkstoff
     #: mit eingetragener Bruchdehnung (Material.bruchdehnung) hat diese als Grenze.
     dehnungsgrenze: float = 0.20
+    #: Hebel 1 (Entscheidung des Anwenders vom 15.10.2026, solver.solve_with_ausfall):
+    #: die Ausfall-Iteration „annehmen und nachpruefen“ - sie beginnt mit der Menge
+    #: ausgefallener Staebe der vorigen Loesung desselben Lastfalls statt mit der leeren
+    #: Menge und rechnet eine zweite Runde nur, wenn die Nachpruefung verletzt ist (ein
+    #: aktiver Zugstab mit Druck oder ein ausgefallener, der sich verlaengern wuerde).
+    #: Am Drehlager fielen in jedem Newton-Schritt dieselben drei Staebe aus, und jede
+    #: Loesung kostete zwei volle Kontaktlaeufe statt einem.
+    #: Vorgabe AUS (Auftrag 16.10.2026): jeder Hebel ist einzeln schaltbar und bleibt
+    #: aus, bis die Messung am Drehlager (H0 gegen den Hebel allein) entschieden hat.
+    ausfall_annehmen: bool = False
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
@@ -364,7 +374,7 @@ class Plastizitaet:
                  "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
                  "spannung_zuerst": True, "ausfall_warm": True}
     #: ... und am 15.10.2026 (Reibungstangente), ebenso
-    NEU_15_10 = {"reibungstangente": True, "haft_faktor": 1.0e3}
+    NEU_15_10 = {"reibungstangente": True, "haft_faktor": 1.0e3, "ausfall_annehmen": False}
     #: ... und am 16.10.2026 (Gueltigkeitsgrenze), ebenso
     NEU_16_10 = {"dehnungsgrenze": 0.20}
 

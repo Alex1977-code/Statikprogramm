@@ -6076,10 +6076,13 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             # die Kontaktlaeufe der Ausfall-Iteration; aus wie bisher kalt
             warm_a = bool(getattr(model.plastizitaet, "ausfall_warm", True)) and model.has_contact
             st_a = (None if (probelauf and start_ is None) else st) if warm_a else None
+            # Hebel 1 (15.10.2026): die Menge der vorigen Loesung dieses Lastfalls
+            # als Annahme - der erste Aufruf (Vorlauf) beginnt mit der leeren Menge
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
                 model, system, Fg, us=us, progress=progress, uebermass=ueber,
                 K_zusatz=K_zusatz, probelauf=probelauf, n0=n0_ausfall,
-                start=st_a, fortsetzung=start_ is not None)
+                start=st_a, fortsetzung=start_ is not None,
+                annahme=res.info.get("ausfall"))
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
@@ -6616,7 +6619,8 @@ AUSFALL_WARM_NACH_DECKEL = True
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
                        progress=None, max_iter: int = 50, uebermass: dict = None,
                        K_zusatz: sparse.spmatrix = None, probelauf: bool = False,
-                       n0: dict = None, start=None, fortsetzung: bool = False):
+                       n0: dict = None, start=None, fortsetzung: bool = False,
+                       annahme=None):
     """Aktivmengen-Iteration fuer Staebe, die nur Zug oder nur Druck aufnehmen
     (Fachwerkstab/Feder mit ``nur``, Seile).
 
@@ -6658,6 +6662,20 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     Iteration (plastizitaet._newton) - eps_p wird darum nicht aufsummiert.
     Rueckgabe dann zusaetzlich in ``kontakt[2]["contact_state"]`` der Zustand fuer
     den naechsten Aufruf.
+
+    **Annehmen und nachpruefen** (Hebel 1, Entscheidung des Anwenders vom
+    15.10.2026; Plastizitaet.ausfall_annehmen): ``annahme`` ist die Menge der
+    ausgefallenen Staebe der vorigen Loesung desselben Lastfalls (der Loeser reicht
+    sie je Newton-Schritt durch). Die Iteration beginnt mit ihr statt mit der
+    leeren Menge; nach der Loesung wird nachgeprueft wie in jeder Runde - kein
+    aktiver Stab mit der falschen Kraft (Zugstab N < 0), kein ausgefallener, der
+    die richtige truege (die Kraft aus der Laengenaenderung zwischen seinen
+    Endknoten, mit der Anfangsdehnung N0: ein Zugstab ohne N0 verkuerzt sich) -,
+    und nur bei einer Verletzung folgt eine zweite Runde. Die Bedingung ist
+    dieselbe wie ohne Annahme, nur der Startpunkt ist ein anderer. Am Drehlager
+    fielen in jedem Newton-Schritt dieselben drei Staebe aus, und jede Loesung
+    kostete zwei Kontaktlaeufe (E0-neu: je Newton-Schritt zwei Laeufe zu 40
+    Runden); mit der Annahme kostet sie einen.
     """
     if probelauf:
         max_iter = 1            # siehe solve_with_contact: ein Schritt genuegt
@@ -6673,6 +6691,11 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
         Ke[i] = (asm.element_dofs(e, model), np.asarray(asm.element_matrix(model, e), float))
     aus: set = set()
     log: list[str] = []
+    # Hebel 1 (15.10.2026): mit der Menge der vorigen Loesung beginnen, nachpruefen
+    annehmen = (annahme is not None and not probelauf
+                and bool(getattr(getattr(model, "plastizitaet", None), "ausfall_annehmen", False)))
+    if annehmen:
+        aus = {int(i) for i in annahme if int(i) in Ke}
     n = model.ndof
     u = R = None
     kontakt = None
@@ -6748,6 +6771,10 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
         log.append(f"Ausfall-Iteration nach {max_iter} Schritten nicht konvergiert"
                    + (" - im letzten Schritt wechselten " + ", ".join(stab_name(model, i, namen) for i in wechsel[:8])
                       + (" …" if len(wechsel) > 8 else "") if wechsel and not probelauf else ""))
+    if annehmen:
+        log.append(f"Ausfall-Iteration: Annahme der vorigen Lösung ({len(annahme)} "
+                   f"{'Stab' if len(annahme) == 1 else 'Stäbe'} ausgefallen) "
+                   + ("bestätigt - ein Lauf" if it == 1 else f"verletzt - {it} Runden"))
     if aus:
         log.append(("1 Stab trägt nicht (nur Zug/Druck): " if len(aus) == 1 else
                     f"{len(aus)} Stäbe tragen nicht (nur Zug/Druck): ")

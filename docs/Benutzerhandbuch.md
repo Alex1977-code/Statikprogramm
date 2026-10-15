@@ -7846,6 +7846,29 @@ Warmstart“, sondern, von welchem Lastfall der Start angeboten wurde. Ausschalt
 lässt es sich am Modell mit `plastizitaet.ausfall_warm = False` (Vorgabe an;
 gespeichert nur, wenn er abweicht).
 
+**Ausfall-Iteration: annehmen und nachprüfen (seit 15.10.2026).** Bis zum
+15.10.2026 begann die Ausfall-Iteration jeder Lösung mit allen Stäben, auch in
+jedem Newton-Schritt der Plastizität, obwohl dort meist dieselben Stäbe
+ausfallen wie im Schritt davor. Jede Lösung kostete damit mindestens zwei ganze
+Kontaktläufe: einen mit allen Stäben, der zeigt, welche ausfallen, und einen
+ohne sie, der das bestätigt. Am Drehlager fielen in jedem Newton-Schritt
+dieselben drei Zugstäbe aus, und beide Läufe endeten dort jeweils nach 40
+Runden. Jetzt nimmt das Programm ab der zweiten Lösung eines Lastfalls an, dass
+dieselben Stäbe ausgefallen sind wie in der Lösung davor, rechnet damit einen
+Kontaktlauf und prüft danach nach: jeder aktive Zugstab muss Zug tragen (bzw.
+jeder Druckstab Druck), und jeder ausgefallene muss sich verkürzen (bzw.
+verlängern), gemessen an der Längenänderung zwischen seinen Endknoten, mit einer
+eingeprägten Vorspannung oder Temperatur eingerechnet. Nur wenn das verletzt ist,
+folgt eine zweite Runde wie bisher. Die Bedingung ist also dieselbe, nur der
+Startpunkt ist ein anderer; die erste Lösung eines Lastfalls beginnt wie bisher
+mit allen Stäben. Im Protokoll der Iteration steht, ob die Annahme bestätigt
+oder verletzt war. An der Prüfplatte mit Strebe und Fließen
+(`tests/test_drehlager_zeit.py`) sind es 13 statt 24 Kontaktläufe und 124 statt
+228 Runden, bei derselben Lösung auf 1,4·10⁻¹⁰ m und derselben plastischen
+Dehnung. Einschalten lässt es sich am Modell mit
+`plastizitaet.ausfall_annehmen = True` (Vorgabe aus, bis die Messung am Drehlager
+entschieden hat; gespeichert nur, wenn er abweicht).
+
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
 Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann

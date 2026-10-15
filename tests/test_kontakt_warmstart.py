@@ -448,12 +448,15 @@ def kontaktlaeufe_mitschreiben(aufz: list, unkonvergiert=()):
 
 def test_vorschlag5():
     print("\n--- Vorschlag 5: Warmstart in der Ausfall-Iteration, vom letzten konvergierten Zustand ---")
-    # (a) Platte mit einer Strebe "nur Zug", die der Schub drueckt: je Loesung zwei Laeufe
+    # (a) Platte mit einer Strebe "nur Zug", die der Schub drueckt: je Loesung zwei Laeufe.
+    #     Gemessen wird Vorschlag 5 allein: Hebel 1 vom 15.10.2026 (ausfall_annehmen,
+    #     tests/test_drehlager_zeit) spart den zweiten Lauf ab der zweiten Loesung und ist
+    #     hier aus, damit jede Loesung ihre zwei Laeufe behaelt
     l0, l1 = [], []
     with kontaktlaeufe_mitschreiben(l0):
-        a, ta = rechnen(platte(strebe=True, schalter={"ausfall_warm": False}))
+        a, ta = rechnen(platte(strebe=True, schalter={"ausfall_warm": False, "ausfall_annehmen": False}))
     with kontaktlaeufe_mitschreiben(l1):
-        b, tb = rechnen(platte(strebe=True))
+        b, tb = rechnen(platte(strebe=True, schalter={"ausfall_annehmen": False}))
     n0, n1 = sum(x["runden"] for x in l0), sum(x["runden"] for x in l1)
     print(f"      aus: {len(l0)} Kontaktläufe, {n0} Runden, {ta:.1f} s; an: {len(l1)} Läufe, {n1} Runden, {tb:.1f} s")
     check("aus: jeder Kontaktlauf der Ausfall-Iteration kalt (Stand vor dem 14.10.2026)",
@@ -518,7 +521,8 @@ def test_vorschlag5():
             zaehler["n"] = 0
             lz = []
             with kontaktlaeufe_mitschreiben(lz):
-                r, _t = rechnen(platte(strebe=True, fy=30e6, schalter={"ausfall_warm": an}))
+                r, _t = rechnen(platte(strebe=True, fy=30e6, schalter={"ausfall_warm": an,
+                                                                       "ausfall_annehmen": False}))
             pz = r.info.get("plastizitaet") or {}
             erg[an] = (r, zaehler["n"], float(pz.get("eps_p_max") or 0.0), int(pz.get("iterationen") or 0),
                        sum(x["runden"] for x in lz), len(lz))

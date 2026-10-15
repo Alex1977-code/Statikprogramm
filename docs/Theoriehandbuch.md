@@ -4079,6 +4079,22 @@ die Rückführung nicht. Gemessen (Prüfplatte mit Strebe „nur Zug“, die aus
 1,1·10⁻⁶ relativ gleich, jeweils 24 Kontaktläufe. `_startherkunft_eintragen`
 schreibt „Ausfallweg ohne Warmstart“ nur noch ausgeschaltet.
 
+**6. Ausfall-Iteration: annehmen und nachprüfen** (Hebel 1, seit 15.10.2026;
+`ausfall_annehmen`, Vorgabe aus). `solve_with_ausfall(…, annahme)` beginnt mit der
+Menge `annahme` statt mit der leeren Menge; `_solve_loads._rechnen` reicht dafür
+`res.info["ausfall"]` der vorigen Lösung desselben Lastfalls durch (der erste
+Aufruf, Vorlauf oder Spannschritt, hat keine und beginnt leer). Die Nachprüfung
+ist die Abbruchbedingung jeder Runde: die Kraft jedes Kandidaten
+N = N0 + EA/L·Δl aus den Verschiebungen seiner Endknoten (`_normalkraft`, für
+ausgefallene Stäbe dieselbe Formel, also die Längenänderung gegen die
+spannungsfreie Länge), neu = {Zugstab mit N < −tol} ∪ {Druckstab mit N > tol},
+tol = 10⁻⁹ max|N|; ist neu gleich der angenommenen Menge, endet die Iteration
+nach einem Lauf. Der Fixpunkt ist derselbe wie ohne Annahme; wo es mehrere gibt
+(ein Stab mit N ≈ 0), wählt der Startpunkt, innerhalb tol. Gemessen
+(Prüfplatte mit Strebe, f_y 30 N/mm², 10 Newton-Schritte): 24 → 13 Kontaktläufe,
+228 → 124 Runden, |Δu| 1,4·10⁻¹⁰ m, Δε_p 2·10⁻¹¹; mit falscher Annahme (Strebe
+gezogen bzw. gedrückt) zwei Läufe und dieselbe Lösung.
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
