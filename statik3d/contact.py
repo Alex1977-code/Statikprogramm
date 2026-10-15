@@ -2534,6 +2534,12 @@ class ContactSystem:
         if dt is None:
             return 0.0
         _gl, Ft_rm, _nd, _kq = self._rueckabbildung(c, dt, roh)
+        if c.slip and self._ohne_halt(c, full_slip):
+            # Ganz gleitende Gruppe ohne anderen Halt ("Bauteil rutscht"): die grobe
+            # Reststeifigkeit haelt das Bauteil und traegt Kraft - das meldet die Warnung,
+            # nicht das Residuum (wie bei der primal-dualen Reibung). Sonst endete der
+            # rutschende Block (tests/test_solver_ext, H = 0,4 N > mu N) nie
+            Ft_lin = np.asarray(Ft_lin, float) - self._k_res(c, full_slip) * np.asarray(dt, float)
         return float(np.linalg.norm(np.asarray(Ft_rm, float) - np.asarray(Ft_lin, float)))
 
     def _lam_t(self, c: Constraint, lam, dt: np.ndarray) -> np.ndarray:

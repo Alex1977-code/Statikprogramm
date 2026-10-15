@@ -7311,7 +7311,8 @@ Zerlegungen, der Block nahe der Grenzlast 34 statt 136, der kippende Stempel 34
 statt 76 und der Block mit Anschlag 6 statt 13; die Verschiebungen weichen um
 höchstens 1,4·10⁻⁵ ab. Ein steifer Klotz auf
 einem Lager mit Reibung, den eine Zugfeder in x hält, haftet bis F = μ·N und gleitet
-darüber um (F − μ·N) durch die Federsteifigkeit, auf 10⁻⁴ genau, in 3 bis 5 Runden.
+darüber um (F − μ·N) durch die Federsteifigkeit, auf 10⁻⁴ genau (knapp über μ·N auf
+0,2 nm, die Schranke, bei der der Kontaktlauf endet), in 3 bis 5 Runden.
 Am alten Stand galt derselbe Lauf bei F = 1,5·μ·N als konvergiert, obwohl der Klotz
 nur 1,1 statt 100 µm geglitten war und 4,8 % der Last im Gleichgewicht fehlten: die
 kleine Reststeifigkeit, mit der gleitende Knoten gehalten werden, trug die Kraft. Ein
