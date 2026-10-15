@@ -10045,6 +10045,18 @@ NEUE_FELDER = {
     "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": []},
 }
 
+#: Neue Felder, deren Vorgabe sich spaeter geaendert hat, mit der frueheren
+#: Vorgabe - je Schluessel der Modelldatei wie NEUE_FELDER. Eine Ergebnisdatei
+#: vom frueheren Stand traegt einen Wert, der heute die Vorgabe ist, in ihrer
+#: Kennung; heute fehlt er dort. ergebnisse.pruefen vergleicht darum auch nach
+#: den frueheren Vorgaben: der Wert, der heute Vorgabe ist, gilt als gleich.
+#: reibungstangente: Vorgabe False von 4073439 bis b24910b, seit 49cb8bb True
+#: (Entscheidung des Anwenders vom 15.10.2026); die Drehlager-Laeufe dieses Tages
+#: tragen „reibungstangente: true“ in der Modelldatei.
+FRUEHERE_VORGABEN = {
+    "plastizitaet": {"reibungstangente": False},
+}
+
 
 def ist_vorgabe(schluessel: str, feld: str, wert) -> bool:
     """Traegt das neue Feld ``feld`` unter ``schluessel`` (:data:`NEUE_FELDER`)

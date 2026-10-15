@@ -30413,6 +30413,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.error(str(ex))
             return False
         epfad = erg.pfad_zu(p)
+        datei_hinweis = ""
         if os.path.exists(epfad):
             self._fortschritt_beginnen(1000, f"Ergebnisse laden: {os.path.basename(epfad)} …",
                                        abbrechbar=False)
@@ -30442,6 +30443,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Datei von vor dem 06.10.2026: geladen, aber nicht still als
                     # passend (F06) - Statuszeile und Protokoll sagen es
                     self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
+                # Ergebnisdatei von vor dem 15.10.2026 zu einem Modell mit Reibung:
+                # gerechnet ohne die konsistente Tangente; die Ergebnisse bleiben
+                reib = (getattr(an, "info", None) or {}).get("reibverfahren_vorbehalt")
+                if reib:
+                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {reib}"
+                    self.hinweis(datei_hinweis)
         # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
         # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
         # Protokollzeile steht schon oben (_ladehinweise)
@@ -30466,6 +30473,9 @@ class MainWindow(QtWidgets.QMainWindow):
             status_hinweise.append("Hinweis: Vorspannung aus RFEM steht als eingeprägte Dehnung (ΔT), zu prüfen – "
                                    "Lasten › Vorspannung, Lastart „" + _vk_.LASTART_UMWANDELN
                                    + "“ oder Anfangs-/Endvorspannung")
+        if status_hinweise and datei_hinweis:
+            # der Hinweis zur Ergebnisdatei bleibt in der Statuszeile stehen
+            status_hinweise.insert(0, "Hinweis: " + datei_hinweis)
         if status_hinweise:
             self._hinweis_statuszeile(" · ".join(status_hinweise))
         # Modell und Ergebnisse sind die der Datei
