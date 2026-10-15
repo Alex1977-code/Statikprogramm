@@ -11406,8 +11406,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return out
 
     def _gewinde_felder(self, F, sec) -> list:
-        """A_s und Gewinde fuer die Querschnittsmaske."""
+        """A_s und Gewinde fuer die Querschnittsmaske - beim Rundstahl (Section.typ
+        „circle“) und bei jedem Querschnitt, der schon ein Gewinde oder A_s traegt
+        (15.10.2026: bei einem Rechteck oder I-Profil gibt es kein Gewinde)."""
         from ..ec3 import spannstahl as sp
+        if sec is not None and getattr(sec, "typ", "") != "circle"                 and not getattr(sec, "gewinde", "") and getattr(sec, "A_s", None) is None:
+            return []
         gew = str(getattr(sec, "gewinde", "") or "") if sec is not None else ""
         wahl = (sp.GEWINDE_AUFGEWALZT_TEXT if gew == sp.GEWINDE_AUFGEWALZT
                 else gew if gew in sp.schraubengroessen() else "–")
@@ -11436,9 +11440,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if v is not None and v <= 0:
                 return "A_s muss größer als null sein – leer lassen heißt Nennquerschnitt. Nicht übernommen."
             As = None if v is None else v * 1e-6
-        if gew in sp.schraubengroessen():
-            As = sp.schraubengroessen()[gew]
+        tabelle = sp.schraubengroessen()
+        alt = str(getattr(sec, "gewinde", "") or "")
+        if gew in tabelle:
+            As = tabelle[gew]
         elif gew == sp.GEWINDE_AUFGEWALZT:
+            As = None
+        elif alt in tabelle and As is not None and abs(As - tabelle[alt]) <= 1e-9 * tabelle[alt]:
+            # zurueck auf „ohne Gewinde“: das A_s, das aus der Tabelle der Schraubengroesse stammte,
+            # geht mit ihr (15.10.2026); ein von Hand eingetragenes A_s (Zulassung) bleibt
             As = None
         return {"A_s": As, "gewinde": gew}
 
@@ -11701,6 +11711,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                           **werte, **gewinde)
             del m.sections[name]
             m.add_section(neu_sec)
+            # passt das Gewinde zum Stabdurchmesser? Nur ein Hinweis (15.10.2026), keine Sperre; er
+            # geht nicht ueber hinweis(), das ein „Uebernehmen“ als abgewiesen zaehlt
+            try:
+                from ..ec3 import spannstahl as _sp_
+                passt = _sp_.gewinde_hinweis(neu_sec)
+            except Exception:                   # noqa: BLE001 - der Hinweis darf die Uebernahme nie kippen
+                passt = ""
+            if passt:
+                self.log.appendPlainText("HINWEIS: " + passt)
+                self._hinweis_statuszeile("Hinweis: " + passt)
             if neuname != name:
                 for e in m.elements:
                     if getattr(e, "sec", "") == name:

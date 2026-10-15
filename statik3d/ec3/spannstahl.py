@@ -160,6 +160,28 @@ def schraubengroesse(sec) -> str:
     return g if g in schraubengroessen() else ""
 
 
+def gewinde_hinweis(sec) -> str:
+    """Hinweis, wenn der Nenndurchmesser des gewaehlten Gewindes nicht zum
+    Durchmesser eines Rundstahls passt (M20 an Rund 16), sonst "" (15.10.2026).
+    Nur ein Hinweis, keine Sperre: der Anwender stellt das Gewinde allein ein
+    (z. B. Gewinde kleiner als der Schaft bei einem abgesetzten Stab), und
+    gerechnet wird mit dem, was er gewaehlt hat. Ohne Gewinde, bei einem
+    aufgewalzten Gewindestab und bei einem Querschnitt, der kein Rundstahl ist
+    (Durchmesser unbekannt), gibt es keinen Hinweis."""
+    g = schraubengroesse(sec)
+    if not g or getattr(sec, "typ", "") != "circle":
+        return ""
+    from ..joints.bolts import SIZES
+    d_stab = float(getattr(sec, "h", 0.0) or 0.0) * 1e3
+    d_gew = float(SIZES[g][0])
+    if d_stab <= 0 or round(d_stab) == round(d_gew):
+        return ""
+    return (f"Gewinde {g} passt nicht zum Stabdurchmesser {zahl_text(d_stab, tausender=False)} mm "
+            f"({getattr(sec, 'name', '')}): der Nenndurchmesser des Gewindes ist {zahl_text(d_gew, tausender=False)} mm "
+            f"– Gewinde oder Querschnitt prüfen; gerechnet wird mit dem gewählten Gewinde "
+            f"(A_s = {schraubengroessen()[g] * 1e6:.0f} mm²), gesperrt ist nichts")
+
+
 def spannungsquerschnitt(sec) -> tuple:
     """(A_s [m^2], Vermerk, Meldung) fuer den Nachweis im Gewinde.
 
@@ -439,6 +461,8 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat, zustaende:
         return mc
     if meldung:
         mc.warnings.append(meldung)
+    if gewinde_hinweis(sec):
+        mc.warnings.append(gewinde_hinweis(sec))
     fpd = fp / GAMMA_S
     pmax, h_pmax = sigma_p_max(mat)
     pm0, h_pm0 = sigma_pm0(mat)

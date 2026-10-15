@@ -9419,6 +9419,22 @@ kennen weder A_s noch das Gewinde; die Felder bleiben dort leer, und
 Ergebnisdateien von vorher passen weiter, weil leere Felder die Kennung der
 Ergebnisdatei nicht ändern.
 
+**Gewinde am Rundstahl selbst einstellen (seit 15.10.2026).** Ein Rundstahl aus
+RFEM kommt als Rundstahl ohne Gewinde an: „Rund 16“ bleibt „Rund 16“, das
+Programm setzt kein Gewinde von selbst und deutet nichts nach dem Namen um. Wer
+den Stab als Schraube nachweisen will, stellt in der Maske des Querschnitts die
+Auswahl „Gewinde“ von „–“ (ohne) auf eine Schraubengröße, etwa M16. Das Feld
+„A_s Gewinde [mm²]“ zeigt danach den Wert aus EN ISO 898-1 (M16 157 mm², M20
+245 mm²), und der Stab wird als Schraube auf Zug nach EN 1993-1-8 nachgewiesen;
+die Güte kommt aus dem Werkstoff (f_ub = f_u). Die Auswahl und das Feld A_s
+gibt es nur beim Rundstahl, bei einem Rechteck oder I-Profil nicht. Passt der
+Nenndurchmesser des Gewindes nicht zum Stabdurchmesser (M20 an Rund 16), steht
+im Protokoll und in der Statuszeile ein Hinweis, und der Nachweis nennt ihn am
+Stab; gesperrt ist nichts, gerechnet wird mit dem gewählten Gewinde. Stellt man
+das Gewinde auf „–“ zurück, geht das A_s mit, das aus der Tabelle stammte; ein
+von Hand eingetragenes A_s bleibt. Gespeichert wird das Gewinde nur, wenn es
+gesetzt ist (`tests.test_rundstahl_gewinde`).
+
 **Stab mit Schraubengröße (seit 13.10.2026).** Trägt der Querschnitt eines
 Stabes eine Schraubengröße und ist sein Werkstoff kein Spannstahl, wird der
 Stab als Schraube auf Zug nach EN 1993-1-8, Tabelle 3.4 nachgewiesen: F_t,Ed ≤

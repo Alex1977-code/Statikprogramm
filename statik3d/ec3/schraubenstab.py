@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .spannstahl import ist_spannstahl, schraubengroesse, spannungsquerschnitt, M_GRENZE
+from .spannstahl import ist_spannstahl, schraubengroesse, spannungsquerschnitt, gewinde_hinweis, M_GRENZE
 
 ART = "Schraube"
 K2 = 0.9
@@ -38,6 +38,9 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat):
     mc.art = ART
     g = schraubengroesse(sec)
     A_s, vermerk, _meldung = spannungsquerschnitt(sec)
+    # passt das Gewinde zum Stabdurchmesser? Nur ein Hinweis (15.10.2026)
+    if gewinde_hinweis(sec):
+        mc.warnings.append(gewinde_hinweis(sec))
     d = SIZES[g][0] * 1e-3
     fub = float(mat.ultimate_strength(d) or 0.0)
     gM2 = float(getattr(model.design, "gamma_M2", 1.25) or 1.25)
