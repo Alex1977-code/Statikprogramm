@@ -6113,6 +6113,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                          "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
+        g.nur_suche("Freie Knoten entfernen…", self.freie_knoten_entfernen, symbol="netz_loeschen",
+                    hinweis="Knoten ohne Element und ohne jeden Verweis (keine Linie, Fläche, Last, "
+                            "Lager, Kopplung) auf Rückfrage entfernen - die Netzabnahme meldet sie als "
+                            "Information; das Vernetzen löscht sie nie")
         # Das einzelne finite Stabelement (Teilpaket C14, 03.10.2026): bis dahin
         # der Befehl Struktur → Stab. Es steht im Modellbaum unter FE-Netz →
         # Stabelemente, darum hier; im Register Struktur fehlte auch der Platz
@@ -14146,6 +14150,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"{bg.anzahl(ges['fugen'], 'Kontaktfuge', 'Kontaktfugen')} ausgeführt, {ges['offen']} offen"
                   if ges["fugen"] else
                   "Keine Kontaktfuge ausgeführt - das Protokoll sagt, warum")
+
+    def freie_knoten_entfernen(self):
+        """Netz → Freie Knoten entfernen… (nur Befehlssuche): Knoten ohne Element und
+        ohne jeden Verweis, auf Rückfrage. Aus einem RFEM-Import wird nichts
+        selbständig geändert (16.10.2026) - die Abnahme meldet, dieser Befehl
+        löscht, wenn der Anwender es will."""
+        n = self.model.freie_knoten_entfernen(nur_zaehlen=True)
+        if not n:
+            return self.hinweis("Es gibt keine freien Knoten ohne jeden Verweis - nichts zu entfernen")
+        if not self._fragen("Freie Knoten entfernen",
+                            f"{n} Knoten hängen an keinem Element und werden von nichts genannt (keine Linie, "
+                            "Fläche, Last, kein Lager, keine Kopplung). Entfernen? Die Geometrie mit ihren "
+                            "Verweisen bleibt unverändert."):
+            return
+        self.merken("Freie Knoten entfernen")
+        weg = self.model.freie_knoten_entfernen()
+        self.analysis = None
+        self.results = None
+        self.info(f"{n if weg else 0} freie Knoten entfernt")
+        self.refresh_all()
 
     def netz_loeschen_geometrie(self):
         """Das Netz der Flaechen und Koerper entfernen, die Geometrie bleibt."""

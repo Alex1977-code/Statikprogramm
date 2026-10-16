@@ -11686,8 +11686,13 @@ eine **Information** im Protokoll: Am Drehlager waren es 67 Geometriepunkte der
 RFEM-Datei (Kreismittelpunkte und Kreispunkte der Stirnflächen, Enden der Linien
 L609, L578 und L561, integrierte Knoten von etwa 40 Flächen). Sie bleiben in der
 Geometrie mit allen Verweisen und gehen nicht in die Rechnung ein.
-Gelöscht wird beim Vernetzen nur ein Knoten des alten Netzes, auf den nichts
-mehr verweist – keine Linie, keine Fläche, keine Last, kein Lager.
+Das Vernetzen löscht keinen dieser Knoten – auch keinen, auf den nichts
+verweist: Ein RFEM-Import wird nicht selbständig in der Geometrie geändert
+(Regel des Anwenders vom 16.10.2026). Gelöscht werden beim Vernetzen nur die
+Knoten des alten Netzes. Wer die Knoten ohne jeden Verweis (keine Linie, keine
+Fläche, keine Last, kein Lager, keine Kopplung) loswerden will, ruft in der
+Befehlssuche **Freie Knoten entfernen…** auf: Das Programm nennt die Zahl, fragt
+und entfernt nur nach „Ja“; Rückgängig bringt sie zurück.
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des

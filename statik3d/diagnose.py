@@ -1468,7 +1468,8 @@ def _abnahme_freie_knoten(model, lose: list, als_rbe3: list) -> list:
             teile.append(f"{len(geo)} Geometriepunkte (Linienenden, Kreismittelpunkte, "
                          f"integrierte Knoten von Flächen; {_kn_liste(geo)})")
         if ohne:
-            teile.append(f"{len(ohne)} Knoten ohne jeden Verweis ({_kn_liste(ohne)})")
+            teile.append(f"{len(ohne)} Knoten ohne jeden Verweis ({_kn_liste(ohne)}; sie bleiben "
+                         "stehen, bis der Anwender sie über „Freie Knoten entfernen…“ entfernt)")
         aus.append(Befund(
             pruefung="Knoten ohne Element", knoten=rest[:8],
             wert=float(len(rest)), grenze=0.0, stufe="INFORMATION",

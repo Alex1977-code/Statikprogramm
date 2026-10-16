@@ -6243,7 +6243,28 @@ class Model:
                            "Stäbe“ genommen" for x in weg]
         return zeilen
 
-    def netzknoten_loeschen(self, kandidaten=None) -> int:
+    def freie_knoten_entfernen(self, nur_zaehlen: bool = False) -> int:
+        """Knoten ohne Element **und ohne jeden Verweis** entfernen - nur auf Wunsch
+        des Anwenders (16.10.2026: „rfem-importe nicht selbstaendig in der Geometrie
+        aendern, nur nach Rueckfrage beim user“). Das Vernetzen loescht sie nie; die
+        Abnahme meldet sie als Information, die Aktion „Freie Knoten entfernen…“
+        bietet das Entfernen an. Was eine Linie, eine Flaeche (Ecke, integrierter
+        Knoten), eine Last, ein Lager, eine Kopplung usw. nennt, bleibt
+        (:meth:`netzknoten_loeschen` schuetzt es). ``nur_zaehlen``: nichts aendern,
+        nur die Zahl nennen. Rueckgabe: Zahl der (zu) entfernenden Knoten."""
+        import itertools
+        nn = int(self.nn)
+        if not nn:
+            return 0
+        kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in self.elements), np.int64)
+        belegt = np.zeros(nn, bool)
+        belegt[kn[(kn >= 0) & (kn < nn)]] = True
+        frei = np.flatnonzero(~belegt)
+        if not len(frei):
+            return 0
+        return self.netzknoten_loeschen(frei.tolist(), nur_zaehlen=nur_zaehlen)
+
+    def netzknoten_loeschen(self, kandidaten=None, nur_zaehlen: bool = False) -> int:
         """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
 
         ``kandidaten``: nur diese Knoten duerfen weg - die Knoten der eben
@@ -6343,6 +6364,8 @@ class Model:
         weg = np.flatnonzero(~benutzt)
         if not len(weg):
             return 0
+        if nur_zaehlen:
+            return int(len(weg))
         bleibt = np.flatnonzero(benutzt)
         neu = {int(alt): k for k, alt in enumerate(bleibt)}
         for L in (getattr(self, "layer", None) or {}).values():

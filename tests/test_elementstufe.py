@@ -716,6 +716,38 @@ def test_netzhinweis_im_fenster():
     w.maskenrand.schliessen()
 
 
+def test_freie_knoten_aktion():
+    """„Freie Knoten entfernen…“ (nur Befehlssuche): fragt, loescht nur auf ja und nur,
+    worauf nichts verweist (Regel vom 16.10.2026)."""
+    from statik3d.model import Flaeche, Line
+    w, app = _fenster()
+    m = wuerfel()
+    a = int(m.add_node(3.0, 3.0, 0.0))
+    b = int(m.add_node(4.0, 3.0, 0.0))
+    nur = int(m.add_node(7.0, 7.0, 7.0))
+    m.lines["L900"] = Line("L900", nodes=[a, b])
+    _modell_ins_fenster(w, app, m)
+    befehle = {bf.text: bf for bf in w.ribbon.befehle}
+    check("die Aktion „Freie Knoten entfernen…“ steht in der Befehlssuche",
+          any("Freie Knoten entfernen" in t for t in befehle) or hasattr(w, "freie_knoten_entfernen"),
+          "")
+    nn0 = int(w.model.nn)
+    antworten = []
+    w._fragen = lambda titel, text: (antworten.append((titel, text)), False)[1]
+    w.freie_knoten_entfernen()
+    check("Nein: nichts wird entfernt, die Rückfrage nennt die Zahl", w.model.nn == nn0 and
+          antworten and "1 Knoten" in antworten[0][1], str(antworten)[:90])
+    w._fragen = lambda titel, text: True
+    w.freie_knoten_entfernen()
+    app.processEvents()
+    check("Ja: nur der Knoten ohne jeden Verweis geht; die Linie bleibt gültig",
+          w.model.nn == nn0 - 1 and all(0 <= n < w.model.nn for n in w.model.lines["L900"].nodes)
+          and np.allclose(w.model.nodes[w.model.lines["L900"].nodes[0]], [3.0, 3.0, 0.0]))
+    w.undo()
+    app.processEvents()
+    check("Rückgängig bringt ihn zurück", w.model.nn == nn0)
+
+
 def test_maske_mit_kontakt():
     """Die Maske an einem gesperrten Modell - seit dem 08.10.2026 eine
     Schale auf einem Flaechenlager (bis dahin das Kontaktmodell mit Fuge, das
@@ -828,7 +860,7 @@ def main():
     for t in (test_stufen_und_texte, test_stufe_und_setzen, test_laden_und_speichern, test_beschreibung,
               test_fein_wie_mittel_im_feld, test_sperre, test_kontakt_in_jeder_stufe,
               test_plastizitaet_in_jeder_stufe, test_import_frage, test_ribbon_und_neues_modell,
-              test_maske, test_netzhinweis_im_fenster, test_maske_mit_kontakt, test_import_im_fenster):
+              test_maske, test_netzhinweis_im_fenster, test_freie_knoten_aktion, test_maske_mit_kontakt, test_import_im_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

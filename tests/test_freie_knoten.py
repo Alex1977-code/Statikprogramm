@@ -9,8 +9,13 @@ eine Last, ein Lager, eine Kopplung oder ein Stab. Die Entscheidung des Anwender
 * mit Last          -> das Ergebnis ist "nicht gueltig" (FEHLER in der Abnahme);
 * mit Lager         -> WARNUNG "Lager unwirksam";
 * ohne beides       -> Information; die Geometrie bleibt unveraendert, der
-  Knoten geht nicht in die Rechnung ein. Wirklich geloescht wird beim
-  Vernetzen nur ein Knoten, auf den nichts verweist - auch keine Geometrie.
+  Knoten geht nicht in die Rechnung ein.
+
+Regel des Anwenders (16.10.2026): „rfem-importe nicht selbstaendig in der
+geometrie aendern, nur nach rueckfrage beim user“. Das Vernetzen loescht darum
+nie einen Knoten, der nicht zum alten Netz gehoerte - auch keinen, auf den nichts
+verweist. Entfernt wird nur auf Wunsch (Model.freie_knoten_entfernen, Aktion
+„Freie Knoten entfernen…“), und auch dann nur, worauf nichts verweist.
 
 Aufruf:  python -m tests.test_freie_knoten
 """
@@ -142,9 +147,11 @@ def test_geometriepunkte_bleiben():
           not [z for z in m.check() if "Elementanschluss" in z and "4 Knoten" in z]
           and not [z for z in m.check() if "Elementanschluss" in z and "3 Knoten" in z],
           str([z for z in m.check() if "Elementanschluss" in z]))
-    # Vernetzen: geloescht wird nur, worauf nichts verweist
-    weg = m.netzknoten_loeschen()
-    check("netzknoten_loeschen entfernt nur den Knoten ohne jeden Verweis", weg == 1 and m.nn == nn0 - 1,
+    # Nur auf Wunsch geloescht, und nur, worauf nichts verweist
+    check("freie_knoten_entfernen(nur_zaehlen) nennt nur den Knoten ohne jeden Verweis, ändert nichts",
+          m.freie_knoten_entfernen(nur_zaehlen=True) == 1 and m.nn == nn0)
+    weg = m.freie_knoten_entfernen()
+    check("freie_knoten_entfernen entfernt nur den Knoten ohne jeden Verweis", weg == 1 and m.nn == nn0 - 1,
           f"weg {weg}, nn {m.nn} von {nn0}")
     check("Linie L900 und die Fläche zeigen weiter auf ihre (nummerierten) Punkte",
           len(m.lines["L900"].nodes) == 2
@@ -183,6 +190,51 @@ def test_neuvernetzen_entfernt_alte_netzknoten():
           and np.allclose(m.nodes[m.lines["L901"].nodes[0]], [3.0, 3.0, 0.0]))
 
 
+def test_vernetzen_loescht_keine_fremden_knoten():
+    """Laden, Vernetzen und Speichern lassen die Geometrie bitgleich (Regel vom
+    16.10.2026): Geometriepunkte und Knoten ohne Verweis, die nie zum Netz gehoerten,
+    bleiben mit ihren Koordinaten stehen; nur die Knoten des alten Netzes gehen."""
+    print("\n--- Vernetzen loescht keine fremden Knoten ---")
+    import contextlib
+    import io
+    from tests.test_diagnose import _gestuft
+    m, k = _gestuft(1.0, n=2)
+    fremd = [m.add_node(5.0 + i, 5.0, 0.0) for i in range(3)]
+    a, b, c, nur = (int(x) for x in fremd + [m.add_node(9.0, 9.0, 9.0)])
+    m.lines["L900"] = Line("L900", nodes=[a, b])
+    m.flaechen["F900"] = Flaeche("F900", linien=["L900"], integrierte_knoten=[c])
+    fest = np.array([m.nodes[i] for i in (a, b, c, nur)], float)         # vor dem Vernetzen
+    nn_netz = int(m.nn) - 4
+    with tempfile.TemporaryDirectory() as d:
+        pf = os.path.join(d, "m.json")
+        m.save(pf)
+        m2 = Model.load(pf)
+    check("Speichern und Laden: Knoten bitgleich", np.array_equal(m2.nodes, m.nodes)
+          and m2.lines["L900"].nodes == m.lines["L900"].nodes)
+    k.elemente = list(range(len(m.elements)))
+    with contextlib.redirect_stdout(io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1)
+    da = {tuple(x) for x in np.asarray(m.nodes, float)}
+    check("Vernetzen: Geometriepunkte und der Knoten ohne Verweis stehen mit denselben Koordinaten da",
+          all(tuple(p) in da for p in fest), "")
+    check("… die Linie zeigt auf dieselben Punkte",
+          np.array_equal(m.nodes[m.lines["L900"].nodes], fest[:2]) and
+          np.array_equal(m.nodes[m.flaechen["F900"].integrierte_knoten], fest[2:3]))
+    belegt = {int(x) for e in m.elements for x in e.nodes}
+    ohne = [i for i in range(m.nn) if i not in belegt]
+    check("… das alte Netz ist weg: Knoten ohne Element sind nur noch Geometrie (Ecken der Flächen, "
+          "die vier fremden Punkte)", len(ohne) < nn_netz, f"{len(ohne)} ohne Element, altes Netz {nn_netz}")
+    check("Die Abnahme meldet sie als Information und entfernt keinen",
+          any(x.stufe == "INFORMATION" and x.wert >= 4.0
+              for x in dg.abnahme(m, warnungen=True) if x.pruefung == "Knoten ohne Element"))
+    nn_vor = int(m.nn)
+    check("Erst die Aktion entfernt ihn - und nur ihn", m.freie_knoten_entfernen(nur_zaehlen=True) == 1
+          and m.freie_knoten_entfernen() == 1 and m.nn == nn_vor - 1, f"{nn_vor} -> {m.nn}")
+    check("… Linie und Fläche bleiben gültig",
+          np.allclose(m.nodes[m.lines["L900"].nodes], fest[:2])
+          and np.allclose(m.nodes[m.flaechen["F900"].integrierte_knoten], fest[2:3]))
+
+
 def test_check_zaehlt_nur_tragende_rollen():
     print("\n--- Model.check(): Warnung nur, wo etwas an dem Knoten haengt ---")
     m = wuerfel()
@@ -198,6 +250,7 @@ def main():
     test_nichts_am_freien_knoten()
     test_geometriepunkte_bleiben()
     test_neuvernetzen_entfernt_alte_netzknoten()
+    test_vernetzen_loescht_keine_fremden_knoten()
     test_check_zaehlt_nur_tragende_rollen()
     n_ok = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{n_ok}/{len(RESULTS)} Pruefungen bestanden")

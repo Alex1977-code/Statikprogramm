@@ -1796,6 +1796,12 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
         alt = [e for f in flaechen for e in (f.elemente or [])] + \
               [e for k in koerper for e in (k.elemente or [])]
         if alt:
+            # Kandidaten fuers Loeschen sind nur die Knoten der alten Netze: ein Knoten
+            # ohne Element, den dieses Netz nie trug (Geometriepunkt, Knoten aus einem
+            # RFEM-Import), bleibt stehen - der Anwender entscheidet (16.10.2026,
+            # Model.freie_knoten_entfernen)
+            alte_knoten = {int(x) for e in alt if 0 <= int(e) < len(model.elements)
+                           for x in model.elements[int(e)].nodes}
             model.elemente_loeschen(alt)
             # Die Knoten des alten Netzes gleich mit: sonst stehen sie als
             # „Knoten ohne Element" in der Abnahme und als Freiheitsgrade
@@ -1804,7 +1810,7 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
             # Ohne den Zusatz in model.py (Arbeitskopie einer anderen Sitzung)
             # bleiben sie liegen - das Protokoll sagt es.
             if hasattr(model, "netzknoten_loeschen"):
-                weg = model.netzknoten_loeschen()
+                weg = model.netzknoten_loeschen(alte_knoten)
                 if weg:
                     C.say(log, f"{weg} Knoten des alten Netzes entfernt")
             else:
