@@ -1596,6 +1596,57 @@ class Vorspannung:
         return d
 
 
+#: Zustaende der Vorspannung je Anker in einem Lastfall (LoadCase.vorspannzustand,
+#: 16.10.2026): Zeitpunkt 0 (nach dem Verankern, sofortige Verluste gerechnet) und
+#: Zeitpunkt ∞ (nach den zeitabhaengigen Verlusten); ``VORSPANN_ALLE`` als
+#: Schluessel meint jede Definition des Modells
+VORSPANN_ZUSTAND_0 = "0"
+VORSPANN_ZUSTAND_INF = "inf"
+VORSPANN_ZUSTAENDE = (VORSPANN_ZUSTAND_0, VORSPANN_ZUSTAND_INF)
+VORSPANN_ALLE = "*"
+#: Wie der Endwert der Definition eingegeben ist: P_∞ absolut oder Verlust ΔP_t
+VORSPANN_ENDWERT_ABSOLUT = "absolut"
+VORSPANN_ENDWERT_VERLUST = "verlust"
+
+
+@dataclass
+class VorspannDefinition:
+    """Vorspannung einmal je Anker definiert (Entwurf des Anwenders vom
+    16.10.2026, woertlich: „Vorspannung künftig einmal je Anker definieren
+    (Pressenkraft, Schlupf), Lastfälle verweisen nur darauf.“ und „Zustände 0
+    und ∞ plus P_max beim Spannen reichen. Sofortige Verluste rechnet das
+    Programm (elastische Verkürzung, Verankerungsschlupf → P_0). Zeitabhängige
+    Verluste sind Eingabe, wahlweise P_∞ absolut oder Verlust ΔP_t, Anzeige
+    beider Werte.“).
+
+    staebe:  die Anker (Stabnamen), die zusammen gespannt werden
+    P_max:   Pressenkraft beim Spannen [N] (gegen σ_p,max nachgewiesen)
+    schlupf: Verankerungsschlupf Δs [m]
+    gruppe:  Spannfolge - Definitionen derselben Gruppe werden gleichzeitig
+             gespannt, mehrere Gruppen nacheinander in aufsteigender Nummer
+             (die frueher gespannten verlieren dann Kraft: elastische Verkuerzung)
+    endwert: "absolut" (P_inf gilt) oder "verlust" (dP_t gilt, P_∞ = P₀ − ΔP_t)
+    P_inf:   P_∞ [N], bei "absolut"
+    dP_t:    zeitabhaengiger Verlust ΔP_t [N], bei "verlust"
+
+    P₀ (nach dem Verankern) ist keine Eingabe: das Programm rechnet ihn im
+    Spannschritt (statik3d.vorspannkraft, statik3d.vorspannung)."""
+    name: str
+    staebe: list[str] = field(default_factory=list)
+    P_max: float = 0.0
+    schlupf: float = 0.0
+    gruppe: int = 1
+    endwert: str = VORSPANN_ENDWERT_ABSOLUT
+    P_inf: float = 0.0
+    dP_t: float = 0.0
+    kommentar: str = ""
+    #: Woher die Werte stammen, z. B. „aus RFEM übernommen – prüfen“ (Zuordnung)
+    herkunft: str = ""
+
+    def ist_verlust(self) -> bool:
+        return str(self.endwert or "") == VORSPANN_ENDWERT_VERLUST
+
+
 @dataclass
 class Uebermass:
     """Uebermass (Presspassung) als Last: die Fuge ist zu eng.
@@ -1842,6 +1893,11 @@ class LoadCase:
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
     gamma_inf: Optional[float] = None
+    #: Verweise auf die Vorspannung je Anker (16.10.2026): {Definition oder
+    #: VORSPANN_ALLE: "0" | "inf"} - leer heisst keine. Die Kraefte stehen in
+    #: Model.vorspann_definitionen; die bisherigen Vorspannungslasten des
+    #: Lastfalls bleiben daneben, wie sie sind. In der Datei nur, wenn gesetzt.
+    vorspannzustand: dict = field(default_factory=dict)
 
     @property
     def psi_factors(self) -> tuple[float, float, float]:
@@ -1973,6 +2029,10 @@ class LoadCase:
         # Speichern, wie sie war, und ein aelterer Stand liest die neue
         if getattr(self, "faktorisiert", False):
             d["faktorisiert"] = True
+        # Verweise auf die Vorspannung je Anker (16.10.2026): nur, wo gesetzt -
+        # eine Datei ohne sie bleibt beim Speichern Zeichen fuer Zeichen, wie sie war
+        if getattr(self, "vorspannzustand", None):
+            d["vorspannzustand"] = {str(k): str(v) for k, v in self.vorspannzustand.items()}
         return d
 
     @staticmethod
@@ -2001,6 +2061,8 @@ class LoadCase:
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
         lc.gamma_inf = d.get("gamma_inf")
+        # Dateien vor dem 16.10.2026 kennen die Verweise nicht: keine
+        lc.vorspannzustand = {str(k): str(v) for k, v in (d.get("vorspannzustand") or {}).items()}
         return lc
 
 
@@ -4354,6 +4416,9 @@ class Model:
         self.unterlagen: dict[str, Unterlage] = {}
         #: Gespeicherte Ansichten (Ansichtspaket C, 14.10.2026), nach Name
         self.ansichten: dict[str, Ansicht] = {}
+        #: Vorspannung je Anker (16.10.2026): Definitionen nach Name, auf die
+        #: Lastfaelle verweisen (LoadCase.vorspannzustand)
+        self.vorspann_definitionen: dict[str, VorspannDefinition] = {}
         self.stellungen: list = []
         #: Hinweise aus dem Laden einer Datei (Model.from_dict), nicht gespeichert
         self._ladehinweise: list = []
@@ -6859,7 +6924,7 @@ class Model:
     #: Sammlungen, deren Objekte Staebe in einer Liste ``staebe`` beim Namen
     #: nennen (Wort im Protokoll, Sammlung im Modell)
     STABLISTEN = (("Schweißnaht", "schweissnaehte"), ("Wind", "winde"), ("Layer", "layer"),
-                  ("Subsystem", "subsysteme"))
+                  ("Subsystem", "subsysteme"), ("Vorspannung", "vorspann_definitionen"))
 
     def stab_umbenennen(self, alt: str, neu: str) -> list:
         """Den Stab *alt* in *neu* umbenennen - mit **jedem** Verweis
@@ -9556,6 +9621,9 @@ class Model:
             # eine Datei ohne sie bleibt beim Speichern, wie sie war
             **({"ansichten": [asdict(a) for a in self.ansichten.values()]}
                if getattr(self, "ansichten", None) else {}),
+            # Vorspannung je Anker (16.10.2026): nur, wenn es Definitionen gibt
+            **({"vorspann_definitionen": [asdict(x) for x in self.vorspann_definitionen.values()]}
+               if getattr(self, "vorspann_definitionen", None) else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -9699,6 +9767,9 @@ class Model:
         m.unterlagen = {x["name"]: _dc(Unterlage, x) for x in d.get("unterlagen", [])}
         m.ansichten = {x["name"]: _dc(Ansicht, x) for x in d.get("ansichten") or []
                        if isinstance(x, dict) and x.get("name")}
+        m.vorspann_definitionen = {x["name"]: _dc(VorspannDefinition, x)
+                                   for x in d.get("vorspann_definitionen") or []
+                                   if isinstance(x, dict) and x.get("name")}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck
@@ -10025,7 +10096,9 @@ NEUE_FELDER = {
     "starrkoerper": {"momente": []},
     # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
     # alten Felds category und zaehlt wie jede andere Kategorie)
-    "load_cases": {"faktorisiert": False},
+    "load_cases": {"faktorisiert": False,
+                   # vorspannung/je-anker (Verweis auf die Vorspannung je Anker, 16.10.2026)
+                   "vorspannzustand": {}},
     # vorspannung/kraft (Sollkraft nach Verankerung); vorspannung/presse
     # (Anfangsvorspannung mit Pressenkraft P0 und Verankerungsschlupf, 14.10.2026)
     "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1, "kraftart": "", "schlupf": 0.0},
@@ -10042,7 +10115,8 @@ NEUE_FELDER = {
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen); ansicht/ansichten
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
-    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": []},
+    # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
+    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": []},
 }
 
 #: Neue Felder, deren Vorgabe sich spaeter geaendert hat, mit der frueheren

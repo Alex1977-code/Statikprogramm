@@ -131,28 +131,72 @@ class Soll:
     gruppe: int = 1
     schlupf: float = 0.0
     presse: bool = False
+    #: Vorspannung je Anker, Zeitpunkt ∞ mit Verlust ΔP_t (16.10.2026): so oft
+    #: kommt P₀,i des Zustands 0 zu ``kraft`` (dort steht −ΔP_t) - aufgeloest in
+    #: :func:`rechnen` (:func:`p0_zustand0`), vorher ist ``kraft`` nicht die Sollkraft
+    p0_faktor: float = 0.0
 
 
 def sollkraefte(model, factors) -> list:
     """Die Sollkraefte der Lastfaelle in ``factors`` (Name -> Faktor), je
-    Stab zusammengezaehlt - leer, wenn keiner eine traegt."""
-    je: dict = {}
+    Stab zusammengezaehlt - leer, wenn keiner eine traegt. Seit dem 16.10.2026
+    zaehlen die Verweise auf die Vorspannung je Anker mit
+    (vorspannung.verweis_vorspannungen); ohne Verweis ist die Liste dieselbe
+    wie zuvor."""
+    from .vorspannung import verweis_vorspannungen
+    paare = []
     for name, f in (factors or {}).items():
         if not f:
             continue
         lc = (getattr(model, "load_cases", None) or {}).get(name)
         if lc is None:
             continue
-        for v in getattr(lc, "vorspannungen", None) or []:
-            if not getattr(v, "sollkraft", False) or getattr(v, "art", "stab") != "stab" or not v.kraft:
-                continue
-            k, g, ds, pr = je.get(v.ziel, (0.0, None, 0.0, False))
-            gv = int(getattr(v, "gruppe", 1) or 1)
-            presse = callable(getattr(v, "ist_presse", None)) and v.ist_presse()
-            ds_v = float(getattr(v, "schlupf", 0.0) or 0.0) if presse else 0.0
-            je[v.ziel] = (k + float(f) * float(v.kraft), gv if g is None else min(g, gv),
-                          ds + float(f) * ds_v, pr or presse)
-    return [Soll(s, k, g, ds, pr) for s, (k, g, ds, pr) in je.items() if k]
+        for v in list(getattr(lc, "vorspannungen", None) or []) + verweis_vorspannungen(model, lc):
+            paare.append((f, v))
+    return _soll_aus(paare)
+
+
+def _soll_aus(paare) -> list:
+    """[Soll] aus [(Faktor, Vorspannung)], je Stab zusammengezaehlt."""
+    je: dict = {}
+    for f, v in paare:
+        p0f = float(f) if getattr(v, "_p0_aus_zustand0", False) else 0.0
+        if not getattr(v, "sollkraft", False) or getattr(v, "art", "stab") != "stab" or not (v.kraft or p0f):
+            continue
+        k, g, ds, pr, pf = je.get(v.ziel, (0.0, None, 0.0, False, 0.0))
+        gv = int(getattr(v, "gruppe", 1) or 1)
+        presse = callable(getattr(v, "ist_presse", None)) and v.ist_presse()
+        ds_v = float(getattr(v, "schlupf", 0.0) or 0.0) if presse else 0.0
+        je[v.ziel] = (k + float(f) * float(v.kraft), gv if g is None else min(g, gv),
+                      ds + float(f) * ds_v, pr or presse, pf + p0f)
+    return [Soll(s, k, g, ds, pr, pf) for s, (k, g, ds, pr, pf) in je.items() if k or pf]
+
+
+def p0_zustand0(model, system, workers=None, progress=None, einfrieren=None, fenster=None,
+                probelauf: bool = False) -> dict:
+    """{Anker: P₀} - die Kraft nach dem Verankern im Zustand 0 **aller**
+    Definitionen der Vorspannung je Anker (vorspannung.zustand0_alle), auf
+    demselben Weg gerechnet wie ein Lastfall im Zeitpunkt 0: linear ueber die
+    Einflussmatrix, sonst Spannen und Verriegeln. Einflussmatrix und
+    Spannzustand sind am System gemerkt und haengen nur an den Definitionen:
+    P₀ ist darum derselbe, ob vorher ein Lastfall im Zeitpunkt 0 gerechnet
+    wurde oder nicht, und in welcher Reihenfolge (16.10.2026)."""
+    from .vorspannung import zustand0_alle
+    soll0 = _soll_aus([(1.0, v) for v in zustand0_alle(model)])
+    if not soll0:
+        return {}
+    aktiv = getattr(system, "aktiv", None)
+    staebe = [s.stab for s in soll0]
+    els = {s: _elemente(model, s, aktiv) for s in staebe}
+    if weg(model, soll0) == WEG_EINFLUSS:
+        A = einflussmatrix(model, system, staebe)
+        P = _einfluss_loesen(A, np.array([s.kraft for s in soll0], float), staebe)
+        P = P - np.array([_ziel(model, s, els)[1] * s.schlupf for s in soll0], float)
+        N_v = A @ P
+        return {s.stab: float(N_v[k]) for k, s in enumerate(soll0)}
+    z = _spannzustand(model, system, soll0, els, workers=workers, progress=progress,
+                      einfrieren=einfrieren, fenster=fenster, probelauf=probelauf)
+    return {s.stab: float(z["staebe"][s.stab]["N_verankert"]) for s in soll0}
 
 
 def freie_laenge(model, elemente: list) -> float:
@@ -380,9 +424,18 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
     dazu in ``res.vorspannzustaende`` ({"spannen": [je Gruppe], "verankert"})."""
     from . import solver as sv
     soll = sollkraefte(model, factors)
-    w = weg(model, soll)
     kw = dict(workers=workers, progress=progress, einfrieren=einfrieren, fenster=fenster,
               probelauf=probelauf)
+    # Vorspannung je Anker, Zeitpunkt ∞ mit ΔP_t: P_∞,i = P₀,i − ΔP_t mit P₀,i aus
+    # dem Zustand 0 aller Definitionen (am System gemerkt, 16.10.2026)
+    p0 = {}
+    if any(s.p0_faktor for s in soll):
+        sv._melde(progress, f"{name}: P₀ nach dem Verankern (Zeitpunkt 0) für P_∞ = P₀ − ΔP_t")
+        p0 = p0_zustand0(model, system, **kw)
+        for s in soll:
+            if s.p0_faktor:
+                s.kraft = float(s.kraft) + float(s.p0_faktor) * p0[s.stab]
+    w = weg(model, soll)
     aktiv = getattr(system, "aktiv", None)
     staebe = [s.stab for s in soll]
     els = {s: _elemente(model, s, aktiv) for s in staebe}
@@ -410,6 +463,7 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
                                       "P_eingepraegt": float(P[k]),
                                       "N_ende": _n_ergebnis(res, els[s.stab]),
                                       **_presse_info(model, s, els)}
+        _verweis_info(model, factors, info, soll, p0)
         res.info["vorspannung"] = info
         return res
     z = _spannzustand(model, system, soll, els, **kw)
@@ -427,6 +481,7 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
         d = dict(z["staebe"][s.stab])
         d["N_ende"] = _n_ergebnis(res, els[s.stab])
         info["staebe"][s.stab] = d
+    _verweis_info(model, factors, info, soll, p0)
     res.info["vorspannung"] = info
     # Ein vorlaeufiger Spannzustand macht den Lastfall vorlaeufig: er startet von
     # ihm (Entscheidung des Anwenders vom 14.10.2026)
@@ -439,6 +494,24 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
         res.info["vorlaeufig"] = v
     res.vorspannzustaende = {"spannen": list(z["spannen"]), "verankert": z["verankert"]}
     return res
+
+
+def _verweis_info(model, factors, info: dict, soll: list, p0: dict) -> None:
+    """Eintraege der Vorspannung je Anker im Ergebnis (16.10.2026, nur mit
+    Verweis - ohne bleibt ``info`` wie bisher): die Zustaende je Definition
+    und bei ΔP_t je Anker P₀ (``P0_basis``) und P_∞."""
+    from .vorspannung import gemischt_hinweis, zustaende_der_faktoren
+    zs = zustaende_der_faktoren(model, factors)
+    if not zs:
+        return
+    info["verweise"] = {n: sorted(z) for n, z in zs.items()}
+    h = gemischt_hinweis(model, factors)
+    if h:
+        info["hinweis"] = h
+    for s in soll:
+        if s.p0_faktor and s.stab in info["staebe"]:
+            info["staebe"][s.stab]["P0_basis"] = float(p0[s.stab])
+            info["staebe"][s.stab]["P_inf"] = float(s.kraft)
 
 
 def _n_ergebnis(res, elemente: list) -> float:

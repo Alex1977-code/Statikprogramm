@@ -132,6 +132,10 @@ MODELLTEILE = {
     # je Lastfall geteilt: die Lasten nach „lasten“, der Rest nach „lastfaelle“;
     # die Lastgenerierer stehen bei den Lasten, die sie erzeugen
     "load_cases": "lasten", "winde": "lasten", "wasserdruecke": "lasten",
+    # Vorspannung je Anker (16.10.2026): zaehlt nicht fuer sich, sondern in den
+    # Lasten jedes Lastfalls, der auf eine Definition verweist (rechenkennung) -
+    # eine Definition ohne Verweis rechnet nirgends mit
+    "vorspann_definitionen": None,
     "combinations": "kombinationen",
     "kontaktbedingungen": "kontakt", "contact_supports": "kontakt", "gap_elements": "kontakt",
     "contact_pairs": "kontakt", "getrennte_knoten": "kontakt", "kontakt_ausnahmen": "kontakt",
@@ -157,7 +161,9 @@ ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "suppor
 #: NEUE_VORGABEN, NEU_AUF_VORGABE und SPAETERE_FELDER).
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
-              "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
+              "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity",
+              # Verweis auf die Vorspannung je Anker (16.10.2026, nur in der Datei, wenn gesetzt)
+              "vorspannzustand")
 #: einzelne Objekte (Einstellungen) statt Sammlungen
 _EINZELOBJEKTE = ("design", "plastizitaet")
 #: Sammlungen {Name: Objekt}. Sie zaehlen nur mit den Eintraegen, deren Name
@@ -385,7 +391,16 @@ def rechenkennung(model, frueher: bool = False, ausdruecklich=None) -> tuple:
             for lc in wert:
                 name = str(lc.get("name", ""))
                 eig = _hash({k: v for k, v in lc.items() if k not in LASTFELDER})
-                last = _hash({k: v for k, v in lc.items() if k in LASTFELDER})
+                lasten_lc = {k: v for k, v in lc.items() if k in LASTFELDER}
+                if lasten_lc.get("vorspannzustand"):
+                    # die Definitionen sind die Lasten eines verweisenden Lastfalls
+                    # (16.10.2026): aendert sich eine, ist sein Ergebnis alt. Alle,
+                    # nicht nur die genannten: P₀ fuer ΔP_t kommt aus dem Spannen
+                    # aller Definitionen (vorspannkraft.p0_zustand0)
+                    lasten_lc["_vorspann_definitionen"] = _bereinigt(
+                        "vorspann_definitionen", list(d.get("vorspann_definitionen") or []), namen,
+                        ausdruecklich)
+                last = _hash(lasten_lc)
                 einzeln[name] = [eig, last]
                 teile["lastfaelle"].append([name, eig])
                 teile["lasten"].append([name, last])
