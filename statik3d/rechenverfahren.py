@@ -606,7 +606,7 @@ MERKMALE: list = [
                       "Summe der Lasten und Lagerkräfte",
                "neu": "Traglast mit letztem konvergiertem Zustand, Mechanismus, Gültigkeitsgrenze ε_p, "
                       "Gleichgewicht mit inneren Kräften"},
-        wechsel=(Wechsel(stand=3, datum="16.10.2026", commit="plast/traglast", alt="alt", neu="neu",
+        wechsel=(Wechsel(stand=3, datum="16.10.2026", commit="045d1bc, 5d747de", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="plastische Rechnung", betrifft=_fliessen, im_ergebnis=_traglast_im_ergebnis,
         marke=_marke_traglast),
