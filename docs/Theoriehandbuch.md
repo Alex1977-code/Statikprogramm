@@ -7261,6 +7261,34 @@ ein vorläufiger Kontakt bleibt vorläufig. Am Zugstab bei 1,2·F_lim fehlen
 die Kontrolle allein den weggelaufenen Zustand mit 0,33. Am Prüfblech fehlen
 412,5 kN, bezogen 0,32.
 
+**Residuum am Ende jeder Laststufe und im Kontaktlauf.** Dieselbe Lücke hatten
+die Zeile „Residuum am Ende – Gleichgewicht … der Lasten“ jeder Laststufe mit
+Kontakt (`_KontaktImNewton.residuum_stufe`) und das Ingenieurkriterium des
+Kontaktlaufs (`solver._ingenieur_abschluss`): beide prüften nur die Summe
+|ΣR + ΣF|. Seit dem 16.10.2026 misst die Laststufe das innere Gleichgewicht
+ihrer letzten Lösung. Die Lösung erfüllt (K + ΔK) u = F_k + F_p,l + ΔK u_vor,
+die inneren Kräfte sind K u − F_p(u); es fehlen also
+F_p(u) − F_p,l + ΔK (u − u_vor), dazu das Residuum des Kontakts. Dieses ist
+F + f_c(u) − (K + K_zusatz) u an den freien Freiheitsgraden, mit den
+Kontaktkräften f_c nach dem Kontaktgesetz in dieser Lösung
+(`solver.kontakt_residuum`). Bezogen wird wie die Abbruchtoleranz, also auf
+die Lasten, bei einer Endvorspannung mit der Sollkraft. Die Freiheitsgrade
+ausgenommener Zonen stehen getrennt in der Zeile. Schranke ist die Toleranz
+der Plastizität (10⁻³), und die Summe bleibt Pflicht. An den Kontaktmodellen
+der Prüfungen liegen konvergierte Kontaktläufe bei 10⁻¹⁵ bis 1,6·10⁻⁶ von ‖F‖,
+die Stufen des gequetschten Blocks bei höchstens 6·10⁻⁷. Das
+Ingenieurkriterium nimmt einen pendelnden Zustand nur noch an, wenn auch sein
+inneres Residuum unter 10⁻⁴ liegt. An den 16 Annahmen der Kontaktprüfungen lag
+es bei 4·10⁻¹⁵ bis 1,6·10⁻¹⁴; ein eingespieltes Ungleichgewicht von 1 % der
+Last am Kontaktgesetz wird abgelehnt, und der Lauf endet am Deckel.
+
+Aus einer gespeicherten Ergebnisdatei lässt sich dieses Residuum nicht
+nachrechnen. Die Datei hält u, die plastischen Dehnungen der fließenden
+Elemente je Integrationspunkt (`ip_dehnungen`) und je Element die größte
+Vergleichsdehnung. Für F_p(u) braucht die Rückführung aber den Zustand am
+Anfang der letzten Laststufe und die Vergleichsdehnung je Punkt; beides steht
+nicht in der Datei.
+
 **Ausgabe.** Jeder plastische Lauf meldet in Protokoll und Zusammenfassung
 ε_p,max mit Ort (Körper, Element, Integrationspunkt, Koordinate) und ΣR, ΣM der
 Lagerkräfte des gezeigten Zustands.

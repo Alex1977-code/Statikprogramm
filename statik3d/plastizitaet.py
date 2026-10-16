@@ -1999,7 +1999,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         F_p_stufe, zustand_stufe = F_p, basis
         # die letzte Loesung der Stufe: mit welchem F_p und welcher Tangente sie
         # gerechnet ist (fuer das Residuum am Ende der Stufe, 16.10.2026)
-        letzte = (F_p, None, None)
+        letzte_loesung = (F_p, None, None)
         vorab = None
         if gemeinsam:
             u_start = u
@@ -2112,10 +2112,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if dK.nnz == 0:
                 # Nichts fliesst gerade (etwa beim Entlasten): die Tangente ist
                 # die elastische, und dafuer gibt es die Faktorisierung schon
-                letzte = (F_p_neu, None, None)
+                letzte_loesung = (F_p_neu, None, None)
                 u = _loesen(F_k + F_p_neu, None, "Newton", k, it)
             else:
-                letzte = (F_p_neu, dK, u)
+                letzte_loesung = (F_p_neu, dK, u)
                 u = _loesen(F_k + F_p_neu + dK @ u, dK, "Newton", k, it)
                 info["faktorisierungen"] += 1
         # Traglast (16.10.2026): eine Stufe ohne Konvergenz - Budget aufgebraucht oder
@@ -2176,7 +2176,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             # Loesung erfuellt (K + dK) u = F_k + F_p_l + dK u_vor (mit Kontakt samt
             # seinen Kraeften), die inneren Kraefte sind K u - F_p(u): es fehlen
             # F_p(u) - F_p_l + dK (u - u_vor), dazu das Residuum des Kontakts
-            F_p_l, dK_l, u_vor_l = letzte
+            F_p_l, dK_l, u_vor_l = letzte_loesung
             r_st = np.asarray(F_p_stufe, float) - np.asarray(F_p_l, float)
             if dK_l is not None and u_vor_l is not None:
                 r_st = r_st + dK_l @ (np.asarray(u, float) - np.asarray(u_vor_l, float))
