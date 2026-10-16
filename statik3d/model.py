@@ -4698,6 +4698,33 @@ class Model:
                 aus.append(f"Anschluss '{j.name}'")
         return aus
 
+    def vorspann_definition_loeschen(self, name: str, protokoll: list = None) -> str:
+        """Eine Vorspannung je Anker entfernen - mit den Verweisen der Lastfaelle
+        auf sie (16.10.2026). Ein Verweis auf „alle“ bleibt. Rueckgabe "" bei
+        Erfolg, sonst der Grund; je betroffenem Lastfall eine Zeile nach ``protokoll``."""
+        if name not in (getattr(self, "vorspann_definitionen", None) or {}):
+            return f"Vorspannung {name} gibt es nicht"
+        del self.vorspann_definitionen[name]
+        for lc in self.load_cases.values():
+            vz = getattr(lc, "vorspannzustand", None) or {}
+            if name in vz:
+                lc.vorspannzustand = {k: v for k, v in vz.items() if k != name}
+                if protokoll is not None:
+                    protokoll.append(f"Lastfall „{lc.name}“: Verweis auf die Vorspannung {name} entfernt")
+        return ""
+
+    def vorspann_definition_umbenennen(self, alt: str, neu: str) -> None:
+        """Eine Vorspannung je Anker umbenennen, mit den Verweisen der Lastfaelle."""
+        defs = getattr(self, "vorspann_definitionen", None) or {}
+        if alt not in defs or alt == neu:
+            return
+        _schluessel_tauschen(defs, alt, neu)
+        defs[neu].name = neu
+        for lc in self.load_cases.values():
+            vz = getattr(lc, "vorspannzustand", None) or {}
+            if alt in vz:
+                lc.vorspannzustand = {(neu if k == alt else k): v for k, v in vz.items()}
+
     def ermuedungslast_loeschen(self, name: str, protokoll: list = None) -> str:
         """Eine Ermuedungslast entfernen - und aus der Liste jedes Anschlusses
         (:meth:`_ermuedungslast_austragen`, Fehlerliste F29, 06.10.2026).

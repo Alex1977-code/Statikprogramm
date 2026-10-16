@@ -462,11 +462,10 @@ class FatigueResults:
     #: Ermuedungslasten auf Ergebnissen einer plastischen Rechnung (seit
     #: 13.10.2026): der Grund; dann ist kein Nachweis gefuehrt
     nicht_anwendbar: str = ""
-    #: Zustand der Vorspannung je Anker, mit dem die Zustaende der
-    #: Ermuedungslasten gerechnet sind (16.10.2026, statik3d.vorspannung): leer
-    #: ohne Verweis, sonst eine Zeile („Vorspannung der Anker: t = ∞“); die
-    #: Ermuedung der Anker ist mit t = ∞ zu fuehren (Entwurf des Anwenders)
-    vorspannung: str = ""
+    # Zustand der Vorspannung je Anker (16.10.2026): Attribut ``vorspannung``,
+    # nur gesetzt, wenn ein Ermuedungszustand auf eine Definition verweist
+    # (:func:`vorspannzustand_text`) - kein Feld, damit das Ergebnis ohne
+    # Verweis Feld fuer Feld bleibt, wie es war (tests.test_huellen_schluessel R1e)
 
     def summary(self) -> str:
         vz = getattr(self, "vorspannung", "")
@@ -1368,7 +1367,9 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
         from ..schweissnaehte import kerbfaelle_uebernehmen
         kerbfaelle_uebernehmen(model, out.warnings if hasattr(out, "warnings") else None)
     all_res = analysis.all_results() if hasattr(analysis, "all_results") else analysis
-    out.vorspannung = vorspannzustand_text(model)
+    vz = vorspannzustand_text(model)
+    if vz:
+        out.vorspannung = vz
     plastisch = _plastische_zustaende(model, all_res)
     if plastisch:
         return _nicht_anwendbar(model, out, plastisch, bezug)

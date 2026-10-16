@@ -507,45 +507,11 @@ def zuordnen(model, eintraege: list) -> dict:
     Danach verweist jeder Lastfall der Gruppe auf die Definition, und die
     Vorspannungslasten der Gruppe fallen dort weg; alle anderen Lasten bleiben.
     Rueckgabe {"definitionen": [...], "faelle": Zahl, "je_gruppe": [...]}.
-    Fehler in der Eingabe: ValueError, bevor etwas geaendert ist."""
+    Fehler in der Eingabe: ValueError, bevor etwas geaendert ist
+    (:func:`zuordnung_pruefen`)."""
     from .vorspannkraft import temperatur_vorspannungen
     defs = definitionen(model)
-    plan: dict = {}
-    for e in eintraege or []:
-        z = str(e.get("zustand") or "")
-        if z not in VORSPANN_ZUSTAENDE:
-            continue
-        g = e["gruppe"]
-        name = str(e.get("definition") or "").strip()
-        if not name:
-            raise ValueError(f"{gruppe_text(g)}: keine Definition genannt")
-        p = plan.setdefault(name, {"staebe": None, "0": None, "inf": None, "gruppen": [], "rfem": False})
-        if p["staebe"] is not None and set(p["staebe"]) != set(g["staebe"]):
-            raise ValueError(f"Vorspannung {name}: die Gruppen liegen an verschiedenen Stäben "
-                             f"({anker_text(p['staebe'])} und {anker_text(g['staebe'])}) – eine eigene "
-                             "Definition je Ankergruppe wählen")
-        p["staebe"] = list(g["staebe"])
-        if p[z] is not None:
-            raise ValueError(f"Vorspannung {name}: zwei Gruppen im {ZUSTAND_TEXT[z]} – je Definition "
-                             "und Zeitpunkt eine Gruppe")
-        p[z] = e
-        p["gruppen"].append((g, z))
-        p["rfem"] = p["rfem"] or g["art"] == ART_DT
-    for name, p in plan.items():
-        alt = defs.get(name)
-        if alt is not None and set(alt.staebe) != set(p["staebe"]):
-            raise ValueError(f"Vorspannung {name} gibt es schon an {anker_text(alt.staebe)}")
-        e0, ei = p["0"], p["inf"]
-        P_max = float(e0.get("P_max") or 0.0) if e0 else float(getattr(alt, "P_max", 0.0) or 0.0)
-        if e0 and P_max <= 0:
-            raise ValueError(f"Vorspannung {name}: P_max fehlt (Zeitpunkt 0)")
-        if ei:
-            ew = str(ei.get("endwert") or VORSPANN_ENDWERT_ABSOLUT)
-            if ew == VORSPANN_ENDWERT_ABSOLUT and not float(ei.get("P_inf") or 0.0) > 0:
-                raise ValueError(f"Vorspannung {name}: P_∞ fehlt (Zeitpunkt ∞)")
-            if ew == VORSPANN_ENDWERT_VERLUST and P_max <= 0:
-                raise ValueError(f"Vorspannung {name}: ΔP_t braucht P_max (P_∞ = P₀ − ΔP_t) – die Gruppe "
-                                 "im Zeitpunkt 0 derselben Definition zuordnen oder P_∞ absolut eingeben")
+    plan = zuordnung_pruefen(model, eintraege)
     # ab hier wird geaendert
     je_gruppe = []
     n_faelle = 0
@@ -592,6 +558,50 @@ def zuordnen(model, eintraege: list) -> dict:
             if h.get("art") == "vorspannung" and round(float(h.get("N0", 0.0)), 3) not in rest:
                 h["erledigt"] = True
     return {"definitionen": list(plan), "faelle": n_faelle, "je_gruppe": je_gruppe}
+
+
+def zuordnung_pruefen(model, eintraege: list) -> dict:
+    """Die Eintraege einer Zuordnung pruefen, ohne etwas zu aendern; Rueckgabe
+    der Plan je Definition, Fehler als ValueError (der Dialog prueft so vor dem
+    Schliessen, ohne das Modell zu kopieren)."""
+    defs = definitionen(model)
+    plan: dict = {}
+    for e in eintraege or []:
+        z = str(e.get("zustand") or "")
+        if z not in VORSPANN_ZUSTAENDE:
+            continue
+        g = e["gruppe"]
+        name = str(e.get("definition") or "").strip()
+        if not name:
+            raise ValueError(f"{gruppe_text(g)}: keine Definition genannt")
+        p = plan.setdefault(name, {"staebe": None, "0": None, "inf": None, "gruppen": [], "rfem": False})
+        if p["staebe"] is not None and set(p["staebe"]) != set(g["staebe"]):
+            raise ValueError(f"Vorspannung {name}: die Gruppen liegen an verschiedenen Stäben "
+                             f"({anker_text(p['staebe'])} und {anker_text(g['staebe'])}) – eine eigene "
+                             "Definition je Ankergruppe wählen")
+        p["staebe"] = list(g["staebe"])
+        if p[z] is not None:
+            raise ValueError(f"Vorspannung {name}: zwei Gruppen im {ZUSTAND_TEXT[z]} – je Definition "
+                             "und Zeitpunkt eine Gruppe")
+        p[z] = e
+        p["gruppen"].append((g, z))
+        p["rfem"] = p["rfem"] or g["art"] == ART_DT
+    for name, p in plan.items():
+        alt = defs.get(name)
+        if alt is not None and set(alt.staebe) != set(p["staebe"]):
+            raise ValueError(f"Vorspannung {name} gibt es schon an {anker_text(alt.staebe)}")
+        e0, ei = p["0"], p["inf"]
+        P_max = float(e0.get("P_max") or 0.0) if e0 else float(getattr(alt, "P_max", 0.0) or 0.0)
+        if e0 and P_max <= 0:
+            raise ValueError(f"Vorspannung {name}: P_max fehlt (Zeitpunkt 0)")
+        if ei:
+            ew = str(ei.get("endwert") or VORSPANN_ENDWERT_ABSOLUT)
+            if ew == VORSPANN_ENDWERT_ABSOLUT and not float(ei.get("P_inf") or 0.0) > 0:
+                raise ValueError(f"Vorspannung {name}: P_∞ fehlt (Zeitpunkt ∞)")
+            if ew == VORSPANN_ENDWERT_VERLUST and P_max <= 0:
+                raise ValueError(f"Vorspannung {name}: ΔP_t braucht P_max (P_∞ = P₀ − ΔP_t) – die Gruppe "
+                                 "im Zeitpunkt 0 derselben Definition zuordnen oder P_∞ absolut eingeben")
+    return plan
 
 
 def vorschlag(g: dict, zustand: str) -> dict:

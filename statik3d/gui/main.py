@@ -6061,6 +6061,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
                         "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
                         "die Umgebung", symbol="vorspannung")
+        g.klein("Vorspannung je Anker", lambda: self.maske_vorspanndefinition(neu=True),
+                hinweis="Vorspannung einmal je Anker definieren (Pressenkraft P_max, Schlupf Δs, "
+                        "Spanngruppe, P_∞ oder ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf",
+                symbol="vorspannung")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -7310,7 +7314,8 @@ class MainWindow(QtWidgets.QMainWindow):
         "flaechenlager_einzeln": "surface_supports", "punktmasse": "punktmassen", "daempfer": "daempfer",
         "feder": "federn", "starrkoerper": "starrkoerper", "grenzschicht": "grenzschichten",
         "wasserdruck": "wasserdruecke", "wind": "winde", "schwingung": "schwingungen",
-        "schweissnaht": "schweissnaehte", "ermuedungslast": "fatigue_loads"}
+        "schweissnaht": "schweissnaehte", "ermuedungslast": "fatigue_loads",
+        "vorspanndefinition": "vorspann_definitionen"}
     #: Auswahlarten der Sammelmaske -> Art des Bezugs
     SAMMEL_BEZUG = {"element": "stabelement", "flaeche": "geoflaeche", "volumen": "geokoerper_einzeln",
                     "lager": "lager_einzeln", "linienlager": "linienlager_einzeln",
@@ -7415,6 +7420,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "situation": "Situation {}", "subsystem": "Subsystem {}", "bemassung": "Bemaßung {}",
         "stellung": "Stellung {}", "wasserdruck": "Wasserdruck {}", "wind": "Wind {}",
         "schwingung": "Schwingung {}", "schweissnaht": "Schweißnaht {}", "ermuedungslast": "Ermüdungslast {}",
+        "vorspanndefinition": "Vorspannung {}",
         "punktmasse": "Punktmasse {}", "daempfer": "Dämpfer {}", "feder": "Feder {}",
         "starrkoerper": "Starrer Körper {}", "grenzschicht": "Grenzschicht {}"}
     #: Arten, deren Name ein Listenplatz ist: der Anwender zaehlt ab 1
@@ -7781,7 +7787,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
                     "schweissnaht", "schweissnaht_neu", "ermuedungslast", "ermuedungslast_neu",
                     # gespeicherte Ansichten (14.10.2026): Klick ruft auf, „+“ speichert
-                    "ansicht", "ansicht_neu"}
+                    "ansicht", "ansicht_neu",
+                    # Vorspannung je Anker (16.10.2026): Definition, neue, Zuordnung
+                    "vorspanndefinition", "vorspanndefinition_neu", "vorspannung_zuordnen"}
 
     #: Arten, die nur an Zweigen stehen (Teilpaket 8b): ihr Klick zeigt die
     #: Uebersicht und waehlt nichts. Knoten, Daempfer und starre Koerper teilen
@@ -7797,7 +7805,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "ergebnisse", "ergebnisgruppe", "bericht", "unterlagen",
         "subsysteme", "stellungen", "situationen",
         "schweissnaehte", "anschluesse", "verformungen", "beulfelder", "volumenbereiche",
-        "lasteinleitung", "bemassungen", "layerliste", "ansichten"})
+        "lasteinleitung", "bemassungen", "layerliste", "ansichten", "vorspanndefinitionen"})
     #: So viele Zeilen zeigt die Liste einer Uebersicht hoechstens; der Rest
     #: steht in der Tabelle (wie bei den Lasten eines Lastfalls, 40 Zeilen in
     #: :meth:`_lastart_geklickt`)
@@ -8841,6 +8849,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     felder.append(F("rfem_pruefen", "Vorspannung", "info",
                                     f"{_vk.VERMERK_RFEM}: als eingeprägte Dehnung übernommen – "
                                     f"{_vk.RFEM_PRUEFEN} (Lasten › Vorspannung)"))
+                # Vorspannung je Anker (16.10.2026): Verweis mit Zeitpunkt
+                wahl_vz, jetzt_vz = self._vorspannzustand_wahl(lc)
+                if len(wahl_vz) > 1:
+                    felder.append(F("vorspannzustand", "Vorspannung je Anker", "wahl", jetzt_vz, wahl_vz,
+                                    hinweis="Verweis auf die Vorspannung je Anker: Zeitpunkt 0 (P₀ nach dem "
+                                            "Verankern, vom Programm gerechnet) oder Zeitpunkt ∞ (P_∞); "
+                                            "„keine“ = nur die Lasten des Lastfalls"))
                 felder += [F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
                             hinweis="Lastfälle einer Gruppe wirken nie gemeinsam"),
                           F("situation", "Situation", "wahl",
@@ -11531,6 +11546,10 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
             lc.grundlast = bool(w.get("grundlast", False))
             lc.faktorisiert = bool(w.get("faktorisiert", False))
+            if "vorspannzustand" in w:
+                vz_neu = self._vorspannzustand_lesen(str(w.get("vorspannzustand") or ""), lc)
+                if vz_neu is not None:
+                    lc.vorspannzustand = vz_neu
             lc.nummer = nummer          # oben gelesen und geprueft
             g = zahl("g_z", 0.0)
             grav = list(lc.gravity) + [0.0] * (3 - len(lc.gravity))
@@ -12007,6 +12026,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_schweissnaht()
         if zweigart == "ermuedungslasten":
             return self.maske_ermuedungslasten(neu=True)
+        if zweigart == "vorspanndefinitionen":
+            return self.maske_vorspanndefinition(neu=True)
         if zweigart == "bemassungen":
             return self.bemassung_neu("linear")
         if zweigart == "bericht":
@@ -12068,6 +12089,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.ansicht_speichern()
         if art == "ermuedungslast_neu":
             return self.maske_ermuedungslasten(neu=True)
+        if art == "vorspanndefinition":
+            return self.maske_vorspanndefinition(name)
+        if art == "vorspanndefinition_neu":
+            return self.maske_vorspanndefinition(neu=True)
+        if art == "vorspannung_zuordnen":
+            return self.vorspannung_zuordnen()
         if art == "bemassung_neu":
             return self.bemassung_neu("linear")
         if art == "bemassung":
@@ -12464,6 +12491,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            "Ermüdungslasten verlieren ihn)",
                "kombination": f"Kombination {name}",
                "ermuedungslast": f"Ermüdungslast {name}",
+               "vorspanndefinition": f"Vorspannung {name} (die Lastfälle verlieren ihren Verweis)",
                "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
             return
@@ -12519,6 +12547,9 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "ermuedungslast":
             # auch aus jedem Anschluss (Model.ermuedungslast_loeschen, F29)
             grund = m.ermuedungslast_loeschen(name, protokoll=zeilen)
+        elif art == "vorspanndefinition":
+            # mit den Verweisen der Lastfaelle (16.10.2026)
+            grund = m.vorspann_definition_loeschen(name, protokoll=zeilen)
         elif art == "werkstoff":
             benutzt = (sum(1 for e in m.elements if e.mat == name)
                        + sum(1 for f in m.flaechen.values() if getattr(f, "material", "") == name)
@@ -21430,6 +21461,178 @@ class MainWindow(QtWidgets.QMainWindow):
     from ..vorspannkraft import LASTART_DEHNUNG, LASTART_ENDE, LASTART_PRESSE, LASTART_UMWANDELN
     VORSPANN_ARTEN = [LASTART_DEHNUNG, LASTART_ENDE, LASTART_PRESSE, LASTART_UMWANDELN]
 
+    # ---- Vorspannung je Anker (16.10.2026) ------------------------------
+    VZ_KEINE = "keine"
+
+    def _vorspannzustand_wahl(self, lc) -> tuple:
+        """(Eintraege, aktueller Eintrag) des Felds „Vorspannung je Anker“ der
+        Lastfallmaske: keine, alle Definitionen im Zeitpunkt 0 / ∞, je
+        Definition 0 / ∞; ein anderer gespeicherter Verweis steht als eigener
+        Eintrag da und bleibt, solange er gewaehlt ist."""
+        from .. import vorspannung as vsp
+        defs = list(vsp.definitionen(self.model))
+        if not defs:
+            return [self.VZ_KEINE], self.VZ_KEINE
+        wahl = [self.VZ_KEINE]
+        for z in ("0", "inf"):
+            wahl.append(f"alle Definitionen: {vsp.ZUSTAND_TEXT[z]}")
+        for d in defs:
+            for z in ("0", "inf"):
+                wahl.append(f"{d}: {vsp.ZUSTAND_TEXT[z]}")
+        jetzt = self.VZ_KEINE
+        vz = dict(getattr(lc, "vorspannzustand", None) or {}) if lc is not None else {}
+        if len(vz) == 1:
+            (k, z), = vz.items()
+            t = (f"alle Definitionen: {vsp.ZUSTAND_TEXT.get(z, z)}" if k == "*"
+                 else f"{k}: {vsp.ZUSTAND_TEXT.get(z, z)}")
+            if t not in wahl:
+                wahl.append(t)
+            jetzt = t
+        elif vz:
+            jetzt = "wie gespeichert: " + vsp.zustand_lastfall_text(self.model, lc)
+            wahl.append(jetzt)
+        return wahl, jetzt
+
+    def _vorspannzustand_lesen(self, text: str, lc):
+        """Der Verweis aus dem Feld der Lastfallmaske; None = unveraendert."""
+        from .. import vorspannung as vsp
+        if not text or text.startswith("wie gespeichert"):
+            return None
+        if text == self.VZ_KEINE:
+            return {}
+        k, _, zt = text.partition(": ")
+        z = next((z for z, t in vsp.ZUSTAND_TEXT.items() if t == zt), None)
+        if z is None:
+            return None
+        return {"*" if k == "alle Definitionen" else k: z}
+
+    def vorspannung_zuordnen(self):
+        """Lasten › Vorspannung › „Je Anker zuordnen …“: die Gruppen gleicher
+        Vorspannungen an denselben Staeben den Zeitpunkten 0/∞ und Definitionen
+        zuordnen (Entwurf des Anwenders vom 16.10.2026). Umgestellt wird erst
+        mit „Übernehmen“; Rueckgaengig nimmt alles zurueck."""
+        from .vorspannmaske import ZuordnungDialog, anwenden
+        from .. import vorspannung as vsp
+        erg = getattr(getattr(self, "analysis", None), "cases", None) or {}
+        gruppen = vsp.gruppen_finden(self.model, erg)
+        if not gruppen:
+            return self.hinweis("Keine Vorspannung an Stäben in den Lastfällen – nichts zuzuordnen")
+        d = ZuordnungDialog(self.model, erg, self, gruppen=gruppen)
+        if not d.exec() or not d.ergebnis:
+            return None
+        self.merken("Vorspannung je Anker zugeordnet")
+        r = anwenden(self.model, d.ergebnis)
+        self.analysis = None
+        self.results = None
+        zeilen = [f"Vorspannung je Anker zugeordnet: {r['faelle']} Lastfälle verweisen auf "
+                  + ", ".join(r["definitionen"])]
+        for g in r["je_gruppe"]:
+            zeilen.append(f"  {g['gruppe']} → {vsp.ZUSTAND_TEXT[g['zustand']]} ({g['definition']})")
+        for n in r["definitionen"]:
+            zeilen.append("  " + vsp.definition_zeile(self.model, self.model.vorspann_definitionen[n]))
+        self._protokollzeilen(zeilen)
+        self.info(zeilen[0])
+        self.refresh_all()
+        return r
+
+    @_maskenweg(bezug=_bezug_fest("vorspanndefinition"))
+    def maske_vorspanndefinition(self, name: str = None, neu: bool = False):
+        """Vorspannung je Anker anlegen oder bearbeiten: Anker, P_max, Δs,
+        Spanngruppe, P_∞ absolut oder ΔP_t; angezeigt P₀ (berechnet bzw.
+        geschaetzt) und beide Endwerte (16.10.2026)."""
+        from .. import vorspannung as vsp
+        from ..model import VorspannDefinition
+        m = self.model
+        d = vsp.definitionen(m).get(name) if name else None
+        if d is None:
+            d = VorspannDefinition(m.naechster_name("V", vsp.definitionen(m)),
+                                   [s for s in self.sel_staebe if s in m.members])
+            neu = True
+        F = msk.Feld
+        erg = getattr(getattr(self, "analysis", None), "cases", None) or {}
+        a = vsp.anzeige(m, d, erg) if not neu else None
+        ew = vsp.ENDWERT_TEXT
+        felder = [F("name", "Name", "text", d.name, breite=100),
+                  F("staebe", "Anker (Stäbe)", "text", vsp.anker_text(d.staebe), breite=200,
+                    hinweis="„S1–S16“ oder „S1, S2“; „Auswahl übernehmen“ nimmt die gewählten Stäbe"),
+                  F("P_max", "P_max (Pressenkraft) [kN]", "zahl", float(d.P_max) / 1e3,
+                    hinweis="Kraft der Presse beim Spannen – nachgewiesen gegen σ_p,max"),
+                  F("schlupf", "Verankerungsschlupf Δs [mm]", "zahl", float(d.schlupf or 0.0) * 1e3),
+                  F("gruppe", "Spanngruppe (Spannfolge)", "ganz", int(d.gruppe or 1),
+                    hinweis="Definitionen derselben Gruppe werden gleichzeitig gespannt, mehrere Gruppen "
+                            "nacheinander (1, 2, …) – die früher gespannten verlieren durch elastische "
+                            "Verkürzung Kraft"),
+                  F("endwert", "Endwert (Zeitpunkt ∞)", "wahl", ew.get(d.endwert, ew["absolut"]), list(ew.values())),
+                  F("P_inf", "P_∞ [kN]", "zahl", float(d.P_inf or 0.0) / 1e3,
+                    hinweis="bei „P_∞ absolut“: die Kraft nach allen Verlusten"),
+                  F("dP_t", "ΔP_t [kN]", "zahl", float(d.dP_t or 0.0) / 1e3,
+                    hinweis="bei „Verlust ΔP_t“: P_∞ = P₀ − ΔP_t je Anker"),
+                  F("kommentar", "Bemerkung", "text", d.kommentar, breite=200)]
+        if a is not None:
+            felder += [F("P0", "P₀ nach dem Verankern", "info", a["text_P0"], anzeige=True),
+                       F("P_inf_text", "P_∞", "info", a["text_P_inf"], anzeige=True),
+                       F("dP_t_text", "ΔP_t", "info", a["text_dP_t"], anzeige=True),
+                       F("faelle", "Lastfälle", "info",
+                         f"Zeitpunkt 0: {len(a['faelle']['0'])}, Zeitpunkt ∞: {len(a['faelle']['inf'])}",
+                         anzeige=True)]
+            if d.herkunft:
+                felder.append(F("herkunft", "Herkunft", "info", d.herkunft, anzeige=True))
+        halter: dict = {}
+
+        def auswahl_lesen():
+            halter["m"].setzen("staebe", vsp.anker_text([s for s in self.sel_staebe if s in m.members]))
+
+        maske = msk.Maske("Neu: Vorspannung je Anker" if neu else f"Vorspannung {d.name}", felder,
+                          knopf="Übernehmen",
+                          hinweis="Die Vorspannung wird einmal je Anker definiert; Lastfälle verweisen mit "
+                                  "Zeitpunkt 0 (P₀ nach dem Verankern: das Programm rechnet Schlupf und "
+                                  "elastische Verkürzung) oder Zeitpunkt ∞ (P_∞ = Eingabe oder P₀ − ΔP_t) darauf "
+                                  "(Lastfallmaske, Feld „Vorspannung je Anker“). Nachweise: Spannen mit P_max, "
+                                  "nach dem Verankern und GZT mit t = 0, Fuge, Passstifte und Ermüdung mit t = ∞.",
+                          zusatz=[("Auswahl übernehmen", auswahl_lesen),
+                                  ("Je Anker zuordnen …", self.vorspannung_zuordnen)])
+        halter["m"] = maske
+        maske.angewendet.connect(lambda w, alt=(None if neu else d.name): self._vorspanndefinition_uebernehmen(w, alt))
+        return self.maske_erzeugen(maske)
+
+    def _vorspanndefinition_uebernehmen(self, w: dict, alt: str = None):
+        from .. import vorspannung as vsp
+        from ..model import VorspannDefinition
+        from .vorspannmaske import staebe_lesen
+        m = self.model
+        name = str(w.get("name", "") or "").strip()
+        if not name:
+            return self.hinweis("Die Vorspannung braucht einen Namen")
+        if name != alt and name in vsp.definitionen(m):
+            return self.hinweis(f"Vorspannung „{name}“ gibt es schon")
+        staebe = staebe_lesen(str(w.get("staebe", "") or ""), m)
+        if not staebe:
+            return self.hinweis("Keine Anker: Stäbe eintragen („S1–S16“) oder wählen und „Auswahl übernehmen“")
+        try:
+            P_max = zl.feldwert(w.get("P_max"), 0.0) * 1e3
+            ds = zl.feldwert(w.get("schlupf"), 0.0) / 1e3
+            P_inf = zl.feldwert(w.get("P_inf"), 0.0) * 1e3
+            dP_t = zl.feldwert(w.get("dP_t"), 0.0) * 1e3
+        except zl.Eingabefehler as ex:
+            return self.hinweis(f"Eingabe: {ex}")
+        if P_max < 0 or ds < 0 or P_inf < 0 or dP_t < 0:
+            return self.hinweis("Kräfte und Schlupf sind nicht negativ")
+        endwert = next((k for k, t in vsp.ENDWERT_TEXT.items() if t == str(w.get("endwert", ""))), "absolut")
+        self.merken(f"Vorspannung {name}")
+        alt_d = vsp.definitionen(m).get(alt) if alt else None
+        d = VorspannDefinition(name, staebe, P_max, ds, max(1, int(float(w.get("gruppe", 1) or 1))), endwert,
+                               P_inf, dP_t, str(w.get("kommentar", "") or ""),
+                               getattr(alt_d, "herkunft", "") if alt_d is not None else "")
+        if alt and alt != name:
+            m.vorspann_definition_umbenennen(alt, name)
+        m.vorspann_definitionen[name] = d
+        self.analysis = None
+        self.results = None
+        self.info(vsp.definition_zeile(m, d))
+        for z in vsp.pruefen(m):
+            self.log.appendPlainText("  HINWEIS: " + z)
+        self.refresh_all()
+
     @_maskenweg()
     def maske_vorspannung(self):
         """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung
@@ -21484,7 +21687,11 @@ class MainWindow(QtWidgets.QMainWindow):
                               "Endvorspannung: der Stab trägt nach dem Verankern F_soll. "
                               "Anfangsvorspannung: die Presse spannt mit P₀, beim Verankern gehen der "
                               "Schlupf Δs und die elastischen Verluste ab. Umwandeln: ohne "
-                              "Auswahl alle Stäbe mit einer Temperatur-Vorspannung.")
+                              "Auswahl alle Stäbe mit einer Temperatur-Vorspannung. Vorspannung je "
+                              "Anker: einmal definieren, Lastfälle verweisen mit Zeitpunkt 0 oder ∞ "
+                              "darauf; „Je Anker zuordnen …“ stellt vorhandene Vorspannungen um.",
+                      zusatz=[("Je Anker zuordnen …", self.vorspannung_zuordnen),
+                              ("Vorspannung je Anker …", lambda: self.maske_vorspanndefinition(neu=True))])
         m.angewendet.connect(self._vorspannung_aufbringen)
         self.maske_erzeugen(m)
 
