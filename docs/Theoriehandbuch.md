@@ -5824,6 +5824,31 @@ Knoten, um 0,04 bzw. 0,08 % weicher (Nachgiebigkeit des Blocks). Umgesetzt:
   folgen ihren Ecken (wie b009aff bei der Verteilkopplung); `_belegte_knoten`
   zählt von der Scheibe nur den Master. Annahme: RFEM bewegt eine starre
   Fläche als starren Körper; am RFEM-Modell geprüft ist das nicht.
+* **Starre Scheibe mit Kreisring** (seit 16.10.2026,
+  `statik3d.scheibeneinleitung`, Starrkörper „Scheibe …“): statt des RBE2 am
+  Lochrand eine Verteilkopplung RBE3 vom Stabende auf die Auflage von Mutter
+  bzw. Scheibe. Die Auflage sind die Randseiten der Körper in der Ebene der
+  Scheibe (bis 0,1 mm), deren Normale höchstens 5° von der Scheibennormale
+  abweicht und deren Außennormale gegen die Stabachse zeigt; davon der Teil
+  zwischen r_i und r_a um die Scheibenmitte, mit derselben Integration wie
+  der Kreisring eines Stabendes (`stabeinleitung._integrieren`: ganze Seiten
+  mit ihrer Regel, geschnittene in Teilzellen; w_i = ∫ N_i dA, s_i = ∫ N_i
+  (x − x_m) dA). Wirksame Gewichte, Zwangsmatrix, Strafbeiwert und die
+  Prüfung von Kraftsumme und Moment sind die der verteilenden Einleitung.
+  Am Blech 60 × 60 × 20 mm mit Bohrung Ø 20 und Ring 20/37 mm
+  (`tests/test_scheibe_kreisring.py`, h 4 mm) ist die Gewichtssumme
+  764,1 mm² (tet4, 98 Knoten) bzw. 761,4 mm² (tet10, 334 Knoten, davon 236
+  Seitenmitten) gegen 761,0 mm². Die Kopplung gibt 150 kN mit einer
+  Abweichung von höchstens 1·10⁻⁷ N weiter. Die flächengewichtete mittlere
+  Spannung σ_zz der obersten Elemente im Ring ist −158,2 (tet4) bzw.
+  −183,1 N/mm² (tet10) gegen F/A_Ring = 197,1 N/mm²; die Elemente messen in
+  ihrem Schwerpunkt, also etwas unter der Oberfläche. Die größte
+  Vergleichsspannung der Knoten an der Oberseite (tet10, elastisch) wächst
+  beim Lochrand mit h 4 → 2 mm von 3 959 auf 6 312 N/mm² und bleibt beim Ring
+  bei 195 bzw. 189 N/mm². Plastisch mit 300 kN (Ring 394 N/mm² = 1,11 f_y):
+  Mit dem Ring konvergiert die Rechnung auf tet4 (ε_p höchstens 0,043 %) und
+  auf tet10 (0,013 %). Mit dem Lochrand erreicht tet4 ε_p = 11,3 %, und tet10
+  bricht ab, weil das Gleichungssystem singulär wird (der Lochrand fließt weg).
 * **Stabende an 1–4 Knoten** (`fugen.stabenden_koppeln`, Gruppe
   „Stabende …“): RBE3 je Stabknoten (`assemble.stabende_zwang`). Die
   Kraftzeilen mit den baryzentrischen Koordinaten λ_i des Stabendes im
@@ -7153,6 +7178,120 @@ herauskondensiert, und auf dem Plateau ist ΔK_aa in Fließrichtung bis auf
 den Boden null. Das ist nicht weiter zerlegt. Ideal plastisch konvergiert der
 Newton damit schlechter, aber erst unter den Toleranzen, die die Oberfläche
 anbietet.
+
+### 5e.6 Traglast, Mechanismus und Gültigkeitsgrenze (16.10.2026)
+
+**Anlass.** Am Prüfblech aus `tests/test_scheibe_kreisring` (60 × 60 × 20 mm,
+S355, Bohrung Ø 20, Kreisring 20/37, tet10, Endvorspannung 900 kN) meldete
+die plastische Rechnung „konvergiert“ mit ε_p,max = 2 399, also rund
+240 000 %. Der Newton hatte richtig gerechnet: Er meldete im Spannschritt bei
+600 und 900 kN „nicht konvergiert“, die Änderung blieb über 25 Schritte bei 30
+bis 148. Diese Meldung ging aber nicht weiter, denn der Lastfall übernahm vom
+Spannschritt nur einen vorläufigen Kontakt. Der Spannzustand wurde in der
+weggelaufenen Lage verriegelt: Die Platte war 4,56 m eingesunken, die
+Verriegelungskraft betrug 1 369,6 MN. Damit war dieser Zustand mit der
+eingefrorenen plastischen Last per Konstruktion im Gleichgewicht. Der
+Lastfall brauchte drei Schritte mit der Änderung 9,7·10⁻⁶, und diese war auf
+‖F_lock‖ = 1,94·10⁹ N bezogen statt auf das Kräftepaar der Sollkraft
+(1,27·10⁶ N). Die globale Gleichgewichtskontrolle (§ 5d-2, Absatz „Globale Gleichgewichtskontrolle“) konnte nicht
+anschlagen, denn sie prüft Φᵀ(F + R) = Φᵀ K u, und das ist für jedes u null.
+
+**Traglast.** Oberhalb der Traglast gibt es bei ideal plastischem Werkstoff
+(hier über f_u) kein Gleichgewicht. Eine Laststufe, die ihr Budget ohne
+Konvergenz verbraucht oder an einem Mechanismus abbricht, wird darum wie eine
+weglaufende Stufe vom Startwert an halbiert, höchstens viermal je
+ursprünglicher Stufe. Geht das nicht mehr, endet die Rechnung beim **letzten
+konvergierten Zustand**: Lastfaktor, Lösung und plastischer Zustand dieser
+Stufe, gelöst mit der Last dieses Faktors. Das Ergebnis heißt dann „Traglast
+überschritten bei Lastfaktor λ (letzter konvergierter Zustand gezeigt; bei λ′
+kein Gleichgewicht)“ und ist nicht gültig. Wirkt die ganze Last sofort voll
+(Temperatur, Vorspannung, jede Spannstufe einer Endvorspannung), gibt es im
+Newton nichts zu halbieren. Dann halbiert der Spannschritt seine Spannstufen
+und verriegelt nicht. Bis dahin rechnete der Newton nach einer nicht
+konvergierten Stufe mit deren Zustand weiter: Am Zugstab unter 1,2·A·f_u
+standen nach 320 Schritten ε_p 47 362 % im Ergebnis.
+
+Gemessen an den Prüfmodellen in `tests/test_traglast`. Der Zugstab aus tet10
+(50 × 50 mm, f_u 510 N/mm², F_lim = A·f_u = 1 275 kN) trägt bei 1,2·F_lim
+noch den Faktor 0,8125, also 0,975·F_lim, und bei 0,8333 (genau F_lim) kein
+Gleichgewicht mehr. Der Kragträger unter reinem Moment (ideal plastisch ab
+f_y, M_pl = f_y·b·h²/4) trägt bei 1,2·M_pl den Faktor 0,8333, also 1,000·M_pl.
+Der Zugstab aus tet4 trägt dagegen 1,1·F_lim bei ε_p 92,5 %. Der tet4 sperrt:
+Das volumentreue Fließen bei konstanter Dehnung je Element behindert die
+Querkontraktion, die Spannung wird dreiachsig, und σ_x steigt über f_u. Das
+fängt die Gültigkeitsgrenze. Das Prüfblech (tet10) trägt 0,5417 der
+Sollkraft, also 487,5 kN, und bei 506,3 kN kein Gleichgewicht mehr.
+
+**Mechanismus.** In einer Stufe ist ein Mechanismus erkannt, wenn drei
+Bedingungen zugleich gelten. Erstens schrumpft die größte
+Knotenverschiebung je Newton-Schritt dreimal hintereinander nicht unter die
+Hälfte des vorigen Schritts. Zweitens ist die größte Verschiebung zehnmal so
+groß wie im letzten konvergierten Zustand. Drittens liegt ε_p,max des
+Iterierten über der Gültigkeitsgrenze. Am Balken unter 1,2·M_pl war der
+Schritt 16,7 m und blieb gleich; am Prüfblech wuchs die Verschiebung je
+Schritt um 33 mm. Ein konvergierender Newton zieht sich dagegen zusammen, so
+am Zugstab bei 0,9·f_u mit 5,5 / 2,2 / 0,36 / 0,003 mm. Die Spannung ist kein
+Kriterium, denn am Prüfblech änderte sie sich je Schritt noch um 13 bis
+270 N/mm², weil die Fließzone wuchs. Sie steht nur in der Meldung. Die Stufe
+bricht beim Erkennen ab, statt den Verschiebungen 25 Schritte lang
+nachzulaufen; das Prüfblech rechnet so in 249 statt 818 s. Gestörte Pivots
+zählen nicht: Ein lastfreier Freiheitsgrad, den nur ein angehobener Pivot
+hält (die Ankerköpfe am Drehlager mit 0,4 bis 66 Nm/rad), verschiebt sich im
+Newton nicht. Gemeldet wird nur ein Mechanismus, der Last trägt.
+
+**Gültigkeitsgrenze.** Liegt ε_p,max über der Grenze, ist das ganze Ergebnis
+„nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Die Grenze ist
+einstellbar (`Plastizitaet.dehnungsgrenze`, Vorgabe 20 %). Für einen
+Werkstoff mit eingetragener Bruchdehnung (`Material.bruchdehnung`) gilt
+diese. Das Prüfblech aus tet4 konvergiert bei 900 kN mit ε_p 20,56 % und ist
+damit nicht gültig.
+
+**Gleichgewicht mit inneren Kräften.** Jede plastische Rechnung bestimmt am
+gezeigten Zustand das Residuum an den freien Freiheitsgraden. Der Lösungsweg
+erfüllt K u = F_ende + F_p exakt, die inneren Kräfte sind aber K u − F_p(u)
+mit dem F_p, das die Rückführung an u liefert. Es fehlen also
+(F − F_ende) + (F_p(u) − F_p), gemessen gegen die verlangte Last F. Die
+Freiheitsgrade ausgenommener netzabhängiger Zonen (§ 5e.4) zählen nicht.
+Bezogen wird auf ‖F‖, bei einer Endvorspannung mit dem Kräftepaar der
+Sollkraft statt der Verriegelungskraft. Das ist dasselbe Maß wie die
+Abbruchtoleranz, ein konvergierter Lauf liegt darum unter ihr (10⁻³). Ab
+10⁻² ist das Ergebnis nicht gültig, auch wenn es nicht konvergiert ist; nur
+ein vorläufiger Kontakt bleibt vorläufig. Am Zugstab bei 1,2·F_lim fehlen
+(1 − λ)·F, bezogen 0,083; ohne Traglasterkennung (Rücknahmeprobe) erkennt
+die Kontrolle allein den weggelaufenen Zustand mit 0,33. Am Prüfblech fehlen
+412,5 kN, bezogen 0,32.
+
+**Residuum am Ende jeder Laststufe und im Kontaktlauf.** Dieselbe Lücke hatten
+die Zeile „Residuum am Ende – Gleichgewicht … der Lasten“ jeder Laststufe mit
+Kontakt (`_KontaktImNewton.residuum_stufe`) und das Ingenieurkriterium des
+Kontaktlaufs (`solver._ingenieur_abschluss`): beide prüften nur die Summe
+|ΣR + ΣF|. Seit dem 16.10.2026 misst die Laststufe das innere Gleichgewicht
+ihrer letzten Lösung. Die Lösung erfüllt (K + ΔK) u = F_k + F_p,l + ΔK u_vor,
+die inneren Kräfte sind K u − F_p(u); es fehlen also
+F_p(u) − F_p,l + ΔK (u − u_vor), dazu das Residuum des Kontakts. Dieses ist
+F + f_c(u) − (K + K_zusatz) u an den freien Freiheitsgraden, mit den
+Kontaktkräften f_c nach dem Kontaktgesetz in dieser Lösung
+(`solver.kontakt_residuum`). Bezogen wird wie die Abbruchtoleranz, also auf
+die Lasten, bei einer Endvorspannung mit der Sollkraft. Die Freiheitsgrade
+ausgenommener Zonen stehen getrennt in der Zeile. Schranke ist die Toleranz
+der Plastizität (10⁻³), und die Summe bleibt Pflicht. An den Kontaktmodellen
+der Prüfungen liegen konvergierte Kontaktläufe bei 10⁻¹⁵ bis 1,6·10⁻⁶ von ‖F‖,
+die Stufen des gequetschten Blocks bei höchstens 6·10⁻⁷. Das
+Ingenieurkriterium nimmt einen pendelnden Zustand nur noch an, wenn auch sein
+inneres Residuum unter 10⁻⁴ liegt. An den 16 Annahmen der Kontaktprüfungen lag
+es bei 4·10⁻¹⁵ bis 1,6·10⁻¹⁴; ein eingespieltes Ungleichgewicht von 1 % der
+Last am Kontaktgesetz wird abgelehnt, und der Lauf endet am Deckel.
+
+Aus einer gespeicherten Ergebnisdatei lässt sich dieses Residuum nicht
+nachrechnen. Die Datei hält u, die plastischen Dehnungen der fließenden
+Elemente je Integrationspunkt (`ip_dehnungen`) und je Element die größte
+Vergleichsdehnung. Für F_p(u) braucht die Rückführung aber den Zustand am
+Anfang der letzten Laststufe und die Vergleichsdehnung je Punkt; beides steht
+nicht in der Datei.
+
+**Ausgabe.** Jeder plastische Lauf meldet in Protokoll und Zusammenfassung
+ε_p,max mit Ort (Körper, Element, Integrationspunkt, Koordinate) und ΣR, ΣM der
+Lagerkräfte des gezeigten Zustands.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

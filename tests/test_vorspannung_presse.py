@@ -372,8 +372,13 @@ def test_bezeichnung_je_lastfall():
           and "eingegebene" in e["quelle"]}
     print(f"     {sp}")
     check("LF_V: eingegebene Anfangsvorspannung P₀", "Anfangsvorspannung P₀" in sp.get("LF_V", ""), sp.get("LF_V"))
-    check("LF398 (ΔT, Kategorie P): eingegebene Vorspannung als eingeprägte Dehnung",
-          "Vorspannung als eingeprägte Dehnung" in sp.get("LF398", ""), sp.get("LF398"))
+    # seit dem 16.10.2026 ist Spannen EIN Eintrag je Anker aus der Definition (P0 vor ΔT);
+    # die zweite Definition nennt eine Zeile am Stab mit ihrer Bezeichnung
+    warn = [w_ for w_ in an.design.members["A1"].warnings if w_.startswith("Vorspannung des Ankers")]
+    check("LF398 (ΔT, Kategorie P): genannt als „Vorspannung als eingeprägte Dehnung“ (Zeile am Stab), "
+          "Spannen nur einmal (P₀)",
+          len([e for e in zst if e["zustand"] == "Spannen"]) == 1 and "LF398" not in sp
+          and any("LF398: Vorspannung als eingeprägte Dehnung" in w_ for w_ in warn), str(warn))
     check("eingabe_art je Lastfall", sp_.eingabe_art(m, m.members["A1"], "LF398")
           == "Vorspannung als eingeprägte Dehnung" and sp_.eingabe_art(m, m.members["A1"], "LF_V")
           == "Anfangsvorspannung P₀")

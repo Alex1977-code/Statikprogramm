@@ -5130,6 +5130,84 @@ vor Neu oder Beenden *Speichern* gewählt hat, sieht die Fehlermeldung, und das
 Programm hält an, statt ohne die Ergebnisse weiterzumachen. Bis zum
 25.09.2026 galt das als gespeichert.
 
+**Ergebnisdatei beim Öffnen: Modell geändert oder älteres Rechenverfahren (seit
+16.10.2026).** Das Programm trennt zwei Fälle. *Modell geändert*: Geometrie, Netz,
+Werkstoffe, Querschnitte, Lager, Lasten, Kontakte oder eine Einstellung, die der
+Anwender nach der Rechnung selbst umgestellt hat – auch eine, die zugleich das
+Rechenverfahren bestimmt, etwa das Reibverfahren oder der Abbruch der Plastizität.
+Dann ist die Ergebnisdatei ungültig und wird nicht geladen („seit der Rechnung
+geändert: …“). *Mit älterem Rechenverfahren gerechnet*: Das Modell ist dasselbe, aber
+das Programm rechnet es heute anders, weil sich eine Programmvorgabe oder das
+Verfahren selbst geändert hat. Dann gelten die Ergebnisse und werden geladen;
+Statuszeile und Protokoll sagen, womit gerechnet wurde und was heute gilt, etwa
+„gerechnet mit älterem Rechenverfahren: bisheriges Reibverfahren ohne
+Reibungstangente (aktuell: konsistente Reibungstangente, seit 15.10.2026) – die
+Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren“.
+Die Ergebnisdatei schreibt dafür den Verfahrensstand und die Verfahrensmerkmale mit
+(Reibverfahren, Deckel des Kontaktlaufs, Abbruch der Plastizität); Speichern ohne
+neue Rechnung behält die Merkmale der geladenen Datei.
+
+Jeder Wechsel des Verfahrens ist eingestuft und nennt das Modellmerkmal, bei dem er
+eine Rolle spielt (Einstufung des Anwenders vom 16.10.2026). Eine *Verbesserung* – der
+ingenieurmäßige Abbruch der Plastizität (13.10.2026, plastische Rechnung) – gibt den
+Hinweis oben. Eine *Fehlerkorrektur* gibt den Status „Ergebnis möglicherweise
+betroffen – neu rechnen“: in der Kopfzeile, vorn in der Statuszeile, im Protokoll
+(Zusammenfassung als WARNUNG) und im Bericht (Kapitel Ergebnisse und
+Zusammenfassung); die Ergebnisse bleiben sichtbar, eine neue Rechnung nimmt den
+Status weg. Fehlerkorrekturen sind:
+
+* die konsistente Reibungstangente (15.10.2026, Kontakt mit μ > 0 oder Lager mit
+  Reibbeiwert) – der alte Weg meldete falsche Konvergenz;
+* der Deckel über alle Runden des Kontaktlaufs (15.10.2026, Kontakt) – betroffen ist
+  nur ein Ergebnis, dessen Laufbuch einen Kontaktlauf mit mehr als 40 Runden als
+  konvergiert führt (genau 40 sind auch heute möglich);
+* die Saitenform N/L der geometrischen Steifigkeit (14.10.2026, Fachwerkstab,
+  Zug-/Druckstab oder Seil, wenn das Ergebnis alpha_cr, Knicken oder Theorie II.
+  Ordnung enthält; Theorie III. Ordnung rechnete schon vorher mit der Saitenform);
+* das Einzelknicken der Fachwerk-Druckstäbe in alpha_cr (14.10.2026, Fachwerkstab, der
+  Druck tragen kann, mit alpha_cr-Ergebnis): bis dahin nur alpha_cr des Systems;
+* alpha_cr nur aus den wirksamen Elementen (14.10.2026, alpha_cr eines Ergebnisses,
+  in dessen Situation Stäbe oder Elemente abgeschaltet sind);
+* die Streckenlast auf dem Seil nach Theorie III. Ordnung (14.10.2026, Theorie III.
+  für ein Ergebnis, dessen Lastfälle eine Streckenlast auf einem Seil tragen);
+* der Fachwerkstab mit Querlast (14.10.2026, ein gerechnetes Ergebnis, dessen
+  Lastfälle eine Stablast oder ein Eigengewicht quer zur Achse eines Fachwerkstabs oder
+  Seils tragen: bis dahin im Feld qL²/24 statt qL²/8);
+* die Korrekturen am RFEM-Import: Lagerreibung (15.10.2026, nur Lager mit dem
+  RFEM-Vorgabewert μ = 0,1 – ein anderes μ ist ausdrücklich gesetzt und wird nie
+  markiert), Stabtypen (Zugstab, Seil; 14.10.2026), Vorspannung als Kraft und
+  Lastkategorien (13.10.2026; nur wenn alle Lastfälle noch Kategorie Q tragen und
+  Kombinationen gerechnet sind). Hier zählt nicht das Alter der Ergebnisdatei, sondern
+  das Modell: aus RFEM übernommen, ohne das Merkmal des neueren Imports und noch nicht
+  nachgelesen bzw. umgestellt. Der Status nennt den Weg („Aus RFEM nachlesen…“),
+  danach neu rechnen. Die Maske „Lager aus RFEM“ hat dafür zwei Knöpfe: „Lager
+  nachlesen“ und „selbst gesetzt – behalten“. Die Quittung steht mit dem Modell in der
+  Datei (Merkmal des Imports); danach kommen weder Hinweis noch Markierung, und die
+  Ergebnisse bleiben gültig.
+
+Markiert wird eine Fehlerkorrektur nur, wenn das Merkmal im Modell vorkommt und die
+betroffene Rechenart im Ergebnis gerechnet ist; fehlt eines von beiden, auch bei einer
+alten Datei ohne Kennzeichen nicht.
+
+Hat das Modell das Merkmal nicht, kommt weder Hinweis noch Status. Ein Modell ohne
+Reibung trägt in der Ergebnisdatei „keine Reibung im Modell“.
+
+Das Alter einer Ergebnisdatei von vor dem 16.10.2026 erkennt das Programm an der
+Angabe „reibverfahren“ (15.10.2026 abends), an der globalen
+Gleichgewichtskontrolle eines Ergebnisses (seit dem 14.10.2026 mittags) oder am
+Einzelknicken der Fachwerkstäbe in alpha_cr (seit dem 14.10.2026), dazu am alten
+Deckel (Datei vom 15.10.2026 mittags mit „reibungstangente: true“, Protokollzeile
+oder ein Lauf mit mehr als 40 Runden). Fehlt jede Spur, gilt der Grundsatz des
+Anwenders „lieber ‚möglicherweise betroffen‘ als still gültig“: Der Status nennt dann
+„Alter der Ergebnisdatei nicht sicher erkennbar“. Eine Datei ohne Angabe zum
+Reibverfahren gilt als mit dem bisherigen Verfahren gerechnet. Ob eine plastische
+Rechnung von vor dem 13.10.2026 streng abgebrochen hat, lässt sich der Datei nicht
+sicher ansehen; als Verbesserung wird es nicht genannt.
+
+Nach dem Öffnen steht „⚠ Ergebnis vorläufig …“ eines Ergebnisses mit nicht
+konvergiertem Kontaktlauf vorn in der Statuszeile; bis zum 16.10.2026 überschrieb
+die Zeile „Ergebnisse geladen …“ sie sofort, nur die Kopfzeile sagte „vorläufig“.
+
 **Beenden während einer Rechnung** fragt „Rechnung abbrechen und beenden?“
 (*Abbrechen und beenden* / *Weiterrechnen*). Mit Ja hält die Rechnung beim
 nächsten Rechenschritt an (eine laufende Faktorisierung läuft zu Ende),
@@ -7365,14 +7443,16 @@ Vergleich: In der Maske heißt es „bisheriges Verfahren (nur zum Vergleich)“
 Modelldateien enthalten keine Angabe dazu und rechnen beim nächsten Rechnen mit der
 Vorgabe; eine dort gespeicherte Ergebnisdatei bleibt, wie sie gerechnet wurde.
 Seit dem 15.10.2026 schreibt die Ergebnisdatei das Reibverfahren mit („konsistente
-Tangente“ oder „bisheriges Verfahren“). Eine ältere Ergebnisdatei ohne diese Angabe
-zu einem Modell mit Reibung (Kontakt mit μ > 0 oder Lager mit Reibbeiwert) wird
-geladen, die Ergebnisse bleiben sichtbar, und ein Hinweis sagt „gerechnet mit dem
-bisherigen Reibverfahren – für aktuelle Ergebnisse neu rechnen“. Speichern ohne
-neue Rechnung lässt die Angabe weg, der Hinweis kommt dann beim nächsten Öffnen
-wieder. Eine Modelldatei mit ausdrücklich „reibungstangente: true“ (gespeichert,
-als das Verfahren noch nicht Vorgabe war) gilt mit ihrer Ergebnisdatei nicht als
-geändert.
+Tangente“ oder „bisheriges Verfahren“), seit dem 16.10.2026 mit den übrigen
+Verfahrensmerkmalen (Abschnitt „Ergebnisdatei beim Öffnen: Modell geändert oder
+älteres Rechenverfahren“). Eine ältere Ergebnisdatei ohne diese Angabe zu einem
+Modell mit Reibung (Kontakt mit μ > 0 oder Lager mit Reibbeiwert) wird geladen, die
+Ergebnisse gelten, und der Hinweis nennt das bisherige Reibverfahren. Eine
+Modelldatei mit ausdrücklich „reibungstangente: true“ (gespeichert, als das
+Verfahren noch nicht Vorgabe war) gilt mit ihrer Ergebnisdatei nicht als geändert.
+Stellt der Anwender nach der Rechnung auf das bisherige Verfahren um, ist die
+Ergebnisdatei ungültig – bis zum 16.10.2026 galt sie dann bei einer Datei vom
+15.10.2026 abends weiter als passend.
 
 Die Haftsteifigkeit ist kein fester Wert, sondern ein Vielfaches der Steifigkeit,
 die der Knoten aus seinen angrenzenden Elementen hat – auch an starren Lagern, die
@@ -8360,6 +8440,54 @@ Plattenoberfläche dort im gespeicherten Ergebnis um bis zu 1,46 mrad neigte
 gebunden ist, fällt aus der Scheibe heraus und folgt ihren Ecken, wie bei der
 verteilenden Einleitung der Stabenden; bis zum 14.10.2026 brach die Rechnung
 an ihr ab.
+
+**Starre Scheiben über einen Kreisring einleiten (seit 16.10.2026).** Eine
+starre Scheibe aus RFEM, die genau über einer Bohrung liegt, hängt die ganze
+Anker- bzw. Schraubenkraft als Linie an den Lochrand. Dort fließt der
+Werkstoff netzabhängig; am Drehlager (G0, Netz Mittel, plastisch) liefen die
+Ankerplatten im Spannschritt am Lochrand weg. Seit dem 16.10.2026 hat jede
+starre Kreisscheibe mit einem Stabende in der Mitte eine Einleitungsart:
+**Lochrand starr (bisher)** oder **Kreisring verteilend (RBE3,
+flächenanteilig)**. Der Kreisring ist die Auflage von Mutter bzw. Scheibe:
+die Randseiten des Blechs in der Ebene der Scheibe zwischen Innen- und
+Außendurchmesser, auf der Seite, auf der die Mutter liegt (die Außennormale
+zeigt gegen die Stabachse). Der Innen-Ø ist ohne Eintrag die Bohrung aus der
+Geometrie. Das Stabende hängt dann wie ein verteilt eingeleitetes Stabende
+über eine Verteilkopplung (Starrkörper „Scheibe F…“) an allen Knoten des
+Rings, flächenanteilig gewichtet, bei tet10 mit den Seitenmitten; Kraftsumme
+und Moment prüft das Programm nach der Rechnung genauso. Die Kopplung
+versteift den Ring nicht, es entstehen also keine Spitzen an seinen Kanten.
+Die Geometrie bleibt dabei unverändert: Knoten, Linien, Flächen und Bohrungen
+des Imports fasst die Umstellung nicht an, sie ist nur eine Kopplungsart.
+
+Umgestellt wird nur auf Anweisung, unter Netz → **Scheiben einleiten…**. Die
+Tabelle zeigt je Gruppe gleicher Bohrung (oder je Scheibe) die Einleitung,
+Innen- und Außen-Ø, die Herkunft des Maßes und die mittlere Pressung
+F/A_Ring aus der Vorspannkraft mit ihrem Verhältnis zu f_y des Blechs. Liegt
+sie über 3 f_y, steht dort „Auflage prüfen (Zeichnungsmaß)“. Der Außen-Ø ist
+mit einem Normmaß vorbelegt und als **Annahme** gekennzeichnet, bis ein Maß
+aus der Zeichnung eingetragen ist. Ist der Stabdurchmesser ein Nennmaß der
+Unterlegscheibe nach ISO 7089, gilt deren Außendurchmesser d₂ (M16 30 mm,
+M20 37 mm), weil das Modell nicht sagt, ob Kopf oder Mutter außen sitzt. Sonst
+ist es ein Gewindestab, und es gilt d_w der Sechskantmutter nach ISO 4032 der
+nächsten Größe (Ø 40 → M42, d_w 60 mm). „Alle auf Kreisring (Normmaße als
+Annahme)“ stellt jede Scheibe am Lochrand um. Jede Umstellung ist ein
+Schritt, den Rückgängig (Strg+Z) zurücknimmt. Am vorhandenen Netz koppelt das
+Programm sofort neu, und das Protokoll nennt Ring, Annahme, Fläche,
+Knotenzahl und Pressung. Hat ein Ring weniger als 6 tragende Knoten, steht
+dort eine Warnung; findet sich kein Ring mit mindestens drei Knoten oder kein
+Stabende in der Mitte, bleibt die Scheibe am Lochrand, ebenfalls mit Warnung.
+Alte Dateien und neue RFEM-Importe bleiben bei „Lochrand starr“, und eine
+Datei ohne Umstellung bleibt beim Speichern Zeichen für Zeichen gleich. Die
+Warnung „Kraft ohne Fläche“ der Netzabnahme nennt bei Lochrand-Scheiben diese
+Abhilfe.
+
+**Vor einer plastischen Rechnung** fragt das Programm deutlich nach, wenn es
+Stellen „Kraft ohne Fläche“ oder starre Scheiben am Lochrand gibt, denn sie
+können die Konvergenz verhindern: „Abbrechen“, „Trotzdem rechnen“ oder „Auf
+Kreisring umstellen und rechnen“. Ohne Oberfläche, im Skript, steht vor der
+Rechnung eine Zeile „WARNUNG – BITTE LESEN: …“. In elastischen Rechnungen
+bleibt es bei der Warnung der Netzabnahme und der netzabhängigen Zone.
 
 **Globale Gleichgewichtskontrolle (seit 14.10.2026).** Nach jeder Rechnung
 prüft das Programm, ob die Lasten und die Lagerkräfte zusammen im
@@ -9437,7 +9565,14 @@ Nachweis dort nur die Eingabe). Die Zeilen nennen die Begriffe, etwa
 „LF_V: N_verankert = Endvorspannung nach dem Verankern (P₀ − Schlupf Δs =
 1.00 mm und elastische Verluste)“. Ist kein Spannschritt gerechnet, setzt der
 Nachweis nach dem Verankern P₀ − k_A·Δs an (starre Umgebung, ohne elastische
-Verluste) und sagt das. Der Bericht hat unter der Übersicht der Stabnachweise
+Verluste) und sagt das. Seit dem 16.10.2026 zählen nur gerechnete Lastfälle (als
+Lastfall oder in einer gerechneten Kombination): am Drehlager zeigte die Tabelle beim
+Spannen η 1,0081 aus dem nicht gerechneten LF398. Der Nachweis beim Spannen gehört zur
+Vorspannungsdefinition des Ankers und ist ein Eintrag je Anker (Pressenkraft P₀ bzw.
+Soll), kein Maximum über Lastfälle; stehen in gerechneten Lastfällen verschiedene
+Definitionen, gilt P₀ vor der Endvorspannung vor der eingeprägten Dehnung, und eine
+Zeile am Stab nennt die anderen. Nach dem Verankern und im Lastzustand bleibt es je
+gerechnetem Lastfall. Der Bericht hat unter der Übersicht der Stabnachweise
 die Tabelle „Spannstahl je Anker“: je Anker eine Zeile mit der Eingabe und je
 Zustand Kraft, Spannung und Ausnutzung, nämlich Anfangsvorspannung P₀ beim
 Spannen, Endvorspannung nach dem Verankern und Kraft im Lastzustand, dazu der
@@ -10984,6 +11119,26 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   waren es 8 statt 3 Schritte, bei Tetraedern (tet10) 4 statt 3. In den
   Prüfreihen der Plastizität ändert sich die Zahl der Newton-Schritte und
   Halbierungen nicht (Theoriehandbuch § 5e.5).
+* **Traglast, Mechanismus und Gültigkeitsgrenze** (16.10.2026). Über der
+  Traglast gibt es bei ideal plastischem Werkstoff kein Gleichgewicht. Findet
+  der Newton in einer Laststufe keines, halbiert das Programm die Stufe bis zu
+  viermal. Gelingt es auch dann nicht, endet die Rechnung beim letzten
+  konvergierten Zustand, und das Ergebnis heißt „NICHT gültig: Traglast
+  überschritten bei Lastfaktor …“. Gezeigt wird dieser letzte konvergierte
+  Zustand, gekennzeichnet in Zusammenfassung, Rechenliste, Protokoll und
+  Bericht. Bei einer Endvorspannung halbiert der Spannschritt seine
+  Spannstufen und nennt den Anteil der Sollkraft; verriegelt wird dann nicht.
+  Wachsen die Verschiebungen im Newton, ohne dass er sich zusammenzieht, steht
+  zusätzlich „Mechanismus“ mit Knoten, Verschiebung und Dehnung dabei. Unter
+  **Berechnung › Plastizität › Gültigkeitsgrenze ε_p** (Vorgabe 20 %) und je
+  Werkstoff im Feld **Bruchdehnung** stellt man ein, ab welcher plastischen
+  Dehnung das ganze Ergebnis „nicht gültig: außerhalb der Theorie kleiner
+  Verzerrungen“ ist. Jede plastische Rechnung nennt in Protokoll und
+  Zusammenfassung ε_p,max mit Körper, Element und Koordinate sowie ΣR und ΣM
+  der Lagerkräfte. Die Gleichgewichtskontrolle prüft dabei auch das Residuum
+  der inneren Kräfte gegen die Lasten, bei einer Endvorspannung gegen die
+  Sollkraft; ab 1 % der Lasten ist das Ergebnis nicht gültig (Theoriehandbuch
+  § 5e.6).
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
   Tangente** — ein Newton-Verfahren, das die Steifigkeit je Schritt neu
   aufstellt und faktorisiert. Es konvergiert quadratisch und **unabhängig

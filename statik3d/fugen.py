@@ -1734,6 +1734,32 @@ def _starre_teilung(model: Model, f) -> int:
     return int(min(4096, max(32, np.ceil(laenge / STARR_ABTASTUNG))))
 
 
+def scheibe_geometrie(model: Model, f) -> dict:
+    """Umriss, Mitte, Ebene und Radius einer starren Flaeche - fuer
+    :func:`starre_flaechen_koppeln` und die Liste der Scheiben
+    (scheibeneinleitung.scheiben): {"P" (Randpunkte), "mitte", "e1", "e2",
+    "normale", "r" (groesster Abstand vom Mittelpunkt), "kreis" (alle
+    Randpunkte bis scheibeneinleitung.KREIS_TOL r auf einem Kreis), "tol_ebene"}
+    oder None, wenn der Rand nicht schliesst."""
+    from .scheibeneinleitung import KREIS_TOL
+    try:
+        P = np.asarray(f.randpunkte(model, _starre_teilung(model, f)), float).reshape(-1, 3)
+    except Exception:                 # noqa: BLE001
+        P = np.zeros((0, 3))
+    if len(P) < 3:
+        return None
+    c = P.mean(axis=0)
+    _u, _s, vt = np.linalg.svd(P - c)
+    e1, e2, nrm = vt[0], vt[1], vt[2]
+    rr = np.linalg.norm(P - c, axis=1)
+    r = float(rr.max())
+    return {"P": P, "mitte": c, "e1": e1, "e2": e2, "normale": nrm, "r": r,
+            "kreis": bool(r > 0 and float(rr.max() - rr.min()) <= KREIS_TOL * r),
+            # Ist der Rand selbst nicht ganz eben, gilt seine eigene Abweichung
+            # als Toleranz zur Ebene
+            "tol_ebene": max(STARR_TOL_EBENE, float(np.abs((P - c) @ nrm).max()))}
+
+
 def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     """Starre Flaechen (RFEM: SurfaceStiffnessRigid) als starre Kopplung umsetzen.
 
@@ -1753,15 +1779,32 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     des Lochs, ohne Mutter oder Unterlegscheibe -, sind das nur die Knoten
     des Lochrands, und so schliesst auch RFEM sie an.
 
-    Rueckgabe {"flaechen": n, "kopplungen": n, "offen": [(Name, Grund)]}.
-    Vorhandene Kopplungen dieser Art werden vorher entfernt (neues Netz).
+    **Kreisring (seit 16.10.2026).** Steht die Scheibe auf „Kreisring
+    verteilend“ (Flaeche.einleitung, statik3d.scheibeneinleitung), haengt
+    das Stabende statt starr am Lochrand ueber eine Verteilkopplung (RBE3
+    ohne Versteifung, StarrKoerper "Scheibe <Flaeche>") an der
+    Auflageflaeche zwischen Innen- und Aussendurchmesser in der Ebene der
+    Scheibe, flaechenanteilig gewichtet (stabeinleitung.ring_auf_ebene) -
+    wie ein verteilend eingeleitetes Stabende. Unter
+    scheibeneinleitung.MINDEST_KNOTEN tragenden Knoten kommt eine WARNUNG;
+    findet sich kein Ring mit mindestens drei, bleibt die Scheibe am
+    Lochrand, ebenfalls mit WARNUNG.
+
+    Rueckgabe {"flaechen": n, "kopplungen": n, "offen": [(Name, Grund)],
+    "ring": [je Scheibe ein Woerterbuch], "rueckfall": [(Name, Grund)],
+    "wenig": [(Name, Knoten)]}. Vorhandene Kopplungen dieser Art werden
+    vorher entfernt (neues Netz).
     """
     from scipy.spatial import cKDTree
     from .importers import _common as C
-    bericht = {"flaechen": 0, "kopplungen": 0, "offen": []}
+    from . import scheibeneinleitung as SCH
+    from . import stabeinleitung as SE
+    bericht = {"flaechen": 0, "kopplungen": 0, "offen": [], "ring": [], "rueckfall": [], "wenig": []}
     starre = starre_flaechen(model)
     model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
                         if not str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)]
+    if any(SE.ist_scheibenkopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
+        model.starrkoerper = [sk for sk in model.starrkoerper if not SE.ist_scheibenkopplung(sk)]
     if not starre or not model.nn:
         return bericht
     N = np.asarray(model.nodes[:model.nn], float)
@@ -1772,18 +1815,13 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
         (stab if e.typ in ("beam", "truss", "seil") else andere).update(int(x) for x in e.nodes)
     baum = cKDTree(N)
     unendlich = float("inf")
+    ring_cache: dict = {}
     for f in starre:
-        try:
-            P = np.asarray(f.randpunkte(model, _starre_teilung(model, f)), float).reshape(-1, 3)
-        except Exception:                 # noqa: BLE001
-            P = np.zeros((0, 3))
-        if len(P) < 3:
+        geo = scheibe_geometrie(model, f)
+        if geo is None:
             bericht["offen"].append((f.name, "der Rand schliesst nicht"))
             continue
-        c = P.mean(axis=0)
-        _u, _s, vt = np.linalg.svd(P - c)
-        e1, e2, nrm = vt[0], vt[1], vt[2]
-        r = float(np.linalg.norm(P - c, axis=1).max())
+        P, c, e1, e2, nrm, r = geo["P"], geo["mitte"], geo["e1"], geo["e2"], geo["normale"], geo["r"]
         # Master: der Stabknoten in der Mitte - sonst der naechste Knoten dort.
         # Hier bleibt der weite Fangkreis: er sucht den einen Knoten, an dem
         # der Stab endet, und der muss nicht genau in der Mitte des Umrisses
@@ -1796,10 +1834,15 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
         if master is None:
             bericht["offen"].append((f.name, "kein Knoten in der Mitte der Scheibe"))
             continue
+        e_ = SCH.einstellung(f)
+        if e_["art"] == SCH.RING:
+            grund = _ring_koppeln(model, f, geo, master, master in stab, e_, ring_cache, bericht)
+            if not grund:
+                continue
+            bericht["rueckfall"].append((f.name, grund))
         # Slaves: die Netzknoten in der Scheibe - auf ihrer Ebene und im
-        # Umriss. Ist der Rand selbst nicht ganz eben, gilt seine eigene
-        # Abweichung als Toleranz zur Ebene.
-        tol_ebene = max(STARR_TOL_EBENE, float(np.abs((P - c) @ nrm).max()))
+        # Umriss.
+        tol_ebene = geo["tol_ebene"]
         kand = np.asarray(baum.query_ball_point(c, r + STARR_TOL_RAND), dtype=int)
         if not kand.size:
             bericht["offen"].append((f.name, "keine Knoten in der Scheibe"))
@@ -1832,17 +1875,70 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
         bericht["flaechen"] += 1
         bericht["kopplungen"] += len(slaves)
     if log is not None and (bericht["flaechen"] or bericht["offen"]):
-        if bericht["flaechen"]:
-            C.say(log, f"{bericht['flaechen']} starre Flächen als starre Kopplung umgesetzt: "
+        starr_n = bericht["flaechen"] - len(bericht["ring"])
+        if starr_n:
+            C.say(log, f"{starr_n} starre Flächen als starre Kopplung umgesetzt: "
                        f"{bericht['kopplungen']} Netzknoten hängen an ihrem Mittelknoten "
                        "(Stabende ↔ Körperoberfläche, wie ein starrer Bereich in ANSYS)")
+        for z in SCH.ring_zeilen(bericht["ring"]):
+            log.append(z)
+        for name, n in bericht["wenig"]:
+            C.warn(log, f"  Kreisring der Scheibe {name}: nur {n} tragende Knoten im Ring (Mindestzahl "
+                        f"{SCH.MINDEST_KNOTEN}) – das Netz ist dort zu grob für die Auflagefläche")
+        for name, grund in bericht["rueckfall"]:
+            C.warn(log, f"  Kreisring der Scheibe {name} nicht möglich, sie bleibt am Lochrand starr: {grund}")
         for name, grund in bericht["offen"]:
             C.warn(log, f"  starre Fläche {name} nicht gekoppelt: {grund}")
     return bericht
 
 
+def _ring_koppeln(model: Model, f, geo: dict, master: int, ist_stab: bool, e_: dict, cache: dict,
+                  bericht: dict) -> str:
+    """Den Kreisring einer starren Scheibe als Verteilkopplung anlegen (siehe
+    :func:`starre_flaechen_koppeln`). Rueckgabe "" bei Erfolg, sonst der Grund."""
+    from . import scheibeneinleitung as SCH
+    from . import stabeinleitung as SE
+    if not ist_stab:
+        return "kein Stabende in der Mitte der Scheibe (Bezugsknoten der Kopplung)"
+    di = e_["d_innen"] or 2.0 * geo["r"]
+    fl = SE.ring_auf_ebene(model, master, geo["mitte"], geo["normale"], di, e_["d_aussen"], cache)
+    if "grund" in fl:
+        return fl["grund"]
+    if fl["tragend"] < 3:
+        return f"nur {fl['tragend']} tragende Knoten im Ring (mindestens drei)"
+    ken = SCH.kennung(e_, 2.0 * geo["r"])
+    text = (f"{ken}: Kreisring {SE.mm2(fl['flaeche'])} mm², {len(fl['knoten'])} Knoten, "
+            f"{fl['tragend']} tragend ({', '.join(fl['koerper'])})"
+            + (f"; Annahme {e_['quelle']}" if e_["annahme"] else (f"; {e_['quelle']}" if e_["quelle"] else "")))
+    model.add_starrkoerper(int(master), fl["knoten"], "RBE3", fl["gewichte"], name=SE.SCHEIBE + f.name,
+                           kommentar=text, momente=fl.get("momente"))
+    if not (getattr(f, "steifigkeit", "") or ""):
+        f.steifigkeit = "starr"
+    f.kommentar = f"Kreisring: verteilt auf {fl['tragend']} Knoten an K{master} (Stabende)"
+    stab = ""
+    for i in SE.stabelemente_an(model).get(int(master), []):
+        stab = next((str(n) for n, mem in (getattr(model, "members", None) or {}).items()
+                     if int(i) in [int(x) for x in (mem.elements or [])]), "")
+        if stab:
+            break
+    fy = SCH.fy_koerper(model, fl["koerper"][0]) if fl["koerper"] else None
+    z = dict(name=f.name, kennung=ken, quelle=e_["quelle"], annahme=e_["annahme"], flaeche=fl["flaeche"],
+             flaeche_nenn=fl["flaeche_nenn"], tragend=fl["tragend"], knoten=len(fl["knoten"]),
+             koerper=", ".join(fl["koerper"]), F=SCH._vorspannkraft(model, stab), fy=fy,
+             einleitung=SCH.RING, d_innen=di, d_aussen=e_["d_aussen"])
+    SCH.pressung_setzen(z)
+    bericht["ring"].append(z)
+    if fl["tragend"] < SCH.MINDEST_KNOTEN:
+        bericht["wenig"].append((f.name, fl["tragend"]))
+    bericht["flaechen"] += 1
+    return ""
+
+
 def _starre_kopplungen(model: Model) -> dict:
-    """{Gruppe: (Master, Slaves)} der Kopplungen starrer Flaechen, als frozensets."""
+    """{Gruppe: (Master, Slaves)} der Kopplungen starrer Flaechen, als
+    frozensets; seit 16.10.2026 dazu je Kreisring-Scheibe {"Scheibe F…":
+    (Master, Slaves, Gewichte, Momente, Kommentar)}."""
+    from .stabeinleitung import ist_scheibenkopplung
     aus: dict = {}
     for k in getattr(model, "kopplungen", None) or []:
         g = str(getattr(k, "gruppe", ""))
@@ -1850,7 +1946,14 @@ def _starre_kopplungen(model: Model) -> dict:
             aus.setdefault(g, (set(), set()))
             aus[g][0].add(int(k.node_a))
             aus[g][1].add(int(k.node_b))
-    return {g: (frozenset(a), frozenset(b)) for g, (a, b) in aus.items()}
+    aus = {g: (frozenset(a), frozenset(b)) for g, (a, b) in aus.items()}
+    for sk in getattr(model, "starrkoerper", None) or []:
+        if ist_scheibenkopplung(sk):
+            aus[str(sk.name)] = (frozenset({int(sk.master)}), tuple(int(x) for x in sk.slaves),
+                                 tuple(float(x) for x in sk.gewichte),
+                                 tuple(tuple(float(y) for y in v) for v in (sk.momente or [])),
+                                 str(sk.kommentar))
+    return aus
 
 
 def starre_kopplungen_erneuern(model: Model, log: list = None) -> dict:
@@ -1875,18 +1978,40 @@ def starre_kopplungen_erneuern(model: Model, log: list = None) -> dict:
     if not starre or not getattr(model, "elements", None):
         return {"geaendert": False, "vorher": {}, "nachher": {}}
     bestand = list(getattr(model, "kopplungen", None) or [])
+    bestand_sk = list(getattr(model, "starrkoerper", None) or [])
     alt = _starre_kopplungen(model)
     merk = {f.name: (f.kommentar, getattr(f, "steifigkeit", "")) for f in starre}
     teil_log: list = []
     starre_flaechen_koppeln(model, teil_log)
     neu = _starre_kopplungen(model)
-    vorher = {g: len(s) for g, (_m, s) in alt.items()}
-    nachher = {g: len(s) for g, (_m, s) in neu.items()}
+    vorher = {g: len(v[1]) for g, v in alt.items()}
+    nachher = {g: len(v[1]) for g, v in neu.items()}
     if neu == alt:
         model.kopplungen = bestand
+        model.starrkoerper = bestand_sk
         for f in starre:
             f.kommentar, f.steifigkeit = merk[f.name]
         return {"geaendert": False, "vorher": vorher, "nachher": nachher}
+    from .stabeinleitung import SCHEIBE
+
+    def flaeche_von(g: str) -> str:
+        return g[len(SCHEIBE):] if g.startswith(SCHEIBE) else g[len(STARR_GRUPPE):]
+    geaendert = {flaeche_von(g) for g in set(alt) | set(neu) if alt.get(g) != neu.get(g)}
+    # Umgestellt zwischen Lochrand und Kreisring (16.10.2026): eine Scheibe,
+    # die vorher oder jetzt ueber einen Kreisring geht
+    ring_bezug = {n for n in geaendert if SCHEIBE + n in alt or SCHEIBE + n in neu}
+    if log is not None and ring_bezug and alt:
+        log.extend(z for z in teil_log if "Kreisring" in z or "über einen Kreisring" in z
+                   or z.startswith("  Ø") or "Auflage prüfen" in z)
+        zurueck = sorted(n for n in ring_bezug if SCHEIBE + n in alt and SCHEIBE + n not in neu)
+        if zurueck:
+            log.append(f"{anzahl(len(zurueck), 'starre Scheibe hängt', 'starre Scheiben hängen')} wieder "
+                       f"starr am Lochrand: {', '.join(zurueck[:8])}{' …' if len(zurueck) > 8 else ''}")
+        alt = {g: v for g, v in alt.items() if flaeche_von(g) not in ring_bezug}
+        neu_rest = {g: v for g, v in neu.items() if flaeche_von(g) not in ring_bezug}
+        if alt == neu_rest:
+            return {"geaendert": True, "vorher": vorher, "nachher": nachher}
+        neu = neu_rest
     if log is not None and not alt:
         # aeltere Datei ganz ohne Kopplung: gemeldet wie bisher
         log.extend(teil_log)
@@ -2017,8 +2142,8 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
                "erweitert": []}
     model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
                         if not str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE)]
-    if any(SE.ist_verteilkopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
-        model.starrkoerper = [sk for sk in model.starrkoerper if not SE.ist_verteilkopplung(sk)]
+    if any(SE.ist_stabende_kopplung(sk) for sk in (getattr(model, "starrkoerper", None) or [])):
+        model.starrkoerper = [sk for sk in model.starrkoerper if not SE.ist_stabende_kopplung(sk)]
     model._stabende_rueckfall = {}
     if not model.nn or not model.elements:
         return bericht
@@ -2033,6 +2158,9 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         else:
             andere.update(int(x) for x in e.nodes)
     schon = {int(k.node_a) for k in model.kopplungen} | {int(k.node_b) for k in model.kopplungen}
+    # Mitte einer starren Scheibe mit Kreisring (seit 16.10.2026): angeschlossen
+    schon |= {int(sk.master) for sk in (getattr(model, "starrkoerper", None) or [])
+              if SE.ist_scheibenkopplung(sk)}
     # Neben den Stabenden: was eine Knotenlast oder ein Lager traegt - ein
     # Knoten, an dem etwas haengt und der auf einem Koerper liegt, gehoert zu
     # dessen Netz. Ein integrierter Knoten ohne Anhang (Hilfspunkt auf einer
@@ -2190,7 +2318,7 @@ def stabenden_erneuern(model: Model, log: list = None) -> bool:
             partner.setdefault(int(k.node_a), []).append(int(k.node_b))
     ohne_momente = False
     for sk in (getattr(model, "starrkoerper", None) or []):
-        if SE.ist_verteilkopplung(sk):
+        if SE.ist_stabende_kopplung(sk):
             ist[int(sk.master)] = SE.kennung_der_kopplung(sk)
             ohne_momente = ohne_momente or len(getattr(sk, "momente", None) or []) != len(sk.slaves)
     if not ist or ohne_momente:
@@ -2231,9 +2359,11 @@ def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
     legt eigene an.
     """
     from .importers import _common as C
+    from .stabeinleitung import ist_scheibenkopplung
     namen = {kb.name for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values()}
-    if not namen and not any(str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)
-                             for k in (getattr(model, "kopplungen", None) or [])):
+    ringe = sum(1 for sk in (getattr(model, "starrkoerper", None) or []) if ist_scheibenkopplung(sk))
+    if not namen and not ringe and not any(str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)
+                                           for k in (getattr(model, "kopplungen", None) or [])):
         return 0
     n = 0
     vorher = (len(model.gap_elements), len(model.kopplungen), len(model.contact_pairs))
@@ -2247,6 +2377,11 @@ def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
                         if not str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)]
     n = (vorher[0] - len(model.gap_elements) + vorher[1] - len(model.kopplungen)
          + vorher[2] - len(model.contact_pairs))
+    # die Kreisringe starrer Scheiben (Verteilkopplungen "Scheibe F…", seit
+    # 16.10.2026) zeigen ebenso auf das alte Netz
+    if ringe:
+        model.starrkoerper = [sk for sk in model.starrkoerper if not ist_scheibenkopplung(sk)]
+        n += ringe
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
         kb.ausgefuehrt = False
     # Die Paare der verdoppelten Knoten gehoeren ebenfalls zum alten Netz:

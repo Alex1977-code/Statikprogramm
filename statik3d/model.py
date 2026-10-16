@@ -426,6 +426,10 @@ class Material:
     #: Eine Eingabe gilt, wenn die Zulassung abweicht.
     sigma_pmax: Optional[float] = None
     sigma_pm0: Optional[float] = None
+    #: Bruchdehnung [-] (16.10.2026): die Gueltigkeitsgrenze der plastischen
+    #: Dehnung fuer diesen Werkstoff (plastizitaet.dehnungsgrenze_text). None = die
+    #: Grenze der Rechnung (Plastizitaet.dehnungsgrenze, Vorgabe 20 %).
+    bruchdehnung: Optional[float] = None
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
@@ -2993,6 +2997,15 @@ class Flaeche:
     #: Globale Richtung von +x bei zylindrischen Achsen (wird auf die Achse
     #: projiziert); leer = Richtung der ersten geraden Randlinie.
     achse_plus_x: list[float] = field(default_factory=list)
+    #: Einleitung einer **starren Scheibe** ueber einer Bohrung (seit
+    #: 16.10.2026, statik3d.scheibeneinleitung): leer = „Lochrand starr
+    #: (bisher)“ - die Netzknoten in der Scheibe, ueber einer Bohrung nur
+    #: der Lochrand, haengen starr am Stabende. {"art": "ring", "d_innen" [m]
+    #: (0 = die Bohrung aus der Geometrie), "d_aussen" [m], "annahme": bool
+    #: (Normmass, nicht aus der Zeichnung), "quelle": Text} = „Kreisring
+    #: verteilend (RBE3, flächenanteilig)“ unter Mutter bzw. Scheibe. Gesetzt
+    #: nur vom Anwender; die Datei fuehrt den Schluessel nur, wenn er belegt ist.
+    einleitung: dict = field(default_factory=dict)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -10004,7 +10017,8 @@ NEUE_FELDER = {
     # kontakt/warmstart. Diese fuehrt Plastizitaet.NEU_14_10 - dieselbe Tabelle,
     # nach der Plastizitaet.als_dict sie beim Speichern weglaesst; hier wird sie
     # nur gelesen, damit es die Vorgaben einmal gibt (Zusammenfuehrung 14.10.2026).
-    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10},
+    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10,
+                     **Plastizitaet.NEU_16_10},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
@@ -10013,7 +10027,9 @@ NEUE_FELDER = {
     # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
     # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
     "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
-                  "sigma_pmax": None, "sigma_pm0": None},
+                  "sigma_pmax": None, "sigma_pm0": None,
+                  # plast/traglast (16.10.2026): Gueltigkeitsgrenze je Werkstoff
+                  "bruchdehnung": None},
     # nachweis/spannstahl
     "sections": {"A_s": None, "gewinde": ""},
     # spitzen/zeigen N2
@@ -10038,7 +10054,8 @@ NEUE_FELDER = {
     # import/gewoelbt (Lasten in lokalen Achsen gewoelbter Flaechen und
     # zylindrische Flaechenachsen; seit 14.10.2026)
     "load_cases.geometrielasten": {"lokal": {}},
-    "flaechen": {"lokale_achsen": "", "achse_plus_x": []},
+    # einleitung/kreisring (Einleitung starrer Scheiben ueber Kreisring, 16.10.2026)
+    "flaechen": {"lokale_achsen": "", "achse_plus_x": [], "einleitung": {}},
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen); ansicht/ansichten
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
@@ -10048,14 +10065,15 @@ NEUE_FELDER = {
 #: Neue Felder, deren Vorgabe sich spaeter geaendert hat, mit der frueheren
 #: Vorgabe - je Schluessel der Modelldatei wie NEUE_FELDER. Eine Ergebnisdatei
 #: vom frueheren Stand traegt einen Wert, der heute die Vorgabe ist, in ihrer
-#: Kennung; heute fehlt er dort. ergebnisse.pruefen vergleicht darum auch nach
-#: den frueheren Vorgaben: der Wert, der heute Vorgabe ist, gilt als gleich.
+#: Kennung; heute fehlt er dort. ergebnisse.pruefen bildet die Kennung darum
+#: auch mit diesem Wert ausdruecklich (nie ohne einen gesetzten Wert).
 #: reibungstangente: Vorgabe False von 4073439 bis b24910b, seit 49cb8bb True
 #: (Entscheidung des Anwenders vom 15.10.2026); die Drehlager-Laeufe dieses Tages
-#: tragen „reibungstangente: true“ in der Modelldatei.
-FRUEHERE_VORGABEN = {
-    "plastizitaet": {"reibungstangente": False},
-}
+#: tragen „reibungstangente: true“ in der Modelldatei. Seit dem 16.10.2026 kommt
+#: die Tabelle aus statik3d.rechenverfahren (Wechsel der Vorgaben mit Stand und
+#: Datum): ein kuenftiger Wechsel wird nur dort eingetragen.
+from .rechenverfahren import fruehere_vorgaben as _fruehere_vorgaben  # noqa: E402
+FRUEHERE_VORGABEN = _fruehere_vorgaben()
 
 
 def ist_vorgabe(schluessel: str, feld: str, wert) -> bool:

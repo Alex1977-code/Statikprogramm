@@ -6122,6 +6122,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Ein einzelnes finites Stabelement zwischen zwei Knoten anlegen, ohne Stab mit "
                         "Nachweis - es steht unter FE-Netz → Stabelemente. Den Stab wie in RFEM legt "
                         "Struktur → Stab an")
+        # Einleitung der starren Scheiben ueber Bohrungen (16.10.2026,
+        # statik3d.scheibeneinleitung): eine Kopplungsart am Netz, darum hier
+        g.klein("Scheiben einleiten…", self.scheiben_einleiten, symbol="einstellungen",
+                hinweis="Starre Scheiben über einer Bohrung (aus RFEM): Kraft am Lochrand starr (bisher) oder "
+                        "über einen Kreisring unter Mutter bzw. Scheibe verteilend (RBE3, flächenanteilig); "
+                        "Außen-Ø je Gruppe oder Scheibe, Normmaß als Annahme, mittlere Pressung F/A_Ring. "
+                        "Die Geometrie bleibt unverändert; Rückgängig mit Strg+Z")
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
@@ -8952,6 +8959,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                     f"{mt.grenze_name() if mt else 'f_u'} verfestigt der Werkstoff, "
                                     "danach fließt er ideal plastisch."),
                           F("grenze", "Grenze", "info", (pl_.grenze_text(mt, pz_) if mt else "–")),
+                          # Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026)
+                          F("bruchdehnung", "Bruchdehnung [%]", "zahl",
+                            (float(mt.bruchdehnung) * 100.0 if mt and getattr(mt, "bruchdehnung", None) else None),
+                            breite=78, leer=True,
+                            hinweis="Gültigkeitsgrenze der plastischen Dehnung für diesen Werkstoff: liegt "
+                                    "ε_p,max darüber, ist das ganze Ergebnis nicht gültig. Leer = die Grenze "
+                                    "der Rechnung (Berechnung › Plastizität, Vorgabe 20 %)."),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
                           # Hilfs- oder Krafteinleitungskoerper (13.10.2026): nur
@@ -11635,6 +11649,14 @@ class MainWindow(QtWidgets.QMainWindow):
             spann = self._spannstahl_lesen(w, None if neu else alt_mt, zahl)
             if isinstance(spann, str):
                 return self.hinweis(spann)
+            # Bruchdehnung (16.10.2026): leer = Grenze der Rechnung; ohne das Feld bleibt sie
+            bruch = getattr(alt_mt, "bruchdehnung", None) if alt_mt is not None else None
+            if "bruchdehnung" in w:
+                bd = zahl("bruchdehnung")
+                if bd is not None and not bd > 0.0:
+                    return self.hinweis("Bruchdehnung muss größer als 0 % sein - oder leer für die Grenze "
+                                        "der Rechnung. Nicht übernommen.")
+                bruch = None if bd is None else float(bd) / 100.0
             self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
@@ -11646,7 +11668,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           rho=float(zahl("rho", 7850.0)),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte, verfestigung=r_verf, **spann)
+                          grade=sorte, verfestigung=r_verf, bruchdehnung=bruch, **spann)
             # art, sigma_pmax, sigma_pm0 schreibt die Schleife unten wie jedes Feld der
             # Maske; E_p (kein Eingabefeld) bleibt am vorhandenen Werkstoff, wie es war
             dicken_zeilen = []
@@ -14323,6 +14345,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 # ein Kontaktlauf am Deckel oder nicht konvergiert (15.10.2026): das
                 # steht nicht nur in der Zusammenfassung, sondern sichtbar oben
                 zustand, art = zustand + " · vorläufig", "warn"
+            if info.get("verfahren_betroffen"):
+                # vor einer Fehlerkorrektur des Rechenverfahrens gerechnet (16.10.2026,
+                # rechenverfahren): die Ergebnisse bleiben sichtbar, oben steht es
+                zustand, art = zustand + " · möglicherweise betroffen – neu rechnen", "warn"
         elif self.results is not None:
             zustand, art = "Ergebnis vorhanden", "gut"
         else:
@@ -14355,14 +14381,19 @@ class MainWindow(QtWidgets.QMainWindow):
         """Nach der Rechnung in die Statuszeile (und das Protokoll): welche Ergebnisse
         vorlaeufig sind, weil ein Kontaktlauf am Deckel endete oder nicht konvergierte.
         Rueckgabe der Text ("" ohne solche)."""
+        text = self._vorlaeufig_text()
+        if text:
+            self.info(text)
+        return text
+
+    def _vorlaeufig_text(self) -> str:
+        """„⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): LF1 - …“ oder ""."""
         faelle = self._vorlaeufige_faelle()
         if not faelle:
             return ""
         namen = ", ".join(n for n, _t in faelle[:6]) + (" …" if len(faelle) > 6 else "")
-        text = (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
+        return (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
                 "Zusammenfassung und Bericht nennen die Stellen")
-        self.info(text)
-        return text
 
     def _baum_neu_beginnen(self):
         """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
@@ -17408,6 +17439,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_plast_tol.addItem(t_, v_)
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
+        # Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026, Plastizitaet.dehnungsgrenze)
+        self.sp_plast_grenze = QtWidgets.QDoubleSpinBox()
+        self.sp_plast_grenze.setRange(0.1, 1000.0)
+        self.sp_plast_grenze.setDecimals(1)
+        self.sp_plast_grenze.setSingleStep(1.0)
+        self.sp_plast_grenze.setSuffix(" %")
+        self.sp_plast_grenze.setValue(20.0)
+        self.sp_plast_grenze.setToolTip(
+            "Gültigkeitsgrenze der plastischen Dehnung: liegt ε_p,max darüber, ist das ganze Ergebnis "
+            "„nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Vorgabe 20 %. Ein Werkstoff "
+            "mit eingetragener Bruchdehnung (Werkstoffmaske) hat diese als Grenze.")
         gpl.addWidget(self.cb_plast)
         # je Zeile hoechstens zwei Felder: der rechte Bereich ist 460 px breit, vier
         # Felder in einer Zeile waren 815 px (Paket 13r)
@@ -17417,6 +17459,7 @@ class MainWindow(QtWidgets.QMainWindow):
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen))
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
+        gpl.addWidget(row("Gültigkeitsgrenze ε_p", self.sp_plast_grenze))
         lay.addWidget(gp)
 
         # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
@@ -21844,7 +21887,14 @@ class MainWindow(QtWidgets.QMainWindow):
                            breite=260,
                            hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
                                    "woanders, hier ihren Pfad eintragen")]
+        from .. import rechenverfahren as _rv
         maske = msk.Maske("Lager aus RFEM", felder, knopf="Lager nachlesen",
+                          # die zweite Antwort (16.10.2026): die Reibbeiwerte sind selbst gesetzt
+                          # und bleiben - Quittung im Modell, danach keine Markierung mehr
+                          zusatz=[(_rv.LAGERREIBUNG_BEHALTEN, self._lagerreibung_behalten,
+                                   "Die Reibbeiwerte der Lager sind selbst gesetzt und bleiben, wie sie sind: "
+                                   "der Hinweis und der Status „möglicherweise betroffen“ zur Lagerreibung "
+                                   "entfallen; die Quittung wird mit dem Modell gespeichert")],
                           hinweis="Liest die Knoten-, Linien- und Flächenlager aus der RFEM-Datei nach und nimmt "
                                   "einen Reibbeiwert zurück, der dort ohne Reibungsart steht – RFEM rechnet dann "
                                   "keine Reibung. Der Freiheitsgrad gilt danach nach seiner Federkonstanten "
@@ -21852,6 +21902,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "Rückgängig nimmt ihn zurück.")
         maske.angewendet.connect(self._lager_rfem_anwenden)
         return self.maske_erzeugen(maske)
+
+    def _lagerreibung_behalten(self):
+        """„selbst gesetzt – behalten“ (16.10.2026): Quittung im Modell
+        (rechenverfahren.lagerreibung_behalten), Importhinweis erledigt; der Status
+        der geladenen Ergebnisse wird neu bewertet - sie bleiben."""
+        from .. import rechenverfahren as _rv
+        self.merken("Lagerreibung selbst gesetzt – behalten")
+        _rv.lagerreibung_behalten(self.model)
+        an = self.analysis
+        info = getattr(an, "info", None)
+        if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
+            bew = _rv.bewerten(self.model, info["rechenverfahren"], an)
+            for k, v in (("verfahren_hinweis", bew["hinweis"]), ("verfahren_betroffen", bew["betroffen"])):
+                if v:
+                    info[k] = v
+                else:
+                    info.pop(k, None)
+        self.log.appendPlainText("Lagerreibung aus RFEM: Reibbeiwerte selbst gesetzt – behalten (im Modell vermerkt)")
+        self._refresh_kopf()
+        self._refresh_status()
+        self.statusBar().showMessage("Lagerreibung: selbst gesetzt – behalten", 8000)
 
     def _lager_rfem_anwenden(self, w: dict):
         from ..importers import rfem6_db as R6
@@ -24805,6 +24876,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_plast_it.setValue(int(pz.iterationen))
         k = self.cb_plast_tol.findData(float(pz.toleranz))
         self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
+        if hasattr(self, "sp_plast_grenze"):
+            self.sp_plast_grenze.setValue(float(getattr(pz, "dehnungsgrenze", 0.20) or 0.20) * 100.0)
         w = self.cb_plast_weg.findData(str(getattr(pz, "verfahren", "tangente")))
         self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
         w = self.cb_plast_kontakt.findData(str(getattr(pz, "kontakt", "verschachtelt")))
@@ -24845,6 +24918,12 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
         pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
         pz.abbruch = str(self.cb_plast_abbruch.currentData() or "ingenieurmaessig")
+        if hasattr(self, "sp_plast_grenze"):
+            # gerundet wie angezeigt (eine Nachkommastelle in %): sonst meldete schon
+            # das Oeffnen der Maske eine Aenderung
+            alt_g = float(getattr(pz, "dehnungsgrenze", 0.20) or 0.20)
+            g_ = float(self.sp_plast_grenze.value()) / 100.0
+            pz.dehnungsgrenze = alt_g if round(alt_g * 100.0, 1) == round(g_ * 100.0, 1) else g_
         if hasattr(self, "sp_pendel_kraft"):
             # gerundet wie angezeigt: sonst aenderte schon das Oeffnen der Maske
             # die Einstellung um Rundungsreste und meldete eine Aenderung
@@ -25597,6 +25676,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self._abnahme_bestaetigen():
             return
+        if art_ in ("all", "case") and not self._plastisch_einleitung_bestaetigen():
+            return
         self._apply_parallel_settings()
         if kind is None:
             kind = ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
@@ -25629,6 +25710,108 @@ class MainWindow(QtWidgets.QMainWindow):
         stand = vp.modellstand(model)
         self._run_background(func, lambda r: self._solve_done(kind, r, self._rechnung_stand), "Berechnung",
                              posten=posten, stand=stand)
+
+    # ---- Starre Scheiben: Lochrand oder Kreisring (16.10.2026) ----------------
+    def scheiben_einleiten(self):
+        """Dialog „Scheiben einleiten“ (gui.scheiben_dialog): je Gruppe gleicher
+        Bohrung oder je Scheibe die Einleitung, Innen- und Außen-Ø, die Herkunft
+        des Maßes und die mittlere Pressung. Umgestellt wird erst mit
+        „Übernehmen“ bzw. „Alle auf Kreisring“, als ein Schritt mit Rückgängig."""
+        from .. import scheibeneinleitung as SCH
+        from .scheiben_dialog import ScheibenDialog
+        if not SCH.scheiben(self.model, mit_koerper=False):
+            return self.hinweis("Im Modell gibt es keine starre Kreisscheibe mit einem Stabende in der Mitte "
+                                "(RFEM: starre Fläche über einer Bohrung)")
+        dlg = ScheibenDialog(self.model, self)
+        if not dlg.exec() or not dlg.ergebnis:
+            return
+        if dlg.ergebnis == "alle":
+            return self._scheiben_umstellen(alle=True)
+        try:
+            umst = dlg.umstellungen()
+        except ValueError as ex:
+            return self.error(f"Scheiben einleiten: Maß nicht lesbar ({ex})")
+        return self._scheiben_umstellen(umstellungen=umst)
+
+    def _scheiben_umstellen(self, umstellungen: list = None, alle: bool = False) -> dict:
+        """Die Einleitung der Scheiben umstellen - ein Schritt (merken, Strg+Z
+        nimmt ihn zurueck), am vorhandenen Netz sofort neu gekoppelt
+        (fugen.starre_kopplungen_erneuern), ins Protokoll; die Ergebnisse
+        passen danach nicht mehr. Die Geometrie bleibt, wie sie ist."""
+        from .. import fugen
+        from .. import scheibeneinleitung as SCH
+        from .scheiben_dialog import anwenden
+        self.merken("Scheiben einleiten")
+        erg = SCH.alle_auf_kreisring(self.model) if alle else anwenden(self.model, umstellungen or [])
+        if not erg["umgestellt"]:
+            self._merken_zuruecknehmen()
+            for name, grund in erg["offen"]:
+                self.log.appendPlainText(f"WARNUNG: Scheibe {name} nicht umgestellt: {grund}")
+            self.info("Scheiben einleiten: nichts umgestellt" + (" (siehe Protokoll)" if erg["offen"] else ""))
+            return erg
+        self.log.appendPlainText("Scheiben einleiten: " + SCH.umstell_zeile(erg)
+                                 + " – Rückgängig (Strg+Z) stellt zurück")
+        log: list = []
+        if getattr(self.model, "elements", None):
+            if fugen.starre_kopplungen_erneuern(self.model, log)["geaendert"]:
+                self.analysis = None
+                self.results = None
+        for z in log:
+            self.log.appendPlainText(z)
+        self.refresh_all()
+        self.info(f"Scheiben einleiten: {SCH.umstell_zeile(erg)}")
+        return erg
+
+    def _plastisch_einleitung_bestaetigen(self) -> bool:
+        """Vor einer plastischen Rechnung (16.10.2026, Entscheidung des
+        Anwenders): gibt es Stellen „Kraft ohne Fläche“ oder starre Scheiben am
+        Lochrand, fragt ein deutlicher Dialog - abbrechen, trotzdem rechnen
+        oder auf Kreisring umstellen (dann wird mit dem Kreisring gerechnet).
+        Elastisch fragt nichts; es bleibt bei der Warnung der Netzabnahme."""
+        pz = getattr(self.model, "plastizitaet", None)
+        if not (pz is not None and getattr(pz, "an", False)):
+            return True
+        from .. import scheibeneinleitung as SCH
+        try:
+            h = SCH.plastisch_pruefen(self.model)
+        except Exception as ex:            # noqa: BLE001 - ein Hinweis sperrt nie
+            self.log.appendPlainText(f"Prüfung „Kraft ohne Fläche“ vor der plastischen Rechnung nicht möglich: {ex}")
+            return True
+        if not h["text"]:
+            return True
+        self.log.appendPlainText(f"WARNUNG – BITTE LESEN: {h['text']}")
+        self.bottom_tabs.setCurrentIndex(0)
+        wahl = self._plastisch_frage(h)
+        if wahl == "kreisring":
+            erg = self._scheiben_umstellen(alle=True)
+            self.log.appendPlainText("Plastische Rechnung: Scheiben auf Kreisring umgestellt, es wird gerechnet")
+            return bool(erg["umgestellt"]) or not erg["offen"]
+        if wahl == "rechnen":
+            self.log.appendPlainText("Plastische Rechnung trotz Kraft ohne Fläche – vom Anwender bestätigt")
+            return True
+        self.info("Berechnung abgebrochen: Kraft ohne Fläche in einer plastischen Rechnung (Protokoll)")
+        return False
+
+    def _plastisch_frage(self, h: dict) -> str:
+        """Der Dialog zu :meth:`_plastisch_einleitung_bestaetigen` - die Tests
+        ueberschreiben ihn. "abbrechen" | "rechnen" | "kreisring"; waehrend
+        einer Rechnung wird nicht gefragt (abbrechen)."""
+        if self._modal_gesperrt("Rückfrage „Plastische Rechnung“ während der Rechnung verneint", h["text"]):
+            return "abbrechen"
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Plastische Rechnung: Kraft ohne Fläche")
+        box.setText(h["text"] + "\n\nAbbrechen, trotzdem rechnen oder die Scheiben auf einen Kreisring "
+                                "umstellen (Normmaße als Annahme, Rückgängig mit Strg+Z)?")
+        b_ab = box.addButton("Abbrechen", QtWidgets.QMessageBox.RejectRole)
+        b_ring = (box.addButton("Auf Kreisring umstellen und rechnen", QtWidgets.QMessageBox.AcceptRole)
+                  if h.get("lochrand") else None)
+        b_rech = box.addButton("Trotzdem rechnen", QtWidgets.QMessageBox.DestructiveRole)
+        box.setDefaultButton(b_ab)
+        box.setEscapeButton(b_ab)
+        box.exec()
+        k = box.clickedButton()
+        return "kreisring" if b_ring is not None and k is b_ring else "rechnen" if k is b_rech else "abbrechen"
 
     def _kontaktzustand_zuletzt(self):
         """Der Kontaktzustand der gerade gezeigten statischen Loesung - die
@@ -30416,6 +30599,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         epfad = erg.pfad_zu(p)
         datei_hinweis = ""
+        # vorn in der Statuszeile nach dem Oeffnen (16.10.2026): Status und Hinweise
+        # zur Ergebnisdatei - sonst ueberschrieb „Ergebnisse geladen …“ die Zeile
+        # „⚠ Ergebnis vorläufig …“ aus _solve_done
+        status_vorn = []
         if os.path.exists(epfad):
             self._fortschritt_beginnen(1000, f"Ergebnisse laden: {os.path.basename(epfad)} …",
                                        abbrechbar=False)
@@ -30445,11 +30632,23 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Datei von vor dem 06.10.2026: geladen, aber nicht still als
                     # passend (F06) - Statuszeile und Protokoll sagen es
                     self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
-                # Ergebnisdatei von vor dem 15.10.2026 zu einem Modell mit Reibung:
-                # gerechnet ohne die konsistente Tangente; die Ergebnisse bleiben
-                reib = (getattr(an, "info", None) or {}).get("reibverfahren_vorbehalt")
-                if reib:
-                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {reib}"
+                # Mit aelterem Rechenverfahren gerechnet (16.10.2026, rechenverfahren;
+                # am 15.10.2026 nur das Reibverfahren): die Ergebnisse gelten,
+                # Statuszeile und Protokoll nennen das Verfahren
+                # vor einer Fehlerkorrektur gerechnet: Status statt nur Hinweis - vorn
+                # in der Statuszeile, im Protokoll (Kopfzeile, Zusammenfassung und
+                # Bericht nennen ihn auch); die Ergebnisse bleiben
+                betroffen = (getattr(an, "info", None) or {}).get("verfahren_betroffen")
+                if betroffen:
+                    zeile = f"⚠ {betroffen} (Ergebnisdatei {os.path.basename(epfad)})"
+                    self.hinweis(zeile)
+                    status_vorn.append(zeile)
+                vorl = self._vorlaeufig_text()
+                if vorl:
+                    status_vorn.append(vorl)
+                verfahren = (getattr(an, "info", None) or {}).get("verfahren_hinweis")
+                if verfahren:
+                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {verfahren}"
                     self.hinweis(datei_hinweis)
         # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
         # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
@@ -30475,9 +30674,10 @@ class MainWindow(QtWidgets.QMainWindow):
             status_hinweise.append("Hinweis: Vorspannung aus RFEM steht als eingeprägte Dehnung (ΔT), zu prüfen – "
                                    "Lasten › Vorspannung, Lastart „" + _vk_.LASTART_UMWANDELN
                                    + "“ oder Anfangs-/Endvorspannung")
-        if status_hinweise and datei_hinweis:
+        if (status_hinweise or status_vorn) and datei_hinweis:
             # der Hinweis zur Ergebnisdatei bleibt in der Statuszeile stehen
             status_hinweise.insert(0, "Hinweis: " + datei_hinweis)
+        status_hinweise = status_vorn + status_hinweise
         if status_hinweise:
             self._hinweis_statuszeile(" · ".join(status_hinweise))
         # Modell und Ergebnisse sind die der Datei

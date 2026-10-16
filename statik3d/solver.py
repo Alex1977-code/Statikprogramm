@@ -1948,6 +1948,9 @@ class Results:
                      + (f", davon {pz['faktorisierungen']} mit neuer Faktorisierung "
                         "(konsistente Tangente)" if pz.get("faktorisierungen") else "")
                      + ("" if pz.get("konvergiert", True) else " - NICHT KONVERGIERT"))
+            # Seit dem 16.10.2026 (Auftrag des Anwenders): Traglast, Mechanismus,
+            # Gueltigkeitsgrenze, ε_p,max mit Ort, ΣR und ΣM
+            s.extend(plastisch_zeilen(pz))
             # Abbruch ingenieurmaessig (13.10.2026): die ausgenommenen
             # netzabhaengigen Stellen sind dort nicht auskonvergiert
             n_aus = len((pz.get("spitzen") or {}).get("ausgenommen") or [])
@@ -2376,13 +2379,25 @@ def gueltigkeit(info) -> str:
     konvergiert“ (:func:`konvergenz_zustand`): da fehlt Genauigkeit, hier
     stimmt das Modell nicht."""
     info = info if isinstance(info, dict) else {}
+    # Plastische Rechnung (16.10.2026, Auftrag des Anwenders): Traglast
+    # ueberschritten, Mechanismus und Gueltigkeitsgrenze machen das ganze Ergebnis
+    # ungueltig - auch wenn es (beim letzten konvergierten Zustand) konvergiert ist
+    plast = plastisch_ungueltig(info)
+    if plast:
+        return "NICHT gültig: " + plast
     e = info.get("auto_gehalten") or []
     if not e:
         # Seit dem 14.10.2026 auch: die globale Gleichgewichtskontrolle ueber
         # gleichgewicht.UNGUELTIG. Ein vorlaeufiges (nicht konvergiertes)
         # Ergebnis bleibt vorlaeufig - die Zeile der Kontrolle steht dort trotzdem.
         from . import gleichgewicht as _gg
-        text = _gg.verletzt_text(info.get("gleichgewicht_global") or {})
+        gl = info.get("gleichgewicht_global") or {}
+        # Das Residuum der inneren Kraefte (16.10.2026) gilt auch fuer ein nicht
+        # konvergiertes Ergebnis - nur ein vorlaeufiger Kontakt bleibt vorlaeufig
+        r_text = _gg.residuum_text(gl)
+        if r_text and not kontakt_vorlaeufig(info):
+            return "NICHT gültig: " + r_text
+        text = _gg.verletzt_text(gl)
         if not text or kontakt_vorlaeufig(info) or konvergenz_zustand(info).startswith("NICHT"):
             return ""
         return "NICHT gültig: " + text
@@ -2392,6 +2407,61 @@ def gueltigkeit(info) -> str:
     return ("NICHT gültig: Mechanismus – " + "; ".join(kurz) + (" …" if n > 3 else "")
             + (" wird" if n == 1 else f" ({n} Lasten) werden")
             + " von keinem Bauteil getragen (automatisch gehaltene Freiheitsgrade)")
+
+
+def plastisch_zeilen(pz: dict) -> list:
+    """Die Zeilen der Zusammenfassung zu Traglast, Mechanismus, Gueltigkeitsgrenze,
+    ε_p,max mit Ort und ΣR/ΣM einer plastischen Rechnung (16.10.2026)."""
+    from . import plastizitaet as pl
+    from .zahlen import zahl_text as _z
+    z = []
+    tl = pz.get("traglast")
+    if isinstance(tl, dict) and tl.get("ueberschritten"):
+        z.append(f"NICHT GÜLTIG            : {tl.get('text', 'Traglast überschritten')}")
+    mech = pz.get("mechanismus")
+    if isinstance(mech, dict) and mech.get("text"):
+        z.append(f"NICHT GÜLTIG            : {mech['text']}")
+    dg = pz.get("dehnungsgrenze")
+    if isinstance(dg, dict) and dg.get("verletzt"):
+        z.append(f"NICHT GÜLTIG            : {dg.get('text', 'außerhalb der Theorie kleiner Verzerrungen')}")
+    if isinstance(pz.get("eps_p_ort"), dict):
+        z.append("ε_p,max                 : " + pl.eps_p_ort_text(pz["eps_p_ort"])
+                 + (f" (Grenze {_z(float(dg['grenze']) * 100.0, stellen=4)} %, {dg.get('quelle', '')})"
+                    if isinstance(dg, dict) and dg.get("grenze") else ""))
+    if pz.get("summe_R") is not None:
+        z.append("ΣR / ΣM (Lager)         : " + summen_text(pz["summe_R"], pz.get("summe_M") or [0.0] * 3,
+                                                            pz.get("summe_x0") or [0.0] * 3))
+    return z
+
+
+def summen_text(R, M, x0) -> str:
+    """„ΣR = (−1 147,500; 0,000; 0,000) kN, ΣM = (…) kNm um (…) m“ - feste drei
+    Nachkommastellen in kN bzw. kNm wie die Gleichgewichtskontrolle (nie wissenschaftlich)."""
+    from . import gleichgewicht as _gg
+    return (f"ΣR = ({_gg._z(R[0] / 1e3)}; {_gg._z(R[1] / 1e3)}; {_gg._z(R[2] / 1e3)}) kN, "
+            f"ΣM = ({_gg._z(M[0] / 1e3)}; {_gg._z(M[1] / 1e3)}; {_gg._z(M[2] / 1e3)}) kNm um "
+            f"({_gg._z(x0[0])}; {_gg._z(x0[1])}; {_gg._z(x0[2])}) m")
+
+
+def plastisch_ungueltig(info) -> str:
+    """Der Grund, aus dem eine plastische Rechnung nicht gueltig ist, oder "":
+    „Traglast überschritten bei Lastfaktor …“ (mit dem Mechanismus, wenn erkannt),
+    „außerhalb der Theorie kleiner Verzerrungen …“ (Gueltigkeitsgrenze ε_p,max).
+    Auftrag des Anwenders vom 16.10.2026, Punkte 1, 4 und 5."""
+    pz = (info or {}).get("plastizitaet") if isinstance(info, dict) else None
+    if not isinstance(pz, dict):
+        return ""
+    teile = []
+    tl = pz.get("traglast")
+    if isinstance(tl, dict) and tl.get("ueberschritten"):
+        teile.append(str(tl.get("text") or "Traglast überschritten"))
+    mech = pz.get("mechanismus")
+    if isinstance(mech, dict) and mech.get("text"):
+        teile.append(str(mech["text"]))
+    dg = pz.get("dehnungsgrenze")
+    if isinstance(dg, dict) and dg.get("verletzt"):
+        teile.append(str(dg.get("text") or "außerhalb der Theorie kleiner Verzerrungen"))
+    return "; ".join(teile)
 
 
 def auto_gehalten_zeilen(info) -> list:
@@ -4100,6 +4170,30 @@ def _plastisch(model) -> bool:
     return bool(pz is not None and getattr(pz, "an", False))
 
 
+def _einleitung_plastisch_melden(model, progress) -> None:
+    """Vor einer plastischen Rechnung deutlich melden, wenn Kraft ohne Flaeche
+    in ein Volumen geht oder eine starre Scheibe nur am Lochrand haengt (seit
+    16.10.2026, Entscheidung des Anwenders: „in plastischen Rechnungen vor dem
+    Start deutlich hervorheben“). Die Oberflaeche fragt vorher nach; ohne sie,
+    im Skript, ist das die eine Zeile, die es sagt. Elastisch geschieht nichts
+    (es bleibt bei der Warnung der Netzabnahme). Haelt nie etwas auf."""
+    if not _plastisch(model):
+        return
+    try:
+        from .scheibeneinleitung import plastisch_zeile
+        z = plastisch_zeile(model)
+    except Exception:                         # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return
+    if not z:
+        return
+    if progress is None:
+        # ohne Empfaenger auf die Fehlerausgabe (logging, lastResort)
+        import logging
+        logging.getLogger("statik3d").warning(z)
+    else:
+        _melde(progress, z)
+
+
 def _nichtlinear(model, ausfall: bool = None) -> bool:
     """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt, bei
     Fliessen (plastische Dehnungen ueberlagern sich nicht, 17.09.2026) - und
@@ -4481,7 +4575,8 @@ def konvergenz_zustand(info) -> str:
         gruende.append(str(info["vorlaeufig"]["text"]))
     pz = info.get("plastizitaet")
     if isinstance(pz, dict) and pz.get("konvergiert", True) is False:
-        gruende.append("Plastizität nicht konvergiert")
+        tl = pz.get("traglast") if isinstance(pz.get("traglast"), dict) else None
+        gruende.append(tl.get("text") or "Traglast überschritten" if tl else "Plastizität nicht konvergiert")
     if any("nicht konvergiert" in str(z_) for z_ in (info.get("ausfall_log") or [])):
         gruende.append("Ausfall-Iteration nicht konvergiert")
     # Zugstaebe in der Konvergenzbedingung (13.10.2026): ein aktiver Zugstab
@@ -4736,7 +4831,11 @@ class _KontaktImNewton:
         self.rechnen, self.res, self.log = rechnen, res, log
         self.gemeinsam = bool(gemeinsam)
         self.tol = float(tol)
-        self.halter = {"start": start, "R": None, "aktiv": aktiv, "abgekuerzt": False}
+        self.halter = {"start": start, "R": None, "aktiv": aktiv, "abgekuerzt": False, "r_ct": None}
+        # Residuum der Laststufe (16.10.2026): freie FHG und die Zonen des
+        # ingenieurmaessigen Abbruchs setzt _plastizitaet_rechnen
+        self.frei = None
+        self.zonen = None
         self.aufrufe: list = []     # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
         self._stufe = None
         self._stufen = 0
@@ -4803,7 +4902,9 @@ class _KontaktImNewton:
     def loesen(self, Fg, dK=None, voll=True):
         res, halter = self.res, self.halter
         vor = len(res.info.get("laeufe") or [])
+        res._kontakt_residuum = None
         u_, R_, a_ = self.rechnen(Fg, halter["start"], dK, None if voll else 1)
+        halter["r_ct"] = getattr(res, "_kontakt_residuum", None)
         if self._stab:
             self._stab_verlauf.append(self._stab_lesen())
         laeufe = res.info.get("laeufe") or []
@@ -4895,7 +4996,12 @@ class _KontaktImNewton:
         return any(not e.get("konvergiert", True) and not e.get("abgekuerzt") and not e.get("verworfen")
                    for e in laeufe[marke["lauf"]:])
 
-    def residuum_stufe(self, F_k, k) -> tuple:
+    def kontakt_residuum(self):
+        """Das innere Residuum des Kontakts der letzten Loesung (solver.kontakt_residuum)
+        oder None (ohne Kontakt)."""
+        return self.halter.get("r_ct")
+
+    def residuum_stufe(self, F_k, k, r=None, bezug: float = None) -> tuple:
         """Vorschlag 4 (14.10.2026): das Residuum am Ende einer Laststufe - das
         Gleichgewicht |Summe R + Summe F_k| der letzten Loesung (die plastische Last
         F_p und die Tangente dK tragen zur Summe nichts bei), bezogen auf die Summe
@@ -4933,14 +5039,48 @@ class _KontaktImNewton:
         # konvergierter ist schon als vorlaeufig gekennzeichnet, und ob er die Stufe
         # haelt, entscheidet plastizitaet.KONTAKT_IN_KONVERGENZ (aus bis zur Freigabe)
         kontakt_konv = bool(laeufe[-1].get("konvergiert", True)) if laeufe else True
-        ok = gg <= ABSCHLUSS_GLEICHGEWICHT or not kontakt_konv
         from .zahlen import zahl_text as _z
-        text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
-                f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
-                + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else "")
-                + ("" if gg <= ABSCHLUSS_GLEICHGEWICHT else
-                   " - die Stufe ist nicht konvergiert" if kontakt_konv else
-                   " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet"))
+        # Das innere Residuum der Stufe (16.10.2026, plast/traglast): die Summe gg ist
+        # fuer jedes u null (Phi^T (F + R) = Phi^T K u) - am Pruefblech mit 900 kN
+        # „erfuellt“ bei 4,56 m Einsenkung. Gemessen wird an den freien FHG das
+        # Residuum der letzten Loesung der Stufe mit den inneren Kraeften
+        # (plastizitaet._newton: F_p(u) - F_p + dK (u - u_vor), dazu das des Kontakts
+        # nach seinem Gesetz), bezogen auf die Lasten (bei Endvorspannung mit der
+        # Sollkraft) wie die Abbruchtoleranz; die ausgenommenen Zonen getrennt.
+        # Schranke ist die Toleranz der Plastizitaet: eine Stufe, deren Newton sie
+        # erreicht hat, liegt darunter. Die Summe bleibt dazu Pflicht.
+        innen = None
+        if r is not None:
+            rv = np.asarray(r, float).copy()
+            frei = self.frei if self.frei is not None else np.ones(rv.size, bool)
+            rv[~frei] = 0.0
+            zone = np.zeros(rv.size, bool)
+            z = self.zonen
+            if z is not None and getattr(z, "ingenieur", False) and getattr(z, "auffaellig", None):
+                z._masken()
+                zone[np.asarray(z._innen_dof, np.int64)] = True
+            b = float(bezug) if bezug else (float(np.linalg.norm(np.asarray(F_k, float))) or 1.0)
+            aussen = float(np.linalg.norm(rv[~zone])) / b
+            in_z = float(np.linalg.norm(rv[zone])) / b if zone.any() else None
+            schranke = float(getattr(getattr(model, "plastizitaet", None), "toleranz", 1e-3) or 1e-3)
+            innen = (aussen, in_z, schranke, float(np.linalg.norm(rv[~zone])))
+            self.letzte_stufe = {"aussen": aussen, "zonen": in_z, "schranke": schranke, "summe": gg}
+        gg_ok = gg <= ABSCHLUSS_GLEICHGEWICHT
+        in_ok = innen is None or innen[0] <= innen[2]
+        ok = (gg_ok and in_ok) or not kontakt_konv
+        if innen is not None:
+            text = (f"Plastizität: Laststufe {k}: Residuum am Ende - inneres Gleichgewicht "
+                    f"{_z(innen[3] / 1e3, stellen=3)} kN = {innen[0]:.1e} der Lasten (Schranke {innen[2]:.0e})"
+                    + (f", in den ausgenommenen Zonen {innen[1]:.1e}" if innen[1] is not None else "")
+                    + f"; Summe der Kräfte {_z(rest / 1e3, stellen=3)} kN = {gg:.1e}"
+                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+        else:
+            text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
+                    f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
+                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+        text += ("" if (gg_ok and in_ok) else
+                 " - die Stufe ist nicht konvergiert" if kontakt_konv else
+                 " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet")
         return text, ok
 
     def halbieren_am_deckel(self, marke, anteil: float) -> tuple:
@@ -5488,7 +5628,7 @@ def _kaltstart_nicht_proportional(model, F, F_S):
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                           gemeinsam: bool = False, F_sofort=None, system=None, factors=None, feq=None,
                           plast_start=None, plast_merken: bool = False, feq_sofort_dazu=None,
-                          vorab=None):
+                          vorab=None, bezug_F=None):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
     Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
     Zusatzlast F_p, mit Kontakt warm gestartet vom letzten Zustand.
@@ -5525,6 +5665,10 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     iteriert = model.has_contact or model.hat_ausfallstaebe()
     zonen = _spitzen_im_newton(model, system, factors, feq, temp, log, aktiv,
                                reaktionen=lambda: kn.halter["R"])
+    kn.zonen = zonen
+    if getattr(system, "fi", None) is not None:
+        kn.frei = np.zeros(model.ndof, bool)
+        kn.frei[np.asarray(system.fi, np.int64)] = True
     if zonen is not None and feq_sofort_dazu:
         for i, v in feq_sofort_dazu.items():
             zonen.feq_sofort[i] = zonen.feq_sofort.get(i, 0.0) + v
@@ -5538,10 +5682,14 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                                          loesen_tangente=kn.loesen,
                                          kontakt=kn if iteriert else None,
                                          F_sofort=F_sofort, sigma0=sigma0, zonen=zonen,
-                                         start=plast_start)
+                                         start=plast_start, bezug_F=bezug_F)
     if plast_merken:
         res._plast_ende = (zustand, F_p)
     halter, aufrufe = kn.halter, kn.aufrufe
+    # Traglast, Gueltigkeitsgrenze, ε_p,max mit Ort, ΣR/ΣM und das Residuum der
+    # inneren Kraefte (Auftrag vom 16.10.2026)
+    _plastisch_bewerten(model, res, info, zustand, halter.get("R"), system, zonen, log,
+                        F if bezug_F is None else bezug_F)
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
         _schlussabnahme_kontakt(res)
@@ -5582,6 +5730,72 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     res.info["plastisch"] = {int(i): float(np.max(v)) for i, v in zustand.eps_p_eq.items()
                              if float(np.max(v)) > 0}
     return u, halter["R"], halter["aktiv"], temp
+
+
+def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: list, bezug_F) -> None:
+    """Was jeder plastische Lauf seit dem 16.10.2026 meldet (Auftrag des Anwenders,
+    Punkte 1, 5 und 7): ε_p,max mit Ort (plastizitaet.eps_p_ort), die
+    Gueltigkeitsgrenze (plastizitaet.dehnungsgrenze_pruefen), ΣR und ΣM der
+    Lagerkraefte des gezeigten Zustands und - fuer die Gleichgewichtskontrolle
+    mit inneren Kraeften (gleichgewicht.residuum) - das Residuum an den freien
+    Freiheitsgraden, ohne die FHG ausgenommener Zonen (ingenieurmaessiger
+    Abbruch: dort ist es mit Absicht nicht auskonvergiert). Alles ins Protokoll;
+    die Zusammenfassung liest es aus res.info."""
+    from . import gleichgewicht as _gg
+    from . import plastizitaet as pl
+    r_vec = info.pop("_residuum", None)
+    # Die letzte Zeile des Protokolls bleibt die Zusammenfassung des Fliessens
+    # („Plastizität: n Elemente fließen …“): die Rechenliste zeigt die letzte Zeile
+    # eines Postens (tests/test_vorspannung_sofort). Die Zeilen hier kommen davor.
+    import re as _re
+    stelle = next((k for k in range(len(log) - 1, -1, -1)
+                   if _re.match(r"Plastizität: \d+ Elemente? fließ", str(log[k]))), len(log))
+    neu: list = []
+    try:
+        ort = pl.eps_p_ort(model, zustand)
+        info["eps_p_ort"] = ort
+        neu.append("Plastizität: " + pl.eps_p_ort_text(ort))
+    except Exception as ex:                       # noqa: BLE001 - Ausgabe haelt nichts auf
+        neu.append(f"Plastizität: Ort von ε_p,max nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
+    dg = pl.dehnungsgrenze_pruefen(model, zustand, model.plastizitaet)
+    info["dehnungsgrenze"] = dg
+    if dg.get("verletzt"):
+        neu.append("Plastizität: NICHT GÜLTIG – " + dg["text"])
+    if R is not None:
+        nn = int(model.nn)
+        X = np.asarray(model.nodes, float)[:nn]
+        x0 = 0.5 * (X.min(axis=0) + X.max(axis=0))
+        Rk = _gg._knotenteil(R, nn)
+        SR = Rk[:, :3].sum(axis=0)
+        SM = (np.cross(X - x0, Rk[:, :3]) + Rk[:, 3:]).sum(axis=0)
+        info["summe_R"], info["summe_M"], info["summe_x0"] = ([float(v) for v in SR], [float(v) for v in SM],
+                                                             [float(v) for v in x0])
+        neu.append("Plastizität: " + summen_text(info["summe_R"], info["summe_M"], info["summe_x0"])
+                   + " – Lagerkräfte des gezeigten Zustands")
+    if r_vec is None:
+        log[stelle:stelle] = neu
+        return
+    r = np.asarray(r_vec, float).copy()
+    frei = np.zeros(r.size, bool)
+    fi = getattr(system, "fi", None) if system is not None else None
+    if fi is not None:
+        frei[np.asarray(fi, np.int64)] = True
+    else:
+        frei[:] = True
+    if zonen is not None and getattr(zonen, "ingenieur", False) and getattr(zonen, "auffaellig", None):
+        zonen._masken()
+        frei[np.asarray(zonen._innen_dof, np.int64)] = False
+    r[~frei] = 0.0
+    res._residuum_plastisch = r
+    res._residuum_frei = frei
+    res._residuum_bezug = np.asarray(bezug_F, float)
+    rinfo = _gg.residuum(model, r, bezug_F)
+    res._residuum_info = rinfo
+    neu.append(f"Plastizität: Residuum der inneren Kräfte an den freien Freiheitsgraden {_gg._z(rinfo['norm'] / 1e3)} kN "
+               f"= {_gg.rel_text(rinfo['rel'])} der Lasten"
+               + (" – NICHT GÜLTIG, die Spannungen halten der Last nicht das Gleichgewicht"
+                  if rinfo["verletzt"] else ""))
+    log[stelle:stelle] = neu
 
 
 def _startherkunft_eintragen(res, start, start_von, ausfallweg: bool) -> None:
@@ -5668,8 +5882,13 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     # Vorspannkraefte sofort voll (10.10.2026) - Zwangsverformungen und
     # Uebermasse gibt _rechnen ohnehin in jedem Aufruf voll mit
     F_S = case_sofort(model, factors, aktiv) if _plastisch(model) else None
+    F_bezug = None
     if zusatz is not None:
         F, feq, F_S = _zusatz_einrechnen(model, zusatz, F, feq, F_S)
+        if zusatz.get("F_bezug") is not None and zusatz.get("F") is not None:
+            # Bezug der Toleranz und der Gleichgewichtskontrolle: die Lasten mit dem
+            # Kraeftepaar der Sollkraft statt der Verriegelungskraft (16.10.2026)
+            F_bezug = F - np.asarray(zusatz["F"], float) + np.asarray(zusatz["F_bezug"], float)
     us = case_prescribed(model, factors, warn=progress)
     ueber = case_uebermass(model, factors)
     # Zug-/Druckstaebe und Seile: die Kraft ihrer Anfangsdehnung (Temperatur,
@@ -5719,6 +5938,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             res.info["ausfall_log"] = alog
             if kontakt is not None:
                 res.contact, res.contact_forces, cinfo = kontakt
+                res._kontakt_residuum = getattr(system, "_kontakt_residuum", None)
                 if warm_a:
                     res.kontaktzustand = cinfo.pop("contact_state_weiter", None)
                     cinfo.pop("contact_state", None)
@@ -5733,6 +5953,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             # Derselbe Ausdruck wie unten im Aufruf, nur fuer das Laufbuch
             st_eff = None if (probelauf and start_ is None) else st
             von_lauf = _start_von_lauf(st_eff)
+            system._kontakt_residuum = None
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, Fg, progress=progress, us=us, uebermass=ueber,
                 # Der Probelauf verwirft den Warmstart des **vorigen
@@ -5755,9 +5976,11 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 # dann ist der Zustand kein fremder, siehe fortsetzung unten
                 fortsetzung=start_ is not None)
             res.kontaktzustand = cinfo.pop("contact_state", None)
+            res._kontakt_residuum = getattr(system, "_kontakt_residuum", None)
             res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], von_lauf))
             zustaende.append((len(res.info["laeufe"]), res.kontaktzustand))
             return u_, R_, aktiv
+        res._kontakt_residuum = None
         u_ = system.solve(Fg, K_extra=K_zusatz, us=us)
         return u_, system.reactions(u_, Fg, K_zusatz), aktiv
 
@@ -5838,6 +6061,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         pl_extra = {} if zusatz is None else {
             "plast_start": zusatz.get("plast_start"), "plast_merken": bool(zusatz.get("plast_merken")),
             "feq_sofort_dazu": zusatz.get("feq")}
+        if F_bezug is not None:
+            pl_extra["bezug_F"] = F_bezug
         if zs is not None and start_pl is zs:
             # Vorschlag 1 (14.10.2026): Kontaktstatus der ersten Stufe kalt, wenn
             # ihre Last nicht proportional zur Last des Vorlaufs ist - nur der
@@ -5954,6 +6179,10 @@ def _gleichgewicht_pruefen(model: Model, res: Results, F) -> None:
         from . import gleichgewicht as _gg
         g = _gg.pruefen(model, res, F)
         if g:
+            # mit den inneren Kraeften der plastischen Rechnung (16.10.2026)
+            ri = getattr(res, "_residuum_info", None)
+            if ri:
+                g["residuum"] = dict(ri)
             res.info["gleichgewicht_global"] = g
     except Exception as ex:                  # noqa: BLE001 - die Pruefung ist Beiwerk
         res.info["gleichgewicht_global_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"
@@ -6397,6 +6626,7 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
     Winkelrahmen: uz in Kragarmmitte -0,2470 statt -3,5971 mm wie
     solve_cases). Ein uebergebenes System gilt, wie es ist."""
     factors, name = _lastfall_faktoren(model, case)
+    _einleitung_plastisch_melden(model, progress)
     if system is None:
         sit = _situation_der_faelle(model, list(factors))
         if sit != GRUNDSTELLUNG:
@@ -6566,6 +6796,7 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     if referenzen:
         names = _mit_referenzen_zuerst(list(names), referenzen)
     out = {}
+    _einleitung_plastisch_melden(model, progress)
 
     def _einfrieren(name):
         ref = referenzen.get(name)
@@ -8097,6 +8328,33 @@ def _weg_aus_spannung(model: Model) -> float:
     return wert
 
 
+def kontakt_residuum(model: Model, system, cs, F, u, K_zusatz=None) -> np.ndarray:
+    """Das innere Residuum einer Kontaktloesung (16.10.2026, plast/traglast): an den
+    freien Freiheitsgraden F + f_c(u) − (K + K_zusatz) u, mit den Kontaktkraeften
+    f_c, die das Kontaktgesetz in dieser Loesung ergibt (ContactSystem.nodal_forces
+    nach kraefte_der_loesung). Die Loesung selbst rechnet mit den Kraeften ihres
+    Zustands (Fc, C^T lambda, Kc u); was davon abweicht - Zug gekappt, Reibkraft
+    ueber dem Kegel, eine Reststeifigkeit, die Kraft traegt -, steht hier. An den
+    gesperrten FHG 0 (dort ist es die Lagerkraft).
+
+    Gemessen an den Kontaktmodellen von tests/test_plastizitaet (Block mit Reibung,
+    drehlagerartiges Modell, gequetschter Block): konvergierte Laeufe 1e-15 bis
+    1,6e-6 von ‖F‖ an den freien FHG; mit dem falschen Vorzeichen von f_c waere es
+    die Groessenordnung der Last. Die Summenkontrolle (Φᵀ(F + R) = Φᵀ K u) ist
+    dagegen fuer jedes u null."""
+    n = int(model.nn)
+    f = np.zeros(model.ndof)
+    if cs is not None and getattr(cs, "cons", None):
+        fv = f[:6 * n].reshape(-1, 6)
+        fv[:, :3] += np.asarray(cs.nodal_forces(n), float)
+    K = system.K if K_zusatz is None else system.K + K_zusatz
+    r = np.asarray(F, float) + f - K @ np.asarray(u, float)
+    frei = np.zeros(model.ndof, bool)
+    frei[np.asarray(system.fi, np.int64)] = True
+    r[~frei] = 0.0
+    return r
+
+
 def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, merker: dict):
     """Prueft das Ingenieurkriterium (ABSCHLUSS_*) fuer die Loesung ``u`` gegen die
     vorige ``u_vor``. Rueckgabe None (nicht erfuellt; Kraefte unveraendert) oder ein
@@ -8177,10 +8435,24 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     Rk = R[:n6].reshape(-1, NDOF)[:, :3].sum(0) + cs.support_reactions(model.nn).sum(0)
     gg = float(np.linalg.norm(Rk + Fk)) / bez
     aus["gleichgewicht"] = gg
-    if gg > ABSCHLUSS_GLEICHGEWICHT:
+    # Inneres Residuum dieser Loesung (16.10.2026, plast/traglast): die Summe oben ist
+    # fuer jedes u null (Φᵀ K u); geprueft wird darum zusaetzlich F + f_c(u) − (K + K_zusatz) u
+    # an den freien FHG mit den Kontaktkraeften nach dem Gesetz, bezogen auf ‖F‖ dort -
+    # mit derselben Schranke. Gemessen an den angenommenen Zustaenden der Kontakt-
+    # pruefungen (test_ingenieur_warm, test_kontakt_exakt, _pendeln, _warmstart,
+    # test_reibungstangente; 16 Annahmen): 4e-15 bis 1,6e-14 - die Schranke nimmt dort
+    # nichts weg, faengt aber jeden Zustand, dessen Kraefte nicht zur Loesung passen.
+    # K_zusatz (die Tangente der Plastizitaet) kommt ueber ``merker`` - die Signatur
+    # bleibt, Pruefungen ersetzen diese Funktion (tests/test_ingenieur_warm)
+    r_in = kontakt_residuum(model, system, cs, F, u, merker.get("_K_zusatz"))
+    b_in = float(np.linalg.norm(np.asarray(F, float)[np.asarray(system.fi, np.int64)])) or 1.0
+    aus["inneres_residuum"] = float(np.linalg.norm(r_in)) / b_in
+    if gg > ABSCHLUSS_GLEICHGEWICHT or aus["inneres_residuum"] > ABSCHLUSS_GLEICHGEWICHT:
         for c, (fn, ft, g, zr) in zip(cs.cons, vorher):     # nicht angenommen: wie vorher
             c.Fn, c.Ft, c.g, c.zug_roh = fn, ft, g, zr
-        merker["abgelehnt"] = f"Gleichgewicht {gg:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}"
+        merker["abgelehnt"] = (f"Gleichgewicht {gg:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}"
+                               if gg > ABSCHLUSS_GLEICHGEWICHT else
+                               f"inneres Residuum {aus['inneres_residuum']:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}")
         return None
     return aus
 
@@ -8694,6 +8966,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             Rk = R[:n6].reshape(-1, NDOF)
             Rk[:, :3] += Rsup
             R[:n6] = Rk.ravel()
+            system._kontakt_residuum = kontakt_residuum(model, system, cs, F, u, K_zusatz)
             log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
                        "Referenzzustands, lineare Lösung ohne Iteration")
             log.extend(cs.warnings())
@@ -8760,6 +9033,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     if not cs.cons:
         u = system.solve(F, K_extra=K_zusatz, us=us)
         R = system.reactions(u, F, K_zusatz)
+        system._kontakt_residuum = None
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
                                                    "contact_log": log,
@@ -8898,6 +9172,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 and cs.phase == 2 and (wie_runde is not None or richtungen)):
             abschluss_merker.pop("abgelehnt", None)
             zyklus_runden += 1          # Aktivmenge oder Gleitrichtungen pendeln (erkannt)
+            abschluss_merker["_K_zusatz"] = K_zusatz
             ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
                                              abschluss_merker)
             abgelehnt = abschluss_merker.pop("abgelehnt", None)
@@ -8924,7 +9199,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
                         f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm, "
                         f"Schranke {ingenieur['du_grenze'] * 1e6:.3g} µm), "
-                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}; Normalbedingung: "
+                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}, inneres Residuum "
+                        f"{ingenieur.get('inneres_residuum', 0.0):.1e}; Normalbedingung: "
                         f"Zug höchstens {ingenieur['zug_max']:.3g} N, Durchdringung höchstens "
                         f"{ingenieur['durchdringung_max']:.3g} N (Schranke {ingenieur['normal_grenze']:.3g} N)")
                 log.append(text)
@@ -9231,6 +9507,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
+    # inneres Residuum der Loesung, die der Lauf zurueckgibt (16.10.2026) - am System,
+    # nicht im Laufbuch: die Plastizitaet liest es fuer ihr Residuum (Laststufe, Ende)
+    system._kontakt_residuum = kontakt_residuum(model, system, cs, F, u, K_zusatz)
     # Derselbe Entscheid wie der Meldetext oben, als Wort fuers Laufbuch
     grund = ("" if converged else "probelauf" if probelauf else "pendeln" if pendel_verletzt
              else "gleitrichtung" if gleit_verletzt
@@ -9609,6 +9888,10 @@ class Analysis:
         s += seil_querlast_gebuendelt(self.all_results().items())
         # Ergebnisse mit nicht konvergiertem Kontakt sind vorlaeufig (14.10.2026)
         s += vorlaeufig_gebuendelt(self.all_results().items())
+        # vor einer Fehlerkorrektur des Rechenverfahrens gerechnet (Ergebnisdatei,
+        # rechenverfahren, 16.10.2026): „Ergebnis möglicherweise betroffen – neu rechnen“
+        if self.info.get("verfahren_betroffen"):
+            s.append(f"WARNUNG: {self.info['verfahren_betroffen']}")
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)

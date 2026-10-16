@@ -606,7 +606,8 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         # nach 698 Minuten bei 94 % und kam nicht weiter; ein Arbeiter starb
         # vorher mit AssertionError in multiprocessing/connection.py
         # (_get_more_data, die Pipe brach) - 21.09.2026.
-        paket = _paket_schreiben(model, stripped, {k: (_strip(r), z) for k, (r, z) in zustaende.items()})
+        paket = _paket_schreiben(model, stripped, {k: (_strip(r) if r is not None else None, z)
+                                                   for k, (r, z) in zustaende.items()})
         try:
             jobs = [Job("design_members", {"paket": paket, "members": c})
                     for c in chunks]

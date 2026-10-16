@@ -121,7 +121,8 @@ def _job_design_members(members: list, paket: str = None, model: dict = None,
     for r in results.values():
         r.model = m
     for r, _z in zustaende.values():
-        r.model = m
+        if r is not None:          # spannstahl.GERECHNET: (None, Menge der Lastfaelle)
+            r.model = m
     return check_member_set(m, members, results, zustaende=zustaende)
 
 

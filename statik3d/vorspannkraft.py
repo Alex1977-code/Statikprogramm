@@ -413,7 +413,10 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
         res.info["vorspannung"] = info
         return res
     z = _spannzustand(model, system, soll, els, **kw)
-    zusatz = {"F": z["F"], "feq": z["feq"], "F_S": z["F"], "n0": z["n0"], "plast_start": z["plast"]}
+    if z.get("traglast") is not None:
+        return _traglast_im_spannschritt(model, z, soll, name, kind, progress)
+    zusatz = {"F": z["F"], "feq": z["feq"], "F_S": z["F"], "n0": z["n0"], "plast_start": z["plast"],
+              "F_bezug": z.get("F_bezug")}
     st = z["kontakt"] if z["kontakt"] is not None else start
     res = sv._solve_loads(model, system, factors, name, kind, start=st,
                           start_von="Spannschritt" if z["kontakt"] is not None else start_von,
@@ -437,7 +440,77 @@ def rechnen(model, system, factors: dict, name: str, kind: str, workers=None, pr
         v["stellen"] = ["Spannschritt"] + [x for x in (v.get("stellen") or []) if x != "Spannschritt"]
         v["text"] = f"{sv.VORLAEUFIG} in " + ", ".join(v["stellen"])
         res.info["vorlaeufig"] = v
+    # Eine Spannstufe, deren Plastizitaet nicht konvergierte, macht den Lastfall
+    # nicht konvergiert (16.10.2026): er startet von ihrem Zustand. Bis dahin ging
+    # nur ein vorlaeufiger Kontakt weiter
+    if z.get("nicht_konvergiert"):
+        pz = dict(res.info.get("plastizitaet") or {})
+        pz["konvergiert"] = False
+        pz["spannschritt_nicht_konvergiert"] = list(z["nicht_konvergiert"])
+        pz["log"] = list(pz.get("log") or []) + [
+            "Plastizität: Spannschritt nicht konvergiert in " + ", ".join(z["nicht_konvergiert"])
+            + " – der Lastfall startet von diesem Zustand"]
+        res.info["plastizitaet"] = pz
     res.vorspannzustaende = {"spannen": list(z["spannen"]), "verankert": z["verankert"]}
+    return res
+
+
+def _traglast_im_spannschritt(model, z: dict, soll: list, name: str, kind: str, progress=None):
+    """Das Ergebnis eines Lastfalls, dessen Spannschritt die Traglast
+    ueberschreitet (16.10.2026, Auftrag des Anwenders): der letzte konvergierte
+    Spannzustand, gekennzeichnet und nicht gueltig - kein Verriegeln, kein
+    Lastfall von einem Zustand ohne Gleichgewicht. Der Lastfaktor ist der Anteil
+    der Sollkraft der Gruppe; die Gleichgewichtskontrolle mit inneren Kraeften
+    misst gegen die **volle** Sollkraft (sie fehlt um (1 − Faktor) F_soll)."""
+    from . import gleichgewicht as gg
+    from . import solver as sv
+    from .zahlen import zahl_text as _z
+    tl = z["traglast"]
+    r0 = tl["r"]
+    res = copy.copy(r0)
+    res.beam_end = dict(r0.beam_end)
+    res.info = dict(r0.info)
+    res._cache = {}
+    res.name, res.kind = name, kind
+    a, a_v = float(tl["lastfaktor"]), float(tl["versuch"])
+    jetzt = [s for s in soll if int(s.gruppe) == int(tl["gruppe"])]
+    kraft = (", ".join(f"{s.stab} {_z(a * float(s.kraft) / 1e3, stellen=4)} von "
+                       f"{_z(float(s.kraft) / 1e3, stellen=4)} kN" for s in jetzt[:4])
+             + (" …" if len(jetzt) > 4 else ""))
+    text = (f"Traglast überschritten im Spannschritt (Gruppe {tl['gruppe']}) bei Lastfaktor "
+            f"{_z(a, stellen=4)} der Sollkraft ({kraft}; letzter konvergierter Zustand gezeigt; bei "
+            f"{_z(a_v, stellen=4)} kein Gleichgewicht)")
+    pz = dict(res.info.get("plastizitaet") or {})
+    fehl = (getattr(tl.get("r_fehl"), "info", None) or {}).get("plastizitaet") or {}
+    pz["traglast"] = {"ueberschritten": True, "lastfaktor": a, "versuch": a_v, "text": text,
+                      "spannschritt": True, "gruppe": int(tl["gruppe"])}
+    if isinstance(fehl.get("mechanismus"), dict):
+        pz["mechanismus"] = fehl["mechanismus"]
+    pz["konvergiert"] = False
+    pz["log"] = list(pz.get("log") or []) + ["Plastizität: " + text]
+    res.info["plastizitaet"] = pz
+    res.info["vorspannung"] = {"weg": WEG_SPANNEN, "reihenfolge": [list(g) for g in z["reihenfolge"]],
+                               "staebe": {s.stab: dict(z["staebe"][s.stab]) for s in soll},
+                               "zustaende": ["spannen"], "zeit_spannen": float(z["zeit"]),
+                               "spannstufen": int(z.get("spannstufen", 1)), "traglast": pz["traglast"]}
+    # Residuum gegen die volle Sollkraft der Gruppe: der gezeigte Zustand traegt nur
+    # den Anteil a_gezeigt; an den freien FHG fehlt (1 − a_gezeigt) F_sp dazu
+    r_alt = getattr(r0, "_residuum_plastisch", None)
+    frei = getattr(r0, "_residuum_frei", None)
+    if r_alt is not None and frei is not None:
+        F_sp = np.asarray(tl["F_sp"], float)
+        a_g = float(tl["a_gezeigt"])
+        a_r0 = a_g if tl["r"] is not tl["r_fehl"] else float(tl["versuch"])
+        # r_alt misst gegen die Last des Laufs r0 (Anteil a_r0); verlangt ist der Anteil 1
+        dazu = (1.0 - a_r0) * F_sp
+        r_neu = np.asarray(r_alt, float) + np.where(frei, dazu, 0.0)
+        bezug = np.asarray(tl["F_bez_lock"], float) + F_sp
+        g = dict(res.info.get("gleichgewicht_global") or {})
+        if g:
+            g["residuum"] = gg.residuum(model, r_neu, bezug)
+            res.info["gleichgewicht_global"] = g
+    res.vorspannzustaende = {"spannen": list(z["spannen"]), "verankert": None}
+    sv._melde(progress, text)
     return res
 
 
@@ -510,6 +583,13 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
     reihenfolge = []
     r = None
     u = None
+    # 16.10.2026: Bezug der Toleranz - die verriegelten Staebe mit ihrer Sollkraft
+    # (nicht mit der Verriegelungskraft P) -, Spannstufen ueber der Traglast und
+    # Spannstufen, deren Plastizitaet nicht konvergierte
+    from . import plastizitaet as pl
+    F_bez_lock = np.zeros(model.ndof)
+    traglast = None
+    nicht_konv: list = []
     for g in gruppen:
         jetzt = [s for s in soll if s.gruppe == g]
         reihenfolge.append([s.stab for s in jetzt])
@@ -525,30 +605,67 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                                 situation=getattr(system, "situation", "") or "")
         F_sp, _feq = _stablast(model, [(s.stab, s.kraft) for s in jetzt], basis)
         vorl = []               # Spannstufen vor der letzten mit nicht konvergiertem Kontakt
+        # Spannstufen mit Traglast (16.10.2026): ueberschreitet eine Stufe die
+        # Traglast (plastizitaet.TRAGLAST_ERKENNEN; im Lastfall ist nichts zu
+        # halbieren, die Spannkraft wirkt sofort voll), wird sie wie eine Laststufe
+        # halbiert, hoechstens plastizitaet.HALBIEREN_MAX-mal je Stufe; sonst endet
+        # der Spannschritt beim letzten konvergierten Anteil, und es wird nicht
+        # verriegelt (_traglast_im_spannschritt). Bis dahin ging eine nicht
+        # konvergierte Stufe weiter - am Pruefblech (900 kN) in die Verriegelung
+        # einer 4,56 m tief weggelaufenen Lage.
+        anteile = [(kk / n_st, 0) for kk in range(1, n_st + 1)]
+        a_alt, j = 0.0, 0
+        r_konv = None
         try:
             # n gleiche Stufen (spannstufen); jede vom Kontakt- und plastischen
             # Zustand der vorigen aus, in ihr wirkt ihre Kraft sofort voll (F_S).
             # Mit einer Stufe ist es der Spannschritt bis zum 14.10.2026, Zahl
             # fuer Zahl (1.0 * F_sp ist F_sp)
-            for k in range(1, n_st + 1):
-                F_k = F_lock + (k / n_st) * F_sp
+            while j < len(anteile):
+                a, tiefe = anteile[j]
+                j += 1
+                F_k = F_lock + a * F_sp
                 zus = {"F": F_k, "feq": dict(feq_lock), "F_S": F_k, "n0": n0,
-                       "plast_start": plast, "plast_merken": True, "ohne_grund": True}
-                name = f"Spannschritt Gruppe {g}" + (f", Stufe {k}/{n_st}" if n_st > 1 else "")
-                if n_st > 1:
-                    sv._melde(progress, f"{name}: {100.0 * k / n_st:.4g} % von F_soll".replace(".", ","))
+                       "plast_start": plast, "plast_merken": True, "ohne_grund": True,
+                       # Bezug: die verriegelten Staebe mit ihrer Sollkraft (16.10.2026)
+                       "F_bezug": F_bez_lock + a * F_sp}
+                n_jetzt = len(anteile)
+                name = f"Spannschritt Gruppe {g}" + (f", Stufe {j}/{n_jetzt}" if n_jetzt > 1 else "")
+                if n_jetzt > 1:
+                    sv._melde(progress, f"{name}: {100.0 * a:.4g} % von F_soll".replace(".", ","))
                 r = sv._solve_loads(model, sys_s, {}, name, "case", workers,
                                     progress, start=kontakt, probelauf=probelauf,
                                     start_von=None if kontakt is None else "Spannschritt",
                                     zusatz=zus)
+                pz_r = r.info.get("plastizitaet") or {}
+                if isinstance(pz_r.get("traglast"), dict) and pz_r["traglast"].get("ueberschritten"):
+                    if hasattr(r, "_plast_ende"):
+                        del r._plast_ende
+                    if tiefe < pl.HALBIEREN_MAX:
+                        anteile[j - 1] = (a, tiefe + 1)
+                        anteile.insert(j - 1, (0.5 * (a_alt + a), tiefe + 1))
+                        j -= 1
+                        sv._melde(progress, f"Spannschritt Gruppe {g}: bei {100.0 * a:.4g} % von F_soll "
+                                            f"Traglast überschritten – die Spannstufe wird halbiert".replace(".", ","))
+                        continue
+                    traglast = {"gruppe": int(g), "lastfaktor": float(a_alt), "versuch": float(a),
+                                "r": r_konv if r_konv is not None else r, "r_fehl": r,
+                                "F_lock": F_lock.copy(), "F_sp": F_sp, "F_bez_lock": F_bez_lock.copy(),
+                                "a_gezeigt": float(a_alt) if r_konv is not None else 0.0}
+                    break
+                if pz_r.get("konvergiert", True) is False:
+                    nicht_konv.append(name)
                 plast = getattr(r, "_plast_ende", None) or plast
                 if hasattr(r, "_plast_ende"):
                     del r._plast_ende
                 kontakt = getattr(r, "kontaktzustand", None) or kontakt
-                if k < n_st and isinstance(r.info.get("vorlaeufig"), dict):
-                    vorl.append(f"Spannstufe {k}/{n_st}")
+                if j < len(anteile) and isinstance(r.info.get("vorlaeufig"), dict):
+                    vorl.append(f"Spannstufe {j}/{len(anteile)}")
+                a_alt, r_konv = a, r
         finally:
             _freigeben(sys_s)
+        if traglast is not None:
+            break
         if vorl:
             # Auch eine fruehere Stufe mit nicht konvergiertem Kontakt macht den
             # Spannzustand vorlaeufig (Entscheidung des Anwenders vom 14.10.2026)
@@ -574,6 +691,14 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                 P[i] = T - _n_elastisch(model, i, u)
         F_lock, feq_lock = _verriegelung(model, P)
         n0 = _n0_ausfall(model, P)
+        F_bez_lock = _verriegelung(model, {i: _ziel(model, s, els)[0] for s in soll if s.gruppe <= g
+                                           for i in els[s.stab]})[0]
+    if traglast is not None:
+        z = {"traglast": traglast, "spannen": spannen, "staebe": staebe, "reihenfolge": reihenfolge,
+             "zeit": time.time() - t0, "spannstufen": n_st, "verankern": [], "nicht_konvergiert": nicht_konv,
+             "kontakt": kontakt}
+        c[key] = z
+        return z
     if any(s.schlupf for s in jetzt):
         # Verankerungsschritt: mit Schlupf ist u_S kein Gleichgewicht mehr - die
         # Umgebung federt zurueck. Gerechnet am System des Lastfalls (alle Staebe
@@ -613,7 +738,8 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                                "P_verriegelt": float(np.mean([P[i] for i in els[s.stab]]))})
     z = {"F": F_lock, "feq": feq_lock, "n0": n0, "plast": plast, "kontakt": kontakt,
          "spannen": spannen, "verankert": v, "staebe": staebe, "reihenfolge": reihenfolge,
-         "zeit": time.time() - t0, "spannstufen": n_st, "verankern": verankern}
+         "zeit": time.time() - t0, "spannstufen": n_st, "verankern": verankern,
+         "F_bezug": F_bez_lock, "nicht_konvergiert": nicht_konv}
     c[key] = z
     return z
 
