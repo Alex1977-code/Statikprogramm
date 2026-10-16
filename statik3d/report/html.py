@@ -912,8 +912,12 @@ class Report:
             "lineare Überlagerung (Superposition) der Lastfallergebnisse."]
         if counts:
             items.append("Elementtypen im Modell: " + "; ".join(
-                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + ". "
-                + self._netz_satz())
+                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + "."
+                # die Netzeinstellung nur bei einem FE-Netz aus Flaechen oder Volumen:
+                # ein Stabwerk hat kein Netz, dessen Einstellung zu nennen waere
+                + (" " + self._netz_satz() if any(
+                    ELEMENT_TYPES.get(t) and not t.startswith(("beam", "truss", "seil", "feder"))
+                    for t in counts) else ""))
         if self.info.get("solver"):
             # mit dem Ausweichen wie im Anhang (F37, 06.10.2026)
             items.append(f"Gleichungslöser: {self.info['solver']} (direkt, sparse)"
