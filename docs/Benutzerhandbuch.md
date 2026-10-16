@@ -28,6 +28,11 @@ Fassung und der Meldung, was gerade geladen wird; es verschwindet, sobald
 das Fenster steht. Kein zweiter Doppelklick nötig. Der Knopf **Update suchen**
 unten rechts holt die neueste Version: prüfen, herunterladen, austauschen,
 Neustart. Dasselbe leistet Hilfe → Nach Update suchen… in jeder Installation.
+Angeboten wird nur eine **neuere** Fassung: Verglichen werden die Versionsnummer und,
+wenn sie gleich ist, das Baudatum – nie nur der Commit. Ist die veröffentlichte Fassung
+älter als die installierte, steht „ist auf dem neuesten Stand“ da; lässt sich nichts
+vergleichen (kein Datum), wird nichts angeboten, und der Befund (rechte Maustaste am
+Knopf) nennt den Grund. Ohne Netz meldet der Knopf den Fehler und bietet nichts an.
 Der Austausch läuft nicht, solange eine Berechnung oder Vernetzung läuft — der
 Knopf zeigt dann „Update bereit“, und der Austausch folgt auf Knopfdruck nach
 dem Ende. Nach dem Schließen beendet sich Statik3D sofort, ohne Modell und

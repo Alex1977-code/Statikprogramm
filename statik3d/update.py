@@ -57,14 +57,29 @@ class UpdateInfo:
     size: int = 0
     available: bool = False
     notes: str = ""
+    #: Version der neuesten Fassung, wenn das Release sie nennt ("Version: 2.1.0")
+    latest_version: str = ""
+    #: Datum der installierten Fassung (Build-Stempel oder Commit)
+    current_date: str = ""
+    #: Ergebnis des Vergleichs: neuer | gleich | aelter | unklar (siehe :func:`vergleiche`)
+    vergleich: str = ""
 
     @property
     def message(self) -> str:
         cur = self.current_sha[:7] if self.current_sha else "unbekannt"
         new = self.latest_sha[:7] if self.latest_sha else "?"
-        if not self.available:
-            return f"Statik3D {self.current_version} ({cur}) ist auf dem neuesten Stand."
         when = self.latest_date[:10] if self.latest_date else ""
+        if not self.available:
+            if self.vergleich == "aelter":
+                return (f"Statik3D {self.current_version} ({cur}) ist auf dem neuesten Stand: die "
+                        f"veröffentlichte Fassung (Stand {new}{' vom ' + when if when else ''}) "
+                        "ist älter als die installierte.")
+            if self.vergleich == "unklar":
+                return (f"Statik3D {self.current_version} ({cur}): ob die veröffentlichte Fassung "
+                        f"(Stand {new}{' vom ' + when if when else ''}) neuer ist, lässt sich nicht "
+                        "beurteilen - es fehlt eine Versionsnummer oder ein Datum. Es wird nichts "
+                        "angeboten.")
+            return f"Statik3D {self.current_version} ({cur}) ist auf dem neuesten Stand."
         return (f"Neue Version verfügbar: Stand {new}{' vom ' + when if when else ''}"
                 f" (installiert: {self.current_version}, {cur}).")
 
@@ -97,6 +112,14 @@ def build_info() -> dict:
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if out.returncode == 0:
                 sha = out.stdout.strip()
+                if not date:
+                    # ohne Build-Stempel: Zeitpunkt des Commits, damit der Vergleich
+                    # mit der veroeffentlichten Fassung ein Datum hat
+                    d = subprocess.run(["git", "-C", root, "show", "-s", "--format=%cI", "HEAD"],
+                                       capture_output=True, text=True, timeout=10,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    if d.returncode == 0:
+                        date = d.stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
     return {"version": __version__, "sha": sha, "date": date,
@@ -127,6 +150,61 @@ def _short_date(text: str) -> str:
     return f"{m.group(3)}.{m.group(2)}.{m.group(1)}" if m else str(text)
 
 
+def _versionszahlen(text: str) -> tuple:
+    """"2.1.0" -> (2, 1, 0); () bei allem, was keine Versionsnummer ist."""
+    m = re.fullmatch(r"\s*v?(\d+(?:\.\d+){0,3})\s*", str(text or ""))
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+
+
+def _zeitpunkt(text: str):
+    """ISO-Zeitstempel -> datetime (mit Zeitzone, sonst UTC); None, wenn nicht lesbar."""
+    from datetime import datetime, timezone
+    t = str(text or "").strip()
+    if not t:
+        return None
+    t = t[:-1] + "+00:00" if t.endswith("Z") else t
+    try:
+        d = datetime.fromisoformat(t)
+    except ValueError:
+        try:
+            d = datetime.strptime(t[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def vergleiche(cur_version: str, cur_sha: str, cur_date: str,
+               new_version: str, new_sha: str, new_date: str) -> str:
+    """Ist die veroeffentlichte Fassung neuer, gleich, aelter oder nicht beurteilbar?
+
+    Nicht der Commit entscheidet, ob etwas "neu" ist: zwei verschiedene
+    Stempel sagen nur, dass sie verschieden sind. Am 16.10.2026 bot die exe
+    b63e669 (2.1.0) den Stand e7e7877 vom 03.09.2026 als "Neue Version
+    verfuegbar" an - eine aeltere Fassung, weil ``available`` nur auf die
+    Ungleichheit der Commits sah. Jetzt gilt:
+
+    1. gleicher Commit (die ersten sieben Zeichen) -> ``gleich``;
+    2. beide Versionsnummern bekannt und verschieden -> die hoehere gewinnt;
+    3. sonst beide Zeitpunkte bekannt -> der spaetere gewinnt (gleicher
+       Zeitpunkt = ``gleich``);
+    4. sonst ``unklar`` - angeboten wird dann nichts. Ausnahme: die
+       installierte Fassung hat gar keinen Stempel (kein Commit), dann ist
+       ohnehin nichts bekannt und es wird ``neuer`` gemeldet (Verhalten von
+       jeher, siehe :func:`diagnose`).
+    """
+    if not cur_sha:
+        return "neuer"
+    if new_sha and cur_sha[:7] == new_sha[:7]:
+        return "gleich"
+    a, b = _versionszahlen(cur_version), _versionszahlen(new_version)
+    if a and b and a != b:
+        return "neuer" if b > a else "aelter"
+    ta, tb = _zeitpunkt(cur_date), _zeitpunkt(new_date)
+    if ta is not None and tb is not None:
+        return "neuer" if tb > ta else ("gleich" if tb == ta else "aelter")
+    return "unklar"
+
+
 def _get_json(url: str, timeout: float) -> dict:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
                                                "User-Agent": USER_AGENT})
@@ -154,9 +232,11 @@ def check(timeout: float = 10.0, api_url: str = API_URL, kind: str = None) -> Up
         if asset is None:
             raise UpdateError(f"Im Release '{RELEASE_TAG}' liegt keine {EXE_NAME}")
         sha = _sha_from_text(rel.get("body", "")) or str(rel.get("target_commitish", ""))
-        ui = UpdateInfo("exe", info["version"], info["sha"], sha, rel.get("published_at", ""),
+        body = rel.get("body", "") or ""
+        mv = re.search(r"^\s*Version:\s*(\S+)", body, re.M | re.I)
+        ui = UpdateInfo("exe", info["version"], info["sha"], sha, rel.get("published_at", "") or "",
                         asset.get("browser_download_url", DOWNLOAD_URL), int(asset.get("size", 0) or 0),
-                        notes=rel.get("body", ""))
+                        notes=body, latest_version=mv.group(1) if mv else "")
     else:
         c = _get_json(f"{api_url}/commits/main", timeout)
         sha = str(c.get("sha", ""))
@@ -164,7 +244,10 @@ def check(timeout: float = 10.0, api_url: str = API_URL, kind: str = None) -> Up
         date = cm.get("committer", {}).get("date", "") or cm.get("author", {}).get("date", "")
         ui = UpdateInfo("source", info["version"], info["sha"], sha, date, ZIP_URL,
                         notes=(cm.get("message", "") or "").splitlines()[0] if cm.get("message") else "")
-    ui.available = (not ui.current_sha) or (ui.latest_sha[:7] != ui.current_sha[:7])
+    ui.current_date = info.get("date", "")
+    ui.vergleich = vergleiche(ui.current_version, ui.current_sha, ui.current_date,
+                              ui.latest_version, ui.latest_sha, ui.latest_date)
+    ui.available = ui.vergleich == "neuer"
     return ui
 
 
@@ -191,9 +274,16 @@ def diagnose(timeout: float = 10.0) -> str:
         z.append(f"  Neueste Fassung  Build {ui.latest_sha[:12] or '-'} vom "
                  f"{_short_date(ui.latest_date)}")
         z.append(f"  Groesse          {ui.size / 1e6:.1f} MB" if ui.size else "")
+        z.append(f"  Vergleich        {ui.vergleich} (installiert {b['version']}, "
+                 f"{_short_date(b['date']) if b['date'] else 'ohne Datum'}; "
+                 f"veroeffentlicht {ui.latest_version or 'ohne Version'}, {_short_date(ui.latest_date)})")
         z.append(f"  Ergebnis         " + ("Update verfuegbar" if ui.available
+                                           else "Die veroeffentlichte Fassung ist aelter"
+                                           if ui.vergleich == "aelter"
+                                           else "Nicht beurteilbar - es wird nichts angeboten"
+                                           if ui.vergleich == "unklar"
                                            else "Sie haben bereits die neueste Fassung"))
-        if not ui.available and not b["sha"]:
+        if not b["sha"]:
             z.append("  Hinweis          Ohne Build-Stempel wird immer aktualisiert.")
     except UpdateError as ex:
         z.append(f"  Ergebnis         Abfrage fehlgeschlagen: {ex}")
