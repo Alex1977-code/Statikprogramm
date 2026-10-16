@@ -5824,6 +5824,21 @@ Knoten, um 0,04 bzw. 0,08 % weicher (Nachgiebigkeit des Blocks). Umgesetzt:
   folgen ihren Ecken (wie b009aff bei der Verteilkopplung); `_belegte_knoten`
   zählt von der Scheibe nur den Master. Annahme: RFEM bewegt eine starre
   Fläche als starren Körper; am RFEM-Modell geprüft ist das nicht.
+* **Starre Scheibe mit Kreisring** (seit 16.10.2026,
+  `statik3d.scheibeneinleitung`, Starrkörper „Scheibe …“): statt des RBE2 am
+  Lochrand eine Verteilkopplung RBE3 vom Stabende auf die Auflage von Mutter
+  bzw. Scheibe. Die Auflage sind die Randseiten der Körper in der Ebene der
+  Scheibe (bis 0,1 mm), deren Normale höchstens 5° von der Scheibennormale
+  abweicht und deren Außennormale gegen die Stabachse zeigt; davon der Teil
+  zwischen r_i und r_a um die Scheibenmitte, mit derselben Integration wie
+  der Kreisring eines Stabendes (`stabeinleitung._integrieren`: ganze Seiten
+  mit ihrer Regel, geschnittene in Teilzellen; w_i = ∫ N_i dA, s_i = ∫ N_i
+  (x − x_m) dA). Wirksame Gewichte, Zwangsmatrix, Strafbeiwert und die
+  Prüfung von Kraftsumme und Moment sind die der verteilenden Einleitung.
+  Am Blech 120 × 120 × 20 mm mit Bohrung Ø 20 und Ring 20/37 mm
+  (`tests/test_scheibe_kreisring.py`, h 4 mm) ist die Gewichtssumme
+  764,4 mm² (tet4) bzw. 761,7 mm² (tet10) gegen 761,0 mm², und die Kopplung
+  gibt 150 kN mit einer Abweichung von höchstens 7,4·10⁻⁷ N weiter.
 * **Stabende an 1–4 Knoten** (`fugen.stabenden_koppeln`, Gruppe
   „Stabende …“): RBE3 je Stabknoten (`assemble.stabende_zwang`). Die
   Kraftzeilen mit den baryzentrischen Koordinaten λ_i des Stabendes im

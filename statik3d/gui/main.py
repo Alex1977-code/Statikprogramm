@@ -6122,6 +6122,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Ein einzelnes finites Stabelement zwischen zwei Knoten anlegen, ohne Stab mit "
                         "Nachweis - es steht unter FE-Netz → Stabelemente. Den Stab wie in RFEM legt "
                         "Struktur → Stab an")
+        # Einleitung der starren Scheiben ueber Bohrungen (16.10.2026,
+        # statik3d.scheibeneinleitung): eine Kopplungsart am Netz, darum hier
+        g.klein("Scheiben einleiten…", self.scheiben_einleiten, symbol="einstellungen",
+                hinweis="Starre Scheiben über einer Bohrung (aus RFEM): Kraft am Lochrand starr (bisher) oder "
+                        "über einen Kreisring unter Mutter bzw. Scheibe verteilend (RBE3, flächenanteilig); "
+                        "Außen-Ø je Gruppe oder Scheibe, Normmaß als Annahme, mittlere Pressung F/A_Ring. "
+                        "Die Geometrie bleibt unverändert; Rückgängig mit Strg+Z")
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
@@ -25634,6 +25641,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self._abnahme_bestaetigen():
             return
+        if art_ in ("all", "case") and not self._plastisch_einleitung_bestaetigen():
+            return
         self._apply_parallel_settings()
         if kind is None:
             kind = ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
@@ -25666,6 +25675,108 @@ class MainWindow(QtWidgets.QMainWindow):
         stand = vp.modellstand(model)
         self._run_background(func, lambda r: self._solve_done(kind, r, self._rechnung_stand), "Berechnung",
                              posten=posten, stand=stand)
+
+    # ---- Starre Scheiben: Lochrand oder Kreisring (16.10.2026) ----------------
+    def scheiben_einleiten(self):
+        """Dialog „Scheiben einleiten“ (gui.scheiben_dialog): je Gruppe gleicher
+        Bohrung oder je Scheibe die Einleitung, Innen- und Außen-Ø, die Herkunft
+        des Maßes und die mittlere Pressung. Umgestellt wird erst mit
+        „Übernehmen“ bzw. „Alle auf Kreisring“, als ein Schritt mit Rückgängig."""
+        from .. import scheibeneinleitung as SCH
+        from .scheiben_dialog import ScheibenDialog
+        if not SCH.scheiben(self.model, mit_koerper=False):
+            return self.hinweis("Im Modell gibt es keine starre Kreisscheibe mit einem Stabende in der Mitte "
+                                "(RFEM: starre Fläche über einer Bohrung)")
+        dlg = ScheibenDialog(self.model, self)
+        if not dlg.exec() or not dlg.ergebnis:
+            return
+        if dlg.ergebnis == "alle":
+            return self._scheiben_umstellen(alle=True)
+        try:
+            umst = dlg.umstellungen()
+        except ValueError as ex:
+            return self.error(f"Scheiben einleiten: Maß nicht lesbar ({ex})")
+        return self._scheiben_umstellen(umstellungen=umst)
+
+    def _scheiben_umstellen(self, umstellungen: list = None, alle: bool = False) -> dict:
+        """Die Einleitung der Scheiben umstellen - ein Schritt (merken, Strg+Z
+        nimmt ihn zurueck), am vorhandenen Netz sofort neu gekoppelt
+        (fugen.starre_kopplungen_erneuern), ins Protokoll; die Ergebnisse
+        passen danach nicht mehr. Die Geometrie bleibt, wie sie ist."""
+        from .. import fugen
+        from .. import scheibeneinleitung as SCH
+        from .scheiben_dialog import anwenden
+        self.merken("Scheiben einleiten")
+        erg = SCH.alle_auf_kreisring(self.model) if alle else anwenden(self.model, umstellungen or [])
+        if not erg["umgestellt"]:
+            self._merken_zuruecknehmen()
+            for name, grund in erg["offen"]:
+                self.log.appendPlainText(f"WARNUNG: Scheibe {name} nicht umgestellt: {grund}")
+            self.info("Scheiben einleiten: nichts umgestellt" + (" (siehe Protokoll)" if erg["offen"] else ""))
+            return erg
+        self.log.appendPlainText("Scheiben einleiten: " + SCH.umstell_zeile(erg)
+                                 + " – Rückgängig (Strg+Z) stellt zurück")
+        log: list = []
+        if getattr(self.model, "elements", None):
+            if fugen.starre_kopplungen_erneuern(self.model, log)["geaendert"]:
+                self.analysis = None
+                self.results = None
+        for z in log:
+            self.log.appendPlainText(z)
+        self.refresh_all()
+        self.info(f"Scheiben einleiten: {SCH.umstell_zeile(erg)}")
+        return erg
+
+    def _plastisch_einleitung_bestaetigen(self) -> bool:
+        """Vor einer plastischen Rechnung (16.10.2026, Entscheidung des
+        Anwenders): gibt es Stellen „Kraft ohne Fläche“ oder starre Scheiben am
+        Lochrand, fragt ein deutlicher Dialog - abbrechen, trotzdem rechnen
+        oder auf Kreisring umstellen (dann wird mit dem Kreisring gerechnet).
+        Elastisch fragt nichts; es bleibt bei der Warnung der Netzabnahme."""
+        pz = getattr(self.model, "plastizitaet", None)
+        if not (pz is not None and getattr(pz, "an", False)):
+            return True
+        from .. import scheibeneinleitung as SCH
+        try:
+            h = SCH.plastisch_pruefen(self.model)
+        except Exception as ex:            # noqa: BLE001 - ein Hinweis sperrt nie
+            self.log.appendPlainText(f"Prüfung „Kraft ohne Fläche“ vor der plastischen Rechnung nicht möglich: {ex}")
+            return True
+        if not h["text"]:
+            return True
+        self.log.appendPlainText(f"WARNUNG – BITTE LESEN: {h['text']}")
+        self.bottom_tabs.setCurrentIndex(0)
+        wahl = self._plastisch_frage(h)
+        if wahl == "kreisring":
+            erg = self._scheiben_umstellen(alle=True)
+            self.log.appendPlainText("Plastische Rechnung: Scheiben auf Kreisring umgestellt, es wird gerechnet")
+            return bool(erg["umgestellt"]) or not erg["offen"]
+        if wahl == "rechnen":
+            self.log.appendPlainText("Plastische Rechnung trotz Kraft ohne Fläche – vom Anwender bestätigt")
+            return True
+        self.info("Berechnung abgebrochen: Kraft ohne Fläche in einer plastischen Rechnung (Protokoll)")
+        return False
+
+    def _plastisch_frage(self, h: dict) -> str:
+        """Der Dialog zu :meth:`_plastisch_einleitung_bestaetigen` - die Tests
+        ueberschreiben ihn. "abbrechen" | "rechnen" | "kreisring"; waehrend
+        einer Rechnung wird nicht gefragt (abbrechen)."""
+        if self._modal_gesperrt("Rückfrage „Plastische Rechnung“ während der Rechnung verneint", h["text"]):
+            return "abbrechen"
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Plastische Rechnung: Kraft ohne Fläche")
+        box.setText(h["text"] + "\n\nAbbrechen, trotzdem rechnen oder die Scheiben auf einen Kreisring "
+                                "umstellen (Normmaße als Annahme, Rückgängig mit Strg+Z)?")
+        b_ab = box.addButton("Abbrechen", QtWidgets.QMessageBox.RejectRole)
+        b_ring = (box.addButton("Auf Kreisring umstellen und rechnen", QtWidgets.QMessageBox.AcceptRole)
+                  if h.get("lochrand") else None)
+        b_rech = box.addButton("Trotzdem rechnen", QtWidgets.QMessageBox.DestructiveRole)
+        box.setDefaultButton(b_ab)
+        box.setEscapeButton(b_ab)
+        box.exec()
+        k = box.clickedButton()
+        return "kreisring" if b_ring is not None and k is b_ring else "rechnen" if k is b_rech else "abbrechen"
 
     def _kontaktzustand_zuletzt(self):
         """Der Kontaktzustand der gerade gezeigten statischen Loesung - die

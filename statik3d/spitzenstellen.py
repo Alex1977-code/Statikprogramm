@@ -359,7 +359,7 @@ def _quellen(model, netz: _Netz) -> list:
         else:
             quelle = KOPPLUNG
         aus.append(dict(quelle=quelle, name=g, knoten=S, master=master))
-    from .stabeinleitung import ist_verteilkopplung
+    from .stabeinleitung import ist_scheibenkopplung, ist_verteilkopplung
     for sk in getattr(model, "starrkoerper", None) or []:
         alle = np.asarray([int(x) for x in sk.slaves if int(x) != int(sk.master)], np.int64)
         alle = alle[(alle >= 0) & (alle < netz.nn)]
@@ -369,7 +369,10 @@ def _quellen(model, netz: _Netz) -> list:
         # Ein verteilend eingeleitetes Stabende (seit 13.10.2026) ist ein
         # Stabende; seine Knoten decken die Einleitungsflaeche, die Regel
         # ordnet es darum als Flaeche ein
-        aus.append(dict(quelle=STABENDE if ist_verteilkopplung(sk) else STARRKOERPER,
+        # Der Kreisring einer starren Scheibe (seit 16.10.2026) bleibt eine
+        # starre Scheibe - nur haengt sie an einer Flaeche statt am Lochrand
+        aus.append(dict(quelle=(STARRE_SCHEIBE if ist_scheibenkopplung(sk) else
+                                STABENDE if ist_verteilkopplung(sk) else STARRKOERPER),
                         name=str(getattr(sk, "name", "")) or "Starrkörper",
                         knoten=S, master=int(sk.master)))
     # Knotenlasten auf Volumenknoten (ohne die aus Linienlasten verteilten),
@@ -495,6 +498,8 @@ def _lochrand(model, name: str, P: np.ndarray, h: float) -> bool:
     fugen.STARR_TOL_RAND) liegen am Drehlager einzelne Knoten bis 2,46 mm
     daneben; h ist dort 11,6 mm (Ankerscheiben) bzw. rund 5 mm."""
     from . import fugen
+    if not name.startswith(fugen.STARR_GRUPPE):
+        return False                        # Kreisring einer Scheibe (seit 16.10.2026)
     f = (getattr(model, "flaechen", None) or {}).get(name[len(fugen.STARR_GRUPPE):])
     if f is None:
         return False
@@ -753,7 +758,12 @@ def abnahme_befunde(model) -> list:
                   f"Auflagefläche in das Volumen ({sum(1 for s in sel if s['art'] == 'Linie')} als "
                   f"Linie, {sum(1 for s in sel if s['art'] == 'Punkt')} als Punkt; geprüft in "
                   f"{dauer:.1f} s). Die Rechnung läuft; danach stehen Kraft, Spitze und Zone je "
-                  "Stelle beim Ergebnis.")))
+                  "Stelle beim Ergebnis."
+                  # die Aktion (16.10.2026, statik3d.scheibeneinleitung): umgestellt
+                  # wird nur auf Anweisung, nie hier
+                  + (" Abhilfe: Netz → „Scheiben einleiten…“ → „Alle auf Kreisring (Normmaße als "
+                     "Annahme)“, Rückgängig mit Strg+Z; vor einer plastischen Rechnung fragt das "
+                     "Programm." if q == STARRE_SCHEIBE and any(s.get("lochrand") for s in sel) else ""))))
     return aus
 
 

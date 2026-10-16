@@ -8441,6 +8441,54 @@ gebunden ist, fällt aus der Scheibe heraus und folgt ihren Ecken, wie bei der
 verteilenden Einleitung der Stabenden; bis zum 14.10.2026 brach die Rechnung
 an ihr ab.
 
+**Starre Scheiben über einen Kreisring einleiten (seit 16.10.2026).** Eine
+starre Scheibe aus RFEM, die genau über einer Bohrung liegt, hängt die ganze
+Anker- bzw. Schraubenkraft als Linie an den Lochrand. Dort fließt der
+Werkstoff netzabhängig; am Drehlager (G0, Netz Mittel, plastisch) liefen die
+Ankerplatten im Spannschritt am Lochrand weg. Seit dem 16.10.2026 hat jede
+starre Kreisscheibe mit einem Stabende in der Mitte eine Einleitungsart:
+**Lochrand starr (bisher)** oder **Kreisring verteilend (RBE3,
+flächenanteilig)**. Der Kreisring ist die Auflage von Mutter bzw. Scheibe:
+die Randseiten des Blechs in der Ebene der Scheibe zwischen Innen- und
+Außendurchmesser, auf der Seite, auf der die Mutter liegt (die Außennormale
+zeigt gegen die Stabachse). Der Innen-Ø ist ohne Eintrag die Bohrung aus der
+Geometrie. Das Stabende hängt dann wie ein verteilt eingeleitetes Stabende
+über eine Verteilkopplung (Starrkörper „Scheibe F…“) an allen Knoten des
+Rings, flächenanteilig gewichtet, bei tet10 mit den Seitenmitten; Kraftsumme
+und Moment prüft das Programm nach der Rechnung genauso. Die Kopplung
+versteift den Ring nicht, es entstehen also keine Spitzen an seinen Kanten.
+Die Geometrie bleibt dabei unverändert: Knoten, Linien, Flächen und Bohrungen
+des Imports fasst die Umstellung nicht an, sie ist nur eine Kopplungsart.
+
+Umgestellt wird nur auf Anweisung, unter Netz → **Scheiben einleiten…**. Die
+Tabelle zeigt je Gruppe gleicher Bohrung (oder je Scheibe) die Einleitung,
+Innen- und Außen-Ø, die Herkunft des Maßes und die mittlere Pressung
+F/A_Ring aus der Vorspannkraft mit ihrem Verhältnis zu f_y des Blechs. Liegt
+sie über 3 f_y, steht dort „Auflage prüfen (Zeichnungsmaß)“. Der Außen-Ø ist
+mit einem Normmaß vorbelegt und als **Annahme** gekennzeichnet, bis ein Maß
+aus der Zeichnung eingetragen ist. Ist der Stabdurchmesser ein Nennmaß der
+Unterlegscheibe nach ISO 7089, gilt deren Außendurchmesser d₂ (M16 30 mm,
+M20 37 mm), weil das Modell nicht sagt, ob Kopf oder Mutter außen sitzt. Sonst
+ist es ein Gewindestab, und es gilt d_w der Sechskantmutter nach ISO 4032 der
+nächsten Größe (Ø 40 → M42, d_w 60 mm). „Alle auf Kreisring (Normmaße als
+Annahme)“ stellt jede Scheibe am Lochrand um. Jede Umstellung ist ein
+Schritt, den Rückgängig (Strg+Z) zurücknimmt. Am vorhandenen Netz koppelt das
+Programm sofort neu, und das Protokoll nennt Ring, Annahme, Fläche,
+Knotenzahl und Pressung. Hat ein Ring weniger als 6 tragende Knoten, steht
+dort eine Warnung; findet sich kein Ring mit mindestens drei Knoten oder kein
+Stabende in der Mitte, bleibt die Scheibe am Lochrand, ebenfalls mit Warnung.
+Alte Dateien und neue RFEM-Importe bleiben bei „Lochrand starr“, und eine
+Datei ohne Umstellung bleibt beim Speichern Zeichen für Zeichen gleich. Die
+Warnung „Kraft ohne Fläche“ der Netzabnahme nennt bei Lochrand-Scheiben diese
+Abhilfe.
+
+**Vor einer plastischen Rechnung** fragt das Programm deutlich nach, wenn es
+Stellen „Kraft ohne Fläche“ oder starre Scheiben am Lochrand gibt, denn sie
+können die Konvergenz verhindern: „Abbrechen“, „Trotzdem rechnen“ oder „Auf
+Kreisring umstellen und rechnen“. Ohne Oberfläche, im Skript, steht vor der
+Rechnung eine Zeile „WARNUNG – BITTE LESEN: …“. In elastischen Rechnungen
+bleibt es bei der Warnung der Netzabnahme und der netzabhängigen Zone.
+
 **Globale Gleichgewichtskontrolle (seit 14.10.2026).** Nach jeder Rechnung
 prüft das Programm, ob die Lasten und die Lagerkräfte zusammen im
 Gleichgewicht sind: die Summe der Kräfte und die Summe der Momente um die

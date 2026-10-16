@@ -4100,6 +4100,30 @@ def _plastisch(model) -> bool:
     return bool(pz is not None and getattr(pz, "an", False))
 
 
+def _einleitung_plastisch_melden(model, progress) -> None:
+    """Vor einer plastischen Rechnung deutlich melden, wenn Kraft ohne Flaeche
+    in ein Volumen geht oder eine starre Scheibe nur am Lochrand haengt (seit
+    16.10.2026, Entscheidung des Anwenders: „in plastischen Rechnungen vor dem
+    Start deutlich hervorheben“). Die Oberflaeche fragt vorher nach; ohne sie,
+    im Skript, ist das die eine Zeile, die es sagt. Elastisch geschieht nichts
+    (es bleibt bei der Warnung der Netzabnahme). Haelt nie etwas auf."""
+    if not _plastisch(model):
+        return
+    try:
+        from .scheibeneinleitung import plastisch_zeile
+        z = plastisch_zeile(model)
+    except Exception:                         # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return
+    if not z:
+        return
+    if progress is None:
+        # ohne Empfaenger auf die Fehlerausgabe (logging, lastResort)
+        import logging
+        logging.getLogger("statik3d").warning(z)
+    else:
+        _melde(progress, z)
+
+
 def _nichtlinear(model, ausfall: bool = None) -> bool:
     """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt, bei
     Fliessen (plastische Dehnungen ueberlagern sich nicht, 17.09.2026) - und
@@ -6397,6 +6421,7 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
     Winkelrahmen: uz in Kragarmmitte -0,2470 statt -3,5971 mm wie
     solve_cases). Ein uebergebenes System gilt, wie es ist."""
     factors, name = _lastfall_faktoren(model, case)
+    _einleitung_plastisch_melden(model, progress)
     if system is None:
         sit = _situation_der_faelle(model, list(factors))
         if sit != GRUNDSTELLUNG:
@@ -6566,6 +6591,7 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     if referenzen:
         names = _mit_referenzen_zuerst(list(names), referenzen)
     out = {}
+    _einleitung_plastisch_melden(model, progress)
 
     def _einfrieren(name):
         ref = referenzen.get(name)

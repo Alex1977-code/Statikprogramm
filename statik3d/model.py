@@ -2993,6 +2993,15 @@ class Flaeche:
     #: Globale Richtung von +x bei zylindrischen Achsen (wird auf die Achse
     #: projiziert); leer = Richtung der ersten geraden Randlinie.
     achse_plus_x: list[float] = field(default_factory=list)
+    #: Einleitung einer **starren Scheibe** ueber einer Bohrung (seit
+    #: 16.10.2026, statik3d.scheibeneinleitung): leer = „Lochrand starr
+    #: (bisher)“ - die Netzknoten in der Scheibe, ueber einer Bohrung nur
+    #: der Lochrand, haengen starr am Stabende. {"art": "ring", "d_innen" [m]
+    #: (0 = die Bohrung aus der Geometrie), "d_aussen" [m], "annahme": bool
+    #: (Normmass, nicht aus der Zeichnung), "quelle": Text} = „Kreisring
+    #: verteilend (RBE3, flächenanteilig)“ unter Mutter bzw. Scheibe. Gesetzt
+    #: nur vom Anwender; die Datei fuehrt den Schluessel nur, wenn er belegt ist.
+    einleitung: dict = field(default_factory=dict)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -10038,7 +10047,8 @@ NEUE_FELDER = {
     # import/gewoelbt (Lasten in lokalen Achsen gewoelbter Flaechen und
     # zylindrische Flaechenachsen; seit 14.10.2026)
     "load_cases.geometrielasten": {"lokal": {}},
-    "flaechen": {"lokale_achsen": "", "achse_plus_x": []},
+    # einleitung/kreisring (Einleitung starrer Scheiben ueber Kreisring, 16.10.2026)
+    "flaechen": {"lokale_achsen": "", "achse_plus_x": [], "einleitung": {}},
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen); ansicht/ansichten
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
