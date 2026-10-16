@@ -107,6 +107,9 @@ import numpy as np
 #: Eigenwerte unter diesem Anteil des groessten gelten als null (Stufe 1a).
 NULLRAUM = 1e-6
 
+#: Freiheitsgrade je Knoten (wie model.NDOF)
+NDOF = 6
+
 #: Hoechstzahl der Bewegungen, die **angezeigt** werden. Ein Modell mit 88
 #: losen Teilen braucht keine 528 Meldungen, um verstanden zu werden -
 #: :func:`wichtigste` waehlt die schwersten aus. Gesucht und gefesselt werden
@@ -1254,6 +1257,24 @@ PIVOT_STARR = 0.999
 #: Platten), das Rauschen liegt bei 1e-9.
 PIVOT_RANG = 1e-5
 
+#: „Frei drehbar“ streng (Vorgabe des Anwenders vom 16.10.2026): ein
+#: Freiheitsgrad ist **nur numerisch gehalten**, wenn seine wirksame
+#: Steifigkeit - die Antwort des vorhandenen Faktors auf eine Einheitslast dort
+#: - unter diesem Anteil seiner Hauptdiagonale liegt. Die Hauptdiagonale traegt
+#: die Kopplung (Strafbeiwert 1e4 mal die groesste Diagonale); was das Tragwerk
+#: dahinter haelt, liegt einige Zehnerpotenzen darunter, ein angehobener Pivot
+#: bei 1e-13 der Matrix und tiefer. Gemessen am Drehlager-Entwurf mit Lochrand:
+#: Ankerkopf K157 0,36 bis 0,48 Nm/rad (eine Richtung sogar negativ) gegen
+#: 3,2e13 Nm/rad auf der Diagonale, also 1e-14; das Blech mit Bohrung voll
+#: gelagert (tests/test_frei_drehbar_streng) liegt weit ueber 1e-9.
+ZWANG_ANTEIL = 1e-9
+#: So viele Proben (rechte Seiten mit zufaelligen Vorzeichen auf den
+#: Freiheitsgraden der geprueften Knoten) je Art (Verschiebung, Drehung).
+ZWANG_PROBEN = 2
+#: Unter diesem Anteil der groessten Antwort zaehlt eine Richtung am Knoten
+#: nicht als frei (die Kopplung an andere freie Knoten streut darunter).
+ZWANG_RANG = 1e-3
+
 _ACHSEN = "xyz"
 
 
@@ -1534,7 +1555,8 @@ def last_je_knoten(model, knoten) -> dict:
     return aus
 
 
-def stufe_freier_knoten(model, k: int, Vt, Vr, lasten: dict, zwang: dict, feder: dict) -> tuple:
+def stufe_freier_knoten(model, k: int, Vt, Vr, lasten: dict, zwang: dict, feder: dict,
+                        numerisch=None) -> tuple:
     """Die Stufe der Meldung „Knoten k frei beweglich“: ``("INFORMATION", Halt)``
     oder ``("WARNUNG", Grund)``.
 
@@ -1546,22 +1568,214 @@ def stufe_freier_knoten(model, k: int, Vt, Vr, lasten: dict, zwang: dict, feder:
     gebundenem Knoten bleibt die Rechnung eindeutig in allem, was zaehlt. Sonst
     **Warnung**: mit Last ginge sie ins Nichts, ohne Zwangsbedingung hielte den
     Knoten nur der angehobene Pivot, und eine weiche Feder haelt nur so weit,
-    wie sie steif ist."""
+    wie sie steif ist.
+
+    Streng (Vorgabe des Anwenders vom 16.10.2026): „Information nur bei echter
+    Zwangsbedingung“ - der Freiheitsgrad muss durch die Bedingung **bestimmt**
+    sein, mit nicht verschwindender Steifigkeit, nicht nur durch einen
+    angehobenen Pivot. ``numerisch``: das Mass dafuer (:func:`numerisch_gehalten`)
+    - ein Eintrag (dict mit ``k_eff``, ``k_diag``) heisst nur numerisch gehalten,
+    False heisst gemessen und bestimmt, "unbekannt" heisst nicht gemessen (dann im
+    Zweifel Warnung). None (Vorgabe) rechnet wie bis zum 16.10.2026 mittags, fuer
+    Aufrufe ohne Faktor."""
     F, M = lasten.get(int(k), (np.zeros(3), np.zeros(3)))
     kraft = float(np.linalg.norm(np.asarray(Vt).T @ F)) if np.asarray(Vt).shape[1] else 0.0
     moment = float(np.linalg.norm(np.asarray(Vr).T @ M)) if np.asarray(Vr).shape[1] else 0.0
-    if kraft > 1e-9 or moment > 1e-9:
-        return "WARNUNG", "an der freien Bewegung greift " + (
-            "ein Moment" if moment > 1e-9 and kraft <= 1e-9 else
-            "eine Kraft" if kraft > 1e-9 and moment <= 1e-9 else "Kraft und Moment") + " an"
+    # Schranke relativ zur Last am Knoten (16.10.2026): eine gemessene Richtung
+    # traegt Rundung (1e-6 einer senkrechten Last ist kein Anteil an ihr)
+    s_F = 1e-9 + 1e-6 * float(np.linalg.norm(F))
+    s_M = 1e-9 + 1e-6 * float(np.linalg.norm(M))
+    last = ""
+    if kraft > s_F or moment > s_M:
+        last = "an der freien Bewegung greift " + (
+            "ein Moment" if moment > s_M and kraft <= s_F else
+            "eine Kraft" if kraft > s_F and moment <= s_M else "Kraft und Moment") + " an"
+    if last and not isinstance(numerisch, dict):
+        return "WARNUNG", last
+    if isinstance(numerisch, dict):
+        from .zahlen import zahl_text as _z
+        wer = (" – die Zwangsbedingung " + ", ".join(zwang[int(k)]) + " bestimmt diese Bewegung nicht"
+               if int(k) in zwang else "")
+        einheit = str(numerisch.get("einheit") or ("Nm/rad" if np.asarray(Vr).shape[1] else "N/m"))
+        k_eff = float(numerisch.get("k_eff", 0.0))
+        return "WARNUNG", (f"nur numerisch gehalten (angehobener Pivot, Pivot-Regularisierung; wirksame "
+                           f"Steifigkeit etwa {_z(k_eff, stellen=3) if k_eff > 0 else 'null oder negativ'} "
+                           f"{einheit} gegen {_z(float(numerisch.get('k_diag', 0.0)), stellen=3)} {einheit} "
+                           f"auf der Hauptdiagonale{wer})" + (f"; {last}" if last else ""))
     if int(k) in feder and int(k) not in zwang:
         return "WARNUNG", "nur eine weiche Feder bindet den Knoten (" + ", ".join(feder[int(k)]) + ")"
+    if int(k) in zwang and numerisch == "unbekannt":
+        return "WARNUNG", ("nur numerisch gehalten (angehobener Pivot; ob die Zwangsbedingung "
+                           + ", ".join(zwang[int(k)]) + " die Bewegung bestimmt, ist nicht gemessen)")
     if int(k) in zwang:
         return "INFORMATION", ", ".join(zwang[int(k)])
     return "WARNUNG", "keine Zwangsbedingung bindet den Knoten"
 
 
-def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
+def numerische_haltung(model, F, freie_teile, auto_gehalten=None):
+    """Kraft und Moment, die nur **numerisch** gehalten werden (Vorgabe des
+    Anwenders vom 16.10.2026: „Kraft bzw. Moment in numerischen Haltungen in die
+    Gleichgewichtskontrolle aufnehmen“) - als Vektor ueber alle FHG.
+
+    * Angehobener Pivot: je Eintrag von ``freie_teile`` (pivotbefund) mit freier
+      Bewegung (``modus``) der Anteil der Last ``F``, der auf diese Bewegung
+      faellt. An einer freien Bewegung gilt Φᵀ K = 0, also haelt Φᵀ F allein der
+      angehobene Pivot. Am Knoten die Projektion von Kraft und Moment auf die
+      freien Richtungen, am Bauteil die Projektion der Knotenkraefte auf seine
+      freien Starrkoerperbewegungen. Information (echte Zwangsbedingung) traegt
+      keinen Modus.
+    * Automatisch gehaltene FHG (solver.auto_gehalten_abtrennen): die Last dort.
+    * Die Mindesttangente der Plastizitaet (plastizitaet.H_TANGENTE) haelt keine
+      Kraft im Ergebnis: sie wirkt nur in der Tangente, die inneren Kraefte des
+      Residuums rechnen mit dem wahren Werkstoff.
+
+    Rueckgabe (r, Zahl der Eintraege) oder (None, 0) ohne numerische Haltung."""
+    if F is None:
+        return None, 0
+    Fv = np.asarray(F, float).ravel()
+    r = np.zeros(Fv.size)
+    n = 0
+    nn = int(model.nn)
+    X = np.asarray(model.nodes, float)
+    for e in freie_teile or []:
+        for md in e.get("modus") or []:
+            if md.get("art") == "knoten":
+                k = int(md["knoten"])
+                if not 0 <= k < nn or NDOF * k + 6 > Fv.size:
+                    continue
+                for d0, schl in ((0, "Vt"), (3, "Vr")):
+                    V = np.asarray(md.get(schl) or [], float).reshape(-1, 3)
+                    if len(V):
+                        f = Fv[NDOF * k + d0:NDOF * k + d0 + 3]
+                        r[NDOF * k + d0:NDOF * k + d0 + 3] += V.T @ (V @ f)
+                n += 1
+            elif md.get("art") == "koerper":
+                gr = str(md.get("gruppe", ""))
+                kn = sorted({int(x) for el in model.elements if str(getattr(el, "group", "") or "") == gr
+                             for x in el.nodes if 0 <= int(x) < nn})
+                S = np.asarray(md.get("S") or [], float)
+                if not kn or S.size == 0:
+                    continue
+                P = np.asarray(kn, np.int64)
+                L = float(md.get("L", 1.0)) or 1.0
+                rr = X[P] - np.asarray(md.get("mitte"), float)
+                M = np.zeros((3 * len(P), 6))
+                M[0::3, 0] = M[1::3, 1] = M[2::3, 2] = 1.0
+                M[0::3, 4], M[0::3, 5] = rr[:, 2] / L, -rr[:, 1] / L
+                M[1::3, 3], M[1::3, 5] = -rr[:, 2] / L, rr[:, 0] / L
+                M[2::3, 3], M[2::3, 4] = rr[:, 1] / L, -rr[:, 0] / L
+                Phi = M @ S.reshape(6, -1)
+                idx = (NDOF * P[:, None] + np.arange(3)[None, :]).ravel()
+                f = Fv[idx]
+                c, *_ = np.linalg.lstsq(Phi.T @ Phi, Phi.T @ f, rcond=None)
+                r[idx] += Phi @ c
+                n += 1
+    for a in auto_gehalten or []:
+        i = NDOF * int(a["knoten"]) + int(a["fhg"])
+        if 0 <= i < r.size:
+            r[i] += float(a.get("last", 0.0))
+            n += 1
+    # Unter der Residuumschranke des Gleichungsloesers (1e-6 der Last) ist es
+    # Rundung - eine gemessene Richtung streift eine senkrechte Last (am Blech mit
+    # 50 kN senkrecht 0,5 mN, 1e-8)
+    if not n or float(np.linalg.norm(r)) <= 1e-6 * max(float(np.linalg.norm(Fv)), 1e-300):
+        return None, 0
+    return r, n
+
+
+def zwangsknoten(model) -> list:
+    """Die Knoten, die eine Zwangsbedingung bindet und an denen kein Element eine
+    Drehung haelt (16.10.2026): der Kopf einer starren Scheibe oder eines starren
+    Koerpers (Master), der Knoten a einer starren Kopplung - mit nur
+    Fachwerkstaeben, Seilen oder gar keinem Element. Fuer sie misst
+    :func:`numerisch_gehalten`, ob die Bedingung sie bestimmt."""
+    kand = set()
+    for kp in (getattr(model, "kopplungen", None) or []):
+        steif = [float(x) for x in (kp.steifigkeiten or []) if float(x) != 0.0]
+        if steif and all(np.isinf(x) for x in steif):
+            kand.add(int(kp.node_a))
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        kand.add(int(sk.master))
+    nn = int(model.nn)
+    kand = {k for k in kand if 0 <= k < nn}
+    if not kand:
+        return []
+    dreh = set()
+    for e in model.elements:
+        if e.typ in ("truss", "seil"):
+            continue
+        for n in e.nodes:
+            if int(n) in kand:
+                dreh.add(int(n))
+    return sorted(kand - dreh)
+
+
+def numerisch_gehalten(model, fi, ls, K, knoten, seed: int = 20261016) -> dict:
+    """Welche Freiheitsgrade der ``knoten`` haelt nur der angehobene Pivot?
+    (Vorgabe des Anwenders vom 16.10.2026, „frei drehbar“ streng.)
+
+    Je Art (Verschiebung, Drehung) :data:`ZWANG_PROBEN` Loesungen ueber den
+    **vorhandenen** Faktor ``ls`` mit Einheitslasten zufaelligen Vorzeichens auf
+    den freien Freiheitsgraden aller Knoten zugleich; die groesste Antwort am
+    Freiheitsgrad ist seine Nachgiebigkeit (die Kopplung an andere Knoten streut
+    darunter), ihr Kehrwert die wirksame Steifigkeit k_eff. Nur numerisch
+    gehalten, wenn k_eff < :data:`ZWANG_ANTEIL` mal der Hauptdiagonale von ``K``.
+    Nichts wird gelagert oder neu faktorisiert.
+
+    Rueckgabe {Knoten: {"Vt", "Vr" (3 x d, die nur numerisch gehaltenen
+    Richtungen), "k_eff", "k_diag" (der kleinste Anteil), "dofs"}} - nur Knoten
+    mit mindestens einer solchen Richtung. Ein leeres Woerterbuch auch dann,
+    wenn die Probe nicht endlich war."""
+    if K is None or not knoten:
+        return {}
+    nf, n = len(fi), int(ls.n)
+    pos = np.full(model.ndof, -1, np.int64)
+    pos[np.asarray(fi, np.int64)] = np.arange(nf)
+    diag = np.abs(np.asarray(K.diagonal(), float).ravel())
+    rng = np.random.default_rng(seed)
+    knoten = [int(k) for k in knoten]
+    antwort: dict = {}                          # FHG -> [Antwort je Probe]
+    for d0 in (0, 3):
+        dofs = np.array([NDOF * k + d for k in knoten for d in range(d0, d0 + 3)
+                         if pos[NDOF * k + d] >= 0], np.int64)
+        if not dofs.size:
+            continue
+        for _j in range(ZWANG_PROBEN):
+            b = np.zeros(n)
+            b[pos[dofs]] = rng.choice((-1.0, 1.0), size=dofs.size)
+            x = np.asarray(ls._solve(b), float).ravel()
+            if x.size < nf or not np.all(np.isfinite(x[:nf])):
+                return {}
+            for d, v in zip(dofs.tolist(), x[pos[dofs]].tolist()):
+                antwort.setdefault(d, []).append(v)
+    aus: dict = {}
+    for k in knoten:
+        e = {}
+        for d0, schl in ((0, "Vt"), (3, "Vr")):
+            R = np.array([antwort.get(NDOF * k + d, [0.0] * ZWANG_PROBEN) for d in range(d0, d0 + 3)], float)
+            c = np.abs(R).max(axis=1)
+            kd = diag[NDOF * k + d0:NDOF * k + d0 + 3]
+            num = [(d0 + i) for i in range(3)
+                   if c[i] > 0 and kd[i] > 0 and 1.0 / c[i] < ZWANG_ANTEIL * kd[i]]
+            if not num:
+                e[schl] = np.zeros((3, 0))
+                continue
+            u, sv, _vt = np.linalg.svd(R, full_matrices=False)
+            r = int((sv > ZWANG_RANG * max(float(sv[0]), 1e-300)).sum())
+            e[schl] = u[:, :max(r, 1)]
+            anteil = [(1.0 / c[d - d0]) / kd[d - d0] for d in num]
+            i = int(np.argmin(anteil))
+            if "k_eff" not in e or anteil[i] < e["_anteil"]:
+                e.update({"k_eff": float(1.0 / c[num[i] - d0]), "k_diag": float(kd[num[i] - d0]),
+                          "_anteil": float(anteil[i]), "einheit": "Nm/rad" if d0 == 3 else "N/m"})
+            e.setdefault("dofs", []).extend(NDOF * k + d for d in num)
+        if e.get("dofs"):
+            e.pop("_anteil", None)
+            aus[k] = e
+    return aus
+
+
+def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008, K=None) -> tuple:
     """Stufe 3: welche Teile hat die Faktorisierung freigelassen?
 
     PARDISO hebt ein Pivot, das null wuerde, auf einen winzigen Wert an und
@@ -1601,7 +1815,22 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
     gross = g_t | g_r
     suche["knoten_verstaerkt"] = int(gross.sum())
     suche["abstand_dekaden"] = float(max(d_t, d_r))
-    if not gross.any():
+    # „Frei drehbar“ streng (16.10.2026): an den Knoten, die eine Zwangsbedingung
+    # bindet, wird gemessen, ob die Bedingung sie bestimmt oder nur der angehobene
+    # Pivot (numerisch_gehalten) - auch wenn die Antworten keinen Haufen bilden (am
+    # Drehlager-Entwurf mit 357 gestoerten Pivots: kein Knoten verstaerkt, der
+    # Ankerkopf K157 trotzdem mit 0,4 Nm/rad nur numerisch gehalten)
+    zk = set(zwangsknoten(model))
+    if gross.any():
+        zw_g, _fe_g = zwang_je_knoten(model, np.flatnonzero(gross).tolist())
+        zk |= set(zw_g)
+    num: dict = {}
+    gemessen = K is not None
+    if gemessen and zk:
+        num = numerisch_gehalten(model, fi, ls, K, sorted(zk))
+        suche["zwangsknoten"] = len(zk)
+        suche["numerisch_gehalten"] = len(num)
+    if not gross.any() and not num:
         return [], suche
 
     # ---- Bauteile der verstaerkten Knoten ------------------------------
@@ -1662,25 +1891,40 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
         if not bew:
             bew = (f"ohne Steifigkeit verformbar (kein Starrkörper; {int(gross[P].sum())} von "
                    f"{len(P)} Knoten verstärkt)")
+        modus = []
+        if float(guete.min()) >= PIVOT_STARR and bew and not bew.startswith("ohne Steifigkeit"):
+            # die freie Starrkoerperbewegung fuer die Gleichgewichtskontrolle
+            # (numerische_haltung): Kraft und Moment, die nur der Pivot haelt
+            modus = [{"art": "koerper", "gruppe": gruppe, "mitte": [float(c) for c in mitte], "L": float(L),
+                      "S": u_[:, :rang].tolist()}]
         roh.append(("koerper", bew, [name], [int(k) for k in P[gross[P]][:6]], halter,
-                    "WARNUNG", ""))
+                    "WARNUNG", "", modus))
 
     # ---- einzelne Knoten (Staebe, Knoten ohne Bauteil) -----------------
+    # dazu die Zwangsknoten, die nur numerisch gehalten sind (16.10.2026)
     rest = np.flatnonzero(gross & ~im_koerper)
-    if rest.size:
+    nur_num = sorted(k for k in num if not gross[k] and not im_koerper[k])
+    if rest.size or nur_num:
+        alle = rest.tolist() + nur_num
         in_rest = np.zeros(nn, bool)
-        in_rest[rest] = True
-        lasten = last_je_knoten(model, rest.tolist())
-        zwang, feder = zwang_je_knoten(model, rest.tolist())
+        in_rest[alle] = True
+        lasten = last_je_knoten(model, alle)
+        zwang, feder = zwang_je_knoten(model, alle)
         sel = in_rest[flach]
         je_knoten: dict = {}
         for k, e in zip(flach[sel].tolist(), elem[sel].tolist()):
             je_knoten.setdefault(k, []).append(e)
-        for k in rest.tolist():
+        for k in alle:
             es = je_knoten.get(k, [])
             teile = []
-            Vt = _unterraum(A[:, k, :3].T) if g_t[k] else np.zeros((3, 0))
-            Vr = _unterraum(A[:, k, 3:].T) if g_r[k] else np.zeros((3, 0))
+            if gross[k]:
+                Vt = _unterraum(A[:, k, :3].T) if g_t[k] else np.zeros((3, 0))
+                Vr = _unterraum(A[:, k, 3:].T) if g_r[k] else np.zeros((3, 0))
+            else:
+                Vt, Vr = num[k]["Vt"], num[k]["Vr"]
+            # gemessen: nur numerisch gehalten (Eintrag), bestimmt (False); ohne
+            # Messung im Zweifel numerisch ("unbekannt")
+            nmess = num.get(k, False) if (gemessen and k in zk) else ("unbekannt" if k in zwang else None)
             achse = None
             for e in es:
                 if ist_stab[e] and len(els[e].nodes) >= 2:
@@ -1708,14 +1952,17 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
                 gr = sorted({namen_von_code[int(code[e])] or "Bauteil ohne Namen" for e in es},
                             key=_natuerlich)
                 art, namen = "knoten", (gr or ["Knoten ohne Element"])
-            stufe, halt = stufe_freier_knoten(model, k, Vt, Vr, lasten, zwang, feder)
-            roh.append((art, bew, namen, [k], _halter(model, np.array([k]), cache), stufe, halt))
+            stufe, halt = stufe_freier_knoten(model, k, Vt, Vr, lasten, zwang, feder, numerisch=nmess)
+            modus = ([{"art": "knoten", "knoten": int(k), "Vt": np.asarray(Vt).T.tolist(),
+                       "Vr": np.asarray(Vr).T.tolist()}] if stufe != "INFORMATION" else [])
+            roh.append((art, bew, namen, [k], _halter(model, np.array([k]), cache), stufe, halt, modus))
 
     # ---- gleich bewegte Teile zu einer Zeile -----------------------------
     gruppen: dict = {}
-    for art, bew, namen, knoten, halter, stufe, halt in roh:
+    for art, bew, namen, knoten, halter, stufe, halt, modus in roh:
         g = gruppen.setdefault((art, bew, stufe), {"namen": [], "knoten": [], "halter": [],
-                                                   "grund": []})
+                                                   "grund": [], "modus": []})
+        g["modus"].extend(modus)
         for nm in namen:
             if nm not in g["namen"]:
                 g["namen"].append(nm)
@@ -1753,7 +2000,9 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
                 text += " (" + "; ".join(g["grund"]) + ")"
         liste.append({"art": art, "namen": namen, "anzahl": len(namen),
                       "knoten_anzahl": len(kn), "knoten": [int(k) for k in kn[:8]],
-                      "bewegung": bew, "haltung": haltung, "text": text, "stufe": stufe})
+                      "bewegung": bew, "haltung": haltung, "text": text, "stufe": stufe,
+                      # die freien Bewegungen fuer die Gleichgewichtskontrolle (16.10.2026)
+                      **({"modus": g["modus"]} if g["modus"] else {})})
     liste.sort(key=lambda e: (-e["anzahl"], _natuerlich(e["namen"][0])))
     suche["teile"] = len(liste)
     return liste, suche

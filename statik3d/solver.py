@@ -2430,6 +2430,8 @@ def plastisch_zeilen(pz: dict) -> list:
     dg = pz.get("dehnungsgrenze")
     if isinstance(dg, dict) and dg.get("verletzt"):
         z.append(f"NICHT GÜLTIG            : {dg.get('text', 'außerhalb der Theorie kleiner Verzerrungen')}")
+    elif isinstance(dg, dict) and dg.get("netzabhaengig") and dg.get("warnung"):
+        z.append(f"WARNUNG: {dg['warnung']}")
     if isinstance(pz.get("eps_p_ort"), dict):
         z.append("ε_p,max                 : " + pl.eps_p_ort_text(pz["eps_p_ort"])
                  + (f" (Grenze {_z(float(dg['grenze']) * 100.0, stellen=4)} %, {dg.get('quelle', '')})"
@@ -2467,7 +2469,17 @@ def plastisch_ungueltig(info) -> str:
     dg = pz.get("dehnungsgrenze")
     if isinstance(dg, dict) and dg.get("verletzt"):
         teile.append(str(dg.get("text") or "außerhalb der Theorie kleiner Verzerrungen"))
-    return "; ".join(teile)
+    elif isinstance(dg, dict) and dg.get("netzabhaengig"):
+        # Ausnahme der netzabhaengigen Zone (16.10.2026): sie gilt nur, solange das
+        # Gleichgewicht stimmt - auch die Gesamtkontrolle nach der Rechnung
+        from . import gleichgewicht as _gg
+        gl = info.get("gleichgewicht_global") or {}
+        if _gg.verletzt_text(gl):
+            teile.append(str(dg.get("text_ungueltig") or "außerhalb der Theorie kleiner Verzerrungen")
+                         + " (keine Ausnahme der netzabhängigen Zone: (c) das Gleichgewicht stimmt nicht)")
+    # die Traglastmeldung endet mit einem Punkt (Wortlaut des Anwenders); vor „;“ faellt er weg
+    return "; ".join(t[:-1] if (len(teile) > 1 and t.endswith(".") and i < len(teile) - 1) else t
+                     for i, t in enumerate(teile))
 
 
 def auto_gehalten_zeilen(info) -> list:
@@ -2848,7 +2860,7 @@ class StaticSystem:
         if gemerkt is not None and gemerkt[0]() is ls:
             return gemerkt[1], gemerkt[2]
         try:
-            liste, suche = sg.pivotbefund(self.model, self.fi, ls, int(g))
+            liste, suche = sg.pivotbefund(self.model, self.fi, ls, int(g), K=getattr(self, "K", None))
         except Exception:                   # noqa: BLE001 - eine Diagnose darf nie sperren
             liste, suche = [], None
         self._freie_teile_gemerkt = (weakref.ref(ls), liste, suche)
@@ -5750,6 +5762,7 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
     from . import gleichgewicht as _gg
     from . import plastizitaet as pl
     r_vec = info.pop("_residuum", None)
+    spur = info.pop("_ueber_grenze", None) or []
     # Die letzte Zeile des Protokolls bleibt die Zusammenfassung des Fliessens
     # („Plastizität: n Elemente fließen …“): die Rechenliste zeigt die letzte Zeile
     # eines Postens (tests/test_vorspannung_sofort). Die Zeilen hier kommen davor.
@@ -5765,8 +5778,8 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
         neu.append(f"Plastizität: Ort von ε_p,max nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
     dg = pl.dehnungsgrenze_pruefen(model, zustand, model.plastizitaet)
     info["dehnungsgrenze"] = dg
-    if dg.get("verletzt"):
-        neu.append("Plastizität: NICHT GÜLTIG – " + dg["text"])
+    # die Zeile „NICHT GÜLTIG“ der Grenze schreibt _grenze_netzabhaengig (erst nach
+    # der Pruefung, ob eine netzabhaengige Zone ausgenommen ist)
     if R is not None:
         nn = int(model.nn)
         X = np.asarray(model.nodes, float)[:nn]
@@ -5779,6 +5792,7 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
         neu.append("Plastizität: " + summen_text(info["summe_R"], info["summe_M"], info["summe_x0"])
                    + " – Lagerkräfte des gezeigten Zustands")
     if r_vec is None:
+        _grenze_netzabhaengig(model, info, dg, zustand, zonen, spur, None, neu)
         log[stelle:stelle] = neu
         return
     r = np.asarray(r_vec, float).copy()
@@ -5788,6 +5802,9 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
         frei[np.asarray(fi, np.int64)] = True
     else:
         frei[:] = True
+    # das Residuum an allen freien FHG, auch in den Zonen (Bedingung (c) der
+    # Ausnahme netzabhaengiger Zonen, 16.10.2026: dort muss das Gleichgewicht stimmen)
+    r_voll = np.where(frei, r, 0.0)
     if zonen is not None and getattr(zonen, "ingenieur", False) and getattr(zonen, "auffaellig", None):
         zonen._masken()
         frei[np.asarray(zonen._innen_dof, np.int64)] = False
@@ -5801,7 +5818,63 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
                f"= {_gg.rel_text(rinfo['rel'])} der Lasten"
                + (" – NICHT GÜLTIG, die Spannungen halten der Last nicht das Gleichgewicht"
                   if rinfo["verletzt"] else ""))
+    r_info_voll = _gg.residuum(model, r_voll, bezug_F)
+    _grenze_netzabhaengig(model, info, dg, zustand, zonen, spur, r_info_voll, neu)
     log[stelle:stelle] = neu
+
+
+def _grenze_netzabhaengig(model, info: dict, dg: dict, zustand, zonen, spur: list, r_info_voll, neu: list) -> None:
+    """Netzabhaengige Zonen von der Gueltigkeitsgrenze ausnehmen und nur warnen
+    (Vorgabe des Anwenders vom 16.10.2026, plastizitaet.grenze_netzabhaengig).
+    Nur wenn die Grenze verletzt ist. Das Gleichgewicht (c) ist das Residuum der
+    inneren Kraefte an **allen** freien FHG, auch in den Zonen, bezogen wie die
+    Abbruchtoleranz und hoechstens diese (``r_info_voll``; None: nicht bestimmt).
+    Ausgenommen: dg["verletzt"] = False, dg["netzabhaengig"] = True und eine
+    WARNUNG; die Gesamtkontrolle des Gleichgewichts nach der Rechnung kann das
+    Ergebnis trotzdem ungueltig machen (plastisch_ungueltig). Sonst bleibt es
+    ungueltig, und dg["ausnahme_nicht"] nennt die nicht erfuellten Bedingungen."""
+    from . import plastizitaet as pl
+    from .begriffe import anzahl
+    from .zahlen import zahl_text as _z
+    if not dg.get("verletzt"):
+        return
+    ueber = pl.ueber_grenze(model, zustand, model.plastizitaet)
+    markiert = bool(zonen is not None and getattr(zonen, "auffaellig", None))
+    zonen_el = set()
+    if markiert:
+        try:
+            zonen._masken()
+            zonen_el = set(int(x) for x in np.asarray(zonen._zonen_el).tolist())
+        except Exception:                          # noqa: BLE001 - dann (a) nicht erfuellt
+            markiert = False
+    tol = float(getattr(model.plastizitaet, "toleranz", 1e-3) or 1e-3)
+    gl_ok = None if r_info_voll is None else bool(float(r_info_voll.get("rel", 1.0)) <= tol)
+    konv = bool(info.get("konvergiert")) and not info.get("traglast")
+    vorher = set(spur[-2]) if len(spur) >= 2 else None
+    ok, gruende = pl.grenze_netzabhaengig(ueber, zonen_el, markiert, konv, gl_ok, vorher)
+    dg["netzabhaengig_pruefung"] = {"markiert": markiert, "zonen_elemente": len(zonen_el),
+                                    "ueber_grenze": len(ueber), "ausserhalb": len(ueber - zonen_el),
+                                    "konvergiert": konv, "gleichgewicht_ok": gl_ok,
+                                    "gleichgewicht_rel": None if r_info_voll is None else float(r_info_voll["rel"]),
+                                    "vorher": None if vorher is None else len(vorher), "ausgenommen": ok}
+    if not ok:
+        dg["ausnahme_nicht"] = gruende
+        if markiert:
+            # nur wenn es eine markierte Zone gibt, erklaert die Ausnahme etwas
+            dg["text"] = str(dg.get("text", "")) + " (keine Ausnahme der netzabhängigen Zone: " + "; ".join(gruende) + ")"
+        neu.append("Plastizität: NICHT GÜLTIG – " + dg["text"])
+        return
+    namen = sorted({zonen._name(n) for n in zonen.auffaellig}) if hasattr(zonen, "_name") else []
+    dg["text_ungueltig"] = dg.get("text", "")
+    dg["verletzt"] = False
+    dg["netzabhaengig"] = True
+    dg["warnung"] = (f"ε_p,max {_z(float(dg['eps_p_max']) * 100.0, stellen=4)} % über der Gültigkeitsgrenze "
+                     f"{_z(float(dg['grenze']) * 100.0, stellen=4)} % nur in der netzabhängigen Zone"
+                     + (f" ({', '.join(namen[:6])}{' …' if len(namen) > 6 else ''})" if namen else "")
+                     + f" – {anzahl(len(ueber), 'Element', 'Elemente')}, vollständig in der Zone, Rechnung "
+                     "konvergiert, Gleichgewicht erfüllt, Zone wächst in der letzten Laststufe nicht; von der "
+                     "Grenze ausgenommen, dort sind die Werte netzabhängig")
+    neu.append("WARNUNG: " + dg["warnung"])
 
 
 def _startherkunft_eintragen(res, start, start_von, ausfallweg: bool) -> None:
@@ -6189,6 +6262,22 @@ def _gleichgewicht_pruefen(model: Model, res: Results, F) -> None:
             ri = getattr(res, "_residuum_info", None)
             if ri:
                 g["residuum"] = dict(ri)
+            # Kraft und Moment in numerischen Haltungen (Vorgabe des Anwenders vom
+            # 16.10.2026): angehobene Pivots (freie_teile mit Modus) und automatisch
+            # gehaltene FHG - eigene Angabe und im inneren Residuum
+            from . import singular as _sg
+            r_num, n_num = _sg.numerische_haltung(model, F, res.info.get("freie_teile"),
+                                                  res.info.get("auto_gehalten"))
+            if r_num is not None:
+                ni = _gg.numerisch(model, r_num, F, n_num)
+                g["numerisch"] = ni
+                if ni["warnung"]:
+                    g["ok"] = False
+                rp = getattr(res, "_residuum_plastisch", None)
+                if rp is not None and ri and np.size(rp) == np.size(r_num):
+                    g["residuum"] = _gg.residuum(model, np.asarray(rp, float) + r_num,
+                                                 getattr(res, "_residuum_bezug", F))
+                    g["residuum"]["mit_numerisch"] = True
             res.info["gleichgewicht_global"] = g
     except Exception as ex:                  # noqa: BLE001 - die Pruefung ist Beiwerk
         res.info["gleichgewicht_global_fehler"] = f"{type(ex).__name__}: {str(ex)[:200]}"

@@ -11223,8 +11223,17 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Traglast gibt es bei ideal plastischem Werkstoff kein Gleichgewicht. Findet
   der Newton in einer Laststufe keines, halbiert das Programm die Stufe bis zu
   viermal. Gelingt es auch dann nicht, endet die Rechnung beim letzten
-  konvergierten Zustand, und das Ergebnis heißt „NICHT gültig: Traglast
-  überschritten bei Lastfaktor …“. Gezeigt wird dieser letzte konvergierte
+  konvergierten Zustand, und das Ergebnis heißt seit dem 16.10.2026 (Wortlaut
+  des Anwenders) „NICHT gültig: Kein Gleichgewicht gefunden bei Laststufe X
+  (… % der Last). Mögliche Ursache: Traglast überschritten oder örtlicher
+  Mechanismus an <Ort>. Letzter konvergierter Lastanteil: … %.“ Der Ort ist
+  das Element, dessen plastische Dehnung vom letzten konvergierten Zustand zum
+  letzten Versuch am meisten wächst, mit Körper und Koordinate. Liegt es in
+  einer netzabhängigen Zone oder hängt es an einer Krafteinleitung (Knotenlast,
+  starre Scheibe, Kreisring, starrer Körper, gekoppeltes Stabende), heißt die
+  Ursache „örtlicher Mechanismus an Krafteinleitung – Modell prüfen“. Im
+  Spannschritt einer Endvorspannung steht statt der Laststufe „im
+  Spannschritt (Gruppe g) bei … % der Sollkraft“. Gezeigt wird dieser letzte konvergierte
   Zustand, gekennzeichnet in Zusammenfassung, Rechenliste, Protokoll und
   Bericht. Bei einer Endvorspannung halbiert der Spannschritt seine
   Spannstufen und nennt den Anteil der Sollkraft; verriegelt wird dann nicht.
@@ -11233,7 +11242,18 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   **Berechnung › Plastizität › Gültigkeitsgrenze ε_p** (Vorgabe 20 %) und je
   Werkstoff im Feld **Bruchdehnung** stellt man ein, ab welcher plastischen
   Dehnung das ganze Ergebnis „nicht gültig: außerhalb der Theorie kleiner
-  Verzerrungen“ ist. Jede plastische Rechnung nennt in Protokoll und
+  Verzerrungen“ ist. **Netzabhängige Zonen** nimmt das Programm von dieser
+  Grenze aus und warnt nur (Vorgabe des Anwenders vom 16.10.2026), wenn (a) die
+  Zone vom Programm als netzabhängig markiert ist (auffällige Stelle „Kraft
+  ohne Fläche“), (b) jedes Element über der Grenze in dieser Zone liegt, (c)
+  die Rechnung konvergiert ist und das Residuum der inneren Kräfte an allen
+  freien Freiheitsgraden, auch in der Zone, unter der Toleranz der Plastizität
+  liegt (und die Gleichgewichtskontrolle danach nicht anschlägt) und (d) die
+  Zone über die Laststufen nicht wächst: In der letzten konvergierten Laststufe
+  kommt kein Element über der Grenze dazu, und in der vorletzten lag schon
+  eines darüber. Dann steht eine WARNUNG mit der Zone in Protokoll und
+  Zusammenfassung, und das Ergebnis bleibt gültig; sonst bleibt es „nicht
+  gültig“, und der Text nennt die Bedingung, die fehlt. Jede plastische Rechnung nennt in Protokoll und
   Zusammenfassung ε_p,max mit Körper, Element und Koordinate sowie ΣR und ΣM
   der Lagerkräfte. Die Gleichgewichtskontrolle prüft dabei auch das Residuum
   der inneren Kräfte gegen die Lasten, bei einer Endvorspannung gegen die
@@ -12799,6 +12819,31 @@ eine weiche Feder bindet (Kopplung mit endlicher Steifigkeit, Federlager) oder g
 der Text nennt den Grund. Bauteile (Körper) bleiben Warnungen. Ein Fehler ist es dort,
 wo es heute schon einer ist: eine Last an einem automatisch gehaltenen Freiheitsgrad
 macht das Ergebnis „nicht gültig“.
+
+**Streng ausgelegt (seit 16.10.2026 nachmittags, Vorgabe des Anwenders).** „Frei
+drehbar“ ist eine **Warnung**, wenn die Drehung nur numerisch gehalten wird – durch
+eine weiche Feder oder durch die Pivot-Regularisierung des Gleichungslösers.
+**Information** gibt es nur bei einer echten Zwangsbedingung ohne Last am
+Freiheitsgrad: Die Bedingung muss den Freiheitsgrad bestimmen, mit endlicher, nicht
+verschwindender Steifigkeit, nicht nur ein angehobener Pivot. Das Programm misst das
+an jedem Knoten, den eine starre Kopplung, eine starre Scheibe oder ein starrer Körper
+bindet und an dem nur Fachwerkstäbe, Seile oder gar keine Elemente hängen: Es löst mit
+dem vorhandenen Faktor für Einheitslasten an diesen Knoten und vergleicht die wirksame
+Steifigkeit mit der Hauptdiagonale; unter 10⁻⁹ davon ist der Freiheitsgrad nur
+numerisch gehalten. Am Drehlager-Entwurf mit Lochrand hielt die Drehung des Ankerkopfs
+K157 so 0,4 bis 66 Nm/rad gegen 3,2·10¹³ Nm/rad auf der Diagonale – die
+Unterlegbleche drehen sich selbst frei, und die starre Scheibe bindet den Kopf an sie.
+Der Text sagt dann „nur numerisch gehalten (angehobener Pivot, Pivot-Regularisierung;
+wirksame Steifigkeit etwa … Nm/rad …; die Zwangsbedingung … bestimmt diese Bewegung
+nicht)“. Mit Kreisring hängt die Drehung des Kopfs an nichts und wird automatisch
+gesperrt; dort kommt keine Meldung. Kraft und Moment in numerischen Haltungen gehen in
+die Gleichgewichtskontrolle ein: Die Zeile „Gleichgewicht global“ nennt sie als „nur
+numerisch gehalten ΣF …, ΣM …“; ab 10⁻⁴ der Lasten warnt sie, ab 1 % ist das Ergebnis
+nicht gültig. Dazu zählen die angehobenen Pivots (der Teil der Last, der auf die freie
+Bewegung fällt) und die Lasten an automatisch gehaltenen Freiheitsgraden; in einer
+plastischen Rechnung gehen sie auch ins Residuum der inneren Kräfte ein. Die
+Mindesttangente der Plastizität hält keine Kraft im Ergebnis, sie wirkt nur in der
+Tangente.
 
 **Das Programm lagert nichts.** Die Teile in den genannten Richtungen zu lagern
 (Lager, Feder oder Reibung) ist Sache des Anwenders; bis dahin ist ihre

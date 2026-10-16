@@ -139,6 +139,28 @@ def residuum_text(g: dict) -> str:
             "in diesem Zustand nicht im Gleichgewicht mit den Spannungen")
 
 
+def numerisch(model, r, bezug_F, anzahl: int) -> dict:
+    """Kraft und Moment in numerischen Haltungen (Vorgabe des Anwenders vom
+    16.10.2026; singular.numerische_haltung): angehobene Pivots und automatisch
+    gehaltene FHG. Dasselbe Mass wie :func:`residuum` - bezogen auf die Lasten;
+    ab :data:`SCHRANKE` eine Warnung, ab :data:`UNGUELTIG` nicht gueltig."""
+    d = residuum(model, r, bezug_F)
+    d["anzahl"] = int(anzahl)
+    d["warnung"] = bool(d["rel"] >= SCHRANKE)
+    return d
+
+
+def numerisch_text(g: dict) -> str:
+    """„Gleichgewicht verletzt: … nur numerisch gehalten …“ - leer ohne Verletzung."""
+    n = (g or {}).get("numerisch") or {}
+    if not n.get("verletzt"):
+        return ""
+    return (f"Gleichgewicht verletzt: ΣF {_z(float(np.linalg.norm(n['F'])) / 1e3)} kN, "
+            f"ΣM {_z(float(np.linalg.norm(n['M'])) / 1e3)} kNm (bezogen auf die Lasten {_rel(n['rel'])}) "
+            "werden nur numerisch gehalten (angehobener Pivot bzw. automatisch gehaltene "
+            "Freiheitsgrade) – kein Bauteil trägt sie")
+
+
 def bewerten(aus: dict) -> dict:
     """dF, dM, bezogene Werte und Urteil aus den Summen eines Eintrags."""
     dF = float(np.linalg.norm(np.add(aus["F_last"], aus["F_lager"])))
@@ -158,14 +180,15 @@ def verletzt_text(g: dict) -> str:
     vor dem 14.10.2026 ohne das Feld ``verletzt``)."""
     if not g:
         return ""
+    zus = "; ".join(t for t in (residuum_text(g), numerisch_text(g)) if t)
     if not (g.get("verletzt") or float(g.get("rel_F", 0.0)) >= UNGUELTIG
             or float(g.get("rel_M", 0.0)) >= UNGUELTIG):
-        return residuum_text(g)
+        return zus
     return (f"Gleichgewicht verletzt: ΣF {_z(g['dF'] / 1e3)} kN (bezogen {_rel(g['rel_F'])}), "
             f"ΣM {_z(g['dM'] / 1e3)} kNm (bezogen {_rel(g['rel_M'])}) – Lasten und Lagerkräfte "
             f"weichen um mindestens {_rel(UNGUELTIG)} des Umsatzes voneinander ab, ein Teil der "
             "Last hat keinen Weg in die Lager"
-            + ("; " + residuum_text(g) if residuum_text(g) else ""))
+            + ("; " + zus if zus else ""))
 
 
 def ueberlagern(teile) -> dict:
@@ -228,6 +251,19 @@ def zeile(g: dict) -> str:
         if r.get("verletzt"):
             return (kopf + "NICHT GÜLTIG – " + text + f"; ab {_rel(UNGUELTIG)} der Lasten ist das Ergebnis "
                     "nicht gültig: die Spannungen halten der Last nicht das Gleichgewicht")
+    n = g.get("numerisch")
+    if n:
+        # numerische Haltungen (16.10.2026): angehobene Pivots, automatisch gehaltene FHG
+        text += (f"; nur numerisch gehalten ΣF {_z(float(np.linalg.norm(n['F'])) / 1e3)} kN, "
+                 f"ΣM {_z(float(np.linalg.norm(n['M'])) / 1e3)} kNm (bezogen auf die Lasten "
+                 f"{rel_text(n['rel'])})")
+        if n.get("verletzt"):
+            return (kopf + "NICHT GÜLTIG – " + text + f"; ab {_rel(UNGUELTIG)} der Lasten ist das Ergebnis "
+                    "nicht gültig: diesen Teil der Last trägt kein Bauteil")
+        if n.get("warnung"):
+            return (kopf + "WARNUNG – " + text + f"; Schranke {_rel(SCHRANKE)} der Lasten überschritten: "
+                    "ein Teil der Last wird nur numerisch gehalten (angehobener Pivot bzw. automatisch "
+                    "gehaltene Freiheitsgrade)")
     if g.get("ok"):
         return kopf + "erfüllt – " + text
     if verletzt_text(g):

@@ -519,6 +519,7 @@ def _traglast_im_spannschritt(model, z: dict, soll: list, name: str, kind: str, 
     der Sollkraft der Gruppe; die Gleichgewichtskontrolle mit inneren Kraeften
     misst gegen die **volle** Sollkraft (sie fehlt um (1 − Faktor) F_soll)."""
     from . import gleichgewicht as gg
+    from . import plastizitaet as pl
     from . import solver as sv
     from .zahlen import zahl_text as _z
     tl = z["traglast"]
@@ -533,13 +534,18 @@ def _traglast_im_spannschritt(model, z: dict, soll: list, name: str, kind: str, 
     kraft = (", ".join(f"{s.stab} {_z(a * float(s.kraft) / 1e3, stellen=4)} von "
                        f"{_z(float(s.kraft) / 1e3, stellen=4)} kN" for s in jetzt[:4])
              + (" …" if len(jetzt) > 4 else ""))
-    text = (f"Traglast überschritten im Spannschritt (Gruppe {tl['gruppe']}) bei Lastfaktor "
-            f"{_z(a, stellen=4)} der Sollkraft ({kraft}; letzter konvergierter Zustand gezeigt; bei "
-            f"{_z(a_v, stellen=4)} kein Gleichgewicht)")
     pz = dict(res.info.get("plastizitaet") or {})
     fehl = (getattr(tl.get("r_fehl"), "info", None) or {}).get("plastizitaet") or {}
+    # Wortlaut des Anwenders (16.10.2026, plastizitaet.traglast_text) mit dem
+    # Spannschritt statt der Laststufe; Ort und Ursache aus dem Newton der Spannstufe
+    tl_f = fehl.get("traglast") if isinstance(fehl.get("traglast"), dict) else {}
+    ort = tl_f.get("ort") or {}
+    ursache = str(tl_f.get("ursache") or pl.traglast_ursache(ort))
+    text = (f"Kein Gleichgewicht gefunden im Spannschritt (Gruppe {tl['gruppe']}) bei "
+            f"{_z(a_v * 100.0, stellen=4)} % der Sollkraft ({kraft}). Mögliche Ursache: {ursache}. "
+            f"Letzter konvergierter Lastanteil: {_z(a * 100.0, stellen=4)} % der Sollkraft.")
     pz["traglast"] = {"ueberschritten": True, "lastfaktor": a, "versuch": a_v, "text": text,
-                      "spannschritt": True, "gruppe": int(tl["gruppe"])}
+                      "spannschritt": True, "gruppe": int(tl["gruppe"]), "ort": ort, "ursache": ursache}
     if isinstance(fehl.get("mechanismus"), dict):
         pz["mechanismus"] = fehl["mechanismus"]
     pz["konvergiert"] = False

@@ -43,6 +43,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_zonenrand",
            "tests.test_scheibe_kreisring",
            "tests.test_traglast",
+           "tests.test_traglast_meldung", "tests.test_frei_drehbar_streng",
            "tests.test_scheiben_dialog",
            "volumen3d.tests.test_kern"]
 

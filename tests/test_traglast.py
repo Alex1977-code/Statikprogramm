@@ -164,12 +164,13 @@ def test_zugstab():
               f"{'1,0' if typ == 'tet10' else '1,15 (Sperren)'} F_lim",
               0.95 <= lam * 1.2 <= oben, f"λ {lam:.5f} → {lam * 1.2:.4f} F_lim")
         g = _gueltig_text(r)
-        check(f"{typ}, 1,2 F_lim: NICHT gültig mit „Traglast überschritten bei Lastfaktor …“",
-              g.startswith("NICHT gültig") and "Traglast überschritten bei Lastfaktor" in g, g[:160])
+        # Wortlaut seit 16.10.2026 nachmittags (Vorgabe des Anwenders, tests/test_traglast_meldung)
+        check(f"{typ}, 1,2 F_lim: NICHT gültig mit „Kein Gleichgewicht gefunden bei Laststufe …“",
+              g.startswith("NICHT gültig") and "Kein Gleichgewicht gefunden bei Laststufe" in g, g[:160])
         # Der letzte konvergierte Zustand bleibt sichtbar und gekennzeichnet
         ep = float(pz.get("eps_p_max") or 0.0)
         check(f"{typ}, 1,2 F_lim: gezeigt ist der letzte konvergierte Zustand (gekennzeichnet in "
-              "Zusammenfassung)", "letzter konvergierter Zustand" in r.summary(), f"ε_p {ep * 100:.3f} %")
+              "Zusammenfassung)", "Letzter konvergierter Lastanteil" in r.summary(), f"ε_p {ep * 100:.3f} %")
         if typ == "tet10":
             check("tet10, 1,2 F_lim: der gezeigte Zustand bleibt in der Theorie kleiner Verzerrungen (ε_p < 20 %)",
                   ep < 0.2, f"ε_p {ep * 100:.3f} %")
@@ -181,7 +182,7 @@ def test_zugstab():
               abs(-Rx - lam * 1.2 * F_LIM) <= 2e-3 * F_LIM, f"ΣR_x {Rx / 1e3:.2f} kN gegen "
               f"{lam * 1.2 * F_LIM / 1e3:.2f} kN")
         check(f"{typ}, 1,2 F_lim: Protokoll nennt Traglast und Faktor",
-              any("Traglast überschritten bei Lastfaktor" in z for z in meld), "")
+              any("Kein Gleichgewicht gefunden bei Laststufe" in z for z in meld), "")
         if typ == "tet10":
             import tempfile
             from statik3d.report import write_report
@@ -190,7 +191,7 @@ def test_zugstab():
                                     os.path.join(td, "b.md"), fmt="md")
                 text = open(pfad, encoding="utf-8").read()
             check("tet10, 1,2 F_lim: der Bericht nennt das Ergebnis NICHT GÜLTIG mit der Traglast",
-                  "NICHT GÜLTIG – LF1: Traglast überschritten" in text, "")
+                  "NICHT GÜLTIG – LF1: Kein Gleichgewicht gefunden" in text, "")
 
 
 def test_balken():
@@ -315,8 +316,8 @@ def test_pruefblech():
     r, meld = rechnen(m)
     pz = _pz(r)
     g = _gueltig_text(r)
-    check("tet10, 900 kN: NICHT gültig – Traglast überschritten (im Spannschritt)",
-          g.startswith("NICHT gültig") and "Traglast überschritten" in g, g[:220])
+    check("tet10, 900 kN: NICHT gültig – kein Gleichgewicht (im Spannschritt)",
+          g.startswith("NICHT gültig") and "Kein Gleichgewicht gefunden im Spannschritt" in g, g[:220])
     check("tet10, 900 kN: nicht „konvergiert“", solver.konvergenz_zustand(r.info) != solver.KONVERGIERT,
           solver.konvergenz_zustand(r.info)[:160])
     # Gemessen 16.10.2026: Spannstufe 600 kN ohne Gleichgewicht, nach vier

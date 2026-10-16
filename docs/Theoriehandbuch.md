@@ -7246,6 +7246,55 @@ Werkstoff mit eingetragener Bruchdehnung (`Material.bruchdehnung`) gilt
 diese. Das Prüfblech aus tet4 konvergiert bei 900 kN mit ε_p 20,56 % und ist
 damit nicht gültig.
 
+**Netzabhängige Zonen an der Gültigkeitsgrenze (seit 16.10.2026, Vorgabe des
+Anwenders).** Eine Überschreitung wird nur gewarnt, wenn vier Bedingungen
+zugleich gelten (`plastizitaet.grenze_netzabhaengig`, `solver._grenze_netzabhaengig`).
+(a) Es gibt Stellen, die der Newton als auffällig und damit netzabhängig markiert
+hat (`_SpitzenImNewton.auffaellig`); ihre Zonen sind die Elementmengen
+`zone` der Stellen. (b) Jedes Element, dessen ε_p,max über seiner Grenze liegt,
+gehört zu diesen Zonen. (c) Die Rechnung ist konvergiert, ohne Traglastmeldung,
+und das Residuum der inneren Kräfte an **allen** freien Freiheitsgraden, auch in
+den Zonen, liegt bezogen auf die Lasten unter der Abbruchtoleranz (1e-3); schlägt
+die globale Gleichgewichtskontrolle danach an, fällt die Ausnahme weg. (d) Die
+Zone wächst nicht: Am Ende jeder konvergierten Laststufe hält der Newton die
+Elemente über der Grenze fest; in der letzten kommt keines dazu, und in der
+vorletzten lag schon eines darüber. Gemessen an der Ankerplatte
+(`tests/test_traglast_meldung`): Mit 0,3 MN Zuglast fließen nur die 48 Elemente
+der Zone am Lochrand (ε_p,max 8,78 %); über einer Grenze von 2 % liegen in den
+letzten beiden Laststufen dieselben 32 Elemente, die Ausnahme greift. Mit 0,6 MN fließen 16 Elemente
+außerhalb (ε_p,max 33 %); das Ergebnis bleibt nicht gültig mit Grund (b).
+
+**Wortlaut der Traglastmeldung (seit 16.10.2026, Vorgabe des Anwenders).** „Kein
+Gleichgewicht gefunden bei Laststufe X (… % der Last). Mögliche Ursache: Traglast
+überschritten oder örtlicher Mechanismus an <Ort>. Letzter konvergierter
+Lastanteil: … %.“ Der Ort ist das Element mit dem größten Zuwachs von ε_p vom
+letzten konvergierten Zustand zum letzten Versuch (`plastizitaet.traglast_ort`).
+Liegt es in einer auffälligen Zone oder berührt es einen Knoten mit Knotenlast,
+einen Knoten eines starren Körpers oder einer Verteilkopplung (auch Kreisring)
+oder einer starren Scheibe bzw. eines gekoppelten Stabendes
+(`krafteinleitung_knoten`), heißt die Ursache „örtlicher Mechanismus an
+Krafteinleitung – Modell prüfen“. Am Zugstab 50 × 50 mm mit 1,2 F_lim liegt der Ort
+im fließenden Stab; mit F_lim an einem einzigen Knoten liegt er im Element an
+diesem Knoten.
+
+**Numerische Haltungen in der Gleichgewichtskontrolle (seit 16.10.2026).** „Frei
+drehbar“ wird streng ausgelegt: An jedem Knoten, den eine starre Kopplung, eine
+starre Scheibe oder ein starrer Körper bindet und an dem kein Element eine Drehung
+hält, löst das Programm mit dem vorhandenen Faktor für Einheitslasten zufälligen
+Vorzeichens (zwei je Verschiebung und Drehung, alle Knoten zugleich). Die größte
+Antwort am Freiheitsgrad ist seine Nachgiebigkeit; liegt ihr Kehrwert unter 10⁻⁹
+der Hauptdiagonale, hält ihn nur der angehobene Pivot (`singular.numerisch_gehalten`),
+und die Meldung ist eine Warnung, auch mit Zwangsbedingung und ohne Last. Kraft und
+Moment, die nur numerisch gehalten werden, sind an einer freien Bewegung Φ der
+Anteil Φᵀ F der Last, denn Φᵀ K = 0: am Knoten die Projektion von Kraft und Moment
+auf die freien Richtungen, am frei beweglichen Bauteil die Projektion seiner
+Knotenkräfte auf seine Starrkörperbewegungen, dazu die Lasten an automatisch
+gehaltenen Freiheitsgraden (`singular.numerische_haltung`). Sie stehen als eigene
+Angabe in der Gleichgewichtskontrolle (Warnung ab 10⁻⁴, nicht gültig ab 1 % der
+Lasten) und gehen in einer plastischen Rechnung ins innere Residuum ein. Die
+Mindesttangente (H_TANGENTE) gehört nicht dazu: Sie steht nur in der Tangente, das
+Residuum rechnet mit den inneren Kräften des wahren Werkstoffs.
+
 **Gleichgewicht mit inneren Kräften.** Jede plastische Rechnung bestimmt am
 gezeigten Zustand das Residuum an den freien Freiheitsgraden. Der Lösungsweg
 erfüllt K u = F_ende + F_p exakt, die inneren Kräfte sind aber K u − F_p(u)

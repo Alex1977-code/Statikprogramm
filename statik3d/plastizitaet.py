@@ -1869,14 +1869,26 @@ def _stufe_teilbar(F, F_sofort, lam_alt: float, lam_k: float) -> bool:
 
 
 def traglast_text(tl: dict) -> str:
-    """„Traglast überschritten bei Lastfaktor 0,833 (…)“ - die Meldung des Anwenders."""
+    """Die Meldung im Wortlaut des Anwenders (16.10.2026): „Kein Gleichgewicht
+    gefunden bei Laststufe X. Mögliche Ursache: Traglast überschritten oder
+    örtlicher Mechanismus an <Ort>. Letzter konvergierter Lastanteil: …%.“ -
+    an einer Krafteinleitung oder in einer netzabhaengigen Zone heisst die
+    Ursache „örtlicher Mechanismus an Krafteinleitung – Modell prüfen“
+    (:func:`traglast_ursache`). Hinter X steht der Anteil der Last dieser Stufe:
+    nach dem Halbieren sagt die Nummer allein nicht, welche Last sie traegt.
+    (Bis zum 16.10.2026 nachmittags: „Traglast überschritten bei Lastfaktor …“.)"""
     from .zahlen import zahl_text as _z
     lam = float(tl.get("lastfaktor", 0.0))
-    t = (f"Traglast überschritten bei Lastfaktor {_z(lam, stellen=4)} (letzter konvergierter Zustand "
-         f"gezeigt; bei {_z(float(tl.get('versuch', 1.0)), stellen=4)} kein Gleichgewicht")
+    ursache = str(tl.get("ursache") or traglast_ursache(tl.get("ort") or {}))
+    stufe = tl.get("stufe")
+    wo = (f"bei Laststufe {int(stufe)} ({_z(float(tl.get('versuch', 1.0)) * 100.0, stellen=4)} % der Last)"
+          if stufe is not None else
+          f"bei {_z(float(tl.get('versuch', 1.0)) * 100.0, stellen=4)} % der Last")
+    t = (f"Kein Gleichgewicht gefunden {wo}. Mögliche Ursache: {ursache}. "
+         f"Letzter konvergierter Lastanteil: {_z(lam * 100.0, stellen=4)} %.")
     if tl.get("sofort") and lam == 0.0:
-        t += ", schon unter den sofort voll wirkenden Lasten Temperatur und Vorspannung"
-    return t + ")"
+        t += " (Schon unter den sofort voll wirkenden Lasten Temperatur und Vorspannung.)"
+    return t
 
 
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
@@ -1977,6 +1989,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     # Rueckfuehrung, fuer das Residuum am Ende). Vor der ersten Stufe der Start
     traglast = None
     konv = {"lam": 0.0, "u": None, "basis": basis, "F_p": F_p, "anfang": basis}
+    # Elemente ueber der Gueltigkeitsgrenze am Ende jeder konvergierten Stufe
+    # (16.10.2026, Bedingung (d) der Ausnahme netzabhaengiger Zonen)
+    grenz_spur: list = []
     grenze_eps = float(getattr(einst, "dehnungsgrenze", DEHNUNGSGRENZE_VORGABE) or DEHNUNGSGRENZE_VORGABE)
     while k < len(faktoren):
         lam_k, tiefe = faktoren[k]
@@ -2027,11 +2042,13 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 if TRAGLAST_ERKENNEN:
                     # nicht auf dem Zustand einer nicht konvergierten Stufe weiterrechnen
                     traglast = {"lastfaktor": float(konv["lam"]), "versuch": float(lam_k),
-                                "sofort": F_sofort is not None, "mechanismus": None}
+                                "sofort": F_sofort is not None, "mechanismus": None, "stufe": int(k),
+                                "_fehl": zustand_stufe}
                     break
             else:
                 konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
                         "anfang": basis}
+                grenz_spur.append(ueber_grenze(model, zustand_stufe, einst))
             basis, F_p = zustand_stufe, F_p_stufe
             lam_alt = lam_k
             continue
@@ -2136,7 +2153,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                                + (" (Mechanismus)" if mech is not None else
                                   f" ({_mass_text(zonen, mess, diff, mass)} > {einst.toleranz:g})"))
                 traglast = {"lastfaktor": float(konv["lam"]), "versuch": float(lam_k),
-                            "sofort": F_sofort is not None, "mechanismus": mech}
+                            "sofort": F_sofort is not None, "mechanismus": mech, "stufe": int(k),
+                            "_fehl": zustand_neu}
                 break
         if weglauf:
             # Zurueck an den Stufenanfang, die Stufe in zwei halben wiederholen
@@ -2199,6 +2217,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         if erreicht and (pruef is None or gg_ok):
             konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
                     "anfang": basis}
+            grenz_spur.append(ueber_grenze(model, zustand_stufe, einst))
         basis, F_p = zustand_stufe, F_p_stufe
         lam_alt = lam_k
     stufen_gerechnet = len(faktoren)
@@ -2211,6 +2230,15 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         lam_e = float(konv["lam"])
         F_ende = stufenlast(F, F_sofort, lam_e) if lam_e > 0.0 else np.zeros_like(np.asarray(F, float))
         traglast["ueberschritten"] = True
+        # Wo die Fliesszone ohne Gleichgewicht waechst (Wortlaut des Anwenders, 16.10.2026)
+        fehl = traglast.pop("_fehl", None)
+        try:
+            traglast["ort"] = traglast_ort(model, konv["basis"], fehl, traglast.get("mechanismus"), zonen)
+        except Exception as ex:                  # noqa: BLE001 - eine Meldung haelt nichts auf
+            traglast["ort"] = {}
+            if log is not None:
+                log.append(f"Plastizität: Ort der Fließzone nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
+        traglast["ursache"] = traglast_ursache(traglast["ort"])
         traglast["text"] = traglast_text(traglast)
         info["traglast"] = traglast
         if traglast.get("mechanismus"):
@@ -2323,6 +2351,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         info["_residuum"] = info["_residuum"] + np.asarray(r_ct, float)
     info["fliessend"] = len(basis.fliessend())
     info["eps_p_max"] = basis.eq_max()
+    # die beiden letzten konvergierten Stufen (solver._plastisch_bewerten nimmt es heraus)
+    info["_ueber_grenze"] = [sorted(x) for x in grenz_spur[-2:]]
     if zonen is not None and log is not None:
         zeile = zonen.schlusszeile()
         if zeile:
@@ -2659,6 +2689,169 @@ def dehnungsgrenze_pruefen(model, zustand: Zustand, einst: Plastizitaet) -> dict
                        f"in Element {i} über {_z(g * 100.0, stellen=4)} % ({quelle}); das ganze Ergebnis "
                        "ist nicht gültig")
     return aus
+
+
+def _grenze_je_element(model, einst) -> tuple:
+    """(Vorgabe, Funktion Element -> Grenze): die Bruchdehnung des Werkstoffs,
+    wenn eingetragen, sonst die Grenze der Rechnung (wie dehnungsgrenze_pruefen)."""
+    vorgabe = float(getattr(einst, "dehnungsgrenze", DEHNUNGSGRENZE_VORGABE) or DEHNUNGSGRENZE_VORGABE)
+    cache: dict = {}
+
+    def grenze(i: int) -> float:
+        name = model.elements[int(i)].mat
+        if name not in cache:
+            mat = model.materials.get(name)
+            bd = getattr(mat, "bruchdehnung", None) if mat is not None else None
+            cache[name] = float(bd) if bd else vorgabe
+        return cache[name]
+    return vorgabe, grenze
+
+
+def ueber_grenze(model, zustand: Zustand, einst) -> set:
+    """Die Elemente, deren ε_p,max ueber ihrer Gueltigkeitsgrenze liegt
+    (16.10.2026, fuer die Ausnahme netzabhaengiger Zonen)."""
+    _v, grenze = _grenze_je_element(model, einst)
+    aus = set()
+    for i, v in zustand.eps_p_eq.items():
+        a = np.asarray(v, float).ravel()
+        if a.size and float(a.max()) > grenze(int(i)):
+            aus.add(int(i))
+    return aus
+
+
+def grenze_netzabhaengig(ueber, zonen_el, markiert: bool, konvergiert: bool, gleichgewicht_ok,
+                         vorher) -> tuple:
+    """Darf die Ueberschreitung der Gueltigkeitsgrenze nur gewarnt werden?
+    Vorgabe des Anwenders vom 16.10.2026, woertlich: „Netzabhängige Zonen von
+    der 20-%-Grenze ausnehmen und nur warnen: ja, wenn (a) die Zone vom
+    Programm als netzabhängig markiert ist, (b) die Dehnung über 20 %
+    vollständig innerhalb der Zone bleibt, (c) die Rechnung konvergiert ist und
+    das Gleichgewicht stimmt, (d) die Zone über die Laststufen nicht wächst.
+    Sonst Ergebnis ‚nicht gültig‘.“
+
+    ``ueber``: Elemente ueber der Grenze am Ende; ``zonen_el``: die Elemente
+    der als netzabhaengig markierten Zonen (auffaellige Stellen, solver.
+    _SpitzenImNewton); ``markiert``: es gibt solche Stellen; ``gleichgewicht_ok``:
+    True, False oder None (nicht bestimmt - zaehlt nicht als erfuellt);
+    ``vorher``: Elemente ueber der Grenze am Ende der vorletzten konvergierten
+    Laststufe (None: es gab keine). (d) heisst hier: in der letzten Laststufe
+    kommt kein Element ueber der Grenze dazu, und die Ueberschreitung war in
+    der vorletzten schon da - sonst laesst sich nicht sagen, dass sie nicht
+    waechst. Rueckgabe (ausgenommen, Gruende je nicht erfuellter Bedingung)."""
+    from .begriffe import anzahl
+    ueber, zonen_el = set(int(x) for x in ueber), set(int(x) for x in (zonen_el or ()))
+    gruende = []
+    if not markiert or not zonen_el:
+        gruende.append("(a) keine vom Programm als netzabhängig markierte Zone")
+    aussen = ueber - zonen_el
+    if aussen:
+        gruende.append(f"(b) die Dehnung über der Grenze reicht über die netzabhängige Zone hinaus "
+                       f"({anzahl(len(aussen), 'Element', 'Elemente')} außerhalb)")
+    if not konvergiert:
+        gruende.append("(c) die Rechnung ist nicht konvergiert")
+    if gleichgewicht_ok is None:
+        gruende.append("(c) das Gleichgewicht ist nicht bestimmt")
+    elif not gleichgewicht_ok:
+        gruende.append("(c) das Gleichgewicht stimmt nicht")
+    if vorher is None:
+        gruende.append("(d) nur eine Laststufe – ob die Zone wächst, lässt sich nicht prüfen")
+    else:
+        neu = ueber - set(int(x) for x in vorher)
+        if neu or not vorher:
+            gruende.append("(d) die Zone wächst über die Laststufen ("
+                           + (f"{anzahl(len(neu), 'Element', 'Elemente')} in der letzten Laststufe dazu"
+                              if vorher else "in der vorletzten Laststufe noch keine Überschreitung") + ")")
+    return (not gruende), gruende
+
+
+def krafteinleitung_knoten(model) -> np.ndarray:
+    """Maske der Knoten, an denen Kraft eingeleitet wird (16.10.2026, Wortlaut der
+    Traglastmeldung): Knotenlasten aller Lastfaelle, Master und Slaves starrer
+    Koerper und Verteilkopplungen (RBE2/RBE3, Kreisring), die Knoten der starren
+    Scheiben und der gekoppelten Stabenden. Kontaktfugen zaehlen nicht."""
+    nn = int(model.nn)
+    m = np.zeros(nn, bool)
+
+    def setze(k):
+        k = int(k)
+        if 0 <= k < nn:
+            m[k] = True
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for nl in getattr(lc, "nodal_loads", None) or []:
+            if any(float(x) for x in (nl.F or [])):
+                setze(nl.node)
+    for sk in getattr(model, "starrkoerper", None) or []:
+        setze(sk.master)
+        for s in sk.slaves or []:
+            setze(s)
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
+    for kp in getattr(model, "kopplungen", None) or []:
+        g = str(getattr(kp, "gruppe", "") or "")
+        if g.startswith(STARR_GRUPPE) or g.startswith(STABENDE_GRUPPE):
+            setze(kp.node_a)
+            setze(kp.node_b)
+    return m
+
+
+def ort_element(model, i: int) -> dict:
+    """Koerper, Werkstoff und Mitte eines Elements (fuer den Ort einer Meldung)."""
+    e = model.elements[int(i)]
+    X = np.asarray(model.nodes, float)[[int(n) for n in e.nodes if 0 <= int(n) < model.nn]]
+    xyz = X.mean(axis=0) if len(X) else np.zeros(3)
+    return {"element": int(i), "koerper": _koerper_des_elements(model, int(i)), "werkstoff": str(e.mat),
+            "xyz": [float(c) for c in xyz]}
+
+
+def ort_text(ort: dict) -> str:
+    """„Körper V1, Element 12 bei (0,12; 0,03; 0,01) m“."""
+    from .zahlen import zahl_text as _z
+    if not ort:
+        return "unbekanntem Ort"
+    x, y, z = ort.get("xyz") or (0.0, 0.0, 0.0)
+    kp = str(ort.get("koerper") or "")
+    wo = f"Körper {kp}, " if kp and kp != "default" else ""
+    return f"{wo}Element {ort['element']} bei ({_z(x, stellen=4)}; {_z(y, stellen=4)}; {_z(z, stellen=4)}) m"
+
+
+def traglast_ort(model, konv_zustand, fehl_zustand, mech, zonen) -> dict:
+    """Wo die Fliesszone ohne Gleichgewicht waechst (16.10.2026): das Element mit
+    dem groessten Zuwachs von ε_p vom letzten konvergierten Zustand zum letzten
+    Versuch; ohne Zuwachs das Element am Knoten des Mechanismus. Dazu, ob es in
+    einer als netzabhaengig markierten Zone (auffaellige Stelle) oder an einer
+    Krafteinleitung (:func:`krafteinleitung_knoten`) liegt."""
+    best_i, best = None, 0.0
+    alt = getattr(konv_zustand, "eps_p_eq", None) or {}
+    for i, v in (getattr(fehl_zustand, "eps_p_eq", None) or {}).items():
+        a = float(np.max(v)) if np.size(v) else 0.0
+        b = float(np.max(alt[i])) if (i in alt and np.size(alt[i])) else 0.0
+        if a - b > best:
+            best_i, best = int(i), a - b
+    if best_i is None and isinstance(mech, dict) and mech.get("knoten") is not None:
+        k = int(mech["knoten"])
+        best_i = next((j for j, e in enumerate(model.elements) if k in [int(x) for x in e.nodes]), None)
+    if best_i is None:
+        return {}
+    ort = ort_element(model, best_i)
+    ort["d_eps_p"] = float(best)
+    netzabh = False
+    if zonen is not None and getattr(zonen, "auffaellig", None):
+        try:
+            zonen._masken()
+            netzabh = best_i in set(int(x) for x in np.asarray(zonen._zonen_el).tolist())
+        except Exception:                      # noqa: BLE001 - nur eine Einordnung
+            netzabh = False
+    ke = krafteinleitung_knoten(model)
+    an_ke = any(0 <= int(n) < len(ke) and ke[int(n)] for n in model.elements[best_i].nodes)
+    ort["netzabhaengig"] = bool(netzabh)
+    ort["krafteinleitung"] = bool(an_ke)
+    return ort
+
+
+def traglast_ursache(ort: dict) -> str:
+    """Die „mögliche Ursache“ der Traglastmeldung (Wortlaut des Anwenders)."""
+    if ort and (ort.get("netzabhaengig") or ort.get("krafteinleitung")):
+        return f"örtlicher Mechanismus an Krafteinleitung – Modell prüfen ({ort_text(ort)})"
+    return "Traglast überschritten oder örtlicher Mechanismus an " + ort_text(ort)
 
 
 def sigma0_je_element(model, zustand: Zustand) -> dict:
