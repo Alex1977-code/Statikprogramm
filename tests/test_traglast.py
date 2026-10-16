@@ -182,6 +182,15 @@ def test_zugstab():
               f"{lam * 1.2 * F_LIM / 1e3:.2f} kN")
         check(f"{typ}, 1,2 F_lim: Protokoll nennt Traglast und Faktor",
               any("Traglast überschritten bei Lastfaktor" in z for z in meld), "")
+        if typ == "tet10":
+            import tempfile
+            from statik3d.report import write_report
+            with tempfile.TemporaryDirectory() as td:
+                pfad = write_report(r.model, solver.Analysis(r.model, cases={"LF1": r}),
+                                    os.path.join(td, "b.md"), fmt="md")
+                text = open(pfad, encoding="utf-8").read()
+            check("tet10, 1,2 F_lim: der Bericht nennt das Ergebnis NICHT GÜLTIG mit der Traglast",
+                  "NICHT GÜLTIG – LF1: Traglast überschritten" in text, "")
 
 
 def test_balken():
@@ -340,6 +349,45 @@ def test_pruefblech():
           _gueltig_text(r)[:160])
 
 
+def test_oberflaeche():
+    print("\n--- 7. Oberfläche: Gültigkeitsgrenze und Bruchdehnung einstellbar ---")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("STATIK3D_NO_UPDATE_CHECK", "1")
+    os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")
+    from PySide6 import QtWidgets
+    from statik3d.gui.main import MainWindow
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    w = MainWindow()
+    w._fragen_knoepfe = lambda *a, **k: True
+    hinweise = []
+    w.hinweis = lambda t, *a, **k: hinweise.append(str(t))
+    w.model = zugstab(0.9)
+    w.refresh_all()
+    app.processEvents()
+    w._plast_anzeigen()
+    check("Maske Berechnung: Feld „Gültigkeitsgrenze ε_p“ mit Vorgabe 20 %",
+          hasattr(w, "sp_plast_grenze") and abs(w.sp_plast_grenze.value() - 20.0) < 1e-9, "")
+    vorher = dict(vars(w.model.plastizitaet))
+    w._plast_schreiben(w.model.plastizitaet)
+    check("… Öffnen und Übernehmen ohne Eingabe ändert die Einstellung nicht",
+          dict(vars(w.model.plastizitaet)) == vorher, "")
+    w.sp_plast_grenze.setValue(15.0)
+    w._plast_schreiben(w.model.plastizitaet)
+    check("… 15 % übernommen: Plastizitaet.dehnungsgrenze = 0,15",
+          abs(w.model.plastizitaet.dehnungsgrenze - 0.15) < 1e-12, str(w.model.plastizitaet.dehnungsgrenze))
+    felder = {"name": "S355", "E": "210", "nu": "0.3", "rho": "0", "alpha": "12", "fy": "355", "fu": "510",
+              "grade": ""}
+    w._eigenschaften_uebernehmen("werkstoff", "S355", dict(felder, bruchdehnung="22"))
+    check("Werkstoffmaske: Bruchdehnung 22 % übernommen", getattr(w.model.materials["S355"], "bruchdehnung", None)
+          == 0.22, str(getattr(w.model.materials["S355"], "bruchdehnung", None)))
+    w._eigenschaften_uebernehmen("werkstoff", "S355", dict(felder, bruchdehnung="0"))
+    check("… 0 % abgewiesen, der Wert bleibt", getattr(w.model.materials["S355"], "bruchdehnung", None) == 0.22
+          and any("Bruchdehnung" in h for h in hinweise), hinweise[-1:] if hinweise else "")
+    w._eigenschaften_uebernehmen("werkstoff", "S355", dict(felder, bruchdehnung=""))
+    check("… leer = Grenze der Rechnung (None)", getattr(w.model.materials["S355"], "bruchdehnung", 1) is None, "")
+    w.close()
+
+
 def main():
     test_zugstab()
     test_balken()
@@ -347,6 +395,7 @@ def main():
     test_ausgabe()
     test_gleichgewicht_mit_inneren_kraeften()
     test_pruefblech()
+    test_oberflaeche()
     n_f = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_f} von {len(RESULTS)} Prüfungen bestanden")
     return 1 if n_f else 0

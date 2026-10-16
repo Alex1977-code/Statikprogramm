@@ -2075,10 +2075,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 # Mechanismus: weiterrechnen hiesse den Verschiebungen nachlaufen
                 # (Balken 1,2 M_pl: 25 Schritte zu je 16,7 m) - die Stufe gilt als
                 # nicht konvergiert, unten wird halbiert oder die Traglast gemeldet
+                # ins Protokoll; der Loeser gibt es am Ende des Lastfalls in den
+                # Fortschritt weiter (wie die Zeilen zum Halbieren)
                 if log is not None:
                     log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last: {mech['text']}")
-                if progress is not None:
-                    progress(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last: {mech['text']}")
                 break
             je_schritt.append(mass)
             if len(je_schritt) >= 2 and je_schritt[-1] < je_schritt[-2]:
@@ -2196,8 +2196,6 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         rest = None
         if log is not None:
             log.append("Plastizität: " + traglast["text"])
-        if progress is not None:
-            progress("Plastizität: " + traglast["text"])
     stab_offen = ""
     tol = float(einst.toleranz)
     abgenommen = None           # Urteil der Schlussabnahme (nur mit Kontakt)

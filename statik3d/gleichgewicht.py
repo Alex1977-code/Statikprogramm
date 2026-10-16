@@ -204,6 +204,12 @@ def _rel(x: float) -> str:
     return _z(x, stellen)
 
 
+def rel_text(x: float) -> str:
+    """Bezogene Abweichung fuer Protokoll und Zusammenfassung: unter 1e-6 nur
+    „unter 0,000001“ - zwoelf Nullen sagen dem Leser nichts."""
+    return "unter 0,000001" if abs(float(x)) < 1e-6 else _rel(float(x))
+
+
 def zeile(g: dict) -> str:
     """Die Zeile der Zusammenfassung eines Ergebnisses."""
     if not g:
@@ -217,7 +223,7 @@ def zeile(g: dict) -> str:
     if r:
         # mit den inneren Kraeften (plastische Rechnung, 16.10.2026)
         text += (f"; Residuum der inneren Kräfte {_z(r['norm'] / 1e3)} kN (bezogen auf die Lasten "
-                 f"{_rel(r['rel'])}), ΣF {_z(float(np.linalg.norm(r['F'])) / 1e3)} kN, "
+                 f"{rel_text(r['rel'])}), ΣF {_z(float(np.linalg.norm(r['F'])) / 1e3)} kN, "
                  f"ΣM {_z(float(np.linalg.norm(r['M'])) / 1e3)} kNm")
         if r.get("verletzt"):
             return (kopf + "NICHT GÜLTIG – " + text + f"; ab {_rel(UNGUELTIG)} der Lasten ist das Ergebnis "

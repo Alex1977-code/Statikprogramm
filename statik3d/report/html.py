@@ -2768,6 +2768,14 @@ class Report:
         # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
         from .. import gleichgewicht as _GG
         b.extend(_GG.bericht_saetze(allres))
+        # plastische Rechnung (16.10.2026): Traglast, Mechanismus, Gueltigkeitsgrenze -
+        # das ganze Ergebnis ist nicht gueltig
+        from ..solver import plastisch_ungueltig as _pu
+        for name, res in allres:
+            grund = _pu(getattr(res, "info", None) or {})
+            if grund:
+                b.append(("note", f"NICHT GÜLTIG – {name}: {grund}."))
+                self._warnings.append(f"{name} nicht gültig: {grund}")
         spitzen = [_SA.spitze(r) for _n, r in allres]
         spitzen = [x for x in spitzen if x is not None]
         if spitzen:

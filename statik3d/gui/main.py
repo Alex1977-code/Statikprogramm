@@ -8959,6 +8959,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                     f"{mt.grenze_name() if mt else 'f_u'} verfestigt der Werkstoff, "
                                     "danach fließt er ideal plastisch."),
                           F("grenze", "Grenze", "info", (pl_.grenze_text(mt, pz_) if mt else "–")),
+                          # Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026)
+                          F("bruchdehnung", "Bruchdehnung [%]", "zahl",
+                            (float(mt.bruchdehnung) * 100.0 if mt and getattr(mt, "bruchdehnung", None) else None),
+                            breite=78, leer=True,
+                            hinweis="Gültigkeitsgrenze der plastischen Dehnung für diesen Werkstoff: liegt "
+                                    "ε_p,max darüber, ist das ganze Ergebnis nicht gültig. Leer = die Grenze "
+                                    "der Rechnung (Berechnung › Plastizität, Vorgabe 20 %)."),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
                           # Hilfs- oder Krafteinleitungskoerper (13.10.2026): nur
@@ -11642,6 +11649,14 @@ class MainWindow(QtWidgets.QMainWindow):
             spann = self._spannstahl_lesen(w, None if neu else alt_mt, zahl)
             if isinstance(spann, str):
                 return self.hinweis(spann)
+            # Bruchdehnung (16.10.2026): leer = Grenze der Rechnung; ohne das Feld bleibt sie
+            bruch = getattr(alt_mt, "bruchdehnung", None) if alt_mt is not None else None
+            if "bruchdehnung" in w:
+                bd = zahl("bruchdehnung")
+                if bd is not None and not bd > 0.0:
+                    return self.hinweis("Bruchdehnung muss größer als 0 % sein - oder leer für die Grenze "
+                                        "der Rechnung. Nicht übernommen.")
+                bruch = None if bd is None else float(bd) / 100.0
             self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
@@ -11653,7 +11668,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           rho=float(zahl("rho", 7850.0)),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte, verfestigung=r_verf, **spann)
+                          grade=sorte, verfestigung=r_verf, bruchdehnung=bruch, **spann)
             # art, sigma_pmax, sigma_pm0 schreibt die Schleife unten wie jedes Feld der
             # Maske; E_p (kein Eingabefeld) bleibt am vorhandenen Werkstoff, wie es war
             dicken_zeilen = []
@@ -17424,6 +17439,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_plast_tol.addItem(t_, v_)
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
+        # Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026, Plastizitaet.dehnungsgrenze)
+        self.sp_plast_grenze = QtWidgets.QDoubleSpinBox()
+        self.sp_plast_grenze.setRange(0.1, 1000.0)
+        self.sp_plast_grenze.setDecimals(1)
+        self.sp_plast_grenze.setSingleStep(1.0)
+        self.sp_plast_grenze.setSuffix(" %")
+        self.sp_plast_grenze.setValue(20.0)
+        self.sp_plast_grenze.setToolTip(
+            "Gültigkeitsgrenze der plastischen Dehnung: liegt ε_p,max darüber, ist das ganze Ergebnis "
+            "„nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Vorgabe 20 %. Ein Werkstoff "
+            "mit eingetragener Bruchdehnung (Werkstoffmaske) hat diese als Grenze.")
         gpl.addWidget(self.cb_plast)
         # je Zeile hoechstens zwei Felder: der rechte Bereich ist 460 px breit, vier
         # Felder in einer Zeile waren 815 px (Paket 13r)
@@ -17433,6 +17459,7 @@ class MainWindow(QtWidgets.QMainWindow):
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen))
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
+        gpl.addWidget(row("Gültigkeitsgrenze ε_p", self.sp_plast_grenze))
         lay.addWidget(gp)
 
         # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
@@ -24849,6 +24876,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_plast_it.setValue(int(pz.iterationen))
         k = self.cb_plast_tol.findData(float(pz.toleranz))
         self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
+        if hasattr(self, "sp_plast_grenze"):
+            self.sp_plast_grenze.setValue(float(getattr(pz, "dehnungsgrenze", 0.20) or 0.20) * 100.0)
         w = self.cb_plast_weg.findData(str(getattr(pz, "verfahren", "tangente")))
         self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
         w = self.cb_plast_kontakt.findData(str(getattr(pz, "kontakt", "verschachtelt")))
@@ -24889,6 +24918,12 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
         pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
         pz.abbruch = str(self.cb_plast_abbruch.currentData() or "ingenieurmaessig")
+        if hasattr(self, "sp_plast_grenze"):
+            # gerundet wie angezeigt (eine Nachkommastelle in %): sonst meldete schon
+            # das Oeffnen der Maske eine Aenderung
+            alt_g = float(getattr(pz, "dehnungsgrenze", 0.20) or 0.20)
+            g_ = float(self.sp_plast_grenze.value()) / 100.0
+            pz.dehnungsgrenze = alt_g if round(alt_g * 100.0, 1) == round(g_ * 100.0, 1) else g_
         if hasattr(self, "sp_pendel_kraft"):
             # gerundet wie angezeigt: sonst aenderte schon das Oeffnen der Maske
             # die Einstellung um Rundungsreste und meldete eine Aenderung

@@ -11119,6 +11119,26 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   waren es 8 statt 3 Schritte, bei Tetraedern (tet10) 4 statt 3. In den
   Prüfreihen der Plastizität ändert sich die Zahl der Newton-Schritte und
   Halbierungen nicht (Theoriehandbuch § 5e.5).
+* **Traglast, Mechanismus und Gültigkeitsgrenze** (16.10.2026). Über der
+  Traglast gibt es bei ideal plastischem Werkstoff kein Gleichgewicht. Findet
+  der Newton in einer Laststufe keines, halbiert das Programm die Stufe bis zu
+  viermal. Gelingt es auch dann nicht, endet die Rechnung beim letzten
+  konvergierten Zustand, und das Ergebnis heißt „NICHT gültig: Traglast
+  überschritten bei Lastfaktor …“. Gezeigt wird dieser letzte konvergierte
+  Zustand, gekennzeichnet in Zusammenfassung, Rechenliste, Protokoll und
+  Bericht. Bei einer Endvorspannung halbiert der Spannschritt seine
+  Spannstufen und nennt den Anteil der Sollkraft; verriegelt wird dann nicht.
+  Wachsen die Verschiebungen im Newton, ohne dass er sich zusammenzieht, steht
+  zusätzlich „Mechanismus“ mit Knoten, Verschiebung und Dehnung dabei. Unter
+  **Berechnung › Plastizität › Gültigkeitsgrenze ε_p** (Vorgabe 20 %) und je
+  Werkstoff im Feld **Bruchdehnung** stellt man ein, ab welcher plastischen
+  Dehnung das ganze Ergebnis „nicht gültig: außerhalb der Theorie kleiner
+  Verzerrungen“ ist. Jede plastische Rechnung nennt in Protokoll und
+  Zusammenfassung ε_p,max mit Körper, Element und Koordinate sowie ΣR und ΣM
+  der Lagerkräfte. Die Gleichgewichtskontrolle prüft dabei auch das Residuum
+  der inneren Kräfte gegen die Lasten, bei einer Endvorspannung gegen die
+  Sollkraft; ab 1 % der Lasten ist das Ergebnis nicht gültig (Theoriehandbuch
+  § 5e.6).
 * **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
   Tangente** — ein Newton-Verfahren, das die Steifigkeit je Schritt neu
   aufstellt und faktorisiert. Es konvergiert quadratisch und **unabhängig

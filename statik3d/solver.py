@@ -2429,12 +2429,18 @@ def plastisch_zeilen(pz: dict) -> list:
                  + (f" (Grenze {_z(float(dg['grenze']) * 100.0, stellen=4)} %, {dg.get('quelle', '')})"
                     if isinstance(dg, dict) and dg.get("grenze") else ""))
     if pz.get("summe_R") is not None:
-        R, M, x0 = pz["summe_R"], pz.get("summe_M") or [0.0] * 3, pz.get("summe_x0") or [0.0] * 3
-        z.append(f"ΣR / ΣM (Lager)         : ({_z(R[0] / 1e3, stellen=6)}; {_z(R[1] / 1e3, stellen=6)}; "
-                 f"{_z(R[2] / 1e3, stellen=6)}) kN / ({_z(M[0] / 1e3, stellen=6)}; {_z(M[1] / 1e3, stellen=6)}; "
-                 f"{_z(M[2] / 1e3, stellen=6)}) kNm um ({_z(x0[0], stellen=4)}; {_z(x0[1], stellen=4)}; "
-                 f"{_z(x0[2], stellen=4)}) m")
+        z.append("ΣR / ΣM (Lager)         : " + summen_text(pz["summe_R"], pz.get("summe_M") or [0.0] * 3,
+                                                            pz.get("summe_x0") or [0.0] * 3))
     return z
+
+
+def summen_text(R, M, x0) -> str:
+    """„ΣR = (−1 147,500; 0,000; 0,000) kN, ΣM = (…) kNm um (…) m“ - feste drei
+    Nachkommastellen in kN bzw. kNm wie die Gleichgewichtskontrolle (nie wissenschaftlich)."""
+    from . import gleichgewicht as _gg
+    return (f"ΣR = ({_gg._z(R[0] / 1e3)}; {_gg._z(R[1] / 1e3)}; {_gg._z(R[2] / 1e3)}) kN, "
+            f"ΣM = ({_gg._z(M[0] / 1e3)}; {_gg._z(M[1] / 1e3)}; {_gg._z(M[2] / 1e3)}) kNm um "
+            f"({_gg._z(x0[0])}; {_gg._z(x0[1])}; {_gg._z(x0[2])}) m")
 
 
 def plastisch_ungueltig(info) -> str:
@@ -5688,18 +5694,24 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
     die Zusammenfassung liest es aus res.info."""
     from . import gleichgewicht as _gg
     from . import plastizitaet as pl
-    from .zahlen import zahl_text as _z
     r_vec = info.pop("_residuum", None)
+    # Die letzte Zeile des Protokolls bleibt die Zusammenfassung des Fliessens
+    # („Plastizität: n Elemente fließen …“): die Rechenliste zeigt die letzte Zeile
+    # eines Postens (tests/test_vorspannung_sofort). Die Zeilen hier kommen davor.
+    import re as _re
+    stelle = next((k for k in range(len(log) - 1, -1, -1)
+                   if _re.match(r"Plastizität: \d+ Elemente? fließ", str(log[k]))), len(log))
+    neu: list = []
     try:
         ort = pl.eps_p_ort(model, zustand)
         info["eps_p_ort"] = ort
-        log.append("Plastizität: " + pl.eps_p_ort_text(ort))
+        neu.append("Plastizität: " + pl.eps_p_ort_text(ort))
     except Exception as ex:                       # noqa: BLE001 - Ausgabe haelt nichts auf
-        log.append(f"Plastizität: Ort von ε_p,max nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
+        neu.append(f"Plastizität: Ort von ε_p,max nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
     dg = pl.dehnungsgrenze_pruefen(model, zustand, model.plastizitaet)
     info["dehnungsgrenze"] = dg
     if dg.get("verletzt"):
-        log.append("Plastizität: NICHT GÜLTIG – " + dg["text"])
+        neu.append("Plastizität: NICHT GÜLTIG – " + dg["text"])
     if R is not None:
         nn = int(model.nn)
         X = np.asarray(model.nodes, float)[:nn]
@@ -5709,12 +5721,10 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
         SM = (np.cross(X - x0, Rk[:, :3]) + Rk[:, 3:]).sum(axis=0)
         info["summe_R"], info["summe_M"], info["summe_x0"] = ([float(v) for v in SR], [float(v) for v in SM],
                                                              [float(v) for v in x0])
-        log.append(f"Plastizität: ΣR = ({_z(SR[0] / 1e3, stellen=6)}; {_z(SR[1] / 1e3, stellen=6)}; "
-                   f"{_z(SR[2] / 1e3, stellen=6)}) kN, ΣM = ({_z(SM[0] / 1e3, stellen=6)}; "
-                   f"{_z(SM[1] / 1e3, stellen=6)}; {_z(SM[2] / 1e3, stellen=6)}) kNm um "
-                   f"({_z(x0[0], stellen=4)}; {_z(x0[1], stellen=4)}; {_z(x0[2], stellen=4)}) m "
-                   "– Lagerkräfte des gezeigten Zustands")
+        neu.append("Plastizität: " + summen_text(info["summe_R"], info["summe_M"], info["summe_x0"])
+                   + " – Lagerkräfte des gezeigten Zustands")
     if r_vec is None:
+        log[stelle:stelle] = neu
         return
     r = np.asarray(r_vec, float).copy()
     frei = np.zeros(r.size, bool)
@@ -5732,10 +5742,11 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
     res._residuum_bezug = np.asarray(bezug_F, float)
     rinfo = _gg.residuum(model, r, bezug_F)
     res._residuum_info = rinfo
-    log.append(f"Plastizität: Residuum der inneren Kräfte an den freien Freiheitsgraden {_z(rinfo['norm'] / 1e3, stellen=4)} kN "
-               f"= {_gg._rel(rinfo['rel'])} der Lasten"
+    neu.append(f"Plastizität: Residuum der inneren Kräfte an den freien Freiheitsgraden {_gg._z(rinfo['norm'] / 1e3)} kN "
+               f"= {_gg.rel_text(rinfo['rel'])} der Lasten"
                + (" – NICHT GÜLTIG, die Spannungen halten der Last nicht das Gleichgewicht"
                   if rinfo["verletzt"] else ""))
+    log[stelle:stelle] = neu
 
 
 def _startherkunft_eintragen(res, start, start_von, ausfallweg: bool) -> None:
