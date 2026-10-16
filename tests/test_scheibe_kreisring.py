@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from statik3d import fugen, mesher, solver, spitzenstellen as sp          # noqa: E402
 from statik3d import scheibeneinleitung as SCH                           # noqa: E402
 from statik3d import stabeinleitung as SE                                # noqa: E402
-from statik3d.model import Material, Model, Section                      # noqa: E402
+from statik3d.model import Model, Section                                # noqa: E402
 
 from tests.test_netzfeld import platte_mit_bohrungen                     # noqa: E402
 
@@ -198,13 +198,19 @@ def test_kopplung():
 _ERG = {}
 
 
-def rechnen(h, ordnung, ring, plast):
-    schl = (h, ordnung, ring, plast)
+def rechnen(h, ordnung, ring, plast, F=F_):
+    """(Modell, Ergebnis oder None, Meldungen, Abbruchtext) - ein Abbruch der
+    Rechnung (singulaer, weggeflossen) ist ein Ergebnis dieser Probe."""
+    schl = (h, ordnung, ring, plast, F)
     if schl not in _ERG:
-        m = blech(h=h, ordnung=ordnung, ring=ring, plast=plast)
+        m = blech(h=h, ordnung=ordnung, ring=ring, plast=plast, F=F)
         meld = []
-        r = solver.solve_static(m, progress=lambda t, *a: meld.append(str(t)), case="LF1", workers=1)
-        _ERG[schl] = (m, r, meld)
+        try:
+            r, fehler = solver.solve_static(m, progress=lambda t, *a: meld.append(str(t)), case="LF1",
+                                            workers=1), ""
+        except RuntimeError as ex:
+            r, fehler = None, str(ex).split(" - ")[0]
+        _ERG[schl] = (m, r, meld, fehler)
     return _ERG[schl]
 
 
@@ -219,7 +225,7 @@ def sigma_v_max(m, r, radius):
 def test_elastisch():
     print("\n--- 3. Elastisch: Kraftsumme, Moment, Pressung ---")
     for ordnung, typ in ((1, "tet4"), (2, "tet10")):
-        m, r, _meld = rechnen(0.004, ordnung, True, False)
+        m, r, _meld, _f = rechnen(0.004, ordnung, True, False)
         info = r.info.get("stabenden_kraftsumme") or {}
         check(f"{typ}: Kraftsumme und Moment der Kopplung gleich der Stabendkraft (stabeinleitung.pruefen)",
               info.get("geprueft") == 1 and not info.get("abweichend"),
@@ -243,7 +249,7 @@ def test_netzabhaengig():
     werte = {}
     for ring in (False, True):
         for h in (0.004, 0.002):
-            m, r, _ = rechnen(h, 2, ring, False)
+            m, r, _, _f = rechnen(h, 2, ring, False)
             werte[(ring, h)] = sigma_v_max(m, r, D_A / 2 + 0.002)
     loch = werte[(False, 0.002)] / werte[(False, 0.004)]
     ringq = werte[(True, 0.002)] / werte[(True, 0.004)]
@@ -253,28 +259,36 @@ def test_netzabhaengig():
     check("… und der Ring bleibt unter der Lochrandspitze", werte[(True, 0.002)] < werte[(False, 0.002)], detail)
 
 
+#: Kraft fuer die plastische Probe: 300 kN, im Ring 394 N/mm² = 1,11 f_y (S355) -
+#: dort fliesst es unter dem Ring ein wenig, am Lochrand (300 kN auf 62,8 mm
+#: Umfang) weit
+F_PLAST = 300e3
+
+
 def test_plastisch():
     print("\n--- 3c. Plastisch: Ring konvergiert, Lochrand fließt weg ---")
     for ordnung, typ in ((1, "tet4"), (2, "tet10")):
-        _m, r, meld = rechnen(0.004, ordnung, True, True)
-        pz = r.info.get("plastizitaet") or {}
-        info = r.info.get("stabenden_kraftsumme") or {}
-        check(f"{typ}, Kreisring: die plastische Rechnung konvergiert, Kraftsumme stimmt",
-              pz.get("konvergiert") is True and info.get("geprueft") == 1 and not info.get("abweichend"),
-              f"konvergiert {pz.get('konvergiert')}, eps_p max {pz.get('eps_p_max')}, "
-              f"fließend {pz.get('fliessend')}")
+        _m, r, meld, fehler = rechnen(0.004, ordnung, True, True, F_PLAST)
+        pz = (r.info.get("plastizitaet") or {}) if r is not None else {}
+        info = (r.info.get("stabenden_kraftsumme") or {}) if r is not None else {}
+        check(f"{typ}, Kreisring, 300 kN (1,11 f_y im Ring): konvergiert, Kraftsumme stimmt",
+              not fehler and pz.get("konvergiert") is True and info.get("geprueft") == 1
+              and not info.get("abweichend"),
+              fehler or f"konvergiert {pz.get('konvergiert')}, eps_p max {pz.get('eps_p_max')}, "
+                        f"fließend {pz.get('fliessend')}, dF {info.get('max_dF', -1):.3g} N")
         check(f"{typ}, Kreisring: keine deutliche Warnung vor dem Start",
               not any("BITTE LESEN" in z for z in meld), "")
-        _m2, r2, meld2 = rechnen(0.004, ordnung, False, True)
-        pz2 = r2.info.get("plastizitaet") or {}
-        check(f"{typ}, Lochrand: plastische Dehnung weit über der des Rings oder nicht konvergiert",
-              pz2.get("konvergiert") is not True or float(pz2.get("eps_p_max") or 0) > 3 * float(pz.get("eps_p_max") or 0),
-              f"konvergiert {pz2.get('konvergiert')}, eps_p max {pz2.get('eps_p_max')} "
-              f"(Ring {pz.get('eps_p_max')})")
+        _m2, r2, meld2, fehler2 = rechnen(0.004, ordnung, False, True, F_PLAST)
+        pz2 = (r2.info.get("plastizitaet") or {}) if r2 is not None else {}
+        weg = bool(fehler2) or pz2.get("konvergiert") is not True
+        check(f"{typ}, Lochrand: weggeflossen (Abbruch, nicht konvergiert) oder eps_p weit über dem Ring",
+              weg or float(pz2.get("eps_p_max") or 0) > 3 * float(pz.get("eps_p_max") or 0),
+              fehler2 or f"konvergiert {pz2.get('konvergiert')}, eps_p max {pz2.get('eps_p_max')} "
+                         f"(Ring {pz.get('eps_p_max')})")
         check(f"{typ}, Lochrand: vor dem Start eine deutliche Protokollzeile",
               any("WARNUNG – BITTE LESEN" in z and "Lochrand" in z for z in meld2),
               next((z for z in meld2 if "BITTE LESEN" in z), "")[:160])
-    _m3, _r3, meld3 = rechnen(0.004, 1, False, False)
+    _m3, _r3, meld3, _f3 = rechnen(0.004, 1, False, False)
     check("elastisch, Lochrand: keine deutliche Zeile (bleibt bei Warnung und Zone)",
           not any("BITTE LESEN" in z for z in meld3), "")
 

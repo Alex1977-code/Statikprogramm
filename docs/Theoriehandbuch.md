@@ -5835,10 +5835,20 @@ Knoten, um 0,04 bzw. 0,08 % weicher (Nachgiebigkeit des Blocks). Umgesetzt:
   mit ihrer Regel, geschnittene in Teilzellen; w_i = ∫ N_i dA, s_i = ∫ N_i
   (x − x_m) dA). Wirksame Gewichte, Zwangsmatrix, Strafbeiwert und die
   Prüfung von Kraftsumme und Moment sind die der verteilenden Einleitung.
-  Am Blech 120 × 120 × 20 mm mit Bohrung Ø 20 und Ring 20/37 mm
+  Am Blech 60 × 60 × 20 mm mit Bohrung Ø 20 und Ring 20/37 mm
   (`tests/test_scheibe_kreisring.py`, h 4 mm) ist die Gewichtssumme
-  764,4 mm² (tet4) bzw. 761,7 mm² (tet10) gegen 761,0 mm², und die Kopplung
-  gibt 150 kN mit einer Abweichung von höchstens 7,4·10⁻⁷ N weiter.
+  764,1 mm² (tet4, 98 Knoten) bzw. 761,4 mm² (tet10, 334 Knoten, davon 236
+  Seitenmitten) gegen 761,0 mm². Die Kopplung gibt 150 kN mit einer
+  Abweichung von höchstens 1·10⁻⁷ N weiter. Die flächengewichtete mittlere
+  Spannung σ_zz der obersten Elemente im Ring ist −158,2 (tet4) bzw.
+  −183,1 N/mm² (tet10) gegen F/A_Ring = 197,1 N/mm²; die Elemente messen in
+  ihrem Schwerpunkt, also etwas unter der Oberfläche. Die größte
+  Vergleichsspannung der Knoten an der Oberseite (tet10, elastisch) wächst
+  beim Lochrand mit h 4 → 2 mm von 3 959 auf 6 312 N/mm² und bleibt beim Ring
+  bei 195 bzw. 189 N/mm². Plastisch mit 300 kN (Ring 394 N/mm² = 1,11 f_y):
+  Mit dem Ring konvergiert die Rechnung auf tet4 (ε_p höchstens 0,043 %) und
+  auf tet10 (0,013 %). Mit dem Lochrand erreicht tet4 ε_p = 11,3 %, und tet10
+  bricht ab, weil das Gleichungssystem singulär wird (der Lochrand fließt weg).
 * **Stabende an 1–4 Knoten** (`fugen.stabenden_koppeln`, Gruppe
   „Stabende …“): RBE3 je Stabknoten (`assemble.stabende_zwang`). Die
   Kraftzeilen mit den baryzentrischen Koordinaten λ_i des Stabendes im
