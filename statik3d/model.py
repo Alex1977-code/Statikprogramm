@@ -2808,6 +2808,13 @@ class Netzeinstellungen:
     #: Netz geliefert, und mit Ringen zusammen wuchsen die Nachbarplatten V15
     #: um 63 %, V33 und V35 um 44 % der Knoten (Messung 14.10.2026).
     krafteinleitung_stabenden: bool = False
+    #: **Mit dieser Einstellung ist das vorhandene Netz entstanden**
+    #: (16.10.2026, statik3d.netzhinweis): beim Vernetzen vermerkt, damit das
+    #: Programm sagen kann, wenn die Einstellung davon abweicht („wirksam erst
+    #: nach Vernetzen“). Leer = nicht bekannt (Datei von davor, Import). Zaehlt
+    #: nicht fuer die Rechnung: die Netzeinstellungen stehen nicht in der Kennung
+    #: der Ergebnisdatei (ergebnisse.MODELLTEILE).
+    vernetzt_mit: dict = field(default_factory=dict)
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
@@ -6341,7 +6348,28 @@ class Model:
                            "Stäbe“ genommen" for x in weg]
         return zeilen
 
-    def netzknoten_loeschen(self, kandidaten=None) -> int:
+    def freie_knoten_entfernen(self, nur_zaehlen: bool = False) -> int:
+        """Knoten ohne Element **und ohne jeden Verweis** entfernen - nur auf Wunsch
+        des Anwenders (16.10.2026: „rfem-importe nicht selbstaendig in der Geometrie
+        aendern, nur nach Rueckfrage beim user“). Das Vernetzen loescht sie nie; die
+        Abnahme meldet sie als Information, die Aktion „Freie Knoten entfernen…“
+        bietet das Entfernen an. Was eine Linie, eine Flaeche (Ecke, integrierter
+        Knoten), eine Last, ein Lager, eine Kopplung usw. nennt, bleibt
+        (:meth:`netzknoten_loeschen` schuetzt es). ``nur_zaehlen``: nichts aendern,
+        nur die Zahl nennen. Rueckgabe: Zahl der (zu) entfernenden Knoten."""
+        import itertools
+        nn = int(self.nn)
+        if not nn:
+            return 0
+        kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in self.elements), np.int64)
+        belegt = np.zeros(nn, bool)
+        belegt[kn[(kn >= 0) & (kn < nn)]] = True
+        frei = np.flatnonzero(~belegt)
+        if not len(frei):
+            return 0
+        return self.netzknoten_loeschen(frei.tolist(), nur_zaehlen=nur_zaehlen)
+
+    def netzknoten_loeschen(self, kandidaten=None, nur_zaehlen: bool = False) -> int:
         """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
 
         ``kandidaten``: nur diese Knoten duerfen weg - die Knoten der eben
@@ -6441,6 +6469,8 @@ class Model:
         weg = np.flatnonzero(~benutzt)
         if not len(weg):
             return 0
+        if nur_zaehlen:
+            return int(len(weg))
         bleibt = np.flatnonzero(benutzt)
         neu = {int(alt): k for k, alt in enumerate(bleibt)}
         for L in (getattr(self, "layer", None) or {}).values():
@@ -9382,7 +9412,15 @@ class Model:
                     used[n] = True
         free = np.where(~used)[0]
         if len(free):
-            msgs.append(f"WARNUNG: {len(free)} Knoten ohne Elementanschluss")
+            # Nur Knoten, an denen etwas haengt (Last, Lager, Kopplung ...): ein
+            # Geometriepunkt oder ein Knoten ohne Verweis ist eine Information der
+            # Netzabnahme (diagnose.freie_knoten_rollen, 16.10.2026), keine
+            # Warnung bei jeder Rechnung - am Drehlager standen 67 davon da.
+            from .diagnose import freie_knoten_rollen
+            rl = freie_knoten_rollen(self, free)
+            n_rolle = sum(1 for r in rl.values() if r & {"last", "lager", "verbindung"})
+            if n_rolle:
+                msgs.append(f"WARNUNG: {n_rolle} Knoten ohne Elementanschluss")
         if str(getattr(self, "randspannung", "frei") or "frei") not in ("frei", "gemittelt"):
             msgs.append(f"FEHLER: Randspannung '{self.randspannung}' unbekannt - "
                         f"erlaubt sind 'frei' und 'gemittelt'")
@@ -10121,7 +10159,9 @@ NEUE_FELDER = {
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
     # zaehlen nicht in der Kennung - das Netz selbst steht in Knoten und Elementen)
-    "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False},
+    "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False,
+             # netz/hinweis: mit welcher Einstellung das Netz entstand
+             "vernetzt_mit": {}},
     # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
     # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
     "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,

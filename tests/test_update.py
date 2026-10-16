@@ -354,6 +354,143 @@ def test_bauablauf_prueft_das_release_ernsthaft():
           "timeout-minutes" in schritt, schritt[schritt.find("timeout-minutes"):][:20])
 
 
+class _Release(BaseHTTPRequestHandler):
+    """Schein-GitHub mit einstellbarem Release: Stand, Datum, Version."""
+    stand = {"sha": "e7e7877" + "0" * 33, "datum": "2026-09-03T10:00:00Z", "version": ""}
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        s = self.stand
+        if "/repos/x/y/" not in self.path:
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = f"Automatisch gebaut.\n\nbuild: {s['sha']}\n" + (f"Version: {s['version']}\n" if s["version"] else "")
+        if self.path.endswith("/releases/tags/latest"):
+            data = json.dumps({"tag_name": "latest", "published_at": s["datum"], "body": body,
+                               "assets": [{"name": "Statik3D.exe", "size": 1_100_000,
+                                           "browser_download_url": "http://x/Statik3D.exe"}]}).encode()
+        elif self.path.endswith("/commits/main"):
+            data = json.dumps({"sha": s["sha"], "commit": {"message": "x", "committer": {"date": s["datum"]}}}).encode()
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class _Kaputt(_Release):
+    def do_GET(self):
+        data = b"<html>Proxy</html>"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def test_versionsvergleich():
+    """Eine aeltere Fassung wird nie als neu angeboten (16.10.2026).
+
+    Die exe b63e669 (2.1.0) meldete "Neue Version verfuegbar: Stand e7e7877 vom
+    2026-09-03" - ein Stand von vor sechs Wochen. Verglichen wurde nur, ob die
+    Commits verschieden sind."""
+    print("\n--- Versionsvergleich ---")
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Release)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    api = f"http://127.0.0.1:{srv.server_address[1]}/repos/x/y"
+    echt = upd.build_info
+    inst = {"version": "2.1.0", "sha": "b63e669" + "0" * 33, "date": "2026-10-15T20:00:00Z",
+            "kind": "exe", "dir": "."}
+    try:
+        upd.build_info = lambda: dict(inst)
+
+        def frage(rsha, datum, version="", art="exe", **ueber):
+            _Release.stand.update(sha=rsha, datum=datum, version=version)
+            inst.update(ueber)
+            return upd.check(api_url=api, kind=art)
+        for art in ("exe", "source"):
+            inst["kind"] = art
+            # aelter: genau der Fall des Anwenders
+            i = frage("e7e7877" + "0" * 33, "2026-09-03T10:00:00Z", art=art)
+            check(f"{art}: aelteres Datum -> kein Update", not i.available and i.vergleich == "aelter",
+                  i.message[:80])
+            check(f"{art}: die Meldung nennt 'aelter' und bietet nichts an",
+                  "älter" in i.message and "Neue Version" not in i.message)
+            # gleich: derselbe Commit, auch wenn das Datum des Releases spaeter liegt
+            i = frage("b63e669" + "1" * 33, "2026-10-16T08:00:00Z", art=art)
+            check(f"{art}: gleicher Commit -> kein Update", not i.available and i.vergleich == "gleich")
+            # neuer
+            i = frage("1234567" + "0" * 33, "2026-10-16T08:00:00Z", art=art)
+            check(f"{art}: spaeteres Datum -> Update", i.available and i.vergleich == "neuer"
+                  and "Neue Version verfügbar" in i.message, i.message[:80])
+            # gleicher Zeitpunkt, anderer Commit: nicht neuer
+            i = frage("1234567" + "0" * 33, "2026-10-15T20:00:00Z", art=art)
+            check(f"{art}: gleicher Zeitpunkt, anderer Commit -> kein Update", not i.available)
+        inst["kind"] = "exe"
+        # Versionsnummer geht vor dem Datum
+        i = frage("1234567" + "0" * 33, "2026-09-01T00:00:00Z", version="2.2.0")
+        check("hoehere Versionsnummer -> Update, auch bei aelterem Datum",
+              i.available and i.vergleich == "neuer", i.vergleich)
+        i = frage("1234567" + "0" * 33, "2026-11-01T00:00:00Z", version="2.0.9")
+        check("niedrigere Versionsnummer -> kein Update, auch bei spaeterem Datum",
+              not i.available and i.vergleich == "aelter", i.vergleich)
+        i = frage("1234567" + "0" * 33, "2026-11-01T00:00:00Z", version="2.1.0")
+        check("gleiche Versionsnummer -> das Datum entscheidet", i.available, i.vergleich)
+        check("Versionsnummern werden als Zahlen verglichen (2.10.0 > 2.9.0)",
+              upd.vergleiche("2.9.0", "a" * 40, "", "2.10.0", "b" * 40, "") == "neuer")
+        # kein Datum der installierten Fassung: nicht beurteilbar -> nichts anbieten
+        i = frage("1234567" + "0" * 33, "2026-11-01T00:00:00Z", date="")
+        check("installiert ohne Datum und ohne Versionsunterschied -> unklar, kein Angebot",
+              not i.available and i.vergleich == "unklar" and "nicht" in i.message, i.message[:90])
+        # ohne Stempel (kein Commit): wie jeher immer neu
+        i = frage("1234567" + "0" * 33, "2026-09-03T10:00:00Z", sha="", date="")
+        check("installiert ganz ohne Stempel -> wie bisher angeboten", i.available)
+        inst.update(sha="b63e669" + "0" * 33, date="2026-10-15T20:00:00Z")
+        # Ohne Netz bzw. Fehler: Ausnahme, kein stilles 'neu'
+        for url, name in (("http://127.0.0.1:9/repos/x/y", "ohne Netz"),
+                          (api.replace("/repos/x/y", "/nichts/da"), "404 vom Server")):
+            try:
+                upd.check(api_url=url, kind="exe", timeout=2)
+                check(f"{name}: UpdateError", False)
+            except upd.UpdateError as ex:
+                check(f"{name}: UpdateError, kein Angebot", "GitHub" in str(ex), str(ex)[:60])
+        srv2 = ThreadingHTTPServer(("127.0.0.1", 0), _Kaputt)
+        threading.Thread(target=srv2.serve_forever, daemon=True).start()
+        try:
+            upd.check(api_url=f"http://127.0.0.1:{srv2.server_address[1]}/repos/x/y", kind="exe", timeout=2)
+            check("unlesbare Antwort: UpdateError", False)
+        except upd.UpdateError as ex:
+            check("unlesbare Antwort: UpdateError", "unlesbar" in str(ex), str(ex)[:60])
+        finally:
+            srv2.shutdown()
+            srv2.server_close()
+        # die Zahlen allein
+        v = upd.vergleiche
+        check("vergleiche: reine Funktion, aelter/gleich/neuer/unklar",
+              v("2.1.0", "b" * 40, "2026-10-15", "", "c" * 40, "2026-09-03T10:00:00Z") == "aelter"
+              and v("2.1.0", "b" * 40, "2026-10-15", "", "b" * 40, "2026-09-03") == "gleich"
+              and v("2.1.0", "b" * 40, "2026-10-15", "", "c" * 40, "2026-10-16") == "neuer"
+              and v("2.1.0", "b" * 40, "", "", "c" * 40, "") == "unklar")
+        check("vergleiche: Zeitzonen werden beruecksichtigt",
+              v("2.1.0", "b" * 40, "2026-10-15T23:00:00+02:00", "", "c" * 40,
+                "2026-10-15T22:00:00Z") == "neuer"
+              and v("2.1.0", "b" * 40, "2026-10-15T23:00:00+02:00", "", "c" * 40,
+                    "2026-10-15T20:00:00Z") == "aelter")
+        wf = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".github",
+                                  "workflows", "windows-exe.yml"), encoding="utf-8").read()
+        check("Bauablauf schreibt die Versionsnummer in die Release-Notizen",
+              '"Version: $version"' in wf)
+    finally:
+        upd.build_info = echt
+        srv.shutdown()
+        srv.server_close()
+
+
 def main():
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -424,6 +561,7 @@ def main():
         srv.server_close()
         shutil.rmtree(tmp, ignore_errors=True)
     test_bauablauf_prueft_das_release_ernsthaft()
+    test_versionsvergleich()
     n_ok = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{n_ok}/{len(RESULTS)} Pruefungen bestanden")
     failed = [n for n, ok in RESULTS if not ok]

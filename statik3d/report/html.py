@@ -912,7 +912,12 @@ class Report:
             "lineare Überlagerung (Superposition) der Lastfallergebnisse."]
         if counts:
             items.append("Elementtypen im Modell: " + "; ".join(
-                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + ".")
+                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + "."
+                # die Netzeinstellung nur bei einem FE-Netz aus Flaechen oder Volumen:
+                # ein Stabwerk hat kein Netz, dessen Einstellung zu nennen waere
+                + (" " + self._netz_satz() if any(
+                    ELEMENT_TYPES.get(t) and not t.startswith(("beam", "truss", "seil", "feder"))
+                    for t in counts) else ""))
         if self.info.get("solver"):
             # mit dem Ausweichen wie im Anhang (F37, 06.10.2026)
             items.append(f"Gleichungslöser: {self.info['solver']} (direkt, sparse)"
@@ -1314,6 +1319,31 @@ class Report:
     #: jeden Koerper finden (Drehlager: rund 200 Koerper)
     NETZ_ZEILEN = 2000
 
+    def _netz_ausweis(self) -> dict:
+        """Elementtypen und Netzeinstellung beim Vernetzen: der Ausweis der
+        Rechnung (info["netz"], steht auch in der Ergebnisdatei), sonst der des
+        Modells von jetzt (statik3d.netzhinweis, 16.10.2026)."""
+        from .. import netzhinweis as nh
+        a = (self.info or {}).get("netz") if isinstance(self.info, dict) else None
+        return a if isinstance(a, dict) and a.get("elementtypen") is not None else nh.ausweis(self.model)
+
+    def _netz_satz(self) -> str:
+        """„Netzeinstellung beim Vernetzen: …“ - und, wo die Einstellung seither
+        geaendert wurde, was jetzt eingestellt ist (wirkt erst nach dem Vernetzen)."""
+        a = self._netz_ausweis()
+        ein = a.get("netzeinstellung") or ""
+        s = ("Netzeinstellung beim Vernetzen: " + ein + "." if ein else
+             "Netzeinstellung beim Vernetzen: nicht bekannt (Netz ohne Vermerk, etwa aus einer "
+             "Datei vor dem 16.10.2026 oder importiert); aktuell eingestellt: "
+             + self.model.netz.beschreibung() + ".")
+        if a.get("abweichend") or (ein and ein != self.model.netz.beschreibung()
+                                   and self.model.netz.vernetzt_mit):
+            ab = a.get("abweichend") or []
+            if ab:
+                s += (" Seither geändert, aber nicht vernetzt (wirkt erst nach dem Vernetzen): "
+                      + "; ".join(ab) + ".")
+        return s
+
     def chapter_netz(self) -> list:
         """Netz und Elemente (Paket E, 25.09.2026).
 
@@ -1334,8 +1364,7 @@ class Report:
         b = [self._h(1, "Netz und Elemente")]
         z = ea.zaehlung(m)
         b.append(("p", esc("Mit welchen finiten Elementen gerechnet wurde - je Elementtyp, je Körper "
-                           "und im Bild, wo sie liegen. Eingestellt für das Vernetzen: "
-                           + m.netz.beschreibung() + ".")))
+                           "und im Bild, wo sie liegen. " + self._netz_satz())))
         b.append(self._h(2, "Gesamtübersicht"))
         rows = [["Elementtyp", "Bezeichnung", "Ansatz", "Anzahl", "Anteil"]]
         for zeile in ea.zeilen(m, z):
@@ -3058,9 +3087,31 @@ class Report:
         # Gebuendelt ueber alle Ergebnisse: am Drehlager haben 422 Lastfaelle
         # dieselben Platten, und ein Kapitel je Lastfall waere keines.
         frei: dict = {}
+        durch_zwang: dict = {}          # Information: an der Bewegung greift nichts an (16.10.2026)
         for name, res in allres:
             for e in (getattr(res, "info", None) or {}).get("freie_teile") or []:
-                frei.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+                ziel = durch_zwang if str(e.get("stufe", "")) == "INFORMATION" else frei
+                ziel.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+        if durch_zwang:
+            b.append(self._h(2, "Drehungen und Verschiebungen durch Zwangsbedingung gehalten"))
+            b.append(("p", "An diesen Knoten ist eine Bewegung für den Gleichungslöser nur schwach "
+                           "gehalten (er hebt einen Pivot an). Sie wird aber über eine "
+                           "Zwangsbedingung gebunden (starre Scheibe, starre Kopplung, starrer "
+                           "Körper), und an dieser Bewegung greift weder Kraft noch Moment an: "
+                           "Es ist nichts zu lagern, die Ergebnisse sind davon nicht betroffen."))
+            rows = [["Knoten", "Bewegung", "Gehalten durch", "Ergebnisse"]]
+            for text, (e, namen) in durch_zwang.items():
+                teile = e.get("namen") or []
+                wer = ", ".join(teile[:6]) + (f" … {teile[-1]} ({len(teile)})" if len(teile) > 6 else "")
+                if e.get("knoten"):
+                    wer += ": Knoten " + ", ".join(f"K{k}" for k in e["knoten"][:6])
+                wo = ", ".join(namen[:4]) + (f" … ({len(namen)} Ergebnisse)" if len(namen) > 4 else "")
+                rows.append([wer, e.get("bewegung", ""), e.get("haltung", ""), wo])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Durch Zwangsbedingung gehaltene Bewegungen (Information)", None,
+                      "compact"))
+            if note:
+                b.append(("note", note))
         if frei:
             b.append(self._h(2, "Frei bewegliche Teile"))
             b.append(("p", "Der Gleichungslöser musste bei diesen Teilen einen Pivot anheben, "

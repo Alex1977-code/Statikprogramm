@@ -28,6 +28,11 @@ Fassung und der Meldung, was gerade geladen wird; es verschwindet, sobald
 das Fenster steht. Kein zweiter Doppelklick nötig. Der Knopf **Update suchen**
 unten rechts holt die neueste Version: prüfen, herunterladen, austauschen,
 Neustart. Dasselbe leistet Hilfe → Nach Update suchen… in jeder Installation.
+Angeboten wird nur eine **neuere** Fassung: Verglichen werden die Versionsnummer und,
+wenn sie gleich ist, das Baudatum – nie nur der Commit. Ist die veröffentlichte Fassung
+älter als die installierte, steht „ist auf dem neuesten Stand“ da; lässt sich nichts
+vergleichen (kein Datum), wird nichts angeboten, und der Befund (rechte Maustaste am
+Knopf) nennt den Grund. Ohne Netz meldet der Knopf den Fehler und bietet nichts an.
 Der Austausch läuft nicht, solange eine Berechnung oder Vernetzung läuft — der
 Knopf zeigt dann „Update bereit“, und der Austausch folgt auf Knopfdruck nach
 dem Ende. Nach dem Schließen beendet sich Statik3D sofort, ohne Modell und
@@ -1819,6 +1824,22 @@ wählen“, die es seit dem 25.09.2026 nicht mehr gibt.
 *Gemessen gegen den Sollwert 355 N/mm² an der Nachweisstelle des
 Kragarm-Prüfkörpers bzw. gegen die Lamé-Lösung am Innenrand; Freiheitsgrade =
 Unbekannte des Gleichungssystems.*
+
+**Wirksam erst nach dem Vernetzen (seit 16.10.2026).** Die Netzeinstellungen
+ändern das vorhandene Netz nicht; sie gelten für das nächste Vernetzen. Wer
+„Mittel“ übernimmt und gleich rechnet, rechnet mit dem alten Netz des Entwurfs
+(tet4). Darum merkt sich das Modell beim Vernetzen, mit welcher Einstellung das
+Netz entstand (Elemente, Netzdichte, Ziellänge bei eigener Dichte, intelligente
+Anpassung, Elementform, Vernetzer, Nachbesserung, Krafteinleitungen). Weicht die
+eingestellte Einstellung davon ab, steht der Hinweis „Die Netzeinstellung wirkt
+erst nach dem Vernetzen …“ mit dem Unterschied („Elemente Mittel statt Entwurf“)
+beim Übernehmen der Netzeinstellungen und beim Start der Rechnung im Protokoll
+und in der Statuszeile. Gesperrt wird nichts; *Netz → Vernetzen* wendet die
+Einstellung an. Ein Netz ohne Vermerk (Datei von vor dem 16.10.2026, Import) hat
+keinen Hinweis, bis die Einstellung zum ersten Mal geändert wird – dann gilt die
+bisherige als die des vorhandenen Netzes. Bericht (Kapitel *Netz und Elemente*
+und *Rechenverfahren*) und Ergebnisdatei nennen die Elementtypen mit Anzahl und
+die Netzeinstellung beim Vernetzen.
 
 **Was jede Stufe einstellt.** Die Elementordnung (Entwurf linear, Mittel und
 Fein quadratisch) und den Sweep „sauber“: Sechsflächner entstehen
@@ -11871,7 +11892,9 @@ nichts stillschweigend Übergangenes:
 | Abdeckung der Kontaktseite | ≥ 95 % |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
-| Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
+| Knoten im Rechennetz ohne Element **mit Last** (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
+| Lager unwirksam (Warnung, seit 16.10.2026): ein Knoten mit Lager hängt an keinem Element | – |
+| Knoten ohne Element, weder Last noch Lager noch Kopplung (Information, seit 16.10.2026): Geometriepunkte oder Knoten ohne Verweis | – |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
@@ -11884,6 +11907,26 @@ nichts stillschweigend Übergangenes:
 | Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
 | Kraft ohne Fläche (Warnung, seit 10.10.2026): Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft ohne Auflagefläche in ein Volumen leiten – eine Zeile je Art, siehe *Netzabhängige Spannungsspitzen* | – |
 | Stabenden an wenigen Knoten (Warnung, seit 13.10.2026): Stabenden, die an 1–3 Volumenknoten hängen, mit dem Hinweis auf die verteilende Einleitung – umgestellt wird nichts, siehe *Stabenden verteilt einleiten* | – |
+
+**Freie Knoten, gestuft (seit 16.10.2026).** Ein Knoten ohne Element wird nach
+dem beurteilt, was an ihm hängt. Greift eine Last oder Zwangsverformung an (oder
+hängt eine Kopplung an ihm, die ihn nicht in allen Richtungen hält), ist es ein
+**Fehler**: die Last wird von keinem Bauteil getragen, und das Ergebnis ist
+„nicht gültig“ (die Prüfung der Lasten an automatisch gehaltenen
+Freiheitsgraden zeigt es in der Zusammenfassung, im Bericht und in der
+Rechenliste). Ein Lager allein ergibt die **Warnung** „Lager unwirksam“, denn das
+Lager hält nichts. Hängt weder Last noch Lager noch Kopplung an ihm, ist es nur
+eine **Information** im Protokoll: Am Drehlager waren es 67 Geometriepunkte der
+RFEM-Datei (Kreismittelpunkte und Kreispunkte der Stirnflächen, Enden der Linien
+L609, L578 und L561, integrierte Knoten von etwa 40 Flächen). Sie bleiben in der
+Geometrie mit allen Verweisen und gehen nicht in die Rechnung ein.
+Das Vernetzen löscht keinen dieser Knoten – auch keinen, auf den nichts
+verweist: Ein RFEM-Import wird nicht selbständig in der Geometrie geändert
+(Regel des Anwenders vom 16.10.2026). Gelöscht werden beim Vernetzen nur die
+Knoten des alten Netzes. Wer die Knoten ohne jeden Verweis (keine Linie, keine
+Fläche, keine Last, kein Lager, keine Kopplung) loswerden will, ruft in der
+Befehlssuche **Freie Knoten entfernen…** auf: Das Programm nennt die Zahl, fragt
+und entfernt nur nach „Ja“; Rückgängig bringt sie zurück.
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
@@ -12738,6 +12781,24 @@ Bericht: als Kapitel „Frei bewegliche Teile“ (einmal für alle Ergebnisse, n
 je Lastfall) und bei den Warnungen. Geneigte Ebenen werden über ihre Normale
 genannt, Stabknoten mit Stab und Knotennummer („S7: Knoten K5: quer zur
 Stabachse …“).
+
+**Gestufte Meldung (seit 16.10.2026).** Nicht jede frei bewegliche Stabverbindung ist
+ein Mangel. Am Kopf der Anker S1–S16 (K157, K172 …) stand „um z frei drehbar –
+gehalten nur durch: kein Lager und keine Fuge; bitte lagern“; der Knoten hängt über
+die starre Scheibe der starren Fläche (Zwangsbedingung, am Drehlager „starr F37“ u. a.)
+am Bauteil, auf dem er sitzt, und ein Fachwerkstab nimmt dort kein Moment auf. Die
+Meldung hat jetzt zwei Stufen. **Information**, wenn (a) an der freien Bewegung
+weder eine Kraft noch ein Moment in irgendeinem Lastfall angreift und (b) der Knoten
+über eine Zwangsbedingung gebunden ist – eine starre Kopplung (alle Richtungen starr),
+einen starren Körper (RBE2/RBE3). Der Text sagt dann „Information: über eine
+Zwangsbedingung … an das Bauteil gebunden, das diese Bewegung bestimmt; … nichts zu
+lagern“, und der Bericht führt sie unter „Drehungen und Verschiebungen durch
+Zwangsbedingung gehalten“, nicht bei den Warnungen. **Warnung** bleibt es, wenn eine
+Kraft oder ein Moment in der freien Bewegung angreift (sie ginge ins Nichts), wenn nur
+eine weiche Feder bindet (Kopplung mit endlicher Steifigkeit, Federlager) oder gar nichts;
+der Text nennt den Grund. Bauteile (Körper) bleiben Warnungen. Ein Fehler ist es dort,
+wo es heute schon einer ist: eine Last an einem automatisch gehaltenen Freiheitsgrad
+macht das Ergebnis „nicht gültig“.
 
 **Das Programm lagert nichts.** Die Teile in den genannten Richtungen zu lagern
 (Lager, Feder oder Reibung) ist Sache des Anwenders; bis dahin ist ihre

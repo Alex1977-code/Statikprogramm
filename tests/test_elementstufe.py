@@ -670,6 +670,84 @@ def test_maske():
     _ = QtCore
 
 
+def test_netzhinweis_im_fenster():
+    """„Netzeinstellung wirksam erst nach Vernetzen“ (16.10.2026): Mittel
+    uebernommen, das Netz stammt vom Entwurf - Protokoll und Statuszeile sagen es
+    beim Uebernehmen und beim Rechenstart; gesperrt wird nichts."""
+    import inspect
+    es = _es()
+    w, app = _fenster()
+    m = wuerfel()
+    m.netz = es.setzen(m.netz, "entwurf")
+    _modell_ins_fenster(w, app, m)
+    w._vernetzen([], [m.koerper["V1"]])
+    app.processEvents()
+    check("Vernetzen im Fenster vermerkt die Einstellung (Entwurf)",
+          m.netz.vernetzt_mit.get("elemente") == "Entwurf", str(m.netz.vernetzt_mit)[:80])
+    w.log.clear()
+    w.maske_netzeinstellungen()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    mk._felder["elemente"].setCurrentText("Mittel (Vorgabe)")
+    mk.anwenden()
+    app.processEvents()
+    log = w.log.toPlainText()
+    check("Übernehmen Mittel: das Protokoll sagt 'wirkt erst nach dem Vernetzen'",
+          "wirkt erst nach dem Vernetzen" in log and "Mittel statt Entwurf" in log, log[-200:])
+    check("… die Statuszeile ebenso", "wirkt erst nach dem Vernetzen" in w.statusBar().currentMessage(),
+          w.statusBar().currentMessage()[:80])
+    check("… das vorhandene Netz bleibt tet/hex8 des Entwurfs, nichts gesperrt",
+          {e.typ for e in m.elements} == {"hex8"} and es.stufe(w.model.netz) == "mittel")
+    check("… der Vermerk des Netzes bleibt der Entwurf (nicht mit der neuen Einstellung überschrieben)",
+          w.model.netz.vernetzt_mit.get("elemente") == "Entwurf")
+    w.log.clear()
+    t = w._netzhinweis("rechnen")
+    check("Rechenstart: derselbe Hinweis mit 'Gerechnet wird mit dem vorhandenen Netz'",
+          "Gerechnet wird mit dem vorhandenen Netz" in t and t in w.log.toPlainText())
+    check("do_solve ruft den Hinweis nach dem Vernetzen und vor der Abnahme",
+          inspect.getsource(type(w).do_solve).index('self._netzhinweis("rechnen")')
+          < inspect.getsource(type(w).do_solve).index("self._abnahme_bestaetigen()"))
+    # nach dem Vernetzen mit Mittel: kein Hinweis mehr
+    w._vernetzen([], [m.koerper["V1"]])
+    app.processEvents()
+    w.log.clear()
+    check("nach dem Vernetzen mit Mittel: kein Hinweis", w._netzhinweis("rechnen") == ""
+          and w.model.netz.vernetzt_mit.get("elemente") == "Mittel")
+    w.maskenrand.schliessen()
+
+
+def test_freie_knoten_aktion():
+    """„Freie Knoten entfernen…“ (nur Befehlssuche): fragt, loescht nur auf ja und nur,
+    worauf nichts verweist (Regel vom 16.10.2026)."""
+    from statik3d.model import Flaeche, Line
+    w, app = _fenster()
+    m = wuerfel()
+    a = int(m.add_node(3.0, 3.0, 0.0))
+    b = int(m.add_node(4.0, 3.0, 0.0))
+    nur = int(m.add_node(7.0, 7.0, 7.0))
+    m.lines["L900"] = Line("L900", nodes=[a, b])
+    _modell_ins_fenster(w, app, m)
+    befehle = {bf.text: bf for bf in w.ribbon.befehle}
+    check("die Aktion „Freie Knoten entfernen…“ steht in der Befehlssuche",
+          any("Freie Knoten entfernen" in t for t in befehle) or hasattr(w, "freie_knoten_entfernen"),
+          "")
+    nn0 = int(w.model.nn)
+    antworten = []
+    w._fragen = lambda titel, text: (antworten.append((titel, text)), False)[1]
+    w.freie_knoten_entfernen()
+    check("Nein: nichts wird entfernt, die Rückfrage nennt die Zahl", w.model.nn == nn0 and
+          antworten and "1 Knoten" in antworten[0][1], str(antworten)[:90])
+    w._fragen = lambda titel, text: True
+    w.freie_knoten_entfernen()
+    app.processEvents()
+    check("Ja: nur der Knoten ohne jeden Verweis geht; die Linie bleibt gültig",
+          w.model.nn == nn0 - 1 and all(0 <= n < w.model.nn for n in w.model.lines["L900"].nodes)
+          and np.allclose(w.model.nodes[w.model.lines["L900"].nodes[0]], [3.0, 3.0, 0.0]))
+    w.undo()
+    app.processEvents()
+    check("Rückgängig bringt ihn zurück", w.model.nn == nn0)
+
+
 def test_maske_mit_kontakt():
     """Die Maske an einem gesperrten Modell - seit dem 08.10.2026 eine
     Schale auf einem Flaechenlager (bis dahin das Kontaktmodell mit Fuge, das
@@ -782,7 +860,7 @@ def main():
     for t in (test_stufen_und_texte, test_stufe_und_setzen, test_laden_und_speichern, test_beschreibung,
               test_fein_wie_mittel_im_feld, test_sperre, test_kontakt_in_jeder_stufe,
               test_plastizitaet_in_jeder_stufe, test_import_frage, test_ribbon_und_neues_modell,
-              test_maske, test_maske_mit_kontakt, test_import_im_fenster):
+              test_maske, test_netzhinweis_im_fenster, test_freie_knoten_aktion, test_maske_mit_kontakt, test_import_im_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

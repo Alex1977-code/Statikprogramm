@@ -1796,6 +1796,12 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
         alt = [e for f in flaechen for e in (f.elemente or [])] + \
               [e for k in koerper for e in (k.elemente or [])]
         if alt:
+            # Kandidaten fuers Loeschen sind nur die Knoten der alten Netze: ein Knoten
+            # ohne Element, den dieses Netz nie trug (Geometriepunkt, Knoten aus einem
+            # RFEM-Import), bleibt stehen - der Anwender entscheidet (16.10.2026,
+            # Model.freie_knoten_entfernen)
+            alte_knoten = {int(x) for e in alt if 0 <= int(e) < len(model.elements)
+                           for x in model.elements[int(e)].nodes}
             model.elemente_loeschen(alt)
             # Die Knoten des alten Netzes gleich mit: sonst stehen sie als
             # „Knoten ohne Element" in der Abnahme und als Freiheitsgrade
@@ -1804,7 +1810,7 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
             # Ohne den Zusatz in model.py (Arbeitskopie einer anderen Sitzung)
             # bleiben sie liegen - das Protokoll sagt es.
             if hasattr(model, "netzknoten_loeschen"):
-                weg = model.netzknoten_loeschen()
+                weg = model.netzknoten_loeschen(alte_knoten)
                 if weg:
                     C.say(log, f"{weg} Knoten des alten Netzes entfernt")
             else:
@@ -1865,6 +1871,11 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
                 f.teilung = eigene_teilung[f.name]
     aus["zeiten"] = zeiten
     aus["unbekannte"] = unbekannte(model)
+    # Das Netz merkt sich seine Einstellung (statik3d.netzhinweis); ein
+    # abgebrochener Lauf hat kein vollstaendiges Netz, an dem sie gilt
+    if aus["elemente"] and not aus["abgebrochen"]:
+        from . import netzhinweis as _nh
+        _nh.merken(model)
     lang = sorted(((k, v) for k, v in zeiten.items() if v >= 0.05), key=lambda x: -x[1])
     C.say(log, f"Vernetzt: {aus['elemente']} Elemente in {sum(zeiten.values()):.1f} s"
                + (f" auf {aus['prozesse']} Prozessen" if aus["prozesse"] > 1 else "")

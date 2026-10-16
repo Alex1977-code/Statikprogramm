@@ -6116,6 +6116,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                          "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
+        g.nur_suche("Freie Knoten entfernen…", self.freie_knoten_entfernen, symbol="netz_loeschen",
+                    hinweis="Knoten ohne Element und ohne jeden Verweis (keine Linie, Fläche, Last, "
+                            "Lager, Kopplung) auf Rückfrage entfernen - die Netzabnahme meldet sie als "
+                            "Information; das Vernetzen löscht sie nie")
         # Das einzelne finite Stabelement (Teilpaket C14, 03.10.2026): bis dahin
         # der Befehl Struktur → Stab. Es steht im Modellbaum unter FE-Netz →
         # Stabelemente, darum hier; im Register Struktur fehlte auch der Platz
@@ -13995,6 +13999,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if abgebrochen:
             log.append(f"Vernetzen abgebrochen: {bg.anzahl(n, 'Element', 'Elemente')} erzeugt, die übrigen "
                        "Objekte bleiben ohne Netz")
+        elif n:
+            # das Netz merkt sich seine Einstellung (statik3d.netzhinweis)
+            from .. import netzhinweis as _nhw
+            _nhw.merken(self.model)
         for z in log:
             self.log.appendPlainText(z)
         if n:
@@ -14194,6 +14202,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"{bg.anzahl(ges['fugen'], 'Kontaktfuge', 'Kontaktfugen')} ausgeführt, {ges['offen']} offen"
                   if ges["fugen"] else
                   "Keine Kontaktfuge ausgeführt - das Protokoll sagt, warum")
+
+    def freie_knoten_entfernen(self):
+        """Netz → Freie Knoten entfernen… (nur Befehlssuche): Knoten ohne Element und
+        ohne jeden Verweis, auf Rückfrage. Aus einem RFEM-Import wird nichts
+        selbständig geändert (16.10.2026) - die Abnahme meldet, dieser Befehl
+        löscht, wenn der Anwender es will."""
+        n = self.model.freie_knoten_entfernen(nur_zaehlen=True)
+        if not n:
+            return self.hinweis("Es gibt keine freien Knoten ohne jeden Verweis - nichts zu entfernen")
+        if not self._fragen("Freie Knoten entfernen",
+                            f"{n} Knoten hängen an keinem Element und werden von nichts genannt (keine Linie, "
+                            "Fläche, Last, kein Lager, keine Kopplung). Entfernen? Die Geometrie mit ihren "
+                            "Verweisen bleibt unverändert."):
+            return
+        self.merken("Freie Knoten entfernen")
+        weg = self.model.freie_knoten_entfernen()
+        self.analysis = None
+        self.results = None
+        self.info(f"{n if weg else 0} freie Knoten entfernt")
+        self.refresh_all()
 
     def netz_loeschen_geometrie(self):
         """Das Netz der Flaechen und Koerper entfernen, die Geometrie bleibt."""
@@ -20312,7 +20340,13 @@ class MainWindow(QtWidgets.QMainWindow):
         except (ValueError, TypeError) as ex:
             return self.error(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
-        self.model.netz = netz
+        # Hat das Netz keinen Vermerk, gilt die bisherige Einstellung als die
+        # seine; danach sagt der Hinweis, was erst nach dem Vernetzen wirkt
+        import dataclasses
+        from .. import netzhinweis as nhw
+        nhw.vor_aenderung(self.model)
+        self.model.netz = dataclasses.replace(netz, vernetzt_mit=dict(self.model.netz.vernetzt_mit))
+        netz = self.model.netz
         if sef.netz_uebernehmen(self.model, w):
             sef.erneuern(self)
         # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
@@ -20321,8 +20355,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if sperre:
             self.log.appendPlainText(sperre)
         self.info("Netzeinstellungen: " + self.model.netz.beschreibung())
+        self._netzhinweis("uebernehmen")
         self.refresh_all()
         return self.model.netz
+
+    def _netzhinweis(self, wann: str) -> str:
+        """Weicht die Netzeinstellung vom vorhandenen Netz ab, steht der Hinweis
+        „wirksam erst nach Vernetzen“ im Protokoll und in der Statuszeile. Gesperrt
+        wird nichts (16.10.2026, statik3d.netzhinweis)."""
+        from .. import netzhinweis as nhw
+        text = nhw.hinweis(self.model, wann)
+        if text:
+            self.log.appendPlainText(text)
+            self.statusBar().showMessage(text.split(". ")[0] + ".", 15000)
+        return text
 
     @_maskenweg()
     def maske_stabzug(self):
@@ -25877,6 +25923,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.hinweis(self.model.sperrhinweis(gesperrt))
         if not self._vor_rechnung_vernetzen():
             return
+        # Weicht die Netzeinstellung vom vorhandenen Netz ab, sagt es der Rechenstart
+        # (16.10.2026) - gesperrt wird nichts
+        self._netzhinweis("rechnen")
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
         if msgs and not self._trotzdem_rechnen(msgs):
             return
@@ -26056,9 +26105,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Warnungen (Splitter je Koerper) stehen im Protokoll, halten aber
         # nichts an - die Entscheidung bleibt beim Anwender, der sie liest.
         warnungen = [b for b in alle if getattr(b, "stufe", "FEHLER") == "WARNUNG"]
-        befunde = [b for b in alle if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
+        infos = [b for b in alle if getattr(b, "stufe", "FEHLER") == "INFORMATION"]
+        befunde = [b for b in alle if getattr(b, "stufe", "FEHLER") not in ("WARNUNG", "INFORMATION")]
         for b in warnungen:
             self.log.appendPlainText(f"WARNUNG: [{b.pruefung}] {b.text}")
+        # Hinweise ohne Handlungsbedarf (freie Geometriepunkte): nur ins Protokoll
+        for b in infos:
+            self.log.appendPlainText(f"INFORMATION: [{b.pruefung}] {b.text}")
         self._abnahme_befunde = befunde
         if not befunde:
             # „bestanden" darf nicht heissen „nicht geprueft": faellt eine der
@@ -26166,6 +26219,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # welche Elemente gerechnet wurden (25.09.2026: „nach der Berechnung
         # sehe ich das auch nirgendwo“)
         self.log.appendPlainText(ea.protokollzeile(self.model))
+        # und mit welcher Einstellung das Netz entstand (16.10.2026)
+        from .. import netzhinweis as _nhw
+        _ausw = _nhw.ausweis(self.model)
+        self.log.appendPlainText("Netzeinstellung beim Vernetzen: " + (
+            _ausw["netzeinstellung"] or "nicht bekannt (Netz ohne Vermerk)"))
+        if kind == "case" and isinstance(self.analysis, solver.Analysis):
+            self.analysis.info.setdefault("netz", _ausw)
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
         self._bewegungen_melden()
