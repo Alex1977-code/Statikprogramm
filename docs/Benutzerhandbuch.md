@@ -925,6 +925,58 @@ einer Anfangsvorspannung, und Dateien von vorher bleiben beim Laden und
 Speichern bitgleich. Am Drehlager (Entwurf, 215 MB) ergibt das Laden und
 unveränderte Speichern dieselbe Datei Byte für Byte.
 
+**Vorspannung je Anker** (seit 16.10.2026). Die Vorspannung eines Ankers wird
+einmal definiert, und die Lastfälle verweisen nur noch darauf. Eine Definition
+legen Sie unter *Lasten → Vorspannung je Anker* an, im Modellbaum unter
+*Einwirkungen → Vorspannung je Anker* oder in der Maske *Lasten → Vorspannung*
+über den Knopf „Vorspannung je Anker …“. Sie enthält die Anker (Stabliste, etwa
+„S1–S16“), die Pressenkraft P_max, den Verankerungsschlupf Δs und die
+Spanngruppe. Definitionen derselben Spanngruppe werden gleichzeitig gespannt,
+mehrere Gruppen nacheinander in aufsteigender Nummer; die früher gespannten
+Anker verlieren dann durch elastische Verkürzung Kraft. Für den Zeitpunkt ∞
+geben Sie wahlweise P_∞ absolut oder den zeitabhängigen Verlust ΔP_t ein.
+
+Im Lastfall wählen Sie im Feld „Vorspannung je Anker“ zwischen „keine“, dem
+Zeitpunkt 0 und dem Zeitpunkt ∞, für alle Definitionen oder für eine. Im
+Zeitpunkt 0 spannt das Programm jeden Anker mit P_max, verriegelt ihn und zieht
+den Schlupf ab; die Umgebung federt zurück, und die früher gespannten Gruppen
+verlieren durch die späteren. Die Kraft danach ist P₀, und die rechnet das
+Programm, eine Eingabe dafür gibt es nicht. Im Zeitpunkt ∞ trägt jeder Anker nach
+dem Verriegeln genau P_∞; dafür werden alle Anker gleichzeitig gespannt. Mit
+ΔP_t gilt je Anker P_∞,i = P₀,i − ΔP_t. Dabei kommt P₀,i aus dem Zustand 0
+aller Definitionen und wird am selben System gerechnet, auch wenn kein Lastfall
+im Zeitpunkt 0 mitgerechnet wird. Das Ergebnis hängt nicht davon ab, ob und in
+welcher Reihenfolge Lastfälle im Zeitpunkt 0 gerechnet werden. Die Maske der
+Definition zeigt P₀ und beide Endwerte, den eingegebenen und den daraus
+folgenden. P₀ steht dort aus dem Ergebnis eines Lastfalls im Zeitpunkt 0;
+vor der ersten Rechnung steht eine Schätzung P_max − k_A·Δs gegen starre Umgebung
+mit diesem Vermerk. Liegt P_∞ über P₀, wäre der Verlust negativ, und die Zeile
+sagt das; umgestellt wird nichts. Bisherige Vorspannungen im Lastfall
+(Endvorspannung, Anfangsvorspannung, eingeprägte Dehnung als ΔT) bleiben
+lesbar und rechnen wie zuvor. Eine Datei ohne Definition lädt, rechnet und
+speichert sich Byte für Byte wie vorher.
+
+**Zuordnung vorhandener Vorspannungen.** *Lasten → Vorspannung → „Je Anker
+zuordnen …“* (oder im Modellbaum „Vorspannungen der Lastfälle zuordnen …“) fasst
+die Vorspannungen an denselben Stäben nach Wert zu Gruppen zusammen. Je Gruppe
+zeigt der Dialog die Lastfälle mit ihren Kategorien und die Kraft, die nach
+elastischer Verkürzung wirkt. Diese Kraft stammt aus dem Importhinweis, aus dem
+Ergebnis eines Lastfalls nur mit dieser Vorspannung oder, bei der Endvorspannung,
+aus F_soll selbst. Fehlt sie, nennt der Dialog den Grund. Sie ordnen jede Gruppe
+einem Zeitpunkt und einer Definition zu. Als Vorschlag steht im Zeitpunkt 0
+P_max gleich dem Wert der Gruppe mit Δs = 0, im Zeitpunkt ∞ P_∞ absolut gleich
+dem Wert der Gruppe; beides ändern Sie im Dialog. Erst „Übernehmen“ stellt die
+Lastfälle um: Die Vorspannungslasten der Gruppe fallen weg, und der Lastfall
+verweist auf die Definition. Alle anderen Lasten bleiben, auch eine echte
+Temperaturlast an einem anderen Bauteil. Eine Gruppe ohne Zuordnung bleibt, wie
+sie ist. Eine aus RFEM übernommene Definition trägt den Vermerk „aus RFEM
+übernommen – prüfen“. Am Drehlager sind es 952 kN als ΔT in 128 Lastfällen
+(LF398 Kategorie P und 127 Q), 805 kN als ΔT in 293 Lastfällen (LF399 P, 128 Q,
+164 FAT) und 944,7 kN Endvorspannung in LF1. Mit 952 kN → Zeitpunkt 0 und
+805 kN → Zeitpunkt ∞ verweisen danach 421 Lastfälle auf die Definition, LF1
+bleibt unverändert. Ob die Lastfälle mit 805 kN den Zeitpunkt ∞ meinen und
+welcher Sollwert gilt, prüft der Anwender in RFEM.
+
 **Spannschritt in Stufen** (seit 14.10.2026). Bis zum 14.10.2026 brachte das
 Programm den Spannschritt in einem Zug auf: mit Kontakt rechnete ein
 Kontaktlauf von der unbelasteten Lage bis zur vollen Kraft, mit Fließen wirkte
@@ -9592,6 +9644,33 @@ gleich. Die 952 kN der RFEM-Vorspannung als eingeprägte Dehnung in LF398
 geben beim Spannen 1,0081 und sind dort maßgebend. Die Anker sind 3,23 m lang
 mit k_A = 66,14 kN/mm, ein Millimeter Schlupf kostet gegen starre Umgebung also
 66,14 kN.
+
+**Nachweise nach dem Zustand der Vorspannung je Anker** (seit 16.10.2026).
+Gehört ein Spannstahlstab zu einer Vorspannung je Anker, gilt der Entwurf des
+Anwenders: Spannen gegen σ_p,max mit P_max, nach dem Verankern gegen σ_pm0 und
+im GZT gegen f_pd mit t = 0, Klaffen und Gleiten der Fuge, Passstifte und
+Ermüdung der Anker mit t = ∞. Beim Spannen steht genau ein Eintrag je
+Definition mit P_max („Vorspannung V1: P_max (Pressenkraft beim Spannen,
+Definition des Ankers)“), kein Maximum über Lastfälle. Trägt ein gerechneter
+Lastfall daneben eine eigene Vorspannung des Ankers, nennt eine Zeile am Stab
+sie. Nach dem Verankern zählen nur Ergebnisse im Zeitpunkt 0, die Zeile endet
+mit „t = 0“. Ein Lastfall im Zeitpunkt ∞ trägt P_∞ und ist nicht der Zustand nach
+dem Verankern. Ohne gerechneten Lastfall im Zeitpunkt 0 setzt der Nachweis
+P_max − k_A·Δs gegen starre Umgebung an und sagt das. Im GZT nennt jede Zeile
+den Zustand, mit dem die Kombination gerechnet ist, etwa „LK0 (Vorspannung
+t = 0)“. Die Grenze nach dem Verankern ist die der Norm, σ_pm0 =
+min(0,75·f_pk; 0,85·f_p0,1k) nach EN 1992-1-1, 5.10.3(2). Am Drehlager mit
+835/1 030 N/mm² ist 0,85·f_p0,1k = 709,75 N/mm² maßgebend; bei einem Stahl mit
+f_pk/f_p0,1k < 1,133 wäre es 0,75·f_pk. Die Ermüdung sagt in ihrer
+Zusammenfassung, mit welchem Zustand ihre Zustände gerechnet sind. Liegt einer
+im Zeitpunkt 0, heißt es „Ermüdung der Anker ist mit t = ∞ zu führen“, geändert
+wird nichts. Einen Nachweis für Klaffen und Gleiten der Fuge und für die
+Passstifte gibt es noch nicht (der Bolzennachweis 3.13 ist vorgemerkt); Bericht
+und Ergebnisanzeige nennen dafür nur den Zustand t = ∞.
+
+**Nicht enthalten**: obere und untere charakteristische Werte der Vorspannung
+r_sup/r_inf nach EN 1992-1-1, 5.10.9. Sie sind als späteres Merkmal
+vorgemerkt.
 
 **Freie Ankerlänge und Kraftverlust aus dem Schlupf** (seit 15.10.2026). Trägt
 ein Anker eine Anfangsvorspannung mit Verankerungsschlupf, nennt der Nachweis

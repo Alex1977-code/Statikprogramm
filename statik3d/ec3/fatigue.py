@@ -462,8 +462,16 @@ class FatigueResults:
     #: Ermuedungslasten auf Ergebnissen einer plastischen Rechnung (seit
     #: 13.10.2026): der Grund; dann ist kein Nachweis gefuehrt
     nicht_anwendbar: str = ""
+    # Zustand der Vorspannung je Anker (16.10.2026): Attribut ``vorspannung``,
+    # nur gesetzt, wenn ein Ermuedungszustand auf eine Definition verweist
+    # (:func:`vorspannzustand_text`) - kein Feld, damit das Ergebnis ohne
+    # Verweis Feld fuer Feld bleibt, wie es war (tests.test_huellen_schluessel R1e)
 
     def summary(self) -> str:
+        vz = getattr(self, "vorspannung", "")
+        return self._summary() + (f"; {vz}" if vz else "")
+
+    def _summary(self) -> str:
         if getattr(self, "nicht_anwendbar", ""):
             return f"Ermüdung: {NICHT_ANWENDBAR} ({self.nicht_anwendbar})"
         # Stab- und Volumeneintraege mit Anzeigenamen; ein nicht gefuehrter
@@ -1299,6 +1307,34 @@ def _nicht_anwendbar(model: Model, out: FatigueResults, plastisch: list, bezug: 
     return out
 
 
+def vorspannzustand_text(model: Model) -> str:
+    """Mit welchem Zustand der Vorspannung je Anker die Ermuedungslasten
+    gerechnet sind (16.10.2026): leer ohne Verweis; „Vorspannung der Anker:
+    t = ∞“; liegt ein Zustand im Zeitpunkt 0, sagt die Zeile, dass die
+    Ermuedung der Anker mit t = ∞ zu fuehren ist (Entwurf des Anwenders:
+    „Klaffen und Gleiten der Fuge, Passstifte und Ermüdung der Anker mit
+    t = ∞“) - geaendert wird nichts."""
+    from ..vorspannung import zustand_kurz, zustand_von
+    faelle: list = []
+    for fl in (getattr(model, "fatigue_loads", None) or {}).values():
+        for f in list(getattr(fl, "folge", None) or []) + [fl.case_max, fl.case_min]:
+            if f and f not in faelle:
+                faelle.append(f)
+    zs: set = set()
+    null = []
+    for f in faelle:
+        z = zustand_von(model, f)
+        zs |= z
+        if "0" in z:
+            null.append(f)
+    if not zs:
+        return ""
+    text = f"Vorspannung der Anker in den Ermüdungszuständen: {zustand_kurz(zs)}"
+    if null:
+        text += (f" – Ermüdung der Anker ist mit t = ∞ zu führen; im Zeitpunkt 0: {_aufzaehlen(null)}")
+    return text
+
+
 def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                   anteil=None) -> FatigueResults:
     """Ermuedungsnachweis aller Staebe mit Kerbfall fuer alle Ermuedungslasten.
@@ -1331,6 +1367,9 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
         from ..schweissnaehte import kerbfaelle_uebernehmen
         kerbfaelle_uebernehmen(model, out.warnings if hasattr(out, "warnings") else None)
     all_res = analysis.all_results() if hasattr(analysis, "all_results") else analysis
+    vz = vorspannzustand_text(model)
+    if vz:
+        out.vorspannung = vz
     plastisch = _plastische_zustaende(model, all_res)
     if plastisch:
         return _nicht_anwendbar(model, out, plastisch, bezug)

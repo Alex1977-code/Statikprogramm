@@ -1603,8 +1603,45 @@ class Report:
         if np.any(g):
             b.append(("p", f"Eigengewicht aus den Elementmassen mit g = ({g[0]:.2f}, {g[1]:.2f}, "
                            f"{g[2]:.2f}) m/s²."))
+        # Vorspannung je Anker (16.10.2026): der Verweis des Lastfalls
+        vz_text = ""
+        if getattr(lc, "vorspannzustand", None):
+            from .. import vorspannung as _vsp
+            vz_text = _vsp.zustand_lastfall_text(self.model, lc)
+            b.append(("p", f"Vorspannung je Anker: {vz_text}."))
         if lc.n_loads == 0:
-            b.append(("p", "Dieser Lastfall enthält keine Lasten."))
+            b.append(("p", "Dieser Lastfall enthält keine eigenen Lasten." if vz_text
+                      else "Dieser Lastfall enthält keine Lasten."))
+        return b
+
+    def _vorspannung_je_anker(self) -> list:
+        """Abschnitt „Vorspannung je Anker“ (16.10.2026): je Definition P_max, Δs,
+        Spanngruppe, P₀ (berechnet oder geschaetzt), P_∞ und ΔP_t, die Zahl der
+        Lastfaelle je Zeitpunkt und der Zustand je Nachweis. Leer ohne Definition."""
+        from .. import vorspannung as _vsp
+        m = self.model
+        defs = _vsp.definitionen(m)
+        if not defs:
+            return []
+        erg = getattr(getattr(self, "analysis", None), "cases", None) or {}
+        b = [self._h(2, "Vorspannung je Anker")]
+        rows = [["Name", "Anker", "Spanngruppe", "P_max [kN]", "Δs [mm]", "P₀ nach dem Verankern",
+                 "P_∞", "ΔP_t", "Lastfälle t = 0", "Lastfälle t = ∞", "Herkunft"]]
+        for d in defs.values():
+            a = _vsp.anzeige(m, d, erg)
+            rows.append([d.name, _vsp.anker_text(d.staebe), str(int(d.gruppe or 1)), fmt(d.P_max / 1e3, 2),
+                         fmt(float(d.schlupf or 0.0) * 1e3, 2), a["text_P0"].replace("P₀ = ", ""),
+                         a["text_P_inf"].replace("P_∞ = ", ""), a["text_dP_t"].replace("ΔP_t = ", ""),
+                         str(len(a["faelle"]["0"])), str(len(a["faelle"]["inf"])), d.herkunft or "–"])
+        b.append(("table", rows, "Vorspannung je Anker: einmal definiert, die Lastfälle verweisen mit Zeitpunkt 0 "
+                                 "(P₀ nach dem Verankern, gerechnet aus P_max, Schlupf und elastischer "
+                                 "Verkürzung) oder Zeitpunkt ∞ (P_∞ als Eingabe oder P₀ − ΔP_t)", None, "compact"))
+        b.append(("p", "Zustand der Vorspannung je Nachweis: " + "; ".join(
+            f"{t} mit {('P_max' if z == 'P_max' else _vsp.ZUSTAND_KURZ[z])}"
+            + (" (Nachweis noch nicht im Programm)" if k in _vsp.NACHWEIS_NOCH_NICHT else "")
+            for k, (t, z) in _vsp.NACHWEIS_ZUSTAND.items())
+            + ". Nicht enthalten: obere und untere charakteristische Werte der Vorspannung "
+              "r_sup/r_inf nach EN 1992-1-1, 5.10.9 (vorgemerkt)."))
         return b
 
     def chapter_actions(self) -> list:
@@ -1647,6 +1684,7 @@ class Report:
                          str(lc.n_loads)])
         b.append(("table", rows, "Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)",
                   None, ""))
+        b.extend(self._vorspannung_je_anker())
         if self.opt("load_cases"):
             W, H = self.opt("figure_width"), int(self.opt("figure_height") * 0.85)
             views = self._views()

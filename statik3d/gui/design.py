@@ -788,6 +788,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
                  "kombinationen": "Kombination", "ermuedungslasten": "Ermüdungslast",
+                 "vorspanndefinitionen": "Vorspannung je Anker",
                  "werkstoffe": "Werkstoff", "dicken": "Dicke",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
                  "kontaktbedingungen": "Kontaktbedingung",
@@ -800,7 +801,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "ermuedungslast",
-                    "werkstoff", "dicke",
+                    "vorspanndefinition", "werkstoff", "dicke",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln", "ansicht"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
@@ -812,7 +813,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "wasserdruck": "generierer", "wind": "generierer",
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
-                 "ermuedungslast": "ermuedungslasten",
+                 "ermuedungslast": "ermuedungslasten", "vorspanndefinition": "vorspanndefinitionen",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
                  "kontaktbedingung": "kontaktbedingungen",
@@ -2449,7 +2450,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         def lastfallzeile(name, lc):
             nr = int(getattr(lc, "nummer", 0) or 0)
+            vz = getattr(lc, "vorspannzustand", None) or {}
             return (name, f"{lc.category} · {lc.n_loads}"
+                    # Vorspannung je Anker (16.10.2026): der Zeitpunkt am Lastfall
+                    + ("".join(f" · {('alle' if k == '*' else k)} t={'∞' if z == 'inf' else z}"
+                               for k, z in vz.items()))
                     + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
                     + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
                     name, (f"Lastfall {nr}: " if nr else "") + f"{name}: "
@@ -2487,7 +2492,38 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}", blatt=True,
                             hinweis=f"{titel} im Lastfall {name} - ein Klick zeigt sie rechts, "
                                     "in der Tabelle unten und in der Ansicht")
-        kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
+            # Verweise auf die Vorspannung je Anker (16.10.2026): je Definition eine Zeile
+            from .. import vorspannung as _vsp
+            for d_, z_ in _vsp.verweise(model, lc):
+                self._zweig(it, f"Vorspannung {d_.name}", _vsp.ZUSTAND_TEXT[z_], "vorspanndefinition",
+                            schluessel=d_.name, blatt=True,
+                            hinweis=f"Lastfall {name} verweist auf die Vorspannung je Anker {d_.name} im "
+                                    f"{_vsp.ZUSTAND_TEXT[z_]} - ein Klick öffnet die Definition")
+        # Vorspannung je Anker (16.10.2026): Definitionen mit P_max und Endwert,
+        # Zuordnung vorhandener Vorspannungen
+        from .. import vorspannung as _vsp
+        vdefs = _vsp.definitionen(model)
+        # nur in Modellen mit Vorspannung an Staeben oder mit Definitionen: sonst
+        # bleibt der Baum, wie er war (am Beispiel „hall“ bei 1366 x 768 zaehlt
+        # jede Zeile, tests.test_fensteraufteilung); angelegt wird die erste
+        # Definition dann ueber Lasten › Vorspannung je Anker
+        if vdefs or _vsp.vorspannung_vorhanden(model):
+            vz = self._zweig(ew, "Vorspannung je Anker", len(vdefs), "vorspanndefinitionen",
+                             hinweis="Vorspannung einmal je Anker definiert (P_max, Δs, Spanngruppe, P_∞ oder "
+                                     "ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf. P₀ nach dem "
+                                     "Verankern rechnet das Programm.")
+            self._liste(vz, [(n, (f"P_max {_vsp._kn(d.P_max)} · "
+                                  + (f"ΔP_t {_vsp._kn(d.dP_t)}" if d.ist_verlust() else f"P_∞ {_vsp._kn(d.P_inf)}")
+                                  + " kN"),
+                              n, _vsp.definition_zeile(model, d)) for n, d in vdefs.items()],
+                        "vorspanndefinition", "vorspanndefinitionen", sortieren=False)
+            self._zweig(vz, "+ Vorspannung je Anker anlegen", "", "vorspanndefinition_neu",
+                        farbe=FARBEN["akzent"])
+            self._zweig(vz, "Vorspannungen der Lastfälle zuordnen …", "", "vorspannung_zuordnen",
+                        farbe=FARBEN["akzent"],
+                        hinweis="Gleiche Vorspannungen an denselben Stäben (ΔT aus RFEM, Endvorspannung, "
+                                "Anfangsvorspannung) einem Zeitpunkt und einer Definition zuordnen")
+        kb =self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
         self._liste(kb, [(name, " · ".join(x for x in (getattr(c, "situation", "") or "",
                                                        (f"{c.theorie.upper()}. O."
                                                         if getattr(c, "theorie", "") else "")) if x),
