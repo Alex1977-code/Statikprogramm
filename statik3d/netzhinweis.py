@@ -20,8 +20,6 @@ an einem solchen Netz, gilt die **bisherige** Einstellung als die des Netzes
 """
 from __future__ import annotations
 
-from dataclasses import replace
-
 
 def _wert(netz, feld):
     """Wert eines Feldes, so wie er verglichen und gezeigt wird."""
@@ -70,7 +68,10 @@ def netzstand(netz) -> dict:
 
 def merken(model) -> dict:
     """Die aktuelle Einstellung als die des Netzes vermerken - nach dem Vernetzen."""
-    model.netz = replace(model.netz, vernetzt_mit=netzstand(model.netz))
+    # An Ort und Stelle: die adaptive Vernetzung und die Oberflaeche halten das
+    # Netzeinstellungen-Objekt und lesen es nach dem Vernetzen noch einmal
+    # (tests.test_netzfehler); ein neues Objekt braeche diesen Bezug.
+    model.netz.vernetzt_mit = netzstand(model.netz)
     return model.netz.vernetzt_mit
 
 
