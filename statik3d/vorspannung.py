@@ -402,11 +402,15 @@ def gruppen_finden(model, ergebnisse: dict = None, linear_rechnen: bool = False)
         temperatur_vorspannungen, x_rechenbar
     lcs = getattr(model, "load_cases", None) or {}
     gruppen: dict = {}
-    # Anker in der Folge der Staebe im Modell (S1, S2, …, S10 - nicht nach Text)
-    folge = {n: i for i, n in enumerate(getattr(model, "members", None) or {})}
+    # Anker nach Name und Nummer (S1, S2, …, S10): nicht nach Text (S1, S10, S2)
+    # und nicht in der Folge im Modell (am Drehlager aus RFEM S4, S3, S8, …)
+    import re
+
+    def schluessel(n):
+        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(n))]
 
     def sortiert(staebe):
-        return tuple(sorted(set(staebe), key=lambda n: (folge.get(n, len(folge)), str(n))))
+        return tuple(sorted(set(staebe), key=schluessel))
 
     def eintrag(key, art, N0, schlupf, stab_liste, fall):
         g = gruppen.setdefault(key, {"schluessel": key, "art": art, "N0": float(N0), "schlupf": float(schlupf),
