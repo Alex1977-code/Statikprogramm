@@ -4831,7 +4831,11 @@ class _KontaktImNewton:
         self.rechnen, self.res, self.log = rechnen, res, log
         self.gemeinsam = bool(gemeinsam)
         self.tol = float(tol)
-        self.halter = {"start": start, "R": None, "aktiv": aktiv, "abgekuerzt": False}
+        self.halter = {"start": start, "R": None, "aktiv": aktiv, "abgekuerzt": False, "r_ct": None}
+        # Residuum der Laststufe (16.10.2026): freie FHG und die Zonen des
+        # ingenieurmaessigen Abbruchs setzt _plastizitaet_rechnen
+        self.frei = None
+        self.zonen = None
         self.aufrufe: list = []     # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
         self._stufe = None
         self._stufen = 0
@@ -4898,7 +4902,9 @@ class _KontaktImNewton:
     def loesen(self, Fg, dK=None, voll=True):
         res, halter = self.res, self.halter
         vor = len(res.info.get("laeufe") or [])
+        res._kontakt_residuum = None
         u_, R_, a_ = self.rechnen(Fg, halter["start"], dK, None if voll else 1)
+        halter["r_ct"] = getattr(res, "_kontakt_residuum", None)
         if self._stab:
             self._stab_verlauf.append(self._stab_lesen())
         laeufe = res.info.get("laeufe") or []
@@ -4990,7 +4996,12 @@ class _KontaktImNewton:
         return any(not e.get("konvergiert", True) and not e.get("abgekuerzt") and not e.get("verworfen")
                    for e in laeufe[marke["lauf"]:])
 
-    def residuum_stufe(self, F_k, k) -> tuple:
+    def kontakt_residuum(self):
+        """Das innere Residuum des Kontakts der letzten Loesung (solver.kontakt_residuum)
+        oder None (ohne Kontakt)."""
+        return self.halter.get("r_ct")
+
+    def residuum_stufe(self, F_k, k, r=None, bezug: float = None) -> tuple:
         """Vorschlag 4 (14.10.2026): das Residuum am Ende einer Laststufe - das
         Gleichgewicht |Summe R + Summe F_k| der letzten Loesung (die plastische Last
         F_p und die Tangente dK tragen zur Summe nichts bei), bezogen auf die Summe
@@ -5028,14 +5039,48 @@ class _KontaktImNewton:
         # konvergierter ist schon als vorlaeufig gekennzeichnet, und ob er die Stufe
         # haelt, entscheidet plastizitaet.KONTAKT_IN_KONVERGENZ (aus bis zur Freigabe)
         kontakt_konv = bool(laeufe[-1].get("konvergiert", True)) if laeufe else True
-        ok = gg <= ABSCHLUSS_GLEICHGEWICHT or not kontakt_konv
         from .zahlen import zahl_text as _z
-        text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
-                f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
-                + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else "")
-                + ("" if gg <= ABSCHLUSS_GLEICHGEWICHT else
-                   " - die Stufe ist nicht konvergiert" if kontakt_konv else
-                   " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet"))
+        # Das innere Residuum der Stufe (16.10.2026, plast/traglast): die Summe gg ist
+        # fuer jedes u null (Phi^T (F + R) = Phi^T K u) - am Pruefblech mit 900 kN
+        # „erfuellt“ bei 4,56 m Einsenkung. Gemessen wird an den freien FHG das
+        # Residuum der letzten Loesung der Stufe mit den inneren Kraeften
+        # (plastizitaet._newton: F_p(u) - F_p + dK (u - u_vor), dazu das des Kontakts
+        # nach seinem Gesetz), bezogen auf die Lasten (bei Endvorspannung mit der
+        # Sollkraft) wie die Abbruchtoleranz; die ausgenommenen Zonen getrennt.
+        # Schranke ist die Toleranz der Plastizitaet: eine Stufe, deren Newton sie
+        # erreicht hat, liegt darunter. Die Summe bleibt dazu Pflicht.
+        innen = None
+        if r is not None:
+            rv = np.asarray(r, float).copy()
+            frei = self.frei if self.frei is not None else np.ones(rv.size, bool)
+            rv[~frei] = 0.0
+            zone = np.zeros(rv.size, bool)
+            z = self.zonen
+            if z is not None and getattr(z, "ingenieur", False) and getattr(z, "auffaellig", None):
+                z._masken()
+                zone[np.asarray(z._innen_dof, np.int64)] = True
+            b = float(bezug) if bezug else (float(np.linalg.norm(np.asarray(F_k, float))) or 1.0)
+            aussen = float(np.linalg.norm(rv[~zone])) / b
+            in_z = float(np.linalg.norm(rv[zone])) / b if zone.any() else None
+            schranke = float(getattr(getattr(model, "plastizitaet", None), "toleranz", 1e-3) or 1e-3)
+            innen = (aussen, in_z, schranke, float(np.linalg.norm(rv[~zone])))
+            self.letzte_stufe = {"aussen": aussen, "zonen": in_z, "schranke": schranke, "summe": gg}
+        gg_ok = gg <= ABSCHLUSS_GLEICHGEWICHT
+        in_ok = innen is None or innen[0] <= innen[2]
+        ok = (gg_ok and in_ok) or not kontakt_konv
+        if innen is not None:
+            text = (f"Plastizität: Laststufe {k}: Residuum am Ende - inneres Gleichgewicht "
+                    f"{_z(innen[3] / 1e3, stellen=3)} kN = {innen[0]:.1e} der Lasten (Schranke {innen[2]:.0e})"
+                    + (f", in den ausgenommenen Zonen {innen[1]:.1e}" if innen[1] is not None else "")
+                    + f"; Summe der Kräfte {_z(rest / 1e3, stellen=3)} kN = {gg:.1e}"
+                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+        else:
+            text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
+                    f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
+                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+        text += ("" if (gg_ok and in_ok) else
+                 " - die Stufe ist nicht konvergiert" if kontakt_konv else
+                 " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet")
         return text, ok
 
     def halbieren_am_deckel(self, marke, anteil: float) -> tuple:
@@ -5620,6 +5665,10 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     iteriert = model.has_contact or model.hat_ausfallstaebe()
     zonen = _spitzen_im_newton(model, system, factors, feq, temp, log, aktiv,
                                reaktionen=lambda: kn.halter["R"])
+    kn.zonen = zonen
+    if getattr(system, "fi", None) is not None:
+        kn.frei = np.zeros(model.ndof, bool)
+        kn.frei[np.asarray(system.fi, np.int64)] = True
     if zonen is not None and feq_sofort_dazu:
         for i, v in feq_sofort_dazu.items():
             zonen.feq_sofort[i] = zonen.feq_sofort.get(i, 0.0) + v
@@ -5889,6 +5938,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             res.info["ausfall_log"] = alog
             if kontakt is not None:
                 res.contact, res.contact_forces, cinfo = kontakt
+                res._kontakt_residuum = getattr(system, "_kontakt_residuum", None)
                 if warm_a:
                     res.kontaktzustand = cinfo.pop("contact_state_weiter", None)
                     cinfo.pop("contact_state", None)
@@ -5903,6 +5953,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             # Derselbe Ausdruck wie unten im Aufruf, nur fuer das Laufbuch
             st_eff = None if (probelauf and start_ is None) else st
             von_lauf = _start_von_lauf(st_eff)
+            system._kontakt_residuum = None
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, Fg, progress=progress, us=us, uebermass=ueber,
                 # Der Probelauf verwirft den Warmstart des **vorigen
@@ -5925,9 +5976,11 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 # dann ist der Zustand kein fremder, siehe fortsetzung unten
                 fortsetzung=start_ is not None)
             res.kontaktzustand = cinfo.pop("contact_state", None)
+            res._kontakt_residuum = getattr(system, "_kontakt_residuum", None)
             res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], von_lauf))
             zustaende.append((len(res.info["laeufe"]), res.kontaktzustand))
             return u_, R_, aktiv
+        res._kontakt_residuum = None
         u_ = system.solve(Fg, K_extra=K_zusatz, us=us)
         return u_, system.reactions(u_, Fg, K_zusatz), aktiv
 
@@ -8275,6 +8328,33 @@ def _weg_aus_spannung(model: Model) -> float:
     return wert
 
 
+def kontakt_residuum(model: Model, system, cs, F, u, K_zusatz=None) -> np.ndarray:
+    """Das innere Residuum einer Kontaktloesung (16.10.2026, plast/traglast): an den
+    freien Freiheitsgraden F + f_c(u) − (K + K_zusatz) u, mit den Kontaktkraeften
+    f_c, die das Kontaktgesetz in dieser Loesung ergibt (ContactSystem.nodal_forces
+    nach kraefte_der_loesung). Die Loesung selbst rechnet mit den Kraeften ihres
+    Zustands (Fc, C^T lambda, Kc u); was davon abweicht - Zug gekappt, Reibkraft
+    ueber dem Kegel, eine Reststeifigkeit, die Kraft traegt -, steht hier. An den
+    gesperrten FHG 0 (dort ist es die Lagerkraft).
+
+    Gemessen an den Kontaktmodellen von tests/test_plastizitaet (Block mit Reibung,
+    drehlagerartiges Modell, gequetschter Block): konvergierte Laeufe 1e-15 bis
+    1,6e-6 von ‖F‖ an den freien FHG; mit dem falschen Vorzeichen von f_c waere es
+    die Groessenordnung der Last. Die Summenkontrolle (Φᵀ(F + R) = Φᵀ K u) ist
+    dagegen fuer jedes u null."""
+    n = int(model.nn)
+    f = np.zeros(model.ndof)
+    if cs is not None and getattr(cs, "cons", None):
+        fv = f[:6 * n].reshape(-1, 6)
+        fv[:, :3] += np.asarray(cs.nodal_forces(n), float)
+    K = system.K if K_zusatz is None else system.K + K_zusatz
+    r = np.asarray(F, float) + f - K @ np.asarray(u, float)
+    frei = np.zeros(model.ndof, bool)
+    frei[np.asarray(system.fi, np.int64)] = True
+    r[~frei] = 0.0
+    return r
+
+
 def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, merker: dict):
     """Prueft das Ingenieurkriterium (ABSCHLUSS_*) fuer die Loesung ``u`` gegen die
     vorige ``u_vor``. Rueckgabe None (nicht erfuellt; Kraefte unveraendert) oder ein
@@ -8355,10 +8435,24 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     Rk = R[:n6].reshape(-1, NDOF)[:, :3].sum(0) + cs.support_reactions(model.nn).sum(0)
     gg = float(np.linalg.norm(Rk + Fk)) / bez
     aus["gleichgewicht"] = gg
-    if gg > ABSCHLUSS_GLEICHGEWICHT:
+    # Inneres Residuum dieser Loesung (16.10.2026, plast/traglast): die Summe oben ist
+    # fuer jedes u null (Φᵀ K u); geprueft wird darum zusaetzlich F + f_c(u) − (K + K_zusatz) u
+    # an den freien FHG mit den Kontaktkraeften nach dem Gesetz, bezogen auf ‖F‖ dort -
+    # mit derselben Schranke. Gemessen an den angenommenen Zustaenden der Kontakt-
+    # pruefungen (test_ingenieur_warm, test_kontakt_exakt, _pendeln, _warmstart,
+    # test_reibungstangente; 16 Annahmen): 4e-15 bis 1,6e-14 - die Schranke nimmt dort
+    # nichts weg, faengt aber jeden Zustand, dessen Kraefte nicht zur Loesung passen.
+    # K_zusatz (die Tangente der Plastizitaet) kommt ueber ``merker`` - die Signatur
+    # bleibt, Pruefungen ersetzen diese Funktion (tests/test_ingenieur_warm)
+    r_in = kontakt_residuum(model, system, cs, F, u, merker.get("_K_zusatz"))
+    b_in = float(np.linalg.norm(np.asarray(F, float)[np.asarray(system.fi, np.int64)])) or 1.0
+    aus["inneres_residuum"] = float(np.linalg.norm(r_in)) / b_in
+    if gg > ABSCHLUSS_GLEICHGEWICHT or aus["inneres_residuum"] > ABSCHLUSS_GLEICHGEWICHT:
         for c, (fn, ft, g, zr) in zip(cs.cons, vorher):     # nicht angenommen: wie vorher
             c.Fn, c.Ft, c.g, c.zug_roh = fn, ft, g, zr
-        merker["abgelehnt"] = f"Gleichgewicht {gg:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}"
+        merker["abgelehnt"] = (f"Gleichgewicht {gg:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}"
+                               if gg > ABSCHLUSS_GLEICHGEWICHT else
+                               f"inneres Residuum {aus['inneres_residuum']:.1e} > {ABSCHLUSS_GLEICHGEWICHT:.0e}")
         return None
     return aus
 
@@ -8872,6 +8966,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             Rk = R[:n6].reshape(-1, NDOF)
             Rk[:, :3] += Rsup
             R[:n6] = Rk.ravel()
+            system._kontakt_residuum = kontakt_residuum(model, system, cs, F, u, K_zusatz)
             log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
                        "Referenzzustands, lineare Lösung ohne Iteration")
             log.extend(cs.warnings())
@@ -8938,6 +9033,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     if not cs.cons:
         u = system.solve(F, K_extra=K_zusatz, us=us)
         R = system.reactions(u, F, K_zusatz)
+        system._kontakt_residuum = None
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
                                                    "contact_log": log,
@@ -9076,6 +9172,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 and cs.phase == 2 and (wie_runde is not None or richtungen)):
             abschluss_merker.pop("abgelehnt", None)
             zyklus_runden += 1          # Aktivmenge oder Gleitrichtungen pendeln (erkannt)
+            abschluss_merker["_K_zusatz"] = K_zusatz
             ingenieur = _ingenieur_abschluss(model, system, cs, F, Kc, Fc, C, lam, u, u_vor,
                                              abschluss_merker)
             abgelehnt = abschluss_merker.pop("abgelehnt", None)
@@ -9102,7 +9199,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         f"zur vorigen Runde ändert sich σ_v höchstens um {ingenieur['dsv_max'] / 1e6:.3g} N/mm², "
                         f"u um {ingenieur['du_max'] * 1e6:.3g} µm (u_max {ingenieur['u_max'] * 1e3:.4g} mm, "
                         f"Schranke {ingenieur['du_grenze'] * 1e6:.3g} µm), "
-                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}; Normalbedingung: "
+                        f"Gleichgewicht dieser Lösung {ingenieur['gleichgewicht']:.1e}, inneres Residuum "
+                        f"{ingenieur.get('inneres_residuum', 0.0):.1e}; Normalbedingung: "
                         f"Zug höchstens {ingenieur['zug_max']:.3g} N, Durchdringung höchstens "
                         f"{ingenieur['durchdringung_max']:.3g} N (Schranke {ingenieur['normal_grenze']:.3g} N)")
                 log.append(text)
@@ -9409,6 +9507,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
+    # inneres Residuum der Loesung, die der Lauf zurueckgibt (16.10.2026) - am System,
+    # nicht im Laufbuch: die Plastizitaet liest es fuer ihr Residuum (Laststufe, Ende)
+    system._kontakt_residuum = kontakt_residuum(model, system, cs, F, u, K_zusatz)
     # Derselbe Entscheid wie der Meldetext oben, als Wort fuers Laufbuch
     grund = ("" if converged else "probelauf" if probelauf else "pendeln" if pendel_verletzt
              else "gleitrichtung" if gleit_verletzt

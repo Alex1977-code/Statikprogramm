@@ -1720,10 +1720,17 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # statt 15 Zerlegungen, u_max 2.6415669504283543e-06 -> ...786 (+4,4e-6 relativ);
     # Stempel 6 statt 8, u_max 0.00039380952002928657 -> ...1069 (+3,0e-6) - die
     # Haftfeder k_h = 1000 x Knotensteifigkeit statt der exakten Haftzeile
+    # 16.10.2026 (plast/traglast, Gleichgewichtskontrolle mit inneren Kraeften):
+    # je plastischem Lastfall ohne Kontakt eine Rueckfuehrung mehr - F_p an der
+    # gezeigten Loesung fuer das Residuum (plastizitaet._newton, info["_residuum"]);
+    # mit Kontakt rechnete die Schlussabnahme sie schon. Zugwuerfel 5 statt 4,
+    # Kragtraeger 9 statt 8; Zerlegungen, max |u| und Urteil bitgleich (Gegenprobe
+    # gegen abaf33f). Die 24.09.2026 vermiedene Rueckfuehrung (Stand 77903e5) ist
+    # damit bewusst wieder da: ohne sie kann die Kontrolle nicht pruefen.
     referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (5, 0, 2.641578486685606e-06, None),
                 "Kontakt ohne Plastizität: Stempel auf Sockel": (6, 0, 0.00039381069489834077, None),
-                "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
-                "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
+                "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 5, 0.010142857142857335, True),
+                "Plastizität ohne Kontakt: Kragträger tet4": (6, 9, 0.00967601273071502, True)}
 
     def nur_kontakt_stempel():
         m = _drehlagerartiges_modell()

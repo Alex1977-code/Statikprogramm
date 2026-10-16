@@ -388,6 +388,114 @@ def test_oberflaeche():
     w.close()
 
 
+class _ZonenAttrappe:
+    """Die Zonen des ingenieurmaessigen Abbruchs, nur was residuum_stufe liest."""
+    ingenieur = True
+    auffaellig = {1}
+
+    def __init__(self, dofs):
+        self._innen_dof = np.asarray(dofs, np.int64)
+
+    def _masken(self):
+        pass
+
+
+def _stufenpruefer(r_gleich_null=True):
+    """Ein _KontaktImNewton an einem kleinen Modell, dessen Lagerkraefte die Last
+    genau ausgleichen - die Summenkontrolle ist erfuellt (Φᵀ(F + R) = 0)."""
+    m = zugstab(0.5)
+    F = solver.case_loads(m, {"LF1": 1.0})[0]
+    res = solver.Results(name="LF1", kind="case", model=m)
+    kn = solver._KontaktImNewton(None, res, None, None, [], False, 1e-3)
+    R = np.zeros(m.ndof)
+    lager = [i for i in range(m.nn) if abs(m.nodes[i][0]) < 1e-12]
+    for i in lager:
+        R[6 * i] = -float(np.asarray(F, float)[0::6].sum()) / len(lager)
+    kn.halter["R"] = R
+    kn.frei = np.ones(m.ndof, bool)
+    return m, F, kn
+
+
+def test_residuum_stufe_mit_kontakt():
+    print("\n--- 8. Residuum am Ende einer Laststufe: inneres Gleichgewicht statt Summe ---")
+    m, F, kn = _stufenpruefer()
+    b = float(np.linalg.norm(F))
+    # Rücknahme: ohne Residuum urteilt nur die Summe - erfüllt, gleich wie groß das
+    # innere Ungleichgewicht ist (so bis zum 16.10.2026)
+    z0, ok0 = kn.residuum_stufe(F, "1/1")
+    check("ohne inneres Residuum (bisher): die Summe allein ist erfüllt", ok0 and "Gleichgewicht" in z0, z0[:160])
+    r = np.zeros(m.ndof)
+    r[6 * 10] = 0.02 * b                       # 2 % der Last als Paar, Summe null
+    r[6 * 11] = -0.02 * b
+    z1, ok1 = kn.residuum_stufe(F, "1/1", r=r, bezug=b)
+    check("inneres Residuum 2,8 % der Lasten (Kräftepaar, Summe null): Stufe nicht konvergiert",
+          not ok1 and "inneres Gleichgewicht" in z1 and "nicht konvergiert" in z1, z1[:220])
+    check("… die Zeile nennt die Summe weiter mit", "Summe der Kräfte" in z1, "")
+    kn.zonen = _ZonenAttrappe([6 * 10, 6 * 11])
+    z2, ok2 = kn.residuum_stufe(F, "1/1", r=r, bezug=b)
+    check("dasselbe Residuum nur in ausgenommenen Zonen: außerhalb erfüllt, Zonen getrennt ausgewiesen",
+          ok2 and "in den ausgenommenen Zonen 2.8e-02" in z2, z2[:220])
+    kn.zonen = None
+    r_klein = r * 1e-3
+    z3, ok3 = kn.residuum_stufe(F, "1/1", r=r_klein, bezug=b)
+    check("inneres Residuum 2,8e-5 der Lasten: erfüllt (Schranke = Toleranz 1e-3)", ok3, z3[:160])
+    # am gerechneten Kontaktfall: Block mit Reibung und Fließen (tests/test_plastizitaet)
+    from tests import test_plastizitaet as TP
+    mk = TP._gequetschter_block()
+    rk = solver.solve_static(mk, workers=1)
+    zeilen = [z for z in (rk.info.get("plastizitaet") or {}).get("log") or [] if "Residuum am Ende" in z]
+    werte = [float(x) for z in zeilen for x in _re_inner(z)]
+    check("Kontaktfall (gequetschter Block): jede Laststufe meldet das innere Gleichgewicht",
+          zeilen and all("inneres Gleichgewicht" in z for z in zeilen), f"{len(zeilen)} Zeilen")
+    check("… und es liegt unter der Toleranz 1e-3, konvergiert",
+          werte and max(werte) <= 1e-3 and (rk.info.get("plastizitaet") or {}).get("konvergiert") is True,
+          f"größtes {max(werte) if werte else None:.2e}" if werte else "")
+
+
+def _re_inner(z):
+    import re
+    m = re.search(r"inneres Gleichgewicht .*? = ([0-9.e+-]+) der Lasten", z)
+    return [m.group(1)] if m else []
+
+
+def test_ingenieurkriterium_inneres_residuum():
+    print("\n--- 9. Ingenieurkriterium des Kontaktlaufs: inneres Residuum ---")
+    from statik3d import contact
+    from tests import test_ingenieur_warm as tiw
+    from tests import test_kontakt_pendeln as tp
+    m = tp.lager_in_flaechenachsen()
+    with tiw.weite_schranken(), tp.schutz(False):
+        r = solver.solve_static(m)
+    ing = r.info.get("contact_ingenieur") or {}
+    zeile = next((z for z in r.info.get("contact_log") or [] if "Ingenieurkriterium" in z), "")
+    check("Pendelmodell: angenommen, inneres Residuum der Lösung unter 1e-4 und im Protokoll",
+          r.info.get("contact_converged") and ing and float(ing.get("inneres_residuum", 1.0)) <= 1e-4
+          and "inneres Residuum" in zeile, f"{ing.get('inneres_residuum')}")
+    # eingespielt: das Kontaktgesetz liefert an einem Knoten 1 % der Last mehr, als die
+    # Lösung trägt - nur in der Sicht des inneren Residuums; die Summe sieht es nicht
+    alt = contact.ContactSystem.nodal_forces
+    F = solver.case_loads(m, {list(m.load_cases)[0]: 1.0})[0]
+    zusatz = 0.01 * float(np.linalg.norm(F))
+
+    def nf(self, nn, _a=alt):
+        f = _a(self, nn)
+        if len(f):
+            k = int(np.argmax(np.linalg.norm(f, axis=1)))
+            f = f.copy()
+            f[k, 0] += zusatz
+        return f
+    contact.ContactSystem.nodal_forces = nf
+    try:
+        m2 = tp.lager_in_flaechenachsen()
+        with tiw.weite_schranken(), tp.schutz(False):
+            r2 = solver.solve_static(m2)
+    finally:
+        contact.ContactSystem.nodal_forces = alt
+    ing2 = r2.info.get("contact_ingenieur") or {}
+    check("eingespieltes Ungleichgewicht 1 % der Last: nicht angenommen (die Kontaktbedingung bleibt streng)",
+          not ing2, f"konvergiert {r2.info.get('contact_converged')}, Runden {r2.info.get('contact_iterations')}")
+
+
 def main():
     test_zugstab()
     test_balken()
@@ -396,6 +504,8 @@ def main():
     test_gleichgewicht_mit_inneren_kraeften()
     test_pruefblech()
     test_oberflaeche()
+    test_residuum_stufe_mit_kontakt()
+    test_ingenieurkriterium_inneres_residuum()
     n_f = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_f} von {len(RESULTS)} Prüfungen bestanden")
     return 1 if n_f else 0
