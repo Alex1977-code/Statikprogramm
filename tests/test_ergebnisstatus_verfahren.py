@@ -620,7 +620,23 @@ def test_importkorrekturen():
           fehler or st)
     check("Import Lastkategorien vor dem 14.10.2026 mit Kombinationen: Status „Lastkategorien aus RFEM“",
           "Lastkategorien aus RFEM" in st, fehler or st)
-    f.meta["rfem_zugstaebe"] = f.meta["rfem_seile"] = True
+    # Lastkategorien geordnet (zwei Kategorien): erledigt; nur ein Lastfall gerechnet: nicht beruehrt
+    from statik3d.model import LoadCase
+    f.load_cases["LF2"] = LoadCase("LF2", category="Q")
+    f.save(p)
+    erg.schreiben(erg.pfad_zu(p), f, solver.solve_all(f, design=False))
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("… Lastfälle in verschiedenen Kategorien (vom Anwender geordnet): kein Status zu den Lastkategorien",
+          a2 is not None and "Lastkategorien" not in _status(a2), fehler or _status(a2))
+    f.load_cases.pop("LF2")
+    an1 = solver.solve_all(f, design=False)
+    an1.combinations.clear()
+    f.save(p)
+    erg.schreiben(erg.pfad_zu(p), f, an1)
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("… nur Lastfälle gerechnet, keine Kombination: kein Status zu den Lastkategorien",
+          a2 is not None and "Lastkategorien" not in _status(a2), fehler or _status(a2))
+    f.meta["rfem_zugstaebe"] = f.meta["rfem_seile"] = "beim Import gesetzt (14.10.2026)"
     f.save(p)
     erg.schreiben(erg.pfad_zu(p), f, an)
     a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))

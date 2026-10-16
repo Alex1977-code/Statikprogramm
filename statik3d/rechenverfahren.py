@@ -360,13 +360,26 @@ def _import_vorspannung(model) -> bool:
 
 
 def _import_lastkategorien(model) -> bool:
-    """Aus RFEM 6 vor 6706ef6 (13.10.2026) uebernommen - erkennbar nur am Fehlen der
-    Merkmale der Importe ab dem 14.10.2026 (meta „rfem_zugstaebe“; ein Merkmal des
-    13.10.2026 gibt es nicht: Importe zwischen 13.10. 23:09 und 14.10. 07:28 zaehlen
-    mit) - und mit Kombinationen (die Kategorie wirkt nur ueber Teilsicherheits- und
-    Kombinationsbeiwerte)."""
+    """Aus RFEM 6 vor 6706ef6 (13.10.2026) uebernommen - erkennbar nur daran, dass das
+    Merkmal der Importe ab dem 14.10.2026 nicht „beim Import gesetzt“ ist (meta
+    „rfem_zugstaebe“ fehlt oder ist „nachgelesen“; ein Merkmal des 13.10.2026 gibt es
+    nicht: Importe zwischen 13.10. 23:09 und 14.10. 07:28 zaehlen mit) -, mit
+    Kombinationen und mit Lastfaellen, die alle noch dieselbe Kategorie tragen (so
+    legte der alte Import sie an; hat der Anwender sie geordnet, gilt es als erledigt)."""
     meta = getattr(model, "meta", None) or {}
-    return bool(_rfem(model) and not meta.get("rfem_zugstaebe") and (getattr(model, "combinations", None) or {}))
+    if not _rfem(model) or str(meta.get("rfem_zugstaebe", "") or "").startswith("beim Import"):
+        return False
+    if not (getattr(model, "combinations", None) or {}):
+        return False
+    kat = {str(getattr(lc, "category", "") or "") for lc in (getattr(model, "load_cases", None) or {}).values()}
+    return len(kat) <= 1
+
+
+def _kombinationen_im_ergebnis(an) -> str:
+    """Die Kategorie wirkt nur ueber Teilsicherheits- und Kombinationsbeiwerte: betroffen
+    sind gerechnete Kombinationen (und was aus ihnen folgt)."""
+    namen = sorted(str(n) for n in (getattr(an, "combinations", None) or {}))
+    return ("Kombinationen " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
 #: Arten eines Wechsels (Wechsel.art)
@@ -487,8 +500,9 @@ MERKMALE: list = [
                "neu": "Kategorie aus der Einwirkung, sonst „nicht zugeordnet“"},
         wechsel=(Wechsel(stand=1.5, datum="13.10.2026", commit="6706ef6", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="RFEM-Import vor dem 14.10.2026 (ohne Merkmal rfem_zugstaebe) mit Kombinationen",
-        betrifft=_import_lastkategorien, import_korrektur=True,
+        modellmerkmal="RFEM-Import vor dem 14.10.2026 (rfem_zugstaebe fehlt oder „nachgelesen“), alle "
+                      "Lastfälle in einer Kategorie, gerechnete Kombinationen",
+        betrifft=_import_lastkategorien, import_korrektur=True, im_ergebnis=_kombinationen_im_ergebnis,
         vorschlag="die Kategorien der Lastfälle prüfen"),
 ]
 
@@ -690,16 +704,19 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
         if wert is None:
             unsicher.append(mk.name)
             betr.append(f"{mk.titel}: Alter der Ergebnisdatei nicht sicher erkennbar, möglicherweise noch "
-                        f"mit {mk.text(w.alt)} gerechnet" + (f" ({wo})" if wo else "")
-                        + f", seit {_seit(mk, jetzt, w)} korrigiert: {mk.text(jetzt)}")
+                        f"gerechnet mit „{mk.text(w.alt)}“" + (f" ({wo})" if wo else "")
+                        + f", seit {_seit(mk, jetzt, w)} korrigiert: „{mk.text(jetzt)}“")
         else:
-            betr.append(f"gerechnet mit {mk.text(wert)}" + (f" ({wo})" if wo else "")
-                        + f", seit {_seit(mk, jetzt, w)} korrigiert: {mk.text(jetzt)}")
+            betr.append(f"{mk.titel}: gerechnet mit „{mk.text(wert)}“" + (f" ({wo})" if wo else "")
+                        + f", seit {_seit(mk, jetzt, w)} korrigiert: „{mk.text(jetzt)}“")
     for mk in MERKMALE:
         if mk.import_korrektur and _sicher(lambda: mk.betrifft(model)):
+            wo = _sicher(lambda: mk.im_ergebnis(analyse)) if (mk.im_ergebnis is not None and analyse is not None)                 else None
+            if wo == "":
+                continue
             w = mk.wechsel[-1]
-            betr.append(f"{mk.titel}: Modell vor dem {w.datum} aus RFEM übernommen ({mk.text('alt')}) – "
-                        f"{mk.vorschlag}, danach neu rechnen")
+            betr.append(f"{mk.titel}: Modell vor dem {w.datum} aus RFEM übernommen ({mk.text('alt')}"
+                        + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
     return {"hinweis": ("gerechnet mit älterem Rechenverfahren: " + "; ".join(hinw)
                         + " – die Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren")
             if hinw else "",
