@@ -9609,6 +9609,10 @@ class Analysis:
         s += seil_querlast_gebuendelt(self.all_results().items())
         # Ergebnisse mit nicht konvergiertem Kontakt sind vorlaeufig (14.10.2026)
         s += vorlaeufig_gebuendelt(self.all_results().items())
+        # Vorspannung je Anker: mit welchem Zeitpunkt gerechnet ist (16.10.2026,
+        # nur mit Verweis - sonst keine Zeile)
+        from .vorspannung import zustaende_gebuendelt as _vz_geb
+        s += _vz_geb(self.all_results().items())
         # vor einer Fehlerkorrektur des Rechenverfahrens gerechnet (Ergebnisdatei,
         # rechenverfahren, 16.10.2026): „Ergebnis möglicherweise betroffen – neu rechnen“
         if self.info.get("verfahren_betroffen"):

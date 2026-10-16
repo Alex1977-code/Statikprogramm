@@ -6063,8 +6063,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         "die Umgebung", symbol="vorspannung")
         g.klein("Vorspannung je Anker", lambda: self.maske_vorspanndefinition(neu=True),
                 hinweis="Vorspannung einmal je Anker definieren (Pressenkraft P_max, Schlupf Δs, "
-                        "Spanngruppe, P_∞ oder ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf",
-                symbol="vorspannung")
+                        "Spanngruppe, P_∞ oder ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "

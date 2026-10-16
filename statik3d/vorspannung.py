@@ -318,7 +318,6 @@ def anzeige(model, d: VorspannDefinition, ergebnisse: dict = None) -> dict:
     Ergebnisse): P_max, P₀ (berechnet oder geschaetzt, mit Herkunft), P_∞ und
     ΔP_t - beide, der eingegebene und der daraus folgende (Entwurf: „Anzeige
     beider Werte“)."""
-    from .zahlen import zahl_text
     p0, her = p0_aus_ergebnissen(model, d, ergebnisse or {})
     geschaetzt = not p0
     if geschaetzt:
@@ -403,6 +402,11 @@ def gruppen_finden(model, ergebnisse: dict = None, linear_rechnen: bool = False)
         temperatur_vorspannungen, x_rechenbar
     lcs = getattr(model, "load_cases", None) or {}
     gruppen: dict = {}
+    # Anker in der Folge der Staebe im Modell (S1, S2, …, S10 - nicht nach Text)
+    folge = {n: i for i, n in enumerate(getattr(model, "members", None) or {})}
+
+    def sortiert(staebe):
+        return tuple(sorted(set(staebe), key=lambda n: (folge.get(n, len(folge)), str(n))))
 
     def eintrag(key, art, N0, schlupf, stab_liste, fall):
         g = gruppen.setdefault(key, {"schluessel": key, "art": art, "N0": float(N0), "schlupf": float(schlupf),
@@ -416,7 +420,7 @@ def gruppen_finden(model, ergebnisse: dict = None, linear_rechnen: bool = False)
         je_fall.setdefault(t.fall, {}).setdefault(round(t.N0, 3), []).append(t.stab)
     for fall in lcs:
         for N0, staebe in (je_fall.get(fall) or {}).items():
-            st = tuple(sorted(set(staebe)))
+            st = sortiert(staebe)
             eintrag(("dT", N0, 0.0, st), ART_DT, N0, 0.0, st, fall)
         je: dict = {}
         for v in getattr(lcs[fall], "vorspannungen", None) or []:
@@ -425,7 +429,7 @@ def gruppen_finden(model, ergebnisse: dict = None, linear_rechnen: bool = False)
             k = (_art_vorspannung(v), round(float(v.kraft), 3), round(float(v.schlupf or 0.0), 9))
             je.setdefault(k, []).append(v.ziel)
         for (art, N0, ds), staebe in je.items():
-            st = tuple(sorted(set(staebe)))
+            st = sortiert(staebe)
             eintrag(("kraft", art, N0, ds, st), art, N0, ds, st, fall)
     out = sorted(gruppen.values(), key=lambda g: (-len(g["faelle"]), -g["N0"]))
     # X: Importhinweis, Ergebnis, Endvorspannung, linear
@@ -484,7 +488,6 @@ def _linear_x(model, g) -> list:
 
 
 def gruppe_text(g: dict) -> str:
-    from .zahlen import zahl_text
     kat = ", ".join(f"{k} {n}" for k, n in sorted(g["kategorien"].items()))
     return (f"{_kn(g['N0'])} kN {g['art']} an {anker_text(g['staebe'])} in "
             f"{len(g['faelle'])} {'Lastfall' if len(g['faelle']) == 1 else 'Lastfällen'} ({kat})")
@@ -614,3 +617,42 @@ def vorschlag(g: dict, zustand: str) -> dict:
     if zustand == VORSPANN_ZUSTAND_INF:
         return {"endwert": VORSPANN_ENDWERT_ABSOLUT, "P_inf": g["N0"], "dP_t": 0.0}
     return {}
+
+
+def zustaende_gebuendelt(ergebnisse) -> list:
+    """Zeilen fuer Analysis.summary: je Definition und Zeitpunkt, wie viele
+    Ergebnisse damit gerechnet sind („Vorspannung je Anker V1: Zeitpunkt 0 in
+    128, Zeitpunkt ∞ in 293 Ergebnissen“), dazu Hinweise auf Kombinationen
+    beider Zeitpunkte. Leer ohne Verweis."""
+    je: dict = {}
+    hinweise = []
+    for name, res in ergebnisse:
+        vs = ((getattr(res, "info", None) or {}).get("vorspannung") or {})
+        for d, zs in (vs.get("verweise") or {}).items():
+            for z in zs:
+                je.setdefault(d, {}).setdefault(z, []).append(name)
+        if vs.get("hinweis"):
+            hinweise.append(f"{name}: {vs['hinweis']}")
+    out = []
+    for d, zz in je.items():
+        teile = [f"{ZUSTAND_TEXT[z]} in {len(zz[z])}" for z in VORSPANN_ZUSTAENDE if z in zz]
+        out.append(f"Vorspannung je Anker {d}: " + ", ".join(teile) + " Ergebnissen gerechnet")
+    out += [f"HINWEIS: {h}" for h in hinweise[:5]]
+    if len(hinweise) > 5:
+        out.append(f"HINWEIS: … und {len(hinweise) - 5} weitere Ergebnisse mit beiden Zeitpunkten")
+    return out
+
+
+def vorspannung_vorhanden(model) -> bool:
+    """Gibt es im Modell Vorspannung an Staeben (eingegeben, als ΔT an einem
+    Zug- oder Seilstab, oder ein Verweis)? Fuer den Modellbaum: schnell, bricht
+    beim ersten Fund ab."""
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        if getattr(lc, "vorspannzustand", None):
+            return True
+        if any(getattr(v, "art", "stab") == "stab" for v in (getattr(lc, "vorspannungen", None) or [])):
+            return True
+        for t in getattr(lc, "temp_loads", None) or []:
+            if getattr(t, "aus_vorspannung", 0.0) or (not t.dT_z and t.vorspannkraft(model) > 1.0):
+                return True
+    return False

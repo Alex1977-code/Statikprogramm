@@ -2503,21 +2503,27 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Zuordnung vorhandener Vorspannungen
         from .. import vorspannung as _vsp
         vdefs = _vsp.definitionen(model)
-        vz = self._zweig(ew, "Vorspannung je Anker", len(vdefs), "vorspanndefinitionen",
-                         hinweis="Vorspannung einmal je Anker definiert (P_max, Δs, Spanngruppe, P_∞ oder "
-                                 "ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf. P₀ nach dem "
-                                 "Verankern rechnet das Programm.")
-        self._liste(vz, [(n, (f"P_max {_vsp._kn(d.P_max)} · "
-                              + (f"ΔP_t {_vsp._kn(d.dP_t)}" if d.ist_verlust() else f"P_∞ {_vsp._kn(d.P_inf)}")
-                              + " kN"),
-                          n, _vsp.definition_zeile(model, d)) for n, d in vdefs.items()],
-                    "vorspanndefinition", "vorspanndefinitionen", sortieren=False)
-        self._zweig(vz, "+ Vorspannung je Anker anlegen", "", "vorspanndefinition_neu", farbe=FARBEN["akzent"])
-        self._zweig(vz, "Vorspannungen der Lastfälle zuordnen …", "", "vorspannung_zuordnen",
-                    farbe=FARBEN["akzent"],
-                    hinweis="Gleiche Vorspannungen an denselben Stäben (ΔT aus RFEM, Endvorspannung, "
-                            "Anfangsvorspannung) einem Zeitpunkt und einer Definition zuordnen")
-        kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
+        # nur in Modellen mit Vorspannung an Staeben oder mit Definitionen: sonst
+        # bleibt der Baum, wie er war (am Beispiel „hall“ bei 1366 x 768 zaehlt
+        # jede Zeile, tests.test_fensteraufteilung); angelegt wird die erste
+        # Definition dann ueber Lasten › Vorspannung je Anker
+        if vdefs or _vsp.vorspannung_vorhanden(model):
+            vz = self._zweig(ew, "Vorspannung je Anker", len(vdefs), "vorspanndefinitionen",
+                             hinweis="Vorspannung einmal je Anker definiert (P_max, Δs, Spanngruppe, P_∞ oder "
+                                     "ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf. P₀ nach dem "
+                                     "Verankern rechnet das Programm.")
+            self._liste(vz, [(n, (f"P_max {_vsp._kn(d.P_max)} · "
+                                  + (f"ΔP_t {_vsp._kn(d.dP_t)}" if d.ist_verlust() else f"P_∞ {_vsp._kn(d.P_inf)}")
+                                  + " kN"),
+                              n, _vsp.definition_zeile(model, d)) for n, d in vdefs.items()],
+                        "vorspanndefinition", "vorspanndefinitionen", sortieren=False)
+            self._zweig(vz, "+ Vorspannung je Anker anlegen", "", "vorspanndefinition_neu",
+                        farbe=FARBEN["akzent"])
+            self._zweig(vz, "Vorspannungen der Lastfälle zuordnen …", "", "vorspannung_zuordnen",
+                        farbe=FARBEN["akzent"],
+                        hinweis="Gleiche Vorspannungen an denselben Stäben (ΔT aus RFEM, Endvorspannung, "
+                                "Anfangsvorspannung) einem Zeitpunkt und einer Definition zuordnen")
+        kb =self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
         self._liste(kb, [(name, " · ".join(x for x in (getattr(c, "situation", "") or "",
                                                        (f"{c.theorie.upper()}. O."
                                                         if getattr(c, "theorie", "") else "")) if x),

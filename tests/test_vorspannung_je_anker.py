@@ -452,6 +452,10 @@ def test_nachweise_je_zustand():
     check("Zustand je Nachweis: Klaffen/Gleiten/Passstifte t = ∞, als noch nicht im Programm",
           "Klaffen der Fuge mit t = ∞ (Nachweis noch nicht im Programm)" in zeilen[-1], zeilen[-1])
     check("Nachweise EC3: Zusammenfassung nennt die Definitionen", "Vorspannung V1" in an.design.summary())
+    zs = an.summary()
+    check("Zusammenfassung der Rechnung: Zeitpunkte je Definition",
+          "Vorspannung je Anker V1: Zeitpunkt 0 in 3, Zeitpunkt ∞ in 3 Ergebnissen gerechnet" in zs,
+          [z for z in zs.splitlines() if "je Anker" in z])
     # ohne Ergebnis im Zeitpunkt 0: P₀ gegen starre Umgebung
     m2, _H, _el = _spannanker_modell()
     for n in ("T0", "T0P"):
