@@ -3023,9 +3023,31 @@ class Report:
         # Gebuendelt ueber alle Ergebnisse: am Drehlager haben 422 Lastfaelle
         # dieselben Platten, und ein Kapitel je Lastfall waere keines.
         frei: dict = {}
+        durch_zwang: dict = {}          # Information: an der Bewegung greift nichts an (16.10.2026)
         for name, res in allres:
             for e in (getattr(res, "info", None) or {}).get("freie_teile") or []:
-                frei.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+                ziel = durch_zwang if str(e.get("stufe", "")) == "INFORMATION" else frei
+                ziel.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+        if durch_zwang:
+            b.append(self._h(2, "Drehungen und Verschiebungen durch Zwangsbedingung gehalten"))
+            b.append(("p", "An diesen Knoten ist eine Bewegung für den Gleichungslöser nur schwach "
+                           "gehalten (er hebt einen Pivot an). Sie wird aber über eine "
+                           "Zwangsbedingung gebunden (starre Scheibe, starre Kopplung, starrer "
+                           "Körper), und an dieser Bewegung greift weder Kraft noch Moment an: "
+                           "Es ist nichts zu lagern, die Ergebnisse sind davon nicht betroffen."))
+            rows = [["Knoten", "Bewegung", "Gehalten durch", "Ergebnisse"]]
+            for text, (e, namen) in durch_zwang.items():
+                teile = e.get("namen") or []
+                wer = ", ".join(teile[:6]) + (f" … {teile[-1]} ({len(teile)})" if len(teile) > 6 else "")
+                if e.get("knoten"):
+                    wer += ": Knoten " + ", ".join(f"K{k}" for k in e["knoten"][:6])
+                wo = ", ".join(namen[:4]) + (f" … ({len(namen)} Ergebnisse)" if len(namen) > 4 else "")
+                rows.append([wer, e.get("bewegung", ""), e.get("haltung", ""), wo])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Durch Zwangsbedingung gehaltene Bewegungen (Information)", None,
+                      "compact"))
+            if note:
+                b.append(("note", note))
         if frei:
             b.append(self._h(2, "Frei bewegliche Teile"))
             b.append(("p", "Der Gleichungslöser musste bei diesen Teilen einen Pivot anheben, "

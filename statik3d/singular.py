@@ -1475,6 +1475,92 @@ def verstaerkte_knoten(a: np.ndarray) -> tuple:
     return a > 10.0 ** (0.5 * (v[b] + v[b + 1])), abstand, trennung
 
 
+def zwang_je_knoten(model, knoten) -> tuple:
+    """Was die Knoten ``knoten`` durch eine **Zwangsbedingung** bindet und was
+    nur durch eine **weiche Feder**: ``(zwang, feder)``, je ``{Knoten: [Namen]}``.
+
+    Zwangsbedingung heisst: eine starre Kopplung (alle Steifigkeiten ``inf``;
+    die starre Scheibe einer starren Flaeche, das Stabende am Volumen), ein
+    starrer Koerper (RBE2/RBE3), eine Kopplung in der Kontaktfuge ohne endliche
+    Feder. Eine Kopplung mit endlicher Steifigkeit, ein Federelement und ein
+    Lager mit Feder sind weiche Federn - sie halten nur so weit, wie die Feder
+    steif ist, und zaehlen nicht als Zwangsbedingung."""
+    wollen = {int(k) for k in knoten}
+    zwang: dict = {k: [] for k in wollen}
+    feder: dict = {k: [] for k in wollen}
+
+    def merke(ziel, n, name):
+        if int(n) in wollen and name not in ziel[int(n)]:
+            ziel[int(n)].append(name)
+    for kp in (getattr(model, "kopplungen", None) or []):
+        a, b = int(kp.node_a), int(kp.node_b)
+        if a not in wollen and b not in wollen:
+            continue
+        steif = [float(s) for s in (kp.steifigkeiten or []) if float(s) != 0.0]
+        starr = bool(steif) and all(np.isinf(s) for s in steif)
+        name = str(getattr(kp, "gruppe", "") or "Kopplung").strip() or "Kopplung"
+        for n in (a, b):
+            merke(zwang if starr else feder, n, name if starr else name + " (endliche Steifigkeit)")
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        glieder = [int(sk.master)] + [int(x) for x in (sk.slaves or [])]
+        if wollen.isdisjoint(glieder):
+            continue
+        for n in glieder:
+            merke(zwang, n, str(getattr(sk, "art", "RBE2")) + (f" {sk.name}" if getattr(sk, "name", "") else ""))
+    for s in (getattr(model, "supports", None) or []):
+        if int(s.node) in wollen:
+            try:
+                if any(s.dof_behaviour(d).typ == "spring" for d in range(6)):
+                    merke(feder, s.node, "Federlager")
+            except Exception:                  # noqa: BLE001 - fremdes Lager
+                pass
+    return {k: v for k, v in zwang.items() if v}, {k: v for k, v in feder.items() if v}
+
+
+def last_je_knoten(model, knoten) -> dict:
+    """Die groessten Beträge von Kraft und Moment an den Knoten ``knoten`` über
+    alle Lastfälle: ``{Knoten: (F[3], M[3])}``; nur Knoten mit Last. (Eine
+    Zwangsverformung braucht ein Lager und gehört nicht zu einem freien Knoten.)"""
+    wollen = {int(k) for k in knoten}
+    aus: dict = {}
+    for lc in model.load_cases.values():
+        for l in lc.nodal_loads:
+            n = int(l.node)
+            if n in wollen:
+                F, M = aus.setdefault(n, (np.zeros(3), np.zeros(3)))
+                w = np.abs(np.asarray(list(l.F) + [0.0] * 6, float)[:6])
+                F[:] = np.maximum(F, w[:3])
+                M[:] = np.maximum(M, w[3:])
+    return aus
+
+
+def stufe_freier_knoten(model, k: int, Vt, Vr, lasten: dict, zwang: dict, feder: dict) -> tuple:
+    """Die Stufe der Meldung „Knoten k frei beweglich“: ``("INFORMATION", Halt)``
+    oder ``("WARNUNG", Grund)``.
+
+    **Information** nur, wenn (a) an der freien Bewegung weder Kraft noch Moment
+    angreift - die Last (aus allen Lastfaellen) hat keinen Anteil in den freien
+    Verschiebungs- und Drehrichtungen ``Vt``/``Vr`` - und (b) der Knoten ueber
+    eine Zwangsbedingung gebunden ist, keine weiche Feder (:func:`zwang_je_knoten`).
+    Der Gleichungsloeser hebt dort einen Pivot an; ohne Last und mit starr
+    gebundenem Knoten bleibt die Rechnung eindeutig in allem, was zaehlt. Sonst
+    **Warnung**: mit Last ginge sie ins Nichts, ohne Zwangsbedingung hielte den
+    Knoten nur der angehobene Pivot, und eine weiche Feder haelt nur so weit,
+    wie sie steif ist."""
+    F, M = lasten.get(int(k), (np.zeros(3), np.zeros(3)))
+    kraft = float(np.linalg.norm(np.asarray(Vt).T @ F)) if np.asarray(Vt).shape[1] else 0.0
+    moment = float(np.linalg.norm(np.asarray(Vr).T @ M)) if np.asarray(Vr).shape[1] else 0.0
+    if kraft > 1e-9 or moment > 1e-9:
+        return "WARNUNG", "an der freien Bewegung greift " + (
+            "ein Moment" if moment > 1e-9 and kraft <= 1e-9 else
+            "eine Kraft" if kraft > 1e-9 and moment <= 1e-9 else "Kraft und Moment") + " an"
+    if int(k) in feder and int(k) not in zwang:
+        return "WARNUNG", "nur eine weiche Feder bindet den Knoten (" + ", ".join(feder[int(k)]) + ")"
+    if int(k) in zwang:
+        return "INFORMATION", ", ".join(zwang[int(k)])
+    return "WARNUNG", "keine Zwangsbedingung bindet den Knoten"
+
+
 def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
     """Stufe 3: welche Teile hat die Faktorisierung freigelassen?
 
@@ -1576,13 +1662,16 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
         if not bew:
             bew = (f"ohne Steifigkeit verformbar (kein Starrkörper; {int(gross[P].sum())} von "
                    f"{len(P)} Knoten verstärkt)")
-        roh.append(("koerper", bew, [name], [int(k) for k in P[gross[P]][:6]], halter))
+        roh.append(("koerper", bew, [name], [int(k) for k in P[gross[P]][:6]], halter,
+                    "WARNUNG", ""))
 
     # ---- einzelne Knoten (Staebe, Knoten ohne Bauteil) -----------------
     rest = np.flatnonzero(gross & ~im_koerper)
     if rest.size:
         in_rest = np.zeros(nn, bool)
         in_rest[rest] = True
+        lasten = last_je_knoten(model, rest.tolist())
+        zwang, feder = zwang_je_knoten(model, rest.tolist())
         sel = in_rest[flach]
         je_knoten: dict = {}
         for k, e in zip(flach[sel].tolist(), elem[sel].tolist()):
@@ -1619,12 +1708,14 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
                 gr = sorted({namen_von_code[int(code[e])] or "Bauteil ohne Namen" for e in es},
                             key=_natuerlich)
                 art, namen = "knoten", (gr or ["Knoten ohne Element"])
-            roh.append((art, bew, namen, [k], _halter(model, np.array([k]), cache)))
+            stufe, halt = stufe_freier_knoten(model, k, Vt, Vr, lasten, zwang, feder)
+            roh.append((art, bew, namen, [k], _halter(model, np.array([k]), cache), stufe, halt))
 
     # ---- gleich bewegte Teile zu einer Zeile -----------------------------
     gruppen: dict = {}
-    for art, bew, namen, knoten, halter in roh:
-        g = gruppen.setdefault((art, bew), {"namen": [], "knoten": [], "halter": []})
+    for art, bew, namen, knoten, halter, stufe, halt in roh:
+        g = gruppen.setdefault((art, bew, stufe), {"namen": [], "knoten": [], "halter": [],
+                                                   "grund": []})
         for nm in namen:
             if nm not in g["namen"]:
                 g["namen"].append(nm)
@@ -1632,8 +1723,10 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
         for h in halter:
             if h not in g["halter"]:
                 g["halter"].append(h)
+        if halt and halt not in g["grund"]:
+            g["grund"].append(halt)
     liste = []
-    for (art, bew), g in gruppen.items():
+    for (art, bew, stufe), g in gruppen.items():
         namen = sorted(g["namen"], key=_natuerlich)
         kn = sorted(set(g["knoten"]))
         if art == "koerper":
@@ -1645,10 +1738,22 @@ def pivotbefund(model, fi, ls, gestoert: int, seed: int = 20261008) -> tuple:
                    + (f" … ({len(kn)} Knoten)" if len(kn) > 6 else ""))
             bitte = "bitte lagern (Lager, Feder oder Kopplung in diesen Richtungen)"
         haltung = "; ".join(g["halter"]) if g["halter"] else "kein Lager und keine Fuge"
-        text = f"{wer}: {bew} - gehalten nur durch: {haltung}; {bitte}"
+        if stufe == "INFORMATION":
+            # Seit 16.10.2026: keine Last und kein Moment an dieser Bewegung, und
+            # der Knoten ist ueber eine Zwangsbedingung gebunden - dann ist es
+            # nichts, was der Anwender lagern muesste (Kopf der Anker S1-S16,
+            # Drehung um die Stabachse an der starren Scheibe)
+            haltung = "Zwangsbedingung: " + "; ".join(g["grund"])
+            text = (f"{wer}: {bew} - Information: über eine {haltung} an das Bauteil gebunden, "
+                    "das diese Bewegung bestimmt; weder Kraft noch Moment greift an dieser "
+                    "Bewegung an, nichts zu lagern")
+        else:
+            text = f"{wer}: {bew} - gehalten nur durch: {haltung}; {bitte}"
+            if art != "koerper" and g["grund"]:
+                text += " (" + "; ".join(g["grund"]) + ")"
         liste.append({"art": art, "namen": namen, "anzahl": len(namen),
                       "knoten_anzahl": len(kn), "knoten": [int(k) for k in kn[:8]],
-                      "bewegung": bew, "haltung": haltung, "text": text})
+                      "bewegung": bew, "haltung": haltung, "text": text, "stufe": stufe})
     liste.sort(key=lambda e: (-e["anzahl"], _natuerlich(e["namen"][0])))
     suche["teile"] = len(liste)
     return liste, suche

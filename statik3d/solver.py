@@ -2165,7 +2165,13 @@ def freie_teile_zeilen(teile) -> list:
     """Die Zeilen der Zusammenfassung zu den frei beweglichen Teilen: je Gruppe
     gleich bewegter Teile eine WARNUNG mit Namen, Richtung und dem, was sie
     heute haelt (singular.pivotbefund)."""
-    return ["WARNUNG: " + str(e.get("text", "")) for e in (teile or [])]
+    return [_stufenwort(e) + ": " + str(e.get("text", "")) for e in (teile or [])]
+
+
+def _stufenwort(e) -> str:
+    """INFORMATION oder WARNUNG - die Stufe eines Eintrags in ``freie_teile``
+    (Eintraege von vor dem 16.10.2026 haben keine: WARNUNG)."""
+    return "INFORMATION" if str((e or {}).get("stufe", "")) == "INFORMATION" else "WARNUNG"
 
 
 def freie_teile_gebuendelt(ergebnisse) -> list:
@@ -2177,13 +2183,13 @@ def freie_teile_gebuendelt(ergebnisse) -> list:
     for name, r in ergebnisse:
         inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
         for e in inf.get("freie_teile") or []:
-            gruppen.setdefault(str(e.get("text", "")), []).append(str(name))
+            gruppen.setdefault((_stufenwort(e), str(e.get("text", ""))), []).append(str(name))
     zeilen = []
-    for text, namen in gruppen.items():
+    for (wort, text), namen in gruppen.items():
         n = len(namen)
         wo = (f"bei {n} Ergebnissen: {', '.join(namen[:3])}{' …' if n > 3 else ''}"
               if n > 1 else f"bei {namen[0]}")
-        zeilen.append(f"WARNUNG: {text} ({wo})")
+        zeilen.append(f"{wort}: {text} ({wo})")
     return zeilen
 
 

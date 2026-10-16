@@ -12543,6 +12543,24 @@ je Lastfall) und bei den Warnungen. Geneigte Ebenen werden über ihre Normale
 genannt, Stabknoten mit Stab und Knotennummer („S7: Knoten K5: quer zur
 Stabachse …“).
 
+**Gestufte Meldung (seit 16.10.2026).** Nicht jede frei bewegliche Stabverbindung ist
+ein Mangel. Am Kopf der Anker S1–S16 (K157, K172 …) stand „um z frei drehbar –
+gehalten nur durch: kein Lager und keine Fuge; bitte lagern“; der Knoten hängt über
+die starre Scheibe der starren Fläche (Zwangsbedingung, am Drehlager „starr F37“ u. a.)
+am Bauteil, auf dem er sitzt, und ein Fachwerkstab nimmt dort kein Moment auf. Die
+Meldung hat jetzt zwei Stufen. **Information**, wenn (a) an der freien Bewegung
+weder eine Kraft noch ein Moment in irgendeinem Lastfall angreift und (b) der Knoten
+über eine Zwangsbedingung gebunden ist – eine starre Kopplung (alle Richtungen starr),
+einen starren Körper (RBE2/RBE3). Der Text sagt dann „Information: über eine
+Zwangsbedingung … an das Bauteil gebunden, das diese Bewegung bestimmt; … nichts zu
+lagern“, und der Bericht führt sie unter „Drehungen und Verschiebungen durch
+Zwangsbedingung gehalten“, nicht bei den Warnungen. **Warnung** bleibt es, wenn eine
+Kraft oder ein Moment in der freien Bewegung angreift (sie ginge ins Nichts), wenn nur
+eine weiche Feder bindet (Kopplung mit endlicher Steifigkeit, Federlager) oder gar nichts;
+der Text nennt den Grund. Bauteile (Körper) bleiben Warnungen. Ein Fehler ist es dort,
+wo es heute schon einer ist: eine Last an einem automatisch gehaltenen Freiheitsgrad
+macht das Ergebnis „nicht gültig“.
+
 **Das Programm lagert nichts.** Die Teile in den genannten Richtungen zu lagern
 (Lager, Feder oder Reibung) ist Sache des Anwenders; bis dahin ist ihre
 Verschiebung unbestimmt, und ihre Spannungen gelten nur, solange die Last auf
