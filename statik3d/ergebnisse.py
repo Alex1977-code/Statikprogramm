@@ -626,7 +626,9 @@ def _entpacken_results(d: dict, model):
 
 #: Reibverfahren in der Ergebnisdatei (15.10.2026), nach
 #: Plastizitaet.reibungstangente
-REIBVERFAHREN = {True: "konsistente Tangente", False: "bisheriges Verfahren"}
+REIBVERFAHREN = {True: "konsistente Tangente", False: "bisheriges Verfahren",
+                 # Modell ohne Reibung (16.10.2026, rechenverfahren.KEINE_REIBUNG)
+                 "keine_reibung": "keine Reibung im Modell"}
 #: Hinweis zu einer Ergebnisdatei ohne Angabe des Reibverfahrens, deren Modell
 #: Reibung hat: geschrieben vor dem 15.10.2026, gerechnet ohne die Tangente
 REIBVERFAHREN_ALT = "gerechnet mit dem bisherigen Reibverfahren – für aktuelle Ergebnisse neu rechnen"
@@ -673,7 +675,7 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
     # geladenen, mit dem bisherigen Verfahren gerechneten Analyse weg, solange
     # das Modell heute mit der Tangente rechnet
     rt = inhalt["verfahren"]["merkmale"].get("reibverfahren")
-    if rt is True or (rt is False and rv.merkmal("reibverfahren").aktuell(model) is False):
+    if rt is True or rt == rv.KEINE_REIBUNG or (rt is False and rv.merkmal("reibverfahren").aktuell(model) is False):
         inhalt["reibverfahren"] = REIBVERFAHREN[rt]
     if info.get("kennung_vorbehalt"):
         # aus einer Datei mit aelterer Kennung geladen und nicht neu gerechnet
@@ -810,17 +812,20 @@ def lesen(pfad: str, model, fortschritt=None):
     merkmale = rvf.merkmale_der_datei(inhalt, model, gesetzt)
     an.info["rechenverfahren"] = merkmale
     an.info["verfahren_aus_datei"] = True
-    hinweis = rvf.hinweis(model, merkmale)
-    if hinweis:
-        an.info["verfahren_hinweis"] = hinweis
-    # vor einer Fehlerkorrektur gerechnet (rechenverfahren.Wechsel.art): Status
-    # „Ergebnis möglicherweise betroffen – neu rechnen“ - die Ergebnisse bleiben
-    betroffen = rvf.betroffen(model, merkmale, an)
-    if betroffen:
-        an.info["verfahren_betroffen"] = betroffen
+    # Verbesserung: Hinweis; Fehlerkorrektur (auch am Import, auch bei unsicherem
+    # Alter der Datei): Status „Ergebnis möglicherweise betroffen – neu rechnen“ -
+    # die Ergebnisse bleiben (Einstufung des Anwenders vom 16.10.2026)
+    bew = rvf.bewerten(model, merkmale, an)
+    an.info.pop("verfahren_unsicher", None)
+    if bew["hinweis"]:
+        an.info["verfahren_hinweis"] = bew["hinweis"]
+    if bew["betroffen"]:
+        an.info["verfahren_betroffen"] = bew["betroffen"]
+    if bew["unsicher"]:
+        an.info["verfahren_unsicher"] = list(bew["unsicher"])
     # wie am 15.10.2026 (a371cf2): das Reibverfahren als Text, und der Vorbehalt
     # zu einer Datei mit dem bisherigen Verfahren an einem Modell mit Reibung
-    if merkmale.get("reibverfahren") in REIBVERFAHREN:
+    if merkmale.get("reibverfahren") is not None and merkmale.get("reibverfahren") in REIBVERFAHREN:
         an.info["reibverfahren"] = REIBVERFAHREN[merkmale["reibverfahren"]]
     if merkmale.get("reibverfahren") is False and rvf.merkmal("reibverfahren").aktuell(model) is True \
             and modell_hat_reibung(model):

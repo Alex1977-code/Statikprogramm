@@ -127,6 +127,10 @@ def _hinweis(an) -> str:
     return str(((an.info if an is not None else {}) or {}).get("verfahren_hinweis") or "")
 
 
+def _status(an) -> str:
+    return str(((an.info if an is not None else {}) or {}).get("verfahren_betroffen") or "")
+
+
 def test_tabelle_und_datei():
     from statik3d import ergebnisse as erg, rechenverfahren as rv
     namen = [mk.name for mk in rv.MERKMALE]
@@ -141,10 +145,18 @@ def test_tabelle_und_datei():
           all(w.art in (rv.VERBESSERUNG, rv.FEHLERKORREKTUR) for mk in rv.MERKMALE for w in mk.wechsel)
           and all(mk.modellmerkmal and callable(mk.betrifft) for mk in rv.MERKMALE),
           str({mk.name: [w.art for w in mk.wechsel] for mk in rv.MERKMALE}))
-    check("… Reibungstangente Verbesserung, Deckel Fehlerkorrektur (mit Prüfung am Ergebnis)",
-          rv.merkmal("reibverfahren").wechsel[-1].art == rv.VERBESSERUNG
+    check("… Einstufung 16.10.2026: Abbruch Verbesserung; Reibungstangente und Deckel Fehlerkorrektur",
+          rv.merkmal("abbruch").wechsel[-1].art == rv.VERBESSERUNG
+          and rv.merkmal("reibverfahren").wechsel[-1].art == rv.FEHLERKORREKTUR
           and rv.merkmal("deckel").wechsel[-1].art == rv.FEHLERKORREKTUR
           and rv.merkmal("deckel").im_ergebnis is not None)
+    neu = ("saitenform", "alpha_cr_aktiv", "seil_theorie3", "fachwerk_querlast", "import_lagerreibung",
+           "import_stabtypen", "import_vorspannung", "import_lastkategorien")
+    check("… dazu als Fehlerkorrektur: Saitenform, alpha_cr mit abgeschalteten Stäben, Seil Theorie III, "
+          "Fachwerkstab mit Querlast, Importe Lagerreibung, Stabtypen, Vorspannung, Lastkategorien",
+          all(rv.merkmal(n) is not None and rv.merkmal(n).wechsel[-1].art == rv.FEHLERKORREKTUR for n in neu)
+          and all(rv.merkmal(n).import_korrektur for n in neu if n.startswith("import_")),
+          str([n for n in neu if rv.merkmal(n) is None]))
     from statik3d import model as mdl
     check("… model.FRUEHERE_VORGABEN kommt aus der Tabelle",
           mdl.FRUEHERE_VORGABEN == rv.fruehere_vorgaben()
@@ -198,11 +210,12 @@ def test_alte_datei_mit_reibung():
     erg.schreiben(p, m, an)
     _vor_15_10(p, m)
     a2, fehler = _laden(p, m)
-    h = _hinweis(a2)
-    check("Alte Datei mit Reibung ohne Verfahrensangabe: gültig, mit Hinweis",
-          a2 is not None and "älterem Rechenverfahren" in h and "bisheriges Reibverfahren" in h
-          and "neue Rechnung" in h, fehler or h)
-    check("… der Hinweis nennt das aktuelle Verfahren", "konsistente Reibungstangente" in h, h)
+    h = _status(a2)
+    check("Alte Datei mit Reibung ohne Verfahrensangabe: Ergebnisse geladen, Status „möglicherweise betroffen“ "
+          "(Reibungstangente ist Fehlerkorrektur)",
+          a2 is not None and h.startswith("Ergebnis möglicherweise betroffen – neu rechnen")
+          and "bisheriges Reibverfahren" in h and not _hinweis(a2), fehler or h)
+    check("… der Status nennt das aktuelle Verfahren", "konsistente Reibungstangente" in h, h)
     check("… der Deckel ist in einer solchen Datei nicht sicher erkennbar: nicht genannt",
           a2 is not None and a2.info.get("rechenverfahren", {}).get("deckel") is None and "Deckel" not in h,
           repr(a2.info.get("rechenverfahren")) if a2 is not None else "")
@@ -213,16 +226,17 @@ def test_alte_datei_mit_reibung():
     erg.schreiben(p2, m, a2)
     v = _inhalt(p2, m).get("verfahren") or {}
     a3, fehler = _laden(p2, m)
-    check("… ohne neue Rechnung gespeichert: Merkmale der Datei bleiben, Hinweis kommt wieder",
+    check("… ohne neue Rechnung gespeichert: Merkmale der Datei bleiben, Status kommt wieder",
           v.get("merkmale", {}).get("reibverfahren") is False and v.get("merkmale", {}).get("deckel") is None
           and "reibverfahren" not in _inhalt(p2, m)      # das Programm vom 15.10.2026 sagt dann den Hinweis
-          and a3 is not None and "bisheriges Reibverfahren" in _hinweis(a3), fehler or repr(v))
+          and a3 is not None and "bisheriges Reibverfahren" in _status(a3), fehler or repr(v))
     # neu gerechnet: kein Hinweis
     from statik3d import solver
     p3 = os.path.join(d, "neu.ergebnisse")
     erg.schreiben(p3, m, solver.solve_all(m, design=False))
     a4, fehler = _laden(p3, m)
-    check("… nach neuer Rechnung gespeichert: kein Hinweis", a4 is not None and not _hinweis(a4), fehler)
+    check("… nach neuer Rechnung gespeichert: kein Hinweis, kein Status",
+          a4 is not None and not _hinweis(a4) and not _status(a4), fehler)
 
 
 def test_alte_datei_ohne_reibung():
@@ -353,8 +367,8 @@ def test_deckel_aus_protokoll():
     a2, fehler = _laden(p, m)
     check("Alte Datei, Protokoll „nach 40 Zustandswechseln abgebrochen“: alter Deckel erkannt",
           a2 is not None and a2.info.get("rechenverfahren", {}).get("deckel") == "zustandswechsel", fehler)
-    check("… der Lauf endete am Deckel (vorläufig), keiner galt mit mehr als 40 Runden: kein Status",
-          a2 is not None and not a2.info.get("verfahren_betroffen"), str(a2.info.get("verfahren_betroffen")))
+    check("… der Lauf endete am Deckel (vorläufig), keiner galt mit mehr als 40 Runden: der Status nennt "
+          "den Deckel nicht", a2 is not None and "Deckel" not in _status(a2), _status(a2))
 
 
 def _langer_lauf(schritte=57, konvergiert=True):
@@ -397,14 +411,14 @@ def test_fehlerkorrektur_deckel():
     erg.schreiben(p, m, an)
     _umschreiben(p, m, _langer_lauf(40, True))
     a2, fehler = _laden(p, m)
-    check("Lauf mit genau 40 Runden konvergiert (auch heute möglich): kein Status",
-          a2 is not None and not a2.info.get("verfahren_betroffen"), fehler)
+    check("Lauf mit genau 40 Runden konvergiert (auch heute möglich): kein Deckel im Status",
+          a2 is not None and "Deckel" not in _status(a2), fehler or _status(a2))
     # 57 Runden, nicht konvergiert: vorlaeufig, kein Status der Fehlerkorrektur
     erg.schreiben(p, m, an)
     _umschreiben(p, m, _langer_lauf(57, False))
     a2, fehler = _laden(p, m)
-    check("Lauf mit 57 Runden, nicht konvergiert: kein Status der Fehlerkorrektur",
-          a2 is not None and not a2.info.get("verfahren_betroffen"), fehler)
+    check("Lauf mit 57 Runden, nicht konvergiert: kein Deckel im Status",
+          a2 is not None and "Deckel" not in _status(a2), fehler or _status(a2))
     # heutige Datei: kein Status (Angabe alle Runden)
     erg.schreiben(p, m, an)
     a2, fehler = _laden(p, m)
@@ -470,6 +484,150 @@ def test_kuenftiger_wechsel():
         mdl.FRUEHERE_VORGABEN = rv.fruehere_vorgaben()
 
 
+def _ohne_marken(inhalt):
+    """So schrieb das Programm vor dem 14.10.2026 mittags: keine Angabe, keine Marke
+    (gleichgewicht_global ab 9a96ea6, Th2Info.alpha_cr_stab ab d1d8ebb)."""
+    inhalt.pop("verfahren", None)
+    inhalt.pop("reibverfahren", None)
+    for gruppe in ("cases", "combinations", "alternativen"):
+        for d in (inhalt.get(gruppe) or {}).values():
+            if isinstance(d.get("info"), dict):
+                d["info"].pop("gleichgewicht_global", None)
+    for i in (getattr(inhalt.get("theorie2"), "kombinationen", None) or {}).values():
+        vars(i).pop("alpha_cr_stab", None)
+
+
+def test_keine_reibung():
+    from statik3d import ergebnisse as erg, examples_lib as ex, solver
+    d = _ordner()
+    m = ex.frame_example()
+    an = solver.solve_all(m, design=False)
+    p = os.path.join(d, "rahmen.ergebnisse")
+    erg.schreiben(p, m, an)
+    i = _inhalt(p, m)
+    check("Modell ohne Reibung: die Ergebnisdatei trägt „keine Reibung im Modell“",
+          i.get("reibverfahren") == "keine Reibung im Modell"
+          and (i.get("verfahren") or {}).get("merkmale", {}).get("reibverfahren") == "keine_reibung",
+          repr((i.get("reibverfahren"), (i.get("verfahren") or {}).get("merkmale", {}).get("reibverfahren"))))
+    a2, fehler = _laden(p, m)
+    check("… geladen ohne Hinweis und Status", a2 is not None and not _hinweis(a2) and not _status(a2), fehler)
+
+
+def test_saitenform_und_querlast():
+    from statik3d import ergebnisse as erg, examples_lib as ex, solver
+    d = _ordner()
+    m = ex.truss_bridge_example()
+    m.case().theorie = "II"
+    an = solver.solve_all(m, design=False)
+    p = os.path.join(d, "fachwerk.ergebnisse")
+    erg.schreiben(p, m, an)
+    _umschreiben(p, m, lambda i: (i.pop("verfahren", None), i.pop("reibverfahren", None)))
+    a2, fehler = _laden(p, m)
+    check("Fachwerk mit Theorie II, Datei ohne Angabe, aber mit Marke (Th2Info.alpha_cr_stab): kein Status",
+          a2 is not None and not _status(a2), fehler or _status(a2))
+    erg.schreiben(p, m, an)
+    _umschreiben(p, m, _ohne_marken)
+    a2, fehler = _laden(p, m)
+    st = _status(a2)
+    check("… ohne Angabe und ohne Marke: Status, Saitenform „Alter nicht sicher erkennbar“ (lieber betroffen)",
+          a2 is not None and "Saitenform" in st and "nicht sicher erkennbar" in st
+          and "saitenform" in (a2.info.get("verfahren_unsicher") or []), fehler or st)
+    # Theorie I: kein alpha_cr - die Saitenform beruehrt das Ergebnis nicht
+    m1 = ex.truss_bridge_example()
+    an1 = solver.solve_all(m1, design=False)
+    p1 = os.path.join(d, "fachwerk1.ergebnisse")
+    erg.schreiben(p1, m1, an1)
+    _umschreiben(p1, m1, _ohne_marken)
+    a2, fehler = _laden(p1, m1)
+    check("Fachwerk nach Theorie I ohne Querlast, Datei ohne Marke: kein Status",
+          a2 is not None and not _status(a2), fehler or _status(a2))
+    # mit Eigengewicht: Querlast auf Fachwerkstaeben
+    m2 = ex.truss_bridge_example()
+    m2.case().gravity = [0.0, 0.0, -9.81]
+    an2 = solver.solve_all(m2, design=False)
+    p2 = os.path.join(d, "fachwerk2.ergebnisse")
+    erg.schreiben(p2, m2, an2)
+    _umschreiben(p2, m2, _ohne_marken)
+    a2, fehler = _laden(p2, m2)
+    check("Fachwerk mit Eigengewicht (Querlast), Datei ohne Marke: Status „Fachwerkstab mit Querlast“",
+          a2 is not None and "qL²/8" in _status(a2), fehler or _status(a2))
+    erg.schreiben(p2, m2, an2)
+    a2, fehler = _laden(p2, m2)
+    check("… heutige Datei: kein Status", a2 is not None and not _status(a2), fehler or _status(a2))
+
+
+def test_pruefungen_der_merkmale():
+    from statik3d import examples_lib as ex, rechenverfahren as rv
+    from statik3d.model import BeamLoad
+    m = ex.truss_bridge_example()
+    check("Prüffunktion Fachwerkstab: Fachwerk ja, Rahmen nein",
+          rv._hat_fachwerk_oder_seil(m) and not rv._hat_fachwerk_oder_seil(ex.frame_example()))
+    check("Prüffunktion abgeschaltete Stäbe: ohne nein", not rv._abgeschaltete_staebe(m))
+    m.add_member("D1", [1], beta_y=1.0, beta_z=1.0)
+    m.members["D1"].aus = True
+    check("… Stab aus: ja", rv._abgeschaltete_staebe(m))
+    s = ex.truss_bridge_example()
+    s.elements[0].typ = "seil"
+    check("Prüffunktion Seil mit Streckenlast: ohne Last nein", not rv._seil_mit_streckenlast(s))
+    s.case().beam_loads.append(BeamLoad(elem=0, q=[0.0, 0.0, -1000.0]))
+    check("… mit Last ja", rv._seil_mit_streckenlast(s) and rv._fachwerk_mit_querlast(s))
+    v = ex.truss_bridge_example()
+    v.meta["quelle"] = "C:/x/drehlager.rf6"
+    v.importhinweise = [{"art": "vorspannung", "text": "…", "erledigt": False}]
+    check("Prüffunktion Vorspannung aus RFEM: offener Hinweis ja, erledigt nein",
+          rv._import_vorspannung(v) and not (v.importhinweise[0].update(erledigt=True)
+                                              or rv._import_vorspannung(v)))
+
+
+def test_importkorrekturen():
+    from statik3d import ergebnisse as erg, examples_lib as ex, solver
+    from statik3d.model import DofBehaviour, Model
+    d = _ordner()
+    # Lagerreibung: RFEM-Quelle ohne Merkmal, Lager mit Reibbeiwert
+    m = ex.frame_example()
+    m.meta["quelle"] = "C:/x/rahmen.rf6"
+    m.meta["rfem_zugstaebe"] = m.meta["rfem_seile"] = True
+    m.supports[0].behaviour = {0: DofBehaviour(typ="rigid", mu=0.2, mu_ref=2)}
+    an = solver.solve_all(m, design=False)
+    p = os.path.join(d, "rahmen.json")
+    m.save(p)
+    erg.schreiben(erg.pfad_zu(p), m, an)
+    m2 = Model.load(p)
+    a2, fehler = _laden(erg.pfad_zu(p), m2)
+    st = _status(a2)
+    check("Import Lagerreibung vor dem 15.10.2026 (kein rfem_lagerreibung): Status, auch bei heutiger Datei",
+          a2 is not None and "Lagerreibung aus RFEM" in st and "nachlesen" in st, fehler or st)
+    m.meta["rfem_lagerreibung"] = True
+    m.save(p)
+    erg.schreiben(erg.pfad_zu(p), m, an)
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("… mit Merkmal rfem_lagerreibung: kein Status zur Lagerreibung",
+          a2 is not None and "Lagerreibung" not in _status(a2), fehler or _status(a2))
+    # Stabtypen und Lastkategorien: RFEM-Quelle ohne die Merkmale vom 14.10.2026
+    f = ex.truss_bridge_example()
+    f.meta["quelle"] = "C:/x/fachwerk.rf6"
+    f.meta["rfem_lagerreibung"] = True
+    f.add_member("Gurt", [0], beta_y=1.0, beta_z=1.0)
+    from statik3d.model import Combination
+    f.combinations["K1"] = Combination("K1", {"LF1": 1.35})
+    an = solver.solve_all(f, design=False)
+    p = os.path.join(d, "fachwerk.json")
+    f.save(p)
+    erg.schreiben(erg.pfad_zu(p), f, an)
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    st = _status(a2)
+    check("Import Stabtypen vor dem 14.10.2026: Status „Stabtypen aus RFEM“", "Stabtypen aus RFEM" in st,
+          fehler or st)
+    check("Import Lastkategorien vor dem 14.10.2026 mit Kombinationen: Status „Lastkategorien aus RFEM“",
+          "Lastkategorien aus RFEM" in st, fehler or st)
+    f.meta["rfem_zugstaebe"] = f.meta["rfem_seile"] = True
+    f.save(p)
+    erg.schreiben(erg.pfad_zu(p), f, an)
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("… mit den Merkmalen vom 14.10.2026: kein Status", a2 is not None and not _status(a2),
+          fehler or _status(a2))
+
+
 def _fenster():
     if "w" in _FENSTER:
         return _FENSTER["w"], _FENSTER["app"]
@@ -501,14 +659,15 @@ def test_fenster():
     w.modell_laden(p, fragen=False); app.processEvents()
     check("Fenster: alte Datei geladen, Ergebnisse gültig (passt)",
           w.analysis is not None and "LF1" in w.analysis.cases and w._analyse_passt() == "passt")
-    check("… Hinweis in Statuszeile und Protokoll: älteres Verfahren, neue Rechnung",
-          me.hinweis_mit("älterem Rechenverfahren", "bisheriges Reibverfahren", "neue Rechnung")
-          and "älterem Rechenverfahren" in w.log.toPlainText(), str(me.alle[-2:]))
+    check("… Status in Statuszeile und Protokoll: möglicherweise betroffen, bisheriges Reibverfahren",
+          me.hinweis_mit("möglicherweise betroffen – neu rechnen", "bisheriges Reibverfahren")
+          and "möglicherweise betroffen" in w.log.toPlainText(), str(me.alle[-2:]))
     erg.schreiben(erg.pfad_zu(p), m, an)
     me.leeren()
     w.modell_laden(p, fragen=False); app.processEvents()
-    check("… dieselbe Datei nach heutigem Stand: kein Hinweis",
-          w.analysis is not None and not me.hinweis_mit("Rechenverfahren"), str(me.alle[-2:]))
+    check("… dieselbe Datei nach heutigem Stand: kein Hinweis, kein Status",
+          w.analysis is not None and not me.hinweis_mit("Rechenverfahren")
+          and not me.hinweis_mit("möglicherweise betroffen"), str(me.alle[-2:]))
     m.plastizitaet.reibungstangente = False
     m.save(p)
     me.leeren()
@@ -522,7 +681,9 @@ def main():
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_tabelle_und_datei, test_modell_geaendert, test_alte_datei_mit_reibung,
               test_alte_datei_ohne_reibung, test_datei_15_10_mit_tangente, test_anwender_stellt_um,
-              test_deckel_aus_protokoll, test_fehlerkorrektur_deckel, test_kuenftiger_wechsel, test_fenster):
+              test_deckel_aus_protokoll, test_fehlerkorrektur_deckel, test_kuenftiger_wechsel,
+              test_keine_reibung, test_saitenform_und_querlast, test_pruefungen_der_merkmale,
+              test_importkorrekturen, test_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

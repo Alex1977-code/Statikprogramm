@@ -5148,29 +5148,48 @@ Die Ergebnisdatei schreibt dafür den Verfahrensstand und die Verfahrensmerkmale
 neue Rechnung behält die Merkmale der geladenen Datei.
 
 Jeder Wechsel des Verfahrens ist eingestuft und nennt das Modellmerkmal, bei dem er
-eine Rolle spielt. Eine *Verbesserung* – die konsistente Reibungstangente (15.10.2026,
-Modellmerkmal Reibkontakt: Kontakt mit μ > 0 oder Lager mit Reibbeiwert) und der
+eine Rolle spielt (Einstufung des Anwenders vom 16.10.2026). Eine *Verbesserung* – der
 ingenieurmäßige Abbruch der Plastizität (13.10.2026, plastische Rechnung) – gibt den
 Hinweis oben. Eine *Fehlerkorrektur* gibt den Status „Ergebnis möglicherweise
 betroffen – neu rechnen“: in der Kopfzeile, vorn in der Statuszeile, im Protokoll
 (Zusammenfassung als WARNUNG) und im Bericht (Kapitel Ergebnisse und
 Zusammenfassung); die Ergebnisse bleiben sichtbar, eine neue Rechnung nimmt den
-Status weg. Das ist der Deckel über alle Runden des Kontaktlaufs (15.10.2026): bis
-dahin zählte er nur die Zustandswechsel der Reibung, und ein Lauf konnte nach mehr
-als 40 Runden als konvergiert gelten. Betroffen ist darum nur ein Ergebnis, dessen
-Laufbuch einen Kontaktlauf mit mehr als 40 Runden als konvergiert führt – genau 40
-sind auch heute möglich. Hat das Modell das Merkmal nicht, kommt weder Hinweis noch
-Status. Korrekturen am Import (Lagerreibung, Zug- und Druckstäbe, Vorspannung aus ΔT)
-stehen nicht in dieser Tabelle: sie ändern die Modelldaten, nicht das Rechnen; der
-Ladehinweis nennt den Weg, und die Korrektur selbst ist eine Modelländerung.
+Status weg. Fehlerkorrekturen sind:
 
-Bei einer Ergebnisdatei von vor dem 16.10.2026 zählt nur, was sich sicher erkennen
-lässt: das Reibverfahren (ohne Angabe in der Datei und mit Reibung im Modell das
-bisherige Verfahren), der alte Deckel bei einer Datei vom 15.10.2026 mittags mit
-„reibungstangente: true“, wenn ein Kontaktlauf der Datei an diesem Deckel endete
-oder wenn einer mit mehr als 40 Runden als konvergiert galt. Ob eine plastische
+* die konsistente Reibungstangente (15.10.2026, Kontakt mit μ > 0 oder Lager mit
+  Reibbeiwert) – der alte Weg meldete falsche Konvergenz;
+* der Deckel über alle Runden des Kontaktlaufs (15.10.2026, Kontakt) – betroffen ist
+  nur ein Ergebnis, dessen Laufbuch einen Kontaktlauf mit mehr als 40 Runden als
+  konvergiert führt (genau 40 sind auch heute möglich);
+* die Saitenform N/L der geometrischen Steifigkeit (14.10.2026, Fachwerkstab,
+  Zug-/Druckstab oder Seil, wenn das Ergebnis alpha_cr, Knicken oder Theorie II.
+  Ordnung enthält);
+* alpha_cr nur aus den wirksamen Elementen (14.10.2026, abgeschaltete Stäbe oder
+  Elemente, mit alpha_cr bzw. Theorie II. Ordnung);
+* die Streckenlast auf dem Seil nach Theorie III. Ordnung (14.10.2026, Seil mit
+  Streckenlast, mit Theorie III. Ordnung);
+* der Fachwerkstab mit Querlast (14.10.2026, Fachwerkstab oder Seil mit Stablast oder
+  Eigengewicht quer zur Achse: bis dahin im Feld qL²/24 statt qL²/8);
+* die Korrekturen am RFEM-Import: Lagerreibung (15.10.2026), Stabtypen (Zugstab,
+  Seil; 14.10.2026), Vorspannung als Kraft und Lastkategorien (13.10.2026). Hier
+  zählt nicht das Alter der Ergebnisdatei, sondern das Modell: aus RFEM übernommen,
+  ohne das Merkmal des neueren Imports und noch nicht nachgelesen bzw. umgestellt.
+  Der Status nennt den Weg („Aus RFEM nachlesen…“), danach neu rechnen.
+
+Hat das Modell das Merkmal nicht, kommt weder Hinweis noch Status. Ein Modell ohne
+Reibung trägt in der Ergebnisdatei „keine Reibung im Modell“.
+
+Das Alter einer Ergebnisdatei von vor dem 16.10.2026 erkennt das Programm an der
+Angabe „reibverfahren“ (15.10.2026 abends), an der globalen
+Gleichgewichtskontrolle eines Ergebnisses (seit dem 14.10.2026 mittags) oder am
+Einzelknicken der Fachwerkstäbe in alpha_cr (seit dem 14.10.2026), dazu am alten
+Deckel (Datei vom 15.10.2026 mittags mit „reibungstangente: true“, Protokollzeile
+oder ein Lauf mit mehr als 40 Runden). Fehlt jede Spur, gilt der Grundsatz des
+Anwenders „lieber ‚möglicherweise betroffen‘ als still gültig“: Der Status nennt dann
+„Alter der Ergebnisdatei nicht sicher erkennbar“. Eine Datei ohne Angabe zum
+Reibverfahren gilt als mit dem bisherigen Verfahren gerechnet. Ob eine plastische
 Rechnung von vor dem 13.10.2026 streng abgebrochen hat, lässt sich der Datei nicht
-sicher ansehen und wird nicht genannt.
+sicher ansehen; als Verbesserung wird es nicht genannt.
 
 Nach dem Öffnen steht „⚠ Ergebnis vorläufig …“ eines Ergebnisses mit nicht
 konvergiertem Kontaktlauf vorn in der Statuszeile; bis zum 16.10.2026 überschrieb
@@ -9485,7 +9504,14 @@ Nachweis dort nur die Eingabe). Die Zeilen nennen die Begriffe, etwa
 „LF_V: N_verankert = Endvorspannung nach dem Verankern (P₀ − Schlupf Δs =
 1.00 mm und elastische Verluste)“. Ist kein Spannschritt gerechnet, setzt der
 Nachweis nach dem Verankern P₀ − k_A·Δs an (starre Umgebung, ohne elastische
-Verluste) und sagt das. Der Bericht hat unter der Übersicht der Stabnachweise
+Verluste) und sagt das. Seit dem 16.10.2026 zählen nur gerechnete Lastfälle (als
+Lastfall oder in einer gerechneten Kombination): am Drehlager zeigte die Tabelle beim
+Spannen η 1,0081 aus dem nicht gerechneten LF398. Der Nachweis beim Spannen gehört zur
+Vorspannungsdefinition des Ankers und ist ein Eintrag je Anker (Pressenkraft P₀ bzw.
+Soll), kein Maximum über Lastfälle; stehen in gerechneten Lastfällen verschiedene
+Definitionen, gilt P₀ vor der Endvorspannung vor der eingeprägten Dehnung, und eine
+Zeile am Stab nennt die anderen. Nach dem Verankern und im Lastzustand bleibt es je
+gerechnetem Lastfall. Der Bericht hat unter der Übersicht der Stabnachweise
 die Tabelle „Spannstahl je Anker“: je Anker eine Zeile mit der Eingabe und je
 Zustand Kraft, Spannung und Ausnutzung, nämlich Anfangsvorspannung P₀ beim
 Spannen, Endvorspannung nach dem Verankern und Kraft im Lastzustand, dazu der
