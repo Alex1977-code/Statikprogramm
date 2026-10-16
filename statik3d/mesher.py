@@ -1865,6 +1865,11 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
                 f.teilung = eigene_teilung[f.name]
     aus["zeiten"] = zeiten
     aus["unbekannte"] = unbekannte(model)
+    # Das Netz merkt sich seine Einstellung (statik3d.netzhinweis); ein
+    # abgebrochener Lauf hat kein vollstaendiges Netz, an dem sie gilt
+    if aus["elemente"] and not aus["abgebrochen"]:
+        from . import netzhinweis as _nh
+        _nh.merken(model)
     lang = sorted(((k, v) for k, v in zeiten.items() if v >= 0.05), key=lambda x: -x[1])
     C.say(log, f"Vernetzt: {aus['elemente']} Elemente in {sum(zeiten.values()):.1f} s"
                + (f" auf {aus['prozesse']} Prozessen" if aus["prozesse"] > 1 else "")

@@ -912,7 +912,8 @@ class Report:
             "lineare Überlagerung (Superposition) der Lastfallergebnisse."]
         if counts:
             items.append("Elementtypen im Modell: " + "; ".join(
-                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + ".")
+                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + ". "
+                + self._netz_satz())
         if self.info.get("solver"):
             # mit dem Ausweichen wie im Anhang (F37, 06.10.2026)
             items.append(f"Gleichungslöser: {self.info['solver']} (direkt, sparse)"
@@ -1314,6 +1315,31 @@ class Report:
     #: jeden Koerper finden (Drehlager: rund 200 Koerper)
     NETZ_ZEILEN = 2000
 
+    def _netz_ausweis(self) -> dict:
+        """Elementtypen und Netzeinstellung beim Vernetzen: der Ausweis der
+        Rechnung (info["netz"], steht auch in der Ergebnisdatei), sonst der des
+        Modells von jetzt (statik3d.netzhinweis, 16.10.2026)."""
+        from .. import netzhinweis as nh
+        a = (self.info or {}).get("netz") if isinstance(self.info, dict) else None
+        return a if isinstance(a, dict) and a.get("elementtypen") is not None else nh.ausweis(self.model)
+
+    def _netz_satz(self) -> str:
+        """„Netzeinstellung beim Vernetzen: …“ - und, wo die Einstellung seither
+        geaendert wurde, was jetzt eingestellt ist (wirkt erst nach dem Vernetzen)."""
+        a = self._netz_ausweis()
+        ein = a.get("netzeinstellung") or ""
+        s = ("Netzeinstellung beim Vernetzen: " + ein + "." if ein else
+             "Netzeinstellung beim Vernetzen: nicht bekannt (Netz ohne Vermerk, etwa aus einer "
+             "Datei vor dem 16.10.2026 oder importiert); aktuell eingestellt: "
+             + self.model.netz.beschreibung() + ".")
+        if a.get("abweichend") or (ein and ein != self.model.netz.beschreibung()
+                                   and self.model.netz.vernetzt_mit):
+            ab = a.get("abweichend") or []
+            if ab:
+                s += (" Seither geändert, aber nicht vernetzt (wirkt erst nach dem Vernetzen): "
+                      + "; ".join(ab) + ".")
+        return s
+
     def chapter_netz(self) -> list:
         """Netz und Elemente (Paket E, 25.09.2026).
 
@@ -1334,8 +1360,7 @@ class Report:
         b = [self._h(1, "Netz und Elemente")]
         z = ea.zaehlung(m)
         b.append(("p", esc("Mit welchen finiten Elementen gerechnet wurde - je Elementtyp, je Körper "
-                           "und im Bild, wo sie liegen. Eingestellt für das Vernetzen: "
-                           + m.netz.beschreibung() + ".")))
+                           "und im Bild, wo sie liegen. " + self._netz_satz())))
         b.append(self._h(2, "Gesamtübersicht"))
         rows = [["Elementtyp", "Bezeichnung", "Ansatz", "Anzahl", "Anteil"]]
         for zeile in ea.zeilen(m, z):

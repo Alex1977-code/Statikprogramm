@@ -517,7 +517,9 @@ class Befund:
     wert: float = 0.0
     grenze: float = 0.0
     text: str = ""
-    stufe: str = "FEHLER"                #: FEHLER haelt an, WARNUNG nennt nur
+    #: FEHLER haelt an, WARNUNG nennt nur, INFORMATION ist ein Hinweis ohne
+    #: Handlungsbedarf (seit 16.10.2026, freie Knoten ohne Last und Lager)
+    stufe: str = "FEHLER"
     #: alle betroffenen Elemente, wo es mehr als eins sind (``element`` ist
     #: dann das erste davon) - bisher nur beim gefalteten Netz
     elemente: list = field(default_factory=list)
@@ -583,9 +585,18 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     sonst „abgenommen", obwohl gar nicht gemessen wurde.
 
     Rueckgabe die Liste der Befunde; leer heisst: das Netz ist abgenommen.
-    Mit ``warnungen=True`` stehen auch die Befunde der Stufe WARNUNG dabei
-    (Splitter unter :data:`ABNAHME_SPLITTER` je Koerper) - sie halten nichts
-    an, der Aufrufer trennt sie an ``Befund.stufe``.
+    Mit ``warnungen=True`` stehen auch die Befunde der Stufen WARNUNG
+    (Splitter unter :data:`ABNAHME_SPLITTER` je Koerper) und INFORMATION dabei
+    - sie halten nichts an, der Aufrufer trennt sie an ``Befund.stufe``.
+
+    **Freie Knoten (Punkt 5, gestuft seit 16.10.2026).** Ein Knoten ohne
+    Element wird nach dem beurteilt, was an ihm haengt: eine Last oder
+    Zwangsverformung (oder eine Kopplung, die ihn nicht in allen Richtungen
+    haelt) ist ein FEHLER - die Last geht verloren, das Ergebnis ist "nicht
+    gueltig"; ein Lager allein ist die WARNUNG "Lager unwirksam"; ohne beides
+    ist es eine INFORMATION. Am Drehlager waren das 67 Geometriepunkte
+    (Kreismittelpunkte, Linienenden, integrierte Knoten von Flaechen) - sie
+    bleiben in der Geometrie und gehen nicht in die Rechnung ein.
     """
     aus: list = []
     aus += _abnahme_fugen(model)
@@ -640,7 +651,7 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
         except Exception:                 # noqa: BLE001 - ein Hinweis darf nie sperren
             pass
     if not warnungen:
-        aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
+        aus = [b for b in aus if getattr(b, "stufe", "FEHLER") not in ("WARNUNG", "INFORMATION")]
     return aus
 
 
@@ -1348,6 +1359,125 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
             return an
 
 
+def freie_knoten_rollen(model, knoten) -> dict:
+    """Was an den Knoten ``knoten`` (ohne Element) haengt: {Knoten: Rollen}.
+
+    Rollen (Menge von Woertern):
+
+    * ``"last"``       - Knotenlast oder Zwangsverformung in irgendeinem Lastfall;
+    * ``"lager"``      - Knotenlager, einseitiges Lager, ein Linien- oder
+      Flaechenlager, das allein ueber Knoten gegeben ist;
+    * ``"verbindung"`` - Kopplung, starrer Koerper, Spalt- oder Dämpferelement,
+      Punktmasse, Kontaktpaar, Lasteinleitung, Verformungsgrenze, Antrieb einer
+      Stellung: etwas, das den Knoten mit dem Netz verbindet oder dort etwas
+      misst;
+    * ``"geometrie"``  - Endpunkt einer Linie, Ecke oder integrierter Knoten
+      einer Flaeche.
+
+    Ein Knoten ohne jede Rolle ist ein Punkt, auf den nichts verweist.
+    """
+    S = {int(k) for k in knoten}
+    rollen = {k: set() for k in S}
+
+    def merke(folge, rolle):
+        for n in folge:
+            try:
+                k = int(n)
+            except (TypeError, ValueError):
+                continue
+            if k in S:
+                rollen[k].add(rolle)
+    for lc in model.load_cases.values():
+        merke((l.node for l in lc.nodal_loads), "last")
+        merke((z.node for z in lc.zwangsverformungen), "last")
+    merke((sp.node for sp in model.supports), "lager")
+    merke((c.node for c in (getattr(model, "contact_supports", None) or [])), "lager")
+    for x in list(model.line_supports) + list(model.surface_supports):
+        if not (getattr(x, "linien", None) or getattr(x, "flaechen", None) or []):
+            merke(x.nodes or [], "lager")
+    for kp in (getattr(model, "kopplungen", None) or []):
+        merke((kp.node_a, kp.node_b), "verbindung")
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        merke([sk.master] + list(sk.slaves or []), "verbindung")
+    for g in (getattr(model, "gap_elements", None) or []):
+        merke((g.node_a, g.node_b), "verbindung")
+    for dp in (getattr(model, "daempfer", None) or []):
+        merke((dp.node_a, dp.node_b), "verbindung")
+    merke((pm.node for pm in (getattr(model, "punktmassen", None) or [])), "verbindung")
+    for cp in (getattr(model, "contact_pairs", None) or []):
+        merke(cp.slave_nodes or [], "verbindung")
+        for face in (getattr(cp, "master_faces", None) or []):
+            merke(face or [], "verbindung")
+    merke((x.knoten for x in (getattr(model, "lasteinleitungen", None) or {}).values()), "verbindung")
+    for x in (getattr(model, "verformungsgrenzen", None) or {}).values():
+        merke(x.knoten or [], "verbindung")
+    merke((st.antrieb[0] for st in (getattr(model, "stellungen", None) or [])
+           if getattr(st, "antrieb", None)), "verbindung")
+    for ln in model.lines.values():
+        merke(ln.nodes, "geometrie")
+    for f in model.flaechen.values():
+        merke(f.ecken or [], "geometrie")
+        merke(getattr(f, "integrierte_knoten", None) or [], "geometrie")
+    return rollen
+
+
+def _kn_liste(knoten, n=6) -> str:
+    return ", ".join("K" + str(k) for k in knoten[:n]) + (" …" if len(knoten) > n else "")
+
+
+def _abnahme_freie_knoten(model, lose: list, als_rbe3: list) -> list:
+    """Die Befunde zu den Knoten ohne Element, gestuft nach ihren Rollen
+    (siehe :func:`abnahme`, Punkt „Freie Knoten“)."""
+    if not lose:
+        return []
+    rollen = freie_knoten_rollen(model, lose)
+    fehler = [k for k in lose if rollen[k] & {"last", "verbindung"}]
+    lager = [k for k in lose if k not in set(fehler) and "lager" in rollen[k]]
+    rest = [k for k in lose if k not in set(fehler) and k not in set(lager)]
+    aus = []
+    if fehler:
+        mit_last = [k for k in fehler if "last" in rollen[k]]
+        aus.append(Befund(
+            pruefung="Knoten ohne Element", knoten=fehler[:8],
+            wert=float(len(fehler)), grenze=0.0,
+            text=f"{len(fehler)} Knoten im Rechennetz hängen an keinem Element "
+                 f"(z. B. {_kn_liste(fehler)}), und die Abnahme findet "
+                 "auch über Kopplungen oder starre Körper keinen Halt in allen "
+                 "drei Richtungen. Wo der Halt in einer Richtung fehlt, geht "
+                 "eine Last darauf ganz oder zum Teil verloren, oder die "
+                 "Rechnung bricht ab (Gleichungssystem singulär)."
+                 + (f" An {len(mit_last)} davon greift eine Last oder Zwangsverformung an "
+                    f"({_kn_liste(mit_last)}): sie wird von keinem Bauteil getragen, "
+                    "das Ergebnis ist „nicht gültig“." if mit_last else "")
+                 + (f" Davon als Slave eines RBE3: {_kn_liste([k for k in fehler if k in set(als_rbe3)])}. "
+                    "Ein RBE3 verteilt eine Last am Master auf seine Slaves, ohne sie "
+                    "zu versteifen; die Abnahme zählt es darum nicht als Halt "
+                    "eines Slaves, auch wo die Rechnung ihn über einen "
+                    "gehaltenen Master festlegt." if [k for k in fehler if k in set(als_rbe3)] else "")))
+    if lager:
+        aus.append(Befund(
+            pruefung="Lager unwirksam", knoten=lager[:8],
+            wert=float(len(lager)), grenze=0.0, stufe="WARNUNG",
+            text=f"{len(lager)} Knoten mit Lager hängen an keinem Element "
+                 f"({_kn_liste(lager)}): das Lager hält nichts, es wirkt nicht auf das Tragwerk."))
+    if rest:
+        geo = [k for k in rest if "geometrie" in rollen[k]]
+        ohne = [k for k in rest if "geometrie" not in rollen[k]]
+        teile = []
+        if geo:
+            teile.append(f"{len(geo)} Geometriepunkte (Linienenden, Kreismittelpunkte, "
+                         f"integrierte Knoten von Flächen; {_kn_liste(geo)})")
+        if ohne:
+            teile.append(f"{len(ohne)} Knoten ohne jeden Verweis ({_kn_liste(ohne)})")
+        aus.append(Befund(
+            pruefung="Knoten ohne Element", knoten=rest[:8],
+            wert=float(len(rest)), grenze=0.0, stufe="INFORMATION",
+            text=f"{len(rest)} Knoten hängen an keinem Element und tragen weder Last noch Lager "
+                 f"noch Kopplung: {' und '.join(teile)}. Sie gehen nicht in die Rechnung ein; "
+                 "die Geometrie bleibt unverändert."))
+    return aus
+
+
 def _abnahme_netz(model, bilanz: dict = None) -> list:
     """Knoten ohne Element, Elementgueete, Randtreue und Volumenbilanz je Koerper.
 
@@ -1376,24 +1506,7 @@ def _abnahme_netz(model, bilanz: dict = None) -> list:
                        if str(getattr(sk, "art", "RBE2")).upper() == "RBE3"
                        for x in (getattr(sk, "slaves", None) or [])
                        if int(x) != int(getattr(sk, "master", -1))}
-        als_rbe3 = [k for k in lose if k in rbe3_slaves]
-        aus.append(Befund(
-            pruefung="Knoten ohne Element", knoten=lose[:8],
-            wert=float(len(lose)), grenze=0.0,
-            text=f"{len(lose)} Knoten im Rechennetz hängen an keinem Element "
-                 f"(z. B. {', '.join('K' + str(k) for k in lose[:6])}"
-                 + (" …" if len(lose) > 6 else "") + "), und die Abnahme findet "
-                 "auch über Kopplungen oder starre Körper keinen Halt in allen "
-                 "drei Richtungen. Wo der Halt in einer Richtung fehlt, geht "
-                 "eine Last darauf ganz oder zum Teil verloren, oder die "
-                 "Rechnung bricht ab (Gleichungssystem singulär)."
-                 + (f" Davon als Slave eines RBE3: "
-                    f"{', '.join('K' + str(k) for k in als_rbe3[:6])}"
-                    + (" …" if len(als_rbe3) > 6 else "") + ". Ein RBE3 "
-                    "verteilt eine Last am Master auf seine Slaves, ohne sie "
-                    "zu versteifen; die Abnahme zählt es darum nicht als Halt "
-                    "eines Slaves, auch wo die Rechnung ihn über einen "
-                    "gehaltenen Master festlegt." if als_rbe3 else "")))
+        aus += _abnahme_freie_knoten(model, lose, [k for k in lose if k in rbe3_slaves])
     try:
         from .netzguete import guete as _formguete
         q = _formguete(model)

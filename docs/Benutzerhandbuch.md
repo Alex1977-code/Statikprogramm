@@ -1773,6 +1773,22 @@ wählen“, die es seit dem 25.09.2026 nicht mehr gibt.
 Kragarm-Prüfkörpers bzw. gegen die Lamé-Lösung am Innenrand; Freiheitsgrade =
 Unbekannte des Gleichungssystems.*
 
+**Wirksam erst nach dem Vernetzen (seit 16.10.2026).** Die Netzeinstellungen
+ändern das vorhandene Netz nicht; sie gelten für das nächste Vernetzen. Wer
+„Mittel“ übernimmt und gleich rechnet, rechnet mit dem alten Netz des Entwurfs
+(tet4). Darum merkt sich das Modell beim Vernetzen, mit welcher Einstellung das
+Netz entstand (Elemente, Netzdichte, Ziellänge bei eigener Dichte, intelligente
+Anpassung, Elementform, Vernetzer, Nachbesserung, Krafteinleitungen). Weicht die
+eingestellte Einstellung davon ab, steht der Hinweis „Die Netzeinstellung wirkt
+erst nach dem Vernetzen …“ mit dem Unterschied („Elemente Mittel statt Entwurf“)
+beim Übernehmen der Netzeinstellungen und beim Start der Rechnung im Protokoll
+und in der Statuszeile. Gesperrt wird nichts; *Netz → Vernetzen* wendet die
+Einstellung an. Ein Netz ohne Vermerk (Datei von vor dem 16.10.2026, Import) hat
+keinen Hinweis, bis die Einstellung zum ersten Mal geändert wird – dann gilt die
+bisherige als die des vorhandenen Netzes. Bericht (Kapitel *Netz und Elemente*
+und *Rechenverfahren*) und Ergebnisdatei nennen die Elementtypen mit Anzahl und
+die Netzeinstellung beim Vernetzen.
+
 **Was jede Stufe einstellt.** Die Elementordnung (Entwurf linear, Mittel und
 Fein quadratisch) und den Sweep „sauber“: Sechsflächner entstehen
 **automatisch** nur dort, wo jedes Element sauber wird, sonst Tetraeder (Zeile
@@ -11642,7 +11658,9 @@ nichts stillschweigend Übergangenes:
 | Abdeckung der Kontaktseite | ≥ 95 % |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
-| Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
+| Knoten im Rechennetz ohne Element **mit Last** (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
+| Lager unwirksam (Warnung, seit 16.10.2026): ein Knoten mit Lager hängt an keinem Element | – |
+| Knoten ohne Element, weder Last noch Lager noch Kopplung (Information, seit 16.10.2026): Geometriepunkte oder Knoten ohne Verweis | – |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
@@ -11655,6 +11673,21 @@ nichts stillschweigend Übergangenes:
 | Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
 | Kraft ohne Fläche (Warnung, seit 10.10.2026): Kopplungen, Stabenden, Knotenlasten, Lager und Linienlasten, die Kraft ohne Auflagefläche in ein Volumen leiten – eine Zeile je Art, siehe *Netzabhängige Spannungsspitzen* | – |
 | Stabenden an wenigen Knoten (Warnung, seit 13.10.2026): Stabenden, die an 1–3 Volumenknoten hängen, mit dem Hinweis auf die verteilende Einleitung – umgestellt wird nichts, siehe *Stabenden verteilt einleiten* | – |
+
+**Freie Knoten, gestuft (seit 16.10.2026).** Ein Knoten ohne Element wird nach
+dem beurteilt, was an ihm hängt. Greift eine Last oder Zwangsverformung an (oder
+hängt eine Kopplung an ihm, die ihn nicht in allen Richtungen hält), ist es ein
+**Fehler**: die Last wird von keinem Bauteil getragen, und das Ergebnis ist
+„nicht gültig“ (die Prüfung der Lasten an automatisch gehaltenen
+Freiheitsgraden zeigt es in der Zusammenfassung, im Bericht und in der
+Rechenliste). Ein Lager allein ergibt die **Warnung** „Lager unwirksam“, denn das
+Lager hält nichts. Hängt weder Last noch Lager noch Kopplung an ihm, ist es nur
+eine **Information** im Protokoll: Am Drehlager waren es 67 Geometriepunkte der
+RFEM-Datei (Kreismittelpunkte und Kreispunkte der Stirnflächen, Enden der Linien
+L609, L578 und L561, integrierte Knoten von etwa 40 Flächen). Sie bleiben in der
+Geometrie mit allen Verweisen und gehen nicht in die Rechnung ein.
+Gelöscht wird beim Vernetzen nur ein Knoten des alten Netzes, auf den nichts
+mehr verweist – keine Linie, keine Fläche, keine Last, kein Lager.
 
 Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des

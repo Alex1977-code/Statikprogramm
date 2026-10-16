@@ -670,6 +670,52 @@ def test_maske():
     _ = QtCore
 
 
+def test_netzhinweis_im_fenster():
+    """„Netzeinstellung wirksam erst nach Vernetzen“ (16.10.2026): Mittel
+    uebernommen, das Netz stammt vom Entwurf - Protokoll und Statuszeile sagen es
+    beim Uebernehmen und beim Rechenstart; gesperrt wird nichts."""
+    import inspect
+    es = _es()
+    w, app = _fenster()
+    m = wuerfel()
+    m.netz = es.setzen(m.netz, "entwurf")
+    _modell_ins_fenster(w, app, m)
+    w._vernetzen([], [m.koerper["V1"]])
+    app.processEvents()
+    check("Vernetzen im Fenster vermerkt die Einstellung (Entwurf)",
+          m.netz.vernetzt_mit.get("elemente") == "Entwurf", str(m.netz.vernetzt_mit)[:80])
+    w.log.clear()
+    w.maske_netzeinstellungen()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    mk._felder["elemente"].setCurrentText("Mittel (Vorgabe)")
+    mk.anwenden()
+    app.processEvents()
+    log = w.log.toPlainText()
+    check("Übernehmen Mittel: das Protokoll sagt 'wirkt erst nach dem Vernetzen'",
+          "wirkt erst nach dem Vernetzen" in log and "Mittel statt Entwurf" in log, log[-200:])
+    check("… die Statuszeile ebenso", "wirkt erst nach dem Vernetzen" in w.statusBar().currentMessage(),
+          w.statusBar().currentMessage()[:80])
+    check("… das vorhandene Netz bleibt tet/hex8 des Entwurfs, nichts gesperrt",
+          {e.typ for e in m.elements} == {"hex8"} and es.stufe(w.model.netz) == "mittel")
+    check("… der Vermerk des Netzes bleibt der Entwurf (nicht mit der neuen Einstellung überschrieben)",
+          w.model.netz.vernetzt_mit.get("elemente") == "Entwurf")
+    w.log.clear()
+    t = w._netzhinweis("rechnen")
+    check("Rechenstart: derselbe Hinweis mit 'Gerechnet wird mit dem vorhandenen Netz'",
+          "Gerechnet wird mit dem vorhandenen Netz" in t and t in w.log.toPlainText())
+    check("do_solve ruft den Hinweis nach dem Vernetzen und vor der Abnahme",
+          inspect.getsource(type(w).do_solve).index('self._netzhinweis("rechnen")')
+          < inspect.getsource(type(w).do_solve).index("self._abnahme_bestaetigen()"))
+    # nach dem Vernetzen mit Mittel: kein Hinweis mehr
+    w._vernetzen([], [m.koerper["V1"]])
+    app.processEvents()
+    w.log.clear()
+    check("nach dem Vernetzen mit Mittel: kein Hinweis", w._netzhinweis("rechnen") == ""
+          and w.model.netz.vernetzt_mit.get("elemente") == "Mittel")
+    w.maskenrand.schliessen()
+
+
 def test_maske_mit_kontakt():
     """Die Maske an einem gesperrten Modell - seit dem 08.10.2026 eine
     Schale auf einem Flaechenlager (bis dahin das Kontaktmodell mit Fuge, das
@@ -782,7 +828,7 @@ def main():
     for t in (test_stufen_und_texte, test_stufe_und_setzen, test_laden_und_speichern, test_beschreibung,
               test_fein_wie_mittel_im_feld, test_sperre, test_kontakt_in_jeder_stufe,
               test_plastizitaet_in_jeder_stufe, test_import_frage, test_ribbon_und_neues_modell,
-              test_maske, test_maske_mit_kontakt, test_import_im_fenster):
+              test_maske, test_netzhinweis_im_fenster, test_maske_mit_kontakt, test_import_im_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

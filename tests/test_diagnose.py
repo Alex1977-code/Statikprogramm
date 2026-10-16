@@ -391,9 +391,19 @@ def test_abnahme():
     # 4) Knoten ohne Element und Randtreue
     m4 = _wuerfelpaar()
     lose = int(m4.add_node(5.0, 5.0, 5.0))
+    # Ohne Last und Lager ist er seit 16.10.2026 eine INFORMATION (nur mit
+    # warnungen=True), mit Last ein FEHLER (tests.test_freie_knoten)
+    check("ein Knoten ohne Element hält die Abnahme nicht an", not dg.abnahme(m4))
+    b4 = [x for x in dg.abnahme(m4, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+    check("ein Knoten ohne Element wird gezählt und genannt (INFORMATION)",
+          len(b4) == 1 and b4[0].stufe == "INFORMATION" and lose in b4[0].knoten
+          and abs(b4[0].wert - 1.0) < 1e-12,
+          b4[0].text[:110] if b4 else "kein Befund")
+    m4.load_node(lose, Fz=-1.0)
     b4 = [x for x in dg.abnahme(m4) if x.pruefung == "Knoten ohne Element"]
-    check("ein Knoten ohne Element wird gezählt und genannt",
-          len(b4) == 1 and lose in b4[0].knoten and abs(b4[0].wert - 1.0) < 1e-12,
+    check("mit einer Last darauf ist er ein FEHLER",
+          len(b4) == 1 and b4[0].stufe == "FEHLER" and lose in b4[0].knoten
+          and abs(b4[0].wert - 1.0) < 1e-12,
           b4[0].text[:110] if b4 else "kein Befund")
     from statik3d.model import Volumenkoerper
     m5 = _wuerfelpaar()
@@ -2959,8 +2969,8 @@ def test_abnahme_knoten_ueber_kopplung():
     e0 = int(m.elements[k.elemente[0]].nodes[0])
     lose = int(m.add_node(5.0, 5.0, 5.0))
     kb = knoten_befund()
-    check("  ein wirklich loser Knoten bleibt ein FEHLER",
-          len(kb) == 1 and kb[0].stufe == "FEHLER" and kb[0].wert == 1.0 and kb[0].knoten == [lose],
+    check("  ein wirklich loser Knoten ohne Last und Lager ist eine INFORMATION",
+          len(kb) == 1 and kb[0].stufe == "INFORMATION" and kb[0].wert == 1.0 and kb[0].knoten == [lose],
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f} {b.knoten}" for b in kb))
     # Eine Kopplung unter losen Knoten, die an kein Element reicht, und eine
     # Kopplung ohne wirksame Richtung schließen nichts an
@@ -2975,9 +2985,11 @@ def test_abnahme_knoten_ueber_kopplung():
     m.kopplungen.append(Kopplung(d, e0, xyz, [float("inf")] * 3))
     m.kopplungen.append(Kopplung(f, d, xyz, [1e9] * 3))
     kb = knoten_befund()
-    check("  Kopplung ohne Elementknoten oder ohne Richtung: lose; Kopplung in x, y, z "
-          "und Kette: angeschlossen",
-          len(kb) == 1 and kb[0].wert == 4.0 and sorted(kb[0].knoten) == sorted([lose, a, b, c]),
+    fb = [x for x in kb if x.stufe == "FEHLER"]
+    check("  Kopplung ohne Elementknoten oder ohne Richtung: lose (FEHLER); Kopplung in x, y, z "
+          "und Kette: angeschlossen; der Knoten ohne alles bleibt eine INFORMATION",
+          len(fb) == 1 and fb[0].wert == 3.0 and sorted(fb[0].knoten) == sorted([a, b, c])
+          and len(kb) == 2 and [x.knoten for x in kb if x.stufe == "INFORMATION"] == [[lose]],
           "; ".join(f"{b_.stufe} {b_.pruefung} {b_.wert:.0f} {b_.knoten}" for b_ in kb))
 
 

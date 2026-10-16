@@ -10108,6 +10108,13 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})
+    # Mit welchem Netz gerechnet wurde: Elementtypen mit Anzahl und die
+    # Einstellung beim Vernetzen - fuer Bericht und Ergebnisdatei (16.10.2026)
+    try:
+        from . import netzhinweis as _nh
+        an.info["netz"] = _nh.ausweis(model)
+    except Exception:                      # noqa: BLE001 - ein Ausweis sperrt nie
+        pass
     _melde(progress, f"Berechnung fertig ({time.time() - t0:.1f} s)", 1.0)
     return an
 
