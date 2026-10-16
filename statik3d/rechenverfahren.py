@@ -86,7 +86,7 @@ class Merkmal:
     #: heisst sicher nicht beruehrt (kein Status); None heisst nicht pruefbar (Status,
     #: lieber „möglicherweise betroffen“ als still gueltig). Ohne Funktion: jedes
     #: Ergebnis des Modells mit dem Merkmal.
-    im_ergebnis: Optional[Callable[[Any], Optional[str]]] = field(default=None, repr=False)
+    im_ergebnis: Optional[Callable[[Any, Any], Optional[str]]] = field(default=None, repr=False)
     #: Marke einer Ergebnisdatei ohne Angabe „verfahren“, die sicher nach dem
     #: Wechsel gerechnet ist (etwa res.info["gleichgewicht_global"] ab 9a96ea6)
     marke: Optional[Callable[[dict], bool]] = field(default=None, repr=False)
@@ -171,7 +171,7 @@ def _ergebnis_infos(an) -> list:
     return [(n, i) for n, i in infos if isinstance(i, dict)]
 
 
-def _deckel_im_ergebnis(an) -> Optional[str]:
+def _deckel_im_ergebnis(model, an) -> Optional[str]:
     infos = _ergebnis_infos(an)
     if not any(i.get("laeufe") for _n, i in infos):
         return None                     # ohne Laufbuch (vor dem 22.09.2026) nicht pruefbar
@@ -259,8 +259,114 @@ def _fachwerk_mit_querlast(model) -> bool:
     return False
 
 
-def _alpha_cr_im_ergebnis(an) -> str:
-    """alpha_cr, Theorie II. Ordnung oder Knicken im Ergebnis (geometrische Steifigkeit)."""
+def _fachwerk_druckstaebe(model) -> bool:
+    """Fachwerkstab, der Druck tragen kann (truss, nicht „trägt nur Zug“) - das
+    Einzelknicken (d1d8ebb) betrifft nur gedrueckte Fachwerkstaebe; Seile und
+    Zugstaebe fallen bei Druck aus."""
+    return any(getattr(e, "typ", "") == "truss" and getattr(e, "nur", "") != "zug"
+               for e in getattr(model, "elements", None) or [])
+
+
+def _lastfaelle_von(model, name) -> set:
+    """Die Lastfaelle eines Ergebnisses: der Lastfall selbst oder die Lastfaelle mit
+    Faktor in der Kombination (auch „EK [k]“-Alternativen)."""
+    name = str(name)
+    lcs = getattr(model, "load_cases", None) or {}
+    if name in lcs:
+        return {name}
+    c = (getattr(model, "combinations", None) or {}).get(name.split(" [")[0])
+    return {lf for lf, f in (getattr(c, "factors", None) or {}).items() if f}
+
+
+def _situation_von(model, name) -> str:
+    name = str(name)
+    obj = (getattr(model, "load_cases", None) or {}).get(name) or \
+        (getattr(model, "combinations", None) or {}).get(name.split(" [")[0])
+    return str(getattr(obj, "situation", "") or "")
+
+
+def _alpha_cr_namen(an) -> list:
+    th2 = getattr(an, "theorie2", None)
+    komb = getattr(th2, "kombinationen", None) or {}
+    return [str(n) for n, i in komb.items() if getattr(i, "alpha_cr", None) is not None]
+
+
+def _alpha_cr_aktiv_im_ergebnis(model, an) -> str:
+    """alpha_cr eines Ergebnisses, in dessen Situation Elemente nicht wirken
+    (Stab aus, Situation, Stellung) - nur dort stand bis 878369b ein abgeschalteter
+    Stab in K_g."""
+    namen = []
+    for n in _alpha_cr_namen(an):
+        try:
+            if not bool(model.aktive_elemente(_situation_von(model, n)).all()):
+                namen.append(n)
+        except Exception:                               # noqa: BLE001
+            namen.append(n)
+    return ("alpha_cr in " + ", ".join(sorted(namen)[:6])) if namen else ""
+
+
+def _seil_theorie3_im_ergebnis(model, an) -> str:
+    """Theorie III. Ordnung fuer ein Ergebnis, dessen Lastfaelle eine Streckenlast auf
+    einem Seil tragen (bis fea5b8b wirkte sie dort nicht)."""
+    mit = _lastfaelle_mit(model, lambda lc: any(int(getattr(b, "elem", -1)) in set(_staebe(model, ("seil",)))
+                                                for b in getattr(lc, "beam_loads", None) or []))
+    th3 = getattr(an, "theorie3", None)
+    namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
+    for n, r_ in _ergebnis_paare(an):
+        if str((getattr(r_, "info", None) or {}).get("theorie", "")).startswith("III"):
+            namen.append(str(n))
+    namen = sorted({n for n in namen if _lastfaelle_von(model, n) & mit})
+    return ("Theorie III. Ordnung: " + ", ".join(namen[:6])) if namen else ""
+
+
+def _lastfaelle_mit(model, bedingung) -> set:
+    return {n for n, lc in (getattr(model, "load_cases", None) or {}).items() if _sicher(lambda: bedingung(lc))}
+
+
+def _querlast_lastfaelle(model) -> set:
+    """Lastfaelle mit einer Querlast auf einem Fachwerkstab oder Seil: Stablast oder
+    Eigengewicht quer zur Stabachse."""
+    import numpy as np
+    st = _staebe(model)
+    stset = set(st)
+    X = np.asarray(getattr(model, "nodes", None), float).reshape(-1, 3)
+    out = set()
+    for n, lc in (getattr(model, "load_cases", None) or {}).items():
+        if any(int(getattr(b, "elem", -1)) in stset for b in getattr(lc, "beam_loads", None) or []):
+            out.add(n)
+            continue
+        g = np.asarray(getattr(lc, "gravity", None) or [0, 0, 0], float)
+        if g.size != 3 or np.linalg.norm(g) <= 0:
+            continue
+        for i in st:
+            e = model.elements[i]
+            d = X[int(e.nodes[1])] - X[int(e.nodes[0])]
+            nd = float(np.linalg.norm(d))
+            if nd > 0 and np.linalg.norm(np.cross(d / nd, g / np.linalg.norm(g))) > 1e-6:
+                out.add(n)
+                break
+    return out
+
+
+def _querlast_im_ergebnis(model, an) -> str:
+    """Ein gerechnetes Ergebnis, dessen Lastfaelle eine Querlast auf einem
+    Fachwerkstab oder Seil tragen (bis 4a6bba9 qL²/24 statt qL²/8)."""
+    mit = _querlast_lastfaelle(model)
+    namen = sorted({str(n) for n, _r in _ergebnis_paare(an) if _lastfaelle_von(model, n) & mit})
+    return ("Querlast in " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _einzelknicken_im_ergebnis(model, an) -> str:
+    namen = _alpha_cr_namen(an)
+    return ("alpha_cr ohne Einzelknicken: " + ", ".join(sorted(namen)[:6])) if namen else ""
+
+
+def _alpha_cr_im_ergebnis(an, _an2=None) -> str:
+    """alpha_cr, Theorie II. Ordnung oder Knicken im Ergebnis (geometrische Steifigkeit);
+    mit zwei Argumenten (Modell, Analyse) wie die uebrigen Pruefungen. Theorie III.
+    Ordnung rechnete schon vor 5a5e8d0 mit der Saitenform."""
+    if _an2 is not None:
+        an = _an2
     th2 = getattr(an, "theorie2", None)
     komb = getattr(th2, "kombinationen", None) or {}
     namen = [str(n) for n, i in komb.items() if getattr(i, "alpha_cr", None) is not None]
@@ -273,7 +379,7 @@ def _alpha_cr_im_ergebnis(an) -> str:
             if namen else "")
 
 
-def _theorie3_im_ergebnis(an) -> str:
+def _theorie3_im_ergebnis(model, an) -> str:
     th3 = getattr(an, "theorie3", None)
     namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
     for n, r in _ergebnis_paare(an):
@@ -315,9 +421,33 @@ def _importhinweis_offen(model, art: str) -> bool:
                for h in (getattr(model, "importhinweise", None) or []))
 
 
+#: Reibbeiwert, den RFEM in jedem Lager traegt, auch ohne Reibungsart (Vorgabe 0,1)
+RFEM_MU_VORGABE = 0.1
+#: Quittung „selbst gesetzt – behalten“ (16.10.2026): steht im Merkmal des Imports
+#: (meta „rfem_lagerreibung“), das die Datei ohnehin traegt - danach gibt es weder
+#: Markierung noch Ladehinweis; die Rechnung aendert sie nicht (meta zaehlt nicht in
+#: der Kennung)
+LAGERREIBUNG_BEHALTEN = "selbst gesetzt – behalten"
+
+
+def lagerreibung_behalten(model) -> None:
+    """Die Reibbeiwerte der aus RFEM uebernommenen Lager sind selbst gesetzt und
+    bleiben: Quittung im Modell, Importhinweis „lagerreibung“ erledigt."""
+    import datetime
+    meta = getattr(model, "meta", None)
+    if meta is None:
+        meta = model.meta = {}
+    meta["rfem_lagerreibung"] = f"{LAGERREIBUNG_BEHALTEN} ({datetime.date.today():%d.%m.%Y})"
+    for h in getattr(model, "importhinweise", None) or []:
+        if h.get("art") == "lagerreibung":
+            h["erledigt"] = True
+
+
 def _import_lagerreibung(model) -> bool:
-    """Aus RFEM 6 vor edc00eb (15.10.2026) uebernommen (kein meta „rfem_lagerreibung“), ein
-    Lager mit Reibbeiwert und der Hinweis „lagerreibung“ offen (model.lagerreibung_hinweis)."""
+    """Aus RFEM 6 vor edc00eb (15.10.2026) uebernommen (kein meta „rfem_lagerreibung“, auch
+    keine Quittung), ein Lager mit dem RFEM-Vorgabewert μ = 0,1 und der Hinweis
+    „lagerreibung“ nicht erledigt. Ein anderes μ wird nie markiert (Anwender 16.10.2026):
+    es ist ausdruecklich gesetzt."""
     meta = getattr(model, "meta", None) or {}
     if not _rfem(model) or meta.get("rfem_lagerreibung"):
         return False
@@ -326,7 +456,7 @@ def _import_lagerreibung(model) -> bool:
     from .model import NDOF
     for liste in ("supports", "line_supports", "surface_supports"):
         for s_ in getattr(model, liste, None) or []:
-            if any(float(s_.dof_behaviour(d).mu or 0.0) > 0.0 for d in range(NDOF)):
+            if any(abs(float(s_.dof_behaviour(d).mu or 0.0) - RFEM_MU_VORGABE) <= 1e-9 for d in range(NDOF)):
                 return True
     return False
 
@@ -372,10 +502,12 @@ def _import_lastkategorien(model) -> bool:
     if not (getattr(model, "combinations", None) or {}):
         return False
     kat = {str(getattr(lc, "category", "") or "") for lc in (getattr(model, "load_cases", None) or {}).values()}
-    return len(kat) <= 1
+    # so legte der alte Import jeden Lastfall an (Anwender 16.10.2026: nur „alle Q“;
+    # gemischte Kategorien sind nicht betroffen)
+    return kat == {"Q"}
 
 
-def _kombinationen_im_ergebnis(an) -> str:
+def _kombinationen_im_ergebnis(model, an) -> str:
     """Die Kategorie wirkt nur ueber Teilsicherheits- und Kombinationsbeiwerte: betroffen
     sind gerechnete Kombinationen (und was aus ihnen folgt)."""
     namen = sorted(str(n) for n in (getattr(an, "combinations", None) or {}))
@@ -442,6 +574,14 @@ MERKMALE: list = [
         modellmerkmal="Fachwerkstab, Zug-/Druckstab oder Seil, mit alpha_cr, Knicken oder Theorie II. Ordnung",
         betrifft=_hat_fachwerk_oder_seil, im_ergebnis=_alpha_cr_im_ergebnis, marke=_marke_14_10),
     Merkmal(
+        name="einzelknicken", titel="Einzelknicken der Fachwerk-Druckstäbe",
+        texte={"alt": "alpha_cr nur des Systems, ohne Knicken der Fachwerk-Druckstäbe zwischen ihren Knoten",
+               "neu": "alpha_cr = min(System; Einzelstab)"},
+        wechsel=(Wechsel(stand=1.5, datum="14.10.2026", commit="d1d8ebb", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Fachwerk-Druckstäbe (truss, nicht nur Zug) mit alpha_cr-Ergebnis",
+        betrifft=_fachwerk_druckstaebe, im_ergebnis=_einzelknicken_im_ergebnis, marke=_marke_14_10),
+    Merkmal(
         name="alpha_cr_aktiv", titel="alpha_cr mit abgeschalteten Stäben",
         texte={"alt": "abgeschaltete Stäbe in der geometrischen Steifigkeit von alpha_cr",
                "neu": "alpha_cr nur aus den wirksamen Elementen"},
@@ -449,7 +589,7 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="abgeschaltete Stäbe oder Elemente (Stab aus, Situation, Stellung) mit alpha_cr "
                       "bzw. Theorie II. Ordnung",
-        betrifft=_abgeschaltete_staebe, im_ergebnis=_alpha_cr_im_ergebnis, marke=_marke_14_10),
+        betrifft=_abgeschaltete_staebe, im_ergebnis=_alpha_cr_aktiv_im_ergebnis, marke=_marke_14_10),
     Merkmal(
         name="seil_theorie3", titel="Seil-Streckenlast nach Theorie III. Ordnung",
         texte={"alt": "Streckenlast auf dem Seil nach Theorie III. Ordnung nicht angesetzt",
@@ -457,7 +597,7 @@ MERKMALE: list = [
         wechsel=(Wechsel(stand=1.5, datum="14.10.2026", commit="fea5b8b", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Seil mit Streckenlast, Theorie III. Ordnung",
-        betrifft=_seil_mit_streckenlast, im_ergebnis=_theorie3_im_ergebnis, marke=_marke_14_10),
+        betrifft=_seil_mit_streckenlast, im_ergebnis=_seil_theorie3_im_ergebnis, marke=_marke_14_10),
     Merkmal(
         name="fachwerk_querlast", titel="Fachwerkstab mit Querlast",
         texte={"alt": "Ersatzlasten mit Momenten qL²/12 (im Feld qL²/24, Lagermomente)",
@@ -465,7 +605,7 @@ MERKMALE: list = [
         wechsel=(Wechsel(stand=1.5, datum="14.10.2026", commit="4a6bba9", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Fachwerkstab, Zug-/Druckstab oder Seil mit Stablast oder Eigengewicht quer zur Achse",
-        betrifft=_fachwerk_mit_querlast, marke=_marke_14_10),
+        betrifft=_fachwerk_mit_querlast, im_ergebnis=_querlast_im_ergebnis, marke=_marke_14_10),
     # --- Korrekturen am Import: das Modell, nicht das Alter der Ergebnisdatei --------
     Merkmal(
         name="import_lagerreibung", titel="Lagerreibung aus RFEM",
@@ -473,9 +613,10 @@ MERKMALE: list = [
                "neu": "Reibbeiwert nur mit Reibungsart"},
         wechsel=(Wechsel(stand=1.5, datum="15.10.2026", commit="edc00eb", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="RFEM-Import ohne Merkmal rfem_lagerreibung, Lager mit Reibbeiwert",
+        modellmerkmal="RFEM-Import ohne Merkmal rfem_lagerreibung, Lager mit μ = 0,1 (RFEM-Vorgabewert)",
         betrifft=_import_lagerreibung, import_korrektur=True,
-        vorschlag="Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Lager aus RFEM nachlesen…“"),
+        vorschlag="Datei › Austausch › „Aus RFEM nachlesen ▾“ › „Lager aus RFEM nachlesen…“: dort "
+                  "„Lager nachlesen“ oder „selbst gesetzt – behalten“"),
     Merkmal(
         name="import_stabtypen", titel="Stabtypen aus RFEM",
         texte={"alt": "RFEM-Zugstab und -Seil als Fachwerkstab mit Druck übernommen",
@@ -501,7 +642,7 @@ MERKMALE: list = [
         wechsel=(Wechsel(stand=1.5, datum="13.10.2026", commit="6706ef6", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="RFEM-Import vor dem 14.10.2026 (rfem_zugstaebe fehlt oder „nachgelesen“), alle "
-                      "Lastfälle in einer Kategorie, gerechnete Kombinationen",
+                      "Lastfälle in Kategorie Q, gerechnete Kombinationen",
         betrifft=_import_lastkategorien, import_korrektur=True, im_ergebnis=_kombinationen_im_ergebnis,
         vorschlag="die Kategorien der Lastfälle prüfen"),
 ]
@@ -698,7 +839,7 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
             continue
         wo = None
         if mk.im_ergebnis is not None:
-            wo = _sicher(lambda: mk.im_ergebnis(analyse)) if analyse is not None else None
+            wo = _sicher(lambda: mk.im_ergebnis(model, analyse)) if analyse is not None else None
             if wo == "":
                 continue                # am Ergebnis sicher nicht beruehrt
         if wert is None:
@@ -711,7 +852,8 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
                         + f", seit {_seit(mk, jetzt, w)} korrigiert: „{mk.text(jetzt)}“")
     for mk in MERKMALE:
         if mk.import_korrektur and _sicher(lambda: mk.betrifft(model)):
-            wo = _sicher(lambda: mk.im_ergebnis(analyse)) if (mk.im_ergebnis is not None and analyse is not None)                 else None
+            wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
+                  if (mk.im_ergebnis is not None and analyse is not None) else None)
             if wo == "":
                 continue
             w = mk.wechsel[-1]

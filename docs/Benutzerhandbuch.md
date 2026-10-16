@@ -5163,18 +5163,31 @@ Status weg. Fehlerkorrekturen sind:
   konvergiert führt (genau 40 sind auch heute möglich);
 * die Saitenform N/L der geometrischen Steifigkeit (14.10.2026, Fachwerkstab,
   Zug-/Druckstab oder Seil, wenn das Ergebnis alpha_cr, Knicken oder Theorie II.
-  Ordnung enthält);
-* alpha_cr nur aus den wirksamen Elementen (14.10.2026, abgeschaltete Stäbe oder
-  Elemente, mit alpha_cr bzw. Theorie II. Ordnung);
-* die Streckenlast auf dem Seil nach Theorie III. Ordnung (14.10.2026, Seil mit
-  Streckenlast, mit Theorie III. Ordnung);
-* der Fachwerkstab mit Querlast (14.10.2026, Fachwerkstab oder Seil mit Stablast oder
-  Eigengewicht quer zur Achse: bis dahin im Feld qL²/24 statt qL²/8);
-* die Korrekturen am RFEM-Import: Lagerreibung (15.10.2026), Stabtypen (Zugstab,
-  Seil; 14.10.2026), Vorspannung als Kraft und Lastkategorien (13.10.2026). Hier
-  zählt nicht das Alter der Ergebnisdatei, sondern das Modell: aus RFEM übernommen,
-  ohne das Merkmal des neueren Imports und noch nicht nachgelesen bzw. umgestellt.
-  Der Status nennt den Weg („Aus RFEM nachlesen…“), danach neu rechnen.
+  Ordnung enthält; Theorie III. Ordnung rechnete schon vorher mit der Saitenform);
+* das Einzelknicken der Fachwerk-Druckstäbe in alpha_cr (14.10.2026, Fachwerkstab, der
+  Druck tragen kann, mit alpha_cr-Ergebnis): bis dahin nur alpha_cr des Systems;
+* alpha_cr nur aus den wirksamen Elementen (14.10.2026, alpha_cr eines Ergebnisses,
+  in dessen Situation Stäbe oder Elemente abgeschaltet sind);
+* die Streckenlast auf dem Seil nach Theorie III. Ordnung (14.10.2026, Theorie III.
+  für ein Ergebnis, dessen Lastfälle eine Streckenlast auf einem Seil tragen);
+* der Fachwerkstab mit Querlast (14.10.2026, ein gerechnetes Ergebnis, dessen
+  Lastfälle eine Stablast oder ein Eigengewicht quer zur Achse eines Fachwerkstabs oder
+  Seils tragen: bis dahin im Feld qL²/24 statt qL²/8);
+* die Korrekturen am RFEM-Import: Lagerreibung (15.10.2026, nur Lager mit dem
+  RFEM-Vorgabewert μ = 0,1 – ein anderes μ ist ausdrücklich gesetzt und wird nie
+  markiert), Stabtypen (Zugstab, Seil; 14.10.2026), Vorspannung als Kraft und
+  Lastkategorien (13.10.2026; nur wenn alle Lastfälle noch Kategorie Q tragen und
+  Kombinationen gerechnet sind). Hier zählt nicht das Alter der Ergebnisdatei, sondern
+  das Modell: aus RFEM übernommen, ohne das Merkmal des neueren Imports und noch nicht
+  nachgelesen bzw. umgestellt. Der Status nennt den Weg („Aus RFEM nachlesen…“),
+  danach neu rechnen. Die Maske „Lager aus RFEM“ hat dafür zwei Knöpfe: „Lager
+  nachlesen“ und „selbst gesetzt – behalten“. Die Quittung steht mit dem Modell in der
+  Datei (Merkmal des Imports); danach kommen weder Hinweis noch Markierung, und die
+  Ergebnisse bleiben gültig.
+
+Markiert wird eine Fehlerkorrektur nur, wenn das Merkmal im Modell vorkommt und die
+betroffene Rechenart im Ergebnis gerechnet ist; fehlt eines von beiden, auch bei einer
+alten Datei ohne Kennzeichen nicht.
 
 Hat das Modell das Merkmal nicht, kommt weder Hinweis noch Status. Ein Modell ohne
 Reibung trägt in der Ergebnisdatei „keine Reibung im Modell“.

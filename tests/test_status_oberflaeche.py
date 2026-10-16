@@ -176,6 +176,46 @@ def test_moeglicherweise_betroffen():
           w.analysis is not None and "möglicherweise betroffen" not in _kopf(w), _kopf(w))
 
 
+def test_lagerreibung_behalten():
+    print("\n--- Lagerreibung aus RFEM (μ = 0,1): „selbst gesetzt – behalten“ in der Maske ---")
+    from statik3d import ergebnisse as erg, examples_lib as ex, rechenverfahren as rv, solver
+    from statik3d.model import DofBehaviour
+    w, app = _fenster()
+    m = ex.frame_example()
+    m.meta["quelle"] = "C:/x/rahmen.rf6"
+    m.meta["rfem_zugstaebe"] = m.meta["rfem_seile"] = "beim Import gesetzt (14.10.2026)"
+    m.supports[0].behaviour = {0: DofBehaviour(typ="rigid", mu=0.1, mu_ref=2)}
+    an = solver.solve_all(m, design=False)
+    p = os.path.join(tempfile.mkdtemp(prefix="status_ob_"), "rahmen.json")
+    m.save(p)
+    erg.schreiben(erg.pfad_zu(p), m, an)
+    w.modell_laden(p, fragen=False)
+    app.processEvents()
+    check("geöffnet: Status „möglicherweise betroffen“ zur Lagerreibung", "möglicherweise betroffen" in _kopf(w)
+          and "Lagerreibung" in str((w.analysis.info or {}).get("verfahren_betroffen", "")))
+    w.maske_lager_rfem()
+    app.processEvents()
+    mk = w.maskenrand.maske if w.maskenrand.offen() else None
+    knopf = (getattr(mk, "zusatzknoepfe", None) or {}).get(rv.LAGERREIBUNG_BEHALTEN)
+    check("Maske „Lager aus RFEM“ bietet „selbst gesetzt – behalten“ neben „Lager nachlesen“",
+          knopf is not None and getattr(mk, "btn_anwenden", None) is not None
+          and "nachlesen" in mk.btn_anwenden.text(), str(list((getattr(mk, "zusatzknoepfe", None) or {}))))
+    if knopf is None:
+        return
+    knopf.click()
+    app.processEvents()
+    check("… Klick: Quittung im Modell, Status in der Kopfzeile weg, Ergebnisse bleiben",
+          str(w.model.meta.get("rfem_lagerreibung", "")).startswith(rv.LAGERREIBUNG_BEHALTEN)
+          and "möglicherweise betroffen" not in _kopf(w) and w.analysis is not None, _kopf(w))
+    w.save_model()                     # Modell und Ergebnisse (die Quittung steht im Modell)
+    app.processEvents()
+    w.modell_laden(p, fragen=False)
+    app.processEvents()
+    check("… gespeichert und wieder geöffnet: keine Markierung, kein Hinweis zur Lagerreibung",
+          w.analysis is not None and "möglicherweise betroffen" not in _kopf(w)
+          and "Lagerreibung" not in _status(w), f"{_kopf(w)} | {_status(w)[:80]}")
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
@@ -186,7 +226,8 @@ def main():
     from statik3d.examples_lib import block_friction_example
     m = block_friction_example()
     _F["alt"] = (m, solver.solve_all(m, design=False))
-    for t in (test_vorlaeufig_nach_rechnung, test_vorlaeufig_nach_oeffnen, test_moeglicherweise_betroffen):
+    for t in (test_vorlaeufig_nach_rechnung, test_vorlaeufig_nach_oeffnen, test_moeglicherweise_betroffen,
+              test_lagerreibung_behalten):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

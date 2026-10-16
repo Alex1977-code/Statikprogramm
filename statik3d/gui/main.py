@@ -21853,7 +21853,14 @@ class MainWindow(QtWidgets.QMainWindow):
                            breite=260,
                            hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
                                    "woanders, hier ihren Pfad eintragen")]
+        from .. import rechenverfahren as _rv
         maske = msk.Maske("Lager aus RFEM", felder, knopf="Lager nachlesen",
+                          # die zweite Antwort (16.10.2026): die Reibbeiwerte sind selbst gesetzt
+                          # und bleiben - Quittung im Modell, danach keine Markierung mehr
+                          zusatz=[(_rv.LAGERREIBUNG_BEHALTEN, self._lagerreibung_behalten,
+                                   "Die Reibbeiwerte der Lager sind selbst gesetzt und bleiben, wie sie sind: "
+                                   "der Hinweis und der Status „möglicherweise betroffen“ zur Lagerreibung "
+                                   "entfallen; die Quittung wird mit dem Modell gespeichert")],
                           hinweis="Liest die Knoten-, Linien- und Flächenlager aus der RFEM-Datei nach und nimmt "
                                   "einen Reibbeiwert zurück, der dort ohne Reibungsart steht – RFEM rechnet dann "
                                   "keine Reibung. Der Freiheitsgrad gilt danach nach seiner Federkonstanten "
@@ -21861,6 +21868,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "Rückgängig nimmt ihn zurück.")
         maske.angewendet.connect(self._lager_rfem_anwenden)
         return self.maske_erzeugen(maske)
+
+    def _lagerreibung_behalten(self):
+        """„selbst gesetzt – behalten“ (16.10.2026): Quittung im Modell
+        (rechenverfahren.lagerreibung_behalten), Importhinweis erledigt; der Status
+        der geladenen Ergebnisse wird neu bewertet - sie bleiben."""
+        from .. import rechenverfahren as _rv
+        self.merken("Lagerreibung selbst gesetzt – behalten")
+        _rv.lagerreibung_behalten(self.model)
+        an = self.analysis
+        info = getattr(an, "info", None)
+        if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
+            bew = _rv.bewerten(self.model, info["rechenverfahren"], an)
+            for k, v in (("verfahren_hinweis", bew["hinweis"]), ("verfahren_betroffen", bew["betroffen"])):
+                if v:
+                    info[k] = v
+                else:
+                    info.pop(k, None)
+        self.log.appendPlainText("Lagerreibung aus RFEM: Reibbeiwerte selbst gesetzt – behalten (im Modell vermerkt)")
+        self._refresh_kopf()
+        self._refresh_status()
+        self.statusBar().showMessage("Lagerreibung: selbst gesetzt – behalten", 8000)
 
     def _lager_rfem_anwenden(self, w: dict):
         from ..importers import rfem6_db as R6

@@ -532,6 +532,16 @@ def test_saitenform_und_querlast():
     check("… ohne Angabe und ohne Marke: Status, Saitenform „Alter nicht sicher erkennbar“ (lieber betroffen)",
           a2 is not None and "Saitenform" in st and "nicht sicher erkennbar" in st
           and "saitenform" in (a2.info.get("verfahren_unsicher") or []), fehler or st)
+    check("… und das Einzelknicken der Fachwerk-Druckstäbe in alpha_cr (d1d8ebb)",
+          a2 is not None and "Einzelknicken" in st and "einzelknicken" in (a2.info.get("verfahren_unsicher") or []),
+          st)
+    # nur Zugstaebe: kein Fachwerk-Druckstab, kein Einzelknicken
+    mz = ex.truss_bridge_example()
+    for e_ in mz.elements:
+        e_.nur = "zug"
+    from statik3d import rechenverfahren as rv
+    check("Prüffunktion Fachwerk-Druckstab: nur Zugstäbe nein, Fachwerk ja",
+          not rv._fachwerk_druckstaebe(mz) and rv._fachwerk_druckstaebe(m))
     # Theorie I: kein alpha_cr - die Saitenform beruehrt das Ergebnis nicht
     m1 = ex.truss_bridge_example()
     an1 = solver.solve_all(m1, design=False)
@@ -554,6 +564,19 @@ def test_saitenform_und_querlast():
     erg.schreiben(p2, m2, an2)
     a2, fehler = _laden(p2, m2)
     check("… heutige Datei: kein Status", a2 is not None and not _status(a2), fehler or _status(a2))
+    # Eigengewicht nur in LF2, gerechnet ist nur LF1: die Querlast steckt in keinem Ergebnis
+    from statik3d.model import LoadCase
+    m3 = ex.truss_bridge_example()
+    m3.load_cases["LF2"] = LoadCase("LF2", category="G")
+    m3.load_cases["LF2"].gravity = [0.0, 0.0, -9.81]
+    an3 = solver.solve_all(m3, design=False)
+    an3.cases.pop("LF2", None)
+    p3 = os.path.join(d, "fachwerk3.ergebnisse")
+    erg.schreiben(p3, m3, an3)
+    _umschreiben(p3, m3, _ohne_marken)
+    a2, fehler = _laden(p3, m3)
+    check("Querlast nur im nicht gerechneten LF2, Datei ohne Marke: kein Status (Rechenart nicht im Ergebnis)",
+          a2 is not None and "Querlast" not in _status(a2), fehler or _status(a2))
 
 
 def test_pruefungen_der_merkmale():
@@ -579,6 +602,42 @@ def test_pruefungen_der_merkmale():
                                               or rv._import_vorspannung(v)))
 
 
+def test_rechenart_im_ergebnis():
+    """(a) Markiert nur, wenn das Merkmal im Modell vorkommt UND die betroffene
+    Rechenart im Ergebnis gerechnet wurde - an Ersatzanalysen gepruefte Funktionen."""
+    from types import SimpleNamespace as NS
+    from statik3d import examples_lib as ex, rechenverfahren as rv
+    from statik3d.model import BeamLoad, Combination, LoadCase, Situation
+
+    def an_(cases=(), combos=(), th2=(), th3=()):
+        a = NS(cases={n: NS(info={}, kind="case") for n in cases},
+               combinations={n: NS(info={}, kind="case") for n in combos}, alternativen={},
+               theorie2=NS(kombinationen={n: NS(alpha_cr=5.0) for n in th2}) if th2 else None,
+               theorie3=NS(kombinationen={n: NS() for n in th3}) if th3 else None)
+        a.all_results = lambda: {**a.cases, **a.combinations}
+        return a
+    m = ex.truss_bridge_example()
+    m.situationen["S1"] = Situation("S1", deaktiviert=[1])
+    m.load_cases["LF2"] = LoadCase("LF2", category="G", situation="S1")
+    m.combinations["K2"] = Combination("K2", {"LF2": 1.0}, situation="S1")
+    check("alpha_cr mit abgeschalteten Stäben: alpha_cr nur in der Grundstellung (LF1) - nicht betroffen",
+          rv._alpha_cr_aktiv_im_ergebnis(m, an_(cases=["LF1"], th2=["LF1"])) == "")
+    check("… alpha_cr in der Situation S1 mit abgeschaltetem Element (K2) - betroffen",
+          "K2" in (rv._alpha_cr_aktiv_im_ergebnis(m, an_(combos=["K2"], th2=["K2"])) or ""))
+    s = ex.truss_bridge_example()
+    s.elements[0].typ = "seil"
+    s.load_cases["LF2"] = LoadCase("LF2", category="Q")
+    s.load_cases["LF2"].beam_loads.append(BeamLoad(elem=0, q=[0.0, 0.0, -1000.0]))
+    check("Seil-Streckenlast nur in LF2, Theorie III nur für LF1 - nicht betroffen",
+          rv._seil_theorie3_im_ergebnis(s, an_(cases=["LF1"], th3=["LF1"])) == "")
+    check("… Theorie III für LF2 - betroffen", "LF2" in (rv._seil_theorie3_im_ergebnis(s, an_(th3=["LF2"])) or ""))
+    check("Saitenform: kein alpha_cr, keine Theorie II im Ergebnis - nicht betroffen",
+          rv._alpha_cr_im_ergebnis(an_(cases=["LF1"], th3=["LF1"])) == "")
+    check("Fachwerk-Querlast: LF2 mit Querlast gerechnet - betroffen, nur LF1 - nicht",
+          "LF2" in (rv._querlast_im_ergebnis(s, an_(cases=["LF2"])) or "")
+          and rv._querlast_im_ergebnis(s, an_(cases=["LF1"])) == "")
+
+
 def test_importkorrekturen():
     from statik3d import ergebnisse as erg, examples_lib as ex, solver
     from statik3d.model import DofBehaviour, Model
@@ -592,11 +651,29 @@ def test_importkorrekturen():
     p = os.path.join(d, "rahmen.json")
     m.save(p)
     erg.schreiben(erg.pfad_zu(p), m, an)
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("Import Lagerreibung mit μ = 0,2 (nicht der RFEM-Vorgabewert): nie markiert",
+          a2 is not None and "Lagerreibung" not in _status(a2), fehler or _status(a2))
+    m.supports[0].behaviour = {0: DofBehaviour(typ="rigid", mu=0.1, mu_ref=2)}
+    an = solver.solve_all(m, design=False)
+    m.save(p)
+    erg.schreiben(erg.pfad_zu(p), m, an)
     m2 = Model.load(p)
     a2, fehler = _laden(erg.pfad_zu(p), m2)
     st = _status(a2)
-    check("Import Lagerreibung vor dem 15.10.2026 (kein rfem_lagerreibung): Status, auch bei heutiger Datei",
-          a2 is not None and "Lagerreibung aus RFEM" in st and "nachlesen" in st, fehler or st)
+    check("Import Lagerreibung μ = 0,1 (RFEM-Vorgabe) vor dem 15.10.2026: Status, auch bei heutiger Datei, "
+          "mit beiden Wegen", a2 is not None and "Lagerreibung aus RFEM" in st and "nachlesen" in st
+          and "selbst gesetzt – behalten" in st, fehler or st)
+    from statik3d import rechenverfahren as rv
+    rv.lagerreibung_behalten(m2)
+    check("„selbst gesetzt – behalten“: Quittung im Modell, Importhinweis erledigt",
+          str(m2.meta.get("rfem_lagerreibung", "")).startswith("selbst gesetzt")
+          and not any(h.get("art") == "lagerreibung" and not h.get("erledigt") for h in m2.importhinweise),
+          repr(m2.meta.get("rfem_lagerreibung")))
+    m2.save(p)
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("… nach Speichern und Öffnen: keine Markierung mehr, Ergebnisse weiter gültig (Quittung ändert die "
+          "Rechnung nicht)", a2 is not None and "Lagerreibung" not in _status(a2), fehler or _status(a2))
     m.meta["rfem_lagerreibung"] = True
     m.save(p)
     erg.schreiben(erg.pfad_zu(p), m, an)
@@ -610,6 +687,7 @@ def test_importkorrekturen():
     f.add_member("Gurt", [0], beta_y=1.0, beta_z=1.0)
     from statik3d.model import Combination
     f.combinations["K1"] = Combination("K1", {"LF1": 1.35})
+    f.case().category = "Q"                       # so legte der alte Import jeden Lastfall an
     an = solver.solve_all(f, design=False)
     p = os.path.join(d, "fachwerk.json")
     f.save(p)
@@ -618,11 +696,18 @@ def test_importkorrekturen():
     st = _status(a2)
     check("Import Stabtypen vor dem 14.10.2026: Status „Stabtypen aus RFEM“", "Stabtypen aus RFEM" in st,
           fehler or st)
-    check("Import Lastkategorien vor dem 14.10.2026 mit Kombinationen: Status „Lastkategorien aus RFEM“",
+    check("Import Lastkategorien vor dem 14.10.2026, alle Lastfälle Q, mit Kombinationen: Status",
           "Lastkategorien aus RFEM" in st, fehler or st)
-    # Lastkategorien geordnet (zwei Kategorien): erledigt; nur ein Lastfall gerechnet: nicht beruehrt
+    f.case().category = "G"
+    f.save(p)
+    erg.schreiben(erg.pfad_zu(p), f, solver.solve_all(f, design=False))
+    a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
+    check("… alle Lastfälle G (nicht Q): kein Status zu den Lastkategorien",
+          a2 is not None and "Lastkategorien" not in _status(a2), fehler or _status(a2))
+    f.case().category = "Q"
+    # gemischte Kategorien: nicht betroffen; nur ein Lastfall gerechnet: nicht beruehrt
     from statik3d.model import LoadCase
-    f.load_cases["LF2"] = LoadCase("LF2", category="Q")
+    f.load_cases["LF2"] = LoadCase("LF2", category="G")
     f.save(p)
     erg.schreiben(erg.pfad_zu(p), f, solver.solve_all(f, design=False))
     a2, fehler = _laden(erg.pfad_zu(p), Model.load(p))
@@ -699,7 +784,7 @@ def main():
               test_alte_datei_ohne_reibung, test_datei_15_10_mit_tangente, test_anwender_stellt_um,
               test_deckel_aus_protokoll, test_fehlerkorrektur_deckel, test_kuenftiger_wechsel,
               test_keine_reibung, test_saitenform_und_querlast, test_pruefungen_der_merkmale,
-              test_importkorrekturen, test_fenster):
+              test_rechenart_im_ergebnis, test_importkorrekturen, test_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
