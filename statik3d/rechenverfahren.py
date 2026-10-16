@@ -396,6 +396,35 @@ def _ergebnis_paare(an) -> list:
         return []
 
 
+def _traglast_im_ergebnis(model, an) -> str:
+    """Plastische Ergebnisse, die das alte Verfahren (vor plast/traglast, 16.10.2026)
+    beruehrt haben kann: nicht konvergiert (heute: Traglast mit dem letzten
+    konvergierten Zustand, bis dahin der Zustand der nicht konvergierten Stufe),
+    ε_p,max ueber 20 % (heute nicht gueltig) und jeder Lastfall mit Endvorspannung im
+    Spannschritt - ob dessen Spannstufen konvergierten, steht in einer alten
+    Ergebnisdatei nicht (am Pruefblech meldete der Lastfall „konvergiert“ mit
+    ε_p 2 399 aus einem nicht konvergierten Spannschritt)."""
+    namen = []
+    for n, r in _ergebnis_paare(an):
+        inf = getattr(r, "info", None) or {}
+        pz = inf.get("plastizitaet") if isinstance(inf, dict) else None
+        if not isinstance(pz, dict):
+            continue
+        if (pz.get("konvergiert", True) is False or float(pz.get("eps_p_max", 0.0) or 0.0) > 0.2
+                or (inf.get("vorspannung") or {}).get("weg") == "spannen und verriegeln"):
+            namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("plastisch, nicht konvergiert, ε_p über 20 % oder mit Spannschritt: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _marke_traglast(inhalt: dict) -> bool:
+    """Eine Datei, sicher nach plast/traglast gerechnet: ein plastisches Ergebnis traegt
+    die Gueltigkeitsgrenze (res.info["plastizitaet"]["dehnungsgrenze"], seit 16.10.2026)."""
+    return any(isinstance(i.get("plastizitaet"), dict) and "dehnungsgrenze" in i["plastizitaet"]
+               for i in _infos(inhalt))
+
+
 def _marke_14_10(inhalt: dict) -> bool:
     """Eine Datei, sicher gerechnet nach den Korrekturen vom 14.10.2026 vormittags
     (5a5e8d0, fea5b8b, 878369b, 4a6bba9 - alle Vorfahren von 9a96ea6 und d1d8ebb): ein
@@ -530,7 +559,8 @@ KEINE_REIBUNG = "keine_reibung"
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
 #: Marken; Stand 2: Reibungstangente als Vorgabe und Deckel ueber alle Runden
 #: (49cb8bb, 15.10.2026 19:49). Eine Datei mit der Angabe (Stand 2) und eine mit
-#: „reibverfahren“ (ab a371cf2) sind nach allen gerechnet.
+#: „reibverfahren“ (ab a371cf2) sind nach allen gerechnet. Stand 3: Traglast, Mechanismus,
+#: Gueltigkeitsgrenze und Gleichgewicht mit inneren Kraeften (plast/traglast, 16.10.2026).
 _KONTAKT = "Kontakt (Kontaktpaar, Kontaktlager, Lager mit Ausfall, Reibung oder Grenzkraft)"
 MERKMALE: list = [
     Merkmal(
@@ -565,6 +595,21 @@ MERKMALE: list = [
         wechsel=(Wechsel(stand=1, datum="13.10.2026", commit="a1194ef", alt="streng",
                          neu="ingenieurmaessig", art=VERBESSERUNG),),
         modellmerkmal="plastische Rechnung", betrifft=_fliessen),
+    Merkmal(
+        # plast/traglast (16.10.2026, Auftrag des Anwenders): bis dahin rechnete der
+        # Newton nach einer nicht konvergierten Laststufe mit deren Zustand weiter,
+        # ein nicht konvergierter Spannschritt ging unbemerkt in den Lastfall
+        # (Pruefblech 900 kN: „konvergiert“ mit ε_p 2 399), und die Gleichgewichts-
+        # kontrolle pruefte nur Φᵀ(F + R), was fuer jedes u null ist
+        name="traglast", titel="Plastische Rechnung über der Traglast",
+        texte={"alt": "nicht konvergierte Lauf- und Spannstufen weitergerechnet, Gleichgewicht nur als "
+                      "Summe der Lasten und Lagerkräfte",
+               "neu": "Traglast mit letztem konvergiertem Zustand, Mechanismus, Gültigkeitsgrenze ε_p, "
+                      "Gleichgewicht mit inneren Kräften"},
+        wechsel=(Wechsel(stand=3, datum="16.10.2026", commit="plast/traglast", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="plastische Rechnung", betrifft=_fliessen, im_ergebnis=_traglast_im_ergebnis,
+        marke=_marke_traglast),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -648,7 +693,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 2
+VERFAHRENSSTAND = 3
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

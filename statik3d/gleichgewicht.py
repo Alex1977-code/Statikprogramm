@@ -94,6 +94,51 @@ def pruefen(model, res, F, verformt: bool = False) -> dict:
     return bewerten(aus)
 
 
+def residuum(model, r, bezug_F, x0=None) -> dict:
+    """Die Kontrolle mit den **inneren Kraeften** (16.10.2026): ``r`` ist das
+    Residuum F_ext − F_int(u) an den freien Freiheitsgraden (an den Lagern und in
+    ausgenommenen Zonen 0), wie es die plastische Rechnung liefert
+    (plastizitaet._newton, info["_residuum"]; solver._plastizitaet_rechnen).
+
+    Warum: die Summenkontrolle oben prueft Φᵀ(F + R) = Φᵀ K u, und das ist fuer
+    **jedes** u null - am Pruefblech mit 900 kN (Spannschritt nicht konvergiert,
+    4,56 m Einsenkung) fand sie 0,24 N bzw. 0,06 N. Ein Ungleichgewicht, das sich
+    selbst aufhebt (ein Kraeftepaar), hat zudem die Summe null; darum steht neben
+    ΣF und ΣM des Residuums seine Norm.
+
+    Bezug ist ‖bezug_F‖ - die Lasten, bei einer Endvorspannung mit dem
+    Kraeftepaar der **Sollkraft**, nicht der Verriegelungskraft (am Pruefblech
+    1 369,6 MN). Dasselbe Mass wie die Abbruchtoleranz der Plastizitaet
+    (Aenderung von F_p durch ‖F‖): ein konvergierter Lauf liegt darum unter
+    seiner Toleranz (1e-3), nicht gueltig ist es ab :data:`UNGUELTIG`."""
+    nn = int(model.nn)
+    rv = np.asarray(r, float).reshape(-1)
+    rk = _knotenteil(rv, nn)
+    X = np.asarray(model.nodes, float)[:nn]
+    if x0 is None:
+        x0 = 0.5 * (X.min(axis=0) + X.max(axis=0))
+    m = np.cross(X - np.asarray(x0, float), rk[:, :3]) + rk[:, 3:]
+    norm = float(np.linalg.norm(rv))
+    b = float(np.linalg.norm(np.asarray(bezug_F, float))) if bezug_F is not None else 0.0
+    rel = norm / b if b > 0.0 else 0.0
+    j = int(np.argmax(np.linalg.norm(rk[:, :3], axis=1))) if nn else 0
+    return {"norm": norm, "bezug": b, "rel": rel, "F": [float(x) for x in rk[:, :3].sum(axis=0)],
+            "M": [float(x) for x in m.sum(axis=0)], "knoten_max": j,
+            "knoten_max_kraft": float(np.linalg.norm(rk[j, :3])) if nn else 0.0,
+            "verletzt": bool(rel >= UNGUELTIG)}
+
+
+def residuum_text(g: dict) -> str:
+    """„Residuum an den freien FHG 18,7 kN (bezogen 0,0147) …“ - leer ohne Verletzung."""
+    r = (g or {}).get("residuum") or {}
+    if not r.get("verletzt"):
+        return ""
+    return (f"Gleichgewicht verletzt: Residuum der inneren Kräfte an den freien Freiheitsgraden "
+            f"{_z(r['norm'] / 1e3)} kN (bezogen auf die Lasten {_rel(r['rel'])}, größte Knotenkraft "
+            f"{_z(r.get('knoten_max_kraft', 0.0) / 1e3)} kN an Knoten {r.get('knoten_max')}) – die Last ist "
+            "in diesem Zustand nicht im Gleichgewicht mit den Spannungen")
+
+
 def bewerten(aus: dict) -> dict:
     """dF, dM, bezogene Werte und Urteil aus den Summen eines Eintrags."""
     dF = float(np.linalg.norm(np.add(aus["F_last"], aus["F_lager"])))
@@ -115,11 +160,12 @@ def verletzt_text(g: dict) -> str:
         return ""
     if not (g.get("verletzt") or float(g.get("rel_F", 0.0)) >= UNGUELTIG
             or float(g.get("rel_M", 0.0)) >= UNGUELTIG):
-        return ""
+        return residuum_text(g)
     return (f"Gleichgewicht verletzt: ΣF {_z(g['dF'] / 1e3)} kN (bezogen {_rel(g['rel_F'])}), "
             f"ΣM {_z(g['dM'] / 1e3)} kNm (bezogen {_rel(g['rel_M'])}) – Lasten und Lagerkräfte "
             f"weichen um mindestens {_rel(UNGUELTIG)} des Umsatzes voneinander ab, ein Teil der "
-            "Last hat keinen Weg in die Lager")
+            "Last hat keinen Weg in die Lager"
+            + ("; " + residuum_text(g) if residuum_text(g) else ""))
 
 
 def ueberlagern(teile) -> dict:
@@ -167,6 +213,15 @@ def zeile(g: dict) -> str:
             f"ΣM {_z(g['dM'] / 1e3)} kNm (bezogen {_rel(g['rel_M'])}) um "
             f"({_z(g['x0'][0])}; {_z(g['x0'][1])}; {_z(g['x0'][2])}) m"
             + (", am verformten System" if g.get("verformt") else ""))
+    r = g.get("residuum")
+    if r:
+        # mit den inneren Kraeften (plastische Rechnung, 16.10.2026)
+        text += (f"; Residuum der inneren Kräfte {_z(r['norm'] / 1e3)} kN (bezogen auf die Lasten "
+                 f"{_rel(r['rel'])}), ΣF {_z(float(np.linalg.norm(r['F'])) / 1e3)} kN, "
+                 f"ΣM {_z(float(np.linalg.norm(r['M'])) / 1e3)} kNm")
+        if r.get("verletzt"):
+            return (kopf + "NICHT GÜLTIG – " + text + f"; ab {_rel(UNGUELTIG)} der Lasten ist das Ergebnis "
+                    "nicht gültig: die Spannungen halten der Last nicht das Gleichgewicht")
     if g.get("ok"):
         return kopf + "erfüllt – " + text
     if verletzt_text(g):

@@ -426,6 +426,10 @@ class Material:
     #: Eine Eingabe gilt, wenn die Zulassung abweicht.
     sigma_pmax: Optional[float] = None
     sigma_pm0: Optional[float] = None
+    #: Bruchdehnung [-] (16.10.2026): die Gueltigkeitsgrenze der plastischen
+    #: Dehnung fuer diesen Werkstoff (plastizitaet.dehnungsgrenze_text). None = die
+    #: Grenze der Rechnung (Plastizitaet.dehnungsgrenze, Vorgabe 20 %).
+    bruchdehnung: Optional[float] = None
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
@@ -10013,7 +10017,8 @@ NEUE_FELDER = {
     # kontakt/warmstart. Diese fuehrt Plastizitaet.NEU_14_10 - dieselbe Tabelle,
     # nach der Plastizitaet.als_dict sie beim Speichern weglaesst; hier wird sie
     # nur gelesen, damit es die Vorgaben einmal gibt (Zusammenfuehrung 14.10.2026).
-    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10},
+    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10,
+                     **Plastizitaet.NEU_16_10},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
@@ -10022,7 +10027,9 @@ NEUE_FELDER = {
     # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
     # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
     "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
-                  "sigma_pmax": None, "sigma_pm0": None},
+                  "sigma_pmax": None, "sigma_pm0": None,
+                  # plast/traglast (16.10.2026): Gueltigkeitsgrenze je Werkstoff
+                  "bruchdehnung": None},
     # nachweis/spannstahl
     "sections": {"A_s": None, "gewinde": ""},
     # spitzen/zeigen N2

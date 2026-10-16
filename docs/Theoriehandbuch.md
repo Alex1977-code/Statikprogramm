@@ -7179,6 +7179,92 @@ den Boden null. Das ist nicht weiter zerlegt. Ideal plastisch konvergiert der
 Newton damit schlechter, aber erst unter den Toleranzen, die die Oberfläche
 anbietet.
 
+### 5e.6 Traglast, Mechanismus und Gültigkeitsgrenze (16.10.2026)
+
+**Anlass.** Am Prüfblech aus `tests/test_scheibe_kreisring` (60 × 60 × 20 mm,
+S355, Bohrung Ø 20, Kreisring 20/37, tet10, Endvorspannung 900 kN) meldete
+die plastische Rechnung „konvergiert“ mit ε_p,max = 2 399, also rund
+240 000 %. Der Newton hatte richtig gerechnet: Er meldete im Spannschritt bei
+600 und 900 kN „nicht konvergiert“, die Änderung blieb über 25 Schritte bei 30
+bis 148. Diese Meldung ging aber nicht weiter, denn der Lastfall übernahm vom
+Spannschritt nur einen vorläufigen Kontakt. Der Spannzustand wurde in der
+weggelaufenen Lage verriegelt: Die Platte war 4,56 m eingesunken, die
+Verriegelungskraft betrug 1 369,6 MN. Damit war dieser Zustand mit der
+eingefrorenen plastischen Last per Konstruktion im Gleichgewicht. Der
+Lastfall brauchte drei Schritte mit der Änderung 9,7·10⁻⁶, und diese war auf
+‖F_lock‖ = 1,94·10⁹ N bezogen statt auf das Kräftepaar der Sollkraft
+(1,27·10⁶ N). Die globale Gleichgewichtskontrolle (§ 5d-2, Absatz „Globale Gleichgewichtskontrolle“) konnte nicht
+anschlagen, denn sie prüft Φᵀ(F + R) = Φᵀ K u, und das ist für jedes u null.
+
+**Traglast.** Oberhalb der Traglast gibt es bei ideal plastischem Werkstoff
+(hier über f_u) kein Gleichgewicht. Eine Laststufe, die ihr Budget ohne
+Konvergenz verbraucht oder an einem Mechanismus abbricht, wird darum wie eine
+weglaufende Stufe vom Startwert an halbiert, höchstens viermal je
+ursprünglicher Stufe. Geht das nicht mehr, endet die Rechnung beim **letzten
+konvergierten Zustand**: Lastfaktor, Lösung und plastischer Zustand dieser
+Stufe, gelöst mit der Last dieses Faktors. Das Ergebnis heißt dann „Traglast
+überschritten bei Lastfaktor λ (letzter konvergierter Zustand gezeigt; bei λ′
+kein Gleichgewicht)“ und ist nicht gültig. Wirkt die ganze Last sofort voll
+(Temperatur, Vorspannung, jede Spannstufe einer Endvorspannung), gibt es im
+Newton nichts zu halbieren. Dann halbiert der Spannschritt seine Spannstufen
+und verriegelt nicht. Bis dahin rechnete der Newton nach einer nicht
+konvergierten Stufe mit deren Zustand weiter: Am Zugstab unter 1,2·A·f_u
+standen nach 320 Schritten ε_p 47 362 % im Ergebnis.
+
+Gemessen an den Prüfmodellen in `tests/test_traglast`. Der Zugstab aus tet10
+(50 × 50 mm, f_u 510 N/mm², F_lim = A·f_u = 1 275 kN) trägt bei 1,2·F_lim
+noch den Faktor 0,8125, also 0,975·F_lim, und bei 0,8333 (genau F_lim) kein
+Gleichgewicht mehr. Der Kragträger unter reinem Moment (ideal plastisch ab
+f_y, M_pl = f_y·b·h²/4) trägt bei 1,2·M_pl den Faktor 0,8333, also 1,000·M_pl.
+Der Zugstab aus tet4 trägt dagegen 1,1·F_lim bei ε_p 92,5 %. Der tet4 sperrt:
+Das volumentreue Fließen bei konstanter Dehnung je Element behindert die
+Querkontraktion, die Spannung wird dreiachsig, und σ_x steigt über f_u. Das
+fängt die Gültigkeitsgrenze. Das Prüfblech (tet10) trägt 0,5417 der
+Sollkraft, also 487,5 kN, und bei 506,3 kN kein Gleichgewicht mehr.
+
+**Mechanismus.** In einer Stufe ist ein Mechanismus erkannt, wenn drei
+Bedingungen zugleich gelten. Erstens schrumpft die größte
+Knotenverschiebung je Newton-Schritt dreimal hintereinander nicht unter die
+Hälfte des vorigen Schritts. Zweitens ist die größte Verschiebung zehnmal so
+groß wie im letzten konvergierten Zustand. Drittens liegt ε_p,max des
+Iterierten über der Gültigkeitsgrenze. Am Balken unter 1,2·M_pl war der
+Schritt 16,7 m und blieb gleich; am Prüfblech wuchs die Verschiebung je
+Schritt um 33 mm. Ein konvergierender Newton zieht sich dagegen zusammen, so
+am Zugstab bei 0,9·f_u mit 5,5 / 2,2 / 0,36 / 0,003 mm. Die Spannung ist kein
+Kriterium, denn am Prüfblech änderte sie sich je Schritt noch um 13 bis
+270 N/mm², weil die Fließzone wuchs. Sie steht nur in der Meldung. Die Stufe
+bricht beim Erkennen ab, statt den Verschiebungen 25 Schritte lang
+nachzulaufen; das Prüfblech rechnet so in 249 statt 818 s. Gestörte Pivots
+zählen nicht: Ein lastfreier Freiheitsgrad, den nur ein angehobener Pivot
+hält (die Ankerköpfe am Drehlager mit 0,4 bis 66 Nm/rad), verschiebt sich im
+Newton nicht. Gemeldet wird nur ein Mechanismus, der Last trägt.
+
+**Gültigkeitsgrenze.** Liegt ε_p,max über der Grenze, ist das ganze Ergebnis
+„nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Die Grenze ist
+einstellbar (`Plastizitaet.dehnungsgrenze`, Vorgabe 20 %). Für einen
+Werkstoff mit eingetragener Bruchdehnung (`Material.bruchdehnung`) gilt
+diese. Das Prüfblech aus tet4 konvergiert bei 900 kN mit ε_p 20,56 % und ist
+damit nicht gültig.
+
+**Gleichgewicht mit inneren Kräften.** Jede plastische Rechnung bestimmt am
+gezeigten Zustand das Residuum an den freien Freiheitsgraden. Der Lösungsweg
+erfüllt K u = F_ende + F_p exakt, die inneren Kräfte sind aber K u − F_p(u)
+mit dem F_p, das die Rückführung an u liefert. Es fehlen also
+(F − F_ende) + (F_p(u) − F_p), gemessen gegen die verlangte Last F. Die
+Freiheitsgrade ausgenommener netzabhängiger Zonen (§ 5e.4) zählen nicht.
+Bezogen wird auf ‖F‖, bei einer Endvorspannung mit dem Kräftepaar der
+Sollkraft statt der Verriegelungskraft. Das ist dasselbe Maß wie die
+Abbruchtoleranz, ein konvergierter Lauf liegt darum unter ihr (10⁻³). Ab
+10⁻² ist das Ergebnis nicht gültig, auch wenn es nicht konvergiert ist; nur
+ein vorläufiger Kontakt bleibt vorläufig. Am Zugstab bei 1,2·F_lim fehlen
+(1 − λ)·F, bezogen 0,083; ohne Traglasterkennung (Rücknahmeprobe) erkennt
+die Kontrolle allein den weggelaufenen Zustand mit 0,33. Am Prüfblech fehlen
+412,5 kN, bezogen 0,32.
+
+**Ausgabe.** Jeder plastische Lauf meldet in Protokoll und Zusammenfassung
+ε_p,max mit Ort (Körper, Element, Integrationspunkt, Koordinate) und ΣR, ΣM der
+Lagerkräfte des gezeigten Zustands.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
