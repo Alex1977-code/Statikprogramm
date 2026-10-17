@@ -173,6 +173,19 @@ RT_REST = 1.0e-8
 #: die Reibkraefte heben sich dann auf, auch wenn alle Knoten gleiten (radial unter
 #: einer Ankerkraft). Ruecknahme: False.
 RT_HALT_EINMAL = True
+#: Gleitweg-Speicher der Reibungstangente (17.10.2026). Die Rueckabbildung rechnete mit
+#: dem ganzen Tangentialweg dt = C_t u seit der Ausgangslage, ohne Gedaechtnis: in einer
+#: Stufe nach einer Stufe mit Gleiten (Spannschritt -> Lastfall, Laststufen der
+#: Plastizitaet, Spannstufen) zog die Haftfeder den Knoten zur Ausgangslage zurueck, und die
+#: Reibkraft konnte die Bewegung antreiben statt ihr entgegenzuwirken (gemessen am Klotz mit
+#: Reibung, tests/test_gleitweg: im Lastfall 17 von 17 gleitenden Knoten mit negativer
+#: Dissipation, Reibkraft -12,4 kN statt Haften). Jetzt hat jeder Knoten einen Gleitweg g_s
+#: (Constraint.g_s), die Versuchskraft ist k_h (dt - g_s). g_s steht in der Sicherung des
+#: Zustands ("gleitweg") und wird am Ende jeder konvergierten Stufe fortgeschrieben
+#: (solver.gleitweg_fortschreiben: g_s = dt - F_t/k_h der letzten Loesung); innerhalb einer
+#: Stufe (Newton-Schritte, Ausfall-Iteration, Neustart, Halbierung) bleibt er, ein
+#: Warmstart aus einem anderen Lastfall bringt keinen mit. Ruecknahme: False.
+GLEITWEG_SPEICHER = True
 #: Ab dieser Drehung bzw. relativen Aenderung wird die Tangente eines gleitenden
 #: Knotens der Reibungstangente neu gesetzt (neue Matrix); darunter rechnet die Runde
 #: mit der vorigen Tangente weiter (vereinfachter Newton), die Kraft ist trotzdem die
@@ -389,6 +402,8 @@ class Constraint:
     umkehr_fest: bool = False      # in diesem Lauf vom Pendelschutz der Gleitrichtung festgehalten
                                    # (ContactSystem.umkehr_winkel, Vorschlag 2, 14.10.2026)
     dt_fest: Optional[np.ndarray] = None    # Weg in der Fuge (2,) beim letzten Festhalten
+    g_s: Optional[np.ndarray] = None        # Gleitweg (2,) bis zum Anfang dieser Stufe
+                                            # (GLEITWEG_SPEICHER); None: null
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -1657,6 +1672,8 @@ class ContactSystem:
                              for c in self.cons],
                 "wechsel_anteil": float(getattr(self, "wechsel_anteil", 1.0)),
                 "wechsel_guete": float(getattr(self, "wechsel_guete", float("inf"))),
+                # Gleitweg bis zum Anfang der Stufe (GLEITWEG_SPEICHER)
+                "gleitweg": self.gleitweg(),
                 # ganz rutschende Gruppen ohne anderen Halt: Reststeifigkeit und
                 # Signatur haengen daran - ohne Sicherung faktorisierte der
                 # Warmstart neu (27.09.2026)
@@ -1876,7 +1893,7 @@ class ContactSystem:
                 gl, _f, nd, _kq = self._rueckabbildung(c, dt, Fn)
                 if gl and not c.slip:
                     v["kegel"] += 1
-                    kh = float(np.linalg.norm(self._k_haft(c) * dt))
+                    kh = float(np.linalg.norm(self._k_haft(c) * self._dt_el(c, dt)))
                     v["kegel_max"] = max(v["kegel_max"], kh / limit if limit > 0 else np.inf)
                 elif c.slip and (not gl or (c.slip_dir is not None and nd is not None
                                             and float(np.linalg.norm(c.slip_dir - nd)) > 1e-3)):
@@ -2092,7 +2109,7 @@ class ContactSystem:
                 if self._rt(c):
                     # eingefroren: gegen die Rueckabbildung an dieser Loesung
                     gl, Ft_rm, _nd, _kq = self._rueckabbildung(c, dt, roh)
-                    Ft_z = (self._k_haft(c) * dt if not c.slip
+                    Ft_z = (self._k_haft(c) * self._dt_el(c, dt) if not c.slip
                             else limit * np.asarray(c.slip_dir, float))
                     kraft += float(np.linalg.norm(Ft_rm - Ft_z))
                 elif self._primal_dual(c):
@@ -2222,7 +2239,7 @@ class ContactSystem:
         if dt is None or not (c.mu > 0 or c.haften):
             Ft = np.zeros(2)
         elif not c.slip:
-            Ft = (self._k_haft(c) * dt if self._rt(c)
+            Ft = (self._k_haft(c) * self._dt_el(c, dt) if self._rt(c)
                   else np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
                   else c.kt * dt)
         else:
@@ -2537,12 +2554,54 @@ class ContactSystem:
         nicht die Strafsteifigkeit k_t = 1e4-fache Diagonale der Phase 1."""
         return float(getattr(self, "haft_faktor", HAFT_FAKTOR)) * self._c_pd(c)
 
+    def _dt_el(self, c: Constraint, dt) -> np.ndarray:
+        """Der Weg der Haftfeder: dt - g_s (GLEITWEG_SPEICHER), ohne Gleitweg dt."""
+        g = getattr(c, "g_s", None)
+        if not GLEITWEG_SPEICHER or g is None or dt is None:
+            return dt
+        return np.asarray(dt, float) - np.asarray(g, float)
+
+    def gleitweg(self) -> list:
+        """Je Bedingung der Gleitweg g_s (Liste (2,) oder None) - fuer die Sicherung."""
+        return [None if getattr(c, "g_s", None) is None else np.array(c.g_s, float) for c in self.cons]
+
+    def gleitweg_setzen(self, gw) -> None:
+        """Den Gleitweg einsetzen (Liste je Bedingung) oder loeschen (None)."""
+        if gw is not None and len(gw) != len(self.cons):
+            gw = None
+        for i, c in enumerate(self.cons):
+            g = None if gw is None else gw[i]
+            c.g_s = None if g is None else np.array(g, float).reshape(2)
+
+    def gleitweg_ende(self, u: np.ndarray) -> list:
+        """Der Gleitweg nach der Loesung ``u`` (GLEITWEG_SPEICHER), der Anfang der
+        naechsten Stufe: an einem aktiven Knoten der Reibungstangente dt - F_t/k_h mit
+        der Kraft der Rueckabbildung (haftend bleibt g_s, gleitend wandert er mit), an
+        einem offenen dt (die Haftfeder ist entspannt; schliesst er wieder, haftet er
+        dort, wo er war). Andere Bedingungen: unveraendert."""
+        out = self.gleitweg()
+        if u is None:
+            return out
+        u = np.asarray(u, float)
+        for i, c in enumerate(self.cons):
+            if c.ct is None or not (c.mu > 0 and not c.haften) or not self._rt(c):
+                continue
+            ue = u[c.dofs]
+            dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+            if not c.active:
+                out[i] = dt
+                continue
+            fn = float(getattr(c, "zug_roh", c.Fn))
+            _gl, Ft, _nd, _kq = self._rueckabbildung(c, dt, fn)
+            out[i] = dt - np.asarray(Ft, float) / self._k_haft(c)
+        return out
+
     def _rueckabbildung(self, c: Constraint, dt: np.ndarray, p: float) -> tuple:
         """Coulomb je Knoten (Return-Mapping): (gleitet, F_t (2,), Richtung (2,)
         oder None, Quertangente mu p/|d_t|) aus dem Tangentialweg ``dt`` und der
         Normalkraft ``p`` (ungekappt; Zug traegt keine Reibung). F_t in der
         Ft-Konvention (parallel zum Weg, die Kraft auf das Tragwerk ist -C_t^T F_t)."""
-        dt = np.asarray(dt, float)
+        dt = self._dt_el(c, np.asarray(dt, float))
         f = self._k_haft(c) * dt
         nf = float(np.linalg.norm(f))
         limit = c.mu * max(float(p), 0.0)
@@ -2696,6 +2755,9 @@ class ContactSystem:
                         # Reibungstangente: Haften als Feder k_h (symmetrisch)
                         kmat = kmat + self._k_haft(c) * (np.outer(c.ct[0], c.ct[0])
                                                          + np.outer(c.ct[1], c.ct[1]))
+                        if GLEITWEG_SPEICHER and getattr(c, "g_s", None) is not None:
+                            # F_t = k_h (C_t u - g_s): der Anteil k_h C_t^T g_s ist Last
+                            Fc[c.dofs] += self._k_haft(c) * (c.g_s[0] * c.ct[0] + c.g_s[1] * c.ct[1])
                     elif not (self._haftzeile(c) and not als_federn):
                         kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                     # sonst Haften exakt: zwei Zeilen in C (system_matrizen), keine Feder
@@ -3204,11 +3266,12 @@ class ContactSystem:
                     gl, Ft_rm, nd, kq = self._rueckabbildung(c, dt, c.Fn)
                     if c.pendel_fest:
                         # eingefroren (Pendeln): Status bleibt, Pruefung am Ende des Laufs
-                        c.Ft = (self._k_haft(c) * dt if not c.slip
+                        c.Ft = (self._k_haft(c) * self._dt_el(c, dt) if not c.slip
                                 else limit * np.asarray(c.slip_dir, float))
                     elif ruhe:
                         c.Ft = Ft_rm if gl == c.slip else (
-                            self._k_haft(c) * dt if not c.slip else limit * np.asarray(c.slip_dir, float))
+                            self._k_haft(c) * self._dt_el(c, dt) if not c.slip
+                            else limit * np.asarray(c.slip_dir, float))
                     else:
                         if (RT_UMKEHR and gl and c.slip and c.slip_dir is not None
                                 and float(nd @ np.asarray(c.slip_dir, float)) < RT_UMKEHR_COS):

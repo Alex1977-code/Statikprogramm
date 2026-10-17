@@ -741,7 +741,9 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
                 plast = getattr(r, "_plast_ende", None) or plast
                 if hasattr(r, "_plast_ende"):
                     del r._plast_ende
-                kontakt = getattr(r, "kontaktzustand", None) or kontakt
+                # die Spannstufe ist die naechste Stufe des Lastwegs: der Gleitweg der
+                # Reibung am Ende ist der Anfang der folgenden (contact.GLEITWEG_SPEICHER)
+                kontakt = sv.gleitweg_fortschreiben(getattr(r, "kontaktzustand", None)) or kontakt
                 if j < len(anteile) and isinstance(r.info.get("vorlaeufig"), dict):
                     vorl.append(f"Spannstufe {j}/{len(anteile)}")
                 a_alt, r_konv = a, r
@@ -796,7 +798,7 @@ def _spannzustand(model, system, soll: list, els: dict, workers=None, progress=N
         plast = getattr(r, "_plast_ende", None) or plast
         if hasattr(r, "_plast_ende"):
             del r._plast_ende
-        kontakt = getattr(r, "kontaktzustand", None) or kontakt
+        kontakt = sv.gleitweg_fortschreiben(getattr(r, "kontaktzustand", None)) or kontakt
         u = _u_voll(model, r)
         verankern.append(r)
     # verankert: die Lage des letzten Spannschritts, alle Staebe verriegelt

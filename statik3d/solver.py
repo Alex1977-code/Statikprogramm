@@ -5028,6 +5028,13 @@ class _KontaktImNewton:
         s["kurz"] += 1
         return "kurz"
 
+    def stufe_fertig(self):
+        """Eine Laststufe ist konvergiert: der Gleitweg der Reibungstangente am Ende
+        ihrer letzten Loesung wird der Anfang der naechsten (contact.GLEITWEG_SPEICHER).
+        Eine Halbierung danach geht an die Marke der naechsten Stufe zurueck, also auf
+        diesen Stand."""
+        self.halter["start"] = gleitweg_fortschreiben(self.halter["start"])
+
     def merken(self):
         """Marke fuer einen Ruecksprung an den Anfang einer Laststufe
         (plastizitaet.HALBIEREN_MAX): Kontaktzustand vor dem Startwert und die
@@ -8401,7 +8408,21 @@ def _kontaktlauf_angaben(cs, u, model: Model, grund: str) -> dict:
 FORTSETZUNGEN_MAX = 8
 
 
-def _zustand_markiert(cs, konvergiert: bool) -> dict:
+def gleitweg_fortschreiben(z):
+    """Der Kontaktzustand ``z`` als Anfang der naechsten Stufe desselben Lastwegs
+    (contact.GLEITWEG_SPEICHER): eine flache Kopie mit dem Gleitweg am Ende der Stufe
+    ("gleitweg_ende") als neuem Gleitweg und der Marke "lastweg" - ein Lauf, der damit
+    startet, uebernimmt den Gleitweg auch als fremder Zustand (Spannschritt ->
+    Lastfall). Ohne Zustand oder ohne Ende: ``z`` selbst."""
+    if not isinstance(z, dict) or z.get("gleitweg_ende") is None:
+        return z
+    neu = dict(z)
+    neu["gleitweg"] = [None if g is None else np.array(g, float) for g in z["gleitweg_ende"]]
+    neu["lastweg"] = True
+    return neu
+
+
+def _zustand_markiert(cs, konvergiert: bool, u=None) -> dict:
     """Die Sicherung des Kontaktzustands mit der Marke, ob der Lauf konvergiert
     (oder mit Absicht abgekuerzt) war. Ein Zustand vom Deckel (die Reibungs-
     nachpruefung hat aufgegeben) gilt fuer den naechsten Lauf als fremd: dort
@@ -8412,6 +8433,9 @@ def _zustand_markiert(cs, konvergiert: bool) -> dict:
     z = cs.zustand()
     if isinstance(z, dict):
         z["konvergiert"] = bool(konvergiert)
+        if u is not None and hasattr(cs, "gleitweg_ende"):
+            # der Gleitweg am Ende dieses Laufs: der Anfang der naechsten Stufe
+            z["gleitweg_ende"] = cs.gleitweg_ende(u)
     return z
 
 
@@ -9053,7 +9077,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
                        start=None, versuch: int = 0, einfrieren=None, fenster=None,
                        probelauf: bool = False, kurz: int = None, fortsetzung: bool = False,
-                       gegen_vorher: float = float("inf")):
+                       gegen_vorher: float = float("inf"), gleitweg=False):
     """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
     ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit.
 
@@ -9101,6 +9125,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         cs.nur_symmetrisch = False
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
+    if hasattr(cs, "gleitweg_setzen"):
+        # das Kontaktsystem wird wiederverwendet: kein Gleitweg eines anderen Laufs
+        # (gesetzt wird er unten, nach dem Start; der eingefrorene Zustand kehrt vorher zurueck)
+        cs.gleitweg_setzen(None)
     # Pendelschutz der Gleitrichtung (Vorschlag 2, 14.10.2026): je Lauf aus dem Modell.
     # Nicht in abgekuerzten Laeufen (gemeinsame Iteration): sie enden nie konvergiert,
     # die Pruefung nach dem Festhalten kaeme nie, und der festgehaltene Zustand ginge
@@ -9185,6 +9213,14 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         eingefroren_verworfen = verst
         start = einfrieren
     warm = bool(start) and cs.zustand_setzen(start)
+    # Gleitweg der Reibungstangente (contact.GLEITWEG_SPEICHER): aus dem Start, wenn er
+    # aus diesem Lastfall stammt oder den Lastweg fortsetzt (Spannschritt); ein Neustart
+    # dieses Laufs (``gleitweg``) behaelt ihn; ein fremder Zustand bringt keinen mit
+    if gleitweg is False:
+        gleitweg = (start.get("gleitweg") if isinstance(start, dict)
+                    and (fortsetzung or start.get("lastweg")) else None)
+    if hasattr(cs, "gleitweg_setzen"):
+        cs.gleitweg_setzen(gleitweg)
     if fortsetzung and isinstance(start, dict) and not start.get("konvergiert", True):
         # Der Start kommt aus demselben Lastfall, aber von einem Lauf, der am
         # Deckel aufgab: fuer die Warmstartregel ein fremder Zustand
@@ -9637,7 +9673,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                 start=neu_start, versuch=versuch + 1, fenster=fenster,
                 probelauf=probelauf, fortsetzung=fortsetzung,
-                gegen_vorher=kraft_gegen if neu_start is not None else float("inf"))
+                gegen_vorher=kraft_gegen if neu_start is not None else float("inf"),
+                gleitweg=gleitweg)
             if fortsetzbar and neu_start is not None and not cinfo2.get("contact_converged"):
                 # Die Fortsetzung vom Zustand aus kam nicht zum Ende - jetzt
                 # ist der kalte Start unbedingt noetig
@@ -9650,7 +9687,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                     model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                     start=None, versuch=3, fenster=fenster, probelauf=probelauf,
-                    fortsetzung=fortsetzung)
+                    fortsetzung=fortsetzung, gleitweg=gleitweg)
                 cinfo2["contact_log"] = log_fort + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_iterations"] = it_fort + int(cinfo2.get("contact_iterations", 0))
                 neu_start = None
@@ -9706,7 +9743,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
         "contact_nachfuehrungen": getattr(system, "nachfuehrungen", 0) - n0,
-        "contact_state": _zustand_markiert(cs, converged or abgekuerzt),
+        "contact_state": _zustand_markiert(cs, converged or abgekuerzt, u),
         "contact_frozen_verworfen": eingefroren_verworfen,
         "contact_ingenieur": ingenieur,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}

@@ -2049,6 +2049,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
                         "anfang": basis}
                 grenz_spur.append(ueber_grenze(model, zustand_stufe, einst))
+                if not letzte and hasattr(kontakt, "stufe_fertig"):
+                    # Gleitweg der Reibung fortschreiben - nicht nach der letzten Stufe:
+                    # der Abschluss gehoert zu ihr
+                    kontakt.stufe_fertig()
             basis, F_p = zustand_stufe, F_p_stufe
             lam_alt = lam_k
             continue
@@ -2218,6 +2222,11 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
                     "anfang": basis}
             grenz_spur.append(ueber_grenze(model, zustand_stufe, einst))
+            if not letzte and kontakt is not None and hasattr(kontakt, "stufe_fertig"):
+                # Gleitweg der Reibung fortschreiben (contact.GLEITWEG_SPEICHER) - nicht
+                # nach der letzten Stufe: der Abschluss gehoert zu ihr, sonst hiesse jeder
+                # Knoten, der in ihr glitt, im Ergebnis haftend
+                kontakt.stufe_fertig()
         basis, F_p = zustand_stufe, F_p_stufe
         lam_alt = lam_k
     stufen_gerechnet = len(faktoren)
