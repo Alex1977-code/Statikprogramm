@@ -2163,9 +2163,34 @@ darunter rechnet die Runde mit der alten Matrix weiter und die Abweichung der Kr
 steht im Lastvektor. Residuum je Knoten ist |F_t,Rückabbildung(u) − F_t,linearisiert(u)|;
 die Summe geht in das Laufresiduum (`RESIDUUM_ANTEIL` 10⁻⁶ der Kontaktkraft). Ohne
 Statuswechsel, aber mit offenem Residuum zählt die Runde in Phase 1 als Wechsel und in
-Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Der
-Weg ist wie bisher der gesamte Weg des Lastfalls (ohne Lastgeschichte): Haften heißt
-an der Ausgangslage, bis auf f/k_h.
+Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Bis
+zum 17.10.2026 war der Weg der gesamte Weg seit der Ausgangslage (ohne Lastgeschichte):
+Haften hieß an der Ausgangslage, bis auf f/k_h. Seitdem gilt der Gleitweg-Speicher
+(unten).
+
+**Gleitweg-Speicher (17.10.2026, `contact.GLEITWEG_SPEICHER`, Fehlerkorrektur Stand 4).**
+Jeder Knoten der Reibungstangente trägt einen Gleitweg g_s, die Versuchskraft ist
+f = k_h·(d_t − g_s) und im Lastvektor steht k_h·C_tᵀ·g_s. Am Ende einer Stufe wird er
+fortgeschrieben, g_s = d_t − F_t/k_h mit der Kraft der Rückabbildung an der letzten
+Lösung: ein haftender Knoten behält g_s, ein gleitender nimmt ihn mit, ein offener
+erhält d_t (schließt er wieder, haftet er dort, wo er war). Stufen sind die Spannstufen
+und das Verankern des Spannschritts (`vorspannkraft`) und die Laststufen der
+Plastizität außer der letzten – der Abschluss gehört zu ihr
+(`_KontaktImNewton.stufe_fertig`); eine Halbierung geht an die Marke der Stufe zurück
+und damit auf den Gleitweg ihres Anfangs. Innerhalb einer Stufe (Newton-Schritte,
+Ausfall-Iteration, Neustart nach verworfenem Warmstart) bleibt g_s. Der Gleitweg steht in
+der Sicherung des Kontaktzustands („gleitweg“, am Ende des Laufs „gleitweg_ende“); ein
+Lauf übernimmt ihn nur, wenn der Start aus demselben Lastfall stammt oder die Marke
+„lastweg“ trägt (Spannschritt → Lastfall), ein Warmstart aus einem anderen Lastfall
+bringt keinen mit. Befund (`tests/test_gleitweg`, Klotz mit Reibung μ = 0,3 nach einem
+Spannschritt, der ihn um 1,5 mm in +x gleiten ließ, dazu im Lastfall H = 20 kN in −x):
+ohne Speicher glitten alle 17 Reibknoten weiter in −x um 0,198 mm, mit −12,4 kN Reibkraft
+in Bewegungsrichtung (negative Dissipation), obwohl der Klotz nur +8,9 kN Reibung braucht.
+Mit Speicher hält er (Weg höchstens 0,16 µm an Knoten, die örtlich an der Grenze liegen,
+Reibkraft +8,76 kN bei μ·ΣF_n = 11,14 kN); bei H = 80 kN gleitet er zurück, die
+Reibkraft wirkt mit +14,35 kN gegen die Bewegung. Die Dissipation −f·Δu ist je Knoten und
+Stufe ≥ 0; zwei Laststufen geben dasselbe u wie eine (2·10⁻⁹ m), der Spannschritt selbst
+ist unverändert (1,9·10⁻⁹ m).
 
 Umkehr (`RT_UMKEHR`): dreht t von einer Runde zur nächsten um mehr als 90°, rechnet die
 nächste Runde den Knoten mit der Haftfeder. Ohne die Regel lief der gequetschte Block
@@ -2183,6 +2208,38 @@ Ingenieurkriterium wirken. Ohne das pendelte der Block mit Anschlag (tet4,
 (120 Runden): dort bestimmt der Löser je Runde neu, welche ganz gleitenden Gruppen
 anderswo gehalten sind, und ein einzelner Lagerknoten bekam abwechselnd die grobe und
 die feine Reststeifigkeit; jetzt 6 Runden.
+
+**Reststeifigkeit einmal je Lauf (17.10.2026, `contact.RT_HALT_EINMAL`).** Gleiten alle
+Knoten einer Gruppe und hält sonst nichts ihr Bauteil, bekam bis dahin jeder gleitende
+Knoten die grobe Reststeifigkeit 10⁻³·k_t ohne Ausgleich, sobald aber einer haftete, die
+feine 10⁻⁸·k_d mit Ausgleich – je Runde neu, das 10⁹-Fache hin und her. Die grobe Feder
+trägt Kraft und verschiebt das Bauteil, Knoten haften wieder, die nächste Runde springt
+zurück: am Drehlager-Z mit μ = 0,2 in der Fuge Ankerplatte – Unterlegblech (GZ02) endete
+so jeder Kontaktlauf mit Periode 2 nach 40 Runden in Phase 1, wo weder das Einfrieren
+noch das Ingenieurkriterium wirken. Jetzt entscheidet die erste Runde, in der die Gruppe
+ganz gleitet, für den Rest des Laufs: grob (und die Warnung „Bauteil rutscht“) nur, wenn
+die Fuge Kraft und Moment, die sie in der Lösung davor tangential trug, nicht halten kann,
+F/(μ·ΣF_n) + M/(μ·ΣF_n·|r_t|) > 1 (lineare Wechselwirkung, innerhalb der konvexen
+Grenzkurve; bei ebener Fuge senkrecht zur gemittelten Normale bzw. um sie), sonst fein
+mit Ausgleich. Prüfkörper (`tests/test_pendeln_rt`): Platte 120 × 120 × 20 mm mit Bohrung
+auf einem Unterlegblech, μ = 0,2, Ankerkraft 300 kN auf dem Ring um die Bohrung, in der
+Ebene nur über die Reibfuge gehalten – vorher Deckel nach 40 Runden, jetzt 7 Runden, alle
+96 Knoten gleiten radial, Resultierende der Reibkräfte 0,08 N bei 61 kN Σ|F_t|. Der
+rutschende Block (H = 0,4·N > μ·N) bleibt grob mit Warnung, das Pendelmodell mit Tangente
+konvergiert in 23 statt 27 Runden, mit einer haltenden Nachbarfuge ändert sich nichts.
+Gemessen und verworfen: kleine Normalwechsel (Klaffung unter `pendel_weg`) beim Übergang
+in Phase 2 und in der Erkennung der Periode 2 nicht zu zählen – das Pendelmodell mit
+Tangente fror dann zwei Runden zu früh ein (Weg 1,27 µm über der Schranke, Lauf
+abgelehnt) bzw. brauchte 35 statt 27 Runden.
+
+**Ausfall-Iteration nach dem Deckel (17.10.2026, `solver.AUSFALL_WARM_NACH_DECKEL`).**
+Endet ein Kontaktlauf der Ausfall-Iteration am Deckel, beginnt der nächste Lauf der
+Iteration bei dessen Zustand statt kalt; `solve_with_contact` nimmt ihn als fremden
+Zustand, das Ergebnis bleibt vorläufig, bis ein Lauf selbst konvergiert. An den nächsten
+Aufruf (Newton-Schritt, Lastfall) geht weiterhin nur ein konvergierter Zustand. Am
+Drehlager-Z rechnete die Iteration nach jedem Deckel denselben Lauf kalt noch einmal,
+Runde für Runde gleich, rund 6 Minuten je Lauf. Die Iteration endet wie bisher, sobald
+sich die Menge der ausgefallenen Stäbe nicht mehr ändert.
 
 Gemessen (Faktor 1 000, `tests/test_reibungstangente`, Vergleich mit dem Stand
 9fb56e5): Runden je Rechnung Block mit Reibung 29 → 6, Stempel auf Sockel 14 → 7

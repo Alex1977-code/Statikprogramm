@@ -248,6 +248,23 @@ def test_warmstart_uebernahme():
           and sum(1 for g in sp["gleitweg_ende"] if g is not None) > 0, f"{n} Bedingungen")
 
 
+def test_rechenverfahren():
+    print("\n--- Fehlerkorrektur im Rechenverfahren (Stand 4) ---")
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("gleitweg")
+    m, _u = klotz(20e3)
+    m2, _u2 = klotz(20e3)
+    for lc in m2.load_cases.values():
+        lc.vorspannungen = []                  # nur die Querkraft, eine Stufe
+    m3, _u3 = klotz(20e3)
+    m3.contact_pairs[0].mu = 0.0               # ohne Reibung
+    check("Merkmal „gleitweg“ als Fehlerkorrektur, Stand 4 = VERFAHRENSSTAND; betrifft Reibung + Spannschritt, "
+          "nicht einstufig, nicht ohne Reibung",
+          mk is not None and mk.wechsel[-1].art == rv.FEHLERKORREKTUR and mk.wechsel[-1].stand == 4
+          and rv.VERFAHRENSSTAND == 4 and mk.betrifft(m) and not mk.betrifft(m2) and not mk.betrifft(m3),
+          f"{mk.modellmerkmal if mk else 'fehlt'}")
+
+
 def main():
     test_ruecknahme()
     test_haften()
@@ -255,6 +272,7 @@ def main():
     test_laststufen()
     test_fremder_warmstart()
     test_warmstart_uebernahme()
+    test_rechenverfahren()
     n_f = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_f} von {len(RESULTS)} Prüfungen bestanden")
     return 1 if n_f else 0

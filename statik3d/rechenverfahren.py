@@ -418,6 +418,39 @@ def _traglast_im_ergebnis(model, an) -> str:
             + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
+def _mehrstufig(model) -> bool:
+    """Rechnet ein Lastfall des Modells in mehreren Stufen: plastisch (Laststufen) oder
+    mit Sollkraft (Spannschritt, Spannstufen)?"""
+    if _fliessen(model):
+        return True
+    try:
+        from .vorspannkraft import sollkraefte
+        return any(sollkraefte(model, {n: 1.0}) for n in (getattr(model, "load_cases", None) or {}))
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+def _reibung_mehrstufig(model) -> bool:
+    """Kontakt mit μ > 0 und mehrstufiger Rechnung - das Merkmal des Gleitweg-Speichers."""
+    return _hat_reibung_mu(model) and _mehrstufig(model)
+
+
+def _gleitweg_im_ergebnis(model, an) -> str:
+    """Ergebnisse, die ohne Gleitweg-Speicher (vor dem 17.10.2026) anders gerechnet sein
+    koennen: plastisch (Laststufen) oder mit Spannschritt. Ob in einer frueheren Stufe ein
+    Knoten glitt, steht in der Ergebnisdatei nicht - dann lieber „möglicherweise betroffen“."""
+    namen = []
+    for n, r in _ergebnis_paare(an):
+        inf = getattr(r, "info", None) or {}
+        if not isinstance(inf, dict):
+            continue
+        if isinstance(inf.get("plastizitaet"), dict) or (inf.get("vorspannung") or {}).get("weg") == "spannen und verriegeln":
+            namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("mit Reibung in mehreren Stufen (Spannschritt oder Laststufen): " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
 def _marke_traglast(inhalt: dict) -> bool:
     """Eine Datei, sicher nach plast/traglast gerechnet: ein plastisches Ergebnis traegt
     die Gueltigkeitsgrenze (res.info["plastizitaet"]["dehnungsgrenze"], seit 16.10.2026)."""
@@ -561,6 +594,7 @@ KEINE_REIBUNG = "keine_reibung"
 #: (49cb8bb, 15.10.2026 19:49). Eine Datei mit der Angabe (Stand 2) und eine mit
 #: „reibverfahren“ (ab a371cf2) sind nach allen gerechnet. Stand 3: Traglast, Mechanismus,
 #: Gueltigkeitsgrenze und Gleichgewicht mit inneren Kraeften (plast/traglast, 16.10.2026).
+#: Stand 4: Gleitweg-Speicher der Reibungstangente (kontakt/pendeln-rt, 17.10.2026).
 _KONTAKT = "Kontakt (Kontaktpaar, Kontaktlager, Lager mit Ausfall, Reibung oder Grenzkraft)"
 MERKMALE: list = [
     Merkmal(
@@ -610,6 +644,19 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="plastische Rechnung", betrifft=_fliessen, im_ergebnis=_traglast_im_ergebnis,
         marke=_marke_traglast),
+    Merkmal(
+        # kontakt/pendeln-rt (17.10.2026, Auftrag des Anwenders): die Reibungstangente
+        # rechnete ohne Gedaechtnis des Gleitwegs - in der Stufe nach einer Stufe mit Gleiten
+        # zog die Haftfeder zur Ausgangslage zurueck, die Reibkraft trieb die Bewegung an
+        # (Klotz mit Reibung: 17 von 17 Knoten mit negativer Dissipation, gleitet statt zu
+        # haften; tests/test_gleitweg)
+        name="gleitweg", titel="Gleitweg der Reibung über Stufen",
+        texte={"alt": "Haftfeder auf den ganzen Weg seit der Ausgangslage (ohne Gleitweg)",
+               "neu": "Gleitweg je Reibknoten, fortgeschrieben am Ende jeder Stufe"},
+        wechsel=(Wechsel(stand=4, datum="17.10.2026", commit="a0bd908", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kontakt mit μ > 0 und mehrstufiger Rechnung (Spannschritt oder Plastizität)",
+        betrifft=_reibung_mehrstufig, im_ergebnis=_gleitweg_im_ergebnis),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -693,7 +740,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 3
+VERFAHRENSSTAND = 4
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
