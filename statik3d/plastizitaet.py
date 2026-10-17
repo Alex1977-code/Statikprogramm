@@ -2239,6 +2239,10 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if log is not None:
                 log.append(f"Plastizität: Ort der Fließzone nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
         traglast["ursache"] = traglast_ursache(traglast["ort"])
+        if traglast["ort"].get("kontakt_koerper") and isinstance(traglast.get("mechanismus"), dict):
+            # auch die Meldung „Mechanismus“ nennt den nur reibungsfrei gehaltenen Koerper (17.10.2026)
+            traglast["mechanismus"]["text"] = (str(traglast["mechanismus"].get("text", ""))
+                                               + " – " + traglast["ursache"])
         traglast["text"] = traglast_text(traglast)
         info["traglast"] = traglast
         if traglast.get("mechanismus"):
@@ -2844,11 +2848,34 @@ def traglast_ort(model, konv_zustand, fehl_zustand, mech, zonen) -> dict:
     an_ke = any(0 <= int(n) < len(ke) and ke[int(n)] for n in model.elements[best_i].nodes)
     ort["netzabhaengig"] = bool(netzabh)
     ort["krafteinleitung"] = bool(an_ke)
+    # Ein Koerper, der seitlich nur ueber reibungsfreien Kontakt und Staebe ohne
+    # Quersteifigkeit gehalten ist (17.10.2026, singular.kontakt_gehalten): der
+    # Knoten des Mechanismus zuerst, sonst das Element des Orts
+    try:
+        from .singular import kontakt_koerper_am_ort
+        kh = None
+        if isinstance(mech, dict) and mech.get("knoten") is not None:
+            kh = kontakt_koerper_am_ort(model, knoten=int(mech["knoten"]))
+        if kh is None:
+            kh = kontakt_koerper_am_ort(model, element=best_i)
+        if kh is not None:
+            ort["kontakt_koerper"] = {"koerper": kh["koerper_ort"], "art": kh["art"],
+                                      "reibungsfrei": kh["reibungsfrei"], "kontakte": kh["kontakte"]}
+    except Exception:                          # noqa: BLE001 - nur eine Einordnung
+        pass
     return ort
 
 
 def traglast_ursache(ort: dict) -> str:
     """Die „mögliche Ursache“ der Traglastmeldung (Wortlaut des Anwenders)."""
+    kk = (ort or {}).get("kontakt_koerper")
+    if kk:
+        # Wortlaut des Auftrags vom 17.10.2026
+        if kk.get("reibungsfrei"):
+            return (f"örtlicher Mechanismus: Körper {kk['koerper']} {kk.get('art', 'rutscht')}, er ist nur über "
+                    f"reibungsfreien Kontakt gehalten – Reibung ansetzen oder halten ({ort_text(ort)})")
+        return (f"örtlicher Mechanismus: Körper {kk['koerper']} {kk.get('art', 'rutscht')}, er ist nur über Stäbe "
+                f"ohne Quersteifigkeit gehalten – seitlich halten ({ort_text(ort)})")
     if ort and (ort.get("netzabhaengig") or ort.get("krafteinleitung")):
         return f"örtlicher Mechanismus an Krafteinleitung – Modell prüfen ({ort_text(ort)})"
     return "Traglast überschritten oder örtlicher Mechanismus an " + ort_text(ort)

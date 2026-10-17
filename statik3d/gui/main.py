@@ -25933,6 +25933,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if art_ in ("all", "case") and not self._plastisch_einleitung_bestaetigen():
             return
+        if art_ in ("all", "case") and not self._kontakthalt_bestaetigen():
+            return
         self._apply_parallel_settings()
         if kind is None:
             kind = ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
@@ -26046,6 +26048,52 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         self.info("Berechnung abgebrochen: Kraft ohne Fläche in einer plastischen Rechnung (Protokoll)")
         return False
+
+    def _kontakthalt_bestaetigen(self) -> bool:
+        """Vor einer plastischen Rechnung (17.10.2026, Wunsch des Anwenders: „gut
+        wäre ein verständlicher hinweis“): Koerper, die seitlich nur ueber
+        reibungsfreien Kontakt und Staebe ohne Quersteifigkeit gehalten sind
+        (singular.kontakt_gehalten), fragt ein Dialog wie beim Kreisring -
+        abbrechen oder trotzdem rechnen. Elastisch fragt nichts; die Rechnung
+        schreibt dort eine INFORMATION ins Protokoll."""
+        pz = getattr(self.model, "plastizitaet", None)
+        if not (pz is not None and getattr(pz, "an", False)):
+            return True
+        from .. import singular as _sg
+        try:
+            h = _sg.kontakt_gehalten(self.model)
+        except Exception as ex:            # noqa: BLE001 - ein Hinweis sperrt nie
+            self.log.appendPlainText(f"Prüfung „nur über reibungsfreien Kontakt gehalten“ nicht möglich: {ex}")
+            return True
+        if not h:
+            return True
+        for e in h:
+            self.log.appendPlainText(f"WARNUNG – BITTE LESEN: {e['text']}")
+        self.bottom_tabs.setCurrentIndex(0)
+        if self._kontakthalt_frage(h) == "rechnen":
+            self.log.appendPlainText("Plastische Rechnung trotz nur reibungsfrei gehaltener Körper – vom "
+                                     "Anwender bestätigt")
+            return True
+        self.info("Berechnung abgebrochen: Körper nur über reibungsfreien Kontakt gehalten (Protokoll)")
+        return False
+
+    def _kontakthalt_frage(self, h: list) -> str:
+        """Der Dialog zu :meth:`_kontakthalt_bestaetigen` - die Tests
+        ueberschreiben ihn. "abbrechen" | "rechnen"."""
+        text = "\n\n".join(e["text"] for e in h)
+        if self._modal_gesperrt("Rückfrage „nur über reibungsfreien Kontakt gehalten“ während der Rechnung "
+                                "verneint", text):
+            return "abbrechen"
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Plastische Rechnung: Körper nur über reibungsfreien Kontakt gehalten")
+        box.setText(text + "\n\nAbbrechen (und Reibung ansetzen oder seitlich halten) oder trotzdem rechnen?")
+        b_ab = box.addButton("Abbrechen", QtWidgets.QMessageBox.RejectRole)
+        b_rech = box.addButton("Trotzdem rechnen", QtWidgets.QMessageBox.DestructiveRole)
+        box.setDefaultButton(b_ab)
+        box.setEscapeButton(b_ab)
+        box.exec()
+        return "rechnen" if box.clickedButton() is b_rech else "abbrechen"
 
     def _plastisch_frage(self, h: dict) -> str:
         """Der Dialog zu :meth:`_plastisch_einleitung_bestaetigen` - die Tests

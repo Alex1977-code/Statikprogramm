@@ -4212,6 +4212,27 @@ def _einleitung_plastisch_melden(model, progress) -> None:
         _melde(progress, z)
 
 
+def _kontakthalt_melden(model, progress) -> None:
+    """Koerper, die seitlich nur ueber reibungsfreien Kontakt und Staebe ohne
+    Quersteifigkeit gehalten sind (17.10.2026, singular.kontakt_gehalten):
+    vor dem Start eine INFORMATION (elastisch) bzw. „WARNUNG – BITTE LESEN“
+    (plastisch). Die Oberflaeche fragt plastisch vorher nach. Haelt nie etwas auf."""
+    if not (getattr(model, "contact_pairs", None) or getattr(model, "gap_elements", None)
+            or getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return
+    try:
+        from .singular import kontakt_gehalten_zeilen
+        zeilen = kontakt_gehalten_zeilen(model)
+    except Exception:                         # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return
+    for z in zeilen:
+        if progress is None:
+            import logging
+            logging.getLogger("statik3d").warning(z)
+        else:
+            _melde(progress, z)
+
+
 def _nichtlinear(model, ausfall: bool = None) -> bool:
     """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt, bei
     Fliessen (plastische Dehnungen ueberlagern sich nicht, 17.09.2026) - und
@@ -6722,6 +6743,7 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
     solve_cases). Ein uebergebenes System gilt, wie es ist."""
     factors, name = _lastfall_faktoren(model, case)
     _einleitung_plastisch_melden(model, progress)
+    _kontakthalt_melden(model, progress)
     if system is None:
         sit = _situation_der_faelle(model, list(factors))
         if sit != GRUNDSTELLUNG:
@@ -6892,6 +6914,7 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         names = _mit_referenzen_zuerst(list(names), referenzen)
     out = {}
     _einleitung_plastisch_melden(model, progress)
+    _kontakthalt_melden(model, progress)
 
     def _einfrieren(name):
         ref = referenzen.get(name)

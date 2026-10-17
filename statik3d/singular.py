@@ -406,7 +406,8 @@ def _dreiecke(model, cp) -> tuple:
     return np.array(E), np.array(S), np.array(N), KN
 
 
-def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
+def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict,
+                   reibung_annehmen: bool = False) -> dict:
     """Zeilen aus Kontaktpaaren und Spaltelementen, je Teiltragwerk.
 
     Rueckgabe {Teil: (Gleichungen, Ungleichungen, Namen der Fugen)}. Eine
@@ -423,6 +424,10 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
     die raeumlich naechste. Die Richtung ist die Normale der Facette, nicht
     die der wahren Flaeche; fuer eine Richtungsfrage genuegt das, der
     Hebelarm aendert sich hoechstens um eine Facettengroesse.
+
+    ``reibung_annehmen`` (17.10.2026, :func:`kontakt_gehalten`): jede Fuge haelt
+    so, als haette sie einen Reibbeiwert - die Frage, ob Reibung einen Koerper
+    halten wuerde.
     """
     from scipy.spatial import cKDTree
     from .contact import _tangent_basis
@@ -441,7 +446,8 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
         E, S, N, KN = _dreiecke(model, cp)
         if not len(S):
             continue
-        haelt = bool(getattr(cp, "haften", False)) or float(getattr(cp, "mu", 0.0)) > 0
+        haelt = (bool(getattr(cp, "haften", False)) or float(getattr(cp, "mu", 0.0)) > 0
+                 or reibung_annehmen)
         verbund = bool(getattr(cp, "zug", False))
         radius = float(getattr(cp, "search_radius", 0.0) or 0.0) or 0.1 * groesse
         spalt = float(getattr(cp, "gap", 0.0) or 0.0)
@@ -525,7 +531,7 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
                 continue
             dazu(teil, _zeile(model.nodes[k], vz * np.asarray(d, float),
                               mitten[teil], laengen[teil]), ">", name)
-            if float(getattr(g, "mu", 0.0)) > 0:
+            if float(getattr(g, "mu", 0.0)) > 0 or reibung_annehmen:
                 for t in _tangent_basis(np.asarray(d, float)):
                     dazu(teil, _zeile(model.nodes[k], t, mitten[teil],
                                       laengen[teil]), "=", name)
@@ -825,6 +831,267 @@ def _gruppen_je_knoten(model) -> dict:
         for k in e.nodes:
             aus.setdefault(int(k), g)
     return aus
+
+
+# --------------------------------------------------------------------------
+# Koerper, die seitlich nur ueber reibungsfreien Kontakt und Staebe ohne
+# Quersteifigkeit gehalten sind (17.10.2026)
+# --------------------------------------------------------------------------
+# Anlass: die 16 Ankerplatten am Drehlager haengen nur am Anker (Fachwerkstab)
+# und an einem reibungsfreien Kontakt zu V14, in RFEM genauso (Freigabe Typ 1,
+# Federkonstante 0 in der Ebene). Plastisch am feinen Netz rutschte eine Platte
+# weg; erst die Mechanismus-Erkennung meldete es. Der Anwender: „gut wäre ein
+# verständlicher hinweis in statik3D wenn so etwas auftritt“.
+#
+# Die Vorabsuche oben (restfreiheiten) sieht das nicht: sie nimmt ein
+# Teiltragwerk als starr, und ueber den Stab gehoert der Fuss mit seinem Lager
+# dazu. Hier wird darum **je Koerper** gefragt, was ihn als starren Koerper
+# haelt: Lager, Kontakte (Normale; tangential nur mit Reibung), Spaltelemente,
+# Kopplungen, Knoten, die er mit anderen Elementen teilt, und Staebe - ein
+# Fachwerkstab oder Seil nur laengs, auch hinter einer starren Scheibe oder
+# einem starren Koerper. Bleibt eine Bewegung frei, die eine Reibung im Kontakt
+# halten wuerde (oder die nur Staebe ohne Quersteifigkeit begleiten), steht ein
+# Hinweis da. Am Kontakt selbst wird nichts geaendert.
+REIBUNG_VORSCHLAG = "μ = 0,2 Stahl/Stahl"
+
+
+def koerper_der_elemente(model) -> dict:
+    """{Koerpername: [Volumenelemente]} - die Koerper des Modells
+    (Model.koerper), sonst die Elementgruppen der Volumenelemente."""
+    from .elemente import VOLUMEN_TYPEN
+    vol = set(VOLUMEN_TYPEN)
+    aus: dict = {}
+    zu: set = set()
+    ne = len(model.elements)
+    for name, kp in (getattr(model, "koerper", None) or {}).items():
+        el = [int(i) for i in (getattr(kp, "elemente", None) or [])
+              if 0 <= int(i) < ne and model.elements[int(i)].typ in vol]
+        if el:
+            aus[str(name)] = el
+            zu |= set(el)
+    for i, e in enumerate(model.elements):
+        if e.typ in vol and i not in zu:
+            aus.setdefault(str(getattr(e, "group", "") or "default"), []).append(i)
+    return aus
+
+
+def kontakt_gehalten(model) -> list:
+    """Koerper, die in einer oder mehreren Richtungen nur ueber reibungsfreie
+    Kontakte (bzw. Fugen ohne tangentiale Steifigkeit) und Staebe ohne
+    Quersteifigkeit gehalten sind - je Gruppe gleichartiger Koerper ein
+    Eintrag {"koerper", "anzahl", "bewegung", "art" (rutscht | kippt),
+    "kontakte", "partner", "staebe", "reibungsfrei", "text"}. Leer, wenn
+    alles gehalten ist. Ein Koerper ganz ohne Halt gehoert nicht dazu, den
+    nennt die Vorabsuche (restfreiheiten). Kostet je Koerper eine
+    6x6-Eigenwertaufgabe; die Kontaktzeilen einmal fuer alle."""
+    from .elemente import VOLUMEN_TYPEN
+    vol = set(VOLUMEN_TYPEN)
+    koerper = koerper_der_elemente(model)
+    if not koerper:
+        return []
+    nn = int(model.nn)
+    X = np.asarray(model.nodes, float)
+    namen = sorted(koerper, key=_natuerlich)
+    knoten = {b: {int(k) for i in koerper[b] for k in model.elements[i].nodes if 0 <= int(k) < nn}
+              for b in namen}
+    el_koerper = {i: b for b in namen for i in koerper[b]}
+    besitzer: dict = {}
+    for b in namen:
+        for k in knoten[b]:
+            besitzer.setdefault(k, set()).add(b)
+    # Elemente an den Knoten, die zu keinem Koerper gehoeren (Staebe, Schalen, Federn)
+    fremd: dict = {}
+    for i, e in enumerate(model.elements):
+        if i in el_koerper:
+            continue
+        for k in e.nodes:
+            fremd.setdefault(int(k), []).append(i)
+    stab_name = {}
+    for mn, mem in (getattr(model, "members", None) or {}).items():
+        for ei in mem.elements:
+            stab_name[int(ei)] = str(mn)
+    teil_von = {k: namen.index(next(iter(sorted(bs)))) for k, bs in besitzer.items()}
+    mitten, laengen = {}, {}
+    for j, b in enumerate(namen):
+        mitten[j], laengen[j] = _mitte_und_laenge(X[sorted(knoten[b])])
+    kontakt = _kontaktzeilen(model, teil_von, mitten, laengen)
+    hyp = _kontaktzeilen(model, teil_von, mitten, laengen, reibung_annehmen=True)
+    # reibungsfreie Fugen und ihre Seiten
+    reibfrei, seiten = set(), {}
+    for cp in getattr(model, "contact_pairs", None) or []:
+        if not (bool(getattr(cp, "haften", False)) or float(getattr(cp, "mu", 0.0)) > 0
+                or bool(getattr(cp, "zug", False))):
+            reibfrei.add(cp.name)
+        s_b = {b for k in (cp.slave_nodes or []) for b in besitzer.get(int(k), ())}
+        m_b = {el_koerper[int(i)] for i in (cp.master_elements or []) if int(i) in el_koerper}
+        seiten[cp.name] = (s_b, m_b)
+    for g in getattr(model, "gap_elements", None) or []:
+        if float(getattr(g, "mu", 0.0)) <= 0:
+            reibfrei.add(str(getattr(g, "group", "") or "Spaltelement"))
+    achsen = np.eye(3)
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
+
+    def stabzeilen(kn, b, mitte, L, staebe):
+        """Was am Knoten kn ausser dem Koerper b haengt: (Zeilen, voll)."""
+        z, voll = [], False
+        for i in fremd.get(kn, []):
+            e = model.elements[i]
+            if e.typ in ("truss", "seil"):
+                a, c = (int(e.nodes[0]), int(e.nodes[-1]))
+                z.append(_zeile(X[kn], X[c] - X[a], mitte, L))
+                staebe.add(stab_name.get(i, f"Element {i}"))
+            else:
+                voll = True
+        for bb in besitzer.get(kn, ()):
+            if bb != b:
+                voll = True
+        return z, voll
+
+    roh = []
+    for j, b in enumerate(namen):
+        K = knoten[b]
+        mitte, L = mitten[j], laengen[j]
+        gl, ug = _lagerzeilen(model, K, mitte, L)
+        kg, ku, fugen = kontakt.get(j, ([], [], set()))
+        hg, _hu, _hf = hyp.get(j, ([], [], set()))
+        zeilen = list(gl) + list(ug) + list(kg) + list(ku)
+        staebe: set = set()
+        # Knoten des Koerpers, an denen anderes haengt
+        for k in K:
+            if k not in fremd and len(besitzer.get(k, ())) < 2:
+                continue
+            z, voll = stabzeilen(k, b, mitte, L, staebe)
+            if voll:
+                zeilen += [_zeile(X[k], achsen[d], mitte, L) for d in range(3)]
+            zeilen += z
+        # Kopplungen und starre Koerper: was am anderen Ende haelt
+        master: dict = {}
+        for kp in getattr(model, "kopplungen", None) or []:
+            a, c = int(kp.node_a), int(kp.node_b)
+            if (a in K) == (c in K):
+                continue
+            g = str(getattr(kp, "gruppe", "") or "")
+            innen, aussen = (a, c) if a in K else (c, a)
+            if g.startswith(STARR_GRUPPE) or g.startswith(STABENDE_GRUPPE):
+                master.setdefault(aussen, True)
+                continue
+            for richtung, wert in kp.paare():
+                if wert != 0:
+                    zeilen.append(_zeile(X[innen], richtung, mitte, L))
+        for sk in getattr(model, "starrkoerper", None) or []:
+            m_, sl = int(sk.master), [int(x) for x in (sk.slaves or [])]
+            if m_ not in K and any(x in K for x in sl):
+                master.setdefault(m_, True)
+            elif m_ in K and any(x not in K for x in sl):
+                zeilen += [_zeile(X[m_], achsen[d], mitte, L) for d in range(3)]
+        for m_ in master:
+            z, voll = stabzeilen(m_, b, mitte, L, staebe)
+            mg, mu_ = _lagerzeilen(model, {m_}, mitte, L)
+            if voll:
+                zeilen += [_zeile(X[m_], achsen[d], mitte, L) for d in range(3)]
+                zeilen += [_drehzeile(achsen[d]) for d in range(3)]
+            zeilen += z + list(mg) + list(mu_)
+        zeilen = [x for x in zeilen if x is not None]
+        if not zeilen:
+            continue                              # ganz ohne Halt: die Vorabsuche
+        frei = _nullraum(zeilen)
+        if not frei.shape[1]:
+            continue
+        mit_reibung = _nullraum(zeilen + list(hg))
+        hilft = mit_reibung.shape[1] < frei.shape[1]
+        rf = sorted(f for f in fugen if f in reibfrei)
+        if not (hilft and rf) and not staebe:
+            continue
+        partner = set()
+        for f in rf:
+            s_b, m_b = seiten.get(f, (set(), set()))
+            partner |= (m_b if b in s_b else s_b) - {b}
+        roh.append({"koerper": b, "frei": frei, "kontakte": rf if hilft else [],
+                    "partner": sorted(partner, key=_natuerlich), "staebe": sorted(staebe, key=_natuerlich)})
+    return _kontakt_gehalten_gruppen(roh)
+
+
+def _kontakt_gehalten_gruppen(roh: list) -> list:
+    """Gleichartige Koerper (dieselben freien Bewegungen, dieselben Gegenkoerper
+    und Fugen) in eine Zeile."""
+    gruppen: dict = {}
+    for r in roh:
+        S = r["frei"]
+        bew = _bewegungstext(S)
+        _u, s, vt = np.linalg.svd(S[3:, :], full_matrices=True)
+        rang = int((s > 1e-3).sum())
+        T = _unterraum(S[:3, :] @ vt[rang:].T) if rang < S.shape[1] else np.zeros((3, 0))
+        art = "rutscht" if (T.shape[1] or "verschieblich" in bew) else "kippt"
+        key = (bew, tuple(r["partner"]), tuple(r["kontakte"]), art)
+        g = gruppen.setdefault(key, {"koerper": [], "staebe": [], "T": T})
+        g["koerper"].append(r["koerper"])
+        g["staebe"] += [x for x in r["staebe"] if x not in g["staebe"]]
+    aus = []
+    for (bew, partner, kontakte, art), g in gruppen.items():
+        kn = sorted(g["koerper"], key=_natuerlich)
+        st = sorted(g["staebe"], key=_natuerlich)
+        n = len(kn)
+        wer = (f"Körper {kn[0]}" if n == 1 else
+               f"{n} Körper " + (", ".join(kn) if n <= 6 else f"{kn[0]}–{kn[-1]}"))
+        T = g["T"]
+        wo = ("in der Ebene" if T.shape[1] == 2 else
+              f"in Richtung {_achse(T[:, 0])}" if T.shape[1] == 1 else
+              "in allen Richtungen" if T.shape[1] == 3 else "gegen Drehen")
+        er = "er" if n == 1 else "sie"
+        stab = ""
+        if st:
+            stab = (f" und {'hängt' if n == 1 else 'hängen'} an {'dem Stab' if len(st) == 1 else 'den Stäben'} "
+                    f"{_namenstext(st, 'Stäbe')} ohne Quersteifigkeit")
+        if kontakte:
+            gegen = f" zu {', '.join(partner)}" if partner else ""
+            text = (f"{wer} {'ist' if n == 1 else 'sind'} {wo} nur über reibungsfreien Kontakt{gegen} "
+                    f"({', '.join(kontakte)}) gehalten{stab} – {bew}. Elastisch und symmetrisch belastet "
+                    f"bleibt {er} liegen; bei plastischer Rechnung oder unsymmetrischer Last kann {er} "
+                    f"wegrutschen. Abhilfe: Reibbeiwert im Kontakt ansetzen (z. B. {REIBUNG_VORSCHLAG}) "
+                    "oder seitlich halten.")
+        else:
+            text = (f"{wer} {'ist' if n == 1 else 'sind'} {wo} nur über Stäbe ohne Quersteifigkeit gehalten"
+                    f" ({_namenstext(st, 'Stäbe')}) – {bew}. Elastisch und symmetrisch belastet bleibt {er} "
+                    f"stehen; bei plastischer Rechnung oder unsymmetrischer Last kann {er} wegrutschen oder "
+                    "kippen. Abhilfe: seitlich halten (Lager, Feder, Kopplung oder Kontakt mit Reibung).")
+        aus.append({"koerper": kn, "anzahl": n, "bewegung": bew, "art": art, "kontakte": list(kontakte),
+                    "partner": list(partner), "staebe": st, "reibungsfrei": bool(kontakte), "text": text})
+    aus.sort(key=lambda e: (-e["anzahl"], _natuerlich(e["koerper"][0])))
+    return aus
+
+
+def kontakt_gehalten_zeilen(model) -> list:
+    """Die Zeilen vor dem Start: INFORMATION bei elastischer, „WARNUNG – BITTE
+    LESEN“ bei plastischer Rechnung (wie der Hinweis zum Kreisring)."""
+    try:
+        h = kontakt_gehalten(model)
+    except Exception:                          # noqa: BLE001 - ein Hinweis sperrt nie
+        return []
+    pz = getattr(model, "plastizitaet", None)
+    wort = "WARNUNG – BITTE LESEN" if (pz is not None and getattr(pz, "an", False)) else "INFORMATION"
+    return [f"{wort}: {e['text']}" for e in h]
+
+
+def kontakt_koerper_am_ort(model, element=None, knoten=None):
+    """Der Eintrag von :func:`kontakt_gehalten`, zu dessen Koerper das Element
+    bzw. der Knoten gehoert - fuer die Traglastmeldung - oder None."""
+    if element is None and knoten is None:
+        return None
+    h = kontakt_gehalten(model)
+    if not h:
+        return None
+    kk = koerper_der_elemente(model)
+    gesucht = set()
+    for b, el in kk.items():
+        if element is not None and int(element) in set(el):
+            gesucht.add(b)
+        if knoten is not None and any(int(knoten) in [int(x) for x in model.elements[i].nodes] for i in el):
+            gesucht.add(b)
+    for e in h:
+        treffer = [b for b in e["koerper"] if b in gesucht]
+        if treffer:
+            return dict(e, koerper_ort=treffer[0])
+    return None
 
 
 # --------------------------------------------------------------------------
