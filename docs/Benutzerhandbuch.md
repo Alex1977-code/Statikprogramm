@@ -12845,6 +12845,45 @@ plastischen Rechnung gehen sie auch ins Residuum der inneren Kräfte ein. Die
 Mindesttangente der Plastizität hält keine Kraft im Ergebnis, sie wirkt nur in der
 Tangente.
 
+**Körper nur über reibungsfreien Kontakt gehalten (seit 17.10.2026).** Vor jeder
+Rechnung, auch der linearen, prüft das Programm je Körper, was ihn als starren Körper
+hält: Lager, Kontakte (die Normale; in der Fugenebene nur mit Reibbeiwert oder Haften),
+Spaltelemente, Kopplungen, Knoten, die er mit anderen Bauteilen teilt, und Stäbe –
+Fachwerkstäbe und Seile nur längs, auch hinter einer starren Scheibe oder einem starren
+Körper. Bleibt eine Richtung frei, die eine Reibung in der Fuge oder eine Federkonstante
+größer null in einer Freigabe halten würde, oder halten ihn dort nur Stäbe ohne
+Quersteifigkeit, steht ein Hinweis im Klartext da, mit Name des Körpers, freier
+Richtung, der verantwortlichen Fuge bzw. Freigabe (Name aus dem Modell) und Abhilfe;
+gleichartige Körper in einer Zeile. Beispiel: „Körper P1 ist in der Ebene nicht
+gehalten (in der Ebene (x, y) frei verschieblich, um z frei drehbar). Er liegt
+reibungsfrei auf Block (Fuge ‚Fuge‘: Federkonstante 0, kein Reibbeiwert) und hängt an
+dem Stab S1 ohne Quersteifigkeit. Bei symmetrischer Last bleibt er in Ruhe, bei
+Querlast oder ungleichmäßigem Fließen kann er wegrutschen. Abhilfe: Reibbeiwert in der
+Fuge setzen (z. B. μ = 0,2 nach EN 1090-2, Klasse D), Federkonstante > 0 oder seitliche
+Halterung.“ Bei elastischer Rechnung ist es eine **Information** im Protokoll, bei
+plastischer eine **Warnung** vor dem Start; die Oberfläche fragt dann wie beim
+Kreisring nach: „Abbrechen“, „Reibbeiwert setzen…“ oder „Trotzdem rechnen“. Nichts wird
+automatisch geändert. „Reibbeiwert setzen…“ fragt den Wert (Vorschlag 0,2) und setzt
+ihn erst nach Bestätigung in die genannten reibungsfreien Fugen, als ein Schritt, den
+Strg+Z zurücknimmt; Freigaben in Lagern bleiben, wie sie sind. Anlass sind die
+Ankerplatten am Drehlager: Sie hängen nur am Anker und am reibungsfreien Kontakt zu V14,
+in RFEM genauso (Freigabe Typ 1, Federkonstante 0 in der Ebene); plastisch am feinen
+Netz rutschte eine Platte weg.
+
+**Während der Rechnung: Starrkörperbewegung.** Bewegt sich ein solcher Körper (oder ein
+frei bewegliches Bauteil aus der Suche am Faktor) im Ergebnis als Ganzes, ohne
+nennenswerte Verformung, um mehr als ein Tausendstel seiner Größe, steht getrennt vom
+plastischen Mechanismus „Körper … bewegt sich als Ganzes um … mm in Richtung … – nicht
+gehalten“ als WARNUNG in Protokoll und Zusammenfassung. Unter **Ergebnisse → Freie
+Bewegungen** steht die Bewegung als Eintrag; ein Klick hebt die Knoten des Körpers in
+der 3D-Ansicht hervor und zeichnet einen Pfeil in der Bewegungsrichtung. Bricht eine
+plastische Rechnung ab, wird dasselbe für den letzten Versuch geprüft. Meldet die
+Rechnung dann „Kein Gleichgewicht“ oder „Mechanismus“ an einem solchen Körper, heißt die
+Ursache „örtlicher Mechanismus: Körper … rutscht, er ist nur über reibungsfreien Kontakt
+gehalten – Reibung ansetzen oder halten“. Am Kontakt selbst ändert die Prüfung nichts.
+Ein Körper ganz ohne Halt gehört nicht dazu; ihn nennt die Prüfung der freien
+Bewegungen weiter oben.
+
 **Das Programm lagert nichts.** Die Teile in den genannten Richtungen zu lagern
 (Lager, Feder oder Reibung) ist Sache des Anwenders; bis dahin ist ihre
 Verschiebung unbestimmt, und ihre Spannungen gelten nur, solange die Last auf

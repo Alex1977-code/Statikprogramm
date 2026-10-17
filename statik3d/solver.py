@@ -1852,6 +1852,7 @@ class Results:
         if self.info.get("loeser_nachweis"):
             s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
         s.extend(freie_teile_zeilen(self.info.get("freie_teile")))
+        s.extend(starrkoerper_zeilen(self.info))
         # Last an automatisch gehaltenen FHG: Mechanismus, nicht gueltig (14.10.2026)
         s.extend(auto_gehalten_zeilen(self.info))
         # Greift die Knotendilatation fuer einen Werkstoff nicht (nu ausserhalb
@@ -2432,6 +2433,10 @@ def plastisch_zeilen(pz: dict) -> list:
         z.append(f"NICHT GÜLTIG            : {dg.get('text', 'außerhalb der Theorie kleiner Verzerrungen')}")
     elif isinstance(dg, dict) and dg.get("netzabhaengig") and dg.get("warnung"):
         z.append(f"WARNUNG: {dg['warnung']}")
+    if isinstance(tl, dict):
+        for e in tl.get("starrkoerper") or []:
+            # getrennt vom plastischen Mechanismus (17.10.2026)
+            z.append(f"NICHT GÜLTIG            : Starrkörperbewegung im letzten Versuch – {e.get('text', '')}")
     if isinstance(pz.get("eps_p_ort"), dict):
         z.append("ε_p,max                 : " + pl.eps_p_ort_text(pz["eps_p_ort"])
                  + (f" (Grenze {_z(float(dg['grenze']) * 100.0, stellen=4)} %, {dg.get('quelle', '')})"
@@ -2466,6 +2471,9 @@ def plastisch_ungueltig(info) -> str:
     mech = pz.get("mechanismus")
     if isinstance(mech, dict) and mech.get("text"):
         teile.append(str(mech["text"]))
+    if isinstance(tl, dict):
+        for e in tl.get("starrkoerper") or []:
+            teile.append("Starrkörperbewegung: " + str(e.get("text", "")))
     dg = pz.get("dehnungsgrenze")
     if isinstance(dg, dict) and dg.get("verletzt"):
         teile.append(str(dg.get("text") or "außerhalb der Theorie kleiner Verzerrungen"))
@@ -5784,6 +5792,12 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
     from . import plastizitaet as pl
     r_vec = info.pop("_residuum", None)
     spur = info.pop("_ueber_grenze", None) or []
+    # Starrkoerperbewegung im letzten Versuch (17.10.2026): als freie Bewegung fuer die Ansicht
+    tl = info.get("traglast")
+    if isinstance(tl, dict) and tl.get("starrkoerper"):
+        from . import singular as _sg
+        res.singular = list(res.singular or []) + [_sg.starrkoerper_singularitaet(e) for e in tl["starrkoerper"]]
+        tl["starrkoerper"] = [{k: v for k, v in e.items() if k != "knoten"} for e in tl["starrkoerper"]]
     # Die letzte Zeile des Protokolls bleibt die Zusammenfassung des Fliessens
     # („Plastizität: n Elemente fließen …“): die Rechenliste zeigt die letzte Zeile
     # eines Postens (tests/test_vorspannung_sofort). Die Zeilen hier kommen davor.
@@ -6246,11 +6260,48 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
     _stabenden_pruefen(model, res, F)
     _gleichgewicht_pruefen(model, res, F)
+    _starrkoerper_pruefen(model, res, progress)
     if model.has_contact:
         # vorlaeufig, wenn ein Kontaktlauf, der zaehlt, nicht konvergierte (14.10.2026)
         vorlaeufig_eintragen(res, progress)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
+
+
+def _starrkoerper_pruefen(model: Model, res: Results, progress=None) -> None:
+    """Bewegt sich ein Koerper als Ganzes? (17.10.2026, Praezisierung des
+    Anwenders, singular.starrkoerperbewegung) - nur fuer die Koerper, die die
+    Pruefung vor dem Start als nicht gehalten nennt (singular.kontakt_gehalten)
+    oder die Suche am Faktor als frei bewegliches Bauteil (freie_teile).
+    Ergebnis: res.info["starrkoerperbewegung"], je Koerper eine freie Bewegung
+    mit Pfeil fuer die 3D-Ansicht (res.singular) und eine WARNUNG im Protokoll.
+    Getrennt vom plastischen Mechanismus; haelt nie etwas auf."""
+    try:
+        from . import singular as _sg
+        namen = set()
+        for e in res.info.get("freie_teile") or []:
+            if e.get("art") == "koerper":
+                namen |= set(e.get("namen") or [])
+        if getattr(model, "contact_pairs", None) or getattr(model, "gap_elements", None) \
+                or getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None):
+            for e in _sg.kontakt_gehalten_gemerkt(model):
+                namen |= set(e["koerper"])
+        if not namen or getattr(res, "u", None) is None:
+            return
+        b = _sg.starrkoerperbewegung(model, res.u, sorted(namen))
+    except Exception:                          # noqa: BLE001 - eine Pruefung sperrt nie
+        return
+    if not b:
+        return
+    res.info["starrkoerperbewegung"] = [{k: v for k, v in e.items() if k != "knoten"} for e in b]
+    res.singular = list(res.singular or []) + [_sg.starrkoerper_singularitaet(e) for e in b]
+    for e in b:
+        _melde(progress, "WARNUNG: " + e["text"])
+
+
+def starrkoerper_zeilen(info) -> list:
+    """Die Zeilen der Zusammenfassung zur Starrkoerperbewegung (17.10.2026)."""
+    return ["WARNUNG: " + str(e.get("text", "")) for e in ((info or {}).get("starrkoerperbewegung") or [])]
 
 
 def _stabenden_pruefen(model: Model, res: Results, F) -> None:

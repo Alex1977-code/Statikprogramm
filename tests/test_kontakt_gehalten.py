@@ -70,15 +70,23 @@ def test_erkennung():
           str([x.get("koerper") for x in h]))
     if h:
         t = h[0]["text"]
-        check("… der Text: nur über reibungsfreien Kontakt zu Block gehalten",
-              "nur über reibungsfreien Kontakt" in t and "Block" in t and "Fuge" in t, t)
-        check("… er nennt den Stab ohne Quersteifigkeit", "S1" in t and "Quersteifigkeit" in t, t)
+        # Wortlaut nach der Praezisierung des Anwenders (17.10.2026)
+        check("… „Körper P1 ist in der Ebene nicht gehalten.“", t.startswith("Körper P1 ist in der Ebene nicht "
+                                                                         "gehalten"), t)
+        check("… „Er liegt reibungsfrei auf (Fuge ‚Fuge‘: … kein Reibbeiwert)“ – Name der Fuge aus dem Modell",
+              "Er liegt reibungsfrei auf Block (Fuge ‚Fuge‘: Federkonstante 0, kein Reibbeiwert)" in t,
+              t)
+        check("… er nennt den Gegenkörper und den Stab ohne Quersteifigkeit",
+              "Block" in t and "S1" in t and "Quersteifigkeit" in t, t)
         check("… und die freien Richtungen (Ebene x, y und Drehung um z)",
-              "(x, y)" in h[0]["bewegung"] and "um z" in h[0]["bewegung"], h[0]["bewegung"])
-        check("… elastisch und symmetrisch bleibt er liegen, plastisch kann er wegrutschen",
-              "bleibt er liegen" in t and "wegrutschen" in t, t)
-        check("… Abhilfe: Reibbeiwert (μ = 0,2 Stahl/Stahl) oder seitlich halten",
-              "Reibbeiwert" in t and "μ = 0,2" in t and "seitlich halten" in t, t)
+              "(x, y)" in h[0]["bewegung"] and "um z" in h[0]["bewegung"] and "(x, y)" in t, h[0]["bewegung"])
+        check("… „Bei symmetrischer Last bleibt er in Ruhe, bei Querlast oder ungleichmäßigem Fließen kann er "
+              "wegrutschen.“", "Bei symmetrischer Last bleibt er in Ruhe, bei Querlast oder ungleichmäßigem Fließen "
+              "kann er wegrutschen." in t, t)
+        check("… „Abhilfe: Reibbeiwert in der Fuge setzen (z. B. μ = 0,2 nach EN 1090-2, Klasse D), "
+              "Federkonstante > 0 oder seitliche Halterung.“",
+              t.endswith("Abhilfe: Reibbeiwert in der Fuge setzen (z. B. μ = 0,2 nach EN 1090-2, Klasse D), "
+                         "Federkonstante > 0 oder seitliche Halterung."), t)
         check("… Art: rutscht", h[0].get("art") == "rutscht", h[0].get("art"))
     check("mit μ = 0,2: kein Hinweis", not sg.kontakt_gehalten(kloetze(mu=0.2)), "")
     check("seitlich gehalten: kein Hinweis", not sg.kontakt_gehalten(kloetze(seitlich=True)), "")
@@ -86,6 +94,17 @@ def test_erkennung():
     h = sg.kontakt_gehalten(m)
     check("Platte ohne Anker (nur Kontakt): ebenfalls ein Hinweis, ohne Stab",
           len(h) == 1 and "Stab" not in h[0]["text"], str([x.get("text", "")[:120] for x in h]))
+    # Freigabe mit Federkonstante 0: Klotz nur senkrecht gelagert (Lager „Unterlage“)
+    m = kloetze()
+    m.contact_pairs = []
+    from statik3d.model import Support
+    e = next(e for e in m.elements if e.group == "P1")
+    for k in e.nodes[:4]:
+        m.supports.append(Support(node=int(k), dofs=[2], name="Unterlage"))
+    h = sg.kontakt_gehalten(m)
+    check("Freigabe (Lager nur senkrecht, in der Ebene Federkonstante 0): Hinweis mit dem Namen der Freigabe",
+          len(h) == 1 and "Freigabe ‚Unterlage‘" in h[0]["text"] and "Federkonstante 0" in h[0]["text"],
+          str([x.get("text", "")[:200] for x in h]))
     h = sg.kontakt_gehalten(kloetze(3))
     check("drei gleiche Klötze: eine Zeile „3 Körper P1, P2, P3“",
           len(h) == 1 and h[0]["anzahl"] == 3 and h[0]["text"].startswith("3 Körper P1, P2, P3"),
@@ -105,9 +124,60 @@ def test_stufe_und_protokoll():
     meld = []
     r = solver.solve_static(kloetze(), case="LF1", progress=lambda t, *a: meld.append(str(t)))
     check("die Rechnung (elastisch) meldet die Zeile vor dem Start ins Protokoll",
-          any(x.startswith("INFORMATION: ") and "reibungsfreien Kontakt" in x for x in meld),
-          [x for x in meld if "Kontakt" in x][:2])
+          any(x.startswith("INFORMATION: ") and "nicht gehalten" in x for x in meld),
+          [x for x in meld if "gehalten" in x][:2])
     check("… und rechnet", r is not None and r.u is not None, "")
+
+
+def test_starrkoerperbewegung():
+    print("\n--- 5. Während der Rechnung: Starrkörperbewegung, getrennt vom plastischen Mechanismus ---")
+    m = kloetze()
+    e = next(e for e in m.elements if e.group == "P1")
+    kn = [int(k) for k in e.nodes]
+    u = np.zeros((m.nn, 6))
+    u[kn, 0] = 0.005
+    b = sg.starrkoerperbewegung(m, u, ["P1"])
+    check("5 mm Verschiebung des ganzen Klotzes in x: erkannt",
+          len(b) == 1 and b[0]["koerper"] == "P1" and abs(b[0]["weg"] - 0.005) < 1e-9, str(b)[:200])
+    if b:
+        check("… Wortlaut „Körper P1 bewegt sich als Ganzes um 5 mm in Richtung x – nicht gehalten“",
+              b[0]["text"].startswith("Körper P1 bewegt sich als Ganzes um 5 mm in Richtung x – nicht gehalten"),
+              b[0]["text"])
+    u2 = np.zeros((m.nn, 6))
+    u2[kn, 0] = np.linspace(0.0, 0.005, len(kn))
+    check("dieselbe Größe als Verformung (nicht starr): keine Meldung", not sg.starrkoerperbewegung(m, u2, ["P1"]),
+          "")
+    u3 = np.zeros((m.nn, 6))
+    u3[kn, 0] = 1e-7
+    check("0,0001 mm: keine Meldung", not sg.starrkoerperbewegung(m, u3, ["P1"]), "")
+    # in der Rechnung: der reibungsfreie Klotz mit einer Querlast, die der
+    # Gleichungsloeser noch annimmt (0,25 N bei 1 MN; 1 N bricht als „singulär“ ab) -
+    # der angehobene Pivot laesst ihn wandern (gemessen rund 200 N/m: gut 1 mm)
+    m = kloetze()
+    oben = [int(k) for k in e.nodes[4:8]]
+    m.load_node(oben[0], Fx=0.25, case="LF1")
+    r = solver.solve_static(m, case="LF1")
+    sk = r.info.get("starrkoerperbewegung") or []
+    check("Rechnung mit kleiner Querlast: Starrkörperbewegung des Klotzes im Ergebnis",
+          any(x["koerper"] == "P1" for x in sk), str(sk)[:240])
+    zl = [z for z in r.summary().splitlines() if "bewegt sich als Ganzes" in z]
+    check("… als WARNUNG in der Zusammenfassung, nicht als „Mechanismus“",
+          zl and zl[0].startswith("WARNUNG") and "Mechanismus" not in zl[0], str(zl)[:240])
+    sing = [x for x in (r.singular or []) if x.art == "starr"]
+    check("… als Befund mit Richtung für die 3D-Ansicht (Ergebnisse → Freie Bewegungen)",
+          len(sing) == 1 and sing[0].koerper == ["P1"] and float(np.linalg.norm(sing[0].t)) > 0.99, str(sing)[:200])
+    m = kloetze(mu=0.2)
+    m.load_node(oben[0], Fx=0.25, case="LF1")
+    r = solver.solve_static(m, case="LF1")
+    check("mit μ = 0,2: keine Starrkörperbewegung", not r.info.get("starrkoerperbewegung"), "")
+    return None
+
+
+def _ergebnis_mit_bewegung():
+    m = kloetze()
+    e = next(e for e in m.elements if e.group == "P1")
+    m.load_node(int(e.nodes[4]), Fx=0.25, case="LF1")
+    return m, solver.solve_static(m, case="LF1")
 
 
 def test_oberflaeche():
@@ -134,6 +204,47 @@ def test_oberflaeche():
     check("elastisch: keine Frage, es wird gerechnet", w._kontakthalt_bestaetigen() is True and not gefragt, "")
     w.model = kloetze(mu=0.2, plast=True)
     check("mit Reibung: keine Frage", w._kontakthalt_bestaetigen() is True and not gefragt, "")
+    # Teil 3: „Reibbeiwert setzen…“ wirkt erst nach Bestaetigung, mit Rueckgaengig
+    w.model = kloetze(plast=True)
+    w._kontakthalt_frage = lambda h: "reibung"
+    w._reibbeiwert_eingabe = lambda h: None
+    ok = w._kontakthalt_bestaetigen()
+    check("„Reibbeiwert setzen…“ ohne Bestätigung (Eingabe abgebrochen): nichts geändert, nicht gerechnet",
+          ok is False and w.model.contact_pairs[0].mu == 0.0, f"{ok}, μ {w.model.contact_pairs[0].mu}")
+    w._reibbeiwert_eingabe = lambda h: 0.2
+    ok = w._kontakthalt_bestaetigen()
+    check("… bestätigt mit 0,2: μ in der Fuge gesetzt, dann wird gerechnet",
+          ok is True and abs(w.model.contact_pairs[0].mu - 0.2) < 1e-12, f"{ok}, μ {w.model.contact_pairs[0].mu}")
+    check("… das Protokoll nennt die Fuge und Rückgängig", "Fuge" in w.log.toPlainText()
+          and "Rückgängig" in w.log.toPlainText(), "")
+    w.undo()
+    check("… Rückgängig stellt μ = 0 wieder her", w.model.contact_pairs[0].mu == 0.0, str(w.model.contact_pairs[0].mu))
+    # 3D-Ansicht: der Koerper hervorgehoben, Pfeil in der freien Richtung (Darstellerdaten)
+    m, r = _ergebnis_mit_bewegung()
+    w.model = m
+    w.analysis = solver.Analysis(m, cases={"LF1": r})
+    w.results = None
+    sing = w.singularitaeten()
+    i = next((j for j, x in enumerate(sing) if x.art == "starr"), None)
+    check("die Starrkörperbewegung steht unter den freien Bewegungen", i is not None,
+          str([x.art for x in sing]))
+    if i is not None:
+        w.bewegung_zeigen(i)
+        app.processEvents()
+        akt = dict(w.plotter.renderer.actors)
+        kn_akt = akt.get("result_singular_knoten")
+        e = next(e for e in m.elements if e.group == "P1")
+        n_kn = kn_akt.GetMapper().GetInput().GetNumberOfPoints() if kn_akt is not None else 0
+        check("Darsteller: die Knoten des Körpers P1 sind hervorgehoben", n_kn == len(set(e.nodes)),
+              f"{n_kn} Punkte")
+        pf = akt.get("result_singular")
+        check("Darsteller: ein Pfeil in der freien Richtung", pf is not None, str([k for k in akt if "singular" in k]))
+        if pf is not None:
+            b = pf.GetMapper().GetInput().GetBounds()
+            ausd = np.array([b[1] - b[0], b[3] - b[2], b[5] - b[4]])
+            t = np.asarray(sing[i].t, float)
+            check("… der Pfeil zeigt längs der Bewegung", float(ausd @ np.abs(t)) >= 0.9 * float(ausd.max()),
+                  f"Ausdehnung {ausd}, t {t}")
     w.close()
 
 
@@ -164,7 +275,8 @@ def test_traglastmeldung():
 
 
 def main():
-    for f in (test_erkennung, test_stufe_und_protokoll, test_traglastmeldung, test_oberflaeche):
+    for f in (test_erkennung, test_stufe_und_protokoll, test_traglastmeldung, test_starrkoerperbewegung,
+              test_oberflaeche):
         try:
             f()
         except Exception as ex:                     # noqa: BLE001

@@ -2223,6 +2223,22 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     stufen_gerechnet = len(faktoren)
     F_ende = F                  # die Last, zu der der gezeigte Zustand gehoert
     if traglast is not None:
+        # Starrkoerperbewegung im letzten Versuch, getrennt vom plastischen
+        # Mechanismus (17.10.2026): Koerper, die die Pruefung vor dem Start als
+        # nicht gehalten nennt, bewegen sich vom letzten konvergierten Zustand an
+        # als Ganzes
+        try:
+            from .singular import kontakt_gehalten_gemerkt, starrkoerperbewegung
+            kh = [b for e in kontakt_gehalten_gemerkt(model) for b in e["koerper"]]
+            if kh and u is not None:
+                du = np.asarray(u, float) - (np.asarray(konv["u"], float) if konv["u"] is not None else 0.0)
+                sb = starrkoerperbewegung(model, du, kh)
+                if sb:
+                    traglast["starrkoerper"] = sb
+                    if log is not None:
+                        log.extend("Plastizität: Starrkörperbewegung im letzten Versuch – " + e["text"] for e in sb)
+        except Exception:                      # noqa: BLE001 - eine Meldung haelt nichts auf
+            pass
         # Der letzte konvergierte Zustand bleibt sichtbar und gekennzeichnet (Auftrag
         # vom 16.10.2026); seine Last ist die seines Lastfaktors - beim Faktor 0 ohne
         # Last (vor dem Lastfall bzw. vom Start aus)

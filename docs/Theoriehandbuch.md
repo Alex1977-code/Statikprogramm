@@ -7277,6 +7277,33 @@ Krafteinleitung – Modell prüfen“. Am Zugstab 50 × 50 mm mit 1,2 F_lim lieg
 im fließenden Stab; mit F_lim an einem einzigen Knoten liegt er im Element an
 diesem Knoten.
 
+**Körper nur über reibungsfreien Kontakt gehalten (seit 17.10.2026).** Die
+Vorabsuche der freien Bewegungen (`singular.restfreiheiten`) nimmt ein Teiltragwerk als
+starr; über einen Anker gehört dessen fester Fuß dazu, und eine Ankerplatte auf
+reibungsfreiem Kontakt gilt dort als gehalten. `singular.kontakt_gehalten` fragt darum je
+Körper (`Model.koerper`, sonst die Elementgruppe der Volumen) nach den Zeilen a = [d,
+(r × d)/L] seiner Halterungen auf die sechs Starrkörperbewegungen: Lager
+(`_lagerzeilen`), Kontaktnormalen und -tangenten (`_kontaktzeilen`, Tangenten nur mit
+Reibung), Kopplungsrichtungen, drei Zeilen je Knoten, den er mit einem anderen Körper,
+einer Schale oder einem Balken teilt, und je Fachwerkstab oder Seil eine Zeile längs der
+Stabachse – am Körper selbst oder am Master einer starren Scheibe bzw. eines starren
+Körpers, an dem dann auch dessen Lager zählen. Bleibt ein Nullraum, wird derselbe Satz
+mit angenommener Reibung in allen Fugen gebildet (`reibung_annehmen`); wird er kleiner,
+hielte Reibung den Körper. Gemeldet wird das, und das, was nur Stäbe ohne Quersteifigkeit
+begleiten; ein Körper ohne jede Zeile bleibt der Vorabsuche. Die freien Bewegungen nennt
+`_bewegungstext`, gleichartige Körper (dieselben Bewegungen, Fugen und Gegenkörper)
+stehen in einer Zeile. Am Klotz auf dem Block (`tests/test_kontakt_gehalten`) meldet die
+Prüfung ohne Reibung „in der Ebene (x, y) frei verschieblich, um z frei drehbar“, mit
+μ = 0,2 und seitlich gehalten nichts; eine Freigabe (Lager nur senkrecht) nennt sie mit
+ihrem Namen. Im Ergebnis passt `singular.starrkoerperbewegung` je solchem Körper die
+beste Starrkörperbewegung an die Knotenverschiebungen an (kleinste Quadrate in [t, L·ω]);
+gemeldet wird sie, wenn sie größer als 10⁻³ L ist und die Abweichung davon höchstens 10 %
+beträgt. Am Klotz mit 0,25 N Querlast bei 1 MN senkrecht (der Gleichungslöser nimmt
+das noch an, 1 N bricht als „singulär“ ab) wandert er über den angehobenen Pivot gut
+1 mm, als Ganzes. Liegt der Knoten des Mechanismus oder das Element
+des Orts einer Traglastmeldung in einem solchen Körper, nennt die Ursache ihn
+(`plastizitaet.traglast_ort`, `traglast_ursache`).
+
 **Numerische Haltungen in der Gleichgewichtskontrolle (seit 16.10.2026).** „Frei
 drehbar“ wird streng ausgelegt: An jedem Knoten, den eine starre Kopplung, eine
 starre Scheibe oder ein starrer Körper bindet und an dem kein Element eine Drehung

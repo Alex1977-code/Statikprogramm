@@ -233,6 +233,11 @@ class Singularitaet:
 
     def befund(self) -> str:
         """Was die unausgeglichene Last fuer die Rechnung bedeutet."""
+        if self.art == "starr":
+            # Starrkoerperbewegung im Ergebnis (17.10.2026)
+            return ("Der Körper bewegt sich als Ganzes, ohne nennenswerte Verformung – er ist in dieser "
+                    "Richtung nicht gehalten. Abhilfe: Reibbeiwert in der Fuge setzen, Federkonstante > 0 "
+                    "oder seitliche Halterung.")
         if self.kraft <= 0.0 and self.moment <= 0.0:
             if self.art == "hebt ab":
                 return ("Die Last drückt in die Fuge - das Bauteil bleibt liegen. "
@@ -852,7 +857,53 @@ def _gruppen_je_knoten(model) -> dict:
 # einem starren Koerper. Bleibt eine Bewegung frei, die eine Reibung im Kontakt
 # halten wuerde (oder die nur Staebe ohne Quersteifigkeit begleiten), steht ein
 # Hinweis da. Am Kontakt selbst wird nichts geaendert.
-REIBUNG_VORSCHLAG = "μ = 0,2 Stahl/Stahl"
+REIBUNG_VORSCHLAG = "μ = 0,2 nach EN 1090-2, Klasse D"
+#: Starrkoerperbewegung im Ergebnis (17.10.2026, Praezisierung des Anwenders):
+#: gemeldet, wenn der Koerper sich als Ganzes um mehr als diesen Anteil seiner
+#: Bezugslaenge (halbe Diagonale) bewegt ...
+STARR_WEG_MIN = 1e-3
+#: ... und die Verformung (Abweichung von der besten Starrkoerperbewegung)
+#: hoechstens dieser Anteil der Starrkoerperbewegung ist
+STARR_VERFORMUNG_MAX = 0.1
+
+
+def _freigabe_zeilen(model, K: set, mitte, L: float) -> tuple:
+    """Gedachte Zeilen der Freigaben mit Federkonstante 0: ein Lager, das an
+    Knoten des Koerpers in mindestens einer Verschiebungsrichtung haelt, in
+    einer anderen aber nicht (RFEM „Freigabe“, Federkonstante 0 in der Ebene).
+    Rueckgabe (Zeilen, {Name: {Richtungen}})."""
+    zeilen, namen = [], {}
+    achsen = np.eye(3)
+    for s in getattr(model, "supports", None) or []:
+        k = int(getattr(s, "node", -1))
+        if k not in K:
+            continue
+        wirkt = {d for d in range(3) if getattr(s.dof_behaviour(d), "acts", False)}
+        if not wirkt or len(wirkt) == 3:
+            continue
+        nm = str(getattr(s, "name", "") or f"Lager K{k}")
+        for d in sorted(set(range(3)) - wirkt):
+            a = _zeile(model.nodes[k], achsen[d], mitte, L)
+            if a is not None:
+                zeilen.append(a)
+                namen.setdefault(nm, set()).add(d)
+    for lager in list(getattr(model, "line_supports", None) or []) \
+            + list(getattr(model, "surface_supports", None) or []):
+        kn = [int(k) for k in (getattr(lager, "nodes", None) or []) if int(k) in K]
+        if not kn:
+            continue
+        beh = getattr(lager, "behaviour", None) or {}
+        wirkt = {int(d) for d, b in beh.items() if int(d) < 3 and getattr(b, "acts", False)}
+        if not wirkt or len(wirkt) == 3:
+            continue
+        nm = str(getattr(lager, "name", "") or "Linien- bzw. Flächenlager")
+        for k in kn:
+            for d in sorted(set(range(3)) - wirkt):
+                a = _zeile(model.nodes[k], achsen[d], mitte, L)
+                if a is not None:
+                    zeilen.append(a)
+                    namen.setdefault(nm, set()).add(d)
+    return zeilen, namen
 
 
 def koerper_der_elemente(model) -> dict:
@@ -997,23 +1048,31 @@ def kontakt_gehalten(model) -> list:
         frei = _nullraum(zeilen)
         if not frei.shape[1]:
             continue
-        mit_reibung = _nullraum(zeilen + list(hg))
-        hilft = mit_reibung.shape[1] < frei.shape[1]
         rf = sorted(f for f in fugen if f in reibfrei)
-        if not (hilft and rf) and not staebe:
+        hilft = bool(rf) and _nullraum(zeilen + list(hg)).shape[1] < frei.shape[1]
+        fz, fnamen = _freigabe_zeilen(model, K, mitte, L)
+        hilft_f = bool(fz) and _nullraum(zeilen + fz).shape[1] < frei.shape[1]
+        if not hilft and not hilft_f and not staebe:
             continue
         partner = set()
-        for f in rf:
+        for f in (rf if hilft else []):
             s_b, m_b = seiten.get(f, (set(), set()))
             partner |= (m_b if b in s_b else s_b) - {b}
         roh.append({"koerper": b, "frei": frei, "kontakte": rf if hilft else [],
+                    "freigaben": {n: sorted(d) for n, d in fnamen.items()} if hilft_f else {},
                     "partner": sorted(partner, key=_natuerlich), "staebe": sorted(staebe, key=_natuerlich)})
     return _kontakt_gehalten_gruppen(roh)
 
 
 def _kontakt_gehalten_gruppen(roh: list) -> list:
-    """Gleichartige Koerper (dieselben freien Bewegungen, dieselben Gegenkoerper
-    und Fugen) in eine Zeile."""
+    """Gleichartige Koerper (dieselben freien Bewegungen, dieselben Gegenkoerper,
+    Fugen und Freigaben) in eine Zeile, im Wortlaut der Praezisierung des
+    Anwenders vom 17.10.2026: „Ankerplatte V… ist in der Ebene nicht gehalten.
+    Sie liegt reibungsfrei auf (Fuge ‚Lagerbock-Unterlegbleche‘: Federkonstante
+    0, kein Reibbeiwert). Bei symmetrischer Last bleibt sie in Ruhe, bei
+    Querlast oder ungleichmäßigem Fließen kann sie wegrutschen. Abhilfe:
+    Reibbeiwert in der Fuge setzen (z. B. μ = 0,2 nach EN 1090-2, Klasse D),
+    Federkonstante > 0 oder seitliche Halterung.“"""
     gruppen: dict = {}
     for r in roh:
         S = r["frei"]
@@ -1022,42 +1081,141 @@ def _kontakt_gehalten_gruppen(roh: list) -> list:
         rang = int((s > 1e-3).sum())
         T = _unterraum(S[:3, :] @ vt[rang:].T) if rang < S.shape[1] else np.zeros((3, 0))
         art = "rutscht" if (T.shape[1] or "verschieblich" in bew) else "kippt"
-        key = (bew, tuple(r["partner"]), tuple(r["kontakte"]), art)
+        fg = tuple(sorted((n, tuple(d)) for n, d in r["freigaben"].items()))
+        key = (bew, tuple(r["partner"]), tuple(r["kontakte"]), fg, art)
         g = gruppen.setdefault(key, {"koerper": [], "staebe": [], "T": T})
         g["koerper"].append(r["koerper"])
         g["staebe"] += [x for x in r["staebe"] if x not in g["staebe"]]
     aus = []
-    for (bew, partner, kontakte, art), g in gruppen.items():
+    for (bew, partner, kontakte, fg, art), g in gruppen.items():
         kn = sorted(g["koerper"], key=_natuerlich)
         st = sorted(g["staebe"], key=_natuerlich)
         n = len(kn)
-        wer = (f"Körper {kn[0]}" if n == 1 else
+        eins = n == 1
+        wer = (f"Körper {kn[0]}" if eins else
                f"{n} Körper " + (", ".join(kn) if n <= 6 else f"{kn[0]}–{kn[-1]}"))
         T = g["T"]
         wo = ("in der Ebene" if T.shape[1] == 2 else
               f"in Richtung {_achse(T[:, 0])}" if T.shape[1] == 1 else
-              "in allen Richtungen" if T.shape[1] == 3 else "gegen Drehen")
-        er = "er" if n == 1 else "sie"
+              "in keiner Richtung" if T.shape[1] == 3 else "gegen Verdrehen")
+        er, Er = ("er", "Er") if eins else ("sie", "Sie")
+        ist, liegt, bleibt, kann, haengt = (("ist", "liegt", "bleibt", "kann", "hängt") if eins else
+                                            ("sind", "liegen", "bleiben", "können", "hängen"))
         stab = ""
         if st:
-            stab = (f" und {'hängt' if n == 1 else 'hängen'} an {'dem Stab' if len(st) == 1 else 'den Stäben'} "
+            stab = (f" und {haengt} an {'dem Stab' if len(st) == 1 else 'den Stäben'} "
                     f"{_namenstext(st, 'Stäbe')} ohne Quersteifigkeit")
-        if kontakte:
-            gegen = f" zu {', '.join(partner)}" if partner else ""
-            text = (f"{wer} {'ist' if n == 1 else 'sind'} {wo} nur über reibungsfreien Kontakt{gegen} "
-                    f"({', '.join(kontakte)}) gehalten{stab} – {bew}. Elastisch und symmetrisch belastet "
-                    f"bleibt {er} liegen; bei plastischer Rechnung oder unsymmetrischer Last kann {er} "
-                    f"wegrutschen. Abhilfe: Reibbeiwert im Kontakt ansetzen (z. B. {REIBUNG_VORSCHLAG}) "
-                    "oder seitlich halten.")
+        satz1 = f"{wer} {ist} {wo} nicht gehalten ({bew})."
+        lage = f"Bei symmetrischer Last {bleibt} {er} in Ruhe, bei Querlast oder ungleichmäßigem Fließen {kann} {er} "
+        if kontakte or fg:
+            teile = [f"Fuge ‚{f}‘: Federkonstante 0, kein Reibbeiwert" for f in kontakte]
+            teile += [f"Freigabe ‚{nm}‘: Federkonstante 0 in " + ", ".join(_ACHSEN[d] for d in dd) for nm, dd in fg]
+            auf = f" auf {', '.join(partner)}" if partner else " auf"
+            text = (f"{satz1} {Er} {liegt} reibungsfrei{auf} ({'; '.join(teile)}){stab}. {lage}wegrutschen. "
+                    f"Abhilfe: Reibbeiwert in der Fuge setzen (z. B. {REIBUNG_VORSCHLAG}), Federkonstante > 0 oder "
+                    "seitliche Halterung.")
         else:
-            text = (f"{wer} {'ist' if n == 1 else 'sind'} {wo} nur über Stäbe ohne Quersteifigkeit gehalten"
-                    f" ({_namenstext(st, 'Stäbe')}) – {bew}. Elastisch und symmetrisch belastet bleibt {er} "
-                    f"stehen; bei plastischer Rechnung oder unsymmetrischer Last kann {er} wegrutschen oder "
-                    "kippen. Abhilfe: seitlich halten (Lager, Feder, Kopplung oder Kontakt mit Reibung).")
+            text = (f"{satz1} {'Ihn' if eins else 'Sie'} {'hält' if len(st) == 1 else 'halten'} dort nur "
+                    f"{'der Stab' if len(st) == 1 else 'die Stäbe'} {_namenstext(st, 'Stäbe')} ohne "
+                    f"Quersteifigkeit. {lage}wegrutschen oder kippen. Abhilfe: seitliche Halterung (Lager, Feder "
+                    "mit Federkonstante > 0, Kopplung) oder eine Fuge mit Reibbeiwert.")
         aus.append({"koerper": kn, "anzahl": n, "bewegung": bew, "art": art, "kontakte": list(kontakte),
-                    "partner": list(partner), "staebe": st, "reibungsfrei": bool(kontakte), "text": text})
+                    "freigaben": [nm for nm, _d in fg], "partner": list(partner), "staebe": st,
+                    "reibungsfrei": bool(kontakte or fg), "text": text})
     aus.sort(key=lambda e: (-e["anzahl"], _natuerlich(e["koerper"][0])))
     return aus
+
+
+def kontakt_gehalten_gemerkt(model) -> list:
+    """:func:`kontakt_gehalten`, am Modell gemerkt, solange sich Netz, Fugen,
+    Lager und Kopplungen nicht aendern (fuer die Pruefung je Ergebnis)."""
+    sch = (int(model.nn), len(model.elements),
+           tuple((cp.name, float(getattr(cp, "mu", 0.0)), bool(getattr(cp, "haften", False)),
+                  len(cp.slave_nodes or [])) for cp in (getattr(model, "contact_pairs", None) or [])),
+           len(getattr(model, "supports", None) or []), len(getattr(model, "kopplungen", None) or []),
+           len(getattr(model, "starrkoerper", None) or []), len(getattr(model, "gap_elements", None) or []))
+    alt = getattr(model, "_kontakt_gehalten_gemerkt", None)
+    if alt is not None and alt[0] == sch:
+        return alt[1]
+    h = kontakt_gehalten(model)
+    try:
+        model._kontakt_gehalten_gemerkt = (sch, h)
+    except AttributeError:
+        pass
+    return h
+
+
+def starrkoerperbewegung(model, u, koerper_namen) -> list:
+    """Bewegt sich ein Koerper als Ganzes (17.10.2026, Praezisierung des
+    Anwenders: „Körper V… bewegt sich als Ganzes um x mm in Richtung … – nicht
+    gehalten“, getrennt vom plastischen Mechanismus)? Je Koerper aus
+    ``koerper_namen`` die beste Starrkoerperbewegung der Knotenverschiebungen
+    ``u`` (nn x 6 oder flach) nach kleinsten Quadraten; gemeldet, wenn sie
+    groesser als :data:`STARR_WEG_MIN` mal die Bezugslaenge ist und die
+    Verformung hoechstens :data:`STARR_VERFORMUNG_MAX` davon. Rueckgabe je
+    Koerper {"koerper", "weg" [m], "t" (Richtung), "omega" [rad], "verformung"
+    [m], "knoten", "mitte", "laenge", "text"}."""
+    from .zahlen import zahl_text as _z
+    nn = int(model.nn)
+    U = np.asarray(u, float).reshape(-1)
+    if U.size < 6 * nn:
+        return []
+    U = U[:6 * nn].reshape(nn, 6)[:, :3]
+    kk = koerper_der_elemente(model)
+    X = np.asarray(model.nodes, float)
+    aus = []
+    for b in sorted(set(koerper_namen or []), key=_natuerlich):
+        el = kk.get(b)
+        if not el:
+            continue
+        P = np.unique(np.concatenate([np.asarray(model.elements[i].nodes, np.int64) for i in el]))
+        P = P[(P >= 0) & (P < nn)]
+        if len(P) < 3:
+            continue
+        mitte, L = _mitte_und_laenge(X[P])
+        r = X[P] - mitte
+        M = np.zeros((3 * len(P), 6))
+        M[0::3, 0] = M[1::3, 1] = M[2::3, 2] = 1.0
+        M[0::3, 4], M[0::3, 5] = r[:, 2] / L, -r[:, 1] / L
+        M[1::3, 3], M[1::3, 5] = -r[:, 2] / L, r[:, 0] / L
+        M[2::3, 3], M[2::3, 4] = r[:, 1] / L, -r[:, 0] / L
+        Y = U[P].ravel()
+        p, *_ = np.linalg.lstsq(M, Y, rcond=None)
+        starr = (M @ p).reshape(-1, 3)
+        rest = Y.reshape(-1, 3) - starr
+        s_max = float(np.linalg.norm(starr, axis=1).max())
+        v_max = float(np.linalg.norm(rest, axis=1).max())
+        if s_max <= STARR_WEG_MIN * L or v_max > STARR_VERFORMUNG_MAX * s_max:
+            continue
+        t, w = p[:3], p[3:] / L
+        weg = float(np.linalg.norm(t))
+        teile = []
+        if weg >= 0.1 * s_max:
+            teile.append(f"um {_z(weg * 1e3, stellen=3)} mm in Richtung {_achse(t)}")
+        if float(np.linalg.norm(w)) * L >= 0.1 * s_max:
+            teile.append(f"dreht sich um {_achse(w)} um {_z(float(np.linalg.norm(w)) * 1e3, stellen=3)} mrad")
+        text = f"Körper {b} bewegt sich als Ganzes " + " und ".join(teile) + " – nicht gehalten"
+        aus.append({"koerper": b, "weg": weg, "t": [float(x) for x in t], "omega": [float(x) for x in w],
+                    "verformung": v_max, "knoten": [int(k) for k in P], "mitte": [float(x) for x in mitte],
+                    "laenge": float(L), "text": text})
+    return aus
+
+
+def starrkoerper_singularitaet(e: dict) -> "Singularitaet":
+    """Ein Eintrag von :func:`starrkoerperbewegung` als freie Bewegung fuer die
+    3D-Ansicht (Ergebnisse → Freie Bewegungen): Knoten des Koerpers
+    hervorgehoben, Pfeil in Bewegungsrichtung."""
+    t = np.asarray(e["t"], float)
+    w = np.asarray(e["omega"], float)
+    s = Singularitaet(art="starr", knoten=list(e["knoten"]), koerper=[e["koerper"]],
+                      t=t / (np.linalg.norm(t) or 1.0) if np.linalg.norm(t) > 0 else np.zeros(3),
+                      omega=w * float(e["laenge"]) / (np.linalg.norm(w) * float(e["laenge"]) or 1.0)
+                      if np.linalg.norm(w) > 0 and np.linalg.norm(t) == 0 else np.zeros(3),
+                      bezug=np.asarray(e["mitte"], float), mitte=np.asarray(e["mitte"], float),
+                      laenge=float(e["laenge"]), text=e["text"],
+                      ursache="der Körper bewegt sich als Ganzes, ohne nennenswerte Verformung")
+    s.weg = float(e["weg"])
+    return s
 
 
 def kontakt_gehalten_zeilen(model) -> list:
@@ -1077,7 +1235,7 @@ def kontakt_koerper_am_ort(model, element=None, knoten=None):
     bzw. der Knoten gehoert - fuer die Traglastmeldung - oder None."""
     if element is None and knoten is None:
         return None
-    h = kontakt_gehalten(model)
+    h = kontakt_gehalten_gemerkt(model)
     if not h:
         return None
     kk = koerper_der_elemente(model)

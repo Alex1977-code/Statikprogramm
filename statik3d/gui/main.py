@@ -177,6 +177,9 @@ def _bewegung_kurz(s) -> str:
     Steht dort eine Zahl, geht sie in dieser Bewegung ins Nichts; steht
     „im Gleichgewicht", ist nur die Lage des Bauteils unbestimmt.
     """
+    if getattr(s, "art", "") == "starr":
+        # Starrkoerperbewegung im Ergebnis (17.10.2026)
+        return f"als Ganzes {zl.zahl_text(float(getattr(s, 'weg', 0.0)) * 1e3, stellen=3)} mm – nicht gehalten"
     teile = [f"{zl.zahl_text(s.kraft / 1000.0, stellen=3)} kN" for _ in (1,) if s.kraft > 0.0]
     teile += [f"{zl.zahl_text(s.moment / 1000.0, stellen=3)} kNm" for _ in (1,) if s.moment > 0.0]
     return " + ".join(teile) if teile else "im Gleichgewicht"
@@ -26070,12 +26073,60 @@ class MainWindow(QtWidgets.QMainWindow):
         for e in h:
             self.log.appendPlainText(f"WARNUNG – BITTE LESEN: {e['text']}")
         self.bottom_tabs.setCurrentIndex(0)
-        if self._kontakthalt_frage(h) == "rechnen":
+        wahl = self._kontakthalt_frage(h)
+        if wahl == "rechnen":
             self.log.appendPlainText("Plastische Rechnung trotz nur reibungsfrei gehaltener Körper – vom "
                                      "Anwender bestätigt")
             return True
+        if wahl == "reibung" and self._reibbeiwert_setzen(h):
+            return True
         self.info("Berechnung abgebrochen: Körper nur über reibungsfreien Kontakt gehalten (Protokoll)")
         return False
+
+    def _reibbeiwert_setzen(self, h: list) -> bool:
+        """„Reibbeiwert setzen…“ (17.10.2026, Praezisierung des Anwenders: nichts
+        wird automatisch geaendert, die Schaltflaeche wirkt erst nach Bestaetigung,
+        mit Rueckgaengig): der Reibbeiwert, den der Anwender bestaetigt
+        (:meth:`_reibbeiwert_eingabe`), in die reibungsfreien Fugen der genannten
+        Koerper - ein Schritt, Strg+Z nimmt ihn zurueck. Freigaben (Lager) bleiben,
+        wie sie sind. Rueckgabe: gesetzt."""
+        fugen = sorted({f for e in h for f in (e.get("kontakte") or [])})
+        if not fugen:
+            self.info("Reibbeiwert setzen: keine reibungsfreie Fuge genannt – Freigaben bitte im Lager ändern")
+            return False
+        mu = self._reibbeiwert_eingabe(h)
+        if mu is None or not float(mu) > 0.0:
+            self.log.appendPlainText("Reibbeiwert setzen: nicht bestätigt – nichts geändert")
+            return False
+        self.merken("Reibbeiwert setzen")
+        n = 0
+        for cp in getattr(self.model, "contact_pairs", None) or []:
+            if cp.name in fugen:
+                cp.mu = float(mu)
+                n += 1
+        self.analysis = None
+        self.results = None
+        from .. import zahlen as _zl
+        self.log.appendPlainText(f"Reibbeiwert μ = {_zl.zahl_text(float(mu), stellen=3)} in "
+                                 + ", ".join(f"Fuge ‚{f}‘" for f in fugen)
+                                 + " gesetzt – Rückgängig (Strg+Z) stellt zurück")
+        try:
+            self.refresh_all()
+        except Exception:                  # noqa: BLE001 - die Anzeige sperrt nichts
+            pass
+        return n > 0
+
+    def _reibbeiwert_eingabe(self, h: list):
+        """Der Reibbeiwert, den der Anwender bestaetigt - None ohne Bestaetigung
+        (die Tests ueberschreiben das). Vorschlag 0,2 (EN 1090-2, Klasse D)."""
+        if self._modal_gesperrt("Eingabe „Reibbeiwert“ während der Rechnung verneint", ""):
+            return None
+        fugen = sorted({f for e in h for f in (e.get("kontakte") or [])})
+        wert, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Reibbeiwert setzen",
+            "Reibbeiwert μ für " + ", ".join(f"Fuge ‚{f}‘" for f in fugen)
+            + "\n(z. B. 0,2 nach EN 1090-2, Klasse D; Rückgängig mit Strg+Z):", 0.2, 0.0, 2.0, 3)
+        return float(wert) if ok else None
 
     def _kontakthalt_frage(self, h: list) -> str:
         """Der Dialog zu :meth:`_kontakthalt_bestaetigen` - die Tests
@@ -26089,11 +26140,14 @@ class MainWindow(QtWidgets.QMainWindow):
         box.setWindowTitle("Plastische Rechnung: Körper nur über reibungsfreien Kontakt gehalten")
         box.setText(text + "\n\nAbbrechen (und Reibung ansetzen oder seitlich halten) oder trotzdem rechnen?")
         b_ab = box.addButton("Abbrechen", QtWidgets.QMessageBox.RejectRole)
+        b_mu = (box.addButton("Reibbeiwert setzen…", QtWidgets.QMessageBox.AcceptRole)
+                if any(e.get("kontakte") for e in h) else None)
         b_rech = box.addButton("Trotzdem rechnen", QtWidgets.QMessageBox.DestructiveRole)
         box.setDefaultButton(b_ab)
         box.setEscapeButton(b_ab)
         box.exec()
-        return "rechnen" if box.clickedButton() is b_rech else "abbrechen"
+        k = box.clickedButton()
+        return "reibung" if (b_mu is not None and k is b_mu) else "rechnen" if k is b_rech else "abbrechen"
 
     def _plastisch_frage(self, h: dict) -> str:
         """Der Dialog zu :meth:`_plastisch_einleitung_bestaetigen` - die Tests
