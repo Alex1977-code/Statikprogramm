@@ -3571,6 +3571,13 @@ class Kontaktbedingung:
     #: gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen
     #: unterschiedlich feinen Netzen verschwinden.
     spalt_schliessen: bool = False
+    #: Kontaktstart geschlossen (17.10.2026, Einstellung des Anwenders): die Kontaktiteration
+    #: beginnt mit allen Bedingungen dieser Fuge geschlossen, mit dem echten Spalt (anders
+    #: als ``spalt_schliessen``, das den Spalt auf null setzt). Die Fuge darf trotzdem
+    #: abheben, wenn Zug entsteht. Sinnvoll fuer Teile, die planmaessig anliegen und durch
+    #: Vorspannung oder Last angedrueckt werden - der Lauf beginnt dann nicht mit einem
+    #: Teil, das an keiner Bedingung haengt.
+    start_geschlossen: bool = False
     #: Der Standardkontakt, aus dem die Wirkung kam ("" = benutzerdefiniert).
     standard: str = ""
     #: Von selbst angelegt, weil sich zwei Koerper beruehren (kontakte.py,
@@ -4027,6 +4034,9 @@ class ContactPair:
     #: Anfangsspalt schliessen: jeder Slave-Knoten gilt in seiner Lage als
     #: anliegend (ANSYS „auf Beruehrung setzen“)
     anliegend: bool = False
+    #: Kontaktstart geschlossen (17.10.2026, aus Kontaktbedingung.start_geschlossen): der
+    #: Lauf beginnt mit allen Bedingungen geschlossen, mit dem echten Spalt; Zug oeffnet sie
+    start_geschlossen: bool = False
     #: Anteil der Kontaktseite, der eine Gegenflaeche gefunden hat (Flaeche zu
     #: Flaeche, 0 … 1). Die Abnahme vor dem Rechnen prueft ihn
     #: (:func:`diagnose.abnahme`); 0 heisst "nicht gemessen".
@@ -9646,7 +9656,7 @@ class Model:
             "volumenbereiche": [_ohne_vorgabe("volumenbereiche", asdict(x))
                                  for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
-            "kontaktbedingungen": [_beh_dict(asdict(x))
+            "kontaktbedingungen": [_ohne_vorgabe("kontaktbedingungen", _beh_dict(asdict(x)))
                                    for x in self.kontaktbedingungen.values()],
             "flaechen": [_ohne_vorgabe("flaechen", asdict(x)) for x in self.flaechen.values()],
             "koerper": [_ohne_vorgabe("koerper", asdict(x)) for x in self.koerper.values()],
@@ -9661,7 +9671,7 @@ class Model:
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
-            "contact_pairs": [asdict(c) for c in self.contact_pairs],
+            "contact_pairs": [_ohne_vorgabe("contact_pairs", asdict(c)) for c in self.contact_pairs],
             "getrennte_knoten": {k: [[int(a), int(b)] for a, b in v]
                                  for k, v in (self.getrennte_knoten or {}).items()},
             "kontakt_ausnahmen": [[str(a), str(b)] for a, b in (getattr(self, "kontakt_ausnahmen", None) or [])],
@@ -10172,6 +10182,9 @@ NEUE_FELDER = {
     "sections": {"A_s": None, "gewinde": ""},
     # spitzen/zeigen N2
     "koerper": {"nachweis_ausnehmen": False},
+    # kontakt/pendeln-rt (Kontaktstart geschlossen, 17.10.2026)
+    "kontaktbedingungen": {"start_geschlossen": False},
+    "contact_pairs": {"start_geschlossen": False},
     "volumenbereiche": {"eps_grenze": 0.05},
     # stab/rbe3 (Einleitung je Stabende)
     "members": {"einleitung": {}},

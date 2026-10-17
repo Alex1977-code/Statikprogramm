@@ -186,6 +186,19 @@ RT_HALT_EINMAL = True
 #: Stufe (Newton-Schritte, Ausfall-Iteration, Neustart, Halbierung) bleibt er, ein
 #: Warmstart aus einem anderen Lastfall bringt keinen mit. Ruecknahme: False.
 GLEITWEG_SPEICHER = True
+#: Oeffnen begrenzen (17.10.2026, Auftrag des Anwenders nach Mittel-Z mu 0,2): eine Runde
+#: oeffnet bei einem Teil, das dadurch weniger Starrkoerperbewegungen gehalten haette
+#: (Rang der geschlossenen Bedingungen, Bindungen und Lager, solver._rang_zahl), nur die
+#: staerker gezogene Haelfte der Bedingungen, die oeffnen wollen. Das ist Schrittsteuerung:
+#: geoeffnet wird weiter nur bei Zug ueber der Toleranz, und solange eine zurueckgehaltene
+#: Bedingung Zug traegt, gilt die Runde als Wechsel - muss das Teil wirklich abheben, endet
+#: der Lauf nicht konvergiert. Ruecknahme: False.
+OEFFNEN_BEGRENZEN = True
+#: Kontaktstabilisierung (17.10.2026): Steifigkeit der Feder, die ein nicht gehaltenes oder
+#: springendes Teil an seinen Kontaktbedingungen bekommt, als Anteil der Kontaktsteifigkeit
+#: (Diagonale, _c_pd). Sie wirkt auf den Weg seit der vorigen Runde (Daempfung,
+#: solver.solve_with_contact setzt den Bezug), ihre Kraft steht im Residuum und im Protokoll.
+STABIL_ANTEIL = 1.0e-6
 #: Ab dieser Drehung bzw. relativen Aenderung wird die Tangente eines gleitenden
 #: Knotens der Reibungstangente neu gesetzt (neue Matrix); darunter rechnet die Runde
 #: mit der vorigen Tangente weiter (vereinfachter Newton), die Kraft ist trotzdem die
@@ -404,6 +417,9 @@ class Constraint:
     dt_fest: Optional[np.ndarray] = None    # Weg in der Fuge (2,) beim letzten Festhalten
     g_s: Optional[np.ndarray] = None        # Gleitweg (2,) bis zum Anfang dieser Stufe
                                             # (GLEITWEG_SPEICHER); None: null
+    start_zu: bool = False         # Kontaktstart geschlossen (Kontaktbedingung.start_geschlossen)
+    stab_k: float = 0.0            # Kontaktstabilisierung: Federsteifigkeit (0: keine)
+    stab_ref: Optional[np.ndarray] = None   # ... ihr Bezug (C u der vorigen Runde)
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -1247,7 +1263,8 @@ class ContactSystem:
                                     TANGENT_FACTOR * kn, mu, s, n, marke,
                                     master=(list(tri), list(wj)), limit=limit,
                                     zug=bool(cp.zug), haften=haften, bindung=haften,
-                                    starr=self._starr(cp.stiffness)))
+                                    starr=self._starr(cp.stiffness),
+                                    start_zu=bool(getattr(cp, "start_geschlossen", False))))
 
     def _knoten_elemente(self) -> dict:
         """Knoten -> Volumenelemente, einmal je Kontaktsystem gebaut."""
@@ -1589,8 +1606,14 @@ class ContactSystem:
         self._ruhe_gemeldet = False
         self.gruppe_frei = None
         self._halt_rt = {}
+        self._begrenzt_gemeldet = set()
+        self.zurueckgehalten = 0
         for c in self.cons:
-            c.active = True if c.zug else c.g0 <= self.tol
+            # Kontaktstart geschlossen (Einstellung der Fuge): geschlossen mit dem echten
+            # Spalt; Zug oeffnet sie in der ersten Aktualisierung wie jede andere
+            c.active = True if (c.zug or getattr(c, "start_zu", False)) else c.g0 <= self.tol
+            c.stab_k = 0.0
+            c.stab_ref = None
             c.slip = False
             c.slip_dir = None
             c.dt_last = None
@@ -2030,6 +2053,9 @@ class ContactSystem:
                 tuple(sorted(self._full_slip_groups().items())),
                 None if getattr(self, "gruppe_frei", None) is None else tuple(sorted(self.gruppe_frei)),
                 tuple(sorted((getattr(self, "_halt_rt", None) or {}).items())),
+                # Kontaktstabilisierung: welche Bedingungen mit welcher Feder
+                tuple((i, float(c.stab_k)) for i, c in enumerate(self.cons)
+                      if getattr(c, "stab_k", 0.0) > 0.0),
                 # Quertangenten (primal-dual) stehen in Kc: ihr Inhalt, nicht ein
                 # Zaehler - ein uebernommener Zustand mit denselben Tangenten
                 # loest mit der Faktorisierung des vorigen Lastfalls
@@ -2822,6 +2848,17 @@ class ContactSystem:
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(kmat.ravel())
+        if not als_federn:
+            for c in self.cons:
+                if getattr(c, "stab_k", 0.0) > 0.0:
+                    # Kontaktstabilisierung: k (C u - Bezug) in Normal- und Tangentialrichtung
+                    R = self._stab_zeilen(c)
+                    r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
+                    rows.append(r.ravel())
+                    cols.append(cc.ravel())
+                    vals.append((c.stab_k * (R.T @ R)).ravel())
+                    if c.stab_ref is not None:
+                        Fc[c.dofs] += c.stab_k * (R.T @ np.asarray(c.stab_ref, float))
         if rows:
             Kc = sparse.coo_matrix((np.concatenate(vals),
                                     (np.concatenate(rows), np.concatenate(cols))),
@@ -2867,6 +2904,93 @@ class ContactSystem:
             return False                # RT_HALT_EINMAL: die Fuge haelt das Bauteil
         gf = getattr(self, "gruppe_frei", None)
         return gf is None or _group(c) in gf
+
+    def _stab_zeilen(self, c: Constraint) -> np.ndarray:
+        """Die Zeilen der Kontaktstabilisierung: Normale und, wenn vorhanden, die beiden
+        Tangentialrichtungen der Bedingung (relativer Weg Slave - Gegenseite)."""
+        R = [np.asarray(c.cn, float)]
+        if c.ct is not None:
+            R += [np.asarray(c.ct[0], float), np.asarray(c.ct[1], float)]
+        return np.array(R)
+
+    def stab_setzen(self, idx, k_anteil: float, u=None) -> int:
+        """Kontaktstabilisierung an den Bedingungen ``idx`` (Indizes): Feder
+        k_anteil * Kontaktsteifigkeit (_c_pd), nie kleiner als eine schon gesetzte; Bezug
+        der Weg in ``u`` (None: null). Rueckgabe: Zahl der neu oder staerker gesetzten."""
+        n = 0
+        for i in idx:
+            c = self.cons[int(i)]
+            k = float(k_anteil) * float(self._c_pd(c))
+            if k > getattr(c, "stab_k", 0.0):
+                c.stab_k = k
+                n += 1
+            if c.stab_ref is None:
+                c.stab_ref = (self._stab_zeilen(c) @ np.asarray(u, float)[c.dofs] if u is not None
+                              else np.zeros(len(self._stab_zeilen(c))))
+        return n
+
+    def stab_bezug(self, u) -> None:
+        """Bezug der Stabilisierung auf die Loesung ``u`` setzen (Daempfung: die Feder
+        wirkt auf den Weg seit dieser Loesung)."""
+        if u is None:
+            return
+        u = np.asarray(u, float)
+        for c in self.cons:
+            if getattr(c, "stab_k", 0.0) > 0.0:
+                c.stab_ref = self._stab_zeilen(c) @ u[c.dofs]
+
+    def stab_kraefte(self, u) -> dict:
+        """{Index: |Kraft| [N]} der Kontaktstabilisierung in der Loesung ``u``."""
+        aus = {}
+        if u is None:
+            return aus
+        u = np.asarray(u, float)
+        for i, c in enumerate(self.cons):
+            if getattr(c, "stab_k", 0.0) > 0.0:
+                ref = np.zeros(3) if c.stab_ref is None else np.asarray(c.stab_ref, float)
+                R = self._stab_zeilen(c)
+                aus[i] = float(np.linalg.norm(c.stab_k * (R @ u[c.dofs] - ref[:len(R)])))
+        return aus
+
+    def _oeffnen_begrenzen(self, wuensche: list, umstellen: set) -> set:
+        """OEFFNEN_BEGRENZEN: je Teil, dem die Oeffnungen dieser Runde Rang nehmen, nur die
+        staerker gezogene Haelfte oeffnen (``wuensche``: (Zug, Bedingung) - bei einer
+        aktiven Bedingung ist der Wert der Zug). Rueckgabe die verbleibende Menge
+        ``umstellen``; ``zurueckgehalten`` zaehlt, was geschlossen blieb."""
+        zug = {id(c): float(v) for v, c in wuensche if c.active and id(c) in umstellen}
+        if not zug or getattr(self, "model", None) is None:
+            return umstellen
+        try:
+            from .solver import _halterzeilen, _lagerzeilen, _rang_zahl, _teile_bedingungen
+            teile = _teile_bedingungen(self.model, self)
+            lager = _lagerzeilen(self.model, self)
+        except Exception:                     # noqa: BLE001 - eine Schrittsteuerung sperrt nie
+            return umstellen
+        umstellen = set(umstellen)
+        for name, kn, cons in teile:
+            mine = [c for c in cons if id(c) in zug and id(c) in umstellen]
+            if not mine:
+                continue
+            r_jetzt = _rang_zahl(self.model, kn, _halterzeilen(cons, kn=kn, lager=lager))
+            weg = {id(c) for c in mine}
+            r_nach = _rang_zahl(self.model, kn, _halterzeilen([c for c in cons if id(c) not in weg],
+                                                              kn=kn, lager=lager))
+            if r_nach >= r_jetzt:
+                continue
+            mine.sort(key=lambda c: -zug[id(c)])
+            bleiben = mine[len(mine) // 2:]
+            for c in bleiben:
+                umstellen.discard(id(c))
+            self.zurueckgehalten = getattr(self, "zurueckgehalten", 0) + len(bleiben)
+            gemeldet = getattr(self, "_begrenzt_gemeldet", None)
+            if gemeldet is None:
+                gemeldet = self._begrenzt_gemeldet = set()
+            if name not in gemeldet:
+                gemeldet.add(name)
+                self.log.append(f"Kontakt: Körper {name} wäre in dieser Runde nicht gehalten (die haltenden "
+                                f"Bedingungen wollten öffnen) - geöffnet wird nur die stärker gezogene "
+                                f"Hälfte ({len(mine) - len(bleiben)} von {len(mine)})")
+        return umstellen
 
     def _halt_fein(self, g: str) -> bool:
         """Hat dieser Lauf fuer die Gruppe entschieden, dass ihre Reibung das Bauteil
@@ -3178,6 +3302,11 @@ class ContactSystem:
             wuensche.sort(key=lambda e: -e[0])
             wuensche = wuensche[:max(1, int(anteil * len(wuensche)))]
         umstellen = {id(c) for _v, c in wuensche}
+        self.zurueckgehalten = 0
+        if OEFFNEN_BEGRENZEN and wuensche and not ruhe:
+            umstellen = self._oeffnen_begrenzen(wuensche, umstellen)
+            if self.zurueckgehalten:
+                changed = True          # Zug an zurueckgehaltenen Bedingungen: kein Ende
         self.richtung_neu = 0
         for c in self.cons:
             ue = u[c.dofs]

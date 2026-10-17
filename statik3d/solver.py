@@ -7914,6 +7914,140 @@ def _gruppen_frei(model, cs) -> set:
     return frei
 
 
+#: Koerper, die in der Kontaktiteration springen (17.10.2026, Auftrag des Anwenders nach
+#: Mittel-Z mu 0,2 auf addd95a: Ankerplatten sprangen als starre Koerper um 10 bis 770 mm,
+#: Verformungsanteil um 1e-5 %, und die Zerlegung scheiterte nicht - die Halte-Hilfe
+#: _freie_teile_halten griff nur bei einer RuntimeError).
+#:
+#: VORAB_HALTEN: vor jeder Loesung ab Runde 2 (warm gestartet auch in Runde 1) die Teile
+#: halten, die im Zustand dieser Runde weniger Starrkoerperbewegungen gehalten haben als
+#: mit allen Bedingungen (_freie_teile_halten, Stufe 1); bleibt eines ungehalten, bekommen
+#: seine Bedingungen die Kontaktstabilisierung (contact.STABIL_ANTEIL der
+#: Kontaktsteifigkeit, auf den Weg seit der vorigen Runde).
+#: SPRUNG_PRUEFEN: bewegt sich ein Teil in einer Runde als Ganzes um mehr als seine
+#: Elementgroesse bei einem Verformungsanteil unter SPRUNG_VERFORMUNG, wird die Runde
+#: verworfen und mit Daempfung (SPRUNG_DAEMPFUNG der Kontaktsteifigkeit, je Versuch das
+#: 100-Fache, hoechstens SPRUNG_WIEDERHOLEN Versuche) neu geloest; das Protokoll sagt
+#: "Koerper ... in dieser Runde nicht gehalten". Die Kraft der Stabilisierung steht im
+#: inneren Residuum und am Ende im Protokoll, ueber STABIL_WARNUNG der Last als Warnung.
+#: Ruecknahme: False.
+VORAB_HALTEN = True
+SPRUNG_PRUEFEN = True
+SPRUNG_VERFORMUNG = 1.0e-3
+SPRUNG_DAEMPFUNG = 1.0e-4
+SPRUNG_WIEDERHOLEN = 3
+STABIL_WARNUNG = 1.0e-3
+#: Die Daempfung haelt die Schleife offen, solange ihre Kraft ueber diesem Anteil der
+#: Kontaktkraft liegt (wie contact.RESIDUUM_ANTEIL)
+RESIDUUM_STAB = 1.0e-6
+
+
+def _teil_feld(model, cs) -> list:
+    """[(Name, Knoten (Array), Elementgroesse h [m], Indizes der Bedingungen)] je Teil mit
+    Kontakt, einmal je Kontaktsystem. h aus der Ausdehnung des Teils und der Zahl seiner
+    Knoten (Knotenabstand), mindestens 1e-9 der Modellgroesse."""
+    cache = getattr(cs, "_teil_feld_cache", None)
+    if cache is not None and cache[0] is model and cache[1] == len(cs.cons):
+        return cache[2]
+    X = np.asarray(model.nodes, float)
+    idx_von = {id(c): i for i, c in enumerate(cs.cons)}
+    aus = []
+    for name, kn, cons in _teile_bedingungen(model, cs):
+        k = np.array(sorted(int(n) for n in kn if int(n) < len(X)), np.int64)
+        if len(k) < 3:
+            continue
+        P = X[k]
+        L = float(np.linalg.norm(P.max(axis=0) - P.min(axis=0)))
+        h = max(L / max(len(k) ** (1.0 / 3.0), 1.0), 1e-9 * max(L, 1e-9))
+        aus.append((name, k, h, [idx_von[id(c)] for c in cons if id(c) in idx_von]))
+    cs._teil_feld_cache = (model, len(cs.cons), aus)
+    return aus
+
+
+def _spruenge(model, cs, u, u_vor) -> list:
+    """Teile, die sich von ``u_vor`` nach ``u`` als Ganzes um mehr als ihre
+    Elementgroesse bewegen, bei einem Verformungsanteil (Rest nach der besten
+    Starrkoerperbewegung, bezogen auf die ganze Aenderung) unter SPRUNG_VERFORMUNG.
+    Rueckgabe [(Name, Indizes der Bedingungen, Weg [m], Verformungsanteil)]."""
+    n6 = model.nn * NDOF
+    d = (np.asarray(u, float)[:n6] - np.asarray(u_vor, float)[:n6]).reshape(-1, NDOF)[:, :3]
+    X = np.asarray(model.nodes, float)
+    aus = []
+    for name, k, h, idx in _teil_feld(model, cs):
+        D = d[k]
+        w = float(np.linalg.norm(D, axis=1).max())
+        if w <= h:
+            continue
+        r = X[k] - X[k].mean(0)
+        A = np.zeros((3 * len(k), 6))
+        A[0::3, 0] = A[1::3, 1] = A[2::3, 2] = 1.0
+        A[0::3, 4], A[0::3, 5] = r[:, 2], -r[:, 1]
+        A[1::3, 3], A[1::3, 5] = -r[:, 2], r[:, 0]
+        A[2::3, 3], A[2::3, 4] = r[:, 1], -r[:, 0]
+        Dv = D.ravel()
+        p = np.linalg.lstsq(A, Dv, rcond=None)[0]
+        anteil = float(np.linalg.norm(Dv - A @ p)) / max(float(np.linalg.norm(Dv)), 1e-300)
+        if anteil < SPRUNG_VERFORMUNG:
+            aus.append((name, idx, w, anteil))
+    return aus
+
+
+def _ungehaltene_teile(model, cs) -> list:
+    """[(Name, Indizes der Bedingungen)] der Teile, deren geschlossene Bedingungen,
+    Bindungen und Lager weniger Starrkoerperbewegungen halten als alle ihre
+    Bedingungen zusammen (Rang, wie _freie_teile_halten)."""
+    lager = _lagerzeilen(model, cs)
+    idx_von = {id(c): i for i, c in enumerate(cs.cons)}
+    aus = []
+    for name, kn, cons in _teile_bedingungen(model, cs):
+        if not cons:
+            continue
+        ziel = _rang_zahl(model, kn, _halterzeilen(cons, alle_zu=True, kn=kn, lager=lager))
+        if _rang_zahl(model, kn, _halterzeilen(cons, kn=kn, lager=lager)) < ziel:
+            aus.append((name, [idx_von[id(c)] for c in cons if id(c) in idx_von]))
+    return aus
+
+
+def _vorab_halten(model, cs, log: list, progress, u) -> None:
+    """VORAB_HALTEN: vor der Loesung dieser Runde die nicht gehaltenen Teile halten,
+    sonst stabilisieren (siehe dort)."""
+    if not _ungehaltene_teile(model, cs):
+        return
+    _freie_teile_halten(model, cs, log, stufe=1)
+    rest = _ungehaltene_teile(model, cs)
+    for name, idx in rest:
+        if cs.stab_setzen(idx, _stabil_anteil(), u):
+            zeile = (f"Kontakt: Körper {name} in dieser Runde nicht gehalten (Rang der geschlossenen "
+                     f"Bedingungen) - Kontaktstabilisierung an {len(idx)} Bedingungen")
+            log.append(zeile)
+            _melde(progress, zeile)
+
+
+def _stabil_anteil() -> float:
+    from .contact import STABIL_ANTEIL
+    return float(STABIL_ANTEIL)
+
+
+def _stabil_bericht(model, cs, F, u, log: list, progress) -> None:
+    """Am Ende des Laufs: die Kraft der Kontaktstabilisierung, ueber STABIL_WARNUNG der
+    Last als Warnung."""
+    kr = cs.stab_kraefte(u) if hasattr(cs, "stab_kraefte") else {}
+    if not kr:
+        return
+    n = int(model.nn)
+    Fv = np.asarray(F, float)[:n * NDOF].reshape(-1, NDOF)[:, :3]
+    last = float(np.linalg.norm(Fv, axis=1).sum()) or 1.0
+    summe = float(sum(kr.values()))
+    teile = sorted({name for name, _k, _h, idx in _teil_feld(model, cs) if any(i in kr for i in idx)})
+    zeile = (f"Kontakt: Kontaktstabilisierung an {len(kr)} Bedingungen ({', '.join(teile[:6])}"
+             f"{' …' if len(teile) > 6 else ''}) trägt am Ende {summe / 1e3:.4g} kN = "
+             f"{100.0 * summe / last:.3g} % der Last")
+    if summe > STABIL_WARNUNG * last:
+        zeile = "WARNUNG – " + zeile + f" (über {100.0 * STABIL_WARNUNG:g} %: Ergebnis prüfen)"
+    log.append(zeile)
+    _melde(progress, zeile)
+
+
 def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MINDESTENS,
                         stufe: int = 1) -> bool:
     """Teile, die in der Kontakt-Iteration (fast) alle Bedingungen verloren
@@ -9289,7 +9423,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     pendel_sp: dict = {"bits": {}, "rec": {}, "mass": {}}
     pendeln = None                  # Ergebnis der Pruefung am Ende (contact_pendeln)
     zyklus_runden = 0               # Runden mit erkanntem Zyklus (Vorschlag 3, Laufbuch "zyklus")
+    # Bezug der Sprungpruefung in Runde 1 eines warm gestarteten Laufs: die Loesung des
+    # Laufs davor an diesem Kontaktsystem (17.10.2026)
+    u_start = getattr(cs, "_u_letzt", None) if warm else None
+    if u_start is not None and np.asarray(u_start).shape != np.asarray(F).shape:
+        u_start = None
     for it in range(1, max_iter + 1):
+        if VORAB_HALTEN and not probelauf and (it > 1 or warm):
+            _vorab_halten(model, cs, log, progress, u if u is not None else u_start)
+        cs.stab_bezug(u if u is not None else u_start)
         Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
@@ -9347,6 +9489,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 # wenigsten offenen gehalten und denselben Schritt noch einmal
                 # geloest; reicht das nicht, bis zur Haelfte halten
                 geloest = False
+                for name, _idx in _ungehaltene_teile(model, cs):
+                    zeile = (f"Kontakt: Körper {name} in dieser Runde nicht gehalten "
+                             "(Zerlegung singulär) - an den nächsten Bedingungen gehalten")
+                    log.append(zeile)
+                    _melde(progress, zeile)
                 for stufe in (1, 2):
                     if not _freie_teile_halten(model, cs, log, stufe=stufe):
                         continue
@@ -9359,6 +9506,25 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         ex = ex4
                 if not geloest:
                     raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
+        u_bez = u_vor if u_vor is not None else u_start
+        if SPRUNG_PRUEFEN and not probelauf and u_bez is not None and u is not None:
+            for versuch_s in range(SPRUNG_WIEDERHOLEN):
+                spr = _spruenge(model, cs, u, u_bez)
+                if not spr:
+                    break
+                for name, idx, weg, anteil in spr:
+                    zeile = (f"Kontakt: Körper {name} in dieser Runde nicht gehalten - er sprang als "
+                             f"Ganzes um {weg * 1e3:.4g} mm (Verformungsanteil {100.0 * anteil:.2g} %); "
+                             f"Runde verworfen und gedämpft wiederholt (Versuch {versuch_s + 1})")
+                    log.append(zeile)
+                    _melde(progress, zeile)
+                    cs.stab_setzen(idx, SPRUNG_DAEMPFUNG * 100.0 ** versuch_s, u_bez)
+                cs.stab_bezug(u_bez)
+                Kc, Fc, C, b = matrizen()
+                try:
+                    u, lam = loesen()
+                except RuntimeError as ex5:
+                    raise _kontakt_abbruch(it, ex5, cs, model, u, log=log) from None
         # Ganz rutschende Gruppen, die anderswo gehalten sind (Rang): vor dem
         # Update bestimmt, damit der Phasenwechsel den aktuellen Stand sieht,
         # und danach fuer die Matrix des naechsten Schritts (27.09.2026).
@@ -9475,6 +9641,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             elif frei_nachher != frei_vorher:
                 changed = True
             cs.gruppe_frei = frei_nachher
+        if not changed and not getattr(cs, "am_deckel", False):
+            # Die Kontaktstabilisierung wirkt auf den Weg seit der vorigen Runde: traegt sie
+            # noch Kraft, steht die Loesung nicht - weiter (17.10.2026)
+            kr = cs.stab_kraefte(u) if hasattr(cs, "stab_kraefte") else {}
+            if kr and sum(kr.values()) > RESIDUUM_STAB * max(float(getattr(cs, "kontaktkraft", 0.0) or 0.0),
+                                                             1e-300):
+                changed = True
         if aktiv_vor is not None:
             wechsel_je_runde[it] = {i for i, (c, (a0, s0)) in enumerate(zip(cs.cons, aktiv_vor))
                                     if c.active != a0 or c.slip != s0}
@@ -9735,6 +9908,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
+    if u is not None:
+        _stabil_bericht(model, cs, F, u, log, progress)
+        cs._u_letzt = np.array(u, float, copy=True)
     # inneres Residuum der Loesung, die der Lauf zurueckgibt (16.10.2026) - am System,
     # nicht im Laufbuch: die Plastizitaet liest es fuer ihr Residuum (Laststufe, Ende)
     system._kontakt_residuum = kontakt_residuum(model, system, cs, F, u, K_zusatz)

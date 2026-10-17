@@ -9642,6 +9642,8 @@ class MainWindow(QtWidgets.QMainWindow):
     KONTAKT_SCHUB = {"frei": "frei (gleiten)", "starr": "starr (haften)", "feder": "Feder"}
     KONTAKT_DREH = {"frei": "frei", "starr": "starr"}
     KONTAKT_SPALT = ["wie modelliert", "auf Berührung setzen (Spalt schließen)"]
+    #: Kontaktstart (17.10.2026): wie die Kontaktiteration beginnt
+    KONTAKT_START = ["nach Spalt (Vorgabe)", "geschlossen"]
     KONTAKT_FREI = "Benutzerdefiniert"
     KONTAKT_ALLE = "(alle anderen Körper)"
     #: Gelenkmaske: Lage, Freiheitsgrade und Wirkung im Klartext
@@ -9882,6 +9884,13 @@ class MainWindow(QtWidgets.QMainWindow):
                      self.KONTAKT_SPALT,
                      hinweis="„auf Berührung setzen“: jeder Knoten gilt in seiner Lage als anliegend - "
                              "Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden"),
+                   F("start_geschlossen", "Kontaktstart", "wahl",
+                     self.KONTAKT_START[1 if getattr(kb, "start_geschlossen", False) else 0],
+                     self.KONTAKT_START,
+                     hinweis="„geschlossen“: die Rechnung beginnt mit allen Knoten dieser Fuge "
+                             "geschlossen, mit dem echten Spalt. Sinnvoll, wenn Teile planmäßig anliegen "
+                             "und durch Vorspannung oder Last angedrückt werden; die Fuge darf trotzdem "
+                             "abheben, wenn Zug entsteht"),
                    F("spiel", "Spiel je Seite [mm]", "zahl", float(getattr(kb, "spiel", 0.0) or 0.0) * 1e3,
                      hinweis="Passung: Anfangsspalt je Knoten zusätzlich zur Geometrie - bei einer "
                              "Bohrung das radiale Spiel (halbes Durchmesserspiel; H7/h6 bei 25 mm bis "
@@ -11890,6 +11899,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            and self._kontakt_ist_standard(standard, zug, sx, sy, dreh, mu) else "")
             kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
             kb.spalt_schliessen = str(w.get("spalt_art", "")) == self.KONTAKT_SPALT[1]
+            kb.start_geschlossen = str(w.get("start_geschlossen", "")) == self.KONTAKT_START[1]
             kb.spiel = max(float(zahl("spiel", 0.0) or 0.0), 0.0) / 1e3
             kb.grenzpressung = max(float(zahl("grenzpressung", 0.0) or 0.0), 0.0) * 1e6
             kb.rand_frei = int(max(float(zahl("rand_frei", 0.0) or 0.0), 0.0))
