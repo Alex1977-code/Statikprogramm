@@ -159,6 +159,20 @@ UMKEHR_RUNDEN = 2
 #: regulaer und traegt am Ende keine Kraft, denn ihre Kraft steht im Residuum.
 HAFT_FAKTOR = 1.0e3
 RT_REST = 1.0e-8
+#: Reststeifigkeit der Reibungstangente einmal je Lauf entscheiden (17.10.2026). Bis
+#: dahin bekam ein gleitender Knoten die grobe Feder SLIP_STIFFNESS*k_t ohne Ausgleich,
+#: solange seine Gruppe in dieser Runde ganz rutschte und sonst nichts das Bauteil hielt,
+#: und die feine RT_REST*c_pd mit Ausgleich, sobald ein Knoten haftete - je Runde neu,
+#: das 1e9-fache hin und her. Die grobe Feder traegt Kraft und verschiebt das Bauteil,
+#: Knoten haften wieder, die naechste Runde springt zurueck: am Drehlager-Z mit mu 0,2
+#: (GZ02) Periode 2 bis zum Deckel, am Pruefkoerper Platte auf Reibfuge (tests/
+#: test_pendeln_rt) ebenso. Jetzt entscheidet die erste Runde, in der die Gruppe ganz
+#: rutscht, und die Entscheidung gilt bis zum Ende des Laufs: grob nur, wenn die Fuge das
+#: Bauteil nicht halten kann (Kraft und Moment, die sie in der Loesung davor trug, ueber
+#: der Reibkapazitaet: F/(mu Sum Fn) + M/(mu Sum Fn r) > 1), sonst fein mit Ausgleich -
+#: die Reibkraefte heben sich dann auf, auch wenn alle Knoten gleiten (radial unter
+#: einer Ankerkraft). Ruecknahme: False.
+RT_HALT_EINMAL = True
 #: Ab dieser Drehung bzw. relativen Aenderung wird die Tangente eines gleitenden
 #: Knotens der Reibungstangente neu gesetzt (neue Matrix); darunter rechnet die Runde
 #: mit der vorigen Tangente weiter (vereinfachter Newton), die Kraft ist trotzdem die
@@ -913,6 +927,8 @@ class ContactSystem:
         #: die Feder am Ende keine Kraft traegt (K5). None: vom Loeser noch
         #: nicht bestimmt - dann wie bis dahin (alle grob).
         self.gruppe_frei = None
+        #: RT_HALT_EINMAL: {Gruppe: "fein" | "grob"} - einmal je Lauf entschieden
+        self._halt_rt: dict = {}
         self.diag = np.asarray(K.diagonal()).ravel()
         self.cons: list[Constraint] = []
         self.size = model.characteristic_size()
@@ -1557,6 +1573,7 @@ class ContactSystem:
         self.wechsel_guete = float("inf")
         self._ruhe_gemeldet = False
         self.gruppe_frei = None
+        self._halt_rt = {}
         for c in self.cons:
             c.active = True if c.zug else c.g0 <= self.tol
             c.slip = False
@@ -1705,6 +1722,8 @@ class ContactSystem:
         self.phase = int(z.get("phase", 2) or 2)
         gf = z.get("gruppe_frei")
         self.gruppe_frei = None if gf is None else set(gf)
+        # die Entscheidung ueber die Reststeifigkeit gilt je Lauf (RT_HALT_EINMAL)
+        self._halt_rt = {}
         self.warm = True
         self.cycles = 0
         self.richtung_runden = 0
@@ -1993,6 +2012,7 @@ class ContactSystem:
                 hash(h.tobytes()),
                 tuple(sorted(self._full_slip_groups().items())),
                 None if getattr(self, "gruppe_frei", None) is None else tuple(sorted(self.gruppe_frei)),
+                tuple(sorted((getattr(self, "_halt_rt", None) or {}).items())),
                 # Quertangenten (primal-dual) stehen in Kc: ihr Inhalt, nicht ein
                 # Zaehler - ein uebernommener Zustand mit denselben Tangenten
                 # loest mit der Faktorisierung des vorigen Lastfalls
@@ -2781,8 +2801,89 @@ class ContactSystem:
         die grobe Reststeifigkeit ohne Ausgleich: sie haelt das Bauteil."""
         if not full_slip.get(_group(c), False):
             return False
+        if self._halt_fein(_group(c)) and self._rt(c):
+            return False                # RT_HALT_EINMAL: die Fuge haelt das Bauteil
         gf = getattr(self, "gruppe_frei", None)
         return gf is None or _group(c) in gf
+
+    def _halt_fein(self, g: str) -> bool:
+        """Hat dieser Lauf fuer die Gruppe entschieden, dass ihre Reibung das Bauteil
+        haelt (RT_HALT_EINMAL)? Dann feine Reststeifigkeit mit Ausgleich, auch wenn
+        alle Knoten gleiten, und keine Warnung "Bauteil rutscht"."""
+        return RT_HALT_EINMAL and (getattr(self, "_halt_rt", None) or {}).get(g) == "fein"
+
+    def _rt_bedarf(self, u: np.ndarray, lam) -> dict:
+        """{Gruppe: (F, M, F_kap, M_kap)} der Reibungstangente in der Loesung ``u``
+        (mit dem Zustand, mit dem sie gerechnet wurde): die Resultierende F und das
+        Moment M um den Schwerpunkt der aktiven Knoten, die die Fuge tangential traegt,
+        und ihre Kapazitaet mu Sum Fn und mu Sum Fn |r_t|.
+
+        Ist die Fuge eben (|Sum Fn n| >= 0,9 Sum Fn), zaehlen nur die Anteile senkrecht
+        zur gemittelten Normale n_m (F) bzw. um sie (M): an Knoten mit schraeger Normale
+        (Rand des Gegenstuecks) hat die Tangentialkraft einen Anteil laengs n_m, den die
+        Normalkraefte aufnehmen (Pruefkoerper: 6,5 kN laengs z bei Resultierender null
+        in der Ebene). Bei gekruemmten Fugen bleibt der volle Vektor - das schaetzt den
+        Bedarf hoeher, die Entscheidung faellt eher grob, also wie bisher."""
+        full_slip = self._full_slip_groups()
+        X = np.asarray(self.model.nodes, float)
+        teile: dict = {}
+        for c in self.cons:
+            if not (c.active and c.mu > 0 and c.ct is not None and self._rt(c)):
+                continue
+            _g, roh, _fn, Ft, _dt = self._kraft_einer(c, u, lam, full_slip)
+            t1, t2 = _axes_of(c)
+            f = float(Ft[0]) * np.asarray(t1, float) + float(Ft[1]) * np.asarray(t2, float)
+            teile.setdefault(_group(c), []).append((X[int(c.node)], f, c.mu * max(float(roh), 0.0),
+                                                   np.asarray(c.normal, float)))
+        out = {}
+        for g, z in teile.items():
+            o = np.mean([x for x, _f, _k, _n in z], axis=0)
+            F = np.sum([f for _x, f, _k, _n in z], axis=0)
+            M = np.sum([np.cross(x - o, f) for x, f, _k, _n in z], axis=0)
+            kF = float(sum(k for _x, _f, k, _n in z))
+            nm = np.sum([k * n / (float(np.linalg.norm(n)) or 1.0) for _x, _f, k, n in z], axis=0)
+            eben = kF > 0.0 and float(np.linalg.norm(nm)) >= 0.9 * kF
+            if eben:
+                nm = nm / float(np.linalg.norm(nm))
+                F = F - (F @ nm) * nm
+                M = (M @ nm) * nm
+            kM = 0.0
+            for x, _f, k, n in z:
+                r = x - o
+                a = nm if eben else n / (float(np.linalg.norm(n)) or 1.0)
+                r = r - (r @ a) * a
+                kM += k * float(np.linalg.norm(r))
+            out[g] = (float(np.linalg.norm(F)), float(np.linalg.norm(M)), kF, kM)
+        return out
+
+    def _halt_rt_entscheiden(self, bedarf: dict):
+        """RT_HALT_EINMAL: fuer jede Gruppe, die jetzt ganz rutscht und noch nicht
+        entschieden ist, aus dem Bedarf der Loesung davor (:meth:`_rt_bedarf`)
+        entscheiden - einmal, ohne Zuruecknehmen. Grob (die Feder haelt das Bauteil,
+        Warnung), wenn F/F_kap + M/M_kap > 1: die lineare Wechselwirkung liegt
+        innerhalb der konvexen Grenzkurve, darunter haelt die Reibung sicher."""
+        if not RT_HALT_EINMAL:
+            return
+        halt = getattr(self, "_halt_rt", None)
+        if halt is None:
+            halt = self._halt_rt = {}
+        for g, voll in self._full_slip_groups().items():
+            if not voll or g in halt or g not in bedarf:
+                continue
+            F, M, kF, kM = bedarf[g]
+            if kF <= 0.0:
+                continue
+            qF = F / kF
+            qM = M / kM if kM > 0.0 else (0.0 if M <= 1e-12 * kF * self.size else float("inf"))
+            halt[g] = "fein" if qF + qM <= 1.0 else "grob"
+            self.log.append(
+                f"Kontakt: {g} - alle Knoten gleiten; die Fuge trug F = {F:.4g} N und "
+                f"M = {M:.4g} Nm bei der Kapazitaet {kF:.4g} N bzw. {kM:.4g} Nm "
+                f"(Ausnutzung {qF + qM:.3g}): "
+                + ("die Reibung haelt das Bauteil, feine Reststeifigkeit mit Ausgleich"
+                   if halt[g] == "fein" else
+                   "das Bauteil rutscht, grobe Reststeifigkeit haelt es")
+                + " - bis zum Ende des Laufs")
 
     def _full_slip_groups(self) -> dict:
         """Kontaktgruppe -> True, wenn alle aktiven Reibknoten gleiten (Bauteil rutscht;
@@ -2804,7 +2905,15 @@ class ContactSystem:
         Laufs (MAX_CYCLES, seit dem 15.10.2026): soll die Iteration weiterlaufen und hat
         der Lauf schon MAX_CYCLES Runden, endet er am Deckel - mit der Zeile im
         Protokoll und ``am_deckel``, also nicht konvergiert und das Ergebnis vorlaeufig."""
+        bedarf = (self._rt_bedarf(u, lam)
+                  if RT_HALT_EINMAL and getattr(self, "reibungstangente", False) else {})
         weiter = self._update_entscheiden(u, lam)
+        if bedarf:
+            vor = dict(getattr(self, "_halt_rt", None) or {})
+            self._halt_rt_entscheiden(bedarf)
+            if self._halt_rt != vor and not weiter and not self.am_deckel:
+                # die Reststeifigkeit aendert sich: noch eine Runde mit der neuen Matrix
+                weiter = True
         n = len(getattr(self, "runden", None) or [])
         if weiter and n >= MAX_CYCLES:
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
@@ -2850,7 +2959,8 @@ class ContactSystem:
             # K5 in Phase 1 an der groben Feder haengen
             gf = getattr(self, "gruppe_frei", None)
             if any(c.active and c.slip and (not full.get(_group(c), False)
-                                            or (gf is not None and _group(c) not in gf))
+                                            or (gf is not None and _group(c) not in gf)
+                                            or self._halt_fein(_group(c)))
                    for c in self.cons):
                 self.phase = 2
                 self.cycles = 0
@@ -3430,6 +3540,8 @@ class ContactSystem:
                 gf = getattr(self, "gruppe_frei", None)
                 if gf is not None and name not in gf:
                     continue            # anderswo gehalten: nichts laeuft weg
+                if self._halt_fein(name):
+                    continue            # die Reibung haelt das Bauteil (RT_HALT_EINMAL)
                 out.append(f"{name}: alle aktiven Kontaktknoten gleiten - Reibung reicht "
                            "nicht fuer das Gleichgewicht (Bauteil rutscht; nahe der "
                            "Reibkapazitaet mu*N urteilt das Verfahren konservativ)")

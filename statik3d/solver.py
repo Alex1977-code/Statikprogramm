@@ -6571,6 +6571,16 @@ def _anfang_ausfall(model: Model, factors: dict, aktiv=None, zusatz: dict = None
     return out
 
 
+#: Ausfall-Iteration: nach einem Kontaktlauf, der am Deckel endete, beginnt der naechste
+#: Lauf der Iteration bei dessen letztem Zustand statt kalt (17.10.2026). Am Drehlager-Z
+#: mit mu 0,2 (GZ02) rechnete sie nach jedem Deckel denselben Kontaktlauf kalt noch
+#: einmal, Runde fuer Runde gleich, rund 6 Minuten je Lauf. Der Zustand gilt dem
+#: naechsten Lauf als fremd (solve_with_contact, fortsetzung), dessen Ergebnis bleibt
+#: vorlaeufig, bis er selbst konvergiert; an den naechsten Aufruf (Newton-Schritt,
+#: Lastfall) geht wie bisher nur ein konvergierter Zustand. Ruecknahme: False.
+AUSFALL_WARM_NACH_DECKEL = True
+
+
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
                        progress=None, max_iter: int = 50, uebermass: dict = None,
                        K_zusatz: sparse.spmatrix = None, probelauf: bool = False,
@@ -6637,6 +6647,7 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     # Vorschlag 5: Warmstart vom letzten konvergierten Zustand (ausfall_warm)
     warm = bool(getattr(getattr(model, "plastizitaet", None), "ausfall_warm", True)) and not probelauf
     st_warm, st_fort = (start, bool(fortsetzung)) if warm else (None, False)
+    st_konv = st_warm               # fuer den naechsten Aufruf: nur ein konvergierter Zustand
     zustaende: list = []        # Kontaktzustand je Lauf (fuer den Laufbuch-Eintrag des Loesers)
     for it in range(1, max_iter + 1):
         K_aus = K_zusatz
@@ -6674,6 +6685,12 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
                 if isinstance(z_, dict) and z_.get("konvergiert", True):
                     # der naechste Lauf setzt beim letzten konvergierten fort
                     st_warm, st_fort = z_, True
+                    st_konv = z_
+                elif isinstance(z_, dict) and AUSFALL_WARM_NACH_DECKEL:
+                    # am Deckel geendet: der naechste Lauf dieser Iteration beginnt dort
+                    # statt kalt (solve_with_contact nimmt ihn als fremden Zustand, sein
+                    # Ergebnis bleibt vorlaeufig, bis er selbst konvergiert)
+                    st_warm, st_fort = z_, True
         else:
             u = system.solve(F, K_extra=K_aus, us=us)
             R = system.reactions(u, F, K_aus)
@@ -6710,7 +6727,7 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     if warm and kontakt is not None:
         # fuer den naechsten Aufruf: der letzte konvergierte Zustand dieser Iteration
         # (oder der angebotene Start, wenn keiner konvergierte)
-        kontakt[2]["contact_state_weiter"] = st_warm
+        kontakt[2]["contact_state_weiter"] = st_konv
     return u, R, aktiv, sorted(int(i) for i in aus), log, kontakt
 
 
