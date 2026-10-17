@@ -5032,8 +5032,13 @@ class _KontaktImNewton:
         """Eine Laststufe ist konvergiert: der Gleitweg der Reibungstangente am Ende
         ihrer letzten Loesung wird der Anfang der naechsten (contact.GLEITWEG_SPEICHER).
         Eine Halbierung danach geht an die Marke der naechsten Stufe zurueck, also auf
-        diesen Stand."""
-        self.halter["start"] = gleitweg_fortschreiben(self.halter["start"])
+        diesen Stand. Fortgeschrieben wird im Zustand selbst, nicht in einer Kopie: das
+        Laufbuch erkennt die Herkunft des naechsten Starts an der Identitaet
+        (_start_von_lauf), und die Marke dieser Stufe ist ein anderer Zustand (der vor
+        ihrem Startwert)."""
+        z = self.halter["start"]
+        if isinstance(z, dict) and z.get("gleitweg_ende") is not None:
+            z["gleitweg"] = [None if g is None else np.array(g, float) for g in z["gleitweg_ende"]]
 
     def merken(self):
         """Marke fuer einen Ruecksprung an den Anfang einer Laststufe

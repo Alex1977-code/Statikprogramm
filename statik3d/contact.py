@@ -2967,8 +2967,10 @@ class ContactSystem:
         Laufs (MAX_CYCLES, seit dem 15.10.2026): soll die Iteration weiterlaufen und hat
         der Lauf schon MAX_CYCLES Runden, endet er am Deckel - mit der Zeile im
         Protokoll und ``am_deckel``, also nicht konvergiert und das Ergebnis vorlaeufig."""
+        # (Stuempfe aus object.__new__ ohne Bedingungen: nichts zu entscheiden)
         bedarf = (self._rt_bedarf(u, lam)
-                  if RT_HALT_EINMAL and getattr(self, "reibungstangente", False) else {})
+                  if RT_HALT_EINMAL and getattr(self, "reibungstangente", False)
+                  and getattr(self, "cons", None) else {})
         weiter = self._update_entscheiden(u, lam)
         if bedarf:
             vor = dict(getattr(self, "_halt_rt", None) or {})
