@@ -2278,6 +2278,29 @@ wird erkannt und im ersten Versuch gedämpft, die größte angenommene Änderung
 bei 15 mm Elementgröße, das Ergebnis gleicht dem ohne Sprung auf 7·10⁻¹² m, die
 Stabilisierung trägt am Ende 2,9·10⁻⁶ % der Last.
 
+**Halt über geteilte Knoten (05.11.2026, `solver.TEILE_UEBER_KNOTEN`).** Am Drehlager-Z
+(Mittel, μ = 0,2) brach fd34e1b in Spannstufe 1/3 ab: „V112 hebt ab und hängt an 4
+gehaltenen Kontaktpunkten unter 0,9 kN Zug; V111 … 7 … 0,7 kN“. Die Knaggen V111 und V112
+teilen mit V36 je 97 Knoten (mit V108 bzw. V110 je 86); Kontaktbedingungen haben sie nur
+aus dem Flächenlager „Starr“ mit Ausfall bei Zug. Die Haltprüfung vor der Lösung nahm
+jeden Körper für sich und zählte nur seine eigenen Kontaktbedingungen und Lager – die
+Verbindung über geteilte Knoten sah sie nicht, hielt die Knaggen fest, sobald ihre
+Lagerfuge aufging, und die strenge Endprüfung fand an den gehaltenen Punkten Zug. Jetzt
+sind Körper mit gemeinsamen Knoten für die Haltprüfung (Halten vor der Lösung, Öffnen
+begrenzen) ein Teil, und der Rang zählt Kontaktbedingungen und Lager der ganzen Gruppe,
+auch der Körper ohne eigene Kontaktbedingung. Teile, die nur über Kontakt aneinander
+liegen, bleiben getrennt. Prüfkörper (`tests/test_knagge_gehalten`): Kragblock mit
+Knagge an geteilten Knoten auf einer Lagerfuge „Ausfall bei Zug“, ohne Querlast; die Last
+nach oben hebt die Knagge ab – vorher Abbruch („hängt an 2 gehaltenen Kontaktpunkten
+unter 22,4 kN Zug“), jetzt konvergiert in 2 Runden, alle 15 Bedingungen offen, Ergebnis
+gleich dem ohne Halten vor der Lösung.
+
+Dazu die Endprüfung: trägt ein Halt am Ende nur Zug unter `pendel_kraft_anteil` der
+gesamten Kontaktkraft, hält er nichts – er wird als offen angenommen und gemeldet, statt
+abzubrechen (Prüfkörper mit unabhängigem Sockel unter 2 000 kN: 1,12 kN Zug, als offen
+angenommen). Ein Teil, das wirklich abhebt (der nach oben gezogene Block,
+`tests/test_kontakthalt`), bricht weiter ab.
+
 **Ausfall-Iteration nach dem Deckel (17.10.2026, `solver.AUSFALL_WARM_NACH_DECKEL`).**
 Endet ein Kontaktlauf der Ausfall-Iteration am Deckel, beginnt der nächste Lauf der
 Iteration bei dessen Zustand statt kalt; `solve_with_contact` nimmt ihn als fremden

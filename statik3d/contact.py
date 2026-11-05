@@ -2967,8 +2967,8 @@ class ContactSystem:
         if not zug or getattr(self, "model", None) is None:
             return umstellen
         try:
-            from .solver import _halterzeilen, _lagerzeilen, _rang_zahl, _teile_bedingungen
-            teile = _teile_bedingungen(self.model, self)
+            from .solver import _halterzeilen, _lagerzeilen, _rang_zahl, _teile_gruppen
+            teile = _teile_gruppen(self.model, self)
             lager = _lagerzeilen(self.model, self)
         except Exception:                     # noqa: BLE001 - eine Schrittsteuerung sperrt nie
             return umstellen

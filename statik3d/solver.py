@@ -7720,6 +7720,8 @@ def _teile_bedingungen(model, cs) -> list:
             cons_je[j].append(c)
     aus = [(name, kn, cons) for (name, kn), cons in zip(teile, cons_je) if cons]
     try:
+        # auch die Teile ohne Kontakt (Block an der Knagge): _teile_gruppen braucht sie
+        cs._teile_alle = [(name, kn, cons) for (name, kn), cons in zip(teile, cons_je)]
         cs._teile_cache = (model, len(cs.cons), aus)
     except Exception:                 # noqa: BLE001 - Stuempfe ohne __dict__
         pass
@@ -7992,14 +7994,74 @@ def _spruenge(model, cs, u, u_vor) -> list:
     return aus
 
 
+#: Halt ueber geteilte Knoten (05.11.2026): Koerper, die Knoten teilen, sind fuer die
+#: Haltpruefung (VORAB_HALTEN, OEFFNEN_BEGRENZEN) ein Teil - der Rang zaehlt die
+#: Kontaktbedingungen und Lager der ganzen Gruppe. Bis dahin galt am Drehlager-Z (Mittel,
+#: mu 0,2, fd34e1b) jede Knagge V111/V112 als frei, sobald ihre Lagerfuge "Starr" (Ausfall
+#: bei Zug) aufging, obwohl sie mit V36 97 Knoten teilt; sie wurde festgehalten, und die
+#: Endpruefung brach ab ("haengt an 4 gehaltenen Kontaktpunkten unter 0.9 kN Zug").
+#: Teile, die nur ueber Kontakt aneinander liegen, bleiben getrennt. Ruecknahme: False.
+TEILE_UEBER_KNOTEN = True
+
+
+def _teile_gruppen(model, cs) -> list:
+    """Wie :func:`_teile_bedingungen`, aber Teile mit gemeinsamen Knoten zu einer Gruppe
+    zusammengefasst (TEILE_UEBER_KNOTEN): [(Namen mit "+", Knotenmenge, Bedingungen)].
+    Einmal je Kontaktsystem."""
+    nur_kontakt = _teile_bedingungen(model, cs)
+    if not TEILE_UEBER_KNOTEN:
+        return nur_kontakt
+    cache = getattr(cs, "_gruppen_cache", None)
+    if cache is not None and cache[0] is model and cache[1] == len(cs.cons):
+        return cache[2]
+    # alle Teile, auch ohne Kontaktbedingung - ihre Lager halten die Gruppe mit
+    teile = getattr(cs, "_teile_alle", None) or nur_kontakt
+    eltern = list(range(len(teile)))
+
+    def wurzel(i):
+        while eltern[i] != i:
+            eltern[i] = eltern[eltern[i]]
+            i = eltern[i]
+        return i
+    erster: dict = {}
+    for j, (_name, kn, _cons) in enumerate(teile):
+        for n in kn:
+            i = erster.setdefault(int(n), j)
+            if i != j:
+                a, b2 = wurzel(i), wurzel(j)
+                if a != b2:
+                    eltern[b2] = a
+    gruppen: dict = {}
+    for j in range(len(teile)):
+        gruppen.setdefault(wurzel(j), []).append(j)
+    aus = []
+    for js in gruppen.values():
+        if len(js) == 1:
+            if teile[js[0]][2]:
+                aus.append(teile[js[0]])
+            continue
+        kn, cons, ids = set(), [], set()
+        for j in js:
+            kn |= set(teile[j][1])
+            for c in teile[j][2]:
+                if id(c) not in ids:
+                    ids.add(id(c))
+                    cons.append(c)
+        if cons:
+            aus.append(("+".join(str(teile[j][0]) for j in js), kn, cons))
+    cs._gruppen_cache = (model, len(cs.cons), aus)
+    return aus
+
+
 def _ungehaltene_teile(model, cs) -> list:
     """[(Name, Indizes der Bedingungen)] der Teile, deren geschlossene Bedingungen,
     Bindungen und Lager weniger Starrkoerperbewegungen halten als alle ihre
-    Bedingungen zusammen (Rang, wie _freie_teile_halten)."""
+    Bedingungen zusammen (Rang, wie _freie_teile_halten). Teile mit gemeinsamen Knoten
+    zaehlen zusammen (_teile_gruppen)."""
     lager = _lagerzeilen(model, cs)
     idx_von = {id(c): i for i, c in enumerate(cs.cons)}
     aus = []
-    for name, kn, cons in _teile_bedingungen(model, cs):
+    for name, kn, cons in _teile_gruppen(model, cs):
         if not cons:
             continue
         ziel = _rang_zahl(model, kn, _halterzeilen(cons, alle_zu=True, kn=kn, lager=lager))
@@ -8025,7 +8087,7 @@ def _vorab_halten(model, cs, log: list, progress, u) -> None:
                      "Bedingungen) - vor der Lösung an den nächsten Bedingungen gehalten")
             log.append(zeile)
             _melde(progress, zeile)
-    _freie_teile_halten(model, cs, log, stufe=1)
+    _freie_teile_halten(model, cs, log, stufe=1, teile=_teile_gruppen(model, cs))
     rest = _ungehaltene_teile(model, cs)
     for name, idx in rest:
         if cs.stab_setzen(idx, _stabil_anteil(), u):
@@ -8061,7 +8123,7 @@ def _stabil_bericht(model, cs, F, u, log: list, progress) -> None:
 
 
 def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MINDESTENS,
-                        stufe: int = 1) -> bool:
+                        stufe: int = 1, teile: list = None) -> bool:
     """Teile, die in der Kontakt-Iteration (fast) alle Bedingungen verloren
     haben, an ihren am wenigsten offenen Bedingungen halten.
 
@@ -8099,7 +8161,7 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     denselben Schritt noch einmal.
     """
     gehalten, geschoben = [], []
-    for name, _kn, cons in _teile_bedingungen(model, cs):
+    for name, _kn, cons in (teile if teile is not None else _teile_bedingungen(model, cs)):
         aktiv = [c for c in cons if c.active]
         if stufe == 1:
             # Rang statt Zahl (26.09.2026): gehalten wird, bis die
@@ -9766,6 +9828,27 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             log.append(text)
             raise _kontakt_abbruch(it, RuntimeError(text), cs, model, u, log=log) from None
         zug = _gehaltene_unter_zug(model, cs)
+        if zug:
+            # Ein Halt, der am Ende nur Zug unter der Toleranz traegt (pendel_kraft_anteil
+            # der Kontaktkraft, wie die Restwechsel eingefrorener Knoten), haelt nichts: er
+            # wird als offen angenommen statt abzubrechen (05.11.2026)
+            k_anteil = pendel_schwellen(model)[0]
+            K_ges = float(getattr(cs, "kontaktkraft", 0.0) or 0.0)
+            klein = [z_ for z_ in zug if K_ges > 0.0 and z_[3] <= k_anteil * K_ges]
+            for name, _kn, n_geh, kraft, cons_z in klein:
+                for c in cons_z:
+                    if getattr(c, "gehalten", False) and c.active:
+                        c.gehalten = False
+                        c.active = False
+                        c.slip = False
+                        c.Fn = 0.0
+                        c.Ft[:] = 0
+                zeile = (f"Kontakt: {name} - die {n_geh} gehaltenen Kontaktpunkte tragen am Ende "
+                         f"{kraft / 1e3:.3g} kN Zug, unter {100.0 * k_anteil:g} % der Kontaktkraft "
+                         f"{K_ges / 1e3:.4g} kN - als offen angenommen")
+                log.append(zeile)
+                _melde(progress, zeile)
+            zug = [z_ for z_ in zug if z_ not in klein]
         if zug:
             # Der Halt hat den Schritt gerettet, nicht das Ergebnis: das Teil
             # zieht an den gehaltenen Punkten - es hebt ab, kein Gleichgewicht
