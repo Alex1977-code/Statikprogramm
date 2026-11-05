@@ -2232,6 +2232,52 @@ in Phase 2 und in der Erkennung der Periode 2 nicht zu zählen – das Pendelmod
 Tangente fror dann zwei Runden zu früh ein (Weg 1,27 µm über der Schranke, Lauf
 abgelehnt) bzw. brauchte 35 statt 27 Runden.
 
+**Körper springen nicht mehr (17.10.2026, Auftrag des Anwenders nach Mittel-Z mit μ = 0,2).**
+Im Kontaktlauf von Laststufe 1/3 sprangen dort Ankerplatten als starre Körper (V4 um
+180 mm, V7 um 101 mm, Verformungsanteil um 10⁻⁷ %), nachdem sie zwei Stufen lang anlagen.
+Die Zerlegung scheiterte nicht – der Löser löste das fast singuläre System –, und die
+Halte-Hilfe `_freie_teile_halten` griff nur bei einer RuntimeError. Nachgestellt
+(`tests/test_kontakt_sprung`): Platte auf Reibfuge unter 300 kN, ein Stab „nur Zug“ mit
+Temperaturdehnung drückt sie im ersten Schritt der Ausfall-Iteration hoch, sie liegt am
+Ende auf 4 Knoten; der nächste Lauf startet warm von diesem Zustand, der Stab ist
+ausgefallen, und die Lösung springt um 536 m. Vier Bausteine:
+
+1. *Kontaktstart „geschlossen“* (Kontaktbedingung `start_geschlossen`, im Kontaktpaar
+   mitgeführt, Maske „Kontaktstart“): der Lauf beginnt mit allen Bedingungen der Fuge
+   geschlossen, mit dem echten Spalt; wo Zug entsteht, öffnet die erste Aktualisierung
+   sie wie jede andere. Anders als „auf Berührung setzen“ bleibt der Spalt, wie er ist.
+2. *Öffnen begrenzen* (`contact.OEFFNEN_BEGRENZEN`): wollen in einer Runde alle
+   geschlossenen Bedingungen eines Teils öffnen (mehr als drei) und wäre es dadurch weniger
+   gehalten (Rang der geschlossenen Bedingungen, Bindungen und Lager), öffnet die Runde nur
+   die stärker gezogene Hälfte; das Protokoll sagt „Körper … wäre in dieser Runde nicht
+   gehalten“. Geöffnet wird weiter nur bei Zug über der Toleranz; solange eine
+   zurückgehaltene Bedingung Zug trägt, zählt die Runde als Wechsel. Bei drei und weniger
+   übernimmt die Halte-Hilfe (Punkt 3); trägt der Halt am Ende Zug, bricht der Lauf wie
+   bisher ab („hebt ab, kein Gleichgewicht“). Verworfen (gemessen 17.10.2026): jede Öffnung
+   zu begrenzen, die einem Teil Rang nimmt – sie hielt in den Pendelmodellen
+   (`tests/test_pendeln_periode2`) einen einzelnen pendelnden Knoten auf Dauer geschlossen,
+   jeder Lauf endete am Deckel (21 von 36 Prüfungen), und der nach oben gezogene Block
+   brach nicht mehr ab (`tests/test_kontakthalt`).
+3. *Vorab halten und stabilisieren* (`solver.VORAB_HALTEN`): vor jeder Lösung ab Runde 2
+   (warm gestartet auch in Runde 1) werden Teile, die im Zustand der Runde nicht gehalten
+   sind, an den Bedingungen mit dem kleinsten Spalt gehalten (Meldung „Körper … in dieser
+   Runde nicht gehalten“, je Lauf einmal je Körper); bleibt eines ungehalten,
+   bekommen seine Bedingungen die Kontaktstabilisierung, eine Feder mit 10⁻⁶ der
+   Kontaktsteifigkeit auf den Weg seit der vorigen Runde (`contact.STABIL_ANTEIL`).
+4. *Sprungprüfung* (`solver.SPRUNG_PRUEFEN`): bewegt sich ein Teil in einer Runde als
+   Ganzes um mehr als seine Elementgröße bei einem Verformungsanteil unter 10⁻³, wird die
+   Runde verworfen und mit Dämpfung neu gelöst (10⁻⁴ der Kontaktsteifigkeit auf den Weg
+   seit der vorigen Runde, je Versuch das 100-Fache, höchstens drei Versuche); das
+   Protokoll sagt „Körper … in dieser Runde nicht gehalten“, ebenso bei singulärer
+   Zerlegung.
+
+Die Kraft der Stabilisierung steht im inneren Residuum (sie ist keine Kontaktkraft nach
+dem Gesetz), hält die Schleife offen, solange sie über 10⁻⁶ der Kontaktkraft liegt, und
+steht am Ende im Protokoll; über 0,1 % der Last als „WARNUNG“. Am Prüfkörper: der Sprung
+wird erkannt und im ersten Versuch gedämpft, die größte angenommene Änderung ist 9,6 mm
+bei 15 mm Elementgröße, das Ergebnis gleicht dem ohne Sprung auf 7·10⁻¹² m, die
+Stabilisierung trägt am Ende 2,9·10⁻⁶ % der Last.
+
 **Ausfall-Iteration nach dem Deckel (17.10.2026, `solver.AUSFALL_WARM_NACH_DECKEL`).**
 Endet ein Kontaktlauf der Ausfall-Iteration am Deckel, beginnt der nächste Lauf der
 Iteration bei dessen Zustand statt kalt; `solve_with_contact` nimmt ihn als fremden

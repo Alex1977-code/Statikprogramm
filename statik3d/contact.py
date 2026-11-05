@@ -186,14 +186,20 @@ RT_HALT_EINMAL = True
 #: Stufe (Newton-Schritte, Ausfall-Iteration, Neustart, Halbierung) bleibt er, ein
 #: Warmstart aus einem anderen Lastfall bringt keinen mit. Ruecknahme: False.
 GLEITWEG_SPEICHER = True
-#: Oeffnen begrenzen (17.10.2026, Auftrag des Anwenders nach Mittel-Z mu 0,2): eine Runde
-#: oeffnet bei einem Teil, das dadurch weniger Starrkoerperbewegungen gehalten haette
-#: (Rang der geschlossenen Bedingungen, Bindungen und Lager, solver._rang_zahl), nur die
-#: staerker gezogene Haelfte der Bedingungen, die oeffnen wollen. Das ist Schrittsteuerung:
-#: geoeffnet wird weiter nur bei Zug ueber der Toleranz, und solange eine zurueckgehaltene
-#: Bedingung Zug traegt, gilt die Runde als Wechsel - muss das Teil wirklich abheben, endet
-#: der Lauf nicht konvergiert. Ruecknahme: False.
+#: Oeffnen begrenzen (17.10.2026, Auftrag des Anwenders nach Mittel-Z mu 0,2): wollen in
+#: einer Runde **alle** geschlossenen Bedingungen eines Teils oeffnen und waere es dadurch
+#: weniger gehalten (Rang der geschlossenen Bedingungen, Bindungen und Lager,
+#: solver._rang_zahl), oeffnet die Runde nur die staerker gezogene Haelfte. Das ist
+#: Schrittsteuerung: geoeffnet wird weiter nur bei Zug ueber der Toleranz, und solange eine
+#: zurueckgehaltene Bedingung Zug traegt, gilt die Runde als Wechsel. Bei hoechstens
+#: OEFFNEN_REST Bedingungen begrenzt die Regel nicht mehr: dann haelt die vorhandene
+#: Halte-Hilfe das Teil (solver.VORAB_HALTEN, _freie_teile_halten), und traegt der Halt am
+#: Ende Zug, bricht der Lauf wie bisher ab ("hebt ab, kein Gleichgewicht").
+#: Verworfen (gemessen 17.10.2026): jede Oeffnung begrenzen, die Rang nimmt - sie hielt in den
+#: Pendelmodellen (tests/test_pendeln_periode2) einen einzelnen pendelnden Knoten auf Dauer
+#: geschlossen, jeder Lauf endete am Deckel (21 von 36 Pruefungen). Ruecknahme: False.
 OEFFNEN_BEGRENZEN = True
+OEFFNEN_REST = 3
 #: Kontaktstabilisierung (17.10.2026): Steifigkeit der Feder, die ein nicht gehaltenes oder
 #: springendes Teil an seinen Kontaktbedingungen bekommt, als Anteil der Kontaktsteifigkeit
 #: (Diagonale, _c_pd). Sie wirkt auf den Weg seit der vorigen Runde (Daempfung,
@@ -2969,8 +2975,10 @@ class ContactSystem:
         umstellen = set(umstellen)
         for name, kn, cons in teile:
             mine = [c for c in cons if id(c) in zug and id(c) in umstellen]
-            if not mine:
+            if not mine or len(mine) <= OEFFNEN_REST:
                 continue
+            if any(c.active and id(c) not in zug for c in cons):
+                continue                # es bleibt eine geschlossene Bedingung: nicht alle
             r_jetzt = _rang_zahl(self.model, kn, _halterzeilen(cons, kn=kn, lager=lager))
             weg = {id(c) for c in mine}
             r_nach = _rang_zahl(self.model, kn, _halterzeilen([c for c in cons if id(c) not in weg],

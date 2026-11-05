@@ -48,7 +48,7 @@ def check(name, ok, detail=""):
 
 
 def platte(n=8, F=300e3, mu=0.2, a=0.12, t=0.02, loch=2, dT=480.0, A_stab=1e-3, start_zu=None,
-           Fz_auf=0.0, spalt=0.0):
+           Fz_auf=0.0, spalt=0.0, stab_nur="zug"):
     """Platte mit Bohrung auf einem Unterlegblech (Koerper "Platte" und "Blech"), Reibfuge
     mu, Ankerkraft F auf dem Ring um die Bohrung; ``dT``: Stab "nur Zug" durch die
     Bohrung, der sich dehnt und die Platte im ersten Ausfallschritt hochdrueckt;
@@ -96,7 +96,7 @@ def platte(n=8, F=300e3, mu=0.2, a=0.12, t=0.02, loch=2, dT=480.0, A_stab=1e-3, 
         P = m.add_node(X[A, 0], X[A, 1], -0.3)
         m.fix(P, "all")
         m.add_section(Section("Stab", A_stab, 1e-8, 1e-8, 2e-8))
-        i = m.add_element("truss", [A, P], "S355", "Stab", nur="zug")
+        i = m.add_element("truss", [A, P], "S355", "Stab", nur=stab_nur)
         lc.temp_loads.append(TempLoad(elem=int(i), dT=float(dT)))
     m.active_case = "LF1"
     m.plastizitaet.an = False
@@ -209,11 +209,16 @@ def test_sprung():
 
 def test_abheben():
     print("\n--- 2a. Platte, die abheben muss: keine Runde öffnet alles, kein Sprung, ehrlich nicht konvergiert ---")
-    r, rd, log = rechnen(platte(dT=0.0, F=10e3, Fz_auf=60e3, start_zu=True))
-    nie_alle = all(b > 0 for _d, a, b in rd if a > 0)
-    check("keine Runde öffnet alle Bedingungen der Platte (sie wäre frei)",
+    # Ein Stab "nur Druck" zieht die Platte im ersten Ausfallschritt fest an (er verkuerzt
+    # sich), dann faellt er aus (Zug): der naechste Lauf startet warm mit allen 80
+    # Bedingungen geschlossen, und die Last nach oben will in einer Runde alle oeffnen
+    r, rd, log = rechnen(platte(dT=-480.0, F=10e3, Fz_auf=60e3, start_zu=True, stab_nur="druck"))
+    # ueber contact.OEFFNEN_REST (3) geschlossenen oeffnet keine Runde alle; darunter haelt
+    # die Halte-Hilfe vor der naechsten Loesung (solver.VORAB_HALTEN)
+    nie_alle = all(b > 0 for _d, a, b in rd if a > contact.OEFFNEN_REST)
+    check("bei mehr als 3 geschlossenen öffnet keine Runde alle Bedingungen der Platte, die Regel greift",
           nie_alle and any("wäre in dieser Runde nicht gehalten" in z for z in log),
-          " ".join(f"{a}->{b}" for _d, a, b in rd[:12]))
+          " ".join(f"{a}->{b}" for _d, a, b in rd[-12:]))
     d_max = max(d for d, _a, _b in rd)
     check("… kein Sprung über eine Elementgröße", d_max < 0.015, f"{d_max * 1e3:.4g} mm")
     check("… der Lauf endet nicht konvergiert und sagt, dass die Platte nicht gehalten ist",

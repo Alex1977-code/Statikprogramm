@@ -8011,8 +8011,20 @@ def _ungehaltene_teile(model, cs) -> list:
 def _vorab_halten(model, cs, log: list, progress, u) -> None:
     """VORAB_HALTEN: vor der Loesung dieser Runde die nicht gehaltenen Teile halten,
     sonst stabilisieren (siehe dort)."""
-    if not _ungehaltene_teile(model, cs):
+    frei = _ungehaltene_teile(model, cs)
+    if not frei:
         return
+    gemeldet = getattr(cs, "_vorab_gemeldet", None)
+    if gemeldet is None or gemeldet[0] is not getattr(cs, "runden", None):
+        # je Lauf einmal je Koerper (runden beginnt mit jedem Lauf neu)
+        gemeldet = cs._vorab_gemeldet = (getattr(cs, "runden", None), set())
+    for name, _idx in frei:
+        if name not in gemeldet[1]:
+            gemeldet[1].add(name)
+            zeile = (f"Kontakt: Körper {name} in dieser Runde nicht gehalten (zu wenige geschlossene "
+                     "Bedingungen) - vor der Lösung an den nächsten Bedingungen gehalten")
+            log.append(zeile)
+            _melde(progress, zeile)
     _freie_teile_halten(model, cs, log, stufe=1)
     rest = _ungehaltene_teile(model, cs)
     for name, idx in rest:
