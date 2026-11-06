@@ -170,12 +170,40 @@ def _vorspannkraft(model, stab: str) -> float:
     return F
 
 
-def fy_koerper(model, kname: str):
-    """f_y [Pa] des Werkstoffs eines Koerpers (wie in der Plastizitaet ohne
-    Dickenstufe) - None ohne."""
+def dicke_koerper(model, kname: str, _cache: dict = None):
+    """Erzeugnisdicke [m] des Koerpers ``kname``: die kleinste Abmessung des
+    umschliessenden Quaders aller seiner Knoten (wie im Volumennachweis,
+    ``ec3.volumen._erzeugnisdicke``; bei einer 60-mm-Ankerplatte 60 mm).
+    ``None``, wenn sie sich nicht bestimmen laesst (Koerper ohne Elemente)."""
+    if _cache is not None and kname in _cache:
+        return _cache[kname]
+    k = (getattr(model, "koerper", None) or {}).get(kname)
+    dicke = None
+    if k is not None:
+        n_el = len(model.elements)
+        kn = {int(x) for i in (getattr(k, "elemente", None) or []) if 0 <= int(i) < n_el
+              for x in model.elements[int(i)].nodes}
+        if kn:
+            P = np.asarray(model.nodes, float)[sorted(kn)]
+            d = float((P.max(axis=0) - P.min(axis=0)).min())
+            dicke = d if d > 0.0 else None
+    if _cache is not None:
+        _cache[kname] = dicke
+    return dicke
+
+
+def fy_koerper(model, kname: str, dicke=None):
+    """f_y [Pa] des Werkstoffs eines Koerpers bei der Erzeugnisdicke ``dicke``
+    [m] (EN 1993-1-1 Tab. 3.1 ueber ``Material.yield_strength``); ohne Dicke
+    der Werkstoffwert (duennste Stufe) - None ohne f_y."""
     k = (getattr(model, "koerper", None) or {}).get(kname)
     mat = (getattr(model, "materials", None) or {}).get(getattr(k, "material", "") if k is not None else "")
-    fy = getattr(mat, "fy", None) if mat is not None else None
+    if mat is None:
+        return None
+    if dicke:
+        fy = mat.yield_strength(float(dicke))
+        return float(fy) if fy else None
+    fy = getattr(mat, "fy", None)
     return float(fy) if fy else None
 
 
@@ -200,7 +228,8 @@ def scheiben(model, mit_koerper: bool = True) -> list:
     ein Woerterbuch: name, master, stab, d_stab, d_bohrung, mitte, normale,
     einleitung (:func:`einstellung`), d_innen (wirksam), d_aussen, annahme,
     quelle, vorschlag (Normmass) und vorschlag_quelle, F (Vorspannkraft),
-    A_ring, pressung, koerper, fy, verhaeltnis (pressung / f_y), hinweis."""
+    A_ring, pressung, koerper, dicke (Erzeugnisdicke des Koerpers, None = nicht
+    bestimmbar), fy (nach dieser Dicke), verhaeltnis (pressung / f_y), hinweis."""
     from scipy.spatial import cKDTree
     from . import fugen
     from .stabeinleitung import stabelemente_an
@@ -233,7 +262,7 @@ def scheiben(model, mit_koerper: bool = True) -> list:
                         mitte=c, normale=geo["normale"], einleitung=e["art"], d_innen=di,
                         d_aussen=e["d_aussen"], annahme=e["annahme"], quelle=e["quelle"],
                         vorschlag=vorschlag, vorschlag_quelle=vq, F=_vorspannkraft(model, stab),
-                        A_ring=0.0, pressung=None, koerper="", fy=None, verhaeltnis=None, hinweis=""))
+                        A_ring=0.0, pressung=None, koerper="", dicke=None, fy=None, verhaeltnis=None, hinweis=""))
     if mit_koerper and aus:
         # der Koerper unter der Scheibe: der eines gekoppelten Knotens (Ring
         # oder Lochrand) - ein Durchgang fuer alle Scheiben
@@ -247,11 +276,13 @@ def scheiben(model, mit_koerper: bool = True) -> list:
         knoten_von = {z["name"]: (je.get(_scheibe_name(z["name"])) or je.get(fugen.STARR_GRUPPE + z["name"]) or [])
                       for z in aus}
         ko = _koerper_der_knoten(model, {x for v in knoten_von.values() for x in v})
+        dicken: dict = {}
         for z in aus:
             k = next((ko[x] for x in knoten_von[z["name"]] if x in ko), "")
             if k:
                 z["koerper"] = k
-                z["fy"] = fy_koerper(model, k)
+                z["dicke"] = dicke_koerper(model, k, dicken)
+                z["fy"] = fy_koerper(model, k, z["dicke"])
     for z in aus:
         pressung_setzen(z)
     return aus
@@ -277,12 +308,19 @@ def pressung_setzen(z: dict) -> dict:
 
 
 def pressung_text(z: dict) -> str:
-    """„1203,6 N/mm² = 3,39 f_y“ bzw. „–“."""
+    """„1203,6 N/mm² = 3,39 f_y (f_y = 335 N/mm² bei t = 60 mm)“ bzw. „–“.
+    Ist die Dicke des Koerpers nicht bestimmbar, steht der Werkstoffwert dort
+    mit dem Hinweis „Dicke nicht bestimmbar“."""
     if z.get("pressung") is None:
         return "–"
     t = f"{_zahl(z['pressung'] / 1e6)} N/mm²"
     if z.get("verhaeltnis") is not None:
         t += f" = {_zahl(z['verhaeltnis'], 2)} f_y"
+        fy = _zahl(z["fy"] / 1e6, 0)
+        if z.get("dicke"):
+            t += f" (f_y = {fy} N/mm² bei t = {_zahl(z['dicke'] * 1e3, 0)} mm)"
+        else:
+            t += f" (f_y = {fy} N/mm² des Werkstoffs, Dicke nicht bestimmbar)"
     return t
 
 

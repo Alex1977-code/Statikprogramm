@@ -8536,7 +8536,12 @@ des Imports fasst die Umstellung nicht an, sie ist nur eine Kopplungsart.
 Umgestellt wird nur auf Anweisung, unter Netz → **Scheiben einleiten…**. Die
 Tabelle zeigt je Gruppe gleicher Bohrung (oder je Scheibe) die Einleitung,
 Innen- und Außen-Ø, die Herkunft des Maßes und die mittlere Pressung
-F/A_Ring aus der Vorspannkraft mit ihrem Verhältnis zu f_y des Blechs. Liegt
+F/A_Ring aus der Vorspannkraft mit ihrem Verhältnis zu f_y des Blechs. Dabei
+gilt f_y bei der Erzeugnisdicke des Körpers unter der Scheibe (kleinste Abmessung
+seines umschließenden Quaders, EN 1993-1-1 Tab. 3.1: S355 an einer 60-mm-Ankerplatte
+335 statt 355 N/mm²); die Tabelle nennt f_y und die Dicke in Klammern. Lässt sich
+die Dicke nicht bestimmen, steht der Werkstoffwert dort mit dem Hinweis „Dicke nicht
+bestimmbar“. Liegt
 sie über 3 f_y, steht dort „Auflage prüfen (Zeichnungsmaß)“. Der Außen-Ø ist
 mit einem Normmaß vorbelegt und als **Annahme** gekennzeichnet, bis ein Maß
 aus der Zeichnung eingetragen ist. Ist der Stabdurchmesser ein Nennmaß der
