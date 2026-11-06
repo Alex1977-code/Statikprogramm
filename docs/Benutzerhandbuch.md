@@ -9729,8 +9729,8 @@ min(0,75·f_pk; 0,85·f_p0,1k) nach EN 1992-1-1, 5.10.3(2). Am Drehlager mit
 f_pk/f_p0,1k < 1,133 wäre es 0,75·f_pk. Die Ermüdung sagt in ihrer
 Zusammenfassung, mit welchem Zustand ihre Zustände gerechnet sind. Liegt einer
 im Zeitpunkt 0, heißt es „Ermüdung der Anker ist mit t = ∞ zu führen“, geändert
-wird nichts. Einen Nachweis für Klaffen und Gleiten der Fuge und für die
-Passstifte gibt es noch nicht (der Bolzennachweis 3.13 ist vorgemerkt); Bericht
+wird nichts. Die Passstifte weist der Bolzennachweis nach EN 1993-1-8, 3.13 nach, sobald
+Sie sie festlegen. Einen Nachweis für Klaffen und Gleiten der Fuge gibt es noch nicht; Bericht
 und Ergebnisanzeige nennen dafür nur den Zustand t = ∞.
 
 **Nicht enthalten**: obere und untere charakteristische Werte der Vorspannung
