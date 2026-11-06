@@ -155,7 +155,9 @@ TEXTFELDER = frozenset(("kommentar", "comment", "beschreibung", "description", "
 #: weitere Felder ohne Einfluss auf die Rechnung, je Schluessel der Modelldatei:
 #: die Nummer eines Lastfalls und einer Kombination (ihr Name ist der
 #: Schluessel), die Groesse des Lagersymbols
-ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",)}
+ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",),
+                # Bolzen (06.11.2026): wird nur nachgewiesen, nicht gerechnet
+                "koerper": ("bolzen",)}
 #: Neue Felder mit ihrer Vorgabe zaehlen nicht: model.NEUE_FELDER (ein Mechanismus
 #: fuer alle Pakete seit der Zusammenfuehrung am 14.10.2026; bis dahin standen hier
 #: NEUE_VORGABEN, NEU_AUF_VORGABE und SPAETERE_FELDER).
@@ -276,6 +278,10 @@ def _verwendete_namen(model, d: dict) -> set:
             for name, eintrag in wert.items():
                 namen |= _texte(eintrag) - {name}
         else:
+            if schluessel in ANZEIGEFELDER and isinstance(wert, list):
+                # Anzeigefelder nennen keinen Werkstoff, der rechnet (Bolzen, 06.11.2026)
+                wert = [{k: v for k, v in x.items() if k not in ANZEIGEFELDER[schluessel]}
+                        if isinstance(x, dict) else x for x in wert]
             namen |= _texte(wert)
     return namen
 

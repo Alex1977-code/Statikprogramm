@@ -2334,6 +2334,9 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 sub.addAction("Bearbeiten…", rufe(lambda _c=False, a=art, n=list(namen): self.sammelmaske(a, n),
                                                   True))
+            if art == "volumen":
+                sub.addAction("Als Bolzen nachweisen…",
+                              rufe(lambda _c=False, n=list(namen): self.bolzen_festlegen(n), True))
             if art == "stab" and len(namen) > 1:
                 sub.addAction("Stäbe zusammenfassen",
                               rufe(lambda _c=False, n=list(namen): self.staebe_zusammenfassen(n)))
@@ -26002,6 +26005,30 @@ class MainWindow(QtWidgets.QMainWindow):
         except ValueError as ex:
             return self.error(f"Scheiben einleiten: Maß nicht lesbar ({ex})")
         return self._scheiben_umstellen(umstellungen=umst)
+
+    # ---- Bolzennachweis nach EN 1993-1-8, 3.13 (06.11.2026) ------------------
+    def bolzen_festlegen(self, namen: list):
+        """Dialog „Als Bolzen nachweisen…“ fuer die gewaehlten Volumen: Durchmesser und
+        Werkstoff des Anwenders; ein Schritt mit Rueckgaengig (Strg+Z). Ohne beide
+        Angaben wird nichts festgelegt."""
+        from ..ec3 import bolzen as BZ
+        from .bolzen_dialog import BolzenDialog
+        namen = [n for n in namen if n in self.model.koerper]
+        if not namen:
+            return self.hinweis("Kein Volumen gewählt")
+        dlg = BolzenDialog(self.model, namen, self)
+        if not dlg.exec() or not dlg.ergebnis:
+            return None
+        self.merken("Als Bolzen nachweisen")
+        if dlg.ergebnis == "aufheben":
+            n = BZ.bolzen_entfernen(self.model, namen)
+            self.log.appendPlainText(f"Bolzen: Festlegung aufgehoben ({n}) – Rückgängig (Strg+Z) stellt zurück")
+        else:
+            d, w = dlg.werte()
+            for z in BZ.bolzen_festlegen(self.model, namen, d, w):
+                self.log.appendPlainText(z + " – Rückgängig (Strg+Z) stellt zurück")
+        self.refresh_all()
+        return None
 
     def _scheiben_umstellen(self, umstellungen: list = None, alle: bool = False) -> dict:
         """Die Einleitung der Scheiben umstellen - ein Schritt (merken, Strg+Z

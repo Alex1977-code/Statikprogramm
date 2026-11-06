@@ -365,6 +365,9 @@ class VolumenResults:
     #: Kombinationen ohne Ergebnis ("nicht nachgewiesen"), siehe
     #: design._uls_results
     warnungen: list = field(default_factory=list)
+    #: Bolzennachweise nach EN 1993-1-8, 3.13 (ec3.bolzen.BolzenCheck je Koerper,
+    #: seit 06.11.2026) - nur fuer Koerper, die der Anwender als Bolzen festgelegt hat
+    bolzen: dict = field(default_factory=dict)
 
     @property
     def util_max(self) -> float:
@@ -373,7 +376,9 @@ class VolumenResults:
 
     def summary(self) -> str:
         from .design import warnzeilen
-        return self._summary() + warnzeilen(self)
+        from .bolzen import zeilen as _bz
+        return (self._summary() + warnzeilen(self)
+                + "".join("\n" + z for z in _bz(getattr(self, "bolzen", None))))
 
     def _summary(self) -> str:
         if not self.bereiche:
@@ -959,6 +964,8 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
         out.bereiche[name] = c
         if progress:
             progress(f"Volumenbereich {name} ({i + 1}/{len(model.volumenbereiche)})")
+    from .bolzen import check_bolzen
+    out.bolzen = check_bolzen(model, analysis)
     return out
 
 

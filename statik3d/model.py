@@ -3193,6 +3193,13 @@ class Volumenkoerper:
     #: Krafteinleitungskoerper (13.10.2026, wie Material.nachweis_ausnehmen).
     #: Setzt nur der Anwender; ein Importhinweis darf es vorschlagen.
     nachweis_ausnehmen: bool = False
+    #: Bolzennachweis nach EN 1993-1-8, 3.13 (Tab. 3.10), nur wenn der Anwender den
+    #: Koerper als Bolzen festgelegt hat (06.11.2026): {"d": Durchmesser [m],
+    #: "werkstoff": Name in ``materials``, optional "fuge": Lage der Scherfuge
+    #: auf der Bolzenachse [m ab dem Ende mit kleinerer Koordinate]}. Leer = kein
+    #: Bolzennachweis; nichts wird aus Name oder Form abgeleitet. f_yp und f_up
+    #: kommen allein aus dem hier genannten Werkstoff.
+    bolzen: dict = field(default_factory=dict)
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -10181,7 +10188,7 @@ NEUE_FELDER = {
     # nachweis/spannstahl
     "sections": {"A_s": None, "gewinde": ""},
     # spitzen/zeigen N2
-    "koerper": {"nachweis_ausnehmen": False},
+    "koerper": {"nachweis_ausnehmen": False, "bolzen": {}},
     # kontakt/pendeln-rt (Kontaktstart geschlossen, 17.10.2026)
     "kontaktbedingungen": {"start_geschlossen": False},
     "contact_pairs": {"start_geschlossen": False},

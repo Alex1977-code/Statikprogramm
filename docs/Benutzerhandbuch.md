@@ -10388,6 +10388,25 @@ Drehlager lag sie außerhalb der netzabhängigen Stellen bis 1 596 N/mm², an
 Ecken nicht fließender Elemente, deren Integrationspunkte weit darunter
 liegen.
 
+**Bolzennachweis für Passstifte (seit 06.11.2026).** Ein Stift ist im Modell ein
+gewöhnlicher Volumenkörper; das Programm erkennt ihn nicht von selbst und leitet
+nichts aus dem Namen oder der Form ab. Nachgewiesen wird nur ein Körper, den Sie
+im Rechtsklickmenü der Volumen mit **Als Bolzen nachweisen…** festlegen (Rückgängig
+mit Strg+Z). Dort tragen Sie den Durchmesser und den Werkstoff des Bolzens ein; beides
+ist Pflicht, es gibt keinen Vorgabewert. f_up (= f_u) und f_yp kommen allein aus diesem
+Werkstoff, fehlt eines davon, steht dort „Nachweis nicht geführt“ mit dem Grund. Der
+Nachweis nach EN 1993-1-8, 3.13 (Tab. 3.10) läuft für die Lastfälle (nicht für
+Kombinationen, weil sich Kontakt nicht überlagert): Abscheren F_v,Rd = 0,6·A·f_up/γ_M2,
+Lochleibung F_b,Rd = 1,5·t·d·f_y/γ_M0 je Partnerkörper mit f_y als dem kleineren Wert von
+Bolzen und Partner (nicht gegen den Normtext geprüft), Biegung M_Rd = 1,5·W_el·f_yp/γ_M0
+und die Wechselwirkung (M_Ed/M_Rd)² + (F_v,Ed/F_v,Rd)² ≤ 1. Die Querkraft und das Moment
+in der Scherfuge folgen aus dem Gleichgewicht der Kontaktkräfte, die die Partnerkörper auf
+den Bolzen ausüben. Die Scherfuge liegt zwischen den Kontaktbereichen zweier Partner.
+**Das Moment ist netzabhängig** (Lage der Kontaktknoten), die Ausgabe sagt es. Die Zeile je
+Bolzen steht in der Zusammenfassung des Volumennachweises. Die Dicke t eines Partners ist sein
+Anteil an der Bolzenlänge zwischen den Scherfugen; die Festlegung ändert die Ergebnisse
+nicht (`tests.test_bolzen_nachweis`).
+
 **Vom Volumennachweis ausnehmen** (seit 13.10.2026). Hilfs- und
 Krafteinleitungskörper – etwa aus einem gewichtslosen Hilfswerkstoff – sollen
 nicht nachgewiesen werden. Dafür gibt es den Schalter „vom Volumennachweis
