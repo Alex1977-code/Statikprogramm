@@ -40,6 +40,13 @@ def main():
             check(f"lesen({d!r}, {w!r}) abgewiesen", False, "kein Fehler")
         except ValueError as ex:
             check(f"lesen({d!r}, {w!r}) abgewiesen: {text}", text in str(ex), str(ex))
+    check("Scherfuge: leer -> None, „35,5“ -> 0,0355 m", BD.lesen_fuge(" ") is None and abs(BD.lesen_fuge("35,5") - 0.0355) < 1e-12, "")
+    for t, grund in (("x", "keine Zahl"), ("-1", "negativ")):
+        try:
+            BD.lesen_fuge(t)
+            check(f"Scherfuge {t!r} abgewiesen", False, "kein Fehler")
+        except ValueError as ex:
+            check(f"Scherfuge {t!r} abgewiesen: {grund}", grund in str(ex), str(ex))
     m, _res = kuenstlich()
     dlg = BD.BolzenDialog(m, ["Stift"])
     check("Dialog ohne Festlegung: Werkstoff steht auf „bitte wählen“, Aufheben gesperrt",
@@ -52,6 +59,14 @@ def main():
     dlg._festlegen()
     check("mit beiden Angaben: Ergebnis „festlegen“, Werte (0,025 m, Stift490)",
           dlg.ergebnis == "festlegen" and dlg.werte() == (0.025, "Stift490"), dlg.ergebnis)
+    dlg.fuge.setText("x")
+    dlg.ergebnis = None
+    dlg._festlegen()
+    check("Festlegen mit unsinniger Scherfuge: kein Ergebnis, Meldung im Dialog",
+          dlg.ergebnis is None and "keine Zahl" in dlg.fehler.text(), dlg.fehler.text())
+    m.koerper["Stift"].bolzen = {"d": 0.025, "werkstoff": "Stift490", "fuge": 0.035}
+    dlg3 = BD.BolzenDialog(m, ["Stift"])
+    check("Dialog zeigt die gespeicherte Scherfuge", dlg3.fuge.text() == "35" and abs(dlg3.scherfuge() - 0.035) < 1e-12, dlg3.fuge.text())
     m.koerper["Stift"].bolzen = {"d": 0.025, "werkstoff": "Stift490"}
     dlg2 = BD.BolzenDialog(m, ["Stift"])
     check("Dialog mit Festlegung: vorbelegt, Aufheben möglich",

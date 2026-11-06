@@ -26025,7 +26025,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"Bolzen: Festlegung aufgehoben ({n}) – Rückgängig (Strg+Z) stellt zurück")
         else:
             d, w = dlg.werte()
-            for z in BZ.bolzen_festlegen(self.model, namen, d, w):
+            for z in BZ.bolzen_festlegen(self.model, namen, d, w, fuge=dlg.scherfuge()):
                 self.log.appendPlainText(z + " – Rückgängig (Strg+Z) stellt zurück")
         self.refresh_all()
         return None

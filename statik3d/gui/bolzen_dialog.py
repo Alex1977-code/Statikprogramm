@@ -30,6 +30,21 @@ def lesen(d_text: str, werkstoff: str):
     return d, werkstoff
 
 
+def lesen_fuge(text: str):
+    """Lage der Scherfuge [m] ab dem Bolzenanfang; leer = None (das Programm bestimmt sie
+    aus den Kontaktbereichen). ValueError mit Grund bei unsinniger Eingabe."""
+    t = str(text or "").strip().replace(",", ".")
+    if not t:
+        return None
+    try:
+        s = float(t) * 1e-3
+    except ValueError:
+        raise ValueError("Lage der Scherfuge ist keine Zahl") from None
+    if s < 0:
+        raise ValueError("Lage der Scherfuge darf nicht negativ sein")
+    return s
+
+
 class BolzenDialog(QtWidgets.QDialog):
     """``ergebnis`` nach exec(): "festlegen", "aufheben" oder None."""
 
@@ -52,6 +67,11 @@ class BolzenDialog(QtWidgets.QDialog):
         self.w = QtWidgets.QComboBox()
         self.w.addItems([KEIN_WERKSTOFF] + list(model.materials))
         form.addRow("Werkstoff des Bolzens", self.w)
+        self.fuge = QtWidgets.QLineEdit()
+        self.fuge.setPlaceholderText("leer: aus den Kontaktbereichen")
+        self.fuge.setToolTip("Nur nötig, wenn der Nachweis danach fragt. Abstand vom Bolzenanfang; der Anfang ist "
+                             "das Ende mit der kleineren Koordinate in der Hauptrichtung der Bolzenachse.")
+        form.addRow("Lage der Scherfuge [mm]", self.fuge)
         lay.addLayout(form)
         vorhanden = [model.koerper[n].bolzen for n in namen if n in model.koerper and model.koerper[n].bolzen]
         if vorhanden:
@@ -60,6 +80,8 @@ class BolzenDialog(QtWidgets.QDialog):
             i = self.w.findText(str(b.get("werkstoff", "")))
             if i >= 0:
                 self.w.setCurrentIndex(i)
+            if b.get("fuge") is not None:
+                self.fuge.setText(zl.zahl_text(float(b["fuge"]) * 1e3, tausender=False))
         self.fehler = QtWidgets.QLabel("")
         lay.addWidget(self.fehler)
         knoepfe = QtWidgets.QHBoxLayout()
@@ -79,9 +101,13 @@ class BolzenDialog(QtWidgets.QDialog):
     def werte(self):
         return lesen(self.d.text(), self.w.currentText())
 
+    def scherfuge(self):
+        return lesen_fuge(self.fuge.text())
+
     def _festlegen(self):
         try:
             self.werte()
+            self.scherfuge()
         except ValueError as ex:
             self.fehler.setText(str(ex))
             return

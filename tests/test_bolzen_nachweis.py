@@ -124,6 +124,43 @@ def test_handprobe():
     check("Lochleibung: f_y = min(f_yp 355, f_y des Partners 275) = 275", abs(pa["fy"] - 275e6) < 1.0, pa.get("fy"))
 
 
+def test_fuge_spiel():
+    print("\n--- 2c. Scherfuge: Spiel an der Fuge, Grenze 1 % der Bolzenlänge (wie die Stifte am Drehlager) ---")
+    F = 100e3
+
+    def rechne(ueber_mm):
+        """A trägt von y = 20 bis 35 + ueber/2, B von 35 - ueber/2 bis 50 mm, je die halbe Kraft an beiden Punkten.
+        Nach der Lage statt nach dem Partner zugeordnet ergäbe das Spiel V = 0."""
+        m, _ = kuenstlich()
+        na = m.elements[m.koerper["A"].elemente[0]].nodes[0]
+        nb = m.elements[m.koerper["B"].elemente[0]].nodes[0]
+        pin = sorted({int(x) for e in m.koerper["Stift"].elemente for x in m.elements[int(e)].nodes})
+        Y = np.asarray(m.nodes, float)[pin, 1]
+        pa, pb = [pin[i] for i in np.argsort(np.abs(Y - 35 * MM))[:2]]
+        X = np.asarray(m.nodes, float).copy()
+        X[pa, 1] = (35 + ueber_mm / 2) * MM
+        X[pb, 1] = (35 - ueber_mm / 2) * MM
+        m.nodes = [tuple(x) for x in X]
+        pa2 = pin[int(np.argmin(np.abs(Y - 20 * MM)))]
+        pb2 = pin[int(np.argmin(np.abs(Y - 50 * MM)))]
+        c = [{"kind": "node", "label": "A:1", "node": na, "master": ([pa], [1.0]), "F_vek": [-F / 2, 0.0, 0.0]},
+             {"kind": "node", "label": "A:2", "node": na, "master": ([pa2], [1.0]), "F_vek": [-F / 2, 0.0, 0.0]},
+             {"kind": "node", "label": "B:1", "node": nb, "master": ([pb], [1.0]), "F_vek": [F / 2, 0.0, 0.0]},
+             {"kind": "node", "label": "B:2", "node": nb, "master": ([pb2], [1.0]), "F_vek": [F / 2, 0.0, 0.0]}]
+        return m, Res(c)
+    m, r = rechne(0.1)
+    w = lastfall(m, r)
+    check("Spiel 0,1 mm (0,14 % von 70 mm): gilt als Berühren, V = F (Zuordnung nach Partner, nicht nach Lage)",
+          not w["fehler"] and abs(w["V"] - F) < 1.0, w.get("fehler") or f"V {w['V'] / 1e3:.2f} kN")
+    m, r = rechne(5.0)
+    w = lastfall(m, r)
+    check("Überlappung 5 mm (7 %): nicht eindeutig, Fehler nennt die Scherfuge",
+          "Scherfuge" in w["fehler"], w["fehler"])
+    w2 = B.bolzen_lastfall(m, r, "Stift", {"d": 0.025, "werkstoff": "Stift490", "fuge": 0.035},
+                           m.materials["Stift490"], m.design)
+    check("Überlappung 5 mm, Lage der Scherfuge angegeben: Nachweis geführt", not w2["fehler"], w2["fehler"])
+
+
 def test_nicht_gefuehrt():
     print("\n--- 3. Keine Angabe: Nachweis nicht geführt, mit Grund ---")
     m, res = kuenstlich()
@@ -272,7 +309,7 @@ def test_festlegen():
 
 
 def main():
-    for t in (test_handprobe, test_nicht_gefuehrt, test_gleichgewicht, test_speichern_laden, test_festlegen):
+    for t in (test_handprobe, test_fuge_spiel, test_nicht_gefuehrt, test_gleichgewicht, test_speichern_laden, test_festlegen):
         try:
             t()
         except Exception as ex:                      # noqa: BLE001

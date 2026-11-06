@@ -65,6 +65,9 @@ class BolzenCheck:
         return t.replace(".", ",")
 
 
+BERUEHRUNG_ANTEIL = 0.01    # Ueberlappung der Kontaktbereiche, die noch als Beruehren gilt (Anteil der Bolzenlaenge)
+
+
 # --------------------------------------------------------------------------
 # Festlegen durch den Anwender
 # --------------------------------------------------------------------------
@@ -234,8 +237,11 @@ def bolzen_lastfall(model, res, kname: str, spec: dict, mat, ds, knoten_von: dic
     if "fuge" in spec:
         ebenen = [float(spec["fuge"]) + s0]
     else:
+        # Beruehren sich die Bereiche an der Fuge, ueberlappen sie im Netz um Rundungs- und
+        # Knotenabstaende; erst ab 1 % der Bolzenlaenge ist die Fuge wirklich nicht eindeutig.
+        spiel = BERUEHRUNG_ANTEIL * (s1 - s0)
         for p, q in zip(reihe[:-1], reihe[1:]):
-            if ein[p]["smax"] > ein[q]["smin"] + 1e-9:
+            if ein[p]["smax"] > ein[q]["smin"] + spiel:
                 return {"fehler": f"die Kontaktbereiche von {p} und {q} überlappen auf der Achse - "
                                   "Lage der Scherfuge angeben"}
             ebenen.append(0.5 * (ein[p]["smax"] + ein[q]["smin"]))
@@ -252,7 +258,13 @@ def bolzen_lastfall(model, res, kname: str, spec: dict, mat, ds, knoten_von: dic
         mom = np.zeros(3)
         for p, liste in teile.items():
             for x, F in liste:
-                if float((x - c0) @ a) <= sf:
+                # Ohne Angabe gehoert die Kraft zum Partner, nicht zur Lage: im Spiel der Fuge
+                # koennte ein Knoten sonst auf die falsche Seite fallen.
+                if "fuge" in spec or p not in reihe:
+                    unter = float((x - c0) @ a) <= sf
+                else:
+                    unter = reihe.index(p) <= j
+                if unter:
                     unten += F
                     mom += np.cross(x - xf, F)
         V = float(np.linalg.norm(_quer(unten, a)))
