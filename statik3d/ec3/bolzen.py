@@ -58,11 +58,12 @@ class BolzenCheck:
         if self.fehler:
             return f"Bolzen {self.name}: {KEIN_NACHWEIS} ({self.fehler})"
         w = self.werte
-        return (f"Bolzen {self.name} (Ø {self.d * 1e3:.1f} mm, {self.werkstoff}): η = {self.util:.3f} "
+        t = (f"Bolzen {self.name} (Ø {self.d * 1e3:.1f} mm, {self.werkstoff}): η = {self.util:.3f} "
                 f"({self.lastfall}; Abscheren {w.get('eta_v', 0):.3f}, "
                 f"Lochleibung {w.get('eta_b', 0):.3f}, Biegung {w.get('eta_M', 0):.3f}, "
                 f"Wechselwirkung {w.get('eta_ww', 0):.3f}; V = {w.get('V', 0) / 1e3:.1f} kN, "
                 f"M = {w.get('M', 0):.1f} Nm, netzabhängig)")
+        return t.replace(".", ",")
 
 
 # --------------------------------------------------------------------------
