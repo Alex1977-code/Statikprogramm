@@ -191,7 +191,15 @@ def test_warmstart_ohne_halt():
     """Ein Warmstart, dessen Zustand im ersten Schritt keinen Halt laesst
     (alle Bedingungen offen - wie ein Lager mit Ausfall, das im vorigen
     Lastfall offen war), wird verworfen und kalt neu gerechnet statt mit
-    „singulaer“ abzubrechen (test_web, 12.09.2026)."""
+    „singulaer“ abzubrechen (test_web, 12.09.2026).
+
+    Umgestellt am 06.11.2026 (Halten im Warmstart fd34e1b, solver.VORAB_HALTEN, Freigabe des
+    Anwenders): der Zustand wird nicht mehr verworfen; die Teile werden vor der ersten Loesung
+    gehalten, und der Lauf rechnet warm weiter. Das Ergebnis muss weiter das des kalten Laufs
+    sein. Schranke 1 nm (wie der Vergleich in tests/test_kontakt_warmstart): gemessen sind
+    1,8e-13 m; die alte relative Schranke 1e-9 von u_max (rund 1e-14 m) laege unter der
+    Genauigkeit zweier verschiedener Rechenwege. Der alte Weg bleibt als Fixture mit der
+    bisherigen Schranke."""
     m = examples_lib.build_example("friction")
     lf = list(m.load_cases)[0]
     kalt = solver.solve_cases(m, [lf])[lf]
@@ -201,12 +209,25 @@ def test_warmstart_ohne_halt():
     system = solver.StaticSystem(m)
     F, _feq, _q, _temp = solver.case_loads(m, {lf: 1.0}, None)
     u, R, cons, cf, info = solver.solve_with_contact(m, system, F, start=z)
-    check("Warmstart ohne Halt wird verworfen und kalt neu gerechnet",
-          any("kein Gleichgewicht" in s for s in info["contact_log"]) and info["contact_converged"]
-          and not info["contact_warm"], str([s for s in info["contact_log"] if "Warmstart" in s])[:90])
-    check("… mit demselben Ergebnis wie der kalte Lauf",
-          float(np.abs(u.reshape(kalt.u.shape) - kalt.u).max()) < 1e-9 * float(np.abs(kalt.u).max()),
-          f"{float(np.abs(u.reshape(kalt.u.shape) - kalt.u).max()):.2e}")
+    check("Warmstart ohne Halt: vor der ersten Lösung gehalten (fd34e1b), warm zu Ende gerechnet",
+          any("nicht gehalten" in s for s in info["contact_log"]) and info["contact_converged"]
+          and info["contact_warm"], str([s for s in info["contact_log"] if "nicht gehalten" in s])[:90])
+    check("… mit demselben Ergebnis wie der kalte Lauf (auf 1 nm)",
+          float(np.abs(u.reshape(kalt.u.shape) - kalt.u).max()) < 1e-9,
+          f"{float(np.abs(u.reshape(kalt.u.shape) - kalt.u).max()):.2e} m")
+    alt_vorab = solver.VORAB_HALTEN
+    try:
+        solver.VORAB_HALTEN = False
+        system_f = solver.StaticSystem(m)
+        u_f, _R, _c, _cf, info_f = solver.solve_with_contact(m, system_f, F, start=z)
+    finally:
+        solver.VORAB_HALTEN = alt_vorab
+    check("Fixture bisheriger Weg (Halten aus): verworfen und kalt neu gerechnet",
+          any("kein Gleichgewicht" in s for s in info_f["contact_log"]) and info_f["contact_converged"]
+          and not info_f["contact_warm"], str([s for s in info_f["contact_log"] if "Warmstart" in s])[:90])
+    check("… mit demselben Ergebnis wie der kalte Lauf (1e-9 von u_max)",
+          float(np.abs(u_f.reshape(kalt.u.shape) - kalt.u).max()) < 1e-9 * float(np.abs(kalt.u).max()),
+          f"{float(np.abs(u_f.reshape(kalt.u.shape) - kalt.u).max()):.2e}")
 
 
 def test_fortschritt_kontakt():

@@ -2176,34 +2176,57 @@ def test_reibung_und_fliessen_wegunabhaengig():
     dasselbe, der Zuwachs halbiert sich je Verdopplung (rt_werk/reihe_gequetscht,
     15.10.2026). Bis dahin stand hier „1 und 4 Laststufen geben 42,667 mm“ fuer die
     primal-duale Reibung - auch das war nicht der Grenzwert. Geprueft wird die
-    Konvergenz der Reihe 10 / 20 / 40, die Gleichheit beider Verfahren bei 40 Stufen
-    und die Symmetrie (mittleres u_y des Deckels unter 1e-6 m)."""
+    Konvergenz der Reihe 10 / 20 / 40 mit ihrem Grenzwert, die Gleichheit beider Verfahren
+    bei 40 Stufen und die Symmetrie (mittleres u_y des Deckels unter 1e-6 m).
+
+    Umgestellt am 06.11.2026 (Gleitweg-Speicher a0bd908, Freigabe des Anwenders): die
+    Tangente hat ein Gedaechtnis des Gleitwegs ueber die Laststufen, das bisherige Verfahren
+    nicht; die Reihe laeuft darum zu einem anderen Grenzwert. Gemessen auf fe4210a: 10 / 20 /
+    40 / 80 Stufen 42,7114 / 42,7790 / 42,8111 / 42,8272 mm (Zuwachs 0,0676 / 0,0321 /
+    0,0162), Grenzwert 42,843 mm (2 u80 - u40 = 42,8434); ohne Speicher wie zuvor 42,796 mm
+    bei 40 Stufen. Die Gleichheit mit dem bisherigen Verfahren wird weiter in voller Schaerfe
+    geprueft - am Fixture "Tangente ohne Speicher" (contact.GLEITWEG_SPEICHER = False)."""
+    from statik3d import contact
     from statik3d.gui.rechenliste import zustand_aus_info
     erg = {}
-    for stufen, rt in ((10, True), (20, True), (40, True), (40, False)):
+    # (Stufen, Tangente, Speicher); der letzte Fall ist das Fixture zum bisherigen Verfahren
+    for stufen, rt, speicher in ((10, True, True), (20, True, True), (40, True, True), (40, False, True),
+                                 (40, True, False)):
         m = _gequetschter_block()
         m.plastizitaet.laststufen = stufen
         m.plastizitaet.reibungstangente = rt
-        r = solver.solve_static(m)
+        contact.GLEITWEG_SPEICHER = speicher
+        try:
+            r = solver.solve_static(m)
+        finally:
+            contact.GLEITWEG_SPEICHER = True
         X = np.asarray(m.nodes, float)
         oben = [i for i in range(len(X)) if abs(X[i, 2] - 0.4) < 1e-9]
         u = np.asarray(r.u, float).reshape(-1, 6)
-        erg[(stufen, rt)] = (zustand_aus_info(r.info), float(np.abs(u[:, :3]).max()),
-                             float((r.info.get("plastizitaet") or {}).get("eps_p_max") or 0.0),
-                             float(np.mean(u[oben, 1])))
-    z10, u10, _e10, y10 = erg[(10, True)]
-    z20, u20, _e20, y20 = erg[(20, True)]
-    z40, u40, e40, y40 = erg[(40, True)]
-    zb, ub, eb, yb = erg[(40, False)]
+        erg[(stufen, rt, speicher)] = (zustand_aus_info(r.info), float(np.abs(u[:, :3]).max()),
+                                       float((r.info.get("plastizitaet") or {}).get("eps_p_max") or 0.0),
+                                       float(np.mean(u[oben, 1])))
+    z10, u10, _e10, y10 = erg[(10, True, True)]
+    z20, u20, _e20, y20 = erg[(20, True, True)]
+    z40, u40, e40, y40 = erg[(40, True, True)]
+    zb, ub, eb, yb = erg[(40, False, True)]
+    zo, uo, eo, _yo = erg[(40, True, False)]
+    # Erwartung umgestellt wegen des Gleitweg-Speichers (a0bd908): feste Werte 42,811 mm bei 40
+    # Stufen und Grenzwert 42,843 mm statt 42,796 mm; Toleranz und Halbierung wie zuvor
+    grenzwert = 2.0 * u40 - u20
     check("10 / 20 / 40 Laststufen konvergiert, Zuwachs je Verdopplung mindestens halbiert "
-          "(Konvergenz der Lastteilung), 40 Stufen 42,796 mm auf 0,01 mm",
+          "(Konvergenz der Lastteilung), 40 Stufen 42,811 mm und Grenzwert 42,843 mm auf 0,01 mm",
           z10 == z20 == z40 == "konvergiert" and 0.0 < u40 - u20 <= 0.55 * (u20 - u10)
-          and abs(u40 - 0.042796) < 1e-5,
-          f"{u10 * 1e3:.4f} / {u20 * 1e3:.4f} / {u40 * 1e3:.4f} mm")
-    check("… 40 Stufen: bisheriges Verfahren dasselbe auf 1e-5 (u_max) und 1e-4 (ε_p 13,05 %)",
-          zb == "konvergiert" and abs(ub - u40) <= 1e-5 * u40 and abs(eb - e40) <= 1e-4 * e40
-          and abs(e40 - 0.1305) < 5e-4,
-          f"{ub * 1e3:.5f} / {u40 * 1e3:.5f} mm, ε_p {eb * 100:.4f} / {e40 * 100:.4f} %")
+          and abs(u40 - 0.042811) < 1e-5 and abs(grenzwert - 0.042843) < 1e-5,
+          f"{u10 * 1e3:.4f} / {u20 * 1e3:.4f} / {u40 * 1e3:.4f} mm, Grenzwert {grenzwert * 1e3:.4f} mm")
+    # Der Vergleich misst jetzt am Fixture ohne Speicher; dass der Speicher wirkt, sagt die
+    # zweite Haelfte: u_max 0,0148 mm ueber dem Fixture, gemessen auf fe4210a (a0bd908)
+    check("… 40 Stufen: bisheriges Verfahren wie die Tangente ohne Speicher auf 1e-5 (u_max) und 1e-4 "
+          "(ε_p 13,05 %); mit Speicher 0,015 mm darüber auf 0,002 mm",
+          zb == zo == "konvergiert" and abs(ub - uo) <= 1e-5 * uo and abs(eb - eo) <= 1e-4 * eo
+          and abs(e40 - 0.1305) < 5e-4 and abs((u40 - uo) - 1.48e-5) < 2e-6,
+          f"{ub * 1e3:.5f} / {uo * 1e3:.5f} / {u40 * 1e3:.5f} mm, ε_p {eb * 100:.4f} / {eo * 100:.4f} / "
+          f"{e40 * 100:.4f} %")
     check("… symmetrisch: mittleres u_y des Deckels unter 1e-6 m",
           max(abs(y10), abs(y20), abs(y40), abs(yb)) < 1e-6,
           f"{y10:.1e} / {y20:.1e} / {y40:.1e} / {yb:.1e} m")

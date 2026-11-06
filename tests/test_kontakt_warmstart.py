@@ -468,8 +468,10 @@ def test_vorschlag5():
           n1 < 0.6 * n0 and max_du(a, b) < 1e-9 and solver.konvergenz_zustand(b.info) == "konvergiert"
           and solver.konvergenz_zustand(a.info) == "konvergiert",
           f"{n1} statt {n0} Runden, max |Δu| {max_du(a, b):.1e} m")
-    # (b) Vom letzten konvergierten Zustand: meldet der erste Lauf "nicht konvergiert",
-    #     beginnt der zweite beim angebotenen Start, nicht bei diesem Zustand
+    # (b) Nach einem nicht konvergierten Lauf. Erwartung umgestellt wegen des Warmstarts nach
+    #     dem Deckel (bcfa16a, solver.AUSFALL_WARM_NACH_DECKEL): der zweite Lauf der Iteration
+    #     beginnt bei dem Zustand des ersten statt beim angebotenen Start; an den naechsten
+    #     Aufruf geht weiter nur ein konvergierter Zustand. Die alte Regel bleibt als Fixture
     m = platte(strebe=True)
     system = solver.StaticSystem(m)
     F = solver.case_loads(m, {"LF1": 1.0})[0]
@@ -479,12 +481,27 @@ def test_vorschlag5():
         solver.solve_with_ausfall(m, system, F, n0=n0a)
     start = vor[-1]["zustand"]
     mit = []
-    with kontaktlaeufe_mitschreiben(mit, unkonvergiert=(0,)):
-        solver.solve_with_ausfall(m, system, F, n0=n0a, start=start, fortsetzung=True)
-    check("  vom letzten konvergierten: nach einem nicht konvergierten Lauf wieder der angebotene Start",
-          len(mit) == 2 and mit[0]["start"] is start and mit[1]["start"] is start
-          and mit[0]["zustand"].get("konvergiert") is False,
-          f"Start 2. Lauf ist der angebotene: {len(mit) == 2 and mit[1]['start'] is start}")
+    with kontaktlaeufe_mitschreiben(mit, unkonvergiert=(0, 1)):
+        erg_b = solver.solve_with_ausfall(m, system, F, n0=n0a, start=start, fortsetzung=True)
+    check("  nach einem nicht konvergierten Lauf: der zweite beginnt bei dessen Zustand (bcfa16a), "
+          "an den nächsten Aufruf geht der angebotene konvergierte Start",
+          len(mit) == 2 and mit[0]["start"] is start and mit[1]["start"] is mit[0]["zustand"]
+          and mit[1]["fortsetzung"] is True and mit[0]["zustand"].get("konvergiert") is False
+          and erg_b[5][2].get("contact_state_weiter") is start,
+          f"Start 2. Lauf ist der Zustand des ersten: {len(mit) == 2 and mit[1]['start'] is mit[0]['zustand']}, "
+          f"weiter ist der angebotene: {erg_b[5][2].get('contact_state_weiter') is start}")
+    alt_warm = solver.AUSFALL_WARM_NACH_DECKEL
+    fix = []
+    try:
+        solver.AUSFALL_WARM_NACH_DECKEL = False
+        with kontaktlaeufe_mitschreiben(fix, unkonvergiert=(0,)):
+            solver.solve_with_ausfall(m, system, F, n0=n0a, start=start, fortsetzung=True)
+    finally:
+        solver.AUSFALL_WARM_NACH_DECKEL = alt_warm
+    check("  Fixture bisheriger Weg (Regel aus): nach einem nicht konvergierten Lauf wieder der angebotene Start",
+          len(fix) == 2 and fix[0]["start"] is start and fix[1]["start"] is start
+          and fix[0]["zustand"].get("konvergiert") is False,
+          f"Start 2. Lauf ist der angebotene: {len(fix) == 2 and fix[1]['start'] is start}")
     # (c) eps_p aus verworfenen Iterationen wird nicht aufsummiert: mit Fliessen dieselben
     #     Rueckfuehrungen und dasselbe eps_p, obwohl jede Loesung zwei Kontaktlaeufe hat
     #     (auf 1e-5: die Kontaktlaeufe enden am Residuum 1e-6 der Kontaktkraft, nicht bitgleich)

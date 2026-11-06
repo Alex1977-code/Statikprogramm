@@ -407,6 +407,15 @@ def _modelle():
             ("Stempel auf Sockel, plastisch", tp._drehlagerartiges_modell))
 
 
+#: Modelle, die in mehreren Laststufen rechnen, mit dem festen Referenzwert von u_max [m] der
+#: Tangente mit Gleitweg-Speicher (gemessen auf fe4210a, 06.11.2026; 3 Stufen). Grund der
+#: Umstellung: Gleitweg-Speicher a0bd908 - das bisherige Verfahren hat kein Gedaechtnis des
+#: Gleitwegs, "u wie vorher" gilt darum nur noch fuer die Tangente ohne Speicher (Fixture).
+#: Das bisherige Verfahren lag bei 0,037841 bzw. 0,540223 mm.
+UMAX_MIT_SPEICHER = {"Platte mit Ankern (plastisch, wie Drehlager)": 0.037866e-3,
+                     "Stempel auf Sockel, plastisch": 0.539715e-3}
+
+
 def test_konvergenzrate():
     print("\n--- Konvergenzrate: Runden gegen den alten Stand, gleiches Ergebnis, Coulomb ---")
     for name, bau in _modelle():
@@ -419,19 +428,45 @@ def test_konvergenzrate():
             aus[rt] = (r, g.cs)
         (r0, _cs0), (r1, cs1) = aus[False], aus[True]
         u0, u1 = np.asarray(r0.u, float), np.asarray(r1.u, float)
-        du = float(np.abs(u1 - u0).max()) / float(np.abs(u0).max())
+        ref_umax = UMAX_MIT_SPEICHER.get(name)
+        if ref_umax is None:
+            du = float(np.abs(u1 - u0).max()) / float(np.abs(u0).max())
+        else:
+            # Fixture: die Tangente ohne Speicher gegen das bisherige Verfahren (a0bd908)
+            contact.GLEITWEG_SPEICHER = False
+            try:
+                mf = bau()
+                mf.plastizitaet.reibungstangente = True
+                rf = solver.solve_static(mf)
+            finally:
+                contact.GLEITWEG_SPEICHER = True
+            du = float(np.abs(np.asarray(rf.u, float) - u0).max()) / float(np.abs(u0).max())
         winkel, kegel = 0.0, 0.0
         for _i, gl, dt, Ft, lim, _kh in _reibknoten(cs1, u1.ravel()):
-            if gl and np.linalg.norm(dt) > 0 and np.linalg.norm(Ft) > 0:
-                cw = float(dt @ Ft) / (np.linalg.norm(dt) * np.linalg.norm(Ft))
+            # Massstab umgestellt (a0bd908): der Winkel gegen den Weg dieser Stufe, d_t - g_s, an
+            # dem die Rueckabbildung die Kraft ausrichtet. Gegen den Gesamtweg waeren es an der
+            # Platte 141 Grad, ohne dass etwas falsch ist: der Knoten glitt in einer frueheren
+            # Stufe. Bei einer Stufe ist g_s null und beide sind derselbe Weg
+            weg = cs1._dt_el(cs1.cons[_i], dt)
+            if gl and np.linalg.norm(weg) > 0 and np.linalg.norm(Ft) > 0:
+                cw = float(weg @ Ft) / (np.linalg.norm(weg) * np.linalg.norm(Ft))
                 winkel = max(winkel, math.degrees(math.acos(max(-1.0, min(1.0, cw)))))
             elif not gl:
                 kegel = max(kegel, float(np.linalg.norm(Ft)) / max(lim, 1e-300))
         konv = bool(r1.info.get("contact_converged")) and not solver.kontakt_vorlaeufig(r1.info)
-        check(f"{name}: konvergiert, weniger Runden, u wie vorher auf 1e-4",
-              konv and _runden(r1) < _runden(r0) and du < 1e-4,
-              f"{_runden(r0)} -> {_runden(r1)} Runden, Δu {du:.1e}")
-        check(f"  {name}: Reibkraft längs des Wegs (< 0,001 Grad), Haften im Kegel",
+        if ref_umax is None:
+            check(f"{name}: konvergiert, weniger Runden, u wie vorher auf 1e-4",
+                  konv and _runden(r1) < _runden(r0) and du < 1e-4,
+                  f"{_runden(r0)} -> {_runden(r1)} Runden, Δu {du:.1e}")
+        else:
+            umax = float(np.abs(u1.reshape(-1, 6)[:, :3]).max())
+            check(f"{name}: konvergiert, weniger Runden; ohne Speicher u wie vorher auf 1e-4; mit Speicher "
+                  f"u_max {ref_umax * 1e3:.6f} mm (fester Wert) auf 1e-4",
+                  konv and _runden(r1) < _runden(r0) and du < 1e-4
+                  and abs(umax - ref_umax) <= 1e-4 * ref_umax,
+                  f"{_runden(r0)} -> {_runden(r1)} Runden, ohne Speicher Δu {du:.1e}, "
+                  f"u_max {umax * 1e3:.6f} mm")
+        check(f"  {name}: Reibkraft längs des Wegs der Stufe (< 0,001 Grad), Haften im Kegel",
               winkel < 1e-3 and kegel <= 1.0 + 1e-9, f"{winkel:.2e} Grad, |F_t|/mu Fn {kegel:.6f}")
 
 
