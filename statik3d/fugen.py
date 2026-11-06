@@ -1651,32 +1651,23 @@ def gegenseite_ergaenzung(model: Model, cp) -> list:
     alt = speicher.get(cp.name)
     if alt is not None and alt[0] == schluessel:
         return alt[1]
-    aus = _gegenseite_suchen(model, cp, kb, speicher)
+    aus = _gegenseite_suchen(model, cp, kb)
     speicher[cp.name] = (schluessel, aus)
     return aus
 
 
-def _gegenseite_suchen(model: Model, cp, kb, speicher: dict) -> list:
-    """:func:`gegenseite_ergaenzung` ohne den Zwischenspeicher."""
+def _gegenseite_suchen(model: Model, cp, kb) -> list:
+    """:func:`gegenseite_ergaenzung` ohne den Zwischenspeicher. Am Modell bleibt nur das
+    Ergebnis: das Modell geht gepickelt an die Arbeitsprozesse, und die Tabellen der Suche
+    (Randseiten, Knoten je Bauteil) waeren am Drehlager eine Million Eintraege."""
     from . import mortar as mo
-    netz = (model.nn, len(model.elements))
-    gj = speicher.get("_gruppen")
-    if gj is None or gj[0] != netz:
-        gj = speicher["_gruppen"] = (netz, gruppen_je_knoten(model))
-    rand = speicher.get("_rand")
-    if rand is None or rand[0] != netz:
-        rand = speicher["_rand"] = (netz, {})
 
     def randseiten(gruppen: set) -> list:
-        neu = {g for g in gruppen if g not in rand[1]}
-        if neu:
-            gefunden = _randseiten_rechnen(model, neu)
-            for g in neu:
-                rand[1][g] = gefunden.get(g, [])
-        return [x for g in sorted(gruppen) for x in rand[1][g]]
+        gefunden = _randseiten_rechnen(model, set(gruppen))
+        return [x for g in sorted(gruppen) for x in gefunden.get(g, [])]
 
     S = {int(x) for x in cp.slave_nodes}
-    eigene = {g for s in S for g in gj[1].get(s, ())}
+    eigene = {str(getattr(el, "group", "") or "") for el in model.elements if not S.isdisjoint(el.nodes)}
     genannt = _seiten_flaechen(model, getattr(kb, "gegenflaechen", None))
     if genannt:
         kand = _dreiecke_der_fuge(model, genannt)
