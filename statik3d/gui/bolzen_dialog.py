@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from PySide6 import QtWidgets
 
+from .. import zahlen as zl
+
 KEIN_WERKSTOFF = "– bitte wählen –"
 
 
@@ -54,7 +56,7 @@ class BolzenDialog(QtWidgets.QDialog):
         vorhanden = [model.koerper[n].bolzen for n in namen if n in model.koerper and model.koerper[n].bolzen]
         if vorhanden:
             b = vorhanden[0]
-            self.d.setText(f"{float(b.get('d', 0.0)) * 1e3:g}")
+            self.d.setText(zl.zahl_text(float(b.get('d', 0.0)) * 1e3, tausender=False))
             i = self.w.findText(str(b.get("werkstoff", "")))
             if i >= 0:
                 self.w.setCurrentIndex(i)
