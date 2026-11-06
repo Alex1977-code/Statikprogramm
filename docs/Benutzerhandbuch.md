@@ -9782,6 +9782,14 @@ das Gewinde auf „–“ zurück, geht das A_s mit, das aus der Tabelle stammte
 von Hand eingetragenes A_s bleibt. Gespeichert wird das Gewinde nur, wenn es
 gesetzt ist (`tests.test_rundstahl_gewinde`).
 
+**W_el am Rundstahl aus RFEM (seit 06.11.2026).** Die RFEM-Datei führt für einen
+Rundstahl kein elastisches Widerstandsmoment. Der Import setzt es deshalb aus dem
+Kreisquerschnitt, W_el = π·d³/32 (Ø 40: 6,28 cm³), sonst stünde dort 0. Das wirkt
+sich nur aus, wo eine Randspannung aus Biegung gebildet wird (Ermüdung, Klasse 3);
+für reine Zugstäbe ohne Biegung ändert sich nichts. Bereits gespeicherte Modelle
+bleiben unverändert; das Widerstandsmoment lässt sich in der Maske des
+Querschnitts eintragen.
+
 **Stab mit Schraubengröße (seit 13.10.2026).** Trägt der Querschnitt eines
 Stabes eine Schraubengröße und ist sein Werkstoff kein Spannstahl, wird der
 Stab als Schraube auf Zug nach EN 1993-1-8, Tabelle 3.4 nachgewiesen: F_t,Ed ≤
