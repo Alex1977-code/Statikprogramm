@@ -13154,6 +13154,13 @@ Eckspannung bzw. den Elementwert. Beim ersten Bild nach einer plastischen
 Rechnung rechnet das Programm die Punkte der nicht fließenden Elemente
 einmal nach, am Drehlager in rund 30 s.
 
+Seit dem 06.11.2026 gilt das auch für den Elementwert und die Knotentabelle des
+Ergebnisses: in einer plastischen Rechnung tragen sie auch bei nicht fließenden
+Elementen die Integrationspunkte, nie eine Ecke (Export, Auswertungen). Am Drehlager
+(Mittel) standen dort an 124 Elementen mit fast entarteter Ecke bis 14 379 N/mm², wo die
+Gaußpunkte desselben Elements höchstens 344 N/mm² haben. Elastische Rechnungen bleiben
+beim größten Auswertepunkt, die Nachweise lesen, was sie vorher lasen.
+
 ## 10 Ergebnisse und Bericht
 
 * **Färbung**: |u|, ux/uy/uz [mm], **|φ|, φx/φy/φz** [mrad] (Verdrehungen, seit

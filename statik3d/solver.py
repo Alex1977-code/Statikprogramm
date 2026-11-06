@@ -3383,11 +3383,22 @@ def _ohne_punkte(e, i: int, was: str) -> str:
             f"dieses Elements fehlt; bitte mit dem Modell melden")
 
 
+#: Plastische Ergebnisse zeigen Integrationspunktwerte, nie Eckwerte (Festlegung des
+#: Anwenders, 06.11.2026): auch ein Element, das nicht fliesst. Eine Ecke extrapoliert ueber
+#: die Punkte hinaus, an denen das Fliessen geprueft wird; am Drehlager (Mittel) trugen 124
+#: tet10 mit fast entarteter Ecke (det J das 0,006-Fache) im Elementwert bis 14 379 N/mm²,
+#: ihre Gausspunkte hoechstens 344 N/mm² und ε_p = 0. Nur fuer die Ruecknahmeprobe abschaltbar.
+PLASTISCH_NUR_PUNKTE = True
+
+
 def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     u = extra["u"]
     feq = extra["feq"]
     temp = extra["temp"]
     out = []
+    # temp["plast_punkte"] steht in jeder plastischen Rechnung, auch ohne fliessendes Element
+    ip_lauf = PLASTISCH_NUR_PUNKTE and isinstance(temp, dict) and temp.get("plast_punkte") is not None
+    ip_xi: dict = {}                    # Typ -> natuerliche Koordinaten der Integrationspunkte
     # Sechsflaechner stapelweise: einzeln kostet stress_points 1375,5 µs je
     # Element - einundsiebzigmal so viel wie eine tet4-Spannung mit 18,2 µs
     # (21.09.2026). Zwei Drittel davon sind die acht Gausspunkte fuer die
@@ -3417,7 +3428,10 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             teil = liste[a0:a0 + asm.HEX8_STAPEL]
             try:
                 Us = np.asarray([u[asm.element_dofs(model.elements[j], model)] for j in teil], float)
-                S, M = sl.spannungen_stapel(model, typ, teil, mat.E, mat.nu, Us)
+                xi_ip = sl.dehnungsoperator(model, typ, teil[:1])[0].xi if ip_lauf else None
+                if xi_ip is not None:
+                    ip_xi[typ] = np.asarray(xi_ip, float)
+                S, M = sl.spannungen_stapel(model, typ, teil, mat.E, mat.nu, Us, punkte=xi_ip)
                 for j, sp, mm in zip(teil, S, M):
                     hex_vor[j] = sp
                     mittel_vor[j] = mm
@@ -3577,7 +3591,8 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 else:
                     ecken = None
             else:
-                if sig0 and i in sig0 and len(werte) > 1:
+                am_ip = e.typ in ip_xi and i in hex_vor     # die Punkte aus dem Stapel oben
+                if sig0 and i in sig0 and len(werte) > 1 and not am_ip:
                     # Plastischer Zustand ohne Punktspannungen (etwa ein Typ ohne
                     # Dehnungsoperator): die Mitte, wie bis zum 22.09.2026
                     werte = werte[:1]
@@ -3585,7 +3600,12 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                     raise ValueError(_ohne_punkte(e, i, "Auswertepunkte"))
                 s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
                 ecken = None
-                if ecken_nr is not None:
+                if am_ip and ecken_nr is not None:
+                    # die Ecke nimmt den naechsten Punkt, wie beim fliessenden Element
+                    en = np.asarray(sl.ECKEN_NATUERLICH[e.typ], float)
+                    naechst = np.argmin(np.linalg.norm(en[:, None, :] - ip_xi[e.typ][None], axis=2), axis=1)
+                    ecken = np.array([werte[k] for k in naechst])
+                elif ecken_nr is not None:
                     ecken = np.array([werte[k] if k < len(werte) else werte[0] for k in ecken_nr])
             out.append((i, "solid", s_))
             if ecken is not None:
