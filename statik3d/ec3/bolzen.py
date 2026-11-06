@@ -14,8 +14,7 @@ Tragfaehigkeiten (A = pi d^2/4, W_el = pi d^3/32):
     Biegung     M_Rd   = 1,5 W_el f_yp / gamma_M0
     Wechselwirkung  (M_Ed/M_Rd)^2 + (F_v,Ed/F_v,Rd)^2 <= 1
 
-(Das min(f_yp, f_y Partner) der Lochleibung ist aus der Erinnerung an Tab. 3.10
-gesetzt und **nicht gegen den Normtext geprueft**; im Repo liegt keine Norm.)
+(Lochleibung: f_y = min(f_yp, f_y Partner), vom Anwender am 06.11.2026 bestaetigt.)
 
 Schnittgroessen aus dem Gleichgewicht des Bolzens (nur Lastfaelle, nicht
 Kombinationen: Kontakt ueberlagert sich nicht). Die Kraft auf den Bolzen sind

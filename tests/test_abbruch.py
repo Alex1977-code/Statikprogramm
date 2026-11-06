@@ -18,7 +18,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from statik3d import solver                                   # noqa: E402
+from statik3d import contact, solver                          # noqa: E402
 from statik3d.examples_lib import block_friction_example, hall_frame_example   # noqa: E402
 
 RESULTS = []
@@ -42,10 +42,16 @@ def test_abbruch():
     m = _hochgezogen()
     alt = solver.StaticSystem.hilfsfesselung
     alt_halt = solver._freie_teile_halten
-    # Ohne Hilfsfesselung und ohne den Halt (17.09.2026) fuer Teile ohne
-    # geschlossene Bedingung - nur so entsteht der Abbruch, der hier geprueft wird
+    alt_schalter = (solver.VORAB_HALTEN, solver.SPRUNG_PRUEFEN, contact.OEFFNEN_BEGRENZEN)
+    # Ohne Hilfsfesselung, ohne den Halt (17.09.2026) fuer Teile ohne
+    # geschlossene Bedingung und ohne die Schutzschalter aus 485ec2c (Vorab-Halten
+    # mit Stabilisierung, Sprungpruefung, Oeffnen begrenzen) - nur so bleibt der
+    # wirklich singulaere Fall, der hier geprueft wird. Mit den Schaltern an
+    # (Vorgabe) bricht dieses Modell nicht mehr ab: test_ohne_hilfsfesselung_stabilisiert
     solver.StaticSystem.hilfsfesselung = lambda self: False
     solver._freie_teile_halten = lambda *a, **k: False
+    solver.VORAB_HALTEN = solver.SPRUNG_PRUEFEN = False
+    contact.OEFFNEN_BEGRENZEN = False
     try:
         ex = None
         try:
@@ -55,6 +61,7 @@ def test_abbruch():
     finally:
         solver.StaticSystem.hilfsfesselung = alt
         solver._freie_teile_halten = alt_halt
+        solver.VORAB_HALTEN, solver.SPRUNG_PRUEFEN, contact.OEFFNEN_BEGRENZEN = alt_schalter
     check("ohne Hilfsfesselung: KontaktAbbruch mit Nummer der letzten geloesten Iteration",
           isinstance(ex, solver.KontaktAbbruch) and ex.iteration >= 1, f"{type(ex).__name__} {getattr(ex, 'iteration', None)}")
     if not isinstance(ex, solver.KontaktAbbruch):
@@ -93,6 +100,40 @@ def test_abbruch():
           and "abbruch_nachlauf" not in res.info, str(res.info.get("abbruch_nachlauf", "")))
     check("Ergebnisinfo als Woerterbuch (fuer Bericht und Web)",
           res is not None and res.info.get("singularitaeten") and res.info["singularitaeten"][0]["art"] == "hebt ab")
+
+
+def test_ohne_hilfsfesselung_stabilisiert():
+    """Seit 485ec2c (17.10.2026) bricht das frei bewegliche Modell ohne
+    Hilfsfesselung und ohne Halt nicht mehr singulaer ab: Vorab-Halten mit
+    Kontaktstabilisierung 1e-6, Sprungpruefung. Das Ergebnis darf aber nie still
+    gelten - nicht konvergiert, Warnung mit der Stabilisierungskraft ueber 0,1 %
+    der Last, der Sprung des Koerpers verworfen."""
+    m = _hochgezogen()
+    alt = solver.StaticSystem.hilfsfesselung
+    alt_halt = solver._freie_teile_halten
+    solver.StaticSystem.hilfsfesselung = lambda self: False
+    solver._freie_teile_halten = lambda *a, **k: False
+    try:
+        try:
+            r = solver.solve_static(m)
+            ex = None
+        except RuntimeError as e:
+            r, ex = None, e
+    finally:
+        solver.StaticSystem.hilfsfesselung = alt
+        solver._freie_teile_halten = alt_halt
+    check("ohne Hilfsfesselung (Schutz an): ein Ergebnis, kein Abbruch mit Ausnahme",
+          r is not None, f"{type(ex).__name__}")
+    if r is None:
+        return
+    log = [str(z) for z in r.info.get("contact_log") or []]
+    check("... und es gilt als nicht konvergiert", r.info.get("contact_converged") is False
+          and not solver.kontakt_konvergiert(r.info), str(r.info.get("contact_converged")))
+    check("... Warnung nennt die Stabilisierungskraft (ueber 0,1 % der Last)",
+          any(z.startswith("WARNUNG") and "Kontaktstabilisierung" in z and "über 0.1 %" in z for z in log),
+          next((z for z in log if "Kontaktstabilisierung" in z and "WARNUNG" in z), "keine")[:140])
+    check("... der Sprung des Koerpers wurde verworfen und gedaempft wiederholt",
+          any("sprang als Ganzes" in z and "Runde verworfen" in z for z in log), "")
 
 
 def test_mit_hilfsfesselung_und_normal():
@@ -212,7 +253,7 @@ def test_ohne_ein_fertiges_ergebnis_wird_nichts_vorgetaeuscht():
 
 
 def main():
-    for t in (test_abbruch, test_mit_hilfsfesselung_und_normal,
+    for t in (test_abbruch, test_ohne_hilfsfesselung_stabilisiert, test_mit_hilfsfesselung_und_normal,
               test_abbruch_behaelt_gerechnete_lastfaelle,
               test_abbruch_in_den_kombinationen_behaelt_lastfaelle_und_kombinationen,
               test_ohne_ein_fertiges_ergebnis_wird_nichts_vorgetaeuscht):

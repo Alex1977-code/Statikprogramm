@@ -115,7 +115,7 @@ def test_handprobe():
                                          for p in w["partner"]), [(p["name"], round(p["t"] * 1e3, 1)) for p in w["partner"]])
     check("Quader statt Rundstahl: Hinweis zum gemessenen Durchmesser",
           any("gemessener Durchmesser" in h for h in w["hinweise"]), w["hinweise"])
-    # Lochleibung mit dem kleineren f_y: Partner A mit f_y 275 (Quader 27,5 mm dick: Stufe bis 40 mm)
+    # Lochleibung mit dem kleineren f_y (f_y = min(f_yp, f_y Partner), vom Anwender am 06.11.2026 bestaetigt): Partner A mit f_y 275 (Quader 27,5 mm dick: Stufe bis 40 mm)
     m2, res2 = kuenstlich(F)
     m2.add_material(Material("Platte275", fy=275e6, fu=430e6))
     m2.koerper["A"].material = "Platte275"
