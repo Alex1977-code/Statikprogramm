@@ -11502,7 +11502,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   An der Ankerplatte der Tests (Platte mit Bohrung, starre Scheibe über dem
   Loch, Anker mit 0,9 MN Vorspannung und 0,3 MN Zuglast, Netz wie der Entwurf
   des Drehlagers) braucht „ingenieurmäßig“ 20 statt 29 Newton-Schritte.
-  Außerhalb der Zone weicht σ_v dabei um höchstens 0,10 N/mm² ab, die
+  Außerhalb der Zone weicht σ_v dabei um höchstens 0,08 N/mm² ab, die
   Ankerkraft um 0,01 % und die Verschiebung um 0,01 %
   (`tests/test_spitzen_abbruch.py`). Seit dem 14.10.2026 ist die Zone dort
   kleiner (zwei Elementringe bis r + 2 h, 48 statt 128 Elemente). Ohne die

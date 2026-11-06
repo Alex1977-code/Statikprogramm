@@ -6122,7 +6122,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                          "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
-        g.klein("Freie Knoten entfernen…", self.freie_knoten_entfernen, symbol="netz_loeschen",
+        g.klein("Freie Knoten entfernen…", self.freie_knoten_entfernen, symbol="loeschen",
                     hinweis="Knoten ohne Element und ohne jeden Verweis (keine Linie, Fläche, Last, "
                             "Lager, Kopplung) auf Rückfrage entfernen - die Netzabnahme meldet sie als "
                             "Information; das Vernetzen löscht sie nie")
