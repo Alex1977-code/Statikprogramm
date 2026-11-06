@@ -2810,7 +2810,7 @@ Modelldatei und in der Kennung der Ergebnisse, eine nachgetragene Liste machte
 vorhandene Ergebnisse ungültig. Die Bindung der Seitenmitten liest dieselbe Funktion, und
 ein Paar ohne ausgeführte Kontaktbedingung bleibt bei seinen eigenen Facetten. Prüfung:
 `tests.test_master_voll`, P1 (Würfel, Gegenseite fein): σ_zz = −p auf 0,000 N/mm²,
-u = −p L/E, ΣFn = p A, ΣM = 0; ohne die Kur 669 N/mm² und mehr daneben.
+u = −p L/E, ΣFn = p A, ΣM = 0; ohne die Kur 100 bis 39 547 N/mm² daneben.
 
 **Im Löser wirkt Kontakt nur auf der Gegenfläche.** Für die Zuordnung Knoten
 gegen Master-Facette galt bis zum 15.09.2026 dieselbe Umkreisregel — für einen
