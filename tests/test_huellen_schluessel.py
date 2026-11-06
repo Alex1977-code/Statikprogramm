@@ -90,6 +90,11 @@ _REF = {}
 #: dass sie da und im Beispiel ueberall null sind (nichts pendelt), und nimmt sie
 #: fuer den Vergleich mit 6791f9f ab.
 NEU_IM_KONTAKTZUSTAND = ("umkehr", "pendel")
+#: Seit a0bd908 (17.10.2026, Gleitweg-Speicher) traegt der Kontaktzustand auch
+#: ``gleitweg`` und ``gleitweg_ende``: Sicherung fuer den Warmstart, keine Zahl des
+#: Ergebnisses (Verschiebung und Auflagerkraefte mit und ohne Speicher bitgleich);
+#: Freigabe des Anwenders 06.11.2026. R1f prueft, dass sie da sind.
+NEU_GLEITWEG = ("gleitweg", "gleitweg_ende")
 
 #: Felder der Nachweisergebnisse, die nach 6791f9f dazukamen, mit ihrem
 #: Leerwert im Fingerabdruck (erzeugen.wert): ``nicht_anwendbar`` der Ermuedung
@@ -536,11 +541,11 @@ def _pendelmarken_abnehmen(an) -> dict:
             kz = getattr(r, "kontaktzustand", None)
             if not isinstance(kz, dict):
                 continue
-            da = all(k in kz for k in NEU_IM_KONTAKTZUSTAND)
+            da = all(k in kz for k in NEU_IM_KONTAKTZUSTAND + NEU_GLEITWEG)
             marken = sum(int(np.count_nonzero(np.asarray(kz.get(k, []), int)))
                          for k in NEU_IM_KONTAKTZUSTAND)
             aus[f"{teil}/{n}"] = (da, marken)
-            r.kontaktzustand = {k: v for k, v in kz.items() if k not in NEU_IM_KONTAKTZUSTAND}
+            r.kontaktzustand = {k: v for k, v in kz.items() if k not in NEU_IM_KONTAKTZUSTAND + NEU_GLEITWEG}
     return aus
 
 

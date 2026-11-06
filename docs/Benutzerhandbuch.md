@@ -10398,7 +10398,7 @@ Werkstoff, fehlt eines davon, steht dort „Nachweis nicht geführt“ mit dem G
 Nachweis nach EN 1993-1-8, 3.13 (Tab. 3.10) läuft für die Lastfälle (nicht für
 Kombinationen, weil sich Kontakt nicht überlagert): Abscheren F_v,Rd = 0,6·A·f_up/γ_M2,
 Lochleibung F_b,Rd = 1,5·t·d·f_y/γ_M0 je Partnerkörper mit f_y als dem kleineren Wert von
-Bolzen und Partner (nicht gegen den Normtext geprüft), Biegung M_Rd = 1,5·W_el·f_yp/γ_M0
+Bolzen und Partner (vom Anwender am 06.11.2026 bestätigt), Biegung M_Rd = 1,5·W_el·f_yp/γ_M0
 und die Wechselwirkung (M_Ed/M_Rd)² + (F_v,Ed/F_v,Rd)² ≤ 1. Die Querkraft und das Moment
 in der Scherfuge folgen aus dem Gleichgewicht der Kontaktkräfte, die die Partnerkörper auf
 den Bolzen ausüben. Die Scherfuge liegt zwischen den Kontaktbereichen zweier Partner.
