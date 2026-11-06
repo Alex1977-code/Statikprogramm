@@ -1455,6 +1455,22 @@ Rechnen je Kontaktpaar: „… 240 liegen neben der Gegenfläche: dort steht ihn
 nichts gegenüber, sie tragen nicht“. Das ist kein Fehler des Modells, sondern
 die Auskunft, wie weit die Kontaktseite über die Gegenfläche hinausreicht.
 
+**Die Gegenseite einer Fuge ist die ganze Gegenfläche** (seit 06.11.2026). Bis
+dahin gehörte zur Gegenseite nur, was die Facetten der Kontaktseite als nächste
+Gegenfacette trafen. War die Gegenseite feiner vernetzt als die Kontaktseite, war
+das ein kleiner, zufälliger Teil der Fläche, und die übrigen Knoten meldeten
+fälschlich „neben der Gegenfläche“. Am Drehlager (Mittel, Fuge „Achse (Typ 3)“)
+waren es an V16 13 % der Fläche, 177 statt 663 Bedingungen und 174 statt 30 kN
+je tragendem Punkt. Jetzt gehört jede Facette der genannten Gegenflächen dazu,
+die sich mit der Kontaktseite überdeckt (ohne genannte Gegenflächen: jede Randseite
+der Gegenkörper, die das tut). Das wirkt auch bei gespeicherten Modellen ohne Ihr
+Zutun: Datei und Netz bleiben, wie sie sind, die Gegenseite wird beim Rechnen aus dem
+Netz bestimmt, und nur an den neu dazugekommenen Facetten gehen die Seitenmitten eines
+quadratischen Netzes vor der Rechnung auf die Kantenmitte, wie an jeder Kontaktseite.
+Ergebnisse von davor tragen den Status „Ergebnis möglicherweise betroffen – neu
+rechnen“ und bleiben sichtbar. Auch im Entwurf ändert sich das Zusammenstellen an
+Fugen, deren Gegenfläche über die gefundene Liste hinausging (Theoriehandbuch).
+
 Zum Spalt nennt das Protokoll die **Verteilung**, nicht einen Mittelwert:
 
 ```

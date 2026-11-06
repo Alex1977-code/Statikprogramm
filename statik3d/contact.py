@@ -877,7 +877,10 @@ def _deckender_knoten(p, s, mbaum, mknoten, knorm, tol):
 
 
 def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
-    """Facetten (Knotenlisten) der Master-Oberflaeche eines Kontaktpaares."""
+    """Facetten (Knotenlisten) der Master-Oberflaeche eines Kontaktpaares.
+
+    Bei einer Fuge die ganze Gegenseite, nicht nur die Liste im Paar
+    (fugen.gegenseite_ergaenzung); die Liste kommt zuerst und bleibt in ihrer Folge."""
     from .assemble import SOLID_FACES, SHELL_TYPES, SOLID_TYPES
     facets: list[tuple[int, ...]] = [tuple(int(n) for n in f) for f in cp.master_faces]
     faces: dict[tuple, tuple] = {}
@@ -894,6 +897,8 @@ def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
                 else:
                     faces[key] = nodes
     facets.extend(faces.values())
+    from .fugen import gegenseite_ergaenzung
+    facets.extend(tuple(int(n) for n in f) for f in gegenseite_ergaenzung(model, cp))
     return facets
 
 
@@ -1581,6 +1586,8 @@ class ContactSystem:
             + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
                f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
                if ohne else "")
+            + (f"; {len(facets) - len(cp.master_faces or [])} Gegenfacetten aus der Gegenfläche ergänzt"
+               if not cp.master_elements and len(facets) > len(cp.master_faces or []) else "")
             + (f" - {len(neben)} liegen neben der Gegenfläche: dort steht ihnen nichts "
                f"gegenüber, sie tragen nicht (z. B. Knoten {', '.join(str(x) for x in neben[:5])})"
                if neben else ""))

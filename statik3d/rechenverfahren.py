@@ -130,6 +130,13 @@ def _hat_kontakt(model) -> bool:
         return False
 
 
+def _fuge_mit_kontaktpaar(model) -> bool:
+    """Ein Kontaktpaar aus einer Kontaktbedingung (fugen._fuge_ueber_kontaktpaar):
+    ungleiche Netze an einer Fuge. Passende Netze werden zu Spaltelementen."""
+    kbs = getattr(model, "kontaktbedingungen", None) or {}
+    return any(str(cp.name) in kbs for cp in (getattr(model, "contact_pairs", None) or []))
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -658,6 +665,18 @@ MERKMALE: list = [
         modellmerkmal="Kontakt mit μ > 0 und mehrstufiger Rechnung (Spannschritt oder Plastizität)",
         betrifft=_reibung_mehrstufig, im_ergebnis=_gleitweg_im_ergebnis),
     Merkmal(
+        # kontakt/master-voll (06.11.2026): die Gegenseite einer Fuge war nur das, was die
+        # Schwerpunkte der Kontaktseite als Naechstes trafen; auf einer gekruemmten Fuge
+        # wanderte der Masterpunkt der Randknoten um L/3 (Drehlager Mittel: 177 statt 663
+        # Bedingungen, 34,7 kNm Momentenluecke; tests/test_master_voll)
+        name="gegenseite", titel="Gegenseite der Kontaktfugen",
+        texte={"alt": "Gegenfacetten nur, soweit eine Facette der Kontaktseite sie als nächste traf; "
+                      "fast ganz überdeckte Facetten einer gekrümmten Fuge als Rand der Überdeckung",
+               "neu": "die ganze Gegenfläche; Überdeckung mit der Facettenkrümmung beurteilt"},
+        wechsel=(Wechsel(stand=5, datum="06.11.2026", commit="kontakt/master-voll-2026-11-06", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kontakt: Fuge mit Kontaktpaar (ungleiche Netze)", betrifft=_fuge_mit_kontaktpaar),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -740,7 +759,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 4
+VERFAHRENSSTAND = 5
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -1571,7 +1571,8 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                    + (f"{bericht['knoten']} Randknoten"
                       + (f" und {bericht['mitten']} Seitenmitten" if bericht.get("mitten") else "")
                       + " getrennt, " if bericht["knoten"] else "")
-                   + f"Kontaktpaar mit {len(slave)} Knoten gegen {len(master)} Gegenfacetten "
+                   + f"Kontaktpaar mit {len(slave)} Knoten gegen "
+                   f"{len(master) + len(gegenseite_ergaenzung(model, model.contact_pairs[-1]))} Gegenfacetten "
                    f"({A_zu * 1e4:.0f} von {A_alle * 1e4:.0f} cm² der Kontaktseite, "
                    f"Suchradius {weite * 1e3:.0f} mm, Spalt "
                    + verteilungstext(spalt, AUFLIEGEND * weite)
@@ -1592,6 +1593,116 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
             _gleiten_melden(kb, b_n, b_t, mu, log, model,
                             [seite_b[i] for i in sorted(paare)])
     return bericht
+
+
+#: Die Gegenseite einer Fuge ist die ganze Gegenflaeche (06.11.2026), siehe
+#: :func:`gegenseite_ergaenzung`. Nur fuer die Ruecknahmeprobe abschaltbar.
+GEGENSEITE_VOLL = True
+#: Eine Gegenfacette gehoert zur Fuge, wenn sie sich auf mindestens diesem Anteil ihrer
+#: Flaeche mit der Kontaktseite ueberdeckt. Nicht null: auf einer gekruemmten Fuge
+#: schneidet die Projektion auch die Nachbarfacette neben dem Rand der Kontaktseite auf
+#: einem Streifen an (mortar.KRUEMMUNG_BEACHTEN), ohne dass ihr dort etwas gegenuebersteht.
+GEGENSEITE_ANTEIL = 1e-2
+
+
+def _knoten_hash(werte) -> int:
+    return hash(np.asarray(list(werte), np.int64).tobytes())
+
+
+def gegenseite_ergaenzung(model: Model, cp) -> list:
+    """Die Gegenfacetten einer Fuge, die in ``cp.master_faces`` fehlen.
+
+    ``master_faces`` haelt, was die Suche der Fuge gefunden hat (je Facette der
+    Kontaktseite die **naechste** Gegenfacette, :func:`_fuge_ueber_kontaktpaar`). Ist die
+    Gegenseite feiner als die Kontaktseite, ist das nur ein Teil der Flaeche, und zwar
+    ein zufaelliger: am Drehlager (Mittel, „Achse (Typ 3)“, V16: Dreiecke 23 mm², Facetten
+    von V30 mit 38 mm Kante) 13,2 % der Gegenflaeche, 486 Knoten galten als „neben der
+    Gegenflaeche“, statt 663 Bedingungen 177, und 28 statt 169 Punkte trugen dieselben
+    5 000 kN. Massgebend ist die Flaeche, die der Kontaktseite gegenueberliegt: von den
+    genannten Gegenflaechen (ohne sie den Randseiten der Gegenkoerper) jede Facette, die
+    sich mit einer Facette der Kontaktseite ueberdeckt (mortar.ueberdeckte).
+
+    **Hier und nicht beim Anlegen des Paars**, weil die Kur auch gespeicherte Modelle
+    erreichen muss, ohne dass sich die Modelldatei oder das Netz aendert: die Liste steht
+    in der Datei und in der Kennung der Ergebnisse (ergebnisse.rechenkennung), eine
+    nachgetragene Liste machte alle Ergebnisse ungueltig. Abgeleitet wird sie aus den
+    Randseiten der Flaechen, also aus dem aktuellen Netz; alle Leser fragen
+    contact.master_facets - auch die Bindung der Seitenmitten, die dieselbe Seite sehen
+    muss. Ein Paar ohne ausgefuehrte Kontaktbedingung nennt seine Facetten selbst und
+    bleibt, wie es ist. Rueckgabe: Knotenlisten, Umlauf nach aussen wie master_faces.
+    """
+    if not GEGENSEITE_VOLL:
+        return []
+    kbs = getattr(model, "kontaktbedingungen", None)
+    kb = kbs.get(cp.name) if isinstance(kbs, dict) else None
+    if kb is None or not getattr(kb, "ausgefuehrt", False) or not cp.slave_nodes:
+        return []
+    schluessel = (model.nn, len(model.elements), _knoten_hash(cp.slave_nodes),
+                  _knoten_hash(n for f in (cp.master_faces or []) for n in f),
+                  tuple(str(x) for x in (getattr(kb, "gegenflaechen", None) or [])),
+                  tuple(str(x) for x in (cp.gegenkoerper or [])), float(cp.search_radius or 0.0))
+    speicher = getattr(model, "_gegenseite", None)
+    if speicher is None:
+        speicher = {}
+        try:
+            model._gegenseite = speicher
+        except AttributeError:
+            pass
+    alt = speicher.get(cp.name)
+    if alt is not None and alt[0] == schluessel:
+        return alt[1]
+    aus = _gegenseite_suchen(model, cp, kb, speicher)
+    speicher[cp.name] = (schluessel, aus)
+    return aus
+
+
+def _gegenseite_suchen(model: Model, cp, kb, speicher: dict) -> list:
+    """:func:`gegenseite_ergaenzung` ohne den Zwischenspeicher."""
+    from . import mortar as mo
+    netz = (model.nn, len(model.elements))
+    gj = speicher.get("_gruppen")
+    if gj is None or gj[0] != netz:
+        gj = speicher["_gruppen"] = (netz, gruppen_je_knoten(model))
+    rand = speicher.get("_rand")
+    if rand is None or rand[0] != netz:
+        rand = speicher["_rand"] = (netz, {})
+
+    def randseiten(gruppen: set) -> list:
+        neu = {g for g in gruppen if g not in rand[1]}
+        if neu:
+            gefunden = _randseiten_rechnen(model, neu)
+            for g in neu:
+                rand[1][g] = gefunden.get(g, [])
+        return [x for g in sorted(gruppen) for x in rand[1][g]]
+
+    S = {int(x) for x in cp.slave_nodes}
+    eigene = {g for s in S for g in gj[1].get(s, ())}
+    genannt = _seiten_flaechen(model, getattr(kb, "gegenflaechen", None))
+    if genannt:
+        kand = _dreiecke_der_fuge(model, genannt)
+    else:
+        ziel = {str(x) for x in (cp.gegenkoerper or [])} - eigene
+        kand = randseiten(ziel) if ziel else []
+    vorhanden = {tuple(sorted(int(x) for x in f)) for f in (cp.master_faces or [])}
+    kand = [x for x in kand if len(x[1]) in (3, 4) and _gruppe(model, int(x[0])) not in eigene
+            and tuple(sorted(int(k) for k in x[1])) not in vorhanden]
+    if not kand:
+        return []
+    seite = [x for x in randseiten(eigene) if len(x[1]) in (3, 4) and all(int(k) in S for k in x[1])]
+    if not seite:
+        return []
+    weite = float(cp.search_radius or 0.0) or max(_kantenlaenge(model, seite), _kantenlaenge(model, kand), 1e-9)
+    treffer = mo.ueberdeckte(np.asarray(model.nodes, float),
+                             [tuple(int(k) for k in x[1]) for x in seite], [x[2] for x in seite],
+                             [tuple(int(k) for k in x[1]) for x in kand], [x[2] for x in kand],
+                             weite, GEGENSEITE_ANTEIL)
+    aus, gesehen = [], set()
+    for x, ja in zip(kand, treffer.tolist()):
+        schl = tuple(sorted(int(k) for k in x[1]))
+        if ja and schl not in gesehen:
+            gesehen.add(schl)
+            aus.append(_nach_normale(model, x[1], x[2]))
+    return aus
 
 
 def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:

@@ -2419,6 +2419,25 @@ spiegelbildliche Eckknoten um 10,3 % voneinander ab (8 972 gegen 4 128 kN).
 Prüfmatrix K1–K7, KP1, KP2 und der Stempel der Plastizität (als kleinerer
 Slave ganz überdeckt) bleiben unverändert.
 
+**Überdeckung auf einer gekrümmten Fuge (06.11.2026, `mortar.KRUEMMUNG_BEACHTEN`).**
+Die Masterseite wird längs der Normalen der Slave-Facette in deren Ebene projiziert.
+Auf einer gekrümmten Fuge steht eine Randkante um die Höhe d über der Ebene und läuft
+unter dem Winkel b zu ihr; ihr Bild verrückt sich um d tan b, und längs einer Kante L
+bleibt ein Streifen frei, obwohl beide Netze dieselbe Fläche belegen. Am Drehlager (V30
+an V29, Facetten über 69 mm Breite, r = 298 mm) fehlten 0,00002 bis 0,00023 der
+Facette, am Halbzylinder mit 8 Teilungen 0,006; eben genau null. Die Facette galt als
+teilweise überdeckt und bekam die Standard-Formfunktionen, deren Schwerpunkt um L/3
+neben dem Knoten liegt: der Masterpunkt der Randknoten wanderte um 23 mm, und die
+Kontaktkräfte trugen (Fn n) × Hebel, am Drehlager 34,7 kNm, die im globalen Gleichgewicht
+fehlten. Eine Facette gilt jetzt als ganz überdeckt, wenn die Fehlfläche unter
+L d tan b liegt (aus ihren Schnittstücken, höchstens 10 % der Facette); eine feste Schranke
+genügt nicht (10⁻³ reicht am Drehlager, bei 8 Teilungen nicht). Die dualen Integrale
+laufen dann über die vorhandenen Stücke, und der Nenner ist ihr Integral, damit die Summe
+der Gewichte 1 bleibt. Eben ist L d tan b null und alles bitgleich; ein echter Rand
+(Master auf ¾ der Breite) bleibt teilweise. Gemessen (`tests.test_master_voll`, P2):
+axialer Hebel 0,27 mm bei 8, 0,003 mm bei 24 Teilungen gegen 23 mm ohne die Kur; Stichprobe
+über Radius, Teilung und Masterreihen von 6 Teilungen am Halbkreis an (30°, `contact.KNICK`).
+
 Am Drehlager (Lauf `mortar_rand_cca9e85`, 30.09.2026, PARDISO, auf dem
 Netz des Laufs `einzeilig_18a770d`, zwei Auswerter) bekommen jetzt 7 504
 Slave-Knoten in sieben Fugen Mortar-Gewichte statt 803, davon 6 701 am Rand
@@ -2771,6 +2790,27 @@ der Gegenfacette hinaus, ist dort nichts mehr, was ihr gegenübersteht, und sie
 bleibt ungepaart. Die Randfacette einer Fuge, die zur Hälfte über die Kante
 ragt, bleibt so dabei. **Gewählt** wird unter den so verbliebenen Gegenseiten
 die räumlich nächste; **gemessen** wird längs der Normalen.
+
+**Die Gegenseite hängt nicht an den Schwerpunkten (06.11.2026,
+`fugen.gegenseite_ergaenzung`, Fehlerkorrektur Stand 5).** Die Liste im Kontaktpaar ist
+das Bild der Suche: je Facette der Kontaktseite die nächste Gegenfacette. Bei feinerer
+Gegenseite ist das ein Bruchteil und ein zufälliger: am Drehlager (Mittel, „Achse
+(Typ 3)“) 1 333 von 9 027 Dreiecken, an V16 (Dreiecke 23 mm², Facetten von V30 mit
+38 mm Kante) 13,2 % der Fläche; 486 Slave-Knoten galten als „neben der Gegenfläche“,
+177 statt 663 Bedingungen. Auch im Entwurf waren Fugen betroffen, deren Liste Lücken
+hatte: die Mortar-Gewichte (unten) stuften dort sonst ganz überdeckte Facetten als Rand
+ein, Lagerbock-Grundplatte mit Hebel bis 24,46 mm auf deckungsgleichen Netzen.
+`contact.master_facets` nimmt darum zur Liste jede Facette der genannten Gegenflächen
+(ohne sie jede Randseite der Gegenkörper) hinzu, deren Außennormale der Kontaktseite
+entgegen zeigt und die sich auf mindestens 1 % ihrer Fläche mit einer Facette der
+Kontaktseite überdeckt (`mortar.ueberdeckte`; der Anteil hält die Nachbarfacette neben
+dem Rand heraus, die die Projektion auf einer gekrümmten Fuge nur anschneidet). Das
+geschieht beim Lesen und nicht beim Anlegen des Paars: die Liste steht in der
+Modelldatei und in der Kennung der Ergebnisse, eine nachgetragene Liste machte
+vorhandene Ergebnisse ungültig. Die Bindung der Seitenmitten liest dieselbe Funktion, und
+ein Paar ohne ausgeführte Kontaktbedingung bleibt bei seinen eigenen Facetten. Prüfung:
+`tests.test_master_voll`, P1 (Würfel, Gegenseite fein): σ_zz = −p auf 0,000 N/mm²,
+u = −p L/E, ΣFn = p A, ΣM = 0; ohne die Kur 669 N/mm² und mehr daneben.
 
 **Im Löser wirkt Kontakt nur auf der Gegenfläche.** Für die Zuordnung Knoten
 gegen Master-Facette galt bis zum 15.09.2026 dieselbe Umkreisregel — für einen
