@@ -39,6 +39,10 @@ for optional in ("pypardiso", "pyamg", "ama", "reportlab", "svglib", "qrcode"):
 try:
     __import__("pyamg")
     hiddenimports += collect_submodules("pyamg")
+    # pyamg 5.4 liest beim Import importlib.metadata.version("pyamg"): ohne die Metadaten
+    # scheitert der Import in der exe, und der Loeser fehlt (Selbsttest 07.11.2026)
+    from PyInstaller.utils.hooks import copy_metadata
+    datas += copy_metadata("pyamg")
 except ImportError:
     pass
 # ama (eigener Rechenkern, Rust, keine Fremdlizenz) gehoert genauso in die exe,
