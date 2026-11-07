@@ -388,6 +388,12 @@ Lagerkräfte stimmen auf 0,01 kN überein, die Kräfte der Anker S1 bis S16 auf 
 fallen dieselben Zugstäbe aus (S24, S25, S35). Die Momentenlücke ΣM fällt von 1,09 auf 0,31 kNm, die Kraft der
 Knaggen in z von 2 120 auf 2 109 kN und ε_p,max von 1,30 % auf 0,90 %. Der Lauf braucht 147 statt 101 Zerlegungen.
 
+Die Abnahme mit μ = 1 ist nicht sauber durchgelaufen. Lagerkräfte, Ankerkräfte und die Kraft der Knaggen stimmen
+auf 0,01 kN, eine Nachkommastelle und 0,1 kN mit dem Stand vom 15.10.2026 überein, und ε_p,max fällt von 1,30 % auf
+0,90 %. Im Spannschritt konvergierte der Kontaktlauf aber in allen drei Stufen nicht, das Ergebnis heißt deshalb
+„vorläufig – Kontakt nicht konvergiert in Spannschritt“. Der Lauf brauchte 863 statt 297 Zerlegungen und 3 h 51 min.
+Bei μ = 0,2 und mit der Reibungstangente tritt das nicht auf; die Ursache ist nicht untersucht.
+
 ### Drehlager, Netz „Mittel“: Ergebnis dieses Stands
 
 Gerechnet ist der Lastfall LF1 des Zeichnungsstands mit μ = 0,2, der Endvorspannung 944,4 kN der Anker und den
