@@ -6829,7 +6829,7 @@ in der Ansicht wählen, „Auswahl übernehmen“, dann:
 | Geländekategorie / Profil | 0, I, II, III, IV nach Tab. 4.1 (c_r, v_m, I_v, q_p = (1 + 7·I_v)·½·ρ·v_m²) oder die Mischprofile des NA (Binnenland, Küste, Inseln der Nordsee) |
 | Anströmung | ±x, ±y oder ein Winkel von +x; Geländeoberkante (leer = Unterkante der Objekte) |
 | Flächen sind | Gebäude (Wände und Dach nach ihrer Normale: Luv D, Lee E, Seiten A/B/C, Flachdach F/G/H/I), freistehende Wand (Tab. 7.9) oder Anzeigetafel (c_f = 1,8) |
-| Stäbe | Kraftbeiwert aus dem Querschnitt: Rechteck (Bild 7.23), scharfkantige Profile (2,0), Kreiszylinder (Reynoldszahl, Rauigkeit k), Fachwerk (Völligkeitsgrad φ); Schlankheitsabminderung ψ_λ; oder c_f vorgeben |
+| Stäbe | Kraftbeiwert aus dem Querschnitt: Rechteck (Bild 7.23), scharfkantige Profile (2,0), Kreiszylinder (Reynoldszahl, Rauigkeit k), Fachwerk (Völligkeitsgrad φ); Schlankheitsabminderung ψ_λ; oder c_f,0 vorgeben, das ebenfalls mit ψ_λ abgemindert wird |
 | c_pi, c_s·c_d | Innendruck (wird von allen Zonen abgezogen), Strukturbeiwert |
 
 **Lasten erzeugen** schreibt Objektlasten an die Flächen (Verlauf „Wind“:
@@ -7049,7 +7049,7 @@ Einstellungen im Einzelnen:
 | **Ausfall bei Druck** | Das Lager nimmt nur Zug auf (Zuganker, Hänger). |
 | **Schlupf** | Freier Weg, bevor das Lager wirkt (Lagerspiel, Fuge). |
 | **Reibung μ** | Die Kraft quer zur Stützrichtung ist auf μ·|F| der Bezugskraft begrenzt; „μ bezogen auf“ nennt den Freiheitsgrad der Normalkraft (meist uz). |
-| **Grenzkraft** | Ab dieser Kraft fließt das Lager plastisch weiter (Zustand „Fließen“). Knotenlager in kN bzw. kNm, Linienlager je m, Flächenlager je m²; 0 = unbegrenzt. Sie braucht einen Ausfall bei Zug oder Druck oder einen Schlupf: ohne beides trüge das Lager im Löser nur Druck, deshalb nimmt der Dialog sie dann nicht an. Eine aus RFEM gelesene Grenzkraft steht in der Spalte und bleibt beim OK erhalten. |
+| **Grenzkraft** | Ab dieser Kraft fließt das Lager plastisch weiter (Zustand „Fließen“). Knotenlager in kN bzw. kNm, Linienlager je m, Flächenlager je m²; 0 = unbegrenzt. Sie braucht einen Ausfall bei Zug oder Druck oder einen Schlupf: ohne beides trüge das Lager im Löser nur Druck, deshalb nimmt der Dialog sie dann nicht an. Eine aus RFEM gelesene Grenzkraft steht in der Spalte und bleibt beim OK erhalten; fehlen dort Ausfall und Schlupf, nennt eine Warnung in Protokoll und Zusammenfassung das Lager. |
 
 **Vorzeichen:** Das Lager wirkt entlang der positiven Achse seines
 Freiheitsgrads. Bewegt sich der Knoten in das Lager hinein, entsteht **Druck**;

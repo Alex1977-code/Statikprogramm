@@ -22839,7 +22839,8 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("fachwerk", "Stäbe als Fachwerk (φ)", "haken", bool(w.fachwerk)),
                   F("phi", "Völligkeitsgrad φ", "zahl", float(w.phi)),
                   F("k", "Rauigkeit k [mm] (Zylinder)", "zahl", float(w.k_rauigkeit * 1e3)),
-                  F("cf", "c_f Vorgabe (leer = Norm)", "zahl", w.cf_vorgabe, breite=78, leer=True),
+                  F("cf", "c_f,0 Vorgabe (wird mit ψ_λ abgemindert)", "zahl", w.cf_vorgabe, breite=78, leer=True,
+                    hinweis="leer = Norm"),
                   F("kennwerte", "Kennwerte", "info", "–", anzeige=True)]
         halter: dict = {}
 

@@ -352,6 +352,12 @@ langsamer; bei 136 GB Commit-Grenze blieben so mindestens 17,6 GB statt zuletzt 
 * **Lastkategorien und Stabtypen aus RFEM** sind in die Einstufung aufgenommen: Ein Modell, das vor den
   Korrekturen des Imports übernommen und noch nicht nachgelesen wurde, trägt den Status, solange Sie die
   Lager, Stabtypen oder Vorspannung nicht nachgelesen oder umgestellt haben.
+* **Zwei neue Warnungen.** Eine Grenzkraft ohne Ausfall und ohne Schlupf wirkt nur in Druckrichtung; das
+  meldet das Programm jetzt je Lager im Kontaktprotokoll und in der Zusammenfassung. Eine Zwangsverformung an
+  einem Freiheitsgrad ohne Lager bleibt unwirksam; das steht jetzt auch im Ergebnis, in der Zusammenfassung
+  und in der Überlagerung. Die Rechnung ändert sich dadurch nicht.
+* **Feld im Winddialog umbenannt.** „c_f Vorgabe“ heißt jetzt „c_f,0 Vorgabe (wird mit ψ_λ abgemindert)“,
+  weil die Eingabe wie bisher noch mit ψ_λ multipliziert wird. Die Rechnung ändert sich dadurch nicht.
 
 ## Wo Ergebnisse anders ausfallen
 
@@ -387,6 +393,12 @@ Dasselbe Modell (Entwurf, Reibungstangente, Vorgabe-Einstellungen) wurde mit die
 Lagerkräfte stimmen auf 0,01 kN überein, die Kräfte der Anker S1 bis S16 auf eine Nachkommastelle in kN, und es
 fallen dieselben Zugstäbe aus (S24, S25, S35). Die Momentenlücke ΣM fällt von 1,09 auf 0,31 kNm, die Kraft der
 Knaggen in z von 2 120 auf 2 109 kN und ε_p,max von 1,30 % auf 0,90 %. Der Lauf braucht 147 statt 101 Zerlegungen.
+
+Die Abnahme mit μ = 1 ist nicht sauber durchgelaufen. Die Lagerkräfte stimmen auf 0,01 kN, die Ankerkräfte auf eine
+Nachkommastelle und die Kraft der Knaggen auf 2 kN mit dem Stand vom 15.10.2026 überein, und ε_p,max fällt von 1,30 %
+auf 0,90 %. Im Spannschritt konvergierte der Kontaktlauf aber in allen drei Stufen nicht, das Ergebnis heißt deshalb
+„vorläufig – Kontakt nicht konvergiert in Spannschritt“. Der Lauf brauchte 863 statt 297 Zerlegungen und 3 h 51 min.
+Bei der Abnahme RT und bei μ = 0,2 tritt das nicht auf; die Ursache ist nicht untersucht.
 
 ### Drehlager, Netz „Mittel“: Ergebnis dieses Stands
 
@@ -470,3 +482,5 @@ Folgende Punkte sind bekannt und bewusst nicht in diesem Stand:
   unsymmetrisch).
 * Die ama-LU (Zweig `loeser/ama-uebernahme`).
 * Die Linux-Fassung.
+* Die Ursache, warum das Drehlager mit μ = 1 in allen drei Spannstufen als „vorläufig – Kontakt nicht
+  konvergiert“ endet; sie ist zurückgestellt.

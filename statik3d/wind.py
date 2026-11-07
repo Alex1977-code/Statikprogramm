@@ -89,7 +89,7 @@ class Wind:
     k_rauigkeit: float = 0.2e-3           # Oberflächenrauigkeit k [m] für Zylinder (Stahl 0,2 mm)
     phi: float = 1.0                      # Völligkeitsgrad (Fachwerk); 1 = Vollwand
     fachwerk: bool = False                # Stäbe als Fachwerk (Bild 7.33/7.34)
-    cf_vorgabe: Optional[float] = None    # c_f für alle Stäbe erzwingen
+    cf_vorgabe: Optional[float] = None    # c_f,0 für alle Stäbe; wird noch mit ψ_λ abgemindert
     c_scd: float = 1.0                    # Strukturbeiwert c_s·c_d
     kommentar: str = ""
     # -- numerischer Windkanal (Gitter-Boltzmann im Schnitt) ------------------
