@@ -86,6 +86,57 @@ def test_zug_und_druckausfall():
             check(f"Ausfall bei {mode}: {richtung} nur Stab", r.u[n1, 2], last / ka, 1e-6, "m")
 
 
+def _ja(name, ok, detail=""):
+    RESULTS.append((name, bool(ok)))
+    print(f"{'OK ' if ok else 'FAIL'} {name:52s} {detail}")
+
+
+def test_grenzkraft_ohne_ausfall_wird_gemeldet():
+    """Grenzkraft ohne Ausfall und ohne Schlupf: Der Dialog nimmt sie nicht an, ein
+    Skript oder Import kann sie setzen. Das Lager wirkt dann nur in Druckrichtung
+    (Programmtest 07.11.2026: +40 kN gaben R = 0 statt 15 kN). Die Rechnung bleibt,
+    aber es steht im Kontaktprotokoll und in der Zusammenfassung."""
+    L, A, E, P, lim = 2.0, 1e-3, 210e9, 100e3, 50e3
+    m, n1, ka = _bar(L, A, E)
+    m.support(n1, [2], uz=dict(typ="rigid", limit=lim))
+    m.load_node(n1, Fz=P)
+    r = solver.solve_static(m)
+    check("Grenzkraft ohne Ausfall: Rechnung unveraendert, Lager traegt nichts", r.reactions[n1, 2], 0.0, 1e-9, "N")
+    log = [str(z) for z in r.info.get("contact_log") or []]
+    _ja("... WARNUNG im Kontaktprotokoll", any(z.startswith("WARNUNG") and "Grenzkraft ohne Ausfall" in z for z in log))
+    _ja("... WARNUNG in der Zusammenfassung", "Grenzkraft ohne Ausfall" in r.summary())
+    _ja("... nur eine Zeile je Lager", sum("Grenzkraft ohne Ausfall" in z for z in log) == 1, str(len(log)))
+    for kw, text in ((dict(typ="rigid", limit=lim, failure="zug"), "mit Ausfall"), (dict(typ="rigid", limit=lim, slip=1e-6), "mit Schlupf")):
+        m, n1, ka = _bar(L, A, E)
+        m.support(n1, [2], uz=kw)
+        m.load_node(n1, Fz=-P)
+        r = solver.solve_static(m)
+        _ja(f"Grenzkraft {text}: keine Warnung", "Grenzkraft ohne Ausfall" not in r.summary())
+
+
+def test_zwang_ohne_lager_steht_im_ergebnis():
+    """Zwangsverformung an einem Freiheitsgrad ohne Lager bleibt unwirksam. Die Meldung
+    stand nur im Rechenablauf (progress) und ohne Fortschrittsempfaenger nirgends;
+    jetzt steht sie im Ergebnis, in der Zusammenfassung und in der Ueberlagerung."""
+    m, n1, ka = _bar()
+    m.add_zwangsverformung(n1, [2], [-1e-3])
+    m.add_load_case("LF2", "Q")
+    m.load_node(n1, Fz=-1e3, case="LF2")
+    m.add_combination("LK1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
+    an = solver.solve_all(m)
+    r = an.cases["LF1"]
+    _ja("Zwang ohne Lager: im Ergebnis", bool(r.info.get("zwang_ohne_lager")), str(r.info.get("zwang_ohne_lager")))
+    _ja("... in der Zusammenfassung", "ohne Lager" in r.summary() and "WARNUNG" in r.summary())
+    _ja("... auch in der Ueberlagerung", "ohne Lager" in an.combinations["LK1"].summary())
+    _ja("... LF2 ohne Zwang: keine Warnung", "ohne Lager" not in an.cases["LF2"].summary())
+    m, n1, ka = _bar()
+    m.fix(n1, [2])
+    m.add_zwangsverformung(n1, [2], [-1e-3])
+    r = solver.solve_static(m)
+    check("Zwang am Lager: wirkt", r.u[n1, 2], -1e-3, 1e-9, "m")
+    _ja("... keine Warnung", "ohne Lager" not in r.summary())
+
+
 def test_grenzkraft():
     """Grenzkraft (plastisch): Lagerkraft bleibt bei 'limit' stehen."""
     L, A, E, P, lim = 2.0, 1e-3, 210e9, 200e3, 50e3
@@ -659,7 +710,8 @@ def main():
               test_rotationslager_und_zusammenfassung, test_federgelenke,
               test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen,
               test_lagersymbolik, test_einseitiges_lager_ohne_richtung,
-              test_bettung_ab_1e11_gilt_als_starr):
+              test_bettung_ab_1e11_gilt_als_starr,
+              test_grenzkraft_ohne_ausfall_wird_gemeldet, test_zwang_ohne_lager_steht_im_ergebnis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

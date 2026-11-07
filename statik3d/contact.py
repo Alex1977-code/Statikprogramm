@@ -1137,6 +1137,15 @@ class ContactSystem:
             dirs = [-1.0]
         else:
             dirs = [+1.0, -1.0] if e.slip > 0 else [+1.0]
+            if e.limit > 0 and not e.slip > 0:
+                # Der Dialog nimmt das nicht an, ein Import oder Skript kann es setzen. Nie still:
+                # in der Gegenrichtung traegt das Lager nichts (Programmtest 07.11.2026)
+                gemeldet = self.__dict__.setdefault("_grenzkraft_gemeldet", set())
+                if (e.label, dof) not in gemeldet:
+                    gemeldet.add((e.label, dof))
+                    self.log.append(f"WARNUNG: Grenzkraft ohne Ausfall und ohne Schlupf: {e.label} {DOF_NAMES[dof]} wirkt "
+                                    "nur in Druckrichtung, in der Gegenrichtung trägt das Lager nichts. "
+                                    "Ausfall bei Zug oder Druck oder einen kleinen Schlupf setzen")
         for sgn in dirs:
             dofs = [NDOF * node + dof]
             cn = np.array([sgn])

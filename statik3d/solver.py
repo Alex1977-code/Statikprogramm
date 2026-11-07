@@ -1809,6 +1809,14 @@ class Results:
                     freie.append(e)
         if freie:
             out.info["freie_teile"] = freie
+        # Eine unwirksame Zwangsverformung eines Anteils gilt auch in der Ueberlagerung
+        zwang: list = []
+        for r, f in parts:
+            for t in ((r.info or {}).get("zwang_ohne_lager") or []) if f else []:
+                if t not in zwang:
+                    zwang.append(t)
+        if zwang:
+            out.info["zwang_ohne_lager"] = zwang
         # Last an automatisch gehaltenen FHG: die Anteile mit ihrem Faktor
         auto_gehalten_kombinieren(out, parts)
         # Globale Gleichgewichtskontrolle (14.10.2026): linear wie die Anteile
@@ -1980,6 +1988,12 @@ class Results:
                 s.append(f"Ausgefallene Stäbe      : {len(weg)} ({', '.join(weg[:8])}{' …' if len(weg) > 8 else ''})")
             for d in zs.get("druck") or []:
                 s.append(f"WARNUNG                 : {_stabstatus_text(d)} – NICHT konvergiert")
+        # Programmtest 07.11.2026: beide blieben bis dahin im Ergebnis ungenannt
+        for t in self.info.get("zwang_ohne_lager") or []:
+            s.append(f"WARNUNG                 : {t}")
+        for z in self.info.get("contact_log") or []:
+            if str(z).startswith("WARNUNG: Grenzkraft ohne Ausfall"):
+                s.append(f"WARNUNG                 : {str(z)[len('WARNUNG: '):]}")
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
@@ -6035,12 +6049,19 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             # Bezug der Toleranz und der Gleichgewichtskontrolle: die Lasten mit dem
             # Kraeftepaar der Sollkraft statt der Verriegelungskraft (16.10.2026)
             F_bezug = F - np.asarray(zusatz["F"], float) + np.asarray(zusatz["F_bezug"], float)
-    us = case_prescribed(model, factors, warn=progress)
+    zwang_warnung: list = []
+
+    def _zwang_melden(text):
+        zwang_warnung.append(text)
+        _melde(progress, "WARNUNG: " + text)
+    us = case_prescribed(model, factors, warn=_zwang_melden)
     ueber = case_uebermass(model, factors)
     # Zug-/Druckstaebe und Seile: die Kraft ihrer Anfangsdehnung (Temperatur,
     # Vorspannung, Verriegelung) zaehlt in der Ausfall-Iteration mit (13.10.2026)
     n0_ausfall = _anfang_ausfall(model, factors, aktiv, zusatz) if model.hat_ausfallstaebe() else None
     res = Results(name=name, kind=kind, model=model)
+    if zwang_warnung:
+        res.info["zwang_ohne_lager"] = zwang_warnung
     if getattr(system, "situation", ""):
         res.info["situation"] = system.situation
     if grund:
