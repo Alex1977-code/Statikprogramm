@@ -533,9 +533,12 @@ def test_zustaende():
     an.cases["Spannschritt 1"] = r
     d = check_members(m, an, use_jobs=False)
     zst = getattr(d.members["A1"], "zustaende", None) or []
-    sp = [z for z in zst if z.get("zustand") == "Spannen" and "Spannschritt 1" in str(z.get("quelle"))]
-    check("Schnittstelle: ein Ergebnis mit info['zustand'] = 'spannen' wird gegen σ_p,max geprüft",
-          bool(sp) and nah(sp[0]["grenze"], 751.5e6), str([z.get("quelle") for z in zst]))
+    sp = [z for z in zst if z.get("zustand") == "Spannen"]
+    # seit dem 16.10.2026: ein Ergebnis mit info['zustand'] = 'spannen' gibt keinen zweiten
+    # Eintrag - Spannen gehoert zur Definition des Ankers
+    check("Schnittstelle: Spannen bleibt ein Eintrag je Anker (Definition), auch mit Spannschritt-Ergebnis",
+          len(sp) == 1 and nah(sp[0]["grenze"], 751.5e6) and "Spannschritt 1" not in str(sp[0].get("quelle")),
+          str([z.get("quelle") for z in zst]))
     # Laststufen der Plastizitaet: abgelegt -> jede Stufe; sonst Endzustand mit Vermerk
     an = solver.solve_all(m, design=False)
     k1 = an.combinations["K1"]
@@ -553,6 +556,49 @@ def test_zustaende():
     check("abgelegte Laststufe wird gegen f_pd geprüft (Stufe 1, λ = 0,5)",
           bool(st) and nah(st[0]["grenze"], 835e6 / 1.15) and "0.5" in str(st[0].get("quelle")),
           str([z.get("quelle") for z in zst]))
+
+
+def test_nur_gerechnete_lastfaelle():
+    """(B) 16.10.2026: am Drehlager zeigte „Spannstahl je Anker“ beim Spannen η 1,0081 aus dem
+    nicht gerechneten LF398. Ausgewertet werden nur gerechnete Lastfaelle; Spannen ist ein
+    Eintrag je Anker aus der Definition (P₀ bzw. Soll), nach dem Verankern und Lastzustand je
+    gerechnetem Lastfall."""
+    from statik3d import solver
+    from statik3d.ec3.design import check_members
+    from statik3d.ec3 import spannstahl as sp
+    from statik3d.model import LoadCase, Vorspannung
+    from statik3d.report import Report
+    m = anker(F_v=800e3)
+    m.load_cases["LF398"] = LoadCase("LF398", category="P")
+    m.load_cases["LF398"].vorspannungen.append(Vorspannung(ziel="A1", art="stab", kraft=950e3))
+    an = solver.solve_all(m, design=False)
+    an.cases.pop("LF398", None)                     # LF398 nicht gerechnet
+    d = check_members(m, an, use_jobs=False)
+    mc = d.members["A1"]
+    zst = mc.zustaende
+    for z in zst:
+        print(f"        {z['zustand']:20s} {z['quelle']:60s} N {z['N'] / 1e3:7.1f} kN  η {z['util']:.4f}")
+    check("kein Zustand aus dem nicht gerechneten LF398", not any("LF398" in str(z.get("quelle")) for z in zst),
+          str([z["quelle"] for z in zst]))
+    spn = [z for z in zst if z["zustand"] == "Spannen"]
+    check("Spannen: genau ein Eintrag je Anker, aus der Definition im gerechneten LF_V (800 kN)",
+          len(spn) == 1 and nah(spn[0]["N"], 800e3) and "LF_V" in spn[0]["quelle"], str([z["quelle"] for z in spn]))
+    je = sp.je_anker(mc)
+    check("Spannstahl je Anker: Spannen η aus 800 kN, nicht 950 kN (LF398)",
+          "Spannen" in je and nah(je["Spannen"]["util"], 800e3 / A_NENN / 751.5e6, 1e-6),
+          f"{je.get('Spannen', {}).get('util')}")
+    html = Report(m, an).html()
+    check("Bericht nennt LF398 im Spannstahl nicht", "LF398" not in html.split("Spannstahl je Anker")[-1][:4000])
+    check("Befund Vorspannung kommt nicht aus LF398",
+          not any("LF398" in w for w in mc.warnings if w.startswith("Befund")), str(mc.warnings))
+    # beide gerechnet: Spannen bleibt EIN Eintrag (Definition des Ankers), kein Maximum
+    an2 = solver.solve_all(m, design=False)
+    d2 = check_members(m, an2, use_jobs=False)
+    spn2 = [z for z in d2.members["A1"].zustaende if z["zustand"] == "Spannen"]
+    ve2 = [z for z in d2.members["A1"].zustaende if z["zustand"] == "nach dem Verankern"]
+    check("beide gerechnet: Spannen ein Eintrag je Anker; nach dem Verankern je Lastfall",
+          len(spn2) == 1 and {"LF_V", "LF398"} <= {z["combo"] for z in ve2},
+          f"{[z['quelle'] for z in spn2]} / {[z['combo'] for z in ve2]}")
 
 
 def test_ladehinweis():
@@ -589,10 +635,12 @@ def test_vorspannkraft_schnittstelle():
     zst = d.members["A1"].zustaende
     for z in zst:
         print(f"        {z['zustand']:20s} {z['quelle']:55s} N {z['N'] / 1e3:7.1f} kN  η {z['util']:.4f}")
-    sp_ = [z for z in zst if z["zustand"] == "Spannen" and "N_spannen" in z["quelle"]]
+    sp_ = [z for z in zst if z["zustand"] == "Spannen"]
     ve = [z for z in zst if z["zustand"] == "nach dem Verankern"]
-    check("N_spannen = 944,7 kN gegen σ_p,max: η = 1,0004",
-          bool(sp_) and nah(sp_[0]["util"], F_SOLL / A_NENN / 751.5e6, 1e-6), str([z["quelle"] for z in zst]))
+    # seit dem 16.10.2026: Spannen ist ein Eintrag je Anker aus der Vorspannungsdefinition
+    # (N_spannen des Spannschritts ist dieselbe Kraft), kein Maximum ueber Ergebnisse
+    check("Spannen: ein Eintrag aus der Definition, 944,7 kN gegen σ_p,max: η = 1,0004",
+          len(sp_) == 1 and nah(sp_[0]["util"], F_SOLL / A_NENN / 751.5e6, 1e-6), str([z["quelle"] for z in sp_]))
     check("nach dem Verankern nur aus N_verankert = 900 kN: η = 900/1 256,6/709,75 = 1,0091",
           len(ve) == 1 and "N_verankert" in ve[0]["quelle"] and nah(ve[0]["util"], 900e3 / A_NENN / 709.75e6, 1e-6),
           str([z["quelle"] for z in ve]))
@@ -870,7 +918,8 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_eta_mit_und_ohne_As, test_stahlstab_bitgleich, test_import_typ15, test_speichern_laden, test_kennung_unveraendert,
-              test_spannungsgrenzen, test_zustaende, test_ladehinweis, test_vorspannkraft_schnittstelle,
+              test_spannungsgrenzen, test_zustaende, test_nur_gerechnete_lastfaelle, test_ladehinweis,
+              test_vorspannkraft_schnittstelle,
               test_schraube_m20, test_bericht, test_masken,
               test_schraubenhinweis):
         print(f"\n--- {t.__name__} ---")

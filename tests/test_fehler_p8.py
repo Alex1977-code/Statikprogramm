@@ -197,7 +197,12 @@ def test_verschachtelt_ohne_warnung():
     # Kontaktrunden LF1 84 -> 21, K1 90 -> 21; u_max 2.9403970836312483e-06 -> ...408 und
     # 7.844300353569184e-06 -> ...308 (1e-6 relativ, Haftfeder statt exakter Haftzeile);
     # Laeufe, Newton-Schritte und Zerlegungen der Plastizitaet unveraendert
-    soll = {"LF1": (2.940408188840527e-06, 21, 7, 5, 3), "K1": (7.844307765287515e-06, 21, 9, 7, 5)}
+    # Seit a0bd908 (17.10.2026, Gleitweg-Speicher je Reibknoten ueber Stufen, Fehlerkorrektur)
+    # und Freigabe des Anwenders (06.11.2026): LF1 u_max ...6498e-06 (relativ 6e-7), 20 Runden;
+    # K1 u_max 7.844278648e-06 (relativ 4e-6), 23 Runden. Gleichgewicht < 1e-9 N; bei Toleranz 1e-8
+    # oder 8 Laststufen sind alte und neue Rechnung bitgleich - der Unterschied liegt unter
+    # der Toleranz 1e-4 der Plastizitaet
+    soll = {"LF1": (2.9404064979198905e-06, 20, 7, 5, 3), "K1": (7.84427864768734e-06, 23, 9, 7, 5)}
     for n, (umax, it, laeufe, pl_it, fakt) in soll.items():
         r = an.all_results()[n]
         pz = r.info.get("plastizitaet") or {}

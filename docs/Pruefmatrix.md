@@ -998,3 +998,19 @@ Soll: δ = 2 L ε(300 N/mm²) = 14,62 mm (ε_p 0,588 %): σ_v = 300 N/mm² über
 | Fein | hex20 | 0,2500 | grün | σ_v -0,00 N/mm²; σ_v Element +0,00 N/mm²; Auflager 0,00 % | ja | ja | 0 | 2.550 | 3,4 | 4³ Zellen je Würfel |
 
 Laufzeit gesamt 3,6 min (einkernig, 08.10.2026).
+
+## Nachtrag 07.11.2026: Hill-Rohr P2 am Radius des Integrationspunkts
+
+Seit f70703c trägt die Knotentabelle einer plastischen Rechnung den nächsten Integrationspunkt, nicht den Wert am Knoten. P2 vergleicht deshalb mit Hill am Radius dieser Punkte (Freigabe des Anwenders vom 07.11.2026), die Grenze bleibt 1 N/mm². Die Zahlen σ_v(b) der Tabelle oben und der Abschnitte zu tet4 und hex20 gelten für den alten Vergleich; u_r(b) ändert sich nicht. Alle neun Zellen bleiben gelb.
+
+| Stufe | Element | h [m] | σ_v(b) bisher [N/mm²] | σ_v(b) jetzt [N/mm²] |
+|---|---|---|---|---|
+| Entwurf | tet4 | 0,0250 | +99,64 | +77,51 |
+| Entwurf | hex8 | 0,0250 | −6,87 | −8,00 |
+| Mittel | tet10 | 0,0250 | +7,55 | −3,92 |
+| Mittel | hex20 | 0,0250 | −45,79 | −46,77 |
+| Fein | tet10 | 0,0125 | +2,98 | −1,70 |
+| Fein | hex20 | 0,0125 | −5,00 | −4,99 |
+| Zusatz | tet4 | 0,0125 | +98,70 | +88,43 |
+| Zusatz | tet4 | 0,0063 | +93,38 | +88,22 |
+| Zusatz | tet4 | 0,0031 | +75,35 | +72,33 |

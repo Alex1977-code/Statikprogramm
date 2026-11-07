@@ -71,10 +71,12 @@ def _inhalt(pfad, model):
 
 
 def _ohne_angabe(pfad, model):
-    """So schrieb das Programm bis zum 15.10.2026: ohne „reibverfahren“."""
+    """So schrieb das Programm bis zum 15.10.2026: ohne „reibverfahren“ (und ohne
+    die Angabe „verfahren“ vom 16.10.2026)."""
     from statik3d import ergebnisse as erg
     inhalt = _inhalt(pfad, model)
     inhalt.pop("reibverfahren", None)
+    inhalt.pop("verfahren", None)
     with open(pfad, "wb") as fh:
         erg._Schreiber(fh, model).dump(inhalt)
 
@@ -260,7 +262,8 @@ def test_fenster():
     me.leeren()
     w.modell_laden(p, fragen=False); app.processEvents()
     check("Fenster: ältere Ergebnisdatei mit Reibung geladen, Hinweis „bisheriges Reibverfahren“",
-          w.analysis is not None and me.hinweis_mit(HINWEIS),
+          # seit dem 16.10.2026 der Status zur Fehlerkorrektur Reibungstangente (rechenverfahren)
+          w.analysis is not None and me.hinweis_mit("möglicherweise betroffen", "bisheriges Reibverfahren"),
           f"analysis {'da' if w.analysis is not None else 'None'}, {me.alle[-2:]}")
     check("… die Ergebnisse sind sichtbar (LF1 in der Analyse, passt)",
           w.analysis is not None and "LF1" in w.analysis.cases and w._analyse_passt() == "passt",

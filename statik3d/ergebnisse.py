@@ -132,6 +132,10 @@ MODELLTEILE = {
     # je Lastfall geteilt: die Lasten nach „lasten“, der Rest nach „lastfaelle“;
     # die Lastgenerierer stehen bei den Lasten, die sie erzeugen
     "load_cases": "lasten", "winde": "lasten", "wasserdruecke": "lasten",
+    # Vorspannung je Anker (16.10.2026): zaehlt nicht fuer sich, sondern in den
+    # Lasten jedes Lastfalls, der auf eine Definition verweist (rechenkennung) -
+    # eine Definition ohne Verweis rechnet nirgends mit
+    "vorspann_definitionen": None,
     "combinations": "kombinationen",
     "kontaktbedingungen": "kontakt", "contact_supports": "kontakt", "gap_elements": "kontakt",
     "contact_pairs": "kontakt", "getrennte_knoten": "kontakt", "kontakt_ausnahmen": "kontakt",
@@ -151,13 +155,17 @@ TEXTFELDER = frozenset(("kommentar", "comment", "beschreibung", "description", "
 #: weitere Felder ohne Einfluss auf die Rechnung, je Schluessel der Modelldatei:
 #: die Nummer eines Lastfalls und einer Kombination (ihr Name ist der
 #: Schluessel), die Groesse des Lagersymbols
-ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",)}
+ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",),
+                # Bolzen (06.11.2026): wird nur nachgewiesen, nicht gerechnet
+                "koerper": ("bolzen",)}
 #: Neue Felder mit ihrer Vorgabe zaehlen nicht: model.NEUE_FELDER (ein Mechanismus
 #: fuer alle Pakete seit der Zusammenfuehrung am 14.10.2026; bis dahin standen hier
 #: NEUE_VORGABEN, NEU_AUF_VORGABE und SPAETERE_FELDER).
 #: Felder eines Lastfalls, die Lasten tragen - der Rest sind seine Eigenschaften
 LASTFELDER = ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
-              "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity")
+              "zwangsverformungen", "vorspannungen", "uebermasse", "temp_loads", "gravity",
+              # Verweis auf die Vorspannung je Anker (16.10.2026, nur in der Datei, wenn gesetzt)
+              "vorspannzustand")
 #: einzelne Objekte (Einstellungen) statt Sammlungen
 _EINZELOBJEKTE = ("design", "plastizitaet")
 #: Sammlungen {Name: Objekt}. Sie zaehlen nur mit den Eintraegen, deren Name
@@ -270,24 +278,27 @@ def _verwendete_namen(model, d: dict) -> set:
             for name, eintrag in wert.items():
                 namen |= _texte(eintrag) - {name}
         else:
+            if schluessel in ANZEIGEFELDER and isinstance(wert, list):
+                # Anzeigefelder nennen keinen Werkstoff, der rechnet (Bolzen, 06.11.2026)
+                wert = [{k: v for k, v in x.items() if k not in ANZEIGEFELDER[schluessel]}
+                        if isinstance(x, dict) else x for x in wert]
             namen |= _texte(wert)
     return namen
 
 
-def _bereinigt(schluessel: str, wert, lagernamen: bool, frueher: bool = False):
+def _bereinigt(schluessel: str, wert, lagernamen: bool, ausdruecklich=frozenset()):
     """Ein Schluessel der Modelldatei ohne seine Anzeigefelder (TEXTFELDER,
     ANZEIGEFELDER, die Namen der Lager, wenn keine Stellung sie nennt).
-    ``frueher``: die Felder aus model.FRUEHERE_VORGABEN fallen bei ihrer
-    frueheren Vorgabe weg, nicht bei der heutigen (rechenkennung)."""
+    ``ausdruecklich``: {(Schluessel, Feld)} der neuen Felder, die auch mit
+    ihrer heutigen Vorgabe zaehlen (rechenkennung)."""
     weg = set(TEXTFELDER) | set(ANZEIGEFELDER.get(schluessel, ()))
     if schluessel in _LAGERLISTEN and not lagernamen:
         weg.add("name")
-    from .model import FRUEHERE_VORGABEN, ist_vorgabe
-    alt = FRUEHERE_VORGABEN.get(schluessel, {}) if frueher else {}
+    from .model import ist_vorgabe
 
     def ist_vorgabe(s, k, v, _heute=ist_vorgabe):
-        if s == schluessel and k in alt:
-            return v == alt[k] and isinstance(v, bool) == isinstance(alt[k], bool)
+        if (s, k) in ausdruecklich:
+            return False
         return _heute(s, k, v)
 
     def objekt(x):
@@ -311,7 +322,38 @@ def _bereinigt(schluessel: str, wert, lagernamen: bool, frueher: bool = False):
     return wert
 
 
-def rechenkennung(model, frueher: bool = False) -> tuple:
+def _vorgabe_einsetzen(d: dict, schluessel: str, feld: str) -> None:
+    """In ``d`` (Model.to_dict) das neue Feld ``feld`` unter ``schluessel``
+    mit seiner heutigen Vorgabe einsetzen, wo es fehlt - die Modelldatei
+    laesst es mit der Vorgabe weg (model.NEUE_FELDER). Einzelobjekt, Sammlung
+    mit Namen, Liste von Objekten oder Lasten eines Lastfalls
+    („load_cases.<liste>“)."""
+    from .model import NEUE_FELDER
+    vg = NEUE_FELDER.get(schluessel, {})
+    if feld not in vg:
+        return
+    import copy
+
+    def setzen(x):
+        if isinstance(x, dict) and feld not in x:
+            x[feld] = copy.deepcopy(vg[feld])
+    oben, _, liste = schluessel.partition(".")
+    wert = d.get(oben)
+    if liste:
+        for lc in wert or []:
+            for last in (lc.get(liste) or []) if isinstance(lc, dict) else []:
+                setzen(last)
+    elif isinstance(wert, list):
+        for x in wert:
+            setzen(x)
+    elif isinstance(wert, dict) and oben in _NAMENSSAMMLUNGEN:
+        for x in wert.values():
+            setzen(x)
+    elif isinstance(wert, dict):
+        setzen(wert)
+
+
+def rechenkennung(model, frueher: bool = False, ausdruecklich=None) -> tuple:
     """({Gruppe: Hash}, {Lastfall: [Hash Eigenschaften, Hash Lasten]}) - alles,
     was das Ergebnis bestimmt, ausser Knoten und Elementen (eigene Hashes).
 
@@ -321,17 +363,21 @@ def rechenkennung(model, frueher: bool = False) -> tuple:
     Verteilen neu. Sammlungen mit Namen zaehlen ohne ihre Reihenfolge, Listen
     (Lager, Kopplungen: ueber die Nummer genannt) mit ihr.
 
-    ``frueher`` (15.10.2026): die Kennung, wie sie der fruehere Stand mit den
-    Vorgaben aus model.FRUEHERE_VORGABEN schrieb - ein Feld, das heute seine
-    Vorgabe traegt und darum nicht in der Modelldatei steht, zaehlt mit, wenn
-    es von der frueheren Vorgabe abweicht."""
+    ``ausdruecklich`` (16.10.2026): {(Schluessel, Feld)} - diese Felder
+    zaehlen auch mit ihrer heutigen Vorgabe, so wie ein frueherer Stand sie
+    schrieb, als ihre Vorgabe eine andere war (rechenverfahren, Wechsel mit
+    ``vorher_einstellung``; reibungstangente: true vom 15.10.2026 mittags).
+    Es kommt nur hinzu, nie faellt ein Wert weg: ein Wert, den der Anwender
+    nach der Rechnung gesetzt hat, bleibt eine Aenderung des Modells.
+    ``frueher``: alle solchen Felder (bis 15.10.2026 abends die einzige Form).
+    """
     d = model.to_dict(netz=False)
-    if frueher:
-        from .model import FRUEHERE_VORGABEN, NEUE_FELDER
-        for schluessel, alt in FRUEHERE_VORGABEN.items():
-            if isinstance(d.get(schluessel), dict):
-                d[schluessel] = {**{k: NEUE_FELDER.get(schluessel, {}).get(k) for k in alt},
-                                 **d[schluessel]}
+    if frueher and ausdruecklich is None:
+        from .rechenverfahren import ausdruecklich_moeglich
+        ausdruecklich = {(s, f) for s, f, _st in ausdruecklich_moeglich(None)}
+    ausdruecklich = frozenset(ausdruecklich or ())
+    for schluessel, feld in ausdruecklich:
+        _vorgabe_einsetzen(d, schluessel, feld)
     namen = lagernamen_zaehlen(model)
     verwendet = _verwendete_namen(model, d)
     teile: dict = {g: [] for g in GRUPPEN}
@@ -343,7 +389,7 @@ def rechenkennung(model, frueher: bool = False) -> tuple:
             continue
         if schluessel in _NAMENSSAMMLUNGEN and isinstance(wert, dict):
             wert = {k: v for k, v in wert.items() if k in verwendet}
-        wert = _bereinigt(schluessel, wert, namen, frueher)
+        wert = _bereinigt(schluessel, wert, namen, ausdruecklich)
         if (isinstance(wert, list) and isinstance(getattr(model, schluessel, None), dict)
                 and all(isinstance(x, dict) for x in wert)):
             wert = sorted(wert, key=lambda x: str(x.get("name", "")))
@@ -351,7 +397,16 @@ def rechenkennung(model, frueher: bool = False) -> tuple:
             for lc in wert:
                 name = str(lc.get("name", ""))
                 eig = _hash({k: v for k, v in lc.items() if k not in LASTFELDER})
-                last = _hash({k: v for k, v in lc.items() if k in LASTFELDER})
+                lasten_lc = {k: v for k, v in lc.items() if k in LASTFELDER}
+                if lasten_lc.get("vorspannzustand"):
+                    # die Definitionen sind die Lasten eines verweisenden Lastfalls
+                    # (16.10.2026): aendert sich eine, ist sein Ergebnis alt. Alle,
+                    # nicht nur die genannten: P₀ fuer ΔP_t kommt aus dem Spannen
+                    # aller Definitionen (vorspannkraft.p0_zustand0)
+                    lasten_lc["_vorspann_definitionen"] = _bereinigt(
+                        "vorspann_definitionen", list(d.get("vorspann_definitionen") or []), namen,
+                        ausdruecklich)
+                last = _hash(lasten_lc)
                 einzeln[name] = [eig, last]
                 teile["lastfaelle"].append([name, eig])
                 teile["lasten"].append([name, last])
@@ -435,9 +490,48 @@ def pruefen(k: dict, model) -> tuple:
     return _pruefen(k, model)[:3]
 
 
-def _pruefen(k: dict, model) -> tuple:
-    """(passt, Grund, fehlt, frueher) - ``frueher``: die Rechenangaben passen
-    erst nach den frueheren Vorgaben (model.FRUEHERE_VORGABEN, 15.10.2026)."""
+def _ausdruecklich_passend(rk: dict, model, stand) -> list:
+    """Die Einstellungen [(Schluessel, Feld, Stand)], mit denen die Kennung
+    ``rk`` passt, wenn sie mit ihrer heutigen Vorgabe ausdruecklich zaehlen -
+    so schrieb ein Stand vor dem Wechsel ihrer Vorgabe einen damals gesetzten
+    Wert (rechenverfahren.Wechsel.vorher_einstellung). Nur Felder, die heute
+    ihre Vorgabe tragen; jede Teilmenge wird versucht (es sind wenige).
+    None, wenn keine passt. ``stand``: der Verfahrensstand der Datei, soweit
+    bekannt (None: unbekannt)."""
+    import itertools
+    from .model import ist_vorgabe
+    from .rechenverfahren import ausdruecklich_moeglich
+    felder = []
+    for s, f, st in ausdruecklich_moeglich(stand):
+        oben, _, liste = s.partition(".")
+        if liste:
+            werte = [l.get(f) if isinstance(l, dict) else getattr(l, f, None)
+                     for lc in (getattr(model, "load_cases", None) or {}).values()
+                     for l in (getattr(lc, liste, None) or [])]
+        else:
+            obj = getattr(model, oben, None)
+            if isinstance(obj, dict):
+                werte = [getattr(x, f, None) for x in obj.values()]
+            elif isinstance(obj, (list, tuple)):
+                werte = [getattr(x, f, None) for x in obj]
+            else:
+                werte = [getattr(obj, f, None)]
+        if any(ist_vorgabe(s, f, w) for w in werte):
+            felder.append((s, f, st))
+    for n in range(1, len(felder) + 1):
+        for teil in itertools.combinations(felder, n):
+            alt = rechenkennung(model, ausdruecklich={(s, f) for s, f, _st in teil})[0]
+            if all(rk.get(g) == alt[g] for g in GRUPPEN):
+                return list(teil)
+    return None
+
+
+def _pruefen(k: dict, model, stand=None) -> tuple:
+    """(passt, Grund, fehlt, ausdruecklich) - ``ausdruecklich``: die
+    Einstellungen [(Schluessel, Feld, Stand)], die in der Kennung der Datei
+    mit ihrem heutigen Vorgabewert ausdruecklich stehen (geschrieben vor dem
+    Wechsel ihrer Vorgabe, rechenverfahren); ``stand``: Verfahrensstand der
+    Datei, soweit bekannt."""
     jetzt = kennung(model)
     if not isinstance(k, dict):
         return False, "keine Kennung", []
@@ -462,16 +556,21 @@ def _pruefen(k: dict, model) -> tuple:
     if isinstance(rk, dict) and k.get("rechnung_fassung") == RECHENKENNUNG_FASSUNG:
         anders = [g for g in GRUPPEN if rk.get(g) != jetzt["rechnung"][g]]
         if anders:
-            # gerechnet mit einer frueheren Vorgabe (reibungstangente: true vom
-            # 15.10.2026, als die Vorgabe noch false war): derselbe Wert, der
-            # heute Vorgabe ist, gilt als gleich
-            alt = rechenkennung(model, frueher=True)[0]
-            if all(rk.get(g) == alt[g] for g in GRUPPEN):
-                return True, vorbehalt_text(fehlt), fehlt, True
-            return False, "seit der Rechnung geändert: " + ", ".join(_gruppentext(g, k, jetzt) for g in anders), []
+            # Modell oder Verfahren? Ein Wert, der damals ausdruecklich gesetzt
+            # war und heute die Vorgabe ist (reibungstangente: true vom 15.10.2026
+            # mittags), steht nur in der alten Kennung - dasselbe Modell, ein
+            # Wechsel der Vorgabe (rechenverfahren). Alles andere hat der
+            # Anwender geaendert: ungueltig. Bis zum 16.10.2026 fiel dabei auch
+            # ein Wert weg, der der frueheren Vorgabe glich - dann galt eine
+            # Datei als passend, nachdem der Anwender auf das bisherige
+            # Reibverfahren umgestellt hatte.
+            gesetzt = _ausdruecklich_passend(rk, model, stand)
+            if gesetzt is not None:
+                return True, vorbehalt_text(fehlt), fehlt, gesetzt
+            return False, "seit der Rechnung geändert: " + ", ".join(_gruppentext(g, k, jetzt) for g in anders), [], []
     else:
         fehlt.append("rechnung")
-    return True, vorbehalt_text(fehlt), fehlt
+    return True, vorbehalt_text(fehlt), fehlt, []
 
 
 def passt(k: dict, model) -> tuple:
@@ -548,7 +647,9 @@ def _entpacken_results(d: dict, model):
 
 #: Reibverfahren in der Ergebnisdatei (15.10.2026), nach
 #: Plastizitaet.reibungstangente
-REIBVERFAHREN = {True: "konsistente Tangente", False: "bisheriges Verfahren"}
+REIBVERFAHREN = {True: "konsistente Tangente", False: "bisheriges Verfahren",
+                 # Modell ohne Reibung (16.10.2026, rechenverfahren.KEINE_REIBUNG)
+                 "keine_reibung": "keine Reibung im Modell"}
 #: Hinweis zu einer Ergebnisdatei ohne Angabe des Reibverfahrens, deren Modell
 #: Reibung hat: geschrieben vor dem 15.10.2026, gerechnet ohne die Tangente
 REIBVERFAHREN_ALT = "gerechnet mit dem bisherigen Reibverfahren – für aktuelle Ergebnisse neu rechnen"
@@ -581,12 +682,22 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
         fortschritt(0.05, "Ergebnisse packen")
     inhalt = {"kennung": kennung(model)}
     info = getattr(analysis, "info", None) or {}
-    # das Reibverfahren (15.10.2026): das des Modells - die Kennung haelt die
-    # Einstellung, eine passende Analyse ist damit gerechnet. Aus einer Datei
-    # ohne die Angabe geladen und nicht neu gerechnet: sie bleibt weg, das
-    # naechste Oeffnen sagt den Hinweis wieder (wie kennung_vorbehalt).
-    if not info.get("reibverfahren_vorbehalt"):
-        inhalt["reibverfahren"] = reibverfahren(model)
+    # das Rechenverfahren (16.10.2026, rechenverfahren): Stand dieses Programms
+    # und die Merkmale, mit denen gerechnet wurde - bei einer neuen Rechnung die
+    # des Modells (die Kennung haelt die Einstellungen, eine passende Analyse ist
+    # damit gerechnet), bei einer aus der Datei geladenen und nicht neu
+    # gerechneten die der Datei (unbekannte bleiben None); das naechste Oeffnen
+    # sagt den Hinweis dann wieder (wie kennung_vorbehalt)
+    from . import rechenverfahren as rv
+    merkmale = info.get("rechenverfahren") if info.get("verfahren_aus_datei") else None
+    inhalt["verfahren"] = rv.angabe(model, merkmale if isinstance(merkmale, dict) else None)
+    # „reibverfahren“ (15.10.2026) weiter fuer das Programm dieses Tages - ohne
+    # die Angabe nennt es das bisherige Verfahren; so bleibt sie bei einer
+    # geladenen, mit dem bisherigen Verfahren gerechneten Analyse weg, solange
+    # das Modell heute mit der Tangente rechnet
+    rt = inhalt["verfahren"]["merkmale"].get("reibverfahren")
+    if rt is True or rt == rv.KEINE_REIBUNG or (rt is False and rv.merkmal("reibverfahren").aktuell(model) is False):
+        inhalt["reibverfahren"] = REIBVERFAHREN[rt]
     if info.get("kennung_vorbehalt"):
         # aus einer Datei mit aelterer Kennung geladen und nicht neu gerechnet
         # (F06, N38): die neue Kennung behauptete, Knotenlage oder
@@ -606,7 +717,7 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
         # systeme: Faktorisierungen (SuperLU/Pardiso, nicht picklebar, nach dem
         # Laden wertlos); modelle: die Modellkopien je Stellung - sie entstehen
         # bei der naechsten Rechnung neu
-        if feld in ("model", "systeme", "modelle", "reibverfahren") + _ERGEBNISGRUPPEN:
+        if feld in ("model", "systeme", "modelle", "reibverfahren", "verfahren") + _ERGEBNISGRUPPEN:
             continue
         inhalt[feld] = wert
     if fortschritt:
@@ -672,7 +783,13 @@ def lesen(pfad: str, model, fortschritt=None):
         fortschritt(0.05, "Ergebnisse lesen")
     with open(pfad, "rb") as fh:
         inhalt = _Leser(fh, model).load()
-    ok, grund, fehlt, *frueher = _pruefen(inhalt.get("kennung"), model)
+    from . import rechenverfahren as rvf
+    angabe = inhalt.get("verfahren") if isinstance(inhalt.get("verfahren"), dict) else {}
+    stand = angabe.get("stand") if isinstance(angabe.get("stand"), int) else None
+    if stand is None and "reibverfahren" in inhalt:
+        stand = 2                       # a371cf2 bis b63e669 (15.10.2026 abends)
+    ok, grund, fehlt, *rest = _pruefen(inhalt.get("kennung"), model, stand)
+    gesetzt = (rest[0] if rest else None) or []
     # eine Kombination der Datei, die es im Modell nicht (mehr) gibt, wird
     # beim Namen genannt (R2-A1, G1) - auch neben den geaenderten Gruppen
     fremd = [n for n in (inhalt.get("combinations") or {}) if n not in model.combinations]
@@ -701,23 +818,39 @@ def lesen(pfad: str, model, fortschritt=None):
         for name, d in (inhalt.get(gruppe) or {}).items():
             getattr(an, gruppe)[name] = _entpacken_results(d, model)
     for feld, wert in inhalt.items():
-        if feld in ("kennung", "reibverfahren") + _ERGEBNISGRUPPEN:
+        if feld in ("kennung", "reibverfahren", "verfahren") + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
-    # das Reibverfahren (15.10.2026): eine Datei ohne die Angabe ist vor dem
-    # 15.10.2026 geschrieben und - hat das Modell Reibung - ohne die Tangente
-    # gerechnet; die Ergebnisse bleiben, ein Hinweis sagt es. Passt die Kennung
-    # erst nach den frueheren Vorgaben, stand reibungstangente: true im Modell.
-    an.info.pop("reibverfahren_vorbehalt", None)
-    rv = inhalt.get("reibverfahren")
-    if rv is None and frueher and frueher[0]:
-        rv = REIBVERFAHREN[True]
-    if rv is not None:
-        an.info["reibverfahren"] = rv
-    else:
-        an.info.pop("reibverfahren", None)
-        if modell_hat_reibung(model):
-            an.info["reibverfahren_vorbehalt"] = REIBVERFAHREN_ALT
+    # Das Rechenverfahren (16.10.2026, rechenverfahren): womit die Datei
+    # gerechnet ist - aus ihrer Angabe, ohne sie aus dem, was sie sicher sagt
+    # (Reibverfahren vom 15.10.2026 abends, Kennung mit einem damals gesetzten
+    # Wert, Protokollzeilen); was sich nicht sicher erkennen laesst, bleibt None.
+    # Die Ergebnisse gelten; weicht ein Merkmal, das dieses Modell betrifft, vom
+    # heutigen Verfahren ab, sagt es der Hinweis (Statuszeile und Protokoll).
+    for k in ("rechenverfahren", "verfahren_hinweis", "verfahren_betroffen", "verfahren_aus_datei", "reibverfahren",
+              "reibverfahren_vorbehalt"):
+        an.info.pop(k, None)
+    merkmale = rvf.merkmale_der_datei(inhalt, model, gesetzt)
+    an.info["rechenverfahren"] = merkmale
+    an.info["verfahren_aus_datei"] = True
+    # Verbesserung: Hinweis; Fehlerkorrektur (auch am Import, auch bei unsicherem
+    # Alter der Datei): Status „Ergebnis möglicherweise betroffen – neu rechnen“ -
+    # die Ergebnisse bleiben (Einstufung des Anwenders vom 16.10.2026)
+    bew = rvf.bewerten(model, merkmale, an)
+    an.info.pop("verfahren_unsicher", None)
+    if bew["hinweis"]:
+        an.info["verfahren_hinweis"] = bew["hinweis"]
+    if bew["betroffen"]:
+        an.info["verfahren_betroffen"] = bew["betroffen"]
+    if bew["unsicher"]:
+        an.info["verfahren_unsicher"] = list(bew["unsicher"])
+    # wie am 15.10.2026 (a371cf2): das Reibverfahren als Text, und der Vorbehalt
+    # zu einer Datei mit dem bisherigen Verfahren an einem Modell mit Reibung
+    if merkmale.get("reibverfahren") is not None and merkmale.get("reibverfahren") in REIBVERFAHREN:
+        an.info["reibverfahren"] = REIBVERFAHREN[merkmale["reibverfahren"]]
+    if merkmale.get("reibverfahren") is False and rvf.merkmal("reibverfahren").aktuell(model) is True \
+            and modell_hat_reibung(model):
+        an.info["reibverfahren_vorbehalt"] = REIBVERFAHREN_ALT
     # der Vorbehalt der alten Kennung (F06, N38) gilt fuer diese Analyse, bis
     # neu gerechnet wird: schreiben behaelt dann die alte Form der Kennung
     an.info.pop("kennung_vorbehalt", None)

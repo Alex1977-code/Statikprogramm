@@ -47,6 +47,24 @@ drei Zustaende sind dann: Spannen mit P0, nach dem Verankern N_verankert
 Ergebnis des Spannschritts steht nach dem Verankern P0 − k_A·Δs da (starre
 Umgebung). :func:`je_anker` fasst die drei Zustaende je Anker zu einer Zeile
 zusammen (Bericht, Tabelle „Spannstahl je Anker“).
+
+**Vorspannung je Anker** (seit 16.10.2026, statik3d.vorspannung): ist der Stab
+Anker einer Definition, gelten die Zustaende des Entwurfs des Anwenders
+(„Nachweise nach Zustand: Spannen gegen σ_p,max mit P_max. Nach Verankern
+(0,85·f_p0,1k) und GZT gegen f_pd mit t = 0.“):
+
+* Spannen - ein Eintrag je Definition mit P_max, nicht das Maximum ueber
+  Lastfaelle; eine Vorspannung, die ein Lastfall selbst traegt, nennt eine
+  Zeile am Stab.
+* nach dem Verankern - nur Ergebnisse im Zeitpunkt 0 (ein Lastfall im
+  Zeitpunkt ∞ traegt P_∞, das ist nicht der Zustand nach dem Verankern);
+  ohne solches Ergebnis P_max − k_A·Δs gegen starre Umgebung, mit Vermerk.
+* Lastzustand - jede GZT-Kombination wie bisher; die Zeile nennt den Zustand
+  der Vorspannung, mit dem die Kombination gerechnet ist (t = 0 / t = ∞).
+
+Die Grenze nach dem Verankern ist die der Norm, σ_pm0 = min(0,75·f_pk;
+0,85·f_p0,1k) (EN 1992-1-1, 5.10.3(2)); am Drehlager (835/1 030) massgebend
+0,85·f_p0,1k = 709,75 N/mm² (0,75·1 030 = 772,5).
 """
 from __future__ import annotations
 
@@ -247,10 +265,23 @@ def eingabe_art(model, member, fall: str = None) -> str:
     return ""
 
 
+def definitionen_am_stab(model, member) -> list:
+    """Die Definitionen der Vorspannung je Anker, zu denen der Stab gehoert
+    (statik3d.vorspannung, 16.10.2026)."""
+    from ..vorspannung import definitionen
+    return [d for d in definitionen(model).values() if member.name in (d.staebe or [])]
+
+
 def eingabe_text(model, member) -> str:
     """Die Eingabe am Stab zum Lesen: „Anfangsvorspannung P₀ = 1 010,84 kN,
-    Δs = 1,00 mm (LF_V)“ - je Lastfall, durch Semikolon getrennt."""
+    Δs = 1,00 mm (LF_V)“ - je Lastfall, durch Semikolon getrennt; davor die
+    Definition der Vorspannung je Anker (16.10.2026)."""
     teile = []
+    for d in definitionen_am_stab(model, member):
+        endwert = (f"ΔP_t = {float(d.dP_t or 0.0) / 1e3:.2f} kN" if d.ist_verlust()
+                   else f"P_∞ = {float(d.P_inf or 0.0) / 1e3:.2f} kN")
+        teile.append(f"Vorspannung {d.name}: P_max = {float(d.P_max) / 1e3:.2f} kN, "
+                     f"Δs = {float(d.schlupf or 0.0) * 1e3:.2f} mm, {endwert}")
     for name, v in _vorspannungen_am_stab(model, member):
         kn = f"{float(v.kraft) / 1e3:.2f} kN"
         if callable(getattr(v, "ist_presse", None)) and v.ist_presse():
@@ -322,14 +353,35 @@ def ist_reine_vorspannung(model, lc) -> bool:
     return True
 
 
+#: Schluessel in den Zustaenden (:func:`zustaende_sammeln`) fuer die Menge der
+#: gerechneten Lastfaelle: (None, frozenset) - 16.10.2026
+GERECHNET = "__gerechnet__"
+
+
+def gerechnete_lastfaelle(model, analysis) -> frozenset:
+    """Die Lastfaelle, die in dieser Analyse gerechnet sind: als Lastfall oder mit
+    einem Faktor in einer gerechneten Kombination (16.10.2026: am Drehlager stand
+    beim Spannen η 1,0081 aus dem nicht gerechneten LF398)."""
+    namen = set(getattr(analysis, "cases", None) or {})
+    for gruppe in ("combinations", "alternativen"):
+        for name in (getattr(analysis, gruppe, None) or {}):
+            c = (getattr(model, "combinations", None) or {}).get(str(name).split(" [")[0])
+            for lf, f in (getattr(c, "factors", None) or {}).items():
+                if f:
+                    namen.add(lf)
+    return frozenset(namen)
+
+
 def zustaende_sammeln(model, analysis) -> dict:
     """{Name: (Results, "spannen" | "verankert")} - die Ergebnisse, die einen
     Vorspannzustand zeigen: Lastfaelle nur mit Vorspannung (nach dem
     Verankern) und jedes Ergebnis mit ``info["zustand"]`` (Spannschritt des
-    kuenftigen kraftgesteuerten Vorspannens)."""
+    kuenftigen kraftgesteuerten Vorspannens). Dazu unter :data:`GERECHNET`
+    (None, Menge der gerechneten Lastfaelle) - nur deren Vorspannung zaehlt."""
     out: dict = {}
     if not hasattr(analysis, "cases"):
         return out
+    out[GERECHNET] = (None, gerechnete_lastfaelle(model, analysis))
     gruppen = [getattr(analysis, "cases", None) or {}, getattr(analysis, "combinations", None) or {},
                getattr(analysis, "alternativen", None) or {}]
     for g in gruppen:
@@ -408,7 +460,7 @@ def schlupfangaben(model, member, zustaende: dict = None) -> list:
         P0 = float(v.kraft)
         d = None
         z = (zustaende or {}).get(name)
-        if z is not None and z[1] == "vorspannkraft":
+        if z is not None and len(z) == 2 and z[1] == "vorspannkraft":
             d = (((getattr(z[0], "info", None) or {}).get("vorspannung") or {}).get("staebe") or {}).get(member.name)
         N_ver = d.get("N_verankert") if isinstance(d, dict) and d.get("kraftart") == "presse" else None
         if N_ver is not None:
@@ -492,30 +544,81 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat, zustaende:
                                   norm, herkunft))
 
     # Lastzustaende: jede GZT-Kombination, bei plastischer Rechnung jede
-    # abgelegte Laststufe
-    for cname, res in (results or {}).items():
+    # abgelegte Laststufe. Mit Vorspannung je Anker nennt die Zeile den Zustand
+    # (t = 0 / t = ∞, 16.10.2026); ohne Verweis bleibt sie, wie sie war
+    from ..vorspannung import zustand_kurz, zustand_von
+    for cname0, res in (results or {}).items():
+        zk = zustand_kurz(zustand_von(model, cname0))
+        cname = f"{cname0} (Vorspannung {zk})" if zk else cname0
         info = getattr(res, "info", None) or {}
         stufen = info.get("laststufen") or []
         for k, st in enumerate(stufen, 1):
             lam = (getattr(st, "info", None) or {}).get("lam")
             q = f"{cname}, Laststufe {k}" + (f" (λ = {zahl_text(float(lam), tausender=False, stellen=4, punkt=True)})"
                                              if lam is not None else "")
-            aus_ergebnis(st, q, cname, ZUSTAND_LAST, fpd, "f_pd", NORM_FPD, "f_p0,1k / γ_s")
+            aus_ergebnis(st, q, cname0, ZUSTAND_LAST, fpd, "f_pd", NORM_FPD, "f_p0,1k / γ_s")
         if info.get("plastizitaet") and not stufen:
-            mc.warnings.append(f"Laststufen der Plastizität von {cname} nicht abgelegt – nachgewiesen "
+            mc.warnings.append(f"Laststufen der Plastizität von {cname0} nicht abgelegt – nachgewiesen "
                                "ist der Endzustand")
-        aus_ergebnis(res, cname, cname, ZUSTAND_LAST, fpd, "f_pd", NORM_FPD, "f_p0,1k / γ_s", extrem=True)
-    # Spannen: die eingegebene Vorspannkraft und Ergebnisse eines Spannschritts
-    eingaben = eingegebene_vorspannung(model, member)
-    # Benennung vom 14.10.2026: Anfangsvorspannung (Pressenkraft P0) und
+        aus_ergebnis(res, cname, cname0, ZUSTAND_LAST, fpd, "f_pd", NORM_FPD, "f_p0,1k / γ_s", extrem=True)
+    # nur gerechnete Lastfaelle (16.10.2026): die Menge steht in den Zustaenden
+    # (zustaende_sammeln); ohne sie - Aufruf ohne Analyse - alle wie bisher
+    gerechnet = (zustaende or {}).get(GERECHNET, (None, None))[1]
+    zustaende = {k: v for k, v in (zustaende or {}).items() if k != GERECHNET}
+
+    def zaehlt(lf):
+        return gerechnet is None or lf in gerechnet
+    # Spannen: EIN Eintrag je Anker aus seiner Vorspannungsdefinition (P0 bzw. Soll) -
+    # kein Maximum ueber Lastfaelle (16.10.2026). Gibt es mehrere Definitionen in
+    # gerechneten Lastfaellen, gilt die Anfangsvorspannung P0 vor der Endvorspannung vor
+    # der eingepraegten Dehnung, bei gleicher Art die groessere; die anderen nennt eine
+    # Zeile am Stab. Benennung vom 14.10.2026: Anfangsvorspannung (Pressenkraft P0) und
     # Endvorspannung (bleibend nach dem Verankern); bis dahin „Vorspannkraft“
-    for lcname, N0 in eingaben:
-        art = eingabe_art(model, member, lcname) or "Vorspannkraft"
-        eintraege.append(_eintrag(ZUSTAND_SPANNEN, f"{lcname}: eingegebene {art}", lcname, N0, 0.0,
-                                  A_s, pmax, "σ_p,max", NORM_SPANNEN, h_pmax))
+    eingaben = [(lf, N0) for lf, N0 in eingegebene_vorspannung(model, member) if zaehlt(lf)]
+    rang = {"Anfangsvorspannung P₀": 3, "Endvorspannung": 2, "Vorspannung als eingeprägte Dehnung": 1}
+    defs = [(rang.get(eingabe_art(model, member, lf), 0), N0, lf, eingabe_art(model, member, lf) or "Vorspannkraft")
+            for lf, N0 in eingaben]
+    nicht = [lf for lf, _N in eingegebene_vorspannung(model, member) if not zaehlt(lf)]
+    # Vorspannung je Anker (16.10.2026): Spannen einmal je Definition mit P_max
+    vdefs = definitionen_am_stab(model, member)
+    for d in vdefs:
+        eintraege.append(_eintrag(ZUSTAND_SPANNEN, f"Vorspannung {d.name}: P_max (Pressenkraft beim Spannen, "
+                                  "Definition des Ankers)", d.name, float(d.P_max), 0.0, A_s, pmax, "σ_p,max",
+                                  NORM_SPANNEN, h_pmax))
+    if vdefs and defs:
+        mc.warnings.append("Vorspannung des Ankers außerdem in gerechneten Lastfällen eingegeben: "
+                           + "; ".join(f"{d[2]}: {d[3]} {d[1] / 1e3:.1f} kN" for d in defs)
+                           + " – beim Spannen nachgewiesen ist die Definition "
+                           + ", ".join(d.name for d in vdefs))
+        defs = []
+    if defs:
+        bester = max(defs, key=lambda d: (d[0], d[1]))
+        gleich = [d[2] for d in defs if d[0] == bester[0] and abs(d[1] - bester[1]) <= 1e-6 * max(bester[1], 1.0)]
+        eintraege.append(_eintrag(ZUSTAND_SPANNEN, f"{', '.join(gleich)}: eingegebene {bester[3]} (Definition des Ankers)",
+                                  bester[2], bester[1], 0.0, A_s, pmax, "σ_p,max", NORM_SPANNEN, h_pmax))
+        andere = [d for d in defs if d[2] not in gleich]
+        if andere:
+            mc.warnings.append("Vorspannung des Ankers in gerechneten Lastfällen verschieden: "
+                               + "; ".join(f"{d[2]}: {d[3]} {d[1] / 1e3:.1f} kN" for d in defs)
+                               + f" – beim Spannen nachgewiesen: {bester[3]} {bester[1] / 1e3:.1f} kN ({bester[2]})")
+    if nicht:
+        mc.warnings.append("Vorspannung in nicht gerechneten Lastfällen nicht nachgewiesen: " + ", ".join(nicht[:6])
+                           + (" …" if len(nicht) > 6 else ""))
     verankert = False
-    for name, (res, z) in (zustaende or {}).items():
+    verankert_def: set = set()          # Definitionen mit Ergebnis im Zeitpunkt 0
+    vnamen = {d.name for d in vdefs}
+    for name, (res, z) in zustaende.items():
+        # Zustand der Vorspannung je Anker in diesem Ergebnis (nur mit Verweis)
+        vz = (((getattr(res, "info", None) or {}).get("vorspannung") or {}).get("verweise") or {})
+        vz_stab = set()
+        for dn, zz in vz.items():
+            if dn in vnamen:
+                vz_stab |= set(zz)
+        if vz_stab and "0" not in vz_stab:
+            continue                # Zeitpunkt ∞: P_∞ ist nicht der Zustand nach dem Verankern
         if z == "spannen":
+            if defs or vdefs:
+                continue            # Spannen gehoert zur Definition des Ankers (oben)
             aus_ergebnis(res, f"{name} (Spannschritt)", name, ZUSTAND_SPANNEN, pmax, "σ_p,max",
                          NORM_SPANNEN, h_pmax)
         elif z == "verankert":
@@ -527,20 +630,35 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat, zustaende:
             if not d:
                 continue
             presse = d.get("kraftart") == "presse"
-            if d.get("N_spannen") is not None:
+            if d.get("N_spannen") is not None and not (defs or vdefs):
                 eintraege.append(_eintrag(
                     ZUSTAND_SPANNEN, f"{name}: N_spannen = " + ("Anfangsvorspannung P₀ (Pressenkraft, Spannschritt)"
                                                                 if presse else "Endvorspannung (Spannschritt)"),
                     name, float(d["N_spannen"]), 0.0, A_s, pmax, "σ_p,max", NORM_SPANNEN, h_pmax))
             if d.get("N_verankert") is not None:
                 verankert = True
+                if vz_stab:
+                    verankert_def |= {dn for dn, zz in vz.items() if dn in vnamen and "0" in zz}
                 eintraege.append(_eintrag(
                     ZUSTAND_VERANKERT, f"{name}: N_verankert = Endvorspannung nach dem Verankern"
                     + (f" (P₀ − Schlupf Δs = {float(d.get('schlupf', 0.0)) * 1e3:.2f} mm und elastische Verluste)"
-                       if presse else ""),
+                       if presse else "") + (", t = 0" if vz_stab else ""),
                     name, float(d["N_verankert"]), 0.0, A_s, pm0, "σ_pm0", NORM_VERANKERT, h_pm0))
+    for d in vdefs:
+        if d.name in verankert_def:
+            continue
+        # kein Ergebnis im Zeitpunkt 0: P₀ gegen starre Umgebung, ohne Rueckfedern
+        from ..vorspannung import p0_starr
+        p0 = p0_starr(model, d).get(member.name, float(d.P_max))
+        eintraege.append(_eintrag(
+            ZUSTAND_VERANKERT, f"Vorspannung {d.name}: P₀ = P_max − k_A·Δs (starre Umgebung), ohne elastische "
+            "Verluste, t = 0 (kein Ergebnis eines Lastfalls im Zeitpunkt 0)", d.name, p0, 0.0, A_s, pm0,
+            "σ_pm0", NORM_VERANKERT, h_pm0))
+        verankert = True
     if not verankert:
         for lcname, N0, vermerk in eingegebene_endvorspannung(model, member):
+            if not zaehlt(lcname):
+                continue
             art = eingabe_art(model, member, lcname) or "Vorspannkraft"
             eintraege.append(_eintrag(
                 ZUSTAND_VERANKERT, f"{lcname}: eingegebene {art}, "

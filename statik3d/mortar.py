@@ -55,6 +55,26 @@ import numpy as np
 #: reicht; darueber hinaus ist sie mehrfach ueberdeckt. Deckungsgleiche und
 #: ineinander aufgehende Netze (K6) treffen die Flaeche auf 1e-15.
 VOLL_TOL = 1e-6
+#: Auf einer **gekruemmten** Fuge reicht die Flaeche allein nicht (06.11.2026).
+#: Die Masterseite wird laengs der Normalen der Slave-Facette in deren Ebene
+#: projiziert. Eine gekruemmte Randkante steht dabei um die Hoehe d ueber der Ebene
+#: und laeuft unter dem Winkel b zu ihr; ihr Bild verrueckt sich um d tan(b), und
+#: laengs der Kante L der Facette bleibt ein Streifen frei - auch wenn beide Netze
+#: genau dieselbe Flaeche belegen. Am Drehlager (V30 an V29, Mittel: Facetten ueber
+#: die 69 mm der Buchse, r = 298 mm) fehlten so 0,00002 bis 0,00023 der Facette,
+#: am Halbzylinder mit 8 Teilungen 0,006; eben ist es genau null. Darum gilt eine
+#: Facette als ganz ueberdeckt, wenn die Fehlflaeche unter L d tan(b) liegt
+#: (:func:`_kruemmungsflaeche`) - aus den Stuecken dieser Facette, also ohne feste
+#: Zahl: jede feste Schranke hat einen Gegenbeweis (1e-3 genuegt am Drehlager, bei 8
+#: Teilungen nicht). Sonst bekam die fast ganz ueberdeckte Facette die Standard-
+#: Formfunktionen, ihr Schwerpunkt liegt um L/3 neben dem Knoten: der Masterpunkt der
+#: Randknoten wanderte um 23 mm, und die Kontaktkraefte trugen 34,7 kNm, die im
+#: Gleichgewicht fehlten. Nur fuer die Ruecknahmeprobe abschaltbar.
+KRUEMMUNG_BEACHTEN = True
+#: Hoechstens dieser Anteil der Facette darf der Kruemmung zugerechnet werden: was
+#: darueber fehlt, ist in jedem Netz ein echter Rand der Ueberdeckung (die Facetten
+#: eines echten Rands liegen am Drehlager unter 0,5 ueberdeckt).
+KRUEMMUNG_HOECHSTENS = 0.1
 
 
 class Gewicht(NamedTuple):
@@ -248,6 +268,84 @@ def _ebenen(Ps: list) -> tuple:
     return C, N
 
 
+def _kruemmungsflaeche(poly, Q3, N_m, c, n, e1, e2, kante: float) -> float:
+    """Die Flaeche, die die Projektion eines Stuecks ``poly`` (2D in der Ebene der
+    Slave-Facette: Mitte c, Normale n, Achsen e1, e2) laengs einer Kante der Laenge
+    ``kante`` freilassen kann: L d tan(b) (siehe KRUEMMUNG_BEACHTEN). ``Q3`` ein Punkt
+    der Master-Facette, ``N_m`` ihre Normale. d ist die Hoehe der Master-Facette ueber
+    der Ebene an den Ecken des Stuecks, b der Winkel beider Normalen."""
+    cs = float(N_m @ n)
+    sn2 = 1.0 - cs * cs
+    if abs(cs) <= 0.0 or sn2 <= 0.0:
+        return 0.0
+    nm_q = float(N_m @ (Q3 - c))
+    a1, a2 = float(N_m @ e1), float(N_m @ e2)
+    d = max(abs((nm_q - a1 * x - a2 * y) / cs) for x, y in poly)
+    return kante * d * sn2 ** 0.5 / abs(cs)
+
+
+def ueberdeckte(knoten: np.ndarray, slave_facetten: list, slave_normalen, kandidaten: list,
+                kand_normalen, suchradius: float, anteil: float) -> np.ndarray:
+    """bool je Kandidat: liegt die Facette einer Slave-Facette gegenueber und
+    ueberdeckt sich mit ihr auf mindestens ``anteil`` ihrer eigenen Flaeche?
+
+    Dieselbe Geometrie wie :func:`gewichte`: Aussennormalen entgegengesetzt
+    (hoechstens 60 Grad), im Suchradius laengs der Normalen, Schnitt der Polygone in
+    der Ebene der Slave-Facette. Damit haengt die Gegenseite einer Fuge am Ueberdecken
+    und nicht daran, was der Schwerpunkt einer Slave-Facette als Naechstes trifft."""
+    from scipy.spatial import cKDTree
+    treffer = np.zeros(len(kandidaten), bool)
+    if not len(kandidaten) or not len(slave_facetten):
+        return treffer
+    MP = [knoten[list(f)] for f in kandidaten]
+    MC, MN = _ebenen(MP)
+    MA = np.asarray(kand_normalen, float).reshape(-1, 3)
+    MR = np.array([float(np.sqrt(((P - P.mean(axis=0)) ** 2).sum(1).max())) for P in MP])
+    rmax = float(MR.max())
+    baum = cKDTree(MC)
+    SP = [knoten[list(f)] for f in slave_facetten]
+    SC, SN = _ebenen(SP)
+    SA = np.asarray(slave_normalen, float).reshape(-1, 3)
+    SR = np.array([float(np.sqrt(((P - c_) ** 2).sum(1).max())) for P, c_ in zip(SP, SC)])
+    listen = baum.query_ball_point(SC, SR + rmax + suchradius)
+    for si, P3 in enumerate(SP):
+        n = SN[si]
+        kand = np.asarray(listen[si], dtype=int)
+        if not np.any(n) or not kand.size:
+            continue
+        kand = kand[~treffer[kand]]
+        if not kand.size:
+            continue
+        c = SC[si]
+        dC = MC[kand] - c
+        laengs = dC @ n
+        quer = np.linalg.norm(dC - laengs[:, None] * n, axis=1)
+        ok = ((np.abs(MN[kand] @ n) >= 0.5) & (MA[kand] @ SA[si] <= -0.5)
+              & (np.abs(laengs) <= suchradius + MR[kand]) & (quer <= SR[si] + MR[kand]))
+        if not ok.any():
+            continue
+        e1 = P3[1] - P3[0]
+        e1 = e1 - (e1 @ n) * n
+        e1 = e1 / float(np.linalg.norm(e1))
+        e2 = np.array([n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]])
+        P2 = np.column_stack([(P3 - c) @ e1, (P3 - c) @ e2])
+        if _flaeche2(P2) < 0:
+            P2 = P2[::-1]
+        P2l = [(float(x), float(y)) for x, y in P2]
+        E = np.column_stack([e1, e2])
+        for fi in kand[ok]:
+            ql = [(float(x), float(y)) for x, y in (MP[fi] - c) @ E]
+            aq = _flaeche_py(ql)
+            if aq == 0.0:
+                continue
+            if aq < 0:
+                ql = ql[::-1]
+            poly = _schneiden_py(P2l, ql)
+            if len(poly) >= 3 and abs(_flaeche_py(poly)) >= anteil * abs(aq):
+                treffer[fi] = True
+    return treffer
+
+
 def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
              suchradius: float, slave_innen: dict = None, master_innen: dict = None) -> dict:
     """Duale Mortar-Gewichte je Slave-Knoten.
@@ -337,6 +435,8 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
         E = np.column_stack([e1, e2])
         pts, wts, stuecke = [], [], []          # stuecke: (Q2c, Master-Knoten, von, bis)
         a_ueb = 0.0                             # ueberdeckte Flaeche, exakt aus den Polygonen
+        a_kr = 0.0                              # was die Kruemmung davon verdecken kann
+        kante = max(float(np.linalg.norm(P3[(a_ + 1) % len(P3)] - P3[a_])) for a_ in range(len(P3)))
         for fi in kand[ok]:
             Q2 = (MP[fi] - c) @ E
             ql = [(float(x), float(y)) for x, y in Q2]
@@ -355,6 +455,8 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
             if len(poly) < 3 or abs(_flaeche_py(poly)) <= 1e-14 * a_e:
                 continue
             a_ueb += abs(_flaeche_py(poly))
+            if KRUEMMUNG_BEACHTEN:
+                a_kr = max(a_kr, _kruemmungsflaeche(poly, MC[fi], MN[fi], c, n, e1, e2, kante))
             von = len(pts)
             ax, ay = poly[0]
             for k in range(1, len(poly) - 1):
@@ -365,10 +467,17 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
                     pts.append((ax + l1 * (bx - ax) + l2 * (cx - ax), ay + l1 * (by - ay) + l2 * (cy - ay)))
                     wts.append(w * ak)
             stuecke.append((np.array(ql), [mf[fi][i] for i in q_ord], von, len(pts)))
-        if a_ueb > (1.0 + VOLL_TOL) * a_e:
+        schranke = VOLL_TOL * a_e + min(a_kr, KRUEMMUNG_HOECHSTENS * a_e)
+        if a_ueb > a_e + schranke:
             doppelt.update(f)                     # zwei Master-Lagen: kein Gewicht
             continue
-        voll = abs(a_ueb - a_e) <= VOLL_TOL * a_e
+        voll = abs(a_ueb - a_e) <= schranke
+        # Ganz ueberdeckt, aber nicht auf die Flaeche genau: die dualen Integrale laufen
+        # ueber das, was da ist, und der Nenner muss derselbe sein - sonst ist die Summe
+        # der Gewichte nicht 1, und contact._mortar_einsetzen faellt auf die Projektion
+        # zurueck (schon bei 1e-6 Fehlflaeche: Phi_j ist dort bis zum Dreifachen gross,
+        # zwei Knoten am Drehlager). Eben, auf 1e-15 genau, bleibt der Nenner De, bitgleich.
+        genau = not KRUEMMUNG_BEACHTEN or abs(a_ueb - a_e) <= 1e-9 * a_e
         if not voll:
             rand.update(f)
         if not stuecke:
@@ -378,8 +487,8 @@ def gewichte(knoten: np.ndarray, slave_facetten: list, master_facetten: list,
         Ns = formfunktionen(P2, pts_a)                  # (k, ns), einmal je Slave-Facette
         if voll:
             Phi = Ns @ Ae.T                             # dual: int_e Phi_j N_k = delta_jk int_e N_j
-            for j, dj in zip(f, De):
-                D[j] = D.get(j, 0.0) + float(dj)
+            for a_, (j, dj) in enumerate(zip(f, De)):
+                D[j] = D.get(j, 0.0) + (float(dj) if genau else float(Phi[:, a_] @ wts_a))
         else:
             # teilweise ueberdeckt: Standard-Formfunktionen auf den Stuecken -
             # nichtnegativ, und sum_i M_ji = int_{e cap gamma} N_j genau

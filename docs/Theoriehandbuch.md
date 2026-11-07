@@ -2163,9 +2163,34 @@ darunter rechnet die Runde mit der alten Matrix weiter und die Abweichung der Kr
 steht im Lastvektor. Residuum je Knoten ist |F_t,Rückabbildung(u) − F_t,linearisiert(u)|;
 die Summe geht in das Laufresiduum (`RESIDUUM_ANTEIL` 10⁻⁶ der Kontaktkraft). Ohne
 Statuswechsel, aber mit offenem Residuum zählt die Runde in Phase 1 als Wechsel und in
-Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Der
-Weg ist wie bisher der gesamte Weg des Lastfalls (ohne Lastgeschichte): Haften heißt
-an der Ausgangslage, bis auf f/k_h.
+Phase 2 als Richtungsrunde (nicht auf den Deckel, höchstens `QUER_RUNDEN_MAX`). Bis
+zum 17.10.2026 war der Weg der gesamte Weg seit der Ausgangslage (ohne Lastgeschichte):
+Haften hieß an der Ausgangslage, bis auf f/k_h. Seitdem gilt der Gleitweg-Speicher
+(unten).
+
+**Gleitweg-Speicher (17.10.2026, `contact.GLEITWEG_SPEICHER`, Fehlerkorrektur Stand 4).**
+Jeder Knoten der Reibungstangente trägt einen Gleitweg g_s, die Versuchskraft ist
+f = k_h·(d_t − g_s) und im Lastvektor steht k_h·C_tᵀ·g_s. Am Ende einer Stufe wird er
+fortgeschrieben, g_s = d_t − F_t/k_h mit der Kraft der Rückabbildung an der letzten
+Lösung: ein haftender Knoten behält g_s, ein gleitender nimmt ihn mit, ein offener
+erhält d_t (schließt er wieder, haftet er dort, wo er war). Stufen sind die Spannstufen
+und das Verankern des Spannschritts (`vorspannkraft`) und die Laststufen der
+Plastizität außer der letzten – der Abschluss gehört zu ihr
+(`_KontaktImNewton.stufe_fertig`); eine Halbierung geht an die Marke der Stufe zurück
+und damit auf den Gleitweg ihres Anfangs. Innerhalb einer Stufe (Newton-Schritte,
+Ausfall-Iteration, Neustart nach verworfenem Warmstart) bleibt g_s. Der Gleitweg steht in
+der Sicherung des Kontaktzustands („gleitweg“, am Ende des Laufs „gleitweg_ende“); ein
+Lauf übernimmt ihn nur, wenn der Start aus demselben Lastfall stammt oder die Marke
+„lastweg“ trägt (Spannschritt → Lastfall), ein Warmstart aus einem anderen Lastfall
+bringt keinen mit. Befund (`tests/test_gleitweg`, Klotz mit Reibung μ = 0,3 nach einem
+Spannschritt, der ihn um 1,5 mm in +x gleiten ließ, dazu im Lastfall H = 20 kN in −x):
+ohne Speicher glitten alle 17 Reibknoten weiter in −x um 0,198 mm, mit −12,4 kN Reibkraft
+in Bewegungsrichtung (negative Dissipation), obwohl der Klotz nur +8,9 kN Reibung braucht.
+Mit Speicher hält er (Weg höchstens 0,16 µm an Knoten, die örtlich an der Grenze liegen,
+Reibkraft +8,76 kN bei μ·ΣF_n = 11,14 kN); bei H = 80 kN gleitet er zurück, die
+Reibkraft wirkt mit +14,35 kN gegen die Bewegung. Die Dissipation −f·Δu ist je Knoten und
+Stufe ≥ 0; zwei Laststufen geben dasselbe u wie eine (2·10⁻⁹ m), der Spannschritt selbst
+ist unverändert (1,9·10⁻⁹ m).
 
 Umkehr (`RT_UMKEHR`): dreht t von einer Runde zur nächsten um mehr als 90°, rechnet die
 nächste Runde den Knoten mit der Haftfeder. Ohne die Regel lief der gequetschte Block
@@ -2183,6 +2208,107 @@ Ingenieurkriterium wirken. Ohne das pendelte der Block mit Anschlag (tet4,
 (120 Runden): dort bestimmt der Löser je Runde neu, welche ganz gleitenden Gruppen
 anderswo gehalten sind, und ein einzelner Lagerknoten bekam abwechselnd die grobe und
 die feine Reststeifigkeit; jetzt 6 Runden.
+
+**Reststeifigkeit einmal je Lauf (17.10.2026, `contact.RT_HALT_EINMAL`).** Gleiten alle
+Knoten einer Gruppe und hält sonst nichts ihr Bauteil, bekam bis dahin jeder gleitende
+Knoten die grobe Reststeifigkeit 10⁻³·k_t ohne Ausgleich, sobald aber einer haftete, die
+feine 10⁻⁸·k_d mit Ausgleich – je Runde neu, das 10⁹-Fache hin und her. Die grobe Feder
+trägt Kraft und verschiebt das Bauteil, Knoten haften wieder, die nächste Runde springt
+zurück: am Drehlager-Z mit μ = 0,2 in der Fuge Ankerplatte – Unterlegblech (GZ02) endete
+so jeder Kontaktlauf mit Periode 2 nach 40 Runden in Phase 1, wo weder das Einfrieren
+noch das Ingenieurkriterium wirken. Jetzt entscheidet die erste Runde, in der die Gruppe
+ganz gleitet, für den Rest des Laufs: grob (und die Warnung „Bauteil rutscht“) nur, wenn
+die Fuge Kraft und Moment, die sie in der Lösung davor tangential trug, nicht halten kann,
+F/(μ·ΣF_n) + M/(μ·ΣF_n·|r_t|) > 1 (lineare Wechselwirkung, innerhalb der konvexen
+Grenzkurve; bei ebener Fuge senkrecht zur gemittelten Normale bzw. um sie), sonst fein
+mit Ausgleich. Prüfkörper (`tests/test_pendeln_rt`): Platte 120 × 120 × 20 mm mit Bohrung
+auf einem Unterlegblech, μ = 0,2, Ankerkraft 300 kN auf dem Ring um die Bohrung, in der
+Ebene nur über die Reibfuge gehalten – vorher Deckel nach 40 Runden, jetzt 7 Runden, alle
+96 Knoten gleiten radial, Resultierende der Reibkräfte 0,08 N bei 61 kN Σ|F_t|. Der
+rutschende Block (H = 0,4·N > μ·N) bleibt grob mit Warnung, das Pendelmodell mit Tangente
+konvergiert in 23 statt 27 Runden, mit einer haltenden Nachbarfuge ändert sich nichts.
+Gemessen und verworfen: kleine Normalwechsel (Klaffung unter `pendel_weg`) beim Übergang
+in Phase 2 und in der Erkennung der Periode 2 nicht zu zählen – das Pendelmodell mit
+Tangente fror dann zwei Runden zu früh ein (Weg 1,27 µm über der Schranke, Lauf
+abgelehnt) bzw. brauchte 35 statt 27 Runden.
+
+**Körper springen nicht mehr (17.10.2026, Auftrag des Anwenders nach Mittel-Z mit μ = 0,2).**
+Im Kontaktlauf von Laststufe 1/3 sprangen dort Ankerplatten als starre Körper (V4 um
+180 mm, V7 um 101 mm, Verformungsanteil um 10⁻⁷ %), nachdem sie zwei Stufen lang anlagen.
+Die Zerlegung scheiterte nicht – der Löser löste das fast singuläre System –, und die
+Halte-Hilfe `_freie_teile_halten` griff nur bei einer RuntimeError. Nachgestellt
+(`tests/test_kontakt_sprung`): Platte auf Reibfuge unter 300 kN, ein Stab „nur Zug“ mit
+Temperaturdehnung drückt sie im ersten Schritt der Ausfall-Iteration hoch, sie liegt am
+Ende auf 4 Knoten; der nächste Lauf startet warm von diesem Zustand, der Stab ist
+ausgefallen, und die Lösung springt um 536 m. Vier Bausteine:
+
+1. *Kontaktstart „geschlossen“* (Kontaktbedingung `start_geschlossen`, im Kontaktpaar
+   mitgeführt, Maske „Kontaktstart“): der Lauf beginnt mit allen Bedingungen der Fuge
+   geschlossen, mit dem echten Spalt; wo Zug entsteht, öffnet die erste Aktualisierung
+   sie wie jede andere. Anders als „auf Berührung setzen“ bleibt der Spalt, wie er ist.
+2. *Öffnen begrenzen* (`contact.OEFFNEN_BEGRENZEN`): wollen in einer Runde alle
+   geschlossenen Bedingungen eines Teils öffnen (mehr als drei) und wäre es dadurch weniger
+   gehalten (Rang der geschlossenen Bedingungen, Bindungen und Lager), öffnet die Runde nur
+   die stärker gezogene Hälfte; das Protokoll sagt „Körper … wäre in dieser Runde nicht
+   gehalten“. Geöffnet wird weiter nur bei Zug über der Toleranz; solange eine
+   zurückgehaltene Bedingung Zug trägt, zählt die Runde als Wechsel. Bei drei und weniger
+   übernimmt die Halte-Hilfe (Punkt 3); trägt der Halt am Ende Zug, bricht der Lauf wie
+   bisher ab („hebt ab, kein Gleichgewicht“). Verworfen (gemessen 17.10.2026): jede Öffnung
+   zu begrenzen, die einem Teil Rang nimmt – sie hielt in den Pendelmodellen
+   (`tests/test_pendeln_periode2`) einen einzelnen pendelnden Knoten auf Dauer geschlossen,
+   jeder Lauf endete am Deckel (21 von 36 Prüfungen), und der nach oben gezogene Block
+   brach nicht mehr ab (`tests/test_kontakthalt`).
+3. *Vorab halten und stabilisieren* (`solver.VORAB_HALTEN`): vor jeder Lösung ab Runde 2
+   (warm gestartet auch in Runde 1) werden Teile, die im Zustand der Runde nicht gehalten
+   sind, an den Bedingungen mit dem kleinsten Spalt gehalten (Meldung „Körper … in dieser
+   Runde nicht gehalten“, je Lauf einmal je Körper); bleibt eines ungehalten,
+   bekommen seine Bedingungen die Kontaktstabilisierung, eine Feder mit 10⁻⁶ der
+   Kontaktsteifigkeit auf den Weg seit der vorigen Runde (`contact.STABIL_ANTEIL`).
+4. *Sprungprüfung* (`solver.SPRUNG_PRUEFEN`): bewegt sich ein Teil in einer Runde als
+   Ganzes um mehr als seine Elementgröße bei einem Verformungsanteil unter 10⁻³, wird die
+   Runde verworfen und mit Dämpfung neu gelöst (10⁻⁴ der Kontaktsteifigkeit auf den Weg
+   seit der vorigen Runde, je Versuch das 100-Fache, höchstens drei Versuche); das
+   Protokoll sagt „Körper … in dieser Runde nicht gehalten“, ebenso bei singulärer
+   Zerlegung.
+
+Die Kraft der Stabilisierung steht im inneren Residuum (sie ist keine Kontaktkraft nach
+dem Gesetz), hält die Schleife offen, solange sie über 10⁻⁶ der Kontaktkraft liegt, und
+steht am Ende im Protokoll; über 0,1 % der Last als „WARNUNG“. Am Prüfkörper: der Sprung
+wird erkannt und im ersten Versuch gedämpft, die größte angenommene Änderung ist 9,6 mm
+bei 15 mm Elementgröße, das Ergebnis gleicht dem ohne Sprung auf 7·10⁻¹² m, die
+Stabilisierung trägt am Ende 2,9·10⁻⁶ % der Last.
+
+**Halt über geteilte Knoten (05.11.2026, `solver.TEILE_UEBER_KNOTEN`).** Am Drehlager-Z
+(Mittel, μ = 0,2) brach fd34e1b in Spannstufe 1/3 ab: „V112 hebt ab und hängt an 4
+gehaltenen Kontaktpunkten unter 0,9 kN Zug; V111 … 7 … 0,7 kN“. Die Knaggen V111 und V112
+teilen mit V36 je 97 Knoten (mit V108 bzw. V110 je 86); Kontaktbedingungen haben sie nur
+aus dem Flächenlager „Starr“ mit Ausfall bei Zug. Die Haltprüfung vor der Lösung nahm
+jeden Körper für sich und zählte nur seine eigenen Kontaktbedingungen und Lager – die
+Verbindung über geteilte Knoten sah sie nicht, hielt die Knaggen fest, sobald ihre
+Lagerfuge aufging, und die strenge Endprüfung fand an den gehaltenen Punkten Zug. Jetzt
+sind Körper mit gemeinsamen Knoten für die Haltprüfung (Halten vor der Lösung, Öffnen
+begrenzen) ein Teil, und der Rang zählt Kontaktbedingungen und Lager der ganzen Gruppe,
+auch der Körper ohne eigene Kontaktbedingung. Teile, die nur über Kontakt aneinander
+liegen, bleiben getrennt. Prüfkörper (`tests/test_knagge_gehalten`): Kragblock mit
+Knagge an geteilten Knoten auf einer Lagerfuge „Ausfall bei Zug“, ohne Querlast; die Last
+nach oben hebt die Knagge ab – vorher Abbruch („hängt an 2 gehaltenen Kontaktpunkten
+unter 22,4 kN Zug“), jetzt konvergiert in 2 Runden, alle 15 Bedingungen offen, Ergebnis
+gleich dem ohne Halten vor der Lösung.
+
+Dazu die Endprüfung: trägt ein Halt am Ende nur Zug unter `pendel_kraft_anteil` der
+gesamten Kontaktkraft, hält er nichts – er wird als offen angenommen und gemeldet, statt
+abzubrechen (Prüfkörper mit unabhängigem Sockel unter 2 000 kN: 1,12 kN Zug, als offen
+angenommen). Ein Teil, das wirklich abhebt (der nach oben gezogene Block,
+`tests/test_kontakthalt`), bricht weiter ab.
+
+**Ausfall-Iteration nach dem Deckel (17.10.2026, `solver.AUSFALL_WARM_NACH_DECKEL`).**
+Endet ein Kontaktlauf der Ausfall-Iteration am Deckel, beginnt der nächste Lauf der
+Iteration bei dessen Zustand statt kalt; `solve_with_contact` nimmt ihn als fremden
+Zustand, das Ergebnis bleibt vorläufig, bis ein Lauf selbst konvergiert. An den nächsten
+Aufruf (Newton-Schritt, Lastfall) geht weiterhin nur ein konvergierter Zustand. Am
+Drehlager-Z rechnete die Iteration nach jedem Deckel denselben Lauf kalt noch einmal,
+Runde für Runde gleich, rund 6 Minuten je Lauf. Die Iteration endet wie bisher, sobald
+sich die Menge der ausgefallenen Stäbe nicht mehr ändert.
 
 Gemessen (Faktor 1 000, `tests/test_reibungstangente`, Vergleich mit dem Stand
 9fb56e5): Runden je Rechnung Block mit Reibung 29 → 6, Stempel auf Sockel 14 → 7
@@ -2292,6 +2418,25 @@ spiegelsymmetrisch auf 2,8·10⁻¹⁶; mit der Projektion (Rücknahmeprobe) wei
 spiegelbildliche Eckknoten um 10,3 % voneinander ab (8 972 gegen 4 128 kN).
 Prüfmatrix K1–K7, KP1, KP2 und der Stempel der Plastizität (als kleinerer
 Slave ganz überdeckt) bleiben unverändert.
+
+**Überdeckung auf einer gekrümmten Fuge (06.11.2026, `mortar.KRUEMMUNG_BEACHTEN`).**
+Die Masterseite wird längs der Normalen der Slave-Facette in deren Ebene projiziert.
+Auf einer gekrümmten Fuge steht eine Randkante um die Höhe d über der Ebene und läuft
+unter dem Winkel b zu ihr; ihr Bild verrückt sich um d tan b, und längs einer Kante L
+bleibt ein Streifen frei, obwohl beide Netze dieselbe Fläche belegen. Am Drehlager (V30
+an V29, Facetten über 69 mm Breite, r = 298 mm) fehlten 0,00002 bis 0,00023 der
+Facette, am Halbzylinder mit 8 Teilungen 0,006; eben genau null. Die Facette galt als
+teilweise überdeckt und bekam die Standard-Formfunktionen, deren Schwerpunkt um L/3
+neben dem Knoten liegt: der Masterpunkt der Randknoten wanderte um 23 mm, und die
+Kontaktkräfte trugen (Fn n) × Hebel, am Drehlager 34,7 kNm, die im globalen Gleichgewicht
+fehlten. Eine Facette gilt jetzt als ganz überdeckt, wenn die Fehlfläche unter
+L d tan b liegt (aus ihren Schnittstücken, höchstens 10 % der Facette); eine feste Schranke
+genügt nicht (10⁻³ reicht am Drehlager, bei 8 Teilungen nicht). Die dualen Integrale
+laufen dann über die vorhandenen Stücke, und der Nenner ist ihr Integral, damit die Summe
+der Gewichte 1 bleibt. Eben ist L d tan b null und alles bitgleich; ein echter Rand
+(Master auf ¾ der Breite) bleibt teilweise. Gemessen (`tests.test_master_voll`, P2):
+axialer Hebel 0,27 mm bei 8, 0,003 mm bei 24 Teilungen gegen 23 mm ohne die Kur; Stichprobe
+über Radius, Teilung und Masterreihen von 6 Teilungen am Halbkreis an (30°, `contact.KNICK`).
 
 Am Drehlager (Lauf `mortar_rand_cca9e85`, 30.09.2026, PARDISO, auf dem
 Netz des Laufs `einzeilig_18a770d`, zwei Auswerter) bekommen jetzt 7 504
@@ -2645,6 +2790,27 @@ der Gegenfacette hinaus, ist dort nichts mehr, was ihr gegenübersteht, und sie
 bleibt ungepaart. Die Randfacette einer Fuge, die zur Hälfte über die Kante
 ragt, bleibt so dabei. **Gewählt** wird unter den so verbliebenen Gegenseiten
 die räumlich nächste; **gemessen** wird längs der Normalen.
+
+**Die Gegenseite hängt nicht an den Schwerpunkten (06.11.2026,
+`fugen.gegenseite_ergaenzung`, Fehlerkorrektur Stand 5).** Die Liste im Kontaktpaar ist
+das Bild der Suche: je Facette der Kontaktseite die nächste Gegenfacette. Bei feinerer
+Gegenseite ist das ein Bruchteil und ein zufälliger: am Drehlager (Mittel, „Achse
+(Typ 3)“) 1 333 von 9 027 Dreiecken, an V16 (Dreiecke 23 mm², Facetten von V30 mit
+38 mm Kante) 13,2 % der Fläche; 486 Slave-Knoten galten als „neben der Gegenfläche“,
+177 statt 663 Bedingungen. Auch im Entwurf waren Fugen betroffen, deren Liste Lücken
+hatte: die Mortar-Gewichte (unten) stuften dort sonst ganz überdeckte Facetten als Rand
+ein, Lagerbock-Grundplatte mit Hebel bis 24,46 mm auf deckungsgleichen Netzen.
+`contact.master_facets` nimmt darum zur Liste jede Facette der genannten Gegenflächen
+(ohne sie jede Randseite der Gegenkörper) hinzu, deren Außennormale der Kontaktseite
+entgegen zeigt und die sich auf mindestens 1 % ihrer Fläche mit einer Facette der
+Kontaktseite überdeckt (`mortar.ueberdeckte`; der Anteil hält die Nachbarfacette neben
+dem Rand heraus, die die Projektion auf einer gekrümmten Fuge nur anschneidet). Das
+geschieht beim Lesen und nicht beim Anlegen des Paars: die Liste steht in der
+Modelldatei und in der Kennung der Ergebnisse, eine nachgetragene Liste machte
+vorhandene Ergebnisse ungültig. Die Bindung der Seitenmitten liest dieselbe Funktion, und
+ein Paar ohne ausgeführte Kontaktbedingung bleibt bei seinen eigenen Facetten. Prüfung:
+`tests.test_master_voll`, P1 (Würfel, Gegenseite fein): σ_zz = −p auf 0,000 N/mm²,
+u = −p L/E, ΣFn = p A, ΣM = 0; ohne die Kur 100 bis 39 547 N/mm² daneben.
 
 **Im Löser wirkt Kontakt nur auf der Gegenfläche.** Für die Zuordnung Knoten
 gegen Master-Facette galt bis zum 15.09.2026 dieselbe Umkreisregel — für einen
@@ -3912,6 +4078,22 @@ die Rückführung nicht. Gemessen (Prüfplatte mit Strebe „nur Zug“, die aus
 4,09 → 2,39 s, 11 Rückführungen, 10 Newton-Schritte und ε_p,max 0,00784 % auf
 1,1·10⁻⁶ relativ gleich, jeweils 24 Kontaktläufe. `_startherkunft_eintragen`
 schreibt „Ausfallweg ohne Warmstart“ nur noch ausgeschaltet.
+
+**6. Ausfall-Iteration: annehmen und nachprüfen** (Hebel 1, seit 15.10.2026;
+`ausfall_annehmen`, Vorgabe aus). `solve_with_ausfall(…, annahme)` beginnt mit der
+Menge `annahme` statt mit der leeren Menge; `_solve_loads._rechnen` reicht dafür
+`res.info["ausfall"]` der vorigen Lösung desselben Lastfalls durch (der erste
+Aufruf, Vorlauf oder Spannschritt, hat keine und beginnt leer). Die Nachprüfung
+ist die Abbruchbedingung jeder Runde: die Kraft jedes Kandidaten
+N = N0 + EA/L·Δl aus den Verschiebungen seiner Endknoten (`_normalkraft`, für
+ausgefallene Stäbe dieselbe Formel, also die Längenänderung gegen die
+spannungsfreie Länge), neu = {Zugstab mit N < −tol} ∪ {Druckstab mit N > tol},
+tol = 10⁻⁹ max|N|; ist neu gleich der angenommenen Menge, endet die Iteration
+nach einem Lauf. Der Fixpunkt ist derselbe wie ohne Annahme; wo es mehrere gibt
+(ein Stab mit N ≈ 0), wählt der Startpunkt, innerhalb tol. Gemessen
+(Prüfplatte mit Strebe, f_y 30 N/mm², 10 Newton-Schritte): 24 → 13 Kontaktläufe,
+228 → 124 Runden, |Δu| 1,4·10⁻¹⁰ m, Δε_p 2·10⁻¹¹; mit falscher Annahme (Strebe
+gezogen bzw. gedrückt) zwei Läufe und dieselbe Lösung.
 
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
@@ -5824,6 +6006,31 @@ Knoten, um 0,04 bzw. 0,08 % weicher (Nachgiebigkeit des Blocks). Umgesetzt:
   folgen ihren Ecken (wie b009aff bei der Verteilkopplung); `_belegte_knoten`
   zählt von der Scheibe nur den Master. Annahme: RFEM bewegt eine starre
   Fläche als starren Körper; am RFEM-Modell geprüft ist das nicht.
+* **Starre Scheibe mit Kreisring** (seit 16.10.2026,
+  `statik3d.scheibeneinleitung`, Starrkörper „Scheibe …“): statt des RBE2 am
+  Lochrand eine Verteilkopplung RBE3 vom Stabende auf die Auflage von Mutter
+  bzw. Scheibe. Die Auflage sind die Randseiten der Körper in der Ebene der
+  Scheibe (bis 0,1 mm), deren Normale höchstens 5° von der Scheibennormale
+  abweicht und deren Außennormale gegen die Stabachse zeigt; davon der Teil
+  zwischen r_i und r_a um die Scheibenmitte, mit derselben Integration wie
+  der Kreisring eines Stabendes (`stabeinleitung._integrieren`: ganze Seiten
+  mit ihrer Regel, geschnittene in Teilzellen; w_i = ∫ N_i dA, s_i = ∫ N_i
+  (x − x_m) dA). Wirksame Gewichte, Zwangsmatrix, Strafbeiwert und die
+  Prüfung von Kraftsumme und Moment sind die der verteilenden Einleitung.
+  Am Blech 60 × 60 × 20 mm mit Bohrung Ø 20 und Ring 20/37 mm
+  (`tests/test_scheibe_kreisring.py`, h 4 mm) ist die Gewichtssumme
+  764,1 mm² (tet4, 98 Knoten) bzw. 761,4 mm² (tet10, 334 Knoten, davon 236
+  Seitenmitten) gegen 761,0 mm². Die Kopplung gibt 150 kN mit einer
+  Abweichung von höchstens 1·10⁻⁷ N weiter. Die flächengewichtete mittlere
+  Spannung σ_zz der obersten Elemente im Ring ist −158,2 (tet4) bzw.
+  −183,1 N/mm² (tet10) gegen F/A_Ring = 197,1 N/mm²; die Elemente messen in
+  ihrem Schwerpunkt, also etwas unter der Oberfläche. Die größte
+  Vergleichsspannung der Knoten an der Oberseite (tet10, elastisch) wächst
+  beim Lochrand mit h 4 → 2 mm von 3 959 auf 6 312 N/mm² und bleibt beim Ring
+  bei 195 bzw. 189 N/mm². Plastisch mit 300 kN (Ring 394 N/mm² = 1,11 f_y):
+  Mit dem Ring konvergiert die Rechnung auf tet4 (ε_p höchstens 0,043 %) und
+  auf tet10 (0,013 %). Mit dem Lochrand erreicht tet4 ε_p = 11,3 %, und tet10
+  bricht ab, weil das Gleichungssystem singulär wird (der Lochrand fließt weg).
 * **Stabende an 1–4 Knoten** (`fugen.stabenden_koppeln`, Gruppe
   „Stabende …“): RBE3 je Stabknoten (`assemble.stabende_zwang`). Die
   Kraftzeilen mit den baryzentrischen Koordinaten λ_i des Stabendes im
@@ -6430,6 +6637,11 @@ Extrapolation). `tests/messung_rohr_plastisch.py`, gemessen 23.09.2026, Ablage
 | tet10 16 × 8 | 5 049 | 0,9992 | −0,14 | −4,7 | +9,8 % |
 | tet4 8 × 4 | 270 | 1,1726 | +46,6 | +306 | +154 % |
 | tet4 16 × 8 | 918 | 1,1995 | +46,8 | +367 | +434 % |
+
+Die Spalte σ_v(b) ist der Stand vom 23.09.2026 mit Knotenwerten aus der Extrapolation. Seit dem
+06.11.2026 trägt die Knotentabelle einer plastischen Rechnung den nächsten Integrationspunkt. Gegen Hill am
+Radius dieses Punkts sind es bei tet10 8 × 4 −0,93 und bei hex8 32 × 16 −0,48 N/mm²; die Prüfung vergleicht
+seit dem 07.11.2026 so.
 
 σ_v am Punkt ist bei allen Typen fy (die Rückführung), darum steht er nicht in
 der Tabelle. Die **Grenzlast** (mit dem Newton bestimmt, siehe unten): hex8 und
@@ -7153,6 +7365,196 @@ herauskondensiert, und auf dem Plateau ist ΔK_aa in Fließrichtung bis auf
 den Boden null. Das ist nicht weiter zerlegt. Ideal plastisch konvergiert der
 Newton damit schlechter, aber erst unter den Toleranzen, die die Oberfläche
 anbietet.
+
+### 5e.6 Traglast, Mechanismus und Gültigkeitsgrenze (16.10.2026)
+
+**Anlass.** Am Prüfblech aus `tests/test_scheibe_kreisring` (60 × 60 × 20 mm,
+S355, Bohrung Ø 20, Kreisring 20/37, tet10, Endvorspannung 900 kN) meldete
+die plastische Rechnung „konvergiert“ mit ε_p,max = 2 399, also rund
+240 000 %. Der Newton hatte richtig gerechnet: Er meldete im Spannschritt bei
+600 und 900 kN „nicht konvergiert“, die Änderung blieb über 25 Schritte bei 30
+bis 148. Diese Meldung ging aber nicht weiter, denn der Lastfall übernahm vom
+Spannschritt nur einen vorläufigen Kontakt. Der Spannzustand wurde in der
+weggelaufenen Lage verriegelt: Die Platte war 4,56 m eingesunken, die
+Verriegelungskraft betrug 1 369,6 MN. Damit war dieser Zustand mit der
+eingefrorenen plastischen Last per Konstruktion im Gleichgewicht. Der
+Lastfall brauchte drei Schritte mit der Änderung 9,7·10⁻⁶, und diese war auf
+‖F_lock‖ = 1,94·10⁹ N bezogen statt auf das Kräftepaar der Sollkraft
+(1,27·10⁶ N). Die globale Gleichgewichtskontrolle (§ 5d-2, Absatz „Globale Gleichgewichtskontrolle“) konnte nicht
+anschlagen, denn sie prüft Φᵀ(F + R) = Φᵀ K u, und das ist für jedes u null.
+
+**Traglast.** Oberhalb der Traglast gibt es bei ideal plastischem Werkstoff
+(hier über f_u) kein Gleichgewicht. Eine Laststufe, die ihr Budget ohne
+Konvergenz verbraucht oder an einem Mechanismus abbricht, wird darum wie eine
+weglaufende Stufe vom Startwert an halbiert, höchstens viermal je
+ursprünglicher Stufe. Geht das nicht mehr, endet die Rechnung beim **letzten
+konvergierten Zustand**: Lastfaktor, Lösung und plastischer Zustand dieser
+Stufe, gelöst mit der Last dieses Faktors. Das Ergebnis heißt dann „Traglast
+überschritten bei Lastfaktor λ (letzter konvergierter Zustand gezeigt; bei λ′
+kein Gleichgewicht)“ und ist nicht gültig. Wirkt die ganze Last sofort voll
+(Temperatur, Vorspannung, jede Spannstufe einer Endvorspannung), gibt es im
+Newton nichts zu halbieren. Dann halbiert der Spannschritt seine Spannstufen
+und verriegelt nicht. Bis dahin rechnete der Newton nach einer nicht
+konvergierten Stufe mit deren Zustand weiter: Am Zugstab unter 1,2·A·f_u
+standen nach 320 Schritten ε_p 47 362 % im Ergebnis.
+
+Gemessen an den Prüfmodellen in `tests/test_traglast`. Der Zugstab aus tet10
+(50 × 50 mm, f_u 510 N/mm², F_lim = A·f_u = 1 275 kN) trägt bei 1,2·F_lim
+noch den Faktor 0,8125, also 0,975·F_lim, und bei 0,8333 (genau F_lim) kein
+Gleichgewicht mehr. Der Kragträger unter reinem Moment (ideal plastisch ab
+f_y, M_pl = f_y·b·h²/4) trägt bei 1,2·M_pl den Faktor 0,8333, also 1,000·M_pl.
+Der Zugstab aus tet4 trägt dagegen 1,1·F_lim bei ε_p 92,5 %. Der tet4 sperrt:
+Das volumentreue Fließen bei konstanter Dehnung je Element behindert die
+Querkontraktion, die Spannung wird dreiachsig, und σ_x steigt über f_u. Das
+fängt die Gültigkeitsgrenze. Das Prüfblech (tet10) trägt 0,5417 der
+Sollkraft, also 487,5 kN, und bei 506,3 kN kein Gleichgewicht mehr.
+
+**Mechanismus.** In einer Stufe ist ein Mechanismus erkannt, wenn drei
+Bedingungen zugleich gelten. Erstens schrumpft die größte
+Knotenverschiebung je Newton-Schritt dreimal hintereinander nicht unter die
+Hälfte des vorigen Schritts. Zweitens ist die größte Verschiebung zehnmal so
+groß wie im letzten konvergierten Zustand. Drittens liegt ε_p,max des
+Iterierten über der Gültigkeitsgrenze. Am Balken unter 1,2·M_pl war der
+Schritt 16,7 m und blieb gleich; am Prüfblech wuchs die Verschiebung je
+Schritt um 33 mm. Ein konvergierender Newton zieht sich dagegen zusammen, so
+am Zugstab bei 0,9·f_u mit 5,5 / 2,2 / 0,36 / 0,003 mm. Die Spannung ist kein
+Kriterium, denn am Prüfblech änderte sie sich je Schritt noch um 13 bis
+270 N/mm², weil die Fließzone wuchs. Sie steht nur in der Meldung. Die Stufe
+bricht beim Erkennen ab, statt den Verschiebungen 25 Schritte lang
+nachzulaufen; das Prüfblech rechnet so in 249 statt 818 s. Gestörte Pivots
+zählen nicht: Ein lastfreier Freiheitsgrad, den nur ein angehobener Pivot
+hält (die Ankerköpfe am Drehlager mit 0,4 bis 66 Nm/rad), verschiebt sich im
+Newton nicht. Gemeldet wird nur ein Mechanismus, der Last trägt.
+
+**Gültigkeitsgrenze.** Liegt ε_p,max über der Grenze, ist das ganze Ergebnis
+„nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Die Grenze ist
+einstellbar (`Plastizitaet.dehnungsgrenze`, Vorgabe 20 %). Für einen
+Werkstoff mit eingetragener Bruchdehnung (`Material.bruchdehnung`) gilt
+diese. Das Prüfblech aus tet4 konvergiert bei 900 kN mit ε_p 20,56 % und ist
+damit nicht gültig.
+
+**Netzabhängige Zonen an der Gültigkeitsgrenze (seit 16.10.2026, Vorgabe des
+Anwenders).** Eine Überschreitung wird nur gewarnt, wenn vier Bedingungen
+zugleich gelten (`plastizitaet.grenze_netzabhaengig`, `solver._grenze_netzabhaengig`).
+(a) Es gibt Stellen, die der Newton als auffällig und damit netzabhängig markiert
+hat (`_SpitzenImNewton.auffaellig`); ihre Zonen sind die Elementmengen
+`zone` der Stellen. (b) Jedes Element, dessen ε_p,max über seiner Grenze liegt,
+gehört zu diesen Zonen. (c) Die Rechnung ist konvergiert, ohne Traglastmeldung,
+und das Residuum der inneren Kräfte an **allen** freien Freiheitsgraden, auch in
+den Zonen, liegt bezogen auf die Lasten unter der Abbruchtoleranz (1e-3); schlägt
+die globale Gleichgewichtskontrolle danach an, fällt die Ausnahme weg. (d) Die
+Zone wächst nicht: Am Ende jeder konvergierten Laststufe hält der Newton die
+Elemente über der Grenze fest; in der letzten kommt keines dazu, und in der
+vorletzten lag schon eines darüber. Gemessen an der Ankerplatte
+(`tests/test_traglast_meldung`): Mit 0,3 MN Zuglast fließen nur die 48 Elemente
+der Zone am Lochrand (ε_p,max 8,78 %); über einer Grenze von 2 % liegen in den
+letzten beiden Laststufen dieselben 32 Elemente, die Ausnahme greift. Mit 0,6 MN fließen 16 Elemente
+außerhalb (ε_p,max 33 %); das Ergebnis bleibt nicht gültig mit Grund (b).
+
+**Wortlaut der Traglastmeldung (seit 16.10.2026, Vorgabe des Anwenders).** „Kein
+Gleichgewicht gefunden bei Laststufe X (… % der Last). Mögliche Ursache: Traglast
+überschritten oder örtlicher Mechanismus an <Ort>. Letzter konvergierter
+Lastanteil: … %.“ Der Ort ist das Element mit dem größten Zuwachs von ε_p vom
+letzten konvergierten Zustand zum letzten Versuch (`plastizitaet.traglast_ort`).
+Liegt es in einer auffälligen Zone oder berührt es einen Knoten mit Knotenlast,
+einen Knoten eines starren Körpers oder einer Verteilkopplung (auch Kreisring)
+oder einer starren Scheibe bzw. eines gekoppelten Stabendes
+(`krafteinleitung_knoten`), heißt die Ursache „örtlicher Mechanismus an
+Krafteinleitung – Modell prüfen“. Am Zugstab 50 × 50 mm mit 1,2 F_lim liegt der Ort
+im fließenden Stab; mit F_lim an einem einzigen Knoten liegt er im Element an
+diesem Knoten.
+
+**Körper nur über reibungsfreien Kontakt gehalten (seit 17.10.2026).** Die
+Vorabsuche der freien Bewegungen (`singular.restfreiheiten`) nimmt ein Teiltragwerk als
+starr; über einen Anker gehört dessen fester Fuß dazu, und eine Ankerplatte auf
+reibungsfreiem Kontakt gilt dort als gehalten. `singular.kontakt_gehalten` fragt darum je
+Körper (`Model.koerper`, sonst die Elementgruppe der Volumen) nach den Zeilen a = [d,
+(r × d)/L] seiner Halterungen auf die sechs Starrkörperbewegungen: Lager
+(`_lagerzeilen`), Kontaktnormalen und -tangenten (`_kontaktzeilen`, Tangenten nur mit
+Reibung), Kopplungsrichtungen, drei Zeilen je Knoten, den er mit einem anderen Körper,
+einer Schale oder einem Balken teilt, und je Fachwerkstab oder Seil eine Zeile längs der
+Stabachse – am Körper selbst oder am Master einer starren Scheibe bzw. eines starren
+Körpers, an dem dann auch dessen Lager zählen. Bleibt ein Nullraum, wird derselbe Satz
+mit angenommener Reibung in allen Fugen gebildet (`reibung_annehmen`); wird er kleiner,
+hielte Reibung den Körper. Gemeldet wird das, und das, was nur Stäbe ohne Quersteifigkeit
+begleiten; ein Körper ohne jede Zeile bleibt der Vorabsuche. Die freien Bewegungen nennt
+`_bewegungstext`, gleichartige Körper (dieselben Bewegungen, Fugen und Gegenkörper)
+stehen in einer Zeile. Am Klotz auf dem Block (`tests/test_kontakt_gehalten`) meldet die
+Prüfung ohne Reibung „in der Ebene (x, y) frei verschieblich, um z frei drehbar“, mit
+μ = 0,2 und seitlich gehalten nichts; eine Freigabe (Lager nur senkrecht) nennt sie mit
+ihrem Namen. Im Ergebnis passt `singular.starrkoerperbewegung` je solchem Körper die
+beste Starrkörperbewegung an die Knotenverschiebungen an (kleinste Quadrate in [t, L·ω]);
+gemeldet wird sie, wenn sie größer als 10⁻³ L ist und die Abweichung davon höchstens 10 %
+beträgt. Am Klotz mit 0,25 N Querlast bei 1 MN senkrecht (der Gleichungslöser nimmt
+das noch an, 1 N bricht als „singulär“ ab) wandert er über den angehobenen Pivot gut
+1 mm, als Ganzes. Liegt der Knoten des Mechanismus oder das Element
+des Orts einer Traglastmeldung in einem solchen Körper, nennt die Ursache ihn
+(`plastizitaet.traglast_ort`, `traglast_ursache`).
+
+**Numerische Haltungen in der Gleichgewichtskontrolle (seit 16.10.2026).** „Frei
+drehbar“ wird streng ausgelegt: An jedem Knoten, den eine starre Kopplung, eine
+starre Scheibe oder ein starrer Körper bindet und an dem kein Element eine Drehung
+hält, löst das Programm mit dem vorhandenen Faktor für Einheitslasten zufälligen
+Vorzeichens (zwei je Verschiebung und Drehung, alle Knoten zugleich). Die größte
+Antwort am Freiheitsgrad ist seine Nachgiebigkeit; liegt ihr Kehrwert unter 10⁻⁹
+der Hauptdiagonale, hält ihn nur der angehobene Pivot (`singular.numerisch_gehalten`),
+und die Meldung ist eine Warnung, auch mit Zwangsbedingung und ohne Last. Kraft und
+Moment, die nur numerisch gehalten werden, sind an einer freien Bewegung Φ der
+Anteil Φᵀ F der Last, denn Φᵀ K = 0: am Knoten die Projektion von Kraft und Moment
+auf die freien Richtungen, am frei beweglichen Bauteil die Projektion seiner
+Knotenkräfte auf seine Starrkörperbewegungen, dazu die Lasten an automatisch
+gehaltenen Freiheitsgraden (`singular.numerische_haltung`). Sie stehen als eigene
+Angabe in der Gleichgewichtskontrolle (Warnung ab 10⁻⁴, nicht gültig ab 1 % der
+Lasten) und gehen in einer plastischen Rechnung ins innere Residuum ein. Die
+Mindesttangente (H_TANGENTE) gehört nicht dazu: Sie steht nur in der Tangente, das
+Residuum rechnet mit den inneren Kräften des wahren Werkstoffs.
+
+**Gleichgewicht mit inneren Kräften.** Jede plastische Rechnung bestimmt am
+gezeigten Zustand das Residuum an den freien Freiheitsgraden. Der Lösungsweg
+erfüllt K u = F_ende + F_p exakt, die inneren Kräfte sind aber K u − F_p(u)
+mit dem F_p, das die Rückführung an u liefert. Es fehlen also
+(F − F_ende) + (F_p(u) − F_p), gemessen gegen die verlangte Last F. Die
+Freiheitsgrade ausgenommener netzabhängiger Zonen (§ 5e.4) zählen nicht.
+Bezogen wird auf ‖F‖, bei einer Endvorspannung mit dem Kräftepaar der
+Sollkraft statt der Verriegelungskraft. Das ist dasselbe Maß wie die
+Abbruchtoleranz, ein konvergierter Lauf liegt darum unter ihr (10⁻³). Ab
+10⁻² ist das Ergebnis nicht gültig, auch wenn es nicht konvergiert ist; nur
+ein vorläufiger Kontakt bleibt vorläufig. Am Zugstab bei 1,2·F_lim fehlen
+(1 − λ)·F, bezogen 0,083; ohne Traglasterkennung (Rücknahmeprobe) erkennt
+die Kontrolle allein den weggelaufenen Zustand mit 0,33. Am Prüfblech fehlen
+412,5 kN, bezogen 0,32.
+
+**Residuum am Ende jeder Laststufe und im Kontaktlauf.** Dieselbe Lücke hatten
+die Zeile „Residuum am Ende – Gleichgewicht … der Lasten“ jeder Laststufe mit
+Kontakt (`_KontaktImNewton.residuum_stufe`) und das Ingenieurkriterium des
+Kontaktlaufs (`solver._ingenieur_abschluss`): beide prüften nur die Summe
+|ΣR + ΣF|. Seit dem 16.10.2026 misst die Laststufe das innere Gleichgewicht
+ihrer letzten Lösung. Die Lösung erfüllt (K + ΔK) u = F_k + F_p,l + ΔK u_vor,
+die inneren Kräfte sind K u − F_p(u); es fehlen also
+F_p(u) − F_p,l + ΔK (u − u_vor), dazu das Residuum des Kontakts. Dieses ist
+F + f_c(u) − (K + K_zusatz) u an den freien Freiheitsgraden, mit den
+Kontaktkräften f_c nach dem Kontaktgesetz in dieser Lösung
+(`solver.kontakt_residuum`). Bezogen wird wie die Abbruchtoleranz, also auf
+die Lasten, bei einer Endvorspannung mit der Sollkraft. Die Freiheitsgrade
+ausgenommener Zonen stehen getrennt in der Zeile. Schranke ist die Toleranz
+der Plastizität (10⁻³), und die Summe bleibt Pflicht. An den Kontaktmodellen
+der Prüfungen liegen konvergierte Kontaktläufe bei 10⁻¹⁵ bis 1,6·10⁻⁶ von ‖F‖,
+die Stufen des gequetschten Blocks bei höchstens 6·10⁻⁷. Das
+Ingenieurkriterium nimmt einen pendelnden Zustand nur noch an, wenn auch sein
+inneres Residuum unter 10⁻⁴ liegt. An den 16 Annahmen der Kontaktprüfungen lag
+es bei 4·10⁻¹⁵ bis 1,6·10⁻¹⁴; ein eingespieltes Ungleichgewicht von 1 % der
+Last am Kontaktgesetz wird abgelehnt, und der Lauf endet am Deckel.
+
+Aus einer gespeicherten Ergebnisdatei lässt sich dieses Residuum nicht
+nachrechnen. Die Datei hält u, die plastischen Dehnungen der fließenden
+Elemente je Integrationspunkt (`ip_dehnungen`) und je Element die größte
+Vergleichsdehnung. Für F_p(u) braucht die Rückführung aber den Zustand am
+Anfang der letzten Laststufe und die Vergleichsdehnung je Punkt; beides steht
+nicht in der Datei.
+
+**Ausgabe.** Jeder plastische Lauf meldet in Protokoll und Zusammenfassung
+ε_p,max mit Ort (Körper, Element, Integrationspunkt, Koordinate) und ΣR, ΣM der
+Lagerkräfte des gezeigten Zustands.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

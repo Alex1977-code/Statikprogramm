@@ -217,6 +217,28 @@ def test_bericht_fuehrt_die_teile_auf():
           html.count("frei verschieblich") >= 2, str(html.count("frei verschieblich")))
 
 
+def test_bericht_trennt_information_von_warnung():
+    """Eine Information (durch Zwangsbedingung gebunden, ohne Last) steht im Bericht
+    unter eigener Überschrift und nicht bei den Warnungen."""
+    from statik3d.report import Report
+    m = stab_mit_freiem_knoten()
+    r, _n = loesen(m)
+    e = dict(teile(r)[0])
+    e.update(stufe="INFORMATION", namen=["S1"], knoten=[157],
+             bewegung="um z frei drehbar", haltung="Zwangsbedingung: starr F37",
+             text="S1: Knoten K157: um z frei drehbar - Information: ...")
+    r.info["freie_teile"] = [e]
+    rep = Report(m, results=r)
+    html = rep.html()
+    check("der Bericht hat das Kapitel zur Information", "durch Zwangsbedingung gehalten" in html, "")
+    check("und kein Kapitel „Frei bewegliche Teile“ (nur Information vorhanden)",
+          "Frei bewegliche Teile" not in html, "")
+    check("die Information steht nicht bei den Warnungen",
+          not any("K157" in str(w) for w in rep._warnings), str(rep._warnings)[:80])
+    check("sie nennt Knoten, Bewegung und Zwangsbedingung",
+          "K157" in html and "um z frei drehbar" in html and "starr F37" in html, "")
+
+
 def test_bericht_sagt_nur_wahres_zur_hilfsfesselung():
     """Das Kapitel „Freie Bewegungen“ behauptete bis zum 08.10.2026 immer, jede
     Bewegung sei mit einer Hilfsfesselung festgehalten - auch wo die Rechnung
@@ -406,6 +428,87 @@ def test_stabknoten_ohne_querhalt():
 
 
 # --------------------------------------------------------------------------
+# 5b) Gestufte Meldung (16.10.2026): Information, Warnung
+# --------------------------------------------------------------------------
+def test_stufen_der_meldung():
+    """„um z frei drehbar“ am Kopf der Anker S1-S16 (K157, K172 ...) war eine
+    WARNUNG „gehalten nur durch: kein Lager und keine Fuge; bitte lagern“ -
+    dabei haelt das Programm diese Drehung selbst, ueber die starre Scheibe
+    (Zwangsbedingung). Entscheidung des Anwenders: Information nur, wenn an
+    diesem Freiheitsgrad keine Last und kein Moment angreift und er ueber eine
+    Zwangsbedingung (keine weiche Feder) gebunden ist; sonst Warnung."""
+    from statik3d.model import Kopplung, StarrKoerper
+    inf = float("inf")
+    z_achse = np.array([[0.0], [0.0], [1.0]])           # freie Drehung um z
+    quer = np.array([[1.0], [0.0], [0.0]])              # freie Verschiebung in x
+    keine = np.zeros((3, 0))
+
+    def stufe(m, k, Vt, Vr):
+        lasten = sg.last_je_knoten(m, [k])
+        zw, fe = sg.zwang_je_knoten(m, [k])
+        return sg.stufe_freier_knoten(m, k, Vt, Vr, lasten, zw, fe)
+
+    m = stab_mit_freiem_knoten()
+    s, grund = stufe(m, STAB_KNOTEN, keine, z_achse)
+    check("ohne Zwangsbedingung: WARNUNG, der Grund nennt es", s == "WARNUNG" and "Zwangsbedingung" in grund,
+          f"{s}: {grund}")
+    # starre Scheibe: Kopplung mit unendlicher Steifigkeit
+    n2 = int(m.add_node(1.0, 0.0, 0.0))
+    m.kopplungen.append(Kopplung(STAB_KNOTEN, n2, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [inf] * 3,
+                                 gruppe="starr F37"))
+    s, halt = stufe(m, STAB_KNOTEN, keine, z_achse)
+    check("starre Kopplung, keine Last: INFORMATION mit dem Namen der Zwangsbedingung",
+          s == "INFORMATION" and "starr F37" in halt, f"{s}: {halt}")
+    # Moment um die freie Achse: Warnung; Moment um eine andere Achse: weiter Information
+    m.load_node(STAB_KNOTEN, Mz=100.0)
+    s, grund = stufe(m, STAB_KNOTEN, keine, z_achse)
+    check("Moment um die freie Drehachse: WARNUNG (die Last ginge ins Nichts)",
+          s == "WARNUNG" and "Moment" in grund, f"{s}: {grund}")
+    m2 = stab_mit_freiem_knoten()
+    n2 = int(m2.add_node(1.0, 0.0, 0.0))
+    m2.kopplungen.append(Kopplung(STAB_KNOTEN, n2, [[1, 0, 0]], [inf], gruppe="starr F37"))
+    m2.load_node(STAB_KNOTEN, My=100.0)
+    s, _h = stufe(m2, STAB_KNOTEN, keine, z_achse)
+    check("Moment um eine andere Achse als die freie: weiter INFORMATION", s == "INFORMATION", s)
+    m2.load_node(STAB_KNOTEN, Fx=50.0)
+    s, grund = stufe(m2, STAB_KNOTEN, quer, keine)
+    check("Kraft in der freien Verschiebungsrichtung: WARNUNG", s == "WARNUNG" and "Kraft" in grund,
+          f"{s}: {grund}")
+    # weiche Feder statt Zwangsbedingung
+    m3 = stab_mit_freiem_knoten()
+    n3 = int(m3.add_node(1.0, 0.0, 0.0))
+    m3.kopplungen.append(Kopplung(STAB_KNOTEN, n3, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [1e6] * 3,
+                                  gruppe="Feder"))
+    s, grund = stufe(m3, STAB_KNOTEN, keine, z_achse)
+    check("nur eine weiche Feder (endliche Steifigkeit): WARNUNG", s == "WARNUNG" and "weiche Feder" in grund,
+          f"{s}: {grund}")
+    # starrer Koerper (RBE2)
+    m4 = stab_mit_freiem_knoten()
+    n4 = int(m4.add_node(1.0, 0.0, 0.0))
+    m4.add_starrkoerper(STAB_KNOTEN, [n4], art="RBE2")
+    s, halt = stufe(m4, STAB_KNOTEN, keine, z_achse)
+    check("starrer Körper (RBE2): INFORMATION", s == "INFORMATION" and "RBE2" in halt, f"{s}: {halt}")
+    # die Zeilen
+    e_info = {"text": "S1: Knoten K157 um z frei drehbar - Information: ...", "stufe": "INFORMATION"}
+    e_warn = {"text": "S9: Knoten K5 ...", "stufe": "WARNUNG"}
+    e_alt = {"text": "S7: Knoten K5 ..."}
+    zl = solver.freie_teile_zeilen([e_info, e_warn, e_alt])
+    check("Zusammenfassung: INFORMATION- und WARNUNG-Zeilen, Eintrag ohne Stufe = WARNUNG",
+          [z.split(":")[0] for z in zl] == ["INFORMATION", "WARNUNG", "WARNUNG"], str([z[:14] for z in zl]))
+
+
+def test_stab_ohne_querhalt_bleibt_warnung_mit_grund():
+    """Der Stabknoten am schiefen Anschlag hat keine Zwangsbedingung: die
+    Meldung bleibt eine WARNUNG und sagt, was fehlt."""
+    r, _n = loesen(stab_mit_freiem_knoten())
+    t = teile(r)
+    check("Eintrag mit Stufe WARNUNG", len(t) == 1 and t[0].get("stufe") == "WARNUNG", str(t[:1])[:80])
+    check("der Satz nennt, dass keine Zwangsbedingung bindet",
+          bool(t) and "keine Zwangsbedingung" in t[0]["text"], t[0]["text"][-90:] if t else "")
+    check("die Zeile der Zusammenfassung beginnt mit WARNUNG", len(warnzeilen(r)) == 1)
+
+
+# --------------------------------------------------------------------------
 # 6) Die Beispiele bleiben still
 # --------------------------------------------------------------------------
 def test_beispiele_ohne_meldung():
@@ -440,12 +543,13 @@ def test_rechnung_bitgleich_und_billig():
 
 
 def main():
-    for f in (test_platte_reibungsfrei_wird_genannt, test_bericht_fuehrt_die_teile_auf,
+    for f in (test_platte_reibungsfrei_wird_genannt, test_bericht_fuehrt_die_teile_auf, test_bericht_trennt_information_von_warnung,
               test_bericht_sagt_nur_wahres_zur_hilfsfesselung, test_gesamtanalyse_buendelt,
               test_kombination_traegt_die_teile, test_gehalten_keine_meldung,
               test_viele_platten_eine_zeile, test_schiefe_ebene_nennt_die_normale,
               test_gesunde_modelle_haben_einen_haufen,
-              test_stabknoten_ohne_querhalt, test_beispiele_ohne_meldung,
+              test_stabknoten_ohne_querhalt, test_stufen_der_meldung,
+              test_stab_ohne_querhalt_bleibt_warnung_mit_grund, test_beispiele_ohne_meldung,
               test_rechnung_bitgleich_und_billig):
         print(f"\n--- {f.__name__} ---")
         try:

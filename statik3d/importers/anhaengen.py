@@ -96,6 +96,10 @@ _OHNE_VERGLEICH = ("format", "name", "meta", "active_case")
 
 #: Nicht uebertragbar: (Bezeichnung, Grund und was zu tun ist)
 NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
+    # Vorspannung je Anker (16.10.2026): Definitionen und Verweise der Lastfaelle
+    "vorspann_definitionen": ("Vorspannung je Anker",
+                              "die Definitionen und die Verweise der Lastfälle auf sie werden nicht "
+                              "übertragen – im Ziel neu anlegen bzw. zuordnen"),
     # gespeicherte Ansichten (14.10.2026): Kamera, Ausgeblendetes und Schnitt
     # nennen Nummern und Namen des Quellmodells
     "ansichten": ("Gespeicherte Ansichten",

@@ -64,6 +64,32 @@ class Hill:
         return self.fy * c * c / (r * r), self.k * c * c / (self.b * self.b), 0.0
 
 
+def soll_am_punkt(m, h, c, knoten):
+    """{Knoten: Soll-sigma_v [Pa]} fuer die Knotentabelle einer plastischen Rechnung.
+
+    Dort traegt eine Ecke den naechsten Integrationspunkt jedes angrenzenden Elements
+    (solver.PLASTISCH_NUR_PUNKTE), nicht den Wert am Knoten. Der Sollwert gehoert also an den
+    Radius dieser Punkte: das Mittel von Hill ueber die angrenzenden Elemente."""
+    X = np.asarray(m.nodes, float)
+    radien = {int(n): [] for n in knoten}
+    xi_je_typ = {}
+    for i, e in enumerate(m.elements):
+        ecken = e.nodes[:len(sl.ECKEN_NATUERLICH[e.typ])]
+        if not any(int(n) in radien for n in ecken):
+            continue
+        xi = xi_je_typ.get(e.typ)
+        if xi is None:
+            xi = xi_je_typ[e.typ] = np.asarray(sl.dehnungsoperator(m, e.typ, [i])[0].xi, float)
+        en = np.asarray(sl.ECKEN_NATUERLICH[e.typ], float)
+        Xe = X[list(e.nodes)]
+        for k, n in enumerate(ecken):
+            if int(n) in radien:
+                q = int(np.argmin(np.linalg.norm(en[k] - xi, axis=1)))
+                xp = sl.N_dN(e.typ, *xi[q])[0] @ Xe
+                radien[int(n)].append(float(np.hypot(xp[0], xp[1])))
+    return {n: float(np.mean([h.punkt(c, r)[0] for r in rs])) for n, rs in radien.items()}
+
+
 def modell(typ, n_t, n_r, p, laststufen=1, verfestigung=0.0, iterationen=200):
     rz = pk.Hohlzylinder(p=p)
     m = rz.modell(typ, n_t, n_r, nu=NU, fy=FY)
@@ -88,6 +114,7 @@ def lauf(typ, n_t, n_r, c=0.15, verfestigung=0.0):
     pos = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]))}
     S = np.asarray(sk["spannung"])
     sv_b = np.mean([sl.von_mises(S[pos[n]]) for n in aussen])
+    soll_ip = soll_am_punkt(m, h, c, aussen)
     # Zustand an den Integrationspunkten: eine Laststufe, also die Rueckfuehrung
     # aus dem Anfangszustand bei der Endverschiebung (wie der Loeser rechnete)
     uu = np.asarray(res.u, float).ravel()
@@ -106,6 +133,7 @@ def lauf(typ, n_t, n_r, c=0.15, verfestigung=0.0):
     sv_s, sm_s, ep_s = h.punkt(c, rp)
     return {"fhg": pk.fhg(m), "ok": ok, "u": ur / h.u_r(c, h.b),
             "sv_b": (sv_b - h.punkt(c, h.b)[0]) / 1e6,
+            "sv_b_ip": (sv_b - np.mean([soll_ip[n] for n in aussen])) / 1e6,
             "r": rp, "sv": (sl.von_mises(s) - sv_s) / 1e6,
             "sm": (np.mean(s[:3]) - sm_s) / 1e6, "ep": ep / ep_s - 1}
 
@@ -130,7 +158,7 @@ def main(argv=None):
             try:
                 z = lauf(typ, n_t, n_r)
                 print(f"{typ:6s} {n_t:2d} x {n_r:2d} ({z['fhg']:5d} FHG) {z['ok']}: "
-                      f"u_r(b) {z['u']:.4f}, sv(b) {z['sv_b']:+.2f} | Punkt r = {z['r']:.4f}: "
+                      f"u_r(b) {z['u']:.4f}, sv(b) {z['sv_b']:+.2f}, am Punktradius {z['sv_b_ip']:+.2f} | Punkt r = {z['r']:.4f}: "
                       f"sv {z['sv']:+.2f}, sm {z['sm']:+.2f} N/mm2, ep {z['ep'] * 100:+.1f} %",
                       flush=True)
             except Exception as ex:                    # noqa: BLE001

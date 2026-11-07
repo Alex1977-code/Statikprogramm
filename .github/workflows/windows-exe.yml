@@ -87,10 +87,14 @@ jobs:
           $repo = "${{ github.repository }}"
           # Die Release-Notizen ueber eine Datei: ein PowerShell-Here-String
           # braeuchte sein "@ in Spalte 0, und in YAML ist alles eingerueckt.
+          # Die Versionsnummer steht in den Notizen, damit die exe beim Vergleich
+          # nicht nur Commits sieht (update.vergleiche, 16.10.2026)
+          $version = (Select-String -Path statik3d/__init__.py -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
           $zeilen = @(
             "Automatisch gebaut aus main.",
             "",
             "build: ${{ github.sha }}",
+            "Version: $version",
             "Datum: ${{ github.event.head_commit.timestamp }}",
             "",
             "Download: Statik3D.exe (Windows 10/11, 64 Bit). Beim ersten Start meldet",

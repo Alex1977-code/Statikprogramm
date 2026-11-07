@@ -770,6 +770,14 @@ def _section(db: Db, sec_id: int, model: Model, cache: dict, matcache: dict,
         sec.zmax = sec.h / 2.0
     if sec.ymax <= 0 and sec.b:
         sec.ymax = sec.b / 2.0
+    # Der Rundstahl fuehrt in der rf6 kein W_el; die Kennwerte kamen nach __post_init__,
+    # darum blieb es 0 (Drehlager Rund 16/20/40, 06.11.2026). W_el = pi d^3 / 32.
+    if sec.typ == "circle" and sec.h > 0:
+        w = math.pi * sec.h ** 3 / 32.0
+        if sec.Wel_y <= 0:
+            sec.Wel_y = w
+        if sec.Wel_z <= 0:
+            sec.Wel_z = w
     if not kw:
         C.warn(log, f"Querschnitt '{name}': keine Kennwerte in der Datei - Ersatzwerte.")
     else:

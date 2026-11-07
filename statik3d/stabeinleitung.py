@@ -48,6 +48,10 @@ import numpy as np
 #: Name der Kopplung eines Stabendes (wie die Gruppe der starren Kopplungen in
 #: fugen.STABENDE_GRUPPE): "Stabende K<Knoten>"
 STABENDE = "Stabende "
+#: Name der Verteilkopplung einer starren Scheibe mit Kreisring (seit
+#: 16.10.2026): "Scheibe <Flaeche>", wie fugen.STARR_GRUPPE + Flaeche bei der
+#: starren Kopplung des Lochrands
+SCHEIBE = "Scheibe "
 #: Knick [Grad], bis zu dem eine Randseite noch in der Ebene der Stirnflaeche
 #: liegt (eine Zylinderflaeche aus 20 Abschnitten knickt um 18 Grad)
 KNICK = 5.0
@@ -68,9 +72,26 @@ TEXTE = {"punkt": "an 1–3 Knoten wie RFEM", "stirn": "verteilt über die Stirn
 # Einstellung je Stabende
 # --------------------------------------------------------------------------
 def ist_verteilkopplung(sk) -> bool:
-    """Eine verteilende Kopplung eines Stabendes (RBE3 mit Namen "Stabende K…")."""
+    """Eine verteilende Kopplung eines Stabendes: RBE3 mit Namen "Stabende K…"
+    (Stabende auf einer Stirnflaeche) oder, seit 16.10.2026, "Scheibe F…"
+    (Stabende in der Mitte einer starren Scheibe, Kreisring unter Mutter
+    bzw. Scheibe, fugen.starre_flaechen_koppeln). Beide rechnen und pruefen
+    gleich (zwangsmatrix, pruefen)."""
+    return ist_stabende_kopplung(sk) or ist_scheibenkopplung(sk)
+
+
+def ist_stabende_kopplung(sk) -> bool:
+    """Die verteilende Kopplung eines Stabendes auf einer Stirnflaeche
+    (RBE3 "Stabende K…", fugen.stabenden_koppeln)."""
     return (str(getattr(sk, "art", "")).upper() == "RBE3"
             and str(getattr(sk, "name", "")).startswith(STABENDE))
+
+
+def ist_scheibenkopplung(sk) -> bool:
+    """Der Kreisring einer starren Scheibe (RBE3 "Scheibe F…", seit 16.10.2026,
+    fugen.starre_flaechen_koppeln)."""
+    return (str(getattr(sk, "art", "")).upper() == "RBE3"
+            and str(getattr(sk, "name", "")).startswith(SCHEIBE))
 
 
 def staebe_an_enden(model) -> dict:
@@ -286,6 +307,69 @@ def _teilregel(k: int, s: int) -> tuple:
     return GP, np.full(len(GP), 4.0 / (s * s))
 
 
+def _integrieren(X, R, seiten, p, P0, n0, ring: bool, ri: float, ra: float) -> tuple:
+    """Gewichte w_i = Integral N_i dA und Momentvektoren s_i = Integral N_i
+    (x - p) dA ueber die Randseiten ``seiten`` (Indizes in ``R``) - ganz oder,
+    mit ``ring``, nur ihr Teil zwischen ri und ra um P0 in der Ebene mit der
+    Normale n0; Seiten, die der Ring schneidet, in Teilzellen. Gemeinsam fuer
+    die Stirnflaeche eines Stabendes (:func:`flaeche_finden`) und den
+    Kreisring unter einer starren Scheibe (:func:`ring_auf_ebene`, seit
+    16.10.2026). Rueckgabe ({Knoten: w}, {Knoten: s}, Zahl der benutzten Seiten)."""
+    from .elements import solid as sl
+    gewicht: dict = {}
+    moment: dict = {}
+    je_k: dict = {}
+    for j in seiten:
+        je_k.setdefault(len(R["voll"][j]), []).append(j)
+    benutzt = 0
+    for k, liste in je_k.items():
+        for j in liste:
+            voll = R["voll"][j]
+            P = X[voll]
+            if ring:
+                kc = 4 if k in (4, 8) else 3
+                Q = P[:kc] - P0
+                Q = Q - np.outer(Q @ n0, n0)
+                r_ecke = np.linalg.norm(Q, axis=1)
+                # kleinster Abstand der Seite zum Mittelpunkt: 0, wenn er darin liegt
+                if _in_seite(P0, P[:kc], n0, 0.0):
+                    r_min = 0.0
+                else:
+                    r_min = float("inf")
+                    for a_, b_ in zip(Q, np.roll(Q, -1, axis=0)):
+                        d = b_ - a_
+                        t_ = float(np.clip(-(a_ @ d) / max(float(d @ d), 1e-300), 0.0, 1.0))
+                        r_min = min(r_min, float(np.linalg.norm(a_ + t_ * d)))
+                r_max = float(r_ecke.max())
+                if r_min >= ra or r_max <= ri:
+                    continue                        # ganz ausserhalb des Rings
+                if r_min >= ri and r_max <= ra:
+                    d_ = sl.seiten_integration_stapel(P[None])
+                    w = d_["knotenflaechen"][0]
+                    s_ = np.einsum("m,mk,mj->kj", d_["dA"][0], d_["N"], d_["punkte"][0] - p)
+                else:
+                    h = float(np.max(np.linalg.norm(P[:kc] - np.roll(P[:kc], -1, axis=0), axis=1)))
+                    s = int(min(64, max(4, math.ceil(RING_TEILUNG * h / (ra - ri)))))
+                    d_ = sl.seiten_integration_stapel(P[None], regel=_teilregel(k, s))
+                    pk = d_["punkte"][0] - P0
+                    pk = pk - np.outer(pk @ n0, n0)
+                    r = np.linalg.norm(pk, axis=1)
+                    chi = ((r >= ri) & (r <= ra)).astype(float)
+                    w = (d_["dA"][0] * chi) @ d_["N"]
+                    s_ = np.einsum("m,mk,mj->kj", d_["dA"][0] * chi, d_["N"], d_["punkte"][0] - p)
+                    if not np.any(chi):
+                        continue
+            else:
+                d_ = sl.seiten_integration_stapel(P[None])
+                w = d_["knotenflaechen"][0]
+                s_ = np.einsum("m,mk,mj->kj", d_["dA"][0], d_["N"], d_["punkte"][0] - p)
+            benutzt += 1
+            for q, wq, sq in zip(voll, w.tolist(), s_):
+                gewicht[int(q)] = gewicht.get(int(q), 0.0) + float(wq)
+                moment[int(q)] = moment.get(int(q), np.zeros(3)) + sq
+    return gewicht, moment, benutzt
+
+
 def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
                    toleranz: float = 1e-4) -> dict:
     """Die Einleitungsflaeche eines Stabendes am ``knoten`` im Koerper ``kname``.
@@ -303,7 +387,6 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
     (Integral N_i (x - x_Stabknoten) dA [m3], seit 14.10.2026), "flaeche"
     [m2], "normale", "punkt" (Durchstosspunkt), "seiten"} - oder
     {"grund": Text}, wenn es die Flaeche nicht gibt."""
-    from .elements import solid as sl
     cache = {} if cache is None else cache
     X = np.asarray(model.nodes, float)
     p = X[int(knoten)]
@@ -355,62 +438,12 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
     if float(np.linalg.norm(achse)) > 0 and abs(float(achse @ n0)) > 1e-9:
         t = float((X[R["ecken"][saat[0]][0]] - p) @ n0) / float(achse @ n0)
         P0 = p + t * achse
-    gewicht: dict = {}
-    moment: dict = {}
     ring = str(e.get("art")) == "ring"
     ri = 0.5 * float(e.get("d_innen", 0.0) or 0.0)
     ra = 0.5 * float(e.get("d_aussen", 0.0) or 0.0)
     if ring and not ra > ri:
         return {"grund": f"Kreisring ohne gültige Durchmesser (innen {mm(2 * ri)} mm, außen {mm(2 * ra)} mm)"}
-    je_k: dict = {}
-    for j in seiten:
-        je_k.setdefault(len(R["voll"][j]), []).append(j)
-    benutzt = 0
-    for k, liste in je_k.items():
-        for j in liste:
-            voll = R["voll"][j]
-            P = X[voll]
-            if ring:
-                kc = 4 if k in (4, 8) else 3
-                Q = P[:kc] - P0
-                Q = Q - np.outer(Q @ n0, n0)
-                r_ecke = np.linalg.norm(Q, axis=1)
-                # kleinster Abstand der Seite zum Mittelpunkt: 0, wenn er darin liegt
-                if _in_seite(P0, P[:kc], n0, 0.0):
-                    r_min = 0.0
-                else:
-                    r_min = float("inf")
-                    for a_, b_ in zip(Q, np.roll(Q, -1, axis=0)):
-                        d = b_ - a_
-                        t_ = float(np.clip(-(a_ @ d) / max(float(d @ d), 1e-300), 0.0, 1.0))
-                        r_min = min(r_min, float(np.linalg.norm(a_ + t_ * d)))
-                r_max = float(r_ecke.max())
-                if r_min >= ra or r_max <= ri:
-                    continue                        # ganz ausserhalb des Rings
-                if r_min >= ri and r_max <= ra:
-                    d_ = sl.seiten_integration_stapel(P[None])
-                    w = d_["knotenflaechen"][0]
-                    s_ = np.einsum("m,mk,mj->kj", d_["dA"][0], d_["N"], d_["punkte"][0] - p)
-                else:
-                    h = float(np.max(np.linalg.norm(P[:kc] - np.roll(P[:kc], -1, axis=0), axis=1)))
-                    s = int(min(64, max(4, math.ceil(RING_TEILUNG * h / (ra - ri)))))
-                    d_ = sl.seiten_integration_stapel(P[None], regel=_teilregel(k, s))
-                    pk = d_["punkte"][0] - P0
-                    pk = pk - np.outer(pk @ n0, n0)
-                    r = np.linalg.norm(pk, axis=1)
-                    chi = ((r >= ri) & (r <= ra)).astype(float)
-                    w = (d_["dA"][0] * chi) @ d_["N"]
-                    s_ = np.einsum("m,mk,mj->kj", d_["dA"][0] * chi, d_["N"], d_["punkte"][0] - p)
-                    if not np.any(chi):
-                        continue
-            else:
-                d_ = sl.seiten_integration_stapel(P[None])
-                w = d_["knotenflaechen"][0]
-                s_ = np.einsum("m,mk,mj->kj", d_["dA"][0], d_["N"], d_["punkte"][0] - p)
-            benutzt += 1
-            for q, wq, sq in zip(voll, w.tolist(), s_):
-                gewicht[int(q)] = gewicht.get(int(q), 0.0) + float(wq)
-                moment[int(q)] = moment.get(int(q), np.zeros(3)) + sq
+    gewicht, moment, benutzt = _integrieren(X, R, seiten, p, P0, n0, ring, ri, ra)
     if not gewicht:
         return {"grund": "der Kreisring trifft keine Randseite der Stirnfläche"}
     kn = sorted(gewicht)
@@ -420,6 +453,141 @@ def flaeche_finden(model, knoten: int, kname: str, e: dict, cache: dict = None,
     if ring:
         aus["flaeche_nenn"] = math.pi * (ra * ra - ri * ri)
     return aus
+
+
+def _ebenen(X, R: dict, kname: str, cache: dict) -> dict:
+    """Je Randseite des Koerpers die Einheitsnormale nach aussen, der
+    Mittelpunkt der Ecken und der groesste Abstand einer Ecke von ihm -
+    vektorisiert und je Koerper einmal (``cache``); die 64 Scheiben des
+    Drehlagers fragen dieselben Koerper."""
+    schl = ("ebenen", kname)
+    if schl in cache:
+        return cache[schl]
+    n_s = len(R["ecken"])
+    nrm = np.zeros((n_s, 3))
+    mitte = np.zeros((n_s, 3))
+    weite = np.zeros(n_s)
+    ecken = R["ecken"]
+    for zahl in (3, 4):
+        idx = np.asarray([j for j in range(n_s) if len(ecken[j]) == zahl], np.int64)
+        if not len(idx):
+            continue
+        E = np.asarray([ecken[j] for j in idx.tolist()], np.int64)
+        P = X[E]
+        n = (np.cross(P[:, 2] - P[:, 0], P[:, 3] - P[:, 1]) if zahl == 4
+             else np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0]))
+        ln = np.linalg.norm(n, axis=1)
+        n = n / np.maximum(ln, 1e-300)[:, None]
+        n[ln <= 0] = 0.0
+        c = P.mean(axis=1)
+        dreh = np.einsum("ij,ij->i", n, c - R["innen"][idx]) < 0
+        n[dreh] = -n[dreh]
+        nrm[idx], mitte[idx] = n, c
+        weite[idx] = np.linalg.norm(P - c[:, None, :], axis=2).max(axis=1)
+    cache[schl] = {"normale": nrm, "mitte": mitte, "weite": weite}
+    return cache[schl]
+
+
+def _koerper_nahe(model, punkt, radius: float, cache: dict) -> list:
+    """Die Koerper, deren Huellquader (aus den Raendern ihrer Flaechen) die
+    Kugel um ``punkt`` mit ``radius`` trifft - ein Koerper ohne Flaechen
+    zaehlt immer."""
+    schl = "huellquader"
+    if schl not in cache:
+        quader = {}
+        for kname, k in (getattr(model, "koerper", None) or {}).items():
+            P = []
+            for fn in (getattr(k, "flaechen", None) or []):
+                f = (getattr(model, "flaechen", None) or {}).get(fn)
+                try:
+                    # abgetastet: ein Zylinder aus zwei Halbboegen hat nur zwei Knoten
+                    P.extend(np.asarray(f.randpunkte(model, 8), float).reshape(-1, 3))
+                except Exception:                 # noqa: BLE001 - dann ohne Huellquader
+                    P = []
+                    break
+            if len(P):
+                lo, hi = np.min(P, axis=0), np.max(P, axis=0)
+                # Sehnen von 8 Abschnitten liegen bis 8 % des Radius innen
+                rand = 0.1 * (hi - lo)
+                quader[kname] = (lo - rand, hi + rand)
+            else:
+                quader[kname] = None
+        cache[schl] = quader
+    p = np.asarray(punkt, float)
+    aus = []
+    for kname, q in cache[schl].items():
+        if q is None or (np.all(p >= q[0] - radius) and np.all(p <= q[1] + radius)):
+            aus.append(kname)
+    return aus
+
+
+def ring_auf_ebene(model, master: int, mitte, normale, d_innen: float, d_aussen: float,
+                   cache: dict = None, toleranz: float = 1e-4) -> dict:
+    """Der Kreisring unter einer starren Scheibe (seit 16.10.2026, Entscheidung
+    des Anwenders: „Mutterkraft an allen 64 Scheiben über einen Kreisring
+    einleiten, verteilend (RBE3, flächenanteilig)“).
+
+    Anders als bei :func:`flaeche_finden` liegt das Stabende hier in keiner
+    Randseite - es sitzt in der Mitte der Bohrung. Die Auflageflaeche sind
+    darum die Randseiten der Koerper in der Ebene der Scheibe (``mitte``,
+    ``normale``; bis ``toleranz`` in der Ebene und mit der Normale bis
+    :data:`KNICK` Grad parallel), deren Aussennormale der Stabachse
+    entgegensteht: die Mutter drueckt auf das Blech, durch das der Stab geht.
+    Ohne Stab am ``master`` zaehlen beide Seiten. Davon der Teil zwischen
+    d_innen/2 und d_aussen/2 um die Mitte, integriert wie bei der
+    Stirnflaeche (:func:`_integrieren`, tet10: Seitenmitten mit den
+    konsistenten Knotenflaechen). Momentvektoren bezogen auf den Master.
+
+    Rueckgabe wie :func:`flaeche_finden` und dazu "koerper" (Namen) und
+    "tragend" (Knoten mit Gewicht > 0) - oder {"grund": Text}."""
+    cache = {} if cache is None else cache
+    X = np.asarray(model.nodes, float)
+    m = int(master)
+    p = X[m]
+    c = np.asarray(mitte, float)
+    n0 = np.asarray(normale, float)
+    n0 = n0 / (np.linalg.norm(n0) or 1.0)
+    ri, ra = 0.5 * float(d_innen), 0.5 * float(d_aussen)
+    if not ra > ri >= 0.0:
+        return {"grund": f"Kreisring ohne gültige Durchmesser (innen {mm(2 * ri)} mm, außen {mm(2 * ra)} mm)"}
+    achse = stabachse(model, m)
+    cos_k = math.cos(math.radians(KNICK))
+    gewicht: dict = {}
+    moment: dict = {}
+    benutzt = 0
+    koerper = []
+    for kname in _koerper_nahe(model, c, ra, cache):
+        R = _randseiten(model, kname, cache)
+        if not R["voll"]:
+            continue
+        eb = _ebenen(X, R, kname, cache)
+        nrm, mit = eb["normale"], eb["mitte"]
+        d = mit - c
+        r_mitte = np.linalg.norm(d - np.outer(d @ n0, n0), axis=1)
+        wahl = (np.abs(nrm @ n0) >= cos_k) & (np.abs(d @ n0) <= toleranz) & (r_mitte <= ra + eb["weite"])
+        if float(np.linalg.norm(achse)) > 0:
+            wahl &= (nrm @ achse) < 0.0
+        seiten = [j for j in np.flatnonzero(wahl).tolist()
+                  if np.all(np.abs((X[R["ecken"][j]] - c) @ n0) <= toleranz)]
+        if not seiten:
+            continue
+        g, s_, b = _integrieren(X, R, seiten, p, c, n0, True, ri, ra)
+        if not g:
+            continue
+        benutzt += b
+        koerper.append(kname)
+        for q, w in g.items():
+            gewicht[q] = gewicht.get(q, 0.0) + w
+            moment[q] = moment.get(q, np.zeros(3)) + s_[q]
+    if not gewicht:
+        return {"grund": "der Kreisring trifft keine Randseite eines Körpers in der Ebene der Scheibe"}
+    kn = sorted(gewicht)
+    w = [gewicht[q] for q in kn]
+    klein = 1e-12 * max(abs(x) for x in w)
+    return {"knoten": kn, "gewichte": w, "momente": [[float(x) for x in moment[q]] for q in kn],
+            "flaeche": float(sum(w)), "flaeche_nenn": math.pi * (ra * ra - ri * ri), "normale": n0,
+            "punkt": c, "seiten": benutzt, "koerper": koerper,
+            "tragend": int(sum(1 for x in w if abs(x) > klein))}
 
 
 def verteilt_zeile(verteilt: list) -> str:

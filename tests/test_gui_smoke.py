@@ -9405,8 +9405,14 @@ def main():
         w.model = m_; w.analysis = None; w.results = None; w.refresh_all(); app.processEvents()
         alt_hf = solver.StaticSystem.hilfsfesselung
         alt_halt = solver._freie_teile_halten
+        from statik3d import contact as contact_
+        alt_schalter = (solver.VORAB_HALTEN, solver.SPRUNG_PRUEFEN, contact_.OEFFNEN_BEGRENZEN)
         solver.StaticSystem.hilfsfesselung = lambda self: False
         solver._freie_teile_halten = lambda *a, **k: False      # sonst haelt der Block an drei Punkten
+        # Ohne die Schutzschalter aus 485ec2c, wie tests/test_abbruch.py: mit ihnen bricht dieses
+        # Modell nicht mehr ab (test_ohne_hilfsfesselung_stabilisiert)
+        solver.VORAB_HALTEN = solver.SPRUNG_PRUEFEN = False
+        contact_.OEFFNEN_BEGRENZEN = False
         try:
             ex_ = None
             try:
@@ -9416,6 +9422,7 @@ def main():
         finally:
             solver.StaticSystem.hilfsfesselung = alt_hf
             solver._freie_teile_halten = alt_halt
+            solver.VORAB_HALTEN, solver.SPRUNG_PRUEFEN, contact_.OEFFNEN_BEGRENZEN = alt_schalter
         check("Abbruch: die Ausnahme trägt das Teilergebnis der letzten Iteration",
               ex_ is not None and getattr(ex_, "teilergebnis", None) is not None
               and getattr(ex_, "iteration", 0) >= 1, str(ex_)[:80])

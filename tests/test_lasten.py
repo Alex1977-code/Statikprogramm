@@ -768,7 +768,10 @@ def test_flaechenlast_auf_seite_ohne_flaeche():
     # es hier angelegt, und check() nennt es jetzt als eigenen FEHLER.
     from statik3d.model import Element
     m3 = wuerfel(W)
-    m3.add_node(2.0, 0.0, 0.0)
+    # Seit 16.10.2026 warnt check() nur bei einem freien Knoten, an dem etwas
+    # haengt (Last, Lager, Kopplung); ein Knoten ohne alles ist eine Information
+    # der Netzabnahme (tests.test_freie_knoten)
+    m3.load_node(int(m3.add_node(2.0, 0.0, 0.0)), Fz=-1.0)
     m3.elements.append(Element("hex8", list(range(1, 8)), "S235"))    # sieben Knoten
     m3.load_face(1, -1000e3, face=1)
     try:

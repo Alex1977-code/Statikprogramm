@@ -159,6 +159,52 @@ UMKEHR_RUNDEN = 2
 #: regulaer und traegt am Ende keine Kraft, denn ihre Kraft steht im Residuum.
 HAFT_FAKTOR = 1.0e3
 RT_REST = 1.0e-8
+#: Reststeifigkeit der Reibungstangente einmal je Lauf entscheiden (17.10.2026). Bis
+#: dahin bekam ein gleitender Knoten die grobe Feder SLIP_STIFFNESS*k_t ohne Ausgleich,
+#: solange seine Gruppe in dieser Runde ganz rutschte und sonst nichts das Bauteil hielt,
+#: und die feine RT_REST*c_pd mit Ausgleich, sobald ein Knoten haftete - je Runde neu,
+#: das 1e9-fache hin und her. Die grobe Feder traegt Kraft und verschiebt das Bauteil,
+#: Knoten haften wieder, die naechste Runde springt zurueck: am Drehlager-Z mit mu 0,2
+#: (GZ02) Periode 2 bis zum Deckel, am Pruefkoerper Platte auf Reibfuge (tests/
+#: test_pendeln_rt) ebenso. Jetzt entscheidet die erste Runde, in der die Gruppe ganz
+#: rutscht, und die Entscheidung gilt bis zum Ende des Laufs: grob nur, wenn die Fuge das
+#: Bauteil nicht halten kann (Kraft und Moment, die sie in der Loesung davor trug, ueber
+#: der Reibkapazitaet: F/(mu Sum Fn) + M/(mu Sum Fn r) > 1), sonst fein mit Ausgleich -
+#: die Reibkraefte heben sich dann auf, auch wenn alle Knoten gleiten (radial unter
+#: einer Ankerkraft). Ruecknahme: False.
+RT_HALT_EINMAL = True
+#: Gleitweg-Speicher der Reibungstangente (17.10.2026). Die Rueckabbildung rechnete mit
+#: dem ganzen Tangentialweg dt = C_t u seit der Ausgangslage, ohne Gedaechtnis: in einer
+#: Stufe nach einer Stufe mit Gleiten (Spannschritt -> Lastfall, Laststufen der
+#: Plastizitaet, Spannstufen) zog die Haftfeder den Knoten zur Ausgangslage zurueck, und die
+#: Reibkraft konnte die Bewegung antreiben statt ihr entgegenzuwirken (gemessen am Klotz mit
+#: Reibung, tests/test_gleitweg: im Lastfall 17 von 17 gleitenden Knoten mit negativer
+#: Dissipation, Reibkraft -12,4 kN statt Haften). Jetzt hat jeder Knoten einen Gleitweg g_s
+#: (Constraint.g_s), die Versuchskraft ist k_h (dt - g_s). g_s steht in der Sicherung des
+#: Zustands ("gleitweg") und wird am Ende jeder konvergierten Stufe fortgeschrieben
+#: (solver.gleitweg_fortschreiben: g_s = dt - F_t/k_h der letzten Loesung); innerhalb einer
+#: Stufe (Newton-Schritte, Ausfall-Iteration, Neustart, Halbierung) bleibt er, ein
+#: Warmstart aus einem anderen Lastfall bringt keinen mit. Ruecknahme: False.
+GLEITWEG_SPEICHER = True
+#: Oeffnen begrenzen (17.10.2026, Auftrag des Anwenders nach Mittel-Z mu 0,2): wollen in
+#: einer Runde **alle** geschlossenen Bedingungen eines Teils oeffnen und waere es dadurch
+#: weniger gehalten (Rang der geschlossenen Bedingungen, Bindungen und Lager,
+#: solver._rang_zahl), oeffnet die Runde nur die staerker gezogene Haelfte. Das ist
+#: Schrittsteuerung: geoeffnet wird weiter nur bei Zug ueber der Toleranz, und solange eine
+#: zurueckgehaltene Bedingung Zug traegt, gilt die Runde als Wechsel. Bei hoechstens
+#: OEFFNEN_REST Bedingungen begrenzt die Regel nicht mehr: dann haelt die vorhandene
+#: Halte-Hilfe das Teil (solver.VORAB_HALTEN, _freie_teile_halten), und traegt der Halt am
+#: Ende Zug, bricht der Lauf wie bisher ab ("hebt ab, kein Gleichgewicht").
+#: Verworfen (gemessen 17.10.2026): jede Oeffnung begrenzen, die Rang nimmt - sie hielt in den
+#: Pendelmodellen (tests/test_pendeln_periode2) einen einzelnen pendelnden Knoten auf Dauer
+#: geschlossen, jeder Lauf endete am Deckel (21 von 36 Pruefungen). Ruecknahme: False.
+OEFFNEN_BEGRENZEN = True
+OEFFNEN_REST = 3
+#: Kontaktstabilisierung (17.10.2026): Steifigkeit der Feder, die ein nicht gehaltenes oder
+#: springendes Teil an seinen Kontaktbedingungen bekommt, als Anteil der Kontaktsteifigkeit
+#: (Diagonale, _c_pd). Sie wirkt auf den Weg seit der vorigen Runde (Daempfung,
+#: solver.solve_with_contact setzt den Bezug), ihre Kraft steht im Residuum und im Protokoll.
+STABIL_ANTEIL = 1.0e-6
 #: Ab dieser Drehung bzw. relativen Aenderung wird die Tangente eines gleitenden
 #: Knotens der Reibungstangente neu gesetzt (neue Matrix); darunter rechnet die Runde
 #: mit der vorigen Tangente weiter (vereinfachter Newton), die Kraft ist trotzdem die
@@ -375,6 +421,11 @@ class Constraint:
     umkehr_fest: bool = False      # in diesem Lauf vom Pendelschutz der Gleitrichtung festgehalten
                                    # (ContactSystem.umkehr_winkel, Vorschlag 2, 14.10.2026)
     dt_fest: Optional[np.ndarray] = None    # Weg in der Fuge (2,) beim letzten Festhalten
+    g_s: Optional[np.ndarray] = None        # Gleitweg (2,) bis zum Anfang dieser Stufe
+                                            # (GLEITWEG_SPEICHER); None: null
+    start_zu: bool = False         # Kontaktstart geschlossen (Kontaktbedingung.start_geschlossen)
+    stab_k: float = 0.0            # Kontaktstabilisierung: Federsteifigkeit (0: keine)
+    stab_ref: Optional[np.ndarray] = None   # ... ihr Bezug (C u der vorigen Runde)
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -826,7 +877,10 @@ def _deckender_knoten(p, s, mbaum, mknoten, knorm, tol):
 
 
 def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
-    """Facetten (Knotenlisten) der Master-Oberflaeche eines Kontaktpaares."""
+    """Facetten (Knotenlisten) der Master-Oberflaeche eines Kontaktpaares.
+
+    Bei einer Fuge die ganze Gegenseite, nicht nur die Liste im Paar
+    (fugen.gegenseite_ergaenzung); die Liste kommt zuerst und bleibt in ihrer Folge."""
     from .assemble import SOLID_FACES, SHELL_TYPES, SOLID_TYPES
     facets: list[tuple[int, ...]] = [tuple(int(n) for n in f) for f in cp.master_faces]
     faces: dict[tuple, tuple] = {}
@@ -843,6 +897,8 @@ def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
                 else:
                     faces[key] = nodes
     facets.extend(faces.values())
+    from .fugen import gegenseite_ergaenzung
+    facets.extend(tuple(int(n) for n in f) for f in gegenseite_ergaenzung(model, cp))
     return facets
 
 
@@ -913,6 +969,8 @@ class ContactSystem:
         #: die Feder am Ende keine Kraft traegt (K5). None: vom Loeser noch
         #: nicht bestimmt - dann wie bis dahin (alle grob).
         self.gruppe_frei = None
+        #: RT_HALT_EINMAL: {Gruppe: "fein" | "grob"} - einmal je Lauf entschieden
+        self._halt_rt: dict = {}
         self.diag = np.asarray(K.diagonal()).ravel()
         self.cons: list[Constraint] = []
         self.size = model.characteristic_size()
@@ -1216,7 +1274,8 @@ class ContactSystem:
                                     TANGENT_FACTOR * kn, mu, s, n, marke,
                                     master=(list(tri), list(wj)), limit=limit,
                                     zug=bool(cp.zug), haften=haften, bindung=haften,
-                                    starr=self._starr(cp.stiffness)))
+                                    starr=self._starr(cp.stiffness),
+                                    start_zu=bool(getattr(cp, "start_geschlossen", False))))
 
     def _knoten_elemente(self) -> dict:
         """Knoten -> Volumenelemente, einmal je Kontaktsystem gebaut."""
@@ -1527,6 +1586,8 @@ class ContactSystem:
             + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
                f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
                if ohne else "")
+            + (f"; {len(facets) - len(cp.master_faces or [])} Gegenfacetten aus der Gegenfläche ergänzt"
+               if not cp.master_elements and len(facets) > len(cp.master_faces or []) else "")
             + (f" - {len(neben)} liegen neben der Gegenfläche: dort steht ihnen nichts "
                f"gegenüber, sie tragen nicht (z. B. Knoten {', '.join(str(x) for x in neben[:5])})"
                if neben else ""))
@@ -1557,8 +1618,15 @@ class ContactSystem:
         self.wechsel_guete = float("inf")
         self._ruhe_gemeldet = False
         self.gruppe_frei = None
+        self._halt_rt = {}
+        self._begrenzt_gemeldet = set()
+        self.zurueckgehalten = 0
         for c in self.cons:
-            c.active = True if c.zug else c.g0 <= self.tol
+            # Kontaktstart geschlossen (Einstellung der Fuge): geschlossen mit dem echten
+            # Spalt; Zug oeffnet sie in der ersten Aktualisierung wie jede andere
+            c.active = True if (c.zug or getattr(c, "start_zu", False)) else c.g0 <= self.tol
+            c.stab_k = 0.0
+            c.stab_ref = None
             c.slip = False
             c.slip_dir = None
             c.dt_last = None
@@ -1640,6 +1708,8 @@ class ContactSystem:
                              for c in self.cons],
                 "wechsel_anteil": float(getattr(self, "wechsel_anteil", 1.0)),
                 "wechsel_guete": float(getattr(self, "wechsel_guete", float("inf"))),
+                # Gleitweg bis zum Anfang der Stufe (GLEITWEG_SPEICHER)
+                "gleitweg": self.gleitweg(),
                 # ganz rutschende Gruppen ohne anderen Halt: Reststeifigkeit und
                 # Signatur haengen daran - ohne Sicherung faktorisierte der
                 # Warmstart neu (27.09.2026)
@@ -1705,6 +1775,8 @@ class ContactSystem:
         self.phase = int(z.get("phase", 2) or 2)
         gf = z.get("gruppe_frei")
         self.gruppe_frei = None if gf is None else set(gf)
+        # die Entscheidung ueber die Reststeifigkeit gilt je Lauf (RT_HALT_EINMAL)
+        self._halt_rt = {}
         self.warm = True
         self.cycles = 0
         self.richtung_runden = 0
@@ -1857,7 +1929,7 @@ class ContactSystem:
                 gl, _f, nd, _kq = self._rueckabbildung(c, dt, Fn)
                 if gl and not c.slip:
                     v["kegel"] += 1
-                    kh = float(np.linalg.norm(self._k_haft(c) * dt))
+                    kh = float(np.linalg.norm(self._k_haft(c) * self._dt_el(c, dt)))
                     v["kegel_max"] = max(v["kegel_max"], kh / limit if limit > 0 else np.inf)
                 elif c.slip and (not gl or (c.slip_dir is not None and nd is not None
                                             and float(np.linalg.norm(c.slip_dir - nd)) > 1e-3)):
@@ -1993,6 +2065,10 @@ class ContactSystem:
                 hash(h.tobytes()),
                 tuple(sorted(self._full_slip_groups().items())),
                 None if getattr(self, "gruppe_frei", None) is None else tuple(sorted(self.gruppe_frei)),
+                tuple(sorted((getattr(self, "_halt_rt", None) or {}).items())),
+                # Kontaktstabilisierung: welche Bedingungen mit welcher Feder
+                tuple((i, float(c.stab_k)) for i, c in enumerate(self.cons)
+                      if getattr(c, "stab_k", 0.0) > 0.0),
                 # Quertangenten (primal-dual) stehen in Kc: ihr Inhalt, nicht ein
                 # Zaehler - ein uebernommener Zustand mit denselben Tangenten
                 # loest mit der Faktorisierung des vorigen Lastfalls
@@ -2072,7 +2148,7 @@ class ContactSystem:
                 if self._rt(c):
                     # eingefroren: gegen die Rueckabbildung an dieser Loesung
                     gl, Ft_rm, _nd, _kq = self._rueckabbildung(c, dt, roh)
-                    Ft_z = (self._k_haft(c) * dt if not c.slip
+                    Ft_z = (self._k_haft(c) * self._dt_el(c, dt) if not c.slip
                             else limit * np.asarray(c.slip_dir, float))
                     kraft += float(np.linalg.norm(Ft_rm - Ft_z))
                 elif self._primal_dual(c):
@@ -2202,7 +2278,7 @@ class ContactSystem:
         if dt is None or not (c.mu > 0 or c.haften):
             Ft = np.zeros(2)
         elif not c.slip:
-            Ft = (self._k_haft(c) * dt if self._rt(c)
+            Ft = (self._k_haft(c) * self._dt_el(c, dt) if self._rt(c)
                   else np.asarray(self._lam_t(c, lam, dt), float) if self._haftzeile(c)
                   else c.kt * dt)
         else:
@@ -2517,12 +2593,54 @@ class ContactSystem:
         nicht die Strafsteifigkeit k_t = 1e4-fache Diagonale der Phase 1."""
         return float(getattr(self, "haft_faktor", HAFT_FAKTOR)) * self._c_pd(c)
 
+    def _dt_el(self, c: Constraint, dt) -> np.ndarray:
+        """Der Weg der Haftfeder: dt - g_s (GLEITWEG_SPEICHER), ohne Gleitweg dt."""
+        g = getattr(c, "g_s", None)
+        if not GLEITWEG_SPEICHER or g is None or dt is None:
+            return dt
+        return np.asarray(dt, float) - np.asarray(g, float)
+
+    def gleitweg(self) -> list:
+        """Je Bedingung der Gleitweg g_s (Liste (2,) oder None) - fuer die Sicherung."""
+        return [None if getattr(c, "g_s", None) is None else np.array(c.g_s, float) for c in self.cons]
+
+    def gleitweg_setzen(self, gw) -> None:
+        """Den Gleitweg einsetzen (Liste je Bedingung) oder loeschen (None)."""
+        if gw is not None and len(gw) != len(self.cons):
+            gw = None
+        for i, c in enumerate(self.cons):
+            g = None if gw is None else gw[i]
+            c.g_s = None if g is None else np.array(g, float).reshape(2)
+
+    def gleitweg_ende(self, u: np.ndarray) -> list:
+        """Der Gleitweg nach der Loesung ``u`` (GLEITWEG_SPEICHER), der Anfang der
+        naechsten Stufe: an einem aktiven Knoten der Reibungstangente dt - F_t/k_h mit
+        der Kraft der Rueckabbildung (haftend bleibt g_s, gleitend wandert er mit), an
+        einem offenen dt (die Haftfeder ist entspannt; schliesst er wieder, haftet er
+        dort, wo er war). Andere Bedingungen: unveraendert."""
+        out = self.gleitweg()
+        if u is None:
+            return out
+        u = np.asarray(u, float)
+        for i, c in enumerate(self.cons):
+            if c.ct is None or not (c.mu > 0 and not c.haften) or not self._rt(c):
+                continue
+            ue = u[c.dofs]
+            dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+            if not c.active:
+                out[i] = dt
+                continue
+            fn = float(getattr(c, "zug_roh", c.Fn))
+            _gl, Ft, _nd, _kq = self._rueckabbildung(c, dt, fn)
+            out[i] = dt - np.asarray(Ft, float) / self._k_haft(c)
+        return out
+
     def _rueckabbildung(self, c: Constraint, dt: np.ndarray, p: float) -> tuple:
         """Coulomb je Knoten (Return-Mapping): (gleitet, F_t (2,), Richtung (2,)
         oder None, Quertangente mu p/|d_t|) aus dem Tangentialweg ``dt`` und der
         Normalkraft ``p`` (ungekappt; Zug traegt keine Reibung). F_t in der
         Ft-Konvention (parallel zum Weg, die Kraft auf das Tragwerk ist -C_t^T F_t)."""
-        dt = np.asarray(dt, float)
+        dt = self._dt_el(c, np.asarray(dt, float))
         f = self._k_haft(c) * dt
         nf = float(np.linalg.norm(f))
         limit = c.mu * max(float(p), 0.0)
@@ -2676,6 +2794,9 @@ class ContactSystem:
                         # Reibungstangente: Haften als Feder k_h (symmetrisch)
                         kmat = kmat + self._k_haft(c) * (np.outer(c.ct[0], c.ct[0])
                                                          + np.outer(c.ct[1], c.ct[1]))
+                        if GLEITWEG_SPEICHER and getattr(c, "g_s", None) is not None:
+                            # F_t = k_h (C_t u - g_s): der Anteil k_h C_t^T g_s ist Last
+                            Fc[c.dofs] += self._k_haft(c) * (c.g_s[0] * c.ct[0] + c.g_s[1] * c.ct[1])
                     elif not (self._haftzeile(c) and not als_federn):
                         kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                     # sonst Haften exakt: zwei Zeilen in C (system_matrizen), keine Feder
@@ -2740,6 +2861,17 @@ class ContactSystem:
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(kmat.ravel())
+        if not als_federn:
+            for c in self.cons:
+                if getattr(c, "stab_k", 0.0) > 0.0:
+                    # Kontaktstabilisierung: k (C u - Bezug) in Normal- und Tangentialrichtung
+                    R = self._stab_zeilen(c)
+                    r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
+                    rows.append(r.ravel())
+                    cols.append(cc.ravel())
+                    vals.append((c.stab_k * (R.T @ R)).ravel())
+                    if c.stab_ref is not None:
+                        Fc[c.dofs] += c.stab_k * (R.T @ np.asarray(c.stab_ref, float))
         if rows:
             Kc = sparse.coo_matrix((np.concatenate(vals),
                                     (np.concatenate(rows), np.concatenate(cols))),
@@ -2781,8 +2913,178 @@ class ContactSystem:
         die grobe Reststeifigkeit ohne Ausgleich: sie haelt das Bauteil."""
         if not full_slip.get(_group(c), False):
             return False
+        if self._halt_fein(_group(c)) and self._rt(c):
+            return False                # RT_HALT_EINMAL: die Fuge haelt das Bauteil
         gf = getattr(self, "gruppe_frei", None)
         return gf is None or _group(c) in gf
+
+    def _stab_zeilen(self, c: Constraint) -> np.ndarray:
+        """Die Zeilen der Kontaktstabilisierung: Normale und, wenn vorhanden, die beiden
+        Tangentialrichtungen der Bedingung (relativer Weg Slave - Gegenseite)."""
+        R = [np.asarray(c.cn, float)]
+        if c.ct is not None:
+            R += [np.asarray(c.ct[0], float), np.asarray(c.ct[1], float)]
+        return np.array(R)
+
+    def stab_setzen(self, idx, k_anteil: float, u=None) -> int:
+        """Kontaktstabilisierung an den Bedingungen ``idx`` (Indizes): Feder
+        k_anteil * Kontaktsteifigkeit (_c_pd), nie kleiner als eine schon gesetzte; Bezug
+        der Weg in ``u`` (None: null). Rueckgabe: Zahl der neu oder staerker gesetzten."""
+        n = 0
+        for i in idx:
+            c = self.cons[int(i)]
+            k = float(k_anteil) * float(self._c_pd(c))
+            if k > getattr(c, "stab_k", 0.0):
+                c.stab_k = k
+                n += 1
+            if c.stab_ref is None:
+                c.stab_ref = (self._stab_zeilen(c) @ np.asarray(u, float)[c.dofs] if u is not None
+                              else np.zeros(len(self._stab_zeilen(c))))
+        return n
+
+    def stab_bezug(self, u) -> None:
+        """Bezug der Stabilisierung auf die Loesung ``u`` setzen (Daempfung: die Feder
+        wirkt auf den Weg seit dieser Loesung)."""
+        if u is None:
+            return
+        u = np.asarray(u, float)
+        for c in self.cons:
+            if getattr(c, "stab_k", 0.0) > 0.0:
+                c.stab_ref = self._stab_zeilen(c) @ u[c.dofs]
+
+    def stab_kraefte(self, u) -> dict:
+        """{Index: |Kraft| [N]} der Kontaktstabilisierung in der Loesung ``u``."""
+        aus = {}
+        if u is None:
+            return aus
+        u = np.asarray(u, float)
+        for i, c in enumerate(self.cons):
+            if getattr(c, "stab_k", 0.0) > 0.0:
+                ref = np.zeros(3) if c.stab_ref is None else np.asarray(c.stab_ref, float)
+                R = self._stab_zeilen(c)
+                aus[i] = float(np.linalg.norm(c.stab_k * (R @ u[c.dofs] - ref[:len(R)])))
+        return aus
+
+    def _oeffnen_begrenzen(self, wuensche: list, umstellen: set) -> set:
+        """OEFFNEN_BEGRENZEN: je Teil, dem die Oeffnungen dieser Runde Rang nehmen, nur die
+        staerker gezogene Haelfte oeffnen (``wuensche``: (Zug, Bedingung) - bei einer
+        aktiven Bedingung ist der Wert der Zug). Rueckgabe die verbleibende Menge
+        ``umstellen``; ``zurueckgehalten`` zaehlt, was geschlossen blieb."""
+        zug = {id(c): float(v) for v, c in wuensche if c.active and id(c) in umstellen}
+        if not zug or getattr(self, "model", None) is None:
+            return umstellen
+        try:
+            from .solver import _halterzeilen, _lagerzeilen, _rang_zahl, _teile_gruppen
+            teile = _teile_gruppen(self.model, self)
+            lager = _lagerzeilen(self.model, self)
+        except Exception:                     # noqa: BLE001 - eine Schrittsteuerung sperrt nie
+            return umstellen
+        umstellen = set(umstellen)
+        for name, kn, cons in teile:
+            mine = [c for c in cons if id(c) in zug and id(c) in umstellen]
+            if not mine or len(mine) <= OEFFNEN_REST:
+                continue
+            if any(c.active and id(c) not in zug for c in cons):
+                continue                # es bleibt eine geschlossene Bedingung: nicht alle
+            r_jetzt = _rang_zahl(self.model, kn, _halterzeilen(cons, kn=kn, lager=lager))
+            weg = {id(c) for c in mine}
+            r_nach = _rang_zahl(self.model, kn, _halterzeilen([c for c in cons if id(c) not in weg],
+                                                              kn=kn, lager=lager))
+            if r_nach >= r_jetzt:
+                continue
+            mine.sort(key=lambda c: -zug[id(c)])
+            bleiben = mine[len(mine) // 2:]
+            for c in bleiben:
+                umstellen.discard(id(c))
+            self.zurueckgehalten = getattr(self, "zurueckgehalten", 0) + len(bleiben)
+            gemeldet = getattr(self, "_begrenzt_gemeldet", None)
+            if gemeldet is None:
+                gemeldet = self._begrenzt_gemeldet = set()
+            if name not in gemeldet:
+                gemeldet.add(name)
+                self.log.append(f"Kontakt: Körper {name} wäre in dieser Runde nicht gehalten (die haltenden "
+                                f"Bedingungen wollten öffnen) - geöffnet wird nur die stärker gezogene "
+                                f"Hälfte ({len(mine) - len(bleiben)} von {len(mine)})")
+        return umstellen
+
+    def _halt_fein(self, g: str) -> bool:
+        """Hat dieser Lauf fuer die Gruppe entschieden, dass ihre Reibung das Bauteil
+        haelt (RT_HALT_EINMAL)? Dann feine Reststeifigkeit mit Ausgleich, auch wenn
+        alle Knoten gleiten, und keine Warnung "Bauteil rutscht"."""
+        return RT_HALT_EINMAL and (getattr(self, "_halt_rt", None) or {}).get(g) == "fein"
+
+    def _rt_bedarf(self, u: np.ndarray, lam) -> dict:
+        """{Gruppe: (F, M, F_kap, M_kap)} der Reibungstangente in der Loesung ``u``
+        (mit dem Zustand, mit dem sie gerechnet wurde): die Resultierende F und das
+        Moment M um den Schwerpunkt der aktiven Knoten, die die Fuge tangential traegt,
+        und ihre Kapazitaet mu Sum Fn und mu Sum Fn |r_t|.
+
+        Ist die Fuge eben (|Sum Fn n| >= 0,9 Sum Fn), zaehlen nur die Anteile senkrecht
+        zur gemittelten Normale n_m (F) bzw. um sie (M): an Knoten mit schraeger Normale
+        (Rand des Gegenstuecks) hat die Tangentialkraft einen Anteil laengs n_m, den die
+        Normalkraefte aufnehmen (Pruefkoerper: 6,5 kN laengs z bei Resultierender null
+        in der Ebene). Bei gekruemmten Fugen bleibt der volle Vektor - das schaetzt den
+        Bedarf hoeher, die Entscheidung faellt eher grob, also wie bisher."""
+        full_slip = self._full_slip_groups()
+        X = np.asarray(self.model.nodes, float)
+        teile: dict = {}
+        for c in self.cons:
+            if not (c.active and c.mu > 0 and c.ct is not None and self._rt(c)):
+                continue
+            _g, roh, _fn, Ft, _dt = self._kraft_einer(c, u, lam, full_slip)
+            t1, t2 = _axes_of(c)
+            f = float(Ft[0]) * np.asarray(t1, float) + float(Ft[1]) * np.asarray(t2, float)
+            teile.setdefault(_group(c), []).append((X[int(c.node)], f, c.mu * max(float(roh), 0.0),
+                                                   np.asarray(c.normal, float)))
+        out = {}
+        for g, z in teile.items():
+            o = np.mean([x for x, _f, _k, _n in z], axis=0)
+            F = np.sum([f for _x, f, _k, _n in z], axis=0)
+            M = np.sum([np.cross(x - o, f) for x, f, _k, _n in z], axis=0)
+            kF = float(sum(k for _x, _f, k, _n in z))
+            nm = np.sum([k * n / (float(np.linalg.norm(n)) or 1.0) for _x, _f, k, n in z], axis=0)
+            eben = kF > 0.0 and float(np.linalg.norm(nm)) >= 0.9 * kF
+            if eben:
+                nm = nm / float(np.linalg.norm(nm))
+                F = F - (F @ nm) * nm
+                M = (M @ nm) * nm
+            kM = 0.0
+            for x, _f, k, n in z:
+                r = x - o
+                a = nm if eben else n / (float(np.linalg.norm(n)) or 1.0)
+                r = r - (r @ a) * a
+                kM += k * float(np.linalg.norm(r))
+            out[g] = (float(np.linalg.norm(F)), float(np.linalg.norm(M)), kF, kM)
+        return out
+
+    def _halt_rt_entscheiden(self, bedarf: dict):
+        """RT_HALT_EINMAL: fuer jede Gruppe, die jetzt ganz rutscht und noch nicht
+        entschieden ist, aus dem Bedarf der Loesung davor (:meth:`_rt_bedarf`)
+        entscheiden - einmal, ohne Zuruecknehmen. Grob (die Feder haelt das Bauteil,
+        Warnung), wenn F/F_kap + M/M_kap > 1: die lineare Wechselwirkung liegt
+        innerhalb der konvexen Grenzkurve, darunter haelt die Reibung sicher."""
+        if not RT_HALT_EINMAL:
+            return
+        halt = getattr(self, "_halt_rt", None)
+        if halt is None:
+            halt = self._halt_rt = {}
+        for g, voll in self._full_slip_groups().items():
+            if not voll or g in halt or g not in bedarf:
+                continue
+            F, M, kF, kM = bedarf[g]
+            if kF <= 0.0:
+                continue
+            qF = F / kF
+            qM = M / kM if kM > 0.0 else (0.0 if M <= 1e-12 * kF * self.size else float("inf"))
+            halt[g] = "fein" if qF + qM <= 1.0 else "grob"
+            self.log.append(
+                f"Kontakt: {g} - alle Knoten gleiten; die Fuge trug F = {F:.4g} N und "
+                f"M = {M:.4g} Nm bei der Kapazitaet {kF:.4g} N bzw. {kM:.4g} Nm "
+                f"(Ausnutzung {qF + qM:.3g}): "
+                + ("die Reibung haelt das Bauteil, feine Reststeifigkeit mit Ausgleich"
+                   if halt[g] == "fein" else
+                   "das Bauteil rutscht, grobe Reststeifigkeit haelt es")
+                + " - bis zum Ende des Laufs")
 
     def _full_slip_groups(self) -> dict:
         """Kontaktgruppe -> True, wenn alle aktiven Reibknoten gleiten (Bauteil rutscht;
@@ -2804,7 +3106,17 @@ class ContactSystem:
         Laufs (MAX_CYCLES, seit dem 15.10.2026): soll die Iteration weiterlaufen und hat
         der Lauf schon MAX_CYCLES Runden, endet er am Deckel - mit der Zeile im
         Protokoll und ``am_deckel``, also nicht konvergiert und das Ergebnis vorlaeufig."""
+        # (Stuempfe aus object.__new__ ohne Bedingungen: nichts zu entscheiden)
+        bedarf = (self._rt_bedarf(u, lam)
+                  if RT_HALT_EINMAL and getattr(self, "reibungstangente", False)
+                  and getattr(self, "cons", None) else {})
         weiter = self._update_entscheiden(u, lam)
+        if bedarf:
+            vor = dict(getattr(self, "_halt_rt", None) or {})
+            self._halt_rt_entscheiden(bedarf)
+            if self._halt_rt != vor and not weiter and not self.am_deckel:
+                # die Reststeifigkeit aendert sich: noch eine Runde mit der neuen Matrix
+                weiter = True
         n = len(getattr(self, "runden", None) or [])
         if weiter and n >= MAX_CYCLES:
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
@@ -2850,7 +3162,8 @@ class ContactSystem:
             # K5 in Phase 1 an der groben Feder haengen
             gf = getattr(self, "gruppe_frei", None)
             if any(c.active and c.slip and (not full.get(_group(c), False)
-                                            or (gf is not None and _group(c) not in gf))
+                                            or (gf is not None and _group(c) not in gf)
+                                            or self._halt_fein(_group(c)))
                    for c in self.cons):
                 self.phase = 2
                 self.cycles = 0
@@ -3004,6 +3317,11 @@ class ContactSystem:
             wuensche.sort(key=lambda e: -e[0])
             wuensche = wuensche[:max(1, int(anteil * len(wuensche)))]
         umstellen = {id(c) for _v, c in wuensche}
+        self.zurueckgehalten = 0
+        if OEFFNEN_BEGRENZEN and wuensche and not ruhe:
+            umstellen = self._oeffnen_begrenzen(wuensche, umstellen)
+            if self.zurueckgehalten:
+                changed = True          # Zug an zurueckgehaltenen Bedingungen: kein Ende
         self.richtung_neu = 0
         for c in self.cons:
             ue = u[c.dofs]
@@ -3094,11 +3412,12 @@ class ContactSystem:
                     gl, Ft_rm, nd, kq = self._rueckabbildung(c, dt, c.Fn)
                     if c.pendel_fest:
                         # eingefroren (Pendeln): Status bleibt, Pruefung am Ende des Laufs
-                        c.Ft = (self._k_haft(c) * dt if not c.slip
+                        c.Ft = (self._k_haft(c) * self._dt_el(c, dt) if not c.slip
                                 else limit * np.asarray(c.slip_dir, float))
                     elif ruhe:
                         c.Ft = Ft_rm if gl == c.slip else (
-                            self._k_haft(c) * dt if not c.slip else limit * np.asarray(c.slip_dir, float))
+                            self._k_haft(c) * self._dt_el(c, dt) if not c.slip
+                            else limit * np.asarray(c.slip_dir, float))
                     else:
                         if (RT_UMKEHR and gl and c.slip and c.slip_dir is not None
                                 and float(nd @ np.asarray(c.slip_dir, float)) < RT_UMKEHR_COS):
@@ -3430,6 +3749,8 @@ class ContactSystem:
                 gf = getattr(self, "gruppe_frei", None)
                 if gf is not None and name not in gf:
                     continue            # anderswo gehalten: nichts laeuft weg
+                if self._halt_fein(name):
+                    continue            # die Reibung haelt das Bauteil (RT_HALT_EINMAL)
                 out.append(f"{name}: alle aktiven Kontaktknoten gleiten - Reibung reicht "
                            "nicht fuer das Gleichgewicht (Bauteil rutscht; nahe der "
                            "Reibkapazitaet mu*N urteilt das Verfahren konservativ)")

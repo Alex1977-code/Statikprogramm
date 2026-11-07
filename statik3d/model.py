@@ -426,6 +426,10 @@ class Material:
     #: Eine Eingabe gilt, wenn die Zulassung abweicht.
     sigma_pmax: Optional[float] = None
     sigma_pm0: Optional[float] = None
+    #: Bruchdehnung [-] (16.10.2026): die Gueltigkeitsgrenze der plastischen
+    #: Dehnung fuer diesen Werkstoff (plastizitaet.dehnungsgrenze_text). None = die
+    #: Grenze der Rechnung (Plastizitaet.dehnungsgrenze, Vorgabe 20 %).
+    bruchdehnung: Optional[float] = None
 
     def __post_init__(self):
         # Eine Sorte der Tabelle steht in der Schreibweise der Tabelle - auch
@@ -1596,6 +1600,57 @@ class Vorspannung:
         return d
 
 
+#: Zustaende der Vorspannung je Anker in einem Lastfall (LoadCase.vorspannzustand,
+#: 16.10.2026): Zeitpunkt 0 (nach dem Verankern, sofortige Verluste gerechnet) und
+#: Zeitpunkt ∞ (nach den zeitabhaengigen Verlusten); ``VORSPANN_ALLE`` als
+#: Schluessel meint jede Definition des Modells
+VORSPANN_ZUSTAND_0 = "0"
+VORSPANN_ZUSTAND_INF = "inf"
+VORSPANN_ZUSTAENDE = (VORSPANN_ZUSTAND_0, VORSPANN_ZUSTAND_INF)
+VORSPANN_ALLE = "*"
+#: Wie der Endwert der Definition eingegeben ist: P_∞ absolut oder Verlust ΔP_t
+VORSPANN_ENDWERT_ABSOLUT = "absolut"
+VORSPANN_ENDWERT_VERLUST = "verlust"
+
+
+@dataclass
+class VorspannDefinition:
+    """Vorspannung einmal je Anker definiert (Entwurf des Anwenders vom
+    16.10.2026, woertlich: „Vorspannung künftig einmal je Anker definieren
+    (Pressenkraft, Schlupf), Lastfälle verweisen nur darauf.“ und „Zustände 0
+    und ∞ plus P_max beim Spannen reichen. Sofortige Verluste rechnet das
+    Programm (elastische Verkürzung, Verankerungsschlupf → P_0). Zeitabhängige
+    Verluste sind Eingabe, wahlweise P_∞ absolut oder Verlust ΔP_t, Anzeige
+    beider Werte.“).
+
+    staebe:  die Anker (Stabnamen), die zusammen gespannt werden
+    P_max:   Pressenkraft beim Spannen [N] (gegen σ_p,max nachgewiesen)
+    schlupf: Verankerungsschlupf Δs [m]
+    gruppe:  Spannfolge - Definitionen derselben Gruppe werden gleichzeitig
+             gespannt, mehrere Gruppen nacheinander in aufsteigender Nummer
+             (die frueher gespannten verlieren dann Kraft: elastische Verkuerzung)
+    endwert: "absolut" (P_inf gilt) oder "verlust" (dP_t gilt, P_∞ = P₀ − ΔP_t)
+    P_inf:   P_∞ [N], bei "absolut"
+    dP_t:    zeitabhaengiger Verlust ΔP_t [N], bei "verlust"
+
+    P₀ (nach dem Verankern) ist keine Eingabe: das Programm rechnet ihn im
+    Spannschritt (statik3d.vorspannkraft, statik3d.vorspannung)."""
+    name: str
+    staebe: list[str] = field(default_factory=list)
+    P_max: float = 0.0
+    schlupf: float = 0.0
+    gruppe: int = 1
+    endwert: str = VORSPANN_ENDWERT_ABSOLUT
+    P_inf: float = 0.0
+    dP_t: float = 0.0
+    kommentar: str = ""
+    #: Woher die Werte stammen, z. B. „aus RFEM übernommen – prüfen“ (Zuordnung)
+    herkunft: str = ""
+
+    def ist_verlust(self) -> bool:
+        return str(self.endwert or "") == VORSPANN_ENDWERT_VERLUST
+
+
 @dataclass
 class Uebermass:
     """Uebermass (Presspassung) als Last: die Fuge ist zu eng.
@@ -1842,6 +1897,11 @@ class LoadCase:
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
     gamma_inf: Optional[float] = None
+    #: Verweise auf die Vorspannung je Anker (16.10.2026): {Definition oder
+    #: VORSPANN_ALLE: "0" | "inf"} - leer heisst keine. Die Kraefte stehen in
+    #: Model.vorspann_definitionen; die bisherigen Vorspannungslasten des
+    #: Lastfalls bleiben daneben, wie sie sind. In der Datei nur, wenn gesetzt.
+    vorspannzustand: dict = field(default_factory=dict)
 
     @property
     def psi_factors(self) -> tuple[float, float, float]:
@@ -1973,6 +2033,10 @@ class LoadCase:
         # Speichern, wie sie war, und ein aelterer Stand liest die neue
         if getattr(self, "faktorisiert", False):
             d["faktorisiert"] = True
+        # Verweise auf die Vorspannung je Anker (16.10.2026): nur, wo gesetzt -
+        # eine Datei ohne sie bleibt beim Speichern Zeichen fuer Zeichen, wie sie war
+        if getattr(self, "vorspannzustand", None):
+            d["vorspannzustand"] = {str(k): str(v) for k, v in self.vorspannzustand.items()}
         return d
 
     @staticmethod
@@ -2001,6 +2065,8 @@ class LoadCase:
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
         lc.gamma_inf = d.get("gamma_inf")
+        # Dateien vor dem 16.10.2026 kennen die Verweise nicht: keine
+        lc.vorspannzustand = {str(k): str(v) for k, v in (d.get("vorspannzustand") or {}).items()}
         return lc
 
 
@@ -2742,6 +2808,13 @@ class Netzeinstellungen:
     #: Netz geliefert, und mit Ringen zusammen wuchsen die Nachbarplatten V15
     #: um 63 %, V33 und V35 um 44 % der Knoten (Messung 14.10.2026).
     krafteinleitung_stabenden: bool = False
+    #: **Mit dieser Einstellung ist das vorhandene Netz entstanden**
+    #: (16.10.2026, statik3d.netzhinweis): beim Vernetzen vermerkt, damit das
+    #: Programm sagen kann, wenn die Einstellung davon abweicht („wirksam erst
+    #: nach Vernetzen“). Leer = nicht bekannt (Datei von davor, Import). Zaehlt
+    #: nicht fuer die Rechnung: die Netzeinstellungen stehen nicht in der Kennung
+    #: der Ergebnisdatei (ergebnisse.MODELLTEILE).
+    vernetzt_mit: dict = field(default_factory=dict)
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
@@ -2993,6 +3066,15 @@ class Flaeche:
     #: Globale Richtung von +x bei zylindrischen Achsen (wird auf die Achse
     #: projiziert); leer = Richtung der ersten geraden Randlinie.
     achse_plus_x: list[float] = field(default_factory=list)
+    #: Einleitung einer **starren Scheibe** ueber einer Bohrung (seit
+    #: 16.10.2026, statik3d.scheibeneinleitung): leer = „Lochrand starr
+    #: (bisher)“ - die Netzknoten in der Scheibe, ueber einer Bohrung nur
+    #: der Lochrand, haengen starr am Stabende. {"art": "ring", "d_innen" [m]
+    #: (0 = die Bohrung aus der Geometrie), "d_aussen" [m], "annahme": bool
+    #: (Normmass, nicht aus der Zeichnung), "quelle": Text} = „Kreisring
+    #: verteilend (RBE3, flächenanteilig)“ unter Mutter bzw. Scheibe. Gesetzt
+    #: nur vom Anwender; die Datei fuehrt den Schluessel nur, wenn er belegt ist.
+    einleitung: dict = field(default_factory=dict)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -3111,6 +3193,13 @@ class Volumenkoerper:
     #: Krafteinleitungskoerper (13.10.2026, wie Material.nachweis_ausnehmen).
     #: Setzt nur der Anwender; ein Importhinweis darf es vorschlagen.
     nachweis_ausnehmen: bool = False
+    #: Bolzennachweis nach EN 1993-1-8, 3.13 (Tab. 3.10), nur wenn der Anwender den
+    #: Koerper als Bolzen festgelegt hat (06.11.2026): {"d": Durchmesser [m],
+    #: "werkstoff": Name in ``materials``, optional "fuge": Lage der Scherfuge
+    #: auf der Bolzenachse [m ab dem Ende mit kleinerer Koordinate]}. Leer = kein
+    #: Bolzennachweis; nichts wird aus Name oder Form abgeleitet. f_yp und f_up
+    #: kommen allein aus dem hier genannten Werkstoff.
+    bolzen: dict = field(default_factory=dict)
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -3489,6 +3578,13 @@ class Kontaktbedingung:
     #: gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen
     #: unterschiedlich feinen Netzen verschwinden.
     spalt_schliessen: bool = False
+    #: Kontaktstart geschlossen (17.10.2026, Einstellung des Anwenders): die Kontaktiteration
+    #: beginnt mit allen Bedingungen dieser Fuge geschlossen, mit dem echten Spalt (anders
+    #: als ``spalt_schliessen``, das den Spalt auf null setzt). Die Fuge darf trotzdem
+    #: abheben, wenn Zug entsteht. Sinnvoll fuer Teile, die planmaessig anliegen und durch
+    #: Vorspannung oder Last angedrueckt werden - der Lauf beginnt dann nicht mit einem
+    #: Teil, das an keiner Bedingung haengt.
+    start_geschlossen: bool = False
     #: Der Standardkontakt, aus dem die Wirkung kam ("" = benutzerdefiniert).
     standard: str = ""
     #: Von selbst angelegt, weil sich zwei Koerper beruehren (kontakte.py,
@@ -3945,6 +4041,9 @@ class ContactPair:
     #: Anfangsspalt schliessen: jeder Slave-Knoten gilt in seiner Lage als
     #: anliegend (ANSYS „auf Beruehrung setzen“)
     anliegend: bool = False
+    #: Kontaktstart geschlossen (17.10.2026, aus Kontaktbedingung.start_geschlossen): der
+    #: Lauf beginnt mit allen Bedingungen geschlossen, mit dem echten Spalt; Zug oeffnet sie
+    start_geschlossen: bool = False
     #: Anteil der Kontaktseite, der eine Gegenflaeche gefunden hat (Flaeche zu
     #: Flaeche, 0 … 1). Die Abnahme vor dem Rechnen prueft ihn
     #: (:func:`diagnose.abnahme`); 0 heisst "nicht gemessen".
@@ -4354,6 +4453,9 @@ class Model:
         self.unterlagen: dict[str, Unterlage] = {}
         #: Gespeicherte Ansichten (Ansichtspaket C, 14.10.2026), nach Name
         self.ansichten: dict[str, Ansicht] = {}
+        #: Vorspannung je Anker (16.10.2026): Definitionen nach Name, auf die
+        #: Lastfaelle verweisen (LoadCase.vorspannzustand)
+        self.vorspann_definitionen: dict[str, VorspannDefinition] = {}
         self.stellungen: list = []
         #: Hinweise aus dem Laden einer Datei (Model.from_dict), nicht gespeichert
         self._ladehinweise: list = []
@@ -4632,6 +4734,33 @@ class Model:
                 j.ermuedung = [neu if x == alt else x for x in liste]
                 aus.append(f"Anschluss '{j.name}'")
         return aus
+
+    def vorspann_definition_loeschen(self, name: str, protokoll: list = None) -> str:
+        """Eine Vorspannung je Anker entfernen - mit den Verweisen der Lastfaelle
+        auf sie (16.10.2026). Ein Verweis auf „alle“ bleibt. Rueckgabe "" bei
+        Erfolg, sonst der Grund; je betroffenem Lastfall eine Zeile nach ``protokoll``."""
+        if name not in (getattr(self, "vorspann_definitionen", None) or {}):
+            return f"Vorspannung {name} gibt es nicht"
+        del self.vorspann_definitionen[name]
+        for lc in self.load_cases.values():
+            vz = getattr(lc, "vorspannzustand", None) or {}
+            if name in vz:
+                lc.vorspannzustand = {k: v for k, v in vz.items() if k != name}
+                if protokoll is not None:
+                    protokoll.append(f"Lastfall „{lc.name}“: Verweis auf die Vorspannung {name} entfernt")
+        return ""
+
+    def vorspann_definition_umbenennen(self, alt: str, neu: str) -> None:
+        """Eine Vorspannung je Anker umbenennen, mit den Verweisen der Lastfaelle."""
+        defs = getattr(self, "vorspann_definitionen", None) or {}
+        if alt not in defs or alt == neu:
+            return
+        _schluessel_tauschen(defs, alt, neu)
+        defs[neu].name = neu
+        for lc in self.load_cases.values():
+            vz = getattr(lc, "vorspannzustand", None) or {}
+            if alt in vz:
+                lc.vorspannzustand = {(neu if k == alt else k): v for k, v in vz.items()}
 
     def ermuedungslast_loeschen(self, name: str, protokoll: list = None) -> str:
         """Eine Ermuedungslast entfernen - und aus der Liste jedes Anschlusses
@@ -6236,7 +6365,28 @@ class Model:
                            "Stäbe“ genommen" for x in weg]
         return zeilen
 
-    def netzknoten_loeschen(self, kandidaten=None) -> int:
+    def freie_knoten_entfernen(self, nur_zaehlen: bool = False) -> int:
+        """Knoten ohne Element **und ohne jeden Verweis** entfernen - nur auf Wunsch
+        des Anwenders (16.10.2026: „rfem-importe nicht selbstaendig in der Geometrie
+        aendern, nur nach Rueckfrage beim user“). Das Vernetzen loescht sie nie; die
+        Abnahme meldet sie als Information, die Aktion „Freie Knoten entfernen…“
+        bietet das Entfernen an. Was eine Linie, eine Flaeche (Ecke, integrierter
+        Knoten), eine Last, ein Lager, eine Kopplung usw. nennt, bleibt
+        (:meth:`netzknoten_loeschen` schuetzt es). ``nur_zaehlen``: nichts aendern,
+        nur die Zahl nennen. Rueckgabe: Zahl der (zu) entfernenden Knoten."""
+        import itertools
+        nn = int(self.nn)
+        if not nn:
+            return 0
+        kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in self.elements), np.int64)
+        belegt = np.zeros(nn, bool)
+        belegt[kn[(kn >= 0) & (kn < nn)]] = True
+        frei = np.flatnonzero(~belegt)
+        if not len(frei):
+            return 0
+        return self.netzknoten_loeschen(frei.tolist(), nur_zaehlen=nur_zaehlen)
+
+    def netzknoten_loeschen(self, kandidaten=None, nur_zaehlen: bool = False) -> int:
         """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
 
         ``kandidaten``: nur diese Knoten duerfen weg - die Knoten der eben
@@ -6336,6 +6486,8 @@ class Model:
         weg = np.flatnonzero(~benutzt)
         if not len(weg):
             return 0
+        if nur_zaehlen:
+            return int(len(weg))
         bleibt = np.flatnonzero(benutzt)
         neu = {int(alt): k for k, alt in enumerate(bleibt)}
         for L in (getattr(self, "layer", None) or {}).values():
@@ -6859,7 +7011,7 @@ class Model:
     #: Sammlungen, deren Objekte Staebe in einer Liste ``staebe`` beim Namen
     #: nennen (Wort im Protokoll, Sammlung im Modell)
     STABLISTEN = (("Schweißnaht", "schweissnaehte"), ("Wind", "winde"), ("Layer", "layer"),
-                  ("Subsystem", "subsysteme"))
+                  ("Subsystem", "subsysteme"), ("Vorspannung", "vorspann_definitionen"))
 
     def stab_umbenennen(self, alt: str, neu: str) -> list:
         """Den Stab *alt* in *neu* umbenennen - mit **jedem** Verweis
@@ -9277,7 +9429,15 @@ class Model:
                     used[n] = True
         free = np.where(~used)[0]
         if len(free):
-            msgs.append(f"WARNUNG: {len(free)} Knoten ohne Elementanschluss")
+            # Nur Knoten, an denen etwas haengt (Last, Lager, Kopplung ...): ein
+            # Geometriepunkt oder ein Knoten ohne Verweis ist eine Information der
+            # Netzabnahme (diagnose.freie_knoten_rollen, 16.10.2026), keine
+            # Warnung bei jeder Rechnung - am Drehlager standen 67 davon da.
+            from .diagnose import freie_knoten_rollen
+            rl = freie_knoten_rollen(self, free)
+            n_rolle = sum(1 for r in rl.values() if r & {"last", "lager", "verbindung"})
+            if n_rolle:
+                msgs.append(f"WARNUNG: {n_rolle} Knoten ohne Elementanschluss")
         if str(getattr(self, "randspannung", "frei") or "frei") not in ("frei", "gemittelt"):
             msgs.append(f"FEHLER: Randspannung '{self.randspannung}' unbekannt - "
                         f"erlaubt sind 'frei' und 'gemittelt'")
@@ -9503,7 +9663,7 @@ class Model:
             "volumenbereiche": [_ohne_vorgabe("volumenbereiche", asdict(x))
                                  for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
-            "kontaktbedingungen": [_beh_dict(asdict(x))
+            "kontaktbedingungen": [_ohne_vorgabe("kontaktbedingungen", _beh_dict(asdict(x)))
                                    for x in self.kontaktbedingungen.values()],
             "flaechen": [_ohne_vorgabe("flaechen", asdict(x)) for x in self.flaechen.values()],
             "koerper": [_ohne_vorgabe("koerper", asdict(x)) for x in self.koerper.values()],
@@ -9518,7 +9678,7 @@ class Model:
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
-            "contact_pairs": [asdict(c) for c in self.contact_pairs],
+            "contact_pairs": [_ohne_vorgabe("contact_pairs", asdict(c)) for c in self.contact_pairs],
             "getrennte_knoten": {k: [[int(a), int(b)] for a, b in v]
                                  for k, v in (self.getrennte_knoten or {}).items()},
             "kontakt_ausnahmen": [[str(a), str(b)] for a, b in (getattr(self, "kontakt_ausnahmen", None) or [])],
@@ -9556,6 +9716,9 @@ class Model:
             # eine Datei ohne sie bleibt beim Speichern, wie sie war
             **({"ansichten": [asdict(a) for a in self.ansichten.values()]}
                if getattr(self, "ansichten", None) else {}),
+            # Vorspannung je Anker (16.10.2026): nur, wenn es Definitionen gibt
+            **({"vorspann_definitionen": [asdict(x) for x in self.vorspann_definitionen.values()]}
+               if getattr(self, "vorspann_definitionen", None) else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -9699,6 +9862,9 @@ class Model:
         m.unterlagen = {x["name"]: _dc(Unterlage, x) for x in d.get("unterlagen", [])}
         m.ansichten = {x["name"]: _dc(Ansicht, x) for x in d.get("ansichten") or []
                        if isinstance(x, dict) and x.get("name")}
+        m.vorspann_definitionen = {x["name"]: _dc(VorspannDefinition, x)
+                                   for x in d.get("vorspann_definitionen") or []
+                                   if isinstance(x, dict) and x.get("name")}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck
@@ -10004,20 +10170,28 @@ NEUE_FELDER = {
     # kontakt/warmstart. Diese fuehrt Plastizitaet.NEU_14_10 - dieselbe Tabelle,
     # nach der Plastizitaet.als_dict sie beim Speichern weglaesst; hier wird sie
     # nur gelesen, damit es die Vorgaben einmal gibt (Zusammenfuehrung 14.10.2026).
-    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10},
+    "plastizitaet": {"abbruch": "ingenieurmaessig", **Plastizitaet.NEU_14_10, **Plastizitaet.NEU_15_10,
+                     **Plastizitaet.NEU_16_10},
     # import/lastfaelle (gamma_P wirkt nur im Generator der Kombinationen)
     "design": {"gamma_P": 1.0},
     # netz/krafteinleitung (feinere Netze an Krafteinleitungen; Netzvorgaben
     # zaehlen nicht in der Kennung - das Netz selbst steht in Knoten und Elementen)
-    "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False},
+    "netz": {"krafteinleitung_fein": False, "krafteinleitung_stabenden": False,
+             # netz/hinweis: mit welcher Einstellung das Netz entstand
+             "vernetzt_mit": {}},
     # plast/verfestigung (verfestigung, art), spitzen/zeigen N2
     # (nachweis_ausnehmen), nachweis/spannstahl (Ep, sigma_pmax, sigma_pm0)
     "materials": {"verfestigung": None, "art": "", "nachweis_ausnehmen": False, "Ep": None,
-                  "sigma_pmax": None, "sigma_pm0": None},
+                  "sigma_pmax": None, "sigma_pm0": None,
+                  # plast/traglast (16.10.2026): Gueltigkeitsgrenze je Werkstoff
+                  "bruchdehnung": None},
     # nachweis/spannstahl
     "sections": {"A_s": None, "gewinde": ""},
     # spitzen/zeigen N2
-    "koerper": {"nachweis_ausnehmen": False},
+    "koerper": {"nachweis_ausnehmen": False, "bolzen": {}},
+    # kontakt/pendeln-rt (Kontaktstart geschlossen, 17.10.2026)
+    "kontaktbedingungen": {"start_geschlossen": False},
+    "contact_pairs": {"start_geschlossen": False},
     "volumenbereiche": {"eps_grenze": 0.05},
     # stab/rbe3 (Einleitung je Stabende)
     "members": {"einleitung": {}},
@@ -10025,7 +10199,9 @@ NEUE_FELDER = {
     "starrkoerper": {"momente": []},
     # import/lastfaelle (Bemessungslastfall; die Kategorie „NZ“ ist ein Wert des
     # alten Felds category und zaehlt wie jede andere Kategorie)
-    "load_cases": {"faktorisiert": False},
+    "load_cases": {"faktorisiert": False,
+                   # vorspannung/je-anker (Verweis auf die Vorspannung je Anker, 16.10.2026)
+                   "vorspannzustand": {}},
     # vorspannung/kraft (Sollkraft nach Verankerung); vorspannung/presse
     # (Anfangsvorspannung mit Pressenkraft P0 und Verankerungsschlupf, 14.10.2026)
     "load_cases.vorspannungen": {"sollkraft": False, "gruppe": 1, "kraftart": "", "schlupf": 0.0},
@@ -10038,24 +10214,27 @@ NEUE_FELDER = {
     # import/gewoelbt (Lasten in lokalen Achsen gewoelbter Flaechen und
     # zylindrische Flaechenachsen; seit 14.10.2026)
     "load_cases.geometrielasten": {"lokal": {}},
-    "flaechen": {"lokale_achsen": "", "achse_plus_x": []},
+    # einleitung/kreisring (Einleitung starrer Scheiben ueber Kreisring, 16.10.2026)
+    "flaechen": {"lokale_achsen": "", "achse_plus_x": [], "einleitung": {}},
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen); ansicht/ansichten
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
-    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": []},
+    # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
+    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": []},
 }
 
 #: Neue Felder, deren Vorgabe sich spaeter geaendert hat, mit der frueheren
 #: Vorgabe - je Schluessel der Modelldatei wie NEUE_FELDER. Eine Ergebnisdatei
 #: vom frueheren Stand traegt einen Wert, der heute die Vorgabe ist, in ihrer
-#: Kennung; heute fehlt er dort. ergebnisse.pruefen vergleicht darum auch nach
-#: den frueheren Vorgaben: der Wert, der heute Vorgabe ist, gilt als gleich.
+#: Kennung; heute fehlt er dort. ergebnisse.pruefen bildet die Kennung darum
+#: auch mit diesem Wert ausdruecklich (nie ohne einen gesetzten Wert).
 #: reibungstangente: Vorgabe False von 4073439 bis b24910b, seit 49cb8bb True
 #: (Entscheidung des Anwenders vom 15.10.2026); die Drehlager-Laeufe dieses Tages
-#: tragen „reibungstangente: true“ in der Modelldatei.
-FRUEHERE_VORGABEN = {
-    "plastizitaet": {"reibungstangente": False},
-}
+#: tragen „reibungstangente: true“ in der Modelldatei. Seit dem 16.10.2026 kommt
+#: die Tabelle aus statik3d.rechenverfahren (Wechsel der Vorgaben mit Stand und
+#: Datum): ein kuenftiger Wechsel wird nur dort eingetragen.
+from .rechenverfahren import fruehere_vorgaben as _fruehere_vorgaben  # noqa: E402
+FRUEHERE_VORGABEN = _fruehere_vorgaben()
 
 
 def ist_vorgabe(schluessel: str, feld: str, wert) -> bool:

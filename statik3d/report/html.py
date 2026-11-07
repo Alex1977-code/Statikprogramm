@@ -912,7 +912,12 @@ class Report:
             "lineare Überlagerung (Superposition) der Lastfallergebnisse."]
         if counts:
             items.append("Elementtypen im Modell: " + "; ".join(
-                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + ".")
+                f"{ELEMENT_TYPES.get(t, t)} ({n} Stück)" for t, n in counts.items()) + "."
+                # die Netzeinstellung nur bei einem FE-Netz aus Flaechen oder Volumen:
+                # ein Stabwerk hat kein Netz, dessen Einstellung zu nennen waere
+                + (" " + self._netz_satz() if any(
+                    ELEMENT_TYPES.get(t) and not t.startswith(("beam", "truss", "seil", "feder"))
+                    for t in counts) else ""))
         if self.info.get("solver"):
             # mit dem Ausweichen wie im Anhang (F37, 06.10.2026)
             items.append(f"Gleichungslöser: {self.info['solver']} (direkt, sparse)"
@@ -1314,6 +1319,31 @@ class Report:
     #: jeden Koerper finden (Drehlager: rund 200 Koerper)
     NETZ_ZEILEN = 2000
 
+    def _netz_ausweis(self) -> dict:
+        """Elementtypen und Netzeinstellung beim Vernetzen: der Ausweis der
+        Rechnung (info["netz"], steht auch in der Ergebnisdatei), sonst der des
+        Modells von jetzt (statik3d.netzhinweis, 16.10.2026)."""
+        from .. import netzhinweis as nh
+        a = (self.info or {}).get("netz") if isinstance(self.info, dict) else None
+        return a if isinstance(a, dict) and a.get("elementtypen") is not None else nh.ausweis(self.model)
+
+    def _netz_satz(self) -> str:
+        """„Netzeinstellung beim Vernetzen: …“ - und, wo die Einstellung seither
+        geaendert wurde, was jetzt eingestellt ist (wirkt erst nach dem Vernetzen)."""
+        a = self._netz_ausweis()
+        ein = a.get("netzeinstellung") or ""
+        s = ("Netzeinstellung beim Vernetzen: " + ein + "." if ein else
+             "Netzeinstellung beim Vernetzen: nicht bekannt (Netz ohne Vermerk, etwa aus einer "
+             "Datei vor dem 16.10.2026 oder importiert); aktuell eingestellt: "
+             + self.model.netz.beschreibung() + ".")
+        if a.get("abweichend") or (ein and ein != self.model.netz.beschreibung()
+                                   and self.model.netz.vernetzt_mit):
+            ab = a.get("abweichend") or []
+            if ab:
+                s += (" Seither geändert, aber nicht vernetzt (wirkt erst nach dem Vernetzen): "
+                      + "; ".join(ab) + ".")
+        return s
+
     def chapter_netz(self) -> list:
         """Netz und Elemente (Paket E, 25.09.2026).
 
@@ -1334,8 +1364,7 @@ class Report:
         b = [self._h(1, "Netz und Elemente")]
         z = ea.zaehlung(m)
         b.append(("p", esc("Mit welchen finiten Elementen gerechnet wurde - je Elementtyp, je Körper "
-                           "und im Bild, wo sie liegen. Eingestellt für das Vernetzen: "
-                           + m.netz.beschreibung() + ".")))
+                           "und im Bild, wo sie liegen. " + self._netz_satz())))
         b.append(self._h(2, "Gesamtübersicht"))
         rows = [["Elementtyp", "Bezeichnung", "Ansatz", "Anzahl", "Anteil"]]
         for zeile in ea.zeilen(m, z):
@@ -1603,8 +1632,45 @@ class Report:
         if np.any(g):
             b.append(("p", f"Eigengewicht aus den Elementmassen mit g = ({g[0]:.2f}, {g[1]:.2f}, "
                            f"{g[2]:.2f}) m/s²."))
+        # Vorspannung je Anker (16.10.2026): der Verweis des Lastfalls
+        vz_text = ""
+        if getattr(lc, "vorspannzustand", None):
+            from .. import vorspannung as _vsp
+            vz_text = _vsp.zustand_lastfall_text(self.model, lc)
+            b.append(("p", f"Vorspannung je Anker: {vz_text}."))
         if lc.n_loads == 0:
-            b.append(("p", "Dieser Lastfall enthält keine Lasten."))
+            b.append(("p", "Dieser Lastfall enthält keine eigenen Lasten." if vz_text
+                      else "Dieser Lastfall enthält keine Lasten."))
+        return b
+
+    def _vorspannung_je_anker(self) -> list:
+        """Abschnitt „Vorspannung je Anker“ (16.10.2026): je Definition P_max, Δs,
+        Spanngruppe, P₀ (berechnet oder geschaetzt), P_∞ und ΔP_t, die Zahl der
+        Lastfaelle je Zeitpunkt und der Zustand je Nachweis. Leer ohne Definition."""
+        from .. import vorspannung as _vsp
+        m = self.model
+        defs = _vsp.definitionen(m)
+        if not defs:
+            return []
+        erg = getattr(getattr(self, "analysis", None), "cases", None) or {}
+        b = [self._h(2, "Vorspannung je Anker")]
+        rows = [["Name", "Anker", "Spanngruppe", "P_max [kN]", "Δs [mm]", "P₀ nach dem Verankern",
+                 "P_∞", "ΔP_t", "Lastfälle t = 0", "Lastfälle t = ∞", "Herkunft"]]
+        for d in defs.values():
+            a = _vsp.anzeige(m, d, erg)
+            rows.append([d.name, _vsp.anker_text(d.staebe), str(int(d.gruppe or 1)), fmt(d.P_max / 1e3, 2),
+                         fmt(float(d.schlupf or 0.0) * 1e3, 2), a["text_P0"].replace("P₀ = ", ""),
+                         a["text_P_inf"].replace("P_∞ = ", ""), a["text_dP_t"].replace("ΔP_t = ", ""),
+                         str(len(a["faelle"]["0"])), str(len(a["faelle"]["inf"])), d.herkunft or "–"])
+        b.append(("table", rows, "Vorspannung je Anker: einmal definiert, die Lastfälle verweisen mit Zeitpunkt 0 "
+                                 "(P₀ nach dem Verankern, gerechnet aus P_max, Schlupf und elastischer "
+                                 "Verkürzung) oder Zeitpunkt ∞ (P_∞ als Eingabe oder P₀ − ΔP_t)", None, "compact"))
+        b.append(("p", "Zustand der Vorspannung je Nachweis: " + "; ".join(
+            f"{t} mit {('P_max' if z == 'P_max' else _vsp.ZUSTAND_KURZ[z])}"
+            + (" (Nachweis noch nicht im Programm)" if k in _vsp.NACHWEIS_NOCH_NICHT else "")
+            for k, (t, z) in _vsp.NACHWEIS_ZUSTAND.items())
+            + ". Nicht enthalten: obere und untere charakteristische Werte der Vorspannung "
+              "r_sup/r_inf nach EN 1992-1-1, 5.10.9 (vorgemerkt)."))
         return b
 
     def chapter_actions(self) -> list:
@@ -1647,6 +1713,7 @@ class Report:
                          str(lc.n_loads)])
         b.append(("table", rows, "Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)",
                   None, ""))
+        b.extend(self._vorspannung_je_anker())
         if self.opt("load_cases"):
             W, H = self.opt("figure_width"), int(self.opt("figure_height") * 0.85)
             views = self._views()
@@ -2733,6 +2800,19 @@ class Report:
                       np.concatenate(imx))
         return x, out
 
+    def _verfahren_status(self) -> list:
+        """Ergebnisse aus einer Ergebnisdatei, die vor einer Fehlerkorrektur des
+        Rechenverfahrens gerechnet sind (16.10.2026, rechenverfahren): der Status
+        „Ergebnis möglicherweise betroffen – neu rechnen“, dazu der Hinweis zu
+        einem aelteren Verfahren (Verbesserung)."""
+        info = getattr(self.analysis, "info", None) or {}
+        b = []
+        if info.get("verfahren_betroffen"):
+            b.append(("status", str(info["verfahren_betroffen"]), False))
+        if info.get("verfahren_hinweis"):
+            b.append(("note", "Ergebnisdatei " + str(info["verfahren_hinweis"])))
+        return b
+
     def chapter_results(self) -> list:
         m = self.model
         b = [self._h(1, "Ergebnisse")]
@@ -2740,6 +2820,7 @@ class Report:
         if not allres:
             b.append(("p", "Es liegen keine Berechnungsergebnisse vor."))
             return b
+        b.extend(self._verfahren_status())
         # ---- Uebersicht
         b.append(self._h(2, "Übersicht"))
         rows = [["Ergebnis", "Art", "max |u| [mm]", "Knoten", "ΣF_x [kN]", "ΣF_y [kN]",
@@ -2754,6 +2835,14 @@ class Report:
         # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
         from .. import gleichgewicht as _GG
         b.extend(_GG.bericht_saetze(allres))
+        # plastische Rechnung (16.10.2026): Traglast, Mechanismus, Gueltigkeitsgrenze -
+        # das ganze Ergebnis ist nicht gueltig
+        from ..solver import plastisch_ungueltig as _pu
+        for name, res in allres:
+            grund = _pu(getattr(res, "info", None) or {})
+            if grund:
+                b.append(("note", f"NICHT GÜLTIG – {name}: {grund}."))
+                self._warnings.append(f"{name} nicht gültig: {grund}")
         spitzen = [_SA.spitze(r) for _n, r in allres]
         spitzen = [x for x in spitzen if x is not None]
         if spitzen:
@@ -2998,9 +3087,31 @@ class Report:
         # Gebuendelt ueber alle Ergebnisse: am Drehlager haben 422 Lastfaelle
         # dieselben Platten, und ein Kapitel je Lastfall waere keines.
         frei: dict = {}
+        durch_zwang: dict = {}          # Information: an der Bewegung greift nichts an (16.10.2026)
         for name, res in allres:
             for e in (getattr(res, "info", None) or {}).get("freie_teile") or []:
-                frei.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+                ziel = durch_zwang if str(e.get("stufe", "")) == "INFORMATION" else frei
+                ziel.setdefault(str(e.get("text", "")), (e, []))[1].append(name)
+        if durch_zwang:
+            b.append(self._h(2, "Drehungen und Verschiebungen durch Zwangsbedingung gehalten"))
+            b.append(("p", "An diesen Knoten ist eine Bewegung für den Gleichungslöser nur schwach "
+                           "gehalten (er hebt einen Pivot an). Sie wird aber über eine "
+                           "Zwangsbedingung gebunden (starre Scheibe, starre Kopplung, starrer "
+                           "Körper), und an dieser Bewegung greift weder Kraft noch Moment an: "
+                           "Es ist nichts zu lagern, die Ergebnisse sind davon nicht betroffen."))
+            rows = [["Knoten", "Bewegung", "Gehalten durch", "Ergebnisse"]]
+            for text, (e, namen) in durch_zwang.items():
+                teile = e.get("namen") or []
+                wer = ", ".join(teile[:6]) + (f" … {teile[-1]} ({len(teile)})" if len(teile) > 6 else "")
+                if e.get("knoten"):
+                    wer += ": Knoten " + ", ".join(f"K{k}" for k in e["knoten"][:6])
+                wo = ", ".join(namen[:4]) + (f" … ({len(namen)} Ergebnisse)" if len(namen) > 4 else "")
+                rows.append([wer, e.get("bewegung", ""), e.get("haltung", ""), wo])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, "Durch Zwangsbedingung gehaltene Bewegungen (Information)", None,
+                      "compact"))
+            if note:
+                b.append(("note", note))
         if frei:
             b.append(self._h(2, "Frei bewegliche Teile"))
             b.append(("p", "Der Gleichungslöser musste bei diesen Teilen einen Pivot anheben, "
@@ -4752,6 +4863,7 @@ class Report:
     def chapter_summary(self) -> list:
         m = self.model
         b = [self._h(1, "Zusammenfassung")]
+        b.extend(self._verfahren_status())
         kv = [("Modell", f"{m.name}: {m.nn} Knoten, {len(m.elements)} Elemente, "
                          f"{len(m.members)} Stäbe"),
               ("Lastfälle / Kombinationen", f"{len(self.cases)} / {len(self.combos)}")]

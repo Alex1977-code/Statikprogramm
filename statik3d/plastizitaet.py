@@ -351,6 +351,21 @@ class Plastizitaet:
     #: dort gibt es keine Gegenseite). Je groesser, desto naeher am starren Haften: der
     #: elastische Weg beim Haften ist F_t/k_h.
     haft_faktor: float = 1.0e3
+    #: Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026,
+    #: :data:`DEHNUNGSGRENZE_VORGABE`): ε_p,max darueber macht das ganze Ergebnis
+    #: „nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Ein Werkstoff
+    #: mit eingetragener Bruchdehnung (Material.bruchdehnung) hat diese als Grenze.
+    dehnungsgrenze: float = 0.20
+    #: Hebel 1 (Entscheidung des Anwenders vom 15.10.2026, solver.solve_with_ausfall):
+    #: die Ausfall-Iteration „annehmen und nachpruefen“ - sie beginnt mit der Menge
+    #: ausgefallener Staebe der vorigen Loesung desselben Lastfalls statt mit der leeren
+    #: Menge und rechnet eine zweite Runde nur, wenn die Nachpruefung verletzt ist (ein
+    #: aktiver Zugstab mit Druck oder ein ausgefallener, der sich verlaengern wuerde).
+    #: Am Drehlager fielen in jedem Newton-Schritt dieselben drei Staebe aus, und jede
+    #: Loesung kostete zwei volle Kontaktlaeufe statt einem.
+    #: Vorgabe AUS (Auftrag 16.10.2026): jeder Hebel ist einzeln schaltbar und bleibt
+    #: aus, bis die Messung am Drehlager (H0 gegen den Hebel allein) entschieden hat.
+    ausfall_annehmen: bool = False
 
     #: Einstellungen, die am 14.10.2026 dazukamen, mit ihrer Vorgabe: mit ihr
     #: stehen sie nicht in der Modelldatei (:meth:`als_dict`)
@@ -359,7 +374,9 @@ class Plastizitaet:
                  "gleit_toleranz": 1.0e-6, "halbieren_lastabhaengig": False,
                  "spannung_zuerst": True, "ausfall_warm": True}
     #: ... und am 15.10.2026 (Reibungstangente), ebenso
-    NEU_15_10 = {"reibungstangente": True, "haft_faktor": 1.0e3}
+    NEU_15_10 = {"reibungstangente": True, "haft_faktor": 1.0e3, "ausfall_annehmen": False}
+    #: ... und am 16.10.2026 (Gueltigkeitsgrenze), ebenso
+    NEU_16_10 = {"dehnungsgrenze": 0.20}
 
     def als_dict(self) -> dict:
         """Zum Speichern (Model.to_dict): die Einstellungen vom 14.10.2026 nur,
@@ -370,7 +387,7 @@ class Plastizitaet:
         Rechenkennung (ergebnisse.rechenkennung) liest dieselbe Form. Eine Datei
         ohne die Schluessel bekommt beim Laden die Vorgabe."""
         d = asdict(self)
-        for k, v in {**self.NEU_14_10, **self.NEU_15_10}.items():
+        for k, v in {**self.NEU_14_10, **self.NEU_15_10, **self.NEU_16_10}.items():
             if k in d and d[k] == v and isinstance(d[k], bool) == isinstance(v, bool):
                 del d[k]
         return d
@@ -1513,6 +1530,54 @@ ABSCHLUSS_NACHSCHRITTE = 5
 #: (solver._KontaktImNewton.naechster).
 HALBIEREN_MAX = 4
 
+#: Traglast (Auftrag des Anwenders vom 16.10.2026: „Oberhalb der Traglast gibt
+#: es bei ideal plastischem Material kein Gleichgewicht, das Programm muss
+#: ‚Traglast überschritten‘ mit dem letzten konvergierten Lastfaktor melden“).
+#: Bis dahin rechnete der Newton nach einer nicht konvergierten Laststufe mit
+#: deren Zustand die naechste Stufe weiter; am Zugstab bei 1,2 A f_u standen am
+#: Ende ε_p 47 362 % im Ergebnis (320 Schritte, 11-mal halbiert), am Pruefblech
+#: mit 900 kN im Spannschritt 2 399. Jetzt: eine Stufe, die ihr Budget ohne
+#: Konvergenz verbraucht oder an einem Mechanismus (:func:`_mechanismus`)
+#: abbricht, wird halbiert (hoechstens :data:`HALBIEREN_MAX`-mal je
+#: urspruenglicher Stufe, wie beim Weglaufen); geht das nicht mehr, endet die
+#: Rechnung beim **letzten konvergierten Zustand** mit info["traglast"]. False
+#: rechnet wie bis zum 16.10.2026 (Ruecknahmeprobe tests/test_traglast).
+TRAGLAST_ERKENNEN = True
+
+#: Mechanismus im Newton einer Laststufe (Auftrag vom 16.10.2026, Punkt 4:
+#: „wachsende Verschiebungen bei konstanter Spannung → Meldung ‚Mechanismus‘“).
+#: Erkannt, wenn **alle drei** gelten:
+#:
+#: * die groesste Knotenverschiebung je Schritt |Δu|∞ schrumpft dreimal
+#:   hintereinander nicht unter MECHANISMUS_FAKTOR des vorigen Schritts - ein
+#:   konvergierender Newton zieht sich zusammen (Zugstab 0,9 f_u: 5,5 / 2,2 /
+#:   0,36 / 0,003 mm), am Mechanismus bleibt der Schritt gleich gross (Balken
+#:   1,2 M_pl: 16,7 m je Schritt; Pruefblech tet10 600 kN: 33 mm je Schritt);
+#: * die groesste Verschiebung ist MECHANISMUS_WACHSTUM-mal so gross wie im
+#:   letzten konvergierten Zustand (bzw. wie der Startwert der ersten Stufe) -
+#:   Balken nach 4 Schritten 8,4 m gegen 9,9 mm, Pruefblech 56 mm gegen 0,03 mm;
+#:   der Zugstab 0,9 f_u waechst in seiner letzten Stufe auf das 12-fache, zieht
+#:   sich dabei aber zusammen;
+#: * ε_p,max des Iterierten liegt ueber der Gueltigkeitsgrenze
+#:   (:data:`DEHNUNGSGRENZE_VORGABE`) - Balken 246 %, Pruefblech 589 %, Zugstab
+#:   1,2 f_u 146 % beim Erkennen.
+#:
+#: Die Spannung selbst ist kein Kriterium, sie steht nur in der Meldung: am
+#: Pruefblech aendert sie sich je Schritt noch um 13 bis 270 N/mm2, weil die
+#: Fliesszone waechst; am Balken faellt sie unter 1 N/mm2. Gestoerte Pivots
+#: zaehlen nicht: lastfreie Freiheitsgrade, die nur ein angehobener Pivot
+#: haelt (Ankerkoepfe am Drehlager, 0,4 bis 66 Nm/rad), verschieben sich im
+#: Newton nicht und loesen nichts aus - gemeldet wird nur ein Mechanismus, der
+#: Last traegt und darum im Newton wegwandert.
+MECHANISMUS_FAKTOR = 0.5
+MECHANISMUS_WACHSTUM = 10.0
+
+#: Gueltigkeitsgrenze der plastischen Dehnung (Auftrag vom 16.10.2026, Punkt 5):
+#: ε_p,max darueber - gesamtes Ergebnis „nicht gültig: außerhalb der Theorie
+#: kleiner Verzerrungen“. Einstellbar (Plastizitaet.dehnungsgrenze), je Werkstoff
+#: gilt die Bruchdehnung, wenn eingetragen (Material.bruchdehnung).
+DEHNUNGSGRENZE_VORGABE = 0.20
+
 #: Die Zeile im Protokoll, wenn Temperaturlasten oder Vorspannungen mitwirken
 #: (siehe stufenlast)
 SOFORT_VOLL = ("Temperaturlasten und Vorspannungen wirken ab der ersten Laststufe voll, "
@@ -1753,6 +1818,89 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
     return False, u, F_p_stufe, zustand_stufe, None
 
 
+def _knoten_u(model, u) -> np.ndarray:
+    """Die Verschiebungen der Knoten (nn, 3) aus dem FHG-Vektor."""
+    n = int(model.nn)
+    return np.asarray(u, float)[:6 * n].reshape(-1, 6)[:, :3]
+
+
+def _sv_flach(s_info) -> np.ndarray:
+    """σ_v an allen Integrationspunkten eines Schritts, flach (fuer Δσ_v)."""
+    teile = [np.asarray(q, float).ravel() for _i, q in (s_info or {}).get("sv_punkte") or []]
+    return np.concatenate(teile) if teile else np.zeros(0)
+
+
+def _mechanismus(model, u, s_info, zustand, spur: dict, u_ref: float, grenze: float, it: int):
+    """Ein Newton-Schritt einer Laststufe fuer die Mechanismus-Erkennung
+    (:data:`MECHANISMUS_FAKTOR`, :data:`MECHANISMUS_WACHSTUM`): ``spur`` haelt je
+    Stufe die Verschiebung des vorigen Iterierten und die Folge |Δu|∞. Rueckgabe
+    None oder der Befund mit Text, wenn alle drei Bedingungen gelten."""
+    from .zahlen import zahl_text as _z
+    ut = _knoten_u(model, u)
+    sv = _sv_flach(s_info)
+    vor, sv_vor = spur.get("u"), spur.get("sv")
+    spur["u"], spur["sv"] = ut.copy(), sv
+    if vor is None or vor.shape != ut.shape:
+        return None
+    d = np.linalg.norm(ut - vor, axis=1)
+    j = int(np.argmax(d)) if len(d) else 0
+    du = float(d[j]) if len(d) else 0.0
+    folge = spur.setdefault("du", [])
+    folge.append(du)
+    if len(folge) < 4:
+        return None
+    if not all(folge[-k] >= MECHANISMUS_FAKTOR * folge[-k - 1] for k in (1, 2, 3)):
+        return None
+    u_max = float(np.linalg.norm(ut, axis=1).max()) if len(ut) else 0.0
+    if u_max < MECHANISMUS_WACHSTUM * max(float(u_ref), 1e-300):
+        return None
+    eq = float(zustand.eq_max())
+    if eq <= float(grenze):
+        return None
+    dsv = float(np.abs(sv - sv_vor).max()) if (sv_vor is not None and len(sv) == len(sv_vor) and len(sv)) else None
+    text = (f"Mechanismus: die Verschiebungen wachsen ohne Gleichgewicht – im Newton-Schritt {it} "
+            f"{_z(du * 1e3, stellen=3)} mm an Knoten {j}, größte Verschiebung {_z(u_max * 1e3, stellen=3)} mm "
+            f"(das {_z(u_max / max(float(u_ref), 1e-300), stellen=3)}-fache des letzten konvergierten Zustands), "
+            f"ε_p,max {_z(eq * 100.0, stellen=3)} %"
+            + (f", σ_v ändert sich je Schritt noch um höchstens {_z(dsv / 1e6, stellen=3)} N/mm²"
+               if dsv is not None else ""))
+    return {"erkannt": True, "knoten": j, "du": du, "u_max": u_max, "u_ref": float(u_ref), "eps_p": eq,
+            "dsv": dsv, "schritt": int(it), "text": text}
+
+
+def _stufe_teilbar(F, F_sofort, lam_alt: float, lam_k: float) -> bool:
+    """Aendert sich die Last zwischen lam_alt und lam_k? Wirkt alles sofort voll
+    (Temperatur, Vorspannung - der Spannschritt einer Endvorspannung ist nur
+    das), gibt es nichts zu halbieren."""
+    if not lam_k > lam_alt:
+        return False
+    rest = np.asarray(F, float) if F_sofort is None else np.asarray(F, float) - np.asarray(F_sofort, float)
+    return bool(np.any(rest))
+
+
+def traglast_text(tl: dict) -> str:
+    """Die Meldung im Wortlaut des Anwenders (16.10.2026): „Kein Gleichgewicht
+    gefunden bei Laststufe X. Mögliche Ursache: Traglast überschritten oder
+    örtlicher Mechanismus an <Ort>. Letzter konvergierter Lastanteil: …%.“ -
+    an einer Krafteinleitung oder in einer netzabhaengigen Zone heisst die
+    Ursache „örtlicher Mechanismus an Krafteinleitung – Modell prüfen“
+    (:func:`traglast_ursache`). Hinter X steht der Anteil der Last dieser Stufe:
+    nach dem Halbieren sagt die Nummer allein nicht, welche Last sie traegt.
+    (Bis zum 16.10.2026 nachmittags: „Traglast überschritten bei Lastfaktor …“.)"""
+    from .zahlen import zahl_text as _z
+    lam = float(tl.get("lastfaktor", 0.0))
+    ursache = str(tl.get("ursache") or traglast_ursache(tl.get("ort") or {}))
+    stufe = tl.get("stufe")
+    wo = (f"bei Laststufe {int(stufe)} ({_z(float(tl.get('versuch', 1.0)) * 100.0, stellen=4)} % der Last)"
+          if stufe is not None else
+          f"bei {_z(float(tl.get('versuch', 1.0)) * 100.0, stellen=4)} % der Last")
+    t = (f"Kein Gleichgewicht gefunden {wo}. Mögliche Ursache: {ursache}. "
+         f"Letzter konvergierter Lastanteil: {_z(lam * 100.0, stellen=4)} %.")
+    if tl.get("sofort") and lam == 0.0:
+        t += " (Schon unter den sofort voll wirkenden Lasten Temperatur und Vorspannung.)"
+    return t
+
+
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
             norm_F: float, info: dict, log: list = None, progress=None,
             kontakt=None, F_sofort=None, sigma0=None, zonen=None, start=None) -> tuple:
@@ -1846,6 +1994,15 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     info["halbiert"] = 0
     lam_alt = 0.0
     k = 0
+    # Der letzte konvergierte Zustand (16.10.2026, TRAGLAST_ERKENNEN): Lastfaktor,
+    # Loesung, Zustand, F_p und der Zustand am Anfang seiner Stufe (die Basis der
+    # Rueckfuehrung, fuer das Residuum am Ende). Vor der ersten Stufe der Start
+    traglast = None
+    konv = {"lam": 0.0, "u": None, "basis": basis, "F_p": F_p, "anfang": basis}
+    # Elemente ueber der Gueltigkeitsgrenze am Ende jeder konvergierten Stufe
+    # (16.10.2026, Bedingung (d) der Ausnahme netzabhaengiger Zonen)
+    grenz_spur: list = []
+    grenze_eps = float(getattr(einst, "dehnungsgrenze", DEHNUNGSGRENZE_VORGABE) or DEHNUNGSGRENZE_VORGABE)
     while k < len(faktoren):
         lam_k, tiefe = faktoren[k]
         stufe_last[0] = lam_k
@@ -1865,6 +2022,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         # ein Rueckwaertseinsetzen auf der schon vorhandenen Faktorisierung
         u = _loesen(F_k + F_p, None, "Laststufe", k, 0)
         F_p_stufe, zustand_stufe = F_p, basis
+        # die letzte Loesung der Stufe: mit welchem F_p und welcher Tangente sie
+        # gerechnet ist (fuer das Residuum am Ende der Stufe, 16.10.2026)
+        letzte_loesung = (F_p, None, None)
         vorab = None
         if gemeinsam:
             u_start = u
@@ -1889,6 +2049,20 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                     log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} "
                                f"Newton-Schritten nicht konvergiert (Änderung {diff:.2e} > "
                                f"{einst.toleranz:g})")
+                if TRAGLAST_ERKENNEN:
+                    # nicht auf dem Zustand einer nicht konvergierten Stufe weiterrechnen
+                    traglast = {"lastfaktor": float(konv["lam"]), "versuch": float(lam_k),
+                                "sofort": F_sofort is not None, "mechanismus": None, "stufe": int(k),
+                                "_fehl": zustand_stufe}
+                    break
+            else:
+                konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
+                        "anfang": basis}
+                grenz_spur.append(ueber_grenze(model, zustand_stufe, einst))
+                if not letzte and hasattr(kontakt, "stufe_fertig"):
+                    # Gleitweg der Reibung fortschreiben - nicht nach der letzten Stufe:
+                    # der Abschluss gehoert zu ihr
+                    kontakt.stufe_fertig()
             basis, F_p = zustand_stufe, F_p_stufe
             lam_alt = lam_k
             continue
@@ -1898,9 +2072,16 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         erreicht = False
         mass, mess = 0.0, None
         stab_offen = ""
+        # Mechanismus (16.10.2026): Verschiebungen je Schritt, Bezug ist die groesste
+        # Verschiebung des letzten konvergierten Zustands bzw. der Startwert der Stufe
+        mech, mech_spur = None, {}
+        u_ref = float(np.linalg.norm(_knoten_u(model, konv["u"] if konv["u"] is not None else u),
+                                     axis=1).max()) if model.nn else 0.0
         for it in range(1, int(max(1, einst.iterationen)) + 1):
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                    tangente=True)
+            if TRAGLAST_ERKENNEN:
+                mech = _mechanismus(model, u, s_info, zustand_neu, mech_spur, u_ref, grenze_eps, it)
             bezug = _bezug(norm_F, F_p_neu)
             diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / bezug
             mass, ok, mess = _zonen_mass(zonen, diff, float(einst.toleranz), u, F_p_neu, F_p_stufe,
@@ -1923,6 +2104,15 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                                f"{stab_offen} - noch nicht konvergiert")
             if ok:
                 erreicht = True
+                break
+            if mech is not None:
+                # Mechanismus: weiterrechnen hiesse den Verschiebungen nachlaufen
+                # (Balken 1,2 M_pl: 25 Schritte zu je 16,7 m) - die Stufe gilt als
+                # nicht konvergiert, unten wird halbiert oder die Traglast gemeldet
+                # ins Protokoll; der Loeser gibt es am Ende des Lastfalls in den
+                # Fortschritt weiter (wie die Zeilen zum Halbieren)
+                if log is not None:
+                    log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last: {mech['text']}")
                 break
             je_schritt.append(mass)
             if len(je_schritt) >= 2 and je_schritt[-1] < je_schritt[-2]:
@@ -1953,10 +2143,33 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if dK.nnz == 0:
                 # Nichts fliesst gerade (etwa beim Entlasten): die Tangente ist
                 # die elastische, und dafuer gibt es die Faktorisierung schon
+                letzte_loesung = (F_p_neu, None, None)
                 u = _loesen(F_k + F_p_neu, None, "Newton", k, it)
             else:
+                letzte_loesung = (F_p_neu, dK, u)
                 u = _loesen(F_k + F_p_neu + dK @ u, dK, "Newton", k, it)
                 info["faktorisierungen"] += 1
+        # Traglast (16.10.2026): eine Stufe ohne Konvergenz - Budget aufgebraucht oder
+        # Mechanismus - wird halbiert, solange es geht; sonst endet die Rechnung beim
+        # letzten konvergierten Zustand. Offener Stabstatus bleibt beim alten Weg: er
+        # ist keine Frage der Traglast.
+        nicht_halbiert = ""
+        if TRAGLAST_ERKENNEN and not weglauf and not erreicht and not stab_offen:
+            if tiefe < HALBIEREN_MAX and _stufe_teilbar(F, F_sofort, lam_alt, lam_k):
+                weglauf = True
+                nicht_halbiert = ("ein Mechanismus" if mech is not None else
+                                  f"nach {it} Newton-Schritten nicht konvergiert")
+            else:
+                info["konvergiert"] = False
+                if log is not None:
+                    log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last nach {it} "
+                               f"Newton-Schritten nicht konvergiert"
+                               + (" (Mechanismus)" if mech is not None else
+                                  f" ({_mass_text(zonen, mess, diff, mass)} > {einst.toleranz:g})"))
+                traglast = {"lastfaktor": float(konv["lam"]), "versuch": float(lam_k),
+                            "sofort": F_sofort is not None, "mechanismus": mech, "stufe": int(k),
+                            "_fehl": zustand_neu}
+                break
         if weglauf:
             # Zurueck an den Stufenanfang, die Stufe in zwei halben wiederholen
             u, basis, F_p = vorher
@@ -1969,7 +2182,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if zonen is not None:
                 zonen.zurueck(z_marke)
             if log is not None:
-                if len(je_schritt) >= 3 and je_schritt[-1] > je_schritt[-2] > je_schritt[-3]:
+                if nicht_halbiert:
+                    warum = f"- {nicht_halbiert}"
+                elif len(je_schritt) >= 3 and je_schritt[-1] > je_schritt[-2] > je_schritt[-3]:
                     wo = " außerhalb der Zonen" if _zonen_greifen(zonen, mess) else ""
                     warum = (f"läuft weg (Änderung{wo} {je_schritt[-3]:.2e} - {je_schritt[-2]:.2e} - "
                              f"{je_schritt[-1]:.2e})")
@@ -1989,25 +2204,97 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         # protokollieren - Δσ ergaenzt das Kraftresiduum, ersetzt es nicht
         pruef = getattr(kontakt, "residuum_stufe", None) if kontakt is not None else None
         if pruef is not None:
-            zeile, gg_ok = pruef(F_k, f"{k}/{len(faktoren)}")
+            # Residuum der letzten Loesung mit den inneren Kraeften (16.10.2026): die
+            # Loesung erfuellt (K + dK) u = F_k + F_p_l + dK u_vor (mit Kontakt samt
+            # seinen Kraeften), die inneren Kraefte sind K u - F_p(u): es fehlen
+            # F_p(u) - F_p_l + dK (u - u_vor), dazu das Residuum des Kontakts
+            F_p_l, dK_l, u_vor_l = letzte_loesung
+            r_st = np.asarray(F_p_stufe, float) - np.asarray(F_p_l, float)
+            if dK_l is not None and u_vor_l is not None:
+                r_st = r_st + dK_l @ (np.asarray(u, float) - np.asarray(u_vor_l, float))
+            r_ct = kontakt.kontakt_residuum() if hasattr(kontakt, "kontakt_residuum") else None
+            if r_ct is not None:
+                r_st = r_st + np.asarray(r_ct, float)
+            try:
+                # nur an einer Loesung, an der F_p gerechnet ist (erreicht): sonst gehoert
+                # F_p_stufe zur vorletzten Loesung
+                zeile, gg_ok = pruef(F_k, f"{k}/{len(faktoren)}", r=r_st if erreicht else None,
+                                     bezug=_bezug(norm_F, F_p_stufe))
+            except TypeError:           # ein Loeser ohne die Angabe (Pruefungen mit Attrappen)
+                zeile, gg_ok = pruef(F_k, f"{k}/{len(faktoren)}")
             if zeile and log is not None:
                 log.append(zeile)
             if zeile and progress is not None:
                 progress(zeile)
             if not gg_ok:
                 info["konvergiert"] = False
+        if erreicht and (pruef is None or gg_ok):
+            konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
+                    "anfang": basis}
+            grenz_spur.append(ueber_grenze(model, zustand_stufe, einst))
+            if not letzte and kontakt is not None and hasattr(kontakt, "stufe_fertig"):
+                # Gleitweg der Reibung fortschreiben (contact.GLEITWEG_SPEICHER) - nicht
+                # nach der letzten Stufe: der Abschluss gehoert zu ihr, sonst hiesse jeder
+                # Knoten, der in ihr glitt, im Ergebnis haftend
+                kontakt.stufe_fertig()
         basis, F_p = zustand_stufe, F_p_stufe
         lam_alt = lam_k
     stufen_gerechnet = len(faktoren)
+    F_ende = F                  # die Last, zu der der gezeigte Zustand gehoert
+    if traglast is not None:
+        # Starrkoerperbewegung im letzten Versuch, getrennt vom plastischen
+        # Mechanismus (17.10.2026): Koerper, die die Pruefung vor dem Start als
+        # nicht gehalten nennt, bewegen sich vom letzten konvergierten Zustand an
+        # als Ganzes
+        try:
+            from .singular import kontakt_gehalten_gemerkt, starrkoerperbewegung
+            kh = [b for e in kontakt_gehalten_gemerkt(model) for b in e["koerper"]]
+            if kh and u is not None:
+                du = np.asarray(u, float) - (np.asarray(konv["u"], float) if konv["u"] is not None else 0.0)
+                sb = starrkoerperbewegung(model, du, kh)
+                if sb:
+                    traglast["starrkoerper"] = sb
+                    if log is not None:
+                        log.extend("Plastizität: Starrkörperbewegung im letzten Versuch – " + e["text"] for e in sb)
+        except Exception:                      # noqa: BLE001 - eine Meldung haelt nichts auf
+            pass
+        # Der letzte konvergierte Zustand bleibt sichtbar und gekennzeichnet (Auftrag
+        # vom 16.10.2026); seine Last ist die seines Lastfaktors - beim Faktor 0 ohne
+        # Last (vor dem Lastfall bzw. vom Start aus)
+        basis, F_p, basis_anfang = konv["basis"], konv["F_p"], konv["anfang"]
+        lam_e = float(konv["lam"])
+        F_ende = stufenlast(F, F_sofort, lam_e) if lam_e > 0.0 else np.zeros_like(np.asarray(F, float))
+        traglast["ueberschritten"] = True
+        # Wo die Fliesszone ohne Gleichgewicht waechst (Wortlaut des Anwenders, 16.10.2026)
+        fehl = traglast.pop("_fehl", None)
+        try:
+            traglast["ort"] = traglast_ort(model, konv["basis"], fehl, traglast.get("mechanismus"), zonen)
+        except Exception as ex:                  # noqa: BLE001 - eine Meldung haelt nichts auf
+            traglast["ort"] = {}
+            if log is not None:
+                log.append(f"Plastizität: Ort der Fließzone nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
+        traglast["ursache"] = traglast_ursache(traglast["ort"])
+        if traglast["ort"].get("kontakt_koerper") and isinstance(traglast.get("mechanismus"), dict):
+            # auch die Meldung „Mechanismus“ nennt den nur reibungsfrei gehaltenen Koerper (17.10.2026)
+            traglast["mechanismus"]["text"] = (str(traglast["mechanismus"].get("text", ""))
+                                               + " – " + traglast["ursache"])
+        traglast["text"] = traglast_text(traglast)
+        info["traglast"] = traglast
+        if traglast.get("mechanismus"):
+            info["mechanismus"] = traglast["mechanismus"]
+        rest = None
+        if log is not None:
+            log.append("Plastizität: " + traglast["text"])
     stab_offen = ""
     tol = float(einst.toleranz)
     abgenommen = None           # Urteil der Schlussabnahme (nur mit Kontakt)
     rest_mass, mess = rest, None
+    F_p_ende = None             # F_p an der gezeigten Loesung, fuer das Residuum
     if rest is None:
         # Die letzte Loesung gehoert zum letzten Zustand: im Gleichgewicht ist
         # K u = F + F_p, also genau diese elastische Loesung
-        u = _loesen(F + F_p, None, "Abschluss", None, None)
-        if kontakt is not None:
+        u = _loesen(F_ende + F_p, None, "Abschluss", None, None)
+        if kontakt is not None and traglast is None:
             F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
             bezug = _bezug(norm_F, F_p_ende)
             rest = float(np.linalg.norm(F_p_ende - F_p)) / bezug
@@ -2087,8 +2374,24 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 else:
                     log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
                                f"({_mass_text(zonen, mess, rest, rest_mass)} > {einst.toleranz:g}) - nicht konvergiert")
+    # Residuum der gezeigten Loesung (16.10.2026, Gleichgewichtskontrolle mit inneren
+    # Kraeften): der Loesungsweg erfuellt K u = F_ende + F_p (mit Kontakt samt
+    # Kontaktkraeften) exakt, die inneren Kraefte sind aber K u − F_p(u) mit dem F_p,
+    # das die Rueckfuehrung an u ergibt. An den freien FHG fehlt also
+    # (F − F_ende) + (F_p(u) − F_p) - gegen die **verlangte** Last F. Der Loeser
+    # nimmt die freien FHG (und mit ausgenommenen Zonen deren FHG heraus) und
+    # bewertet es (solver._residuum_eintragen).
+    if F_p_ende is None:
+        F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
+    info["_residuum"] = (np.asarray(F, float) - np.asarray(F_ende, float)) + (F_p_ende - F_p)
+    r_ct = kontakt.kontakt_residuum() if (kontakt is not None and hasattr(kontakt, "kontakt_residuum")) else None
+    if r_ct is not None:
+        # der Kontakt des Abschlusses: Kraefte nach dem Gesetz gegen die der Loesung
+        info["_residuum"] = info["_residuum"] + np.asarray(r_ct, float)
     info["fliessend"] = len(basis.fliessend())
     info["eps_p_max"] = basis.eq_max()
+    # die beiden letzten konvergierten Stufen (solver._plastisch_bewerten nimmt es heraus)
+    info["_ueber_grenze"] = [sorted(x) for x in grenz_spur[-2:]]
     if zonen is not None and log is not None:
         zeile = zonen.schlusszeile()
         if zeile:
@@ -2100,13 +2403,14 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                    f"{stufen_gerechnet} {'Laststufe' if stufen_gerechnet == 1 else 'Laststufen'}"
                    + (f" ({info['halbiert']}-mal halbiert)" if info.get("halbiert") else "")
                    + f" ({info['faktorisierungen']} Faktorisierungen, konsistente Tangente)"
-                   + ("" if info["konvergiert"] else " - nicht konvergiert"))
+                   + ("" if info["konvergiert"] else
+                      " - Traglast überschritten" if traglast is not None else " - nicht konvergiert"))
     return u, basis, F_p, info
 
 
 def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
               progress=None, loesen_tangente=None, kontakt=None, F_sofort=None,
-              sigma0=None, zonen=None, start=None) -> tuple:
+              sigma0=None, zonen=None, start=None, bezug_F=None) -> tuple:
     """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
     Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
     Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
@@ -2162,11 +2466,22 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     Spannschritts einer Vorspannkraft (Soll nach Verankerung). Ohne ihn
     beginnt jede Rechnung jungfraeulich wie bisher. Die Anfangsspannung
     ``sigma0`` ist die dieser Rechnung, nicht die des Starts.
+
+    ``bezug_F`` (16.10.2026): der Lastvektor, auf dessen Betrag die Aenderung von
+    F_p bezogen wird, wenn er nicht F selbst ist - im Lastfall nach dem Verriegeln
+    einer Endvorspannung die Lasten mit dem Kraeftepaar der **Sollkraft** statt der
+    Verriegelungskraft (vorspannkraft.rechnen). Am Pruefblech mit 900 kN war
+    ‖F_lock‖ = 1,94e9 N statt 1,27e6 N: die Verriegelung einer weggelaufenen Lage
+    (4,56 m) blaehte den Bezug um den Faktor 1 500 auf, und 18,7 kN Aenderung
+    galten als 9,7e-6. Ohne ``bezug_F`` wie bisher ‖F‖. Der Bezug steht in
+    info["bezug"].
     """
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand(sigma0)
     F = np.asarray(F, float)
     norm_F = float(np.linalg.norm(F))      # 0 ohne aeussere Last - dann greift _bezug
+    if bezug_F is not None:
+        norm_F = float(np.linalg.norm(np.asarray(bezug_F, float)))
     F_p = np.zeros(model.ndof)
     if start is not None:
         zustand = start[0].kopie()
@@ -2175,7 +2490,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     u = None
     info = {"laststufen": int(max(1, einst.laststufen)), "iterationen": 0, "konvergiert": True,
             "fliessend": 0, "eps_p_max": 0.0, "verlauf": [], "faktorisierungen": 0,
-            "verfahren": "anfangsdehnung"}
+            "verfahren": "anfangsdehnung", "bezug": norm_F}
     if not elemente:
         u = loesen(F)
         return u, zustand, F_p, info
@@ -2330,6 +2645,275 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                    f"{stufen} {'Laststufe' if stufen == 1 else 'Laststufen'}"
                    + ("" if info["konvergiert"] else " - nicht konvergiert"))
     return u, zustand, F_p, info
+
+
+# --------------------------------------------------------------------------
+# Ausgabe und Gueltigkeit jeder plastischen Rechnung (16.10.2026)
+# --------------------------------------------------------------------------
+def _koerper_des_elements(model, i: int) -> str:
+    """Der Koerper eines Elements (model.koerper[...].elemente), sonst seine Gruppe."""
+    for name, kp in (getattr(model, "koerper", None) or {}).items():
+        if int(i) in set(int(e) for e in (getattr(kp, "elemente", None) or [])):
+            return str(name)
+    return str(getattr(model.elements[int(i)], "group", "") or "")
+
+
+def eps_p_ort(model, zustand: Zustand) -> dict:
+    """ε_p,max mit Ort (Auftrag vom 16.10.2026, Punkt 7): Wert, Element,
+    Integrationspunkt, Koerper und Koordinate des Punkts [m] - aus den
+    natuerlichen Koordinaten des Punkts (Dehnungsoperator) mit den Formfunktionen
+    des Elements; ohne sie die Elementmitte. Leer, wenn nichts fliesst."""
+    from .elements import solid as sl
+    best_i, best_p, best = None, 0, 0.0
+    for i, v in zustand.eps_p_eq.items():
+        a = np.asarray(v, float).ravel()
+        if a.size and float(a.max()) > best:
+            best_i, best_p, best = int(i), int(np.argmax(a)), float(a.max())
+    if best_i is None:
+        return {}
+    e = model.elements[best_i]
+    k = sl._KNOTENZAHL.get(e.typ, len(e.nodes))
+    X = np.asarray(model.nodes, float)[[int(n) for n in list(e.nodes)[:k]]]
+    xyz = X.mean(axis=0)
+    try:
+        op = sl.dehnungsoperator(model, e.typ, [best_i])[0]
+        if op.xi is not None and len(op.xi) > best_p:
+            N, _dN = sl.N_dN(e.typ, *[float(c) for c in np.asarray(op.xi, float)[best_p]])
+            xyz = np.asarray(N, float) @ X
+    except Exception:                       # noqa: BLE001 - dann die Elementmitte
+        pass
+    return {"wert": best, "element": best_i, "punkt": best_p, "koerper": _koerper_des_elements(model, best_i),
+            "werkstoff": str(e.mat), "xyz": [float(c) for c in xyz]}
+
+
+def eps_p_ort_text(ort: dict) -> str:
+    """„ε_p,max 5,097 % in Körper V1, Element 12 (Punkt 3) bei (0,12; 0,03; 0,01) m“."""
+    from .zahlen import zahl_text as _z
+    if not ort:
+        return "ε_p,max 0 % (nichts fließt)"
+    x, y, z = ort["xyz"]
+    wo = f"Körper {ort['koerper']}, " if ort.get("koerper") else ""
+    return (f"ε_p,max {_z(float(ort['wert']) * 100.0, stellen=4)} % in {wo}Element {ort['element']} "
+            f"(Integrationspunkt {int(ort['punkt']) + 1}, {ort.get('werkstoff', '')}) bei "
+            f"({_z(x, stellen=4)}; {_z(y, stellen=4)}; {_z(z, stellen=4)}) m")
+
+
+def dehnungsgrenze_pruefen(model, zustand: Zustand, einst: Plastizitaet) -> dict:
+    """Gueltigkeitsgrenze der plastischen Dehnung (Auftrag vom 16.10.2026,
+    Punkt 5): je Element seine Grenze - die Bruchdehnung des Werkstoffs, wenn
+    eingetragen, sonst ``einst.dehnungsgrenze`` (Vorgabe 20 %). Gemeldet wird das
+    Element mit dem groessten Verhaeltnis ε_p,max / Grenze; liegt es ueber 1, ist
+    das **ganze** Ergebnis „nicht gültig: außerhalb der Theorie kleiner
+    Verzerrungen“ (solver.gueltigkeit)."""
+    from .zahlen import zahl_text as _z
+    vorgabe = float(getattr(einst, "dehnungsgrenze", DEHNUNGSGRENZE_VORGABE) or DEHNUNGSGRENZE_VORGABE)
+    best = None
+    for i, v in zustand.eps_p_eq.items():
+        a = np.asarray(v, float).ravel()
+        if not a.size:
+            continue
+        eq = float(a.max())
+        mat = model.materials.get(model.elements[int(i)].mat)
+        bd = getattr(mat, "bruchdehnung", None) if mat is not None else None
+        g = float(bd) if bd else vorgabe
+        if best is None or eq / g > best[0]:
+            best = (eq / g, int(i), eq, g, bool(bd), str(getattr(mat, "name", "")))
+    if best is None:
+        return {"grenze": vorgabe, "quelle": "Vorgabe", "eps_p_max": 0.0, "verletzt": False}
+    _r, i, eq, g, aus_bd, mat_name = best
+    quelle = f"Bruchdehnung des Werkstoffs {mat_name}" if aus_bd else "Grenze der Rechnung"
+    aus = {"grenze": g, "quelle": quelle, "eps_p_max": eq, "element": i, "verletzt": bool(eq > g)}
+    if aus["verletzt"]:
+        aus["text"] = (f"außerhalb der Theorie kleiner Verzerrungen – ε_p,max {_z(eq * 100.0, stellen=4)} % "
+                       f"in Element {i} über {_z(g * 100.0, stellen=4)} % ({quelle}); das ganze Ergebnis "
+                       "ist nicht gültig")
+    return aus
+
+
+def _grenze_je_element(model, einst) -> tuple:
+    """(Vorgabe, Funktion Element -> Grenze): die Bruchdehnung des Werkstoffs,
+    wenn eingetragen, sonst die Grenze der Rechnung (wie dehnungsgrenze_pruefen)."""
+    vorgabe = float(getattr(einst, "dehnungsgrenze", DEHNUNGSGRENZE_VORGABE) or DEHNUNGSGRENZE_VORGABE)
+    cache: dict = {}
+
+    def grenze(i: int) -> float:
+        name = model.elements[int(i)].mat
+        if name not in cache:
+            mat = model.materials.get(name)
+            bd = getattr(mat, "bruchdehnung", None) if mat is not None else None
+            cache[name] = float(bd) if bd else vorgabe
+        return cache[name]
+    return vorgabe, grenze
+
+
+def ueber_grenze(model, zustand: Zustand, einst) -> set:
+    """Die Elemente, deren ε_p,max ueber ihrer Gueltigkeitsgrenze liegt
+    (16.10.2026, fuer die Ausnahme netzabhaengiger Zonen)."""
+    _v, grenze = _grenze_je_element(model, einst)
+    aus = set()
+    for i, v in zustand.eps_p_eq.items():
+        a = np.asarray(v, float).ravel()
+        if a.size and float(a.max()) > grenze(int(i)):
+            aus.add(int(i))
+    return aus
+
+
+def grenze_netzabhaengig(ueber, zonen_el, markiert: bool, konvergiert: bool, gleichgewicht_ok,
+                         vorher) -> tuple:
+    """Darf die Ueberschreitung der Gueltigkeitsgrenze nur gewarnt werden?
+    Vorgabe des Anwenders vom 16.10.2026, woertlich: „Netzabhängige Zonen von
+    der 20-%-Grenze ausnehmen und nur warnen: ja, wenn (a) die Zone vom
+    Programm als netzabhängig markiert ist, (b) die Dehnung über 20 %
+    vollständig innerhalb der Zone bleibt, (c) die Rechnung konvergiert ist und
+    das Gleichgewicht stimmt, (d) die Zone über die Laststufen nicht wächst.
+    Sonst Ergebnis ‚nicht gültig‘.“
+
+    ``ueber``: Elemente ueber der Grenze am Ende; ``zonen_el``: die Elemente
+    der als netzabhaengig markierten Zonen (auffaellige Stellen, solver.
+    _SpitzenImNewton); ``markiert``: es gibt solche Stellen; ``gleichgewicht_ok``:
+    True, False oder None (nicht bestimmt - zaehlt nicht als erfuellt);
+    ``vorher``: Elemente ueber der Grenze am Ende der vorletzten konvergierten
+    Laststufe (None: es gab keine). (d) heisst hier: in der letzten Laststufe
+    kommt kein Element ueber der Grenze dazu, und die Ueberschreitung war in
+    der vorletzten schon da - sonst laesst sich nicht sagen, dass sie nicht
+    waechst. Rueckgabe (ausgenommen, Gruende je nicht erfuellter Bedingung)."""
+    from .begriffe import anzahl
+    ueber, zonen_el = set(int(x) for x in ueber), set(int(x) for x in (zonen_el or ()))
+    gruende = []
+    if not markiert or not zonen_el:
+        gruende.append("(a) keine vom Programm als netzabhängig markierte Zone")
+    aussen = ueber - zonen_el
+    if aussen:
+        gruende.append(f"(b) die Dehnung über der Grenze reicht über die netzabhängige Zone hinaus "
+                       f"({anzahl(len(aussen), 'Element', 'Elemente')} außerhalb)")
+    if not konvergiert:
+        gruende.append("(c) die Rechnung ist nicht konvergiert")
+    if gleichgewicht_ok is None:
+        gruende.append("(c) das Gleichgewicht ist nicht bestimmt")
+    elif not gleichgewicht_ok:
+        gruende.append("(c) das Gleichgewicht stimmt nicht")
+    if vorher is None:
+        gruende.append("(d) nur eine Laststufe – ob die Zone wächst, lässt sich nicht prüfen")
+    else:
+        neu = ueber - set(int(x) for x in vorher)
+        if neu or not vorher:
+            gruende.append("(d) die Zone wächst über die Laststufen ("
+                           + (f"{anzahl(len(neu), 'Element', 'Elemente')} in der letzten Laststufe dazu"
+                              if vorher else "in der vorletzten Laststufe noch keine Überschreitung") + ")")
+    return (not gruende), gruende
+
+
+def krafteinleitung_knoten(model) -> np.ndarray:
+    """Maske der Knoten, an denen Kraft eingeleitet wird (16.10.2026, Wortlaut der
+    Traglastmeldung): Knotenlasten aller Lastfaelle, Master und Slaves starrer
+    Koerper und Verteilkopplungen (RBE2/RBE3, Kreisring), die Knoten der starren
+    Scheiben und der gekoppelten Stabenden. Kontaktfugen zaehlen nicht."""
+    nn = int(model.nn)
+    m = np.zeros(nn, bool)
+
+    def setze(k):
+        k = int(k)
+        if 0 <= k < nn:
+            m[k] = True
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for nl in getattr(lc, "nodal_loads", None) or []:
+            if any(float(x) for x in (nl.F or [])):
+                setze(nl.node)
+    for sk in getattr(model, "starrkoerper", None) or []:
+        setze(sk.master)
+        for s in sk.slaves or []:
+            setze(s)
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
+    for kp in getattr(model, "kopplungen", None) or []:
+        g = str(getattr(kp, "gruppe", "") or "")
+        if g.startswith(STARR_GRUPPE) or g.startswith(STABENDE_GRUPPE):
+            setze(kp.node_a)
+            setze(kp.node_b)
+    return m
+
+
+def ort_element(model, i: int) -> dict:
+    """Koerper, Werkstoff und Mitte eines Elements (fuer den Ort einer Meldung)."""
+    e = model.elements[int(i)]
+    X = np.asarray(model.nodes, float)[[int(n) for n in e.nodes if 0 <= int(n) < model.nn]]
+    xyz = X.mean(axis=0) if len(X) else np.zeros(3)
+    return {"element": int(i), "koerper": _koerper_des_elements(model, int(i)), "werkstoff": str(e.mat),
+            "xyz": [float(c) for c in xyz]}
+
+
+def ort_text(ort: dict) -> str:
+    """„Körper V1, Element 12 bei (0,12; 0,03; 0,01) m“."""
+    from .zahlen import zahl_text as _z
+    if not ort:
+        return "unbekanntem Ort"
+    x, y, z = ort.get("xyz") or (0.0, 0.0, 0.0)
+    kp = str(ort.get("koerper") or "")
+    wo = f"Körper {kp}, " if kp and kp != "default" else ""
+    return f"{wo}Element {ort['element']} bei ({_z(x, stellen=4)}; {_z(y, stellen=4)}; {_z(z, stellen=4)}) m"
+
+
+def traglast_ort(model, konv_zustand, fehl_zustand, mech, zonen) -> dict:
+    """Wo die Fliesszone ohne Gleichgewicht waechst (16.10.2026): das Element mit
+    dem groessten Zuwachs von ε_p vom letzten konvergierten Zustand zum letzten
+    Versuch; ohne Zuwachs das Element am Knoten des Mechanismus. Dazu, ob es in
+    einer als netzabhaengig markierten Zone (auffaellige Stelle) oder an einer
+    Krafteinleitung (:func:`krafteinleitung_knoten`) liegt."""
+    best_i, best = None, 0.0
+    alt = getattr(konv_zustand, "eps_p_eq", None) or {}
+    for i, v in (getattr(fehl_zustand, "eps_p_eq", None) or {}).items():
+        a = float(np.max(v)) if np.size(v) else 0.0
+        b = float(np.max(alt[i])) if (i in alt and np.size(alt[i])) else 0.0
+        if a - b > best:
+            best_i, best = int(i), a - b
+    if best_i is None and isinstance(mech, dict) and mech.get("knoten") is not None:
+        k = int(mech["knoten"])
+        best_i = next((j for j, e in enumerate(model.elements) if k in [int(x) for x in e.nodes]), None)
+    if best_i is None:
+        return {}
+    ort = ort_element(model, best_i)
+    ort["d_eps_p"] = float(best)
+    netzabh = False
+    if zonen is not None and getattr(zonen, "auffaellig", None):
+        try:
+            zonen._masken()
+            netzabh = best_i in set(int(x) for x in np.asarray(zonen._zonen_el).tolist())
+        except Exception:                      # noqa: BLE001 - nur eine Einordnung
+            netzabh = False
+    ke = krafteinleitung_knoten(model)
+    an_ke = any(0 <= int(n) < len(ke) and ke[int(n)] for n in model.elements[best_i].nodes)
+    ort["netzabhaengig"] = bool(netzabh)
+    ort["krafteinleitung"] = bool(an_ke)
+    # Ein Koerper, der seitlich nur ueber reibungsfreien Kontakt und Staebe ohne
+    # Quersteifigkeit gehalten ist (17.10.2026, singular.kontakt_gehalten): der
+    # Knoten des Mechanismus zuerst, sonst das Element des Orts
+    try:
+        from .singular import kontakt_koerper_am_ort
+        kh = None
+        if isinstance(mech, dict) and mech.get("knoten") is not None:
+            kh = kontakt_koerper_am_ort(model, knoten=int(mech["knoten"]))
+        if kh is None:
+            kh = kontakt_koerper_am_ort(model, element=best_i)
+        if kh is not None:
+            ort["kontakt_koerper"] = {"koerper": kh["koerper_ort"], "art": kh["art"],
+                                      "reibungsfrei": kh["reibungsfrei"], "kontakte": kh["kontakte"]}
+    except Exception:                          # noqa: BLE001 - nur eine Einordnung
+        pass
+    return ort
+
+
+def traglast_ursache(ort: dict) -> str:
+    """Die „mögliche Ursache“ der Traglastmeldung (Wortlaut des Anwenders)."""
+    kk = (ort or {}).get("kontakt_koerper")
+    if kk:
+        # Wortlaut des Auftrags vom 17.10.2026
+        if kk.get("reibungsfrei"):
+            return (f"örtlicher Mechanismus: Körper {kk['koerper']} {kk.get('art', 'rutscht')}, er ist nur über "
+                    f"reibungsfreien Kontakt gehalten – Reibung ansetzen oder halten ({ort_text(ort)})")
+        return (f"örtlicher Mechanismus: Körper {kk['koerper']} {kk.get('art', 'rutscht')}, er ist nur über Stäbe "
+                f"ohne Quersteifigkeit gehalten – seitlich halten ({ort_text(ort)})")
+    if ort and (ort.get("netzabhaengig") or ort.get("krafteinleitung")):
+        return f"örtlicher Mechanismus an Krafteinleitung – Modell prüfen ({ort_text(ort)})"
+    return "Traglast überschritten oder örtlicher Mechanismus an " + ort_text(ort)
 
 
 def sigma0_je_element(model, zustand: Zustand) -> dict:

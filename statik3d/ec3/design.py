@@ -158,6 +158,9 @@ class DesignResults:
         from .spannstahl import schlupf_zeilen
         for z in schlupf_zeilen(self):
             s += "\n" + z
+        # Vorspannung je Anker (16.10.2026): P_max, P₀, P_∞ und ΔP_t je Definition
+        for z in (getattr(self, "vorspannung_zeilen", None) or []):
+            s += "\n" + z
         return s + warnzeilen(self) + hinweiszeilen(self)
 
     def table(self) -> list[list]:
@@ -583,6 +586,11 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",
         "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche, hinweise=hinweise)
+    # Vorspannung je Anker (16.10.2026): nur mit Definitionen - sonst bleibt das
+    # Ergebnis, wie es war
+    if getattr(model, "vorspann_definitionen", None):
+        from ..vorspannung import ergebnis_zeilen
+        out.vorspannung_zeilen = ergebnis_zeilen(model, getattr(analysis, "cases", None) or {})
     if not names or not results:
         _melde(progress, "Nachweise EC3: keine Stäbe mit Nachweis" if not names else
                "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))
@@ -606,7 +614,8 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         # nach 698 Minuten bei 94 % und kam nicht weiter; ein Arbeiter starb
         # vorher mit AssertionError in multiprocessing/connection.py
         # (_get_more_data, die Pipe brach) - 21.09.2026.
-        paket = _paket_schreiben(model, stripped, {k: (_strip(r), z) for k, (r, z) in zustaende.items()})
+        paket = _paket_schreiben(model, stripped, {k: (_strip(r) if r is not None else None, z)
+                                                   for k, (r, z) in zustaende.items()})
         try:
             jobs = [Job("design_members", {"paket": paket, "members": c})
                     for c in chunks]

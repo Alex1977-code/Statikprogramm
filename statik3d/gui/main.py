@@ -177,6 +177,9 @@ def _bewegung_kurz(s) -> str:
     Steht dort eine Zahl, geht sie in dieser Bewegung ins Nichts; steht
     „im Gleichgewicht", ist nur die Lage des Bauteils unbestimmt.
     """
+    if getattr(s, "art", "") == "starr":
+        # Starrkoerperbewegung im Ergebnis (17.10.2026)
+        return f"als Ganzes {zl.zahl_text(float(getattr(s, 'weg', 0.0)) * 1e3, stellen=3)} mm – nicht gehalten"
     teile = [f"{zl.zahl_text(s.kraft / 1000.0, stellen=3)} kN" for _ in (1,) if s.kraft > 0.0]
     teile += [f"{zl.zahl_text(s.moment / 1000.0, stellen=3)} kNm" for _ in (1,) if s.moment > 0.0]
     return " + ".join(teile) if teile else "im Gleichgewicht"
@@ -2331,6 +2334,9 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 sub.addAction("Bearbeiten…", rufe(lambda _c=False, a=art, n=list(namen): self.sammelmaske(a, n),
                                                   True))
+            if art == "volumen":
+                sub.addAction("Als Bolzen nachweisen…",
+                              rufe(lambda _c=False, n=list(namen): self.bolzen_festlegen(n), True))
             if art == "stab" and len(namen) > 1:
                 sub.addAction("Stäbe zusammenfassen",
                               rufe(lambda _c=False, n=list(namen): self.staebe_zusammenfassen(n)))
@@ -6061,6 +6067,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
                         "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
                         "die Umgebung", symbol="vorspannung")
+        g.klein("Vorspannung je Anker", lambda: self.maske_vorspanndefinition(neu=True),
+                hinweis="Vorspannung einmal je Anker definieren (Pressenkraft P_max, Schlupf Δs, "
+                        "Spanngruppe, P_∞ oder ΔP_t); Lastfälle verweisen mit Zeitpunkt 0 oder ∞ darauf")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -6113,6 +6122,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                          "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
+        g.klein("Freie Knoten entfernen…", self.freie_knoten_entfernen, symbol="loeschen",
+                    hinweis="Knoten ohne Element und ohne jeden Verweis (keine Linie, Fläche, Last, "
+                            "Lager, Kopplung) auf Rückfrage entfernen - die Netzabnahme meldet sie als "
+                            "Information; das Vernetzen löscht sie nie")
         # Das einzelne finite Stabelement (Teilpaket C14, 03.10.2026): bis dahin
         # der Befehl Struktur → Stab. Es steht im Modellbaum unter FE-Netz →
         # Stabelemente, darum hier; im Register Struktur fehlte auch der Platz
@@ -6122,6 +6135,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Ein einzelnes finites Stabelement zwischen zwei Knoten anlegen, ohne Stab mit "
                         "Nachweis - es steht unter FE-Netz → Stabelemente. Den Stab wie in RFEM legt "
                         "Struktur → Stab an")
+        # Einleitung der starren Scheiben ueber Bohrungen (16.10.2026,
+        # statik3d.scheibeneinleitung): eine Kopplungsart am Netz, darum hier
+        g.klein("Scheiben einleiten…", self.scheiben_einleiten, symbol="einstellungen",
+                hinweis="Starre Scheiben über einer Bohrung (aus RFEM): Kraft am Lochrand starr (bisher) oder "
+                        "über einen Kreisring unter Mutter bzw. Scheibe verteilend (RBE3, flächenanteilig); "
+                        "Außen-Ø je Gruppe oder Scheibe, Normmaß als Annahme, mittlere Pressung F/A_Ring. "
+                        "Die Geometrie bleibt unverändert; Rückgängig mit Strg+Z")
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
@@ -7310,7 +7330,8 @@ class MainWindow(QtWidgets.QMainWindow):
         "flaechenlager_einzeln": "surface_supports", "punktmasse": "punktmassen", "daempfer": "daempfer",
         "feder": "federn", "starrkoerper": "starrkoerper", "grenzschicht": "grenzschichten",
         "wasserdruck": "wasserdruecke", "wind": "winde", "schwingung": "schwingungen",
-        "schweissnaht": "schweissnaehte", "ermuedungslast": "fatigue_loads"}
+        "schweissnaht": "schweissnaehte", "ermuedungslast": "fatigue_loads",
+        "vorspanndefinition": "vorspann_definitionen"}
     #: Auswahlarten der Sammelmaske -> Art des Bezugs
     SAMMEL_BEZUG = {"element": "stabelement", "flaeche": "geoflaeche", "volumen": "geokoerper_einzeln",
                     "lager": "lager_einzeln", "linienlager": "linienlager_einzeln",
@@ -7415,6 +7436,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "situation": "Situation {}", "subsystem": "Subsystem {}", "bemassung": "Bemaßung {}",
         "stellung": "Stellung {}", "wasserdruck": "Wasserdruck {}", "wind": "Wind {}",
         "schwingung": "Schwingung {}", "schweissnaht": "Schweißnaht {}", "ermuedungslast": "Ermüdungslast {}",
+        "vorspanndefinition": "Vorspannung {}",
         "punktmasse": "Punktmasse {}", "daempfer": "Dämpfer {}", "feder": "Feder {}",
         "starrkoerper": "Starrer Körper {}", "grenzschicht": "Grenzschicht {}"}
     #: Arten, deren Name ein Listenplatz ist: der Anwender zaehlt ab 1
@@ -7781,7 +7803,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
                     "schweissnaht", "schweissnaht_neu", "ermuedungslast", "ermuedungslast_neu",
                     # gespeicherte Ansichten (14.10.2026): Klick ruft auf, „+“ speichert
-                    "ansicht", "ansicht_neu"}
+                    "ansicht", "ansicht_neu",
+                    # Vorspannung je Anker (16.10.2026): Definition, neue, Zuordnung
+                    "vorspanndefinition", "vorspanndefinition_neu", "vorspannung_zuordnen"}
 
     #: Arten, die nur an Zweigen stehen (Teilpaket 8b): ihr Klick zeigt die
     #: Uebersicht und waehlt nichts. Knoten, Daempfer und starre Koerper teilen
@@ -7797,7 +7821,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "ergebnisse", "ergebnisgruppe", "bericht", "unterlagen",
         "subsysteme", "stellungen", "situationen",
         "schweissnaehte", "anschluesse", "verformungen", "beulfelder", "volumenbereiche",
-        "lasteinleitung", "bemassungen", "layerliste", "ansichten"})
+        "lasteinleitung", "bemassungen", "layerliste", "ansichten", "vorspanndefinitionen"})
     #: So viele Zeilen zeigt die Liste einer Uebersicht hoechstens; der Rest
     #: steht in der Tabelle (wie bei den Lasten eines Lastfalls, 40 Zeilen in
     #: :meth:`_lastart_geklickt`)
@@ -8841,6 +8865,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     felder.append(F("rfem_pruefen", "Vorspannung", "info",
                                     f"{_vk.VERMERK_RFEM}: als eingeprägte Dehnung übernommen – "
                                     f"{_vk.RFEM_PRUEFEN} (Lasten › Vorspannung)"))
+                # Vorspannung je Anker (16.10.2026): Verweis mit Zeitpunkt
+                wahl_vz, jetzt_vz = self._vorspannzustand_wahl(lc)
+                if len(wahl_vz) > 1:
+                    felder.append(F("vorspannzustand", "Vorspannung je Anker", "wahl", jetzt_vz, wahl_vz,
+                                    hinweis="Verweis auf die Vorspannung je Anker: Zeitpunkt 0 (P₀ nach dem "
+                                            "Verankern, vom Programm gerechnet) oder Zeitpunkt ∞ (P_∞); "
+                                            "„keine“ = nur die Lasten des Lastfalls"))
                 felder += [F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
                             hinweis="Lastfälle einer Gruppe wirken nie gemeinsam"),
                           F("situation", "Situation", "wahl",
@@ -8952,6 +8983,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                     f"{mt.grenze_name() if mt else 'f_u'} verfestigt der Werkstoff, "
                                     "danach fließt er ideal plastisch."),
                           F("grenze", "Grenze", "info", (pl_.grenze_text(mt, pz_) if mt else "–")),
+                          # Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026)
+                          F("bruchdehnung", "Bruchdehnung [%]", "zahl",
+                            (float(mt.bruchdehnung) * 100.0 if mt and getattr(mt, "bruchdehnung", None) else None),
+                            breite=78, leer=True,
+                            hinweis="Gültigkeitsgrenze der plastischen Dehnung für diesen Werkstoff: liegt "
+                                    "ε_p,max darüber, ist das ganze Ergebnis nicht gültig. Leer = die Grenze "
+                                    "der Rechnung (Berechnung › Plastizität, Vorgabe 20 %)."),
                           F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
                             hinweis="S235, S355 … für die Nachweise; Groß-/Kleinschreibung und Leerzeichen sind gleich"),
                           # Hilfs- oder Krafteinleitungskoerper (13.10.2026): nur
@@ -9607,6 +9645,8 @@ class MainWindow(QtWidgets.QMainWindow):
     KONTAKT_SCHUB = {"frei": "frei (gleiten)", "starr": "starr (haften)", "feder": "Feder"}
     KONTAKT_DREH = {"frei": "frei", "starr": "starr"}
     KONTAKT_SPALT = ["wie modelliert", "auf Berührung setzen (Spalt schließen)"]
+    #: Kontaktstart (17.10.2026): wie die Kontaktiteration beginnt
+    KONTAKT_START = ["nach Spalt (Vorgabe)", "geschlossen"]
     KONTAKT_FREI = "Benutzerdefiniert"
     KONTAKT_ALLE = "(alle anderen Körper)"
     #: Gelenkmaske: Lage, Freiheitsgrade und Wirkung im Klartext
@@ -9847,6 +9887,13 @@ class MainWindow(QtWidgets.QMainWindow):
                      self.KONTAKT_SPALT,
                      hinweis="„auf Berührung setzen“: jeder Knoten gilt in seiner Lage als anliegend - "
                              "Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden"),
+                   F("start_geschlossen", "Kontaktstart", "wahl",
+                     self.KONTAKT_START[1 if getattr(kb, "start_geschlossen", False) else 0],
+                     self.KONTAKT_START,
+                     hinweis="„geschlossen“: die Rechnung beginnt mit allen Knoten dieser Fuge "
+                             "geschlossen, mit dem echten Spalt. Sinnvoll, wenn Teile planmäßig anliegen "
+                             "und durch Vorspannung oder Last angedrückt werden; die Fuge darf trotzdem "
+                             "abheben, wenn Zug entsteht"),
                    F("spiel", "Spiel je Seite [mm]", "zahl", float(getattr(kb, "spiel", 0.0) or 0.0) * 1e3,
                      hinweis="Passung: Anfangsspalt je Knoten zusätzlich zur Geometrie - bei einer "
                              "Bohrung das radiale Spiel (halbes Durchmesserspiel; H7/h6 bei 25 mm bis "
@@ -11531,6 +11578,10 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
             lc.grundlast = bool(w.get("grundlast", False))
             lc.faktorisiert = bool(w.get("faktorisiert", False))
+            if "vorspannzustand" in w:
+                vz_neu = self._vorspannzustand_lesen(str(w.get("vorspannzustand") or ""), lc)
+                if vz_neu is not None:
+                    lc.vorspannzustand = vz_neu
             lc.nummer = nummer          # oben gelesen und geprueft
             g = zahl("g_z", 0.0)
             grav = list(lc.gravity) + [0.0] * (3 - len(lc.gravity))
@@ -11635,6 +11686,14 @@ class MainWindow(QtWidgets.QMainWindow):
             spann = self._spannstahl_lesen(w, None if neu else alt_mt, zahl)
             if isinstance(spann, str):
                 return self.hinweis(spann)
+            # Bruchdehnung (16.10.2026): leer = Grenze der Rechnung; ohne das Feld bleibt sie
+            bruch = getattr(alt_mt, "bruchdehnung", None) if alt_mt is not None else None
+            if "bruchdehnung" in w:
+                bd = zahl("bruchdehnung")
+                if bd is not None and not bd > 0.0:
+                    return self.hinweis("Bruchdehnung muss größer als 0 % sein - oder leer für die Grenze "
+                                        "der Rechnung. Nicht übernommen.")
+                bruch = None if bd is None else float(bd) / 100.0
             self.merken(f"Werkstoff {neuname}")
             # Die Sorte vereinheitlichen (F08, 06.10.2026): „s235“ wird S235;
             # eine Sorte, die die Tabelle nicht kennt, wird gemeldet (siehe
@@ -11646,7 +11705,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           rho=float(zahl("rho", 7850.0)),
                           alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
                           fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
-                          grade=sorte, verfestigung=r_verf, **spann)
+                          grade=sorte, verfestigung=r_verf, bruchdehnung=bruch, **spann)
             # art, sigma_pmax, sigma_pm0 schreibt die Schleife unten wie jedes Feld der
             # Maske; E_p (kein Eingabefeld) bleibt am vorhandenen Werkstoff, wie es war
             dicken_zeilen = []
@@ -11843,6 +11902,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            and self._kontakt_ist_standard(standard, zug, sx, sy, dreh, mu) else "")
             kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
             kb.spalt_schliessen = str(w.get("spalt_art", "")) == self.KONTAKT_SPALT[1]
+            kb.start_geschlossen = str(w.get("start_geschlossen", "")) == self.KONTAKT_START[1]
             kb.spiel = max(float(zahl("spiel", 0.0) or 0.0), 0.0) / 1e3
             kb.grenzpressung = max(float(zahl("grenzpressung", 0.0) or 0.0), 0.0) * 1e6
             kb.rand_frei = int(max(float(zahl("rand_frei", 0.0) or 0.0), 0.0))
@@ -12007,6 +12067,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_schweissnaht()
         if zweigart == "ermuedungslasten":
             return self.maske_ermuedungslasten(neu=True)
+        if zweigart == "vorspanndefinitionen":
+            return self.maske_vorspanndefinition(neu=True)
         if zweigart == "bemassungen":
             return self.bemassung_neu("linear")
         if zweigart == "bericht":
@@ -12068,6 +12130,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.ansicht_speichern()
         if art == "ermuedungslast_neu":
             return self.maske_ermuedungslasten(neu=True)
+        if art == "vorspanndefinition":
+            return self.maske_vorspanndefinition(name)
+        if art == "vorspanndefinition_neu":
+            return self.maske_vorspanndefinition(neu=True)
+        if art == "vorspannung_zuordnen":
+            return self.vorspannung_zuordnen()
         if art == "bemassung_neu":
             return self.bemassung_neu("linear")
         if art == "bemassung":
@@ -12464,6 +12532,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            "Ermüdungslasten verlieren ihn)",
                "kombination": f"Kombination {name}",
                "ermuedungslast": f"Ermüdungslast {name}",
+               "vorspanndefinition": f"Vorspannung {name} (die Lastfälle verlieren ihren Verweis)",
                "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
             return
@@ -12519,6 +12588,9 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "ermuedungslast":
             # auch aus jedem Anschluss (Model.ermuedungslast_loeschen, F29)
             grund = m.ermuedungslast_loeschen(name, protokoll=zeilen)
+        elif art == "vorspanndefinition":
+            # mit den Verweisen der Lastfaelle (16.10.2026)
+            grund = m.vorspann_definition_loeschen(name, protokoll=zeilen)
         elif art == "werkstoff":
             benutzt = (sum(1 for e in m.elements if e.mat == name)
                        + sum(1 for f in m.flaechen.values() if getattr(f, "material", "") == name)
@@ -13943,6 +14015,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if abgebrochen:
             log.append(f"Vernetzen abgebrochen: {bg.anzahl(n, 'Element', 'Elemente')} erzeugt, die übrigen "
                        "Objekte bleiben ohne Netz")
+        elif n:
+            # das Netz merkt sich seine Einstellung (statik3d.netzhinweis)
+            from .. import netzhinweis as _nhw
+            _nhw.merken(self.model)
         for z in log:
             self.log.appendPlainText(z)
         if n:
@@ -14143,6 +14219,26 @@ class MainWindow(QtWidgets.QMainWindow):
                   if ges["fugen"] else
                   "Keine Kontaktfuge ausgeführt - das Protokoll sagt, warum")
 
+    def freie_knoten_entfernen(self):
+        """Netz → Freie Knoten entfernen… (nur Befehlssuche): Knoten ohne Element und
+        ohne jeden Verweis, auf Rückfrage. Aus einem RFEM-Import wird nichts
+        selbständig geändert (16.10.2026) - die Abnahme meldet, dieser Befehl
+        löscht, wenn der Anwender es will."""
+        n = self.model.freie_knoten_entfernen(nur_zaehlen=True)
+        if not n:
+            return self.hinweis("Es gibt keine freien Knoten ohne jeden Verweis - nichts zu entfernen")
+        if not self._fragen("Freie Knoten entfernen",
+                            f"{n} Knoten hängen an keinem Element und werden von nichts genannt (keine Linie, "
+                            "Fläche, Last, kein Lager, keine Kopplung). Entfernen? Die Geometrie mit ihren "
+                            "Verweisen bleibt unverändert."):
+            return
+        self.merken("Freie Knoten entfernen")
+        weg = self.model.freie_knoten_entfernen()
+        self.analysis = None
+        self.results = None
+        self.info(f"{n if weg else 0} freie Knoten entfernt")
+        self.refresh_all()
+
     def netz_loeschen_geometrie(self):
         """Das Netz der Flaechen und Koerper entfernen, die Geometrie bleibt."""
         m = self.model
@@ -14323,6 +14419,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 # ein Kontaktlauf am Deckel oder nicht konvergiert (15.10.2026): das
                 # steht nicht nur in der Zusammenfassung, sondern sichtbar oben
                 zustand, art = zustand + " · vorläufig", "warn"
+            if info.get("verfahren_betroffen"):
+                # vor einer Fehlerkorrektur des Rechenverfahrens gerechnet (16.10.2026,
+                # rechenverfahren): die Ergebnisse bleiben sichtbar, oben steht es
+                zustand, art = zustand + " · möglicherweise betroffen – neu rechnen", "warn"
         elif self.results is not None:
             zustand, art = "Ergebnis vorhanden", "gut"
         else:
@@ -14355,14 +14455,19 @@ class MainWindow(QtWidgets.QMainWindow):
         """Nach der Rechnung in die Statuszeile (und das Protokoll): welche Ergebnisse
         vorlaeufig sind, weil ein Kontaktlauf am Deckel endete oder nicht konvergierte.
         Rueckgabe der Text ("" ohne solche)."""
+        text = self._vorlaeufig_text()
+        if text:
+            self.info(text)
+        return text
+
+    def _vorlaeufig_text(self) -> str:
+        """„⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): LF1 - …“ oder ""."""
         faelle = self._vorlaeufige_faelle()
         if not faelle:
             return ""
         namen = ", ".join(n for n, _t in faelle[:6]) + (" …" if len(faelle) > 6 else "")
-        text = (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
+        return (f"⚠ Ergebnis vorläufig (Kontakt nicht konvergiert): {namen} - "
                 "Zusammenfassung und Bericht nennen die Stellen")
-        self.info(text)
-        return text
 
     def _baum_neu_beginnen(self):
         """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
@@ -17408,6 +17513,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_plast_tol.addItem(t_, v_)
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
+        # Gueltigkeitsgrenze der plastischen Dehnung (16.10.2026, Plastizitaet.dehnungsgrenze)
+        self.sp_plast_grenze = QtWidgets.QDoubleSpinBox()
+        self.sp_plast_grenze.setRange(0.1, 1000.0)
+        self.sp_plast_grenze.setDecimals(1)
+        self.sp_plast_grenze.setSingleStep(1.0)
+        self.sp_plast_grenze.setSuffix(" %")
+        self.sp_plast_grenze.setValue(20.0)
+        self.sp_plast_grenze.setToolTip(
+            "Gültigkeitsgrenze der plastischen Dehnung: liegt ε_p,max darüber, ist das ganze Ergebnis "
+            "„nicht gültig: außerhalb der Theorie kleiner Verzerrungen“. Vorgabe 20 %. Ein Werkstoff "
+            "mit eingetragener Bruchdehnung (Werkstoffmaske) hat diese als Grenze.")
         gpl.addWidget(self.cb_plast)
         # je Zeile hoechstens zwei Felder: der rechte Bereich ist 460 px breit, vier
         # Felder in einer Zeile waren 815 px (Paket 13r)
@@ -17417,6 +17533,7 @@ class MainWindow(QtWidgets.QMainWindow):
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen))
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
+        gpl.addWidget(row("Gültigkeitsgrenze ε_p", self.sp_plast_grenze))
         lay.addWidget(gp)
 
         # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
@@ -20239,7 +20356,13 @@ class MainWindow(QtWidgets.QMainWindow):
         except (ValueError, TypeError) as ex:
             return self.error(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
-        self.model.netz = netz
+        # Hat das Netz keinen Vermerk, gilt die bisherige Einstellung als die
+        # seine; danach sagt der Hinweis, was erst nach dem Vernetzen wirkt
+        import dataclasses
+        from .. import netzhinweis as nhw
+        nhw.vor_aenderung(self.model)
+        self.model.netz = dataclasses.replace(netz, vernetzt_mit=dict(self.model.netz.vernetzt_mit))
+        netz = self.model.netz
         if sef.netz_uebernehmen(self.model, w):
             sef.erneuern(self)
         # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
@@ -20248,8 +20371,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if sperre:
             self.log.appendPlainText(sperre)
         self.info("Netzeinstellungen: " + self.model.netz.beschreibung())
+        self._netzhinweis("uebernehmen")
         self.refresh_all()
         return self.model.netz
+
+    def _netzhinweis(self, wann: str) -> str:
+        """Weicht die Netzeinstellung vom vorhandenen Netz ab, steht der Hinweis
+        „wirksam erst nach Vernetzen“ im Protokoll und in der Statuszeile. Gesperrt
+        wird nichts (16.10.2026, statik3d.netzhinweis)."""
+        from .. import netzhinweis as nhw
+        text = nhw.hinweis(self.model, wann)
+        if text:
+            self.log.appendPlainText(text)
+            self.statusBar().showMessage(text.split(". ")[0] + ".", 15000)
+        return text
 
     @_maskenweg()
     def maske_stabzug(self):
@@ -21421,6 +21556,178 @@ class MainWindow(QtWidgets.QMainWindow):
     from ..vorspannkraft import LASTART_DEHNUNG, LASTART_ENDE, LASTART_PRESSE, LASTART_UMWANDELN
     VORSPANN_ARTEN = [LASTART_DEHNUNG, LASTART_ENDE, LASTART_PRESSE, LASTART_UMWANDELN]
 
+    # ---- Vorspannung je Anker (16.10.2026) ------------------------------
+    VZ_KEINE = "keine"
+
+    def _vorspannzustand_wahl(self, lc) -> tuple:
+        """(Eintraege, aktueller Eintrag) des Felds „Vorspannung je Anker“ der
+        Lastfallmaske: keine, alle Definitionen im Zeitpunkt 0 / ∞, je
+        Definition 0 / ∞; ein anderer gespeicherter Verweis steht als eigener
+        Eintrag da und bleibt, solange er gewaehlt ist."""
+        from .. import vorspannung as vsp
+        defs = list(vsp.definitionen(self.model))
+        if not defs:
+            return [self.VZ_KEINE], self.VZ_KEINE
+        wahl = [self.VZ_KEINE]
+        for z in ("0", "inf"):
+            wahl.append(f"alle Definitionen: {vsp.ZUSTAND_TEXT[z]}")
+        for d in defs:
+            for z in ("0", "inf"):
+                wahl.append(f"{d}: {vsp.ZUSTAND_TEXT[z]}")
+        jetzt = self.VZ_KEINE
+        vz = dict(getattr(lc, "vorspannzustand", None) or {}) if lc is not None else {}
+        if len(vz) == 1:
+            (k, z), = vz.items()
+            t = (f"alle Definitionen: {vsp.ZUSTAND_TEXT.get(z, z)}" if k == "*"
+                 else f"{k}: {vsp.ZUSTAND_TEXT.get(z, z)}")
+            if t not in wahl:
+                wahl.append(t)
+            jetzt = t
+        elif vz:
+            jetzt = "wie gespeichert: " + vsp.zustand_lastfall_text(self.model, lc)
+            wahl.append(jetzt)
+        return wahl, jetzt
+
+    def _vorspannzustand_lesen(self, text: str, lc):
+        """Der Verweis aus dem Feld der Lastfallmaske; None = unveraendert."""
+        from .. import vorspannung as vsp
+        if not text or text.startswith("wie gespeichert"):
+            return None
+        if text == self.VZ_KEINE:
+            return {}
+        k, _, zt = text.partition(": ")
+        z = next((z for z, t in vsp.ZUSTAND_TEXT.items() if t == zt), None)
+        if z is None:
+            return None
+        return {"*" if k == "alle Definitionen" else k: z}
+
+    def vorspannung_zuordnen(self):
+        """Lasten › Vorspannung › „Je Anker zuordnen …“: die Gruppen gleicher
+        Vorspannungen an denselben Staeben den Zeitpunkten 0/∞ und Definitionen
+        zuordnen (Entwurf des Anwenders vom 16.10.2026). Umgestellt wird erst
+        mit „Übernehmen“; Rueckgaengig nimmt alles zurueck."""
+        from .vorspannmaske import ZuordnungDialog, anwenden
+        from .. import vorspannung as vsp
+        erg = getattr(getattr(self, "analysis", None), "cases", None) or {}
+        gruppen = vsp.gruppen_finden(self.model, erg)
+        if not gruppen:
+            return self.hinweis("Keine Vorspannung an Stäben in den Lastfällen – nichts zuzuordnen")
+        d = ZuordnungDialog(self.model, erg, self, gruppen=gruppen)
+        if not d.exec() or not d.ergebnis:
+            return None
+        self.merken("Vorspannung je Anker zugeordnet")
+        r = anwenden(self.model, d.ergebnis)
+        self.analysis = None
+        self.results = None
+        zeilen = [f"Vorspannung je Anker zugeordnet: {r['faelle']} Lastfälle verweisen auf "
+                  + ", ".join(r["definitionen"])]
+        for g in r["je_gruppe"]:
+            zeilen.append(f"  {g['gruppe']} → {vsp.ZUSTAND_TEXT[g['zustand']]} ({g['definition']})")
+        for n in r["definitionen"]:
+            zeilen.append("  " + vsp.definition_zeile(self.model, self.model.vorspann_definitionen[n]))
+        self._protokollzeilen(zeilen)
+        self.info(zeilen[0])
+        self.refresh_all()
+        return r
+
+    @_maskenweg(bezug=_bezug_fest("vorspanndefinition"))
+    def maske_vorspanndefinition(self, name: str = None, neu: bool = False):
+        """Vorspannung je Anker anlegen oder bearbeiten: Anker, P_max, Δs,
+        Spanngruppe, P_∞ absolut oder ΔP_t; angezeigt P₀ (berechnet bzw.
+        geschaetzt) und beide Endwerte (16.10.2026)."""
+        from .. import vorspannung as vsp
+        from ..model import VorspannDefinition
+        m = self.model
+        d = vsp.definitionen(m).get(name) if name else None
+        if d is None:
+            d = VorspannDefinition(m.naechster_name("V", vsp.definitionen(m)),
+                                   [s for s in self.sel_staebe if s in m.members])
+            neu = True
+        F = msk.Feld
+        erg = getattr(getattr(self, "analysis", None), "cases", None) or {}
+        a = vsp.anzeige(m, d, erg) if not neu else None
+        ew = vsp.ENDWERT_TEXT
+        felder = [F("name", "Name", "text", d.name, breite=100),
+                  F("staebe", "Anker (Stäbe)", "text", vsp.anker_text(d.staebe), breite=200,
+                    hinweis="„S1–S16“ oder „S1, S2“; „Auswahl übernehmen“ nimmt die gewählten Stäbe"),
+                  F("P_max", "P_max (Pressenkraft) [kN]", "zahl", float(d.P_max) / 1e3,
+                    hinweis="Kraft der Presse beim Spannen – nachgewiesen gegen σ_p,max"),
+                  F("schlupf", "Verankerungsschlupf Δs [mm]", "zahl", float(d.schlupf or 0.0) * 1e3),
+                  F("gruppe", "Spanngruppe (Spannfolge)", "ganz", int(d.gruppe or 1),
+                    hinweis="Definitionen derselben Gruppe werden gleichzeitig gespannt, mehrere Gruppen "
+                            "nacheinander (1, 2, …) – die früher gespannten verlieren durch elastische "
+                            "Verkürzung Kraft"),
+                  F("endwert", "Endwert (Zeitpunkt ∞)", "wahl", ew.get(d.endwert, ew["absolut"]), list(ew.values())),
+                  F("P_inf", "P_∞ [kN]", "zahl", float(d.P_inf or 0.0) / 1e3,
+                    hinweis="bei „P_∞ absolut“: die Kraft nach allen Verlusten"),
+                  F("dP_t", "ΔP_t [kN]", "zahl", float(d.dP_t or 0.0) / 1e3,
+                    hinweis="bei „Verlust ΔP_t“: P_∞ = P₀ − ΔP_t je Anker"),
+                  F("kommentar", "Bemerkung", "text", d.kommentar, breite=200)]
+        if a is not None:
+            felder += [F("P0", "P₀ nach dem Verankern", "info", a["text_P0"], anzeige=True),
+                       F("P_inf_text", "P_∞", "info", a["text_P_inf"], anzeige=True),
+                       F("dP_t_text", "ΔP_t", "info", a["text_dP_t"], anzeige=True),
+                       F("faelle", "Lastfälle", "info",
+                         f"Zeitpunkt 0: {len(a['faelle']['0'])}, Zeitpunkt ∞: {len(a['faelle']['inf'])}",
+                         anzeige=True)]
+            if d.herkunft:
+                felder.append(F("herkunft", "Herkunft", "info", d.herkunft, anzeige=True))
+        halter: dict = {}
+
+        def auswahl_lesen():
+            halter["m"].setzen("staebe", vsp.anker_text([s for s in self.sel_staebe if s in m.members]))
+
+        maske = msk.Maske("Neu: Vorspannung je Anker" if neu else f"Vorspannung {d.name}", felder,
+                          knopf="Übernehmen",
+                          hinweis="Die Vorspannung wird einmal je Anker definiert; Lastfälle verweisen mit "
+                                  "Zeitpunkt 0 (P₀ nach dem Verankern: das Programm rechnet Schlupf und "
+                                  "elastische Verkürzung) oder Zeitpunkt ∞ (P_∞ = Eingabe oder P₀ − ΔP_t) darauf "
+                                  "(Lastfallmaske, Feld „Vorspannung je Anker“). Nachweise: Spannen mit P_max, "
+                                  "nach dem Verankern und GZT mit t = 0, Fuge, Passstifte und Ermüdung mit t = ∞.",
+                          zusatz=[("Auswahl übernehmen", auswahl_lesen),
+                                  ("Je Anker zuordnen …", self.vorspannung_zuordnen)])
+        halter["m"] = maske
+        maske.angewendet.connect(lambda w, alt=(None if neu else d.name): self._vorspanndefinition_uebernehmen(w, alt))
+        return self.maske_erzeugen(maske)
+
+    def _vorspanndefinition_uebernehmen(self, w: dict, alt: str = None):
+        from .. import vorspannung as vsp
+        from ..model import VorspannDefinition
+        from .vorspannmaske import staebe_lesen
+        m = self.model
+        name = str(w.get("name", "") or "").strip()
+        if not name:
+            return self.hinweis("Die Vorspannung braucht einen Namen")
+        if name != alt and name in vsp.definitionen(m):
+            return self.hinweis(f"Vorspannung „{name}“ gibt es schon")
+        staebe = staebe_lesen(str(w.get("staebe", "") or ""), m)
+        if not staebe:
+            return self.hinweis("Keine Anker: Stäbe eintragen („S1–S16“) oder wählen und „Auswahl übernehmen“")
+        try:
+            P_max = zl.feldwert(w.get("P_max"), 0.0) * 1e3
+            ds = zl.feldwert(w.get("schlupf"), 0.0) / 1e3
+            P_inf = zl.feldwert(w.get("P_inf"), 0.0) * 1e3
+            dP_t = zl.feldwert(w.get("dP_t"), 0.0) * 1e3
+        except zl.Eingabefehler as ex:
+            return self.hinweis(f"Eingabe: {ex}")
+        if P_max < 0 or ds < 0 or P_inf < 0 or dP_t < 0:
+            return self.hinweis("Kräfte und Schlupf sind nicht negativ")
+        endwert = next((k for k, t in vsp.ENDWERT_TEXT.items() if t == str(w.get("endwert", ""))), "absolut")
+        self.merken(f"Vorspannung {name}")
+        alt_d = vsp.definitionen(m).get(alt) if alt else None
+        d = VorspannDefinition(name, staebe, P_max, ds, max(1, int(float(w.get("gruppe", 1) or 1))), endwert,
+                               P_inf, dP_t, str(w.get("kommentar", "") or ""),
+                               getattr(alt_d, "herkunft", "") if alt_d is not None else "")
+        if alt and alt != name:
+            m.vorspann_definition_umbenennen(alt, name)
+        m.vorspann_definitionen[name] = d
+        self.analysis = None
+        self.results = None
+        self.info(vsp.definition_zeile(m, d))
+        for z in vsp.pruefen(m):
+            self.log.appendPlainText("  HINWEIS: " + z)
+        self.refresh_all()
+
     @_maskenweg()
     def maske_vorspannung(self):
         """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung
@@ -21475,7 +21782,11 @@ class MainWindow(QtWidgets.QMainWindow):
                               "Endvorspannung: der Stab trägt nach dem Verankern F_soll. "
                               "Anfangsvorspannung: die Presse spannt mit P₀, beim Verankern gehen der "
                               "Schlupf Δs und die elastischen Verluste ab. Umwandeln: ohne "
-                              "Auswahl alle Stäbe mit einer Temperatur-Vorspannung.")
+                              "Auswahl alle Stäbe mit einer Temperatur-Vorspannung. Vorspannung je "
+                              "Anker: einmal definieren, Lastfälle verweisen mit Zeitpunkt 0 oder ∞ "
+                              "darauf; „Je Anker zuordnen …“ stellt vorhandene Vorspannungen um.",
+                      zusatz=[("Je Anker zuordnen …", self.vorspannung_zuordnen),
+                              ("Vorspannung je Anker …", lambda: self.maske_vorspanndefinition(neu=True))])
         m.angewendet.connect(self._vorspannung_aufbringen)
         self.maske_erzeugen(m)
 
@@ -21844,7 +22155,14 @@ class MainWindow(QtWidgets.QMainWindow):
                            breite=260,
                            hinweis="die Datei, aus der das Modell übernommen wurde; liegt sie heute "
                                    "woanders, hier ihren Pfad eintragen")]
+        from .. import rechenverfahren as _rv
         maske = msk.Maske("Lager aus RFEM", felder, knopf="Lager nachlesen",
+                          # die zweite Antwort (16.10.2026): die Reibbeiwerte sind selbst gesetzt
+                          # und bleiben - Quittung im Modell, danach keine Markierung mehr
+                          zusatz=[(_rv.LAGERREIBUNG_BEHALTEN, self._lagerreibung_behalten,
+                                   "Die Reibbeiwerte der Lager sind selbst gesetzt und bleiben, wie sie sind: "
+                                   "der Hinweis und der Status „möglicherweise betroffen“ zur Lagerreibung "
+                                   "entfallen; die Quittung wird mit dem Modell gespeichert")],
                           hinweis="Liest die Knoten-, Linien- und Flächenlager aus der RFEM-Datei nach und nimmt "
                                   "einen Reibbeiwert zurück, der dort ohne Reibungsart steht – RFEM rechnet dann "
                                   "keine Reibung. Der Freiheitsgrad gilt danach nach seiner Federkonstanten "
@@ -21852,6 +22170,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "Rückgängig nimmt ihn zurück.")
         maske.angewendet.connect(self._lager_rfem_anwenden)
         return self.maske_erzeugen(maske)
+
+    def _lagerreibung_behalten(self):
+        """„selbst gesetzt – behalten“ (16.10.2026): Quittung im Modell
+        (rechenverfahren.lagerreibung_behalten), Importhinweis erledigt; der Status
+        der geladenen Ergebnisse wird neu bewertet - sie bleiben."""
+        from .. import rechenverfahren as _rv
+        self.merken("Lagerreibung selbst gesetzt – behalten")
+        _rv.lagerreibung_behalten(self.model)
+        an = self.analysis
+        info = getattr(an, "info", None)
+        if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
+            bew = _rv.bewerten(self.model, info["rechenverfahren"], an)
+            for k, v in (("verfahren_hinweis", bew["hinweis"]), ("verfahren_betroffen", bew["betroffen"])):
+                if v:
+                    info[k] = v
+                else:
+                    info.pop(k, None)
+        self.log.appendPlainText("Lagerreibung aus RFEM: Reibbeiwerte selbst gesetzt – behalten (im Modell vermerkt)")
+        self._refresh_kopf()
+        self._refresh_status()
+        self.statusBar().showMessage("Lagerreibung: selbst gesetzt – behalten", 8000)
 
     def _lager_rfem_anwenden(self, w: dict):
         from ..importers import rfem6_db as R6
@@ -24805,6 +25144,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_plast_it.setValue(int(pz.iterationen))
         k = self.cb_plast_tol.findData(float(pz.toleranz))
         self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
+        if hasattr(self, "sp_plast_grenze"):
+            self.sp_plast_grenze.setValue(float(getattr(pz, "dehnungsgrenze", 0.20) or 0.20) * 100.0)
         w = self.cb_plast_weg.findData(str(getattr(pz, "verfahren", "tangente")))
         self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
         w = self.cb_plast_kontakt.findData(str(getattr(pz, "kontakt", "verschachtelt")))
@@ -24845,6 +25186,12 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
         pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
         pz.abbruch = str(self.cb_plast_abbruch.currentData() or "ingenieurmaessig")
+        if hasattr(self, "sp_plast_grenze"):
+            # gerundet wie angezeigt (eine Nachkommastelle in %): sonst meldete schon
+            # das Oeffnen der Maske eine Aenderung
+            alt_g = float(getattr(pz, "dehnungsgrenze", 0.20) or 0.20)
+            g_ = float(self.sp_plast_grenze.value()) / 100.0
+            pz.dehnungsgrenze = alt_g if round(alt_g * 100.0, 1) == round(g_ * 100.0, 1) else g_
         if hasattr(self, "sp_pendel_kraft"):
             # gerundet wie angezeigt: sonst aenderte schon das Oeffnen der Maske
             # die Einstellung um Rundungsreste und meldete eine Aenderung
@@ -25592,10 +25939,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.hinweis(self.model.sperrhinweis(gesperrt))
         if not self._vor_rechnung_vernetzen():
             return
+        # Weicht die Netzeinstellung vom vorhandenen Netz ab, sagt es der Rechenstart
+        # (16.10.2026) - gesperrt wird nichts
+        self._netzhinweis("rechnen")
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
         if msgs and not self._trotzdem_rechnen(msgs):
             return
         if not self._abnahme_bestaetigen():
+            return
+        if art_ in ("all", "case") and not self._plastisch_einleitung_bestaetigen():
+            return
+        if art_ in ("all", "case") and not self._kontakthalt_bestaetigen():
             return
         self._apply_parallel_settings()
         if kind is None:
@@ -25629,6 +25983,229 @@ class MainWindow(QtWidgets.QMainWindow):
         stand = vp.modellstand(model)
         self._run_background(func, lambda r: self._solve_done(kind, r, self._rechnung_stand), "Berechnung",
                              posten=posten, stand=stand)
+
+    # ---- Starre Scheiben: Lochrand oder Kreisring (16.10.2026) ----------------
+    def scheiben_einleiten(self):
+        """Dialog „Scheiben einleiten“ (gui.scheiben_dialog): je Gruppe gleicher
+        Bohrung oder je Scheibe die Einleitung, Innen- und Außen-Ø, die Herkunft
+        des Maßes und die mittlere Pressung. Umgestellt wird erst mit
+        „Übernehmen“ bzw. „Alle auf Kreisring“, als ein Schritt mit Rückgängig."""
+        from .. import scheibeneinleitung as SCH
+        from .scheiben_dialog import ScheibenDialog
+        if not SCH.scheiben(self.model, mit_koerper=False):
+            return self.hinweis("Im Modell gibt es keine starre Kreisscheibe mit einem Stabende in der Mitte "
+                                "(RFEM: starre Fläche über einer Bohrung)")
+        dlg = ScheibenDialog(self.model, self)
+        if not dlg.exec() or not dlg.ergebnis:
+            return
+        if dlg.ergebnis == "alle":
+            return self._scheiben_umstellen(alle=True)
+        try:
+            umst = dlg.umstellungen()
+        except ValueError as ex:
+            return self.error(f"Scheiben einleiten: Maß nicht lesbar ({ex})")
+        return self._scheiben_umstellen(umstellungen=umst)
+
+    # ---- Bolzennachweis nach EN 1993-1-8, 3.13 (06.11.2026) ------------------
+    def bolzen_festlegen(self, namen: list):
+        """Dialog „Als Bolzen nachweisen…“ fuer die gewaehlten Volumen: Durchmesser und
+        Werkstoff des Anwenders; ein Schritt mit Rueckgaengig (Strg+Z). Ohne beide
+        Angaben wird nichts festgelegt."""
+        from ..ec3 import bolzen as BZ
+        from .bolzen_dialog import BolzenDialog
+        namen = [n for n in namen if n in self.model.koerper]
+        if not namen:
+            return self.hinweis("Kein Volumen gewählt")
+        dlg = BolzenDialog(self.model, namen, self)
+        if not dlg.exec() or not dlg.ergebnis:
+            return None
+        self.merken("Als Bolzen nachweisen")
+        if dlg.ergebnis == "aufheben":
+            n = BZ.bolzen_entfernen(self.model, namen)
+            self.log.appendPlainText(f"Bolzen: Festlegung aufgehoben ({n}) – Rückgängig (Strg+Z) stellt zurück")
+        else:
+            d, w = dlg.werte()
+            for z in BZ.bolzen_festlegen(self.model, namen, d, w, fuge=dlg.scherfuge()):
+                self.log.appendPlainText(z + " – Rückgängig (Strg+Z) stellt zurück")
+        self.refresh_all()
+        return None
+
+    def _scheiben_umstellen(self, umstellungen: list = None, alle: bool = False) -> dict:
+        """Die Einleitung der Scheiben umstellen - ein Schritt (merken, Strg+Z
+        nimmt ihn zurueck), am vorhandenen Netz sofort neu gekoppelt
+        (fugen.starre_kopplungen_erneuern), ins Protokoll; die Ergebnisse
+        passen danach nicht mehr. Die Geometrie bleibt, wie sie ist."""
+        from .. import fugen
+        from .. import scheibeneinleitung as SCH
+        from .scheiben_dialog import anwenden
+        self.merken("Scheiben einleiten")
+        erg = SCH.alle_auf_kreisring(self.model) if alle else anwenden(self.model, umstellungen or [])
+        if not erg["umgestellt"]:
+            self._merken_zuruecknehmen()
+            for name, grund in erg["offen"]:
+                self.log.appendPlainText(f"WARNUNG: Scheibe {name} nicht umgestellt: {grund}")
+            self.info("Scheiben einleiten: nichts umgestellt" + (" (siehe Protokoll)" if erg["offen"] else ""))
+            return erg
+        self.log.appendPlainText("Scheiben einleiten: " + SCH.umstell_zeile(erg)
+                                 + " – Rückgängig (Strg+Z) stellt zurück")
+        log: list = []
+        if getattr(self.model, "elements", None):
+            if fugen.starre_kopplungen_erneuern(self.model, log)["geaendert"]:
+                self.analysis = None
+                self.results = None
+        for z in log:
+            self.log.appendPlainText(z)
+        self.refresh_all()
+        self.info(f"Scheiben einleiten: {SCH.umstell_zeile(erg)}")
+        return erg
+
+    def _plastisch_einleitung_bestaetigen(self) -> bool:
+        """Vor einer plastischen Rechnung (16.10.2026, Entscheidung des
+        Anwenders): gibt es Stellen „Kraft ohne Fläche“ oder starre Scheiben am
+        Lochrand, fragt ein deutlicher Dialog - abbrechen, trotzdem rechnen
+        oder auf Kreisring umstellen (dann wird mit dem Kreisring gerechnet).
+        Elastisch fragt nichts; es bleibt bei der Warnung der Netzabnahme."""
+        pz = getattr(self.model, "plastizitaet", None)
+        if not (pz is not None and getattr(pz, "an", False)):
+            return True
+        from .. import scheibeneinleitung as SCH
+        try:
+            h = SCH.plastisch_pruefen(self.model)
+        except Exception as ex:            # noqa: BLE001 - ein Hinweis sperrt nie
+            self.log.appendPlainText(f"Prüfung „Kraft ohne Fläche“ vor der plastischen Rechnung nicht möglich: {ex}")
+            return True
+        if not h["text"]:
+            return True
+        self.log.appendPlainText(f"WARNUNG – BITTE LESEN: {h['text']}")
+        self.bottom_tabs.setCurrentIndex(0)
+        wahl = self._plastisch_frage(h)
+        if wahl == "kreisring":
+            erg = self._scheiben_umstellen(alle=True)
+            self.log.appendPlainText("Plastische Rechnung: Scheiben auf Kreisring umgestellt, es wird gerechnet")
+            return bool(erg["umgestellt"]) or not erg["offen"]
+        if wahl == "rechnen":
+            self.log.appendPlainText("Plastische Rechnung trotz Kraft ohne Fläche – vom Anwender bestätigt")
+            return True
+        self.info("Berechnung abgebrochen: Kraft ohne Fläche in einer plastischen Rechnung (Protokoll)")
+        return False
+
+    def _kontakthalt_bestaetigen(self) -> bool:
+        """Vor einer plastischen Rechnung (17.10.2026, Wunsch des Anwenders: „gut
+        wäre ein verständlicher hinweis“): Koerper, die seitlich nur ueber
+        reibungsfreien Kontakt und Staebe ohne Quersteifigkeit gehalten sind
+        (singular.kontakt_gehalten), fragt ein Dialog wie beim Kreisring -
+        abbrechen oder trotzdem rechnen. Elastisch fragt nichts; die Rechnung
+        schreibt dort eine INFORMATION ins Protokoll."""
+        pz = getattr(self.model, "plastizitaet", None)
+        if not (pz is not None and getattr(pz, "an", False)):
+            return True
+        from .. import singular as _sg
+        try:
+            h = _sg.kontakt_gehalten(self.model)
+        except Exception as ex:            # noqa: BLE001 - ein Hinweis sperrt nie
+            self.log.appendPlainText(f"Prüfung „nur über reibungsfreien Kontakt gehalten“ nicht möglich: {ex}")
+            return True
+        if not h:
+            return True
+        for e in h:
+            self.log.appendPlainText(f"WARNUNG – BITTE LESEN: {e['text']}")
+        self.bottom_tabs.setCurrentIndex(0)
+        wahl = self._kontakthalt_frage(h)
+        if wahl == "rechnen":
+            self.log.appendPlainText("Plastische Rechnung trotz nur reibungsfrei gehaltener Körper – vom "
+                                     "Anwender bestätigt")
+            return True
+        if wahl == "reibung" and self._reibbeiwert_setzen(h):
+            return True
+        self.info("Berechnung abgebrochen: Körper nur über reibungsfreien Kontakt gehalten (Protokoll)")
+        return False
+
+    def _reibbeiwert_setzen(self, h: list) -> bool:
+        """„Reibbeiwert setzen…“ (17.10.2026, Praezisierung des Anwenders: nichts
+        wird automatisch geaendert, die Schaltflaeche wirkt erst nach Bestaetigung,
+        mit Rueckgaengig): der Reibbeiwert, den der Anwender bestaetigt
+        (:meth:`_reibbeiwert_eingabe`), in die reibungsfreien Fugen der genannten
+        Koerper - ein Schritt, Strg+Z nimmt ihn zurueck. Freigaben (Lager) bleiben,
+        wie sie sind. Rueckgabe: gesetzt."""
+        fugen = sorted({f for e in h for f in (e.get("kontakte") or [])})
+        if not fugen:
+            self.info("Reibbeiwert setzen: keine reibungsfreie Fuge genannt – Freigaben bitte im Lager ändern")
+            return False
+        mu = self._reibbeiwert_eingabe(h)
+        if mu is None or not float(mu) > 0.0:
+            self.log.appendPlainText("Reibbeiwert setzen: nicht bestätigt – nichts geändert")
+            return False
+        self.merken("Reibbeiwert setzen")
+        n = 0
+        for cp in getattr(self.model, "contact_pairs", None) or []:
+            if cp.name in fugen:
+                cp.mu = float(mu)
+                n += 1
+        self.analysis = None
+        self.results = None
+        from .. import zahlen as _zl
+        self.log.appendPlainText(f"Reibbeiwert μ = {_zl.zahl_text(float(mu), stellen=3)} in "
+                                 + ", ".join(f"Fuge ‚{f}‘" for f in fugen)
+                                 + " gesetzt – Rückgängig (Strg+Z) stellt zurück")
+        try:
+            self.refresh_all()
+        except Exception:                  # noqa: BLE001 - die Anzeige sperrt nichts
+            pass
+        return n > 0
+
+    def _reibbeiwert_eingabe(self, h: list):
+        """Der Reibbeiwert, den der Anwender bestaetigt - None ohne Bestaetigung
+        (die Tests ueberschreiben das). Vorschlag 0,2 (EN 1090-2, Klasse D)."""
+        if self._modal_gesperrt("Eingabe „Reibbeiwert“ während der Rechnung verneint", ""):
+            return None
+        fugen = sorted({f for e in h for f in (e.get("kontakte") or [])})
+        wert, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Reibbeiwert setzen",
+            "Reibbeiwert μ für " + ", ".join(f"Fuge ‚{f}‘" for f in fugen)
+            + "\n(z. B. 0,2 nach EN 1090-2, Klasse D; Rückgängig mit Strg+Z):", 0.2, 0.0, 2.0, 3)
+        return float(wert) if ok else None
+
+    def _kontakthalt_frage(self, h: list) -> str:
+        """Der Dialog zu :meth:`_kontakthalt_bestaetigen` - die Tests
+        ueberschreiben ihn. "abbrechen" | "rechnen"."""
+        text = "\n\n".join(e["text"] for e in h)
+        if self._modal_gesperrt("Rückfrage „nur über reibungsfreien Kontakt gehalten“ während der Rechnung "
+                                "verneint", text):
+            return "abbrechen"
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Plastische Rechnung: Körper nur über reibungsfreien Kontakt gehalten")
+        box.setText(text + "\n\nAbbrechen (und Reibung ansetzen oder seitlich halten) oder trotzdem rechnen?")
+        b_ab = box.addButton("Abbrechen", QtWidgets.QMessageBox.RejectRole)
+        b_mu = (box.addButton("Reibbeiwert setzen…", QtWidgets.QMessageBox.AcceptRole)
+                if any(e.get("kontakte") for e in h) else None)
+        b_rech = box.addButton("Trotzdem rechnen", QtWidgets.QMessageBox.DestructiveRole)
+        box.setDefaultButton(b_ab)
+        box.setEscapeButton(b_ab)
+        box.exec()
+        k = box.clickedButton()
+        return "reibung" if (b_mu is not None and k is b_mu) else "rechnen" if k is b_rech else "abbrechen"
+
+    def _plastisch_frage(self, h: dict) -> str:
+        """Der Dialog zu :meth:`_plastisch_einleitung_bestaetigen` - die Tests
+        ueberschreiben ihn. "abbrechen" | "rechnen" | "kreisring"; waehrend
+        einer Rechnung wird nicht gefragt (abbrechen)."""
+        if self._modal_gesperrt("Rückfrage „Plastische Rechnung“ während der Rechnung verneint", h["text"]):
+            return "abbrechen"
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Plastische Rechnung: Kraft ohne Fläche")
+        box.setText(h["text"] + "\n\nAbbrechen, trotzdem rechnen oder die Scheiben auf einen Kreisring "
+                                "umstellen (Normmaße als Annahme, Rückgängig mit Strg+Z)?")
+        b_ab = box.addButton("Abbrechen", QtWidgets.QMessageBox.RejectRole)
+        b_ring = (box.addButton("Auf Kreisring umstellen und rechnen", QtWidgets.QMessageBox.AcceptRole)
+                  if h.get("lochrand") else None)
+        b_rech = box.addButton("Trotzdem rechnen", QtWidgets.QMessageBox.DestructiveRole)
+        box.setDefaultButton(b_ab)
+        box.setEscapeButton(b_ab)
+        box.exec()
+        k = box.clickedButton()
+        return "kreisring" if b_ring is not None and k is b_ring else "rechnen" if k is b_rech else "abbrechen"
 
     def _kontaktzustand_zuletzt(self):
         """Der Kontaktzustand der gerade gezeigten statischen Loesung - die
@@ -25667,9 +26244,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Warnungen (Splitter je Koerper) stehen im Protokoll, halten aber
         # nichts an - die Entscheidung bleibt beim Anwender, der sie liest.
         warnungen = [b for b in alle if getattr(b, "stufe", "FEHLER") == "WARNUNG"]
-        befunde = [b for b in alle if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
+        infos = [b for b in alle if getattr(b, "stufe", "FEHLER") == "INFORMATION"]
+        befunde = [b for b in alle if getattr(b, "stufe", "FEHLER") not in ("WARNUNG", "INFORMATION")]
         for b in warnungen:
             self.log.appendPlainText(f"WARNUNG: [{b.pruefung}] {b.text}")
+        # Hinweise ohne Handlungsbedarf (freie Geometriepunkte): nur ins Protokoll
+        for b in infos:
+            self.log.appendPlainText(f"INFORMATION: [{b.pruefung}] {b.text}")
         self._abnahme_befunde = befunde
         if not befunde:
             # „bestanden" darf nicht heissen „nicht geprueft": faellt eine der
@@ -25777,6 +26358,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # welche Elemente gerechnet wurden (25.09.2026: „nach der Berechnung
         # sehe ich das auch nirgendwo“)
         self.log.appendPlainText(ea.protokollzeile(self.model))
+        # und mit welcher Einstellung das Netz entstand (16.10.2026)
+        from .. import netzhinweis as _nhw
+        _ausw = _nhw.ausweis(self.model)
+        self.log.appendPlainText("Netzeinstellung beim Vernetzen: " + (
+            _ausw["netzeinstellung"] or "nicht bekannt (Netz ohne Vermerk)"))
+        if kind == "case" and isinstance(self.analysis, solver.Analysis):
+            self.analysis.info.setdefault("netz", _ausw)
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
         self._bewegungen_melden()
@@ -30416,6 +31004,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         epfad = erg.pfad_zu(p)
         datei_hinweis = ""
+        # vorn in der Statuszeile nach dem Oeffnen (16.10.2026): Status und Hinweise
+        # zur Ergebnisdatei - sonst ueberschrieb „Ergebnisse geladen …“ die Zeile
+        # „⚠ Ergebnis vorläufig …“ aus _solve_done
+        status_vorn = []
         if os.path.exists(epfad):
             self._fortschritt_beginnen(1000, f"Ergebnisse laden: {os.path.basename(epfad)} …",
                                        abbrechbar=False)
@@ -30445,11 +31037,23 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Datei von vor dem 06.10.2026: geladen, aber nicht still als
                     # passend (F06) - Statuszeile und Protokoll sagen es
                     self.hinweis(f"Ergebnisdatei {os.path.basename(epfad)} mit Vorbehalt geladen: {vorbehalt}")
-                # Ergebnisdatei von vor dem 15.10.2026 zu einem Modell mit Reibung:
-                # gerechnet ohne die konsistente Tangente; die Ergebnisse bleiben
-                reib = (getattr(an, "info", None) or {}).get("reibverfahren_vorbehalt")
-                if reib:
-                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {reib}"
+                # Mit aelterem Rechenverfahren gerechnet (16.10.2026, rechenverfahren;
+                # am 15.10.2026 nur das Reibverfahren): die Ergebnisse gelten,
+                # Statuszeile und Protokoll nennen das Verfahren
+                # vor einer Fehlerkorrektur gerechnet: Status statt nur Hinweis - vorn
+                # in der Statuszeile, im Protokoll (Kopfzeile, Zusammenfassung und
+                # Bericht nennen ihn auch); die Ergebnisse bleiben
+                betroffen = (getattr(an, "info", None) or {}).get("verfahren_betroffen")
+                if betroffen:
+                    zeile = f"⚠ {betroffen} (Ergebnisdatei {os.path.basename(epfad)})"
+                    self.hinweis(zeile)
+                    status_vorn.append(zeile)
+                vorl = self._vorlaeufig_text()
+                if vorl:
+                    status_vorn.append(vorl)
+                verfahren = (getattr(an, "info", None) or {}).get("verfahren_hinweis")
+                if verfahren:
+                    datei_hinweis = f"Ergebnisdatei {os.path.basename(epfad)}: {verfahren}"
                     self.hinweis(datei_hinweis)
         # Ein Modell aus RFEM 6 von vor dem 14.10.2026 (Importhinweis
         # „zugstab“): die Statuszeile nennt den Weg zur Umstellung - die
@@ -30475,9 +31079,10 @@ class MainWindow(QtWidgets.QMainWindow):
             status_hinweise.append("Hinweis: Vorspannung aus RFEM steht als eingeprägte Dehnung (ΔT), zu prüfen – "
                                    "Lasten › Vorspannung, Lastart „" + _vk_.LASTART_UMWANDELN
                                    + "“ oder Anfangs-/Endvorspannung")
-        if status_hinweise and datei_hinweis:
+        if (status_hinweise or status_vorn) and datei_hinweis:
             # der Hinweis zur Ergebnisdatei bleibt in der Statuszeile stehen
             status_hinweise.insert(0, "Hinweis: " + datei_hinweis)
+        status_hinweise = status_vorn + status_hinweise
         if status_hinweise:
             self._hinweis_statuszeile(" · ".join(status_hinweise))
         # Modell und Ergebnisse sind die der Datei

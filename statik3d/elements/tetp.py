@@ -736,10 +736,13 @@ def _gebundene_knoten(model) -> set:
     - dann sieht der Kontakt dort genau, was er beim tet4 sieht (Absprache mit
     der Loeser-Sitzung 22.09.2026: keine Mittenfreiheitsgrade auf Kontaktseiten,
     die der Kontakt nicht kennt)."""
+    from ..fugen import gegenseite_ergaenzung
     out: set = set()
     for cp in getattr(model, "contact_pairs", None) or []:
         out.update(int(n) for n in cp.slave_nodes)
         for f in cp.master_faces or []:
+            out.update(int(n) for n in f)
+        for f in gegenseite_ergaenzung(model, cp):
             out.update(int(n) for n in f)
         for ei in cp.master_elements or []:
             out.update(int(n) for n in model.elements[int(ei)].nodes)

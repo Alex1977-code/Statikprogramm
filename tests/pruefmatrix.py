@@ -86,7 +86,7 @@ from statik3d.elements import solid as sl                        # noqa: E402
 from statik3d.model import (ContactPair, DofBehaviour, Material,  # noqa: E402
                             Model, Uebermass)
 from tests import pruefkoerper as pk                             # noqa: E402
-from tests.messung_rohr_plastisch import Hill                    # noqa: E402
+from tests.messung_rohr_plastisch import Hill, soll_am_punkt     # noqa: E402
 
 DATUM = "25.09.2026"
 E_ST, NU_ST = pk.E_ST, pk.NU_ST
@@ -762,8 +762,9 @@ class Druckwuerfel(Fall):
 class HillRohr(Fall):
     kurz, rechenart = "P2", "Plastizität"
     name = "Rohr unter Innendruck nach Hill, ideal plastisch (ν = 0,4999)"
-    soll = "c/a = 1,5 bei p = 255,88 N/mm²: σ_v(b) = fy c²/b² = 199,69 N/mm², u_r(b) = k c²/(2 G b); fy 355"
-    grenze_text = "1 N/mm² an jedem Eckknoten der Außenfläche, u_r 1 %"
+    soll = ("c/a = 1,5 bei p = 255,88 N/mm²: σ_v(r) = fy c²/r² am Radius des Integrationspunkts, den die Ecke "
+            "der Außenfläche trägt, u_r(b) = k c²/(2 G b); fy 355")
+    grenze_text = "1 N/mm² an jedem Eckknoten der Außenfläche gegen Hill am Radius der Punkte, u_r 1 %"
     plastisch = True
     h = 0.025
 
@@ -783,7 +784,8 @@ class HillRohr(Fall):
         X = np.asarray(m.nodes, float)
         r = np.hypot(X[:, 0], X[:, 1])
         aussen = [n for n in ecken_am_netz(m) if abs(r[n] - hl.b) < 1e-9]
-        d = groesster_fehler(knotenspannung(res, aussen), hl.punkt(c, hl.b)[0])
+        # Die Knotentabelle traegt Integrationspunkte (solver.PLASTISCH_NUR_PUNKTE); Freigabe 07.11.2026
+        d = groesster_fehler(knotenspannung(res, aussen), soll_am_punkt(m, hl, c, aussen).__getitem__)
         u = u3(res, m)
         ur = np.mean([(u[n, 0] * X[n, 0] + u[n, 1] * X[n, 1]) / r[n] for n in aussen])
         du = (ur / hl.u_r(c, hl.b) - 1) * 100
