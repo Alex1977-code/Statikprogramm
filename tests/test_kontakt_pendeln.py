@@ -298,9 +298,66 @@ def test_ingenieurkriterium():
           (zeilen[-1][:150] + " …") if zeilen else "keine Zeile")
 
 
+def test_kriterium_ohne_kraeftesumme():
+    """Aeussere Kraefte in Summe null, wie das Kraeftepaar im Spannschritt: Der Bezug |sum F|
+    war null, das Kriterium lehnte jeden Zustand ab (Drehlager mu = 1, 07.11.2026: bis 7,3e+29
+    gegen 1e-04, 16-mal am Deckel). Dieselbe Last mit Gegenlast an einem eigenen festen Knoten
+    aendert die Loesung nicht, nur die Kraeftesumme; sie muss genauso angenommen werden."""
+    print("\n--- Ingenieurkriterium ohne Kraeftesumme (Kraeftepaar im Spannschritt) ---")
+
+    def modell(gegenlast):
+        m = lager_in_flaechenachsen()
+        if gegenlast:
+            S = sum(np.asarray(nl.F, float)[:3] for nl in m.case().nodal_loads)
+            n = m.add_node(5.0, 5.0, 5.0)
+            m.fix(n, [0, 1, 2, 3, 4, 5])
+            m.load_node(n, Fx=-S[0], Fy=-S[1], Fz=-S[2])
+        return m
+
+    alt = (solver.ABSCHLUSS_SPANNUNG, solver.ABSCHLUSS_WEG_ANTEIL)
+    try:
+        solver.ABSCHLUSS_SPANNUNG, solver.ABSCHLUSS_WEG_ANTEIL = 1e12, 1.0
+        with schutz(False):
+            ra, _ = rechnen(modell(False))
+            mb = modell(True)
+            rb, _ = rechnen(mb)
+    finally:
+        solver.ABSCHLUSS_SPANNUNG, solver.ABSCHLUSS_WEG_ANTEIL = alt
+    ia, ib = ra.info.get("contact_ingenieur") or {}, rb.info.get("contact_ingenieur") or {}
+    summe = np.linalg.norm(sum(np.asarray(nl.F, float)[:3] for nl in mb.case().nodal_loads))
+    check("Gegenlast macht die Kraeftesumme null", summe == 0.0, f"|sum F| {summe:.3g} N")
+    check("ohne Kraeftesumme: Zustand angenommen, konvergiert",
+          rb.info.get("contact_converged") and ib.get("runde"), f"Runde {ib.get('runde')}, Grund {grund(rb)}")
+    check("  in derselben Runde wie mit Kraeftesumme", ib.get("runde") == ia.get("runde"),
+          f"{ib.get('runde')} gegen {ia.get('runde')}")
+    ua, ub = (np.linalg.norm(np.asarray(r.u, float)[:, :3], axis=1).max() for r in (ra, rb))
+    check("  dieselbe Loesung (u_max auf 1e-9)", abs(ua - ub) <= 1e-9 * ua, f"{ub * 1e3:.6f} gegen {ua * 1e3:.6f} mm")
+    check("  Gleichgewicht klein gegen die Kontaktkraft", ib.get("gleichgewicht", 1.0) <= 1e-6,
+          f"{ib.get('gleichgewicht', 1.0):.1e}")
+
+    class _C:
+        def __init__(self, active, Fn):
+            self.active, self.Fn = active, Fn
+
+    class _Cs:
+        cons = [_C(True, 300.0), _C(True, -50.0), _C(False, 900.0)]
+
+    F = np.zeros(12)
+    F[0], F[6] = 1000.0, -1000.0
+    bez = solver._gleichgewichts_bezug
+    check("Bezug: Kraeftepaar -> Summe der Druckkraefte aktiver Bedingungen", bez(F, 2, _Cs) == 300.0, str(bez(F, 2, _Cs)))
+    F[6] = -900.0
+    check("Bezug: Kraeftesumme vorhanden -> |sum F| wie bisher", bez(F, 2, _Cs) == 100.0, str(bez(F, 2, _Cs)))
+    F[:] = 0.0
+
+    class _Leer:
+        cons = []
+    check("Bezug: gar keine Kraft -> nicht durch null teilen", bez(F, 2, _Leer) > 0.0, str(bez(F, 2, _Leer)))
+
+
 def main() -> int:
     for t in (test_pendeln_an_der_haftgrenze, test_ohne_pendeln_bitgleich, test_warmstart_ohne_pendeln,
-              test_ingenieurkriterium):
+              test_ingenieurkriterium, test_kriterium_ohne_kraeftesumme):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

@@ -8846,6 +8846,19 @@ def kontakt_residuum(model: Model, system, cs, F, u, K_zusatz=None) -> np.ndarra
     return r
 
 
+def _gleichgewichts_bezug(F, nn: int, cs) -> float:
+    """Bezug des Gleichgewichts im Ingenieurkriterium: |Σ F| und nur dort, wo die aeusseren
+    Kraefte in Summe null sind, die Summe der Druckkraefte der aktiven Bedingungen. So im
+    Spannschritt (Kraeftepaar): Der Bezug war dort null, das Kriterium lehnte jeden Zustand ab
+    (Drehlager μ = 1, 07.11.2026: bis 7,3e+29 gegen 1e-04, 16-mal am Deckel). Mit einer
+    Kraeftesumme bleibt die Rechnung bitgleich."""
+    Fn = np.asarray(F[:nn * NDOF], float).reshape(-1, NDOF)[:, :3]
+    summe = float(np.linalg.norm(Fn.sum(0)))
+    if summe > 1e-9 * float(np.abs(Fn).sum()):
+        return summe
+    return max(summe, float(sum(max(float(c.Fn), 0.0) for c in cs.cons if c.active)), 1e-30)
+
+
 def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, merker: dict):
     """Prueft das Ingenieurkriterium (ABSCHLUSS_*) fuer die Loesung ``u`` gegen die
     vorige ``u_vor``. Rueckgabe None (nicht erfuellt; Kraefte unveraendert) oder ein
@@ -8908,7 +8921,6 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     # der Lauf am Drehlager (8b2de7b) Runde 34 mit 1,30 N Durchdringung an - das
     # bleibt so moeglich, ein Verstoss in der Groesse der Last aber nicht.
     Fk = np.asarray(F[:n6], float).reshape(-1, NDOF)[:, :3].sum(0)
-    bez = max(float(np.linalg.norm(Fk)), 1e-30)
     grenze = max(float(getattr(cs, "f_tol", 0.0)), ABSCHLUSS_NORMAL_ANTEIL * float(np.linalg.norm(Fk)))
     nv = cs.normal_verstoesse(u, lam)
     aus.update({"normal_grenze": grenze, "zug_max": nv["zug_max"], "zug_bei": nv["zug_bei"],
@@ -8924,7 +8936,7 @@ def _ingenieur_abschluss(model: Model, system, cs, F, Kc, Fc, C, lam, u, u_vor, 
     cs.kraefte_der_loesung(u, lam)
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0) + _kontaktlast(C, lam, model.ndof, D), Kc)
     Rk = R[:n6].reshape(-1, NDOF)[:, :3].sum(0) + cs.support_reactions(model.nn).sum(0)
-    gg = float(np.linalg.norm(Rk + Fk)) / bez
+    gg = float(np.linalg.norm(Rk + Fk)) / _gleichgewichts_bezug(F, model.nn, cs)
     aus["gleichgewicht"] = gg
     # Inneres Residuum dieser Loesung (16.10.2026, plast/traglast): die Summe oben ist
     # fuer jedes u null (Φᵀ K u); geprueft wird darum zusaetzlich F + f_c(u) − (K + K_zusatz) u
@@ -9742,8 +9754,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 _melde(progress, text)
                 # Vernachlaessigbar ist, was das Gleichgewicht nicht merklich stoert:
                 # die groesste pendelnde Reibkraft unter ABSCHLUSS_GLEICHGEWICHT der Last
-                Fsum = float(np.linalg.norm(np.asarray(F[:model.nn * NDOF], float)
-                                            .reshape(-1, NDOF)[:, :3].sum(0)))
+                Fsum = _gleichgewichts_bezug(F, model.nn, cs)
                 if f_pend > ABSCHLUSS_GLEICHGEWICHT * Fsum and zeilen:
                     log.append(f"WARNUNG: im angenommenen Zustand pendeln noch {len(ids)} Kontaktbedingungen "
                                f"(Reibkraft bis {f_pend / 1e3:.3g} kN, Weg bis {w_pend * 1e6:.3g} µm): "
