@@ -675,14 +675,20 @@ def test_rohr_ideal_plastisch_nach_hill():
 
     Gemessen 23.09.2026: tet10 8 x 4 (1 377 FHG) σ_v(b) +0,56 N/mm², u_r(b)
     0,9967; hex8 32 x 16 (3 366 FHG) -0,42 / 0,9991. Die Grenzlast (mit dem
-    Newton bestimmt): beide Netze tragen 0,995 p_L und 1,005 p_L nicht."""
+    Newton bestimmt): beide Netze tragen 0,995 p_L und 1,005 p_L nicht.
+
+    Umgestellt 07.11.2026 mit Freigabe des Anwenders: Seit f70703c traegt die Knotentabelle einer
+    plastischen Rechnung den naechsten Integrationspunkt, nicht den Wert am Knoten. Verglichen
+    wird deshalb mit Hill am Radius dieser Punkte, die Grenze bleibt 1 N/mm². Gemessen am Knoten-
+    radius waere das tet10 8 x 4 +10,89 und hex8 32 x 16 +2,27 N/mm², am Punktradius -0,93 und
+    -0,48 N/mm²."""
     from tests import messung_rohr_plastisch as mr
     for typ, n_t, n_r in (("tet10", 8, 4), ("hex8", 32, 16)):
         z = mr.lauf(typ, n_t, n_r)
         check(f"Rohr nach Hill, {typ} {n_t} x {n_r}: ideal plastisch konvergiert", z["ok"].endswith(" konv."),
               z["ok"])
-        check(f"… σ_v an der Außenfläche auf 1 N/mm² ({z['fhg']} FHG)", abs(z["sv_b"]) < 1.0,
-              f"{z['sv_b']:+.2f} N/mm²")
+        check(f"… σ_v an der Außenfläche gegen Hill am Radius der Punkte auf 1 N/mm² ({z['fhg']} FHG)",
+              abs(z["sv_b_ip"]) < 1.0, f"{z['sv_b_ip']:+.2f} N/mm², am Knotenradius {z['sv_b']:+.2f}")
         check("… u_r an der Außenfläche auf 0,5 %", abs(z["u"] - 1.0) < 5e-3, f"{z['u']:.4f}")
     for faktor, soll in ((0.995, True), (1.005, False)):
         check(f"tet10 8 x 4 {'trägt' if soll else 'trägt nicht'} {faktor:.3f} p_L "

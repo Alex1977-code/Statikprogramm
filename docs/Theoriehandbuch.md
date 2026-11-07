@@ -6638,6 +6638,11 @@ Extrapolation). `tests/messung_rohr_plastisch.py`, gemessen 23.09.2026, Ablage
 | tet4 8 × 4 | 270 | 1,1726 | +46,6 | +306 | +154 % |
 | tet4 16 × 8 | 918 | 1,1995 | +46,8 | +367 | +434 % |
 
+Die Spalte σ_v(b) ist der Stand vom 23.09.2026 mit Knotenwerten aus der Extrapolation. Seit dem
+06.11.2026 trägt die Knotentabelle einer plastischen Rechnung den nächsten Integrationspunkt. Gegen Hill am
+Radius dieses Punkts sind es bei tet10 8 × 4 −0,93 und bei hex8 32 × 16 −0,48 N/mm²; die Prüfung vergleicht
+seit dem 07.11.2026 so.
+
 σ_v am Punkt ist bei allen Typen fy (die Rückführung), darum steht er nicht in
 der Tabelle. Die **Grenzlast** (mit dem Newton bestimmt, siehe unten): hex8 und
 tet10 8 × 4 tragen 0,995 p_L und 1,005 p_L nicht — auf 0,5 % getroffen; tet4
