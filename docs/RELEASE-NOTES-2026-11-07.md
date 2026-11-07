@@ -352,6 +352,12 @@ langsamer; bei 136 GB Commit-Grenze blieben so mindestens 17,6 GB statt zuletzt 
 * **Lastkategorien und Stabtypen aus RFEM** sind in die Einstufung aufgenommen: Ein Modell, das vor den
   Korrekturen des Imports übernommen und noch nicht nachgelesen wurde, trägt den Status, solange Sie die
   Lager, Stabtypen oder Vorspannung nicht nachgelesen oder umgestellt haben.
+* **Zwei neue Warnungen.** Eine Grenzkraft ohne Ausfall und ohne Schlupf wirkt nur in Druckrichtung; das
+  meldet das Programm jetzt je Lager im Kontaktprotokoll und in der Zusammenfassung. Eine Zwangsverformung an
+  einem Freiheitsgrad ohne Lager bleibt unwirksam; das steht jetzt auch im Ergebnis, in der Zusammenfassung
+  und in der Überlagerung. Die Rechnung ändert sich dadurch nicht.
+* **Feld im Winddialog umbenannt.** „c_f Vorgabe“ heißt jetzt „c_f,0 Vorgabe (wird mit ψ_λ abgemindert)“,
+  weil die Eingabe wie bisher noch mit ψ_λ multipliziert wird. Die Rechnung ändert sich dadurch nicht.
 
 ## Wo Ergebnisse anders ausfallen
 
@@ -476,3 +482,5 @@ Folgende Punkte sind bekannt und bewusst nicht in diesem Stand:
   unsymmetrisch).
 * Die ama-LU (Zweig `loeser/ama-uebernahme`).
 * Die Linux-Fassung.
+* Die Ursache, warum das Drehlager mit μ = 1 in allen drei Spannstufen als „vorläufig – Kontakt nicht
+  konvergiert“ endet; sie ist zurückgestellt.
