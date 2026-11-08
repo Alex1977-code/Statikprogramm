@@ -260,7 +260,8 @@ if QtWidgets is not None:
     class Rechenliste(QtWidgets.QDialog):
         """Nicht modales Fenster mit einer Zeile je Posten."""
 
-        SPALTEN = ("Posten", "Art", "Zustand", "Schritte", "Konvergenz", "Zeit", "Meldung")
+        SPALTEN = ("Lastfall / Kombination", "Art", "Zustand", "Iterationen", "Letzte Änderung",
+                   "Rechenzeit", "Letzte Meldung")
         S_ZUSTAND, S_SCHRITTE, S_KONVERGENZ, S_ZEIT, S_MELDUNG = 2, 3, 4, 5, 6
 
         def __init__(self, parent=None):
@@ -285,9 +286,10 @@ if QtWidgets is not None:
             self._folgt = True
 
             self.kopf_rechner = QtWidgets.QLabel("")
-            self.kopf_rechner.setToolTip("Prozesspool und Gleichungslöser dieser Rechnung; "
-                                         "bei eingeschalteter Rechnerfarm zusätzlich, wie viele "
-                                         "Rechner arbeiten und wie viele Aufträge warten")
+            self.kopf_rechner.setToolTip("Womit gerechnet wird: Zahl der Rechenkerne und "
+                                         "Gleichungslöser; bei eingeschalteter Rechnerfarm "
+                                         "zusätzlich, wie viele Rechner arbeiten und wie viele "
+                                         "Aufträge warten")
 
             self.tabelle = QtWidgets.QTableWidget(0, len(self.SPALTEN), self)
             self.tabelle.setHorizontalHeaderLabels(self.SPALTEN)
@@ -304,9 +306,12 @@ if QtWidgets is not None:
             self.btn_abbrechen = QtWidgets.QPushButton("Abbrechen")
             self.btn_abbrechen.setToolTip(
                 "Rechnung anhalten: sie hält beim nächsten Rechenschritt an, eine laufende "
-                "Faktorisierung läuft zu Ende; Ergebnis und Netz bleiben, wie sie waren")
-            self.btn_folgen = QtWidgets.QPushButton("Dem Laufenden folgen")
-            self.btn_folgen.setToolTip("Die Liste springt wieder zum gerade rechnenden Posten")
+                "Zerlegung der Steifigkeitsmatrix läuft zu Ende; fertig gerechnete Lastfälle "
+                "und Kombinationen bleiben erhalten")
+            self.btn_folgen = QtWidgets.QPushButton("Zum laufenden Lastfall springen")
+            self.btn_folgen.setToolTip("Die Liste springt zur Zeile des Lastfalls bzw. der "
+                                       "Kombination, die gerade gerechnet wird, und folgt "
+                                       "ihr wieder, bis man selbst scrollt")
             self.btn_folgen.clicked.connect(self._wieder_folgen)
 
             unten = QtWidgets.QHBoxLayout()
@@ -350,7 +355,7 @@ if QtWidgets is not None:
                 self._zeile_von_name.setdefault((art, name), i)
                 self._zustand.append("")
                 self._schritte.append({})
-            self._stand = "%d Posten" % len(posten)
+            self._stand = "%d Lastfälle/Kombinationen zu rechnen" % len(posten)
             self.kopfzeile.setText(self._stand)
             self._laufend = 0 if posten else -1
             self._t_posten = time.time()

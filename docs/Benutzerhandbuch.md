@@ -2560,13 +2560,17 @@ einen Streifen.
 
 | Spalte | Was darin steht |
 |---|---|
-| Posten | Name des Lastfalls oder der Kombination |
+| Lastfall / Kombination | Name des Lastfalls oder der Kombination |
 | Art | Lastfall oder Kombination |
 | Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“, „läuft (nicht konvergiert)“ bzw. „läuft (Probelauf)“; nach dem Abschluss steht dieser Stand statt „fertig“ da (siehe unten) |
-| Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
-| Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
-| Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
-| Meldung | die letzte Zeile des Rechenkerns im Klartext |
+| Iterationen | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Kontakt- und Plastizitätsiterationen |
+| Letzte Änderung | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
+| Rechenzeit | Laufzeit des Lastfalls bzw. der Kombination, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
+| Letzte Meldung | die letzte Zeile des Rechenkerns im Klartext |
+
+Bis zum 08.11.2026 hießen die Spalten „Posten“, „Schritte“, „Konvergenz“,
+„Zeit“ und „Meldung“; die Fußzeile sagt jetzt „3 Lastfälle/Kombinationen zu
+rechnen“ statt „3 Posten“.
 
 Über der Liste steht, **womit** gerechnet wird: der Prozesspool (Element-
 schleifen und Vernetzen) und der Gleichungslöser. Ist die **Rechnerfarm**
@@ -2577,8 +2581,9 @@ als aktiv - so fällt ein ausgefallener Rechner auf. Bricht die Verbindung zur
 Farm ab, sagt die Zeile das; die Rechnung selbst läuft weiter.
 
 Die Liste **folgt** dem gerade rechnenden Posten. Scrollt man selbst, bleibt
-sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Dem
-Laufenden folgen** springt zurück und schaltet das Folgen wieder ein. Das
+sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Zum
+laufenden Lastfall springen** (bis 08.11.2026 „Dem Laufenden folgen“) springt
+zurück und schaltet das Folgen wieder ein. Das
 Fenster ist nicht modal: das übrige Programm bleibt bedienbar, während
 gerechnet wird.
 
