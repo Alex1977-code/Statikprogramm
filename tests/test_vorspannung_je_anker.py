@@ -265,7 +265,7 @@ def test_speichern_laden():
             if not os.path.exists(pa):
                 check(f"alte Datei {rel[-1]} vorhanden", False, pa)
                 continue
-            mb = Model.load(pa)
+            mb = Model.load(pa, umstellen=False)   # alte Datei ohne Umstellung der Namen (die prueft test_umstellung_lf_lk)
             pb = os.path.join(tmp, "alt.json")
             mb.save(pb)
             with open(pa, encoding="utf-8") as f1, open(pb, encoding="utf-8") as f2:

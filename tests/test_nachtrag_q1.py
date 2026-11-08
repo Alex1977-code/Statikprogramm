@@ -124,7 +124,7 @@ def _basis():
     Berichtseintrag."""
     from statik3d.examples_lib import build_example
     from statik3d.model import ContactSupport, Kopplung, Berichtseintrag, Layer, Situation
-    m = build_example("hall")
+    m = build_example("hall")   # seit R2-C1: LF2 = Schnee („S“), LF3 = Wind links („W_links“)
     mat = next(iter(m.materials))
     k = [m.add_node(100.0 + x, y, z) for z in (0.0, 1.0) for (x, y) in ((0, 0), (1, 0), (1, 1), (0, 1))]
     linien = {"B1": (0, 1), "B2": (1, 2), "B3": (2, 3), "B4": (3, 0),
@@ -147,7 +147,7 @@ def _basis():
     m.contact_supports.append(ContactSupport(node=k[4], direction=[0.0, 0.0, 1.0]))
     m.add_punktmasse(k[5], 120.0, name="M1", kommentar="Antrieb")
     m.situationen["Bau"] = Situation("Bau", "", [0], "Bauzustand")
-    ll = m.add_linienlast("B1", [0.0, 0.0, -1000.0], art="linie", case="W_links")
+    ll = m.add_linienlast("B1", [0.0, 0.0, -1000.0], art="linie", case="LF3")
     ll.erzeuger, ll.kommentar = "Wind W1", "Wind W1: Sog"
     m.layer["Quader"] = Layer("Quader", knoten=list(k))
     m.bericht.append(Berichtseintrag(name="Bild 1", quelle="case:LF1", beschriftung="Verformung"))
@@ -174,10 +174,10 @@ def _rechenaenderungen():
     return [
         ("Lasten (LF1)", "Eigengewicht g_z verdoppelt",
          lambda m: lc(m, "LF1").gravity.__setitem__(2, 2 * lc(m, "LF1").gravity[2])),
-        ("Lasten (S)", "eine Stablast von S um 10 % größer",
-         lambda m: setattr(lc(m, "S").beam_loads[0], "q", [1.1 * x for x in lc(m, "S").beam_loads[0].q])),
-        ("Lasten (W_links)", "Linienlast des Lastgenerierers (Wind W1) geändert",
-         lambda m: setattr(lc(m, "W_links").linienlasten[-1], "q", [0.0, 0.0, -1500.0])),
+        ("Lasten (LF2)", "eine Stablast von S um 10 % größer",
+         lambda m: setattr(lc(m, "LF2").beam_loads[0], "q", [1.1 * x for x in lc(m, "LF2").beam_loads[0].q])),
+        ("Lasten (LF3)", "Linienlast des Lastgenerierers (Wind W1) geändert",
+         lambda m: setattr(lc(m, "LF3").linienlasten[-1], "q", [0.0, 0.0, -1500.0])),
         ("Lastfalleigenschaften (LF1)", "LF1 nach Theorie II. Ordnung",
          lambda m: setattr(lc(m, "LF1"), "theorie", "II")),
         ("Kombinationen", "ein Faktor einer Kombination",
@@ -225,14 +225,14 @@ def _anzeigeaenderungen():
         ("Kommentar einer Fläche", lambda m: setattr(m.flaechen["unten"], "kommentar", "Boden")),
         ("Kommentar eines Volumens", lambda m: setattr(m.koerper["Q1"], "kommentar", "Block")),
         ("Beschreibung, Bezeichnung und Nummer eines Lastfalls",
-         lambda m: (setattr(m.load_cases["S"], "description", "Schnee nach Zone 2"),
-                    setattr(m.load_cases["S"], "bezeichnung", "Schnee"),
-                    setattr(m.load_cases["S"], "nummer", 77))),
+         lambda m: (setattr(m.load_cases["LF2"], "description", "Schnee nach Zone 2"),
+                    setattr(m.load_cases["LF2"], "bezeichnung", "Schnee"),
+                    setattr(m.load_cases["LF2"], "nummer", 77))),
         ("Beschreibung, Bezeichnung und Nummer einer Kombination",
          lambda m: [setattr(c, a, v) for c in list(m.combinations.values())[:1]
                     for a, v in (("description", "neu"), ("bezeichnung", "GZT neu"), ("nummer", 99))]),
         ("Kommentar einer Linienlast (Verteilen überschreibt ihn)",
-         lambda m: setattr(m.load_cases["W_links"].linienlasten[-1], "kommentar", "1 Elementlast")),
+         lambda m: setattr(m.load_cases["LF3"].linienlasten[-1], "kommentar", "1 Elementlast")),
         ("Kommentar einer Punktmasse", lambda m: setattr(m.punktmassen[0], "kommentar", "Motor")),
         ("Beschreibung einer Situation", lambda m: setattr(m.situationen["Bau"], "beschreibung", "Montage")),
         ("Größe des Lagersymbols", lambda m: setattr(m.supports[0], "groesse", 2.5)),
@@ -245,7 +245,7 @@ def _anzeigeaenderungen():
         ("ein weiterer Berichtseintrag", lambda m: m.bericht.append(Berichtseintrag(name="Bild 2"))),
         ("Einheiten der Ansicht", lambda m: setattr(m.einheiten, next(iter(vars(m.einheiten))),
                                                      _anders(getattr(m.einheiten, next(iter(vars(m.einheiten))))))),
-        ("aktiver Lastfall", lambda m: setattr(m, "active_case", "S")),
+        ("aktiver Lastfall", lambda m: setattr(m, "active_case", "LF2")),
         ("Projektangaben und Modellname",
          lambda m: (m.meta.__setitem__("projekt", "Probe"), setattr(m, "name", "Halle 2"))),
         ("Netzvorgabe (das Netz selbst bleibt)", lambda m: setattr(m.netz, "ziellaenge", 0.123)),
@@ -392,7 +392,7 @@ def test_n38_beschriftungsfelder():
         "linie": ("B1", {"kommentar": "Kante"}),
         "geoflaeche": ("unten", {"kommentar": "Boden"}),
         "geokoerper_einzeln": ("Q1", {"kommentar": "Block"}),
-        "lastfall": ("S", {"beschreibung": "Schnee nach Zone 3"}),
+        "lastfall": ("LF2", {"beschreibung": "Schnee nach Zone 3"}),
         "lager_einzeln": ("0", {"name": "Fuß Ost", "groesse": 2.0}),
         "linienlager_einzeln": ("0", {"name": "Rand 2"}),
         "flaechenlager_einzeln": ("0", {"name": "Bettung 2"}),

@@ -360,7 +360,8 @@ def test_ausweichen_erreicht_bericht():
           f"{html.count('Probe: PARDISO verweigert')} mal")
     # Kommt der Lastfall aus der Analyse, zaehlt er im Bericht bei den
     # Lastfaellen und im Nachweis nicht noch einmal. Der Bericht bleibt bei
-    # einer Zeile fuer LF1, Wasser S, Wasser S dyn und den Nachweis. Sie nennt
+    # einer Zeile fuer LF1, den Lastfall des Wasserdrucks S (seit R2-C1 LF2 mit der
+    # Bezeichnung „Wasser S“, bis dahin „Wasser S“), seinen dyn-Lastfall und den Nachweis. Sie nennt
     # nur die ersten drei Namen (solver.ausweichen_gebuendelt); der Nachweis
     # steht hinter den Lastfaellen und Kombinationen und wird dort nur
     # mitgezaehlt. Das Handbuch sagte am Stand 802ff71, der Bericht nenne ihn
@@ -380,7 +381,8 @@ def test_ausweichen_erreicht_bericht():
     namen_a = [n for n, r in list(an_a.cases.items()) + list((getattr(an_a, "combinations", None) or {}).items())
                if "verweigert" in str((getattr(r, "info", None) or {}).get("ausweichgrund", ""))]
     check("Vorbedingung: drei Lastfälle der Analyse tragen denselben Grund",
-          namen_a == ["LF1", "Wasser S", wd_a.lastfall_dyn], str(namen_a))
+          namen_a == ["LF1", wd_a.lastfall, wd_a.lastfall_dyn]
+          and (wd_a.lastfall, m_a.load_cases[wd_a.lastfall].bezeichnung) == ("LF2", "Wasser S"), str(namen_a))
     check("Lastfall aus der Analyse: eine Hinweiszeile, der Nachweis zählt dort mit",
           len(punkte_a) == 1 and "bei 4 Ergebnissen" in punkte_a[0]
           and html_a.count("Probe: PARDISO verweigert") == 1,

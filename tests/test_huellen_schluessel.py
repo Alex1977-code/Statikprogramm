@@ -324,7 +324,7 @@ def test_r1c_ergebnisdatei():
     pfad = os.path.join(tmp, "modell.json")
     m.save(pfad)
     ergebnisse.schreiben(ergebnisse.pfad_zu(pfad), m, an)
-    m2 = Model.load(pfad)
+    m2 = Model.load(pfad, umstellen=False)   # die Umstellung prueft test_umstellung_lf_lk
     an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m2)
     vorher = {k: R["huelle"](e) for k, e in an.envelopes.items()}
     nachher = {k: R["huelle"](e) for k, e in an2.envelopes.items()}
@@ -349,9 +349,13 @@ def test_r1c_ergebnisdatei():
     m3 = Model.load(pfad)
     an3 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m3)
     soll = _json("ohne_kollision_geladen.json")
-    ist = R["verdichtet"](R["analyse"](an3))
-    check("R1c: Ergebnisdatei von 6791f9f ohne Kollision lädt unverändert (bitgleich)",
-          ist == soll, str([k for k in soll if ist.get(k) != soll[k]]))
+    # Seit R2-A2 (06.10.2026) heissen K1…K4 nach dem Oeffnen LK1…LK4: die
+    # Zahlen sind dieselben, die Namen folgen der Tabelle alt -> neu. Mit den
+    # alten Namen zurueckgerechnet gleicht die Lesung der von 6791f9f.
+    ist = R["verdichtet"](_alte_namen(R["analyse"](an3), m3))
+    check("R1c: Ergebnisdatei von 6791f9f ohne Kollision lädt bitgleich, unter den neuen Namen (LK1…LK4)",
+          ist == soll and list(an3.combinations) == ["LK1", "LK2", "LK3", "LK4"],
+          str([k for k in soll if ist.get(k) != soll[k]]) + f" {list(an3.combinations)}")
     check("R1c: … und meldet nichts", "Ergebniskombination" not in an3.summary(),
           [z for z in an3.summary().splitlines() if "Ergebniskombination" in z][:1])
     # eine Datei von 6791f9f mit Kollision: die Umhuellende unter ULS ist die
@@ -360,12 +364,16 @@ def test_r1c_ergebnisdatei():
     pfad = os.path.join(tmp, "mit_kollision.json")
     m4 = Model.load(pfad)
     an4 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m4)
-    alt_namen = [f"ULS [{k}]" for k in (1, 2, 3)]
+    # Seit R2-A2 (06.10.2026) heisst die Ergebniskombination „ULS“ nach dem
+    # Oeffnen EK3 (EK2 ist vergeben) und ihre Umhuellende „Umhüllende EK3“ -
+    # der Zusatz „(Ergebniskombination)“ (R1) ist nicht mehr noetig
+    ek = m4._umbenennung["kombinationen"]["ULS"]
+    alt_namen = [f"{ek} [{k}]" for k in (1, 2, 3)]
     ks = [k for k, e in an4.envelopes.items() if list(e.names) == alt_namen]
     texte = [bg.umhuellende_kurz(k) for k in an4.envelopes]
     check("R1c: Datei von 6791f9f mit Kollision: Umhüllende der Ergebniskombination „ULS“ "
-          "heißt „Umhüllende ULS (Ergebniskombination)“",
-          [bg.umhuellende_kurz(k) for k in ks] == ["Umhüllende ULS (Ergebniskombination)"],
+          "heißt nach der Umstellung „Umhüllende EK3“",
+          ek == "EK3" and [bg.umhuellende_kurz(k) for k in ks] == ["Umhüllende EK3"],
           f"{ks} {texte}")
     check("R1c: … keine „Umhüllende GZT“ vorgetäuscht", "Umhüllende GZT" not in texte, str(texte))
     s = an4.summary()
@@ -378,8 +386,9 @@ def test_r1c_ergebnisdatei():
     for _ in range(4):
         app.processEvents()
     log = w.log.toPlainText()
-    check("R1c: … und das Protokoll beim Öffnen im Fenster",
-          ok and "„ULS“" in log and "Umhüllende GZT" in log and "fehlt" in log,
+    check("R1c: … und das Protokoll beim Öffnen im Fenster (die Ergebniskombination unter ihrem neuen "
+          "Namen EK3)",
+          ok and f"„{ek}“" in log and "Umhüllende GZT" in log and "fehlt" in log,
           [z for z in log.splitlines() if "fehlt" in z][:1])
 
 
@@ -549,18 +558,47 @@ def _pendelmarken_abnehmen(an) -> dict:
     return aus
 
 
+def _alte_namen_tab(m) -> dict:
+    """Name von heute -> Name vor R2-C1 (06.10.2026) fuer ein eingebautes Beispiel: der Lastfall
+    mit seiner Bezeichnung (LF1 behaelt den Namen), die Kombination als GZT<n> (Typ ULS) oder
+    GZG<n> - die Nummer ist dieselbe geblieben."""
+    tab = {n: (lc.bezeichnung if n != "LF1" and lc.bezeichnung else n) for n, lc in m.load_cases.items()}
+    tab.update({n: (("GZT" if c.typ == "ULS" else "GZG") + n[2:]) for n, c in m.combinations.items()})
+    return tab
+
+
+def _zurueck(x, tab: dict):
+    """Die Namen von heute in einem Fingerabdruck (Schluessel und Zeichenketten) durch die alten
+    ersetzen: die Referenz von 6791f9f traegt die damaligen Namen."""
+    if isinstance(x, str):
+        return re.sub(r"\b(?:LF|LK)\d+\b", lambda t: tab.get(t.group(0), t.group(0)), x)
+    if isinstance(x, list):
+        return [_zurueck(y, tab) for y in x]
+    if isinstance(x, dict):
+        return {_zurueck(k, tab): _zurueck(v, tab) for k, v in x.items()}
+    return x
+
+
 def test_r1f_beispiele():
+    """Die Beispiele rechnen Zahl fuer Zahl wie auf 6791f9f. Seit R2-C1 (06.10.2026) heissen ihre
+    Lastfaelle LF<n> und ihre Kombinationen LK<n>; die Referenz traegt noch die Namen von damals
+    und wird ueber die Tabelle alt -> neu (_alte_namen) verglichen. Die neuen Namen prueft
+    tests/test_namen_erzeuger.py."""
     from statik3d import solver
     from statik3d.examples_lib import build_example
     R = ref()
     soll = _json("beispiele.json")
     for b in R["BEISPIELE"]:
-        an = solver.solve_all(build_example(b), design=True, fatigue=True)
+        m = build_example(b)
+        an = solver.solve_all(m, design=True, fatigue=True)
         marken = _pendelmarken_abnehmen(an)
         if b == "contact":
             check(f"R1f {b}: Kontaktzustand mit den Pendelmarken aus B4, keine Bedingung pendelte",
                   bool(marken) and all(da and z == 0 for da, z in marken.values()), str(marken))
-        abdruck = R["analyse"](an)
+        check(f"R1f {b}: Lastfälle LF<n>, Kombinationen LK<n>",
+              all(re.fullmatch(r"LF\d+", n) for n in m.load_cases)
+              and all(re.fullmatch(r"LK\d+", n) for n in m.combinations), str(list(m.load_cases)))
+        abdruck = _zurueck(R["analyse"](an), _alte_namen_tab(m))
         abdruck["fatigue"] = _ohne_neue_felder(abdruck["fatigue"])
         ist = R["verdichtet"](abdruck)
         anders = [f"{teil}/{k}" for teil in soll[b] if isinstance(soll[b][teil], dict)
@@ -601,8 +639,10 @@ def test_r1g_ausnutzung_unbekannter_typ():
     pfad = os.path.join(REFERENZ, "alt", "unbekannt.json")
     m2 = Model.load(pfad)
     an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m2)
-    ks2 = [k for k, e in an2.envelopes.items() if getattr(e, "kombination", None) == "XYZ"]
-    check("R1g: alte Datei: Umhüllende der Ergebniskombination „XYZ“ mit Spalte, GZT mit, "
+    # seit R2-A2 heisst die Ergebniskombination „XYZ“ nach dem Oeffnen EK1
+    ek = m2._umbenennung["kombinationen"]["XYZ"]
+    ks2 = [k for k, e in an2.envelopes.items() if getattr(e, "kombination", None) == ek]
+    check("R1g: alte Datei: Umhüllende der Ergebniskombination „XYZ“ (jetzt EK1) mit Spalte, GZT mit, "
           "GZG ohne",
           len(ks2) == 1 and _ausnutzung(m2, an2, ks2[0]) is True
           and _ausnutzung(m2, an2, "ULS") is True and _ausnutzung(m2, an2, "SLS_CH") is False,
@@ -631,16 +671,46 @@ def test_r1h_alte_datei_ohne_modellbezug():
         check(f"R1h {fall}: … mit Hinweis, dass die Umhüllende GZT fehlt",
               "„ULS“" in s and "„Umhüllende GZT“ überschrieben" in s and "fehlt" in s,
               [z for z in s.splitlines() if z.startswith("Hinweis")][-1:])
-    # keine Fehlerkennung: die zwoelf Dateien wie dc80e1f, auch EK1 -> ULS
-    soll = _json("alt_gelesen_dc80e1f.json")
+    # keine Fehlerkennung: die zwoelf Dateien wie dc80e1f, auch EK1 -> ULS -
+    # seit R2-A2 (06.10.2026) unter den neuen Namen. Die feste Referenz
+    # alt_gelesen_r2a2.json ist die Lesung von dc80e1f (alt_gelesen_dc80e1f.json),
+    # umgeschluesselt mit der Tabelle der Umstellung beim Oeffnen und von Hand
+    # geprueft: die Umhuellende einer Ergebniskombination des Modells liegt
+    # unter deren neuem Namen; in EK1_zu_ULS sind die Umhuellenden ULS und EK1
+    # verworfen, weil ihre Herkunft „EK1 [k]“ die alte, umbenannte EK1 meint
+    # und EK1 jetzt die Ergebniskombination „ULS“ ist
+    soll = _json("alt_gelesen_r2a2.json")
     anders = []
     for fall in list(R["ALTE_DATEIEN"]) + ["EK1_zu_ULS"]:
         pfad = os.path.join(alt, fall + ".json")
         ist = R["gelesen"](ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad)))
         if ist != soll[fall]:
             anders.append(fall)
-    check("R1h: keine Fehlerkennung - zwölf Dateien der Gegenprüfung und „EK1 → ULS“ wie dc80e1f",
-          not anders, f"anders: {anders}" if anders else f"{len(R['ALTE_DATEIEN']) + 1} Dateien gleich")
+    check("R1h: keine Fehlerkennung - zwölf Dateien der Gegenprüfung und „EK1 → ULS“ wie dc80e1f, unter den "
+          "neuen Namen (feste Referenz)", not anders,
+          f"anders: {anders}" if anders else f"{len(R['ALTE_DATEIEN']) + 1} Dateien gleich")
+
+
+def _alte_namen(abdruck: dict, m) -> dict:
+    """Ein Fingerabdruck (erzeugen.py, analyse) mit den alten Namen statt der
+    neuen - zurueckgerechnet ueber die Tabelle der Umstellung beim Laden
+    (R2-A2): so laesst er sich mit der Lesung von 6791f9f vergleichen."""
+    tab = m._umbenennung or {}
+    rueck = {b: a for a, b in list((tab.get("lastfaelle") or {}).items())
+             + list((tab.get("kombinationen") or {}).items())}
+
+    def name(n):
+        if n in rueck:
+            return rueck[n]
+        t = re.fullmatch(r"(.+) \[(\d+)\]", str(n))
+        return f"{rueck[t.group(1)]} [{t.group(2)}]" if t and t.group(1) in rueck else n
+    aus = dict(abdruck)
+    for g in ("cases", "combinations", "alternativen"):
+        aus[g] = {name(k): v for k, v in abdruck[g].items()}
+    aus["envelope_keys"] = [name(k) for k in abdruck["envelope_keys"]]
+    aus["envelopes"] = {name(k): dict(v, name=name(v["name"]), names=[name(x) for x in v["names"]])
+                        for k, v in abdruck["envelopes"].items()}
+    return aus
 
 
 def _modell_lastfall_wie_kombination(name="X"):
@@ -795,7 +865,7 @@ def test_zusatz_lastfall_und_kombination_reserviert():
     pfad = os.path.join(tmp, "modell.json")
     m.save(pfad)
     ergebnisse.schreiben(ergebnisse.pfad_zu(pfad), m, an)
-    an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad))
+    an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad, umstellen=False))
     R = ref()
     check("Zusatz: Ergebnisdatei hält alle Ergebnisse und Umhüllenden bitgleich",
           R["verdichtet"](R["analyse"](an2)) == R["verdichtet"](R["analyse"](an))

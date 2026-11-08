@@ -53,21 +53,29 @@ def test_lastfaelle():
     m = Model("L")
     log = []
     namen = lh.lastfaelle_anlegen(m, log=log)
-    check("Standard-Lastfälle angelegt", namen == lh.STANDARD, str(namen))
+    # Seit R2-C1 (06.10.2026) heisst jeder Lastfall LF<Nr.> und traegt den
+    # Schluessel der Einwirkung als Bezeichnung (bis dahin hiess er wie der Schluessel)
+    schluessel = {n: m.load_cases[n].bezeichnung for n in namen}
+    check("Standard-Lastfälle angelegt: LF2…LF10 mit dem Schlüssel als Bezeichnung",
+          namen == [f"LF{i}" for i in range(2, len(lh.STANDARD) + 2)]
+          and list(schluessel.values()) == lh.STANDARD, str(namen))
     check("Einwirkungsart = Schlüssel, Beschreibung = Einwirkung",
-          all(m.load_cases[n].category == n and m.load_cases[n].description == EINWIRKUNGEN[n] for n in namen))
+          all(m.load_cases[n].category == schluessel[n] and m.load_cases[n].description == EINWIRKUNGEN[schluessel[n]]
+              for n in namen))
     # Seit R2-A1 (04.10.2026) gehoert Nr. 1 dem Vorgabelastfall LF1 (Name und
     # Feld); bis dahin bekam G noch einmal die Nr. 1 (Model.naechste_nummer)
     check("fortlaufende Nummern ab der nächsten freien (2, LF1 hat Nr. 1)",
           m.load_cases["LF1"].nummer == 1
           and [m.load_cases[n].nummer for n in namen] == list(range(2, len(namen) + 2)),
           str([m.load_cases[n].nummer for n in namen]))
-    check("Eigengewicht mit g", m.load_cases["G"].gravity == [0.0, 0.0, -9.81]
-          and m.load_cases["W_S"].gravity == [0.0, 0.0, 0.0])
-    check("aktiver Lastfall bleibt gesetzt (vorhandener LF1 oder G)", m.active_case in ("G", "LF1"), str(m.active_case))
+    check("Eigengewicht mit g", m.load_cases["LF2"].gravity == [0.0, 0.0, -9.81]
+          and m.load_cases["LF4"].gravity == [0.0, 0.0, 0.0])
+    check("aktiver Lastfall bleibt gesetzt (vorhandener LF1)", m.active_case == "LF1", str(m.active_case))
     weitere = lh.lastfaelle_anlegen(m, ["G", "EIS", "XYZ"], start_nr=20, log=log)
-    check("vorhandener Name bekommt eine Zahl, unbekannte Art übersprungen, Nummer ab 20",
-          weitere == ["G 2", "EIS 2"] and m.load_cases["G 2"].nummer == 20 and m.load_cases["EIS 2"].nummer == 21
+    check("zweiter Aufruf legt neue Lastfälle an (nichts überschrieben, keine Zahl angehängt), "
+          "unbekannte Art übersprungen, Nummer ab 20",
+          weitere == ["LF20", "LF21"] and m.load_cases["LF20"].nummer == 20 and m.load_cases["LF21"].nummer == 21
+          and [m.load_cases[n].bezeichnung for n in weitere] == ["G", "EIS"]
           and any("XYZ" in z for z in log), str((weitere, log[-2:])))
     rw = Regelwerk()
     k = rw.kombinationen(m)
@@ -86,9 +94,10 @@ def test_dokument():
     check("jede Einwirkung ein Abschnitt", all(f"{e.key} - {e.titel}" in html for e in lh.EINWIRKUNGSTEXTE))
     check("Skizzen enthalten", html.count("<svg") >= len(EINWIRKUNGEN) - 1, str(html.count("<svg")))
     check("Vorgaben sind gekennzeichnet", "zu bestätigen" in html and "* = Voreinstellung" in html)
-    # G bekommt die naechste freie Nummer: LF1 des Beispiels hat Nr. 1 (R2-A1)
+    # G bekommt die naechste freie Nummer: LF1 bis LF3 des Beispiels haben die
+    # Nr. 1 bis 3 (R2-A1, R2-C1) - der Lastfall heisst LF4
     check("Modellwerte: Wasserdruck-Generierer und Lastfälle genannt",
-          "Wasserdruck " in html and "Lastfall G (Nr. 2)" in html)
+          "Wasserdruck " in html and "Lastfall LF4 (Nr. 4)" in html)
     check("normativer Rahmen nennt DIN 19704-1 und ZTV-ING", "DIN 19704-1" in html and "ZTV-ING" in html)
     md = doc.to_markdown()
     check("Markdown-Fassung", md.startswith("# Lastenheft") and "Eisdruck" in md)

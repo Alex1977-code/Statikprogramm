@@ -525,7 +525,7 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
     Kennwerte samt Zahl der Elementlasten. Strömungsnumerisch wird zuerst
     das Druckfeld gerechnet (``fortschritt(anteil, text) -> bool``; False
     bricht ab, das Modell bleibt dann unverändert)."""
-    from .model import GRUNDSTELLUNG
+    from .model import GRUNDSTELLUNG, _namensnummer
     if not (wd.flaechen or wd.koerper):
         raise ValueError("Keine benetzte Fläche gewählt")
     fehlt = [n for n in wd.flaechen if n not in model.flaechen] \
@@ -546,13 +546,18 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
                               nachkomma=1, z_sohle=fr["z_sohle"], stempel=uuid.uuid4().hex)
     # Name und Nummer der Lastfaelle pruefen, bevor sich etwas aendert (R2-A1,
     # Nachbesserung G3): ein vergebener Name oder eine belegte Nummer weist ab
-    # (NameVergeben), ohne eigene Wahl gilt „Wasser <Name>“ oder ein freier
+    # (NameVergeben); ohne eigene Wahl entstehen neue Lastfaelle LF<Nr.> mit
+    # den Bezeichnungen „Wasser <Name>“ und „Wasser <Name> dyn“ (R2-C1), ein
+    # gewaehlter bleibt, wie er ist
     nr = int(wd.lastfall_nr or 0)
     wd.lastfall = model.generator_lastfall(f"Wasser {wd.name}", wd.lastfall, nr, f"Wasserdruck {wd.name}")
     lastfaelle = [(wd.lastfall, False)]
     if wd.cp_dyn and kw["dp_dyn"] > 0:
+        # die Nummer des ersten Lastfalls ist vergeben, auch wenn er noch nicht im Modell steht
+        erste = _namensnummer(wd.lastfall)[1] or int(getattr(model.load_cases.get(wd.lastfall), "nummer", 0) or 0)
         wd.lastfall_dyn = model.generator_lastfall(f"Wasser {wd.name} dyn", wd.lastfall_dyn,
-                                                   nr + 1 if nr > 0 else 0, f"Wasserdruck {wd.name}")
+                                                   nr + 1 if nr > 0 else 0, f"Wasserdruck {wd.name}",
+                                                   reserviert=(erste,))
         lastfaelle.append((wd.lastfall_dyn, True))
     # Alte Lasten dieses Generierers entfernen (in allen Lastfaellen)
     for lc in model.load_cases.values():
@@ -565,7 +570,9 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
     for j, (fall, dyn) in enumerate(lastfaelle):
         if fall not in model.load_cases:
             model.add_load_case(fall, "Q", f"Wasserdruck {wd.name}" + (" (Schwankung)" if dyn else ""),
-                                activate=False)
+                                activate=False,
+                                bezeichnung=(f"Wasser {wd.name}" + (" dyn" if dyn else ""))
+                                if _namensnummer(fall)[0] == "LF" else "")
         lc = model.load_cases[fall]
         lc.situation = "" if wd.situation == GRUNDSTELLUNG else wd.situation
         if not getattr(lc, "nummer", 0):

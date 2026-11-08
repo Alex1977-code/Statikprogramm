@@ -1,4 +1,14 @@
-"""Fertige Beispielmodelle (auch aus der GUI ueber das Menue 'Beispiele')."""
+"""Fertige Beispielmodelle (auch aus der GUI ueber das Menue 'Beispiele').
+
+Namen (Paket R2-C1, 06.10.2026, Entscheidung des Anwenders vom 04.10.2026):
+Lastfaelle heissen LF<Nr.>, Lastkombinationen LK<Nr.>, und der freie Name von
+frueher steht als Bezeichnung daneben - Hallenrahmen: LF1 Eigengewicht, LF2 S,
+LF3 W_links, LF4 W_rechts, LF5 Kran; Stauwand: LF1 Eigengewicht, LF2 Wasser,
+LF3 Wasser_Wellen; die Kombinationen LK1 ... erzeugt der Generator
+(combinations.generate_combinations). Die Rechnung ist bis auf die Namen
+dieselbe (tests/test_namen_erzeuger.py, G5). Ergebniskombinationen (EK<Nr.>)
+hat keines der eingebauten Beispiele.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -10,6 +20,7 @@ from . import mesher
 def frame_example() -> Model:
     """Zweistieliger Rahmen, 6 m Spannweite, 4 m hoch, mit Dachgleichlast."""
     m = Model("Rahmen")
+    m.case().bezeichnung = "Eigengewicht, Dach, Wind"
     m.add_material(Material("S355", 210e9, 0.3, 7850, fy=355e6))
     m.add_section(Section.i_profile("HEA 200", 0.190, 0.200, 0.0065, 0.010))
     left = mesher.line_of_beams(m, "S355", "HEA 200", (0, 0, 0), (0, 0, 4), 4)
@@ -34,6 +45,7 @@ def frame_example() -> Model:
 def plate_example() -> Model:
     """Vierseitig gelagerte Stahlplatte 3 x 2 m, t = 12 mm, Flaechenlast 5 kN/m²."""
     m = Model("Platte")
+    m.case().bezeichnung = "Flächenlast"
     m.add_material(Material("S235", 210e9, 0.3, 7850, fy=235e6))
     m.add_shell_prop(ShellProp("t = 12 mm", 0.012))
     ids = mesher.grid_plate(m, "S235", "t = 12 mm", 3.0, 2.0, 24, 16, quad=True)
@@ -52,6 +64,7 @@ def plate_example() -> Model:
 def solid_example() -> Model:
     """Volumenmodell einer Konsole 1,0 x 0,3 x 0,4 m mit Endlast."""
     m = Model("Konsole")
+    m.case().bezeichnung = "Endlast"
     m.add_material(Material("S355", 210e9, 0.3, 7850, fy=355e6))
     ids = mesher.grid_box(m, "S355", 1.0, 0.3, 0.4, 20, 6, 8, typ="hex8")
     for j in range(ids.shape[1]):
@@ -66,6 +79,7 @@ def solid_example() -> Model:
 def truss_bridge_example() -> Model:
     """Ebener Fachwerktraeger, 5 Felder à 3 m, Nutzlast in den Untergurtknoten."""
     m = Model("Fachwerk")
+    m.case().bezeichnung = "Nutzlast"
     m.add_material(Material("S355", 210e9, 0.3, 7850, fy=355e6))
     m.add_section(Section.pipe("RO 168/8", 0.1683, 0.008))
     L, h, nf = 15.0, 2.0, 5
@@ -116,6 +130,7 @@ def hall_frame_example() -> Model:
     L, h = 15.0, 6.0
     m.case().category = "G"
     m.case().description = "Eigengewicht + Dachaufbau"
+    m.case().bezeichnung = "Eigengewicht"
     left = mesher.line_of_beams(m, "S355", "HEB 300", (0, 0, 0), (0, 0, h), 4)
     right = mesher.line_of_beams(m, "S355", "HEB 300", (L, 0, 0), (L, 0, h), 4)
     top = mesher.line_of_beams(m, "S355", "IPE 500", (0, 0, h), (L, 0, h), 10)
@@ -134,26 +149,28 @@ def hall_frame_example() -> Model:
     for e in riegel:
         m.load_beam(e, qz=-6000.0)               # G: 6 kN/m
     m.set_gravity(-9.81)
-    m.add_load_case("S", "S", "Schnee 0,85 kN/m² x 6 m")
+    m.add_load_case("LF2", "S", "Schnee 0,85 kN/m² x 6 m", nummer=2, bezeichnung="S")
     for e in riegel:
         m.load_beam(e, qz=-5100.0)
-    m.add_load_case("W_links", "W", "Wind von links", exclusive_group="Wind")
+    m.add_load_case("LF3", "W", "Wind von links", exclusive_group="Wind", nummer=3,
+                    bezeichnung="W_links")
     for e in range(0, 4):
         m.load_beam(e, qx=3000.0)                # Druck auf linken Stiel
     for e in range(4, 8):
         m.load_beam(e, qx=1500.0)                # Sog rechts
     for e in riegel:
         m.load_beam(e, qz=2400.0)                # Dachsog
-    m.add_load_case("W_rechts", "W", "Wind von rechts", exclusive_group="Wind")
+    m.add_load_case("LF4", "W", "Wind von rechts", exclusive_group="Wind", nummer=4,
+                    bezeichnung="W_rechts")
     for e in range(4, 8):
         m.load_beam(e, qx=-3000.0)
     for e in range(0, 4):
         m.load_beam(e, qx=-1500.0)
     for e in riegel:
         m.load_beam(e, qz=2400.0)
-    m.add_load_case("Kran", "Q_K", "Kranbahnlast (Ermuedung)")
+    m.add_load_case("LF5", "Q_K", "Kranbahnlast (Ermuedung)", nummer=5, bezeichnung="Kran")
     m.load_node(int(mesher.select_nodes(m, xmin=6 - 1e-6, xmax=6 + 1e-6, zmin=h - 1e-6)[0]), Fz=-40000.0)
-    m.add_fatigue_load("Kranspiele", "Kran", None, 5e5)
+    m.add_fatigue_load("Kranspiele", "LF5", None, 5e5)
     m.active_case = "LF1"
     generate_combinations(m)
     return m
@@ -164,6 +181,7 @@ def contact_example() -> Model:
     einseitigen Lagern - das hintere Lager hebt ab. Zusaetzlich Spaltelement
     als Anschlag unter dem Kragarmende."""
     m = Model("Kontakt: abhebendes Lager")
+    m.case().bezeichnung = "Einzellast"
     m.add_material(Material.steel("S235"))
     m.add_section(Section.from_profile("IPE 200"))
     ids = mesher.line_of_beams(m, "S235", "IPE 200", (0, 0, 0), (6, 0, 0), 12)
@@ -183,6 +201,7 @@ def block_friction_example() -> Model:
     """Stahlblock (Volumen) auf starrer Platte mit Reibung mu = 0,3:
     Auflast 90 kN, Horizontalkraft 20 kN -> teilweises Gleiten."""
     m = Model("Kontakt: Block mit Reibung")
+    m.case().bezeichnung = "Auflast und Horizontalkraft"
     m.add_material(Material.steel("S235"))
     m.add_material(Material("Starr", E=210e12))
     m.add_shell_prop(ShellProp("t = 50 mm", 0.05))
@@ -237,16 +256,18 @@ def gate_example() -> Model:
     for i in range(nx + 1):
         m.fix(int(ids[i, 0]), [1, 2])
     m.case().category = "G"
+    m.case().bezeichnung = "Eigengewicht"
     m.set_gravity(-9.81)
-    m.add_load_case("Wasser", "H", "Wasserdruck, Stauhoehe 3 m")
+    m.add_load_case("LF2", "H", "Wasserdruck, Stauhoehe 3 m", nummer=2, bezeichnung="Wasser")
     for e in plate_elems:
         zc = m.nodes[m.elements[e].nodes][:, 2].mean()
         p = 1000.0 * 9.81 * (h - zc)            # [Pa]
         m.load_face(e, p, direction=(0, 1, 0))  # Druck in +y (vom Wasser weg)
-    m.add_load_case("Wasser_Wellen", "Q", "Wellenschlag / Windstau (Zusatz)")
+    m.add_load_case("LF3", "Q", "Wellenschlag / Windstau (Zusatz)", nummer=3,
+                    bezeichnung="Wasser_Wellen")
     for e in plate_elems:
         m.load_face(e, 2000.0, direction=(0, 1, 0))
-    m.add_fatigue_load("Stauwechsel", "Wasser", None, 2e5)
+    m.add_fatigue_load("Stauwechsel", "LF2", None, 2e5)
     m.active_case = "LF1"
     generate_combinations(m)
     return m

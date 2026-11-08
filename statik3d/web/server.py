@@ -207,6 +207,10 @@ class State:
         self.settings = {"workers": s.workers, "backend": s.backend, "farm_host": s.farm_host,
                          "farm_port": s.farm_port, "farm_key": s.farm_key}
         self.tmpdir = tempfile.mkdtemp(prefix="statik3d_web_")
+        # Webstart mit --modell: was das Oeffnen umgestellt hat (E6, Namen
+        # LF/LK/EK seit R2-A2) steht im Protokoll wie in der Oberflaeche
+        for z in getattr(model, "_ladehinweise", None) or []:
+            self.info("Hinweis: " + z)
 
     # Modell / Analyse ggf. an die GUI gebunden
     @property
@@ -2325,7 +2329,8 @@ def replace_model(st: State, d: dict) -> dict:
             raise ApiError("Es läuft gerade eine Berechnung", 409)
         _desktop_frei(st)
         try:
-            m = Model.from_dict(d)
+            # hochladen ist oeffnen: Namen auf LF/LK/EK umstellen (R2-A2)
+            m = Model.from_dict(d, umstellen=True)
         except Exception as ex:      # noqa: BLE001
             raise ApiError(f"Modell ungültig: {ex}")
         st.model = m
@@ -2334,6 +2339,10 @@ def replace_model(st: State, d: dict) -> dict:
         st.info(f"Modell geladen: {m.name} ({m.nn} Knoten, {len(m.elements)} Elemente)")
         # wie beim Oeffnen einer Datei: f_u nach der Sortentabelle von heute (M26)
         for z in werkstoffe_alter_datei_nachziehen(m):
+            st.info("Hinweis: " + z)
+        # was das Laden umgestellt hat (E6; Namen LF/LK/EK und die Tabelle
+        # alt -> neu seit R2-A2) - wie beim Oeffnen in der Oberflaeche
+        for z in getattr(m, "_ladehinweise", None) or []:
             st.info("Hinweis: " + z)
         return {"ok": True, "message": "Modell geladen", "geometry_changed": True,
                 "state": state_summary(st)}

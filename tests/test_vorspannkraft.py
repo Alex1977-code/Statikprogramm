@@ -365,7 +365,7 @@ def test_speichern_laden():
             d = json.load(f)
         lcs = d["load_cases"].values() if isinstance(d.get("load_cases"), dict) else d["load_cases"]
         vs = [x for lc in lcs for x in lc.get("vorspannungen", [])]
-        mb = Model.load(pa)
+        mb = Model.load(pa, umstellen=False)   # alte Datei ohne Umstellung der Namen (die prueft test_umstellung_lf_lk)
         vb = mb.case("V").vorspannungen
         check("alte Datei: Anfangsdehnung bleibt Anfangsdehnung, ΔT bleibt ΔT",
               vs and len(vb) == 1 and not vb[0].sollkraft and len(mb.case("V").temp_loads) == 1,
@@ -374,6 +374,7 @@ def test_speichern_laden():
         mb.save(pb)
         with open(pa, "rb") as f1, open(pb, "rb") as f2:
             a, b = f1.read(), f2.read()
+        b = b.replace(b'"format": 9', b'"format": 8')   # seit R2-A2 speichert das Programm Fassung 9
         check("alte Datei mit ΔT-Vorspannung: Laden und Speichern bitgleich", a == b,
               f"{len(a)} / {len(b)} Byte")
     finally:

@@ -516,11 +516,14 @@ def lastfaelle_pruefen(model: Model, auswahl=None, start_nr: int = 0) -> str:
 
 
 def lastfaelle_anlegen(model: Model, auswahl=None, start_nr: int = 0, log: list = None) -> list:
-    """Lastfaelle fuer die gewaehlten Einwirkungen anlegen (Namen = Schluessel,
-    Beschreibung = Einwirkung, Kategorie = Schluessel, fortlaufende Nummer).
-    Schon vergebene Namen - als Lastfall, als Kombination oder in anderer
-    Schreibweise - bekommen eine Zahl angehaengt (Model.freier_name).
-    Rueckgabe: Namen.
+    """Lastfaelle fuer die gewaehlten Einwirkungen anlegen. Rueckgabe: Namen.
+
+    **Namen** (Paket R2-C1, Entscheidung des Anwenders vom 04.10.2026): jeder
+    Lastfall heisst LF<Nummer> und traegt den Schluessel der Einwirkung als
+    Bezeichnung („LF5 W_S“); Beschreibung ist der Klartext der Einwirkung,
+    Kategorie der Schluessel, Nummer die fortlaufende Nummer. Bis dahin hiess
+    er wie der Schluessel („W_S“), und ein schon vergebener Name bekam eine
+    Zahl angehaengt („G 2“).
 
     Eine ausdrueckliche erste Nummer (*start_nr*), deren Folge schon belegt
     ist (Model.nummernkonflikt), weist die ganze Anlage mit NameVergeben ab,
@@ -530,6 +533,7 @@ def lastfaelle_anlegen(model: Model, auswahl=None, start_nr: int = 0, log: list 
     einer Kombination „G“ entstand ein Lastfall „G“ -, und eine eingetragene
     erste Nummer wurde ohne Pruefung vergeben."""
     from ..model import NameVergeben
+    from ..begriffe import anzeige_lastfall
     auswahl = list(auswahl if auswahl is not None else STANDARD)
     grund = lastfaelle_pruefen(model, auswahl, start_nr)
     if grund:
@@ -541,10 +545,12 @@ def lastfaelle_anlegen(model: Model, auswahl=None, start_nr: int = 0, log: list 
             if log is not None:
                 log.append(f"  {key}: keine Einwirkungskategorie - übersprungen")
             continue
-        name = model.freier_name(key, "lastfall")
+        name = f"LF{nr}"
+        grund = model.namenskonflikt(name, "", "lastfall")
+        if grund:
+            raise NameVergeben(grund)
         lc = model.add_load_case(name, key, EINWIRKUNGEN.get(key, ACTION_CATEGORIES[key][0]),
-                                 activate=False)
-        lc.nummer = nr
+                                 activate=False, nummer=nr, bezeichnung=key)
         nr += 1
         if key == "G":
             lc.gravity = [0.0, 0.0, -G_ERD]
@@ -552,7 +558,8 @@ def lastfaelle_anlegen(model: Model, auswahl=None, start_nr: int = 0, log: list 
     if not model.active_case and angelegt:
         model.active_case = angelegt[0]
     if log is not None:
-        log.append(f"{len(angelegt)} Lastfälle nach DIN 19704 angelegt: " + ", ".join(angelegt))
+        log.append(f"{len(angelegt)} Lastfälle nach DIN 19704 angelegt: "
+                   + ", ".join(anzeige_lastfall(model.load_cases[n]) for n in angelegt))
     return angelegt
 
 

@@ -112,6 +112,21 @@ def check(name, ok, detail=""):
     return ok
 
 
+def _mit_alten_namen(pfad):
+    """Modell und Ergebnisdatei mit ihren alten Namen - so, wie ein Programm
+    vor R2-A2 (06.10.2026) sie liest: die Umstellung beim Laden abgeschaltet,
+    die Ergebnisdatei mit der Tabelle alt -> alt gelesen."""
+    from statik3d.model import Model
+    from statik3d import ergebnisse
+    m = Model.load(pfad, umstellen=False)
+    m._umbenennung = {"lastfaelle": {n: n for n in m.load_cases},
+                      "kombinationen": {n: n for n in m.combinations}}
+    an = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m)
+    an.info.pop("umstellung", None)
+    m._umbenennung = None
+    return m, an
+
+
 def schluessel_in(text) -> list:
     """Die Schluessel, die in *text* sichtbar stehen. „GZT (EQU)“ ist der
     Fachbegriff aus DIN EN 1990 (Lagesicherheit), kein Schluessel."""
@@ -170,8 +185,11 @@ def test_bericht_vorher_nachher():
     from statik3d.report import Report
     ref = runpy.run_path(os.path.join(REFERENZ, "erzeugen.py"))
     pfad = os.path.join(REFERENZ, "modell.json")
-    m = Model.load(pfad)
-    an = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m)
+    # Der Vergleich mit 68db45b gilt den Fachbegriffen (11b), nicht den Namen:
+    # dafuer Modell und Ergebnisse mit ihren alten Namen, wie ein Programm vor
+    # R2-A2 sie liest. Was die Umstellung auf LF/LK/EK am Bericht aendert,
+    # prueft der Block danach.
+    m, an = _mit_alten_namen(pfad)
     neu = ref["bericht_text"](Report(m, an).html()).splitlines()
     with open(os.path.join(REFERENZ, "bericht.txt"), encoding="utf-8") as f:
         alt = f.read().splitlines()
@@ -191,6 +209,29 @@ def test_bericht_vorher_nachher():
           f"unerwartet {dict(unerwartet)}, fehlt {dict(fehlt)}")
     check("… und es sind alle %d" % sum(BERICHT_AENDERUNGEN.values()),
           sum(paare.values()) == sum(BERICHT_AENDERUNGEN.values()), str(sum(paare.values())))
+    # R2-A2 (06.10.2026): beim Oeffnen heissen K1 … K8 jetzt LK1 … LK8, die
+    # Ergebniskombinationen „GZT“ und „Ermüdung“ EK1 und EK2. Der Bericht der
+    # umgestellten Datei hat dieselben Zeilen, nur mit den neuen Namen; der
+    # Zusatz „(Ergebniskombination)“ (F2) faellt weg, EK1 gleicht keinem
+    # Fachbegriff mehr.
+    m2 = Model.load(pfad)
+    an2 = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m2)
+    neu2 = ref["bericht_text"](Report(m2, an2).html()).splitlines()
+    tab = m2._umbenennung or {}
+    rueck = {b: a for a, b in list((tab.get("lastfaelle") or {}).items())
+             + list((tab.get("kombinationen") or {}).items()) if a != b}
+    muster = re.compile(r"(?<!\w)(" + "|".join(sorted(map(re.escape, rueck), key=len, reverse=True)) + r")(?!\w)")
+
+    def ohne_zusatz(z):
+        return z.replace(" (Ergebniskombination)", "")
+    anders = [(a, b) for a, b in zip(neu, neu2) if a != b]
+    falsch = [(a, b) for a, b in anders
+              if ohne_zusatz(muster.sub(lambda t: rueck[t.group(1)], b)) != ohne_zusatz(a)]
+    check("Bericht der umgestellten Datei (R2-A2): dieselben Zeilen, nur LK1 … LK8, EK1, EK2 statt der alten "
+          "Namen", len(neu2) == len(neu) and bool(anders) and not falsch
+          and any("Kombination LK7 (Ermüdung): 1.6·LF1 + 0.5·LF2" in b for _a, b in anders)
+          and any(b.endswith("Umhüllende EK1") for _a, b in anders),
+          f"{len(anders)} Zeilen anders, {len(falsch)} falsch: {falsch[:2]}")
     # ein ganzer Bericht mit Kombinationen aller Typen
     from statik3d import solver
     from statik3d.report import Report
@@ -304,8 +345,14 @@ def test_alte_ergebnisdatei():
     check("alte Datei: bekannte Umhüllende heißen wie an der Oberfläche",
           all(namen[k] == KURZ_HUELLE[k] for k in namen if k in KURZ_HUELLE)
           and {"ULS", "FAT"} <= set(namen), str(namen))
-    check("… die Umhüllenden der Ergebniskombinationen behalten ihren Namen",
-          namen.get("GZT") == "GZT" and namen.get("Ermüdung") == "Ermüdung", str(namen))
+    # R2-A2: die Ergebniskombinationen „GZT“ und „Ermüdung“ heissen nach dem
+    # Oeffnen EK1 und EK2, ihre Umhuellenden ebenso (bis zum 06.10.2026
+    # behielten sie die alten Namen)
+    ko = (m._umbenennung or {}).get("kombinationen") or {}
+    check("… die Umhüllenden der Ergebniskombinationen heißen wie diese nach der Umstellung (GZT → EK1, "
+          "Ermüdung → EK2)", ko.get("GZT") == "EK1" and ko.get("Ermüdung") == "EK2"
+          and namen.get("EK1") == "EK1" and namen.get("EK2") == "EK2"
+          and "GZT" not in namen and "Ermüdung" not in namen, str(namen))
     w, app = _fenster()
     ok = w.modell_laden(pfad, fragen=False)     # beginnt ein neues Protokoll
     for _ in range(4):
