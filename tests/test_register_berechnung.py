@@ -143,7 +143,8 @@ def test_reihenfolge():
     y_ana = _y(w, w.cb_analysis, inh)
     y_knopf = _y(w, w.btn_solve, inh)
     y_zus = _y(w, w.txt_summary, inh)
-    y_plast = _y(w, w.cb_plast, inh)
+    # seit 08.11.2026 ist die Plastizitaet eine (zugeklappte) Gruppe: ihr Kopf zaehlt
+    y_plast = _y(w, getattr(w, "abschnitt_plast", w.cb_plast), inh)
     check("„BERECHNEN (F5)“ steht über der Plastizität (vorher ganz unten)", y_knopf < y_plast,
           f"Knopf y={y_knopf}, Plastizität y={y_plast}")
     check("Reihenfolge Analyse → BERECHNEN → Zusammenfassung", y_ana < y_knopf < y_zus,
@@ -182,14 +183,16 @@ def test_vorgabe_zu():
         check("Experten vorhanden (Vorgabe)", False)
         return
     check("Die Experten sind zu, solange man sie nicht aufklappt", not ex.ist_offen())
-    check("… der Kopf „Experten“ ist zu sehen, der Inhalt nicht",
-          ex.knopf.isVisible() and "Experten" in ex.knopf.text() and not ex.inhalt.isVisible(),
+    check("… der Kopf „Gleichungslöser (Experte)“ ist zu sehen, der Inhalt nicht (bis 08.11.2026 „Experten“)",
+          ex.knopf.isVisible() and "Gleichungslöser (Experte)" in ex.knopf.text() and not ex.inhalt.isVisible(),
           ex.knopf.text())
     check("… Löser, Threads und Rechnerfarm sind nicht sichtbar",
           not any(getattr(w, n).isVisible() for n in ("cb_loeser", "cb_threads", "sp_workers", "cb_backend",
                                                       "ed_farm_host", "btn_farm_start")))
-    check("… die übrigen Felder (Analyse, BERECHNEN, Plastizität) sind sichtbar",
-          all(getattr(w, n).isVisible() for n in ("cb_analysis", "btn_solve", "txt_summary", "cb_plast")))
+    # seit 08.11.2026 ist die Plastizitaet zugeklappt: sichtbar ist ihr Kopf
+    check("… die übrigen Felder (Analyse, BERECHNEN, Kopf der Plastizität) sind sichtbar",
+          all(getattr(w, n).isVisible() for n in ("cb_analysis", "btn_solve", "txt_summary"))
+          and w.abschnitt_plast.knopf.isVisible())
     check("… der Kopf trägt einen Pfeil nach rechts", ex.knopf.text().lstrip().startswith("▸"), ex.knopf.text())
 
 
@@ -440,7 +443,10 @@ def test_breite():
 PFEIL = r"(?:→|->)"
 #: Ziele unter „Berechnung → Einstellungen“, die nicht in den Experten liegen
 #: (die Plastizitaet steht sichtbar im Register)
-AUSSERHALB_EXPERTEN = ("Plastizität", "Fließen", "Dilatation")
+AUSSERHALB_EXPERTEN = ("Plastizität", "Fließen", "Dilatation", "Kontakt und Spannschritt",
+                       "Grundeinstellungen")
+#: Name der Gruppe seit 08.11.2026 (bis dahin „Experten“)
+EXPERTE = r"(?:Experten|Gleichungslöser \(Experte\))"
 
 
 def _pfadfehler(text: str, streng: bool = True) -> list:
@@ -451,9 +457,9 @@ def _pfadfehler(text: str, streng: bool = True) -> list:
     import re
     # Markdown-Sternchen und Zeilenumbrueche stoeren den Weg nicht
     text = re.sub(r"\s+", " ", text.replace("*", ""))
-    nackt = re.compile(r"Berechnung\s*" + PFEIL + r"\s*Einstellungen(?!\s*" + PFEIL + r"\s*(?:Experten|"
+    nackt = re.compile(r"Berechnung\s*" + PFEIL + r"\s*Einstellungen(?!\s*" + PFEIL + r"\s*(?:" + EXPERTE + "|"
                        + "|".join(AUSSERHALB_EXPERTEN) + "))")
-    ziel = re.compile(r"Einstellungen\s*" + PFEIL + r"\s*(?!Experten)(?:Gleichungsl|Löser|Loeser|Threads|"
+    ziel = re.compile(r"Einstellungen\s*" + PFEIL + r"\s*(?!" + EXPERTE + r")(?:Gleichungsl|Löser|Loeser|Threads|"
                       r"Prozesse|Rechnerfarm|Genauigkeit|Ketten|Backend|Nachiteration|Arbeitsprozesse)")
     alt = re.compile(r"Berechnung\s*" + PFEIL + r"\s*(?:Prozesse|Backend|Gleichungsl|Threads|Rechnerfarm)")
     regeln = (nackt, ziel, alt) if streng else (ziel, alt)
@@ -471,7 +477,9 @@ def test_pfade_nennen_experten():
                 "*Berechnung →\n  Einstellungen → Rechnerfarm einschalten*"]
     gut = ["Berechnung \u2192 Einstellungen \u2192 Experten \u2192 Gleichungslöser.",
            "Berechnung -> Einstellungen -> Experten ein", "*Berechnung →\n Einstellungen → Experten → Prozesse*",
-           "Berechnung → Einstellungen → Plastizität", "Netzeinstellungen → Vernetzer"]
+           "Berechnung → Einstellungen → Plastizität", "Netzeinstellungen → Vernetzer",
+           "Berechnung → Einstellungen → Gleichungslöser (Experte) → Threads",
+           "Berechnung → Einstellungen → Kontakt und Spannschritt"]
     check("Die Regel erkennt Wege ohne „Experten“ in jeder Schreibweise",
           all(_pfadfehler(s) for s in schlecht), str([bool(_pfadfehler(s)) for s in schlecht]))
     check("… und lässt Wege mit „Experten“ und zur Plastizität durch",
@@ -501,7 +509,7 @@ def test_pfade_nennen_experten():
             for ln, text in texte:
                 for stelle in _pfadfehler(text):
                     funde.append(f"{os.path.relpath(p, os.path.dirname(stamm))}:{ln} {stelle!r}")
-                if "Einstellungen" in text and "Experten" in text:
+                if "Einstellungen" in text and ("Experten" in text or "Gleichungslöser (Experte)" in text):
                     mit_experten += 1
     check("In statik3d/ nennt jeder Weg zu Löser, Threads, Prozessen und Farm „Experten“ "
           "(Texte, Docstrings, Kommentare)", not funde, "; ".join(funde[:3]))
@@ -789,11 +797,123 @@ def test_einstellungsdatei_schutz():
     schreibe({})
 
 
+# --------------------------------------------------------------------------
+# Paket A (08.11.2026): Gruppen, Ausfall-Iteration, Mausrad
+# --------------------------------------------------------------------------
+def test_gruppen_08_11():
+    """Punkt 6: Grundeinstellungen (offen), Kontakt und Spannschritt, Plastizitaet,
+    Gleichungsloeser (Experte) (zu); dazu das Feld fuer ausfall_annehmen."""
+    w, app = _fenster()
+    sa, inh = _register(w, app)
+    namen = ("abschnitt_grund", "abschnitt_kontakt", "abschnitt_plast", "experten")
+    ab = [getattr(w, n, None) for n in namen]
+    check("Vier einklappbare Gruppen im Register Berechnung", all(a is not None for a in ab),
+          str([type(a).__name__ for a in ab]))
+    if not all(a is not None for a in ab):
+        return
+    titel = [a.titel for a in ab]
+    check("… mit den Titeln Grundeinstellungen, Kontakt und Spannschritt, Plastizität, Gleichungslöser (Experte)",
+          titel == ["Grundeinstellungen", "Kontakt und Spannschritt", "Plastizität", "Gleichungslöser (Experte)"],
+          str(titel))
+    check("Grundeinstellungen offen, die anderen zu (Vorgabe)",
+          ab[0].ist_offen() and not any(a.ist_offen() for a in ab[1:]),
+          str([a.ist_offen() for a in ab]))
+    ys = [_y(w, a, inh) for a in ab]
+    check("Reihenfolge Grundeinstellungen → BERECHNEN → Kontakt → Plastizität → Gleichungslöser",
+          ys[0] < _y(w, w.btn_solve, inh) < ys[1] < ys[2] < ys[3], str(ys))
+    check("Analyse liegt in den Grundeinstellungen", ab[0].inhalt.isAncestorOf(w.cb_analysis))
+    check("Plastizität liegt in ihrer Gruppe", ab[2].inhalt.isAncestorOf(w.cb_plast)
+          and ab[2].inhalt.isAncestorOf(w.cb_dilat))
+    check("Reibung und Spannschritt liegen in „Kontakt und Spannschritt“",
+          ab[1].inhalt.isAncestorOf(w.cb_reibverfahren) and ab[1].inhalt.isAncestorOf(w.sp_spannstufen))
+    cb = getattr(w, "cb_ausfall_annehmen", None)
+    check("Feld „Ausfall-Iteration mit Annahme“ in „Kontakt und Spannschritt“",
+          cb is not None and ab[1].inhalt.isAncestorOf(cb) and cb.text() == "Ausfall-Iteration mit Annahme",
+          getattr(cb, "text", lambda: "-")())
+    if cb is None:
+        return
+    tip = cb.toolTip()
+    check("… Tooltip: schneller, am Netz Mittel noch nicht verglichen, Vorgabe aus",
+          "Schneller" in tip and "Mittel" in tip and "noch nicht verglichen" in tip and "Vorgabe aus" in tip,
+          tip[:60])
+    pz = w.model.plastizitaet
+    pz.ausfall_annehmen = False
+    w._plast_anzeigen()
+    check("… zeigt die Vorgabe aus", not cb.isChecked())
+    w._plast_uebernehmen()
+    check("… und schreibt nichts in die Modelldatei, solange es aus ist",
+          "ausfall_annehmen" not in pz.als_dict() and pz.ausfall_annehmen is False)
+    cb.setChecked(True)
+    app.processEvents()
+    check("Zugeklappt nennt die graue Zeile die Abweichung",
+          "Ausfall-Iteration mit Annahme" in ab[1].hinweis_text(), ab[1].hinweis_text())
+    w._plast_uebernehmen()
+    check("Angehakt kommt es ins Modell und in die Modelldatei",
+          pz.ausfall_annehmen is True and pz.als_dict().get("ausfall_annehmen") is True)
+    pz.ausfall_annehmen = False
+    w._plast_anzeigen()
+    check("Modell zurück auf aus: das Feld folgt", not cb.isChecked())
+    app.processEvents()
+    check("… und die graue Zeile sagt wieder „Vorgaben“", ab[1].hinweis_text() == "Vorgaben", ab[1].hinweis_text())
+    check("Plastizität zugeklappt: „Fließen an/aus“",
+          ab[2].hinweis_text().startswith("Fließen "), ab[2].hinweis_text())
+
+
+def test_mausrad_ohne_fokus():
+    """Punkt 7: im Register Berechnung verstellte das Rad ueber dem Gleichungsloeser
+    seinen Wert, auch ohne Fokus (das Register ist keine Maske)."""
+    from PySide6 import QtCore, QtGui
+    w, app = _fenster()
+    sa, inh = _register(w, app)
+    w.experten.aufklappen(True)
+    w.abschnitt_plast.aufklappen(True)
+    for _ in range(4):
+        app.processEvents()
+    vorher = (w.cb_loeser.currentIndex(), w.sp_plast_stufen.value(), w.cb_plast_tol.currentIndex())
+    w.btn_solve.setFocus()
+    app.processEvents()
+
+    def rad(ziel, dy=-120):
+        lokal = QtCore.QPointF(ziel.width() / 2, ziel.height() / 2)
+        ev = QtGui.QWheelEvent(lokal, QtCore.QPointF(ziel.mapToGlobal(lokal.toPoint())),
+                               QtCore.QPoint(0, 0), QtCore.QPoint(0, dy), QtCore.Qt.NoButton,
+                               QtCore.Qt.NoModifier, QtCore.Qt.NoScrollPhase, False)
+        app.sendEvent(ziel, ev)
+        app.processEvents()
+
+    try:
+        for ziel in (w.cb_loeser, w.sp_plast_stufen, w.cb_plast_tol):
+            rad(ziel)
+            rad(ziel, 120)
+            rad(ziel, -120)
+        nachher = (w.cb_loeser.currentIndex(), w.sp_plast_stufen.value(), w.cb_plast_tol.currentIndex())
+        check("Rad ohne Fokus über Gleichungslöser, Laststufen und Toleranz: kein Wert verstellt",
+              nachher == vorher, f"{vorher} -> {nachher}")
+        check("Gleichungslöser nimmt den Fokus nicht per Rad (StrongFocus)",
+              w.cb_loeser.focusPolicy() == QtCore.Qt.StrongFocus, str(w.cb_loeser.focusPolicy()))
+        w.activateWindow()
+        w.sp_plast_stufen.setFocus()
+        app.processEvents()
+        if w.sp_plast_stufen.hasFocus():
+            rad(w.sp_plast_stufen, 120)
+            check("Mit Fokus (angeklickt) verstellt das Rad den Wert wie gewohnt",
+                  w.sp_plast_stufen.value() != vorher[1], f"{vorher[1]} -> {w.sp_plast_stufen.value()}")
+        else:
+            print("--   Positivprobe mit Fokus entfällt: Fenster offscreen nicht aktiv")
+    finally:
+        w.cb_loeser.setCurrentIndex(vorher[0])
+        w.sp_plast_stufen.setValue(vorher[1])
+        w.cb_plast_tol.setCurrentIndex(vorher[2])
+        w.experten.aufklappen(False)
+        w.abschnitt_plast.aufklappen(False)
+        app.processEvents()
+
+
 def main():
     for f in (test_reihenfolge, test_inhalt_der_experten, test_vorgabe_zu, test_aufklappen,
               test_werte_zugeklappt, test_zustand_wird_gemerkt, test_nichts_zur_elementwahl, test_breite,
               test_pfade_nennen_experten, test_listen_breit_mit_tooltip, test_kopfzeile_abweichungen,
-              test_einstellungsdatei_schutz):
+              test_einstellungsdatei_schutz, test_gruppen_08_11, test_mausrad_ohne_fokus):
         try:
             f()
         except Exception as ex:          # noqa: BLE001

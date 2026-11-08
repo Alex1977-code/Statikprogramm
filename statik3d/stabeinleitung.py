@@ -773,7 +773,7 @@ def pruefen(model, res, F_norm: float = None) -> dict:
     - die Gegenkraft seiner Stabendkraft (res.beam_end, global, hinter einem
     Versatz) - samt Knotenlasten am Stabknoten (F_stab, M_stab). Ein Zugstab
     zieht die Flaeche zu sich: F_stab zeigt vom Volumen in den Stab. **Toleranz**: die Residuumschranke des Gleichungsloesers
-    (Vorgabe 1e-6, Berechnung → Einstellungen → Experten) mal der Norm des
+    (Vorgabe 1e-6, Berechnung → Einstellungen → Gleichungslöser (Experte)) mal der Norm des
     Lastvektors - um mehr kann das Gleichgewicht eines Knotens nach dem
     Loesen nicht verfehlt sein, ||K u - F|| <= Schranke ||F||; dazu 1e-9 der
     Stabkraft als Rundung. Momente in Nm gegen dieselbe Zahl (die Norm

@@ -539,6 +539,9 @@ class _UeberhoehungValidator(zf.Zahlvalidator):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+        # Mausrad an Auswahllisten und Zahlenfeldern nur mit Fokus, in allen
+        # rollbaren Masken und Registern (08.11.2026, gui/masken.py)
+        msk.mausrad_nur_mit_fokus()
         # Gespeicherte Einstellungen (Loeser, Threads, MUMPS nachladen) vor
         # dem Aufbau der Register - die Auswahlfelder lesen sie beim Bauen
         parallel.einstellungen_laden()
@@ -6161,8 +6164,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
         g = r.gruppe("Einstellungen")
         g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
-                hinweis="Analyseart, Nachweise und Fließen der Volumen; aufklappbar unter „Experten“: "
-                        "Gleichungslöser, Threads, Prozesse, Rechnerfarm")
+                hinweis="Grundeinstellungen (Analyseart, Nachweise); aufklappbar: Kontakt und "
+                        "Spannschritt, Plastizität, Gleichungslöser (Experte) mit Threads, Prozessen "
+                        "und Rechnerfarm")
         g.klein("Bedienung im Browser…", self.start_web_server,
                 hinweis="Web-Server starten - das Modell im Browser oder auf dem Handy bedienen")
 
@@ -17232,11 +17236,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "Knicken / Beulen (Stabtragwerke)"])
         self.sp_modes = QtWidgets.QSpinBox()
         self.sp_modes.setRange(1, 50); self.sp_modes.setValue(6)
-        lay.addWidget(row("Analyse", self.cb_analysis))
-        lay.addWidget(row("Anzahl Eigenformen", self.sp_modes))
+        # Einklappbare Gruppen (08.11.2026, Paket A Punkt 6): Grundeinstellungen
+        # offen, Kontakt und Spannschritt, Plastizitaet und Gleichungsloeser
+        # zugeklappt; der Zustand jeder Gruppe ueberlebt den Neustart
+        grund = QtWidgets.QWidget()
+        grl = QtWidgets.QVBoxLayout(grund)
+        grl.setContentsMargins(0, 2, 0, 0)
+        grl.addWidget(row("Analyse", self.cb_analysis))
+        grl.addWidget(row("Anzahl Eigenformen", self.sp_modes))
         self.cb_do_design = QtWidgets.QCheckBox("anschließend Nachweise EC3"); self.cb_do_design.setChecked(True)
         self.cb_do_fat = QtWidgets.QCheckBox("anschließend Ermüdungsnachweis"); self.cb_do_fat.setChecked(True)
-        lay.addWidget(row(self.cb_do_design, self.cb_do_fat))
+        grl.addWidget(row(self.cb_do_design, self.cb_do_fat))
+        self.abschnitt_grund = self._berechnung_abschnitt(
+            "Grundeinstellungen", grund, "Analyse, Eigenformen, Nachweise", "berechnung_grund", True)
+        lay.addWidget(self.abschnitt_grund)
 
         # „Rechnen“ steht oben (03.10.2026, Paket 13r): bis zum 02.10.2026 stand der
         # Knopf ganz unten, hinter zehn Zeilen Loeser- und Farmeinstellungen und der
@@ -17406,8 +17419,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Plastizitaet der Volumen (17.09.2026): eine Einstellung am Modell,
         # keine Programmeinstellung - sie reist mit der Datei
-        gp = QtWidgets.QGroupBox("Plastizität der Volumen (Einstellung am Modell)")
+        gp = QtWidgets.QWidget()
         gpl = QtWidgets.QVBoxLayout(gp)
+        gpl.setContentsMargins(0, 2, 0, 0)
         # Knotengemittelte Dilatation (20.09.2026): der lineare Tetraeder
         # versteift volumetrisch, und im Fliessbereich am staerksten - von
         # Mises ist volumentreu, die Querdehnzahl geht praktisch gegen 0,5.
@@ -17534,14 +17548,14 @@ class MainWindow(QtWidgets.QMainWindow):
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
         gpl.addWidget(row("Gültigkeitsgrenze ε_p", self.sp_plast_grenze))
-        lay.addWidget(gp)
 
         # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
         # Ingenieurgroessen - wie viel die Restwechsel pendelnder Knoten tragen und
         # wie weit sie klaffen duerfen. Am Modell gespeichert (Plastizitaet.
         # pendel_kraft_anteil, pendel_weg), gilt fuer jeden Kontaktlauf, auch ohne Fliessen
-        gk = QtWidgets.QGroupBox("Kontaktlauf und Spannschritt (Einstellung am Modell)")
+        gk = QtWidgets.QWidget()
         gkl = QtWidgets.QVBoxLayout(gk)
+        gkl.setContentsMargins(0, 2, 0, 0)
         self.sp_pendel_kraft = QtWidgets.QDoubleSpinBox()
         self.sp_pendel_kraft.setRange(0.0, 10.0)
         self.sp_pendel_kraft.setDecimals(3)
@@ -17613,10 +17627,36 @@ class MainWindow(QtWidgets.QMainWindow):
             "näher am starren Haften. Vorgabe 1000.")
         gkl.addWidget(row("Reibung", self.cb_reibverfahren))
         gkl.addWidget(row("Haftsteifigkeit", self.sp_haft_faktor))
-        lay.addWidget(gk)
+        # Ausfall-Iteration mit Annahme (Plastizitaet.ausfall_annehmen, 15.10.2026);
+        # bis zum 08.11.2026 nur im Skript oder in der Modelldatei einstellbar
+        self.cb_ausfall_annehmen = QtWidgets.QCheckBox("Ausfall-Iteration mit Annahme")
+        self.cb_ausfall_annehmen.setToolTip(
+            "Gilt für Zug- und Druckstäbe, die ausfallen können. Ab der zweiten Lösung eines "
+            "Lastfalls beginnt die Ausfall-Iteration mit den Stäben, die in der Lösung davor "
+            "ausgefallen waren, statt mit allen Stäben, und rechnet eine zweite Runde nur, wenn die "
+            "Nachprüfung verletzt ist. Die Bedingung bleibt dieselbe, nur der Startpunkt ändert sich.\n\n"
+            "Schneller (Prüfplatte mit Strebe und Fließen: 13 statt 24 Kontaktläufe bei derselben "
+            "Lösung), am Netz Mittel des Drehlagers aber noch nicht verglichen. Vorgabe aus. Wird mit "
+            "dem Modell gespeichert, und nur, wenn es eingeschaltet ist.")
+        gkl.addWidget(self.cb_ausfall_annehmen)
+        # Reihenfolge der Gruppen: Kontakt und Spannschritt, dann Plastizitaet
+        self.abschnitt_kontakt = self._berechnung_abschnitt(
+            "Kontakt und Spannschritt", gk, "Restwechsel, Klaffung, Spannschritt, Reibung, Ausfall-Iteration "
+            "(Einstellung am Modell)", "berechnung_kontakt", False)
+        lay.addWidget(self.abschnitt_kontakt)
+        self.abschnitt_plast = self._berechnung_abschnitt(
+            "Plastizität", gp, "Fließen der Volumen, Verfahren, Laststufen (Einstellung am Modell)",
+            "berechnung_plast", False)
+        lay.addWidget(self.abschnitt_plast)
+        for wid in (self.sp_pendel_kraft, self.sp_pendel_weg, self.sp_spannstufen, self.sp_haft_faktor):
+            wid.valueChanged.connect(lambda _v: self._abschnitte_hinweis())
+        self.cb_reibverfahren.currentIndexChanged.connect(lambda _i: self._abschnitte_hinweis())
+        for cb in (self.cb_ausfall_annehmen, self.cb_plast, self.cb_dilat):
+            cb.toggled.connect(lambda _b: self._abschnitte_hinweis())
+        self._abschnitte_hinweis()
 
         self.experten = msk.Einklappabschnitt(
-            "Experten", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
+            "Gleichungslöser (Experte)", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
             offen=fen.abschnitt_offen("berechnung_experten"))
         # der Zustand ueberlebt den Neustart (einstellungen.json, Schluessel „abschnitte“)
         self.experten.umgeschaltet.connect(lambda an: fen.abschnitt_merken("berechnung_experten", an))
@@ -17628,6 +17668,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_workers.valueChanged.connect(lambda _v: self._experten_hinweis())
         self._experten_hinweis()
         return w
+
+    def _berechnung_abschnitt(self, titel, inhalt, hinweis, schluessel, vorgabe):
+        """Eine einklappbare Gruppe des Registers Berechnung; ihr Zustand steht in
+        einstellungen.json (Schluessel „abschnitte“) und ueberlebt den Neustart."""
+        ab = msk.Einklappabschnitt(titel, inhalt, hinweis,
+                                   offen=fen.abschnitt_offen(schluessel, vorgabe))
+        ab.umgeschaltet.connect(lambda an, s=schluessel: fen.abschnitt_merken(s, an))
+        return ab
+
+    def _abschnitte_hinweis(self) -> None:
+        """Die graue Zeile der Gruppen „Kontakt und Spannschritt“ und „Plastizität“:
+        zugeklappt, was von der Vorgabe abweicht, sonst „Vorgaben“."""
+        ak = getattr(self, "abschnitt_kontakt", None)
+        ap = getattr(self, "abschnitt_plast", None)
+        if ak is None or ap is None:
+            return
+        teile = []
+        if round(self.sp_pendel_kraft.value(), 3) != 0.1:
+            teile.append("Restwechsel " + f"{self.sp_pendel_kraft.value():.3f}".replace(".", ",") + " %")
+        if round(self.sp_pendel_weg.value(), 2) != 1.0:
+            teile.append("Klaffung " + f"{self.sp_pendel_weg.value():.2f}".replace(".", ",") + " µm")
+        if self.sp_spannstufen.value() != 0:
+            teile.append(f"Spannschritt {self.sp_spannstufen.value()} Stufen")
+        if not bool(self.cb_reibverfahren.currentData()):
+            teile.append("Reibung bisheriges Verfahren")
+        if round(self.sp_haft_faktor.value()) != 1000:
+            teile.append(f"Haftsteifigkeit × {self.sp_haft_faktor.value():.0f}")
+        if self.cb_ausfall_annehmen.isChecked():
+            teile.append("Ausfall-Iteration mit Annahme")
+        ak.setze_hinweise(" · ".join(teile) or "Vorgaben",
+                          "Restwechsel, Klaffung, Spannschritt, Reibung, Ausfall-Iteration "
+                          "(Einstellung am Modell)")
+        zu = "Fließen an" if self.cb_plast.isChecked() else "Fließen aus"
+        if self.cb_dilat.isChecked():
+            zu += " · Tetraeder ohne volumetrische Versteifung"
+        ap.setze_hinweise(zu, "Fließen der Volumen, Verfahren, Laststufen (Einstellung am Modell)")
 
     def _experten_hinweis(self) -> None:
         """Die graue Zeile am Kopf „Experten“: zugeklappt die Abweichungen der Felder von
@@ -25161,6 +25237,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "cb_reibverfahren"):
             self.cb_reibverfahren.setCurrentIndex(0 if bool(getattr(pz, "reibungstangente", True)) else 1)
             self.sp_haft_faktor.setValue(float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3))
+        if hasattr(self, "cb_ausfall_annehmen"):
+            self.cb_ausfall_annehmen.setChecked(bool(getattr(pz, "ausfall_annehmen", False)))
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -25209,6 +25287,8 @@ class MainWindow(QtWidgets.QMainWindow):
             alt_f = float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3)
             f_ = float(self.sp_haft_faktor.value())
             pz.haft_faktor = alt_f if round(alt_f) == round(f_) else f_
+        if hasattr(self, "cb_ausfall_annehmen"):
+            pz.ausfall_annehmen = bool(self.cb_ausfall_annehmen.isChecked())
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
@@ -31572,7 +31652,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt_ende()
             self._werkzeuge_geaendert("mumps", f"MUMPS {s.get('version', '?')} nachgeladen ({groesse} MB, "
                                                f"{time.time() - t0:.0f} s) - Berechnung → Einstellungen → "
-                                               "Experten → Gleichungslöser"
+                                               "Gleichungslöser (Experte)"
                                                + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
 
         def fehler(msg):

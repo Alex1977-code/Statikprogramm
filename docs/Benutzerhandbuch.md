@@ -2152,7 +2152,7 @@ Verfeinerungsdurchgang, Splitter glätten, Randtreue).
 
 Die **Volumen laufen parallel**: alle Kerne bis auf einen rechnen in
 Arbeitsprozessen (der letzte bleibt der Oberfläche, die dabei bedienbar
-bleibt), gedeckelt durch *Berechnung → Einstellungen → Experten → Prozesse*. Die großen
+bleibt), gedeckelt durch *Berechnung → Einstellungen → Gleichungslöser (Experte) → Prozesse*. Die großen
 Körper starten zuerst, damit am Ende nicht ein Prozess allein auf den
 Lagerbock wartet; der Einbau ins Modell geschieht in der Reihenfolge des
 Fertigwerdens, das Netz ist dasselbe wie nacheinander. **Abbrechen** (Knopf
@@ -2420,13 +2420,12 @@ die DLLs kommen erst beim ersten Kontext; ein bloßer Import sagt nichts.
 Ist das Kästchen **MUMPS beim Programmstart nachladen, wenn es fehlt** an
 (Vorgabe), holt das Programm MUMPS einige Sekunden nach dem Start ohne
 Rückfrage: Balken in der Statuszeile, danach eine Protokollzeile („MUMPS
-5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Experten →
-Gleichungslöser“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
+5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Gleichungslöser (Experte)“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
 eine Zeile im Protokoll, und der nächste Start versucht es erneut; im Dialog
 bleibt **Installieren**. Ein neuer Bau (andere Prüfsumme im Programm)
 wird beim Start ebenso nachgeladen. Eine eigene Python-Umgebung, in der das
 Rad installiert ist, gilt als „vorhanden“ — dann lädt der Start nichts. Die
-Löserauswahl unter *Berechnung → Einstellungen → Experten* wird nach dem Nachladen
+Löserauswahl unter *Berechnung → Einstellungen → Gleichungslöser (Experte)* wird nach dem Nachladen
 sofort neu aufgebaut: bis 13.09.2026 entstand sie beim Start, bevor MUMPS
 da war, und zeigte es bis zum Neustart als „nicht installiert“.
 Geprüft in `tests/test_werkzeuge.py` (das echte Rad aus `packaging/` über
@@ -4674,7 +4673,13 @@ Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
 verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
 Tab erreicht) — sonst würde beim Rollen etwa die Windzone unbemerkt springen.
 Ein Klick auf ein halb sichtbares Feld wirkt sofort auf dieses Feld (ein Haken
-schaltet um); die Mitte rollt dabei nicht.
+schaltet um); die Mitte rollt dabei nicht. Seit dem 08.11.2026 gilt das für
+Auswahllisten und Zahlenfelder in **allen** rollbaren Masken und Registern des
+rechten Bereichs, auch im Register *Berechnung → Einstellungen* und in Tabellen
+mit Auswahllisten: ohne Fokus rollt das Rad den Bereich, erst nach einem Klick
+ins Feld verstellt es den Wert. Anlass war ein versehentlich umgestellter
+Gleichungslöser. Die Listen der Glasleiste über der Ansicht reagieren weiter
+direkt aufs Rad.
 
 Zur Tastatur: **Tab** geht von oben nach unten durch die Felder, dann durch
 die Knöpfe des Fußes und zuletzt auf **✕** — die Leertaste schließt die Maske
@@ -7278,7 +7283,7 @@ auskonvergiert“. Das gilt auch für Lagerknoten mit Reibung in nur einer
 Richtung (seit dem 28.09.2026 abends; vorher konnte dort die Reibkraft am
 Ende gegen die Bewegung zeigen, ohne dass die Rechnung es meldete).
 Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
-bisher. Ist unter *Berechnung → Einstellungen → Experten* der
+bisher. Ist unter *Berechnung → Einstellungen → Gleichungslöser (Experte)* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
@@ -7872,7 +7877,9 @@ oder verletzt war. An der Prüfplatte mit Strebe und Fließen
 228 Runden, bei derselben Lösung auf 1,4·10⁻¹⁰ m und derselben plastischen
 Dehnung. Einschalten lässt es sich am Modell mit
 `plastizitaet.ausfall_annehmen = True` (Vorgabe aus, bis die Messung am Drehlager
-entschieden hat; gespeichert nur, wenn er abweicht).
+entschieden hat; gespeichert nur, wenn er abweicht). Seit dem 08.11.2026 steht
+dafür in *Berechnung → Einstellungen → Kontakt und Spannschritt* der Haken
+„Ausfall-Iteration mit Annahme“.
 
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
@@ -8491,7 +8498,7 @@ Stirnfläche möglich …“), eine Warnung je Stabende statt zwei. Bis zum
 Rechnung prüft das Programm je verteilt eingeleitetem Stabende, ob die
 Kopplung genau die Kraft und das Moment um den Durchstoßpunkt in die Fläche
 gibt, die der Stab in seinen Knoten gibt. Die Toleranz ist die Genauigkeit
-des Gleichungslösers (Berechnung → Einstellungen → Experten, Vorgabe 10⁻⁶) mal
+des Gleichungslösers (Berechnung → Einstellungen → Gleichungslöser (Experte), Vorgabe 10⁻⁶) mal
 der Größe des Lastvektors, denn um mehr kann das Gleichgewicht eines Knotens
 nach dem Lösen nicht verfehlt sein. Die Zusammenfassung nennt die größte
 Abweichung, eine Abweichung über der Toleranz steht als Warnung im
@@ -10863,29 +10870,46 @@ davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
-**Register Berechnung: Rechnen oben, Experten eingeklappt (seit 03.10.2026).**
-Das Register *Berechnung → Einstellungen* beginnt mit dem, was man zum Rechnen
-braucht: der Analyseart, der Zahl der Eigenformen, den beiden Haken für die
-Nachweise nach der Rechnung, dem Knopf „Modell prüfen“ und dem Knopf
-„BERECHNEN (F5)“. Darunter steht die Zusammenfassung des letzten Laufs, danach
-die Plastizität der Volumen. Ganz unten steht der Abschnitt **Experten**, und er
-ist zu, solange man ihn nicht aufklappt. In ihm liegen die Prozesse fürs
-Vernetzen und die Elemente, der Gleichungslöser, die Threads, die Genauigkeit
-mit den Nachiterationen, die Rechenketten und die Rechnerfarm. Die Vorgaben
-passen für die meisten Modelle; wer sie ändern will, klappt den Abschnitt mit
-einem Klick auf „Experten“ auf (ebenso mit der Leertaste, wenn der Kopf den
-Fokus hat, oder mit einem Klick auf die graue Zeile daneben). Auch zugeklappt
-gelten die eingestellten Werte, und sie werden wie bisher gespeichert. Solange
-der Abschnitt zu ist, nennt die graue Zeile neben „Experten“, was von der Vorgabe
-abweicht, zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten · Rechnerfarm“,
-und sonst „Vorgaben“; sie folgt jeder Änderung eines Feldes. Ist sie zu lang für
-die Zeile, kürzt sie am Rand, und der Tooltip nennt alles. Aufgeklappt steht dort,
-was im Abschnitt liegt. Ob der Abschnitt zuletzt auf oder zu war, merkt sich das
-Programm in `einstellungen.json` (Schlüssel „abschnitte“); die Vorgabe ist zu. Das
-Programm schreibt die Datei in einem Zug (erst in eine Hilfsdatei, dann ersetzt es
-die alte), und lässt sie sich nicht lesen, schreibt es nichts hinein, damit
-Löser, Threads und Fensteraufteilung nicht verloren gehen; der Zustand der
-Experten gilt dann nur bis zum Beenden.
+**Register Berechnung: vier einklappbare Gruppen (seit 08.11.2026).**
+Das Register *Berechnung → Einstellungen* ist in Gruppen geteilt, die man mit
+einem Klick auf ihren Kopf auf- und zuklappt:
+
+| Gruppe | Vorgabe | Inhalt |
+|---|---|---|
+| **Grundeinstellungen** | offen | Analyseart, Zahl der Eigenformen, die beiden Haken für die Nachweise nach der Rechnung |
+| **Kontakt und Spannschritt** | zu | Restwechsel und Klaffung des Kontaktlaufs, Spannschritt in Stufen, Reibungsverfahren, Haftsteifigkeit, Ausfall-Iteration mit Annahme |
+| **Plastizität** | zu | Tetraeder ohne volumetrische Versteifung, Fließen, Verfahren, Laststufen, Toleranz, Gültigkeitsgrenze |
+| **Gleichungslöser (Experte)** | zu | Prozesse fürs Vernetzen und die Elemente, Gleichungslöser, Threads, Genauigkeit mit Nachiterationen, Rechenketten, Rechnerfarm |
+
+Unter den Grundeinstellungen stehen außerhalb jeder Gruppe die Knöpfe „Modell
+prüfen“ und „BERECHNEN (F5)“ und die Zusammenfassung des letzten Laufs. Bis zum
+08.11.2026 standen Plastizität und Kontaktlauf als feste Rahmen offen im
+Register, und die letzte Gruppe hieß „Experten“. Die Einstellungen der Gruppen
+Kontakt und Plastizität gehören zum Modell und werden mit ihm gespeichert, die
+des Gleichungslösers sind Programmeinstellungen.
+
+**Ausfall-Iteration mit Annahme** (Gruppe Kontakt und Spannschritt, Vorgabe
+aus): der Haken schaltet `plastizitaet.ausfall_annehmen` ein, das bis zum
+08.11.2026 nur im Skript oder in der Modelldatei einstellbar war (siehe
+„Ausfall-Iteration: annehmen und nachprüfen“). Er macht Läufe mit ausfallenden
+Zug- oder Druckstäben schneller, ist am Netz Mittel des Drehlagers aber noch
+nicht verglichen. Gespeichert wird er nur, wenn er eingeschaltet ist.
+
+Auch zugeklappt gelten die eingestellten Werte. Solange eine Gruppe zu ist,
+nennt die graue Zeile neben ihrem Kopf, was von der Vorgabe abweicht: beim
+Gleichungslöser zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten ·
+Rechnerfarm“, bei Kontakt und Spannschritt etwa „Spannschritt 3 Stufen ·
+Ausfall-Iteration mit Annahme“, sonst „Vorgaben“; bei der Plastizität steht
+„Fließen an“ oder „Fließen aus“. Sie folgt jeder Änderung eines Feldes. Ist sie
+zu lang für die Zeile, kürzt sie am Rand, und der Tooltip nennt alles.
+Aufgeklappt steht dort, was in der Gruppe liegt. Aufklappen geht auch mit der
+Leertaste, wenn der Kopf den Fokus hat, oder mit einem Klick auf die graue
+Zeile. Ob eine Gruppe zuletzt auf oder zu war, merkt sich das Programm in
+`einstellungen.json` (Schlüssel „abschnitte“). Das Programm schreibt die Datei
+in einem Zug (erst in eine Hilfsdatei, dann ersetzt es die alte), und lässt sie
+sich nicht lesen, schreibt es nichts hinein, damit Löser, Threads und
+Fensteraufteilung nicht verloren gehen; der Zustand der Gruppen gilt dann nur
+bis zum Beenden.
 
 Dieselbe Sorgfalt gilt seit dem 06.10.2026 für die Werte des Registers selbst
 (Löser, Threads, Genauigkeit, Ketten, Nachladen von MUMPS), die ein Druck auf
@@ -11027,7 +11051,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (Knicken bei umgekehrter Last), nach Betrag geordnet. Mit Zug und Druck im
   Grundzustand wechselten sie bis zum 23.09.2026 von Lauf zu Lauf – an einem
   Zweigelenkrahmen unter Wind 4,27, 3,03 und 2,49 in drei Läufen statt 77,33.
-* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Experten*): Vorgabe
+* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Gleichungslöser (Experte)*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
   „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
   in der Zeile „Faktorisiert (SuperLU (ausgewichen - PARDISO: …), …)“, bei den
@@ -11143,7 +11167,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (jeder Löser hat eine Herkunftsangabe; Bauvorschrift und Bauablauf nennen
   das Rad, das wirklich dort liegt).
 * **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen →
-  Experten*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
+  Gleichungslöser (Experte)*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
   Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
   locker 1e-3. Liegt das Residuum darüber, iteriert der Löser mit der
   vorhandenen Faktorisierung nach (**Nachiterationen**: keine, bis 1, 2, 3
@@ -11663,7 +11687,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   `tests/test_plastizitaet.py` (zwei Aufbauten statt 54 bei 28 Läufen, und
   dieselbe Lösung wie beim Bauen in jedem Schritt).
 * **Rechenketten: mehrere Lastfälle gleichzeitig** (*Berechnung →
-  Einstellungen → Experten*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
+  Einstellungen → Gleichungslöser (Experte)*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
   Kette einen eigenen Prozess; **innerhalb** einer Kette laufen die Lastfälle
   nacheinander und warm gestartet. Das ist der Kern der Sache: der Warmstart
   ist der größte Einzelgewinn je Lastfall (Drehlager: kalt 112
