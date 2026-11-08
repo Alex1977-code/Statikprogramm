@@ -153,7 +153,8 @@ GRUPPEN_SOLL = ["Eigenschaften", "Geometrie", "Lager und Verbindungen", "Einwirk
                 "Hilfsobjekte"]
 #: Die Zweige je Gruppe am reichen Modell, in dieser Folge
 ZWEIGE_SOLL = {
-    "Eigenschaften": ["Werkstoffe", "Querschnitte", "Dicken"],
+    # seit dem 08.11.2026 dazu die eigenen Koordinatensysteme (Paket B Punkt 3)
+    "Eigenschaften": ["Werkstoffe", "Querschnitte", "Dicken", "Koordinatensysteme"],
     "Geometrie": ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"],
     "Lager und Verbindungen": ["Lager", "Verbindungen", "Gelenke", "Liniengelenke", "Kontaktbedingungen"],
     "Einwirkungen": ["Lastfälle", "Kombinationen", "Ermüdungslasten", "Lastgenerierer"],
@@ -240,7 +241,9 @@ def test_nichts_geht_verloren():
     # dazu seit dem 14.10.2026 der Zweig „Ansichten“ mit „+ Ansicht speichern“ (Ansichtspaket C)
     # und seit dem 08.11.2026 die Zeilen „+ … anlegen“ (Paket A Punkt 4)
     from statik3d.gui.design import Modellbaum
-    erwartet = sorted({"ansicht_neu", "ansichten", "netzknoten"} | set(Modellbaum.ANLEGEN_ZEILEN))
+    # und der Zweig „Koordinatensysteme“ (Paket B Punkt 3, 08.11.2026)
+    erwartet = sorted({"ansicht_neu", "ansichten", "netzknoten", "koordinatensysteme"}
+                      | set(Modellbaum.ANLEGEN_ZEILEN))
     check("neu sind nur die Zählzeile „Netzknoten“, die Ansichten und die Zeilen „+ … anlegen“ "
           "(die Gruppen tragen die Art „modell“)", neu == erwartet, str(sorted(set(neu) ^ set(erwartet))))
     anders = {a: (n, len(eintraege.get(a, []))) for a, n in EINTRAEGE_VORHER.items()

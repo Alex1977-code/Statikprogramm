@@ -132,6 +132,8 @@ MODELLTEILE = {
     # je Lastfall geteilt: die Lasten nach „lasten“, der Rest nach „lastfaelle“;
     # die Lastgenerierer stehen bei den Lasten, die sie erzeugen
     "load_cases": "lasten", "winde": "lasten", "wasserdruecke": "lasten",
+    # eigene Koordinatensysteme (08.11.2026): Lasten beziehen sich auf sie
+    "koordinatensysteme": "lasten",
     # Vorspannung je Anker (16.10.2026): zaehlt nicht fuer sich, sondern in den
     # Lasten jedes Lastfalls, der auf eine Definition verweist (rechenkennung) -
     # eine Definition ohne Verweis rechnet nirgends mit
