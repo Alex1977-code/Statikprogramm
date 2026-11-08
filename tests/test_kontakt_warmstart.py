@@ -381,19 +381,32 @@ def test_vorschlag4():
         m_.plastizitaet.reibungstangente = False      # bisheriges Verfahren (siehe platte)
         m_.plastizitaet.spannung_zuerst = an
         return m_
-    a, ta = rechnen(stempel(False))
+    # 08.11.2026: mit dem Beruehrungsband 1e-6 hat der gewoelbte Stempel echte Spalte, er
+    # konvergiert ohne Pendeln - das Beispiel fuer die Ablehnung am Kraftresiduum ist der
+    # Stempel mit dem alten Band 1e-3 (21 von 25 Knoten flach anliegend, ganz gleitend)
+    from statik3d import contact as _ct
+    _band = _ct.AUFLIEGEND
+    _ct.AUFLIEGEND = 1e-3
+    try:
+        a, ta = rechnen(stempel(False))
+    except Exception:
+        _ct.AUFLIEGEND = _band
+        raise
     abgelehnt = []
 
     def mit(t, *a_):
         if "Ingenieurkriterium nicht erfüllt" in str(t):
             abgelehnt.append(str(t).split("Ingenieurkriterium nicht erfüllt: ")[1])
     t0_ = time.perf_counter()
-    b = solver.solve_static(stempel(True), progress=mit)
+    try:
+        b = solver.solve_static(stempel(True), progress=mit)
+    finally:
+        _ct.AUFLIEGEND = _band
     tb = time.perf_counter() - t0_
     print(f"      aus: {kurz(a)} ({ta:.1f} s), an: {kurz(b)} ({tb:.1f} s)")
     kraft = [z for z in abgelehnt if "Kraftresiduum" in z]
     check("Stempel: Δσ und Δu (Schranke 4,69 µm) erfüllt, abgelehnt am Kraftresiduum, bitgleich wie aus",
-          kraft and "0,926 µm erfüllt" in kraft[0] and "0,171 % der Kontaktkraft > 0,1 %" in kraft[0]
+          kraft and "0,927 µm erfüllt" in kraft[0] and "0,171 % der Kontaktkraft > 0,1 %" in kraft[0]  # 0,926 µm bis 08.11. (Eichung)
           and bitgleich(a, b) and b.info.get("contact_converged"),
           (kraft[0][:150] if kraft else str(abgelehnt[:2])))
     # (b) Residuum am Ende jeder Stufe, geprueft und protokolliert

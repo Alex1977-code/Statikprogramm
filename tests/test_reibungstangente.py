@@ -413,7 +413,9 @@ def _modelle():
 #: Gleitwegs, "u wie vorher" gilt darum nur noch fuer die Tangente ohne Speicher (Fixture).
 #: Das bisherige Verfahren lag bei 0,037841 bzw. 0,540223 mm.
 UMAX_MIT_SPEICHER = {"Platte mit Ankern (plastisch, wie Drehlager)": 0.037866e-3,
-                     "Stempel auf Sockel, plastisch": 0.539715e-3}
+                     # 08.11.2026 neu gemessen: Fangbereich 1e-6 statt 1e-3 und Eichung an der
+                     # geschlossenen Fuge - die Spalte bis 0,1 mm bleiben, u_max 0,539715 -> 0,576793 mm
+                     "Stempel auf Sockel, plastisch": 0.576793e-3}
 
 
 def test_konvergenzrate():

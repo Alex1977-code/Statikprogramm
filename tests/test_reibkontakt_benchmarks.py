@@ -9,8 +9,8 @@ B1  Hertz, mu = 0: Zylinder R 100 mm auf Ebene, ebene Dehnung, Stahl auf Stahl.
     Modell aus der Sicherung vom 01.10.2026 (pruefmatrix_zusatz.py, Abschnitt H1),
     hier eigenstaendig; Netz a/8. Die 0,34 % der Sicherung waren mit der „Kur“
     gemessen (Fangbereiche contact.AUFLIEGEND/DECKUNGSGLEICH auf null); mit dem
-    Programm, wie es ist, liegt p0 rund 25 % zu tief - BEFUND, siehe
-    BEKANNTE_BEFUNDE. Die Ursachenprobe rechnet einmal mit AUFLIEGEND = 0.
+    Fangbereich 1e-3 lag p0 rund 25 % zu tief, seit 08.11.2026 (1e-6) nicht mehr.
+    Die Ursachenprobe rechnet einmal mit AUFLIEGEND = 0.
 B2  Klotz auf schiefer Ebene, mu = 1: Stahlplatte 0,4 x 0,4 x 0,02 m (hex8 4 x 4 x 1)
     unter Eigengewicht auf einer starren, festen Platte, das ganze Modell um alpha
     um die y-Achse gedreht. Flach, damit das Kippmoment des Hangabtriebs die
@@ -79,16 +79,8 @@ RESULTS = []          # (Name, ok, bekannter Befund)
 #: dieser Pruefungen an, steht sie als BEFUND im Protokoll und laesst den Lauf nicht
 #: scheitern; besteht sie, steht dort „Befund behoben?“.
 BEKANNTE_BEFUNDE: dict = {
-    "B1 Hertz hex8: p0 auf 2 %":
-        "Fangbereich contact.AUFLIEGEND (Anfangsspalt unter 1e-3 x Suchradius gilt als Berührung, hier "
-        "2 µm bei Suchradius 2 a = 2 mm): die Knoten bis x = 0,625 mm (Spalt x²/2R bis 1,95 µm) werden "
-        "auf Berührung gesetzt, die Pressung staut sich am äußersten gesetzten Knoten (x = 0,625 mm), "
-        "p0 −24 %; mit AUFLIEGEND = 0 −0,10 % (08.11.2026)",
-    "B1 Hertz tet4: p0 auf 2 %":
-        "wie hex8: p0 −27 %, mit AUFLIEGEND = 0 −0,29 % (08.11.2026)",
-    "B1 Hertz tet4: Kontaktrand a innerhalb eines Elements":
-        "Fangbereich AUFLIEGEND: Rand bei 0,625 … 0,75 mm statt 1,0 mm (2 Elemente zu kurz); "
-        "mit AUFLIEGEND = 0 im richtigen Element (08.11.2026)",
+    # B1 Hertz (p0 −24 % hex8, −27 % tet4, Rand 2 Elemente zu kurz) war bis 08.11.2026 ein
+    # Befund des Fangbereichs AUFLIEGEND 1e-3; mit 1e-6 behoben, die Pruefungen gelten wieder
     "B2 Ebene 50°: alle geschlossenen Kontaktknoten gleiten":
         "Endzustand am Deckel (40 Runden, vorläufig): 22 von 25 Knoten gleiten, 3 Knoten am "
         "hangabwärtigen Rand (y = −0,2 / 0 / +0,2 m) stehen auf „Haften“ (Fn 3,1 / 6,2 / 3,1 N, Ft 0,8 / 6,0 / 0,8 N), obwohl das Protokoll "
