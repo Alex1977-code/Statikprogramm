@@ -1153,16 +1153,16 @@ def test_anschluss_ermuedungslasten():
     def gleich(a, b):
         return b > 0 and abs(a - b) <= 1e-9 * b
 
-    zwei = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=2e6))
+    zwei = nachweis(FatigueLoad("E", case_max="LF5", case_min="LF1", cycles=2e6))
     check("zwei Zustände Kran gegen LF1: Schädigung am Anschluss", zwei.D > 1.0,
           f"D = {zwei.D:.6g}")
 
     # -- B094: der Verlauf wird gezaehlt -------------------------------------
     faelle = [
         ("wie der RFEM-Import (case_max leer, Wiederholungen global)",
-         FatigueLoad("E", folge=["Kran", "LF1"], zaehlung="spanne", wiederholungen=None)),
+         FatigueLoad("E", folge=["LF5", "LF1"], zaehlung="spanne", wiederholungen=None)),
         ("wie die Maske (case_max Kran, cycles 2e6)",
-         FatigueLoad("E", case_max="Kran", cycles=2e6, folge=["Kran", "LF1"],
+         FatigueLoad("E", case_max="LF5", cycles=2e6, folge=["LF5", "LF1"],
                      wiederholungen=2e6)),
     ]
     for text, fl in faelle:
@@ -1179,12 +1179,12 @@ def test_anschluss_ermuedungslasten():
     # LF1 85,1, Kran 47,4, S 63,0 kNm) zaehlt die Spanne nur ein Spiel
     # Kran gegen LF1, Rainflow und Reservoir je ein volles Spiel Kran gegen
     # LF1 und S gegen LF1 - wie zwei Lasten aus zwei Zustaenden (7,32878).
-    beide = nachweis(FatigueLoad("E1", case_max="Kran", case_min="LF1", cycles=2e6),
-                     FatigueLoad("E2", case_max="S", case_min="LF1", cycles=2e6))
+    beide = nachweis(FatigueLoad("E1", case_max="LF5", case_min="LF1", cycles=2e6),
+                     FatigueLoad("E2", case_max="LF2", case_min="LF1", cycles=2e6))
     for z, soll, text in (("spanne", zwei.D, "Kran gegen LF1"),
                           ("rainflow", beide.D, "Kran gegen LF1 plus S gegen LF1"),
                           ("reservoir", beide.D, "Kran gegen LF1 plus S gegen LF1")):
-        v = nachweis(FatigueLoad("E", folge=["LF1", "Kran", "LF1", "S", "LF1"],
+        v = nachweis(FatigueLoad("E", folge=["LF1", "LF5", "LF1", "LF2", "LF1"],
                                  wiederholungen=2e6, zaehlung=z))
         check(f"Verlauf LF1-Kran-LF1-S-LF1, {z}: D wie {text}",
               beide.D > 1.1 * zwei.D and gleich(v.D, soll) and not fehlend(v),
@@ -1192,8 +1192,8 @@ def test_anschluss_ermuedungslasten():
 
     # Ein fehlendes Glied: die uebrigen Glieder zaehlen (wie im Stabnachweis,
     # ec3.fatigue._verlauf), die Last steht nur teilweise in D - unvollstaendig
-    ohne = nachweis(FatigueLoad("E", folge=["Kran", "LF1"], wiederholungen=1e5), fest=klein)
-    v = nachweis(FatigueLoad("E", folge=["Kran", "FEHLT", "LF1"], wiederholungen=1e5),
+    ohne = nachweis(FatigueLoad("E", folge=["LF5", "LF1"], wiederholungen=1e5), fest=klein)
+    v = nachweis(FatigueLoad("E", folge=["LF5", "FEHLT", "LF1"], wiederholungen=1e5),
                  fest=klein)
     check("Verlauf mit fehlendem Glied: übrige Glieder zählen, Hinweis, unvollständig",
           any("'FEHLT'" in h for h in v.hinweise) and fehlend(v) == ["E"]
@@ -1213,35 +1213,35 @@ def test_anschluss_ermuedungslasten():
     check("fehlender Höchstzustand: nicht „erfüllt“, sondern unvollständig",
           any("'FEHLT'" in h for h in v.hinweise) and v.status() == "unvollständig",
           f"{v.status()}, D = {v.D:.4g}")
-    v = nachweis(FatigueLoad("E", folge=["Kran", "FEHLT"], wiederholungen=0.0), fest=klein)
+    v = nachweis(FatigueLoad("E", folge=["LF5", "FEHLT"], wiederholungen=0.0), fest=klein)
     check("unwirksame Sammlung (0 Wiederholungen) mit fehlendem Glied bleibt erfüllt",
           v.status() == "erfüllt" and not fehlend(v) and v.D == 0.0,
           f"{v.status()}, fehlend {fehlend(v)}")
 
     # -- B095: benannter, nicht gerechneter Mindestzustand ---------------------
-    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=2e6))
+    b = nachweis(FatigueLoad("E", case_max="LF5", case_min="GIBT_ES_NICHT", cycles=2e6))
     check("fehlender Mindestzustand: Hinweis statt „Kran gegen null“",
           any("GIBT_ES_NICHT" in h and "Mindestzustand" in h for h in b.hinweise)
           and b.D == 0.0 and fehlend(b) == ["E"],
           f"D = {b.D:.6g}, {[h for h in b.hinweise if 'GIBT' in h]}")
-    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=1e5),
+    b = nachweis(FatigueLoad("E", case_max="LF5", case_min="GIBT_ES_NICHT", cycles=1e5),
                  fest=klein)
     check("... und der Anschluss heißt unvollständig, nicht erfüllt",
           b.status() == "unvollständig", b.status())
-    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=0.0),
+    b = nachweis(FatigueLoad("E", case_max="LF5", case_min="GIBT_ES_NICHT", cycles=0.0),
                  fest=klein)
     check("... außer bei 0 Lastspielen (die Last wäre unwirksam)",
           b.status() == "erfüllt" and not fehlend(b), b.status())
 
     # -- NB1: globale Lastspielzahl ------------------------------------------
-    g = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=None))
+    g = nachweis(FatigueLoad("E", case_max="LF5", case_min="LF1", cycles=None))
     check("cycles=None: globale Lastspielzahl 2e6, D wie mit 2e6",
           gleich(g.D, zwei.D), f"D = {g.D:.6g} / {zwei.D:.6g}")
 
     # -- NB2: gamma_Ff ---------------------------------------------------------
     m.design.gamma_Ff = 1.5
     try:
-        f15 = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=2e6))
+        f15 = nachweis(FatigueLoad("E", case_max="LF5", case_min="LF1", cycles=2e6))
     finally:
         m.design.gamma_Ff = 1.0
     check("γ_Ff = 1,5 vergrößert D am Anschluss um 1,5³",
@@ -1250,7 +1250,7 @@ def test_anschluss_ermuedungslasten():
           f"D = {f15.D:.6g} / {1.5 ** 3 * zwei.D:.6g}")
 
     # -- Zusammenfassung und Bericht nennen den unvollstaendigen Anschluss -------
-    nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=1e5),
+    nachweis(FatigueLoad("E", case_max="LF5", case_min="GIBT_ES_NICHT", cycles=1e5),
              fest=klein)
     erg = A.check_joints(m, an)
     check("Zusammenfassung: unvollständig statt „alle erfüllt“",

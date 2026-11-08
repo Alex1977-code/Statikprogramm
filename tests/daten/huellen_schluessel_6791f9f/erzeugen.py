@@ -183,8 +183,14 @@ def hallenrahmen_ermuedung(ek_name: str = "EK_FAT"):
     from statik3d.model import Combination
     from statik3d.importers.rfem6_db import _ermuedungslasten_aus_fat
     m = hall_frame_example()
+
+    def fall(alt):
+        """Der Lastfall, der in der Halle bis R2-C1 (06.10.2026) „alt“ hiess; seitdem
+        heisst er LF<n> und traegt „alt“ als Bezeichnung (auf 6791f9f gilt der Name)."""
+        return next((n for n, lc in m.load_cases.items()
+                     if n == alt or getattr(lc, "bezeichnung", "") == alt), alt)
     m.combinations[ek_name] = Combination(ek_name, {}, "FAT",
-                                          alternativen=[{"Kran": 1.0}, {"LF1": 1.0}, {"S": 1.0}])
+                                          alternativen=[{fall("Kran"): 1.0}, {"LF1": 1.0}, {fall("S"): 1.0}])
     _ermuedungslasten_aus_fat(m, [])
     return m
 

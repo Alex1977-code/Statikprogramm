@@ -647,6 +647,28 @@ def kennwerte(w: Wind, model=None, geo: dict = None) -> dict:
     return out
 
 
+def lasten_entfernen(model, name: str) -> None:
+    """Alle Lasten des Windgenerierers *name* aus allen Lastfaellen nehmen:
+    die Objektlasten auf Flaechen (``verlauf["art"] == "wind"`` mit seinem
+    Namen) und die Linienlasten auf Staeben (``Linienlast.erzeugt ==
+    "wind:<Name>"``).
+
+    Erkannt werden die Lasten an ihrem Merkmal, nie am Kommentar: nach dem
+    Verteilen lautet der Kommentar einer Linienlast „6 Elementlasten“
+    (Model.lasten_verteilen), und ein Aufraeumen, das nach „Wind W1:“ suchte,
+    liess sie stehen - ein zweiter Lauf machte aus 1 Linienlast 2 und aus 6
+    Elementlasten 12 (R2-C1, 06.10.2026). Nur fuer Dateien von vor dem
+    Merkmal gilt der Kommentar noch, solange er so dasteht, wie ihn der
+    Generierer schrieb („Wind W1: c_f = …“)."""
+    marke = f"wind:{name}"
+    for lc in model.load_cases.values():
+        lc.geometrielasten = [gl for gl in lc.geometrielasten
+                              if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == name)]
+        lc.linienlasten = [ll for ll in lc.linienlasten
+                           if ll.erzeugt != marke
+                           and not (not ll.erzeugt and (ll.kommentar or "").startswith(f"Wind {name}:"))]
+
+
 def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     """Objektlasten an Flächen und Linienlasten auf Stäbe schreiben (alte des
     Generierers entfernen), verteilen; Rückgabe: Kennwerte samt Zahlen. Mit
@@ -679,17 +701,17 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
                               aufriss=bool(wk["aufriss"]), stempel=uuid.uuid4().hex)
         st._melden(fortschritt, 0.96, f"Wind {w.name}: Lasten auf das Netz")
     # Name und Nummer des Lastfalls pruefen, bevor sich etwas aendert: ein
-    # vergebener Name oder eine belegte Nummer weist ab (NameVergeben), ohne
-    # eigene Wahl gilt „Wind <Name>“ oder ein freier (R2-A1, Nachbesserung G3)
+    # vergebener Name oder eine belegte Nummer weist ab (NameVergeben); ohne
+    # eigene Wahl entsteht ein neuer Lastfall LF<Nr.> mit der Bezeichnung
+    # „Wind <Name>“ (R2-A1 G3, R2-C1), ein gewaehlter bleibt, wie er ist
     w.lastfall = model.generator_lastfall(f"Wind {w.name}", w.lastfall, int(w.lastfall_nr or 0),
                                           f"Wind {w.name}")
-    for lc in model.load_cases.values():
-        lc.geometrielasten = [gl for gl in lc.geometrielasten
-                              if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == w.name)]
-        lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {w.name}:")]
+    lasten_entfernen(model, w.name)
     if w.lastfall not in model.load_cases:
+        from .model import _namensnummer
         model.add_load_case(w.lastfall, "W" if "W" in ACTION_CATEGORIES else "Q",
-                            f"Wind {w.name}", activate=False)
+                            f"Wind {w.name}", activate=False,
+                            bezeichnung=f"Wind {w.name}" if _namensnummer(w.lastfall)[0] == "LF" else "")
     lc = model.load_cases[w.lastfall]
     lc.situation = "" if w.situation == GRUNDSTELLUNG else w.situation
     if not getattr(lc, "nummer", 0):
@@ -722,6 +744,7 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
                                   q2=(sb["w2"] * faktor * d).tolist(), system="global", case=w.lastfall)
         ll.kommentar = f"Wind {w.name}: c_f = {sb['cf']:.2f}, b_ref = {sb['b_ref']:.3f} m" \
             + (f", Windkanal (v/v∞)² = {faktor:.2f}" if wk is not None else "")
+        ll.erzeugt = f"wind:{w.name}"
         staebe.append(sb)
     model.winde[w.name] = w
     n_elem = model.lasten_verteilen()

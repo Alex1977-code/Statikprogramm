@@ -1660,13 +1660,13 @@ def test_maske_verlauf_ohne_zustaende():
 
     # (1) Im Modus Verlauf stehen die Zustaende nur in der Folge
     m = hall()
-    fl = neu(m, "LF1, S, LF1")
+    fl = neu(m, "LF1, LF2, LF1")
     check("Maske, Modus Verlauf: Folge übernommen, case_max leer, case_min None",
-          fl is not None and fl.folge == ["LF1", "S", "LF1"] and fl.case_max == ""
+          fl is not None and fl.folge == ["LF1", "LF2", "LF1"] and fl.case_max == ""
           and fl.case_min is None and fl.wiederholungen == 5e5,
           "keine Last" if fl is None else f"case_max {fl.case_max!r}, case_min {fl.case_min!r}")
-    m.remove_load_case("Kran")
-    check("... Lastfall 'Kran' gelöscht: kein FEHLER für den Verlauf ohne 'Kran'",
+    m.remove_load_case("LF5")
+    check("... Lastfall LF5 (Kran) gelöscht: kein FEHLER für den Verlauf ohne LF5",
           not fehler(m), "; ".join(fehler(m))[:100])
 
     # (2) Dateien aus der alten Maske tragen das case_max weiter: die
@@ -1675,19 +1675,19 @@ def test_maske_verlauf_ohne_zustaende():
     # B105 (fix2/nb_model) selbst mit und nennt sie in der Rueckgabe; bis
     # dahin blieb sie stehen und war ein FEHLER.
     m = hall()
-    m.fatigue_loads["Alt"] = FatigueLoad("Alt", case_max="Kran", folge=["LF1", "S", "LF1"],
+    m.fatigue_loads["Alt"] = FatigueLoad("Alt", case_max="LF5", folge=["LF1", "LF2", "LF1"],
                                          wiederholungen=5e5)
-    m.add_fatigue_load("Zwei", "Kran", None, 5e5)
-    aus = m.remove_load_case("Kran")
+    m.add_fatigue_load("Zwei", "LF5", None, 5e5)
+    aus = m.remove_load_case("LF5")
     zeilen = fehler(m)
-    check("alter Verlauf mit case_max 'Kran': kein FEHLER; zwei Zustände: entfällt mit dem Lastfall",
+    check("alter Verlauf mit case_max LF5 (Kran): kein FEHLER; zwei Zustände: entfällt mit dem Lastfall",
           not [z for z in zeilen if "'Alt'" in z] and "Alt" in m.fatigue_loads
           and "Zwei" not in m.fatigue_loads and any("'Zwei' entfällt" in a for a in aus),
           "; ".join(zeilen + aus)[:110])
     # Gegenprobe: bei zwei Zustaenden liest die Modellpruefung case_max weiter
-    m.add_fatigue_load("Zwei", "Kran", None, 5e5)
+    m.add_fatigue_load("Zwei", "LF5", None, 5e5)
     zeilen = fehler(m)
-    check("… Gegenprobe: zwei Zustände mit unbekanntem 'Kran': FEHLER",
+    check("… Gegenprobe: zwei Zustände mit unbekanntem LF5: FEHLER",
           [z for z in zeilen if "'Zwei'" in z] and not [z for z in zeilen if "'Alt'" in z],
           "; ".join(zeilen)[:110])
 
@@ -1707,9 +1707,9 @@ def test_maske_verlauf_ohne_zustaende():
     e_kopf = m.members["Riegel"].elements[0]
     m.joints["K1"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, N=-50e3,
                                          Vz=150e3, My=300e3), "K1")
-    verlauf = neu(m, "Null, S, Null")
-    m.add_fatigue_load("S-Null", "S", None, 5e5)
-    m.add_fatigue_load("Kran-Null", "Kran", None, 5e5)
+    verlauf = neu(m, "Null, LF2, Null")
+    m.add_fatigue_load("S-Null", "LF2", None, 5e5)
+    m.add_fatigue_load("Kran-Null", "LF5", None, 5e5)
     an = solver.solve_all(m, design=True, fatigue=False)
     D = {}
     for name in (verlauf.name if verlauf is not None else "?", "S-Null", "Kran-Null"):

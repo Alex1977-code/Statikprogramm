@@ -11678,12 +11678,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 grund = f"Wind {name} gibt es nicht"
             else:
                 self.merken(f"{was} gelöscht")
-                for lc in m.load_cases.values():
-                    lc.geometrielasten = [gl for gl in lc.geometrielasten
-                                          if not (gl.verlauf.get("art") == "wind"
-                                                  and gl.verlauf.get("name") == name)]
-                    lc.linienlasten = [ll for ll in lc.linienlasten
-                                       if not (ll.kommentar or "").startswith(f"Wind {name}:")]
+                from ..wind import lasten_entfernen as wind_lasten_entfernen
+                wind_lasten_entfernen(m, name)      # erkennt die Stablasten am Merkmal, nicht am Kommentar
                 del m.winde[name]
                 m.lasten_verteilen()
         elif art == "kontaktbedingung":
@@ -20707,8 +20703,9 @@ class MainWindow(QtWidgets.QMainWindow):
         verfahren = self.WASSERVERFAHREN[0 if wd.numerisch() else 1]
         felder = [F("name", "Name", "text", wd.name, breite=140),
                   F("situation", "Situation", "wahl", wd.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140,
-                    verweis="lastfall"),
+                  F("fall", "Lastfall", "text", wd.lastfall, breite=140, verweis="lastfall",
+                    hinweis="leer = neuer Lastfall mit der Nummer unten und der Bezeichnung "
+                            f"„Wasser {wd.name}“; ein vorhandener Lastfall bleibt, wie er ist"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(wd.lastfall_nr or m.naechste_lastfallnummer()),
                     hinweis="Nummer des Lastfalls (0 = nächste freie)"),
                   F("verfahren", "Verfahren", "wahl", verfahren, list(self.WASSERVERFAHREN),
@@ -20876,8 +20873,9 @@ class MainWindow(QtWidgets.QMainWindow):
         situationen = m.situationsnamen()
         felder = [F("name", "Name", "text", w.name, breite=140),
                   F("situation", "Situation", "wahl", w.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140,
-                    verweis="lastfall"),
+                  F("fall", "Lastfall", "text", w.lastfall, breite=140, verweis="lastfall",
+                    hinweis="leer = neuer Lastfall mit der Nummer unten und der Bezeichnung "
+                            f"„Wind {w.name}“; ein vorhandener Lastfall bleibt, wie er ist"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(w.lastfall_nr or m.naechste_lastfallnummer())),
                   F("verfahren", "Verfahren", "wahl", self.WINDVERFAHREN[1 if w.windkanal() else 0],
                     list(self.WINDVERFAHREN),
@@ -21056,10 +21054,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # umbenannt: den alten Wind und seine Lasten erst jetzt entfernen - bis
             # zum 03.10.2026 geschah das vor der Rechnung, und ein Abbruch liess
             # ihn geloescht zurueck, ohne Rueckgaengig-Schritt
-            for lc in m.load_cases.values():
-                lc.geometrielasten = [gl for gl in lc.geometrielasten
-                                      if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == alt)]
-                lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {alt}:")]
+            from ..wind import lasten_entfernen as wind_lasten_entfernen
+            wind_lasten_entfernen(m, alt)           # Merkmal statt Kommentar (R2-C1)
             del m.winde[alt]
         self._fortschritt_ende()
         self._namen_geaendert()             # ein neuer Lastfall kann entstanden sein
