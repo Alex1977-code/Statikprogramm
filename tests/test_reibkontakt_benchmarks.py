@@ -95,12 +95,6 @@ BEKANNTE_BEFUNDE: dict = {
         "„alle Knoten gleiten … das Bauteil rutscht“ meldet. Den fehlenden Hangabtrieb (45,1 N = 24 %) trägt "
         "die grobe Reststeifigkeit; sie erscheint in den Auflagerkräften der Platte (ΣR_z = G = 246,4 N), "
         "die Gleichgewichtskontrolle meldet daher ok (08.11.2026)",
-    "B2b Würfel 50°: der Lauf endet am Deckel (höchstens 40 Runden)":
-        "Ab Runde 40 meldet das Kontaktsystem in jeder Runde „Nachprüfung der Reibung nach 40 Runden "
-        "abgebrochen“ (am_deckel), die Kontaktschleife in solver.py rechnet trotzdem weiter bis "
-        "max_iter 120: _gruppen_frei wechselt jede Runde zwischen „Klotz/Ebene frei“ und „gehalten“ "
-        "(Periode 2, Phase 1), und frei_nachher != frei_vorher setzt changed = True nach dem Deckel; "
-        "rund 80 Deckelzeilen im Protokoll, Ergebnis vorläufig, ΣR 1,72 kN statt G 4,93 kN (08.11.2026)",
 }
 
 
