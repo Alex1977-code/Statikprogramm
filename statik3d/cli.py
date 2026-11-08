@@ -104,6 +104,20 @@ def main(argv=None) -> int:
     else:
         ap.error("Bitte eine Modelldatei, --import oder --beispiel angeben")
 
+    if a.lastfall and a.lastfall not in m.load_cases:
+        # ein alter Name (vor der Umstellung auf LF<Nr>, R2-A2): eindeutig
+        # ueber die Bezeichnung, sonst eine Meldung statt eines Tracebacks
+        treffer = [n for n, lc in m.load_cases.items()
+                   if str(getattr(lc, "bezeichnung", "") or "") == a.lastfall]
+        if len(treffer) == 1:
+            log(f"Hinweis: Lastfall „{a.lastfall}“ heißt jetzt {treffer[0]}")
+            a.lastfall = treffer[0]
+        else:
+            print(f"Lastfall „{a.lastfall}“ gibt es nicht"
+                  + (f" eindeutig (Bezeichnung von {', '.join(treffer)})" if treffer else "")
+                  + " - vorhanden: " + ", ".join(list(m.load_cases)[:20])
+                  + (" …" if len(m.load_cases) > 20 else ""), file=sys.stderr)
+            return 2
     if a.staebe:
         n = len(m.auto_members())
         log(f"{n} Staebe erkannt")

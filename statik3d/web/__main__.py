@@ -32,6 +32,9 @@ def main(argv=None) -> int:
     elif a.modell:
         if a.modell.lower().endswith(".json"):
             model = Model.load(a.modell)
+            # was das Oeffnen umgestellt hat - auch im Protokoll des Browsers
+            for z in getattr(model, "_ladehinweise", None) or []:
+                print("Hinweis: " + z)
         else:
             from ..importers import import_file
             msgs: list[str] = []

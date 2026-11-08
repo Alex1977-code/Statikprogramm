@@ -19513,6 +19513,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stand_gespeichert = self._stand
         self._signatur_gespeichert = self._modellsignatur()
         self._ergebnis_ungespeichert = False
+        self._namen_umgestellt = False
         self._titel_nachziehen()
 
     def ungespeichert(self) -> str:
@@ -19524,6 +19525,10 @@ class MainWindow(QtWidgets.QMainWindow):
             teile.append("Änderungen am Modell")
         if self._ergebnis_ungespeichert and (self.analysis is not None or self.results is not None):
             teile.append("Ergebnisse der letzten Rechnung")
+        # R2-A2: die beim Oeffnen umgestellten Namen stehen erst nach dem
+        # Speichern in der Datei (Entscheidung der Hauptsitzung, 06.10.2026)
+        if getattr(self, "_namen_umgestellt", False):
+            teile.append("die beim Öffnen umgestellten Namen (Namen umgestellt auf LF/LK/EK)")
         return " und ".join(teile)
 
     def _titel_nachziehen(self):
@@ -27469,8 +27474,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.info(f"Ergebnisse geladen: {bg.anzahl(len(an.cases), 'Lastfall', 'Lastfälle')}, "
                           f"{bg.anzahl(len(an.combinations), 'Kombination', 'Kombinationen')} "
                           f"({os.path.basename(epfad)})")
-        # Modell und Ergebnisse sind die der Datei
+        # Modell und Ergebnisse sind die der Datei - ausser den beim Oeffnen
+        # umgestellten Namen (R2-A2): sie gelten als Aenderung, der Titel
+        # traegt den Stern, und Schliessen fragt mit dem Grund
         self._als_gespeichert()
+        if (getattr(self.model, "_umbenennung", None) or {}).get("geaendert"):
+            self._namen_umgestellt = True
+            self._titel_nachziehen()
         return True
 
     def _analyse_passt(self) -> str:

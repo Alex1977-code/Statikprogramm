@@ -116,11 +116,9 @@ def _mit_alten_namen(pfad):
     """Modell und Ergebnisdatei mit ihren alten Namen - so, wie ein Programm
     vor R2-A2 (06.10.2026) sie liest: die Umstellung beim Laden abgeschaltet,
     die Ergebnisdatei mit der Tabelle alt -> alt gelesen."""
-    from unittest import mock
     from statik3d.model import Model
     from statik3d import ergebnisse
-    with mock.patch.object(Model, "_namen_umstellen", lambda self, fassung=0: None, create=True):
-        m = Model.load(pfad)
+    m = Model.load(pfad, umstellen=False)
     m._umbenennung = {"lastfaelle": {n: n for n in m.load_cases},
                       "kombinationen": {n: n for n in m.combinations}}
     an = ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m)

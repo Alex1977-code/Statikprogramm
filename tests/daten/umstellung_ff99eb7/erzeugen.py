@@ -14,9 +14,16 @@ ff99eb7 (R2-A1) - also **vor** der Umstellung auf LF/LK/EK.
   theorie2.kombinationen), die Nachweise muessen sie dort finden; die
   Ergebniskombination EK7 (behaelt ihren Namen); eine Verformungsgrenze
   (GZG, je Kombination); eine Stellung mit Lastfaellen und Kombinationen;
-  Wind und Wasserdruck auf W_links und S; Berichtseintraege auf Lastfall,
-  Kombination und Umhuellende; aktiver Lastfall S. Gerechnet mit
-  ``solve_all(design=True, fatigue=True)``.
+  Wind (mit Lastfallnummer 3) und Wasserdruck auf W_links und S;
+  Berichtseintraege auf Lastfall, Kombination und Umhuellende; aktiver
+  Lastfall S. Gerechnet mit ``solve_all(design=True, fatigue=True)``, dazu die
+  Knicklaengen aus der ersten Knickfigur mit dem Grundzustand S.
+* ``kontakt.json/.ergebnisse`` (Nachbesserung 06.10.2026) - der Reibblock
+  (Beispiel friction) mit der Grundlast „Eigengewicht“, den Lastfaellen „Hub 1“, LF5 und
+  „H3“, einer Ermuedungslast mit diesem Verlauf (ihre Zustaende rechnet die
+  Rechnung mit eingefrorenem Kontakt: ``contact_frozen_from``,
+  ``info["kontakt_eingefroren"]``), Warmstart (``start_angeboten_von``) und
+  der Ergebniskombination „Kontakt EK“.
 
 Erzeugt mit dem Baum von ff99eb7:
 
@@ -54,7 +61,7 @@ def hallenrahmen():
     m.verformungsgrenzen["Riegel w"] = Verformungsgrenze("Riegel w", "stab", "Riegel", wert=300.0)
     m.stellungen.append(Stellung("S1", 0.0, "geschlossen", faelle=["LF1", "S", "W_links"],
                                  kombinationen=["K1", "Bemessung GZT"]))
-    m.winde["W1"] = Wind("W1", lastfall="W_links")
+    m.winde["W1"] = Wind("W1", lastfall="W_links", lastfall_nr=3)
     m.wasserdruecke["WD1"] = Wasserdruck("WD1", lastfall="S", lastfall_dyn="S")
     m.bericht += [
         Berichtseintrag("Bild 1", "case:W_links", "Verschiebung",
@@ -68,20 +75,54 @@ def hallenrahmen():
     return m
 
 
+def kontakt():
+    from statik3d.examples_lib import build_example
+    from statik3d.model import Combination, FatigueLoad
+    m = build_example("friction")
+    m.name = "Reibblock Umstellung"
+    # die Grundlast heisst nicht LF<n> - sie wird umbenannt
+    m.lastfall_umbenennen(list(m.load_cases)[0], "Eigengewicht")
+    lf1 = list(m.load_cases)[0]
+    lasten = [(nl.node, list(nl.F)) for nl in m.load_cases[lf1].nodal_loads]
+    m.load_cases[lf1].nodal_loads.clear()
+    for n, F in lasten:
+        m.load_node(n, Fz=F[2], case=lf1)
+    m.load_cases[lf1].grundlast = True
+    for name, f in (("Hub 1", 1.0), ("LF5", 1.0), ("H3", 1.1)):
+        m.add_load_case(name, "Q", activate=False)
+        for n, F in lasten:
+            m.load_node(n, Fx=F[0] * f, case=name)
+    m.fatigue_loads["E"] = FatigueLoad("E", folge=["Hub 1", "LF5", "H3"], wiederholungen=1e5)
+    m.combinations["Kontakt EK"] = Combination("Kontakt EK", {}, "ULS", "Ergebniskombination",
+                                               alternativen=[{lf1: 1.0, "Hub 1": 1.0}, {lf1: 1.0, "H3": 1.0}])
+    m.active_case = lf1
+    return m
+
+
 def main():
     baum, ziel = sys.argv[1], sys.argv[2]
     sys.path.insert(0, baum)
     from statik3d import solver, ergebnisse
     from statik3d.model import FORMAT_VERSION
     os.makedirs(ziel, exist_ok=True)
+    from statik3d.ec3.knicklaengen import knicklaengen_aus_eigenform
     m = hallenrahmen()
     an = solver.solve_all(m, design=True, fatigue=True)
+    an.knicklaengen = knicklaengen_aus_eigenform(m, solver.solve_buckling(m, 3, None, case="S"), 0)
     pfad = os.path.join(ziel, "hallenrahmen.json")
     m.save(pfad)
     ergebnisse.schreiben(ergebnisse.pfad_zu(pfad), m, an)
     print(f"Fassung {FORMAT_VERSION}: {len(m.load_cases)} Lastfälle, {len(m.combinations)} Kombinationen, "
           f"Alternativen abgelegt {sorted(an.alternativen)}, Theorie II {sorted(an.theorie2.kombinationen) if an.theorie2 else None}")
     print(an.summary())
+    m = kontakt()
+    an = solver.solve_all(m, design=True, fatigue=True)
+    pfad = os.path.join(ziel, "kontakt.json")
+    m.save(pfad)
+    ergebnisse.schreiben(ergebnisse.pfad_zu(pfad), m, an)
+    print("kontakt:", list(m.load_cases), list(m.combinations), an.info.get("kontakt_eingefroren"),
+          {k: (r.info.get("contact_frozen_from"), r.info.get("grundlast"), r.info.get("start_angeboten_von"))
+           for k, r in an.cases.items()})
 
 
 if __name__ == "__main__":

@@ -239,15 +239,16 @@ class _Unsicher(Exception):
 #: Lastfalls oder einer Alternative „<EK> [k]“ tragen (Anzeige): EC3
 #: (MemberCheck.governing, section_checks, stability, woelb: "combo"), GZG,
 #: Beulen, Lasteinleitung, Volumen, Anschluesse (kombination, je_kombination),
-#: Theorie II. Ordnung (Th2Info.kombination)
-_NAMENSFELDER = ("kombination", "combo")
+#: Theorie II. Ordnung (Th2Info.kombination); Schwingung (dyn["lastfall"]),
+#: Knicklaengen (KnicklaengenErgebnis.grundzustand)
+_NAMENSFELDER = ("kombination", "combo", "lastfall", "grundzustand")
 #: Listen solcher Namen (DesignResults/AnschlussResults.combinations,
 #: GZG-/Beul-/Einleitungs-/VolumenResults.kombinationen) - bei Theorie II./III.
 #: Ordnung ist ``kombinationen`` ein Woerterbuch {Name: Info}
 _LISTENFELDER = ("kombinationen", "combinations")
 #: Freie Texte, in denen ein Name nach seinem Klartext steht („Kombination K1
 #: nicht nachgewiesen“, „Ergebnis 'K1' fehlt“)
-_TEXTFELDER = ("warnungen", "warnings", "hinweise")
+_TEXTFELDER = ("warnungen", "warnings", "hinweise", "log")
 #: Nachweise und Ergebnisse der Analyse, die Namen tragen koennen
 _NACHWEISE = (("design", "Nachweise EC3"), ("gzg", "Verformungsnachweise (GZG)"),
               ("beulen", "Beulnachweise"), ("lasteinleitung", "Lasteinleitung"),
@@ -258,8 +259,8 @@ _NACHWEISE = (("design", "Nachweise EC3"), ("gzg", "Verformungsnachweise (GZG)")
 
 
 def _namen_umschluesseln(an, model, tab: dict) -> None:
-    """Eine Ergebnisdatei von vor Fassung 9 auf die Namen der Umstellung
-    beim Laden bringen (Model._namen_umstellen, Paket R2-A2) - dieselben
+    """Eine Ergebnisdatei auf die Namen der Umstellung beim Oeffnen
+    bringen (Model._namen_umstellen, Paket R2-A2) - dieselben
     Zahlen unter den neuen Namen, ohne Neurechnung.
 
     Umgeschluesselt werden die Schluessel von ``cases``, ``combinations``
@@ -361,6 +362,13 @@ def _namen_umschluesseln(an, model, tab: dict) -> None:
             return
         if isinstance(info.get("grundlast"), list):
             info["grundlast"] = [lf.get(x, x) for x in info["grundlast"]]
+        if isinstance(info.get("factors"), dict):
+            # {Lastfall: Faktor} der Rechnung - der Bericht nennt sie
+            # („Lastfaktoren“)
+            try:
+                info["factors"] = {name(x): f for x, f in info["factors"].items()}
+            except _Unsicher:
+                info.pop("factors")
         if info.get("contact_frozen_from"):
             try:
                 info["contact_frozen_from"] = name(info["contact_frozen_from"])
@@ -534,8 +542,8 @@ def _namen_umschluesseln(an, model, tab: dict) -> None:
         hinweise.append("Die Warnungstexte der Nachweise nennen die alten Namen - die alte Datei hatte "
                         "mehrdeutige Namen (" + ", ".join(f"„{n}“" for n in sorted(zweideutig)[:5]) + ")")
     if geaendert_lf or geaendert_ko:
-        hinweise.insert(0, "Ergebnisse aus einer Datei vor Fassung 9 - unter den neuen Namen geladen "
-                           "(Tabelle alt → neu beim Öffnen), dieselben Zahlen ohne Neurechnung")
+        hinweise.insert(0, "Ergebnisse unter den beim Öffnen umgestellten Namen geladen (Tabelle "
+                           "alt → neu oben) - dieselben Zahlen ohne Neurechnung")
     if hinweise:
         info["umstellung"] = hinweise
     an.info = info
@@ -549,20 +557,22 @@ def lesen(pfad: str, model, fortschritt=None):
     with open(pfad, "rb") as fh:
         inhalt = _Leser(fh, model).load()
     k = inhalt.get("kennung")
-    # R2-A2: eine Datei ohne „modellfassung“ (vor Fassung 9) traegt die alten
-    # Namen. Hat das Laden das Modell umgestellt, schluesselt die Tabelle
-    # alt -> neu sie um; sonst passen ihre Namen nicht zum Modell, und sie
-    # wird verworfen, statt Ergebnisse unter fremden Namen zu zeigen (am
-    # Drehlager - nur Ergebniskombinationen, keine Kombination in der Datei -
-    # liess die Pruefung auf fremde Kombinationen unten sie sonst durch).
-    tab = None
-    if isinstance(k, dict) and int(k.get("modellfassung", 0) or 0) < 9:
-        tab = getattr(model, "_umbenennung", None)
-        if tab is None:
-            raise ValueError("Die Ergebnisdatei passt nicht zum Modell: sie trägt die Namen von vor der "
-                             "Umstellung auf LF/LK/EK, das Modell schon die neuen – neu rechnen")
+    # R2-A2: Hat das Oeffnen das Modell umgestellt (model._umbenennung), traegt
+    # die Ergebnisdatei daneben die Namen, mit denen beide gespeichert wurden -
+    # die Tabelle alt -> neu schluesselt sie um, gleich welcher Fassung (auch
+    # eine Datei der Fassung 9 mit freien Namen wird beim Oeffnen
+    # umgestellt). Ohne Tabelle und ohne „modellfassung“ (vor Fassung 9)
+    # passen ihre Namen nicht zum Modell, und sie wird verworfen, statt
+    # Ergebnisse unter fremden Namen zu zeigen (am Drehlager - nur
+    # Ergebniskombinationen, keine Kombination in der Datei - liess die
+    # Pruefung auf fremde Kombinationen unten sie sonst durch).
+    tab = getattr(model, "_umbenennung", None)
+    if isinstance(k, dict) and tab is not None:
         lf = tab.get("lastfaelle") or {}
         k = dict(k, lastfaelle=sorted(lf.get(n, n) for n in k.get("lastfaelle", [])))
+    elif isinstance(k, dict) and int(k.get("modellfassung", 0) or 0) < 9:
+        raise ValueError("Die Ergebnisdatei passt nicht zum Modell: sie trägt die Namen von vor der "
+                         "Umstellung auf LF/LK/EK, das Modell schon die neuen – neu rechnen")
     ok, grund = passt(k, model)
     if not ok:
         raise ValueError(f"Die Ergebnisdatei passt nicht zum Modell: {grund}")

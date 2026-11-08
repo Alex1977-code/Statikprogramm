@@ -578,17 +578,22 @@ def test_r1h_alte_datei_ohne_modellbezug():
               "„ULS“" in s and "„Umhüllende GZT“ überschrieben" in s and "fehlt" in s,
               [z for z in s.splitlines() if z.startswith("Hinweis")][-1:])
     # keine Fehlerkennung: die zwoelf Dateien wie dc80e1f, auch EK1 -> ULS -
-    # seit R2-A2 (06.10.2026) unter den neuen Namen (_wie_dc80e1f_umgestellt)
-    soll = _json("alt_gelesen_dc80e1f.json")
+    # seit R2-A2 (06.10.2026) unter den neuen Namen. Die feste Referenz
+    # alt_gelesen_r2a2.json ist die Lesung von dc80e1f (alt_gelesen_dc80e1f.json),
+    # umgeschluesselt mit der Tabelle der Umstellung beim Oeffnen und von Hand
+    # geprueft: die Umhuellende einer Ergebniskombination des Modells liegt
+    # unter deren neuem Namen; in EK1_zu_ULS sind die Umhuellenden ULS und EK1
+    # verworfen, weil ihre Herkunft „EK1 [k]“ die alte, umbenannte EK1 meint
+    # und EK1 jetzt die Ergebniskombination „ULS“ ist
+    soll = _json("alt_gelesen_r2a2.json")
     anders = []
     for fall in list(R["ALTE_DATEIEN"]) + ["EK1_zu_ULS"]:
         pfad = os.path.join(alt, fall + ".json")
-        m = Model.load(pfad)
-        ist = R["gelesen"](ergebnisse.lesen(ergebnisse.pfad_zu(pfad), m))
-        if ist != _wie_dc80e1f_umgestellt(soll[fall], m):
+        ist = R["gelesen"](ergebnisse.lesen(ergebnisse.pfad_zu(pfad), Model.load(pfad)))
+        if ist != soll[fall]:
             anders.append(fall)
     check("R1h: keine Fehlerkennung - zwölf Dateien der Gegenprüfung und „EK1 → ULS“ wie dc80e1f, unter den "
-          "neuen Namen", not anders,
+          "neuen Namen (feste Referenz)", not anders,
           f"anders: {anders}" if anders else f"{len(R['ALTE_DATEIEN']) + 1} Dateien gleich")
 
 
@@ -611,50 +616,6 @@ def _alte_namen(abdruck: dict, m) -> dict:
     aus["envelope_keys"] = [name(k) for k in abdruck["envelope_keys"]]
     aus["envelopes"] = {name(k): dict(v, name=name(v["name"]), names=[name(x) for x in v["names"]])
                         for k, v in abdruck["envelopes"].items()}
-    return aus
-
-
-def _wie_dc80e1f_umgestellt(soll: dict, m) -> dict:
-    """Die Lesung von dc80e1f (gelesen) unter den Namen der Umstellung beim
-    Laden (R2-A2): die Umhuellende einer Ergebniskombination des Modells heisst
-    und liegt unter deren neuem Namen; eine, deren Ergebniskombination das
-    Modell nicht mehr hat, bleibt - ausser ein Name in ihr gleicht einem
-    neuen Namen (EK1_zu_ULS: die alte „EK1“ war umbenannt, die neue EK1 ist
-    die Ergebniskombination „ULS“), dann ist sie verworfen."""
-    tab = m._umbenennung or {}
-    lf, ko = tab.get("lastfaelle") or {}, tab.get("kombinationen") or {}
-    neue = set(m.load_cases) | set(m.combinations)
-
-    def name(n):
-        if n in lf:
-            return lf[n]
-        if n in ko:
-            return ko[n]
-        t = re.fullmatch(r"(.+) \[(\d+)\]", str(n))
-        if t and t.group(1) in ko:
-            return f"{ko[t.group(1)]} [{t.group(2)}]"
-        if n in neue or (t and t.group(1) in neue):
-            raise KeyError(n)
-        return n
-    aus = {"schluessel": [], "namen": {}, "names": {}, "kombination": {}}
-    for k in soll["schluessel"]:
-        besitzer = soll["kombination"][k] or (k if soll["namen"][k] == k else None)
-        try:
-            names = [name(x) for x in soll["names"][k]]
-            if besitzer is not None and besitzer not in ko and besitzer in neue:
-                raise KeyError(besitzer)
-        except KeyError:
-            continue
-        if besitzer in ko:
-            k2 = name_ = komb = ko[besitzer]
-        else:
-            k2, name_, komb = k, soll["namen"][k], soll["kombination"][k]
-        aus["schluessel"].append(k2)
-        aus["namen"][k2], aus["names"][k2], aus["kombination"][k2] = name_, names, komb
-    sch = {n: k for n, k in (soll["info_schluessel"] or {}).items() if n not in ko and n not in neue}
-    aus["info_schluessel"] = sch or None
-    ueb = {ko.get(n, n): a for n, a in (soll["info_ueberschrieben"] or {}).items() if n in ko or n not in neue}
-    aus["info_ueberschrieben"] = ueb or None
     return aus
 
 

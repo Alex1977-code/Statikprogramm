@@ -596,12 +596,8 @@ def test_nur_zugewiesene_lastfaelle():
     d["stellungen"] = [asdict(Stellung("S0", 0.0, "alt"))]
     d["format"] = 7
     m7 = Model.from_dict(d)
-    # seit R2-A2 (06.10.2026) unter den neuen Namen: „Wind“ heisst nach dem
-    # Laden LF2, und die Stellung nennt LF2
-    neu7 = (getattr(m7, "_umbenennung", None) or {}).get("lastfaelle") or {}
-    check("Datei vor Fassung 8: eine leere Zuordnung wird „alle Lastfälle“ (E6), unter den neuen Namen",
-          m7.stellungen[0].faelle == [neu7.get(x) for x in m.load_cases] == list(m7.load_cases)
-          and neu7.get("Wind") == "LF2", str(m7.stellungen[0].faelle))
+    check("Datei vor Fassung 8: eine leere Zuordnung wird „alle Lastfälle“ (E6)",
+          m7.stellungen[0].faelle == list(m.load_cases), str(m7.stellungen[0].faelle))
     check("… und das Laden sagt es", any("S0" in z for z in getattr(m7, "_ladehinweise", [])),
           str(getattr(m7, "_ladehinweise", None)))
     d["format"] = 8
@@ -622,9 +618,13 @@ def test_nur_zugewiesene_lastfaelle():
         json.dump(d, f)
     log = []
     mi = importers.import_file(pfad, log=log)
+    # das Importieren oeffnet die Datei: seit R2-A2 (06.10.2026) unter den
+    # neuen Namen - „Wind“ heisst danach LF2, die Stellung nennt LF2
+    neu7 = (getattr(mi, "_umbenennung", None) or {}).get("lastfaelle") or {}
     check("Importieren einer älteren Datei: alle Lastfälle (unter den neuen Namen, R2-A2) und der Hinweis "
           "im Protokoll",
-          mi.stellungen[0].faelle == [neu7.get(x) for x in m.load_cases]
+          mi.stellungen[0].faelle == [neu7.get(x) for x in m.load_cases] == list(mi.load_cases)
+          and neu7.get("Wind") == "LF2"
           and any(str(z).startswith("Hinweis: Stellung S0") for z in log), str(log[:3]))
     # Umbenennen und Loeschen fuehren die Liste mit (Gegenpruefung 02.10.2026:
     # nach E6 traegt jede Stellung einer aelteren Datei alle Namen, und ein

@@ -1,0 +1,3995 @@
+{
+"format": 8,
+"name": "Reibblock Umstellung",
+"meta": {
+ "projekt": "",
+ "bauteil": "",
+ "bearbeiter": "",
+ "auftraggeber": "",
+ "position": ""
+},
+"nodes": [
+ [
+  -0.5,
+  -0.5,
+  0.0
+ ],
+ [
+  -0.5,
+  0.0,
+  0.0
+ ],
+ [
+  -0.5,
+  0.5,
+  0.0
+ ],
+ [
+  0.0,
+  -0.5,
+  0.0
+ ],
+ [
+  0.0,
+  0.0,
+  0.0
+ ],
+ [
+  0.0,
+  0.5,
+  0.0
+ ],
+ [
+  0.5,
+  -0.5,
+  0.0
+ ],
+ [
+  0.5,
+  0.0,
+  0.0
+ ],
+ [
+  0.5,
+  0.5,
+  0.0
+ ],
+ [
+  -0.2,
+  -0.2,
+  0.0
+ ],
+ [
+  -0.2,
+  -0.2,
+  0.1
+ ],
+ [
+  -0.2,
+  -0.2,
+  0.2
+ ],
+ [
+  -0.2,
+  -0.2,
+  0.30000000000000004
+ ],
+ [
+  -0.2,
+  -0.2,
+  0.4
+ ],
+ [
+  -0.2,
+  -0.1,
+  0.0
+ ],
+ [
+  -0.2,
+  -0.1,
+  0.1
+ ],
+ [
+  -0.2,
+  -0.1,
+  0.2
+ ],
+ [
+  -0.2,
+  -0.1,
+  0.30000000000000004
+ ],
+ [
+  -0.2,
+  -0.1,
+  0.4
+ ],
+ [
+  -0.2,
+  0.0,
+  0.0
+ ],
+ [
+  -0.2,
+  0.0,
+  0.1
+ ],
+ [
+  -0.2,
+  0.0,
+  0.2
+ ],
+ [
+  -0.2,
+  0.0,
+  0.30000000000000004
+ ],
+ [
+  -0.2,
+  0.0,
+  0.4
+ ],
+ [
+  -0.2,
+  0.10000000000000003,
+  0.0
+ ],
+ [
+  -0.2,
+  0.10000000000000003,
+  0.1
+ ],
+ [
+  -0.2,
+  0.10000000000000003,
+  0.2
+ ],
+ [
+  -0.2,
+  0.10000000000000003,
+  0.30000000000000004
+ ],
+ [
+  -0.2,
+  0.10000000000000003,
+  0.4
+ ],
+ [
+  -0.2,
+  0.2,
+  0.0
+ ],
+ [
+  -0.2,
+  0.2,
+  0.1
+ ],
+ [
+  -0.2,
+  0.2,
+  0.2
+ ],
+ [
+  -0.2,
+  0.2,
+  0.30000000000000004
+ ],
+ [
+  -0.2,
+  0.2,
+  0.4
+ ],
+ [
+  -0.1,
+  -0.2,
+  0.0
+ ],
+ [
+  -0.1,
+  -0.2,
+  0.1
+ ],
+ [
+  -0.1,
+  -0.2,
+  0.2
+ ],
+ [
+  -0.1,
+  -0.2,
+  0.30000000000000004
+ ],
+ [
+  -0.1,
+  -0.2,
+  0.4
+ ],
+ [
+  -0.1,
+  -0.1,
+  0.0
+ ],
+ [
+  -0.1,
+  -0.1,
+  0.1
+ ],
+ [
+  -0.1,
+  -0.1,
+  0.2
+ ],
+ [
+  -0.1,
+  -0.1,
+  0.30000000000000004
+ ],
+ [
+  -0.1,
+  -0.1,
+  0.4
+ ],
+ [
+  -0.1,
+  0.0,
+  0.0
+ ],
+ [
+  -0.1,
+  0.0,
+  0.1
+ ],
+ [
+  -0.1,
+  0.0,
+  0.2
+ ],
+ [
+  -0.1,
+  0.0,
+  0.30000000000000004
+ ],
+ [
+  -0.1,
+  0.0,
+  0.4
+ ],
+ [
+  -0.1,
+  0.10000000000000003,
+  0.0
+ ],
+ [
+  -0.1,
+  0.10000000000000003,
+  0.1
+ ],
+ [
+  -0.1,
+  0.10000000000000003,
+  0.2
+ ],
+ [
+  -0.1,
+  0.10000000000000003,
+  0.30000000000000004
+ ],
+ [
+  -0.1,
+  0.10000000000000003,
+  0.4
+ ],
+ [
+  -0.1,
+  0.2,
+  0.0
+ ],
+ [
+  -0.1,
+  0.2,
+  0.1
+ ],
+ [
+  -0.1,
+  0.2,
+  0.2
+ ],
+ [
+  -0.1,
+  0.2,
+  0.30000000000000004
+ ],
+ [
+  -0.1,
+  0.2,
+  0.4
+ ],
+ [
+  0.0,
+  -0.2,
+  0.0
+ ],
+ [
+  0.0,
+  -0.2,
+  0.1
+ ],
+ [
+  0.0,
+  -0.2,
+  0.2
+ ],
+ [
+  0.0,
+  -0.2,
+  0.30000000000000004
+ ],
+ [
+  0.0,
+  -0.2,
+  0.4
+ ],
+ [
+  0.0,
+  -0.1,
+  0.0
+ ],
+ [
+  0.0,
+  -0.1,
+  0.1
+ ],
+ [
+  0.0,
+  -0.1,
+  0.2
+ ],
+ [
+  0.0,
+  -0.1,
+  0.30000000000000004
+ ],
+ [
+  0.0,
+  -0.1,
+  0.4
+ ],
+ [
+  0.0,
+  0.0,
+  0.0
+ ],
+ [
+  0.0,
+  0.0,
+  0.1
+ ],
+ [
+  0.0,
+  0.0,
+  0.2
+ ],
+ [
+  0.0,
+  0.0,
+  0.30000000000000004
+ ],
+ [
+  0.0,
+  0.0,
+  0.4
+ ],
+ [
+  0.0,
+  0.10000000000000003,
+  0.0
+ ],
+ [
+  0.0,
+  0.10000000000000003,
+  0.1
+ ],
+ [
+  0.0,
+  0.10000000000000003,
+  0.2
+ ],
+ [
+  0.0,
+  0.10000000000000003,
+  0.30000000000000004
+ ],
+ [
+  0.0,
+  0.10000000000000003,
+  0.4
+ ],
+ [
+  0.0,
+  0.2,
+  0.0
+ ],
+ [
+  0.0,
+  0.2,
+  0.1
+ ],
+ [
+  0.0,
+  0.2,
+  0.2
+ ],
+ [
+  0.0,
+  0.2,
+  0.30000000000000004
+ ],
+ [
+  0.0,
+  0.2,
+  0.4
+ ],
+ [
+  0.10000000000000003,
+  -0.2,
+  0.0
+ ],
+ [
+  0.10000000000000003,
+  -0.2,
+  0.1
+ ],
+ [
+  0.10000000000000003,
+  -0.2,
+  0.2
+ ],
+ [
+  0.10000000000000003,
+  -0.2,
+  0.30000000000000004
+ ],
+ [
+  0.10000000000000003,
+  -0.2,
+  0.4
+ ],
+ [
+  0.10000000000000003,
+  -0.1,
+  0.0
+ ],
+ [
+  0.10000000000000003,
+  -0.1,
+  0.1
+ ],
+ [
+  0.10000000000000003,
+  -0.1,
+  0.2
+ ],
+ [
+  0.10000000000000003,
+  -0.1,
+  0.30000000000000004
+ ],
+ [
+  0.10000000000000003,
+  -0.1,
+  0.4
+ ],
+ [
+  0.10000000000000003,
+  0.0,
+  0.0
+ ],
+ [
+  0.10000000000000003,
+  0.0,
+  0.1
+ ],
+ [
+  0.10000000000000003,
+  0.0,
+  0.2
+ ],
+ [
+  0.10000000000000003,
+  0.0,
+  0.30000000000000004
+ ],
+ [
+  0.10000000000000003,
+  0.0,
+  0.4
+ ],
+ [
+  0.10000000000000003,
+  0.10000000000000003,
+  0.0
+ ],
+ [
+  0.10000000000000003,
+  0.10000000000000003,
+  0.1
+ ],
+ [
+  0.10000000000000003,
+  0.10000000000000003,
+  0.2
+ ],
+ [
+  0.10000000000000003,
+  0.10000000000000003,
+  0.30000000000000004
+ ],
+ [
+  0.10000000000000003,
+  0.10000000000000003,
+  0.4
+ ],
+ [
+  0.10000000000000003,
+  0.2,
+  0.0
+ ],
+ [
+  0.10000000000000003,
+  0.2,
+  0.1
+ ],
+ [
+  0.10000000000000003,
+  0.2,
+  0.2
+ ],
+ [
+  0.10000000000000003,
+  0.2,
+  0.30000000000000004
+ ],
+ [
+  0.10000000000000003,
+  0.2,
+  0.4
+ ],
+ [
+  0.2,
+  -0.2,
+  0.0
+ ],
+ [
+  0.2,
+  -0.2,
+  0.1
+ ],
+ [
+  0.2,
+  -0.2,
+  0.2
+ ],
+ [
+  0.2,
+  -0.2,
+  0.30000000000000004
+ ],
+ [
+  0.2,
+  -0.2,
+  0.4
+ ],
+ [
+  0.2,
+  -0.1,
+  0.0
+ ],
+ [
+  0.2,
+  -0.1,
+  0.1
+ ],
+ [
+  0.2,
+  -0.1,
+  0.2
+ ],
+ [
+  0.2,
+  -0.1,
+  0.30000000000000004
+ ],
+ [
+  0.2,
+  -0.1,
+  0.4
+ ],
+ [
+  0.2,
+  0.0,
+  0.0
+ ],
+ [
+  0.2,
+  0.0,
+  0.1
+ ],
+ [
+  0.2,
+  0.0,
+  0.2
+ ],
+ [
+  0.2,
+  0.0,
+  0.30000000000000004
+ ],
+ [
+  0.2,
+  0.0,
+  0.4
+ ],
+ [
+  0.2,
+  0.10000000000000003,
+  0.0
+ ],
+ [
+  0.2,
+  0.10000000000000003,
+  0.1
+ ],
+ [
+  0.2,
+  0.10000000000000003,
+  0.2
+ ],
+ [
+  0.2,
+  0.10000000000000003,
+  0.30000000000000004
+ ],
+ [
+  0.2,
+  0.10000000000000003,
+  0.4
+ ],
+ [
+  0.2,
+  0.2,
+  0.0
+ ],
+ [
+  0.2,
+  0.2,
+  0.1
+ ],
+ [
+  0.2,
+  0.2,
+  0.2
+ ],
+ [
+  0.2,
+  0.2,
+  0.30000000000000004
+ ],
+ [
+  0.2,
+  0.2,
+  0.4
+ ]
+],
+"elements": [
+ {
+  "typ": "shell4",
+  "nodes": [
+   0,
+   3,
+   4,
+   1
+  ],
+  "mat": "Starr",
+  "sec": "t = 50 mm",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "shell4",
+  "nodes": [
+   1,
+   4,
+   5,
+   2
+  ],
+  "mat": "Starr",
+  "sec": "t = 50 mm",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "shell4",
+  "nodes": [
+   3,
+   6,
+   7,
+   4
+  ],
+  "mat": "Starr",
+  "sec": "t = 50 mm",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "shell4",
+  "nodes": [
+   4,
+   7,
+   8,
+   5
+  ],
+  "mat": "Starr",
+  "sec": "t = 50 mm",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   9,
+   34,
+   39,
+   14,
+   10,
+   35,
+   40,
+   15
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   10,
+   35,
+   40,
+   15,
+   11,
+   36,
+   41,
+   16
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   11,
+   36,
+   41,
+   16,
+   12,
+   37,
+   42,
+   17
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   12,
+   37,
+   42,
+   17,
+   13,
+   38,
+   43,
+   18
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   14,
+   39,
+   44,
+   19,
+   15,
+   40,
+   45,
+   20
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   15,
+   40,
+   45,
+   20,
+   16,
+   41,
+   46,
+   21
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   16,
+   41,
+   46,
+   21,
+   17,
+   42,
+   47,
+   22
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   17,
+   42,
+   47,
+   22,
+   18,
+   43,
+   48,
+   23
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   19,
+   44,
+   49,
+   24,
+   20,
+   45,
+   50,
+   25
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   20,
+   45,
+   50,
+   25,
+   21,
+   46,
+   51,
+   26
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   21,
+   46,
+   51,
+   26,
+   22,
+   47,
+   52,
+   27
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   22,
+   47,
+   52,
+   27,
+   23,
+   48,
+   53,
+   28
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   24,
+   49,
+   54,
+   29,
+   25,
+   50,
+   55,
+   30
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   25,
+   50,
+   55,
+   30,
+   26,
+   51,
+   56,
+   31
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   26,
+   51,
+   56,
+   31,
+   27,
+   52,
+   57,
+   32
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   27,
+   52,
+   57,
+   32,
+   28,
+   53,
+   58,
+   33
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   34,
+   59,
+   64,
+   39,
+   35,
+   60,
+   65,
+   40
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   35,
+   60,
+   65,
+   40,
+   36,
+   61,
+   66,
+   41
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   36,
+   61,
+   66,
+   41,
+   37,
+   62,
+   67,
+   42
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   37,
+   62,
+   67,
+   42,
+   38,
+   63,
+   68,
+   43
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   39,
+   64,
+   69,
+   44,
+   40,
+   65,
+   70,
+   45
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   40,
+   65,
+   70,
+   45,
+   41,
+   66,
+   71,
+   46
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   41,
+   66,
+   71,
+   46,
+   42,
+   67,
+   72,
+   47
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   42,
+   67,
+   72,
+   47,
+   43,
+   68,
+   73,
+   48
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   44,
+   69,
+   74,
+   49,
+   45,
+   70,
+   75,
+   50
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   45,
+   70,
+   75,
+   50,
+   46,
+   71,
+   76,
+   51
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   46,
+   71,
+   76,
+   51,
+   47,
+   72,
+   77,
+   52
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   47,
+   72,
+   77,
+   52,
+   48,
+   73,
+   78,
+   53
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   49,
+   74,
+   79,
+   54,
+   50,
+   75,
+   80,
+   55
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   50,
+   75,
+   80,
+   55,
+   51,
+   76,
+   81,
+   56
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   51,
+   76,
+   81,
+   56,
+   52,
+   77,
+   82,
+   57
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   52,
+   77,
+   82,
+   57,
+   53,
+   78,
+   83,
+   58
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   59,
+   84,
+   89,
+   64,
+   60,
+   85,
+   90,
+   65
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   60,
+   85,
+   90,
+   65,
+   61,
+   86,
+   91,
+   66
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   61,
+   86,
+   91,
+   66,
+   62,
+   87,
+   92,
+   67
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   62,
+   87,
+   92,
+   67,
+   63,
+   88,
+   93,
+   68
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   64,
+   89,
+   94,
+   69,
+   65,
+   90,
+   95,
+   70
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   65,
+   90,
+   95,
+   70,
+   66,
+   91,
+   96,
+   71
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   66,
+   91,
+   96,
+   71,
+   67,
+   92,
+   97,
+   72
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   67,
+   92,
+   97,
+   72,
+   68,
+   93,
+   98,
+   73
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   69,
+   94,
+   99,
+   74,
+   70,
+   95,
+   100,
+   75
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   70,
+   95,
+   100,
+   75,
+   71,
+   96,
+   101,
+   76
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   71,
+   96,
+   101,
+   76,
+   72,
+   97,
+   102,
+   77
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   72,
+   97,
+   102,
+   77,
+   73,
+   98,
+   103,
+   78
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   74,
+   99,
+   104,
+   79,
+   75,
+   100,
+   105,
+   80
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   75,
+   100,
+   105,
+   80,
+   76,
+   101,
+   106,
+   81
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   76,
+   101,
+   106,
+   81,
+   77,
+   102,
+   107,
+   82
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   77,
+   102,
+   107,
+   82,
+   78,
+   103,
+   108,
+   83
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   84,
+   109,
+   114,
+   89,
+   85,
+   110,
+   115,
+   90
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   85,
+   110,
+   115,
+   90,
+   86,
+   111,
+   116,
+   91
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   86,
+   111,
+   116,
+   91,
+   87,
+   112,
+   117,
+   92
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   87,
+   112,
+   117,
+   92,
+   88,
+   113,
+   118,
+   93
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   89,
+   114,
+   119,
+   94,
+   90,
+   115,
+   120,
+   95
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   90,
+   115,
+   120,
+   95,
+   91,
+   116,
+   121,
+   96
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   91,
+   116,
+   121,
+   96,
+   92,
+   117,
+   122,
+   97
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   92,
+   117,
+   122,
+   97,
+   93,
+   118,
+   123,
+   98
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   94,
+   119,
+   124,
+   99,
+   95,
+   120,
+   125,
+   100
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   95,
+   120,
+   125,
+   100,
+   96,
+   121,
+   126,
+   101
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   96,
+   121,
+   126,
+   101,
+   97,
+   122,
+   127,
+   102
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   97,
+   122,
+   127,
+   102,
+   98,
+   123,
+   128,
+   103
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   99,
+   124,
+   129,
+   104,
+   100,
+   125,
+   130,
+   105
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   100,
+   125,
+   130,
+   105,
+   101,
+   126,
+   131,
+   106
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   101,
+   126,
+   131,
+   106,
+   102,
+   127,
+   132,
+   107
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "hex8",
+  "nodes": [
+   102,
+   127,
+   132,
+   107,
+   103,
+   128,
+   133,
+   108
+  ],
+  "mat": "S235",
+  "sec": null,
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ }
+],
+"tetp_kantenmitten": [],
+"materials": {
+ "S235": {
+  "name": "S235",
+  "E": 210000000000.0,
+  "nu": 0.3,
+  "rho": 7850.0,
+  "alpha": 1.2e-05,
+  "fy": 235000000.0,
+  "fu": 360000000.0,
+  "grade": "S235",
+  "fy_dicke": [],
+  "fu_dicke": []
+ },
+ "Starr": {
+  "name": "Starr",
+  "E": 210000000000000.0,
+  "nu": 0.3,
+  "rho": 7850.0,
+  "alpha": 1.2e-05,
+  "fy": null,
+  "fu": null,
+  "grade": "",
+  "fy_dicke": [],
+  "fu_dicke": []
+ }
+},
+"sections": {},
+"shells": {
+ "t = 50 mm": {
+  "name": "t = 50 mm",
+  "t": 0.05,
+  "lagen": [],
+  "formulierung": ""
+ }
+},
+"supports": [
+ {
+  "node": 0,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 1,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 2,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 3,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 4,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 5,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 6,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 7,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 8,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ }
+],
+"line_supports": [],
+"surface_supports": [],
+"lines": [],
+"hinges": [],
+"load_cases": [
+ {
+  "name": "Eigengewicht",
+  "category": "G",
+  "description": "Eigengewicht / staendige Lasten",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 1,
+  "bezeichnung": "",
+  "grundlast": true,
+  "nodal_loads": [
+   {
+    "node": 13,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 18,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 23,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 28,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 33,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 38,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 43,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 48,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 53,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 58,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 63,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 68,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 73,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 78,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 83,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 88,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 93,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 98,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 103,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 108,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 113,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 118,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 123,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 128,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 133,
+    "F": [
+     0.0,
+     0.0,
+     -3600.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "beam_loads": [],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "Hub 1",
+  "category": "Q",
+  "description": "",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [
+   {
+    "node": 13,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 18,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 23,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 28,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 33,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 38,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 43,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 48,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 53,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 58,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 63,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 68,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 73,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 78,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 83,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 88,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 93,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 98,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 103,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 108,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 113,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 118,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 123,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 128,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 133,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "beam_loads": [],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "LF5",
+  "category": "Q",
+  "description": "",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [
+   {
+    "node": 13,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 18,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 23,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 28,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 33,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 38,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 43,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 48,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 53,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 58,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 63,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 68,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 73,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 78,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 83,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 88,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 93,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 98,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 103,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 108,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 113,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 118,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 123,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 128,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 133,
+    "F": [
+     800.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "beam_loads": [],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "H3",
+  "category": "Q",
+  "description": "",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [
+   {
+    "node": 13,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 18,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 23,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 28,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 33,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 38,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 43,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 48,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 53,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 58,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 63,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 68,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 73,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 78,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 83,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 88,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 93,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 98,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 103,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 108,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 113,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 118,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 123,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 128,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node": 133,
+    "F": [
+     880.0000000000001,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "beam_loads": [],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ }
+],
+"active_case": "Eigengewicht",
+"combinations": [
+ {
+  "name": "Kontakt EK",
+  "factors": {},
+  "typ": "ULS",
+  "description": "Ergebniskombination",
+  "leading": "",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [
+   {
+    "Eigengewicht": 1.0,
+    "Hub 1": 1.0
+   },
+   {
+    "Eigengewicht": 1.0,
+    "H3": 1.0
+   }
+  ],
+  "nummer": 0,
+  "art": "EK",
+  "bezeichnung": "",
+  "erzeugt": "",
+  "erzeugt_merkmal": ""
+ }
+],
+"fatigue_loads": [
+ {
+  "name": "E",
+  "case_max": "",
+  "case_min": null,
+  "cycles": null,
+  "factor": 1.0,
+  "folge": [
+   "Hub 1",
+   "LF5",
+   "H3"
+  ],
+  "wiederholungen": 100000.0,
+  "zaehlung": "spanne"
+ }
+],
+"members": [],
+"joints": [],
+"verformungsgrenzen": [],
+"beulfelder": [],
+"volumenbereiche": [],
+"lasteinleitungen": [],
+"kontaktbedingungen": [],
+"flaechen": [],
+"koerper": [],
+"bericht": [],
+"netz": {
+ "ziellaenge": 0.5,
+ "knoten_linie": 0.001,
+ "stabteilung": 10,
+ "seitenverhaeltnis": 1.8,
+ "form": 2,
+ "abgebildet": false,
+ "ordnung": 1,
+ "splitter": 0.1,
+ "quelle": "",
+ "dichte": "mittel",
+ "intelligent": true,
+ "h_min": 0.0,
+ "h_max": 0.0,
+ "max_elemente": 100000,
+ "nachvernetzen": true,
+ "vernetzer": "eigener",
+ "nachbessern": "keine",
+ "mmg_pfad": "",
+ "dickenmass": false,
+ "teilung_uebersteuern": true,
+ "verfeinerungen": [],
+ "feldpunkte": [],
+ "koerper_h": {},
+ "sweep": "aus",
+ "pyramiden": false,
+ "nebenflaechen_grob": false,
+ "stufe": ""
+},
+"design": {
+ "gamma_M0": 1.0,
+ "gamma_M1": 1.1,
+ "gamma_M2": 1.25,
+ "gamma_Ff": 1.0,
+ "interaction_method": "B",
+ "lt_method": "general",
+ "national_annex": "DE",
+ "combination_rule": "6.10",
+ "xi": 0.85,
+ "gamma_G_sup": 1.35,
+ "gamma_G_inf": 1.0,
+ "gamma_Q": 1.5,
+ "gamma_Q_fav": 0.0,
+ "stations": 9,
+ "ermuedung_bezugsjahre": 0.0,
+ "ermuedung_lastspiele": 2000000.0,
+ "ermuedung_kontakt_einfrieren": true,
+ "ermuedung_volumen": "knoten",
+ "theorie2": "aus",
+ "imperfektionen": true,
+ "th2_plastisch": false,
+ "th2_richtung": null,
+ "th2_alle_vorkruemmungen": false,
+ "th3_schritte": 10
+},
+"plastizitaet": {
+ "an": false,
+ "verfestigung": 0.01,
+ "laststufen": 3,
+ "iterationen": 25,
+ "toleranz": 0.001,
+ "verfahren": "tangente",
+ "dicke_punkte": 5,
+ "kontakt": "verschachtelt"
+},
+"knotendilatation": false,
+"randspannung": "frei",
+"contact_supports": [],
+"gap_elements": [],
+"kopplungen": [],
+"contact_pairs": [
+ {
+  "name": "Block/Platte",
+  "slave_nodes": [
+   9,
+   14,
+   19,
+   24,
+   29,
+   34,
+   39,
+   44,
+   49,
+   54,
+   59,
+   64,
+   69,
+   74,
+   79,
+   84,
+   89,
+   94,
+   99,
+   104,
+   109,
+   114,
+   119,
+   124,
+   129
+  ],
+  "master_elements": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "master_faces": [],
+  "stiffness": 0.0,
+  "mu": 0.3,
+  "gap": 0.0,
+  "search_radius": null,
+  "flip_normal": false,
+  "zug": false,
+  "haften": false,
+  "anliegend": false,
+  "abdeckung": 0.0,
+  "gegenkoerper": [],
+  "spiel": 0.0,
+  "grenzpressung": 0.0,
+  "knotenflaechen": {},
+  "rand_knoten": []
+ }
+],
+"getrennte_knoten": {},
+"kontakt_ausnahmen": [],
+"importhinweise": [],
+"punktmassen": [],
+"daempfer": [],
+"federn": [],
+"starrkoerper": [],
+"grenzschichten": [],
+"subsysteme": [],
+"layer": [],
+"unterlagen": [],
+"situationen": [],
+"stellungen": [],
+"wasserdruecke": [],
+"winde": [],
+"schwingungen": [],
+"schweissnaehte": [],
+"bemassungen": [],
+"bemassung_einstellung": null,
+"werteskala": null,
+"bericht_rahmen": null,
+"einheiten": {
+ "kraft": "kN",
+ "laenge": "m",
+ "verformung": "mm",
+ "spannung": "N/mm\u00b2",
+ "winkel": "\u00b0",
+ "temperatur": "K",
+ "nk_kraft": 2,
+ "nk_laenge": 3,
+ "nk_verformung": 2,
+ "nk_spannung": 1,
+ "nk_winkel": 1,
+ "nk_ausnutzung": 3,
+ "nk_last": 2
+}
+}

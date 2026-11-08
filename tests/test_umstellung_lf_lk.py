@@ -49,7 +49,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -107,10 +106,9 @@ def _roh(p) -> dict:
 
 def _ohne_umstellung(quelle):
     """Das Modell mit seinen alten Namen - so, wie es ein Programm vor A2
-    liest (die Umstellung abgeschaltet)."""
+    liest (ohne die Umstellung beim Oeffnen)."""
     from statik3d.model import Model
-    with mock.patch.object(Model, "_namen_umstellen", lambda self, fassung=0: None, create=True):
-        return Model.load(quelle) if isinstance(quelle, str) else Model.from_dict(quelle)
+    return Model.load(quelle, umstellen=False) if isinstance(quelle, str) else Model.from_dict(quelle)
 
 
 def _tabellen(m):
@@ -143,8 +141,9 @@ def _form_ok(m) -> tuple:
         if not t or lc.nummer != int(t.group(1)):
             fehler.append(f"{n}/Nr. {lc.nummer}")
     for n, c in m.combinations.items():
-        t = re.fullmatch(r"(LK|EK)([1-9]\d*)", n)
-        if not t or c.art != t.group(1) or c.nummer != int(t.group(2)):
+        # nach Situation geteilt: „EK5 (Grundstellung)“ mit der eigenen Situation
+        t = re.fullmatch(r"(LK|EK)([1-9]\d*)(?: \((.+)\))?", n)
+        if not t or c.art != t.group(1) or c.nummer != int(t.group(2))                 or (t.group(3) is not None and t.group(3) != (c.situation or "Grundstellung")):
             fehler.append(f"{n}/{c.art}{c.nummer}")
     fehler += m.doppelte_nummern()
     return not fehler, ", ".join(fehler[:6])
@@ -307,7 +306,7 @@ def test_u1_dateien_in_tests_daten():
     S.replace_model(st, _roh(PRUEFKOERPER))
     weblog = " | ".join(st.log)
     check("U1 Browser: ein hochgeladenes altes Modell wird umgestellt, das Protokoll nennt die Tabelle",
-          "Hinweis: Namen umgestellt (Datei der Fassung 8)" in weblog and "S → LF10" in weblog
+          "Hinweis: Namen umgestellt auf LF/LK/EK (Datei der Fassung 8)" in weblog and "S → LF10" in weblog
           and "LF10" in st.model.load_cases, f"{len(st.log)} Zeilen")
     # im Fenster: das Protokoll beim Oeffnen
     w, app = _fenster()
@@ -461,7 +460,7 @@ def test_u2_cbg_und_pruefkoerper():
     for x in d["load_cases"]:
         x.pop("bezeichnung", None)
         x["nummer"] = 0
-    m = Model.from_dict(json.loads(json.dumps(d)))
+    m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
     lf, ko = _tabellen(m)
     erzeugt = [ko[n] for n in ("GZT1", "GZT2", "GZT3", "GZT4", "GZG43", "GZG44", "GZG45", "GZG46")]
     eigen = [n for n in m.combinations if n not in erzeugt]
@@ -677,7 +676,7 @@ def test_u4_ergebnisdateien():
     eintraege = [w.cb_result.itemData(i) for i in range(w.cb_result.count())]
     check("U4 Fenster: Ergebnisse geladen, Auswahl mit neuen Namen, Hinweis im Protokoll",
           ok and w.analysis is not None and ("combo", ko["K1"]) in [tuple(e) for e in eintraege if e]
-          and "Ergebnisse aus einer Datei vor Fassung 9" in log,
+          and "Ergebnisse unter den beim Öffnen umgestellten Namen geladen" in log,
           str([e for e in eintraege if e][:4]))
     w.save_model()
     app.processEvents()
@@ -687,7 +686,7 @@ def test_u4_ergebnisdateien():
     log2 = w.log.toPlainText()
     check("U4 Fenster: gespeichert und wieder geöffnet - Ergebnisse geladen, nichts mehr umgestellt",
           ok2 and w.analysis is not None and list(w.analysis.combinations) == list(an.combinations)
-          and "Namen umgestellt" not in log2 and "vor Fassung 9" not in log2
+          and "Namen umgestellt" not in log2 and "umgestellten Namen" not in log2
           and "umstellung" not in k_neu.info, f"{list(w.analysis.combinations)[:4] if w.analysis else None}")
 
     # alte Ergebnisdatei neben einem Modell der Fassung 9: verworfen statt fremder Namen
@@ -858,14 +857,14 @@ def test_u5_kreuzende_namen():
                        ("E", {}, ({"A": 1.0}, {"LF2": 1.5, "LF1": 1.0}))],
                       [("F", "A", "LF2", ()), ("V", "", None, ("A", "LF2", "LF1"))],
                       (["A", "LF1"], ["K1", "E"]), "A", ("case:A", "combo:K1", "case:LF2"), "A")
-    m = Model.from_dict(json.loads(json.dumps(d)))
+    m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
     check("U5 „LF2“, „A“, „LF1“: LF2 und LF1 bleiben, A wird LF3 (nicht LF2); K1 → LK1, E → EK1",
           list(m.load_cases) == ["LF2", "LF3", "LF1"] and m.load_cases["LF3"].bezeichnung == "A"
           and list(m.combinations) == ["LK1", "EK1"], f"{list(m.load_cases)} {list(m.combinations)}")
     check("U5 … kein Verweis zeigt auf einen anderen Lastfall (Faktoren, Alternativen, Ermüdung, Stellung, "
           "Bericht, Wind, aktiver Lastfall)", _ziele_nachher(m) == _ziele(d),
           str(m.combinations["LK1"].factors))
-    m2 = Model.from_dict(json.loads(json.dumps(d)))
+    m2 = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
     check("U5 … stabil: zweimal geladen dieselbe Vergabe",
           list(m2.load_cases) == list(m.load_cases) and list(m2.combinations) == list(m.combinations)
           and _ziele_nachher(m2) == _ziele_nachher(m), "")
@@ -874,7 +873,7 @@ def test_u5_kreuzende_namen():
     # Zwischennamen ohne Kreuzung
     d = _altes_modell(["LF1", "A"], [("LF2", {"A": 1.5}, ()), ("K9", {"LF1": 1.0}, ())],
                       [("F", "LF2", None, ())], (["A"], ["LF2"]), "A", ("combo:LF2", "case:A"), "A")
-    m = Model.from_dict(json.loads(json.dumps(d)))
+    m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
     check("U5 Kombination „LF2“ neben Lastfall A, der LF2 wird: Kombination → LK1, A → LF2, ohne Kreuzung",
           list(m.load_cases) == ["LF1", "LF2"] and list(m.combinations) == ["LK1", "LK2"]
           and m.combinations["LK1"].factors == {"LF2": 1.5} and m.fatigue_loads["F"].case_max == "LK1"
@@ -883,7 +882,7 @@ def test_u5_kreuzende_namen():
     # andere Schreibweisen: „lf2“ neben „LF2“, „LF 3“
     d = _altes_modell(["lf2", "LF2", "LF 3", "B"], [("lk1", {"lf2": 1.0, "LF2": 2.0}, ()), ("LK1", {"B": 1.0}, ())],
                       aktiv="lf2", bericht=("case:lf2", "case:LF 3"))
-    m = Model.from_dict(json.loads(json.dumps(d)))
+    m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
     check("U5 „lf2“ neben „LF2“, „LF 3“: LF2 bleibt, LF 3 → LF3, lf2 und B bekommen die nächsten; lk1 neben LK1",
           list(m.load_cases) == ["LF4", "LF2", "LF3", "LF5"] and list(m.combinations) == ["LK2", "LK1"]
           and m.load_cases["LF4"].bezeichnung == "lf2" and _ziele_nachher(m) == _ziele(d),
@@ -892,7 +891,7 @@ def test_u5_kreuzende_namen():
     d = _altes_modell(["LF1", "X"], [("X", {"LF1": 0.2}, ()), ("E", {}, ({"LF1": 1.0}, {"X": 1.5})),
                                      ("E [2]", {"LF1": 0.1}, ())],
                       [("FX", "X", None, ())])
-    m = Model.from_dict(json.loads(json.dumps(d)))
+    m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
     lf, ko = _tabellen(m)
     hinweise = " ".join(m._ladehinweise)
     check("U5 Lastfall und Kombination „X“, Kombination „E [2]“ neben EK E: getrennt umbenannt, "
@@ -925,7 +924,7 @@ def test_u5_kreuzende_namen():
         bericht = [f"case:{zufall.choice(lfs)}"] + ([f"combo:{kos[0][0]}"] if kos else [])
         d = _altes_modell(lfs, kos, erm, stellung, zufall.choice(lfs), bericht, zufall.choice(lfs))
         try:
-            m = Model.from_dict(json.loads(json.dumps(d)))
+            m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
         except Exception as ex:      # noqa: BLE001
             fehler.append(f"Lauf {lauf}: {type(ex).__name__} {ex} - {lfs} {[k[0] for k in kos]}")
             continue
@@ -935,7 +934,7 @@ def test_u5_kreuzende_namen():
         elif _ziele_nachher(m) != _ziele(d):
             fehler.append(f"Lauf {lauf}: Verweis zeigt woanders hin - {lfs} {[k[0] for k in kos]}")
         else:
-            m2 = Model.from_dict(m.to_dict())
+            m2 = Model.from_dict(m.to_dict(), umstellen=True)
             if getattr(m2, "_umbenennung", None) is not None or list(m2.load_cases) != list(m.load_cases):
                 fehler.append(f"Lauf {lauf}: Fassung 9 erneut umgestellt")
             arten = {n: c.art for n, c in m.combinations.items()}
@@ -969,7 +968,7 @@ def test_u6_rechenarbeiter():
     check("U6 Arbeiter (solve_case, solve_combination, solve_all) rechnen unter den Namen der Hauptsitzung, "
           "ohne Umstellung und ohne Hinweis",
           r_lf.name == "W_links" and r_k.name == "GZT3" and "Namen umgestellt" not in zusammen
-          and "vor Fassung 9" not in zusammen, f"{r_lf.name} {r_k.name}")
+          and "umgestellten Namen" not in zusammen, f"{r_lf.name} {r_k.name}")
     # Arbeiter mit einem Modell aus einer alten Datei: die Hauptsitzung hat
     # umgestellt, der Arbeiter bekommt Fassung 9 und rechnet unter LF/LK
     alt = Model.load(PRUEFKOERPER)
@@ -1051,12 +1050,418 @@ def test_u8_beispiele():
               f"{namen[0][:5]} {namen[1][:2]}" + (f"; anders: {anders[:4]}" if anders else ""))
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung von 1fea7af (06.10.2026): V1 bis V8,
+# S3 (Mutanten), S4 (Protokoll)
+# --------------------------------------------------------------------------
+KONTAKT = os.path.join(DATEN, "umstellung_ff99eb7", "kontakt.json")
+
+
+def _alte_namen_in_meldungen(meldungen, m) -> list:
+    """check()-Meldungen mit den alten Namen: neue Namen in Anfuehrung zurueck
+    ueber die Tabelle, „verwaist: “ weg - so vergleichbar mit dem Stand vor
+    der Umstellung."""
+    lf, ko = _tabellen(m)
+    rueck = {b: a for a, b in list(lf.items()) + list(ko.items())}
+    return sorted(re.sub(r"'([^']*)'", lambda t: "'" + rueck.get(t.group(1), t.group(1)) + "'", z)
+                  .replace(m.VERWAIST, "") for z in meldungen)
+
+
+def _verwaist_dict() -> dict:
+    """Ein altes Modell (Fassung 8) mit Verweisen auf geloeschte Objekte, wie
+    verwaist_test.py der Gegenpruefung: Lastfall LF2 mit Berichtsbild und
+    Wind angelegt und wieder geloescht; Kombination LK1 mit Ermuedungslast,
+    Bild und Stellung angelegt und wieder geloescht (wie die Oberflaeche:
+    del); dazu eine Kombination K9 mit dem nie angelegten Lastfall LF3."""
+    from statik3d.examples_lib import build_example
+    from statik3d.model import Combination, FatigueLoad, Berichtseintrag
+    from statik3d.wind import Wind
+    from statik3d.bridges.positions import Stellung
+    m = build_example("hall")
+    m.combinations = {n: c for n, c in m.combinations.items() if n in ("GZT1", "GZT2")}
+    m.add_load_case("LF2", "Q", "Probe", activate=False)
+    m.load_node(0, Fz=-1.0, case="LF2")
+    m.bericht.append(Berichtseintrag("Bild LF2", "case:LF2", "Verschiebung",
+                                     beschriftung="Lastfall LF2 · Verschiebung"))
+    m.winde["W1"] = Wind("W1", lastfall="LF2", staebe=["Riegel"])
+    m.remove_load_case("LF2")
+    m.combinations["LK1"] = Combination("LK1", {"S": 1.0}, "FAT", "Schnee als Ermüdung")
+    m.fatigue_loads["FS"] = FatigueLoad("FS", "LK1", None, cycles=1e5)
+    m.bericht.append(Berichtseintrag("Bild LK1", "combo:LK1", "Verschiebung",
+                                     beschriftung="Kombination LK1 · Verschiebung"))
+    m.stellungen.append(Stellung("S1", 0.0, "zu", faelle=["LF1"], kombinationen=["LK1"]))
+    del m.combinations["LK1"]
+    m.combinations["K9"] = Combination("K9", {"LF1": 1.0, "LF3": 2.0}, "ULS", "mit fehlendem LF3")
+    d = m.to_dict()
+    d["format"] = 8
+    return json.loads(json.dumps(d))
+
+
+def test_v1_verwaiste_verweise():
+    """F1: ein Verweis auf ein geloeschtes Objekt mit einem Namen der Form
+    LF<n>/LK<n> wurde nach der Umstellung still gueltig - Ermuedung FS zeigte
+    auf GZT1, Wind W1 schrieb in den Schneelastfall."""
+    from statik3d.model import Model
+    from statik3d import wind
+    d = _verwaist_dict()
+    vor = Model.from_dict(json.loads(json.dumps(d)))
+    m = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
+    meld_vor = sorted(z for z in vor.check() if z.startswith(("FEHLER", "WARNUNG")))
+    meld_nach = _alte_namen_in_meldungen([z for z in m.check() if z.startswith(("FEHLER", "WARNUNG"))], m)
+    check("V1 check() meldet dieselben FEHLER und WARNUNGEN wie vor der Umstellung (Namen zurückgeführt)",
+          meld_vor == meld_nach and any("'LK1'" in z for z in meld_vor),
+          f"{len(meld_vor)} Meldungen; anders: {sorted(set(meld_vor) ^ set(meld_nach))[:2]}")
+    v = m.VERWAIST
+    check("V1 jeder verwaiste Verweis heißt „verwaist: …“ (Ermüdung, Stellung, Bild, Wind, Faktor)",
+          m.fatigue_loads["FS"].case_max == v + "LK1" and m.stellungen[0].kombinationen == [v + "LK1"]
+          and [e.quelle for e in m.bericht][-2:] == [f"case:{v}LF2", f"combo:{v}LK1"]
+          and m.winde["W1"].lastfall == v + "LF2"
+          and set(m.combinations[m._umbenennung["kombinationen"]["K9"]].factors) == {"LF1", v + "LF3"},
+          f"FS {m.fatigue_loads['FS'].case_max!r}, Wind {m.winde['W1'].lastfall!r}")
+    check("V1 … der Name gehört keinem Objekt, die neuen LF2, LK1 bleiben unberührt",
+          not any(n.startswith(v) for n in list(m.load_cases) + list(m.combinations))
+          and "LF2" in m.load_cases and "LK1" in m.combinations, str(list(m.load_cases)))
+    check("V1 … das Protokoll nennt die verwaisten Verweise",
+          any("verwaist" in z and "FS" in z for z in m._ladehinweise), "")
+    vorher = {n: lc.n_loads for n, lc in m.load_cases.items()}
+    wind.lasten_erzeugen(m, m.winde["W1"])
+    nachher = {n: lc.n_loads for n, lc in m.load_cases.items()}
+    fremd = [n for n in vorher if nachher[n] != vorher[n]]
+    check("V1 Wind W1 schreibt in einen eigenen Lastfall, in keinen fremden (vorher: in den Schneelastfall)",
+          not fremd and m.winde["W1"].lastfall not in vorher and nachher[m.winde["W1"].lastfall] > 0,
+          f"geändert {fremd}, Wind in {m.winde['W1'].lastfall!r}")
+
+
+def test_v2_anhaengen():
+    """F2: beim Anhaengen wird die Quelle nicht umgestellt - umgestellt
+    legte anhaengen ihre LF1/LF2 mit denen des Ziels zusammen."""
+    from statik3d.model import Model
+    from statik3d import importers
+    q = Model("Quelle")
+    a, b = q.add_node(10, 0, 0), q.add_node(12, 0, 0)
+    q.lastfall_umbenennen("LF1", "G")
+    q.load_node(a, Fz=-1000.0, case="G")
+    q.add_load_case("W", "W", "Wind", activate=False)
+    q.load_node(b, Fx=500.0, case="W")
+    d = q.to_dict()
+    d["format"] = 8
+    pfad = os.path.join(tempfile.mkdtemp(prefix="statik3d_umstellung_anh_"), "quelle.json")
+    with open(pfad, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+    z = Model("Ziel")
+    n0, n1 = z.add_node(0, 0, 0), z.add_node(2, 0, 0)
+    z.load_node(n0, Fz=-7000.0, case="LF1")
+    z.add_load_case("LF2", "Q", "Nutzlast", activate=False)
+    z.load_node(n1, Fz=-3000.0, case="LF2")
+    log = []
+    importers.import_file(pfad, model=z, log=log)
+    lasten = {n: sorted(round(nl.F[0] + nl.F[2]) for nl in lc.nodal_loads) for n, lc in z.load_cases.items()}
+    check("V2 Anhängen einer alten Datei: vier getrennte Lastfälle LF1, LF2, G, W wie vor A2",
+          lasten == {"LF1": [-7000], "LF2": [-3000], "G": [-1000], "W": [500]}
+          and not any("zusammengelegt" in z_ and "davon" in z_ and "(davon 0" not in z_ for z_ in log),
+          str(lasten))
+
+
+def test_v3_ausloeser():
+    """L3: umgestellt wird beim Oeffnen einer Datei, gleich welcher Fassung -
+    auch Fassung 9 mit freien Namen; from_dict ohne Wunsch, Rechenarbeiter
+    und Kopien nie."""
+    from statik3d.model import Model, Combination
+    from statik3d.examples_lib import build_example
+    from statik3d import jobs
+    m = build_example("frame")
+    m.add_load_case("W", "W", "Wind von Hand", activate=False, nummer=5)
+    m.load_node(1, Fx=1000.0, case="W")
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.35, "W": 1.5}, "ULS", "von Hand")
+    m.combinations["Bem"] = Combination("Bem", {}, "ULS", "EK von Hand", alternativen=[{"LF1": 1.35}, {"W": 1.5}])
+    pfad = os.path.join(tempfile.mkdtemp(prefix="statik3d_umstellung_f9_"), "hand.json")
+    m.save(pfad)
+    m9 = Model.load(pfad)
+    check("V3 Fassung 9 mit freien Namen wird beim Öffnen umgestellt (W mit Nr. 5 → LF5, K1 → LK1, Bem → EK1)",
+          _roh(pfad)["format"] == 9 and list(m9.load_cases) == ["LF1", "LF5"]
+          and list(m9.combinations) == ["LK1", "EK1"] and m9._umbenennung["geaendert"]
+          and any("Namen umgestellt" in z for z in m9._ladehinweise),
+          f"{list(m9.load_cases)} {list(m9.combinations)}")
+    roh = Model.from_dict(_roh(pfad))
+    kopie = m9.copy()
+    check("V3 from_dict ohne Wunsch und eine Kopie stellen nichts um",
+          list(roh.load_cases) == ["LF1", "W"] and roh._umbenennung is None and not roh._ladehinweise
+          and list(kopie.load_cases) == list(m9.load_cases), f"{list(roh.load_cases)}")
+    r = jobs._job_solve_combination(m.to_dict(), "K1")
+    check("V3 Rechenarbeiter mit freien Namen im Speicher stellt nicht um", r.name == "K1", r.name)
+    d = m.to_dict()
+    d["format"] = 8
+    d["combinations"].append({"name": "Bemessung GZT", "factors": {"LF1": 1.35}, "typ": "ULS",
+                              "description": "Bemessung GZT (Ergebniskombination)", "alternativen": []})
+    mr = Model.from_dict(d, umstellen=True)
+    c = mr.combinations[mr._umbenennung["kombinationen"]["Bemessung GZT"]]
+    check("V3 eine als Summe gespeicherte RFEM-Ergebniskombination („(Ergebniskombination)“) wird EK",
+          c.art == "EK" and c.name.startswith("EK"), f"{c.name} {c.art}")
+    m2 = Model.load(pfad)
+    m2.save(pfad)
+    m3 = Model.load(pfad)
+    check("V3 regelgerecht gespeichert: das nächste Öffnen ändert nichts (auch keine Nummer)",
+          m3._umbenennung is None and not m3._ladehinweise
+          and [(n, lc.nummer) for n, lc in m3.load_cases.items()]
+          == [(n, lc.nummer) for n, lc in m2.load_cases.items()], "")
+
+
+def _geteilt_dict() -> dict:
+    """Ein altes Modell mit einer nach Situation geteilten RFEM-
+    Ergebniskombination („Bem (Grundstellung)“, „Bem (Ankerausfall)“), einem
+    einzelnen Teil ohne Gegenstueck und einer RFEM-Ergebniskombination, die
+    RFEM als Summe lieferte."""
+    from statik3d.model import Model, Combination, Situation
+    m = Model("geteilt")
+    m.add_node(0, 0, 0)
+    m.situationen["Ankerausfall"] = Situation("Ankerausfall")
+    m.add_load_case("A", "Q", activate=False)
+    m.load_cases["A"].situation = "Ankerausfall"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.5}, "ULS", "Summe")
+    m.combinations["Bem (Grundstellung)"] = Combination(
+        "Bem (Grundstellung)", {}, "ULS", "Bem (Ergebniskombination)", alternativen=[{"LF1": 1.35}, {"LF1": 1.0}])
+    m.combinations["Bem (Ankerausfall)"] = Combination(
+        "Bem (Ankerausfall)", {}, "ULS", "Bem (Ergebniskombination)", situation="Ankerausfall",
+        alternativen=[{"A": 1.35}, {"A": 1.0}])
+    m.combinations["X"] = Combination("X", {"LF1": 1.0}, "ULS", "X (Ergebniskombination)")
+    m.combinations["Y (Ankerausfall)"] = Combination(
+        "Y (Ankerausfall)", {}, "SLS_CH", "Y", situation="Ankerausfall", alternativen=[{"A": 1.0}])
+    d = m.to_dict()
+    d["format"] = 8
+    return json.loads(json.dumps(d))
+
+
+def test_v4_geteilte_ergebniskombinationen():
+    """L2: Teile einer nach Situation geteilten Ergebniskombination bekommen
+    eine gemeinsame Nummer mit der Situation in Klammern (Variante a); eine
+    RFEM-Ergebniskombination als Summe wird EK."""
+    from statik3d.model import Model
+    m = Model.from_dict(_geteilt_dict(), umstellen=True)
+    vorher = Model.from_dict(_geteilt_dict()).check()
+    k = {n: (c.art, c.nummer, c.bezeichnung) for n, c in m.combinations.items()}
+    check("V4 „Bem (Grundstellung)“/„Bem (Ankerausfall)“ → EK1 (Grundstellung)/EK1 (Ankerausfall), "
+          "Bezeichnung Bem; „X“ (Summe aus RFEM) → EK2; einzelner Teil Y → EK3; K1 → LK1",
+          k == {"LK1": ("LK", 1, "K1"), "EK1 (Grundstellung)": ("EK", 1, "Bem"),
+                "EK1 (Ankerausfall)": ("EK", 1, "Bem"), "EK2": ("EK", 2, "X"),
+                "EK3": ("EK", 3, "Y (Ankerausfall)")}, str(k))
+    neu = [z for z in m.check() if z.startswith(("FEHLER", "WARNUNG")) and z not in vorher]
+    check("V4 … keine neue Meldung, auch keine Warnung „Nr. … gehört mehreren“", not neu, str(neu[:2]))
+    pfad = os.path.join(tempfile.mkdtemp(prefix="statik3d_umstellung_geteilt_"), "g.json")
+    m.save(pfad)
+    m2 = Model.load(pfad)
+    check("V4 … gespeichert und wieder geöffnet: regelgerecht, nichts umgestellt",
+          m2._umbenennung is None and list(m2.combinations) == list(m.combinations), str(list(m2.combinations)))
+    quelle = os.path.join(MODELLE, "drehlager.json")
+    if os.environ.get("STATIK3D_R2_GROSS") != "1" or not os.path.exists(quelle):
+        skip("V4 Drehlager", "nur mit STATIK3D_R2_GROSS=1 und der Datei unter STATIK3D_R2_MODELLE")
+        return
+    md = Model.load(_kopie(quelle))
+    lf, ko = _tabellen(md)
+    teile = {a: b for a, b in ko.items() if "(Grundstellung)" in a or "(Ankerausfall)" in a}
+    check("V4 Drehlager: die geteilten Ergebniskombinationen heißen EK5 (Grundstellung), EK5 (Ankerausfall), "
+          "EK6 (Grundstellung), EK6 (Ankerausfall); 52 Nummern für 54 Kombinationen",
+          sorted(teile.values()) == ["EK5 (Ankerausfall)", "EK5 (Grundstellung)", "EK6 (Ankerausfall)",
+                                     "EK6 (Grundstellung)"]
+          and len({c.nummer for c in md.combinations.values()}) == 52
+          and not [z for z in md.doppelte_nummern()], str(teile))
+
+
+def test_v5_bericht_und_felder():
+    """L1: Results.info["factors"], Schwingung (dyn["lastfall"], log) und
+    Knicklaengen (grundzustand) - der Bericht nennt danach die neuen Namen."""
+    from statik3d.model import Model
+    from statik3d import ergebnisse as E
+    from statik3d.report import Report
+    kopie = _kopie(PRUEFKOERPER)
+    m = Model.load(kopie)
+    an = E.lesen(E.pfad_zu(kopie), m)
+    text = re.sub(r"<[^>]+>", " ", Report(m, an).html())
+    faktoren = [" ".join(t.split()) for t in re.findall(r"Lastfaktoren\s+([^\n]{0,80})", text)]
+    namen = {x for t in faktoren for x in re.findall(r"·(\S+)", t)}
+    lf, _ko = _tabellen(m)
+    check("V5 Bericht: „Lastfaktoren“ nennen die neuen Namen (LF10 statt S, LF11 statt W_links)",
+          bool(faktoren) and namen <= set(m.load_cases) and lf["S"] in namen, str(sorted(namen)))
+    check("V5 Knicklängen: Grundzustand S → LF10, im Bericht „Grundzustand: LF10“",
+          an.knicklaengen.grundzustand == lf["S"] and f"Grundzustand: {lf['S']}." in text,
+          repr(an.knicklaengen.grundzustand))
+    from statik3d.solver import Analysis
+    from statik3d.schwingung import SchwingungsErgebnis
+    a2 = Analysis(Model())
+    a2.schwingung = SchwingungsErgebnis("S1", "WD1", dyn={"lastfall": "Wasser S dyn", "D": 0.1},
+                                        log=["Lastfall Wasser S dyn (Druckschwankung) gerechnet"])
+    E._namen_umschluesseln(a2, Model(), {"lastfaelle": {"Wasser S dyn": "LF3"}, "kombinationen": {}})
+    check("V5 Schwingung: dyn[„lastfall“] und Protokoll nennen den neuen Namen",
+          a2.schwingung.dyn["lastfall"] == "LF3"
+          and a2.schwingung.log == ["Lastfall LF3 (Druckschwankung) gerechnet"], str(a2.schwingung.log))
+
+
+def test_v6_laufzeit():
+    """S1: die Umstellung waechst linear - 4000 Kombinationen in hoechstens
+    5 s (gemessen in der Gegenpruefung von 1fea7af: 50 s), cbg hoechstens 1 s."""
+    from statik3d.model import Model, Combination
+    m = Model("s")
+    m.add_node(0, 0, 0)
+    for i in range(20):
+        m.add_load_case(f"Fall {i}", "Q", activate=False)
+    for i in range(4000):
+        m.combinations[f"Kombi {i}"] = Combination(f"Kombi {i}", {f"Fall {i % 20}": 1.0}, "ULS")
+    d = m.to_dict()
+    d["format"] = 8
+    d = json.loads(json.dumps(d))
+    t = time.perf_counter()
+    m2 = Model.from_dict(d, umstellen=True)
+    dauer = time.perf_counter() - t
+    check(f"V6 4000 Kombinationen und 20 Lastfälle: Umstellung in {dauer:.2f} s (höchstens 5 s)",
+          dauer <= 5.0 and list(m2.combinations)[-1] == "LK4000", "")
+    cbg = os.path.join(MODELLE, "cbg.json")
+    if not os.path.exists(cbg):
+        skip("V6 cbg", f"nicht gefunden unter {MODELLE}")
+        return
+    kopie = _kopie(cbg)
+    t0 = time.perf_counter()
+    Model.load(kopie, umstellen=False)
+    t1 = time.perf_counter()
+    mc = Model.load(kopie)
+    t2 = time.perf_counter()
+    check(f"V6 cbg: Öffnen mit Umstellung {t2 - t1:.2f} s, ohne {t1 - t0:.2f} s (höchstens 1 s)",
+          t2 - t1 <= 1.0 and mc._umbenennung["geaendert"], "")
+
+
+def test_v7_geaendert():
+    """S2: nach einer Umstellung gilt das Modell als geaendert - Stern im
+    Titel, Rueckfrage beim Schliessen mit dem Grund „Namen umgestellt“."""
+    w, app = _fenster()
+    kopie = _kopie(PRUEFKOERPER)
+    ok = w.modell_laden(kopie, fragen=False)
+    app.processEvents()
+    grund = w.ungespeichert()
+    check("V7 nach dem Öffnen einer umgestellten Datei: geändert, Stern im Titel",
+          ok and "Namen umgestellt" in grund and "*" in w.windowTitle(), f"{grund!r} {w.windowTitle()!r}")
+    gefragt = []
+    alt_env = os.environ.pop("STATIK3D_UNGESPEICHERT", None)
+    w._frage_speichern_verwerfen = lambda anlass, g: (gefragt.append((anlass, g)), "abbrechen")[1]
+    try:
+        weiter = w._ungespeichert_fragen("Beenden")
+    finally:
+        del w._frage_speichern_verwerfen
+        if alt_env is not None:
+            os.environ["STATIK3D_UNGESPEICHERT"] = alt_env
+    check("V7 Schließen fragt mit dem Grund „Namen umgestellt“ (Abbrechen hält an)",
+          not weiter and gefragt and "Namen umgestellt" in gefragt[0][1], str(gefragt))
+    w.save_model()
+    app.processEvents()
+    check("V7 nach dem Speichern: nichts mehr ungespeichert, kein Stern", not w.ungespeichert()
+          and "*" not in w.windowTitle(), w.windowTitle())
+    w.modell_laden(kopie, fragen=False)
+    app.processEvents()
+    check("V7 wieder geöffnet (Fassung 9, regelgerecht): nicht geändert", not w.ungespeichert(), w.ungespeichert())
+
+
+def test_v8_webstart_kommandozeile():
+    """L4/L5: der Webstart mit --modell zeigt den Ladehinweis; die
+    Kommandozeile nimmt einen alten Lastfallnamen ueber die Bezeichnung an
+    und meldet einen unbekannten verstaendlich."""
+    from statik3d.model import Model
+    from statik3d.web import server as S
+    kopie = _kopie(PRUEFKOERPER)
+    st = S.State(Model.load(kopie))
+    check("V8 Webstart: das Protokoll des Browsers zeigt den Ladehinweis",
+          any("Hinweis: Namen umgestellt" in z for z in st.log), f"{len(st.log)} Zeilen")
+    umg = dict(os.environ, PYTHONUTF8="1")
+    wurzel = os.path.dirname(HIER)
+    p = subprocess.run([sys.executable, "-m", "statik3d.cli", kopie, "--analyse", "lastfall", "--lastfall", "S"],
+                       capture_output=True, text=True, encoding="utf-8", env=umg, cwd=wurzel)
+    check("V8 Kommandozeile: alter Name „S“ über die Bezeichnung eindeutig → LF10, gerechnet",
+          p.returncode == 0 and "Lastfall „S“ heißt jetzt LF10" in p.stdout,
+          (p.stdout + p.stderr).strip().splitlines()[-1:] if p.returncode else "")
+    p = subprocess.run([sys.executable, "-m", "statik3d.cli", kopie, "--analyse", "lastfall", "--lastfall",
+                        "Quatsch"], capture_output=True, text=True, encoding="utf-8", env=umg, cwd=wurzel)
+    check("V8 Kommandozeile: unbekannter Name - verständliche Meldung, kein Traceback",
+          p.returncode == 2 and "„Quatsch“ gibt es nicht" in p.stderr and "Traceback" not in p.stderr,
+          p.stderr.strip()[:120])
+
+
+def test_s3_mutanten():
+    """S3: Pruefungen fuer die Stellen, die in der Gegenpruefung kein Test
+    bemerkte (mutanten_ergebnis.txt): contact_frozen_from, grundlast,
+    kontakt_eingefroren, start_angeboten_von (Klartext in Results.info),
+    lastfall_nr, info["umhuellende"], info["umhuellende_schluessel"] und die
+    Nummernfelder einer alten Datei."""
+    from statik3d.model import Model
+    from statik3d import ergebnisse as E
+    kopie = _kopie(KONTAKT)
+    m = Model.load(kopie)
+    an = E.lesen(E.pfad_zu(kopie), m)
+    lf, _ko = _tabellen(m)
+    eg, hub, h3 = lf["Eigengewicht"], lf["Hub 1"], lf["H3"]
+    info = {n: an.cases[n].info for n in an.cases}
+    check("S3 Kontaktmodell: Lastfälle umgestellt (Eigengewicht, Hub 1, H3 → LF6, LF7, LF8; LF5 bleibt)",
+          (eg, hub, h3) == ("LF6", "LF7", "LF8") and "LF5" in m.load_cases, str(lf))
+    check("S3 contact_frozen_from nennt den neuen Lastfall",
+          info["LF5"].get("contact_frozen_from") == hub and info[h3].get("contact_frozen_from") == hub,
+          str({n: i.get("contact_frozen_from") for n, i in info.items()}))
+    check("S3 grundlast nennt den neuen Lastfall",
+          all(info[n].get("grundlast") == [eg] for n in (hub, "LF5", h3)),
+          str({n: i.get("grundlast") for n, i in info.items()}))
+    check("S3 info[„kontakt_eingefroren“] unter den neuen Namen",
+          an.info.get("kontakt_eingefroren") == {"LF5": hub, h3: hub}, str(an.info.get("kontakt_eingefroren")))
+    check("S3 start_angeboten_von (Klartext) nennt den neuen Lastfall",
+          info["LF5"].get("start_angeboten_von") == f"Lastfall {hub}"
+          and info[eg].get("start_angeboten_von") == f"Lastfall {h3}",
+          str({n: i.get("start_angeboten_von") for n, i in info.items()}))
+    kopie = _kopie(PRUEFKOERPER)
+    m = Model.load(kopie)
+    an = E.lesen(E.pfad_zu(kopie), m)
+    lf, ko = _tabellen(m)
+    check("S3 Wind: lastfall_nr folgt der neuen Nummer (3 → 11)",
+          m.winde["W1"].lastfall == lf["W_links"] and m.winde["W1"].lastfall_nr == 11, str(m.winde["W1"].lastfall_nr))
+    check("S3 info[„umhuellende“] unter den neuen Namen (Bemessung GZT → EK8)",
+          set(an.info.get("umhuellende") or {}) == {ko["Bemessung GZT"], "EK7"}, str(an.info.get("umhuellende")))
+    p = os.path.join(DATEN, "huellen_schluessel_6791f9f", "mit_kollision.json")
+    an = E.lesen(E.pfad_zu(p), Model.load(p))
+    check("S3 info[„umhuellende_schluessel“]: kein R1-Hinweis mehr für die umbenannte „ULS“ (jetzt EK3)",
+          "umhuellende_schluessel" not in an.info and "der Name „ULS“ ist im Programm schon vergeben" not in an.summary(),
+          str(an.info.get("umhuellende_schluessel")))
+    d = _roh(PRUEFKOERPER)
+    for x in d["load_cases"]:
+        x["nummer"] = {"S": 2, "W_links": 3, "Kran": 2}.get(x["name"], x.get("nummer", 0))
+    mn = Model.from_dict(d, umstellen=True)
+    check("S3 alte Datei mit Nummernfeldern (S und Kran mit Nr. 2, W_links mit Nr. 3): sie zählen nicht, "
+          "dieselbe Vergabe wie ohne",
+          list(mn.load_cases) == list(m.load_cases) and [lc.nummer for lc in mn.load_cases.values()]
+          == [lc.nummer for lc in m.load_cases.values()], f"{list(mn.load_cases)}")
+
+
+def test_s4_protokoll():
+    """S4: die ersten zehn Zeilen stehen nicht doppelt im Protokoll, die erste
+    Zeile ist kurz."""
+    from statik3d.model import Model, Combination
+    m = Model("viele")
+    m.add_node(0, 0, 0)
+    for i in range(25):
+        m.combinations[f"K{i}"] = Combination(f"K{i}", {"LF1": 1.0 + i}, "ULS")
+    d = m.to_dict()
+    d["format"] = 8
+    m2 = Model.from_dict(json.loads(json.dumps(d)), umstellen=True)
+    erst, weiter = m2._ladehinweise[0], m2._ladehinweise[1]
+    def tabellenzeilen(t):
+        return [z.strip() for z in t.splitlines() if z.startswith("    ") and " → " in z]
+    zeilen = tabellenzeilen(erst)
+    check("S4 erste Zeile kurz, zehn Zeilen im ersten Hinweis, keine davon im zweiten, die übrigen 15 dort",
+          len(erst.splitlines()[0]) <= 60 and len(zeilen) == 10
+          and not set(zeilen) & set(tabellenzeilen(weiter)) and len(tabellenzeilen(weiter)) == 15,
+          repr(erst.splitlines()[0]))
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(1800, exit=True)
     for t in (test_u1_dateien_in_tests_daten, test_u2_cbg_und_pruefkoerper, test_u3_drehlager,
               test_u4_ergebnisdateien, test_u4_nachweise_umschluesseln, test_u5_kreuzende_namen,
-              test_u6_rechenarbeiter, test_u7_speichern, test_u8_beispiele):
+              test_u6_rechenarbeiter, test_u7_speichern, test_u8_beispiele,
+              test_v1_verwaiste_verweise, test_v2_anhaengen, test_v3_ausloeser,
+              test_v4_geteilte_ergebniskombinationen, test_v5_bericht_und_felder, test_v6_laufzeit,
+              test_v7_geaendert, test_v8_webstart_kommandozeile, test_s3_mutanten, test_s4_protokoll):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
