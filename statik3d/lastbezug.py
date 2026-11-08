@@ -61,6 +61,22 @@ def achsen_aus_winkeln(winkel) -> np.ndarray:
     return R.T.copy()
 
 
+def winkel_aus_achsen(achsen) -> list:
+    """Umkehrung von :func:`achsen_aus_winkeln`: die drei Winkel [Grad] zu den
+    Zeilen ex, ey, ez eines Rechtssystems. Bei senkrechter x-Achse (Nick
+    ±90°) ist die Zerlegung nicht eindeutig; dann ist der dritte Winkel 0."""
+    R = np.asarray(achsen, float).T
+    sb = max(-1.0, min(1.0, -float(R[2, 0])))
+    b = math.asin(sb)
+    if math.cos(b) > 1e-9:
+        a = math.atan2(float(R[1, 0]), float(R[0, 0]))
+        c = math.atan2(float(R[2, 1]), float(R[2, 2]))
+    else:
+        a = math.atan2(-float(R[0, 1]), float(R[1, 1]))
+        c = 0.0
+    return [round(math.degrees(x), 9) + 0.0 for x in (a, b, c)]
+
+
 def achsen_aus_punkten(ursprung, punkt_x, punkt_xy) -> np.ndarray:
     """Zeilen ex, ey, ez aus drei Punkten: x zeigt vom Ursprung auf ``punkt_x``,
     ``punkt_xy`` liegt in der xy-Ebene auf der Seite von +y. ValueError, wenn

@@ -167,6 +167,20 @@ def _fuge_mit_kontaktpaar(model) -> bool:
     return any(str(cp.name) in kbs for cp in (getattr(model, "contact_pairs", None) or []))
 
 
+def _projiziert_auf_schale(model) -> bool:
+    """Eine Flaechenlast „auf die Projektion“ an einer Schale (Flaeche mit Dicke
+    oder Schalenelementen) - nur dort wirkte sie bis zum 08.11.2026 nicht."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if not getattr(gl, "projiziert", False) or getattr(gl, "art", "flaeche") != "flaeche":
+                continue
+            f = flaechen.get(str(gl.ziel))
+            if f is not None and (getattr(f, "dicke", "") or getattr(f, "elemente", None)):
+                return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -744,6 +758,17 @@ MERKMALE: list = [
                          art=VERBESSERUNG),),
         modellmerkmal="Kontakt mit Spannschritt (Vorspannung als Kraft)", betrifft=_kontakt_mit_spannschritt),
     Merkmal(
+        # Nebenbefund Oberflaechenpaket B (08.11.2026): der Windschatten einer projizierten
+        # Flaechenlast fragte die Aussennormale einer Volumenseite; an einer Schale gibt es
+        # keine, und die Last erzeugte nichts - Schnee 5 kN/m2 auf einem Dach von 2 m2
+        # Grundriss gab 0 statt 10 kN (tests/test_paket_b_neben). Fehlerkorrektur
+        name="projiziert_schale", titel="Flächenlast auf die Projektion an Schalen",
+        texte={"alt": "projizierte Flächenlast an einer Schale ohne Wirkung",
+               "neu": "projizierte Flächenlast an einer Schale mit p · A · |n · d|"},
+        wechsel=(Wechsel(stand=7, datum="08.11.2026", commit="fix/paket-b-nebenbefunde", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast auf die Projektion an einer Schale", betrifft=_projiziert_auf_schale),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -826,7 +851,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 6
+VERFAHRENSSTAND = 7
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
