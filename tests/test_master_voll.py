@@ -381,8 +381,10 @@ def test_verfahren_betroffen():
     mk = rv.merkmal("gegenseite")
     check("Verfahrenstabelle: Fehlerkorrektur eingetragen", mk is not None and mk.wechsel[-1].art == rv.FEHLERKORREKTUR,
           str(mk.titel if mk else ""))
+    # seit 08.11.2026 folgen weitere Eintraege: der Stand des Merkmals liegt
+    # nicht mehr oben, VERFAHRENSSTAND bleibt aber der hoechste der Tabelle
     check("… der Stand ist der höchste der Tabelle",
-          mk is not None and rv.VERFAHRENSSTAND == mk.wechsel[-1].stand == max(
+          mk is not None and mk.wechsel[-1].stand <= rv.VERFAHRENSSTAND == max(
               w.stand for x in rv.MERKMALE for w in x.wechsel), f"Stand {rv.VERFAHRENSSTAND}")
     m, _log = _p1(0.5, 0.25)
     pm.FugeDruck.lagerung(None, m, 1e6)

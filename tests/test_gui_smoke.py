@@ -3022,8 +3022,9 @@ def main():
               gruppen_[:2] == ["Eigenschaften", "Geometrie"]
               and oben == ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"], str((gruppen_[:3], oben)))
         kn_zweig = geo_.child(0)
+        _plus = lambda z: sum(1 for k in range(z.childCount()) if z.child(k).text(0).startswith("+ "))
         check("alle Knoten numerisch untereinander",
-              kn_zweig.childCount() == m_.nn and kn_zweig.child(0).text(0) == "K0"
+              kn_zweig.childCount() - _plus(kn_zweig) == m_.nn and kn_zweig.child(0).text(0) == "K0"
               and kn_zweig.child(m_.nn - 1).text(0) == f"K{m_.nn - 1}",
               f"{kn_zweig.childCount()} Einträge")
         st_zweig = geo_.child(2)
@@ -3033,8 +3034,8 @@ def main():
         nw_ = w.baum.gruppe("nachweise")
         check("unter „Stäbe“ die Stäbe mit Nachweis, die Stabelemente unter „FE-Netz“, "
               "die Schweißnähte unter „Nachweise“",
-              st_zweig.text(0) == "Stäbe" and st_zweig.childCount() == len(m_.members)
-              and se_zweig.childCount() == sum(1 for e in m_.elements if e.typ in ("beam", "truss"))
+              st_zweig.text(0) == "Stäbe" and st_zweig.childCount() - _plus(st_zweig) == len(m_.members)
+              and se_zweig.childCount() - _plus(se_zweig) == sum(1 for e in m_.elements if e.typ in ("beam", "truss"))
               and nw_.child(0).text(0) == "Schweißnähte",
               f"{st_zweig.childCount()} Stäbe, {se_zweig.childCount()} Stabelemente")
         w.clear_selection()
@@ -7069,7 +7070,7 @@ def main():
               and {"typ0", "k0", "aus0", "typ5", "beton", "E_cm", "d_bett", "A_bett", "groesse"} <= set(mk.werte())
               and mk.werte()["typ2"] == "starr" and mk.werte()["typ4"] == "frei"
               and w.sel_lager == [("lager", 1)] and w.auswahlart == "Lager"
-              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung …", "Lager löschen"},
+              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung …", "Lager löschen", "Neu: Knotenlager …"},
               str(getattr(mk, "titel", mk)))
         mk.setzen("typ2", "Feder"); mk.setzen("k2", 1000.0); mk.setzen("typ4", "starr"); mk.setzen("name", "Gelenk B")
         mk.anwenden(); app.processEvents()
@@ -8225,7 +8226,8 @@ def main():
                 while st:
                     x = st.pop()
                     if x.text(0) == zweigname:
-                        return [x.child(k).text(0) for k in range(x.childCount())]
+                        return [x.child(k).text(0) for k in range(x.childCount())
+                                if not x.child(k).text(0).startswith("+ ")]
                     st += [x.child(k) for k in range(x.childCount())]
             return []
 

@@ -9474,7 +9474,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     return "Ein Knotenlager sitzt an genau einem Knoten"
                 return {} if int(kn[0]) == int(obj.node) else {"node": int(kn[0])}
             if art == "linienlager_einzeln":
-                if not betroffen("linien", "kn_folge"):
+                if not betroffen("linien", "kn_folge") or not ({"linien", "kn_folge"} & set(w)):
                     return {}
                 linien = self._namensliste(w.get("linien"))
                 fehlt = [x for x in linien if x not in m.lines]
@@ -9491,7 +9491,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if len(kn) < 2:
                     return "Linien anklicken oder mindestens zwei Knoten in Reihenfolge nennen"
                 return {"linien": [], "nodes": kn}
-            if not betroffen("flaechen", "elemente_nr"):
+            if not betroffen("flaechen", "elemente_nr") or not ({"flaechen", "elemente_nr"} & set(w)):
                 return {}
             flaechen = self._namensliste(w.get("flaechen"))
             fehlt = [x for x in flaechen if x not in m.flaechen]

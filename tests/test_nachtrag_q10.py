@@ -477,7 +477,7 @@ def test_n34_zusatzknoepfe_brechen_um():
         _ruhe(app, 5)
         mk = w.maskenrand.maske
         lage = _lage(mk)
-        check(f"{breite} x {hoehe}: echte Lagermaske - Knöpfe ganz", len(mk.zusatzknoepfe) == 3 and _lage_gut(lage),
+        check(f"{breite} x {hoehe}: echte Lagermaske - Knöpfe ganz", len(mk.zusatzknoepfe) == 4 and _lage_gut(lage),
               lage["breiten"])
         w.maskenrand.schliessen()
         _ruhe(app)
