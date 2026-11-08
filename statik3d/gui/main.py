@@ -9383,8 +9383,12 @@ class MainWindow(QtWidgets.QMainWindow):
             felder.append(F("flaechen", "Flächen", "liste", ", ".join(flaechen), breite=160,
                             hinweis="Namen der Flächen - oder ins Feld klicken und die Flächen in der Ansicht "
                                     "anklicken. Das Lager folgt dann dem Netz der Flächen."))
+            els = list(getattr(obj, "elements", None) or [])
+            if neu and not flaechen and not els and len(self.selection):
+                # wie bis zum 08.11.2026: die Elemente, deren Knoten alle gewaehlt sind
+                els = self._elements_from_text("")
             felder.append(F("elemente_nr", "Elemente (ohne Flächen)", "text",
-                            self._elemente_text(obj.elements) if getattr(obj, "elements", None) else "",
+                            ", ".join(str(int(e)) for e in sorted(els)),
                             breite=160, hinweis="Nur ohne Flächen: Nummern der Schalen- oder "
                                                 "Volumenelemente, deren Fläche gebettet ist"))
             if not neu:
@@ -13300,6 +13304,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if art == "spitze":
             return self._spitze_zeigen(int(wert or 0))
+        if art == "lager":
+            # Lagerreaktionen (08.11.2026): die Tabelle „Auflagerkräfte“ mit allen
+            # sechs Komponenten je Lagerknoten
+            j = int(wert or 0) if str(wert or "0").isdigit() else 0
+            name = self.LAGERREAKTIONEN[min(j, 5)][0]
+            self.tabelle_zeigen("Auflagerkräfte")
+            return self.info(f"Lagerreaktion {name}: alle Komponenten je Lagerknoten in der Tabelle "
+                             "„Auflagerkräfte“")
         if art == "nachweis":
             tabelle = self.NACHWEIS_TABELLE.get(wert)
             if tabelle and self.tabelle_zeigen(tabelle):
@@ -14832,6 +14844,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 reihe.append(("kein Verlauf", "Verlauf ausblenden",
                               "schnittgroesse:kein Verlauf"))
                 out["Schnittgrößen"] = reihe
+        # Lagerreaktionen (08.11.2026, Paket A Punkt 9): Kraefte und, soweit die
+        # Rechnung sie liefert, die Lagermomente M_x, M_y, M_z - kleinster und
+        # groesster Wert ueber die Lagerknoten; ein Klick holt die Tabelle
+        # „Auflagerkräfte“. Bis dahin standen sie nur in Tabelle und Kennwerten.
+        reihe = self._lagerreaktionen_liste(r, passt)
+        if reihe:
+            out["Lagerreaktionen"] = reihe
         # Spannungen analog ANSYS: je Art eine Gruppe, Schluessel spannung:<art>:<groesse>
         for art in spn.arten_im_ergebnis(self.model, self._spannungsergebnis()):
             out[spn.GRUPPE[art]] = [(text, einheit, spn.schluessel(art, g))
@@ -14862,6 +14881,50 @@ class MainWindow(QtWidgets.QMainWindow):
                      else "", f"buckling:{i}") for i in range(len(r.buckling_modes))]
         return {k: v for k, v in out.items() if v}
 
+
+    #: Die sechs Komponenten der Lagerreaktion: Name im Baum, Einheit
+    LAGERREAKTIONEN = (("R_x", "kN"), ("R_y", "kN"), ("R_z", "kN"),
+                       ("M_x", "kNm"), ("M_y", "kNm"), ("M_z", "kNm"))
+
+    def _lagerreaktionen_liste(self, r, passt: str = "passt") -> list:
+        """Die Zeilen der Gruppe „Lagerreaktionen“ im Ergebnisbaum: je Komponente,
+        die an einem Knoten nicht null ist, „min … max“ in kN bzw. kNm. Ein
+        Lastfall oder eine Kombination liefert ``reactions`` (Knoten × 6), eine
+        Umhuellende ``r_min``/``r_max``. Komponenten, die ueberall null sind,
+        fehlen - die Momente also, wo kein Lager eine Drehung haelt."""
+        if r is None:
+            return []
+        R = getattr(r, "reactions", None)
+        if R is not None:
+            R = np.asarray(R, float)
+            if R.ndim != 2 or not R.size:
+                return []
+            lo_a, hi_a = R, R
+        elif getattr(r, "r_min", None) is not None and getattr(r, "r_max", None) is not None:
+            lo_a, hi_a = np.asarray(r.r_min, float), np.asarray(r.r_max, float)
+            if lo_a.ndim != 2 or not lo_a.size:
+                return []
+        else:
+            return []
+        # nur die Knoten mit Reaktion (die Lagerknoten): ein freier Knoten traegt
+        # ueberall null und machte jede Spanne zu „… 0“
+        lager = np.any(np.nan_to_num(lo_a) != 0, axis=1) | np.any(np.nan_to_num(hi_a) != 0, axis=1)
+        if not lager.any():
+            return []
+        lo_a, hi_a = lo_a[lager], hi_a[lager]
+        grau_ = (dsg.FARBEN["matt"],)
+        reihe = []
+        for j, (name, einheit) in enumerate(self.LAGERREAKTIONEN):
+            if j >= lo_a.shape[1] or not (np.any(lo_a[:, j]) or np.any(hi_a[:, j])):
+                continue
+            if passt == "anders":
+                reihe.append((name, vp.NEU_RECHNEN, f"lager:{j}", *grau_))
+                continue
+            lo, hi = float(np.nanmin(lo_a[:, j])) / 1e3, float(np.nanmax(hi_a[:, j])) / 1e3
+            text = (spn.dezimal(lo, vorzeichen=True) if lo == hi
+                    else f"{spn.dezimal(lo, vorzeichen=True)} … {spn.dezimal(hi, vorzeichen=True)}")
+            reihe.append((name, f"{text} {einheit}", f"lager:{j}"))
+        return reihe
 
     def _stellungen_liste(self) -> list:
         """Stellungen als einfache Liste fuer Baum und Filmstreifen."""
@@ -21767,7 +21830,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             knoten = [int(i) for i in self.selection]
         if not knoten:
-            return self.hinweis("Zuerst Knoten nennen oder in der Ansicht anklicken")
+            return self.hinweis("Zuerst Knoten in der Ansicht wählen")
         dofs = [i for i in range(6) if w.get(f"d{i}")]
         if not dofs:
             return self.hinweis("Kein Freiheitsgrad angekreuzt")
@@ -31498,12 +31561,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not p:
             return
         with open(p, "w", encoding="utf-8") as f:
-            f.write(f"Ergebnis;{r.name}\nKnoten;x;y;z;ux;uy;uz;rx;ry;rz;Rx;Ry;Rz\n")
+            # mit den Lagermomenten Mx, My, Mz (08.11.2026, bis dahin nur Rx, Ry, Rz)
+            f.write(f"Ergebnis;{r.name}\nKnoten;x;y;z;ux;uy;uz;rx;ry;rz;Rx;Ry;Rz;Mx;My;Mz\n")
             for i in range(self.model.nn):
                 x, y, z = self.model.nodes[i]
                 f.write(f"{i};{x:.6f};{y:.6f};{z:.6f};"
                         + ";".join(f"{v:.6e}" for v in r.u[i]) + ";"
-                        + ";".join(f"{v:.4f}" for v in r.reactions[i, :3]) + "\n")
+                        + ";".join(f"{v:.4f}" for v in r.reactions[i, :6]) + "\n")
             if r.beam_forces:
                 f.write("\nElement;N1;N2;Vy1;Vy2;Vz1;Vz2;Mt1;My1;My2;Mz1;Mz2;sigma\n")
                 for e, d in sorted(r.beam_forces.items()):

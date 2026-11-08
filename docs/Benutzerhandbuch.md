@@ -3751,6 +3751,18 @@ und der Bereich unten sprang auf das Register *Umhüllende*; die
 Auflagerkräfte standen als Text „min / max“ in einer Zelle, eine Summenzeile
 gab es nicht, und die Zelle mit der Kombination war nur Text.
 
+**Lagerreaktionen im Ergebnisbaum** (seit 08.11.2026). Unter *Ergebnisse*
+steht zu Lastfall, Kombination und Umhüllender die Gruppe **Lagerreaktionen**
+mit *R_x*, *R_y*, *R_z* und, soweit die Rechnung sie liefert, den
+Lagermomenten *M_x*, *M_y*, *M_z*: je Komponente der kleinste und der größte
+Wert über alle Lagerknoten in kN bzw. kNm, bei nur einem Wert dieser allein.
+Komponenten, die an keinem Knoten von null verschieden sind, fehlen - die
+Momente also, wo kein Lager eine Drehung hält (etwa an Volumenmodellen). Ein
+Klick holt unten die Tabelle *Auflagerkräfte* mit allen sechs Komponenten je
+Knoten. Bis dahin standen die Lagerreaktionen nur in dieser Tabelle und in
+den Kennwerten im Bild; die Ausgabe „Ergebnisse als CSV…“ nennt seit
+demselben Tag zu Rx, Ry, Rz auch Mx, My, Mz.
+
 **Kopfzeile unten.** Der Bereich unten hat eine einzige Kopfzeile. Links
 steht die Gruppe als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager,
 Lasten, Ergebnisse, Nachweise, Bericht), daneben stehen die Tabellen dieser

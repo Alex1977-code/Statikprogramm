@@ -215,6 +215,9 @@ def test_lager_rueckgaengig():
         w._set_selection([n[0], n[1], n[2]]); app.processEvents()
         vorher = len(w._undo) if hasattr(w, "_undo") else 0
         w.add_line_support(); app.processEvents()
+        # seit dem 08.11.2026 (Paket A Punkt 3) eine Maske statt des Dialogs: die
+        # gewaehlten Knoten stehen darin, angelegt wird mit OK
+        w.maskenrand.maske.anwenden(); app.processEvents()
         check("F4 Linienlager angelegt, ein Rückgängig-Schritt",
               len(w.model.line_supports) == 1 and len(w._undo) == vorher + 1,
               f"{len(w.model.line_supports)} Lager, Schritte {vorher} -> {len(w._undo)}")
@@ -226,6 +229,7 @@ def test_lager_rueckgaengig():
         w._set_selection([n[0], n[1], n[3]]); app.processEvents()
         vorher = len(w._undo)
         w.add_surface_support(); app.processEvents()
+        w.maskenrand.maske.anwenden(); app.processEvents()          # Maske seit 08.11.2026
         check("F4 Flächenlager angelegt, ein Rückgängig-Schritt",
               len(w.model.surface_supports) == 1 and len(w._undo) == vorher + 1,
               f"{len(w.model.surface_supports)} Lager, Schritte {vorher} -> {len(w._undo)}")

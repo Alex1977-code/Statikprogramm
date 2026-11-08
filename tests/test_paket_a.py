@@ -372,6 +372,58 @@ def test_flaechenlager_anlegen():
     w.maskenrand.schliessen()
 
 
+# ---------------------------------------------------------------------------
+# Punkt 9: Lagermomente
+# ---------------------------------------------------------------------------
+def test_lagermomente():
+    """Kragarm 4 m, eingespannt an K0, F_z = -10 kN an K1: die Einspannung traegt
+    R_z = 10 kN und M_y = ±40 kNm. Der Ergebnisbaum nennt beide (vorher gar keine
+    Lagerreaktionen), die Tabelle hat M_x, M_y, M_z."""
+    import numpy as np
+    from statik3d import solver
+    from statik3d.model import Material, Section
+    w, app = _fenster()
+    w.new_model()
+    m = w.model
+    m.add_material(Material.steel(MAT))
+    m.add_section(Section.from_profile(SEC))
+    m.add_node(0, 0, 0)
+    m.add_node(4, 0, 0)
+    w._maske_stab_anlegen({"knoten": [0, 1], "mat": MAT, "sec": SEC})
+    m.support(0, [0, 1, 2, 3, 4, 5])
+    m.load_node(1, case=m.active_case, Fz=-10e3)
+    w.refresh_all()
+    _ruhe(app)
+    an = solver.solve_all(m, design=False)
+    w._solve_done("all", an)
+    _ruhe(app)
+    huelle = {z[0]: z for z in w._ergebnisliste().get("Lagerreaktionen", [])}
+    check("Zur Umhüllenden (min und max je Komponente): „Lagerreaktionen“ mit R_z und M_y = −40 kNm",
+          "R_z" in huelle and huelle.get("M_y", ("", ""))[1].startswith("-40"), str(list(huelle.values())))
+    w.ergebnis_zeigen(f"case:{m.active_case}")
+    _ruhe(app)
+    erg = w._ergebnisliste()
+    zeilen = {z[0]: z for z in erg.get("Lagerreaktionen", [])}
+    check("Ergebnisbaum (Lastfall): Gruppe „Lagerreaktionen“ mit R_z und M_y",
+          "R_z" in zeilen and "M_y" in zeilen, str(list(erg)))
+    my = zeilen.get("M_y", ("", ""))[1]
+    rz = zeilen.get("R_z", ("", ""))[1]
+    R = np.asarray(w.current_result().reactions)[0] / 1e3
+    check("… M_y nennt das Einspannmoment −40 kNm (ein Lagerknoten: ein Wert, Einheit kNm)",
+          my.startswith("-40") and "…" not in my and my.endswith(" kNm") and abs(R[4] + 40.0) < 1e-6,
+          f"{my} / R = {R.round(3).tolist()}")
+    check("… R_z nennt +10 kN", rz.startswith("+10") and rz.endswith(" kN"), rz)
+    check("… und nur Komponenten, die nicht null sind (kein M_x, kein R_x)",
+          "M_x" not in zeilen and "R_x" not in zeilen, str(list(zeilen)))
+    w.ergebnis_zeigen(zeilen["M_y"][2] if "M_y" in zeilen else "lager:4")
+    _ruhe(app)
+    tu = w.tab_unten
+    check("… ein Klick zeigt unten die Tabelle „Auflagerkräfte“",
+          tu.tabText(tu.currentIndex()) == "Auflagerkräfte", tu.tabText(tu.currentIndex()))
+    kopf = [s.name for s in w._auflager_spalten(False)]
+    check("… und die hat die Spalten Mx, My, Mz", {"Mx", "My", "Mz"} <= set(kopf), str(kopf))
+
+
 def test_handbuch():
     from tests.handbuch import absatz
     a = absatz("**Klicken statt Abtippen")
@@ -381,7 +433,7 @@ def test_handbuch():
 
 def main():
     for t in (test_klicken_statt_abtippen, test_neu_in_der_maske, test_baum_lager_und_anlegen,
-              test_flaechenlager_anlegen, test_handbuch):
+              test_flaechenlager_anlegen, test_lagermomente, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

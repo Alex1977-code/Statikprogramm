@@ -284,7 +284,8 @@ def test_gekuerzter_zweig_baum():
         b.fuellen(m)
         app.processEvents()
         kn = _zweig(b, "Knoten", "knoten")
-        sammel = [kn.child(i).text(0) for i in range(kn.childCount())]
+        # ohne die Zeile „+ Knoten anlegen“ (seit 08.11.2026, steht hinter der Sammelzeile)
+        sammel = [kn.child(i).text(0) for i in range(kn.childCount()) if not kn.child(i).text(0).startswith("+ ")]
         check("Vorbereitung: der Zweig Knoten zeigt drei Einträge und „… 9 weitere“",
               sammel == ["K0", "K1", "K2", "… 9 weitere"], str(sammel))
         ok = b.eintrag_waehlen("knoten", "7")
@@ -292,7 +293,7 @@ def test_gekuerzter_zweig_baum():
         check("ein Knoten hinter „… 9 weitere“ (K7) wird nachgeladen und gewählt, nicht still nichts",
               ok and it is not None and _element(it) == ("knoten", "7") and it.parent() is kn
               and it.text(0) == "K7" and "x =" in it.toolTip(0), str(_aktuell(b)))
-        texte = [kn.child(i).text(0) for i in range(kn.childCount())]
+        texte = [kn.child(i).text(0) for i in range(kn.childCount()) if not kn.child(i).text(0).startswith("+ ")]
         check("… er steht vor der Sammelzeile, und die zählt einen weniger",
               texte == ["K0", "K1", "K2", "K7", "… 8 weitere"], str(texte))
         ok = b.eintrag_waehlen("linie", "L9")
@@ -468,9 +469,10 @@ def test_ansicht_gekuerzter_zweig():
         _ruhe(app)
         b = w.baum
         kn = _zweig(b, "Knoten", "knoten")
-        sammel = kn.child(kn.childCount() - 1).text(0) if kn is not None and kn.childCount() else ""
+        # ohne die Zeile „+ Knoten anlegen“ (seit 08.11.2026, die letzte)
+        sammel = kn.child(kn.childCount() - 2).text(0) if kn is not None and kn.childCount() > 1 else ""
         check("Vorbereitung: der Zweig Knoten ist auf drei Einträge gekürzt",
-              kn is not None and kn.childCount() == 4 and sammel.endswith(" weitere"), sammel)
+              kn is not None and kn.childCount() == 5 and sammel.endswith(" weitere"), sammel)
         _ansicht_fokussieren(w, app)
         klick(w, app, m.nodes[n["K5"]])
         it = b.currentItem()
@@ -728,7 +730,7 @@ def test_filter_gekuerzt():
         check("… auch nach dem Neuaufbau", ("knoten", str(n["K5"])) in _sichtbare_eintraege(b))
         _tippen(app, f, "")
         kn = _zweig(b, "Knoten", "knoten")
-        texte = [kn.child(i).text(0) for i in range(kn.childCount())]
+        texte = [kn.child(i).text(0) for i in range(kn.childCount()) if not kn.child(i).text(0).startswith("+ ")]
         check("… Filter leer: der Zweig zeigt wieder drei Einträge und die Sammelzeile",
               len(texte) == 4 and texte[-1].endswith(" weitere") and not kn.child(3).isHidden(), str(texte))
         # Obergrenze: mehr Treffer hinter der Sammelzeile als FILTER_MAX laden
@@ -739,7 +741,8 @@ def test_filter_gekuerzt():
         try:
             _tippen(app, f, "K")
             kn = _zweig(b, "Knoten", "knoten")
-            texte = [kn.child(i).text(0) for i in range(kn.childCount())]
+            texte = [kn.child(i).text(0) for i in range(kn.childCount())
+                     if not kn.child(i).text(0).startswith("+ ")]
             sammel = [kn.child(i).text(0) for i in range(kn.childCount())
                       if not kn.child(i).isHidden() and kn.child(i).text(0).startswith("… ")]
             check(f"Filter „K“ mit Obergrenze 2: {rest} Treffer hinter der Sammelzeile, keiner nachgeladen",
@@ -1081,9 +1084,10 @@ def test_d7_kein_nachladen_wegen_zweignamen():
         b.filtern("k")
         app.processEvents()
         n1 = kn.childCount()
-        sammel = kn.child(n1 - 1)
+        # die letzte Zeile ist seit dem 08.11.2026 „+ Knoten anlegen“, davor die Sammelzeile
+        sammel = kn.child(n1 - 2)
         check("D7: 21 000 Knoten, Filter „k“ - hinter „… N weitere“ wird nichts nachgeladen",
-              n0 == dsg.BAUM_MAX + 1 and n1 == n0, f"Zeilen vorher {n0}, nachher {n1}")
+              n0 == dsg.BAUM_MAX + 2 and n1 == n0, f"Zeilen vorher {n0}, nachher {n1}")
         check("D7: … der Zweig „Knoten“ bleibt zu, die Sammelzeile nennt die Treffer",
               not kn.isExpanded() and not kn.isHidden() and sammel.text(0) == "… 1000 weitere Treffer"
               and not sammel.isHidden(), f"offen {kn.isExpanded()}, {sammel.text(0)!r}")
@@ -1181,7 +1185,7 @@ def test_d10_reihenfolge_nachgeladen():
         b.eintrag_waehlen("knoten", "10")
         b.eintrag_waehlen("knoten", "3")
         kn = _zweig(b, "Knoten", "knoten")
-        texte = [kn.child(i).text(0) for i in range(kn.childCount())]
+        texte = [kn.child(i).text(0) for i in range(kn.childCount()) if not kn.child(i).text(0).startswith("+ ")]
         check("D10: K10 und dann K3 hinter der Sammelzeile nachgeladen - Reihenfolge K0, K1, K2, K3, K10",
               texte == ["K0", "K1", "K2", "K3", "K10", "… 7 weitere"], str(texte))
     finally:
