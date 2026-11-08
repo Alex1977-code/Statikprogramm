@@ -969,8 +969,10 @@ def test_antrieb_in_den_alternativen():
     k, _ = _stellungen_eta("K", Stellung("ohne", 0.0, faelle=["LF1", "LF2"]), antrieb)
     e = ek["antrieb"]
     alt = e.modell.combinations["EK1"].alternativen
-    check("jede Alternative traegt den Antrieb mit 1,0",
-          all(a.get("Antrieb antrieb") == 1.0 for a in alt) and len(alt) == 2, str(alt))
+    # der Antriebslastfall heisst seit R2-C1 LF<Nr.> mit der Bezeichnung „Antrieb antrieb“
+    name = next((n for n, lc in e.modell.load_cases.items() if lc.bezeichnung == "Antrieb antrieb"), "?")
+    check("jede Alternative traegt den Antrieb (LF3, „Antrieb antrieb“) mit 1,0",
+          name == "LF3" and all(a.get(name) == 1.0 for a in alt) and len(alt) == 2, f"{name}: {alt}")
     check("EK und gleichwertige K2 liefern mit Antrieb dasselbe eta",
           abs(e.eta - k["antrieb"].eta) < 1e-9 and k["antrieb"].eta > k["ohne"].eta + 0.01,
           f"EK {e.eta:.4f} / K {k['antrieb'].eta:.4f} / ohne Antrieb {k['ohne'].eta:.4f}")

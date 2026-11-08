@@ -94,10 +94,10 @@ def test_kennwerte_aus_dem_feld_der_faerbung():
               and abs(zahlen[1] - round(float(np.nanmax(w)), 2)) < 0.006,
               f"{zz} / {np.nanmin(w):.3f} … {np.nanmax(w):.3f}")
     # eine einzelne Kombination: unveraendert der Betrag ihres u
-    r = an.combinations["GZT4"]
+    r = an.combinations["LK4"]
     z = [x for x in vp.kennwerte(m, r, None, "", feld="|u| Verschiebung") if x.startswith("u ")]
     soll = float(np.linalg.norm(r.u[:, :3], axis=1).max() * 1000)
-    check("… Kombination GZT4: Kennwert u = ihr größtes |u|",
+    check("… Kombination LK4: Kennwert u = ihr größtes |u|",
           z and abs(_zahl(z[0]) - round(soll, 2)) < 0.006, f"{z} / {soll:.3f}")
 
 
@@ -106,13 +106,13 @@ def test_figur_der_umhuellenden():
     m, an = _halle()
     env = an.envelopes["ULS"]
     u, figur = vp.figur(an, env)
-    check("Figur der Umhüllenden ULS: die maßgebende Kombination GZT4",
-          figur == "GZT4", repr(figur))
+    check("Figur der Umhüllenden ULS: die maßgebende Kombination LK4",
+          figur == "LK4", repr(figur))
     check("… ihre Verformung, kein Gemisch",
-          u is not None and np.array_equal(u, an.combinations["GZT4"].u))
+          u is not None and np.array_equal(u, an.combinations["LK4"].u))
     check("… und ihr größtes |u| ist das der Färbung",
           u is not None and abs(np.linalg.norm(u[:, :3], axis=1).max() - env.umag_max.max()) < 1e-12)
-    r = an.combinations["GZT7"]
+    r = an.combinations["LK7"]
     u2, f2 = vp.figur(an, r)
     check("Kombination: ihre eigene Verformung, keine Figur-Zeile",
           u2 is r.u and f2 == "", repr(f2))
@@ -121,8 +121,8 @@ def test_figur_der_umhuellenden():
     u3, f3 = vp.figur(None, env)
     check("ohne Einzelergebnisse: Extremwerte je Richtung, und die Zeile sagt es",
           u3 is not None and f3 == vp.FIGUR_GEMISCHT, repr(f3))
-    z = vp.kopfzeile(m, env, "Umhüllende ULS", "|u| Verschiebung", figur="GZT4")
-    check("Kopfzeile: „Figur: GZT4“", any(x.strip() == "Figur: GZT4" for x in z), str(z))
+    z = vp.kopfzeile(m, env, "Umhüllende ULS", "|u| Verschiebung", figur="LK4")
+    check("Kopfzeile: „Figur: LK4“", any(x.strip() == "Figur: LK4" for x in z), str(z))
 
 
 # --------------------------------------------------------------------------
@@ -191,7 +191,7 @@ def test_glasleiste_fuehrt_alle_ergebnisse():
     check("… auf jede Überschrift folgt ein Eintrag",
           all(i + 1 < len(eintr) and eintr[i + 1][1] is not None for i, _t in koepfe))
     # rechts gewaehlt -> Glasleiste folgt, fuer jede Art
-    for ziel in (("case", "S"), ("combo", "GZT4"), ("env", "SLS_CH"), ("env", "ULS")):
+    for ziel in (("case", "LF2"), ("combo", "LK4"), ("env", "SLS_CH"), ("env", "ULS")):
         cbr.setCurrentIndex(_index(cbr, ziel)); app.processEvents()
         check(f"Ergebnismaske auf {ziel[1]}: Glasleiste zeigt dasselbe",
               cbl.currentData() == cbr.currentData() == ziel, f"{cbl.currentData()} / {cbr.currentData()}")
@@ -200,17 +200,17 @@ def test_glasleiste_fuehrt_alle_ergebnisse():
 def test_umhuellende_waehlen_laesst_den_lastfall():
     w, app, an = _halle_im_fenster()
     cbl, cbr = w.cb_lastwahl, w.cb_result
-    cbl.setCurrentIndex(_index(cbl, ("case", "W_links"))); app.processEvents()
+    cbl.setCurrentIndex(_index(cbl, ("case", "LF3"))); app.processEvents()
     check("Lastfall in der Glasleiste: er wird der aktive (wie bisher)",
-          w.model.active_case == "W_links" and cbr.currentData() == ("case", "W_links"),
+          w.model.active_case == "LF3" and cbr.currentData() == ("case", "LF3"),
           f"{w.model.active_case} / {cbr.currentData()}")
     cbl.setCurrentIndex(_index(cbl, ("env", "SLS_CH"))); app.processEvents()
     check("Umhüllende in der Glasleiste: die Ergebnismaske folgt",
           cbr.currentData() == ("env", "SLS_CH"), str(cbr.currentData()))
-    check("… der aktive Lastfall bleibt", w.model.active_case == "W_links", w.model.active_case)
-    cbl.setCurrentIndex(_index(cbl, ("combo", "GZT4"))); app.processEvents()
+    check("… der aktive Lastfall bleibt", w.model.active_case == "LF3", w.model.active_case)
+    cbl.setCurrentIndex(_index(cbl, ("combo", "LK4"))); app.processEvents()
     check("Kombination in der Glasleiste: Ergebnismaske folgt, aktiver Lastfall bleibt",
-          cbr.currentData() == ("combo", "GZT4") and w.model.active_case == "W_links",
+          cbr.currentData() == ("combo", "LK4") and w.model.active_case == "LF3",
           f"{cbr.currentData()} / {w.model.active_case}")
     kopf = [i for i in range(cbl.count()) if cbl.itemData(i) is None]
     vorher = cbr.currentData()
@@ -224,11 +224,11 @@ def test_kennwerte_und_figur_im_bild():
     w, app, an = _halle_im_fenster()
     w.cb_result.setCurrentIndex(_index(w.cb_result, ("env", "ULS"))); app.processEvents()
     zeilen = list(w._kopfzeile_zeilen or [])
-    check("Kopfzeile der Umhüllenden nennt die Figur: GZT4",
-          any(z.strip() == "Figur: GZT4" for z in zeilen), str(zeilen))
+    check("Kopfzeile der Umhüllenden nennt die Figur: LK4",
+          any(z.strip() == "Figur: LK4" for z in zeilen), str(zeilen))
     u_bild = getattr(w, "_bild_figur", (None, None))[1]
-    check("… das Bild zeigt die Verformung von GZT4",
-          u_bild is not None and np.array_equal(u_bild, an.combinations["GZT4"].u))
+    check("… das Bild zeigt die Verformung von LK4",
+          u_bild is not None and np.array_equal(u_bild, an.combinations["LK4"].u))
     kw = [z for z in (w._kennwerte_zeilen or []) if z.startswith("u ")]
     skala = [a.mapper.scalar_range for n, a in w.plotter.renderer.actors.items()
              if n.startswith("result_") and a.mapper is not None
@@ -237,7 +237,7 @@ def test_kennwerte_und_figur_im_bild():
     check("Kennwert u = obere Grenze der Legende (73,52 mm)",
           kw and abs(_zahl(kw[0]) - round(hoch, 2)) < 0.006 and abs(hoch - 73.52) < 0.01,
           f"{kw} / Legende {hoch:.4f}")
-    w.cb_result.setCurrentIndex(_index(w.cb_result, ("combo", "GZT7"))); app.processEvents()
+    w.cb_result.setCurrentIndex(_index(w.cb_result, ("combo", "LK7"))); app.processEvents()
     check("Kombination: keine Figur-Zeile (die Figur ist sie selbst)",
           not any("Figur" in z for z in (w._kopfzeile_zeilen or [])), str(w._kopfzeile_zeilen))
 
@@ -250,7 +250,7 @@ def test_lasten_im_ergebnisbild():
           a is not None and a.isCheckable() and not a.isChecked())
     if a is None:
         return
-    for ziel in (("env", "ULS"), ("combo", "GZT4")):
+    for ziel in (("env", "ULS"), ("combo", "LK4")):
         cbr.setCurrentIndex(_index(cbr, ziel)); app.processEvents()
         check(f"{ziel[1]}: keine Lasten im Bild, keine Lastzeile oben links",
               not w._lastpunkte and not any(z.strip().startswith("Lasten") and "[" in z
@@ -272,19 +272,19 @@ def test_lasten_im_ergebnisbild():
     a.setChecked(False); app.processEvents()
     # ein Lastfall zeigt seine eigenen Lasten - und wird, rechts gewaehlt,
     # der aktive wie in der Glasleiste (Nachbesserung 24.09.2026: vorher blieb
-    # LF1 aktiv, die Leiste zeigte „Lastfall W_links“ und eine neue Last ging
+    # LF1 aktiv, die Leiste zeigte „Lastfall LF3“ und eine neue Last ging
     # unsichtbar in LF1)
     w.model.active_case = "LF1"
-    cbr.setCurrentIndex(_index(cbr, ("case", "W_links"))); app.processEvents()
-    n_w = w.model.load_cases["W_links"].n_loads
-    check("Lastfall W_links rechts gewählt: seine Lasten im Bild, die Kopfzeile nennt ihn",
-          bool(w._lastpunkte) and any(z.strip().startswith("Lasten W_links [")
+    cbr.setCurrentIndex(_index(cbr, ("case", "LF3"))); app.processEvents()
+    n_w = w.model.load_cases["LF3"].n_loads
+    check("Lastfall LF3 rechts gewählt: seine Lasten im Bild, die Kopfzeile nennt ihn",
+          bool(w._lastpunkte) and any(z.strip().startswith("Lasten LF3 [")
                                       for z in w._kopfzeile_zeilen)
-          and getattr(w, "_lastfall_im_bild", None) == "W_links",
+          and getattr(w, "_lastfall_im_bild", None) == "LF3",
           f"{len(w._lastpunkte)} Symbole ({n_w} Lasten), {w._kopfzeile_zeilen}")
     check("… und er ist jetzt der aktive (wie bei der Wahl in der Glasleiste)",
-          w.model.active_case == "W_links" and "W_links" in w.lbl_active.text()
-          and w.cb_lastwahl.currentData() == ("case", "W_links"),
+          w.model.active_case == "LF3" and "LF3" in w.lbl_active.text()
+          and w.cb_lastwahl.currentData() == ("case", "LF3"),
           f"{w.model.active_case} / {w.lbl_active.text()}")
     n_sym = len(w._lastpunkte)
     w.selection = np.array([3])
@@ -294,30 +294,30 @@ def test_lasten_im_ergebnisbild():
         except Exception:        # noqa: BLE001 - Feld ohne setValue
             e.setText(str(v))
     w.add_load(); app.processEvents()
-    check("… eine neue Knotenlast landet in W_links und steht im Bild",
-          w.model.load_cases["W_links"].n_loads == n_w + 1 and len(w._lastpunkte) == n_sym + 1,
-          f"W_links {w.model.load_cases['W_links'].n_loads} Lasten, Symbole {n_sym} -> "
+    check("… eine neue Knotenlast landet in LF3 und steht im Bild",
+          w.model.load_cases["LF3"].n_loads == n_w + 1 and len(w._lastpunkte) == n_sym + 1,
+          f"LF3 {w.model.load_cases['LF3'].n_loads} Lasten, Symbole {n_sym} -> "
           f"{len(w._lastpunkte)}")
     w.undo(); app.processEvents()
     an = solver.solve_all(w.model, design=bool(w.model.members))
     w._solve_done("all", an); app.processEvents()
-    cbr.setCurrentIndex(_index(cbr, ("case", "W_links"))); app.processEvents()
+    cbr.setCurrentIndex(_index(cbr, ("case", "LF3"))); app.processEvents()
     # der aktive Lastfall wechselt in der Maske Lastfaelle: das gezeigte
     # Lastfall-Ergebnis folgt ihm
-    w.tbl_lc.selectRow(list(w.model.load_cases).index("S")); app.processEvents()
-    check("aktiver Lastfall in der Lastfalltabelle auf S: Ergebnis und Leiste folgen",
-          w.model.active_case == "S" and cbr.currentData() == ("case", "S")
-          and w.cb_lastwahl.currentData() == ("case", "S"),
+    w.tbl_lc.selectRow(list(w.model.load_cases).index("LF2")); app.processEvents()
+    check("aktiver Lastfall in der Lastfalltabelle auf LF2: Ergebnis und Leiste folgen",
+          w.model.active_case == "LF2" and cbr.currentData() == ("case", "LF2")
+          and w.cb_lastwahl.currentData() == ("case", "LF2"),
           f"{w.model.active_case} / {cbr.currentData()} / {w.cb_lastwahl.currentData()}")
-    cbr.setCurrentIndex(_index(cbr, ("case", "W_links"))); app.processEvents()
-    # ein Klick auf einen dieser Pfeile trifft die Last von W_links, nicht
+    cbr.setCurrentIndex(_index(cbr, ("case", "LF3"))); app.processEvents()
+    # ein Klick auf einen dieser Pfeile trifft die Last von LF3, nicht
     # die gleichnummerige von LF1
     alt_art = w.auswahlart
     w.auswahlart_setzen("Last")
     liste, k, punkt = w._lastpunkte[0][:3]
     w._picked(np.asarray(punkt, float)); app.processEvents()
-    check("… ein Klick auf einen Lastpfeil wählt die Last von W_links",
-          bool(w.sel_lasten) and w.sel_lasten[0][0] == "W_links", str(w.sel_lasten[:1]))
+    check("… ein Klick auf einen Lastpfeil wählt die Last von LF3",
+          bool(w.sel_lasten) and w.sel_lasten[0][0] == "LF3", str(w.sel_lasten[:1]))
     w.sel_lasten = []
     w.auswahlart_setzen(alt_art)
     w.maske_zeigen("Ergebnisse"); app.processEvents()
@@ -326,8 +326,8 @@ def test_lasten_im_ergebnisbild():
     w.act_loads.setChecked(True); app.processEvents()
     # ohne Ergebnis wie bisher: der aktive Lastfall
     w.act_ergebnisse.setChecked(False); app.processEvents()
-    check("Ergebnisse ausgeblendet: die Lasten des aktiven Lastfalls (W_links)",
-          bool(w._lastpunkte) and getattr(w, "_lastfall_im_bild", None) == "W_links",
+    check("Ergebnisse ausgeblendet: die Lasten des aktiven Lastfalls (LF3)",
+          bool(w._lastpunkte) and getattr(w, "_lastfall_im_bild", None) == "LF3",
           str(getattr(w, "_lastfall_im_bild", None)))
     w.act_ergebnisse.setChecked(True); app.processEvents()
 
@@ -351,12 +351,12 @@ def test_ausgeblendet_steht_die_leiste_auf_dem_lastfall():
           cbl.currentData() == ("env", "SLS_CH"), str(cbl.currentData()))
     # ausgeblendet eine Kombination in der Leiste waehlen: sie zeigt sich
     w.act_ergebnisse.setChecked(False); app.processEvents()
-    cbl.setCurrentIndex(_index(cbl, ("combo", "GZT4"))); app.processEvents()
-    check("ausgeblendet Kombination GZT4 in der Leiste gewählt: Ergebnisse wieder an, "
-          "Bild und Leiste zeigen GZT4",
-          w.ergebnisse_sichtbar() and cbr.currentData() == ("combo", "GZT4")
-          and cbl.currentData() == ("combo", "GZT4")
-          and w._kopfzeile_zeilen and w._kopfzeile_zeilen[0] == "Kombination GZT4",
+    cbl.setCurrentIndex(_index(cbl, ("combo", "LK4"))); app.processEvents()
+    check("ausgeblendet Kombination LK4 in der Leiste gewählt: Ergebnisse wieder an, "
+          "Bild und Leiste zeigen LK4",
+          w.ergebnisse_sichtbar() and cbr.currentData() == ("combo", "LK4")
+          and cbl.currentData() == ("combo", "LK4")
+          and w._kopfzeile_zeilen and w._kopfzeile_zeilen[0] == "Kombination LK4",
           f"{w.ergebnisse_sichtbar()} / {cbl.currentData()} / {w._kopfzeile_zeilen[:1]}")
 
 
@@ -403,8 +403,8 @@ def test_kombination_vor_der_rechnung():
     w.load_example("hall"); app.processEvents()
     cbl = w.cb_lastwahl
     akt = w.model.active_case
-    cbl.setCurrentIndex(_index(cbl, ("combo", "GZT4"))); app.processEvents()
-    check("vor der Rechnung Kombination GZT4 gewählt: Protokoll sagt, woran es liegt",
+    cbl.setCurrentIndex(_index(cbl, ("combo", "LK4"))); app.processEvents()
+    check("vor der Rechnung Kombination LK4 gewählt: Protokoll sagt, woran es liegt",
           "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1],
           w.log.toPlainText().splitlines()[-1][:80])
     check("… die Leiste steht wieder auf dem aktiven Lastfall",
@@ -432,18 +432,18 @@ def test_statisch_dann_eigenformen():
           and all(("case", n) in daten for n in w.model.load_cases)
           and all(("combo", n) in daten for n in w.model.combinations), f"{len(daten)} Einträge")
     n_log = len(w.log.toPlainText().splitlines())
-    cbl.setCurrentIndex(_index(cbl, ("combo", "GZT4"))); app.processEvents()
+    cbl.setCurrentIndex(_index(cbl, ("combo", "LK4"))); app.processEvents()
     neu = w.log.toPlainText().splitlines()[n_log:]
     check("Kombination gewählt: die Meldung nennt die Eigenformen, nicht „sobald gerechnet ist“",
           neu and "Eigen- bzw. Knickformen" in neu[-1] and "sobald gerechnet" not in neu[-1],
           str(neu))
     check("… die Leiste springt auf die gezeigte Form zurück",
           cbl.currentData() == ("form", 0), str(cbl.currentData()))
-    cbl.setCurrentIndex(_index(cbl, ("case", "W_links"))); app.processEvents()
+    cbl.setCurrentIndex(_index(cbl, ("case", "LF3"))); app.processEvents()
     check("Lastfall gewählt: aktiv, Ergebnisse ausgeblendet, Leiste und Bild zeigen ihn",
-          w.model.active_case == "W_links" and not w.ergebnisse_sichtbar()
-          and cbl.currentData() == ("case", "W_links")
-          and getattr(w, "_lastfall_im_bild", None) == "W_links",
+          w.model.active_case == "LF3" and not w.ergebnisse_sichtbar()
+          and cbl.currentData() == ("case", "LF3")
+          and getattr(w, "_lastfall_im_bild", None) == "LF3",
           f"{w.model.active_case} / {w.ergebnisse_sichtbar()} / {cbl.currentData()}")
     cbl.setCurrentIndex(_index(cbl, ("form", 1))); app.processEvents()
     check("Form 2 gewählt: Ergebnisse wieder an, sie wird gezeigt",
@@ -453,9 +453,9 @@ def test_statisch_dann_eigenformen():
 
 def test_rueckgaengig_leert_die_ergebnismaske():
     """Nachbesserung 24.09.2026: Rueckgaengig verwirft die Ergebnisse - die
-    Maske Ergebnisse zeigte weiter „Kombination GZT4“, die Leiste LF1."""
+    Maske Ergebnisse zeigte weiter „Kombination LK4“, die Leiste LF1."""
     w, app, an = _halle_im_fenster()
-    w.cb_lastwahl.setCurrentIndex(_index(w.cb_lastwahl, ("combo", "GZT4"))); app.processEvents()
+    w.cb_lastwahl.setCurrentIndex(_index(w.cb_lastwahl, ("combo", "LK4"))); app.processEvents()
     w.merken("Probe")
     w.undo(); app.processEvents()
     check("nach Rückgängig: Ergebnismaske leer, Leiste auf dem aktiven Lastfall",
@@ -497,8 +497,8 @@ def test_sichtbare_texte():
     check("Überhöhung 0 (keine verformte Figur): keine Zeile „Figur: …“",
           not any("Figur" in z for z in w._kopfzeile_zeilen), str(w._kopfzeile_zeilen))
     w.ueberhoehung_setzen("auto"); app.processEvents()
-    check("… mit Überhöhung wieder „Figur: GZT4“",
-          any(z.strip() == "Figur: GZT4" for z in w._kopfzeile_zeilen), str(w._kopfzeile_zeilen))
+    check("… mit Überhöhung wieder „Figur: LK4“",
+          any(z.strip() == "Figur: LK4" for z in w._kopfzeile_zeilen), str(w._kopfzeile_zeilen))
 
 
 def test_eigenformen_in_der_glasleiste():

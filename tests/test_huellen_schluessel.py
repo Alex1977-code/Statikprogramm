@@ -558,18 +558,47 @@ def _pendelmarken_abnehmen(an) -> dict:
     return aus
 
 
+def _alte_namen(m) -> dict:
+    """Name von heute -> Name vor R2-C1 (06.10.2026) fuer ein eingebautes Beispiel: der Lastfall
+    mit seiner Bezeichnung (LF1 behaelt den Namen), die Kombination als GZT<n> (Typ ULS) oder
+    GZG<n> - die Nummer ist dieselbe geblieben."""
+    tab = {n: (lc.bezeichnung if n != "LF1" and lc.bezeichnung else n) for n, lc in m.load_cases.items()}
+    tab.update({n: (("GZT" if c.typ == "ULS" else "GZG") + n[2:]) for n, c in m.combinations.items()})
+    return tab
+
+
+def _zurueck(x, tab: dict):
+    """Die Namen von heute in einem Fingerabdruck (Schluessel und Zeichenketten) durch die alten
+    ersetzen: die Referenz von 6791f9f traegt die damaligen Namen."""
+    if isinstance(x, str):
+        return re.sub(r"\b(?:LF|LK)\d+\b", lambda t: tab.get(t.group(0), t.group(0)), x)
+    if isinstance(x, list):
+        return [_zurueck(y, tab) for y in x]
+    if isinstance(x, dict):
+        return {_zurueck(k, tab): _zurueck(v, tab) for k, v in x.items()}
+    return x
+
+
 def test_r1f_beispiele():
+    """Die Beispiele rechnen Zahl fuer Zahl wie auf 6791f9f. Seit R2-C1 (06.10.2026) heissen ihre
+    Lastfaelle LF<n> und ihre Kombinationen LK<n>; die Referenz traegt noch die Namen von damals
+    und wird ueber die Tabelle alt -> neu (_alte_namen) verglichen. Die neuen Namen prueft
+    tests/test_namen_erzeuger.py."""
     from statik3d import solver
     from statik3d.examples_lib import build_example
     R = ref()
     soll = _json("beispiele.json")
     for b in R["BEISPIELE"]:
-        an = solver.solve_all(build_example(b), design=True, fatigue=True)
+        m = build_example(b)
+        an = solver.solve_all(m, design=True, fatigue=True)
         marken = _pendelmarken_abnehmen(an)
         if b == "contact":
             check(f"R1f {b}: Kontaktzustand mit den Pendelmarken aus B4, keine Bedingung pendelte",
                   bool(marken) and all(da and z == 0 for da, z in marken.values()), str(marken))
-        abdruck = R["analyse"](an)
+        check(f"R1f {b}: Lastfälle LF<n>, Kombinationen LK<n>",
+              all(re.fullmatch(r"LF\d+", n) for n in m.load_cases)
+              and all(re.fullmatch(r"LK\d+", n) for n in m.combinations), str(list(m.load_cases)))
+        abdruck = _zurueck(R["analyse"](an), _alte_namen(m))
         abdruck["fatigue"] = _ohne_neue_felder(abdruck["fatigue"])
         ist = R["verdichtet"](abdruck)
         anders = [f"{teil}/{k}" for teil in soll[b] if isinstance(soll[b][teil], dict)

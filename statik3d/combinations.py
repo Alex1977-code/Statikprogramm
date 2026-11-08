@@ -104,42 +104,68 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
     (Stellung, abgeschaltete Elemente) stehen nie in einer Kombination; jede
     erzeugte Kombination traegt ihre Situation.
 
-    Die Nummer im Namen zaehlt ab der Zahl der verbleibenden Kombinationen
-    weiter und ueberspringt jeden vergebenen Namen: eine erzeugte
-    Kombination ueberschreibt nie eine vorhandene (R2-A1, 04.10.2026). Bis
-    dahin ersetzte sie still eine Handkombination gleichen Namens - gemessen:
-    „GZT2“ mit 9,99·LF2 war danach die erzeugte mit 1,35·LF1
-    (tests/test_namen_lf_lk.py, N6). Die Namen bleiben GZT<n>, GZT-A<n> und
-    GZG<n>; LK<n> kommt mit Paket R2-C1.
+    **Namen** (Paket R2-C1, Entscheidung des Anwenders vom 04.10.2026: eine
+    Lastkombination heisst LK und traegt ihre Nummer): jede erzeugte
+    Kombination heisst LK<n> mit der naechsten freien Nummer, Art "LK". Der
+    Typ (ULS, ACC, SLS_CH, SLS_FR, SLS_QP) bleibt ihr eigenes Merkmal, und die
+    **Bezeichnung** sagt kurz, was sie ist - Art und Leiteinwirkung, bei
+    Bedarf die Begleiteinwirkungen: „GZT, Leit LF3 (mit LF2, LF5)“,
+    „GZG char., Leit LF3“, „GZT 6.10a (mit LF2)“, „GZG quasi-ständig, nur
+    ständig“, „GZT außergew. LF9, Leit LF3“, dazu „, G günstig“, wenn die
+    ständigen Lasten günstig angesetzt sind, und „[Situation]“ in einer
+    Stellung. Warum so: Art und Leiteinwirkung sind das, wonach der Anwender
+    in der Liste sucht; die Begleiteinwirkungen trennen Kombinationen mit
+    gleicher Leiteinwirkung voneinander, und der Lastfall steht mit seinem
+    **Namen** (LF3) da und nicht mit seiner Bezeichnung, damit sich die
+    Bezeichnung des Lastfalls ohne Folgen ändern lässt. Bis zu diesem Stand
+    hießen sie GZT<n>, GZT-A<n> und GZG<n> mit einem gemeinsamen Zähler;
+    Reihenfolge und Zahl sind geblieben (Halle: GZT1…GZT42 sind LK1…LK42,
+    GZG43…GZG72 sind LK43…LK72).
 
-    Ersetzt wird nur, was dieser Generator selbst erzeugt hat und was
-    seitdem niemand angefasst hat (:func:`gehoert_dem_generator`,
-    Nachbesserung G5 vom 04.10.2026). Bis dahin entschied die Beschreibung
-    („auto: …“): eine erzeugte Kombination, die der Anwender in LK50
-    umbenannt hatte, verschwand beim naechsten Lauf, und eine
-    Ermuedungslast auf LK50 zeigte ins Leere."""
+    **Nie etwas überschreiben, nur Eigenes ersetzen.** Die Nummer kommt aus
+    der Folge der freien Nummern und überspringt jede vergebene - im Feld
+    ``nummer`` und im Namen -: eine Handkombination LK5 bleibt, wie sie ist
+    (R2-A1: bis dahin ersetzte der Generator still eine Handkombination
+    „GZT2“, gemessen mit 9,99·LF2 in tests/test_namen_lf_lk.py, N6).
+    Ersetzt wird nur, was dieser Generator selbst erzeugt hat und was seitdem
+    niemand angefasst hat (:func:`gehoert_dem_generator`, über den
+    **Fingerabdruck** ``erzeugt`` und ``unberuehrt``, nie über den Namen): eine
+    erzeugte Kombination, die der Anwender umbenannt oder geändert hat,
+    gehört ihm.
+
+    **Nummern halten.** Ein erneuter Lauf gibt jeder Kombination ihre Nummer
+    zurück, wenn ihr Inhalt (Typ, Situation, Faktoren) derselbe ist - eine
+    Ermüdungslast auf LK17, ein Berichtseintrag oder eine Stellung zeigt dann
+    weiter auf dieselbe Kombination. Neue Kombinationen füllen zuerst die
+    Lücken, die ersetzte hinterlassen haben (niedrigste Nummer zuerst, in der
+    Reihenfolge der Erzeugung), danach geht es hinter der höchsten weiter. Eine
+    Nummer, die im Modell noch genannt wird (Ermüdungslast, Stellung,
+    Berichtseintrag) und keiner Kombination mehr gehört, wird nie neu
+    vergeben: der Verweis zeigt ins Leere, und Model.check sagt es, statt
+    still auf eine andere Kombination zu zeigen."""
     ds = model.design
     rule = rule or ds.combination_rule
-    combos: list[Combination] = []
     # Lastfaelle ohne Einwirkung: gamma und psi stehen nicht fest. Der Generator
     # liesse sie sonst still weg (weder staendig noch veraenderlich) - er weigert
     # sich, bevor er vorhandene Kombinationen ersetzt.
     offen = model.lastfaelle_ohne_einwirkung()
     if offen:
         raise KombinationGesperrt(sperrhinweis_erzeugen(offen), lastfaelle=offen)
-    if replace:
-        model.combinations = {k: c for k, c in model.combinations.items()
-                              if not gehoert_dem_generator(c)}
-    zaehler = [len(model.combinations)]
+    # erst entwerfen, dann ersetzen: scheitert der Entwurf („Zu viele Kombinationen“),
+    # bleibt das Modell, wie es ist
+    entwuerfe: list = []
     seen: set = set()
-    # Namen in ihrer Form (Gross/Klein, Leerzeichen): einmal gebildet statt
-    # je Kombination namenskonflikt - am Generator sind es bis 2000
-    vergeben = model.namensformen()
     for sit, namen in model.lastfaelle_je_situation().items():
         faelle = [model.load_cases[k] for k in namen]
         _kombinationen_bilden(model, faelle, sit, uls, sls, accidental, rule, g_favourable,
-                              max_combinations, combos, seen, zaehler, vergeben)
-    return combos
+                              max_combinations, entwuerfe, seen)
+    ersetzt: list = []
+    if replace:
+        ersetzt = [c for c in model.combinations.values() if gehoert_dem_generator(c)]
+        weg = {id(c) for c in ersetzt}
+        for k in [k for k, c in model.combinations.items() if id(c) in weg]:
+            del model.combinations[k]
+    return kombinationen_anlegen(model, GENERATOR, entwuerfe, ersetzt)
 
 
 #: Name dieses Generators in Combination.erzeugt
@@ -150,13 +176,15 @@ def gehoert_dem_generator(c: Combination) -> bool:
     """Ob der Generator die Kombination *c* ersetzen darf: er hat sie selbst
     erzeugt, und niemand hat sie seitdem angefasst (Combination.unberuehrt -
     umbenannt, Faktoren, Typ, Beschreibung, Leiteinwirkung geaendert macht
-    sie zur Kombination des Anwenders).
+    sie zur Kombination des Anwenders). Gefunden wird sie am Fingerabdruck,
+    nie am Namen: nach der Umstellung beim Laden heisst jede erzeugte
+    Kombination LK<n> und traegt ihren Fingerabdruck weiter.
 
     Eine Kombination aus einer Datei von vor dem 04.10.2026 traegt kein
     Merkmal. Fuer sie gilt die alte Regel - Beschreibung „auto…“ -, aber nur,
     solange sie noch den Namen des Generators traegt (GZT<n>, GZT-A<n>,
     GZG<n>): eine umbenannte bleibt. Mehr laesst sich ohne Merkmal nicht
-    sagen; die Umstellung beim Laden (Paket R2-A2) kann es setzen."""
+    sagen; die Umstellung beim Laden (Paket R2-A2) setzt es."""
     import re
     if getattr(c, "erzeugt", ""):
         return c.unberuehrt(GENERATOR)
@@ -164,12 +192,127 @@ def gehoert_dem_generator(c: Combination) -> bool:
             and re.fullmatch(r"(GZT|GZT-A|GZG)\d+", str(c.name)) is not None)
 
 
+# ==========================================================================
+# Nummern und Anlegen - gemeinsam fuer alle Kombinationsgeneratoren
+# ==========================================================================
+def inhaltsschluessel(typ: str, situation: str, faktoren: dict) -> tuple:
+    """Woran der Generator eine Kombination wiedererkennt, wenn er sie neu
+    erzeugt: Typ, Situation und Faktoren (auf sechs Stellen gerundet, wie der
+    Generator sie legt) - nie ihr Name."""
+    return (str(typ), str(situation or ""),
+            tuple(sorted((str(k), round(float(v), 6)) for k, v in faktoren.items())))
+
+
+def _kombinationen_genannt(model: Model) -> set:
+    """Die Namen von Kombinationen, auf die im Modell etwas zeigt: Zustand und
+    Verlauf einer Ermuedungslast, Kombinationsliste einer Stellung,
+    Berichtseintrag „combo:“."""
+    namen: set = set()
+    for fl in model.fatigue_loads.values():
+        namen.update(x for x in (fl.case_max, fl.case_min) if x)
+        namen.update(x for x in (getattr(fl, "folge", None) or []) if x)
+    for s in getattr(model, "stellungen", None) or []:
+        namen.update(x for x in (getattr(s, "kombinationen", None) or []) if x)
+    for e in getattr(model, "bericht", None) or []:
+        q = str(getattr(e, "quelle", "") or "")
+        if q.startswith("combo:"):
+            namen.add(q[len("combo:"):])
+    return namen
+
+
+def kombinationen_anlegen(model: Model, generator: str, entwuerfe: list, ersetzt: list = ()) -> list:
+    """Die Entwuerfe eines Generators als Lastkombinationen LK<n> im Modell
+    ablegen und die angelegten Kombinationen zurueckgeben (R2-C1).
+
+    *entwuerfe*: Woerterbuecher mit ``factors``, ``typ``, ``description``,
+    ``leading``, ``situation`` und ``bezeichnung`` - ohne Namen und ohne Nummer.
+    *ersetzt*: die Kombinationen, die der Generator eben aus dem Modell
+    genommen hat (sie stehen nicht mehr in ``model.combinations``); ihre
+    Nummern werden gehalten, wo der Inhalt derselbe ist
+    (:func:`inhaltsschluessel`), sonst nach der Regel von
+    :func:`generate_combinations` vergeben.
+
+    Jede Kombination bekommt den Namen LK<Nummer> und die Art "LK" und traegt
+    den Fingerabdruck des Generators (Combination.als_erzeugt). Eine vergebene
+    Nummer - Feld oder Name, Lastfall oder Kombination - wird nie vergeben."""
+    from .model import _namensnummer
+    belegt: set = set()
+    for c in model.combinations.values():
+        if c.art == "LK":
+            belegt.add(int(c.nummer or 0))
+    for n in list(model.load_cases) + list(model.combinations):
+        a, z = _namensnummer(n)
+        if a == "LK":
+            belegt.add(z)
+    belegt.discard(0)
+    gesperrt = {z for a, z in (_namensnummer(n) for n in _kombinationen_genannt(model))
+                if a == "LK"} - belegt
+    alte: dict = {}
+    for c in ersetzt:
+        nr = int(c.nummer or 0)
+        if nr > 0 and c.art == "LK":
+            alte.setdefault(inhaltsschluessel(c.typ, c.situation, c.factors), nr)
+    nummern: list = [0] * len(entwuerfe)
+    benutzt: set = set()
+    for i, e in enumerate(entwuerfe):
+        nr = alte.get(inhaltsschluessel(e["typ"], e["situation"], e["factors"]), 0)
+        # dieselbe Nummer fuer denselben Inhalt - auch dann, wenn etwas auf sie
+        # zeigt: der Verweis zeigt weiter auf dieselbe Kombination
+        if nr and nr not in belegt and nr not in benutzt:
+            nummern[i] = nr
+            benutzt.add(nr)
+    luecken = sorted(set(alte.values()) - benutzt - belegt - gesperrt)
+    naechste = max(belegt | benutzt | set(alte.values()) | gesperrt, default=0) + 1
+    li = 0
+    for i in range(len(entwuerfe)):
+        if nummern[i]:
+            continue
+        if li < len(luecken):
+            nummern[i] = luecken[li]
+            li += 1
+        else:
+            while naechste in belegt or naechste in benutzt or naechste in gesperrt:
+                naechste += 1
+            nummern[i] = naechste
+            naechste += 1
+        benutzt.add(nummern[i])
+    angelegt: list = []
+    for e, nr in zip(entwuerfe, nummern):
+        c = Combination(f"LK{nr}", e["factors"], e["typ"], e["description"], e.get("leading", ""),
+                        situation=e["situation"], nummer=nr, art="LK",
+                        bezeichnung=e.get("bezeichnung", "")).als_erzeugt(generator)
+        model.combinations[c.name] = c
+        angelegt.append(c)
+    return angelegt
+
+
+def _bezeichnung(art: str, leit: str = "", begleit=(), nur: str = "", guenstig: bool = False,
+                 situation: str = "") -> str:
+    """Die kurze Bezeichnung einer erzeugten Kombination, etwa „GZT, Leit LF3
+    (mit LF2, LF5), G günstig“ (Muster und Begruendung bei
+    :func:`generate_combinations`)."""
+    t = art
+    if leit:
+        t += f", Leit {leit}"
+        if begleit:
+            t += f" (mit {', '.join(begleit)})"
+    elif begleit:
+        t += f" (mit {', '.join(begleit)})"
+    elif nur:
+        t += f", nur {nur}"
+    if guenstig:
+        t += ", G günstig"
+    if situation:
+        t += f" [{situation}]"
+    return t
+
+
 def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool, sls: bool,
                           accidental: bool, rule: str, g_favourable: bool,
-                          max_combinations: int, combos: list, seen: set, zaehler: list,
-                          vergeben: set = None):
+                          max_combinations: int, entwuerfe: list, seen: set):
     """Die Kombinationen einer Situation nach DIN EN 1990 (6.10, 6.10a/b,
-    6.11b, 6.14b, 6.15b, 6.16b)."""
+    6.11b, 6.14b, 6.15b, 6.16b) als Entwuerfe ohne Namen und Nummer; die
+    Namen vergibt :func:`kombinationen_anlegen`."""
     from .model import GRUNDSTELLUNG
     ds = model.design
     # Bemessungslastfaelle (schon faktorisiert) stehen fuer sich: sie werden
@@ -180,13 +323,10 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
     perm = [lc for lc in faelle if lc.is_permanent]
     var = [lc for lc in faelle if lc.is_variable]
     acc = [lc for lc in faelle if lc.is_accidental]
-    from .model import _namensform
     sit = "" if situation == GRUNDSTELLUNG else situation
     zusatz = f" [{situation}]" if sit else ""
-    if vergeben is None:
-        vergeben = model.namensformen()
 
-    def add(name_prefix, factors, typ, desc, leading=""):
+    def add(art, factors, typ, desc, leading="", begleit=(), nur="", fav=False):
         factors = {k: round(v, 6) for k, v in factors.items() if abs(v) > 1e-12}
         if not factors:
             return
@@ -194,18 +334,12 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
         if key in seen:
             return
         seen.add(key)
-        zaehler[0] += 1
-        # die naechste freie Nummer - ein vergebener Name (Handkombination,
-        # Lastfall, auch in anderer Gross-/Kleinschreibung) wird
-        # uebersprungen, nie ueberschrieben (R2-A1). Ein Name GZT<n> kann
-        # nicht wie eine Alternative „<EK> [k]“ heissen.
-        while _namensform(f"{name_prefix}{zaehler[0]}") in vergeben:
-            zaehler[0] += 1
-        c = Combination(f"{name_prefix}{zaehler[0]}", factors, typ, "auto: " + desc + zusatz,
-                        leading, situation=sit).als_erzeugt(GENERATOR)
-        combos.append(c)
-        model.combinations[c.name] = c
-        vergeben.add(_namensform(c.name))
+        # Begleiteinwirkungen: nur die, die mit ihrem Faktor wirklich in der
+        # Kombination stehen (psi = 0 laesst sie weg)
+        begl = [lc.name for lc in begleit if lc.name in factors]
+        entwuerfe.append({"factors": factors, "typ": typ, "description": "auto: " + desc + zusatz,
+                          "leading": leading, "situation": sit,
+                          "bezeichnung": _bezeichnung(art, leading, begl, nur, fav, sit)})
 
     g_variants = [False, True] if (g_favourable and var) else [False]
     var_sets = _variable_sets(var) if var else [[]]
@@ -225,10 +359,10 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
             gf = {lc.name: _gamma(lc, ds, fav) for lc in perm}
             gdesc = "G guenstig" if fav else "G unguenstig"
             if not var:
-                add("GZT", gf, "ULS", f"6.10 nur staendig, {gdesc}")
+                add("GZT", gf, "ULS", f"6.10 nur staendig, {gdesc}", nur="ständig", fav=fav)
             for vs in var_sets:
                 if not vs:
-                    add("GZT", gf, "ULS", f"6.10 nur staendig, {gdesc}")
+                    add("GZT", gf, "ULS", f"6.10 nur staendig, {gdesc}", nur="ständig", fav=fav)
                     continue
                 for lead in vs:
                     f = dict(gf)
@@ -240,11 +374,14 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
                         f_a = dict(gf)
                         for lc in vs:
                             f_a[lc.name] = _gamma(lc, ds, False) * lc.psi_factors[0]
-                        add("GZT", f_a, "ULS", f"6.10a, {gdesc}")
+                        add("GZT 6.10a", f_a, "ULS", f"6.10a, {gdesc}", begleit=vs, nur="ständig",
+                            fav=fav)
                         f_b = {k: (v * ds.xi if k in gf else v) for k, v in f.items()}
-                        add("GZT", f_b, "ULS", f"6.10b Leit {lead.name}, {gdesc}", lead.name)
+                        add("GZT 6.10b", f_b, "ULS", f"6.10b Leit {lead.name}, {gdesc}", lead.name,
+                            begleit=[lc for lc in vs if lc is not lead], fav=fav)
                     else:
-                        add("GZT", f, "ULS", f"6.10 Leit {lead.name}, {gdesc}", lead.name)
+                        add("GZT", f, "ULS", f"6.10 Leit {lead.name}, {gdesc}", lead.name,
+                            begleit=[lc for lc in vs if lc is not lead], fav=fav)
 
     # ---------------- Aussergewoehnlich ----------------
     if accidental and acc:
@@ -253,7 +390,7 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
             gf[a.name] = 1.0
             for vs in var_sets:
                 if not vs:
-                    add("GZT-A", gf, "ACC", f"6.11b {a.name} ohne Q", a.name)
+                    add(f"GZT außergew. {a.name}", gf, "ACC", f"6.11b {a.name} ohne Q", a.name)
                     continue
                 for lead in vs:
                     f = dict(gf)
@@ -261,17 +398,18 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
                     for lc in vs:
                         if lc is not lead:
                             f[lc.name] = lc.psi_factors[2]
-                    add("GZT-A", f, "ACC", f"6.11b {a.name}, Leit {lead.name}", lead.name)
+                    add(f"GZT außergew. {a.name}", f, "ACC", f"6.11b {a.name}, Leit {lead.name}",
+                        lead.name, begleit=[lc for lc in vs if lc is not lead])
 
     # ---------------- GZG ----------------
     if sls:
         gf = {lc.name: 1.0 for lc in perm}
         if not var:
-            add("GZG", gf, "SLS_CH", "6.14b charakteristisch")
+            add("GZG char.", gf, "SLS_CH", "6.14b charakteristisch", nur="ständig")
         for vs in var_sets:
             if not vs:
-                add("GZG", gf, "SLS_CH", "6.14b charakteristisch (nur G)")
-                add("GZG", gf, "SLS_QP", "6.16b quasi-staendig (nur G)")
+                add("GZG char.", gf, "SLS_CH", "6.14b charakteristisch (nur G)", nur="ständig")
+                add("GZG quasi-ständig", gf, "SLS_QP", "6.16b quasi-staendig (nur G)", nur="ständig")
                 continue
             for lead in vs:
                 f = dict(gf)
@@ -279,17 +417,20 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
                 for lc in vs:
                     if lc is not lead:
                         f[lc.name] = lc.psi_factors[0]
-                add("GZG", f, "SLS_CH", f"6.14b charakteristisch, Leit {lead.name}", lead.name)
+                rest = [lc for lc in vs if lc is not lead]
+                add("GZG char.", f, "SLS_CH", f"6.14b charakteristisch, Leit {lead.name}", lead.name,
+                    begleit=rest)
                 f = dict(gf)
                 f[lead.name] = lead.psi_factors[1]
                 for lc in vs:
                     if lc is not lead:
                         f[lc.name] = lc.psi_factors[2]
-                add("GZG", f, "SLS_FR", f"6.15b haeufig, Leit {lead.name}", lead.name)
+                add("GZG häufig", f, "SLS_FR", f"6.15b haeufig, Leit {lead.name}", lead.name,
+                    begleit=rest)
             f = dict(gf)
             for lc in vs:
                 f[lc.name] = lc.psi_factors[2]
-            add("GZG", f, "SLS_QP", "6.16b quasi-staendig")
+            add("GZG quasi-ständig", f, "SLS_QP", "6.16b quasi-staendig", begleit=vs, nur="ständig")
 
 
 def combination_table(model: Model, theorie=None) -> list[list[str]]:

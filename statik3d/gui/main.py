@@ -22637,8 +22637,9 @@ class MainWindow(QtWidgets.QMainWindow):
         verfahren = self.WASSERVERFAHREN[0 if wd.numerisch() else 1]
         felder = [F("name", "Name", "text", wd.name, breite=140),
                   F("situation", "Situation", "wahl", wd.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140,
-                    verweis="lastfall"),
+                  F("fall", "Lastfall", "text", wd.lastfall, breite=140, verweis="lastfall",
+                    hinweis="leer = neuer Lastfall mit der Nummer unten und der Bezeichnung "
+                            f"„Wasser {wd.name}“; ein vorhandener Lastfall bleibt, wie er ist"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(wd.lastfall_nr or m.naechste_lastfallnummer()),
                     hinweis="Nummer des Lastfalls (0 = nächste freie)"),
                   F("verfahren", "Verfahren", "wahl", verfahren, list(self.WASSERVERFAHREN),
@@ -22813,8 +22814,9 @@ class MainWindow(QtWidgets.QMainWindow):
         situationen = m.situationsnamen()
         felder = [F("name", "Name", "text", w.name, breite=140),
                   F("situation", "Situation", "wahl", w.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140,
-                    verweis="lastfall"),
+                  F("fall", "Lastfall", "text", w.lastfall, breite=140, verweis="lastfall",
+                    hinweis="leer = neuer Lastfall mit der Nummer unten und der Bezeichnung "
+                            f"„Wind {w.name}“; ein vorhandener Lastfall bleibt, wie er ist"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(w.lastfall_nr or m.naechste_lastfallnummer())),
                   F("verfahren", "Verfahren", "wahl", self.WINDVERFAHREN[1 if w.windkanal() else 0],
                     list(self.WINDVERFAHREN),

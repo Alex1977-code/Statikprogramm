@@ -298,10 +298,10 @@ def test_stichprobe_umgestellter_stellen():
          maske_und_uebernehmen(w.maske_knotenlast, auswahl=[1]))
     fall("Maske Knoten (Nummer 999)", "Nummer 999 gibt es nicht",
          maske_und_uebernehmen(lambda: w._objektmaske("knoten", "1"), {"nr": 999}))
-    fall("Maske Lastfall (Name doppelt)", "Lastfall „S“ gibt es schon",
-         lambda: w._eigenschaften_uebernehmen("lastfall", "LF1", {"name": "S"}))
+    fall("Maske Lastfall (Name doppelt)", "Lastfall „LF2“ gibt es schon",
+         lambda: w._eigenschaften_uebernehmen("lastfall", "LF1", {"name": "LF2"}))
     fall("Maske Kombination (Formel ohne Doppelpunkt)", "bitte als „Lastfall: Faktor“ schreiben",
-         lambda: w._eigenschaften_uebernehmen("kombination", "GZT1", {"name": "GZT1", "faktoren": "LF1 1.35"}))
+         lambda: w._eigenschaften_uebernehmen("kombination", "LK1", {"name": "LK1", "faktoren": "LF1 1.35"}))
     fall("Maske Situation (ohne Namen)", "Bitte einen eigenen Namen für die Situation eingeben",
          lambda: w._situation_uebernehmen(None, {"name": ""}))
     fall("Maske Subsystem (ohne Namen)", "Bitte einen eigenen Namen für das Subsystem eingeben",

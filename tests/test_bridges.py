@@ -6,6 +6,7 @@ Aufruf:  python -m tests.test_bridges
 """
 import math
 import os
+import re
 import sys
 
 import numpy as np
@@ -102,9 +103,14 @@ def test_stellungen():
 
     st4 = Stellung("S5", 30.0, antrieb=(n[0], (0.0, 250e3, 0.0)))
     m5 = st4.modell(m)
-    check("Antriebslastfall angelegt", "Antrieb S5" in m5.load_cases,
-          str([k for k in m5.load_cases if "Antrieb" in k]))
-    lc = m5.load_cases["Antrieb S5"]
+    # Seit R2-C1 (06.10.2026): LF<Nr.> mit der Bezeichnung „Antrieb S5“ (bis dahin
+    # hiess er „Antrieb S5“), Nummer hinter der hoechsten des Basismodells
+    antrieb = [k for k, v in m5.load_cases.items() if v.bezeichnung == "Antrieb S5"]
+    check("Antriebslastfall angelegt: LF<Nr.> mit der Bezeichnung „Antrieb S5“, nur in der Kopie",
+          len(antrieb) == 1 and re.fullmatch(r"LF\d+", antrieb[0])
+          and antrieb[0] not in m.load_cases and m5.load_cases[antrieb[0]].nummer == int(antrieb[0][2:]),
+          str([k for k in m5.load_cases]))
+    lc = m5.load_cases[antrieb[0]]
     close("Antriebsmoment als Knotenlast", float(lc.nodal_loads[0].F[4]), 250e3, 1e-9, " Nm")
 
     check("Beschriftung nennt Winkel und Text",
@@ -460,11 +466,15 @@ def test_din19704():
     log = []
     k = rw.kombinationen(m, log=log)
     check("Kombinationen angelegt", len(k) >= 8, f"{len(k)}")
-    check("Namen mit Präfix DIN", all(x.startswith("DIN LF") for x in k), k[0])
+    # Seit R2-C1 (06.10.2026): LK<Nr.> mit der Bezeichnung „DIN 19704 Klasse <k>, …“
+    # (bis dahin „DIN LF1.1“); „Klasse“, weil LF1 bis LF3 neben den Lastfaellen missverstanden wuerden
+    check("Namen LK<Nr.>, Bezeichnung mit „DIN 19704 Klasse“",
+          all(re.fullmatch(r"LK\d+", x) and m.combinations[x].bezeichnung.startswith("DIN 19704 Klasse ")
+              for x in k), f"{k[0]} {m.combinations[k[0]].bezeichnung}")
     check("Protokoll nennt die offenen Beiwerte",
           any("bestätigen" in z for z in log))
 
-    lf1 = [x for x in k if x.startswith("DIN LF1")]
+    lf1 = [x for x in k if m.combinations[x].bezeichnung.startswith("DIN 19704 Klasse 1")]
     f = m.combinations[lf1[0]].factors
     close("LF1: ständige Einwirkung mit gamma_F", f["LF1"], 1.35, 1e-12)
     check("LF1 enthält keine außergewöhnliche Einwirkung",
@@ -473,7 +483,7 @@ def test_din19704():
           any(abs(v - 1.5) < 1e-9 for kk, v in f.items() if kk != "LF1")
           and any(abs(v - 1.5 * 0.6) < 1e-9 for v in f.values()),
           ", ".join(f"{kk}={v:g}" for kk, v in f.items()))
-    lf3 = [x for x in k if x.startswith("DIN LF3")]
+    lf3 = [x for x in k if m.combinations[x].bezeichnung.startswith("DIN 19704 Klasse 3")]
     check("LF3 vorhanden und enthält das Verklemmen",
           lf3 and any("Klemmen" in m.combinations[x].factors for x in lf3),
           str(lf3))
@@ -488,7 +498,8 @@ def test_din19704():
     m2.load_cases["LF1"].category = "G"
     m2.add_load_case("Verkehr", "Q", activate=False)
     k2 = Regelwerk().kombinationen(m2, klassen=["LF2"])
-    check("Auswahl der Klasse wirkt", all(x.startswith("DIN LF2") for x in k2), str(k2))
+    check("Auswahl der Klasse wirkt", k2 and all(
+          m2.combinations[x].bezeichnung.startswith("DIN 19704 Klasse 2") for x in k2), str(k2))
 
 
 # --------------------------------------------------------------------------

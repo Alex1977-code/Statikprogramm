@@ -5134,25 +5134,44 @@ class Model:
             name, k = f"{basis} {k}", k + 1
         return name
 
-    def generator_lastfall(self, vorschlag: str, gewaehlt: str = "", nr: int = 0, wer: str = "") -> str:
+    def generator_lastfall(self, bezeichnung: str, gewaehlt: str = "", nr: int = 0, wer: str = "",
+                           reserviert=()) -> str:
         """Der Lastfall, in den ein Lastgenerierer (Wind, Wasserdruck)
         schreibt, geprueft, bevor sich etwas aendert (Nachbesserung G3 von
         R2-A1, 04.10.2026).
 
         *gewaehlt* ist der Name, den der Anwender eingetragen hat: gibt es den
-        Lastfall, schreibt der Generierer hinein; sonst muss der Name frei
-        sein (:meth:`namenskonflikt`), und ein vergebener wird mit
-        :class:`NameVergeben` abgewiesen. Ohne eigene Wahl gilt *vorschlag*
-        („Wind W1“), und ist er als Kombination oder in anderer Schreibweise
-        vergeben, ein freier (:meth:`freier_name`). Eine ausdrueckliche
-        Nummer *nr* fuer einen Lastfall ohne Nummer darf keinem anderen
-        gehoeren. Bis dahin legte der Generierer einen Lastfall neben einer
-        gleichnamigen Kombination an und vergab jede eingetragene Nummer.
+        Lastfall, schreibt der Generierer hinein - er bleibt, wie er ist; sonst
+        muss der Name frei sein (:meth:`namenskonflikt`), und ein vergebener
+        wird mit :class:`NameVergeben` abgewiesen.
+
+        **Ohne eigene Wahl** bekommt der Generierer einen neuen Lastfall
+        **LF<Nummer>** (Paket R2-C1, 06.10.2026): mit der Nummer *nr*, wenn der
+        Anwender eine eingetragen hat - sie darf keinem anderen gehoeren
+        (:meth:`nummernkonflikt`) -, sonst mit der naechsten freien
+        (:meth:`naechste_nummer`), die keine der *reserviert*en Nummern ist
+        (der zweite Lastfall eines Wasserdrucks, dessen erster noch nicht im
+        Modell steht). *bezeichnung* („Wind W1“) legt der Aufrufer beim
+        Anlegen als Bezeichnung des Lastfalls ab. Bis dahin hiess der Lastfall
+        „Wind W1“; neben einer gleichnamigen Kombination oder in anderer
+        Schreibweise bekam er einen freien Namen, und jede eingetragene Nummer
+        wurde vergeben.
 
         Rueckgabe: der Name des Lastfalls."""
         name = str(gewaehlt or "").strip()
         if not name:
-            name = vorschlag if vorschlag in self.load_cases else self.freier_name(vorschlag, "lastfall")
+            if int(nr or 0) > 0:
+                n = int(nr)
+                # eine eingetragene Nummer, die ein Lastfall schon hat, weist
+                # ab - der Generierer schreibt nie ungefragt in ihn hinein
+                grund = self.nummernkonflikt("LF", n)
+                if grund:
+                    raise NameVergeben(f"{wer}: {grund}" if wer else grund)
+            else:
+                n = self.naechste_nummer("LF")
+                while n in set(int(x) for x in reserviert):
+                    n += 1
+            name = f"LF{n}"
         lc = self.load_cases.get(name)
         if lc is None:
             grund = self.namenskonflikt(name, "", "lastfall")

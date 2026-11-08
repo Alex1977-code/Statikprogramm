@@ -296,13 +296,13 @@ def test_umhuellende_zwei_linien():
 
 def test_skala_des_verlaufs_symmetrisch():
     w, app, an = _halle()
-    _waehle(w, app, ("combo", "GZT4"))
+    _waehle(w, app, ("combo", "LK4"))
     w.cb_diagram.setCurrentText("My"); app.processEvents()
     a = _akteure(w).get("diagram")
     rng = tuple(a.GetMapper().GetScalarRange()) if a is not None else (0.0, 0.0)
-    r = an.combinations["GZT4"]
+    r = an.combinations["LK4"]
     groesst = max(float(np.abs(d["My"]).max()) for d in r.stations().values()) / 1e3
-    check("Kombination GZT4, My: Farbskala symmetrisch um 0",
+    check("Kombination LK4, My: Farbskala symmetrisch um 0",
           a is not None and abs(rng[0] + rng[1]) < 1e-9 * max(abs(rng[1]), 1.0) and rng[1] > 0,
           str(rng))
     check("… bis zum größten Betrag", abs(rng[1] - groesst) < 1e-6 * groesst, f"{rng[1]:.3f} / {groesst:.3f}")
@@ -357,7 +357,7 @@ def test_werte_am_verlauf():
     w, app, an = _halle()
     cb = getattr(w, "cb_verlaufswerte", None)
     check("„Werte am Verlauf“ gibt es und ist vorab an", cb is not None and cb.isChecked())
-    _waehle(w, app, ("combo", "GZT4"))
+    _waehle(w, app, ("combo", "LK4"))
     w.cb_diagram.setCurrentText("My"); app.processEvents()
     akt = _akteure(w)
     n = int(getattr(w, "_verlaufswerte", 0) or 0)
@@ -373,7 +373,7 @@ def test_werte_am_verlauf():
 def test_verlauf_am_unverformten_stab():
     from statik3d.gui import viewport as vp
     w, app, an = _halle()
-    _waehle(w, app, ("combo", "GZT4"))
+    _waehle(w, app, ("combo", "LK4"))
     w.cb_diagram.setCurrentText("My"); app.processEvents()
     akt = _akteure(w)
     stab = akt.get("result_stabkoerper") or akt.get("result_netz")
@@ -459,12 +459,12 @@ def test_legende_folgt_den_einheiten():
               kw and "[cm]" in kw[0] and dict(w._extremmarken).get("marke_max", "").endswith(" cm"),
               f"{kw} {w._extremmarken}")
         E.kraft = "N"
-        _waehle(w, app, ("combo", "GZT4"))
+        _waehle(w, app, ("combo", "LK4"))
         w.cb_diagram.setCurrentText("My"); app.processEvents()
         titel = list(w.plotter.scalar_bars.keys())
         a = _akteure(w).get("diagram")
         hi = float(a.GetMapper().GetScalarRange()[1]) if a is not None else 0.0
-        r = an.combinations["GZT4"]
+        r = an.combinations["LK4"]
         groesst = max(float(np.abs(d["My"]).max()) for d in r.stations().values())
         check("Kraft in N: Verlauf „My [Nm]“ und Werte in Nm", "My [Nm]" in titel
               and abs(hi - groesst) < 1e-6 * groesst, f"{titel} {hi:.1f} / {groesst:.1f}")
@@ -764,7 +764,7 @@ def test_umriss_marke_verlauf_sichtbar():
           f"Knoten {k} ausgeblendet, Marke bei {P}")
     w.verborgen["elemente"] = set(); w.redraw(); app.processEvents()
     # Verlauf nur an sichtbaren Staeben
-    _waehle(w, app, ("combo", "GZT4"))
+    _waehle(w, app, ("combo", "LK4"))
     stab = next(iter(w.model.members))
     weg = {int(e) for e in w.model.members[stab].elements}
     w.verborgen["elemente"] = set(weg)
@@ -971,7 +971,7 @@ def test_ueberhoehungsfeld_nachbesserung():
     ed.clearFocus()
     w.btn_ueberhoehung["auto"].click(); app.processEvents()
     # Verlauf: gezeichnet mit 0 - das Feld sagt es
-    _waehle(w, app, ("combo", "GZT4"))
+    _waehle(w, app, ("combo", "LK4"))
     w.cb_diagram.setCurrentText("My"); app.processEvents()
     check("Verlauf My: das Feld zeigt 0 und ist gesperrt (gezeichnet wird unverformt)",
           ed.text() == "0" and not ed.isEnabled() and w._ueberhoehung_faktor == 0.0,

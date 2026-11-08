@@ -5980,7 +5980,9 @@ Es sind dieselben Befehle wie in den Fachregistern, keine neuen.
 Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
-Kontaktbeispiele.
+Kontaktbeispiele. Seit dem 06.10.2026 heißen ihre Lastfälle LF1, LF2 …, ihre
+Kombinationen LK1, LK2 …, und der frühere Name steht als Bezeichnung daneben
+(am Hallenrahmen „LF3 W_links“).
 
 ## 4 Lastfälle und Kombinationen
 
@@ -6121,10 +6123,13 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   günstig und ungünstig, jede veränderliche Einwirkung als Leiteinwirkung;
   GZG charakteristisch/häufig/quasi-ständig; außergewöhnlich 6.11b.
   Beschreibung „auto: …“ kennzeichnet erzeugte Kombinationen; sie werden bei
-  erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Seit dem 04.10.2026
-  überschreibt eine erzeugte Kombination nie eine vorhandene: Die Nummer im
-  Namen (GZT3, GZG7 …) zählt weiter und überspringt jeden Namen, den es schon
-  gibt. Bis dahin begann die Zählung bei der Zahl der vorhandenen
+  erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Die erzeugten
+  Kombinationen heißen seit dem 06.10.2026 LK1, LK2 …, ihre Bezeichnung nennt
+  Art und Leiteinwirkung (Abschnitt „Namen der erzeugten Lastfälle,
+  Kombinationen und Beispiele“ unten). Seit dem 04.10.2026
+  überschreibt eine erzeugte Kombination nie eine vorhandene: Sie nimmt die
+  nächste freie Nummer und überspringt jede, die es schon gibt. Bis zum
+  04.10.2026 begann die Zählung bei der Zahl der vorhandenen
   Kombinationen, und eine von Hand angelegte Kombination „GZT2“ mit
   9,99 · LF2 war nach dem Erzeugen still die erzeugte „GZT2“ mit 1,35 · LF1.
   Ersetzt wird beim erneuten Erzeugen außerdem nur, was der Generator selbst
@@ -6140,8 +6145,11 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   Kombinationen aus Dateien von vor dem 04.10.2026, die noch keinen
   Fingerabdruck tragen, gilt die alte Regel, aber nur, solange sie noch
   GZT…, GZT-A… oder GZG… heißen. „Kombinationen nach DIN 19704“ hält es
-  genauso: Heißt eine eigene Kombination schon „DIN LF1.1“, bekommt die
-  erzeugte einen freien Namen („DIN LF1.1 2“), und das Protokoll sagt es.
+  genauso: Sie heißen LK mit ihrer Nummer, ein erneuter Lauf ersetzt nur die
+  eigenen, unberührten und hält ihre Nummern, und eine Kombination des
+  Anwenders bleibt, auch wenn sie so heißt, wie eine erzeugte früher hieß
+  („DIN LF1.1“). Bis zum 06.10.2026 bekam die erzeugte in diesem Fall einen
+  freien Namen („DIN LF1.1 2“), und das Protokoll sagte es.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
 
@@ -6435,6 +6443,119 @@ in 17,1 und 16,5 s gegen vorher 16,5 und 17,5 s, mit derselben Speicherspitze
 von 0,91 GB.
 
 Geprüft in `tests/test_umstellung_lf_lk.py`.
+
+### Namen der erzeugten Lastfälle, Kombinationen und Beispiele (seit 06.10.2026)
+
+Am 06.10.2026 hat das Programm die Stellen umgestellt, die Namen selbst
+bilden: den Kombinationsgenerator nach DIN EN 1990, die Lastfälle und
+Kombinationen nach DIN 19704, die Generatoren Wind und Wasserdruck, den
+Antrieb einer Stellung und die eingebauten Beispiele. Sie legen nur noch
+Lastfälle LF mit Nummer und Lastkombinationen LK mit Nummer an, und was
+früher der freie Name war, steht als Bezeichnung daneben, etwa „LF3 W_links“.
+Erzwungen wird die Form noch nicht: Ein Name, den man selbst eingibt, bleibt
+erlaubt.
+
+**Kombinationsgenerator (DIN EN 1990).** Jede erzeugte Kombination heißt LK
+mit der nächsten freien Nummer und ist eine Lastkombination (Art LK). Der Typ
+— GZT, GZG charakteristisch, häufig, quasi-ständig, außergewöhnlich — bleibt
+ein eigenes Merkmal und steht in der Spalte Typ. Die Bezeichnung sagt kurz,
+was die Kombination ist: Art und Leiteinwirkung, bei Bedarf die
+Begleiteinwirkungen in Klammern und der Zusatz „G günstig“, wenn die
+ständigen Lasten günstig angesetzt sind. Beispiele sind „GZT, Leit LF3 (mit
+LF2, LF5)“, „GZG char., Leit LF3“, „GZG häufig, Leit LF3“, „GZT 6.10a (mit
+LF2)“, „GZT außergew. LF9, Leit LF3“, „GZT, nur ständig“ und „GZG
+quasi-ständig, nur ständig“; in einer Stellung steht deren Name in eckigen
+Klammern dahinter. Die Leiteinwirkung nennt den Lastfall mit seinem Namen
+(LF3) und nicht mit seiner Bezeichnung, damit sich die Bezeichnung eines
+Lastfalls ändern lässt, ohne dass ein Text in einer Kombination veraltet. Bis
+zum 06.10.2026 hießen die erzeugten Kombinationen GZT<n>, GZT-A<n> und
+GZG<n> mit einem gemeinsamen Zähler. Reihenfolge und Zahl sind geblieben: Am
+Hallenrahmen wurden aus GZT1 bis GZT42 und GZG43 bis GZG72 die Kombinationen
+LK1 bis LK72, und gerechnet wird Zahl für Zahl dasselbe.
+
+Der Generator überschreibt nie etwas und ersetzt nur Eigenes. Die Nummer
+einer neuen Kombination ist die nächste freie, und er überspringt jede, die
+schon vergeben ist, im Feld Nummer oder im Namen: Eine von Hand angelegte
+Kombination LK5 bleibt, wie sie ist. Beim erneuten Erzeugen ersetzt er nur
+die Kombinationen, die er selbst erzeugt hat und die seitdem niemand
+angefasst hat. Gefunden werden sie an ihrem Fingerabdruck und nie am Namen;
+darum bekommt auch eine Datei, die beim Öffnen auf LF, LK und EK umgestellt
+wurde und deren erzeugte Kombinationen dabei andere Namen bekommen haben,
+beim zweiten Erzeugen keine Doppel. Jede ersetzte Kombination bekommt ihre
+Nummer zurück, wenn ihr Inhalt (Typ, Situation, Faktoren) derselbe ist: Eine
+Ermüdungslast auf LK17, ein Berichtseintrag oder eine Stellung zeigt dann
+weiter auf dieselbe Kombination. Neue Kombinationen füllen zuerst die
+Lücken, die ersetzte hinterlassen haben, niedrigste Nummer zuerst, danach
+geht es hinter der höchsten weiter. Eine Nummer, auf die noch eine
+Ermüdungslast, eine Stellung oder ein Berichtseintrag zeigt und die keiner
+Kombination mehr gehört, wird nie an eine andere vergeben. Der Verweis zeigt
+dann ins Leere, und die Modellprüfung meldet ihn als FEHLER, statt dass er
+still auf eine andere Kombination zeigt.
+
+**Lastfälle und Kombinationen nach DIN 19704.** „Lastfälle nach DIN 19704“
+legt LF mit Nummer an und trägt das Kürzel der Einwirkung als Bezeichnung
+(„LF5 W_V“); Einwirkungsart und Beschreibung bleiben, wie sie waren. Bis zum
+06.10.2026 hießen sie wie das Kürzel („W_V“), und ein schon vergebener Name
+bekam eine Zahl angehängt („G 2“). „Kombinationen nach DIN 19704“ legt LK mit
+Nummer an, Typ GZT, und die Bezeichnung nennt Klasse und Leiteinwirkung:
+„DIN 19704 Klasse 2, Leit LF3“. Bis zum 06.10.2026 hießen sie „DIN LF1.1“ und
+„DIN LF2.3“, und „LF1“ bis „LF3“ meinte darin die Lastfallklassen der Norm,
+was neben den Lastfällen LF1 bis LF3 des Modells missverständlich war; die
+Bezeichnung sagt darum „Klasse“. Auch hier ersetzt ein erneuter Lauf nur die
+eigenen, unberührten Kombinationen, hält ihre Nummern und lässt jede andere
+stehen.
+
+**Wind und Wasserdruck.** Das Feld Lastfall der Masken ist leer, solange man
+keinen Lastfall wählt. „Lasten erzeugen“ legt dann einen neuen Lastfall an: LF
+mit der eingetragenen Lastfall-Nr. (0 heißt die nächste freie) und der
+Bezeichnung „Wind W1“. Beim Wasserdruck mit Druckschwankung kommt ein zweiter
+Lastfall mit der nächsten Nummer dazu, Bezeichnung „Wasser W1 dyn“. Bis zum
+06.10.2026 hießen sie „Wind W1“, „Wasser W1“ und „Wasser W1 dyn“, und die
+Maske trug diesen Namen schon vor, sodass er als gewählt galt. Wer einen
+vorhandenen Lastfall einträgt, etwa LF3, schreibt in ihn hinein; Name,
+Bezeichnung und Nummer bleiben, wie sie sind. Wer einen noch nicht
+vorhandenen Namen einträgt, bekommt genau diesen. Trägt man eine Nummer ein,
+die schon ein anderer Lastfall hat, kommt ein Hinweis, und es wird nichts
+angelegt.
+
+**Wind: „Lasten erzeugen“ ein zweites Mal.** Bis zum 06.10.2026 verdoppelte
+ein zweiter Lauf die Streckenlasten auf Stäben. Am Mast mit sechs Elementen
+wurde aus 1 Streckenlast 2 und aus 6 Elementlasten 12, und die Summe der
+Lasten verdoppelte sich mit. Die Ursache lag im Aufräumen: Es suchte die alten
+Lasten an ihrem Kommentar „Wind W1: …“, aber nach dem Verteilen auf die
+Elemente lautet er „6 Elementlasten“. Jetzt trägt jede vom Wind erzeugte
+Streckenlast ein Merkmal in der Datei („wind:W1“), und das Aufräumen — beim
+erneuten Erzeugen, beim Umbenennen und beim Löschen eines Windgenerators —
+erkennt seine Lasten daran, nicht am Text. Eine Streckenlast, die man selbst
+auf demselben Stab im selben Lastfall angelegt hat, bleibt dabei stehen. Eine
+Datei, die vor dem 06.10.2026 gespeichert wurde und deren Stablasten schon
+verdoppelt sind, bleibt, wie sie ist: Beim Öffnen steht dort der Kommentar
+schon als „6 Elementlasten“, und das Programm kann die Stablasten des Winds
+nicht von eigenen unterscheiden. Ein neues Erzeugen legt sie dann ein weiteres
+Mal an; die alten Streckenlasten auf den Stäben sind in diesem Fall von Hand
+zu löschen. Nur wo der Kommentar noch „Wind W1: …“ lautet, erkennt das
+Programm sie auch ohne Merkmal. Der Wasserdruck war nicht betroffen; seine
+Objektlasten tragen den Namen des Generators.
+
+**Antrieb einer Stellung.** In der Rechenkopie der Stellung heißt der Lastfall
+für das Antriebsmoment LF mit Nummer und trägt die Bezeichnung „Antrieb S5“.
+Bis zum 06.10.2026 hieß er „Antrieb S5“. Die Nummer ist die nächste freie des
+Modells, nie eine, die dort ein anderer Lastfall hat; das Modell selbst
+bekommt den Lastfall nicht.
+
+**Eingebaute Beispiele.** Der Hallenrahmen hat jetzt LF1 Eigengewicht, LF2 S,
+LF3 W_links, LF4 W_rechts und LF5 Kran, dazu die Kombinationen LK1 bis LK72
+und die Ermüdungslast Kranspiele auf LF5. Die Stauwand hat LF1 Eigengewicht,
+LF2 Wasser und LF3 Wasser_Wellen, die Kombinationen LK1 bis LK23 und die
+Ermüdungslast Stauwechsel auf LF2. Rahmen, Platte, Konsole, Fachwerk und die
+beiden Kontaktbeispiele haben LF1 mit einer Bezeichnung, die sagt, was darin
+liegt. Gerechnet wird dasselbe wie vorher: Lastfälle, Kombinationen,
+Umhüllende, EC3-Nachweis und Ermüdung sind Zahl für Zahl gleich dem Stand vom
+04.10.2026 geprüft. Wo dieses Handbuch am Hallenrahmen von GZT4, GZT7 oder
+GZG43 spricht, heißt die Kombination seit dem 06.10.2026 LK4, LK7 oder LK43;
+die Zahl ist dieselbe geblieben. Messungen mit einem Datum vor dem 06.10.2026
+behalten die Namen von damals. Keines der Beispiele hat Ergebniskombinationen,
+also auch keine EK.
 
 ### Namen, unter denen Ergebnisse einander verdecken (seit 04.10.2026)
 
@@ -6907,7 +7028,11 @@ das Ober- bzw. Unterwasser steht; dazu die Angabe, ob das Wasser an der
 liegt - daraus folgt die Strömungsrichtung). Derselbe Knopf beendet den
 Modus; „Auswahl übernehmen“ nimmt stattdessen die laufende Auswahl. Je
 Generierer gilt eine **Situation**; der Lastfall wird angelegt, trägt die
-Situation und die **Lastfall-Nr.** aus der Maske (0 = nächste freie).
+Situation und die **Lastfall-Nr.** aus der Maske (0 = nächste freie). Das Feld
+Lastfall bleibt leer, solange man keinen Lastfall wählt: Dann entsteht ein
+neuer Lastfall LF mit dieser Nummer und der Bezeichnung „Wasser <Name>“, bei
+einer Druckschwankung ein zweiter mit „Wasser <Name> dyn“ (bis zum
+06.10.2026 hießen sie „Wasser <Name>“ und „Wasser <Name> dyn“).
 
 | Angabe | Bedeutung |
 |---|---|
@@ -6960,7 +7085,12 @@ in der Ansicht wählen, „Auswahl übernehmen“, dann:
 **Lasten erzeugen** schreibt Objektlasten an die Flächen (Verlauf „Wind“:
 q_p in der Höhe des Elements mal dem Beiwert seiner Zone) und trapezförmige
 Streckenlasten auf die Stäbe (w = c_f·q_p(z)·b_ref) in einen Lastfall der
-Kategorie W. Protokoll und Bericht nennen v_b, q_b, das Höhenprofil (v_m,
+Kategorie W. Das Feld Lastfall bleibt leer, solange man keinen Lastfall wählt;
+dann entsteht ein neuer Lastfall LF mit der Lastfall-Nr. und der Bezeichnung
+„Wind <Name>“ (bis zum 06.10.2026 hieß er „Wind <Name>“). Erzeugt man die
+Lasten ein zweites Mal, ersetzen sie die ersten, auch die Streckenlasten auf
+den Stäben; bis zum 06.10.2026 verdoppelten sich diese (siehe „Namen der
+erzeugten Lastfälle, Kombinationen und Beispiele“). Protokoll und Bericht nennen v_b, q_b, das Höhenprofil (v_m,
 I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
 und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
 Anströmung und Zonen.
@@ -14079,7 +14209,7 @@ Je Stellung lässt sich einstellen:
 | `dreh_achse`, `dreh_punkt`, `dreh_winkel`, `dreh_gruppen` | die bewegten Bauteile werden gedreht; das Eigengewicht wirkt dadurch anders |
 | `faelle` | welche Lastfälle diese Stellung rechnet — nur diese; ohne Zuordnung rechnet sie nichts |
 | `kombinationen` | welche Kombinationen in dieser Stellung gelten |
-| `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall |
+| `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall der Rechenkopie, LF mit Nummer und der Bezeichnung „Antrieb S5“ (bis zum 06.10.2026 hieß er „Antrieb S5“) |
 
 Die Umhüllende nennt die größte Ausnutzung, die größte Verformung und die
 größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
@@ -14217,10 +14347,11 @@ Haken je Einwirkung — vorgehakt sind Eigengewicht G, Ausrüstung G_A,
 Wasserdruck ständig W_S und veränderlich W_V, Wind W, Temperatur T, Eis EIS,
 Betriebslast Q_BEW und Antriebsmoment A_M; die übrigen (Verkehr,
 Grenzmoment, Wind während der Bewegung, Schwall, Anprall, Verklemmen,
-Montage, Erdbeben) nach Bedarf. Jeder Lastfall bekommt das Kürzel als
-Namen, die Einwirkungsart, die Beschreibung der Einwirkung und eine
-fortlaufende Lastfallnummer ab der eingetragenen ersten Nummer; das
-Eigengewicht trägt g. Vorgeschlagen wird als erste Nummer die nächste freie.
+Montage, Erdbeben) nach Bedarf. Jeder Lastfall heißt LF mit seiner
+Lastfallnummer, fortlaufend ab der eingetragenen ersten Nummer, und trägt das
+Kürzel als Bezeichnung („LF5 W_V“), dazu die Einwirkungsart und die
+Beschreibung der Einwirkung; das Eigengewicht trägt g. Bis zum 06.10.2026
+hieß der Lastfall wie das Kürzel („W_V“). Vorgeschlagen wird als erste Nummer die nächste freie.
 Seit dem 04.10.2026 zählt dabei auch der Name LF1 des Vorgabelastfalls, in
 einem neuen Modell beginnt die Zählung darum bei 2; bis dahin bekam G dort
 noch einmal die Nr. 1. Die Lasten selbst kommen danach aus den Masken und
@@ -14251,7 +14382,7 @@ Norm und Thema genannt.
 from statik3d.bridges import Regelwerk
 rw = Regelwerk()
 rw.faktor("LF1", "G", 1.35, "DIN 19704-1, geprüft")   # eigenen Wert bestätigen
-kombis = rw.kombinationen(modell)                     # DIN LF1.1, DIN LF2.3, …
+kombis = rw.kombinationen(modell)                     # LK1, LK2, … (Bezeichnung „DIN 19704 Klasse 1, Leit LF3“)
 print(rw.bericht())
 ```
 
