@@ -398,7 +398,16 @@ Die Abnahme mit μ = 1 ist nicht sauber durchgelaufen. Die Lagerkräfte stimmen 
 Nachkommastelle und die Kraft der Knaggen auf 2 kN mit dem Stand vom 15.10.2026 überein, und ε_p,max fällt von 1,30 %
 auf 0,90 %. Im Spannschritt konvergierte der Kontaktlauf aber in allen drei Stufen nicht, das Ergebnis heißt deshalb
 „vorläufig – Kontakt nicht konvergiert in Spannschritt“. Der Lauf brauchte 863 statt 297 Zerlegungen und 3 h 51 min.
-Bei der Abnahme RT und bei μ = 0,2 tritt das nicht auf; die Ursache ist nicht untersucht.
+Bei der Abnahme RT und bei μ = 0,2 tritt das nicht auf.
+
+Eine Ursache ist inzwischen behoben. Das Ingenieurkriterium des Kontaktlaufs bezog das Gleichgewicht auf die
+Summe der äußeren Kräfte. Im Spannschritt wirkt aber nur das Kräftepaar der Anker, die Summe ist null, und das
+Kriterium lehnte jeden Abschluss ab. Ist die Summe der äußeren Kräfte gegenüber den Einzelkräften null, gilt
+jetzt die Summe der Druckkräfte des Kontakts als Bezug; alle anderen Rechnungen rechnen wie bisher. Im selben
+Lauf fallen die Ablehnungen von 79 auf 1, die Zerlegungen von 863 auf 618 und die Läufe am Deckel von 16 auf 8.
+Die Ergebnisse bleiben gleich (ε_p,max 0,898 %, Lagerkräfte auf 0,001 kN, Verschiebungen auf 0,04 µm). Das
+Ergebnis heißt weiter „vorläufig“: In den übrigen 8 Läufen wandert die Ankerplatte V7 als starrer Körper um
+wenige µm, das wird nicht als Pendeln erkannt, und der Lauf endet am Deckel von 40 Runden.
 
 ### Drehlager, Netz „Mittel“: Ergebnis dieses Stands
 
@@ -482,5 +491,6 @@ Folgende Punkte sind bekannt und bewusst nicht in diesem Stand:
   unsymmetrisch).
 * Die ama-LU (Zweig `loeser/ama-uebernahme`).
 * Die Linux-Fassung.
-* Die Ursache, warum das Drehlager mit μ = 1 in allen drei Spannstufen als „vorläufig – Kontakt nicht
-  konvergiert“ endet; sie ist zurückgestellt.
+* Die zweite Ursache, warum das Drehlager mit μ = 1 als „vorläufig – Kontakt nicht konvergiert“ endet (8 Läufe
+  am Deckel ohne erkanntes Pendeln), und warum ε_p,max dort 0,90 % statt wie am 15.10.2026 1,30 % beträgt; beides
+  ist zurückgestellt.
