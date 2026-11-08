@@ -1,0 +1,2391 @@
+{
+"format": 8,
+"name": "Hallenrahmen Umstellung",
+"meta": {
+ "projekt": "Beispiel Hallenrahmen",
+ "bauteil": "Zweigelenkrahmen Achse 3",
+ "bearbeiter": "",
+ "auftraggeber": "",
+ "position": ""
+},
+"nodes": [
+ [
+  0.0,
+  0.0,
+  0.0
+ ],
+ [
+  0.0,
+  0.0,
+  1.5
+ ],
+ [
+  0.0,
+  0.0,
+  3.0
+ ],
+ [
+  0.0,
+  0.0,
+  4.5
+ ],
+ [
+  0.0,
+  0.0,
+  6.0
+ ],
+ [
+  15.0,
+  0.0,
+  0.0
+ ],
+ [
+  15.0,
+  0.0,
+  1.5
+ ],
+ [
+  15.0,
+  0.0,
+  3.0
+ ],
+ [
+  15.0,
+  0.0,
+  4.5
+ ],
+ [
+  15.0,
+  0.0,
+  6.0
+ ],
+ [
+  1.5,
+  0.0,
+  6.0
+ ],
+ [
+  3.0,
+  0.0,
+  6.0
+ ],
+ [
+  4.5,
+  0.0,
+  6.0
+ ],
+ [
+  6.0,
+  0.0,
+  6.0
+ ],
+ [
+  7.5,
+  0.0,
+  6.0
+ ],
+ [
+  9.0,
+  0.0,
+  6.0
+ ],
+ [
+  10.5,
+  0.0,
+  6.0
+ ],
+ [
+  12.0,
+  0.0,
+  6.0
+ ],
+ [
+  13.5,
+  0.0,
+  6.0
+ ]
+],
+"elements": [
+ {
+  "typ": "beam",
+  "nodes": [
+   0,
+   1
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   1,
+   2
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   2,
+   3
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   3,
+   4
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   5,
+   6
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   6,
+   7
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   7,
+   8
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   8,
+   9
+  ],
+  "mat": "S355",
+  "sec": "HEB 300",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   4,
+   10
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   10,
+   11
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   11,
+   12
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   12,
+   13
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   13,
+   14
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   14,
+   15
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   15,
+   16
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   16,
+   17
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   17,
+   18
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ },
+ {
+  "typ": "beam",
+  "nodes": [
+   18,
+   9
+  ],
+  "mat": "S355",
+  "sec": "IPE 500",
+  "roll": 0.0,
+  "group": "default",
+  "hinges": [],
+  "hinge_springs": [],
+  "line": "",
+  "nur": "",
+  "exzentrizitaet": [],
+  "woelb": false,
+  "zustand": "spannung",
+  "laenge0": 0.0
+ }
+],
+"tetp_kantenmitten": [],
+"materials": {
+ "S355": {
+  "name": "S355",
+  "E": 210000000000.0,
+  "nu": 0.3,
+  "rho": 7850.0,
+  "alpha": 1.2e-05,
+  "fy": 355000000.0,
+  "fu": 490000000.0,
+  "grade": "S355",
+  "fy_dicke": [],
+  "fu_dicke": []
+ }
+},
+"sections": {
+ "HEB 300": {
+  "name": "HEB 300",
+  "A": 0.01490777895553304,
+  "Iy": 0.0002516564821293538,
+  "Iz": 8.562822027888499e-05,
+  "It": 1.891783783853362e-06,
+  "Asy": 0.012025778955533039,
+  "Asz": 0.004742778955533041,
+  "zmax": 0.15,
+  "ymax": 0.15,
+  "typ": "I",
+  "h": 0.3,
+  "b": 0.3,
+  "tw": 0.011,
+  "tf": 0.019,
+  "r": 0.027,
+  "Iw": 1.6877913749999993e-06,
+  "Wel_y": 0.0016777098808623588,
+  "Wel_z": 0.0005708548018592333,
+  "Wpl_y": 0.0018686740113754358,
+  "Wpl_z": 0.0008701413160548239,
+  "fabrication": "rolled",
+  "yc": 0.0,
+  "zc": 0.0,
+  "alpha": 0.0,
+  "Iy_geo": 0.0,
+  "Iz_geo": 0.0,
+  "Iyz_geo": 0.0,
+  "parts": []
+ },
+ "IPE 500": {
+  "name": "IPE 500",
+  "A": 0.0115521576397669,
+  "Iy": 0.0004819850267295988,
+  "Iz": 2.1416847458777554e-05,
+  "It": 8.909728662446087e-07,
+  "Asy": 0.0067785576397669,
+  "Asz": 0.0059873576397669,
+  "zmax": 0.25,
+  "ymax": 0.1,
+  "typ": "I",
+  "h": 0.5,
+  "b": 0.2,
+  "tw": 0.010199999999999999,
+  "tf": 0.016,
+  "r": 0.021,
+  "Iw": 1.2493653333333335e-06,
+  "Wel_y": 0.001927940106918395,
+  "Wel_z": 0.00021416847458777553,
+  "Wpl_y": 0.00219411797727035,
+  "Wpl_z": 0.00033587903439791624,
+  "fabrication": "rolled",
+  "yc": 0.0,
+  "zc": 0.0,
+  "alpha": 0.0,
+  "Iy_geo": 0.0,
+  "Iz_geo": 0.0,
+  "Iyz_geo": 0.0,
+  "parts": []
+ }
+},
+"shells": {},
+"supports": [
+ {
+  "node": 0,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 5,
+  "dofs": [
+   0,
+   1,
+   2,
+   3,
+   5
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 0,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 1,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 2,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 3,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 4,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 5,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 6,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 7,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 8,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 9,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 10,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 11,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 12,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 13,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 14,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 15,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 16,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 17,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ },
+ {
+  "node": 18,
+  "dofs": [
+   1,
+   3
+  ],
+  "values": null,
+  "stiffness": null,
+  "behaviour": {},
+  "name": "",
+  "groesse": 1.0,
+  "woelb": false
+ }
+],
+"line_supports": [],
+"surface_supports": [],
+"lines": [],
+"hinges": [],
+"load_cases": [
+ {
+  "name": "LF1",
+  "category": "G",
+  "description": "Eigengewicht + Dachaufbau",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 1,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [],
+  "beam_loads": [
+   {
+    "elem": 8,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 9,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 10,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 11,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 12,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 13,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 14,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 15,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 16,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 17,
+    "q": [
+     0.0,
+     0.0,
+     -6000.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   }
+  ],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   -9.81
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "S",
+  "category": "S",
+  "description": "Schnee 0,85 kN/m\u00b2 x 6 m",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [],
+  "beam_loads": [
+   {
+    "elem": 8,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 9,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 10,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 11,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 12,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 13,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 14,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 15,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 16,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 17,
+    "q": [
+     0.0,
+     0.0,
+     -5100.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   }
+  ],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "W_links",
+  "category": "W",
+  "description": "Wind von links",
+  "psi": null,
+  "exclusive_group": "Wind",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [],
+  "beam_loads": [
+   {
+    "elem": 0,
+    "q": [
+     3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 1,
+    "q": [
+     3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 2,
+    "q": [
+     3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 3,
+    "q": [
+     3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 4,
+    "q": [
+     1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 5,
+    "q": [
+     1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 6,
+    "q": [
+     1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 7,
+    "q": [
+     1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 8,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 9,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 10,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 11,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 12,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 13,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 14,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 15,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 16,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 17,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   }
+  ],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "W_rechts",
+  "category": "W",
+  "description": "Wind von rechts",
+  "psi": null,
+  "exclusive_group": "Wind",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [],
+  "beam_loads": [
+   {
+    "elem": 4,
+    "q": [
+     -3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 5,
+    "q": [
+     -3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 6,
+    "q": [
+     -3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 7,
+    "q": [
+     -3000.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 0,
+    "q": [
+     -1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 1,
+    "q": [
+     -1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 2,
+    "q": [
+     -1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 3,
+    "q": [
+     -1500.0,
+     0.0,
+     0.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 8,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 9,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 10,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 11,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 12,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 13,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 14,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 15,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 16,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   },
+   {
+    "elem": 17,
+    "q": [
+     0.0,
+     0.0,
+     2400.0
+    ],
+    "system": "global",
+    "q2": null,
+    "a": 0.0,
+    "b": null
+   }
+  ],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "Kran",
+  "category": "Q_K",
+  "description": "Kranbahnlast (Ermuedung)",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [
+   {
+    "node": 13,
+    "F": [
+     0.0,
+     0.0,
+     -40000.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "beam_loads": [],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ },
+ {
+  "name": "LF9",
+  "category": "Q",
+  "description": "Anprall",
+  "psi": null,
+  "exclusive_group": "",
+  "situation": "",
+  "theorie": "",
+  "nummer": 0,
+  "bezeichnung": "",
+  "grundlast": false,
+  "nodal_loads": [
+   {
+    "node": 4,
+    "F": [
+     5000.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "beam_loads": [],
+  "face_loads": [],
+  "geometrielasten": [],
+  "linienlasten": [],
+  "zwangsverformungen": [],
+  "vorspannungen": [],
+  "uebermasse": [],
+  "temp_loads": [],
+  "gravity": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gamma_sup": null,
+  "gamma_inf": null
+ }
+],
+"active_case": "S",
+"combinations": [
+ {
+  "name": "GZT1",
+  "factors": {
+   "LF1": 1.35
+  },
+  "typ": "ULS",
+  "description": "auto: 6.10 nur staendig, G unguenstig",
+  "leading": "",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "fd08405a42d9e8bf"
+ },
+ {
+  "name": "GZT2",
+  "factors": {
+   "LF1": 1.35,
+   "S": 1.5
+  },
+  "typ": "ULS",
+  "description": "auto: 6.10 Leit S, G unguenstig",
+  "leading": "S",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "5b0bff5ba79eff74"
+ },
+ {
+  "name": "GZT3",
+  "factors": {
+   "LF1": 1.35,
+   "Kran": 1.5
+  },
+  "typ": "ULS",
+  "description": "auto: 6.10 Leit Kran, G unguenstig",
+  "leading": "Kran",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "271d80a2cb044c50"
+ },
+ {
+  "name": "GZT4",
+  "factors": {
+   "LF1": 1.35,
+   "S": 1.5,
+   "Kran": 1.5
+  },
+  "typ": "ULS",
+  "description": "auto: 6.10 Leit S, G unguenstig",
+  "leading": "S",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "385a8cb1b546f23a"
+ },
+ {
+  "name": "GZG43",
+  "factors": {
+   "LF1": 1.0
+  },
+  "typ": "SLS_CH",
+  "description": "auto: 6.14b charakteristisch (nur G)",
+  "leading": "",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "857a15af13b8ceed"
+ },
+ {
+  "name": "GZG44",
+  "factors": {
+   "LF1": 1.0
+  },
+  "typ": "SLS_QP",
+  "description": "auto: 6.16b quasi-staendig (nur G)",
+  "leading": "",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "aef63e5d21a0499c"
+ },
+ {
+  "name": "GZG45",
+  "factors": {
+   "LF1": 1.0,
+   "S": 1.0
+  },
+  "typ": "SLS_CH",
+  "description": "auto: 6.14b charakteristisch, Leit S",
+  "leading": "S",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "274ac15f7bd2d3a2"
+ },
+ {
+  "name": "GZG46",
+  "factors": {
+   "LF1": 1.0,
+   "S": 0.2
+  },
+  "typ": "SLS_FR",
+  "description": "auto: 6.15b haeufig, Leit S",
+  "leading": "S",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "EN 1990",
+  "erzeugt_merkmal": "90fcb02800d34444"
+ },
+ {
+  "name": "K1",
+  "factors": {
+   "LF1": 1.35,
+   "S": 1.5,
+   "W_links": 0.9
+  },
+  "typ": "ULS",
+  "description": "von Hand",
+  "leading": "S",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "",
+  "erzeugt_merkmal": ""
+ },
+ {
+  "name": "Erm\u00fcdung Kran",
+  "factors": {
+   "Kran": 1.0
+  },
+  "typ": "FAT",
+  "description": "Kran\u00fcberfahrt",
+  "leading": "",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [],
+  "nummer": 0,
+  "art": "LK",
+  "bezeichnung": "",
+  "erzeugt": "",
+  "erzeugt_merkmal": ""
+ },
+ {
+  "name": "Bemessung GZT",
+  "factors": {},
+  "typ": "ULS",
+  "description": "Ergebniskombination nach Theorie II. Ordnung",
+  "leading": "",
+  "situation": "",
+  "theorie": "II",
+  "bemessungssituation": "",
+  "alternativen": [
+   {
+    "LF1": 1.35,
+    "S": 1.5
+   },
+   {
+    "LF1": 1.35,
+    "W_links": 1.5,
+    "S": 0.75
+   },
+   {
+    "LF1": 1.0,
+    "Kran": 1.5
+   }
+  ],
+  "nummer": 0,
+  "art": "EK",
+  "bezeichnung": "",
+  "erzeugt": "",
+  "erzeugt_merkmal": ""
+ },
+ {
+  "name": "EK7",
+  "factors": {},
+  "typ": "ULS",
+  "description": "aus RFEM",
+  "leading": "",
+  "situation": "",
+  "theorie": "",
+  "bemessungssituation": "",
+  "alternativen": [
+   {
+    "LF1": 1.0
+   },
+   {
+    "LF1": 1.35,
+    "S": 1.5
+   }
+  ],
+  "nummer": 0,
+  "art": "EK",
+  "bezeichnung": "",
+  "erzeugt": "",
+  "erzeugt_merkmal": ""
+ }
+],
+"fatigue_loads": [
+ {
+  "name": "Kranspiele",
+  "case_max": "Kran",
+  "case_min": null,
+  "cycles": 500000.0,
+  "factor": 1.0,
+  "folge": [],
+  "wiederholungen": null,
+  "zaehlung": "spanne"
+ },
+ {
+  "name": "FK",
+  "case_max": "Erm\u00fcdung Kran",
+  "case_min": null,
+  "cycles": 200000.0,
+  "factor": 1.0,
+  "folge": [],
+  "wiederholungen": null,
+  "zaehlung": "spanne"
+ }
+],
+"members": [
+ {
+  "name": "Stiel links",
+  "elements": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "design": true,
+  "aus": false,
+  "beta_y": 2.0,
+  "beta_z": 1.0,
+  "Lcr_y": null,
+  "Lcr_z": null,
+  "L_LT": 6.0,
+  "k_z": 1.0,
+  "k_w": 1.0,
+  "C1": null,
+  "load_position": "shear_centre",
+  "lt_check": true,
+  "sway_y": false,
+  "sway_z": false,
+  "a_steifen": 0.0,
+  "starre_endsteife": false,
+  "woelb_start": "frei",
+  "woelb_ende": "frei",
+  "woelb_check": true,
+  "detail_category": null,
+  "detail_category_shear": null,
+  "kerbfall_vorschlag": false,
+  "fatigue_points": "flanges",
+  "consequence": "low",
+  "assessment": "damage_tolerant"
+ },
+ {
+  "name": "Stiel rechts",
+  "elements": [
+   4,
+   5,
+   6,
+   7
+  ],
+  "design": true,
+  "aus": false,
+  "beta_y": 2.0,
+  "beta_z": 1.0,
+  "Lcr_y": null,
+  "Lcr_z": null,
+  "L_LT": 6.0,
+  "k_z": 1.0,
+  "k_w": 1.0,
+  "C1": null,
+  "load_position": "shear_centre",
+  "lt_check": true,
+  "sway_y": false,
+  "sway_z": false,
+  "a_steifen": 0.0,
+  "starre_endsteife": false,
+  "woelb_start": "frei",
+  "woelb_ende": "frei",
+  "woelb_check": true,
+  "detail_category": null,
+  "detail_category_shear": null,
+  "kerbfall_vorschlag": false,
+  "fatigue_points": "flanges",
+  "consequence": "low",
+  "assessment": "damage_tolerant"
+ },
+ {
+  "name": "Riegel",
+  "elements": [
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17
+  ],
+  "design": true,
+  "aus": false,
+  "beta_y": 1.0,
+  "beta_z": 0.25,
+  "Lcr_y": null,
+  "Lcr_z": null,
+  "L_LT": 5.0,
+  "k_z": 1.0,
+  "k_w": 1.0,
+  "C1": null,
+  "load_position": "shear_centre",
+  "lt_check": true,
+  "sway_y": false,
+  "sway_z": false,
+  "a_steifen": 0.0,
+  "starre_endsteife": false,
+  "woelb_start": "frei",
+  "woelb_ende": "frei",
+  "woelb_check": true,
+  "detail_category": 80000000.0,
+  "detail_category_shear": null,
+  "kerbfall_vorschlag": false,
+  "fatigue_points": "flanges",
+  "consequence": "low",
+  "assessment": "damage_tolerant"
+ }
+],
+"joints": [],
+"verformungsgrenzen": [
+ {
+  "name": "Riegel w",
+  "art": "stab",
+  "stab": "Riegel",
+  "knoten": [],
+  "groesse": "uz",
+  "grenzart": "L/x",
+  "wert": 300.0,
+  "situation": "SLS_CH",
+  "ueberhoehung": 0.0,
+  "beschreibung": ""
+ }
+],
+"beulfelder": [],
+"volumenbereiche": [],
+"lasteinleitungen": [],
+"kontaktbedingungen": [],
+"flaechen": [],
+"koerper": [],
+"bericht": [
+ {
+  "name": "Bild 1",
+  "quelle": "case:W_links",
+  "feld": "Verschiebung",
+  "verlauf": "",
+  "ueberhoehung": 0.0,
+  "bild": "",
+  "beschriftung": "Lastfall W_links \u00b7 Verschiebung",
+  "bemerkung": "",
+  "art": "bild",
+  "text": "",
+  "tabelle": "",
+  "datei": "",
+  "daten": "",
+  "typ": "",
+  "nach": ""
+ },
+ {
+  "name": "Stabkr\u00e4fte \u00b7 Kombination K1",
+  "quelle": "combo:K1",
+  "feld": "",
+  "verlauf": "",
+  "ueberhoehung": 0.0,
+  "bild": "",
+  "beschriftung": "",
+  "bemerkung": "",
+  "art": "tabelle",
+  "text": "",
+  "tabelle": "Stabkr\u00e4fte",
+  "datei": "",
+  "daten": "",
+  "typ": "",
+  "nach": ""
+ },
+ {
+  "name": "Bild 2",
+  "quelle": "env:Bemessung GZT",
+  "feld": "Verschiebung",
+  "verlauf": "",
+  "ueberhoehung": 0.0,
+  "bild": "",
+  "beschriftung": "Umh\u00fcllende Bemessung GZT \u00b7 Verschiebung",
+  "bemerkung": "",
+  "art": "bild",
+  "text": "",
+  "tabelle": "",
+  "datei": "",
+  "daten": "",
+  "typ": "",
+  "nach": ""
+ },
+ {
+  "name": "Bild 3",
+  "quelle": "env:ULS",
+  "feld": "Verschiebung",
+  "verlauf": "",
+  "ueberhoehung": 0.0,
+  "bild": "",
+  "beschriftung": "Umh\u00fcllende GZT \u00b7 Verschiebung",
+  "bemerkung": "",
+  "art": "bild",
+  "text": "",
+  "tabelle": "",
+  "datei": "",
+  "daten": "",
+  "typ": "",
+  "nach": ""
+ },
+ {
+  "name": "Bild 4",
+  "quelle": "combo:GZT3",
+  "feld": "Verschiebung",
+  "verlauf": "",
+  "ueberhoehung": 0.0,
+  "bild": "",
+  "beschriftung": "Kombination GZT3 \u00b7 Verschiebung",
+  "bemerkung": "",
+  "art": "bild",
+  "text": "",
+  "tabelle": "",
+  "datei": "",
+  "daten": "",
+  "typ": "",
+  "nach": ""
+ }
+],
+"netz": {
+ "ziellaenge": 0.5,
+ "knoten_linie": 0.001,
+ "stabteilung": 10,
+ "seitenverhaeltnis": 1.8,
+ "form": 2,
+ "abgebildet": false,
+ "ordnung": 1,
+ "splitter": 0.1,
+ "quelle": "",
+ "dichte": "mittel",
+ "intelligent": true,
+ "h_min": 0.0,
+ "h_max": 0.0,
+ "max_elemente": 100000,
+ "nachvernetzen": true,
+ "vernetzer": "eigener",
+ "nachbessern": "keine",
+ "mmg_pfad": "",
+ "dickenmass": false,
+ "teilung_uebersteuern": true,
+ "verfeinerungen": [],
+ "feldpunkte": [],
+ "koerper_h": {},
+ "sweep": "aus",
+ "pyramiden": false,
+ "nebenflaechen_grob": false,
+ "stufe": ""
+},
+"design": {
+ "gamma_M0": 1.0,
+ "gamma_M1": 1.1,
+ "gamma_M2": 1.25,
+ "gamma_Ff": 1.0,
+ "interaction_method": "B",
+ "lt_method": "general",
+ "national_annex": "DE",
+ "combination_rule": "6.10",
+ "xi": 0.85,
+ "gamma_G_sup": 1.35,
+ "gamma_G_inf": 1.0,
+ "gamma_Q": 1.5,
+ "gamma_Q_fav": 0.0,
+ "stations": 9,
+ "ermuedung_bezugsjahre": 0.0,
+ "ermuedung_lastspiele": 2000000.0,
+ "ermuedung_kontakt_einfrieren": true,
+ "ermuedung_volumen": "knoten",
+ "theorie2": "aus",
+ "imperfektionen": true,
+ "th2_plastisch": false,
+ "th2_richtung": null,
+ "th2_alle_vorkruemmungen": false,
+ "th3_schritte": 10
+},
+"plastizitaet": {
+ "an": false,
+ "verfestigung": 0.01,
+ "laststufen": 3,
+ "iterationen": 25,
+ "toleranz": 0.001,
+ "verfahren": "tangente",
+ "dicke_punkte": 5,
+ "kontakt": "verschachtelt"
+},
+"knotendilatation": false,
+"randspannung": "frei",
+"contact_supports": [],
+"gap_elements": [],
+"kopplungen": [],
+"contact_pairs": [],
+"getrennte_knoten": {},
+"kontakt_ausnahmen": [],
+"importhinweise": [],
+"punktmassen": [],
+"daempfer": [],
+"federn": [],
+"starrkoerper": [],
+"grenzschichten": [],
+"subsysteme": [],
+"layer": [],
+"unterlagen": [],
+"situationen": [],
+"stellungen": [
+ {
+  "name": "S1",
+  "winkel": 0.0,
+  "beschreibung": "geschlossen",
+  "lager_aktiv": [],
+  "lager_aus": [],
+  "faelle": [
+   "LF1",
+   "S",
+   "W_links"
+  ],
+  "kombinationen": [
+   "K1",
+   "Bemessung GZT"
+  ],
+  "dreh_achse": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "dreh_punkt": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "dreh_winkel": 0.0,
+  "dreh_gruppen": [],
+  "antrieb": null,
+  "windlast": 0.0,
+  "basis": "",
+  "verschiebung": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "staebe_aus": [],
+  "flaechen_aus": [],
+  "koerper_aus": [],
+  "gelenke_aus": [],
+  "linienlager_aus": [],
+  "flaechenlager_aus": []
+ }
+],
+"wasserdruecke": [
+ {
+  "name": "WD1",
+  "situation": "",
+  "lastfall": "S",
+  "lastfall_dyn": "S",
+  "flaechen": [],
+  "koerper": [],
+  "dichtung": [],
+  "h_ow": 0.0,
+  "h_uw": null,
+  "rho": 1000.0,
+  "richtung": null,
+  "seite": 1,
+  "z_uk": null,
+  "z_ok": null,
+  "breite": null,
+  "ueberstroemt": false,
+  "mu_ue": 0.62,
+  "unterstroemt": false,
+  "spalt": 0.0,
+  "mu_a": 0.61,
+  "absenkung": true,
+  "cp_dyn": 0.0,
+  "kommentar": "",
+  "verfahren": "numerisch",
+  "lastfall_nr": 0,
+  "ow_flaeche": "",
+  "ow_seite": "Oberseite",
+  "uw_flaeche": "",
+  "uw_seite": "Unterseite",
+  "z_sohle": null,
+  "gitter": 40,
+  "unterdruck": false
+ }
+],
+"winde": [
+ {
+  "name": "W1",
+  "situation": "",
+  "lastfall": "W_links",
+  "zone": 2,
+  "v_b": null,
+  "c_dir": 1.0,
+  "c_season": 1.0,
+  "profil": "II",
+  "c_o": 1.0,
+  "richtung": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "z_boden": null,
+  "flaechen": [],
+  "freie_waende": [],
+  "schilder": [],
+  "staebe": [],
+  "c_pi": 0.0,
+  "k_rauigkeit": 0.0002,
+  "phi": 1.0,
+  "fachwerk": false,
+  "cf_vorgabe": null,
+  "c_scd": 1.0,
+  "kommentar": "",
+  "verfahren": "norm",
+  "schnittart": "grundriss",
+  "z_schnitt": null,
+  "gitter": 24,
+  "re": 150.0,
+  "schritte": 3000,
+  "lastfall_nr": 3
+ }
+],
+"schwingungen": [],
+"schweissnaehte": [],
+"bemassungen": [],
+"bemassung_einstellung": null,
+"werteskala": null,
+"bericht_rahmen": null,
+"einheiten": {
+ "kraft": "kN",
+ "laenge": "m",
+ "verformung": "mm",
+ "spannung": "N/mm\u00b2",
+ "winkel": "\u00b0",
+ "temperatur": "K",
+ "nk_kraft": 2,
+ "nk_laenge": 3,
+ "nk_verformung": 2,
+ "nk_spannung": 1,
+ "nk_winkel": 1,
+ "nk_ausnutzung": 3,
+ "nk_last": 2
+}
+}

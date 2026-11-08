@@ -284,8 +284,14 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     tol = float(options.get("tol", C.DEFAULT_TOL))
 
     if kind == "json":
+        # Ein frisches Modell ist ein Oeffnen: die Namen werden auf LF/LK/EK
+        # umgestellt (R2-A2). Angehaengt wird die Quelle mit ihren Namen, wie
+        # vor R2-A2 - umgestellt legte anhaengen gleichnamige LF1, LF2 von Ziel
+        # und Quelle zusammen (Gegenpruefung vom 06.10.2026, F2); die Nummern
+        # angehaengter Objekte vergibt Paket C2.
         loaded = Model.load(path, fortschritt=(None if fortschritt is None else
-                                               lambda a, t: _melde(fortschritt, 0.05 + 0.9 * a, t)))
+                                               lambda a, t: _melde(fortschritt, 0.05 + 0.9 * a, t)),
+                            umstellen=fresh)
         _melde(fortschritt, 1.0, "Modell gelesen")
         if fresh:
             model = loaded

@@ -6305,11 +6305,136 @@ Lastfälle plus eins vor, neben LF1 und LF3 also das vergebene LF3. Ein neuer
 Lastfall, der LF8 heißt, bekommt die Nr. 8, jeder andere die nächste freie
 Nummer.
 
-Alle neuen Angaben stehen in der Modelldatei. Die Dateifassung bleibt 8: Eine
-ältere Datei ohne diese Angaben lädt wie bisher, jede Kombination bekommt die
-Art nach ihren Alternativen, Nummer 0 und keine Bezeichnung. Ein älteres
-Programm liest eine neue Datei und übergeht die neuen Angaben. Die Umstellung
-alter Namen beim Öffnen folgt in einem späteren Schritt.
+Alle neuen Angaben stehen in der Modelldatei. Bis zum 06.10.2026 blieb die
+Dateifassung 8, und eine ältere Datei lud mit ihren alten Namen, mit der Nummer
+0 und ohne Bezeichnung. Seit dem 06.10.2026 schreibt das Programm die Fassung 9
+und stellt eine ältere Datei beim Öffnen um; wie, steht im nächsten Abschnitt.
+Ein Programm von vor dieser Umstellung liest eine Datei der Fassung 9 ohne
+Fehler und übernimmt Namen, Nummern, Art und Bezeichnung; das ist gegen den
+Stand unmittelbar davor geprüft.
+
+### Ältere Dateien beim Öffnen umstellen (seit 06.10.2026)
+
+Am 04.10.2026 hat der Anwender entschieden, dass alte Modelle und
+Ergebnisdateien beim Öffnen umgestellt werden: Alle Verweise gehen mit, das
+Protokoll zeigt eine Tabelle alt → neu, und gespeichert wird danach im neuen
+Format. Seit dem 06.10.2026 tut das Programm das bei jeder Datei vor der
+Fassung 9, also bei jeder Datei, die vor dem 06.10.2026 gespeichert wurde. Eine
+Datei der Fassung 9 stellt es nie um. Bis zum 06.10.2026 lud eine alte Datei
+mit ihren alten Namen.
+
+**Die neuen Namen.** Ein Lastfall heißt danach LF mit seiner Nummer, eine
+Lastkombination LK mit ihrer Nummer und eine Ergebniskombination EK mit ihrer
+Nummer. Ein Lastfall, der schon LF3 heißt, behält Namen und Nummer, solange
+die Nummer frei ist; dasselbe gilt für LK7 und EK2. Eine andere Schreibweise
+derselben Nummer wie „LF03“ oder „lf 3“ wird zu LF3, wenn LF3 nicht schon
+vergeben ist. Alle übrigen bekommen in der Reihenfolge des Modells die nächste
+freie Nummer, und das ist immer eins mehr als die höchste vergebene. Ein
+Modell mit den Lastfällen LF1, S, W_links und LF9 hat danach LF1, LF10, LF11
+und LF9. Lastkombinationen und Ergebniskombinationen zählen getrennt. Die
+Nummer, die in einer alten Datei im Feld Nr steht, zählt dabei nicht; sie war
+fast überall 0, und das Lastenheft hatte die Nr. 1 neben LF1 ein zweites Mal
+vergeben.
+
+**Lastkombination oder Ergebniskombination.** Eine Kombination wird EK, wenn
+sie Alternativen hat oder schon EK mit einer Nummer heißt, und sonst LK. Die
+in einer alten Datei gespeicherte Art zählt dabei nicht. Eine
+Ergebniskombination, die RFEM mit nur einer Alternative als Summe geliefert
+hat, wird darum noch LK; dass der RFEM-Import die Herkunft festhält, kommt mit
+dem Paket C2. Im Modell cbg werden so 872 Kombinationen zu LK1 bis LK872 und
+die 36 mit Alternativen zu EK1 bis EK36.
+
+**Die Bezeichnung.** Der alte Name wird die Bezeichnung, wenn er nicht schon
+der neue Name ist und die Bezeichnung noch leer ist. Aus „W_links“ wird so
+LF11 mit der Bezeichnung „W_links“, aus „Bemessungskombination im GZT
+(Grundstellung)“ etwa EK5 mit dieser Bezeichnung. Der alte Name geht damit
+nicht verloren, auch nicht in der gespeicherten Datei.
+
+**Alle Verweise gehen mit.** Die Umstellung benennt jeden Lastfall und jede
+Kombination über dieselben Wege um wie die Maske, und die nehmen jeden Verweis
+mit: die Faktoren und Alternativen der Kombinationen und ihre Leiteinwirkung,
+die Zustände und den Verlauf der Ermüdungslasten, die Lastfälle und
+Kombinationen der Stellungen, den Lastfall der Wind- und
+Wasserdruckgeneratoren samt seiner Nummer, den aktiven Lastfall und die
+Quelle jedes Berichtseintrags. Ein übernommenes Bild bleibt, was es war, ein
+Schnappschuss; seine Beschriftung folgt nur dort, wo sie den Klartext der
+Quelle enthält, etwa „Lastfall W_links · Verschiebung“, das zu „Lastfall LF11 ·
+Verschiebung“ wird. Damit sich unterwegs keine Namen kreuzen, etwa wenn ein
+Lastfall LF2 werden soll und eine Kombination noch „LF2“ heißt, bekommt ein
+solches Objekt zuerst einen eindeutigen Zwischennamen. Eine erzeugte
+Kombination bleibt dem Generator zugehörig: Das Umbenennen beim Öffnen zählt
+nicht als Hand des Anwenders, auch nicht bei einer Datei von vor dem
+04.10.2026, deren Kombinationen „auto…“ in der Beschreibung tragen und GZT…,
+GZT-A… oder GZG… heißen.
+
+**Die Tabelle im Protokoll.** Beim Öffnen steht im Protokoll ein Hinweis, der
+mit „Namen umgestellt (Datei der Fassung 8)“ beginnt und sagt, dass beim
+Speichern im neuen Format gespeichert wird. Darunter steht die Tabelle alt →
+neu, getrennt nach Lastfällen, Lastkombinationen und Ergebniskombinationen, mit
+höchstens zehn Zeilen je Gruppe. Eine Gruppe ohne Änderung steht als eine
+Zeile da, etwa „Lastfälle: alle 422 heißen schon LF<Nr>“ beim Modell
+Drehlager. Hat eine Gruppe mehr als zehn Zeilen, folgt darunter im Protokoll
+die vollständige Tabelle, beim Modell cbg mit 908 Zeilen. Die vollständige
+Tabelle steht im Protokoll und nicht in einer Datei neben dem Modell, weil das
+Öffnen nichts schreiben soll, worum niemand gebeten hat, auch nicht in einen
+schreibgeschützten oder synchronisierten Ordner, und weil derselbe Weg auch
+von der Kommandozeile, aus dem Browser und beim Import einer Modelldatei
+gegangen wird. Verloren geht nichts, denn der alte Name ist die Bezeichnung.
+Die Kommandozeile und der Browser zeigen dieselben Hinweise; `--lastfall`
+nennt danach den neuen Namen.
+
+Zwei Dinge, die eine alte Datei zweideutig machte, nennt das Protokoll eigens.
+Hießen ein Lastfall und eine Kombination gleich, hat die alte Rechnung die
+Kombination gelesen; beide bekommen getrennte Namen, und eine Ermüdungslast,
+die den gemeinsamen Namen nannte, zeigt danach auf die Kombination, so wie
+gerechnet wurde, mit der Bitte, das zu prüfen. Hieß eine Kombination oder ein
+Lastfall wie eine Alternative einer Ergebniskombination, etwa „E [2]“ neben E,
+war die alte Rechnung unvollständig; beide bekommen getrennte Namen, und das
+Protokoll bittet, neu zu rechnen.
+
+**Speichern.** Bis man speichert, steht die Datei auf der Platte unverändert
+mit den alten Namen da, und jedes Öffnen stellt sie gleich um. Nach dem
+Speichern hat sie die Fassung 9 mit Nummer, Art und Bezeichnung, und das
+nächste Öffnen stellt nichts mehr um.
+
+**Die Ergebnisdatei.** Liegt neben der alten Modelldatei eine Ergebnisdatei,
+wird sie mit derselben Tabelle umgestellt. Sie zeigt danach dieselben Zahlen
+unter den neuen Namen, ohne Neurechnung: die Lastfälle, die Kombinationen, die
+abgelegten Alternativen einer Ergebniskombination („EK8 [2]“ statt
+„Bemessung GZT [2]“), die Umhüllenden mit ihrem Schlüssel und ihrer Herkunft,
+die Tabellen der Theorie II. und III. Ordnung, die Namen in den Nachweisen
+(EC3, Verformungen, Beulen, Lasteinleitung, Volumen, Anschlüsse) und in deren
+Warnungen. Die Nachweise finden die abgelegten Alternativen danach unter den
+neuen Namen; am Prüfkörper ergibt ein neuer EC3-Nachweis aus der geöffneten
+Datei bitgleich dieselbe Ausnutzung wie der gespeicherte. Eine Umhüllende,
+die vor dem 04.10.2026 eine Umhüllende des Programms überschrieben hatte,
+heißt danach nach ihrer Ergebniskombination, etwa „Umhüllende EK3“ statt
+„Umhüllende ULS (Ergebniskombination)“. Was sich nicht sicher zuordnen lässt,
+verwirft das Programm und nennt es im Protokoll, statt es unter einem
+falschen Namen zu zeigen, etwa „Umhüllende „EK1“ verworfen: der Name „EK1
+[1]“ lässt sich nicht sicher zuordnen – neu rechnen“. Das trifft eine
+Ergebnisdatei, deren Ergebniskombination nach der Rechnung umbenannt wurde und
+deren alter Name jetzt einem anderen Objekt gehört. Die Stellungsreihe steht
+nicht in der Ergebnisdatei und kommt wie bisher mit der nächsten Rechnung. Eine
+Ergebnisdatei mit alten Namen neben einer Modelldatei, die schon die Fassung 9
+hat, lädt das Programm nicht; das Protokoll sagt, sie trage die Namen von vor
+der Umstellung.
+
+**Rechenarbeiter und Beispiele.** Ob umgestellt wird, hängt nur an der
+Fassung der Datei und nie daran, wie die Namen aussehen. Die Rechenarbeiter
+von Pool und Farm bekommen das Modell in der Fassung 9 und stellen darum nie
+selbst um; sie rechnen unter denselben Namen wie das Fenster. Die eingebauten
+Beispiele werden nicht aus Dateien geladen und behalten ihre Namen wie „S“,
+„W_links“ und „GZT1“, bis das Paket C1 sie ändert.
+
+**Dauer.** Gemessen am 06.10.2026, je zweimal abwechselnd mit dem Stand davor:
+Das Modell cbg (58 Lastfälle, 908 Kombinationen) braucht beim Öffnen 1,6 bis
+1,7 s mehr, vorher unter 0,1 s. Das Modell Drehlager (422 Lastfälle, die schon
+LF<Nr> heißen, und 54 Ergebniskombinationen) öffnet sich so schnell wie vorher,
+in 17,1 und 16,5 s gegen vorher 16,5 und 17,5 s, mit derselben Speicherspitze
+von 0,91 GB.
+
+Geprüft in `tests/test_umstellung_lf_lk.py`.
 
 ### Namen, unter denen Ergebnisse einander verdecken (seit 04.10.2026)
 
@@ -13399,6 +13524,9 @@ Ergebnisdatei. Die Datei enthält das
 Modell nicht (es steht in der Modelldatei) und kann groß werden: je
 Lastfall die Verschiebungen aller Knoten und die Spannungen aller Elemente
 (Drehlager: rund 90 MB je Lastfall). Geprüft in `tests/test_ergebnisse.py`.
+Seit dem 06.10.2026 trägt die Kennung auch die Fassung der Modelldatei. Eine
+Ergebnisdatei von davor wird beim Öffnen mit der Tabelle alt → neu der
+Namensumstellung gelesen (Abschnitt „Ältere Dateien beim Öffnen umstellen“).
 
 Die Lage der Knoten prüft das Programm seit dem 06.10.2026 Knoten für Knoten.
 Bis zum 06.10.2026 verglich es nur die Summe aller Koordinaten: Wurde ein

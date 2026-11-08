@@ -32,7 +32,8 @@ def main(argv=None) -> int:
     elif a.modell:
         if a.modell.lower().endswith(".json"):
             model = Model.load(a.modell)
-            # was das Oeffnen umgestellt hat (M26: f_u der Werkstoffe nach der Sortentabelle von heute)
+            # was das Oeffnen umgestellt hat (M26: f_u der Werkstoffe nach der Sortentabelle von heute;
+            # seit R2-A2 auch die Namen LF/LK/EK mit der Tabelle alt -> neu)
             for z in getattr(model, "_ladehinweise", None) or []:
                 print("  Hinweis: " + z)
         else:

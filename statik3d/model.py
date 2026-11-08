@@ -66,7 +66,11 @@ NDOF = 6
 #: Fassung der Modelldatei. 8 seit 02.10.2026: Stellung.faelle leer heisst
 #: „keine Lastfaelle“ statt „alle“ - beim Laden einer aelteren Datei bekommt
 #: eine leere Zuordnung alle Lastfaelle (Entscheidung E6 des Anwenders).
-FORMAT_VERSION = 8
+#: 9 seit 06.10.2026 (Paket R2-A2): Lastfaelle heissen LF<Nr>, Last-
+#: kombinationen LK<Nr>, Ergebniskombinationen EK<Nr>, der alte freie Name ist
+#: die Bezeichnung - eine aeltere Datei wird beim Laden umgestellt
+#: (Model._namen_umstellen), eine Datei der Fassung 9 nie.
+FORMAT_VERSION = 9
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -4459,6 +4463,10 @@ class Model:
         self.stellungen: list = []
         #: Hinweise aus dem Laden einer Datei (Model.from_dict), nicht gespeichert
         self._ladehinweise: list = []
+        #: Tabelle alt -> neu der Umstellung beim Laden einer Datei vor
+        #: Fassung 9 (Model._namen_umstellen) - fuer ergebnisse.lesen, nicht
+        #: gespeichert; None, wenn nichts umgestellt wurde
+        self._umbenennung = None
         # Lastgenerierer (wasserdruck.Wasserdruck, wind.Wind), nach Name
         self.wasserdruecke: dict = {}
         self.winde: dict = {}
@@ -5179,6 +5187,7 @@ class Model:
         vergab bis zum 04.10.2026 die Nr. 1 neben LF1 ein zweites Mal), und die
         Rechnung haengt nicht daran; die Umstellung beim Laden (Paket R2-A2)
         vergibt sie neu."""
+        import re
         msgs = []
         for art in ("LF", "LK", "EK"):
             halter: dict = {}
@@ -5195,6 +5204,10 @@ class Model:
                     if not any(x is o for x in liste):
                         liste.append(o)
             for nr, liste in sorted(halter.items()):
+                # die Teile einer nach Situation geteilten Ergebniskombination
+                # teilen ihre Nummer: „EK5 (Grundstellung)“, „EK5 (Ankerausfall)“
+                if len(liste) > 1 and all(re.fullmatch(rf"{art}{nr} \(.+\)", o.name) for o in liste):
+                    continue
                 if len(liste) > 1:
                     msgs.append(f"WARNUNG: Nr. {nr} ({art}) gehört mehreren: "
                                 + ", ".join(f"'{o.name}'" for o in liste)
@@ -5229,7 +5242,9 @@ class Model:
         und ``leading`` nach, der Webserver auch die Stellungen nicht
         (Bestandsaufnahme R2, Befund 3): ein Wind auf einem umbenannten
         Lastfall legte beim naechsten „Lasten erzeugen“ einen neuen Lastfall
-        unter dem alten Namen an (tests/test_namen_lf_lk.py, N5).
+        unter dem alten Namen an (tests/test_namen_lf_lk.py, N5). Seit der
+        Nachbesserung von R2-A2 (06.10.2026) zieht :meth:`namen_umbenennen`
+        die Verweise nach - dieselbe Stelle wie die Umstellung beim Oeffnen.
 
         Rueckgabe: Klartextzeilen, was mitging."""
         alt, neu = str(alt), str(neu)
@@ -5240,42 +5255,7 @@ class Model:
         grund = self.namenskonflikt(neu, alt, "lastfall")
         if grund:
             raise NameVergeben(grund)
-        aus: list[str] = []
-        lc = self.load_cases[alt]
-        # Eine erzeugte, unberuehrte Kombination bleibt es: das Umbenennen
-        # eines Lastfalls ist keine Hand an ihr (G5) - sonst verdoppelte der
-        # naechste Generatorlauf alle Kombinationen
-        frisch = [c for c in self.combinations.values() if c.unberuehrt()]
-        _schluessel_tauschen(self.load_cases, alt, neu)
-        lc.name = neu
-        for c in self.combinations.values():
-            if alt in c.factors or c.leading == alt or any(alt in a for a in c.alternativen):
-                c.lastfall_umbenennen(alt, neu)
-                aus.append(f"Kombination '{c.name}'")
-        for c in frisch:
-            c.erzeugt_merkmal = c.merkmal()
-        if alt not in self.combinations:
-            for fl in self.fatigue_loads.values():
-                if alt in (fl.case_max, fl.case_min) or alt in (fl.folge or []):
-                    fl.lastfall_umbenennen(alt, neu)
-                    aus.append(f"Ermüdungslast '{fl.name}'")
-        for s in getattr(self, "stellungen", None) or []:
-            if alt in (getattr(s, "faelle", None) or []):
-                s.lastfall_umbenennen(alt, neu)
-                aus.append(f"Stellung '{s.name}'")
-        for w in (getattr(self, "winde", None) or {}).values():
-            if getattr(w, "lastfall", "") == alt:
-                w.lastfall = neu
-                aus.append(f"Wind '{w.name}'")
-        for wd in (getattr(self, "wasserdruecke", None) or {}).values():
-            for feld in ("lastfall", "lastfall_dyn"):
-                if getattr(wd, feld, "") == alt:
-                    setattr(wd, feld, neu)
-                    aus.append(f"Wasserdruck '{wd.name}' ({feld})")
-        if self.active_case == alt:
-            self.active_case = neu
-        aus += self._bericht_umbenennen({f"case:{alt}": f"case:{neu}"})
-        return aus
+        return self.namen_umbenennen({alt: neu}, {}, pruefen=False)
 
     def kombination_umbenennen(self, alt: str, neu: str) -> list[str]:
         """Die Kombination *alt* in *neu* umbenennen - mit jedem Verweis.
@@ -5300,10 +5280,9 @@ class Model:
         Bis zum 04.10.2026 legte die Oberflaeche dafuer eine neue Kombination
         an und loeschte die alte: kein Verweis folgte, und Leiteinwirkung,
         Bemessungssituation (Dialog) gingen verloren (Bestandsaufnahme R2,
-        Abschnitt 1.4).
+        Abschnitt 1.4). Die Verweise zieht :meth:`namen_umbenennen` nach.
 
         Rueckgabe: Klartextzeilen, was mitging."""
-        from .solver import umhuellende_schluessel_im_modell
         alt, neu = str(alt), str(neu)
         if alt == neu:
             return []
@@ -5312,30 +5291,162 @@ class Model:
         grund = self.namenskonflikt(neu, alt, "kombination")
         if grund:
             raise NameVergeben(grund)
+        return self.namen_umbenennen({}, {alt: neu}, pruefen=False)
+
+    def namen_umbenennen(self, lastfaelle: dict = None, kombinationen: dict = None,
+                         pruefen: bool = True) -> list[str]:
+        """Lastfaelle (*lastfaelle*, {alt: neu}) und Kombinationen
+        (*kombinationen*, {alt: neu}) in **einem** Durchgang umbenennen - mit
+        jedem Verweis. Das ist die eine Stelle, an der umbenannt wird:
+        :meth:`lastfall_umbenennen` und :meth:`kombination_umbenennen` rufen
+        sie mit einem Eintrag, die Umstellung beim Oeffnen (Paket R2-A2,
+        :meth:`_namen_umstellen`) mit allen.
+
+        Alle Namen wechseln gleichzeitig: „A“ -> LF2 neben „LF2“ -> LF3 kreuzt
+        sich nicht, Zwischennamen braucht es nicht. Der Aufwand waechst mit
+        der Zahl der Verweise. Bis zur Nachbesserung von R2-A2 (06.10.2026)
+        lief die Umstellung je Objekt ueber das ganze Modell: 4000
+        Kombinationen brauchten 50 s (Gegenpruefung).
+
+        Mit geht, was die Bestandsaufnahme R2 (Abschnitt 2.1) als Verweis
+        gefunden hat: die Schluessel in ``load_cases`` und ``combinations``
+        (die Reihenfolge bleibt, die Objekte bleiben dieselben),
+        ``active_case``, Faktoren, Alternativen und Leiteinwirkung jeder
+        Kombination, beide Zustaende und der Verlauf jeder Ermuedungslast,
+        Lastfall- und Kombinationsliste jeder Stellung, der Lastfall jedes
+        Wind- und Wasserdruckgenerators und jeder Berichtseintrag mit der
+        Quelle „case:“, „combo:“ oder der Umhuellenden einer umbenannten
+        Ergebniskombination („env:<Schluessel>“, vorher und nachher mit
+        solver.umhuellende_schluessel_im_modell gebildet - das Bild der
+        Umhuellenden GZT „env:ULS“ folgt nie einer Ergebniskombination „ULS“),
+        samt seinen eingefrorenen Texten (:meth:`_bericht_umbenennen`). Ein
+        Zustand einer Ermuedungslast, der Lastfall und Kombination zugleich
+        nennt, meint die Kombination (Analysis.all_results). Eine erzeugte,
+        unberuehrte Kombination bleibt es, wenn nur ihre Lastfaelle umbenannt
+        werden (G5); eine selbst umbenannte gehoert danach dem Anwender.
+
+        *pruefen*: die Namen nach dem Umbenennen werden einmal gemeinsam
+        geprueft (:meth:`_namen_pruefen`), bevor sich etwas aendert; ein
+        Verstoss weist mit :class:`NameVergeben` ab. Die Einzelwege pruefen
+        vorher mit :meth:`namenskonflikt` (genauere Meldung, auch die Nummer
+        im Feld) und rufen ohne.
+
+        Rueckgabe: Klartextzeilen, was mitging."""
+        from .solver import umhuellende_schluessel_im_modell
+        lf = {str(a): str(n) for a, n in (lastfaelle or {}).items() if str(a) != str(n)}
+        ko = {str(a): str(n) for a, n in (kombinationen or {}).items() if str(a) != str(n)}
+        if not lf and not ko:
+            return []
+        for a in lf:
+            if a not in self.load_cases:
+                raise KeyError(f"Lastfall '{a}' existiert nicht")
+        for a in ko:
+            if a not in self.combinations:
+                raise KeyError(f"Kombination '{a}' existiert nicht")
+        if pruefen:
+            grund = self._namen_pruefen([lf.get(n, n) for n in self.load_cases],
+                                        [(ko.get(n, n), c) for n, c in self.combinations.items()])
+            if grund:
+                raise NameVergeben(grund)
         aus: list[str] = []
-        vorher = umhuellende_schluessel_im_modell(self)
-        c = self.combinations[alt]
-        _schluessel_tauschen(self.combinations, alt, neu)
-        c.name = neu
-        nachher = umhuellende_schluessel_im_modell(self)
-        quellen = {f"combo:{alt}": f"combo:{neu}"}
-        for n, k in vorher.items():
-            k2 = nachher.get(neu if n == alt else n)
-            if k2 is not None and k2 != k:
-                quellen[f"env:{k}"] = f"env:{k2}"
-        # Ein Zustand nennt einen Lastfall oder eine Kombination; heissen
-        # beide gleich, lesen Rechnung und Nachweis die Kombination
-        # (Analysis.all_results) - der Verweis meint also sie
+        alte_kombinationen = set(self.combinations)
+        vorher = umhuellende_schluessel_im_modell(self) if ko else {}
+        frisch = [c for n, c in self.combinations.items() if n not in ko and c.unberuehrt()]
+        for tafel, d in ((lf, self.load_cases), (ko, self.combinations)):
+            if not tafel:
+                continue
+            for a, n in tafel.items():
+                d[a].name = n
+            eintraege = [(tafel.get(k, k), v) for k, v in d.items()]
+            d.clear()
+            d.update(eintraege)
+        if lf:
+            for c in self.combinations.values():
+                if any(k in lf for k in c.factors) or c.leading in lf \
+                        or any(k in lf for a in c.alternativen for k in a):
+                    c.factors = {lf.get(k, k): v for k, v in c.factors.items()}
+                    c.alternativen = [{lf.get(k, k): v for k, v in a.items()} for a in c.alternativen]
+                    if c.leading in lf:
+                        c.leading = lf[c.leading]
+                    aus.append(f"Kombination '{c.name}'")
+            for c in frisch:
+                c.erzeugt_merkmal = c.merkmal()
+
+        def zustand(n):
+            if not n:
+                return n
+            return ko.get(n, n) if n in alte_kombinationen else lf.get(n, n)
         for fl in self.fatigue_loads.values():
-            if alt in (fl.case_max, fl.case_min) or alt in (fl.folge or []):
-                fl.lastfall_umbenennen(alt, neu)
+            folge = [zustand(f) for f in (fl.folge or [])]
+            neu = (zustand(fl.case_max), zustand(fl.case_min), folge)
+            if neu != (fl.case_max, fl.case_min, list(fl.folge or [])):
+                fl.case_max, fl.case_min = neu[0], neu[1]
+                if fl.folge:
+                    fl.folge = folge
                 aus.append(f"Ermüdungslast '{fl.name}'")
         for s in getattr(self, "stellungen", None) or []:
-            if alt in (getattr(s, "kombinationen", None) or []):
-                s.kombinationen = [neu if k == alt else k for k in s.kombinationen]
+            faelle = [lf.get(f, f) for f in (getattr(s, "faelle", None) or [])]
+            kombis = [ko.get(k, k) for k in (getattr(s, "kombinationen", None) or [])]
+            if faelle != list(getattr(s, "faelle", None) or []) \
+                    or kombis != list(getattr(s, "kombinationen", None) or []):
+                s.faelle, s.kombinationen = faelle, kombis
                 aus.append(f"Stellung '{s.name}'")
+        for w in (getattr(self, "winde", None) or {}).values():
+            if getattr(w, "lastfall", "") in lf:
+                w.lastfall = lf[w.lastfall]
+                aus.append(f"Wind '{w.name}'")
+        for wd in (getattr(self, "wasserdruecke", None) or {}).values():
+            for feld in ("lastfall", "lastfall_dyn"):
+                if getattr(wd, feld, "") in lf:
+                    setattr(wd, feld, lf[getattr(wd, feld)])
+                    aus.append(f"Wasserdruck '{wd.name}' ({feld})")
+        if self.active_case in lf:
+            self.active_case = lf[self.active_case]
+        quellen = {f"case:{a}": f"case:{n}" for a, n in lf.items()}
+        quellen.update({f"combo:{a}": f"combo:{n}" for a, n in ko.items()})
+        if ko:
+            nachher = umhuellende_schluessel_im_modell(self)
+            for n, k in vorher.items():
+                k2 = nachher.get(ko.get(n, n))
+                if k2 is not None and k2 != k:
+                    quellen[f"env:{k}"] = f"env:{k2}"
         aus += self._bericht_umbenennen(quellen)
         return aus
+
+    def _namen_pruefen(self, lastfaelle: list, kombinationen: list) -> str:
+        """Warum die Namen *lastfaelle* und *kombinationen* ([(Name,
+        Combination)]) nicht zusammen bestehen koennen - "" heisst: sie
+        koennen. Dieselben Regeln wie :meth:`namenskonflikt`, aber fuer alle
+        Namen auf einmal und in einem Durchgang: nicht leer, ohne Leerzeichen
+        am Anfang oder Ende, verschieden in ihrer Form (:func:`_namensform`),
+        keine Nummer zweimal im Namen (:func:`_namensnummer`), kein Name wie
+        die Alternative „<EK> [k]“ einer Ergebniskombination."""
+        import re
+        alle = [(str(n), "Lastfall") for n in lastfaelle] + [(str(n), "Kombination") for n, _c in kombinationen]
+        formen: dict = {}
+        nummern: dict = {}
+        for n, was in alle:
+            if not n.strip():
+                return f"{was} ohne Namen"
+            if n != n.strip():
+                return f"„{n}“ beginnt oder endet mit einem Leerzeichen - bitte ohne"
+            f = _namensform(n)
+            if f in formen:
+                return (f"„{n}“ und „{formen[f]}“ hießen gleich (auch in Groß-/Kleinschreibung oder "
+                        "Leerzeichen) - ihre Ergebnisse verdeckten einander")
+            formen[f] = n
+            a, z = _namensnummer(n)
+            if a:
+                if (a, z) in nummern:
+                    return f"„{n}“ und „{nummern[(a, z)]}“ tragen dieselbe Nummer {a}{z}"
+                nummern[(a, z)] = n
+        eks = {_namensform(n) for n, c in kombinationen if c.ist_umhuellende}
+        for n, was in alle:
+            t = re.fullmatch(r"(.+) \[0*\d+\]", _namensform(n))
+            if t and t.group(1) in eks:
+                return (f"{was} „{n}“ hieße wie eine Alternative der Ergebniskombination - in den "
+                        "Nachweisen verdrängte die eine die andere")
+        return ""
 
     def _bericht_umbenennen(self, quellen: dict) -> list[str]:
         """Berichtseintraege mit einer Quelle aus *quellen* (alt -> neu)
@@ -5415,6 +5526,372 @@ class Model:
             return ""
         was = "der Lastfall" if isinstance(o, LoadCase) else "die Kombination"
         return f"Nr. {nr} hat schon {was} „{o.name}“ - frei ist Nr. {self.naechste_nummer(art)}"
+
+    # ---------------- Umstellung beim Oeffnen (Paket R2-A2) ----------------
+    #: So viele Zeilen je Gruppe zeigt der erste Hinweis im Protokoll; die
+    #: uebrigen stehen im zweiten (cbg: 908 Kombinationen)
+    UMSTELLUNG_ZEILEN = 10
+    #: Vorsilbe fuer einen Verweis auf ein Objekt, das es nicht (mehr) gibt -
+    #: so heisst kein Lastfall und keine Kombination der Umstellung
+    VERWAIST = "verwaist: "
+
+    def _namen_umstellen(self, fassung: int = 0) -> dict:
+        """Die Namen beim **Oeffnen einer Datei** auf LF<Nr>, LK<Nr> und
+        EK<Nr> umstellen - Entscheidung des Anwenders vom 04.10.2026: alte
+        Modelle und Ergebnisdateien werden beim Oeffnen umgestellt, alle
+        Verweise gehen mit, das Protokoll zeigt die Tabelle alt -> neu,
+        gespeichert wird danach im neuen Format.
+
+        **Ausloeser** ist das Oeffnen (Model.load, das Fenster, der Webstart,
+        die Kommandozeile, das Hochladen im Browser), gleich welcher Fassung:
+        auch eine Datei der Fassung 9 mit freien Namen, wie sie bis Paket R2-E
+        entsteht, wird umgestellt. ``from_dict`` ohne ausdruecklichen Wunsch,
+        Pool und Farm (jobs.py), Kopien und Rueckgaengig stellen nie um - sie
+        sollen dieselben Namen sehen wie die Sitzung. Bei regelgerechten Namen
+        aendert die Umstellung in Fassung 9 nichts; in einer aelteren Datei
+        traegt sie nur Nummer und Art nach. Bis zur Nachbesserung vom
+        06.10.2026 hing sie an der Fassung < 9 (Entscheidung der
+        Hauptsitzung, L3).
+
+        **Nummern.** Ein Name, der schon LF<n> heisst, behaelt Name und
+        Nummer, solange die Nummer frei ist; danach zaehlt in einer Datei der
+        Fassung 9 die gespeicherte Nummer (sie ist dort eindeutig, R2-A1),
+        dann eine andere Schreibweise derselben Nummer („LF03“, „lf 3“ - sie
+        heisst danach LF3). Alle uebrigen bekommen in der Reihenfolge des
+        Modells die naechste freie Nummer, 1 + die hoechste vergebene, wie
+        :meth:`naechste_nummer`. In aelteren Dateien zaehlt das Feld nicht:
+        es war fast ueberall 0, und das Lastenheft vergab die Nr. 1 neben LF1
+        ein zweites Mal. LK und EK zaehlen getrennt.
+
+        **Art.** In Fassung 9 die gespeicherte. Sonst EK, wenn die
+        Kombination Alternativen hat, schon EK<n> heisst oder ihre
+        Beschreibung mit „(Ergebniskombination)“ endet (so kennzeichnet der
+        RFEM-Import eine Ergebniskombination, auch wenn RFEM sie mit nur einer
+        Alternative als Summe liefert), sonst LK.
+
+        **Nach Situation geteilte Ergebniskombinationen.** Teilt der
+        RFEM-Import eine Ergebniskombination nach Situation, heissen die Teile
+        „<Name> (<Situation>)“ (rfem6_db). Zwei oder mehr Teile mit demselben
+        Namen davor, derselben Art und je ihrer eigenen Situation am Ende
+        (Name oder Beschreibung) bekommen nach Variante (a) des Anwenders eine
+        gemeinsame Nummer und die Situation in Klammern: „EK5
+        (Grundstellung)“, „EK5 (Ankerausfall)“. Ihre Bezeichnung ist der Name
+        davor.
+
+        **Bezeichnung.** Der alte Name wird die Bezeichnung, wenn er nicht
+        schon der neue ist und die Bezeichnung leer ist („LF3 W_links“).
+
+        **Erzeugt.** Eine erzeugte, unberuehrte Kombination (Fingerabdruck)
+        oder - in einer Datei vor R2-A1 - eine mit „auto…“ und dem Namen
+        GZT<n>, GZT-A<n> oder GZG<n> bleibt erzeugt und dem Generator
+        zugehoerig.
+
+        **Verwaiste Verweise.** Wird umbenannt, setzt die Umstellung vorher
+        jeden Verweis auf ein Objekt, das es nicht gibt (Faktor,
+        Leiteinwirkung, Ermuedungszustand, Stellung, Wind, Wasserdruck,
+        Berichtsquelle), auf „verwaist: <alter Name>“. Ohne das wuerde er
+        still gueltig, sobald ein anderes Objekt den alten Namen bekommt:
+        gemessen in der Gegenpruefung vom 06.10.2026 zeigte eine Ermuedungslast
+        auf die geloeschte LK1 danach auf GZT1, und ein Wind auf den
+        geloeschten LF2 schrieb in den Schneelastfall. check() meldet den
+        Verweis weiter, Wind und Wasserdruck legen beim naechsten Erzeugen
+        einen eigenen Lastfall an. Ein ungueltiger aktiver Lastfall wird der
+        erste.
+
+        **Verweise** gehen ueber :meth:`namen_umbenennen` mit, in einem
+        Durchgang fuer alle Namen. Zwei Mehrdeutigkeiten alter Dateien stehen
+        als eigener Hinweis im Protokoll: ein Lastfall und eine Kombination
+        gleichen Namens und „X [k]“ neben der Ergebniskombination X.
+
+        Rueckgabe: {"fassung", "geaendert", "lastfaelle": {alt: neu} fuer jeden
+        Lastfall, "kombinationen": {alt: neu} fuer jede Kombination,
+        "ergebniskombinationen", "zweideutig", "verwaist": [(Verweis, alt,
+        neu)]}. ``self._umbenennung`` haelt sie, wenn sich etwas geaendert hat
+        oder die Datei vor Fassung 9 stammt (ergebnisse.lesen schluesselt
+        damit die Ergebnisdatei um), sonst None. Die Hinweise stehen in
+        ``self._ladehinweise``."""
+        # Der Stand mit den alten Namen, ohne Netz: gegen ihn prueft ergebnisse.lesen
+        # die Kennung einer Ergebnisdatei (N38, Rechenangaben mit Namen) - die
+        # Umstellung allein ist keine Aenderung des Modells (R2-A2, 08.11.2026)
+        self._dict_vor_umstellung = self.to_dict(netz=False)
+        import re
+        from .combinations import gehoert_dem_generator, GENERATOR as EN1990
+        fassung = int(fassung or 0)
+        trauen = fassung >= FORMAT_VERSION
+        lfs = list(self.load_cases.values())
+        kos = list(self.combinations.values())
+        alle = lfs + kos
+        alt_name = {id(o): o.name for o in alle}
+
+        def art_von(c) -> str:
+            if trauen and c.art in ("LK", "EK"):
+                return c.art
+            if c.alternativen or _namensnummer(c.name)[0] == "EK" \
+                    or str(c.description or "").rstrip().endswith("(Ergebniskombination)"):
+                return "EK"
+            return "LK"
+        arten = {id(c): art_von(c) for c in kos}
+
+        # Teile einer nach Situation geteilten Kombination: Name davor und
+        # Situation; eine Gruppe braucht mindestens zwei verschiedene
+        def teil(c):
+            endung = f" ({c.situation or GRUNDSTELLUNG})"
+            for text in (c.name, str(c.description or "").rstrip()):
+                if text.endswith(endung) and len(text) > len(endung):
+                    return text[:-len(endung)]
+            return None
+        gruppen: dict = {}
+        for c in kos:
+            basis = teil(c)
+            if basis is not None:
+                gruppen.setdefault((basis, c.typ, arten[id(c)]), []).append(c)
+        # schon umgestellt („EK5 (Ankerausfall)“) gilt auch ein einzelner Teil
+        gruppen = {k: v for k, v in gruppen.items()
+                   if len({c.situation or GRUNDSTELLUNG for c in v}) == len(v)
+                   and (len(v) > 1 or re.fullmatch(rf"{k[2]}[1-9]\d*", k[0]))}
+        gruppe_von = {id(c): k for k, v in gruppen.items() for c in v}
+
+        # Vergabe je Einheit (ein Objekt oder eine Gruppe): (Name zum Pruefen,
+        # gespeicherte Nummer, Objekte)
+        def vergeben(einheiten, art) -> dict:
+            nr, belegt = {}, set()
+            genau = re.compile(rf"{art}([1-9]\d*)")
+
+            def nehmen(i, z):
+                nr[i] = z
+                belegt.add(z)
+            for i, (name, _gesp, _o) in enumerate(einheiten):
+                t = genau.fullmatch(name)
+                if t and int(t.group(1)) not in belegt:
+                    nehmen(i, int(t.group(1)))
+            if trauen:
+                for i, (_name, gesp, _o) in enumerate(einheiten):
+                    if i not in nr and gesp > 0 and gesp not in belegt:
+                        nehmen(i, gesp)
+            for i, (name, _gesp, _o) in enumerate(einheiten):
+                a, z = _namensnummer(name)
+                if i not in nr and a == art and z > 0 and z not in belegt:
+                    nehmen(i, z)
+            naechste = max(belegt, default=0) + 1
+            for i in range(len(einheiten)):
+                if i not in nr:
+                    nehmen(i, naechste)
+                    naechste += 1
+            return {id(o): nr[i] for i, (_n, _g, objekte) in enumerate(einheiten) for o in objekte}
+        nummer = vergeben([(lc.name, int(lc.nummer or 0), [lc]) for lc in lfs], "LF")
+        for art in ("LK", "EK"):
+            einheiten, gesehen = [], set()
+            for c in kos:
+                if arten[id(c)] != art:
+                    continue
+                g = gruppe_von.get(id(c))
+                if g is None:
+                    einheiten.append((c.name, int(c.nummer or 0), [c]))
+                elif g not in gesehen:
+                    gesehen.add(g)
+                    teile = gruppen[g]
+                    gesp = {int(x.nummer or 0) for x in teile}
+                    einheiten.append((g[0], gesp.pop() if len(gesp) == 1 else 0, teile))
+            nummer.update(vergeben(einheiten, art))
+        ziel = {id(lc): f"LF{nummer[id(lc)]}" for lc in lfs}
+        for c in kos:
+            g = gruppe_von.get(id(c))
+            ziel[id(c)] = f"{arten[id(c)]}{nummer[id(c)]}" + (
+                f" ({c.situation or GRUNDSTELLUNG})" if g is not None else "")
+        bezeichnung = {id(c): gruppe_von[id(c)][0] for c in kos if id(c) in gruppe_von}
+        umbenannt = any(o.name != ziel[id(o)] for o in alle)
+        if not umbenannt and trauen:
+            # regelgerecht in Fassung 9: die Umstellung aendert nichts, auch
+            # keine Nummer und keine Art
+            self._umbenennung = None
+            return {"fassung": fassung, "geaendert": False,
+                    "lastfaelle": {n: n for n in self.load_cases},
+                    "kombinationen": {n: n for n in self.combinations},
+                    "ergebniskombinationen": [c.name for c in kos if c.ist_umhuellende],
+                    "zweideutig": [], "verwaist": []}
+
+        # Mehrdeutigkeiten der alten Datei - vor dem Umbenennen festhalten
+        eks_alt = [c.name for c in kos if c.ist_umhuellende]
+        doppelt = {lc.name: [fl.name for fl in self.fatigue_loads.values()
+                             if lc.name in (fl.case_max, fl.case_min) or lc.name in (fl.folge or [])]
+                   for lc in lfs if lc.name in self.combinations}
+        wie_alternative = []
+        for o in alle:
+            t = re.fullmatch(r"(.+) \[(\d+)\]", o.name)
+            if t and t.group(1) in eks_alt:
+                wie_alternative.append((o, self.combinations[t.group(1)], t.group(2)))
+        erzeugt = [c for c in kos if (c.unberuehrt() if c.erzeugt else gehoert_dem_generator(c))]
+
+        verwaist = self._verwaiste_verweise() if umbenannt else []
+        if self.active_case not in self.load_cases and self.load_cases:
+            self.active_case = next(iter(self.load_cases))
+        self.namen_umbenennen({alt_name[id(lc)]: ziel[id(lc)] for lc in lfs},
+                              {alt_name[id(c)]: ziel[id(c)] for c in kos}, pruefen=True)
+        for o in alle:
+            o.nummer = nummer[id(o)]
+            if isinstance(o, Combination):
+                o.art = arten[id(o)]
+            alt = alt_name[id(o)]
+            if alt != o.name and not str(getattr(o, "bezeichnung", "") or "").strip():
+                o.bezeichnung = bezeichnung.get(id(o), alt)
+        for c in erzeugt:
+            if not c.erzeugt:
+                c.erzeugt = EN1990
+            c.erzeugt_merkmal = c.merkmal()
+        # Wind und Wasserdruck merken sich die Nummer ihres Lastfalls
+        # (lastfall_nr, 0 = naechste freie) - sie folgt der neuen Nummer
+        for g in list((self.winde or {}).values()) + list((self.wasserdruecke or {}).values()):
+            lc = self.load_cases.get(getattr(g, "lastfall", ""))
+            if int(getattr(g, "lastfall_nr", 0) or 0) > 0 and lc is not None:
+                g.lastfall_nr = lc.nummer
+
+        tab = {"fassung": fassung, "geaendert": bool(umbenannt or verwaist),
+               "lastfaelle": {alt_name[id(o)]: o.name for o in lfs},
+               "kombinationen": {alt_name[id(c)]: c.name for c in kos},
+               "ergebniskombinationen": list(eks_alt),
+               "zweideutig": sorted(set(doppelt) | {alt_name[id(o)] for o, _ek, _k in wie_alternative}),
+               "verwaist": verwaist}
+        self._umbenennung = tab if (tab["geaendert"] or fassung < FORMAT_VERSION) else None
+        self._ladehinweise += self._umstellung_hinweise(
+            fassung, lfs, kos, arten, alt_name,
+            [(alt, tab["lastfaelle"][alt], tab["kombinationen"][alt], fls) for alt, fls in doppelt.items()],
+            [(o, alt_name[id(o)], alt_name[id(ek)], ek.name, kk) for o, ek, kk in wie_alternative],
+            verwaist)
+        # ... und der Stand gleich danach: ergebnisse.lesen nimmt den alten Stand nur,
+        # solange das Modell seit der Umstellung unveraendert ist
+        self._dict_nach_umstellung = self.to_dict(netz=False)
+        return tab
+
+    def _verwaiste_verweise(self) -> list:
+        """Jeden Verweis auf einen Lastfall oder eine Kombination, die es
+        nicht gibt, auf „verwaist: <Name>“ setzen (siehe _namen_umstellen) -
+        Rueckgabe [(Verweis im Klartext, alter Name, neuer Name)]."""
+        from .begriffe import UMHUELLENDE
+        from .solver import umhuellende_schluessel_im_modell, umhuellende_art
+        lf, ko = set(self.load_cases), set(self.combinations)
+        vergeben = lf | ko
+        ersatz: dict = {}
+        aus: list = []
+
+        def waise(n: str) -> str:
+            if n not in ersatz:
+                neu, k = f"{self.VERWAIST}{n}", 2
+                while neu in vergeben:
+                    neu, k = f"{self.VERWAIST}{n} ({k})", k + 1
+                ersatz[n] = neu
+            return ersatz[n]
+
+        def lastfall(n, wo):
+            if n and n not in lf:
+                aus.append((wo, n, waise(n)))
+                return waise(n)
+            return n
+        for c in self.combinations.values():
+            if any(k not in lf for k in c.factors) or any(k not in lf for a in c.alternativen for k in a):
+                c.factors = {lastfall(k, f"Kombination {c.name}"): v for k, v in c.factors.items()}
+                c.alternativen = [{lastfall(k, f"Kombination {c.name}"): v for k, v in a.items()}
+                                  for a in c.alternativen]
+            if c.leading:
+                c.leading = lastfall(c.leading, f"Leiteinwirkung von {c.name}")
+        for fl in self.fatigue_loads.values():
+            def zustand(n, _fl=fl):
+                if n and n not in vergeben:
+                    aus.append((f"Ermüdungslast {_fl.name}", n, waise(n)))
+                    return waise(n)
+                return n
+            fl.case_max = zustand(fl.case_max)
+            fl.case_min = zustand(fl.case_min)
+            if fl.folge:
+                fl.folge = [zustand(f) for f in fl.folge]
+        for s in getattr(self, "stellungen", None) or []:
+            if getattr(s, "faelle", None):
+                s.faelle = [lastfall(f, f"Stellung {s.name}") for f in s.faelle]
+            if getattr(s, "kombinationen", None):
+                neu = []
+                for k in s.kombinationen:
+                    if k not in ko:
+                        aus.append((f"Stellung {s.name}", k, waise(k)))
+                        k = waise(k)
+                    neu.append(k)
+                s.kombinationen = neu
+        for w in (getattr(self, "winde", None) or {}).values():
+            w.lastfall = lastfall(getattr(w, "lastfall", ""), f"Wind {w.name}")
+        for wd in (getattr(self, "wasserdruecke", None) or {}).values():
+            for feld in ("lastfall", "lastfall_dyn"):
+                setattr(wd, feld, lastfall(getattr(wd, feld, ""), f"Wasserdruck {wd.name}"))
+        huellen = set(UMHUELLENDE) | {umhuellende_art(c.typ) for c in self.combinations.values()} \
+            | set(umhuellende_schluessel_im_modell(self).values())
+        quellen = {}
+        for e in getattr(self, "bericht", None) or []:
+            art, _, wert = (e.quelle or "").partition(":")
+            fehlt = ((art == "case" and wert not in lf) or (art == "combo" and wert not in ko)
+                     or (art == "env" and wert not in huellen))
+            if wert and fehlt:
+                aus.append((f"Berichtseintrag {e.name}", wert, waise(wert)))
+                quellen[e.quelle] = f"{art}:{waise(wert)}"
+        self._bericht_umbenennen(quellen)
+        return aus
+
+    def _umstellung_hinweise(self, fassung, lfs, kos, arten, alt_name, doppelt, wie_alternative,
+                             verwaist=()) -> list:
+        """Die Zeilen fuer das Protokoll. Der erste Hinweis beginnt mit einer
+        kurzen Zeile und zeigt hoechstens UMSTELLUNG_ZEILEN Zeilen je Gruppe;
+        die uebrigen stehen - jede nur einmal - im zweiten Hinweis. Warum im
+        Protokoll und nicht in einer Datei neben dem Modell: das Oeffnen
+        schreibt nichts (auch nicht in schreibgeschuetzte oder
+        synchronisierte Ordner), derselbe Weg dient Kommandozeile, Browser
+        und Import, und der alte Name geht nicht verloren - er ist die
+        Bezeichnung."""
+        gruppen = []
+        for titel, objekte, form in (
+                ("Lastfälle", lfs, "LF<Nr>"),
+                ("Lastkombinationen", [c for c in kos if arten[id(c)] == "LK"], "LK<Nr>"),
+                ("Ergebniskombinationen", [c for c in kos if arten[id(c)] == "EK"], "EK<Nr>")):
+            zeilen = [(alt_name[id(o)], o.name) for o in objekte if alt_name[id(o)] != o.name]
+            gruppen.append((titel, objekte, form, zeilen))
+        hinweise = []
+        if any(z for _t, _o, _f, z in gruppen):
+            n = self.UMSTELLUNG_ZEILEN
+            rest = sum(max(0, len(z) - n) for _t, _o, _f, z in gruppen)
+            kopf = [f"Namen umgestellt auf LF/LK/EK (Datei der Fassung {fassung})",
+                    "  Der alte Name ist jetzt die Bezeichnung, alle Verweise gehen mit; gespeichert "
+                    f"wird beim Speichern im neuen Format (Fassung {FORMAT_VERSION}). Tabelle alt → neu:"]
+            weiter = [f"Tabelle alt → neu, Fortsetzung ({rest} weitere Zeilen):"]
+            for titel, objekte, form, zeilen in gruppen:
+                if not objekte:
+                    continue
+                if not zeilen:
+                    kopf.append(f"  {titel}: alle {len(objekte)} heißen schon {form}")
+                    continue
+                kopf.append(f"  {titel}: {len(zeilen)} von {len(objekte)} umbenannt")
+                kopf += [f"    {a} → {b}" for a, b in zeilen[:n]]
+                if len(zeilen) > n:
+                    kopf.append(f"    … und {len(zeilen) - n} weitere im nächsten Hinweis")
+                    weiter.append(f"  {titel} (weiter ab Zeile {n + 1}):")
+                    weiter += [f"    {a} → {b}" for a, b in zeilen[n:]]
+            hinweise = ["\n".join(kopf)] + (["\n".join(weiter)] if rest else [])
+        if verwaist:
+            zeilen = [f"  {wo}: „{alt}“ → „{neu}“" for wo, alt, neu in verwaist]
+            hinweise.append(
+                f"{len(verwaist)} Verweise nannten ein Objekt, das es nicht mehr gibt - sie heißen jetzt "
+                "„verwaist: …“, damit sie nicht still auf ein anderes Objekt mit dem alten Namen zeigen "
+                "(die Modellprüfung meldet sie weiter):\n" + "\n".join(zeilen[:20])
+                + (f"\n  … und {len(zeilen) - 20} weitere" if len(zeilen) > 20 else ""))
+        for alt, lf_neu, k_neu, ermuedung in doppelt:
+            hinweise.append(
+                f"Lastfall und Kombination „{alt}“ hießen gleich - gerechnet und nachgewiesen wurde dabei "
+                f"die Kombination, sie verdeckte den Lastfall. Der Lastfall heißt jetzt {lf_neu}, die "
+                f"Kombination {k_neu}"
+                + (f"; die Ermüdungslasten {', '.join(ermuedung)} nannten „{alt}“ und zeigen jetzt auf "
+                   f"die Kombination {k_neu} - bitte prüfen, ob der Lastfall gemeint war" if ermuedung
+                   else "") + ".")
+        for o, alt, ek_alt, ek_neu, kk in wie_alternative:
+            was = "Lastfall" if isinstance(o, LoadCase) else "Kombination"
+            hinweise.append(
+                f"{was} „{alt}“ hieß wie die Alternative {kk} der Ergebniskombination „{ek_alt}“ - in "
+                f"den Nachweisen verdrängte die eine die andere, die alte Rechnung war darum "
+                f"unvollständig. Jetzt heißen sie {o.name} und {ek_neu} [{kk}]; bitte neu rechnen.")
+        return hinweise
 
     # Kompatible Ein-Lastfall-API -> aktiver Lastfall
     @property
@@ -9749,8 +10226,21 @@ class Model:
         _melde(fortschritt, 1.0, "gespeichert")
 
     @staticmethod
-    def from_dict(d: dict, fortschritt=None) -> "Model":
+    def from_dict(d: dict, fortschritt=None, umstellen: bool = False) -> "Model":
+        """Ein Modell aus seinem Woerterbuch (to_dict). *umstellen*: die Namen
+        auf LF/LK/EK umstellen (_namen_umstellen) - das tut nur das Oeffnen
+        einer Datei (Model.load, Hochladen im Browser). Pool und Farm (jobs.py),
+        Kopien und Rueckgaengig bauen ohne, damit sie dieselben Namen sehen wie
+        die Sitzung (Nachbesserung L3 von R2-A2, 06.10.2026; bis dahin hing
+        die Umstellung an der Fassung < 9)."""
+        # Die Fassung der Datei: an ihr haengt E6
+        try:
+            fassung = int(d.get("format") or 0)
+        except (TypeError, ValueError):
+            fassung = 0
         m = Model(d.get("name", "Modell"))
+        #: die Fassung der gelesenen Datei - fuer die Umstellung der Namen nach dem Oeffnen (R2-A2)
+        m._dateifassung = fassung
         m.meta.update(d.get("meta", {}))
         _melde(fortschritt, 0.05, "Knoten aufbauen")
         m.nodes = np.asarray(d["nodes"], dtype=float).reshape(-1, 3)
@@ -9909,10 +10399,6 @@ class Model:
             # E6 (01.10.2026): bis Fassung 7 hiess eine leere Zuordnung „alle
             # Lastfaelle“ - so bleiben die Ergebnisse aelterer Dateien gleich,
             # und die Zuordnung steht sichtbar in der Stellung
-            try:
-                fassung = int(d.get("format") or 0)
-            except (TypeError, ValueError):
-                fassung = 0
             if fassung < 8 and m.load_cases:
                 for s in m.stellungen:
                     if not s.faelle:
@@ -9920,6 +10406,11 @@ class Model:
                         m._ladehinweise.append(
                             f"Stellung {s.name}: ohne zugewiesene Lastfälle gespeichert (das hieß bis "
                             f"Fassung 7 „alle“) - jetzt alle {len(s.faelle)} Lastfälle zugewiesen")
+        # R2-A2: Namen LF<Nr>/LK<Nr>/EK<Nr> - nach E6, das die Stellungen mit
+        # den alten Namen fuellt; die Umbenennung nimmt sie dann mit
+        if umstellen:
+            _melde(fortschritt, 0.95, "Namen umstellen (LF, LK, EK)")
+            m._namen_umstellen(fassung)
         # Die aus Objektlasten verteilten Elementlasten stehen absichtlich
         # nicht in der Datei (``LoadCase.to_dict`` schreibt nur ``eigene``),
         # damit sie nach dem Laden nicht doppelt liegen. Erzeugt hat sie bis
@@ -9941,13 +10432,15 @@ class Model:
         return m
 
     @staticmethod
-    def load(path: str, fortschritt=None) -> "Model":
+    def load(path: str, fortschritt=None, umstellen: bool = True) -> "Model":
         """Modell aus einer JSON-Datei lesen; ``fortschritt(anteil, text)``
         optional. Gelesen wird blockweise, damit der Balken auch waehrend der
-        Datei laeuft und nicht erst danach springt."""
+        Datei laeuft und nicht erst danach springt. Das Oeffnen stellt die
+        Namen auf LF/LK/EK um (*umstellen*, Paket R2-A2); ohne Umstellung liest
+        nur das Anhaengen an ein offenes Modell (importers.import_file)."""
         if fortschritt is None:
             with open(path, encoding="utf-8") as f:
-                return Model._geoeffnet(Model.from_dict(json.load(f)))
+                return Model._nach_dem_oeffnen(Model.from_dict(json.load(f)), umstellen)
         groesse = max(1, os.path.getsize(path))
         teile, gelesen = [], 0
         with open(path, "rb") as f:
@@ -9961,8 +10454,26 @@ class Model:
                        f"Datei lesen ({gelesen / 1e6:.0f} von {groesse / 1e6:.0f} MB)")
         _melde(fortschritt, 0.32, "Daten auswerten")
         d = json.loads(b"".join(teile).decode("utf-8"))
-        return Model._geoeffnet(
-            Model.from_dict(d, fortschritt=lambda a, t: _melde(fortschritt, 0.4 + 0.6 * a, t)))
+        return Model._nach_dem_oeffnen(
+            Model.from_dict(d, fortschritt=lambda a, t: _melde(fortschritt, 0.4 + 0.6 * a, t)), umstellen)
+
+    @staticmethod
+    def _nach_dem_oeffnen(m: "Model", umstellen: bool) -> "Model":
+        """Was das Oeffnen einer Datei nach ``from_dict`` tut: erst :meth:`_geoeffnet`, dann -
+        mit *umstellen* - die Namen auf LF/LK/EK (R2-A2, :meth:`_namen_umstellen`). Erst nach
+        :meth:`_geoeffnet`: der Stand mit den alten Namen, den die Umstellung fuer die Kennung
+        der Ergebnisdatei festhaelt (``_dict_vor_umstellung``), ist dann derselbe, gegen den
+        das Lesen ohne Umstellung pruefen wuerde (f_u nach M26 schon nachgezogen)."""
+        m = Model._geoeffnet(m)
+        if umstellen:
+            m.namen_umstellen()
+        return m
+
+    def namen_umstellen(self) -> dict:
+        """Die Namen des geoeffneten Modells auf LF/LK/EK umstellen, nach der Fassung der
+        gelesenen Datei (:meth:`_namen_umstellen`); die Tabelle steht danach in
+        ``_umbenennung`` (None, wenn sich nichts geaendert hat)."""
+        return self._namen_umstellen(int(getattr(self, "_dateifassung", 0) or 0))
 
     @staticmethod
     def _geoeffnet(m: "Model") -> "Model":

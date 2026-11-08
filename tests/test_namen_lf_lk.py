@@ -765,9 +765,12 @@ def test_n8_speichern_laden():
                           for c in mm.combinations.values()])
     check("N8 Speichern und Laden: bezeichnung, nummer und art gleich", felder(m2) == felder(m),
           str(felder(m2)))
-    check("N8 Dateifassung bleibt 8", d.get("format") == 8, str(d.get("format")))
+    # Fassung 9 seit R2-A2 (06.10.2026); A1 liess sie bei 8
+    check("N8 Dateifassung 9 (seit R2-A2)", d.get("format") == 9, str(d.get("format")))
 
-    # Alte Datei ohne die Felder (Fassung 8, 68db45b)
+    # Alte Datei ohne die Felder (Fassung 8, 68db45b). from_dict stellt nie
+    # um (R2-A2, Nachbesserung L3: nur das Oeffnen einer Datei) - sie laedt
+    # wie bisher
     alt_pfad = os.path.join(HIER, "daten", "fachbegriffe_68db45b", "modell.json")
     with open(alt_pfad, encoding="utf-8") as f:
         alt = json.load(f)
@@ -1106,7 +1109,8 @@ def test_g1_ergebnisdatei():
     _rechnen_im_fenster(w, app, stellungen=False)
     w.path = p
     w.save_model()
-    m2 = M.load(p)
+    # die Datei so bauen, wie sie war: ohne die Umstellung beim Oeffnen
+    m2 = M.load(p, umstellen=False)
     m2.kombination_umbenennen("K1", "LK7")
     m2.save(p)
     try:
