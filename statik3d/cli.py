@@ -104,7 +104,7 @@ def main(argv=None) -> int:
     else:
         ap.error("Bitte eine Modelldatei, --import oder --beispiel angeben")
 
-    if a.lastfall and a.lastfall not in m.load_cases:
+    if a.lastfall and a.lastfall != "all" and a.lastfall not in m.load_cases:   # „all“: alle Lastfaelle (24.09.2026)
         # ein alter Name (vor der Umstellung auf LF<Nr>, R2-A2): eindeutig
         # ueber die Bezeichnung, sonst eine Meldung statt eines Tracebacks
         treffer = [n for n, lc in m.load_cases.items()

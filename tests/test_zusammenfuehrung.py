@@ -188,9 +188,10 @@ def test_alte_datei_bitgleich():
     tmp = tempfile.mkdtemp()
     try:
         pb = os.path.join(tmp, "neu.json")
-        Model.load(pa).save(pb)
+        Model.load(pa, umstellen=False).save(pb)   # alte Datei ohne Umstellung der Namen (die prueft test_umstellung_lf_lk)
         with open(pa, "rb") as f1, open(pb, "rb") as f2:
             a, b = f1.read(), f2.read()
+        b = b.replace(b'"format": 9', b'"format": 8')   # seit R2-A2 speichert das Programm Fassung 9
         check("alte Datei: Laden und Speichern bitgleich", a == b, f"{len(a)} / {len(b)} Byte")
         m, _e = _anker(art="Spannstahl")
         mat = next(iter(m.materials.values()))

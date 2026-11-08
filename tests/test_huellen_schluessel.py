@@ -558,7 +558,7 @@ def _pendelmarken_abnehmen(an) -> dict:
     return aus
 
 
-def _alte_namen(m) -> dict:
+def _alte_namen_tab(m) -> dict:
     """Name von heute -> Name vor R2-C1 (06.10.2026) fuer ein eingebautes Beispiel: der Lastfall
     mit seiner Bezeichnung (LF1 behaelt den Namen), die Kombination als GZT<n> (Typ ULS) oder
     GZG<n> - die Nummer ist dieselbe geblieben."""
@@ -598,7 +598,7 @@ def test_r1f_beispiele():
         check(f"R1f {b}: Lastfälle LF<n>, Kombinationen LK<n>",
               all(re.fullmatch(r"LF\d+", n) for n in m.load_cases)
               and all(re.fullmatch(r"LK\d+", n) for n in m.combinations), str(list(m.load_cases)))
-        abdruck = _zurueck(R["analyse"](an), _alte_namen(m))
+        abdruck = _zurueck(R["analyse"](an), _alte_namen_tab(m))
         abdruck["fatigue"] = _ohne_neue_felder(abdruck["fatigue"])
         ist = R["verdichtet"](abdruck)
         anders = [f"{teil}/{k}" for teil in soll[b] if isinstance(soll[b][teil], dict)

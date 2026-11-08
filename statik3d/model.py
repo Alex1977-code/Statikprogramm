@@ -10427,7 +10427,7 @@ class Model:
                             f"Fassung 7 „alle“) - jetzt alle {len(s.faelle)} Lastfälle zugewiesen")
         # R2-A2: Namen LF<Nr>/LK<Nr>/EK<Nr> - nach E6, das die Stellungen mit
         # den alten Namen fuellt; die Umbenennung nimmt sie dann mit
-        if umstellen:
+        if umstellen and fassung < FORMAT_VERSION:
             _melde(fortschritt, 0.95, "Namen umstellen (LF, LK, EK)")
             m._namen_umstellen(fassung)
         # Die aus Objektlasten verteilten Elementlasten stehen absichtlich
@@ -10491,8 +10491,19 @@ class Model:
     def namen_umstellen(self) -> dict:
         """Die Namen des geoeffneten Modells auf LF/LK/EK umstellen, nach der Fassung der
         gelesenen Datei (:meth:`_namen_umstellen`); die Tabelle steht danach in
-        ``_umbenennung`` (None, wenn sich nichts geaendert hat)."""
-        return self._namen_umstellen(int(getattr(self, "_dateifassung", 0) or 0))
+        ``_umbenennung`` (None, wenn sich nichts geaendert hat).
+
+        Nur eine Datei **aelterer Fassung** wird umgestellt (Entscheidung des Anwenders
+        vom 04.10.2026: „alte Modelle und Ergebnisdateien werden beim Oeffnen
+        umgestellt“). Eine Datei der heutigen Fassung behaelt ihre Namen, auch freie
+        (Skript, Pruefung): seit R2-A1 vergibt die Oberflaeche LF<Nr>/LK<Nr>, und wer eine
+        heute gespeicherte Datei oeffnet, findet sie, wie er sie gespeichert hat
+        (08.11.2026; bis dahin galt seit der Nachbesserung L3 vom 06.10.2026 jede
+        Fassung)."""
+        fassung = int(getattr(self, "_dateifassung", 0) or 0)
+        if fassung >= FORMAT_VERSION:
+            return None
+        return self._namen_umstellen(fassung)
 
     @staticmethod
     def _geoeffnet(m: "Model") -> "Model":

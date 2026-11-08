@@ -466,10 +466,14 @@ def test_u2_cbg_und_pruefkoerper():
     eigen = [n for n in m.combinations if n not in erzeugt]
     gehoert = all(gehoert_dem_generator(m.combinations[n]) for n in erzeugt) \
         and not any(gehoert_dem_generator(m.combinations[n]) for n in eigen)
+    alt = {n: m.combinations[n] for n in m.combinations}
     generate_combinations(m)
+    # seit R2-C1 haelt der Generator die Nummer einer Kombination gleichen Inhalts: ersetzt
+    # heisst ein neues Objekt (Fingerabdruck), der Name LK<n> darf bleiben
     check("U2 Datei vor R2-A1 (ohne Fingerabdruck): „auto…“ GZT/GZG bleibt nach der Umstellung erzeugt - "
           "der Generator ersetzt genau sie, die von Hand bleiben",
-          gehoert and not any(n in m.combinations for n in erzeugt) and all(n in m.combinations for n in eigen),
+          gehoert and not any(m.combinations.get(n) is alt[n] for n in erzeugt)
+          and all(m.combinations.get(n) is alt[n] for n in eigen),
           f"erzeugt {erzeugt[:3]}…, von Hand {eigen}")
 
 
@@ -958,16 +962,16 @@ def test_u6_rechenarbeiter():
     m = build_example("hall")
     d = m.to_dict()
     m2 = Model.from_dict(d)
-    check("U6 to_dict schreibt Fassung 9, from_dict stellt nichts um (hall mit S, W_links, GZT1 …)",
+    check("U6 to_dict schreibt Fassung 9, from_dict stellt nichts um (hall seit R2-C1 mit LF1…LF5, LK1…LK72)",
           d.get("format") == 9 and getattr(m2, "_umbenennung", None) is None and not m2._ladehinweise
           and list(m2.load_cases) == list(m.load_cases) and list(m2.combinations) == list(m.combinations),
           f"Fassung {d.get('format')}, {list(m2.load_cases)}")
-    r_lf = jobs._job_solve_case(d, "W_links")
-    r_k = jobs._job_solve_combination(d, "GZT3")
+    r_lf = jobs._job_solve_case(d, "LF3")
+    r_k = jobs._job_solve_combination(d, "LK3")
     zusammen = jobs._job_solve_all(d)
     check("U6 Arbeiter (solve_case, solve_combination, solve_all) rechnen unter den Namen der Hauptsitzung, "
           "ohne Umstellung und ohne Hinweis",
-          r_lf.name == "W_links" and r_k.name == "GZT3" and "Namen umgestellt" not in zusammen
+          r_lf.name == "LF3" and r_k.name == "LK3" and "Namen umgestellt" not in zusammen
           and "umgestellten Namen" not in zusammen, f"{r_lf.name} {r_k.name}")
     # Arbeiter mit einem Modell aus einer alten Datei: die Hauptsitzung hat
     # umgestellt, der Arbeiter bekommt Fassung 9 und rechnet unter LF/LK
@@ -1083,6 +1087,13 @@ def _verwaist_dict() -> dict:
     from statik3d.wind import Wind
     from statik3d.bridges.positions import Stellung
     m = build_example("hall")
+    # eine alte Datei traegt die Namen von vor R2-C1: Lastfaelle mit ihrer Bezeichnung
+    # (LF1 bleibt), Kombinationen GZT<n>/GZG<n> mit derselben Nummer
+    for n, lc_ in list(m.load_cases.items()):
+        if n != "LF1" and lc_.bezeichnung:
+            m.lastfall_umbenennen(n, lc_.bezeichnung)
+    for n, c_ in list(m.combinations.items()):
+        m.kombination_umbenennen(n, ("GZT" if c_.typ == "ULS" else "GZG") + n[2:])
     m.combinations = {n: c for n, c in m.combinations.items() if n in ("GZT1", "GZT2")}
     m.add_load_case("LF2", "Q", "Probe", activate=False)
     m.load_node(0, Fz=-1.0, case="LF2")
@@ -1197,9 +1208,9 @@ def test_v2_anhaengen():
 
 
 def test_v3_ausloeser():
-    """L3: umgestellt wird beim Oeffnen einer Datei, gleich welcher Fassung -
-    auch Fassung 9 mit freien Namen; from_dict ohne Wunsch, Rechenarbeiter
-    und Kopien nie."""
+    """Umgestellt wird beim Oeffnen einer Datei aelterer Fassung (Anwender 04.10.2026:
+    „alte Modelle“); eine Datei der Fassung 9 behaelt ihre Namen, auch freie (08.11.2026,
+    bis dahin L3: jede Fassung). from_dict ohne Wunsch, Rechenarbeiter und Kopien nie."""
     from statik3d.model import Model, Combination
     from statik3d.examples_lib import build_example
     from statik3d import jobs
@@ -1211,16 +1222,26 @@ def test_v3_ausloeser():
     pfad = os.path.join(tempfile.mkdtemp(prefix="statik3d_umstellung_f9_"), "hand.json")
     m.save(pfad)
     m9 = Model.load(pfad)
-    check("V3 Fassung 9 mit freien Namen wird beim Öffnen umgestellt (W mit Nr. 5 → LF5, K1 → LK1, Bem → EK1)",
-          _roh(pfad)["format"] == 9 and list(m9.load_cases) == ["LF1", "LF5"]
-          and list(m9.combinations) == ["LK1", "EK1"] and m9._umbenennung["geaendert"]
-          and any("Namen umgestellt" in z for z in m9._ladehinweise),
+    check("V3 Fassung 9 mit freien Namen behält beim Öffnen ihre Namen",
+          _roh(pfad)["format"] == 9 and list(m9.load_cases) == ["LF1", "W"]
+          and list(m9.combinations) == ["K1", "Bem"] and m9._umbenennung is None
+          and not any("Namen umgestellt" in z for z in m9._ladehinweise),
           f"{list(m9.load_cases)} {list(m9.combinations)}")
+    d8 = _roh(pfad)
+    d8["format"] = 8
+    p8 = os.path.join(os.path.dirname(pfad), "hand_f8.json")
+    with open(p8, "w", encoding="utf-8") as f:
+        json.dump(d8, f)
+    m8 = Model.load(p8)
+    check("V3 dieselbe Datei als Fassung 8 wird umgestellt (W → LF2, die gespeicherte Nr. 5 zählt erst ab Fassung 9; K1 → LK1, Bem → EK1)",
+          list(m8.load_cases) == ["LF1", "LF2"] and list(m8.combinations) == ["LK1", "EK1"]
+          and m8._umbenennung["geaendert"] and any("Namen umgestellt" in z for z in m8._ladehinweise),
+          f"{list(m8.load_cases)} {list(m8.combinations)}")
     roh = Model.from_dict(_roh(pfad))
-    kopie = m9.copy()
+    kopie = m8.copy()
     check("V3 from_dict ohne Wunsch und eine Kopie stellen nichts um",
           list(roh.load_cases) == ["LF1", "W"] and roh._umbenennung is None and not roh._ladehinweise
-          and list(kopie.load_cases) == list(m9.load_cases), f"{list(roh.load_cases)}")
+          and list(kopie.load_cases) == list(m8.load_cases), f"{list(roh.load_cases)}")
     r = jobs._job_solve_combination(m.to_dict(), "K1")
     check("V3 Rechenarbeiter mit freien Namen im Speicher stellt nicht um", r.name == "K1", r.name)
     d = m.to_dict()
