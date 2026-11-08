@@ -10045,7 +10045,11 @@ class Model:
             msgs.append("FEHLER: keine Knoten definiert")
         if not self.elements:
             msgs.append("FEHLER: keine Elemente definiert")
-        if not self.supports and not self.contact_supports:
+        # Linien- und Flaechenlager zaehlen mit (Befund des Anwenders 08.11.2026:
+        # „linienlager und flächenlager rechnen nicht … nicht gelagert“). Bis
+        # dahin wies diese Pruefung jedes Modell ab, das nur auf ihnen stand -
+        # seit den Lagermasken vom 08.11.2026 (Paket A) legt man solche an.
+        if not (self.supports or self.contact_supports or self.line_supports or self.surface_supports):
             msgs.append("FEHLER: keine Lagerung definiert (System kinematisch)")
         used = np.zeros(self.nn, dtype=bool)
         for i, e in enumerate(self.elements):

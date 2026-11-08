@@ -476,8 +476,17 @@ Die Arbeitsfläche in drei Spalten:
   Reihenfolge) und die Flächen eines Flächenlagers (ohne Flächen: Element-
   nummern). Bis dahin zeigten die Lagermasken ihren Ort nur an, und Linien
   bzw. Flächen eines Lagers standen gar nicht darin. Ein Lager auf Linien
-  oder Flächen folgt dem Netz wie ein importiertes. Ein Klick in ein anderes
-  Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
+  oder Flächen folgt dem Netz wie ein importiertes; am schon vernetzten Modell
+  bekommt es mit OK gleich alle Netzknoten (seit 09.11.2026, vorher erst beim
+  nächsten Vernetzen). Eine **neue** Maske (Neu: Linie, Linienlager,
+  Flächenlager, Lager setzen …) beginnt seit dem 09.11.2026 gleich mit der
+  Auswahl per Maus für ihr erstes Knoten-, Linien- oder Flächenfeld – man
+  klickt die Objekte sofort an, ohne vorher ins Feld zu klicken; tippen geht
+  ebenso. Die Maske eines bestehenden Eintrags beginnt ohne, dort wählt ein
+  Klick in der Ansicht weiter das nächste Objekt. Ein Modell, das nur auf
+  Linien- oder Flächenlagern steht, gilt als gelagert (bis zum 08.11.2026
+  wies die Modellprüfung es mit „keine Lagerung definiert“ ab). Ein Klick in
+  ein anderes Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
   hat außerdem den Knopf **„Neu: <Art> …“** (etwa „Neu: Linie …“), der wie
   Rechtsklick → *Neu* im Modellbaum die Anlegemaske öffnet; angelegt wird erst
   mit OK; im Modellbaum tut dasselbe die Zeile „+ … anlegen“ jedes Zweigs.
@@ -13156,7 +13165,9 @@ jedes Bauteil, das sich bewegen kann:
   0.00)“, bei einer Schraubbewegung beides;
 * **warum** - „Die Fugen *Achse* übertragen nur Druck senkrecht zur Fläche;
   in der Fugenebene ist nichts gehalten (keine Reibung, keine Federn)“ oder
-  „Das Bauteil hat weder Lager noch eine Kopplung an ein gelagertes Teil“;
+  „Kein Lager und keine Kopplung an ein gelagertes Teil hält diese Bewegung:
+  das Bauteil ist nicht gelagert, oder seine Lager lassen sie zu (etwa ein
+  Linienlager ohne Verdrehung – ein Gelenk um die Linie)“;
 * **was es kostet** - die Last, die in dieser Bewegung ins Nichts geht.
 
 Der letzte Punkt ist der, auf den es ankommt. Unterschieden wird:
