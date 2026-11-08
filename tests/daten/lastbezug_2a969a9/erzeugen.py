@@ -1,6 +1,8 @@
 """Eine Modelldatei vom Stand **vor** dem Lastbezug (Oberflaechenpaket B, 08.11.2026).
 
-Erzeugt wurde ``alt.json`` und ``lastvektor.json`` auf dem Stand 2a969a9
+Erzeugt wurde ``alt.modell`` (eine Modelldatei im JSON-Format; die Endung
+ist nicht .json, damit tests/test_umstellung_lf_lk sie nicht unter den
+Dateien der Fassung 7 und 8 sucht) und ``lastvektor.json`` auf dem Stand 2a969a9
 (Integrationsstand 08.11.2026, vor ui/paket-b), im Wurzelverzeichnis eines
 Arbeitsbaums auf diesem Commit:
 
@@ -95,7 +97,7 @@ def lastvektor(m) -> list:
 
 if __name__ == "__main__":
     m = modell()
-    m.save(os.path.join(HIER, "alt.json"))
+    m.save(os.path.join(HIER, "alt.modell"))
     with open(os.path.join(HIER, "lastvektor.json"), "w", encoding="utf-8") as f:
         json.dump(lastvektor(m), f)
     print("geschrieben:", len(m.nodes), "Knoten,", len(m.elements), "Elemente")

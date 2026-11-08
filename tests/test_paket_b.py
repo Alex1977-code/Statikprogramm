@@ -198,10 +198,10 @@ def test_alte_datei():
     Zeichen fuer Zeichen gleich, und ihr Lastvektor ist derselbe."""
     from statik3d.model import Model
     from statik3d import solver
-    m = Model.load(os.path.join(ALT, "alt.json"))
+    m = Model.load(os.path.join(ALT, "alt.modell"))
     t = os.path.join(tempfile.mkdtemp(prefix="paket_b_"), "neu.json")
     m.save(t)
-    with open(os.path.join(ALT, "alt.json"), "rb") as f:
+    with open(os.path.join(ALT, "alt.modell"), "rb") as f:
         a = f.read()
     with open(t, "rb") as f:
         b = f.read()
