@@ -633,9 +633,15 @@ def _griffe_ziehen(w, app):
     finally:
         w.redraw = alt
     b1 = list(w.schnittbox_grenzen())
+    # Die Maus steht auf ganzen Bildpunkten: genauer als ein Bildpunkt (in Metern
+    # entlang der Achse) kann die Seite nicht folgen. Im kleinen offscreen-Fenster
+    # sind 0,2 m rund 45 Bildpunkte, ein Bildpunkt also rund 4,4 mm (08.11.2026:
+    # mit der Lastdarstellung aus Paket B steht die Kamera etwas weiter weg)
+    px = float(np.hypot(ziel.x() - start.x(), ziel.y() - start.y()))
+    grenze = max(2e-3, 0.2 / max(px, 1e-9))
     check("Griff „x+“ gezogen: nur diese Seite folgt der Maus (um 0,2 m nach innen)",
-          druck_zug and abs(b1[1] - (b0[1] - 0.2)) < 2e-3 and b1[0] == b0[0] and b1[2:] == b0[2:],
-          f"{np.round(b0, 4).tolist()} -> {np.round(b1, 4).tolist()}")
+          druck_zug and abs(b1[1] - (b0[1] - 0.2)) < grenze and b1[0] == b0[0] and b1[2:] == b0[2:],
+          f"{np.round(b0, 4).tolist()} -> {np.round(b1, 4).tolist()}, Grenze {grenze * 1e3:.1f} mm ({px:.0f} Bildpunkte)")
     check("… beim Ziehen nur Rahmen und Griffe nachgezogen, geschnitten beim Loslassen (einmal)",
           n_zeichnen == 0 and len(zeichnen) == 1 and waehrend[1] < b0[1], f"{n_zeichnen} / {len(zeichnen)}")
     check("… das Ziehen am Griff dreht die Ansicht nicht", _gleiche_kamera(_kamera(w), kam0))
