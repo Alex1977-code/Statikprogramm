@@ -5179,6 +5179,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
         # im Register Ergebnisse, damit beide immer gleich stehen
         leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse", weicht=1)
+        # Zurueck auf die Grundstellung, wenn eine Stellung im Bild steht
+        # (08.11.2026, Paket A Punkt 8). Der Knopf steht nur dann da: die Leiste
+        # bleibt sonst bei ihren zwoelf Knoepfen (tests.test_glasleiste_ribbon)
+        self.act_grundstellung = QtGui.QAction("Grundstellung zeigen", self)
+        self.act_grundstellung.setToolTip("Grundstellung zeigen - keine Stellung ist im Bild "
+                                          "(eine Stellung im Modellbaum anklicken)")
+        self.act_grundstellung.setEnabled(False)
+        self.act_grundstellung.triggered.connect(lambda _c=False: self.stellung_zeigen(None))
+        leiste.knopf(self.act_grundstellung, "stellungen", "grundstellung").setVisible(False)
         leiste.trenner()
         # Seit 25.09.2026 (Paket 7) je Schar ein Menueknopf statt 20 Einzel-
         # knoepfen: die Leiste war 1133 px breit bei 1002 px Ansicht. Dieselben
@@ -7879,6 +7888,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if tab:
                 self.tabelle_zeigen(tab)
             self._objektmaske(art, name)
+            if art == "stellung":
+                # das Modell in dieser Stellung zeigen (08.11.2026, Paket A Punkt 8)
+                self.stellung_zeigen(name)
             return
         if art == "stellung_neu":
             return self.neue_stellung()
@@ -14678,6 +14690,12 @@ class MainWindow(QtWidgets.QMainWindow):
         Aktualisieren behalten sie."""
         if hasattr(self, "baum"):
             self.baum.zustand_vergessen()
+        # eine Stellung des vorigen Modells steht nicht mehr im Bild (08.11.2026)
+        self._stellung_im_bild = ""
+        self._stellung_bild = None
+        if getattr(self, "act_grundstellung", None) is not None:
+            self.act_grundstellung.setEnabled(False)
+            self._grundstellung_knopf(False)
 
     def _refresh_baum(self):
         self._werteskala_anzeigen()
@@ -28109,6 +28127,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Situation mit Stellung die gedrehte Kopie, mit der gerechnet wurde -
         sonst das Modell selbst. Knoten und Elemente sind dieselben, nur die
         Lage der bewegten Teile ist eine andere."""
+        sm = self._stellungsmodell()
+        if sm is not None:
+            return sm                       # eine Stellung im Bild (stellung_zeigen)
         r = self.current_result()
         rm = getattr(r, "model", None) if r is not None else None
         info = getattr(r, "info", None) or {}
@@ -28116,6 +28137,99 @@ class MainWindow(QtWidgets.QMainWindow):
                 and rm.nn == self.model.nn and len(rm.elements) == len(self.model.elements)):
             return rm
         return self.model
+
+    def stellung_zeigen(self, name) -> None:
+        """Das Modell in einer Stellung zeigen (08.11.2026, Paket A Punkt 8):
+        die bewegten Teile verschoben und gedreht wie in der Rechnung
+        (Stellung.anwenden, nur die Lage), die Grundstellung blass dahinter.
+        ``None`` zeigt wieder die Grundstellung - ebenso der Knopf „Grundstellung
+        zeigen“ in der Glasleiste. Das Modell selbst bleibt unberuehrt."""
+        if name and self.model.stellung(name) is None:
+            name = None
+        alt = getattr(self, "_stellung_im_bild", "") or ""
+        self._stellung_im_bild = name or ""
+        self._stellung_bild = None
+        a = getattr(self, "act_grundstellung", None)
+        if a is not None:
+            a.setEnabled(bool(name))
+            a.setToolTip(f"Grundstellung zeigen - im Bild steht die Stellung „{name}“" if name else
+                         "Grundstellung zeigen - keine Stellung ist im Bild (eine Stellung im "
+                         "Modellbaum anklicken)")
+        self._grundstellung_knopf(bool(name))
+        if (name or "") != alt:
+            self.redraw()
+        if name:
+            self.info(f"Stellung „{name}“ im Bild, die Grundstellung blass dahinter - zurück mit "
+                      "„Grundstellung zeigen“ in der Glasleiste")
+        elif alt:
+            self.info("Grundstellung im Bild")
+
+    def _grundstellung_knopf(self, an: bool) -> None:
+        """Den Knopf „Grundstellung zeigen“ der Glasleiste zeigen oder wegnehmen."""
+        gl = getattr(self, "glasleiste", None)
+        b = (getattr(gl, "knoepfe", None) or {}).get("grundstellung")
+        if b is None or b.isVisibleTo(gl) == bool(an):
+            return
+        b.setVisible(bool(an))
+        try:
+            gl._stand = None                # die Leiste neu einpassen
+            gl.nachziehen()
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def _stellungsmodell(self):
+        """Das Modell der Stellung im Bild oder None: eine flache Kopie mit
+        eigenen Knotenkoordinaten - Elemente, Linien und Flaechen sind dieselben
+        Objekte, nur die Lage der bewegten Knoten ist eine andere. Je Stand des
+        Modells und der Stellung einmal gebildet."""
+        name = getattr(self, "_stellung_im_bild", "") or ""
+        if not name:
+            return None
+        m = self.model
+        st = m.stellung(name)
+        if st is None:
+            self._stellung_im_bild = ""
+            a = getattr(self, "act_grundstellung", None)
+            if a is not None:
+                a.setEnabled(False)
+                self._grundstellung_knopf(False)
+            return None
+        schluessel = (name, id(m), getattr(self, "_stand", None), m.nn, len(m.elements),
+                      repr(sorted(vars(st).items(), key=lambda kv: kv[0])))
+        zwischen = getattr(self, "_stellung_bild", None)
+        if zwischen is not None and zwischen[0] == schluessel:
+            return zwischen[1]
+        import copy
+        import types
+        sm = copy.copy(m)
+        sm.nodes = np.array(m.nodes, dtype=float, copy=True)
+        try:
+            st.anwenden(types.SimpleNamespace(nodes=sm.nodes), m, nur_lage=True)
+        except Exception as ex:             # noqa: BLE001 - die Ansicht bleibt bedienbar
+            self.log.appendPlainText(f"Stellung {name} nicht darstellbar: {ex}")
+            return None
+        self._stellung_bild = (schluessel, sm)
+        return sm
+
+    def _grundstellung_zeichnen(self, m) -> None:
+        """Steht eine Stellung im Bild, die Grundstellung blass dahinter: das Netz
+        und die Linien an ihren unbewegten Orten, nicht anklickbar."""
+        if m is self.model or not getattr(self, "_stellung_im_bild", ""):
+            return
+        basis = self.model
+        blass = dict(color=self.GEIST_FARBE, opacity=0.25, show_edges=False, lighting=False, pickable=False)
+        try:
+            if len(basis.elements):
+                grid = vp.teilnetz(basis, range(len(basis.elements)))
+                if grid.n_cells:
+                    self.plotter.add_mesh(grid, name="stellung_grund", **blass)
+            if basis.lines:
+                netz = vp.linien_netz(basis, [])
+                if netz is not None:
+                    self.plotter.add_mesh(netz, name="stellung_grund_linien", color=self.GEIST_KANTE,
+                                          line_width=1, opacity=0.5, pickable=False)
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Grundstellung nicht gezeichnet: {ex}")
 
     def _netze_bauen(self, m, r, modus: str):
         """Die Netze der Ansicht: [(Netz, Knoten je Punkt, Name)] und die
@@ -28155,6 +28269,20 @@ class MainWindow(QtWidgets.QMainWindow):
                     netze.append((pd, np.asarray(pd.point_data["knoten"], int), "stabkoerper"))
             except Exception as ex:         # noqa: BLE001
                 self.log.appendPlainText(f"Stabkörper: {ex}")
+        if m is not self.model and getattr(self, "_stellung_im_bild", "") and m.nn == self.model.nn:
+            # Eine Stellung im Bild (08.11.2026): das Gitter entsteht aus dem
+            # Modell (einmal je Netzstand) - seine Punkte an die Lage der Stellung
+            # setzen. Punkte eines Schnitts (Nummer >= nn) haben keinen Knoten;
+            # dann bleibt das Netz, wie es ist.
+            lage = np.asarray(m.nodes, float)
+            verlegt = []
+            for netz, kn, nm in netze:
+                kn = np.asarray(kn, int)
+                if nm != "stabkoerper" and len(kn) == netz.n_points and (not len(kn) or kn.max() < m.nn):
+                    netz = netz.copy()
+                    netz.points = lage[kn]
+                verlegt.append((netz, kn, nm))
+            netze = verlegt
         return netze, ausser
 
     def _modellfarben(self, m, u) -> dict:
@@ -28652,6 +28780,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Werte im Bild: nur die {vp.WERTE_MAX} betragsgrößten Werte beschriftet - "
                     "Filter oder Schwelle in der Maske Ergebnisse", 8000)
         self._bewegung_zeichnen(m)
+        # Eine Stellung im Bild: die Grundstellung blass dahinter, und Klicks
+        # treffen die Knoten dort, wo sie gezeichnet sind (08.11.2026)
+        if m is not self.model and getattr(self, "_stellung_im_bild", ""):
+            self._grundstellung_zeichnen(m)
+            if self._bildlage is None:
+                self._bildlage = np.asarray(m.nodes, float)
         # Rahmen und Griffe der Schnittbox (Ansichtspaket C, 14.10.2026)
         self.schnittbox.zeichnen()
         # Das Achsenkreuz unten rechts (add_axes) entfiel am 14.10.2026: das

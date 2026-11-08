@@ -424,6 +424,59 @@ def test_lagermomente():
     check("… und die hat die Spalten Mx, My, Mz", {"Mx", "My", "Mz"} <= set(kopf), str(kopf))
 
 
+# ---------------------------------------------------------------------------
+# Punkt 8: Stellungen anzeigen
+# ---------------------------------------------------------------------------
+def test_stellung_anzeigen():
+    """Klick auf eine Stellung im Baum: das Bild zeigt die bewegten Teile in
+    ihrer Lage, die Grundstellung blass dahinter; „Grundstellung zeigen“ in der
+    Glasleiste schaltet zurueck. Das Modell bleibt unberuehrt."""
+    import numpy as np
+    from statik3d.bridges.positions import Stellung
+    w, app = _fenster()
+    m = _modell(w, app)
+    m.support(0, [0, 1, 2])
+    m.stellungen.append(Stellung("St1", verschiebung=(0.0, 0.0, 1.0)))
+    w.refresh_all()
+    _ruhe(app)
+    vorher = np.array(m.nodes, float)
+    a = getattr(w, "act_grundstellung", None)
+    knopf = w.glasleiste.knoepfe.get("grundstellung")
+    check("Glasleiste: Knopf „Grundstellung zeigen“ - ohne Stellung im Bild weg und gesperrt",
+          a is not None and knopf is not None and not a.isEnabled() and not knopf.isVisibleTo(w.glasleiste),
+          str(getattr(a, "isEnabled", lambda: None)()))
+    w._baum_geklickt("stellung", "St1")
+    _ruhe(app)
+    am = w._anzeigemodell()
+    dz = np.asarray(am.nodes, float)[:, 2] - vorher[:, 2]
+    check("Klick auf „St1“: das Bild zeigt K1 bis K3 um 1 m gehoben, K0 (Knotenlager) bleibt",
+          am is not w.model and np.allclose(dz, [0.0, 1.0, 1.0, 1.0]), str(dz.tolist()))
+    check("… das Modell selbst bleibt, wie es war", np.array_equal(np.asarray(w.model.nodes, float), vorher))
+    namen = set(w.plotter.actors) if hasattr(w.plotter, "actors") else set()
+    check("… die Grundstellung steht blass dahinter", "stellung_grund" in namen
+          or "stellung_grund_linien" in namen, str(sorted(n for n in namen if "stellung" in n)))
+    check("… und der Knopf „Grundstellung zeigen“ steht in der Glasleiste und ist frei",
+          a is not None and a.isEnabled() and knopf.isVisibleTo(w.glasleiste))
+    netze, _aus = w._netze_bauen(am, None, w.darstellung)
+    pz = [float(np.max(n.points[:, 2])) for n, _kn, _nm in netze if n.n_points]
+    # Stab E0 von K0 (bleibt) nach K2 (+1 m), als Profilkoerper HEB 300 (halbe Hoehe 0,15 m)
+    check("… das gezeichnete Netz liegt in der Stellung: der Stab reicht bis über z = 1 m",
+          pz and 1.0 < max(pz) < 1.2, str(pz))
+    if a is not None:
+        a.trigger()
+        _ruhe(app)
+    namen = set(w.plotter.actors) if hasattr(w.plotter, "actors") else set()
+    netze, _aus = w._netze_bauen(w._anzeigemodell(), None, w.darstellung)
+    pz = [float(np.max(n.points[:, 2])) for n, _kn, _nm in netze if n.n_points]
+    check("… und das Netz wieder in der Grundstellung (oberster Punkt die Profiloberkante 0,15 m)",
+          pz and max(pz) < 0.2, str(pz))
+    check("„Grundstellung zeigen“: wieder das Modell im Bild, ohne blasse Grundstellung, Knopf gesperrt",
+          w._anzeigemodell() is w.model and "stellung_grund" not in namen
+          and "stellung_grund_linien" not in namen and a is not None and not a.isEnabled()
+          and not knopf.isVisibleTo(w.glasleiste))
+    w.maskenrand.schliessen()
+
+
 def test_handbuch():
     from tests.handbuch import absatz
     a = absatz("**Klicken statt Abtippen")
@@ -433,7 +486,7 @@ def test_handbuch():
 
 def main():
     for t in (test_klicken_statt_abtippen, test_neu_in_der_maske, test_baum_lager_und_anlegen,
-              test_flaechenlager_anlegen, test_lagermomente, test_handbuch):
+              test_flaechenlager_anlegen, test_lagermomente, test_stellung_anzeigen, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

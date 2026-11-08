@@ -3130,7 +3130,7 @@ erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
+| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) und, nur solange eine Stellung im Bild steht (nach dem Klick auf sie im Modellbaum), **Grundstellung zeigen** (seit 08.11.2026): zurück auf die Grundstellung |
 | Darstellung ▾ | Menü: Voll, Transparent, Hidden-Line, Drahtmodell (Strg+1 … 4); das Symbol zeigt die gewählte Art |
 | Zeigen ▾ | Menü: Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz (F9), Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter) |
@@ -5724,6 +5724,18 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten, außer eine Kopplung hängt sie an einen wirksamen Knoten |
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
 | Deaktivierte Knoten-, Linien-, Flächenlager | drei Listen zum Anhaken, je Lagerart eine; die Lager heißen darin wie im Modellbaum (ihr Name, sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“): sie greifen in dieser Stellung nicht |
+
+**Stellung im Bild** (seit 08.11.2026). Der Klick auf eine Stellung im
+Modellbaum zeigt das Modell zugleich **in dieser Stellung**: die bewegten
+Knoten verschoben und gedreht, wie die Rechnung sie legt (mit der Kette der
+Ausgangsstellungen), die Grundstellung blass dahinter. Das Modell selbst
+bleibt, wie es ist; Klicks in der Ansicht treffen die Knoten dort, wo sie
+gezeichnet sind. Der Knopf **„Grundstellung zeigen“** in der Glasleiste über
+der Ansicht schaltet zurück; er steht nur da, solange eine Stellung im Bild ist. Gezeigt
+wird nur die Lage. Welche Teile in der Stellung abgeschaltet sind, zeigt wie
+bisher die offene Maske. Kreise und Bögen, deren Mittelpunkt als Zahl in der
+Linie steht, folgen der Bewegung nicht; sie stehen an ihrem Ort in der
+Grundstellung.
 
 **Per Maus statt Tippen.** Solange der Haken *Klick in der Ansicht schaltet
 Stab, Fläche oder Volumen aus / ein* oben in der Maske steht, gehen Klicks in
