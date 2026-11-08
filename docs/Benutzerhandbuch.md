@@ -450,7 +450,7 @@ Die Arbeitsfläche in drei Spalten:
   | Geometrie → Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
   | Geometrie → Stäbe | die **Stäbe im Sinn von RFEM**, also die Stäbe mit Nachweis; jeder ist eine Kette von Stabelementen |
   | Geometrie → Flächen, Volumen | die Flächenobjekte und die Volumenkörper |
-  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
+  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung; seit dem 08.11.2026 stehen *Linienlager* und *Flächenlager* immer da, auch leer, mit Rechtsklick *Neu* und Doppelklick-Anlegen wie die Knotenlager |
   | Lager und Verbindungen → Verbindungen | Punktmassen, Dämpfer, Federn, starre Körper und Grenzschichten, sobald es welche gibt |
   | Lager und Verbindungen → Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
   | Lager und Verbindungen → Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
@@ -463,6 +463,30 @@ Die Arbeitsfläche in drei Spalten:
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
   | **Hilfsobjekte** → Bemaßungen, Layer, Ansichten | Maße, benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) und gespeicherte Ansichten (seit 14.10.2026) |
+
+  **Klicken statt Abtippen und „Neu“ in der Maske (seit 08.11.2026).** In
+  den Masken rechts lassen sich die Bezugsobjekte in der Ansicht anklicken,
+  statt ihre Nummern abzutippen: Ein Klick ins Feld schaltet die Auswahl per
+  Maus auf dieses Feld (orange eingerahmt), und jeder Klick in der Ansicht
+  nimmt das Objekt dazu oder wieder heraus. Das gilt für die Knoten einer
+  Linie (Feld „Knoten“) und eines Stabelements, die Stabelemente eines Stabs
+  (Feld „Elemente“), den Knoten eines Knotenlagers (der Klick ersetzt ihn, ein
+  Knotenlager sitzt an genau einem Knoten), die Knoten in der Maske „Lager
+  setzen“, die Linien eines Linienlagers (ohne Linien: seine Knoten in
+  Reihenfolge) und die Flächen eines Flächenlagers (ohne Flächen: Element-
+  nummern). Bis dahin zeigten die Lagermasken ihren Ort nur an, und Linien
+  bzw. Flächen eines Lagers standen gar nicht darin. Ein Lager auf Linien
+  oder Flächen folgt dem Netz wie ein importiertes. Ein Klick in ein anderes
+  Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
+  hat außerdem den Knopf **„Neu: <Art> …“** (etwa „Neu: Linie …“), der wie
+  Rechtsklick → *Neu* im Modellbaum die Anlegemaske öffnet; angelegt wird erst
+  mit OK; im Modellbaum tut dasselbe die Zeile „+ … anlegen“ jedes Zweigs.
+  *Neues Linienlager* und *Neues Flächenlager* öffnen seit demselben
+  Tag diese Maske statt eines eigenen Fensters; gewählte Linien bzw. Flächen
+  stehen schon darin. *Neues Flächenlager* las bis dahin die Elemente aus
+  einem Feld, das es im Register nicht mehr zu sehen gab, und meldete darum
+  praktisch immer „Keine Elemente angegeben“. Jede Änderung nimmt **Strg+Z**
+  zurück.
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -726,7 +750,7 @@ Die Arbeitsfläche in drei Spalten:
   wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
   *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
   Linien, Stabelemente (bis zum 03.10.2026 „Stäbe“), Flächen, Volumen,
-  Gelenke, Knotenlager,
+  Gelenke, Knotenlager, seit dem 08.11.2026 Linien- und Flächenlager,
   Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
   Situationen, Subsysteme, Schweißnähte, Bemaßungen, den Wasserdruck und seit
   dem 03.10.2026 den Bericht: „Neu: Berichtsbild“ fragt Name,
@@ -742,15 +766,22 @@ Die Arbeitsfläche in drei Spalten:
   alle Objekte der Art aus. Ausgenommen sind Zweige, deren *Neu* keine
   Anlegemaske ist: Knoten (dort legt *Neu* sofort einen Knoten an), Layer
   (*Neu* fragt in einem eigenen Fenster nach dem Namen und legt den Layer aus
-  der Auswahl an), Unterlagen (*Neu* öffnet das Zeichenfenster einer Skizze)
-  sowie Linien- und Flächenlager (brauchen erst eine Auswahl und fragen in
-  einem eigenen Fenster). Sie, die Zweige ohne *Neu* (Anschlüsse,
+  der Auswahl an) und Unterlagen (*Neu* öffnet das Zeichenfenster einer
+  Skizze); bis zum 08.11.2026 gehörten Linien- und Flächenlager dazu (sie
+  brauchten erst eine Auswahl und fragten in einem eigenen Fenster). Sie, die
+  Zweige ohne *Neu* (Anschlüsse,
   Nachweisobjekte) und alle Gruppen klappen beim Doppelklick nur auf und zu,
   die Übersicht bleibt stehen. Das gilt auch für die Gruppe „Lager“: bis zum
   03.10.2026 öffnete ihr Doppelklick die Anlegemaske des Knotenlagers, weil
   sie die Art mit „Knotenlager“ teilt. Die Zeilen „+ … anlegen“ sind Befehle und tun beim
   einfachen Klick, was sie sagen; „+ Ansicht übernehmen“ nimmt die Ansicht
-  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
+  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Seit dem
+  08.11.2026 hat jeder Zweig mit *Neu* eine solche Zeile, nicht nur die
+  Gelenke: Knoten, Linien, Stäbe, Flächen, Volumen, Stabelemente, Werkstoffe,
+  Querschnitte, Dicken, Lastfälle, Kombinationen und die drei Lagerarten. Der
+  Klick darauf wirkt wie Rechtsklick → *Neu* am Zweig. Unter den Lagern heißt
+  die Zeile kurz „+ Lager anlegen“, weil der volle Text eine Ebene tiefer bei
+  1366 × 768 abgeschnitten würde; welches Lager, sagt der Zweig darüber. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
   Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
   Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
   einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein
@@ -2152,7 +2183,7 @@ Verfeinerungsdurchgang, Splitter glätten, Randtreue).
 
 Die **Volumen laufen parallel**: alle Kerne bis auf einen rechnen in
 Arbeitsprozessen (der letzte bleibt der Oberfläche, die dabei bedienbar
-bleibt), gedeckelt durch *Berechnung → Einstellungen → Experten → Prozesse*. Die großen
+bleibt), gedeckelt durch *Berechnung → Einstellungen → Gleichungslöser (Experte) → Prozesse*. Die großen
 Körper starten zuerst, damit am Ende nicht ein Prozess allein auf den
 Lagerbock wartet; der Einbau ins Modell geschieht in der Reihenfolge des
 Fertigwerdens, das Netz ist dasselbe wie nacheinander. **Abbrechen** (Knopf
@@ -2420,13 +2451,12 @@ die DLLs kommen erst beim ersten Kontext; ein bloßer Import sagt nichts.
 Ist das Kästchen **MUMPS beim Programmstart nachladen, wenn es fehlt** an
 (Vorgabe), holt das Programm MUMPS einige Sekunden nach dem Start ohne
 Rückfrage: Balken in der Statuszeile, danach eine Protokollzeile („MUMPS
-5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Experten →
-Gleichungslöser“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
+5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Gleichungslöser (Experte)“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
 eine Zeile im Protokoll, und der nächste Start versucht es erneut; im Dialog
 bleibt **Installieren**. Ein neuer Bau (andere Prüfsumme im Programm)
 wird beim Start ebenso nachgeladen. Eine eigene Python-Umgebung, in der das
 Rad installiert ist, gilt als „vorhanden“ — dann lädt der Start nichts. Die
-Löserauswahl unter *Berechnung → Einstellungen → Experten* wird nach dem Nachladen
+Löserauswahl unter *Berechnung → Einstellungen → Gleichungslöser (Experte)* wird nach dem Nachladen
 sofort neu aufgebaut: bis 13.09.2026 entstand sie beim Start, bevor MUMPS
 da war, und zeigte es bis zum Neustart als „nicht installiert“.
 Geprüft in `tests/test_werkzeuge.py` (das echte Rad aus `packaging/` über
@@ -2560,13 +2590,17 @@ einen Streifen.
 
 | Spalte | Was darin steht |
 |---|---|
-| Posten | Name des Lastfalls oder der Kombination |
+| Lastfall / Kombination | Name des Lastfalls oder der Kombination |
 | Art | Lastfall oder Kombination |
 | Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“, „läuft (nicht konvergiert)“ bzw. „läuft (Probelauf)“; nach dem Abschluss steht dieser Stand statt „fertig“ da (siehe unten) |
-| Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
-| Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
-| Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
-| Meldung | die letzte Zeile des Rechenkerns im Klartext |
+| Iterationen | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Kontakt- und Plastizitätsiterationen |
+| Letzte Änderung | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
+| Rechenzeit | Laufzeit des Lastfalls bzw. der Kombination, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
+| Letzte Meldung | die letzte Zeile des Rechenkerns im Klartext |
+
+Bis zum 08.11.2026 hießen die Spalten „Posten“, „Schritte“, „Konvergenz“,
+„Zeit“ und „Meldung“; die Fußzeile sagt jetzt „3 Lastfälle/Kombinationen zu
+rechnen“ statt „3 Posten“.
 
 Über der Liste steht, **womit** gerechnet wird: der Prozesspool (Element-
 schleifen und Vernetzen) und der Gleichungslöser. Ist die **Rechnerfarm**
@@ -2577,8 +2611,9 @@ als aktiv - so fällt ein ausgefallener Rechner auf. Bricht die Verbindung zur
 Farm ab, sagt die Zeile das; die Rechnung selbst läuft weiter.
 
 Die Liste **folgt** dem gerade rechnenden Posten. Scrollt man selbst, bleibt
-sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Dem
-Laufenden folgen** springt zurück und schaltet das Folgen wieder ein. Das
+sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Zum
+laufenden Lastfall springen** (bis 08.11.2026 „Dem Laufenden folgen“) springt
+zurück und schaltet das Folgen wieder ein. Das
 Fenster ist nicht modal: das übrige Programm bleibt bedienbar, während
 gerechnet wird.
 
@@ -3095,7 +3130,7 @@ erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
+| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) und, nur solange eine Stellung im Bild steht (nach dem Klick auf sie im Modellbaum), **Grundstellung zeigen** (seit 08.11.2026): zurück auf die Grundstellung |
 | Darstellung ▾ | Menü: Voll, Transparent, Hidden-Line, Drahtmodell (Strg+1 … 4); das Symbol zeigt die gewählte Art |
 | Zeigen ▾ | Menü: Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz (F9), Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter) |
@@ -3715,6 +3750,18 @@ Sichtfensters liegen, und ein Klick zeichnete das Bild zweimal. Bis zum
 und der Bereich unten sprang auf das Register *Umhüllende*; die
 Auflagerkräfte standen als Text „min / max“ in einer Zelle, eine Summenzeile
 gab es nicht, und die Zelle mit der Kombination war nur Text.
+
+**Lagerreaktionen im Ergebnisbaum** (seit 08.11.2026). Unter *Ergebnisse*
+steht zu Lastfall, Kombination und Umhüllender die Gruppe **Lagerreaktionen**
+mit *R_x*, *R_y*, *R_z* und, soweit die Rechnung sie liefert, den
+Lagermomenten *M_x*, *M_y*, *M_z*: je Komponente der kleinste und der größte
+Wert über alle Lagerknoten in kN bzw. kNm, bei nur einem Wert dieser allein.
+Komponenten, die an keinem Knoten von null verschieden sind, fehlen - die
+Momente also, wo kein Lager eine Drehung hält (etwa an Volumenmodellen). Ein
+Klick holt unten die Tabelle *Auflagerkräfte* mit allen sechs Komponenten je
+Knoten. Bis dahin standen die Lagerreaktionen nur in dieser Tabelle und in
+den Kennwerten im Bild; die Ausgabe „Ergebnisse als CSV…“ nennt seit
+demselben Tag zu Rx, Ry, Rz auch Mx, My, Mz.
 
 **Kopfzeile unten.** Der Bereich unten hat eine einzige Kopfzeile. Links
 steht die Gruppe als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager,
@@ -4669,7 +4716,13 @@ Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
 verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
 Tab erreicht) — sonst würde beim Rollen etwa die Windzone unbemerkt springen.
 Ein Klick auf ein halb sichtbares Feld wirkt sofort auf dieses Feld (ein Haken
-schaltet um); die Mitte rollt dabei nicht.
+schaltet um); die Mitte rollt dabei nicht. Seit dem 08.11.2026 gilt das für
+Auswahllisten und Zahlenfelder in **allen** rollbaren Masken und Registern des
+rechten Bereichs, auch im Register *Berechnung → Einstellungen* und in Tabellen
+mit Auswahllisten: ohne Fokus rollt das Rad den Bereich, erst nach einem Klick
+ins Feld verstellt es den Wert. Anlass war ein versehentlich umgestellter
+Gleichungslöser. Die Listen der Glasleiste über der Ansicht reagieren weiter
+direkt aufs Rad.
 
 Zur Tastatur: **Tab** geht von oben nach unten durch die Felder, dann durch
 die Knöpfe des Fußes und zuletzt auf **✕** — die Leertaste schließt die Maske
@@ -5671,6 +5724,18 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten, außer eine Kopplung hängt sie an einen wirksamen Knoten |
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
 | Deaktivierte Knoten-, Linien-, Flächenlager | drei Listen zum Anhaken, je Lagerart eine; die Lager heißen darin wie im Modellbaum (ihr Name, sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“): sie greifen in dieser Stellung nicht |
+
+**Stellung im Bild** (seit 08.11.2026). Der Klick auf eine Stellung im
+Modellbaum zeigt das Modell zugleich **in dieser Stellung**: die bewegten
+Knoten verschoben und gedreht, wie die Rechnung sie legt (mit der Kette der
+Ausgangsstellungen), die Grundstellung blass dahinter. Das Modell selbst
+bleibt, wie es ist; Klicks in der Ansicht treffen die Knoten dort, wo sie
+gezeichnet sind. Der Knopf **„Grundstellung zeigen“** in der Glasleiste über
+der Ansicht schaltet zurück; er steht nur da, solange eine Stellung im Bild ist. Gezeigt
+wird nur die Lage. Welche Teile in der Stellung abgeschaltet sind, zeigt wie
+bisher die offene Maske. Kreise und Bögen, deren Mittelpunkt als Zahl in der
+Linie steht, folgen der Bewegung nicht; sie stehen an ihrem Ort in der
+Grundstellung.
 
 **Per Maus statt Tippen.** Solange der Haken *Klick in der Ansicht schaltet
 Stab, Fläche oder Volumen aus / ein* oben in der Maske steht, gehen Klicks in
@@ -7528,7 +7593,7 @@ auskonvergiert“. Das gilt auch für Lagerknoten mit Reibung in nur einer
 Richtung (seit dem 28.09.2026 abends; vorher konnte dort die Reibkraft am
 Ende gegen die Bewegung zeigen, ohne dass die Rechnung es meldete).
 Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
-bisher. Ist unter *Berechnung → Einstellungen → Experten* der
+bisher. Ist unter *Berechnung → Einstellungen → Gleichungslöser (Experte)* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
@@ -8122,7 +8187,9 @@ oder verletzt war. An der Prüfplatte mit Strebe und Fließen
 228 Runden, bei derselben Lösung auf 1,4·10⁻¹⁰ m und derselben plastischen
 Dehnung. Einschalten lässt es sich am Modell mit
 `plastizitaet.ausfall_annehmen = True` (Vorgabe aus, bis die Messung am Drehlager
-entschieden hat; gespeichert nur, wenn er abweicht).
+entschieden hat; gespeichert nur, wenn er abweicht). Seit dem 08.11.2026 steht
+dafür in *Berechnung → Einstellungen → Kontakt und Spannschritt* der Haken
+„Ausfall-Iteration mit Annahme“.
 
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
@@ -8741,7 +8808,7 @@ Stirnfläche möglich …“), eine Warnung je Stabende statt zwei. Bis zum
 Rechnung prüft das Programm je verteilt eingeleitetem Stabende, ob die
 Kopplung genau die Kraft und das Moment um den Durchstoßpunkt in die Fläche
 gibt, die der Stab in seinen Knoten gibt. Die Toleranz ist die Genauigkeit
-des Gleichungslösers (Berechnung → Einstellungen → Experten, Vorgabe 10⁻⁶) mal
+des Gleichungslösers (Berechnung → Einstellungen → Gleichungslöser (Experte), Vorgabe 10⁻⁶) mal
 der Größe des Lastvektors, denn um mehr kann das Gleichgewicht eines Knotens
 nach dem Lösen nicht verfehlt sein. Die Zusammenfassung nennt die größte
 Abweichung, eine Abweichung über der Toleranz steht als Warnung im
@@ -11113,29 +11180,46 @@ davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
-**Register Berechnung: Rechnen oben, Experten eingeklappt (seit 03.10.2026).**
-Das Register *Berechnung → Einstellungen* beginnt mit dem, was man zum Rechnen
-braucht: der Analyseart, der Zahl der Eigenformen, den beiden Haken für die
-Nachweise nach der Rechnung, dem Knopf „Modell prüfen“ und dem Knopf
-„BERECHNEN (F5)“. Darunter steht die Zusammenfassung des letzten Laufs, danach
-die Plastizität der Volumen. Ganz unten steht der Abschnitt **Experten**, und er
-ist zu, solange man ihn nicht aufklappt. In ihm liegen die Prozesse fürs
-Vernetzen und die Elemente, der Gleichungslöser, die Threads, die Genauigkeit
-mit den Nachiterationen, die Rechenketten und die Rechnerfarm. Die Vorgaben
-passen für die meisten Modelle; wer sie ändern will, klappt den Abschnitt mit
-einem Klick auf „Experten“ auf (ebenso mit der Leertaste, wenn der Kopf den
-Fokus hat, oder mit einem Klick auf die graue Zeile daneben). Auch zugeklappt
-gelten die eingestellten Werte, und sie werden wie bisher gespeichert. Solange
-der Abschnitt zu ist, nennt die graue Zeile neben „Experten“, was von der Vorgabe
-abweicht, zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten · Rechnerfarm“,
-und sonst „Vorgaben“; sie folgt jeder Änderung eines Feldes. Ist sie zu lang für
-die Zeile, kürzt sie am Rand, und der Tooltip nennt alles. Aufgeklappt steht dort,
-was im Abschnitt liegt. Ob der Abschnitt zuletzt auf oder zu war, merkt sich das
-Programm in `einstellungen.json` (Schlüssel „abschnitte“); die Vorgabe ist zu. Das
-Programm schreibt die Datei in einem Zug (erst in eine Hilfsdatei, dann ersetzt es
-die alte), und lässt sie sich nicht lesen, schreibt es nichts hinein, damit
-Löser, Threads und Fensteraufteilung nicht verloren gehen; der Zustand der
-Experten gilt dann nur bis zum Beenden.
+**Register Berechnung: vier einklappbare Gruppen (seit 08.11.2026).**
+Das Register *Berechnung → Einstellungen* ist in Gruppen geteilt, die man mit
+einem Klick auf ihren Kopf auf- und zuklappt:
+
+| Gruppe | Vorgabe | Inhalt |
+|---|---|---|
+| **Grundeinstellungen** | offen | Analyseart, Zahl der Eigenformen, die beiden Haken für die Nachweise nach der Rechnung |
+| **Kontakt und Spannschritt** | zu | Restwechsel und Klaffung des Kontaktlaufs, Spannschritt in Stufen, Reibungsverfahren, Haftsteifigkeit, Ausfall-Iteration mit Annahme |
+| **Plastizität** | zu | Tetraeder ohne volumetrische Versteifung, Fließen, Verfahren, Laststufen, Toleranz, Gültigkeitsgrenze |
+| **Gleichungslöser (Experte)** | zu | Prozesse fürs Vernetzen und die Elemente, Gleichungslöser, Threads, Genauigkeit mit Nachiterationen, Rechenketten, Rechnerfarm |
+
+Unter den Grundeinstellungen stehen außerhalb jeder Gruppe die Knöpfe „Modell
+prüfen“ und „BERECHNEN (F5)“ und die Zusammenfassung des letzten Laufs. Bis zum
+08.11.2026 standen Plastizität und Kontaktlauf als feste Rahmen offen im
+Register, und die letzte Gruppe hieß „Experten“. Die Einstellungen der Gruppen
+Kontakt und Plastizität gehören zum Modell und werden mit ihm gespeichert, die
+des Gleichungslösers sind Programmeinstellungen.
+
+**Ausfall-Iteration mit Annahme** (Gruppe Kontakt und Spannschritt, Vorgabe
+aus): der Haken schaltet `plastizitaet.ausfall_annehmen` ein, das bis zum
+08.11.2026 nur im Skript oder in der Modelldatei einstellbar war (siehe
+„Ausfall-Iteration: annehmen und nachprüfen“). Er macht Läufe mit ausfallenden
+Zug- oder Druckstäben schneller, ist am Netz Mittel des Drehlagers aber noch
+nicht verglichen. Gespeichert wird er nur, wenn er eingeschaltet ist.
+
+Auch zugeklappt gelten die eingestellten Werte. Solange eine Gruppe zu ist,
+nennt die graue Zeile neben ihrem Kopf, was von der Vorgabe abweicht: beim
+Gleichungslöser zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten ·
+Rechnerfarm“, bei Kontakt und Spannschritt etwa „Spannschritt 3 Stufen ·
+Ausfall-Iteration mit Annahme“, sonst „Vorgaben“; bei der Plastizität steht
+„Fließen an“ oder „Fließen aus“. Sie folgt jeder Änderung eines Feldes. Ist sie
+zu lang für die Zeile, kürzt sie am Rand, und der Tooltip nennt alles.
+Aufgeklappt steht dort, was in der Gruppe liegt. Aufklappen geht auch mit der
+Leertaste, wenn der Kopf den Fokus hat, oder mit einem Klick auf die graue
+Zeile. Ob eine Gruppe zuletzt auf oder zu war, merkt sich das Programm in
+`einstellungen.json` (Schlüssel „abschnitte“). Das Programm schreibt die Datei
+in einem Zug (erst in eine Hilfsdatei, dann ersetzt es die alte), und lässt sie
+sich nicht lesen, schreibt es nichts hinein, damit Löser, Threads und
+Fensteraufteilung nicht verloren gehen; der Zustand der Gruppen gilt dann nur
+bis zum Beenden.
 
 Dieselbe Sorgfalt gilt seit dem 06.10.2026 für die Werte des Registers selbst
 (Löser, Threads, Genauigkeit, Ketten, Nachladen von MUMPS), die ein Druck auf
@@ -11277,7 +11361,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (Knicken bei umgekehrter Last), nach Betrag geordnet. Mit Zug und Druck im
   Grundzustand wechselten sie bis zum 23.09.2026 von Lauf zu Lauf – an einem
   Zweigelenkrahmen unter Wind 4,27, 3,03 und 2,49 in drei Läufen statt 77,33.
-* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Experten*): Vorgabe
+* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Gleichungslöser (Experte)*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
   „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
   in der Zeile „Faktorisiert (SuperLU (ausgewichen - PARDISO: …), …)“, bei den
@@ -11393,7 +11477,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (jeder Löser hat eine Herkunftsangabe; Bauvorschrift und Bauablauf nennen
   das Rad, das wirklich dort liegt).
 * **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen →
-  Experten*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
+  Gleichungslöser (Experte)*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
   Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
   locker 1e-3. Liegt das Residuum darüber, iteriert der Löser mit der
   vorhandenen Faktorisierung nach (**Nachiterationen**: keine, bis 1, 2, 3
@@ -11913,7 +11997,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   `tests/test_plastizitaet.py` (zwei Aufbauten statt 54 bei 28 Läufen, und
   dieselbe Lösung wie beim Bauen in jedem Schritt).
 * **Rechenketten: mehrere Lastfälle gleichzeitig** (*Berechnung →
-  Einstellungen → Experten*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
+  Einstellungen → Gleichungslöser (Experte)*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
   Kette einen eigenen Prozess; **innerhalb** einer Kette laufen die Lastfälle
   nacheinander und warm gestartet. Das ist der Kern der Sache: der Warmstart
   ist der größte Einzelgewinn je Lastfall (Drehlager: kalt 112

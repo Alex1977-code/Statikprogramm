@@ -175,6 +175,58 @@ def _fenster_fest() -> bool:
     return fest()
 
 
+class _Radfilter(QtCore.QObject):
+    """Mausrad nur mit Fokus (08.11.2026, Paket A Punkt 7).
+
+    Eine Auswahlliste oder ein Zahlenfeld in einer rollbaren Maske verstellte
+    seinen Wert, sobald das Rad ueber ihm stand - der Anwender wollte die
+    Maske rollen und hatte den Gleichungsloeser umgestellt. Der Filter sitzt
+    an der Anwendung und gilt damit fuer jede Maske, auch fuer die Register
+    des rechten Bereichs (Berechnung, Ergebnisse), die keine :class:`Maske`
+    sind: liegt das Feld in einem rollbaren Bereich und hat es keinen Fokus,
+    geht das Rad an diesen Bereich. Erst nach einem Klick ins Feld verstellt
+    das Rad den Wert. Ausserhalb rollbarer Bereiche (Glasleiste ueber der
+    Ansicht) bleibt alles, wie es war.
+    """
+
+    def _bereich(self, w):
+        p = w.parentWidget()
+        while p is not None:
+            if isinstance(p, QtWidgets.QAbstractScrollArea):
+                return p
+            p = p.parentWidget()
+        return None
+
+    def eventFilter(self, obj, ev):
+        typ = ev.type()
+        if typ == QtCore.QEvent.Polish and isinstance(obj, Maske._RADWIDGETS):
+            # WheelFocus gaebe dem Feld beim ersten Raddreh den Fokus, bevor
+            # ein Filter das Rad sieht: StrongFocus - per Klick und Tab ja,
+            # per Rad nein
+            if (obj.focusPolicy() == QtCore.Qt.WheelFocus and self._bereich(obj) is not None):
+                obj.setFocusPolicy(QtCore.Qt.StrongFocus)
+        elif (typ == QtCore.QEvent.Wheel and isinstance(obj, Maske._RADWIDGETS)
+              and not obj.hasFocus()):
+            bereich = self._bereich(obj)
+            if bereich is not None:
+                QtCore.QCoreApplication.sendEvent(bereich.viewport(), ev)
+                return True
+        return False
+
+
+_RADFILTER = None
+
+
+def mausrad_nur_mit_fokus(app=None) -> None:
+    """Den :class:`_Radfilter` einmal an der Anwendung einhaengen."""
+    global _RADFILTER
+    app = app or QtWidgets.QApplication.instance()
+    if app is None or _RADFILTER is not None:
+        return
+    _RADFILTER = _Radfilter(app)
+    app.installEventFilter(_RADFILTER)
+
+
 class Rollflaeche(QtWidgets.QScrollArea):
     """Die rollbare Mitte einer Maske (24.09.2026).
 
@@ -622,6 +674,7 @@ class Maske(QtWidgets.QFrame):
                  hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = "",
                  zusatz: list = None, punkte: bool = False):
         super().__init__(parent)
+        mausrad_nur_mit_fokus()
         self.setObjectName("maske")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)

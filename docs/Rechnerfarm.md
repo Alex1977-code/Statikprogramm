@@ -16,7 +16,7 @@ Standardmäßig nutzt Statik3D alle Prozessorkerne des Rechners bis auf einen
   parallel; Faktorisierung SuperLU 113 s → Pardiso 3 s; jeder weitere
   Lastfall 8 s (Lösen + Nachlauf).
 
-Einstellung: GUI → Berechnung → Einstellungen → Experten → „Prozesse fürs Vernetzen und die
+Einstellung: GUI → Berechnung → Einstellungen → Gleichungslöser (Experte) → „Prozesse fürs Vernetzen und die
 Elemente“, oder in Python
 
 ```python
@@ -36,7 +36,7 @@ müssen denselben Programmstand haben und sich im selben Netz erreichen
 ### Ohne Kommandozeile: Arbeitsplatz und Rechenhilfe (seit 13.09.2026)
 
 1. **Arbeitsplatz** (der Rechner, an dem gerechnet wird): *Berechnung →
-   Einstellungen → Experten → Rechnerfarm einschalten*. Das startet den Server, eigene
+   Einstellungen → Gleichungslöser (Experte) → Rechnerfarm einschalten*. Das startet den Server, eigene
    Worker (Zahl = „Prozesse“) und eine **Ankündigung im Netz** (UDP-Rundruf
    auf Port 5556, alle zwei Sekunden); das Backend springt auf
    „Rechnerfarm“. Das Protokoll nennt die eigene Adresse und den Port. In der
@@ -81,7 +81,7 @@ Schlüssel, Trennen).
 
 4. Rechnen:
 
-   * GUI → Berechnung → Einstellungen → Experten → Backend „lokal und Rechnerfarm“,
+   * GUI → Berechnung → Einstellungen → Gleichungslöser (Experte) → Backend „lokal und Rechnerfarm“,
      Server/Port/Schlüssel eintragen. Der Knopf „Rechnerfarm einschalten“ startet
      Server und Worker direkt in der Oberfläche (danach steht dort „Rechnerfarm
      läuft“); weitere Rechner verbinden sich mit `--host` auf die IP des

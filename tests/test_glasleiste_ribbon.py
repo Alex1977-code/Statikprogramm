@@ -286,7 +286,13 @@ def _skaliert_lauf():
 def _glasaktionen(w) -> set:
     """Alle Aktionen, die die Glasleiste traegt - Knoepfe und Menues."""
     gl = w.glasleiste
-    out = {id(b.defaultAction()) for b in gl.knoepfe.values() if b.defaultAction() is not None}
+    # „Grundstellung zeigen“ (08.11.2026) steht nur da, solange eine Stellung im
+    # Bild ist: ohne sie hat der Knopf nichts zu tun und gehoert nicht zu dem,
+    # was erreichbar sein muss
+    kontext = {k for k in ("grundstellung",)
+               if k in gl.knoepfe and not getattr(w, "_stellung_im_bild", "")}
+    out = {id(b.defaultAction()) for k, b in gl.knoepfe.items()
+           if b.defaultAction() is not None and k not in kontext}
     out |= {id(a) for a in getattr(gl, "eintraege", {}).values()}
     return out
 
@@ -404,7 +410,7 @@ def test_glasleiste_passt():
             erreichbar = _erreichbar(w)
             if not alle <= erreichbar:
                 fehler.append(f"{breite}: {len(alle - erreichbar)} Aktionen nicht erreichbar")
-            versteckt = [b for b in gl.knoepfe.values() if not b.isVisibleTo(gl)]
+            versteckt = [b for k, b in gl.knoepfe.items() if not b.isVisibleTo(gl) and k != "grundstellung"]
             if bool(versteckt) != gl.ueberlauf.isVisibleTo(gl):
                 fehler.append(f"{breite}: »-Knopf {gl.ueberlauf.isVisibleTo(gl)} bei {len(versteckt)} versteckten")
     print("   " + "; ".join(stufen))
