@@ -130,6 +130,36 @@ def _hat_kontakt(model) -> bool:
         return False
 
 
+def _kontakt_mit_spannschritt(model) -> bool:
+    """Kontakt und eine Vorspannung, die einen Spannschritt rechnet (Kraeftepaar,
+    Summe der aeusseren Kraefte null) - nur dort wirkt der Gleichgewichtsbezug (PR #39)."""
+    if not _hat_kontakt(model):
+        return False
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        if getattr(lc, "vorspannzustand", None) or getattr(lc, "vorspannungen", None):
+            return True
+    return False
+
+
+def _haltekraefte_im_ergebnis(model, an) -> Optional[str]:
+    """Freie Bewegungen, die die Rechnung damals fand (Results.singular): nur dort hielt
+    die Pivot-Regularisierung Freiheitsgrade numerisch. Ohne das Feld nicht pruefbar."""
+    try:
+        paare = list(an.all_results().items()) + list((getattr(an, "alternativen", None) or {}).items())
+    except Exception:                                   # noqa: BLE001
+        return None
+    namen = []
+    for n, r in paare:
+        s = getattr(r, "singular", None)
+        if s is None:
+            return None
+        if s:
+            namen.append(str(n))
+    if not namen:
+        return ""
+    return "freie Bewegungen numerisch gehalten in " + ", ".join(namen[:5]) + (" …" if len(namen) > 5 else "")
+
+
 def _fuge_mit_kontaktpaar(model) -> bool:
     """Ein Kontaktpaar aus einer Kontaktbedingung (fugen._fuge_ueber_kontaktpaar):
     ungleiche Netze an einer Fuge. Passende Netze werden zu Spaltelementen."""
@@ -677,6 +707,43 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Kontakt: Fuge mit Kontaktpaar (ungleiche Netze)", betrifft=_fuge_mit_kontaktpaar),
     Merkmal(
+        # f70703c (06.11.2026, mit kontakt/master-voll integriert, Stand 5): res.solid_res und
+        # res.solid_knoten einer plastischen Rechnung trugen bis dahin die Elementecken - am
+        # Drehlager (Mittel) 14 379 N/mm2 an einer Ecke mit det J das 0,006-Fache, die
+        # Gausspunkte desselben Elements hoechstens 344 N/mm2 (tests/test_plastisch_gausspunkte).
+        # Beide stehen in der Ergebnisdatei: Fehlerkorrektur (Anwender 08.11.2026)
+        name="gausspunkte", titel="Elementwert und Knotentabelle plastischer Rechnungen",
+        texte={"alt": "Elementwert und Knotentabelle aus den Elementecken",
+               "neu": "Elementwert und Knotentabelle aus den Integrationspunkten"},
+        wechsel=(Wechsel(stand=5, datum="06.11.2026", commit="f70703c", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="plastische Rechnung", betrifft=_fliessen),
+    Merkmal(
+        # 0dcf399 (16.10.2026, mit plast/traglast integriert, Stand 3): Kraft und Moment der nur
+        # numerisch gehaltenen Freiheitsgrade (Pivot-Regularisierung, weiche Feder unter 1e-9
+        # der Hauptdiagonale) fehlten in der globalen Gleichgewichtskontrolle; ein so
+        # gehaltenes Modell konnte als im Gleichgewicht gelten. Welche Freiheitsgrade es
+        # waren, zeigt Results.singular (freie Bewegungen der Rechnung): nur ein Ergebnis mit
+        # solchen traegt den Status (Fehlerkorrektur, Anwender 08.11.2026; test_frei_drehbar_streng)
+        name="haltekraefte", titel="Numerisch gehaltene Freiheitsgrade im Gleichgewicht",
+        texte={"alt": "Gleichgewichtskontrolle ohne die Kräfte nur numerisch gehaltener Freiheitsgrade",
+               "neu": "Gleichgewichtskontrolle mit Kraft und Moment nur numerisch gehaltener Freiheitsgrade"},
+        wechsel=(Wechsel(stand=3, datum="16.10.2026", commit="0dcf399", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="freie Bewegung, die nur die Pivot-Regularisierung hielt (Results.singular)",
+        im_ergebnis=_haltekraefte_im_ergebnis),
+    Merkmal(
+        # PR #39 (08.11.2026, 7f92425): das Ingenieurkriterium des Kontaktlaufs bezog das
+        # Gleichgewicht auf |Summe F|; im Spannschritt (Kraeftepaar) ist sie null, und jeder
+        # Abschluss wurde abgelehnt. Am Drehlager mit mu = 1 gleiche Ergebnisse auf zwei Wegen,
+        # 618 statt 863 Zerlegungen: Verbesserung (Anwender 08.11.2026)
+        name="gleichgewichtsbezug", titel="Gleichgewichtsbezug im Spannschritt",
+        texte={"alt": "Ingenieurkriterium bezieht das Gleichgewicht auf die Summe der äußeren Kräfte",
+               "neu": "bei Kräftesumme null bezieht es das Gleichgewicht auf die Druckkräfte des Kontakts"},
+        wechsel=(Wechsel(stand=6, datum="08.11.2026", commit="7f92425", alt="alt", neu="neu",
+                         art=VERBESSERUNG),),
+        modellmerkmal="Kontakt mit Spannschritt (Vorspannung als Kraft)", betrifft=_kontakt_mit_spannschritt),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -759,7 +826,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 5
+VERFAHRENSSTAND = 6
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
