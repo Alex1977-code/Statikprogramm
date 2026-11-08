@@ -450,7 +450,7 @@ Die Arbeitsfläche in drei Spalten:
   | Geometrie → Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
   | Geometrie → Stäbe | die **Stäbe im Sinn von RFEM**, also die Stäbe mit Nachweis; jeder ist eine Kette von Stabelementen |
   | Geometrie → Flächen, Volumen | die Flächenobjekte und die Volumenkörper |
-  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
+  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung; seit dem 08.11.2026 stehen *Linienlager* und *Flächenlager* immer da, auch leer, mit Rechtsklick *Neu* und Doppelklick-Anlegen wie die Knotenlager |
   | Lager und Verbindungen → Verbindungen | Punktmassen, Dämpfer, Federn, starre Körper und Grenzschichten, sobald es welche gibt |
   | Lager und Verbindungen → Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
   | Lager und Verbindungen → Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
@@ -463,6 +463,30 @@ Die Arbeitsfläche in drei Spalten:
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
   | **Hilfsobjekte** → Bemaßungen, Layer, Ansichten | Maße, benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) und gespeicherte Ansichten (seit 14.10.2026) |
+
+  **Klicken statt Abtippen und „Neu“ in der Maske (seit 08.11.2026).** In
+  den Masken rechts lassen sich die Bezugsobjekte in der Ansicht anklicken,
+  statt ihre Nummern abzutippen: Ein Klick ins Feld schaltet die Auswahl per
+  Maus auf dieses Feld (orange eingerahmt), und jeder Klick in der Ansicht
+  nimmt das Objekt dazu oder wieder heraus. Das gilt für die Knoten einer
+  Linie (Feld „Knoten“) und eines Stabelements, die Stabelemente eines Stabs
+  (Feld „Elemente“), den Knoten eines Knotenlagers (der Klick ersetzt ihn, ein
+  Knotenlager sitzt an genau einem Knoten), die Knoten in der Maske „Lager
+  setzen“, die Linien eines Linienlagers (ohne Linien: seine Knoten in
+  Reihenfolge) und die Flächen eines Flächenlagers (ohne Flächen: Element-
+  nummern). Bis dahin zeigten die Lagermasken ihren Ort nur an, und Linien
+  bzw. Flächen eines Lagers standen gar nicht darin. Ein Lager auf Linien
+  oder Flächen folgt dem Netz wie ein importiertes. Ein Klick in ein anderes
+  Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
+  hat außerdem den Knopf **„Neu: <Art> …“** (etwa „Neu: Linie …“), der wie
+  Rechtsklick → *Neu* im Modellbaum die Anlegemaske öffnet; angelegt wird erst
+  mit OK; im Modellbaum tut dasselbe die Zeile „+ … anlegen“ jedes Zweigs.
+  *Neues Linienlager* und *Neues Flächenlager* öffnen seit demselben
+  Tag diese Maske statt eines eigenen Fensters; gewählte Linien bzw. Flächen
+  stehen schon darin. *Neues Flächenlager* las bis dahin die Elemente aus
+  einem Feld, das es im Register nicht mehr zu sehen gab, und meldete darum
+  praktisch immer „Keine Elemente angegeben“. Jede Änderung nimmt **Strg+Z**
+  zurück.
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -726,7 +750,7 @@ Die Arbeitsfläche in drei Spalten:
   wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
   *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
   Linien, Stabelemente (bis zum 03.10.2026 „Stäbe“), Flächen, Volumen,
-  Gelenke, Knotenlager,
+  Gelenke, Knotenlager, seit dem 08.11.2026 Linien- und Flächenlager,
   Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
   Situationen, Subsysteme, Schweißnähte, Bemaßungen, den Wasserdruck und seit
   dem 03.10.2026 den Bericht: „Neu: Berichtsbild“ fragt Name,
@@ -742,15 +766,22 @@ Die Arbeitsfläche in drei Spalten:
   alle Objekte der Art aus. Ausgenommen sind Zweige, deren *Neu* keine
   Anlegemaske ist: Knoten (dort legt *Neu* sofort einen Knoten an), Layer
   (*Neu* fragt in einem eigenen Fenster nach dem Namen und legt den Layer aus
-  der Auswahl an), Unterlagen (*Neu* öffnet das Zeichenfenster einer Skizze)
-  sowie Linien- und Flächenlager (brauchen erst eine Auswahl und fragen in
-  einem eigenen Fenster). Sie, die Zweige ohne *Neu* (Anschlüsse,
+  der Auswahl an) und Unterlagen (*Neu* öffnet das Zeichenfenster einer
+  Skizze); bis zum 08.11.2026 gehörten Linien- und Flächenlager dazu (sie
+  brauchten erst eine Auswahl und fragten in einem eigenen Fenster). Sie, die
+  Zweige ohne *Neu* (Anschlüsse,
   Nachweisobjekte) und alle Gruppen klappen beim Doppelklick nur auf und zu,
   die Übersicht bleibt stehen. Das gilt auch für die Gruppe „Lager“: bis zum
   03.10.2026 öffnete ihr Doppelklick die Anlegemaske des Knotenlagers, weil
   sie die Art mit „Knotenlager“ teilt. Die Zeilen „+ … anlegen“ sind Befehle und tun beim
   einfachen Klick, was sie sagen; „+ Ansicht übernehmen“ nimmt die Ansicht
-  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
+  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Seit dem
+  08.11.2026 hat jeder Zweig mit *Neu* eine solche Zeile, nicht nur die
+  Gelenke: Knoten, Linien, Stäbe, Flächen, Volumen, Stabelemente, Werkstoffe,
+  Querschnitte, Dicken, Lastfälle, Kombinationen und die drei Lagerarten. Der
+  Klick darauf wirkt wie Rechtsklick → *Neu* am Zweig. Unter den Lagern heißt
+  die Zeile kurz „+ Lager anlegen“, weil der volle Text eine Ebene tiefer bei
+  1366 × 768 abgeschnitten würde; welches Lager, sagt der Zweig darüber. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
   Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
   Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
   einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein

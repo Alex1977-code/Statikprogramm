@@ -4144,6 +4144,25 @@ class MainWindow(QtWidgets.QMainWindow):
             proben.append(("stab", lambda: self._objekt_am_zeiger("Stab") or vp.member_at(m, point)))
         if modus == "linie":
             proben.append(("linie", lambda: self._linie_am_zeiger() or vp.line_at(m, point, size)))
+        if modus == "knoten":
+            # der Knoten unter dem Zeiger, wie der Fang ihn findet - auch wenn der
+            # Knotenfang abgeschaltet ist (08.11.2026, Paket A Punkt 1)
+            def knoten_am_zeiger():
+                if not m.nn:
+                    return None
+                bild = getattr(self, "_bildlage", None)
+                treffer = self._naechster_am_zeiger(bild if bild is not None and len(bild) == m.nn
+                                                    else m.nodes)
+                return str(int(treffer[0])) if treffer is not None else None
+            proben.append(("knoten", knoten_am_zeiger))
+        if modus == "stabelement":
+            def stabelement_am_zeiger():
+                e = self._element_am_zeiger()
+                if e is None or not 0 <= int(e) < len(m.elements) \
+                        or m.elements[int(e)].typ not in vp.TYPEN_STAEBE:
+                    return None
+                return str(int(e))
+            proben.append(("stabelement", stabelement_am_zeiger))
         for art, finder in proben:
             try:
                 name = finder()
@@ -7846,6 +7865,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._baum_system_geklickt(art, name)
         if art == "lastart":
             return self._lastart_geklickt(name)
+        if art in dsg.Modellbaum.ANLEGEN_ZEILEN:
+            # „+ … anlegen“ (08.11.2026): wie Rechtsklick → Neu am Zweig
+            return self._baum_neu(dsg.Modellbaum.ANLEGEN_ZEILEN[art])
         if self._baum_ist_zweig(art, name):
             # Ein Zweig waehlt nichts und legt nichts an (Teilpaket 8b): rechts
             # seine Uebersicht mit Liste, unten seine Tabelle
@@ -9230,11 +9252,12 @@ class MainWindow(QtWidgets.QMainWindow):
             # die ersten zwoelf in einer Zeile)
             felder = [F("anzahl", "Anzahl", "info", str(len(liste)))]
             titel, knopf = titel_art, self._neu_text(art)
-            hinweis = {"lager": "Knoten in der Ansicht wählen, dann „Neues Knotenlager“ - die Maske "
-                                "fragt die Freiheitsgrade ab.",
-                       "linienlager": "Mindestens zwei Knoten in Reihenfolge wählen, dann „Neues Linienlager“.",
-                       "flaechenlager": "Elemente im Feld „Elemente“ (Lager/Lasten) nennen, dann "
-                                        "„Neues Flächenlager“."}[art]
+            hinweis = {"lager": "„Neu: Knotenlager …“ - in der Maske die Knoten nennen oder in der "
+                                "Ansicht anklicken und die Freiheitsgrade ankreuzen.",
+                       "linienlager": "„Neu: Linienlager …“ - in der Maske die Linien nennen oder in der "
+                                      "Ansicht anklicken (ohne Linien: Knoten in Reihenfolge).",
+                       "flaechenlager": "„Neu: Flächenlager …“ - in der Maske die Flächen nennen oder in "
+                                        "der Ansicht anklicken (ohne Flächen: Elementnummern)."}[art]
         elif art in self.LAGER_ARTEN:
             felder, titel, hinweis, zusatz = self._lagermaske(art, name, halter)
         elif art in ("dicken", "dicke"):
@@ -9260,6 +9283,15 @@ class MainWindow(QtWidgets.QMainWindow):
             # Randlinien bzw. Randflaechen in der Ansicht anklicken statt tippen
             zusatz = [("Randlinien anklicken" if art == "geoflaeche" else "Randflächen anklicken",
                        lambda: self._objektmaske_klick_umschalten(halter.get("m"), art))]
+        if eintrag and not neu:
+            # „Neu: <Art> …“ direkt in der Maske eines Eintrags (08.11.2026, Paket A
+            # Punkt 2) - derselbe Weg wie Rechtsklick → Neu am Zweig
+            zweig_neu = dsg.Modellbaum.ELTERNART.get(art)
+            if zweig_neu in dsg.Modellbaum.NEU_ARTEN:
+                zusatz = list(zusatz) + [(f"Neu: {dsg.Modellbaum.NEU_ARTEN[zweig_neu]} …",
+                                          lambda z=zweig_neu: self._baum_neu(z),
+                                          "Ein neues Objekt dieser Art anlegen - rechts öffnet sich "
+                                          "seine Maske (wie Rechtsklick → Neu im Modellbaum)")]
         maske = msk.Maske(titel, felder, knopf=knopf,
                           hinweis=hinweis or ("Werte ändern und „Übernehmen“." if eintrag else
                                               "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."),
@@ -9315,20 +9347,50 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         attr, titel_art, e_kraft, e_moment = self.LAGER_ARTEN[art]
         liste = getattr(m, attr)
-        i = int(name)
-        obj = liste[i]
+        neu = not str(name).isdigit()
+        i = len(liste) if neu else int(name)
+        obj = self._lager_vorlage(art) if neu else liste[i]
         felder = [F("name", "Name", "text", (getattr(obj, "name", "") or ""), breite=150)]
-        if hasattr(obj, "node"):
-            felder.append(F("ort", "Knoten", "info", f"K{obj.node} bei {np.round(m.nodes[int(obj.node)], 3).tolist()}"
-                            if 0 <= int(obj.node) < m.nn else f"K{obj.node}"))
+        # Der Ort ist seit dem 08.11.2026 ein Feld (Paket A Punkt 1): Knoten,
+        # Linien bzw. Flaechen - getippt oder in der Ansicht angeklickt, solange
+        # das Feld die Tastatur hat (FELDKLICK). Bis dahin stand er nur da.
+        if art == "lager_einzeln":
+            felder.append(F("knoten_nr", "Knoten", "text", str(int(obj.node)), breite=80,
+                            hinweis="Nummer des Knotens - oder ins Feld klicken und den Knoten in der "
+                                    "Ansicht anklicken"))
+            if 0 <= int(obj.node) < m.nn:
+                felder.append(F("ort", "Lage [m]", "info", self._lage_text(m.nodes[int(obj.node)])))
             felder.append(F("groesse", "Symbolgröße", "zahl", float(getattr(obj, "groesse", 1.0) or 1.0),
                             hinweis="1,0 = Grundgröße"))
-        elif hasattr(obj, "elements") and obj.elements:
-            felder.append(F("ort", "Elemente", "info", self._elemente_text(obj.elements)))
-        else:
+        elif art == "linienlager_einzeln":
+            linien = list(getattr(obj, "linien", None) or [])
+            if neu and not linien:
+                linien = [x for x in self.sel_linien if x in m.lines]
             kn = [int(n) for n in (getattr(obj, "nodes", []) or [])]
-            felder.append(F("ort", "Knoten", "info", f"{len(kn)}: " + ", ".join(f"K{n}" for n in kn[:10])
-                            + (" …" if len(kn) > 10 else "")))
+            if neu and not kn and not linien and len(self.selection) >= 2:
+                kn = [int(n) for n in self.selection]
+            felder.append(F("linien", "Linien", "liste", ", ".join(linien), breite=160,
+                            hinweis="Namen der Linien - oder ins Feld klicken und die Linien in der Ansicht "
+                                    "anklicken. Das Lager folgt dann dem Netz der Linien."))
+            felder.append(F("kn_folge", "Knoten (ohne Linien)", "liste", ", ".join(str(n) for n in kn),
+                            breite=160,
+                            hinweis="Nur ohne Linien: die Knoten des Linienzugs in Reihenfolge - oder ins "
+                                    "Feld klicken und die Knoten in der Ansicht anklicken"))
+        else:
+            flaechen = list(getattr(obj, "flaechen", None) or [])
+            if neu and not flaechen:
+                flaechen = [x for x in self.sel_flaechen if x in m.flaechen]
+            felder.append(F("flaechen", "Flächen", "liste", ", ".join(flaechen), breite=160,
+                            hinweis="Namen der Flächen - oder ins Feld klicken und die Flächen in der Ansicht "
+                                    "anklicken. Das Lager folgt dann dem Netz der Flächen."))
+            felder.append(F("elemente_nr", "Elemente (ohne Flächen)", "text",
+                            self._elemente_text(obj.elements) if getattr(obj, "elements", None) else "",
+                            breite=160, hinweis="Nur ohne Flächen: Nummern der Schalen- oder "
+                                                "Volumenelemente, deren Fläche gebettet ist"))
+            if not neu:
+                kn = [int(n) for n in (getattr(obj, "nodes", []) or [])]
+                felder.append(F("ort", "Knoten", "info", f"{len(kn)}: " + ", ".join(f"K{n}" for n in kn[:10])
+                                + (" …" if len(kn) > 10 else "")))
         for d, fhg in enumerate(self.LAGER_FHG):
             b = obj.dof_behaviour(d)
             einheit = e_kraft if d < 3 else e_moment
@@ -9358,6 +9420,10 @@ class MainWindow(QtWidgets.QMainWindow):
         hinweis = ("Je Freiheitsgrad: frei, starr oder Feder (Steifigkeit in " + e_kraft + " bzw. "
                    + e_moment + "), dazu der Ausfall bei Zug oder Druck. „Bettung übernehmen“ trägt den "
                    "Vorschlag für Beton in die Felder ein - vor „Übernehmen“ prüfen.")
+        if neu:
+            # Schlupf, Reibung und Loeschen gibt es erst am angelegten Lager
+            return felder, titel, hinweis, [("Bettung übernehmen",
+                                             lambda: self._bettung_beton(halter.get("m"), art))]
         # Kurzer Text, der Hinweis nennt alles (F40, 06.10.2026): „Schlupf,
         # Reibung, Grenzkraft …“ brauchte mit Segoe UI 211 px und bekam in der
         # 460 px breiten Maske 160 - der Text war vorn und hinten abgeschnitten
@@ -9367,6 +9433,81 @@ class MainWindow(QtWidgets.QMainWindow):
                    "dieses Lager"),
                   ("Lager löschen", lambda: self._baum_loeschen(art, str(i)))]
         return felder, titel, hinweis, zusatz
+
+    @staticmethod
+    def _lage_text(p) -> str:
+        """„x = 1,25  y = 0  z = 3“ - die Lage eines Knotens mit Dezimalkomma."""
+        return "  ".join(f"{a} = {zl.zahl_text(float(v), stellen=4)}" for a, v in zip("xyz", p))
+
+    def _lagerort_lesen(self, art: str, obj, w: dict, neu: bool, geaendert) -> object:
+        """Der Ort eines Lagers aus seiner Maske (08.11.2026, Paket A Punkt 1):
+        {Attribut: Wert} zum Setzen, {} wenn er gleich bleibt, oder ein Text mit
+        dem Grund, warum er nicht geht (dann wird nichts geschrieben)."""
+        m = self.model
+        g = None if geaendert is None else set(geaendert)
+
+        def betroffen(*felder):
+            return neu or g is None or bool(g & set(felder))
+
+        try:
+            if art == "lager_einzeln":
+                if not betroffen("knoten_nr") or "knoten_nr" not in w:
+                    return {}
+                kn = self._zahlenliste(w.get("knoten_nr"), feld="Knoten", bereich=(m.nn, "Knoten"))
+                if len(kn) != 1:
+                    return "Ein Knotenlager sitzt an genau einem Knoten"
+                return {} if int(kn[0]) == int(obj.node) else {"node": int(kn[0])}
+            if art == "linienlager_einzeln":
+                if not betroffen("linien", "kn_folge"):
+                    return {}
+                linien = self._namensliste(w.get("linien"))
+                fehlt = [x for x in linien if x not in m.lines]
+                if fehlt:
+                    return "Linie " + ", ".join(fehlt[:4]) + " gibt es nicht"
+                if linien:
+                    kn: list = []
+                    for x in linien:
+                        for n in m.lines[x].nodes:
+                            if not kn or kn[-1] != int(n):
+                                kn.append(int(n))
+                    return {"linien": linien, "nodes": kn}
+                kn = self._zahlenliste(w.get("kn_folge"), feld="Knoten", bereich=(m.nn, "Knoten"))
+                if len(kn) < 2:
+                    return "Linien anklicken oder mindestens zwei Knoten in Reihenfolge nennen"
+                return {"linien": [], "nodes": kn}
+            if not betroffen("flaechen", "elemente_nr"):
+                return {}
+            flaechen = self._namensliste(w.get("flaechen"))
+            fehlt = [x for x in flaechen if x not in m.flaechen]
+            if fehlt:
+                return "Fläche " + ", ".join(fehlt[:4]) + " gibt es nicht"
+            if flaechen:
+                trib = supports.flaechen_einflussflaechen(m, [m.flaechen[x] for x in flaechen]) or {}
+                kn = sorted(trib)
+                return {"flaechen": flaechen, "elements": [], "nodes": kn, "areas": [trib[n] for n in kn]}
+            txt = str(w.get("elemente_nr", "") or "").strip()
+            els = self._elements_from_text(txt) if txt else []
+            if not els:
+                return "Flächen anklicken oder Elemente nennen"
+            return {"flaechen": [], "elements": els, "nodes": [], "areas": []}
+        except ValueError as ex:            # zl.Eingabefehler und parse_int_list
+            return str(ex)
+
+    def _lager_vorlage(self, art: str):
+        """Ein neues Lager fuer die Maske „Neu“ (noch nicht im Modell): ux, uy und
+        uz starr wie in der Maske „Lager setzen“, der Name wie Model.add_line_support
+        bzw. add_surface_support ihn vergeben."""
+        from ..model import DofBehaviour, LineSupport, SurfaceSupport, Support
+        m = self.model
+        if art == "lager_einzeln":
+            obj = Support(int(self.selection[0]) if len(self.selection) else 0, [0, 1, 2])
+        elif art == "linienlager_einzeln":
+            obj = LineSupport(f"LL{len(m.line_supports) + 1}")
+        else:
+            obj = SurfaceSupport(f"FL{len(m.surface_supports) + 1}")
+        if not isinstance(obj, Support):
+            obj.behaviour = {d: DofBehaviour("rigid") for d in range(3)}
+        return obj
 
     def _verbindung_listen(self, art: str, w: dict) -> dict:
         """Die Listenfelder einer Verbindung lesen, bevor etwas geschrieben
@@ -9633,7 +9774,18 @@ class MainWindow(QtWidgets.QMainWindow):
                    "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen"),
                    "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen"),
                    "kontaktbedingung_a": ("koerper_a", "volumen", "Körper A"),
-                   "kontaktbedingung_b": ("koerper_b", "volumen", "Körper B")}
+                   "kontaktbedingung_b": ("koerper_b", "volumen", "Körper B"),
+                   # Klicken statt Abtippen (08.11.2026, Paket A Punkt 1)
+                   "linie": ("kn", "knoten", "Knoten"),
+                   "stabelement": ("kn", "knoten", "Knoten"),
+                   "stab": ("elemente", "stabelement", "Stabelemente"),
+                   "lager_einzeln": ("knoten_nr", "knoten", "Knoten"),
+                   "lager_setzen": ("knoten_nr", "knoten", "Knoten"),
+                   "linienlager_einzeln": ("linien", "linie", "Linien"),
+                   "linienlager_knoten": ("kn_folge", "knoten", "Knoten"),
+                   "flaechenlager_einzeln": ("flaechen", "flaeche", "Flächen")}
+    #: Felder, die genau ein Objekt tragen: der Klick ersetzt statt dazuzunehmen
+    EINZELKLICK = frozenset({"lager_einzeln"})
     #: Welches Feld einer Maske beim Klick ins Feld die Auswahl per Maus auf
     #: sich zieht (15.09.2026, „bei Klick in Feld Auswahl per Maus"): Maskenart
     #: -> {Feldname: Klickart aus MASKENKLICK}. Ein Feld, das hier nicht steht,
@@ -9642,7 +9794,15 @@ class MainWindow(QtWidgets.QMainWindow):
                  "geokoerper_einzeln": {"flaechen": "geokoerper_einzeln"},
                  "kontaktbedingung": {"koerper_a": "kontaktbedingung_a", "koerper_b": "kontaktbedingung_b",
                                       "flaechennamen": "kontaktbedingung",
-                                      "gegenflaechen": "kontaktbedingung_gegen"}}
+                                      "gegenflaechen": "kontaktbedingung_gegen"},
+                 # seit 08.11.2026 (Paket A Punkt 1)
+                 "linie": {"kn": "linie"},
+                 "stabelement": {"kn": "stabelement"},
+                 "stab": {"elemente": "stab"},
+                 "lager_einzeln": {"knoten_nr": "lager_einzeln"},
+                 "lager_setzen": {"knoten_nr": "lager_setzen"},
+                 "linienlager_einzeln": {"linien": "linienlager_einzeln", "kn_folge": "linienlager_knoten"},
+                 "flaechenlager_einzeln": {"flaechen": "flaechenlager_einzeln"}}
     #: Kontaktmaske: Wirkung je Richtung im Klartext (Druck wird immer uebertragen)
     KONTAKT_ZUG = {"abheben": "abheben möglich (nur Druck)",
                    "starr": "wird übertragen (kein Abheben)", "feder": "Feder"}
@@ -10916,7 +11076,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if art_obj != modus:
                 return self.statusBar().showMessage(f"{name} ist keine {was[:-1]} - Klickmodus: {was}", 3000)
             namen = liste()
-            if name in namen:
+            if art in self.EINZELKLICK:
+                namen = [name]
+            elif name in namen:
                 namen.remove(name)
             else:
                 namen.append(name)
@@ -10936,6 +11098,11 @@ class MainWindow(QtWidgets.QMainWindow):
         namen = self._namensliste(maske.werte().get(feld))
         if modus == "linie":
             self.sel_linien = [x for x in namen if x in self.model.lines]
+        elif modus == "knoten":
+            self.selection = np.array([int(x) for x in namen if x.isdigit() and int(x) < self.model.nn],
+                                      dtype=int)
+        elif modus == "stabelement":
+            self.sel_elemente = [int(x) for x in namen if x.isdigit() and int(x) < len(self.model.elements)]
         else:
             self.sel_flaechen = [x for x in namen if x in self.model.flaechen]
         self.redraw()
@@ -11939,10 +12106,18 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..model import DofBehaviour
             attr, titel_art, _ek, _em = self.LAGER_ARTEN[art]
             liste = getattr(m, attr)
-            i = int(name)
-            if not 0 <= i < len(liste):
-                return self.error(f"{titel_art} {i + 1} gibt es nicht mehr")
-            obj = liste[i]
+            if neu:
+                obj = self._lager_vorlage(art)
+                i = len(liste)
+            else:
+                i = int(name)
+                if not 0 <= i < len(liste):
+                    return self.error(f"{titel_art} {i + 1} gibt es nicht mehr")
+                obj = liste[i]
+            # Der Ort aus der Maske (08.11.2026) - geprueft vor dem Merken
+            ort = self._lagerort_lesen(art, obj, w, neu, geaendert)
+            if isinstance(ort, str):
+                return self.hinweis(ort)
             # Komma und Semikolon trennen die Namen in den Listen (N12), vor dem Merken
             grund = m.objektname_konflikt(str(neuname if neuname != name else w.get("name", "") or "").strip(),
                                           (getattr(obj, "name", "") or "").strip(), titel_art)
@@ -11965,7 +12140,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     b.limit = getattr(alt_b, "limit", 0.0)
                 if b.acts or b.failure or b.slip or b.mu:
                     neu_beh[d] = b
-            self.merken(f"{titel_art} {neuname or i + 1}")
+            if neu and neuname == name:
+                neuname = (getattr(obj, "name", "") or "").strip() or name
+            self.merken(f"{titel_art} {neuname or i + 1}" + (" angelegt" if neu else ""))
+            vorher_bezug = m.stellungsbezug() if (neu or ort) else None
+            if neu:
+                liste.append(obj)
+            for k_, v_ in (ort or {}).items():
+                setattr(obj, k_, v_)
             obj.behaviour = neu_beh
             if hasattr(obj, "dofs"):
                 obj.dofs = sorted(d for d, b in neu_beh.items() if b.acts)
@@ -11975,7 +12157,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 obj.groesse = max(0.05, float(zahl("groesse", 1.0) or 1.0))
             if "woelb" in w and hasattr(obj, "woelb"):
                 obj.woelb = bool(w.get("woelb"))
+            if vorher_bezug is not None:
+                self._protokollzeilen(m.stellungen_nachziehen(vorher_bezug))
             name = str(i)
+
         elif art == "stellung":
             liste = self._stellungen_obj()
             alt = m.stellung(name) if not neu else None
@@ -12954,13 +13139,14 @@ class MainWindow(QtWidgets.QMainWindow):
     #: * Layer: „Layer aus Auswahl“ fragt modal nach dem Namen und legt den
     #:   Layer aus der Auswahl sofort an (Umbau modaler Dialoge: Block D);
     #: * Unterlagen: „Skizze“ oeffnet ein eigenes Zeichenfenster;
-    #: * Linien- und Flaechenlager: „Neu“ meldet ohne Auswahl nur einen Fehler
-    #:   und oeffnet mit Auswahl einen modalen Dialog (SupportNonlinearDialog,
-    #:   Block D).
     #:
     #: Ihr Doppelklick klappt nur auf und zu (Qt); die Uebersicht bleibt stehen.
+    #: Linien- und Flaechenlager gehoeren seit dem 08.11.2026 dazu (Paket A
+    #: Punkt 3): ihr „Neu“ oeffnet die rechte Maske mit Linien bzw. Flaechen zum
+    #: Anklicken. Bis dahin meldete es ohne Auswahl nur einen Fehler und oeffnete
+    #: mit Auswahl einen modalen Dialog.
     BAUM_DOPPELKLICK_NEU = frozenset(dsg.Modellbaum.NEU_ARTEN) - {
-        "knoten", "layerliste", "unterlagen", "linienlager", "flaechenlager"}
+        "knoten", "layerliste", "unterlagen"}
 
     def _baum_doppelklick_ohne_maske(self, art: str, name: str) -> bool:
         """Der Doppelklick auf einen Zweig ohne Anlegemaske klappt nur auf und
@@ -21553,24 +21739,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @_maskenweg()
     def maske_lager(self):
-        """Lager setzen: Knoten anklicken, Freiheitsgrade in der Maske."""
-        felder = [msk.Feld(f"d{i}", DOF_NAMES[i], "haken", i < 3) for i in range(6)]
+        """Lager setzen: Knoten anklicken, Freiheitsgrade in der Maske.
+
+        Seit dem 08.11.2026 (Paket A Punkt 1) mit dem Feld „Knoten“: es beginnt
+        mit der Auswahl, und solange es die Tastatur hat, setzt ein Klick auf
+        einen Knoten der Ansicht dessen Nummer hinein oder nimmt sie heraus."""
+        kn = ", ".join(str(int(i)) for i in self.selection)
+        felder = [msk.Feld("knoten_nr", "Knoten", "liste", kn, breite=160,
+                           hinweis="Nummern der Knoten - oder ins Feld klicken und die Knoten in der "
+                                   "Ansicht anklicken")]
+        felder += [msk.Feld(f"d{i}", DOF_NAMES[i], "haken", i < 3) for i in range(6)]
         m = msk.Maske("Lager", felder, knoten=0, knopf="Lager setzen",
-                      hinweis="Knoten in der Ansicht wählen, Freiheitsgrade "
+                      hinweis="Knoten ins Feld schreiben oder anklicken, Freiheitsgrade "
                               "ankreuzen und „Lager setzen“.")
         m.angewendet.connect(self._maske_lager_setzen)
-        self.maske_erzeugen(m)
+        m.feld_fokussiert.connect(lambda feld, mk=m: self._maskenfeld_fokus(mk, "lager_setzen", feld))
+        m.klick_beenden = lambda mk=m: self._objektmaske_klick_aus(mk)
+        return self.maske_erzeugen(m)
 
     def _maske_lager_setzen(self, w: dict):
-        if not len(self.selection):
-            return self.hinweis("Zuerst Knoten in der Ansicht wählen")
+        if str(w.get("knoten_nr", "") or "").strip():
+            try:
+                knoten = self._zahlenliste(w.get("knoten_nr"), feld="Knoten",
+                                           bereich=(self.model.nn, "Knoten"))
+            except zl.Eingabefehler as ex:
+                return self.hinweis(str(ex))
+        else:
+            knoten = [int(i) for i in self.selection]
+        if not knoten:
+            return self.hinweis("Zuerst Knoten nennen oder in der Ansicht anklicken")
         dofs = [i for i in range(6) if w.get(f"d{i}")]
         if not dofs:
             return self.hinweis("Kein Freiheitsgrad angekreuzt")
-        self.merken(f"Lager an {len(self.selection)} Knoten")
-        for i in self.selection:
+        self.merken(f"Lager an {len(knoten)} Knoten")
+        for i in knoten:
             self.model.support(int(i), dofs)
-        self.info(f"Lager an {len(self.selection)} Knoten: "
+        self.info(f"Lager an {len(knoten)} Knoten: "
                   + ", ".join(DOF_NAMES[d] for d in dofs))
         self.refresh_all()
 
@@ -23983,31 +24187,22 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.exec()
 
     def add_line_support(self):
-        """Linienlager entlang der gewaehlten Knoten (in Auswahlreihenfolge)."""
-        if len(self.selection) < 2:
-            return self.error("Mindestens zwei Knoten auswählen (Reihenfolge = Linienzug)")
-        d = SupportNonlinearDialog(self, None, "Linienlager")
-        if not d.exec():
-            return
-        self.merken("Linienlager angelegt")
-        ls = self.model.add_line_support([int(n) for n in self.selection])
-        ls.behaviour = d.behaviours()
-        self.info(f"Linienlager über {len(self.selection)} Knoten angelegt")
-        self.refresh_all()
+        """Neues Linienlager: rechts die Maske mit den Linien (in der Ansicht
+        anklickbar) und den Freiheitsgraden; angelegt wird erst mit OK.
+
+        Seit dem 08.11.2026 (Paket A Punkt 3): bis dahin brauchte der Befehl
+        mindestens zwei gewaehlte Knoten und oeffnete einen modalen Dialog.
+        Gewaehlte Linien bzw. Knoten stehen schon in der Maske."""
+        return self._objektmaske("linienlager_einzeln", "neu", neu=True)
 
     def add_surface_support(self):
-        """Flaechenlager (Bettung) auf den gewaehlten Elementen."""
-        els = self._elements_from_text(self.ed_elist.text())
-        if not els:
-            return self.error("Keine Elemente angegeben (Feld 'Elemente')")
-        d = SupportNonlinearDialog(self, None, "Flächenlager (Bettung)")
-        if not d.exec():
-            return
-        self.merken("Flächenlager angelegt")
-        ss = self.model.add_surface_support(els)
-        ss.behaviour = d.behaviours()
-        self.info(f"Flächenlager auf {bg.anzahl(len(els), 'Element', 'Elementen')} angelegt")
-        self.refresh_all()
+        """Neues Flaechenlager: rechts die Maske mit den Flaechen (in der
+        Ansicht anklickbar) und den Freiheitsgraden; angelegt wird erst mit OK.
+
+        Bis zum 08.11.2026 las der Befehl die Elemente aus dem Feld ``ed_elist``
+        eines Registers, das nicht mehr zu sehen ist - er scheiterte praktisch
+        immer mit „Keine Elemente angegeben“ (Paket A Punkt 5)."""
+        return self._objektmaske("flaechenlager_einzeln", "neu", neu=True)
 
     def remove_support(self):
         sel = set(int(n) for n in self.selection)
