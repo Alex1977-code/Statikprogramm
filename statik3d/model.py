@@ -1355,6 +1355,16 @@ class Geometrielast:
     #: (Flaeche.lokale_achsen = "zylinder") - dann je Elementseite in der
     #: Richtung dieser Achse. Leer = keine solche Last.
     lokal: dict = field(default_factory=dict)
+    #: **Lastbezug** (Oberflaechenpaket B, 08.11.2026): "" = wie bisher (ohne
+    #: ``richtung`` senkrecht zur Flaeche, sonst in ``richtung``); "global",
+    #: "lokal" (Flaechenachsen, statik3d.lastbezug) oder "ks" (eigenes
+    #: Koordinatensystem ``ks``). Mit Bezug wirkt p in Richtung der Achse
+    #: ``achse`` ("x", "y", "z"): positiv in +Achse - global Z mit -5 kN/m2
+    #: wirkt nach unten, wenn Z nach oben zeigt. In der Datei nur, wenn gesetzt
+    #: (NEUE_FELDER): alte Dateien und bestehende Lasten bleiben, wie sie waren.
+    lastbezug: str = ""
+    achse: str = ""
+    ks: str = ""
 
     def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
@@ -1405,7 +1415,10 @@ class Geometrielast:
                 P = self.verlauf.get("punkte") or []
                 werte = ", ".join(f"{float(x[3]) / 1e3:.3g}" for x in P)
                 t = f"{self.ziel}: linear {werte} kN/m²"
-            if self.richtung:
+            if self.lastbezug:
+                from .lastbezug import bezug_text
+                t += " in " + bezug_text(self.lastbezug, self.achse, self.ks)
+            elif self.richtung:
                 t += " in " + ", ".join(f"{x:g}" for x in self.richtung)
             if self.projiziert:
                 t += " (auf die Projektion)"
@@ -1476,6 +1489,10 @@ class Linienlast:
     # Bezug einer globalen Stablast (14.10.2026, wie BeamLoad.bezugslaenge):
     # "" je Stablaenge, "projektion" je Laenge der Projektion
     bezugslaenge: str = ""
+    #: Eigenes Koordinatensystem (Oberflaechenpaket B, 08.11.2026): mit
+    #: ``system`` "ks" stehen q und q2 in den Achsen von
+    #: Model.koordinatensysteme[ks]; beim Verteilen werden sie global.
+    ks: str = ""
 
     def bezug(self) -> str:
         q = ", ".join(f"{v / 1e3:g}" for v in self.q)
@@ -1487,6 +1504,8 @@ class Linienlast:
                                           else " bis zum Ende")
         if self.system == "local":
             t += " (lokal)"
+        elif self.system == "ks":
+            t += f" (in {self.ks})"
         elif self.bezugslaenge == "projektion":
             t += " (je Projektion)"
         return t + (f" – {self.kommentar}" if self.kommentar else "")
@@ -2020,7 +2039,7 @@ class LoadCase:
             # ohne leeres Feld erzeuger: so liest auch ein aelterer Stand die Datei;
             # den Stand des Verteilens (verteilt) schreibt niemand, er entsteht neu
             "linienlasten": [{k: v for k, v in asdict(l).items()
-                              if k != "verteilt" and (k not in ("erzeuger", "bezugslaenge") or v)}
+                              if k != "verteilt" and (k not in ("erzeuger", "bezugslaenge", "ks") or v)}
                              for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [l.als_dict() for l in (getattr(self, "vorspannungen", None) or [])],
@@ -4205,6 +4224,43 @@ class Ansicht:
 
 
 @dataclass
+class Koordinatensystem:
+    """Ein eigenes Koordinatensystem (Oberflaechenpaket B, 08.11.2026), auf das
+    sich Flaechen- und Linienlasten beziehen koennen.
+
+    art:      "winkel" - Ursprung und drei Drehwinkel [Grad]: um Z, dann um
+              die neue y-, dann um die neue x-Achse (lastbezug.achsen_aus_winkeln);
+              "punkte" - Ursprung, ein Punkt auf der x-Achse und ein Punkt in
+              der xy-Ebene (lastbezug.achsen_aus_punkten).
+    Gespeichert wird die Eingabe, nicht die Achsen: so zeigt die Maske beim
+    Bearbeiten, was eingegeben wurde. Steht im Modell und in der Datei nur,
+    wenn es welche gibt.
+    """
+    name: str
+    art: str = "winkel"
+    ursprung: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    winkel: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    punkt_x: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])
+    punkt_xy: list[float] = field(default_factory=lambda: [0.0, 1.0, 0.0])
+    kommentar: str = ""
+
+    def achsen(self) -> np.ndarray:
+        """Zeilen ex, ey, ez (Einheitsvektoren, Rechtssystem)."""
+        from .lastbezug import achsen_aus_punkten, achsen_aus_winkeln
+        if self.art == "punkte":
+            return achsen_aus_punkten(self.ursprung, self.punkt_x, self.punkt_xy)
+        return achsen_aus_winkeln(self.winkel)
+
+    def bezug(self) -> str:
+        from .zahlen import zahl_text
+        o = ", ".join(zahl_text(x, punkt=True) for x in self.ursprung)
+        if self.art == "punkte":
+            return f"Ursprung ({o}), aus drei Punkten"
+        w = ", ".join(zahl_text(x, punkt=True) for x in self.winkel)
+        return f"Ursprung ({o}), Drehung ({w})°"
+
+
+@dataclass
 class Layer:
     """Eine benannte Objektgruppe fuer Sicht und Sperre - in RFEM die
     Objektselektion (16.09.2026: "Ribbon Ansicht soll eine Dropdownliste mit
@@ -4460,6 +4516,8 @@ class Model:
         #: Vorspannung je Anker (16.10.2026): Definitionen nach Name, auf die
         #: Lastfaelle verweisen (LoadCase.vorspannzustand)
         self.vorspann_definitionen: dict[str, VorspannDefinition] = {}
+        #: Eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026), nach Name
+        self.koordinatensysteme: dict[str, Koordinatensystem] = {}
         self.stellungen: list = []
         #: Hinweise aus dem Laden einer Datei (Model.from_dict), nicht gespeichert
         self._ladehinweise: list = []
@@ -6266,6 +6324,9 @@ class Model:
                 neue = self._geometrielast_legen(gl)
                 for f in neue:
                     f._geo = True
+                    # die Quelle, damit die Ansicht genau die gerechneten
+                    # Elementlasten zeigt (Oberflaechenpaket B, 08.11.2026)
+                    f._geo_quelle = gl
                     (lc.temp_loads if isinstance(f, TempLoad) else lc.face_loads).append(f)
                 erzeugt += len(neue)
                 gl.kommentar = f"{len(neue)} Elementlasten" if neue else self._warum_leer(gl)
@@ -7803,6 +7864,15 @@ class Model:
         out: list = []
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1.copy()
+        system = ll.system
+        if system == "ks":
+            # q in den Achsen eines eigenen Koordinatensystems (08.11.2026):
+            # global ist es q_x ex + q_y ey + q_z ez
+            k = (getattr(self, "koordinatensysteme", None) or {}).get(str(ll.ks))
+            if k is None:
+                return out
+            R = np.asarray(k.achsen(), float)
+            q1, q2, system = R.T @ q1, R.T @ q2, "global"
         if ll.art == "stab":
             mem = self.members.get(ll.ziel)
             if mem is None or not mem.elements:
@@ -7829,7 +7899,7 @@ class Model:
                 t_hi = (hi - A) / (B - A)
                 qa = (1 - t_lo) * q1 + t_lo * q2
                 qb = (1 - t_hi) * q1 + t_hi * q2
-                out.append(BeamLoad(int(e), qa.tolist(), ll.system, qb.tolist(),
+                out.append(BeamLoad(int(e), qa.tolist(), system, qb.tolist(),
                                     a=float(lo - s0),
                                     b=None if hi >= s1 - 1e-12 else float(hi - s0),
                                     bezugslaenge=str(getattr(ll, "bezugslaenge", "") or "")))
@@ -7887,6 +7957,8 @@ class Model:
         return out
 
     def _warum_leer_linie(self, ll: "Linienlast") -> str:
+        if ll.system == "ks" and ll.ks not in (getattr(self, "koordinatensysteme", None) or {}):
+            return f"Koordinatensystem „{ll.ks}“ gibt es im Modell nicht"
         if ll.art == "stab":
             mem = self.members.get(ll.ziel)
             if mem is None:
@@ -7912,6 +7984,8 @@ class Model:
                 else self.koerper.get(gl.ziel))
         if ziel is None:
             return "Ziel gibt es im Modell nicht"
+        if getattr(gl, "lastbezug", "") == "ks" and gl.ks not in (getattr(self, "koordinatensysteme", None) or {}):
+            return f"Koordinatensystem „{gl.ks}“ gibt es im Modell nicht"
         if gl.lokal and gl.art == "flaeche":
             if getattr(ziel, "lokale_achsen", "") != "zylinder":
                 return ("lokale Achsen der gewölbten Fläche nicht gewählt – wirkt erst mit "
@@ -8012,12 +8086,24 @@ class Model:
                     out.append(TempLoad(int(e), float(gl.dT), float(gl.dT_z)))
             return out
         richtung = list(gl.richtung) if gl.richtung else None
+        # Lastbezug (Oberflaechenpaket B, 08.11.2026): global und eigenes
+        # Koordinatensystem geben eine feste Richtung, lokal eine je Seite;
+        # ohne Bezug bleibt alles wie bisher
+        bezug = str(getattr(gl, "lastbezug", "") or "")
+        if bezug in ("global", "ks"):
+            from .lastbezug import globale_richtung
+            r_b = globale_richtung(self, bezug, gl.achse, gl.ks)
+            if r_b is None:
+                return out          # das Koordinatensystem fehlt (_warum_leer)
+            richtung = [float(x) for x in r_b]
+        elif bezug == "lokal":
+            richtung = None
         d = None
         if gl.projiziert and richtung:
             d = np.asarray(richtung, float)
             d = d / (np.linalg.norm(d) or 1.0)
 
-        def nimm(e: int, seite: int):
+        def nimm(e: int, seite: int, flaeche=None):
             if not 0 <= int(e) < len(self.elements):
                 return
             # Reihenfolge nach Kosten, nicht nach Lesbarkeit - und das ist
@@ -8061,6 +8147,12 @@ class Model:
                 if ax is None:
                     return
                 r_seite = [float(v) for v in ax[int(gl.lokal.get("achse", 0))]]
+            if bezug == "lokal":
+                from .lastbezug import achsindex, seitenachsen
+                ax = seitenachsen(self, flaeche, e, seite)
+                if ax is None:
+                    return
+                r_seite = [float(v) for v in ax[achsindex(gl.achse)]]
             out.append(FaceLoad(int(e), p, int(seite), r_seite))
 
         flaechen = []
@@ -8086,9 +8178,9 @@ class Model:
             zyl = (achse[0], zylinder_plus_x(self, f0, achse[1]))
         for f in flaechen:
             for e in (f.elemente or []):
-                nimm(e, 0)
+                nimm(e, 0, f)
             for e, seite in (f.randseiten or []):
-                nimm(e, seite)
+                nimm(e, seite, f)
         return out
 
     def add_geometrielast(self, ziel: str, p: float = 0.0, art: str = "flaeche",
@@ -8096,36 +8188,90 @@ class Model:
                           bereich: dict = None,
                           projiziert: bool = False, lastart: str = "druck",
                           dT: float = 0.0, dT_z: float = 0.0,
-                          verlauf: dict = None, lokal: dict = None) -> "Geometrielast":
+                          verlauf: dict = None, lokal: dict = None,
+                          bezug: str = "", achse: str = "", ks: str = "") -> "Geometrielast":
         """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen).
 
         ``lastart`` "druck" (Flaechenlast p, gleichmaessig oder mit
         ``verlauf``) oder "temperatur" (dT, dT_z auf alle Elemente).
-        ``lokal`` siehe :attr:`Geometrielast.lokal`.
+        ``lokal`` siehe :attr:`Geometrielast.lokal`; ``bezug``, ``achse``,
+        ``ks`` siehe :attr:`Geometrielast.lastbezug` (dann bleibt ``richtung`` leer).
         """
+        if bezug:
+            if bezug not in ("global", "lokal", "ks"):
+                raise ValueError(f"Lastbezug „{bezug}“ gibt es nicht (global, lokal, ks)")
+            if bezug == "ks" and ks not in self.koordinatensysteme:
+                raise KeyError(f"Koordinatensystem „{ks}“ gibt es nicht")
+            richtung = None
         gl = Geometrielast(str(ziel), art, float(p),
                            list(richtung) if richtung else None,
                            dict(bereich or {}), bool(projiziert),
                            lastart=str(lastart), dT=float(dT), dT_z=float(dT_z),
-                           verlauf=dict(verlauf or {}), lokal=dict(lokal or {}))
+                           verlauf=dict(verlauf or {}), lokal=dict(lokal or {}),
+                           lastbezug=str(bezug or ""),
+                           achse=(str(achse or "z").lower()[:1] if bezug else ""),
+                           ks=(str(ks) if bezug == "ks" else ""))
         self.case(case).geometrielasten.append(gl)
         return gl
 
     def add_linienlast(self, ziel: str, q, art: str = "stab", q2=None,
                        system: str = "global", von: float = 0.0, bis: float = None,
-                       case: str = None, bezugslaenge: str = "") -> "Linienlast":
+                       case: str = None, bezugslaenge: str = "", ks: str = "") -> "Linienlast":
         """Eine Linienlast an einen Stab oder eine Linie haengen.
 
         Sie wird sofort auf vorhandene Elemente gelegt (lasten_verteilen) und
         nach jedem Neuvernetzen wieder. ``bezugslaenge`` "projektion": die
         globale Last gilt je Laenge der Projektion (Linienlast.bezugslaenge).
+        ``ks``: q in den Achsen dieses Koordinatensystems (system wird "ks").
         """
+        if ks:
+            if ks not in self.koordinatensysteme:
+                raise KeyError(f"Koordinatensystem „{ks}“ gibt es nicht")
+            system = "ks"
         ll = Linienlast(str(ziel), str(art), [float(x) for x in q],
                         [float(x) for x in q2] if q2 is not None else None,
                         str(system), float(von), None if bis is None else float(bis),
-                        bezugslaenge=str(bezugslaenge or ""))
+                        bezugslaenge=str(bezugslaenge or ""), ks=str(ks or ""))
         self.case(case).linienlasten.append(ll)
         return ll
+
+    # ---- Eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026) -----------
+    def add_koordinatensystem(self, name: str, **kw) -> "Koordinatensystem":
+        """Ein Koordinatensystem anlegen oder ersetzen; ValueError, wenn seine
+        Achsen nicht bestimmt sind (drei Punkte auf einer Geraden)."""
+        name = str(name).strip()
+        if not name:
+            raise ValueError("Ein Koordinatensystem braucht einen Namen")
+        k = Koordinatensystem(name, **kw)
+        k.achsen()                       # wirft, wenn die Punkte keine Ebene aufspannen
+        self.koordinatensysteme[name] = k
+        return k
+
+    def ks_verweise(self, name: str) -> list:
+        """Die Lasten, die sich auf das Koordinatensystem ``name`` beziehen, als
+        (Lastfall, Text) - leer, wenn keine."""
+        out = []
+        for lc in self.load_cases.values():
+            for gl in lc.geometrielasten:
+                if getattr(gl, "lastbezug", "") == "ks" and gl.ks == name:
+                    out.append((lc.name, f"Flächenlast {gl.ziel}"))
+            for ll in lc.linienlasten:
+                if ll.system == "ks" and getattr(ll, "ks", "") == name:
+                    out.append((lc.name, f"Linienlast {ll.ziel}"))
+        return out
+
+    def koordinatensystem_loeschen(self, name: str) -> None:
+        """Ein Koordinatensystem loeschen - ValueError mit den Lasten, wenn sich
+        noch eine darauf bezieht (die Last verloere sonst ihre Richtung)."""
+        if name not in self.koordinatensysteme:
+            raise KeyError(f"Koordinatensystem „{name}“ gibt es nicht")
+        v = self.ks_verweise(name)
+        if v:
+            liste = "; ".join(f"{fall}: {text}" for fall, text in v[:8])
+            raise ValueError(f"Koordinatensystem „{name}“ wird noch von {anzahl(len(v), 'Last', 'Lasten')} "
+                             f"benutzt ({liste}{' …' if len(v) > 8 else ''}) - erst diese Lasten "
+                             "ändern oder löschen")
+        del self.koordinatensysteme[name]
 
     def add_zwangsverformung(self, node: int, dofs, values, case: str = None) -> "Zwangsverformung":
         """Eine vorgegebene Verschiebung/Verdrehung an einem gelagerten Knoten.
@@ -10215,6 +10361,9 @@ class Model:
             # Vorspannung je Anker (16.10.2026): nur, wenn es Definitionen gibt
             **({"vorspann_definitionen": [asdict(x) for x in self.vorspann_definitionen.values()]}
                if getattr(self, "vorspann_definitionen", None) else {}),
+            # eigene Koordinatensysteme (08.11.2026): nur, wenn es welche gibt
+            **({"koordinatensysteme": [asdict(x) for x in self.koordinatensysteme.values()]}
+               if getattr(self, "koordinatensysteme", None) else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -10374,6 +10523,10 @@ class Model:
         m.vorspann_definitionen = {x["name"]: _dc(VorspannDefinition, x)
                                    for x in d.get("vorspann_definitionen") or []
                                    if isinstance(x, dict) and x.get("name")}
+        # Dateien vor dem 08.11.2026 kennen sie nicht: keine
+        m.koordinatensysteme = {x["name"]: _dc(Koordinatensystem, x)
+                                for x in d.get("koordinatensysteme") or []
+                                if isinstance(x, dict) and x.get("name")}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck
@@ -10751,17 +10904,19 @@ NEUE_FELDER = {
     # stab/querlast (Bezug einer globalen Stab- bzw. Linienlast: "" = je
     # Stablaenge, "projektion" = je Laenge der Projektion; seit 14.10.2026)
     "load_cases.beam_loads": {"bezugslaenge": ""},
-    "load_cases.linienlasten": {"bezugslaenge": ""},
+    "load_cases.linienlasten": {"bezugslaenge": "", "ks": ""},
     # import/gewoelbt (Lasten in lokalen Achsen gewoelbter Flaechen und
     # zylindrische Flaechenachsen; seit 14.10.2026)
-    "load_cases.geometrielasten": {"lokal": {}},
+    "load_cases.geometrielasten": {"lokal": {}, "lastbezug": "", "achse": "", "ks": ""},
     # einleitung/kreisring (Einleitung starrer Scheiben ueber Kreisring, 16.10.2026)
     "flaechen": {"lokale_achsen": "", "achse_plus_x": [], "einleitung": {}},
     # stab/rbe3 (Modelleinstellung der Stabenden in Volumen); ansicht/ansichten
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
     # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
-    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": []},
+    "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": [],
+         # ui/paket-b (eigene Koordinatensysteme, 08.11.2026)
+         "koordinatensysteme": []},
 }
 
 #: Neue Felder, deren Vorgabe sich spaeter geaendert hat, mit der frueheren

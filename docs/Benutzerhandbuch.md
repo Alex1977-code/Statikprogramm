@@ -4408,9 +4408,11 @@ Zwangsverformungen die Verschiebung. Die **Einheiten** der gezeichneten
 Lastarten stehen oben links in eckigen Klammern unter dem Lastfall, etwa
 „[kN, kN/m, kN/m²]“ - in den Einheiten aus *Ansicht → Einheiten*
 (Vorgabe kN, kNm, kN/m, kN/m², K und mm). Der Schalter
-*Ansicht → Anzeigen ▾ → Lastwerte* blendet die Zahlen aus; die Textgröße
+*Ansicht → Anzeigen ▾ → Lasten beschriften* blendet die Zahlen aus; die Textgröße
 folgt den Bemaßungseinstellungen. Bei sehr vielen gleichartigen Lasten
-werden höchstens 60 je Lastart beschriftet.
+werden höchstens 60 je Lastart beschriftet. Seit 08.11.2026 heißt der
+Schalter *Lasten beschriften* und schreibt die Einheit an jede Zahl (siehe
+„Lastbezug und eigene Koordinatensysteme“).
 
 ### Einheiten und Genauigkeiten
 
@@ -6078,8 +6080,8 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Last | Ziel | Maske | Was sie kann |
 |---|---|---|---|
 | Knotenlast | gewählte Knoten | Kräfte F_x…F_z [kN], Momente M_x…M_z [kNm] | — |
-| Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, global oder lokal, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
-| Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
+| Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, Bezug global, lokal oder ein **eigenes Koordinatensystem**, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
+| Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], **Bezug** (global, lokal, eigenes Koordinatensystem; Vorgabe global Z) und Achse, auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
 | Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v, F_soll bzw. P₀ [kN], Verankerungsschlupf Δs [mm], Gruppe beim Spannen, Achse (Volumen) | als eingeprägte Dehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Endvorspannung (bleibend nach dem Verankern)** (nur Stäbe, seit 13.10.2026, bis 14.10.2026 „Sollkraft nach Verankerung“): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; als **Anfangsvorspannung (Pressenkraft P₀)** (nur Stäbe, seit 14.10.2026): die Presse spannt mit P₀, nach dem Verankern fehlen der Schlupf Δs und die elastischen Verluste; **Umwandeln** einer RFEM-Vorspannung (eingeprägte Dehnung, ΔT) in die Endvorspannung |
@@ -6217,6 +6219,48 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   freien Namen („DIN LF1.1 2“), und das Protokoll sagte es.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Lastbezug und eigene Koordinatensysteme (seit 08.11.2026)
+
+**Lastbezug: global, lokal oder eigenes Koordinatensystem.** Eine neue
+Flächenlast hat ein Feld *Bezug* und ein Feld *Achse*; p wirkt positiv in
+Richtung der gewählten Achse. Die Vorgabe ist **global Z** mit p = −5 kN/m²:
+zeigt Z nach oben, wirkt die Last nach unten. *Lokal* meint die Achsen der
+Fläche (z bei einer Schale die Elementnormale, die dem Umlauf der Randlinien
+folgt, an der Randfläche eines Volumens die Außennormale; x die globale
+X-Achse in die Fläche projiziert, bei einer Fläche quer zu X die Y-Achse;
+y = z × x). Ein **eigenes Koordinatensystem** legt man im Modellbaum unter
+*Eigenschaften → Koordinatensysteme* an („+ Koordinatensystem anlegen“):
+Name, Ursprung und entweder drei Drehwinkel (um Z, dann um die neue y-, dann
+um die neue x-Achse) oder drei Punkte (Ursprung, ein Punkt auf der x-Achse,
+ein Punkt in der xy-Ebene). Flächenlasten (Achse x, y, z) und Linienlasten
+(q_x, q_y, q_z in seinen Achsen) können sich darauf beziehen; gelöscht werden
+kann es nur, solange keine Last darauf verweist – sonst nennt der Hinweis die
+Lasten. Warum: bis dahin wirkte die Flächenlast immer *senkrecht zur Fläche*,
+und bei einer Schale hing das Vorzeichen am Umlaufsinn ihres Randes, den man
+nicht sieht („−5 kN/m² … die Fläche verformt sich nach oben“). **Bestehende
+Lasten und alte Dateien bleiben, wie sie waren**: ohne Bezug wirkt eine Last
+wie bisher, und eine Datei ohne die neuen Felder wird Zeichen für Zeichen
+gleich wieder gespeichert. Die bisherige Richtung bleibt in der Maske als
+„senkrecht zur Fläche (wie bisher, positiv drückt hinein)“ wählbar; bei einer
+Schale wirkt sie in Richtung der Elementnormalen. *Ansicht → Anzeigen ▾ →
+Flächenachsen* zeigt die lokalen Achsen jeder Fläche als Pfeile x (rot),
+y (grün), z (blau). Geprüft in `tests/test_paket_b.py`.
+
+**Lasten im Bild, druckfähig.** Eine Flächenlast ist ein **Pfeilfeld** über
+die ganze Fläche (höchstens 49 Pfeile je Fläche) mit der durchscheinenden
+Lastfläche an den Pfeilenden und deren **Umriss** als Linie; eine Linienlast
+eine **Pfeilreihe** mit einer Linie an den Pfeilenden. Jede Lastart hat ihren
+eigenen Maßstab – die größte Knotenlast, die größte Strecken- und die größte
+Flächenlast bekommen je die volle Pfeillänge (vorher teilten sich Kräfte in kN
+und Flächenlasten in kN/m² einen Maßstab, und 100 kN am Knoten ließen
+5 kN/m² verschwinden). Die Pfeile zeigen die Richtung, **mit der gerechnet
+wird**: vernetzt nehmen sie die Elementlasten der Fläche (vorher zeigte die
+Ansicht eine Schalen-Flächenlast ohne Bezug gegen die Normale, gerechnet wurde
+mit ihr). *Ansicht → Anzeigen ▾ → Lasten beschriften* (bis 08.11.2026
+*Lastwerte*) schreibt den Wert **mit Einheit** und Dezimalkomma auf weißem
+Feld ans Ende des Pfeils, bei Flächenlasten mit Bezug mit Vorzeichen und Bezug
+(„−5 kN/m² (global Z)“) – so bleibt er im Bildexport und im Druck lesbar.
 
 ### Einwirkung nicht zugeordnet, Bemessungslastfall und Vorspannung (seit 13.10.2026)
 

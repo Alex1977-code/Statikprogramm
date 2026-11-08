@@ -1481,7 +1481,8 @@ class Report:
                 if l.von or l.bis is not None:
                     abschnitt = f"{l.von:g} – " + (f"{l.bis:g} m" if l.bis is not None else "Ende")
                 rows.append([("Stab " if l.art == "stab" else "Linie ") + str(l.ziel),
-                             "global" if l.system == "global" else "lokal", abschnitt]
+                             "global" if l.system == "global" else
+                             (str(getattr(l, "ks", "")) if l.system == "ks" else "lokal"), abschnitt]
                             + [fmt(v / 1e3, 3) for v in l.q]
                             + ([fmt(v / 1e3, 3) for v in q2] if list(q2) != list(l.q)
                                else ["=", "=", "="])
@@ -1509,6 +1510,7 @@ class Report:
                 b.append(("note", note))
         gls = getattr(lc, "geometrielasten", None) or []
         druck = [g for g in gls if getattr(g, "lastart", "druck") != "temperatur"]
+        from ..lastbezug import bezug_text as _bezug_text
         if druck:
             rows = [["Ziel", "p [kN/m²]", "Verlauf", "Richtung", "Projektion", "Fenster",
                      "Elementlasten"]]
@@ -1521,7 +1523,9 @@ class Report:
                         for pt in P)
                 rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
                              fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
-                             (f"lokal {'xyz'[int(g.lokal.get('achse', 0))]} (Flächenachsen)"
+                             (_bezug_text(g.lastbezug, g.achse, g.ks)
+                              if getattr(g, "lastbezug", "") else
+                              f"lokal {'xyz'[int(g.lokal.get('achse', 0))]} (Flächenachsen)"
                               if getattr(g, "lokal", None) else
                               "senkrecht" if not g.richtung else
                               "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")"),
@@ -1529,8 +1533,12 @@ class Report:
                              g.bereich.get("art", "ja") if g.bereich else "–",
                              g.kommentar or "–"])
             rows, note = self._truncate(rows)
+            # mit Lastbezug (08.11.2026) wirkt p positiv in Richtung der Achse
+            mit_bezug = any(getattr(g, "lastbezug", "") for g in druck)
             b.append(("table", rows, f"Flächenlasten auf Flächen und Volumen, Lastfall {lc.name} "
-                                     "(p positiv drückt in den Körper)", None, ""))
+                                     + ("(p ohne Bezug positiv in den Körper, mit Bezug positiv in Richtung "
+                                        "der Achse)" if mit_bezug else "(p positiv drückt in den Körper)"),
+                      None, ""))
             if note:
                 b.append(("note", note))
         warm = [g for g in gls if getattr(g, "lastart", "druck") == "temperatur"]

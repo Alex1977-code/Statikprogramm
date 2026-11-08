@@ -2636,8 +2636,25 @@ FARBE_LAST_HERVOR = "#ffb000"   # die angeklickte Last
 PFEILE_MAX = 6000
 
 
-def _pfeile(plotter, pts, vec, size: float, name: str, farbe: str = FARBE_LAST):
-    """Pfeile, deren Spitze auf dem Angriffspunkt steht; Laenge nach Betrag."""
+#: Laenge des groessten Lastpfeils je Lastart, als Anteil der Modellgroesse
+#: (Oberflaechenpaket B, 08.11.2026: „die Lasten müssen viel deutlicher im
+#: viewport erkennbar sein“; bis dahin 0,06 fuer alle Lasten zusammen)
+LASTPFEIL_LAENGE = 0.09
+
+
+def _pfeilform():
+    """Ein kraeftiger Pfeil fuer Lasten: dicker Schaft, breite Spitze - im
+    Druck auf A4 noch als Pfeil lesbar (vtk-Vorgabe: Schaft 0,03, Spitze 0,1)."""
+    return pv.Arrow(start=(0.0, 0.0, 0.0), direction=(1.0, 0.0, 0.0), tip_length=0.3,
+                    tip_radius=0.11, shaft_radius=0.04)
+
+
+def _pfeile(plotter, pts, vec, size: float, name: str, farbe: str = FARBE_LAST,
+            groesst: float = None, laenge: float = 0.06, kraeftig: bool = False):
+    """Pfeile, deren Spitze auf dem Angriffspunkt steht; Laenge nach Betrag.
+
+    ``groesst``: der Betrag, der die volle Laenge ``laenge`` · size bekommt
+    (sonst der groesste Eintrag); ``kraeftig`` nimmt die dicke Pfeilform."""
     if not len(pts):
         return
     P = np.asarray(pts, float).reshape(-1, 3)
@@ -2645,11 +2662,13 @@ def _pfeile(plotter, pts, vec, size: float, name: str, farbe: str = FARBE_LAST):
     if len(P) > PFEILE_MAX:
         wahl = np.linspace(0, len(P) - 1, PFEILE_MAX).astype(int)
         P, V = P[wahl], V[wahl]
-    groesst = float(np.abs(V).max()) or 1.0
-    V = V / groesst * 0.06 * size
+    groesst = float(groesst) if groesst else (float(np.abs(V).max()) or 1.0)
+    V = V / groesst * laenge * size
     pd = pv.PolyData(P - V)
     pd["v"] = V
-    plotter.add_mesh(pd.glyph(orient="v", scale="v", factor=1.0), color=farbe, name=name)
+    glyphen = (pd.glyph(orient="v", scale="v", factor=1.0, geom=_pfeilform()) if kraeftig
+               else pd.glyph(orient="v", scale="v", factor=1.0))
+    plotter.add_mesh(glyphen, color=farbe, name=name)
 
 
 #: Farbe der freien Bewegungen (Singularitaeten) - dasselbe Warnorange wie
@@ -3272,9 +3291,18 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
     arten: list = []
     texte: dict = {}            # Lastart -> [(Punkt, Text)]
     hervor = {(str(a), int(b)) for a, b in (hervor or ())}
-    h_pts, h_vec, h_punkte = [], [], []
+    h_pts, h_vec, h_punkte, h_art = [], [], [], []
+    # Lastpfeile je Lastart fuer sich bemessen (Oberflaechenpaket B, 08.11.2026):
+    # bis dahin teilten sich Knotenlasten [N], Strecken- [N/m] und Flaechenlasten
+    # [N/m²] einen Massstab - 100 kN am Knoten liessen 5 kN/m² verschwinden
+    pfeilart: list = []
 
-    def merke(liste, k, punkt, vec_=None):
+    def pfeil(punkt, v_, art_):
+        pts.append(np.asarray(punkt, float))
+        vec.append(np.asarray(v_, float))
+        pfeilart.append(art_)
+
+    def merke(liste, k, punkt, vec_=None, art_=""):
         """Ein Lastsymbol fuer den Klick merken - und hervorheben, wenn gewaehlt."""
         if merker is not None:
             merker.append((liste, int(k), np.asarray(punkt, float)))
@@ -3282,17 +3310,26 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             if vec_ is not None:
                 h_pts.append(np.asarray(punkt, float))
                 h_vec.append(np.asarray(vec_, float))
+                h_art.append(art_)
             else:
                 h_punkte.append(np.asarray(punkt, float))
 
-    def merken(art, punkt, text):
+    def merken(art, punkt, text, versatz=None):
+        """Einen Lastwert zum Beschriften merken; ``versatz`` (der Lastvektor)
+        setzt die Zahl ans Ende des Pfeils statt auf den Angriffspunkt."""
         if art not in arten:
             arten.append(art)
-        texte.setdefault(art, []).append((np.asarray(punkt, float), text))
+        texte.setdefault(art, []).append((np.asarray(punkt, float), text, versatz))
 
     def lz(wert_si, art):
         """Lastgroesse (SI) als kurze Zahl in der eingestellten Einheit."""
         return eh.zahl(abs(float(wert_si)), LASTARTEN[art], eh.nk_last)
+
+    def lz_vz(wert_si, art):
+        """Wie lz, mit Vorzeichen (Lasten mit Bezug: das Vorzeichen sagt die
+        Richtung zur Achse)."""
+        s = eh.zahl(abs(float(wert_si)), LASTARTEN[art], eh.nk_last)
+        return ("−" + s) if float(wert_si) < 0 and s.strip("0.,") else s
 
     def spanne(a_si, b_si, art, pfeil="→"):
         return lz(a_si, art) if abs(a_si - b_si) < 1e-9 * max(1.0, abs(a_si)) \
@@ -3305,10 +3342,9 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             continue
         f = np.asarray(l.F[:3], float)
         if np.any(f) and 0 <= int(l.node) < model.nn:
-            pts.append(model.nodes[int(l.node)])
-            vec.append(f)
+            pfeil(model.nodes[int(l.node)], f, "kraft")
             merken("kraft", model.nodes[int(l.node)], lz(np.linalg.norm(f), "kraft"))
-            merke("nodal_loads", k_l, model.nodes[int(l.node)], f)
+            merke("nodal_loads", k_l, model.nodes[int(l.node)], f, "kraft")
         mo = np.asarray(l.F[3:6], float) if len(l.F) >= 6 else np.zeros(3)
         if np.any(mo) and 0 <= int(l.node) < model.nn:
             merken("moment", model.nodes[int(l.node)], lz(np.linalg.norm(mo), "moment"))
@@ -3333,9 +3369,8 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             x = a + t * (b - a)
             q = (1 - t) * q1 + t * q2
             if np.any(q):
-                pts.append(X[0] + (x / L) * (X[-1] - X[0]))
-                vec.append(q)
-                merke("beam_loads", k_l, pts[-1], q)
+                pfeil(X[0] + (x / L) * (X[-1] - X[0]), q, "strecke")
+                merke("beam_loads", k_l, pts[-1], q, "strecke")
         if np.any(q1) or np.any(q2):
             merken("strecke", X[0] + (0.5 * (a + b) / L) * (X[-1] - X[0]),
                    spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke"))
@@ -3349,21 +3384,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                 or int(fl.elem) in weg_e:
             continue
         mitte = model._seitenmitte(fl.elem, fl.face)
-        if fl.direction is not None:
-            d = np.asarray(fl.direction, float)
-            d = d / (np.linalg.norm(d) or 1.0)
-        else:
-            n = model._seitennormale(fl.elem, fl.face)
-            if n is None:
-                e = model.elements[fl.elem]
-                X = model.nodes[e.nodes]
-                n = np.cross(X[1] - X[0], X[2] - X[0])
-                n = n / (np.linalg.norm(n) or 1.0)
-            d = -n            # positiv drueckt in den Koerper hinein
-        pts.append(mitte)
-        vec.append(d * fl.p)
+        d = _seitenlast_richtung(model, fl)
+        pfeil(mitte, d * fl.p, "flaeche")
         merken("flaeche", mitte, lz(fl.p, "flaeche"))
-        merke("face_loads", k_l, mitte, d * fl.p)
+        merke("face_loads", k_l, mitte, d * fl.p, "flaeche")
         e = model.elements[fl.elem]
         seiten_e = SOLID_FACES.get(e.typ)
         if seiten_e:
@@ -3373,6 +3397,19 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             ecken = [int(x) for x in e.nodes[:n_eck]]
         patches.append((model.nodes[ecken], d, float(fl.p)))
     # ---- Objektlasten auf der Geometrie -------------------------------------
+    # die gerechneten Elementlasten jeder Objektlast (Model.lasten_verteilen
+    # haengt die Quelle an): so zeigt das Bild die Richtung, mit der gerechnet wird
+    abgeleitet: dict = {}
+    for fl in case.face_loads:
+        q_ = getattr(fl, "_geo_quelle", None)
+        if q_ is not None and getattr(fl, "_geo", False):
+            abgeleitet.setdefault(id(q_), []).append(fl)
+    n_geo_flaechen = sum(1 for gl_ in (getattr(case, "geometrielasten", []) or [])
+                         for _ in ([gl_.ziel] if gl_.art == "flaeche"
+                                   else (model.koerper[gl_.ziel].flaechen if gl_.ziel in model.koerper else [])))
+    #: Pfeile je Flaeche: ein Pfeilfeld, zusammen hoechstens PFEILE_MAX
+    je_flaeche = int(max(6, min(FELDPFEILE_MAX, PFEILE_MAX // max(1, n_geo_flaechen))))
+    umriss_pts, umriss_lines = [], []
     warm, kalt = [], []
     rahmen_pts, rahmen_lines = [], []
     for k_l, gl in enumerate(getattr(case, "geometrielasten", []) or []):
@@ -3413,43 +3450,29 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                 for m_ in mitten:
                     merke("geometrielasten", k_l, m_)
                 continue
-            if gl.richtung:
-                d = np.asarray(gl.richtung, float)
-                d = d / (np.linalg.norm(d) or 1.0)
-                D = np.repeat(d[None, :], len(mitten), axis=0)
-                if gl.projiziert:
-                    # nur die zugewandten Seiten tragen die Last
-                    c = normalen @ d
-                    halten = c < 0
-                    mitten, D = mitten[halten], D[halten]
-                    if not len(mitten):
-                        continue
-            else:
-                D = -normalen       # positiv drueckt hinein
-            # die Lastflaeche: jedes Vieleck der Flaeche, das die Last trifft
-            for Q in flaechenpolygone(model, f, raender, seiten):
-                c_q = Q.mean(axis=0)
-                if gl.bereich and not gl.trifft(c_q):
-                    continue
-                n_q = _polygonnormale(Q)
-                if gl.richtung:
-                    d_q = np.asarray(gl.richtung, float)
-                    d_q = d_q / (np.linalg.norm(d_q) or 1.0)
-                    if gl.projiziert and float(n_q @ d_q) >= 0:
-                        continue
-                else:
-                    d_q = -n_q
-                p_q = gl.wert(c_q) if getattr(gl, "verlauf", None) else gl.p
+            feld = _pfeilfeld(model, gl, f, abgeleitet.get(id(gl), []), raender, seiten, size, je_flaeche)
+            if feld is None:
+                continue
+            F_pts, F_dir, F_p, polys = feld
+            for Q, d_q, p_q in polys:
                 patches.append((Q, d_q, float(p_q)))
             werte = []
-            for m_, d_ in zip(mitten, D):
-                p = gl.wert(m_) if getattr(gl, "verlauf", None) else gl.p
-                pts.append(m_)
-                vec.append(d_ * p)
+            for m_, d_, p in zip(F_pts, F_dir, F_p):
+                pfeil(m_, d_ * p, "flaeche")
                 werte.append(float(p))
-                merke("geometrielasten", k_l, m_, d_ * p)
+                merke("geometrielasten", k_l, m_, d_ * p, "flaeche")
             if werte:
-                merken("flaeche", mitten.mean(axis=0), spanne(min(werte), max(werte), "flaeche", "…"))
+                # die Zahl am Pfeil in der Mitte des Feldes, ausserhalb der Lastflaeche
+                j_ = int(np.argmin(np.linalg.norm(F_pts - F_pts.mean(axis=0), axis=1)))
+                if getattr(gl, "lastbezug", ""):
+                    from ..lastbezug import bezug_text
+                    t_ = (spanne(min(werte), max(werte), "flaeche", "…") if gl.verlauf
+                          else lz_vz(gl.p, "flaeche"))
+                    t_ = f"{t_} {eh.einheit('flaechenlast')} ({bezug_text(gl.lastbezug, gl.achse, gl.ks)})"
+                else:
+                    t_ = spanne(min(werte), max(werte), "flaeche", "…") + f" {eh.einheit('flaechenlast')}"
+                merken("flaeche", F_pts[j_], t_, versatz=F_dir[j_] * F_p[j_])
+    lastlinien: list = []        # je Linienlast die Pfeile der Reihe (Linie an den Enden)
     for k_l, ll in enumerate(getattr(case, "linienlasten", []) or []):
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1
@@ -3487,14 +3510,28 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         B_ = gesamt if ll.bis is None else min(float(ll.bis), gesamt)
         if B_ <= A_ or gesamt <= 0:
             continue
-        n_pfeile = max(4, min(40, int(gesamt / max(size, 1e-9) * 40)))
+        # Pfeilreihe: Abstand etwa ein Drittel der Pfeillaenge - dichter liefen die
+        # kraeftigen Pfeile ineinander (08.11.2026; bis dahin bis 40 je Last)
+        n_pfeile = max(4, min(30, int(gesamt / max(0.035 * size, 1e-9))))
         # Beschriftung in der Mitte des belasteten Abschnitts
         mitte_s = 0.5 * (A_ + B_)
         lauf = 0.0
+        if ll.system == "ks":
+            # q in den Achsen eines eigenen Koordinatensystems (08.11.2026)
+            k_ = (getattr(model, "koordinatensysteme", None) or {}).get(getattr(ll, "ks", ""))
+            if k_ is None:
+                continue
+            R_ = np.asarray(k_.achsen(), float)
+            q1, q2 = R_.T @ q1, R_.T @ q2
+        reihe = []
         for (A, B, roll), L in zip(stuecke, laengen):
             if lauf <= mitte_s <= lauf + L and L > 0:
+                q_m = 0.5 * (q1 + q2)
                 merken("strecke", A + (mitte_s - lauf) / L * (B - A),
-                       spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke"))
+                       spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke")
+                       + f" {eh.einheit('strecke')}"
+                       + (f" ({ll.ks})" if ll.system == "ks" else ""),
+                       versatz=q_m if np.any(q_m) else None)
                 break
             lauf += L
         s0 = 0.0
@@ -3512,24 +3549,57 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                     T3, _ = bm.local_axes(A, B, roll)
                     q = T3.T @ q
                 if np.any(q):
-                    pts.append(A + (x - s0) / L * (B - A))
-                    vec.append(q)
-                    merke("linienlasten", k_l, pts[-1], q)
+                    pfeil(A + (x - s0) / L * (B - A), q, "strecke")
+                    reihe.append(len(pts) - 1)
+                    merke("linienlasten", k_l, pts[-1], q, "strecke")
             s0 += L
+        if len(reihe) >= 2:
+            lastlinien.append(reihe)
+    # je Lastart der groesste Betrag: er bekommt die volle Pfeillaenge
+    groesst_je: dict = {}
+    for v_, a_ in zip(vec, pfeilart):
+        groesst_je[a_] = max(groesst_je.get(a_, 0.0), float(np.linalg.norm(v_)))
+
+    def laenge_von(v_, a_) -> np.ndarray:
+        """Der gezeichnete Pfeil (Vektor in m) zum Lastvektor v_ der Lastart a_."""
+        g_ = groesst_je.get(a_) or float(np.linalg.norm(v_)) or 1.0
+        return np.asarray(v_, float) / g_ * LASTPFEIL_LAENGE * size
+
     if patches:
-        # Lastflaeche an den Pfeilenden: dieselbe Laengenregel wie _pfeile,
-        # damit Pfeilspitze auf der Flaeche steht und Pfeilende in der Lastflaeche
-        groesst = float(np.abs(np.asarray(vec, float)).max()) if len(vec) else 1.0
+        # Lastflaeche an den Pfeilenden: dieselbe Laengenregel wie die Pfeile,
+        # damit Pfeilspitze auf der Flaeche steht und Pfeilende in der Lastflaeche;
+        # dazu ihr Umriss als Linie - durchscheinend allein geht im Druck unter
+        g_fl = groesst_je.get("flaeche") or 1.0
         pkt, zellen = [], []
         for Q, d_q, p_q in patches:
-            L_q = abs(p_q) / (groesst or 1.0) * 0.06 * size
-            Q_off = np.asarray(Q, float) - np.asarray(d_q, float) * L_q
+            L_q = abs(p_q) / g_fl * LASTPFEIL_LAENGE * size
+            Q_off = np.asarray(Q, float) - np.asarray(d_q, float) * np.sign(p_q or 1.0) * L_q
             basis = len(pkt)
             pkt.extend(Q_off.tolist())
             zellen.extend([len(Q_off), *range(basis, basis + len(Q_off))])
+            b_u = len(umriss_pts)
+            umriss_pts.extend(Q_off.tolist())
+            for j in range(len(Q_off)):
+                umriss_lines.extend([2, b_u + j, b_u + (j + 1) % len(Q_off)])
         plotter.add_mesh(pv.PolyData(np.asarray(pkt, float), faces=np.asarray(zellen, int)),
                          color=FARBE_LAST, opacity=0.3, name="flaechenlasten")
-    _pfeile(plotter, pts, vec, size, "loads")
+    if umriss_pts and len(umriss_pts) <= 200000:
+        plotter.add_mesh(pv.PolyData(np.asarray(umriss_pts, float), lines=np.asarray(umriss_lines, int)),
+                         color=FARBE_LAST, line_width=2, name="lastumriss")
+    if lastlinien:
+        # Linienlast als Pfeilreihe mit einer Linie an den Pfeilenden
+        lp, ll_ = [], []
+        for reihe in lastlinien:
+            b_ = len(lp)
+            for j in reihe:
+                lp.append(pts[j] - laenge_von(vec[j], pfeilart[j]))
+            for j in range(len(reihe) - 1):
+                ll_.extend([2, b_ + j, b_ + j + 1])
+        plotter.add_mesh(pv.PolyData(np.asarray(lp, float), lines=np.asarray(ll_, int)),
+                         color=FARBE_LAST, line_width=3, name="lastlinien")
+    if pts:
+        V_n = [np.asarray(v_, float) / (groesst_je.get(a_) or 1.0) for v_, a_ in zip(vec, pfeilart)]
+        _pfeile(plotter, pts, V_n, size, "loads", groesst=1.0, laenge=LASTPFEIL_LAENGE, kraeftig=True)
     if rahmen_pts:
         plotter.add_mesh(pv.PolyData(np.asarray(rahmen_pts, float),
                                      lines=np.asarray(rahmen_lines)),
@@ -3574,7 +3644,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             zpts.append(X)
             zvec.append(u)
             merken("zwang", X, eh.zahl(np.linalg.norm(u), "zwang"))
-            merke("zwangsverformungen", k_l, X, u)
+            merke("zwangsverformungen", k_l, X, u, "zwang")
         if any(k in zv.dofs and zv.u[k] for k in (3, 4, 5)):
             ringe.append(X)
             if not np.any(u):
@@ -3598,8 +3668,8 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         Fv = float(v.kraft)
         vpts += [a, b]
         vvec += [-d * Fv, d * Fv]
-        merke("vorspannungen", k_l, a, -d * Fv)
-        merke("vorspannungen", k_l, b, d * Fv)
+        merke("vorspannungen", k_l, a, -d * Fv, "vorspannung")
+        merke("vorspannungen", k_l, b, d * Fv, "vorspannung")
         # die Sollkraft nach Verankerung (13.10.2026) als F_soll, die
         # Anfangsdehnung wie bisher als F_v
         # seit 14.10.2026 die Anfangsvorspannung als P0 mit Schlupf
@@ -3611,25 +3681,256 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
     _pfeile(plotter, vpts, vvec, size, "vorspannung", FARBE_VORSPANNUNG)
     # ---- die angeklickte Last: dieselben Symbole in der Hervorhebungsfarbe ----
     if h_pts:
-        _pfeile(plotter, h_pts, h_vec, size, "last_hervor", FARBE_LAST_HERVOR)
+        # im selben Massstab wie die gezeichneten Pfeile (je Lastart)
+        g_z = max([float(np.linalg.norm(x)) for x in zvec] or [0.0]) or 1.0
+        g_v = max([float(np.linalg.norm(x)) for x in vvec] or [0.0]) or 1.0
+        H = []
+        for v_, a_ in zip(h_vec, h_art):
+            g_ = groesst_je.get(a_) or {"zwang": g_z, "vorspannung": g_v}.get(a_) or 1.0
+            H.append(np.asarray(v_, float) / g_)
+        _pfeile(plotter, h_pts, H, size, "last_hervor", FARBE_LAST_HERVOR, groesst=1.0,
+                laenge=LASTPFEIL_LAENGE, kraeftig=True)
     if h_punkte:
         plotter.add_points(np.asarray(h_punkte, float), color=FARBE_LAST_HERVOR, point_size=16,
                            render_points_as_spheres=True, name="last_hervor_punkte")
     # ---- Lastwerte als Zahlen ----------------------------------------------
     if beschriften and texte:
+        # „Lasten beschriften“ (Oberflaechenpaket B, 08.11.2026): Wert mit
+        # Einheit und Dezimalkomma, nie wissenschaftlich, auf weissem Feld am
+        # Ende des Pfeils - so bleibt er im Bildexport und im Druck lesbar
         punkte, zeilen = [], []
         for art, liste in texte.items():
             if len(liste) > LASTWERTE_MAX:
                 wahl = np.linspace(0, len(liste) - 1, LASTWERTE_MAX).astype(int)
                 liste = [liste[i] for i in wahl]
-            for q, s in liste:
+            einheit = eh.einheit(LASTARTEN[art]) if art in LASTARTEN else ""
+            for q, s, versatz in liste:
+                if versatz is not None and art in groesst_je:
+                    q = q - 1.08 * laenge_von(versatz, art)
+                s = lastzahl_komma(s)
+                if einheit and einheit not in s:
+                    s = f"{s} {einheit}"
                 punkte.append(q)
                 zeilen.append(s)
         if punkte:
-            plotter.add_point_labels(np.asarray(punkte, float), zeilen, font_size=int(textgroesse),
-                                     text_color=FARBE_LAST, shape=None, show_points=False,
+            plotter.add_point_labels(np.asarray(punkte, float), zeilen, font_size=max(11, int(textgroesse) + 1),
+                                     text_color=FARBE_LAST, shape="rounded_rect", shape_color="white",
+                                     shape_opacity=0.85, bold=True, show_points=False,
                                      always_visible=True, name="lastwerte")
     return [eh.einheit(LASTARTEN[a]) for a in arten if a in LASTARTEN]
+
+
+#: Hoechstzahl der Pfeile im Pfeilfeld einer Flaeche
+FELDPFEILE_MAX = 49
+
+
+def lastzahl_komma(text: str) -> str:
+    """Dezimalpunkt einer Lastbeschriftung als Komma - nur zwischen Ziffern,
+    damit „5.25 kN/m²“ zu „5,25 kN/m²“ wird und ein Name wie „KS.1“ bleibt."""
+    import re
+    return re.sub(r"(?<=\d)\.(?=\d)", ",", str(text))
+
+
+def _seitenlast_richtung(model: Model, fl) -> np.ndarray:
+    """Einheitsvektor, in dem eine Elementseitenlast mit positivem p wirkt -
+    so, wie assemble.load_vector sie rechnet: mit Richtung in dieser, sonst bei
+    Schalen in Richtung der Elementnormalen (shell_face_load) und bei
+    Volumenseiten nach innen (solid_face_pressure).
+
+    Bis zum 08.11.2026 zeichnete die Ansicht auch bei Schalen „nach innen“,
+    also gegen die Normale - entgegen der Rechnung (Oberflaechenpaket B: „-5
+    kN/m² ... die fläche verformt sich nach oben“)."""
+    if fl.direction is not None:
+        d = np.asarray(fl.direction, float)
+        return d / (np.linalg.norm(d) or 1.0)
+    e = model.elements[int(fl.elem)]
+    if e.typ in EL.SCHALEN_TYPEN:
+        X = model.nodes[[int(k) for k in e.nodes[:3]]]
+        n = np.cross(X[1] - X[0], X[2] - X[0])
+        return n / (np.linalg.norm(n) or 1.0)
+    n = model._seitennormale(fl.elem, fl.face)
+    if n is None:
+        X = model.nodes[[int(k) for k in e.nodes[:3]]]
+        n = np.cross(X[1] - X[0], X[2] - X[0])
+        n = n / (np.linalg.norm(n) or 1.0)
+    return -np.asarray(n, float)
+
+
+def _punkte_im_vieleck(Q, abstand: float) -> np.ndarray:
+    """Rasterpunkte im ebenen Vieleck Q (k, 3) mit dem Abstand ``abstand`` -
+    mindestens der Schwerpunkt."""
+    Q = np.asarray(Q, float)
+    c = Q.mean(axis=0)
+    n = _polygonnormale(Q)
+    if not np.any(n) or abstand <= 0:
+        return c[None, :]
+    h = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    u = np.cross(n, h)
+    u /= np.linalg.norm(u)
+    w = np.cross(n, u)
+    xy = np.c_[(Q - c) @ u, (Q - c) @ w]
+    lo, hi = xy.min(axis=0), xy.max(axis=0)
+    gx = np.arange(lo[0] + 0.5 * ((hi[0] - lo[0]) % abstand), hi[0] + 1e-12, abstand)
+    gy = np.arange(lo[1] + 0.5 * ((hi[1] - lo[1]) % abstand), hi[1] + 1e-12, abstand)
+    if not len(gx) or not len(gy):
+        return c[None, :]
+    G = np.array([(a, b) for a in gx for b in gy], float)
+    # Strahlprobe (gerade Zahl von Kreuzungen = draussen)
+    innen = np.zeros(len(G), bool)
+    k = len(xy)
+    for j in range(k):
+        x1, y1 = xy[j]
+        x2, y2 = xy[(j + 1) % k]
+        kreuzt = ((y1 > G[:, 1]) != (y2 > G[:, 1]))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xs = x1 + (G[:, 1] - y1) * (x2 - x1) / (y2 - y1)
+        innen ^= kreuzt & (G[:, 0] < xs)
+    G = G[innen]
+    if not len(G):
+        return c[None, :]
+    return c + G[:, :1] * u + G[:, 1:2] * w
+
+
+def _pfeilfeld(model: Model, gl, f, abgeleitet: list, raender, seiten, size: float,
+               hoechstens: int):
+    """Das Pfeilfeld einer Flaechenlast auf der Flaeche ``f``: (Punkte (n, 3),
+    Richtungen (n, 3) als Einheitsvektoren, Werte p (n), [(Vieleck, Richtung,
+    p)] der Lastflaeche) - oder None.
+
+    Vernetzt nehmen Richtung und Wert die gerechnete Elementlast der naechsten
+    Seite der Flaeche (``abgeleitet``: die Elementlasten der Objektlast). Ohne
+    Netz gelten die Regeln von Model._geometrielast_legen auf dem Randvieleck."""
+    from ..lastbezug import (achsindex, ebenenachsen, globale_richtung, _flaeche_ist_rand)
+    polygone = flaechenpolygone(model, f, raender, seiten)
+    if gl.bereich:
+        polygone = [Q for Q in polygone if gl.trifft(np.asarray(Q, float).mean(axis=0))]
+    if not polygone:
+        return None
+    seiten_f = {(int(e), 0) for e in (f.elemente or [])} | \
+        {(int(e), int(s)) for e, s in (f.randseiten or [])}
+    eigene = [fl for fl in abgeleitet if (int(fl.elem), int(fl.face)) in seiten_f]
+    if eigene:
+        M = np.array([model._seitenmitte(fl.elem, fl.face) for fl in eigene], float)
+        Dm = np.array([_seitenlast_richtung(model, fl) for fl in eigene], float)
+        Pm = np.array([float(fl.p) for fl in eigene], float)
+
+        def am(punkte, _normale=None):
+            j = np.argmin(np.linalg.norm(M[None, :, :] - np.asarray(punkte, float)[:, None, :], axis=2), axis=1)
+            return Dm[j], Pm[j], np.ones(len(j), bool)
+    else:
+        rand = _flaeche_ist_rand(model, f) or gl.art != "flaeche"
+        bezug = str(getattr(gl, "lastbezug", "") or "")
+        fest = None
+        if bezug in ("global", "ks"):
+            fest = globale_richtung(model, bezug, gl.achse, gl.ks)
+            if fest is None:
+                return None
+        elif not bezug and gl.richtung:
+            fest = np.asarray(gl.richtung, float)
+            fest = fest / (np.linalg.norm(fest) or 1.0)
+        # Aussennormale am Rand eines Koerpers: vom Koerperschwerpunkt weg
+        koerper = [k for k in model.koerper.values() if f.name in (k.flaechen or [])]
+        schwer = None
+        if rand and koerper:
+            try:
+                schwer = np.concatenate([np.asarray(model.flaechen[x].randpunkte(model), float)
+                                         for x in koerper[0].flaechen if x in model.flaechen]).mean(axis=0)
+            except Exception:            # noqa: BLE001
+                schwer = None
+
+        def am(punkte, normale):
+            n_ = np.asarray(normale, float)
+            if rand and schwer is not None and float(n_ @ (np.mean(punkte, axis=0) - schwer)) < 0:
+                n_ = -n_                 # nach aussen
+            if fest is not None:
+                d_ = fest
+            elif bezug == "lokal":
+                d_ = ebenenachsen(n_)[achsindex(gl.achse)]
+            else:
+                d_ = -n_ if rand else n_  # wie bisher: Volumen nach innen, Schale mit der Normalen
+            P_ = np.asarray(punkte, float)
+            p_ = np.array([gl.wert(x) if gl.verlauf else float(gl.p) for x in P_], float)
+            ok = np.ones(len(P_), bool)
+            if gl.projiziert and fest is not None and bezug != "lokal":
+                if not rand:
+                    # wie die Rechnung: eine Schale hat keine Aussennormale
+                    # (Model._seitennormale), die projizierte Last trifft sie nicht
+                    ok[:] = False
+                else:
+                    c_ = float(n_ @ d_)
+                    if c_ >= 0:
+                        ok[:] = False       # Windschatten
+                    p_ = p_ * (-c_)
+            return np.repeat(np.asarray(d_, float)[None, :], len(P_), axis=0), p_, ok
+
+    flaeche_ges = sum(float(np.linalg.norm(_polygonflaeche_vektor(Q))) for Q in polygone) or 1.0
+    abstand = max(np.sqrt(flaeche_ges / max(1, hoechstens)), 0.02 * size)
+    P_all, D_all, p_all, polys = [], [], [], []
+    for Q in polygone:
+        Q = np.asarray(Q, float)
+        n_q = _polygonnormale(Q)
+        G = _punkte_im_vieleck(Q, abstand)
+        D, pw, ok = am(G, n_q)
+        if not ok.any():
+            continue
+        Dc, pc, okc = am(Q.mean(axis=0)[None, :], n_q)
+        if okc[0]:
+            polys.append((Q, Dc[0], float(pc[0])))
+        P_all.append(G[ok])
+        D_all.append(D[ok])
+        p_all.append(pw[ok])
+    if not P_all:
+        return None
+    P_all, D_all, p_all = np.concatenate(P_all), np.concatenate(D_all), np.concatenate(p_all)
+    nz = np.abs(p_all) > 0
+    P_all, D_all, p_all = P_all[nz], D_all[nz], p_all[nz]
+    if not len(P_all):
+        return None
+    if len(P_all) > hoechstens:
+        wahl = np.linspace(0, len(P_all) - 1, hoechstens).astype(int)
+        P_all, D_all, p_all = P_all[wahl], D_all[wahl], p_all[wahl]
+    return P_all, D_all, p_all, polys
+
+
+def _polygonflaeche_vektor(Q) -> np.ndarray:
+    Q = np.asarray(Q, float)
+    n = np.zeros(3)
+    for j in range(len(Q)):
+        n += np.cross(Q[j], Q[(j + 1) % len(Q)])
+    return 0.5 * n
+
+
+def add_flaechenachsen(plotter, model: Model, size: float, ausser_flaechen=None, hoechstens: int = 400):
+    """Die lokalen Achsen jeder Flaeche als kleine Pfeile x (rot), y (gruen),
+    z (blau) mit Buchstaben - dieselben Achsen, mit denen eine Last mit Bezug
+    „lokal“ rechnet (lastbezug.flaechenachsen_bild). Rueckgabe: Zahl der Flaechen."""
+    from ..lastbezug import flaechenachsen_bild
+    weg = set(ausser_flaechen or ())
+    namen = [n for n in model.flaechen if n not in weg][:hoechstens]
+    L = 0.07 * size
+    P, V = {0: [], 1: [], 2: []}, {0: [], 1: [], 2: []}
+    txt_p, txt = [], []
+    for n in namen:
+        r = flaechenachsen_bild(model, model.flaechen[n])
+        if r is None:
+            continue
+        mitte, *ax = r
+        for i in range(3):
+            P[i].append(mitte)
+            V[i].append(np.asarray(ax[i], float) * L)
+            txt_p.append(mitte + np.asarray(ax[i], float) * L * 1.25)
+            txt.append("xyz"[i])
+    if not txt:
+        return 0
+    for i, farbe in enumerate(("#d02020", "#20a020", "#2050d0")):
+        pd = pv.PolyData(np.asarray(P[i], float))
+        pd["v"] = np.asarray(V[i], float)
+        plotter.add_mesh(pd.glyph(orient="v", scale="v", factor=1.0, geom=_pfeilform()),
+                         color=farbe, name=f"flaechenachsen_{'xyz'[i]}")
+    plotter.add_point_labels(np.asarray(txt_p, float), txt, font_size=11, bold=True,
+                             text_color="#202020", shape=None, show_points=False,
+                             always_visible=True, name="flaechenachsen_text")
+    return len(txt) // 3
 
 
 def last_at(punkt, merker, size: float):

@@ -790,6 +790,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "kombinationen": "Kombination", "ermuedungslasten": "Ermüdungslast",
                  "vorspanndefinitionen": "Vorspannung je Anker",
                  "werkstoffe": "Werkstoff", "dicken": "Dicke",
+                 # eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026)
+                 "koordinatensysteme": "Koordinatensystem",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
                  "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager",
@@ -807,7 +809,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                       "querschnitt_neu": "querschnitte", "dicke_neu": "dicken",
                       "lager_neu": "lager", "linienlager_neu": "linienlager",
                       "flaechenlager_neu": "flaechenlager", "lastfall_neu": "lastfaelle",
-                      "kombination_neu": "kombinationen"}
+                      "kombination_neu": "kombinationen",
+                      "koordinatensystem_neu": "koordinatensysteme"}
     #: Kurzer Text der Zeile, wo der volle zu breit waere: die Lagerzeilen stehen
     #: eine Ebene tiefer, und „+ Knotenlager anlegen“ wurde bei 1366 x 768 schon
     #: abgeschnitten (tests.test_fensteraufteilung.test_baum_namen_lesbar). Welches
@@ -817,7 +820,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "ermuedungslast",
-                    "vorspanndefinition", "werkstoff", "dicke",
+                    "vorspanndefinition", "werkstoff", "dicke", "koordinatensystem",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln", "ansicht"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
@@ -831,6 +834,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
                  "ermuedungslast": "ermuedungslasten", "vorspanndefinition": "vorspanndefinitionen",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
+                 "koordinatensystem": "koordinatensysteme",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
                  "kontaktbedingung": "kontaktbedingungen",
                  "lager_einzeln": "lager", "linienlager_einzeln": "linienlager",
@@ -2309,6 +2313,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           f"{name}: t = {zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm")
                          for name, x in model.shells.items()], "dicke", "dicken")
         self._anlegen(dk, "dicke_neu")
+        # Eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026): Flaechen-
+        # und Linienlasten koennen sich auf sie beziehen
+        kss = getattr(model, "koordinatensysteme", None) or {}
+        ksz = self._zweig(eig, "Koordinatensysteme", len(kss), "koordinatensysteme",
+                          hinweis="Eigene Koordinatensysteme (Ursprung und Achsen); Flächen- und "
+                                  "Linienlasten können sich auf sie beziehen (Maske der Last, Feld "
+                                  "„Bezug“). Löschen geht nur, solange keine Last darauf verweist.")
+        self._liste(ksz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                          for name, x in kss.items()], "koordinatensystem", "koordinatensysteme")
+        self._anlegen(ksz, "koordinatensystem_neu")
 
         # ---- Lager und Verbindungen: Lager, Verbindungselemente, Gelenke,
         # Liniengelenke, Kontaktbedingungen --------------------------------
