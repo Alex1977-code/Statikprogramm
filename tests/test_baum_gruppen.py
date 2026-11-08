@@ -153,7 +153,8 @@ GRUPPEN_SOLL = ["Eigenschaften", "Geometrie", "Lager und Verbindungen", "Einwirk
                 "Hilfsobjekte"]
 #: Die Zweige je Gruppe am reichen Modell, in dieser Folge
 ZWEIGE_SOLL = {
-    "Eigenschaften": ["Werkstoffe", "Querschnitte", "Dicken"],
+    # seit dem 08.11.2026 dazu die eigenen Koordinatensysteme (Paket B Punkt 3)
+    "Eigenschaften": ["Werkstoffe", "Querschnitte", "Dicken", "Koordinatensysteme"],
     "Geometrie": ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"],
     "Lager und Verbindungen": ["Lager", "Verbindungen", "Gelenke", "Liniengelenke", "Kontaktbedingungen"],
     "Einwirkungen": ["Lastfälle", "Kombinationen", "Ermüdungslasten", "Lastgenerierer"],
@@ -238,8 +239,13 @@ def test_nichts_geht_verloren():
     check("jede frühere Zweigart steht noch im Baum", not fehlt, str(fehlt))
     neu = sorted(set(zweige) - ARTEN_VORHER)
     # dazu seit dem 14.10.2026 der Zweig „Ansichten“ mit „+ Ansicht speichern“ (Ansichtspaket C)
-    check("neu sind nur die Zählzeile „Netzknoten“ und die Ansichten (die Gruppen tragen die Art „modell“)",
-          neu == ["ansicht_neu", "ansichten", "netzknoten"], str(neu))
+    # und seit dem 08.11.2026 die Zeilen „+ … anlegen“ (Paket A Punkt 4)
+    from statik3d.gui.design import Modellbaum
+    # und der Zweig „Koordinatensysteme“ (Paket B Punkt 3, 08.11.2026)
+    erwartet = sorted({"ansicht_neu", "ansichten", "netzknoten", "koordinatensysteme"}
+                      | set(Modellbaum.ANLEGEN_ZEILEN))
+    check("neu sind nur die Zählzeile „Netzknoten“, die Ansichten und die Zeilen „+ … anlegen“ "
+          "(die Gruppen tragen die Art „modell“)", neu == erwartet, str(sorted(set(neu) ^ set(erwartet))))
     anders = {a: (n, len(eintraege.get(a, []))) for a, n in EINTRAEGE_VORHER.items()
               if len(eintraege.get(a, [])) != n}
     check("jede Eintragsart hat so viele Einträge wie vorher", not anders, str(anders))
@@ -385,16 +391,18 @@ def test_staebe_im_sinn_von_rfem():
           st is not None and _element(st)[0] == "staebe" and st.text(1) == str(len(m.members)),
           str(_element(st) if st is not None else None))
     namen = sorted(_element(k)[1] for k in _kinder(st) if _ist_eintrag(k)) if st is not None else []
-    check("… darunter genau die Stäbe, keine Stabelemente und keine Unterzweige",
-          st is not None and namen == sorted(m.members) and st.childCount() == len(m.members),
+    # dazu seit dem 08.11.2026 die Zeile „+ Stab anlegen“
+    check("… darunter genau die Stäbe, keine Stabelemente und keine Unterzweige (und „+ Stab anlegen“)",
+          st is not None and namen == sorted(m.members) and st.childCount() == len(m.members) + 1
+          and _element(st.child(st.childCount() - 1))[0] == "stab_neu",
           str(namen))
     netz = _zweig(b, "FE-Netz")
     se = _unter(netz, "Stabelemente")
     n_stab = [str(i) for i, e in enumerate(m.elements) if e.typ in ("beam", "truss", "seil")]
     check("FE-Netz → „Stabelemente“ (Art „stabelemente“) mit allen Stabelementen E…",
           se is not None and _element(se)[0] == "stabelemente"
-          and [_element(k)[1] for k in _kinder(se)] == n_stab
-          and all(k.text(0).startswith("E") for k in _kinder(se)),
+          and [_element(k)[1] for k in _kinder(se) if _element(k)[0] != "stabelement_neu"] == n_stab
+          and all(k.text(0).startswith("E") for k in _kinder(se) if _element(k)[0] != "stabelement_neu"),
           f"{se.childCount() if se is not None else None} von {len(n_stab)}")
     nw = _zweig(b, "Nachweise")
     check("die Schweißnähte stehen gebündelt unter „Nachweise“",
@@ -548,8 +556,10 @@ def test_zaehlzeile_kostet_keine_schleife():
           and id(kr._ZWISCHENSPEICHER[id(m)][1]) == vorher, str(len(kr._ZWISCHENSPEICHER)))
     kn = _zweig(b, "Knoten", "knoten")
     n_kons = len(kr.konstruktionsknoten(m))
-    check("der Zweig „Knoten“ baut nur so viele Zeilen, wie es Konstruktionsknoten gibt",
-          kn is not None and kn.childCount() == n_kons < m.nn, f"{kn.childCount() if kn else None} von {m.nn}")
+    # dazu seit dem 08.11.2026 die Zeile „+ Knoten anlegen“
+    check("der Zweig „Knoten“ baut nur so viele Zeilen, wie es Konstruktionsknoten gibt (und „+ Knoten anlegen“)",
+          kn is not None and kn.childCount() == n_kons + 1 and n_kons < m.nn,
+          f"{kn.childCount() if kn else None} von {m.nn}")
 
 
 def test_knoten_an_den_beispielen():

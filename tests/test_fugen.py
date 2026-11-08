@@ -1657,7 +1657,9 @@ def test_facettenspalt_bereinigt():
                                           (1, 0, 1), (1, 1, 1)]]
     boden = [b[0], b[1], b[2], b[3]]                    # Normale +z
     wand = [b[1], b[4], b[5], b[2]]                     # x = 1, Normale -x (zur Ecke hin)
-    lage = {"ecke": (0.95, 0.5, 0.001), "band": (0.5, 0.5, 0.00005),
+    # Berührungsband seit 08.11.2026 ein Millionstel des Suchradius (0,1 µm bei 0,1 m), bis
+    # dahin ein Tausendstel (0,1 mm): 0,05 µm liegen im Band, 0,05 mm sind ein Spalt
+    lage = {"ecke": (0.95, 0.5, 0.001), "band": (0.5, 0.5, 0.00000005), "band_alt": (0.5, 0.5, 0.00005),
             "offen": (0.5, 0.5, 0.0005), "hinter": (0.5, 0.5, -0.01)}
     ids = {k: int(m2.add_node(*v)) for k, v in lage.items()}
     m2.contact_pairs.append(ContactPair("Eben", slave_nodes=list(ids.values()),
@@ -1669,8 +1671,11 @@ def test_facettenspalt_bereinigt():
           abs(c.g0 - 0.001) < 1e-9 and abs(c.normal[2] - 1.0) < 1e-12,
           f"g0 = {c.g0 * 1e3:.6f} mm, n = {np.round(c.normal, 6).tolist()}")
     c = von[ids["band"]]
-    check("0,05 mm über dem Boden liegen im Berührungsband (ein Tausendstel des Suchradius): Spalt null",
+    check("0,05 µm über dem Boden liegen im Berührungsband (ein Millionstel des Suchradius): Spalt null",
           c.g0 == 0.0, f"g0 = {c.g0:.2e} m")
+    c = von[ids["band_alt"]]
+    check("… 0,05 mm (bis 08.11.2026 im Band) bleiben ein Spalt", abs(c.g0 - 0.00005) < 1e-12,
+          f"g0 = {c.g0 * 1e3:.4f} mm")
     c = von[ids["offen"]]
     check("0,5 mm bleiben offen", abs(c.g0 - 0.0005) < 1e-12, f"g0 = {c.g0 * 1e3:.4f} mm")
     c = von[ids["hinter"]]

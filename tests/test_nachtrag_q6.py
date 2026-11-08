@@ -82,12 +82,21 @@ def _mast(name="Mast") -> Model:
     return m
 
 
+def _fall(m, fall):
+    """Seit R2-C1 legt der Wind-Generator LF<Nr> mit der Bezeichnung „Wind <Name>“ an:
+    ein Name, den es nicht gibt, wird ueber die Bezeichnung gesucht."""
+    if fall is None or fall in m.load_cases:
+        return fall
+    treffer = [n for n, lc in m.load_cases.items() if getattr(lc, "bezeichnung", "") == fall]
+    return treffer[0] if len(treffer) == 1 else fall
+
+
 def _linienlasten(m, fall=None) -> list:
-    return list(m.case(fall).linienlasten)
+    return list(m.case(_fall(m, fall)).linienlasten)
 
 
 def _stab_elementlasten(m, fall=None) -> int:
-    return sum(1 for b in m.case(fall).beam_loads if getattr(b, "_geo", False))
+    return sum(1 for b in m.case(_fall(m, fall)).beam_loads if getattr(b, "_geo", False))
 
 
 # --------------------------------------------------------------------------
@@ -226,7 +235,9 @@ def test_n05_alte_datei():
     erst = (len(_linienlasten(m3, "Wind W")), _stab_elementlasten(m3, "Wind W"))
     for x in _linienlasten(m3, "Wind W"):
         x.kommentar, x.erzeuger = "6 Elementlasten", ""
-    wm.lasten_erzeugen(m3, Wind("W", zone=3, profil="II", richtung=[1, 0, 0], staebe=["Mast"]))
+    # derselbe Wind noch einmal (wie die Oberflaeche: das gespeicherte Objekt) - seit R2-C1
+    # legte ein neues Objekt ohne Lastfall einen zweiten LF<Nr> „Wind W“ an
+    wm.lasten_erzeugen(m3, m3.winde["W"])
     check("N05 Erkennung alter Dateien (Kontrolle): „6 Elementlasten“ ohne Merkmal wird weiter erkannt",
           (len(_linienlasten(m3, "Wind W")), _stab_elementlasten(m3, "Wind W")) == erst,
           f"{erst} -> {(len(_linienlasten(m3, 'Wind W')), _stab_elementlasten(m3, 'Wind W'))}")
@@ -575,8 +586,8 @@ def _halle_mit_anschluss():
     m = examples_lib.build_example("hall")
     e_kopf = m.members["Riegel"].elements[0]
     m.joints["K1"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, N=-50e3, Vz=150e3, My=300e3), "K1")
-    m.fatigue_loads["E1"] = FatigueLoad("E1", case_max="Kran", case_min="LF1", cycles=2e6)
-    m.fatigue_loads["E2"] = FatigueLoad("E2", case_max="S", case_min="LF1", cycles=2e6)
+    m.fatigue_loads["E1"] = FatigueLoad("E1", case_max="LF5", case_min="LF1", cycles=2e6)   # seit R2-C1: LF5 = Kran
+    m.fatigue_loads["E2"] = FatigueLoad("E2", case_max="LF2", case_min="LF1", cycles=2e6)    # LF2 = Schnee („S“)
     m.joints["K1"].ermuedung = []                  # leer heisst: alle Ermuedungslasten
     return m
 
@@ -605,7 +616,7 @@ def test_n22_browser_ermuedungslast():
     m = _halle_mit_anschluss()
     st = State(m)
     st.analysis = solver.solve_all(m, design=True, fatigue=True)
-    apply_op(st, {"op": "add_fatigue_load", "name": "E3", "case_max": "S", "case_min": "LF1", "cycles": 1e6})
+    apply_op(st, {"op": "add_fatigue_load", "name": "E3", "case_max": "LF2", "case_min": "LF1", "cycles": 1e6})
     an = st.analysis
     check("N22 add_fatigue_load: auch hier ist der Anschlussnachweis verworfen",
           an is None or an.joints is None, f"joints {getattr(an, 'joints', 0) is None}")

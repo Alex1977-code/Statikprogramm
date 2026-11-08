@@ -171,12 +171,12 @@ def test_ergebniszeile_gleich():
     spy_oben = QtTest.QSignalSpy(w.cb_result.currentIndexChanged)
     try:
         # oben rechts -> unten und Glasleiste
-        k = _index(w, "combo", "GZT7")
+        k = _index(w, "combo", "LK7")
         w.cb_result.setCurrentIndex(k)
         _ruhe()
-        check("oben rechts gewählt (Kombination GZT7): unten und Glasleiste zeigen sie",
+        check("oben rechts gewählt (Kombination LK7): unten und Glasleiste zeigen sie",
               cb.currentIndex() == k and cb.currentText() == w.cb_result.currentText()
-              and tuple(w.cb_lastwahl.currentData() or ()) == ("combo", "GZT7"),
+              and tuple(w.cb_lastwahl.currentData() or ()) == ("combo", "LK7"),
               f"unten {cb.currentText()[:30]!r}, Glasleiste {w.cb_lastwahl.currentData()}")
         # unten -> oben rechts und Glasleiste, genau einmal gefuellt
         gezaehlt["fuellen"] = 0
@@ -193,13 +193,13 @@ def test_ergebniszeile_gleich():
               f"Wechsel oben {spy_oben.count() - n0}, gefüllt {gezaehlt['fuellen']}")
         # Glasleiste -> oben und unten
         gl = w.cb_lastwahl
-        j = next(i for i in range(gl.count()) if tuple(gl.itemData(i) or ()) == ("combo", "GZT3"))
+        j = next(i for i in range(gl.count()) if tuple(gl.itemData(i) or ()) == ("combo", "LK3"))
         gezaehlt["fuellen"] = 0
         n0 = spy_oben.count()
         gl.setCurrentIndex(j)
         _ruhe()
-        check("in der Glasleiste gewählt (Kombination GZT3): oben rechts und unten folgen, einmal gefüllt",
-              w.cb_result.currentData() == ("combo", "GZT3") and cb.currentData() == ("combo", "GZT3")
+        check("in der Glasleiste gewählt (Kombination LK3): oben rechts und unten folgen, einmal gefüllt",
+              w.cb_result.currentData() == ("combo", "LK3") and cb.currentData() == ("combo", "LK3")
               and spy_oben.count() - n0 == 1 and gezaehlt["fuellen"] == 1,
               f"unten {cb.currentData()}, Wechsel {spy_oben.count() - n0}, gefüllt {gezaehlt['fuellen']}")
     finally:
@@ -285,9 +285,9 @@ def test_stabkraefte_umhuellende():
           and all(isinstance(t.modell.zeilen[0][namen.index(n)], float) for n in ("N min", "Mz max")),
           f"Fuß {t.fussmodell.rowCount()} Zeilen")
     # zurueck zu einer Kombination: die gewohnten Spalten, gefuellt aus beam_forces
-    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    w.cb_result.setCurrentIndex(_index(w, "combo", "LK7"))
     _ruhe()
-    r = an.combinations["GZT7"]
+    r = an.combinations["LK7"]
     e0 = sorted(r.beam_forces)[0]
     z = _zeile(t, e0)
     check("zurück zur Kombination: die Spalten des einzelnen Ergebnisses, N1 aus den Stabendkräften",
@@ -302,9 +302,9 @@ def test_auflager():
     w.tabelle_zeigen("Auflagerkräfte")
     _ruhe()
     t = w.tbl_react
-    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    w.cb_result.setCurrentIndex(_index(w, "combo", "LK7"))
     _ruhe()
-    r = an.combinations["GZT7"]
+    r = an.combinations["LK7"]
     knoten = sorted({s.node for s in w.model.supports})
     fuss = t.fussmodell.zeilen
     summe = fuss[-1] if fuss else []
@@ -442,10 +442,10 @@ def test_kombinationszelle():
     # ein Name ohne eigenes Ergebnis (Alternative einer Ergebniskombination)
     vorher = w.cb_result.currentIndex()
     n0 = len(w.meldungen)
-    w._ergebnis_aus_zelle("GZT1 [3]")
+    w._ergebnis_aus_zelle("LK1 [3]")
     _ruhe(6)
     check("ein Name ohne eigenes Ergebnis schaltet nicht und sagt es in der Statuszeile",
-          w.cb_result.currentIndex() == vorher and len(w.meldungen) > n0 and "GZT1 [3]" in w.meldungen[-1],
+          w.cb_result.currentIndex() == vorher and len(w.meldungen) > n0 and "LK1 [3]" in w.meldungen[-1],
           (w.meldungen[-1] if len(w.meldungen) > n0 else "")[:90])
 
 
@@ -651,19 +651,19 @@ def test_b03_filter_und_sortierung_bleiben():
                 kopf.sortIndicatorOrder() == QtCore.Qt.DescendingOrder,
                 int(t.filter.index(0, 0).data(QtCore.Qt.UserRole)) if t.sichtbar() else None)
     erwartet = ("> 4", True, soll, 0, True, 17)
-    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    w.cb_result.setCurrentIndex(_index(w, "combo", "LK7"))
     _ruhe()
     zur_kombination = stand()
     w.cb_result.setCurrentIndex(_index(w, "env", "ULS"))
     _ruhe()
     zurueck = stand()
-    check("B3: Umhüllende → GZT7 → Umhüllende mit Filter und absteigender Sortierung auf „Element“: beides bleibt",
-          zur_kombination == erwartet and zurueck == erwartet, f"GZT7 {zur_kombination}, zurück {zurueck}")
+    check("B3: Umhüllende → LK7 → Umhüllende mit Filter und absteigender Sortierung auf „Element“: beides bleibt",
+          zur_kombination == erwartet and zurueck == erwartet, f"LK7 {zur_kombination}, zurück {zurueck}")
     # die sortierte Spalte gibt es zur Kombination nicht: die Statuszeile sagt es
     t.view.sortByColumn(_namen(t).index("My max"), QtCore.Qt.DescendingOrder)
     _ruhe()
     n0 = len(w.meldungen)
-    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    w.cb_result.setCurrentIndex(_index(w, "combo", "LK7"))
     _ruhe()
     neu = w.meldungen[n0:]
     check("… fällt die sortierte Spalte weg („My max“), sagt die Statuszeile das",
@@ -691,7 +691,7 @@ def test_b04_meldung_bei_eigenformen():
     neu = w.meldungen[n0:]
     check(f"B4: Eigenformen gezeigt, Klick in Nachweise EC3 auf „{name}“: keine Meldung „kein einzeln "
           "gespeichertes Ergebnis“, sondern dass Eigenformen gezeigt werden",
-          name == "GZT4" and not any("kein einzeln gespeichertes Ergebnis" in x for x in neu)
+          name == "LK4" and not any("kein einzeln gespeichertes Ergebnis" in x for x in neu)
           and any("Eigen" in x and name in x for x in neu), str(neu)[:140])
     _F["hall"] = None
 
@@ -753,8 +753,8 @@ def _hall_ek():
     from statik3d.model import Combination
     m = hall_frame_example()
     m.combinations["EK1"] = Combination("EK1", {}, "ULS", alternativen=[
-        {"LF1": 1.35, "S": 1.5, "W_links": 0.9}, {"LF1": 1.0},
-        {"LF1": 1.0, "W_links": 1.5}, {"LF1": 1.35, "S": 1.5, "W_rechts": 0.9}])
+        {"LF1": 1.35, "LF2": 1.5, "LF3": 0.9}, {"LF1": 1.0},
+        {"LF1": 1.0, "LF3": 1.5}, {"LF1": 1.35, "LF2": 1.5, "LF4": 0.9}])
     return m
 
 
@@ -788,7 +788,7 @@ def test_b07_fuss_folgt_der_spalte():
     w = _fenster()
     _hall(w)
     w.tabelle_zeigen("Auflagerkräfte")
-    w.cb_result.setCurrentIndex(_index(w, "combo", "GZT7"))
+    w.cb_result.setCurrentIndex(_index(w, "combo", "LK7"))
     _ruhe()
     t = w.tbl_react
     kopf, fk = t.view.horizontalHeader(), t.fuss.horizontalHeader()
@@ -800,7 +800,7 @@ def test_b07_fuss_folgt_der_spalte():
     unter = [fm.data(fm.index(r, k_f), QtCore.Qt.DisplayRole) for r in range(fm.rowCount())]
     soll = [fm.data(fm.index(r, 3), QtCore.Qt.DisplayRole) for r in range(fm.rowCount())]
     gleich = all(fk.visualIndex(k) == kopf.visualIndex(k) for k in range(kopf.count()))
-    check("B7: Auflager GZT7, Rz an die zweite Stelle gezogen: darunter stehen Max, Min und Σ von Rz",
+    check("B7: Auflager LK7, Rz an die zweite Stelle gezogen: darunter stehen Max, Min und Σ von Rz",
           kopf.visualIndex(3) == 1 and k_f == 3 and unter == soll and gleich and len(soll) == 3,
           f"unter Rz steht Spalte {t.modell.spalten[k_f].name}: {unter} (Rz: {soll})")
     kopf.moveSection(1, 3)
@@ -840,8 +840,8 @@ def test_b09_auflager_nennen_kombination():
     tip = str(t.modell.data(q, QtCore.Qt.ToolTipRole))
     soll = env.names[int(env.r_min_src[0, 2])]
     _klicke(t, r, k)
-    check("B9: Auflager der Umhüllenden, Rz min an Knoten 0: Tooltip nennt GZT27, ein Klick schaltet auf GZT27",
-          soll == "GZT27" and "GZT27" in tip and w.cb_result.currentData() == ("combo", "GZT27"),
+    check("B9: Auflager der Umhüllenden, Rz min an Knoten 0: Tooltip nennt LK27, ein Klick schaltet auf LK27",
+          soll == "LK27" and "LK27" in tip and w.cb_result.currentData() == ("combo", "LK27"),
           f"Tooltip {tip!r}, danach {w.cb_result.currentData()}")
 
 
@@ -913,14 +913,14 @@ def test_b12_einblenden_oben_rechts():
     _huelle_zeigen(w)
     w.act_ergebnisse.setChecked(False)
     _ruhe()
-    i = _index(w, "combo", "GZT10")
+    i = _index(w, "combo", "LK10")
     # wie die Wahl in der Liste: erst der neue Eintrag, dann „activated“
     w.cb_result.setCurrentIndex(i)
     w.cb_result.activated.emit(i)
     _ruhe()
-    check("B12: Ergebnisse ausgeblendet, Wahl oben rechts (GZT10): eingeblendet, Glasleiste und unten gleich",
-          w.ergebnisse_sichtbar() and tuple(w.cb_lastwahl.currentData() or ()) == ("combo", "GZT10")
-          and w.cb_ergebnis_unten.currentData() == ("combo", "GZT10"),
+    check("B12: Ergebnisse ausgeblendet, Wahl oben rechts (LK10): eingeblendet, Glasleiste und unten gleich",
+          w.ergebnisse_sichtbar() and tuple(w.cb_lastwahl.currentData() or ()) == ("combo", "LK10")
+          and w.cb_ergebnis_unten.currentData() == ("combo", "LK10"),
           f"sichtbar {w.ergebnisse_sichtbar()}, Glasleiste {w.cb_lastwahl.currentData()}")
     w.act_ergebnisse.setChecked(True)
     _ruhe()

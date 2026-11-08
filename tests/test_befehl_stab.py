@@ -281,8 +281,11 @@ def test_stab_im_baum():
     app.processEvents()
     st = _zweig(w, "geometrie", "Stäbe")
     se = _zweig(w, "fe_netz", "Stabelemente")
-    staebe = [w.baum._schluessel(st.child(i)) for i in range(st.childCount())] if st is not None else []
-    elemente = [w.baum._schluessel(se.child(i)) for i in range(se.childCount())] if se is not None else []
+    # ohne die Zeilen „+ … anlegen“ (seit 08.11.2026)
+    staebe = [w.baum._schluessel(st.child(i)) for i in range(st.childCount())
+              if not w.baum._schluessel(st.child(i))[0].endswith("_neu")] if st is not None else []
+    elemente = [w.baum._schluessel(se.child(i)) for i in range(se.childCount())
+                if not w.baum._schluessel(se.child(i))[0].endswith("_neu")] if se is not None else []
     check("Der neue Stab steht unter Geometrie → Stäbe (S1)", staebe == [("stab", "S1")], str(staebe))
     check("… sein Element unter FE-Netz → Stabelemente (E0)", elemente == [("stabelement", "0")]
           and se.child(0).text(0) == "E0", str(elemente))

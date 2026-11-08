@@ -539,6 +539,9 @@ class _UeberhoehungValidator(zf.Zahlvalidator):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+        # Mausrad an Auswahllisten und Zahlenfeldern nur mit Fokus, in allen
+        # rollbaren Masken und Registern (08.11.2026, gui/masken.py)
+        msk.mausrad_nur_mit_fokus()
         # Gespeicherte Einstellungen (Loeser, Threads, MUMPS nachladen) vor
         # dem Aufbau der Register - die Auswahlfelder lesen sie beim Bauen
         parallel.einstellungen_laden()
@@ -4141,6 +4144,25 @@ class MainWindow(QtWidgets.QMainWindow):
             proben.append(("stab", lambda: self._objekt_am_zeiger("Stab") or vp.member_at(m, point)))
         if modus == "linie":
             proben.append(("linie", lambda: self._linie_am_zeiger() or vp.line_at(m, point, size)))
+        if modus == "knoten":
+            # der Knoten unter dem Zeiger, wie der Fang ihn findet - auch wenn der
+            # Knotenfang abgeschaltet ist (08.11.2026, Paket A Punkt 1)
+            def knoten_am_zeiger():
+                if not m.nn:
+                    return None
+                bild = getattr(self, "_bildlage", None)
+                treffer = self._naechster_am_zeiger(bild if bild is not None and len(bild) == m.nn
+                                                    else m.nodes)
+                return str(int(treffer[0])) if treffer is not None else None
+            proben.append(("knoten", knoten_am_zeiger))
+        if modus == "stabelement":
+            def stabelement_am_zeiger():
+                e = self._element_am_zeiger()
+                if e is None or not 0 <= int(e) < len(m.elements) \
+                        or m.elements[int(e)].typ not in vp.TYPEN_STAEBE:
+                    return None
+                return str(int(e))
+            proben.append(("stabelement", stabelement_am_zeiger))
         for art, finder in proben:
             try:
                 name = finder()
@@ -5157,6 +5179,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
         # im Register Ergebnisse, damit beide immer gleich stehen
         leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse", weicht=1)
+        # Zurueck auf die Grundstellung, wenn eine Stellung im Bild steht
+        # (08.11.2026, Paket A Punkt 8). Der Knopf steht nur dann da: die Leiste
+        # bleibt sonst bei ihren zwoelf Knoepfen (tests.test_glasleiste_ribbon)
+        self.act_grundstellung = QtGui.QAction("Grundstellung zeigen", self)
+        self.act_grundstellung.setToolTip("Grundstellung zeigen - keine Stellung ist im Bild "
+                                          "(eine Stellung im Modellbaum anklicken)")
+        self.act_grundstellung.setEnabled(False)
+        self.act_grundstellung.triggered.connect(lambda _c=False: self.stellung_zeigen(None))
+        leiste.knopf(self.act_grundstellung, "stellungen", "grundstellung").setVisible(False)
         leiste.trenner()
         # Seit 25.09.2026 (Paket 7) je Schar ein Menueknopf statt 20 Einzel-
         # knoepfen: die Leiste war 1133 px breit bei 1002 px Ansicht. Dieselben
@@ -5489,7 +5520,7 @@ class MainWindow(QtWidgets.QMainWindow):
     SCHNELLDREHEN_AB = 20000
     #: Darsteller, die beim Drehen eines grossen Modells kurz wegbleiben
     NEBENDARSTELLER = ("knoten", "knoten_frei", "linien", "geo_volumen", "geo_raender",
-                       "nlabels", "elabels", "loads", "lastfenster", "temp_warm",
+                       "nlabels", "elabels", "loads", "lastfenster", "lastumriss", "lastlinien", "temp_warm",
                        "temp_kalt", "zwang", "zwang_drehung", "undeformed_netz",
                        "undeformed_stabkoerper")
 
@@ -6161,8 +6192,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
         g = r.gruppe("Einstellungen")
         g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
-                hinweis="Analyseart, Nachweise und Fließen der Volumen; aufklappbar unter „Experten“: "
-                        "Gleichungslöser, Threads, Prozesse, Rechnerfarm")
+                hinweis="Grundeinstellungen (Analyseart, Nachweise); aufklappbar: Kontakt und "
+                        "Spannschritt, Plastizität, Gleichungslöser (Experte) mit Threads, Prozessen "
+                        "und Rechnerfarm")
         g.klein("Bedienung im Browser…", self.start_web_server,
                 hinweis="Web-Server starten - das Modell im Browser oder auf dem Handy bedienen")
 
@@ -6472,10 +6504,17 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "Ergebnis eines Lastfalls dessen eigene; bei Kombination oder "
                                    "Umhüllender nur mit Ergebnisse → Lasten im Ergebnisbild",
                                    symbol="lasten", schalter=True, an=True)
-        self.act_lastwerte = g.eintrag(menu, "Lastwerte", lambda z: self.redraw(), "",
-                                       "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
-                                       "oben links unter dem Lastfall", symbol="lasten",
-                                       schalter=True, an=True)
+        # „Lasten beschriften“ (Oberflaechenpaket B, 08.11.2026; bis dahin
+        # „Lastwerte“, Zahlen ohne Einheit): Wert mit Einheit und Dezimalkomma
+        self.act_lastwerte = g.eintrag(menu, "Lasten beschriften", lambda z: self.redraw(), "",
+                                       "Den Lastwert mit Einheit an jede Last schreiben (Dezimalkomma, "
+                                       "auf weißem Feld - lesbar auch im Bildexport und Druck); "
+                                       "Flächenlasten mit Bezug nennen ihn dazu (global Z, lokal z, KS …)",
+                                       symbol="lasten", schalter=True, an=True)
+        self.act_flaechenachsen = g.eintrag(menu, "Flächenachsen", lambda z: self.redraw(), "",
+                                            "Die lokalen Achsen jeder Fläche als kleine Pfeile x (rot), "
+                                            "y (grün), z (blau) - mit ihnen rechnet eine Flächenlast mit "
+                                            "Bezug „lokal“", symbol="lasten", schalter=True, an=False)
         self.act_members = g.eintrag(menu, "Stäbe farbig", lambda z: self.redraw(), "",
                                      "Jeden Stab mit Nachweis in eigener Farbe zeigen", symbol="farbig",
                                      schalter=True, an=False)
@@ -7324,6 +7363,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "linie": "lines", "stab": "members", "stabelement": "elements", "geoflaeche": "flaechen",
         "geokoerper_einzeln": "koerper", "lastfall": "load_cases", "kombination": "combinations",
         "werkstoff": "materials", "dicke": "shells", "querschnitt": "sections", "gelenk": "hinges",
+        "koordinatensystem": "koordinatensysteme",
         "kontaktbedingung": "kontaktbedingungen", "situation": "situationen", "subsystem": "subsysteme",
         "bemassung": "bemassungen", "berichtseintrag": "bericht", "stellung": "stellungen",
         "lager_einzeln": "supports", "linienlager_einzeln": "line_supports",
@@ -7432,6 +7472,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "knoten": "Knoten K{}", "stabelement": "Stabelement E{}", "linie": "Linie {}", "stab": "Stab {}",
         "geoflaeche": "Fläche {}", "geokoerper_einzeln": "Volumen {}", "lastfall": "Lastfall {}",
         "kombination": "Kombination {}", "werkstoff": "Werkstoff {}", "dicke": "Dicke {}",
+        "koordinatensystem": "Koordinatensystem {}",
         "querschnitt": "Querschnitt {}", "gelenk": "Gelenk {}", "kontaktbedingung": "Kontaktbedingung {}",
         "situation": "Situation {}", "subsystem": "Subsystem {}", "bemassung": "Bemaßung {}",
         "stellung": "Stellung {}", "wasserdruck": "Wasserdruck {}", "wind": "Wind {}",
@@ -7774,6 +7815,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln",
                     "lastfaelle", "lastfall", "kombinationen", "kombination",
                     "werkstoffe", "werkstoff", "dicken", "dicke",
+                    "koordinatensysteme", "koordinatensystem",
                     "querschnitt", "gelenke", "gelenk", "berichtseintrag",
                     "liniengelenke", "liniengelenk",
                     "kontaktbedingung", "stellungen", "stellung",
@@ -7814,7 +7856,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: entscheidet :meth:`_baum_ist_zweig` nach dem Namen.
     ZWEIG_ARTEN = frozenset({
         "netzknoten", "linien", "stabelemente", "staebe", "geoflaechen", "geokoerper",
-        "flaechen", "volumen", "werkstoffe", "querschnitte", "dicken",
+        "flaechen", "volumen", "werkstoffe", "querschnitte", "dicken", "koordinatensysteme",
         "lager", "linienlager", "flaechenlager", "punktmassen", "federn", "grenzschichten",
         "gelenke", "liniengelenke", "kontaktbedingungen",
         "lastfaelle", "kombinationen", "ermuedungslasten", "generierer",
@@ -7842,6 +7884,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._baum_system_geklickt(art, name)
         if art == "lastart":
             return self._lastart_geklickt(name)
+        if art in dsg.Modellbaum.ANLEGEN_ZEILEN:
+            # „+ … anlegen“ (08.11.2026): wie Rechtsklick → Neu am Zweig
+            return self._baum_neu(dsg.Modellbaum.ANLEGEN_ZEILEN[art])
         if self._baum_ist_zweig(art, name):
             # Ein Zweig waehlt nichts und legt nichts an (Teilpaket 8b): rechts
             # seine Uebersicht mit Liste, unten seine Tabelle
@@ -7853,6 +7898,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if tab:
                 self.tabelle_zeigen(tab)
             self._objektmaske(art, name)
+            if art == "stellung":
+                # das Modell in dieser Stellung zeigen (08.11.2026, Paket A Punkt 8)
+                self.stellung_zeigen(name)
             return
         if art == "stellung_neu":
             return self.neue_stellung()
@@ -8409,6 +8457,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return name in m.materials
         if art == "dicke":
             return name in m.shells
+        if art == "koordinatensystem":
+            return name in (getattr(m, "koordinatensysteme", None) or {})
         if art == "querschnitt":
             return name in m.sections
         if art == "liniengelenk":
@@ -9226,11 +9276,12 @@ class MainWindow(QtWidgets.QMainWindow):
             # die ersten zwoelf in einer Zeile)
             felder = [F("anzahl", "Anzahl", "info", str(len(liste)))]
             titel, knopf = titel_art, self._neu_text(art)
-            hinweis = {"lager": "Knoten in der Ansicht wählen, dann „Neues Knotenlager“ - die Maske "
-                                "fragt die Freiheitsgrade ab.",
-                       "linienlager": "Mindestens zwei Knoten in Reihenfolge wählen, dann „Neues Linienlager“.",
-                       "flaechenlager": "Elemente im Feld „Elemente“ (Lager/Lasten) nennen, dann "
-                                        "„Neues Flächenlager“."}[art]
+            hinweis = {"lager": "„Neu: Knotenlager …“ - in der Maske die Knoten nennen oder in der "
+                                "Ansicht anklicken und die Freiheitsgrade ankreuzen.",
+                       "linienlager": "„Neu: Linienlager …“ - in der Maske die Linien nennen oder in der "
+                                      "Ansicht anklicken (ohne Linien: Knoten in Reihenfolge).",
+                       "flaechenlager": "„Neu: Flächenlager …“ - in der Maske die Flächen nennen oder in "
+                                        "der Ansicht anklicken (ohne Flächen: Elementnummern)."}[art]
         elif art in self.LAGER_ARTEN:
             felder, titel, hinweis, zusatz = self._lagermaske(art, name, halter)
         elif art in ("dicken", "dicke"):
@@ -9247,6 +9298,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             f"Schalenelementen, {sum(1 for f in m.flaechen.values() if f.dicke == name)} Flächen"
                             if sp else "–")]
                 titel = f"Dicke {name}"
+        elif art in ("koordinatensysteme", "koordinatensystem"):
+            felder, titel, knopf, hinweis = self._ks_maske(name, eintrag, knopf)
         else:
             return None
         if neu:
@@ -9256,6 +9309,15 @@ class MainWindow(QtWidgets.QMainWindow):
             # Randlinien bzw. Randflaechen in der Ansicht anklicken statt tippen
             zusatz = [("Randlinien anklicken" if art == "geoflaeche" else "Randflächen anklicken",
                        lambda: self._objektmaske_klick_umschalten(halter.get("m"), art))]
+        if eintrag and not neu:
+            # „Neu: <Art> …“ direkt in der Maske eines Eintrags (08.11.2026, Paket A
+            # Punkt 2) - derselbe Weg wie Rechtsklick → Neu am Zweig
+            zweig_neu = dsg.Modellbaum.ELTERNART.get(art)
+            if zweig_neu in dsg.Modellbaum.NEU_ARTEN:
+                zusatz = list(zusatz) + [(f"Neu: {dsg.Modellbaum.NEU_ARTEN[zweig_neu]} …",
+                                          lambda z=zweig_neu: self._baum_neu(z),
+                                          "Ein neues Objekt dieser Art anlegen - rechts öffnet sich "
+                                          "seine Maske (wie Rechtsklick → Neu im Modellbaum)")]
         maske = msk.Maske(titel, felder, knopf=knopf,
                           hinweis=hinweis or ("Werte ändern und „Übernehmen“." if eintrag else
                                               "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."),
@@ -9311,20 +9373,54 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         attr, titel_art, e_kraft, e_moment = self.LAGER_ARTEN[art]
         liste = getattr(m, attr)
-        i = int(name)
-        obj = liste[i]
+        neu = not str(name).isdigit()
+        i = len(liste) if neu else int(name)
+        obj = self._lager_vorlage(art) if neu else liste[i]
         felder = [F("name", "Name", "text", (getattr(obj, "name", "") or ""), breite=150)]
-        if hasattr(obj, "node"):
-            felder.append(F("ort", "Knoten", "info", f"K{obj.node} bei {np.round(m.nodes[int(obj.node)], 3).tolist()}"
-                            if 0 <= int(obj.node) < m.nn else f"K{obj.node}"))
+        # Der Ort ist seit dem 08.11.2026 ein Feld (Paket A Punkt 1): Knoten,
+        # Linien bzw. Flaechen - getippt oder in der Ansicht angeklickt, solange
+        # das Feld die Tastatur hat (FELDKLICK). Bis dahin stand er nur da.
+        if art == "lager_einzeln":
+            felder.append(F("knoten_nr", "Knoten", "text", str(int(obj.node)), breite=80,
+                            hinweis="Nummer des Knotens - oder ins Feld klicken und den Knoten in der "
+                                    "Ansicht anklicken"))
+            if 0 <= int(obj.node) < m.nn:
+                felder.append(F("ort", "Lage [m]", "info", self._lage_text(m.nodes[int(obj.node)])))
             felder.append(F("groesse", "Symbolgröße", "zahl", float(getattr(obj, "groesse", 1.0) or 1.0),
                             hinweis="1,0 = Grundgröße"))
-        elif hasattr(obj, "elements") and obj.elements:
-            felder.append(F("ort", "Elemente", "info", self._elemente_text(obj.elements)))
-        else:
+        elif art == "linienlager_einzeln":
+            linien = list(getattr(obj, "linien", None) or [])
+            if neu and not linien:
+                linien = [x for x in self.sel_linien if x in m.lines]
             kn = [int(n) for n in (getattr(obj, "nodes", []) or [])]
-            felder.append(F("ort", "Knoten", "info", f"{len(kn)}: " + ", ".join(f"K{n}" for n in kn[:10])
-                            + (" …" if len(kn) > 10 else "")))
+            if neu and not kn and not linien and len(self.selection) >= 2:
+                kn = [int(n) for n in self.selection]
+            felder.append(F("linien", "Linien", "liste", ", ".join(linien), breite=160,
+                            hinweis="Namen der Linien - oder ins Feld klicken und die Linien in der Ansicht "
+                                    "anklicken. Das Lager folgt dann dem Netz der Linien."))
+            felder.append(F("kn_folge", "Knoten (ohne Linien)", "liste", ", ".join(str(n) for n in kn),
+                            breite=160,
+                            hinweis="Nur ohne Linien: die Knoten des Linienzugs in Reihenfolge - oder ins "
+                                    "Feld klicken und die Knoten in der Ansicht anklicken"))
+        else:
+            flaechen = list(getattr(obj, "flaechen", None) or [])
+            if neu and not flaechen:
+                flaechen = [x for x in self.sel_flaechen if x in m.flaechen]
+            felder.append(F("flaechen", "Flächen", "liste", ", ".join(flaechen), breite=160,
+                            hinweis="Namen der Flächen - oder ins Feld klicken und die Flächen in der Ansicht "
+                                    "anklicken. Das Lager folgt dann dem Netz der Flächen."))
+            els = list(getattr(obj, "elements", None) or [])
+            if neu and not flaechen and not els and len(self.selection):
+                # wie bis zum 08.11.2026: die Elemente, deren Knoten alle gewaehlt sind
+                els = self._elements_from_text("")
+            felder.append(F("elemente_nr", "Elemente (ohne Flächen)", "text",
+                            ", ".join(str(int(e)) for e in sorted(els)),
+                            breite=160, hinweis="Nur ohne Flächen: Nummern der Schalen- oder "
+                                                "Volumenelemente, deren Fläche gebettet ist"))
+            if not neu:
+                kn = [int(n) for n in (getattr(obj, "nodes", []) or [])]
+                felder.append(F("ort", "Knoten", "info", f"{len(kn)}: " + ", ".join(f"K{n}" for n in kn[:10])
+                                + (" …" if len(kn) > 10 else "")))
         for d, fhg in enumerate(self.LAGER_FHG):
             b = obj.dof_behaviour(d)
             einheit = e_kraft if d < 3 else e_moment
@@ -9354,6 +9450,10 @@ class MainWindow(QtWidgets.QMainWindow):
         hinweis = ("Je Freiheitsgrad: frei, starr oder Feder (Steifigkeit in " + e_kraft + " bzw. "
                    + e_moment + "), dazu der Ausfall bei Zug oder Druck. „Bettung übernehmen“ trägt den "
                    "Vorschlag für Beton in die Felder ein - vor „Übernehmen“ prüfen.")
+        if neu:
+            # Schlupf, Reibung und Loeschen gibt es erst am angelegten Lager
+            return felder, titel, hinweis, [("Bettung übernehmen",
+                                             lambda: self._bettung_beton(halter.get("m"), art))]
         # Kurzer Text, der Hinweis nennt alles (F40, 06.10.2026): „Schlupf,
         # Reibung, Grenzkraft …“ brauchte mit Segoe UI 211 px und bekam in der
         # 460 px breiten Maske 160 - der Text war vorn und hinten abgeschnitten
@@ -9363,6 +9463,81 @@ class MainWindow(QtWidgets.QMainWindow):
                    "dieses Lager"),
                   ("Lager löschen", lambda: self._baum_loeschen(art, str(i)))]
         return felder, titel, hinweis, zusatz
+
+    @staticmethod
+    def _lage_text(p) -> str:
+        """„x = 1,25  y = 0  z = 3“ - die Lage eines Knotens mit Dezimalkomma."""
+        return "  ".join(f"{a} = {zl.zahl_text(float(v), stellen=4)}" for a, v in zip("xyz", p))
+
+    def _lagerort_lesen(self, art: str, obj, w: dict, neu: bool, geaendert) -> object:
+        """Der Ort eines Lagers aus seiner Maske (08.11.2026, Paket A Punkt 1):
+        {Attribut: Wert} zum Setzen, {} wenn er gleich bleibt, oder ein Text mit
+        dem Grund, warum er nicht geht (dann wird nichts geschrieben)."""
+        m = self.model
+        g = None if geaendert is None else set(geaendert)
+
+        def betroffen(*felder):
+            return neu or g is None or bool(g & set(felder))
+
+        try:
+            if art == "lager_einzeln":
+                if not betroffen("knoten_nr") or "knoten_nr" not in w:
+                    return {}
+                kn = self._zahlenliste(w.get("knoten_nr"), feld="Knoten", bereich=(m.nn, "Knoten"))
+                if len(kn) != 1:
+                    return "Ein Knotenlager sitzt an genau einem Knoten"
+                return {} if int(kn[0]) == int(obj.node) else {"node": int(kn[0])}
+            if art == "linienlager_einzeln":
+                if not betroffen("linien", "kn_folge") or not ({"linien", "kn_folge"} & set(w)):
+                    return {}
+                linien = self._namensliste(w.get("linien"))
+                fehlt = [x for x in linien if x not in m.lines]
+                if fehlt:
+                    return "Linie " + ", ".join(fehlt[:4]) + " gibt es nicht"
+                if linien:
+                    kn: list = []
+                    for x in linien:
+                        for n in m.lines[x].nodes:
+                            if not kn or kn[-1] != int(n):
+                                kn.append(int(n))
+                    return {"linien": linien, "nodes": kn}
+                kn = self._zahlenliste(w.get("kn_folge"), feld="Knoten", bereich=(m.nn, "Knoten"))
+                if len(kn) < 2:
+                    return "Linien anklicken oder mindestens zwei Knoten in Reihenfolge nennen"
+                return {"linien": [], "nodes": kn}
+            if not betroffen("flaechen", "elemente_nr") or not ({"flaechen", "elemente_nr"} & set(w)):
+                return {}
+            flaechen = self._namensliste(w.get("flaechen"))
+            fehlt = [x for x in flaechen if x not in m.flaechen]
+            if fehlt:
+                return "Fläche " + ", ".join(fehlt[:4]) + " gibt es nicht"
+            if flaechen:
+                trib = supports.flaechen_einflussflaechen(m, [m.flaechen[x] for x in flaechen]) or {}
+                kn = sorted(trib)
+                return {"flaechen": flaechen, "elements": [], "nodes": kn, "areas": [trib[n] for n in kn]}
+            txt = str(w.get("elemente_nr", "") or "").strip()
+            els = self._elements_from_text(txt) if txt else []
+            if not els:
+                return "Flächen anklicken oder Elemente nennen"
+            return {"flaechen": [], "elements": els, "nodes": [], "areas": []}
+        except ValueError as ex:            # zl.Eingabefehler und parse_int_list
+            return str(ex)
+
+    def _lager_vorlage(self, art: str):
+        """Ein neues Lager fuer die Maske „Neu“ (noch nicht im Modell): ux, uy und
+        uz starr wie in der Maske „Lager setzen“, der Name wie Model.add_line_support
+        bzw. add_surface_support ihn vergeben."""
+        from ..model import DofBehaviour, LineSupport, SurfaceSupport, Support
+        m = self.model
+        if art == "lager_einzeln":
+            obj = Support(int(self.selection[0]) if len(self.selection) else 0, [0, 1, 2])
+        elif art == "linienlager_einzeln":
+            obj = LineSupport(f"LL{len(m.line_supports) + 1}")
+        else:
+            obj = SurfaceSupport(f"FL{len(m.surface_supports) + 1}")
+        if not isinstance(obj, Support):
+            obj.behaviour = {d: DofBehaviour("rigid") for d in range(3)}
+        return obj
 
     def _verbindung_listen(self, art: str, w: dict) -> dict:
         """Die Listenfelder einer Verbindung lesen, bevor etwas geschrieben
@@ -9629,7 +9804,18 @@ class MainWindow(QtWidgets.QMainWindow):
                    "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen"),
                    "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen"),
                    "kontaktbedingung_a": ("koerper_a", "volumen", "Körper A"),
-                   "kontaktbedingung_b": ("koerper_b", "volumen", "Körper B")}
+                   "kontaktbedingung_b": ("koerper_b", "volumen", "Körper B"),
+                   # Klicken statt Abtippen (08.11.2026, Paket A Punkt 1)
+                   "linie": ("kn", "knoten", "Knoten"),
+                   "stabelement": ("kn", "knoten", "Knoten"),
+                   "stab": ("elemente", "stabelement", "Stabelemente"),
+                   "lager_einzeln": ("knoten_nr", "knoten", "Knoten"),
+                   "lager_setzen": ("knoten_nr", "knoten", "Knoten"),
+                   "linienlager_einzeln": ("linien", "linie", "Linien"),
+                   "linienlager_knoten": ("kn_folge", "knoten", "Knoten"),
+                   "flaechenlager_einzeln": ("flaechen", "flaeche", "Flächen")}
+    #: Felder, die genau ein Objekt tragen: der Klick ersetzt statt dazuzunehmen
+    EINZELKLICK = frozenset({"lager_einzeln"})
     #: Welches Feld einer Maske beim Klick ins Feld die Auswahl per Maus auf
     #: sich zieht (15.09.2026, „bei Klick in Feld Auswahl per Maus"): Maskenart
     #: -> {Feldname: Klickart aus MASKENKLICK}. Ein Feld, das hier nicht steht,
@@ -9638,7 +9824,15 @@ class MainWindow(QtWidgets.QMainWindow):
                  "geokoerper_einzeln": {"flaechen": "geokoerper_einzeln"},
                  "kontaktbedingung": {"koerper_a": "kontaktbedingung_a", "koerper_b": "kontaktbedingung_b",
                                       "flaechennamen": "kontaktbedingung",
-                                      "gegenflaechen": "kontaktbedingung_gegen"}}
+                                      "gegenflaechen": "kontaktbedingung_gegen"},
+                 # seit 08.11.2026 (Paket A Punkt 1)
+                 "linie": {"kn": "linie"},
+                 "stabelement": {"kn": "stabelement"},
+                 "stab": {"elemente": "stab"},
+                 "lager_einzeln": {"knoten_nr": "lager_einzeln"},
+                 "lager_setzen": {"knoten_nr": "lager_setzen"},
+                 "linienlager_einzeln": {"linien": "linienlager_einzeln", "kn_folge": "linienlager_knoten"},
+                 "flaechenlager_einzeln": {"flaechen": "flaechenlager_einzeln"}}
     #: Kontaktmaske: Wirkung je Richtung im Klartext (Druck wird immer uebertragen)
     KONTAKT_ZUG = {"abheben": "abheben möglich (nur Druck)",
                    "starr": "wird übertragen (kein Abheben)", "feder": "Feder"}
@@ -10663,11 +10857,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
                            F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
             else:
+                # Bezug und Achse (08.11.2026); eine Last von davor zeigt ihren
+                # bisherigen Bezug und behaelt ihn, solange er nicht umgestellt wird
+                wahl_jetzt = self._bezug_als_wahl(obj)
+                wahlen = self._bezugswahl()
+                if wahl_jetzt not in wahlen:
+                    wahlen = wahlen + [wahl_jetzt]
                 felder += [F("p", "p [kN/m²]", "zahl", float(obj.p) / 1e3,
-                             hinweis="positiv drückt in den Körper (Druck)"),
+                             hinweis=("positiv in Richtung der gewählten Achse" if getattr(obj, "lastbezug", "")
+                                      else "positiv drückt in den Körper (Druck)")),
+                           F("bezug", "Bezug", "wahl", wahl_jetzt, wahlen,
+                             hinweis="global, lokal (Flächenachsen) oder ein eigenes Koordinatensystem; "
+                                     "der bisherige Bezug bleibt, solange er nicht umgestellt wird"),
+                           F("achse", "Achse", "wahl", (getattr(obj, "achse", "") or "z"), list(self.LASTACHSEN)),
                            F("projiziert", "auf die Projektion (Schnee, Wind)", "haken",
                              bool(getattr(obj, "projiziert", False)))]
-                if getattr(obj, "richtung", None):
+                if getattr(obj, "richtung", None) and not getattr(obj, "lastbezug", ""):
                     felder.append(F("richtung", "Richtung", "info",
                                     "(" + ", ".join(zl.zahl_text(x, punkt=True) for x in obj.richtung) + ")"))
                 if getattr(obj, "verlauf", None):
@@ -10678,11 +10883,17 @@ class MainWindow(QtWidgets.QMainWindow):
             titel = f"Linienlast {obj.ziel}"
             q = (list(obj.q or []) + [0.0] * 3)[:3]
             q2 = (list(obj.q2) + [0.0] * 3)[:3] if obj.q2 is not None else q
+            sys_jetzt = ("lokal (Stab)" if obj.system == "local"
+                         else f"{obj.ks}{self.KS_ENDUNG}" if obj.system == "ks" else "global")
+            sys_wahl = self._linienbezugswahl()
+            if sys_jetzt not in sys_wahl:
+                sys_wahl.append(sys_jetzt)
             felder += [F("qx", "q_x [kN/m]", "zahl", q[0] / 1e3), F("qy", "q_y [kN/m]", "zahl", q[1] / 1e3),
                        F("qz", "q_z [kN/m]", "zahl", q[2] / 1e3),
                        F("trapez", "trapezförmig (q2 am Ende)", "haken", obj.q2 is not None),
                        F("q2x", "q2_x [kN/m]", "zahl", q2[0] / 1e3), F("q2y", "q2_y [kN/m]", "zahl", q2[1] / 1e3),
                        F("q2z", "q2_z [kN/m]", "zahl", q2[2] / 1e3),
+                       F("system", "Bezug", "wahl", sys_jetzt, sys_wahl),
                        F("von", "Abschnitt von [m]", "zahl", float(obj.von or 0.0)),
                        F("bis", "bis [m] (0 = Ende)", "zahl", float(obj.bis or 0.0))]
         elif liste == "temp_loads" and getattr(obj, "aus_vorspannung", 0.0):
@@ -10802,6 +11013,14 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 obj.von = max(0.0, z("von"))
                 obj.bis = z("bis") or None
+                if "system" in w:
+                    s_ = str(w.get("system", ""))
+                    if s_.endswith(self.KS_ENDUNG) and s_[:-len(self.KS_ENDUNG)] in m.koordinatensysteme:
+                        obj.system, obj.ks = "ks", s_[:-len(self.KS_ENDUNG)]
+                    elif s_.startswith("lokal"):
+                        obj.system, obj.ks = "local", ""
+                    elif s_ == "global":
+                        obj.system, obj.ks = "global", ""
         elif liste == "uebermasse":
             obj.ueberdeckung = z("ue") * 1e-6
             obj.passmass = str(w.get("passmass", "") or "")
@@ -10814,6 +11033,14 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 obj.p = z("p") * 1e3
                 obj.projiziert = bool(w.get("projiziert"))
+                if "bezug" in w:
+                    bezug, ks = self._bezug_aus_wahl(w.get("bezug"))
+                    if bezug:
+                        obj.lastbezug, obj.ks, obj.richtung = bezug, ks, None
+                        obj.achse = str(w.get("achse", "z") or "z")[:1]
+                    elif str(w.get("bezug")) == self.BEZUG_SENKRECHT:
+                        obj.lastbezug, obj.achse, obj.ks, obj.richtung = "", "", "", None
+                    # sonst „Richtung (...) wie bisher“: bleibt
         elif liste == "temp_loads" and getattr(obj, "aus_vorspannung", 0.0):
             # dT = −F/(E·A·α) ist linear in F: die neue Kraft skaliert den Rechenwert
             neu_F = z("F") * 1e3
@@ -10912,7 +11139,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if art_obj != modus:
                 return self.statusBar().showMessage(f"{name} ist keine {was[:-1]} - Klickmodus: {was}", 3000)
             namen = liste()
-            if name in namen:
+            if art in self.EINZELKLICK:
+                namen = [name]
+            elif name in namen:
                 namen.remove(name)
             else:
                 namen.append(name)
@@ -10932,6 +11161,11 @@ class MainWindow(QtWidgets.QMainWindow):
         namen = self._namensliste(maske.werte().get(feld))
         if modus == "linie":
             self.sel_linien = [x for x in namen if x in self.model.lines]
+        elif modus == "knoten":
+            self.selection = np.array([int(x) for x in namen if x.isdigit() and int(x) < self.model.nn],
+                                      dtype=int)
+        elif modus == "stabelement":
+            self.sel_elemente = [int(x) for x in namen if x.isdigit() and int(x) < len(self.model.elements)]
         else:
             self.sel_flaechen = [x for x in namen if x in self.model.flaechen]
         self.redraw()
@@ -11128,6 +11362,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if art in ("lastfall", "kombination", "werkstoff", "dicke", "querschnitt", "gelenk",
                        "berichtseintrag", "kontaktbedingung", "stellung") or art in self.LAGER_ARTEN:
                 return self._eigenschaften_uebernehmen(art, name, w, neu, geaendert)
+            if art == "koordinatensystem":
+                return self._ks_uebernehmen(name, w, neu)
             if art == "knoten":
                 i = int(name)
                 if not 0 <= i < m.nn:
@@ -11500,6 +11736,140 @@ class MainWindow(QtWidgets.QMainWindow):
             # geht mit ihr (15.10.2026); ein von Hand eingetragenes A_s (Zulassung) bleibt
             As = None
         return {"A_s": As, "gewinde": gew}
+
+    # ---- Eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026) -----------
+    KS_ARTEN = ("Drehwinkel", "drei Punkte")
+
+    def _ks_maske(self, name: str, eintrag: bool, knopf: str):
+        """Felder, Titel, Knopf und Hinweis der Maske eines Koordinatensystems
+        (Eintrag) oder ihrer Uebersicht (Zweig)."""
+        m = self.model
+        F = msk.Feld
+        kss = getattr(m, "koordinatensysteme", None) or {}
+        if not eintrag:
+            felder = [F("anzahl", "Anzahl", "info", str(len(kss))),
+                      F("spanne", "Namen", "info", self._spanne(kss))]
+            return (felder, "Koordinatensysteme", self._neu_text("koordinatensysteme"),
+                    "Eigene Koordinatensysteme, auf die sich Flächen- und Linienlasten beziehen können. "
+                    "Rechtsklick auf den Zweig oder „+ Koordinatensystem anlegen“: Neu. Entf löscht "
+                    "den gewählten Eintrag, solange keine Last darauf verweist.")
+        from ..model import Koordinatensystem
+        k = kss.get(name) or Koordinatensystem(name)
+        o, wi, px, pxy = (list(k.ursprung) + [0.0] * 3)[:3], (list(k.winkel) + [0.0] * 3)[:3], \
+            (list(k.punkt_x) + [0.0] * 3)[:3], (list(k.punkt_xy) + [0.0] * 3)[:3]
+        try:
+            A = k.achsen()
+            achsen = "; ".join(f"{a} = (" + ", ".join(zl.zahl_text(round(float(v), 4)) for v in A[i]) + ")"
+                               for i, a in enumerate("xyz"))
+        except ValueError as ex:
+            achsen = f"nicht bestimmt: {ex}"
+        verweise = m.ks_verweise(name) if name in kss else []
+        felder = [F("name", "Name", "text", name, breite=120),
+                  F("art", "Festgelegt über", "wahl", self.KS_ARTEN[1] if k.art == "punkte" else self.KS_ARTEN[0],
+                    list(self.KS_ARTEN),
+                    hinweis="Drehwinkel: Ursprung und drei Drehungen; drei Punkte: Ursprung, ein Punkt "
+                            "auf der x-Achse und ein Punkt in der xy-Ebene (auf der Seite von +y)"),
+                  F("ox", "Ursprung x [m]", "zahl", float(o[0])), F("oy", "Ursprung y [m]", "zahl", float(o[1])),
+                  F("oz", "Ursprung z [m]", "zahl", float(o[2])),
+                  F("a", "Drehung um Z [°]", "zahl", float(wi[0]),
+                    hinweis="Erst um die globale Z-Achse, dann um die neue y-Achse, dann um die neue x-Achse"),
+                  F("b", "dann um y′ [°]", "zahl", float(wi[1])),
+                  F("c", "dann um x″ [°]", "zahl", float(wi[2])),
+                  F("pxx", "Punkt auf x-Achse x [m]", "zahl", float(px[0])),
+                  F("pxy", "Punkt auf x-Achse y [m]", "zahl", float(px[1])),
+                  F("pxz", "Punkt auf x-Achse z [m]", "zahl", float(px[2])),
+                  F("pex", "Punkt in xy-Ebene x [m]", "zahl", float(pxy[0])),
+                  F("pey", "Punkt in xy-Ebene y [m]", "zahl", float(pxy[1])),
+                  F("pez", "Punkt in xy-Ebene z [m]", "zahl", float(pxy[2])),
+                  F("achsen", "Achsen (global)", "info", achsen, anzeige=True),
+                  F("benutzt", "benutzt von", "info",
+                    "; ".join(f"{f_}: {t_}" for f_, t_ in verweise[:6]) + (" …" if len(verweise) > 6 else "")
+                    if verweise else "keiner Last", anzeige=True),
+                  F("kommentar", "Bemerkung", "text", k.kommentar or "", breite=150)]
+        return (felder, f"Koordinatensystem {name}", knopf,
+                "Ursprung und Achsen eintragen und „Übernehmen“. Lasten mit dem Bezug auf dieses "
+                "System wirken in seinen Achsen (Maske der Flächen- oder Linienlast, Feld „Bezug“).")
+
+    def _ks_uebernehmen(self, name: str, w: dict, neu: bool = False):
+        """Ein Koordinatensystem aus der Maske anlegen oder aendern; beim
+        Umbenennen ziehen die Lasten mit, die darauf verweisen."""
+        from ..model import Koordinatensystem
+        m = self.model
+        neuname = str(w.get("name", "") or "").strip() or name
+        if (neu or neuname != name) and neuname in m.koordinatensysteme:
+            return self.hinweis(f"Koordinatensystem „{neuname}“ gibt es schon")
+
+        def z(key, vorgabe=0.0):
+            return float(zl.feldwert(w.get(key), vorgabe))
+
+        try:
+            k = Koordinatensystem(
+                neuname, art="punkte" if str(w.get("art", "")) == self.KS_ARTEN[1] else "winkel",
+                ursprung=[z("ox"), z("oy"), z("oz")], winkel=[z("a"), z("b"), z("c")],
+                punkt_x=[z("pxx", 1.0), z("pxy"), z("pxz")], punkt_xy=[z("pex"), z("pey", 1.0), z("pez")],
+                kommentar=str(w.get("kommentar", "") or ""))
+            k.achsen()
+        except (TypeError, ValueError) as ex:
+            return self.hinweis(f"Koordinatensystem {neuname}: {ex}")
+        self.merken(f"Koordinatensystem {neuname}")
+        if not neu and neuname != name and name in m.koordinatensysteme:
+            del m.koordinatensysteme[name]
+            for lc in m.load_cases.values():
+                for gl in lc.geometrielasten:
+                    if getattr(gl, "lastbezug", "") == "ks" and gl.ks == name:
+                        gl.ks = neuname
+                for ll in lc.linienlasten:
+                    if ll.system == "ks" and getattr(ll, "ks", "") == name:
+                        ll.ks = neuname
+        m.koordinatensysteme[neuname] = k
+        m.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
+        if neu:
+            self.maskenrand.schliessen()
+        try:
+            self.baum.eintrag_waehlen("koordinatensystem", neuname)
+        except Exception:                   # noqa: BLE001
+            pass
+        return self._objektmaske("koordinatensystem", neuname)
+
+    # ---- Lastbezug in den Lastmasken (Oberflaechenpaket B, 08.11.2026) --------
+    #: Wahl „Bezug“ einer Flaechenlast: global und lokal, dann die eigenen
+    #: Koordinatensysteme (KS_ENDUNG), am Ende das bisherige „senkrecht“
+    BEZUG_GLOBAL = "global"
+    BEZUG_LOKAL = "lokal (Flächenachsen)"
+    BEZUG_SENKRECHT = "senkrecht zur Fläche (wie bisher; Schale: positiv in lokaler z-Richtung, Volumenrand: positiv drückt hinein)"
+    KS_ENDUNG = " (eigenes KS)"
+    LASTACHSEN = ["x", "y", "z"]
+
+    def _bezugswahl(self) -> list:
+        return [self.BEZUG_GLOBAL, self.BEZUG_LOKAL] + [
+            f"{n}{self.KS_ENDUNG}" for n in (getattr(self.model, "koordinatensysteme", None) or {})]
+
+    def _bezug_aus_wahl(self, text) -> tuple:
+        """(bezug, ks) aus dem Text der Wahl „Bezug“; ("", "") = wie bisher."""
+        t = str(text or "")
+        if t == self.BEZUG_GLOBAL:
+            return "global", ""
+        if t.startswith("lokal"):
+            return "lokal", ""
+        if t.endswith(self.KS_ENDUNG):
+            return "ks", t[:-len(self.KS_ENDUNG)]
+        return "", ""
+
+    def _bezug_als_wahl(self, gl) -> str:
+        b = str(getattr(gl, "lastbezug", "") or "")
+        if b == "global":
+            return self.BEZUG_GLOBAL
+        if b == "lokal":
+            return self.BEZUG_LOKAL
+        if b == "ks":
+            return f"{gl.ks}{self.KS_ENDUNG}"
+        if getattr(gl, "richtung", None):
+            return "Richtung (" + "; ".join(zl.zahl_text(x, tausender=False) for x in gl.richtung) \
+                + ") wie bisher"
+        return self.BEZUG_SENKRECHT
 
     def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False, geaendert=None):
         """Lastfall, Kombination, Werkstoff oder Dicke aus der Objektmaske
@@ -11935,10 +12305,18 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..model import DofBehaviour
             attr, titel_art, _ek, _em = self.LAGER_ARTEN[art]
             liste = getattr(m, attr)
-            i = int(name)
-            if not 0 <= i < len(liste):
-                return self.error(f"{titel_art} {i + 1} gibt es nicht mehr")
-            obj = liste[i]
+            if neu:
+                obj = self._lager_vorlage(art)
+                i = len(liste)
+            else:
+                i = int(name)
+                if not 0 <= i < len(liste):
+                    return self.error(f"{titel_art} {i + 1} gibt es nicht mehr")
+                obj = liste[i]
+            # Der Ort aus der Maske (08.11.2026) - geprueft vor dem Merken
+            ort = self._lagerort_lesen(art, obj, w, neu, geaendert)
+            if isinstance(ort, str):
+                return self.hinweis(ort)
             # Komma und Semikolon trennen die Namen in den Listen (N12), vor dem Merken
             grund = m.objektname_konflikt(str(neuname if neuname != name else w.get("name", "") or "").strip(),
                                           (getattr(obj, "name", "") or "").strip(), titel_art)
@@ -11961,7 +12339,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     b.limit = getattr(alt_b, "limit", 0.0)
                 if b.acts or b.failure or b.slip or b.mu:
                     neu_beh[d] = b
-            self.merken(f"{titel_art} {neuname or i + 1}")
+            if neu and neuname == name:
+                neuname = (getattr(obj, "name", "") or "").strip() or name
+            self.merken(f"{titel_art} {neuname or i + 1}" + (" angelegt" if neu else ""))
+            vorher_bezug = m.stellungsbezug() if (neu or ort) else None
+            if neu:
+                liste.append(obj)
+            for k_, v_ in (ort or {}).items():
+                setattr(obj, k_, v_)
             obj.behaviour = neu_beh
             if hasattr(obj, "dofs"):
                 obj.dofs = sorted(d for d, b in neu_beh.items() if b.acts)
@@ -11971,7 +12356,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 obj.groesse = max(0.05, float(zahl("groesse", 1.0) or 1.0))
             if "woelb" in w and hasattr(obj, "woelb"):
                 obj.woelb = bool(w.get("woelb"))
+            if vorher_bezug is not None:
+                self._protokollzeilen(m.stellungen_nachziehen(vorher_bezug))
             name = str(i)
+
         elif art == "stellung":
             liste = self._stellungen_obj()
             alt = m.stellung(name) if not neu else None
@@ -12049,6 +12437,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._objektmaske("werkstoff", m.naechster_name("S", m.materials), neu=True)
         if zweigart == "dicken":
             return self._objektmaske("dicke", m.naechster_name("t", m.shells), neu=True)
+        if zweigart == "koordinatensysteme":
+            return self._objektmaske("koordinatensystem",
+                                     m.naechster_name("KS", m.koordinatensysteme), neu=True)
         if zweigart == "querschnitte":
             return self.querschnitt_neu()
         if zweigart == "subsysteme":
@@ -12533,7 +12924,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "kombination": f"Kombination {name}",
                "ermuedungslast": f"Ermüdungslast {name}",
                "vorspanndefinition": f"Vorspannung {name} (die Lastfälle verlieren ihren Verweis)",
-               "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
+               "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}",
+               "koordinatensystem": f"Koordinatensystem {name}"}.get(art)
         if was is None:
             return
         folge = self._stab_folge_text([int(name)]) if art == "stabelement" and name.isdigit() else ""
@@ -12610,6 +13002,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 grund = f"wird noch von {benutzt} Schalenelementen/Flächen benutzt"
             else:
                 del m.shells[name]
+        elif art == "koordinatensystem":
+            # nur, solange keine Last darauf verweist (Model.koordinatensystem_loeschen)
+            try:
+                m.koordinatensystem_loeschen(name)
+            except (KeyError, ValueError) as ex:
+                grund = str(ex.args[0] if ex.args else ex)
         elif art == "wasserdruck":
             if name not in m.wasserdruecke:
                 grund = f"Wasserdruck {name} gibt es nicht"
@@ -12950,13 +13348,14 @@ class MainWindow(QtWidgets.QMainWindow):
     #: * Layer: „Layer aus Auswahl“ fragt modal nach dem Namen und legt den
     #:   Layer aus der Auswahl sofort an (Umbau modaler Dialoge: Block D);
     #: * Unterlagen: „Skizze“ oeffnet ein eigenes Zeichenfenster;
-    #: * Linien- und Flaechenlager: „Neu“ meldet ohne Auswahl nur einen Fehler
-    #:   und oeffnet mit Auswahl einen modalen Dialog (SupportNonlinearDialog,
-    #:   Block D).
     #:
     #: Ihr Doppelklick klappt nur auf und zu (Qt); die Uebersicht bleibt stehen.
+    #: Linien- und Flaechenlager gehoeren seit dem 08.11.2026 dazu (Paket A
+    #: Punkt 3): ihr „Neu“ oeffnet die rechte Maske mit Linien bzw. Flaechen zum
+    #: Anklicken. Bis dahin meldete es ohne Auswahl nur einen Fehler und oeffnete
+    #: mit Auswahl einen modalen Dialog.
     BAUM_DOPPELKLICK_NEU = frozenset(dsg.Modellbaum.NEU_ARTEN) - {
-        "knoten", "layerliste", "unterlagen", "linienlager", "flaechenlager"}
+        "knoten", "layerliste", "unterlagen"}
 
     def _baum_doppelklick_ohne_maske(self, art: str, name: str) -> bool:
         """Der Doppelklick auf einen Zweig ohne Anlegemaske klappt nur auf und
@@ -13002,7 +13401,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.ergebnis_zeigen(name)
                 return None
             if art in ("werkstoff", "dicke", "lastfall", "kombination", "querschnitt", "gelenk",
-                       "berichtseintrag", "kontaktbedingung", "stellung"):
+                       "berichtseintrag", "kontaktbedingung", "stellung", "koordinatensystem"):
                 self._baum_objekt_waehlen(art, name)
                 return self._objektmaske(art, name)
             if art in self.LAGER_ARTEN:
@@ -13110,6 +13509,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if art == "spitze":
             return self._spitze_zeigen(int(wert or 0))
+        if art == "lager":
+            # Lagerreaktionen (08.11.2026): die Tabelle „Auflagerkräfte“ mit allen
+            # sechs Komponenten je Lagerknoten
+            j = int(wert or 0) if str(wert or "0").isdigit() else 0
+            name = self.LAGERREAKTIONEN[min(j, 5)][0]
+            self.tabelle_zeigen("Auflagerkräfte")
+            return self.info(f"Lagerreaktion {name}: alle Komponenten je Lagerknoten in der Tabelle "
+                             "„Auflagerkräfte“")
         if art == "nachweis":
             tabelle = self.NACHWEIS_TABELLE.get(wert)
             if tabelle and self.tabelle_zeigen(tabelle):
@@ -14476,6 +14883,12 @@ class MainWindow(QtWidgets.QMainWindow):
         Aktualisieren behalten sie."""
         if hasattr(self, "baum"):
             self.baum.zustand_vergessen()
+        # eine Stellung des vorigen Modells steht nicht mehr im Bild (08.11.2026)
+        self._stellung_im_bild = ""
+        self._stellung_bild = None
+        if getattr(self, "act_grundstellung", None) is not None:
+            self.act_grundstellung.setEnabled(False)
+            self._grundstellung_knopf(False)
 
     def _refresh_baum(self):
         self._werteskala_anzeigen()
@@ -14642,6 +15055,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 reihe.append(("kein Verlauf", "Verlauf ausblenden",
                               "schnittgroesse:kein Verlauf"))
                 out["Schnittgrößen"] = reihe
+        # Lagerreaktionen (08.11.2026, Paket A Punkt 9): Kraefte und, soweit die
+        # Rechnung sie liefert, die Lagermomente M_x, M_y, M_z - kleinster und
+        # groesster Wert ueber die Lagerknoten; ein Klick holt die Tabelle
+        # „Auflagerkräfte“. Bis dahin standen sie nur in Tabelle und Kennwerten.
+        reihe = self._lagerreaktionen_liste(r, passt)
+        if reihe:
+            out["Lagerreaktionen"] = reihe
         # Spannungen analog ANSYS: je Art eine Gruppe, Schluessel spannung:<art>:<groesse>
         for art in spn.arten_im_ergebnis(self.model, self._spannungsergebnis()):
             out[spn.GRUPPE[art]] = [(text, einheit, spn.schluessel(art, g))
@@ -14672,6 +15092,50 @@ class MainWindow(QtWidgets.QMainWindow):
                      else "", f"buckling:{i}") for i in range(len(r.buckling_modes))]
         return {k: v for k, v in out.items() if v}
 
+
+    #: Die sechs Komponenten der Lagerreaktion: Name im Baum, Einheit
+    LAGERREAKTIONEN = (("R_x", "kN"), ("R_y", "kN"), ("R_z", "kN"),
+                       ("M_x", "kNm"), ("M_y", "kNm"), ("M_z", "kNm"))
+
+    def _lagerreaktionen_liste(self, r, passt: str = "passt") -> list:
+        """Die Zeilen der Gruppe „Lagerreaktionen“ im Ergebnisbaum: je Komponente,
+        die an einem Knoten nicht null ist, „min … max“ in kN bzw. kNm. Ein
+        Lastfall oder eine Kombination liefert ``reactions`` (Knoten × 6), eine
+        Umhuellende ``r_min``/``r_max``. Komponenten, die ueberall null sind,
+        fehlen - die Momente also, wo kein Lager eine Drehung haelt."""
+        if r is None:
+            return []
+        R = getattr(r, "reactions", None)
+        if R is not None:
+            R = np.asarray(R, float)
+            if R.ndim != 2 or not R.size:
+                return []
+            lo_a, hi_a = R, R
+        elif getattr(r, "r_min", None) is not None and getattr(r, "r_max", None) is not None:
+            lo_a, hi_a = np.asarray(r.r_min, float), np.asarray(r.r_max, float)
+            if lo_a.ndim != 2 or not lo_a.size:
+                return []
+        else:
+            return []
+        # nur die Knoten mit Reaktion (die Lagerknoten): ein freier Knoten traegt
+        # ueberall null und machte jede Spanne zu „… 0“
+        lager = np.any(np.nan_to_num(lo_a) != 0, axis=1) | np.any(np.nan_to_num(hi_a) != 0, axis=1)
+        if not lager.any():
+            return []
+        lo_a, hi_a = lo_a[lager], hi_a[lager]
+        grau_ = (dsg.FARBEN["matt"],)
+        reihe = []
+        for j, (name, einheit) in enumerate(self.LAGERREAKTIONEN):
+            if j >= lo_a.shape[1] or not (np.any(lo_a[:, j]) or np.any(hi_a[:, j])):
+                continue
+            if passt == "anders":
+                reihe.append((name, vp.NEU_RECHNEN, f"lager:{j}", *grau_))
+                continue
+            lo, hi = float(np.nanmin(lo_a[:, j])) / 1e3, float(np.nanmax(hi_a[:, j])) / 1e3
+            text = (spn.dezimal(lo, vorzeichen=True) if lo == hi
+                    else f"{spn.dezimal(lo, vorzeichen=True)} … {spn.dezimal(hi, vorzeichen=True)}")
+            reihe.append((name, f"{text} {einheit}", f"lager:{j}"))
+        return reihe
 
     def _stellungen_liste(self) -> list:
         """Stellungen als einfache Liste fuer Baum und Filmstreifen."""
@@ -15386,8 +15850,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         wert = "linear " + " → ".join(f"{zl.zahl_text(float(x[3]) / 1e3, stellen=3)}" for x in P) + " kN/m²"
                     else:
                         wert = f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²"
-                    richtung = ("(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.richtung) + ")"
-                                if l.richtung else "senkrecht")
+                    if getattr(l, "lastbezug", ""):
+                        from ..lastbezug import bezug_text
+                        richtung = bezug_text(l.lastbezug, l.achse, l.ks)
+                    else:
+                        richtung = ("(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.richtung) + ")"
+                                    if l.richtung else "senkrecht")
                     if l.projiziert:
                         richtung += " projiziert"
                     zeilen.append([i, lcname, "Flächenlast", ziel, wert, richtung,
@@ -15409,7 +15877,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 # mehr im Kommentar (N05)
                 stand = " ".join(x for x in (abschnitt, l.verteilt) if x)
                 zeilen.append([i, lcname, "Linienlast", ziel, wert,
-                               tab.LASTSYSTEM_TEXT.get(l.system, l.system),
+                               (str(getattr(l, "ks", "")) if l.system == "ks"
+                                else tab.LASTSYSTEM_TEXT.get(l.system, l.system)),
                                "; ".join(x for x in (stand, l.kommentar or "") if x)])
                 i += 1
             for l in lc.zwangsverformungen:
@@ -17232,11 +17701,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "Knicken / Beulen (Stabtragwerke)"])
         self.sp_modes = QtWidgets.QSpinBox()
         self.sp_modes.setRange(1, 50); self.sp_modes.setValue(6)
-        lay.addWidget(row("Analyse", self.cb_analysis))
-        lay.addWidget(row("Anzahl Eigenformen", self.sp_modes))
+        # Einklappbare Gruppen (08.11.2026, Paket A Punkt 6): Grundeinstellungen
+        # offen, Kontakt und Spannschritt, Plastizitaet und Gleichungsloeser
+        # zugeklappt; der Zustand jeder Gruppe ueberlebt den Neustart
+        grund = QtWidgets.QWidget()
+        grl = QtWidgets.QVBoxLayout(grund)
+        grl.setContentsMargins(0, 2, 0, 0)
+        grl.addWidget(row("Analyse", self.cb_analysis))
+        grl.addWidget(row("Anzahl Eigenformen", self.sp_modes))
         self.cb_do_design = QtWidgets.QCheckBox("anschließend Nachweise EC3"); self.cb_do_design.setChecked(True)
         self.cb_do_fat = QtWidgets.QCheckBox("anschließend Ermüdungsnachweis"); self.cb_do_fat.setChecked(True)
-        lay.addWidget(row(self.cb_do_design, self.cb_do_fat))
+        grl.addWidget(row(self.cb_do_design, self.cb_do_fat))
+        self.abschnitt_grund = self._berechnung_abschnitt(
+            "Grundeinstellungen", grund, "Analyse, Eigenformen, Nachweise", "berechnung_grund", True)
+        lay.addWidget(self.abschnitt_grund)
 
         # „Rechnen“ steht oben (03.10.2026, Paket 13r): bis zum 02.10.2026 stand der
         # Knopf ganz unten, hinter zehn Zeilen Loeser- und Farmeinstellungen und der
@@ -17406,8 +17884,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Plastizitaet der Volumen (17.09.2026): eine Einstellung am Modell,
         # keine Programmeinstellung - sie reist mit der Datei
-        gp = QtWidgets.QGroupBox("Plastizität der Volumen (Einstellung am Modell)")
+        gp = QtWidgets.QWidget()
         gpl = QtWidgets.QVBoxLayout(gp)
+        gpl.setContentsMargins(0, 2, 0, 0)
         # Knotengemittelte Dilatation (20.09.2026): der lineare Tetraeder
         # versteift volumetrisch, und im Fliessbereich am staerksten - von
         # Mises ist volumentreu, die Querdehnzahl geht praktisch gegen 0,5.
@@ -17534,14 +18013,14 @@ class MainWindow(QtWidgets.QMainWindow):
         gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
         gpl.addWidget(row("Toleranz", self.cb_plast_tol))
         gpl.addWidget(row("Gültigkeitsgrenze ε_p", self.sp_plast_grenze))
-        lay.addWidget(gp)
 
         # Kontaktlauf (14.10.2026, Entscheidung des Anwenders): Konvergenz ueber
         # Ingenieurgroessen - wie viel die Restwechsel pendelnder Knoten tragen und
         # wie weit sie klaffen duerfen. Am Modell gespeichert (Plastizitaet.
         # pendel_kraft_anteil, pendel_weg), gilt fuer jeden Kontaktlauf, auch ohne Fliessen
-        gk = QtWidgets.QGroupBox("Kontaktlauf und Spannschritt (Einstellung am Modell)")
+        gk = QtWidgets.QWidget()
         gkl = QtWidgets.QVBoxLayout(gk)
+        gkl.setContentsMargins(0, 2, 0, 0)
         self.sp_pendel_kraft = QtWidgets.QDoubleSpinBox()
         self.sp_pendel_kraft.setRange(0.0, 10.0)
         self.sp_pendel_kraft.setDecimals(3)
@@ -17613,10 +18092,36 @@ class MainWindow(QtWidgets.QMainWindow):
             "näher am starren Haften. Vorgabe 1000.")
         gkl.addWidget(row("Reibung", self.cb_reibverfahren))
         gkl.addWidget(row("Haftsteifigkeit", self.sp_haft_faktor))
-        lay.addWidget(gk)
+        # Ausfall-Iteration mit Annahme (Plastizitaet.ausfall_annehmen, 15.10.2026);
+        # bis zum 08.11.2026 nur im Skript oder in der Modelldatei einstellbar
+        self.cb_ausfall_annehmen = QtWidgets.QCheckBox("Ausfall-Iteration mit Annahme")
+        self.cb_ausfall_annehmen.setToolTip(
+            "Gilt für Zug- und Druckstäbe, die ausfallen können. Ab der zweiten Lösung eines "
+            "Lastfalls beginnt die Ausfall-Iteration mit den Stäben, die in der Lösung davor "
+            "ausgefallen waren, statt mit allen Stäben, und rechnet eine zweite Runde nur, wenn die "
+            "Nachprüfung verletzt ist. Die Bedingung bleibt dieselbe, nur der Startpunkt ändert sich.\n\n"
+            "Schneller (Prüfplatte mit Strebe und Fließen: 13 statt 24 Kontaktläufe bei derselben "
+            "Lösung), am Netz Mittel des Drehlagers aber noch nicht verglichen. Vorgabe aus. Wird mit "
+            "dem Modell gespeichert, und nur, wenn es eingeschaltet ist.")
+        gkl.addWidget(self.cb_ausfall_annehmen)
+        # Reihenfolge der Gruppen: Kontakt und Spannschritt, dann Plastizitaet
+        self.abschnitt_kontakt = self._berechnung_abschnitt(
+            "Kontakt und Spannschritt", gk, "Restwechsel, Klaffung, Spannschritt, Reibung, Ausfall-Iteration "
+            "(Einstellung am Modell)", "berechnung_kontakt", False)
+        lay.addWidget(self.abschnitt_kontakt)
+        self.abschnitt_plast = self._berechnung_abschnitt(
+            "Plastizität", gp, "Fließen der Volumen, Verfahren, Laststufen (Einstellung am Modell)",
+            "berechnung_plast", False)
+        lay.addWidget(self.abschnitt_plast)
+        for wid in (self.sp_pendel_kraft, self.sp_pendel_weg, self.sp_spannstufen, self.sp_haft_faktor):
+            wid.valueChanged.connect(lambda _v: self._abschnitte_hinweis())
+        self.cb_reibverfahren.currentIndexChanged.connect(lambda _i: self._abschnitte_hinweis())
+        for cb in (self.cb_ausfall_annehmen, self.cb_plast, self.cb_dilat):
+            cb.toggled.connect(lambda _b: self._abschnitte_hinweis())
+        self._abschnitte_hinweis()
 
         self.experten = msk.Einklappabschnitt(
-            "Experten", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
+            "Gleichungslöser (Experte)", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
             offen=fen.abschnitt_offen("berechnung_experten"))
         # der Zustand ueberlebt den Neustart (einstellungen.json, Schluessel „abschnitte“)
         self.experten.umgeschaltet.connect(lambda an: fen.abschnitt_merken("berechnung_experten", an))
@@ -17628,6 +18133,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_workers.valueChanged.connect(lambda _v: self._experten_hinweis())
         self._experten_hinweis()
         return w
+
+    def _berechnung_abschnitt(self, titel, inhalt, hinweis, schluessel, vorgabe):
+        """Eine einklappbare Gruppe des Registers Berechnung; ihr Zustand steht in
+        einstellungen.json (Schluessel „abschnitte“) und ueberlebt den Neustart."""
+        ab = msk.Einklappabschnitt(titel, inhalt, hinweis,
+                                   offen=fen.abschnitt_offen(schluessel, vorgabe))
+        ab.umgeschaltet.connect(lambda an, s=schluessel: fen.abschnitt_merken(s, an))
+        return ab
+
+    def _abschnitte_hinweis(self) -> None:
+        """Die graue Zeile der Gruppen „Kontakt und Spannschritt“ und „Plastizität“:
+        zugeklappt, was von der Vorgabe abweicht, sonst „Vorgaben“."""
+        ak = getattr(self, "abschnitt_kontakt", None)
+        ap = getattr(self, "abschnitt_plast", None)
+        if ak is None or ap is None:
+            return
+        teile = []
+        if round(self.sp_pendel_kraft.value(), 3) != 0.1:
+            teile.append("Restwechsel " + f"{self.sp_pendel_kraft.value():.3f}".replace(".", ",") + " %")
+        if round(self.sp_pendel_weg.value(), 2) != 1.0:
+            teile.append("Klaffung " + f"{self.sp_pendel_weg.value():.2f}".replace(".", ",") + " µm")
+        if self.sp_spannstufen.value() != 0:
+            teile.append(f"Spannschritt {self.sp_spannstufen.value()} Stufen")
+        if not bool(self.cb_reibverfahren.currentData()):
+            teile.append("Reibung bisheriges Verfahren")
+        if round(self.sp_haft_faktor.value()) != 1000:
+            teile.append(f"Haftsteifigkeit × {self.sp_haft_faktor.value():.0f}")
+        if self.cb_ausfall_annehmen.isChecked():
+            teile.append("Ausfall-Iteration mit Annahme")
+        ak.setze_hinweise(" · ".join(teile) or "Vorgaben",
+                          "Restwechsel, Klaffung, Spannschritt, Reibung, Ausfall-Iteration "
+                          "(Einstellung am Modell)")
+        zu = "Fließen an" if self.cb_plast.isChecked() else "Fließen aus"
+        if self.cb_dilat.isChecked():
+            zu += " · Tetraeder ohne volumetrische Versteifung"
+        ap.setze_hinweise(zu, "Fließen der Volumen, Verfahren, Laststufen (Einstellung am Modell)")
 
     def _experten_hinweis(self) -> None:
         """Die graue Zeile am Kopf „Experten“: zugeklappt die Abweichungen der Felder von
@@ -21006,6 +21547,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stand_gespeichert = self._stand
         self._signatur_gespeichert = self._modellsignatur()
         self._ergebnis_ungespeichert = False
+        self._namen_umgestellt = False
         self._titel_nachziehen()
 
     def ungespeichert(self) -> str:
@@ -21017,6 +21559,10 @@ class MainWindow(QtWidgets.QMainWindow):
             teile.append("Änderungen am Modell")
         if self._ergebnis_ungespeichert and self._ergebnis_zaehlt():
             teile.append("Ergebnisse der letzten Rechnung")
+        # R2-A2: die beim Oeffnen umgestellten Namen stehen erst nach dem
+        # Speichern in der Datei (Entscheidung der Hauptsitzung, 06.10.2026)
+        if getattr(self, "_namen_umgestellt", False):
+            teile.append("die beim Öffnen umgestellten Namen (Namen umgestellt auf LF/LK/EK)")
         return " und ".join(teile)
 
     def _ergebnis_zaehlt(self) -> bool:
@@ -21477,24 +22023,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @_maskenweg()
     def maske_lager(self):
-        """Lager setzen: Knoten anklicken, Freiheitsgrade in der Maske."""
-        felder = [msk.Feld(f"d{i}", DOF_NAMES[i], "haken", i < 3) for i in range(6)]
+        """Lager setzen: Knoten anklicken, Freiheitsgrade in der Maske.
+
+        Seit dem 08.11.2026 (Paket A Punkt 1) mit dem Feld „Knoten“: es beginnt
+        mit der Auswahl, und solange es die Tastatur hat, setzt ein Klick auf
+        einen Knoten der Ansicht dessen Nummer hinein oder nimmt sie heraus."""
+        kn = ", ".join(str(int(i)) for i in self.selection)
+        felder = [msk.Feld("knoten_nr", "Knoten", "liste", kn, breite=160,
+                           hinweis="Nummern der Knoten - oder ins Feld klicken und die Knoten in der "
+                                   "Ansicht anklicken")]
+        felder += [msk.Feld(f"d{i}", DOF_NAMES[i], "haken", i < 3) for i in range(6)]
         m = msk.Maske("Lager", felder, knoten=0, knopf="Lager setzen",
-                      hinweis="Knoten in der Ansicht wählen, Freiheitsgrade "
+                      hinweis="Knoten ins Feld schreiben oder anklicken, Freiheitsgrade "
                               "ankreuzen und „Lager setzen“.")
         m.angewendet.connect(self._maske_lager_setzen)
-        self.maske_erzeugen(m)
+        m.feld_fokussiert.connect(lambda feld, mk=m: self._maskenfeld_fokus(mk, "lager_setzen", feld))
+        m.klick_beenden = lambda mk=m: self._objektmaske_klick_aus(mk)
+        return self.maske_erzeugen(m)
 
     def _maske_lager_setzen(self, w: dict):
-        if not len(self.selection):
+        if str(w.get("knoten_nr", "") or "").strip():
+            try:
+                knoten = self._zahlenliste(w.get("knoten_nr"), feld="Knoten",
+                                           bereich=(self.model.nn, "Knoten"))
+            except zl.Eingabefehler as ex:
+                return self.hinweis(str(ex))
+        else:
+            knoten = [int(i) for i in self.selection]
+        if not knoten:
             return self.hinweis("Zuerst Knoten in der Ansicht wählen")
         dofs = [i for i in range(6) if w.get(f"d{i}")]
         if not dofs:
             return self.hinweis("Kein Freiheitsgrad angekreuzt")
-        self.merken(f"Lager an {len(self.selection)} Knoten")
-        for i in self.selection:
+        self.merken(f"Lager an {len(knoten)} Knoten")
+        for i in knoten:
             self.model.support(int(i), dofs)
-        self.info(f"Lager an {len(self.selection)} Knoten: "
+        self.info(f"Lager an {len(knoten)} Knoten: "
                   + ", ".join(DOF_NAMES[d] for d in dofs))
         self.refresh_all()
 
@@ -22483,7 +23047,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   msk.Feld("trapez", "trapezförmig (q2 am Ende)", "haken", False),
                   msk.Feld("q2x", "q2_x [kN/m]"), msk.Feld("q2y", "q2_y [kN/m]"),
                   msk.Feld("q2z", "q2_z [kN/m]"),
-                  msk.Feld("system", "Bezug", "wahl", "global", ["global", "lokal (Stab)"]),
+                  msk.Feld("system", "Bezug", "wahl", "global", self._linienbezugswahl(),
+                           hinweis="global: Achsen des Modells; lokal: Achsen des Stabes; eigenes KS: "
+                                   "q_x, q_y, q_z in den Achsen des Koordinatensystems"),
                   msk.Feld("von", "Abschnitt von [m]", wert=0.0),
                   msk.Feld("bis", "bis [m] (0 = Ende)", wert=0.0),
                   self._lastfallfeld()]
@@ -22507,11 +23073,16 @@ class MainWindow(QtWidgets.QMainWindow):
         von = float(w.get("von", 0.0) or 0.0)
         bis = float(w.get("bis", 0.0) or 0.0) or None
         system = "local" if str(w.get("system", "")).startswith("lokal") else "global"
+        ks = ""
+        if str(w.get("system", "")).endswith(self.KS_ENDUNG):
+            ks = str(w.get("system"))[:-len(self.KS_ENDUNG)]
+            if ks not in self.model.koordinatensysteme:
+                return self.hinweis(f"Koordinatensystem „{ks}“ gibt es nicht")
         fall = w.get("fall") or None
         self.merken("Linienlast")
         for name, art in ziele:
             self.model.add_linienlast(name, q, art=art, q2=q2, system=system,
-                                      von=von, bis=bis, case=fall)
+                                      von=von, bis=bis, case=fall, ks=ks)
         n = self.model.lasten_verteilen()
         self.analysis = None
         self.results = None
@@ -22519,7 +23090,13 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"{fall or self.model.active_case} ({bg.anzahl(n, 'Elementlast', 'Elementlasten')})")
         self.refresh_all()
 
-    #: Richtungen einer Flaechenlast in der Maske
+    def _linienbezugswahl(self) -> list:
+        """Wahl „Bezug“ einer Linienlast: global, lokal (Stab), eigene KS."""
+        return ["global", "lokal (Stab)"] + [
+            f"{n}{self.KS_ENDUNG}" for n in (getattr(self.model, "koordinatensysteme", None) or {})]
+
+    #: Richtungen einer Flaechenlast in der Maske (bis 08.11.2026; aeltere
+    #: Aufrufer geben sie weiter im Feld „richtung“)
     LASTRICHTUNGEN = ["senkrecht zur Fläche (Druck)", "global x", "global y", "global z",
                       "global −x", "global −y", "global −z"]
     LASTRICHTUNG_VEKTOR = {"global x": (1, 0, 0), "global y": (0, 1, 0), "global z": (0, 0, 1),
@@ -22529,10 +23106,19 @@ class MainWindow(QtWidgets.QMainWindow):
     @_maskenweg()
     def maske_flaechenlast(self):
         """Flaechenlast auf Flaechen oder Volumen: gleichmaessig oder linear."""
-        felder = [msk.Feld("p", "p [kN/m²]", wert=5.0,
-                           hinweis="positiv drückt in den Körper (Druck)"),
-                  msk.Feld("richtung", "Richtung", "wahl", self.LASTRICHTUNGEN[0],
-                           list(self.LASTRICHTUNGEN)),
+        # Bezug und Achse (Oberflaechenpaket B, 08.11.2026): Vorgabe global Z mit
+        # negativem Wert - so wirkt die Last nach unten, wenn Z nach oben zeigt.
+        # Bis dahin wirkte p senkrecht zur Flaeche, und das Vorzeichen hing am
+        # unsichtbaren Umlaufsinn ihres Randes.
+        felder = [msk.Feld("p", "p [kN/m²]", wert=-5.0,
+                           hinweis="positiv in Richtung der gewählten Achse: bei global Z (Z nach oben) "
+                                   "wirkt −5 nach unten"),
+                  msk.Feld("bezug", "Bezug", "wahl", self.BEZUG_GLOBAL,
+                           self._bezugswahl() + [self.BEZUG_SENKRECHT],
+                           hinweis="global: Achsen des Modells; lokal: Achsen der Fläche (Ansicht → "
+                                   "Anzeigen → Flächenachsen); eigenes KS: Achsen eines Koordinatensystems "
+                                   "(Modellbaum → Eigenschaften); senkrecht: wie vor dem 08.11.2026"),
+                  msk.Feld("achse", "Achse", "wahl", "z", list(self.LASTACHSEN)),
                   msk.Feld("projiziert", "auf die Projektion (Schnee, Wind)", "haken", False),
                   msk.Feld("verlauf", "Verlauf", "wahl", "gleichmäßig",
                            ["gleichmäßig", "linear von Punkt A nach B"]),
@@ -22555,7 +23141,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.hinweis("Zuerst Flächen oder Volumen in der Ansicht wählen "
                               "(Auswahlart „Fläche“ oder „Volumen“)")
         p = float(w.get("p", 0.0) or 0.0) * 1e3
+        # Ohne Feld „bezug“ (aeltere Aufrufer, Feld „richtung“) wie bisher
         richtung = self.LASTRICHTUNG_VEKTOR.get(str(w.get("richtung", "")))
+        bezug, ks = self._bezug_aus_wahl(w.get("bezug")) if "bezug" in w else ("", "")
+        achse = str(w.get("achse", "z") or "z")
+        if bezug:
+            richtung = None
+        if bezug == "lokal" and w.get("projiziert"):
+            return self.hinweis("„auf die Projektion“ geht nur mit einer festen Richtung (global oder "
+                                "eigenes KS), nicht mit lokalen Flächenachsen")
         verlauf = None
         if str(w.get("verlauf", "")).startswith("linear"):
             A = [float(w.get(k, 0.0) or 0.0) for k in ("ax", "ay", "az")]
@@ -22572,7 +23166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for name, art in ziele:
             self.model.add_geometrielast(name, p, art=art, richtung=richtung, case=fall,
                                          projiziert=bool(w.get("projiziert")),
-                                         verlauf=verlauf)
+                                         verlauf=verlauf, bezug=bezug, achse=achse, ks=ks)
         n = self.model.lasten_verteilen()
         self.analysis = None
         self.results = None
@@ -22632,8 +23226,9 @@ class MainWindow(QtWidgets.QMainWindow):
         verfahren = self.WASSERVERFAHREN[0 if wd.numerisch() else 1]
         felder = [F("name", "Name", "text", wd.name, breite=140),
                   F("situation", "Situation", "wahl", wd.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140,
-                    verweis="lastfall"),
+                  F("fall", "Lastfall", "text", wd.lastfall, breite=140, verweis="lastfall",
+                    hinweis="leer = neuer Lastfall mit der Nummer unten und der Bezeichnung "
+                            f"„Wasser {wd.name}“; ein vorhandener Lastfall bleibt, wie er ist"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(wd.lastfall_nr or m.naechste_lastfallnummer()),
                     hinweis="Nummer des Lastfalls (0 = nächste freie)"),
                   F("verfahren", "Verfahren", "wahl", verfahren, list(self.WASSERVERFAHREN),
@@ -22808,8 +23403,9 @@ class MainWindow(QtWidgets.QMainWindow):
         situationen = m.situationsnamen()
         felder = [F("name", "Name", "text", w.name, breite=140),
                   F("situation", "Situation", "wahl", w.situation or situationen[0], situationen),
-                  F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140,
-                    verweis="lastfall"),
+                  F("fall", "Lastfall", "text", w.lastfall, breite=140, verweis="lastfall",
+                    hinweis="leer = neuer Lastfall mit der Nummer unten und der Bezeichnung "
+                            f"„Wind {w.name}“; ein vorhandener Lastfall bleibt, wie er ist"),
                   F("fall_nr", "Lastfall-Nr.", "ganz", int(w.lastfall_nr or m.naechste_lastfallnummer())),
                   F("verfahren", "Verfahren", "wahl", self.WINDVERFAHREN[1 if w.windkanal() else 0],
                     list(self.WINDVERFAHREN),
@@ -23907,31 +24503,22 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.exec()
 
     def add_line_support(self):
-        """Linienlager entlang der gewaehlten Knoten (in Auswahlreihenfolge)."""
-        if len(self.selection) < 2:
-            return self.error("Mindestens zwei Knoten auswählen (Reihenfolge = Linienzug)")
-        d = SupportNonlinearDialog(self, None, "Linienlager")
-        if not d.exec():
-            return
-        self.merken("Linienlager angelegt")
-        ls = self.model.add_line_support([int(n) for n in self.selection])
-        ls.behaviour = d.behaviours()
-        self.info(f"Linienlager über {len(self.selection)} Knoten angelegt")
-        self.refresh_all()
+        """Neues Linienlager: rechts die Maske mit den Linien (in der Ansicht
+        anklickbar) und den Freiheitsgraden; angelegt wird erst mit OK.
+
+        Seit dem 08.11.2026 (Paket A Punkt 3): bis dahin brauchte der Befehl
+        mindestens zwei gewaehlte Knoten und oeffnete einen modalen Dialog.
+        Gewaehlte Linien bzw. Knoten stehen schon in der Maske."""
+        return self._objektmaske("linienlager_einzeln", "neu", neu=True)
 
     def add_surface_support(self):
-        """Flaechenlager (Bettung) auf den gewaehlten Elementen."""
-        els = self._elements_from_text(self.ed_elist.text())
-        if not els:
-            return self.error("Keine Elemente angegeben (Feld 'Elemente')")
-        d = SupportNonlinearDialog(self, None, "Flächenlager (Bettung)")
-        if not d.exec():
-            return
-        self.merken("Flächenlager angelegt")
-        ss = self.model.add_surface_support(els)
-        ss.behaviour = d.behaviours()
-        self.info(f"Flächenlager auf {bg.anzahl(len(els), 'Element', 'Elementen')} angelegt")
-        self.refresh_all()
+        """Neues Flaechenlager: rechts die Maske mit den Flaechen (in der
+        Ansicht anklickbar) und den Freiheitsgraden; angelegt wird erst mit OK.
+
+        Bis zum 08.11.2026 las der Befehl die Elemente aus dem Feld ``ed_elist``
+        eines Registers, das nicht mehr zu sehen ist - er scheiterte praktisch
+        immer mit „Keine Elemente angegeben“ (Paket A Punkt 5)."""
+        return self._objektmaske("flaechenlager_einzeln", "neu", neu=True)
 
     def remove_support(self):
         sel = set(int(n) for n in self.selection)
@@ -25161,6 +25748,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "cb_reibverfahren"):
             self.cb_reibverfahren.setCurrentIndex(0 if bool(getattr(pz, "reibungstangente", True)) else 1)
             self.sp_haft_faktor.setValue(float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3))
+        if hasattr(self, "cb_ausfall_annehmen"):
+            self.cb_ausfall_annehmen.setChecked(bool(getattr(pz, "ausfall_annehmen", False)))
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -25209,6 +25798,8 @@ class MainWindow(QtWidgets.QMainWindow):
             alt_f = float(getattr(pz, "haft_faktor", 1.0e3) or 1.0e3)
             f_ = float(self.sp_haft_faktor.value())
             pz.haft_faktor = alt_f if round(alt_f) == round(f_) else f_
+        if hasattr(self, "cb_ausfall_annehmen"):
+            pz.ausfall_annehmen = bool(self.cb_ausfall_annehmen.isChecked())
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
@@ -27771,6 +28362,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Situation mit Stellung die gedrehte Kopie, mit der gerechnet wurde -
         sonst das Modell selbst. Knoten und Elemente sind dieselben, nur die
         Lage der bewegten Teile ist eine andere."""
+        sm = self._stellungsmodell()
+        if sm is not None:
+            return sm                       # eine Stellung im Bild (stellung_zeigen)
         r = self.current_result()
         rm = getattr(r, "model", None) if r is not None else None
         info = getattr(r, "info", None) or {}
@@ -27778,6 +28372,99 @@ class MainWindow(QtWidgets.QMainWindow):
                 and rm.nn == self.model.nn and len(rm.elements) == len(self.model.elements)):
             return rm
         return self.model
+
+    def stellung_zeigen(self, name) -> None:
+        """Das Modell in einer Stellung zeigen (08.11.2026, Paket A Punkt 8):
+        die bewegten Teile verschoben und gedreht wie in der Rechnung
+        (Stellung.anwenden, nur die Lage), die Grundstellung blass dahinter.
+        ``None`` zeigt wieder die Grundstellung - ebenso der Knopf „Grundstellung
+        zeigen“ in der Glasleiste. Das Modell selbst bleibt unberuehrt."""
+        if name and self.model.stellung(name) is None:
+            name = None
+        alt = getattr(self, "_stellung_im_bild", "") or ""
+        self._stellung_im_bild = name or ""
+        self._stellung_bild = None
+        a = getattr(self, "act_grundstellung", None)
+        if a is not None:
+            a.setEnabled(bool(name))
+            a.setToolTip(f"Grundstellung zeigen - im Bild steht die Stellung „{name}“" if name else
+                         "Grundstellung zeigen - keine Stellung ist im Bild (eine Stellung im "
+                         "Modellbaum anklicken)")
+        self._grundstellung_knopf(bool(name))
+        if (name or "") != alt:
+            self.redraw()
+        if name:
+            self.info(f"Stellung „{name}“ im Bild, die Grundstellung blass dahinter - zurück mit "
+                      "„Grundstellung zeigen“ in der Glasleiste")
+        elif alt:
+            self.info("Grundstellung im Bild")
+
+    def _grundstellung_knopf(self, an: bool) -> None:
+        """Den Knopf „Grundstellung zeigen“ der Glasleiste zeigen oder wegnehmen."""
+        gl = getattr(self, "glasleiste", None)
+        b = (getattr(gl, "knoepfe", None) or {}).get("grundstellung")
+        if b is None or b.isVisibleTo(gl) == bool(an):
+            return
+        b.setVisible(bool(an))
+        try:
+            gl._stand = None                # die Leiste neu einpassen
+            gl.nachziehen()
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def _stellungsmodell(self):
+        """Das Modell der Stellung im Bild oder None: eine flache Kopie mit
+        eigenen Knotenkoordinaten - Elemente, Linien und Flaechen sind dieselben
+        Objekte, nur die Lage der bewegten Knoten ist eine andere. Je Stand des
+        Modells und der Stellung einmal gebildet."""
+        name = getattr(self, "_stellung_im_bild", "") or ""
+        if not name:
+            return None
+        m = self.model
+        st = m.stellung(name)
+        if st is None:
+            self._stellung_im_bild = ""
+            a = getattr(self, "act_grundstellung", None)
+            if a is not None:
+                a.setEnabled(False)
+                self._grundstellung_knopf(False)
+            return None
+        schluessel = (name, id(m), getattr(self, "_stand", None), m.nn, len(m.elements),
+                      repr(sorted(vars(st).items(), key=lambda kv: kv[0])))
+        zwischen = getattr(self, "_stellung_bild", None)
+        if zwischen is not None and zwischen[0] == schluessel:
+            return zwischen[1]
+        import copy
+        import types
+        sm = copy.copy(m)
+        sm.nodes = np.array(m.nodes, dtype=float, copy=True)
+        try:
+            st.anwenden(types.SimpleNamespace(nodes=sm.nodes), m, nur_lage=True)
+        except Exception as ex:             # noqa: BLE001 - die Ansicht bleibt bedienbar
+            self.log.appendPlainText(f"Stellung {name} nicht darstellbar: {ex}")
+            return None
+        self._stellung_bild = (schluessel, sm)
+        return sm
+
+    def _grundstellung_zeichnen(self, m) -> None:
+        """Steht eine Stellung im Bild, die Grundstellung blass dahinter: das Netz
+        und die Linien an ihren unbewegten Orten, nicht anklickbar."""
+        if m is self.model or not getattr(self, "_stellung_im_bild", ""):
+            return
+        basis = self.model
+        blass = dict(color=self.GEIST_FARBE, opacity=0.25, show_edges=False, lighting=False, pickable=False)
+        try:
+            if len(basis.elements):
+                grid = vp.teilnetz(basis, range(len(basis.elements)))
+                if grid.n_cells:
+                    self.plotter.add_mesh(grid, name="stellung_grund", **blass)
+            if basis.lines:
+                netz = vp.linien_netz(basis, [])
+                if netz is not None:
+                    self.plotter.add_mesh(netz, name="stellung_grund_linien", color=self.GEIST_KANTE,
+                                          line_width=1, opacity=0.5, pickable=False)
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Grundstellung nicht gezeichnet: {ex}")
 
     def _netze_bauen(self, m, r, modus: str):
         """Die Netze der Ansicht: [(Netz, Knoten je Punkt, Name)] und die
@@ -27817,6 +28504,20 @@ class MainWindow(QtWidgets.QMainWindow):
                     netze.append((pd, np.asarray(pd.point_data["knoten"], int), "stabkoerper"))
             except Exception as ex:         # noqa: BLE001
                 self.log.appendPlainText(f"Stabkörper: {ex}")
+        if m is not self.model and getattr(self, "_stellung_im_bild", "") and m.nn == self.model.nn:
+            # Eine Stellung im Bild (08.11.2026): das Gitter entsteht aus dem
+            # Modell (einmal je Netzstand) - seine Punkte an die Lage der Stellung
+            # setzen. Punkte eines Schnitts (Nummer >= nn) haben keinen Knoten;
+            # dann bleibt das Netz, wie es ist.
+            lage = np.asarray(m.nodes, float)
+            verlegt = []
+            for netz, kn, nm in netze:
+                kn = np.asarray(kn, int)
+                if nm != "stabkoerper" and len(kn) == netz.n_points and (not len(kn) or kn.max() < m.nn):
+                    netz = netz.copy()
+                    netz.points = lage[kn]
+                verlegt.append((netz, kn, nm))
+            netze = verlegt
         return netze, ausser
 
     def _modellfarben(self, m, u) -> dict:
@@ -27947,6 +28648,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _lasten_zeichnen(self, m, r, size: float, sichtbare_knoten) -> None:
         self._lastpunkte = []
+        # Lokale Flaechenachsen (Oberflaechenpaket B, 08.11.2026): mit ihnen
+        # rechnet eine Flaechenlast mit Bezug „lokal“
+        if getattr(self, "act_flaechenachsen", None) is not None and self.act_flaechenachsen.isChecked():
+            vp.add_flaechenachsen(self.plotter, m, size, ausser_flaechen=self.verborgen["flaechen"])
         fall = self._lastfall_fuers_bild(r, getattr(self, "_modal_im_bild", False))
         self._lastfall_im_bild = fall
         self._lasten_hervor = {(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == fall}
@@ -28314,6 +29019,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Werte im Bild: nur die {vp.WERTE_MAX} betragsgrößten Werte beschriftet - "
                     "Filter oder Schwelle in der Maske Ergebnisse", 8000)
         self._bewegung_zeichnen(m)
+        # Eine Stellung im Bild: die Grundstellung blass dahinter, und Klicks
+        # treffen die Knoten dort, wo sie gezeichnet sind (08.11.2026)
+        if m is not self.model and getattr(self, "_stellung_im_bild", ""):
+            self._grundstellung_zeichnen(m)
+            if self._bildlage is None:
+                self._bildlage = np.asarray(m.nodes, float)
         # Rahmen und Griffe der Schnittbox (Ansichtspaket C, 14.10.2026)
         self.schnittbox.zeichnen()
         # Das Achsenkreuz unten rechts (add_axes) entfiel am 14.10.2026: das
@@ -31086,8 +31797,13 @@ class MainWindow(QtWidgets.QMainWindow):
         status_hinweise = status_vorn + status_hinweise
         if status_hinweise:
             self._hinweis_statuszeile(" · ".join(status_hinweise))
-        # Modell und Ergebnisse sind die der Datei
+        # Modell und Ergebnisse sind die der Datei - ausser den beim Oeffnen
+        # umgestellten Namen (R2-A2): sie gelten als Aenderung, der Titel
+        # traegt den Stern, und Schliessen fragt mit dem Grund
         self._als_gespeichert()
+        if (getattr(self.model, "_umbenennung", None) or {}).get("geaendert"):
+            self._namen_umgestellt = True
+            self._titel_nachziehen()
         return True
 
     def _analyse_passt(self) -> str:
@@ -31223,12 +31939,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not p:
             return
         with open(p, "w", encoding="utf-8") as f:
-            f.write(f"Ergebnis;{r.name}\nKnoten;x;y;z;ux;uy;uz;rx;ry;rz;Rx;Ry;Rz\n")
+            # mit den Lagermomenten Mx, My, Mz (08.11.2026, bis dahin nur Rx, Ry, Rz)
+            f.write(f"Ergebnis;{r.name}\nKnoten;x;y;z;ux;uy;uz;rx;ry;rz;Rx;Ry;Rz;Mx;My;Mz\n")
             for i in range(self.model.nn):
                 x, y, z = self.model.nodes[i]
                 f.write(f"{i};{x:.6f};{y:.6f};{z:.6f};"
                         + ";".join(f"{v:.6e}" for v in r.u[i]) + ";"
-                        + ";".join(f"{v:.4f}" for v in r.reactions[i, :3]) + "\n")
+                        + ";".join(f"{v:.4f}" for v in r.reactions[i, :6]) + "\n")
             if r.beam_forces:
                 f.write("\nElement;N1;N2;Vy1;Vy2;Vz1;Vz2;Mt1;My1;My2;Mz1;Mz2;sigma\n")
                 for e, d in sorted(r.beam_forces.items()):
@@ -31572,7 +32289,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt_ende()
             self._werkzeuge_geaendert("mumps", f"MUMPS {s.get('version', '?')} nachgeladen ({groesse} MB, "
                                                f"{time.time() - t0:.0f} s) - Berechnung → Einstellungen → "
-                                               "Experten → Gleichungslöser"
+                                               "Gleichungslöser (Experte)"
                                                + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
 
         def fehler(msg):

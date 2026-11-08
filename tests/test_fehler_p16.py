@@ -212,8 +212,10 @@ def test_f40_lagerknopf():
     tip = b.toolTip()
     check("… sein Hinweis nennt alles: Schlupf, Reibung und Grenzkraft je Freiheitsgrad",
           all(x in tip for x in ("Schlupf", "Reibung", "Grenzkraft", "Freiheitsgrad")), repr(tip))
-    check("… die anderen Zusatzknöpfe bleiben, wie sie waren",
-          {"Bettung übernehmen", "Lager löschen"} <= set(knoepfe) and len(knoepfe) == 3, str(list(knoepfe)))
+    # dazu seit dem 08.11.2026 „Neu: Knotenlager …“ (Paket A Punkt 2)
+    check("… die anderen Zusatzknöpfe bleiben, wie sie waren (dazu „Neu: Knotenlager …“)",
+          {"Bettung übernehmen", "Lager löschen", "Neu: Knotenlager …"} <= set(knoepfe) and len(knoepfe) == 4,
+          str(list(knoepfe)))
     gerufen = []
     w._lager_nichtlinear = lambda art, i: gerufen.append((art, i))
     try:

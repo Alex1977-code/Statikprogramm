@@ -450,7 +450,7 @@ Die Arbeitsfläche in drei Spalten:
   | Geometrie → Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
   | Geometrie → Stäbe | die **Stäbe im Sinn von RFEM**, also die Stäbe mit Nachweis; jeder ist eine Kette von Stabelementen |
   | Geometrie → Flächen, Volumen | die Flächenobjekte und die Volumenkörper |
-  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
+  | **Lager und Verbindungen** → Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung; seit dem 08.11.2026 stehen *Linienlager* und *Flächenlager* immer da, auch leer, mit Rechtsklick *Neu* und Doppelklick-Anlegen wie die Knotenlager |
   | Lager und Verbindungen → Verbindungen | Punktmassen, Dämpfer, Federn, starre Körper und Grenzschichten, sobald es welche gibt |
   | Lager und Verbindungen → Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026). Die Maske eines Gelenks legt es mit **„Auf gewählte Stäbe setzen“** auf die Stabelemente, deren Knoten alle gewählt sind; „Gelenke setzen…“ (Register Struktur und Auswahl) öffnet diese Maske |
   | Lager und Verbindungen → Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
@@ -463,6 +463,30 @@ Die Arbeitsfläche in drei Spalten:
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht und Unterlagen** → Bericht, Unterlagen | die aus der Ansicht übernommenen Ergebnisbilder; Dateien, Ansichten und Skizzen zum Modell |
   | **Hilfsobjekte** → Bemaßungen, Layer, Ansichten | Maße, benannte Objektgruppen (in RFEM: Bemaßungen und Objektselektionen) und gespeicherte Ansichten (seit 14.10.2026) |
+
+  **Klicken statt Abtippen und „Neu“ in der Maske (seit 08.11.2026).** In
+  den Masken rechts lassen sich die Bezugsobjekte in der Ansicht anklicken,
+  statt ihre Nummern abzutippen: Ein Klick ins Feld schaltet die Auswahl per
+  Maus auf dieses Feld (orange eingerahmt), und jeder Klick in der Ansicht
+  nimmt das Objekt dazu oder wieder heraus. Das gilt für die Knoten einer
+  Linie (Feld „Knoten“) und eines Stabelements, die Stabelemente eines Stabs
+  (Feld „Elemente“), den Knoten eines Knotenlagers (der Klick ersetzt ihn, ein
+  Knotenlager sitzt an genau einem Knoten), die Knoten in der Maske „Lager
+  setzen“, die Linien eines Linienlagers (ohne Linien: seine Knoten in
+  Reihenfolge) und die Flächen eines Flächenlagers (ohne Flächen: Element-
+  nummern). Bis dahin zeigten die Lagermasken ihren Ort nur an, und Linien
+  bzw. Flächen eines Lagers standen gar nicht darin. Ein Lager auf Linien
+  oder Flächen folgt dem Netz wie ein importiertes. Ein Klick in ein anderes
+  Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
+  hat außerdem den Knopf **„Neu: <Art> …“** (etwa „Neu: Linie …“), der wie
+  Rechtsklick → *Neu* im Modellbaum die Anlegemaske öffnet; angelegt wird erst
+  mit OK; im Modellbaum tut dasselbe die Zeile „+ … anlegen“ jedes Zweigs.
+  *Neues Linienlager* und *Neues Flächenlager* öffnen seit demselben
+  Tag diese Maske statt eines eigenen Fensters; gewählte Linien bzw. Flächen
+  stehen schon darin. *Neues Flächenlager* las bis dahin die Elemente aus
+  einem Feld, das es im Register nicht mehr zu sehen gab, und meldete darum
+  praktisch immer „Keine Elemente angegeben“. Jede Änderung nimmt **Strg+Z**
+  zurück.
 
   **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
   klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
@@ -726,7 +750,7 @@ Die Arbeitsfläche in drei Spalten:
   wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
   *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
   Linien, Stabelemente (bis zum 03.10.2026 „Stäbe“), Flächen, Volumen,
-  Gelenke, Knotenlager,
+  Gelenke, Knotenlager, seit dem 08.11.2026 Linien- und Flächenlager,
   Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
   Situationen, Subsysteme, Schweißnähte, Bemaßungen, den Wasserdruck und seit
   dem 03.10.2026 den Bericht: „Neu: Berichtsbild“ fragt Name,
@@ -742,15 +766,22 @@ Die Arbeitsfläche in drei Spalten:
   alle Objekte der Art aus. Ausgenommen sind Zweige, deren *Neu* keine
   Anlegemaske ist: Knoten (dort legt *Neu* sofort einen Knoten an), Layer
   (*Neu* fragt in einem eigenen Fenster nach dem Namen und legt den Layer aus
-  der Auswahl an), Unterlagen (*Neu* öffnet das Zeichenfenster einer Skizze)
-  sowie Linien- und Flächenlager (brauchen erst eine Auswahl und fragen in
-  einem eigenen Fenster). Sie, die Zweige ohne *Neu* (Anschlüsse,
+  der Auswahl an) und Unterlagen (*Neu* öffnet das Zeichenfenster einer
+  Skizze); bis zum 08.11.2026 gehörten Linien- und Flächenlager dazu (sie
+  brauchten erst eine Auswahl und fragten in einem eigenen Fenster). Sie, die
+  Zweige ohne *Neu* (Anschlüsse,
   Nachweisobjekte) und alle Gruppen klappen beim Doppelklick nur auf und zu,
   die Übersicht bleibt stehen. Das gilt auch für die Gruppe „Lager“: bis zum
   03.10.2026 öffnete ihr Doppelklick die Anlegemaske des Knotenlagers, weil
   sie die Art mit „Knotenlager“ teilt. Die Zeilen „+ … anlegen“ sind Befehle und tun beim
   einfachen Klick, was sie sagen; „+ Ansicht übernehmen“ nimmt die Ansicht
-  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
+  sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Seit dem
+  08.11.2026 hat jeder Zweig mit *Neu* eine solche Zeile, nicht nur die
+  Gelenke: Knoten, Linien, Stäbe, Flächen, Volumen, Stabelemente, Werkstoffe,
+  Querschnitte, Dicken, Lastfälle, Kombinationen und die drei Lagerarten. Der
+  Klick darauf wirkt wie Rechtsklick → *Neu* am Zweig. Unter den Lagern heißt
+  die Zeile kurz „+ Lager anlegen“, weil der volle Text eine Ebene tiefer bei
+  1366 × 768 abgeschnitten würde; welches Lager, sagt der Zweig darüber. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
   Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
   Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
   einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein
@@ -2152,7 +2183,7 @@ Verfeinerungsdurchgang, Splitter glätten, Randtreue).
 
 Die **Volumen laufen parallel**: alle Kerne bis auf einen rechnen in
 Arbeitsprozessen (der letzte bleibt der Oberfläche, die dabei bedienbar
-bleibt), gedeckelt durch *Berechnung → Einstellungen → Experten → Prozesse*. Die großen
+bleibt), gedeckelt durch *Berechnung → Einstellungen → Gleichungslöser (Experte) → Prozesse*. Die großen
 Körper starten zuerst, damit am Ende nicht ein Prozess allein auf den
 Lagerbock wartet; der Einbau ins Modell geschieht in der Reihenfolge des
 Fertigwerdens, das Netz ist dasselbe wie nacheinander. **Abbrechen** (Knopf
@@ -2420,13 +2451,12 @@ die DLLs kommen erst beim ersten Kontext; ein bloßer Import sagt nichts.
 Ist das Kästchen **MUMPS beim Programmstart nachladen, wenn es fehlt** an
 (Vorgabe), holt das Programm MUMPS einige Sekunden nach dem Start ohne
 Rückfrage: Balken in der Statuszeile, danach eine Protokollzeile („MUMPS
-5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Experten →
-Gleichungslöser“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
+5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Gleichungslöser (Experte)“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
 eine Zeile im Protokoll, und der nächste Start versucht es erneut; im Dialog
 bleibt **Installieren**. Ein neuer Bau (andere Prüfsumme im Programm)
 wird beim Start ebenso nachgeladen. Eine eigene Python-Umgebung, in der das
 Rad installiert ist, gilt als „vorhanden“ — dann lädt der Start nichts. Die
-Löserauswahl unter *Berechnung → Einstellungen → Experten* wird nach dem Nachladen
+Löserauswahl unter *Berechnung → Einstellungen → Gleichungslöser (Experte)* wird nach dem Nachladen
 sofort neu aufgebaut: bis 13.09.2026 entstand sie beim Start, bevor MUMPS
 da war, und zeigte es bis zum Neustart als „nicht installiert“.
 Geprüft in `tests/test_werkzeuge.py` (das echte Rad aus `packaging/` über
@@ -2560,13 +2590,17 @@ einen Streifen.
 
 | Spalte | Was darin steht |
 |---|---|
-| Posten | Name des Lastfalls oder der Kombination |
+| Lastfall / Kombination | Name des Lastfalls oder der Kombination |
 | Art | Lastfall oder Kombination |
 | Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“, „läuft (nicht konvergiert)“ bzw. „läuft (Probelauf)“; nach dem Abschluss steht dieser Stand statt „fertig“ da (siehe unten) |
-| Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
-| Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
-| Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
-| Meldung | die letzte Zeile des Rechenkerns im Klartext |
+| Iterationen | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Kontakt- und Plastizitätsiterationen |
+| Letzte Änderung | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
+| Rechenzeit | Laufzeit des Lastfalls bzw. der Kombination, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
+| Letzte Meldung | die letzte Zeile des Rechenkerns im Klartext |
+
+Bis zum 08.11.2026 hießen die Spalten „Posten“, „Schritte“, „Konvergenz“,
+„Zeit“ und „Meldung“; die Fußzeile sagt jetzt „3 Lastfälle/Kombinationen zu
+rechnen“ statt „3 Posten“.
 
 Über der Liste steht, **womit** gerechnet wird: der Prozesspool (Element-
 schleifen und Vernetzen) und der Gleichungslöser. Ist die **Rechnerfarm**
@@ -2577,8 +2611,9 @@ als aktiv - so fällt ein ausgefallener Rechner auf. Bricht die Verbindung zur
 Farm ab, sagt die Zeile das; die Rechnung selbst läuft weiter.
 
 Die Liste **folgt** dem gerade rechnenden Posten. Scrollt man selbst, bleibt
-sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Dem
-Laufenden folgen** springt zurück und schaltet das Folgen wieder ein. Das
+sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Zum
+laufenden Lastfall springen** (bis 08.11.2026 „Dem Laufenden folgen“) springt
+zurück und schaltet das Folgen wieder ein. Das
 Fenster ist nicht modal: das übrige Programm bleibt bedienbar, während
 gerechnet wird.
 
@@ -3095,7 +3130,7 @@ erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
+| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) und, nur solange eine Stellung im Bild steht (nach dem Klick auf sie im Modellbaum), **Grundstellung zeigen** (seit 08.11.2026): zurück auf die Grundstellung |
 | Darstellung ▾ | Menü: Voll, Transparent, Hidden-Line, Drahtmodell (Strg+1 … 4); das Symbol zeigt die gewählte Art |
 | Zeigen ▾ | Menü: Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz (F9), Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter) |
@@ -3715,6 +3750,18 @@ Sichtfensters liegen, und ein Klick zeichnete das Bild zweimal. Bis zum
 und der Bereich unten sprang auf das Register *Umhüllende*; die
 Auflagerkräfte standen als Text „min / max“ in einer Zelle, eine Summenzeile
 gab es nicht, und die Zelle mit der Kombination war nur Text.
+
+**Lagerreaktionen im Ergebnisbaum** (seit 08.11.2026). Unter *Ergebnisse*
+steht zu Lastfall, Kombination und Umhüllender die Gruppe **Lagerreaktionen**
+mit *R_x*, *R_y*, *R_z* und, soweit die Rechnung sie liefert, den
+Lagermomenten *M_x*, *M_y*, *M_z*: je Komponente der kleinste und der größte
+Wert über alle Lagerknoten in kN bzw. kNm, bei nur einem Wert dieser allein.
+Komponenten, die an keinem Knoten von null verschieden sind, fehlen - die
+Momente also, wo kein Lager eine Drehung hält (etwa an Volumenmodellen). Ein
+Klick holt unten die Tabelle *Auflagerkräfte* mit allen sechs Komponenten je
+Knoten. Bis dahin standen die Lagerreaktionen nur in dieser Tabelle und in
+den Kennwerten im Bild; die Ausgabe „Ergebnisse als CSV…“ nennt seit
+demselben Tag zu Rx, Ry, Rz auch Mx, My, Mz.
 
 **Kopfzeile unten.** Der Bereich unten hat eine einzige Kopfzeile. Links
 steht die Gruppe als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager,
@@ -4361,9 +4408,11 @@ Zwangsverformungen die Verschiebung. Die **Einheiten** der gezeichneten
 Lastarten stehen oben links in eckigen Klammern unter dem Lastfall, etwa
 „[kN, kN/m, kN/m²]“ - in den Einheiten aus *Ansicht → Einheiten*
 (Vorgabe kN, kNm, kN/m, kN/m², K und mm). Der Schalter
-*Ansicht → Anzeigen ▾ → Lastwerte* blendet die Zahlen aus; die Textgröße
+*Ansicht → Anzeigen ▾ → Lasten beschriften* blendet die Zahlen aus; die Textgröße
 folgt den Bemaßungseinstellungen. Bei sehr vielen gleichartigen Lasten
-werden höchstens 60 je Lastart beschriftet.
+werden höchstens 60 je Lastart beschriftet. Seit 08.11.2026 heißt der
+Schalter *Lasten beschriften* und schreibt die Einheit an jede Zahl (siehe
+„Lastbezug und eigene Koordinatensysteme“).
 
 ### Einheiten und Genauigkeiten
 
@@ -4669,7 +4718,13 @@ Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
 verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
 Tab erreicht) — sonst würde beim Rollen etwa die Windzone unbemerkt springen.
 Ein Klick auf ein halb sichtbares Feld wirkt sofort auf dieses Feld (ein Haken
-schaltet um); die Mitte rollt dabei nicht.
+schaltet um); die Mitte rollt dabei nicht. Seit dem 08.11.2026 gilt das für
+Auswahllisten und Zahlenfelder in **allen** rollbaren Masken und Registern des
+rechten Bereichs, auch im Register *Berechnung → Einstellungen* und in Tabellen
+mit Auswahllisten: ohne Fokus rollt das Rad den Bereich, erst nach einem Klick
+ins Feld verstellt es den Wert. Anlass war ein versehentlich umgestellter
+Gleichungslöser. Die Listen der Glasleiste über der Ansicht reagieren weiter
+direkt aufs Rad.
 
 Zur Tastatur: **Tab** geht von oben nach unten durch die Felder, dann durch
 die Knöpfe des Fußes und zuletzt auf **✕** — die Leertaste schließt die Maske
@@ -5672,6 +5727,18 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
 | Deaktivierte Knoten-, Linien-, Flächenlager | drei Listen zum Anhaken, je Lagerart eine; die Lager heißen darin wie im Modellbaum (ihr Name, sonst „Lager 2“, „Linienlager 1“, „Flächenlager 1“): sie greifen in dieser Stellung nicht |
 
+**Stellung im Bild** (seit 08.11.2026). Der Klick auf eine Stellung im
+Modellbaum zeigt das Modell zugleich **in dieser Stellung**: die bewegten
+Knoten verschoben und gedreht, wie die Rechnung sie legt (mit der Kette der
+Ausgangsstellungen), die Grundstellung blass dahinter. Das Modell selbst
+bleibt, wie es ist; Klicks in der Ansicht treffen die Knoten dort, wo sie
+gezeichnet sind. Der Knopf **„Grundstellung zeigen“** in der Glasleiste über
+der Ansicht schaltet zurück; er steht nur da, solange eine Stellung im Bild ist. Gezeigt
+wird nur die Lage. Welche Teile in der Stellung abgeschaltet sind, zeigt wie
+bisher die offene Maske. Kreise und Bögen, deren Mittelpunkt als Zahl in der
+Linie steht, folgen der Bewegung nicht; sie stehen an ihrem Ort in der
+Grundstellung.
+
 **Per Maus statt Tippen.** Solange der Haken *Klick in der Ansicht schaltet
 Stab, Fläche oder Volumen aus / ein* oben in der Maske steht, gehen Klicks in
 der Ansicht an die Stellung: ein angeklickter Stab, eine Fläche oder ein
@@ -5980,7 +6047,9 @@ Es sind dieselben Befehle wie in den Fachregistern, keine neuen.
 Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
-Kontaktbeispiele.
+Kontaktbeispiele. Seit dem 06.10.2026 heißen ihre Lastfälle LF1, LF2 …, ihre
+Kombinationen LK1, LK2 …, und der frühere Name steht als Bezeichnung daneben
+(am Hallenrahmen „LF3 W_links“).
 
 ## 4 Lastfälle und Kombinationen
 
@@ -6011,8 +6080,8 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Last | Ziel | Maske | Was sie kann |
 |---|---|---|---|
 | Knotenlast | gewählte Knoten | Kräfte F_x…F_z [kN], Momente M_x…M_z [kNm] | — |
-| Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, global oder lokal, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
-| Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
+| Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, Bezug global, lokal oder ein **eigenes Koordinatensystem**, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
+| Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], **Bezug** (global, lokal, eigenes Koordinatensystem; Vorgabe global Z) und Achse, auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
 | Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v, F_soll bzw. P₀ [kN], Verankerungsschlupf Δs [mm], Gruppe beim Spannen, Achse (Volumen) | als eingeprägte Dehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Endvorspannung (bleibend nach dem Verankern)** (nur Stäbe, seit 13.10.2026, bis 14.10.2026 „Sollkraft nach Verankerung“): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; als **Anfangsvorspannung (Pressenkraft P₀)** (nur Stäbe, seit 14.10.2026): die Presse spannt mit P₀, nach dem Verankern fehlen der Schlupf Δs und die elastischen Verluste; **Umwandeln** einer RFEM-Vorspannung (eingeprägte Dehnung, ΔT) in die Endvorspannung |
@@ -6121,10 +6190,13 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   günstig und ungünstig, jede veränderliche Einwirkung als Leiteinwirkung;
   GZG charakteristisch/häufig/quasi-ständig; außergewöhnlich 6.11b.
   Beschreibung „auto: …“ kennzeichnet erzeugte Kombinationen; sie werden bei
-  erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Seit dem 04.10.2026
-  überschreibt eine erzeugte Kombination nie eine vorhandene: Die Nummer im
-  Namen (GZT3, GZG7 …) zählt weiter und überspringt jeden Namen, den es schon
-  gibt. Bis dahin begann die Zählung bei der Zahl der vorhandenen
+  erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Die erzeugten
+  Kombinationen heißen seit dem 06.10.2026 LK1, LK2 …, ihre Bezeichnung nennt
+  Art und Leiteinwirkung (Abschnitt „Namen der erzeugten Lastfälle,
+  Kombinationen und Beispiele“ unten). Seit dem 04.10.2026
+  überschreibt eine erzeugte Kombination nie eine vorhandene: Sie nimmt die
+  nächste freie Nummer und überspringt jede, die es schon gibt. Bis zum
+  04.10.2026 begann die Zählung bei der Zahl der vorhandenen
   Kombinationen, und eine von Hand angelegte Kombination „GZT2“ mit
   9,99 · LF2 war nach dem Erzeugen still die erzeugte „GZT2“ mit 1,35 · LF1.
   Ersetzt wird beim erneuten Erzeugen außerdem nur, was der Generator selbst
@@ -6140,10 +6212,56 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   Kombinationen aus Dateien von vor dem 04.10.2026, die noch keinen
   Fingerabdruck tragen, gilt die alte Regel, aber nur, solange sie noch
   GZT…, GZT-A… oder GZG… heißen. „Kombinationen nach DIN 19704“ hält es
-  genauso: Heißt eine eigene Kombination schon „DIN LF1.1“, bekommt die
-  erzeugte einen freien Namen („DIN LF1.1 2“), und das Protokoll sagt es.
+  genauso: Sie heißen LK mit ihrer Nummer, ein erneuter Lauf ersetzt nur die
+  eigenen, unberührten und hält ihre Nummern, und eine Kombination des
+  Anwenders bleibt, auch wenn sie so heißt, wie eine erzeugte früher hieß
+  („DIN LF1.1“). Bis zum 06.10.2026 bekam die erzeugte in diesem Fall einen
+  freien Namen („DIN LF1.1 2“), und das Protokoll sagte es.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Lastbezug und eigene Koordinatensysteme (seit 08.11.2026)
+
+**Lastbezug: global, lokal oder eigenes Koordinatensystem.** Eine neue
+Flächenlast hat ein Feld *Bezug* und ein Feld *Achse*; p wirkt positiv in
+Richtung der gewählten Achse. Die Vorgabe ist **global Z** mit p = −5 kN/m²:
+zeigt Z nach oben, wirkt die Last nach unten. *Lokal* meint die Achsen der
+Fläche (z bei einer Schale die Elementnormale, die dem Umlauf der Randlinien
+folgt, an der Randfläche eines Volumens die Außennormale; x die globale
+X-Achse in die Fläche projiziert, bei einer Fläche quer zu X die Y-Achse;
+y = z × x). Ein **eigenes Koordinatensystem** legt man im Modellbaum unter
+*Eigenschaften → Koordinatensysteme* an („+ Koordinatensystem anlegen“):
+Name, Ursprung und entweder drei Drehwinkel (um Z, dann um die neue y-, dann
+um die neue x-Achse) oder drei Punkte (Ursprung, ein Punkt auf der x-Achse,
+ein Punkt in der xy-Ebene). Flächenlasten (Achse x, y, z) und Linienlasten
+(q_x, q_y, q_z in seinen Achsen) können sich darauf beziehen; gelöscht werden
+kann es nur, solange keine Last darauf verweist – sonst nennt der Hinweis die
+Lasten. Warum: bis dahin wirkte die Flächenlast immer *senkrecht zur Fläche*,
+und bei einer Schale hing das Vorzeichen am Umlaufsinn ihres Randes, den man
+nicht sieht („−5 kN/m² … die Fläche verformt sich nach oben“). **Bestehende
+Lasten und alte Dateien bleiben, wie sie waren**: ohne Bezug wirkt eine Last
+wie bisher, und eine Datei ohne die neuen Felder wird Zeichen für Zeichen
+gleich wieder gespeichert. Die bisherige Richtung bleibt in der Maske als
+„senkrecht zur Fläche (wie bisher; Schale: positiv in lokaler z-Richtung, Volumenrand: positiv drückt hinein)“ wählbar; bei einer
+Schale wirkt sie in Richtung der Elementnormalen (lokale z-Achse), am Rand eines
+Volumens gegen die Außennormale. *Ansicht → Anzeigen ▾ →
+Flächenachsen* zeigt die lokalen Achsen jeder Fläche als Pfeile x (rot),
+y (grün), z (blau). Geprüft in `tests/test_paket_b.py`.
+
+**Lasten im Bild, druckfähig.** Eine Flächenlast ist ein **Pfeilfeld** über
+die ganze Fläche (höchstens 49 Pfeile je Fläche) mit der durchscheinenden
+Lastfläche an den Pfeilenden und deren **Umriss** als Linie; eine Linienlast
+eine **Pfeilreihe** mit einer Linie an den Pfeilenden. Jede Lastart hat ihren
+eigenen Maßstab – die größte Knotenlast, die größte Strecken- und die größte
+Flächenlast bekommen je die volle Pfeillänge (vorher teilten sich Kräfte in kN
+und Flächenlasten in kN/m² einen Maßstab, und 100 kN am Knoten ließen
+5 kN/m² verschwinden). Die Pfeile zeigen die Richtung, **mit der gerechnet
+wird**: vernetzt nehmen sie die Elementlasten der Fläche (vorher zeigte die
+Ansicht eine Schalen-Flächenlast ohne Bezug gegen die Normale, gerechnet wurde
+mit ihr). *Ansicht → Anzeigen ▾ → Lasten beschriften* (bis 08.11.2026
+*Lastwerte*) schreibt den Wert **mit Einheit** und Dezimalkomma auf weißem
+Feld ans Ende des Pfeils, bei Flächenlasten mit Bezug mit Vorzeichen und Bezug
+(„−5 kN/m² (global Z)“) – so bleibt er im Bildexport und im Druck lesbar.
 
 ### Einwirkung nicht zugeordnet, Bemessungslastfall und Vorspannung (seit 13.10.2026)
 
@@ -6305,11 +6423,249 @@ Lastfälle plus eins vor, neben LF1 und LF3 also das vergebene LF3. Ein neuer
 Lastfall, der LF8 heißt, bekommt die Nr. 8, jeder andere die nächste freie
 Nummer.
 
-Alle neuen Angaben stehen in der Modelldatei. Die Dateifassung bleibt 8: Eine
-ältere Datei ohne diese Angaben lädt wie bisher, jede Kombination bekommt die
-Art nach ihren Alternativen, Nummer 0 und keine Bezeichnung. Ein älteres
-Programm liest eine neue Datei und übergeht die neuen Angaben. Die Umstellung
-alter Namen beim Öffnen folgt in einem späteren Schritt.
+Alle neuen Angaben stehen in der Modelldatei. Bis zum 06.10.2026 blieb die
+Dateifassung 8, und eine ältere Datei lud mit ihren alten Namen, mit der Nummer
+0 und ohne Bezeichnung. Seit dem 06.10.2026 schreibt das Programm die Fassung 9
+und stellt eine ältere Datei beim Öffnen um; wie, steht im nächsten Abschnitt.
+Ein Programm von vor dieser Umstellung liest eine Datei der Fassung 9 ohne
+Fehler und übernimmt Namen, Nummern, Art und Bezeichnung; das ist gegen den
+Stand unmittelbar davor geprüft.
+
+### Ältere Dateien beim Öffnen umstellen (seit 06.10.2026)
+
+Am 04.10.2026 hat der Anwender entschieden, dass alte Modelle und
+Ergebnisdateien beim Öffnen umgestellt werden: Alle Verweise gehen mit, das
+Protokoll zeigt eine Tabelle alt → neu, und gespeichert wird danach im neuen
+Format. Seit dem 06.10.2026 tut das Programm das bei jeder Datei vor der
+Fassung 9, also bei jeder Datei, die vor dem 06.10.2026 gespeichert wurde. Eine
+Datei der Fassung 9 stellt es nie um. Bis zum 06.10.2026 lud eine alte Datei
+mit ihren alten Namen.
+
+**Die neuen Namen.** Ein Lastfall heißt danach LF mit seiner Nummer, eine
+Lastkombination LK mit ihrer Nummer und eine Ergebniskombination EK mit ihrer
+Nummer. Ein Lastfall, der schon LF3 heißt, behält Namen und Nummer, solange
+die Nummer frei ist; dasselbe gilt für LK7 und EK2. Eine andere Schreibweise
+derselben Nummer wie „LF03“ oder „lf 3“ wird zu LF3, wenn LF3 nicht schon
+vergeben ist. Alle übrigen bekommen in der Reihenfolge des Modells die nächste
+freie Nummer, und das ist immer eins mehr als die höchste vergebene. Ein
+Modell mit den Lastfällen LF1, S, W_links und LF9 hat danach LF1, LF10, LF11
+und LF9. Lastkombinationen und Ergebniskombinationen zählen getrennt. Die
+Nummer, die in einer alten Datei im Feld Nr steht, zählt dabei nicht; sie war
+fast überall 0, und das Lastenheft hatte die Nr. 1 neben LF1 ein zweites Mal
+vergeben.
+
+**Lastkombination oder Ergebniskombination.** Eine Kombination wird EK, wenn
+sie Alternativen hat oder schon EK mit einer Nummer heißt, und sonst LK. Die
+in einer alten Datei gespeicherte Art zählt dabei nicht. Eine
+Ergebniskombination, die RFEM mit nur einer Alternative als Summe geliefert
+hat, wird darum noch LK; dass der RFEM-Import die Herkunft festhält, kommt mit
+dem Paket C2. Im Modell cbg werden so 872 Kombinationen zu LK1 bis LK872 und
+die 36 mit Alternativen zu EK1 bis EK36.
+
+**Die Bezeichnung.** Der alte Name wird die Bezeichnung, wenn er nicht schon
+der neue Name ist und die Bezeichnung noch leer ist. Aus „W_links“ wird so
+LF11 mit der Bezeichnung „W_links“, aus „Bemessungskombination im GZT
+(Grundstellung)“ etwa EK5 mit dieser Bezeichnung. Der alte Name geht damit
+nicht verloren, auch nicht in der gespeicherten Datei.
+
+**Alle Verweise gehen mit.** Die Umstellung benennt jeden Lastfall und jede
+Kombination über dieselben Wege um wie die Maske, und die nehmen jeden Verweis
+mit: die Faktoren und Alternativen der Kombinationen und ihre Leiteinwirkung,
+die Zustände und den Verlauf der Ermüdungslasten, die Lastfälle und
+Kombinationen der Stellungen, den Lastfall der Wind- und
+Wasserdruckgeneratoren samt seiner Nummer, den aktiven Lastfall und die
+Quelle jedes Berichtseintrags. Ein übernommenes Bild bleibt, was es war, ein
+Schnappschuss; seine Beschriftung folgt nur dort, wo sie den Klartext der
+Quelle enthält, etwa „Lastfall W_links · Verschiebung“, das zu „Lastfall LF11 ·
+Verschiebung“ wird. Damit sich unterwegs keine Namen kreuzen, etwa wenn ein
+Lastfall LF2 werden soll und eine Kombination noch „LF2“ heißt, bekommt ein
+solches Objekt zuerst einen eindeutigen Zwischennamen. Eine erzeugte
+Kombination bleibt dem Generator zugehörig: Das Umbenennen beim Öffnen zählt
+nicht als Hand des Anwenders, auch nicht bei einer Datei von vor dem
+04.10.2026, deren Kombinationen „auto…“ in der Beschreibung tragen und GZT…,
+GZT-A… oder GZG… heißen.
+
+**Die Tabelle im Protokoll.** Beim Öffnen steht im Protokoll ein Hinweis, der
+mit „Namen umgestellt (Datei der Fassung 8)“ beginnt und sagt, dass beim
+Speichern im neuen Format gespeichert wird. Darunter steht die Tabelle alt →
+neu, getrennt nach Lastfällen, Lastkombinationen und Ergebniskombinationen, mit
+höchstens zehn Zeilen je Gruppe. Eine Gruppe ohne Änderung steht als eine
+Zeile da, etwa „Lastfälle: alle 422 heißen schon LF<Nr>“ beim Modell
+Drehlager. Hat eine Gruppe mehr als zehn Zeilen, folgt darunter im Protokoll
+die vollständige Tabelle, beim Modell cbg mit 908 Zeilen. Die vollständige
+Tabelle steht im Protokoll und nicht in einer Datei neben dem Modell, weil das
+Öffnen nichts schreiben soll, worum niemand gebeten hat, auch nicht in einen
+schreibgeschützten oder synchronisierten Ordner, und weil derselbe Weg auch
+von der Kommandozeile, aus dem Browser und beim Import einer Modelldatei
+gegangen wird. Verloren geht nichts, denn der alte Name ist die Bezeichnung.
+Die Kommandozeile und der Browser zeigen dieselben Hinweise; `--lastfall`
+nennt danach den neuen Namen.
+
+Zwei Dinge, die eine alte Datei zweideutig machte, nennt das Protokoll eigens.
+Hießen ein Lastfall und eine Kombination gleich, hat die alte Rechnung die
+Kombination gelesen; beide bekommen getrennte Namen, und eine Ermüdungslast,
+die den gemeinsamen Namen nannte, zeigt danach auf die Kombination, so wie
+gerechnet wurde, mit der Bitte, das zu prüfen. Hieß eine Kombination oder ein
+Lastfall wie eine Alternative einer Ergebniskombination, etwa „E [2]“ neben E,
+war die alte Rechnung unvollständig; beide bekommen getrennte Namen, und das
+Protokoll bittet, neu zu rechnen.
+
+**Speichern.** Bis man speichert, steht die Datei auf der Platte unverändert
+mit den alten Namen da, und jedes Öffnen stellt sie gleich um. Nach dem
+Speichern hat sie die Fassung 9 mit Nummer, Art und Bezeichnung, und das
+nächste Öffnen stellt nichts mehr um.
+
+**Die Ergebnisdatei.** Liegt neben der alten Modelldatei eine Ergebnisdatei,
+wird sie mit derselben Tabelle umgestellt. Sie zeigt danach dieselben Zahlen
+unter den neuen Namen, ohne Neurechnung: die Lastfälle, die Kombinationen, die
+abgelegten Alternativen einer Ergebniskombination („EK8 [2]“ statt
+„Bemessung GZT [2]“), die Umhüllenden mit ihrem Schlüssel und ihrer Herkunft,
+die Tabellen der Theorie II. und III. Ordnung, die Namen in den Nachweisen
+(EC3, Verformungen, Beulen, Lasteinleitung, Volumen, Anschlüsse) und in deren
+Warnungen. Die Nachweise finden die abgelegten Alternativen danach unter den
+neuen Namen; am Prüfkörper ergibt ein neuer EC3-Nachweis aus der geöffneten
+Datei bitgleich dieselbe Ausnutzung wie der gespeicherte. Eine Umhüllende,
+die vor dem 04.10.2026 eine Umhüllende des Programms überschrieben hatte,
+heißt danach nach ihrer Ergebniskombination, etwa „Umhüllende EK3“ statt
+„Umhüllende ULS (Ergebniskombination)“. Was sich nicht sicher zuordnen lässt,
+verwirft das Programm und nennt es im Protokoll, statt es unter einem
+falschen Namen zu zeigen, etwa „Umhüllende „EK1“ verworfen: der Name „EK1
+[1]“ lässt sich nicht sicher zuordnen – neu rechnen“. Das trifft eine
+Ergebnisdatei, deren Ergebniskombination nach der Rechnung umbenannt wurde und
+deren alter Name jetzt einem anderen Objekt gehört. Die Stellungsreihe steht
+nicht in der Ergebnisdatei und kommt wie bisher mit der nächsten Rechnung. Eine
+Ergebnisdatei mit alten Namen neben einer Modelldatei, die schon die Fassung 9
+hat, lädt das Programm nicht; das Protokoll sagt, sie trage die Namen von vor
+der Umstellung.
+
+**Rechenarbeiter und Beispiele.** Ob umgestellt wird, hängt nur an der
+Fassung der Datei und nie daran, wie die Namen aussehen. Die Rechenarbeiter
+von Pool und Farm bekommen das Modell in der Fassung 9 und stellen darum nie
+selbst um; sie rechnen unter denselben Namen wie das Fenster. Die eingebauten
+Beispiele werden nicht aus Dateien geladen und behalten ihre Namen wie „S“,
+„W_links“ und „GZT1“, bis das Paket C1 sie ändert.
+
+**Dauer.** Gemessen am 06.10.2026, je zweimal abwechselnd mit dem Stand davor:
+Das Modell cbg (58 Lastfälle, 908 Kombinationen) braucht beim Öffnen 1,6 bis
+1,7 s mehr, vorher unter 0,1 s. Das Modell Drehlager (422 Lastfälle, die schon
+LF<Nr> heißen, und 54 Ergebniskombinationen) öffnet sich so schnell wie vorher,
+in 17,1 und 16,5 s gegen vorher 16,5 und 17,5 s, mit derselben Speicherspitze
+von 0,91 GB.
+
+Geprüft in `tests/test_umstellung_lf_lk.py`.
+
+### Namen der erzeugten Lastfälle, Kombinationen und Beispiele (seit 06.10.2026)
+
+Am 06.10.2026 hat das Programm die Stellen umgestellt, die Namen selbst
+bilden: den Kombinationsgenerator nach DIN EN 1990, die Lastfälle und
+Kombinationen nach DIN 19704, die Generatoren Wind und Wasserdruck, den
+Antrieb einer Stellung und die eingebauten Beispiele. Sie legen nur noch
+Lastfälle LF mit Nummer und Lastkombinationen LK mit Nummer an, und was
+früher der freie Name war, steht als Bezeichnung daneben, etwa „LF3 W_links“.
+Erzwungen wird die Form noch nicht: Ein Name, den man selbst eingibt, bleibt
+erlaubt.
+
+**Kombinationsgenerator (DIN EN 1990).** Jede erzeugte Kombination heißt LK
+mit der nächsten freien Nummer und ist eine Lastkombination (Art LK). Der Typ
+— GZT, GZG charakteristisch, häufig, quasi-ständig, außergewöhnlich — bleibt
+ein eigenes Merkmal und steht in der Spalte Typ. Die Bezeichnung sagt kurz,
+was die Kombination ist: Art und Leiteinwirkung, bei Bedarf die
+Begleiteinwirkungen in Klammern und der Zusatz „G günstig“, wenn die
+ständigen Lasten günstig angesetzt sind. Beispiele sind „GZT, Leit LF3 (mit
+LF2, LF5)“, „GZG char., Leit LF3“, „GZG häufig, Leit LF3“, „GZT 6.10a (mit
+LF2)“, „GZT außergew. LF9, Leit LF3“, „GZT, nur ständig“ und „GZG
+quasi-ständig, nur ständig“; in einer Stellung steht deren Name in eckigen
+Klammern dahinter. Die Leiteinwirkung nennt den Lastfall mit seinem Namen
+(LF3) und nicht mit seiner Bezeichnung, damit sich die Bezeichnung eines
+Lastfalls ändern lässt, ohne dass ein Text in einer Kombination veraltet. Bis
+zum 06.10.2026 hießen die erzeugten Kombinationen GZT<n>, GZT-A<n> und
+GZG<n> mit einem gemeinsamen Zähler. Reihenfolge und Zahl sind geblieben: Am
+Hallenrahmen wurden aus GZT1 bis GZT42 und GZG43 bis GZG72 die Kombinationen
+LK1 bis LK72, und gerechnet wird Zahl für Zahl dasselbe.
+
+Der Generator überschreibt nie etwas und ersetzt nur Eigenes. Die Nummer
+einer neuen Kombination ist die nächste freie, und er überspringt jede, die
+schon vergeben ist, im Feld Nummer oder im Namen: Eine von Hand angelegte
+Kombination LK5 bleibt, wie sie ist. Beim erneuten Erzeugen ersetzt er nur
+die Kombinationen, die er selbst erzeugt hat und die seitdem niemand
+angefasst hat. Gefunden werden sie an ihrem Fingerabdruck und nie am Namen;
+darum bekommt auch eine Datei, die beim Öffnen auf LF, LK und EK umgestellt
+wurde und deren erzeugte Kombinationen dabei andere Namen bekommen haben,
+beim zweiten Erzeugen keine Doppel. Jede ersetzte Kombination bekommt ihre
+Nummer zurück, wenn ihr Inhalt (Typ, Situation, Faktoren) derselbe ist: Eine
+Ermüdungslast auf LK17, ein Berichtseintrag oder eine Stellung zeigt dann
+weiter auf dieselbe Kombination. Neue Kombinationen füllen zuerst die
+Lücken, die ersetzte hinterlassen haben, niedrigste Nummer zuerst, danach
+geht es hinter der höchsten weiter. Eine Nummer, auf die noch eine
+Ermüdungslast, eine Stellung oder ein Berichtseintrag zeigt und die keiner
+Kombination mehr gehört, wird nie an eine andere vergeben. Der Verweis zeigt
+dann ins Leere, und die Modellprüfung meldet ihn als FEHLER, statt dass er
+still auf eine andere Kombination zeigt.
+
+**Lastfälle und Kombinationen nach DIN 19704.** „Lastfälle nach DIN 19704“
+legt LF mit Nummer an und trägt das Kürzel der Einwirkung als Bezeichnung
+(„LF5 W_V“); Einwirkungsart und Beschreibung bleiben, wie sie waren. Bis zum
+06.10.2026 hießen sie wie das Kürzel („W_V“), und ein schon vergebener Name
+bekam eine Zahl angehängt („G 2“). „Kombinationen nach DIN 19704“ legt LK mit
+Nummer an, Typ GZT, und die Bezeichnung nennt Klasse und Leiteinwirkung:
+„DIN 19704 Klasse 2, Leit LF3“. Bis zum 06.10.2026 hießen sie „DIN LF1.1“ und
+„DIN LF2.3“, und „LF1“ bis „LF3“ meinte darin die Lastfallklassen der Norm,
+was neben den Lastfällen LF1 bis LF3 des Modells missverständlich war; die
+Bezeichnung sagt darum „Klasse“. Auch hier ersetzt ein erneuter Lauf nur die
+eigenen, unberührten Kombinationen, hält ihre Nummern und lässt jede andere
+stehen.
+
+**Wind und Wasserdruck.** Das Feld Lastfall der Masken ist leer, solange man
+keinen Lastfall wählt. „Lasten erzeugen“ legt dann einen neuen Lastfall an: LF
+mit der eingetragenen Lastfall-Nr. (0 heißt die nächste freie) und der
+Bezeichnung „Wind W1“. Beim Wasserdruck mit Druckschwankung kommt ein zweiter
+Lastfall mit der nächsten Nummer dazu, Bezeichnung „Wasser W1 dyn“. Bis zum
+06.10.2026 hießen sie „Wind W1“, „Wasser W1“ und „Wasser W1 dyn“, und die
+Maske trug diesen Namen schon vor, sodass er als gewählt galt. Wer einen
+vorhandenen Lastfall einträgt, etwa LF3, schreibt in ihn hinein; Name,
+Bezeichnung und Nummer bleiben, wie sie sind. Wer einen noch nicht
+vorhandenen Namen einträgt, bekommt genau diesen. Trägt man eine Nummer ein,
+die schon ein anderer Lastfall hat, kommt ein Hinweis, und es wird nichts
+angelegt.
+
+**Wind: „Lasten erzeugen“ ein zweites Mal.** Bis zum 06.10.2026 verdoppelte
+ein zweiter Lauf die Streckenlasten auf Stäben. Am Mast mit sechs Elementen
+wurde aus 1 Streckenlast 2 und aus 6 Elementlasten 12, und die Summe der
+Lasten verdoppelte sich mit. Die Ursache lag im Aufräumen: Es suchte die alten
+Lasten an ihrem Kommentar „Wind W1: …“, aber nach dem Verteilen auf die
+Elemente lautet er „6 Elementlasten“. Jetzt trägt jede vom Wind erzeugte
+Streckenlast ein Merkmal in der Datei („wind:W1“), und das Aufräumen — beim
+erneuten Erzeugen, beim Umbenennen und beim Löschen eines Windgenerators —
+erkennt seine Lasten daran, nicht am Text. Eine Streckenlast, die man selbst
+auf demselben Stab im selben Lastfall angelegt hat, bleibt dabei stehen. Eine
+Datei, die vor dem 06.10.2026 gespeichert wurde und deren Stablasten schon
+verdoppelt sind, bleibt, wie sie ist: Beim Öffnen steht dort der Kommentar
+schon als „6 Elementlasten“, und das Programm kann die Stablasten des Winds
+nicht von eigenen unterscheiden. Ein neues Erzeugen legt sie dann ein weiteres
+Mal an; die alten Streckenlasten auf den Stäben sind in diesem Fall von Hand
+zu löschen. Nur wo der Kommentar noch „Wind W1: …“ lautet, erkennt das
+Programm sie auch ohne Merkmal. Der Wasserdruck war nicht betroffen; seine
+Objektlasten tragen den Namen des Generators.
+
+**Antrieb einer Stellung.** In der Rechenkopie der Stellung heißt der Lastfall
+für das Antriebsmoment LF mit Nummer und trägt die Bezeichnung „Antrieb S5“.
+Bis zum 06.10.2026 hieß er „Antrieb S5“. Die Nummer ist die nächste freie des
+Modells, nie eine, die dort ein anderer Lastfall hat; das Modell selbst
+bekommt den Lastfall nicht.
+
+**Eingebaute Beispiele.** Der Hallenrahmen hat jetzt LF1 Eigengewicht, LF2 S,
+LF3 W_links, LF4 W_rechts und LF5 Kran, dazu die Kombinationen LK1 bis LK72
+und die Ermüdungslast Kranspiele auf LF5. Die Stauwand hat LF1 Eigengewicht,
+LF2 Wasser und LF3 Wasser_Wellen, die Kombinationen LK1 bis LK23 und die
+Ermüdungslast Stauwechsel auf LF2. Rahmen, Platte, Konsole, Fachwerk und die
+beiden Kontaktbeispiele haben LF1 mit einer Bezeichnung, die sagt, was darin
+liegt. Gerechnet wird dasselbe wie vorher: Lastfälle, Kombinationen,
+Umhüllende, EC3-Nachweis und Ermüdung sind Zahl für Zahl gleich dem Stand vom
+04.10.2026 geprüft. Wo dieses Handbuch am Hallenrahmen von GZT4, GZT7 oder
+GZG43 spricht, heißt die Kombination seit dem 06.10.2026 LK4, LK7 oder LK43;
+die Zahl ist dieselbe geblieben. Messungen mit einem Datum vor dem 06.10.2026
+behalten die Namen von damals. Keines der Beispiele hat Ergebniskombinationen,
+also auch keine EK.
 
 ### Namen, unter denen Ergebnisse einander verdecken (seit 04.10.2026)
 
@@ -6782,7 +7138,11 @@ das Ober- bzw. Unterwasser steht; dazu die Angabe, ob das Wasser an der
 liegt - daraus folgt die Strömungsrichtung). Derselbe Knopf beendet den
 Modus; „Auswahl übernehmen“ nimmt stattdessen die laufende Auswahl. Je
 Generierer gilt eine **Situation**; der Lastfall wird angelegt, trägt die
-Situation und die **Lastfall-Nr.** aus der Maske (0 = nächste freie).
+Situation und die **Lastfall-Nr.** aus der Maske (0 = nächste freie). Das Feld
+Lastfall bleibt leer, solange man keinen Lastfall wählt: Dann entsteht ein
+neuer Lastfall LF mit dieser Nummer und der Bezeichnung „Wasser <Name>“, bei
+einer Druckschwankung ein zweiter mit „Wasser <Name> dyn“ (bis zum
+06.10.2026 hießen sie „Wasser <Name>“ und „Wasser <Name> dyn“).
 
 | Angabe | Bedeutung |
 |---|---|
@@ -6835,7 +7195,12 @@ in der Ansicht wählen, „Auswahl übernehmen“, dann:
 **Lasten erzeugen** schreibt Objektlasten an die Flächen (Verlauf „Wind“:
 q_p in der Höhe des Elements mal dem Beiwert seiner Zone) und trapezförmige
 Streckenlasten auf die Stäbe (w = c_f·q_p(z)·b_ref) in einen Lastfall der
-Kategorie W. Protokoll und Bericht nennen v_b, q_b, das Höhenprofil (v_m,
+Kategorie W. Das Feld Lastfall bleibt leer, solange man keinen Lastfall wählt;
+dann entsteht ein neuer Lastfall LF mit der Lastfall-Nr. und der Bezeichnung
+„Wind <Name>“ (bis zum 06.10.2026 hieß er „Wind <Name>“). Erzeugt man die
+Lasten ein zweites Mal, ersetzen sie die ersten, auch die Streckenlasten auf
+den Stäben; bis zum 06.10.2026 verdoppelten sich diese (siehe „Namen der
+erzeugten Lastfälle, Kombinationen und Beispiele“). Protokoll und Bericht nennen v_b, q_b, das Höhenprofil (v_m,
 I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
 und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
 Anströmung und Zonen.
@@ -7273,7 +7638,7 @@ auskonvergiert“. Das gilt auch für Lagerknoten mit Reibung in nur einer
 Richtung (seit dem 28.09.2026 abends; vorher konnte dort die Reibkraft am
 Ende gegen die Bewegung zeigen, ohne dass die Rechnung es meldete).
 Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
-bisher. Ist unter *Berechnung → Einstellungen → Experten* der
+bisher. Ist unter *Berechnung → Einstellungen → Gleichungslöser (Experte)* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
@@ -7867,7 +8232,9 @@ oder verletzt war. An der Prüfplatte mit Strebe und Fließen
 228 Runden, bei derselben Lösung auf 1,4·10⁻¹⁰ m und derselben plastischen
 Dehnung. Einschalten lässt es sich am Modell mit
 `plastizitaet.ausfall_annehmen = True` (Vorgabe aus, bis die Messung am Drehlager
-entschieden hat; gespeichert nur, wenn er abweicht).
+entschieden hat; gespeichert nur, wenn er abweicht). Seit dem 08.11.2026 steht
+dafür in *Berechnung → Einstellungen → Kontakt und Spannschritt* der Haken
+„Ausfall-Iteration mit Annahme“.
 
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
@@ -8486,7 +8853,7 @@ Stirnfläche möglich …“), eine Warnung je Stabende statt zwei. Bis zum
 Rechnung prüft das Programm je verteilt eingeleitetem Stabende, ob die
 Kopplung genau die Kraft und das Moment um den Durchstoßpunkt in die Fläche
 gibt, die der Stab in seinen Knoten gibt. Die Toleranz ist die Genauigkeit
-des Gleichungslösers (Berechnung → Einstellungen → Experten, Vorgabe 10⁻⁶) mal
+des Gleichungslösers (Berechnung → Einstellungen → Gleichungslöser (Experte), Vorgabe 10⁻⁶) mal
 der Größe des Lastvektors, denn um mehr kann das Gleichgewicht eines Knotens
 nach dem Lösen nicht verfehlt sein. Die Zusammenfassung nennt die größte
 Abweichung, eine Abweichung über der Toleranz steht als Warnung im
@@ -10858,29 +11225,46 @@ davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
-**Register Berechnung: Rechnen oben, Experten eingeklappt (seit 03.10.2026).**
-Das Register *Berechnung → Einstellungen* beginnt mit dem, was man zum Rechnen
-braucht: der Analyseart, der Zahl der Eigenformen, den beiden Haken für die
-Nachweise nach der Rechnung, dem Knopf „Modell prüfen“ und dem Knopf
-„BERECHNEN (F5)“. Darunter steht die Zusammenfassung des letzten Laufs, danach
-die Plastizität der Volumen. Ganz unten steht der Abschnitt **Experten**, und er
-ist zu, solange man ihn nicht aufklappt. In ihm liegen die Prozesse fürs
-Vernetzen und die Elemente, der Gleichungslöser, die Threads, die Genauigkeit
-mit den Nachiterationen, die Rechenketten und die Rechnerfarm. Die Vorgaben
-passen für die meisten Modelle; wer sie ändern will, klappt den Abschnitt mit
-einem Klick auf „Experten“ auf (ebenso mit der Leertaste, wenn der Kopf den
-Fokus hat, oder mit einem Klick auf die graue Zeile daneben). Auch zugeklappt
-gelten die eingestellten Werte, und sie werden wie bisher gespeichert. Solange
-der Abschnitt zu ist, nennt die graue Zeile neben „Experten“, was von der Vorgabe
-abweicht, zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten · Rechnerfarm“,
-und sonst „Vorgaben“; sie folgt jeder Änderung eines Feldes. Ist sie zu lang für
-die Zeile, kürzt sie am Rand, und der Tooltip nennt alles. Aufgeklappt steht dort,
-was im Abschnitt liegt. Ob der Abschnitt zuletzt auf oder zu war, merkt sich das
-Programm in `einstellungen.json` (Schlüssel „abschnitte“); die Vorgabe ist zu. Das
-Programm schreibt die Datei in einem Zug (erst in eine Hilfsdatei, dann ersetzt es
-die alte), und lässt sie sich nicht lesen, schreibt es nichts hinein, damit
-Löser, Threads und Fensteraufteilung nicht verloren gehen; der Zustand der
-Experten gilt dann nur bis zum Beenden.
+**Register Berechnung: vier einklappbare Gruppen (seit 08.11.2026).**
+Das Register *Berechnung → Einstellungen* ist in Gruppen geteilt, die man mit
+einem Klick auf ihren Kopf auf- und zuklappt:
+
+| Gruppe | Vorgabe | Inhalt |
+|---|---|---|
+| **Grundeinstellungen** | offen | Analyseart, Zahl der Eigenformen, die beiden Haken für die Nachweise nach der Rechnung |
+| **Kontakt und Spannschritt** | zu | Restwechsel und Klaffung des Kontaktlaufs, Spannschritt in Stufen, Reibungsverfahren, Haftsteifigkeit, Ausfall-Iteration mit Annahme |
+| **Plastizität** | zu | Tetraeder ohne volumetrische Versteifung, Fließen, Verfahren, Laststufen, Toleranz, Gültigkeitsgrenze |
+| **Gleichungslöser (Experte)** | zu | Prozesse fürs Vernetzen und die Elemente, Gleichungslöser, Threads, Genauigkeit mit Nachiterationen, Rechenketten, Rechnerfarm |
+
+Unter den Grundeinstellungen stehen außerhalb jeder Gruppe die Knöpfe „Modell
+prüfen“ und „BERECHNEN (F5)“ und die Zusammenfassung des letzten Laufs. Bis zum
+08.11.2026 standen Plastizität und Kontaktlauf als feste Rahmen offen im
+Register, und die letzte Gruppe hieß „Experten“. Die Einstellungen der Gruppen
+Kontakt und Plastizität gehören zum Modell und werden mit ihm gespeichert, die
+des Gleichungslösers sind Programmeinstellungen.
+
+**Ausfall-Iteration mit Annahme** (Gruppe Kontakt und Spannschritt, Vorgabe
+aus): der Haken schaltet `plastizitaet.ausfall_annehmen` ein, das bis zum
+08.11.2026 nur im Skript oder in der Modelldatei einstellbar war (siehe
+„Ausfall-Iteration: annehmen und nachprüfen“). Er macht Läufe mit ausfallenden
+Zug- oder Druckstäben schneller, ist am Netz Mittel des Drehlagers aber noch
+nicht verglichen. Gespeichert wird er nur, wenn er eingeschaltet ist.
+
+Auch zugeklappt gelten die eingestellten Werte. Solange eine Gruppe zu ist,
+nennt die graue Zeile neben ihrem Kopf, was von der Vorgabe abweicht: beim
+Gleichungslöser zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten ·
+Rechnerfarm“, bei Kontakt und Spannschritt etwa „Spannschritt 3 Stufen ·
+Ausfall-Iteration mit Annahme“, sonst „Vorgaben“; bei der Plastizität steht
+„Fließen an“ oder „Fließen aus“. Sie folgt jeder Änderung eines Feldes. Ist sie
+zu lang für die Zeile, kürzt sie am Rand, und der Tooltip nennt alles.
+Aufgeklappt steht dort, was in der Gruppe liegt. Aufklappen geht auch mit der
+Leertaste, wenn der Kopf den Fokus hat, oder mit einem Klick auf die graue
+Zeile. Ob eine Gruppe zuletzt auf oder zu war, merkt sich das Programm in
+`einstellungen.json` (Schlüssel „abschnitte“). Das Programm schreibt die Datei
+in einem Zug (erst in eine Hilfsdatei, dann ersetzt es die alte), und lässt sie
+sich nicht lesen, schreibt es nichts hinein, damit Löser, Threads und
+Fensteraufteilung nicht verloren gehen; der Zustand der Gruppen gilt dann nur
+bis zum Beenden.
 
 Dieselbe Sorgfalt gilt seit dem 06.10.2026 für die Werte des Registers selbst
 (Löser, Threads, Genauigkeit, Ketten, Nachladen von MUMPS), die ein Druck auf
@@ -11022,7 +11406,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (Knicken bei umgekehrter Last), nach Betrag geordnet. Mit Zug und Druck im
   Grundzustand wechselten sie bis zum 23.09.2026 von Lauf zu Lauf – an einem
   Zweigelenkrahmen unter Wind 4,27, 3,03 und 2,49 in drei Läufen statt 77,33.
-* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Experten*): Vorgabe
+* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Gleichungslöser (Experte)*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
   „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
   in der Zeile „Faktorisiert (SuperLU (ausgewichen - PARDISO: …), …)“, bei den
@@ -11138,7 +11522,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (jeder Löser hat eine Herkunftsangabe; Bauvorschrift und Bauablauf nennen
   das Rad, das wirklich dort liegt).
 * **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen →
-  Experten*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
+  Gleichungslöser (Experte)*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
   Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
   locker 1e-3. Liegt das Residuum darüber, iteriert der Löser mit der
   vorhandenen Faktorisierung nach (**Nachiterationen**: keine, bis 1, 2, 3
@@ -11658,7 +12042,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   `tests/test_plastizitaet.py` (zwei Aufbauten statt 54 bei 28 Läufen, und
   dieselbe Lösung wie beim Bauen in jedem Schritt).
 * **Rechenketten: mehrere Lastfälle gleichzeitig** (*Berechnung →
-  Einstellungen → Experten*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
+  Einstellungen → Gleichungslöser (Experte)*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
   Kette einen eigenen Prozess; **innerhalb** einer Kette laufen die Lastfälle
   nacheinander und warm gestartet. Das ist der Kern der Sache: der Warmstart
   ist der größte Einzelgewinn je Lastfall (Drehlager: kalt 112
@@ -13399,6 +13783,9 @@ Ergebnisdatei. Die Datei enthält das
 Modell nicht (es steht in der Modelldatei) und kann groß werden: je
 Lastfall die Verschiebungen aller Knoten und die Spannungen aller Elemente
 (Drehlager: rund 90 MB je Lastfall). Geprüft in `tests/test_ergebnisse.py`.
+Seit dem 06.10.2026 trägt die Kennung auch die Fassung der Modelldatei. Eine
+Ergebnisdatei von davor wird beim Öffnen mit der Tabelle alt → neu der
+Namensumstellung gelesen (Abschnitt „Ältere Dateien beim Öffnen umstellen“).
 
 Die Lage der Knoten prüft das Programm seit dem 06.10.2026 Knoten für Knoten.
 Bis zum 06.10.2026 verglich es nur die Summe aller Koordinaten: Wurde ein
@@ -13951,7 +14338,7 @@ Je Stellung lässt sich einstellen:
 | `dreh_achse`, `dreh_punkt`, `dreh_winkel`, `dreh_gruppen` | die bewegten Bauteile werden gedreht; das Eigengewicht wirkt dadurch anders |
 | `faelle` | welche Lastfälle diese Stellung rechnet — nur diese; ohne Zuordnung rechnet sie nichts |
 | `kombinationen` | welche Kombinationen in dieser Stellung gelten |
-| `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall |
+| `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall der Rechenkopie, LF mit Nummer und der Bezeichnung „Antrieb S5“ (bis zum 06.10.2026 hieß er „Antrieb S5“) |
 
 Die Umhüllende nennt die größte Ausnutzung, die größte Verformung und die
 größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
@@ -14089,10 +14476,11 @@ Haken je Einwirkung — vorgehakt sind Eigengewicht G, Ausrüstung G_A,
 Wasserdruck ständig W_S und veränderlich W_V, Wind W, Temperatur T, Eis EIS,
 Betriebslast Q_BEW und Antriebsmoment A_M; die übrigen (Verkehr,
 Grenzmoment, Wind während der Bewegung, Schwall, Anprall, Verklemmen,
-Montage, Erdbeben) nach Bedarf. Jeder Lastfall bekommt das Kürzel als
-Namen, die Einwirkungsart, die Beschreibung der Einwirkung und eine
-fortlaufende Lastfallnummer ab der eingetragenen ersten Nummer; das
-Eigengewicht trägt g. Vorgeschlagen wird als erste Nummer die nächste freie.
+Montage, Erdbeben) nach Bedarf. Jeder Lastfall heißt LF mit seiner
+Lastfallnummer, fortlaufend ab der eingetragenen ersten Nummer, und trägt das
+Kürzel als Bezeichnung („LF5 W_V“), dazu die Einwirkungsart und die
+Beschreibung der Einwirkung; das Eigengewicht trägt g. Bis zum 06.10.2026
+hieß der Lastfall wie das Kürzel („W_V“). Vorgeschlagen wird als erste Nummer die nächste freie.
 Seit dem 04.10.2026 zählt dabei auch der Name LF1 des Vorgabelastfalls, in
 einem neuen Modell beginnt die Zählung darum bei 2; bis dahin bekam G dort
 noch einmal die Nr. 1. Die Lasten selbst kommen danach aus den Masken und
@@ -14123,7 +14511,7 @@ Norm und Thema genannt.
 from statik3d.bridges import Regelwerk
 rw = Regelwerk()
 rw.faktor("LF1", "G", 1.35, "DIN 19704-1, geprüft")   # eigenen Wert bestätigen
-kombis = rw.kombinationen(modell)                     # DIN LF1.1, DIN LF2.3, …
+kombis = rw.kombinationen(modell)                     # LK1, LK2, … (Bezeichnung „DIN 19704 Klasse 1, Leit LF3“)
 print(rw.bericht())
 ```
 

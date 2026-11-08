@@ -611,9 +611,11 @@ def test_doppelklick_anlegemaske():
     _reiches_modell(w, app)
     b = w.baum
     neu_arten = set(getattr(w, "BAUM_DOPPELKLICK_NEU", ()))
-    ohne = {"knoten", "layerliste", "unterlagen", "linienlager", "flaechenlager"}
-    check("Doppelklick-Anlegen gilt für jede Art mit „Neu“ im Rechtsklick, außer Knoten, Layer, Unterlagen, "
-          "Linien- und Flächenlager", neu_arten == set(b.NEU_ARTEN) - ohne and "bericht" in neu_arten,
+    # Linien- und Flaechenlager seit dem 08.11.2026 mit Anlegemaske (Paket A Punkt 3)
+    ohne = {"knoten", "layerliste", "unterlagen"}
+    check("Doppelklick-Anlegen gilt für jede Art mit „Neu“ im Rechtsklick, außer Knoten, Layer und Unterlagen",
+          neu_arten == set(b.NEU_ARTEN) - ohne and "bericht" in neu_arten
+          and {"linienlager", "flaechenlager"} <= neu_arten,
           str(sorted(set(b.NEU_ARTEN) - ohne - neu_arten)) + " / " + str(sorted(neu_arten & ohne)))
     folge = []
 
@@ -684,8 +686,8 @@ def test_doppelklick_anlegemaske():
     check(f"Doppelklick auf {len(zweige) - len(arten_ohne) - len(gruppen)} Zweige: erst „clicked“, dann "
           "„doubleClicked“; rechts die Anlegemaske, nichts angelegt, nichts Modales, Auswahl unverändert",
           not falsch and len(zweige) > 15, f"{len(falsch)}: {falsch[:4]}")
-    check(f"… Knoten, Layer, Unterlagen, Linien- und Flächenlager ({len(arten_ohne)}) und die Gruppe „Lager“: "
-          "die Übersicht bleibt, nichts angelegt", not ausnahmen and len(arten_ohne) == 5 and gruppen,
+    check(f"… Knoten, Layer und Unterlagen ({len(arten_ohne)}) und die Gruppe „Lager“: "
+          "die Übersicht bleibt, nichts angelegt", not ausnahmen and len(arten_ohne) == 3 and gruppen,
           str(ausnahmen[:3]))
     _aufraeumen(w, app)
 
@@ -893,7 +895,8 @@ def test_stabelemente_wie_der_zweig():
     w, app = _fenster()
     m = _reiches_modell(w, app)
     se = _zweig(w.baum, "Stabelemente", "stabelemente")
-    im_baum = [se.child(i).text(0) for i in range(se.childCount())]
+    # ohne die Zeile „+ Stabelement anlegen“ (seit 08.11.2026)
+    im_baum = [se.child(i).text(0) for i in range(se.childCount()) if not _art(se.child(i)).endswith("_neu")]
     n_stab = sum(1 for e in m.elements if e.typ in EL.STAB_TYPEN)
     federn = sum(1 for e in m.elements if e.typ == "feder")
     _klick(w, app, se)

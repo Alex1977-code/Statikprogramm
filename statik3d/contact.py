@@ -330,8 +330,10 @@ RUNDEN_EREIGNISSE = RUNDEN_FELDER[1:13]
 #: naeher als dieser Anteil der Modellgroesse liegt (Rundungsrauschen des
 #: Vernetzers, nicht ein Spalt).
 DECKUNGSGLEICH = 1e-6
-#: Bis zu diesem Anteil des Suchradius gilt ein Spalt als Beruehrung.
-AUFLIEGEND = 1e-3
+#: Bis zu diesem Anteil des Suchradius gilt ein Spalt als Beruehrung - nur Rundungsrauschen
+#: (08.11.2026, Entscheidung des Anwenders; bis dahin 1e-3: am Hertz-Zylinder galten Spalte bis
+#: 2 µm als Beruehrung, p0 −24 % (hex8) bzw. −27 % (tet4), tests/test_reibkontakt_benchmarks B1)
+AUFLIEGEND = 1e-6
 #: Winkel [Grad] zwischen den Normalen zweier Facetten mit gemeinsamer Ecke,
 #: bis zu dem sie zur selben glatten Flaeche gehoeren: nur solche Nachbarn
 #: gehen in die Naeherung der wahren Flaeche ein (:class:`Flaechenquadriken`).

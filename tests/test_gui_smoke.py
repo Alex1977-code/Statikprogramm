@@ -797,8 +797,9 @@ def main():
         text = w.txt_regelwerk.toPlainText()
         check("DIN 19704: Beiwerte mit Zustand", "zu bestätigen" in text, text[:60])
         check("ZTV-ING-Pruefliste in der Oberflaeche", "ZTV-ING" in text)
+        # seit R2-C1 (06.10.2026): LK<n> mit der Bezeichnung „DIN 19704 Klasse …“ (bis dahin „DIN LF1.1“)
         check("Kombinationen im Modell angelegt",
-              any(k.startswith("DIN ") for k in w.model.combinations),
+              any(c.bezeichnung.startswith("DIN 19704") for c in w.model.combinations.values()),
               str(len(w.model.combinations)))
 
         w.stellung_entfernen()
@@ -2552,9 +2553,9 @@ def main():
         namen = zweige(w.baum)
         check("Ergebnisse stehen im Modellbaum", "Ergebnisse" in namen)
         check("Bericht steht im Modellbaum", "Bericht" in namen)
-        w._baum_geklickt("ergebnis", "combo:GZT7")
+        w._baum_geklickt("ergebnis", "combo:LK7")
         check("Klick im Baum stellt das Ergebnis ein",
-              "GZT7" in w.cb_result.currentText(), w.cb_result.currentText()[:40])
+              "LK7" in w.cb_result.currentText(), w.cb_result.currentText()[:40])
         # Ergebnistabellen: die Umhüllende zeigt in „Stabkräfte“ min und max je
         # Element, das Register bleibt (seit 03.10.2026, 10c; vom 12.09.2026 bis
         # dahin blieb die Tabelle leer, und das Register sprang auf „Umhüllende“);
@@ -2573,7 +2574,7 @@ def main():
               and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text()
               and tabs.currentWidget() is w.tbl_beam and len(w.tbl_env.modell.zeilen) > 0,
               w.tbl_beam.lbl_zeilen.text()[:70])
-        w._baum_geklickt("ergebnis", "combo:GZT7"); app.processEvents()
+        w._baum_geklickt("ergebnis", "combo:LK7"); app.processEvents()
         check("zurück zur Kombination: Register „Stabkräfte“ mit den Spalten des einzelnen Ergebnisses",
               tabs.currentWidget() is w.tbl_beam and [sp.name for sp in w.tbl_beam.modell.spalten][1] == "N1"
               and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text(),
@@ -2596,7 +2597,7 @@ def main():
         w.cb_field.setCurrentText("Ausnutzung EC3")
         w.cb_diagram.setCurrentText("My")
         app.processEvents()
-        check("aktuelle Quelle wird erkannt", w._aktuelle_quelle() == "combo:GZT7",
+        check("aktuelle Quelle wird erkannt", w._aktuelle_quelle() == "combo:LK7",
               w._aktuelle_quelle())
         w.ansicht_in_bericht()
         app.processEvents()
@@ -2605,7 +2606,7 @@ def main():
         check("das Bild ist wirklich drin", len(b[0].bild) > 5000,
               f"{len(b[0].bild) // 1024} kB Base64")
         check("die Einstellung steht dabei",
-              b[0].bezug() == "Kombination GZT7 · Ausnutzung EC3 · My", b[0].bezug())
+              b[0].bezug() == "Kombination LK7 · Ausnutzung EC3 · My", b[0].bezug())
         check("Tabelle „Bericht“ gefüllt", len(w.tbl_bericht.modell.zeilen) == 1)
         w._baum_geklickt("ergebnis", "env:GZT")
         w.cb_field.setCurrentText("|u| Verschiebung")
@@ -3021,8 +3022,9 @@ def main():
               gruppen_[:2] == ["Eigenschaften", "Geometrie"]
               and oben == ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"], str((gruppen_[:3], oben)))
         kn_zweig = geo_.child(0)
+        _plus = lambda z: sum(1 for k in range(z.childCount()) if z.child(k).text(0).startswith("+ "))
         check("alle Knoten numerisch untereinander",
-              kn_zweig.childCount() == m_.nn and kn_zweig.child(0).text(0) == "K0"
+              kn_zweig.childCount() - _plus(kn_zweig) == m_.nn and kn_zweig.child(0).text(0) == "K0"
               and kn_zweig.child(m_.nn - 1).text(0) == f"K{m_.nn - 1}",
               f"{kn_zweig.childCount()} Einträge")
         st_zweig = geo_.child(2)
@@ -3032,8 +3034,8 @@ def main():
         nw_ = w.baum.gruppe("nachweise")
         check("unter „Stäbe“ die Stäbe mit Nachweis, die Stabelemente unter „FE-Netz“, "
               "die Schweißnähte unter „Nachweise“",
-              st_zweig.text(0) == "Stäbe" and st_zweig.childCount() == len(m_.members)
-              and se_zweig.childCount() == sum(1 for e in m_.elements if e.typ in ("beam", "truss"))
+              st_zweig.text(0) == "Stäbe" and st_zweig.childCount() - _plus(st_zweig) == len(m_.members)
+              and se_zweig.childCount() - _plus(se_zweig) == sum(1 for e in m_.elements if e.typ in ("beam", "truss"))
               and nw_.child(0).text(0) == "Schweißnähte",
               f"{st_zweig.childCount()} Stäbe, {se_zweig.childCount()} Stabelemente")
         w.clear_selection()
@@ -6379,13 +6381,13 @@ def main():
               and all(k in mk.werte() for k in ("name", "nummer", "kategorie", "beschreibung", "situation",
                                                  "theorie", "g_z", "psi", "aktiv")), str(mk.titel if mk else None))
         mk.setzen("name", "LF!")
-        mk.setzen("nummer", 3)
+        mk.setzen("nummer", 9)          # Nr. 3 hat seit R2-C1 der Lastfall LF3 des Beispiels
         mk.setzen("beschreibung", "umbenannt")
         mk.setzen("aktiv", True)
         mk.anwenden()
         app.processEvents()
         check("Umbenennen aus der Maske: Modell, Kombinationen und aktiver Lastfall folgen",
-              "LF!" in m_.load_cases and "LF1" not in m_.load_cases and m_.load_cases["LF!"].nummer == 3
+              "LF!" in m_.load_cases and "LF1" not in m_.load_cases and m_.load_cases["LF!"].nummer == 9
               and m_.active_case == "LF!" and all("LF1" not in c.factors for c in m_.combinations.values())
               and not fehler_, str(fehler_))
         w._baum_bearbeiten("lastfall", "LF1")
@@ -6404,11 +6406,11 @@ def main():
         w._baum_geklickt("kombination", kname_)
         app.processEvents()
         mk = w.maskenrand.maske
-        mk.setzen("faktoren", "LF!: 1.35, S: 1.5")
+        mk.setzen("faktoren", "LF!: 1.35, LF2: 1.5")
         mk.anwenden()
         app.processEvents()
         check("Kombinationsmaske: Faktoren als Text übernommen",
-              m_.combinations[kname_].factors == {"LF!": 1.35, "S": 1.5} and not fehler_, str(fehler_))
+              m_.combinations[kname_].factors == {"LF!": 1.35, "LF2": 1.5} and not fehler_, str(fehler_))
         mk.setzen("faktoren", "gibtsnicht: 1")
         mk.anwenden()
         app.processEvents()
@@ -7068,7 +7070,7 @@ def main():
               and {"typ0", "k0", "aus0", "typ5", "beton", "E_cm", "d_bett", "A_bett", "groesse"} <= set(mk.werte())
               and mk.werte()["typ2"] == "starr" and mk.werte()["typ4"] == "frei"
               and w.sel_lager == [("lager", 1)] and w.auswahlart == "Lager"
-              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung …", "Lager löschen"},
+              and set(mk.zusatzknoepfe) == {"Bettung übernehmen", "Schlupf, Reibung …", "Lager löschen", "Neu: Knotenlager …"},
               str(getattr(mk, "titel", mk)))
         mk.setzen("typ2", "Feder"); mk.setzen("k2", 1000.0); mk.setzen("typ4", "starr"); mk.setzen("name", "Gelenk B")
         mk.anwenden(); app.processEvents()
@@ -7132,11 +7134,14 @@ def main():
         mk.anwenden()
         app.processEvents()
         m_ = w.model
-        check("Lastfälle angelegt: Name = Kürzel, Art, Nummer fortlaufend, Eigengewicht mit g, Anprall dazu",
-              len(m_.load_cases) == n_alt + 10 and "G" in m_.load_cases and m_.load_cases["G"].category == "G"
-              and m_.load_cases["G"].gravity[2] < 0 and "ANPRALL" in m_.load_cases
-              and m_.load_cases["EIS"].nummer > 0 and not fehler_, str((len(m_.load_cases), fehler_[:1])))
-        check("Lastfalltabelle nennt sie", any(str(z[0]) == "EIS" for z in w.tbl_lastfall.modell.zeilen))
+        # seit R2-C1 (06.10.2026) heissen sie LF<Nr.> und tragen das Kuerzel als Bezeichnung (bis dahin „G“, „EIS“)
+        nach_k_ = {lc.bezeichnung: n for n, lc in m_.load_cases.items() if lc.bezeichnung}
+        check("Lastfälle angelegt: LF<Nr.> mit Kürzel als Bezeichnung, Art, Nummer fortlaufend, Eigengewicht mit g, Anprall dazu",
+              len(m_.load_cases) == n_alt + 10 and "G" in nach_k_ and m_.load_cases[nach_k_["G"]].category == "G"
+              and m_.load_cases[nach_k_["G"]].gravity[2] < 0 and "ANPRALL" in nach_k_
+              and m_.load_cases[nach_k_["EIS"]].nummer > 0 and nach_k_["EIS"].startswith("LF")
+              and not fehler_, str((len(m_.load_cases), fehler_[:1])))
+        check("Lastfalltabelle nennt sie", any(str(z[0]) == nach_k_["EIS"] for z in w.tbl_lastfall.modell.zeilen))
         w.undo()
         app.processEvents()
         check("Rückgängig nimmt die Lastfälle wieder", len(w.model.load_cases) == n_alt)
@@ -8221,7 +8226,8 @@ def main():
                 while st:
                     x = st.pop()
                     if x.text(0) == zweigname:
-                        return [x.child(k).text(0) for k in range(x.childCount())]
+                        return [x.child(k).text(0) for k in range(x.childCount())
+                                if not x.child(k).text(0).startswith("+ ")]
                     st += [x.child(k) for k in range(x.childCount())]
             return []
 

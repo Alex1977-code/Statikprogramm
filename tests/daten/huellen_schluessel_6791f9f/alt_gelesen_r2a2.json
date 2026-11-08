@@ -1,0 +1,516 @@
+{
+ "ohne": {
+  "schluessel": [
+   "ULS",
+   "SLS_CH",
+   "FAT",
+   "EK1",
+   "EK2"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK1": "EK1",
+   "EK2": "EK2"
+  },
+  "names": {
+   "ULS": [
+    "LK1",
+    "LK2",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4",
+    "LF1",
+    "EK2 [2]"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "SLS_CH": null,
+   "FAT": null,
+   "EK1": "EK1",
+   "EK2": "EK2"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": null
+ },
+ "uls": {
+  "schluessel": [
+   "EK3",
+   "SLS_CH",
+   "FAT",
+   "EK2"
+  ],
+  "namen": {
+   "EK3": "EK3",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK2": "EK2"
+  },
+  "names": {
+   "EK3": [
+    "EK3 [1]",
+    "EK3 [2]",
+    "EK3 [3]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4",
+    "LF1",
+    "EK2 [2]"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ]
+  },
+  "kombination": {
+   "EK3": "EK3",
+   "SLS_CH": null,
+   "FAT": null,
+   "EK2": "EK2"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK3": "ULS"
+  }
+ },
+ "fat": {
+  "schluessel": [
+   "ULS",
+   "SLS_CH",
+   "EK2",
+   "EK1"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "EK2": "EK2",
+   "EK1": "EK1"
+  },
+  "names": {
+   "ULS": [
+    "LK1",
+    "LK2",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "SLS_CH": null,
+   "EK2": "EK2",
+   "EK1": "EK1"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK2": "FAT"
+  }
+ },
+ "zwei": {
+  "schluessel": [
+   "EK1",
+   "SLS_CH",
+   "EK2"
+  ],
+  "namen": {
+   "EK1": "EK1",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "EK2": "EK2"
+  },
+  "names": {
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ]
+  },
+  "kombination": {
+   "EK1": "EK1",
+   "SLS_CH": null,
+   "EK2": "EK2"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK1": "ULS",
+   "EK2": "FAT"
+  }
+ },
+ "zwei_gzg": {
+  "schluessel": [
+   "EK1",
+   "EK2",
+   "FAT"
+  ],
+  "namen": {
+   "EK1": "EK1",
+   "EK2": "EK2",
+   "FAT": "Umhüllende Ermüdung"
+  },
+  "names": {
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ],
+   "FAT": [
+    "LK4"
+   ]
+  },
+  "kombination": {
+   "EK1": "EK1",
+   "EK2": "EK2",
+   "FAT": null
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK1": "ULS",
+   "EK2": "SLS_CH"
+  }
+ },
+ "kreuz": {
+  "schluessel": [
+   "ULS",
+   "EK1",
+   "FAT"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "EK1": "EK1",
+   "FAT": "Umhüllende Ermüdung"
+  },
+  "names": {
+   "ULS": [
+    "LK1",
+    "LK2",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "FAT": [
+    "LK4"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "EK1": "EK1",
+   "FAT": null
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK1": "SLS_CH"
+  }
+ },
+ "uls_gzg_ohne_gzt": {
+  "schluessel": [
+   "SLS_CH",
+   "FAT",
+   "EK1"
+  ],
+  "namen": {
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK1": "EK1"
+  },
+  "names": {
+   "SLS_CH": [
+    "LK1",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "FAT": [
+    "LK2"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ]
+  },
+  "kombination": {
+   "SLS_CH": null,
+   "FAT": null,
+   "EK1": "EK1"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": null
+ },
+ "cases": {
+  "schluessel": [
+   "ULS",
+   "EK1"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "EK1": "EK1"
+  },
+  "names": {
+   "ULS": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "EK1": "EK1"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": null
+ },
+ "unbekannt": {
+  "schluessel": [
+   "ULS",
+   "SLS_CH",
+   "FAT",
+   "EK1"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK1": "EK1"
+  },
+  "names": {
+   "ULS": [
+    "LK1",
+    "LK2",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "SLS_CH": null,
+   "FAT": null,
+   "EK1": "EK1"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK1": "XYZ"
+  }
+ },
+ "ekek": {
+  "schluessel": [
+   "ULS",
+   "SLS_CH",
+   "FAT",
+   "EK1",
+   "EK2"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK1": "EK1",
+   "EK2": "EK2"
+  },
+  "names": {
+   "ULS": [
+    "LK1",
+    "LK2",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]",
+    "LF1",
+    "EK2 [2]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "SLS_CH": null,
+   "FAT": null,
+   "EK1": "EK1",
+   "EK2": "EK2"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": null
+ },
+ "doppelt": {
+  "schluessel": [
+   "EK1",
+   "SLS_CH",
+   "FAT",
+   "EK2"
+  ],
+  "namen": {
+   "EK1": "EK1",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK2": "EK2"
+  },
+  "names": {
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4"
+   ],
+   "EK2": [
+    "LF1",
+    "EK2 [2]"
+   ]
+  },
+  "kombination": {
+   "EK1": "EK1",
+   "SLS_CH": null,
+   "FAT": null,
+   "EK2": "EK2"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": {
+   "EK1": "ULS"
+  }
+ },
+ "fachwort": {
+  "schluessel": [
+   "ULS",
+   "SLS_CH",
+   "FAT",
+   "EK1"
+  ],
+  "namen": {
+   "ULS": "Umhüllende GZT",
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung",
+   "EK1": "EK1"
+  },
+  "names": {
+   "ULS": [
+    "LK1",
+    "LK2"
+   ],
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4",
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ],
+   "EK1": [
+    "EK1 [1]",
+    "EK1 [2]",
+    "EK1 [3]"
+   ]
+  },
+  "kombination": {
+   "ULS": null,
+   "SLS_CH": null,
+   "FAT": null,
+   "EK1": "EK1"
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": null
+ },
+ "EK1_zu_ULS": {
+  "schluessel": [
+   "SLS_CH",
+   "FAT"
+  ],
+  "namen": {
+   "SLS_CH": "Umhüllende GZG charakteristisch",
+   "FAT": "Umhüllende Ermüdung"
+  },
+  "names": {
+   "SLS_CH": [
+    "LK3"
+   ],
+   "FAT": [
+    "LK4"
+   ]
+  },
+  "kombination": {
+   "SLS_CH": null,
+   "FAT": null
+  },
+  "info_schluessel": null,
+  "info_ueberschrieben": null
+ }
+}

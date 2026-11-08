@@ -624,25 +624,27 @@ def test_n5_wind_nach_umbenennen():
 
     for weg in ("Modell", "Maske"):
         m = mast()
-        n0 = len(m.load_cases["Wind W1"].linienlasten)
+        # seit R2-C1 (06.10.2026) legt der Wind einen Lastfall LF<n> mit der
+        # Bezeichnung „Wind W1“ an (bis dahin hiess er „Wind W1“)
+        n0 = len(m.load_cases["LF2"].linienlasten)
         if weg == "Modell":
             fn = getattr(m, "lastfall_umbenennen", None)
             if fn is None:
                 check("N5 Modell: Model.lastfall_umbenennen vorhanden", False)
                 continue
-            fn("Wind W1", "LF5")
+            fn("LF2", "LF5")
         else:
             w, app = _fenster()
             _setzen(w, app, m)
-            _maske_anwenden(w, app, "lastfall", "Wind W1", {"name": "LF5"})
+            _maske_anwenden(w, app, "lastfall", "LF2", {"name": "LF5"})
             m = w.model
         kw = wm.lasten_erzeugen(m, m.winde["W1"])
-        # Gezaehlt wird nicht genau: ein zweites „Lasten erzeugen“ verdoppelt
-        # die Stablasten schon auf 36f8d8f ohne Umbenennen (Nebenbefund, im
-        # Bericht von R2-A1 genannt)
+        # Seit R2-C1 (06.10.2026) verdoppelt ein zweites „Lasten erzeugen“ die
+        # Stablasten nicht mehr (auf 36f8d8f: 1 -> 2 Linienlasten); gezaehlt wird
+        # genau (tests/test_namen_erzeuger.py, G4)
         check(f"N5 {weg}: „Lasten erzeugen“ schreibt in den umbenannten Lastfall, kein neuer Lastfall",
               list(m.load_cases) == ["LF1", "LF5"] and kw.get("lastfall") == "LF5"
-              and len(m.load_cases["LF5"].linienlasten) >= n0 > 0 and m.winde["W1"].lastfall == "LF5",
+              and len(m.load_cases["LF5"].linienlasten) == n0 > 0 and m.winde["W1"].lastfall == "LF5",
               f"{list(m.load_cases)}, {m.winde['W1'].lastfall}, {kw.get('lastfall')}")
 
 
@@ -656,24 +658,24 @@ def test_n6_generator_ueberschreibt_nicht():
         m = Model("G")
         m.add_load_case("LF2", "Q", activate=False)
         if hand:
-            m.add_combination("GZT2", {"LF2": 9.99}, "USER", "von Hand")
+            m.add_combination("LK2", {"LF2": 9.99}, "USER", "von Hand", nummer=2, art="LK")
         return m
     ohne = generate_combinations(bau(False))
     m = bau(True)
     erzeugt = generate_combinations(m)
-    hand = m.combinations.get("GZT2")
+    hand = m.combinations.get("LK2")
     namen = [c.name for c in erzeugt]
-    check("N6 Handkombination „GZT2“ bleibt unverändert",
+    check("N6 Handkombination „LK2“ bleibt unverändert",
           hand is not None and hand.factors == {"LF2": 9.99} and hand.typ == "USER"
           and hand.description == "von Hand", str(hand and (hand.factors, hand.typ)))
-    check("N6 der Generator nimmt freie Nummern: alle erzeugt, keiner heißt GZT2",
-          len(erzeugt) == len(ohne) and "GZT2" not in namen and len(set(namen)) == len(namen)
+    check("N6 der Generator nimmt freie Nummern: alle erzeugt, keiner heißt LK2",
+          len(erzeugt) == len(ohne) and "LK2" not in namen and len(set(namen)) == len(namen)
           and all(n in m.combinations for n in namen) and len(m.combinations) == len(ohne) + 1,
           f"{namen}")
-    # ein zweiter Lauf ersetzt nur die eigenen (description „auto…“)
+    # ein zweiter Lauf ersetzt nur die eigenen (Fingerabdruck)
     generate_combinations(m)
     check("N6 erneut erzeugt: die Handkombination bleibt",
-          m.combinations.get("GZT2") is hand and hand.factors == {"LF2": 9.99},
+          m.combinations.get("LK2") is hand and hand.factors == {"LF2": 9.99},
           str(list(m.combinations)))
 
 
@@ -765,9 +767,12 @@ def test_n8_speichern_laden():
                           for c in mm.combinations.values()])
     check("N8 Speichern und Laden: bezeichnung, nummer und art gleich", felder(m2) == felder(m),
           str(felder(m2)))
-    check("N8 Dateifassung bleibt 8", d.get("format") == 8, str(d.get("format")))
+    # Fassung 9 seit R2-A2 (06.10.2026); A1 liess sie bei 8
+    check("N8 Dateifassung 9 (seit R2-A2)", d.get("format") == 9, str(d.get("format")))
 
-    # Alte Datei ohne die Felder (Fassung 8, 68db45b)
+    # Alte Datei ohne die Felder (Fassung 8, 68db45b). from_dict stellt nie
+    # um (R2-A2, Nachbesserung L3: nur das Oeffnen einer Datei) - sie laedt
+    # wie bisher
     alt_pfad = os.path.join(HIER, "daten", "fachbegriffe_68db45b", "modell.json")
     with open(alt_pfad, encoding="utf-8") as f:
         alt = json.load(f)
@@ -815,10 +820,14 @@ def test_anzeige_und_kollisionen():
 
 
 # --------------------------------------------------------------------------
-# N9 - Beispiele: der Generator nennt seine Kombinationen wie auf 36f8d8f
+# N9 - Beispiele: der Generator erzeugt dieselben Kombinationen wie auf 36f8d8f
 # --------------------------------------------------------------------------
 #: sha256 ueber [Name, Typ, Faktoren, Leit, Beschreibung, Situation] aller
-#: Kombinationen, gemessen auf 36f8d8f (scratchpad r2a1_kombi_digest.py)
+#: Kombinationen, gemessen auf 36f8d8f (scratchpad r2a1_kombi_digest.py). Seit
+#: R2-C1 (06.10.2026) heissen Lastfaelle LF<n> (der alte Name ist die
+#: Bezeichnung) und Kombinationen LK<n> (vorher GZT<n>/GZG<n>, dieselbe Zahl):
+#: die Pruefung uebersetzt die Namen von heute zurueck und prueft so, dass
+#: Typ, Faktoren, Leiteinwirkung und Beschreibung dieselben sind.
 KOMBINATIONEN_36F8D8F = {
     "hall": (72, "57ff9ee638c4d185a6d4fadf91a50da60da9235050d5cf7232dd40021af5a228"),
     "gate": (23, "4518df19b1dd40cf0fa48043526426a761775f31bbabcf350a49a71b06230cd6"),
@@ -829,11 +838,17 @@ def test_n9_beispiele():
     from statik3d.examples_lib import build_example
     for name, (n, digest) in KOMBINATIONEN_36F8D8F.items():
         m = build_example(name)
-        zeilen = [[c.name, c.typ, sorted(c.factors.items()), c.leading, c.description, c.situation]
-                  for c in m.combinations.values()]
+        lf = {k: (v.bezeichnung if k != "LF1" and v.bezeichnung else k) for k, v in m.load_cases.items()}
+        k_alt = {k: ("GZT" if c.typ == "ULS" else "GZG") + k[2:] for k, c in m.combinations.items()}
+
+        def alt(text):
+            return re.sub(r"LF[0-9]+", lambda t: lf.get(t.group(0), t.group(0)), text)
+        zeilen = [[k_alt[c.name], c.typ, sorted((lf[k], v) for k, v in c.factors.items()), alt(c.leading),
+                   alt(c.description), c.situation] for c in m.combinations.values()]
         ist = hashlib.sha256(json.dumps(zeilen, ensure_ascii=True).encode()).hexdigest()
-        check(f"N9 Beispiel {name}: {n} Kombinationen wie auf 36f8d8f (Namen, Faktoren, Leit)",
-              len(zeilen) == n and ist == digest, f"{len(zeilen)}, {ist[:12]}")
+        check(f"N9 Beispiel {name}: {n} Kombinationen LK1…LK{n} wie auf 36f8d8f (Typ, Faktoren, Leit, Beschreibung)",
+              len(zeilen) == n and list(m.combinations) == [f"LK{i}" for i in range(1, n + 1)] and ist == digest,
+              f"{len(zeilen)}, {ist[:12]}")
 
 
 # ==========================================================================
@@ -1106,7 +1121,8 @@ def test_g1_ergebnisdatei():
     _rechnen_im_fenster(w, app, stellungen=False)
     w.path = p
     w.save_model()
-    m2 = M.load(p)
+    # die Datei so bauen, wie sie war: ohne die Umstellung beim Oeffnen
+    m2 = M.load(p, umstellen=False)
     m2.kombination_umbenennen("K1", "LK7")
     m2.save(p)
     try:
@@ -1144,12 +1160,12 @@ def test_g2_offene_masken():
     m.members["Mast"] = Member("Mast", el)
     m.fix(ids[0], "all")
     wm.lasten_erzeugen(m, Wind("W1", zone=3, profil="II", richtung=[1, 0, 0], staebe=["Mast"]))
-    m.add_combination("K1", {"LF1": 1.0, "Wind W1": 1.5})
+    m.add_combination("K1", {"LF1": 1.0, "LF2": 1.5})       # LF2: der Lastfall des Winds (seit R2-C1)
     _setzen(w, app, m)
     _aufraeumen(w, app)
     w.maske_wind("W1")
     app.processEvents()
-    _lf_dialog(G, w, "Wind W1", "LF5")
+    _lf_dialog(G, w, "LF2", "LF5")
     app.processEvents()
     mk = w.maskenrand.maske
     fall = mk.werte().get("fall") if mk is not None else None
@@ -1161,7 +1177,7 @@ def test_g2_offene_masken():
     finally:
         mel.zurueck()
     m = w.model
-    check("G2 Windmaske: das Feld Lastfall folgt (LF5), „Übernehmen“ legt keinen „Wind W1“ an",
+    check("G2 Windmaske: das Feld Lastfall folgt (LF5), „Übernehmen“ legt keinen LF2 an",
           fall == "LF5" and list(m.load_cases) == ["LF1", "LF5"] and m.winde["W1"].lastfall == "LF5"
           and len(m.load_cases["LF5"].linienlasten) >= 1 and set(m.combinations["K1"].factors) == {"LF1", "LF5"},
           f"Feld {fall!r}, {list(m.load_cases)}, Meldungen {mel.alle[:1]}")
@@ -1377,17 +1393,18 @@ def test_g3_anlegen_kopieren():
     check("G3 Web add_combination LK5: Art LK, Nummer 5", not meldung and c is not None
           and c.art == "LK" and c.nummer == 5, meldung or f"{c and (c.art, c.nummer)}")
 
-    # DIN 19704: Handkombination „DIN LF1“ bleibt, der Generator nimmt einen freien Namen
+    # DIN 19704: eine Handkombination LK1 bleibt, der Generator nimmt freie Nummern
+    # (seit R2-C1 heissen die erzeugten LK<n>, vorher „DIN LF1.1“)
     from statik3d.bridges.din19704 import Regelwerk
     from statik3d.bridges import lastenheft as lh
     m = Model("DIN")
     lh.lastfaelle_anlegen(m, ["G", "W_S", "W"])
-    m.add_combination("DIN LF1.1", {"G": 9.9}, "ULS", "von Hand")
+    m.add_combination("LK1", {"LF2": 9.9}, "ULS", "von Hand", nummer=1, art="LK")
     rw = Regelwerk()
     namen = rw.kombinationen(m)
-    hand = m.combinations["DIN LF1.1"]
+    hand = m.combinations["LK1"]
     check("G3 DIN 19704: Handkombination bleibt, erzeugte heißen frei, keine Kollision",
-          hand.factors == {"G": 9.9} and hand.description == "von Hand" and "DIN LF1.1" not in namen
+          hand.factors == {"LF2": 9.9} and hand.description == "von Hand" and "LK1" not in namen
           and len(set(namen)) == len(namen) and not m.namenskollisionen()
           and all(m.combinations[n].nummer > 0 for n in namen)
           and len({m.combinations[n].nummer for n in namen}) == len(namen),
@@ -1395,7 +1412,7 @@ def test_g3_anlegen_kopieren():
     n_vorher = len(m.combinations)
     rw.kombinationen(m)
     check("G3 DIN 19704 erneut: ersetzt nur die eigenen, keine Verdopplung, Hand bleibt",
-          len(m.combinations) == n_vorher and m.combinations["DIN LF1.1"].factors == {"G": 9.9},
+          len(m.combinations) == n_vorher and m.combinations["LK1"].factors == {"LF2": 9.9},
           f"{n_vorher} -> {len(m.combinations)}")
 
     # Wind, Wasserdruck, Lastenheft mit ausdruecklicher Nummer oder belegtem Namen
@@ -1431,14 +1448,14 @@ def test_g3_anlegen_kopieren():
             meldung = str(ex)
         check(f"G3 {text}: abgewiesen (NameVergeben), Modell unverändert",
               im in meldung and _stand(mm) == s0, meldung[:80] or "angenommen")
-    # ohne eigene Wahl: der Vorschlag „Wind W1“ ist als Kombination vergeben -
-    # ein freier Name, die Kombination bleibt
+    # ohne eigene Wahl: der Name LF2 ist als Kombination vergeben (er traegt die Nummer 2) -
+    # die naechste freie Nummer, die Kombination bleibt (bis R2-C1: Vorschlag „Wind W1“)
     mm = mast()
-    mm.add_combination("Wind W1", {"LF1": 1.0}, "ULS", "von Hand")
+    mm.add_combination("LF2", {"LF1": 1.0}, "ULS", "von Hand")
     kw = wm.lasten_erzeugen(mm, Wind("W1", zone=3, profil="II", richtung=[1, 0, 0], staebe=["Mast"]))
-    check("G3 Wind ohne eigene Wahl neben einer Kombination „Wind W1“: freier Name, Kombination bleibt",
-          kw["lastfall"] != "Wind W1" and kw["lastfall"] in mm.load_cases
-          and mm.combinations["Wind W1"].factors == {"LF1": 1.0} and not mm.namenskollisionen(),
+    check("G3 Wind ohne eigene Wahl neben einer Kombination „LF2“: LF3, Kombination bleibt",
+          kw["lastfall"] == "LF3" and kw["lastfall"] in mm.load_cases
+          and mm.combinations["LF2"].factors == {"LF1": 1.0} and not mm.namenskollisionen(),
           str(kw["lastfall"]))
     # Wasserdruck mit eingetragener Nummer, die LF1 gehoert
     from statik3d.model import ShellProp, Flaeche
@@ -1470,10 +1487,10 @@ def test_g3_anlegen_kopieren():
     check("G3 Lastenheft ab Nr. 1 (gehört LF1): abgewiesen, Modell unverändert",
           "Nr. 1" in meldung and _stand(mm) == s0, meldung[:80] or "angenommen")
     mm = Model()
-    mm.add_combination("G", {"LF1": 1.0}, "ULS", "von Hand")
+    mm.add_combination("LF2", {"LF1": 1.0}, "ULS", "von Hand")
     neu = lh.lastfaelle_anlegen(mm, ["G"])
-    check("G3 Lastenheft neben einer Kombination „G“: freier Name, Kombination bleibt",
-          len(neu) == 1 and neu[0] != "G" and mm.combinations["G"].factors == {"LF1": 1.0}
+    check("G3 Lastenheft neben einer Kombination „LF2“: nächste freie Nummer LF3, Kombination bleibt",
+          neu == ["LF3"] and mm.combinations["LF2"].factors == {"LF1": 1.0}
           and not mm.namenskollisionen(), str(neu))
     # GUI: „Lastfälle nach DIN 19704“ mit belegter Nummer - ein Hinweis
     _setzen(w, app, Model())

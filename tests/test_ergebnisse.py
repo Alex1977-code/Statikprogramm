@@ -45,7 +45,7 @@ def test_schreiben_lesen():
     n = erg.schreiben(epfad, m, an)
     t_s = time.time() - t0
     check("geschrieben (Bytes > 0)", os.path.exists(epfad) and n > 1000, f"{erg.groesse_text(n)} in {t_s:.2f} s")
-    m2 = Model.load(pfad)
+    m2 = Model.load(pfad, umstellen=False)
     t0 = time.time()
     an2 = erg.lesen(epfad, m2)
     t_l = time.time() - t0
@@ -79,18 +79,18 @@ def test_schreiben_lesen():
           and _gleich(rv.contact_forces, anv2.cases[lfv].contact_forces)
           and anv2.cases[lfv].kontaktzustand is not None)
     # Kennung: passt nicht mehr, wenn das Modell ein anderes ist
-    m3 = Model.load(pfad)
+    m3 = Model.load(pfad, umstellen=False)
     m3.add_load_case("Neu", "Q")
     try:
         erg.lesen(epfad, m3)
         check("anderes Modell (Lastfaelle): Fehler mit Grund", False)
     except ValueError as ex:
         check("anderes Modell (Lastfaelle): Fehler mit Grund", "die Lastfälle sind andere" in str(ex), str(ex)[:70])
-    m4 = Model.load(pfad)
+    m4 = Model.load(pfad, umstellen=False)
     m4.nodes[0, 0] += 0.5
     ok, grund = erg.passt(erg.kennung(m), m4)
     check("verschobener Knoten: Kennung passt nicht", not ok and "oordinaten" in grund, grund)
-    ok, grund = erg.passt(erg.kennung(m), Model.load(pfad))
+    ok, grund = erg.passt(erg.kennung(m), Model.load(pfad, umstellen=False))
     check("unveraendertes Modell: Kennung passt", ok and grund == "")
 
 

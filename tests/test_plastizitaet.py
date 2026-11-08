@@ -1300,7 +1300,11 @@ def _drehlagerartiges_modell():
             m.load_node(n, Fz=-P * 0.4 / len(links))
         return m
 
+    # Eichung an der geschlossenen Fuge (08.11.2026): mit 1 N beruehrt sonst nur der
+    # Mittelknoten, solange der Fangbereich die Spalte nicht schliesst (bis dahin 1e-3 des
+    # Suchradius = 98 µm, damit lagen 21 von 25 Knoten an) - die Auflast hinge am Fangbereich
     m0 = aufbau(1.0)
+    m0.contact_pairs[0].anliegend = True
     q0 = max(pl.vergleichsspannung(np.asarray(v, float))
              for v in solver.solve_static(m0).solid_res.values())
     m = aufbau(235e6 / (0.4 * q0))
@@ -1733,8 +1737,12 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # Kragtraeger 9 statt 8; Zerlegungen, max |u| und Urteil bitgleich (Gegenprobe
     # gegen abaf33f). Die 24.09.2026 vermiedene Rueckfuehrung (Stand 77903e5) ist
     # damit bewusst wieder da: ohne sie kann die Kontrolle nicht pruefen.
+    # 08.11.2026 (Berührungsband 1e-6 statt 1e-3 des Suchradius, Eichung des Stempels an der
+    # geschlossenen Fuge): die Spalte des gewoelbten Stempels bis 0,1 mm bleiben - vorher lagen
+    # 21 von 25 Knoten im Band von 98 µm an. Stempel 8 statt 6 Zerlegungen, u_max 0,43428 statt
+    # 0,39381 mm (+10 %, die Spalte schliessen sich unter der Last)
     referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (5, 0, 2.641578486685606e-06, None),
-                "Kontakt ohne Plastizität: Stempel auf Sockel": (6, 0, 0.00039381069489834077, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (8, 0, 0.0004342832207001751, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 5, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 9, 0.00967601273071502, True)}
 

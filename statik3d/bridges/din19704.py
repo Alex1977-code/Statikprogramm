@@ -189,7 +189,7 @@ class Regelwerk:
         return "\n".join(z)
 
     # -- Kombinationen ---------------------------------------------------
-    def kombinationen(self, model: Model, klassen=None, praefix: str = "DIN ",
+    def kombinationen(self, model: Model, klassen=None, praefix: str = "DIN 19704 ",
                       log: list = None) -> list[str]:
         """Kombinationen nach den Lastfallklassen bilden.
 
@@ -199,17 +199,24 @@ class Regelwerk:
 
             sum gamma_F,i G_i  +  gamma_F,l Q_l  +  sum gamma_F,j psi_0,j Q_j
 
-        Die Namen tragen den Präfix "DIN ", damit sie nicht mit den
-        Lastfallnamen des Modells verwechselt werden.
+        **Namen** (Paket R2-C1, 06.10.2026): jede Kombination heißt LK<n> mit
+        der nächsten freien Nummer (Art "LK", Typ "ULS"); die Bezeichnung nennt
+        Klasse und Leiteinwirkung: „DIN 19704 Klasse 2, Leit LF3“. Bis dahin
+        hießen sie „DIN LF1“ und „DIN LF1.2“ - mit „LF1“ bis „LF3“ für die
+        Lastfallklassen der Norm, die neben den Lastfällen LF1 bis LF3 des
+        Modells missverständlich waren; die Bezeichnung sagt darum „Klasse“.
+        *praefix* ist die Vorsilbe der Bezeichnung.
 
         Ersetzt wird nur eine Kombination, die dieser Generator selbst
         erzeugt hat und die seitdem niemand angefasst hat
-        (Combination.unberuehrt, Nachbesserung R2-A1 vom 04.10.2026). Heisst
-        eine Kombination des Anwenders schon so, bekommt die erzeugte einen
-        freien Namen („DIN LF1.1 2“), und das Protokoll sagt es. Bis dahin
-        ueberschrieb der Generator still eine Handkombination „DIN LF1“. Jede
-        neue Kombination bekommt die naechste freie Nummer einer
-        Lastkombination (Model.naechste_nummer), eine ersetzte behaelt ihre.
+        (Combination.unberuehrt) - gefunden am Fingerabdruck, **nie am Namen**:
+        eine Datei, die beim Laden umgestellt wurde, hat aus „DIN LF1.1“ ein
+        LK<n> gemacht und den Fingerabdruck behalten (A2). Eine Kombination
+        des Anwenders bleibt, wie sie ist, auch wenn sie so heißt wie eine
+        erzeugte hieß; die erzeugten haben ohnehin freie Nummern. Eine
+        Kombination mit demselben Inhalt (Typ, Faktoren) behält bei einem
+        erneuten Lauf ihre Nummer, neue füllen zuerst die Lücken
+        (combinations.kombinationen_anlegen).
 
         Das Präfix steht vorn in jedem erzeugten Namen und muss darum ein
         zulässiger Namensanfang sein: ohne Komma und Semikolon (sie trennen die
@@ -236,6 +243,7 @@ class Regelwerk:
             from ..combinations import sperrhinweis_erzeugen
             from ..model import KombinationGesperrt
             raise KombinationGesperrt(sperrhinweis_erzeugen(offen), lastfaelle=offen)
+        from ..combinations import kombinationen_anlegen
         klassen = list(klassen or ("LF1", "LF2", "LF3"))
         nach_art: dict[str, list[str]] = {}
         faktorisiert: list[str] = []
@@ -244,31 +252,11 @@ class Regelwerk:
                 faktorisiert.append(name)      # schon Bemessungswert: kein zweites gamma
                 continue
             nach_art.setdefault((lc.category or "Q").strip(), []).append(name)
-        angelegt = []
-        belegt_jetzt: set = set()
+        entwuerfe: list = []
 
-        def anlegen(nm: str, faktoren: dict, beschreibung: str) -> str:
-            ziel, k = nm, 2
-            while True:
-                if k > 100000:
-                    # Sicherung gegen eine Endlosschleife (N16): so viele Namen
-                    # sind nie vergeben, hier stimmt etwas mit dem Namen nicht
-                    raise NameVergeben(f"Für „{nm}“ findet sich kein freier Name")
-                da = model.combinations.get(ziel)
-                if ziel not in belegt_jetzt and (
-                        (da is not None and da.unberuehrt(GENERATOR))
-                        or (da is None and not model.namenskonflikt(ziel, "", "kombination"))):
-                    break
-                ziel, k = f"{nm} {k}", k + 1
-            if ziel != nm and log is not None:
-                log.append(f"  „{nm}“ gibt es schon (Anwender) - die erzeugte heißt „{ziel}“")
-            da = model.combinations.get(ziel)
-            nummer = da.nummer if da is not None else model.naechste_nummer("LK")
-            model.combinations[ziel] = Combination(ziel, faktoren, "ULS", beschreibung,
-                                                   nummer=nummer).als_erzeugt(GENERATOR)
-            belegt_jetzt.add(ziel)
-            angelegt.append(ziel)
-            return ziel
+        def entwurf(faktoren: dict, beschreibung: str, bezeichnung: str) -> None:
+            entwuerfe.append({"factors": faktoren, "typ": "ULS", "description": beschreibung,
+                              "leading": "", "situation": "", "bezeichnung": bezeichnung})
         for kl in klassen:
             erlaubt = set(KLASSEN.get(kl, []))
             staendig = [(a, n) for a, ns in nach_art.items() if a in self.staendig
@@ -277,9 +265,11 @@ class Regelwerk:
                              if a not in self.staendig and a in erlaubt for n in ns]
             if not staendig and not veraenderlich:
                 continue
+            klasse = kl[2:] if kl.startswith("LF") else kl
             if not veraenderlich:
                 faktoren = {n: float(self.gamma_F[kl].get(a, _f(1.0))) for a, n in staendig}
-                anlegen(f"{praefix}{kl}", faktoren, f"{kl} - nur ständige Einwirkungen")
+                entwurf(faktoren, f"{kl} - nur ständige Einwirkungen",
+                        f"{praefix}Klasse {klasse}, nur ständig")
                 continue
             for k, (art_l, leit) in enumerate(veraenderlich, 1):
                 faktoren = {n: float(self.gamma_F[kl].get(a, _f(1.0))) for a, n in staendig}
@@ -290,15 +280,22 @@ class Regelwerk:
                     g = float(self.gamma_F[kl].get(art_j, _f(1.0)))
                     psi = float(self.psi0.get(art_j, _f(1.0)))
                     faktoren[begleit] = g * psi
-                anlegen(f"{praefix}{kl}.{k}", faktoren,
-                        f"{kl}, Leiteinwirkung {art_l} ({leit}) - {KLASSEN_TEXT[kl]}")
+                entwurf(faktoren, f"{kl}, Leiteinwirkung {art_l} ({leit}) - {KLASSEN_TEXT[kl]}",
+                        f"{praefix}Klasse {klasse}, Leit {leit}")
+        # erst entwerfen, dann ersetzen: scheitert der Entwurf, bleibt das Modell, wie es ist
+        ersetzt = [c for c in model.combinations.values() if c.unberuehrt(GENERATOR)]
+        weg = {id(c) for c in ersetzt}
+        for k in [k for k, c in model.combinations.items() if id(c) in weg]:
+            del model.combinations[k]
+        angelegt = [c.name for c in kombinationen_anlegen(model, GENERATOR, entwuerfe, ersetzt)]
         if log is not None:
             if faktorisiert:
                 log.append(f"  {len(faktorisiert)} Bemessungslastfälle (bereits faktorisiert) nicht "
                            f"kombiniert: {', '.join(faktorisiert[:6])}"
                            + (" …" if len(faktorisiert) > 6 else ""))
             log.append(f"{len(angelegt)} Kombinationen nach {self.name} gebildet "
-                       f"({', '.join(klassen)})")
+                       f"({', '.join(klassen)})"
+                       + (f", {len(ersetzt)} frühere erzeugte ersetzt" if ersetzt else ""))
             for z in self.offen()[:5]:
                 log.append(f"  zu bestätigen: {z}")
             if len(self.offen()) > 5:

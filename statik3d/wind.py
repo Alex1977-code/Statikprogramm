@@ -672,6 +672,19 @@ def _vom_wind(ll, w: Wind, lc, alt_erkennen: bool) -> bool:
     return nd > 0 and nq > 0 and abs(abs(float(q @ d)) - nq * nd) <= 1e-9 * nq * nd
 
 
+def lasten_entfernen(model, name: str) -> None:
+    """Alle Lasten des Winds *name* aus allen Lastfaellen nehmen (R2-C1): die
+    Objektlasten auf Flaechen (``verlauf["art"] == "wind"`` mit seinem Namen) und
+    seine Stablasten (:func:`stablasten_entfernen`, am Merkmal ``erzeuger``).
+    Danach ist :meth:`Model.lasten_verteilen` zu rufen."""
+    for lc in model.load_cases.values():
+        lc.geometrielasten = [gl for gl in lc.geometrielasten
+                              if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == name)]
+    w = (getattr(model, "winde", None) or {}).get(name)
+    if w is not None:
+        stablasten_entfernen(model, w)
+
+
 def stablasten_entfernen(model, w: Wind) -> int:
     """Die Linienlasten (Stablasten) des Winds ``w`` aus allen Lastfaellen nehmen;
     Rueckgabe: ihre Zahl. Danach ist :meth:`Model.lasten_verteilen` zu rufen,
@@ -726,8 +739,9 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
                               aufriss=bool(wk["aufriss"]), stempel=uuid.uuid4().hex)
         st._melden(fortschritt, 0.96, f"Wind {w.name}: Lasten auf das Netz")
     # Name und Nummer des Lastfalls pruefen, bevor sich etwas aendert: ein
-    # vergebener Name oder eine belegte Nummer weist ab (NameVergeben), ohne
-    # eigene Wahl gilt „Wind <Name>“ oder ein freier (R2-A1, Nachbesserung G3)
+    # vergebener Name oder eine belegte Nummer weist ab (NameVergeben); ohne
+    # eigene Wahl entsteht ein neuer Lastfall LF<Nr.> mit der Bezeichnung
+    # „Wind <Name>“ (R2-A1 G3, R2-C1), ein gewaehlter bleibt, wie er ist
     w.lastfall = model.generator_lastfall(f"Wind {w.name}", w.lastfall, int(w.lastfall_nr or 0),
                                           f"Wind {w.name}")
     # Dateien vor dem 06.10.2026 tragen kein Merkmal ``erzeuger``: dann werden die
@@ -738,8 +752,10 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
                               if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == w.name)]
     stablasten_entfernen(model, w)
     if w.lastfall not in model.load_cases:
+        from .model import _namensnummer
         model.add_load_case(w.lastfall, "W" if "W" in ACTION_CATEGORIES else "Q",
-                            f"Wind {w.name}", activate=False)
+                            f"Wind {w.name}", activate=False,
+                            bezeichnung=f"Wind {w.name}" if _namensnummer(w.lastfall)[0] == "LF" else "")
     lc = model.load_cases[w.lastfall]
     lc.situation = "" if w.situation == GRUNDSTELLUNG else w.situation
     if not getattr(lc, "nummer", 0):

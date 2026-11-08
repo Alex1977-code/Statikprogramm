@@ -142,7 +142,7 @@ class Stellung:
         self._faelle(m, log)
         self._deaktivieren(m, basis, log)
         if self.antrieb:
-            self._antrieb(m, log)
+            self._antrieb(m, log, basis)
         return m
 
     def anwenden(self, m: Model, basis: Model, log: list = None, kette=None,
@@ -492,12 +492,26 @@ class Stellung:
                 log.append(f"  {self.name}: Ermüdungslasten ohne Lastfall entfallen: "
                            + ", ".join(sorted(weg)))
 
-    def _antrieb(self, m: Model, log: list = None):
+    def _antrieb(self, m: Model, log: list = None, basis: Model = None):
+        """Das Antriebsmoment als Lastfall in der Rechenkopie *m* ansetzen.
+
+        Der Lastfall heisst LF<Nr.> und traegt die Bezeichnung „Antrieb <Stellung>“
+        (Paket R2-C1, 06.10.2026; bis dahin hiess er „Antrieb S5“). Die Nummer
+        ist die naechste freie des **Basismodells**, nicht der Kopie: die Kopie
+        hat nur die Lastfaelle der Stellung, und eine Nummer, die im Basismodell
+        ein anderer Lastfall traegt, hiesse in den Ergebnissen dieser Stellung
+        etwas anderes als im Modell. Jede Stellung hat ihre eigene Kopie; gleiche
+        Nummern in zwei Kopien sind darum kein Namenskonflikt. Der Lastfall
+        gehoert nur der Kopie und kommt nie ins Basismodell."""
         knoten, moment = self.antrieb
-        name = f"Antrieb {self.name}"
-        if name not in m.load_cases:
+        bezeichnung = f"Antrieb {self.name}"
+        name = next((n for n, lc in m.load_cases.items() if lc.bezeichnung == bezeichnung
+                     and lc.description == f"Antriebsmoment in Stellung {self.name}"), None)
+        if name is None:
+            nr = max(m.naechste_nummer("LF"), (basis or m).naechste_nummer("LF"))
+            name = f"LF{nr}"
             m.add_load_case(name, "Q", f"Antriebsmoment in Stellung {self.name}",
-                            activate=False)
+                            activate=False, nummer=nr, bezeichnung=bezeichnung)
         Mx, My, Mz = [float(v) for v in moment]
         m.load_node(int(knoten), Mx=Mx, My=My, Mz=Mz, case=name)
         for c in m.combinations.values():

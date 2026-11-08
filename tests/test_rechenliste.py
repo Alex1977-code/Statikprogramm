@@ -437,6 +437,32 @@ def test_fenster():
     f.close()
 
 
+def test_beschriftungen():
+    """Paket A Punkt 10 (08.11.2026): die Beschriftungen des Fensters in
+    Begriffen des Tragwerksplaners. Vorher hiess der Knopf "Dem Laufenden
+    folgen" und die erste Spalte "Posten"."""
+    try:
+        from PySide6 import QtWidgets
+    except Exception as ex:                                  # noqa: BLE001
+        print(f"  (PySide6 nicht vorhanden: {ex} - uebersprungen)")
+        return
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    f = rl.Rechenliste()
+    check("Knopf heisst 'Zum laufenden Lastfall springen'",
+          f.btn_folgen.text() == "Zum laufenden Lastfall springen", f.btn_folgen.text())
+    check("sein Tooltip nennt Lastfall und Kombination",
+          "Lastfall" in f.btn_folgen.toolTip() and "Posten" not in f.btn_folgen.toolTip(),
+          f.btn_folgen.toolTip())
+    kopf = [f.tabelle.horizontalHeaderItem(j).text() for j in range(f.tabelle.columnCount())]
+    check("keine Spalte heisst mehr 'Posten'", "Posten" not in kopf, str(kopf))
+    check("erste Spalte 'Lastfall / Kombination'", kopf[0] == "Lastfall / Kombination", kopf[0])
+    f.posten_setzen([("LF1", "Lastfall"), ("LK1", "Kombination")])
+    check("Fusszeile ohne 'Posten'", "Posten" not in f.kopfzeile.text(), f.kopfzeile.text())
+    check("Abbrechen-Tooltip ohne 'Faktorisierung'",
+          "Faktorisierung" not in f.btn_abbrechen.toolTip(), f.btn_abbrechen.toolTip())
+    f.close()
+
+
 def test_dauer_text():
     check("unter einer Stunde m:ss", rl.dauer_text(343.4) == "5:43", rl.dauer_text(343.4))
     check("ab einer Stunde h:mm:ss", rl.dauer_text(4169.6) == "1:09:30", rl.dauer_text(4169.6))
@@ -450,7 +476,7 @@ def main():
               test_deckelmeldung_ist_nicht_konvergiert, test_zustand_aus_info,
               test_zustand_aus_info_abgekuerzt, test_zustand_aus_info_verworfen,
               test_deckel_im_fortschrittsstrom, test_vorlauf_mit_deckel,
-              test_farm_text, test_dauer_text, test_fenster):
+              test_farm_text, test_dauer_text, test_fenster, test_beschriftungen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

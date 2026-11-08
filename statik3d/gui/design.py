@@ -790,6 +790,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "kombinationen": "Kombination", "ermuedungslasten": "Ermüdungslast",
                  "vorspanndefinitionen": "Vorspannung je Anker",
                  "werkstoffe": "Werkstoff", "dicken": "Dicke",
+                 # eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026)
+                 "koordinatensysteme": "Koordinatensystem",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
                  "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager",
@@ -797,11 +799,28 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "bericht": "Berichtsbild",
                  # seit 14.10.2026 (Ansichtspaket C): gespeichert wird erst mit OK
                  "ansichten": "Ansicht"}
+    #: Zeilen „+ … anlegen“ der Zweige, die bis zum 08.11.2026 keine hatten
+    #: (Paket A Punkt 4): Art der Zeile -> Zweigart. Ein Klick darauf wirkt wie
+    #: Rechtsklick → Neu am Zweig (``neu``-Signal, MainWindow._baum_neu). Der Text
+    #: der Zeile ist „+ <NEU_ARTEN[Zweigart]> anlegen“.
+    ANLEGEN_ZEILEN = {"knoten_neu": "knoten", "linie_neu": "linien", "stab_neu": "staebe",
+                      "geoflaeche_neu": "geoflaechen", "geokoerper_neu": "geokoerper",
+                      "stabelement_neu": "stabelemente", "werkstoff_neu": "werkstoffe",
+                      "querschnitt_neu": "querschnitte", "dicke_neu": "dicken",
+                      "lager_neu": "lager", "linienlager_neu": "linienlager",
+                      "flaechenlager_neu": "flaechenlager", "lastfall_neu": "lastfaelle",
+                      "kombination_neu": "kombinationen",
+                      "koordinatensystem_neu": "koordinatensysteme"}
+    #: Kurzer Text der Zeile, wo der volle zu breit waere: die Lagerzeilen stehen
+    #: eine Ebene tiefer, und „+ Knotenlager anlegen“ wurde bei 1366 x 768 schon
+    #: abgeschnitten (tests.test_fensteraufteilung.test_baum_namen_lesbar). Welches
+    #: Lager, sagt der Zweig darueber und der Tooltip.
+    ANLEGEN_KURZ = {"lager_neu": "Lager", "linienlager_neu": "Lager", "flaechenlager_neu": "Lager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "ermuedungslast",
-                    "vorspanndefinition", "werkstoff", "dicke",
+                    "vorspanndefinition", "werkstoff", "dicke", "koordinatensystem",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln", "ansicht"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
@@ -815,6 +834,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
                  "ermuedungslast": "ermuedungslasten", "vorspanndefinition": "vorspanndefinitionen",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
+                 "koordinatensystem": "koordinatensysteme",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
                  "kontaktbedingung": "kontaktbedingungen",
                  "lager_einzeln": "lager", "linienlager_einzeln": "linienlager",
@@ -1712,6 +1732,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
             it.setToolTip(1, str(zahl))
         return it
 
+    def _anlegen(self, eltern, art_neu: str):
+        """Die Zeile „+ … anlegen“ eines Zweigs (:attr:`ANLEGEN_ZEILEN`, 08.11.2026)."""
+        was = self.NEU_ARTEN[self.ANLEGEN_ZEILEN[art_neu]]
+        return self._zweig(eltern, f"+ {self.ANLEGEN_KURZ.get(art_neu, was)} anlegen", "", art_neu, farbe=FARBEN["akzent"], blatt=True,
+                           hinweis=f"Neu: {was} - rechts öffnet sich die Maske (wie Rechtsklick → Neu "
+                                   "am Zweig)")
+
     def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True, gesamt=None,
                rest=None):
         """Eintraege unter einen Zweig haengen, gedeckelt auf BAUM_MAX.
@@ -2176,6 +2203,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     sortieren=False, gesamt=n_kons,
                     rest=(lambda h=kn_hinten: h.tolist(), lambda j, h=kn_hinten: f"K{int(h[j])}",
                           lambda j, h=kn_hinten: knotenzeile(int(h[j]))))
+        self._anlegen(kn, "knoten_neu")
         # Die Netzknoten als eine Zaehlzeile (Antwort 3) statt bis zu BAUM_MAX
         # Eintraegen. Ihr Klick zeigt ihre Zahl und holt die Knotentabelle
         # (BAUM_TABELLE im Fenster), dort stehen alle Knoten.
@@ -2191,6 +2219,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           for name, ln in sorted(model.lines.items(),
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "linie", "linien")
+        self._anlegen(lin, "linie_neu")
         # „Stäbe“ im Sinn von RFEM (Antwort 2 vom 24.09.2026): die Staebe mit
         # Nachweis. Ihre FE-Stabelemente stehen unter „FE-Netz“, die
         # Schweissnaehte bei den Nachweisen. Bis zum 03.10.2026 hiess der Zweig
@@ -2205,6 +2234,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           for name, mm in sorted(model.members.items(),
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "stab", "staebe")
+        self._anlegen(mem, "stab_neu")
         # Die finiten Elemente nach Familie in einem Durchgang (bis zum
         # 03.10.2026 drei Schleifen ueber alle Elemente)
         stab_els, n_schalen, n_vol = [], 0, 0
@@ -2223,6 +2253,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                i, "Balken" if e.typ == "beam" else "Fachwerkstab",
                                e.nodes[0], e.nodes[-1], e.sec or "-", e.mat or "-"))
                           for i, e in stab_els], "stabelement", "stabelemente")
+        self._anlegen(stb, "stabelement_neu")
         gf = getattr(model, "flaechen", {}) or {}
         flae = self._zweig(geo, "Flächen", len(gf), "geoflaechen")
         if n_schalen:
@@ -2233,6 +2264,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             + ("" if x.elemente else "\nnoch nicht vernetzt"))
                            for name, x in sorted(gf.items(), key=lambda kv: natuerlich(kv[0]))],
                       "geoflaeche", "geoflaechen")
+        self._anlegen(flae, "geoflaeche_neu")
         gk = getattr(model, "koerper", {}) or {}
         koerper_zeilen = [self._koerperzeile(name, x)
                           for name, x in sorted(gk.items(), key=lambda kv: natuerlich(kv[0]))]
@@ -2248,6 +2280,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
             self._zweig(netz, "Volumenelemente", n_vol, "volumen",
                         hinweis="Volumenelemente (Tetraeder, Hexaeder) aller Körper")
         self._liste(vo, koerper_zeilen, "geokoerper_einzeln", "geokoerper")
+        self._anlegen(vo, "geokoerper_neu")
 
         # ---- Hilfsobjekte: Bemassungen (die Layer folgen unten) -------------
         bms = getattr(model, "bemassungen", {}) or {}
@@ -2268,15 +2301,28 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           f"{name}: E = {getattr(x, 'E', 0) / 1e9:.0f} GPa")
                          for name, x in model.materials.items()], "werkstoff",
                     "werkstoffe")
+        self._anlegen(wk, "werkstoff_neu")
         qs = self._zweig(eig, "Querschnitte", len(model.sections), "querschnitte")
         self._liste(qs, [(name, getattr(x, "typ", "") or "", name,
                           f"{name}: A = {getattr(x, 'A', 0) * 1e4:.1f} cm²")
                          for name, x in model.sections.items()], "querschnitt",
                     "querschnitte")
+        self._anlegen(qs, "querschnitt_neu")
         dk = self._zweig(eig, "Dicken", len(model.shells), "dicken")
         self._liste(dk, [(name, f"{zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm", name,
                           f"{name}: t = {zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm")
                          for name, x in model.shells.items()], "dicke", "dicken")
+        self._anlegen(dk, "dicke_neu")
+        # Eigene Koordinatensysteme (Oberflaechenpaket B, 08.11.2026): Flaechen-
+        # und Linienlasten koennen sich auf sie beziehen
+        kss = getattr(model, "koordinatensysteme", None) or {}
+        ksz = self._zweig(eig, "Koordinatensysteme", len(kss), "koordinatensysteme",
+                          hinweis="Eigene Koordinatensysteme (Ursprung und Achsen); Flächen- und "
+                                  "Linienlasten können sich auf sie beziehen (Maske der Last, Feld "
+                                  "„Bezug“). Löschen geht nur, solange keine Last darauf verweist.")
+        self._liste(ksz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                          for name, x in kss.items()], "koordinatensystem", "koordinatensysteme")
+        self._anlegen(ksz, "koordinatensystem_neu")
 
         # ---- Lager und Verbindungen: Lager, Verbindungselemente, Gelenke,
         # Liniengelenke, Kontaktbedingungen --------------------------------
@@ -2292,24 +2338,28 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           f"Knoten {x.node}: {self._lagertext(x)}")
                          for i, x in enumerate(model.supports)], "lager_einzeln",
                     "lager")
-        if model.line_supports:
-            ll = self._zweig(lag, "Linienlager", len(model.line_supports),
-                             "linienlager")
-            schl = model.lagerschluessel("linienlager", model.line_supports)
-            self._liste(ll, [(schl[i],
-                              f"{len(x.nodes)} Kn", str(i),
-                              f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
-                             for i, x in enumerate(model.line_supports)],
-                        "linienlager_einzeln", "linienlager")
-        if model.surface_supports:
-            fll = self._zweig(lag, "Flächenlager", len(model.surface_supports),
-                              "flaechenlager")
-            schl = model.lagerschluessel("flaechenlager", model.surface_supports)
-            self._liste(fll, [(schl[i],
-                               f"{len(x.nodes)} Kn", str(i),
-                               f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
-                              for i, x in enumerate(model.surface_supports)],
-                         "flaechenlager_einzeln", "flaechenlager")
+        self._anlegen(kl, "lager_neu")
+        # Linien- und Flaechenlager stehen seit dem 08.11.2026 immer im Baum, auch
+        # leer (Paket A Punkt 3) - wie die Knotenlager; bis dahin nur, wenn es
+        # schon eines gab, und angelegt wurde ueber Auswahl und Dialog
+        ll = self._zweig(lag, "Linienlager", len(model.line_supports),
+                         "linienlager")
+        schl = model.lagerschluessel("linienlager", model.line_supports)
+        self._liste(ll, [(schl[i],
+                          f"{len(x.nodes)} Kn", str(i),
+                          f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
+                         for i, x in enumerate(model.line_supports)],
+                    "linienlager_einzeln", "linienlager")
+        self._anlegen(ll, "linienlager_neu")
+        fll = self._zweig(lag, "Flächenlager", len(model.surface_supports),
+                          "flaechenlager")
+        schl = model.lagerschluessel("flaechenlager", model.surface_supports)
+        self._liste(fll, [(schl[i],
+                           f"{len(x.nodes)} Kn", str(i),
+                           f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
+                          for i, x in enumerate(model.surface_supports)],
+                     "flaechenlager_einzeln", "flaechenlager")
+        self._anlegen(fll, "flaechenlager_neu")
         # ---- Punkt- und Verbindungselemente -------------------------------
         pm = getattr(model, "punktmassen", None) or []
         dp = getattr(model, "daempfer", None) or []
@@ -2499,6 +2549,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             schluessel=d_.name, blatt=True,
                             hinweis=f"Lastfall {name} verweist auf die Vorspannung je Anker {d_.name} im "
                                     f"{_vsp.ZUSTAND_TEXT[z_]} - ein Klick öffnet die Definition")
+        self._anlegen(lf, "lastfall_neu")
         # Vorspannung je Anker (16.10.2026): Definitionen mit P_max und Endwert,
         # Zuordnung vorhandener Vorspannungen
         from .. import vorspannung as _vsp
@@ -2531,6 +2582,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
+        self._anlegen(kb, "kombination_neu")
         # Ermuedungslasten neben Lastfaellen und Kombinationen: bis zum
         # 24.09.2026 fehlten sie im Baum ganz, und der Anwender fand das Menue
         # nicht („wo definiere ich … die zuweisung zu den ermüdungslasten“).

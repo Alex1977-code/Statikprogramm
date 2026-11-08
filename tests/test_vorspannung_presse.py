@@ -255,15 +255,16 @@ def test_speichern_laden():
         # Datei mit Endvorspannung und Anfangsdehnung, gespeichert am Stand 051007d
         pa = os.path.join(os.path.dirname(os.path.abspath(__file__)), "daten", "vorspannung_soll_051007d",
                           "anker_soll.json")
-        mb = Model.load(pa)
+        mb = Model.load(pa, umstellen=False)   # alte Datei ohne Umstellung der Namen (die prueft test_umstellung_lf_lk)
         pb = os.path.join(tmp, "alt_neu.json")
         mb.save(pb)
         with open(pa, "rb") as f1, open(pb, "rb") as f2:
             a, b = f1.read(), f2.read()
+        b = b.replace(b'"format": 9', b'"format": 8')   # seit R2-A2 speichert das Programm Fassung 9
         check("Datei vom Stand 051007d (Endvorspannung, Anfangsdehnung): Laden und Speichern bitgleich",
               a == b, f"{len(a)} / {len(b)} Byte")
         from statik3d import ergebnisse
-        mc = Model.load(pa)
+        mc = Model.load(pa, umstellen=False)   # alte Datei ohne Umstellung der Namen (die prueft test_umstellung_lf_lk)
         k0 = ergebnisse.kennung(mc)
         for v_ in mc.case("V").vorspannungen:
             v_.kraftart, v_.schlupf = "", 0.0

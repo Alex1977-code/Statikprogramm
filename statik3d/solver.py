@@ -245,7 +245,7 @@ def _melde(progress, text: str, anteil: float = None) -> None:
         progress(text)
 
 
-#: Die Loeser zur Auswahl (Berechnung -> Einstellungen -> Experten): Schluessel ->
+#: Die Loeser zur Auswahl (Berechnung -> Einstellungen -> Gleichungslöser (Experte)): Schluessel ->
 #: (Name, Python-Paket, Lizenz, Art). Lizenzrechtlich sauber heisst: in der
 #: gepackten exe stecken nur MKL (Intel Simplified Software License, frei
 #: weitergebbar), SuperLU (BSD, in scipy), PyAMG (MIT) und MUMPS (CeCILL-C,
@@ -358,7 +358,7 @@ def loeser_verfuegbar(backend: str = "") -> str:
     """Womit die naechste Rechnung loesen wird - ohne zu faktorisieren.
 
     Fuer die Meldung beim Start einer Rechnung. Genannt wird der
-    **eingestellte** Loeser (Berechnung -> Einstellungen -> Experten), nicht der
+    **eingestellte** Loeser (Berechnung -> Einstellungen -> Gleichungslöser (Experte)), nicht der
     erstbeste vorhandene: wer MUMPS gewaehlt hatte, las hier bis zum
     14.09.2026 "MKL PARDISO, 16 Threads", waehrend MUMPS mit acht Threads
     rechnete - die Ergebniszeile sagte es richtig, die Kopfzeile nicht.
@@ -377,7 +377,7 @@ def loeser_verfuegbar(backend: str = "") -> str:
             return f"{be} - unbekannter Gleichungslöser (möglich: {', '.join(LOESER)})"
         if not loeser_da(be):
             return (f"{NAMEN.get(be, be)} - eingestellt, aber nicht installiert; die Rechnung "
-                    "bricht damit ab (Berechnung → Einstellungen → Experten)")
+                    "bricht damit ab (Berechnung → Einstellungen → Gleichungslöser (Experte))")
         return loeser_beschreibung(be)
     for key in ("pardiso", "cholmod"):
         if loeser_da(key):
@@ -814,8 +814,7 @@ def ausweichen_gebuendelt(ergebnisse) -> list:
             f"Gleichungslöser ausgewichen bei {n} Ergebnis{'' if n == 1 else 'sen'} "
             f"({', '.join(e['namen'][:3])}{' …' if n > 3 else ''}): {e['grund']}"
             + (f" – stattdessen rechnete {mit}" if mit else "")
-            + ". Den Grund beheben oder unter Berechnung → Einstellungen → Experten → "
-              "Gleichungslöser einen Löser wählen; ein ausdrücklich gewählter Löser "
+            + ". Den Grund beheben oder unter Berechnung → Einstellungen → Gleichungslöser (Experte) einen Löser wählen; ein ausdrücklich gewählter Löser "
               "bricht ab, statt auszuweichen.")
     return zeilen
 
@@ -1043,7 +1042,7 @@ class LinearSolver:
                 f"{nnz / 1e6:.1f} Mio. Einträgen"
                 + (f". {lage}" if lage else "")
                 + ". Ein größeres Modell braucht mehr Arbeitsspeicher oder eine größere "
-                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen → Experten) "
+                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen → Gleichungslöser (Experte)) "
                   "kann sparsamer sein.") from ex
         self.zeit_faktorisierung = time.perf_counter() - t_fak
 
@@ -1105,7 +1104,7 @@ class LinearSolver:
         text = (f"Das Gleichungssystem ist zu groß für MKL PARDISO: {self.n} Zeilen und "
                 f"{nnz / 1e6:.0f} Mio. Einträge; die Schnittstelle fasst {INT32_MAX} "
                 f"(32-Bit-Indizes). MUMPS, ama und SuperLU rechnen mit 64 Bit - "
-                f"Berechnung \u2192 Einstellungen \u2192 Experten \u2192 Gleichungslöser.")
+                f"Berechnung \u2192 Einstellungen \u2192 Gleichungslöser (Experte).")
         if verlangt:
             raise RuntimeError(text)
         _log_einmal(text + " Es wird auf einen anderen Löser ausgewichen.")
@@ -1326,7 +1325,7 @@ class LinearSolver:
                     f"{self.ausweichgrund}; danach SuperLU: {type(ex).__name__}: "
                     f"{str(ex)[:160]}. SuperLU rechnet mit 32-Bit-Arbeitsfeldern "
                     "und reicht für große Modelle nicht - Berechnung → "
-                    "Einstellungen → Experten → Gleichungslöser: MUMPS oder ama.") from ex
+                    "Einstellungen → Gleichungslöser (Experte): MUMPS oder ama.") from ex
             self._solve = lu.solve
             self.backend = "superlu"
 
@@ -1552,7 +1551,7 @@ class LinearSolver:
                         + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
                            else "") + " - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition prüfen; die Schranke steht "
-                        "unter Berechnung → Einstellungen → Experten → Genauigkeit des Gleichungslösers.")
+                        "unter Berechnung → Einstellungen → Gleichungslöser (Experte) → Genauigkeit des Gleichungslösers.")
         return x
 
     @staticmethod
@@ -9788,10 +9787,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if neu_bestimmen:
             frei_nachher = _gruppen_frei(model, cs)
             voll = {g for g, v in cs._full_slip_groups().items() if v}
+            # Am Deckel endet der Lauf (08.11.2026): ein Wechsel zwischen „frei“ und
+            # „gehalten“ setzte danach wieder changed - in Phase 1 pendelte die Einstufung
+            # mit Periode 2, und der Lauf rechnete bis max_iter weiter (Wuerfel auf der
+            # schiefen Ebene, 50 Grad: 120 statt 40 Runden, tests/test_reibkontakt_benchmarks B2b)
+            am_deckel = bool(getattr(cs, "am_deckel", False))
             if frei_vorher is None:
-                if voll - frei_nachher:
+                if voll - frei_nachher and not am_deckel:
                     changed = True      # erstmals: eine ganz rutschende Gruppe bekommt die feine Feder
-            elif frei_nachher != frei_vorher:
+            elif frei_nachher != frei_vorher and not am_deckel:
                 changed = True
             cs.gruppe_frei = frei_nachher
         if not changed and not getattr(cs, "am_deckel", False):
@@ -10505,6 +10509,10 @@ class Analysis:
             s.append(f"Hinweis: In dieser Ergebnisdatei (vor dem 04.10.2026 geschrieben) hatte die "
                      f"Umhüllende der Ergebniskombination „{n}“ die „{umhuellende_kurz(a)}“ "
                      "überschrieben – diese fehlt, Berechnung → Berechnen bildet sie neu.")
+        # Ergebnisdatei, beim Oeffnen auf LF/LK/EK umgeschluesselt
+        # (ergebnisse._namen_umschluesseln, R2-A2) - und was dabei verworfen wurde
+        for z in (self.info.get("umstellung") or []):
+            s.append(f"Hinweis: {z}")
         if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
             s.append(self.theorie2.summary())
         if self.theorie3 is not None and getattr(self.theorie3, "kombinationen", None):

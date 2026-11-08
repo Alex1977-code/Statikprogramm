@@ -613,11 +613,12 @@ def test_n16_din19704():
     m.add_load_case("EG", "G", activate=False)
     m.add_load_case("V", "Q", activate=False)
     fertig, r, ex = _mit_zeitgrenze(lambda: Regelwerk().kombinationen(m, praefix="DIN "))
+    # seit R2-C1 heissen die Kombinationen LK<Nr>; das Praefix steht vorn in der Bezeichnung
     check("das Vorgabepräfix „DIN “ bildet weiter Kombinationen", fertig and ex is None and bool(r) and
-          all(n.startswith("DIN ") for n in r), f"{ex} {r}")
+          all(m.combinations[n].bezeichnung.startswith("DIN ") for n in r), f"{ex} {r}")
     fertig, r, ex = _mit_zeitgrenze(lambda: Regelwerk().kombinationen(m, praefix="Norm "))
     check("ein Präfix „Norm “ ohne Trenner geht", fertig and ex is None and bool(r) and
-          all(n.startswith("Norm ") for n in r), f"{ex} {r}")
+          all(m.combinations[n].bezeichnung.startswith("Norm ") for n in r), f"{ex} {r}")
 
 
 # --------------------------------------------------------------------------

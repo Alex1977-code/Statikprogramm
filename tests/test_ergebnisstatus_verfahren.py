@@ -131,6 +131,13 @@ def _status(an) -> str:
     return str(((an.info if an is not None else {}) or {}).get("verfahren_betroffen") or "")
 
 
+
+def _betroffen_ausser_halte(an) -> bool:
+    """Status zu einem anderen Merkmal als „Numerisch gehaltene Freiheitsgrade“?"""
+    from statik3d import rechenverfahren as rvf
+    b = str(an.info.get("verfahren_betroffen") or "")
+    return any(m.titel in b for m in rvf.MERKMALE if m.name != "haltekraefte")
+
 def test_tabelle_und_datei():
     from statik3d import ergebnisse as erg, rechenverfahren as rv
     namen = [mk.name for mk in rv.MERKMALE]
@@ -275,12 +282,19 @@ def test_datei_15_10_mit_tangente():
     _vor_15_10(p, m)
     a2, fehler = _laden(p, m)
     h = _hinweis(a2)
+    # Der Klotz hat eine freie Bewegung, die nur die Pivot-Regularisierung hielt (LF1,
+    # Results.singular): seit dem 08.11.2026 traegt seine Datei von vor dem 16.10.2026 dafuer
+    # den Status „Numerisch gehaltene Freiheitsgrade“ (Fehlerkorrektur 0dcf399, Anwender) -
+    # hier geht es um Reibverfahren und Deckel, darum zaehlt nur ein Status zu einem anderen Merkmal
     check("Datei vom 15.10.2026 mittags mit reibungstangente true: gültig, ohne Hinweis",
           a2 is not None and a2.info.get("rechenverfahren", {}).get("reibverfahren") is True
-          and not h and not a2.info.get("verfahren_betroffen"), fehler or h)
+          and not h and not _betroffen_ausser_halte(a2), fehler or h)
     check("… gerechnet vor 49cb8bb (alter Deckel erkannt), aber kein Lauf über 40 Runden: kein Status",
           a2 is not None and a2.info.get("rechenverfahren", {}).get("deckel") == "zustandswechsel"
-          and not a2.info.get("verfahren_betroffen"), str(a2.info.get("verfahren_betroffen")) if a2 else "")
+          and not _betroffen_ausser_halte(a2), str(a2.info.get("verfahren_betroffen")) if a2 else "")
+    check("… freie Bewegung numerisch gehalten (LF1): Status „Numerisch gehaltene Freiheitsgrade“ (08.11.2026)",
+          a2 is not None and "Numerisch gehaltene Freiheitsgrade" in str(a2.info.get("verfahren_betroffen") or ""),
+          str(a2.info.get("verfahren_betroffen")) if a2 else "")
     # wieder gespeichert ohne Rechnung: die Kennung hat jetzt die heutige Form, die Merkmale bleiben
     p2 = os.path.join(d, "mittags2.ergebnisse")
     erg.schreiben(p2, m, a2)
