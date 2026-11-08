@@ -6242,8 +6242,9 @@ nicht sieht („−5 kN/m² … die Fläche verformt sich nach oben“). **Beste
 Lasten und alte Dateien bleiben, wie sie waren**: ohne Bezug wirkt eine Last
 wie bisher, und eine Datei ohne die neuen Felder wird Zeichen für Zeichen
 gleich wieder gespeichert. Die bisherige Richtung bleibt in der Maske als
-„senkrecht zur Fläche (wie bisher, positiv drückt hinein)“ wählbar; bei einer
-Schale wirkt sie in Richtung der Elementnormalen. *Ansicht → Anzeigen ▾ →
+„senkrecht zur Fläche (wie bisher; Schale: positiv in lokaler z-Richtung, Volumenrand: positiv drückt hinein)“ wählbar; bei einer
+Schale wirkt sie in Richtung der Elementnormalen (lokale z-Achse), am Rand eines
+Volumens gegen die Außennormale. *Ansicht → Anzeigen ▾ →
 Flächenachsen* zeigt die lokalen Achsen jeder Fläche als Pfeile x (rot),
 y (grün), z (blau). Geprüft in `tests/test_paket_b.py`.
 

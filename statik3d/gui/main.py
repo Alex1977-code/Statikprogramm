@@ -11839,7 +11839,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Koordinatensysteme (KS_ENDUNG), am Ende das bisherige „senkrecht“
     BEZUG_GLOBAL = "global"
     BEZUG_LOKAL = "lokal (Flächenachsen)"
-    BEZUG_SENKRECHT = "senkrecht zur Fläche (wie bisher, positiv drückt hinein)"
+    BEZUG_SENKRECHT = "senkrecht zur Fläche (wie bisher; Schale: positiv in lokaler z-Richtung, Volumenrand: positiv drückt hinein)"
     KS_ENDUNG = " (eigenes KS)"
     LASTACHSEN = ["x", "y", "z"]
 
