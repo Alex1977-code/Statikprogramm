@@ -6380,13 +6380,13 @@ def main():
               and all(k in mk.werte() for k in ("name", "nummer", "kategorie", "beschreibung", "situation",
                                                  "theorie", "g_z", "psi", "aktiv")), str(mk.titel if mk else None))
         mk.setzen("name", "LF!")
-        mk.setzen("nummer", 3)
+        mk.setzen("nummer", 9)          # Nr. 3 hat seit R2-C1 der Lastfall LF3 des Beispiels
         mk.setzen("beschreibung", "umbenannt")
         mk.setzen("aktiv", True)
         mk.anwenden()
         app.processEvents()
         check("Umbenennen aus der Maske: Modell, Kombinationen und aktiver Lastfall folgen",
-              "LF!" in m_.load_cases and "LF1" not in m_.load_cases and m_.load_cases["LF!"].nummer == 3
+              "LF!" in m_.load_cases and "LF1" not in m_.load_cases and m_.load_cases["LF!"].nummer == 9
               and m_.active_case == "LF!" and all("LF1" not in c.factors for c in m_.combinations.values())
               and not fehler_, str(fehler_))
         w._baum_bearbeiten("lastfall", "LF1")
