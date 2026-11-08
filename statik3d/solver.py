@@ -9788,10 +9788,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if neu_bestimmen:
             frei_nachher = _gruppen_frei(model, cs)
             voll = {g for g, v in cs._full_slip_groups().items() if v}
+            # Am Deckel endet der Lauf (08.11.2026): ein Wechsel zwischen „frei“ und
+            # „gehalten“ setzte danach wieder changed - in Phase 1 pendelte die Einstufung
+            # mit Periode 2, und der Lauf rechnete bis max_iter weiter (Wuerfel auf der
+            # schiefen Ebene, 50 Grad: 120 statt 40 Runden, tests/test_reibkontakt_benchmarks B2b)
+            am_deckel = bool(getattr(cs, "am_deckel", False))
             if frei_vorher is None:
-                if voll - frei_nachher:
+                if voll - frei_nachher and not am_deckel:
                     changed = True      # erstmals: eine ganz rutschende Gruppe bekommt die feine Feder
-            elif frei_nachher != frei_vorher:
+            elif frei_nachher != frei_vorher and not am_deckel:
                 changed = True
             cs.gruppe_frei = frei_nachher
         if not changed and not getattr(cs, "am_deckel", False):
