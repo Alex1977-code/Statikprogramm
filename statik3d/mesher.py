@@ -1776,10 +1776,268 @@ def _netz_zuruecksetzen(model: Model, koerper: list, n_el0: int, n_kn0: int,
                     f"({len(model.elements)} statt {n_el0} Elemente, {model.nn} statt {n_kn0} Knoten).")
 
 
+#: Befund A16 der Pruefagenten, Entscheidung des Anwenders vom 09.11.2026:
+#: zwei Koerper mit je einer eigenen, deckungsgleichen Trennflaeche ohne
+#: Kontaktbedingung werden dort als **eine** gemeinsame Flaeche vernetzt
+#: (:func:`koerper_vernetzen`). False vernetzt wie bis zum 09.11.2026 - jede
+#: Flaeche fuer sich, die Koerper haengen nur an den Randlinien zusammen.
+TRENNFLAECHEN_ZUSAMMENLEGEN = True
+
+
+def _kontakt_nennt_trennstelle(model: Model, fa: str, fb: str, ka: str, kb_: str) -> str:
+    """Name der Kontaktbedingung, die die Trennstelle nennt - "" ohne.
+
+    Genannt ist die Stelle, wenn eine Bedingung eine der beiden Flaechen
+    fuehrt (freigegebene Flaechen oder Gegenflaechen) oder die beiden Koerper
+    als geloesten Koerper und Gegenkoerper - die Eingabe nur mit Koerpern, die
+    fugen.kontaktfuge_ausfuehren seit dem 09.11.2026 ausfuehrt (Befund A17).
+    Eine in der Quelldatei deaktivierte Bedingung nennt die Stelle auch: was
+    der Anwender als Fuge angelegt hat, wird nicht still zum Verbund."""
+    for name, kb in (getattr(model, "kontaktbedingungen", None) or {}).items():
+        fl = set(getattr(kb, "flaechennamen", None) or []) | set(getattr(kb, "gegenflaechen", None) or [])
+        if fa in fl or fb in fl:
+            return str(name)
+        los = set(getattr(kb, "koerpernamen", None) or [])
+        gegen = set(getattr(kb, "gegenkoerper", None) or [])
+        if (ka in los and kb_ in gegen) or (kb_ in los and ka in gegen):
+            return str(name)
+    return ""
+
+
+def trennstellen(model: Model) -> list:
+    """Die Stellen, an denen zwei Koerper je eine **eigene** Flaeche ueber
+    denselben Randlinien (und Oeffnungen) haben - deckungsgleiche
+    Trennflaechen (Befund A16 der Pruefagenten, 09.11.2026).
+
+    Je Stelle ein Woerterbuch: ``flaechen`` (fa, fb), ``koerper`` (ka, kb) -
+    fa gehoert ka, fb gehoert kb -, ``kontakt`` (Name der Kontaktbedingung,
+    die die Stelle nennt, sonst "") und ``hindernis`` (warum die beiden
+    Flaechen nicht als eine vernetzt werden koennen, sonst ""). Dieselbe
+    Liste lesen der Vernetzer (:func:`koerper_vernetzen`) und die Abnahme
+    (diagnose._abnahme_deckungsgleiche_flaechen)."""
+    koerper = getattr(model, "koerper", None) or {}
+    flaechen = getattr(model, "flaechen", None) or {}
+    if len(koerper) < 2:
+        return []
+    je_rand: dict = {}
+    for k in koerper.values():
+        for fn in dict.fromkeys(k.flaechen or []):
+            f = flaechen.get(fn)
+            if f is None or not (f.linien or []):
+                continue
+            rand = (frozenset(f.linien),
+                    frozenset(frozenset(o) for o in (getattr(f, "oeffnungen", None) or [])))
+            je_rand.setdefault(rand, []).append((fn, k.name))
+    aus = []
+    for liste in je_rand.values():
+        if len({fn for fn, _k in liste}) < 2:
+            continue
+        for i, (fa, ka) in enumerate(liste):
+            for fb, kb_ in liste[i + 1:]:
+                if fa == fb or ka == kb_:
+                    continue
+                hindernis = ""
+                if len(liste) != 2:
+                    hindernis = (f"an der Stelle liegen {len(liste)} Körperflächen über denselben Randlinien, "
+                                 "nicht zwei")
+                else:
+                    a, b = flaechen[fa], flaechen[fb]
+                    if (a.typ or "eben") != (b.typ or "eben"):
+                        hindernis = f"die Flächen haben verschiedene Geometriearten ({a.typ} und {b.typ})"
+                    elif (set(getattr(a, "integrierte_knoten", None) or [])
+                          != set(getattr(b, "integrierte_knoten", None) or [])
+                          or set(getattr(a, "integrierte_linien", None) or [])
+                          != set(getattr(b, "integrierte_linien", None) or [])):
+                        hindernis = "die Flächen haben verschiedene integrierte Knoten oder Linien"
+                    elif a.ecken and b.ecken and set(a.ecken) != set(b.ecken):
+                        hindernis = "die Flächen haben verschiedene Eckknoten"
+                aus.append({"flaechen": (fa, fb), "koerper": (ka, kb_),
+                            "kontakt": _kontakt_nennt_trennstelle(model, fa, fb, ka, kb_),
+                            "hindernis": hindernis})
+    return aus
+
+
+def trennstelle_knoten(model: Model, flaeche: str, koerper: str) -> set:
+    """Die Knoten der Elementseiten des Koerpers, die auf der Flaeche liegen
+    (aus ``Flaeche.randseiten``; Ecken und Seitenmitten)."""
+    from .elements import solid as sl
+    f = (getattr(model, "flaechen", None) or {}).get(flaeche)
+    k = (getattr(model, "koerper", None) or {}).get(koerper)
+    if f is None or k is None:
+        return set()
+    els = {int(e) for e in (k.elemente or [])}
+    knoten: set = set()
+    for e, seite in (f.randseiten or []):
+        e = int(e)
+        if e not in els or not 0 <= e < len(model.elements):
+            continue
+        el = model.elements[e]
+        seiten = sl.FLAECHEN.get(el.typ)
+        if seiten and 0 <= int(seite) < len(seiten):
+            knoten.update(int(el.nodes[j]) for j in seiten[int(seite)])
+    return knoten
+
+
+def trennstelle_getrennt(model: Model, stelle: dict) -> bool:
+    """Ist das **vorhandene** Netz an der Trennstelle getrennt - beide Koerper
+    vernetzt, aber ihre Seiten auf den beiden Flaechen haben nicht dieselben
+    Knoten? Ohne Netz in einem der beiden Koerper ist nichts getrennt."""
+    (fa, fb), (ka, kb_) = stelle["flaechen"], stelle["koerper"]
+    koerper = getattr(model, "koerper", None) or {}
+    if not (getattr(koerper.get(ka), "elemente", None) and getattr(koerper.get(kb_), "elemente", None)):
+        return False
+    na = trennstelle_knoten(model, fa, ka)
+    nb = trennstelle_knoten(model, fb, kb_)
+    return not na or na != nb
+
+
+def _trennstellen_des_laufs(model: Model, koerper: list, log: list = None) -> list:
+    """Die Trennstellen, die dieser Lauf als eine gemeinsame Flaeche vernetzt:
+    ohne Kontaktbedingung, ohne Hindernis, beide Koerper im Lauf. Was aus den
+    letzten beiden Gruenden getrennt bleibt, steht im Protokoll."""
+    from .importers import _common as C
+    im_lauf = {k.name for k in koerper}
+    aus = []
+    belegt: set = set()
+    for s in trennstellen(model):
+        (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+        if s["kontakt"] or not (ka in im_lauf or kb_ in im_lauf):
+            continue
+        grund = s["hindernis"]
+        if not grund and not (ka in im_lauf and kb_ in im_lauf):
+            fehlt = kb_ if ka in im_lauf else ka
+            grund = f"der Körper {fehlt} wird in diesem Lauf nicht mit vernetzt"
+        if not grund and (fa in belegt or fb in belegt):
+            grund = "eine der beiden Flächen ist schon mit einer anderen zusammengelegt"
+        if grund:
+            C.warn(log, f"Trennfläche nicht zusammengelegt: Die Körper {ka} und {kb_} haben an derselben Stelle "
+                        f"je eine eigene Fläche ({fa} und {fb}) ohne Kontaktbedingung, aber {grund}. Die Körper "
+                        "bleiben dort nur über die Randlinien verbunden.")
+            continue
+        belegt.update((fa, fb))
+        aus.append(s)
+    return aus
+
+
+def _randseiten_aufteilen(model: Model, stellen: list) -> None:
+    """Nach dem Vernetzen als eine Flaeche: die Elementseiten des zweiten
+    Koerpers stehen bei der Flaeche des ersten - sie gehen an seine eigene
+    Flaeche zurueck, damit Lasten, Lager und Kontakt auf jeder der beiden
+    Flaechen ihre Seiten finden wie bisher."""
+    for s in stellen:
+        (fa, fb), (_ka, kb_) = s["flaechen"], s["koerper"]
+        a, b = model.flaechen.get(fa), model.flaechen.get(fb)
+        k = model.koerper.get(kb_)
+        if a is None or b is None or k is None:
+            continue
+        els = {int(e) for e in (k.elemente or [])}
+        zu_b = [x for x in (a.randseiten or []) if int(x[0]) in els]
+        if not zu_b:
+            continue
+        a.randseiten = [x for x in a.randseiten if int(x[0]) not in els]
+        b.randseiten = [x for x in (b.randseiten or []) if int(x[0]) not in els] + zu_b
+
+
 def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                       cache: dict = None, workers: int = None, fortschritt=None,
                       gewicht: dict = None, ordnung: int = 0, stufen=None,
                       hs_fuer=None) -> dict:
+    """Mehrere Volumenkoerper vernetzen - der gemeinsame Einstieg der
+    Oberflaeche und von :func:`modell_vernetzen` (Befehlszeile, Skripte).
+
+    Die Arbeit macht :func:`_koerper_vernetzen_grenze` (mit der Grenze in
+    Unbekannten, dort beschrieben). Hier liegen die **deckungsgleichen
+    Trennflaechen** (Befund A16 der Pruefagenten, Entscheidung des Anwenders
+    vom 09.11.2026): haben zwei Koerper je eine eigene Flaeche ueber denselben
+    Randlinien und nennt keine Kontaktbedingung die Stelle
+    (:func:`trennstellen`), werden beide als **eine** gemeinsame Flaeche
+    vernetzt - gemeinsame Knoten wie an einer Flaeche, die beiden Koerpern
+    gehoert. Bis dahin teilten sich solche Koerper nur die Knoten der
+    Randlinien (die Knoten im Flaecheninneren sind je Flaechenname gemeinsam),
+    und zwei Wuerfel uebereinander unter Zug verformten sich 52 % mehr als ein
+    Block.
+
+    Die Geometrie bleibt, wie sie ist: nur fuer die Dauer des Vernetzens steht
+    in der Flaechenliste des zweiten Koerpers die Flaeche des ersten - so
+    greift alles, was es fuer gemeinsame Flaechen gibt (abgebildeter Quader,
+    Sweep, freies Netz, Arbeitsprozesse, Netzkarten). Danach ist die Liste
+    wieder die alte, und die Elementseiten des zweiten Koerpers stehen bei
+    seiner eigenen Flaeche. Jede zusammengelegte Stelle steht mit Namen im
+    Protokoll. Haben die beiden Seiten danach **nicht** dieselben Knoten
+    (zwei abgebildete Quader mit verschiedener Teilung), wird das Netz
+    zurueckgenommen und ohne diese Stelle neu erzeugt - getrennt wie bisher,
+    und das Protokoll sagt, warum. ``aus["zusammengelegt"]`` nennt die
+    Stellen als (Flaeche, Flaeche, Koerper, Koerper).
+    """
+    cache = {} if cache is None else cache
+    koerper = list(koerper)
+
+    def lauf():
+        return _koerper_vernetzen_grenze(model, koerper, hs=hs, log=log, cache=cache, workers=workers,
+                                         fortschritt=fortschritt, gewicht=gewicht, ordnung=ordnung,
+                                         stufen=stufen, hs_fuer=hs_fuer)
+    stellen = _trennstellen_des_laufs(model, koerper, log) if TRENNFLAECHEN_ZUSAMMENLEGEN else []
+    if not stellen:
+        return lauf()
+    import copy
+    from .importers import _common as C
+    n_el0, n_kn0 = len(model.elements), int(model.nn)
+    cache0 = copy.deepcopy(cache) if cache else {}
+    while True:
+        # Geometrie nur leihweise aendern: die Flaechenliste des zweiten Koerpers
+        alt = []
+        for s in stellen:
+            fa, fb = s["flaechen"]
+            k = model.koerper[s["koerper"][1]]
+            alt.append((k, k.flaechen))
+            k.flaechen = [fa if fn == fb else fn for fn in k.flaechen]
+        try:
+            aus = lauf()
+        finally:
+            for k, liste in reversed(alt):
+                k.flaechen = liste
+        _randseiten_aufteilen(model, stellen)
+        if aus.get("abgebrochen"):
+            return aus
+        passt, passt_nicht = [], []
+        for s in stellen:
+            (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+            if not (model.koerper[ka].elemente and model.koerper[kb_].elemente):
+                continue                   # ein Koerper blieb ohne Netz: nichts zu verbinden
+            na, nb = trennstelle_knoten(model, fa, ka), trennstelle_knoten(model, fb, kb_)
+            if na and na == nb:
+                passt.append((s, len(na)))
+            else:
+                passt_nicht.append(s)
+                C.warn(log, f"Trennfläche nicht zusammengelegt: Die Netze der Körper {ka} und {kb_} passen an "
+                            f"den Flächen {fa} und {fb} nicht zusammen (als eine Fläche vernetzt: {len(na)} "
+                            f"Knoten von {ka}, {len(nb)} von {kb_}, {len(na & nb)} gemeinsam). Die Körper "
+                            "werden dort getrennt vernetzt und bleiben nur über die Randlinien verbunden. "
+                            "Für einen durchgehenden Verbund brauchen beide Körper an der Fläche dasselbe "
+                            "Netz (gleiche Teilung, gleiche Elementart), für eine Fuge eine Kontaktbedingung "
+                            "anlegen.")
+        if not passt_nicht:
+            break
+        stellen = [s for s in stellen if s not in passt_nicht]
+        _netz_zuruecksetzen(model, koerper, n_el0, n_kn0, cache, log)
+        cache.update(copy.deepcopy(cache0))
+        if not stellen:
+            return lauf()
+    for s, n in passt:
+        (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+        C.say(log, f"Trennfläche zusammengelegt: Die Körper {ka} und {kb_} haben an derselben Stelle je eine "
+                   f"eigene Fläche ({fa} und {fb}) über denselben Randlinien, und keine Kontaktbedingung nennt "
+                   f"sie. Beide Flächen sind als eine gemeinsame Fläche vernetzt ({n} gemeinsame Knoten); die "
+                   "Geometrie bleibt unverändert. Für eine Fuge eine Kontaktbedingung anlegen.")
+    aus["zusammengelegt"] = [(s["flaechen"][0], s["flaechen"][1], s["koerper"][0], s["koerper"][1])
+                             for s, _n in passt]
+    return aus
+
+
+def _koerper_vernetzen_grenze(model: Model, koerper, hs: dict = None, log: list = None,
+                              cache: dict = None, workers: int = None, fortschritt=None,
+                              gewicht: dict = None, ordnung: int = 0, stufen=None,
+                              hs_fuer=None) -> dict:
     """Mehrere Volumenkoerper vernetzen, mit der Grenze in Unbekannten.
 
     Die Arbeit macht :func:`_koerper_lauf` (unten beschrieben). Hier liegt

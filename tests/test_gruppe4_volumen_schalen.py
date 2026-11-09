@@ -10,8 +10,11 @@ A15 Innendruck p auf eine gekruemmte Viertelzylinderseite (tet10): die Summe
     Facettierung; zweiter Weg: Seite fuer Seite mit der oertlichen Normale
     (solid.flaechenlast_knoten ohne Richtung).
 A16 Zwei Koerper mit eigenen, deckungsgleichen Trennflaechen ohne
-    Kontaktbedingung: WARNUNG „Trennfläche doppelt“; mit gemeinsamer
-    Trennflaeche keine.
+    Kontaktbedingung: WARNUNG „Trennfläche doppelt“ bei einem vorhandenen,
+    getrennten Netz; mit gemeinsamer Trennflaeche keine. Seit der
+    Entscheidung des Anwenders vom 09.11.2026 legt der Vernetzer solche
+    Flaechen im Netz zusammen (tests/test_a16_trennflaechen.py) - dann und
+    ohne Netz gibt es nichts zu warnen.
 A19 Schalenflaechen ohne gemeinsame Linie: Knoten auf der Linie einer
     anderen Flaeche und Rippe auf ungeteilter Platte - je eine WARNUNG, wenn
     das Netz dort nicht verbunden ist (Netz von frueher: jede Flaeche fuer
@@ -189,15 +192,36 @@ def _zwei_bloecke(eigene):
 
 
 def test_a16():
+    # Bis zur Entscheidung des Anwenders vom 09.11.2026 stand hier die Warnung am unvernetzten
+    # Modell. Seitdem legt der Vernetzer die beiden Flaechen im Netz zusammen
+    # (tests/test_a16_trennflaechen.py); die Warnung gilt dem vorhandenen, getrennten Netz -
+    # hier erzeugt mit abgeschalteter Zusammenlegung, wie eine Datei von vor dem 09.11.2026.
+    import contextlib
+    import io
     from statik3d import diagnose as dg
-    w = [b for b in dg._abnahme_deckungsgleiche_flaechen(_zwei_bloecke(True))]
-    check("A16 eigene deckungsgleiche Trennflächen ohne Kontakt: WARNUNG „Trennfläche doppelt“",
+    from statik3d import mesher
+
+    def vernetzt(eigene, zusammenlegen=True, kontakt=False):
+        m = _zwei_bloecke(eigene)
+        if kontakt:
+            m.add_kontaktbedingung("K", flaechennamen=["FugeO"], gegenflaechen=["FugeU"])
+        m.netz.ziellaenge, m.netz.dichte = 0.5, "eigene"
+        mesher.TRENNFLAECHEN_ZUSAMMENLEGEN = zusammenlegen
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1)
+        finally:
+            mesher.TRENNFLAECHEN_ZUSAMMENLEGEN = True
+        return m
+    w = [b for b in dg._abnahme_deckungsgleiche_flaechen(vernetzt(True, zusammenlegen=False))]
+    check("A16 eigene deckungsgleiche Trennflächen ohne Kontakt, getrenntes Netz: WARNUNG „Trennfläche doppelt“",
           len(w) == 1 and w[0].stufe == "WARNUNG" and "FugeU" in w[0].text and "FugeO" in w[0].text,
           w[0].text[:100] if w else "")
-    check("… gemeinsame Trennfläche: keine Warnung", not dg._abnahme_deckungsgleiche_flaechen(_zwei_bloecke(False)))
-    m = _zwei_bloecke(True)
-    m.add_kontaktbedingung("K", flaechennamen=["FugeO"], gegenflaechen=["FugeU"])
-    check("… mit Kontaktbedingung an den Flächen: keine Warnung", not dg._abnahme_deckungsgleiche_flaechen(m))
+    check("… im Netz zusammengelegt (Vorgabe seit 09.11.2026): keine Warnung",
+          not dg._abnahme_deckungsgleiche_flaechen(vernetzt(True)))
+    check("… gemeinsame Trennfläche: keine Warnung", not dg._abnahme_deckungsgleiche_flaechen(vernetzt(False)))
+    check("… mit Kontaktbedingung an den Flächen: keine Warnung",
+          not dg._abnahme_deckungsgleiche_flaechen(vernetzt(True, kontakt=True)))
 
 
 def _schalen(art):

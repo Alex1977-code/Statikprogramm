@@ -679,49 +679,32 @@ def _abnahme_werkstoff_grenze(model) -> list:
 def _abnahme_deckungsgleiche_flaechen(model) -> list:
     """Zwei Koerper mit je einer eigenen Trennflaeche ueber denselben
     Randlinien, die keine Kontaktbedingung nennt (Befund A16 der
-    Pruefagenten, 09.11.2026): sie sind nur ueber die Knoten der Randlinien
-    verbunden, nicht in der Flaeche - zwei Wuerfel uebereinander unter Zug
-    verformten sich 52 % mehr als mit einer gemeinsamen Trennflaeche, und die
-    Abnahme schwieg. Eine WARNUNG je Paar; zusammengelegt wird nichts (die
-    Flaechen koennten fuer eine Kontaktfuge gedacht sein)."""
-    koerper = getattr(model, "koerper", None) or {}
-    flaechen = getattr(model, "flaechen", None) or {}
-    if len(koerper) < 2:
-        return []
-    kontakt_f, kontakt_k = set(), set()
-    for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
-        kontakt_f.update(getattr(kb, "flaechennamen", None) or [])
-        kontakt_f.update(getattr(kb, "gegenflaechen", None) or [])
-        kontakt_k.update(getattr(kb, "koerpernamen", None) or [])
-        kontakt_k.update(getattr(kb, "gegenkoerper", None) or [])
-    for fu in (getattr(model, "fugen", None) or {}).values() if isinstance(getattr(model, "fugen", None), dict) else []:
-        kontakt_f.update(getattr(fu, "flaechen", None) or [])
-    je_rand: dict = {}
-    for k in koerper.values():
-        for fn in (k.flaechen or []):
-            f = flaechen.get(fn)
-            if f is None:
-                continue
-            rand = (frozenset(f.linien or []),
-                    frozenset(frozenset(o) for o in (getattr(f, "oeffnungen", None) or [])))
-            je_rand.setdefault(rand, []).append((fn, k.name))
+    Pruefagenten, 09.11.2026), und ein **vorhandenes Netz**, das dort getrennt
+    ist: die Koerper sind nur ueber die Knoten der Randlinien verbunden, nicht
+    in der Flaeche - zwei Wuerfel uebereinander unter Zug verformten sich
+    52 % mehr als mit einer gemeinsamen Trennflaeche, und die Abnahme schwieg.
+
+    Seit der Entscheidung des Anwenders vom 09.11.2026 vernetzt der Vernetzer
+    solche Flaechen als eine gemeinsame (mesher.koerper_vernetzen); wo er das
+    getan hat, ist nichts zu melden. Die WARNUNG bleibt fuer Netze, die noch
+    getrennt sind: aeltere Netze aus einer Datei und Stellen, an denen die
+    Netze beider Seiten nicht zusammenpassten (das Protokoll des Vernetzens
+    nennt den Grund). Ohne Netz gibt es nichts zu melden."""
+    from . import mesher
     aus = []
-    for liste in je_rand.values():
-        namen = {fn for fn, _k in liste}
-        if len(namen) < 2:
+    for s in mesher.trennstellen(model):
+        if s["kontakt"] or not mesher.trennstelle_getrennt(model, s):
             continue
-        for i, (fa, ka) in enumerate(liste):
-            for fb, kb_ in liste[i + 1:]:
-                if fa == fb or ka == kb_:
-                    continue
-                if fa in kontakt_f or fb in kontakt_f or (ka in kontakt_k and kb_ in kontakt_k):
-                    continue
-                aus.append(Befund(
-                    pruefung="Trennfläche doppelt", objekt=f"{ka}/{kb_}", stufe="WARNUNG",
-                    text=(f"Körper {ka} und {kb_}: die Flächen {fa} und {fb} liegen über denselben "
-                          f"Randlinien, ohne Kontaktbedingung - die Körper sind nur über die Randlinien "
-                          f"verbunden, nicht in der Fläche. Für einen durchgehenden Verbund beiden "
-                          f"Körpern dieselbe Fläche geben, für eine Fuge eine Kontaktbedingung anlegen.")))
+        (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+        aus.append(Befund(
+            pruefung="Trennfläche doppelt", objekt=f"{ka}/{kb_}", stufe="WARNUNG",
+            text=(f"Körper {ka} und {kb_}: die Flächen {fa} und {fb} liegen über denselben "
+                  f"Randlinien, ohne Kontaktbedingung, und das vorhandene Netz ist dort getrennt - "
+                  f"die Körper sind nur über die Randlinien verbunden, nicht in der Fläche. Beim "
+                  f"Neuvernetzen legt das Programm solche Flächen im Netz zu einer gemeinsamen "
+                  f"zusammen, wenn die Netze beider Seiten zusammenpassen (gleiche Teilung); das "
+                  f"Protokoll des Vernetzens nennt jede Stelle und den Grund, wenn es nicht geht. "
+                  f"Für eine Fuge eine Kontaktbedingung anlegen.")))
     return aus
 
 
