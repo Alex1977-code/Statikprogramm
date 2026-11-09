@@ -13424,6 +13424,27 @@ anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
 rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
 
+**Eingabeprüfung vor dem Rechnen** (seit 09.11.2026). Vor dem Rechnen prüft
+das Programm die Eingaben und nennt den Fehler mit Namen und Wert: E-Modul
+null oder negativ, Querdehnzahl außerhalb des möglichen Bereichs (größer als
+−1, höchstens 0,5; genau 0,5 ist bei Volumenelementen nicht rechenbar), Dicke
+oder Querschnittswerte null oder negativ, tragende Flächen ohne Dicke, Lasten
+und Lager auf Flächen, Linien, Körper, Stäbe oder Knoten, die es nicht gibt,
+sowie Kombinationen mit einem Lastfall, den es nicht gibt. Bis dahin lief
+etwa ein negativer E-Modul durch, und die Verformung hatte das falsche
+Vorzeichen (+114,1 statt −114,1 mm); ein Lager auf einer unbekannten Linie
+fiel still weg. Warnungen halten das Rechnen nicht auf: Querdehnzahl über
+0,495 bei Volumenelementen (fast inkompressibel, das Netz versteift), Lager
+auf einer vorhandenen, aber nicht vernetzten Linie oder Fläche, und „Netz
+geändert – Lager prüfen“, wenn ein Flächenlager durch Löschen eigene Elemente
+verloren hat. Ein Flächenlager zieht beim Löschen von Elementen jetzt mit:
+Die Nummern seiner Elemente werden nachgeführt (vorher zeigte es danach auf
+andere Elemente; an einer Platte auf Bettung 0,75 statt 1,00 m² gebettete
+Fläche). Nach dem Rechnen warnt die Zusammenfassung, wenn die größte
+Verformung über 10 % der größten Modellabmessung liegt; dann Einheiten und
+Lagerung prüfen. Elementnummern in Meldungen zählen wie in den Tabellen ab 0.
+Geprüft in `tests/test_gruppe5_robustheit.py`.
+
 **Deckungsgleiche Trennflächen zweier Körper** (seit 09.11.2026). Haben zwei
 Volumenkörper an derselben Stelle je eine eigene Fläche über denselben
 Randlinien und nennt keine Kontaktbedingung diese Flächen oder Körper,
