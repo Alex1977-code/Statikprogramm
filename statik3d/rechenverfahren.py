@@ -337,6 +337,27 @@ def _balken_mit_schubflaeche(model) -> bool:
     return False
 
 
+def _flaechen_teilstellen(model) -> bool:
+    """Schalenflaechen, die sich ohne gemeinsame Linie beruehren (Befund A19):
+    Knoten auf fremder Randlinie oder Randlinie in fremder Flaeche."""
+    try:
+        from . import mesher
+        return bool(mesher.flaechen_teilstellen(model))
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _trennflaechen_getrennt(model) -> bool:
+    """Zwei Koerper mit je einer eigenen Trennflaeche ueber denselben Randlinien, ohne
+    Kontaktbedingung, und ein vorhandenes Netz, das dort getrennt ist (Befund A16)."""
+    try:
+        from . import mesher
+        return any(not s["kontakt"] and mesher.trennstelle_getrennt(model, s)
+                   for s in mesher.trennstellen(model))
+    except Exception:                       # noqa: BLE001
+        return False
+
+
 def _zwang_an_feder(model) -> bool:
     """Eine Zwangsverformung an einem linearen Federlager - dort wirkte sie bis
     zum 09.11.2026 nicht (Befund A11 der Pruefagenten)."""
@@ -1254,6 +1275,35 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
         betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
+    # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
+    # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
+    # Der Vernetzer teilt jetzt im Netz (Knoten auf Linie, Linie in Flaeche).
+    # Wirkt erst nach dem Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="flaechen_teilen", titel="Schalenflächen ohne gemeinsame Linie",
+        texte={"alt": "im Netz nicht verbunden (nur gemeinsame Linien)",
+               "neu": "im Netz geteilt und verbunden (Knoten auf Linie, Linie in Fläche); "
+                      "gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=27, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenflächen, die sich ohne gemeinsame Linie berühren",
+        betrifft=_flaechen_teilstellen),
+    # Befund A16 (09.11.2026): zwei Koerper mit je einer eigenen Trennflaeche
+    # ueber denselben Randlinien hingen ohne Kontaktbedingung nur ueber die
+    # Randlinien zusammen - zwei Wuerfel unter Zug 52 % zu weich. Der Vernetzer
+    # legt die Flaechen jetzt im Netz zusammen. Wirkt erst nach dem
+    # Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="trennflaechen_zusammenlegen", titel="Deckungsgleiche Trennflächen zweier Körper",
+        texte={"alt": "jede Fläche für sich vernetzt, Körper nur über die Randlinien verbunden",
+               "neu": "als eine gemeinsame Fläche vernetzt (ohne Kontaktbedingung); "
+                      "gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=28, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="zwei Körper mit eigenen, deckungsgleichen Trennflächen ohne Kontaktbedingung, "
+                      "Netz dort getrennt",
+        betrifft=_trennflaechen_getrennt),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -1337,7 +1387,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 26
+VERFAHRENSSTAND = 28
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

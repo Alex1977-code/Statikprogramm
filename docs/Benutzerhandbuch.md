@@ -13424,16 +13424,47 @@ anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
 rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
 
-**Zwei Warnungen zu Verbindungen** (seit 09.11.2026). Haben zwei Körper je
-eine eigene Trennfläche über denselben Randlinien und nennt keine
-Kontaktbedingung sie, meldet die Abnahme „Trennfläche doppelt“: die Körper
-hängen nur über die Randlinien zusammen, nicht in der Fläche (zwei Würfel
-unter Zug verformten sich 52 % mehr). Berühren sich Schalenflächen, ohne eine
-Linie zu teilen, meldet sie „Flächen ohne gemeinsame Linie“: ein Eckknoten
-liegt mitten auf der Randlinie einer anderen Fläche, oder eine Randlinie liegt
-in einer Fläche, die dort keine Linie hat (Rippe auf ungeteilter Platte). Das
-Netz verbindet nur gemeinsame Linien und Flächen. Beides sind Warnungen;
-zusammengelegt oder geteilt wird nichts.
+**Deckungsgleiche Trennflächen zweier Körper** (seit 09.11.2026). Haben zwei
+Volumenkörper an derselben Stelle je eine eigene Fläche über denselben
+Randlinien und nennt keine Kontaktbedingung diese Flächen oder Körper,
+vernetzt das Programm beide Flächen als eine gemeinsame: Die Körper bekommen
+dort gemeinsame Knoten und tragen wie ein Stück. Die Geometrie bleibt
+unverändert, zusammengelegt wird nur im Netz. Jede Stelle steht mit den Namen
+der Körper und Flächen im Protokoll des Vernetzens. Gibt es für die Stelle
+eine Kontaktbedingung (über die Flächen oder nur über die beiden Körper),
+wird nichts zusammengelegt, dann gilt der Kontakt. In der Oberfläche legt das
+Programm für berührende Körper in der Regel selbsttätig einen Kontakt „starr
+(Verbund)“ an; auch dann gilt der Kontakt. Passen die Netze beider Seiten
+nicht zusammen (verschiedene Teilung oder Elementart) oder wird nur einer der
+beiden Körper neu vernetzt, bleibt die Stelle getrennt, und das Protokoll
+nennt den Grund. Die Warnung „Trennfläche doppelt“ der Abnahme erscheint nur
+noch, wenn ein vorhandenes Netz an einer solchen Stelle getrennt ist. Das
+betrifft Dateien mit einem Netz aus einer früheren Fassung: Dort waren die
+Körper nur über die Randlinien verbunden (zwei Würfel unter Zug verformten
+sich 52 % zu viel). Solche Modelle bitte neu vernetzen. Geprüft in
+`tests/test_a16_trennflaechen.py`.
+
+**Flächen ohne gemeinsame Linie werden im Netz geteilt** (seit 09.11.2026).
+Berühren sich Schalenflächen, ohne eine Linie zu teilen, teilt der Vernetzer
+sie an fremden Knoten und Linien, wie in RFEM „Knoten auf Linie“ und „Linie in
+Fläche“. Liegt ein Eckknoten einer anderen Fläche mitten auf einer geraden
+Randlinie, bekommt das Netz dort einen gemeinsamen Knoten, und die
+anschließenden Flächen hängen längs des gemeinsamen Stücks zusammen. Liegt
+eine gerade Randlinie einer anderen Fläche in einer ebenen Fläche, die dort
+keine Linie hat (Rippe auf ungeteilter Platte), wird sie im Netz dieser Fläche
+zur Zwangslinie mit gemeinsamen Knoten. Knoten, Linien und Flächen des Modells
+bleiben unverändert; geteilt wird nur im Netz, und jede Stelle steht mit Namen
+im Protokoll des Vernetzens. Die so geteilte Fläche wird frei mit Dreiecken
+vernetzt. Vorher hing ein Stoß mit einer ungeteilten Linie nur an den Ecken
+zusammen (0,742 statt 0,143 mm), und die Rippe auf der ungeteilten Platte trug
+nichts (33,1 statt 0,52 mm). Nicht geteilt wird, was nicht genau passt: ein
+Knoten, der bis 1 mm neben der Linie liegt, eine Linie, die nur teilweise in
+der Fläche liegt oder auf dem Rand ohne Knoten endet, zwei Linien, die sich in
+der Fläche ohne gemeinsamen Knoten kreuzen, sowie gekrümmte Linien und Linien
+mit Zwischenknoten. Dort bleibt das Netz unverbunden, das Protokoll nennt den
+Grund, und die Abnahme warnt weiter mit „Flächen ohne gemeinsame Linie“.
+Dieselbe Warnung erscheint für Netze von vor dem 09.11.2026; dann neu
+vernetzen. Geprüft in `tests/test_flaechen_teilen.py`.
 
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
 
