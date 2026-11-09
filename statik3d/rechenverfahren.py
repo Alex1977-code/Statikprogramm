@@ -240,6 +240,26 @@ def _kombination_610b(model) -> bool:
     return False
 
 
+def _zwang_an_feder(model) -> bool:
+    """Eine Zwangsverformung an einem linearen Federlager - dort wirkte sie bis
+    zum 09.11.2026 nicht (Befund A11 der Pruefagenten)."""
+    faelle = [lc for lc in (getattr(model, "load_cases", None) or {}).values()
+              if getattr(lc, "zwangsverformungen", None)]
+    if not faelle:
+        return False
+    from . import supports as sup
+    lin, _ = sup.split(sup.expand(model))
+    federn = {e.index for e in lin if e.typ == "spring" and e.stiffness}
+    starr = {e.index for e in lin if e.typ == "rigid"}
+    for lc in faelle:
+        for zv in lc.zwangsverformungen:
+            for d in zv.dofs:
+                i = 6 * int(zv.node) + int(d)
+                if i in federn and i not in starr:
+                    return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -873,6 +893,17 @@ MERKMALE: list = [
         modellmerkmal="Kombination nach Regel 6.10b",
         betrifft=_kombination_610b),
     Merkmal(
+        # Befund A11 der Pruefagenten (09.11.2026): eine Zwangsverformung wirkte nur an
+        # starren gesperrten FHG; an einer Feder blieb sie still ohne Wirkung. Jetzt
+        # verschiebt sie den Fusspunkt der Feder (Kraft k (u − d)). Fehlerkorrektur
+        name="zwang_feder", titel="Zwangsverformung an Federlagern",
+        texte={"alt": "Zwangsverformung an einer Feder ohne Wirkung",
+               "neu": "Zwangsverformung verschiebt den Fußpunkt der Feder"},
+        wechsel=(Wechsel(stand=12, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Zwangsverformung an einem Federlager",
+        betrifft=_zwang_an_feder),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -955,7 +986,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 11
+VERFAHRENSSTAND = 12
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

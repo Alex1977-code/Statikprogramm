@@ -8448,16 +8448,46 @@ class Model:
         return elems, a, (V / L if L > 0 else 0.0)
 
     def zwang_ohne_lager(self, case: str = None) -> list:
-        """Vorgegebene Freiheitsgrade, an denen kein Lager haelt - unwirksam."""
+        """Vorgegebene Freiheitsgrade, an denen **gar kein** Lager sitzt (weder
+        Knoten-, Linien- noch Flaechenlager) - [(Knoten, FHG)]. Die Oberflaeche
+        setzt dort auf Wunsch ein starres Knotenlager. Bis zum 09.11.2026 zaehlten
+        nur Knotenlager; ein starres Linienlager galt als „ohne Lager“ (Befund C1)."""
+        return [(n, d) for n, d, grund in self.zwang_unwirksam(case) if grund == "ohne Lager"]
+
+    def zwang_unwirksam(self, case: str = None) -> list:
+        """Vorgegebene Freiheitsgrade, an denen die Zwangsverformung nicht wirkt -
+        [(Knoten, FHG, Grund)]. Sie wirkt an einem starren linearen Lager (der FHG
+        steht auf dem Wert) und an einer linearen Feder (der Fusspunkt der Feder
+        verschiebt sich, seit 09.11.2026, Befund A11). Unwirksam ist sie ohne Lager,
+        an einem freien FHG und an einem Lager mit Ausfall, Reibung, Schlupf oder
+        Grenzkraft - dort wird sie gemeldet, nicht still verworfen."""
         lc = self.case(case)
-        gehalten: dict = {}
+        if not lc.zwangsverformungen:
+            return []
+        from . import supports as sup
+        art: dict = {}
+        for e in sup.expand(self):
+            alt = art.get(e.index)
+            if e.nonlinear:
+                art.setdefault(e.index, "Lager mit Ausfall oder nichtlinear")
+            elif e.typ == "rigid" or alt is None or alt.startswith("Lager mit"):
+                art[e.index] = "wirkt"
+        frei_gesetzt = set()
         for s in self.supports:
-            gehalten.setdefault(int(s.node), set()).update(int(d) for d in (s.dofs or []))
+            for d in range(NDOF):
+                b = s.dof_behaviour(d)
+                if not b.acts and (d in (s.dofs or []) or b.typ == "free"):
+                    frei_gesetzt.add(NDOF * int(s.node) + d)
         out = []
         for zv in lc.zwangsverformungen:
             for d in zv.dofs:
-                if d not in gehalten.get(int(zv.node), set()):
-                    out.append((int(zv.node), int(d)))
+                i = NDOF * int(zv.node) + int(d)
+                grund = art.get(i)
+                if grund == "wirkt":
+                    continue
+                if grund is None:
+                    grund = "Lager frei" if i in frei_gesetzt else "ohne Lager"
+                out.append((int(zv.node), int(d), grund))
         return out
 
     def add_kontaktbedingung(self, name: str, **kw) -> Kontaktbedingung:

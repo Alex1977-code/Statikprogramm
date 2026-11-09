@@ -2970,6 +2970,18 @@ class StaticSystem:
         if us is not None:
             u[self.si] += us[self.si]
         rhs = F[self.fi]
+        # Zwangsverformung an einer Feder (09.11.2026, Befund A11): der Fusspunkt
+        # verschiebt sich, die Feder zieht mit k us - als Kraft am freien FHG.
+        # reactions() rechnet die Federkraft dann mit k (u − us).
+        self._us_feder = None
+        if us is not None:
+            idx, k = self._federn()
+            if idx.size:
+                f_f = np.zeros(self.model.ndof)
+                f_f[idx] = k * us[idx]
+                if np.any(f_f):
+                    rhs = rhs + f_f[self.fi]
+                    self._us_feder = us
         if F_extra is not None:
             rhs = rhs + F_extra[self.fi]
         vorgabe = np.any(u[self.si])
@@ -3163,12 +3175,23 @@ class StaticSystem:
         R = np.zeros(self.model.ndof)
         R[self.si] = (K @ u)[self.si] - F[self.si]
         # Federlager (Knoten-, Linien- und Flaechenlager): Federkraft als Reaktion
-        from . import supports as sup
-        lin, _ = sup.split(sup.expand(self.model))
-        for e in lin:
-            if e.typ == "spring" and e.stiffness:
-                R[e.index] += -e.stiffness * u[e.index]
+        idx, k = self._federn()
+        if idx.size:
+            us = getattr(self, "_us_feder", None)
+            R[idx] += -k * (u[idx] - (us[idx] if us is not None else 0.0))
         return R
+
+    def _federn(self):
+        """(FHG, Steifigkeit) der linearen Federlager (Knoten-, Linien- und
+        Flaechenlager), einmal je System bestimmt."""
+        f = getattr(self, "_federn_cache", None)
+        if f is None:
+            from . import supports as sup
+            lin, _ = sup.split(sup.expand(self.model))
+            fed = [(e.index, float(e.stiffness)) for e in lin if e.typ == "spring" and e.stiffness]
+            f = (np.array([i for i, _ in fed], dtype=np.int64), np.array([k for _, k in fed], float))
+            self._federn_cache = f
+        return f
 
 
 # ==========================================================================
@@ -3380,10 +3403,14 @@ def case_prescribed(model: Model, factors: dict, warn=None):
             for d in zv.dofs:
                 us[NDOF * int(zv.node) + int(d)] += f * float(zv.u[d])
         if warn is not None:
-            ohne = model.zwang_ohne_lager(name)
-            if ohne:
-                namen = ("ux", "uy", "uz", "phix", "phiy", "phiz")
-                warn(f"Zwangsverformung im Lastfall {name} ohne Lager - unwirksam: "
+            # unwirksam: ohne Lager, Lager frei, Lager mit Ausfall (seit 09.11.2026
+            # gemeldet statt still; an Linien- und Flaechenlagern keine Fehlmeldung)
+            namen = ("ux", "uy", "uz", "phix", "phiy", "phiz")
+            je_grund: dict = {}
+            for n, d, grund in model.zwang_unwirksam(name):
+                je_grund.setdefault(grund, []).append((n, d))
+            for grund, ohne in je_grund.items():
+                warn(f"Zwangsverformung im Lastfall {name} {grund} - unwirksam: "
                      + ", ".join(f"Knoten {n} {namen[d]}" for n, d in ohne[:8])
                      + (" ..." if len(ohne) > 8 else ""))
     return us if gibt else None

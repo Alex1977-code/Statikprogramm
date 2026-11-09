@@ -6173,6 +6173,20 @@ den gleichmäßigen Anteil ΔT, ΔT_z wurde still verworfen. Ältere Ergebnisse
 solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu rechnen“.
 Geprüft in `tests/test_schale_temperatur_gradient.py`.
 
+**Zwangsverformung an Lagern.** An einem starren Lager (Knoten-, Linien- oder
+Flächenlager) steht der Freiheitsgrad auf dem vorgegebenen Wert. An einer
+Feder verschiebt die Vorgabe den **Fußpunkt** der Feder: die Feder zieht mit
+k (u − d), ihre Lagerkraft ist −k (u − d). An einem freien Freiheitsgrad,
+ohne Lager und an einem Lager mit Ausfall, Reibung, Schlupf oder Grenzkraft
+bleibt die Vorgabe unwirksam; Protokoll und Zusammenfassung nennen sie mit
+Grund („ohne Lager“, „Lager frei“, „Lager mit Ausfall oder nichtlinear“).
+Bis zum 09.11.2026 wirkte die Vorgabe an einer Feder still nicht, an einem
+freien Freiheitsgrad oder einem Lager mit Ausfall ebenso ohne Meldung, und
+an einem starren Linienlager kam fälschlich „ohne Lager – unwirksam“, obwohl
+sie wirkte. Ältere Ergebnisse mit Zwangsverformung an einer Feder tragen
+„Ergebnis möglicherweise betroffen – neu rechnen“. Geprüft in
+`tests/test_zwang_feder.py`.
+
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
 Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf
