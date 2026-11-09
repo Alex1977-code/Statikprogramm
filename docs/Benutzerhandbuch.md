@@ -7271,6 +7271,23 @@ I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
 und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
 Anströmung und Zonen.
 
+**Außenseite und Vorzeichen** (seit 09.11.2026). Eine Schale hat keine
+Außenseite; ihre Normale folgt der Reihenfolge der Randlinien. Der Generator
+richtet darum jede Fläche nach außen aus, bezogen auf die Mitte ihrer Hülle
+(der Flächen, die über gemeinsame Knoten zusammenhängen; eine Fläche allein
+nimmt die Mitte aller Windflächen). Luv, Lee, Seite und Dach hängen so nicht
+mehr davon ab, wie herum die Linien eingegeben sind. Druck wirkt in das
+Gebäude, Sog heraus; am Gebäude mit Wind in +x zeigen Luvdruck und Leesog
+beide in +x, der Dachsog hebt. Bis zum 09.11.2026 wirkten diese Lasten an
+Schalen verkehrt herum (Gebäude 10 × 20 × 8 m: ΣF (−135; 0; −127) statt
+(+135; 0; +127) kN), und die Kontrollsumme zählte umgekehrt wie die Last,
+darum fiel es nicht auf. Randflächen von Volumen und quadratische Schalen
+(shell6, shell8) bekommen seither ebenfalls ihre Rollen (bis dahin alle
+„Seite“, Kontrollsumme 0,00 kN). Die Kontrollsumme ist der Kraftvektor der
+erzeugten Elementlasten, so wie sie wirken. In der Elementlast einer Schale
+steht p seither in Richtung der Elementnormalen (wie bei jeder Schalenlast);
+den Druck auf die Hülle zeigt die Ansicht der Objektlast.
+
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
 (Gitter-Boltzmann-Verfahren, siehe Theoriehandbuch 2.2a): *Grundriss*

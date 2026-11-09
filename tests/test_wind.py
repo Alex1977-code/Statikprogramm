@@ -249,8 +249,19 @@ def test_windkanal():
     check("Lastfallnummer vergeben", lc.nummer >= 1 and kw["lastfall_nr"] == lc.nummer)
 
     def mittel(modell, fall, flaeche):
+        """Mittlerer Druck, positiv in das Gebaeude. Seit dem 09.11.2026 (A1)
+        traegt die Schalenlast p in Richtung der Elementnormalen; in den Druck
+        auf die Huelle zurueck geht es ueber die Aussenseite der Huelle."""
         el = set(modell.flaechen[flaeche].elemente)
-        p = [fl.p for fl in fall.face_loads if int(fl.elem) in el]
+        mitte = np.asarray(wm.huellenmitten(modell, list(modell.flaechen))[flaeche], float)
+        p = []
+        for fl in fall.face_loads:
+            if int(fl.elem) not in el:
+                continue
+            X = modell.nodes[[int(x) for x in modell.elements[int(fl.elem)].nodes[:3]]]
+            n_e = np.cross(X[1] - X[0], X[2] - X[0])
+            aussen = 1.0 if float(n_e @ (X.mean(axis=0) - mitte)) >= 0 else -1.0
+            p.append(-fl.p * aussen)
         return sum(p) / len(p) if p else 0.0
 
     p_luv, p_lee, p_dach = mittel(m, lc, "Luv"), mittel(m, lc, "Lee"), mittel(m, lc, "Dach")
