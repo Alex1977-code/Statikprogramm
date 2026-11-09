@@ -743,8 +743,10 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
         inhalt[feld] = wert
     if fortschritt:
         fortschritt(0.4, "Ergebnisse schreiben")
-    with open(pfad, "wb") as fh:
-        _Schreiber(fh, model).dump(inhalt)
+    # Zwischendatei und Austausch: ein Abbruch laesst die alte Ergebnisdatei
+    # stehen (Befund B1, 09.11.2026)
+    from .model import sicher_schreiben
+    sicher_schreiben(pfad, lambda fh: _Schreiber(fh, model).dump(inhalt), text=False)
     if fortschritt:
         fortschritt(1.0, "Ergebnisse geschrieben")
     return os.path.getsize(pfad)
