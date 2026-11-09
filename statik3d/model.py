@@ -10391,6 +10391,12 @@ class Model:
                 if str(u.ziel) not in fugen:
                     msgs.append(f"FEHLER: Lastfall '{lc.name}': Übermaß auf „{u.ziel}“ - eine Kontaktbedingung "
                                 "oder ein Kontaktpaar dieses Namens gibt es nicht, das Übermaß wirkt nirgends")
+        # Flaechenlager in Flaechenachsen wirken je Flaeche entlang einer
+        # globalen Achse: schraege, gekruemmte und beidseitige Flaechen sperren
+        # die Rechnung (A12, A13 - Entscheidung des Anwenders vom 09.11.2026)
+        if len(self.elements) and any(getattr(ss, "lokal", False) for ss in (self.surface_supports or [])):
+            from .supports import lokale_lager_schraeg
+            msgs += ["FEHLER: " + z for z in lokale_lager_schraeg(self)]
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
         # Lager (FEHLER - das Gleichungssystem waere singulaer)
         if self.elements:

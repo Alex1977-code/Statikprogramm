@@ -3682,7 +3682,21 @@ in Richtung der Flächennormale (bei Volumen nach außen) — nicht mehr nur an
 den Knoten. Ein aus RFEM übernommenes Flächenlager wirkt in den Achsen seiner
 Fläche: die Bettung „uz" in der Flächennormalen, „ux/uy" und die Reibung in
 der Fläche. Eine senkrechte Lagerfläche (Knagge) sperrt damit waagerecht; das
-Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen.
+**Ein Flächenlager in Flächenachsen wirkt je Fläche entlang einer globalen
+Achse** (x, y oder z, die der Normalen am nächsten liegt). Seit dem 09.11.2026
+meldet die Modellprüfung darum einen **Fehler und die Rechnung startet nicht**,
+wenn eine Fläche des Lagers um mehr als 1° schräg zu dieser Achse steht, wenn
+sie gekrümmt ist (Zylindermantel) oder wenn sie zwischen zwei Körpern liegt
+und ihre Normale damit nicht eindeutig ist. Die Meldung nennt Lager, Fläche
+und Winkel. Abhilfe: die Fläche aus dem Lager nehmen oder das Lager auf
+globale Achsen umstellen. Bis dahin stand nur eine Zeile im Protokoll der
+Vernetzung und es wurde mit der falschen Richtung gerechnet (ein um 10°
+geneigter Quader auf Bettung verschob sich in eine um 49° falsche Richtung,
+ein radial gebetteter Zylinder war in einer Querrichtung ungehalten).
+Ausgenommen ist ein Lager, das in allen drei Richtungen gleich wirkt (gleiche
+Feder oder starr, ohne Ausfall und Reibung): dort spielt die Achse keine
+Rolle. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →

@@ -281,6 +281,121 @@ def flaechen_einflussflaechen(model: Model, flaechen: list) -> dict[int, float]:
     return trib
 
 
+def _facettennormalen(model: Model, f) -> tuple:
+    """(Facetten, Normalen, Schwerpunkt des Koerpers) einer Geometrieflaeche.
+
+    Die Facetten wie in normalengruppen beschrieben; die Normalen als
+    Einheitsvektoren (eine Facette ohne Inhalt hat keine). Ohne Facetten
+    ([], [], None).
+    """
+    from .fugen import _dreiecke_der_fuge
+    koerper = getattr(model, "koerper", {}) or {}
+    facetten = _dreiecke_der_fuge(model, [f])
+    if not facetten and not (f.elemente or f.randseiten):
+        facetten = _facetten_geometrisch(model, f)
+    facetten = _nur_in_der_ebene(model, f, facetten)
+    if not facetten:
+        return [], [], None
+    k = next((k for k in koerper.values() if f.name in k.flaechen and k.elemente), None)
+    schwer = None
+    if k is not None:
+        kn = sorted({int(x) for i in k.elemente for x in model.elements[int(i)].nodes})
+        schwer = model.nodes[kn].mean(axis=0)
+    normalen = []
+    for _e, nd, n in facetten:
+        nd = [int(x) for x in nd]
+        P = model.nodes[nd]
+        if n is None:
+            n = np.cross(P[1] - P[0], P[2] - P[0])
+            ln = np.linalg.norm(n)
+            n = n / ln if ln > 0 else None
+            if n is not None and schwer is not None and np.dot(P.mean(axis=0) - schwer, n) < 0:
+                n = -n
+        if n is not None:
+            normalen.append(np.asarray(n, float))
+    return facetten, normalen, schwer
+
+
+#: Bis zu diesem Winkel [Grad] zwischen der Normalen einer Flaeche und einer
+#: globalen Achse gilt ein Flaechenlager in Flaechenachsen als achsparallel.
+#: Darueber wird nicht gerechnet (Entscheidung des Anwenders vom 09.11.2026).
+LOKAL_WINKEL_GRENZE = 1.0
+
+
+def _richtung_ohne_einfluss(ss) -> bool:
+    """Wirken die drei Verschiebungs-FHG eines Flaechenlagers gleich und ohne
+    Ausfall, Reibung, Schlupf und Grenzkraft, dann haengt das Lager nicht von
+    seinen Achsen ab: dieselbe Feder oder Sperre in jede Richtung."""
+    b = [vars(ss.dof_behaviour(d)) for d in (0, 1, 2)]
+    if not (b[0] == b[1] == b[2]):
+        return False
+    return not (b[0].get("failure") or b[0].get("mu") or b[0].get("slip") or b[0].get("limit"))
+
+
+def lokale_lager_schraeg(model: Model) -> list:
+    """Meldungen zu Flaechenlagern in Flaechenachsen, die nicht achsparallel
+    liegen (je Flaeche ein Satz, ohne das Wort FEHLER - das setzt Model.check).
+
+    Ein solches Lager wirkt je Flaeche entlang **einer globalen Achse**
+    (normalengruppen: die Achse mit dem groessten Anteil der gemittelten
+    Normalen). Steht die Flaeche schraeg, ist sie gekruemmt oder zeigen ihre
+    Facetten nach beiden Seiten (Trennflaeche zwischen zwei Koerpern), dann
+    ist diese Richtung falsch oder zufaellig. Bis zum 09.11.2026 stand das nur
+    als Zeile im Protokoll der Vernetzung, gerechnet wurde trotzdem (Befunde
+    A12 und A13 der Pruefagenten). Ein Lager, das in allen drei Richtungen
+    gleich wirkt, ist ausgenommen: dort spielt die Achse keine Rolle.
+    """
+    flaechen = getattr(model, "flaechen", {}) or {}
+    koerper = getattr(model, "koerper", {}) or {}
+    grenze = float(LOKAL_WINKEL_GRENZE)
+    schluss = (" Ein Flächenlager in Flächenachsen wirkt je Fläche nur entlang einer globalen Achse; "
+               "so wird nicht gerechnet. Nehmen Sie die Fläche aus dem Lager oder stellen Sie das Lager "
+               "auf globale Achsen um.")
+    out: list = []
+    for ss in (model.surface_supports or []):
+        if not getattr(ss, "lokal", False) or _richtung_ohne_einfluss(ss):
+            continue
+        for name in (getattr(ss, "flaechen", None) or []):
+            f = flaechen.get(name)
+            if f is None:
+                continue
+            _fac, normalen, _schwer = _facettennormalen(model, f)
+            if not normalen:
+                continue
+            N = np.asarray(normalen, float)
+            kopf = f"Flächenlager '{ss.name}' in Flächenachsen: Fläche {name} "
+            # beidseitig: die Flaeche gehoert zu zwei Koerpern, oder sie ist
+            # eben und ihre Facetten zeigen trotzdem gegeneinander (eine
+            # gekruemmte Flaeche hat auch Normalen ueber 90 Grad auseinander)
+            cs = N @ N[0]
+            gegen = cs < 0.0
+            zwischen = sorted(str(kn) for kn, k in koerper.items()
+                              if name in (k.flaechen or []) and k.elemente)
+            if gegen.any() and (len(zwischen) >= 2 or bool((np.abs(cs) > 0.99).all())):
+                wo = (f"liegt zwischen den Körpern {' und '.join(zwischen)}" if len(zwischen) >= 2
+                      else "hat Facetten nach beiden Seiten")
+                kleiner = int(min(gegen.sum(), len(N) - gegen.sum()))
+                out.append(kopf + f"{wo}: {kleiner} von {len(N)} Facetten zeigen zur Gegenseite, "
+                           "die Normale ist nicht eindeutig und die Lagerrichtung wäre Zufall." + schluss)
+                continue
+            nm = N.mean(axis=0)
+            nm /= (float(np.linalg.norm(nm)) or 1.0)
+            achse = int(np.argmax(np.abs(nm)))
+            vz = 1.0 if nm[achse] >= 0 else -1.0
+            zur_achse = float(np.degrees(np.arccos(np.clip(vz * N[:, achse], -1.0, 1.0))).max())
+            if zur_achse <= grenze:
+                continue
+            streuung = float(np.degrees(np.arccos(np.clip(N @ nm, -1.0, 1.0))).max())
+            w = f"{zur_achse:.1f}".replace(".", ",")
+            g = f"{grenze:.0f}"
+            if streuung > grenze:
+                out.append(kopf + f"ist gekrümmt: ihre Normalen weichen bis {w}° von der Achse "
+                           f"{'xyz'[achse]} ab (zulässig {g}°)." + schluss)
+            else:
+                out.append(kopf + f"liegt um {w}° schräg zur Achse {'xyz'[achse]} (zulässig {g}°)." + schluss)
+    return out
+
+
 def normalengruppen(model: Model, flaechen: list, log: list = None) -> list:
     """Knoten und Einflussflaechen je Normalenrichtung dieser Geometrieflaechen.
 
@@ -294,33 +409,9 @@ def normalengruppen(model: Model, flaechen: list, log: list = None) -> list:
     beim globalen Lager. Schraege Flaechen (Hauptanteil unter 0,95) werden
     der naechsten Achse zugeschlagen und genannt.
     """
-    from .fugen import _dreiecke_der_fuge
-    koerper = getattr(model, "koerper", {}) or {}
     gruppen: dict = {}
     for f in flaechen:
-        facetten = _dreiecke_der_fuge(model, [f])
-        if not facetten and not (f.elemente or f.randseiten):
-            facetten = _facetten_geometrisch(model, f)
-        facetten = _nur_in_der_ebene(model, f, facetten)
-        if not facetten:
-            continue
-        k = next((k for k in koerper.values() if f.name in k.flaechen and k.elemente), None)
-        schwer = None
-        if k is not None:
-            kn = sorted({int(x) for i in k.elemente for x in model.elements[int(i)].nodes})
-            schwer = model.nodes[kn].mean(axis=0)
-        normalen = []
-        for _e, nd, n in facetten:
-            nd = [int(x) for x in nd]
-            P = model.nodes[nd]
-            if n is None:
-                n = np.cross(P[1] - P[0], P[2] - P[0])
-                ln = np.linalg.norm(n)
-                n = n / ln if ln > 0 else None
-                if n is not None and schwer is not None and np.dot(P.mean(axis=0) - schwer, n) < 0:
-                    n = -n
-            if n is not None:
-                normalen.append(np.asarray(n, float))
+        facetten, normalen, schwer = _facettennormalen(model, f)
         if not normalen:
             continue
         nm = np.mean(normalen, axis=0)
