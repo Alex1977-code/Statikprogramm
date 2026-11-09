@@ -181,6 +181,18 @@ def _projiziert_auf_schale(model) -> bool:
     return False
 
 
+def _wind_auf_flaechen(model) -> bool:
+    """Eine Windlast des Generators auf Flaechen (Schale oder Volumenrand) - dort
+    wirkte sie bis zum 09.11.2026 an Schalen gegen den Wind, an Volumen und
+    shell8 mit falschen Rollen (Befunde A1, A2 der Pruefagenten)."""
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if (getattr(gl, "art", "flaeche") == "flaeche"
+                    and (getattr(gl, "verlauf", None) or {}).get("art") == "wind"):
+                return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -769,6 +781,18 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Flächenlast auf die Projektion an einer Schale", betrifft=_projiziert_auf_schale),
     Merkmal(
+        # Befunde A1/A2 der Pruefagenten (09.11.2026): der Windgenerator gab fuer Schalen p
+        # „gegen die Aussennormale“, die Schalenlast wirkt mit der Elementnormalen - Luvdruck,
+        # Leesog und Dachsog wirkten gegen den Wind (Gebaeude 10 x 20 x 8 m: ΣF −135/−127
+        # statt +135/+127 kN); an Volumen und shell8 waren alle Flaechen „Seite“. Fehlerkorrektur
+        name="wind_flaechen", titel="Windlast auf Flächen",
+        texte={"alt": "Wind an Schalen gegen die Windrichtung, an Volumen und shell8 ohne Rollen",
+               "neu": "Wind in die Hülle hinein (Druck) bzw. heraus (Sog), Rollen an allen Flächen"},
+        wechsel=(Wechsel(stand=8, datum="09.11.2026", commit="1b213f9", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators auf Flächen (Schale oder Volumenrand)",
+        betrifft=_wind_auf_flaechen),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -851,7 +875,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 7
+VERFAHRENSSTAND = 8
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

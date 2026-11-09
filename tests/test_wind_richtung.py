@@ -189,8 +189,21 @@ def test_zusammenhaengende_huelle():
           np.allclose(F, F4, rtol=0.01), f"{np.round(F / 1e3, 2)} gegen {np.round(F4 / 1e3, 2)} kN")
 
 
+def test_verfahrenstabelle():
+    """Alte Ergebnisse mit Wind auf Flaechen: „Ergebnis möglicherweise betroffen“."""
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("wind_flaechen")
+    m, fl = schalenbau(True)
+    ohne = neues_modell()
+    wind(m, fl)
+    check("Verfahrenstabelle: „wind_flaechen“ Fehlerkorrektur Stand 8, betrifft nur Modelle mit Wind auf Flächen",
+          mk is not None and mk.wechsel[-1].art == rv.FEHLERKORREKTUR and mk.wechsel[-1].stand == 8
+          and rv.VERFAHRENSSTAND >= 8 and mk.betrifft(m) and not mk.betrifft(ohne))
+
+
 def main():
-    for t in (test_schalen_wirken_in_windrichtung, test_shell8_und_volumen, test_zusammenhaengende_huelle):
+    for t in (test_schalen_wirken_in_windrichtung, test_shell8_und_volumen, test_zusammenhaengende_huelle,
+              test_verfahrenstabelle):
         try:
             t()
         except Exception as ex:               # noqa: BLE001
