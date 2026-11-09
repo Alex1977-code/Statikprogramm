@@ -210,6 +210,27 @@ def _projiziert_negativ_an_volumen(model) -> bool:
     return False
 
 
+def _temperaturunterschied_schale(model) -> bool:
+    """Ein Temperaturunterschied dT_z (oben − unten) auf einer Schale - als Last
+    auf eine Flaeche mit Dicke oder als Elementlast auf ein Schalenelement. Bis
+    zum 09.11.2026 still verworfen (Befund A4 der Pruefagenten)."""
+    from . import elemente as _EL
+    flaechen = getattr(model, "flaechen", None) or {}
+    elemente = getattr(model, "elements", None) or []
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if getattr(gl, "lastart", "") != "temperatur" or not float(getattr(gl, "dT_z", 0.0) or 0.0):
+                continue
+            f = flaechen.get(str(gl.ziel)) if getattr(gl, "art", "flaeche") == "flaeche" else None
+            if f is not None and (getattr(f, "dicke", "") or getattr(f, "elemente", None)):
+                return True
+        for tl in getattr(lc, "temp_loads", None) or []:
+            if (float(getattr(tl, "dT_z", 0.0) or 0.0) and 0 <= int(tl.elem) < len(elemente)
+                    and elemente[int(tl.elem)].typ in _EL.SCHALEN_TYPEN):
+                return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -821,6 +842,17 @@ MERKMALE: list = [
         modellmerkmal="Flächenlast auf die Projektion mit negativem Wert an einem Körper",
         betrifft=_projiziert_negativ_an_volumen),
     Merkmal(
+        # Befund A4 der Pruefagenten (09.11.2026): die Schale trug nur den gleichmaessigen
+        # Anteil ΔT, ΔT_z wurde still verworfen (Kragstreifen 0 statt 12 mm). Jetzt die
+        # Anfangskruemmung α ΔT_z / t in Last und Momentenrueckrechnung. Fehlerkorrektur
+        name="temperatur_schale_dTz", titel="Temperaturunterschied oben − unten auf Schalen",
+        texte={"alt": "ΔT_z auf Schalen ohne Wirkung",
+               "neu": "ΔT_z auf Schalen als Krümmung α · ΔT_z / t"},
+        wechsel=(Wechsel(stand=10, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Temperaturunterschied ΔT_z auf einer Schale",
+        betrifft=_temperaturunterschied_schale),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -903,7 +935,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 9
+VERFAHRENSSTAND = 10
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

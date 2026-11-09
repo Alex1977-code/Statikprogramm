@@ -2122,29 +2122,50 @@ def lastresultierende(abschnitte, x: np.ndarray):
     return Q, Mq
 
 
-def shell_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
-    """Aequivalente Knotenlasten einer gleichmaessigen Temperaturaenderung
-    eines Schalenelements (Membrananteil), global."""
+def shell_thermal_loads(model: Model, e, dT: float, dT_z: float = 0.0) -> np.ndarray:
+    """Aequivalente Knotenlasten einer Temperaturaenderung eines
+    Schalenelements, global: gleichmaessig dT (Membrananteil) und seit dem
+    09.11.2026 der Unterschied dT_z oben − unten (Biegeanteil mit der
+    Anfangskruemmung alpha dT_z / t; bis dahin still verworfen, Befund A4)."""
     mat = model.materials[e.mat]
     prop = model.shells[e.sec]
     X = model.nodes[e.nodes]
     if schalen_formulierung(e, prop) != "dkt":
         from .elements import shell_rm
         return shell_rm.temperatur_schale(e.typ, X, mat.E, mat.nu, prop.t, mat.alpha, dT,
-                                          laminat=laminat_von(model, prop))
+                                          laminat=laminat_von(model, prop), dT_z=dT_z)
     t = prop.t
     tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
     nn = len(e.nodes)
     f = np.zeros(6 * nn)
     eps0 = mat.alpha * dT * np.array([1.0, 1.0, 0.0])
-    Dm = sh._material_matrices(mat.E, mat.nu, t)[0]
-    for tri in tris:
-        T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
-        Bm, _ = sh.cst_b(xy)
-        fm = A * (Bm.T @ (Dm @ eps0))           # [u1 v1 u2 v2 u3 v3] lokal
-        for k, n in enumerate(tri):
-            fl = np.array([fm[2 * k], fm[2 * k + 1], 0.0])
-            f[6 * n:6 * n + 3] += T3.T @ fl
+    Dm, Db, _ = sh._material_matrices(mat.E, mat.nu, t)
+    if dT:
+        for tri in tris:
+            T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+            Bm, _ = sh.cst_b(xy)
+            fm = A * (Bm.T @ (Dm @ eps0))           # [u1 v1 u2 v2 u3 v3] lokal
+            for k, n in enumerate(tri):
+                fl = np.array([fm[2 * k], fm[2 * k + 1], 0.0])
+                f[6 * n:6 * n + 3] += T3.T @ fl
+    if dT_z:
+        # Biegeanteil wie die Steifigkeit (k_shell3_local, k_shell4): DKT je
+        # Dreieck mit drei Punkten, das Viereck gemittelt ueber beide
+        # Diagonalen - f = A Σ w Bᵀ Db kT
+        from .elements.shell_rm import temperatur_kruemmung
+        m0 = Db @ temperatur_kruemmung(mat.alpha, dT_z, t)
+        if e.typ == "shell3":
+            teile = [((0, 1, 2), 1.0)]
+        else:
+            teile = [((0, 1, 2), 0.5), ((0, 2, 3), 0.5), ((0, 1, 3), 0.5), ((1, 2, 3), 0.5)]
+        for tri, g in teile:
+            T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+            fb = np.zeros(9)                         # [w tx ty] je Knoten, lokal
+            for (xi, eta), w in zip(sh._TRI_GP, sh._TRI_W):
+                fb += w * A * (sh.dkt_b(xy, xi, eta).T @ m0)
+            for k, n in enumerate(tri):
+                f[6 * n:6 * n + 3] += g * (T3.T @ np.array([0.0, 0.0, fb[3 * k]]))
+                f[6 * n + 3:6 * n + 6] += g * (T3.T @ np.array([fb[3 * k + 1], fb[3 * k + 2], 0.0]))
     return f
 
 
@@ -2272,7 +2293,7 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             d, fe = _tp.anfangsspannung_modell(model, tl.elem, s0)
             np.add.at(F, d, fe)
         elif e.typ in SHELL_TYPES:
-            F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
+            F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT, getattr(tl, "dT_z", 0.0))
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_thermal_loads(model, e, tl.dT)
         elif e.typ in PLANE_TYPES:

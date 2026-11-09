@@ -649,16 +649,27 @@ def flaechenlast_schale(typ: str, P, p) -> np.ndarray:
     return f
 
 
-def temperatur_schale(typ: str, P, E, nu, t, alpha, dT, laminat=None) -> np.ndarray:
-    """Aequivalente Knotenlasten (6n, global) einer gleichmaessigen
-    Temperaturaenderung dT: Membrananteil n0 = A alpha dT [1 1 0]; bei
-    Laminaten mit Kopplung zusaetzlich m0 = B alpha dT [1 1 0]."""
+def temperatur_kruemmung(alpha, dT_z, t) -> np.ndarray:
+    """Anfangskruemmung [kx ky kxy] eines Temperaturunterschieds dT_z
+    (oben − unten, oben = lokal +z) ueber die Dicke t: alpha dT_z / t in
+    beiden Richtungen (Vorzeichen wie _b_biegung: eps(z) = z kappa)."""
+    if not dT_z or not t:
+        return np.zeros(3)
+    return float(alpha) * float(dT_z) / float(t) * np.array([1.0, 1.0, 0.0])
+
+
+def temperatur_schale(typ: str, P, E, nu, t, alpha, dT, laminat=None, dT_z: float = 0.0) -> np.ndarray:
+    """Aequivalente Knotenlasten (6n, global) einer Temperaturaenderung:
+    gleichmaessig dT mit n0 = A eps0, m0 = B eps0 (eps0 = alpha dT [1 1 0]);
+    Unterschied dT_z (oben − unten, seit 09.11.2026, Befund A4) mit der
+    Anfangskruemmung kT = alpha dT_z / t [1 1 0]: n0 += B kT, m0 += D kT."""
     P = np.asarray(P, float).reshape(-1, 3)
     n = _NKNOTEN[typ]
     lam = _laminat(E, nu, t, laminat)
     eps0 = float(alpha) * float(dT) * np.array([1.0, 1.0, 0.0])
-    n0 = lam.A @ eps0
-    m0 = lam.B @ eps0
+    kT = temperatur_kruemmung(alpha, dT_z, lam.t if laminat is not None else t)
+    n0 = lam.A @ eps0 + lam.B @ kT
+    m0 = lam.B @ eps0 + lam.D @ kT
     T3, xy, _, _ = schalen_frame(P)
     f = np.zeros(6 * n)
     for r, s, w in _regeln(typ)[0]:

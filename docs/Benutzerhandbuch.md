@@ -6139,7 +6139,7 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Knotenlast | gewählte Knoten | Kräfte F_x…F_z [kN], Momente M_x…M_z [kNm] | — |
 | Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, Bezug global, lokal oder ein **eigenes Koordinatensystem**, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], **Bezug** (global, lokal, eigenes Koordinatensystem; Vorgabe global Z) und Achse, auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
-| Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
+| Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe und Schalen) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
 | Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v, F_soll bzw. P₀ [kN], Verankerungsschlupf Δs [mm], Gruppe beim Spannen, Achse (Volumen) | als eingeprägte Dehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Endvorspannung (bleibend nach dem Verankern)** (nur Stäbe, seit 13.10.2026, bis 14.10.2026 „Sollkraft nach Verankerung“): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; als **Anfangsvorspannung (Pressenkraft P₀)** (nur Stäbe, seit 14.10.2026): die Presse spannt mit P₀, nach dem Verankern fehlen der Schlupf Δs und die elastischen Verluste; **Umwandeln** einer RFEM-Vorspannung (eingeprägte Dehnung, ΔT) in die Endvorspannung |
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
@@ -6162,6 +6162,16 @@ an Volumen die abgewandte Seite, etwa die Unterseite eines Blocks. Die
 Lastsumme stimmte, der Angriffspunkt nicht. Ältere Ergebnisse solcher Modelle
 tragen „Ergebnis möglicherweise betroffen – neu rechnen“. An Schalen ändert
 sich nichts. Geprüft in `tests/test_projiziert_vorzeichen.py`.
+
+**Temperaturunterschied auf Schalen.** ΔT_z ist die Temperatur oben minus
+unten; „oben“ ist bei der Schale die Seite der Elementnormalen. Die Schale
+bekommt daraus die Krümmung α · ΔT_z / t in beiden Richtungen, im Lastvektor
+und in den Momenten (m = D (κ − κ_T)). Eine frei gelagerte Platte krümmt sich
+also zur Kugelkappe und bleibt momentenfrei; oben warm biegt sich ein
+Kragstreifen wie ein Stab nach unten. Bis zum 09.11.2026 trug die Schale nur
+den gleichmäßigen Anteil ΔT, ΔT_z wurde still verworfen. Ältere Ergebnisse
+solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu rechnen“.
+Geprüft in `tests/test_schale_temperatur_gradient.py`.
 
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
