@@ -7631,6 +7631,16 @@ Lagen (Dicke, Werkstoff, Winkel), rechnet das Programm mit den
 Laminatsteifigkeiten. Ein unsymmetrischer Aufbau koppelt Dehnung und Biegung -
 eine Scheibe unter Zug krümmt sich dann.
 
+**Geschichtete Schale unter Temperatur** (seit 09.11.2026). Bei einem
+unsymmetrischen Aufbau trägt die Temperaturlast neben der Normalkraft A·α·ΔT
+auch das Moment B·α·ΔT. Die Rückrechnung der Schnittgrößen zieht jetzt beide
+Anteile ab. Bis zum 09.11.2026 zog sie nur die Normalkraft ab: Eine frei
+gedehnte Platte aus 5 mm mit E = 210 000 und 5 mm mit E = 70 000 N/mm² zeigte
+unter ΔT = 50 K ein Moment von 1 500 Nm/m und eine Vergleichsspannung von
+90 N/mm², obwohl sie spannungsfrei ist. Verformungen und Lagerkräfte waren
+richtig. Die Wärmedehnzahl gilt für den ganzen Aufbau (die des Werkstoffs der
+Schale), nicht je Lage. Geprüft in `tests/test_laminat_temperatur.py`.
+
 ## 5 Lager: Ausfall, Schlupf, Reibung, Bettung
 
 Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**.
@@ -10794,6 +10804,15 @@ S355 (355/510 N/mm²). Ältere Ergebnisse solcher Modelle tragen „Ergebnis
 möglicherweise betroffen – neu rechnen“. Geprüft in
 `tests/test_anschluss_festigkeit.py`.
 
+Dasselbe gilt seit dem 09.11.2026 für den **Anschlussvorschlag** (Kopfplatte,
+Lasche, Knotenblech) und für den **Nachweis eines Stabes mit Gewinde**. Fehlt
+im Werkstoff f_y oder f_u, gibt es keinen Vorschlag, sondern die Meldung mit
+dem Namen des Werkstoffs; der Stab mit Gewinde meldet „Werkstoff … ohne
+Zugfestigkeit f_u“. Bis dahin bemaß der Vorschlag die Geometrie still mit
+S355 (355/510 N/mm²), und der Stab mit Gewinde rechnete bei einem Werkstoff
+mit f_y ohne f_u mit f_ub = 1,3 · f_y (640 → 832 N/mm²). Geprüft in
+`tests/test_nachweis_ohne_fu.py`.
+
 **Anlegen**: Stabende wählen (die beiden Knoten des Stabelements markieren),
 dann Register *Lager / Kontakt* → „Anschluss“ — oder im Modellbaum
 „+ Anschluss anlegen“, oder in der Tabelle „Anschluss anlegen…“.
@@ -11252,6 +11271,29 @@ Programm dazu nichts.
 k = 0 ist ein Gelenk. Bis dahin wirkte es biegesteif, wenn es im Skript oder
 über die Web-Schnittstelle angelegt war; die Maske lässt k = 0 nicht zu. Eine
 ältere Datei bekommt das Gelenk beim Öffnen und meldet es im Protokoll.
+
+**Stäbe mit Versatz in α_cr und Theorie II. Ordnung** (seit 09.11.2026). Die
+geometrische Steifigkeit eines Stabes mit Versatz der Stabenden
+(Exzentrizität) wirkt jetzt an den Stabenden, wie seine elastische
+Steifigkeit. Bis zum 09.11.2026 wirkte sie an den Knoten: Ein Druckstab
+0,2 m neben seiner Knotenlinie hatte α_cr = 1,158 statt 2,000.
+
+**Schubweiche Balken im Feld** (seit 09.11.2026). Der Feldanteil N·w nach
+Theorie II. Ordnung nimmt bei einem Querschnitt mit Schubflächen die
+Schubdurchbiegung mit. Bis zum 09.11.2026 fehlte sie: Ein Einfeldträger mit
+N_E/(G·A_s) = 0,1 und Druck 0,6·N_cr in einem Element hatte ein um 12 % zu
+kleines Feldmoment, jetzt sind es −0,04 %. Eine Längslast entlang des Stabes
+bleibt im Feldanteil außen vor; die Stabkraft gilt im Element als
+gleichbleibend (ein Element bis +22,6 %, mit vier Elementen unter 1 %).
+
+**Stabendgelenke nach Theorie III. Ordnung** (seit 09.11.2026). Die Tangente
+der Theorie III. Ordnung kondensiert die geometrische Steifigkeit an Gelenken
+und Federgelenken wie die Theorie II. Ordnung. Bis zum 09.11.2026 bekam sie
+die volle Balkenform; mit einer Pendelstütze als Balken mit Gelenken neben
+einem Kragstiel fand die Rechnung ab 5/6 der Knicklast kein Gleichgewicht.
+Der Versatz der Stabenden ist nach Theorie III. Ordnung **nicht**
+berücksichtigt. Alle drei Punkte sind geprüft in
+`tests/test_theorie_nebenbefund16.py`.
 
 **α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
 eines Lastfalls oder einer Kombination abgeschaltet ist oder als

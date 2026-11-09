@@ -263,6 +263,80 @@ def _din19704_kategorie_fehlt(model) -> bool:
                    for c in erzeugt) for n in faelle)
 
 
+def _laminat_gekoppelt_mit_temperatur(model) -> bool:
+    """Eine geschichtete Schale mit Kopplung (unsymmetrischer Aufbau, B != 0)
+    unter gleichmaessiger Temperatur dT - ihre Momente trugen bis zum
+    09.11.2026 den Anteil B alpha dT zu viel (Nebenbefund 14)."""
+    from . import assemble as asm
+    from . import elemente as _EL
+    gekoppelt = set()
+    for name, prop in (getattr(model, "shells", None) or {}).items():
+        try:
+            lam = asm.laminat_von(model, prop)
+        except Exception:        # noqa: BLE001 - unlesbarer Aufbau: nicht betroffen
+            lam = None
+        if lam is not None and float(abs(lam.B).max()) > 1e-9 * float(abs(lam.A).max()) * float(prop.t or 1.0):
+            gekoppelt.add(str(name))
+    if not gekoppelt:
+        return False
+    flaechen = getattr(model, "flaechen", None) or {}
+    elemente = getattr(model, "elements", None) or []
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if getattr(gl, "lastart", "") != "temperatur" or not float(getattr(gl, "dT", 0.0) or 0.0):
+                continue
+            f = flaechen.get(str(gl.ziel)) if getattr(gl, "art", "flaeche") == "flaeche" else None
+            if f is not None and str(getattr(f, "dicke", "") or "") in gekoppelt:
+                return True
+        for tl in getattr(lc, "temp_loads", None) or []:
+            if (float(getattr(tl, "dT", 0.0) or 0.0) and 0 <= int(tl.elem) < len(elemente)
+                    and elemente[int(tl.elem)].typ in _EL.SCHALEN_TYPEN
+                    and str(elemente[int(tl.elem)].sec) in gekoppelt):
+                return True
+    return False
+
+
+def _schraubenstab_ohne_fu(model) -> bool:
+    """Ein Stab mit Gewinde (Nachweis als Schraube), dessen Werkstoff f_y, aber
+    kein f_u angibt - dort rechnete der Nachweis bis zum 09.11.2026 still mit
+    f_ub = 1,3 f_y (Nebenbefund 15); jetzt wird er nicht gefuehrt."""
+    from .ec3 import schraubenstab as _ss
+    from .joints.bolts import SIZES
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") not in ("beam", "beam_shear", "truss", "seil"):
+            continue
+        mat = (getattr(model, "materials", None) or {}).get(e.mat)
+        sec = (getattr(model, "sections", None) or {}).get(e.sec)
+        if mat is None or sec is None or not _ss.ist_schraube(sec, mat):
+            continue
+        d = SIZES[_ss.schraubengroesse(sec)][0] * 1e-3
+        if mat.yield_strength(d) and not mat.zugfestigkeit_angegeben(d):
+            return True
+    return False
+
+
+def _stab_mit_versatz(model) -> bool:
+    """Ein Stabelement mit Versatz der Stabenden (Exzentrizitaet) - seine
+    geometrische Steifigkeit wirkte bis zum 09.11.2026 auf die Knoten statt
+    auf die Stabenden (Nebenbefund 16 b)."""
+    from . import assemble as asm
+    return any(getattr(e, "typ", "") in asm.LINE_TYPES and asm.beam_versatz(e) is not None
+               for e in getattr(model, "elements", None) or [])
+
+
+def _balken_mit_schubflaeche(model) -> bool:
+    """Ein Balkenelement, dessen Querschnitt eine Schubflaeche hat - sein
+    Feldanteil N w nach Theorie II. Ordnung liess bis zum 09.11.2026 die
+    Schubverformung aus (Nebenbefund 16 c)."""
+    schnitte = getattr(model, "sections", None) or {}
+    for e in getattr(model, "elements", None) or []:
+        sec = schnitte.get(e.sec) if getattr(e, "typ", "") in ("beam", "beam_shear") else None
+        if sec is not None and (float(getattr(sec, "Asy", 0.0) or 0.0) > 0
+                                or float(getattr(sec, "Asz", 0.0) or 0.0) > 0):
+            return True
+    return False
+
+
 def _zwang_an_feder(model) -> bool:
     """Eine Zwangsverformung an einem linearen Federlager - dort wirkte sie bis
     zum 09.11.2026 nicht (Befund A11 der Pruefagenten)."""
@@ -1123,6 +1197,63 @@ MERKMALE: list = [
                       "erzeugten Kombination steht",
         betrifft=_din19704_kategorie_fehlt, im_ergebnis=_kombinationen_im_ergebnis,
         vorschlag="Lasten › „EN 1990…“: die Kombinationen neu erzeugen, dann neu rechnen"),
+    # Nebenbefund 14 (09.11.2026): die Rueckrechnung der Schalenmomente zog
+    # bei einem Laminat mit Kopplung (B != 0) den Anteil B alpha dT nicht ab -
+    # die frei gedehnte Platte zeigte ein Moment. Fehlerkorrektur
+    Merkmal(
+        name="laminat_temperatur", titel="Momente geschichteter Schalen unter Temperatur",
+        texte={"alt": "Momente mit dem Anteil B·α·ΔT zu viel", "neu": "Momente ohne den Anteil B·α·ΔT"},
+        wechsel=(Wechsel(stand=22, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="geschichtete Schale mit unsymmetrischem Aufbau unter Temperaturänderung",
+        betrifft=_laminat_gekoppelt_mit_temperatur),
+    # Nebenbefund 15 (09.11.2026): der Nachweis eines Stabes mit Gewinde nahm
+    # bei einem Werkstoff mit f_y ohne f_u still f_ub = 1,3 f_y. Jetzt Meldung
+    # statt Vorgabewert (Festlegung des Anwenders). Fehlerkorrektur
+    Merkmal(
+        name="schraubenstab_fu", titel="Zugfestigkeit im Nachweis der Stäbe mit Gewinde",
+        texte={"alt": "ohne f_u im Werkstoff mit 1,3·f_y nachgewiesen",
+               "neu": "ohne f_u im Werkstoff kein Nachweis, sondern Meldung"},
+        wechsel=(Wechsel(stand=23, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Gewinde, dessen Werkstoff f_y, aber kein f_u angibt",
+        betrifft=_schraubenstab_ohne_fu),
+    # Nebenbefund 16 b (09.11.2026): die geometrische Steifigkeit eines Stabes
+    # mit Versatz wirkte auf die Knoten statt auf die Stabenden - Druckstab
+    # 0,2 m neben der Knotenlinie alpha_cr 1,158 statt 2,000. Fehlerkorrektur
+    Merkmal(
+        name="theorie2_versatz", titel="Geometrische Steifigkeit an Stäben mit Versatz",
+        texte={"alt": "K_G an den Knoten, ohne den Versatz der Stabenden",
+               "neu": "K_G an den Stabenden, mit dem Versatz"},
+        wechsel=(Wechsel(stand=24, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden, mit alpha_cr, Knicken oder Theorie II. Ordnung",
+        betrifft=_stab_mit_versatz, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Nebenbefund 16 c (09.11.2026): der Feldanteil N w nach Theorie II.
+    # Ordnung liess die Schubdurchbiegung aus - Einfeldtraeger mit
+    # N_E/(G A_s) = 0,1 und Druck 0,6 N_cr in einem Element -12 %. Fehlerkorrektur
+    Merkmal(
+        name="theorie2_feld_schub", titel="Feldmoment nach Theorie II. Ordnung an schubweichen Balken",
+        texte={"alt": "Feldanteil N·w ohne die Schubdurchbiegung",
+               "neu": "Feldanteil N·w mit der Schubdurchbiegung"},
+        wechsel=(Wechsel(stand=25, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Schubfläche, nach Theorie II. Ordnung gerechnet",
+        betrifft=_balken_mit_schubflaeche, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Nebenbefund 16 a (09.11.2026): Theorie III. Ordnung kondensierte die
+    # geometrische Steifigkeit an Stabendgelenken nicht (wie Theorie II.
+    # Ordnung vor A7) - mit einer Pendelstuetze als Balken mit Gelenken
+    # konvergierte die Rechnung ab 5/6 der Knicklast nicht. Die Tangente
+    # aendert den Weg der Iteration, nicht den konvergierten Zustand.
+    # Fehlerkorrektur
+    Merkmal(
+        name="theorie3_gelenke", titel="Tangente der Theorie III. Ordnung an Stabendgelenken",
+        texte={"alt": "geometrische Steifigkeit ohne Rücksicht auf die Gelenke",
+               "neu": "geometrische Steifigkeit an den Gelenken kondensiert"},
+        wechsel=(Wechsel(stand=26, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
+        betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -1206,7 +1337,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 21
+VERFAHRENSSTAND = 26
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
