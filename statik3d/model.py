@@ -609,6 +609,23 @@ class Material:
             return STEEL_GRADES[sorte][1]
         return self.fu or (1.3 * self.fy if self.fy else 0.0)
 
+    def zugfestigkeit_angegeben(self, t: float = 0.0) -> Optional[float]:
+        """f_u, wie es im Werkstoff steht - aus der Dickentabelle, dem Wert f_u
+        oder der Stahlsorte -, sonst None. Kein Ersatzwert 1,3 f_y: nach der
+        Festlegung des Anwenders gibt es ohne f_u eine Meldung, keinen
+        Vorgabewert (Anschlussnachweis seit 09.11.2026, Befund A23)."""
+        wert = self._nach_dicke(self.fu_dicke, t)
+        if wert is not None:
+            return wert
+        sorte = self._sorte()
+        if sorte and t > 0.040:
+            return STEEL_GRADES[sorte][3]
+        if self.fu:
+            return self.fu
+        if sorte:
+            return STEEL_GRADES[sorte][1]
+        return None
+
 
 @dataclass
 class Section:

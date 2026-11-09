@@ -24516,8 +24516,14 @@ class MainWindow(QtWidgets.QMainWindow):
         erg = getattr(an, "joints", None) if an is not None else None
         if erg is None:
             from ..joints import anschluss as ans
-            text = "\n\n".join(
-                ans.vorlage(self.model, j).describe() for j in self.model.joints.values())
+
+            def beschreibung(j):
+                # ohne f_y/f_u im Werkstoff gibt es keine Vorlage (09.11.2026, A23)
+                try:
+                    return ans.vorlage(self.model, j).describe()
+                except Exception as ex:          # noqa: BLE001
+                    return f"{j.name}: {ex}"
+            text = "\n\n".join(beschreibung(j) for j in self.model.joints.values())
             text += "\n\nNoch nicht gerechnet - „Berechnen“ (F5) führt die Nachweise."
         else:
             teile = []

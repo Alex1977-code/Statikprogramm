@@ -260,6 +260,28 @@ def _zwang_an_feder(model) -> bool:
     return False
 
 
+def _anschluss_ohne_festigkeit(model) -> bool:
+    """Ein nachzuweisender Anschluss, dessen Werkstoff f_y oder f_u nicht angibt -
+    dort rechnete der Nachweis bis zum 09.11.2026 still mit 1,3 f_y bzw. S355
+    (Befund A23 der Pruefagenten); jetzt wird er nicht gefuehrt."""
+    elemente = getattr(model, "elements", None) or []
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True):
+            continue
+        i = int(getattr(j, "elem", -1))
+        if not 0 <= i < len(elemente):
+            continue
+        e = elemente[i]
+        mat = (getattr(model, "materials", None) or {}).get(e.mat)
+        sec = (getattr(model, "sections", None) or {}).get(e.sec)
+        if mat is None or sec is None:
+            continue
+        t = float(getattr(sec, "t_max", 0.0) or 0.0)
+        if not mat.yield_strength(t) or not mat.zugfestigkeit_angegeben(t):
+            return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -904,6 +926,17 @@ MERKMALE: list = [
         modellmerkmal="Zwangsverformung an einem Federlager",
         betrifft=_zwang_an_feder),
     Merkmal(
+        # Befund A23 der Pruefagenten (09.11.2026): ohne f_u rechnete der Anschlussnachweis
+        # still mit 1,3 f_y, ganz ohne Festigkeiten mit S355 (Lasche η 1,048 -> 1,573).
+        # Festlegung des Anwenders: Meldung statt Vorgabewert. Fehlerkorrektur
+        name="anschluss_festigkeit", titel="Festigkeiten im Anschlussnachweis",
+        texte={"alt": "fehlendes f_u als 1,3 f_y, fehlende Festigkeiten als S355",
+               "neu": "ohne f_y oder f_u kein Anschlussnachweis, mit Meldung"},
+        wechsel=(Wechsel(stand=13, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Anschluss mit Werkstoff ohne f_y oder f_u",
+        betrifft=_anschluss_ohne_festigkeit),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -986,7 +1019,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 12
+VERFAHRENSSTAND = 13
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

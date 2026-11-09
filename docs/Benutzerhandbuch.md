@@ -10667,6 +10667,15 @@ Ein Anschluss gehört zum Modell wie ein Stab: er wird mitgespeichert, steht im
 Modellbaum und in der Tabelle „Anschlüsse“, überlebt Rückgängig und wird bei
 **jeder** Berechnung mit nachgewiesen.
 
+**Festigkeiten aus dem Werkstoff.** Der Nachweis nimmt f_y und f_u aus dem
+Werkstoff des Stabes: aus den eingegebenen Werten, der Dickentabelle oder der
+Stahlsorte. Fehlt eines davon, wird der Anschluss nicht nachgewiesen, und der
+Nachweis nennt den Werkstoff („f_u fehlt – bitte im Werkstoff angeben“). Bis
+zum 09.11.2026 rechnete er still mit 1,3 · f_y bzw. ganz ohne Festigkeiten mit
+S355 (355/510 N/mm²). Ältere Ergebnisse solcher Modelle tragen „Ergebnis
+möglicherweise betroffen – neu rechnen“. Geprüft in
+`tests/test_anschluss_festigkeit.py`.
+
 **Anlegen**: Stabende wählen (die beiden Knoten des Stabelements markieren),
 dann Register *Lager / Kontakt* → „Anschluss“ — oder im Modellbaum
 „+ Anschluss anlegen“, oder in der Tabelle „Anschluss anlegen…“.

@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, fields
 
-from ..model import Model, Joint, FU_S355
+from ..model import Model, Joint
 from .bolts import Bolt
 from .templates import TEMPLATES
 
@@ -84,11 +84,21 @@ def vorlage(model: Model, joint: Joint):
     sec = model.sections[e.sec]
     mat = model.materials[e.mat]
     ds = model.design
+    # f_y und f_u kommen aus dem Werkstoff; fehlen sie, kein Nachweis und eine
+    # Meldung. Bis zum 09.11.2026 rechnete der Anschluss still mit 1,3 f_y bzw.
+    # mit S355 (355/510 N/mm²) - Befund A23, Lasche η 1,048 -> 1,573.
+    fy = mat.yield_strength(sec.t_max)
+    fu = mat.zugfestigkeit_angegeben(sec.t_max)
+    fehlt = [n for n, v in (("f_y", fy), ("f_u", fu)) if not v]
+    if fehlt:
+        raise ValueError(f"Werkstoff „{mat.name}“: {' und '.join(fehlt)} {'fehlt' if len(fehlt) == 1 else 'fehlen'} – bitte im Werkstoff "
+                         "angeben (Wert oder Stahlsorte); ohne Angabe kein Anschlussnachweis, "
+                         "kein Vorgabewert")
     t = TEMPLATES[joint.typ](
         name=joint.name, model=model, elem=int(joint.elem), end=int(joint.end),
         grade=mat.grade or "S355",
-        fy=mat.yield_strength(sec.t_max) or 355e6,
-        fu=mat.ultimate_strength(sec.t_max) or FU_S355,
+        fy=fy,
+        fu=fu,
         gamma_M0=ds.gamma_M0, gamma_M2=ds.gamma_M2, sec=sec)
     if joint.schraube:
         t.bolt = Bolt(**{k: v for k, v in joint.schraube.items()
