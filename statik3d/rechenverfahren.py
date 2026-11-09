@@ -193,6 +193,23 @@ def _wind_auf_flaechen(model) -> bool:
     return False
 
 
+def _projiziert_negativ_an_volumen(model) -> bool:
+    """Eine Flaechenlast „auf die Projektion“ mit p < 0 an einem Koerper oder einer
+    Koerperrandflaeche - dort traf sie bis zum 09.11.2026 die abgewandte Seite
+    (Befund A3 der Pruefagenten). Schalen sind nicht betroffen."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if not getattr(gl, "projiziert", False) or float(getattr(gl, "p", 0.0) or 0.0) >= 0.0:
+                continue
+            if getattr(gl, "art", "flaeche") != "flaeche":
+                return True
+            f = flaechen.get(str(gl.ziel))
+            if f is not None and not (getattr(f, "dicke", "") or getattr(f, "elemente", None)):
+                return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -793,6 +810,17 @@ MERKMALE: list = [
         modellmerkmal="Windlast des Generators auf Flächen (Schale oder Volumenrand)",
         betrifft=_wind_auf_flaechen),
     Merkmal(
+        # Befund A3 der Pruefagenten (09.11.2026): der Windschatten der projizierten Last nahm
+        # die Achse ohne das Vorzeichen von p - „global Z, p = −5 kN/m²“ traf am Block die
+        # Unterseite statt das Dach. Summe gleich, Angriffspunkt falsch. Fehlerkorrektur
+        name="projiziert_vorzeichen", titel="Projizierte Flächenlast mit negativem Wert an Volumen",
+        texte={"alt": "Last trifft die der Kraft abgewandte Seite",
+               "neu": "Last trifft die der Kraft p · d zugewandte Seite"},
+        wechsel=(Wechsel(stand=9, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast auf die Projektion mit negativem Wert an einem Körper",
+        betrifft=_projiziert_negativ_an_volumen),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -875,7 +903,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 8
+VERFAHRENSSTAND = 9
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

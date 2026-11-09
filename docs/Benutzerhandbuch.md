@@ -6154,6 +6154,15 @@ Bis zum 08.11.2026 wirkte eine projizierte Last an Schalen gar nicht; ältere
 Ergebnisse solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu
 rechnen“. Geprüft in `tests/test_paket_b_neben.py`.
 
+Welche Seite „der Last zugewandt“ ist, bestimmt die **Kraft** p · d, nicht die
+Achse allein. Schnee als „global Z, p = −5 kN/m²“ trifft also das Dach eines
+Körpers, ebenso wie die gleichwertige Eingabe „Richtung (0; 0; −1),
+p = +5 kN/m²“. Bis zum 09.11.2026 traf eine projizierte Last mit negativem Wert
+an Volumen die abgewandte Seite, etwa die Unterseite eines Blocks. Die
+Lastsumme stimmte, der Angriffspunkt nicht. Ältere Ergebnisse solcher Modelle
+tragen „Ergebnis möglicherweise betroffen – neu rechnen“. An Schalen ändert
+sich nichts. Geprüft in `tests/test_projiziert_vorzeichen.py`.
+
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
 Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf

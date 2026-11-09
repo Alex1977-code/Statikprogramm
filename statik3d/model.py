@@ -8160,6 +8160,13 @@ class Model:
         if gl.projiziert and richtung:
             d = np.asarray(richtung, float)
             d = d / (np.linalg.norm(d) or 1.0)
+            # Der Windschatten gehoert zur **Kraft** p d, nicht zur Achse: bei
+            # p < 0 kommt die Last von der Gegenseite. Bis zum 09.11.2026 traf
+            # „global Z, p = −5 kN/m²“ (Schnee) die Unterseite eines Koerpers
+            # statt das Dach - Summe richtig, Angriffspunkt falsch (Befund A3).
+            # Der Betrag p |n.d| bleibt; Schalen nehmen ohnehin |n.d|.
+            if float(gl.p) < 0.0:
+                d = -d
 
         def nimm(e: int, seite: int, flaeche=None):
             if not 0 <= int(e) < len(self.elements):
