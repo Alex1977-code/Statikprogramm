@@ -713,7 +713,11 @@ def _klartext(x: np.ndarray, mitte, L: float, koerper: list, art: str,
         ursache = ((f"Die Fugen {fug} übertragen nur Druck senkrecht zur Fläche; "
                     "in der Fugenebene ist nichts gehalten (keine Reibung, keine Federn)."
                     ) if fug else
-                   "Das Bauteil hat weder Lager noch eine Kopplung an ein gelagertes Teil.")
+                   # bis 08.11.2026 „hat weder Lager noch …“ - falsch, wenn Lager die
+                   # Bewegung zulassen (Platte an einem Linienlager ohne Verdrehung)
+                   "Kein Lager und keine Kopplung an ein gelagertes Teil hält diese Bewegung: "
+                   "das Bauteil ist nicht gelagert, oder seine Lager lassen sie zu (etwa ein "
+                   "Linienlager ohne Verdrehung – ein Gelenk um die Linie).")
     return text, ursache, bezug, t, w
 
 

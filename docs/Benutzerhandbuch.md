@@ -476,8 +476,17 @@ Die Arbeitsfläche in drei Spalten:
   Reihenfolge) und die Flächen eines Flächenlagers (ohne Flächen: Element-
   nummern). Bis dahin zeigten die Lagermasken ihren Ort nur an, und Linien
   bzw. Flächen eines Lagers standen gar nicht darin. Ein Lager auf Linien
-  oder Flächen folgt dem Netz wie ein importiertes. Ein Klick in ein anderes
-  Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
+  oder Flächen folgt dem Netz wie ein importiertes; am schon vernetzten Modell
+  bekommt es mit OK gleich alle Netzknoten (seit 09.11.2026, vorher erst beim
+  nächsten Vernetzen). Eine **neue** Maske (Neu: Linie, Linienlager,
+  Flächenlager, Lager setzen …) beginnt seit dem 09.11.2026 gleich mit der
+  Auswahl per Maus für ihr erstes Knoten-, Linien- oder Flächenfeld – man
+  klickt die Objekte sofort an, ohne vorher ins Feld zu klicken; tippen geht
+  ebenso. Die Maske eines bestehenden Eintrags beginnt ohne, dort wählt ein
+  Klick in der Ansicht weiter das nächste Objekt. Ein Modell, das nur auf
+  Linien- oder Flächenlagern steht, gilt als gelagert (bis zum 08.11.2026
+  wies die Modellprüfung es mit „keine Lagerung definiert“ ab). Ein Klick in
+  ein anderes Feld oder **Esc** beendet die Auswahl per Maus. Jede Maske eines Eintrags
   hat außerdem den Knopf **„Neu: <Art> …“** (etwa „Neu: Linie …“), der wie
   Rechtsklick → *Neu* im Modellbaum die Anlegemaske öffnet; angelegt wird erst
   mit OK; im Modellbaum tut dasselbe die Zeile „+ … anlegen“ jedes Zweigs.
@@ -6088,6 +6097,15 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
+**Flächenlast auf die Projektion** (Schnee, Wind): p gilt je Quadratmeter der
+Projektion auf die Ebene senkrecht zur Lastrichtung d. Am Rand eines Volumens
+trifft sie nur die Seiten, die der Last zugewandt sind; eine Schale trifft sie
+von der Seite, von der sie kommt, mit p · A · |n · d| – unabhängig vom
+Umlaufsinn des Randes. Eine Schale parallel zur Lastrichtung bekommt nichts.
+Bis zum 08.11.2026 wirkte eine projizierte Last an Schalen gar nicht; ältere
+Ergebnisse solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu
+rechnen“. Geprüft in `tests/test_paket_b_neben.py`.
+
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
 Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf
@@ -8402,8 +8420,9 @@ unten“ (vorbelegt). Er dreht das Modell beim Einlesen um 180° um die
 x-Achse: (x, y, z) → (x, −y, −z). Eine bloße Spiegelung z → −z wäre
 falsch, sie machte aus dem rechtshändigen System ein linkshändiges — Momente
 und Drehwinkel liefen dann verkehrt. Mitgedreht werden Knoten, Bögen,
-Lastvektoren, Richtungen, Lastfenster, Schwerkraft, Zwangsverformungen und
-Lagerwerte; das Protokoll vermerkt es. Beim Anhängen an ein vorhandenes
+Lastvektoren, Richtungen, Lastfenster, Schwerkraft, Zwangsverformungen,
+Lagerwerte, eigene Koordinatensysteme und Lasten mit globalem Bezug (seit
+08.11.2026; jede Last bleibt im Bauteil, wo sie war); das Protokoll vermerkt es. Beim Anhängen an ein vorhandenes
 Modell ist der Haken gesperrt.
 
 Datei → Importieren (Details in `Schnittstellen.md`):
@@ -13156,7 +13175,9 @@ jedes Bauteil, das sich bewegen kann:
   0.00)“, bei einer Schraubbewegung beides;
 * **warum** - „Die Fugen *Achse* übertragen nur Druck senkrecht zur Fläche;
   in der Fugenebene ist nichts gehalten (keine Reibung, keine Federn)“ oder
-  „Das Bauteil hat weder Lager noch eine Kopplung an ein gelagertes Teil“;
+  „Kein Lager und keine Kopplung an ein gelagertes Teil hält diese Bewegung:
+  das Bauteil ist nicht gelagert, oder seine Lager lassen sie zu (etwa ein
+  Linienlager ohne Verdrehung – ein Gelenk um die Linie)“;
 * **was es kostet** - die Last, die in dieser Bewegung ins Nichts geht.
 
 Der letzte Punkt ist der, auf den es ankommt. Unterschieden wird:

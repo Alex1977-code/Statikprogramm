@@ -9360,7 +9360,24 @@ class MainWindow(QtWidgets.QMainWindow):
             # (15.09.2026, „wenn neuer Kontakt angelegt wird, dann soll Volumen
             # anklickbar sein")
             self._objektmaske_klick_umschalten(maske, "kontaktbedingung_a")
+        elif neu and eintrag and art in self.FELDKLICK:
+            self._klickfeld_starten(maske, next(iter(self.FELDKLICK[art].values())))
         return maske
+
+    def _klickfeld_starten(self, maske, klickart: str) -> None:
+        """Eine neue Maske beginnt mit der Auswahl per Maus fuer ihr erstes
+        Knoten-, Linien- oder Flaechenfeld (Anwender 08.11.2026: „wenn neue line
+        dann im rechten menü nicht erst in feld für knoten klicken sondern es
+        dürfen gleich knoten angeklickt werden … gilt auch für weitere masken“).
+        Das Feld bekommt auch die Tastatur - Tippen geht weiter."""
+        if maske is None or klickart not in self.MASKENKLICK:
+            return
+        if not (maske.objekt_modus and getattr(maske, "_klick_art", "") == klickart):
+            self._objektmaske_klick_umschalten(maske, klickart)
+        feld = self.MASKENKLICK[klickart][0]
+        wdg = getattr(maske, "_felder", {}).get(feld)
+        if wdg is not None:
+            wdg.setFocus()
 
     #: Bettung auf und an Beton (Vorschlag - Werte sind zu pruefen)
     BETTUNG = ["–", "auf Beton (Druckkontakt)", "an Beton (Schubverbund)"]
@@ -12347,6 +12364,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 liste.append(obj)
             for k_, v_ in (ort or {}).items():
                 setattr(obj, k_, v_)
+            if (ort or {}).get("linien") or (ort or {}).get("flaechen"):
+                # Am schon vernetzten Modell gleich auf das Netz (Befund des Anwenders
+                # 08.11.2026, „linienlager … rechnen nicht“): bis dahin bekam ein
+                # Linienlager aus der Maske nur die Endknoten seiner Linien und erst
+                # beim naechsten Vernetzen die Netzknoten dazwischen - an einer
+                # einzelnen Linie ein Gelenk statt eines Lagers. Ohne Netz bleibt es
+                # bei den Eckknoten (supports.lager_auf_netz)
+                supports.lager_auf_netz(m)
             obj.behaviour = neu_beh
             if hasattr(obj, "dofs"):
                 obj.dofs = sorted(d for d, b in neu_beh.items() if b.acts)
@@ -22039,7 +22064,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m.angewendet.connect(self._maske_lager_setzen)
         m.feld_fokussiert.connect(lambda feld, mk=m: self._maskenfeld_fokus(mk, "lager_setzen", feld))
         m.klick_beenden = lambda mk=m: self._objektmaske_klick_aus(mk)
-        return self.maske_erzeugen(m)
+        self.maske_erzeugen(m)
+        if self.maskenrand.maske is m:
+            self._klickfeld_starten(m, "lager_setzen")
+        return m
 
     def _maske_lager_setzen(self, w: dict):
         if str(w.get("knoten_nr", "") or "").strip():
