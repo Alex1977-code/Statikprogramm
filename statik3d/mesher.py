@@ -672,7 +672,13 @@ def gemeinsame_schalen(model: Model, flaechen) -> list:
     sich an gewünschter netzgröße orientieren“. Bis dahin legte jede Flaeche
     auf ihren Randlinien eigene Zwischenknoten an: zwei Flaechen hingen nur an
     den Linienenden zusammen (Platte 4 m aus zwei Flaechen: 398 statt 149,6 mm
-    Durchbiegung), und eine Dreiecksflaeche wurde ein einziges Element."""
+    Durchbiegung), und eine Dreiecksflaeche wurde ein einziges Element.
+
+    Dazu jede Flaeche mit Oeffnung (Befund A18 der Pruefagenten, 09.11.2026):
+    mesh_flaeche kennt keine Oeffnungen und vernetzte eine einzelne Scheibe
+    mit Kreisloch ueber den Aussenrand - das Loch war gefuellt (Netzflaeche
+    4,0000 statt 3,9686 m2), am Lochrand keine Kerbspannung. Der freie Weg
+    hier spart das Loch aus."""
     schalen = [f for f in flaechen if _ist_schale(model, f)]
 
     def alle_linien(f):
@@ -682,7 +688,8 @@ def gemeinsame_schalen(model: Model, flaechen) -> list:
         for x in set(alle_linien(f)):
             zahl[x] = zahl.get(x, 0) + 1
     return [f for f in schalen
-            if any(zahl.get(x, 0) > 1 for x in alle_linien(f)) or len(f.linien or []) == 3]
+            if any(zahl.get(x, 0) > 1 for x in alle_linien(f)) or len(f.linien or []) == 3
+            or any(f.oeffnungen or [])]
 
 
 def _h_eigene_teilung(model: Model, f) -> float:

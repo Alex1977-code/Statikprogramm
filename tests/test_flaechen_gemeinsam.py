@@ -183,6 +183,43 @@ def test_dreiecksflaeche_folgt_der_netzgroesse():
           abs(abs(Rz) - 1000.0) < 1.0, f"{Rz:.1f} N")
 
 
+def test_einzelne_flaeche_mit_oeffnung():
+    """Befund A18 der Pruefagenten (09.11.2026): eine Scheibe 2 x 2 m mit
+    Kreisloch d = 0,2 m ohne Nachbarn wurde ueber den Aussenrand abgebildet
+    vernetzt - das Loch war gefuellt (Netzflaeche 4,0000 m2)."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_shell_prop(ShellProp("D10", T))
+    for p in ((0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)):
+        m.add_node(*p)
+    for j in range(4):
+        m.add_line(f"L{j + 1}", [j, (j + 1) % 4])
+    r, c = 0.1, (1.0, 1.0)
+    a = m.add_node(c[0] + r, c[1], 0)
+    b = m.add_node(c[0] - r, c[1], 0)
+    m.add_line("K1", [a, b], "arc", punkte=[(c[0] + r, c[1], 0), (c[0], c[1] + r, 0), (c[0] - r, c[1], 0)])
+    m.add_line("K2", [b, a], "arc", punkte=[(c[0] - r, c[1], 0), (c[0], c[1] - r, 0), (c[0] + r, c[1], 0)])
+    f = m.add_flaeche("P", ["L1", "L2", "L3", "L4"], material="S235", dicke="D10")
+    f.oeffnungen = [["K1", "K2"]]
+    check("Flaeche mit Oeffnung gehoert zur gemeinsamen (freien) Vernetzung",
+          [g.name for g in mesher.gemeinsame_schalen(m, [f])] == ["P"])
+    vernetzen(m)
+    A, im_loch = 0.0, 0
+    for e in f.elemente:
+        el = m.elements[e]
+        X = m.nodes[el.nodes[:4] if el.typ in ("shell4", "shell8") else el.nodes[:3]]
+        A += sum(0.5 * float(np.linalg.norm(np.cross(X[k] - X[0], X[k + 1] - X[0])))
+                 for k in range(1, len(X) - 1))
+        s = X.mean(axis=0)
+        if np.hypot(s[0] - c[0], s[1] - c[1]) < r * 0.95:
+            im_loch += 1
+    soll = 4.0 - np.pi * r * r
+    # Ohne den Umbau: 4,0000 m2 und Elemente im Loch
+    check("Netzflaeche = Aussenflaeche minus Loch (auf 0,5 %)", abs(A - soll) / soll < 0.005,
+          f"{A:.4f} m2, Soll {soll:.4f} m2")
+    check("kein Element liegt im Loch", im_loch == 0, f"{im_loch}")
+
+
 def test_oberflaeche_vernetzt_genauso():
     """Die Oberflaeche hat eine eigene Vernetzungsschleife (MainWindow._vernetzen)."""
     from PySide6 import QtWidgets
@@ -210,6 +247,7 @@ def main():
     for t in (test_zwei_flaechen_tragen_wie_eine_platte,
               test_einzelne_flaeche_bleibt_wie_bisher,
               test_dreiecksflaeche_folgt_der_netzgroesse,
+              test_einzelne_flaeche_mit_oeffnung,
               test_oberflaeche_vernetzt_genauso):
         try:
             t()

@@ -1694,6 +1694,7 @@ drei Fälle nur das ○.
 | Fläche mit vier Randabschnitten, allein | abgebildetes Vierecknetz mit der eingestellten Teilung (längs × quer) |
 | Flächen mit gemeinsamer Randlinie | **zusammenhängend**: jede Linie wird einmal geteilt, alle Flächen daran benutzen dieselben Knoten; vier Randlinien mit gleich geteilten Gegenseiten abgebildet (Vierecke), alles andere frei mit Dreiecken in der Netzgröße |
 | Fläche mit drei Randlinien | frei mit Dreiecken in der Netzgröße (bis 09.11.2026: ein einziges Dreieckelement) |
+| Fläche mit Öffnung | frei mit Dreiecken in der Netzgröße, die Öffnung ausgespart (bis 09.11.2026 wurde eine einzelne Fläche mit Öffnung über den Außenrand vernetzt, das Loch war gefüllt) |
 | Volumen: 6 Vierecke, 8 Eckknoten | abgebildetes Hexaedernetz (x × y × z) |
 | Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
 | alles andere | **freier Vernetzer**: Randflächen in Dreiecke, Hülle prüfen, mit Tetraedern füllen |
@@ -2179,6 +2180,13 @@ Schritten Knoten, Elemente, Lastfälle und dem Schreiben der Datei; beim
 Öffnen zusätzlich, wie viel der Datei schon gelesen ist („Datei lesen (120
 von 380 MB)“). Ein Modell mit hunderttausend Knoten braucht dafür Minuten -
 abbrechen lässt sich das nicht, eine halb geschriebene Datei wäre unbrauchbar.
+Seit 09.11.2026 schreibt das Programm Modell- und Ergebnisdatei zuerst in
+eine Zwischendatei neben dem Ziel („modell.json.<Nummer>.schreiben“) und
+tauscht sie erst am Ende gegen die alte aus. Scheitert das Schreiben (Platte
+voll, Netzlaufwerk getrennt, ein Wert, den die Datei nicht aufnehmen kann),
+bleibt die alte Datei unverändert, die Zwischendatei wird entfernt, und die
+Meldung „Nicht gespeichert: …“ stimmt. Bis dahin war die vorhandene Datei in
+diesem Fall zerstört (gemessen: 72 506 → 53 095 Bytes, nicht mehr lesbar).
 Nach dem Lesen steht „Daten auswerten - das kann bei großen Dateien Minuten
 dauern, das Fenster antwortet solange nicht“: in diesem Schritt wird die
 Datei in einem Zug ausgewertet, er meldet nichts zwischendurch, und der

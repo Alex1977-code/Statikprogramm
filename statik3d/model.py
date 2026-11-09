@@ -10414,16 +10414,24 @@ class Model:
         gewicht = {k: (len(v) if isinstance(v, (list, dict)) else 1) for k, v in d.items()}
         gesamt = max(1, sum(gewicht.values()))
         getan = 0
-        with open(path, "w", encoding="utf-8") as f:
+
+        # Erst in eine Zwischendatei, dann austauschen (Befund B1, 09.11.2026):
+        # bis dahin wurde die Zieldatei sofort geoeffnet und Schluessel fuer
+        # Schluessel ueberschrieben - brach das Schreiben ab (ein Wert, den JSON
+        # nicht kennt, Platte voll, Netzlaufwerk weg), war die vorhandene Datei
+        # zerstoert (72 506 -> 53 095 Bytes, nicht mehr lesbar).
+        def schreiben(f):
+            nonlocal getan
             f.write("{\n")
             for i, (k, v) in enumerate(d.items()):
                 if i:
                     f.write(",\n")
                 f.write(json.dumps(k) + ": ")
-                json.dump(v, f, indent=1)
+                json.dump(v, f, indent=1, default=_json_zahl)
                 getan += gewicht[k]
                 _melde(fortschritt, 0.6 + 0.4 * getan / gesamt, f"{k} geschrieben")
             f.write("\n}\n")
+        sicher_schreiben(path, schreiben, text=True)
         _melde(fortschritt, 1.0, "gespeichert")
 
     @staticmethod
@@ -10742,6 +10750,41 @@ class Model:
 #: Objekt kein Netz bekommen hat. Die Rechenbarkeitspruefung liest ihn - so
 #: gibt es genau eine Wahrheit statt zweier Kriterien.
 OHNE_NETZ = "ohne Netz:"
+
+
+def _json_zahl(x):
+    """numpy-Zahlen und -Felder fuer json.dump (eine Knotenlast mit einem
+    np.float32-Wert liess das Speichern scheitern, Befund B1)."""
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    raise TypeError(f"Object of type {type(x).__name__} is not JSON serializable")
+
+
+def sicher_schreiben(pfad, schreiben, text: bool = True) -> None:
+    """``schreiben(f)`` in eine Zwischendatei neben *pfad* schreiben und sie
+    erst danach an die Stelle von *pfad* setzen (os.replace).
+
+    Scheitert das Schreiben, bleibt eine vorhandene Datei unveraendert, und die
+    Zwischendatei wird entfernt; der Fehler geht an den Aufrufer weiter
+    (Befund B1 vom 09.11.2026: bis dahin war die alte Datei dann zerstoert)."""
+    pfad = os.fspath(pfad)
+    zwischen = f"{pfad}.{os.getpid()}.schreiben"
+    try:
+        if text:
+            with open(zwischen, "w", encoding="utf-8") as f:
+                schreiben(f)
+        else:
+            with open(zwischen, "wb") as f:
+                schreiben(f)
+        os.replace(zwischen, pfad)
+    except BaseException:
+        try:
+            os.remove(zwischen)
+        except OSError:
+            pass
+        raise
 
 
 def _melde(fortschritt, anteil: float, text: str) -> None:
