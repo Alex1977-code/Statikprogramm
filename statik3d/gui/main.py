@@ -5691,23 +5691,23 @@ class MainWindow(QtWidgets.QMainWindow):
             # (tests/test_symbole_ribbon, keine gleichen Symbole in einer Gruppe)
             symbol="pruefen")
         g = r.gruppe("Beispiele")
-        # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
-        # (24.09.2026) - die Suche findet die Beispiele weiter
-        act_beispiele = g.menue(
-            "Beispiel öffnen ▾", [(label, lambda k=key: self.load_example(k), f"Beispiel {label} laden")
-                                  for key, label in (("frame", "Rahmen"), ("truss", "Fachwerk"),
-                                                     ("plate", "Platte"), ("solid", "Konsole"),
-                                                     ("hall", "Hallenrahmen"), ("gate", "Stauwand"),
-                                                     ("contact", "Abhebendes Lager"), ("friction", "Reibung"))],
-            hinweis="Ein Beispielmodell laden - es ersetzt das offene Modell (mit Rückfrage, "
-                    "wenn etwas ungespeichert ist)", symbol="beispiel")
+        # Die Beispielbibliothek (09.11.2026) ersetzt das Menue „Beispiel
+        # öffnen ▾“ mit acht festen Beispielen: Gruppen, Beschreibung,
+        # Parametertabelle, eigene Beispiele aus Dokumente\Statik3D\Beispiele.
+        # Der Knopf oeffnet nur den Dialog; das Modell ersetzt erst
+        # „Übernehmen“ (mit Rueckfrage, wenn etwas ungespeichert ist).
+        self.act_beispielbibliothek = g.gross(
+            "Beispielbibliothek…", "", self.maske_beispielbibliothek,
+            hinweis="Beispielmodelle nach Stabwerk, Flächentragwerk und Volumen mit einstellbaren Werten; "
+                    "„Übernehmen“ baut das Modell und ersetzt das offene (mit Rückfrage, wenn etwas "
+                    "ungespeichert ist)", symbol="beispiel")
         g = r.gruppe("Sitzung")
         act_beenden = g.klein("Beenden", self.close, "Ctrl+Q",
                               hinweis="Das Programm schließen")
         # Befehle, die das Modell ersetzen oder leeren, laufen nie direkt aus
         # der Befehlssuche - die Suche zeigt ihr Register (Loeschbefehle
         # erkennt sie am Namen)
-        rb.vorsicht(self.act_neu, act_oeffnen, act_import, act_leeren, act_beenden, *act_beispiele)
+        rb.vorsicht(self.act_neu, act_oeffnen, act_import, act_leeren, act_beenden)
 
         # -- Start -------------------------------------------------------
         r = rb.register("Start")
@@ -32067,12 +32067,34 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Beispiele / Hilfe -------------------------------------------
     def load_example(self, which):
+        """Ein eingebautes Beispiel mit seinen Vorgabewerten laden."""
         from ..examples_lib import build_example
         if not self._ungespeichert_fragen("Beispiel öffnen", lambda: self.load_example(which)):
             return
+        self._beispiel_einsetzen(f"Beispiel '{which}'", lambda: build_example(which))
+
+    def maske_beispielbibliothek(self):
+        """Die Beispielbibliothek zeigen; „Übernehmen“ baut das gewaehlte
+        Beispiel mit den eingetragenen Werten (beispiel_uebernehmen)."""
+        from .beispielbibliothek import BeispielDialog
+        dlg = BeispielDialog(self)
+        self._beispieldialog = dlg          # fuer die Pruefungen
+        if dlg.exec() and dlg.ergebnis is not None:
+            self.beispiel_uebernehmen(*dlg.ergebnis)
+
+    def beispiel_uebernehmen(self, bsp, werte: dict):
+        """Das Beispiel ``bsp`` (statik3d.beispiele.Beispiel) mit ``werte``
+        bauen und als neues Modell einsetzen; fragt vorher, wenn etwas
+        ungespeichert ist."""
+        if not self._ungespeichert_fragen("Beispiel öffnen", lambda: self.beispiel_uebernehmen(bsp, werte)):
+            return
+        self._beispiel_einsetzen(f"Beispiel '{bsp.titel}'", lambda: bsp.bauen(werte))
+
+    def _beispiel_einsetzen(self, text: str, bauen):
         try:
-            self._protokoll_neu(f"Beispiel '{which}'")
-            self.model = build_example(which)
+            neu = bauen()
+            self._protokoll_neu(text)
+            self.model = neu
             self.__init_defaults()
             # derselbe saubere Stand wie nach Neu (02.10.2026), dazu das Beispiel
             self._neues_modell_zuruecksetzen()
@@ -32085,7 +32107,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Schliessen der Maske rechts frei ist
             self.plotter.view_isometric()
             self.zoom_alles()
-            self.info(f"Beispiel '{which}' geladen - jetzt BERECHNEN (F5)")
+            self.info(f"{text} geladen - jetzt BERECHNEN (F5)")
         except Exception as ex:
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))

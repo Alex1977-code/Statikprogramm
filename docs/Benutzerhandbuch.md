@@ -112,7 +112,7 @@ Fünfzehn Register nach Arbeitsschritt:
 
 | Register | Inhalt |
 |---|---|
-| **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
+| **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispielbibliothek…** (14 Beispiele mit einstellbaren Werten, dazu eigene Beispiele) |
 | **Start** | der Arbeitsablauf in einer Reihe: Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen (mit den Prüfwerkzeugen *Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…*, *Freie Bewegungen suchen*), Berechnen, Ergebnisse, Nachweise EC3, Bericht; am Ende das Menü *Bearbeiten ▾* (Rückgängig, Wiederholen, Auswahl) |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
@@ -5456,8 +5456,10 @@ hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026). Eigengewi
 und Temperaturlast im Register Lager/Lasten gelten nicht mehr als solche
 Ausnahme: Seit dem 06.10.2026 sind sie Rückgängig-Schritte wie jede andere Last.
 
-**Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
-Knöpfen, von denen jeder das Modell ersetzte.
+**Beispiele** öffnet der Knopf *Beispielbibliothek…* (seit 09.11.2026; davor
+ein Knopf *Beispiel öffnen ▾* mit acht festen Beispielen). Der Knopf ersetzt
+das Modell nicht, erst *Übernehmen* im Dialog; siehe „Beispielbibliothek“ in
+Abschnitt 3.
 
 **Ein Beispiel räumt auf wie *Neu*** (seit 02.10.2026), ebenso das *Öffnen*
 einer Datei und der *Import* ohne Anhängen. Alle vergessen, was dem vorigen
@@ -6101,12 +6103,68 @@ Rechnung prüft („Zuerst berechnen“, wenn es noch keine gibt); die Parameter
 Stäbe aus Schritt 5 stellt man vor der Rechnung in der Maske *Nachweise* ein.
 Es sind dieselben Befehle wie in den Fachregistern, keine neuen.
 
-Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
-aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
+Beispiele unter **Datei → Beispielbibliothek…** zeigen jeden dieser Schritte
+fertig aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
 Kontaktbeispiele. Seit dem 06.10.2026 heißen ihre Lastfälle LF1, LF2 …, ihre
 Kombinationen LK1, LK2 …, und der frühere Name steht als Bezeichnung daneben
 (am Hallenrahmen „LF3 W_links“).
+
+### Beispielbibliothek (seit 09.11.2026)
+
+Der Knopf **Datei → Beispielbibliothek…** öffnet einen Dialog. Links stehen
+die Beispiele nach Stabwerk, Flächentragwerk und Volumen, rechts die
+Beschreibung und eine Tabelle der Parameter mit Wert, Einheit und Grenzen.
+Werte trägt man in der Spalte *Wert* ein. Liegt ein Wert außerhalb der
+Grenzen oder ist er keine Zahl, wird die Zeile rot. Passt er nicht zu einem
+anderen Wert (etwa Unterwasser über dem Oberwasser), steht das unter der
+Tabelle. In beiden Fällen nennt die Zeile unter der Tabelle den Grund und
+*Übernehmen* ist gesperrt; das Programm begrenzt nie still.
+*Vorgabewerte* setzt die Tabelle zurück. *Übernehmen* baut das Modell und
+ersetzt das offene; ist etwas ungespeichert, fragt das Programm vorher wie
+bei *Neu*. Im Modell stehen danach das Beispiel und seine Werte
+(Projektangaben, `meta["beispiel"]`), bei den Stahlwasserbau- und
+Kranbeispielen auch die Annahmen.
+
+Eingebaut sind 14 Beispiele. Unter Stabwerk stehen Rahmen, Fachwerk,
+Hallenrahmen, Abhebendes Lager, Doppellenkerwippkran und Förderbandbrücke.
+Unter Flächentragwerk stehen Platte, Stauwand, Stemmtor, Hubtor und
+Fischbauchklappe, unter Volumen Konsole, Reibung und Spurlager. Mit den
+Vorgabewerten entsteht jeweils dasselbe Modell wie bis zum 09.11.2026 mit
+*Beispiel öffnen* bzw. mit den Testmodellen vom 09.11.2026. Alle Maße,
+Querschnitte, Werkstoffe und Lasten der Beispiele sind Annahmen; Werkstoff
+und Teilsicherheitsbeiwerte legt der Anwender fest.
+
+**Eigene Beispiele** sind Python-Dateien im Ordner
+`Dokumente\Statik3D\Beispiele` (*Ordner öffnen* im Dialog legt ihn an). Eine
+Datei nennt `TITEL`, `GRUPPE` (Stabwerk, Flächentragwerk, Volumen oder ein
+eigener Name), `BESCHREIBUNG`, `PARAMETER` als Liste von
+`(name, titel, wert, einheit, min, max)` und eine Funktion `bauen(werte)`, die
+das Modell zurückgibt; `werte` enthält die Werte in der Einheit der Tabelle.
+Eine Funktion `pruefen(werte)` kann zusätzlich eine Liste von Meldungen
+zurückgeben, die *Übernehmen* sperren. Beispiel:
+
+```python
+TITEL = "Kragarm"
+GRUPPE = "Stabwerk"
+BESCHREIBUNG = "Kragarm IPE 200 mit Endlast"
+PARAMETER = [("L", "Länge", 3.0, "m", 0.5, 10.0), ("F", "Endlast", 10.0, "kN", 0.0, 500.0)]
+
+def bauen(werte):
+    from statik3d.model import Model, Material, Section
+    from statik3d import mesher
+    m = Model("Kragarm")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("IPE 200"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 200", (0, 0, 0), (werte["L"], 0, 0), 6)
+    m.fix(int(ids[0]), "all")
+    m.load_node(int(ids[-1]), Fz=-werte["F"] * 1e3)
+    return m
+```
+
+Das Programm führt diese Dateien aus, sobald die Bibliothek geöffnet wird.
+Legen Sie dort darum nur eigene Dateien ab. Eine fehlerhafte Datei verhindert
+die anderen nicht; sie steht rot mit Grund und Zeile unter der Liste.
 
 ## 4 Lastfälle und Kombinationen
 
