@@ -598,6 +598,23 @@ def test_r1f_beispiele():
         check(f"R1f {b}: Lastfälle LF<n>, Kombinationen LK<n>",
               all(re.fullmatch(r"LF\d+", n) for n in m.load_cases)
               and all(re.fullmatch(r"LK\d+", n) for n in m.combinations), str(list(m.load_cases)))
+        if b == "gate":
+            # Seit Gruppe 4 (e3f45b8, 09.11.2026) stehen die Schalenspannungen in den Achsen der
+            # Flaeche. Die Vergleichsspannung ist davon unabhaengig, ihre letzte Stelle aber nicht
+            # (gemessen: groesste Abweichung 1,3e-16 bezogen). Die Vergleichsspannung der
+            # Umhuellenden wird deshalb auf 1e-12 gegen die bitgenauen Werte des Stands b047c23
+            # (dort bitgleich mit 6791f9f) geprueft und fuer den Fingerabdruck durch sie ersetzt;
+            # alle anderen Felder bleiben bitgenau verglichen.
+            vm_soll = np.load(os.path.join(REFERENZ, "gate_node_vm_max.npz"))
+            ab = {}
+            for k, e in an.envelopes.items():
+                a, s = np.asarray(e.node_vm_max, float), vm_soll[k]
+                ab[k] = float(np.abs(a - s).max() / s.max()) if a.shape == s.shape else float("inf")
+                if ab[k] <= 1e-12:
+                    e.node_vm_max = s.copy()
+            check(f"R1f {b}: Vergleichsspannung der Umhüllenden auf 1e-12 wie 6791f9f (Flächenachsen: nur Rundung)",
+                  sorted(ab) == sorted(vm_soll.files) and all(x <= 1e-12 for x in ab.values()),
+                  "größte bezogene Abweichung " + ", ".join(f"{k} {x * 1e15:.2f}·10⁻¹⁵" for k, x in ab.items()))
         abdruck = _zurueck(R["analyse"](an), _alte_namen_tab(m))
         abdruck["fatigue"] = _ohne_neue_felder(abdruck["fatigue"])
         ist = R["verdichtet"](abdruck)
