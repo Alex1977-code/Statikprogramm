@@ -153,6 +153,13 @@ class _Stab:
         sec = model.sections[e.sec]
         self.A, self.Ip = sec.A, sec.Iy + sec.Iz
         kl, T3, T, L = asm.beam_local(model, e)
+        # Gelenke und Federgelenke in der geometrischen Steifigkeit wie in der
+        # elastischen (asm.stab_endkinematik, wie Theorie II. Ordnung seit A7).
+        # Bis zum 09.11.2026 bekam die Tangente die volle Balkenform: mit einer
+        # Pendelstuetze als Balken mit Gelenken neben einem Kragstiel
+        # konvergierte die Rechnung ab 5/6 der Knicklast nicht mehr
+        # (Nebenbefund 16 a, tests/test_theorie_nebenbefund16.py)
+        self.C = None if e.typ == "truss" else asm.stab_endkinematik(model, e, kl)
         fa = None if f_anf is None or not np.any(f_anf) else np.asarray(f_anf, float)
         # die Anfangsdehnung wie in asm.stablasten_einbauen: Federgelenke, dann
         # Gelenke kondensiert
@@ -201,6 +208,8 @@ class _Stab:
             kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, self.A, self.Ip)
+            if self.C is not None:
+                kg = self.C.T @ kg @ self.C
         T = bm.transform_matrix(E.T)
         return fl, T, kg, N, L
 

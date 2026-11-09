@@ -2072,11 +2072,22 @@ def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
     v'' = +Mz/EIz, Null an beiden Enden) - iteriert, weil das Moment von der
     Biegelinie abhaengt. Bis dahin fehlte der Anteil ganz: Feldmoment eines
     Einfeldtraegers mit Druck 0,6 N_cr in einem Element -35 %.
-    Schubverformung und Laengslasten entlang des Stabes bleiben aussen vor."""
+
+    Ein Stab mit Schubflaechen (Timoshenko, wie bm.k_local_beam) biegt sich
+    zusaetzlich um die Schubverformung durch, w_s' = My'/(G A_sz) bzw.
+    v_s' = -Mz'/(G A_sy) (Engesser: die Querkraft ist die Ableitung des
+    Moments), integriert w_s = (My - My(0))/(G A_sz) - seit dem 09.11.2026
+    zaehlt sie mit (Nebenbefund 16 c). Bis dahin fehlte sie: Einfeldtraeger
+    mit N_E/(G A_s) = 0,1 und Druck 0,6 N_cr in einem Element -12 %.
+    Laengslasten entlang des Stabes bleiben aussen vor: die Stabkraft gilt
+    im Element als gleichbleibend."""
     e = model.elements[i]
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     EIy, EIz = mat.E * sec.Iy, mat.E * sec.Iz
+    # Schubsteifigkeiten wie bm.schubparameter: Biegung um y traegt A_sz, um z A_sy
+    GAz = mat.G * float(getattr(sec, "Asz", 0.0) or 0.0)
+    GAy = mat.G * float(getattr(sec, "Asy", 0.0) or 0.0)
     xs = np.linspace(0.0, L, TH2_FELDSTELLEN)
     _Qs, Mqs = asm.lastresultierende(q, xs)
     My0 = -fl[4] - fl[2] * xs - Mqs[:, 2]
@@ -2092,13 +2103,19 @@ def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
         c2 = np.concatenate([[0.0], np.cumsum(0.5 * (c1[1:] + c1[:-1]) * dx)])
         return c2 - c2[-1] * xs / L
 
+    def schub(M, GA):
+        # Schubdurchbiegung aus dem Momentenverlauf, Null an beiden Enden
+        if not GA > 0:
+            return 0.0
+        return ((M - M[0]) - (M[-1] - M[0]) * xs / L) / GA
+
     P = float(fl[0])
     w, v = sehne_w.copy(), sehne_v.copy()
     for _ in range(60):
         My_ = My0 + (w - w0) * P
         Mz_ = Mz0 + (v0 - v) * P
-        w_n = sehne_w + (doppelt(-My_ / EIy) if EIy > 0 else 0.0)
-        v_n = sehne_v + (doppelt(Mz_ / EIz) if EIz > 0 else 0.0)
+        w_n = sehne_w + (doppelt(-My_ / EIy) if EIy > 0 else 0.0) + schub(My_, GAz)
+        v_n = sehne_v + (doppelt(Mz_ / EIz) if EIz > 0 else 0.0) - schub(Mz_, GAy)
         d = max(float(np.abs(w_n - w).max()), float(np.abs(v_n - v).max()))
         w, v = w_n, v_n
         if d <= 1e-14 + 1e-10 * max(float(np.abs(w).max()), float(np.abs(v).max())):

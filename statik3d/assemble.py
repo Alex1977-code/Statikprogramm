@@ -1802,6 +1802,14 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
             C = stab_endkinematik(model, e)
             if C is not None:
                 kg = C.T @ kg @ C
+        # Versatz der Stabenden (Exzentrizitaet) wie in der elastischen
+        # Steifigkeit (element_matrix): K_G = A^T k_G A. Bis zum 09.11.2026
+        # wirkte k_G auf die Knoten statt auf die Stabenden - ein Druckstab
+        # 0,2 m neben seiner Knotenlinie hatte alpha_cr 1,158 statt 2,000
+        # (Nebenbefund 16 b, tests/test_theorie_nebenbefund16.py)
+        A = beam_versatz(e)
+        if A is not None:
+            kg = A.T @ kg @ A
         kg = T.T @ kg @ T
         r, c = np.meshgrid(d, d, indexing="ij")
         rows.append(r.ravel())
