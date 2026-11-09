@@ -9455,6 +9455,29 @@ jeweils 0.
 Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
 Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
+**Beim Export geht nichts mehr still verloren** (seit 09.11.2026). Der
+IFC-Export schreibt Knoten, Werkstoff, Profil, Stabendgelenke, Fachwerkstäbe,
+Knotenlager, Lasten und Kombinationen; jeder Knoten steht nur einmal in der
+Datei. Der SAF-Export schreibt zusätzlich Stabendgelenke, Fachwerkstäbe und
+Linienlager. Der Nastran-Export schreibt die Knoten im Großfeld mit voller
+Genauigkeit, Fachwerkstäbe als CROD und Gelenke am CBAR. Der Abaqus-Export
+schreibt Gelenke, Stablasten und das Eigengewicht auf eine vorhandene
+Elementmenge. Der DXF-Export nennt im Kopf die Einheit Meter und legt
+Lagersymbole und Beschriftung auf Ebenen mit dem Vorsatz `STATIK3D_`, die der
+Import nicht als Tragwerk liest. Der DXF-Import liest die Einheit aus der
+Datei und wählt sie im Importdialog vor; fehlt sie, nimmt er wie bisher
+Millimeter an und sagt das in einer Warnung. Was ein Format nicht tragen kann,
+steht nach dem Export als Hinweis mit Anzahl im Protokoll, zum Beispiel
+„nicht übertragen: 1 Flächenlager, 2 Kontaktdefinitionen“. Flächenlager
+schreibt kein Format; sie stehen immer in diesem Hinweis. Nach dem Import
+einer Abaqus- oder IFC-Datei heißt der erste Lastfall LF1 (vorher LF1_2). Bis
+zum 09.11.2026 kam ein Rahmen über IFC mit 8 statt 5 Knoten zurück und
+verformte sich nach dem Wiedereinlesen nicht (0,00 statt −1,45 mm), über SAF,
+Nastran und Abaqus fehlten die Gelenke (Verschiebung −0,62, −0,35 und −0,35
+statt −1,45 mm). Die geschriebenen Dateien sind mit dem
+eigenen Import geprüft (Rundreise), nicht in fremden Programmen. Geprüft in
+`tests/test_gruppe6_exporte.py`.
+
 **SAF-Export: Stablasten und Ergebniskombinationen (seit 06.10.2026).** Der
 SAF-Export (Datei → Exportieren, Endung `.xlsx`) schreibt eine Stablast so, wie
 SAF sie beschreibt: gleichmäßig (Distribution „Uniform“), trapezförmig („Trapez“,
