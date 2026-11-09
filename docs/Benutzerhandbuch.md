@@ -11164,6 +11164,44 @@ das α_cr des Systems; das Knicken des einzelnen Stabs weist der Stabnachweis
 der Übersicht, auch wenn ein Druckstab schon bei einem kleineren Faktor
 knickte.
 
+**Stabendgelenke in α_cr und Theorie II. Ordnung** (seit 09.11.2026). Die
+geometrische Steifigkeit eines Balkens mit Stabendgelenk oder Federgelenk wird
+jetzt genau so kondensiert wie seine elastische Steifigkeit. Ein Balken mit
+Gelenken an beiden Enden wirkt damit wie ein Fachwerkstab als Saite. Bis zum
+09.11.2026 bekam er die volle Balkenform: Eine Pendelstütze als Balken mit
+Gelenken hatte neben einem Kragstiel α_cr = 1,667 statt 2,000, und ein
+gezogener Gelenkstab hielt den Kopf zu steif, α_cr bis 37 % zu hoch, also auf
+der unsicheren Seite. Ein Balken aus einem einzigen Element, der an beiden
+Enden in einer Ebene gelenkig ist, steht deshalb wie ein Fachwerk-Druckstab
+im Einzelknicken (π²·E·I/(L²·N) mit dem Trägheitsmoment der gelenkigen
+Ebene).
+
+**Schnittgrößen nach Theorie II. Ordnung** (seit 09.11.2026). Die
+Stabendkräfte rechnen mit derselben Steifigkeit wie das Gleichungssystem,
+elastisch plus geometrisch. Im Feld kommt der Anteil der Normalkraft am Hebel
+der Durchbiegung dazu (N·w). Die Biegelinie im Element wird dafür aus der
+Momentenlinie integriert, gemessen gegen die Sehne zwischen den Stabenden.
+Bis zum 09.11.2026 fehlten beide Anteile. Ein Einfeldträger mit Druck
+0,6·N_cr in einem Element hatte ein Feldmoment von 37,1 statt 57,3 kNm
+(−35 %), und am Kragarm war das Stabendmoment 7,9 % größer als das
+Lagermoment. Jetzt sind es 57,25 kNm gegen geschlossen 57,27 kNm, und
+Stabend- und Lagermoment sind gleich.
+
+**Stabteilung für α_cr** (seit 09.11.2026). Die Verzweigung rechnet je
+Element mit einer kubischen Biegelinie. Liegt eine ganze Knickhalbwelle in
+einem Element, ist α_cr zu hoch, beim beidseits gelenkigen Druckstab in einem
+Element um 21,6 %. Mit zwei Elementen sind es 0,75 %, mit vier 0,05 %.
+Erreicht α_cr·|N| eines gedrückten Balkenelements 30 % der Euler-Last dieses
+Elements (π²·E·I/l², l seine Länge), steht in den Hinweisen der Kombination
+und in der Zusammenfassung „α_cr: Stabteilung zu grob“. Der Hinweis nennt das
+Element und verlangt mindestens vier Elemente. Bis zum 09.11.2026 sagte das
+Programm dazu nichts.
+
+**Federgelenk mit Steifigkeit 0** (seit 09.11.2026). Ein Federgelenk mit
+k = 0 ist ein Gelenk. Bis dahin wirkte es biegesteif, wenn es im Skript oder
+über die Web-Schnittstelle angelegt war; die Maske lässt k = 0 nicht zu. Eine
+ältere Datei bekommt das Gelenk beim Öffnen und meldet es im Protokoll.
+
 **α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
 eines Lastfalls oder einer Kombination abgeschaltet ist oder als
 „deaktiviert“ nirgends wirkt, zählt für α_cr nicht mehr mit, genau wie in

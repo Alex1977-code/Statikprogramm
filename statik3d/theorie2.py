@@ -340,6 +340,20 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
                "elastisch": elastisch, "anzahl": len(je_stab)}
 
 
+def normalkraefte_kg(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> dict:
+    """{Element: Normalkraft} der Balken (nicht Fachwerkstab, Seil), wie sie
+    asm.geometric_stiffness fuer K_g nimmt (Zug positiv)."""
+    n_anfang = n_anfang or {}
+    out = {}
+    for i, e in enumerate(model.elements):
+        if e.typ not in asm.LINE_TYPES or e.typ in ("truss", "seil"):
+            continue
+        if aktiv is not None and not aktiv[i]:
+            continue
+        out[i] = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0))
+    return out
+
+
 # ==========================================================================
 # alpha_cr (5.2.1)
 # ==========================================================================
@@ -397,7 +411,63 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
     mx = float(np.abs(modus).max())
     if mx > 0:
         modus /= mx
-    return {"alpha_cr": float(1.0 / mu[0]), "modus": modus, "fehler": "", **stab}
+    a = float(1.0 / mu[0])
+    grob = stabteilung_grob(model, u, a, getattr(system, "aktiv", None), n_anfang)
+    return {"alpha_cr": a, "modus": modus, "fehler": "", **stab,
+            "teilung_grob": grob, "hinweis_teilung": teilung_hinweis(grob)}
+
+
+#: Ab diesem Verhaeltnis alpha_cr |N| / (pi^2 E I / l^2) eines Balkenelements
+#: (l seine Laenge) ist die kubische Biegelinie fuer die Knickfigur zu grob:
+#: bei 1 (Euler-Fall 2 in einem Element) liegt alpha_cr 21,6 % zu hoch, bei
+#: 0,25 (zwei Elemente bzw. Kragstuetze in einem) 0,75 %.
+TEILUNG_GRENZE = 0.3
+
+
+def stabteilung_grob(model: Model, u: np.ndarray, a_cr: float, aktiv=None, n_anfang: dict = None) -> list:
+    """Gedrueckte Balkenelemente, die fuer die Knickfigur zu lang sind
+    (Befund A9 der Pruefagenten, 09.11.2026): alpha_cr |N| erreicht
+    TEILUNG_GRENZE der Euler-Last des einzelnen Elements. Die Verzweigung
+    rechnet je Element mit einer kubischen Biegelinie; mit einem Element je
+    Knickhalbwelle liegt alpha_cr bis 21,6 % zu hoch (unsichere Seite), und
+    bis dahin sagte das Programm nichts. Rueckgabe [(Verhaeltnis, Element,
+    Stab)], das groesste zuerst."""
+    if not math.isfinite(a_cr) or a_cr <= 0:
+        return []
+    from .solver import _stab_namen
+    namen = _stab_namen(model)
+    out = []
+    for i, N in normalkraefte_kg(model, u, aktiv, n_anfang).items():
+        if N >= 0.0:
+            continue
+        e = model.elements[i]
+        sec = model.sections[e.sec]
+        # eine an beiden Enden gelenkige Ebene prueft einzelstab_knicken
+        frei = set(int(x) for x in (e.hinges or []))
+        Is = [Ia for Ia, d1, d2 in ((sec.Iy, 4, 10), (sec.Iz, 5, 11)) if not (d1 in frei and d2 in frei)]
+        if not Is:
+            continue
+        I = min(Is)
+        l = model.element_length(i)
+        if I <= 0 or l <= 0:
+            continue
+        v = a_cr * (-N) / (math.pi ** 2 * model.materials[e.mat].E * I / l ** 2)
+        if v >= TEILUNG_GRENZE:
+            out.append((float(v), int(i), str(namen.get(i, ""))))
+    out.sort(reverse=True)
+    return out
+
+
+def teilung_hinweis(grob: list) -> str:
+    """Der Satz zu :func:`stabteilung_grob` ("" ohne Befund)."""
+    if not grob:
+        return ""
+    v, i, name = grob[0]
+    wo = f"Element {i + 1}" + (f" (Stab {name})" if name else "")
+    mehr = f" und {len(grob) - 1} weitere" if len(grob) > 1 else ""
+    return (f"α_cr: Stabteilung zu grob – {wo}{mehr} ist für die Knickfigur zu lang; "
+            f"α_cr kann bis 22 % zu hoch liegen (unsichere Seite). Gedrückte Stäbe in "
+            f"mindestens vier Elemente teilen.")
 
 
 def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> list:
@@ -421,13 +491,27 @@ def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict =
     namen = _stab_namen(model)
     n_anfang = n_anfang or {}
     je_stab: dict = {}
+    pendel: dict = {}
     for i, e in enumerate(model.elements):
-        if e.typ != "truss" or getattr(e, "nur", "") == "zug":
-            continue
         if aktiv is not None and not aktiv[i]:
             continue
+        if e.typ != "truss":
+            # Balken aus einem Element, an beiden Enden in einer Ebene
+            # gelenkig (09.11.2026, mit A7): seine K_g ist dort die Saite wie
+            # beim Fachwerkstab, sein Ausknicken zwischen den Knoten steht
+            # nicht in der Verzweigung - es kommt hierher
+            if e.typ in ("seil",) or e.typ not in asm.LINE_TYPES:
+                continue
+            frei = set(int(x) for x in (e.hinges or []))
+            ebenen = [(achse, d1, d2) for achse, d1, d2 in (("y", 4, 10), ("z", 5, 11))
+                      if d1 in frei and d2 in frei]
+            if not ebenen:
+                continue
+            pendel[i] = ebenen
+        elif getattr(e, "nur", "") == "zug":
+            continue
         N = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0))
-        name = namen.get(i, f"Element {i + 1}")
+        name = namen.get(i, f"Element {i + 1}") if i not in pendel else f"Element {i + 1}"
         alt = je_stab.get(name)
         if alt is None or -N > alt[0]:
             je_stab[name] = (-N, i)
@@ -440,7 +524,10 @@ def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict =
         sec = model.sections[e.sec]
         mem = model.members.get(name)
         L = model.member_length(mem) if mem is not None else model.element_length(i)
-        I, achse = (sec.Iz, "z") if sec.Iz <= sec.Iy else (sec.Iy, "y")
+        if i in pendel:
+            I, achse = min(((sec.Iy if a == "y" else sec.Iz), a) for a, _d1, _d2 in pendel[i])
+        else:
+            I, achse = (sec.Iz, "z") if sec.Iz <= sec.Iy else (sec.Iy, "y")
         if L <= 0 or I <= 0:
             continue
         a = math.pi ** 2 * mat.E * I / (L ** 2 * Nc)
@@ -649,6 +736,8 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     info.stab_aus(ac)
     if ac.get("fehler"):
         info.hinweise.append(ac["fehler"])
+    if ac.get("hinweis_teilung"):
+        info.hinweise.append(ac["hinweis_teilung"])
     if info.alpha_cr <= 1.0:
         # Ueber der Verzweigungslast hat (K + K_g) u = F zwar eine Loesung,
         # aber keine brauchbare: am Druckkragarm (tests/test_umhuellende.py,
@@ -678,6 +767,9 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
             info.schiefstellung, info.vorkruemmung = s_info, v_info
         Fges = F + Fimp
         Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf)
+        # dieselben Normalkraefte wie in K_g fuer die Stabendkraefte und das
+        # Feld (A8, 09.11.2026: postprocess rechnet sie mit k + k_G)
+        n_geo = normalkraefte_kg(model, u, aktiv, n_anf)
         try:
             u_neu = system.solve(Fges, K_extra=Kg, us=us)
         except Exception as exc:
@@ -689,7 +781,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         res = Results(name=name, kind="combination", model=model)
         verschiebungen_eintragen(model, res, u, system.reactions(u, Fges, K_extra=Kg))
         auto_gehalten_abtrennen(model, getattr(system, "auto", None), res, Fges, aktiv)
-        postprocess(model, u, res, feq, q, temp, aktiv=aktiv)
+        postprocess(model, u, res, feq, q, temp, aktiv=aktiv, n_geo=n_geo)
         info.iterationen = it
         info.konvergenz = d / bezug
         if d / bezug < tol:
@@ -770,6 +862,11 @@ class Th2Results:
         fehler = [n for n, i in self.kombinationen.items() if i.fehler]
         if fehler:
             s += f" - {len(fehler)} nicht geführt: " + ", ".join(fehler)
+        # Stabteilung zu grob fuer die Knickfigur (A9, 09.11.2026): nie still
+        grob = next((h for i in self.kombinationen.values() for h in i.hinweise
+                     if h.startswith("α_cr: Stabteilung zu grob")), "")
+        if grob:
+            s += f" - {grob}"
         return s
 
     def table(self) -> list[list]:
@@ -881,6 +978,8 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             info.stab_aus(ac)
             if ac.get("fehler"):
                 info.hinweise.append(ac["fehler"])
+            if ac.get("hinweis_teilung"):
+                info.hinweise.append(ac["hinweis_teilung"])
             if ac["alpha_cr"] >= grenze:
                 out.kombinationen[zeile] = info
                 if schluessel is not None:

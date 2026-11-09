@@ -1581,6 +1581,9 @@ class Results:
     reactions: np.ndarray = None            # (nn, 6) Auflagerreaktionen
     beam_end: dict = field(default_factory=dict)    # elem -> lokale Stabendkraefte (12,)
     beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
+    #: Theorie II. Ordnung: elem -> lokale Stabend-Verschiebungen (12,), aus
+    #: denen beam_station_forces den Anteil N w im Feld rechnet (A8, 09.11.2026)
+    beam_th2: dict = field(default_factory=dict)
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
     #: elem -> Elementmittel Integral sigma dV / V (6,) - linear in u, daher in
@@ -2044,7 +2047,63 @@ def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
     Mt = np.full(n, -fl[3])
     My = -fl[4] - fl[2] * x - Mq[:, 2]
     Mz = -fl[5] + fl[1] * x + Mq[:, 1]
+    th2 = getattr(res, "beam_th2", None) or {}
+    if i in th2 and fl[0] != 0.0:
+        dMy, dMz = _th2_feldanteil(model, i, fl, q, L, th2[i], x)
+        My = My + dMy
+        Mz = Mz + dMz
     return {"x": x, "L": L, "N": N, "Vy": Vy, "Vz": Vz, "Mt": Mt, "My": My, "Mz": Mz}
+
+
+#: Stellen, an denen _th2_feldanteil die Biegelinie im Element rechnet
+TH2_FELDSTELLEN = 81
+
+
+def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
+    """Theorie II. Ordnung im Feld (Befund A8 der Pruefagenten, 09.11.2026):
+    der Anteil der Stabkraft am Hebel der Durchbiegung, (dMy, dMz) an den
+    Stellen ``x``.
+
+    Gleichgewicht am verformten Teilstab [0, x]: die Laengskraft fl[0] am
+    Anfang greift um w(x) - w(0) bzw. v(x) - v(0) versetzt an, also
+    My += (w - w0) fl[0], Mz += (v0 - v) fl[0]. Die Biegelinie im Element ist
+    die Sehne zwischen den Stabenden ``ul`` (lokal, hinter Gelenk und
+    Versatz) plus die zweifach integrierte Kruemmung (w'' = -My/EIy,
+    v'' = +Mz/EIz, Null an beiden Enden) - iteriert, weil das Moment von der
+    Biegelinie abhaengt. Bis dahin fehlte der Anteil ganz: Feldmoment eines
+    Einfeldtraegers mit Druck 0,6 N_cr in einem Element -35 %.
+    Schubverformung und Laengslasten entlang des Stabes bleiben aussen vor."""
+    e = model.elements[i]
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    EIy, EIz = mat.E * sec.Iy, mat.E * sec.Iz
+    xs = np.linspace(0.0, L, TH2_FELDSTELLEN)
+    _Qs, Mqs = asm.lastresultierende(q, xs)
+    My0 = -fl[4] - fl[2] * xs - Mqs[:, 2]
+    Mz0 = -fl[5] + fl[1] * xs + Mqs[:, 1]
+    ul = np.asarray(ul, float)
+    w0, wL, v0, vL = ul[2], ul[8], ul[1], ul[7]
+    sehne_w = w0 + (wL - w0) * xs / L
+    sehne_v = v0 + (vL - v0) * xs / L
+    dx = np.diff(xs)
+
+    def doppelt(k):
+        c1 = np.concatenate([[0.0], np.cumsum(0.5 * (k[1:] + k[:-1]) * dx)])
+        c2 = np.concatenate([[0.0], np.cumsum(0.5 * (c1[1:] + c1[:-1]) * dx)])
+        return c2 - c2[-1] * xs / L
+
+    P = float(fl[0])
+    w, v = sehne_w.copy(), sehne_v.copy()
+    for _ in range(60):
+        My_ = My0 + (w - w0) * P
+        Mz_ = Mz0 + (v0 - v) * P
+        w_n = sehne_w + (doppelt(-My_ / EIy) if EIy > 0 else 0.0)
+        v_n = sehne_v + (doppelt(Mz_ / EIz) if EIz > 0 else 0.0)
+        d = max(float(np.abs(w_n - w).max()), float(np.abs(v_n - v).max()))
+        w, v = w_n, v_n
+        if d <= 1e-14 + 1e-10 * max(float(np.abs(w).max()), float(np.abs(v).max())):
+            break
+    return np.interp(x, xs, (w - w0) * P), np.interp(x, xs, (v0 - v) * P)
 
 
 def member_forces(model: Model, res: Results, member: Member, n: int = None) -> dict:
@@ -3523,6 +3582,19 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             if rec is not None:
                 ul = asm.hinge_local_disp(rec, ul)      # Stabende hinter der Feder
             fl = kl @ ul - f0
+            n_geo = extra.get("n_geo") or {}
+            if i in n_geo and e.typ not in ("truss", "seil"):
+                # Theorie II. Ordnung (A8, 09.11.2026): die Stabendkraefte wie
+                # das Gleichungssystem mit k + k_G, k_G kondensiert wie dort
+                # (asm.stab_endkinematik) - an einem Gelenk bleibt das Moment 0
+                sec_ = model.sections[e.sec]
+                kg_ = bm.kg_local_beam(float(n_geo[i]), L, sec_.A, sec_.Iy + sec_.Iz)
+                zu = kg_ @ ul
+                C_ = asm.stab_endkinematik(model, e, kl)
+                if C_ is not None:
+                    zu = C_.T @ zu
+                fl = fl + zu
+                out.append((i, "beam_th2", np.asarray(ul, float).copy()))
             out.append((i, "beam", fl))
         elif e.typ in asm.SHELL_TYPES:
             prop = model.shells[e.sec]
@@ -4141,9 +4213,15 @@ def rand_projizieren(model: Model, sk: dict, aktiv=None, faelle=None, merker: di
 
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 q: dict = None, temp: dict = None, workers: int = None, aktiv=None,
-                system=None):
+                system=None, n_geo: dict = None):
     """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
-    Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht."""
+    Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht.
+
+    ``n_geo`` {Element: Normalkraft} (Theorie II. Ordnung, theorie2.
+    solve_theorie2): die Stabendkraefte der Balken rechnen dann mit
+    k + k_G wie das Gleichungssystem, und die Stabend-Verschiebungen stehen
+    in ``res.beam_th2`` - daraus nehmen die Stellen im Feld den Anteil N w
+    (beam_station_forces). Befund A8 der Pruefagenten, 09.11.2026."""
     feq = feq if feq is not None else {}
     q = q if q is not None else {}
     temp = temp if temp is not None else {}
@@ -4153,7 +4231,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     ecken: dict = {}
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
                                   extra={"u": u, "feq": feq, "temp": temp,
-                                         "ev_dilatation": ev})
+                                         "ev_dilatation": ev, "n_geo": n_geo or {}})
     if aktiv is not None:
         inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
         res.info["inaktiv"] = inaktiv
@@ -4194,6 +4272,8 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 res.beam_q[i] = qi
         elif kind == "bimoment":
             res.bimomente[i] = val
+        elif kind == "beam_th2":
+            res.beam_th2[i] = val
         elif kind == "shell":
             res.shell_res[i] = val
         elif kind == "feder":

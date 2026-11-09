@@ -293,6 +293,44 @@ def _kontakt_nur_koerper(model) -> bool:
     return False
 
 
+def _balken_mit_gelenk(model) -> bool:
+    """Ein Balkenelement (nicht Fachwerkstab, Seil) mit Stabendgelenk oder
+    Federgelenk - seine geometrische Steifigkeit war bis zum 09.11.2026 nicht
+    kondensiert (Befund A7)."""
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") in ("beam", "beam_shear") and (e.hinges or getattr(e, "hinge_springs", None)):
+            return True
+    return False
+
+
+def _balken(model) -> bool:
+    """Ein Balkenelement (nicht Fachwerkstab, Seil) - seine Schnittgroessen nach
+    Theorie II. Ordnung hatten bis zum 09.11.2026 keinen Anteil k_G u und N w (A8)."""
+    return any(getattr(e, "typ", "") in ("beam", "beam_shear") for e in getattr(model, "elements", None) or [])
+
+
+def _gelenk_feder_null(model) -> bool:
+    """Ein Gelenk mit Federsteifigkeit 0, auf Elemente gelegt (Befund A10)."""
+    for h in (getattr(model, "hinges", None) or {}).values():
+        if not getattr(h, "elemente", None):
+            continue
+        if any(t == "spring" and not float(k) > 0 for t, k in zip(h.typ, h.stiffness)):
+            return True
+    return False
+
+
+def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
+    """Ergebnisse, die nach Theorie II. Ordnung gerechnet sind (nicht nur alpha_cr)."""
+    th2 = getattr(an, "theorie2", None)
+    namen = [str(n) for n, i in (getattr(th2, "kombinationen", None) or {}).items()
+             if getattr(i, "gerechnet", False)]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("II."):
+            namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -958,6 +996,39 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Kontaktbedingung, die nur Körper nennt",
         betrifft=_kontakt_nur_koerper),
+    # Befund A7 der Pruefagenten (09.11.2026): die geometrische Steifigkeit
+    # eines Balkens mit Stabendgelenk war nicht kondensiert - Pendelstuetze als
+    # Balken alpha_cr 1,667 statt 2,000, gezogener Gelenkstab bis +37 %.
+    # Jetzt K_G = C^T k_G C wie die elastische Steifigkeit. Fehlerkorrektur
+    Merkmal(
+        name="theorie2_gelenke", titel="Geometrische Steifigkeit an Stabendgelenken",
+        texte={"alt": "K_G eines Balkens ohne Rücksicht auf seine Gelenke",
+               "neu": "K_G kondensiert wie die elastische Steifigkeit"},
+        wechsel=(Wechsel(stand=15, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, mit alpha_cr, Knicken oder Theorie II. Ordnung",
+        betrifft=_balken_mit_gelenk, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Befund A8 (09.11.2026): Stabend- und Feldmomente nach Theorie II.
+    # Ordnung ohne k_G u und ohne N w (Kragarm +7,9 %, Feld bis -35 % bei einem
+    # Element). Fehlerkorrektur
+    Merkmal(
+        name="theorie2_schnittgroessen", titel="Schnittgrößen nach Theorie II. Ordnung",
+        texte={"alt": "Stabendkräfte k u, Feld ohne N·w",
+               "neu": "Stabendkräfte (k + k_G) u, Feld mit N·w"},
+        wechsel=(Wechsel(stand=16, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken, nach Theorie II. Ordnung gerechnet",
+        betrifft=_balken, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Befund A10 (09.11.2026): ein Federgelenk mit k = 0 wirkte biegesteif
+    # (Skript, Web). Jetzt ist es ein Gelenk; aeltere Dateien ziehen es beim
+    # Oeffnen nach (Model._gelenke_feder_null_nachziehen). Fehlerkorrektur
+    Merkmal(
+        name="gelenk_feder_null", titel="Federgelenk mit Steifigkeit 0",
+        texte={"alt": "Federgelenk mit k = 0 biegesteif", "neu": "Federgelenk mit k = 0 gelenkig"},
+        wechsel=(Wechsel(stand=17, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Gelenk mit Federsteifigkeit 0",
+        betrifft=_gelenk_feder_null),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -1041,7 +1112,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 14
+VERFAHRENSSTAND = 17
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

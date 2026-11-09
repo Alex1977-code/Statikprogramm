@@ -226,6 +226,42 @@ def condense(kl: np.ndarray, fl: np.ndarray, released: list[int]):
     return K, f, (c, r, Kcc_inv, Kcr)
 
 
+def stab_endkinematik(model: Model, e, kl: np.ndarray = None):
+    """Die Stabend-Verschiebungen eines Stabs mit Gelenken oder Federgelenken
+    aus den lokalen Knotenverschiebungen (hinter dem Versatz): u_stab = C u.
+    C ist dieselbe Kondensation wie in der Steifigkeit (element_matrix):
+    erst die Federgelenke (innere FHG), dann die freien Gelenke. Ein freier
+    Gelenk-FHG des Knotens wirkt nicht auf den Stab (Spalte 0). None ohne
+    Gelenk und Federgelenk.
+
+    Die geometrische Steifigkeit (Theorie II. Ordnung, alpha_cr) wird damit
+    wie die elastische kondensiert, K_G = C^T k_G C (Befund A7 der
+    Pruefagenten, 09.11.2026). Bis dahin bekam ein Balken mit Stabendgelenken
+    die volle Balkenform: die Pendelstuetze als Balken mit Gelenken hatte
+    alpha_cr 1,667 statt 2,000, ein gezogener Gelenkstab bis 37 % zu viel
+    (unsichere Seite)."""
+    federn = bool(getattr(e, "hinge_springs", None))
+    if not (federn or e.hinges):
+        return None
+    if kl is None:
+        kl = beam_local(model, e)[0]
+    Cs = np.eye(12)
+    kl_s = kl
+    if federn:
+        kl_s, _f, rec = hinge_springs(kl, np.zeros(12), e.hinge_springs)
+        if rec is not None:
+            B, Kii_inv, Kio, _fi = rec
+            Cs = B @ np.vstack([np.eye(12), -Kii_inv @ Kio])
+    Ch = np.eye(12)
+    if e.hinges:
+        _K, _f, cond = condense(kl_s, np.zeros(12), e.hinges)
+        if cond is not None:
+            c, r, Kcc_inv, Kcr = cond
+            Ch[c, :] = 0.0
+            Ch[np.ix_(c, r)] = -Kcc_inv @ Kcr
+    return Cs @ Ch
+
+
 def element_matrix(model: Model, e):
     """Elementsteifigkeitsmatrix im globalen System."""
     mat = model.materials[e.mat]
@@ -1762,6 +1798,10 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
             kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
+            # Gelenke und Federgelenke wie in der elastischen Steifigkeit (A7)
+            C = stab_endkinematik(model, e)
+            if C is not None:
+                kg = C.T @ kg @ C
         kg = T.T @ kg @ T
         r, c = np.meshgrid(d, d, indexing="ij")
         rows.append(r.ravel())

@@ -1291,8 +1291,14 @@ class MemberHinge:
     elemente: list[int] = field(default_factory=list)
 
     def released(self) -> list[int]:
-        """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation)."""
-        return [d + 6 * self.end for d, t in enumerate(self.typ) if t == "free"]
+        """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation).
+
+        Ein Federgelenk mit k = 0 ist ein Gelenk (Befund A10 der
+        Pruefagenten, 09.11.2026): bis dahin fiel die Feder mit k = 0 aus der
+        Liste der Federn und der FHG blieb biegesteif - im Skript und ueber die
+        Web-Schnittstelle (die Maske laesst k = 0 nicht zu)."""
+        return [d + 6 * self.end for d, t in enumerate(self.typ)
+                if t == "free" or (t == "spring" and not float(self.stiffness[d]) > 0)]
 
     def springs(self) -> list[tuple[int, float]]:
         return [(d + 6 * self.end, float(k)) for d, (t, k) in enumerate(zip(self.typ, self.stiffness))
@@ -1301,7 +1307,7 @@ class MemberHinge:
     def describe(self) -> str:
         parts = []
         for d, t in enumerate(self.typ):
-            if t == "free":
+            if t == "free" or (t == "spring" and not float(self.stiffness[d]) > 0):
                 parts.append(HINGE_DOF_NAMES[d])
             elif t == "spring" and self.stiffness[d] > 0:
                 parts.append(f"{HINGE_DOF_NAMES[d]}={self.stiffness[d]:g}")
@@ -10732,8 +10738,41 @@ class Model:
         if m.elements and any(lc.geometrielasten or lc.linienlasten
                               for lc in m.load_cases.values()):
             m.lasten_verteilen()
+        m._gelenke_feder_null_nachziehen()
         _melde(fortschritt, 1.0, "Modell gelesen")
         return m
+
+    def _gelenke_feder_null_nachziehen(self) -> None:
+        """Federgelenk mit k = 0 auf den Elementen einer aelteren Datei als
+        Gelenk eintragen (Befund A10, 09.11.2026): bis dahin trug apply_hinge
+        einen solchen FHG weder als Gelenk noch als Feder ein - er blieb
+        biegesteif. Das Stabende ist das des Gelenks, ausser die uebrigen FHG
+        des Gelenks stehen am Element am anderen Ende. Jede Aenderung kommt
+        als Ladehinweis ins Protokoll."""
+        for h in self.hinges.values():
+            null = [d for d, (t, k) in enumerate(zip(h.typ, h.stiffness))
+                    if t == "spring" and not float(k) > 0]
+            if not null:
+                continue
+            uebrig = [d for d, t in enumerate(h.typ) if t in ("free", "spring") and d not in null]
+            for i in getattr(h, "elemente", None) or []:
+                if not (0 <= int(i) < len(self.elements)):
+                    continue
+                e = self.elements[int(i)]
+                ende = h.end
+                if uebrig:
+                    federn = {int(dd) for dd, _k in (e.hinge_springs or [])}
+                    vorhanden = set(int(x) for x in e.hinges) | federn
+                    for kand in (h.end, 1 - h.end):
+                        if all(d + 6 * kand in vorhanden for d in uebrig):
+                            ende = kand
+                            break
+                neu = sorted({d + 6 * ende for d in null} - set(int(x) for x in e.hinges))
+                if neu:
+                    e.hinges = sorted(set(int(x) for x in e.hinges) | set(neu))
+                    self._ladehinweise.append(
+                        f"Gelenk {h.name}: Federsteifigkeit 0 an Element {int(i) + 1} jetzt als Gelenk "
+                        f"({', '.join(HINGE_DOF_NAMES[d] for d in null)}; bis 09.11.2026 biegesteif gerechnet)")
 
     @staticmethod
     def load(path: str, fortschritt=None, umstellen: bool = True) -> "Model":
