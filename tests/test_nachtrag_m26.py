@@ -357,7 +357,8 @@ def test_anschluesse_fest_eingetragene_werte():
           str(inspect.signature(design.check_bolt).parameters["fu"].default))
     # ein Werkstoff ohne f_u, f_y und Sorte: seit 09.11.2026 (Befund A23, Festlegung
     # „Meldung statt Vorgabewert“) kein Nachweis mehr mit S355, sondern eine Meldung;
-    # der Vorschlag (Bemessung der Geometrie, kein Nachweis) nimmt weiter S355
+    # dasselbe gilt seit dem 09.11.2026 fuer den Vorschlag (Nebenbefund 15) - bis dahin
+    # bemass er die Geometrie mit S355 und diese Pruefung schrieb „f_u 510“ fest
     m = _hall_mit_anschluessen()
     m.materials["S355"] = Material("S355")
     try:
@@ -372,8 +373,13 @@ def test_anschluesse_fest_eingetragene_werte():
     for art, kw in (("kopfplatte", dict(end=0, N=-50e3, Vz=100e3, My=100e3)),
                     ("lasche", dict(end=1, N=-50e3, Vz=50e3, My=100e3)),
                     ("diagonale", dict(end=1, N=100e3))):
-        p = propose(art, m, e, **kw)
-        check(f"Vorschlag „{art}“ aus einem Werkstoff ohne Angaben: f_u 510", p.fu == f510, f"{mpa(p.fu)}")
+        try:
+            p = propose(art, m, e, **kw)
+            meldung = f"kein Fehler, f_u {mpa(p.fu)}"
+        except ValueError as ex:
+            meldung = str(ex)
+        check(f"Vorschlag „{art}“ aus einem Werkstoff ohne Angaben: kein Vorschlag, Meldung nennt f_y und f_u",
+              "f_y" in meldung and "f_u" in meldung and "kein Vorgabewert" in meldung, meldung)
 
 
 def test_beispiele():

@@ -40,7 +40,13 @@ def _nachweis(fy, fu, grade, art):
     m.fix(ids[0], "all")
     m.load_node(ids[-1], Fz=-20000.0)
     an = solver.solve_all(m, workers=1, combinations=False)
+    # Die Geometrie kommt aus dem Vorschlag mit vollstaendigem Werkstoff (235/360): seit dem
+    # 09.11.2026 gibt es ohne f_y oder f_u auch keinen Vorschlag mehr (Nebenbefund 15,
+    # tests.test_nachweis_ohne_fu). Nachgewiesen wird mit dem Werkstoff des Falls.
+    fall = m.materials["X"]
+    m.materials["X"] = Material("X", E=210e9, nu=0.3, rho=7850, fy=235e6, fu=360e6)
     t = templates.propose(art, m, 0, end=0, N=0.0, Vz=20000.0, My=80000.0)
+    m.materials["X"] = fall
     j = anschluss.als_joint(t, name=f"J_{art}")
     m.joints[j.name] = j
     c = anschluss.check_joint(m, j, dict(an.cases), analysis=an)
