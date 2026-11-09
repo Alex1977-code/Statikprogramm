@@ -6369,7 +6369,8 @@ class Model:
         erhaelt die Haendigkeit: z zeigt danach nach oben, y ist gespiegelt.
         Gedreht werden Knoten, Linienpunkte (Boegen, Kreise), Lastvektoren,
         Richtungen, Lastfenster, Verlaufspunkte, Schwerkraft, Zwangs-
-        verformungen und Lagerwerte. Rueckgabe: Zahl der gedrehten Knoten.
+        verformungen, Lagerwerte, eigene Koordinatensysteme und Lasten mit
+        globalem Bezug. Rueckgabe: Zahl der gedrehten Knoten.
         """
         def dreh_punkt(p):
             p = [float(x) for x in p]
@@ -6423,8 +6424,16 @@ class Model:
                 if gl.verlauf and gl.verlauf.get("punkte"):
                     gl.verlauf["punkte"] = [dreh_punkt(q[:3]) + [float(q[3])]
                                             for q in gl.verlauf["punkte"]]
+                # Lastbezug global (Oberflaechenpaket B): die Achsen y und z
+                # kehren sich um, die Last behaelt ihre Richtung im Bauteil
+                if getattr(gl, "lastbezug", "") == "global" and str(gl.achse or "z")[:1].lower() in ("y", "z"):
+                    gl.p = -float(gl.p)
+                    if gl.verlauf and gl.verlauf.get("art") == "linear" and gl.verlauf.get("punkte"):
+                        gl.verlauf["punkte"] = [list(q[:3]) + [-float(q[3])] for q in gl.verlauf["punkte"]]
             for ll in lc.linienlasten:
-                if ll.system != "local":
+                # "ks": q steht in den Achsen des Koordinatensystems, das unten
+                # mitgedreht wird
+                if ll.system not in ("local", "ks"):
                     ll.q = dreh_punkt(ll.q)
                     if ll.q2 is not None:
                         ll.q2 = dreh_punkt(ll.q2)
@@ -6435,6 +6444,18 @@ class Model:
         for sp in self.supports:
             if getattr(sp, "values", None):
                 sp.values = dreh_vektor6(sp.values)
+        # Eigene Koordinatensysteme drehen mit (Nebenbefund Oberflaechenpaket B,
+        # 08.11.2026): Ursprung und Punkte wie Knoten, die Winkel so, dass die
+        # Achsen ex, ey, ez danach die gedrehten alten sind
+        from .lastbezug import winkel_aus_achsen
+        for k in (getattr(self, "koordinatensysteme", None) or {}).values():
+            achsen_alt = np.asarray(k.achsen(), float)
+            k.ursprung = dreh_punkt(k.ursprung)
+            if k.art == "punkte":
+                k.punkt_x = dreh_punkt(k.punkt_x)
+                k.punkt_xy = dreh_punkt(k.punkt_xy)
+            else:
+                k.winkel = winkel_aus_achsen(achsen_alt * np.array([1.0, -1.0, -1.0]))
         return n
 
     # ---- Umnummerieren, Umbenennen, Loeschen (Modellbaum) -------------------
@@ -8119,10 +8140,18 @@ class Model:
             # wirft die Haelfte der Seiten weg.
             c = None
             if d is not None:
-                n = self._seitennormale(e, seite)
+                schale = self.elements[int(e)].typ in _EL.SCHALEN_TYPEN
+                n = self._seitennormale_oder_schale(e, seite) if schale else self._seitennormale(e, seite)
                 if n is None:
                     return
                 c = float(n @ d)
+                if schale:
+                    # Eine Schale hat keine Aussenseite: die Last trifft sie von
+                    # der Seite, von der sie kommt, mit p A |n.d|. Bis zum
+                    # 08.11.2026 fragte hier _seitennormale, die bei Schalen
+                    # None gibt - projizierte Schnee- und Windlasten auf Schalen
+                    # erzeugten keine Last (Nebenbefund Oberflaechenpaket B).
+                    c = -abs(c)
                 if c >= 0:
                     return          # diese Seite liegt im Windschatten der Last
             # Dann die Seitenmitte - aber nur, wenn jemand sie liest.

@@ -6097,6 +6097,15 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
+**Flächenlast auf die Projektion** (Schnee, Wind): p gilt je Quadratmeter der
+Projektion auf die Ebene senkrecht zur Lastrichtung d. Am Rand eines Volumens
+trifft sie nur die Seiten, die der Last zugewandt sind; eine Schale trifft sie
+von der Seite, von der sie kommt, mit p · A · |n · d| – unabhängig vom
+Umlaufsinn des Randes. Eine Schale parallel zur Lastrichtung bekommt nichts.
+Bis zum 08.11.2026 wirkte eine projizierte Last an Schalen gar nicht; ältere
+Ergebnisse solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu
+rechnen“. Geprüft in `tests/test_paket_b_neben.py`.
+
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
 Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf
@@ -8411,8 +8420,9 @@ unten“ (vorbelegt). Er dreht das Modell beim Einlesen um 180° um die
 x-Achse: (x, y, z) → (x, −y, −z). Eine bloße Spiegelung z → −z wäre
 falsch, sie machte aus dem rechtshändigen System ein linkshändiges — Momente
 und Drehwinkel liefen dann verkehrt. Mitgedreht werden Knoten, Bögen,
-Lastvektoren, Richtungen, Lastfenster, Schwerkraft, Zwangsverformungen und
-Lagerwerte; das Protokoll vermerkt es. Beim Anhängen an ein vorhandenes
+Lastvektoren, Richtungen, Lastfenster, Schwerkraft, Zwangsverformungen,
+Lagerwerte, eigene Koordinatensysteme und Lasten mit globalem Bezug (seit
+08.11.2026; jede Last bleibt im Bauteil, wo sie war); das Protokoll vermerkt es. Beim Anhängen an ein vorhandenes
 Modell ist der Haken gesperrt.
 
 Datei → Importieren (Details in `Schnittstellen.md`):
