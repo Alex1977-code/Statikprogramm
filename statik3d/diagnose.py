@@ -731,9 +731,16 @@ def _abnahme_schalen_ohne_linie(model) -> list:
     liegt mitten auf einer Randlinie einer anderen (Stoss ohne gemeinsame
     Linie: 5,2-fache Verformung), oder eine Randlinie einer Flaeche liegt in
     einer anderen, die dort keine Linie hat (Rippe auf ungeteilter Platte:
-    traegt nichts). Das Netz verbindet nur gemeinsame Linien; bis dahin
-    schwieg die Abnahme. Eine WARNUNG je Flaechenpaar; geteilt wird nichts.
-    Nur gerade Randlinien (Anfang und Ende), Grenze 1 mm."""
+    traegt nichts). Eine WARNUNG je Flaechenpaar. Nur gerade Randlinien
+    (Anfang und Ende), Grenze 1 mm.
+
+    Seit dem 09.11.2026 teilt der Vernetzer solche Stellen **im Netz**
+    (mesher._teilplan: Knoten auf Linie, Linie in Flaeche). Die Abnahme sieht
+    deshalb auf das Netz: haben beide Flaechen an der Stelle dieselben
+    Netzknoten, ist sie verbunden und es gibt keine Warnung. Sie bleibt fuer
+    Netze von frueher und fuer Stellen, die der Vernetzer nicht sauber teilen
+    kann (schleifend, nur teilweise in der Flaeche) - den Grund nennt dann
+    das Protokoll des Vernetzens. Ohne Netz gibt es nichts zu beurteilen."""
     import numpy as np
     flaechen = getattr(model, "flaechen", None) or {}
     in_koerper = {fn for k in (getattr(model, "koerper", None) or {}).values() for fn in (k.flaechen or [])}
@@ -743,6 +750,30 @@ def _abnahme_schalen_ohne_linie(model) -> list:
     X = np.asarray(model.nodes, float)
     lines = getattr(model, "lines", None) or {}
     tol = 1e-3
+    ne = len(model.elements)
+    netz: dict = {}
+
+    def netzknoten(f) -> set:
+        """Knoten der Elemente einer Flaeche (leer: nicht vernetzt)."""
+        if f.name not in netz:
+            netz[f.name] = {int(k) for e in (f.elemente or []) if 0 <= int(e) < ne
+                            for k in model.elements[int(e)].nodes}
+        return netz[f.name]
+
+    def verbunden(fa, fb, i0, i1, dazu=()) -> bool:
+        """Teilen fa und fb auf der Strecke i0-i1 ihre Netzknoten? Alle
+        Netzknoten von fb auf der Strecke und die Knoten ``dazu`` muessen
+        auch Netzknoten von fa sein."""
+        na, nb = netzknoten(fa), netzknoten(fb)
+        if any(int(k) not in na for k in dazu):
+            return False
+        kb = np.fromiter(nb, int, len(nb))
+        d = X[i1] - X[i0]
+        L2 = float(d @ d)
+        t = (X[kb] - X[i0]) @ d / L2
+        ab = np.linalg.norm(X[kb] - (X[i0] + t[:, None] * d), axis=1)
+        auf = kb[(t >= -1e-9) & (t <= 1 + 1e-9) & (ab < tol)]
+        return all(int(k) in na for k in auf)
 
     def strecken(ln):
         """Gerade Strecken einer Polylinie (Bogen, Spline: keine)."""
@@ -769,6 +800,8 @@ def _abnahme_schalen_ohne_linie(model) -> list:
                 continue
             if np.any(P_a.min(axis=0) > P_b.max(axis=0) + tol) or np.any(P_b.min(axis=0) > P_a.max(axis=0) + tol):
                 continue
+            if not netzknoten(fa) or not netzknoten(fb):
+                continue                     # ohne Netz nichts zu beurteilen: der Vernetzer teilt dort
             linien_a = {ln for ln, _e in segs_a}
             grund = ""
             # 1. Eckknoten von b mitten auf einer Randlinie von a
@@ -781,6 +814,8 @@ def _abnahme_schalen_ohne_linie(model) -> list:
                         continue
                     t = float((p - X[i0]) @ d) / L2
                     if 1e-6 < t < 1 - 1e-6 and np.linalg.norm(p - (X[i0] + t * d)) < tol:
+                        if verbunden(fa, fb, i0, i1, dazu=(k,)):
+                            continue         # im Netz geteilt: gemeinsame Knoten
                         grund = f"Knoten {k + 1} von {fb.name} liegt auf der Linie {ln} von {fa.name}"
                         break
                 if grund:
@@ -810,15 +845,18 @@ def _abnahme_schalen_ohne_linie(model) -> list:
                             if xs > q[0]:
                                 innen ^= 1
                     if innen:
+                        if verbunden(fa, fb, i0, i1, dazu=(i0, i1)):
+                            continue         # Zwangslinie im Netz: gemeinsame Knoten
                         grund = f"die Linie {ln} von {fb.name} liegt in {fa.name}, die dort keine Linie hat"
                         break
             if grund:
                 gemeldet.add((fa.name, fb.name))
                 aus.append(Befund(
                     pruefung="Flächen ohne gemeinsame Linie", objekt=f"{fa.name}/{fb.name}", stufe="WARNUNG",
-                    text=(f"{grund} - das Netz verbindet die Flächen dort nicht (nur gemeinsame Linien "
-                          f"werden verbunden). Die Linie an dieser Stelle teilen bzw. die Fläche dort "
-                          f"teilen.")))
+                    text=(f"{grund} - das Netz verbindet die Flächen dort nicht. Neu vernetzen: seit dem "
+                          f"09.11.2026 teilt der Vernetzer solche Stellen im Netz (Knoten auf Linie, Linie "
+                          f"in Fläche). Bleibt die Warnung danach, nennt das Protokoll des Vernetzens den "
+                          f"Grund; dann die Linie bzw. die Fläche dort von Hand teilen.")))
     return aus
 
 

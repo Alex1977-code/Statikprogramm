@@ -13,8 +13,12 @@ A16 Zwei Koerper mit eigenen, deckungsgleichen Trennflaechen ohne
     Kontaktbedingung: WARNUNG „Trennfläche doppelt“; mit gemeinsamer
     Trennflaeche keine.
 A19 Schalenflaechen ohne gemeinsame Linie: Knoten auf der Linie einer
-    anderen Flaeche und Rippe auf ungeteilter Platte - je eine WARNUNG; mit
-    geteilter Linie bzw. Flaeche keine.
+    anderen Flaeche und Rippe auf ungeteilter Platte - je eine WARNUNG, wenn
+    das Netz dort nicht verbunden ist (Netz von frueher: jede Flaeche fuer
+    sich); mit geteilter Linie bzw. Flaeche keine. Seit dem 09.11.2026 teilt
+    der Vernetzer solche Stellen im Netz (tests/test_flaechen_teilen.py):
+    neu vernetzt keine Warnung mehr. Die Abnahme sieht deshalb auf das Netz;
+    vorher pruefte diese Stelle am unvernetzten Modell.
 A20 Patchtest Zug 10 N/mm² in x auf einer Flaeche aus Dreiecken mit
     beliebig gedrehten Elementachsen: σ_x = 10, σ_y = 0 an jedem Knoten
     (vorher 0,8 bis 9,3); zweiter Weg die Hauptspannung σ_1 = 10 (invariant).
@@ -233,12 +237,22 @@ def _schalen(art):
 
 
 def test_a19():
-    from statik3d import diagnose as dg
-    n = {a: len(dg._abnahme_schalen_ohne_linie(_schalen(a)))
-         for a in ("stoss_eins", "stoss_geteilt", "rippe_ungeteilt", "rippe_geteilt")}
-    check("A19 Stoß ohne gemeinsame Linie und Rippe auf ungeteilter Platte: je eine WARNUNG, geteilt keine",
+    from statik3d import diagnose as dg, mesher
+    arten = ("stoss_eins", "stoss_geteilt", "rippe_ungeteilt", "rippe_geteilt")
+    n, neu = {}, {}
+    for a in arten:
+        m = _schalen(a)                       # Netz von frueher: jede Flaeche fuer sich vernetzt
+        for f in m.flaechen.values():
+            mesher.mesh_flaeche(m, f, [])
+        n[a] = len(dg._abnahme_schalen_ohne_linie(m))
+        m = _schalen(a)                       # neu vernetzt: der Vernetzer teilt im Netz
+        mesher.modell_vernetzen(m, [], workers=1)
+        neu[a] = len(dg._abnahme_schalen_ohne_linie(m))
+    check("A19 Stoß ohne gemeinsame Linie und Rippe auf ungeteilter Platte, Netz von früher: je eine WARNUNG, "
+          "geteilt keine",
           n["stoss_eins"] >= 1 and n["rippe_ungeteilt"] >= 1 and n["stoss_geteilt"] == 0 and n["rippe_geteilt"] == 0,
           str(n))
+    check("A19 dieselben Modelle neu vernetzt (im Netz geteilt): keine WARNUNG", not any(neu.values()), str(neu))
 
 
 def test_a20():
