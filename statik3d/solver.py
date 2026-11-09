@@ -3625,6 +3625,12 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 if i in temp:
                     A_ = lam.A if lam is not None else sh._material_matrices(mat.E, mat.nu, t)[0]
                     acc[:3] -= A_ @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
+                    if lam is not None:
+                        # Laminat mit Kopplung (B != 0): die Last traegt m0 = B eps0
+                        # (shell_rm.temperatur_schale), die Rueckrechnung zog es bis
+                        # zum 09.11.2026 nicht ab - die frei gedehnte Platte zeigte
+                        # das Moment B alpha dT statt 0 (Nebenbefund 14)
+                        acc[3:6] -= lam.B @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
                 dTz_ = (temp.get("dT_z") or {}).get(i) if isinstance(temp, dict) else None
                 if dTz_:
                     lam_ = lam if lam is not None else shell_rm.isotrop_laminat(mat.E, mat.nu, t)
