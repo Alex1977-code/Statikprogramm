@@ -692,6 +692,63 @@ def gemeinsame_schalen(model: Model, flaechen) -> list:
             or any(f.oeffnungen or [])]
 
 
+def unverbundene_schalenlinien(model: Model) -> list:
+    """Gemeinsame Randlinien vernetzter Schalenflaechen, an denen die Netze
+    nicht dieselben Knoten haben - ein Netz von vor dem 09.11.2026 (Vernetzer
+    ohne gemeinsame Linienknoten) oder ein von Hand zusammengesetztes.
+
+    Rueckgabe [(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite), ...].
+    Je Linie werden die Netzknoten auf ihr (Model.knoten_auf_linie) mit den
+    Knoten jeder anliegenden Flaeche geschnitten; verbunden ist die Linie, wenn
+    jede Flaeche dieselben Linienknoten traegt. Entscheidung des Anwenders vom
+    09.11.2026: alte, unverbundene Schalennetze beim Oeffnen erkennen und zum
+    Neuvernetzen auffordern."""
+    schalen = [f for f in (getattr(model, "flaechen", None) or {}).values()
+               if _ist_schale(model, f) and f.elemente]
+    if len(schalen) < 2 or not len(model.elements):
+        return []
+    knoten_von = {}
+    an_linie: dict = {}
+    for f in schalen:
+        knoten_von[f.name] = {int(k) for e in f.elemente if 0 <= int(e) < len(model.elements)
+                              for k in model.elements[int(e)].nodes}
+        for x in set(list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]):
+            an_linie.setdefault(x, []).append(f.name)
+    out = []
+    cache: dict = {}
+    X = model.nodes
+    for linie, namen in an_linie.items():
+        if len(namen) < 2 or linie not in model.lines:
+            continue
+        ln = model.lines[linie]
+        kand = sorted(set().union(*(knoten_von[n] for n in namen)))
+        if str(ln.typ or "") in GERADE_LINIEN and len(ln.nodes) == 2 and kand:
+            # gerade Linie: Abstand zur Strecke, nur unter den Knoten der anliegenden
+            # Flaechen (knoten_auf_linie tastet fein ab und sucht im ganzen Modell -
+            # am Stemmtor 167 s fuer 591 Linien)
+            p, q = X[int(ln.nodes[0])], X[int(ln.nodes[1])]
+            d = q - p
+            L2 = float(d @ d)
+            if L2 <= 0:
+                continue
+            K = np.asarray(kand, int)
+            t = (X[K] - p) @ d / L2
+            r = np.linalg.norm(X[K] - (p + t[:, None] * d), axis=1)
+            tol = STUETZKNOTEN_TOL * np.sqrt(L2) + 1e-12
+            auf = {int(k) for k in K[(r <= tol) & (t >= -1e-9) & (t <= 1 + 1e-9)]}
+        else:
+            try:
+                auf = {int(k) for k, _s in model.knoten_auf_linie(linie, cache=cache)}
+            except Exception:               # noqa: BLE001 - eine Linie ohne Kurve sperrt nichts
+                continue
+        seiten = [(n, auf & knoten_von[n]) for n in namen]
+        a, ka = seiten[0]
+        for b, kb in seiten[1:]:
+            if ka != kb:
+                out.append((linie, a, b, len(ka ^ kb)))
+    return out
+
+
 def _h_eigene_teilung(model: Model, f) -> float:
     """Kantenlaenge aus der eigenen Teilung der Flaeche (Netzdichte aus)."""
     from .netzdichte import _seitenlaengen

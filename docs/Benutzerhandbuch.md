@@ -1715,6 +1715,18 @@ Teilung an gemeinsamen Linien durch das ganze Tragwerk weitergereicht wird,
 kann ein Modell aus vielen Flächen feiner werden als die Netzgröße einzelner
 Flächen verlangt (Stemmtor: rund 56 000 Elemente bei Netzdichte mittel).
 
+**Altes Schalennetz beim Öffnen erkannt** (seit 09.11.2026). Ein Netz, das
+vor diesem Tag erzeugt wurde, steht in der Modelldatei und rechnet mit den
+unverbundenen Flächen weiter, bis neu vernetzt wird. Beim Öffnen prüft das
+Programm deshalb jede gemeinsame Randlinie vernetzter Schalenflächen: tragen
+die Flächen dort verschiedene Netzknoten, steht im Protokoll und unter den
+Importhinweisen „Schalennetz nicht verbunden: … Flächenpaar(e) an …
+gemeinsamen Linie(n) … Bitte neu vernetzen (Netz › Vernetzen)“. Nach dem
+Neuvernetzen und Speichern gilt der Hinweis beim nächsten Öffnen als
+erledigt. Umgestellt wird nichts. Die Prüfung dauert am Stemmtor (591
+Linien, 53 000 Knoten) 0,3 s; ein Modell ohne vernetzte Schalenflächen
+(Volumenmodell) prüft sie nicht.
+
 Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
 folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
@@ -3683,6 +3695,17 @@ wirkt nach dem Vernetzen auf **alle Netzknoten** seiner Linien bzw. Flächen
 — mit den Einflusslängen und Einflussflächen aus dem Netz, nicht nur an den
 Eckknoten der Geometrie. Das geschieht beim Vernetzen, beim Löschen des
 Netzes (zurück auf die Eckknoten) und vor jeder Rechnung von selbst.
+
+**Bettung auf die Elementecken verteilt** (Festlegung des Anwenders vom
+09.11.2026: bleibt so). Ein Flächenlager mit Feder (Bettung) gibt jedem
+Netzknoten die Bettung seiner Einflussfläche; die Fläche eines Elements geht
+zu gleichen Teilen auf seine Ecken (konzentrierte Bettung), nicht über eine
+konsistente Bettungsmatrix. Kraftsumme und Moment stimmen damit exakt; die
+Verschiebung einzelner Knoten weicht im groben Netz ab und geht mit h² gegen
+null. Gemessen an einer starren, gekippten Platte (Ecksetzung): 8,3 % bei
+4 × 4 Vierecken, 2,3 % bei 8 × 8, 0,58 % bei 16 × 16 (Dreiecke 11,8 / 3,4 /
+0,87 %, tet10 5,6 % bei h = 0,25 und 1,6 % bei h = 0,125). Wo die Ecksetzung
+zählt, das Netz an der Bettung fein genug wählen.
 
 **Lager auswählen**: mit der Auswahlart **Lager** (Glasleiste) trifft ein
 Klick ein Knotenlager an seinem Symbol, ein Linien- oder Flächenlager an

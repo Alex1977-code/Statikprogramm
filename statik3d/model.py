@@ -217,6 +217,43 @@ def stahlsorte_normiert(text) -> str:
     return stahlsorte_schluessel(text) or str(text or "").strip()
 
 
+def schalennetz_hinweis(model) -> list:
+    """Beim **Oeffnen**: ein Schalennetz, dessen Flaechen an gemeinsamen
+    Randlinien nicht dieselben Knoten haben (mesher.unverbundene_schalenlinien)
+    - so vernetzte das Programm bis zum 09.11.2026 jede Flaeche fuer sich; die
+    Flaechen hingen nur an den Linienenden zusammen (Platte aus zwei Flaechen:
+    8,07 statt 6,49 mm nach Navier). Das Netz steht in der Datei und rechnet
+    unveraendert falsch weiter, bis neu vernetzt wird. Entscheidung des
+    Anwenders vom 09.11.2026 („10 ja“): erkennen und zum Neuvernetzen
+    auffordern. Umgestellt wird nichts. Rueckgabe die Zeilen."""
+    try:
+        from .mesher import unverbundene_schalenlinien
+        lose = unverbundene_schalenlinien(model)
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
+        return []
+    if not lose:
+        # neu vernetzt: ein gespeicherter Hinweis ist erledigt
+        for h in getattr(model, "importhinweise", None) or []:
+            if h.get("art") == "schalennetz":
+                h["erledigt"] = True
+        return []
+    linien = sorted({x[0] for x in lose})
+    paare = sorted({tuple(sorted((x[1], x[2]))) for x in lose})
+    beispiel = ", ".join(f"{a}/{b}" for a, b in paare[:3]) + (" …" if len(paare) > 3 else "")
+    text = (f"Schalennetz nicht verbunden: {len(paare)} Flächenpaar(e) an {len(linien)} gemeinsamen "
+            f"Linie(n) haben verschiedene Netzknoten (z. B. {beispiel}). So vernetzte das Programm bis "
+            "zum 09.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis ist zu "
+            "weich. Bitte neu vernetzen.")
+    vorschlag = "Netz › Vernetzen (alle Flächen)"
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    if not any(h.get("art") == "schalennetz" and not h.get("erledigt") for h in hinweise):
+        hinweise.append({"art": "schalennetz", "text": text, "objekte": [n for p in paare for n in p],
+                         "vorschlag": vorschlag, "erledigt": False, "datei": ""})
+    return [text + " (" + vorschlag + ")"]
+
+
 def zugstab_hinweis(model) -> list:
     """Ein Modell, das vor dem 14.10.2026 aus RFEM 6 uebernommen wurde, kennt
     seine Zugstaebe nicht: der Import legte einen RFEM-Zugstab als
@@ -10708,6 +10745,8 @@ class Model:
         nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
         m._ladehinweise.extend(zugstab_hinweis(m))
+        # Schalennetz von vor dem 09.11.2026 mit unverbundenen Flaechen: nur ein Hinweis
+        m._ladehinweise.extend(schalennetz_hinweis(m))
         # Reibung an Lagern aus RFEM ohne Reibungsart (15.10.2026): nur ein Hinweis
         m._ladehinweise.extend(lagerreibung_hinweis(m))
         # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
