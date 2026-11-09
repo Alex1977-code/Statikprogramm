@@ -7352,8 +7352,11 @@ def main():
         check("Ribbon: jeder Befehl hat einen Hinweistext", not ohne, str(ohne[:6]))
         check("Register Ergebnisse: die Tabellenbefehle heißen „Tabelle …“",
               bool(w.ribbon.finden("Tabelle Nachweise EC3")))
-        check("Nachweise: Befehl „Volumenbereich“, Beispiel „Abhebendes Lager“",
-              bool(w.ribbon.finden("Volumenbereich")) and bool(w.ribbon.finden("Abhebendes Lager")))
+        # das Beispiel steht seit 09.11.2026 in der Beispielbibliothek, nicht mehr als Befehl
+        from statik3d import beispiele as _bib
+        check("Nachweise: Befehl „Volumenbereich“, Beispiel „Abhebendes Lager“ (Beispielbibliothek)",
+              bool(w.ribbon.finden("Volumenbereich")) and bool(w.ribbon.finden("Beispielbibliothek"))
+              and "Abhebendes Lager" in [b_.titel for b_ in _bib.eingebaute()])
         abf.zurueck()
         w.new_model()
     except Exception as ex:      # noqa: BLE001
