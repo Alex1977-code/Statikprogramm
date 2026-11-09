@@ -2456,14 +2456,23 @@ def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) ->
     if ln <= 0:
         return f
     n = nvec / ln
+    innen = 1.0
     if np.dot(n, X.mean(axis=0) - ecken.mean(axis=0)) < 0:
         n = -n                                  # nach innen zeigend
-    if direction is not None:
-        d = np.asarray(direction, float)
+        innen = -1.0
+    if direction is not None or len(fn) not in (6, 8):
+        # mit Richtung, oder eine lineare Seite (eben bzw. bilinear): wie bisher
+        # laengs der Richtung bzw. der Eckennormale
+        d = n if direction is None else np.asarray(direction, float)
         d = d / (np.linalg.norm(d) or 1.0)
+        fk = sl.flaechenlast_knoten(P, p, d)    # (k, 3)
     else:
-        d = n
-    fk = sl.flaechenlast_knoten(P, p, d)        # (k, 3)
+        # senkrecht zur Seite: die oertliche Normale der (gekruemmten) Seite
+        # an jedem Integrationspunkt, nach innen wie die Eckennormale. Bis zum
+        # 09.11.2026 wirkte p an allen Punkten laengs der Normale der Ecken
+        # (Sehne): auf gekruemmten tet10/hex20-Seiten +0,56 % (grob) bis
+        # +0,06 % (fein) zu viel Kraft (Befund A15 der Pruefagenten).
+        fk = sl.flaechenlast_knoten(P, innen * p, None)
     for k, node_local in enumerate(fn):
         f[3 * node_local:3 * node_local + 3] += fk[k]
     return f

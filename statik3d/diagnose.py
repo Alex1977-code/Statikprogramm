@@ -602,6 +602,11 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     aus += _abnahme_fugen(model)
     aus += _abnahme_huellen(model)
     aus += _abnahme_gemeinsame_flaechen(model)
+    aus += _abnahme_deckungsgleiche_flaechen(model)
+    try:
+        aus += _abnahme_schalen_ohne_linie(model)
+    except Exception:                     # noqa: BLE001 - eine Abnahme darf nie sperren
+        pass
     aus += _abnahme_kontaktpaare(model)
     aus += _abnahme_halteguete(model, guete)
     # Fuer welche Koerper die Volumenbilanz lief - der Faltungsbefund sagt es
@@ -669,6 +674,152 @@ def _abnahme_werkstoff_grenze(model) -> list:
                    text=_pl.meldung_ohne_grenze(mat) + " (mit Plastizität verfestigt der Werkstoff "
                         f"bis {mat.grenze_name()}, danach fließt er ideal plastisch).")
             for mat in mats]
+
+
+def _abnahme_deckungsgleiche_flaechen(model) -> list:
+    """Zwei Koerper mit je einer eigenen Trennflaeche ueber denselben
+    Randlinien, die keine Kontaktbedingung nennt (Befund A16 der
+    Pruefagenten, 09.11.2026): sie sind nur ueber die Knoten der Randlinien
+    verbunden, nicht in der Flaeche - zwei Wuerfel uebereinander unter Zug
+    verformten sich 52 % mehr als mit einer gemeinsamen Trennflaeche, und die
+    Abnahme schwieg. Eine WARNUNG je Paar; zusammengelegt wird nichts (die
+    Flaechen koennten fuer eine Kontaktfuge gedacht sein)."""
+    koerper = getattr(model, "koerper", None) or {}
+    flaechen = getattr(model, "flaechen", None) or {}
+    if len(koerper) < 2:
+        return []
+    kontakt_f, kontakt_k = set(), set()
+    for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
+        kontakt_f.update(getattr(kb, "flaechennamen", None) or [])
+        kontakt_f.update(getattr(kb, "gegenflaechen", None) or [])
+        kontakt_k.update(getattr(kb, "koerpernamen", None) or [])
+        kontakt_k.update(getattr(kb, "gegenkoerper", None) or [])
+    for fu in (getattr(model, "fugen", None) or {}).values() if isinstance(getattr(model, "fugen", None), dict) else []:
+        kontakt_f.update(getattr(fu, "flaechen", None) or [])
+    je_rand: dict = {}
+    for k in koerper.values():
+        for fn in (k.flaechen or []):
+            f = flaechen.get(fn)
+            if f is None:
+                continue
+            rand = (frozenset(f.linien or []),
+                    frozenset(frozenset(o) for o in (getattr(f, "oeffnungen", None) or [])))
+            je_rand.setdefault(rand, []).append((fn, k.name))
+    aus = []
+    for liste in je_rand.values():
+        namen = {fn for fn, _k in liste}
+        if len(namen) < 2:
+            continue
+        for i, (fa, ka) in enumerate(liste):
+            for fb, kb_ in liste[i + 1:]:
+                if fa == fb or ka == kb_:
+                    continue
+                if fa in kontakt_f or fb in kontakt_f or (ka in kontakt_k and kb_ in kontakt_k):
+                    continue
+                aus.append(Befund(
+                    pruefung="Trennfläche doppelt", objekt=f"{ka}/{kb_}", stufe="WARNUNG",
+                    text=(f"Körper {ka} und {kb_}: die Flächen {fa} und {fb} liegen über denselben "
+                          f"Randlinien, ohne Kontaktbedingung - die Körper sind nur über die Randlinien "
+                          f"verbunden, nicht in der Fläche. Für einen durchgehenden Verbund beiden "
+                          f"Körpern dieselbe Fläche geben, für eine Fuge eine Kontaktbedingung anlegen.")))
+    return aus
+
+
+def _abnahme_schalen_ohne_linie(model) -> list:
+    """Schalenflaechen, die sich beruehren, ohne eine Linie zu teilen
+    (Befund A19 der Pruefagenten, 09.11.2026): ein Eckknoten einer Flaeche
+    liegt mitten auf einer Randlinie einer anderen (Stoss ohne gemeinsame
+    Linie: 5,2-fache Verformung), oder eine Randlinie einer Flaeche liegt in
+    einer anderen, die dort keine Linie hat (Rippe auf ungeteilter Platte:
+    traegt nichts). Das Netz verbindet nur gemeinsame Linien; bis dahin
+    schwieg die Abnahme. Eine WARNUNG je Flaechenpaar; geteilt wird nichts.
+    Nur gerade Randlinien (Anfang und Ende), Grenze 1 mm."""
+    import numpy as np
+    flaechen = getattr(model, "flaechen", None) or {}
+    in_koerper = {fn for k in (getattr(model, "koerper", None) or {}).values() for fn in (k.flaechen or [])}
+    schalen = [f for n, f in flaechen.items() if n not in in_koerper and (f.linien or [])]
+    if len(schalen) < 2 or len(schalen) > 3000:
+        return []
+    X = np.asarray(model.nodes, float)
+    lines = getattr(model, "lines", None) or {}
+    tol = 1e-3
+
+    def strecken(ln):
+        """Gerade Strecken einer Polylinie (Bogen, Spline: keine)."""
+        L = lines.get(ln)
+        if L is None or getattr(L, "typ", "polyline") not in ("polyline", "line", "", None) or len(L.nodes) < 2:
+            return []
+        return [(ln, (int(a), int(b))) for a, b in zip(L.nodes[:-1], L.nodes[1:])]
+
+    info = []
+    for f in schalen:
+        segs = [s for ln in f.linien for s in strecken(ln)]
+        knoten = sorted({k for _ln, e in segs for k in e})
+        if len(knoten) < 3:
+            continue
+        P = X[knoten]
+        c = P.mean(axis=0)
+        u, s, vt = np.linalg.svd(P - c)
+        info.append((f, segs, set(knoten), c, vt[2], P))
+    aus = []
+    gemeldet = set()
+    for fa, segs_a, kn_a, c_a, n_a, P_a in info:
+        for fb, segs_b, kn_b, c_b, n_b, P_b in info:
+            if fa is fb or (fb.name, fa.name) in gemeldet or (fa.name, fb.name) in gemeldet:
+                continue
+            if np.any(P_a.min(axis=0) > P_b.max(axis=0) + tol) or np.any(P_b.min(axis=0) > P_a.max(axis=0) + tol):
+                continue
+            linien_a = {ln for ln, _e in segs_a}
+            grund = ""
+            # 1. Eckknoten von b mitten auf einer Randlinie von a
+            for k in kn_b - kn_a:
+                p = X[k]
+                for ln, (i0, i1) in segs_a:
+                    d = X[i1] - X[i0]
+                    L2 = float(d @ d)
+                    if L2 <= 0:
+                        continue
+                    t = float((p - X[i0]) @ d) / L2
+                    if 1e-6 < t < 1 - 1e-6 and np.linalg.norm(p - (X[i0] + t * d)) < tol:
+                        grund = f"Knoten {k + 1} von {fb.name} liegt auf der Linie {ln} von {fa.name}"
+                        break
+                if grund:
+                    break
+            # 2. eine Randlinie von b liegt in der Ebene und im Innern von a
+            if not grund and abs(float(np.dot(n_a, n_b))) < 0.999:
+                for ln, (i0, i1) in segs_b:
+                    if ln in linien_a:
+                        continue
+                    pm = 0.5 * (X[i0] + X[i1])
+                    if abs(float((pm - c_a) @ n_a)) > tol or abs(float((X[i0] - c_a) @ n_a)) > tol \
+                            or abs(float((X[i1] - c_a) @ n_a)) > tol:
+                        continue
+                    # im Innern des Randpolygons von a (Ebene, Winkelsumme)
+                    e1 = np.cross(n_a, [1.0, 0.0, 0.0])
+                    if np.linalg.norm(e1) < 0.1:
+                        e1 = np.cross(n_a, [0.0, 1.0, 0.0])
+                    e1 /= np.linalg.norm(e1)
+                    e2 = np.cross(n_a, e1)
+                    q = np.array([(pm - c_a) @ e1, (pm - c_a) @ e2])
+                    innen = 0
+                    for _l, (j0, j1) in segs_a:
+                        a0 = np.array([(X[j0] - c_a) @ e1, (X[j0] - c_a) @ e2])
+                        a1 = np.array([(X[j1] - c_a) @ e1, (X[j1] - c_a) @ e2])
+                        if (a0[1] > q[1]) != (a1[1] > q[1]):
+                            xs = a0[0] + (q[1] - a0[1]) * (a1[0] - a0[0]) / (a1[1] - a0[1])
+                            if xs > q[0]:
+                                innen ^= 1
+                    if innen:
+                        grund = f"die Linie {ln} von {fb.name} liegt in {fa.name}, die dort keine Linie hat"
+                        break
+            if grund:
+                gemeldet.add((fa.name, fb.name))
+                aus.append(Befund(
+                    pruefung="Flächen ohne gemeinsame Linie", objekt=f"{fa.name}/{fb.name}", stufe="WARNUNG",
+                    text=(f"{grund} - das Netz verbindet die Flächen dort nicht (nur gemeinsame Linien "
+                          f"werden verbunden). Die Linie an dieser Stelle teilen bzw. die Fläche dort "
+                          f"teilen.")))
+    return aus
 
 
 def _abnahme_gemeinsame_flaechen(model) -> list:

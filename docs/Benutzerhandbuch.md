@@ -1699,6 +1699,21 @@ drei Fälle nur das ○.
 | Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
 | alles andere | **freier Vernetzer**: Randflächen in Dreiecke, Hülle prüfen, mit Tetraedern füllen |
 
+**Teilung des abgebildeten Quaders in x, y, z** (seit 09.11.2026). Die
+Teilung eines Körpers [nx, ny, nz] gilt in den globalen Achsen: jede Kante
+des Quaders bekommt die Zahl der Achse, der sie am nächsten liegt. Bis dahin
+folgte sie der Reihenfolge seiner Randflächen. Ein Kragarm 2 × 0,1 × 0,2 m
+mit [2, 3, 5] bekam je nach Reihenfolge 5 × 2 × 3 Elemente, und die
+Durchbiegung lag bei 74 statt 97 % der Balkenlösung. Liegen zwei Kanten
+derselben Achse am nächsten (schiefer Quader), bleibt es bei der Reihenfolge.
+
+**Flächenlast auf gekrümmten Volumenseiten** (seit 09.11.2026). Eine
+Flächenlast senkrecht auf eine Seite eines quadratischen Volumenelements
+(tet10, hex20) wirkt an jedem Integrationspunkt längs der örtlichen Normale
+der gekrümmten Seite. Bis dahin wirkte sie längs der Normale der Ecken, auf
+gekrümmten Seiten 0,56 % (grob) bis 0,06 % (fein) zu viel Kraft. Ein
+Innendruck auf einen Viertelzylinder gibt jetzt genau p · r · H.
+
 **Flächen mit gemeinsamer Randlinie sind verbunden** (seit 09.11.2026,
 Entscheidung des Anwenders). Bis dahin legte jede Fläche auf ihren Randlinien
 eigene Zwischenknoten an: zwei Flächen hingen nur an den Linienenden
@@ -13330,6 +13345,18 @@ Auslassungspunkte. Die Rückfrage fasst nur zusammen, wie viele je Prüfung
 anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
 rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
+
+**Zwei Warnungen zu Verbindungen** (seit 09.11.2026). Haben zwei Körper je
+eine eigene Trennfläche über denselben Randlinien und nennt keine
+Kontaktbedingung sie, meldet die Abnahme „Trennfläche doppelt“: die Körper
+hängen nur über die Randlinien zusammen, nicht in der Fläche (zwei Würfel
+unter Zug verformten sich 52 % mehr). Berühren sich Schalenflächen, ohne eine
+Linie zu teilen, meldet sie „Flächen ohne gemeinsame Linie“: ein Eckknoten
+liegt mitten auf der Randlinie einer anderen Fläche, oder eine Randlinie liegt
+in einer Fläche, die dort keine Linie hat (Rippe auf ungeteilter Platte). Das
+Netz verbindet nur gemeinsame Linien und Flächen. Beides sind Warnungen;
+zusammengelegt oder geteilt wird nichts.
+
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
 
 **Vorher greift ein Halt** (17.09.2026): verliert ein Teil in einem Schritt
@@ -13824,6 +13851,12 @@ beim größten Auswertepunkt, die Nachweise lesen, was sie vorher lasen.
     wählt die **Schalenseite** — oben, unten oder je Element die Seite mit dem
     größeren Betrag (wie Top/Bottom in ANSYS). Scheiben (ebene Elemente)
     liefern ihren ebenen Zustand.
+    Die Komponenten σ_x, σ_y, τ_xy (und n_x, m_x …) stehen seit dem
+    09.11.2026 im **Flächensystem**: x ist die globale X-Achse in die
+    Elementebene projiziert, bei Flächen fast quer zu X die globale Y-Achse.
+    Bis dahin lag x an der ersten Kante jedes Elements, und die Knotenmittel
+    mischten verschieden gedrehte Systeme (Patchtest Zug 10 N/mm²: σ_x
+    zwischen 0,8 und 9,3). Hauptspannungen und σ_v waren richtig.
   - **Stäbe**: σ_x Rand = |σ_N| + σ_My + σ_Mz, σ_N = N/A,
     σ_My = |M_y| z_max/I_y, σ_Mz = |M_z| y_max/I_z an den Stabenden, am Knoten
     gemittelt.

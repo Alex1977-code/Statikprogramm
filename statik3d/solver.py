@@ -2125,11 +2125,31 @@ def member_forces(model: Model, res: Results, member: Member, n: int = None) -> 
     return out
 
 
+def flaechen_bezugssystem(T3: np.ndarray) -> np.ndarray:
+    """Das Achsensystem, in dem die Schnittgroessen und Spannungen einer
+    Flaeche angegeben werden (Befund A20 der Pruefagenten, 09.11.2026): z die
+    Elementnormale, x die globale X-Achse in die Elementebene projiziert, bei
+    einer Ebene fast quer zu X (|n·X| > 0,99) die globale Y-Achse. Benachbarte
+    Elemente einer ebenen Flaeche haben damit dieselben Achsen. Bis dahin lag
+    x an der ersten Elementkante, und die Knotenmittel mischten Werte aus
+    verschieden gedrehten Systemen (Patchtest Zug 10 N/mm²: σ_x 0,8 bis 9,3)."""
+    ez = np.asarray(T3[2], float)
+    a = np.array([1.0, 0.0, 0.0]) if abs(float(ez[0])) <= 0.99 else np.array([0.0, 1.0, 0.0])
+    ex = a - float(a @ ez) * ez
+    ex /= np.linalg.norm(ex)
+    return np.vstack([ex, np.cross(ez, ex), ez])
+
+
 def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
     e = model.elements[i]
     t = model.shells[e.sec].t
-    n_forces = r[:3]
-    m_forces = r[3:]
+    X = model.nodes[e.nodes]
+    T3e, _, _ = sh.shell_frame(X[0], X[1], X[2])
+    T3 = flaechen_bezugssystem(T3e)
+    # vom Elementsystem (erste Kante) in das Flaechensystem drehen (A20)
+    phi = sh.frame_winkel(T3e, T3)
+    n_forces = sh.dreh_tensor(np.asarray(r[:3], float), -phi)
+    m_forces = sh.dreh_tensor(np.asarray(r[3:6], float), -phi)
     sig_mem = n_forces / t
     sig_bend = 6.0 * m_forces / t ** 2
     sig_top = sig_mem + sig_bend
@@ -2139,8 +2159,6 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
         sx, sy, sxy = s
         return float(np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy ** 2))
 
-    X = model.nodes[e.nodes]
-    T3, _, _ = sh.shell_frame(X[0], X[1], X[2])
     return {"n": n_forces, "m": m_forces, "sig_top": sig_top, "sig_bot": sig_bot,
             "vM_top": vm(sig_top), "vM_bot": vm(sig_bot),
             "vM": max(vm(sig_top), vm(sig_bot)), "T3": T3}

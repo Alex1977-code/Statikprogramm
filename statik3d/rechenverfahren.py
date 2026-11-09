@@ -331,6 +331,35 @@ def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
     return ("Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
+def _schalen(model) -> bool:
+    """Ein Schalenelement - seine Komponenten sigma_x, n_x, m_x standen bis zum
+    09.11.2026 in Elementachsen (Befund A20)."""
+    return any(str(getattr(e, "typ", "")).startswith("shell") for e in getattr(model, "elements", None) or [])
+
+
+def _quader_teilung_ungleich(model) -> bool:
+    """Ein Koerper mit einer Teilung, die nicht in allen Richtungen gleich ist (A14)."""
+    for k in (getattr(model, "koerper", None) or {}).values():
+        t = list(getattr(k, "teilung", None) or [])
+        if len(set(int(x) for x in t[:3])) > 1:
+            return True
+    return False
+
+
+def _druck_quadratische_seiten(model) -> bool:
+    """Eine Flaechenlast senkrecht auf eine Seite eines quadratischen
+    Volumenelements (A15: bis 09.11.2026 laengs der Eckennormale)."""
+    quad = {i for i, e in enumerate(getattr(model, "elements", None) or [])
+            if getattr(e, "typ", "") in ("tet10", "hex20", "pent15")}
+    if not quad:
+        return False
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for fl in getattr(lc, "face_loads", None) or []:
+            if int(getattr(fl, "elem", -1)) in quad and getattr(fl, "direction", None) is None:
+                return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -1029,6 +1058,33 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Gelenk mit Federsteifigkeit 0",
         betrifft=_gelenk_feder_null),
+    # Befund A20 (09.11.2026): sigma_x, sigma_y, tau_xy, n_x, m_x der Flaechen
+    # in Elementachsen (erste Kante), so auf die Knoten gemittelt. Jetzt im
+    # Flaechensystem (x = globale X-Achse in der Ebene). Fehlerkorrektur
+    Merkmal(
+        name="flaechen_achsen", titel="Achsen der Flächenspannungen",
+        texte={"alt": "Komponenten in Elementachsen (erste Kante)",
+               "neu": "Komponenten im Flächensystem (x = globale X-Achse in der Ebene)"},
+        wechsel=(Wechsel(stand=18, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenelemente", betrifft=_schalen),
+    # Befund A14 (09.11.2026): Teilung [nx, ny, nz] eines abgebildeten Quaders
+    # in der Reihenfolge seiner Flaechen statt in x, y, z. Fehlerkorrektur
+    Merkmal(
+        name="quader_teilung_achsen", titel="Teilung des abgebildeten Quaders",
+        texte={"alt": "Teilung in der Reihenfolge der Flächen", "neu": "Teilung in x, y, z"},
+        wechsel=(Wechsel(stand=19, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Körper mit ungleicher Teilung", betrifft=_quader_teilung_ungleich),
+    # Befund A15 (09.11.2026): Druck auf gekruemmten quadratischen
+    # Volumenseiten laengs der Eckennormale. Fehlerkorrektur
+    Merkmal(
+        name="flaechenlast_gekruemmt", titel="Flächenlast auf gekrümmten Volumenseiten",
+        texte={"alt": "Druck längs der Normale der Ecken", "neu": "Druck längs der örtlichen Normale"},
+        wechsel=(Wechsel(stand=20, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast senkrecht auf quadratische Volumenelemente",
+        betrifft=_druck_quadratische_seiten),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -1112,7 +1168,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 17
+VERFAHRENSSTAND = 20
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

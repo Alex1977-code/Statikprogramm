@@ -1118,12 +1118,25 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                                  OHNE_NETZ, karten=karten)
             if v_hex < 0:
                 order = order[4:] + order[:4]
-            nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
+            teil_xyz = (list(koerper.teilung) + [4, 4, 4])[:3]
+            # Die Teilung [nx, ny, nz] gilt in den globalen Achsen x, y, z
+            # (Befund A14 der Pruefagenten, 09.11.2026). Die Richtungen des
+            # Quaders (Ecke 0->1, 0->3, 0->4, QUADER_ECKNR) folgen der
+            # Reihenfolge seiner Flaechen; bis dahin bekam die erste nx, gleich
+            # wohin sie zeigte (Kragarm 2 x 0,1 x 0,2 m mit [2, 3, 5]: 5 x 3 x 2
+            # Elemente, Durchbiegung 74 statt 97 % der Balkenloesung). Jetzt
+            # bekommt jede Richtung die Zahl der Achse, der sie am naechsten
+            # liegt; zeigen zwei Richtungen zur selben Achse (schiefer Quader),
+            # bleibt es bei der Reihenfolge.
+            teil = list(teil_xyz)
+            Xo = model.nodes[order]
+            achsen = [int(np.argmax(np.abs(Xo[j] - Xo[0]))) for j in (1, 3, 4)]
+            if sorted(achsen) == [0, 1, 2]:
+                teil = [int(teil_xyz[a]) for a in achsen]
             # Eine Linienvorgabe (sweep.lagenvorgabe: Kanten, die Nachbarn
             # gehoeren) geht vor der eigenen Teilung - je Richtung dieselbe.
             vorgabe = getattr(model, "linienvorgabe", None) or {}
             richtungen = quader_richtungen(quader_kanten(model, koerper, order))
-            teil = [nx, ny, nz]
             for d in range(3):
                 fest = [int(vorgabe[x]) for x in richtungen[d] if x in vorgabe]
                 if fest:
@@ -1141,13 +1154,19 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             els = _hex_netz(model, order, max(1, nx), max(1, ny), max(1, nz), mat,
                             koerper.name, ord_, kanten, koerper=koerper, cache=cache)
             koerper.elemente = els
-            koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {nx} x {ny} x {nz})"
+            # in x, y, z angeben, wie die Teilung eingegeben wird (A14)
+            xyz = [nx, ny, nz]
+            if sorted(achsen) == [0, 1, 2]:
+                for k_, a_ in enumerate(achsen):
+                    xyz[a_] = (nx, ny, nz)[k_]
+            zahl = f"{xyz[0]} x {xyz[1]} x {xyz[2]}"
+            koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {zahl})"
             koerper.randtreue = 1.0
             koerper.netzgrund = ""
             koerper.netzkanten = []
             C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder"
                        + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
-                       + f" ({nx} x {ny} x {nz})")
+                       + f" ({zahl})")
             return els
     if len(knoten) == 4 and _dreiflaechner(ringe, flaechen, model):
         X = model.nodes[knoten]
