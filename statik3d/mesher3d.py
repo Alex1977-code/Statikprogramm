@@ -758,7 +758,8 @@ class Linienteilung:
     """
 
     def __init__(self, model: Model, flaechen: list, h: float, h_linien: dict = None,
-                 h_flaechen: dict = None, gemeinsam: tuple = None, feld=None):
+                 h_flaechen: dict = None, gemeinsam: tuple = None, feld=None,
+                 eben_binden: bool = False):
         self.model, self.h = model, max(float(h), 1e-9)
         #: Das Groessenfeld (netzfeld.Groessenfeld) - am Modell, wenn keines
         #: uebergeben ist. Es ist modellweit dasselbe, darum teilen zwei
@@ -803,8 +804,10 @@ class Linienteilung:
             if seiten is None or len(seiten) != 4:
                 continue
             P = f.randpunkte(model, 12)
-            if len(P) >= 4 and ist_eben(P):
+            if len(P) >= 4 and ist_eben(P) and not eben_binden:
                 continue                     # eben: frei vernetzt, keine Bindung
+            # eben_binden (Schalen, mesher.schalen_gemeinsam_vernetzen): auch ebene
+            # Vierecke werden abgebildet vernetzt und brauchen gleich geteilte Gegenseiten
             self._verbinden(seiten[0][0], seiten[2][0])
             self._verbinden(seiten[1][0], seiten[3][0])
         self.n: dict = {}

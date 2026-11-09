@@ -1691,11 +1691,28 @@ drei Fälle nur das ○.
 
 | Form | Netz |
 |---|---|
-| Fläche mit vier Randabschnitten | abgebildetes Vierecknetz mit der eingestellten Teilung (längs × quer) |
-| Fläche mit drei Randknoten | ein Dreieckelement |
+| Fläche mit vier Randabschnitten, allein | abgebildetes Vierecknetz mit der eingestellten Teilung (längs × quer) |
+| Flächen mit gemeinsamer Randlinie | **zusammenhängend**: jede Linie wird einmal geteilt, alle Flächen daran benutzen dieselben Knoten; vier Randlinien mit gleich geteilten Gegenseiten abgebildet (Vierecke), alles andere frei mit Dreiecken in der Netzgröße |
+| Fläche mit drei Randlinien | frei mit Dreiecken in der Netzgröße (bis 09.11.2026: ein einziges Dreieckelement) |
 | Volumen: 6 Vierecke, 8 Eckknoten | abgebildetes Hexaedernetz (x × y × z) |
 | Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
 | alles andere | **freier Vernetzer**: Randflächen in Dreiecke, Hülle prüfen, mit Tetraedern füllen |
+
+**Flächen mit gemeinsamer Randlinie sind verbunden** (seit 09.11.2026,
+Entscheidung des Anwenders). Bis dahin legte jede Fläche auf ihren Randlinien
+eigene Zwischenknoten an: zwei Flächen hingen nur an den Linienenden
+zusammen, dazwischen nicht. Eine allseits gelenkig gelagerte Platte 4 × 2 m
+aus zwei Flächen bog sich um 8,07 mm statt 6,49 mm (Navier) durch; an den
+Testmodellen Hubtor und Stemmtor waren 1 523 bzw. 1 596 Knotenpaare nicht
+verbunden. Jetzt bekommt jede Linie eine Teilung aus der feinsten
+Netzgröße der Flächen an ihr, gegenüberliegende Seiten eines Vierecks werden
+modellweit gleich geteilt (wie beim Volumenvernetzer), und das Protokoll
+sagt je Fläche „Randknoten gemeinsam mit den Nachbarflächen“ und am Ende
+„… Flächen mit gemeinsamen Randlinien zusammenhängend vernetzt (… abgebildet,
+… frei)“. Eine Fläche ohne Nachbarn wird vernetzt wie bisher. Weil die
+Teilung an gemeinsamen Linien durch das ganze Tragwerk weitergereicht wird,
+kann ein Modell aus vielen Flächen feiner werden als die Netzgröße einzelner
+Flächen verlangt (Stemmtor: rund 56 000 Elemente bei Netzdichte mittel).
 
 Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
 folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den

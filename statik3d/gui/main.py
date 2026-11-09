@@ -14369,7 +14369,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 els = self.model.elements
                 alte_knoten.update(int(x) for e in (elemente or []) if 0 <= int(e) < len(els)
                                    for x in els[int(e)].nodes)
+            # Flaechen mit gemeinsamer Randlinie (und Dreiecksflaechen) zusammen:
+            # jede Linie wird einmal geteilt, die Nachbarn teilen ihre Knoten
+            # (mesher.schalen_gemeinsam_vernetzen, Entscheidung vom 09.11.2026)
+            gemeinsam_namen = {g.name for g in mesher.gemeinsame_schalen(self.model, flaechen)}
+            if gemeinsam_namen:
+                gruppe = [g for g in flaechen if g.name in gemeinsam_namen]
+                if not self._fortschritt(int(1000 * erledigt / summe),
+                                         f"Vernetze {len(gruppe)} verbundene Flächen"):
+                    abgebrochen = True
+                else:
+                    for g in gruppe:
+                        knoten_von(g.elemente)
+                        self._netz_loeschen(g.elemente)
+                        g.elemente = []
+                    gem = mesher.schalen_gemeinsam_vernetzen(self.model, gruppe, hs, log, kanten)
+                    n += sum(len(v) for v in gem.values())
+                    erledigt += sum(gewicht.get(g.name, 1.0) for g in gruppe)
             for i, f in enumerate(flaechen):
+                if abgebrochen:
+                    break
+                if f.name in gemeinsam_namen:
+                    continue
                 if not self._fortschritt(int(1000 * erledigt / summe),
                                          f"Vernetze Fläche {i + 1} von {len(flaechen)}: {f.name}"):
                     abgebrochen = True

@@ -651,6 +651,206 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
     return []
 
 
+# ---------------------------------------------------------------------------
+# Schalenflaechen mit gemeinsamen Randlinien (09.11.2026)
+# ---------------------------------------------------------------------------
+def _ist_schale(model: Model, f) -> bool:
+    """Bekommt die Flaeche ein eigenes Schalennetz (Dicke, eigene Steifigkeit)?"""
+    if getattr(f, "steifigkeit", ""):
+        return False
+    traegt = getattr(model, "flaeche_traegt", None)
+    return bool(f.dicke) or traegt is None or bool(traegt(f.name))
+
+
+def gemeinsame_schalen(model: Model, flaechen) -> list:
+    """Die Schalenflaechen, die gemeinsam vernetzt werden muessen.
+
+    Das sind alle, die eine Randlinie (auch eine Oeffnungslinie) mit einer
+    anderen Schalenflaeche teilen, und alle mit genau drei Randlinien.
+    Entscheidung des Anwenders vom 09.11.2026: „flächen mit gemeinsamer
+    randlinie sollen verbunden sein“ und „fläche mit drei randlinien soll
+    sich an gewünschter netzgröße orientieren“. Bis dahin legte jede Flaeche
+    auf ihren Randlinien eigene Zwischenknoten an: zwei Flaechen hingen nur an
+    den Linienenden zusammen (Platte 4 m aus zwei Flaechen: 398 statt 149,6 mm
+    Durchbiegung), und eine Dreiecksflaeche wurde ein einziges Element."""
+    schalen = [f for f in flaechen if _ist_schale(model, f)]
+
+    def alle_linien(f):
+        return list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]
+    zahl: dict = {}
+    for f in schalen:
+        for x in set(alle_linien(f)):
+            zahl[x] = zahl.get(x, 0) + 1
+    return [f for f in schalen
+            if any(zahl.get(x, 0) > 1 for x in alle_linien(f)) or len(f.linien or []) == 3]
+
+
+def _h_eigene_teilung(model: Model, f) -> float:
+    """Kantenlaenge aus der eigenen Teilung der Flaeche (Netzdichte aus)."""
+    from .netzdichte import _seitenlaengen
+    L = _seitenlaengen(model, f)
+    t = list(f.teilung or [])
+    if L is None or len(t) < 2 or min(t) < 1:
+        return 0.0
+    return min(L[0] / t[0], L[1] / t[1])
+
+
+def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: list = None,
+                                kanten: dict = None, ordnung: int = 0,
+                                dreiecke: bool = None) -> dict:
+    """Schalenflaechen mit gemeinsamen Randlinien zusammenhaengend vernetzen.
+
+    Jede Randlinie bekommt **eine** Teilung (mesher3d.Linienteilung) und ihre
+    Zwischenknoten nur einmal; alle Flaechen an der Linie benutzen dieselben
+    Knoten. Die Teilung einer Linie folgt der feinsten Kantenlaenge der
+    Flaechen an ihr (``hs``: Name -> h aus der Netzdichte). Eine Flaeche aus
+    vier Randlinien mit gleich geteilten Gegenseiten wird abgebildet
+    vernetzt (Vierecke wie bisher); jede andere - drei Randlinien, mehr als
+    vier, Oeffnungen - frei mit Dreiecken in ihrer Kantenlaenge
+    (mesher3d.flaechennetz). Rueckgabe {Flaechenname: Elementnummern}; nur die
+    Flaechen aus :func:`gemeinsame_schalen` werden hier vernetzt, alle
+    anderen bleiben bei :func:`mesh_flaeche`."""
+    from . import mesher3d as M3
+    from .importers import _common as C
+    gruppe = gemeinsame_schalen(model, flaechen)
+    if not gruppe:
+        return {}
+    hs = dict(hs or {})
+    kanten = {} if kanten is None else kanten
+    if dreiecke is None:
+        dreiecke = int(getattr(getattr(model, "netz", None), "form", 2) or 0) == 0
+    ordnung = netz_ordnung(model, ordnung)
+    ueber = bool(getattr(getattr(model, "netz", None), "teilung_uebersteuern", True))
+    hf: dict = {}
+    for f in gruppe:
+        h = 0.0 if ueber else _h_eigene_teilung(model, f)
+        if h <= 0:
+            h = float(hs.get(f.name, 0.0) or 0.0)
+        if h <= 0:
+            from .netzdichte import elementlaenge
+            h = float(elementlaenge(model, model.netz, f)["h"])
+        hf[f.name] = max(h, 1e-6)
+    h_lin: dict = {}
+    for f in gruppe:
+        for x in list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]:
+            h_lin[x] = min(h_lin.get(x, hf[f.name]), hf[f.name])
+    namen_f = frozenset(f.name for f in gruppe)
+    teil = M3.Linienteilung(model, gruppe, max(hf.values()), h_linien=h_lin, h_flaechen=hf,
+                            gemeinsam=(namen_f, frozenset(h_lin)), eben_binden=True)
+    for erste, k, grenze in getattr(teil, "gekappt", []) or []:
+        C.warn(log, f"Linie {erste} und ihre Gegenseiten: {k} Abschnitte gefordert, auf {grenze} begrenzt")
+
+    def abgebildet_moeglich(f) -> bool:
+        if len(f.linien or []) != 4 or f.oeffnungen:
+            return False
+        st = M3.seiten_im_umlauf(model, f.linien)
+        if not st or len(st) != 4:
+            return False
+        n = [teil.n.get(x, 1) for x, _k in st]
+        return n[0] == n[2] and n[1] == n[3]
+
+    # 1. Freie Netze in der Ebene - fehlt eine Randstrecke, wird ihre Linie
+    #    nachgeteilt, und zwar fuer alle Flaechen daran (darum neu fuer alle)
+    frei: dict = {}
+    for _runde in range(4):
+        frei, fehlt_alle = {}, set()
+        for f in gruppe:
+            if abgebildet_moeglich(f):
+                continue
+            P, T, meldung, fehlt, kenn = M3.flaechennetz(model, f, teil)
+            frei[f.name] = (P, T, meldung, kenn)
+            fehlt_alle.update(fehlt or [])
+        if not fehlt_alle or not teil.verfeinern(sorted(fehlt_alle)):
+            break
+    # 2. Knoten: jede Kennung (Linienpunkt oder Linienende) nur einmal
+    knoten_von: dict = {}
+
+    def knoten(kennung, p):
+        if kennung is None:
+            return int(model.add_node(*np.asarray(p, float)))
+        if kennung[0] == "K":
+            return int(kennung[1])
+        if kennung not in knoten_von:
+            knoten_von[kennung] = int(model.add_node(*np.asarray(p, float)))
+        return knoten_von[kennung]
+
+    def mitten(ring_ids, herkunft):
+        """Quadratisch: Kantenmitten auf krummen Randlinien auf die Kurve."""
+        if ordnung < 2:
+            return
+        n = len(ring_ids)
+        i = 0
+        while i < n:
+            j = i
+            while j < n and herkunft[j] == herkunft[i]:
+                j += 1
+            kette = [ring_ids[k % n] for k in range(i, j + 1)]
+            linie = herkunft[i]
+            _randmitten(model, kette, [int(x) for x in model.lines[linie].nodes], linie, kanten)
+            i = j
+
+    out: dict = {}
+    n_vier = n_drei = 0
+    for f in gruppe:
+        mat = f.material or C.ensure_material(model, log=log)
+        prop = f.dicke or C.ensure_shell_prop(model, log=log)
+        zug = M3._linienzug(teil, model, f.linien or [])
+        if zug is None:
+            C.warn(log, f"Fläche {f.name}: die Linien bilden keinen geschlossenen Rand.")
+            f.elemente = []
+            continue
+        R, herkunft, kenn = zug
+        ring = [knoten(k, p) for k, p in zip(kenn, R)]
+        # Normale aus dem Umlauf (Newell) - die freien Dreiecke drehen wie er
+        nrm = np.zeros(3)
+        for i in range(len(R)):
+            nrm += np.cross(R[i], R[(i + 1) % len(R)])
+        mitten(ring, herkunft)
+        els = []
+        if f.name not in frei:
+            # abgebildet: die vier Randlinien als Ketten im Umlauf
+            grenzen = [0] + [i for i in range(1, len(ring)) if herkunft[i] != herkunft[i - 1]]
+            ketten = []
+            for s in range(4):
+                a = grenzen[s]
+                b = grenzen[s + 1] if s < 3 else len(ring)
+                ketten.append([ring[k % len(ring)] for k in range(a, b + 1)])
+            ids = transfinit(model, ketten[0], ketten[2][::-1], ketten[3][::-1], ketten[1])
+            for i in range(ids.shape[0] - 1):
+                for j in range(ids.shape[1] - 1):
+                    els.extend(_flaechenelemente(model, [int(ids[i, j]), int(ids[i + 1, j]),
+                                                         int(ids[i + 1, j + 1]), int(ids[i, j + 1])],
+                                                 mat, prop, f.name, dreiecke, ordnung, kanten))
+            n_vier += 1
+            C.say(log, f"Fläche {f.name}: {len(els)} "
+                       + ("Dreieckelemente" if dreiecke else "Viereckelemente")
+                       + (" (quadratisch)" if ordnung >= 2 else "")
+                       + f" ({ids.shape[0] - 1} x {ids.shape[1] - 1}), Randknoten gemeinsam mit den Nachbarflächen")
+        else:
+            P, T, meldung, kp = frei[f.name]
+            if meldung or not len(T):
+                C.warn(log, f"Fläche {f.name}: nicht vernetzt ({meldung or 'kein Netz in der Ebene'}).")
+                f.elemente = []
+                continue
+            ids = [knoten(kp[i] if i < len(kp) else None, P[i]) for i in range(len(P))]
+            X = model.nodes
+            for t in T:
+                a, b, c = ids[int(t[0])], ids[int(t[1])], ids[int(t[2])]
+                if float(np.cross(X[b] - X[a], X[c] - X[a]) @ nrm) < 0:
+                    b, c = c, b
+                els.append(_dreieck(model, [a, b, c], mat, prop, f.name, ordnung, kanten))
+            n_drei += 1
+            C.say(log, f"Fläche {f.name}: {len(els)} Dreieckelemente"
+                       + (" (quadratisch)" if ordnung >= 2 else "")
+                       + f" frei vernetzt, h = {teil.h_fuer(f) * 1e3:.0f} mm, "
+                       "Randknoten gemeinsam mit den Nachbarflächen")
+        f.elemente = els
+        out[f.name] = els
+    C.say(log, f"{len(out)} Flächen mit gemeinsamen Randlinien zusammenhängend vernetzt "
+               f"({n_vier} abgebildet, {n_drei} frei)")
+    return out
+
+
 def _dreieck(model: Model, knoten, mat, prop, gruppe: str, ordnung: int, kanten: dict) -> int:
     """Ein Dreieckelement: shell3 (linear) oder shell6 (quadratisch)."""
     a, b, c = [int(x) for x in knoten[:3]]
@@ -1821,7 +2021,11 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
         for k in koerper:
             k.elemente = []
         kanten: dict = {}
+        gemeinsam = schalen_gemeinsam_vernetzen(model, flaechen, hs_alle, log, kanten)
         for f in flaechen:
+            if f.name in gemeinsam:
+                aus["elemente"] += len(gemeinsam[f.name])
+                continue
             aus["elemente"] += len(mesh_flaeche(model, f, log, kanten=kanten))
         if koerper:
             # Eine groebere Stufe der Grenze bekommt ihre Kantenlaenge aus der
