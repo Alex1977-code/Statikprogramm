@@ -6274,6 +6274,12 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 * Automatische Kombinationen: GZT nach 6.10 (oder 6.10a/b), ständige Lasten
   günstig und ungünstig, jede veränderliche Einwirkung als Leiteinwirkung;
   GZG charakteristisch/häufig/quasi-ständig; außergewöhnlich 6.11b.
+  In 6.10b mindert ξ nur die ungünstigen ständigen Lasten (ξ · γ_G,sup); die
+  Vorspannung bleibt bei γ_P, Setzungen und günstiges G (γ_G,inf) bleiben
+  ohne ξ. Bis zum 09.11.2026 traf ξ jeden ständigen Faktor, also auch P und
+  das günstige G mit 0,85 statt 1,0. Ältere Ergebnisse mit Kombinationen nach
+  6.10b tragen „Ergebnis möglicherweise betroffen – neu rechnen“. Geprüft in
+  `tests/test_kombination_xi.py`.
   Beschreibung „auto: …“ kennzeichnet erzeugte Kombinationen; sie werden bei
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Die erzeugten
   Kombinationen heißen seit dem 06.10.2026 LK1, LK2 …, ihre Bezeichnung nennt

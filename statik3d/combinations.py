@@ -376,7 +376,13 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
                             f_a[lc.name] = _gamma(lc, ds, False) * lc.psi_factors[0]
                         add("GZT 6.10a", f_a, "ULS", f"6.10a, {gdesc}", begleit=vs, nur="ständig",
                             fav=fav)
-                        f_b = {k: (v * ds.xi if k in gf else v) for k, v in f.items()}
+                        # ξ nur auf die ungünstigen ständigen Lasten (ξ γ_G,sup G_k,sup),
+                        # nicht auf γ_P P, nicht auf Setzungen und nicht auf das günstige
+                        # G (γ_G,inf G_k,inf). Bis zum 09.11.2026 traf ξ jeden ständigen
+                        # Faktor (Befund A6): P und günstiges G mit 0,85 statt 1,0.
+                        mit_xi = set() if fav else {lc.name for lc in perm
+                                                    if lc.category not in ("P", "SET")}
+                        f_b = {k: (v * ds.xi if k in mit_xi else v) for k, v in f.items()}
                         add("GZT 6.10b", f_b, "ULS", f"6.10b Leit {lead.name}, {gdesc}", lead.name,
                             begleit=[lc for lc in vs if lc is not lead], fav=fav)
                     else:

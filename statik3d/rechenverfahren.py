@@ -231,6 +231,15 @@ def _temperaturunterschied_schale(model) -> bool:
     return False
 
 
+def _kombination_610b(model) -> bool:
+    """Eine Kombination nach Regel 6.10b - dort traf ξ bis zum 09.11.2026 auch
+    die Vorspannung und das günstige G (Befund A6 der Pruefagenten)."""
+    for c in (getattr(model, "combinations", None) or {}).values():
+        if "6.10b" in str(getattr(c, "description", "") or ""):
+            return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -853,6 +862,17 @@ MERKMALE: list = [
         modellmerkmal="Temperaturunterschied ΔT_z auf einer Schale",
         betrifft=_temperaturunterschied_schale),
     Merkmal(
+        # Befund A6 der Pruefagenten (09.11.2026): Regel 6.10b nahm ξ = 0,85 auf jeden
+        # staendigen Faktor, auch auf γ_P und auf das guenstige G (beides 0,85 statt 1,0,
+        # auf der unsicheren Seite). Fehlerkorrektur
+        name="kombination_xi", titel="Abminderungsbeiwert ξ in Regel 6.10b",
+        texte={"alt": "ξ auf alle ständigen Lasten, auch P und günstiges G",
+               "neu": "ξ nur auf ungünstige ständige Lasten (ξ · γ_G,sup)"},
+        wechsel=(Wechsel(stand=11, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kombination nach Regel 6.10b",
+        betrifft=_kombination_610b),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -935,7 +955,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 10
+VERFAHRENSSTAND = 11
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
