@@ -6187,6 +6187,15 @@ sie wirkte. Ältere Ergebnisse mit Zwangsverformung an einer Feder tragen
 „Ergebnis möglicherweise betroffen – neu rechnen“. Geprüft in
 `tests/test_zwang_feder.py`.
 
+**Kontaktbedingung nur mit Körpern.** Nennt eine Kontaktbedingung nur den
+gelösten Körper und die Gegenkörper, aber keine Flächen, sind die Flächen der
+Gegenkörper die Gegenseite: Die Fuge sind die Randseiten des gelösten Körpers,
+die auf ihnen liegen, wie bei einer RFEM-Freigabe ohne freigegebene Flächen.
+Die Bedingung selbst bleibt, wie sie eingegeben ist. Bis zum 09.11.2026 blieb
+so eine Bedingung unausgeführt; hielt eine zweite Lagerung den Körper, lief die
+Last still daran vorbei. Ältere Ergebnisse tragen „Ergebnis möglicherweise
+betroffen – neu rechnen“. Geprüft in `tests/test_kontakt_nur_koerper.py`.
+
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
 Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf

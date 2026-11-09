@@ -282,6 +282,17 @@ def _anschluss_ohne_festigkeit(model) -> bool:
     return False
 
 
+def _kontakt_nur_koerper(model) -> bool:
+    """Eine Kontaktbedingung, die nur Koerper nennt (geloest und Gegenkoerper, keine
+    Flaechen) - sie blieb bis zum 09.11.2026 unausgefuehrt (Befund A17)."""
+    for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
+        if (not getattr(kb, "flaechennamen", None) and not getattr(kb, "gegenflaechen", None)
+                and getattr(kb, "koerpernamen", None) and getattr(kb, "gegenkoerper", None)
+                and not getattr(kb, "aus", False)):
+            return True
+    return False
+
+
 def _fliessen(model) -> bool:
     return bool(getattr(getattr(model, "plastizitaet", None), "an", False))
 
@@ -937,6 +948,17 @@ MERKMALE: list = [
         modellmerkmal="Anschluss mit Werkstoff ohne f_y oder f_u",
         betrifft=_anschluss_ohne_festigkeit),
     Merkmal(
+        # Befund A17 der Pruefagenten (09.11.2026): eine Kontaktbedingung nur mit Koerpern
+        # blieb unausgefuehrt; mit einer zweiten Halterung lief die Last still daran vorbei.
+        # Jetzt sind die Flaechen der Gegenkoerper die Gegenseite. Fehlerkorrektur
+        name="kontakt_nur_koerper", titel="Kontaktbedingung nur mit Körpern",
+        texte={"alt": "Kontaktbedingung nur mit Körpern nicht ausgeführt",
+               "neu": "Fuge = Seiten des gelösten Körpers auf den Gegenkörpern"},
+        wechsel=(Wechsel(stand=14, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kontaktbedingung, die nur Körper nennt",
+        betrifft=_kontakt_nur_koerper),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -1019,7 +1041,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 13
+VERFAHRENSSTAND = 14
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

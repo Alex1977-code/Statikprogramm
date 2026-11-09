@@ -921,6 +921,36 @@ def gruppen_je_knoten(model: Model) -> dict:
 
 def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
                            knotengruppen: dict = None, cache: dict = None) -> dict:
+    """Eine einzelne Kontaktbedingung im Netz umsetzen (siehe
+    :func:`_kontaktfuge_ausfuehren`).
+
+    Nennt die Bedingung nur Koerper - geloester Koerper und Gegenkoerper, keine
+    Flaechen -, sind die Flaechen der Gegenkoerper die Gegenseite: die Fuge sind
+    die Randseiten des geloesten Koerpers, die auf ihnen liegen, wie bei einer
+    RFEM-Freigabe ohne freigegebene Flaechen. Bis zum 09.11.2026 blieb so eine
+    Bedingung unausgefuehrt („weder freigegebene Flaechen noch zugeordnete
+    Gegenflaechen“), mit einer zweiten Halterung still ohne Kontakt (Befund A17).
+    Die Gegenflaechen gelten nur fuer das Ausfuehren; die Bedingung selbst bleibt,
+    wie sie eingegeben ist."""
+    if (not kb.flaechennamen and not kb.gegenflaechen and kb.koerpernamen
+            and getattr(kb, "gegenkoerper", None)):
+        koerper = getattr(model, "koerper", {}) or {}
+        gegen = [f for name in kb.gegenkoerper if name in koerper and name not in kb.koerpernamen
+                 for f in koerper[name].flaechen]
+        if gegen:
+            alt = kb.gegenflaechen
+            kb.gegenflaechen = list(dict.fromkeys(gegen))
+            try:
+                bericht = _kontaktfuge_ausfuehren(model, kb, log, knotengruppen, cache)
+            finally:
+                kb.gegenflaechen = alt
+            bericht["gegenseite_aus_koerpern"] = list(kb.gegenkoerper)
+            return bericht
+    return _kontaktfuge_ausfuehren(model, kb, log, knotengruppen, cache)
+
+
+def _kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
+                            knotengruppen: dict = None, cache: dict = None) -> dict:
     """Eine einzelne Kontaktbedingung im Netz umsetzen.
 
     Rueckgabe ein Bericht: verdoppelte Knoten (``knoten``: die Ecken; an
