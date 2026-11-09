@@ -133,10 +133,13 @@ def _status(an) -> str:
 
 
 def _betroffen_ausser_halte(an) -> bool:
-    """Status zu einem anderen Merkmal als „Numerisch gehaltene Freiheitsgrade“?"""
+    """Status zu einem anderen Merkmal als „Numerisch gehaltene Freiheitsgrade“
+    und „Achsen der Flächenspannungen“? Beide treffen den Klotz zu Recht (freie
+    Bewegung in LF1; die Platte besteht aus Schalenelementen) und werden unten
+    je für sich verlangt."""
     from statik3d import rechenverfahren as rvf
     b = str(an.info.get("verfahren_betroffen") or "")
-    return any(m.titel in b for m in rvf.MERKMALE if m.name != "haltekraefte")
+    return any(m.titel in b for m in rvf.MERKMALE if m.name not in ("haltekraefte", "flaechen_achsen"))
 
 def test_tabelle_und_datei():
     from statik3d import ergebnisse as erg, rechenverfahren as rv
@@ -294,6 +297,11 @@ def test_datei_15_10_mit_tangente():
           and not _betroffen_ausser_halte(a2), str(a2.info.get("verfahren_betroffen")) if a2 else "")
     check("… freie Bewegung numerisch gehalten (LF1): Status „Numerisch gehaltene Freiheitsgrade“ (08.11.2026)",
           a2 is not None and "Numerisch gehaltene Freiheitsgrade" in str(a2.info.get("verfahren_betroffen") or ""),
+          str(a2.info.get("verfahren_betroffen")) if a2 else "")
+    # Die Platte des Klotzes besteht aus Schalenelementen: seit dem 09.11.2026 traegt eine
+    # aeltere Datei dafuer den Status „Achsen der Flächenspannungen“ (Befund A20)
+    check("… Schalenelemente im Modell: Status „Achsen der Flächenspannungen“ (09.11.2026)",
+          a2 is not None and "Achsen der Flächenspannungen" in str(a2.info.get("verfahren_betroffen") or ""),
           str(a2.info.get("verfahren_betroffen")) if a2 else "")
     # wieder gespeichert ohne Rechnung: die Kennung hat jetzt die heutige Form, die Merkmale bleiben
     p2 = os.path.join(d, "mittags2.ergebnisse")
