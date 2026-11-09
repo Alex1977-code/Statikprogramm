@@ -6485,6 +6485,28 @@ gilt:
 * **Alte Dateien** behalten ihre Einwirkung: ein Lastfall, der bisher Q war, ist
   weiter Q. Nur der RFEM-Import vergibt „nicht zugeordnet“.
 
+**Einwirkungen der DIN 19704 im Generator nach EN 1990 (seit 09.11.2026).** Ein
+Lastfall mit einer Einwirkung der DIN 19704 stand bis dahin in keiner mit
+*EN 1990…* erzeugten Kombination – ohne Meldung (Befund A5 der Prüfagenten). Am
+Einfeldträger mit 6 m, Eigengewicht 10 kN/m und 5 kN/m „Eigengewicht
+Ausrüstung“ kam als größtes Bemessungsmoment 60,75 statt 91,13 kNm heraus. Jetzt
+gilt:
+
+| Einwirkung | im Generator nach EN 1990 |
+|---|---|
+| Eigengewicht Ausrüstung (G_A), Wasserdruck ständig (W_S) | ständig: γ_G 1,35 ungünstig, 1,0 günstig |
+| Wasserdruck veränderlich (W_V), Eis, Schwall, Wind bei Bewegung, Antriebsmoment (A_M, A_MG) | veränderlich: γ_Q 1,5, als Leit- und als Begleiteinwirkung mit ihrem ψ |
+| Anprall, Verklemmen | außergewöhnlich: Gl. 6.11b mit Faktor 1,0 |
+| Erdbeben, Montage- und Revisionszustand | keine Kombination – der Generator weigert sich und nennt den Lastfall |
+
+Für Erdbeben und Montage bildet *EN 1990…* keine Kombination, weil die Regel
+dafür in der DIN 19704 steht (Lastfallklasse LF3): die Kombinationen mit
+**Lasten → DIN 19704** bilden oder von Hand anlegen. Sind die Lasten schon
+Bemessungswerte, genügt am Lastfall der Haken „Bemessungslastfall, bereits
+faktorisiert“. Ältere Ergebnisse eines Modells, in dem ein solcher Lastfall in
+keiner erzeugten Kombination steht, tragen „Ergebnis möglicherweise betroffen –
+neu rechnen“; beheben heißt hier: die Kombinationen neu erzeugen, dann rechnen.
+
 **Was der RFEM-Import zuordnet.** Die Kennzahl der Einwirkungskategorie
 (`actionCategoryId`) liest der Import jetzt aus der Aufzählung der Dlubal-API
 (RFEM 6.15, 296 Werte; an den Beispielmodellen von RFEM 6.15 belegt für 11, 19,

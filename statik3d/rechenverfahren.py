@@ -240,6 +240,29 @@ def _kombination_610b(model) -> bool:
     return False
 
 
+def _din19704_kategorie_fehlt(model) -> bool:
+    """Ein Lastfall mit einer Einwirkung der DIN 19704 (Eigengewicht Ausruestung,
+    Wasserdruck, Eis, Schwall, Wind bei Bewegung, Antriebsmoment, Anprall,
+    Verklemmen), der in keiner Kombination des Generators nach DIN EN 1990 steht -
+    bis zum 09.11.2026 liess der Generator solche Lastfaelle still weg (Befund A5
+    der Pruefagenten). Kombinationen aus Dateien ohne Fingerabdruck zaehlen mit
+    der Beschreibung „auto…“."""
+    from .model import KATEGORIEN_DIN19704_EN1990
+    faelle = [n for n, lc in (getattr(model, "load_cases", None) or {}).items()
+              if getattr(lc, "category", "") in KATEGORIEN_DIN19704_EN1990
+              and not getattr(lc, "faktorisiert", False)]
+    if not faelle:
+        return False
+    erzeugt = [c for c in (getattr(model, "combinations", None) or {}).values()
+               if getattr(c, "erzeugt", "") == "EN 1990"
+               or (not getattr(c, "erzeugt", "")
+                   and str(getattr(c, "description", "") or "").startswith("auto"))]
+    if not erzeugt:
+        return False
+    return any(all(abs(float((getattr(c, "factors", None) or {}).get(n, 0.0))) < 1e-12
+                   for c in erzeugt) for n in faelle)
+
+
 def _zwang_an_feder(model) -> bool:
     """Eine Zwangsverformung an einem linearen Federlager - dort wirkte sie bis
     zum 09.11.2026 nicht (Befund A11 der Pruefagenten)."""
@@ -1085,6 +1108,21 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Flächenlast senkrecht auf quadratische Volumenelemente",
         betrifft=_druck_quadratische_seiten),
+    # Befund A5 (09.11.2026): der Generator nach DIN EN 1990 kannte die
+    # Einwirkungen der DIN 19704 nicht und liess solche Lastfaelle still aus
+    # jeder Kombination. Fehlerkorrektur; beheben heisst hier: Kombinationen
+    # neu erzeugen, dann neu rechnen
+    Merkmal(
+        name="kategorien_din19704", titel="Einwirkungen der DIN 19704 im Generator nach EN 1990",
+        texte={"alt": "Lastfälle mit Einwirkungen der DIN 19704 fehlen in den erzeugten Kombinationen",
+               "neu": "G_A, W_S ständig; W_V, Eis, Schwall, Wind bei Bewegung, Antriebsmoment "
+                      "veränderlich; Anprall, Verklemmen außergewöhnlich"},
+        wechsel=(Wechsel(stand=21, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall mit einer Einwirkung der DIN 19704, der in keiner nach EN 1990 "
+                      "erzeugten Kombination steht",
+        betrifft=_din19704_kategorie_fehlt, im_ergebnis=_kombinationen_im_ergebnis,
+        vorschlag="Lasten › „EN 1990…“: die Kombinationen neu erzeugen, dann neu rechnen"),
     Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
@@ -1168,7 +1206,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 20
+VERFAHRENSSTAND = 21
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -25078,6 +25078,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if offen:
             from ..combinations import sperrhinweis_erzeugen
             return self.hinweis(sperrhinweis_erzeugen(offen))
+        # Erdbeben, Montagezustand (DIN 19704): der Generator nach EN 1990 hat
+        # dafuer keine Regel (Befund A5, 09.11.2026) - ebenfalls vor dem Dialog
+        from ..combinations import lastfaelle_ohne_regel_en1990, sperrhinweis_ohne_regel
+        ohne = lastfaelle_ohne_regel_en1990(self.model)
+        if ohne:
+            return self.hinweis(sperrhinweis_ohne_regel(self.model, ohne))
         d = AutoCombinationDialog(self, self.model.design)
         if d.exec():
             from ..combinations import generate_combinations

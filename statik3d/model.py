@@ -119,6 +119,17 @@ ACTION_CATEGORIES = {
     "ERD":    ("Erdbeben (DIN EN 1998)", (1.0, 1.0, 1.0)),
 }
 
+#: Einwirkungen der DIN 19704, fuer die der Generator nach DIN EN 1990 keine
+#: Kombination bildet (Erdbeben 6.12b und Montagezustaende sind dort nicht
+#: gebaut): er lehnt solche Lastfaelle ab, statt sie still wegzulassen
+#: (Befund A5, 09.11.2026). Der Generator „DIN 19704“ fuehrt sie in der
+#: Lastfallklasse LF3.
+KATEGORIEN_OHNE_EN1990 = ("ERD", "MONT")
+#: Einwirkungen der DIN 19704, die der Generator nach DIN EN 1990 bis zum
+#: 09.11.2026 still wegliess (rechenverfahren: kategorien_din19704)
+KATEGORIEN_DIN19704_EN1990 = ("G_A", "W_S", "W_V", "WIND_B", "EIS", "SCHWALL", "A_M", "A_MG",
+                              "ANPRALL", "KLEMM")
+
 #: Schluessel der Kategorie „nicht zugeordnet“ in ACTION_CATEGORIES
 KATEGORIE_OFFEN = "NZ"
 
@@ -2023,17 +2034,25 @@ class LoadCase:
         Bemessungslastfall (``faktorisiert``), dessen Beiwerte feststehen."""
         return self.kategorie_offen and not self.faktorisiert
 
+    # Die Einwirkungen der DIN 19704 gehoeren seit dem 09.11.2026 in dieselben
+    # drei Klassen (Befund A5 der Pruefagenten, Entscheidung des Anwenders):
+    # bis dahin fiel ein Lastfall „Eigengewicht Ausruestung“ oder „Wasserdruck
+    # staendig“ still aus jeder Kombination nach DIN EN 1990, weil er weder
+    # staendig noch veraenderlich noch aussergewoehnlich war. Ohne Klasse
+    # bleiben ERD und MONT (KATEGORIEN_OHNE_EN1990: der Generator lehnt sie
+    # ab), FAT (nur Ermuedung) und „nicht zugeordnet“ (gesperrt).
     @property
     def is_permanent(self) -> bool:
-        return self.category in ("G", "P", "SET")
+        return self.category in ("G", "P", "SET", "G_A", "W_S")
 
     @property
     def is_variable(self) -> bool:
-        return self.category.startswith("Q") or self.category in ("S", "S_H", "W", "T", "H")
+        return self.category.startswith("Q") or self.category in (
+            "S", "S_H", "W", "T", "H", "W_V", "WIND_B", "EIS", "SCHWALL", "A_M", "A_MG")
 
     @property
     def is_accidental(self) -> bool:
-        return self.category == "A"
+        return self.category in ("A", "ANPRALL", "KLEMM")
 
     def lasten_je_art(self) -> dict:
         """{Lastart: [Lasten]} - nur die eingegebenen, nicht die aus Objektlasten
