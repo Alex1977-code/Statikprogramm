@@ -418,14 +418,18 @@ def elementfehler(model: Model, i: int, ex: Exception) -> ValueError:
     Bisher kam aus einer halben Million Elementen nur „entartetes Tet4“
     zurueck - ohne Nummer, ohne Knoten, ohne Koerper. Wer das Netz reparieren
     soll, braucht beides.
+
+    Element- und Knotennummern zaehlen ab 0 wie in Tabellen, Modellbaum und
+    Modellpruefung (bis zum 09.11.2026 stand hier die Nummer plus eins - das
+    Element der Meldung war in der Tabelle das davor, Befund C13).
     """
     try:
         e = model.elements[i]
-        kn = ", ".join(str(int(k) + 1) for k in e.nodes)
+        kn = ", ".join(str(int(k)) for k in e.nodes)
         wo = f" im Volumen/Objekt '{e.group}'" if getattr(e, "group", "") else ""
-        return ValueError(f"Element {i + 1} ({e.typ}{wo}, Knoten {kn}): {ex}")
+        return ValueError(f"Element {i} ({e.typ}{wo}, Knoten {kn}): {ex}")
     except Exception:      # noqa: BLE001 - die Meldung darf nie selbst scheitern
-        return ValueError(f"Element {i + 1}: {ex}")
+        return ValueError(f"Element {i}: {ex}")
 
 
 #: Hoechstzahl Sechsflaechner je Stapel. 4096 mal 24x24 in double sind 19 MB

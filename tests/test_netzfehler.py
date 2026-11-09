@@ -353,7 +353,8 @@ def test_adaptiv_prueft_das_modell():
     from statik3d import cli
     from statik3d.model import Combination
     G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
-    meldung = "Kombination 'K9': Lastfall 'LF-X' unbekannt"
+    # Wortlaut seit 09.11.2026 (Befund C14, diagnose.lastfall_fehlt_text)
+    meldung = "Kombination „K9“ nennt den Lastfall „LF-X“ – den gibt es nicht"
 
     def modell(mit_fehler=True):
         m, _k = _kleine_platte(0.06)

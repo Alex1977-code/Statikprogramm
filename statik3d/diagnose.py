@@ -420,7 +420,8 @@ def entartete_menge(model) -> frozenset:
     entartete_umwandeln(model)
     fehler = entartete_einordnen(model)["fehler"]
     if fehler:
-        beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in fehler[:3])
+        # Elementnummern ab 0 wie in Tabellen und Modellbaum (C13, 09.11.2026)
+        beispiel = "; ".join(f"Element {i} ({t}): {g}" for i, t, g in fehler[:3])
         raise ValueError(f"{len(fehler)} Volumenelement(e) mit zusammenfallenden Knoten haben "
                          f"Volumen und lassen sich nicht eindeutig umwandeln ({beispiel}"
                          + (" …" if len(fehler) > 3 else "") + ") - dort das Netz neu erzeugen "
@@ -639,6 +640,11 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
         # Spannstahl f_pk) - fehlt f_u, wird ohne Grenze gerechnet, und kein
         # Vorgabewert wird gesetzt (Entscheidung des Anwenders). Nur WARNUNG.
         aus += _abnahme_werkstoff_grenze(model)
+        # 9a. Warnungen der Eingabepruefung (seit 09.11.2026): fast
+        # inkompressibler Werkstoff im Volumen, Lager auf nicht vernetzter
+        # Linie oder Flaeche, Flaechenlager nach geaendertem Netz. Ihre FEHLER
+        # stehen in Model.check - dort sperren sie das Rechnen schon vorher.
+        aus += [b for b in eingabepruefung(model) if b.stufe == "WARNUNG"]
         # 10. Stabenden an 1-3 Volumenknoten (seit 13.10.2026): ein Hinweis auf
         # die verteilende Einleitung - umgestellt wird nichts. Dieselben
         # Stabenden nennt Punkt 8 schon als moegliche Spannungsspitze („48
@@ -674,6 +680,389 @@ def _abnahme_werkstoff_grenze(model) -> list:
                    text=_pl.meldung_ohne_grenze(mat) + " (mit Plastizität verfestigt der Werkstoff "
                         f"bis {mat.grenze_name()}, danach fließt er ideal plastisch).")
             for mat in mats]
+
+
+# ---------------------------------------------------------------------------
+# Eingabepruefung (09.11.2026, Gruppe 5 der Befundliste der Pruefagenten:
+# A21, A22, A24, C10, C11, C14)
+# ---------------------------------------------------------------------------
+#: Querdehnzahl, ueber der ein Volumen als fast inkompressibel gilt (WARNUNG).
+#: Das Verhaeltnis Kompressions- zu Schubmodul K/G = 2(1+nu)/(3(1-2nu)) ist
+#: bei 0,495 rund 100: die Volumenelemente versteifen (Volumensperren).
+#: Gemessen am Kragarm gegen die Balkenloesung (FE/Balken): hex8 0,971 bei
+#: nu 0,3, 0,913 bei 0,495, 0,910 bei 0,499; tet4 0,664, 0,514, 0,494.
+#: Genau 0,5 ist mit Volumenelementen nicht rechenbar (Division durch 1-2nu).
+NU_FAST_INKOMPRESSIBEL = 0.495
+
+PRUEFUNG_EINGABE = "Eingabe"
+
+
+def _zt(x, stellen: int = 6) -> str:
+    """Zahl fuer eine Meldung: Dezimalkomma, nie wissenschaftlich."""
+    from .zahlen import zahl_text
+    return zahl_text(x, stellen=stellen) if _endlich(x) else str(x)
+
+
+def _endlich(x) -> bool:
+    try:
+        return bool(np.isfinite(float(x)))
+    except (TypeError, ValueError):
+        return False
+
+
+def lastfall_text(name) -> str:
+    """„LF3“ bleibt „LF3“, ein Lastfall mit anderem Namen heisst „Lastfall
+    „Wind““ - damit die Meldung in beiden Faellen ein Satz ist."""
+    import re
+    name = str(name)
+    return name if re.fullmatch(r"LF\d+", name) else f"Lastfall „{name}“"
+
+
+def kombination_text(name) -> str:
+    """Wie :func:`lastfall_text` fuer LK<Nr> und EK<Nr>."""
+    import re
+    name = str(name)
+    return name if re.fullmatch(r"(LK|EK)\d+", name) else f"Kombination „{name}“"
+
+
+def lastfall_fehlt_text(kombination, lastfall) -> str:
+    """Der Satz zu einer Kombination, die einen Lastfall nennt, den es nicht
+    gibt (Befund C14) - Modellpruefung und Loeser sagen dasselbe."""
+    return (f"{kombination_text(kombination)} nennt den Lastfall „{lastfall}“ – den gibt es nicht. "
+            "Den Lastfall anlegen oder ihn aus der Kombination nehmen.")
+
+
+def eingabepruefung(model) -> list:
+    """Angaben des Modells, mit denen sich nicht oder nur falsch rechnen
+    laesst - je Angabe ein :class:`Befund` mit Namen und Wert.
+
+    Bis zum 09.11.2026 liefen sie ohne Meldung durch (Befundliste der
+    Pruefagenten): ein negativer E-Modul verformte den Kragarm gegen die Last
+    (+114,131 statt -114,131 mm), nu = 0,5 endete im Volumen als
+    ZeroDivisionError, E = 0 und t = 0 als „Gleichungssystem singulär“ ohne
+    Namen, eine Last auf eine Flaeche, die es nicht gibt, gab ein gueltiges
+    Nullergebnis, ein Lager auf einer unbekannten Linie wirkte nicht.
+
+    FEHLER verhindert das Rechnen (Model.check uebernimmt jede Zeile),
+    WARNUNG nicht. Geprueft wird nur, was benutzt ist: ein Werkstoff ohne
+    Element stoert die Rechnung nicht.
+    """
+    aus: list = []
+    for teil in (_eingabe_werkstoffe, _eingabe_querschnitte, _eingabe_dicken,
+                 _eingabe_lastziele, _eingabe_lager):
+        try:
+            aus += teil(model)
+        except Exception as ex:           # noqa: BLE001 - eine Pruefung darf nie sperren
+            aus.append(Befund(
+                pruefung="Eingabe nicht geprüft", stufe="WARNUNG",
+                text=f"Ein Teil der Eingabeprüfung ließ sich nicht ausführen ({teil.__name__}: "
+                     f"{type(ex).__name__}: {str(ex)[:100]})."))
+    return aus
+
+
+def _eingabe_werkstoffe(model) -> list:
+    """E-Modul und Querdehnzahl der benutzten Werkstoffe (A21, C14)."""
+    from . import elemente as _el
+    shells = getattr(model, "shells", None) or {}
+    je: dict = {}
+    for e in model.elements:
+        if e.mat not in model.materials:
+            continue                      # nennt Model.check („Material unbekannt“)
+        if e.typ in _el.STAB_TYPEN:
+            art = "stab"
+        elif e.typ in _el.VOLUMEN_TYPEN:
+            art = "volumen"
+        elif e.typ in _el.SCHALEN_TYPEN or e.typ in _el.EBENE_TYPEN:
+            prop = shells.get(e.sec)
+            if prop is not None and getattr(prop, "geschichtet", False):
+                continue                  # die Lagen tragen ihr eigenes E und nu
+            if e.typ in _el.SCHALEN_TYPEN:
+                art = "schale"
+            else:
+                # ebener Dehnungszustand und Rotationssymmetrie teilen wie das
+                # Volumen durch 1 - 2 nu (elements/ebene.py)
+                art = ("ebene_dehnung" if str(getattr(e, "zustand", "spannung")) in ("dehnung", "rotation")
+                       else "ebene")
+        else:
+            continue                      # Federn, Grenzschichten: eigene Kennwerte
+        d = je.setdefault(e.mat, {})
+        d[art] = d.get(art, 0) + 1
+    worte = {"stab": ("Stabelement", "Stabelementen"), "schale": ("Schalenelement", "Schalenelementen"),
+             "volumen": ("Volumenelement", "Volumenelementen"),
+             "ebene": ("Scheibenelement", "Scheibenelementen"),
+             "ebene_dehnung": ("Scheibenelement im Dehnungs- oder Rotationszustand",
+                               "Scheibenelementen im Dehnungs- oder Rotationszustand")}
+    aus = []
+    for name, arten in je.items():
+        mat = model.materials[name]
+        benutzt = "Benutzt von " + ", ".join(_anzahl(n, *worte[a]) for a, n in arten.items()) + "."
+        E, nu = getattr(mat, "E", None), getattr(mat, "nu", None)
+        if not _endlich(E):
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name,
+                              text=f"Werkstoff „{name}“: Der E-Modul ist keine Zahl ({E}). {benutzt}"))
+        elif float(E) <= 0.0:
+            was = ("ist negativ – das Tragwerk verformte sich damit gegen die Last" if float(E) < 0.0
+                   else "ist null – ohne Steifigkeit ist das Gleichungssystem nicht lösbar")
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name, wert=float(E), grenze=0.0,
+                              text=f"Werkstoff „{name}“: Der E-Modul {_zt(float(E) / 1e6)} N/mm² {was}. "
+                                   f"{benutzt} Den E-Modul des Werkstoffs berichtigen."))
+        if not _endlich(nu):
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name,
+                              text=f"Werkstoff „{name}“: Die Querdehnzahl ist keine Zahl ({nu}). {benutzt}"))
+            continue
+        nu = float(nu)
+        if nu <= -1.0 or nu > 0.5:
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name, wert=nu, grenze=0.5,
+                              text=f"Werkstoff „{name}“: Die Querdehnzahl {_zt(nu)} liegt außerhalb des "
+                                   "möglichen Bereichs (größer als -1, höchstens 0,5) – Schub- oder "
+                                   f"Kompressionsmodul wären negativ. {benutzt} Die Querdehnzahl "
+                                   "berichtigen (Stahl 0,3)."))
+        elif nu == 0.5 and (arten.get("volumen", 0) or arten.get("ebene_dehnung", 0)):
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name, wert=nu, grenze=0.5,
+                              text=f"Werkstoff „{name}“: Mit der Querdehnzahl 0,5 (inkompressibel) lässt sich "
+                                   "ein Volumen nicht rechnen – die Kompressionssteifigkeit wird unendlich "
+                                   f"(Division durch 1 − 2ν). {benutzt} Einen Wert unter 0,5 eintragen."))
+        elif nu > NU_FAST_INKOMPRESSIBEL and arten.get("volumen", 0):
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name, wert=nu, grenze=NU_FAST_INKOMPRESSIBEL,
+                              stufe="WARNUNG",
+                              text=f"Werkstoff „{name}“: Die Querdehnzahl {_zt(nu)} ist fast inkompressibel "
+                                   f"(über {_zt(NU_FAST_INKOMPRESSIBEL)}). Volumenelemente versteifen dabei "
+                                   "(Volumensperren), die Verformungen werden zu klein – am stärksten bei "
+                                   "linearen Tetraedern. Betroffen: "
+                                   f"{_anzahl(arten['volumen'], 'Volumenelement', 'Volumenelemente')}."))
+    return aus
+
+
+def _eingabe_querschnitte(model) -> list:
+    """Flaeche und Traegheitsmomente der benutzten Stabquerschnitte (A21, C14)."""
+    from . import elemente as _el
+    je: dict = {}
+    for e in model.elements:
+        if e.typ in _el.STAB_TYPEN and e.sec in model.sections:
+            d = je.setdefault(e.sec, {})
+            d[e.typ] = d.get(e.typ, 0) + 1
+    aus = []
+    for name, typen in je.items():
+        sec = model.sections[name]
+        benutzt = f"Benutzt von {_anzahl(sum(typen.values()), 'Stabelement', 'Stabelementen')}."
+        # Fachwerkstab und Seil rechnen nur mit E A; der Biegestab mit allen vier
+        pruefen = [("A", "Die Querschnittsfläche A", 1e4, "cm²", True)]
+        if typen.get("beam"):
+            pruefen += [("Iy", "Das Trägheitsmoment I_y", 1e8, "cm⁴", True),
+                        ("Iz", "Das Trägheitsmoment I_z", 1e8, "cm⁴", True),
+                        # I_t = 0 gibt es als Angabe (offene Profile aus dem Import):
+                        # nur ein negativer Wert ist eindeutig falsch
+                        ("It", "Das Torsionsträgheitsmoment I_t", 1e8, "cm⁴", False)]
+        for feld, wort, faktor, einheit, null_falsch in pruefen:
+            w = getattr(sec, feld, None)
+            if not _endlich(w):
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name,
+                                  text=f"Querschnitt „{name}“: {wort} ist keine Zahl ({w}). {benutzt}"))
+            elif float(w) < 0.0 or (null_falsch and float(w) == 0.0):
+                was = "ist negativ" if float(w) < 0.0 else "ist null – der Stab hat damit keine Steifigkeit"
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name, wert=float(w), grenze=0.0,
+                                  text=f"Querschnitt „{name}“: {wort} = {_zt(float(w) * faktor)} {einheit} "
+                                       f"{was}. {benutzt} Den Querschnitt berichtigen."))
+    return aus
+
+
+def _eingabe_dicken(model) -> list:
+    """Dicke der benutzten Schalen (A21, C14) und Flaechen ohne Dicke (C11)."""
+    from . import elemente as _el
+    shells = getattr(model, "shells", None) or {}
+    flaechen = getattr(model, "flaechen", None) or {}
+    je: dict = {}
+    for e in model.elements:
+        if (e.typ in _el.SCHALEN_TYPEN or e.typ in _el.EBENE_TYPEN) and e.sec and e.sec in shells:
+            je[e.sec] = je.get(e.sec, 0) + 1
+    aus = []
+    for name, n in je.items():
+        try:
+            t = shells[name].dicke()
+        except Exception:                 # noqa: BLE001 - z. B. eine Lage ohne Zahl
+            t = float("nan")
+        fl = sorted(f.name for f in flaechen.values() if f.dicke == name)
+        wo = f" (Fläche {', '.join(fl[:6])}{' …' if len(fl) > 6 else ''})" if fl else ""
+        benutzt = f"Benutzt von {_anzahl(n, 'Flächenelement', 'Flächenelementen')}{wo}."
+        if not _endlich(t):
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name,
+                              text=f"Dicke „{name}“: Die Dicke ist keine Zahl. {benutzt}"))
+        elif float(t) <= 0.0:
+            was = "ist negativ" if float(t) < 0.0 else "ist null – die Fläche hat damit keine Steifigkeit"
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=name, wert=float(t), grenze=0.0,
+                              text=f"Dicke „{name}“: Die Dicke {_zt(float(t) * 1e3)} mm {was}. {benutzt} "
+                                   "Die Dicke berichtigen."))
+    # C11: eine tragende Flaeche ohne Dicke bekommt beim Vernetzen die erste
+    # vorhandene Dicke oder 10 mm (importers._common.ensure_shell_prop) - das
+    # stand nur im Protokoll des Vernetzens. Fehlt eine Angabe des Modells,
+    # kommt eine Meldung, kein Vorgabewert.
+    # Eine Zeile je Ersatzdicke: nach dem Loeschen eines Koerpers sind es
+    # sechs Flaechen auf einmal, an einem Import auch fuenfzig.
+    ohne: dict = {}
+    for f in flaechen.values():
+        if not f.dicke and model.flaeche_traegt(f.name):
+            ersatz = tuple(sorted({str(model.elements[int(i)].sec) for i in (f.elemente or [])
+                                   if 0 <= int(i) < len(model.elements)}))
+            ohne.setdefault(ersatz, []).append(str(f.name))
+    for ersatz, namen in ohne.items():
+        eins = len(namen) == 1
+        kopf = (f"Fläche „{namen[0]}“ hat keine Dicke." if eins else
+                f"{len(namen)} Flächen haben keine Dicke ({', '.join(namen[:6])}{' …' if len(namen) > 6 else ''}).")
+        mit = (f" {'Ihre' if eins else 'Deren'} Elemente rechnen mit der Ersatzdicke „{', '.join(ersatz)}“, "
+               f"die für diese {'Fläche' if eins else 'Flächen'} nicht eingegeben wurde." if ersatz else "")
+        aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=namen[0], wert=float(len(namen)),
+                          text=f"{kopf}{mit} {'Der Fläche' if eins else 'Jeder Fläche'} eine Dicke geben "
+                               f"und neu vernetzen – oder sie löschen, wenn sie nicht tragen "
+                               f"{'soll' if eins else 'sollen'}."))
+    return aus
+
+
+def _eingabe_lastziele(model) -> list:
+    """Lasten, deren Ziel es im Modell nicht gibt (A24).
+
+    Bis zum 09.11.2026 wirkten sie still nicht: eine Flaechenlast auf die
+    Flaeche „GIBTSNICHT“ gab max|u| = 0 und galt als gueltiges Ergebnis.
+    Knoten- und Stablasten mit einer Nummer **ueber** dem Bereich nennt
+    Model.check schon; hier stehen die uebrigen (auch negative Nummern, die
+    sonst vom Ende der Liste zaehlen)."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    koerper = getattr(model, "koerper", None) or {}
+    staebe = getattr(model, "members", None) or {}
+    linien = getattr(model, "lines", None) or {}
+    nn, ne = int(model.nn), len(model.elements)
+    aus = []
+
+    def fehler(lc, text):
+        aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(lc.name),
+                          text=f"{lastfall_text(lc.name)}: {text} – die Last löschen oder ihr Ziel neu wählen."))
+
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if str(getattr(gl, "art", "flaeche") or "flaeche") == "flaeche":
+                if gl.ziel not in flaechen:
+                    fehler(lc, f"Eine Flächenlast nennt die Fläche „{gl.ziel}“, die es nicht gibt")
+            elif gl.ziel not in koerper:
+                fehler(lc, f"Eine Volumenlast nennt den Körper „{gl.ziel}“, den es nicht gibt")
+        for ll in getattr(lc, "linienlasten", None) or []:
+            if str(getattr(ll, "art", "stab") or "stab") == "stab":
+                if ll.ziel not in staebe:
+                    fehler(lc, f"Eine Linienlast nennt den Stab „{ll.ziel}“, den es nicht gibt")
+            elif ll.ziel not in linien:
+                fehler(lc, f"Eine Linienlast nennt die Linie „{ll.ziel}“, die es nicht gibt")
+        for v in getattr(lc, "vorspannungen", None) or []:
+            if str(getattr(v, "art", "stab") or "stab") == "stab":
+                if v.ziel not in staebe:
+                    fehler(lc, f"Eine Vorspannung nennt den Stab „{v.ziel}“, den es nicht gibt")
+            elif v.ziel not in koerper:
+                fehler(lc, f"Eine Vorspannung nennt den Körper „{v.ziel}“, den es nicht gibt")
+        for l in getattr(lc, "nodal_loads", None) or []:
+            if int(l.node) < 0:
+                fehler(lc, f"Eine Knotenlast nennt den Knoten {l.node}, den es nicht gibt")
+        for z in getattr(lc, "zwangsverformungen", None) or []:
+            if not 0 <= int(z.node) < nn:
+                fehler(lc, f"Eine Zwangsverformung nennt den Knoten {z.node}, den es nicht gibt")
+        for l in getattr(lc, "beam_loads", None) or []:
+            if int(l.elem) < 0:
+                fehler(lc, f"Eine Stablast nennt das Element {l.elem}, das es nicht gibt")
+        for l in getattr(lc, "temp_loads", None) or []:
+            if not 0 <= int(l.elem) < ne:
+                fehler(lc, f"Eine Temperaturlast nennt das Element {l.elem}, das es nicht gibt")
+    return aus
+
+
+def _eingabe_lager(model) -> list:
+    """Linien- und Flaechenlager, deren Ziel fehlt oder kein Netz hat (C10),
+    und elementbezogene Flaechenlager nach geaendertem Netz (A22).
+
+    Unbekannt ist ein FEHLER: der Verweis ist falsch, das Lager wirkt dort
+    sicher nicht. Vorhanden, aber nicht vernetzt ist eine WARNUNG:
+    unvernetzte Geometrie ist auch sonst eine WARNUNG (diagnose.meldungen),
+    ein Teilnetz soll rechenbar bleiben - und haelt dadurch nichts mehr,
+    sperrt der FEHLER „Teiltragwerk ohne Lager“."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    linien = getattr(model, "lines", None) or {}
+    ne = len(model.elements)
+    aus = []
+    for ss in getattr(model, "surface_supports", None) or []:
+        for fn in dict.fromkeys(getattr(ss, "flaechen", None) or []):
+            f = flaechen.get(fn)
+            if f is None:
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name),
+                                  text=f"Flächenlager „{ss.name}“ nennt die Fläche „{fn}“, die es nicht gibt – "
+                                       "dort wirkt es nicht. Das Lager löschen oder seine Fläche neu wählen."))
+            elif ne and not (f.elemente or f.randseiten):
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name), stufe="WARNUNG",
+                                  text=f"Flächenlager „{ss.name}“: Die Fläche „{fn}“ ist nicht vernetzt – "
+                                       "das Lager hält dort kein Element."))
+        eigene = [int(i) for i in (ss.elements or [])]
+        fremd = [i for i in eigene if not 0 <= i < ne]
+        if fremd and ne:
+            aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name), element=fremd[0], elemente=fremd,
+                              text=f"Flächenlager „{ss.name}“ nennt {_anzahl(len(fremd), 'Element', 'Elemente')}, "
+                                   f"die es nicht gibt (Element {', '.join(str(i) for i in fremd[:6])}"
+                                   f"{' …' if len(fremd) > 6 else ''}). Netz geändert – Lager prüfen: "
+                                   "dem Lager seine Elemente neu geben."))
+        # A22: beim Loeschen oder Neuvernetzen entfallene Elemente
+        # (Model.elemente_loeschen). Die Meldung gilt, solange das Lager noch
+        # die Elemente nennt, die dabei uebrig blieben.
+        n_weg = int(getattr(ss, "entfallen", 0) or 0)
+        if n_weg and eigene == [int(i) for i in (getattr(ss, "entfallen_rest", None) or [])]:
+            weg = (f"{'ist' if n_weg == 1 else 'sind'} {_anzahl(n_weg, 'Element', 'Elemente')} "
+                   "des Lagers entfallen")
+            if eigene or ss.nodes or getattr(ss, "flaechen", None):
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name), wert=float(n_weg),
+                                  stufe="WARNUNG",
+                                  text=f"Flächenlager „{ss.name}“: Netz geändert – Lager prüfen. Beim Löschen "
+                                       f"oder Neuvernetzen {weg}, es liegt noch auf "
+                                       f"{_anzahl(len(eigene), 'Element', 'Elementen')}. Die Meldung endet, "
+                                       "sobald dem Lager seine Elemente neu gegeben sind."))
+            else:
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name), wert=float(n_weg),
+                                  text=f"Flächenlager „{ss.name}“: Netz geändert – Lager prüfen. Beim Löschen "
+                                       f"oder Neuvernetzen {weg}, es liegt auf keinem Element mehr und wirkt "
+                                       "nirgends. Dem Lager seine Elemente neu geben oder es löschen."))
+    maske = None
+    groesse = 1.0
+    for ls in getattr(model, "line_supports", None) or []:
+        namen = list(dict.fromkeys(getattr(ls, "linien", None) or []))
+        if not namen and not ls.nodes and getattr(ls, "line", ""):
+            namen = [ls.line]
+        for ln in namen:
+            if ln not in linien:
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ls.name),
+                                  text=f"Linienlager „{ls.name}“ nennt die Linie „{ln}“, die es nicht gibt – "
+                                       "dort wirkt es nicht. Das Lager löschen oder seine Linie neu wählen."))
+                continue
+            if not ne:
+                continue
+            if maske is None:
+                from .linienverteilung import im_netz
+                maske = im_netz(model)
+                groesse = float(np.ptp(np.asarray(model.nodes, float), axis=0).max() or 1.0)
+            # Die Knoten auf der Linie auf dem Weg des Loesers
+            # (supports.lager_auf_netz, gleiche Toleranz). Eine Linie ohne
+            # Netz behaelt dort ihre eigenen Knoten
+            # (linienverteilung.nur_netzknoten) - darum hier selbst zaehlen,
+            # wie viele an einem Element haengen
+            from .supports import knoten_auf_linie
+            try:
+                P = np.asarray(linien[ln].punkte(model, 64), float)
+            except Exception:           # noqa: BLE001 - Linie ohne Kurve: die Knoten
+                idx = [int(n) for n in linien[ln].nodes if 0 <= int(n) < model.nn]
+                P = model.nodes[idx] if len(idx) > 1 else np.zeros((0, 3))
+            if len(P) < 2:
+                am_netz = 0
+            else:
+                L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
+                tol = max(2e-3 * L, 1e-6 * groesse)
+                am_netz = sum(1 for n in knoten_auf_linie(model, P, tol)
+                              if 0 <= int(n) < len(maske) and maske[int(n)])
+            if am_netz < 2:
+                was = ("an ihr hängt kein Element, das Lager hält dort nichts" if am_netz == 0
+                       else "nur einer ihrer Knoten hängt an einem Element, das Lager hält nur dort")
+                aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ls.name), stufe="WARNUNG",
+                                  text=f"Linienlager „{ls.name}“: Die Linie „{ln}“ ist nicht vernetzt – {was}."))
+    return aus
 
 
 def _abnahme_deckungsgleiche_flaechen(model) -> list:
@@ -4370,7 +4759,8 @@ def meldungen(model, d: dict = None) -> list:
     z = []
     ent = d.get("entartete_elemente") or []
     if ent:
-        beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in ent[:3])
+        # Elementnummern ab 0 wie in Tabellen und Modellbaum (C13, 09.11.2026)
+        beispiel = "; ".join(f"Element {i} ({t}): {g}" for i, t, g in ent[:3])
         wort = ("1 entartetes Element" if len(ent) == 1
                 else f"{len(ent)} entartete Elemente")
         # Kein FEHLER: ein Element ohne Ausdehnung hat auch keine Steifigkeit
@@ -4387,7 +4777,7 @@ def meldungen(model, d: dict = None) -> list:
                  "die doppelten Knoten zusammenlegen")
     fe = d.get("entartet_fehler") or []
     if fe:
-        beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in fe[:3])
+        beispiel = "; ".join(f"Element {i} ({t}): {g}" for i, t, g in fe[:3])
         z.append((f"FEHLER: 1 Volumenelement mit zusammenfallenden Knoten hat Volumen "
                   f"und lässt sich nicht eindeutig umwandeln ({beispiel}" if len(fe) == 1 else
                   f"FEHLER: {len(fe)} Volumenelemente mit zusammenfallenden Knoten haben Volumen "

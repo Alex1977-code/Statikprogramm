@@ -1242,6 +1242,14 @@ class SurfaceSupport:
     #: Je Normalenrichtung eine Gruppe [Achse 0..2, Vorzeichen, Knoten,
     #: Einflussflaechen] - von lager_auf_netz gefuellt, nur mit ``lokal``.
     gruppen: list = field(default_factory=list)
+    #: So viele Elemente aus ``elements`` sind beim Loeschen oder Neuvernetzen
+    #: entfallen (Model.elemente_loeschen, 09.11.2026) - das Lager liegt nur
+    #: noch auf dem Rest, seine Bettungsflaeche ist kleiner geworden. Die
+    #: Modellpruefung meldet „Netz geändert – Lager prüfen“, solange
+    #: ``elements`` noch der Rest von damals ist (``entfallen_rest``); gibt
+    #: der Anwender dem Lager seine Elemente neu, endet die Meldung von selbst.
+    entfallen: int = 0
+    entfallen_rest: list[int] = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -7512,6 +7520,31 @@ class Model:
             sit.deaktiviert = um(sit.deaktiviert)
         for h in self.hinges.values():
             h.elemente = um(getattr(h, "elemente", []) or [])
+        # Elementbezogene Flaechenlager (Bettung auf ``elements``): bis zum
+        # 09.11.2026 blieben ihre Nummern stehen - nach dem Loeschen des
+        # Elements 0 einer Platte aus 8 Elementen nannte die Bettung der
+        # rechten Haelfte weiter 4-7 statt 3-6, das letzte gab es nicht mehr:
+        # 0,75 statt 1,00 m2 Bettungsflaeche, ohne Meldung (Befund A22). Die
+        # Nummern ruecken jetzt mit wie bei Lasten und Kontaktpaaren. Entfaellt
+        # ein Element des Lagers selbst, ist nicht eindeutig, was der Anwender
+        # will (Bettung kleiner oder auf die neuen Elemente) - das Lager merkt
+        # es sich, die Modellpruefung meldet „Netz geändert – Lager prüfen“.
+        for ss in (getattr(self, "surface_supports", None) or []):
+            alt = [int(i) for i in (ss.elements or [])]
+            if not alt:
+                continue
+            offen = (int(getattr(ss, "entfallen", 0) or 0) > 0
+                     and alt == [int(i) for i in (getattr(ss, "entfallen_rest", None) or [])])
+            neu = um(alt)
+            weg = len(alt) - len(neu)
+            if weg > 0:
+                ss.entfallen = (int(ss.entfallen) if offen else 0) + weg
+                ss.entfallen_rest = list(neu)
+            elif offen:
+                ss.entfallen_rest = list(neu)
+            else:
+                ss.entfallen, ss.entfallen_rest = 0, []
+            ss.elements = neu
         return len(wegmenge)
 
     def koerperflaechen(self) -> set:
@@ -10241,7 +10274,8 @@ class Model:
         for c in self.combinations.values():
             for k in c.lastfaelle():
                 if k not in self.load_cases:
-                    msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
+                    from .diagnose import lastfall_fehlt_text
+                    msgs.append("FEHLER: " + lastfall_fehlt_text(c.name, k))
         # Lastfaelle ohne Einwirkung halten ihre Kombinationen auf (13.10.2026):
         # nur eine Warnung - einzelne Lastfaelle rechnen weiter
         gesperrt = self.gesperrte_kombinationen()
@@ -10397,6 +10431,12 @@ class Model:
         if len(self.elements) and any(getattr(ss, "lokal", False) for ss in (self.surface_supports or [])):
             from .supports import lokale_lager_schraeg
             msgs += ["FEHLER: " + z for z in lokale_lager_schraeg(self)]
+        # Eingaben, mit denen sich nicht oder nur falsch rechnen laesst (seit
+        # 09.11.2026): E-Modul, Querdehnzahl, Querschnitt und Dicke null oder
+        # negativ, Flaeche ohne Dicke, Last oder Lager auf ein Ziel, das es
+        # nicht gibt - mit Namen und Wert (diagnose.eingabepruefung)
+        from .diagnose import eingabepruefung
+        msgs += [f"{b.stufe}: {b.text}" for b in eingabepruefung(self)]
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
         # Lager (FEHLER - das Gleichungssystem waere singulaer)
         if self.elements:
@@ -10446,7 +10486,8 @@ class Model:
             "shells": {k: asdict(v) for k, v in self.shells.items()},
             "supports": [_support_dict(s) for s in self.supports],
             "line_supports": [_beh_dict(asdict(x)) for x in self.line_supports],
-            "surface_supports": [_beh_dict(asdict(x)) for x in self.surface_supports],
+            "surface_supports": [_ohne_vorgabe("surface_supports", _beh_dict(asdict(x)))
+                                 for x in self.surface_supports],
             "lines": [asdict(x) for x in self.lines.values()],
             "hinges": [asdict(x) for x in self.hinges.values()],
             "load_cases": lastfaelle,
@@ -11147,6 +11188,8 @@ NEUE_FELDER = {
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
     # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
+    # gruppe5/robustheit (Flaechenlager merkt sich entfallene Elemente, 09.11.2026)
+    "surface_supports": {"entfallen": 0, "entfallen_rest": []},
     "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": [],
          # ui/paket-b (eigene Koordinatensysteme, 08.11.2026)
          "koordinatensysteme": []},

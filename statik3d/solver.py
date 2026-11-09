@@ -1874,6 +1874,8 @@ class Results:
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
+        # unplausibel grosse Verformung (Einheitenfehler, 09.11.2026)
+        s += verformung_gross_gebuendelt([(self.name, self)])
         try:
             nv = self.node_vm
             if nv is not None and nv.size and np.any(np.isfinite(nv)):
@@ -6739,6 +6741,70 @@ def seil_querlast_gebuendelt(ergebnisse) -> list:
             f"{' …' if len(wo) > 3 else ''})"]
 
 
+#: Anteil der groessten Modellabmessung, ueber dem die groesste Verformung als
+#: unplausibel gilt (Befund C12, 09.11.2026). Ein Tragwerk im Gebrauchszustand
+#: verformt sich um Hundertstel seiner Abmessung (l/300 = 0,33 %); 10 % sind
+#: das Dreissigfache davon und fast immer ein Einheitenfehler (E in N/mm2
+#: statt N/m2 eingegeben: Faktor 1e6) oder eine fehlende Lagerung.
+VERFORMUNG_GROSS = 0.10
+
+
+def verformung_unplausibel(res):
+    """(groesste Verformung [m], groesste Modellabmessung [m]), wenn die
+    Verformung eines Lastfalls oder einer Kombination ueber
+    :data:`VERFORMUNG_GROSS` der groessten Modellabmessung liegt - sonst None.
+
+    Die Modellabmessung ist die laengste Kante des Rahmens um alle Knoten
+    (Model.bbox); die Verformung der Betrag der Verschiebung (``umag``, die
+    Zahl der Zeile „max. Verschiebung“). Eigenformen und Beulformen sind
+    normiert und zaehlen nicht, ein abgebrochenes Ergebnis auch nicht. Der
+    Werkstoff wird nicht angesehen: aus dem Zahlenwert von E allein folgt
+    nichts (Kunststoff, Elastomer, Baugrund)."""
+    if getattr(res, "kind", "") not in ("case", "combination"):
+        return None
+    inf = res.info if isinstance(getattr(res, "info", None), dict) else {}
+    if inf.get("abbruch"):
+        return None
+    u, model = getattr(res, "u", None), getattr(res, "model", None)
+    if u is None or model is None or not getattr(u, "size", 0) or not int(model.nn):
+        return None
+    try:
+        groesse = float(np.ptp(np.asarray(model.nodes, float)[:, :3], axis=0).max())
+        umax = float(np.max(np.linalg.norm(np.asarray(u, float)[:, :3], axis=1)))
+    except Exception:                       # noqa: BLE001 - ein Hinweis darf nie sperren
+        return None
+    if not (np.isfinite(umax) and np.isfinite(groesse)) or groesse <= 0.0:
+        return None
+    return (umax, groesse) if umax > VERFORMUNG_GROSS * groesse else None
+
+
+def verformung_gross_gebuendelt(ergebnisse) -> list:
+    """Die Warnung zu unplausibel grossen Verformungen
+    (:func:`verformung_unplausibel`): eine Zeile ueber alle Ergebnisse mit dem
+    groessten Wert und den ersten drei Ergebnissen - leer ohne.
+
+    Bis zum 09.11.2026 galt ein Ergebnis mit 4 722 mm Verformung an einem
+    Wuerfel von 1 m als gueltig, ohne ein Wort (E = 210 000 statt 210e9 N/m2
+    eingegeben, Befund C12)."""
+    groesste = None
+    wo: list = []
+    for name, r in ergebnisse:
+        t = verformung_unplausibel(r)
+        if t is None:
+            continue
+        wo.append(str(name))
+        if groesste is None or t[0] > groesste[0]:
+            groesste = t
+    if groesste is None:
+        return []
+    from .begriffe import anzahl
+    from .zahlen import zahl_text
+    return [f"WARNUNG: Verformung {zahl_text(groesste[0] * 1000.0, stellen=6)} mm bei Modellgröße "
+            f"{zahl_text(groesste[1], stellen=4)} m – Einheiten und Lagerung prüfen "
+            f"(bei {anzahl(len(wo), 'Ergebnis', 'Ergebnissen')}: {', '.join(wo[:3])}"
+            f"{' …' if len(wo) > 3 else ''})"]
+
+
 def zugstab_druck_gebuendelt(ergebnisse) -> list:
     """Aktive Zugstaebe mit Druck ueber alle Ergebnisse - je Stab eine Zeile
     mit den ersten drei Ergebnissen, fuer die Zusammenfassung der Rechnung."""
@@ -7507,6 +7573,12 @@ def _kombination_pruefen(model: Model, combo: Combination) -> str:
     ein Bedienhinweis (KombinationGesperrt), kein Absturz; der einzelne
     Lastfall bleibt rechenbar. Diese Stelle erreichen alle Wege zu einer
     Kombination - auch die Alternativen einer Ergebniskombination."""
+    # Ein Lastfall, den es nicht gibt: bis zum 09.11.2026 endete das als roher
+    # KeyError aus Model.case (Befund C14) - jetzt der Satz der Modellpruefung
+    for k in combo.lastfaelle():
+        if k not in model.load_cases:
+            from .diagnose import lastfall_fehlt_text
+            raise ValueError(lastfall_fehlt_text(combo.name, k))
     offen = [k for k in combo.lastfaelle()
              if k in model.load_cases and model.load_cases[k].kombination_gesperrt]
     if offen:
@@ -10632,6 +10704,8 @@ class Analysis:
         s += zugstab_druck_gebuendelt(self.all_results().items())
         # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)
         s += seil_querlast_gebuendelt(self.all_results().items())
+        # unplausibel grosse Verformung (Einheitenfehler, 09.11.2026)
+        s += verformung_gross_gebuendelt(self.all_results().items())
         # Ergebnisse mit nicht konvergiertem Kontakt sind vorlaeufig (14.10.2026)
         s += vorlaeufig_gebuendelt(self.all_results().items())
         # Vorspannung je Anker: mit welchem Zeitpunkt gerechnet ist (16.10.2026,
