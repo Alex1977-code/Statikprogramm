@@ -13,7 +13,9 @@ Unterstuetzte Schluesselwoerter (Gross-/Kleinschreibung egal, '**' = Kommentar):
     *NSET / *ELSET [GENERATE]     Knoten-/Elementmengen (auch verschachtelt)
     *MATERIAL, *ELASTIC, *DENSITY, *EXPANSION, *PLASTIC (fy)
     *BEAM SECTION SECTION=RECT|CIRC|PIPE|BOX|I, *BEAM GENERAL SECTION
+    *TRANSVERSE SHEAR STIFFNESS nach *BEAM GENERAL SECTION (K23, K13) -> Schubflaechen
     *SHELL SECTION (Dicke), *SOLID SECTION (Flaeche bei Fachwerkstaeben)
+    *RELEASE (Element/ELSET, S1|S2, T|M1|M2|M1-M2|M1-T|M2-T|ALLM) -> Stabendgelenk
     *BOUNDARY (Knoten/NSET, FHG von, FHG bis, Wert; ENCASTRE, PINNED, XSYMM ...)
     *STEP ... *END STEP           jeder Schritt -> Lastfall STEP-n
     *CLOAD                        Knotenlast (Knoten/NSET, FHG, Wert)
@@ -293,6 +295,31 @@ def _apply_boundary(block: Block, st: _State) -> None:
                 d[dof] = float(value or 0.0) * (st.scale if dof < 3 else 1.0)
 
 
+#: *RELEASE: Schluessel -> geloeste lokale Drehungen (3 = um die Stabachse,
+#: 4 = um die 1-Achse, 5 = um die 2-Achse). Die 1-Achse ist die Achse von I11,
+#: und I11 wird als I_y gelesen - also ist M1 das Gelenk um die lokale y-Achse.
+_RELEASE = {"T": (3,), "M1": (4,), "M2": (5,), "M1-M2": (4, 5), "M1-T": (3, 4),
+            "M2-T": (3, 5), "ALLM": (3, 4, 5)}
+
+
+def _apply_release(block: Block, st: _State) -> None:
+    """Stabendgelenke (09.11.2026; bis dahin wurde *RELEASE uebergangen und
+    jedes Gelenk kam biegesteif an)."""
+    for parts in _join_continued(block.lines):
+        if len(parts) < 3 or not parts[0]:
+            continue
+        elems = [e for e in st.elem_list(parts[0]) if st.model.elements[e].typ == "beam"]
+        ende = {"S1": 0, "S2": 1}.get(parts[1].upper())
+        frei = _RELEASE.get(parts[2].upper().replace(" ", ""))
+        if not elems or ende is None or frei is None:
+            C.warn(st.log, f"*RELEASE: Zeile '{', '.join(parts)}' nicht verwendbar")
+            continue
+        for e in elems:
+            el = st.model.elements[e]
+            el.hinges = sorted({int(d) for d in (el.hinges or [])}
+                               | {6 * ende + d for d in frei})
+
+
 def _apply_cload(block: Block, st: _State) -> None:
     for parts in _join_continued(block.lines):
         if len(parts) < 3:
@@ -364,6 +391,9 @@ def import_inp(path: str, model: Model = None, log: list = None,
     if model is None:
         model = Model(os.path.splitext(os.path.basename(path))[0])
     st = _State(model, log, float(unit_scale), tol)
+    # der leere Vorgabelastfall eines frischen Modells weicht dem gleichnamigen
+    # *STEP der Datei (Befund B6, 09.11.2026: der erste Lastfall hiess "LF1_2")
+    vorgabe = C.leerer_vorgabelastfall(model)
     blocks = read_blocks(path, log)
 
     # ---- Durchlauf 1: Knoten, Elemente, Mengen, Materialien ----------------
@@ -480,9 +510,22 @@ def import_inp(path: str, model: Model = None, log: list = None,
 
     # ---- Durchlauf 2: Querschnitte, Lager, Lasten, Schritte ----------------
     sec_assigned: set[int] = set()
+    balken = None          # (Querschnitt, Werkstoff) der letzten *BEAM GENERAL SECTION
     for b in blocks:
         try:
             kw = b.keyword
+            if kw == "TRANSVERSE SHEAR STIFFNESS" and balken is not None:
+                # K23, K13 = G * Schubflaeche (09.11.2026; bis dahin uebergangen,
+                # der Stab kam schubstarr an). 1-Achse = Achse von I11 = lokale y.
+                k = [C.parse_number(p) for p in _split(b.lines[0])] if b.lines else []
+                G = model.materials[balken[1]].G if balken[1] in model.materials else 0.0
+                if len(k) >= 2 and k[0] and k[1] and G > 0:
+                    model.sections[balken[0]].Asz = k[0] / G
+                    model.sections[balken[0]].Asy = k[1] / G
+                balken = None
+                continue
+            if kw != "TRANSVERSE SHEAR STIFFNESS":
+                balken = None
             if kw in ("BEAM SECTION", "BEAM GENERAL SECTION", "SHELL SECTION",
                       "SOLID SECTION", "MEMBRANE SECTION"):
                 elems = st.elem_list(str(b.get("ELSET") or ""))
@@ -519,6 +562,7 @@ def import_inp(path: str, model: Model = None, log: list = None,
                                                   Iy=vals[1] * s ** 4, Iz=vals[3] * s ** 4,
                                                   It=vals[4] * s ** 4))
                         sec_name = name
+                        balken = (name, mat)
                 elif kw == "SHELL SECTION":
                     t = C.parse_number(_split(b.lines[0])[0]) if b.lines else None
                     t = (t or 0.0) * st.scale
@@ -550,6 +594,7 @@ def import_inp(path: str, model: Model = None, log: list = None,
             elif kw == "STEP":
                 st.step += 1
                 name = str(b.get("NAME") or f"STEP-{st.step}")
+                vorgabe = C.vorgabelastfall_weicht(model, vorgabe, name)
                 if name in model.load_cases:
                     name = C.unique_name(model.load_cases, name)
                 C.get_or_add_case(model, name, "G" if st.step == 1 else "Q",
@@ -559,6 +604,8 @@ def import_inp(path: str, model: Model = None, log: list = None,
                 st.case = "LF1"
             elif kw == "BOUNDARY":
                 _apply_boundary(b, st)
+            elif kw == "RELEASE":
+                _apply_release(b, st)
             elif kw == "CLOAD":
                 if st.case not in model.load_cases:
                     C.get_or_add_case(model, st.case, "G")

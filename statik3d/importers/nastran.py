@@ -7,18 +7,21 @@ Formate: Small Field (8 Zeichen), Large Field ('*', 16 Zeichen), Free Field
 
 Karten:
     GRID (inkl. PS), GRDSET
-    CBAR/CBEAM + PBAR/PBEAM/PBARL/PBEAML (BAR, ROD, TUBE, BOX, I)
+    CBAR/CBEAM + PBAR/PBEAM/PBARL/PBEAML (BAR, ROD, TUBE, BOX, I);
+        Pin-Flags PA/PB -> Stabendgelenke; PBAR: K1/K2 -> Schubflaechen,
+        Spannungspunkte C..F -> Randabstaende
     CROD/CONROD + PROD                 -> Fachwerkstab
     CTRIA3/CQUAD4 + PSHELL             -> Schalen (CTRIA6/CQUAD8 quadratisch)
     CTETRA (4/10), CHEXA (8/20),       -> Volumen
     CPENTA (6/15), CPYRAM (5)
     CONM2                              -> Punktmasse
-    CELAS1/2, CBUSH + PBUSH            -> Feder
+    CELAS1/2, CBUSH + PBUSH            -> Feder (an nur einem Knoten: Lagerfeder)
     CDAMP1/2                           -> Daempfer
     RBE2, RBE3                         -> starrer Koerper / Verteilkopplung
     MAT1 (E, G, NU, RHO, A, ST -> fy)
     SPC / SPC1                         -> Lager (Komponenten 123456)
     FORCE / MOMENT (SID -> Lastfall 'SID n'), PLOAD2 / PLOAD4, GRAV
+    PLOAD1 (FX..FZ, FXE..FZE; LE, FR, LEPR, FRPR) -> Stablast
     LOAD                               -> Kombination
     TEMP / TEMPD                       -> ignoriert (Hinweis)
 Achsen: Nastran-Ebene 1 (Orientierungsvektor) = lokale y-Achse; damit I1 -> Iz,
@@ -267,8 +270,18 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 pid = _int(_f(card, 1))
                 vals = [_num(_f(card, k)) or 0.0 for k in (3, 4, 5, 6)]
                 A, I1, I2, J = vals
+                # Fortsetzungen: Spannungspunkte C1 C2 D1 D2 E1 E2 F1 F2 (y, z)
+                # -> Randabstaende; K1, K2 (Schubflaechenbeiwerte der Ebenen
+                # 1 und 2) -> Schubflaechen in y und z (09.11.2026, bis dahin
+                # nicht gelesen: der Stab kam schubstarr und ohne
+                # Randabstaende an)
+                punkte = [_num(_f(card, k)) or 0.0 for k in range(9, 17)]
+                k1, k2 = _num(_f(card, 17)) or 0.0, _num(_f(card, 18)) or 0.0
                 sec = Section(f"PID {pid}", A=A * scale ** 2, Iy=I2 * scale ** 4,
-                              Iz=I1 * scale ** 4, It=(J or 1e-12) * scale ** 4)
+                              Iz=I1 * scale ** 4, It=(J or 1e-12) * scale ** 4,
+                              Asy=k1 * A * scale ** 2, Asz=k2 * A * scale ** 2,
+                              ymax=max(abs(v) for v in punkte[0::2]) * scale,
+                              zmax=max(abs(v) for v in punkte[1::2]) * scale)
                 model.add_section(sec)
                 props[pid] = {"kind": "beam", "mid": _int(_f(card, 2)), "sec": sec.name}
             elif name == "PBEAM":
@@ -328,7 +341,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                           "CPENTA", "CPYRAM", "CONM2", "CELAS1", "CELAS2", "CBUSH",
                           "CDAMP1", "CDAMP2", "RBE2", "RBE3"):
                 elem_cards.append(card)
-            elif name in ("FORCE", "MOMENT", "PLOAD2", "PLOAD4", "GRAV", "LOAD"):
+            elif name in ("FORCE", "MOMENT", "PLOAD1", "PLOAD2", "PLOAD4", "GRAV", "LOAD"):
                 load_cards.append(card)
             elif name in ("SPC", "SPC1"):
                 spc_cards.append(card)
@@ -357,6 +370,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
         return default_mat
 
     # ---- Elemente ------------------------------------------------------------
+    lagerfedern: dict[int, dict[int, float]] = {}      # Knoten -> {FHG: Steifigkeit}
     for card in elem_cards:
         name = card[0]
         eid = _int(_f(card, 1))
@@ -384,7 +398,14 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 elif x1 or _f(card, 6) or _f(card, 7):
                     v = [_num(_f(card, k)) or 0.0 for k in (5, 6, 7)]
                     roll = C.roll_from_vector(model.nodes[na], model.nodes[nb], v, "y")
-                elems[eid] = model.add_element("beam", [na, nb], mat_for(info), sec, roll=roll)
+                # Pin-Flags PA, PB (Felder 9 und 10): geloeste FHG im
+                # Elementsystem - mit der Ebene 1 als lokaler y-Achse sind
+                # das die lokalen FHG des Stabs (09.11.2026, bis dahin nicht
+                # gelesen: jedes Gelenk kam biegesteif an)
+                gelenke = [d for d in _dofs_from_components(_f(card, 9))] \
+                    + [6 + d for d in _dofs_from_components(_f(card, 10))]
+                elems[eid] = model.add_element("beam", [na, nb], mat_for(info), sec, roll=roll,
+                                               hinges=gelenke or None)
             elif name == "CROD":
                 pid = _int(_f(card, 2))
                 na, nb = grids[_int(_f(card, 3))], grids[_int(_f(card, 4))]
@@ -497,7 +518,13 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                     g1, g2 = _int(_f(card, 3)), _int(_f(card, 4))
                     info = props.get(pid) or {}
                     kk = list(info.get("k", [0.0] * 6))
-                if g1 is None or g2 is None or g2 not in grids:
+                if g1 in grids and g2 is None and any(kk):
+                    # Feder gegen den festen Grund: ein gefedertes Knotenlager
+                    for d, k in enumerate(kk):
+                        if k:
+                            lagerfedern.setdefault(grids[g1], {})[d] = \
+                                lagerfedern.get(grids[g1], {}).get(d, 0.0) + float(k)
+                elif g1 is None or g2 is None or g2 not in grids:
                     C.warn(log, f"{name} {eid}: braucht zwei Knoten - übergangen")
                 else:
                     fp = model.add_feder_prop(C.unique_name(model.federn, f"{name} {eid}"), kk)
@@ -565,10 +592,14 @@ def import_bdf(path: str, model: Model = None, log: list = None,
     if len(spc_sids) > 1:
         C.say(log, f"SPC-Saetze {sorted(spc_sids)} wurden alle uebernommen "
                    f"(Auswahl per SUBCASE wird nicht ausgewertet)")
-    for n, d in sup.items():
-        dofs = sorted(d)
-        vals = [d[k] for k in dofs]
-        model.fix(n, dofs, values=vals if any(vals) else None)
+    for n in sorted(set(sup) | set(lagerfedern)):
+        d = sup.get(n, {})
+        f = {k: v for k, v in lagerfedern.get(n, {}).items() if k not in d}
+        dofs = sorted(set(d) | set(f))
+        vals = [d.get(k, 0.0) for k in dofs]
+        steif = [f.get(k, 0.0) for k in dofs]
+        model.fix(n, dofs, values=vals if any(vals) else None,
+                  stiffness=steif if any(steif) else None)
 
     # ---- Lasten ------------------------------------------------------------
     def case_name(sid: int) -> str:
@@ -577,6 +608,9 @@ def import_bdf(path: str, model: Model = None, log: list = None,
         return nm
 
     load_combos: list[list[str]] = []
+    # PLOAD1 nennt je Karte eine Richtung; Karten desselben Stabs und
+    # Abschnitts werden zu einer Stablast zusammengefasst
+    stablasten: dict[tuple, list] = {}
     for card in load_cards:
         name = card[0]
         try:
@@ -597,6 +631,32 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 off = 0 if name == "FORCE" else 3
                 comp[off:off + 3] = vec
                 model.load_node(grids[g], *comp, case=case_name(sid))
+            elif name == "PLOAD1":
+                e = _int(_f(card, 2))
+                typ, skala = _f(card, 3).upper(), _f(card, 4).upper()
+                if e not in elems or model.elements[elems[e]].typ != "beam":
+                    C.warn(log, f"PLOAD1 SID {sid}: Element {e} ist kein Balken - übergangen")
+                    continue
+                if typ[:2] not in ("FX", "FY", "FZ") or typ[2:] not in ("", "E") \
+                        or skala not in ("LE", "FR", "LEPR", "FRPR"):
+                    C.warn(log, f"PLOAD1 SID {sid}, Element {e}: Art {typ} {skala} wird nicht "
+                                f"gelesen (nur Kräfte FX, FY, FZ, FXE, FYE, FZE) - übergangen")
+                    continue
+                x1 = _num(_f(card, 5)) or 0.0
+                p1 = _num(_f(card, 6)) or 0.0
+                x2 = _num(_f(card, 7))
+                p2 = _num(_f(card, 8))
+                if x2 is None or x2 == x1:
+                    C.warn(log, f"PLOAD1 SID {sid}, Element {e}: Einzellast auf dem Stab "
+                                f"wird nicht gelesen - übergangen")
+                    continue
+                if p2 is None:
+                    p2 = p1
+                key = (sid, e, typ[2:] == "E", skala, x1, x2)
+                case_name(sid)
+                q = stablasten.setdefault(key, [[0.0] * 3, [0.0] * 3])
+                q[0]["XYZ".index(typ[1])] += p1
+                q[1]["XYZ".index(typ[1])] += p2
             elif name == "PLOAD2":
                 p = _num(_f(card, 2)) or 0.0
                 for e in _expand_thru(card[3:]):
@@ -638,6 +698,22 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 load_combos.append(card)
         except Exception as ex:
             C.warn(log, f"{name}: {ex}")
+    for (sid, e, lokal, skala, x1, x2), (q1, q2) in stablasten.items():
+        i = elems[e]
+        L = float(model.element_length(i))
+        if skala.startswith("FR"):
+            voll = x1 == 0.0 and x2 == 1.0
+            a, b = x1 * L, x2 * L
+        else:
+            a, b = x1 * scale, x2 * scale
+            voll = a == 0.0 and abs(b - L) <= 1e-12 * L
+        if lokal and skala.endswith("PR"):
+            C.warn(log, f"PLOAD1 SID {sid}, Element {e}: der Bezug auf die projizierte Länge "
+                        f"gilt nur für globale Lasten - als Last je Stablänge gelesen")
+        model.load_beam(i, q1[0], q1[1], q1[2], system="local" if lokal else "global",
+                        case=case_name(sid), q2=None if q2 == q1 else q2,
+                        a=0.0 if voll else a, b=None if voll else b,
+                        bezugslaenge="projektion" if skala.endswith("PR") and not lokal else "")
     for card in load_combos:
         try:
             sid = _int(_f(card, 1))

@@ -473,7 +473,14 @@ def test_nastran_quadratische_volumen_knotenfolge():
             zeilen = f.read().splitlines()
     # Die Datei selbst in Nastran-Folge: der 13. Knoten der CHEXA-Karte ist eine
     # senkrechte Kantenmitte (z = 0,5), der 17. eine obere (z = 1)
-    z_von = {int(w[8:16]): float(w[40:48]) for w in zeilen if w.startswith("GRID")}
+    # (Knoten seit 09.11.2026 im Grossfeld mit voller Genauigkeit: GRID* mit
+    # 16 Zeichen je Feld, z steht im ersten Feld der Folgezeile)
+    z_von = {}
+    for i, w in enumerate(zeilen):
+        if w.startswith("GRID*"):
+            z_von[int(w[8:24])] = float(zeilen[i + 1][8:24])
+        elif w.startswith("GRID"):
+            z_von[int(w[8:16])] = float(w[40:48])
     karte = []
     for i, w in enumerate(zeilen):
         if w.startswith("CHEXA"):

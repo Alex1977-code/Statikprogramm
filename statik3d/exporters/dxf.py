@@ -1,9 +1,14 @@
 """
 Export nach AutoCAD DXF (ASCII, R12-vertraeglich).
 
-Staebe werden zu LINE, Schalen zu 3DFACE, Aussenflaechen der Volumen ebenso;
-Knoten zu POINT. Lager, Lasten und Stabnamen kommen auf eigene Layer, damit
-sie sich im CAD getrennt schalten lassen.
+Staebe werden zu LINE, Schalen zu 3DFACE, Aussenflaechen der Volumen ebenso.
+Lagersymbole, Linien, Lastnamen und Stabnamen kommen auf eigene Ebenen, deren
+Name mit ``STATIK3D_`` beginnt: so lassen sie sich im CAD getrennt schalten,
+und der eigene Import liest sie nicht als Tragwerk (Befund B5 der
+Pruefagenten, 09.11.2026: bis dahin lagen sie auf LAGER und LINIEN und kamen
+als Staebe zurueck). Die Koordinaten stehen in Metern; der Kopf nennt das mit
+$INSUNITS = 6 (bis zum 09.11.2026 fehlte die Angabe, und der Import las die
+eigene Datei als Millimeter).
 
     from statik3d.exporters.dxf import write_dxf
     write_dxf(m, "modell.dxf")
@@ -13,15 +18,33 @@ from __future__ import annotations
 import numpy as np
 
 from ..model import Model
+from ..importers.dxf import HILFSEBENE
 from . import _common as C
+
+#: Ebenen der Symbole und Beschriftungen (kein Tragwerk)
+E_LAGER = HILFSEBENE + "LAGER"
+E_LASTEN = HILFSEBENE + "LASTEN"
+E_TEXT = HILFSEBENE + "BESCHRIFTUNG"
+E_LINIEN = HILFSEBENE + "LINIEN"
 
 #: Layer -> Farbnummer (AutoCAD Color Index)
 LAYERS = {"STAEBE": 7, "SCHALEN": 5, "VOLUMEN": 8, "KNOTEN": 9,
-          "LAGER": 1, "LASTEN": 2, "BESCHRIFTUNG": 3, "LINIEN": 4}
+          E_LAGER: 1, E_LASTEN: 2, E_TEXT: 3, E_LINIEN: 4}
+
+#: $INSUNITS: 6 = Meter
+INSUNITS_METER = 6
 
 
 def _p(code: int, value) -> str:
     return f"{code:3d}\n{value}\n"
+
+
+def _k(x) -> str:
+    """Koordinate mit voller Genauigkeit (09.11.2026, Befund B5): die kuerzeste
+    Schreibweise, die dieselbe Zahl zurueckgibt. Bis dahin sechs
+    Nachkommastellen - die Rundreise verschob Knoten um bis zu einem halben
+    Mikrometer."""
+    return repr(float(x)).upper()
 
 
 def write_dxf(model: Model, path: str, results=None, log: list = None,
@@ -29,6 +52,10 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
     """Modell als DXF schreiben. Rueckgabe: Pfad."""
     h = text_height or max(model.characteristic_size() * 0.02, 1e-3)
     out = []
+    # ---- Kopf: Herkunft (Kommentar) und Laengeneinheit -----------------
+    out.append(_p(999, "Statik3D DXF-Export, Koordinaten in Metern"))
+    out.append(_p(0, "SECTION") + _p(2, "HEADER")
+               + _p(9, "$INSUNITS") + _p(70, INSUNITS_METER) + _p(0, "ENDSEC"))
     # ---- Tabellen (Layer) ---------------------------------------------
     out.append(_p(0, "SECTION") + _p(2, "TABLES"))
     out.append(_p(0, "TABLE") + _p(2, "LAYER") + _p(70, len(LAYERS)))
@@ -41,15 +68,14 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
 
     def line(p1, p2, layer):
         out.append(_p(0, "LINE") + _p(8, layer)
-                   + _p(10, f"{p1[0]:.6f}") + _p(20, f"{p1[1]:.6f}") + _p(30, f"{p1[2]:.6f}")
-                   + _p(11, f"{p2[0]:.6f}") + _p(21, f"{p2[1]:.6f}") + _p(31, f"{p2[2]:.6f}"))
+                   + _p(10, _k(p1[0])) + _p(20, _k(p1[1])) + _p(30, _k(p1[2]))
+                   + _p(11, _k(p2[0])) + _p(21, _k(p2[1])) + _p(31, _k(p2[2])))
 
     def face(pts, layer):
         q = list(pts) + [pts[-1]] * (4 - len(pts))
         s = _p(0, "3DFACE") + _p(8, layer)
         for k, pt in enumerate(q[:4]):
-            s += _p(10 + k, f"{pt[0]:.6f}") + _p(20 + k, f"{pt[1]:.6f}") \
-                 + _p(30 + k, f"{pt[2]:.6f}")
+            s += _p(10 + k, _k(pt[0])) + _p(20 + k, _k(pt[1])) + _p(30 + k, _k(pt[2]))
         out.append(s)
 
     def text(p, s, layer, hh=None):
@@ -79,24 +105,49 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
             n_face += 1
     for name, ln in model.lines.items():
         for a, b in zip(ln.nodes[:-1], ln.nodes[1:]):
-            line(model.nodes[a], model.nodes[b], "LINIEN")
+            line(model.nodes[a], model.nodes[b], E_LINIEN)
     for s in model.supports:
         p = model.nodes[s.node]
         d = h
         for v in ((d, 0, 0), (0, d, 0), (0, 0, d)):
-            line(np.asarray(p) - np.asarray(v), np.asarray(p) + np.asarray(v), "LAGER")
+            line(np.asarray(p) - np.asarray(v), np.asarray(p) + np.asarray(v), E_LAGER)
     for name, mem in model.members.items():
         if not mem.elements:
             continue
         e = model.elements[int(mem.elements[0])]
         p = 0.5 * (model.nodes[int(e.nodes[0])] + model.nodes[int(e.nodes[1])])
-        text(p, f"{name} {e.sec or ''}".strip(), "BESCHRIFTUNG")
+        text(p, f"{name} {e.sec or ''}".strip(), E_TEXT)
     for lc in model.load_cases.values():
         for nl in lc.nodal_loads:
             p = model.nodes[nl.node]
-            text(p, f"{lc.name}", "LASTEN", h * 0.7)
+            text(p, f"{lc.name}", E_LASTEN, h * 0.7)
     out.append(_p(0, "ENDSEC") + _p(0, "EOF"))
     with open(path, "w", encoding="latin-1", errors="replace") as f:
         f.write("".join(out))
     C.say(log, f"DXF geschrieben: {n_line} Linien, {n_face} Flaechen -> {path}")
+    C.say(log, "DXF: Die Datei trägt die Geometrie in Metern ($INSUNITS = 6). Lagersymbole, "
+               f"Linien und Beschriftung liegen auf Ebenen mit dem Vorsatz {HILFSEBENE}.")
+    n_stab = sum(1 for e in model.elements if e.typ in ("truss", "seil"))
+    n_vol = len(C.solid_elements(model))
+    C.nicht_uebertragen(log, "DXF", [
+        (len(model.materials), "Werkstoff", "Werkstoffe"),
+        (len(model.sections), "Querschnitt", "Querschnitte"),
+        (len(model.shells), "Schalendicke", "Schalendicken"),
+        (n_stab, "Stabart Fachwerkstab oder Seil (geht als Linie hinaus)",
+         "Stabarten Fachwerkstab oder Seil (gehen als Linien hinaus)"),
+        (n_vol, "Volumenelement (nur die Außenflächen als 3DFACE)",
+         "Volumenelemente (nur die Außenflächen als 3DFACE)"),
+        (len(C.gelenkenden(model)), "Stabendgelenk", "Stabendgelenke"),
+        (len(model.supports), "Knotenlager (nur als Symbol)", "Knotenlager (nur als Symbol)"),
+        (len(model.line_supports), "Linienlager", "Linienlager"),
+        (len(model.surface_supports), "Flächenlager", "Flächenlager"),
+        (C.lastzahl(model, "nodal_loads"), "Knotenlast (nur der Lastfallname als Text)",
+         "Knotenlasten (nur der Lastfallname als Text)"),
+        (C.lastzahl(model, "beam_loads"), "Stablast", "Stablasten"),
+        (C.lastzahl(model, "face_loads"), "Flächenlast", "Flächenlasten"),
+        (C.lastzahl(model, "temp_loads"), "Temperaturlast", "Temperaturlasten"),
+        (sum(1 for lc in model.load_cases.values() if np.any(np.asarray(lc.gravity, float))),
+         "Lastfall mit Eigengewicht", "Lastfälle mit Eigengewicht"),
+        (len(model.combinations), "Kombination", "Kombinationen"),
+    ] + C.weiteres(model))
     return path

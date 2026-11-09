@@ -22,6 +22,95 @@ def warn(log: Optional[list], msg: str) -> None:
     say(log, "WARNUNG: " + msg)
 
 
+# --------------------------------------------------------------------------
+# Was ein Format nicht traegt, steht nach dem Export als Hinweis mit Anzahl da
+# (Befunde B2 bis B5 der Pruefagenten, 09.11.2026: bis dahin fielen Gelenke,
+# Fachwerkstaebe, Linien- und Flaechenlager, Stab- und Flaechenlasten beim
+# Export ohne ein Wort weg).
+# --------------------------------------------------------------------------
+def anzahl(n: int, einzahl: str, mehrzahl: str = "") -> str:
+    """„1 Stabendgelenk“, „4 Stabendgelenke“."""
+    return f"{int(n)} {einzahl if int(n) == 1 else (mehrzahl or einzahl)}"
+
+
+def gelenkenden(model: Model) -> list[tuple[int, int]]:
+    """(Element, Ende 0|1) jedes Stabendes mit einem Gelenk oder einer
+    Gelenkfeder (Element.hinges, Element.hinge_springs: lokale FHG 0..11)."""
+    enden = set()
+    for i, e in enumerate(model.elements):
+        for d in getattr(e, "hinges", None) or []:
+            enden.add((i, int(d) // 6))
+        for eintrag in getattr(e, "hinge_springs", None) or []:
+            enden.add((i, int(eintrag[0]) // 6))
+    return sorted(enden)
+
+
+def lager_nicht_starr(model: Model) -> list[int]:
+    """Indizes der Knotenlager, die mehr sind als „diese FHG starr gehalten“:
+    Feder, Ausfall, Schlupf, Reibung, Grenzkraft oder vorgegebene
+    Verschiebung."""
+    aus = []
+    for k, s in enumerate(model.supports):
+        feder = any(s.dof_behaviour(d).typ == "spring" for d in range(6))
+        if feder or s.nonlinear or any(float(v) for v in (s.values or [])):
+            aus.append(k)
+    return aus
+
+
+def lastzahl(model: Model, liste: str, nur_eigene: bool = False) -> int:
+    """Zahl der Lasten einer Liste (``beam_loads``, ``face_loads`` ...) ueber
+    alle Lastfaelle."""
+    n = 0
+    for lc in model.load_cases.values():
+        lasten = getattr(lc, liste, None) or []
+        n += sum(1 for l in lasten if not (nur_eigene and getattr(l, "_geo", False)))
+    return n
+
+
+def nicht_uebertragen(log: Optional[list], fmt: str, teile: list) -> None:
+    """Der eine Hinweis am Ende jedes Exports: was im Modell steht und nicht
+    in der Datei. ``teile``: [(Anzahl, Einzahl, Mehrzahl)] oder fertige
+    Texte; Eintraege mit Anzahl 0 fallen weg. Ohne Eintrag kein Hinweis."""
+    worte = []
+    for t in teile:
+        if isinstance(t, str):
+            if t:
+                worte.append(t)
+        elif t and int(t[0]) > 0:
+            worte.append(anzahl(*t))
+    if worte:
+        warn(log, f"{fmt}: nicht übertragen: " + ", ".join(worte) + ".")
+
+
+def weiteres(model: Model) -> list:
+    """Was keiner der Austauschexporte (DXF, IFC, Abaqus, Nastran) schreibt -
+    fuer :func:`nicht_uebertragen`."""
+    n_feder = sum(1 for e in model.elements if e.typ == "feder")
+    n_grenz = sum(1 for e in model.elements if e.typ.startswith("grenzschicht"))
+    n_nur = sum(1 for e in model.elements if getattr(e, "nur", ""))
+    n_exz = sum(1 for e in model.elements
+                if any(any(float(v) for v in x) for x in (getattr(e, "exzentrizitaet", None) or [])
+                       if isinstance(x, (list, tuple))))
+    return [
+        (n_nur, "Stab mit Ausfall bei Zug oder Druck (geht als gewöhnlicher Stab hinaus)",
+         "Stäbe mit Ausfall bei Zug oder Druck (gehen als gewöhnliche Stäbe hinaus)"),
+        (n_exz, "Stabexzentrizität", "Stabexzentrizitäten"),
+        (n_feder, "Federelement", "Federelemente"),
+        (n_grenz, "Grenzschichtelement", "Grenzschichtelemente"),
+        (len(getattr(model, "kopplungen", None) or []), "Kopplung", "Kopplungen"),
+        (len(getattr(model, "starrkoerper", None) or []), "Starrkörper", "Starrkörper"),
+        (len(getattr(model, "punktmassen", None) or []), "Punktmasse", "Punktmassen"),
+        (len(getattr(model, "contact_pairs", None) or [])
+         + len(getattr(model, "kontaktbedingungen", None) or [])
+         + len(getattr(model, "contact_supports", None) or [])
+         + len(getattr(model, "gap_elements", None) or []), "Kontaktdefinition",
+         "Kontaktdefinitionen"),
+        (lastzahl(model, "zwangsverformungen"), "Zwangsverformung", "Zwangsverformungen"),
+        (lastzahl(model, "vorspannungen"), "Vorspannung", "Vorspannungen"),
+        (lastzahl(model, "uebermasse"), "Übermaß", "Übermaße"),
+    ]
+
+
 def beam_elements(model: Model) -> list[int]:
     return [i for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
 
