@@ -13447,6 +13447,30 @@ anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
 rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
 
+**Meldungen richtiggestellt** (seit 10.11.2026). Die Kontrollsumme des
+Wasserdrucks ist die Summe des Lastvektors und gilt damit auch für
+quadratische Schalen (vorher 0 N an einer Wand aus achtknotigen Schalen,
+jetzt 61 298 N gegen 61 312 N von Hand). Bei einem abgebildeten Quader nennt
+das Protokoll die Teilung des Körpers; sie ersetzt dort die Netzdichte. Eine
+nicht ausgeführte Kontaktbedingung wird mit Namen und Grund gemeldet, und die
+Folge wird benannt: Teilen die beiden Seiten Knoten, rechnet das Modell dort
+durchverbunden (zu steif); teilen sie keine, sind die Bauteile dort nicht
+verbunden (zu weich). Schalen werden bei eingeschalteter Plastizität elastisch
+gerechnet; Protokoll und Zusammenfassung weisen darauf hin. Endet eine
+Laststufe an der Iterationsgrenze, bevor ein Mechanismus erkennbar ist, lautet
+die Meldung „Iterationsgrenze erreicht …“; das ist kein Nachweis einer
+überschrittenen Traglast, sondern die Aufforderung, mehr Iterationen oder
+Laststufen zu wählen. Bilden Stabendgelenke mit den Lagern eine kinematische
+Kette, nennt die Modellprüfung die „Gelenkkette“ mit Stabelement und Knoten;
+„Freie Bewegungen suchen“ zeigt sie. Ab einem Steifigkeitsunterschied von
+Faktor 1 000 000 zwischen zwei Elementen warnt die Modellprüfung, weil die
+Rechnung bei sehr ungleichen Steifigkeiten ein tragfähiges System als singulär
+abweisen kann (an einem Kragarm aus Stäben ab Faktor 100 000 000). Zahlen in
+Zusammenfassung, Plastizitätsprotokoll und Diagnose stehen mit Dezimalkomma
+und ohne wissenschaftliche Schreibweise; das Kontaktprotokoll ist noch nicht
+umgestellt. Rechenergebnisse ändern sich dadurch nicht. Geprüft in
+`tests/test_gruppe5_meldungen.py`.
+
 **Eingabeprüfung vor dem Rechnen** (seit 09.11.2026). Vor dem Rechnen prüft
 das Programm die Eingaben und nennt den Fehler mit Namen und Wert: E-Modul
 null oder negativ, Querdehnzahl außerhalb des möglichen Bereichs (größer als

@@ -17,6 +17,7 @@ Diese Notizen schließen an die Release-Notes vom 09.11.2026 nachts an (Beispiel
 
 * **Flächenlager in Flächenachsen auf schräger, gekrümmter oder beidseitiger Fläche (A12, A13).** Ein solches Lager wirkt je Fläche entlang einer globalen Achse. Weicht die Normale um mehr als 1° davon ab, ist die Fläche gekrümmt oder liegt sie zwischen zwei Körpern, meldet die Modellprüfung einen Fehler, und die Rechnung startet nicht. Ausgenommen ist ein Lager, das in allen drei Richtungen gleich wirkt. **Das Drehlager (Z-Modell) ist betroffen:** Das Lager „Starr“ nennt vier Trennflächen zwischen zwei Körpern (F1401, F1403, F1411, F1413) und rechnet in diesem Stand erst wieder, wenn sie aus dem Lager genommen sind.
 * **Eingabeprüfung vor dem Rechnen (Gruppe 5: A21, A22, A24, C10 bis C14).** Fehler mit Namen und Wert bei E-Modul null oder negativ, Querdehnzahl außerhalb des möglichen Bereichs, Dicke oder Querschnittswerten null oder negativ, tragender Fläche ohne Dicke, Lasten und Lagern auf Dingen, die es nicht gibt, und Kombinationen mit unbekanntem Lastfall. Ein Flächenlager zieht beim Löschen von Elementen mit (vorher zeigte es auf andere Elemente). Warnung, wenn die größte Verformung über 10 % der größten Modellabmessung liegt. Elementnummern in Meldungen zählen wie in den Tabellen ab 0.
+* **Meldungen richtiggestellt (Gruppe 5: C2 bis C9).** Kontrollsumme des Wasserdrucks an quadratischen Schalen (vorher 0 N), Elementzahl am abgebildeten Quader, nicht ausgeführte Kontaktbedingung mit Namen und richtiger Folge (zu steif oder zu weich), Hinweis „Schalen werden elastisch gerechnet“ bei Plastizität, „Iterationsgrenze erreicht“ statt „Kein Gleichgewicht gefunden“, wenn nur die Zahl der Newton-Schritte nicht reicht, „Gelenkkette“ statt „Splitterelemente“, Warnung ab einem Steifigkeitsunterschied von Faktor 1 000 000, Zahlen mit Komma und ohne Exponent. Rechenergebnisse unverändert.
 
 ## Exporte und Importe (Gruppe 6: B2 bis B6)
 
@@ -28,6 +29,7 @@ IFC, SAF, Abaqus, Nastran und DXF übertragen Gelenke, Fachwerkstäbe, Linienlag
 * **Zwischenspeicher des Druckfelds** (strömungsnumerisches Verfahren): Eine geänderte Geometrie bei gleicher Knoten-, Element- und Flächenzahl wird nicht erkannt. Die Korrektur wartet auf die Entscheidung des Anwenders.
 * **Theorie III. Ordnung kennt den Versatz der Stabenden nicht** (7,6 mm gegen 0,0 mm am Prüfkörper). Wartet auf die Entscheidung des Anwenders.
 * **Längslasten entlang des Stabes** bleiben im Feldanteil nach Theorie II. Ordnung außen vor (ein Element bis +22,6 %, vier Elemente unter 1 %).
-* **Gruppe 5, Meldungen C2 bis C9**, ist in Arbeit.
+* **Zahlenformat im Kontaktprotokoll** (Befund C7): Zusammenfassung, Plastizitätsprotokoll und Diagnose sind umgestellt, das Kontaktprotokoll und seine Abschlusszeilen noch nicht.
+* **Sehr ungleiche Steifigkeiten** (Befund C9): Die Schwellen, ab denen die Rechnung ein System als singulär abweist oder Freiheitsgrade festhält, sind unverändert; neu ist nur die Warnung.
 * **Flächenlager** schreibt kein Exportformat; sie stehen im Hinweis „nicht übertragen“. Die exportierten Dateien sind mit dem eigenen Import geprüft, nicht in fremden Programmen.
 * **Drehlager:** Die Wirkung von A16 am Drehlager (Trennflächen ohne Kontaktbedingung werden beim Neuvernetzen zusammengelegt) ist am Modell nicht gemessen.
