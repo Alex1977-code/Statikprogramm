@@ -1533,9 +1533,11 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             # gehoeren) geht vor der eigenen Teilung - je Richtung dieselbe.
             vorgabe = getattr(model, "linienvorgabe", None) or {}
             richtungen = quader_richtungen(quader_kanten(model, koerper, order))
+            vom_nachbarn = False
             for d in range(3):
                 fest = [int(vorgabe[x]) for x in richtungen[d] if x in vorgabe]
                 if fest:
+                    vom_nachbarn = vom_nachbarn or max(fest) != teil[d]
                     teil[d] = max(fest)
             nx, ny, nz = teil
             ord_ = netz_ordnung(model, ordnung)
@@ -1560,9 +1562,15 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             koerper.randtreue = 1.0
             koerper.netzgrund = ""
             koerper.netzkanten = []
+            # Woher die Zahl kommt, steht dabei (Befund C3 der Pruefagenten,
+            # 09.11.2026): der abgebildete Quader folgt seiner eigenen Teilung,
+            # die Netzdichte (Ziellaenge) wirkt an ihm nicht - das Protokoll
+            # kuendigte davor „≈ 3472 Elemente“ an, entstanden sind 64.
             C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder"
                        + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
-                       + f" ({zahl})")
+                       + f" ({zahl}) – abgebildeter Quader, geteilt nach der Teilung des Körpers"
+                       + (" und der Teilung gemeinsamer Kanten" if vom_nachbarn else "")
+                       + ", nicht nach der Netzdichte")
             return els
     if len(knoten) == 4 and _dreiflaechner(ringe, flaechen, model):
         X = model.nodes[knoten]
@@ -1645,6 +1653,37 @@ def abgebildet(model: Model, koerper, h: float = 0.0, karten: tuple = None, log:
     # erst danach.
     from . import sweep as SW
     return SW.sweepbar(model, koerper, h=h, karten=karten, log=log)
+
+
+def quader_abgebildet(model: Model, koerper) -> bool:
+    """Geht der Koerper in :func:`mesh_koerper` den ersten Weg - **abgebildeter
+    Quader** (sechs Vierecke, acht Ecken, gerade Kanten, mit Rauminhalt)?
+
+    Dann bestimmt seine eigene Teilung [nx, ny, nz] die Elementzahl, und die
+    Netzdichte (Ziellaenge) wirkt an ihm nicht. Das Protokoll der Netzdichte
+    fragt hier nach, damit es keine Elementzahl ankuendigt, die nicht entsteht
+    (Befund C3 der Pruefagenten, 09.11.2026). Die Bedingungen sind dieselben
+    wie dort; geaendert wird hier nichts."""
+    if getattr(koerper, "ordnung", None) == 2:
+        return False                    # tet10: freier Vernetzer (Anweisung V1)
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if len(flaechen) != 6 or any(f is None for f in flaechen):
+        return False
+    try:
+        ringe = [f.randknoten(model) for f in flaechen]
+        knoten = {n for r in ringe for n in r}
+        if len(knoten) != 8 or any(len(r) != 4 for r in ringe):
+            return False
+        from .importers.rfem6_db import _hex_order, _hex_volumen
+        order = _hex_order(ringe)
+        if not order or not _gerade_kanten(model, koerper, order):
+            return False
+        entartetes_volumen, _ohne = _entartungspruefung()
+        X = model.nodes[order]
+        return not entartetes_volumen(float(_hex_volumen(X)),
+                                      float(np.linalg.norm(X.max(axis=0) - X.min(axis=0))))
+    except Exception:                   # noqa: BLE001 - im Zweifel die alte Zeile
+        return False
 
 
 # --------------------------------------------------------------------------

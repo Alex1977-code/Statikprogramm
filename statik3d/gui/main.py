@@ -25617,7 +25617,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # nur **ob**, die Guete sagt **wie fest** - und das ist die Zahl,
             # die zwei aeusserlich gleiche Bauteile unterscheidet.
             g: list = []
-            return sg.restfreiheiten(self.model, guete=g), g
+            # dazu die Gelenkketten (Befund C8, 09.11.2026): die Suche je
+            # Teiltragwerk kennt keine Stabendgelenke und fand den
+            # Einfeldtraeger mit Mittelgelenk nicht
+            return list(sg.restfreiheiten(self.model, guete=g)) + sg.gelenkketten(self.model), g
 
         self._run_background(suchen, self._singular_fertig, "Freie Bewegungen")
 

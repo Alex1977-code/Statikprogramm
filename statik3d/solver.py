@@ -1546,8 +1546,9 @@ class LinearSolver:
                     # faengt warnings nirgends ab), und die exe hat keine
                     # Konsole (console=False in packaging/Statik3D.spec).
                     raise RuntimeError(
-                        f"Gleichungssystem numerisch singulär (Residuum {r:.1e}, Schranke {grenze:g}"
-                        + (f", nach {schritte} Nachiterationen" if schritte else "") + ")"
+                        f"Gleichungssystem numerisch singulär (Residuum {_zt(r, 2)}, Schranke {_zt(grenze, 2)}"
+                        + (f", nach {schritte} {'Nachiteration' if schritte == 1 else 'Nachiterationen'}"
+                           if schritte else "") + ")"
                         + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
                            else "") + " - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition prüfen; die Schranke steht "
@@ -1851,7 +1852,7 @@ class Results:
             s.append(f"Situation               : {sit}")
         s += [f"Freiheitsgrade gesamt   : {self.info.get('ndof', '?')}",
               f"davon aktiv             : {self.info.get('nfree', '?')}",
-              f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
+              f"Rechenzeit              : {_fest(self.info.get('time', 0), 3)} s"]
         if self.info.get("solver"):
             s.append(f"Gleichungslöser         : {self.info['solver']}")
         # "Gleichungsloeser" darueber ist der Loeser der letzten
@@ -1873,7 +1874,7 @@ class Results:
         s += seil_querlast_gebuendelt([(self.name, self)])
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
-            s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
+            s.append(f"max. Verschiebung       : {_fest(self.umag[i] * 1000, 4)} mm (Knoten {i})")
         # unplausibel grosse Verformung (Einheitenfehler, 09.11.2026)
         s += verformung_gross_gebuendelt([(self.name, self)])
         try:
@@ -1884,13 +1885,14 @@ class Results:
                 from . import spitzenanzeige as sa
                 zeilen = sa.zusammenfassung_zeilen(self.model, self)
                 if not any(z.startswith("max. Vergleichsspannung") for z in zeilen):
-                    zeilen.insert(0, f"max. Vergleichsspannung : {np.nanmax(nv)/1e6:.2f} MPa")
+                    zeilen.insert(0, f"max. Vergleichsspannung : {_fest(np.nanmax(nv) / 1e6, 2)} MPa")
                 s.extend(zeilen)
         except Exception:
             pass
         if self.reactions is not None and self.reactions.size:
             R = self.reactions[:, :3].sum(axis=0)
-            s.append(f"Summe Auflagerkräfte    : [{R[0]:.1f}, {R[1]:.1f}, {R[2]:.1f}] N")
+            # Dezimalkomma, die Werte durch Strichpunkt getrennt (Befund C7, 09.11.2026)
+            s.append(f"Summe Auflagerkräfte    : [{_fest(R[0], 1)}; {_fest(R[1], 1)}; {_fest(R[2], 1)}] N")
         # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
         if self.info.get("gleichgewicht_global"):
             from . import gleichgewicht as _gg
@@ -1950,9 +1952,9 @@ class Results:
             ea = sa.eps_p_ausserhalb(self.model, self)
             s.append(f"Plastizität             : "
                      + ("1 Element fließt, " if n_fl == 1 else f"{n_fl} Elemente fließen, ")
-                     + (f"ε_p,eq max {ea[0] * 100:.3f} % außerhalb der netzabhängigen Stellen"
+                     + (f"ε_p,eq max {_fest(ea[0] * 100, 3)} % außerhalb der netzabhängigen Stellen"
                         + (f" ({ea[2]})" if ea[2] else "") + ", " if ea is not None else
-                        f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, ")
+                        f"ε_p,eq max {_fest(float(pz.get('eps_p_max', 0.0)) * 100, 3)} %, ")
                      + f"{n_it} {'Schritt' if n_it == 1 else 'Schritte'} in "
                      f"{n_ls} {'Laststufe' if n_ls == 1 else 'Laststufen'}"
                      # Was die Zeit traegt, ist nicht die Zahl der Schritte, sondern
@@ -2553,6 +2555,9 @@ def plastisch_zeilen(pz: dict) -> list:
     if pz.get("summe_R") is not None:
         z.append("ΣR / ΣM (Lager)         : " + summen_text(pz["summe_R"], pz.get("summe_M") or [0.0] * 3,
                                                             pz.get("summe_x0") or [0.0] * 3))
+    if isinstance(pz.get("elastisch"), dict) and pz["elastisch"]:
+        # Befund C5 (09.11.2026): Schalen, Staebe und Scheiben fliessen nicht
+        z.append("Hinweis                 : " + pl.elastisch_text(pz["elastisch"]))
     return z
 
 
@@ -2672,14 +2677,16 @@ def loeser_nachweis_zeilen(nw: dict) -> list:
         text += f" ({wie})" if wie else ""
         n_fak = int(nw.get('faktorisierungen', 0) or 0)
         text += (f"; {n_fak} {'Faktorisierung' if n_fak == 1 else 'Faktorisierungen'} in "
-                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
+                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s".replace(".", ","))
         n_nach = int(nw.get("nachfuehrungen", 0) or 0)
         if n_nach:
             text += (f"; {n_nach} {'Runde' if n_nach == 1 else 'Runden'} mit dem behaltenen Faktor "
                      "nachgeführt statt neu zerlegt")
         r = nw.get("residuum_linear_max")
         if r is not None:
-            text += f"; Residuum höchstens {float(r):.1e}"
+            # Dezimalkomma, nie wissenschaftlich (Befund C7, 09.11.2026: „2.0e-14“)
+            from .zahlen import zahl_text as _zt
+            text += f"; Residuum höchstens {_zt(float(r), stellen=2)}"
         z.append(f"Lösungen                : {text}")
     if nw.get("loesungen_gescheitert"):
         z.append(f"Gescheiterte Lösungen   : {int(nw['loesungen_gescheitert'])}")
@@ -5328,14 +5335,15 @@ class _KontaktImNewton:
         ok = (gg_ok and in_ok) or not kontakt_konv
         if innen is not None:
             text = (f"Plastizität: Laststufe {k}: Residuum am Ende - inneres Gleichgewicht "
-                    f"{_z(innen[3] / 1e3, stellen=3)} kN = {innen[0]:.1e} der Lasten (Schranke {innen[2]:.0e})"
-                    + (f", in den ausgenommenen Zonen {innen[1]:.1e}" if innen[1] is not None else "")
-                    + f"; Summe der Kräfte {_z(rest / 1e3, stellen=3)} kN = {gg:.1e}"
-                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+                    f"{_z(innen[3] / 1e3, stellen=3)} kN = {_zt(innen[0], 2)} der Lasten "
+                    f"(Schranke {_zt(innen[2], 2)})"
+                    + (f", in den ausgenommenen Zonen {_zt(innen[1], 2)}" if innen[1] is not None else "")
+                    + f"; Summe der Kräfte {_z(rest / 1e3, stellen=3)} kN = {_zt(gg, 2)}"
+                    + (f", Kontakt {_zt(kres, 2)} der Kontaktkraft" if kres is not None else ""))
         else:
             text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
-                    f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
-                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+                    f"= {_zt(gg, 2)} der Lasten (Schranke {_zt(ABSCHLUSS_GLEICHGEWICHT, 2)})"
+                    + (f", Kontakt {_zt(kres, 2)} der Kontaktkraft" if kres is not None else ""))
         text += ("" if (gg_ok and in_ok) else
                  " - die Stufe ist nicht konvergiert" if kontakt_konv else
                  " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet")
@@ -5944,6 +5952,11 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     if plast_merken:
         res._plast_ende = (zustand, F_p)
     halter, aufrufe = kn.halter, kn.aufrufe
+    # Schalen, Staebe und Scheiben rechnen elastisch weiter (Befund C5, 09.11.2026):
+    # das steht im Protokoll und in der Zusammenfassung, nie nur „nichts fließt“
+    elastisch = pl.elastisch_gerechnet(model, aktiv)
+    if elastisch:
+        info["elastisch"] = elastisch
     # Traglast, Gueltigkeitsgrenze, ε_p,max mit Ort, ΣR/ΣM und das Residuum der
     # inneren Kraefte (Auftrag vom 16.10.2026)
     _plastisch_bewerten(model, res, info, zustand, halter.get("R"), system, zonen, log,
@@ -6022,6 +6035,8 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
         neu.append("Plastizität: " + pl.eps_p_ort_text(ort))
     except Exception as ex:                       # noqa: BLE001 - Ausgabe haelt nichts auf
         neu.append(f"Plastizität: Ort von ε_p,max nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
+    if info.get("elastisch"):
+        neu.append("Plastizität: Hinweis – " + pl.elastisch_text(info["elastisch"]))
     dg = pl.dehnungsgrenze_pruefen(model, zustand, model.plastizitaet)
     info["dehnungsgrenze"] = dg
     # die Zeile „NICHT GÜLTIG“ der Grenze schreibt _grenze_netzabhaengig (erst nach
@@ -9494,6 +9509,12 @@ def _zt(x: float, stellen: int = 3) -> str:
     return zahl_text(x, stellen=stellen)
 
 
+def _fest(x, nk: int) -> str:
+    """Feste Nachkommastellen mit Dezimalkomma fuer die Zusammenfassung („max.
+    Verschiebung : 16,8940 mm“, Befund C7 vom 09.11.2026: bis dahin mit Punkt)."""
+    return f"{float(x):.{int(nk)}f}".replace(".", ",")
+
+
 def _pendel_bauteile(model: Model, cs, ids, merker: dict) -> str:
     """„Bauteil B (Lager Starr): 2, …“ - je Bauteil und Bedingung die Zahl der Knoten."""
     if "karte" not in merker:
@@ -10621,15 +10642,15 @@ class Envelope:
         if self.u_max.size and self.names:
             um = self.umag_max
             i = int(np.argmax(um))
-            s.append(f"max. Verschiebung       : {um[i]*1000:.3f} mm (Knoten {i})")
+            s.append(f"max. Verschiebung       : {_fest(um[i] * 1000, 3)} mm (Knoten {i})")
         if self.beam:
             for k in ("N", "My", "Mz"):
                 mn = min(float(d[k][0].min()) for d in self.beam.values())
                 mx = max(float(d[k][1].max()) for d in self.beam.values())
                 unit = "kN" if k == "N" else "kNm"
-                s.append(f"{k:2s} min/max              : {mn/1e3:.2f} / {mx/1e3:.2f} {unit}")
+                s.append(f"{k:2s} min/max              : {_fest(mn / 1e3, 2)} / {_fest(mx / 1e3, 2)} {unit}")
         if np.any(self.node_vm_max):
-            s.append(f"max. Vergleichsspannung : {np.nanmax(self.node_vm_max)/1e6:.2f} MPa")
+            s.append(f"max. Vergleichsspannung : {_fest(np.nanmax(self.node_vm_max) / 1e6, 2)} MPa")
         return "\n".join(s)
 
 
@@ -10691,7 +10712,7 @@ class Analysis:
 
     def summary(self) -> str:
         s = [f"Lastfälle: {len(self.cases)}   Kombinationen: {len(self.combinations)}   "
-             f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
+             f"Rechenzeit: {_fest(self.info.get('time', 0), 2)} s ({self.info.get('parallel', '')})"]
         # Ausweichen des Gleichungsloesers: eine Zeile je Grund ueber alle
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())

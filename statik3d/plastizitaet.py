@@ -804,6 +804,42 @@ def _solid_elemente(model, aktiv=None) -> list:
     return [i for i in idx if model.elements[i].typ in asm.SOLID_TYPES]
 
 
+def elastisch_gerechnet(model, aktiv=None) -> dict:
+    """Was eine plastische Rechnung **elastisch** laesst (Befund C5, 09.11.2026):
+    das Fliessen wird nur in den Volumenelementen gerechnet
+    (:func:`_solid_elemente`). Schalen, Staebe (auch Fachwerkstaebe und Seile)
+    und Scheibenelemente behalten ihre elastische Steifigkeit, wie hoch ihre
+    Spannung auch ist. Rueckgabe {"schalen": n, "staebe": n, "scheiben": n} der
+    wirkenden Elemente, nur die Arten, die es gibt - leer, wenn alles fliessen
+    kann. Bis dahin stand an einer Schale mit 1,5 f_y nur „nichts fließt“."""
+    from . import assemble as asm
+    zahl: dict = {}
+    for i in asm.aktive_indizes(model, aktiv):
+        typ = model.elements[i].typ
+        art = ("schalen" if typ in asm.SHELL_TYPES else "staebe" if typ in asm.LINE_TYPES
+               else "scheiben" if typ in asm.PLANE_TYPES else None)
+        if art:
+            zahl[art] = zahl.get(art, 0) + 1
+    return zahl
+
+
+def elastisch_text(zahl: dict) -> str:
+    """„Schalen und Stäbe werden elastisch gerechnet (16 Schalenelemente, 3 Stäbe): …“."""
+    from .zahlen import zahl_text as _z
+    worte = (("schalen", "Schalen", "Schalenelement", "Schalenelemente"),
+             ("staebe", "Stäbe", "Stab", "Stäbe"),
+             ("scheiben", "Scheiben", "Scheibenelement", "Scheibenelemente"))
+    da = [(w, ein, mehr, int(zahl[k])) for k, w, ein, mehr in worte if zahl.get(k)]
+    if not da:
+        return ""
+    namen = [w for w, _e, _m, _n in da]
+    wer = namen[0] if len(namen) == 1 else ", ".join(namen[:-1]) + " und " + namen[-1]
+    wieviel = ", ".join(f"{_z(n, stellen=0)} {ein if n == 1 else mehr}" for _w, ein, mehr, n in da)
+    return (f"{wer} werden elastisch gerechnet ({wieviel}): das Fließen wird nur in "
+            "Volumenelementen gerechnet. Spannungen über der Streckgrenze werden dort weder "
+            "begrenzt noch umgelagert und zählen nicht zu den fließenden Elementen.")
+
+
 def _stapel(model, elemente: list, typ: str) -> list:
     """Geometrie- und Werkstoffdaten der Elemente eines Typs - je Gruppe des
     Dehnungsoperators ein Eintrag (bei den isoparametrischen Typen genau einer).
@@ -1721,11 +1757,25 @@ def _zonen_melden(mess, log, progress) -> None:
         progress(mess["zeile"])
 
 
+def _zt(x, stellen: int = 3) -> str:
+    """Eine Zahl in einer Meldung (Befund C7, 09.11.2026): Dezimalkomma,
+    ``stellen`` gueltige Ziffern, nie wissenschaftlich - bis dahin stand im
+    Protokoll „Änderung 2.12e+00 > 0.001“ und „Laststufe bis 91.67 %“. Ohne
+    Tausenderluecke: die Rechenliste liest „Änderung 0,0185“ als ein Wort."""
+    from .zahlen import zahl_text
+    return zahl_text(x, tausender=False, stellen=stellen)
+
+
+def _fest(x, nk: int) -> str:
+    """Feste Nachkommastellen mit Dezimalkomma (ε_p,eq max 2,121 %)."""
+    return f"{float(x):.{int(nk)}f}".replace(".", ",")
+
+
 def _mass_text(zonen, mess, diff: float, mass: float) -> str:
-    """„Änderung 1.2e-02“ - oder mit Zonen das Mass ausserhalb und die Kraft."""
+    """„Änderung 0,012“ - oder mit Zonen das Mass ausserhalb und die Kraft."""
     if not _zonen_greifen(zonen, mess):
-        return f"Änderung {diff:.2e}"
-    return f"Änderung außerhalb der Zonen {mass:.2e}, {mess.get('kurz', '')}".rstrip(", ")
+        return f"Änderung {_zt(diff)}"
+    return f"Änderung außerhalb der Zonen {_zt(mass)}, {mess.get('kurz', '')}".rstrip(", ")
 
 
 def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, einst: "Plastizitaet",
@@ -1776,7 +1826,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
         info["verlauf"].append((k, it, diff, s_info["fliessend"]))
         if progress is not None:
             progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
-                     f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
+                     f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {_zt(diff)}")
         _zonen_melden(mess, log, progress)
         if ok and not kontakt.abgekuerzt():
             if getattr(kontakt, "deckel_in_stufe", lambda: False)():
@@ -1878,6 +1928,83 @@ def _stufe_teilbar(F, F_sofort, lam_alt: float, lam_k: float) -> bool:
     return bool(np.any(rest))
 
 
+#: Der fruehste Newton-Schritt einer Laststufe, in dem :func:`_mechanismus`
+#: ansprechen kann: er braucht vier Verschiebungsschritte in Folge, der erste
+#: entsteht im zweiten Newton-Schritt. Mit weniger Schritten je Stufe ist ein
+#: Mechanismus nie erkennbar (Befund C6, 09.11.2026).
+MECHANISMUS_AB_SCHRITT = 5
+
+#: „Der Rest fiel noch“ (Befund C6): die Aenderung des letzten Newton-Schritts
+#: liegt unter dem 0,9-fachen des vorletzten und ist die kleinste seit dem
+#: Hoechstwert der Stufe. Gemessen am Zugstab (hex8 4 x 2 x 2): ein Newton, der
+#: konvergiert, faellt um Groessenordnungen (0,250 - 28,59 - 0,000 bei 82 % der
+#: Traglast; der zweite Schritt ist der groesste, darum zaehlt erst ab dem
+#: Hoechstwert). Ueber der Traglast bleibt die Aenderung stehen (467,6 - 467,6 -
+#: 467,6 bei 1,2 f_u; Verhaeltnis 1,000) - das ist kein Fallen. Am Zugstab aus
+#: tests/test_traglast (1,2 F_lim, 25 Schritte) fiel die Aenderung der letzten
+#: Teilstufe je Schritt auf das 0,66-fache (tet4) und das 0,88-fache (tet10);
+#: mit 100 Schritten konvergierten beide Teilstufen (nach 33 und 88 Schritten),
+#: der letzte konvergierte Lastanteil stieg von 91,67 auf 95,83 % und von 81,25
+#: auf 83,33 %. Ein Verhaeltnis von 0,994 (155 - 156 - 156 nach 100 Schritten)
+#: konvergierte nicht. Zwischen 0,9 und 1 bleibt es beim alten Wortlaut.
+ITERATIONSGRENZE_ABFALL = 0.9
+
+
+def _iterationsgrenze(werte, schritte: int, budget: int, mech) -> "dict | None":
+    """Endete die letzte Laststufe an der **Iterationsgrenze** und nicht an
+    fehlendem Gleichgewicht (Befund C6, 09.11.2026)? Bis dahin hiess jede
+    Stufe ohne Konvergenz „Traglast überschritten oder örtlicher Mechanismus“:
+    der Zugstab mit 82 % der Traglast und zwei Newton-Schritten je Stufe
+    ebenso wie der mit 120 %.
+
+    ``werte``: die Aenderungen je Newton-Schritt der Stufe. Rueckgabe None
+    (echtes Nicht-Gleichgewicht: ein erkannter Mechanismus, ein Abbruch vor der
+    Grenze oder eine Aenderung, die nicht mehr faellt) oder
+    {"budget", "faellt", "verlauf"}:
+
+    * ``faellt``: der Rest fiel noch (:data:`ITERATIONSGRENZE_ABFALL`);
+    * sonst nur, wenn das Budget unter :data:`MECHANISMUS_AB_SCHRITT` liegt:
+      mit so wenigen Schritten kann die Rechnung weder einen Mechanismus noch
+      eine stehende Aenderung feststellen, das Urteil „kein Gleichgewicht“
+      waere geraten.
+
+    Der Zustand aendert sich nicht (nicht konvergiert, letzter konvergierter
+    Lastanteil): nur der Wortlaut (:func:`traglast_text`)."""
+    budget = int(max(1, budget))
+    if mech is not None or int(schritte) < budget:
+        return None
+    w = [float(x) for x in werte]
+    faellt = False
+    if len(w) >= 2:
+        spitze = max(range(len(w)), key=w.__getitem__)
+        faellt = (w[-1] < ITERATIONSGRENZE_ABFALL * w[-2] and spitze < len(w) - 1
+                  and w[-1] <= min(w[spitze:]))
+    if not faellt and budget >= MECHANISMUS_AB_SCHRITT:
+        return None
+    return {"budget": budget, "faellt": bool(faellt), "verlauf": w[-3:]}
+
+
+def iterationsgrenze_grund(ig: dict) -> str:
+    """Der Halbsatz zur Iterationsgrenze: was die Rechnung am Verlauf sah."""
+    from .zahlen import zahl_text as _z
+    n = int(ig.get("budget", 0))
+    if ig.get("faellt"):
+        w = ig.get("verlauf") or []
+        zuletzt = (f" (Änderung zuletzt {_z(w[-2], stellen=3)} → {_z(w[-1], stellen=3)})"
+                   if len(w) >= 2 else "")
+        return (f"nach {n} {'Newton-Schritt' if n == 1 else 'Newton-Schritten'} je Laststufe lag die "
+                f"Änderung noch über der Toleranz, der Rest fiel aber noch{zuletzt}")
+    return (f"{n} {'Newton-Schritt je Laststufe reicht' if n == 1 else 'Newton-Schritte je Laststufe reichen'} "
+            f"nicht, um zu entscheiden, ob ein Gleichgewicht besteht (ein Mechanismus ist frühestens im "
+            f"{MECHANISMUS_AB_SCHRITT}. Schritt erkennbar)")
+
+
+def iterationsgrenze_ursache(ig: dict) -> str:
+    """Die „mögliche Ursache“, wenn die Stufe an der Iterationsgrenze endete."""
+    return ("Iterationsgrenze erreicht – " + iterationsgrenze_grund(ig)
+            + "; mehr Iterationen oder mehr Laststufen wählen")
+
+
 def traglast_text(tl: dict) -> str:
     """Die Meldung im Wortlaut des Anwenders (16.10.2026): „Kein Gleichgewicht
     gefunden bei Laststufe X. Mögliche Ursache: Traglast überschritten oder
@@ -1886,16 +2013,37 @@ def traglast_text(tl: dict) -> str:
     Ursache „örtlicher Mechanismus an Krafteinleitung – Modell prüfen“
     (:func:`traglast_ursache`). Hinter X steht der Anteil der Last dieser Stufe:
     nach dem Halbieren sagt die Nummer allein nicht, welche Last sie traegt.
-    (Bis zum 16.10.2026 nachmittags: „Traglast überschritten bei Lastfaktor …“.)"""
+    (Bis zum 16.10.2026 nachmittags: „Traglast überschritten bei Lastfaktor …“.)
+
+    Endete die Stufe an der Iterationsgrenze (:func:`_iterationsgrenze`, Befund
+    C6 vom 09.11.2026), heisst es „Iterationsgrenze erreicht bei Laststufe X: …
+    Das ist kein Nachweis einer überschrittenen Traglast – mehr Iterationen
+    oder mehr Laststufen wählen.“ - der Satz oben bleibt dem Fall, in dem
+    wirklich kein Gleichgewicht gefunden ist."""
     from .zahlen import zahl_text as _z
     lam = float(tl.get("lastfaktor", 0.0))
-    ursache = str(tl.get("ursache") or traglast_ursache(tl.get("ort") or {}))
     stufe = tl.get("stufe")
     wo = (f"bei Laststufe {int(stufe)} ({_z(float(tl.get('versuch', 1.0)) * 100.0, stellen=4)} % der Last)"
           if stufe is not None else
           f"bei {_z(float(tl.get('versuch', 1.0)) * 100.0, stellen=4)} % der Last")
-    t = (f"Kein Gleichgewicht gefunden {wo}. Mögliche Ursache: {ursache}. "
-         f"Letzter konvergierter Lastanteil: {_z(lam * 100.0, stellen=4)} %.")
+    ig = tl.get("iterationsgrenze")
+    if isinstance(ig, dict):
+        t = (f"Iterationsgrenze erreicht {wo}: {iterationsgrenze_grund(ig)}. Das ist kein Nachweis einer "
+             f"überschrittenen Traglast – mehr Iterationen oder mehr Laststufen wählen. "
+             f"Letzter konvergierter Lastanteil: {_z(lam * 100.0, stellen=4)} %.")
+    else:
+        ursache = str(tl.get("ursache") or traglast_ursache(tl.get("ort") or {}))
+        t = (f"Kein Gleichgewicht gefunden {wo}. Mögliche Ursache: {ursache}. "
+             f"Letzter konvergierter Lastanteil: {_z(lam * 100.0, stellen=4)} %.")
+        teil = tl.get("iterationsgrenze_teil")
+        if isinstance(teil, dict):
+            # Ein Mechanismus bei einem hoeheren Lastanteil, die letzte Teilstufe
+            # aber am Budget (Befund C6): der Satz oben bleibt, der Zusatz sagt,
+            # dass der letzte konvergierte Lastanteil am Budget haengt.
+            t += (f" Die letzte Teilstufe endete an der Iterationsgrenze: {iterationsgrenze_grund(teil)}. "
+                  f"Mit mehr Iterationen kann der letzte konvergierte Lastanteil höher liegen; bei "
+                  f"{_z(float(teil.get('mechanismus_bei', 1.0)) * 100.0, stellen=4)} % der Last zeigte die "
+                  f"Rechnung einen Mechanismus.")
     if tl.get("sofort") and lam == 0.0:
         t += " (Schon unter den sofort voll wirkenden Lasten Temperatur und Vorspannung.)"
     return t
@@ -1992,6 +2140,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     # Stufe wird vom Startwert an in zwei halben wiederholt (HALBIEREN_MAX)
     faktoren = [(k_ / stufen, 0) for k_ in range(1, stufen + 1)]
     info["halbiert"] = 0
+    mech_bei = None             # kleinster Lastfaktor, bei dem ein Versuch als Mechanismus endete (C6)
     lam_alt = 0.0
     k = 0
     # Der letzte konvergierte Zustand (16.10.2026, TRAGLAST_ERKENNEN): Lastfaktor,
@@ -2026,6 +2175,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         # gerechnet ist (fuer das Residuum am Ende der Stufe, 16.10.2026)
         letzte_loesung = (F_p, None, None)
         vorab = None
+        n_verlauf = len(info["verlauf"])
         if gemeinsam:
             u_start = u
             kontakt.stufe_beginnt()
@@ -2047,13 +2197,17 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 diff = info["verlauf"][-1][2]
                 if log is not None:
                     log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} "
-                               f"Newton-Schritten nicht konvergiert (Änderung {diff:.2e} > "
-                               f"{einst.toleranz:g})")
+                               f"Newton-Schritten nicht konvergiert (Änderung {_zt(diff)} > "
+                               f"{_zt(einst.toleranz, 6)})")
                 if TRAGLAST_ERKENNEN:
                     # nicht auf dem Zustand einer nicht konvergierten Stufe weiterrechnen
                     traglast = {"lastfaktor": float(konv["lam"]), "versuch": float(lam_k),
                                 "sofort": F_sofort is not None, "mechanismus": None, "stufe": int(k),
                                 "_fehl": zustand_stufe}
+                    ig = _iterationsgrenze([v[2] for v in info["verlauf"][n_verlauf:]],
+                                           einst.iterationen, einst.iterationen, None)
+                    if ig:
+                        traglast["iterationsgrenze"] = ig
                     break
             else:
                 konv = {"lam": float(lam_k), "u": u, "basis": zustand_stufe, "F_p": F_p_stufe,
@@ -2091,7 +2245,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
             if progress is not None:
                 progress(f"Plastizität: Laststufe {k}/{len(faktoren)}, Newton-Schritt {it}: "
-                         f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {diff:.2e}")
+                         f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}, Änderung {_zt(diff)}")
             _zonen_melden(mess, log, progress)
             # Zugstaebe in der Konvergenzbedingung (13.10.2026): streng wie
             # ingenieurmaessig ist die Stufe erst mit stehendem Stabstatus
@@ -2112,7 +2266,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 # ins Protokoll; der Loeser gibt es am Ende des Lastfalls in den
                 # Fortschritt weiter (wie die Zeilen zum Halbieren)
                 if log is not None:
-                    log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last: {mech['text']}")
+                    log.append(f"Plastizität: Laststufe bis {_zt(lam_k * 100, 4)} % der Last: {mech['text']}")
                 break
             je_schritt.append(mass)
             if len(je_schritt) >= 2 and je_schritt[-1] < je_schritt[-2]:
@@ -2159,16 +2313,26 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 weglauf = True
                 nicht_halbiert = ("ein Mechanismus" if mech is not None else
                                   f"nach {it} Newton-Schritten nicht konvergiert")
+                if mech is not None:
+                    mech_bei = float(lam_k) if mech_bei is None else min(mech_bei, float(lam_k))
             else:
                 info["konvergiert"] = False
                 if log is not None:
-                    log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last nach {it} "
+                    log.append(f"Plastizität: Laststufe bis {_zt(lam_k * 100, 4)} % der Last nach {it} "
                                f"Newton-Schritten nicht konvergiert"
                                + (" (Mechanismus)" if mech is not None else
-                                  f" ({_mass_text(zonen, mess, diff, mass)} > {einst.toleranz:g})"))
+                                  f" ({_mass_text(zonen, mess, diff, mass)} > {_zt(einst.toleranz, 6)})"))
                 traglast = {"lastfaktor": float(konv["lam"]), "versuch": float(lam_k),
                             "sofort": F_sofort is not None, "mechanismus": mech, "stufe": int(k),
                             "_fehl": zustand_neu}
+                # Budget oder Gleichgewicht? (Befund C6, 09.11.2026) - nur der Wortlaut
+                ig = _iterationsgrenze(je_schritt, it, einst.iterationen, mech)
+                if ig and mech_bei is not None:
+                    # bei einem hoeheren Lastanteil zeigte sich schon ein Mechanismus:
+                    # der festgelegte Satz bleibt, mit Zusatz zur letzten Teilstufe
+                    traglast["iterationsgrenze_teil"] = dict(ig, mechanismus_bei=float(mech_bei))
+                elif ig:
+                    traglast["iterationsgrenze"] = ig
                 break
         if weglauf:
             # Zurueck an den Stufenanfang, die Stufe in zwei halben wiederholen
@@ -2186,11 +2350,11 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                     warum = f"- {nicht_halbiert}"
                 elif len(je_schritt) >= 3 and je_schritt[-1] > je_schritt[-2] > je_schritt[-3]:
                     wo = " außerhalb der Zonen" if _zonen_greifen(zonen, mess) else ""
-                    warum = (f"läuft weg (Änderung{wo} {je_schritt[-3]:.2e} - {je_schritt[-2]:.2e} - "
-                             f"{je_schritt[-1]:.2e})")
+                    warum = (f"läuft weg (Änderung{wo} {_zt(je_schritt[-3])} - {_zt(je_schritt[-2])} - "
+                             f"{_zt(je_schritt[-1])})")
                 else:
                     warum = "- ein Kontaktlauf endete nicht konvergiert"
-                log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last {warum}; "
+                log.append(f"Plastizität: Laststufe bis {_zt(lam_k * 100, 4)} % der Last {warum}; "
                            f"sie wird vom Startwert an in zwei halben Stufen wiederholt"
                            + ("" if verworfen is None else f" ({verworfen} Kontaktläufe verworfen)"))
             continue
@@ -2199,7 +2363,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if log is not None:
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
                            f"nicht konvergiert ({stab_offen or _mass_text(zonen, mess, diff, mass)}"
-                           f"{'' if stab_offen else f' > {einst.toleranz:g}'})")
+                           f"{'' if stab_offen else f' > {_zt(einst.toleranz, 6)}'})")
         # Vorschlag 4 (14.10.2026): das Residuum am Ende jeder Stufe pruefen und
         # protokollieren - Δσ ergaenzt das Kraftresiduum, ersetzt es nicht
         pruef = getattr(kontakt, "residuum_stufe", None) if kontakt is not None else None
@@ -2273,7 +2437,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             traglast["ort"] = {}
             if log is not None:
                 log.append(f"Plastizität: Ort der Fließzone nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
-        traglast["ursache"] = traglast_ursache(traglast["ort"])
+        traglast["ursache"] = (iterationsgrenze_ursache(traglast["iterationsgrenze"])
+                               if traglast.get("iterationsgrenze") else traglast_ursache(traglast["ort"]))
         if traglast["ort"].get("kontakt_koerper") and isinstance(traglast.get("mechanismus"), dict):
             # auch die Meldung „Mechanismus“ nennt den nur reibungsfrei gehaltenen Koerper (17.10.2026)
             traglast["mechanismus"]["text"] = (str(traglast["mechanismus"].get("text", ""))
@@ -2330,7 +2495,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 info["iterationen"] += 1
                 info["verlauf"].append((stufen_gerechnet, -nach, rest, s_info["fliessend"]))
                 if progress is not None:
-                    progress(f"Plastizität: Abschluss verfehlt (Änderung {rest:.2e}), Nachschritt {nach}: "
+                    progress(f"Plastizität: Abschluss verfehlt (Änderung {_zt(rest)}), Nachschritt {nach}: "
                              f"{s_info['fliessend']} {'Element fließt' if s_info['fliessend'] == 1 else 'Elemente fließen'}")
                 dK = s_info["dK"]
                 if dK.nnz == 0:
@@ -2357,7 +2522,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if nach and log is not None:
                 log.append(f"Plastizität: Abschluss nach {nach} Nachschritt{'' if nach == 1 else 'en'} "
                            f"{'bestanden' if abgenommen else 'weiter verfehlt'} "
-                           f"({_mass_text(zonen, mess, rest, rest_mass)}, Toleranz {einst.toleranz:g}"
+                           f"({_mass_text(zonen, mess, rest, rest_mass)}, Toleranz {_zt(einst.toleranz, 6)}"
                            f"{'; ' + stab_offen if stab_offen else ''})")
     if rest is not None:
         info["rest_abschluss"] = rest
@@ -2373,7 +2538,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                                f"({stab_offen}) - nicht konvergiert")
                 else:
                     log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
-                               f"({_mass_text(zonen, mess, rest, rest_mass)} > {einst.toleranz:g}) - nicht konvergiert")
+                               f"({_mass_text(zonen, mess, rest, rest_mass)} > {_zt(einst.toleranz, 6)}) - nicht konvergiert")
     # Residuum der gezeigten Loesung (16.10.2026, Gleichgewichtskontrolle mit inneren
     # Kraeften): der Loesungsweg erfuellt K u = F_ende + F_p (mit Kontakt samt
     # Kontaktkraeften) exakt, die inneren Kraefte sind aber K u − F_p(u) mit dem F_p,
@@ -2398,13 +2563,14 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             log.append(zeile)
     if log is not None:
         log.append(f"Plastizität: {info['fliessend']} {'Element fließt' if info['fliessend'] == 1 else 'Elemente fließen'}, ε_p,eq max "
-                   f"{info['eps_p_max'] * 100:.3f} %, {info['iterationen']} "
+                   f"{_fest(info['eps_p_max'] * 100, 3)} %, {info['iterationen']} "
                    f"{'Newton-Schritt' if info['iterationen'] == 1 else 'Newton-Schritte'} in "
                    f"{stufen_gerechnet} {'Laststufe' if stufen_gerechnet == 1 else 'Laststufen'}"
                    + (f" ({info['halbiert']}-mal halbiert)" if info.get("halbiert") else "")
                    + f" ({info['faktorisierungen']} Faktorisierungen, konsistente Tangente)"
                    + ("" if info["konvergiert"] else
-                      " - Traglast überschritten" if traglast is not None else " - nicht konvergiert"))
+                      " - Iterationsgrenze erreicht" if traglast is not None and traglast.get("iterationsgrenze")
+                      else " - Traglast überschritten" if traglast is not None else " - nicht konvergiert"))
     return u, basis, F_p, info
 
 
@@ -2554,7 +2720,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
             if progress is not None:
                 progress(f"Plastizität: Laststufe {k}/{stufen}, Schritt {it}: {s_info['fliessend']} Elemente "
-                         f"fließen, Änderung {diff:.2e}")
+                         f"fließen, Änderung {_zt(diff)}")
             # Abbruch am **geschaetzten Fehler**, nicht an der Aenderung allein:
             # die Folge zieht sich mit ρ zusammen, und der Fehler des
             # angenommenen F_p ist rund ρ/(1 − ρ) mal die Aenderung - bei
@@ -2609,7 +2775,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Schritten nicht konvergiert "
-                           f"(Änderung {diff:.2e}, geschätzter Fehler {fehler:.2e} > {einst.toleranz:g})")
+                           f"(Änderung {_zt(diff)}, geschätzter Fehler {_zt(fehler)} > {_zt(einst.toleranz, 6)})")
     # Die letzte Loesung gehoert zum letzten Zustand
     u = loesen(F + F_p)
     if kontakt is not None:
@@ -2636,11 +2802,11 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
-                           f"(Änderung {rest:.2e} > {einst.toleranz:g}) - nicht konvergiert")
+                           f"(Änderung {_zt(rest)} > {_zt(einst.toleranz, 6)}) - nicht konvergiert")
     info["fliessend"] = len(zustand.fliessend())
     info["eps_p_max"] = zustand.eq_max()
     if log is not None:
-        log.append(f"Plastizität: {info['fliessend']} {'Element fließt' if info['fliessend'] == 1 else 'Elemente fließen'}, ε_p,eq max {info['eps_p_max'] * 100:.3f} %, "
+        log.append(f"Plastizität: {info['fliessend']} {'Element fließt' if info['fliessend'] == 1 else 'Elemente fließen'}, ε_p,eq max {_fest(info['eps_p_max'] * 100, 3)} %, "
                    f"{info['iterationen']} {'Schritt' if info['iterationen'] == 1 else 'Schritte'} in "
                    f"{stufen} {'Laststufe' if stufen == 1 else 'Laststufen'}"
                    + ("" if info["konvergiert"] else " - nicht konvergiert"))

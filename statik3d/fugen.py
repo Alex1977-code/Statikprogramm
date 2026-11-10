@@ -1726,6 +1726,105 @@ def _gegenseite_suchen(model: Model, cp, kb) -> list:
     return aus
 
 
+def verbindung_ohne_fuge(model: Model, kb):
+    """Wie viele Netzknoten die beiden Seiten einer **nicht ausgefuehrten**
+    Kontaktbedingung teilen: daran haengt die Folge. Teilen sie Knoten, rechnet
+    das Modell dort durchverbunden (zu steif, es uebertraegt auch Zug). Teilen
+    sie keinen - eigene, aufeinanderliegende Flaechen -, verbindet die Bauteile
+    dort nichts: ueber die Fuge geht keine Kraft (zu weich). Bis zum 09.11.2026
+    hiess beides „hier zu steif“ (Befund C4).
+
+    Seiten: der geloeste Koerper gegen die Gegenkoerper (ohne Angabe: gegen
+    alles andere), an den zugeordneten Gegenflaechen, wenn welche genannt
+    sind; ohne Koerper die Knoten der genannten Flaechen, an denen mehr als
+    ein Bauteil haengt. ``None``: nicht feststellbar (nichts davon im Netz).
+    """
+    from .assemble import SOLID_FACES
+    ne = len(model.elements)
+
+    def gruppe(el) -> str:
+        return str(getattr(el, "group", "") or "")
+
+    def knoten_der(flaechen) -> tuple:
+        ks, eigen = set(), set()
+        for f in flaechen:
+            for e, seite in (f.randseiten or []):
+                e, seite = int(e), int(seite)
+                if 0 <= e < ne:
+                    el = model.elements[e]
+                    seiten = SOLID_FACES.get(el.typ)
+                    if seiten and seite < len(seiten):
+                        ks.update(int(el.nodes[c]) for c in seiten[seite])
+            for e in (f.elemente or []):
+                if 0 <= int(e) < ne:
+                    eigen.add(int(e))
+                    ks.update(int(n) for n in model.elements[int(e)].nodes)
+        return ks, eigen
+
+    koerper = getattr(model, "koerper", {}) or {}
+    geloest = {str(x) for x in (kb.koerpernamen or [])
+               if x in koerper and koerper[x].elemente}
+    if geloest:
+        ort = None
+        if kb.gegenflaechen:
+            ort = knoten_der(_seiten_flaechen(model, kb.gegenflaechen))[0]
+            if not ort:
+                return None
+        gegen = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} - geloest
+        hier: set = set()
+        for el in model.elements:
+            if gruppe(el) in geloest:
+                hier.update(int(n) for n in el.nodes)
+        if ort is not None:
+            hier &= ort
+        gemeinsam: set = set()
+        for el in model.elements:
+            g = gruppe(el)
+            if g not in geloest and (not gegen or g in gegen):
+                gemeinsam.update(hier.intersection(int(n) for n in el.nodes))
+        return len(gemeinsam)
+    ks, eigen = knoten_der(_seiten_flaechen(model, kb.flaechennamen)
+                           or _seiten_flaechen(model, kb.gegenflaechen))
+    if not ks:
+        return None
+    parteien: dict = {}
+    for i, el in enumerate(model.elements):
+        treffer = ks.intersection(int(n) for n in el.nodes)
+        if treffer:
+            partei = ("Fläche", "") if i in eigen else ("Bauteil", gruppe(el))
+            for n in treffer:
+                parteien.setdefault(n, set()).add(partei)
+    return sum(1 for s in parteien.values() if len(s) > 1)
+
+
+def _wer(kb) -> str:
+    """Woran die Bedingung haengt, mit Namen - fuer die Warnung."""
+    def liste(wort, mehrzahl, namen):
+        namen = [str(x) for x in (namen or [])]
+        if not namen:
+            return ""
+        return ((wort if len(namen) == 1 else mehrzahl) + " " + ", ".join(namen[:4])
+                + (f" und {len(namen) - 4} weitere" if len(namen) > 4 else ""))
+    teile = [liste("gelöster Körper", "gelöste Körper", kb.koerpernamen),
+             liste("Gegenkörper", "Gegenkörper", getattr(kb, "gegenkoerper", None)),
+             liste("Fläche", "Flächen", kb.flaechennamen),
+             liste("Gegenfläche", "Gegenflächen", kb.gegenflaechen)]
+    return "; ".join(t for t in teile if t) or "ohne Körper und Flächen"
+
+
+def folge_ohne_fuge(model: Model, kb) -> str:
+    """Die Folge einer nicht ausgefuehrten Kontaktbedingung als ganzer Satz."""
+    n = kb.verbindung(model)
+    if n is None:
+        return ("Die Bedingung wirkt nicht; ob die Bauteile dort verbunden sind, lässt sich ohne "
+                "ihre Körper oder Flächen im Netz nicht feststellen.")
+    if n == 0:
+        return ("Die beiden Seiten haben im Netz keinen gemeinsamen Knoten: ohne die Fuge sind die "
+                "Bauteile dort nicht verbunden, über die Fuge geht keine Kraft (zu weich).")
+    return (f"Die beiden Seiten teilen im Netz {n} Knoten: das Modell rechnet dort durchverbunden "
+            "und überträgt auch Zug (zu steif).")
+
+
 def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
     """Alle noch offenen Kontaktbedingungen ausfuehren.
 
@@ -1760,7 +1859,9 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
         else:
             gesamt["offen"] += 1
             if b["grund"] and b["grund"] != "schon ausgeführt":
-                gruende[b["grund"]] = gruende.get(b["grund"], 0) + 1
+                # Mit Namen, Bezug, Grund und Folge (Befund C4, 09.11.2026):
+                # bis dahin stand nur die Zahl je Grund da.
+                gruende.setdefault((b["grund"], folge_ohne_fuge(model, kb)), []).append(kb)
     if log is not None and zeiten:
         zeiten.sort(reverse=True)
         C.say(log, "Kontaktfugen - die zeitaufwendigsten: "
@@ -1774,8 +1875,14 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
                        + f"{gesamt['spalt']} Spaltelemente, "
                        f"{gesamt['kopplung']} Kopplungen, "
                        f"{gesamt['kontaktpaar']} Kontaktpaare")
-        for grund, n in sorted(gruende.items()):
-            C.warn(log, f"  {n} Kontaktbedingung(en) nicht ausgeführt: {grund}")
+        for (grund, folge), kbs in sorted(gruende.items(), key=lambda x: x[0]):
+            namen = [f"„{kb.name}“ ({_wer(kb)})" for kb in kbs[:8]]
+            if len(kbs) == 1:
+                C.warn(log, f"  Kontaktbedingung {namen[0]} nicht ausgeführt: {grund}. {folge}")
+            else:
+                C.warn(log, f"  {len(kbs)} Kontaktbedingungen nicht ausgeführt: {grund}. {folge} "
+                            "Betroffen: " + ", ".join(namen)
+                            + (f" und {len(kbs) - 8} weitere" if len(kbs) > 8 else "") + ".")
     return gesamt
 
 

@@ -470,8 +470,8 @@ def test_plastisch_newton():
                                      toleranz=1e-10)
     meld = []
     r = solver.solve_static(m, case="M", progress=lambda s_, *a, **k: meld.append(str(s_)))
-    e = [float(z[-1]) for s_ in meld if "Newton-Schritt" in s_
-         for z in [re.findall(r"nderung ([0-9.]+e[+-][0-9]+)", s_)] if z]
+    e = [float(z[-1].replace(",", ".")) for s_ in meld if "Newton-Schritt" in s_
+         for z in [re.findall(r"nderung ([0-9]+(?:,[0-9]+)?)", s_)] if z]
     info = r.info.get("plastizitaet") or {}
     ueber = [x for x in e if x > 1e-10]
     quad = len(ueber) >= 3 and all(ueber[k + 1] <= 10.0 * ueber[k] ** 2

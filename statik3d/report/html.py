@@ -1288,6 +1288,10 @@ class Report:
                     b.append(("note", note))
                 offen = [n for n, kb in kbs.items() if kb.zu_steif(m)]
                 wartend = [n for n, kb in kbs.items() if kb.wartet_auf_netz(m)]
+                # Ohne gemeinsame Knoten der beiden Seiten verbindet dort
+                # nichts: das ist zu weich, nicht zu steif (Befund C4, 09.11.2026).
+                lose = [n for n in offen if kbs[n].verbindung(m) == 0]
+                offen = [n for n in offen if n not in lose]
                 if offen:
                     b.append(("note", f"{len(offen)} Kontaktbedingung(en) sind "
                                       "nicht ausgeführt: "
@@ -1295,6 +1299,14 @@ class Report:
                                       + (" …" if len(offen) > 8 else "")
                                       + ". Das Modell ist dort zu steif und "
                                       "überträgt Zug, wo eine Fuge aufginge."))
+                if lose:
+                    b.append(("note", f"{len(lose)} Kontaktbedingung(en) sind "
+                                      "nicht ausgeführt und ohne Verbindung: "
+                                      + ", ".join(lose[:8])
+                                      + (" …" if len(lose) > 8 else "")
+                                      + ". Die beiden Seiten haben dort im Netz keinen "
+                                      "gemeinsamen Knoten; über die Fuge geht keine Kraft "
+                                      "(zu weich)."))
                 if wartend:
                     b.append(("note", f"{len(wartend)} Kontaktbedingung(en) werden beim "
                                       "Vernetzen getrennt: " + ", ".join(wartend[:8])

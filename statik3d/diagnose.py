@@ -21,6 +21,19 @@ import numpy as np
 from .begriffe import anzahl as _anzahl
 
 
+def _c7_zahl(x, stellen: int = 3) -> str:
+    """Eine Zahl in einer Meldung: Dezimalkomma, nie wissenschaftlich (Befund
+    C7, 09.11.2026: bis dahin „Länge praktisch null (0.000e+00)“)."""
+    from .zahlen import zahl_text
+    return zahl_text(x, stellen=stellen)
+
+
+def _c7_bruchteil(x) -> str:
+    """„1/1 000 000“ statt „1e-06“ (singular.bruchteil_text)."""
+    from .singular import bruchteil_text
+    return bruchteil_text(x)
+
+
 def teiltragwerke(model) -> list:
     """Zusammenhängende Teile des Elementnetzes (Kopplungen verbinden),
     jedes als Liste von Knotennummern - die groessten zuerst.
@@ -264,7 +277,7 @@ def entartete_elemente(model, hoechstens: int = 0) -> list:
         if mass is None:
             continue
         for i, m in zip(jdx[mass <= grenze], mass[mass <= grenze]):
-            treffer.append((int(i), typ, f"{wort} praktisch null ({float(m):.3e})"))
+            treffer.append((int(i), typ, f"{wort} praktisch null ({_c7_zahl(m)})"))
         if hoechstens and len(treffer) >= hoechstens:
             break
     treffer.sort()
@@ -1547,7 +1560,7 @@ def _abnahme_halteguete(model, guete: list = None) -> list:
         aus.append(Befund(
             pruefung="Haltegüte", objekt=", ".join(g.koerper[:3]),
             knoten=list(g.knoten[:1]), wert=g.wert, grenze=HALTEGUETE_MIN,
-            text=g.text + f" (Grenze {HALTEGUETE_MIN:.0e})"))
+            text=g.text + f" (Grenze {_c7_bruchteil(HALTEGUETE_MIN)})"))
     return aus
 
 
@@ -4753,6 +4766,119 @@ def _abnahme_volumenbilanz(model, name, koerper, els, bilanz: dict = None) -> li
     return aus
 
 
+#: Ab diesem Verhaeltnis der groessten zur kleinsten Elementsteifigkeit warnt
+#: die Modellpruefung (Befund C9, 09.11.2026). Gemessen am 10.11.2026 mit einem
+#: Element vom f-fachen E-Modul: der Stabzug (Kragarm, 5 Stabelemente) rechnet
+#: bis f = 1e7 richtig und wird ab 1e8 als singulaer abgewiesen (Residuum
+#: 0,0000015 ueber der Schranke 0,000001), ab 1e11 werden 15 bis 18
+#: Freiheitsgrade automatisch gehalten und die Durchbiegung ist null; auf der
+#: weichen Seite rechnet er bis 1e-8 und scheitert ab 1e-9. Der Volumenstab
+#: (hex8 4 x 2 x 2) rechnet bis 1e9 und 1e-8, scheitert ab 1e10 und 1e-10, ab
+#: 1e12 werden Verschiebungen automatisch gehalten („NICHT gültig:
+#: Mechanismus“). Die Warnung kommt zwei Dekaden vor dem ersten Versagen.
+STEIFIGKEITSUNTERSCHIED_WARNUNG = 1e6
+
+
+def steifigkeitsunterschied(model) -> "dict | None":
+    """Das steifste und das weichste Element des Modells (Befund C9).
+
+    Mass je Element in N/m, ohne die Steifigkeit aufzustellen: Stab E·A/L,
+    Schale E·t, Volumen E·h (h = groesste Ausdehnung der Elementknoten).
+    Elemente ohne Werkstoff, mit E, A, t oder L <= 0, abgeschaltete Staebe,
+    Federn, Grenzschicht und ebene Elemente bleiben aussen vor - was dort
+    fehlt, meldet die Modellpruefung an anderer Stelle. Rueckgabe None (weniger
+    als zwei Elemente) oder {"faktor", "steif": (Element, Typ, Werkstoff, Mass),
+    "weich": (...)}."""
+    from . import assemble as asm
+    X = np.asarray(model.nodes, float)
+    maske = model.grundmaske() if hasattr(model, "grundmaske") else None
+    E_von = {}
+    for name, mt in model.materials.items():
+        try:
+            E_von[name] = float(getattr(mt, "E", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            E_von[name] = 0.0
+    gruppen: dict = {}              # (Art, Knotenzahl) -> ([Element], [E·Querwert], [Knoten])
+    for i, e in enumerate(model.elements):
+        if maske is not None and not maske[i]:
+            continue
+        E = E_von.get(e.mat, 0.0)
+        if not E > 0:
+            continue
+        typ = e.typ
+        if typ in asm.LINE_TYPES:
+            art, q = 0, float(getattr(model.sections.get(e.sec), "A", 0.0) or 0.0)
+        elif typ in asm.SHELL_TYPES:
+            art, q = 1, float(getattr(model.shells.get(e.sec), "t", 0.0) or 0.0)
+        elif typ in asm.SOLID_TYPES:
+            art, q = 2, 1.0
+        else:
+            continue
+        if not q > 0:
+            continue
+        g = gruppen.setdefault((art, len(e.nodes)), ([], [], []))
+        g[0].append(i)
+        g[1].append(E * q)
+        g[2].append(e.nodes)
+    bestes = None                   # (k, Element) des steifsten
+    kleinstes = None
+    for (art, _n), (idx, eq, kn) in gruppen.items():
+        P = X[np.asarray(kn, int)]                      # (n_el, n_knoten, 3)
+        k = np.asarray(eq, float)
+        if art == 0:
+            L = np.linalg.norm(P[:, 1] - P[:, 0], axis=1)
+            ok = L > 0
+            k = np.where(ok, k / np.where(ok, L, 1.0), np.nan)
+        elif art == 2:
+            h = (P.max(axis=1) - P.min(axis=1)).max(axis=1)
+            k = np.where(h > 0, k * h, np.nan)
+        if not np.isfinite(k).any():
+            continue
+        a, b = int(np.nanargmax(k)), int(np.nanargmin(k))
+        if bestes is None or k[a] > bestes[0]:
+            bestes = (float(k[a]), idx[a])
+        if kleinstes is None or k[b] < kleinstes[0]:
+            kleinstes = (float(k[b]), idx[b])
+    if bestes is None or kleinstes is None or bestes[1] == kleinstes[1]:
+        return None
+
+    def eintrag(paar):
+        e = model.elements[paar[1]]
+        return (int(paar[1]), str(e.typ), str(e.mat), float(paar[0]))
+    return {"faktor": bestes[0] / kleinstes[0], "steif": eintrag(bestes), "weich": eintrag(kleinstes)}
+
+
+def _steifigkeit_meldungen(model) -> list:
+    """WARNUNG „Steifigkeitsunterschied Faktor … zwischen … und …“ (Befund C9)."""
+    try:
+        s = steifigkeitsunterschied(model)
+    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
+        return []
+    if not s or not s["faktor"] >= STEIFIGKEITSUNTERSCHIED_WARNUNG:
+        return []
+    (i, ti, mi, _ki), (j, tj, mj, _kj) = s["steif"], s["weich"]
+    return [f"WARNUNG: Steifigkeitsunterschied Faktor {_c7_zahl(s['faktor'], 2)} zwischen Element {i} "
+            f"({ti}, Werkstoff „{mi}“) und Element {j} ({tj}, Werkstoff „{mj}“) - bei so ungleichen "
+            "Steifigkeiten kann die Rechnung ein tragfähiges System als singulär abweisen oder "
+            "Freiheitsgrade der weichen Teile automatisch festhalten (gemessen am Stabzug ab Faktor "
+            "100 000 000, am Volumenstab ab 10 000 000 000); die Fehlermeldung nennt dann einen "
+            "Mechanismus oder Splitterelemente, die es nicht gibt. Werkstoff, Querschnitt und Einheiten "
+            "der beiden Elemente prüfen; ein starres Teil besser über ein Lager oder eine Kopplung abbilden."]
+
+
+def _gelenkketten_meldungen(model) -> list:
+    """WARNUNG „Gelenkkette: … beweglich“ (Befund C8) - keine FEHLER-Zeile: eine
+    Kette, in deren Richtung keine Last wirkt, rechnet (gemessen am
+    Einfeldtraeger mit Mittelgelenk unter Laengskraft), und Model.check() darf
+    eine solche Rechnung nicht sperren. Scheitert die Rechnung an der Kette,
+    macht :func:`singulaer_text` daraus den FEHLER."""
+    try:
+        from .singular import gelenkketten
+        return [f"WARNUNG: {s.text} - {s.ursache}" for s in gelenkketten(model)]
+    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
+        return []
+
+
 def meldungen(model, d: dict = None) -> list:
     """Die Diagnose als Zeilen mit Vorsatz FEHLER/WARNUNG/Hinweis."""
     d = d or diagnose(model)
@@ -4856,6 +4982,9 @@ def meldungen(model, d: dict = None) -> list:
     if d["lose_knoten"]:
         z.append(f"Hinweis: {d['lose_knoten']} Knoten {'trägt' if d['lose_knoten'] == 1 else 'tragen'} "
                  "kein Element (Rand nicht vernetzter Flächen)")
+    # Gelenkkette (C8) und Steifigkeitsunterschied (C9), 09.11.2026
+    z.extend(_gelenkketten_meldungen(model))
+    z.extend(_steifigkeit_meldungen(model))
     return z
 
 
@@ -4890,6 +5019,12 @@ def singulaer_text(model, ex=None, system=None) -> str:
     if ex is not None:
         kopf += f" - {ex}"
     z = [m for m in meldungen(model, d) if not m.startswith("Hinweis")]
+    # Die Gelenkkette ist hier die Ursache und damit ein FEHLER (C8). Die
+    # Warnung zum Steifigkeitsunterschied (C9) erklaert einen falschen Befund
+    # der Stufen, ersetzt sie aber nicht: sie steht am Ende.
+    steif = [m for m in z if m.startswith("WARNUNG: Steifigkeitsunterschied")]
+    z = [("FEHLER: " + m[len("WARNUNG: "):]) if m.startswith("WARNUNG: Gelenkkette:") else m
+         for m in z if m not in steif]
     if not z:
         # Stufe 1b: was sich bewegen kann, mit Bauteil und Richtung. Erst
         # danach die Matrix (Stufe 2) - sie faktorisiert ein zweites Mal.
@@ -4915,7 +5050,7 @@ def singulaer_text(model, ex=None, system=None) -> str:
                  "auffällig weichen Modus. Was hier noch bleibt, sieht keines der "
                  "Verfahren - Gelenke, Lagersteifigkeiten und Nullwerte bei Querschnitt, "
                  "Dicke und Werkstoff sind von Hand zu prüfen.")
-    return kopf + "\n" + "\n".join(z)
+    return kopf + "\n" + "\n".join(z + steif)
 
 
 def _halteguetebefund(guete: list, hoechstens: int = 6) -> list:
@@ -4937,7 +5072,7 @@ def _halteguetebefund(guete: list, hoechstens: int = 6) -> list:
     if len(schwach) > hoechstens:
         rest = len(schwach) - hoechstens
         out.append(f"… und {rest} {'weiteres Teil' if rest == 1 else 'weitere Teile'} unter der "
-                   f"Haltegüte {HALTEGUETE_MIN:.0e}")
+                   f"Haltegüte {_c7_bruchteil(HALTEGUETE_MIN)}")
     return out
 
 
@@ -4972,7 +5107,7 @@ def _bewegungsbefund(model) -> list:
         if s.ursache:
             satz += f" - {s.ursache}"
         if abs(s.kraft) > 1e-6 or abs(s.moment) > 1e-6:
-            satz += (f" (unausgeglichen: {s.kraft:.3g} N, {s.moment:.3g} Nm)")
+            satz += (f" (unausgeglichen: {_c7_zahl(s.kraft)} N, {_c7_zahl(s.moment)} Nm)")
         out.append(satz)
     if len(sing) > len(out):
         out.append(f"… und {len(sing) - len(out)} weitere freie Bewegungen")

@@ -3807,12 +3807,30 @@ class Kontaktbedingung:
             return "in der Quelldatei deaktiviert"
         if model is not None and self.wartet_auf_netz(model):
             return "wird beim Vernetzen getrennt"
+        if model is not None and self.verbindung(model) == 0:
+            # Eigene, aufeinanderliegende Flaechen: ohne die Fuge verbindet die
+            # Bauteile nichts - das ist zu weich, nicht zu steif (Befund C4).
+            return "nicht ausgeführt - hier ohne Verbindung (zu weich)"
         return "nicht ausgeführt - hier zu steif"
 
+    def verbindung(self, model):
+        """Gemeinsame Netzknoten der beiden Seiten, solange die Fuge nicht
+        ausgefuehrt ist (fugen.verbindung_ohne_fuge): 0 = nichts verbindet,
+        None = nicht feststellbar. Je Netzstand einmal gezaehlt."""
+        stand = (len(model.elements), int(model.nn))
+        merk = getattr(self, "_verbindung", None)
+        if merk is None or merk[0] != stand:
+            from .fugen import verbindung_ohne_fuge
+            merk = (stand, verbindung_ohne_fuge(model, self) if model.elements else None)
+            self._verbindung = merk
+        return merk[1]
+
     def zu_steif(self, model) -> bool:
-        """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif.
-        Eine Naht (starr an gemeinsamer Flaeche) ist nie zu steif - sie soll
-        es sein."""
+        """Netz da, Fuge nicht ausgefuehrt: ein Mangel, der Merker fuer das
+        Warnzeichen. Meist rechnet das Modell dort zu steif (durchverbunden);
+        haben die Seiten keinen gemeinsamen Knoten, ist es zu weich - das
+        unterscheidet :meth:`zustand`. Eine Naht (starr an gemeinsamer
+        Flaeche) ist nie zu steif - sie soll es sein."""
         return (not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
                 and not self.verschweisst(model))
 

@@ -221,6 +221,12 @@ class Singularitaet:
     #: einen gab) und in warnings.warn, das weder Protokollfenster noch exe
     #: erreicht; die Meldung ohne Fortschritt nannte es nicht.
     ausweichgrund: str = ""
+    #: Nur bei einer Gelenkkette (Befund C8, 09.11.2026): die Stabendgelenke,
+    #: die sich in der Bewegung oeffnen, als (Element, Knoten, lokaler FHG 0..5,
+    #: Oeffnung bezogen auf den groessten Ausschlag) - leer, wenn keine.
+    gelenke: list = field(default_factory=list)
+    #: v^T K v / v^T diag(K) v der Bewegung - nahe null heisst Mechanismus
+    bezogene_energie: float = 0.0
 
     def verschiebung(self) -> bool:
         """Reine Verschiebung (kein nennenswerter Drehanteil)?"""
@@ -247,9 +253,9 @@ class Singularitaet:
                     "Verformungen gelten, unbestimmt ist nur seine Lage im Raum.")
         teile = []
         if self.kraft > 0.0:
-            teile.append(f"{self.kraft / 1000.0:.3g} kN")
+            teile.append(f"{_zahl(self.kraft / 1000.0)} kN")
         if self.moment > 0.0:
-            teile.append(f"{self.moment / 1000.0:.3g} kNm")
+            teile.append(f"{_zahl(self.moment / 1000.0)} kNm")
         return (" und ".join(teile) + " gehen in dieser Bewegung ins Nichts - "
                 "kein Lager und keine Fuge nimmt sie auf; für dieses Bauteil ist "
                 "das Ergebnis nicht verwertbar.")
@@ -694,13 +700,13 @@ def _klartext(x: np.ndarray, mitte, L: float, koerper: list, art: str,
     lw = float(np.linalg.norm(w)) * L
     if lw <= DREH_ANTEIL:
         richtung = t / (np.linalg.norm(t) or 1.0)
-        wie = f"Verschiebung längs ({richtung[0]:.2f}, {richtung[1]:.2f}, {richtung[2]:.2f})"
+        wie = f"Verschiebung längs {_vektor_text(richtung)}"
         bezug = np.asarray(mitte, float)
     else:
         e = w / np.linalg.norm(w)
         bezug = np.asarray(mitte, float) + np.cross(w, t) / float(w @ w)
         laengs = float(t @ e)
-        wie = (f"Drehung um ({e[0]:.2f}, {e[1]:.2f}, {e[2]:.2f})"
+        wie = (f"Drehung um {_vektor_text(e)}"
                + (" mit Verschiebung längs derselben Achse (Schraubbewegung)"
                   if abs(laengs) > DREH_ANTEIL else ""))
     if art == "hebt ab":
@@ -809,7 +815,7 @@ def _guetetext(koerper: list, wert: float, v) -> str:
         richtung = "Richtung " + achsen[int(np.argmax(np.abs(t)))]
     else:
         richtung = "Drehung um " + achsen[int(np.argmax(np.abs(w)))]
-    return (f"{wo}: in {richtung} nur {wert:.1e} der steifsten Halterung - "
+    return (f"{wo}: in {richtung} nur {bruchteil_text(wert)} der steifsten Halterung - "
             "gehalten, aber dort fast ohne Steifigkeit")
 
 
@@ -1323,6 +1329,136 @@ def _weichstes_element(model, voll: np.ndarray, knoten) -> tuple:
     return bester, gross, energie, anteil
 
 
+# --------------------------------------------------------------------------
+# Gelenkkette (Befund C8, 09.11.2026)
+# --------------------------------------------------------------------------
+#: Bezogene Energie v^T K v / v^T diag(K) v, unter der eine Bewegung als
+#: Mechanismus gilt. Gemessen am 10.11.2026 (inverse Iteration, 20 Schritte):
+#: Einfeldtraeger mit Mittelgelenk 1,5e-17, Zweifeldtraeger mit zwei Gelenken
+#: in einem Feld 2,5e-16; derselbe Einfeldtraeger ohne Gelenk 7,7e-2, der
+#: Gerbertraeger (Gelenk, aber tragfaehig) 1,9e-2; der Gerbertraeger mit einem
+#: Stabelement vom 1e-6-fachen E-Modul 1,0e-7, vom 1e-9-fachen 4,8e-11 (das
+#: bleibt „Bauteil mit Nullsteifigkeit“). Beim 1e-12-fachen (1,6e-13) trennt
+#: das weiche Element den Traeger, und das Gelenk bildet wirklich eine Kette.
+GELENK_NULLENERGIE = 1e-12
+#: Ein Gelenk gilt als beteiligt, wenn es sich in der Bewegung um mehr als
+#: diesen Anteil des groessten Ausschlags oeffnet (Drehung mal Elementlaenge).
+GELENK_OEFFNUNG = 1e-3
+#: Die Vorpruefung (gelenkketten) stellt die Steifigkeit auf und zerlegt sie:
+#: nur bis zu dieser Zahl von Freiheitsgraden. Stabwerke liegen weit darunter.
+GELENKKETTE_FHG_MAX = 60000
+_GELENK_FHG = ("u_x", "u_y", "u_z", "φ_x", "φ_y", "φ_z")
+
+
+def _stabname(model, nr: int) -> str:
+    """„Stab „S1“ (Stabelement E3)“ oder „Stabelement E3“ - die Namen, unter
+    denen die Oberflaeche Stab und Stabelement fuehrt."""
+    for name, mb in (getattr(model, "members", None) or {}).items():
+        if int(nr) in (getattr(mb, "elements", None) or []):
+            return f"Stab „{name}“ (Stabelement E{int(nr)})"
+    return f"Stabelement E{int(nr)}"
+
+
+def gelenkkette(model, voll) -> "dict | None":
+    """Oeffnen sich in der Bewegung ``voll`` freie Stabendgelenke?
+
+    Fuer jedes Stabelement mit freien Gelenken wird die Bewegung des Stabendes
+    aus der Kondensation zurueckgerechnet (assemble.stab_endkinematik) und mit
+    der des Knotens verglichen: der Sprung ist die Oeffnung des Gelenks. Eine
+    Drehung zaehlt mit der Elementlaenge als Weg. Rueckgabe None oder
+    {"gelenke": [(Element, Knoten, lokaler FHG, Oeffnung)], "elemente",
+    "knoten"} mit allen Gelenken, die sich um mindestens ein Zehntel der
+    groessten Oeffnung oeffnen."""
+    try:
+        from . import assemble as asm
+        voll = np.asarray(voll, float).ravel()
+        n6 = 6 * model.nn
+        if voll.size < n6:
+            return None
+        u = voll[:n6].reshape(-1, 6)
+        amax = float(np.abs(u[:, :3]).max()) if u.size else 0.0
+        if not amax > 0:
+            return None
+        funde = []
+        for i, e in enumerate(model.elements):
+            hg = getattr(e, "hinges", None)
+            if not hg or e.typ not in asm.LINE_TYPES or model.stab_woelbt(e):
+                continue
+            kl, _T3, T, L = asm.beam_local(model, e)
+            C = asm.stab_endkinematik(model, e, kl)
+            if C is None:
+                continue
+            ul = T @ u[[int(k) for k in e.nodes]].reshape(-1)
+            A = asm.beam_versatz(e)
+            if A is not None:
+                ul = A @ ul
+            sprung = C @ ul - ul
+            for c in hg:
+                c = int(c)
+                weg = abs(float(sprung[c])) * (float(L) if c % 6 >= 3 else 1.0)
+                funde.append((weg, i, int(e.nodes[c // 6]), c % 6))
+    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
+        return None
+    if not funde:
+        return None
+    gross = max(f[0] for f in funde)
+    if gross < GELENK_OEFFNUNG * amax:
+        return None
+    bet = sorted((f for f in funde if f[0] >= 0.1 * gross), key=lambda f: (f[1], f[3]))
+    return {"gelenke": [(i, k, d, w / amax) for w, i, k, d in bet],
+            "elemente": sorted({f[1] for f in bet}),
+            "knoten": sorted({f[2] for f in bet})}
+
+
+def _gelenkkette_text(model, kette: dict, knoten_max: int) -> tuple:
+    """(Text, Ursache) der Meldung „Gelenkkette: … beweglich“."""
+    el, kn = kette["elemente"], kette["knoten"]
+    staebe = ", ".join(_stabname(model, i) for i in el[:4]) + (" …" if len(el) > 4 else "")
+    knoten = ", ".join(f"K{k}" for k in kn[:6]) + (" …" if len(kn) > 6 else "")
+    eins = len({(i, k) for i, k, _d, _w in kette["gelenke"]}) == 1     # ein Gelenk, auch mit zwei freien Drehungen
+    text = (f"Gelenkkette: {staebe} mit {'Stabendgelenk' if eins else 'Stabendgelenken'} "
+            f"an {'Knoten' if len(kn) == 1 else 'den Knoten'} {knoten} {'ist' if len(el) == 1 else 'sind'} "
+            f"beweglich")
+    fhg = sorted({_GELENK_FHG[d] for _i, _k, d, _w in kette["gelenke"]})
+    ursache = ("Die Stabendgelenke bilden mit den Lagern eine kinematische Kette: die gezeigte Bewegung "
+               f"öffnet {'das Gelenk' if eins else 'die Gelenke'} "
+               f"({', '.join(fhg)} frei), ohne dass ein Bauteil Widerstand leistet"
+               + (f"; der größte Ausschlag liegt an Knoten K{int(knoten_max)}" if knoten_max >= 0 else "")
+               + ". Ein Gelenk schließen (biegesteifer Anschluss oder Drehfeder) oder ein Lager ergänzen.")
+    return text, ursache
+
+
+def gelenkketten(model) -> list:
+    """Vorpruefung: bilden die Stabendgelenke eine kinematische Kette?
+
+    „Freie Bewegungen“ (restfreiheiten) rechnet je Teiltragwerk mit starren
+    Koerpern und kennt keine Stabendgelenke: der Einfeldtraeger mit
+    Mittelgelenk galt als gehalten (Befund C8). Hier wird die Steifigkeit
+    aufgestellt und ihr weichster Modus gesucht (weichster_modus); eine
+    Meldung gibt es nur, wenn er keine Energie kostet und ein Gelenk oeffnet.
+
+    Leer ohne freie Stabendgelenke, mit Kontakt oder nichtlinearen Lagern (dort
+    haelt erst die Rechnung) und ueber GELENKKETTE_FHG_MAX Freiheitsgraden -
+    dann nennt die Rechnung die Kette, wenn sie daran scheitert."""
+    try:
+        from . import assemble as asm
+        if not any(getattr(e, "hinges", None) for e in model.elements):
+            return []
+        if getattr(model, "has_contact", False) or model.ndof > GELENKKETTE_FHG_MAX:
+            return []
+        from . import supports as sup
+        _lin, nichtlinear = sup.split(sup.expand(model))
+        if nichtlinear:
+            return []
+        aktiv = model.grundmaske() if hasattr(model, "grundmaske") else None
+        K = asm.stiffness(model, 1, aktiv)
+        fixed, _vals, _auto = asm.gesperrte_und_automatische(model, K)
+        moden = weichster_modus(K, model, np.where(~fixed)[0])
+    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
+        return []
+    return [s for s in moden if getattr(s, "gelenke", None)]
+
+
 def weichster_modus(K, model, frei=None, schritte: int = 20,
                     hoechstens: int = 1, melden=None) -> list:
     """Stufe 2: der niedrigste Modus von K ueber inverse Iteration.
@@ -1400,6 +1536,25 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     schwer = (model.nodes[gross].mean(axis=0) if len(gross) else np.zeros(3))
     nr, ausschlag, energie, anteil = _weichstes_element(model, voll, gross)
     art = str(getattr(model.elements[nr], "typ", "")) if nr >= 0 else ""
+    # Gelenkkette (Befund C8): die Bewegung kostet keine Energie und oeffnet
+    # ein Stabendgelenk - dann ist es kein Splitterelement und keine
+    # Nullsteifigkeit, sondern eine kinematische Kette.
+    nenner = float(v @ (diag * v))
+    bezogen = float(v @ (Kf @ v)) / nenner if nenner > 0 else 0.0
+    kette = gelenkkette(model, voll) if abs(bezogen) <= GELENK_NULLENERGIE else None
+    if kette:
+        ktext, kursache = _gelenkkette_text(model, kette, int(np.argmax(betrag)))
+        s = Singularitaet(
+            art="numerisch", knoten=[int(k) for k in gross], koerper=koerper,
+            t=(feld[gross].mean(axis=0) if len(gross) else np.zeros(3)),
+            bezug=schwer, mitte=schwer, feld=feld,
+            element=nr, ausschlag=ausschlag, energie=energie, anteil=anteil,
+            ausweichgrund=str(getattr(lu, "ausweichgrund", "") or ""),
+            text=ktext, ursache=kursache,
+            abhilfe=("lager", int(kette["knoten"][0])))
+        s.gelenke = list(kette["gelenke"])
+        s.bezogene_energie = bezogen
+        return [s][:hoechstens]
     s = Singularitaet(
         art="numerisch", knoten=[int(k) for k in gross], koerper=koerper,
         t=(feld[gross].mean(axis=0) if len(gross) else np.zeros(3)),
@@ -1411,10 +1566,11 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
         ursache="Die Steifigkeitsmatrix ist hier nahezu singulär. Die gezeigte "
                 "Bewegung kostet fast keine Energie - meist Splitterelemente oder "
                 "ein Bauteil mit Nullsteifigkeit."
-                + (f" Ausschlag {ausschlag:.3g} bei {anteil:.1e} der mittleren "
-                   f"Steifigkeit dieses Elements ({energie:.3g} Nm "
+                + (f" Ausschlag {_zahl(ausschlag)} bei {bruchteil_text(anteil)} der mittleren "
+                   f"Steifigkeit dieses Elements ({_zahl(energie)} Nm "
                    f"Formänderungsarbeit)." if nr >= 0 else ""),
         abhilfe=("lager", int(gross[0])) if len(gross) else None)
+    s.bezogene_energie = bezogen
     return [s][:hoechstens]
 
 
@@ -1713,13 +1869,38 @@ def _einheit(v) -> np.ndarray:
     return v / n if n > 0 else v
 
 
+def _zahl(x, stellen: int = 3) -> str:
+    """Eine Zahl in einer Meldung: Dezimalkomma, ``stellen`` gueltige Ziffern,
+    nie wissenschaftlich (Befund C7, 09.11.2026: bis dahin „1.2e+03 kN“)."""
+    from .zahlen import zahl_text
+    return zahl_text(x, stellen=stellen)
+
+
+def _vektor_text(v) -> str:
+    """„(0,50; 0,00; 0,87)“: Dezimalkomma, die Werte durch Strichpunkt getrennt."""
+    return "(" + "; ".join(f"{float(x):.2f}".replace(".", ",") for x in v) + ")"
+
+
+def bruchteil_text(x) -> str:
+    """Ein sehr kleiner Anteil als Bruch statt mit Exponent (Befund C7,
+    09.11.2026): „1/1 000 000 der steifsten Halterung“ statt „1.0e-06“. Ab
+    einem Tausendstel als Dezimalzahl („0,0025“)."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if not np.isfinite(x) or x <= 0.0 or x >= 1e-3:
+        return _zahl(x, 2)
+    return "1/" + _zahl(1.0 / x, 2)
+
+
 def _vek(v) -> str:
-    """„(0.50, 0.00, 0.87)“ - das Vorzeichen so, dass die groesste Komponente positiv ist."""
+    """„(0,50; 0,00; 0,87)“ - das Vorzeichen so, dass die groesste Komponente positiv ist."""
     v = _einheit(v)
     if v[int(np.argmax(np.abs(v)))] < 0:
         v = -v
     w = np.round(v, 2) + 0.0                      # + 0.0 macht aus -0.0 eine Null
-    return f"({w[0]:.2f}, {w[1]:.2f}, {w[2]:.2f})"
+    return _vektor_text(w)
 
 
 def _achse(v) -> str:

@@ -99,7 +99,7 @@ def test_einstellung():
             check("strenge Schranke ohne Nachiteration: 3e-6 Fehler sind singulaer", False)
         except RuntimeError as ex:
             check("strenge Schranke ohne Nachiteration: Abbruch, die Meldung nennt Schranke und Einstellung",
-                  "Schranke 1e-09" in str(ex) and "Einstellungen" in str(ex), str(ex)[:100])
+                  "Schranke 0,000000001" in str(ex) and "Einstellungen" in str(ex), str(ex)[:100])
         gespeichert = parallel.GESPEICHERT
         check("beide Werte werden gespeichert", "solver_residuum" in gespeichert and "solver_nachiterationen" in gespeichert)
     finally:
