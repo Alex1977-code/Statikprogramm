@@ -3552,7 +3552,11 @@ def zylinderachsen_je_seite(mitte, a0, x):
     if L <= 0:
         return None
     z = r / L
-    return x, np.cross(x, z), z
+    # ausgeschrieben statt np.cross (dieselben Rechenschritte, bitgleich): am
+    # Drehlager 782 000 Aufrufe je Laden, np.cross kostet je Dreivektor mehr
+    # Python als die Rechnung selbst (wie in Model._seitennormale, 10.11.2026)
+    y = np.array([x[1] * z[2] - x[2] * z[1], x[2] * z[0] - x[0] * z[2], x[0] * z[1] - x[1] * z[0]])
+    return x, y, z
 
 
 def _randstuecke(model, linien: list[str]) -> list:
@@ -8166,7 +8170,9 @@ class Model:
         if not seiten:
             return self.nodes[[int(x) for x in e.nodes]].mean(axis=0)
         s = seiten[int(seite) % len(seiten)]
-        return self.nodes[[int(e.nodes[j]) for j in s]].mean(axis=0)
+        # Summe durch Anzahl wie ndarray.mean, ohne dessen Umweg (bitgleich;
+        # am Drehlager eine Million Aufrufe je Laden, 10.11.2026)
+        return np.add.reduce(self.nodes[[int(e.nodes[j]) for j in s]], axis=0) / len(s)
 
     def _seitennormale_oder_schale(self, elem: int, seite: int):
         """Aussennormale einer Volumenseite - oder die Normale einer Schale

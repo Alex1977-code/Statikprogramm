@@ -8,6 +8,7 @@ Neu gegenueber Version 1:
 """
 from __future__ import annotations
 
+import contextlib
 import math
 
 import numpy as np
@@ -746,6 +747,31 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     return (K + Ks).tocsr() if Ks is not None else K
 
 
+@contextlib.contextmanager
+def bindungen_halten(model):
+    """Die Bindungen der Mittelknoten fuer eine Folge von Aufrufen festhalten,
+    waehrend der sich das Netz nicht aendert (Auswertung in Stapeln).
+
+    :func:`mittelknoten_bindungen` prueft sonst bei jedem Aufruf mit dem
+    Netzschluessel, ob ihr Zwischenspeicher noch gilt - am Drehlager 0,5 s
+    je Aufruf, in der Anzeige der Integrationspunktwerte 36-mal (10.11.2026).
+    Der Wert ist derselbe; verschachtelt bleibt der aeussere gueltig.
+    """
+    if getattr(model, "_mittelknoten_gehalten", None) is not None:
+        yield
+        return
+    bind = mittelknoten_bindungen(model)
+    try:
+        model._mittelknoten_gehalten = bind
+    except AttributeError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        model._mittelknoten_gehalten = None
+
+
 def mittelknoten_bindungen(model: Model) -> list:
     """[(Mittelknoten, Ecke a, Ecke b)] gebundener Seitenmitten quadratischer
     Volumenelemente (tet10, hex20, pent15): u_m = (u_a + u_b)/2. Zwei Quellen:
@@ -789,6 +815,9 @@ def mittelknoten_bindungen(model: Model) -> list:
     from . import parallel as _par
     if _par._WORKER_MODEL is model and getattr(model, "_mittelknoten_arbeiter", None) is not None:
         return model._mittelknoten_arbeiter      # im Arbeitsprozess: die des Hauptprozesses
+    gehalten = getattr(model, "_mittelknoten_gehalten", None)
+    if gehalten is not None:
+        return gehalten                          # bindungen_halten: das Netz aendert sich dort nicht
     typen = {e.typ for e in model.elements}
     vol = typen & set(SOLID_TYPES)
     if not any(EL.ist_quadratisch(t) for t in vol):

@@ -15689,15 +15689,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         return out
 
-    def refresh_modelltabellen(self):
+    def _knotenzeilen(self) -> list:
+        """Zeilen der Knotentabelle - im Block: bei 95 000 Knoten und 490 000
+        Elementen darf der Aufbau der Tabellen keine Minuten kosten."""
         m = self.model
-        self._raender_stand = None
-        self._inhalte_stand = None
-        self._stabnummern_stand = None
-        if not hasattr(self, "tbl_knoten"):
-            return
-        # Knoten - im Block: bei 95 000 Knoten und 490 000 Elementen darf der
-        # Aufbau der Tabellen keine Minuten kosten
         alle_knoten = np.fromiter((int(x) for e in m.elements for x in e.nodes), dtype=np.int64,
                                   count=sum(len(e.nodes) for e in m.elements))
         alle_knoten = alle_knoten[(alle_knoten >= 0) & (alle_knoten < m.nn)]
@@ -15706,9 +15701,29 @@ class MainWindow(QtWidgets.QMainWindow):
         for i, sp in enumerate(m.supports):
             lagername.setdefault(int(sp.node), sp.name or f"Lager {i + 1}")
         XYZ = np.asarray(m.nodes[:m.nn], float).reshape(-1, 3).tolist()
-        self._fill(self.tbl_knoten,
-                   [[i, x, y, z, int(c), lagername.get(i, "")]
-                    for i, ((x, y, z), c) in enumerate(zip(XYZ, anzahl.tolist()))])
+        return [[i, x, y, z, int(c), lagername.get(i, "")]
+                for i, ((x, y, z), c) in enumerate(zip(XYZ, anzahl.tolist()))]
+
+    def _elementzeilen(self) -> list:
+        """Zeilen der Elementtabelle: Laenge, Flaeche oder Volumen je
+        Elementart im Block."""
+        m = self.model
+        mass = self._elementmasse()
+        return [[i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
+                 e.sec or "", float(np.degrees(e.roll or 0.0)), float(mass[i]),
+                 ", ".join(str(h) for h in (e.hinges or []))]
+                for i, e in enumerate(m.elements)]
+
+    def refresh_modelltabellen(self):
+        m = self.model
+        self._raender_stand = None
+        self._inhalte_stand = None
+        self._stabnummern_stand = None
+        if not hasattr(self, "tbl_knoten"):
+            return
+        # Knoten und Elemente als Zeilenquelle: eine grosse Tabelle, die nicht
+        # zu sehen ist, baut ihre Zeilen erst beim Anzeigen (10.11.2026)
+        self._fill(self.tbl_knoten, tab.Zeilenquelle(m.nn, self._knotenzeilen))
         # Linien
         zeilen = []
         for name, ln in m.lines.items():
@@ -15718,13 +15733,7 @@ class MainWindow(QtWidgets.QMainWindow):
             folge = ", ".join(str(x) for x in pts)
             zeilen.append([name, ln.typ, len(pts), laenge, folge, ln.comment])
         self._fill(self.tbl_linie, zeilen)
-        # Elemente: Laenge, Flaeche oder Volumen je Elementart im Block
-        mass = self._elementmasse()
-        zeilen = [[i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
-                   e.sec or "", float(np.degrees(e.roll or 0.0)), float(mass[i]),
-                   ", ".join(str(h) for h in (e.hinges or []))]
-                  for i, e in enumerate(m.elements)]
-        self._fill(self.tbl_elem, zeilen)
+        self._fill(self.tbl_elem, tab.Zeilenquelle(len(m.elements), self._elementzeilen))
         # Lager
         zeilen = []
         for i, (art, obj) in enumerate(self._lagerliste()):
@@ -20273,7 +20282,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_verformungen()
         self.refresh_beulfelder()
         self.refresh_volumen()
-        self.refresh_lasteinleitungen()
         self.refresh_lasteinleitungen()
         self.refresh_stellungen()
         self._refresh_kopf()

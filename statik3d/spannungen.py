@@ -276,30 +276,35 @@ def _ip_spannungen(model, u, elemente, abzug: dict = None) -> list:
     plastizitaet.punktspannungen mit eps_p = 0. Stapelweise (IP_STAPEL)."""
     from . import plastizitaet as pl
     from .elements import solid as sl
+    from . import assemble as asm
     u = np.asarray(u, float).reshape(-1)
     je_typ: dict = {}
     for e in sorted(set(int(i) for i in elemente)):
         je_typ.setdefault(model.elements[e].typ, []).append(e)
     aus = []
-    for typ, liste in je_typ.items():
-        for a0 in range(0, len(liste), IP_STAPEL):
-            for op in sl.dehnungsoperator(model, typ, liste[a0:a0 + IP_STAPEL]):
-                d = pl._stapel_teil(model, op)
-                n, P = op.n, op.P
-                ue = u[d["dofs"]]
-                alpha = None
-                if d.get("eas") is not None:
-                    alpha = pl._eas_alpha(d["eas"], d["lam"], d["mu"], np.zeros((P, n, 6)), d["lasten"], ue)
-                ab = np.zeros((n, 6))
-                if abzug:
-                    for a, i in enumerate(op.idx):
-                        v = abzug.get(int(i))
-                        if v is not None:
-                            ab[a] = v
-                S = np.empty((n, P, 6))
-                for p in range(P):
-                    S[:, p, :] = pl._spannung(d["lam"], d["mu"], sl.dehnung_mit_moden(op, p, ue, alpha)) - ab
-                aus.append((np.asarray(op.idx, np.int64), None if op.xi is None else np.asarray(op.xi, float), S))
+    # Die Bindungen der Mittelknoten gelten fuer alle Stapel: einmal bestimmen
+    # statt je Stapel den Netzschluessel neu zu bilden (am Drehlager 36 Stapel
+    # zu je 0,5 s, 10.11.2026). Das Ergebnis ist dasselbe.
+    with asm.bindungen_halten(model):
+        for typ, liste in je_typ.items():
+            for a0 in range(0, len(liste), IP_STAPEL):
+                for op in sl.dehnungsoperator(model, typ, liste[a0:a0 + IP_STAPEL]):
+                    d = pl._stapel_teil(model, op)
+                    n, P = op.n, op.P
+                    ue = u[d["dofs"]]
+                    alpha = None
+                    if d.get("eas") is not None:
+                        alpha = pl._eas_alpha(d["eas"], d["lam"], d["mu"], np.zeros((P, n, 6)), d["lasten"], ue)
+                    ab = np.zeros((n, 6))
+                    if abzug:
+                        for a, i in enumerate(op.idx):
+                            v = abzug.get(int(i))
+                            if v is not None:
+                                ab[a] = v
+                    S = np.empty((n, P, 6))
+                    for p in range(P):
+                        S[:, p, :] = pl._spannung(d["lam"], d["mu"], sl.dehnung_mit_moden(op, p, ue, alpha)) - ab
+                    aus.append((np.asarray(op.idx, np.int64), None if op.xi is None else np.asarray(op.xi, float), S))
     return aus
 
 
@@ -474,6 +479,29 @@ def je_knoten(model, res, art: str, groesse: str, seite: str = "max") -> np.ndar
     nn = int(model.nn)
     if art == "kontakt":
         return kontakt_je_knoten(model, res, groesse)
+    if art in ("volumen", "flaechen"):
+        # einmal je Ergebnis und Groesse (res._cache): die Ansicht fragt
+        # dasselbe Feld fuer die Farben und fuer die Kennwerte, und bei jedem
+        # Neuzeichnen wieder - am Drehlager je Abfrage 4 s (10.11.2026)
+        cache = getattr(res, "_cache", None)
+        if isinstance(cache, dict):
+            felder = cache.setdefault("je_knoten", {})
+            schl = (art, str(groesse), str(seite), nn, len(model.elements))
+            if schl not in felder:
+                while len(felder) >= JE_KNOTEN_MERKEN:
+                    felder.pop(next(iter(felder)))
+                felder[schl] = _je_knoten(model, res, art, groesse, seite)
+            return felder[schl].copy()
+    return _je_knoten(model, res, art, groesse, seite)
+
+
+#: so viele Felder haelt :func:`je_knoten` je Ergebnis (am Drehlager je Feld 9,4 MB)
+JE_KNOTEN_MERKEN = 8
+
+
+def _je_knoten(model, res, art: str, groesse: str, seite: str = "max") -> np.ndarray:
+    """Die Rechnung hinter :func:`je_knoten`, ohne Zwischenspeicher."""
+    nn = int(model.nn)
     vol, schalen, ebene = _typen()
     kn, w = [], []
     if art == "volumen":

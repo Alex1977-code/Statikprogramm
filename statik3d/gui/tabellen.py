@@ -231,6 +231,42 @@ def als_xlsx(pfad: str, blatt: str, kopf: list, zeilen: list) -> str:
     return pfad
 
 
+class Zeilenquelle:
+    """Zeilen einer Tabelle, die erst beim ersten Lesen gebaut werden.
+
+    Die Datentabelle fuellt eine grosse Tabelle, die nicht zu sehen ist, erst
+    beim Anzeigen (VERZOEGERT_AB). Bis dahin braucht sie nur die Zeilenzahl.
+    Am Drehlager (1,18 Mio. Knoten, 702 000 Elemente) kostete allein das Bauen
+    der Knoten- und Elementzeilen bei jedem Modellstand rund 18 von 22 s -
+    fuer zwei Register, die dabei hinten lagen (10.11.2026). *bauen* liefert
+    die Zeilen und wird hoechstens einmal gerufen.
+    """
+
+    def __init__(self, anzahl: int, bauen):
+        self._anzahl = int(anzahl)
+        self._bauen = bauen
+        self._zeilen = None
+
+    def gebaut(self) -> bool:
+        return self._zeilen is not None
+
+    def zeilen(self) -> list:
+        if self._zeilen is None:
+            self._zeilen = list(self._bauen())
+            self._anzahl = len(self._zeilen)
+            self._bauen = None
+        return self._zeilen
+
+    def __len__(self) -> int:
+        return self._anzahl
+
+    def __iter__(self):
+        return iter(self.zeilen())
+
+    def __getitem__(self, i):
+        return self.zeilen()[i]
+
+
 def zahlen_wandeln(zeilen: list, spalten: list) -> list:
     """In Zahlenspalten aus „12,5“ eine 12.5 machen.
 
