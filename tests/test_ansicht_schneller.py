@@ -220,6 +220,34 @@ def test_modelltabellen():
 
     versuch("a  Auffrischen baut keine Knoten-/Elementzeilen; beim Anzeigen dieselben Zeilen", lauf)
 
+    def mit_koerper():
+        # Am Drehlager aufgefallen (10.11.2026): die Koerpertabelle braucht die
+        # Elementmasse sofort - ohne sie scheiterte jedes Auffrischen eines
+        # Modells mit vernetztem Volumenkoerper, und die Datei ging nicht auf.
+        w, app = _fenster()
+        m, _ids = _kragarm()
+        m.koerper["K1"] = modellmodul.Volumenkoerper("K1", material="S", elemente=list(range(len(m.elements))))
+        w._modell_setzen(m)
+        app.processEvents()
+        w.tbl_elem.VERZOEGERT_AB = 1
+        if w.tbl_elem.isVisible():
+            return False, "Register Elemente ist sichtbar - die Prüfung braucht es hinten"
+        masse = Zaehler(w._elementmasse)
+        with ersetzt(w, "_elementmasse", masse):
+            w.refresh_modelltabellen()
+            beim = masse.n
+            w.tbl_elem.nachholen()
+            danach = masse.n
+        zeile = [list(z) for z in w.tbl_geokoerper.modell.zeilen if z[0] == "K1"]
+        vol = float(zeile[0][5]) if zeile else float("nan")
+        elem = float(sum(float(z[6]) for z in w.tbl_elem.modell.zeilen))
+        ok = (beim == 1 and danach == 1 and len(zeile) == 1 and int(zeile[0][4]) == len(m.elements)
+              and abs(vol - 0.006) < 1e-12 and abs(elem - 0.006) < 1e-12)
+        return ok, (f"Elementmaße beim Auffrischen {beim}-mal, nach dem Anzeigen {danach}-mal; "
+                    f"Volumen K1 {vol * 1000:.3f} dm³ (Soll 6.000), Summe Elementtabelle {elem * 1000:.3f} dm³")
+
+    versuch("a  vernetzter Volumenkörper: Auffrischen gelingt, Volumen stimmt, Maße einmal", mit_koerper)
+
     def doppelt():
         w, app = _fenster()
         z = Zaehler(w.refresh_lasteinleitungen)

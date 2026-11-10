@@ -15704,11 +15704,14 @@ class MainWindow(QtWidgets.QMainWindow):
         return [[i, x, y, z, int(c), lagername.get(i, "")]
                 for i, ((x, y, z), c) in enumerate(zip(XYZ, anzahl.tolist()))]
 
-    def _elementzeilen(self) -> list:
+    def _elementzeilen(self, mass=None) -> list:
         """Zeilen der Elementtabelle: Laenge, Flaeche oder Volumen je
-        Elementart im Block."""
+        Elementart im Block. ``mass``: die Elementmasse, wenn das Auffrischen
+        sie schon bestimmt hat (passen sie nicht zum Netz, werden sie neu
+        bestimmt)."""
         m = self.model
-        mass = self._elementmasse()
+        if mass is None or len(mass) != len(m.elements):
+            mass = self._elementmasse()
         return [[i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
                  e.sec or "", float(np.degrees(e.roll or 0.0)), float(mass[i]),
                  ", ".join(str(h) for h in (e.hinges or []))]
@@ -15733,7 +15736,17 @@ class MainWindow(QtWidgets.QMainWindow):
             folge = ", ".join(str(x) for x in pts)
             zeilen.append([name, ln.typ, len(pts), laenge, folge, ln.comment])
         self._fill(self.tbl_linie, zeilen)
-        self._fill(self.tbl_elem, tab.Zeilenquelle(len(m.elements), self._elementzeilen))
+        # Die Elementmasse hoechstens einmal je Auffrischen: die Koerpertabelle
+        # unten braucht sie sofort, die Elementtabelle erst beim Anzeigen.
+        masse = []
+
+        def elementmasse():
+            if not masse:
+                masse.append(self._elementmasse())
+            return masse[0]
+
+        self._fill(self.tbl_elem, tab.Zeilenquelle(len(m.elements),
+                                                   lambda: self._elementzeilen(elementmasse())))
         # Lager
         zeilen = []
         for i, (art, obj) in enumerate(self._lagerliste()):
@@ -15789,8 +15802,11 @@ class MainWindow(QtWidgets.QMainWindow):
         for name, k in (getattr(m, "koerper", {}) or {}).items():
             # aus den vektorisierten Elementmassen - je Tetraeder einzeln
             # kostete das beim Drehlager eine halbe Minute
-            idx = [int(i) for i in (k.elemente or []) if 0 <= int(i) < len(mass)]
-            V = float(mass[idx].sum()) if idx else 0.0
+            V = 0.0
+            if k.elemente:
+                mass = elementmasse()
+                idx = [int(i) for i in k.elemente if 0 <= int(i) < len(mass)]
+                V = float(mass[idx].sum()) if idx else 0.0
             zeilen.append([name, ", ".join(k.flaechen), k.material,
                            " × ".join(str(x) for x in k.teilung),
                            len(k.elemente or []), V, float(k.kerbfall or 0.0) / 1e6,
