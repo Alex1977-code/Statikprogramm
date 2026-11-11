@@ -463,7 +463,9 @@ def teilung_hinweis(grob: list) -> str:
     if not grob:
         return ""
     v, i, name = grob[0]
-    wo = f"Element {i + 1}" + (f" (Stab {name})" if name else "")
+    # Elementnummer ab 0 wie in Tabellen und Modellbaum (C13; Befund 13/35,
+    # 11.11.2026 - davor „Element {i + 1}“, das Element danach)
+    wo = f"Element {i}" + (f" (Stab {name})" if name else "")
     mehr = f" und {len(grob) - 1} weitere" if len(grob) > 1 else ""
     return (f"α_cr: Stabteilung zu grob – {wo}{mehr} ist für die Knickfigur zu lang; "
             f"α_cr kann bis 22 % zu hoch liegen (unsichere Seite). Gedrückte Stäbe in "
@@ -511,7 +513,9 @@ def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict =
         elif getattr(e, "nur", "") == "zug":
             continue
         N = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0))
-        name = namen.get(i, f"Element {i + 1}") if i not in pendel else f"Element {i + 1}"
+        # ab 0 wie in Tabellen und Modellbaum (C13; Befund 35, 11.11.2026) - fuer
+        # Fachwerkstab und Gelenkbalken gleich, sonst traefen sich zwei Namen
+        name = namen.get(i, f"Element {i}") if i not in pendel else f"Element {i}"
         alt = je_stab.get(name)
         if alt is None or -N > alt[0]:
             je_stab[name] = (-N, i)

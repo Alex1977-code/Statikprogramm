@@ -221,6 +221,9 @@ def test_a10():
           f"{r.reactions[ids[0], 4]:.6f} Nm")
     # aeltere Datei: das Element ohne den Gelenk-FHG (so trug apply_hinge bis 09.11.2026 ein)
     d = m.to_dict()
+    # eine Datei von vor dem 09.11.2026 hat die Kennung nicht (seit 11.11.2026 schreibt
+    # to_dict sie, und from_dict zieht dann nichts nach - Befund 34)
+    d.pop("federgelenk_null", None)
     for ed in d["elements"]:
         ed["hinges"] = []
     m2 = Model.from_dict(d)
