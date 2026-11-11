@@ -251,16 +251,19 @@ def test_windkanal():
     def mittel(modell, fall, flaeche):
         """Mittlerer Druck, positiv in das Gebaeude. Seit dem 09.11.2026 (A1)
         traegt die Schalenlast p in Richtung der Elementnormalen; in den Druck
-        auf die Huelle zurueck geht es ueber die Aussenseite der Huelle."""
+        auf die Huelle zurueck geht es ueber die Aussenseite der Flaeche, die der
+        Generator seit dem 11.11.2026 je Flaeche festhaelt (verlauf["aussen"];
+        bis dahin hier je Element aus der Mitte aller Flaechen des Modells)."""
         el = set(modell.flaechen[flaeche].elemente)
-        mitte = np.asarray(wm.huellenmitten(modell, list(modell.flaechen))[flaeche], float)
+        n_a = next(np.asarray(gl.verlauf["aussen"], float) for gl in fall.geometrielasten
+                   if gl.ziel == flaeche and (gl.verlauf or {}).get("art") == "wind")
         p = []
         for fl in fall.face_loads:
             if int(fl.elem) not in el:
                 continue
             X = modell.nodes[[int(x) for x in modell.elements[int(fl.elem)].nodes[:3]]]
             n_e = np.cross(X[1] - X[0], X[2] - X[0])
-            aussen = 1.0 if float(n_e @ (X.mean(axis=0) - mitte)) >= 0 else -1.0
+            aussen = 1.0 if float(n_e @ n_a) >= 0 else -1.0
             p.append(-fl.p * aussen)
         return sum(p) / len(p) if p else 0.0
 

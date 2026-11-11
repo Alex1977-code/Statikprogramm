@@ -10970,6 +10970,9 @@ class Model:
         m._ladehinweise.extend(schalennetz_hinweis(m))
         # Reibung an Lagern aus RFEM ohne Reibungsart (15.10.2026): nur ein Hinweis
         m._ladehinweise.extend(lagerreibung_hinweis(m))
+        # Windlasten eines aelteren Programmstands (Befund 40, 11.11.2026): nur ein Hinweis
+        from .wind import windlasten_hinweis
+        m._ladehinweise.extend(windlasten_hinweis(m))
         # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
         # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
         from .ec3.spannstahl import ladehinweise
