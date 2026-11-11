@@ -23,6 +23,11 @@ Diese Notizen schließen an die Release-Notes vom 09.11.2026 nachts an (Beispiel
 
 IFC, SAF, Abaqus, Nastran und DXF übertragen Gelenke, Fachwerkstäbe, Linienlager, Werkstoff, Profil und Lasten, soweit das Format sie trägt; alles Übrige nennt der Export als Hinweis mit Anzahl („nicht übertragen: …“). IFC-Knoten liegen nicht mehr an doppelter Stelle, Nastran schreibt mit voller Genauigkeit (Großfeld), DXF führt die Einheit, und der erste importierte Lastfall heißt LF1 statt LF1_2. Ein Rahmen kam vorher über SAF, Nastran und Abaqus ohne die Gelenke zurück (−0,62, −0,35 und −0,35 statt −1,45 mm).
 
+## 3D-Ansicht: schneller und besser lesbar
+
+* **Große Modelle öffnen und auswerten schneller.** Am Drehlager (1,18 Mio. Knoten) dauert das Öffnen 74 bis 88 s statt 113 bis 170 s, die Modelltabellen je Modellstand 2,5 bis 3,6 s statt rund 9 s, der wiederholte Wechsel der Ergebnisgröße auf σ_v 1,5 bis 3,7 s statt 6,5 s; der Arbeitsspeicher sinkt von 5,5 auf 4,9 GB. Gemessen alt und neu zweimal im Wechsel neben einem Rechenlauf, nur bei vergleichbarer Fremdlast gegenübergestellt. Die verteilten Lasten sind bitgleich, Ergebnisse unverändert.
+* **FE-Netz halb deckend.** Elementkanten decken in Voll und Transparent zu 45 %; fein vernetzte Modelle sind in der Gesamtansicht nicht mehr schwarz, aus der Nähe bleibt das Netz lesbar. Hidden-Line und Drahtmodell unverändert.
+
 ## Nicht enthalten
 
 * **Wasserdruck senkrecht zur Fläche auf Schalen:** Ohne globale Lastrichtung wirkt er an Schalen entgegen der Beschriftung der Maske, beim strömungsnumerischen Verfahren zum Oberwasser hin. Mit globaler Lastrichtung ist er richtig; die Testmodelle Fischbauchklappe, Hubtor und Stemmtor sind nicht betroffen. Die Korrektur wartet auf die Entscheidung des Anwenders.

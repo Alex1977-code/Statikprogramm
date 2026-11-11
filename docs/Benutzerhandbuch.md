@@ -3152,6 +3152,16 @@ Drahtnetz — sonst verschwanden die Spannungen hinter Linien („im
 Transparentmodus sehe ich keine Spannungen“). Geprüft in
 `tests/test_gui_smoke.py`.
 
+Seit 10.11.2026 **decken die Elementkanten in Voll und Transparent nur noch
+zu 45 %**: die Kante mischt sich mit der Fläche darunter. Mit voll deckenden
+Kanten war ein fein vernetztes Modell in der Gesamtansicht schwarz — am
+Drehlager (854 000 Oberflächenzellen) liegen die Kanten dichter als die
+Bildpunkte, und von Bauteil und Ergebnisfarben blieb nichts. Aus der Nähe
+bleibt das Netz lesbar, von weitem die Farbe. Die Kantenfarbe ist
+unverändert, **Hidden-Line** und **Drahtmodell** zeichnen ihre Linien weiter
+deckend. Der Wert steht in `viewport.NETZ_DECKUNG`; geprüft in
+`tests/test_ansicht_schneller.py`.
+
 #### Nummern: je Objektart ein Schalter
 
 Im Register *Ansicht* steht der Menüknopf **Nummern ▾** — ein Schalter je
@@ -14098,6 +14108,24 @@ Drahtnetzes, und gewählte, aus dem Modellbaum aufleuchtende oder mit der Maus
 überfahrene Flächen und Volumen leuchten **ohne Elementkanten** (seit
 15.09.2026; vorher zeigte die Hervorhebung das Netz auch bei ausgeschaltetem
 Netz).
+
+Seit 10.11.2026 baut die Datentabelle auch die Zeilen der Knoten- und der
+Elementtabelle erst, wenn ihr Register nach vorn kommt; vorher wurden sie bei
+jedem Modellstand gebaut und nur nicht angezeigt. Die Spannungen je Knoten
+(σ_v, Hauptspannungen) rechnet die Ansicht einmal je Ergebnis und Größe statt
+bei jedem Neuzeichnen, die Bindungen der Mittelknoten werden bei der
+Auswertung einmal statt 36-mal bestimmt, und die Lastverteilung beim Öffnen
+rechnet Kreuzprodukt und Seitenmitte ohne den Umweg über numpy-Hilfsfunktionen
+(die verteilten Lasten sind bitgleich, am Drehlager mit 2 032 936 Lastzeilen
+geprüft). Gemessen am Drehlager (1,18 Mio. Knoten) im Programmfenster, alt
+und neu zweimal im Wechsel; ein gleichzeitig laufender Rechenlauf belegte 1
+bis 17 Kerne, daher sind nur Werte bei vergleichbarer Fremdlast
+gegenübergestellt: Öffnen 74 und 88 s statt 113 und 170 s, Modelltabellen
+2,5 bis 3,6 s statt 9,0 bis 9,5 s, Ergebnisgröße wiederholt auf σ_v wechseln
+1,5 bis 3,7 s statt 6,4 bis 6,6 s (neu sogar bei höherer Fremdlast),
+Arbeitsspeicher 4,9 statt 5,5 GB. Die Bildzeiten beim Drehen bleiben bei
+etwa 5 ms; die halb deckenden Elementkanten kosten dabei nichts. Geprüft in
+`tests/test_ansicht_schneller.py`.
 
 **Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
 (Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der
