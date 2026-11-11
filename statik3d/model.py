@@ -71,6 +71,10 @@ NDOF = 6
 #: die Bezeichnung - eine aeltere Datei wird beim Laden umgestellt
 #: (Model._namen_umstellen), eine Datei der Fassung 9 nie.
 FORMAT_VERSION = 9
+#: Kennung der Modelldatei (seit 11.11.2026, Befund 34): „gelenk“ - ein
+#: Federgelenk mit k = 0 steht schon als Gelenk an den Elementen (apply_hinge
+#: seit 09.11.2026, A10); fehlt sie, zieht from_dict es nach
+FEDERGELENK_NULL = "federgelenk_null"
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -10584,6 +10588,10 @@ class Model:
             # eigene Koordinatensysteme (08.11.2026): nur, wenn es welche gibt
             **({"koordinatensysteme": [asdict(x) for x in self.koordinatensysteme.values()]}
                if getattr(self, "koordinatensysteme", None) else {}),
+            # Federgelenk k = 0 steht als Gelenk an den Elementen (A10, seit
+            # 09.11.2026): from_dict zieht dann nichts nach (Befund 34) - nur,
+            # wenn es ein solches Gelenk gibt
+            **({FEDERGELENK_NULL: "gelenk"} if self._hat_federgelenk_null() else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -10828,9 +10836,16 @@ class Model:
         if m.elements and any(lc.geometrielasten or lc.linienlasten
                               for lc in m.load_cases.values()):
             m.lasten_verteilen()
-        m._gelenke_feder_null_nachziehen()
+        # nur eine Datei von vor dem 09.11.2026 (ohne die Kennung, Befund 34)
+        if d.get(FEDERGELENK_NULL) != "gelenk":
+            m._gelenke_feder_null_nachziehen()
         _melde(fortschritt, 1.0, "Modell gelesen")
         return m
+
+    def _hat_federgelenk_null(self) -> bool:
+        """Ein Gelenk mit einem Federgelenk-FHG der Steifigkeit 0 (A10)."""
+        return any(t == "spring" and not float(k) > 0
+                   for h in self.hinges.values() for t, k in zip(h.typ, h.stiffness))
 
     def _gelenke_feder_null_nachziehen(self) -> None:
         """Federgelenk mit k = 0 auf den Elementen einer aelteren Datei als
@@ -10838,7 +10853,22 @@ class Model:
         einen solchen FHG weder als Gelenk noch als Feder ein - er blieb
         biegesteif. Das Stabende ist das des Gelenks, ausser die uebrigen FHG
         des Gelenks stehen am Element am anderen Ende. Jede Aenderung kommt
-        als Ladehinweis ins Protokoll."""
+        als Ladehinweis ins Protokoll.
+
+        Seit dem 11.11.2026 (Befunde 34 und 43 der Pruefagenten) nur fuer eine
+        Datei ohne die Kennung ``federgelenk_null`` (from_dict): to_dict
+        schreibt sie, sobald ein Gelenk einen solchen FHG hat. Bis dahin lief
+        der Nachzug bei jedem Oeffnen, auch Kopie und Rueckgaengig, und trug
+        in eine aktuelle Datei ein Gelenk ein, das der Anwender wieder
+        entfernt oder mit apply_hinge(end=1) ans andere Ende gelegt hatte -
+        das Einspannmoment fiel auf 0. Hat das Gelenk weitere FHG und steht
+        keiner davon mehr am Element, hat der Anwender es dort entfernt: dann
+        bleibt das Element, wie es ist. Was der Nachzug aendert, haelt
+        ``_gelenke_vor_nachzug`` fest {Element: (vorher, nachher)}: die alte
+        Ergebnisdatei passt gegen den Stand davor (ergebnisse.lesen) und
+        bekommt den Status der Fehlerkorrektur (Stand 17), statt als
+        „seit der Rechnung geändert: Elementeigenschaften“ verworfen zu werden."""
+        vor = getattr(self, "_gelenke_vor_nachzug", None) or {}
         for h in self.hinges.values():
             null = [d for d, (t, k) in enumerate(zip(h.typ, h.stiffness))
                     if t == "spring" and not float(k) > 0]
@@ -10853,16 +10883,24 @@ class Model:
                 if uebrig:
                     federn = {int(dd) for dd, _k in (e.hinge_springs or [])}
                     vorhanden = set(int(x) for x in e.hinges) | federn
+                    ende = None
                     for kand in (h.end, 1 - h.end):
                         if all(d + 6 * kand in vorhanden for d in uebrig):
                             ende = kand
                             break
+                    if ende is None:
+                        continue                # am Element entfernt: nichts nachziehen
                 neu = sorted({d + 6 * ende for d in null} - set(int(x) for x in e.hinges))
                 if neu:
+                    alt = list(e.hinges)
                     e.hinges = sorted(set(int(x) for x in e.hinges) | set(neu))
+                    vor[int(i)] = (vor.get(int(i), (alt, None))[0], list(e.hinges))
+                    # Elementnummer ab 0 wie in Tabellen und Modellbaum (C13, Befund 13/35)
                     self._ladehinweise.append(
-                        f"Gelenk {h.name}: Federsteifigkeit 0 an Element {int(i) + 1} jetzt als Gelenk "
+                        f"Gelenk {h.name}: Federsteifigkeit 0 an Element {int(i)} jetzt als Gelenk "
                         f"({', '.join(HINGE_DOF_NAMES[d] for d in null)}; bis 09.11.2026 biegesteif gerechnet)")
+        if vor:
+            self._gelenke_vor_nachzug = vor
 
     @staticmethod
     def load(path: str, fortschritt=None, umstellen: bool = True) -> "Model":

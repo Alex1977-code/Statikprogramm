@@ -21,6 +21,7 @@ Rechenzwischenwerte (Results._cache) werden nicht geschrieben.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -138,6 +139,9 @@ MODELLTEILE = {
     # Lasten jedes Lastfalls, der auf eine Definition verweist (rechenkennung) -
     # eine Definition ohne Verweis rechnet nirgends mit
     "vorspann_definitionen": None,
+    # Kennung der Modelldatei (11.11.2026, Befund 34): sagt nur, dass ein
+    # Federgelenk k = 0 schon als Gelenk an den Elementen steht
+    "federgelenk_null": None,
     "combinations": "kombinationen",
     "kontaktbedingungen": "kontakt", "contact_supports": "kontakt", "gap_elements": "kontakt",
     "contact_pairs": "kontakt", "getrennte_knoten": "kontakt", "kontakt_ausnahmen": "kontakt",
@@ -1117,6 +1121,29 @@ def _namen_umschluesseln(an, model, tab: dict) -> None:
     an.info = info
 
 
+@contextlib.contextmanager
+def _gelenke_vor_dem_nachzug(model):
+    """Die Gelenke der Elemente fuer die Dauer des Blocks auf den Stand vor
+    dem Nachzug „Federgelenk k = 0“ beim Oeffnen setzen (Befund 43) - nur,
+    wenn jedes nachgezogene Element noch genau den Stand danach hat (sonst hat
+    der Anwender dort seither etwas geaendert). Liefert True, wenn gesetzt."""
+    vor = getattr(model, "_gelenke_vor_nachzug", None) or {}
+    els = model.elements
+    gilt = bool(vor) and all(0 <= i < len(els) and list(els[i].hinges) == list(nach)
+                             for i, (_alt, nach) in vor.items())
+    if not gilt:
+        yield False
+        return
+    jetzt = {i: els[i].hinges for i in vor}
+    try:
+        for i, (alt, _nach) in vor.items():
+            els[i].hinges = list(alt)
+        yield True
+    finally:
+        for i, h in jetzt.items():
+            els[i].hinges = h
+
+
 def lesen(pfad: str, model, fortschritt=None):
     """Die Analyse zum Modell lesen; ValueError, wenn die Datei nicht passt."""
     from .solver import Analysis
@@ -1152,6 +1179,16 @@ def lesen(pfad: str, model, fortschritt=None):
         raise ValueError("Die Ergebnisdatei passt nicht zum Modell: sie trägt die Namen von vor der "
                          "Umstellung auf LF/LK/EK, das Modell schon die neuen – neu rechnen")
     ok, grund, fehlt, *rest = _pruefen(inhalt.get("kennung"), model, stand, d_alt)
+    if not ok:
+        # Federgelenk k = 0 beim Oeffnen nachgezogen (Model._gelenke_feder_null_nachziehen):
+        # gerechnet war der Stand davor. Passt die Datei dagegen, gilt sie - mit
+        # dem Status der Fehlerkorrektur (Stand 17), nicht als „Modell geändert“
+        # (Befund 43, 11.11.2026; wie _dict_vor_umstellung bei R2-A2)
+        with _gelenke_vor_dem_nachzug(model) as vorher:
+            if vorher:
+                ok2, grund2, fehlt2, *rest2 = _pruefen(inhalt.get("kennung"), model, stand, d_alt)
+        if vorher and ok2:
+            ok, grund, fehlt, rest = ok2, grund2, fehlt2, rest2
     gesetzt = (rest[0] if rest else None) or []
     # eine Kombination der Datei, die es im Modell nicht (mehr) gibt, wird
     # beim Namen genannt (R2-A1, G1) - auch neben den geaenderten Gruppen
