@@ -97,6 +97,10 @@ class Merkmal:
     #: Ergebnis dieses Modells, gleich wie alt; ``vorschlag`` nennt den Weg
     import_korrektur: bool = False
     vorschlag: str = ""
+    #: bei einer solchen Korrektur am Modell, die nicht vom Import kommt (Windlasten eines
+    #: aelteren Programmstands, 11.11.2026): warum das Modell betroffen ist; leer heisst
+    #: „Modell vor dem <Datum> aus RFEM übernommen“
+    modellgrund: str = ""
 
     def text(self, wert) -> str:
         return str(self.texte.get(wert, wert))
@@ -182,15 +186,20 @@ def _projiziert_auf_schale(model) -> bool:
 
 
 def _wind_auf_flaechen(model) -> bool:
-    """Eine Windlast des Generators auf Flaechen (Schale oder Volumenrand) - dort
-    wirkte sie bis zum 09.11.2026 an Schalen gegen den Wind, an Volumen und
-    shell8 mit falschen Rollen (Befunde A1, A2 der Pruefagenten)."""
-    for lc in (getattr(model, "load_cases", None) or {}).values():
-        for gl in getattr(lc, "geometrielasten", None) or []:
-            if (getattr(gl, "art", "flaeche") == "flaeche"
-                    and (getattr(gl, "verlauf", None) or {}).get("art") == "wind"):
-                return True
-    return False
+    """Eine Windlast des Generators auf Gebaeudeflaechen (Schale oder
+    Volumenrand), die mit einem aelteren Programmstand erzeugt ist - sie wirkt
+    an Schalen gegen den Wind, an Volumen und shell8 mit falschen Rollen
+    (Befunde A1, A2 der Pruefagenten), bis der Anwender sie neu erzeugt.
+    Seit dem 11.11.2026 am Modell, nicht am Alter der Ergebnisdatei: die
+    gespeicherte Last rechnete nach dem Oeffnen weiter verkehrt, und ein
+    Neurechnen loeschte den Status (Befund 40)."""
+    from .wind import alte_windlasten
+    return bool(alte_windlasten(model))
+
+
+def _alte_windlasten_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_windlasten_text
+    return alte_windlasten_text(model)
 
 
 def _projiziert_negativ_an_volumen(model) -> bool:
@@ -1069,14 +1078,22 @@ MERKMALE: list = [
         # Befunde A1/A2 der Pruefagenten (09.11.2026): der Windgenerator gab fuer Schalen p
         # „gegen die Aussennormale“, die Schalenlast wirkt mit der Elementnormalen - Luvdruck,
         # Leesog und Dachsog wirkten gegen den Wind (Gebaeude 10 x 20 x 8 m: ΣF −135/−127
-        # statt +135/+127 kN); an Volumen und shell8 waren alle Flaechen „Seite“. Fehlerkorrektur
+        # statt +135/+127 kN); an Volumen und shell8 waren alle Flaechen „Seite“. Fehlerkorrektur.
+        # Seit dem 11.11.2026 (Befund 40, fix/k-wind) eine Korrektur am Modell: die Last steht mit
+        # dem Modell in der Datei und rechnet nach dem Oeffnen und jedem Neurechnen weiter
+        # verkehrt - der Status haengt an den Windlasten ohne Aussenseite und bleibt, bis sie
+        # neu erzeugt sind (wind.alte_windlasten); dazu ein Ladehinweis
         name="wind_flaechen", titel="Windlast auf Flächen",
         texte={"alt": "Wind an Schalen gegen die Windrichtung, an Volumen und shell8 ohne Rollen",
-               "neu": "Wind in die Hülle hinein (Druck) bzw. heraus (Sog), Rollen an allen Flächen"},
-        wechsel=(Wechsel(stand=8, datum="09.11.2026", commit="1b213f9", alt="alt", neu="neu",
+               "neu": "Wind in die Hülle hinein (Druck) bzw. heraus (Sog), Außenseite je Fläche aus der "
+                      "Mitte ihres Baukörpers, Rollen an allen Flächen"},
+        wechsel=(Wechsel(stand=8, datum="09.11.2026", commit="1b213f9, fix/k-wind", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Windlast des Generators auf Flächen (Schale oder Volumenrand)",
-        betrifft=_wind_auf_flaechen),
+        modellmerkmal="Windlast des Generators auf Gebäudeflächen, mit einem älteren Programmstand erzeugt "
+                      "(ohne Außenseite)",
+        betrifft=_wind_auf_flaechen, import_korrektur=True, im_ergebnis=_alte_windlasten_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
     Merkmal(
         # Befund A3 der Pruefagenten (09.11.2026): der Windschatten der projizierten Last nahm
         # die Achse ohne das Vorzeichen von p - „global Z, p = −5 kN/m²“ traf am Block die
@@ -1596,7 +1613,8 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
             if wo == "":
                 continue
             w = mk.wechsel[-1]
-            betr.append(f"{mk.titel}: Modell vor dem {w.datum} aus RFEM übernommen ({mk.text('alt')}"
+            grund = mk.modellgrund or f"Modell vor dem {w.datum} aus RFEM übernommen"
+            betr.append(f"{mk.titel}: {grund} ({mk.text('alt')}"
                         + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
     return {"hinweis": ("gerechnet mit älterem Rechenverfahren: " + "; ".join(hinw)
                         + " – die Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren")
