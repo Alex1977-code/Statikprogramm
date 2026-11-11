@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 
+import threading
+
 import numpy as np
 
 MPA = 1e-6
@@ -486,17 +488,44 @@ def je_knoten(model, res, art: str, groesse: str, seite: str = "max") -> np.ndar
         cache = getattr(res, "_cache", None)
         if isinstance(cache, dict):
             felder = cache.setdefault("je_knoten", {})
+            _je_knoten_zuletzt(felder)
             schl = (art, str(groesse), str(seite), nn, len(model.elements))
-            if schl not in felder:
+            wert = felder.get(schl)
+            if wert is None:
                 while len(felder) >= JE_KNOTEN_MERKEN:
                     felder.pop(next(iter(felder)))
-                felder[schl] = _je_knoten(model, res, art, groesse, seite)
-            return felder[schl].copy()
+                wert = felder[schl] = _je_knoten(model, res, art, groesse, seite)
+            return wert.copy()
     return _je_knoten(model, res, art, groesse, seite)
 
 
 #: so viele Felder haelt :func:`je_knoten` je Ergebnis (am Drehlager je Feld 9,4 MB)
 JE_KNOTEN_MERKEN = 8
+#: ... und fuer so viele Ergebnisse insgesamt - die zuletzt angesehenen. Der
+#: Zweck bleibt: zwischen den Groessen eines Ergebnisses (und zurueck zum
+#: vorigen) wird ohne Neurechnung gewechselt. Ohne diese Grenze behielt jedes
+#: einmal angesehene Ergebnis seine Felder; wer am Drehlager die 422
+#: Lastfaelle durchblaettert, haette bis zu 32 GB gehalten (Befund 10 vom
+#: 11.11.2026). Hoechstens 4 x 8 Felder, am Drehlager rund 300 MB.
+JE_KNOTEN_ERGEBNISSE = 4
+_JE_KNOTEN_FOLGE: list = []         # die Felder-Dicts der zuletzt angesehenen Ergebnisse, aeltestes zuerst
+_JE_KNOTEN_SPERRE = threading.Lock()
+
+
+def _je_knoten_zuletzt(felder: dict) -> None:
+    """``felder`` (res._cache["je_knoten"]) als zuletzt angesehen merken und
+    die Felder der Ergebnisse jenseits von JE_KNOTEN_ERGEBNISSE leeren. Nur
+    die Dicts werden gehalten, nicht die Ergebnisse; das geleerte Ergebnis
+    rechnet beim naechsten Ansehen neu (bitgleich)."""
+    with _JE_KNOTEN_SPERRE:
+        for i, d in enumerate(_JE_KNOTEN_FOLGE):
+            if d is felder:
+                if i != len(_JE_KNOTEN_FOLGE) - 1:
+                    _JE_KNOTEN_FOLGE.append(_JE_KNOTEN_FOLGE.pop(i))
+                return
+        _JE_KNOTEN_FOLGE.append(felder)
+        while len(_JE_KNOTEN_FOLGE) > max(1, int(JE_KNOTEN_ERGEBNISSE)):
+            _JE_KNOTEN_FOLGE.pop(0).clear()
 
 
 def _je_knoten(model, res, art: str, groesse: str, seite: str = "max") -> np.ndarray:

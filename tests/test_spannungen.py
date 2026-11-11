@@ -266,9 +266,69 @@ def test_werteskala():
           and sp.Werteskala.from_dict({"stufen": 1}).stufen == 2)
 
 
+def test_zwischenspeicher_begrenzt():
+    """Befund 10 (11.11.2026): je_knoten hielt die Felder jedes einmal
+    angesehenen Ergebnisses (je Ergebnis bis 8). Kragarm hex8 (63 Knoten),
+    12 Lastfaelle, je 8 Groessen angesehen: vorher 96 Felder gehalten, linear
+    mit der Zahl der Ergebnisse. Jetzt hoechstens JE_KNOTEN_ERGEBNISSE x 8,
+    die Werte bitgleich, und der Wechsel zwischen den Groessen desselben
+    Ergebnisses rechnet nicht neu."""
+    from tests.pruefkoerper import quader
+    m, ids = quader("hex8", 6, 2, 2, 0.6, 0.1, 0.1)
+    for j in range(3):
+        for k in range(3):
+            m.fix(ids[(0, j, k)], [0, 1, 2])
+    n_lf = 12
+    for c in range(n_lf):
+        lc = m.add_load_case(f"LF{c + 1}")
+        lc.gravity = [0.0, 0.0, 0.0]
+        for j in range(3):
+            for k in range(3):
+                m.load_node(ids[(6, j, k)], Fz=-1000.0 * (c + 1), case=f"LF{c + 1}")
+    an = solver.solve_all(m)
+    groessen = ["sv"] + [g for g in sp.VOLUMEN if g != "sv"][:7]
+    faelle = [an.cases[f"LF{c + 1}"] for c in range(n_lf)]
+
+    def gehalten():
+        return sum(len(r._cache.get("je_knoten") or {}) for r in list(an.cases.values())
+                   + list(an.combinations.values()))
+    erst = {}
+    for i, r in enumerate(faelle):
+        for g in groessen:
+            erst[(i, g)] = sp.je_knoten(m, r, "volumen", g)
+    grenze = int(getattr(sp, "JE_KNOTEN_ERGEBNISSE", 10 ** 6)) * sp.JE_KNOTEN_MERKEN
+    n = gehalten()
+    check(f"12 Lastfälle x 8 Größen angesehen: gehalten höchstens {min(grenze, 96)} Felder (vorher 96)",
+          n <= min(grenze, 32), f"{n} Felder")
+    # Werte bitgleich: ein geleertes Ergebnis rechnet neu, dasselbe Feld
+    gleich = all(np.array_equal(sp.je_knoten(m, faelle[i], "volumen", g), erst[(i, g)], equal_nan=True)
+                 and np.array_equal(sp._je_knoten(m, faelle[i], "volumen", g), erst[(i, g)], equal_nan=True)
+                 for i in (0, 5, 11) for g in groessen)
+    check("… die Werte bitgleich (neu gerechnet nach dem Leeren, und gegen die Rechnung ohne Speicher)", gleich)
+    # Zweck: zwischen den Groessen desselben Ergebnisses ohne Neurechnung
+    r = faelle[3]
+    for g in groessen:
+        sp.je_knoten(m, r, "volumen", g)
+    zahl = [0]
+    alt = sp._je_knoten
+
+    def zaehlen(*a, **kw):
+        zahl[0] += 1
+        return alt(*a, **kw)
+    sp._je_knoten = zaehlen
+    try:
+        for _ in range(3):
+            for g in groessen:
+                sp.je_knoten(m, r, "volumen", g)
+    finally:
+        sp._je_knoten = alt
+    check("… zwischen den 8 Größen eines Ergebnisses dreimal hin und her: keine Neurechnung", zahl[0] == 0,
+          f"{zahl[0]} Rechnungen")
+
+
 def main():
     for t in (test_volumen, test_flaechen_und_staebe, test_volumen_und_kontakt, test_werteskala,
-              test_kontaktkraefte):
+              test_kontaktkraefte, test_zwischenspeicher_begrenzt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
