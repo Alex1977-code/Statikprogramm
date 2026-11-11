@@ -1206,7 +1206,10 @@ Datei stehen noch die alten Kontaktflächen. Vor dem Vernetzen steht am Eintrag 
 getrennt“ - ohne Warnzeichen, denn ohne Netz gibt es nichts, was zu steif sein
 könnte. Ein ⚠ mit „nicht ausgeführt - hier zu steif“ erscheint nur, wenn das
 Netz da ist und die Fuge trotzdem nicht getrennt werden konnte; das Protokoll
-nennt dann den Grund. Statik3D liest sie
+nennt dann den Grund. Daneben gibt es „nicht ausgeführt - hier ohne Verbindung
+(zu weich)“, wenn die beiden Seiten keine Knoten teilen, und „nicht
+ausgeführt - hier nur an einzelnen Knoten verbunden (zu weich)“, wenn sie nur
+einzelne Knoten teilen. Statik3D liest sie
 aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
 die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
 zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
@@ -3706,7 +3709,10 @@ geneigter Quader auf Bettung verschob sich in eine um 49° falsche Richtung,
 ein radial gebetteter Zylinder war in einer Querrichtung ungehalten).
 Ausgenommen ist ein Lager, das in allen drei Richtungen gleich wirkt (gleiche
 Feder oder starr, ohne Ausfall und Reibung): dort spielt die Achse keine
-Rolle. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+Rolle. Bei Schalen ist die Normale die lokale z-Achse aus der Knotenreihenfolge
+der Elemente; eine ebene Schalenplatte gilt darum in jeder Höhe als einseitig.
+Zeigen einzelne Elemente einer Fläche zur Gegenseite (uneinheitlich
+orientiertes, von Hand geändertes Netz), bleibt der Fehler. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
@@ -6170,7 +6176,10 @@ Hallenrahmen, Abhebendes Lager, Doppellenkerwippkran und Förderbandbrücke.
 Unter Flächentragwerk stehen Platte, Stauwand, Stemmtor, Hubtor und
 Fischbauchklappe, unter Volumen Konsole, Reibung und Spurlager. Mit den
 Vorgabewerten entsteht jeweils dasselbe Modell wie bis zum 09.11.2026 mit
-*Beispiel öffnen* bzw. mit den Testmodellen vom 09.11.2026. Alle Maße,
+*Beispiel öffnen* bzw. mit den Testmodellen vom 09.11.2026. Stemmtor und
+Hubtor verlangen eine Höhe von mindestens 2,19 m bzw. 1,54 m, sonst überdecken
+sich die Gurte benachbarter Riegel; der Dialog meldet das und sperrt
+*Übernehmen*. Alle Maße,
 Querschnitte, Werkstoffe und Lasten der Beispiele sind Annahmen; Werkstoff
 und Teilsicherheitsbeiwerte legt der Anwender fest.
 
@@ -6397,8 +6406,11 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   In 6.10b mindert ξ nur die ungünstigen ständigen Lasten (ξ · γ_G,sup); die
   Vorspannung bleibt bei γ_P, Setzungen und günstiges G (γ_G,inf) bleiben
   ohne ξ. Bis zum 09.11.2026 traf ξ jeden ständigen Faktor, also auch P und
-  das günstige G mit 0,85 statt 1,0. Ältere Ergebnisse mit Kombinationen nach
-  6.10b tragen „Ergebnis möglicherweise betroffen – neu rechnen“. Geprüft in
+  das günstige G mit 0,85 statt 1,0. Trägt eine erzeugte 6.10b-Kombination
+  noch die alten Faktoren, erkennt das Programm es an den Faktoren selbst:
+  jedes Ergebnis mit ihr – auch eine neue Rechnung – trägt „Ergebnis
+  möglicherweise betroffen – neu rechnen“ mit dem Rat, die Kombinationen neu
+  zu erzeugen (*Lasten → EN 1990…*); erst danach entfällt der Status. Geprüft in
   `tests/test_kombination_xi.py`.
   Beschreibung „auto: …“ kennzeichnet erzeugte Kombinationen; sie werden bei
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Die erzeugten
@@ -6525,11 +6537,17 @@ gilt:
 
 Für Erdbeben und Montage bildet *EN 1990…* keine Kombination, weil die Regel
 dafür in der DIN 19704 steht (Lastfallklasse LF3): die Kombinationen mit
-**Lasten → DIN 19704** bilden oder von Hand anlegen. Sind die Lasten schon
+**Lasten → DIN 19704** bilden oder von Hand anlegen. Auf der Kommandozeile
+meldet `--kombinationen` bei einem Erdbeben- oder Montagelastfall den Grund
+und gibt den Rückgabecode 2 zurück, statt abzustürzen. Sind die Lasten schon
 Bemessungswerte, genügt am Lastfall der Haken „Bemessungslastfall, bereits
-faktorisiert“. Ältere Ergebnisse eines Modells, in dem ein solcher Lastfall in
-keiner erzeugten Kombination steht, tragen „Ergebnis möglicherweise betroffen –
-neu rechnen“; beheben heißt hier: die Kombinationen neu erzeugen, dann rechnen.
+faktorisiert“. Steht in einem Modell mit nach EN 1990 erzeugten Kombinationen
+ein Lastfall mit einer Einwirkung der DIN 19704 in keiner dieser Kombinationen
+– Erdbeben und Montage: in keiner Kombination des Modells –, trägt jedes
+Ergebnis, auch eine neue Rechnung, „Ergebnis möglicherweise betroffen – neu
+rechnen“ mit dem Rat, die Kombinationen neu zu erzeugen (Erdbeben, Montage:
+mit *Lasten → DIN 19704* bilden oder von Hand anlegen); erst danach entfällt
+der Status.
 
 **Was der RFEM-Import zuordnet.** Die Kennzahl der Einwirkungskategorie
 (`actionCategoryId`) liest der Import jetzt aus der Aufzählung der Dlubal-API
@@ -7441,8 +7459,11 @@ Anströmung und Zonen.
 **Außenseite und Vorzeichen** (seit 09.11.2026). Eine Schale hat keine
 Außenseite; ihre Normale folgt der Reihenfolge der Randlinien. Der Generator
 richtet darum jede Fläche nach außen aus, bezogen auf die Mitte ihrer Hülle
-(der Flächen, die über gemeinsame Knoten zusammenhängen; eine Fläche allein
-nimmt die Mitte aller Windflächen). Luv, Lee, Seite und Dach hängen so nicht
+(Baukörper sind die Gebäudeflächen des Winds, die sich berühren, auch ohne
+gemeinsame Knoten; freie Wände und Schilder zählen nicht dazu. Bei einer
+Fläche allein oder einer Mitte in ihrer Ebene gibt die Rolle die Außenseite
+vor: Dach oben, Wand quer zum Wind je nach Lage Luv oder Lee, Seite zur
+näheren Seitenkante. Die Außenseite wird einmal je Fläche bestimmt.) Luv, Lee, Seite und Dach hängen so nicht
 mehr davon ab, wie herum die Linien eingegeben sind. Druck wirkt in das
 Gebäude, Sog heraus; am Gebäude mit Wind in +x zeigen Luvdruck und Leesog
 beide in +x, der Dachsog hebt. Bis zum 09.11.2026 wirkten diese Lasten an
@@ -7453,7 +7474,11 @@ darum fiel es nicht auf. Randflächen von Volumen und quadratische Schalen
 „Seite“, Kontrollsumme 0,00 kN). Die Kontrollsumme ist der Kraftvektor der
 erzeugten Elementlasten, so wie sie wirken. In der Elementlast einer Schale
 steht p seither in Richtung der Elementnormalen (wie bei jeder Schalenlast);
-den Druck auf die Hülle zeigt die Ansicht der Objektlast.
+den Druck auf die Hülle zeigt die Ansicht der Objektlast. Windlasten, die mit
+einem älteren Programmstand erzeugt sind, wirken an Schalen weiter gegen den
+Wind; das Programm nennt sie beim Öffnen und im Status „möglicherweise
+betroffen“ – auch nach einem Neurechnen –, bis sie über *Lasten → Wind* neu
+erzeugt sind.
 
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
@@ -10532,7 +10557,9 @@ obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
 Ist auch f_u
 leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²). Ein
 eingetragenes f_y geht der Sorte nur **bis 40 mm** vor, mit leerem f_u gilt
-dort f_u = 1,3 · f_y. Über 40 mm gilt die untere Stufe der Sorte für f_y und
+dort f_u = 1,3 · f_y, außer im Anschluss- und im Schraubennachweis: diese
+nehmen f_u aus dem eingetragenen Wert oder aus der Stahlsorte und melden, wenn
+beides fehlt. Über 40 mm gilt die untere Stufe der Sorte für f_y und
 f_u, auch wenn f_y eingetragen ist: ein Werkstoff mit f_y = 300 N/mm², leerem
 f_u und Sorte S235 ergibt bei 10,7 und 40 mm Erzeugnisdicke f_y = 300 und
 f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
@@ -10843,7 +10870,10 @@ im Werkstoff f_y oder f_u, gibt es keinen Vorschlag, sondern die Meldung mit
 dem Namen des Werkstoffs; der Stab mit Gewinde meldet „Werkstoff … ohne
 Zugfestigkeit f_u“. Bis dahin bemaß der Vorschlag die Geometrie still mit
 S355 (355/510 N/mm²), und der Stab mit Gewinde rechnete bei einem Werkstoff
-mit f_y ohne f_u mit f_ub = 1,3 · f_y (640 → 832 N/mm²). Geprüft in
+mit f_y ohne f_u mit f_ub = 1,3 · f_y (640 → 832 N/mm²). Steht neben f_y eine
+Stahlsorte, aber kein Wert f_u, gilt das f_u der Sorte (S355: 510 statt
+832 N/mm²); ältere Ergebnisse solcher Modelle tragen den Status „möglicherweise
+betroffen“. Geprüft in
 `tests/test_nachweis_ohne_fu.py`.
 
 **Anlegen**: Stabende wählen (die beiden Knoten des Stabelements markieren),
@@ -11288,7 +11318,8 @@ Bis zum 09.11.2026 fehlten beide Anteile. Ein Einfeldträger mit Druck
 0,6·N_cr in einem Element hatte ein Feldmoment von 37,1 statt 57,3 kNm
 (−35 %), und am Kragarm war das Stabendmoment 7,9 % größer als das
 Lagermoment. Jetzt sind es 57,25 kNm gegen geschlossen 57,27 kNm, und
-Stabend- und Lagermoment sind gleich.
+Stabend- und Lagermoment sind gleich, auch an Stäben mit Gelenk oder
+Federgelenk und Feldlast.
 
 **Stabteilung für α_cr** (seit 09.11.2026). Die Verzweigung rechnet je
 Element mit einer kubischen Biegelinie. Liegt eine ganze Knickhalbwelle in
@@ -11302,8 +11333,11 @@ Programm dazu nichts.
 
 **Federgelenk mit Steifigkeit 0** (seit 09.11.2026). Ein Federgelenk mit
 k = 0 ist ein Gelenk. Bis dahin wirkte es biegesteif, wenn es im Skript oder
-über die Web-Schnittstelle angelegt war; die Maske lässt k = 0 nicht zu. Eine
-ältere Datei bekommt das Gelenk beim Öffnen und meldet es im Protokoll.
+über die Web-Schnittstelle angelegt war; die Maske lässt k = 0 nicht zu.
+Nachgezogen werden nur Dateien, die vor diesem Stand gespeichert sind: eine
+solche Datei bekommt das Gelenk beim Öffnen und meldet es im Protokoll. Ein am
+Element entferntes Gelenk bleibt weg. Ältere Ergebnisse werden mit „Ergebnis
+möglicherweise betroffen – neu rechnen“ geladen statt verworfen.
 
 **Stäbe mit Versatz in α_cr und Theorie II. Ordnung** (seit 09.11.2026). Die
 geometrische Steifigkeit eines Stabes mit Versatz der Stabenden
@@ -13465,8 +13499,11 @@ das Protokoll die Teilung des Körpers; sie ersetzt dort die Netzdichte. Eine
 nicht ausgeführte Kontaktbedingung wird mit Namen und Grund gemeldet, und die
 Folge wird benannt: Teilen die beiden Seiten Knoten, rechnet das Modell dort
 durchverbunden (zu steif); teilen sie keine, sind die Bauteile dort nicht
-verbunden (zu weich). Schalen werden bei eingeschalteter Plastizität elastisch
-gerechnet; Protokoll und Zusammenfassung weisen darauf hin. Endet eine
+verbunden (zu weich). Teilen sie nur einzelne Knoten, etwa den gemeinsamen
+Rand eigener, aufeinanderliegender Flächen, ist die Fuge dazwischen offen:
+Druck geht nur an diesen Knoten über (zu weich), dort aber auch Zug. Schalen
+werden bei eingeschalteter Plastizität elastisch gerechnet, Stäbe ebenso,
+gezählt in Stabelementen; Protokoll und Zusammenfassung weisen darauf hin. Endet eine
 Laststufe an der Iterationsgrenze, bevor ein Mechanismus erkennbar ist, lautet
 die Meldung „Iterationsgrenze erreicht …“; das ist kein Nachweis einer
 überschrittenen Traglast, sondern die Aufforderung, mehr Iterationen oder
@@ -13499,7 +13536,8 @@ Die Nummern seiner Elemente werden nachgeführt (vorher zeigte es danach auf
 andere Elemente; an einer Platte auf Bettung 0,75 statt 1,00 m² gebettete
 Fläche). Nach dem Rechnen warnt die Zusammenfassung, wenn die größte
 Verformung über 10 % der größten Modellabmessung liegt; dann Einheiten und
-Lagerung prüfen. Elementnummern in Meldungen zählen wie in den Tabellen ab 0.
+Lagerung prüfen. Element- und Knotennummern in Meldungen zählen ab 0, auch in
+den Meldungen zu Flächen ohne gemeinsame Linie (A19).
 Geprüft in `tests/test_gruppe5_robustheit.py`.
 
 **Deckungsgleiche Trennflächen zweier Körper** (seit 09.11.2026). Haben zwei
@@ -13541,7 +13579,9 @@ der Fläche liegt oder auf dem Rand ohne Knoten endet, zwei Linien, die sich in
 der Fläche ohne gemeinsamen Knoten kreuzen, sowie gekrümmte Linien und Linien
 mit Zwischenknoten. Dort bleibt das Netz unverbunden, das Protokoll nennt den
 Grund, und die Abnahme warnt weiter mit „Flächen ohne gemeinsame Linie“.
-Dieselbe Warnung erscheint für Netze von vor dem 09.11.2026; dann neu
+Ein fremder Knoten mitten auf einem Bogen steht mit Namen im Protokoll und als
+Warnung in der Abnahme; gekrümmte Linien werden nicht geteilt. Abhilfe ist,
+den Bogen dort von Hand in zwei Bögen zu teilen. Dieselbe Warnung erscheint für Netze von vor dem 09.11.2026; dann neu
 vernetzen. Geprüft in `tests/test_flaechen_teilen.py`.
 
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
@@ -14123,7 +14163,10 @@ bis 17 Kerne, daher sind nur Werte bei vergleichbarer Fremdlast
 gegenübergestellt: Öffnen 74 und 88 s statt 113 und 170 s, Modelltabellen
 2,5 bis 3,6 s statt 9,0 bis 9,5 s, Ergebnisgröße wiederholt auf σ_v wechseln
 1,5 bis 3,7 s statt 6,4 bis 6,6 s (neu sogar bei höherer Fremdlast),
-Arbeitsspeicher 4,9 statt 5,5 GB. Die Bildzeiten beim Drehen bleiben bei
+Arbeitsspeicher 4,9 statt 5,5 GB. Gehalten werden die Knotenfelder der
+zuletzt vier angesehenen Ergebnisse (je bis zu acht Größen); beim
+Durchblättern weiterer Lastfälle wächst der Speicher nicht weiter. Die
+Bildzeiten beim Drehen bleiben bei
 etwa 5 ms; die halb deckenden Elementkanten kosten dabei nichts. Geprüft in
 `tests/test_ansicht_schneller.py`.
 
