@@ -273,12 +273,16 @@ def test_alte_windlasten():
           f"ΣF nach dem Oeffnen {np.round(F_alt / 1e3, 2)} kN")
     with contextlib.redirect_stdout(io.StringIO()):
         an = solver.solve_all(m2, design=False)
+    st0 = str(an.info.get("verfahren_betroffen") or "")
+    check("alte Windlasten, neu gerechnet (dieselbe Sitzung): Status sofort, genau einmal",
+          st0.count("Windlast auf Flächen") == 1 and "Windlasten neu erzeugen" in st0 and "RFEM" not in st0,
+          st0 or "kein Status")
     m2.save(p)
     erg.schreiben(erg.pfad_zu(p), m2, an)
     a2 = erg.lesen(erg.pfad_zu(p), Model.load(p))
     st = str(a2.info.get("verfahren_betroffen") or "")
     check("alte Windlasten, neu gerechnet und geoeffnet: Status bleibt, „Windlasten neu erzeugen“",
-          "Windlast auf Flächen" in st and "Windlasten neu erzeugen" in st and "RFEM" not in st, st or "kein Status")
+          st.count("Windlast auf Flächen") == 1 and "Windlasten neu erzeugen" in st and "RFEM" not in st, st or "kein Status")
     wm.lasten_erzeugen(m2, m2.winde["W1"])
     F_neu2 = np.asarray(solver.case_loads(m2, {lf: 1.0}, None)[0], float).reshape(-1, 6)[:, :3].sum(axis=0)
     check("neu erzeugt: kein Merkmal mehr, ΣF wie frisch erzeugt (in Windrichtung)",

@@ -1724,6 +1724,18 @@ def modell_teile(model, analyse=None) -> list:
         if analyse is not None and mk.im_ergebnis is not None                 and _sicher(lambda: mk.im_ergebnis(model, analyse)) == "":
             continue                    # keine betroffene Kombination gerechnet
         teile.append(f"{mk.titel}: {wo}")
+    for mk in MERKMALE:
+        # Korrekturen am Modell, die nicht vom Import kommen (``modellgrund``, alte
+        # Windlasten, Befund 40): auch eine neue Rechnung traegt den Status, bis der
+        # Grund im Modell behoben ist - nicht erst nach dem erneuten Oeffnen
+        if not (mk.import_korrektur and mk.modellgrund) or not _sicher(lambda: mk.betrifft(model)):
+            continue
+        wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
+              if (mk.im_ergebnis is not None and analyse is not None) else None)
+        if wo == "":
+            continue
+        teile.append(f"{mk.titel}: {mk.modellgrund} ({mk.text('alt')}"
+                     + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
     return teile
 
 
@@ -1759,13 +1771,13 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
             betr.append(f"{mk.titel}: gerechnet mit „{mk.text(wert)}“" + (f" ({wo})" if wo else "")
                         + f", seit {_seit(mk, jetzt, w)} korrigiert: „{mk.text(jetzt)}“")
     for mk in MERKMALE:
-        if mk.import_korrektur and _sicher(lambda: mk.betrifft(model)):
+        if mk.import_korrektur and not mk.modellgrund and _sicher(lambda: mk.betrifft(model)):
             wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
                   if (mk.im_ergebnis is not None and analyse is not None) else None)
             if wo == "":
                 continue
             w = mk.wechsel[-1]
-            grund = mk.modellgrund or f"Modell vor dem {w.datum} aus RFEM übernommen"
+            grund = f"Modell vor dem {w.datum} aus RFEM übernommen"
             betr.append(f"{mk.titel}: {grund} ({mk.text('alt')}"
                         + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
     betr += _sicher(lambda: modell_teile(model, analyse)) or []
