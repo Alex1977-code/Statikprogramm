@@ -1201,7 +1201,7 @@ def _abnahme_schalen_ohne_linie(model) -> list:
                     if 1e-6 < t < 1 - 1e-6 and np.linalg.norm(p - (X[i0] + t * d)) < tol:
                         if verbunden(fa, fb, i0, i1, dazu=(k,)):
                             continue         # im Netz geteilt: gemeinsame Knoten
-                        grund = f"Knoten {k + 1} von {fb.name} liegt auf der Linie {ln} von {fa.name}"
+                        grund = f"Knoten {k} von {fb.name} liegt auf der Linie {ln} von {fa.name}"
                         break
                 if grund:
                     break
