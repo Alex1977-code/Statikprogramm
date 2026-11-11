@@ -123,10 +123,9 @@ def parse_dxf_entities(path: str) -> list[dict]:
     return ents
 
 
-def einheit_der_datei(path: str) -> Optional[tuple]:
-    """Die Laengeneinheit, die eine DXF-Datei im Kopf nennt:
-    (Name, Faktor nach m, $INSUNITS) - oder None, wenn $INSUNITS fehlt, 0
-    ("ohne Einheit") ist oder eine Einheit nennt, die EINHEITEN nicht kennt."""
+def insunits_der_datei(path: str) -> Optional[int]:
+    """Der Wert von $INSUNITS im Kopf einer DXF-Datei, wie er dasteht (None,
+    wenn die Angabe fehlt oder keine Zahl ist)."""
     try:
         pairs = _read_pairs(path)
     except OSError:
@@ -137,9 +136,30 @@ def einheit_der_datei(path: str) -> Optional[tuple]:
             break                              # der Kopf ist vorbei
         if code == 9 and val.upper() == "$INSUNITS" and k + 1 < len(pairs):
             v = C.parse_number(pairs[k + 1][1])
-            eintrag = EINHEITEN.get(int(v)) if v is not None else None
-            return (eintrag[0], eintrag[1], int(v)) if eintrag else None
+            return int(v) if v is not None else None
     return None
+
+
+def einheit_der_datei(path: str) -> Optional[tuple]:
+    """Die Laengeneinheit, die eine DXF-Datei im Kopf nennt:
+    (Name, Faktor nach m, $INSUNITS) - oder None, wenn $INSUNITS fehlt, 0
+    ("ohne Einheit") ist oder eine Einheit nennt, die EINHEITEN nicht kennt
+    (den Wert selbst liefert :func:`insunits_der_datei`)."""
+    v = insunits_der_datei(path)
+    eintrag = EINHEITEN.get(v) if v is not None else None
+    return (eintrag[0], eintrag[1], v) if eintrag else None
+
+
+def _ohne_einheit(code: Optional[int]) -> str:
+    """Satz der Meldung, wenn einheit_der_datei None liefert: fehlt die
+    Angabe, ist sie 0 oder nennt sie eine Einheit, die der Import nicht kennt
+    (11.11.2026; bis dahin hiess es auch bei $INSUNITS = 7 „fehlt im Kopf
+    oder ist 0“)."""
+    if code is None or code == 0:
+        return "Die Datei nennt keine Längeneinheit ($INSUNITS fehlt im Kopf oder ist 0)."
+    bekannt = ", ".join(f"{k} = {n}" for k, (n, _f) in sorted(EINHEITEN.items()))
+    return (f"Die Datei nennt im Kopf $INSUNITS = {code}; diese Einheit kennt der Import "
+            f"nicht (er liest {bekannt}).")
 
 
 def _floats(ent: dict, codes: tuple) -> Optional[tuple]:
@@ -210,10 +230,9 @@ def import_dxf(path: str, model: Model = None, log: list = None,
                        f"($INSUNITS = {datei[2]}); sie wird so gelesen.")
         else:
             scale = DEFAULT_UNIT_SCALE
-            C.warn(log, "DXF: Die Datei nennt keine Längeneinheit ($INSUNITS fehlt im Kopf "
-                        "oder ist 0). Angenommen wurde Millimeter (Faktor 0,001). Ist die "
-                        "Datei in einer anderen Einheit gezeichnet, die Einheit beim Import "
-                        "angeben.")
+            C.warn(log, f"DXF: {_ohne_einheit(insunits_der_datei(path))} Angenommen wurde "
+                        "Millimeter (Faktor 0,001). Ist die Datei in einer anderen Einheit "
+                        "gezeichnet, die Einheit beim Import angeben.")
     else:
         scale = float(unit_scale)
         if datei is not None and abs(datei[1] - scale) > 1e-9 * max(datei[1], scale):
@@ -221,8 +240,8 @@ def import_dxf(path: str, model: Model = None, log: list = None,
                         f"($INSUNITS = {datei[2]}, Faktor {_de(datei[1])}); gelesen wurde "
                         f"mit dem vorgegebenen Faktor {_de(scale)}.")
         elif datei is None:
-            C.say(log, "DXF: Die Datei nennt keine Längeneinheit; gelesen wurde mit dem "
-                       f"vorgegebenen Faktor {_de(scale)} m je Zeicheneinheit.")
+            C.say(log, f"DXF: {_ohne_einheit(insunits_der_datei(path))} Gelesen wurde mit "
+                       f"dem vorgegebenen Faktor {_de(scale)} m je Zeicheneinheit.")
     layer_sections = dict(layer_sections or {})
     nodes = C.NodeIndex(model, tol)
 

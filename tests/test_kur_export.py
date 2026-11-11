@@ -308,8 +308,30 @@ def test_k18_dxf_volumen():
         check(f"K18 DXF {typ}: {n_face} × 3DFACE, der Hinweis sagt, was geschrieben ist",
               ok, h[h.find("nicht übertragen"):][:150])
 
+
+# --------------------------------------------------------------------------
+# K26: DXF $INSUNITS unbekannt
+# --------------------------------------------------------------------------
+def test_k26_dxf_insunits():
+    for code, soll in ((7, "$INSUNITS = 7"), (10, "$INSUNITS = 10"), (0, "fehlt im Kopf oder ist 0")):
+        paare = ["0", "SECTION", "2", "HEADER", "9", "$INSUNITS", "70", str(code), "0", "ENDSEC",
+                 "0", "SECTION", "2", "ENTITIES", "0", "LINE", "8", "0", "10", "0.0", "20", "0.0",
+                 "30", "0.0", "11", "5.0", "21", "0.0", "31", "0.0", "0", "ENDSEC", "0", "EOF"]
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "k26.dxf")
+            with open(p, "w") as f:
+                f.write("\n".join(paare) + "\n")
+            log = []
+            import_file(p, log=log)
+        w = [z for z in log if "Längeneinheit" in z or "INSUNITS" in z]
+        ok = len(w) == 1 and soll in w[0] and "Millimeter" in w[0]
+        if code:
+            ok = ok and "fehlt im Kopf" not in w[0]
+        check(f"K26 DXF $INSUNITS = {code}: die Meldung nennt den Wert der Datei", ok,
+              w[0][:150] if w else "(keine Meldung)")
+
 def main():
-    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import, test_k18_dxf_volumen,):
+    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import, test_k18_dxf_volumen, test_k26_dxf_insunits,):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
