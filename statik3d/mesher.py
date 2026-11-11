@@ -700,6 +700,63 @@ def _strecken_kreuzen(p, q, a, b) -> bool:
     return 1e-9 < lam < 1 - 1e-9 and -1e-9 <= mue <= 1 + 1e-9
 
 
+def kurve_fein(model, name: str) -> np.ndarray:
+    """Punkte auf einer gekruemmten Linie, so dicht, dass der Abstand zur
+    Sehnenkette weit unter dem Fangbereich TEIL_FANG bleibt (Abschnitte bis
+    5 mm, 64 bis 4096). Leer, wenn die Linie sich nicht abtasten laesst."""
+    from . import mesher3d as M3
+    try:
+        P = M3._linienpunkte(model, name, 64)
+        if len(P) < 2:
+            return np.zeros((0, 3))
+        L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
+        n = int(min(4096, max(64, np.ceil(L / 5e-3))))
+        return P if n == 64 else M3._linienpunkte(model, name, n)
+    except Exception:                         # noqa: BLE001 - nicht abtastbar: keine Aussage
+        return np.zeros((0, 3))
+
+
+def abstand_zur_kette(P: np.ndarray, Q: np.ndarray) -> np.ndarray:
+    """Kleinster Abstand der Punkte Q (m, 3) zur Sehnenkette P (n+1, 3)."""
+    A, B = P[:-1], P[1:]
+    d = B - A
+    L2 = np.maximum((d * d).sum(1), 1e-300)
+    aus = np.empty(len(Q))
+    schritt = max(1, 1_000_000 // max(len(A), 1))      # Speicher je Block begrenzen
+    for i in range(0, len(Q), schritt):
+        q = Q[i:i + schritt]
+        t = np.clip(((q[:, None, :] - A[None]) * d[None]).sum(2) / L2[None], 0.0, 1.0)
+        aus[i:i + schritt] = np.linalg.norm(q[:, None, :] - (A[None] + t[..., None] * d[None]), axis=2).min(axis=1)
+    return aus
+
+
+def fremde_knoten_auf_kurve(model, name: str, K: np.ndarray, baum, besitz: dict, wem) -> list:
+    """[(Knoten, Abstand, fremde Flaechen)]: Linienknoten anderer Flaechen,
+    die im Innern der gekruemmten Linie ``name`` liegen (bis TEIL_FANG
+    daneben, nicht an ihren Enden). ``K``/``baum``: die Kandidaten und ihr
+    KD-Baum, ``besitz`` {Knoten: Flaechen}, ``wem`` die Flaechen der Linie."""
+    ln = model.lines.get(name)
+    if ln is None or len(ln.nodes) < 2:
+        return []
+    P = kurve_fein(model, name)
+    if len(P) < 2:
+        return []
+    seg = float(np.linalg.norm(np.diff(P, axis=0), axis=1).max())
+    kand = sorted({int(K[j]) for js in baum.query_ball_point(P, 0.5 * seg + TEIL_FANG) for j in js})
+    eigen = {int(k) for k in ln.nodes}
+    kand = [k for k in kand if k not in eigen and besitz.get(k, set()) - set(wem)]
+    if not kand:
+        return []
+    X = np.asarray(model.nodes, float)
+    Q = X[kand]
+    ab = abstand_zur_kette(P, Q)
+    L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
+    ende = np.minimum(np.linalg.norm(Q - X[int(ln.nodes[0])], axis=1),
+                      np.linalg.norm(Q - X[int(ln.nodes[-1])], axis=1))
+    return [(k, float(a), besitz[k] - set(wem)) for k, a, e in zip(kand, ab, ende)
+            if a < TEIL_FANG and e > 1e-6 * L + 1e-9]
+
+
 def _teilplan(model: Model, schalen: list) -> dict:
     """Wo beruehren sich Schalenflaechen, ohne eine Linie zu teilen - und wie
     wird dort **im Netz** geteilt (wie in RFEM Knoten auf Linie und Linie in
@@ -786,6 +843,14 @@ def _teilplan(model: Model, schalen: list) -> dict:
     for x, wem in besitzer.items():
         ln = lines[x]
         if not gerade(ln):
+            # Gekruemmte Linien werden nicht geteilt; ein fremder Knoten darauf
+            # steht aber als Warnung im Protokoll (Befund 38 vom 11.11.2026:
+            # bis dahin blieb der Stoss am Bogen unverbunden und still).
+            for k, ab, fremd in fremde_knoten_auf_kurve(model, x, K, baum, kn_besitzer, wem):
+                plan["warnungen"].append(
+                    f"Knoten {k + 1} ({fl(fremd)}) liegt auf der gekrümmten Linie {x} ({fl(wem)})"
+                    + (f", {mm(ab)} mm daneben" if ab > 5e-7 else "")
+                    + ": gekrümmte Linien werden im Netz nicht geteilt – dort nicht verbunden.")
             continue
         kn = [int(k) for k in ln.nodes]
         treffer = []
@@ -1140,6 +1205,8 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
     from .importers import _common as C
     gruppe, plan = _gruppe_und_plan(model, flaechen)
     if not gruppe:
+        for zeile in plan["warnungen"]:      # z. B. fremder Knoten auf einem Bogen (Befund 38)
+            C.warn(log, zeile)
         return {}
     # Die Geometrie, wie das Netz sie sieht: Teilstuecke statt geteilter Linien
     geo = _Netzgeometrie(model, plan["teilstuecke"]) if plan["aktiv"] else model
