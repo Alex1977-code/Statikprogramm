@@ -4787,12 +4787,17 @@ def steifigkeitsunterschied(model) -> "dict | None":
     Schale E·t, Volumen E·h (h = groesste Ausdehnung der Elementknoten).
     Elemente ohne Werkstoff, mit E, A, t oder L <= 0, abgeschaltete Staebe,
     Federn, Grenzschicht und ebene Elemente bleiben aussen vor - was dort
-    fehlt, meldet die Modellpruefung an anderer Stelle. Rueckgabe None (weniger
+    fehlt, meldet die Modellpruefung an anderer Stelle. Entartete Elemente
+    ohne Ausdehnung bleiben draussen wie in der Rechnung - dieselbe Menge
+    (:func:`entartete_menge`), die assemble.aktive_indizes weglaesst. Bis zum
+    11.11.2026 stand ein Stabelement von 1e-13 m Laenge, das die Rechnung
+    uebergeht, hier mit E·A/L als steifstes Element. Rueckgabe None (weniger
     als zwei Elemente) oder {"faktor", "steif": (Element, Typ, Werkstoff, Mass),
     "weich": (...)}."""
     from . import assemble as asm
     X = np.asarray(model.nodes, float)
     maske = model.grundmaske() if hasattr(model, "grundmaske") else None
+    raus = entartete_menge(model)
     E_von = {}
     for name, mt in model.materials.items():
         try:
@@ -4801,7 +4806,7 @@ def steifigkeitsunterschied(model) -> "dict | None":
             E_von[name] = 0.0
     gruppen: dict = {}              # (Art, Knotenzahl) -> ([Element], [E·Querwert], [Knoten])
     for i, e in enumerate(model.elements):
-        if maske is not None and not maske[i]:
+        if (maske is not None and not maske[i]) or i in raus:
             continue
         E = E_von.get(e.mat, 0.0)
         if not E > 0:
