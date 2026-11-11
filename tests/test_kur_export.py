@@ -114,8 +114,175 @@ def test_k15_ifc_projektion():
     check("K15 IFC: das Exportprotokoll nennt 2 umgerechnete Stablasten je Projektion",
           len(zeile) == 1 and "2 Stablasten" in zeile[0], zeile[0][:120] if zeile else "(keine Zeile)")
 
+
+# --------------------------------------------------------------------------
+# K16 / K22: Abaqus, n1-Richtung, I11/I22, K13/K23, *RELEASE
+# --------------------------------------------------------------------------
+def _inp_karten(p):
+    """Von Hand aus der .inp: {Element: Satz}, {Satz: (Werte, n1)},
+    {Satz: (K23, K13)}, [*RELEASE-Zeilen]."""
+    zeilen = [z.strip() for z in _lesen(p).splitlines()]
+    satz_von, qs, schub, rel = {}, {}, {}, []
+    k = 0
+    while k < len(zeilen):
+        z = zeilen[k]
+        kopf = z.upper().replace(" ", "")
+        if kopf.startswith("*ELEMENT,") and "TYPE=B31" in kopf:
+            satz = re.search(r"ELSET=([^,]+)", kopf).group(1)
+            k += 1
+            while k < len(zeilen) and not zeilen[k].startswith("*"):
+                satz_von[int(zeilen[k].split(",")[0])] = satz
+                k += 1
+            continue
+        if kopf.startswith("*BEAMGENERALSECTION"):
+            satz = re.search(r"ELSET=([^,]+)", kopf).group(1)
+            werte = [float(v) for v in zeilen[k + 1].split(",")]
+            n1 = np.array([float(v) for v in zeilen[k + 2].split(",")])
+            qs[satz] = (werte, n1)
+            if zeilen[k + 3].upper().startswith("*TRANSVERSE SHEAR STIFFNESS"):
+                schub[satz] = tuple(float(v) for v in zeilen[k + 4].split(","))
+            k += 3
+            continue
+        if kopf.startswith("*RELEASE"):
+            k += 1
+            while k < len(zeilen) and not zeilen[k].startswith("*"):
+                rel.append(tuple(v.strip().upper() for v in zeilen[k].split(",")))
+                k += 1
+            continue
+        k += 1
+    return satz_von, qs, schub, rel
+
+
+def _abaqus_modell():
+    """Zweifeldtraeger entlang x (RHS 300x200x10, Iy != Iz) mit Gelenk um die
+    lokale y-Achse am Anfang von Element 2, dazu ein schraeger Kragarm mit
+    Verdrehung 30 Grad und Querlasten in beiden Richtungen."""
+    m = Model("K16")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.rhs("R", 0.3, 0.2, 0.01))
+    a, b, c = m.add_node(0, 0, 0), m.add_node(2, 0, 0), m.add_node(4, 0, 0)
+    m.add_element("beam", [a, b], "S355", "R")
+    m.add_element("beam", [b, c], "S355", "R", hinges=[4])
+    m.fix(a, "all")
+    m.fix(c, [0, 1, 2, 3])
+    d, f = m.add_node(0, 3, 0), m.add_node(2, 4, 1.5)
+    m.add_element("beam", [d, f], "S355", "R", roll=np.radians(30.0))
+    m.fix(d, "all")
+    m.load_node(b, Fy=2e3, Fz=-5e3, case="LF1")
+    m.load_node(f, Fx=1e3, Fy=-3e3, Fz=-4e3, case="LF1")
+    return m
+
+
+def test_k16_abaqus_export():
+    m = _abaqus_modell()
+    s = m.sections["R"]
+    G = m.materials["S355"].G
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "k16.inp")
+        log = []
+        export_model(m, p, log=log)
+        satz_von, qs, schub, rel = _inp_karten(p)
+        m2 = import_file(p, log=[])
+    zitat = {k: (v[0][:5], v[1].tolist()) for k, v in qs.items()}
+    print("   Karten:", zitat, "Schub:", schub, "RELEASE:", rel)
+    # n1 je Element = lokale y-Achse (n1 senkrecht zur Stabachse, Laenge 1)
+    abw = []
+    for i, e in enumerate(m.elements, 1):
+        T3, _L = local_axes(m.nodes[e.nodes[0]], m.nodes[e.nodes[1]], float(e.roll or 0.0))
+        n1 = qs[satz_von[i]][1]
+        n2 = np.cross(T3[0], n1 / np.linalg.norm(n1))           # Abaqus: n2 = t x n1
+        abw.append(max(float(np.abs(n1 - T3[1]).max()), float(np.abs(n2 - T3[2]).max())))
+    check("K16 Abaqus: n1 jedes Stabs = lokale y-Achse, n2 = t x n1 = lokale z (auch mit Verdrehung 30°)",
+          len(abw) == 3 and max(abw) < 1e-12, f"größte Abweichung {max(abw) if abw else float('nan'):.2e}")
+    werte = [v[0] for v in qs.values()]
+    check("K16 Abaqus: I11 = Iy (Biegung um n1 = y), I22 = Iz (um n2 = z), Iy != Iz",
+          bool(werte) and all(_nah(w[1], s.Iy, 1e-15) and w[2] == 0.0 and _nah(w[3], s.Iz, 1e-15)
+                              for w in werte) and abs(s.Iy - s.Iz) > 0.1 * s.Iz,
+          f"I11 {werte[0][1]:.6e}, I22 {werte[0][3]:.6e}; Iy {s.Iy:.6e}, Iz {s.Iz:.6e}")
+    check("K16 Abaqus: K23 = G Asz (Schub in n2 = z), K13 = G Asy (Schub in n1 = y)",
+          bool(schub) and all(_nah(k[0], G * s.Asz, 1e-15) and _nah(k[1], G * s.Asy, 1e-15)
+                              for k in schub.values()) and abs(s.Asy - s.Asz) > 0.1 * s.Asy,
+          f"{list(schub.values())[:1]}; G Asz {G * s.Asz:.6e}, G Asy {G * s.Asy:.6e}")
+    check("K16 Abaqus: *RELEASE „2, S1, M1“ - Gelenk um die lokale y-Achse = n1-Achse",
+          rel == [("2", "S1", "M1")], f"{rel}")
+    check("K16 Abaqus: kein Hinweis „Stabverdrehung nicht übertragen“ mehr (sie steht als n1 in der Datei)",
+          not any("Stabverdrehung" in z for z in log), "")
+    # Rundreise: Verdrehung und Gelenk zurueck, Rechnung wie am Ausgangsmodell
+    rolle = [float(e.roll or 0.0) for e in m2.elements]
+    gel = [sorted(int(h) for h in (e.hinges or [])) for e in m2.elements]
+    check("K16 Abaqus-Rundreise: Verdrehung 30° und Gelenk FHG 4 kommen zurück",
+          len(rolle) == 3 and abs(rolle[0]) < 1e-12 and abs(rolle[1]) < 1e-12
+          and abs(np.degrees(rolle[2]) - 30.0) < 1e-9 and gel == [[], [4], []],
+          f"Verdrehung {[round(float(np.degrees(r)), 9) for r in rolle]}°, Gelenke {gel}")
+    an1 = solver.solve_all(m, workers=1, combinations=False)
+    an2 = solver.solve_all(m2, workers=1, combinations=False)
+    u1 = np.asarray(next(iter(an1.cases.values())).u, float)
+    u2 = np.asarray(next(iter(an2.cases.values())).u, float)
+    rel_u = float(np.abs(u2 - u1).max() / np.abs(u1).max()) if u1.shape == u2.shape else float("inf")
+    check("K16 Abaqus-Rundreise rechnet alle Verschiebungen wie das Ausgangsmodell",
+          rel_u < 1e-9, f"größte Abweichung {rel_u:.2e} (bezogen auf max |u| {np.abs(u1).max() * 1e3:.4f} mm)")
+
+
+INP_FREMD = """*NODE
+1, 0.0, 0.0, 0.0
+2, 1.0, 0.0, 0.0
+3, 2.0, 0.0, 0.0
+*ELEMENT, TYPE=B31, ELSET={satz}
+1, 1, 2
+2, 2, 3
+*MATERIAL, NAME=ST
+*ELASTIC
+2.1E11, 0.3
+{schnitt}
+*BOUNDARY
+1, 1, 6
+"""
+
+
+def _fremd(schnitt, release=""):
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "fremd.inp")
+        with open(p, "w") as f:
+            f.write(INP_FREMD.format(satz="B", schnitt=schnitt) + release)
+        return import_file(p, log=[])
+
+
+def _gelenkachsen(m):
+    """Globale Achse jedes geloesten Drehfreiheitsgrads (lokal 4 = y, 5 = z)."""
+    achsen = []
+    for e in m.elements:
+        T3, _L = local_axes(m.nodes[e.nodes[0]], m.nodes[e.nodes[1]], float(e.roll or 0.0))
+        for h in (e.hinges or []):
+            if int(h) % 6 in (4, 5):
+                achsen.append(np.round(np.abs(T3[int(h) % 6 - 3]), 12).tolist())
+    return achsen
+
+
+def test_k22_abaqus_import():
+    a, b = 0.1, 0.3                   # a in n1-Richtung, b in n2-Richtung (Abaqus)
+    I11, I22 = a * b ** 3 / 12, b * a ** 3 / 12
+    E, F, L = 2.1e11, 1e3, 2.0
+    general = (f"*BEAM GENERAL SECTION, ELSET=B, MATERIAL=ST, SECTION=GENERAL\n"
+               f"{a * b}, {I11}, 0.0, {I22}, 1e-5\n0.0, 0.0, -1.0")
+    m = _fremd(general)
+    m.load_node(2, Fy=F, case="LF1")          # Querlast in n2 = t x n1 = x x (-z) = +y
+    u = float(np.asarray(next(iter(solver.solve_all(m, workers=1, combinations=False)
+                                   .cases.values())).u)[2, 1])
+    hand = F * L ** 3 / (3 * E * I11)         # Biegung um die 1-Achse (lotrecht)
+    check("K22 Abaqus-Import GENERAL, n1 = (0,0,-1): Querlast in n2-Richtung biegt mit I11, "
+          "u = F L³/(3 E I11)",
+          _nah(u, hand, 1e-6), f"u {u * 1e3:.5f} mm, Hand {hand * 1e3:.5f} mm "
+                               f"(mit I22 wären es {F * L ** 3 / (3 * E * I22) * 1e3:.5f} mm)")
+    rel = "*RELEASE\n1, S2, M1\n"
+    mg = _fremd(general, rel)
+    mr = _fremd(f"*BEAM SECTION, ELSET=B, MATERIAL=ST, SECTION=RECT\n{a}, {b}\n0.0, 0.0, -1.0", rel)
+    check("K22 Abaqus-Import: *RELEASE M1 ist das Gelenk um die 1-Achse = global z "
+          "(bei GENERAL und bei RECT)",
+          _gelenkachsen(mg) == [[0.0, 0.0, 1.0]] and _gelenkachsen(mr) == [[0.0, 0.0, 1.0]],
+          f"GENERAL {_gelenkachsen(mg)}, RECT {_gelenkachsen(mr)}")
+
 def main():
-    for t in (test_k15_ifc_projektion,):
+    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import,):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

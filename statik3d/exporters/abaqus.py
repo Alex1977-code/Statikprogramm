@@ -36,7 +36,11 @@ ABQ_EBENE = {("spannung", 3): "CPS3", ("spannung", 4): "CPS4", ("spannung", 6): 
              ("rotation", 4): "CAX4", ("rotation", 6): "CAX6", ("rotation", 8): "CAX8"}
 #: Geloeste Drehungen eines Stabendes (lokale FHG 3, 4, 5) -> Schluessel von
 #: *RELEASE. Die 1-Achse des Querschnitts ist die Achse von I11, hier die
-#: lokale y-Achse (I11 = I_y), die 2-Achse die lokale z-Achse.
+#: lokale y-Achse (I11 = I_y), die 2-Achse die lokale z-Achse. Dazu steht in
+#: der *BEAM GENERAL SECTION als n1-Richtung die lokale y-Achse jedes Stabs
+#: (samt Verdrehung); Abaqus bildet n2 = t x n1 = lokale z. Bis zum 11.11.2026
+#: stand dort fuer jeden Stab n1 = (0,0,-1), beim waagerechten Stab die
+#: lokale -z-Achse: Gelenk M1, I11 und K13/K23 lagen um 90 Grad verdreht.
 RELEASE = {(3,): "T", (4,): "M1", (5,): "M2", (4, 5): "M1-M2", (3, 4): "M1-T",
            (3, 5): "M2-T", (3, 4, 5): "ALLM"}
 #: Volumentypen, deren Flaechendruck als Pn hinausgeht (Seitennummern wie in
@@ -49,6 +53,15 @@ def abq_typ(e) -> str:
     if e.typ.startswith("ebene"):
         return ABQ_EBENE.get((getattr(e, "zustand", "spannung"), len(e.nodes)), "")
     return ABQ.get(e.typ, "")
+
+
+def _n1(model: Model, e) -> tuple:
+    """n1-Richtung eines Balkens fuer Abaqus: die lokale y-Achse (mit der
+    Verdrehung ``roll``), auf 12 Stellen gerundet, damit gleich gerichtete
+    Staebe eine Menge bilden."""
+    T3, _L = local_axes(model.nodes[int(e.nodes[0])], model.nodes[int(e.nodes[1])],
+                        float(e.roll or 0.0))
+    return tuple(float(f"{v:.12g}") + 0.0 for v in T3[1])
 
 
 def _z(v) -> str:
@@ -66,11 +79,21 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
         art = abq_typ(e)
         if not art:
             continue
-        gruppen.setdefault((art, e.mat, e.sec or ""), []).append((i, e))
+        # Balken je n1-Richtung (lokale y-Achse) in eigener Menge: n1 steht in
+        # der Querschnittsdefinition und gilt fuer die ganze Menge
+        n1 = _n1(model, e) if art == "B31" else None
+        gruppen.setdefault((art, e.mat, e.sec or "", n1), []).append((i, e))
         geschrieben.add(i - 1)
     mengen = []
-    for (art, mat, sec), items in gruppen.items():
-        setname = f"E_{art}_{_safe(mat)}_{_safe(sec)}"
+    satzname: dict[tuple, str] = {}
+    for key in gruppen:
+        art, mat, sec, _n = key
+        basis = f"E_{art}_{_safe(mat)}_{_safe(sec)}"
+        k = sum(1 for v in satzname.values() if v == basis or v.startswith(basis + "_R"))
+        satzname[key] = basis if k == 0 else f"{basis}_R{k + 1}"
+    for key, items in gruppen.items():
+        art = key[0]
+        setname = satzname[key]
         mengen.append(setname)
         z.append(f"*ELEMENT, TYPE={art}, ELSET={setname}")
         for i, e in items:
@@ -103,12 +126,13 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
         z.append(f"{_z(m.rho)}")
         z.append("*EXPANSION")
         z.append(f"{_z(m.alpha)}")
-    n_ohne_qs = 0
-    for (art, mat, sec), items in gruppen.items():
-        setname = f"E_{art}_{_safe(mat)}_{_safe(sec)}"
+    ohne_qs = set()
+    for (art, mat, sec, n1), items in gruppen.items():
+        setname = satzname[(art, mat, sec, n1)]
         if art in ("B31", "T3D2"):
             s = model.sections.get(sec)
-            n_ohne_qs += s is None
+            if s is None:
+                ohne_qs.add((art, mat, sec))
             A = s.A if s else 1e-3
             if art == "T3D2":
                 z.append(f"*SOLID SECTION, ELSET={setname}, MATERIAL={_safe(mat)}")
@@ -118,11 +142,12 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
                          f"MATERIAL={_safe(mat)}, SECTION=GENERAL")
                 z.append(f"{_z(A)}, {_z(s.Iy if s else 1e-6)}, 0.0, "
                          f"{_z(s.Iz if s else 1e-6)}, {_z(s.It if s else 1e-6)}")
-                z.append("0.0, 0.0, -1.0")
+                z.append(", ".join(_z(v) for v in n1))
                 m = model.materials.get(mat)
                 if s is not None and m is not None and s.Asy and s.Asz:
                     # Schubsteifigkeiten K23, K13 = G * Schubflaeche; die
                     # 1-Achse ist die Achse von I11, hier die lokale y-Achse
+                    # (n1 oben), die 2-Achse die lokale z: K23 = G Asz
                     z.append("*TRANSVERSE SHEAR STIFFNESS")
                     z.append(f"{_z(m.G * s.Asz)}, {_z(m.G * s.Asy)}")
         elif art.startswith("S"):
@@ -213,11 +238,11 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
         C.say(log, f"Abaqus: {C.anzahl(n_lokal, 'Stablast', 'Stablasten')} im Stabsystem "
                    "in globale Komponenten umgerechnet (die Datei kennt für Stablasten nur "
                    "die globalen Richtungen PX, PY, PZ).")
+    n_ohne_qs = len(ohne_qs)
     if n_ohne_qs:
         C.warn(log, f"Abaqus: {C.anzahl(n_ohne_qs, 'Stabgruppe', 'Stabgruppen')} ohne "
                     "Querschnitt im Modell (mit A = 0,001 m² und I = 0,000001 m⁴ geschrieben). "
                     "Bitte im Modell ergänzen.")
-    n_roll = sum(1 for e in model.elements if e.typ == "beam" and abs(float(e.roll or 0.0)) > 1e-9)
     n_seil = sum(1 for e in model.elements if e.typ == "seil")
     n_gelenkfeder = len({(i, int(x[0]) // 6) for i, e in enumerate(model.elements)
                          for x in (getattr(e, "hinge_springs", None) or [])})
@@ -237,7 +262,6 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
     C.nicht_uebertragen(log, "Abaqus", [
         (n_seil, "Seil (geht als Fachwerkstab T3D2 hinaus)",
          "Seile (gehen als Fachwerkstäbe T3D2 hinaus)"),
-        (n_roll, "Stabverdrehung um die Stabachse", "Stabverdrehungen um die Stabachse"),
         (n_gelenk_weg, "Stabende mit Verschiebungsgelenk (Normalkraft- oder Querkraftgelenk)",
          "Stabenden mit Verschiebungsgelenk (Normalkraft- oder Querkraftgelenk)"),
         (n_gelenkfeder, "Stabende mit Gelenkfeder", "Stabenden mit Gelenkfeder"),
