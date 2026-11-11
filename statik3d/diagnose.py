@@ -1012,7 +1012,8 @@ def _eingabe_lager(model) -> list:
         if fremd and ne:
             aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name), element=fremd[0], elemente=fremd,
                               text=f"Flächenlager „{ss.name}“ nennt {_anzahl(len(fremd), 'Element', 'Elemente')}, "
-                                   f"die es nicht gibt (Element {', '.join(str(i) for i in fremd[:6])}"
+                                   f"{'das' if len(fremd) == 1 else 'die'} es nicht gibt "
+                                   f"(Element {', '.join(str(i) for i in fremd[:6])}"
                                    f"{' …' if len(fremd) > 6 else ''}). Netz geändert – Lager prüfen: "
                                    "dem Lager seine Elemente neu geben."))
         # A22: beim Loeschen oder Neuvernetzen entfallene Elemente
