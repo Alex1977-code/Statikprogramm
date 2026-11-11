@@ -11046,6 +11046,13 @@ def _solve_all_innen(model: Model, workers: int = None, progress=None, combinati
         _teilanalyse(ex, an, model, systeme, t0)
         raise
     _vorspannung_nachreichen(model, an, progress)
+    # Kombinationen mit Faktoren von vor einer Korrektur des Generators (ξ in 6.10b,
+    # fehlende Einwirkungen der DIN 19704; Befunde 41, 42, 44 vom 11.11.2026): ein
+    # Neurechnen aendert sie nicht - der Status bleibt, bis sie neu erzeugt sind
+    from . import rechenverfahren as _rvf
+    status = _rvf.modell_betroffen(model, an)
+    if status:
+        an.info["verfahren_betroffen"] = status
     return an
 
 

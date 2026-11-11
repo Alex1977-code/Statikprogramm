@@ -12,6 +12,11 @@ keinen Vorgabewert; ohne angegebenen Werkstoff kein Nachweis.
                          η = 1,06327 - jetzt kein Nachweis, Meldung
      nur Sorte S355:     f_u 510 aus der Sortentabelle, F_t,Rd = 57 650 N,
                          η = 1,73459   (unverändert; die Sorte ist eine Angabe)
+     f_y 640 mit Sorte S355, ohne Wert f_u (Befund 1, 11.11.2026):
+                         bisher 1,3 · 640 = 832 N/mm², η = 1,06327 - jetzt f_u 510
+                         der Sorte, η = 1,73459. Das neue f_u ist richtig, das
+                         Ergebnis aendert sich aber: das Merkmal schraubenstab_fu
+                         der Verfahrenstabelle meldet es („möglicherweise betroffen“).
    Zweiter Weg der Soll-Zahlen: die Grenze F_t,Rd, die das Programm je
    Lastzustand ausweist, gegen die Handrechnung oben.
 2. Anschlussvorschlag (joints.templates.propose, Kopfplatte, Lasche,
@@ -83,6 +88,37 @@ def test_schraubenstab():
           bool(getattr(mc, "fehler", "")) and "f_u" in mc.fehler, repr(getattr(mc, "fehler", "")))
 
 
+def test_mischfall_sorte():
+    """f_y mit Stahlsorte, ohne Wert f_u (Befund 1): neu das f_u der Sorte, und die
+    Verfahrenstabelle meldet das geaenderte Ergebnis."""
+    from statik3d import rechenverfahren as rv
+    from statik3d.model import Material, Model, Section
+    mc = _schraube(640e6, None, "S355")
+    ftrd = 0.9 * 510e6 * A_S_M16 / 1.25
+    check(f"Schraube M16, f_y 640 mit Sorte S355 ohne Wert f_u: f_ub 510 der Sorte, η = {N_ZUG / ftrd:.5f}",
+          mc.art == "Schraube" and not getattr(mc, "fehler", "") and abs(float(mc.util) - N_ZUG / ftrd) < 1e-9,
+          f"η = {float(mc.util or 0.0):.5f}")
+    alt = Material("X", 210e9, 0.3, 7850.0, 1.2e-5, 640e6, None, "S355").ultimate_strength(0.016)
+    check("… bisher (Material.ultimate_strength) 1,3 · 640 = 832 N/mm², η = 1,06327",
+          abs(alt - 832e6) < 1.0, f"{alt / 1e6:.1f} N/mm²")
+    mk = rv.merkmal("schraubenstab_fu")
+
+    def modell(fy, fu, sorte):
+        m = Model("S")
+        m.add_material(Material("X", 210e9, 0.3, 7850.0, 1.2e-5, fy, fu, sorte))
+        sec = Section.circle("Rund 16", 0.016)
+        sec.gewinde = "M16"
+        m.add_section(sec)
+        a, b = m.add_node(0, 0, 0), m.add_node(2.0, 0, 0)
+        m.add_element("truss", [a, b], "X", sec.name)
+        return m
+    check("Merkmal „schraubenstab_fu“: f_y 640 mit Sorte S355, ohne Wert f_u - gemeldet (η 1,06327 → 1,73459)",
+          mk.betrifft(modell(640e6, None, "S355")))
+    check("… f_y 640 ohne f_u und Sorte - gemeldet (wie bisher)", mk.betrifft(modell(640e6, None, "")))
+    check("… f_u 800 angegeben, nur Sorte S355 - nicht gemeldet (Ergebnis unverändert)",
+          not mk.betrifft(modell(640e6, 800e6, "S355")) and not mk.betrifft(modell(None, None, "S355")))
+
+
 def _traeger(fy, fu, sorte=""):
     from statik3d import mesher
     from statik3d.model import Material, Model, Section
@@ -136,7 +172,7 @@ def test_bolzen_bleibt():
 
 
 def main():
-    for t in (test_schraubenstab, test_vorschlag, test_bolzen_bleibt):
+    for t in (test_schraubenstab, test_mischfall_sorte, test_vorschlag, test_bolzen_bleibt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

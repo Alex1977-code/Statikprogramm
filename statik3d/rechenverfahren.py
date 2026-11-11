@@ -97,6 +97,12 @@ class Merkmal:
     #: Ergebnis dieses Modells, gleich wie alt; ``vorschlag`` nennt den Weg
     import_korrektur: bool = False
     vorschlag: str = ""
+    #: Korrektur, die erst mit neu erzeugten Kombinationen wirkt (11.11.2026, Befunde 41,
+    #: 42, 44 der Pruefagenten): die alten Faktoren stehen im Modell, ein Neurechnen
+    #: aendert nichts. Die Pruefung am Modell gibt den Text des Status zurueck (wo, und
+    #: was zu tun ist) oder "" - der Status gilt dann unabhaengig vom Alter der
+    #: Ergebnisdatei, auch fuer eine neue Rechnung, bis die Kombinationen neu erzeugt sind
+    im_modell: Optional[Callable[[Any], str]] = field(default=None, repr=False)
 
     def text(self, wert) -> str:
         return str(self.texte.get(wert, wert))
@@ -240,27 +246,124 @@ def _kombination_610b(model) -> bool:
     return False
 
 
-def _din19704_kategorie_fehlt(model) -> bool:
-    """Ein Lastfall mit einer Einwirkung der DIN 19704 (Eigengewicht Ausruestung,
-    Wasserdruck, Eis, Schwall, Wind bei Bewegung, Antriebsmoment, Anprall,
-    Verklemmen), der in keiner Kombination des Generators nach DIN EN 1990 steht -
-    bis zum 09.11.2026 liess der Generator solche Lastfaelle still weg (Befund A5
-    der Pruefagenten). Kombinationen aus Dateien ohne Fingerabdruck zaehlen mit
-    der Beschreibung „auto…“."""
-    from .model import KATEGORIEN_DIN19704_EN1990
-    faelle = [n for n, lc in (getattr(model, "load_cases", None) or {}).items()
-              if getattr(lc, "category", "") in KATEGORIEN_DIN19704_EN1990
-              and not getattr(lc, "faktorisiert", False)]
-    if not faelle:
-        return False
-    erzeugt = [c for c in (getattr(model, "combinations", None) or {}).values()
-               if getattr(c, "erzeugt", "") == "EN 1990"
-               or (not getattr(c, "erzeugt", "")
-                   and str(getattr(c, "description", "") or "").startswith("auto"))]
+def _xi_alte_faktoren(model) -> list:
+    """Die Kombinationen des Generators nach Regel 6.10b (Beschreibung „auto: 6.10b…“),
+    deren gespeicherte Faktoren noch der Regel vor dem 09.11.2026 folgen (Befund 41):
+    eine Vorspannung oder Setzung - in einer Kombination „G günstig“ jede staendige
+    Last - steht nicht mit ihrem γ ohne ξ darin. Erkannt an den Faktoren selbst, nicht
+    am Alter der Datei: erst neu erzeugte Kombinationen tragen die richtigen."""
+    from .combinations import _gamma
+    ds = getattr(model, "design", None)
+    faelle = getattr(model, "load_cases", None) or {}
+    namen = []
+    for name, c in (getattr(model, "combinations", None) or {}).items():
+        desc = str(getattr(c, "description", "") or "")
+        if not desc.startswith("auto") or "6.10b" not in desc:
+            continue
+        guenstig = "G guenstig" in desc or "G günstig" in desc
+        for k, f in (getattr(c, "factors", None) or {}).items():
+            lc = faelle.get(k)
+            if lc is None or getattr(lc, "faktorisiert", False) or not lc.is_permanent:
+                continue
+            if not (guenstig or lc.category in ("P", "SET")):
+                continue
+            soll = _gamma(lc, ds, guenstig)
+            if abs(float(f) - soll) > 1e-6 * max(1.0, abs(soll)):
+                namen.append(str(name))
+                break
+    return namen
+
+
+def _kurz(namen, n: int = 6) -> str:
+    return ", ".join(namen[:n]) + (" …" if len(namen) > n else "")
+
+
+def _xi_im_modell(model) -> str:
+    from .combinations import gehoert_dem_generator
+    namen = _xi_alte_faktoren(model)
+    if not namen:
+        return ""
+    kombis = getattr(model, "combinations", None) or {}
+    hand = [n for n in namen if not gehoert_dem_generator(kombis[n])]
+    return (f"die Kombinationen {_kurz(namen)} tragen noch die Faktoren von vor dem 09.11.2026 "
+            "(ξ auch auf P bzw. das günstige G) – Lasten › „EN 1990…“: die Kombinationen neu erzeugen"
+            + (f" (von Hand geänderte ersetzt der Generator nicht: in {_kurz(hand)} die Faktoren prüfen)"
+               if hand else "") + ", dann neu rechnen")
+
+
+def _xi_im_ergebnis(model, an) -> str:
+    """Gerechnete Kombinationen mit den alten 6.10b-Faktoren."""
+    gerechnet = {str(n) for n in (getattr(an, "combinations", None) or {})}
+    namen = [n for n in _xi_alte_faktoren(model) if n in gerechnet]
+    return ("Kombinationen " + _kurz(namen)) if namen else ""
+
+
+def _en1990_erzeugt(c) -> bool:
+    """Vom Generator nach DIN EN 1990 erzeugt (aus Dateien ohne Fingerabdruck: die
+    Beschreibung „auto…“)."""
+    return (getattr(c, "erzeugt", "") == "EN 1990"
+            or (not getattr(c, "erzeugt", "") and str(getattr(c, "description", "") or "").startswith("auto")))
+
+
+def _din19704_fehlende(model) -> list:
+    """[(Lastfall, Kategorie)] der Lastfaelle mit einer Einwirkung der DIN 19704, die
+    der Generator nach DIN EN 1990 bis zum 09.11.2026 still wegliess (Befund A5 der
+    Pruefagenten), und die noch fehlen - nur in einem Modell mit Kombinationen dieses
+    Generators. Eigengewicht Ausruestung, Wasserdruck, Eis, Schwall, Wind bei
+    Bewegung, Antriebsmoment, Anprall, Verklemmen: in keiner dieser Kombinationen;
+    Erdbeben und Montage (fuer sie bildet er keine Kombination, Befund 44): in keiner
+    Kombination des Modells. Bemessungslastfaelle zaehlen nicht."""
+    from .model import KATEGORIEN_DIN19704_EN1990, KATEGORIEN_OHNE_EN1990
+    kombis = list((getattr(model, "combinations", None) or {}).values())
+    erzeugt = [c for c in kombis if _en1990_erzeugt(c)]
     if not erzeugt:
-        return False
-    return any(all(abs(float((getattr(c, "factors", None) or {}).get(n, 0.0))) < 1e-12
-                   for c in erzeugt) for n in faelle)
+        return []
+
+    def in_keiner(n, liste):
+        return all(abs(float((getattr(c, "factors", None) or {}).get(n, 0.0))) < 1e-12
+                   and not any(abs(float(a.get(n, 0.0))) >= 1e-12 for a in (getattr(c, "alternativen", None) or []))
+                   for c in liste)
+    aus = []
+    for n, lc in (getattr(model, "load_cases", None) or {}).items():
+        kat = getattr(lc, "category", "")
+        if getattr(lc, "faktorisiert", False):
+            continue
+        if (kat in KATEGORIEN_DIN19704_EN1990 and in_keiner(n, erzeugt)) \
+                or (kat in KATEGORIEN_OHNE_EN1990 and in_keiner(n, kombis)):
+            aus.append((str(n), kat))
+    return aus
+
+
+def _din19704_kategorie_fehlt(model) -> bool:
+    """Ein Lastfall mit einer Einwirkung der DIN 19704, der in keiner Kombination des
+    Generators nach DIN EN 1990 steht (Erdbeben, Montage: in keiner Kombination) -
+    :func:`_din19704_fehlende`."""
+    return bool(_din19704_fehlende(model))
+
+
+def _din19704_im_modell(model) -> str:
+    from .model import KATEGORIEN_OHNE_EN1990
+    fehlen = _din19704_fehlende(model)
+    if not fehlen:
+        return ""
+    teile = []
+    gen = [n for n, k in fehlen if k not in KATEGORIEN_OHNE_EN1990]
+    ohne = [f"{n} ({'Erdbeben' if k == 'ERD' else 'Montage'})" for n, k in fehlen if k in KATEGORIEN_OHNE_EN1990]
+    if gen:
+        teile.append(f"{_kurz(gen)} in keiner nach EN 1990 erzeugten Kombination – Lasten › „EN 1990…“: "
+                     "die Kombinationen neu erzeugen, dann neu rechnen")
+    if ohne:
+        teile.append(f"{_kurz(ohne)} in keiner Kombination – die Kombinationen "
+                     "mit Lasten › „DIN 19704“ bilden oder von Hand anlegen, dann neu rechnen")
+    return "; ".join(teile)
+
+
+def _en1990_im_ergebnis(model, an) -> str:
+    """Gerechnete Kombinationen des Generators nach DIN EN 1990."""
+    kombis = getattr(model, "combinations", None) or {}
+    namen = sorted(str(n) for n in (getattr(an, "combinations", None) or {})
+                   if n in kombis and _en1990_erzeugt(kombis[n]))
+    return ("Kombinationen " + _kurz(namen)) if namen else ""
 
 
 def _laminat_gekoppelt_mit_temperatur(model) -> bool:
@@ -296,10 +399,24 @@ def _laminat_gekoppelt_mit_temperatur(model) -> bool:
     return False
 
 
+def _fu_anders_als_bisher(mat, t: float) -> bool:
+    """Liest der Nachweis heute ein anderes f_u als bis zum 09.11.2026? Bisher
+    Material.ultimate_strength (mit f_y und ohne Wert f_u: 1,3 f_y, auch wenn eine
+    Stahlsorte angegeben ist), heute Material.zugfestigkeit_angegeben (Wert, Dicke,
+    Stahlsorte, sonst keins). Verschieden ist es ohne f_u ganz und - Befund 1 der
+    Pruefagenten, 11.11.2026 - bei f_y mit Stahlsorte ohne Wert f_u: dann gilt heute
+    das f_u der Sorte statt 1,3 f_y (Schraubenstab M16, f_y 640, S355: η 1,7346
+    statt 1,0633)."""
+    neu = mat.zugfestigkeit_angegeben(t)
+    alt = float(mat.ultimate_strength(t) or 0.0)
+    return neu is None or abs(float(neu) - alt) > 1e-9 * max(1.0, alt)
+
+
 def _schraubenstab_ohne_fu(model) -> bool:
     """Ein Stab mit Gewinde (Nachweis als Schraube), dessen Werkstoff f_y, aber
-    kein f_u angibt - dort rechnete der Nachweis bis zum 09.11.2026 still mit
-    f_ub = 1,3 f_y (Nebenbefund 15); jetzt wird er nicht gefuehrt."""
+    keinen Wert f_u angibt - dort rechnete der Nachweis bis zum 09.11.2026 still
+    mit f_ub = 1,3 f_y (Nebenbefund 15), auch neben einer Stahlsorte; jetzt nimmt
+    er das f_u der Sorte oder wird ohne sie nicht gefuehrt (:func:`_fu_anders_als_bisher`)."""
     from .ec3 import schraubenstab as _ss
     from .joints.bolts import SIZES
     for e in getattr(model, "elements", None) or []:
@@ -310,7 +427,7 @@ def _schraubenstab_ohne_fu(model) -> bool:
         if mat is None or sec is None or not _ss.ist_schraube(sec, mat):
             continue
         d = SIZES[_ss.schraubengroesse(sec)][0] * 1e-3
-        if mat.yield_strength(d) and not mat.zugfestigkeit_angegeben(d):
+        if mat.yield_strength(d) and _fu_anders_als_bisher(mat, d):
             return True
     return False
 
@@ -379,9 +496,11 @@ def _zwang_an_feder(model) -> bool:
 
 
 def _anschluss_ohne_festigkeit(model) -> bool:
-    """Ein nachzuweisender Anschluss, dessen Werkstoff f_y oder f_u nicht angibt -
-    dort rechnete der Nachweis bis zum 09.11.2026 still mit 1,3 f_y bzw. S355
-    (Befund A23 der Pruefagenten); jetzt wird er nicht gefuehrt."""
+    """Ein nachzuweisender Anschluss, dessen Werkstoff f_y oder einen Wert f_u nicht
+    angibt - dort rechnete der Nachweis bis zum 09.11.2026 still mit 1,3 f_y bzw.
+    S355 (Befund A23 der Pruefagenten); jetzt nimmt er das f_u der Stahlsorte oder
+    wird nicht gefuehrt (Befund 1, 11.11.2026: f_y mit Sorte, ohne Wert f_u -
+    Lasche S235 f_u 360 statt 305,5 N/mm²)."""
     elemente = getattr(model, "elements", None) or []
     for j in (getattr(model, "joints", None) or {}).values():
         if not getattr(j, "design", True):
@@ -395,7 +514,7 @@ def _anschluss_ohne_festigkeit(model) -> bool:
         if mat is None or sec is None:
             continue
         t = float(getattr(sec, "t_max", 0.0) or 0.0)
-        if not mat.yield_strength(t) or not mat.zugfestigkeit_angegeben(t):
+        if not mat.yield_strength(t) or _fu_anders_als_bisher(mat, t):
             return True
     return False
 
@@ -719,8 +838,9 @@ def _alpha_cr_im_ergebnis(an, _an2=None) -> str:
     komb = getattr(th2, "kombinationen", None) or {}
     namen = [str(n) for n, i in komb.items() if getattr(i, "alpha_cr", None) is not None]
     for n, r in (_ergebnis_paare(an)):
-        if getattr(r, "kind", "") == "buckling" or str((getattr(r, "info", None) or {}).get("theorie", "")
-                                                       ).startswith("II"):
+        th = str((getattr(r, "info", None) or {}).get("theorie", ""))
+        # „III. Ordnung“ beginnt auch mit „II“ - Theorie III ist nicht gemeint (Befund 45)
+        if getattr(r, "kind", "") == "buckling" or (th.startswith("II") and not th.startswith("III")):
             namen.append(str(n))
     namen = sorted(set(namen))
     return ("alpha_cr bzw. Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")
@@ -1109,7 +1229,10 @@ MERKMALE: list = [
         wechsel=(Wechsel(stand=11, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Kombination nach Regel 6.10b",
-        betrifft=_kombination_610b),
+        # Befund 41 (11.11.2026): die Faktoren stehen in den gespeicherten Kombinationen;
+        # erst neu erzeugte sind richtig - Status am Modell, bis dahin auch nach dem Neurechnen
+        betrifft=_kombination_610b, im_modell=_xi_im_modell, im_ergebnis=_xi_im_ergebnis,
+        vorschlag="Lasten › „EN 1990…“: die Kombinationen neu erzeugen, dann neu rechnen"),
     Merkmal(
         # Befund A11 der Pruefagenten (09.11.2026): eine Zwangsverformung wirkte nur an
         # starren gesperrten FHG; an einer Feder blieb sie still ohne Wirkung. Jetzt
@@ -1126,11 +1249,11 @@ MERKMALE: list = [
         # still mit 1,3 f_y, ganz ohne Festigkeiten mit S355 (Lasche η 1,048 -> 1,573).
         # Festlegung des Anwenders: Meldung statt Vorgabewert. Fehlerkorrektur
         name="anschluss_festigkeit", titel="Festigkeiten im Anschlussnachweis",
-        texte={"alt": "fehlendes f_u als 1,3 f_y, fehlende Festigkeiten als S355",
-               "neu": "ohne f_y oder f_u kein Anschlussnachweis, mit Meldung"},
+        texte={"alt": "fehlendes f_u als 1,3 f_y (auch neben einer Stahlsorte), fehlende Festigkeiten als S355",
+               "neu": "f_y und f_u aus dem Wert oder der Stahlsorte, ohne sie kein Anschlussnachweis, mit Meldung"},
         wechsel=(Wechsel(stand=13, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Anschluss mit Werkstoff ohne f_y oder f_u",
+        modellmerkmal="Anschluss mit Werkstoff ohne f_y oder ohne Wert f_u",
         betrifft=_anschluss_ohne_festigkeit),
     Merkmal(
         # Befund A17 der Pruefagenten (09.11.2026): eine Kontaktbedingung nur mit Koerpern
@@ -1215,8 +1338,10 @@ MERKMALE: list = [
         wechsel=(Wechsel(stand=21, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Lastfall mit einer Einwirkung der DIN 19704, der in keiner nach EN 1990 "
-                      "erzeugten Kombination steht",
-        betrifft=_din19704_kategorie_fehlt, im_ergebnis=_kombinationen_im_ergebnis,
+                      "erzeugten Kombination steht (Erdbeben, Montage: in keiner Kombination)",
+        # Befunde 42 und 44 (11.11.2026): Status am Modell, bis die Kombinationen neu
+        # erzeugt sind - ein Neurechnen allein aendert nichts
+        betrifft=_din19704_kategorie_fehlt, im_modell=_din19704_im_modell, im_ergebnis=_en1990_im_ergebnis,
         vorschlag="Lasten › „EN 1990…“: die Kombinationen neu erzeugen, dann neu rechnen"),
     # Nebenbefund 14 (09.11.2026): die Rueckrechnung der Schalenmomente zog
     # bei einem Laminat mit Kopplung (B != 0) den Anteil B alpha dT nicht ab -
@@ -1233,11 +1358,11 @@ MERKMALE: list = [
     # statt Vorgabewert (Festlegung des Anwenders). Fehlerkorrektur
     Merkmal(
         name="schraubenstab_fu", titel="Zugfestigkeit im Nachweis der Stäbe mit Gewinde",
-        texte={"alt": "ohne f_u im Werkstoff mit 1,3·f_y nachgewiesen",
-               "neu": "ohne f_u im Werkstoff kein Nachweis, sondern Meldung"},
+        texte={"alt": "ohne Wert f_u im Werkstoff mit 1,3·f_y nachgewiesen, auch neben einer Stahlsorte",
+               "neu": "f_u aus dem Wert oder der Stahlsorte, ohne beides kein Nachweis, sondern Meldung"},
         wechsel=(Wechsel(stand=23, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Stab mit Gewinde, dessen Werkstoff f_y, aber kein f_u angibt",
+        modellmerkmal="Stab mit Gewinde, dessen Werkstoff f_y, aber keinen Wert f_u angibt",
         betrifft=_schraubenstab_ohne_fu),
     # Nebenbefund 16 b (09.11.2026): die geometrische Steifigkeit eines Stabes
     # mit Versatz wirkte auf die Knoten statt auf die Stabenden - Druckstab
@@ -1546,10 +1671,12 @@ def aeltere(model, merkmale: dict) -> list:
     """[(Merkmal, Wert der Datei, Wert heute, Wechsel)] fuer jedes Merkmal (ohne die
     Korrekturen am Import), das dieses Modell hat (``betrifft``) und mit dem die
     Datei anders gerechnet ist als heute; ``Wechsel`` ist der erste seither (seine
-    ``art`` stuft ein). Ein unbekannter Wert (None) steht mit None darin."""
+    ``art`` stuft ein). Ein unbekannter Wert (None) steht mit None darin. Merkmale, die
+    erst mit neu erzeugten Kombinationen wirken (``im_modell``), stehen nicht darin:
+    ihren Status sagt das Modell selbst (:func:`modell_teile`), nicht das Alter der Datei."""
     aus = []
     for mk in MERKMALE:
-        if mk.import_korrektur or not _sicher(lambda: mk.betrifft(model)):
+        if mk.import_korrektur or mk.im_modell is not None or not _sicher(lambda: mk.betrifft(model)):
             continue
         wert = (merkmale or {}).get(mk.name)
         jetzt = _sicher(lambda: mk.aktuell(model))
@@ -1562,6 +1689,31 @@ def aeltere(model, merkmale: dict) -> list:
 
 def _seit(mk, jetzt, w) -> str:
     return next((x.datum for x in reversed(mk.wechsel) if x.neu == jetzt), w.datum)
+
+
+def modell_teile(model, analyse=None) -> list:
+    """Die Teile des Status aus Korrekturen, die erst mit neu erzeugten Kombinationen
+    wirken (``Merkmal.im_modell``, Befunde 41, 42, 44 vom 11.11.2026): solange das
+    Modell die alten Kombinationen traegt, gilt der Status fuer jede Ergebnisdatei
+    und fuer eine neue Rechnung. Mit ``analyse`` nur, wenn eine betroffene
+    Kombination gerechnet ist."""
+    teile = []
+    for mk in MERKMALE:
+        if mk.im_modell is None:
+            continue
+        wo = _sicher(lambda: mk.im_modell(model))
+        if not wo:
+            continue
+        if analyse is not None and mk.im_ergebnis is not None                 and _sicher(lambda: mk.im_ergebnis(model, analyse)) == "":
+            continue                    # keine betroffene Kombination gerechnet
+        teile.append(f"{mk.titel}: {wo}")
+    return teile
+
+
+def modell_betroffen(model, analyse=None) -> str:
+    """Der Status einer neuen Rechnung aus :func:`modell_teile` - oder ""."""
+    teile = _sicher(lambda: modell_teile(model, analyse)) or []
+    return BETROFFEN + ": " + "; ".join(teile) if teile else ""
 
 
 def bewerten(model, merkmale: dict, analyse=None) -> dict:
@@ -1598,6 +1750,7 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
             w = mk.wechsel[-1]
             betr.append(f"{mk.titel}: Modell vor dem {w.datum} aus RFEM übernommen ({mk.text('alt')}"
                         + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
+    betr += _sicher(lambda: modell_teile(model, analyse)) or []
     return {"hinweis": ("gerechnet mit älterem Rechenverfahren: " + "; ".join(hinw)
                         + " – die Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren")
             if hinw else "",

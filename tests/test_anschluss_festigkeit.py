@@ -82,6 +82,22 @@ def test_verfahrenstabelle():
     check("Verfahrenstabelle: „anschluss_festigkeit“ Fehlerkorrektur Stand 13, nur Anschluss ohne f_u",
           mk is not None and mk.wechsel[-1].art == rv.FEHLERKORREKTUR and mk.wechsel[-1].stand == 13
           and rv.VERFAHRENSSTAND >= 13 and mk.betrifft(ja) and not mk.betrifft(nein))
+    # Befund 1 (11.11.2026): f_y mit Stahlsorte, ohne Wert f_u - bisher 1,3 · 235 = 305,5 N/mm²
+    # (Material.ultimate_strength), jetzt f_u 360 der Sorte S235. Das neue f_u ist richtig,
+    # aber das Ergebnis aendert sich: das Merkmal muss es melden. Nur Sorte (f_u der Sorte
+    # vorher wie nachher) aendert nichts.
+    from statik3d.joints import anschluss
+    misch = _nachweis(235e6, None, "S235", "lasche")
+    j = next(iter(misch.modell.joints.values()))
+    fu_neu = anschluss.vorlage(misch.modell, j).fu
+    fu_alt = misch.modell.materials["X"].ultimate_strength(0.0107)
+    check("f_y 235 mit Sorte S235, ohne Wert f_u: Vorlage f_u 360 (Sorte), bisher 305,5 N/mm² (1,3 f_y)",
+          abs(fu_neu - 360e6) < 1.0 and abs(fu_alt - 305.5e6) < 1.0,
+          f"neu {fu_neu / 1e6:.1f}, bisher {fu_alt / 1e6:.1f} N/mm²")
+    check("… Merkmal „anschluss_festigkeit“ meldet den Mischfall (Ergebnis geändert)",
+          mk.betrifft(misch.modell))
+    check("… nur Sorte S235 (f_u vorher wie nachher 360): nicht gemeldet",
+          not mk.betrifft(_nachweis(None, None, "S235", "lasche").modell))
 
 
 def main():
