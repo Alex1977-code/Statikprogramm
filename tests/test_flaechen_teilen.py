@@ -391,6 +391,69 @@ def test_teilstellen_fuer_die_verfahrenstabelle():
           aus == {"stoss": ["F"], "stoss_geteilt": [], "rippe": ["P"], "rippe_geteilt": []}, str(aus))
 
 
+def bogenstoss(nur_g1=False, bogen_geteilt=False) -> Model:
+    """Stoss wie (a), aber die rechte Randlinie von F ist ein Bogen
+    (2 | 0) - (2,3 | 1) - (2 | 2); G1 und G2 haben je einen Teilbogen bis zum
+    gemeinsamen Knoten (2,3 | 1) (Befund 38 vom 11.11.2026). ``nur_g1``: nur
+    G1, ohne gemeinsame Linie mit irgendeiner Flaeche. ``bogen_geteilt``: F
+    hat rechts die beiden Teilboegen statt des einen Bogens (von Hand geteilt)."""
+    import math
+    cx = 0.48333333333333334
+    R = 2.3 - cx
+
+    def auf(phi):
+        return (cx + R * math.cos(phi), 1 + R * math.sin(phi), 0.0)
+    p0, p2 = math.atan2(-1, 2 - cx), math.atan2(1, 2 - cx)
+    m = modell(form=2, ordnung=1)
+    k = [m.add_node(*p) for p in [(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0), (2.3, 1, 0),
+                                   (3, 0, 0), (3, 1, 0), (3, 2, 0)]]
+    m.add_line("R0", [k[0], k[1]])
+    m.add_line("R2", [k[2], k[3]])
+    m.add_line("R3", [k[3], k[0]])
+    m.add_line("B1", [k[1], k[4]], "arc", punkte=[auf(p0), auf(p0 / 2), auf(0.0)])
+    m.add_line("B2", [k[4], k[2]], "arc", punkte=[auf(0.0), auf(p2 / 2), auf(p2)])
+    if bogen_geteilt:
+        m.add_flaeche("F", ["R0", "B1", "B2", "R2", "R3"], material="S235", dicke="D")
+    else:
+        m.add_line("Bo", [k[1], k[2]], "arc", punkte=[auf(p0), auf(0.0), auf(p2)])
+        m.add_flaeche("F", ["R0", "Bo", "R2", "R3"], material="S235", dicke="D")
+    m.add_line("G0", [k[1], k[5]])
+    m.add_line("G1r", [k[5], k[6]])
+    m.add_line("Gm", [k[6], k[4]])
+    m.add_flaeche("G1", ["G0", "G1r", "Gm", "B1"], material="S235", dicke="D")
+    if not nur_g1:
+        m.add_line("H1r", [k[6], k[7]])
+        m.add_line("H2", [k[7], k[2]])
+        m.add_flaeche("G2", ["Gm", "H1r", "H2", "B2"], material="S235", dicke="D")
+    return m
+
+
+def test_knoten_auf_bogen():
+    """Befund 38 (11.11.2026): ein fremder Knoten im Innern einer gekruemmten
+    Randlinie wird nicht geteilt (Handbuch) - aber das Protokoll nennt ihn,
+    und die Abnahme warnt mit „Flächen ohne gemeinsame Linie“. Bis dahin
+    schwiegen beide: Protokoll ohne Zeile, Abnahme 0."""
+    for name, m in (("G1 und G2", bogenstoss()), ("nur G1 (keine gemeinsame Linie)", bogenstoss(nur_g1=True))):
+        log = vernetzen(m)
+        z = [x for x in log if "Knoten 5" in x and "gekrümmten Linie Bo" in x and "nicht verbunden" in x]
+        ab = diagnose._abnahme_schalen_ohne_linie(m)
+        ab_kurve = [b for b in ab if "gekrümmten Linie Bo" in b.text]
+        alle = [b for b in diagnose.abnahme(m, warnungen=True) if b.pruefung == "Flächen ohne gemeinsame Linie"]
+        g = [f for f in ("G1", "G2") if f in m.flaechen]
+        check(f"Bogenstoß {name}: Knoten 5 nicht in F (unverbunden wie bisher), eine Protokollzeile, "
+              "Abnahme warnt je Flächenpaar",
+              4 not in netzknoten(m, "F") and len(z) == 1 and len(ab_kurve) == len(g)
+              and len(alle) == len(g) and all(b.stufe == "WARNUNG" for b in alle),
+              (z[0][:100] if z else "keine Zeile") + f"; Abnahme {len(ab_kurve)} / gesamt {len(alle)}")
+    # von Hand geteilt: gemeinsame Teilboegen, verbunden, keine Zeile, keine Warnung
+    m = bogenstoss(bogen_geteilt=True)
+    log = vernetzen(m)
+    z = [x for x in log if "gekrümmten Linie" in x]
+    ab = diagnose._abnahme_schalen_ohne_linie(m)
+    check("Bogen von Hand am Knoten geteilt: Knoten 5 gemeinsam, keine Zeile, keine Warnung",
+          4 in netzknoten(m, "F") and not z and not ab, f"Zeilen {len(z)}, Abnahme {len(ab)}")
+
+
 def main():
     for t in (test_stoss_knoten_auf_linie,
               test_stoss_protokoll_und_geometrie,
@@ -401,7 +464,8 @@ def main():
               test_nicht_teilbar_bleibt_unverbunden,
               test_abnahme_sieht_auf_das_netz,
               test_weg_der_oberflaeche,
-              test_teilstellen_fuer_die_verfahrenstabelle):
+              test_teilstellen_fuer_die_verfahrenstabelle,
+              test_knoten_auf_bogen):
         try:
             t()
         except Exception as ex:               # noqa: BLE001

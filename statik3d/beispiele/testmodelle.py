@@ -197,8 +197,8 @@ def stemmtor(w):
 
     def abb(s, n, z):
         return s * es + n * en + np.array([0, 0, z])
-    riegel = [z * (H / 8.0) for z in (0.25, 1.35, 2.5, 3.7, 5.0, 6.4, 7.85)]
-    haut = platten_raster(m, b, abb, S, H, d, riegel, 0.30, [S * i / 4 for i in (1, 2, 3)], 0.25, False,
+    riegel = [z * (H / 8.0) for z in STEMMTOR_RIEGEL]
+    haut = platten_raster(m, b, abb, S, H, d, riegel, STEMMTOR_GURT, [S * i / 4 for i in (1, 2, 3)], 0.25, False,
                           T[th_], T[0.012], T[0.025], T[0.012], T[0.020])
     b.faces_anlegen()
 
@@ -236,6 +236,42 @@ def _stau_pruefen(w):
     return f
 
 
+#: Lage der Riegel als Anteil von H/8 (Stemmtor) bzw. H/5 (Hubtor) und die
+#: Breite ihrer Gurte [m]. Die Gurte benachbarter Riegel duerfen sich nicht
+#: ueberdecken (Befund 47 vom 11.11.2026: Stemmtor 2,0 m hoch gab 8, Hubtor
+#: 1,0 m 18 Paare doppelter Gurtflaechen - doppelte Steifigkeit, nicht baubar).
+STEMMTOR_RIEGEL, STEMMTOR_GURT = (0.25, 1.35, 2.5, 3.7, 5.0, 6.4, 7.85), 0.30
+HUBTOR_RIEGEL, HUBTOR_GURT = (0.4, 1.7, 3.1, 4.6), 0.40
+
+
+def hoehe_min_gurte(anteile, teiler: float, gurt: float) -> float:
+    """Kleinste Hoehe [m, auf cm aufgerundet], bei der sich die Gurte
+    benachbarter Riegel nicht ueberdecken: kleinster Abstand >= Gurtbreite."""
+    a = sorted(anteile)
+    lichte = min(y - x for x, y in zip(a[:-1], a[1:])) / teiler
+    return math.ceil(gurt / lichte * 100.0 - 1e-9) / 100.0
+
+
+def _gurte_pruefen(w, anteile, teiler, gurt):
+    """Dieselbe Bedingung wie in hilfen.platten_raster: kleinster
+    Riegelabstand mindestens die Gurtbreite."""
+    a = sorted(anteile)
+    abstand = min(y - x for x, y in zip(a[:-1], a[1:])) * w["hoehe"] / teiler
+    if abstand >= gurt - 1e-9:
+        return []
+    return [f"Höhe {zt(w['hoehe'])} m zu klein: die Gurte benachbarter Riegel ({zt(gurt * 1e3)} mm breit) "
+            f"überdecken sich, der kleinste Riegelabstand ist nur {zt(round(abstand * 1e3, 1))} mm. "
+            f"Mindestens {zt(hoehe_min_gurte(anteile, teiler, gurt))} m wählen"]
+
+
+def _stemmtor_pruefen(w):
+    return _stau_pruefen(w) + _gurte_pruefen(w, STEMMTOR_RIEGEL, 8.0, STEMMTOR_GURT)
+
+
+def _hubtor_pruefen(w):
+    return _stau_pruefen(w) + _gurte_pruefen(w, HUBTOR_RIEGEL, 5.0, HUBTOR_GURT)
+
+
 def hubtor(w):
     S, H, d = w["stuetzweite"], w["hoehe"], 1.0
     ow, uw = w["ow"], w["uw"]
@@ -247,10 +283,10 @@ def hubtor(w):
 
     def abb(s, n, z):
         return np.array([s, n, z])
-    riegel = [z * (H / 5.0) for z in (0.4, 1.7, 3.1, 4.6)]
+    riegel = [z * (H / 5.0) for z in HUBTOR_RIEGEL]
     ns = max(1, round(S / 2.0))
     schotte = [S * i / ns for i in range(1, ns)]
-    haut = platten_raster(m, b, abb, S, H, d, riegel, 0.40, schotte, 0.0, True,
+    haut = platten_raster(m, b, abb, S, H, d, riegel, HUBTOR_GURT, schotte, 0.0, True,
                           T[th_], T[0.015], T[0.030], T[0.012], T[0.025])
     b.faces_anlegen()
     linienlager(m, "Rollenbahn links", b.linien_wo(lambda X: abs(X[0]) < 1e-6 and abs(X[1] - d) < 1e-6), [1])

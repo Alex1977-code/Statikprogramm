@@ -1243,6 +1243,78 @@ def _abnahme_schalen_ohne_linie(model) -> list:
                           f"09.11.2026 teilt der Vernetzer solche Stellen im Netz (Knoten auf Linie, Linie "
                           f"in Fläche). Bleibt die Warnung danach, nennt das Protokoll des Vernetzens den "
                           f"Grund; dann die Linie bzw. die Fläche dort von Hand teilen.")))
+    aus.extend(_abnahme_knoten_auf_kurve(model, schalen, netzknoten, gemeldet))
+    return aus
+
+
+def _abnahme_knoten_auf_kurve(model, schalen: list, netzknoten, gemeldet: set) -> list:
+    """Teil von :func:`_abnahme_schalen_ohne_linie` fuer **gekruemmte**
+    Randlinien (Befund 38 vom 11.11.2026): liegt ein Linienknoten einer
+    anderen Schalenflaeche im Innern eines Bogens (Kreis, Spline ...), teilt
+    der Vernetzer dort nicht (mesher._teilplan), und der Stoss haengt nur an
+    den Enden des Bogens. Bis dahin sah die Abnahme nur gerade Strecken und
+    schwieg - entgegen dem Handbuch. Eine WARNUNG je Flaechenpaar, ausser die
+    Netzknoten der anderen Flaeche auf dem Bogen sind auch Netzknoten dieser
+    Flaeche (dann ist es verbunden)."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    from .mesher import GERADE_LINIEN, TEIL_FANG, kurve_fein, abstand_zur_kette, fremde_knoten_auf_kurve
+    lines = getattr(model, "lines", None) or {}
+    nn = len(model.nodes)
+
+    def gerade(ln) -> bool:
+        return str(getattr(ln, "typ", "polyline") or "polyline").lower() in GERADE_LINIEN
+
+    besitz: dict = {}                       # Linienknoten -> Flaechen
+    kurven = []                             # (Flaeche, Linie)
+    for f in schalen:
+        for x in dict.fromkeys(f.linien or []):
+            ln = lines.get(x)
+            if ln is None or len(ln.nodes) < 2 or not all(0 <= int(k) < nn for k in ln.nodes):
+                continue
+            for k in (ln.nodes if gerade(ln) else (ln.nodes[0], ln.nodes[-1])):
+                besitz.setdefault(int(k), set()).add(f.name)
+            if not gerade(ln):
+                kurven.append((f, x))
+    if not kurven or not besitz:
+        return []
+    X = np.asarray(model.nodes, float)
+    K = np.array(sorted(besitz), int)
+    baum = cKDTree(X[K])
+    nach_name = {f.name: f for f in schalen}
+    aus = []
+    for fa, x in kurven:
+        na = netzknoten(fa)
+        if not na:
+            continue                         # ohne Netz nichts zu beurteilen
+        treffer = fremde_knoten_auf_kurve(model, x, K, baum, besitz, [fa.name])
+        P = None
+        for k, _ab, fremd in treffer:
+            for fbn in sorted(fremd):
+                if (fa.name, fbn) in gemeldet or (fbn, fa.name) in gemeldet:
+                    continue
+                nb = netzknoten(nach_name[fbn])
+                if not nb:
+                    continue
+                if k in na:
+                    if P is None:
+                        P = kurve_fein(model, x)
+                    kb = np.fromiter(nb, int, len(nb))
+                    if len(P) >= 2:
+                        kb = kb[np.all((X[kb] >= P.min(axis=0) - TEIL_FANG)
+                                       & (X[kb] <= P.max(axis=0) + TEIL_FANG), axis=1)]
+                        auf = kb[abstand_zur_kette(P, X[kb]) < TEIL_FANG]
+                    else:
+                        auf = kb[:0]
+                    if all(int(j) in na for j in auf):
+                        continue             # im Netz verbunden
+                gemeldet.add((fa.name, fbn))
+                aus.append(Befund(
+                    pruefung="Flächen ohne gemeinsame Linie", objekt=f"{fa.name}/{fbn}", stufe="WARNUNG",
+                    text=(f"Knoten {k + 1} von {fbn} liegt auf der gekrümmten Linie {x} von {fa.name} - das "
+                          f"Netz verbindet die Flächen dort nicht, sie hängen nur an den Enden der Linie "
+                          f"zusammen. Gekrümmte Linien teilt der Vernetzer nicht; die Linie dort von Hand "
+                          f"teilen (zwei Bögen mit dem Knoten als gemeinsamem Ende).")))
     return aus
 
 

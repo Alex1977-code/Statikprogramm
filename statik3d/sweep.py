@@ -1094,12 +1094,16 @@ def _lagen(model: Model, erk: dict, teilung, h: float) -> "tuple[int, str]":
     return int(L), ""
 
 
-def _quaderkanten(model: Model, koerper) -> "list | None":
-    """Die drei Kantenrichtungen eines abgebildet vernetzten Sechsflaechners
-    (sechs Vierecke, acht Eckknoten) als [x-Linien, y-Linien, z-Linien] in
-    der Zaehlung von mesher._hex_netz - sonst None."""
-    from .mesher import quader_kanten, quader_richtungen
-    from .importers.rfem6_db import _hex_order
+def _quaderkanten(model: Model, koerper) -> "tuple | None":
+    """(Linien, Teilung) der drei Kantenrichtungen eines abgebildet
+    vernetzten Sechsflaechners (sechs Vierecke, acht Eckknoten): die Linien
+    als [Richtung 0->1, 0->3, 0->4] in der Zaehlung von mesher._hex_netz und
+    je Richtung die Teilung des Koerpers, **so zugeordnet wie im Vernetzer**
+    (mesher.quader_teilung: [nx, ny, nz] in den globalen Achsen) - sonst
+    None. Bis zum 11.11.2026 las lagenvorgabe die Teilung roh je Richtung
+    und ueberschrieb damit die richtig zugeordnete (Befund 36)."""
+    from .mesher import quader_kanten, quader_richtungen, quader_teilung
+    from .importers.rfem6_db import _hex_order, _hex_volumen
     flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
     if len(flaechen) != 6 or any(f is None for f in flaechen):
         return None
@@ -1109,7 +1113,10 @@ def _quaderkanten(model: Model, koerper) -> "list | None":
     order = _hex_order(ringe)
     if not order:
         return None
-    return quader_richtungen(quader_kanten(model, koerper, order))
+    if float(_hex_volumen(model.nodes[order])) < 0:      # wie mesher.mesh_koerper
+        order = order[4:] + order[:4]
+    teil, _achsen = quader_teilung(model, koerper, order)
+    return quader_richtungen(quader_kanten(model, koerper, order)), teil
 
 
 def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
@@ -1159,7 +1166,7 @@ def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
             flaechen = [model.flaechen[x] for x in k.flaechen]
             h = M3._kantenlaenge(model, k, float(hs.get(k.name, 0.0) or 0.0))
             teilung = M3.Linienteilung(model, flaechen, h, h_linien, h_flaechen, gemeinsam)
-            teil = (list(getattr(k, "teilung", None) or []) + [4, 4, 4])[:3]
+            quader, teil = quader
             for d, linien_d in enumerate(quader):
                 gem = [x for x in linien_d if x in teilung.gem_linien]
                 if not gem:

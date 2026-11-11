@@ -446,7 +446,9 @@ def _dreiecke_der_fuge(model: Model, flaechen: list) -> list:
     Die Aussennormale zeigt **aus dem Element heraus**. Sie wird nicht aus der
     Knotenreihenfolge geraten, sondern am gegenueberliegenden Knoten geprueft:
     die Normale zeigt von ihm weg. Ohne diese Probe waere ihr Vorzeichen
-    beliebig - und das Spaltelement traege dann Zug statt Druck.
+    beliebig - und das Spaltelement traege dann Zug statt Druck. Schalen
+    haben keinen gegenueberliegenden Knoten: ihre Normale ist die lokale
+    z-Achse aus der Knotenreihenfolge.
 
     Gerechnet wird im Block je (Elementtyp, Seite): hunderttausend Randseiten
     einzeln durch numpy zu schicken kostete zwoelf Sekunden je Durchgang.
@@ -475,9 +477,23 @@ def _dreiecke_der_fuge(model: Model, flaechen: list) -> list:
         vorn = list(SOLID_FACES[typ][seite])
         rest = [j for j in range(K.shape[1]) if j not in vorn]
         out.extend(_aussennormalen_block(model, elems, K[:, vorn], K[:, rest] if rest else None))
+    from .assemble import SHELL_TYPES
     for _k, elems in schalen.items():
         K = np.array([[int(x) for x in model.elements[e].nodes] for e in elems], dtype=int)
-        out.extend(_aussennormalen_block(model, elems, K, K[:, 3:] if K.shape[1] > 3 else None))
+        # Schalen: die Normale aus der Knotenreihenfolge (lokale z-Achse des
+        # Elements). Die uebrigen Knoten - vierter Eckknoten, Seitenmitten -
+        # liegen in der Ebene des Elements; an ihnen gemessen war das
+        # Vorzeichen Rundungsrauschen und abseits von z = 0 Zufall (Befund 4
+        # vom 11.11.2026: falscher FEHLER „Facetten nach beiden Seiten“ beim
+        # Flaechenlager in Flaechenachsen).
+        schale = np.array([model.elements[e].typ in SHELL_TYPES for e in elems], dtype=bool)
+        for maske, rest in ((schale, None), (~schale, K[:, 3:] if K.shape[1] > 3 else None)):
+            if maske.all():
+                out.extend(_aussennormalen_block(model, elems, K, rest))
+            elif maske.any():
+                idx = np.flatnonzero(maske)
+                out.extend(_aussennormalen_block(model, [elems[i] for i in idx], K[idx],
+                                                 rest[idx] if rest is not None else None))
     return out
 
 
