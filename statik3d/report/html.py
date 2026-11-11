@@ -1291,7 +1291,10 @@ class Report:
                 # Ohne gemeinsame Knoten der beiden Seiten verbindet dort
                 # nichts: das ist zu weich, nicht zu steif (Befund C4, 09.11.2026).
                 lose = [n for n in offen if kbs[n].verbindung(m) == 0]
-                offen = [n for n in offen if n not in lose]
+                # Nur einzelne gemeinsame Knoten (der Rand eigener Flaechen),
+                # dazwischen offen: ebenfalls zu weich (Befund 37, 11.11.2026).
+                teils = [n for n in offen if n not in lose and kbs[n].zu_weich(m)]
+                offen = [n for n in offen if n not in lose and n not in teils]
                 if offen:
                     b.append(("note", f"{len(offen)} Kontaktbedingung(en) sind "
                                       "nicht ausgeführt: "
@@ -1307,6 +1310,16 @@ class Report:
                                       + ". Die beiden Seiten haben dort im Netz keinen "
                                       "gemeinsamen Knoten; über die Fuge geht keine Kraft "
                                       "(zu weich)."))
+                if teils:
+                    b.append(("note", f"{len(teils)} Kontaktbedingung(en) sind "
+                                      "nicht ausgeführt und nur an einzelnen Knoten verbunden: "
+                                      + ", ".join(teils[:8])
+                                      + (" …" if len(teils) > 8 else "")
+                                      + ". Die beiden Seiten teilen dort im Netz nur einzelne "
+                                      "Knoten, etwa den gemeinsamen Rand eigener Flächen; "
+                                      "dazwischen ist die Fuge offen. Über die Fuge geht Druck "
+                                      "nur an diesen Knoten (zu weich); dort überträgt das "
+                                      "Modell auch Zug."))
                 if wartend:
                     b.append(("note", f"{len(wartend)} Kontaktbedingung(en) werden beim "
                                       "Vernetzen getrennt: " + ", ".join(wartend[:8])

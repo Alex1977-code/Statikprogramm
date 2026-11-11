@@ -1012,7 +1012,8 @@ def _eingabe_lager(model) -> list:
         if fremd and ne:
             aus.append(Befund(pruefung=PRUEFUNG_EINGABE, objekt=str(ss.name), element=fremd[0], elemente=fremd,
                               text=f"Flächenlager „{ss.name}“ nennt {_anzahl(len(fremd), 'Element', 'Elemente')}, "
-                                   f"die es nicht gibt (Element {', '.join(str(i) for i in fremd[:6])}"
+                                   f"{'das' if len(fremd) == 1 else 'die'} es nicht gibt "
+                                   f"(Element {', '.join(str(i) for i in fremd[:6])}"
                                    f"{' …' if len(fremd) > 6 else ''}). Netz geändert – Lager prüfen: "
                                    "dem Lager seine Elemente neu geben."))
         # A22: beim Loeschen oder Neuvernetzen entfallene Elemente
@@ -1201,7 +1202,7 @@ def _abnahme_schalen_ohne_linie(model) -> list:
                     if 1e-6 < t < 1 - 1e-6 and np.linalg.norm(p - (X[i0] + t * d)) < tol:
                         if verbunden(fa, fb, i0, i1, dazu=(k,)):
                             continue         # im Netz geteilt: gemeinsame Knoten
-                        grund = f"Knoten {k + 1} von {fb.name} liegt auf der Linie {ln} von {fa.name}"
+                        grund = f"Knoten {k} von {fb.name} liegt auf der Linie {ln} von {fa.name}"
                         break
                 if grund:
                     break
@@ -4786,12 +4787,17 @@ def steifigkeitsunterschied(model) -> "dict | None":
     Schale E·t, Volumen E·h (h = groesste Ausdehnung der Elementknoten).
     Elemente ohne Werkstoff, mit E, A, t oder L <= 0, abgeschaltete Staebe,
     Federn, Grenzschicht und ebene Elemente bleiben aussen vor - was dort
-    fehlt, meldet die Modellpruefung an anderer Stelle. Rueckgabe None (weniger
+    fehlt, meldet die Modellpruefung an anderer Stelle. Entartete Elemente
+    ohne Ausdehnung bleiben draussen wie in der Rechnung - dieselbe Menge
+    (:func:`entartete_menge`), die assemble.aktive_indizes weglaesst. Bis zum
+    11.11.2026 stand ein Stabelement von 1e-13 m Laenge, das die Rechnung
+    uebergeht, hier mit E·A/L als steifstes Element. Rueckgabe None (weniger
     als zwei Elemente) oder {"faktor", "steif": (Element, Typ, Werkstoff, Mass),
     "weich": (...)}."""
     from . import assemble as asm
     X = np.asarray(model.nodes, float)
     maske = model.grundmaske() if hasattr(model, "grundmaske") else None
+    raus = entartete_menge(model)
     E_von = {}
     for name, mt in model.materials.items():
         try:
@@ -4800,7 +4806,7 @@ def steifigkeitsunterschied(model) -> "dict | None":
             E_von[name] = 0.0
     gruppen: dict = {}              # (Art, Knotenzahl) -> ([Element], [E·Querwert], [Knoten])
     for i, e in enumerate(model.elements):
-        if maske is not None and not maske[i]:
+        if (maske is not None and not maske[i]) or i in raus:
             continue
         E = E_von.get(e.mat, 0.0)
         if not E > 0:

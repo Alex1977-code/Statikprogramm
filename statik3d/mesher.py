@@ -814,7 +814,7 @@ def _teilplan(model: Model, schalen: list) -> dict:
             for _t, k, _ab, fremd in treffer:
                 stelle(wem, fremd)
                 plan["warnungen"].append(
-                    f"Knoten {k + 1} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}): die Linie hat "
+                    f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}): die Linie hat "
                     "Zwischenknoten und wird im Netz nicht geteilt – dort nicht verbunden.")
             continue
         a, b = kn
@@ -825,19 +825,19 @@ def _teilplan(model: Model, schalen: list) -> dict:
             stelle(wem, fremd)
             if ab > tol:
                 plan["warnungen"].append(
-                    f"Knoten {k + 1} ({fl(fremd)}) liegt {mm(ab)} mm neben der Linie {x} ({fl(wem)}) – "
+                    f"Knoten {k} ({fl(fremd)}) liegt {mm(ab)} mm neben der Linie {x} ({fl(wem)}) – "
                     f"schleifend, über der Toleranz von {mm(tol)} mm: dort nicht verbunden.")
                 continue
             nachbar = next((m for m in (kette[-1], b)
                             if float(np.linalg.norm(X[k] - X[m])) < TEIL_MIN), None)
             if nachbar is not None:
                 plan["warnungen"].append(
-                    f"Knoten {k + 1} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}) weniger als 1 mm "
-                    f"neben dem Knoten {nachbar + 1}: das Teilstück wäre zu kurz – dort nicht verbunden.")
+                    f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}) weniger als 1 mm "
+                    f"neben dem Knoten {nachbar}: das Teilstück wäre zu kurz – dort nicht verbunden.")
                 continue
             kette.append(k)
             gruende.append(
-                f"Linie {x} ({fl(wem)}) im Netz am Knoten {k + 1} geteilt (Knoten auf Linie): dort "
+                f"Linie {x} ({fl(wem)}) im Netz am Knoten {k} geteilt (Knoten auf Linie): dort "
                 f"{'schließt' if len(fremd) == 1 else 'schließen'} {fl(fremd)} an – gemeinsamer Netzknoten.")
         if len(kette) > 1:
             kette.append(b)
@@ -964,7 +964,7 @@ def _teilplan(model: Model, schalen: list) -> dict:
                 if k in la["knoten"]:
                     continue
                 if float(M3.randstreckenabstand(k2[None, :], ringe)[0]) <= TEIL_FANG:
-                    grund = (f"ihr Ende am Knoten {k + 1} liegt auf dem Rand der Fläche, der dort "
+                    grund = (f"ihr Ende am Knoten {k} liegt auf dem Rand der Fläche, der dort "
                              "keinen Knoten hat")
                 elif not bool(M3._in_polygon_2d(k2[None, :], ringe)[0]):
                     grund = "sie liegt nur teilweise in der Fläche"

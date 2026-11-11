@@ -3815,21 +3815,52 @@ class Kontaktbedingung:
             return "in der Quelldatei deaktiviert"
         if model is not None and self.wartet_auf_netz(model):
             return "wird beim Vernetzen getrennt"
-        if model is not None and self.verbindung(model) == 0:
+        v = self.fugenverbindung(model) if model is not None else None
+        if v is not None and v["knoten"] == 0:
             # Eigene, aufeinanderliegende Flaechen: ohne die Fuge verbindet die
             # Bauteile nichts - das ist zu weich, nicht zu steif (Befund C4).
             return "nicht ausgeführt - hier ohne Verbindung (zu weich)"
+        if v is not None and v["weich"]:
+            # Nur die Knoten des gemeinsamen Randes, dazwischen offen (Befund 37)
+            return "nicht ausgeführt - hier nur an einzelnen Knoten verbunden (zu weich)"
         return "nicht ausgeführt - hier zu steif"
+
+    def zu_weich(self, model) -> bool:
+        """Nicht ausgefuehrt und im Netz ohne durchgehende Verbindung (keine oder
+        nur einzelne gemeinsame Knoten, fugen.fugenverbindung): zu weich."""
+        v = self.fugenverbindung(model)
+        return v is not None and bool(v["weich"])
 
     def verbindung(self, model):
         """Gemeinsame Netzknoten der beiden Seiten, solange die Fuge nicht
         ausgefuehrt ist (fugen.verbindung_ohne_fuge): 0 = nichts verbindet,
-        None = nicht feststellbar. Je Netzstand einmal gezaehlt."""
-        stand = (len(model.elements), int(model.nn))
+        None = nicht feststellbar."""
+        v = self.fugenverbindung(model)
+        return None if v is None else v["knoten"]
+
+    def fugenverbindung(self, model):
+        """fugen.fugenverbindung, je Netz und Bedingung einmal gerechnet.
+
+        Der Schluessel umfasst die Seiten der Bedingung (geloeste Koerper,
+        Gegenkoerper, Flaechen, Gegenflaechen) und das Netz selbst: das erste,
+        mittlere und letzte Element als Objekt - ein neues Netz hat neue
+        Elemente, auch wenn Element- und Knotenzahl gleich bleiben. Die drei
+        Elemente haelt der Merker fest, damit ihre Kennung nicht an ein neues
+        Objekt vergeben wird. Bis zum 11.11.2026 waren es nur Element- und
+        Knotenzahl: nach einer Aenderung der Bedingung in der Maske und auch
+        nach neuem Vernetzen derselben Geometrie blieb die Folge der alten
+        Bedingung stehen (Befund 27)."""
+        el = model.elements
+        proben = (el[0], el[len(el) // 2], el[-1]) if el else ()
+        stand = (len(el), int(model.nn), tuple(id(x) for x in proben),
+                 tuple(str(x) for x in (self.koerpernamen or [])),
+                 tuple(str(x) for x in (getattr(self, "gegenkoerper", None) or [])),
+                 tuple(str(x) for x in (self.flaechennamen or [])),
+                 tuple(str(x) for x in (self.gegenflaechen or [])))
         merk = getattr(self, "_verbindung", None)
-        if merk is None or merk[0] != stand:
-            from .fugen import verbindung_ohne_fuge
-            merk = (stand, verbindung_ohne_fuge(model, self) if model.elements else None)
+        if merk is None or len(merk) != 3 or merk[0] != stand:
+            from .fugen import fugenverbindung
+            merk = (stand, fugenverbindung(model, self) if el else None, proben)
             self._verbindung = merk
         return merk[1]
 

@@ -230,8 +230,10 @@ def test_stoss_protokoll_und_geometrie():
     m = stoss(False)
     vor = geometrie(m)
     log = vernetzen(m)
-    zeilen = [z for z in log if "Linie R1" in z and "Knoten 5" in z and "Knoten auf Linie" in z]
-    check("(a) Protokoll nennt die Stelle (Linie R1, Knoten 5, Knoten auf Linie); Linien und Flächen "
+    # Knotennummer ab 0 wie Tabelle und Modellbaum (C13; Befund 12 vom
+    # 11.11.2026 - bis dahin „Knoten 5“ fuer den Knoten 4)
+    zeilen = [z for z in log if "Linie R1" in z and "am Knoten 4 geteilt" in z and "Knoten auf Linie" in z]
+    check("(a) Protokoll nennt die Stelle (Linie R1, Knoten 4, Knoten auf Linie); Linien und Flächen "
           "des Modells unverändert",
           len(zeilen) == 1 and "G1" in zeilen[0] and "G2" in zeilen[0] and geometrie(m) == vor
           and not any("(Teil" in n for n in m.lines),
@@ -239,7 +241,7 @@ def test_stoss_protokoll_und_geometrie():
     check("(a) die geteilte Fläche F frei mit Dreiecken, die Nachbarn G1 und G2 bleiben abgebildete Vierecke",
           typen(m, "F") == {"shell3"} and typen(m, "G1") == {"shell4"} and typen(m, "G2") == {"shell4"}
           and int(m.lines["R1"].nodes[0]) in netzknoten(m, "F") and 4 in netzknoten(m, "F"),
-          f"F {sorted(typen(m, 'F'))}, G1 {sorted(typen(m, 'G1'))}, Knoten 5 im Netz von F: "
+          f"F {sorted(typen(m, 'F'))}, G1 {sorted(typen(m, 'G1'))}, Knoten 4 im Netz von F: "
           f"{4 in netzknoten(m, 'F')}")
 
 
@@ -319,7 +321,8 @@ def test_nicht_teilbar_bleibt_unverbunden():
     # schleifend: der Knoten liegt 0,5 mm neben der Linie
     m = stoss(False, versatz=0.0005)
     log = vernetzen(m)
-    z = [x for x in log if "schleifend" in x and "Knoten 5" in x and "Linie R1" in x and "nicht verbunden" in x]
+    # Knoten 4 ab 0 (Befund 12, 11.11.2026; bis dahin „Knoten 5“)
+    z = [x for x in log if "schleifend" in x and "Knoten 4 (" in x and "Linie R1" in x and "nicht verbunden" in x]
     ab = diagnose._abnahme_schalen_ohne_linie(m)
     check("schleifend (Knoten 0,5 mm neben der Linie): nicht verbunden, Grund im Protokoll, Abnahme warnt",
           len(z) == 1 and "0,500 mm" in z[0] and 4 not in netzknoten(m, "F") and len(ab) >= 1,

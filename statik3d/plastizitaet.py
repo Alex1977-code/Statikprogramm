@@ -824,10 +824,14 @@ def elastisch_gerechnet(model, aktiv=None) -> dict:
 
 
 def elastisch_text(zahl: dict) -> str:
-    """„Schalen und Stäbe werden elastisch gerechnet (16 Schalenelemente, 3 Stäbe): …“."""
+    """„Schalen und Stäbe werden elastisch gerechnet (16 Schalenelemente, 3 Stabelemente): …“.
+
+    Gezaehlt werden Elemente: ein Stab ist das Bauteil, ein Stabelement ein
+    Element davon (singular._stabname). Bis zum 11.11.2026 stand ein Stab aus
+    vier Elementen als „4 Stäbe“ da."""
     from .zahlen import zahl_text as _z
     worte = (("schalen", "Schalen", "Schalenelement", "Schalenelemente"),
-             ("staebe", "Stäbe", "Stab", "Stäbe"),
+             ("staebe", "Stäbe", "Stabelement", "Stabelemente"),
              ("scheiben", "Scheiben", "Scheibenelement", "Scheibenelemente"))
     da = [(w, ein, mehr, int(zahl[k])) for k, w, ein, mehr in worte if zahl.get(k)]
     if not da:
