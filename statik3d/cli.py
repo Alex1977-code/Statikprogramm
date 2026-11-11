@@ -123,7 +123,14 @@ def main(argv=None) -> int:
         log(f"{n} Staebe erkannt")
     if a.kombinationen:
         from .combinations import generate_combinations
-        n = len(generate_combinations(m))
+        from .model import KombinationGesperrt
+        try:
+            n = len(generate_combinations(m))
+        except KombinationGesperrt as ex:
+            # Lastfaelle ohne Einwirkung, Erdbeben, Montage (Befund 46, 11.11.2026):
+            # Meldung und Rueckgabe 2 wie bei der Rechnung unten, kein Traceback
+            print(f"--kombinationen: {ex}", file=sys.stderr)
+            return 2
         log(f"{n} Kombinationen erzeugt")
     if a.adaptiv is not None:
         from . import adaptiv as _ad, netzfehler as _nf
