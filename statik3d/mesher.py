@@ -1514,21 +1514,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                                  OHNE_NETZ, karten=karten)
             if v_hex < 0:
                 order = order[4:] + order[:4]
-            teil_xyz = (list(koerper.teilung) + [4, 4, 4])[:3]
-            # Die Teilung [nx, ny, nz] gilt in den globalen Achsen x, y, z
-            # (Befund A14 der Pruefagenten, 09.11.2026). Die Richtungen des
-            # Quaders (Ecke 0->1, 0->3, 0->4, QUADER_ECKNR) folgen der
-            # Reihenfolge seiner Flaechen; bis dahin bekam die erste nx, gleich
-            # wohin sie zeigte (Kragarm 2 x 0,1 x 0,2 m mit [2, 3, 5]: 5 x 3 x 2
-            # Elemente, Durchbiegung 74 statt 97 % der Balkenloesung). Jetzt
-            # bekommt jede Richtung die Zahl der Achse, der sie am naechsten
-            # liegt; zeigen zwei Richtungen zur selben Achse (schiefer Quader),
-            # bleibt es bei der Reihenfolge.
-            teil = list(teil_xyz)
-            Xo = model.nodes[order]
-            achsen = [int(np.argmax(np.abs(Xo[j] - Xo[0]))) for j in (1, 3, 4)]
-            if sorted(achsen) == [0, 1, 2]:
-                teil = [int(teil_xyz[a]) for a in achsen]
+            teil, achsen = quader_teilung(model, koerper, order)
             # Eine Linienvorgabe (sweep.lagenvorgabe: Kanten, die Nachbarn
             # gehoeren) geht vor der eigenen Teilung - je Richtung dieselbe.
             vorgabe = getattr(model, "linienvorgabe", None) or {}
@@ -2549,6 +2535,33 @@ def quader_kanten(model: Model, koerper, ecken: list) -> dict:
             aus[(e0, e1)] = lname
             aus[(e1, e0)] = lname
     return aus
+
+
+def quader_teilung(model: Model, koerper, ecken: list) -> tuple:
+    """(Teilung je Quaderrichtung, Achse je Richtung) eines abgebildeten
+    Sechsflaechners mit den Eckknoten ``ecken`` (hex8-Reihenfolge, schon
+    positiv orientiert) - die Richtungen wie in :func:`quader_richtungen`
+    (Ecke 0->1, 0->3, 0->4).
+
+    Die Teilung [nx, ny, nz] gilt in den globalen Achsen x, y, z (Befund A14
+    der Pruefagenten, 09.11.2026). Die Richtungen des Quaders folgen der
+    Reihenfolge seiner Flaechen; bis dahin bekam die erste nx, gleich wohin
+    sie zeigte (Kragarm 2 x 0,1 x 0,2 m mit [2, 3, 5]: 5 x 3 x 2 Elemente,
+    Durchbiegung 74 statt 97 % der Balkenloesung). Jetzt bekommt jede
+    Richtung die Zahl der Achse, der sie am naechsten liegt; zeigen zwei
+    Richtungen zur selben Achse (schiefer Quader), bleibt es bei der
+    Reihenfolge. Vernetzer (:func:`mesh_koerper`) und Lagenvorgabe des Sweeps
+    (sweep.lagenvorgabe) lesen die Teilung hier - bis zum 11.11.2026 las die
+    Lagenvorgabe sie roh in der Flaechenreihenfolge und ueberschrieb die
+    richtig zugeordnete Teilung (Befund 36: [2, 3, 5] wurde 2 x 2 x 4).
+    """
+    teil_xyz = (list(getattr(koerper, "teilung", None) or []) + [4, 4, 4])[:3]
+    teil = list(teil_xyz)
+    Xo = model.nodes[ecken]
+    achsen = [int(np.argmax(np.abs(Xo[j] - Xo[0]))) for j in (1, 3, 4)]
+    if sorted(achsen) == [0, 1, 2]:
+        teil = [int(teil_xyz[a]) for a in achsen]
+    return teil, achsen
 
 
 def quader_richtungen(kanten: dict) -> list:

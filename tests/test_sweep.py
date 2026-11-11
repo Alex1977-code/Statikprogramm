@@ -1733,6 +1733,75 @@ def test_pyramiden_ausrichtung_am_abgebildeten_nachbarn():
     check("Abnahme ohne Befund", not bef, str([(b.pruefung, b.text[:60]) for b in bef])[:200])
 
 
+def _zwei_quader_xyz(sweep_art, reihenfolge, teilung=(2, 3, 5)):
+    """Zwei Quader 2 x 0,1 x 0,2 m nebeneinander in x mit gemeinsamer Flaeche,
+    beide mit der Teilung [nx, ny, nz], die Flaechen des Koerpers in
+    verschiedener Reihenfolge (Befund 36 vom 11.11.2026)."""
+    m = Model("Q")
+    m.add_material(Material.steel("S235"))
+    nr = {}
+    for x in (0.0, 2.0, 4.0):
+        for y in (0.0, 0.1):
+            for z in (0.0, 0.2):
+                nr[(x, y, z)] = m.add_node(x, y, z)
+    linien, flaechen = {}, {}
+
+    def L(a, b):
+        key = frozenset((a, b))
+        if key not in linien:
+            linien[key] = f"L{len(linien)}"
+            m.add_line(linien[key], [a, b])
+        return linien[key]
+    for i, (x0, x1) in enumerate([(0.0, 2.0), (2.0, 4.0)]):
+        P = [(x0, 0, 0), (x1, 0, 0), (x1, .1, 0), (x0, .1, 0), (x0, 0, .2), (x1, 0, .2), (x1, .1, .2), (x0, .1, .2)]
+        P8 = [nr[tuple(float(c) for c in p)] for p in P]
+        R0 = [L(P8[j], P8[(j + 1) % 4]) for j in range(4)]
+        R1 = [L(P8[4 + j], P8[4 + (j + 1) % 4]) for j in range(4)]
+        V = [L(P8[j], P8[4 + j]) for j in range(4)]
+        namen = []
+        for r in [R0, R1] + [[R0[j], V[(j + 1) % 4], R1[j], V[j]] for j in range(4)]:
+            key = frozenset(r)
+            if key not in flaechen:
+                flaechen[key] = f"F{len(flaechen)}"
+                m.add_flaeche(flaechen[key], r, material="S235")
+            namen.append(flaechen[key])
+        if reihenfolge == "umgedreht":
+            namen = namen[::-1]
+        elif reihenfolge == "gemischt":
+            namen = [namen[2], namen[0], namen[5], namen[1], namen[3], namen[4]]
+        m.add_koerper(f"Q{i}", namen, material="S235", teilung=list(teilung))
+    m.netz.ziellaenge = 0.05
+    m.netz.sweep = sweep_art
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    X = np.asarray(m.nodes)
+    teil = {}
+    for kn, k in m.koerper.items():
+        kk = sorted({int(n) for e in k.elemente for n in m.elements[e].nodes})
+        teil[kn] = [len(np.unique(np.round(X[kk, d], 9))) - 1 for d in range(3)]
+    return m, teil, [str(z) for z in log]
+
+
+def test_quaderteilung_xyz_mit_sweep():
+    """Befund 36 (11.11.2026): die Lagenvorgabe des Sweeps las die Teilung
+    [nx, ny, nz] roh in der Flaechenreihenfolge (Ecke 0->1, 0->3, 0->4),
+    der Vernetzer seit A14 in x, y, z. An Kanten, die der Nachbar mitbenutzt,
+    ueberschrieb die Vorgabe die richtige Zuordnung: [2, 3, 5] wurde
+    2 x 2 x 4 (Flaechen umgedreht) oder 2 x 5 x 4 (gemischt)."""
+    for art in ("aus", "sauber", "immer"):
+        for reihenfolge in ("normal", "umgedreht", "gemischt"):
+            m, teil, log = _zwei_quader_xyz(art, reihenfolge)
+            zeile = [z for z in log if "Volumen Q0:" in z and "Hexaeder" in z]
+            check(f"Quader [2, 3, 5], Sweep {art}, Flächen {reihenfolge}: 2 x 3 x 5 je Körper, Protokoll gleich",
+                  teil == {"Q0": [2, 3, 5], "Q1": [2, 3, 5]} and bool(zeile) and "(2 x 3 x 5)" in zeile[0],
+                  f"{teil}")
+    # eine feinere Karte an den gemeinsamen Kanten geht weiter vor (Vorgabe
+    # = Groesstes aus Teilung und Karte), jetzt in der richtigen Richtung
+    m, teil, log = _zwei_quader_xyz("sauber", "umgedreht", teilung=(2, 1, 1))
+    check("Quader [2, 1, 1], Sweep sauber, umgedreht: die Karte (0,05 m) gibt 2 x 2 x 4",
+          teil == {"Q0": [2, 2, 4], "Q1": [2, 2, 4]}, f"{teil}")
+
+
 def main():
     for t in (test_vorgabe_aus, test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
@@ -1746,7 +1815,7 @@ def main():
               test_angleichen_schont_den_nachbarn, test_zerlegen_an_vorhandener_schleife,
               test_zerlegen_namen_und_budget,
               test_kragplatte_tet4_gegen_hex8, test_betriebsart_sauber,
-              test_pyramiden_ausrichtung_am_abgebildeten_nachbarn):
+              test_pyramiden_ausrichtung_am_abgebildeten_nachbarn, test_quaderteilung_xyz_mit_sweep):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
