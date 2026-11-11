@@ -296,10 +296,24 @@ def _laminat_gekoppelt_mit_temperatur(model) -> bool:
     return False
 
 
+def _fu_anders_als_bisher(mat, t: float) -> bool:
+    """Liest der Nachweis heute ein anderes f_u als bis zum 09.11.2026? Bisher
+    Material.ultimate_strength (mit f_y und ohne Wert f_u: 1,3 f_y, auch wenn eine
+    Stahlsorte angegeben ist), heute Material.zugfestigkeit_angegeben (Wert, Dicke,
+    Stahlsorte, sonst keins). Verschieden ist es ohne f_u ganz und - Befund 1 der
+    Pruefagenten, 11.11.2026 - bei f_y mit Stahlsorte ohne Wert f_u: dann gilt heute
+    das f_u der Sorte statt 1,3 f_y (Schraubenstab M16, f_y 640, S355: η 1,7346
+    statt 1,0633)."""
+    neu = mat.zugfestigkeit_angegeben(t)
+    alt = float(mat.ultimate_strength(t) or 0.0)
+    return neu is None or abs(float(neu) - alt) > 1e-9 * max(1.0, alt)
+
+
 def _schraubenstab_ohne_fu(model) -> bool:
     """Ein Stab mit Gewinde (Nachweis als Schraube), dessen Werkstoff f_y, aber
-    kein f_u angibt - dort rechnete der Nachweis bis zum 09.11.2026 still mit
-    f_ub = 1,3 f_y (Nebenbefund 15); jetzt wird er nicht gefuehrt."""
+    keinen Wert f_u angibt - dort rechnete der Nachweis bis zum 09.11.2026 still
+    mit f_ub = 1,3 f_y (Nebenbefund 15), auch neben einer Stahlsorte; jetzt nimmt
+    er das f_u der Sorte oder wird ohne sie nicht gefuehrt (:func:`_fu_anders_als_bisher`)."""
     from .ec3 import schraubenstab as _ss
     from .joints.bolts import SIZES
     for e in getattr(model, "elements", None) or []:
@@ -310,7 +324,7 @@ def _schraubenstab_ohne_fu(model) -> bool:
         if mat is None or sec is None or not _ss.ist_schraube(sec, mat):
             continue
         d = SIZES[_ss.schraubengroesse(sec)][0] * 1e-3
-        if mat.yield_strength(d) and not mat.zugfestigkeit_angegeben(d):
+        if mat.yield_strength(d) and _fu_anders_als_bisher(mat, d):
             return True
     return False
 
@@ -379,9 +393,11 @@ def _zwang_an_feder(model) -> bool:
 
 
 def _anschluss_ohne_festigkeit(model) -> bool:
-    """Ein nachzuweisender Anschluss, dessen Werkstoff f_y oder f_u nicht angibt -
-    dort rechnete der Nachweis bis zum 09.11.2026 still mit 1,3 f_y bzw. S355
-    (Befund A23 der Pruefagenten); jetzt wird er nicht gefuehrt."""
+    """Ein nachzuweisender Anschluss, dessen Werkstoff f_y oder einen Wert f_u nicht
+    angibt - dort rechnete der Nachweis bis zum 09.11.2026 still mit 1,3 f_y bzw.
+    S355 (Befund A23 der Pruefagenten); jetzt nimmt er das f_u der Stahlsorte oder
+    wird nicht gefuehrt (Befund 1, 11.11.2026: f_y mit Sorte, ohne Wert f_u -
+    Lasche S235 f_u 360 statt 305,5 N/mm²)."""
     elemente = getattr(model, "elements", None) or []
     for j in (getattr(model, "joints", None) or {}).values():
         if not getattr(j, "design", True):
@@ -395,7 +411,7 @@ def _anschluss_ohne_festigkeit(model) -> bool:
         if mat is None or sec is None:
             continue
         t = float(getattr(sec, "t_max", 0.0) or 0.0)
-        if not mat.yield_strength(t) or not mat.zugfestigkeit_angegeben(t):
+        if not mat.yield_strength(t) or _fu_anders_als_bisher(mat, t):
             return True
     return False
 
@@ -1126,11 +1142,11 @@ MERKMALE: list = [
         # still mit 1,3 f_y, ganz ohne Festigkeiten mit S355 (Lasche η 1,048 -> 1,573).
         # Festlegung des Anwenders: Meldung statt Vorgabewert. Fehlerkorrektur
         name="anschluss_festigkeit", titel="Festigkeiten im Anschlussnachweis",
-        texte={"alt": "fehlendes f_u als 1,3 f_y, fehlende Festigkeiten als S355",
-               "neu": "ohne f_y oder f_u kein Anschlussnachweis, mit Meldung"},
+        texte={"alt": "fehlendes f_u als 1,3 f_y (auch neben einer Stahlsorte), fehlende Festigkeiten als S355",
+               "neu": "f_y und f_u aus dem Wert oder der Stahlsorte, ohne sie kein Anschlussnachweis, mit Meldung"},
         wechsel=(Wechsel(stand=13, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Anschluss mit Werkstoff ohne f_y oder f_u",
+        modellmerkmal="Anschluss mit Werkstoff ohne f_y oder ohne Wert f_u",
         betrifft=_anschluss_ohne_festigkeit),
     Merkmal(
         # Befund A17 der Pruefagenten (09.11.2026): eine Kontaktbedingung nur mit Koerpern
@@ -1233,11 +1249,11 @@ MERKMALE: list = [
     # statt Vorgabewert (Festlegung des Anwenders). Fehlerkorrektur
     Merkmal(
         name="schraubenstab_fu", titel="Zugfestigkeit im Nachweis der Stäbe mit Gewinde",
-        texte={"alt": "ohne f_u im Werkstoff mit 1,3·f_y nachgewiesen",
-               "neu": "ohne f_u im Werkstoff kein Nachweis, sondern Meldung"},
+        texte={"alt": "ohne Wert f_u im Werkstoff mit 1,3·f_y nachgewiesen, auch neben einer Stahlsorte",
+               "neu": "f_u aus dem Wert oder der Stahlsorte, ohne beides kein Nachweis, sondern Meldung"},
         wechsel=(Wechsel(stand=23, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Stab mit Gewinde, dessen Werkstoff f_y, aber kein f_u angibt",
+        modellmerkmal="Stab mit Gewinde, dessen Werkstoff f_y, aber keinen Wert f_u angibt",
         betrifft=_schraubenstab_ohne_fu),
     # Nebenbefund 16 b (09.11.2026): die geometrische Steifigkeit eines Stabes
     # mit Versatz wirkte auf die Knoten statt auf die Stabenden - Druckstab
