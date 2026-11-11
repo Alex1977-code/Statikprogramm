@@ -254,9 +254,9 @@ def test_zusammenfassung(platte):
     s = r.summary()
     print("   " + "\n   ".join(z for z in s.splitlines() if "Vergleich" in z or "netzabh" in z))
     check("Zusammenfassung: max. Vergleichsspannung außerhalb der netzabhängigen Stellen",
-          f"max. Vergleichsspannung : {aussen / 1e6:.2f} MPa außerhalb der netzabhängigen Stellen".replace(".", ",") in s)
+          f"max. Vergleichsspannung : {aussen / 1e6:.2f} MPa außerhalb der netzabhängigen Stellen".replace(".", ",").replace("max,", "max.") in s)
     check("… daneben getrennt die Spitze an den Integrationspunkten mit dem Vermerk",
-          f"bis {st['sv_max'] / 1e6:.1f} MPa" in s and VERMERK in s)
+          f"bis {st['sv_max'] / 1e6:.1f} MPa".replace(".", ",") in s and VERMERK in s)
     # Plastizitaet: eps_p ausserhalb und in der Zone getrennt (Eintrag wie vom Loeser)
     zone = sorted(_zone(r))
     aus = next(i for i, e in enumerate(m.elements) if e.typ == "hex8" and i not in set(zone))
@@ -444,7 +444,7 @@ def test_ohne_stellen():
           and len(an.volumen.table()) == 2, f"η {c.util:.4f}")
     s = r.summary()
     check("… Zusammenfassung wie vorher",
-          f"max. Vergleichsspannung : {np.nanmax(r.node_vm) / 1e6:.2f} MPa\n".replace(".", ",") in s + "\n"
+          f"max. Vergleichsspannung : {np.nanmax(r.node_vm) / 1e6:.2f} MPa\n".replace(".", ",").replace("max,", "max.") in s + "\n"
           and "netzabhängig" not in s)
     html = Report(m, an).html()
     check("… kein Abschnitt im Bericht", TITEL not in html)

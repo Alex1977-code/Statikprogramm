@@ -460,6 +460,27 @@ def test_c8():
     versuch("C8 Gegenprobe: Gerberträger ohne Meldung; Kette ohne Last in ihrer Richtung rechnet weiter",
             gegenprobe)
 
+    def alte_datei():
+        # Ergebnisdateien von vor C8 tragen die Felder gelenke/bezogene_energie
+        # nicht; Pickle setzt nur das Gespeicherte (Nachkontrolle 11.11.2026:
+        # AttributeError beim Lesen einer alten Ergebnisdatei in
+        # test_umstellung_lf_lk). Hier wie pickle: __setstate__, sonst __dict__.
+        import pickle
+        s = sg.Singularitaet(art="gleitet", knoten=[1, 2], text="alt")
+        zustand = dict(s.__dict__)
+        del zustand["gelenke"], zustand["bezogene_energie"]
+        alt = object.__new__(sg.Singularitaet)
+        setzen = getattr(alt, "__setstate__", None)
+        if setzen is not None:
+            setzen(zustand)
+        else:
+            alt.__dict__.update(zustand)
+        wieder = pickle.loads(pickle.dumps(alt))
+        return (alt.gelenke == [] and alt.bezogene_energie == 0.0 and alt.text == "alt"
+                and wieder.gelenke == [] and wieder.knoten == [1, 2],
+                f"gelenke {alt.gelenke!r}, bezogene_energie {alt.bezogene_energie!r}")
+    versuch("C8 alte Ergebnisdatei ohne die neuen Felder: Vorgabewerte statt AttributeError", alte_datei)
+
 
 # --------------------------------------------------------------------------
 # C9 Steifigkeitsunterschied

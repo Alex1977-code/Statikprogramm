@@ -99,7 +99,7 @@ Reibung gehalten"), damit niemand die Meldung fuer einen Freibrief haelt.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Optional
 
 import numpy as np
@@ -227,6 +227,20 @@ class Singularitaet:
     gelenke: list = field(default_factory=list)
     #: v^T K v / v^T diag(K) v der Bewegung - nahe null heisst Mechanismus
     bezogene_energie: float = 0.0
+
+    def __setstate__(self, state):
+        """Ergebnisdateien von vor dem 10.11.2026 kennen ``gelenke`` und
+        ``bezogene_energie`` (Befund C8) nicht; Pickle setzt nur das
+        Gespeicherte. Fehlende Felder bekommen ihren Vorgabewert, sonst brach
+        jeder Zugriff darauf mit AttributeError ab (Nachkontrolle 11.11.2026)."""
+        self.__dict__.update(state)
+        for f in fields(self):
+            if f.name in state:
+                continue
+            if f.default is not MISSING:
+                setattr(self, f.name, f.default)
+            elif f.default_factory is not MISSING:
+                setattr(self, f.name, f.default_factory())
 
     def verschiebung(self) -> bool:
         """Reine Verschiebung (kein nennenswerter Drehanteil)?"""
