@@ -3615,6 +3615,7 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             A = asm.beam_versatz(e)
             if A is not None:
                 ul = A @ ul                     # Verschiebung des Stabendes hinter dem Versatz
+            ul_knoten = ul                      # vor der Kondensation (fuer k_G, Befund 31)
             kl_s, f_s, rec = kl, f0, None
             if getattr(e, "hinge_springs", None):
                 kl_s, f_s, rec = asm.hinge_springs(kl, f0, e.hinge_springs)
@@ -3633,10 +3634,22 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 # (asm.stab_endkinematik) - an einem Gelenk bleibt das Moment 0
                 sec_ = model.sections[e.sec]
                 kg_ = bm.kg_local_beam(float(n_geo[i]), L, sec_.A, sec_.Iy + sec_.Iz)
-                zu = kg_ @ ul
                 C_ = asm.stab_endkinematik(model, e, kl)
-                if C_ is not None:
-                    zu = C_.T @ zu
+                if C_ is not None and np.any(f0):
+                    # Gelenk/Federgelenk mit Last im Feld (Befund 31, 11.11.2026):
+                    # das Gleichungssystem hat K_G = C^T k_G C, also wirkt k_G
+                    # auf C u (Knotenverschiebungen) - nicht auf die Stabenden
+                    # ul, in denen die Kondensation den Lastanteil
+                    # Kcc^-1 f_c eingerechnet hat. Bis dahin bekamen die
+                    # Stabendkraefte C^T k_G (ul - C u) dazu, den das System
+                    # nie hatte: Stabendmoment 27,04 statt Lagermoment 22,50
+                    # kNm. Ohne Feldlast ist ul = C u, der Weg darunter
+                    # bleibt (bitgleich).
+                    zu = C_.T @ (kg_ @ (C_ @ ul_knoten))
+                else:
+                    zu = kg_ @ ul
+                    if C_ is not None:
+                        zu = C_.T @ zu
                 fl = fl + zu
                 out.append((i, "beam_th2", np.asarray(ul, float).copy()))
             out.append((i, "beam", fl))
