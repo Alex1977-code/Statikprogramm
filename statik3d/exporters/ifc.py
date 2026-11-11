@@ -112,26 +112,45 @@ def _gelenkfeder(e, ende: int) -> int:
     return sum(1 for x in (getattr(e, "hinge_springs", None) or []) if int(x[0]) // 6 == ende)
 
 
-def _lastmerkmal(model: Model) -> tuple[dict, int]:
+def _lastmerkmal(model: Model) -> tuple[dict, int, int]:
     """Je Element die vollen, gleichmaessigen Stablasten aller Lastfaelle als
     vergleichbares Merkmal - und die Zahl der Stablasten, die so nicht
-    darstellbar sind (trapezfoermig oder auf einem Teilstueck)."""
+    darstellbar sind (trapezfoermig oder auf einem Teilstueck), und die Zahl
+    der Stablasten je Projektion, die in die gleichwertige Last je wahrer
+    Stablaenge umgerechnet wurden.
+
+    Eine globale Last „je Projektion“ (``bl.bezugslaenge``) geht als Last je
+    wahrer Laenge hinaus (.TRUE_LENGTH.): q_wahr = q_proj * L_proj / L mit dem
+    Faktor aus :func:`assemble.projektionsfaktor`, beide Endwerte mit
+    demselben Faktor, Richtung unveraendert. So bleibt die Gesamtkraft gleich;
+    bis zum 11.11.2026 ging der Wert je Projektion unveraendert als Last je
+    wahrer Laenge hinaus (am Stab unter 45 Grad 41 % zu viel)."""
+    from ..assemble import projektionsfaktor
     merk: dict[int, list] = {}
-    rest = 0
+    rest = umgerechnet = 0
     for name, lc in model.load_cases.items():
         for bl in lc.beam_loads:
             q = [float(v) for v in bl.q]
+            q2 = None if bl.q2 is None else [float(v) for v in bl.q2]
+            if bl.system == "global" and getattr(bl, "bezugslaenge", "") == "projektion":
+                e = model.elements[int(bl.elem)]
+                T3, _L = local_axes(model.nodes[int(e.nodes[0])], model.nodes[int(e.nodes[1])],
+                                    float(e.roll or 0.0))
+                f = projektionsfaktor(T3[0], q if np.any(q) else (q2 or q))
+                q = [f * v for v in q]
+                q2 = None if q2 is None else [f * v for v in q2]
+                umgerechnet += 1
             # gleichmaessig heisst: Anfangs- und Endwert stimmen bis auf das
             # Rundungsrauschen der Netzteilung ueberein (2000 und
             # 2000,0000000000002 sind dieselbe Last)
-            gleich = bl.q2 is None or np.allclose(np.asarray(bl.q2, float), q,
-                                                  rtol=1e-9, atol=0.0)
+            gleich = q2 is None or np.allclose(np.asarray(q2, float), q,
+                                               rtol=1e-9, atol=0.0)
             if gleich and not bl.teilweise:
                 q = [float(f"{v:.12g}") for v in q]
                 merk.setdefault(int(bl.elem), []).append((name, bl.system, tuple(q)))
             else:
                 rest += 1
-    return {e: tuple(sorted(v)) for e, v in merk.items()}, rest
+    return {e: tuple(sorted(v)) for e, v in merk.items()}, rest, umgerechnet
 
 
 def _stuecke(model: Model, merk: dict) -> tuple[list, int]:
@@ -345,7 +364,7 @@ def write_ifc(model: Model, path: str, results=None, log: list = None, **_) -> s
         return profilsatz[key]
 
     # ---- Staebe ----------------------------------------------------------
-    merk, n_stablast_rest = _lastmerkmal(model)
+    merk, n_stablast_rest, n_projektion = _lastmerkmal(model)
     stuecke, n_geteilt = _stuecke(model, merk)
     stab_von: dict[int, str] = {}          # erstes Element des Stuecks -> Stab
     zuordnung: dict[str, list] = {}        # Profilsatz/Werkstoff -> Objekte
@@ -505,6 +524,11 @@ def write_ifc(model: Model, path: str, results=None, log: list = None, **_) -> s
                     "kennt je Stab ein Profil, Gelenke nur an den Enden und eine Streckenlast "
                     "über die ganze Länge). Die Stabzuordnung, etwa für Knicklängen, ist nach "
                     "dem Einlesen zu prüfen.")
+    if n_projektion:
+        C.warn(log, f"IFC: {C.anzahl(n_projektion, 'Stablast', 'Stablasten')} je Projektion "
+                    "(projizierte Länge) in die gleichwertige Last je wahrer Stablänge "
+                    "umgerechnet (q · L_Projektion / L, Richtung und Gesamtkraft unverändert); "
+                    "nach dem Einlesen gilt sie je Stablänge.")
     n_lager_nl = sum(1 for sup in model.supports
                      if sup.nonlinear or any(float(v) for v in (sup.values or [])))
     n_frei = sum(1 for sec in model.sections.values()
