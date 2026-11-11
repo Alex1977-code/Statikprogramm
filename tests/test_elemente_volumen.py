@@ -1007,7 +1007,8 @@ def t_operator():
                       for i, (_d, ke) in enumerate(paare)) / np.abs(Ke).max()
             check(f"{typ}: gestapelte Assemblierung = element_matrix je Element",
                   abw <= 1e-13, f"{abw:.1e}")
-    # Umgestuelpt: die Meldung nennt das Element (Nummer ab 1), auch im Stapel
+    # Umgestuelpt: die Meldung nennt das Element, auch im Stapel. Nummer ab 0
+    # wie in Tabellen und Modellbaum (Befund C13, bis 09.11.2026 ab 1)
     Xs = np.stack([verzerrt("hex8", rng) for _ in range(10)])
     Xs[6] = Xs[6][[4, 5, 6, 7, 0, 1, 2, 3]]
     m = _modell_aus("hex8", Xs)
@@ -1015,7 +1016,7 @@ def t_operator():
         asm._matrix_chunk(m, list(range(10)))
         ok, text = False, "kein Fehler"
     except ValueError as ex:
-        ok, text = "Element 7 " in str(ex) and "Jacobi" in str(ex), str(ex)[:90]
+        ok, text = "Element 6 " in str(ex) and "Jacobi" in str(ex), str(ex)[:90]
     check("hex8: umgestuelptes Element im Stapel - Meldung mit Elementnummer", ok, text)
     # Der Zwischenspeicher: derselbe Operator bei gleichem Netz, ein neuer,
     # sobald ein Knoten wandert

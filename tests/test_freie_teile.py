@@ -362,9 +362,10 @@ def test_schiefe_ebene_nennt_die_normale():
     if not t:
         return
     b = t[0]["bewegung"]
+    # Richtungen mit Komma und Semikolon wie in Protokoll und Tabellen (Befund C7)
     check("die Ebene wird über ihre Normale genannt, nicht als x und y",
-          "senkrecht zu (0.50, 0.00, 0.87)" in b and "(x, y)" not in b, b)
-    check("die Drehung auch (um die Normale)", "um (0.50, 0.00, 0.87)" in b, b)
+          "senkrecht zu (0,50; 0,00; 0,87)" in b and "(x, y)" not in b, b)
+    check("die Drehung auch (um die Normale)", "um (0,50; 0,00; 0,87)" in b, b)
 
 
 # --------------------------------------------------------------------------
@@ -420,7 +421,7 @@ def test_stabknoten_ohne_querhalt():
           e.get("namen") == ["S7"], str(e.get("namen")))
     check("der Knoten steht mit seiner Nummer da", f"K{STAB_KNOTEN}" in e["text"], e["text"])
     check("quer zur Stabachse, in der Richtung dazwischen",
-          e["bewegung"] == "quer zur Stabachse in Richtung (0.71, 0.00, -0.71) frei verschieblich",
+          e["bewegung"] == "quer zur Stabachse in Richtung (0,71; 0,00; -0,71) frei verschieblich",
           e["bewegung"])
     check("gehalten nur durch den Anschlag",
           "Fuge „Anschlag“" in e["haltung"], e["haltung"])
