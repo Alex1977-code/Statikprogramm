@@ -22,6 +22,9 @@ G  Dieselbe schraege Flaeche mit gleicher Feder in allen drei Richtungen:
 Z  Zylinder mit radialer Bettung auf dem Mantel: FEHLER „gekrümmt“.
 T  Zwei Bloecke mit gemeinsamer Trennflaeche, die Trennflaeche im Lager:
    FEHLER „zwischen den Körpern“ (die Facetten zeigen nach beiden Seiten).
+P  Schalenplatte 4 x 3 m (shell4, shell8) in mehreren Hoehen, senkrecht und
+   0,7 Grad geneigt: kein FEHLER (Befund 4 vom 11.11.2026); 10 Grad: FEHLER;
+   ein Element von Hand gespiegelt: FEHLER „Facetten nach beiden Seiten“.
 U  Unvernetztes Modell: die Pruefung bleibt still und wirft nichts.
 
 Aufruf:  python -m tests.test_flaechenlager_lokal_schraeg
@@ -227,6 +230,75 @@ def test_trennflaeche():
           f[0][:120] if f else "kein FEHLER")
 
 
+def _platte(ordnung=1, z0=0.0, neig_grad=0.0, ebene="xy"):
+    """Schalenplatte 4 x 3 m (shell4/shell8) auf Hoehe z0, um y geneigt, im
+    Flaechenlager in Flaechenachsen mit Ausfall bei Zug (Befund 4)."""
+    from statik3d.model import Model, Material, ShellProp, DofBehaviour
+    from statik3d import mesher
+    import contextlib
+    import io
+    a = np.radians(neig_grad)
+    m = Model("P")
+    m.add_material(Material.steel("S235"))
+    m.add_shell_prop(ShellProp("t10", 0.01))
+    m.netz.ordnung = ordnung
+    E = np.array([[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]], float)
+    E[:, 2] = z0 + E[:, 0] * np.tan(a)
+    if ebene == "yz":                  # senkrechte Platte, Normale x
+        E = E[:, [2, 0, 1]]
+    m.add_nodes(E)
+    for i in range(4):
+        m.add_line(f"L{i}", [i, (i + 1) % 4])
+    m.add_flaeche("P", [f"L{i}" for i in range(4)], material="S235", dicke="t10")
+    ss = m.add_surface_support(name="B")
+    ss.flaechen = ["P"]
+    ss.lokal = True
+    ss.behaviour[2] = DofBehaviour("rigid", failure="zug")
+    with contextlib.redirect_stdout(io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1)
+    return m
+
+
+def test_schalenplatte():
+    """Befund 4 (11.11.2026): die Normale einer Schale kommt aus ihrer
+    Knotenreihenfolge, nicht aus Knoten in ihrer eigenen Ebene. Bis dahin
+    zeigten auf z = 0,37 bei shell4 37 von 130 Facetten nach +z, der Rest
+    nach -z, und Model.check sperrte die Rechnung mit „Facetten nach beiden
+    Seiten“."""
+    from statik3d import supports
+    for ordnung in (1, 2):
+        for z0, neig, ebene in ((0.0, 0.0, "xy"), (0.37, 0.0, "xy"), (-1.25, 0.0, "xy"), (3.0, 0.0, "xy"),
+                                (0.13, 0.7, "xy"), (0.37, 0.0, "yz")):
+            m = _platte(ordnung, z0, neig, ebene)
+            f = _fehler(m, "B")
+            _fac, N, _s = supports._facettennormalen(m, m.flaechen["P"])
+            N = np.asarray(N)
+            ach = 2 if ebene == "xy" else 0
+            plus, minus = int((N[:, ach] > 0).sum()), int((N[:, ach] < 0).sum())
+            typ = sorted({e.typ for e in m.elements})
+            check(f"P {typ[0]} Platte {ebene} auf {z0:g} m, {neig:g}° geneigt: alle Facetten eine Seite, kein FEHLER",
+                  not f and min(plus, minus) == 0 and len(N) > 0,
+                  f"+{'xyz'[ach]} {plus}, -{'xyz'[ach]} {minus}" + (f"; {f[0][:70]}" if f else ""))
+            g = supports.normalengruppen(m, [m.flaechen["P"]], log=[])
+            check(f"… normalengruppen: eine Gruppe, Achse {'xyz'[ach]}",
+                  len(g) == 1 and g[0][0] == ach, str([x[:2] for x in g]))
+    # die echten Fehlerfaelle bleiben: schraeg ueber der Grenze
+    m = _platte(1, 0.37, 10.0)
+    f = _fehler(m, "B")
+    check("P Schalenplatte 10° geneigt auf 0,37 m: FEHLER „schräg“ bleibt",
+          len(f) == 1 and "10,0° schräg zur Achse z" in f[0], f[0][:90] if f else "kein FEHLER")
+    # ein einzelnes Element von Hand gespiegelt: die Facetten zeigen nach
+    # beiden Seiten - das wird weiter gemeldet (das Netz ist uneinheitlich
+    # orientiert; der Vernetzer erzeugt das nie)
+    for ordnung, perm in ((1, [0, 3, 2, 1]), (2, [0, 3, 2, 1, 7, 6, 5, 4])):
+        m = _platte(ordnung, 0.37)
+        el = m.elements[int(m.flaechen["P"].elemente[0])]
+        el.nodes = [el.nodes[i] for i in perm]
+        f = _fehler(m, "B")
+        check(f"P {el.typ}: ein Element gespiegelt: FEHLER „Facetten nach beiden Seiten“, 1 Facette",
+              len(f) == 1 and "Facetten nach beiden Seiten: 1 von" in f[0], f[0][:110] if f else "kein FEHLER")
+
+
 def test_unvernetzt():
     m, _R = _quader(10.0, vernetzen=False)
     try:
@@ -240,7 +312,8 @@ def test_unvernetzt():
 
 
 def main():
-    for t in (test_schraege_ebene, test_gleiche_feder, test_zylinder, test_trennflaeche, test_unvernetzt):
+    for t in (test_schraege_ebene, test_gleiche_feder, test_zylinder, test_trennflaeche, test_schalenplatte,
+              test_unvernetzt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
