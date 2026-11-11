@@ -496,36 +496,49 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                      (_num(_f(card, 14)) or 0.0) * scale ** 2]
                 model.add_punktmasse(g, masse, J, name=f"CONM2 {eid}")
             elif name in ("CELAS1", "CELAS2", "CBUSH"):
-                # CELAS1 eid pid G1 C1 G2 C2 / CELAS2 eid k G1 C1 G2 C2
-                if name == "CELAS2":
-                    k = _num(_f(card, 2)) or 0.0
+                # CELAS1 eid pid G1 C1 G2 C2 / CELAS2 eid k G1 C1 G2 C2.
+                # Der Grund ist ein leeres Feld oder 0, auf der Seite G2 oder
+                # G1 (11.11.2026; bis dahin griff die Lagerfeder nur bei
+                # leerem G2, G2 = 0 wurde „braucht zwei Knoten“, G1 = 0
+                # „Knoten 0 unbekannt“)
+                if name in ("CELAS1", "CELAS2"):
                     g1, c1 = _int(_f(card, 3)), _int(_f(card, 4))
-                    g2 = _int(_f(card, 5))
-                    kk = [0.0] * 6
-                    if c1 and 1 <= c1 <= 6:
-                        kk[c1 - 1] = k
-                elif name == "CELAS1":
-                    pid = _int(_f(card, 2))
-                    g1, c1 = _int(_f(card, 3)), _int(_f(card, 4))
-                    g2 = _int(_f(card, 5))
-                    info = props.get(pid) or {}
-                    k = float((info.get("k") or [0.0])[0])
+                    g2, c2 = _int(_f(card, 5)), _int(_f(card, 6))
+                    if not g1 and g2:            # Grund auf der Seite G1
+                        g1, c1, g2 = g2, c2, None
+                    if name == "CELAS2":
+                        k = _num(_f(card, 2)) or 0.0
+                    else:
+                        info = props.get(_int(_f(card, 2))) or {}
+                        k = float((info.get("k") or [0.0])[0])
                     kk = [0.0] * 6
                     if c1 and 1 <= c1 <= 6:
                         kk[c1 - 1] = k
                 else:
                     pid = _int(_f(card, 2))
                     g1, g2 = _int(_f(card, 3)), _int(_f(card, 4))
+                    if not g1 and g2:
+                        g1, g2 = g2, None
                     info = props.get(pid) or {}
                     kk = list(info.get("k", [0.0] * 6))
-                if g1 in grids and g2 is None and any(kk):
+                g1 = g1 or None
+                g2 = g2 or None
+                if g1 is None:
+                    C.warn(log, f"{name} {eid}: kein Knoten angegeben (beide Seiten leer "
+                                "oder 0) - übergangen")
+                elif g1 not in grids:
+                    C.warn(log, f"{name} {eid}: Knoten {g1} unbekannt - übergangen")
+                elif g2 is None and any(kk):
                     # Feder gegen den festen Grund: ein gefedertes Knotenlager
                     for d, k in enumerate(kk):
                         if k:
                             lagerfedern.setdefault(grids[g1], {})[d] = \
                                 lagerfedern.get(grids[g1], {}).get(d, 0.0) + float(k)
-                elif g1 is None or g2 is None or g2 not in grids:
-                    C.warn(log, f"{name} {eid}: braucht zwei Knoten - übergangen")
+                elif g2 is None:
+                    C.warn(log, f"{name} {eid}: Feder gegen den Grund ohne Steifigkeit "
+                                "oder ohne Komponente 1 bis 6 - übergangen")
+                elif g2 not in grids:
+                    C.warn(log, f"{name} {eid}: Knoten {g2} unbekannt - übergangen")
                 else:
                     fp = model.add_feder_prop(C.unique_name(model.federn, f"{name} {eid}"), kk)
                     elems[eid] = model.add_element("feder", [grids[g1], grids[g2]],
@@ -609,7 +622,12 @@ def import_bdf(path: str, model: Model = None, log: list = None,
 
     load_combos: list[list[str]] = []
     # PLOAD1 nennt je Karte eine Richtung; Karten desselben Stabs und
-    # Abschnitts werden zu einer Stablast zusammengefasst
+    # Abschnitts werden zu einer Stablast zusammengefasst - globale Karten
+    # mit Bezug auf die Projektion (LEPR, FRPR) aber nur je Richtung: Nastran
+    # projiziert jede Karte senkrecht zu ihrer eigenen Richtung, Statik3D
+    # projiziert mit der Richtung der ganzen Last (11.11.2026; bis dahin
+    # wurden FX- und FZ-Karten zusammengelegt und mit der Summenrichtung
+    # projiziert)
     stablasten: dict[tuple, list] = {}
     for card in load_cards:
         name = card[0]
@@ -652,7 +670,9 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                     continue
                 if p2 is None:
                     p2 = p1
-                key = (sid, e, typ[2:] == "E", skala, x1, x2)
+                lokal = typ[2:] == "E"
+                key = (sid, e, lokal, skala, x1, x2,
+                       typ[1] if skala.endswith("PR") and not lokal else "")
                 case_name(sid)
                 q = stablasten.setdefault(key, [[0.0] * 3, [0.0] * 3])
                 q[0]["XYZ".index(typ[1])] += p1
@@ -698,7 +718,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 load_combos.append(card)
         except Exception as ex:
             C.warn(log, f"{name}: {ex}")
-    for (sid, e, lokal, skala, x1, x2), (q1, q2) in stablasten.items():
+    for (sid, e, lokal, skala, x1, x2, _richtung), (q1, q2) in stablasten.items():
         i = elems[e]
         L = float(model.element_length(i))
         if skala.startswith("FR"):

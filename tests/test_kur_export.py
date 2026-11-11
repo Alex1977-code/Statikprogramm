@@ -310,6 +310,67 @@ def test_k18_dxf_volumen():
 
 
 # --------------------------------------------------------------------------
+# K21: Nastran PLOAD1 mit Projektion je Richtung
+# --------------------------------------------------------------------------
+BDF_PROJ = """SOL 101
+CEND
+BEGIN BULK
+GRID,1,,0.,0.,0.
+GRID,2,,3.,0.,4.
+MAT1,1,2.1+11,,0.3,7850.
+PBAR,1,1,0.01,1.-4,1.-4,1.-4
+CBAR,1,1,1,2,0.,1.,0.
+SPC1,1,123456,1,2
+PLOAD1,1,1,FX,FRPR,0.,1000.,1.,1000.
+PLOAD1,1,1,FZ,FRPR,0.,-1000.,1.,-1000.
+ENDDATA
+"""
+
+
+def test_k21_nastran_pload1():
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "k21.bdf")
+        with open(p, "w") as f:
+            f.write(BDF_PROJ)
+        m = import_file(p, log=[])
+    hand = np.array([4000.0, 0.0, -3000.0])          # Summe F je Achse
+    # Weg 1: Summe der Last aus den gelesenen Stablasten (q · Faktor · L)
+    summe = np.zeros(3)
+    for lc in m.load_cases.values():
+        for bl in lc.beam_loads:
+            e = m.elements[bl.elem]
+            T3, L = local_axes(m.nodes[e.nodes[0]], m.nodes[e.nodes[1]], 0.0)
+            f = projektionsfaktor(T3[0], bl.q) if bl.bezugslaenge == "projektion" else 1.0
+            summe += np.asarray(bl.q, float) * f * L
+    # Weg 2: Rechnung, Summe der Auflagerkraefte = -Summe F
+    R = next(iter(_reaktionen(m).values()))
+    check("K21 Nastran PLOAD1 FRPR: Summe F aus den gelesenen Lasten = Hand (4000, 0, -3000) N",
+          np.allclose(summe, hand, rtol=1e-9, atol=1e-6), f"{np.round(summe, 3).tolist()} N")
+    check("K21 Nastran PLOAD1 FRPR: Rechnung Summe R = -(4000, 0, -3000) N",
+          np.allclose(R, -hand, rtol=1e-9, atol=1e-6), f"{np.round(R, 3).tolist()} N")
+
+
+# --------------------------------------------------------------------------
+# K25: Nastran CELAS2 gegen den Grund
+# --------------------------------------------------------------------------
+def test_k25_nastran_celas():
+    for zeile in ("CELAS2,10,2.+6,2,3", "CELAS2,10,2.+6,2,3,0,0", "CELAS2,10,2.+6,0,0,2,3"):
+        txt = ("BEGIN BULK\nGRID,1,,0.,0.,0.\nGRID,2,,3.,0.,0.\nMAT1,1,2.1+11,,0.3,7850.\n"
+               "PBAR,1,1,0.01,1.-4,1.-4,1.-4\nCBAR,1,1,1,2,0.,1.,0.\nSPC1,1,123456,1\n"
+               f"{zeile}\nENDDATA\n")
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "k25.bdf")
+            with open(p, "w") as f:
+                f.write(txt)
+            log = []
+            m = import_file(p, log=log)
+        feder = [(s.node, list(s.dofs), list(s.stiffness or [])) for s in m.supports if s.node == 1]
+        warn = [z for z in log if "CELAS2" in z]
+        check(f"K25 Nastran „{zeile}“: Lagerfeder 2000 kN/m in z an Knoten 2, keine Warnung",
+              feder == [(1, [2], [2e6])] and not warn, f"{feder} {warn}")
+
+
+# --------------------------------------------------------------------------
 # K26: DXF $INSUNITS unbekannt
 # --------------------------------------------------------------------------
 def test_k26_dxf_insunits():
@@ -330,8 +391,11 @@ def test_k26_dxf_insunits():
         check(f"K26 DXF $INSUNITS = {code}: die Meldung nennt den Wert der Datei", ok,
               w[0][:150] if w else "(keine Meldung)")
 
+
 def main():
-    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import, test_k18_dxf_volumen, test_k26_dxf_insunits,):
+    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import,
+              test_k18_dxf_volumen, test_k21_nastran_pload1, test_k25_nastran_celas,
+              test_k26_dxf_insunits):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
