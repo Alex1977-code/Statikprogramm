@@ -29,6 +29,8 @@ import os
 import re
 from typing import Optional
 
+import numpy as np
+
 from ..model import Model, Material, Section
 from ..elements.solid import normalize_tet10
 from . import _common as C
@@ -176,6 +178,10 @@ class _State:
         self.sec_counter = 0
         self.unsupported: dict[str, int] = {}
         self.supports: dict[int, dict[int, float]] = {}   # Knotenindex -> {dof: Wert}
+        # *RELEASE wird erst nach allen Querschnitten angewandt: welche lokale
+        # Achse M1 ist, haengt vom Querschnittsblock ab (_RELEASE)
+        self.releases: list[tuple[list[int], int, tuple]] = []
+        self.achse1_z: set[int] = set()          # Staebe aus *BEAM SECTION (1-Achse = lokale z)
 
     def node(self, ref: str) -> Optional[int]:
         v = C.parse_number(ref)
@@ -295,16 +301,21 @@ def _apply_boundary(block: Block, st: _State) -> None:
                 d[dof] = float(value or 0.0) * (st.scale if dof < 3 else 1.0)
 
 
-#: *RELEASE: Schluessel -> geloeste lokale Drehungen (3 = um die Stabachse,
-#: 4 = um die 1-Achse, 5 = um die 2-Achse). Die 1-Achse ist die Achse von I11,
-#: und I11 wird als I_y gelesen - also ist M1 das Gelenk um die lokale y-Achse.
+#: *RELEASE: Schluessel -> geloeste Drehungen (3 = um die Stabachse,
+#: 4 = um die 1-Achse, 5 = um die 2-Achse). Bei einer *BEAM GENERAL SECTION
+#: ist die 1-Achse die lokale y-Achse (die Verdrehung des Stabs folgt aus n1,
+#: :func:`_roll_aus_n1`), also M1 das Gelenk um die lokale y-Achse. Bei einer
+#: *BEAM SECTION (RECT, BOX, ...) bleibt die Verdrehung 0 und das Mass a in
+#: n1-Richtung ist die Hoehe: dort ist die 1-Achse die lokale z-Achse, M1 das
+#: Gelenk um z (11.11.2026; bis dahin galt M1 immer als Gelenk um y).
 _RELEASE = {"T": (3,), "M1": (4,), "M2": (5,), "M1-M2": (4, 5), "M1-T": (3, 4),
             "M2-T": (3, 5), "ALLM": (3, 4, 5)}
 
 
 def _apply_release(block: Block, st: _State) -> None:
     """Stabendgelenke (09.11.2026; bis dahin wurde *RELEASE uebergangen und
-    jedes Gelenk kam biegesteif an)."""
+    jedes Gelenk kam biegesteif an). Gemerkt in ``st.releases``, gesetzt von
+    :func:`_releases_setzen` nach allen Querschnitten."""
     for parts in _join_continued(block.lines):
         if len(parts) < 3 or not parts[0]:
             continue
@@ -314,10 +325,35 @@ def _apply_release(block: Block, st: _State) -> None:
         if not elems or ende is None or frei is None:
             C.warn(st.log, f"*RELEASE: Zeile '{', '.join(parts)}' nicht verwendbar")
             continue
+        st.releases.append((elems, ende, frei))
+
+
+def _releases_setzen(st: _State) -> None:
+    for elems, ende, frei in st.releases:
         for e in elems:
             el = st.model.elements[e]
+            dreh = frei
+            if e in st.achse1_z:          # 1-Achse = lokale z: M1 <-> M2
+                dreh = tuple({3: 3, 4: 5, 5: 4}[d] for d in frei)
             el.hinges = sorted({int(d) for d in (el.hinges or [])}
-                               | {6 * ende + d for d in frei})
+                               | {6 * ende + d for d in dreh})
+
+
+def _z3(v) -> list[str]:
+    return [f"{float(x):g}" for x in v]
+
+
+def _roll_aus_n1(model: Model, el, n1) -> Optional[float]:
+    """Verdrehung ``roll`` eines Balkens, bei der seine lokale y-Achse in die
+    1-Achse von Abaqus faellt (n1 senkrecht zur Stabachse projiziert, wie
+    Abaqus: n2 = t x n1, n1 = n2 x t). None, wenn n1 laengs zur Stabachse liegt."""
+    from ..elements.beam3d import local_axes
+    T3, _L = local_axes(model.nodes[int(el.nodes[0])], model.nodes[int(el.nodes[1])], 0.0)
+    n = np.asarray(n1, float)
+    n = n - float(n @ T3[0]) * T3[0]
+    if float(np.linalg.norm(n)) < 1e-9 * max(1.0, float(np.linalg.norm(n1))):
+        return None
+    return float(np.arctan2(float(n @ T3[2]), float(n @ T3[1])))
 
 
 def _apply_cload(block: Block, st: _State) -> None:
@@ -550,19 +586,46 @@ def import_inp(path: str, model: Model = None, log: list = None,
                     if len(b.lines) > 1:
                         C.say(log, f"*BEAM SECTION {b.get('ELSET')}: Richtungskosinus "
                                    f"'{b.lines[1]}' wird ignoriert (Verdrehung 0)")
+                    st.achse1_z.update(elems)
                 elif kw == "BEAM GENERAL SECTION":
                     vals = [C.parse_number(p) for p in _split(b.lines[0])] if b.lines else []
                     vals = [v or 0.0 for v in vals]
                     s = st.scale
                     st.sec_counter += 1
                     name = C.unique_name(model.sections, str(b.get("ELSET") or f"SEC-{st.sec_counter}"))
-                    # Datenzeile: A, I11, I12, I22, J  (1-Achse ~ lokale z, 2-Achse ~ lokale y)
+                    # Datenzeile: A, I11, I12, I22, J; zweite Zeile n1 (Vorgabe
+                    # 0,0,-1). Die 1-Achse wird die lokale y-Achse: die
+                    # Verdrehung jedes Stabs folgt aus n1, dann ist I11 = I_y,
+                    # M1 das Gelenk um y und K13 = G Asy (11.11.2026; bis
+                    # dahin blieb n1 unbeachtet, bei der Vorgabe n1 = (0,0,-1)
+                    # lagen I11, M1 und K13/K23 am waagerechten Stab um 90
+                    # Grad verdreht)
                     if len(vals) >= 5:
                         model.add_section(Section(name, A=vals[0] * s ** 2,
                                                   Iy=vals[1] * s ** 4, Iz=vals[3] * s ** 4,
                                                   It=vals[4] * s ** 4))
                         sec_name = name
                         balken = (name, mat)
+                        n1 = [C.parse_number(p) for p in _split(b.lines[1])] \
+                            if len(b.lines) > 1 else []
+                        n1 = [v or 0.0 for v in n1[:3]] if len(n1) >= 3 else [0.0, 0.0, -1.0]
+                        laengs = 0
+                        for e in elems:
+                            el = model.elements[e]
+                            if el.typ != "beam":
+                                continue
+                            r = _roll_aus_n1(model, el, n1)
+                            if r is None:
+                                laengs += 1
+                            else:
+                                el.roll = r if abs(r) > 1e-12 else 0.0
+                            st.achse1_z.discard(e)
+                        if laengs:
+                            C.warn(log, f"*BEAM GENERAL SECTION {b.get('ELSET')}: die "
+                                        f"n1-Richtung ({', '.join(_z3(n1))}) liegt bei "
+                                        f"{laengs} {'Stab' if laengs == 1 else 'Stäben'} längs der "
+                                        "Stabachse - "
+                                        "Verdrehung 0 angenommen")
                 elif kw == "SHELL SECTION":
                     t = C.parse_number(_split(b.lines[0])[0]) if b.lines else None
                     t = (t or 0.0) * st.scale
@@ -626,6 +689,8 @@ def import_inp(path: str, model: Model = None, log: list = None,
                 st.unsupported[f"*{kw}"] = st.unsupported.get(f"*{kw}", 0) + 1
         except Exception as ex:
             C.warn(log, f"*{b.keyword}: {ex}")
+
+    _releases_setzen(st)
 
     # ---- fehlende Querschnitte ---------------------------------------------
     missing_beam = [i for i, e in enumerate(model.elements)

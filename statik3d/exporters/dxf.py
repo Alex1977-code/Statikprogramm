@@ -1,7 +1,8 @@
 """
 Export nach AutoCAD DXF (ASCII, R12-vertraeglich).
 
-Staebe werden zu LINE, Schalen zu 3DFACE, Aussenflaechen der Volumen ebenso.
+Staebe werden zu LINE, Schalen zu 3DFACE, Aussenflaechen der Volumen tet4, tet10
+und hex8 ebenso (die uebrigen Volumenarten nennt der Hinweis „nicht übertragen“).
 Lagersymbole, Linien, Lastnamen und Stabnamen kommen auf eigene Ebenen, deren
 Name mit ``STATIK3D_`` beginnt: so lassen sie sich im CAD getrennt schalten,
 und der eigene Import liest sie nicht als Tragwerk (Befund B5 der
@@ -20,6 +21,10 @@ import numpy as np
 from ..model import Model
 from ..importers.dxf import HILFSEBENE
 from . import _common as C
+
+#: Volumenarten, deren Aussenflaechen als 3DFACE hinausgehen (die Arten, die
+#: mesher.surface_facets kennt)
+_VOLUMEN_MIT_FLAECHEN = ("tet4", "tet10", "hex8")
 
 #: Ebenen der Symbole und Beschriftungen (kein Tragwerk)
 E_LAGER = HILFSEBENE + "LAGER"
@@ -128,7 +133,14 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
     C.say(log, "DXF: Die Datei trägt die Geometrie in Metern ($INSUNITS = 6). Lagersymbole, "
                f"Linien und Beschriftung liegen auf Ebenen mit dem Vorsatz {HILFSEBENE}.")
     n_stab = sum(1 for e in model.elements if e.typ in ("truss", "seil"))
-    n_vol = len(C.solid_elements(model))
+    # Aussenflaechen schreibt solid_faces (mesher.surface_facets) nur fuer
+    # tet4, tet10 und hex8; die uebrigen Volumenarten (Prismen, Pyramiden,
+    # hex20, tetp) fehlen ganz in der Datei (bis zum 11.11.2026 hiess es fuer
+    # alle „nur die Außenflächen als 3DFACE“)
+    vol = [model.elements[i].typ for i in C.solid_elements(model)]
+    n_vol = sum(1 for t in vol if t in _VOLUMEN_MIT_FLAECHEN)
+    ohne = sorted({t for t in vol if t not in _VOLUMEN_MIT_FLAECHEN})
+    n_vol_fehlt = len(vol) - n_vol
     C.nicht_uebertragen(log, "DXF", [
         (len(model.materials), "Werkstoff", "Werkstoffe"),
         (len(model.sections), "Querschnitt", "Querschnitte"),
@@ -137,6 +149,10 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
          "Stabarten Fachwerkstab oder Seil (gehen als Linien hinaus)"),
         (n_vol, "Volumenelement (nur die Außenflächen als 3DFACE)",
          "Volumenelemente (nur die Außenflächen als 3DFACE)"),
+        (n_vol_fehlt, f"Volumenelement der Art {', '.join(ohne)} (fehlt ganz, als 3DFACE "
+                      "gehen nur die Außenflächen von tet4, tet10 und hex8 hinaus)",
+         f"Volumenelemente der Arten {', '.join(ohne)} (fehlen ganz, als 3DFACE gehen nur "
+         "die Außenflächen von tet4, tet10 und hex8 hinaus)"),
         (len(C.gelenkenden(model)), "Stabendgelenk", "Stabendgelenke"),
         (len(model.supports), "Knotenlager (nur als Symbol)", "Knotenlager (nur als Symbol)"),
         (len(model.line_supports), "Linienlager", "Linienlager"),
