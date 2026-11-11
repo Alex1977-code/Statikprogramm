@@ -169,8 +169,77 @@ def test_eigene():
           f"{len(ohne)} {f_ohne}")
 
 
+def _gurt_ueberdeckungen(m) -> int:
+    """Paare von Gurtflaechen verschiedener Riegel im selben Feld, deren
+    z-Bereiche sich ueberdecken (mehr als 1e-6 m)."""
+    import re
+    zb = {}
+    for nm, f in m.flaechen.items():
+        g = re.match(r"Riegel (\d+) Gurt (\d+)\.(\d)", nm)
+        if not g:
+            continue
+        kn = sorted({int(k) for ln in f.linien for k in m.lines[ln].nodes})
+        z = m.nodes[kn, 2]
+        zb[nm] = (int(g.group(1)), int(g.group(2)), float(z.min()), float(z.max()))
+    namen = sorted(zb)
+    n = 0
+    for i, a in enumerate(namen):
+        for c in namen[i + 1:]:
+            ra, sa, za0, za1 = zb[a]
+            rc, sc, zc0, zc1 = zb[c]
+            if ra != rc and sa == sc and min(za1, zc1) - max(za0, zc0) > 1e-6:
+                n += 1
+    return n
+
+
+def test_gurte_ueberdecken_nicht():
+    """Befund 47 (11.11.2026): Stemmtor 2,0 m und Hubtor 1,0 m hoch lagen in
+    den Grenzen, und die Gurte benachbarter Riegel ueberdeckten sich (8 bzw.
+    18 Paare doppelter Gurtflaechen). Jetzt: jede Hoehe in den Grenzen gibt
+    entweder eine Meldung mit der kleinsten Hoehe oder ein Modell ohne
+    Ueberdeckung; die Vorgabewerte bleiben und bauen wie bisher."""
+    from statik3d import beispiele as bib
+    from statik3d.beispiele import hilfen
+    for key, kante, grenze in (("stemmtor", 2.18, "2,19"), ("hubtor", 1.53, "1,54")):
+        b = bib.finden(key)
+        p = next(x for x in b.parameter if x.name == "hoehe")
+        hoehen = sorted({round(p.min + 0.1 * i, 6) for i in range(16)} | {kante, round(kante + 0.01, 6)})
+        gemeldet, gebaut, schlecht = [], [], []
+        for h in hoehen:
+            w = dict(b.vorgaben())
+            w.update(hoehe=h, ow=min(w["ow"], 0.8 * h), uw=min(w["uw"], 0.2 * h))
+            try:
+                m = b.bauen(w)
+            except ValueError as ex:
+                gemeldet.append(h)
+                if "überdecken sich" not in str(ex) or f"Mindestens {grenze} m" not in str(ex):
+                    schlecht.append((h, str(ex)[:80]))
+                continue
+            gebaut.append(h)
+            n = _gurt_ueberdeckungen(m)
+            if n:
+                schlecht.append((h, f"{n} Paare"))
+        check(f"{b.titel}: Höhe {p.min:g} bis {max(hoehen):g} m - Meldung „überdecken sich, mindestens {grenze} m“ "
+              "oder Modell ohne Überdeckung",
+              not schlecht and p.min in gemeldet and kante in gemeldet and round(kante + 0.01, 6) in gebaut,
+              f"gemeldet {gemeldet}, gebaut {len(gebaut)}, schlecht {schlecht}")
+        m = b.bauen()
+        check(f"{b.titel}: Vorgabewerte bauen ohne Meldung, keine Überdeckung",
+              _gurt_ueberdeckungen(m) == 0 and b.parameter[[x.name for x in b.parameter].index("hoehe")].wert
+              == {"stemmtor": 8.0, "hubtor": 5.0}[key])
+    try:
+        hilfen.platten_raster(None, None, None, 4.0, 2.0, 0.7, [0.5, 0.7], 0.30, [], 0.25, False,
+                              "a", "b", "c", "d", "e")
+        ok, txt = False, "keine Ausnahme"
+    except ValueError as ex:
+        ok, txt = "überdecken sich" in str(ex), str(ex)
+    check("hilfen.platten_raster: zwei Riegel näher als die Gurtbreite - ValueError statt doppelter Flächen",
+          ok, txt[:90])
+
+
 def main():
-    for t in (test_verzeichnis, test_vorgaben_wie_bisher, test_werte_wirken, test_grenzen, test_eigene):
+    for t in (test_verzeichnis, test_vorgaben_wie_bisher, test_werte_wirken, test_grenzen, test_eigene,
+              test_gurte_ueberdecken_nicht):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

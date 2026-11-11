@@ -135,7 +135,15 @@ def platten_raster(m, b, abb, S, H, d, riegel, bf, steifen_s, steifen_tiefe, vol
                    t_haut, t_steg, t_gurt, t_steife, t_end):
     """Stauwand im lokalen System (s laengs, n zur Unterwasserseite, z hoch):
     Haut bei n = 0, Riegel als Steg und Gurt, Steifen bzw. Schotte, Endschotte.
-    ``abb(s, n, z)`` bildet auf global ab. Rueckgabe: Namen der Hautflaechen."""
+    ``abb(s, n, z)`` bildet auf global ab. Rueckgabe: Namen der Hautflaechen.
+    Liegen zwei Riegel naeher als die Gurtbreite ``bf`` beieinander, ueberdecken
+    sich ihre Gurte (doppelte Flaechen): ValueError statt eines solchen Modells
+    (Befund 47 vom 11.11.2026)."""
+    rz = sorted(riegel)
+    for z0, z1 in zip(rz[:-1], rz[1:]):
+        if z1 - z0 < bf - 1e-9:
+            raise ValueError(f"Riegel bei z = {z0:.3f} und {z1:.3f} m liegen näher als die Gurtbreite "
+                             f"{bf * 1e3:.0f} mm: die Gurte überdecken sich")
     Zs = sorted({0.0, H} | set(riegel) | {round(z + v, 6) for z in riegel for v in (-bf / 2, bf / 2)
                                            if 0.0 < z + v < H})
     Ss = sorted({0.0, S} | set(steifen_s))

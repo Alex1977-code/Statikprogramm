@@ -83,14 +83,14 @@ BEISPIELE = [
              [P("breite", "Flügelbreite", 7.0, "m", 2.0, 20.0), P("hoehe", "Höhe", 8.0, "m", 2.0, 25.0),
               P("ow", "Oberwasser", 7.0, "m", 0.5, 25.0), P("uw", "Unterwasser (0 = trocken)", 2.5, "m", 0.0, 25.0),
               P("haut", "Hautblech", 14.0, "mm", 6.0, 50.0)],
-             tm.stemmtor, pruefen_fn=tm._stau_pruefen),
+             tm.stemmtor, pruefen_fn=tm._stemmtor_pruefen),
     Beispiel("hubtor", "Hubtor", "Flächentragwerk",
              "Hubtor mit Haut, vier Riegeln und Querschotten etwa alle 2 m, auf Rollenbahnen und an "
              "Hubseilen gelagert; Wasser über den Wasserdruckgenerator.",
              [P("stuetzweite", "Stützweite", 12.0, "m", 2.0, 40.0), P("hoehe", "Höhe", 5.0, "m", 1.0, 20.0),
               P("ow", "Oberwasser", 5.0, "m", 0.5, 20.0), P("uw", "Unterwasser (0 = trocken)", 1.0, "m", 0.0, 20.0),
               P("haut", "Hautblech", 12.0, "mm", 6.0, 50.0)],
-             tm.hubtor, pruefen_fn=tm._stau_pruefen),
+             tm.hubtor, pruefen_fn=tm._hubtor_pruefen),
     Beispiel("fischbauchklappe", "Fischbauchklappe", "Flächentragwerk",
              "Geneigte Stauklappe mit geschlossenem Fischbauch, Drehachse am Fuß und zwei Zylindern; "
              "Lastfälle Eigengewicht, Wasser und Eisdruck.",
