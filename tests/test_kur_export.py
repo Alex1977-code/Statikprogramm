@@ -281,8 +281,35 @@ def test_k22_abaqus_import():
           _gelenkachsen(mg) == [[0.0, 0.0, 1.0]] and _gelenkachsen(mr) == [[0.0, 0.0, 1.0]],
           f"GENERAL {_gelenkachsen(mg)}, RECT {_gelenkachsen(mr)}")
 
+
+# --------------------------------------------------------------------------
+# K18: DXF-Hinweis zu Volumen ohne 3DFACE
+# --------------------------------------------------------------------------
+def test_k18_dxf_volumen():
+    punkte = {"pent6": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1)],
+              "pyr5": [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 1)],
+              "tet4": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]}
+    for typ, pts in punkte.items():
+        m = Model("K18")
+        m.add_material(Material.steel("S355"))
+        n = [m.add_node(*q) for q in pts]
+        m.add_element(typ, n, "S355")
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, typ + ".dxf")
+            log = []
+            export_model(m, p, log=log)
+            n_face = _lesen(p).count("3DFACE")
+        h = next((z for z in log if "DXF: nicht übertragen:" in z), "")
+        if typ == "tet4":
+            ok = n_face == 4 and "1 Volumenelement (nur die Außenflächen als 3DFACE)" in h
+        else:
+            ok = n_face == 0 and f"1 Volumenelement der Art {typ} (fehlt ganz" in h \
+                and "nur die Außenflächen als 3DFACE)" not in h
+        check(f"K18 DXF {typ}: {n_face} × 3DFACE, der Hinweis sagt, was geschrieben ist",
+              ok, h[h.find("nicht übertragen"):][:150])
+
 def main():
-    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import,):
+    for t in (test_k15_ifc_projektion, test_k16_abaqus_export, test_k22_abaqus_import, test_k18_dxf_volumen,):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
