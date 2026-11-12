@@ -12907,7 +12907,18 @@ Flächennormalen definiert und wirkt danach an jedem Element gleich. Was am
 einzelnen Element hängt (eine eigene Elementlast senkrecht zum Element, ein
 eigenes ΔT_z, ein eigener Schichtaufbau aus einem Import), dreht beim Ausrichten
 physikalisch gleich mit. Das Protokoll nennt Fläche und Elementnummern (ab 0)
-jedes umgedrehten Elements. Beim Öffnen einer Datei wird nicht ausgerichtet:
+jedes umgedrehten Elements. Umgedreht wird durch Umkehr des Umlaufs mit
+festem Knoten 0; ein gespiegeltes Element bekommt so genau seine frühere
+Knotenfolge zurück, und die Diagonale, an der Lasten und Kontaktfacetten ein
+Viereck teilen, bleibt dieselbe. Ein Schichtaufbau, der über die Dicke der
+Fläche zugewiesen ist, gilt zur Flächennormalen und bleibt unverändert; nur ein
+Aufbau am einzelnen Element wird mit umgekehrter Lagenfolge und mit dem
+Faserwinkel zur neuen lokalen x-Achse gewendet. Eine Kontaktfuge an einer
+Schale findet ihre Gegenfläche auf der näheren Seite, gleich wie Schale und
+Fläche orientiert sind, und eine Schale als Gegenseite gilt von beiden Seiten
+(bis dahin wurde ein Blech, dessen Normale vom Block wegzeigte, an die 200 mm
+entfernte Unterseite gebunden). Die Flächenachsen in der Ansicht zeigen immer
+die Normale der Fläche aus ihrem Randumlauf. Beim Öffnen einer Datei wird nicht ausgerichtet:
 Ältere Ergebnisse eines Modells mit gegen ihre Fläche gedrehten Schalen tragen
 den Status „Ergebnis möglicherweise betroffen – neu rechnen“ (Verfahrensstand
 31). Bis dahin wirkten an einem gespiegelten Element die Flächenlast, ΔT_z, der
