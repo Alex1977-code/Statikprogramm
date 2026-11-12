@@ -3711,8 +3711,16 @@ Ausgenommen ist ein Lager, das in allen drei Richtungen gleich wirkt (gleiche
 Feder oder starr, ohne Ausfall und Reibung): dort spielt die Achse keine
 Rolle. Bei Schalen ist die Normale die lokale z-Achse aus der Knotenreihenfolge
 der Elemente; eine ebene Schalenplatte gilt darum in jeder Höhe als einseitig.
-Zeigen einzelne Elemente einer Fläche zur Gegenseite (uneinheitlich
-orientiertes, von Hand geändertes Netz), bleibt der Fehler. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+Zeigen einzelne Elemente einer Schalenfläche ohne Körper zur Gegenseite
+(etwa von Hand umgedreht), richtet die Prüfung sie seit dem 12.11.2026 nach
+der ersten Facette aus: Die Lage der Schalenelemente wählt der Anwender frei,
+und das Lager einer Schalenfläche liegt ohnehin unten. Es gibt keinen Fehler
+mehr, und die Auflagerkräfte sind dieselben wie ohne das umgedrehte Element.
+Bis dahin meldete die Prüfung „hat Facetten nach beiden Seiten“ und die
+Rechnung startete nicht. An anderen Stellen hängt die Rechnung noch an der
+Lage des einzelnen Elements, etwa bei Flächenlasten in lokal z und beim
+Temperaturunterschied oben − unten (offen, siehe Release-Notes vom
+12.11.2026). Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
@@ -7463,7 +7471,11 @@ richtet darum jede Fläche nach außen aus, bezogen auf die Mitte ihrer Hülle
 gemeinsame Knoten; freie Wände und Schilder zählen nicht dazu. Bei einer
 Fläche allein oder einer Mitte in ihrer Ebene gibt die Rolle die Außenseite
 vor: Dach oben, Wand quer zum Wind je nach Lage Luv oder Lee, Seite zur
-näheren Seitenkante. Die Außenseite wird einmal je Fläche bestimmt.) Luv, Lee, Seite und Dach hängen so nicht
+näheren Seitenkante. Die Außenseite wird einmal je Fläche bestimmt.) Steht
+eine Gebäudefläche ganz allein, nennt der Generator seit dem 12.11.2026 einen
+Hinweis im Protokoll: Nach DIN EN 1991-1-4 ist eine einzeln stehende Wand eine
+freistehende Wand (7.4, c_p,net nach Tabelle 7.9) und ein einzelnes Dach ein
+freistehendes Dach (7.3); die Rolle setzt der Anwender. Luv, Lee, Seite und Dach hängen so nicht
 mehr davon ab, wie herum die Linien eingegeben sind. Druck wirkt in das
 Gebäude, Sog heraus; am Gebäude mit Wind in +x zeigen Luvdruck und Leesog
 beide in +x, der Dachsog hebt. Bis zum 09.11.2026 wirkten diese Lasten an
@@ -11321,8 +11333,33 @@ Lagermoment. Jetzt sind es 57,25 kNm gegen geschlossen 57,27 kNm, und
 Stabend- und Lagermoment sind gleich, auch an Stäben mit Gelenk oder
 Federgelenk und Feldlast.
 
+**Interne Stabteilung** (seit 12.11.2026). Nach Theorie II. und III.
+Ordnung teilt das Programm Balken intern in kürzere Abschnitte, ohne das
+Modell zu ändern: Jeder Stab bekommt mindestens so viele Abschnitte, wie die
+**Stabteilung** der Netzeinstellungen angibt (Vorgabe 10, wie RFEM; der
+RFEM-Import übernimmt den Wert), nach Theorie III. Ordnung doppelt so viele.
+Ein Element bekommt seinen Anteil nach seiner Länge; ein Stab, der schon in
+genug Elemente geteilt ist, bleibt, wie er ist. Ohne Stabobjekt zählt die
+gerade Kette von Balken zwischen Knoten mit Abzweig, Gelenk oder Lager als
+Stab. Geteilt wird nur, wo die Normalkraft nach Theorie I. Ordnung mindestens
+ein Tausendstel der Euler-Last des Elements erreicht; starre Kurzstäbe und
+Balken ohne Normalkraft bleiben ganz. Nicht geteilt werden außerdem
+Fachwerkstäbe, Seile, Stäbe mit Wölbkrafttorsion und Stäbe mit Versatz der
+Stabenden. Die Ergebnisse gelten für die Knoten und Elemente des Modells; das
+Feld eines Elements setzt sich aus seinen Teilstücken zusammen, auch in der
+gespeicherten Ergebnisdatei. Stabteilung 1 schaltet die Teilung ab. Bis zum
+12.11.2026 rechnete ein Stab in einem Element bei gehaltenen Enden ohne den
+Anteil der Normalkraft: Der links eingespannte, rechts gelenkige
+Einfeldträger (6 m, q = 5 kN/m, Druck 0,6·N_cr) hatte 22,50 kNm am Lager, das
+Ergebnis nach Theorie I. Ordnung, ohne Hinweis. Jetzt sind es nach Theorie II.
+Ordnung 44,21 kNm (Differentialgleichung 44,207) und nach Theorie III.
+Ordnung 44,07 kNm (−0,3 %, das korotationale Element braucht mehr Teile).
+Geprüft in `tests/test_stabteilung.py`.
+
 **Stabteilung für α_cr** (seit 09.11.2026). Die Verzweigung rechnet je
-Element mit einer kubischen Biegelinie. Liegt eine ganze Knickhalbwelle in
+Element mit einer kubischen Biegelinie. Seit der internen Stabteilung
+(12.11.2026) betrifft der folgende Hinweis nur noch Elemente, die nicht
+geteilt werden, oder die Stabteilung 1. Liegt eine ganze Knickhalbwelle in
 einem Element, ist α_cr zu hoch, beim beidseits gelenkigen Druckstab in einem
 Element um 21,6 %. Mit zwei Elementen sind es 0,75 %, mit vier 0,05 %.
 Erreicht α_cr·|N| eines gedrückten Balkenelements 30 % der Euler-Last dieses
@@ -11359,7 +11396,16 @@ und Federgelenken wie die Theorie II. Ordnung. Bis zum 09.11.2026 bekam sie
 die volle Balkenform; mit einer Pendelstütze als Balken mit Gelenken neben
 einem Kragstiel fand die Rechnung ab 5/6 der Knicklast kein Gleichgewicht.
 Der Versatz der Stabenden ist nach Theorie III. Ordnung **nicht**
-berücksichtigt. Alle drei Punkte sind geprüft in
+berücksichtigt.
+
+**Stablast am Gelenk nach Theorie III. Ordnung** (seit 12.11.2026). Die
+Stabendkräfte eines Balkens mit Gelenk oder Federgelenk nehmen die Stablast
+(Strecken-, Eigengewicht, Temperatur) kondensiert wie die Steifigkeit. Bis
+dahin stand dort die Festeinspannkraft des beidseits eingespannten Stabs: Am
+Gelenk mit Streckenlast zeigte das Ergebnis q·L²/12 statt 0 (15,0 kNm am
+eingespannten Einfeldträger in einem Element, am Stabanfang 15,0 statt
+22,5 kNm). Das Gleichgewicht der Knoten stimmte, nur die Stabendkräfte und
+das Feld nicht. Alle drei Punkte sind geprüft in
 `tests/test_theorie_nebenbefund16.py`.
 
 **α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
