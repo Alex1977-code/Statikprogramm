@@ -313,7 +313,27 @@ def _facettennormalen(model: Model, f) -> tuple:
                 n = -n
         if n is not None:
             normalen.append(np.asarray(n, float))
+    if schwer is None and normalen and _nur_schalen(model, facetten):
+        # Schalenflaeche ohne Koerper: die Normale einer Facette kommt aus der
+        # Knotenfolge ihres Elements, und die darf der Anwender frei waehlen
+        # (Entscheidung vom 12.11.2026: „die lage von schalenelementen sollte
+        # der user frei bestimmen können“). Darum alle zur ersten Facette
+        # ausgerichtet; die Seite legt normalengruppen ohnehin fest (zur
+        # negativen Achse). Bis dahin loeste ein einzelnes umgedrehtes
+        # Element den FEHLER „hat Facetten nach beiden Seiten“ aus.
+        ref = normalen[0]
+        normalen = [n if float(n @ ref) >= 0.0 else -n for n in normalen]
     return facetten, normalen, schwer
+
+
+def _nur_schalen(model: Model, facetten) -> bool:
+    """Stammen alle Facetten von Schalenelementen?"""
+    from .assemble import SHELL_TYPES
+    ne = len(model.elements)
+    for e, _nd, _n in facetten:
+        if e is None or not 0 <= int(e) < ne or model.elements[int(e)].typ not in SHELL_TYPES:
+            return False
+    return True
 
 
 #: Bis zu diesem Winkel [Grad] zwischen der Normalen einer Flaeche und einer

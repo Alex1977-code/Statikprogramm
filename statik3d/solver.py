@@ -1585,6 +1585,12 @@ class Results:
     #: Theorie II. Ordnung: elem -> lokale Stabend-Verschiebungen (12,), aus
     #: denen beam_station_forces den Anteil N w im Feld rechnet (A8, 09.11.2026)
     beam_th2: dict = field(default_factory=dict)
+    #: Interne Stabteilung (Theorie II./III. Ordnung, statik3d.stabteilung,
+    #: seit 12.11.2026): elem -> {"h": Teillaenge, "end": (n,12) Stabend-
+    #: kraefte je Teil, "q": Abschnittslasten je Teil, "th2": (n,12) oder
+    #: None}. Aeltere gespeicherte Ergebnisse haben das Feld nicht - lesen
+    #: nur mit getattr(res, "beam_teile", None).
+    beam_teile: dict = field(default_factory=dict)
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
     #: elem -> Elementmittel Integral sigma dV / V (6,) - linear in u, daher in
@@ -2038,11 +2044,35 @@ def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
     abschnittsweisen Last knickt der Querkraftverlauf an den Abschnittsenden;
     liegt ein Abschnittsende zwischen zwei Stellen, steht es nicht im Feld -
     die Stellen sind gleichmaessig verteilt, n hoch genug waehlen.
+
+    Ein nach Theorie II./III. Ordnung intern geteiltes Element
+    (statik3d.stabteilung, ``res.beam_teile``) rechnet jede Stelle in seinem
+    Teilstueck - aus dessen Anfangskraeften, Lasten und Biegelinie.
     """
-    fl = res.beam_end[i]
     L = model.element_length(i)
-    q = res.beam_q.get(i)
     x = np.linspace(0.0, L, n)
+    teile = (getattr(res, "beam_teile", None) or {}).get(i)
+    if teile is not None:
+        h = float(teile["h"])
+        anz = len(teile["end"])
+        k = np.minimum((x / h + 1e-9).astype(int), anz - 1)
+        aus = {c: np.zeros(n) for c in ("N", "Vy", "Vz", "Mt", "My", "Mz")}
+        for kk in np.unique(k):
+            sel = k == kk
+            th2 = teile["th2"][kk] if teile.get("th2") is not None else None
+            w = _stellen(model, i, teile["end"][kk], teile["q"][kk], h, th2, x[sel] - kk * h)
+            for c in aus:
+                aus[c][sel] = w[c]
+        return {"x": x, "L": L, **aus}
+    th2 = (getattr(res, "beam_th2", None) or {}).get(i)
+    return {"x": x, "L": L, **_stellen(model, i, res.beam_end[i], res.beam_q.get(i), L, th2, x)}
+
+
+def _stellen(model: Model, i: int, fl, q, L: float, th2, x) -> dict:
+    """Schnittgroessen an den Stellen ``x`` eines Elements bzw. Teilstuecks
+    der Laenge L aus seinen Anfangskraeften ``fl``, Abschnittslasten ``q``
+    und - Theorie II. Ordnung - den Stabend-Verschiebungen ``th2``."""
+    n = len(x)
     # Lastresultierende ueber [0,x] und deren Moment um die Stelle x
     Q, Mq = asm.lastresultierende(q, x)                            # (n,3)
     N = -fl[0] - Q[:, 0]
@@ -2051,12 +2081,11 @@ def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
     Mt = np.full(n, -fl[3])
     My = -fl[4] - fl[2] * x - Mq[:, 2]
     Mz = -fl[5] + fl[1] * x + Mq[:, 1]
-    th2 = getattr(res, "beam_th2", None) or {}
-    if i in th2 and fl[0] != 0.0:
-        dMy, dMz = _th2_feldanteil(model, i, fl, q, L, th2[i], x)
+    if th2 is not None and fl[0] != 0.0:
+        dMy, dMz = _th2_feldanteil(model, i, fl, q, L, th2, x)
         My = My + dMy
         Mz = Mz + dMz
-    return {"x": x, "L": L, "N": N, "Vy": Vy, "Vz": Vz, "Mt": Mt, "My": My, "Mz": Mz}
+    return {"N": N, "Vy": Vy, "Vz": Vz, "Mt": Mt, "My": My, "Mz": Mz}
 
 
 #: Stellen, an denen _th2_feldanteil die Biegelinie im Element rechnet
@@ -6672,6 +6701,8 @@ def _stab_namen(model: Model) -> dict:
 def stab_name(model: Model, i: int, namen: dict = None) -> str:
     """Der Name des Stabs zu Element ``i`` (sonst „Element <i+1>“)."""
     namen = _stab_namen(model) if namen is None else namen
+    # intern geteilte Staebe (statik3d.stabteilung): das Element des Modells
+    i = int((getattr(model, "_stabteilung_eltern", None) or {}).get(int(i), int(i)))
     return namen.get(int(i), f"Element {int(i) + 1}")
 
 

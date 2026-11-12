@@ -436,6 +436,7 @@ def stabteilung_grob(model: Model, u: np.ndarray, a_cr: float, aktiv=None, n_anf
         return []
     from .solver import _stab_namen
     namen = _stab_namen(model)
+    eltern = getattr(model, "_stabteilung_eltern", None) or {}
     out = []
     for i, N in normalkraefte_kg(model, u, aktiv, n_anfang).items():
         if N >= 0.0:
@@ -453,9 +454,16 @@ def stabteilung_grob(model: Model, u: np.ndarray, a_cr: float, aktiv=None, n_anf
             continue
         v = a_cr * (-N) / (math.pi ** 2 * model.materials[e.mat].E * I / l ** 2)
         if v >= TEILUNG_GRENZE:
-            out.append((float(v), int(i), str(namen.get(i, ""))))
+            # intern geteilt (statik3d.stabteilung): das Element des Modells nennen
+            j = int(eltern.get(int(i), int(i)))
+            out.append((float(v), j, str(namen.get(i, ""))))
     out.sort(reverse=True)
-    return out
+    gesehen, eindeutig = set(), []
+    for v, j, name in out:
+        if j not in gesehen:
+            gesehen.add(j)
+            eindeutig.append((v, j, name))
+    return eindeutig
 
 
 def teilung_hinweis(grob: list) -> str:
@@ -693,9 +701,13 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
                    imperfektionen: bool = True, elastisch: bool = True,
                    max_iter: int = 30, tol: float = 1e-6,
                    richtung=None, alle_vorkruemmungen: bool = False,
-                   progress=None):
+                   progress=None, stabteilung: bool = True):
     """
     Eine Kombination am verformten System rechnen.
+
+    ``stabteilung``: Balken intern teilen (statik3d.stabteilung, seit
+    12.11.2026) - gerechnet wird am geteilten Modell, das Ergebnis gilt fuer
+    die Knoten und Elemente von ``model``.
 
     Vorgehen:
       1. Loesung nach Theorie I. Ordnung (Grundzustand)
@@ -713,6 +725,17 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # Vorspannkraft (Soll nach Verankerung, 13.10.2026): das Ergebnis nach
         # Theorie I. Ordnung bleibt stehen und wird gekennzeichnet
         return Results(name=name, kind="combination", model=model), Th2Info(kombination=name, fehler=sperre)
+    if stabteilung:
+        from .stabteilung import fein_system, zurueck
+        system = system or StaticSystem(model)
+        fein = fein_system(model, system, factors)
+        if fein is not None:
+            m2, sys2, abb = fein
+            res2, info = solve_theorie2(m2, factors, name, sys2, imperfektionen=imperfektionen,
+                                        elastisch=elastisch, max_iter=max_iter, tol=tol,
+                                        richtung=richtung, alle_vorkruemmungen=alle_vorkruemmungen,
+                                        progress=progress, stabteilung=False)
+            return zurueck(model, res2, abb), info
     t0 = time.time()
     system = system or StaticSystem(model)
     # Das Ergebnis ersetzt die lineare Kombination - ein Ausweichen des
@@ -973,10 +996,16 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
         if modus == "auto" and n not in (erzwungen or ()):
             # Grundzustand und alpha_cr zuerst
             from .solver import case_loads, case_prescribed, anfangsnormalkraefte
-            F, _feq, _q, _temp = case_loads(model, faktoren, getattr(system, "aktiv", None))
-            u1 = system.solve(F, us=case_prescribed(model, faktoren))
-            ac = alpha_cr(model, system, u1,
-                          n_anfang=anfangsnormalkraefte(model, faktoren, getattr(system, "aktiv", None)))
+            # am intern geteilten Modell wie die Rechnung selbst (12.11.2026):
+            # mit einem Element je Stab lag alpha_cr bis 22 % zu hoch, und die
+            # Kombination fiel womoeglich zu Unrecht unter die Grenze
+            from .stabteilung import fein_system
+            fein = fein_system(model, system, faktoren)
+            m_a, s_a = (fein[0], fein[1]) if fein is not None else (model, system)
+            F, _feq, _q, _temp = case_loads(m_a, faktoren, getattr(s_a, "aktiv", None))
+            u1 = s_a.solve(F, us=case_prescribed(m_a, faktoren))
+            ac = alpha_cr(m_a, s_a, u1,
+                          n_anfang=anfangsnormalkraefte(m_a, faktoren, getattr(s_a, "aktiv", None)))
             info = Th2Info(kombination=zeile, alpha_cr=ac["alpha_cr"], grenze=grenze,
                            u_max_I=float(np.abs(u1).max()))
             info.stab_aus(ac)

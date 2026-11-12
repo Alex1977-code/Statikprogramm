@@ -185,6 +185,25 @@ def test_einzelne_flaeche():
           werte[True][0] == werte[False][0] == "luv" and werte[True][1][0] > 0
           and np.allclose(werte[True][1], werte[False][1], rtol=1e-12, atol=1e-6),
           f"{werte[True][0]}/{werte[False][0]}, Fx {werte[True][1][0] / 1e3:.2f}/{werte[False][1][0] / 1e3:.2f} kN")
+    # 12.11.2026: nach DIN EN 1991-1-4 ist eine einzeln stehende Wand eine
+    # freistehende Wand (7.4), ein einzelnes Dach ein freistehendes Dach (7.3)
+    # - gerechnet wird weiter nach der Lage, aber mit Hinweis
+    m, (fl,) = einzelbau(["Luv"], True)
+    _F, kw = wind(m, fl)
+    h = kw.get("hinweise") or []
+    check("Wand allein: Hinweis „freistehende Wand (7.4, c_p,net nach Tab. 7.9)“, auch in der Erläuterung",
+          len(h) == 1 and "freistehende Wand (7.4" in h[0] and "als freie Wand einstufen" in h[0]
+          and any(z.startswith("Hinweis: ") for z in wm.erlaeuterung(m.winde[list(m.winde)[0]], kw)),
+          h[0][:110] if h else "kein Hinweis")
+    m, (fl,) = einzelbau(["Dach"], True)
+    _F, kw = wind(m, fl)
+    h = kw.get("hinweise") or []
+    check("Dach allein: Hinweis „freistehendes Dach (7.3)“", len(h) == 1 and "freistehendes Dach (7.3)" in h[0],
+          h[0][:110] if h else "kein Hinweis")
+    m, fl = einzelbau(list(BAU), True)
+    _F, kw = wind(m, fl[0] if len(fl) == 1 else fl)
+    check("geschlossener Baukörper aus Einzelschalen: kein Hinweis", not kw.get("hinweise"),
+          str(kw.get("hinweise"))[:110])
 
 
 def test_freie_wand_verschiebt_keine_mitte():

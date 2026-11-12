@@ -24,7 +24,10 @@ T  Zwei Bloecke mit gemeinsamer Trennflaeche, die Trennflaeche im Lager:
    FEHLER „zwischen den Körpern“ (die Facetten zeigen nach beiden Seiten).
 P  Schalenplatte 4 x 3 m (shell4, shell8) in mehreren Hoehen, senkrecht und
    0,7 Grad geneigt: kein FEHLER (Befund 4 vom 11.11.2026); 10 Grad: FEHLER;
-   ein Element von Hand gespiegelt: FEHLER „Facetten nach beiden Seiten“.
+   ein Element von Hand gespiegelt: seit dem 12.11.2026 kein FEHLER mehr
+   und dieselben Lagerknoten und Auflagerkraefte wie ungespiegelt
+   (Anwender: „die lage von schalenelementen sollte der user frei bestimmen
+   können und sie dürfte grundsätzlich nicht an der berechnung ändern“).
 U  Unvernetztes Modell: die Pruefung bleibt still und wirft nichts.
 
 Aufruf:  python -m tests.test_flaechenlager_lokal_schraeg
@@ -93,6 +96,8 @@ def _quader(alpha_grad, cn=1e8, ct=None, lokal=True, vernetzen=True):
 
 def _ist_soll(m, R, cn=1e8, ct=None, P=100e3):
     """Mittlere Verschiebung aller Knoten: Rechnung und Starrkoerper-Soll [m]."""
+    import contextlib
+    import io
     from statik3d import solver
     ct = cn / 10 if ct is None else ct
     nn = m.nn
@@ -287,16 +292,45 @@ def test_schalenplatte():
     f = _fehler(m, "B")
     check("P Schalenplatte 10° geneigt auf 0,37 m: FEHLER „schräg“ bleibt",
           len(f) == 1 and "10,0° schräg zur Achse z" in f[0], f[0][:90] if f else "kein FEHLER")
-    # ein einzelnes Element von Hand gespiegelt: die Facetten zeigen nach
-    # beiden Seiten - das wird weiter gemeldet (das Netz ist uneinheitlich
-    # orientiert; der Vernetzer erzeugt das nie)
+    # ein einzelnes Element von Hand gespiegelt: bis zum 12.11.2026 FEHLER
+    # „Facetten nach beiden Seiten“. Die Lage der Schalenelemente waehlt der
+    # Anwender frei; das Lager einer Schalenflaeche ohne Koerper liegt ohnehin
+    # unten (normalengruppen) - kein FEHLER, und gerechnet wird gleich
+    import contextlib
+    import io
+    from statik3d import solver
     for ordnung, perm in ((1, [0, 3, 2, 1]), (2, [0, 3, 2, 1, 7, 6, 5, 4])):
-        m = _platte(ordnung, 0.37)
-        el = m.elements[int(m.flaechen["P"].elemente[0])]
-        el.nodes = [el.nodes[i] for i in perm]
-        f = _fehler(m, "B")
-        check(f"P {el.typ}: ein Element gespiegelt: FEHLER „Facetten nach beiden Seiten“, 1 Facette",
-              len(f) == 1 and "Facetten nach beiden Seiten: 1 von" in f[0], f[0][:110] if f else "kein FEHLER")
+        erg = []
+        for spiegeln in (False, True):
+            m = _platte(ordnung, 0.37)
+            m.fix(0, [0, 1, 5])
+            m.fix(1, [1])
+            el = m.elements[int(m.flaechen["P"].elemente[0])]
+            if spiegeln:
+                el.nodes = [el.nodes[i] for i in perm]
+            f = _fehler(m, "B")
+            g = supports.normalengruppen(m, [m.flaechen["P"]], log=[])
+            R = np.zeros(1)
+            if ordnung == 1:
+                # shell8 rechnet am Flaechenlager nicht (QuadratischeSeiten) -
+                # dort nur Meldung und Lagerknoten
+                k = int(np.argmin(np.linalg.norm(m.nodes[:, :2] - [2.0, 1.5], axis=1)))
+                m.load_node(k, Fz=-1e4)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    r = solver.solve_all(m, workers=1, design=False).cases["LF1"]
+                R = np.asarray(r.reactions)[:, 2].copy()
+            erg.append((f, g, R, el.typ))
+        (f0, g0, R0, typ), (f1, g1, R1, _t) = erg
+        gleich = (len(g0) == len(g1) == 1 and g0[0][:2] == g1[0][:2]
+                  and sorted(g0[0][2]) == sorted(g1[0][2]))
+        dR = float(np.abs(R1 - R0).max())
+        check(f"P {typ}: ein Element gespiegelt: kein FEHLER, dieselben Lagerknoten"
+              + (", Auflagerkräfte gleich" if ordnung == 1 else " (shell8 rechnet am Flächenlager nicht)")
+              + " (vorher FEHLER „Facetten nach beiden Seiten“)",
+              not f1 and not f0 and gleich and dR < 1e-6 * max(float(np.abs(R0).max()), 1.0)
+              and (ordnung == 2 or abs(R1.sum() - 1e4) < 1e-6 * 1e4),
+              (f1[0][:80] if f1 else "kein FEHLER") + f"; Gruppen {[x[:2] for x in g1]}; ΔR {dR:.2e} N, "
+              f"ΣR {R1.sum():.1f} N")
 
 
 def test_unvernetzt():

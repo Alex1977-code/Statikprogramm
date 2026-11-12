@@ -577,6 +577,22 @@ def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
     return ("Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
+def _balken_teilbar(model) -> bool:
+    """Ein Balken, den die interne Stabteilung teilt (statik3d.stabteilung,
+    12.11.2026) - bis dahin rechnete Theorie II./III. Ordnung ihn in seinen
+    Elementen, mit einem Element je Stab ohne Anteil N w bei gehaltenen Enden."""
+    try:
+        from .stabteilung import teilzahlen
+        return bool(teilzahlen(model))
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _theorie2_oder_3_im_ergebnis(model, an) -> str:
+    teile = [t for t in (_theorie2_gerechnet_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
+    return "; ".join(teile)
+
+
 def _schalen(model) -> bool:
     """Ein Schalenelement - seine Komponenten sigma_x, n_x, m_x standen bis zum
     09.11.2026 in Elementachsen (Befund A20)."""
@@ -1417,6 +1433,33 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
         betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Nachstellung vom 11.11.2026, Entscheidung des Anwenders vom 12.11.2026
+    # („interne stabteilung sinnvoll vornehmen“): Theorie II./III. Ordnung
+    # teilen Balken intern, jeder Stab mindestens netz.stabteilung (10)
+    # Abschnitte, Theorie III. Ordnung doppelt so viele. Eingespannter
+    # Einfeldtraeger mit Gelenk, Druck 0,6 N_cr, q in einem Element: 22,5
+    # statt 44,2 kNm. Fehlerkorrektur
+    Merkmal(
+        name="stabteilung_theorie", titel="Interne Stabteilung nach Theorie II./III. Ordnung",
+        texte={"alt": "Balken in seinen Elementen gerechnet (ein Element je Stab: ohne N·w bei gehaltenen Enden)",
+               "neu": "Balken intern geteilt, jeder Stab mindestens in die Stabteilung der Netzeinstellungen"},
+        wechsel=(Wechsel(stand=29, datum="12.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken in weniger Elementen je Stab als die Stabteilung, nach Theorie II. oder III. "
+                      "Ordnung gerechnet",
+        betrifft=_balken_teilbar, im_ergebnis=_theorie2_oder_3_im_ergebnis),
+    # Nachstellung vom 11.11.2026: Theorie III. Ordnung gab am Stabendgelenk
+    # mit Streckenlast q L²/12 statt 0 aus (Festeinspannkraft nicht
+    # kondensiert, seit 05.09.2026); das Gleichgewicht der Knoten stimmte,
+    # die Stabendkraefte nicht. Fehlerkorrektur
+    Merkmal(
+        name="theorie3_gelenk_last", titel="Stabendkräfte nach Theorie III. Ordnung am Gelenk mit Stablast",
+        texte={"alt": "Stablast am Gelenk nicht kondensiert (Moment q L²/12 statt 0)",
+               "neu": "Stablast wie die Steifigkeit kondensiert"},
+        wechsel=(Wechsel(stand=30, datum="12.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
+        betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
@@ -1529,7 +1572,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 28
+VERFAHRENSSTAND = 30
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

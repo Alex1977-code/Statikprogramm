@@ -163,10 +163,14 @@ def test_a8():
 def test_a9():
     from statik3d import theorie2 as T2
     L, P = 6.0, 100e3
-    for n in (1, 4):
+    for n in (1, 4, "geteilt"):
         m = _modell()
         m.sections["Q"].Iz = 2 * I
-        ids, els = _kette(m, (0, 0, 0), (L, 0, 0), n)
+        # ohne interne Stabteilung (seit 12.11.2026 Vorgabe 10) - nur so
+        # bleibt ein Element je Stab und der Hinweis hat etwas zu melden
+        if n != "geteilt":
+            m.netz.stabteilung = 1
+        ids, els = _kette(m, (0, 0, 0), (L, 0, 0), 1 if n == "geteilt" else n)
         m.fix(ids[0], [0, 1, 2, 3])
         m.fix(ids[-1], [1, 2])
         m.load_node(ids[-1], Fx=-P)
@@ -178,8 +182,14 @@ def test_a9():
         if n == 1:
             check("A9 Euler-Fall 2 in einem Element: Hinweis „Stabteilung zu grob“ (Sammlung und Zusammenfassung)",
                   grob and "Stabteilung zu grob" in an.theorie2.summary(), str(hin)[:120])
-        else:
+        elif n == 4:
             check("… in vier Elementen: kein Hinweis", not grob, str(hin)[:120])
+        else:
+            ac = [i.alpha_cr for i in an.theorie2.kombinationen.values()]
+            soll = math.pi ** 2 * EI / (L ** 2 * P)
+            check("… ein Element mit interner Stabteilung (12.11.2026): kein Hinweis, α_cr = π² E I/(L² N) "
+                  "auf 0,1 %", not grob and len(ac) == 1 and abs(ac[0] / soll - 1) < 1e-3,
+                  f"{ac} / {soll:.4f}; {str(hin)[:80]}")
     # Balken aus einem Element, beidseits gelenkig: Einzelknicken pi² E I / (L² N)
     m = _modell()
     ids, els = _kette(m, (0, 0, 0), (L, 0, 0), 1)

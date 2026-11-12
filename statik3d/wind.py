@@ -1040,6 +1040,31 @@ def stablasten_entfernen(model, w: Wind) -> int:
     return n
 
 
+def einzelflaechen_hinweise(model, w: Wind) -> list:
+    """Hinweise zu Gebaeudeflaechen, die allein stehen (ein Baukoerper aus
+    einer Schalenflaeche, :func:`baukoerper`). Sie rechnen als Huellflaeche
+    nach ihrer Lage (allein: Luv bzw. Dach). Nach DIN EN 1991-1-4 ist eine
+    einzeln stehende Wand aber eine freistehende Wand (7.4, c_p,net nach
+    Tab. 7.9 mit den Zonen A bis D) und ein einzelnes Dach ein freistehendes
+    Dach (7.3) - dort wirkt der Nettodruck beider Seiten. Die Rolle setzt der
+    Anwender; darum nur der Hinweis (Entscheidung vom 12.11.2026: „ja, es sei
+    denn die fachliteratur sagt etwas anderes“)."""
+    aus = []
+    for gruppe in baukoerper(model, list(w.flaechen)):
+        if len(gruppe) != 1:
+            continue
+        name = gruppe[0]
+        if _schalenmitte(model, name) is None:
+            continue                       # Volumenrand: gehoert zu einem Koerper
+        n = _flaechennormale(model, name)
+        dach = n is not None and abs(float(n[2])) > 0.7
+        aus.append(f"Wind {w.name}: Fläche {name} steht als Gebäudefläche allein (sie berührt keine andere) "
+                   f"und rechnet als {'Dach' if dach else 'Luv- bzw. Leewand nach ihrer Lage'}. Nach "
+                   f"DIN EN 1991-1-4 ist sie {'ein freistehendes Dach (7.3)' if dach else 'eine freistehende Wand (7.4, c_p,net nach Tab. 7.9)'}"
+                   f" – bitte {'die Last prüfen' if dach else 'als freie Wand einstufen'}.")
+    return aus
+
+
 def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     """Objektlasten an Flächen und Linienlasten auf Stäbe schreiben (alte des
     Generierers entfernen), verteilen; Rückgabe: Kennwerte samt Zahlen. Mit
@@ -1144,6 +1169,7 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
                "lastfall": w.lastfall, "lastfall_nr": int(getattr(lc, "nummer", 0) or 0),
                "aus_feld": aus_feld, "verfahren": "windkanal" if wk is not None else "norm"})
     kw["kontrolle"] = kontrollsumme(model, w)
+    kw["hinweise"] = einzelflaechen_hinweise(model, w)
     st._melden(fortschritt, 1.0, f"Wind {w.name}: {n_elem} Elementlasten")
     return kw
 
@@ -1251,6 +1277,7 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
                    f"Wirbelablösung und Verschattung kommen aus der Rechnung; die Reynolds-Zahl ist die des "
                    f"Modells, nicht die des Bauwerks - die Beiwerte sind qualitativ und gegen die Norm zu "
                    f"prüfen.")
+    z.extend("Hinweis: " + h for h in kw.get("hinweise", []) or [])
     return z
 
 

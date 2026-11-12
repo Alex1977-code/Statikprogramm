@@ -23677,7 +23677,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"(Nr. {kw.get('lastfall_nr', 0)}); "
                   f"q_p(h) = {kw.get('q_p_h', 0):.0f} N/m², "
                   f"Kontrollsumme Flächen {kw['kontrolle']['betrag'] / 1e3:.1f} kN, Stäbe {kw['kontrolle']['F_staebe'] / 1e3:.1f} kN"
-                  + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else ""))
+                  + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else "")
+                  + (f"; {bg.anzahl(len(kw['hinweise']), 'Hinweis', 'Hinweise')} im Protokoll"
+                     if kw.get("hinweise") else ""))
         for zeile in wm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()

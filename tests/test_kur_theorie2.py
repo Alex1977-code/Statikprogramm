@@ -92,6 +92,25 @@ def _einfeld(n, art):
                 MyL=float(bl["My"][-1]))
 
 
+def _einspann_gelenk_analytisch() -> float:
+    """Lagermoment des links eingespannten, rechts gelenkigen Einfeldtraegers
+    mit Druck P = 0,6 N_cr und q nach Theorie II. Ordnung: w = A + B x +
+    C cos kx + D sin kx + q x² / (2 P), k² = P / (E I); w(0) = w'(0) = 0,
+    w(L) = w''(L) = 0; M(0) = E I w''(0) (Betrag)."""
+    import numpy as np
+    P = 0.6 * 20.19 * EI / L ** 2
+    k = math.sqrt(P / EI)
+    q = Q                                     # Last nach unten, Betrag
+    Amat = np.array([
+        [1, 0, 1, 0],
+        [0, 1, 0, k],
+        [1, L, math.cos(k * L), math.sin(k * L)],
+        [0, 0, -k ** 2 * math.cos(k * L), -k ** 2 * math.sin(k * L)]])
+    rhs = -np.array([0.0, 0.0, q * L ** 2 / (2 * P), q / P])
+    A_, B_, C_, D_ = np.linalg.solve(Amat, rhs)
+    return abs(EI * (-k ** 2 * C_ + q / P))
+
+
 def test_31_gleichgewicht():
     d = _einfeld(1, "gelenk")
     check("31 Stabendgelenk + Feldlast, 1 Element: Stab My(0) = Lagermoment (vorher 27,04 gegen 22,50 kNm)",
@@ -102,8 +121,15 @@ def test_31_gleichgewicht():
           and abs(d["MyL"]) < 1e-6,
           f"Vz(0) {d['Vz0'] / 1e3:.4f}/{d['Rz0'] / 1e3:.4f}, Vz(L) {d['VzL'] / 1e3:.4f}/{d['RzL'] / 1e3:.4f} kN, "
           f"My(L) {d['MyL']:.2e}")
-    check("… zweiter Weg: alle Knoten-FHG gehalten, kein Anteil aus K_G - von Hand q L²/8 = 22,500 kNm",
-          abs(d["My0"] - Q * L ** 2 / 8) < 1e-6 * Q * L ** 2 / 8, f"{d['My0'] / 1e3:.4f} kNm")
+    # Bis zum 12.11.2026 lautete der zweite Weg „alle Knoten-FHG gehalten,
+    # kein Anteil aus K_G - von Hand q L²/8 = 22,500 kNm“: das war das
+    # Ergebnis eines Elements ohne Teilung, nicht das nach Theorie II.
+    # Ordnung. Seit der internen Stabteilung (statik3d.stabteilung) gilt die
+    # Loesung der Differentialgleichung (_einspann_gelenk_analytisch).
+    soll = _einspann_gelenk_analytisch()
+    check("… zweiter Weg: Differentialgleichung EI w^IV + P w'' = q, eingespannt/gelenkig - "
+          f"{soll / 1e3:.3f} kNm (auf 0,1 %; ohne Stabteilung waren es 22,500)",
+          abs(d["My0"] - soll) < 1e-3 * soll, f"{d['My0'] / 1e3:.4f} kNm")
     d2 = _einfeld(2, "gelenk")
     check("31 2 Elemente: Vz(L) des Gelenkelements = Rz rechts (vorher 7,778 gegen 7,873 kN)",
           abs(d2["VzL"] - d2["RzL"]) < 1e-6 * d2["RzL"] and abs(d2["My0"] - d2["RM"]) < 1e-6 * d2["RM"],
@@ -316,6 +342,9 @@ def test_13_35_nummern():
     from statik3d import solver, theorie2 as T2
     from statik3d.model import Model
     m = _modell(A=1.0)
+    # ohne interne Stabteilung (seit 12.11.2026 Vorgabe 10): nur so ist das
+    # einzige Element fuer die Knickfigur zu lang und der Hinweis kommt
+    m.netz.stabteilung = 1
     a, b = m.add_node(0, 0, 0), m.add_node(6, 0, 0)
     el = m.add_element("beam", [a, b], "ST", "Q")
     m.fix(a, [0, 1, 2, 3])
