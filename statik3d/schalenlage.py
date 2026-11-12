@@ -30,19 +30,27 @@ Darum werden die Schalenelemente ausgerichtet:
   Kante mit drei und mehr Elementen (Steg auf Gurt) nur die, die in einer
   Ebene auf verschiedenen Seiten der Kante liegen.
 
-Umgedreht wird so, dass die Physik bleibt (:data:`WENDEN`): die Knoten 0 und
-1 tauschen, der Umlauf kehrt sich um. Die lokale z-Achse kehrt sich um, die
-lokale x-Achse (an der Kante 0-1) bleibt auf ihrer Kante und kehrt sich
-ebenfalls um, y bleibt - eine Drehung um 180° um y. Mit dem Element drehen:
+Umgedreht wird so, dass die Physik bleibt (:data:`WENDEN`): der Umlauf
+kehrt sich um, Knoten 0 bleibt (shell4 [0, 3, 2, 1] usw.). Die Umkehr ist
+ihre eigene Umkehrung: ein gespiegeltes Element bekommt genau seine fruehere
+Knotenfolge zurueck, mit derselben Diagonale 0-2 (an ihr haengen die
+Kontaktfacetten, die Lastteilung der DKT-Vierecke und die Abtastung des
+Wasserdrucks). Die lokale z-Achse kehrt sich um; die lokale x-Achse liegt
+danach an der Kante vom Knoten 0 zum bisher letzten Eckknoten (Winkel g zur
+alten x-Achse), y = z x x. Mit dem Element drehen:
 
 * Elementlasten senkrecht (``FaceLoad`` ohne Richtung, p in lokal z): p -> -p.
   Eine Last mit globaler Richtung bleibt.
 * Temperaturunterschied ``TempLoad.dT_z`` (oben - unten): dT_z -> -dT_z.
-* Geschichteter Aufbau (``ShellProp.lagen``, von unten nach oben, Winkel zur
-  lokalen x-Achse): Folge umgekehrt, Winkel -> -Winkel. Ist der gewendete
-  Aufbau ein anderer, bekommt das Element einen eigenen Aufbau „<Name>
-  gewendet“ (oder einen vorhandenen gleichen) - der Aufbau gehoert allen
-  Elementen, die ihn tragen.
+* Ein geschichteter Aufbau **am einzelnen Element** (``ShellProp.lagen``, von
+  unten nach oben, Faserwinkel a zur lokalen x-Achse - etwa aus einem
+  Nastran-PCOMP ohne Flaeche): Folge umgekehrt, Faserwinkel g - a (die Faser
+  cos a x + sin a y liegt im neuen System bei g - a); isotrope Lagen behalten
+  ihren Winkel. Ist der gewendete Aufbau ein anderer, bekommt das Element einen
+  vorhandenen gleichen oder einen neuen „<Name> gewendet“.
+* Ein Aufbau, der **der Flaeche** gehoert (Elementaufbau = ``Flaeche.dicke``),
+  ist zur Flaechennormalen definiert, nicht zum Element (Entscheidung vom
+  12.11.2026): das ausgerichtete Element behaelt ihn unveraendert.
 * Aus Objektlasten abgeleitete Elementlasten (``_geo``) werden nicht
   gedreht, sondern neu verteilt (:meth:`Model.lasten_verteilen`): sie gehoeren
   zur Flaeche, und an der Flaeche ist jetzt jedes Element gleich gerichtet.
@@ -66,14 +74,15 @@ import math
 import numpy as np
 
 SCHALEN = ("shell3", "shell4", "shell6", "shell8")
-#: Neue Knotenfolge eines umgedrehten Elements (Indizes in die alte): Ecken 0
-#: und 1 tauschen, der Umlauf kehrt sich um, die Seitenmitten folgen ihren
-#: Kanten (shell6: Mitten der Kanten 0-1, 1-2, 2-0; shell8: 0-1, 1-2, 2-3, 3-0).
+#: Neue Knotenfolge eines umgedrehten Elements (Indizes in die alte): der
+#: Umlauf kehrt sich um, Knoten 0 bleibt, die Seitenmitten folgen ihren Kanten
+#: (shell6: Mitten der Kanten 0-1, 1-2, 2-0; shell8: 0-1, 1-2, 2-3, 3-0). Jede
+#: Folge ist ihre eigene Umkehrung.
 WENDEN = {
-    "shell3": [1, 0, 2],
-    "shell4": [1, 0, 3, 2],
-    "shell6": [1, 0, 2, 3, 5, 4],
-    "shell8": [1, 0, 3, 2, 4, 7, 6, 5],
+    "shell3": [0, 2, 1],
+    "shell4": [0, 3, 2, 1],
+    "shell6": [0, 2, 1, 5, 4, 3],
+    "shell8": [0, 3, 2, 1, 7, 6, 5, 4],
 }
 _ECKEN = {"shell3": 3, "shell4": 4, "shell6": 3, "shell8": 4}
 #: zwei Elemente an einer Kante mit drei und mehr Elementen gelten als
@@ -275,6 +284,19 @@ def _plan_flaeche(model, f, idx: list) -> list:
     return [("flaeche", f.name, sorted(drehen), wid)]
 
 
+def gegen_flaeche(model, f) -> set:
+    """Die Schalenelemente der Flaeche ``f``, die gegen ihre Flaeche liegen
+    (die :func:`schalen_ausrichten` umdrehen wuerde)."""
+    idx = sorted({int(e) for e in (f.elemente or [])
+                  if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in WENDEN})
+    if not idx:
+        return set()
+    try:
+        return {int(e) for _a, _n, drehen, _w in _plan_flaeche(model, f, idx) for e in drehen}
+    except Exception:                        # noqa: BLE001 - nicht pruefbar: wie es ist
+        return set()
+
+
 def uneinheitlich(model) -> bool:
     """Gibt es Schalenelemente, die gegen ihre Flaeche bzw. ihr Stueck
     liegen? (Merkmal der Verfahrenstabelle, Stand 31)"""
@@ -291,16 +313,30 @@ def _winkel(lage: dict) -> float:
     return float(lage.get("winkel", 0.0) or 0.0)
 
 
-def gewendete_lagen(lagen: list) -> list:
+def _orthotrop(lage: dict) -> bool:
+    return "E1" in lage
+
+
+def _winkel_halb(w: float) -> float:
+    """Faserwinkel auf (-pi/2, pi/2] - eine Faser hat kein Vorzeichen."""
+    w = math.fmod(float(w), math.pi)
+    if w <= -math.pi / 2:
+        w += math.pi
+    elif w > math.pi / 2:
+        w -= math.pi
+    return 0.0 if abs(w) < 1e-15 else w
+
+
+def gewendete_lagen(lagen: list, g: float = 0.0) -> list:
     """Der Schichtaufbau, von der anderen Seite gesehen: Folge umgekehrt
-    (unten wird oben), Winkel zur lokalen x-Achse negiert (x kehrt sich um,
-    y bleibt: Faser (cos a, sin a) liegt im neuen System bei pi - a, fuer
-    die Steifigkeit gleich -a)."""
+    (unten wird oben). ``g`` ist der Winkel der neuen x-Achse zur alten (in
+    der alten Ebene gemessen); der Faserwinkel a einer orthotropen Lage wird
+    g - a. Isotrope Lagen behalten ihren Winkel."""
     out = []
     for lage in reversed(list(lagen or [])):
         neu = dict(lage)
-        w = _winkel(lage)
-        neu["winkel"] = -w if w else 0.0
+        if _orthotrop(lage):
+            neu["winkel"] = _winkel_halb(g - _winkel(lage))
         out.append(neu)
     return out
 
@@ -312,35 +348,38 @@ def _lagen_gleich(a: list, b: list) -> bool:
         if set(x) - {"winkel"} != set(y) - {"winkel"}:
             return False
         for k in x:
-            if k == "winkel":
-                continue
-            if x[k] != y[k]:
+            if k != "winkel" and x[k] != y[k]:
                 return False
-        d = (_winkel(x) - _winkel(y)) % math.pi
-        if min(d, math.pi - d) > 1e-12:
-            return False
+        if _orthotrop(x):
+            d = (_winkel(x) - _winkel(y)) % math.pi
+            if min(d, math.pi - d) > 1e-9:
+                return False
     return True
 
 
-def _aufbau_fuer_gewendet(model, name: str, merk: dict) -> str:
+def _hat_orthotrop(prop) -> bool:
+    return any(_orthotrop(x) for x in (getattr(prop, "lagen", None) or []))
+
+
+def _aufbau_fuer_gewendet(model, name: str, g: float, merk: dict) -> str:
     """Name des Schalenaufbaus, den ein umgedrehtes Element mit Aufbau
     ``name`` braucht - derselbe, wenn der Aufbau von beiden Seiten gleich
     ist, sonst ein vorhandener gleicher oder ein neuer „<name> gewendet“."""
-    if name in merk:
-        return merk[name]
     prop = (getattr(model, "shells", None) or {}).get(name)
     if prop is None or not getattr(prop, "lagen", None):
-        merk[name] = name
         return name
-    neu = gewendete_lagen(prop.lagen)
+    schl = (name, round(_winkel_halb(g), 9)) if _hat_orthotrop(prop) else (name,)
+    if schl in merk:
+        return merk[schl]
+    neu = gewendete_lagen(prop.lagen, g)
     if _lagen_gleich(neu, prop.lagen):
-        merk[name] = name
+        merk[schl] = name
         return name
     for anderer in model.shells.values():
         if (anderer.name != name and getattr(anderer, "lagen", None)
                 and getattr(anderer, "formulierung", "") == getattr(prop, "formulierung", "")
                 and _lagen_gleich(anderer.lagen, neu)):
-            merk[name] = anderer.name
+            merk[schl] = anderer.name
             return anderer.name
     from .model import ShellProp
     basis = f"{name} gewendet"
@@ -350,8 +389,18 @@ def _aufbau_fuer_gewendet(model, name: str, merk: dict) -> str:
         k += 1
     model.add_shell_prop(ShellProp(neu_name, float(prop.t), lagen=neu,
                                    formulierung=getattr(prop, "formulierung", "")))
-    merk[name] = neu_name
+    merk[schl] = neu_name
     return neu_name
+
+
+def _neue_x_winkel(model, alt: list, neu: list) -> float:
+    """Winkel der x-Achse des umgedrehten Elements (Kante neu 0 -> neu 1) zur
+    x-Achse vorher (Kante alt 0 -> alt 1), in der Ebene des Elements."""
+    from .elements import shell_rm
+    X0 = np.asarray(model.nodes[[int(k) for k in alt]], float)
+    T0 = shell_rm.schalen_frame(X0)[0]
+    v = np.asarray(model.nodes[int(neu[1])] - model.nodes[int(neu[0])], float)
+    return float(math.atan2(float(v @ T0[1]), float(v @ T0[0])))
 
 
 def elemente_wenden(model, elemente) -> bool:
@@ -362,13 +411,27 @@ def elemente_wenden(model, elemente) -> bool:
              if 0 <= int(i) < len(model.elements) and model.elements[int(i)].typ in WENDEN}
     if not menge:
         return False
+    # der Aufbau der Flaeche gilt zur Flaechennormalen und bleibt
+    flaechenaufbau: dict = {}
+    for f in (getattr(model, "flaechen", None) or {}).values():
+        if f.dicke:
+            for e in (f.elemente or []):
+                if int(e) in menge:
+                    flaechenaufbau.setdefault(int(e), f.dicke)
+    shells = getattr(model, "shells", None) or {}
     merk: dict = {}
     for i in sorted(menge):
         e = model.elements[i]
         w = WENDEN[e.typ]
-        e.nodes = [e.nodes[j] for j in w] + list(e.nodes[len(w):])
-        if e.sec:
-            e.sec = _aufbau_fuer_gewendet(model, e.sec, merk)
+        alt = list(e.nodes)
+        e.nodes = [alt[j] for j in w] + alt[len(w):]
+        if not e.sec or flaechenaufbau.get(i) == e.sec:
+            continue
+        prop = shells.get(e.sec)
+        if prop is None or not getattr(prop, "lagen", None):
+            continue
+        g = _neue_x_winkel(model, alt, e.nodes) if _hat_orthotrop(prop) else 0.0
+        e.sec = _aufbau_fuer_gewendet(model, e.sec, g, merk)
     geo = False
     for lc in (getattr(model, "load_cases", None) or {}).values():
         for fl in lc.face_loads:

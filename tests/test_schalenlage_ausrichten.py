@@ -38,11 +38,6 @@ A, T, E, NU, P = 1.0, 0.01, 210e9, 0.3, 1.0e4
 #: so spiegelt der Anwender ein Element: Umlauf rueckwaerts, Knoten 0 bleibt
 SPIEGEL = {"shell3": [0, 2, 1], "shell4": [0, 3, 2, 1], "shell6": [0, 2, 1, 5, 4, 3],
            "shell8": [0, 3, 2, 1, 7, 6, 5, 4]}
-#: Spiegeln mit getauschten Knoten 0 und 1: z kehrt sich um, x bleibt auf der
-#: Kante 0-1 (umgekehrt), y bleibt - fuer den Laminatvergleich, bei dem die
-#: Faserrichtung an x haengt
-TAUSCH01 = {"shell3": [1, 0, 2], "shell4": [1, 0, 3, 2], "shell6": [1, 0, 2, 3, 5, 4],
-            "shell8": [1, 0, 3, 2, 4, 7, 6, 5]}
 TYPEN = (("shell4", 1, False), ("shell8", 2, False), ("shell3", 1, True), ("shell6", 2, True))
 GESPIEGELT = (5, 6, 20)
 
@@ -113,9 +108,11 @@ def _abw(r1, r2):
 
 # --------------------------------------------------------------------------
 def test_wenden_je_typ():
-    """Das Umdrehen selbst: z kehrt sich um, die lokale x-Achse bleibt auf
-    ihrer Kante und kehrt sich ebenfalls um (Knoten 0 und 1 tauschen), y
-    bleibt. Die Steifigkeit ist dieselbe (umnummeriert)."""
+    """Das Umdrehen selbst: Umlauf rueckwaerts, Knoten 0 bleibt; z kehrt
+    sich um, die lokale x-Achse liegt danach an der Kante zum bisher letzten
+    Eckknoten. Die Umkehr ist ihre eigene Umkehrung (ein gespiegeltes Element
+    bekommt genau seine Knotenfolge zurueck, die Diagonale 0-2 bleibt). Die
+    Steifigkeit ist dieselbe (umnummeriert)."""
     try:
         from statik3d import schalenlage as SL
     except ImportError as ex:
@@ -134,7 +131,10 @@ def test_wenden_je_typ():
         w = SL.WENDEN[typ]
         T0 = shell_rm.schalen_frame(X)[0]
         T1 = shell_rm.schalen_frame(X[w])[0]
-        ok_ach = (np.allclose(T1[2], -T0[2]) and np.allclose(T1[0], -T0[0]) and np.allclose(T1[1], T0[1]))
+        v = X[w[1]] - X[0]
+        v = v - (v @ T0[2]) * T0[2]
+        ok_ach = (np.allclose(T1[2], -T0[2]) and np.allclose(T1[0], v / np.linalg.norm(v))
+                  and w[0] == 0 and [w[j] for j in w] == list(range(len(w))))
         K0 = shell_rm.k_schale(typ, X, E, NU, T)
         K1 = shell_rm.k_schale(typ, X[w], E, NU, T)
         idx = np.concatenate([np.arange(6 * j, 6 * j + 6) for j in w])
@@ -145,7 +145,8 @@ def test_wenden_je_typ():
             ne = 3 if typ == "shell6" else 4
             Q = X[w]
             ok_mitte = all(np.allclose(Q[ne + k], 0.5 * (Q[k] + Q[(k + 1) % ne])) for k in range(ne))
-        check(f"{typ}: gewendet z' = -z, x' = -x, y' = y, Seitenmitten passend, K gleich",
+        check(f"{typ}: gewendet z' = -z, x' an der Kante 0-{w[1]}, Knoten 0 bleibt, selbstinvers, "
+              "Seitenmitten passend, K gleich",
               ok_ach and ok_mitte and dk < 1e-10, f"|ΔK|/|K| = {dk:.1e}")
 
 
@@ -204,12 +205,12 @@ def test_elementlast_und_dTz():
 
 
 def test_laminat_unsymmetrisch():
-    """Unsymmetrisches Laminat mit schraeger orthotroper Lage: in B ist das
-    Element mit getauschten Knoten 0 und 1 gespiegelt (z' = -z, x' = -x,
-    y' = y) und traegt den Aufbau in umgekehrter Folge mit -winkel - also
-    physikalisch denselben. Nach dem Ausrichten ist es derselbe Aufbau wie in
-    A, die Rechnung gleich (mit Flaechenlast und Temperatur, die die
-    Kopplung B != 0 weckt).
+    """Unsymmetrisches Laminat mit schraeger orthotroper Lage, am einzelnen
+    Element zugewiesen (nicht als Dicke der Flaeche): in B ist ein Element
+    gespiegelt und traegt den Aufbau, von Hand gewendet (Folge umgekehrt,
+    Faserwinkel g - a) - also physikalisch denselben. Nach dem Ausrichten ist
+    es genau das Element und der Aufbau aus A, die Rechnung gleich (mit
+    Flaechenlast und Temperatur, die die Kopplung B != 0 weckt).
 
     C: gespiegelt wie ein Anwender (Umlauf rueckwaerts, Knoten 0 bleibt) mit
     dem Aufbau L - der steht dann physikalisch verkehrt. Weg 2 (D) von Hand:
@@ -217,20 +218,33 @@ def test_laminat_unsymmetrisch():
     darstellt (Folge umgekehrt, Winkel g - a, siehe unten)."""
     from statik3d import solver
     from statik3d.model import ShellProp
+    from statik3d.elements import shell_rm
     unten = {"t": 0.004, "E": 210e9, "nu": 0.3, "winkel": 0.0}
     oben = {"t": 0.006, "E1": 70e9, "E2": 10e9, "nu12": 0.3, "G12": 5e9, "G13": 5e9, "G23": 4e9,
             "winkel": 0.5}
-    gewendet = [dict(oben, winkel=-0.5), dict(unten, winkel=-0.0)]
     k = 5
     for typ, o, dr in (("shell4", 1, False), ("shell8", 2, False), ("shell6", 2, True)):
-        props = [ShellProp("L", 0.01, lagen=[unten, oben]), ShellProp("L umgekehrt", 0.01, lagen=gewendet)]
+        props = [ShellProp("L", 0.01, lagen=[unten, oben])]
         mA, fA = platte(o, dr, prop=props, dT=30.0)
         for e in fA.elemente:
             mA.elements[e].sec = "L"
-        mB, fB = platte(o, dr, (k,), prop=props, dT=30.0, nach_verteilen=True, muster=TAUSCH01)
+        mB, fB = platte(o, dr, (), prop=props, dT=30.0)
         for e in fB.elemente:
             mB.elements[e].sec = "L"
-        mB.elements[fB.elemente[k]].sec = "L umgekehrt"
+        # von Hand: das gespiegelte Element (Umlauf rueckwaerts, Knoten 0
+        # bleibt) hat x' an der Kante zu Knoten SPIEGEL[1] (Winkel g zur alten
+        # x-Achse), z' = -z, y' = z' x x'; die Faser cos a x + sin a y liegt
+        # dort bei g - a, die Folge kehrt sich um
+        el = mB.elements[fB.elemente[k]]
+        XB = mB.nodes[el.nodes]
+        TB = shell_rm.schalen_frame(XB)[0]
+        vB = XB[SPIEGEL[el.typ][1]] - XB[0]
+        gB = float(np.arctan2(vB @ TB[1], vB @ TB[0]))
+        mB.add_shell_prop(ShellProp("L umgekehrt", 0.01, lagen=[dict(oben, winkel=gB - 0.5),
+                                                                   dict(unten, winkel=gB)]))
+        _spiegeln(mB, fB.elemente[k])
+        el.sec = "L umgekehrt"
+        mB.lasten_verteilen()
         rA = solver.solve_static(mA)
         rB = solver.solve_static(mB)
         du, drr = _abw(rA, rB)
@@ -241,17 +255,10 @@ def test_laminat_unsymmetrisch():
         # Gegenrichtung: gespiegelt mit L (der Aufbau steht dann physikalisch
         # verkehrt) - das Ausrichten legt einen gewendeten Aufbau an und
         # aendert die Rechnung nicht. Zwei Aufbauten: isotrop unsymmetrisch
-        # (Stahl 4 mm unten, Aluminium 6 mm oben; exakt) und mit der
-        # orthotropen Lage - dort liegt die x-Achse des ausgerichteten
-        # Elements an einer anderen Kante als im Weg von Hand, und die
-        # Rechnung mit orthotropem Aufbau haengt schon vor dieser Kur um
-        # 1e-5 bis 1e-4 von der Wahl der x-Achse ab (gemessen mit zyklisch
-        # verschobenen Knoten ohne Spiegeln); Grenze darum 1e-3, falsch
-        # gewendet waeren es 2e-2 bis 9e-2.
+        # (Stahl 4 mm unten, Aluminium 6 mm oben) und mit der orthotropen Lage.
         from statik3d import schalenlage as SL
-        from statik3d.elements import shell_rm
         alu = {"t": 0.006, "E": 70e9, "nu": 0.33, "winkel": 0.0}
-        for art, lagen, grenze in (("isotrop", [unten, alu], 1e-8), ("orthotrop", [unten, oben], 1e-3)):
+        for art, lagen, grenze in (("isotrop", [unten, alu], 1e-8), ("orthotrop", [unten, oben], 1e-8)):
             pL = [ShellProp("L", 0.01, lagen=lagen)]
             mC, fC = platte(o, dr, (k,), prop=pL, dT=30.0, nach_verteilen=True)
             for e in fC.elemente:
@@ -267,20 +274,48 @@ def test_laminat_unsymmetrisch():
             T0 = shell_rm.schalen_frame(X)[0]
             v = X[SPIEGEL[el.typ][1]] - X[0]
             g = float(np.arctan2(v @ T0[1], v @ T0[0]))
-            von_hand = [dict(x, winkel=g - float(x.get("winkel", 0.0))) for x in reversed(lagen)]
+            von_hand = [dict(x, winkel=(g - float(x.get("winkel", 0.0))) if "E1" in x else x.get("winkel", 0.0))
+                        for x in reversed(lagen)]
             mD.add_shell_prop(ShellProp("L von Hand", 0.01, lagen=von_hand))
             el.sec = "L von Hand"
             rC = solver.solve_static(mC)
             rD = solver.solve_static(mD)
             du, drr = _abw(rD, rC)
             neu = mC.shells.get(mC.elements[fC.elemente[k]].sec)
-            soll_w = [-float(x.get("winkel", 0.0)) for x in reversed(lagen)]
+            soll_w = [x.get("winkel", 0.0) for x in von_hand]
             check(f"{typ}: gespiegelt mit L ({art}) - gewendeter Aufbau angelegt, Rechnung wie von Hand "
                   f"gewendet (Grenze {grenze:g})",
                   du < grenze and drr < grenze and neu is not None and neu.name != "L"
-                  and np.allclose([x.get("winkel", 0.0) for x in neu.lagen], soll_w, atol=1e-12)
+                  and np.allclose(np.mod(np.subtract([x.get("winkel", 0.0) for x in neu.lagen], soll_w)
+                                         + np.pi / 2, np.pi) - np.pi / 2, 0.0, atol=1e-9)
                   and SL.schalen_ausrichten(mC) == [],
                   f"Δu {du:.1e}, ΔR {drr:.1e}, Aufbau {neu.name if neu else None}")
+
+
+def test_laminat_der_flaeche():
+    """Der Aufbau, der der Flaeche gehoert (Elementaufbau = Flaeche.dicke),
+    gilt zur Flaechennormalen (Entscheidung vom 12.11.2026): gespiegelte
+    Elemente werden ausgerichtet und behalten ihn; kein gewendeter Aufbau, die
+    Rechnung wie ungespiegelt (Flaechenlast und Temperatur, B != 0)."""
+    from statik3d import solver
+    from statik3d.model import ShellProp
+    lagen = [{"t": 0.004, "E": 210e9, "nu": 0.3, "winkel": 0.0},
+             {"t": 0.006, "E1": 70e9, "E2": 10e9, "nu12": 0.3, "G12": 5e9, "G13": 5e9, "G23": 4e9,
+              "winkel": 0.5}]
+    for typ, o, dr in (("shell4", 1, False), ("shell8", 2, False), ("shell6", 2, True)):
+        erg = []
+        for sp in ((), GESPIEGELT):
+            m, f = platte(o, dr, sp, prop=[ShellProp("L", 0.01, lagen=lagen)], dT=30.0, nach_verteilen=True)
+            f.dicke = "L"
+            for e in f.elemente:
+                m.elements[e].sec = "L"
+            erg.append((m, f, solver.solve_static(m)))
+        (m0, _f0, r0), (m1, f1, r1) = erg
+        du, drr = _abw(r0, r1)
+        check(f"{typ}: Aufbau der Fläche, 3 Elemente gespiegelt - u, R wie ungespiegelt, kein gewendeter "
+              "Aufbau", du < 1e-8 and drr < 1e-8 and set(m1.shells) == {"t", "L"}
+              and all(m1.elements[e].sec == "L" for e in f1.elemente),
+              f"Δu {du:.1e}, ΔR {drr:.1e}, Aufbauten {sorted(m1.shells)}")
 
 
 def test_meldung():
@@ -424,7 +459,7 @@ def test_verfahrenstabelle():
 
 def main():
     for t in (test_wenden_je_typ, test_platte_gespiegelt, test_elementlast_und_dTz,
-              test_laminat_unsymmetrisch, test_meldung, test_nastran_stueckweise,
+              test_laminat_unsymmetrisch, test_laminat_der_flaeche, test_meldung, test_nastran_stueckweise,
               test_lastgenerator_und_vernetzen, test_verfahrenstabelle):
         print(f"\n--- {t.__name__} ---")
         try:
