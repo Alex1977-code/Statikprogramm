@@ -2192,7 +2192,8 @@ def flaechen_bezugssystem(T3: np.ndarray) -> np.ndarray:
 
 def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
     e = model.elements[i]
-    t = model.shells[e.sec].t
+    prop = model.shells[e.sec]
+    t = prop.t
     X = model.nodes[e.nodes]
     T3e, _, _ = sh.shell_frame(X[0], X[1], X[2])
     T3 = flaechen_bezugssystem(T3e)
@@ -2200,10 +2201,23 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
     phi = sh.frame_winkel(T3e, T3)
     n_forces = sh.dreh_tensor(np.asarray(r[:3], float), -phi)
     m_forces = sh.dreh_tensor(np.asarray(r[3:6], float), -phi)
-    sig_mem = n_forces / t
-    sig_bend = 6.0 * m_forces / t ** 2
-    sig_top = sig_mem + sig_bend
-    sig_bot = sig_mem - sig_bend
+    lam = asm.laminat_von(model, prop) if getattr(prop, "lagen", None) else None
+    if lam is not None:
+        # Geschichtete Schale: Spannung der aeussersten Faser der obersten bzw.
+        # untersten Lage nach der Laminattheorie (im Elementsystem, dort stehen
+        # die Lagensteifigkeiten), dann ins Flaechensystem gedreht. Bis zum
+        # 12.11.2026 n/t ± 6 m/t² wie fuer eine homogene Schale (Pruefbericht
+        # 11.11.2026, Befund 3: Zweischichter voll gehalten -30/-210 statt
+        # -60/-180 N/mm²)
+        from .elements import shell_rm
+        top_e, bot_e = shell_rm.laminat_randspannungen(lam, r[:3], r[3:6])
+        sig_top = sh.dreh_tensor(top_e, -phi)
+        sig_bot = sh.dreh_tensor(bot_e, -phi)
+    else:
+        sig_mem = n_forces / t
+        sig_bend = 6.0 * m_forces / t ** 2
+        sig_top = sig_mem + sig_bend
+        sig_bot = sig_mem - sig_bend
 
     def vm(s):
         sx, sy, sxy = s
