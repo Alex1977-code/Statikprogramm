@@ -474,6 +474,57 @@ def netto_richtung(model, name: str, d) -> Optional[np.ndarray]:
     return -n if float(n @ d) < 0 else n
 
 
+#: Zwei Seitenflaechen eines Volumens liegen sich gegenueber, wenn ihre
+#: Aussennormalen hoechstens rund 25° von der Gegenrichtung abweichen
+GEGENUEBER = -0.9
+
+
+def gegenueber(model, namen, d) -> dict:
+    """{Leeflaeche: (Luvflaeche, Volumen)} der freien Waende oder Tafeln
+    ``namen`` (eine Rolle), die Seitenflaechen desselben Volumens sind und sich
+    gegenueberliegen (Aussennormalen gegenlaeufig, :data:`GEGENUEBER`).
+
+    Sie gelten als **eine** Wand: c_p,net (Tab. 7.9) bzw. c_f (7.4.3) ist
+    schon der Nettowert beider Seiten und wirkt einmal, auf der Luvseite in
+    Windrichtung (Entscheidung des Anwenders vom 12.11.2026). Bis dahin trug
+    jede gewaehlte Seitenflaeche die volle Nettolast - die Wand die doppelte
+    (Wand 10 x 0,3 x 3 m: ΣF_x 53,508 statt 26,754 kN). Luv ist die Flaeche,
+    deren Aussennormale gegen den Wind zeigt (kleineres n · d); bei Wind
+    laengs zur Wand die zuerst genannte. Schalen gehoeren zu keinem Volumen."""
+    koerper_von: dict = {}
+    for kn, k in (getattr(model, "koerper", None) or {}).items():
+        for f in getattr(k, "flaechen", None) or []:
+            koerper_von.setdefault(str(f), str(kn))
+    d = np.asarray(d, float)[:3]
+    kand = []
+    for i, name in enumerate(namen):
+        k = koerper_von.get(str(name))
+        if k is None or name not in model.flaechen or _schalenmitte(model, name) is not None:
+            continue
+        n = _flaechennormale(model, name)
+        if n is not None:
+            kand.append((i, str(name), k, n, float(n @ d)))
+    aus: dict = {}
+    for i, a, ka, na, sa in kand:
+        for j, b, kb, nb, sb in kand:
+            if kb != ka or b == a or float(na @ nb) > GEGENUEBER:
+                continue
+            if sa > sb + 1e-9 or (abs(sa - sb) <= 1e-9 and i > j):
+                aus[a] = (b, ka)
+                break
+    return aus
+
+
+def gegenueber_satz(lee: str, luv: str, koerper: str, rolle: str) -> str:
+    """Der Satz fuers Protokoll zu einem Paar aus :func:`gegenueber`."""
+    if rolle == "schild":
+        art, beiwert = "Anzeigetafel", "c_f nach DIN EN 1991-1-4, 7.4.3"
+    else:
+        art, beiwert = "Freie Wand", "c_p,net nach DIN EN 1991-1-4, Tab. 7.9"
+    return (f"{art}: die Flächen {luv} und {lee} liegen sich am Volumen {koerper} gegenüber und gelten als "
+            f"eine Wand – die Nettolast ({beiwert}) wirkt einmal, auf der Luvseite {luv}, in Windrichtung.")
+
+
 def _flaechen_dreiecke(model, name: str) -> np.ndarray:
     """Die Dreiecke einer Flaeche aus den Ecken ihrer Schalenelemente oder
     Volumenrandseiten (Vierecke geteilt), Form (k, 3, 3)."""
@@ -790,6 +841,36 @@ def alte_abmessungen_text(model) -> str:
     return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
 
 
+def doppelte_nettolasten(model) -> list:
+    """[(Lastfall, Wind)] der Windlasten des Generators (Normverfahren), in
+    denen zwei gegenueberliegende Seitenflaechen desselben Volumens beide die
+    Rolle freie Wand bzw. beide die Rolle Tafel tragen (:func:`gegenueber`):
+    mit einem Programmstand vor dem 12.11.2026 erzeugt, die Wand traegt die
+    Nettolast doppelt. Erst das Neuerzeugen aendert das."""
+    gruppen: dict = {}
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if (getattr(gl, "art", "flaeche") != "flaeche" or v.get("art") != "wind"
+                    or v.get("rolle") not in ROLLEN_NETTO or v.get("feld")):
+                continue
+            r = (v.get("geometrie") or {}).get("richtung")
+            if r is None:
+                continue
+            schluessel = (str(lf), str(v.get("name", "")), str(v.get("rolle")))
+            gruppen.setdefault(schluessel, (r, []))[1].append(str(gl.ziel))
+    aus = []
+    for (lf, name, _rolle), (r, ziele) in gruppen.items():
+        if len(ziele) > 1 and (lf, name) not in aus and gegenueber(model, ziele, r):
+            aus.append((lf, name))
+    return aus
+
+
+def doppelte_nettolasten_text(model) -> str:
+    alt = doppelte_nettolasten(model)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
 def windlasten_hinweis(model) -> list:
     """Beim Oeffnen: die Zeilen fuers Protokoll zu Windlasten, die neu zu
     erzeugen sind (:func:`alte_windlasten`, :func:`alte_abmessungen`).
@@ -803,6 +884,11 @@ def windlasten_hinweis(model) -> list:
         aus.append(f"Windlasten neu erzeugen: {alte_abmessungen_text(model)} mit einem älteren Programmstand "
                    "erzeugt – die Abmessungen h, b, d des Gebäudes enthalten darin freie Wände, Tafeln "
                    "oder Stäbe, die Zonen einer freien Wand zählen ab den Enden aller Objekte "
+                   f"({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
+    if doppelte_nettolasten(model):
+        aus.append(f"Windlasten neu erzeugen: {doppelte_nettolasten_text(model)} mit einem älteren "
+                   "Programmstand erzeugt – zwei gegenüberliegende Seitenflächen eines Volumens tragen darin "
+                   "als freie Wand bzw. Anzeigetafel je die volle Nettolast, die Wand also die doppelte "
                    f"({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
     return aus
 
@@ -1282,7 +1368,19 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     n_obj = 0
     zonen: dict = {}
     aus_feld: list = []
+    # Freie Wand bzw. Tafel aus einem Volumen mit beiden Seiten gewaehlt: eine
+    # Wand, die Nettolast nur auf der Luvseite (:func:`gegenueber`, 12.11.2026).
+    # Mit c_p-Feld des Windkanals traegt jede Seite ihren eigenen Druck - dort bleibt beides
+    paare = {}
+    for rolle_n, liste in (("freie_wand", w.freie_waende), ("schild", w.schilder)):
+        paare.update({lee: (luv, k, rolle_n) for lee, (luv, k) in gegenueber(model, list(liste),
+                                                                            geo["richtung"]).items()})
+    netto_saetze: list = []
     for name, rolle in roll.items():
+        mit_feld = feld is not None and _feld_passt(wk, _flaechennormale(model, name), geo["quer"])
+        if name in paare and paare[name][2] == rolle and not mit_feld:
+            netto_saetze.append(gegenueber_satz(name, *paare[name]))
+            continue
         verlauf = {"art": "wind", "name": w.name, "param": param, "geometrie": geo, "rolle": rolle}
         if rolle in ROLLEN_NETTO:
             # eigene Abmessungen (Zonen ab den eigenen Enden, Befund 13) und
@@ -1295,7 +1393,7 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
             # der Last; ihr Fehlen kennzeichnet eine aeltere Windlast (Befund 40)
             n_a = seiten[name][1]
             verlauf["aussen"] = [float(x) for x in n_a] if n_a is not None else None
-        if feld is not None and _feld_passt(wk, _flaechennormale(model, name), geo["quer"]):
+        if mit_feld:
             verlauf["feld"] = feld
             aus_feld.append(name)
         model.add_geometrielast(name, 0.0, art="flaeche", richtung=None, case=w.lastfall, verlauf=verlauf)
@@ -1327,7 +1425,8 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     n_elem = model.lasten_verteilen()
     kw.update({"rollen": zonen, "staebe": staebe, "objektlasten": n_obj, "elementlasten": n_elem,
                "lastfall": w.lastfall, "lastfall_nr": int(getattr(lc, "nummer", 0) or 0),
-               "aus_feld": aus_feld, "verfahren": "windkanal" if wk is not None else "norm"})
+               "aus_feld": aus_feld, "verfahren": "windkanal" if wk is not None else "norm",
+               "netto_paare": netto_saetze})
     kw["kontrolle"] = kontrollsumme(model, w)
     kw["hinweise"] = einzelflaechen_hinweise(model, w)
     st._melden(fortschritt, 1.0, f"Wind {w.name}: {n_elem} Elementlasten")
@@ -1437,6 +1536,7 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
                    f"Wirbelablösung und Verschattung kommen aus der Rechnung; die Reynolds-Zahl ist die des "
                    f"Modells, nicht die des Bauwerks - die Beiwerte sind qualitativ und gegen die Norm zu "
                    f"prüfen.")
+    z.extend(kw.get("netto_paare", []) or [])
     z.extend("Hinweis: " + h for h in kw.get("hinweise", []) or [])
     return z
 
