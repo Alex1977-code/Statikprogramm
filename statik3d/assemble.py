@@ -1774,7 +1774,19 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     Ohne Versatz, Laengsfeder und Anfangsdehnung ist es dieselbe Zahl wie bis
     zum 13.10.2026 (E A Δl/L). Gemittelt ueber das Element - eine
     Streckenlast in Stabrichtung aendert N entlang des Stabs.
-    ``_achsen`` (T, L): schon gerechnete Transformation (geometric_stiffness)."""
+    ``_achsen`` (T, L): schon gerechnete Transformation (geometric_stiffness).
+
+    Ein Laengsgelenk (lokaler FHG 0 oder 6 frei, auch Federgelenk mit k = 0,
+    das als Gelenk am Element steht) laesst das Stabende in Stabrichtung
+    frei: der Stab traegt keine Normalkraft, auch nicht aus seiner
+    Anfangsdehnung - N = 0 wie im Ergebnis (kondensierte Steifigkeit). Bis
+    zum 12.11.2026 nahm die Funktion E A Δl/L aus den Knotenverschiebungen:
+    die geometrische Steifigkeit rechnete mit einer Scheinnormalkraft
+    (Befund 33 des Pruefberichts vom 11.11.2026: Stuetze mit Laengsgelenk
+    unter Querlast nach Theorie II. Ordnung 3,88 statt 3,125 kNm, alpha_cr
+    4,374 statt keiner Verzweigung; gezogen 2,69 kNm, unsichere Seite)."""
+    if any(int(d) in (0, 6) for d in (e.hinges or [])):
+        return 0.0
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     if _achsen is None:

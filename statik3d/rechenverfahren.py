@@ -655,6 +655,29 @@ def _balken_teilbar(model) -> bool:
         return False
 
 
+def _balken_mit_woelb(model) -> bool:
+    """Ein Balken mit Woelbkrafttorsion (Haken „woelb“ und Iw > 0) - seine
+    Schnittgroessen nach Theorie II. Ordnung hatten bis zum 12.11.2026 keinen
+    Anteil k_G u und N w (Befund 32)."""
+    pruef = getattr(model, "stab_woelbt", None)
+    if pruef is None:
+        return False
+    try:
+        return any(pruef(e) for e in getattr(model, "elements", None) or [])
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _balken_mit_laengsgelenk(model) -> bool:
+    """Ein Stab mit Laengsgelenk (lokaler FHG ux am Anfang oder Ende frei,
+    auch Federgelenk mit k = 0) - seine geometrische Steifigkeit nahm bis zum
+    12.11.2026 eine Normalkraft aus den Knotenverschiebungen (Befund 33)."""
+    for e in getattr(model, "elements", None) or []:
+        if any(int(d) in (0, 6) for d in (getattr(e, "hinges", None) or [])):
+            return True
+    return False
+
+
 def _theorie2_oder_3_im_ergebnis(model, an) -> str:
     teile = [t for t in (_theorie2_gerechnet_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
     return "; ".join(teile)
@@ -1560,6 +1583,31 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Beulfeld mit Elementen, deren erste Kante gegen die Flächenachse x verdreht ist",
         betrifft=_beulfeld_achsen_verdreht),
+    # Befund 32 des Pruefberichts vom 11.11.2026: Balken mit
+    # Woelbkrafttorsion bekamen nach Theorie II. Ordnung weder k_G u in den
+    # Stabendkraeften noch N w im Feld (Kragarm, Druck 0,6 N_cr, ein Element:
+    # Stab 23,997 gegen Lager 22,158 kNm). Fehlerkorrektur
+    Merkmal(
+        name="theorie2_woelb", titel="Schnittgrößen nach Theorie II. Ordnung an Balken mit Wölbkrafttorsion",
+        texte={"alt": "Stabendkräfte k u, Feld ohne N·w",
+               "neu": "Stabendkräfte (k + k_G) u, Feld mit N·w wie bei den übrigen Balken"},
+        wechsel=(Wechsel(stand=35, datum="12.11.2026", commit="fix/k2-th2neben", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Wölbkrafttorsion, nach Theorie II. Ordnung gerechnet",
+        betrifft=_balken_mit_woelb, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Befund 33 des Pruefberichts vom 11.11.2026: ein Stab mit Laengsgelenk
+    # (ux frei, Federgelenk k = 0) stand in der geometrischen Steifigkeit mit
+    # E A Δl/L, obwohl er keine Normalkraft traegt (Stuetze unter Querlast
+    # 3,88 statt 3,125 kNm, gezogen 2,69 kNm). Fehlerkorrektur
+    Merkmal(
+        name="theorie2_laengsgelenk", titel="Geometrische Steifigkeit an Stäben mit Längsgelenk",
+        texte={"alt": "K_G mit der Normalkraft E A Δl/L aus den Knotenverschiebungen",
+               "neu": "K_G ohne Normalkraft (das Längsgelenk lässt keine zu)"},
+        wechsel=(Wechsel(stand=35, datum="12.11.2026", commit="fix/k2-th2neben", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Längsgelenk (ux frei oder Federgelenk ux mit k = 0), mit alpha_cr, "
+                      "Knicken oder Theorie II. Ordnung",
+        betrifft=_balken_mit_laengsgelenk, im_ergebnis=_alpha_cr_im_ergebnis),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
