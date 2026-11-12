@@ -31,6 +31,10 @@ der ersten Laststufe voll, gesteigert wird nur der Rest
 (plastizitaet.stufenlast; bis dahin wuchsen sie mit λ mit). Ohne beides
 rechnet jede Stufe wie bisher.
 
+Versatz der Stabenden (Exzentrizitaet): seit dem 12.11.2026 ein starrer Arm
+vom Knoten zum Stabende, der mit der Knotendrehung mitdreht; der Stab liegt
+zwischen seinen Stabenden (bis dahin fiel der Versatz still weg).
+
 Grenzen: nur Stab- und Fachwerkelemente (keine Schalen, Volumen), kein
 Kontakt, keine Zwangsverformungen; kleine Dehnungen (linear-elastisch).
 """
@@ -152,7 +156,26 @@ class _Stab:
         self.typ = e.typ
         sec = model.sections[e.sec]
         self.A, self.Ip = sec.A, sec.Iy + sec.Iz
-        kl, T3, T, L = asm.beam_local(model, e)
+        # Versatz der Stabenden (Exzentrizitaet) als starrer Arm a_i (global,
+        # Ausgangslage) vom Knoten zum Stabende; er dreht mit dem Knoten mit
+        # (P_i = x_i + R_i a_i), der Stab liegt zwischen seinen Stabenden.
+        # Bis zum 12.11.2026 fiel der Versatz hier still weg: Kragarm mit
+        # Versatz 0,1 m unter Zug in der Knotenlinie hob sich nach Theorie I.
+        # Ordnung um F e L²/(2 E I), nach Theorie III. Ordnung gar nicht
+        # (tests/test_theorie3_versatz.py)
+        self.arm = None
+        punkte = None
+        A_v = asm.beam_versatz(e)
+        if A_v is not None:
+            X = np.asarray(model.nodes[e.nodes], float)
+            T3n, _Ln = bm.local_axes(X[0], X[1], e.roll)
+            arme = []
+            for k in range(2):
+                S = -A_v[6 * k:6 * k + 3, 6 * k + 3:6 * k + 6]     # [r_k]x
+                arme.append(T3n.T @ np.array([S[2, 1], S[0, 2], S[1, 0]]))
+            self.arm = arme
+            punkte = X + np.asarray(arme)
+        kl, T3, T, L = asm.beam_local(model, e, punkte)
         # Gelenke und Federgelenke in der geometrischen Steifigkeit wie in der
         # elastischen (asm.stab_endkinematik, wie Theorie II. Ordnung seit A7).
         # Bis zum 09.11.2026 bekam die Tangente die volle Balkenform: mit einer
@@ -192,9 +215,13 @@ class _Stab:
     def zustand(self, X: np.ndarray, R: np.ndarray):
         """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage; f_l
         ist der elastische Anteil k_l d_l, N die Normalkraft mit der
-        Anfangsdehnung."""
+        Anfangsdehnung. T wirkt auf die Stabenden (mit Versatz: hinter dem
+        Arm, :meth:`knoten`)."""
         n1, n2 = self.nodes
-        d = X[n2] - X[n1]
+        if self.arm is None:
+            d = X[n2] - X[n1]
+        else:
+            d = (X[n2] + R[n2] @ self.arm[1]) - (X[n1] + R[n1] @ self.arm[0])
         L = float(np.linalg.norm(d))
         e1 = d / L
         Q1 = R[n1] @ self.E0T
@@ -225,6 +252,24 @@ class _Stab:
                 kg = self.C.T @ kg @ self.C
         T = bm.transform_matrix(E.T)
         return fl, T, kg, N, L
+
+    def knoten(self, R: np.ndarray, f_e: np.ndarray, K_e: np.ndarray):
+        """Innere Kraefte und Tangente der Stabenden (global, 12) auf die
+        Knoten: ohne Versatz unveraendert. Mit Versatz bewegt sich das
+        Stabende starr mit dem Knoten, δu_ende = δu - [a_i]x δθ mit dem
+        mitgedrehten Arm a_i = R_i a_i0 (wie bm.versatz_matrix, nur in der
+        aktuellen Lage): f_knoten = Bᵀ f_e (Moment M + a_i × F),
+        K = Bᵀ K_e B + [F_i]x [a_i]x im Drehblock (die Ableitung von a_i × F_i
+        nach der Drehung des Arms)."""
+        if self.arm is None:
+            return f_e, K_e
+        B = np.eye(12)
+        Ka = np.zeros((12, 12))
+        for k, n in enumerate(self.nodes):
+            Sa = bm._skew(R[n] @ self.arm[k])
+            B[6 * k:6 * k + 3, 6 * k + 3:6 * k + 6] = -Sa
+            Ka[6 * k + 3:6 * k + 6, 6 * k + 3:6 * k + 6] = bm._skew(f_e[6 * k:6 * k + 3]) @ Sa
+        return B.T @ f_e, B.T @ K_e @ B + Ka
 
 
 class _Seil:
@@ -553,9 +598,10 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         for st in staebe:
             fl, T, kg, N, L = st.zustand(X, R)
             zust[st.i] = (fl, N)
-            Ke = T.T @ (st.kl + kg) @ T
+            f_e, Ke = st.knoten(R, T.T @ (fl if st.f_anf is None else fl - st.f_anf),
+                                T.T @ (st.kl + kg) @ T)
             d = st.dofs
-            f_int[d] += T.T @ (fl if st.f_anf is None else fl - st.f_anf)
+            f_int[d] += f_e
             r, c = np.meshgrid(d, d, indexing="ij")
             rows.append(r.ravel())
             cols.append(c.ravel())

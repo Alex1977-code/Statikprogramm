@@ -62,16 +62,19 @@ def element_dofs(e, model: Model = None) -> np.ndarray:
     return np.array(d, dtype=int)
 
 
-def beam_local(model: Model, e):
+def beam_local(model: Model, e, punkte=None):
     """Lokale Steifigkeitsmatrix (12x12), T3, T (12x12), L eines Stabelements.
 
     Fachwerkstab und Seil: nur die Laengssteifigkeit (das Seil ist nach
     Theorie I. Ordnung ein Zugstab; Ausfall bei Druck ueber die
     Aktivmengen-Iteration, die Kettenlinie rechnet Theorie III. Ordnung).
+
+    ``punkte``: Anfang und Ende des Stabes statt seiner Knoten (Theorie III.
+    Ordnung legt einen Stab mit Versatz zwischen seine Stabenden, 12.11.2026).
     """
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
-    X = model.nodes[e.nodes]
+    X = model.nodes[e.nodes] if punkte is None else np.asarray(punkte, float)
     T3, L = bm.local_axes(X[0], X[1], e.roll)
     T = bm.transform_matrix(T3)
     if e.typ in ("truss", "seil"):
