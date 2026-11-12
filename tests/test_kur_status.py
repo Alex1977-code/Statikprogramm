@@ -298,9 +298,14 @@ def test_theorie3_nicht_theorie2():
     _als_alte_datei(pe, m)
     a = erg.lesen(pe, m)
     s = _status(a)
-    check("Druckstab mit Versatz nur nach Theorie III, Datei vom Stand 7: kein Status „mit Versatz“ "
-          "(vorher: alpha_cr bzw. Theorie II. Ordnung: LF1)",
-          str(an.cases["LF1"].info.get("theorie")) == "III. Ordnung" and "Versatz" not in s
+    # Seit dem 12.11.2026 (Stand 34) ist Theorie III. Ordnung selbst vom
+    # Versatz betroffen (Merkmal theorie3_versatz): der Status nennt dieses
+    # Merkmal, nicht aber das der geometrischen Steifigkeit (theorie2_versatz)
+    th2 = rv.merkmal("theorie2_versatz").titel
+    th3 = rv.merkmal("theorie3_versatz").titel
+    check("Druckstab mit Versatz nur nach Theorie III, Datei vom Stand 7: kein Status „K_G mit Versatz“ "
+          "(vorher: alpha_cr bzw. Theorie II. Ordnung: LF1), aber „Versatz nach Theorie III“ (Stand 34)",
+          str(an.cases["LF1"].info.get("theorie")) == "III. Ordnung" and th2 not in s and th3 in s
           and "Theorie II. Ordnung: LF1" not in s, s[:200])
 
 

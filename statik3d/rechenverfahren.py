@@ -1608,6 +1608,20 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Längsgelenk (ux frei oder Federgelenk ux mit k = 0), mit alpha_cr, "
                       "Knicken oder Theorie II. Ordnung",
         betrifft=_balken_mit_laengsgelenk, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Nachstellung vom 12.11.2026: Theorie III. Ordnung liess den Versatz der
+    # Stabenden still weg (Kragarm mit Versatz 0,1 m unter Zug in der
+    # Knotenlinie: Theorie I. Ordnung hebt die Spitze um F e L²/(2 E I),
+    # Theorie III. Ordnung 0 mm, Stabendmoment 0 statt F e). Seither ein
+    # starrer, mitdrehender Arm. Fehlerkorrektur
+    Merkmal(
+        name="theorie3_versatz", titel="Versatz der Stabenden nach Theorie III. Ordnung",
+        texte={"alt": "Versatz (Exzentrizität) nicht berücksichtigt, Stab zwischen den Knoten",
+               "neu": "Versatz als starrer Arm, der mit dem Knoten mitdreht"},
+        wechsel=(Wechsel(stand=34, datum="12.11.2026", commit="fix/k2-th3versatz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden (Exzentrizität), nach Theorie III. Ordnung gerechnet",
+        # dieselbe Pruefung wie theorie2_versatz (Stand 26)
+        betrifft=_stab_mit_versatz, im_ergebnis=_theorie3_im_ergebnis),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
