@@ -3636,6 +3636,23 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 f14 = np.zeros(14)
                 f14[:12] = f0
                 fl = kl @ ul - f14
+                n_geo = extra.get("n_geo") or {}
+                if i in n_geo:
+                    # Theorie II. Ordnung wie beim Balken ohne Woelbkrafttorsion
+                    # (A8): k_G auf den 12 Stab-FHG, wie asm.geometric_stiffness
+                    # sie ins Gleichungssystem stellt (Gelenke dort mit C^T k_G C),
+                    # dazu die Stabend-Verschiebungen fuer den Feldanteil N w.
+                    # Bis zum 12.11.2026 fehlte beides (Befund 32 des
+                    # Pruefberichts vom 11.11.2026): Kragarm mit Druck 0,6 N_cr
+                    # in einem Element Stab My(0) 23,997 gegen Lager 22,158 kNm,
+                    # Vz(0) 4,544 gegen Rz 2,000 kN
+                    sec_ = model.sections[e.sec]
+                    kg_ = bm.kg_local_beam(float(n_geo[i]), L, sec_.A, sec_.Iy + sec_.Iz)
+                    C_ = asm.stab_endkinematik(model, e)
+                    if C_ is not None:
+                        kg_ = C_.T @ kg_ @ C_
+                    fl[:12] = fl[:12] + kg_ @ ul[:12]
+                    out.append((i, "beam_th2", np.asarray(ul[:12], float).copy()))
                 out.append((i, "beam", fl[:12]))
                 out.append((i, "bimoment", (-float(fl[12]), float(fl[13]))))
                 continue
