@@ -3,6 +3,9 @@ Export nach AutoCAD DXF (ASCII, R12-vertraeglich).
 
 Staebe werden zu LINE, Schalen zu 3DFACE, Aussenflaechen der Volumen tet4, tet10
 und hex8 ebenso (die uebrigen Volumenarten nennt der Hinweis „nicht übertragen“).
+Ebene Elemente (Scheibe, ebener Dehnungszustand, rotationssymmetrisch) gehen
+mit ihren Eckknoten als 3DFACE auf die Ebene EBENE (Befund 17, 11.11.2026: bis
+dahin fehlten sie ohne ein Wort).
 Lagersymbole, Linien, Lastnamen und Stabnamen kommen auf eigene Ebenen, deren
 Name mit ``STATIK3D_`` beginnt: so lassen sie sich im CAD getrennt schalten,
 und der eigene Import liest sie nicht als Tragwerk (Befund B5 der
@@ -20,6 +23,7 @@ import numpy as np
 
 from ..model import Model
 from ..importers.dxf import HILFSEBENE
+from .. import elemente as EL
 from . import _common as C
 
 #: Volumenarten, deren Aussenflaechen als 3DFACE hinausgehen (die Arten, die
@@ -33,7 +37,7 @@ E_TEXT = HILFSEBENE + "BESCHRIFTUNG"
 E_LINIEN = HILFSEBENE + "LINIEN"
 
 #: Layer -> Farbnummer (AutoCAD Color Index)
-LAYERS = {"STAEBE": 7, "SCHALEN": 5, "VOLUMEN": 8, "KNOTEN": 9,
+LAYERS = {"STAEBE": 7, "SCHALEN": 5, "EBENE": 6, "VOLUMEN": 8, "KNOTEN": 9,
           E_LAGER: 1, E_LASTEN: 2, E_TEXT: 3, E_LINIEN: 4}
 
 #: $INSUNITS: 6 = Meter
@@ -89,6 +93,8 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
                    + _p(40, f"{hh or h:.6f}") + _p(1, s))
 
     n_line = n_face = 0
+    ebene: list[int] = []
+    ohne_karte: list[int] = []
     for i, e in enumerate(model.elements):
         n = [int(x) for x in e.nodes]
         # das Seil wie der Fachwerkstab (14.10.2026: RFEM-Seile kommen als Seil
@@ -99,6 +105,15 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
         elif e.typ.startswith("shell"):
             face([model.nodes[x] for x in n], "SCHALEN")
             n_face += 1
+        elif e.typ in EL.EBENE_TYPEN:
+            # nur die Eckknoten (Dreieck 3, Viereck 4; die Kantenmitten von
+            # ebene6/ebene8 stehen dahinter)
+            ecken = 3 if e.typ in ("ebene3", "ebene6") else 4
+            face([model.nodes[x] for x in n[:ecken]], "EBENE")
+            ebene.append(i)
+            n_face += 1
+        elif e.typ not in EL.VOLUMEN_TYPEN and not C.von_weiteres(e):
+            ohne_karte.append(i)
     for f in C.solid_faces(model):
         idx = f[0] if isinstance(f, (tuple, list)) and not np.isscalar(f[0]) else f
         try:
@@ -153,6 +168,14 @@ def write_dxf(model: Model, path: str, results=None, log: list = None,
                       "gehen nur die Außenflächen von tet4, tet10 und hex8 hinaus)",
          f"Volumenelemente der Arten {', '.join(ohne)} (fehlen ganz, als 3DFACE gehen nur "
          "die Außenflächen von tet4, tet10 und hex8 hinaus)"),
+        C.elementhinweis(model, ebene, "ebenes Element", "ebene Elemente",
+                         "(geht nur als Fläche 3DFACE auf der Ebene EBENE hinaus, ohne Zustand "
+                         "und Dicke; der eigene Import liest es als Schale)",
+                         "(gehen nur als Flächen 3DFACE auf der Ebene EBENE hinaus, ohne Zustand "
+                         "und Dicke; der eigene Import liest sie als Schalen)"),
+        C.elementhinweis(model, ohne_karte, "Element", "Elemente",
+                         "ohne Darstellung in DXF (fehlt ganz)",
+                         "ohne Darstellung in DXF (fehlen ganz)"),
         (len(C.gelenkenden(model)), "Stabendgelenk", "Stabendgelenke"),
         (len(model.supports), "Knotenlager (nur als Symbol)", "Knotenlager (nur als Symbol)"),
         (len(model.line_supports), "Linienlager", "Linienlager"),

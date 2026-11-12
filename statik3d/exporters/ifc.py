@@ -28,6 +28,7 @@ import numpy as np
 from ..model import Model
 from ..elements.beam3d import local_axes
 from . import _common as C
+from .. import elemente as EL
 
 
 class _Step:
@@ -536,8 +537,18 @@ def write_ifc(model: Model, path: str, results=None, log: list = None, **_) -> s
     n_plast = sum(1 for m in model.materials.values()
                   if getattr(m, "verfestigung", None) is not None
                   or getattr(m, "Ep", None) is not None)
+    # ebene Elemente (Scheibe, ebener Dehnungszustand, rotationssymmetrisch)
+    # und was sonst weder Stab, Schale noch Volumen ist (Befund 17,
+    # 11.11.2026: bis dahin fehlten sie ohne ein Wort)
+    ohne = [i for i, e in enumerate(model.elements)
+            if e.typ not in EL.STAB_TYPEN and not e.typ.startswith("shell")
+            and e.typ not in EL.VOLUMEN_TYPEN and not C.von_weiteres(e)]
     C.nicht_uebertragen(log, "IFC", [
         (len(C.solid_elements(model)), "Volumenelement", "Volumenelemente"),
+        C.elementhinweis(model, ohne, "ebenes oder sonstiges Element",
+                         "ebene oder sonstige Elemente",
+                         "(das Statikmodell von IFC führt Stäbe und Schalen; es fehlt ganz)",
+                         "(das Statikmodell von IFC führt Stäbe und Schalen; sie fehlen ganz)"),
         (n_quad, "Seitenmittenknoten eines Schalenelements (es geht mit den Eckknoten hinaus)",
          "Schalenelemente mit Seitenmittenknoten (sie gehen mit den Eckknoten hinaus)"),
         (n_frei, "Querschnitt nur mit Fläche, Trägheitsmomenten, Schubflächen, "

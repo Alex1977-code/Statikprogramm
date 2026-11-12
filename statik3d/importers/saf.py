@@ -841,6 +841,13 @@ def import_saf(path: str, model: Model = None, log: list = None,
         c_grp = sh.col(r"^load ?group")
         c_lt = sh.col(r"^load ?type")
         c_desc = sh.col(r"^description")
+        # Statik3D-Spalte "Category" (seit 12.11.2026, Befund 24): die
+        # Kategorie genau; in Dateien, die Statik3D bis dahin schrieb, stand
+        # das Kurzzeichen (G, S ...) in "Action type" - SAF kennt dort nur
+        # Permanent, Variable und Accidental, ein Kurzzeichen kommt also nur
+        # aus Statik3D. Bis zum 12.11.2026 wurde jeder solche Lastfall Q.
+        from ..model import ACTION_CATEGORIES
+        c_kat = sh.col(r"^category$")
         for r in sh.data():
             name = Sheet.text(r, c_name)
             if not name:
@@ -852,8 +859,11 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 vorgabe = None
             g = groups.get(Sheet.text(r, c_grp), {})
             ltype = Sheet.text(r, c_lt)
-            cat = (_lookup(_LOAD_TYPE_CAT, ltype) or g.get("cat")
-                   or _lookup(_GROUP_TYPE_CAT, Sheet.text(r, c_act)) or "Q")
+            kat = Sheet.text(r, c_kat).strip()
+            if kat not in ACTION_CATEGORIES:
+                kat = Sheet.text(r, c_act).strip()
+            cat = (kat if kat in ACTION_CATEGORIES else None)                 or (_lookup(_LOAD_TYPE_CAT, ltype) or g.get("cat")
+                    or _lookup(_GROUP_TYPE_CAT, Sheet.text(r, c_act)) or "Q")
             lc = C.get_or_add_case(model, C.unique_name(model.load_cases, name), cat,
                                    Sheet.text(r, c_desc))
             if g.get("exclusive"):
@@ -1023,8 +1033,18 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 v2 = Sheet.num(r, c_v2)
                 v2 = v2 * f_v if (v2 is not None and "trapez" in Sheet.text(r, c_dist).lower()) else v1
                 system = "local" if "local" in Sheet.text(r, c_cs).lower() else "global"
+                # Location "Projection" (Befund 19/24, 12.11.2026): globale
+                # Last je Laenge der Projektion senkrecht zu ihrer Richtung -
+                # je Zeile, also je Richtung, wie Statik3D sie rechnet
+                # (assemble.projektionsfaktor). Bis dahin als wahre Laenge
+                # angesetzt. Im Stabsystem kennt SAF nur "Length".
+                bezug = ""
                 if "proj" in Sheet.text(r, c_loc).lower():
-                    C.warn(log, f"Streckenlast auf '{mem}': Projektion als wahre Laenge angesetzt")
+                    if system == "global":
+                        bezug = "projektion"
+                    else:
+                        C.warn(log, f"Streckenlast auf '{mem}': Projektion im Stabsystem "
+                                    "(SAF kennt sie nur global) als wahre Länge angesetzt")
                 ext = Sheet.text(r, c_ext).lower()
                 lengths = [model.element_length(e) for e in elems]
                 total = sum(lengths) or 1.0
@@ -1060,7 +1080,8 @@ def import_saf(path: str, model: Model = None, log: list = None,
                         ganz_b = b >= L - tol
                         model.load_beam(e, *qa, system=system, case=case,
                                         q2=qb if qb != qa else None,
-                                        a=0.0 if a <= tol else a, b=None if ganz_b else b)
+                                        a=0.0 if a <= tol else a, b=None if ganz_b else b,
+                                        bezugslaenge=bezug)
                     pos += L
                 n_loads += 1
             except Exception as ex:
