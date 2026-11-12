@@ -632,6 +632,41 @@ def _gelenk_feder_null(model) -> bool:
     return False
 
 
+def _wasserdruck_an_schalen(model) -> bool:
+    """Ein Wasserdruck des Generators auf einer Schalenflaeche ohne globale
+    Lastrichtung - er wirkte bis zum 12.11.2026 zum Wasser hin statt vom
+    Wasser weg (Maske „gegen die Normale“ an Schalen mit der Normale). Dazu
+    ein stroemungsnumerischer Wasserdruck, dessen Referenzflaeche des
+    Oberwassers Elemente gegen ihren Randumlauf hat: „Oberseite“ bezog sich
+    dort auf die Elemente, seitdem auf den Umlauf (wasserdruck.flaechennormale)."""
+    from . import elemente as _EL
+    from .wasserdruck import bezug_umgedreht
+    elemente = getattr(model, "elements", None) or []
+    flaechen = getattr(model, "flaechen", None) or {}
+    koerper = getattr(model, "koerper", None) or {}
+
+    def schale(name) -> bool:
+        f = flaechen.get(str(name))
+        return f is not None and any(0 <= int(e) < len(elemente) and elemente[int(e)].typ in _EL.SCHALEN_TYPEN
+                                     for e in (f.elemente or []))
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") != "wasser":
+                continue
+            if getattr(gl, "art", "flaeche") == "flaeche":
+                ziele = [gl.ziel]
+            else:
+                k = koerper.get(str(gl.ziel))
+                ziele = list(getattr(k, "flaechen", None) or []) if k is not None else []
+            if not getattr(gl, "richtung", None) and any(schale(n) for n in ziele):
+                return True
+            ow = str((v.get("param") or {}).get("ow_flaeche") or "")
+            if v.get("feld") and ow and bezug_umgedreht(model, ow):
+                return True
+    return False
+
+
 def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
     """Ergebnisse, die nach Theorie II. Ordnung gerechnet sind (nicht nur alpha_cr)."""
     th2 = getattr(an, "theorie2", None)
@@ -1622,6 +1657,21 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Versatz der Stabenden (Exzentrizität), nach Theorie III. Ordnung gerechnet",
         # dieselbe Pruefung wie theorie2_versatz (Stand 26)
         betrifft=_stab_mit_versatz, im_ergebnis=_theorie3_im_ergebnis),
+    # Befund vom 11.11.2026 (Pruefung der Testmodelle): der Wasserdruck an
+    # Schalen ohne globale Lastrichtung hatte das falsche Vorzeichen - „gegen
+    # die Normale (in den Körper)“ wirkte mit der Elementnormale, numerisch
+    # drueckte das Oberwasser die Schale zu sich hin. Wand 2 x 3 m, Oberwasser
+    # 2,5 m: ΣF −61,3 statt +61,3 kN. Die Seite des Wassers kommt seitdem aus
+    # Eingabe und Randumlauf der Flaeche, nicht aus der Knotenreihenfolge.
+    # Fehlerkorrektur
+    Merkmal(
+        name="wasserdruck_schale_seite", titel="Wasserdruck an Schalen ohne globale Lastrichtung",
+        texte={"alt": "Last zum Wasser hin (Seite der Maske an Schalen vertauscht, Bezug Elementnormale)",
+               "neu": "Last vom Wasser weg, benetzte Seite aus Eingabe und Randumlauf der Fläche"},
+        wechsel=(Wechsel(stand=32, datum="12.11.2026", commit="fix/k2-wasserdruck", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Wasserdruck des Generators auf einer Schalenfläche ohne globale Lastrichtung",
+        betrifft=_wasserdruck_an_schalen),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
