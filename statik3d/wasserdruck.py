@@ -54,6 +54,7 @@ Hydrodynamic Forces (IAHR 1991).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import uuid
@@ -310,20 +311,39 @@ def druck(wd, z: float, g: dict = None) -> float:
     return p
 
 
-#: Entpackte Druckfelder je Objektlast (Schluessel: id des verlauf-dicts und
-#: sein Stempel) - das Entpacken darf nicht je Elementseite anfallen
+#: Entpackte Druckfelder je Objektlast - das Entpacken darf nicht je
+#: Elementseite anfallen. Schluessel ist der Stempel des gepackten Felds (eine
+#: uuid je Erzeugung, er steht fuer den Inhalt); ein Feld ohne Stempel wird
+#: ueber die id des Feld-dicts gefunden und nur genommen, wenn es dasselbe
+#: Objekt ist (eine id kann nach dem Aufraeumen wiederkehren)
 _FELDER: dict = {}
 
 
 def _feld_aus_verlauf(verlauf: dict):
-    key = (id(verlauf), (verlauf.get("feld") or {}).get("stempel"))
+    gepackt = verlauf["feld"]
+    stempel = (gepackt or {}).get("stempel")
+    key = ("stempel", stempel) if stempel else ("id", id(gepackt))
     hit = _FELDER.get(key)
-    if hit is None:
-        hit = st.feld_entpacken(verlauf["feld"])
+    if hit is None or (not stempel and hit[0] is not gepackt):
+        hit = (gepackt, st.feld_entpacken(gepackt))
         if len(_FELDER) > 12:
             _FELDER.clear()
         _FELDER[key] = hit
-    return hit
+    return hit[1]
+
+
+def _schalenvorzeichen(verlauf: dict, normale) -> float:
+    """+1, wenn die Elementnormale ``normale`` zur Flaechennormale zeigt, sonst −1.
+
+    Die Flaechennormale (Randumlauf, :func:`flaechennormale`) steht seit dem
+    12.11.2026 je Flaeche im Verlauf (``verlauf["normale_flaeche"]``). Fehlt sie
+    (Last aus einer aelteren Datei) oder steht das Element quer zu ihr, ist die
+    Elementnormale selbst der Bezug."""
+    nf = verlauf.get("normale_flaeche")
+    if nf is None or normale is None:
+        return 1.0
+    c = float(np.asarray(normale, float)[:3] @ np.asarray(nf, float)[:3])
+    return -1.0 if c < -1e-6 else 1.0
 
 
 def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = False) -> float:
@@ -332,7 +352,22 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
     Mit Druckfeld (``verlauf["feld"]``, strömungsnumerisch) wird das Gitter
     vor der Elementseite abgetastet - entlang ``normale``, bei einer dünnen
     Schale (``beidseitig``) netto aus Vorder- und Rückseite; positiv drückt
-    gegen die Außennormale. Sonst die Näherungsformel p(z)."""
+    gegen die Außennormale. Sonst die Näherungsformel p(z), mit ``seite``
+    +1 gegen die Normale der Fläche (in den Körper), −1 mit ihr.
+
+    **Schale** (``beidseitig``) ohne globale Richtung: die Schalenlast wirkt
+    positiv in Richtung der Elementnormale (assemble.shell_face_load), der
+    Wasserdruck aber gegen die Normale der Seite, an der das Wasser steht.
+    Bis zum 12.11.2026 fehlte dieser Wechsel (wie beim Wind bis zur Korrektur
+    A1): an Schalen wirkte „gegen die Normale (in den Körper)“ mit der
+    Elementnormale, und strömungsnumerisch drückte das Oberwasser die Schale
+    zu sich hin - Wand 2 × 3 m, Oberwasser 2,5 m, ΣF −61,3 statt +61,3 kN.
+    Zurück kommt darum der Wert für die Schalenlast, gezählt in Richtung der
+    Elementnormale. Welche Seite benetzt ist, folgt aus der Eingabe und der
+    Geometrie, nicht aus der Knotenreihenfolge des Elements: numerisch aus
+    dem Druckfeld (vorn minus hinten entlang der Elementnormale, das
+    Vorzeichen hebt sich heraus), analytisch aus ``seite`` gegen die
+    Flächennormale des Randumlaufs (:func:`_schalenvorzeichen`)."""
     wd = _param(verlauf.get("param") or {})
     if verlauf.get("feld"):
         schnitt, p, fluid, _block = _feld_aus_verlauf(verlauf)
@@ -346,24 +381,39 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
             c = float(np.asarray(normale, float)[:3] @ np.asarray(wd.richtung, float)[:3])
             if abs(c) > 1e-9:
                 return -p_n if c > 0 else p_n
-        return p_n
+        # Schale: die Kraft −p_n·A·n ist die Schalenlast −p_n (mit n gezaehlt)
+        return -p_n if (beidseitig and wd.richtung is None) else p_n
     g = verlauf.get("geometrie") or geometrie(wd)
     z = float(np.asarray(punkt, float)[2])
     if verlauf.get("dyn"):
         # Druckschwankung: Amplitude auf der benetzten Fläche
-        return float(verlauf.get("dp_dyn", 0.0)) * wd.seite if druck(wd, z, g) > 0 else 0.0
-    return druck(wd, z, g) * wd.seite
+        p = float(verlauf.get("dp_dyn", 0.0)) * wd.seite if druck(wd, z, g) > 0 else 0.0
+    else:
+        p = druck(wd, z, g) * wd.seite
+    if beidseitig and wd.richtung is None and p != 0.0:
+        # p drueckt gegen die Flaechennormale; die Schalenlast zaehlt mit der
+        # Elementnormale
+        return -p * _schalenvorzeichen(verlauf, normale)
+    return p
 
 
 # ==========================================================================
 # Strömungsnumerische Berechnung im Schnitt
 # ==========================================================================
-def flaechennormale(model, name: str):
-    """Mittlere Außennormale einer Fläche - aus den Schalenelementen, sonst
-    aus dem Randpolygon (Newell)."""
-    f = model.flaechen.get(name)
-    if f is None:
-        return None
+def _umlaufnormale(model, f):
+    """Normale des Randumlaufs einer Fläche (Newell), nicht normiert."""
+    try:
+        P = np.asarray(f.randpunkte(model), float)
+    except Exception:                    # noqa: BLE001
+        P = np.zeros((0, 3))
+    n = np.zeros(3)
+    for j in range(len(P)):
+        n += np.cross(P[j], P[(j + 1) % len(P)])
+    return n
+
+
+def _elementnormale_summe(model, f):
+    """Summe der Normalen der Schalenelemente einer Fläche, nicht normiert."""
     n = np.zeros(3)
     for e in f.elemente or []:
         if not 0 <= int(e) < len(model.elements):
@@ -373,16 +423,41 @@ def flaechennormale(model, name: str):
             continue
         X = model.nodes[[int(k) for k in el.nodes[:3]]]
         n += np.cross(X[1] - X[0], X[2] - X[0])
+    return n
+
+
+def flaechennormale(model, name: str):
+    """Normale einer Fläche (Einheitsvektor) - aus dem Randumlauf (Newell,
+    Rechtsschraube), wie die Ansicht sie ohne Netz zeigt; nur wo der Umlauf
+    keine Richtung hat, die Summe der Elementnormalen.
+
+    Bis zum 12.11.2026 kam sie zuerst aus den Schalenelementen - aus deren
+    Knotenreihenfolge. Seitdem bestimmt sie an Schalen auch, auf welcher
+    Seite das Wasser steht (``seite``, :func:`_schalenvorzeichen`); dafür
+    muss sie aus der Geometrie der Fläche kommen, nicht aus dem Netz."""
+    f = model.flaechen.get(name)
+    if f is None:
+        return None
+    n = _umlaufnormale(model, f)
     if float(np.linalg.norm(n)) <= 1e-12:
-        try:
-            P = np.asarray(f.randpunkte(model), float)
-        except Exception:                    # noqa: BLE001
-            P = np.zeros((0, 3))
-        for j in range(len(P)):
-            a, b = P[j], P[(j + 1) % len(P)]
-            n += np.cross(a, b)
+        n = _elementnormale_summe(model, f)
     L = float(np.linalg.norm(n))
     return n / L if L > 1e-12 else None
+
+
+def bezug_umgedreht(model, name: str) -> bool:
+    """Zeigt die Summe der Elementnormalen einer Schalenfläche gegen ihren
+    Randumlauf? Dann bezog ein Programmstand vor dem 12.11.2026 „Oberseite“
+    und ``seite`` dort auf die andere Seite (Verfahrensmerkmal
+    wasserdruck_schale_seite)."""
+    f = model.flaechen.get(name)
+    if f is None:
+        return False
+    u = _umlaufnormale(model, f)
+    e = _elementnormale_summe(model, f)
+    if float(np.linalg.norm(u)) <= 1e-12 or float(np.linalg.norm(e)) <= 1e-12:
+        return False
+    return float(u @ e) < 0.0
 
 
 def _seitennormale(model, name: str, seite: str):
@@ -456,17 +531,31 @@ _FELD_CACHE: dict = {}
 def feld_rechnen(wd: Wasserdruck, model, fortschritt=None) -> dict:
     """Die Potentialströmung um den Verschluss rechnen: Rückgabe
     {"schnitt", "z_sohle", "feld" (siehe stroemung.wasserdruck_feld), "g",
-    "hinweise"}. Je Parametersatz und Modellstand einmal (Zwischenspeicher)."""
+    "hinweise"}. Je Parametersatz und Geometrie einmal (Zwischenspeicher).
+
+    Der Schlüssel des Zwischenspeichers ist ein Fingerabdruck dessen, woraus
+    das Feld entsteht: die Dreiecke der benetzten Flächen (Koordinaten aus
+    Netz bzw. Rand), die Strömungsrichtung und die Normale der
+    Unterwasser-Referenzfläche, Höhen und Breite, die Parameter. Bis zum
+    12.11.2026 waren es id, Knoten-, Element- und Flächenzahl des Modells -
+    eine gedrehte Wand gleicher Teilung bekam das alte Feld (ΣF −61,22 statt
+    +61,22 kN)."""
     g = geometrie(wd, model)
-    stand = (id(model), model.nn, len(model.elements), len(model.flaechen),
+    tris = st.objekt_dreiecke(model, wd.flaechen, wd.koerper)
+    if not tris:
+        raise ValueError("Die benetzten Flächen haben keine Geometrie (weder Netz noch Randlinien)")
+    n_uw = _seitennormale(model, wd.uw_flaeche, wd.uw_seite) \
+        if wd.uw_flaeche and wd.uw_flaeche in model.flaechen else None
+    abdruck = hashlib.blake2b(digest_size=20)
+    abdruck.update(np.ascontiguousarray(np.asarray(tris, float)).tobytes())
+    abdruck.update(np.asarray(stroemungsrichtung(wd, model), float).tobytes())
+    abdruck.update(np.zeros(3).tobytes() if n_uw is None else np.asarray(n_uw, float).tobytes())
+    stand = (abdruck.hexdigest(), json.dumps(g, sort_keys=True, default=str),
              json.dumps({k: v for k, v in asdict(wd).items() if k not in ("name", "kommentar")}, sort_keys=True,
                         default=str))
     hit = _FELD_CACHE.get(stand)
     if hit is not None:
         return hit
-    tris = st.objekt_dreiecke(model, wd.flaechen, wd.koerper)
-    if not tris:
-        raise ValueError("Die benetzten Flächen haben keine Geometrie (weder Netz noch Randlinien)")
     punkte = np.concatenate([np.asarray(t, float) for t in tris]).reshape(-1, 3)
     schnitt, z_sohle = schnitt_anlegen(wd, model, g, punkte)
     st._melden(fortschritt, 0.0, f"Wasserdruck {wd.name}: Gitter {schnitt.nx} × {schnitt.nz}")
@@ -583,8 +672,13 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
         if feld is not None:
             verlauf["feld"] = feld
         for name in wd.flaechen:
-            model.add_geometrielast(name, 0.0, art="flaeche", richtung=wd.richtung, case=fall,
-                                    verlauf=dict(verlauf))
+            v = dict(verlauf)
+            # Flaechennormale (Randumlauf) als Bezug fuer ``seite`` an Schalen
+            # (12.11.2026, druck_aus_verlauf)
+            n_f = flaechennormale(model, name)
+            if n_f is not None:
+                v["normale_flaeche"] = [float(x) for x in n_f]
+            model.add_geometrielast(name, 0.0, art="flaeche", richtung=wd.richtung, case=fall, verlauf=v)
             n_lasten += 1
         for name in wd.koerper:
             model.add_geometrielast(name, 0.0, art="koerper", richtung=wd.richtung, case=fall,
