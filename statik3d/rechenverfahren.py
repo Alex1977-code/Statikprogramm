@@ -528,6 +528,73 @@ def _anschluss_ohne_festigkeit(model) -> bool:
     return False
 
 
+def _anschluss_ohne_sorte(model) -> bool:
+    """Ein nachzuweisender Anschluss mit Kehlnaehten (Kopfplatte, geschweisstes
+    Knotenblech), dessen Werkstoff keine bekannte Stahlsorte nennt - dort rechnete
+    der Nachweis bis zum 12.11.2026 beta_w still mit S355 (0,9) bzw. bei
+    unbekannter Sorte mit 1,0; jetzt wird er nicht gefuehrt (Pruefbericht
+    11.11.2026, Befund 2)."""
+    from .joints.welds import beta_w
+    elemente = getattr(model, "elements", None) or []
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True):
+            continue
+        typ = getattr(j, "typ", "")
+        if not (typ == "kopfplatte" or (typ == "diagonale" and (getattr(j, "geometrie", None) or {}).get("welded"))):
+            continue
+        i = int(getattr(j, "elem", -1))
+        if not 0 <= i < len(elemente):
+            continue
+        mat = (getattr(model, "materials", None) or {}).get(elemente[i].mat)
+        if mat is None:
+            continue
+        try:
+            beta_w(getattr(mat, "grade", ""))
+        except ValueError:
+            return True
+    return False
+
+
+def _laminat_schalen(model) -> bool:
+    """Ein Schalenelement mit geschichtetem Aufbau - seine Randspannungen standen
+    bis zum 12.11.2026 als n/t ± 6 m/t² da (Pruefbericht 11.11.2026, Befund 3)."""
+    schalen = getattr(model, "shells", None) or {}
+    for e in getattr(model, "elements", None) or []:
+        if str(getattr(e, "typ", "")).startswith("shell"):
+            p = schalen.get(getattr(e, "sec", None))
+            if p is not None and getattr(p, "lagen", None):
+                return True
+    return False
+
+
+def _beulfeld_achsen_verdreht(model) -> bool:
+    """Ein Beulfeld mit einem Element, dessen erste Kante gegen die Flaechenachse
+    x verdreht ist (nicht 0° oder 180°) - dort drehte der Beulnachweis die
+    Spannungen vom 09.11. bis 12.11.2026 ein zweites Mal (Nebenbefund Beulen)."""
+    import math
+    import numpy as np
+    felder = getattr(model, "beulfelder", None) or {}
+    if not felder:
+        return False
+    from .elements import shell as sh
+    from .solver import flaechen_bezugssystem
+    elemente = getattr(model, "elements", None) or []
+    for bf in felder.values():
+        for i in getattr(bf, "elemente", None) or []:
+            i = int(i)
+            if not 0 <= i < len(elemente):
+                continue
+            try:
+                X = np.asarray(model.nodes)[elemente[i].nodes]
+                T3e = sh.shell_frame(X[0], X[1], X[2])[0]
+                phi = sh.frame_winkel(T3e, flaechen_bezugssystem(T3e))
+            except Exception:                   # noqa: BLE001 - Pruefung, nie Abbruch
+                return True
+            if abs(math.sin(phi)) > 1e-9:
+                return True
+    return False
+
+
 def _kontakt_nur_koerper(model) -> bool:
     """Eine Kontaktbedingung, die nur Koerper nennt (geloest und Gegenkoerper, keine
     Flaechen) - sie blieb bis zum 09.11.2026 unausgefuehrt (Befund A17)."""
@@ -1460,6 +1527,39 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
         betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Pruefbericht 11.11.2026, Befund 2: ein Anschluss mit Kehlnaehten ohne
+    # Stahlsorte rechnete beta_w still mit S355 (0,9) und nannte S355 (S460-Werte:
+    # η 0,9950 statt 1,1055). Festlegung des Anwenders: ohne Werkstoffangabe kein
+    # Nachweis, Meldung. Fehlerkorrektur
+    Merkmal(
+        name="anschluss_beta_w", titel="Korrelationsbeiwert β_w im Anschlussnachweis",
+        texte={"alt": "β_w ohne Stahlsorte als S355 (0,9), mit unbekannter Sorte 1,0",
+               "neu": "β_w aus der Stahlsorte, ohne Sorte kein Nachweis der Naht, mit Meldung"},
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Anschluss mit Kehlnähten, Werkstoff ohne bekannte Stahlsorte",
+        betrifft=_anschluss_ohne_sorte),
+    # Pruefbericht 11.11.2026, Befund 3: Randspannungen geschichteter Schalen nach
+    # n/t ± 6 m/t² statt je Lage aus eps0 + z kappa (Zweischichter voll gehalten
+    # -30/-210 statt -60/-180 N/mm²). Fehlerkorrektur
+    Merkmal(
+        name="laminat_randspannung", titel="Randspannungen geschichteter Schalen",
+        texte={"alt": "σ oben/unten = n/t ± 6 m/t² wie bei homogener Schale",
+               "neu": "σ oben/unten der äußersten Faser der obersten/untersten Lage nach der Laminattheorie"},
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schale mit Schichtaufbau", betrifft=_laminat_schalen),
+    # Nebenbefund Beulen (12.11.2026): feldspannungen/zylinderspannungen drehten die
+    # Spannungen, die seit A20 im Flaechensystem stehen, ein zweites Mal mit der
+    # ersten Elementkante (Feld 30°: σ_u 22,6 statt 25,9 N/mm²). Fehlerkorrektur
+    Merkmal(
+        name="beulen_flaechenachsen", titel="Spannungen im Beulnachweis",
+        texte={"alt": "Flächenspannungen zusätzlich mit der ersten Elementkante gedreht",
+               "neu": "Flächenspannungen aus dem Flächensystem in die Feldachsen gedreht"},
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Beulfeld mit Elementen, deren erste Kante gegen die Flächenachse x verdreht ist",
+        betrifft=_beulfeld_achsen_verdreht),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
@@ -1572,7 +1672,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 30
+VERFAHRENSSTAND = 36
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

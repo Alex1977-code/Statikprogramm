@@ -43,8 +43,11 @@ def _nachweis(fy, fu, grade, art):
     # Die Geometrie kommt aus dem Vorschlag mit vollstaendigem Werkstoff (235/360): seit dem
     # 09.11.2026 gibt es ohne f_y oder f_u auch keinen Vorschlag mehr (Nebenbefund 15,
     # tests.test_nachweis_ohne_fu). Nachgewiesen wird mit dem Werkstoff des Falls.
+    # Seit dem 12.11.2026 braucht der Vorschlag der Kopfplatte die Stahlsorte (β_w der
+    # Naehte, tests.test_schale_beul_anschluss): Vorschlag mit Sorte S235, dieselben
+    # Werte 235/360, dieselbe Geometrie wie bisher.
     fall = m.materials["X"]
-    m.materials["X"] = Material("X", E=210e9, nu=0.3, rho=7850, fy=235e6, fu=360e6)
+    m.materials["X"] = Material("X", E=210e9, nu=0.3, rho=7850, fy=235e6, fu=360e6, grade="S235")
     t = templates.propose(art, m, 0, end=0, N=0.0, Vz=20000.0, My=80000.0)
     m.materials["X"] = fall
     j = anschluss.als_joint(t, name=f"J_{art}")
@@ -60,7 +63,16 @@ def _eta(c):
 
 def test_festigkeiten():
     for art, eta_soll in (("lasche", 1.0484135), ("kopfplatte", 0.7932072)):
-        c = _nachweis(235e6, 360e6, "", art)
+        if art == "kopfplatte":
+            # Kehlnaehte: β_w haengt an der Stahlsorte - ohne Sorte seit dem 12.11.2026 kein
+            # Nachweis (Pruefbericht 11.11.2026, Befund 2); bis dahin still S355
+            c = _nachweis(235e6, 360e6, "", art)
+            check(f"{art}: f_y 235, f_u 360 ohne Sorte: kein Nachweis, Fehler nennt Stahlsorte und β_w",
+                  bool(c.fehler) and "Stahlsorte" in c.fehler and "β_w" in c.fehler and "X" in c.fehler,
+                  f"Fehler {c.fehler!r}")
+            c = _nachweis(235e6, 360e6, "S235", art)
+        else:
+            c = _nachweis(235e6, 360e6, "", art)
         check(f"{art}: f_y 235, f_u 360 angegeben: η = {eta_soll:.4f} wie bisher",
               not c.fehler and abs(float(_eta(c)) - eta_soll) < 1e-6, f"η = {_eta(c)}, Fehler {c.fehler!r}")
         c = _nachweis(None, None, "S235", art)
