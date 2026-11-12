@@ -599,6 +599,14 @@ def _schalen(model) -> bool:
     return any(str(getattr(e, "typ", "")).startswith("shell") for e in getattr(model, "elements", None) or [])
 
 
+def _schalen_uneinheitlich(model) -> bool:
+    """Schalenelemente, die gegen ihre Flaeche oder ihr zusammenhaengendes
+    Stueck liegen (statik3d.schalenlage, Stand 31). Nach einer Rechnung mit
+    Stand 31 ist das Modell ausgerichtet und nicht mehr betroffen."""
+    from .schalenlage import uneinheitlich
+    return uneinheitlich(model)
+
+
 def _quader_teilung_ungleich(model) -> bool:
     """Ein Koerper mit einer Teilung, die nicht in allen Richtungen gleich ist (A14)."""
     for k in (getattr(model, "koerper", None) or {}).values():
@@ -1460,6 +1468,21 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
         betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Auftrag vom 12.11.2026 („die lage von schalenelementen sollte der user frei
+    # bestimmen können und sie dürfte grundsätzlich nicht an der berechnung
+    # ändern“): an einem gespiegelten Element wirkten Flaechenlast senkrecht zur
+    # Flaeche, dT_z, Wasserdruck und Wind verkehrt herum (Platte 8 x 8 shell4,
+    # ein Element gespiegelt: ΣR_z 9 687,5 statt 10 000 N), die Knotenmittel
+    # mischten Werte verschieden gerichteter Elemente. Vor jeder Rechnung werden
+    # die Schalen jetzt ausgerichtet (statik3d.schalenlage). Fehlerkorrektur
+    Merkmal(
+        name="schalenlage", titel="Lage der Schalenelemente",
+        texte={"alt": "jedes Schalenelement in der Lage seiner Knotenfolge gerechnet",
+               "neu": "Schalenelemente vor der Rechnung zur Fläche bzw. ihrem Stück ausgerichtet"},
+        wechsel=(Wechsel(stand=31, datum="12.11.2026", commit="fix/k2-schalenlage", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenelemente, die gegen ihre Fläche oder ihr zusammenhängendes Stück liegen",
+        betrifft=_schalen_uneinheitlich),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
@@ -1572,7 +1595,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 30
+VERFAHRENSSTAND = 31
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -26551,6 +26551,13 @@ class MainWindow(QtWidgets.QMainWindow):
         fugen.stabenden_erneuern(self.model, log)
         for z in log:
             self.log.appendPlainText(z)
+        # Schalenelemente einheitlich ausrichten (statik3d.schalenlage,
+        # 12.11.2026) - hier, vor dem Festhalten des Modellstands: der Solver
+        # taete es sonst im Hintergrund, und das Ergebnis gaelte als „Modell
+        # waehrend der Rechnung geaendert“
+        from ..schalenlage import schalen_ausrichten
+        for z in schalen_ausrichten(self.model):
+            self.log.appendPlainText(z)
         d = diagnose(self.model)
         nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
         if not nf and not nk:

@@ -537,6 +537,8 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
     for name, was in ((wd.ow_flaeche, "Oberwasser"), (wd.uw_flaeche, "Unterwasser")):
         if name and name not in model.flaechen:
             raise ValueError(f"Referenzfläche {was}: {name} unbekannt")
+    from .schalenlage import schalen_ausrichten   # Elementnormalen einheitlich (12.11.2026)
+    schalen_ausrichten(model)
     g = geometrie(wd, model)
     kw = kennwerte(wd, model, fortschritt=fortschritt)
     feld = None
